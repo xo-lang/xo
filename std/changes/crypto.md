@@ -1,5 +1,36 @@
 # std/crypto changes
 
+## 2026-10-27: perf: AES-GCM on amd64 eight blocks a round with AES-NI and PCLMULQDQ, and SubWord with AES-NI (seal 3.67 to 1.09 times Go's time, open 3.49 to 1.02, key setup 1.28)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 4's amd64 parity audit (bench/results/amd64-crypto-vs-go-2026-10-27.md: AES-GCM 3.5 to 4.4 times Go on an i7-9750H)
+- Go reference: crypto/internal/fips140/aes/gcm gcm_amd64.s (gcmAesEnc, gcmAesDec: eight blocks a round, the previous 128 bytes hashed during the next ones' rounds)
+- Test: internal/llvm golden cpu_prims (aes_gcm8 against the portable body, apart and in place, 11, 13 and 15 round keys; darwin/amd64 native and LLVM builds on the i7-9750H, linux/amd64 in Docker); the aesgcm twin's checksums equal Go's (N 1, 7, 2000); tls goldens in the Docker amd64 run; xo dev codegen test/codegen (intrinsics: aesgcm.Gcm.gcm_bulk's interleave, which fails on the parent's xo)
+
+amd64 ran AES-GCM's bulk through the portable body: one AES-NI block per
+call with its state through memory, and GHASH's carry-less products one at
+a time through general registers (all of a seal's profile). The
+cpu.aes_gcm8 intrinsics, arm64-only until now, are lowered on native
+amd64 and LLVM on x86-64 (compiler/ssa x86aesgcm8.xo): eight counter
+blocks through each round key, each block's GHASH as Karatsuba's three
+products summed over the eight and reduced once, in Xo's own GHASH
+convention (cpu.ghash8_soft's, so the portable body stays the oracle).
+Sealing hashes the previous 128 bytes during the next ones' rounds, as
+Go does; opening hashes the bytes it decrypts during their own rounds.
+new_gcm builds H^8 to H^5 on amd64 too (they were 0 there: a first
+version's tags of 128 bytes or more were wrong while the kernel's own
+test, with its own table, passed). The key schedule's SubWord is one
+aesenclast with a zero key when the CPU has AES instructions (a block of
+four copies of the word; it was the bitsliced S-box): a key's setup
+0.455 (0.447 to 0.457) of its time, seal with a key a record 0.743
+(0.733 to 0.753). `xo bench --ab` on the i7-9750H, A Go 1.26.1's twin
+(its seal, open and key make the key each record as Xo's loop does,
+since this commit), B Xo, N=20000 records of 16 KiB, 11 rounds: seal1
+wall 1.089 (1.077 to 1.097), open1 1.021 (1.004 to 1.04), from 3.671
+and 3.486; seal 1.133 (1.114 to 1.153), open 1.148 (1.13 to 1.165); a
+key and an empty seal 1.276 (1.252 to 1.291).
+
 ## 2026-10-24: perf: RSA's Montgomery loops carry byte offsets (native sign4096 0.922 of the instructions, sign2048 0.883)
 
 - Kind: perf

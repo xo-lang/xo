@@ -241,6 +241,16 @@ fn sub_word(x: Int) -> Int {
   q[0] & 0xFFFFFFFF
 }
 
+/// sub_word with the CPU's AES instructions (cpu.aes_last): x in each of
+/// the block's four columns at sw, the last round with zk's zero key.
+fn sub_word_hw(x: Int, var sw: List[Int], zk: List[Int]) -> Int {
+  let c = x | shl(x, 32)
+  sw[0] = c
+  sw[1] = c
+  cpu.aes_last(addr(sw), addr(zk), addr(zk))
+  sw[0] & 0xFFFFFFFF
+}
+
 /// The bitsliced round keys of the 32 bit words c holds in its lanes.
 fn expand(var sk: List[Int], c: Int) {
   let x0 = c & 0x1111111111111111
@@ -271,15 +281,23 @@ fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
     w.push(le32(key, 4 * i))
   }
   let rcon = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36]
+  let hw = cpu.hw()
+  // with AES instructions, SubWord is one last round with a zero key of a
+  // block whose four columns are the word (ShiftRows then moves nothing):
+  // the bitsliced S-box was most of a key's setup (about 1.8 us of each
+  // AES-GCM key on an i7-9750H, 2026-10-27)
+  let aes = (hw & cpu.HW_AES) != 0
+  var sw = [0, 0]
+  let zk = [0, 0]
   var tmp = w[nk - 1]
   var j = 0
   var k = 0
   for i in nk..nkf {
     if j == 0 {
       tmp = (shl(tmp, 24) | shr(tmp, 8)) & 0xFFFFFFFF
-      tmp = sub_word(tmp) ^ rcon[k]
+      tmp = (if aes { sub_word_hw(tmp, sw, zk) } else { sub_word(tmp) }) ^ rcon[k]
     } else if nk > 6 && j == 4 {
-      tmp = sub_word(tmp)
+      tmp = if aes { sub_word_hw(tmp, sw, zk) } else { sub_word(tmp) }
     }
     tmp = tmp ^ w[i - nk]
     w.push(tmp)
@@ -294,8 +312,9 @@ fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
     rk[2 * r] = w[4 * r] | shl(w[4 * r + 1], 32)
     rk[2 * r + 1] = w[4 * r + 2] | shl(w[4 * r + 3], 32)
   }
+  keep(sw)
+  keep(zk)
   var sk: List[Int] = []
-  let hw = cpu.hw()
   var q = [0, 0, 0, 0, 0, 0, 0, 0]
   var i = if bitsliced || (hw & cpu.HW_AES) == 0 { 0 } else { nkf }
   while i < nkf {
@@ -793,12 +812,15 @@ pub fn new_gcm(key: Bytes) -> Gcm {
     return g
   }
   // H^8 to H (cpu.aes_gcm8's eight entries); the four block kernels and
-  // ghash_blocks read the last four, from HK4. Only arm64 reads H^8 to
-  // H^5 (gcm_bulk): elsewhere they stay 0, four multiplies a key fewer
+  // ghash_blocks read the last four, from HK4. Only arm64 and amd64 read
+  // H^8 to H^5 (gcm_bulk): elsewhere they stay 0, four multiplies a key
+  // fewer (amd64's were 0 too until its gcm8 kernel, 2026-10-27: the
+  // tags of 128 bytes or more were wrong while the kernel's own test,
+  // with its own table, passed)
   let (q1, q0) = g.mul(h1, h0)
   let (r1, r0) = g.mul(q1, q0)
   let (t1, t0) = g.mul(r1, r0)
-  let arm = target.arch == TargetArch.Arm64
+  let arm = target.arch == TargetArch.Arm64 || target.arch == TargetArch.Amd64
   let (u1, u0) = if arm { g.mul(t1, t0) } else { (0, 0) }
   let (v1, v0) = if arm { g.mul(u1, u0) } else { (0, 0) }
   let (w1, w0) = if arm { g.mul(v1, v0) } else { (0, 0) }
@@ -915,13 +937,14 @@ fn (g: Gcm) gcm_bulk(q0: Int, sp: Int, nlo: Int, nhi: Int, whole: Int, a1: Int, 
   let kp = addr(g.c.rk)
   let ip = addr(iv)
   let yp = addr(st)
-  // arm64: the 128 byte multiple eight blocks a round (cpu.aes_gcm8, the
-  // round keys in registers), then a last 64 bytes on the four block
+  // arm64 and amd64: the 128 byte multiple eight blocks a round
+  // (cpu.aes_gcm8: arm64's round keys in registers, amd64's AES-NI and
+  // PCLMULQDQ since 2026-10-27), then a last 64 bytes on the four block
   // kernel from the counter after them
   var q = q0
   var sq = sp
   var rest = whole
-  if target.arch == TargetArch.Arm64 && whole >= 128 {
+  if (target.arch == TargetArch.Arm64 || target.arch == TargetArch.Amd64) && whole >= 128 {
     let w8 = whole & -128
     let hp8 = addr(g.hk)
     if enc {

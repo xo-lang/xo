@@ -1761,6 +1761,25 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" if g.x86 => {
+      // AES-NI and PCLMULQDQ, eight blocks a round (ssa.aes_gcm8_x86_lines):
+      // rax, rcx, r8 to r10 and xmm0 to xmm13 clobbered, xmm14, xmm15 and
+      // r11 the emitter's scratch
+      let name = aux_str(x.aux)
+      let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
+      var cl = [XR_AX, XR_CX, 8, 9, 10]
+      for r in 0..14 {
+        cl.push(FP_BASE + r)
+      }
+      var us: List[Int] = []
+      for a in x.args {
+        us.push(g.real(g.word(a)))
+      }
+      let t = ssa.aes_gcm8_x86_lines(nr, name.contains("enc"), "$u0", "$u1", "$u2", "$u3", "$u4", "$u5", "$u6").join("\n")
+      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: us, x86: true, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" => {
       // ssa.aes_gcm8_lines: the arguments as aes_gcm_lines' (the H
       // powers eight); x9 to x11 its pointers and count (d8 to d15 saved

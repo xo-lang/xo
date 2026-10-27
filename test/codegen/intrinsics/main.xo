@@ -90,6 +90,13 @@ fn main(os: Os) {
 // amd64: "aesenc %xmm"
 // llvm/arm64: "aese \$0.16b, \$2.16b\\0Aaesmc"
 
+// AES-GCM's bulk eight blocks a round on amd64 (cpu.aes_gcm8, ssa
+// x86aesgcm8.xo, Go's gcmAesEnc): a round key through the eight blocks,
+// then one block's GHASH (its bytes swapped, three carry-less products),
+// not the portable body's aes_ctr and ghash calls.
+// func aesgcm.Gcm.gcm_bulk
+// amd64: "(\taesenc %xmm11, %xmm[0-7]\n){7}\taesenc %xmm11, %xmm7\n\tmovdqu -?[0-9]*\(%r[0-9a-z]+\), %xmm12\n\tpshufb %xmm15, %xmm12" "pclmulqdq \$16, %xmm12, %xmm11" "pclmulqdq \$1, %xmm12, %xmm11" "pclmulqdq \$0, %xmm13, %xmm11" -"_xo_f_cpu_2eghash" -"_xo_f_cpu_2eaes__ctr"
+
 // SHA-256's compression with the CPU's instructions (decision 0231's
 // SHA-256 section): the state packed into v16 and v17, four rounds a
 // sha256h and sha256h2.

@@ -30,14 +30,29 @@ func main() {
 		pt[i] = byte(i % 251)
 	}
 	aad := []byte{0x17, 3, 3, 0x40, 0, 0, 0, 0, 0, 0, 0, 1, 0}
-	b, _ := aes.NewCipher(key)
-	a, _ := cipher.NewGCM(b)
+	// seal, open and key make the key every record, as main.xo's do
+	// (crypto_op's aes.seal and aes.open; 2026-10-27, before then only
+	// seal1 and open1 compared the same work)
+	newGCM := func() cipher.AEAD {
+		b, _ := aes.NewCipher(key)
+		a, _ := cipher.NewGCM(b)
+		return a
+	}
+	a := newGCM()
 	sum := 0
 	switch w {
-	case "seal", "seal1":
+	case "seal", "seal1", "key":
 		dst := make([]byte, 0, len(pt)+16)
+		data := pt
+		if w == "key" {
+			data = nil
+		}
 		for i := 0; i < n; i++ {
-			s := a.Seal(dst[:0], nonce, pt, aad)
+			g := a
+			if w != "seal1" {
+				g = newGCM()
+			}
+			s := g.Seal(dst[:0], nonce, data, aad)
 			sum += int(s[len(s)-1]) + len(s)
 		}
 	case "open", "open1":
@@ -54,7 +69,11 @@ func main() {
 			extra = 1
 		}
 		for i := 0; i < n; i++ {
-			r, err := a.Open(dst[:0], nonce, s, aad)
+			g := a
+			if w == "open" {
+				g = newGCM()
+			}
+			r, err := g.Open(dst[:0], nonce, s, aad)
 			if err != nil {
 				panic(err)
 			}

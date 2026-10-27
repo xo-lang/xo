@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- AES-GCM on amd64 is about 3.4 times faster: eight blocks a round with AES-NI
+  and PCLMULQDQ, as Go's assembly does (16 KiB records on an i7-9750H: sealing
+  1.09 and opening 1.02 times Go's time, from 3.67 and 3.49); an AES key's setup
+  takes half the time with AES instructions (1.28 times Go's)
 - The first edit after a cold build of a mid-sized program (the HTTP server's 35
   parts) regenerates only the edited part instead of all of them: its parts
   are kept from the first build when they are under 128 MiB in all (before, only

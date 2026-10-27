@@ -35,7 +35,7 @@ should work, with no test or run on that target), **n/a**.
 | shrink wrapping | on | done | done | missing (Win64 unwind: one prologue) | compiler/arm64/isel.xo:157 |
 | arg_slots under shrink wrapping | on | off where it shrink wraps | same | same | regalloc.xo:441 |
 | reuse_flags, cluster_mem | on | missing | missing | missing | isel.xo:76-133, 135, 147 |
-| wide crypto (aes x4, aes_ctr, aes_gcm(8), chacha4, ghash4) | NEON | missing (portable bodies; single-block AES-NI, SHA-NI, PCLMUL, ML-KEM SSE2 done) | missing | missing | compiler/ssa/call.xo:218-232 |
+| wide crypto (aes x4, aes_ctr, aes_gcm(8), chacha4, ghash4) | NEON | aes_gcm8 done since 2026-10-27 (seal 1.09, open 1.02, key setup 1.28 times Go, amd64-crypto-vs-go-2026-10-27.md); chacha4, ghash4, aes x4, aes_ctr portable | same | same | compiler/ssa/call.xo:218-232, x86aesgcm8.xo |
 | Float.fma in hardware | fmadd | done (FMA3 behind CPUID) | done | done | 0be785fc9 (2026-10-26) |
 | rt.ticks | cntvct | missing (mono_ns body) | missing | missing | call.xo:229 |
 | str.cmp in line, str_eq_const | on | missing | missing | missing | compiler/arm64/calls.xo:1293 (comment says no cneg; the x86 emitter retargets cneg now), :1312 |
@@ -52,7 +52,7 @@ should work, with no test or run on that target), **n/a**.
 | DWARF lines and variables | on | done | done | done (DWARF in the PE, 41cbcb183) | 5156c6684 (2026-10-20); internal/arm64/x86debug_test.go TestAmd64DebugInfoSameCode (linux/amd64) |
 | XO_TRACEBACK=locals | on | done | done (04e1e851e) | missing (refused) | std/native/llrt/fault.xo:318-322 |
 | split debug info / dSYM / PDB | dSYM, split | untested (shared ELF path) | untested (OS-gated dSYM path) | partial: PDB stage 1 (names and publics, 92e966495) | internal/arm64/splitdebug_test.go (arm64 only) |
-| CPU profiling (XO_PROF=cpu) | on | untested (shared runtime, no native amd64 run found) | untested | partial (sampler 28681ddae, checked on the LLVM backend under Wine) | std/native/llrt/prof.xo:23, 173 |
+| CPU profiling (XO_PROF=cpu) | on | untested (shared runtime, no native amd64 run found) | partial: under-samples, 15 ms of samples for about 90 ms of CPU at 1000 Hz (aesgcm seal1 on the i7-9750H, 2026-10-27) | partial (sampler 28681ddae, checked on the LLVM backend under Wine) | std/native/llrt/prof.xo:23, 173 |
 | no-libc static build | linux | done | n/a (Xo's Mach-O linker) | done (PE linker, no CRT) | compiler/xo/link.xo:297-311 |
 | heap scavenge (0383) | on | done | done | missing (no-op, phys_mem 0) | std/native/llrt/heapos.xo:686-708 |
 
@@ -71,6 +71,6 @@ should work, with no test or run on that target), **n/a**.
    cluster_mem, str.cmp in line (check the stale cneg comment first),
    ext_test/ext_add, chain_products, the load memo, slp_f64.
 5. Runs that only need a machine: CPU profiling on native darwin/amd64
-   (the Intel laptop, `XO_PROF=cpu` on a prebuilt llvm-fib) and
-   linux/amd64; --race on a real x86 Linux host (CI, with the owner's
+   records too few samples (15 ms of them for about 90 ms of CPU at
+   1000 Hz, 2026-10-27), and linux/amd64's is unrun; --race on a real x86 Linux host (CI, with the owner's
    approval); split debug info tests for amd64.

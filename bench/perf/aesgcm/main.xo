@@ -3,9 +3,11 @@
 // aesgcmperf <workload> with N records in the environment (default
 // 20000); prints "<workload> <checksum>". twin.go.txt is the same loop
 // over Go's crypto/aes and crypto/cipher. seal and open make the key for
-// every record (crypto_op's aes.seal); seal1 and open1 make it once, as
-// the twin does (aes.seal*N: a fifth of seal's instructions were the key
-// schedule and H's powers, 2026-10-22).
+// every record (crypto_op's aes.seal; the twin's NewCipher and NewGCM a
+// record since 2026-10-27, so both sides do the same work); seal1 and
+// open1 make it once (aes.seal*N: a fifth of seal's instructions were
+// the key schedule and H's powers, 2026-10-22); key makes a key and seals
+// nothing with it, the key setup alone.
 use std/internal
 
 fn main(os: Os) {
@@ -36,6 +38,12 @@ fn main(os: Os) {
       for _ in 0..n {
         let r = internal.crypto_op("aes.open", key, nonce, s, aad)
         sum += r.len()
+      }
+    }
+    "key" => {
+      for _ in 0..n {
+        let s = internal.crypto_op("aes.seal", key, nonce, b"", aad)
+        sum += Int(s[s.len() - 1]) + s.len()
       }
     }
     "seal1" => {

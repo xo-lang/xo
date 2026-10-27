@@ -1,0 +1,212 @@
+// AES-GCM's bulk on x86-64 eight blocks at a time: cpu.aes_gcm8_enc and
+// aes_gcm8_dec with AES-NI and PCLMULQDQ (SSSE3's pshufb, SSE4.1's
+// pinsrd, which every AES-NI CPU has), the instruction sequence both
+// native x86-64 lowerings use (compiler/arm64 calls.xo, compiler/llvm
+// call.xo). The structure is Go's gcmAesEnc and gcmAesDec
+// (crypto/internal/fips140/aes/gcm/gcm_amd64.s, BSD-style license,
+// Copyright The Go Authors): eight counter blocks through the rounds
+// together, then each block's ciphertext hashed with Karatsuba's three
+// products by its H power, summed over the eight and reduced once. The
+// GHASH convention is Xo's own, cpu.ghash8_soft's (the state's words y1
+// then y0 at y, each block's two words byte swapped, the table's entries
+// p0, p1, p0 ^ p1 with H^8 first, the 256 bit product shifted left one
+// bit and reduced with 64 bit shifts), so the portable body stays the
+// oracle (internal/llvm golden cpu_prims) and the table is arm64's
+// (ssa a64aesgcm8.xo).
+//
+// Go's register plan, which leaves no register for a constant in
+// memory: xmm0 to xmm7 the blocks; xmm8, xmm9, xmm10 the sums of x0 p0,
+// x1 p1 and Karatsuba's middle products; xmm11 a round key, then a
+// product (T0); xmm12 a block being hashed (T1); xmm13 its halves xored
+// (T2); xmm14 the counter block (its last 32 bits replaced per block);
+// xmm15 pshufb's mask (each 8 bytes reversed). rcx counts the blocks
+// (32 bits, GCM's inc32), rax a counter word byte swapped, r8 dst, r9
+// src, r10 the bytes left. Sealing hashes the previous 128 bytes'
+// ciphertext (at r8 - 128, final there) during the next 128 bytes'
+// rounds, as Go does, and the last 128 after the loop; opening hashes
+// the 128 bytes of ciphertext it is decrypting during their own rounds
+// (loaded before the stores, so it works in place). The state goes
+// through memory at y between reductions.
+
+/// The general registers aes_gcm8_x86_lines writes besides r11 (the
+/// native emitter's scratch): caller saved on System V and Windows both.
+pub fn aes_gcm8_x86_gprs() -> List[Str] { ["rax", "rcx", "r8", "r9", "r10"] }
+
+/// The xmm registers aes_gcm8_x86_lines writes, xmm14 and xmm15 (the
+/// native emitter's scratch) among them.
+pub fn aes_gcm8_x86_xmms() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15] }
+
+/// The counter blocks: xmm0 to xmm7 from xmm14 with the next eight
+/// counters.
+fn x86_gcm8_ctrs() -> List[Str] {
+  var t: List[Str] = []
+  for s in 0..8 {
+    t = t + ["movdqa %xmm14, %xmm${s}", "movl %ecx, %eax", "bswapl %eax", "pinsrd $3, %eax, %xmm${s}", "addl $1, %ecx"]
+  }
+  t
+}
+
+/// Round r's key into xmm11 and the eight blocks through it (r 0: the
+/// key added; nr: the last round).
+fn x86_gcm8_round(r: Int, nr: Int, rk: Str) -> List[Str] {
+  var t = [if r == 0 { "movdqu (${rk}), %xmm11" } else { "movdqu ${16 * r}(${rk}), %xmm11" }]
+  let op = if r == 0 { "pxor" } else if r == nr { "aesenclast" } else { "aesenc" }
+  for s in 0..8 {
+    t.push("${op} %xmm11, %xmm${s}")
+  }
+  t
+}
+
+/// Hashes block j of the 128 bytes at base + off (its products by the
+/// table's entry j, H^(8 - j), added to xmm8 to xmm10; the state at y
+/// xored into block 0), with xmm11 to xmm13.
+fn x86_gcm8_hash(j: Int, base: Str, off: Int, y: Str, hp: Str) -> List[Str] {
+  let o = off + 16 * j
+  let h = 24 * j
+  var t = ["movdqu ${o}(${base}), %xmm12", "pshufb %xmm15, %xmm12"]
+  if j == 0 {
+    t = t + ["movdqu (${y}), %xmm13", "pxor %xmm13, %xmm12"]
+  }
+  // X = (x1, x0) in xmm12's lanes 0 and 1, the entry (p0, p1): x0 p0
+  // (the entry's lane 0 by X's lane 1), x1 p1 (lane 1 by lane 0), and
+  // (x0 ^ x1) (p0 ^ p1) with the entry's third word
+  t = t + [
+    "pshufd $78, %xmm12, %xmm13",
+    "pxor %xmm12, %xmm13",
+    "movdqu ${h}(${hp}), %xmm11",
+    "pclmulqdq $16, %xmm12, %xmm11",
+  ]
+  t = t + (if j == 0 { ["movdqa %xmm11, %xmm8"] } else { ["pxor %xmm11, %xmm8"] })
+  t = t + ["movdqu ${h}(${hp}), %xmm11", "pclmulqdq $1, %xmm12, %xmm11"]
+  t = t + (if j == 0 { ["movdqa %xmm11, %xmm9"] } else { ["pxor %xmm11, %xmm9"] })
+  t = t + ["movq ${h + 16}(${hp}), %xmm11", "pclmulqdq $0, %xmm13, %xmm11"]
+  t + (if j == 0 { ["movdqa %xmm11, %xmm10"] } else { ["pxor %xmm11, %xmm10"] })
+}
+
+/// The sums' reduction into the state at y: xmm8 = (a0, b0), xmm9 =
+/// (a1, b1), xmm10 = (c0, c1) make the product's words w0 to w3 (lo =
+/// (w0, w1), hi = (w2, w3)), shifted left one bit (s0 to s3), then
+/// reduced as ghash4_soft does: s1 ^= s0 << 63, 62, 57; y1 = s3 ^ s1 ^
+/// s1 >> 1, 2, 7; y0 = s2 ^ s0 ^ s0 >> 1, 2, 7 ^ s1 << 63, 62, 57.
+fn x86_gcm8_reduce(y: Str) -> List[Str] {
+  var t = [
+    // Karatsuba's middle term (z2l, z2h) into lo's lane 1 and hi's lane 0
+    "pxor %xmm8, %xmm10",
+    "pxor %xmm9, %xmm10",
+    "movdqa %xmm10, %xmm11",
+    "pslldq $8, %xmm11",
+    "pxor %xmm11, %xmm8",
+    "psrldq $8, %xmm10",
+    "pxor %xmm10, %xmm9",
+    // the 256 bit value shifted left one bit
+    "movdqa %xmm8, %xmm11",
+    "psrlq $63, %xmm11",
+    "movdqa %xmm9, %xmm12",
+    "psrlq $63, %xmm12",
+    "psllq $1, %xmm8",
+    "psllq $1, %xmm9",
+    "movdqa %xmm11, %xmm13",
+    "pslldq $8, %xmm13",
+    "pxor %xmm13, %xmm8",
+    "psrldq $8, %xmm11",
+    "pxor %xmm11, %xmm9",
+    "pslldq $8, %xmm12",
+    "pxor %xmm12, %xmm9",
+  ]
+  // s1 ^= s0 << 63 ^ s0 << 62 ^ s0 << 57 (lo's lane 0 shifted into lane 1)
+  t = t + x86_gcm8_shl3("%xmm8") + ["pslldq $8, %xmm11", "pxor %xmm11, %xmm8"]
+  // y0's s1 << 63, 62, 57 (the updated s1, lane 1 into hi's lane 0)
+  t = t + x86_gcm8_shl3("%xmm8") + ["psrldq $8, %xmm11", "pxor %xmm11, %xmm9"]
+  // s ^ s >> 1 ^ s >> 2 ^ s >> 7 of lo's lanes into hi's: (y0, y1)
+  t + [
+    "movdqa %xmm8, %xmm11",
+    "movdqa %xmm8, %xmm12",
+    "psrlq $1, %xmm12",
+    "pxor %xmm12, %xmm11",
+    "movdqa %xmm8, %xmm12",
+    "psrlq $2, %xmm12",
+    "pxor %xmm12, %xmm11",
+    "movdqa %xmm8, %xmm12",
+    "psrlq $7, %xmm12",
+    "pxor %xmm12, %xmm11",
+    "pxor %xmm11, %xmm9",
+    // stored as y1 then y0
+    "pshufd $78, %xmm9, %xmm9",
+    "movdqu %xmm9, (${y})",
+  ]
+}
+
+/// xmm11 = r << 63 ^ r << 62 ^ r << 57, lane by lane (xmm12 a scratch).
+fn x86_gcm8_shl3(r: Str) -> List[Str] {
+  [
+    "movdqa ${r}, %xmm11",
+    "psllq $63, %xmm11",
+    "movdqa ${r}, %xmm12",
+    "psllq $62, %xmm12",
+    "pxor %xmm12, %xmm11",
+    "movdqa ${r}, %xmm12",
+    "psllq $57, %xmm12",
+    "pxor %xmm12, %xmm11",
+  ]
+}
+
+/// The rounds of 128 bytes' counter blocks with the hashing of the 128
+/// bytes at base + off (none when base is ""): block j hashed after round
+/// j + 1, the reduction after the eighth (every key size has more
+/// rounds), then the key stream xored into src's bytes and stored at dst.
+fn x86_gcm8_step(nr: Int, rk: Str, base: Str, off: Int, y: Str, hp: Str) -> List[Str] {
+  var t = x86_gcm8_ctrs()
+  for r in 0..nr + 1 {
+    t = t + x86_gcm8_round(r, nr, rk)
+    if !base.is_empty() && r >= 1 && r <= 8 {
+      t = t + x86_gcm8_hash(r - 1, base, off, y, hp)
+      if r == 8 {
+        t = t + x86_gcm8_reduce(y)
+      }
+    }
+  }
+  for s in 0..8 {
+    t = t + ["movdqu ${16 * s}(%r9), %xmm12", "pxor %xmm12, %xmm${s}", "movdqu %xmm${s}, ${16 * s}(%r8)"]
+  }
+  t
+}
+
+/// cpu.aes_gcm8_enc (seal) or aes_gcm8_dec (open) with nr rounds: dst =
+/// src xor AES-CTR's key stream for the n bytes (a multiple of 128) from
+/// the counter block at iv (a 12 byte nonce, then the counter, big
+/// endian; inc32 a block), and the GHASH of the ciphertext (dst when
+/// sealing, src when opening) into the state at y with the eight H
+/// powers at hp (H^8 first, 24 bytes each). dst and src may be the same.
+pub fn aes_gcm8_x86_lines(nr: Int, seal: Bool, dst: Str, src: Str, rk: Str, iv: Str, n: Str, y: Str, hp: Str) -> List[Str] {
+  var t = [
+    "movq ${dst}, %r8",
+    "movq ${src}, %r9",
+    "movq ${n}, %r10",
+    "testq %r10, %r10",
+    "jz 9f",
+    "movdqu (${iv}), %xmm14",
+    "movl 12(${iv}), %ecx",
+    "bswapl %ecx",
+    // pshufb's mask: bytes 7 to 0, then 15 to 8
+    "movabsq $283686952306183, %rax",
+    "movq %rax, %xmm15",
+    "movabsq $579005069656919567, %rax",
+    "movq %rax, %xmm13",
+    "punpcklqdq %xmm13, %xmm15",
+  ]
+  if seal {
+    // the first 128 bytes with nothing to hash, then each next one with
+    // the previous one's ciphertext, then the last one's
+    t = t + x86_gcm8_step(nr, rk, "", 0, y, hp)
+    t = t + ["addq $128, %r8", "addq $128, %r9", "subq $128, %r10", "jz 8f", "1:"]
+    t = t + x86_gcm8_step(nr, rk, "%r8", -128, y, hp)
+    t = t + ["addq $128, %r8", "addq $128, %r9", "subq $128, %r10", "jnz 1b", "8:"]
+    for j in 0..8 {
+      t = t + x86_gcm8_hash(j, "%r8", -128, y, hp)
+    }
+    return t + x86_gcm8_reduce(y) + ["9:"]
+  }
+  t = t + ["1:"]
+  t = t + x86_gcm8_step(nr, rk, "%r9", 0, y, hp)
+  t + ["addq $128, %r8", "addq $128, %r9", "subq $128, %r10", "jnz 1b", "9:"]
+}

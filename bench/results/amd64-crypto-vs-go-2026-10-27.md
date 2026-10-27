@@ -45,6 +45,33 @@ Reading:
 - Poly1305 alone is 1.8 times Go: scalar on both sides, with mulq pairs.
 - A port's ceiling on this CPU: AES-GCM at Go's speed is about 3.5 times
   faster TLS bulk encryption with AES; ChaCha20-Poly1305 about 20 times.
-  Both need SSE2/AVX2 vector code in the x86 emitter; the arm64 NEON
-  versions (compiler/ssa call.xo:218-232, decisions 0329, 0339) give the
-  structure.
+
+## After the AES-GCM port (same machine and method, the same day)
+
+cpu.aes_gcm8 lowered on amd64 (compiler/ssa x86aesgcm8.xo, Go's
+gcmAesEnc structure) and the key schedule's SubWord with AES-NI
+(std/changes/crypto.md 2026-10-27). A profile of the old seal1 had every
+sample in the bulk (aes_ctr_by4 55%, ghash4_soft 45%), so the bulk was
+the ceiling. The twin's seal and open now make the key each record, as
+Xo's loop does (before, only seal1 and open1 compared the same work),
+and key (a key, then a seal of nothing) times the key setup alone.
+
+| workload | Go wall ms | Xo wall ms | Xo / Go (95% interval) | before |
+|---|---|---|---|---|
+| aesgcm seal1 (key once) | 62.71 | 68.26 | 1.089 (1.077 to 1.097) | 3.671 |
+| aesgcm open1 (key once) | 65.79 | 67.17 | 1.021 (1.004 to 1.04) | 3.486 |
+| aesgcm seal (key a record) | 72.98 | 82.66 | 1.133 (1.114 to 1.153) | not like for like |
+| aesgcm open (key a record) | 77.03 | 88.41 | 1.148 (1.13 to 1.165) | not like for like |
+| aesgcm key (key, empty seal) | 16.61 | 21.2 | 1.276 (1.252 to 1.291) | 2.755 without SubWord's change |
+
+SubWord with AES-NI alone (A the port without it, B with): key 0.455
+(0.447 to 0.457), seal 0.743 (0.733 to 0.753). Key setup is still 1.28
+times Go's, about 0.23 us a key more, which a TLS handshake pays once
+per direction.
+
+A first version that ran the eight blocks' rounds and then their GHASH
+reached 1.662 (seal1) and 1.335 (open1): sealing's GHASH waited on each
+block's rounds. A first measurement of the SubWord change read "no
+change" because the std file was edited while the previous kit was being
+built from the same tree, so both binaries had it; the A/B above is
+between two clean builds.

@@ -5,3 +5,4 @@ env N=2000
 - - open
 - - seal1
 - - open1
+- - key

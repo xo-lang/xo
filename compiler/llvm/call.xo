@@ -823,6 +823,25 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       clob = clob + ",~{memory},~{cc}"
       g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])}, ptr ${g.raw_ptr(x.args[5])}, ptr ${g.raw_ptr(x.args[6])})")
     }
+    "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" if g.arch() == "amd64" => {
+      // ssa.aes_gcm8_x86_lines as inline asm (AT&T: its immediates' `$`
+      // doubled), its registers clobbered
+      let name = aux_str(x.aux)
+      let nr = Int.parse(name[name.len() - 2..name.len()]) ?? 10
+      var t: List[Str] = []
+      for l in ssa.aes_gcm8_x86_lines(nr, name.contains("enc"), "@0@", "@1@", "@2@", "@3@", "@4@", "@5@", "@6@") {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3").replace("@4@", "$4").replace("@5@", "$5").replace("@6@", "$6"))
+      }
+      var clob = "r,r,r,r,r,r,r"
+      for r in ssa.aes_gcm8_x86_gprs() {
+        clob = clob + ",~{${r}}"
+      }
+      for r in ssa.aes_gcm8_x86_xmms() {
+        clob = clob + ",~{xmm${r}}"
+      }
+      clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, ptr ${g.raw_ptr(x.args[3])}, i64 ${g.op(x.args[4])}, ptr ${g.raw_ptr(x.args[5])}, ptr ${g.raw_ptr(x.args[6])})")
+    }
     "rt.aes_gcm8_enc10" | "rt.aes_gcm8_enc12" | "rt.aes_gcm8_enc14" | "rt.aes_gcm8_dec10" | "rt.aes_gcm8_dec12" | "rt.aes_gcm8_dec14" => {
       // arm64 only (ssa call.xo): ssa.aes_gcm8_lines as inline asm, x9 to
       // x11 and its V registers clobbered (d8 to d15 restored by it)
