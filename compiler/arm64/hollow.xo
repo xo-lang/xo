@@ -306,6 +306,18 @@ pub fn hollow_scan(p: Str, elf: Bool, extra: Map[Str, Bool], first: List[Bool]) 
   f
 }
 
+/// Whether s names an unsafe range's marker (_xo_utext_X, _xo_utend_X; ELF
+/// without the underscore): a label between two functions that the unsafe
+/// tables name, and the labels of a hollowed function stay, so a marker is
+/// no reason to keep a function. It names the chunk of the function after
+/// it (a label with no instruction before the next global label shares that
+/// function's chunk): as a root it kept whichever function the layout put
+/// after the range, and the DWARF readers or the network stack with it
+/// (TestDebugInfoSameCode, 2026-10-27).
+fn is_marker(s: Str) -> Bool {
+  s.starts_with("_xo_utext_") || s.starts_with("_xo_utend_") || s.starts_with("xo_utext_") || s.starts_with("xo_utend_")
+}
+
 /// Whether each chunk of each part is reached from the roots (main, the
 /// symbols named outside a chunk, the unsafe-range markers), a data
 /// object __DWARF names kept too; a name the first part that names it
@@ -328,7 +340,9 @@ pub fn hollow_live(facts: List[HFacts], elf: Bool) -> List[List[Bool]] {
       }
     }
     for r in f.roots {
-      roots[r] = true
+      if !is_marker(r) {
+        roots[r] = true
+      }
     }
     for d in f.dwarf {
       dwarf_names[d] = true
@@ -357,6 +371,9 @@ pub fn hollow_live(facts: List[HFacts], elf: Bool) -> List[List[Bool]] {
   while let Some(ci) = work.pop() {
     let (pi, li) = owner[ci]
     for s in facts[pi].refs[li] {
+      if is_marker(s) {
+        continue
+      }
       if let Some(cj) = by_name.get(s) {
         if !live[cj] {
           live[cj] = true

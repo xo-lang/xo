@@ -102,6 +102,45 @@ test "an unreached export and the drop helper only it calls become one brk" {
   expect(msg) == "hollowed 3 functions and dropped 1 data objects of 10, 111 bytes of assembly"
 }
 
+test "an unsafe range's marker keeps no function alive, only its own label" {
+  // _xo_utend_X sits between two functions and shares the chunk of the one
+  // after it (no instruction between the labels); the unsafe table in data
+  // names the marker. The function after it is called by nothing: it goes,
+  // and the marker's label stays for the table
+  let asm = [
+    "\t.section __TEXT,__text,regular,pure_instructions",
+    "\t.p2align 2",
+    "\t.globl _main",
+    "_main:",
+    "\tbl _xo_f_inside",
+    "\tret",
+    "\t.p2align 2",
+    "_xo_f_inside:",
+    "\tret",
+    "\t.globl _xo_utend_AB_",
+    "_xo_utend_AB_:",
+    "\t.p2align 2",
+    "_xo_f_after:",
+    "\tbl _xo_f_deeper",
+    "\tret",
+    "\t.p2align 2",
+    "_xo_f_deeper:",
+    "\tret",
+    "\t.section __DATA,__const",
+    "_xo_unsafe_AB_:",
+    "\t.quad _xo_utend_AB_",
+    "",
+  ].join("\n")
+  let (parts, _msg) = hollow_unreached([asm])
+  let out = parts[0]
+  let brk = ["\tbrk #${HOLLOW_BRK}"]
+  expect(body_of(out, "_xo_f_inside")) == ["\tret"]
+  expect(body_of(out, "_xo_f_after")) == brk
+  expect(body_of(out, "_xo_f_deeper")) == brk
+  expect(out.contains("_xo_utend_AB_:\n")) == true
+  expect(out.contains("\t.quad _xo_utend_AB_")) == true
+}
+
 test "nothing unreached leaves the assembly as it is" {
   let src = "\t.section __TEXT,__text,regular,pure_instructions\n_main:\n\tret\n"
   let (parts, msg) = hollow_unreached([src])
