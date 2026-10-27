@@ -9,6 +9,7 @@
 // call site, so prelude.duration_parse is inlined.
 fn ok_sum(xs: List[Str]) -> Int {
   // arm64: "bl _xo_f_text_2eparse__duration" -"(?s)tbn?z x[0-9]+, #63.*bl _xo_f_text_2eparse__duration"
+  // amd64: "callq _xo_f_text_2eparse__duration" -"(?s)btq \$63, [^\n]*\n.*callq _xo_f_text_2eparse__duration"
   var s = 0
   for t in xs {
     match Duration.parse(t) {

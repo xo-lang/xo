@@ -5,6 +5,7 @@
 // with fold_consts's Str.len of a literal, 2026-10-23).
 fn token_len(hs: List[Str]) -> Int {
   // arm64: "movk x[0-9]+, #8306, lsl #16"
+  // amd64: "\$544367986"
   var n = 0
   for h in hs {
     n += h.trim_prefix("Bearer ").len()
@@ -17,6 +18,8 @@ fn token_len(hs: List[Str]) -> Int {
 // (compiler/arm64 calls.xo str_eq_const, 2026-10-24); 17 bytes stays a call.
 fn count_nobody(hs: List[Str]) -> Int {
   // arm64: "ccmp" -"_xo_x_obj_str_eq"
+  // amd64 has no str_eq_const yet (bench/results/amd64-parity-by-target-2026-10-27.md):
+  // amd64: "_xo_x_obj_str_eq"
   var n = 0
   for h in hs {
     if h == "nobody" {
@@ -28,6 +31,7 @@ fn count_nobody(hs: List[Str]) -> Int {
 
 fn count_long(hs: List[Str]) -> Int {
   // arm64: "_xo_x_obj_str_eq"
+  // amd64: "_xo_x_obj_str_eq"
   var n = 0
   for h in hs {
     if h == "abcdefghijklmnopq" {
@@ -48,6 +52,7 @@ const CP: Bytes = b"  "
 // separator no line holds, 2026-10-26).
 fn cut_len(n: Int) -> Int {
   // arm64: -"bl _xo_h"
+  // amd64: -"callq _xo_h"
   var t = 0
   for _ in 0..n {
     t += (CS.cut_prefix(CP) ?? b"").len()
@@ -62,6 +67,7 @@ fn cut_len(n: Int) -> Int {
 // bench/perf kept a compare and a branch that cannot fire).
 fn half_byte(b: Bytes) -> Int {
   // arm64: "asr x[0-9]+, x[0-9]+, #1" -"_xo_x_fault_raise_bytes_index"
+  // amd64: "sarq \$1, %r" -"_xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     return Int(b[b.len() / 2])
   }
@@ -70,6 +76,7 @@ fn half_byte(b: Bytes) -> Int {
 
 fn half_shift(b: Bytes) -> Int {
   // arm64: -"_xo_x_fault_raise_bytes_index"
+  // amd64: -"_xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     return Int(b[b.len() >> 1])
   }
@@ -80,6 +87,7 @@ fn half_shift(b: Bytes) -> Int {
 // too, and b[0] into an empty Bytes faults.
 fn half_unguarded(b: Bytes) -> Int {
   // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // amd64: "callq _xo_x_fault_raise_bytes_index"
   Int(b[b.len() / 2])
 }
 
@@ -87,6 +95,7 @@ fn half_unguarded(b: Bytes) -> Int {
 // equal to the length.
 fn half_none(b: Bytes, one: Int) -> Int {
   // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // amd64: "callq _xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     return Int(b[b.len() >> 0]) + Int(b[b.len() / one])
   }
@@ -96,6 +105,7 @@ fn half_none(b: Bytes, one: Int) -> Int {
 // A list index takes the same rule (calls.xo bounds_check).
 fn half_elem(xs: List[Str]) -> Str {
   // arm64: -"_xo_x_fault_raise_index"
+  // amd64: -"_xo_x_fault_raise_index"
   if xs.len() > 0 {
     return xs[xs.len() / 2]
   }
@@ -106,6 +116,7 @@ fn half_elem(xs: List[Str]) -> Str {
 // check stays (len_pos matches the container by len_root).
 fn half_other(a: Bytes, b: Bytes) -> Int {
   // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // amd64: "callq _xo_x_fault_raise_bytes_index"
   if a.len() > 0 {
     return Int(b[b.len() / 2])
   }
@@ -116,6 +127,7 @@ fn half_other(a: Bytes, b: Bytes) -> Int {
 // the true edge of a comparison is a fact (new_proof).
 fn half_else(b: Bytes) -> Int {
   // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // amd64: "callq _xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     0
   } else {
@@ -127,6 +139,7 @@ fn half_else(b: Bytes) -> Int {
 // it: the fact belongs to the `> 0` edge's block only.
 fn half_after(b: Bytes) -> Int {
   // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // amd64: "callq _xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     0
   } else {

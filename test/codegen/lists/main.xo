@@ -8,6 +8,7 @@
 // 2026-10-24).
 fn sum(xs: List[Int]) -> Int {
   // arm64: "ldr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]" -"b\.hs"
+  // amd64: "movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r" -"\tjae "
   // llvm: "load i64, ptr %t[0-9]+, !tbaa"
   var s = 0
   for i in 0..xs.len() {
@@ -20,6 +21,7 @@ fn sum(xs: List[Int]) -> Int {
 // length of 0 faults in the remainder): no bounds check (2026-10-24).
 fn pick(xs: List[Int], n: Int) -> Int {
   // arm64: "sdiv" -"b\.hs"
+  // amd64: "idivq" -"\tjae "
   var s = 0
   for i in 0..n {
     s += xs[i % xs.len()]
@@ -38,6 +40,7 @@ const XS: List[Int] = [3, 1, 4, 1, 5, 9]
 // shows the bl _xo_h call, 2026-10-26).
 fn cycle(n: Int) -> Int {
   // arm64: "_xo_x_const_once" -"b\.hs" -"bl _xo_h"
+  // amd64: "_xo_x_const_once" -"\tjae " -"callq _xo_h"
   var s = 0
   for i in 0..n {
     s += XS[i % XS.len()]
@@ -50,6 +53,7 @@ fn cycle(n: Int) -> Int {
 // hi indexes with no check of its own (2026-10-26).
 fn guard_fact(xs: List[Int], hi: Int) -> Int {
   // arm64: "ldr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]" -"b\.hs"
+  // amd64: "movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r" -"\tjae "
   if hi > xs.len() {
     return 0
   }
@@ -65,6 +69,7 @@ fn guard_fact(xs: List[Int], hi: Int) -> Int {
 // index needs no check (the shape std's merge sort has, 2026-10-26).
 fn clamp_fact(xs: List[Int], h0: Int) -> Int {
   // arm64: "ldr x[0-9]+, \[x[0-9]+, x[0-9]+, lsl #3\]" -"b\.hs"
+  // amd64: "movq -?[0-9]*\(%r[a-z0-9]+,%r[a-z0-9]+,8\), %r" -"\tjae "
   var h = h0
   if h > xs.len() {
     h = xs.len()
@@ -81,6 +86,7 @@ fn clamp_fact(xs: List[Int], h0: Int) -> Int {
 // the check stays (2026-10-26).
 fn fact_not_dominating(xs: List[Int], hi: Int, flag: Bool) -> Int {
   // arm64: "b\.hs"
+  // amd64: "\tjae "
   if flag {
     if hi > xs.len() {
       return 0

@@ -14,12 +14,14 @@ enum Color {
 // recognizes it; the tab form never occurred (2026-10-26).
 fn is_mac() -> Bool {
   // arm64: -"\tbl "
+  // amd64: -"\tcallq "
   // llvm: -"call " -"icmp"
   target.os == TargetOs.Darwin
 }
 
 fn not_wasm() -> Bool {
   // arm64: -"\tbl "
+  // amd64: -"\tcallq "
   // llvm: -"call " -"icmp"
   target.arch != TargetArch.Wasm32
 }
@@ -27,6 +29,7 @@ fn not_wasm() -> Bool {
 // Two literal variants of a user enum.
 fn same() -> Bool {
   // arm64: -"\tbl "
+  // amd64: -"\tcallq "
   // llvm: -"call " -"icmp"
   Color.Red == Color.Green
 }
@@ -43,6 +46,7 @@ fn is_red(c: Color) -> Bool {
 // Err arm's drop, not a third (2026-10-26, bench/perf/text dur_parse).
 fn ok_nanos(t: Str) -> Int {
   // arm64: "bl _xo_f_text_2eparse__duration" -"(?s)parse__duration.*bl _xo_h.*bl _xo_h.*bl _xo_h.*\tret"
+  // amd64: "callq _xo_f_text_2eparse__duration" -"(?s)parse__duration.*callq _xo_h.*callq _xo_h.*callq _xo_h.*\tretq"
   match Duration.parse(t) {
     Ok(d) => d.nanos()
     Err(_) => -1

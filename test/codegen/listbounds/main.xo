@@ -9,6 +9,7 @@
 // check stays.
 fn le_not_lt(xs: List[Int], hi: Int) -> Int {
   // arm64: "b\.hs"
+  // amd64: "\tjae "
   if hi > xs.len() {
     return 0
   }
@@ -20,6 +21,7 @@ fn le_not_lt(xs: List[Int], hi: Int) -> Int {
 // at most the length and the loop keeps its check.
 fn bad_clamp(xs: List[Int], h0: Int) -> Int {
   // arm64: "b\.hs"
+  // amd64: "\tjae "
   var h = h0
   if h > xs.len() {
     h = xs.len() + 1
@@ -36,6 +38,7 @@ fn bad_clamp(xs: List[Int], h0: Int) -> Int {
 // check stays.
 fn ge_guard_no_nonneg(xs: List[Int], i: Int) -> Int {
   // arm64: "b\.hs"
+  // amd64: "\tjae "
   if i >= xs.len() {
     return 0
   }
@@ -47,6 +50,7 @@ fn ge_guard_no_nonneg(xs: List[Int], i: Int) -> Int {
 // so the pattern is a regression guard, not fail-then-pass evidence.
 fn ge_guard_nonneg(xs: List[Int], ys: List[Int]) -> Int {
   // arm64: -"b\.hs"
+  // amd64: -"\tjae "
   let i = ys.len()
   if i >= xs.len() {
     return 0

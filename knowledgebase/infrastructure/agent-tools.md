@@ -687,6 +687,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `TestGoldenAsm` in its gate (lead, 2026-10-26: a compare encoding
   change reached main with four stale assembly goldens; `-update`, review
   the diff, commit the goldens with the change).
+- A code generation change (isel, emitter, a pass, an intrinsic, a
+  crypto or runtime routine the patterns name) runs `xo dev codegen
+  test/codegen` in its gate; since 2026-10-27 its default backends are
+  arm64, amd64 and llvm, so the x86 wins are checked too (`// amd64:
+  "re"` patterns on AT&T text, the host's object format: `callq`,
+  `\tjae ` for a bounds check, `%rip` and `@GOTPCREL` addresses). A new
+  x86 win adds its pattern, and checks that it fails with the win
+  turned off (`XO_PASSES=-x86_...`) or on the parent's xo
+  (gotchas/codegen-absent-pattern-never-matches.md).
 - Which tool answers what (owner, 2026-10-22): `xo bench --ab` decides
   "is it faster" (real time, interleaved, with an interval; threads,
   waits and I/O included); callgrind (instruction counts, deterministic)

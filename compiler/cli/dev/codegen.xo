@@ -1,11 +1,12 @@
 // `xo dev codegen` (decisions 0209, 0217): optimizations verified by
 // patterns on the code emitted for one function, as Go's test/codegen
 // does, never by whole files. A comment inside a function's body names a
-// backend and regular expressions the function's assembly (arm64) or IR
-// (llvm) must match, or with a leading `-` must not:
+// backend and regular expressions the function's assembly (arm64, amd64)
+// or IR (llvm) must match, or with a leading `-` must not:
 //
 //   fn shift(x: Int) -> Int {
 //     // arm64: "lsl\tx[0-9]+, x[0-9]+, #3" -"mul"
+//     // amd64: "imulq \$8, " -"idiv"
 //     // llvm: "shl i64"
 //     x * 8
 //   }
@@ -13,7 +14,8 @@
 // The function is the nearest `fn name(` line above the comment (a
 // function of the program's root module: its symbol is the bare name).
 // `xo asm --backend=B DIR` prints the code: arm64 functions start at a
-// `// func NAME` line, LLVM ones at `define ... @"x.NAME"(` and end at a
+// `// func NAME` line, amd64 ones (AT&T syntax, the host's object
+// format) at `# func NAME` (since 2026-10-27), LLVM ones at `define ... @"x.NAME"(` and end at a
 // line `}`. A line `// func MOD.NAME` names a function of another
 // module (a std runtime module's) for the patterns below it. A backend
 // key with an architecture, `// llvm/arm64: ...`, is checked only where
@@ -55,7 +57,7 @@ pub fn patterns(file: Str, src: Str) -> List[Pattern] {
       cur = t.trim_prefix("// func ").trim()
       continue
     }
-    for key in ["arm64", "llvm", "llvm/arm64", "llvm/amd64"] {
+    for key in ["arm64", "amd64", "llvm", "llvm/arm64", "llvm/amd64"] {
       let head = "// ${key}: "
       if !t.starts_with(head) {
         continue
@@ -94,7 +96,10 @@ pub fn functions(backend: Str, code: Str) -> Map[Str, Str] {
   var body: List[Str] = []
   var groups: Map[Str, Str] = {}
   var refs: List[Str] = []
-  if backend != "arm64" {
+  // the native backends mark each function with a comment line
+  let mark = if backend == "amd64" { "# func " } else { "// func " }
+  let native = backend == "arm64" || backend == "amd64"
+  if !native {
     for l in code.split("\n") {
       if l.starts_with("attributes #") {
         match l.find(" = ") {
@@ -105,12 +110,12 @@ pub fn functions(backend: Str, code: Str) -> Map[Str, Str] {
     }
   }
   for l in code.split("\n") {
-    if backend == "arm64" {
-      if l.starts_with("// func ") {
+    if native {
+      if l.starts_with(mark) {
         if !name.is_empty() {
           out[name] = body.join("\n")
         }
-        name = l.trim_prefix("// func ").trim()
+        name = l.trim_prefix(mark).trim()
         body = []
         continue
       }
@@ -151,7 +156,7 @@ pub fn functions(backend: Str, code: Str) -> Map[Str, Str] {
       }
     }
   }
-  if backend == "arm64" && !name.is_empty() {
+  if native && !name.is_empty() {
     out[name] = body.join("\n")
   }
   out
@@ -186,13 +191,13 @@ pub fn verify(ps: List[Pattern], fns: Map[Str, Str]) -> List[Str] {
 fn codegen_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, stdio) {
   var fl = core.new_flags("dev codegen")
   fl.str_flag("xo", "", "the xo that compiles (default this one)")
-  fl.str_flag("backend", "arm64,llvm", "the backends whose patterns are checked")
+  fl.str_flag("backend", "arm64,amd64,llvm", "the backends whose patterns are checked")
   fl.int_flag("j", 4, "programs at once")
   if !fl.parse(os, args) {
     return 2
   }
   if fl.args.is_empty() {
-    os.stdio.eprintln("usage: xo dev codegen [--backend=arm64,llvm] [-j N] DIR...")
+    os.stdio.eprintln("usage: xo dev codegen [--backend=arm64,amd64,llvm] [-j N] DIR...")
     return 2
   }
   let xo = if fl.get_str("xo").is_empty() { h.xo } else { fl.get_str("xo") }

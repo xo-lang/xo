@@ -18,16 +18,19 @@ fn main(os: Os) {
 // func ct.bytes_equal
 // llvm: "(?s)call i64 asm \"\", \"=r,0\".*call i64 asm \"\", \"=r,0\""
 // arm64: "eor x[0-9]+, x[0-9]+, x[0-9]+\n\torr x[0-9]+, x[0-9]+, x[0-9]+" -"csel" -"cbn?z" -"tbn?z"
+// amd64: "xorq %r[a-z0-9]+, %r[a-z0-9]+" -"\tcmov"
 
 // A mask is arithmetic only: no branch, no conditional select.
 // func ct.mask_nonzero
 // llvm: "call i64 asm \"\", \"=r,0\"" -"br i1" -"select" -"icmp"
 // arm64: "lsr x[0-9]+, x[0-9]+, #63" -"\tb\." -"cbn?z" -"tbn?z" -"csel" -"cset"
+// amd64: "shrq \$63, %r" -"\tj[a-z]+ " -"\tcmov" -"\tset[a-z]+ "
 
 // A masked pick is and and xor on the barrier's value.
 // func ct.pick
 // llvm: "call i64 asm \"\", \"=r,0\"" -"br i1" -"select"
 // arm64: "and x[0-9]+, x[0-9]+, x[0-9]+" -"\tb\." -"cbn?z" -"tbn?z" -"csel"
+// amd64: "andq %r" -"\tj[a-z]+ " -"\tcmov"
 
 // Ed25519 (std/native/llrt/ed25519.xo): the window table's lookup
 // (a conditional move of every entry with a mask), the scalar
@@ -36,13 +39,16 @@ fn main(os: Os) {
 // public indices).
 // func ed25519.ge_cmov
 // arm64: "eor x[0-9]+, x[0-9]+, x[0-9]+" -"\tb\." -"cbn?z" -"tbn?z" -"csel" -"cset"
+// amd64: "xorq %r" -"\tj[a-z]+ " -"\tcmov" -"\tset[a-z]+ "
 // llvm: "call i64 @\"x.ct.pick\"" -"br i1" -"select"
 // func ed25519.ge_mul
 // arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
 // llvm: "call i64 @\"x.ct.mask_eq\"" -"select"
 // func ed25519.sc_reduce
 // llvm: "call i64 @\"x.ct.mask_bit\"" "call i64 @\"x.ct.pick\"" -"select"
 // arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
 
 // X25519's public key (x25519.xo base, 57541a18): the fixed base table's
 // row is read whole, its entry kept by masks (ct.mask_eq), a negative
@@ -51,9 +57,11 @@ fn main(os: Os) {
 // over public counts and bounds checks on public indices.
 // func x25519.madd_digit
 // arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
 // llvm: "call i64 @\"x.ct.mask_eq\"" "call i64 @\"x.ct.pick\"" -"select"
 // func x25519.base
 // arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
 // llvm: -"select"
 
 // The other code on secrets (2026-10-18): P-256's scalar multiplications
@@ -70,19 +78,25 @@ fn main(os: Os) {
 // sdiv on these cores (2026-10-26).
 // func nistec.pt_mul
 // arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
 // llvm: -"select"
 // func nistec.pt_mul_g
 // arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
 // llvm: -"select"
 // func ed25519.sc_muladd
 // arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
 // llvm: -"select"
 // func mlkem.compress
 // arm64: -"udiv" -"sdiv" -"csel" -"cset" -"\tb\." -"cbn?z" -"tbn?z"
+// amd64: -"divq" -"\tj[a-z]+ " -"\tcmov" -"\tset[a-z]+ "
 // llvm: -"udiv" -"sdiv" -"select" -"br i1"
 // func mlkem.implicit_reject
 // arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
 // llvm: "call i64 @\"x.ct.pick\"" -"select"
 // func bigmod.exp_into
 // arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
 // llvm: -"select"

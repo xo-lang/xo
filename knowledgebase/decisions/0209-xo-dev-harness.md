@@ -110,7 +110,7 @@ dispatcher `xo dev <sub>` beside rtpack:
   compare its diagnostics with the expected ones written as comments in
   the source (`// ERROR "regexp"` on the line, as Go's test/
   `// errorcheck`); a missing or an extra diagnostic fails.
-- `xo dev codegen [--backend=arm64|llvm] DIR...` (decision 0217): build
+- `xo dev codegen [--backend=arm64|amd64|llvm] DIR...` (decision 0217): build
   each file to assembly or IR and check per function assertions written
   as comments (`// arm64: "pattern"`, `// arm64: -"pattern"` for must
   not appear, as Go's test/codegen), never whole files.

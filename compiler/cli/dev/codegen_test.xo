@@ -12,12 +12,19 @@ test "patterns" {
   expect(other.len() == 1 && other[0].func == "ct.pick" && other[0].negate)
   let ar = patterns("m.xo", "fn c() {\n  // llvm/arm64: \"aese\"\n}\n")
   expect(ar.len() == 1 && ar[0].backend == "llvm" && ar[0].arch == "arm64")
+  // the native amd64 backend's key, no architecture
+  let x = patterns("m.xo", "fn d() {\n  // amd64: \"imulq\" -\"idivq\"\n}\n")
+  expect(x.len() == 2 && x[0].backend == "amd64" && x[0].arch.is_empty() && x[1].negate)
 }
 
 test "functions" {
   let s = "// func a\n_xo_f_a:\n\tmul x0, x0, x1\n// func b\n_xo_f_b:\n\tret\n"
   let fs = functions("arm64", s)
   expect((fs.get("a") ?? "").contains("mul") && !(fs.get("b") ?? "").contains("mul"))
+  // amd64's AT&T text marks a function with `# func`
+  let xs = "# func a\n_xo_f_a:\n\timulq $3, %rdi, %rax\n# func b\n_xo_f_b:\n\tretq\n"
+  let xf = functions("amd64", xs)
+  expect((xf.get("a") ?? "").contains("imulq") && !(xf.get("b") ?? "").contains("imulq"))
   let ir = "define internal i64 @\"x.a\"(i64 %v0) #1 {\n  %v1 = shl i64 %v0, 3\n  ret i64 %v1\n}\n"
   expect((functions("llvm", ir).get("a") ?? "").contains("shl i64"))
   // the attribute groups a define names follow its text

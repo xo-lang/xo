@@ -15,16 +15,19 @@ fn main(os: Os) {
 // rt.fn_addr is the export's symbol address, no call.
 // func internal.rt_op
 // arm64: "adrp[^\n]*xo_x_fmt_int"
+// amd64: "leaq _xo_x_fmt_int\(%rip\)"
 // llvm: "ptrtoint ptr @xo_x_fmt_int to i64"
 
 // rt.sym_addr is the C symbol's address under its exact name, declared
 // when the module does not define it.
 // func internal.rt_op
 // arm64: "adrp[^\n]*xo_entry" "adrp[^\n]*strlen@GOTPAGE"
+// amd64: "leaq _xo_entry\(%rip\)" "_strlen@GOTPCREL\(%rip\)"
 // llvm: "ptrtoint ptr @xo_entry to i64" "ptrtoint ptr @strlen to i64"
 
 // rt.frame_addr is the frame pointer of a function that keeps its frame
 // record (a leaf otherwise) and is never inlined.
 // func internal.frame_below
 // arm64: "stp x29, x30" "mov x[0-9]+, x29"
+// amd64: "pushq %rbp" "movq %rbp, %r"
 // llvm: "llvm.frameaddress.p0" "attributes #[0-9]+ = [{][^}]*noinline \"frame-pointer\"=\"all\""

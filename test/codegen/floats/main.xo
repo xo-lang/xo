@@ -4,6 +4,7 @@
 // 0385 stage 2).
 fn fused(x: Float, y: Float, z: Float) -> Float {
   // arm64: "fmadd d[0-9]+, d[0-9]+, d[0-9]+, d[0-9]+" -"\tbl "
+  // amd64: "_xo_f_prelude_2efloat__fma"
   // llvm: "@llvm.fma.f64\(double"
   x.fma(y, z)
 }
@@ -12,6 +13,7 @@ fn fused(x: Float, y: Float, z: Float) -> Float {
 // 0287, golden float_no_fma).
 fn unfused(x: Float, y: Float, z: Float) -> Float {
   // arm64: "fmul d" "fadd d" -"fmadd"
+  // amd64: "mulsd %xmm" "addsd %xmm" -"vfmadd" -"float__fma"
   // llvm: "fmul double" "fadd double" -"llvm.fma" -"contract"
   x * y + z
 }
@@ -19,3 +21,7 @@ fn unfused(x: Float, y: Float, z: Float) -> Float {
 fn main(os: Os) {
   os.stdio.println("${fused(1.5, 2.0, 0.25)} ${unfused(1.5, 2.0, 0.25)}")
 }
+
+// Float.fma's body uses FMA3 when the CPU has it (decision 0385 stage 3).
+// func prelude.float_fma
+// amd64: "vfmadd231sd %xmm"
