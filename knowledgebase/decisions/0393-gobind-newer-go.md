@@ -1,7 +1,8 @@
 # 0393: xo-gobind built with the installed Go when it is newer
 
-Status: Proposed (Xo Lang 2, 2026-10-27; milestone 0.34.0 criterion 1,
-the 0.33.0 Windows tester's bug 14)
+Status: Accepted (lead, 2026-10-27, for the owner's question whether newer
+Go versions will work; proposed by Xo Lang 2 the same day; milestone 0.34.0
+criterion 1, the 0.33.0 Windows tester's bug 14)
 
 ## Context
 

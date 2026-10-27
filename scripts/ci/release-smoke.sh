@@ -93,6 +93,10 @@ commit=$(sed -n 's/.*"commit":"\([0-9a-f]*\)".*/\1/p' "$o/version.json")
 if [ -z "$commit" ]; then fail "stamp: no commit in xo version --json"
 elif [ -n "$want_commit" ] && [ "$commit" != "$want_commit" ]; then fail "stamp: commit $commit, want $want_commit"
 else pass "stamp ($commit)"; fi
+# xo-gobind's source beside std (decision 0393)
+for f in lib/xo/go.mod lib/xo/cmd/xo-gobind/main.go lib/xo/internal/gobind/gobind.go lib/xo/internal/gotool/gotool.go; do
+  if [ -f "$rel/$f" ]; then pass "layout-$f"; else fail "layout-$f"; fi
+done
 # Windows' own check of the release's Authenticode signatures
 # (scripts/sign-windows.sh); XO_VERIFY_UNSIGNED=1 for an unsigned trial
 if [ -n "$exe" ]; then

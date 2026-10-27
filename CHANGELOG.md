@@ -10,6 +10,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   XO_GOBIND) is XO1101 naming the helper and both binding formats
   ("xo-gobind at PATH wrote binding format 5, this xo reads 7"), where every
   check said only that no current binding existed
+- `use go` keeps working when the installed Go is newer than the one the
+  release's xo-gobind was built with (decision 0393; a 0.33.0 tester with Go
+  1.27 had every bind panic on its export data): a release carries the
+  helper's Go source under lib/xo (go.mod, cmd/xo-gobind, internal/gobind,
+  internal/gotool: 96 KB, about 30 KB more in the archive), and xo builds
+  the helper with the installed Go once into
+  `<user cache>/xo/gobind/<source>-<go version>/` and uses that build. A
+  helper that still meets newer export data says so, naming both Go
+  versions and the XO_GOBIND workaround, instead of panicking.
 - The windows/amd64 linker builds each output section as bytes appended
   whole, with its relocations written over them, where it pushed every input
   byte into a list and wrote every output byte alone; the HTTP server's edit

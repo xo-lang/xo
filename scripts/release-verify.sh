@@ -7,7 +7,9 @@
 # Run from a checkout of the commit the archive was built from (the cmd/xo
 # tests come from it). OUTDIR defaults to .tools/release-verify. Steps:
 #
-#   1. unpack ARCHIVE into OUTDIR (a clean layout: bin/xo, lib/xo/...).
+#   1. unpack ARCHIVE into OUTDIR (a clean layout: bin/xo, lib/xo/...),
+#      and check that xo-gobind's source under lib/xo builds with this
+#      machine's Go (decision 0393).
 #   2. without Go: every directory holding `go` is dropped from PATH,
 #      GOROOT unset, XO_GO pointing at nothing, empty caches. `xo
 #      version`, `xo check`, and a hello program
@@ -92,7 +94,7 @@ case "$(basename "$archive")" in
         pass "signed-$f ($(sed -n 's/.*: ok //p' "$out/sign-$f.txt"))"
       else fail "signed-$f"; sed 's/^/  /' "$out/sign-$f.txt"; fi
     done
-    for f in lib/xo/std/prelude.xo LICENSE THIRD_PARTY_NOTICES; do
+    for f in lib/xo/std/prelude.xo lib/xo/go.mod lib/xo/cmd/xo-gobind/main.go LICENSE THIRD_PARTY_NOTICES; do
       if [ -f "$rel/$f" ]; then pass "layout-$f"; else fail "layout-$f"; fi
     done
     echo "release-verify: $fails failed (a windows archive: run it with scripts/ci/release-smoke.sh on Windows)"
@@ -100,6 +102,13 @@ case "$(basename "$archive")" in
     exit
     ;;
 esac
+# xo-gobind's source (decision 0393): there, and it builds with this Go
+for f in lib/xo/go.mod lib/xo/cmd/xo-gobind/main.go lib/xo/internal/gobind/gobind.go lib/xo/internal/gotool/gotool.go; do
+  if [ -f "$rel/$f" ]; then pass "layout-$f"; else fail "layout-$f"; fi
+done
+if (cd "$rel/lib/xo" && go build -o "$out/xo-gobind-local" ./cmd/xo-gobind) > "$out/gobind-source.txt" 2>&1; then
+  pass "gobind-source-builds ($(go env GOVERSION))"
+else fail "gobind-source-builds"; tail -5 "$out/gobind-source.txt" | sed 's/^/  /'; fi
 printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the released xo")\n}\n' > "$out/hello/main.xo"
 printf 'module ex\n' > "$out/usego/xo.mod"
 printf 'use go "strings"\n\nfn main(os: Os) uses (stdio, go) {\n  os.stdio.println(strings.to_upper("hello from use go"))\n}\n' > "$out/usego/app/main.xo"

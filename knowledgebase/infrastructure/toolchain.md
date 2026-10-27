@@ -3816,8 +3816,8 @@ visible files, a SIGINT) and TestBuildOutPaths. Last verified:
 `xo clean -cache` (2026-10-22, owner) empties them all at once, like
 `go clean -cache`: every cache of `compiler/prune/clean.xo`'s
 `caches()` table (build, backend, gocache, testbin, watch, dev,
-lsp-std, checkout, testcc, testprog, testgobind, llvm-ir, lifeline,
-xo1-test, llvm-sysroot), printing the bytes freed per cache; `-n` only
+lsp-std, checkout, testcc, testprog, testgobind, gobind, llvm-ir,
+lifeline, xo1-test, llvm-sysroot), printing the bytes freed per cache; `-n` only
 measures. It keeps each cache's `prune-*` and `*.lock` files, skips an
 entry whose `build.lock` a live process holds (`Fs.try_lock`; a
 checkout build in flight), and never touches the module cache (`mod`,

@@ -535,6 +535,18 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   range).
 - `scripts/progen-batches.sh`, the amd64 progen runner, TestArithOracle.
 - `scripts/codesize.py BINARY`: where a darwin/arm64 build's `__text` goes (functions, modules, generic copies, instruction kinds, whole value word copies, release runs, constant addresses); bench/results/xo-code-size-2026-10-18.md.
+- `scripts/docker-newest-go.sh DARWIN_XO ARCH WORK` (owner, 2026-10-27;
+  decision 0393): `use go` against the newest Go release, read from
+  go.dev/VERSION when it runs and printed first, in its official golang
+  image, with an xo laid out as a release (a Linux xo cross built with the
+  Go backend, std, xo-gobind built with this Mac's Go, the helper's source
+  under lib/xo): internal/gen's go_* goldens and a bind of strings, strconv
+  and encoding/json, PASS or FAIL each, exit 1 on any failure.
+  `XO_ROOT=DIR` tests another checkout (main, to see a bug before its
+  fix). Run it as `~/xo-lead/agents/docker-up.sh && HEAVY_CLASS=bulk
+  ~/xo-lead/agents/heavy.sh NAME scripts/docker-newest-go.sh bin/xo arm64
+  WORK; ~/xo-lead/agents/docker-up.sh stop` (it needs the network for the
+  version and the image). Last verified: 2026-10-27.
 - `scripts/arm64-identity.sh`, `scripts/docker-goldens.sh`,
   `scripts/intel-goldens.sh XO HOST REMOTE_DIR WORK` (the Intel laptop;
   owner rules in the lead's notes: one new directory, nothing deleted),
