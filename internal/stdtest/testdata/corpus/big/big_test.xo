@@ -3847,6 +3847,8 @@ test "parse accepts and reads what Go's SetString does" {
           "hex ${hx(x)}"
         } else if x.display() != disp {
           "display ${x.display()}"
+        } else if x.debug() != disp {
+          "debug ${x.debug()}"
         } else {
           "ok"
         }

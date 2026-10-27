@@ -132,7 +132,8 @@ func bigOp(op string, a, b *big.Int, k int) string {
 // otherwise the message std/native/big.xo builds, "invalid base N" for a
 // base SetString refuses before reading digits and "invalid number "T" in
 // base N" otherwise (Go reports only ok, so this wording is Xo's own and
-// the corpus pins it).
+// the corpus pins it). debug is compared against the same decimal text,
+// which is Go's z.String() for a value that parsed.
 func bigParseDisplay(s string, base int, z *big.Int, ok bool) string {
 	if ok {
 		return z.Text(10)
@@ -332,6 +333,8 @@ test "parse accepts and reads what Go's SetString does" {
           "hex ${hx(x)}"
         } else if x.display() != disp {
           "display ${x.display()}"
+        } else if x.debug() != disp {
+          "debug ${x.debug()}"
         } else {
           "ok"
         }
