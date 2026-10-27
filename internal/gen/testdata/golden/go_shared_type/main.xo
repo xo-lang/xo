@@ -1,0 +1,21 @@
+use go "net"
+use go "net/netip"
+
+// One Go type shared by two bound packages is one Xo type (decision 0392;
+// Intel tester 0.33.0, b14): net's tcp_addr_from_addr_port takes the
+// netip.AddrPort netip makes, and a net value's AddrPort goes back into
+// net, as in Go.
+fn main(os: Os) -> () ! Error {
+  let ap = netip.addr_port_from(netip.must_parse_addr("10.0.0.1"), 80)
+  match net.tcp_addr_from_addr_port(ap) {
+    Some(t) => {
+      os.stdio.println(t.string())
+      let back = t.addr_port()
+      os.stdio.println("${back.string()} ${back == ap}")
+    }
+    None => os.stdio.println("none")
+  }
+  let r = net.resolve_tcp_addr("tcp", "127.0.0.1:8080")?
+  // a 16 byte IP, as Go keeps it: ::ffff:127.0.0.1 until unmapped
+  os.stdio.println(r.addr_port().addr().unmap().string())
+}

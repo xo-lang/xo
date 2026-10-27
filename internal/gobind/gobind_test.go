@@ -82,7 +82,8 @@ func TestMapping(t *testing.T) {
 		t.Error("adapter does not pass GoContext(tk)")
 	}
 	// fields are getters and setters; a nilable pointer field is an Option
-	if !strings.Contains(decl, "fn (recv: ExecCmd) process() -> Process? uses go") {
+	// os.Process is os's binding's type, not a copy (decision 0392)
+	if !strings.Contains(decl, "fn (recv: ExecCmd) process() -> os.Process? uses go") {
 		t.Errorf("process field:\n%s", grep(decl, "process"))
 	}
 	// a cached binding loads; another binder version or pin does not
@@ -178,5 +179,39 @@ func TestWorkspaceGoLine(t *testing.T) {
 		if !strings.Contains(string(data), "\ngo "+want+"\n") {
 			t.Errorf("%s: go.mod\n%s\nwant go %s", version, data, want)
 		}
+	}
+}
+
+// TestSharedHandles: a type of another package is that package's
+// binding's (decision 0392; Intel tester 0.33.0, b14: net declared its
+// own AddrPort, which netip.AddrPort could not be passed as).
+func TestSharedHandles(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	decl, b, dir := bindDecl(t, "net")
+	if !strings.Contains(decl, "\nuse go \"net/netip\" as netip\n") {
+		t.Errorf("no use go of net/netip:\n%s", grep(decl, "use "))
+	}
+	if !strings.Contains(decl, "fn tcp_addr_from_addr_port(addr: netip.AddrPort) -> ") {
+		t.Errorf("tcp_addr_from_addr_port:\n%s", grep(decl, "addr_port"))
+	}
+	if strings.Contains(decl, "struct AddrPort {}") {
+		t.Error("net declares its own AddrPort")
+	}
+	if !strings.Contains(string(b.Adapter), "Go_net_netip_AddrPort") {
+		t.Error("the adapter does not use netip's rt type")
+	}
+	// netip is bound in the same run, with the handle net names
+	home, err := os.ReadFile(declPath(dir, "net/netip", nil))
+	if err != nil {
+		t.Fatalf("net/netip not bound with net: %v", err)
+	}
+	if !strings.Contains(string(home), "struct AddrPort {}") {
+		t.Errorf("netip's binding has no AddrPort:\n%s", grep(string(home), "struct "))
+	}
+	// a type of an internal package stays skipped, with the reason
+	if !importable("net/netip") || importable("internal/poll") || importable("vendor/golang.org/x/net/dns/dnsmessage") || importable("example.com/m/internal/x") {
+		t.Error("importable")
 	}
 }

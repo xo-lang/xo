@@ -14,7 +14,7 @@ use std/crypto
 use github.com/xo-lang/xo/compiler/parser
 
 /// gobind.Version: bindings of another binder version are stale.
-const GOBIND_VERSION: Int = 6
+const GOBIND_VERSION: Int = 7
 
 /// gobind purePackages: the Go std packages whose `use go` in a dependency
 /// is not an escape hatch (decision 0156).
@@ -27,7 +27,11 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
   let gopath = u.path.to_str() ?? ""
   let key = "go:${gopath}"
   let fpath = c.files[f].path
-  if !go_pure_package(gopath) {
+  // a binding's own `use go` of the package its types come from
+  // (decision 0392): the program's use of the binding already passed
+  // the vouch and pin checks, and the package is in the same cache
+  let from_binding = !c.mods[m].go_path.is_empty()
+  if !go_pure_package(gopath) && !from_binding {
     // a dependency's Go code needs the consuming module's vouch
     // (decision 0156)
     let _ = c.escape_hatch(m, f, u, "go", gopath, None)
@@ -35,7 +39,9 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
   var dep = c.mod_index.get(key) ?? -1
   if dep < 0 {
     var root = c.mods[m].dir
-    if let Some(r) = c.find_mod_root(c.mods[m].dir) {
+    if from_binding {
+      root = c.mods[m].go_root
+    } else if let Some(r) = c.find_mod_root(c.mods[m].dir) {
       root = c.abs(c.go_bind_root(r.dir))
     }
     let xomod = join(root, "xo.mod")
@@ -69,13 +75,14 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
       c.go_miss(f, u.span, gopath, root, cache, fpath)
       return
     }
-    if !hdr.standard && pin.is_empty() && !hdr.mod_path.is_empty() {
+    if !hdr.standard && pin.is_empty() && !hdr.mod_path.is_empty() && !from_binding {
       // decision 0356: a third-party Go module needs its pin, or builds
       // follow its latest version
       c.go_unpinned(f, u.span, xomod, hdr.mod_path, hdr.mod_version)
     }
     dep = c.new_module(key, hdr.name, parent(decl_path), true)
     c.mods[dep].go_path = gopath
+    c.mods[dep].go_root = root
     c.mods[dep].go_decl = decl_path
     c.mods[dep].go_skipped = hdr.skipped
     c.mods[dep].go_adapter = c.fs.read_text("${base_path}.go").ok() ?? ""

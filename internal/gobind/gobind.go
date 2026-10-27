@@ -54,9 +54,12 @@ import (
 // are handles (time.AfterFunc binds). 5 (2026-10-09, decision 0093): Go
 // calls are recorded by `--record` and answered or re executed by `xo
 // replay` (rt.GoFxValue, rt.GoFxRerun); declarations carry a `Replay:`
-// doc line. 6 (2026-10-27, Intel b15): a comparable struct handle with no
-// exported fields (netip.Addr) compares and hashes by value.
-const Version = 6
+// doc line. 6 (2026-10-27, Intel b15): a comparable struct handle the
+// package hands out as a value (netip.Addr) compares and hashes by value.
+// 7 (2026-10-27, decision 0392): a type of another package is that
+// package's binding's, named through a `use go` line of the declaration
+// file, not a copy.
+const Version = 7
 
 // Binding is one bound Go package.
 type Binding struct {
@@ -499,6 +502,13 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 	}
 	if err := writeAtomic(b.DeclPath, b.Decl); err != nil {
 		return nil, err
+	}
+	// the bindings this one refers to (decision 0392), bound now so one
+	// check finds them all: Go's imports are acyclic, so this ends
+	for _, dep := range sortedKeys(g.deps) {
+		if _, err := LoadOrBind(dep, Options{Dir: opts.Dir}); err != nil {
+			return nil, &Error{GoPath: goPath, Msg: fmt.Sprintf("binding %s, which its types come from: %v", dep, err)}
+		}
 	}
 	if !b.Standard {
 		b.Require, b.Sum = workspaceDeps(opts.Dir)
