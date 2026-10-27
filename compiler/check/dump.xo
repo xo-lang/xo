@@ -20,6 +20,7 @@ fn (var c: Checker) run() -> () ! Str {
       prog_mods.push(m)
     }
   }
+  c.std_block = StdBlock{obj_lo: c.objs.len(), ty_lo: c.tys.len(), eset_lo: c.esets.len(), evar_lo: c.evars.len()}
   for m in std_mods {
     c.declare(m)
   }
@@ -33,6 +34,10 @@ fn (var c: Checker) run() -> () ! Str {
   for m in std_mods {
     c.resolve_sigs(m)
   }
+  c.std_block.obj_hi = c.objs.len()
+  c.std_block.ty_hi = c.tys.len()
+  c.std_block.eset_hi = c.esets.len()
+  c.std_block.evar_hi = c.evars.len()
   for m in prog_mods {
     c.declare(m)
   }

@@ -23,6 +23,9 @@ pub struct Checker {
   /// Where the std declaration files are read from.
   std_dir: Str
   pub objs: List[Obj] = []
+  /// The std tree's block in objs, tys, esets and evars (Checker.run,
+  /// decision 0388): what std_export records
+  pub std_block: StdBlock = StdBlock{}
   pub mods: List[Module] = []
   pub mod_index: Map[Str, Int] = {}
   pub files: List[SrcFile] = []

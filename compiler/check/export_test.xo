@@ -1,0 +1,33 @@
+// The std export's codec (decision 0388 stage 1a-ii).
+
+/// A checker over a one-file program and the test's small prelude.
+fn export_checker(os: testing.TestOs) -> Checker ! FsErr {
+  let _out = check_files(os, "app", [("app/main.xo", "fn main() {\n  print(\"hi\")\n}\n")])?
+  var c = new_checker(os.fs, "std")
+  if let Err(e) = c.check_dirs(["app"]) {
+    expect(e) == ""
+  }
+  Ok(c)
+}
+
+test "the std block's records encode, decode and encode again to the same bytes" {
+  let c = export_checker(os)?
+  let b = c.std_block
+  expect(b.obj_hi > b.obj_lo) == true
+  let d = encode_std_export(c.std_export())
+  match decode_std_export(d) {
+    Some(e2) => {
+      expect(e2.objs.len()) == b.obj_hi - b.obj_lo
+      expect(encode_std_export(e2) == d) == true
+    }
+    None => expect("decoded") == "None"
+  }
+}
+
+test "a damaged or truncated export decodes to None" {
+  let c = export_checker(os)?
+  let d = encode_std_export(c.std_export())
+  expect(decode_std_export(d[0..d.len() - 1]).is_none()) == true
+  expect(decode_std_export(b"xo std export v0").is_none()) == true
+  expect(decode_std_export(d + b"x").is_none()) == true
+}

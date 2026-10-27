@@ -1,0 +1,719 @@
+// Std's checked declarations as records (decision 0388 stage 1a-ii): the
+// objects, types, effect sets and effect variables the std tree's
+// declare, resolve_types and resolve_sigs made (one block of each table
+// since 1a-i), with no syntax tree. A function's declaration, a
+// parameter's or field's default and a constant's value are counted, not
+// stored: their trees come from the files' parses, joined by position.
+
+use github.com/xo-lang/xo/compiler/parser
+
+/// The bounds of the std tree's block in each of the checker's tables,
+/// [lo, hi): set by Checker.run after the std phases.
+pub struct StdBlock {
+  pub obj_lo: Int = 0
+  pub obj_hi: Int = 0
+  pub ty_lo: Int = 0
+  pub ty_hi: Int = 0
+  pub eset_lo: Int = 0
+  pub eset_hi: Int = 0
+  pub evar_lo: Int = 0
+  pub evar_hi: Int = 0
+}
+
+/// The records of std's block, and what refers into it from outside the
+/// tables: each std module's members and each std file's declaration
+/// objects (by path), the named types of no type arguments, and the
+/// functions inferred or declared realtime.
+pub struct StdExport {
+  pub block: StdBlock
+  pub objs: List[Obj] = []
+  /// per object, its trees' counts (obj_trees): the records leave the
+  /// trees out
+  pub trees: List[List[Int]] = []
+  pub tys: List[Ty] = []
+  pub esets: List[List[EffItem]] = []
+  pub evars: List[Int] = []
+  pub members: List[(Str, List[(Bytes, Int)])] = []
+  pub decl_objs: List[(Str, List[Int])] = []
+  pub named0: List[(Int, Int)] = []
+  pub inferred_fns: List[Int] = []
+  pub realtime_fns: List[Int] = []
+}
+
+const EXPORT_VERSION = "xo std export v1"
+
+/// The std block's records as the checker holds them now.
+pub fn (c: Checker) std_export() -> StdExport {
+  let b = c.std_block
+  var e = StdExport{block: b}
+  for o in b.obj_lo..b.obj_hi {
+    e.objs.push(c.objs[o])
+    e.trees.push(obj_trees(c.objs[o]))
+  }
+  for t in b.ty_lo..b.ty_hi {
+    e.tys.push(c.tys[t])
+  }
+  for s in b.eset_lo..b.eset_hi {
+    e.esets.push(c.esets[s])
+  }
+  for v in b.evar_lo..b.evar_hi {
+    e.evars.push(c.evars[v])
+  }
+  for md in c.mods {
+    if !md.std_tree {
+      continue
+    }
+    var ms: List[(Bytes, Int)] = []
+    for (k, o) in md.members.entries() {
+      ms.push((k, o))
+    }
+    e.members.push((md.path, ms))
+    for f in md.files {
+      e.decl_objs.push((c.files[f].path, c.files[f].decl_objs))
+    }
+  }
+  for (o, t) in c.named0.entries() {
+    if o >= b.obj_lo && o < b.obj_hi {
+      e.named0.push((o, t))
+    }
+  }
+  for f in c.inferred_fns {
+    if f >= b.obj_lo && f < b.obj_hi {
+      e.inferred_fns.push(f)
+    }
+  }
+  for f in c.realtime_fns {
+    if f >= b.obj_lo && f < b.obj_hi {
+      e.realtime_fns.push(f)
+    }
+  }
+  e
+}
+
+// ---------------------------------------------------------------------------
+// The codec: varints (signed values zigzag), length prefixed bytes.
+
+struct ExW {
+  b: BytesBuilder
+}
+
+fn (var w: ExW) uv(v0: Int) {
+  var v = v0
+  while v >= 128 {
+    w.b.write_byte(UInt8((v & 127) | 128))
+    v = v >> 7
+  }
+  w.b.write_byte(UInt8(v))
+}
+
+fn (var w: ExW) sv(v: Int) {
+  w.uv(if v < 0 { ((-v) << 1) - 1 } else { v << 1 })
+}
+
+fn (var w: ExW) bytes(d: Bytes) {
+  w.uv(d.len())
+  w.b.write(d)
+}
+
+fn (var w: ExW) str(s: Str) {
+  w.bytes(s.bytes())
+}
+
+fn (var w: ExW) bool(x: Bool) {
+  w.uv(if x { 1 } else { 0 })
+}
+
+fn (var w: ExW) ints(xs: List[Int]) {
+  w.uv(xs.len())
+  for x in xs {
+    w.sv(x)
+  }
+}
+
+fn (var w: ExW) span(s: Span) {
+  w.uv(s.start.offset)
+  w.uv(s.start.line)
+  w.uv(s.start.col)
+  w.uv(s.end.offset)
+  w.uv(s.end.line)
+  w.uv(s.end.col)
+}
+
+struct ExR {
+  d: Bytes
+  at: Int = 0
+  ok: Bool = true
+}
+
+fn (var r: ExR) uv() -> Int {
+  var v = 0
+  var sh = 0
+  while true {
+    if r.at >= r.d.len() || sh > 63 {
+      r.ok = false
+      return 0
+    }
+    let c = Int(r.d[r.at])
+    r.at += 1
+    v = v | ((c & 127) << sh)
+    if c < 128 {
+      break
+    }
+    sh += 7
+  }
+  v
+}
+
+fn (var r: ExR) sv() -> Int {
+  let u = r.uv()
+  if (u & 1) == 1 { -((u + 1) >> 1) } else { u >> 1 }
+}
+
+fn (var r: ExR) bytes() -> Bytes {
+  let n = r.uv()
+  if !r.ok || n > r.d.len() - r.at {
+    r.ok = false
+    return b""
+  }
+  let out = r.d[r.at..r.at + n]
+  r.at += n
+  out
+}
+
+fn (var r: ExR) str() -> Str {
+  r.bytes().to_str() ?? ""
+}
+
+fn (var r: ExR) bool() -> Bool {
+  r.uv() == 1
+}
+
+fn (var r: ExR) ints() -> List[Int] {
+  let n = r.uv()
+  if !r.ok || n > r.d.len() {
+    r.ok = false
+    return []
+  }
+  var out = List[Int].with_capacity(n)
+  for _ in 0..n {
+    out.push(r.sv())
+  }
+  out
+}
+
+fn (var r: ExR) span() -> Span {
+  let so = r.uv()
+  let sl = r.uv()
+  let sc = r.uv()
+  let eo = r.uv()
+  let el = r.uv()
+  let ec = r.uv()
+  Span{start: parser.Pos{offset: so, line: sl, col: sc}, end: parser.Pos{offset: eo, line: el, col: ec}}
+}
+
+fn obj_kind_int(k: ObjKind) -> Int {
+  match k {
+    ObjKind.Func => 0
+    ObjKind.Const => 1
+    ObjKind.Type => 2
+    ObjKind.TParam => 3
+    ObjKind.Local => 4
+    ObjKind.Module => 5
+  }
+}
+
+fn obj_kind_of(n: Int) -> ObjKind {
+  match n {
+    0 => ObjKind.Func
+    1 => ObjKind.Const
+    2 => ObjKind.Type
+    3 => ObjKind.TParam
+    4 => ObjKind.Local
+    _ => ObjKind.Module
+  }
+}
+
+fn ty_kind_int(k: TyKind) -> Int {
+  match k {
+    TyKind.Named => 0
+    TyKind.Tuple => 1
+    TyKind.Func => 2
+    TyKind.Param => 3
+    TyKind.Var => 4
+    TyKind.Bad => 5
+    TyKind.EffArg => 6
+  }
+}
+
+fn ty_kind_of(n: Int) -> TyKind {
+  match n {
+    0 => TyKind.Named
+    1 => TyKind.Tuple
+    2 => TyKind.Func
+    3 => TyKind.Param
+    4 => TyKind.Var
+    5 => TyKind.Bad
+    _ => TyKind.EffArg
+  }
+}
+
+/// The counts of an object's trees, in record order: each field's
+/// default, the function's declaration, each parameter's default, the
+/// constant's value and the let's value.
+fn obj_trees(x: Obj) -> List[Int] {
+  var t: List[Int] = []
+  for f in x.fields {
+    t.push(f.default.len())
+  }
+  t.push(x.fn_decl.len())
+  for p in x.params {
+    t.push(p.default.len())
+  }
+  t.push(x.const_val.len())
+  t.push(x.let_value.len())
+  t
+}
+
+fn (var w: ExW) obj(x: Obj, t: List[Int]) {
+  var ti = 0
+  w.uv(obj_kind_int(x.kind))
+  w.bytes(x.name)
+  w.sv(x.module)
+  w.str(x.file)
+  w.uv(x.line)
+  w.uv(x.col)
+  w.str(x.local)
+  w.bool(x.effect)
+  w.ints(x.tparams)
+  w.bool(x.is_pub)
+  w.str(x.tkind)
+  w.uv(x.fields.len())
+  for f in x.fields {
+    w.bytes(f.name)
+    w.sv(f.ty)
+    w.bool(f.is_pub)
+    w.uv(t[ti])
+    ti += 1
+    w.uv(f.line)
+    w.uv(f.col)
+    w.bytes(f.wire)
+    w.bytes(f.json_key)
+    w.bool(f.omit_empty)
+    w.bytes(f.json_wire)
+    w.bytes(f.sql_wire)
+    w.bytes(f.xml_wire)
+    w.bytes(f.sql_key)
+  }
+  w.uv(x.variants.len())
+  for v in x.variants {
+    w.bytes(v.name)
+    w.uv(v.index)
+    w.uv(v.fields.len())
+    for vf in v.fields {
+      w.bytes(vf.name)
+      w.bool(vf.from)
+      w.sv(vf.ty)
+      w.uv(vf.line)
+      w.uv(vf.col)
+    }
+    w.bool(v.unit)
+    w.uv(v.line)
+    w.uv(v.col)
+  }
+  w.ints(x.iface_meths)
+  w.sv(x.target)
+  w.uv(x.derives.len())
+  for d in x.derives {
+    w.str(d)
+  }
+  w.bool(x.opaque)
+  w.uv(x.methods.len())
+  for (k, f) in x.methods.entries() {
+    w.bytes(k)
+    w.sv(f)
+  }
+  w.uv(x.statics.len())
+  for (k, f) in x.statics.entries() {
+    w.bytes(k)
+    w.sv(f)
+  }
+  w.bool(x.resolving)
+  w.bool(x.resolved)
+  w.sv(x.decl_file)
+  w.sv(x.decl_idx)
+  w.uv(t[ti])
+  ti += 1
+  w.uv(x.params.len())
+  for p in x.params {
+    w.bytes(p.name)
+    w.sv(p.ty)
+    w.bool(p.is_var)
+    w.uv(t[ti])
+    ti += 1
+    w.uv(p.line)
+    w.uv(p.col)
+  }
+  w.sv(x.result)
+  w.sv(x.err)
+  w.sv(x.recv)
+  w.sv(x.recv_ty)
+  w.bool(x.recv_var)
+  w.bool(x.is_static)
+  w.bool(x.static_const)
+  w.bool(x.iface)
+  w.uv(x.own_tparams)
+  w.sv(x.declared)
+  w.bool(x.sig_done)
+  w.sv(x.body_eff)
+  w.bool(x.moves)
+  w.bool(x.move_only)
+  w.bool(x.realtime)
+  w.span(x.realtime_span)
+  w.sv(x.ty)
+  w.bool(x.done)
+  w.bool(x.checking)
+  w.bool(x.mutable)
+  w.bool(x.is_const)
+  w.uv(t[ti])
+  ti += 1
+  w.sv(x.vctx)
+  w.sv(x.frame)
+  w.sv(x.group_frame)
+  w.bool(x.awaited)
+  w.bool(x.used)
+  w.span(x.let_span)
+  w.uv(t[ti])
+  w.sv(x.constraint)
+  w.bool(x.implicit)
+  w.bool(x.elided)
+  w.str(x.elided_file)
+  w.span(x.elided_at)
+  w.str(x.elided_text)
+}
+
+/// An object's record; its trees (fn_decl, defaults, const_val,
+/// let_value) are empty, their counts in the second result.
+fn (var r: ExR) obj() -> (Obj, List[Int]) {
+  var x = Obj{kind: obj_kind_of(r.uv()), name: r.bytes()}
+  var trees: List[Int] = []
+  x.module = r.sv()
+  x.file = r.str()
+  x.line = r.uv()
+  x.col = r.uv()
+  x.local = r.str()
+  x.effect = r.bool()
+  x.tparams = r.ints()
+  x.is_pub = r.bool()
+  x.tkind = r.str()
+  let nf = r.uv()
+  for _ in 0..nf {
+    if !r.ok {
+      break
+    }
+    let name = r.bytes()
+    let ty = r.sv()
+    let is_pub = r.bool()
+    trees.push(r.uv())
+    let line = r.uv()
+    let col = r.uv()
+    x.fields.push(FieldInfo{name: name, ty: ty, is_pub: is_pub, line: line, col: col, wire: r.bytes(), json_key: r.bytes(), omit_empty: r.bool(), json_wire: r.bytes(), sql_wire: r.bytes(), xml_wire: r.bytes(), sql_key: r.bytes()})
+  }
+  let nv = r.uv()
+  for _ in 0..nv {
+    if !r.ok {
+      break
+    }
+    let name = r.bytes()
+    let index = r.uv()
+    let nvf = r.uv()
+    var vfs: List[VFieldInfo] = []
+    for _ in 0..nvf {
+      if !r.ok {
+        break
+      }
+      vfs.push(VFieldInfo{name: r.bytes(), from: r.bool(), ty: r.sv(), line: r.uv(), col: r.uv()})
+    }
+    x.variants.push(VariantInfo{name: name, index: index, fields: vfs, unit: r.bool(), line: r.uv(), col: r.uv()})
+  }
+  x.iface_meths = r.ints()
+  x.target = r.sv()
+  let nd = r.uv()
+  for _ in 0..nd {
+    if !r.ok {
+      break
+    }
+    x.derives.push(r.str())
+  }
+  x.opaque = r.bool()
+  let nm = r.uv()
+  for _ in 0..nm {
+    if !r.ok {
+      break
+    }
+    let k = r.bytes()
+    x.methods[k] = r.sv()
+  }
+  let ns = r.uv()
+  for _ in 0..ns {
+    if !r.ok {
+      break
+    }
+    let k = r.bytes()
+    x.statics[k] = r.sv()
+  }
+  x.resolving = r.bool()
+  x.resolved = r.bool()
+  x.decl_file = r.sv()
+  x.decl_idx = r.sv()
+  trees.push(r.uv())
+  let np = r.uv()
+  for _ in 0..np {
+    if !r.ok {
+      break
+    }
+    let name = r.bytes()
+    let ty = r.sv()
+    let is_var = r.bool()
+    trees.push(r.uv())
+    x.params.push(ParamInfo{name: name, ty: ty, is_var: is_var, line: r.uv(), col: r.uv()})
+  }
+  x.result = r.sv()
+  x.err = r.sv()
+  x.recv = r.sv()
+  x.recv_ty = r.sv()
+  x.recv_var = r.bool()
+  x.is_static = r.bool()
+  x.static_const = r.bool()
+  x.iface = r.bool()
+  x.own_tparams = r.uv()
+  x.declared = r.sv()
+  x.sig_done = r.bool()
+  x.body_eff = r.sv()
+  x.moves = r.bool()
+  x.move_only = r.bool()
+  x.realtime = r.bool()
+  x.realtime_span = r.span()
+  x.ty = r.sv()
+  x.done = r.bool()
+  x.checking = r.bool()
+  x.mutable = r.bool()
+  x.is_const = r.bool()
+  trees.push(r.uv())
+  x.vctx = r.sv()
+  x.frame = r.sv()
+  x.group_frame = r.sv()
+  x.awaited = r.bool()
+  x.used = r.bool()
+  x.let_span = r.span()
+  trees.push(r.uv())
+  x.constraint = r.sv()
+  x.implicit = r.bool()
+  x.elided = r.bool()
+  x.elided_file = r.str()
+  x.elided_at = r.span()
+  x.elided_text = r.str()
+  (x, trees)
+}
+
+fn (var w: ExW) ty(t: Ty) {
+  w.uv(ty_kind_int(t.kind))
+  w.sv(t.obj)
+  w.ints(t.args)
+  w.uv(t.vars.len())
+  for v in t.vars {
+    w.bool(v)
+  }
+  w.sv(t.result)
+  w.sv(t.err)
+  w.sv(t.ref)
+  w.sv(t.eff)
+}
+
+fn (var r: ExR) ty() -> Ty {
+  var t = Ty{kind: ty_kind_of(r.uv())}
+  t.obj = r.sv()
+  t.args = r.ints()
+  let nv = r.uv()
+  for _ in 0..nv {
+    if !r.ok {
+      break
+    }
+    t.vars.push(r.bool())
+  }
+  t.result = r.sv()
+  t.err = r.sv()
+  t.ref = r.sv()
+  t.eff = r.sv()
+  t
+}
+
+fn (var w: ExW) eff_item(e: EffItem) {
+  w.str(e.label)
+  w.sv(e.param)
+  w.sv(e.evar)
+  w.sv(e.fn_obj)
+  w.uv(e.sub.len())
+  for (k, v) in e.sub.entries() {
+    w.sv(k)
+    w.sv(v)
+  }
+  w.bool(e.has_sub)
+  w.str(e.file)
+  w.span(e.span)
+  w.str(e.via)
+}
+
+fn (var r: ExR) eff_item() -> EffItem {
+  var e = EffItem{label: r.str(), param: r.sv(), evar: r.sv(), fn_obj: r.sv()}
+  let n = r.uv()
+  for _ in 0..n {
+    if !r.ok {
+      break
+    }
+    let k = r.sv()
+    e.sub[k] = r.sv()
+  }
+  e.has_sub = r.bool()
+  e.file = r.str()
+  e.span = r.span()
+  e.via = r.str()
+  e
+}
+
+/// The records as bytes.
+pub fn encode_std_export(e: StdExport) -> Bytes {
+  var w = ExW{b: BytesBuilder.new()}
+  w.str(EXPORT_VERSION)
+  let b = e.block
+  for v in [b.obj_lo, b.obj_hi, b.ty_lo, b.ty_hi, b.eset_lo, b.eset_hi, b.evar_lo, b.evar_hi] {
+    w.uv(v)
+  }
+  w.uv(e.objs.len())
+  for (i, x) in e.objs.indexed() {
+    w.obj(x, e.trees[i])
+  }
+  w.uv(e.tys.len())
+  for t in e.tys {
+    w.ty(t)
+  }
+  w.uv(e.esets.len())
+  for s in e.esets {
+    w.uv(s.len())
+    for it in s {
+      w.eff_item(it)
+    }
+  }
+  w.ints(e.evars)
+  w.uv(e.members.len())
+  for (p, ms) in e.members {
+    w.str(p)
+    w.uv(ms.len())
+    for (k, o) in ms {
+      w.bytes(k)
+      w.sv(o)
+    }
+  }
+  w.uv(e.decl_objs.len())
+  for (p, ds) in e.decl_objs {
+    w.str(p)
+    w.ints(ds)
+  }
+  w.uv(e.named0.len())
+  for (o, t) in e.named0 {
+    w.sv(o)
+    w.sv(t)
+  }
+  w.ints(e.inferred_fns)
+  w.ints(e.realtime_fns)
+  w.b.freeze()
+}
+
+/// The records of d, or None when d is not an export of this version or
+/// is damaged (a miss, never a wrong table).
+pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
+  var r = ExR{d: d}
+  if r.str() != EXPORT_VERSION {
+    return None
+  }
+  var b = StdBlock{}
+  b.obj_lo = r.uv()
+  b.obj_hi = r.uv()
+  b.ty_lo = r.uv()
+  b.ty_hi = r.uv()
+  b.eset_lo = r.uv()
+  b.eset_hi = r.uv()
+  b.evar_lo = r.uv()
+  b.evar_hi = r.uv()
+  var e = StdExport{block: b}
+  let no = r.uv()
+  for _ in 0..no {
+    if !r.ok {
+      return None
+    }
+    let (x, t) = r.obj()
+    e.objs.push(x)
+    e.trees.push(t)
+  }
+  let nt = r.uv()
+  for _ in 0..nt {
+    if !r.ok {
+      return None
+    }
+    e.tys.push(r.ty())
+  }
+  let ne = r.uv()
+  for _ in 0..ne {
+    if !r.ok {
+      return None
+    }
+    let n = r.uv()
+    var s: List[EffItem] = []
+    for _ in 0..n {
+      if !r.ok {
+        return None
+      }
+      s.push(r.eff_item())
+    }
+    e.esets.push(s)
+  }
+  e.evars = r.ints()
+  let nm = r.uv()
+  for _ in 0..nm {
+    if !r.ok {
+      return None
+    }
+    let p = r.str()
+    let n = r.uv()
+    var ms: List[(Bytes, Int)] = []
+    for _ in 0..n {
+      if !r.ok {
+        return None
+      }
+      let k = r.bytes()
+      ms.push((k, r.sv()))
+    }
+    e.members.push((p, ms))
+  }
+  let nd = r.uv()
+  for _ in 0..nd {
+    if !r.ok {
+      return None
+    }
+    let p = r.str()
+    e.decl_objs.push((p, r.ints()))
+  }
+  let nn = r.uv()
+  for _ in 0..nn {
+    if !r.ok {
+      return None
+    }
+    let o = r.sv()
+    e.named0.push((o, r.sv()))
+  }
+  e.inferred_fns = r.ints()
+  e.realtime_fns = r.ints()
+  if !r.ok || r.at != d.len() || e.objs.len() != b.obj_hi - b.obj_lo || e.tys.len() != b.ty_hi - b.ty_lo {
+    return None
+  }
+  Some(e)
+}
