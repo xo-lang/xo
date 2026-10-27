@@ -103,6 +103,14 @@ fn x86_reg(b: Bytes) -> (Int, Int, Int, Bool)? {
     }
     return None
   }
+  // AVX2's 256 bit registers (VEX.L 1): the xmm class, width 32
+  if s.starts_with("ymm") {
+    let n = parse_int(b[3..]) ?? -1
+    if n >= 0 && n < 16 {
+      return Some((n, RC_XMM, 32, false))
+    }
+    return None
+  }
   if s.starts_with("r") && s.len() >= 2 {
     // r8 to r15 with an optional d, w, b suffix
     var e = b.len()
@@ -861,6 +869,9 @@ fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
     e.byte(0xb9)
     return e.modrm(ops[2].reg, ops[0])
   }
+  if mn is "vpaddd" | "vpxor" | "vpor" | "vpshufb" | "vpslld" | "vpsrld" | "vpshufd" | "vperm2i128" | "vinserti128" | "vextracti128" | "vbroadcasti128" | "vmovdqu" | "vzeroupper" {
+    return e.avx2(mn, ops)
+  }
   if mn is "mulxq" | "mulxl" {
     // VEX.LZ.F2.0F38.W1 f6 /r: mulx r/m, vvvv, reg
     if n != 3 || ops[1].kind != XO_REG || ops[2].kind != XO_REG {
@@ -1375,6 +1386,112 @@ fn (var e: XB) rr_rm0f(size: Int, opc: Int, ops: List[XOp]) {
   }
   let rex8 = size == 1 && (ops[0].rex8 || ops[1].rex8)
   e.op_rm(size, [0x0f, opc], ops[0].reg, rex8, ops[1])
+}
+
+/// A VEX prefixed instruction: opcode map m (1 0f, 2 0f38, 3 0f3a),
+/// implied prefix pp (0 none, 1 66, 2 f3, 3 f2), L (256 bits), W, the
+/// ModRM reg field reg, the second source vvvv (0 when the form has none:
+/// 1111 encoded), and r/m rm. The two byte form (c5) where it can say it
+/// (map 0f, W 0, no X or B), as LLVM picks.
+fn (var e: XB) vex(m: Int, pp: Int, l: Bool, w: Bool, reg: Int, vvvv: Int, rm: XOp, op: Int) {
+  e.seg(rm)
+  let rx = rm_rex(rm)
+  let r = if reg >= 8 { 0 } else { 0x80 }
+  let lb = if l { 4 } else { 0 }
+  let vb = ((15 - vvvv) & 15) << 3
+  if m == 1 && !w && rx == 0 {
+    e.byte(0xc5)
+    e.byte(r | vb | lb | pp)
+  } else {
+    let x = if rx & 2 != 0 { 0 } else { 0x40 }
+    let b = if rx & 1 != 0 { 0 } else { 0x20 }
+    e.byte(0xc4)
+    e.byte(r | x | b | m)
+    e.byte((if w { 0x80 } else { 0 }) | vb | lb | pp)
+  }
+  e.byte(op)
+  e.modrm(reg, rm)
+}
+
+/// AVX2's 256 bit integer forms the amd64 ChaCha20 kernel uses (AT&T
+/// order: sources first, the destination last; 2026-10-27).
+fn (var e: XB) avx2(mn: Str, ops: List[XOp]) {
+  let n = ops.len()
+  if mn == "vzeroupper" {
+    if n != 0 {
+      return e.fail("vzeroupper takes no operands")
+    }
+    e.byte(0xc5)
+    e.byte(0xf8)
+    return e.byte(0x77)
+  }
+  if mn is "vpaddd" | "vpxor" | "vpor" | "vpshufb" {
+    // VEX.256.66.0F fe, ef, eb; 0F38 00: rm, vvvv, reg
+    if n != 3 || ops[1].kind != XO_REG || ops[2].kind != XO_REG {
+      return e.fail("${mn} takes ymm/m256, ymm, ymm")
+    }
+    let (m, op) = match mn {
+      "vpaddd" => (1, 0xfe)
+      "vpxor" => (1, 0xef)
+      "vpor" => (1, 0xeb)
+      _ => (2, 0x00)
+    }
+    // the commutative three: the sources swapped when only r/m would
+    // need VEX's B, so the two byte prefix does (as LLVM encodes them)
+    if m == 1 && ops[0].kind == XO_REG && ops[0].reg >= 8 && ops[1].reg < 8 {
+      return e.vex(m, 1, true, false, ops[2].reg, ops[0].reg, ops[1], op)
+    }
+    return e.vex(m, 1, true, false, ops[2].reg, ops[1].reg, ops[0], op)
+  }
+  if mn is "vpslld" | "vpsrld" {
+    // VEX.256.66.0F 72 /6 (left) or /2 (right) ib: vvvv the destination
+    if n != 3 || ops[0].kind != XO_IMM || ops[1].kind != XO_REG || ops[2].kind != XO_REG {
+      return e.fail("${mn} takes an immediate, ymm, ymm")
+    }
+    e.vex(1, 1, true, false, if mn == "vpslld" { 6 } else { 2 }, ops[2].reg, ops[1], 0x72)
+    return e.immn(ops[0], 1)
+  }
+  if mn == "vpshufd" {
+    // VEX.256.66.0F 70 /r ib
+    if n != 3 || ops[0].kind != XO_IMM || ops[2].kind != XO_REG {
+      return e.fail("vpshufd takes an immediate, ymm/m256, ymm")
+    }
+    e.vex(1, 1, true, false, ops[2].reg, 0, ops[1], 0x70)
+    return e.immn(ops[0], 1)
+  }
+  if mn is "vperm2i128" | "vinserti128" {
+    // VEX.256.66.0F3A.W0 46 or 38 /r ib: rm, vvvv, reg
+    if n != 4 || ops[0].kind != XO_IMM || ops[2].kind != XO_REG || ops[3].kind != XO_REG {
+      return e.fail("${mn} takes an immediate, r/m, ymm, ymm")
+    }
+    e.vex(3, 1, true, false, ops[3].reg, ops[2].reg, ops[1], if mn == "vperm2i128" { 0x46 } else { 0x38 })
+    return e.immn(ops[0], 1)
+  }
+  if mn == "vextracti128" {
+    // VEX.256.66.0F3A.W0 39 /r ib: reg the ymm, r/m the xmm or memory
+    if n != 3 || ops[0].kind != XO_IMM || ops[1].kind != XO_REG {
+      return e.fail("vextracti128 takes an immediate, ymm, xmm/m128")
+    }
+    e.vex(3, 1, true, false, ops[1].reg, 0, ops[2], 0x39)
+    return e.immn(ops[0], 1)
+  }
+  if mn == "vbroadcasti128" {
+    // VEX.256.66.0F38.W0 5a /r: m128 into both lanes
+    if n != 2 || ops[0].kind != XO_MEM || ops[1].kind != XO_REG {
+      return e.fail("vbroadcasti128 takes m128, ymm")
+    }
+    return e.vex(2, 1, true, false, ops[1].reg, 0, ops[0], 0x5a)
+  }
+  // vmovdqu: VEX.256.F3.0F 6f (load) or 7f (store); a move between
+  // registers takes the store form when only its source needs VEX's B,
+  // so it keeps the two byte prefix (as LLVM encodes it)
+  if n != 2 {
+    return e.fail("vmovdqu takes two operands")
+  }
+  if ops[1].kind == XO_MEM || (ops[0].kind == XO_REG && ops[1].kind == XO_REG && ops[0].reg >= 8 && ops[1].reg < 8) {
+    return e.vex(1, 2, true, false, ops[0].reg, 0, ops[1], 0x7f)
+  }
+  e.vex(1, 2, true, false, ops[1].reg, 0, ops[0], 0x6f)
 }
 
 /// An SSE instruction xmm <- xmm/m with mandatory prefix p (0 none).

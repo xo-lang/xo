@@ -179,6 +179,15 @@ bytes stay clang's:
   with the SSE moves they need (`movdqu`, `movdqa`, `pshufd`,
   `pshufb`, `pxor`, `movq %xmm, %reg` and back, `pinsrq`/`pextrq` from
   SSE4.1).
+- AVX2's 256 bit integer forms since 2026-10-27, for the ChaCha20 kernel:
+  `%ymm0` to `%ymm15` (the xmm class, width 32, VEX.L 1), `vpaddd`,
+  `vpxor`, `vpor`, `vpshufb`, `vpslld`/`vpsrld` by an immediate,
+  `vpshufd`, `vperm2i128`, `vinserti128`, `vextracti128`,
+  `vbroadcasti128`, `vmovdqu` and `vzeroupper`, each with LLVM's choice
+  of the two byte VEX prefix (the sources of the commutative three
+  swapped, a register move in the store form, when that keeps it);
+  scripts/amd64-enc-goldens.py lists their forms (54, checked against
+  clang's bytes).
 
 What the encoder does not need: no macros, no .if, no expressions
 beyond `sym+n`, `sym-sym2` and `sym-.`, no Intel syntax.

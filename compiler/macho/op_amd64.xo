@@ -108,7 +108,7 @@ const XRH = ["ah", "ch", "dh", "bh"]
 /// %dil, else 4 to 7 of width 1 are %ah to %bh).
 fn xreg_name(n: Int, rc: Int, size: Int, rex8: Bool) -> Str {
   if rc == RC_XMM {
-    return "xmm${n}"
+    return if size == 32 { "ymm${n}" } else { "xmm${n}" }
   }
   if n >= 8 {
     return match size {

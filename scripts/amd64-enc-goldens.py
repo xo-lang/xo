@@ -99,6 +99,20 @@ def forms():
     L += ["pshufd $27, %xmm1, %xmm2", "pshufd $78, %xmm9, %xmm10", "pslldq $4, %xmm1", "psrldq $8, %xmm9", "psrlq $63, %xmm2", "psllq $1, %xmm3"]
     L += ["adcxq %rax, %rbx", "adcxq %r9, %r10", "adcxq 8(%rsi), %rcx", "adoxq %rax, %rbx", "adoxq %r11, %r12", "adcxl %eax, %ebx"]
     L += ["mulxq %rax, %rbx, %rcx", "mulxq %r9, %r10, %r11", "mulxq 8(%rsi), %r8, %r9", "mulxq %rdi, %rax, %rdx"]
+    # in the table before this list had them (SHA-256's schedule, cmc)
+    L += ["cmc", "palignr $4, %xmm6, %xmm7", "palignr $4, %xmm14, %xmm9", "palignr $12, 16(%rax), %xmm1"]
+    # AVX2 (VEX.256) for the amd64 ChaCha20 kernel (2026-10-27): the three
+    # operand forms with high registers in each place and memory sources
+    for op in ["vpaddd", "vpxor", "vpor", "vpshufb"]:
+        L += [f"{op} %ymm1, %ymm2, %ymm3", f"{op} %ymm9, %ymm2, %ymm3", f"{op} %ymm1, %ymm10, %ymm3", f"{op} %ymm1, %ymm2, %ymm11", f"{op} (%rax), %ymm2, %ymm3", f"{op} 32(%r12), %ymm9, %ymm3"]
+    for op in ["vpslld", "vpsrld"]:
+        L += [f"{op} $7, %ymm1, %ymm2", f"{op} $25, %ymm9, %ymm2", f"{op} $12, %ymm1, %ymm10"]
+    L += ["vpshufd $57, %ymm1, %ymm2", "vpshufd $147, %ymm9, %ymm10", "vpshufd $78, (%rax), %ymm3"]
+    L += ["vperm2i128 $32, %ymm1, %ymm2, %ymm3", "vperm2i128 $49, %ymm9, %ymm10, %ymm11", "vperm2i128 $32, (%rax), %ymm2, %ymm3"]
+    L += ["vinserti128 $1, %xmm1, %ymm2, %ymm3", "vinserti128 $1, %xmm9, %ymm10, %ymm11", "vinserti128 $1, 16(%rax), %ymm2, %ymm3"]
+    L += ["vextracti128 $1, %ymm1, %xmm2", "vextracti128 $1, %ymm9, %xmm10", "vextracti128 $1, %ymm2, 16(%rax)"]
+    L += ["vbroadcasti128 (%rax), %ymm1", "vbroadcasti128 16(%r9), %ymm10"]
+    L += ["vmovdqu (%rax), %ymm1", "vmovdqu 32(%r9), %ymm10", "vmovdqu %ymm1, (%rax)", "vmovdqu %ymm10, 32(%r9)", "vmovdqu %ymm1, %ymm2", "vmovdqu %ymm9, %ymm2", "vzeroupper"]
     L += ["pinsrq $1, %rax, %xmm0", "pinsrq $0, %r9, %xmm10", "pextrq $1, %xmm0, %rax", "pextrq $0, %xmm11, %r12", "pinsrd $2, %eax, %xmm1", "pextrd $3, %xmm1, %ecx"]
     L += ["btq $62, %rax", "btq %rcx, %rdx", "shldq $5, %rax, %rbx", "shrdq %cl, %rax, %rbx", "rep bsfq %rax, %rbx", "syscall", "cpuid", "stc", "clc", "roundsd $9, %xmm1, %xmm2", "roundsd $10, %xmm9, %xmm3", "roundss $11, 8(%rax), %xmm4", "shrdq $13, %rax, %rbx", "rorl $7, %ecx", "popcntq %r9, %r10"]
     return L
