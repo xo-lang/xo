@@ -1,23 +1,12 @@
 # stdcoverage's allowlist: declarations that no corpus or golden reaches,
 # one line each with the reason. Format: module.Symbol, whitespace, reason.
-# A trailing * matches a family (prelude.llrt_*).
+# A trailing * matches a family (debug.mem_*). A prelude helper the compiler
+# emits is reached by the lowering and needs no line (emitted.go).
 #
 # A line here says the declaration cannot have a corpus or golden call. When
 # one could, add the corpus instead. TestStdAPICovered fails both for an
 # uncovered declaration missing here and for a line here that matches
 # nothing, so this file cannot go stale quietly.
-
-# Native runtime hooks: the compiler lowers an intrinsic or a prelude call
-# to them (decision 0074), so no Xo source names them.
-prelude.llrt_*  native runtime hooks the compiler lowers a call or intrinsic to; no source call site
-
-# The bounds-check hooks the compiler emits at an index.
-prelude.slice_check  emitted at every Str/Bytes/List index, not written in source
-prelude.slice_fail  the failure path slice_check calls
-
-# Helpers internal/ssa calls directly rather than through a method.
-prelude.str_eq_lower  lowers a.to_lower() == b.to_lower()
-prelude.int_range_list  lowers Range.to_list
 
 # A child's stdio: Cmd.inherit and its lowering are covered by the
 # cmd_inherit golden, whose child's line arrives in the program's own

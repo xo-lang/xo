@@ -403,6 +403,17 @@ func UncoveredIn(root, text string) (entries []Entry, total int, err error) {
 			queue = append(queue, i)
 		}
 	}
+	// a helper the compiler emits is reached by the lowering, not by a
+	// call site (emitted.go)
+	emitted, err := Emitted(root)
+	if err != nil {
+		return nil, 0, err
+	}
+	for i, d := range decls {
+		if d.Module == "prelude" && emitted[d.bare] {
+			mark(i)
+		}
+	}
 	for i, d := range decls {
 		switch {
 		case calls[d.Symbol], calls[d.bare]:
@@ -675,6 +686,17 @@ func UncoveredResolved(root string, edges []Edge) (entries []Entry, total int, i
 	}
 	for i, d := range decls {
 		if d.bare == "await" && awaitRe.MatchString(text) {
+			mark(i)
+		}
+	}
+	// a helper the compiler emits has no edge into it: the walk starts
+	// there as the scan does (emitted.go)
+	emitted, err := Emitted(root)
+	if err != nil {
+		return nil, 0, nil, err
+	}
+	for i, d := range decls {
+		if d.Module == "prelude" && emitted[d.bare] {
 			mark(i)
 		}
 	}

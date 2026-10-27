@@ -356,3 +356,18 @@ to a source level walk.
 `scripts/stdcoverage -check` passes on main `8c6cf2f89` (2026-10-27): 1465
 declarations, 131 uncovered, all 131 already in `allow.txt`. That run is the
 baseline the next drift is measured from.
+
+## 2026-10-27 addendum: generic declarations and the emitted helpers
+
+Two scanner gaps moved the baseline. The function and interface method
+patterns did not accept `[` after a name, so no generic function
+(`fn list_sort[T: Ord](`) and no generic interface method (Rand's
+`fn shuffle[T](`) was counted (TestDeclaredGenericFunctions): with them
+the scan reads 1551 declarations, 129 uncovered. The `prelude.llrt_*`
+wildcard is replaced by internal/stdcoverage/emitted.go, which credits a
+prelude helper only when compiler/ssa spells its whole name, an emitting
+call's template fixes its family, or std calls its intrinsic `rt.X`
+(TestEmitted). 110 of the 112 `llrt_*` helpers are credited that way; the
+other two, `llrt_time_ok` and `llrt_time`, had no emitter since the JSON
+decoder's move to `json_time_opt` and are removed. The new baseline is
+1549 declarations, 14 uncovered, all 14 in `allow.txt`.
