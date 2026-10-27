@@ -45,3 +45,6 @@ internal.lock_shared  the shared fs lock a reader takes; no corpus opens one
 # so the swap would not reach the caller's list.
 internal.list_swap_at  a swap at two runtime indexes, for the codegen pattern
 internal.list_swap_both  a swap at two list lengths, for the codegen pattern
+# merge_runs_in_place's fault for a caller that broke its hi <= len clamp: every
+# caller in std clamps first, so no program can reach it (7043f791a, 2026-10-26).
+prelude.merge_end_past  fault helper unreachable from programs (the sort clamps its bound)
