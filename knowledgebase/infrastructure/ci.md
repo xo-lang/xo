@@ -214,11 +214,16 @@ gh workflow run ──> GitHub queues job (runs-on: self-hosted, xo-arm64)
 
 | GitHub runner | instance | type | labels | role |
 |---|---|---|---|---|
-| xo-ci-arm64 | i-EXAMPLE06 | r8g.4xlarge (16 vCPU, 128 GB) | xo-arm64 | default jobs |
-| xo-ci-arm64-big | i-EXAMPLE01 | r8g.8xlarge (32 vCPU, 256 GB) | xo-arm64-big, xo-arm64 | heavy jobs, overflow |
-| xo-ci-arm64-big2 | i-EXAMPLE46 | r8g.8xlarge | xo-arm64-big, xo-arm64 | heavy jobs, overflow |
-| xo-ci-arm64-big3 | i-EXAMPLE29 | r8g.8xlarge | xo-arm64-big, xo-arm64 | heavy jobs, overflow |
+| xo-ci-arm64-big | i-EXAMPLE01 | r8g.8xlarge (32 vCPU, 256 GB) | xo-arm64-big, xo-arm64 | every arm64 job (the only arm64 runner since 2026-10-27) |
 | xo-ci-windows | i-EXAMPLE47 | c7i.4xlarge (16 vCPU, 32 GB), Windows Server 2025 | xo-windows | `suite=windows`, or any single job suite with `-f runner=xo-windows`; best effort |
+
+One machine of each kind (owner, 2026-10-27; Last verified: 2026-10-27):
+xo-ci-arm64 (r8g.4xlarge), xo-ci-arm64-big2 and xo-ci-arm64-big3 were
+removed from runners.json and destroyed with their disks, and the warm
+x86 machines amd64-big2 and amd64-big3 terminated, for disk. Left: the
+two runners above and one warm c7i.8xlarge (xo-warm, role amd64-big,
+i-EXAMPLE02), not a runner. Parallel arm64 jobs now queue on
+xo-ci-arm64-big.
 
 All four were the lead's warm machines (scripts/warm-run.sh), adopted
 into Terraform on 2026-10-14 with their 120 GB disks and caches. Because
