@@ -182,6 +182,61 @@ fn walk_of(os: Os, dir: Str) -> Str {
   }
 }
 
+/// How many of an entry's files run_fetch hashes one by one before the
+/// rest go to tasks.
+const RUN_SERIAL_FILES = 16
+
+/// The (SHA-256, path) of an entry's files after its first
+/// RUN_SERIAL_FILES, which run_fetch hashes on tasks.
+fn later_files(text: Str) -> List[(Str, Str)] {
+  var out: List[(Str, Str)] = []
+  var n = 0
+  for l in text.split("\n") {
+    if l.starts_with("file ") {
+      let f = l.split(" ")
+      if f.len() == 3 {
+        n += 1
+        if n > RUN_SERIAL_FILES {
+          out.push((f[1], unhex_field(f[2])))
+        }
+      }
+    }
+  }
+  out
+}
+
+/// Whether each (SHA-256, path) still holds those contents, hashed on
+/// tasks: a hit hashed 449 files one by one, 13 ms of llvm-fib's 20 ms
+/// warm rebuild (2026-10-26). Stops early once one differs.
+fn files_unchanged(os: Os, xs: List[(Str, Str)]) -> Bool {
+  let n = xs.len()
+  if n == 0 {
+    return true
+  }
+  let next = Atomic[Int].new(0)
+  let bad = Atomic[Int].new(0)
+  scope s {
+    for _ in 0..emit_jobs(os).min((n + 31) / 32).max(1) {
+      let _t = s.spawn(fn() {
+        while bad.get() == 0 {
+          let i = next.add(32) - 32
+          if i >= n {
+            break
+          }
+          for j in i..(i + 32).min(n) {
+            let (sum, p) = xs[j]
+            if sha_of(os, p) != sum {
+              bad.set(1)
+              break
+            }
+          }
+        }
+      })
+    }
+  }
+  bad.get() == 0
+}
+
 /// The stored run of key when every input it lists is unchanged.
 fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
   if key.is_empty() {
@@ -205,6 +260,10 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
   var output = ""
   var outs: List[(Str, Str)] = []
   var head = false
+  // the first files (run_store writes the program's own first) are
+  // hashed in order, so an edit misses at its first file; the rest
+  // (std's, hundreds) on tasks after the walk (later_files)
+  var nfiles = 0
   for l in text.split("\n") {
     if l.is_empty() {
       continue
@@ -213,7 +272,8 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
     if f[0] == "xo-testrun-v1" {
       head = true
     } else if f[0] == "file" && f.len() == 3 {
-      if sha_of(os, unhex_field(f[2])) != f[1] {
+      nfiles += 1
+      if nfiles <= RUN_SERIAL_FILES && sha_of(os, unhex_field(f[2])) != f[1] {
         return None
       }
     } else if f[0] == "dir" && f.len() == 3 {
@@ -243,7 +303,7 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
       return None
     }
   }
-  if !head {
+  if !head || !files_unchanged(os, later_files(text)) {
     return None
   }
   prune.mark_used_within(os.fs, os.clock, "${entry}.m", BIN_TOUCH)

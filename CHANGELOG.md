@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- An unchanged `xo build`, `xo run` or `xo test` (a run cache hit) checks its
+  inputs on tasks: the program's own files first in order, so an edit still misses
+  at its first file, then the std files (hundreds) in parallel.
 - `--race` no longer reports a data race between tasks that only reused one stack
   (the Windows tester's report on v0.32.0: tasks looping only over
   `m.with(fn(var c: Map[Int, Int]) { c[k] = v })` reported WARNING: DATA RACE
