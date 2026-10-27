@@ -1,5 +1,19 @@
 # std/compress changes
 
+## 2026-10-27: perf: flate's write_tokens keeps the bit buffer in locals
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/compress gzip1 CPU profile at 1000 Hz after the code tables (BitWriter.write_bits a call per code, offset_code a call per match)
+- Go reference: compress/flate huffman_bit_writer.go writeTokens, writeCode and writeBits (go1.26.1)
+- Test: internal/llvm/testdata/golden/archive_formats, lz4_roundtrip, http_gzip, http_gzip_responses (and internal/arm64's); internal/stdtest corpora; twincheck bench/perf/compress and archive; the outputs of gzip, gzip1, deflate and zip byte for byte the parent's
+
+write_tokens holds the pending bits and their count in locals over the
+token loop and writes six bytes (put48) once 48 are pending, as Go's
+writeTokens does with writeCode and writeBits inlined; the offset code is
+computed inline. Quiet --ab, 15 rounds, the parent's std as A: gzip1
+wall 0.987 (0.968 to 0.992), instructions 0.911.
+
 ## 2026-10-27: perf: flate's length and offset codes by Go's tables
 
 - Kind: perf

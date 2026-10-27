@@ -122,12 +122,7 @@ fn (var w: BitWriter) write_bits(b: Int, nb: Int) {
   w.nbits += nb
   if w.nbits >= 48 {
     let x = w.bits
-    w.out.push(UInt8(x & 255))
-    w.out.push(UInt8((x >> 8) & 255))
-    w.out.push(UInt8((x >> 16) & 255))
-    w.out.push(UInt8((x >> 24) & 255))
-    w.out.push(UInt8((x >> 32) & 255))
-    w.out.push(UInt8((x >> 40) & 255))
+    put48(w.out, x)
     w.bits = x.shr_logical(48)
     w.nbits -= 48
   }
@@ -591,27 +586,76 @@ fn (var w: Blocks) write_dynamic_header(num_lits: Int, num_offs: Int, num_cg: In
   }
 }
 
+/// writeTokens, with the bit buffer in locals for the whole run of tokens
+/// (Go's writeCode and writeBits inline into its loop): each code or
+/// extra bits field is at most 16 bits, so a field is added below 64
+/// bits and six bytes go out once 48 are pending.
 fn (var w: Blocks) write_tokens(tokens: List[Int], lit: Encoder, off: Encoder) {
+  var bits = w.w.bits
+  var nbits = w.w.nbits
   for t in tokens {
     if t < MATCH {
-      w.w.write_bits(lit.code[t], lit.len[t])
+      bits = bits | (lit.code[t] << nbits)
+      nbits += lit.len[t]
+      if nbits >= 48 {
+        put48(w.w.out, bits)
+        bits = bits.shr_logical(48)
+        nbits -= 48
+      }
       continue
     }
     let length = (t - MATCH) >> 22
-    let lc = length_code(length)
-    w.w.write_bits(lit.code[lc + 257], lit.len[lc + 257])
+    let lc = LENGTH_CODES[length]
+    bits = bits | (lit.code[lc + 257] << nbits)
+    nbits += lit.len[lc + 257]
+    if nbits >= 48 {
+      put48(w.w.out, bits)
+      bits = bits.shr_logical(48)
+      nbits -= 48
+    }
     let el = LENGTH_EXTRA[lc]
     if el > 0 {
-      w.w.write_bits(length - LENGTH_BASE[lc], el)
+      bits = bits | ((length - LENGTH_BASE[lc]) << nbits)
+      nbits += el
+      if nbits >= 48 {
+        put48(w.w.out, bits)
+        bits = bits.shr_logical(48)
+        nbits -= 48
+      }
     }
     let offset = t & 4194303
-    let oc = offset_code(offset)
-    w.w.write_bits(off.code[oc], off.len[oc])
+    // offset_code, inline
+    let oc = if offset < 256 { OFFSET_CODES[offset] } else if offset >> 7 < 256 { OFFSET_CODES[offset >> 7] + 14 } else { OFFSET_CODES[offset >> 14] + 28 }
+    bits = bits | (off.code[oc] << nbits)
+    nbits += off.len[oc]
+    if nbits >= 48 {
+      put48(w.w.out, bits)
+      bits = bits.shr_logical(48)
+      nbits -= 48
+    }
     let eo = OFFSET_EXTRA[oc]
     if eo > 0 {
-      w.w.write_bits(offset - OFFSET_BASE[oc], eo)
+      bits = bits | ((offset - OFFSET_BASE[oc]) << nbits)
+      nbits += eo
+      if nbits >= 48 {
+        put48(w.w.out, bits)
+        bits = bits.shr_logical(48)
+        nbits -= 48
+      }
     }
   }
+  w.w.bits = bits
+  w.w.nbits = nbits
+}
+
+/// The low six bytes of x, least significant first.
+fn put48(var out: List[UInt8], x: Int) {
+  out.push(UInt8(x & 255))
+  out.push(UInt8((x >> 8) & 255))
+  out.push(UInt8((x >> 16) & 255))
+  out.push(UInt8((x >> 24) & 255))
+  out.push(UInt8((x >> 32) & 255))
+  out.push(UInt8((x >> 40) & 255))
 }
 
 /// writeBlock: the tokens with the smallest encoding, or the input
