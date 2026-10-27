@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A windows/amd64 edit rebuild no longer rewrites the DWARF slots of every
+  part's assembly text: the COFF parts are keyed and assembled with the
+  placeholders and the real paths patched into each object, as the Mach-O
+  parts are; the HTTP server's edit 795 to 719 ms (the .exe and .pdb byte
+  for byte the same)
 - `use go`: a Go type two bound packages use is one Xo type (decision 0392):
   `net.tcp_addr_from_addr_port` takes the `netip.AddrPort` netip makes, and
   golang.org/x/text/cases' functions take `language.Tag`, where each binding
