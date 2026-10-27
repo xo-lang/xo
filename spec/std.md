@@ -345,6 +345,12 @@ fn (var xs: List[T]) sort_in_place()         // T: Ord, stable, sorts the receiv
 fn (var xs: List[T]) sort_in_place_by[K: Ord](key: fn(T) -> K)   // stable
 ```
 
+`sort` of a `List[Int]` runs Go's pattern-defeating quicksort (the
+algorithm of `slices.Sort`), which does not keep equal elements in input
+order; equal Ints cannot be told apart, so the result is the stable sort's.
+Every other element type, `Float` included (`-0.0` and `0.0` compare
+equal), keeps the stable merge.
+
 `sort_in_place` and `sort_in_place_by` order the receiver itself and return
 nothing (decision 0374); they are stable exactly like `sort` and `sort_by`. A
 list another binding shares is copied first, the way `push` and `set` copy

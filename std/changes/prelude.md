@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-10-27: perf: List[Int].sort is Go's pdqsort
+
+- Kind: perf
+- Commit: this commit
+- Found by: Intel tester 0.33.0 (sort1M 1.64x Go on an i7; the profile put 330 of 440 ms on the merge's mispredicted branch, which isel keeps a branch because its condition is on loaded values)
+- Go reference: slices.Sort (pdqsortOrdered, slices/zsortordered.go), ported with its pivots, partial insertion, equal partition and heapsort fallback; pattern breaking draws from an LCG in Int range instead of xorshift (moves which elements swap, never the result)
+- Test: prelude_test "sort of Ints": every branch's size (0 to 20000), sorted, reversed, equal, few distinct, sawtooth and organ pipe inputs, extreme values and a near sorted list, each against sort_in_place's stable merge
+- Timing: 1M LCG Ints, best of 5: arm64 54.7 ms against Go's 56.5 (0.97; the merge 59.0); Intel i7-9750H 82 to 84 ms against Go's 67 to 69 (1.23; the merge 114 to 117)
+
+`sort` of a `List[Int]` takes this path through the same any_get check
+that sends `List[Str]` to list_sort_str; equal Ints are indistinguishable,
+so the order is the stable merge's. Float and every other type keep the
+merge (`-0.0` and `0.0` compare equal but differ).
 ## 2026-10-26: perf: Float.fma uses x86-64's FMA3 when the CPU has it (decision 0385 stage 3)
 
 - Kind: perf

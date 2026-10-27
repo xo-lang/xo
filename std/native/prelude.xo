@@ -1402,6 +1402,11 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
       return r
     }
   }
+  if let Some(is) = rt.any_get[List[Int]](rt.any_of[List[T]](xs)) {
+    if let Some(r) = rt.any_get[List[T]](rt.any_of[List[Int]](list_sort_int(is))) {
+      return r
+    }
+  }
   var a = xs
   var lo = 0
   while lo < n {
@@ -1465,6 +1470,346 @@ fn list_sort[T: Ord](xs: List[T]) -> List[T] {
     width *= 2
   }
   a
+}
+
+// ---------------------------------------------------------------------------
+// Ints: pattern-defeating quicksort, ported from Go's slices
+// zsortordered.go (pdqsortOrdered and its helpers; The Go Authors,
+// BSD-style license), which slices.Sort runs. Equal Ints cannot be told
+// apart, so an unstable sort gives the stable one's result; the merge's
+// branch on two loaded values mispredicted on random input (sort1M 1.67x
+// Go's on an i7, Intel tester 0.33.0). Pattern breaking draws from an LCG
+// in Int range where Go's xorshift wraps; it only moves which elements
+// are swapped, never the result.
+
+/// xs sorted ascending (slices.Sort).
+fn list_sort_int(xs: List[Int]) -> List[Int] {
+  var a = xs
+  let n = a.len()
+  var limit = 0
+  var m = n
+  while m > 0 {
+    limit += 1
+    m = m / 2
+  }
+  pdq_int(a, 0, n, limit)
+  a
+}
+
+fn pdq_insertion(var d: List[Int], a: Int, b: Int) {
+  var i = a + 1
+  while i < b {
+    var j = i
+    while j > a && d[j] < d[j - 1] {
+      let t1 = d[j]
+      d[j] = d[j - 1]
+      d[j - 1] = t1
+      j -= 1
+    }
+    i += 1
+  }
+}
+
+fn pdq_sift_down(var d: List[Int], lo: Int, hi: Int, first: Int) {
+  var root = lo
+  while true {
+    var child = 2 * root + 1
+    if child >= hi {
+      return
+    }
+    if child + 1 < hi && d[first + child] < d[first + child + 1] {
+      child += 1
+    }
+    if !(d[first + root] < d[first + child]) {
+      return
+    }
+    let t2 = d[first + root]
+    d[first + root] = d[first + child]
+    d[first + child] = t2
+    root = child
+  }
+}
+
+fn pdq_heap(var d: List[Int], a: Int, b: Int) {
+  let first = a
+  let hi = b - a
+  var i = (hi - 1) / 2
+  while i >= 0 {
+    pdq_sift_down(d, i, hi, first)
+    i -= 1
+  }
+  i = hi - 1
+  while i >= 0 {
+    let t3 = d[first]
+    d[first] = d[first + i]
+    d[first + i] = t3
+    pdq_sift_down(d, 0, i, first)
+    i -= 1
+  }
+}
+
+/// pdqsortOrdered: d[a..b] sorted; limit bad pivots before heapsort.
+fn pdq_int(var d: List[Int], a0: Int, b0: Int, limit0: Int) {
+  var a = a0
+  var b = b0
+  var limit = limit0
+  var was_balanced = true
+  var was_partitioned = true
+  while true {
+    let length = b - a
+    if length <= 12 {
+      pdq_insertion(d, a, b)
+      return
+    }
+    if limit == 0 {
+      pdq_heap(d, a, b)
+      return
+    }
+    if !was_balanced {
+      pdq_break_patterns(d, a, b)
+      limit -= 1
+    }
+    let (pivot0, hint0) = pdq_choose_pivot(d, a, b)
+    var pivot = pivot0
+    var hint = hint0
+    if hint == 2 {
+      pdq_reverse(d, a, b)
+      pivot = (b - 1) - (pivot - a)
+      hint = 1
+    }
+    if was_balanced && was_partitioned && hint == 1 {
+      if pdq_partial_insertion(d, a, b) {
+        return
+      }
+    }
+    if a > 0 && !(d[a - 1] < d[pivot]) {
+      a = pdq_partition_equal(d, a, b, pivot)
+      continue
+    }
+    let (mid, already) = pdq_partition(d, a, b, pivot)
+    was_partitioned = already
+    let left = mid - a
+    let right = b - mid
+    let threshold = length / 8
+    if left < right {
+      was_balanced = left >= threshold
+      pdq_int(d, a, mid, limit)
+      a = mid + 1
+    } else {
+      was_balanced = right >= threshold
+      pdq_int(d, mid + 1, b, limit)
+      b = mid
+    }
+  }
+}
+
+fn pdq_partition(var d: List[Int], a: Int, b: Int, pivot: Int) -> (Int, Bool) {
+  let t4 = d[a]
+  d[a] = d[pivot]
+  d[pivot] = t4
+  let p = d[a]
+  var i = a + 1
+  var j = b - 1
+  while i <= j && d[i] < p {
+    i += 1
+  }
+  while i <= j && !(d[j] < p) {
+    j -= 1
+  }
+  if i > j {
+    let t5 = d[j]
+    d[j] = d[a]
+    d[a] = t5
+    return (j, true)
+  }
+  let t6 = d[i]
+  d[i] = d[j]
+  d[j] = t6
+  i += 1
+  j -= 1
+  while true {
+    while i <= j && d[i] < p {
+      i += 1
+    }
+    while i <= j && !(d[j] < p) {
+      j -= 1
+    }
+    if i > j {
+      break
+    }
+    let t7 = d[i]
+    d[i] = d[j]
+    d[j] = t7
+    i += 1
+    j -= 1
+  }
+  let t8 = d[j]
+  d[j] = d[a]
+  d[a] = t8
+  (j, false)
+}
+
+fn pdq_partition_equal(var d: List[Int], a: Int, b: Int, pivot: Int) -> Int {
+  let t9 = d[a]
+  d[a] = d[pivot]
+  d[pivot] = t9
+  let p = d[a]
+  var i = a + 1
+  var j = b - 1
+  while true {
+    while i <= j && !(p < d[i]) {
+      i += 1
+    }
+    while i <= j && p < d[j] {
+      j -= 1
+    }
+    if i > j {
+      break
+    }
+    let t10 = d[i]
+    d[i] = d[j]
+    d[j] = t10
+    i += 1
+    j -= 1
+  }
+  i
+}
+
+fn pdq_partial_insertion(var d: List[Int], a: Int, b: Int) -> Bool {
+  var i = a + 1
+  for _ in 0..5 {
+    while i < b && !(d[i] < d[i - 1]) {
+      i += 1
+    }
+    if i == b {
+      return true
+    }
+    if b - a < 50 {
+      return false
+    }
+    let t11 = d[i]
+    d[i] = d[i - 1]
+    d[i - 1] = t11
+    if i - a >= 2 {
+      var j = i - 1
+      while j >= 1 {
+        if !(d[j] < d[j - 1]) {
+          break
+        }
+        let t12 = d[j]
+        d[j] = d[j - 1]
+        d[j - 1] = t12
+        j -= 1
+      }
+    }
+    if b - i >= 2 {
+      var j = i + 1
+      while j < b {
+        if !(d[j] < d[j - 1]) {
+          break
+        }
+        let t13 = d[j]
+        d[j] = d[j - 1]
+        d[j - 1] = t13
+        j += 1
+      }
+    }
+  }
+  false
+}
+
+fn pdq_break_patterns(var d: List[Int], a: Int, b: Int) {
+  let length = b - a
+  if length >= 8 {
+    var r = length % 2147483648
+    var modulus = 1
+    while modulus <= length {
+      modulus *= 2
+    }
+    var idx = a + (length / 4) * 2 - 1
+    while idx <= a + (length / 4) * 2 + 1 {
+      r = (r * 1103515245 + 12345) % 2147483648
+      var other = r % modulus
+      if other >= length {
+        other -= length
+      }
+      let t14 = d[idx]
+      d[idx] = d[a + other]
+      d[a + other] = t14
+      idx += 1
+    }
+  }
+}
+
+/// choosePivotOrdered: the pivot's index and a hint, 0 unknown, 1
+/// increasing, 2 decreasing.
+fn pdq_choose_pivot(d: List[Int], a: Int, b: Int) -> (Int, Int) {
+  let l = b - a
+  var swaps = 0
+  var i = a + l / 4
+  var j = a + l / 4 * 2
+  var k = a + l / 4 * 3
+  if l >= 8 {
+    if l >= 50 {
+      let (i2, s1) = pdq_median(d, i - 1, i, i + 1, swaps)
+      let (j2, s2) = pdq_median(d, j - 1, j, j + 1, s1)
+      let (k2, s3) = pdq_median(d, k - 1, k, k + 1, s2)
+      i = i2
+      j = j2
+      k = k2
+      swaps = s3
+    }
+    let (j3, s4) = pdq_median(d, i, j, k, swaps)
+    j = j3
+    swaps = s4
+  }
+  if swaps == 0 {
+    return (j, 1)
+  }
+  if swaps == 12 {
+    return (j, 2)
+  }
+  (j, 0)
+}
+
+/// medianOrdered: the index of the median of d[a], d[b], d[c] and the
+/// swap count.
+fn pdq_median(d: List[Int], a0: Int, b0: Int, c0: Int, swaps0: Int) -> (Int, Int) {
+  var a = a0
+  var b = b0
+  var c = c0
+  var swaps = swaps0
+  if d[b] < d[a] {
+    swaps += 1
+    let t = a
+    a = b
+    b = t
+  }
+  if d[c] < d[b] {
+    swaps += 1
+    let t = b
+    b = c
+    c = t
+  }
+  if d[b] < d[a] {
+    swaps += 1
+    let t = a
+    a = b
+    b = t
+  }
+  (b, swaps)
+}
+
+fn pdq_reverse(var d: List[Int], a: Int, b: Int) {
+  var i = a
+  var j = b - 1
+  while i < j {
+    let t15 = d[i]
+    d[i] = d[j]
+    d[j] = t15
+    i += 1
+    j -= 1
+  }
 }
 
 /// A stable sort of xs in its own array, by less (decision 0374 step 3b):

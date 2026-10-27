@@ -3471,3 +3471,67 @@ test "list_sort_in_place_by: a failing key propagates and leaves the list alone"
   expect(xs[1].tag == "b")
 }
 
+
+// list_sort's Int path: Go's pdqsort (list_sort_int), checked against
+// the stable in-place merge on the inputs its branches handle (insertion
+// below 13, ninther pivots from 50, a sorted run's partial insertion, a
+// decreasing one reversed, many duplicates partitioned by equality,
+// pattern breaking on bad pivots).
+fn pdq_case(xs: List[Int]) -> Bool {
+  var want = xs
+  want.sort_in_place()
+  xs.sort() == want
+}
+
+test "sort of Ints agrees with the stable merge on random lists of every branch's size" {
+  var r = 7
+  for n in [0, 1, 2, 3, 11, 12, 13, 49, 50, 51, 127, 1000, 20000] {
+    var xs: List[Int] = []
+    for _ in 0..n {
+      r = (r * 1103515245 + 12345) % 2147483648
+      xs.push(r % 1000003 - 500000)
+    }
+    expect(pdq_case(xs)) == true
+  }
+}
+
+test "sort of Ints: sorted, reversed, equal, few distinct, sawtooth and organ pipe" {
+  for n in [13, 50, 51, 1000, 5000] {
+    var up: List[Int] = []
+    var down: List[Int] = []
+    var same: List[Int] = []
+    var few: List[Int] = []
+    var saw: List[Int] = []
+    var pipe: List[Int] = []
+    for i in 0..n {
+      up.push(i)
+      down.push(n - i)
+      same.push(42)
+      few.push((i * 7919) % 3)
+      saw.push(i % 17)
+      pipe.push(if i < n / 2 { i } else { n - i })
+    }
+    for xs in [up, down, same, few, saw, pipe] {
+      expect(pdq_case(xs)) == true
+    }
+  }
+}
+
+test "sort of Ints: extreme values and a sorted list with a few swaps" {
+  expect([9223372036854775807, -9223372036854775807 - 1, 0, -1, 1].sort()) == [-9223372036854775807 - 1, -1, 0, 1, 9223372036854775807]
+  var xs: List[Int] = []
+  for i in 0..300 {
+    xs.push(i)
+  }
+  xs[10] = 290
+  xs[290] = 10
+  xs[150] = 0
+  expect(pdq_case(xs)) == true
+}
+
+test "sort of Ints leaves the receiver as it was" {
+  let xs = [3, 1, 2]
+  let s = xs.sort()
+  expect(xs) == [3, 1, 2]
+  expect(s) == [1, 2, 3]
+}
