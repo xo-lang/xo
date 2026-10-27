@@ -11,6 +11,8 @@ line per entry.
 | [guides/](guides/README.md) | Short guides for people coming from another language (Option and Result for Go programmers); the website copies them. |
 | [drafts/](drafts/README.md) | Unpublished drafts of posts and documents (the owner and Xo Publish decide what is published). |
 
+[maturity-gaps.md](maturity-gaps.md): what mature languages have that Xo does not yet (stability policy, registry and checksum database, security process, newcomer docs, editor support, platforms, drivers, observability, c-shared, public process), for the owner to revisit.
+
 [positioning.md](positioning.md): why Xo, its measured advantages over and alongside Go, honest costs, and precedents for languages on Go and self-hosting.
 
 The language itself is specified in [../spec/core.md](../spec/core.md). The
