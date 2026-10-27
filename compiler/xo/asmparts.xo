@@ -7,15 +7,16 @@ use github.com/xo-lang/xo/compiler/arm64
 use github.com/xo-lang/xo/compiler/macho
 use std/crypto
 
-/// The objects of the assembly files srcs (ELF when elf, else Mach-O) by
-/// compiler/macho, on up to jobs tasks, in the order of srcs.
-fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> List[Result[Bytes, Str]] {
+/// The objects of the assembly files srcs (ELF when elf, else Mach-O; a
+/// windows/amd64 COFF object when coff) by compiler/macho, on up to jobs
+/// tasks, in the order of srcs.
+fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> List[Result[Bytes, Str]] {
   let n = srcs.len()
   let w = jobs.min(n)
   if w <= 1 {
     var out: List[Result[Bytes, Str]] = []
     for s in srcs {
-      out.push(assemble_one(s, elf, amd64))
+      out.push(if coff { assemble_coff(s) } else { assemble_one(s, elf, amd64) })
     }
     return out
   }
@@ -30,7 +31,7 @@ fn macho_objects(srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> List[Res
           if i >= n {
             break
           }
-          mine.push((i, assemble_one(srcs[i], elf, amd64)))
+          mine.push((i, if coff { assemble_coff(srcs[i]) } else { assemble_one(srcs[i], elf, amd64) }))
         }
         mine
       }))
@@ -185,16 +186,18 @@ fn part_keys(prefix: Str, tags: List[Str], srcs: List[Str], jobs: Int) -> List[S
 /// of one file does not use the cache.
 /// Also the objects' keys ([] without the cache), which a tail entry
 /// records (tail_put).
-fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int, List[Str]) {
+fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int, List[Str]) {
   let dir = backend_cache_dir(os, ctx)
   if dir.is_empty() || srcs.len() < 2 {
-    return (macho_objects(srcs, elf, amd64, jobs), srcs.len(), [])
+    return (macho_objects(srcs, elf, amd64, coff, jobs), srcs.len(), [])
   }
   let id = cache_id(os)
   if id.is_empty() {
-    return (macho_objects(srcs, elf, amd64, jobs), srcs.len(), [])
+    return (macho_objects(srcs, elf, amd64, coff, jobs), srcs.len(), [])
   }
-  let keys = part_keys("xo backend v1 obj macho elf=${elf} ${id}", [], srcs, jobs)
+  // windows/amd64's COFF objects since 2026-10-27 (their own keys; the
+  // Mach-O and ELF keys as before)
+  let keys = part_keys("xo backend v1 obj macho elf=${elf}${if coff { " coff=true" } else { "" }} ${id}", [], srcs, jobs)
   var out: List[Result[Bytes, Str]] = []
   var miss: List[Int] = []
   var msrcs: List[Str] = []
@@ -212,7 +215,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
     return (out, 0, keys)
   }
   var n = 0
-  for (j, r) in macho_objects(msrcs, elf, amd64, jobs).indexed() {
+  for (j, r) in macho_objects(msrcs, elf, amd64, coff, jobs).indexed() {
     let i = miss[j]
     out[i] = r
     match r {
@@ -389,7 +392,7 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, elf
       texts.push(t)
     }
     var stored = 0
-    for (j, r) in macho_objects(texts, elf, amd64, jobs).indexed() {
+    for (j, r) in macho_objects(texts, elf, amd64, false, jobs).indexed() {
       let i = amiss[j]
       out.objs[i] = r
       // the undefined-symbol check is Mach-O's (main.xo, darwin)

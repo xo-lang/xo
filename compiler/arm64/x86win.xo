@@ -333,23 +333,44 @@ fn (g: G) win_text(text: Str) -> Str {
       to[g.sym(f.export)] = g.fname(f.name)
     }
   }
+  // a shim's own call of its function is already direct
+  win_retarget(win_retarget(text, "\tcallq ", to), "\tjmp ", to)
+}
+
+/// text with each line `op TARGET` whose TARGET is a key of to rewritten
+/// to its value; text itself (no copy) when none is. A scan for op
+/// (2026-10-27: splitting and rebuilding every part's lines was 56 ms of
+/// an HTTP server edit's windows build, the parts on one thread).
+fn win_retarget(text: Str, op: Str, to: Map[Str, Str]) -> Str {
   var out = StrBuilder.new()
-  for line in text.split("\n") {
-    var l = line
-    for op in ["\tcallq ", "\tjmp "] {
-      if l.starts_with(op) {
-        let target = l[op.len()..l.len()]
-        if let Some(t) = to.get(target) {
-          // a shim's own call of its function is already direct
-          l = "${op}${t}"
-        }
+  var last = 0
+  var pos = 0
+  var any = false
+  while pos < text.len() {
+    let k = match text[pos..text.len()].find(op) {
+      Some(k0) => pos + k0
+      None => break
+    }
+    let ls = k + op.len()
+    let le = match text[ls..text.len()].find("\n") {
+      Some(e) => ls + e
+      None => text.len()
+    }
+    if k == 0 || text[k - 1..k] == "\n" {
+      if let Some(t) = to.get(text[ls..le]) {
+        out.write(text[last..ls])
+        out.write(t)
+        last = le
+        any = true
       }
     }
-    out.write(l)
-    out.write("\n")
+    pos = le
   }
-  let s = out.freeze()
-  s[0..s.len() - 1]
+  if !any {
+    return text
+  }
+  out.write(text[last..text.len()])
+  out.freeze()
 }
 
 /// The task switch and thread locals on windows/amd64 (x86_sched_asm).

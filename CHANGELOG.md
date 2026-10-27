@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A windows/amd64 edit rebuild assembles only the parts it changed (their
+  objects kept in the back-end cache, the rest assembled on parallel tasks as
+  on darwin and linux): the HTTP server's body edit 2783 to 1179 ms, llvm-fib's
+  917 to 560 ms
 - AES-GCM on amd64 is about 3.4 times faster: eight blocks a round with AES-NI
   and PCLMULQDQ, as Go's assembly does (16 KiB records on an i7-9750H: sealing
   1.09 and opening 1.02 times Go's time, from 3.67 and 3.49); an AES key's setup

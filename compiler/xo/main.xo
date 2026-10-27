@@ -1601,11 +1601,19 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       if o.assembler != "cc" {
         // Xo's COFF writer (compiler/macho coff.xo, decision 0254 6b
         // step 3), the objects llvm-mc writes; --as=cc for clang's
+        // on parallel tasks through the back-end cache's objects, as the
+        // Mach-O and ELF parts (an edit's other parts not assembled again;
+        // the texts with their real paths, which the objects carry)
         let texts = if p.parts.len() > 1 { p.parts } else { [code] }
+        var real: List[Str] = []
+        for txt in texts {
+          real.push(dw_real(gm, txt))
+        }
+        let (assembled, nasm, _okeys) = cached_macho_objects(os, ctx, real, false, true, true, jobs)
         var objs: List[Str] = []
-        for (i, txt) in texts.indexed() {
+        for (i, r) in assembled.indexed() {
           let obj = if texts.len() > 1 { "${dir}/prog-${tgoos}.${i}.obj" } else { "${dir}/prog-${tgoos}.obj" }
-          match assemble_coff(dw_real(gm, txt)) {
+          match r {
             Ok(b) => write_or_fail(os, dir, obj, b)
             Err(e) => fail(os, "assembler: ${e}")
           }
@@ -1613,6 +1621,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
         wsrcs = objs
         t = lap(os, phases, "assemble", t)
+        cache_note(os, phases, "objects", texts.len() - nasm, texts.len())
       }
       write_or_fail(os, dir_name(wbin), "", b"")
       if nolibc(os, o, c, tgoos) {
@@ -1737,7 +1746,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           okeys = r.okeys
         }
         None => {
-          let (a, n, ok) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", jobs)
+          let (a, n, ok) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", false, jobs)
           assembled = a
           nasm = n
           okeys = ok
