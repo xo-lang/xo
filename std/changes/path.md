@@ -9,12 +9,13 @@
 - Test: internal/stdtest/testdata/corpus/path (go, arm64, LLVM); twincheck bench/perf/path agrees on clean, join, parts, match
 - Timing: bench/perf/path, quiet --ab, 15 rounds: match against the parent 0.623 (cycles 0.543), against Go's 0.998; parts 1.02 against the parent, 1.53 against Go's (unchanged within noise); clean 1.15, join 1.17
 
-Go reslices the pattern and the name at every step; a Bytes slice copies,
-so the port now carries offsets (get_esc, match_chunk and scan_chunk take
+Go reslices the pattern and the name at every step; each Xo slice is a
+view (decision 0330) but pays a range check, a count and a drop, so the
+port now carries offsets (get_esc, match_chunk and scan_chunk take
 and return positions) and is_match makes no copy at all. base finds its
 end and start by index and cuts once, where it cut a copy per trailing
-slash. parts stays over Go: split, dir, base and ext each return a new
-Str, where Go's substrings share the path's bytes.
+slash. parts stays over Go: its profile is clean (dir calls it), whose
+copy buffer is a List[UInt8] pushed a byte at a time, and the slice checks.
 
 ## 2026-10-23: feature: split, is_abs and is_match, and a generated corpus
 

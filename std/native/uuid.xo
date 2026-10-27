@@ -3,30 +3,17 @@
 // THIRD_PARTY_NOTICES): Parse's accepted forms and error texts, NewRandom
 // and NewV7's bit layouts (v7 without google/uuid's process wide counter:
 // random bits after the millisecond, no package state).
+use std/internal
 use std/uuid
 
 fn uuiderr_display(e: uuid.UuidErr) -> Str { e.msg }
 
 fn fail(msg: Str) -> uuid.UuidErr { uuid.UuidErr{msg: msg} }
 
-/// The lowercase hex digit of v (0 to 15).
-fn hex_digit(v: Int) -> UInt8 { UInt8(if v < 10 { 48 + v } else { 87 + v }) }
-
-/// The canonical text of 16 bytes, written once (google/uuid's
-/// encodeHex; 2026-10-26: to_hex, five slices and an interpolation made
-/// from_bytes and bytes() 9.7x Go's time).
-fn text_of(b: Bytes) -> uuid.Uuid {
-  var o = BytesBuilder.with_capacity(36)
-  for i in 0..16 {
-    if i == 4 || i == 6 || i == 8 || i == 10 {
-      o.write_byte(45)
-    }
-    let x = Int(b[i])
-    o.write_byte(hex_digit(x >> 4))
-    o.write_byte(hex_digit(x & 15))
-  }
-  uuid.Uuid(o.freeze().to_str() ?? "")
-}
+/// The canonical text of 16 bytes: std/internal's uuid_text, stores into
+/// one buffer natively (2026-10-26: a builder a character at a time ran
+/// from_bytes and bytes() at 7.1x google/uuid's time).
+fn text_of(b: Bytes) -> uuid.Uuid { uuid.Uuid(internal.uuid_text(b)) }
 
 fn with_bits(b: Bytes, version: Int) -> Bytes {
   var out = BytesBuilder.with_capacity(16)
@@ -56,12 +43,6 @@ fn v7(r: Rand, c: Clock) -> uuid.Uuid uses (rand, clock) {
   text_of(with_bits(b.freeze(), 7))
 }
 
-fn xtob(a: UInt8, b: UInt8) -> Int {
-  let hi = hex_val(a)
-  let lo = hex_val(b)
-  if hi < 0 || lo < 0 { -1 } else { hi * 16 + lo }
-}
-
 fn hex_val(c: UInt8) -> Int {
   if c >= 48 && c <= 57 { return Int(c) - 48 }
   if c >= 97 && c <= 102 { return Int(c) - 87 }
@@ -84,20 +65,8 @@ fn urn_at(s: Bytes, off: Int) -> Bool {
   true
 }
 
-/// The lowercase form of the hex digit c, or 0 when c is not one.
-fn lower_hex(c: UInt8) -> UInt8 {
-  if c >= 48 && c <= 57 || c >= 97 && c <= 102 {
-    return c
-  }
-  if c >= 65 && c <= 70 {
-    return c + 32
-  }
-  0
-}
-
-/// google/uuid's Parse. The canonical text is written straight from the
-/// input's digits (lowercased), with offsets into it rather than slices,
-/// which copy (2026-10-26: parse ran at 2.8x Go's time).
+/// google/uuid's Parse: the text decoded by position (internal.uuid_decode)
+/// and written back canonical.
 fn parse(s0: Str) -> uuid.Uuid ! uuid.UuidErr {
   let s = s0.bytes()
   var off = 0
@@ -112,41 +81,14 @@ fn parse(s0: Str) -> uuid.Uuid ! uuid.UuidErr {
     // google/uuid takes the 36 characters after the first without
     // checking the braces
     38 => off = 1
-    32 => return parse_hex(s)
+    32 => {
+      let b = internal.uuid_decode(s, 0, false) ?? return Err(fail("invalid UUID format"))
+      return Ok(text_of(b))
+    }
     n => return Err(fail("invalid UUID length: ${n}"))
   }
-  if s[off + 8] != 45 || s[off + 13] != 45 || s[off + 18] != 45 || s[off + 23] != 45 {
-    return Err(fail("invalid UUID format"))
-  }
-  var o = BytesBuilder.with_capacity(36)
-  for k in 0..36 {
-    if k == 8 || k == 13 || k == 18 || k == 23 {
-      o.write_byte(45)
-      continue
-    }
-    let c = lower_hex(s[off + k])
-    if c == 0 {
-      return Err(fail("invalid UUID format"))
-    }
-    o.write_byte(c)
-  }
-  Ok(uuid.Uuid(o.freeze().to_str() ?? ""))
-}
-
-/// 32 hex digits without dashes.
-fn parse_hex(s: Bytes) -> uuid.Uuid ! uuid.UuidErr {
-  var o = BytesBuilder.with_capacity(36)
-  for k in 0..32 {
-    if k == 8 || k == 12 || k == 16 || k == 20 {
-      o.write_byte(45)
-    }
-    let c = lower_hex(s[k])
-    if c == 0 {
-      return Err(fail("invalid UUID format"))
-    }
-    o.write_byte(c)
-  }
-  Ok(uuid.Uuid(o.freeze().to_str() ?? ""))
+  let b = internal.uuid_decode(s, off, true) ?? return Err(fail("invalid UUID format"))
+  Ok(text_of(b))
 }
 
 fn from_bytes(b: Bytes) -> uuid.Uuid ! uuid.UuidErr {
@@ -158,25 +100,8 @@ fn from_bytes(b: Bytes) -> uuid.Uuid ! uuid.UuidErr {
 
 fn nil() -> uuid.Uuid { uuid.Uuid("00000000-0000-0000-0000-000000000000") }
 
-/// The 16 bytes of the canonical text, decoded in place (it was a
-/// replace, then from_hex).
-fn uuid_bytes(u: uuid.Uuid) -> Bytes {
-  let t = u.0.bytes()
-  if t.len() != 36 {
-    return b""
-  }
-  var o = BytesBuilder.with_capacity(16)
-  var k = 0
-  while k < 36 {
-    if k == 8 || k == 13 || k == 18 || k == 23 {
-      k += 1
-      continue
-    }
-    o.write_byte(UInt8(xtob(t[k], t[k + 1])))
-    k += 2
-  }
-  o.freeze()
-}
+/// The 16 bytes of the canonical text (internal.uuid_decode).
+fn uuid_bytes(u: uuid.Uuid) -> Bytes { internal.uuid_decode(u.0.bytes(), 0, true) ?? b"" }
 
 fn uuid_version(u: uuid.Uuid) -> Int { hex_val(u.0.bytes()[14]) }
 

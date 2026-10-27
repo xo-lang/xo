@@ -88,9 +88,11 @@ twin, B the Xo program:
 | path clean | 9.97 ms | 11.45 ms | 1.148 | 1.467 |
 | path join | 20.88 ms | 24.33 ms | 1.165 | 1.349 |
 
-match is at Go's time. parts is still over the bar: each of split, dir, base and ext returns a new Str (a Str
-slice copies; Go's substrings share the bytes), so what is left is allocation, not the algorithm; it needs
-substring views that do not allocate, a runtime change rather than a std port.
+match is at Go's time. parts is still over the bar. (Corrected the same evening: a Str slice is a view since
+decision 0330, not a copy.) An XO_PROF=cpu profile of parts, 100x the passes, 109 samples: path.clean 54%
+cumulative (dir calls it, as Go's Dir does), of which path.Lazy.append 22% (its copy buffer, a List[UInt8]
+pushed a byte at a time) and the loop 28%; prelude.llrt_str_slice_chk 16.5% (each view's range and UTF-8
+boundary check); drop Str 7%. The next step is clean's buffer, written in runs rather than bytes.
 
 ## uuid, base32, mime (same day, Xo Lang 2)
 
@@ -115,7 +117,11 @@ mime.md, 2026-10-26):
 | mime ext (8 extensions) | 5.453 | 0.760 | a match generated from the table |
 | mime detect (7 headers) | 8.256 | 1.216 | constant signatures, offsets instead of slices |
 
+Then (2026-10-27, std/changes/uuid.md: std/internal's uuid_text and uuid_decode, table driven): uuid bytes
+7.141 to 4.241, parse 1.529 to 1.230, string 0.347, none 0.878; what is left of bytes is its allocations (the
+16 bytes, the Result, the text), where google/uuid copies into a value array.
+
 Still over the 1.2x bar: uuid parse and bytes (the representation: a Uuid is its canonical text, and each
 character is a write call; a native word writer, as base64's to_base64, is the next step), mime format (1.23)
-and detect (1.22, at the edge), path parts (1.53, the substring allocations above).
+and detect (1.22, at the edge), path parts (1.53, clean's byte at a time buffer and the slice checks above).
 

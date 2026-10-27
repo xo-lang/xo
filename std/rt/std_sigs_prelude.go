@@ -6,6 +6,19 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
+	_ func(*Task, Fs, string) Result[Internal_SharedLock, FsErr]    = Internal_lock_shared
+	_ func(*Internal_SharedLock, *Task)                             = (*Internal_SharedLock).M_unlock
+	_ func(*Task, Fs, string) Result[List[string], FsErr]           = Internal_dir_names
+	_ func(*Task, Bytes) Bytes                                      = Internal_lz4_compress
+	_ func(*Task, Bytes, int64, int64) Option[Bytes]                = Internal_lz4_decompress
+	_ func(*Task, Bytes) string                                     = Internal_uuid_text
+	_ func(*Task, Bytes, int64, bool) Option[Bytes]                 = Internal_uuid_decode
+	_ func(*Task, string, Bytes, Bytes, Bytes, Bytes) Bytes         = Internal_crypto_op
+	_ func(*Task, List[int64], int64, int64)                        = Internal_list_swap_at
+	_ func(*Task, List[int64], List[int64], List[int64])            = Internal_list_swap_both
+	_ func(*Task, string, int64, int64, int64, int64) int64         = Internal_rt_probe
+	_ func(*Task) int64                                             = Internal_rt_queued
+	_ func(*Task) int64                                             = Internal_rt_allocs
 	_ func(*Task, string) Option[int64]                             = Int_parse
 	_ func(*Task, string, int64) Option[int64]                      = Int_parse_base
 	_ func(*Task, int64, int64) string                              = Int_to_str_base

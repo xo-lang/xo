@@ -39,6 +39,15 @@ fn lz4_compress(src: Bytes) -> Bytes
 /// leaves the buffers.
 fn lz4_decompress(src: Bytes, start: Int, n: Int) -> Bytes?
 
+/// std/uuid's canonical text of 16 bytes (xxxxxxxx-xxxx-xxxx-xxxx-
+/// xxxxxxxxxxxx, lowercase); "" when b is not 16 bytes.
+fn uuid_text(b: Bytes) -> Str
+
+/// The 16 bytes of a UUID's text in s from off: 36 characters with dashes
+/// (dashed), else 32 hex digits, either case; None when a dash or digit is
+/// out of place or s is short.
+fn uuid_decode(s: Bytes, off: Int, dashed: Bool) -> Bytes?
+
 /// A primitive of the native TLS stack's (work item B31, decision 0202)
 /// for the golden tests that diff it against Go's crypto (std/rt's
 /// internal_crypto.go): op is "area.what", a to d its inputs (unused ones

@@ -581,7 +581,8 @@ const SIGS: List[Sig] = [
 
 fn is_ws(b: UInt8) -> Bool { b == 9 || b == 10 || b == 12 || b == 13 || b == 32 }
 
-/// Whether data starts with p, compared in place (a slice copies).
+/// Whether data starts with p, compared in place (no slice: a view pays a
+/// range check, a count and a drop).
 fn has_prefix(data: Bytes, p: Bytes) -> Bool {
   if data.len() < p.len() {
     return false
@@ -597,7 +598,8 @@ fn has_prefix(data: Bytes, p: Bytes) -> Bool {
 fn sig_match(s: Sig, data: Bytes, first: Int) -> Str {
   match s {
     Html(h) => {
-      // data from first, by offset (a slice copied the data per pattern)
+      // data from first, by offset (a view per pattern paid its checks,
+      // count and drop)
       if data.len() - first < h.len() + 1 {
         return ""
       }

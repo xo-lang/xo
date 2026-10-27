@@ -195,3 +195,86 @@ func Internal_lz4_decompress(_ *Task, src Bytes, start, n int64) Option[Bytes] {
 	}
 	return Some(Bytes(d))
 }
+
+// Internal_uuid_text is `internal.uuid_text(b)`: std/uuid's canonical text
+// of 16 bytes (google/uuid's encodeHex), "" when b is not 16 bytes.
+func Internal_uuid_text(_ *Task, b Bytes) string {
+	if len(b) != 16 {
+		return ""
+	}
+	const hexd = "0123456789abcdef"
+	var out [36]byte
+	o := 0
+	for i := 0; i < 16; i++ {
+		if i == 4 || i == 6 || i == 8 || i == 10 {
+			out[o] = '-'
+			o++
+		}
+		out[o] = hexd[b[i]>>4]
+		out[o+1] = hexd[b[i]&15]
+		o += 2
+	}
+	return string(out[:])
+}
+
+func unhexAny(c byte) int {
+	switch {
+	case c >= '0' && c <= '9':
+		return int(c - '0')
+	case c >= 'a' && c <= 'f':
+		return int(c-'a') + 10
+	case c >= 'A' && c <= 'F':
+		return int(c-'A') + 10
+	}
+	return -1
+}
+
+// Internal_uuid_decode is `internal.uuid_decode(s, off, dashed)`: the 16
+// bytes of a UUID's text from off, None when it is malformed or short.
+func Internal_uuid_decode(_ *Task, s Bytes, off int64, dashed bool) Option[Bytes] {
+	n := int64(32)
+	if dashed {
+		n = 36
+	}
+	if off < 0 || int64(len(s))-off < n {
+		return None[Bytes]()
+	}
+	t := s[off:]
+	if dashed && (t[8] != '-' || t[13] != '-' || t[18] != '-' || t[23] != '-') {
+		return None[Bytes]()
+	}
+	var out [16]byte
+	k := 0
+	for i := 0; i < 16; i++ {
+		if dashed && (i == 4 || i == 6 || i == 8 || i == 10) {
+			k++
+		}
+		hi, lo := unhexAny(t[k]), unhexAny(t[k+1])
+		if hi < 0 || lo < 0 {
+			return None[Bytes]()
+		}
+		out[i] = byte(hi<<4 | lo)
+		k += 2
+	}
+	return Some(Bytes(out[:]))
+}
+
+// Internal_list_swap_at is `internal.list_swap_at(xs, i, j)`, the native
+// backends' codegen probe (test/codegen/intrinsics): the swap when i is in
+// range; an index out of range faults as a list index does. The Go backend
+// has it since std/uuid imports std/internal, which puts every internal
+// function in the Go-compiled set (scripts/stdgen's std_sigs).
+func Internal_list_swap_at(_ *Task, xs List[int64], i, j int64) {
+	if i < int64(len(xs.s)) {
+		xs.s[i], xs.s[j] = xs.s[j], xs.s[i]
+	}
+}
+
+// Internal_list_swap_both is `internal.list_swap_both(xs, ys, zs)`: the
+// swap at ys's and zs's lengths when both are in range.
+func Internal_list_swap_both(_ *Task, xs, ys, zs List[int64]) {
+	i, j := len(ys.s), len(zs.s)
+	if i < len(xs.s) && j < len(xs.s) {
+		xs.s[i], xs.s[j] = xs.s[j], xs.s[i]
+	}
+}

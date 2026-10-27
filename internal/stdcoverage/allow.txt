@@ -38,6 +38,8 @@ internal.rt_probe  the runtime's probe hook, called by xo debug
 internal.rt_queued  the realtime queue depth, native backends only
 internal.rt_allocs  the realtime allocation count, native backends only
 internal.lock_shared  the shared fs lock a reader takes; no corpus opens one
+internal.uuid_text  std/uuid's hook; the uuid corpus and goldens reach it through uuid.parse, from_bytes, v4 and v7
+internal.uuid_decode  std/uuid's hook; the uuid corpus reaches it through uuid.parse and Uuid.bytes
 
 # Swap shapes a codegen pattern needs a call site for (test/codegen/intrinsics,
 # the bounds check of each index): a golden cannot call them, because a golden

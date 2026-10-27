@@ -184,8 +184,9 @@ fn patherr_display(e: path.PathErr) -> Str { "invalid path pattern ${e.pattern.q
 // and a non-star string; a chunk is literals, `?` and byte classes. A
 // malformed chunk is reported (`bad`) even when the match fails. Go walks
 // the pattern and the name by reslicing; here they are offsets into the
-// two Bytes, since a Bytes slice copies (2026-10-26: the slicing port ran
-// match at 1.70x Go's time, gotchas/std-port-costly-go-idioms.md).
+// two Bytes: a slice is a view (decision 0330) but pays a range check, a
+// count and a drop each (2026-10-26: the slicing port ran match at 1.70x
+// Go's time).
 
 // get_esc is Go's getEsc on p[i..end]: a possibly escaped character of a
 // byte class and the offset after it; bad when the class is malformed.

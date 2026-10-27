@@ -1,5 +1,23 @@
 # std/uuid changes
 
+## 2026-10-27: perf: the text is written and read through std/internal hooks with tables
+
+- Kind: perf
+- Commit: this commit
+- Found by: the uuid twin's bytes row (7.1x google/uuid, the worst row of the std timing audit) and its CPU profile (decoding a digit at a time through a call was 54% of bytes and of parse)
+- Go reference: google/uuid's encodeHex and xvalues table
+- Test: internal/stdtest/testdata/corpus/uuid (go, arm64, LLVM); twincheck bench/perf/uuid agrees on none, parse, string, bytes; internal/stdcoverage allow lines for the two hooks (reached through uuid)
+- Timing: bench/perf/uuid, quiet --ab, 15 rounds, Xo / Go wall: bytes 7.14 to 4.24 (0.606 of the parent), parse 1.53 to 1.23 (0.801), string 0.35, none 0.88
+
+std/internal's uuid_text (16 bytes to the canonical text) and uuid_decode
+(the text, dashed or 32 digits, to 16 bytes, None when malformed) are
+stores and loads into one buffer with a digit table and a value table
+(google/uuid's xvalues: one load a digit, one test after the loop) on the
+native backends, and Go code on the Go backend (std/rt). parse, from_bytes,
+v4, v7 and bytes() go through them. Still over Go: bytes allocates the 16
+bytes, the Result and the text, where google/uuid's FromBytes copies into a
+value array.
+
 ## 2026-10-26: perf: parse, bytes and from_bytes write and read the canonical text directly
 
 - Kind: perf

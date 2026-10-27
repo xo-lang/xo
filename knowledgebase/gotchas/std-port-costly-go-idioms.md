@@ -1,5 +1,13 @@
 # Std ports: Go's idioms that are free in Go cost in Xo
 
+Retired since: the "slicing a Str or Bytes copies" bullet below. Decision
+0330 (2026-10-22) made `s[a..b]` and `b[a..b]` views on arm64, x86 and
+LLVM (a count on the parent, no copy; wasm still copies): what a slice
+costs now is its range and UTF-8 boundary check (prelude
+llrt_str_slice_chk, 16% of path's parts profile, 2026-10-26), the count
+and the drop, so index-based loops still win in hot paths, by less. The
+other bullets stand.
+
 Observed 2026-10-21. Several native std modules ported from Go's packages
 ran 3 to 10 times slower than Go's (bench/results/json-vs-go-2026-10-21.md,
 bench/results/regexp-time-csv-vs-go-2026-10-21.md), while json, url,
@@ -26,7 +34,7 @@ Two kinds, both fixed std-side:
    - base64/base32: a small list allocated per quantum; Go uses a
      256-byte table and a four- or eight-symbol fast path.
 2. **A Go idiom that is free in Go costs in Xo:**
-   - slicing a Str or Bytes copies (Go's slices share): a port of
+   - (retired by decision 0330, see the top) slicing a Str or Bytes copies (Go's slices share): a port of
      time's nextStdChunk that sliced the layout per field got slower
      (parse 3,768 to 6,208 M); Go compares bytes by index;
    - a piece List grown one push at a time: `Str.split("")`,
