@@ -73,6 +73,38 @@ and the exit (9, less with 0382's deferred exit work): about 35 to 45 ms. The HT
 with its own code, not std's. Measuring this needs a prototype: the first step would be an oracle
 that links fib's own part against a std object made from today's parts.
 
+## Oracle measurements (2026-10-27)
+
+Oracle 1, n=8 interleaved, darwin/arm64, quiet machine, at aa91ea517 (a throwaway xo that replays a build's
+link inputs through macho_link alone: process start, the link, the exit):
+
+| Row | Median (ms) | How |
+|---|---|---|
+| xo start and exit (`xo version`) | 9.0 | measured |
+| fib's link alone (13 hollowed objects, 2.1M) | 12 (21 with start and exit) | measured |
+| the HTTP server's link alone (38 objects, 7.9M), standing in for a full std object | 42.5 (51.5 with start and exit) | measured |
+| the program's own check, SSA, passes, emit and assembly for fib's two functions | 5 to 10 | bounded from phase times (check_module 4.4 ms of CPU; assemble 2.2 for 13 objects today) |
+| a fib edit today (`xo build`, every cache warm) | 261.5 (mean 261.9) | measured |
+
+A fib edit under this decision: 9 + 42.5 + 5 to 10, about 57 to 62 ms, above the 35 to 45 estimated
+above: the link against a full std set costs about 42 ms, not the 12 of today's hollowed objects.
+That is still about 4x faster than today's 261 and under Go's 102.
+
+Oracle 2, the same harness and machine, n=8 interleaved, medians with xo's start and exit
+(8.0 alone): the HTTP link (38 objects, 7.9M) 51.5 ms; the same without the embedded DWARF
+(decision 0346) 21.5; its objects merged into one by `ld -r` (which drops DWARF; the throwaway
+linker also dropped the merged object's DWARF-mode unwind entries) 17.0. The system `ld` on the
+same inputs, as a reference linker: 36.0, with `-dead_strip` 35.5 (the objects are already
+hollowed), merged 32.0.
+
+So about 30 of oracle 1's 42.5 ms is embedding std's DWARF, not linking its code: without it a
+full std set links in about 13.5 ms (9 when std is one prelinked object). A fib edit under this
+decision would be 8 to 9 + 9 to 13.5 + 5 to 10, about 23 to 33 ms, below the 35 to 45 estimated
+above, if the edit build does not relink std's DWARF: std's DWARF kept in std's object and
+referenced from a dSYM-style debug map (as ld64's N_OSO entries do), or written once per std
+object and copied, are the options to weigh. With today's embedded DWARF the floor stays at 57
+to 62 ms.
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle
