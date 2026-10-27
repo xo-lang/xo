@@ -48,6 +48,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `xo check --no-gc` (and a native build) of a `use go` program reports one
   XO1201 per Go package and file, at its `use go` line with the count of its
   uses, instead of one per Go call (a tester's program had 45)
+- Breaking: a `uuid.Uuid` is two Ints (its 128 bits) instead of its canonical
+  text (decision 0387; deprecated in 0.33.0 as vet's XO0912). Migration: `u.0`
+  becomes `u.display()` (or `"${u}"`); `uuid.Uuid(s)` becomes `uuid.parse(s)?`;
+  a pattern `uuid.Uuid(t)` becomes a binding and `t = u.display()`; `u.0 < v.0`
+  becomes `u < v` (the bytes' order, as before). The checker names
+  `display()` on `u.0`. Against google/uuid: parse 1.18, string 1.02, bytes
+  1.75 times Go's time (from 1.23, 0.35 and 4.24).
 - A windows/amd64 build writes its PDB faster: the DWARF reader pushes each
   variable and inlined call in place instead of copying its function out and
   back, keeps its abstract origins' records in a list indexed by a map, and

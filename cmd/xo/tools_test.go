@@ -252,62 +252,6 @@ fn main(os: Os) {
 	}
 }
 
-// TestVetUuidText: XO0912 (decision 0387) flags reading or building a
-// uuid.Uuid's text directly (.0, the pattern, the constructor), once per
-// use, and not display(), parse, or another newtype's .0.
-func TestVetUuidText(t *testing.T) {
-	t.Parallel()
-	dir := writeFiles(t, map[string]string{"main.xo": `use std/uuid
-
-type Name struct(Str)
-
-fn text(u: uuid.Uuid) -> Str {
-  let uuid.Uuid(s) = u
-  s
-}
-
-fn main(os: Os) {
-  let u = uuid.nil()
-  let n = Name("a")
-  let w = uuid.Uuid("00000000-0000-0000-0000-000000000000")
-  match uuid.parse(u.display()) {
-    Ok(uuid.Uuid(t)) => os.stdio.println(t)
-    Err(_) => {}
-  }
-  os.stdio.println("${u.0} ${n.0} ${text(w)} ${u}")
-}
-`})
-	var out, errOut bytes.Buffer
-	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
-		t.Fatalf("exit %d: %s", code, errOut.String())
-	}
-	var res struct {
-		Diagnostics []struct {
-			Code string `json:"code"`
-			Span struct {
-				Line int `json:"line"`
-			} `json:"span"`
-		} `json:"diagnostics"`
-		CheckErrors int `json:"check_errors"`
-	}
-	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
-		t.Fatalf("bad JSON: %v\n%s", err, out.String())
-	}
-	var lines []int
-	for _, d := range res.Diagnostics {
-		if d.Code == "XO0912" {
-			lines = append(lines, d.Span.Line)
-		}
-	}
-	sort.Ints(lines)
-	if res.CheckErrors != 0 {
-		t.Errorf("check errors: %d\n%s", res.CheckErrors, out.String())
-	}
-	if fmt.Sprint(lines) != "[6 13 15 18]" {
-		t.Errorf("XO0912 at lines %v, want [6 13 15 18]\n%s", lines, out.String())
-	}
-}
-
 // copyStoreProg has the shape of decision 0266, a copy changed and
 // stored back (XO0532, line 4), and three that are not: a store with
 // another statement between, a copy that is only read, and the update

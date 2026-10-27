@@ -11,8 +11,10 @@ var (
 	_ func(*Task, Fs, string) Result[List[string], FsErr]           = Internal_dir_names
 	_ func(*Task, Bytes) Bytes                                      = Internal_lz4_compress
 	_ func(*Task, Bytes, int64, int64) Option[Bytes]                = Internal_lz4_decompress
-	_ func(*Task, Bytes) string                                     = Internal_uuid_text
-	_ func(*Task, Bytes, int64, bool) Option[Bytes]                 = Internal_uuid_decode
+	_ func(*Task, Bytes, int64, bool, int64) Option[int64]          = Internal_uuid_half
+	_ func(*Task, int64, int64) string                              = Internal_uuid_text_words
+	_ func(*Task, int64, int64) Bytes                               = Internal_uuid_bytes_words
+	_ func(*Task, Bytes, int64) int64                               = Internal_uuid_word
 	_ func(*Task, string, Bytes, Bytes, Bytes, Bytes) Bytes         = Internal_crypto_op
 	_ func(*Task, List[int64], int64, int64)                        = Internal_list_swap_at
 	_ func(*Task, List[int64], List[int64], List[int64])            = Internal_list_swap_both

@@ -1,0 +1,14 @@
+// A uuid.Uuid is two Ints since 0.34.0 (decision 0387): its text, which
+// 0.33.0 deprecated reading with `.0`, the pattern and the constructor
+// (XO0912), is `u.display()`; each of those names the way now.
+use std/uuid
+
+fn main(os: Os) uses stdio {
+  let u = uuid.nil()
+  let t = u.0 // ERROR XO0601 "a Uuid is two Ints since 0.34.0, and `u.display"
+  let w = uuid.Uuid("00000000-0000-0000-0000-000000000000") // ERROR XO0407 "`uuid.Uuid` is a type and cannot be called"
+  match u {
+    uuid.Uuid(s) => os.stdio.println(s) // ERROR XO0302 "a Uuid is two Ints since 0.34.0"
+  }
+  os.stdio.println("${t} ${w} ${u.display()} ${u.bytes().len()}")
+}

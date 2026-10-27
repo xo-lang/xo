@@ -10,44 +10,33 @@ fn uuiderr_display(e: uuid.UuidErr) -> Str { e.msg }
 
 fn fail(msg: Str) -> uuid.UuidErr { uuid.UuidErr{msg: msg} }
 
-/// The canonical text of 16 bytes: std/internal's uuid_text, stores into
-/// one buffer natively (2026-10-26: a builder a character at a time ran
-/// from_bytes and bytes() at 7.1x google/uuid's time).
-fn text_of(b: Bytes) -> uuid.Uuid { uuid.Uuid(internal.uuid_text(b)) }
+/// The top bit of a word: flipped in a Uuid's stored words so that their
+/// signed order is the bytes' order.
+const TOP: Int = -9223372036854775807 - 1
 
-fn with_bits(b: Bytes, version: Int) -> Bytes {
-  var out = BytesBuilder.with_capacity(16)
-  for i in 0..16 {
-    var x = Int(b[i])
-    if i == 6 {
-      x = (x & 0x0f) | (version << 4)
-    }
-    if i == 8 {
-      // the RFC 9562 variant: 10xx
-      x = (x & 0x3f) | 0x80
-    }
-    out.write_byte(UInt8(x))
-  }
-  out.freeze()
+/// The Uuid of the words hi and lo (the bytes, the first highest).
+fn of_words(hi: Int, lo: Int) -> uuid.Uuid { uuid.Uuid{hi: hi ^ TOP, lo: lo ^ TOP} }
+
+/// The word of b[i..i + 8], the first byte highest (one load natively).
+fn word_of(b: Bytes, i: Int) -> Int { internal.uuid_word(b, i) }
+
+/// The version and the RFC 9562 variant (10xx) set in the words.
+fn with_bits(hi: Int, lo: Int, version: Int) -> uuid.Uuid {
+  let h = (hi & -61441) | (version << 12)
+  let l = (lo & 4611686018427387903) | TOP
+  of_words(h, l)
 }
 
-fn v4(r: Rand) -> uuid.Uuid uses rand { text_of(with_bits(r.bytes(16), 4)) }
+fn v4(r: Rand) -> uuid.Uuid uses rand {
+  let b = r.bytes(16)
+  with_bits(word_of(b, 0), word_of(b, 8), 4)
+}
 
 fn v7(r: Rand, c: Clock) -> uuid.Uuid uses (rand, clock) {
   let ms = c.now().unix_millis()
-  var b = BytesBuilder.with_capacity(16)
-  for k in 0..6 {
-    b.write_byte(UInt8((ms >> (40 - 8 * k)) & 255))
-  }
-  b.write(r.bytes(10))
-  text_of(with_bits(b.freeze(), 7))
-}
-
-fn hex_val(c: UInt8) -> Int {
-  if c >= 48 && c <= 57 { return Int(c) - 48 }
-  if c >= 97 && c <= 102 { return Int(c) - 87 }
-  if c >= 65 && c <= 70 { return Int(c) - 55 }
-  -1
+  let b = r.bytes(10)
+  let hi = ms.wrapping_shl(16) | (Int(b[0]) << 8) | Int(b[1])
+  with_bits(hi, word_of(b, 2), 7)
 }
 
 /// Whether s[off..off + 9] is "urn:uuid:" in any case.
@@ -65,8 +54,14 @@ fn urn_at(s: Bytes, off: Int) -> Bool {
   true
 }
 
-/// google/uuid's Parse: the text decoded by position (internal.uuid_decode)
-/// and written back canonical.
+/// The Uuid of the text in s from off (internal.uuid_half), or the error.
+fn decode(s: Bytes, off: Int, dashed: Bool) -> uuid.Uuid ! uuid.UuidErr {
+  let hi = internal.uuid_half(s, off, dashed, 0) ?? return Err(fail("invalid UUID format"))
+  let lo = internal.uuid_half(s, off, dashed, 1) ?? return Err(fail("invalid UUID format"))
+  Ok(of_words(hi, lo))
+}
+
+/// google/uuid's Parse: the text decoded by position.
 fn parse(s0: Str) -> uuid.Uuid ! uuid.UuidErr {
   let s = s0.bytes()
   var off = 0
@@ -81,28 +76,25 @@ fn parse(s0: Str) -> uuid.Uuid ! uuid.UuidErr {
     // google/uuid takes the 36 characters after the first without
     // checking the braces
     38 => off = 1
-    32 => {
-      let b = internal.uuid_decode(s, 0, false) ?? return Err(fail("invalid UUID format"))
-      return Ok(text_of(b))
-    }
+    32 => return decode(s, 0, false)
     n => return Err(fail("invalid UUID length: ${n}"))
   }
-  let b = internal.uuid_decode(s, off, true) ?? return Err(fail("invalid UUID format"))
-  Ok(text_of(b))
+  decode(s, off, true)
 }
 
 fn from_bytes(b: Bytes) -> uuid.Uuid ! uuid.UuidErr {
   if b.len() != 16 {
     return Err(fail("invalid UUID (got ${b.len()} bytes)"))
   }
-  text_of(b)
+  of_words(word_of(b, 0), word_of(b, 8))
 }
 
-fn nil() -> uuid.Uuid { uuid.Uuid("00000000-0000-0000-0000-000000000000") }
+fn nil() -> uuid.Uuid { of_words(0, 0) }
 
-/// The 16 bytes of the canonical text (internal.uuid_decode).
-fn uuid_bytes(u: uuid.Uuid) -> Bytes { internal.uuid_decode(u.0.bytes(), 0, true) ?? b"" }
+fn uuid_bytes(u: uuid.Uuid) -> Bytes { internal.uuid_bytes_words(u.hi ^ TOP, u.lo ^ TOP) }
 
-fn uuid_version(u: uuid.Uuid) -> Int { hex_val(u.0.bytes()[14]) }
+fn uuid_version(u: uuid.Uuid) -> Int { ((u.hi ^ TOP) >> 12) & 15 }
 
-fn uuid_display(u: uuid.Uuid) -> Str { u.0 }
+fn uuid_display(u: uuid.Uuid) -> Str { internal.uuid_text_words(u.hi ^ TOP, u.lo ^ TOP) }
+
+fn uuid_debug(u: uuid.Uuid) -> Str { "Uuid(${uuid_display(u).quote()})" }

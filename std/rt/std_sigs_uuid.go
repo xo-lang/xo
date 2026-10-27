@@ -8,4 +8,5 @@ package rt
 var (
 	_ func(*Uuid_UuidErr, *Task) string = (*Uuid_UuidErr).M_display
 	_ func(*Uuid_Uuid, *Task) string    = (*Uuid_Uuid).M_display
+	_ func(*Uuid_Uuid, *Task) string    = (*Uuid_Uuid).M_debug
 )

@@ -97,7 +97,7 @@ func TestOutsideBytesValidated(t *testing.T) {
 		"std/native/llrt/netconn.xo": 1,
 		"std/native/llrt/raw.xo":     2, // the conversion helpers themselves
 		"std/native/llrt/scan.xo":    1, // text_of: validates
-		"std/native/internal.xo":     1, // uuid_text: 36 ASCII bytes it wrote itself (hex digits and dashes)
+		"std/native/internal.xo":     1, // uuid_text_words: 36 ASCII bytes it wrote itself (hex digits and dashes)
 	}
 	files, _ := filepath.Glob(filepath.Join(root, "std/native/*.xo"))
 	more, _ := filepath.Glob(filepath.Join(root, "std/native/llrt/*.xo"))

@@ -196,9 +196,9 @@ func Internal_lz4_decompress(_ *Task, src Bytes, start, n int64) Option[Bytes] {
 	return Some(Bytes(d))
 }
 
-// Internal_uuid_text is `internal.uuid_text(b)`: std/uuid's canonical text
+// uuidText is std/uuid's canonical text
 // of 16 bytes (google/uuid's encodeHex), "" when b is not 16 bytes.
-func Internal_uuid_text(_ *Task, b Bytes) string {
+func uuidText(b Bytes) string {
 	if len(b) != 16 {
 		return ""
 	}
@@ -229,9 +229,9 @@ func unhexAny(c byte) int {
 	return -1
 }
 
-// Internal_uuid_decode is `internal.uuid_decode(s, off, dashed)`: the 16
+// uuidDecode is the 16
 // bytes of a UUID's text from off, None when it is malformed or short.
-func Internal_uuid_decode(_ *Task, s Bytes, off int64, dashed bool) Option[Bytes] {
+func uuidDecode(s Bytes, off int64, dashed bool) Option[Bytes] {
 	n := int64(32)
 	if dashed {
 		n = 36
@@ -277,4 +277,40 @@ func Internal_list_swap_both(_ *Task, xs, ys, zs List[int64]) {
 	if i < len(xs.s) && j < len(xs.s) {
 		xs.s[i], xs.s[j] = xs.s[j], xs.s[i]
 	}
+}
+
+// Internal_uuid_half is `internal.uuid_half(s, off, dashed, half)`: the
+// first (half 0) or last (half 1) 8 bytes of a UUID's text as a word, the
+// first byte highest; None as uuidDecode.
+func Internal_uuid_half(t *Task, s Bytes, off int64, dashed bool, half int64) Option[int64] {
+	b := uuidDecode(s, off, dashed)
+	if !b.Some {
+		return None[int64]()
+	}
+	var w uint64
+	for i := half * 8; i < half*8+8; i++ {
+		w = w<<8 | uint64(b.V[i])
+	}
+	return Some(int64(w))
+}
+
+// Internal_uuid_text_words is `internal.uuid_text_words(hi, lo)`: the
+// canonical text of the UUID whose bytes are hi then lo, big endian.
+func Internal_uuid_text_words(t *Task, hi, lo int64) string {
+	return uuidText(Internal_uuid_bytes_words(t, hi, lo))
+}
+
+// Internal_uuid_word is `internal.uuid_word(b, i)`: b[i:i+8] big endian.
+func Internal_uuid_word(_ *Task, b Bytes, i int64) int64 {
+	return int64(binary.BigEndian.Uint64([]byte(b[i : i+8])))
+}
+
+// Internal_uuid_bytes_words is `internal.uuid_bytes_words(hi, lo)`.
+func Internal_uuid_bytes_words(_ *Task, hi, lo int64) Bytes {
+	var b [16]byte
+	for i := 0; i < 8; i++ {
+		b[i] = byte(uint64(hi) >> (56 - 8*i))
+		b[8+i] = byte(uint64(lo) >> (56 - 8*i))
+	}
+	return Bytes(b[:])
 }

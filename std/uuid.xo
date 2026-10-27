@@ -1,14 +1,20 @@
 // std/uuid (spec/std.md 24, decision 0282). Declaration file; encoding
 // rules are listed at the top of std/prelude.xo. RFC 9562 UUIDs, following
 // github.com/google/uuid: random (v4) and time ordered (v7) ones from the
-// Rand and Clock capabilities, and parsing. A Uuid is its canonical text
-// (lower case 8-4-4-4-12): equality, order (`u < v`, derive Ord on the
-// newtype, decision 0390), hashing, and JSON are the text's, and it reads and writes as a Postgres uuid with sql.str.
+// Rand and Clock capabilities, and parsing. A Uuid is two Ints (decision
+// 0387): equality and hashing compare two words, `u < v` orders UUIDs as
+// their bytes, and its canonical text (lower case 8-4-4-4-12) is
+// `u.display()`, which a Postgres uuid column takes with sql.str.
 
-/// A UUID: its canonical text, `u.display()`; `u < v` orders UUIDs as
-/// their bytes. `u.0`, the pattern `Uuid(p)`, and `Uuid(s)` are deprecated
-/// (XO0912, decision 0387): the next minor makes a Uuid two Ints.
-type Uuid struct(Str) derive Ord
+/// A UUID: its 16 bytes as two words. `u.display()` (or `"${u}"`) is its
+/// canonical text, `u.bytes()` its bytes, `u < v` the order of its bytes.
+struct Uuid {
+  /// the first and last 8 bytes, the first byte highest, with the top
+  /// bit flipped so that the derived order of the signed words is the
+  /// order of the bytes
+  hi: Int
+  lo: Int
+} derive Ord
 
 /// Displays as google/uuid's texts: `invalid UUID length: 35`,
 /// `invalid UUID format`, `invalid urn prefix: "urn:uid::"`.
@@ -33,3 +39,5 @@ fn nil() -> Uuid
 fn (u: Uuid) version() -> Int
 fn (u: Uuid) bytes() -> Bytes
 fn (u: Uuid) display() -> Str
+/// `Uuid("<its text>")`, as when a Uuid was its text.
+fn (u: Uuid) debug() -> Str

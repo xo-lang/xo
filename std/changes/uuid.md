@@ -1,5 +1,27 @@
 # std/uuid changes
 
+## 2026-10-27: behavior: a Uuid is two Ints (breaking)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: decision 0387 part 2 (milestone 0.34.0 criterion 3): bench/perf/uuid bytes at 4.24x google/uuid, its profile all allocation (the 36 byte text from_bytes made)
+- Go reference: github.com/google/uuid v1.6.0 (UUID is a [16]byte value; FromBytes copies, String formats)
+- Test: internal/stdtest/testdata/corpus/uuid (Parse, FromBytes, Version and String on seeded texts and bytes; go, arm64, LLVM); std/native/uuid_test.xo; goldens uuid_basic, parse_edge_formats and gen's go_uuid; twincheck bench/perf/uuid
+
+`Uuid` is `struct Uuid { hi: Int, lo: Int } derive Ord`, its 16 bytes as
+two words (private, the top bit flipped so the derived signed order is
+the bytes' order), where it was a newtype over its canonical text.
+Equality and hashing compare two words; `display()` writes the text from
+the words on each call (as google/uuid's String formats); `parse`,
+`from_bytes`, `v4` and `v7` make no text; `bytes()` writes 16 bytes from
+the words. `u.0`, the pattern `uuid.Uuid(p)` and `uuid.Uuid(s)`,
+deprecated in 0.33.0 (XO0912), are type errors now, and vet no longer
+reports XO0912. std/internal's uuid_text and uuid_decode are replaced by
+uuid_half, uuid_text_words and uuid_bytes_words. Quiet --ab, 15 rounds,
+the Go twin as A, Xo / Go wall: parse 1.181 (1.135 to 1.213), string 1.018 (0.999 to 1.061, within noise), bytes 1.749 (1.696 to 1.903), from 1.23, 0.35 and 4.24 with the text representation. bytes stays over 1.2x: what is
+left is the 16 byte allocation and free (rs_with_cap, rs_new_n, about 40%
+of its samples), where Go's allocator bumps a pointer.
+
 ## 2026-10-27: feature: a Uuid is Ord (`u < v`, sort, min, max)
 
 - Kind: feature

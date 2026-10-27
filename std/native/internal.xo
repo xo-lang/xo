@@ -685,15 +685,14 @@ const UHEX: Bytes = b"0123456789abcdef"
 /// xvalues): one load a digit (a call each ran uuid_decode at 42 ns).
 const UHEXVAL: Bytes = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x00\x01\x02\x03\x04\x05\x06\x07\x08\x09\xff\xff\xff\xff\xff\xff\xff\x0a\x0b\x0c\x0d\x0e\x0f\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\x0a\x0b\x0c\x0d\x0e\x0f\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff"
 
-/// The canonical text of the 16 bytes b, xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx
-/// (google/uuid's encodeHex); "" when b is not 16 bytes.
-pub fn uuid_text(b: Bytes) -> Str {
-  if b.len() != 16 {
-    return ""
-  }
+/// The byte i (0 to 15) of the UUID words hi and lo, the first highest.
+fn uuid_byte(hi: Int, lo: Int, i: Int) -> Int {
+  if i < 8 { hi.shr_logical(56 - 8 * i) & 255 } else { lo.shr_logical(120 - 8 * i) & 255 }
+}
+
+pub fn uuid_text_words(hi: Int, lo: Int) -> Str {
   let out = raw.bytes_buf(36)
   let d = raw.bytes_addr(out)
-  let s = raw.bytes_addr(b)
   let h = raw.bytes_addr(UHEX)
   var o = 0
   for i in 0..16 {
@@ -701,7 +700,7 @@ pub fn uuid_text(b: Bytes) -> Str {
       rt.mem_store(d, o, 45, 1)
       o += 1
     }
-    let x = rt.mem_load(s, i, 1)
+    let x = uuid_byte(hi, lo, i)
     rt.mem_store(d, o, rt.mem_load(h, x >> 4, 1), 1)
     rt.mem_store(d, o + 1, rt.mem_load(h, x & 15, 1), 1)
     o += 2
@@ -709,10 +708,25 @@ pub fn uuid_text(b: Bytes) -> Str {
   rt.cast[Bytes, Str](raw.bytes_len(out, 36))
 }
 
-/// The 16 bytes of a UUID's text in s from off: 36 characters with dashes
-/// after the 8th, 12th, 16th and 20th digit (dashed), else 32 hex digits;
-/// None when a dash or a digit is not where it should be, or s is short.
-pub fn uuid_decode(s: Bytes, off: Int, dashed: Bool) -> Bytes? {
+/// Two stores of the words with their bytes reversed (swap_bytes:
+/// rev on arm64, bswap on LLVM).
+pub fn uuid_bytes_words(hi: Int, lo: Int) -> Bytes {
+  let out = raw.bytes_buf(16)
+  let d = raw.bytes_addr(out)
+  rt.mem_store(d, 0, hi.swap_bytes(), 8)
+  rt.mem_store(d, 8, lo.swap_bytes(), 8)
+  raw.bytes_len(out, 16)
+}
+
+/// One load, its bytes reversed; a b too short for it faults.
+pub fn uuid_word(b: Bytes, i: Int) -> Int {
+  if i < 0 || i + 8 > b.len() {
+    fault("uuid_word: 8 bytes at ${i} of ${b.len()}")
+  }
+  rt.bytes_word(b, i).swap_bytes()
+}
+
+pub fn uuid_half(s: Bytes, off: Int, dashed: Bool, half: Int) -> Int? {
   let n = if dashed { 36 } else { 32 }
   if off < 0 || s.len() - off < n {
     return None
@@ -721,24 +735,25 @@ pub fn uuid_decode(s: Bytes, off: Int, dashed: Bool) -> Bytes? {
   if dashed && (rt.mem_load(a, 8, 1) != 45 || rt.mem_load(a, 13, 1) != 45 || rt.mem_load(a, 18, 1) != 45 || rt.mem_load(a, 23, 1) != 45) {
     return None
   }
-  let out = raw.bytes_buf(16)
-  let d = raw.bytes_addr(out)
   let t = raw.bytes_addr(UHEXVAL)
   var bad = 0
-  var k = 0
-  for i in 0..16 {
-    if dashed && (i == 4 || i == 6 || i == 8 || i == 10) {
+  var w = 0
+  let i0 = half * 8
+  // the text index of byte i0: two digits a byte, and the dashes before it
+  var k = 2 * i0 + (if dashed { (if i0 >= 8 { 3 } else { 0 }) } else { 0 })
+  for i in i0..i0 + 8 {
+    if dashed && (i == 4 || i == 6 || i == 10) {
       k += 1
     }
-    let hi = rt.mem_load(t, rt.mem_load(a, k, 1), 1)
-    let lo = rt.mem_load(t, rt.mem_load(a, k + 1, 1), 1)
-    // 0xff marks a non digit: one test after the loop
-    bad = bad | hi | lo
-    rt.mem_store(d, i, (hi << 4) | lo, 1)
+    let hd = rt.mem_load(t, rt.mem_load(a, k, 1), 1)
+    let ld = rt.mem_load(t, rt.mem_load(a, k + 1, 1), 1)
+    bad = bad | hd | ld
+    w = w.wrapping_shl(8) | (hd << 4) | ld
     k += 2
   }
   if bad > 15 {
     return None
   }
-  Some(raw.bytes_len(out, 16))
+  Some(w)
 }
+

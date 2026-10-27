@@ -3561,18 +3561,18 @@ pub fn detect_content_type(data: Bytes) -> Str
 Status: implemented on every backend (decision 0282, 2026-10-20),
 following github.com/google/uuid v1.6.0 (outside Go's std; RFC 9562);
 google/uuid's Parse results on its test inputs in
-`std/native/uuid_test.xo`; golden `uuid_basic`. A `Uuid` field of a
-`derive Json` struct waits for newtype JSON (a code bug against core 2.8,
-being fixed); until then store `u.display()`.
+`std/native/uuid_test.xo`; golden `uuid_basic`. A `derive Json` struct
+stores a UUID as its text, `u.display()`, and reads it back with
+`uuid.parse`.
 
-Deprecated in 0.33.0 (decision 0387): reading the text with `u.0`, the
-pattern `uuid.Uuid(p)`, and `uuid.Uuid(s)`. `xo vet` reports each as
-`XO0912`. The next minor release makes a `Uuid` two Ints (its 128 bits),
-which removes them; `u.display()`, `"${u}"`, `uuid.parse` and `u.bytes()`
-stay.
+Since 0.34.0 a `Uuid` is two Ints, its 128 bits (decision 0387; it was
+its canonical text through 0.33.0, where `u.0`, the pattern
+`uuid.Uuid(p)` and `uuid.Uuid(s)` were deprecated as `XO0912`): those
+uses are type errors now, and `u.display()`, `"${u}"`, `uuid.parse` and
+`u.bytes()` are the ways in and out.
 
 ```
-type Uuid struct(Str) derive Ord          // its canonical text, lower case 8-4-4-4-12: `u.display()`
+struct Uuid { ... } derive Ord            // 16 bytes as two Ints; its text, lower case 8-4-4-4-12: `u.display()`
 struct UuidErr { msg: Str }               // google/uuid's texts: `invalid UUID length: 35`
 
 pub fn v4(r: Rand) -> Uuid uses rand
@@ -3583,12 +3583,14 @@ pub fn nil() -> Uuid
 fn (u: Uuid) version() -> Int
 fn (u: Uuid) bytes() -> Bytes
 fn (u: Uuid) display() -> Str
+fn (u: Uuid) debug() -> Str            // Uuid("6ba7b810-9dad-11d1-80b4-00c04fd430c8")
 ```
 
-- A `Uuid` is a newtype over its canonical text, so equality, hashing,
-  and JSON (a string, core 2.8) are the text's, and `a < b` (sorting,
-  `min`, `max`; `derive Ord`, decision 0390) orders two UUIDs as their
-  texts, which is the order of their bytes. It
+- A `Uuid` is its 16 bytes as two Ints (fields not visible outside
+  std): equality and hashing compare the two words, and `a < b`
+  (sorting, `min`, `max`; `derive Ord`) orders two UUIDs as their bytes,
+  which is the order of their texts. `display()` makes the text on each
+  call, as google/uuid's String does. It
   reads and writes as a Postgres `uuid` column through
   `sql.str(u.display())` and `uuid.parse(row.str(...)?)`.
 - `v4` is 122 random bits from `r` with the version 4 and variant bits
@@ -3600,8 +3602,8 @@ fn (u: Uuid) display() -> Str
 - `parse` takes `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx`, `urn:uuid:` and
   that (prefix in any case), the 36 characters wrapped in two others (as
   google/uuid, `{...}`, without checking the braces), or 32 hex digits;
-  hex digits in either case. The result is the canonical lower case
-  text.
+  hex digits in either case; `display()` of the result is the canonical
+  lower case text.
 
 ---
 

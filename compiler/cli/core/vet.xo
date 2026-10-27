@@ -305,9 +305,6 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
           if let Some(d) = vet_call(c, f, path, e, span, fun, args) {
             out.push(d)
           }
-          if let Some(d) = uuid_make(c, m, f, path, e, span, fun) {
-            out.push(d)
-          }
           out = out + task_captures(c, f, path, e, args)
         }
         MatchExpr(span, subject, arms) => {
@@ -317,7 +314,6 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
           var pats: List[parser.Pattern] = []
           for a in arms {
             pats.push(a.pattern)
-            out = out + uuid_pats(c, m, f, path, a.pattern)
           }
           if let Some(d) = payload_share(c, f, path, subject, pats) {
             out.push(d)
@@ -330,16 +326,8 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
               out.push(d)
             }
           }
-          if let Some(p) = ie.pattern {
-            out = out + uuid_pats(c, m, f, path, p)
-          }
         }
         Block(b) => {
-          for st in b.stmts {
-            if let LetStmt(_, p, ..) = st {
-              out = out + uuid_pats(c, m, f, path, p)
-            }
-          }
           out = out + copy_store(c, f, path, b) + elem_copy_store(c, f, path, b) + stale_captures(c, f, path, b)
         }
         StringLit(s) => {
@@ -347,9 +335,6 @@ fn vet_module(c: check.Checker, m: Int) -> List[Diag] {
         }
         SelectorExpr(span, _, sel) => {
           if let Some(d) = verify_none(c, f, path, e, span, sel) {
-            out.push(d)
-          }
-          if let Some(d) = uuid_text(c, m, f, path, e, span, sel) {
             out.push(d)
           }
         }
@@ -1083,87 +1068,6 @@ fn verify_none(c: check.Checker, f: Int, file: Str, e: parser.Expr, span: parser
   var d = vdiag("XO0902", false, file, span, "`tls.Verify.None` checks no certificate: the connection is encrypted but an active attacker can stand in for the server")
   d.notes.push(check.DNote{message: "`tls.Verify.ChainOnly` checks the chain without the host name (libpq's verify-ca); `roots: tls.roots(pem)` trusts a private CA with full checks (std.md 27)"})
   Some(d)
-}
-
-/// XO0912 (decision 0387): `uuid.Uuid`'s text read or built directly,
-/// which the next minor's two Int representation removes. Not in std,
-/// where std/uuid itself reads it.
-fn uuid_text(c: check.Checker, m: Int, f: Int, file: Str, e: parser.Expr, span: parser.Span, sel: parser.Ident) -> Diag? {
-  if sel.name != b"0" || c.mods[m].is_std {
-    return None
-  }
-  let x = match e {
-    SelectorExpr(_, x, _) => x
-    _ => return None
-  }
-  if c.type_text_in(f, x) != "uuid.Uuid" {
-    return None
-  }
-  Some(uuid_diag(file, span, "`.0` reads a `uuid.Uuid`'s text", "`u.display()` (or `\"\${u}\"`) for the text, `u < v` to order"))
-}
-
-/// XO0912 on `uuid.Uuid(s)`: a UUID built from a text that was never
-/// parsed.
-fn uuid_make(c: check.Checker, m: Int, f: Int, file: Str, call: parser.Expr, span: parser.Span, fun: parser.Expr) -> Diag? {
-  if c.mods[m].is_std {
-    return None
-  }
-  let name = match fun {
-    Ident(id) => id.name
-    SelectorExpr(_, _, sel) => sel.name
-    _ => return None
-  }
-  if name != b"Uuid" || c.type_text_in(f, call) != "uuid.Uuid" {
-    return None
-  }
-  Some(uuid_diag(file, span, "`uuid.Uuid(s)` builds a `uuid.Uuid` from its text", "`uuid.parse(s)?` checks the text and gives the canonical form"))
-}
-
-/// XO0912 on each pattern `uuid.Uuid(p)` in p.
-fn uuid_pats(c: check.Checker, m: Int, f: Int, file: Str, p: parser.Pattern) -> List[Diag] {
-  var out: List[Diag] = []
-  if c.mods[m].is_std {
-    return out
-  }
-  match p {
-    VariantPat(span, _, _, fields, _) => {
-      let o = c.pat_newtype_in(f, p)
-      if o >= 0 && c.objs[o].name == b"Uuid" && c.mods[c.objs[o].module].is_std && c.mods[c.objs[o].module].path.ends_with("uuid") {
-        out.push(uuid_diag(file, span, "the pattern `uuid.Uuid(p)` reads a `uuid.Uuid`'s text", "`u.display()` for the text"))
-      }
-      for x in fields {
-        out = out + uuid_pats(c, m, f, file, x.pattern)
-      }
-    }
-    OrPat(_, alts) => {
-      for a in alts {
-        out = out + uuid_pats(c, m, f, file, a)
-      }
-    }
-    TuplePat(_, elems) => {
-      for a in elems {
-        out = out + uuid_pats(c, m, f, file, a)
-      }
-    }
-    StructPat(_, _, fields, _) => {
-      for x in fields {
-        out = out + uuid_pats(c, m, f, file, x.pattern)
-      }
-    }
-    ListPat(_, elems, _) => {
-      for a in elems {
-        out = out + uuid_pats(c, m, f, file, a)
-      }
-    }
-    _ => {}
-  }
-  out
-}
-
-fn uuid_diag(file: Str, span: parser.Span, what: Str, fix: Str) -> Diag {
-  var d = vdiag("XO0912", false, file, span, "${what}: deprecated, a `uuid.Uuid` becomes two Ints in the next minor release and its text is only `display()`")
-  d.notes.push(check.DNote{message: "${fix} (std.md 24, decision 0387)"})
-  d
 }
 
 /// XO0208 for `.ignore_err` and XO0901 for `dbg` calls.

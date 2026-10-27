@@ -107,3 +107,20 @@ uuid_text, the spec section, the goldens and the corpus.
   cheaper.
 - display allocates the text on each call (Go's String does too); code that
   prints a Uuid in a loop pays what parse saves.
+
+## Part 2 landed (2026-10-27, Xo Lang 2; milestone 0.34.0 criterion 3)
+
+`Uuid` is `struct Uuid { hi: Int, lo: Int } derive Ord` (the top bit of
+each word flipped, so the derived signed order is the bytes'), with
+`debug()` keeping `Uuid("<text>")`; std/internal's uuid_half,
+uuid_text_words, uuid_bytes_words and uuid_word (one load or store a word
+natively, swap_bytes) replace uuid_text and uuid_decode. vet's XO0912
+rule is removed and the code retired; the checker names the way on
+`u.0` (XO0601 with a fix to `.display()`), `uuid.Uuid(s)` (XO0407's note:
+`uuid.parse`) and the pattern `uuid.Uuid(p)` (XO0302); errorcheck
+`uuid_two_ints`. Quiet `xo bench --ab`, 15 rounds, google/uuid's twin as
+A, Xo / Go wall: parse 1.181 (1.135 to 1.213), string 1.018 (0.999 to
+1.061), bytes 1.749 (1.696 to 1.903). bytes is still over 1.2x: its
+profile is the 16 byte Bytes' allocation and free (about 40%), which Go's
+bump allocator does in a few instructions; the next step is a small
+Bytes allocation fast path in the runtime, not std/uuid.

@@ -179,6 +179,12 @@ fn (var c: Checker) resolve_variant_path(span: Span, path: List[Ident], t: Int) 
     c.error("XO0302", span, "variant pattern `${text(name)}` does not fit a value of type `${c.show(t)}`")
     return (-1, -1)
   } else if path.len() == 2 {
+    if path[1].name == b"Uuid" && c.show(t) == "uuid.Uuid" {
+      // 0.33.0's newtype pattern (XO0912, decision 0387)
+      let d = c.error("XO0302", span, "the pattern `uuid.Uuid(p)` reads a Uuid's text: a Uuid is two Ints since 0.34.0 (decision 0387)")
+      c.note(d, "bind the Uuid and take its text with `u.display()` (spec/std.md 24)")
+      return (-1, -1)
+    }
     let o = c.lookup_module_obj(c.cur_mod, path[0].name)
     if o < 0 || c.objs[o].kind != ObjKind.Type {
       c.unresolved(path[0].span, "enum", text(path[0].name), c.visible_type_names(c.local_env()))

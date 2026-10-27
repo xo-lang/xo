@@ -678,6 +678,13 @@ fn (var c: Checker) habit_field(bt: Int, span: Span, x: Expr, sel: Ident, place:
   if place {
     return (-1, false)
   }
+  if sel.name == b"0" && c.show(bt) == "uuid.Uuid" {
+    // the text 0.33.0 deprecated (XO0912, decision 0387)
+    let d = c.error("XO0601", sel.span, "`uuid.Uuid` has no field `0`: a Uuid is two Ints since 0.34.0, and `u.display()` is its text (decision 0387)")
+    c.note(d, "`u.bytes()` gives its 16 bytes, `uuid.parse(s)` makes a Uuid from a text, and `u < v` orders Uuids as their bytes (spec/std.md 24)")
+    c.fix(d, "write `.display()`", [c.replace_edit(sel.span, "display()")])
+    return (c.bad_ty, true)
+  }
   let xo = match text(sel.name) {
     "length" | "count" | "size" => "len"
     "isEmpty" => "is_empty"
@@ -1523,7 +1530,10 @@ fn (var c: Checker) type_call(obj0: Int, targs0: List[Int], has_targs0: Bool, ca
   }
   let d = c.error("XO0407", parser.expr_span(fun), "`${c.qual_name(obj)}` is a type and cannot be called")
   if d >= 0 {
-    if c.objs[obj].tkind == "struct" && !c.objs[obj].opaque {
+    if c.qual_name(obj) == "uuid.Uuid" {
+      // 0.33.0's newtype constructor (XO0912, decision 0387)
+      c.note(d, "a Uuid is two Ints since 0.34.0: `uuid.parse(s)?` makes one from a text, `uuid.from_bytes(b)?` from 16 bytes (spec/std.md 24, decision 0387)")
+    } else if c.objs[obj].tkind == "struct" && !c.objs[obj].opaque {
       c.note(d, "build a struct with a literal: `${oname}{field: value}` (core 2.2)")
     } else if c.objs[obj].tkind == "enum" {
       c.note(d, "construct a variant: `${oname}.Variant(...)` (core 2.3)")

@@ -326,3 +326,9 @@ at_arg.
 Per std/changes/big.md 2026-10-27 ("decimal text divides by a constant 10"). Quiet `xo bench --ab`, 15 rounds,
 the parent's std as A: text wall 0.907 (0.895 to 0.934), instructions 0.972; Xo / Go about 1.35 (estimate: 1.490
 x 0.907), from 1.490.
+
+## uuid as two Ints (2026-10-27, Xo Lang 2)
+
+Per decision 0387 part 2 and std/changes/uuid.md 2026-10-27. Quiet `xo bench --ab`, 15 rounds, the Go twin
+(google/uuid) as A, Xo / Go wall: parse 1.181 (1.135 to 1.213), string 1.018 (0.999 to 1.061), bytes 1.749
+(1.696 to 1.903), from 1.23, 0.35 and 4.24. bytes is over the bar on allocation (the 16 byte Bytes).
