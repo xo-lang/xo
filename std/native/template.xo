@@ -1613,7 +1613,7 @@ fn ctx_find(list: List[Node], kind: Int, tag: Int, pos: Int) -> Ctx? {
         Some(p) => ctx_in_pipe(p, kind, tag, pos)
         None => None
       }
-      _ => None
+      Text(..) | Comment(..) | Break(..) | Continue(..) | End(..) | Else(..) => None
     }
     if found is Some(_) {
       return found
@@ -1654,7 +1654,7 @@ fn ctx_in_args(args: List[Arg], kind: Int, tag: Int, pos: Int) -> Ctx? {
         }
         r
       }
-      _ => None
+      Field(..) | Ident(..) | Variable(..) | BoolA(..) | Dot(..) | NilA(..) | Number(..) | StringA(..) => None
     }
     if found is Some(_) {
       return found
