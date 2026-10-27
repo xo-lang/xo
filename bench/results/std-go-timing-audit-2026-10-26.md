@@ -77,3 +77,17 @@ cycles); the runs are 8 to 24 ms, so process start is a share of each:
 
 Over the 1.2x bar: parts (1.54x) and match (1.70x), clean at the bar's edge (1.21x). Peak memory 0.23 to 0.57
 of Go's. Fix next, one at a time: match, then parts.
+
+After std/changes/path.md 2026-10-26 (is_match by offset, base cut once; Xo Lang 2), the same --ab, A the Go
+twin, B the Xo program:
+
+| workload | Go wall | Xo wall | wall | instructions |
+|---|---|---|---|---|
+| path match | 8.45 ms | 8.43 ms | 0.998 | 1.12 |
+| path parts | 9.68 ms | 14.81 ms | 1.530 | 1.694 |
+| path clean | 9.97 ms | 11.45 ms | 1.148 | 1.467 |
+| path join | 20.88 ms | 24.33 ms | 1.165 | 1.349 |
+
+match is at Go's time. parts is still over the bar: each of split, dir, base and ext returns a new Str (a Str
+slice copies; Go's substrings share the bytes), so what is left is allocation, not the algorithm; it needs
+substring views that do not allocate, a runtime change rather than a std port.

@@ -132,18 +132,28 @@ fn last_slash(p: Str) -> Int {
 
 fn dir(p: Str) -> Str { clean(p[0..last_slash(p) + 1]) }
 
+/// Go's Base: the last element, trailing slashes dropped; found by index
+/// and cut once (the port cut a copy per trailing slash and per step).
 fn base(p: Str) -> Str {
   if p == "" {
     return "."
   }
-  var s = p
-  while s.len() > 0 && s.ends_with("/") {
-    s = s[0..s.len() - 1]
+  let b = p.bytes()
+  var e = b.len()
+  while e > 0 && b[e - 1] == 47 {
+    e -= 1
   }
-  if s == "" {
+  if e == 0 {
     return "/"
   }
-  s[last_slash(s) + 1..]
+  var i = e - 1
+  while i >= 0 && b[i] != 47 {
+    i -= 1
+  }
+  if i < 0 && e == b.len() {
+    return p
+  }
+  p[i + 1..e]
 }
 
 fn ext(p: Str) -> Str {
@@ -172,82 +182,82 @@ fn patherr_display(e: path.PathErr) -> Str { "invalid path pattern ${e.pattern.q
 
 // Go's path/match.go, ported below: a pattern is chunks, each a run of `*`
 // and a non-star string; a chunk is literals, `?` and byte classes. A
-// malformed chunk is reported even when the match fails (`bad`).
+// malformed chunk is reported (`bad`) even when the match fails. Go walks
+// the pattern and the name by reslicing; here they are offsets into the
+// two Bytes, since a Bytes slice copies (2026-10-26: the slicing port ran
+// match at 1.70x Go's time, gotchas/std-port-costly-go-idioms.md).
 
-// Go's path/match.go, ported below: a pattern is chunks, each a run of `*`
-// and a non-star string; a chunk is literals, `?` and byte classes. Bytes
-// are compared and sliced byte by byte, as Go's strings are, and a
-// malformed chunk is reported (`bad`) even when the match fails.
-
-// get_esc is Go's getEsc: a possibly escaped character of a byte class and
-// the rest of the chunk; bad when the class is malformed.
-fn get_esc(chunk0: Bytes) -> (Int, Bytes, Bool) {
-  var chunk = chunk0
-  if chunk.len() == 0 || chunk[0] == 45 || chunk[0] == 93 {
-    return (0, b"", true)
+// get_esc is Go's getEsc on p[i..end]: a possibly escaped character of a
+// byte class and the offset after it; bad when the class is malformed.
+fn get_esc(p: Bytes, i0: Int, end: Int) -> (Int, Int, Bool) {
+  var i = i0
+  if i >= end || p[i] == 45 || p[i] == 93 {
+    return (0, i, true)
   }
-  if chunk[0] == 92 {
-    chunk = chunk[1..]
-    if chunk.len() == 0 {
-      return (0, b"", true)
+  if p[i] == 92 {
+    i += 1
+    if i >= end {
+      return (0, i, true)
     }
   }
-  let (r0, n) = chunk.decode_rune(0)
+  let (r0, n) = p.decode_rune(i)
   let r = Int(r0)
   if r == 0xfffd && n == 1 {
-    return (0, b"", true)
+    return (0, i, true)
   }
-  if n >= chunk.len() {
-    return (0, b"", true)
+  if i + n >= end {
+    return (0, i, true)
   }
-  (r, chunk[n..], false)
+  (r, i + n, false)
 }
 
-// match_chunk is Go's matchChunk: whether chunk matches the beginning of s,
-// with the rest of s after the match and whether the chunk is malformed.
-fn match_chunk(chunk0: Bytes, s0: Bytes) -> (Bytes, Bool, Bool) {
-  var chunk = chunk0
-  var s = s0
+// match_chunk is Go's matchChunk: whether the chunk p[c0..ce] matches s
+// from s0, with the offset in s after the match and whether the chunk is
+// malformed.
+fn match_chunk(p: Bytes, c0: Int, ce: Int, s: Bytes, s0: Int) -> (Int, Bool, Bool) {
+  var c = c0
+  var si = s0
+  let sn = s.len()
   var failed = false
-  while chunk.len() > 0 {
-    if s.len() == 0 {
+  while c < ce {
+    if si >= sn {
       failed = true
     }
-    let c = chunk[0]
-    if c == 91 {
+    let ch = p[c]
+    if ch == 91 {
       // a byte class: `[`, `[^`, ranges and `]`, and one rune of s
       var r = 0
       if !failed {
-        let (r0, n) = s.decode_rune(0)
+        let (r0, n) = s.decode_rune(si)
         r = Int(r0)
-        s = s[n..]
+        si += n
       }
-      chunk = chunk[1..]
+      c += 1
       var negated = false
-      if chunk.len() > 0 && chunk[0] == 94 {
+      if c < ce && p[c] == 94 {
         negated = true
-        chunk = chunk[1..]
+        c += 1
       }
       var got = false
       var nrange = 0
       while true {
-        if chunk.len() > 0 && chunk[0] == 93 && nrange > 0 {
-          chunk = chunk[1..]
+        if c < ce && p[c] == 93 && nrange > 0 {
+          c += 1
           break
         }
-        let (lo, rest, bad) = get_esc(chunk)
+        let (lo, next, bad) = get_esc(p, c, ce)
         if bad {
-          return (b"", false, true)
+          return (0, false, true)
         }
-        chunk = rest
+        c = next
         var hi = lo
-        if chunk[0] == 45 {
-          let (h, rest2, bad2) = get_esc(chunk[1..])
+        if p[c] == 45 {
+          let (h, next2, bad2) = get_esc(p, c + 1, ce)
           if bad2 {
-            return (b"", false, true)
+            return (0, false, true)
           }
           hi = h
-          chunk = rest2
+          c = next2
         }
         if lo <= r && r <= hi {
           got = true
@@ -257,52 +267,53 @@ fn match_chunk(chunk0: Bytes, s0: Bytes) -> (Bytes, Bool, Bool) {
       if got == negated {
         failed = true
       }
-    } else if c == 63 {
+    } else if ch == 63 {
       if !failed {
-        failed = s[0] == 47
-        let (_, n) = s.decode_rune(0)
-        s = s[n..]
+        failed = s[si] == 47
+        let (_, n) = s.decode_rune(si)
+        si += n
       }
-      chunk = chunk[1..]
-    } else if c == 92 {
-      chunk = chunk[1..]
-      if chunk.len() == 0 {
-        return (b"", false, true)
+      c += 1
+    } else if ch == 92 {
+      c += 1
+      if c >= ce {
+        return (0, false, true)
       }
       if !failed {
-        failed = chunk[0] != s[0]
-        s = s[1..]
+        failed = p[c] != s[si]
+        si += 1
       }
-      chunk = chunk[1..]
+      c += 1
     } else {
       if !failed {
-        failed = c != s[0]
-        s = s[1..]
+        failed = ch != s[si]
+        si += 1
       }
-      chunk = chunk[1..]
+      c += 1
     }
   }
   if failed {
-    return (b"", false, false)
+    return (0, false, false)
   }
-  (s, true, false)
+  (si, true, false)
 }
 
-// scan_chunk is Go's scanChunk: the next chunk of a pattern, whether a star
-// precedes it, and the rest of the pattern.
-fn scan_chunk(pat0: Bytes) -> (Bool, Bytes, Bytes) {
-  var pat = pat0
+// scan_chunk is Go's scanChunk from offset i0: whether a star precedes the
+// next chunk, the chunk's start and end, and the offset of the rest.
+fn scan_chunk(p: Bytes, i0: Int) -> (Bool, Int, Int, Int) {
+  let n = p.len()
+  var i = i0
   var star = false
-  while pat.len() > 0 && pat[0] == 42 {
-    pat = pat[1..]
+  while i < n && p[i] == 42 {
+    i += 1
     star = true
   }
+  let start = i
   var inrange = false
-  var i = 0
-  while i < pat.len() {
-    let c = pat[i]
+  while i < n {
+    let c = p[i]
     if c == 92 {
-      if i + 1 < pat.len() {
+      if i + 1 < n {
         i += 1
       }
     } else if c == 91 {
@@ -311,50 +322,57 @@ fn scan_chunk(pat0: Bytes) -> (Bool, Bytes, Bytes) {
       inrange = false
     } else if c == 42 {
       if !inrange {
-        return (star, pat[0..i], pat[i..])
+        return (star, start, i, i)
       }
     }
     i += 1
   }
-  (star, pat, b"")
+  (star, start, n, n)
 }
 
 /// Go's Match: whether name matches the whole pattern.
 fn is_match(pattern: Str, name0: Str) -> Bool ! path.PathErr {
-  var pat = pattern.bytes()
-  var name = name0.bytes()
-  while pat.len() > 0 {
-    let (star, chunk, rest) = scan_chunk(pat)
-    pat = rest
-    if star && chunk.len() == 0 {
+  let pat = pattern.bytes()
+  let name = name0.bytes()
+  let pn = pat.len()
+  let nn = name.len()
+  var pi = 0
+  var ni = 0
+  while pi < pn {
+    let (star, cs, ce, rest) = scan_chunk(pat, pi)
+    pi = rest
+    if star && cs == ce {
       // a trailing star matches the rest of the name unless it has a `/`
-      let slash = match name.find(b"/") {
-        Some(_) => true
-        None => false
+      var j = ni
+      while j < nn {
+        if name[j] == 47 {
+          return false
+        }
+        j += 1
       }
-      return !slash
+      return true
     }
-    let (t, ok, bad) = match_chunk(chunk, name)
+    let (t, ok, bad) = match_chunk(pat, cs, ce, name, ni)
     if bad {
       return Err(path.PathErr{pattern: pattern})
     }
-    if ok && (t.len() == 0 || pat.len() > 0) {
-      name = t
+    if ok && (t == nn || pi < pn) {
+      ni = t
       continue
     }
     var advanced = false
     if star {
       // a star looks for the chunk's match after each byte it skips
-      var i = 0
-      while i < name.len() && name[i] != 47 {
-        let (t2, ok2, bad2) = match_chunk(chunk, name[i + 1..])
+      var i = ni
+      while i < nn && name[i] != 47 {
+        let (t2, ok2, bad2) = match_chunk(pat, cs, ce, name, i + 1)
         if ok2 {
           // a last chunk must exhaust the name
-          if pat.len() == 0 && t2.len() > 0 {
+          if pi == pn && t2 < nn {
             i += 1
             continue
           }
-          name = t2
+          ni = t2
           advanced = true
           break
         }
@@ -368,15 +386,15 @@ fn is_match(pattern: Str, name0: Str) -> Bool ! path.PathErr {
       continue
     }
     // no match: the rest of the pattern must still be well formed
-    while pat.len() > 0 {
-      let (_, chunk2, rest2) = scan_chunk(pat)
-      pat = rest2
-      let (_, _, bad3) = match_chunk(chunk2, b"")
+    while pi < pn {
+      let (_, cs2, ce2, rest2) = scan_chunk(pat, pi)
+      pi = rest2
+      let (_, _, bad3) = match_chunk(pat, cs2, ce2, b"", 0)
       if bad3 {
         return Err(path.PathErr{pattern: pattern})
       }
     }
     return false
   }
-  name.len() == 0
+  ni == nn
 }

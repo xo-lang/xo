@@ -1,5 +1,21 @@
 # std/path changes
 
+## 2026-10-26: perf: is_match walks the pattern and the name by offset; base cuts once
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 3's twin (bench/perf/path, std-go-timing-audit: match 1.70x, parts 1.54x Go's wall)
+- Go reference: path/match.go (Match, scanChunk, matchChunk, getEsc) and path.Base
+- Test: internal/stdtest/testdata/corpus/path (go, arm64, LLVM); twincheck bench/perf/path agrees on clean, join, parts, match
+- Timing: bench/perf/path, quiet --ab, 15 rounds: match against the parent 0.623 (cycles 0.543), against Go's 0.998; parts 1.02 against the parent, 1.53 against Go's (unchanged within noise); clean 1.15, join 1.17
+
+Go reslices the pattern and the name at every step; a Bytes slice copies,
+so the port now carries offsets (get_esc, match_chunk and scan_chunk take
+and return positions) and is_match makes no copy at all. base finds its
+end and start by index and cuts once, where it cut a copy per trailing
+slash. parts stays over Go: split, dir, base and ext each return a new
+Str, where Go's substrings share the path's bytes.
+
 ## 2026-10-23: feature: split, is_abs and is_match, and a generated corpus
 
 - Kind: feature
