@@ -4570,7 +4570,13 @@ ThreadSanitizer's static runtime, `scripts/race-runtime.sh
 WORKDIR/race-linux DIR linux-arm64`, built in Docker, about 10 minutes,
 so seed-cut refuses to start while Docker is not running; owner
 2026-10-21), packs all five with
-seed-pack.sh into WORKDIR/out, and writes WORKDIR/out/SEED. Logs are in
+seed-pack.sh into WORKDIR/out, and writes WORKDIR/out/SEED. Every pack runs
+with `XO_SEED_FORBID=WORKDIR`: seed-pack.sh refuses a pack when a packed
+file contains a path it names (separated by `:`), and race-runtime.sh
+maps its WORKDIR to `.` (`-ffile-prefix-map`, `-fdebug-prefix-map`), so
+no runtime names the cutter's home directory
+(gotchas/build-paths-in-shipped-runtimes.md; last verified: 2026-10-27).
+Logs are in
 WORKDIR/logs. A failure after the push (a build or pack) is fixed and
 the packing redone by hand from WORKDIR/tree; the tag and the version
 commit stay. `XO_SEED_DRY_RUN=1` rehearses every step without the push

@@ -33,6 +33,9 @@
 # level (`go run ./scripts/xobuild` builds xo at -O0 on an LLVM host,
 # decision 0220) is refused unless XO_SEED_ALLOW_OPT=1; rebuild it with
 # XO_LLVM_OPT=O2 go run ./scripts/xobuild.
+#
+# XO_SEED_FORBID (paths separated by ':') refuses a pack when a packed file
+# contains one of them; seed-cut.sh passes its WORKDIR.
 set -euo pipefail
 
 die() { echo "seed-pack: $*" >&2; exit 1; }
@@ -146,6 +149,18 @@ race=$prefix/lib/xo/race
 if [ -d "$race" ]; then
   mkdir -p "$stage/xo/lib/xo"
   cp -R "$race" "$stage/xo/lib/xo/race"
+fi
+# XO_SEED_FORBID: paths (separated by ':') no packed file may contain,
+# such as the cut's WORKDIR, which is under the cutter's home directory
+# (seed-cut.sh sets it): a build path baked into a binary (0.29 to 0.33's
+# darwin TSan dylib named its WORKDIR 88 times) refuses the pack
+if [ -n "${XO_SEED_FORBID:-}" ]; then
+  IFS=: read -r -a forbid <<< "$XO_SEED_FORBID"
+  for p in "${forbid[@]}"; do
+    [ -n "$p" ] || continue
+    hits=$(grep -rlaF -- "$p" "$stage/xo" | sed "s#^$stage/##" || true)
+    [ -z "$hits" ] || die "packed files contain $p (XO_SEED_FORBID): $(echo $hits)"
+  done
 fi
 printf 'seed %s\nversion %s\ncommit %s\ndate %s\nplatform %s\n' "$seed" "$version" "$commit" "$date" "$plat" > "$stage/xo/SEED"
 

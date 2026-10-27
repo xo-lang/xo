@@ -87,6 +87,9 @@ git -C "$repo" diff --quiet "$ref" -- scripts/seed-cut.sh scripts/seed-pack.sh s
 case "$work" in "$repo"/*) die "WORKDIR must be outside the repository" ;; esac
 mkdir -p "$work"
 work=$(cd "$work" && pwd)
+# no packed file may name WORKDIR, which is under the cutter's home
+# directory (seed-pack.sh; the TSan runtimes did through 0.33.0)
+export XO_SEED_FORBID=$work
 [ -z "$(ls -A "$work")" ] || die "$work is not empty"
 log=$work/logs
 mkdir -p "$log"

@@ -74,7 +74,7 @@ if [ "${3:-}" = windows-amd64 ]; then
   # test program (it needs a POSIX C library)
   (cd "$g" && GOOS=windows GOARCH=amd64 CC=x86_64-w64-mingw32-g++ SKIP_TEST=1 DEPENDS_ON_LIBC=1 \
     ADD_SRCS=xo_race_windows.cpp \
-    EXTRA_CFLAGS="-DWINVER=0x0600 -D_WIN32_WINNT=0x0600 -DGetProcessMemoryInfo=K32GetProcessMemoryInfo -DSANITIZER_WINDOWS=1 -D_CRTIMP= -msse3 -Wno-format -Wno-maybe-uninitialized" \
+    EXTRA_CFLAGS="-ffile-prefix-map=$work=. -fdebug-prefix-map=$work=. -DWINVER=0x0600 -D_WIN32_WINNT=0x0600 -DGetProcessMemoryInfo=K32GetProcessMemoryInfo -DSANITIZER_WINDOWS=1 -D_CRTIMP= -msse3 -Wno-format -Wno-maybe-uninitialized" \
     ./buildgo.sh >"$work/build.txt" 2>&1) || true
   [ -s "$g/race_windows_amd64.syso" ] || { tail -30 "$work/build.txt"; exit 1; }
   dest="$out/lib/xo/race/windows-amd64"
@@ -145,19 +145,28 @@ fi
 
 build="$work/build"
 rm -rf "${build:?}"
+# the build's own paths (WORKDIR, under the cutter's home directory on the
+# Mac) become "." in __FILE__ strings and debug info, so no packed runtime
+# names them (seed-pack.sh's XO_SEED_FORBID check; 0.29 to 0.33's darwin
+# dylib held 88 of them)
+pmap="-ffile-prefix-map=$work=. -fdebug-prefix-map=$work=."
+cflags=$pmap
+cxxflags=$pmap
 platform=()
 if [ "$goos" = linux ] && [ "$goarch" = amd64 ]; then
   # no thread safe statics (as arm64's below); initial exec TLS, which
   # Xo's ELF linker relaxes to local exec (sanitizer_coverage's
   # __sancov_lowest_stack was general dynamic: an R_X86_64_TLSGD and a
   # __tls_get_addr call)
-  platform=("-DCMAKE_C_FLAGS=-ftls-model=initial-exec" "-DCMAKE_CXX_FLAGS=-fno-threadsafe-statics -ftls-model=initial-exec")
+  cflags="$cflags -ftls-model=initial-exec"
+  cxxflags="$cxxflags -fno-threadsafe-statics -ftls-model=initial-exec"
 elif [ "$goos" = linux ]; then
   # no outline atomics: the inline ARMv8.0 loops, so the archive calls no
   # libgcc __aarch64_* helper (Xo's ELF linker synthesizes only some); no
   # thread safe statics: no __cxa_guard_* from a C++ runtime Xo does not
   # link (the runtime initializes once, before threads, in __tsan_init)
-  platform=(-DCMAKE_C_FLAGS=-mno-outline-atomics "-DCMAKE_CXX_FLAGS=-mno-outline-atomics -fno-threadsafe-statics")
+  cflags="$cflags -mno-outline-atomics"
+  cxxflags="$cxxflags -mno-outline-atomics -fno-threadsafe-statics"
 fi
 if [ "$goos" = darwin ]; then
   platform=(-DCOMPILER_RT_ENABLE_IOS=OFF -DCOMPILER_RT_ENABLE_WATCHOS=OFF -DCOMPILER_RT_ENABLE_TVOS=OFF
@@ -169,7 +178,8 @@ cmake -G Ninja -S "$src/compiler-rt" -B "$build" \
   -DCOMPILER_RT_BUILD_BUILTINS=OFF -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
   -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF \
   -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF -DCOMPILER_RT_INCLUDE_TESTS=OFF \
-  "${platform[@]}" \
+  "-DCMAKE_C_FLAGS=$cflags" "-DCMAKE_CXX_FLAGS=$cxxflags" \
+  ${platform[@]+"${platform[@]}"} \
   >"$work/configure.txt" 2>&1 || { tail -30 "$work/configure.txt"; exit 1; }
 ninja -C "$build" "$target" >"$work/build.txt" 2>&1 || { tail -30 "$work/build.txt"; exit 1; }
 
