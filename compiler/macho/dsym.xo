@@ -60,6 +60,21 @@ fn (l: Linker) dwarf_sizes() -> List[Int] {
   sizes
 }
 
+/// The DWARF sections of dwarf_names, joined (empty when no input has
+/// DWARF): dwarf_write's output cut at its sections' lengths.
+fn (var l: Linker) dwarf_data() -> List[Bytes] {
+  var b = BytesBuilder.new()
+  let ns = l.dwarf_write(b)
+  let all = b.freeze()
+  var data: List[Bytes] = []
+  var at = 0
+  for n in ns {
+    data.push(all[at..at + n])
+    at += n
+  }
+  data
+}
+
 /// The dSYM file, or empty bytes when no input has DWARF.
 fn (var l: Linker) dsym() -> Bytes {
   let data = l.dwarf_data()
@@ -69,11 +84,13 @@ fn (var l: Linker) dsym() -> Bytes {
   l.dsym_file(data)
 }
 
-/// The DWARF sections of dwarf_names, joined (empty when no input has
-/// DWARF): each object's section copied as one piece around its patches,
+/// The DWARF sections of dwarf_names, joined and written to out one
+/// after another (the executable's __DWARF segment, with no copy of its
+/// own): each object's section copied as one piece around its patches,
 /// not byte by byte (a std sized link spent about 13 ms of CPU in the
-/// byte lists, 2026-10-27).
-fn (var l: Linker) dwarf_data() -> List[Bytes] {
+/// byte lists, 2026-10-27). The sections' lengths, none when no input
+/// has DWARF.
+fn (var l: Linker) dwarf_write(var out: BytesBuilder) -> List[Int] {
   // only the arm64 emitter's objects (a compile unit with producer
   // "xo"): another compiler's Mach-O DWARF refers between its sections by
   // offsets in its own object, with no relocations, which joining would
@@ -108,11 +125,12 @@ fn (var l: Linker) dwarf_data() -> List[Bytes] {
   if !any {
     return []
   }
-  var data: List[Bytes] = []
-  // the xo compile units' address ranges, one set each (.debug_aranges)
+  var lens: List[Int] = []
+  // the xo compile units' address ranges, one set each (.debug_aranges,
+  // after its pieces)
   var sets = BytesBuilder.new()
   for (i, ps) in parts.indexed() {
-    var out = BytesBuilder.with_capacity(if i < l.dw_sizes.len() { l.dw_sizes[i] } else { 0 })
+    let start = out.len()
     for (o, k) in ps {
       let s = l.objs[o].sects[k]
       var ch: List[BytePatch] = []
@@ -128,16 +146,19 @@ fn (var l: Linker) dwarf_data() -> List[Bytes] {
         ch.push(BytePatch{at: r.addr, n: 8, v: t.addr})
       }
       if i == 2 {
-        dw_unit(o, s, ch, at, out.len(), sets)
+        dw_unit(o, s, ch, at, out.len() - start, sets)
       } else if i == 0 {
         dw_line(s.data, ch, at[7].get(o) ?? 0)
       }
       write_patched(out, s.data, ch)
     }
-    data.push(out.freeze())
+    if i == 3 {
+      out.write(sets.freeze())
+      sets = BytesBuilder.new()
+    }
+    lens.push(out.len() - start)
   }
-  data[3] = data[3] + sets.freeze()
-  data
+  lens
 }
 
 /// The patches of an xo compile unit (one per object, at the start of

@@ -1443,23 +1443,18 @@ fn (var l: Linker) write() -> Bytes {
   l.segs[le].vmsize = align_up(l.segs[le].filesize, PAGE)
 
   // the contents of the segments before __LINKEDIT
-  var dw: List[Bytes] = []
-  if !l.dw_sizes.is_empty() {
-    dw = l.dwarf_data()
-    for (i, d) in dw.indexed() {
-      if i >= l.dw_sizes.len() || d.len() != l.dw_sizes[i] {
-        l.fail("internal: DWARF section ${i} is ${d.len()} bytes, ${l.dw_sizes[i]} reserved")
-        return "".bytes()
-      }
-    }
-  }
   var body = new_out(le_off + link_bytes.len())
   for gi in 1..le {
     let g = l.segs[gi]
     if g.name == "__DWARF" {
       body.zeros(g.fileoff - body.n)
-      for d in dw {
-        body.bytes(d)
+      let lens = l.dwarf_write(body.b)
+      for (i, n) in lens.indexed() {
+        if i >= l.dw_sizes.len() || n != l.dw_sizes[i] {
+          l.fail("internal: DWARF section ${i} is ${n} bytes, ${if i < l.dw_sizes.len() { l.dw_sizes[i] } else { 0 }} reserved")
+          return "".bytes()
+        }
+        body.n += n
       }
       body.zeros(g.fileoff + g.filesize - body.n)
       continue
