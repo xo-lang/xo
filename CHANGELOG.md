@@ -9,9 +9,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - A windows/amd64 build writes its PDB faster: the DWARF reader pushes each
   variable and inlined call in place instead of copying its function out and
   back, keeps its abstract origins' records in a list indexed by a map, and
-  the module stream is sized first and then written into one buffer; the
-  HTTP server's edit spends 76 ms in the PDB instead of 105 (the PDB and the
-  .exe byte for byte the same)
+  the module stream is sized first and then written into one buffer, and an
+  inline site's ranges are sorted only when out of order and its children
+  found once; the HTTP server's edit spends 70 ms in the PDB instead of 105
+  (the PDB and the .exe byte for byte the same)
 - A windows/amd64 edit rebuild assembles only the parts it changed (their
   objects kept in the back-end cache, the rest assembled on parallel tasks as
   on darwin and linux): the HTTP server's body edit 2783 to 1179 ms, llvm-fib's

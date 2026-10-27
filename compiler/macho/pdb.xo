@@ -244,34 +244,36 @@ fn inline_sites(lns: debug.Lines, by_addr: List[(Int, Int)], file_of: Map[Str, I
     }
     parent[i] = p
   }
+  // each call's children in idx order: one depth, so by first address
+  var kids: Map[Int, List[Int]] = {}
+  for i in idx {
+    if parent.contains(i) {
+      let p = parent.get(i) ?? -2
+      var l = kids.get(p) ?? []
+      l.push(i)
+      kids[p] = l
+    }
+  }
   // the sites in depth first order, each parent before its children
   var out: List[PdbSite] = []
-  var at: Map[Int, Int] = {}
-  site_walk(lns, by_addr, file_of, f, idx, parent, -1, -1, out, at)
+  site_walk(lns, by_addr, file_of, f, kids, -1, -1, out)
   out
 }
 
 /// Appends the sites whose parent is call p (site index ps) and their
 /// children.
-fn site_walk(lns: debug.Lines, by_addr: List[(Int, Int)], file_of: Map[Str, Int], f: debug.Func, idx: List[Int], parent: Map[Int, Int], p: Int, ps: Int, var out: List[PdbSite], var at: Map[Int, Int]) {
-  var kids: List[(Int, Int)] = []
-  for i in idx {
-    if parent.contains(i) && (parent.get(i) ?? -2) == p {
-      kids.push((f.inlined[i].ranges[0].0, i))
-    }
-  }
-  for (_, i) in kids.sort() {
+fn site_walk(lns: debug.Lines, by_addr: List[(Int, Int)], file_of: Map[Str, Int], f: debug.Func, kids: Map[Int, List[Int]], p: Int, ps: Int, var out: List[PdbSite]) {
+  for i in kids.get(p) ?? [] {
     let c = f.inlined[i]
     // the calls inlined into this one: their code at their call's line
     var calls: List[(List[(Int, Int)], Int, Int)] = []
-    for j in idx {
-      if (parent.get(j) ?? -2) == i {
-        let d = f.inlined[j]
-        calls.push((d.ranges, file_of.get(lns.call_file(d.unit_line, d.call_file)) ?? -1, d.call_line))
-      }
+    for j in kids.get(i) ?? [] {
+      let d = f.inlined[j]
+      calls.push((d.ranges, file_of.get(lns.call_file(d.unit_line, d.call_file)) ?? -1, d.call_line))
     }
+    let ranges = spans_sorted(c.ranges)
     var entries: List[(Int, Int, Int)] = []
-    for (rlo, rhi) in c.ranges.sort() {
+    for (rlo, rhi) in ranges {
       let rows = fn_rows(lns, by_addr, rlo, rhi, calls)
       for (k, (off, file, line, _)) in rows.indexed() {
         // the range's first entry at its start
@@ -282,8 +284,8 @@ fn site_walk(lns: debug.Lines, by_addr: List[(Int, Int)], file_of: Map[Str, Int]
       continue
     }
     let me = out.len()
-    out.push(PdbSite{name: c.name, parent: ps, ranges: c.ranges.sort(), entries: entries, vars: c.vars})
-    site_walk(lns, by_addr, file_of, f, idx, parent, i, me, out, at)
+    out.push(PdbSite{name: c.name, parent: ps, ranges: ranges, entries: entries, vars: c.vars})
+    site_walk(lns, by_addr, file_of, f, kids, i, me, out)
   }
 }
 
