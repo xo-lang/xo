@@ -73,20 +73,20 @@ fn main(os: Os) {
   for d in docs {
     match toml.to_json(d) {
       Ok(j) => os.stdio.println("${d.quote()} -> ${j}")
-      Err(e) => os.stdio.println("${d.quote()} -> ${e}")
+      Err(e) => os.stdio.println("${d.quote()} -> ${e.display()}")
     }
   }
   let doc = "name = \"svc\"\n[[servers]]\nhost = \"a\"\ntimeout = \"5s\"\n[[servers]]\nhost = \"b\"\nport = 9000\n"
   match toml.decode[Config](doc) {
     Ok(c) => os.stdio.println("decoded ${c.name}: ${c.servers.map(fn(s) { "${s.host}:${s.port}/${s.timeout}" }).join(" ")}")
-    Err(e) => os.stdio.println("decode: ${e}")
+    Err(e) => os.stdio.println("decode: ${e.display()}")
   }
   match toml.decode[Config]("name = 1") {
     Ok(_) => os.stdio.println("decoded a wrong type")
-    Err(e) => os.stdio.println("decode: ${e}")
+    Err(e) => os.stdio.println("decode: ${e.display()}")
   }
   match toml.decode[Config]("name = ") {
     Ok(_) => os.stdio.println("decoded bad syntax")
-    Err(e) => os.stdio.println("decode: ${e}")
+    Err(e) => os.stdio.println("decode: ${e.display()}")
   }
 }
