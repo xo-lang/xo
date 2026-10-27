@@ -560,6 +560,14 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- Measure the build that ships, and check a stand-in before trusting it
+  (lead, 2026-10-27; Last verified: 2026-10-27): three 0377 runs measured
+  a fixed cap with no raise while the default to flip was mode 3, and
+  were dropped after waiting; a faster stand-in (the HTTP server's cold
+  build for the self build) is calibrated first against a case whose
+  answer is known (fixed cap 4: +26% on the self build), and a mistyped
+  flag (`--env-b X` for `--env-b=X`) made three jobs exit in a second, so
+  check one job's log before queueing its siblings.
 - One A/B per measure job, about 30 minutes at most (lead, 2026-10-27;
   Last verified: 2026-10-27): every slot run waits while a measurement
   holds the measure lock, so a job of four 20 round self build A/Bs
