@@ -459,17 +459,3 @@ fn cv_reg(r: Int) -> Int {
     _ => if r >= 8 && r <= 15 { 336 + r - 8 } else if r >= 17 && r <= 24 { 154 + r - 17 } else if r >= 25 && r <= 32 { 252 + r - 25 } else { 0 }
   }
 }
-
-/// A local's records: S_LOCAL (its type, flags: a parameter 1, name),
-/// then its S_DEFRANGEs.
-fn local_records(l: PdbLocal) -> List[(Int, Bytes)] {
-  var w = new_out(8 + l.name.len())
-  w.u32(l.ty)
-  w.u16(if l.param { 1 } else { 0 })
-  w.bytes(cstr_bytes(l.name))
-  var out = [(S_LOCAL, w.done())]
-  for d in l.defs {
-    out.push(d)
-  }
-  out
-}

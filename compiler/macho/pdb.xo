@@ -658,115 +658,124 @@ fn cstr_bytes(s: Str) -> Bytes {
 /// S_GPROC32's offset. A procedure's and a site's parent and end are the
 /// offsets of the enclosing record and of their closing one.
 fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees: List[(Str, Int, Int)], fidx: Map[Int, Int]) -> (Bytes, List[Int]) {
-  // the records: kind, body, the record holding the parent, the
-  // closing record (-1: none), and whether the body starts with the two
-  // offsets
-  var kinds: List[Int] = []
-  var bodies: List[Bytes] = []
-  var parents: List[Int] = []
-  var ends: List[Int] = []
-  var ob = new_out(16)
-  ob.u32(0)
-  ob.bytes(cstr_bytes("xo"))
-  kinds.push(S_OBJNAME)
-  bodies.push(ob.done())
-  parents.push(-1)
-  ends.push(-1)
+  // Two passes over the same walk (2026-10-27: a body per record joined
+  // at the end, and the procedures' and sites' copied again to put their
+  // parent and end in front, were a fifth of the PDB's time). The first
+  // finds each record's body size, the record holding its parent and its
+  // closing record, so the second writes every record once, in place.
+  var sizes: List[Int] = [7]
+  var parents: List[Int] = [-1]
+  var ends: List[Int] = [-1]
+  // each site's annotations, made once
+  var anns: List[Bytes] = []
   var proc_rec: List[Int] = []
   for p in procs {
-    let pr = kinds.len()
+    let pr = sizes.len()
     proc_rec.push(pr)
-    var pb = new_out(40 + p.name.len())
-    // parent, end (patched), next, code size, debug start and end, type
-    // (none), offset, segment, flags, name
-    pb.u32(0)
-    pb.u32(0)
-    pb.u32(0)
-    pb.u32(p.size)
-    pb.u32(0)
-    pb.u32(p.size)
-    pb.u32(0)
-    pb.u32(p.off)
-    pb.u16(p.seg)
-    pb.u8(0)
-    pb.bytes(cstr_bytes(p.name))
-    kinds.push(S_GPROC32)
-    bodies.push(pb.done())
+    // parent, end, next, code size, debug start and end, type, offset
+    // (8 words), segment, flags, the name and its zero
+    sizes.push(36 + p.name.len())
     parents.push(-1)
     ends.push(-1)
     for l in p.locals {
-      for (k, b) in local_records(l) {
-        kinds.push(k)
-        bodies.push(b)
-        parents.push(-1)
-        ends.push(-1)
-      }
+      local_sizes(l, sizes, parents, ends)
     }
     // the sites: a stack of open ones (site index, record)
     var open: List[(Int, Int)] = []
     for (si, st) in p.sites.indexed() {
       while !open.is_empty() && open[open.len() - 1].0 != st.parent {
         let (_, r) = open.pop() ?? (0, 0)
-        ends[r] = kinds.len()
-        kinds.push(S_INLINESITE_END)
-        bodies.push(b"")
+        ends[r] = sizes.len()
+        sizes.push(0)
         parents.push(-1)
         ends.push(-1)
       }
       let enclosing = if open.is_empty() { pr } else { open[open.len() - 1].1 }
-      var sb = new_out(16 + 4 * st.entries.len())
-      sb.u32(0)
-      sb.u32(0)
-      sb.u32(fid.get(st.name) ?? 0)
-      sb.bytes(annotations(p.lo, st, inlinees[(fid.get(st.name) ?? 0x1000) - 0x1000], fidx))
-      let r = kinds.len()
-      kinds.push(S_INLINESITE)
-      bodies.push(sb.done())
+      let a = annotations(p.lo, st, inlinees[(fid.get(st.name) ?? 0x1000) - 0x1000], fidx)
+      anns.push(a)
+      let r = sizes.len()
+      // parent, end, the inlinee, the annotations
+      sizes.push(12 + a.len())
       parents.push(enclosing)
       ends.push(-1)
       open.push((si, r))
       for l in st.locals {
-        for (k, b) in local_records(l) {
-          kinds.push(k)
-          bodies.push(b)
-          parents.push(-1)
-          ends.push(-1)
-        }
+        local_sizes(l, sizes, parents, ends)
       }
     }
     while !open.is_empty() {
       let (_, r) = open.pop() ?? (0, 0)
-      ends[r] = kinds.len()
-      kinds.push(S_INLINESITE_END)
-      bodies.push(b"")
+      ends[r] = sizes.len()
+      sizes.push(0)
       parents.push(-1)
       ends.push(-1)
     }
-    ends[pr] = kinds.len()
-    kinds.push(S_END)
-    bodies.push(b"")
+    ends[pr] = sizes.len()
+    sizes.push(0)
     parents.push(-1)
     ends.push(-1)
   }
-  // the records' offsets (after the signature), then the stream
+  // the records' offsets (after the signature)
   var offs: List[Int] = []
   var o = 4
-  for body in bodies {
+  for n in sizes {
     offs.push(o)
-    o += (4 + body.len() + 3) / 4 * 4
+    o += (4 + n + 3) / 4 * 4
   }
   var w = new_out(o + c13.len() + 8)
   w.u32(4)
-  for (i, body) in bodies.indexed() {
-    if kinds[i] == S_GPROC32 || kinds[i] == S_INLINESITE {
-      var pb = new_out(body.len())
-      pb.u32(if parents[i] >= 0 { offs[parents[i]] } else { 0 })
-      pb.u32(if ends[i] >= 0 { offs[ends[i]] } else { 0 })
-      pb.bytes(body[8..body.len()])
-      sym_record(w, kinds[i], pb.done())
-    } else {
-      sym_record(w, kinds[i], body)
+  rec_head(w, S_OBJNAME, 7)
+  w.u32(0)
+  w.bytes(cstr_bytes("xo"))
+  w.zeros(rec_pad(7))
+  var i = 1
+  var ai = 0
+  for p in procs {
+    rec_head(w, S_GPROC32, sizes[i])
+    w.u32(rec_off(offs, parents[i]))
+    w.u32(rec_off(offs, ends[i]))
+    w.u32(0)
+    w.u32(p.size)
+    w.u32(0)
+    w.u32(p.size)
+    w.u32(0)
+    w.u32(p.off)
+    w.u16(p.seg)
+    w.u8(0)
+    w.bytes(p.name.bytes())
+    w.u8(0)
+    w.zeros(rec_pad(sizes[i]))
+    i += 1
+    for l in p.locals {
+      i = write_local(w, l, i)
     }
+    var open: List[(Int, Int)] = []
+    for (si, st) in p.sites.indexed() {
+      while !open.is_empty() && open[open.len() - 1].0 != st.parent {
+        let _o = open.pop()
+        rec_head(w, S_INLINESITE_END, 0)
+        i += 1
+      }
+      rec_head(w, S_INLINESITE, sizes[i])
+      w.u32(rec_off(offs, parents[i]))
+      w.u32(rec_off(offs, ends[i]))
+      w.u32(fid.get(st.name) ?? 0)
+      w.bytes(anns[ai])
+      w.zeros(rec_pad(sizes[i]))
+      ai += 1
+      open.push((si, i))
+      i += 1
+      for l in st.locals {
+        i = write_local(w, l, i)
+      }
+    }
+    while !open.is_empty() {
+      let _o = open.pop()
+      rec_head(w, S_INLINESITE_END, 0)
+      i += 1
+    }
+    rec_head(w, S_END, 0)
+    i += 1
   }
   w.bytes(c13)
   w.u32(0)
@@ -775,6 +784,55 @@ fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees:
     at.push(offs[r])
   }
   (w.done(), at)
+}
+
+/// A symbol record's length and kind for a body of n bytes (sym_record's
+/// header).
+fn rec_head(var w: Out, kind: Int, n: Int) {
+  w.u16((2 + n + 2 + 3) / 4 * 4 - 2)
+  w.u16(kind)
+}
+
+/// Record i's offset (0 for none, -1).
+fn rec_off(offs: List[Int], i: Int) -> Int {
+  if i >= 0 { offs[i] } else { 0 }
+}
+
+/// The zeros after a body of n bytes (sym_record's padding).
+fn rec_pad(n: Int) -> Int {
+  (2 + n + 2 + 3) / 4 * 4 - 2 - (2 + n)
+}
+
+/// The sizes of a local's records (S_LOCAL: its type, flags, a
+/// parameter 1, its name; then its S_DEFRANGEs), for module_stream's
+/// first pass.
+fn local_sizes(l: PdbLocal, var sizes: List[Int], var parents: List[Int], var ends: List[Int]) {
+  // type, flags, the name and its zero
+  sizes.push(7 + l.name.len())
+  parents.push(-1)
+  ends.push(-1)
+  for (_, b) in l.defs {
+    sizes.push(b.len())
+    parents.push(-1)
+    ends.push(-1)
+  }
+}
+
+/// A local's records written in place; the next record's index.
+fn write_local(var w: Out, l: PdbLocal, i: Int) -> Int {
+  let n = 7 + l.name.len()
+  rec_head(w, S_LOCAL, n)
+  w.u32(l.ty)
+  w.u16(if l.param { 1 } else { 0 })
+  w.bytes(l.name.bytes())
+  w.u8(0)
+  w.zeros(rec_pad(n))
+  var j = i + 1
+  for (k, b) in l.defs {
+    sym_record(w, k, b)
+    j += 1
+  }
+  j
 }
 
 /// An inline site's binary annotations, as LLVM's MCCodeView encodes
