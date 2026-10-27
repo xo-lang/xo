@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The first edit after a cold build of a mid-sized program (the HTTP server's 35
+  parts) regenerates only the edited part instead of all of them: its parts
+  are kept from the first build when they are under 128 MiB in all (before, only
+  a module of fewer than 16 parts).
 - An edit rebuild is a few ms faster: the checker's syntax trees and tables are
   released on a task beside the passes after the SSA is built, not on the build's
   thread. Opt in (XO_CHAIN_KEYS=1, decision 0382): the landings and the cleanup

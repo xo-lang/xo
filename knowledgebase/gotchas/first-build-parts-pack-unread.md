@@ -32,3 +32,11 @@ build of fewer than 16 parts still on its first, e7118db80), and a build
 that used none of its pack's entries rewrites the pack instead of
 appending. The first edit after a cold build regenerates xo's parts once
 (8.6 s against 7.6 s for an edit with them, xo, 2026-10-22); a gate's one-shot build writes no parts.
+
+Addendum (2026-10-27, xo-lang-4): the part count was the wrong measure
+for small programs. The HTTP server grew to 35 parts (8.4 MB packed),
+so every user's first edit after a cold build regenerated all 35 (emit
+67 ms against 24 ms, darwin/arm64 and both amd64 targets alike). A module
+now also packs on its first build when its parts are under
+PART_PACK_FIRST_BYTES (128 MiB) in all; the compiler's stay on the
+second (internal/arm64 TestFirstEditAfterColdParts).

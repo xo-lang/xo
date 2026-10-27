@@ -3130,3 +3130,89 @@ func TestFrontCacheClosureMadeMapHelper(t *testing.T) {
 		t.Errorf("the second program's run: %v\n%s", err, out)
 	}
 }
+
+// TestFirstEditAfterColdParts: a program of more than PART_PACK_FIRST
+// parts but under PART_PACK_FIRST_BYTES (the HTTP server, 35) packs its
+// parts on its build target's first build, so the first edit after a
+// cold build and the builds the run cache served regenerates only the
+// edited part, on arm64 and amd64 (2026-10-27: it regenerated all 35,
+// emit 67 ms against 24 ms with them; compiler/xo bcache.xo
+// fn_cache_store).
+func TestFirstEditAfterColdParts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-firstedit-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	parts := regexp.MustCompile(`cache parts (\d+)/(\d+) reused`)
+	for _, target := range []string{"", "linux/amd64"} {
+		name := strings.ReplaceAll(target, "/", "-")
+		if name == "" {
+			name = "host"
+		}
+		src := filepath.Join(work, name, "src")
+		if err := os.CopyFS(src, os.DirFS(filepath.Join(root, "bench", "perf", "http", "xo"))); err != nil {
+			t.Fatal(err)
+		}
+		build := func() string {
+			t.Helper()
+			args := []string{"build", "--phase-times", "-o", filepath.Join(work, name, "prog")}
+			if target != "" {
+				args = append(args, "--targets="+target)
+			}
+			cmd := testtmp.Guard(exec.Command(xo, append(args, ".")...))
+			cmd.Dir = src
+			cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, name, "cache"), "XO_BIN_CACHE="+filepath.Join(work, name, "bin"), "XO_BACKEND_CACHE=on",
+				// the run cache, which this package turns off (arm64_test.go),
+				// serves the unchanged second build as for a user
+				"XO_WHOLE_BUILD=on")
+			log, err := cmd.CombinedOutput()
+			if err != nil {
+				t.Fatalf("%s: xo build: %v\n%s", name, err, log)
+			}
+			return string(log)
+		}
+		cold := build()
+		if m := parts.FindStringSubmatch(cold); m == nil {
+			t.Fatalf("%s: the cold build has no cache parts line (not split?):\n%s", name, cold)
+		} else if n, _ := strconv.Atoi(m[2]); n < 16 {
+			t.Fatalf("%s: %d parts, not more than PART_PACK_FIRST: the test checks nothing new", name, n)
+		}
+		if second := build(); !strings.Contains(second, "phase run_cache ") {
+			t.Fatalf("%s: the second build was not served by the run cache:\n%s", name, second)
+		}
+		f := filepath.Join(src, "main.xo")
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		edited := strings.Replace(string(b), `log.info("listening",`, `log.info("listening on",`, 1)
+		if edited == string(b) {
+			t.Fatalf("%s: main.xo has no log.info(\"listening\", to edit", name)
+		}
+		if err := os.WriteFile(f, []byte(edited), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		edit := build()
+		m := parts.FindStringSubmatch(edit)
+		if m == nil {
+			t.Fatalf("%s: no cache parts line:\n%s", name, edit)
+		}
+		ph, _ := strconv.Atoi(m[1])
+		pn, _ := strconv.Atoi(m[2])
+		if ph != pn-1 {
+			t.Errorf("%s: the first edit after a cold build reused %d of %d parts, want all but the edited one", name, ph, pn)
+		}
+	}
+}

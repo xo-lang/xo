@@ -147,9 +147,10 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
 /// Stores the entries a cached generation made (fn_cache_load's dir),
 /// functions' and parts', and updates the target's packs with them and
 /// the hits of fc. first_parts: a module of fewer than PART_PACK_FIRST
-/// parts packs them on the target's first build (a test build the run
-/// cache keys: its unchanged rebuilds never reach the back end, so its
-/// first edit regenerated every part, 2026-10-21).
+/// parts, or of parts under PART_PACK_FIRST_BYTES in all, packs them on
+/// the target's first build (a build the run cache keys: its unchanged
+/// rebuilds never reach the back end, so its first edit regenerated every
+/// part, 2026-10-21; the HTTP server's 35 parts, 2026-10-27).
 fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(Str, Bytes)], part_stores: List[(Str, Bytes)], first_parts: Bool) {
   if dir.is_empty() {
     return
@@ -159,7 +160,7 @@ fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(S
   // its namespace), and its text is large (xo: 34 parts, 328 MB), so
   // no loose copy for other programs to share
   if let Some(pp) = pk.parts {
-    if pp.fresh && first_parts && fc.part_keys.len() < PART_PACK_FIRST && !part_stores.is_empty() {
+    if pp.fresh && first_parts && !part_stores.is_empty() && (fc.part_keys.len() < PART_PACK_FIRST || parts_bytes(part_stores) < PART_PACK_FIRST_BYTES) {
       // a small test module's parts on the target's first build: they
       // have no loose copies to come back from. A large module's wait
       // for the second build: xo's (650 MB) written by every gate's
@@ -1173,6 +1174,13 @@ const PACK_VERSION = "xo pack v1"
 /// about 7 to 9, a hello program 3 (m.funcs holds the runtime),
 /// 2026-10-20.
 const PART_PACK_FIRST = 16
+/// Or a module whose parts are under this many bytes in all: the HTTP
+/// server has 35 parts (8.4 MB as a packed segment, 2026-10-27) and regenerated every one
+/// on the first edit after a cold build (emit 67 ms against 24 ms with
+/// them), while the compiler's (650 MB packed), written once by each gate's self
+/// build and never read, stay on the second build
+/// (gotchas/first-build-parts-pack-unread.md)
+const PART_PACK_FIRST_BYTES = 128 * 1048576
 const PACK_SEGS = 4
 /// The builds of a target that only count before its pack is written: the
 /// first creates the directory, the second counts, the third writes. The
@@ -1663,6 +1671,15 @@ fn note_store(os: Os, kind: Str, dir: Str, n: Int) {
 }
 
 /// Writes items as a new segment of p.
+/// The bytes of a build's part entries, before the pack's compression.
+fn parts_bytes(items: List[(Str, Bytes)]) -> Int {
+  var n = 0
+  for (_, b) in items {
+    n += b.len()
+  }
+  n
+}
+
 fn pack_write(os: Os, p: Pack, items: List[(Str, Bytes)]) { pack_write_counted(os, p, items, 0) }
 
 /// pack_write, counting for the prune only the bytes past replaced (the
