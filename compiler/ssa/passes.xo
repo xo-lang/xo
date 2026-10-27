@@ -176,6 +176,8 @@ pub fn (var b: Builder) prune_unwind() {
     }
   }
   let faults = b.m.may_fault()
+  b.unwind_faults = faults
+  b.unwind_may = may
   for c in b.checks {
     let g = if c.callee.is_empty() { -1 } else { b.m.func_index(c.callee) }
     if b.conc && (c.callee.is_empty() || (g >= 0 && may[g])) {
@@ -238,6 +240,7 @@ pub fn (var b: Builder) fold_known_calls() {
       known[fi] = n
     }
   }
+  b.fold_known = known
   if known.is_empty() {
     return
   }
@@ -1278,6 +1281,29 @@ pub fn (var b: Builder) cleanup_all_jobs(jobs: Int) {
     return
   }
   b.m.funcs = cleanup_funcs(b.m.funcs, jobs)
+}
+
+/// cleanup_all_jobs but for the functions in skip (the cleanup cache's
+/// hits, decision 0382, which stand in for their cleaned form).
+pub fn (var b: Builder) cleanup_skip_jobs(jobs: Int, skip: Map[Int, Bool]) {
+  if skip.is_empty() {
+    b.cleanup_all_jobs(jobs)
+    return
+  }
+  var idx: List[Int] = []
+  for fi in 0..b.m.funcs.len() {
+    if !skip.contains(fi) {
+      idx.push(fi)
+    }
+  }
+  var sub: List[Func] = []
+  for fi in idx {
+    sub.push(b.m.funcs[fi])
+  }
+  let done = if jobs <= 1 || sub.len() < 256 || target.arch == TargetArch.Wasm32 { cleanup_funcs(sub, 1) } else { cleanup_funcs(sub, jobs) }
+  for (i, fi) in idx.indexed() {
+    b.m.funcs[fi] = done[i]
+  }
 }
 
 /// funcs after cleanup, on up to jobs tasks, in order.

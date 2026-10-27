@@ -70,6 +70,9 @@ fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], closures: Bool) {
             clones[ck] = c
           }
           b.m.funcs[fi].values[v].aux = Aux.S(s: b.m.funcs[c].name)
+          if fi < b.m.body_ids.len() {
+            b.m.body_ids[fi] = ""
+          }
           // one constant parameter a call: the clone's other parameters
           // stay parameters
           break

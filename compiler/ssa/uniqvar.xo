@@ -557,6 +557,7 @@ pub fn (var r: Rc) apply_uniq(var m: Module) {
     r.uq.push(if fs.contains(true) { fs } else { [] })
   }
   r.uq_mark = mark
+  r.uq_entry = uf.entry
   for fi in 0..m.funcs.len() {
     let es = uf.entry[fi]
     if !es.contains(true) {

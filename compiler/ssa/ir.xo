@@ -354,6 +354,12 @@ pub struct Module {
   /// entry and the inliner's summary of it; the function is a shell
   /// (rccache.xo lazy_shell) until force_lazy decodes it.
   pub lazy: Map[Int, LazyFn] = {}
+  /// What stands for each function's body in the caches' keys after the
+  /// cleanup, by index (decision 0382 stage 3): "cln KEY", the cleanup
+  /// cache's key, which fixes the body as the cleanup left it; "" (or
+  /// past the end) where key_func hashes the body itself. A pass that
+  /// changes a body before insert_rc clears its id (specialize_args).
+  pub body_ids: List[Str] = []
   /// The facts that stand in for the body of a function the passes after
   /// inlining have not decoded (decision 0283 stage B, bodyfacts.xo), by
   /// index; such a function is a shell. Readers go through the accessors

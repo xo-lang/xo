@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v10"
+const RC_CACHE_VERSION = "xo rc cache v11"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -204,7 +204,11 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   var b = BytesBuilder.new()
   b.write_str("${RC_CACHE_VERSION}\n${id}\n${m.goarch}\n")
   b.write_str("self ${bools_text(r.borrowed[fi])} last=${(r.fidx.get(f.name) ?? -1) == fi} imm=${r.skip_imm}\n")
-  key_func(b, f, tk)
+  if key_body(b, m, fi, f, tk) {
+    // apply_uniq's marks, which the body id does not cover
+    let es = if fi < r.uq_entry.len() { bools_text(r.uq_entry[fi]) } else { "-" }
+    b.write_str("uq ${es} ${r.uq_mark}\n")
+  }
   var seen: Map[Str, Bool] = {}
   for x in f.values {
     if let S(s) = x.aux {
@@ -272,7 +276,7 @@ fn borrow_hash(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   let f = m.funcs[fi]
   var b = BytesBuilder.new()
   b.write_str("${BORROW_REC_VERSION}\n${id}\n${m.goarch}\nlast=${(r.fidx.get(f.name) ?? -1) == fi} imm=${r.skip_imm}\n")
-  key_func(b, f, tk)
+  let _id = key_body(b, m, fi, f, tk)
   var seen: Map[Str, Bool] = {}
   for x in f.values {
     if let S(s) = x.aux {
@@ -285,8 +289,20 @@ fn borrow_hash(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   crypto.sha256(b.freeze()).to_hex()
 }
 
+/// Writes what stands for function fi's body (f) into a key: its body id
+/// when it has one (Module.body_ids, decision 0382 stage 3), else the
+/// body in full (key_func); whether it was the id.
+fn key_body(var b: BytesBuilder, m: Module, fi: Int, f: Func, tk: List[Str]) -> Bool {
+  if fi < m.body_ids.len() && !m.body_ids[fi].is_empty() {
+    b.write_str("body ${m.body_ids[fi]}\n")
+    return true
+  }
+  key_func(b, f, tk)
+  false
+}
+
 /// The version of the incremental borrow inference's record and hashes.
-pub const BORROW_REC_VERSION = "xo borrow record v2"
+pub const BORROW_REC_VERSION = "xo borrow record v3"
 
 fn bools_text(xs: List[Bool]) -> Str {
   var b = StrBuilder.new()

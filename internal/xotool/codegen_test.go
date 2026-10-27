@@ -73,6 +73,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_BACKEND_CACHE":        {"none", ""},
 	"XO_BACKEND_CACHE_DIR":    {"none", ""},
 	"XO_BIN_CACHE":            {"none", ""},
+	"XO_CHAIN_KEYS":           {"none", ""}, // the cleanup cache (decision 0382); every build writes the same binary
 	"XO_CHK_CACHE":            {"none", ""},
 	"XO_FE_CACHE":             {"none", ""},
 	"XO_FE_STATS":             {"none", ""},
@@ -113,6 +114,7 @@ var codegenEnv = map[string]inputClass{
 
 // codegenFields classifies the module fields compiler/xo sets.
 var codegenFields = map[string]inputClass{
+	"body_ids":      {"none", ""}, // the cleanup cache's keys (XO_CHAIN_KEYS, decision 0382), which the caches hash in place of the bodies they fix
 	"comp_dir":      {"none", ""}, // only in the .debug_str path slots, filled after the caches (arm64 debug.xo dw_slots_obj, 2026-10-22)
 	"std_root":      {"none", ""}, // only in the .debug_str path slots, filled after the caches (arm64 debug.xo dw_slots_obj, 2026-10-22)
 	"debug_info":    {"keyed", "debug=${m.debug_info}"},
@@ -124,10 +126,10 @@ var codegenFields = map[string]inputClass{
 	"inline_deny":   {"keyed", "deny ${m.inline_deny"},
 	"passes_off":    {"keyed", "passes ${m.passes_off"},
 	"reader_bodies": {"keyed", "readers ${m.reader_bodies}"}, // the inliner decides for the DWARF readers and what only they reach differently (arm64/inline.xo release_view)
-	"dump_fn":       {"keyed", "dumpfn=${m.dump_fn}"}, // XO_DUMP_FN: the code is the same, but a cached function would not be generated and dumped
-	"rc_check":      {"none", ""},                     // XO_RC_CHECK: marks Reuse values in the SSA bodies every cache key hashes
-	"jobs":          {"none", ""},                     // the tasks of may_fault's scan; its result does not depend on them
-	"op_verify":     {"none", ""},                     // XO_OP_VERIFY: checks, never changes, the emitter's output
+	"dump_fn":       {"keyed", "dumpfn=${m.dump_fn}"},        // XO_DUMP_FN: the code is the same, but a cached function would not be generated and dumped
+	"rc_check":      {"none", ""},                            // XO_RC_CHECK: marks Reuse values in the SSA bodies every cache key hashes
+	"jobs":          {"none", ""},                            // the tasks of may_fault's scan; its result does not depend on them
+	"op_verify":     {"none", ""},                            // XO_OP_VERIFY: checks, never changes, the emitter's output
 }
 
 // codegenFS are the closure's files that use the file system, with why

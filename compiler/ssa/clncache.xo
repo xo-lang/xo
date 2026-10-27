@@ -12,19 +12,43 @@ use std/crypto
 
 /// The version of the keys (the entries are the reference counting
 /// cache's encoding, RC_CACHE_VERSION).
-const CLN_CACHE_VERSION = "xo cln cache v1"
+const CLN_CACHE_VERSION = "xo cln cache v2"
+
+/// What a key hashes besides a function's own SSA (decision 0382 stage
+/// 3): the front end entry each function's body replayed or was recorded
+/// as, which fixes the body as the builder made it (FeCache.body_entries;
+/// the key hashes its bytes), and prune_unwind's
+/// bits of each function (Builder.unwind_faults, unwind_may), which with
+/// fold_known_calls' constants are all the passes before the landings
+/// read of the functions a body calls.
+pub struct ClnFacts {
+  pub fe: Map[Int, Bytes] = {}
+  pub pre: List[Bool] = []
+  pub may: List[Bool] = []
+  /// per function: cln_known
+  pub known: List[Str] = []
+}
+
+/// The facts of b's build (ClnFacts).
+pub fn (b: Builder) cln_facts() -> ClnFacts { ClnFacts{fe: b.fe.body_entries, pre: b.unwind_faults, may: b.unwind_may, known: cln_known(b.fold_known, b.m.funcs.len())} }
 
 /// The key of function fi as fold_known_calls left it: the SHA-256 of
 /// the compiler's identity, the build's flags, the target, the function
-/// in full (key_func, and the fields key_func leaves out: reader, target,
-/// moved, inlined sites and values), and for every name it uses that
-/// names a function of the module, that function's may_fault bit and
-/// whether it catches.
-pub fn cln_key(m: Module, fi: Int, faults: List[Bool], tk: List[Str], id: Str, flags: Str) -> Str {
+/// (a replayed body by its front end entry's key, any other in full by
+/// key_func), the fields key_func leaves out (reader, target, moved,
+/// inlined sites and values), and for every name it uses that names a
+/// function of the module, that function's may_fault bit, whether it
+/// catches, its bits before prune_unwind and its known constant
+/// (ClnFacts.known).
+pub fn cln_key(m: Module, fi: Int, faults: List[Bool], tk: List[Str], id: Str, flags: Str, facts: ClnFacts) -> Str {
   let f = m.funcs[fi]
   var b = BytesBuilder.new()
   b.write_str("${CLN_CACHE_VERSION}\n${id}\n${flags}\n${m.goarch}\n")
-  key_func(b, f, tk)
+  if let Some(e) = facts.fe.get(fi) {
+    b.write_str("fe ${crypto.sha256(e).to_hex()}\n")
+  } else {
+    key_func(b, f, tk)
+  }
   var mv: List[Int] = []
   for (k, _) in f.moved {
     mv.push(k)
@@ -42,7 +66,7 @@ pub fn cln_key(m: Module, fi: Int, faults: List[Bool], tk: List[Str], id: Str, f
         seen[s] = true
         let g = m.func_index(s)
         if g >= 0 && g < faults.len() {
-          b.write_str("callee ${s.len()}:${s} ${faults[g]} ${m.funcs[g].catches}\n")
+          b.write_str("callee ${s.len()}:${s} ${faults[g]} ${m.funcs[g].catches} ${bit_at(facts.pre, g)} ${bit_at(facts.may, g)} ${if g < facts.known.len() { facts.known[g] } else { "" }}\n")
         }
       }
     }
@@ -50,13 +74,39 @@ pub fn cln_key(m: Module, fi: Int, faults: List[Bool], tk: List[Str], id: Str, f
   crypto.sha256(b.freeze()).to_hex()
 }
 
+/// l[i], false past its end.
+fn bit_at(l: List[Bool], i: Int) -> Bool { i < l.len() && l[i] }
+
+/// Per function of an n function module: the constant fold_known_calls
+/// folded a call of it to (known, Builder.fold_known; "" for none).
+fn cln_known(known: Map[Int, Aux], n: Int) -> List[Str] {
+  var out: List[Str] = []
+  for _ in 0..n {
+    out.push("")
+  }
+  for (g, a) in known {
+    if g < n {
+      out[g] = match a {
+        I(x) => "i${x}"
+        B(x) => "b${x}"
+        None | F(..) | S(..) | Bs(..) | P(..) => ""
+      }
+    }
+  }
+  out
+}
+
+/// may_fault of m, the list a driver hands both cln_keys and
+/// add_landings_with.
+pub fn cln_faults(m: Module) -> List[Bool] { m.may_fault() }
+
 /// The flags the keys hash: the driver's (fe_flags) and the builder's
 /// own.
 pub fn (var b: Builder) cln_flags(flags: Str) -> Str { "${flags} ${b.fe_own_flags()}" }
 
 /// cln_key of every function of m, on up to jobs tasks (flags from
 /// cln_flags).
-pub fn cln_keys(m: Module, faults: List[Bool], tk: List[Str], id: Str, flags: Str, jobs: Int) -> List[Str] {
+pub fn cln_keys(m: Module, faults: List[Bool], tk: List[Str], id: Str, flags: Str, facts: ClnFacts, jobs: Int) -> List[Str] {
   let fl = flags
   let n = m.funcs.len()
   let next = Atomic[Int].new(0)
@@ -71,7 +121,7 @@ pub fn cln_keys(m: Module, faults: List[Bool], tk: List[Str], id: Str, flags: St
             break
           }
           for fi in i..(i + 64).min(n) {
-            mine.push((fi, cln_key(m, fi, faults, tk, id, fl)))
+            mine.push((fi, cln_key(m, fi, faults, tk, id, fl, facts)))
           }
         }
         mine
@@ -101,3 +151,93 @@ pub fn cln_entry(m: Module, f: Func) -> Option[Bytes] { encode_func(m, f) }
 /// it does not decode or names a type the module does not have yet (the
 /// function then misses: a cold build's landings would have made it).
 pub fn cln_of_entry(m: Module, d: Bytes) -> Option[Func] { decode_func(m, d, ops_by_name()) }
+
+/// The functions whose key's entry decodes (cln_of_entry), by index, on
+/// up to jobs tasks; a function with no key ("") is not looked up.
+pub fn cln_hits(m: Module, keys: List[Str], entries: Map[Str, Bytes], jobs: Int) -> Map[Int, Func] {
+  var todo: List[Int] = []
+  for (fi, k) in keys.indexed() {
+    if !k.is_empty() && entries.contains(k) {
+      todo.push(fi)
+    }
+  }
+  var out: Map[Int, Func] = {}
+  if todo.is_empty() {
+    return out
+  }
+  let mt = Module{types: m.types, type_at: m.type_at, goarch: m.goarch}
+  let ops = ops_by_name()
+  let n = todo.len()
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min((n + 31) / 32).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, Func)] {
+        var mine: List[(Int, Func)] = []
+        while true {
+          let i = next.add(32) - 32
+          if i >= n {
+            break
+          }
+          for j in i..(i + 32).min(n) {
+            let fi = todo[j]
+            if let Some(g) = decode_func(mt, entries.get(keys[fi]) ?? b"", ops) {
+              mine.push((fi, g))
+            }
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Func)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  for (fi, g0) in done {
+    // what an entry does not carry, from the function it stands in for
+    // (the key hashed it)
+    var g = g0
+    g.target = m.funcs[fi].target
+    g.skip = m.funcs[fi].skip
+    out[fi] = g
+  }
+  out
+}
+
+/// The entries of functions idx of m (cln_entry), on up to jobs tasks; a
+/// function an entry cannot hold is left out.
+pub fn cln_encode(m: Module, idx: List[Int], jobs: Int) -> List[(Int, Bytes)] {
+  let n = idx.len()
+  if n == 0 {
+    return []
+  }
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min((n + 31) / 32).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, Bytes)] {
+        var mine: List[(Int, Bytes)] = []
+        while true {
+          let i = next.add(32) - 32
+          if i >= n {
+            break
+          }
+          for j in i..(i + 32).min(n) {
+            if let Some(e) = encode_func(m, m.funcs[idx[j]]) {
+              mine.push((idx[j], e))
+            }
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Bytes)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  done.sort_by(fn(x) { x.0 })
+}

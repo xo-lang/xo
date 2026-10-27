@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- An edit rebuild is a few ms faster: the checker's syntax trees and tables are
+  released on a task beside the passes after the SSA is built, not on the build's
+  thread. Opt in (XO_CHAIN_KEYS=1, decision 0382): the landings and the cleanup
+  per function through the back-end cache, keyed by the front end entry each body
+  came from, and the reference counting's keys chained from them (llvm-fib edit
+  284 to 274 ms, the HTTP server 596 to 564 ms).
 - `--backend=amd64` edit rebuilds on darwin and linux reuse every unchanged
   function and part, as arm64 builds do (the per-function and part back-end
   cache, lazy inline-cache decode and the deferred inline verification): a body

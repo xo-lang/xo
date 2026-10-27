@@ -105,6 +105,39 @@ a type the module does not have yet does not decode, and the function misses. Te
 clncache_test.xo (a key by name when every index moves; a callee's bit, the flags and the identity
 change it; keys on tasks; an entry reads back as its function).
 
+## Stages 2 and 3 (2026-10-27, Xo Lang 1)
+
+Stage 2 (reuse behind XO_CHAIN_KEYS=1, keys by key_func over each function after fold_known_calls):
+every edit equal to a cold build on darwin/arm64 and linux/amd64, verify clean, about 1298 of 1299
+functions reused on an llvm-fib edit; a wash (quiet, n=8 alternating: fib 282.5 to 283.8 ms, the HTTP
+server 581.2 to 576.2): the keys (8.9 ms) and the decoding read (9.0) cost what add_landings (7.1)
+and cleanup (13.2) saved.
+
+Stage 3: a body the front end cache replayed, or recorded (a cold build keys as the next build's
+hits do), is keyed by the SHA-256 of that entry's bytes, not by key_func (FeCache.body_entries);
+not by the entry's key, which a body built anew replaces when its checks fail. Each named function
+adds the facts the passes before the landings read of it: prune_unwind's may_fault bit and cancel
+bit before it ran (Builder.unwind_faults, unwind_may) and the constant fold_known_calls folded its
+calls to (Builder.fold_known). Then each function's cleanup key stands for its body in the
+reference counting's and the incremental borrow inference's keys (Module.body_ids, "cln KEY"),
+except where specialize_args rewrote a call (its id cleared) and for its clones; rc_key adds
+apply_uniq's entry marks. The front end's release (decision 0352) runs on a task beside the passes.
+Gates: each edit (a constant, a string, a callee that stops faulting so an unchanged caller must
+miss, and back) byte for byte a cold build on darwin/arm64 and linux/amd64; XO_BACKEND_CACHE=verify
+clean (an applicable entry's body is keyed as a hit's, so verify checks the chained keys);
+TestBackendCacheEditIdentity, TestCacheStoreLog, TestFrontEndFreedByDefault; the fixed point.
+
+Quiet, n=10 interleaved, warm caches, wall ms of a real body edit (Go: its twin, `go build -o`
+after the same kind of edit, warm GOCACHE):
+
+| | off | stage 2 | stage 3 | + rc/borrow keys | + release on a task | Go |
+|---|---|---|---|---|---|---|
+| llvm-fib | 284.2 | 286.2 | 281.6 | 275.5 | 273.6 | 98.9 |
+| HTTP server | 596.0 | 594.0 | 583.6 | 567.5 | 563.9 | 245.8 |
+
+Still opt in (XO_CHAIN_KEYS=1) until the default's suites run; next, by measured ceilings (oracle
+runs) rather than CPU estimates.
+
 ## Expected effect (to be measured)
 
 The edit's middle phases (108 ms) fall toward the cost of the 10 changed functions and the key

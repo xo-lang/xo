@@ -35,6 +35,12 @@ pub struct FeCache {
   pub entries: Map[Str, Bytes] = {}
   pub stores: List[(Str, Bytes)] = []
   pub hits: Int = 0
+  /// per function index: the entry its body replayed (a hit) or was
+  /// recorded as (a miss whose entry was sealed at once), which fixes the
+  /// body as built; the cleanup cache's key hashes it (cln_key). Not the
+  /// entry's key: an entry whose checks fail is replaced under the same
+  /// key by a body built anew.
+  pub body_entries: Map[Int, Bytes] = {}
   pub misses: Int = 0
   pub mismatches: List[Str] = []
   /// the build starts with unwinding checks (Builder.conc): the last

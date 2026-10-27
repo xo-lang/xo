@@ -189,6 +189,13 @@ pub struct Builder {
   /// A test binary (Options.Tests, testmode.xo).
   pub tests: Bool = false
   pub conc: Bool = false
+  /// prune_unwind's view of each function before it ran: may_fault, and
+  /// with conc whether a call of it can be canceled (cln_key hashes a
+  /// callee's)
+  pub unwind_faults: List[Bool] = []
+  pub unwind_may: List[Bool] = []
+  /// the constants fold_known_calls folded calls of these functions to
+  pub fold_known: Map[Int, Aux] = {}
   /// The program is lowered for the wasm backend (decision 0207): rt.layout
   /// folds to the wasm runtime's layout, and no C ABI export is built (no
   /// C calls them).
@@ -744,6 +751,7 @@ fn (var b: Builder) run_job_fe(j: Job) {
               b.fe.bad.push("${key} (${b.m.funcs[fi].name}, recorded by xo ${b.fe.last_recorder})")
             }
             b.fe.hits += 1
+            b.fe.body_entries[fi] = e
             return
           }
         }
@@ -765,6 +773,10 @@ fn (var b: Builder) run_job_fe(j: Job) {
           Some(old) => {
             if applies && !b.fe_same_numbered(old, e) {
               b.fe.mismatches.push(b.m.funcs[fi].name)
+            } else if applies {
+              // the body a hit would have replayed: keyed as a hit's, so
+              // verify checks the cleanup cache's chained keys too
+              b.fe.body_entries[fi] = old
             }
           }
           None => {}
@@ -776,6 +788,11 @@ fn (var b: Builder) run_job_fe(j: Job) {
         } else if let Some(x) = b.fe_seal(e, []) {
           if entry == None || entry != Some(x) {
             b.fe.stores.push((key, x))
+          }
+          // the entry a later build replays: this body's (a cold build
+          // keys its cleanup as the next build's hits do)
+          if !b.fe.verify {
+            b.fe.body_entries[fi] = x
           }
         }
       }

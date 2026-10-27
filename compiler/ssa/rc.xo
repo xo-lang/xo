@@ -123,6 +123,9 @@ struct Rc {
   /// prove unneeded (REUSE_PROVED, or REUSE_CHECKED under XO_RC_CHECK=1)
   uq: List[List[Bool]] = []
   uq_mark: Int = 0
+  /// per function: the `var` parameters apply_uniq marked proved unique
+  /// at the entry (UniqFacts.entry; rc_key hashes them with a body id)
+  uq_entry: List[List[Bool]] = []
 }
 
 /// The leaf of root at path, its path numbered (leaf_key).

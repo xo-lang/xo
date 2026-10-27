@@ -120,7 +120,7 @@ fn main(os: Os) ! {
     let (cd, cid) = check_cache(os, args)
     // `xo check --support`: the SSA builder through the front end cache,
     // as plain_support builds it (no target, the profiler kept)
-    os.proc.exit(core.run_cached(os, args, [], cd, cid, fn(c: check.Checker) -> List[check.Diag] uses (clock, env, fs, proc, rand, stdio) {
+    os.proc.exit(core.run_cached(os, args, [], cd, cid, fn(c: check.Checker) -> List[check.Diag] uses clock, env, fs, proc, rand, stdio {
       let bb = fe_cached_build(os, c, ".", false, false, false, "", "", false, false, true, false, false, false, false, [])
       if bb.why.is_empty() { ssa.nogc_diags(bb) } else { [] }
     }))
@@ -2007,34 +2007,44 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
   // the zone data std/time needs, noted as the Go builder lowers
   let tu = if uses_time { tzsel.tz_use(c, b.m, root) } else { tzsel.TZUse{} }
   t = lap(os, o.phases, "tz", t)
-  if strip {
-    // decision 0352: the SSA is built and nothing after reads the
-    // checker but the link's view, so its syntax trees and tables go
-    // here, before the passes' peak (the caller's c is this variable)
-    c = c.link_view(o.reuse_parse)
-    b.c = c
-    // the marker TestFrontEndFreedByDefault looks for in --phase-times
-    t = lap(os, o.phases, "front_end_freed", t)
+  // the passes run in a scope whose one task lets the front end go
+  let lo = scope s {
+    if strip {
+      // decision 0352: the SSA is built and nothing after reads the
+      // checker but the link's view, so its syntax trees and tables go
+      // here, before the passes' peak (the caller's c is this variable).
+      // The last reference is the task's: the release (7 ms of an edit of
+      // llvm-fib, 20 of the HTTP server's, on the build's thread) runs
+      // beside the passes
+      let old = c
+      c = c.link_view(o.reuse_parse)
+      b.c = c
+      let _f = s.spawn(fn() -> Int { old.mods.len() })
+      // the marker TestFrontEndFreedByDefault looks for in --phase-times
+      t = lap(os, o.phases, "front_end_freed", t)
+    }
+    // b.run_passes(), timed; may_fault's scans on tasks
+    b.m.jobs = emit_jobs(os)
+    let tp = t
+    b.prune_unwind()
+    t = lap(os, o.phases, "prune_unwind.unwind", t)
+    b.fold_known_calls()
+    t = lap(os, o.phases, "prune_unwind.fold", t)
+    let _p = lap(os, o.phases, "prune_unwind", tp)
+    landings_cleanup_cached(os, b, release, fe_settings(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, trace_support_eff(o, release), soft_cpu, heap_guard), emit_jobs(os), o.phases)
+    t = os.clock.now()
+    // the reference counting's optional pass (rc.xo chain_pads)
+    b.m.passes_off = passes_off(os)
+    b.m.rc_check = (os.env.get("XO_RC_CHECK") ?? "") == "1"
+    // a callee per constant argument (decision 0368), before the reference
+    // counting so its caches see the clones as functions
+    b.specialize_args()
+    t = lap(os, o.phases, "specialize_args", t)
+    let rk = rc_cached(os, b, release, emit_jobs(os), o.phases, lazy)
+    t = lap(os, o.phases, "insert_rc", t)
+    Lowered{b: b, tu: tu, t: t, rc_keys: rk}
   }
-  // b.run_passes(), timed; may_fault's scans on tasks
-  b.m.jobs = emit_jobs(os)
-  b.prune_unwind()
-  b.fold_known_calls()
-  t = lap(os, o.phases, "prune_unwind", t)
-  b.add_landings()
-  t = lap(os, o.phases, "add_landings", t)
-  b.cleanup_all_jobs(emit_jobs(os))
-  t = lap(os, o.phases, "cleanup", t)
-  // the reference counting's optional pass (rc.xo chain_pads)
-  b.m.passes_off = passes_off(os)
-  b.m.rc_check = (os.env.get("XO_RC_CHECK") ?? "") == "1"
-  // a callee per constant argument (decision 0368), before the reference
-  // counting so its caches see the clones as functions
-  b.specialize_args()
-  t = lap(os, o.phases, "specialize_args", t)
-  let rk = rc_cached(os, b, release, emit_jobs(os), o.phases, lazy)
-  t = lap(os, o.phases, "insert_rc", t)
-  Lowered{b: b, tu: tu, t: t, rc_keys: rk}
+  lo
 }
 
 /// The end of a native build: the test list of a test binary, or the

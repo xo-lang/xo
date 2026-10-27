@@ -2,6 +2,8 @@
 // name, not by index; the may_fault bits of what a function calls in it;
 // an entry that reads back as the function it was made of.
 
+use std/crypto
+
 /// f calls g and h; g faults, h does not. With extra, an unrelated
 /// function comes first (every index moves by one).
 fn calls_module(extra: Bool) -> Module {
@@ -29,7 +31,7 @@ fn calls_module(extra: Bool) -> Module {
 }
 
 fn key_of(m: Module, name: Str, flags: Str) -> Str {
-  cln_key(m, m.func_index(name), m.may_fault(), type_keys(m), "xo-id", flags)
+  cln_key(m, m.func_index(name), m.may_fault(), type_keys(m), "xo-id", flags, ClnFacts{})
 }
 
 test "a cln key is the same when every index moves" {
@@ -44,15 +46,37 @@ test "a cln key changes with a callee's may_fault bit, the flags and the identit
   let k = key_of(m, "f", "fl")
   var faults = m.may_fault()
   faults[m.func_index("h")] = true
-  expect(cln_key(m, m.func_index("f"), faults, type_keys(m), "xo-id", "fl") == k) == false
+  expect(cln_key(m, m.func_index("f"), faults, type_keys(m), "xo-id", "fl", ClnFacts{}) == k) == false
   // a function f does not name
   var other = m.may_fault()
   let mz = calls_module(true)
   expect(key_of(mz, "f", "fl")) == k
   other[m.func_index("f")] = !other[m.func_index("f")]
-  expect(cln_key(m, m.func_index("f"), other, type_keys(m), "xo-id", "fl")) == k
+  expect(cln_key(m, m.func_index("f"), other, type_keys(m), "xo-id", "fl", ClnFacts{})) == k
   expect(key_of(m, "f", "fl2") == k) == false
-  expect(cln_key(m, m.func_index("f"), m.may_fault(), type_keys(m), "xo-id2", "fl") == k) == false
+  expect(cln_key(m, m.func_index("f"), m.may_fault(), type_keys(m), "xo-id2", "fl", ClnFacts{}) == k) == false
+}
+
+test "a replayed body's cln key is its front end entry's, with its callees' prune_unwind and fold bits" {
+  let m = calls_module(false)
+  let fi = m.func_index("f")
+  let faults = m.may_fault()
+  let tk = type_keys(m)
+  // f is 0, g 1, h 2
+  let facts = ClnFacts{fe: {fi: b"fe entry"}, pre: [false, true, false], may: [false, false, false], known: ["", "", ""]}
+  let k = cln_key(m, fi, faults, tk, "id", "fl", facts)
+  expect(k == key_of(m, "f", "fl")) == false
+  // the body is not hashed: the entry's key stands for it
+  var m2 = m
+  var f2 = m2.funcs[fi]
+  let _c = f2.add(0, Op.Const, -1, Aux.I(n: 7), [])
+  m2.funcs[fi] = f2
+  expect(cln_key(m2, fi, faults, tk, "id", "fl", facts)) == k
+  expect(cln_key(m, fi, faults, tk, "id", "fl", ClnFacts{fe: {fi: b"fe entry 2"}, pre: facts.pre, may: facts.may, known: facts.known}) == k) == false
+  // a callee's bit before prune_unwind, its cancel bit and its constant
+  expect(cln_key(m, fi, faults, tk, "id", "fl", ClnFacts{fe: facts.fe, pre: [false, true, true], may: facts.may, known: facts.known}) == k) == false
+  expect(cln_key(m, fi, faults, tk, "id", "fl", ClnFacts{fe: facts.fe, pre: facts.pre, may: [false, true, false], known: facts.known}) == k) == false
+  expect(cln_key(m, fi, faults, tk, "id", "fl", ClnFacts{fe: facts.fe, pre: facts.pre, may: facts.may, known: ["", "", "i1"]}) == k) == false
 }
 
 test "cln keys on tasks are one task's" {
@@ -62,7 +86,7 @@ test "cln keys on tasks are one task's" {
   }
   let faults = m.may_fault()
   let tk = type_keys(m)
-  expect(cln_keys(m, faults, tk, "id", "fl", 4)) == cln_keys(m, faults, tk, "id", "fl", 1)
+  expect(cln_keys(m, faults, tk, "id", "fl", ClnFacts{}, 4)) == cln_keys(m, faults, tk, "id", "fl", ClnFacts{}, 1)
 }
 
 test "a cln entry reads back as its function, and not where a type is missing" {
@@ -81,4 +105,32 @@ test "a cln entry reads back as its function, and not where a type is missing" {
   var bare = Module{}
   let _f = bare.new_func("f", [], [])
   expect((cln_of_entry(bare, e) ?? Func{name: "none"}).name) == "none"
+}
+
+fn body_key(m: Module, fi: Int) -> Str {
+  var b = BytesBuilder.new()
+  let _id = key_body(b, m, fi, m.funcs[fi], type_keys(m))
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+test "a function with a body id is keyed by it, one without by its body" {
+  var m = calls_module(false)
+  let fi = m.func_index("f")
+  let full = body_key(m, fi)
+  m.body_ids = ["cln k1", "", ""]
+  let k = body_key(m, fi)
+  expect(k == full) == false
+  // the body is not read: the id stands for it
+  var f = m.funcs[fi]
+  let _c = f.add(0, Op.Const, -1, Aux.I(n: 7), [])
+  m.funcs[fi] = f
+  expect(body_key(m, fi)) == k
+  m.body_ids = ["cln k2", "", ""]
+  expect(body_key(m, fi) == k) == false
+  // no id (specialize_args cleared it, or past the end): the body
+  m.body_ids = ["", "", ""]
+  let changed = body_key(m, fi)
+  expect(changed == full) == false
+  m.body_ids = []
+  expect(body_key(m, fi)) == changed
 }
