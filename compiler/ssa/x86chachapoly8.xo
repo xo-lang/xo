@@ -1,0 +1,196 @@
+// ChaCha20-Poly1305's bulk on x86-64 with AVX2 (cpu.chacha_poly_seal8 and
+// chacha_poly_open8, std/native/llrt/cpu.xo): x86chachapoly.xo's loop with
+// the AVX2 layout of Go's chacha20poly1305_amd64.s (BSD-style license,
+// Copyright The Go Authors), two blocks in each ymm register (block 2s in
+// the low 128 bits, 2s + 1 in the high), a group's four blocks in two
+// sets of four rows (ymm0 to ymm3, ymm4 to ymm7), 10 double rounds for
+// all four, and x86chachapoly.xo's Poly1305 blocks (16 a group, two after
+// each of the first six double rounds, one after each of the next four).
+// No legacy SSE instruction runs in it (an SSE write between AVX ones
+// costs a transition): what the SSE kernel built with pinsrd is written
+// once with general register stores into 256 bytes of scratch after the
+// state at st (chacha.xo allocates st with them), read as VEX memory
+// operands:
+//
+//   st+80   rows 0 to 2 (constants, key), each twice (32 bytes each)
+//   st+176  row 3 of blocks 0 and 1, then of blocks 2 and 3 (counters)
+//   st+240  the counters' step, 4 in each lane's first word
+//   st+272  vpshufb's table of a rotation left by 16, twice
+//   st+304  vpshufb's table of a rotation left by 8, twice
+//
+// Registers: ymm0 to ymm7 the rows, ymm8 and ymm9 the rotations' scratch
+// (and the output's), ymm12 and ymm13 the two sets' row 3 as loaded (their
+// counters, advanced 4 a group, added back after the rounds); the general
+// registers as x86chachapoly.xo. vzeroupper before the end.
+
+/// One step of the quarter round on both sets (x += y; z ^= x; z rotated
+/// left by r): rows as x86chacha.xo's, set 1's four registers above set
+/// 0's.
+fn avx_chacha_step(x: Int, y: Int, z: Int, r: Int) -> List[Str] {
+  var t: List[Str] = []
+  for o in [0, 4] {
+    t = t + ["vpaddd %ymm${y + o}, %ymm${x + o}, %ymm${x + o}", "vpxor %ymm${x + o}, %ymm${z + o}, %ymm${z + o}"]
+  }
+  for o in [0, 4] {
+    let s = 8 + o / 4
+    if r == 16 {
+      t.push("vpshufb 272(%rsi), %ymm${z + o}, %ymm${z + o}")
+    } else if r == 8 {
+      t.push("vpshufb 304(%rsi), %ymm${z + o}, %ymm${z + o}")
+    } else {
+      t = t + ["vpslld $${r}, %ymm${z + o}, %ymm${s}", "vpsrld $${32 - r}, %ymm${z + o}, %ymm${z + o}", "vpor %ymm${s}, %ymm${z + o}, %ymm${z + o}"]
+    }
+  }
+  t
+}
+
+/// A half round of both sets.
+fn avx_chacha_half() -> List[Str] {
+  var t: List[Str] = []
+  for (a, b, d, r) in [(0, 1, 3, 16), (2, 3, 1, 12), (0, 1, 3, 8), (2, 3, 1, 7)] {
+    t = t + avx_chacha_step(a, b, d, r)
+  }
+  t
+}
+
+/// Rows B, C, D of both sets rotated by lanes within each 128 bits.
+fn avx_chacha_diag(b: Int, c: Int, d: Int) -> List[Str] {
+  var t: List[Str] = []
+  for o in [0, 4] {
+    t = t + ["vpshufd $${b}, %ymm${1 + o}, %ymm${1 + o}", "vpshufd $${c}, %ymm${2 + o}, %ymm${2 + o}", "vpshufd $${d}, %ymm${3 + o}, %ymm${3 + o}"]
+  }
+  t
+}
+
+/// The scratch after st, written with general register stores (rax).
+fn avx_chacha_scratch(st: Str) -> List[Str] {
+  var t: List[Str] = []
+  // rows 0 to 2, each twice
+  for r in 0..3 {
+    for h in 0..2 {
+      t = t + ["movq ${16 * r + 8 * h}(${st}), %rax", "movq %rax, ${80 + 32 * r + 8 * h}(${st})", "movq %rax, ${80 + 32 * r + 16 + 8 * h}(${st})"]
+    }
+  }
+  // row 3 of each block: its counter, then words 13 to 15
+  for b in 0..4 {
+    let at = 176 + 16 * b
+    t = t + ["movl ${64 + 4 * b}(${st}), %eax", "movl %eax, ${at}(${st})"]
+    for w in 1..4 {
+      t = t + ["movl ${48 + 4 * w}(${st}), %eax", "movl %eax, ${at + 4 * w}(${st})"]
+    }
+  }
+  // the step (4, 0, 0, 0 in each lane) and the two tables, twice each
+  t = t + ["movl $4, %eax", "movq %rax, 240(${st})", "movq %rax, 256(${st})", "xorl %eax, %eax", "movq %rax, 248(${st})", "movq %rax, 264(${st})"]
+  for (at, lo, hi) in [(272, 361421592464458498, 940142975169071882), (304, 433757367256023043, 1012478749960636427)] {
+    t = t + ["movabsq $${lo}, %rax", "movq %rax, ${at}(${st})", "movq %rax, ${at + 16}(${st})", "movabsq $${hi}, %rax", "movq %rax, ${at + 8}(${st})", "movq %rax, ${at + 24}(${st})"]
+  }
+  t
+}
+
+/// A 256 byte group at r8/r9 with the 16 Poly1305 blocks at off(base)
+/// hashed in its rounds (none when base is ""): the rows loaded, 20
+/// rounds, the state added back, each block's 64 bytes gathered from its
+/// lanes and xored with src's into dst's, the counters advanced.
+fn avx_chacha_poly_group(base: Str, off: Int) -> List[Str] {
+  var t = [
+    "vmovdqu 80(%rsi), %ymm0",
+    "vmovdqu 112(%rsi), %ymm1",
+    "vmovdqu 144(%rsi), %ymm2",
+    "vmovdqu %ymm12, %ymm3",
+    "vmovdqu 80(%rsi), %ymm4",
+    "vmovdqu 112(%rsi), %ymm5",
+    "vmovdqu 144(%rsi), %ymm6",
+    "vmovdqu %ymm13, %ymm7",
+  ]
+  // the Poly1305 blocks after each double round: 2, 2, 2, 2, 2, 2, 1, 1, 1, 1
+  var j = 0
+  for d in 0..10 {
+    t = t + avx_chacha_half() + avx_chacha_diag(57, 78, 147) + avx_chacha_half() + avx_chacha_diag(147, 78, 57)
+    let k = if d < 6 { 2 } else { 1 }
+    for _ in 0..k {
+      if !base.is_empty() && j < 16 {
+        t = t + x86_poly_block(base, off + 16 * j)
+      }
+      j += 1
+    }
+  }
+  for o in [0, 4] {
+    t = t + ["vpaddd 80(%rsi), %ymm${o}, %ymm${o}", "vpaddd 112(%rsi), %ymm${o + 1}, %ymm${o + 1}", "vpaddd 144(%rsi), %ymm${o + 2}, %ymm${o + 2}", "vpaddd %ymm${12 + o / 4}, %ymm${o + 3}, %ymm${o + 3}"]
+  }
+  for s in 0..2 {
+    let o = 4 * s
+    // block 2s: the rows' low lanes; block 2s + 1: their high lanes
+    for (imm, at) in [(32, 128 * s), (49, 128 * s + 64)] {
+      t = t + [
+        "vperm2i128 $${imm}, %ymm${o + 1}, %ymm${o}, %ymm8",
+        "vperm2i128 $${imm}, %ymm${o + 3}, %ymm${o + 2}, %ymm9",
+        "vpxor ${at}(%r9), %ymm8, %ymm8",
+        "vpxor ${at + 32}(%r9), %ymm9, %ymm9",
+        "vmovdqu %ymm8, ${at}(%r8)",
+        "vmovdqu %ymm9, ${at + 32}(%r8)",
+      ]
+    }
+  }
+  t = t + ["vpaddd 240(%rsi), %ymm12, %ymm12", "vpaddd 240(%rsi), %ymm13, %ymm13"]
+  for b in 0..4 {
+    t = t + ["movl ${64 + 4 * b}(%rsi), %eax", "addl $4, %eax", "movl %eax, ${64 + 4 * b}(%rsi)"]
+  }
+  t
+}
+
+/// cpu.chacha_poly_seal8 (seal) or chacha_poly_open8: chacha_stream4's key
+/// stream from src s into dst d over n bytes (a multiple of 256) with the
+/// state at st (and its 256 bytes of scratch after it), and Poly1305 over
+/// the ciphertext (dst when sealing, src when opening) into the state at
+/// ps; chacha_poly4_x86_lines' contract.
+pub fn chacha_poly8_avx2_lines(seal: Bool, d: Str, s: Str, st: Str, n: Str, ps: Str) -> List[Str] {
+  var t = [
+    "movq ${d}, %r8",
+    "movq ${s}, %r9",
+    "movq ${n}, %r10",
+    "movq ${st}, %rsi",
+    "movq ${ps}, %rdi",
+  ]
+  t = t + avx_chacha_scratch("%rsi")
+  t = t + [
+    "vmovdqu 176(%rsi), %ymm12",
+    "vmovdqu 208(%rsi), %ymm13",
+    "leaq -128(%rsp), %rsp",
+    "pushq %rbx",
+    "pushq %r12",
+    "pushq %r13",
+    "pushq %r14",
+    "pushq %r15",
+    "movq (%rdi), %rbx",
+    "movq 8(%rdi), %r12",
+    "movq 16(%rdi), %r13",
+    "testq %r10, %r10",
+    "jz 9f",
+  ]
+  if seal {
+    t = t + avx_chacha_poly_group("", 0)
+    t = t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jz 8f", "1:"]
+    t = t + avx_chacha_poly_group("%r8", -256)
+    t = t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jnz 1b", "8:"]
+    for j in 0..16 {
+      t = t + x86_poly_block("%r8", -256 + 16 * j)
+    }
+  } else {
+    t = t + ["1:"]
+    t = t + avx_chacha_poly_group("%r9", 0)
+    t = t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jnz 1b"]
+  }
+  t + [
+    "9:",
+    "vzeroupper",
+    "movq %rbx, (%rdi)",
+    "movq %r12, 8(%rdi)",
+    "movq %r13, 16(%rdi)",
+    "popq %r15",
+    "popq %r14",
+    "popq %r13",
+    "popq %r12",
+    "popq %rbx",
+    "leaq 128(%rsp), %rsp",
+  ]
+}

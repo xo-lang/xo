@@ -1,0 +1,183 @@
+// ChaCha20-Poly1305's bulk on x86-64 in one loop (cpu.chacha_poly_seal4
+// and chacha_poly_open4, std/native/llrt/cpu.xo), the instruction
+// sequence both x86-64 lowerings use: x86chacha.xo's SSSE3 rounds with a
+// Poly1305 block (Go's polyAdd, polyMul and polyMulReduce macros,
+// golang.org/x/crypto/chacha20poly1305 chacha20poly1305_amd64.s,
+// BSD-style license, Copyright The Go Authors) after each double round,
+// so the scalar multiplies run beside the vector rounds. Sealing hashes
+// the previous 256 bytes' ciphertext (at r8 - 256, final there) during
+// the next 256 bytes' rounds, and the last 256 after the loop; opening
+// hashes the 256 bytes it is decrypting during their own rounds (loaded
+// before the stores, so it works in place). Sixteen blocks a group, in
+// the 20 double rounds of its two pairs.
+//
+// Registers: x86chacha.xo's xmm0 to xmm13, rax and r8 to r10, its 10
+// double rounds unrolled (rcx free); Poly1305's accumulator in rbx, r12,
+// r13 (h0, h1, h2), Go's t0 to t3 in r14, r15, rcx, r11, rax and rdx for
+// mulq, r0 and r1 read from the state at rdi (cpu.poly_blocks' words h0,
+// h1, h2, r0, r1), st in rsi. rbx and r12 to r15, which a callee keeps,
+// are pushed and popped below the red zone (the leaq -128 bracket the
+// emitter's red zone check knows); r11 is the emitter's scratch, free
+// once the operands are read.
+
+/// The general registers chacha_poly4_x86_lines writes and does not
+/// restore, besides r11: caller saved on System V and Windows both.
+pub fn chacha_poly4_x86_gprs() -> List[Str] { ["rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10"] }
+
+/// One Poly1305 block: the 16 bytes at off(base) added (with 2^128) to
+/// the accumulator and the sum multiplied by r mod 2^130 - 5.
+fn x86_poly_block(base: Str, off: Int) -> List[Str] {
+  [
+    // polyAdd
+    "addq ${off}(${base}), %rbx",
+    "adcq ${off + 8}(${base}), %r12",
+    "adcq $1, %r13",
+    // polyMulStage1: t0, t1, t2 = h0 r0 (128 bits), h1 r0, h2 r0
+    "movq 24(%rdi), %rax",
+    "movq %rax, %rcx",
+    "mulq %rbx",
+    "movq %rax, %r14",
+    "movq %rdx, %r15",
+    "movq 24(%rdi), %rax",
+    "mulq %r12",
+    "imulq %r13, %rcx",
+    "addq %rax, %r15",
+    "adcq %rdx, %rcx",
+    // polyMulStage2: h0 r1, its high word kept in rbx
+    "movq 32(%rdi), %rax",
+    "movq %rax, %r11",
+    "mulq %rbx",
+    "addq %rax, %r15",
+    "adcq $0, %rdx",
+    "movq %rdx, %rbx",
+    // polyMulStage3: h1 r1
+    "movq 32(%rdi), %rax",
+    "mulq %r12",
+    "addq %rax, %rcx",
+    "adcq $0, %rdx",
+    // polyMulReduceStage: t3 = h2 r1 + the high words; the bits from
+    // 130 up, times 5 (4 + 1), added back
+    "imulq %r13, %r11",
+    "addq %rbx, %rcx",
+    "adcq %rdx, %r11",
+    "movq %r14, %rbx",
+    "movq %r15, %r12",
+    "movq %rcx, %r13",
+    "andq $3, %r13",
+    "movq %rcx, %r14",
+    "andq $-4, %r14",
+    "movq %r11, %r15",
+    "shrdq $2, %r11, %rcx",
+    "shrq $2, %r11",
+    "addq %r14, %rbx",
+    "adcq %r15, %r12",
+    "adcq $0, %r13",
+    "addq %rcx, %rbx",
+    "adcq %r11, %r12",
+    "adcq $0, %r13",
+  ]
+}
+
+/// x86chacha.xo's pair of blocks k and k + 1 of the group, its double
+/// rounds unrolled, with Poly1305 block j0 + d after double round d of
+/// the 16 at off(base) (none when base is "" or j0 + d >= 16).
+fn x86_chacha_poly_pair(k: Int, st: Str, base: Str, off: Int, j0: Int) -> List[Str] {
+  var t: List[Str] = []
+  for (o, b) in [(0, k), (4, k + 1)] {
+    t = t + [
+      "movdqu (${st}), %xmm${o}",
+      "movdqu 16(${st}), %xmm${o + 1}",
+      "movdqu 32(${st}), %xmm${o + 2}",
+      "movdqu 48(${st}), %xmm${o + 3}",
+      "movl ${64 + 4 * b}(${st}), %eax",
+      "pinsrd $0, %eax, %xmm${o + 3}",
+      "movdqa %xmm${o + 3}, %xmm${12 + o / 4}",
+    ]
+  }
+  for d in 0..10 {
+    t = t + x86_chacha_half() + x86_chacha_diag(57, 78, 147) + x86_chacha_half() + x86_chacha_diag(147, 78, 57)
+    if !base.is_empty() && j0 + d < 16 {
+      t = t + x86_poly_block(base, off + 16 * (j0 + d))
+    }
+  }
+  for (o, b) in [(0, k), (4, k + 1)] {
+    let at = 64 * b
+    t = t + ["movdqu (${st}), %xmm8", "paddd %xmm8, %xmm${o}", "movdqu 16(${st}), %xmm8", "paddd %xmm8, %xmm${o + 1}", "movdqu 32(${st}), %xmm8", "paddd %xmm8, %xmm${o + 2}", "paddd %xmm${12 + o / 4}, %xmm${o + 3}"]
+    for r in 0..4 {
+      t = t + ["movdqu ${at + 16 * r}(%r9), %xmm8", "pxor %xmm8, %xmm${o + r}", "movdqu %xmm${o + r}, ${at + 16 * r}(%r8)"]
+    }
+  }
+  t
+}
+
+/// A 256 byte group with the 16 Poly1305 blocks at off(base) hashed in
+/// its rounds (none when base is ""), then st's four counters advanced.
+fn x86_chacha_poly_group(st: Str, base: Str, off: Int) -> List[Str] {
+  var t = x86_chacha_poly_pair(0, st, base, off, 0) + x86_chacha_poly_pair(2, st, base, off, 10)
+  for b in 0..4 {
+    t = t + ["movl ${64 + 4 * b}(${st}), %eax", "addl $4, %eax", "movl %eax, ${64 + 4 * b}(${st})"]
+  }
+  t
+}
+
+/// cpu.chacha_poly_seal4 (seal) or chacha_poly_open4: chacha_stream4 from
+/// src s into dst d over n bytes (a multiple of 256) with the state at
+/// st, and Poly1305 over the ciphertext (dst when sealing, src when
+/// opening) into the state at ps.
+pub fn chacha_poly4_x86_lines(seal: Bool, d: Str, s: Str, st: Str, n: Str, ps: Str) -> List[Str] {
+  // the operands first (r11 may hold one), then the kept registers saved
+  var t = [
+    "movq ${d}, %r8",
+    "movq ${s}, %r9",
+    "movq ${n}, %r10",
+    "movq ${st}, %rsi",
+    "movq ${ps}, %rdi",
+    // pshufb's tables (x86chacha.xo): rotations left by 16 and by 8
+    "movabsq $361421592464458498, %rax",
+    "movq %rax, %xmm10",
+    "movabsq $940142975169071882, %rax",
+    "movq %rax, %xmm8",
+    "punpcklqdq %xmm8, %xmm10",
+    "movabsq $433757367256023043, %rax",
+    "movq %rax, %xmm11",
+    "movabsq $1012478749960636427, %rax",
+    "movq %rax, %xmm8",
+    "punpcklqdq %xmm8, %xmm11",
+    "leaq -128(%rsp), %rsp",
+    "pushq %rbx",
+    "pushq %r12",
+    "pushq %r13",
+    "pushq %r14",
+    "pushq %r15",
+    "movq (%rdi), %rbx",
+    "movq 8(%rdi), %r12",
+    "movq 16(%rdi), %r13",
+    "testq %r10, %r10",
+    "jz 9f",
+  ]
+  if seal {
+    t = t + x86_chacha_poly_group("%rsi", "", 0)
+    t = t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jz 8f", "1:"]
+    t = t + x86_chacha_poly_group("%rsi", "%r8", -256)
+    t = t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jnz 1b", "8:"]
+    for j in 0..16 {
+      t = t + x86_poly_block("%r8", -256 + 16 * j)
+    }
+  } else {
+    t = t + ["1:"]
+    t = t + x86_chacha_poly_group("%rsi", "%r9", 0)
+    t = t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jnz 1b"]
+  }
+  t + [
+    "9:",
+    "movq %rbx, (%rdi)",
+    "movq %r12, 8(%rdi)",
+    "movq %r13, 16(%rdi)",
+    "popq %r15",
+    "popq %r14",
+    "popq %r13",
+    "popq %r12",
+    "popq %rbx",
+    "leaq 128(%rsp), %rsp",
+  ]
+}

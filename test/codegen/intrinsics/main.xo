@@ -124,10 +124,17 @@ fn main(os: Os) {
 // arm64: "add w[0-9]+, w[0-9]+, w[0-9]+"
 // amd64: "leal \(%r[a-z0-9]+,%r[a-z0-9]+\), %e" "rorl \$" -"andq \$4294967295"
 // amd64: "pshufb %xmm10, %xmm3\n\tpaddd %xmm5, %xmm4" "pshufd \$57, %xmm1, %xmm1" "pshufd \$147, %xmm3, %xmm3" -"_xo_f_cpu_2echacha__block__xor"
-// func chacha.absorb
+// ChaCha20-Poly1305's bulk in one loop (cpu.chacha_poly_seal4 and seal8):
+// Poly1305's mulq by r read from its state between the rounds, and the
+// AVX2 kernel's two blocks a ymm register (vperm2i128 gathering a block's
+// rows, vzeroupper after).
+// amd64: "mulq %rbx" "movq 24\(%rdi\), %rax" "vpshufb 272\(%rsi\), %ymm3, %ymm3" "vperm2i128 \$32, %ymm1, %ymm0, %ymm8" "vzeroupper"
+// func chacha.absorb26
 // arm64: -"smulh" -"b\.vs"
-// amd64: -"\tjo "
 // llvm: -"with.overflow"
+// amd64's 64 bit limbs (cpu.poly_blocks): mulq, no overflow checks.
+// func cpu.poly_blocks
+// amd64: "mulq " -"\tjo "
 
 // A swap checks each index against the list it indexes (2026-10-26): with
 // entry parameters as indexes, neither known non negative, both checks

@@ -28,6 +28,10 @@ pub const HW_FMA: Int = 16
 /// ChaCha20 kernels use (pshufb, pinsrd; ssa x86chacha.xo): x86-64's
 /// baseline is SSE2 only, as Go's GOAMD64=v1 (2026-10-27).
 pub const HW_SSSE3: Int = 32
+/// x86-64's AVX2 with the OS saving the ymm state (CPUID.7 EBX bit 5,
+/// CPUID.1's OSXSAVE and AVX, XCR0's SSE and AVX states): the AVX2
+/// ChaCha20-Poly1305 kernel (ssa x86chachapoly8.xo, 2026-10-27).
+pub const HW_AVX2: Int = 64
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -73,7 +77,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -98,7 +102,9 @@ fn detect() -> Int {
       let fma_bits = (1 << 12) | (1 << 27) | (1 << 28)
       let fma = (c & fma_bits) == fma_bits && (xgetbv0() & 6) == 6
       let sse_bits = (1 << 9) | (1 << 19)
-      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 }) | (if (c & sse_bits) == sse_bits { HW_SSSE3 } else { 0 })
+      let avx_bits = (1 << 27) | (1 << 28)
+      let avx2 = (c & avx_bits) == avx_bits && (xgetbv0() & 6) == 6 && (b.shr_logical(5) & 1) != 0
+      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 }) | (if (c & sse_bits) == sse_bits { HW_SSSE3 } else { 0 }) | (if avx2 { HW_AVX2 } else { 0 })
     }
     _ => 0
   }
@@ -1261,6 +1267,109 @@ fn chacha_qr(a0: Int, b0: Int, c0: Int, d0: Int) -> (Int, Int, Int, Int) {
   let c2 = c1.wrapping_add(d2) & 0xFFFFFFFF
   let b2 = (b1 ^ c2).rotate_right32(25)
   (a2, b2, c2, d2)
+}
+
+// ---------------------------------------------------------------------------
+// Poly1305 (RFC 8439 2.5) with 64 bit limbs, and ChaCha20-Poly1305's bulk
+
+/// Poly1305's blocks: the n bytes at d (a multiple of 16), each with hb
+/// (1 for a full block, 0 for a padded last one) added above its 128
+/// bits, into the state at ps (words h0, h1, h2, r0, r1: h = h0 + h1
+/// 2^64 + h2 2^128, h2 under 8 between blocks, and the clamped r):
+/// h = (h + m) r mod 2^130 - 5 a block, as Go's
+/// golang.org/x/crypto/internal/poly1305 sum_generic.go (BSD-style
+/// license, Copyright The Go Authors) with mul_hi_unsigned and adc.
+pub fn poly_blocks(ps: Int, d: Int, n: Int, hb: Int) {
+  var h0 = rt.mem_load(ps, 0, 8)
+  var h1 = rt.mem_load(ps, 8, 8)
+  var h2 = rt.mem_load(ps, 16, 8)
+  let r0 = rt.mem_load(ps, 24, 8)
+  let r1 = rt.mem_load(ps, 32, 8)
+  var o = 0
+  while o < n {
+    let w0 = rt.mem_load(d, o, 8)
+    let w1 = rt.mem_load(d, o.wrapping_add(8), 8)
+    // h += m
+    let a0 = adc(h0, w0, 0)
+    let c0 = adc_carry(h0, w0, 0)
+    let a1 = adc(h1, w1, c0)
+    let c1 = adc_carry(h1, w1, c0)
+    let a2 = h2.wrapping_add(c1).wrapping_add(hb)
+    // h *= r: a2 is under 8 and r's top four bits clear, so a2 r0 and
+    // a2 r1 fit a word
+    let l00 = a0.wrapping_mul(r0)
+    let h00 = a0.mul_hi_unsigned(r0)
+    let l10 = a1.wrapping_mul(r0)
+    let h10 = a1.mul_hi_unsigned(r0)
+    let l01 = a0.wrapping_mul(r1)
+    let h01 = a0.mul_hi_unsigned(r1)
+    let l11 = a1.wrapping_mul(r1)
+    let h11 = a1.mul_hi_unsigned(r1)
+    let l20 = a2.wrapping_mul(r0)
+    let l21 = a2.wrapping_mul(r1)
+    // m1 = a1 r0 + a0 r1, m2 = a2 r0 + a1 r1 (128 bits each)
+    let m1l = adc(l10, l01, 0)
+    let m1c = adc_carry(l10, l01, 0)
+    let m1h = h10.wrapping_add(h01).wrapping_add(m1c)
+    let m2l = adc(l20, l11, 0)
+    let m2c = adc_carry(l20, l11, 0)
+    let m2h = h11.wrapping_add(m2c)
+    // t = m0 + m1 2^64 + m2 2^128 + m3 2^192
+    let t0 = l00
+    let t1 = adc(m1l, h00, 0)
+    let e1 = adc_carry(m1l, h00, 0)
+    let t2 = adc(m2l, m1h, e1)
+    let e2 = adc_carry(m2l, m1h, e1)
+    let t3 = l21.wrapping_add(m2h).wrapping_add(e2)
+    // reduce: the bits from 130 up, cc, times 5 = cc 4 + cc, added back
+    let cl = t2 & -4
+    let g0 = adc(t0, cl, 0)
+    let k0 = adc_carry(t0, cl, 0)
+    let g1 = adc(t1, t3, k0)
+    let k1 = adc_carry(t1, t3, k0)
+    let g2 = (t2 & 3).wrapping_add(k1)
+    let sl = cl.shr_logical(2) | t3.wrapping_shl(62)
+    let sh = t3.shr_logical(2)
+    h0 = adc(g0, sl, 0)
+    let j0 = adc_carry(g0, sl, 0)
+    h1 = adc(g1, sh, j0)
+    let j1 = adc_carry(g1, sh, j0)
+    h2 = g2.wrapping_add(j1)
+    o = o.wrapping_add(16)
+  }
+  rt.mem_store(ps, 0, h0, 8)
+  rt.mem_store(ps, 8, h1, 8)
+  rt.mem_store(ps, 16, h2, 8)
+}
+
+/// ChaCha20-Poly1305's sealing bulk: chacha_stream4 over the n bytes (a
+/// multiple of 256) and Poly1305's blocks of the ciphertext at dst into
+/// the state at ps (poly_blocks'). amd64 runs both in one SSE loop, the
+/// previous 256 bytes hashed during the next ones' rounds; elsewhere
+/// the two one after the other.
+pub fn chacha_poly_seal4(dst: Int, src: Int, st: Int, n: Int, ps: Int) { chacha_poly_seal4_soft(dst, src, st, n, ps) }
+
+/// chacha_poly_seal4's body.
+pub fn chacha_poly_seal4_soft(dst: Int, src: Int, st: Int, n: Int, ps: Int) {
+  chacha_stream4(dst, src, st, n)
+  poly_blocks(ps, dst, n, 1)
+}
+
+/// chacha_poly_seal4 with AVX2 (cpu.HW_AVX2), four blocks in one pass of
+/// the rounds; st has 256 bytes of scratch after its 80 (chacha.xo).
+pub fn chacha_poly_seal8(dst: Int, src: Int, st: Int, n: Int, ps: Int) { chacha_poly_seal4_soft(dst, src, st, n, ps) }
+
+/// chacha_poly_open4 with AVX2 (cpu.HW_AVX2).
+pub fn chacha_poly_open8(dst: Int, src: Int, st: Int, n: Int, ps: Int) { chacha_poly_open4_soft(dst, src, st, n, ps) }
+
+/// The opening bulk: Poly1305's blocks of the ciphertext at src, then
+/// chacha_stream4 into dst (which may be src).
+pub fn chacha_poly_open4(dst: Int, src: Int, st: Int, n: Int, ps: Int) { chacha_poly_open4_soft(dst, src, st, n, ps) }
+
+/// chacha_poly_open4's body.
+pub fn chacha_poly_open4_soft(dst: Int, src: Int, st: Int, n: Int, ps: Int) {
+  poly_blocks(ps, src, n, 1)
+  chacha_stream4(dst, src, st, n)
 }
 
 // ---------------------------------------------------------------------------

@@ -1699,6 +1699,24 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.chacha_poly_seal4" | "rt.chacha_poly_open4" | "rt.chacha_poly_seal8" | "rt.chacha_poly_open8" if g.x86 => {
+      // ChaCha20 and Poly1305 in one loop (ssa.chacha_poly4_x86_lines):
+      // rax, rcx, rdx, rsi, rdi, r8 to r10 and xmm0 to xmm13 clobbered;
+      // rbx and r12 to r15 saved and restored by the lines themselves
+      var cl = [XR_AX, XR_CX, XR_DX, 6, 7, 8, 9, 10]
+      for r in ssa.chacha4_x86_xmms() {
+        cl.push(FP_BASE + r)
+      }
+      var us: List[Int] = []
+      for a in x.args {
+        us.push(g.real(g.word(a)))
+      }
+      let nm = aux_str(x.aux)
+      let ls = if nm.ends_with("8") { ssa.chacha_poly8_avx2_lines(nm == "rt.chacha_poly_seal8", "$u0", "$u1", "$u2", "$u3", "$u4") } else { ssa.chacha_poly4_x86_lines(nm == "rt.chacha_poly_seal4", "$u0", "$u1", "$u2", "$u3", "$u4") }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ls.join("\n"), us: us, x86: true, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.chacha_blocks4" | "rt.chacha_stream4" if g.x86 => {
       // SSSE3, two blocks' rows at a time (ssa.chacha4_x86_lines): rax,
       // rcx, r8 to r10 and xmm0 to xmm13 clobbered, r11 the emitter's

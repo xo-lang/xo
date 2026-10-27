@@ -30,6 +30,33 @@ since this commit), B Xo, N=20000 records of 16 KiB, 11 rounds: seal1
 wall 1.089 (1.077 to 1.097), open1 1.021 (1.004 to 1.04), from 3.671
 and 3.486; seal 1.133 (1.114 to 1.153), open 1.148 (1.13 to 1.165); a
 key and an empty seal 1.276 (1.252 to 1.291).
+## 2026-10-27: perf: ChaCha20-Poly1305 on amd64 in one loop, AVX2 or SSE, with 64 bit Poly1305 limbs (seal 3.10 to 1.25 times Go's time)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 4's amd64 parity audit (bench/results/amd64-chacha-2026-10-27.md)
+- Go reference: golang.org/x/crypto/chacha20poly1305 chacha20poly1305_amd64.s (the SSE and AVX2 loops, polyAdd, polyMul, polyMulReduce); golang.org/x/crypto/internal/poly1305 sum_generic.go (64 bit limbs)
+- Test: internal/llvm golden crypto_prims (RFC 8439's vectors with A.3's Poly1305 edge cases) built for darwin/amd64 native and LLVM and run on an i7-9750H; the chacha twin's checksums equal Go's (seal, open, xor, poly at N=1, 7, 64) on both backends; the same with HW_AVX2 masked off (the SSE kernel) and with HW_AVX2 and HW_SSSE3 off (the portable path); internal/llvm TestTLSDiff and the arm64 crypto goldens (donna's path); xo dev codegen test/codegen (the kernels' patterns fail on the parent); internal/repotest TestX86SIMDGated
+
+On amd64, seal and open hash the additional data first and then run
+ChaCha20 and Poly1305 over the bulk in one loop (cpu.chacha_poly_seal4
+and open4 with SSSE3, seal8 and open8 with AVX2; compiler/ssa
+x86chachapoly.xo and x86chachapoly8.xo): a Poly1305 block's scalar
+multiplies after each double round of the vector rounds, sealing hashing
+the previous 256 bytes, opening the bytes it decrypts. Poly1305 there
+has 64 bit limbs (cpu.poly_blocks, after Go's sum_generic.go: four 64 by
+64 bit products a block where donna's 26 bit limbs took 25 for two):
+alone 0.656 of the time (1.227 of Go's, from 1.788). Every other target
+keeps donna's code: on arm64 the 64 bit limbs took 1.174 (1.168 to 1.18)
+times its time with 0.667 of its instructions
+(gotchas/poly1305-64bit-limbs-slower-on-apple-arm64.md). The AVX2 kernel
+holds two blocks a ymm register and runs without legacy SSE (its
+constants in 256 bytes after the state, read as VEX operands). `xo bench
+--ab` on the i7-9750H, N=20000 records of 16 KiB, 11 rounds: SSE fused
+against the unfused SSSE3 kernel, seal 0.639, open 0.636; AVX2 against
+SSE fused, seal 0.638 (0.63 to 0.649), open 0.641; against Go 1.26.1,
+seal 1.248 (1.239 to 1.27), open 1.29.
+
 ## 2026-10-27: perf: ChaCha20 on amd64 with SSSE3, two blocks' rows at a time (ChaCha20 0.382 of the time, ChaCha20-Poly1305 0.519)
 
 - Kind: perf

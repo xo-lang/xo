@@ -875,6 +875,31 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.ticks" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntvct_el0\", \"=r\"()")
     "rt.ticks_hz" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntfrq_el0\", \"=r\"()")
+    "rt.chacha_poly_seal4" | "rt.chacha_poly_open4" | "rt.chacha_poly_seal8" | "rt.chacha_poly_open8" => {
+      // amd64 only (ssa call.xo): ssa.chacha_poly4_x86_lines as inline
+      // asm (AT&T: its immediates' `$` doubled); rbx and r12 to r15 it
+      // saves itself, the rest clobbered
+      var t: List[Str] = []
+      let nm = aux_str(x.aux)
+      let ls = if nm.ends_with("8") { ssa.chacha_poly8_avx2_lines(nm == "rt.chacha_poly_seal8", "@0@", "@1@", "@2@", "@3@", "@4@") } else { ssa.chacha_poly4_x86_lines(nm == "rt.chacha_poly_seal4", "@0@", "@1@", "@2@", "@3@", "@4@") }
+      for l in ls {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3").replace("@4@", "$4"))
+      }
+      var clob = "r,r,r,r,r"
+      for r in ssa.chacha_poly4_x86_gprs() {
+        clob = clob + ",~{${r}}"
+      }
+      clob = clob + ",~{r11}"
+      for r in ssa.chacha4_x86_xmms() {
+        clob = clob + ",~{xmm${r}}"
+      }
+      if nm.ends_with("8") {
+        // the AVX2 kernel's ymm registers past the xmm list
+        clob = clob + ",~{ymm0},~{ymm1},~{ymm2},~{ymm3},~{ymm4},~{ymm5},~{ymm6},~{ymm7},~{ymm8},~{ymm9},~{ymm12},~{ymm13}"
+      }
+      clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, i64 ${g.op(x.args[3])}, ptr ${g.raw_ptr(x.args[4])})")
+    }
     "rt.chacha_stream4" if g.arch() == "amd64" => {
       // ssa.chacha4_x86_lines' loop as inline asm (AT&T: its immediates'
       // `$` doubled), its registers clobbered
