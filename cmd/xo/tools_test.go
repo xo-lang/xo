@@ -565,6 +565,23 @@ func agentJSON(t *testing.T, code int, args ...string) map[string]any {
 	return v
 }
 
+// TestDefMissInStdNative: a name declared only in a std/native file, which
+// a module does not load, gets the directory to search, not a "did you
+// mean" of the same name (2026-10-27: `xo def Printer.pop_prefix` from the
+// repository's root suggested Printer.pop_prefix).
+func TestDefMissInStdNative(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{"main.xo": toolsProg})
+	var out, errb bytes.Buffer
+	if code := runXo(t, []string{"def", "--dir=" + dir, "Printer.write_indent"}, &out, &errb); code != 1 {
+		t.Fatalf("exit %d, want 1\n%s%s", code, out.String(), errb.String())
+	}
+	e := errb.String()
+	if !strings.Contains(e, "`Printer.write_indent` is declared in std/native/xml.xo:") || !strings.Contains(e, "--dir=std/native") || strings.Contains(e, "did you mean") {
+		t.Errorf("stderr = %q", e)
+	}
+}
+
 // TestAgentCLI covers xo def, refs, type, doc NAME, and symbols (decision
 // 0261 stage (a)) on toolsProg.
 func TestAgentCLI(t *testing.T) {

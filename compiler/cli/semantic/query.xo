@@ -173,6 +173,16 @@ pub fn miss_hint(os: Os, std_dir: Str, name: Str) -> Str uses fs.read {
     out = "${out}; ${ty}"
   }
   let alts = std_suggestions(os, std_dir, name)
+  // the name itself, in a std file the module does not load (a std/native
+  // implementation file, searched from the repository's root): where to
+  // look instead of a suggestion of the same name
+  for a in alts {
+    if a.starts_with(name + " (std/") {
+      let file = a[name.len() + 2..a.len() - 1]
+      let dir = file[0..(file.rfind("/") ?? 0)]
+      return "${out}; `${name}` is declared in ${file}, outside the module searched: give --dir=${dir} (or the path to it)"
+    }
+  }
   if !alts.is_empty() {
     out = "${out}; did you mean ${alts.join(", ")}?"
   }
