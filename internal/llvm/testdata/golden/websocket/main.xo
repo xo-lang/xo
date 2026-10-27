@@ -99,15 +99,15 @@ fn client(os: Os, addr: Str) -> () ! websocket.WsErr {
   s.write_text("much too long for it")?
   match s.read() {
     Ok(m) => os.stdio.println("small: ${show(m)}")
-    Err(e) => os.stdio.println("small: ${e}")
+    Err(e) => os.stdio.println("small: ${e.display()}")
   }
   match websocket.dial(os.net, "ws://${addr}/plain") {
     Ok(_) => os.stdio.println("plain: upgraded?")
-    Err(e) => os.stdio.println("plain: ${e} (${e is websocket.WsErr.Handshake(200, _)})")
+    Err(e) => os.stdio.println("plain: ${e.display()} (${e is websocket.WsErr.Handshake(200, _)})")
   }
   match websocket.dial(os.net, "http://${addr}/echo") {
     Ok(_) => os.stdio.println("http url: upgraded?")
-    Err(e) => os.stdio.println("http url: ${e}")
+    Err(e) => os.stdio.println("http url: ${e.display()}")
   }
 }
 
