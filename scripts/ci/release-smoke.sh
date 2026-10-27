@@ -16,7 +16,9 @@
 # backend; goldens with threads (channels, mutexes, scopes, a reader and
 # writer handoff) and the time zone golden (zone data from the archive's
 # lib/xo/std/tzdata) through scripts/golden-run.sh; `xo test` of a small
-# module; and the released xo building compiler/xo (its own sources,
+# module; `use go` with the archive's xo-gobind and `xo mod tidy` of a
+# pinned Go module in a fresh copy (when go is on PATH); and the released
+# xo building compiler/xo (its own sources,
 # threads and memory under load) and that xo's version (XO_SMOKE_SELF=0
 # skips it: the owner's Intel laptop builds no xo). $XO_CI_OUT/
 # release-smoke.txt has a line per check; exit 1 on any failure. Crash
@@ -151,6 +153,42 @@ printf 'module calc\n' > "$w/modt/xo.mod"
 printf 'pub fn add(a: Int, b: Int) -> Int {\n  a + b\n}\n' > "$w/modt/calc/calc.xo"
 printf 'test "add" {\n  expect(add(2, 3)) == 5\n}\n' > "$w/modt/calc/calc_test.xo"
 run xo-test sh -c 'cd "$1" && "$2" test ./calc' _ "$w/modt" "$xo"
+
+# use go with the archive's own xo-gobind (no XO_GOBIND; Windows tester
+# 0.33.0 bug 13: bin/xo-gobind.exe was not found), then xo mod tidy in a
+# fresh copy of a module with a `require go` pin: XO1320 and nothing
+# written before a binding exists (Intel b17: exit 0 and no xo.lock lines),
+# then check and tidy record its go.sum hashes in xo.lock, with the module
+# directory given as a host path (bug 15: C:/ paths doubled). Needs go on
+# PATH and the module proxy.
+if command -v go >/dev/null; then
+  unset XO_GOBIND
+  mkdir -p "$w/usego" "$w/pin"
+  printf 'module example.com/usego\nedition preview\n' > "$w/usego/xo.mod"
+  printf 'use go "strings"\n\nfn main(os: Os) {\n  os.stdio.println(strings.to_upper("go"))\n}\n' > "$w/usego/main.xo"
+  if [ "$("$xo" run --backend=go "$(np "$w/usego")" 2>"$o/use-go-std.txt" | tr -d '\r')" = GO ]; then pass use-go-std; else
+    fail use-go-std; tail -8 "$o/use-go-std.txt" | sed 's/^/  /' | tee -a "$sum"
+  fi
+  printf 'module example.com/pin\nedition preview\nrequire go github.com/google/uuid v1.6.0\n' > "$w/pin/xo.mod"
+  printf 'use go "github.com/google/uuid"\n\nfn main(os: Os) {\n  os.stdio.println("${uuid.new_string().len()}")\n}\n' > "$w/pin/main.xo"
+  pin=$(np "$w/pin")
+  "$xo" mod tidy --dir="$pin" > "$o/tidy-fresh.txt" 2>&1
+  rc=$?
+  if [ $rc != 0 ] && grep -q XO1320 "$o/tidy-fresh.txt" && ! grep -qs uuid "$w/pin/xo.lock"; then pass tidy-fresh; else
+    fail "tidy-fresh (exit $rc, want XO1320 and no xo.lock lines)"; tail -8 "$o/tidy-fresh.txt" | sed 's/^/  /' | tee -a "$sum"
+  fi
+  "$xo" check --backend=go "$pin" > "$o/tidy-check.txt" 2>&1
+  run tidy-bound "$xo" mod tidy --dir="$pin"
+  if grep -q '^go github.com/google/uuid v1.6.0 h1:' "$w/pin/xo.lock" && grep -q '^go github.com/google/uuid v1.6.0/go.mod h1:' "$w/pin/xo.lock" &&
+    ! grep -qi "$(basename "$w")/.*$(basename "$w")" "$w/pin/xo.mod" "$w/pin/xo.lock"; then pass tidy-lock; else
+    fail tidy-lock; sed 's/^/  /' "$w/pin/xo.lock" | tee -a "$sum"
+  fi
+  if [ "$("$xo" run --backend=go "$pin" 2>"$o/use-go-pin.txt" | tr -d '\r')" = 36 ]; then pass use-go-pin; else
+    fail use-go-pin; tail -8 "$o/use-go-pin.txt" | sed 's/^/  /' | tee -a "$sum"
+  fi
+else
+  echo "UNSUPPORTED use-go (no go on PATH)" | tee -a "$sum"
+fi
 
 # the released xo builds its own compiler (several minutes)
 if [ "${XO_SMOKE_SELF:-1}" != 0 ]; then
