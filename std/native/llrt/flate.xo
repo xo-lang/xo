@@ -73,13 +73,17 @@ pub fn crc_table() -> List[Int] {
   t
 }
 
+/// hash/crc32's slicing-by-8 update: eight bytes a step, read as one
+/// word (the first lowest).
 pub fn crc32(t: List[Int], crc0: Int, b: Bytes) -> Int {
   var c = crc0 ^ 0xffffffff
   var i = 0
   let n = b.len()
   while i + 8 <= n {
-    c = c ^ (byte_of(b, i) | (byte_of(b, i + 1) << 8) | (byte_of(b, i + 2) << 16) | (byte_of(b, i + 3) << 24))
-    c = t[1792 + (c & 255)] ^ t[1536 + ((c >> 8) & 255)] ^ t[1280 + ((c >> 16) & 255)] ^ t[1024 + (c >> 24)] ^ t[768 + byte_of(b, i + 4)] ^ t[512 + byte_of(b, i + 5)] ^ t[256 + byte_of(b, i + 6)] ^ t[byte_of(b, i + 7)]
+    let w = rt.bytes_word(b, i)
+    c = c ^ (w & 0xffffffff)
+    let hi = w.shr_logical(32)
+    c = t[1792 + (c & 255)] ^ t[1536 + ((c >> 8) & 255)] ^ t[1280 + ((c >> 16) & 255)] ^ t[1024 + (c >> 24)] ^ t[768 + (hi & 255)] ^ t[512 + ((hi >> 8) & 255)] ^ t[256 + ((hi >> 16) & 255)] ^ t[hi >> 24]
     i += 8
   }
   while i < n {
@@ -988,7 +992,15 @@ pub struct HDec {
   link_mask: Int
 }
 
-fn reverse16(x: Int) -> Int { reverse_bits(x & 65535, 16) }
+/// bits.Reverse16 of the low 16 bits of x: halves, then pairs, nibbles
+/// and bytes swapped, where reverse_bits takes a step a bit.
+fn reverse16(x0: Int) -> Int {
+  var x = x0 & 65535
+  x = ((x >> 1) & 21845) | ((x & 21845) << 1)
+  x = ((x >> 2) & 13107) | ((x & 13107) << 2)
+  x = ((x >> 4) & 3855) | ((x & 3855) << 4)
+  ((x >> 8) & 255) | ((x & 255) << 8)
+}
 
 /// huffmanDecoder.init: None for lengths that are not a complete code.
 fn hdec_init(lengths: List[Int]) -> HDec? {

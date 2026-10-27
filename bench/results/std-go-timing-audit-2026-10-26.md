@@ -285,3 +285,11 @@ step 1; Xo / Go about 0.98 (estimate: 1.788 x 0.687 x 0.801).
 Step 3 (derive Xml writes through xmlcodec.Writer, no element tree; std/changes/xmlcodec.md 2026-10-27): encode
 wall 0.548 (0.544 to 0.553), instructions 0.598 against step 2; Xo / Go about 0.54 (estimate: 1.788 x 0.687 x
 0.801 x 0.548), from 1.788.
+
+## flate CRC-32 words and Huffman code reversal (2026-10-27, Xo Lang 2)
+
+Per std/changes/compress.md 2026-10-27 ("CRC-32 reads a word a step"). Quiet `xo bench --ab`, 15 rounds, the
+parent's std as A: archive unzip wall 0.965 (0.958 to 0.984), instructions 0.923; compress gunzip wall 0.987
+(0.982 to 0.997), instructions 0.986. Xo / Go about 1.41 for unzip (estimate: 1.460 x 0.965) and 1.28 for
+gunzip (1.293 x 0.987). Left in unzip: huffman_block and huff_sym (57%); Go's arm64 CRC-32 uses the CRC32
+instructions (crc32x), which Xo has no intrinsic for yet.

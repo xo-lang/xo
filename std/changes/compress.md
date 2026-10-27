@@ -1,5 +1,21 @@
 # std/compress changes
 
+## 2026-10-27: perf: CRC-32 reads a word a step and Huffman tables reverse codes without a loop
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/archive unzip at 1.46x Go; its CPU profile (flate.crc32 13.5%, eight checked byte reads a step; hdec_init 12.4%, a 16 step loop to reverse every code)
+- Go reference: hash/crc32 crc32_generic.go slicingUpdate; math/bits Reverse16 as compress/flate inflate.go huffmanDecoder.init uses it (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/compress and archive (go, arm64, LLVM); TestStdModules native archive; internal/llvm and internal/arm64 archive_formats, http_gzip, http_gzip_responses; twincheck bench/perf/archive and bench/perf/compress; reverse16 equal to the loop for all 65,536 inputs
+
+The CRC-32 of std/compress, std/archive and the gzip of std/http (one
+function in std/native/llrt/flate.xo) takes its eight bytes a step as
+one load, and a Huffman decoder reverses each code's bits by four
+swaps. Results are the same. Quiet --ab, 15 rounds, the parent's std as
+A: bench/perf/archive unzip wall 0.965 (0.958 to 0.984), instructions
+0.923; bench/perf/compress gunzip wall 0.987 (0.982 to 0.997), instructions
+0.986.
+
 ## 2026-10-27: perf: flate's write_tokens keeps the bit buffer in locals
 
 - Kind: perf
