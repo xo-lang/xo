@@ -10,6 +10,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   objects kept in the back-end cache, the rest assembled on parallel tasks as
   on darwin and linux): the HTTP server's body edit 2783 to 1179 ms, llvm-fib's
   917 to 560 ms
+- `xo build` and `xo run` skip inline `test` blocks, as they skip `_test.xo`
+  files (decision 0389): a block is not type-checked by a build, so an error in
+  it fails `xo check` and `xo test` but not `xo build`, and a build never loads
+  std/testing (with its http, sql, log and json imports) for one. `xo test`,
+  `xo check`, vet, fix and the language server check them as before.
 - AES-GCM on amd64 is about 3.4 times faster: eight blocks a round with AES-NI
   and PCLMULQDQ, as Go's assembly does (16 KiB records on an i7-9750H: sealing
   1.09 and opening 1.02 times Go's time, from 3.67 and 3.49); an AES key's setup

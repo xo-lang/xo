@@ -597,7 +597,6 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
       }
     }
   }
-  c.load_testing_if()
   if c.native {
     c.load_native()
   } else {
@@ -846,32 +845,13 @@ fn (var c: Checker) load_prelude() {
     c.mods[c.prelude].is_prelude = true
   }
   // std/testing provides the predeclared `os`, `expect`, and `testing`
-  // of test blocks (core 9.2). A build or run (skip_tests) loads it only
-  // when a program file has a test block (check_dirs, load_testing_if):
-  // it imports std/http, sql, log and json, whose implementations and
-  // runtime modules a program without them never needs (llrt-fib parsed
-  // 195 std files, 59 of which hold code it runs)
+  // of test blocks (core 9.2), which a build or run (skip_tests) does not
+  // read (parse_into, decision 0389): it imports std/http, sql, log and
+  // json, whose implementations and runtime modules a program without
+  // them never needs (llvm-fib parsed 195 std files, 59 of which hold
+  // code it runs)
   if !c.skip_tests {
     c.load_std("testing")
-  }
-}
-
-/// A build's (skip_tests) std/testing, loaded when a file of a program
-/// module has a test block: a build checks inline test blocks as `xo
-/// test` does (core 9.2), with the predeclared names they need.
-fn (var c: Checker) load_testing_if() {
-  if !c.skip_tests || c.mod_index.contains("std/testing") {
-    return
-  }
-  for f in c.files {
-    if f.module >= 0 && !c.mods[f.module].is_std && !c.mods[f.module].native {
-      for d in f.ast.decls {
-        if let TestDecl(..) = d {
-          c.load_std("testing")
-          return
-        }
-      }
-    }
   }
 }
 
@@ -1111,7 +1091,25 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
     c.parse_failed[path] = true
   }
   let f = c.files.len()
-  c.files.push(SrcFile{path: path, module: m, ast: r.file, iface: r.iface, is_test: path.ends_with("_test.xo"), src: src})
+  var ast = r.file
+  if c.skip_tests {
+    // a build or run reads no test block (decision 0389, as 0348 reads
+    // no _test.xo file): it is neither declared nor checked, so its
+    // errors and its std/testing do not exist for the build
+    var ds: List[parser.Decl] = []
+    var cut = false
+    for d in ast.decls {
+      if let TestDecl(..) = d {
+        cut = true
+      } else {
+        ds.push(d)
+      }
+    }
+    if cut {
+      ast.decls = ds
+    }
+  }
+  c.files.push(SrcFile{path: path, module: m, ast: ast, iface: r.iface, is_test: path.ends_with("_test.xo"), src: src})
   c.mods[m].files.push(f)
   if !c.mods[m].is_std && !sig {
     c.add_derived_file(m, path, f, r)

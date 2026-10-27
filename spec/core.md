@@ -105,6 +105,10 @@ programs for any OS with fast, structured, unambiguous feedback.
   `while cond bound N { }`, a contract on any loop: a constant range
   longer than N is `XO1402`; otherwise starting iteration N + 1 faults
   with `XO-F006`. `bound` is a contextual word.
+- **Builds skip inline test blocks** (9.2, decision 0389): `xo build`
+  and `xo run` neither declare nor check a `test` block, as they read no
+  `_test.xo` file (decision 0348); an error in one fails `xo check` and
+  `xo test`, not a build.
 
 ## Changes in 0.9
 
@@ -2582,6 +2586,12 @@ test "retries after 503" {
   `XO0601` in production code and a test-only import is never fetched
   or bound. `xo test`, `xo check`, `xo vet`, `xo fix`, the language
   server, and the lookup tools read them.
+- `xo build` and `xo run` skip inline `test` blocks the same way
+  (decision 0389): a block is neither declared nor type-checked, so an
+  error in it does not fail a build, a helper or closure declared in it
+  does not exist for the build, and a build does not load `std/testing`
+  for it. `xo test`, `xo check`, `xo vet`, `xo fix`, and the language
+  server check every test block.
 - Where tests live (a note, not a rule). Both places have the same access
   to the module's private names; they differ in what else sees the edit:
   - Inline `test` blocks keep a test next to the code it checks, so a

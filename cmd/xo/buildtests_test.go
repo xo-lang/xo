@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -66,12 +67,12 @@ func TestBuildSkipsTestFiles(t *testing.T) {
 	}
 }
 
-// TestBuildInlineTestBlocks: a build loads std/testing only when a program
-// file has a test block (check/load.xo load_testing_if; a program without
-// one never declares std/testing's imports, http and sql among them), and a
-// build still checks inline test blocks with their predeclared `os` and
-// `expect` (core 9.2): a valid one builds, one with a type
-// error fails the build as before.
+// TestBuildInlineTestBlocks: `xo build` and `xo run` skip inline test
+// blocks (decision 0389, as 0348 skips _test.xo files): a block with a
+// type error builds and runs, and `xo check` and `xo test` still fail on
+// it; a valid block passes `xo test`; and a build of a file with a test
+// block parses no more files than the same file without it (no
+// std/testing, whose imports bring http and sql).
 func TestBuildInlineTestBlocks(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -79,10 +80,12 @@ func TestBuildInlineTestBlocks(t *testing.T) {
 	}
 	main := "fn main(os: Os) {\n  os.stdio.println(\"hello\")\n}\n"
 	dir := writeFiles(t, map[string]string{
-		"good/xo.mod":  "module good\n",
-		"good/main.xo": main + "\ntest \"inline\" {\n  let c = os.clock\n  expect(c.sleeps().len()) == 0\n}\n",
-		"bad/xo.mod":   "module bad\n",
-		"bad/main.xo":  main + "\ntest \"inline\" {\n  let n: Int = \"text\"\n  expect(n) == 1\n}\n",
+		"plain/xo.mod":  "module plain\n",
+		"plain/main.xo": main,
+		"good/xo.mod":   "module good\n",
+		"good/main.xo":  main + "\ntest \"inline\" {\n  let c = os.clock\n  expect(c.sleeps().len()) == 0\n}\n",
+		"bad/xo.mod":    "module bad\n",
+		"bad/main.xo":   main + "\ntest \"inline\" {\n  let n: Int = \"text\"\n  expect(n) == 1\n}\n",
 	})
 	xo := func(args ...string) (int, string) {
 		t.Helper()
@@ -90,18 +93,36 @@ func TestBuildInlineTestBlocks(t *testing.T) {
 		code := run(t, args, &out, &errb)
 		return code, out.String() + errb.String()
 	}
+	parsed := regexp.MustCompile(`cache parse \d+/(\d+)`)
+	files := func(d string) string {
+		t.Helper()
+		code, out := xo("build", "--phase-times", "-o", filepath.Join(t.TempDir(), "p"), filepath.Join(dir, d))
+		if code != 0 {
+			t.Fatalf("xo build %s: exit %d\n%s", d, code, out)
+		}
+		m := parsed.FindStringSubmatch(out)
+		if m == nil {
+			t.Fatalf("xo build %s: no cache parse line\n%s", d, out)
+		}
+		return m[1]
+	}
+	if p, g := files("plain"), files("good"); p != g {
+		t.Errorf("a build of a file with a test block parsed %s files, without it %s: want the same (no std/testing)", g, p)
+	}
 	g := filepath.Join(dir, "good")
-	if code, out := xo("build", "-o", filepath.Join(t.TempDir(), "good"), g); code != 0 {
-		t.Errorf("xo build good: exit %d\n%s", code, out)
-	}
-	if code, out := xo("run", g); code != 0 || out != "hello\n" {
-		t.Errorf("xo run good: exit %d\n%s", code, out)
-	}
 	if code, out := xo("test", g); code != 0 || !strings.Contains(out, "1 passed") {
 		t.Errorf("xo test good: exit %d\n%s", code, out)
 	}
 	b := filepath.Join(dir, "bad")
-	if code, out := xo("build", "-o", filepath.Join(t.TempDir(), "bad"), b); code != 1 || !strings.Contains(out, "main.xo:6:") {
-		t.Errorf("xo build bad: exit %d, want the test block's error at main.xo:6\n%s", code, out)
+	if code, out := xo("build", "-o", filepath.Join(t.TempDir(), "bad"), b); code != 0 {
+		t.Errorf("xo build bad: exit %d, want 0 (a build does not check test blocks)\n%s", code, out)
+	}
+	if code, out := xo("run", b); code != 0 || out != "hello\n" {
+		t.Errorf("xo run bad: exit %d, want 0 and hello\n%s", code, out)
+	}
+	for _, cmd := range []string{"check", "test"} {
+		if code, out := xo(cmd, b); code == 0 || !strings.Contains(out, "main.xo:6:") {
+			t.Errorf("xo %s bad: exit %d, want the test block's error at main.xo:6\n%s", cmd, code, out)
+		}
 	}
 }
