@@ -41,6 +41,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   stops with XO1320 ("run `xo check` once, then `xo mod tidy` again")
   instead of exiting 0 without the pin's xo.lock lines (Intel tester,
   0.33.0, b17)
+- `xo check --no-gc` (and a native build) of a `use go` program reports one
+  XO1201 per Go package and file, at its `use go` line with the count of its
+  uses, instead of one per Go call (a tester's program had 45)
 - A windows/amd64 build writes its PDB faster: the DWARF reader pushes each
   variable and inlined call in place instead of copying its function out and
   back, keeps its abstract origins' records in a list indexed by a map, and

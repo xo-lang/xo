@@ -291,3 +291,22 @@ func TestUseGoSharedType(t *testing.T) {
 		t.Fatalf("run: exit %d\nstdout %q\n%s", code, out.String(), errOut.String())
 	}
 }
+
+// TestUseGoNoGCOneErrorPerLine: `xo check --no-gc` of a `use go` program
+// reports XO1201 once per `use go` line, not once per Go call (Windows
+// tester, 0.33.0, bug 17: 45 errors for one program). Spec conformance
+// (milestone 0.34.0); lands with the fix.
+func TestUseGoNoGCOneErrorPerLine(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module ex\nedition preview\n",
+		"app/main.xo": "use go \"strings\"\nuse go \"strconv\"\n\nfn main(os: Os) {\n" +
+			"  os.stdio.println(strings.to_upper(\"a\") + strings.to_lower(\"B\") + strings.repeat(\"c\", 2))\n" +
+			"  os.stdio.println(strconv.itoa(1) + strconv.itoa(2) + strconv.quote(\"x\"))\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	code := run(t, []string{"check", "--no-gc", filepath.Join(dir, "app")}, &out, &errOut)
+	if n := strings.Count(errOut.String(), "XO1201"); code != 1 || n != 2 {
+		t.Fatalf("check --no-gc: exit %d, %d XO1201 (want 1 and 2, one per use go line):\n%s", code, n, errOut.String())
+	}
+}
