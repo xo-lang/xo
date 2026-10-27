@@ -262,3 +262,10 @@ Per std/changes/big.md 2026-10-27 ("long division subtracts qhat times the divis
 
 Xo / Go: 1.42 (1.398 to 1.448; instructions 1.574), from 1.945: quiet --ab, 15 rounds, the Go twin as A and
 0e18046f5's std as B (the estimate from the two steps was 1.48).
+
+## toml JSON writer and string fast paths (2026-10-27, Xo Lang 2)
+
+Per std/changes/toml.md 2026-10-27. Quiet `xo bench --ab`, 15 rounds, the parent's std as A: decode wall 0.709
+(0.703 to 0.714), instructions 0.745; Xo / Go about 1.58 (estimate: 2.230 x 0.709), from 2.230. Left (profile
+at 1000 Hz, 400,000 decodes): the parser 48% (key lists, set's two map lookups, TomlVal copies), the JSON text
+round trip (writer plus jsontext.scan and the decode) about 40%.

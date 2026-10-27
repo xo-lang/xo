@@ -192,6 +192,20 @@ fn (var p: TomlParser) key() -> List[Str] ! toml.TomlErr {
 
 fn (var p: TomlParser) basic_string() -> Str ! toml.TomlErr {
   p.i += 1
+  // A string with no escape and no control byte is a slice of the text.
+  let st = p.i
+  var j = st
+  while j < p.s.len() {
+    let c = raw.str_byte(p.s, j)
+    if c == 34 {
+      p.i = j + 1
+      return Ok(raw.str_slice(p.s, st, j))
+    }
+    if c == 92 || is_control(c) {
+      break
+    }
+    j += 1
+  }
   var b = BytesBuilder.new()
   while {
     if p.eof() || p.peek() == 10 {
@@ -723,7 +737,6 @@ fn (var p: TomlParser) inline_table() -> TomlVal ! toml.TomlErr {
 
 fn (var p: TomlParser) assign(t0: Int, k: List[Str], v: TomlVal) -> () ! toml.TomlErr {
   var t = t0
-  let full = k.join(".")
   for i in 0..k.len() - 1 {
     let part = k[i]
     match p.tables[t].vals.get(part) {
@@ -735,16 +748,16 @@ fn (var p: TomlParser) assign(t0: Int, k: List[Str], v: TomlVal) -> () ! toml.To
       Some(TomlVal.Tab(sub)) => {
         let st = p.tables[sub]
         if st.inline || st.header && !st.dotted {
-          return Err(p.err("key ${full.quote()} is already defined"))
+          return Err(p.err("key ${k.join(".").quote()} is already defined"))
         }
         t = sub
       }
-      Some(_) => return Err(p.err("key ${full.quote()} is already defined"))
+      Some(_) => return Err(p.err("key ${k.join(".").quote()} is already defined"))
     }
   }
   let last = k[k.len() - 1]
   if p.tables[t].vals.contains(last) {
-    return Err(p.err("key ${full.quote()} is already defined"))
+    return Err(p.err("key ${k.join(".").quote()} is already defined"))
   }
   p.set(t, last, v)
   Ok(())
@@ -755,7 +768,6 @@ fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
   for i in 0..k.len() {
     let part = k[i]
     let last = i == k.len() - 1
-    let name = k[0..i + 1].join(".").quote()
     match p.tables[t].vals.get(part) {
       None => {
         if last && array {
@@ -771,14 +783,14 @@ fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
       Some(TomlVal.Tab(sub)) => {
         let st = p.tables[sub]
         if st.inline {
-          return Err(p.err("table ${name} is an inline table"))
+          return Err(p.err("table ${k[0..i + 1].join(".").quote()} is an inline table"))
         }
         if last {
           if array {
-            return Err(p.err("key ${name} is already a table"))
+            return Err(p.err("key ${k[0..i + 1].join(".").quote()} is already a table"))
           }
           if st.header || st.dotted && !st.implicit {
-            return Err(p.err("table ${name} is already defined"))
+            return Err(p.err("table ${k[0..i + 1].join(".").quote()} is already defined"))
           }
           p.tables[sub].header = true
           p.tables[sub].implicit = false
@@ -787,11 +799,11 @@ fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
       }
       Some(TomlVal.Arr(a)) => {
         if !p.arrays[a].tables {
-          return Err(p.err("key ${name} is already an array"))
+          return Err(p.err("key ${k[0..i + 1].join(".").quote()} is already an array"))
         }
         if last {
           if !array {
-            return Err(p.err("table ${name} is already an array of tables"))
+            return Err(p.err("table ${k[0..i + 1].join(".").quote()} is already an array of tables"))
           }
           let n = p.add_table(new_table() with {header: true})
           p.arrays[a].elems.push(TomlVal.Tab(id: n))
@@ -799,10 +811,10 @@ fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
         }
         match p.arrays[a].elems[p.arrays[a].elems.len() - 1] {
           TomlVal.Tab(id) => t = id
-          TomlVal.Text(_) | TomlVal.Num(_) | TomlVal.Flag(_) | TomlVal.Arr(_) => return Err(p.err("key ${name} is already a value"))
+          TomlVal.Text(_) | TomlVal.Num(_) | TomlVal.Flag(_) | TomlVal.Arr(_) => return Err(p.err("key ${k[0..i + 1].join(".").quote()} is already a value"))
         }
       }
-      Some(_) => return Err(p.err("key ${name} is already a value"))
+      Some(_) => return Err(p.err("key ${k[0..i + 1].join(".").quote()} is already a value"))
     }
   }
   Ok(t)
@@ -856,9 +868,22 @@ fn (var p: TomlParser) document() -> () ! toml.TomlErr {
   }
 }
 
-fn json_string(s: Str) -> Str {
-  var out = BytesBuilder.new()
+/// Writes s as a JSON string; text with nothing to escape is copied whole.
+fn write_json_string(var out: BytesBuilder, s: Str) {
   out.write_byte(34)
+  var plain = true
+  for i in 0..s.len() {
+    let c = raw.str_byte(s, i)
+    if c == 34 || c == 92 || c < 32 || c == 127 {
+      plain = false
+      break
+    }
+  }
+  if plain {
+    out.write_str(s)
+    out.write_byte(34)
+    return
+  }
   let hex = "0123456789abcdef"
   for i in 0..s.len() {
     let c = raw.str_byte(s, i)
@@ -880,30 +905,47 @@ fn json_string(s: Str) -> Str {
     }
   }
   out.write_byte(34)
-  out.freeze().to_str() ?? "\"\""
 }
 
-fn (p: TomlParser) json(v: TomlVal) -> Str {
+fn (p: TomlParser) write_json(var out: BytesBuilder, v: TomlVal) {
   match v {
-    TomlVal.Text(s) => json_string(s)
-    TomlVal.Num(text) => text
-    TomlVal.Flag(x) => "${x}"
+    TomlVal.Text(s) => write_json_string(out, s)
+    TomlVal.Num(text) => out.write_str(text)
+    TomlVal.Flag(x) => out.write_str(if x { "true" } else { "false" })
     TomlVal.Tab(id) => {
+      out.write_byte(123)
       let t = p.tables[id]
-      var parts: List[Str] = []
-      for k in t.keys {
-        parts.push(json_string(k) + ":" + p.json(t.vals.get(k) ?? TomlVal.Flag(b: false)))
+      for i in 0..t.keys.len() {
+        if i > 0 {
+          out.write_byte(44)
+        }
+        let k = t.keys[i]
+        write_json_string(out, k)
+        out.write_byte(58)
+        p.write_json(out, t.vals.get(k) ?? TomlVal.Flag(b: false))
       }
-      "{" + parts.join(",") + "}"
+      out.write_byte(125)
     }
-    TomlVal.Arr(id) => "[" + p.arrays[id].elems.map(fn(e) { p.json(e) }).join(",") + "]"
+    TomlVal.Arr(id) => {
+      out.write_byte(91)
+      let elems = p.arrays[id].elems
+      for i in 0..elems.len() {
+        if i > 0 {
+          out.write_byte(44)
+        }
+        p.write_json(out, elems[i])
+      }
+      out.write_byte(93)
+    }
   }
 }
 
 fn to_json(text: Str) -> Str ! toml.TomlErr {
   var p = TomlParser{s: text, i: 0, line: 1, tables: [], arrays: []}
   p.document()?
-  p.json(TomlVal.Tab(id: 0))
+  var out = BytesBuilder.new()
+  p.write_json(out, TomlVal.Tab(id: 0))
+  out.freeze().to_str() ?? ""
 }
 
 fn decode[T: Json](text: Str) -> T ! toml.DecodeErr {
