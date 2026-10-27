@@ -329,11 +329,9 @@ fn cv_locals(var t: CvTypes, info: debug.Info, vars: List[debug.Var], whole: Lis
             keys.push(key)
             spans.push([])
           }
-          var sp = spans[k]
           for r in rs {
-            sp.push(r)
+            spans[k].push(r)
           }
-          spans[k] = sp
         }
         poff += pc.size
       }

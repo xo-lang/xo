@@ -774,8 +774,11 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
   var pending: List[(Int, Int, Bool, VarRec)] = []
   // the unit's line table (DW_AT_stmt_list), for its calls' files
   var stmt = -1
-  // names of entries other entries refer to (abstract origins)
-  var names: Map[Int, VarRec] = {}
+  // names of entries other entries refer to (abstract origins): each
+  // entry's index in recs (a map of the records themselves spent a
+  // quarter of read's time putting them)
+  var names: Map[Int, Int] = {}
+  var recs: List[VarRec] = []
   // the inlined calls (function, call, abstract origin) to name
   var calls: List[(Int, Int, Int)] = []
   while r.p < next {
@@ -869,12 +872,13 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
       0x11 => u.low = low
       0x2e => {
         if !v.name.is_empty() || v.origin >= 0 {
-          names[die] = v
+          names[die] = recs.len()
+          recs.push(v)
         }
         if high > low {
           var name = v.name
           if name.is_empty() {
-            name = (names.get(v.origin) ?? VarRec{}).name
+            name = rec_at(names, recs, v.origin).name
           }
           out.funcs.push(Func{name: name, lo: low, hi: high, vars: []})
           here_fn = out.funcs.len() - 1
@@ -894,14 +898,15 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
           ranges = [(low, high)]
         }
         let outer = if here_inl >= 0 { out.funcs[here_fn].inlined[here_inl].depth } else { 0 }
-        var f = out.funcs[here_fn]
-        f.inlined.push(Inlined{name: "", ranges: ranges, depth: outer + 1, call_line: v.call_line, vars: [], call_file: v.call_file, unit_line: stmt})
-        out.funcs[here_fn] = f
-        here_inl = f.inlined.len() - 1
+        // in place: a copy of the function out and back copied its inlined
+        // list (and each call's variables below) every time
+        out.funcs[here_fn].inlined.push(Inlined{name: "", ranges: ranges, depth: outer + 1, call_line: v.call_line, vars: [], call_file: v.call_file, unit_line: stmt})
+        here_inl = out.funcs[here_fn].inlined.len() - 1
         calls.push((here_fn, here_inl, v.origin))
       }
       0x05 | 0x34 => {
-        names[die] = v
+        names[die] = recs.len()
+        recs.push(v)
         if v.has_loc || here_fn >= 0 {
           pending.push((here_fn, here_inl, ab.tag == 0x05, v))
         }
@@ -948,22 +953,19 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
     var o = origin
     var guard = 0
     while o >= 0 && guard < 4 && name.is_empty() {
-      let rec = names.get(o) ?? VarRec{}
+      let rec = rec_at(names, recs, o)
       name = rec.name
       o = rec.origin
       guard += 1
     }
-    var f = out.funcs[fi]
-    var c = f.inlined[ii]
-    c.name = if name.is_empty() { "?" } else { name }
-    f.inlined[ii] = c
-    out.funcs[fi] = f
+    out.funcs[fi].inlined[ii].name = if name.is_empty() { "?" } else { name }
   }
   for (fi, ii, param, rec) in pending {
     var v = rec
     // a concrete entry of an abstract one: the name, type, and line from it
     if v.origin >= 0 {
-      if let Some(o) = names.get(v.origin) {
+      if let Some(i) = names.get(v.origin) {
+        let o = recs[i]
         if v.name.is_empty() {
           v.name = o.name
         }
@@ -991,18 +993,20 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
     }
     let var_ = Var{name: v.name, ty: v.ty, param: param, line: v.line, locs: locs}
     if fi >= 0 && ii >= 0 {
-      var f = out.funcs[fi]
-      var c = f.inlined[ii]
-      c.vars.push(var_)
-      f.inlined[ii] = c
-      out.funcs[fi] = f
+      out.funcs[fi].inlined[ii].vars.push(var_)
     } else if fi >= 0 {
-      var f = out.funcs[fi]
-      f.vars.push(var_)
-      out.funcs[fi] = f
+      out.funcs[fi].vars.push(var_)
     } else {
       out.globals.push(var_)
     }
+  }
+}
+
+/// The record of the entry at offset die (an empty one when none was kept).
+fn rec_at(names: Map[Int, Int], recs: List[VarRec], die: Int) -> VarRec {
+  match names.get(die) {
+    Some(i) => recs[i]
+    None => VarRec{}
   }
 }
 

@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- A windows/amd64 build writes its PDB faster: the DWARF reader pushes each
+  variable and inlined call in place instead of copying its function out and
+  back, and keeps its abstract origins' records in a list indexed by a map; the
+  HTTP server's edit spends 78 ms in the PDB instead of 105 (the PDB and the
+  .exe byte for byte the same)
 - A windows/amd64 edit rebuild assembles only the parts it changed (their
   objects kept in the back-end cache, the rest assembled on parallel tasks as
   on darwin and linux): the HTTP server's body edit 2783 to 1179 ms, llvm-fib's
