@@ -1,0 +1,33 @@
+// std/internal's LZ4 codec with the large block cache full: a 256 KiB
+// match table (an input of 64 KiB or more) is a large block whose
+// mapping the cache could not keep, so a table released before its last
+// use was unmapped under the compressor (a SIGSEGV in memset, seen in
+// cold xo builds, 2026-10-27). The cache is filled first: 20 blocks of
+// 3 MiB leave its 16 entries full (49 MiB, under its 64 MiB) of mappings
+// that a request under 768 KiB cannot reuse (a block is reused for a
+// request of a quarter of its size up to its size), so the table gets a
+// new mapping and its release is an unmap. The input (about 200 KB,
+// small enough to take nothing from the cache) is built after.
+use std/internal
+
+fn main(os: Os) {
+  var held: List[Bytes] = []
+  for _ in 0..20 {
+    held.push(b"a".repeat(3145728))
+  }
+  os.stdio.println("held ${held.len()}")
+  held = []
+  var sb = StrBuilder.new()
+  for i in 0..6000 {
+    sb.write("line ${i % 97} of the compressed text\n")
+  }
+  let src = sb.freeze().bytes()
+  var ok = 0
+  for _ in 0..8 {
+    let c = internal.lz4_compress(src)
+    if internal.lz4_decompress(c, 0, src.len()) == Some(src) {
+      ok += 1
+    }
+  }
+  os.stdio.println("input ${src.len()} round trips ${ok}")
+}

@@ -13,6 +13,15 @@ use native/rt
 const M32 = 0xFFFFFFFF
 const M26 = 0x3FFFFFF
 
+/// A use of s after its last raw access: reference counting releases a
+/// value after its last use, and the kernels read the scratch through its
+/// address (the same hazard as lz4.xo's table).
+fn keep_str(s: Str) {
+  if s.len() < 0 {
+    return
+  }
+}
+
 fn shl(x: Int, s: Int) -> Int { x.wrapping_shl(s) }
 
 fn shr(x: Int, s: Int) -> Int { x.shr_logical(s) }
@@ -112,6 +121,7 @@ fn xor_stream(s0: Str, key: Bytes, ctr0: Int, nonce: Bytes, src: Bytes, ps: Int,
     } else {
       cpu.chacha_stream4(dp, sp, st, i)
     }
+    keep_str(sb)
     if mode != 0 {
       rt.mem_store(ps, 40, i, 8)
     }
