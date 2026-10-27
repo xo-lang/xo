@@ -246,9 +246,23 @@ four builds, 15 interleaved rounds, medians; measurement window at load
 function each round) 278 against 270 ms (+8 ms). The cache after the
 runs: 12.1 MB compressed, 34.1 MB plain (65% less).
 
-**Still to do:** re-measure the day's churn (the store-log) on
-2026-10-27 with compression on, then the content store's share on the
-compressed cache.
+**Re-measured 2026-10-27 17:11** (scripts/cache-churn.sh on the Mac's
+back-end cache, compression on since 2026-10-26 17:09; the day before
+from a run since 2026-10-25 17:09, its whole period less its last 24
+hours):
+
+| 24 hours to | GB stored | GB pruned | ids that stored | stored by retired ids |
+|---|---|---|---|---|
+| 2026-10-27 17:11 (compressed) | 476.7 | 113.6 | 157 | 92% |
+| 2026-10-26 17:09 (plain) | about 1,110 | about 395 | about 205 | about 100% |
+
+Bytes written fell 57% (1,110 to 477 GB a day), less than the 81 to 83%
+compression alone gave in the measurement above, with the day's activity
+not the same (fewer ids stored; a release day); the retired share stays
+about nine tenths, so most of what is written is still short-lived ids
+re-storing what another wrote. **Still to do:** the content store's share
+of the compressed bytes (how much of the 477 GB repeats bytes already
+stored), the number that decides whether the store is built next.
 
 ### Recommendation (Xo Lang 2, for the owner)
 

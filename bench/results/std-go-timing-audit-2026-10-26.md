@@ -286,6 +286,10 @@ Step 3 (derive Xml writes through xmlcodec.Writer, no element tree; std/changes/
 wall 0.548 (0.544 to 0.553), instructions 0.598 against step 2; Xo / Go about 0.54 (estimate: 1.788 x 0.687 x
 0.801 x 0.548), from 1.788.
 
+Measured after the push (quiet `xo bench --ab`, 15 rounds, the Go twin as A and ad915415c's std as B): Xo /
+Go 0.512 (0.501 to 0.518), instructions 0.446; Xo's encode now takes about half Go's time (the estimate was
+0.54).
+
 ## flate CRC-32 words and Huffman code reversal (2026-10-27, Xo Lang 2)
 
 Per std/changes/compress.md 2026-10-27 ("CRC-32 reads a word a step"). Quiet `xo bench --ab`, 15 rounds, the
