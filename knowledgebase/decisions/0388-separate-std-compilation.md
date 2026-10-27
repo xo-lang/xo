@@ -1,7 +1,7 @@
 # 0388: Std compiled once to objects and export data; an edit compiles only the program's modules
 
-Status: Proposed (Xo Lang 1, 2026-10-27, for the owner's approval: milestone 0.34.0, "edit
-rebuilds at Go's speed", criterion 2; first written as the 0.33.0 edit-rebuild criterion's
+Status: Accepted (owner, 2026-10-27: "Approved, start"). Proposed by Xo Lang 1 the same day for
+milestone 0.34.0, "edit rebuilds at Go's speed", criterion 2; first written as the 0.33.0 edit-rebuild criterion's
 structural option, from decision 0382's measurements; the oracles and the DWARF decision below
 were added the same day)
 
@@ -31,7 +31,7 @@ about 35 to 50 ms of the 274 (bench notes: o497, the ceiling table): enough for 
 criterion (230 ms, owner 2026-10-26) only with decision 0380 stage 3, and not for 200 or for
 anything near Go's 99.
 
-## Decision (proposed)
+## Decision
 
 1. Std (and each library module a program imports) is compiled once per xo identity, target and
    build flags into an object and export data, kept in the back-end cache. The export data holds
