@@ -1,5 +1,21 @@
 # std/template changes
 
+## 2026-10-27: perf: a node visit stores no value
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/template, the std Go twin (render 2.92x Go; dup and drop of nodes and contexts about a quarter of it)
+- Go reference: text/template exec.go state.at (go1.26.1)
+- Test: internal/stdtest template corpus (Go's error texts with their `at <...>` node); internal/arm64 template_basic; bench/perf/template twincheck
+
+state.at kept the node in the executor (a Ctx made per visit, the node
+retained, the last one dropped); it now records the node's kind, variant
+and position, and an error finds that node in the tree to print it
+(kind, variant and position name one node: a parenthesized pipeline and
+its first argument share a position, not a variant). Quiet --ab, 15
+rounds: render wall 0.639 against the parent (a stub that kept no context
+at all: 0.771), 1.86x Go.
+
 ## 2026-10-23: behavior: TemplateErr prints its message (decision 0358)
 
 - Kind: behavior

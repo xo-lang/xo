@@ -208,3 +208,27 @@ Under the bar: template parse, mail msg and date, archive untar, big parse, webs
 the fixed rows. Still without a row: metrics (no Go counterpart in the module cache offline:
 prometheus/client_golang), smtp and sql (need a server), and http's request-head parser (bench/perf/httpparse
 exists; its row is Xo Lang 3's).
+
+## flate, template, big, mime fixes (2026-10-27, Xo Lang 2)
+
+Per std/changes 2026-10-27 (compress.md, template.md, big.md, mime.md). Quiet `xo bench --ab`, one pair per
+job, 10 to 15 rounds; "parent" is main's std as A, "Go" the twin as A:
+
+| workload | parent | Xo / Go before | Xo / Go now |
+|---|---|---|---|
+| compress gzip | 0.876 | 1.468 | 1.251 |
+| compress gzip1 (BestSpeed) | 0.897 | 1.939 | 1.569 |
+| compress gunzip | 0.859 | about 1.51 | 1.293 |
+| compress deflate | 0.872 | 1.430 | 1.236 |
+| compress inflate | 0.851 | 1.426 | 1.217 |
+| archive zip | | 1.541 | 1.360 |
+| archive unzip | | 1.629 | 1.460 |
+| template render | 0.639 | 2.917 | 1.861 |
+| big mul | 0.435 | 2.997 | 1.291 |
+| big quorem | 0.978 (noise; instructions 0.848) | 2.025 | 1.945 |
+| mime detect | 0.723 | 1.22 | 0.885 |
+
+Template's ceiling, a stub that kept no node context: 0.771 against the parent, so the fix (0.639) took
+all of that and more (no Ctx made per visit). Still over 1.2x: BestSpeed (write_tokens and index_tokens),
+zip and unzip (flate plus the archive's own copies), template render (the walk itself), big quorem
+(nat_divmod_basic's qhat estimate, division by a word per step) and the rest of the earlier list.

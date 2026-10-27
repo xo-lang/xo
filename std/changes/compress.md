@@ -1,5 +1,23 @@
 # std/compress changes
 
+## 2026-10-27: perf: packed byte output and Go's fast paths in flate
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/compress, the std Go twin (1.43x to 1.94x Go)
+- Go reference: compress/flate deflate.go matchLen, deflatefast.go load32 and matchLen, huffman_bit_writer.go writeBits (go1.26.1)
+- Test: internal/llvm/testdata/golden/archive_formats, lz4_roundtrip, http_gzip, http_gzip_responses (and internal/arm64's); internal/stdtest compress and archive corpora; bench/perf/compress and archive twincheck
+
+The inflater's output and the bit writer's are a List[UInt8] (one byte an
+element; a List[Int] took a word a byte), handed out as Bytes in one copy;
+match lengths compare 8 bytes a step and BestSpeed's hash reads 4 bytes in
+one load, as Go's do; the bit writer keeps up to 63 bits and writes 6 bytes
+once 48 are pending (a streaming take still gives out every whole byte).
+Quiet --ab, 10 rounds, the parent's std as A: gzip 0.876, gzip BestSpeed
+0.897, gunzip 0.859, deflate 0.872, inflate 0.851. Against Go: gzip 1.25,
+BestSpeed 1.57, gunzip 1.29, deflate 1.24, inflate 1.22 (archive zip 1.36,
+unzip 1.46).
+
 ## 2026-10-27: perf: CRC-32 slicing-by-8, and gunzip checks a member without copying it
 
 - Kind: perf

@@ -1,5 +1,19 @@
 # std/big changes
 
+## 2026-10-27: perf: multiplication and division by machine word rows
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/big, the std Go twin (mul 3.00x Go)
+- Go reference: math/big arith.go addMulVVW, mulAddVWW, subVV; nat.go basicMul, divBasic (go1.26.1)
+- Test: internal/stdtest big corpus; internal/llvm big and rsa goldens; bench/perf/big twincheck
+
+The schoolbook product adds each row with bigmod.mac_row (the RSA code's
+row, unrolled by 4, in place of a loop over list elements), and long
+division subtracts qhat times the divisor as a mac_row product and one
+borrow chain. Quiet --ab, 10 rounds, the parent's std as A: mul 0.435
+(1.29x Go), quorem wall within noise (instructions 0.848; 1.95x Go).
+
 ## 2026-10-27: perf: exp with an odd modulus uses Montgomery multiplication
 
 - Kind: perf

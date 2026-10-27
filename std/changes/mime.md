@@ -1,5 +1,17 @@
 # std/mime changes
 
+## 2026-10-27: perf: detect_content_type makes a type only on a match
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/mime, the std Go twin (detect 1.22x Go; 30% in releasing the empty Str each signature that did not match returned)
+- Go reference: net/http sniff.go DetectContentType (go1.26.1)
+- Test: internal/stdtest mime corpus; bench/perf/mime twincheck
+
+Each signature's test returns a Bool and the content type is made once,
+for the signature that matched. Quiet --ab, 15 rounds: detect wall 0.723
+against the parent, 0.885x Go.
+
 ## 2026-10-26: perf: detect_content_type matches by offset over constant signatures; type_by_extension is a match
 
 - Kind: perf
