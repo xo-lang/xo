@@ -895,6 +895,7 @@ fn (var c: Checker) load_std(name: Str) -> Int {
     None => return -1
   }
   let m = c.new_module(path, name, "std", true)
+  c.mods[m].std_tree = true
   c.parse_into(m, "std/${name}.xo", data, true)
   c.load_std_tests(m, "std/${name}.xo")
   c.mods[m].state = 1
@@ -950,6 +951,7 @@ fn (var c: Checker) load_go_compiled() {
         None => continue
       }
       let m = c.new_module("native/${name}", name, "std/native", false)
+      c.mods[m].std_tree = true
       c.mods[m].native = true
       c.mods[m].implements = path
       c.parse_into(m, "std/native/${name}.xo", data, false)
@@ -1001,6 +1003,7 @@ fn (var c: Checker) load_impl(path: Str) -> Int {
     None => return -1
   }
   let m = c.new_module("native/${name}", name, "std/native", false)
+  c.mods[m].std_tree = true
   c.mods[m].native = true
   c.mods[m].implements = path
   c.parse_into(m, "std/native/${name}.xo", data, false)
@@ -1039,6 +1042,7 @@ fn (var c: Checker) load_runtime_module(path: Str) -> Int {
     None => return -1
   }
   let m = c.new_module(path, name, "std/native/llrt", false)
+  c.mods[m].std_tree = true
   c.mods[m].native = true
   c.parse_into(m, "std/${file}", data, false)
   c.load_std_tests(m, "std/${file}")
@@ -1062,6 +1066,7 @@ fn (var c: Checker) load_native_rt(path: Str) -> Int {
     None => return -1
   }
   let m = c.new_module(path, path.trim_prefix("native/"), "std/native", true)
+  c.mods[m].std_tree = true
   c.parse_into(m, "std/${path}.xo", data, true)
   c.mods[m].state = 1
   c.load_imports(m)

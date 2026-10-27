@@ -214,6 +214,11 @@ pub struct Module {
   /// Top level names to objects.
   pub members: Map[Bytes, Int] = {}
   pub is_std: Bool = false
+  /// A module of the std tree (std, native, llrt), whose declarations
+  /// never depend on the program's: declared and resolved before the
+  /// program's modules (decision 0388), unlike a `use c` or `use go`
+  /// binding module, which is_std too
+  pub std_tree: Bool = false
   pub is_prelude: Bool = false
   /// Named on the command line (or found under a named directory).
   pub root: Bool = false

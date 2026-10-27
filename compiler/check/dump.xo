@@ -6,18 +6,41 @@
 /// the bodies of the user modules. The error is a prelude without a core
 /// type the passes name (prelude_missing), found after the declarations.
 fn (var c: Checker) run() -> () ! Str {
+  // the std tree's modules are declared and resolved before the
+  // program's, so their objects, types and effect sets come first in the
+  // tables (decision 0388: std's checked declarations as one prefix); std
+  // never imports a program module, so this is still an order in which
+  // every import comes before its importer
+  var std_mods: List[Int] = []
+  var prog_mods: List[Int] = []
   for m in c.order {
+    if c.mods[m].std_tree {
+      std_mods.push(m)
+    } else {
+      prog_mods.push(m)
+    }
+  }
+  for m in std_mods {
     c.declare(m)
   }
   let missing = c.prelude_missing()
   if !missing.is_empty() {
     return Err(missing)
   }
-  c.check_export_names()
-  for m in c.order {
+  for m in std_mods {
     c.resolve_types(m)
   }
-  for m in c.order {
+  for m in std_mods {
+    c.resolve_sigs(m)
+  }
+  for m in prog_mods {
+    c.declare(m)
+  }
+  c.check_export_names()
+  for m in prog_mods {
+    c.resolve_types(m)
+  }
+  for m in prog_mods {
     c.resolve_sigs(m)
   }
   for m in c.order {
