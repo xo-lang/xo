@@ -580,7 +580,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   and gated against a CPU budget and broke even, and stage 3 plus the
   chain delivered 11 ms of about 35 planned, while the oracle table
   (Lang 1, o497) priced every remaining candidate in about an hour,
-  dropping two of them at about 0 ms.
+  dropping two of them at about 0 ms. A stub that changes a pass's output
+  measures its downstream effects too, so check a candidate's own share
+  with a same-output variant or its profile before trusting the ceiling
+  (2026-10-27: the prune_unwind stub's -17.5 ms on HTTP was downstream;
+  the pass made 2 ms cheaper moved the wall 0 ms).
 - Fewer instructions is not faster (agent poll 2026-10-26: the most
   misleading trap; Lang 3's cut_suffix ran +1.6% instructions and +9.7%
   wall, an IPC drop). `xo bench --ab` on macOS reports cycles,

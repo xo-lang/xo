@@ -155,22 +155,36 @@ pub fn (var b: Builder) prune_unwind() {
   for _ in 0..n {
     may.push(false)
   }
+  // each check's callee by index (-1 for none or not a function of m)
+  var gs: List[Int] = List.with_capacity(b.checks.len())
+  for c in b.checks {
+    gs.push(if c.callee.is_empty() { -1 } else { b.m.func_index(c.callee) })
+  }
   if b.conc {
-    for c in b.checks {
+    // a function may be canceled when it has a check of no callee, or
+    // calls one that may: from those, up the callers (a worklist; the
+    // fixpoint over every check walked them all once a round, 15 ms of
+    // an HTTP server edit)
+    var callers: List[List[Int]] = []
+    for _ in 0..n {
+      callers.push([])
+    }
+    var work: List[Int] = []
+    for (ci, c) in b.checks.indexed() {
       if c.callee.is_empty() {
-        may[c.fi] = true
+        if !may[c.fi] {
+          may[c.fi] = true
+          work.push(c.fi)
+        }
+      } else if gs[ci] >= 0 {
+        callers[gs[ci]].push(c.fi)
       }
     }
-    var changed = true
-    while changed {
-      changed = false
-      for c in b.checks {
-        if !c.callee.is_empty() && !may[c.fi] {
-          let g = b.m.func_index(c.callee)
-          if g >= 0 && may[g] {
-            may[c.fi] = true
-            changed = true
-          }
+    while let Some(i) = work.pop() {
+      for f in callers[i] {
+        if !may[f] {
+          may[f] = true
+          work.push(f)
         }
       }
     }
@@ -178,8 +192,8 @@ pub fn (var b: Builder) prune_unwind() {
   let faults = b.m.may_fault()
   b.unwind_faults = faults
   b.unwind_may = may
-  for c in b.checks {
-    let g = if c.callee.is_empty() { -1 } else { b.m.func_index(c.callee) }
+  for (ci, c) in b.checks.indexed() {
+    let g = gs[ci]
     if b.conc && (c.callee.is_empty() || (g >= 0 && may[g])) {
       continue
     }

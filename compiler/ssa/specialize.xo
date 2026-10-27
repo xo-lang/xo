@@ -21,15 +21,21 @@ pub fn (var b: Builder) specialize_args() {
     return
   }
   var clones: Map[Str, Int] = {}
+  // spec_callee by function index (0 not asked yet, 1 yes, 2 no): a
+  // callee's answer reads only its own body, which neither pass changes
+  // but for the names its calls take (never its own), so it is asked once
+  // and not at each of its call sites (3.4 of the pass's 6 ms of CPU on
+  // an HTTP server edit, 2026-10-27)
+  var callee_ok: List[Int] = []
   // closures first, then literals with the budget left: the literals at
   // most call sites are fault locations a callee only passes on
-  b.specialize_pass(clones, true)
-  b.specialize_pass(clones, false)
+  b.specialize_pass(clones, callee_ok, true)
+  b.specialize_pass(clones, callee_ok, false)
 }
 
 /// One pass of specialize_args over the module and the clones it adds:
 /// closure arguments when closures, else literals.
-fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], closures: Bool) {
+fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], var callee_ok: List[Int], closures: Bool) {
   // the clones too, as they are added: a constant a clone passes on
   // (str_split_where's closure, which it hands to where_spans) clones the
   // next callee; SPEC_MAX_CLONES bounds the chain
@@ -49,7 +55,7 @@ fn (var b: Builder) specialize_pass(var clones: Map[Str, Int], closures: Bool) {
           None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
         }
         let ci = b.m.func_at.get(name) ?? -1
-        if ci < 0 || ci == fi || !spec_callee(b.m.funcs[ci]) {
+        if ci < 0 || ci == fi || !b.spec_callee_at(callee_ok, ci) {
           continue
         }
         for (k, a) in x.args.indexed() {
@@ -248,4 +254,15 @@ fn spec_clone(f: Func, k: Int, c: Value, name: Str) -> Func {
     }
   }
   g
+}
+
+/// spec_callee of function ci, memoized in ok (specialize_args).
+fn (b: Builder) spec_callee_at(var ok: List[Int], ci: Int) -> Bool {
+  while ok.len() <= ci {
+    ok.push(0)
+  }
+  if ok[ci] == 0 {
+    ok[ci] = if spec_callee(b.m.funcs[ci]) { 1 } else { 2 }
+  }
+  ok[ci] == 1
 }
