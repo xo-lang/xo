@@ -272,3 +272,9 @@ round trip (writer plus jsontext.scan and the decode) about 40%.
 
 Step 2 (one lookup per new key, no view of the rest per value, plain integers kept, decode from Bytes): decode wall
 0.942 (0.921 to 0.955), instructions 0.94 against step 1; Xo / Go about 1.49 (estimate: 2.230 x 0.709 x 0.942).
+
+## xmlcodec encode escape runs (2026-10-27, Xo Lang 2)
+
+Per std/changes/xml.md 2026-10-27 ("encode copies the text between escapes whole"). Quiet `xo bench --ab`, 15
+rounds, the parent's std as A: encode wall 0.687 (0.677 to 0.694), instructions 0.632; Xo / Go about 1.23
+(estimate: 1.788 x 0.687), from 1.788.

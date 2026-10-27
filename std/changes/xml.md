@@ -1,5 +1,20 @@
 # std/xml changes
 
+## 2026-10-27: perf: encode copies the text between escapes whole
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/xmlcodec encode at 1.79x encoding/xml; its CPU profile (obj.rs_append 12%, move_at 6.9%, Printer.write_start 6.1%)
+- Go reference: encoding/xml xml.go (EscapeText, escapeText: the run since the last escape is written in one call) and marshal.go (printer.writeStart, writes each piece) (go1.26.1)
+- Test: internal/llvm/testdata/golden/xml_basic and xml_derive (arm64, LLVM); internal/stdtest/testdata/corpus/xml and xmlcodec (go, arm64, LLVM); twincheck bench/perf/xmlcodec; an escape and encode differential (control bytes, U+FFFE and U+FFFF, emoji, CJK, namespaces, with and without indent) equal on go, arm64 and llvm
+
+Escaping writes each run of plain text between two escapes in one append,
+and a text with nothing to escape whole, where it appended a string per
+character. Start and end tags and attributes are written piece by piece
+into the printer's builder instead of through string interpolation.
+Output is unchanged. Quiet --ab, 15 rounds, the parent's std as A:
+bench/perf/xmlcodec encode wall 0.687 (0.677 to 0.694), instructions 0.632.
+
 ## 2026-10-22: perf: parse reads spaces, names and plain text without a call per byte
 
 - Kind: perf

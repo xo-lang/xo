@@ -5,6 +5,7 @@
 // Unicode name tables and the HTML entities are generated from Go's
 // source (the end of this file).
 use std/xml
+use native/llrt/raw as llraw
 
 fn xmlerr_display(e: xml.XmlErr) -> Str { if e.line > 0 { "XML syntax error on line ${e.line}: ${e.msg}" } else { e.msg } }
 
@@ -1109,32 +1110,63 @@ fn element_text(e: xml.Element) -> Str {
 // The encoder (marshal.go's printer for EncodeToken, Indent("", indent))
 
 /// Go's escapeText (escape_newline) and EscapeString (true).
+/// Appends s escaped as Go's EscapeText does: the bytes between two
+/// escapes are written as one run. A Str is valid UTF-8, so the only
+/// characters out of XML's range are the controls below 32 other than tab,
+/// newline and return, and U+FFFE and U+FFFF; each is written as U+FFFD.
+fn escape_into(var out: StrBuilder, s: Str, escape_newline: Bool) {
+  let n = s.len()
+  var last = 0
+  var i = 0
+  while i < n {
+    let c = llraw.str_byte(s, i)
+    var esc = ""
+    var w = 1
+    if c == 34 {
+      esc = "&#34;"
+    } else if c == 39 {
+      esc = "&#39;"
+    } else if c == 38 {
+      esc = "&amp;"
+    } else if c == 60 {
+      esc = "&lt;"
+    } else if c == 62 {
+      esc = "&gt;"
+    } else if c == 9 {
+      esc = "&#x9;"
+    } else if c == 10 {
+      if escape_newline {
+        esc = "&#xA;"
+      }
+    } else if c == 13 {
+      esc = "&#xD;"
+    } else if c < 32 {
+      esc = "\u{FFFD}"
+    } else if c == 239 && i + 2 < n && llraw.str_byte(s, i + 1) == 191 && (llraw.str_byte(s, i + 2) == 190 || llraw.str_byte(s, i + 2) == 191) {
+      esc = "\u{FFFD}"
+      w = 3
+    }
+    if esc.is_empty() {
+      i += 1
+      continue
+    }
+    if last < i {
+      out.write(llraw.str_slice(s, last, i))
+    }
+    out.write(esc)
+    i += w
+    last = i
+  }
+  if last == 0 {
+    out.write(s)
+  } else if last < n {
+    out.write(llraw.str_slice(s, last, n))
+  }
+}
+
 fn escape_text(s: Str, escape_newline: Bool) -> Str {
   var out = StrBuilder.new()
-  for r in s.runes() {
-    let c = Int(r)
-    if c == 34 {
-      out.write("&#34;")
-    } else if c == 39 {
-      out.write("&#39;")
-    } else if c == 38 {
-      out.write("&amp;")
-    } else if c == 60 {
-      out.write("&lt;")
-    } else if c == 62 {
-      out.write("&gt;")
-    } else if c == 9 {
-      out.write("&#x9;")
-    } else if c == 10 {
-      out.write(if escape_newline { "&#xA;" } else { "\n" })
-    } else if c == 13 {
-      out.write("&#xD;")
-    } else if !in_char_range(c) {
-      out.write("\u{FFFD}")
-    } else {
-      out.write("${r}")
-    }
-  }
+  escape_into(out, s, escape_newline)
   out.freeze()
 }
 
@@ -1160,6 +1192,13 @@ fn (var p: Printer) write(s: Str) {
   if !s.is_empty() {
     p.wrote = true
   }
+}
+
+fn (var p: Printer) write_escaped(s: Str, escape_newline: Bool) {
+  if !s.is_empty() {
+    p.wrote = true
+  }
+  escape_into(p.out, s, escape_newline)
 }
 
 fn (var p: Printer) write_indent(delta: Int) {
@@ -1248,9 +1287,12 @@ fn (var p: Printer) write_start(name: xml.Name, attrs: List[xml.Attr]) -> () ! S
   p.tags.push(name)
   p.prefixes.push("")
   p.write_indent(1)
-  p.write("<${name.local}")
+  p.write("<")
+  p.write(name.local)
   if !name.space.is_empty() {
-    p.write(" xmlns=\"${escape_text(name.space, true)}\"")
+    p.write(" xmlns=\"")
+    p.write_escaped(name.space, true)
+    p.write("\"")
   }
   for a in attrs {
     if a.name.local.is_empty() {
@@ -1259,9 +1301,13 @@ fn (var p: Printer) write_start(name: xml.Name, attrs: List[xml.Attr]) -> () ! S
     p.write(" ")
     if !a.name.space.is_empty() {
       let pre = p.create_attr_prefix(a.name.space)
-      p.write("${pre}:")
+      p.write(pre)
+      p.write(":")
     }
-    p.write("${a.name.local}=\"${escape_text(a.value, true)}\"")
+    p.write(a.name.local)
+    p.write("=\"")
+    p.write_escaped(a.value, true)
+    p.write("\"")
   }
   p.write(">")
 }
@@ -1282,7 +1328,9 @@ fn (var p: Printer) write_end(name: xml.Name) -> () ! Str {
   }
   let _t = p.tags.pop()
   p.write_indent(-1)
-  p.write("</${name.local}>")
+  p.write("</")
+  p.write(name.local)
+  p.write(">")
   p.pop_prefix()
 }
 
@@ -1328,7 +1376,7 @@ fn (var p: Printer) encode_element(e: xml.Element) -> () ! Str {
   for n in e.children {
     match n {
       xml.Node.Elem(c) => p.encode_element(c)?
-      xml.Node.Text(s) => p.write(escape_text(s, false))
+      xml.Node.Text(s) => p.write_escaped(s, false)
       xml.Node.Raw(s) => p.write(s)
       xml.Node.Comment(s) => {
         if s.contains("-->") {
