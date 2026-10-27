@@ -1,6 +1,8 @@
 # 0377: The awake worker count follows the load
 
 Status: Proposed (Xo Lang 3, 2026-10-25, for the owner: it changes the default scheduler behavior).
+2026-10-27: no adaptive variant is clean (see "Variants screened"); the default stays off and `XO_CAP=N` is the opt-in for
+server deployments.
 Nothing is built. Measured evidence below; the design and the measurement plan are the proposal.
 
 ## Context
@@ -147,6 +149,45 @@ the XO_THREADS rows above, then adaptive; no default changes until the owner see
    arm64, LLVM and under XO_THREADS=1, 2.
 
 Reject if the CPU bound rows or the burst p99 regress beyond noise, or CRUD CPU a request does not fall.
+
+## Variants screened on 2026-10-27 (Xo Lang 3; none is clean, the default stays off)
+
+The owner conditionally approved a default of a fixed cap (max(2, ncpu/3), raised by the monitor when
+work waits). The conditions were no regression on CPU bound fan-out, the self build or the fib edit.
+All variants sit in one binary selected by `XO_CAP`; every row is `xo bench --ab` against `XO_CAP=0`
+on the same binary (12 CPU Mac, 8 performance cores, fixed cap 4 = ncpu/3). The fast stand-in
+(a cold bench/perf/http build) was calibrated first and rejected: fixed cap 4 cost +8.9% there against
++26% on the 20 round self build, under the +15% bar.
+
+| Variant | fan-out micros | self build | CRUD c32 CPU/req | CRUD c128 CPU/req |
+|---|---|---|---|---|
+| fixed cap 4 (mode 1) | not run | 1.265 worse (20 rounds) | -16% | -25% |
+| third + monitor slice raise (mode 3) | pmap 1.893 worse | 0.997 | not run | not run |
+| delay raise, D = 20 or 50 us (mode 4, first form) | pmap 1.020 / 1.017 worse | 0.995 / 1.003 | flat | not run |
+| searcher limit 1, no cap (mode 5) | within noise | 1.002 | flat (+4%) | not run |
+| idle rate window 2 ms (mode 4) | pmap 1.086 worse | 0.997 | not run | not run |
+| idle rate window 0.5 ms (mode 4) | pmap 1.041 worse | not run | -14% | -2% |
+| same, raising at the first blocked wake while no worker has gone idle yet | pmap 1.024, spawn 1.040 worse | not run | -17% | -4.6% |
+
+What the counters (`XO_RTSTATS=1`) showed:
+
+- A fixed cap saves CPU by cutting wake and park cycling (wakes 325k to 147k, idle sleeps -54%, futex
+  wait and wake -50%), not by spinning less; the Tokio rule (wake only if nobody is searching) is already
+  the baseline, and Go's half-the-busy-workers spin cap changes nothing at the default of 0 spin rounds.
+- Mode 3's slice raise never fires on a short CPU bound fan-out, so a capped pmap runs 1.89x slower.
+- A raise on "work waited D us" fires on request servers within the first wakes, because tasks at the cap
+  routinely wait longer than 20 to 50 us, and the cap then stays at the CPUs. Queue depth does not
+  separate the cases either: CRUD at c128 queues 64 or more items at cap 4. A gap since the last worker
+  went idle fires on CRUD bursts. A rate of workers going idle (a request server at the cap idles a worker
+  every 50 us; a fan-out keeps them all busy) separates them at c32 (-14%) but not at c128, where the
+  capped workers are nearly saturated and the cap still did not cost throughput.
+- Any wait before raising costs a few ms on a 60 ms CPU bound run (pmap +4% at 0.5 ms, +8.6% at 2 ms);
+  raising at the first blocked wake with no wait still leaves pmap +2.4% (the idle counter, the checks, and
+  decay cycles), so the start-up wait was 1.7 of the 4.1 points.
+
+Opt-in stands: `XO_CAP=N` (2 up to the CPUs) for a server deployment gives -16% (c32) to -25% (c128)
+CPU a request with p99 equal or better and 1% fewer requests a second; it must not be set for build
+tools or CPU bound batch programs (the compiler's own build is 26% slower at N = 4).
 
 ## Alternatives
 
