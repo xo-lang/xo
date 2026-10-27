@@ -47,6 +47,7 @@ pub fn caches() -> List[Cache] {
     Cache{name: "testcc", what: "the Go tests' C compiles (xotool.EnableTestCCache)"},
     Cache{name: "testprog", what: "the Go tests' content keyed program directories"},
     Cache{name: "testgobind", what: "the Go tests' use go bindings"},
+    Cache{name: "gobind", what: "xo-gobind built with the installed Go when it is newer than the shipped one (decision 0393)"},
     Cache{name: "llvm-ir", what: "scripts/gate.sh's LLVM IR keys"},
     Cache{name: "lifeline", what: "the Go tests' lifeline helper binaries (internal/testtmp)"},
     Cache{name: "xo1-test", what: "test binaries of older Go tests"},

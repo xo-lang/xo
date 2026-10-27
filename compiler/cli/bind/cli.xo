@@ -8,6 +8,7 @@
 
 use github.com/xo-lang/xo/compiler/cli/cmdhelp
 use github.com/xo-lang/xo/compiler/hostpath
+use std/crypto
 
 /// Runs `xo bind <args>` (args[0] is "bind") and returns the exit status,
 /// with the std directory $XO_STD, else "std" in the working directory
@@ -339,14 +340,15 @@ pub fn gobind_helper(os: Os, std_dir: Str, wd: Str) -> (Str, Bool) ! Str uses (f
     return Ok((named, false))
   }
   // beside this program (a release ships them together), then the std
-  // directory's repository or release layout
+  // directory's repository or release layout; a prebuilt helper older
+  // than the installed Go is rebuilt with it (decision 0393)
   let win = hostpath.windows()
+  let up = hostpath.dir_w(if wd.is_empty() { std_dir } else { hostpath.abs_w(wd, std_dir, win) }, win)
   for cand in gobind_candidates_w(os.env.program(), std_dir, wd, win) {
     if is_file(os, cand) {
-      return Ok((cand, false))
+      return Ok((helper_for_go(os, cand, up)?, false))
     }
   }
-  let up = hostpath.dir_w(if wd.is_empty() { std_dir } else { hostpath.abs_w(wd, std_dir, win) }, win)
   let on_path = look_path(os, "xo-gobind${if win { ".exe" } else { "" }}")
   if !on_path.is_empty() {
     return Ok((on_path, false))
@@ -396,6 +398,122 @@ pub fn gobind_candidates_w(prog0: Str, std_dir: Str, wd: Str, win: Bool) -> List
     out.push(hostpath.join_w(up, rel, win))
   }
   out
+}
+
+/// The go command xo-gobind runs: $XO_GO, else go.
+fn go_command(os: Os) -> Str uses env {
+  let g = os.env.get("XO_GO") ?? ""
+  if g.is_empty() { "go" } else { g }
+}
+
+/// The trimmed standard output of go with args, or "" when it fails.
+fn go_output(os: Os, go: Str, args: List[Str]) -> Str uses proc {
+  match os.proc.cmd(go, args).output() {
+    Ok(o) => if o.code == 0 { (o.stdout.to_str() ?? "").trim() } else { "" }
+    Err(_) => ""
+  }
+}
+
+/// The language version (major, minor) of a Go version text
+/// ("go1.27.0", "go1.27rc1", "devel go1.28-abc ..."), or (0, 0).
+fn go_lang(v0: Str) -> (Int, Int) {
+  var v = v0.trim()
+  if v.starts_with("devel ") {
+    v = v[6..]
+  }
+  if !v.starts_with("go") {
+    return (0, 0)
+  }
+  let parts = v[2..].split(".")
+  if parts.len() < 2 {
+    return (0, 0)
+  }
+  let maj = Int.parse(parts[0]) ?? 0
+  let b = parts[1].bytes()
+  var n = 0
+  while n < b.len() && b[n] >= 48 && b[n] <= 57 {
+    n += 1
+  }
+  (maj, Int.parse(parts[1][0..n]) ?? 0)
+}
+
+/// The sha256 of the helper's source under src (go.mod and the .go files
+/// of cmd/xo-gobind, internal/gobind and internal/gotool, tests left out),
+/// in hex: the cache key of a local build.
+fn helper_source_key(os: Os, src: Str) -> Str uses fs.read {
+  var b = BytesBuilder.new()
+  b.write((os.fs.read(join(src, "go.mod")).ok() ?? b""))
+  for d in ["cmd/xo-gobind", "internal/gobind", "internal/gotool"] {
+    let entries = os.fs.read_dir(join(src, d)).ok() ?? []
+    for name in entries.map(fn(e) { e.name }).sort() {
+      if !name.ends_with(".go") || name.ends_with("_test.go") {
+        continue
+      }
+      b.write_str("\n${d}/${name}\n")
+      b.write(os.fs.read(join(src, "${d}/${name}")).ok() ?? b"")
+    }
+  }
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+/// The helper to run in place of the prebuilt one at helper (decision
+/// 0393): when the installed go command is a newer Go than the helper
+/// was built with, whose export data the helper cannot read, and the
+/// helper's source is under src (a release's lib/xo, or a checkout), a
+/// build of that source with the installed Go, made once into <user
+/// cache>/xo/gobind/<source key>-<go version>/; else helper.
+fn helper_for_go(os: Os, helper: Str, src: Str) -> Str ! Str uses (fs, proc, env) {
+  if !is_file(os, join(src, "cmd/xo-gobind/main.go")) {
+    return Ok(helper)
+  }
+  let go = go_command(os)
+  let local = go_output(os, go, ["env", "GOVERSION"])
+  // `go version FILE` prints "FILE: go1.26.1"
+  let built_line = go_output(os, go, ["version", helper])
+  let built = built_line[(built_line.rfind(" ") ?? -1) + 1..]
+  let (lmaj, lmin) = go_lang(local)
+  let (bmaj, bmin) = go_lang(built)
+  if lmaj == 0 || bmaj == 0 || lmaj < bmaj || (lmaj == bmaj && lmin <= bmin) {
+    return Ok(helper)
+  }
+  let cache = hostpath.user_cache_dir(os.env)
+  if cache.is_empty() {
+    return Err("xo-gobind was built with ${built} and cannot read ${local}'s export data, and there is no user cache directory to build it into (HOME, or LocalAppData on Windows): set XO_GOBIND to an xo-gobind built with ${local}")
+  }
+  let dir = "${cache}/xo/gobind/${helper_source_key(os, src)[0..16]}-${local}"
+  let out = join(dir, "xo-gobind${if hostpath.windows() { ".exe" } else { "" }}")
+  if is_file(os, out) {
+    return Ok(out)
+  }
+  os.fs.create_dir_all(dir).ok()
+  // built beside its name and renamed, so a concurrent bind never runs
+  // a half written helper
+  let tmp = match os.fs.create_temp(dir, "xo-gobind-") {
+    Ok(t) => t
+    Err(e) => return Err("building xo-gobind with ${local}: ${e}")
+  }
+  // only the unique name: the build makes the file, executable (the
+  // temporary one is not)
+  os.fs.remove(tmp).ok()
+  match os.proc.cmd(go, ["build", "-o", tmp, "./cmd/xo-gobind"]).dir(src).output() {
+    Ok(o) => {
+      if o.code != 0 {
+        os.fs.remove(tmp).ok()
+        return Err("building xo-gobind with ${local} (decision 0393; the shipped one is ${built}): ${(o.stderr.to_str() ?? "").trim()}")
+      }
+    }
+    Err(e) => {
+      os.fs.remove(tmp).ok()
+      return Err("building xo-gobind with ${local}: ${e}")
+    }
+  }
+  match os.fs.rename(tmp, out) {
+    Ok(_) => Ok(out)
+    Err(e) => {
+      os.fs.remove(tmp).ok()
+      if is_file(os, out) { Ok(out) } else { Err("building xo-gobind with ${local}: ${e}") }
+    }
+  }
 }
 
 /// Binds Go package gopath into the binding cache of the project at root

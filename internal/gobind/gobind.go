@@ -33,10 +33,12 @@ import (
 	"fmt"
 	"go/importer"
 	"go/token"
+	"go/types"
 	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -469,9 +471,9 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 		}
 		return os.Open(f)
 	})
-	pkg, err := imp.Import(goPath)
+	pkg, err := importPkg(imp, goPath)
 	if err != nil {
-		return nil, &Error{GoPath: goPath, Msg: err.Error()}
+		return nil, err
 	}
 	b := &Binding{GoPath: goPath, Name: self.Name, Prefix: Prefix(goPath), Standard: self.Standard, Skipped: map[string]string{}}
 	if self.Module != nil && !self.Standard {
@@ -558,4 +560,38 @@ func writeAtomic(path string, data []byte) error {
 		return err
 	}
 	return os.Rename(f.Name(), path)
+}
+
+// importPkg is imp.Import, with the importer's panic on export data it
+// cannot read (a newer Go's format: go1.26's importer panics with
+// "export data version 4 is greater than maximum supported version 2"
+// on Go 1.27's) turned into an Error naming the two Go versions, as is an
+// error about the export data's version.
+func importPkg(imp types.Importer, goPath string) (pkg *types.Package, err error) {
+	defer func() {
+		if r := recover(); r != nil {
+			pkg, err = nil, &Error{GoPath: goPath, Msg: exportDataMsg(fmt.Sprint(r))}
+		}
+	}()
+	pkg, err = imp.Import(goPath)
+	if err != nil {
+		msg := err.Error()
+		if strings.Contains(msg, "export data") {
+			msg = exportDataMsg(msg)
+		}
+		return nil, &Error{GoPath: goPath, Msg: msg}
+	}
+	return pkg, nil
+}
+
+// exportDataMsg says that this helper's Go cannot read the export data
+// of the installed go command, and how to get a helper that can.
+func exportDataMsg(detail string) string {
+	local, err := gotool.Version()
+	if err != nil {
+		local = "the installed go command"
+	}
+	return fmt.Sprintf("xo-gobind was built with %s and cannot read the export data of %s (%s); "+
+		"build xo-gobind with the installed Go (go build -o xo-gobind ./cmd/xo-gobind in this xo's source at its version) and set XO_GOBIND to it",
+		runtime.Version(), local, firstLine(detail))
 }

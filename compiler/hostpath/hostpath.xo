@@ -210,6 +210,26 @@ pub fn temp_dir_w(env: Env, win: Bool) -> Str uses env {
 
 pub fn temp_dir(env: Env) -> Str uses env { temp_dir_w(env, windows()) }
 
+/// os.UserCacheDir in `/` form, "" when there is none: %LocalAppData% on
+/// Windows, $HOME/Library/Caches on macOS, else $XDG_CACHE_HOME when it
+/// is absolute, else $HOME/.cache.
+pub fn user_cache_dir(env: Env) -> Str uses env {
+  if windows() {
+    let la = env.get("LocalAppData") ?? ""
+    return if la.is_empty() { "" } else { trim_slash_w(slash_w(la, true), true) }
+  }
+  let home = env.get("HOME") ?? ""
+  match target.os {
+    Darwin => return if home.is_empty() { "" } else { "${trim_slash_w(home, false)}/Library/Caches" }
+    Windows | Linux | Wasi => {}
+  }
+  let x = env.get("XDG_CACHE_HOME") ?? ""
+  if x.starts_with("/") {
+    return trim_slash_w(x, false)
+  }
+  if home.is_empty() { "" } else { "${trim_slash_w(home, false)}/.cache" }
+}
+
 /// A Git Bash path (`/c/Users/x`) as the drive path a Windows program can
 /// open (`C:/Users/x`); other paths unchanged.
 pub fn msys_w(p: Str, win: Bool) -> Str {

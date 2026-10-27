@@ -231,7 +231,7 @@ layout() {
 	local target=$1 stage
 	stage=$(stage_of "$target")
 	if [ "$dry" = 1 ]; then
-		echo "+ layout $stage: lib/xo/std (git ls-files std), bin/xo-gobind (go build ./cmd/xo-gobind for $target), README.md, CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES, lib/xo/race/${target%/*}-${target#*/} when built" >&2
+		echo "+ layout $stage: lib/xo/std (git ls-files std), bin/xo-gobind (go build ./cmd/xo-gobind for $target), lib/xo/{go.mod,cmd/xo-gobind,internal/gobind,internal/gotool} (its source, decision 0393), README.md, CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES, lib/xo/race/${target%/*}-${target#*/} when built" >&2
 		return
 	fi
 	mkdir -p "$stage/bin" "$stage/lib/xo"
@@ -242,6 +242,11 @@ layout() {
 	[ "${target%/*}" = windows ] && exe=.exe
 	GOOS="${target%/*}" GOARCH="${target#*/}" CGO_ENABLED=0 \
 		go build -trimpath -o "$stage/bin/xo-gobind$exe" ./cmd/xo-gobind
+	# the helper's source (decision 0393): xo builds xo-gobind with the
+	# installed Go when that Go is newer than the one that built
+	# bin/xo-gobind, whose export data the shipped helper cannot read
+	git ls-files -z -- go.mod cmd/xo-gobind internal/gobind internal/gotool ':!:*_test.go' ':!:*/testdata/*' |
+		rsync -a --from0 --files-from=- ./ "$stage/lib/xo/"
 	cp CHANGELOG.md LICENSE THIRD_PARTY_NOTICES "$stage/"
 	# the archive's README: getting started for this archive
 	# (scripts/release-readme.md, plain text that reads as Markdown too),

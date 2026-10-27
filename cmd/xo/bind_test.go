@@ -395,3 +395,100 @@ func TestUseGoOfflineProxy(t *testing.T) {
 		t.Errorf("output %q, want %q", got, want)
 	}
 }
+
+// TestGobindNewerGo (decision 0393): with an installed Go newer than the
+// one the shipped xo-gobind was built with, xo builds the helper from the
+// source a release carries under lib/xo, once, into the user cache, and
+// uses that build; a second bind reuses it. A release layout of links
+// (bin/xo, bin/xo-gobind, lib/xo/std and the helper's source) and a fake
+// go command that says go1.99.0, reports the shipped helper as go1.26.1,
+// logs each build of the helper (copying the shipped one), and passes
+// everything else to the real go.
+func TestGobindNewerGo(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	if runtime.GOOS == "windows" {
+		t.Skip("fake go command is a shell script")
+	}
+	cli, err := xoCommand()
+	if err != nil {
+		t.Fatal(err)
+	}
+	realGo, err := exec.LookPath("go")
+	if err != nil {
+		t.Skip("no go command")
+	}
+	root, err := filepath.Abs(filepath.Join("..", ".."))
+	if err != nil {
+		t.Fatal(err)
+	}
+	rel := t.TempDir()
+	for _, d := range []string{"bin", "lib/xo/cmd", "lib/xo/internal", "home"} {
+		if err := os.MkdirAll(filepath.Join(rel, d), 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	links := map[string]string{
+		"lib/xo/std":             filepath.Join(root, "std"),
+		"lib/xo/go.mod":          filepath.Join(root, "go.mod"),
+		"lib/xo/cmd/xo-gobind":   filepath.Join(root, "cmd", "xo-gobind"),
+		"lib/xo/internal/gobind": filepath.Join(root, "internal", "gobind"),
+		"lib/xo/internal/gotool": filepath.Join(root, "internal", "gotool"),
+	}
+	for name, target := range links {
+		if err := os.Symlink(target, filepath.Join(rel, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	// bin/xo a hard link (or a copy), not a symlink: xo finds std beside
+	// the path it runs from after resolving links
+	if err := os.Link(cli[0], filepath.Join(rel, "bin", "xo")); err != nil {
+		data, err := os.ReadFile(cli[0])
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(rel, "bin", "xo"), data, 0o755); err != nil {
+			t.Fatal(err)
+		}
+	}
+	shipped := filepath.Join(rel, "bin", "xo-gobind")
+	build := exec.Command(realGo, "build", "-o", shipped, "./cmd/xo-gobind")
+	build.Dir = root
+	if out, err := build.CombinedOutput(); err != nil {
+		t.Fatalf("building the shipped helper: %v\n%s", err, out)
+	}
+	log := filepath.Join(rel, "builds.log")
+	fake := filepath.Join(rel, "go")
+	script := "#!/bin/sh\n" +
+		"if [ \"$1\" = env ] && [ \"$2\" = GOVERSION ]; then echo go1.99.0; exit 0; fi\n" +
+		"if [ \"$1\" = version ] && [ $# -eq 2 ]; then echo \"$2: go1.26.1\"; exit 0; fi\n" +
+		"if [ \"$1\" = build ] && [ \"$2\" = -o ] && [ \"$4\" = ./cmd/xo-gobind ]; then pwd -P >> '" + log + "'; cp '" + shipped + "' \"$3\"; exit $?; fi\n" +
+		"exec '" + realGo + "' \"$@\"\n"
+	if err := os.WriteFile(fake, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	home := filepath.Join(rel, "home")
+	for k, v := range map[string]string{"XO_GO": fake, "HOME": home, "XDG_CACHE_HOME": "", "XO_GOBIND": "", "XO_GOBIND_DIR": "", "XO_STD": "", cliEnv: ""} {
+		setenv(t, k, v)
+	}
+	dir := writeFiles(t, map[string]string{"xo.mod": "module ex\n"})
+	xo := []string{filepath.Join(rel, "bin", "xo")}
+	for _, pkg := range []string{"strings", "strconv"} {
+		var out, errOut bytes.Buffer
+		if code := execCLI(t, xo, []string{"bind", "--dir", dir, pkg}, &out, &errOut); code != 0 {
+			t.Fatalf("bind %s: exit %d: %s", pkg, code, errOut.String())
+		}
+	}
+	data, _ := os.ReadFile(log)
+	builds := strings.Split(strings.TrimSpace(string(data)), "\n")
+	want, _ := filepath.EvalSymlinks(filepath.Join(rel, "lib", "xo"))
+	if len(data) == 0 || len(builds) != 1 || builds[0] != want {
+		t.Fatalf("helper builds %q, want one in %s/lib/xo", builds, rel)
+	}
+	got, _ := filepath.Glob(filepath.Join(home, "*", "*", "xo", "gobind", "*-go1.99.0", "xo-gobind"))
+	more, _ := filepath.Glob(filepath.Join(home, "*", "xo", "gobind", "*-go1.99.0", "xo-gobind"))
+	if len(got)+len(more) != 1 {
+		t.Fatalf("cached helper %v %v, want one under %s", got, more, home)
+	}
+}

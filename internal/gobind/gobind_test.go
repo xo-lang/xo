@@ -1,6 +1,7 @@
 package gobind
 
 import (
+	"go/types"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -213,5 +214,35 @@ func TestSharedHandles(t *testing.T) {
 	// a type of an internal package stays skipped, with the reason
 	if !importable("net/netip") || importable("internal/poll") || importable("vendor/golang.org/x/net/dns/dnsmessage") || importable("example.com/m/internal/x") {
 		t.Error("importable")
+	}
+}
+
+// panicImporter panics as go1.26's importer does on Go 1.27's export data.
+type panicImporter struct{}
+
+func (panicImporter) Import(string) (*types.Package, error) {
+	panic(`cannot decode "strings", export data version 4 is greater than maximum supported version 2`)
+}
+
+// TestImportNewerExportData: export data from a newer Go is an Error that
+// names this helper's Go and the installed one, not a panic (the 0.33.0
+// testers' bug 14: every bind panicked with Go 1.27 installed).
+func TestImportNewerExportData(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("fake go command is a shell script")
+	}
+	bin := t.TempDir()
+	fake := filepath.Join(bin, "go")
+	os.WriteFile(fake, []byte("#!/bin/sh\nif [ \"$1\" = env ] && [ \"$2\" = GOVERSION ]; then echo go1.99.1; exit 0; fi\nexit 2\n"), 0o755)
+	t.Setenv("XO_GO", fake)
+	pkg, err := importPkg(panicImporter{}, "strings")
+	if pkg != nil || err == nil {
+		t.Fatalf("importPkg = %v, %v; want an error", pkg, err)
+	}
+	msg := err.Error()
+	for _, want := range []string{runtime.Version(), "go1.99.1", "export data version 4", "XO_GOBIND"} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("error %q does not name %q", msg, want)
+		}
 	}
 }
