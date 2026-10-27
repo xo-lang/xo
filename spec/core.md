@@ -1705,6 +1705,11 @@ fn main(os: Os) ! {
   `UpperCamel`.
 - Types at the boundary: `(T, error)` becomes `T ! go.Error`; a pointer result
   that may be nil becomes `T?`; mutable Go objects become opaque handles;
+  a handle keeps Go's equality (2.9): a comparable type the package hands
+  out as a value, `T` in a signature or field (`netip.Addr`, `uuid.UUID`),
+  compares and hashes by value, a struct it passes only as `*T`
+  (`url.Parse`'s `*url.URL`) by pointer, as Go's `==` on the pointers,
+  and an interface by its dynamic value;
   slices and maps are copied in and out; a `context.Context` parameter is
   supplied from the current task (deadline and cancellation); a panic becomes
   a fault.

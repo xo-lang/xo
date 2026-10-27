@@ -3353,7 +3353,9 @@ experiment of its work queue item 6. Results and coverage:
   handles, so `time.after_func` binds; 5 since 2026-10-09, decision 0093:
   adapters call `rt.GoFxValue`/`rt.GoFxRerun` when `rt.GoFxOn()`, by
   value calls live in `goCall_<prefix><name>`, declarations carry a
-  `/// Replay:` line) or another module version
+  `/// Replay:` line; 6 since 2026-10-27, Intel b15: a comparable struct
+  handle the package hands out as a value, `T` in some bound signature or
+  field (netip.Addr), compares and hashes by value) or another module version
   than the pin, or another `replay rerun go` list (header line
   `// replay-rerun: <names>`). Pins: `require go <module> <version>`
   lines in xo.mod. A binding made with a rerun list is cached as
