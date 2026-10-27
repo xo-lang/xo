@@ -256,10 +256,15 @@ fn (var g: Gen) run() -> Program {
   // checksums of the binding workspace
   var reqs: List[Str] = []
   var sums: List[Str] = []
+  // the go line: at least the requirements' (Intel b16, 0.33.0: `go 1.26`
+  // is below a dependency's `go 1.26.0` in Go's order, and go build
+  // stopped with "updates to go.mod needed")
+  var goline = "1.26"
   for m in g.c.mods {
     if m.go_path.is_empty() {
       continue
     }
+    goline = go_line_max(goline, m.go_line)
     let prefix = g.std_prefix_go(m.go_path)
     files.push(GFile{path: "rt/xo_gobind_${prefix.trim_prefix("Go_").trim_suffix("_")}.go", text: m.go_adapter})
     for r in m.go_require {
@@ -274,7 +279,7 @@ fn (var g: Gen) run() -> Program {
     }
   }
   var gomod = StrBuilder.new()
-  gomod.write("module xoprog\n\ngo 1.26\n")
+  gomod.write("module xoprog\n\ngo ${goline}\n")
   if !reqs.is_empty() {
     gomod.write("\nrequire (\n")
     for r in reqs.sort() {
@@ -289,6 +294,48 @@ fn (var g: Gen) run() -> Program {
   prog.files = files
   prog.skipped = g.skipped
   prog
+}
+
+/// The higher of two go.mod go versions in Go's order (gover.Compare):
+/// by number, a missing patch below any patch (1.26 < 1.26.0 < 1.26.1);
+/// "" is lowest. A pre-release suffix (1.27rc1) counts as its numbers.
+pub fn go_line_max(a: Str, b: Str) -> Str {
+  if b.is_empty() {
+    return a
+  }
+  if a.is_empty() {
+    return b
+  }
+  let pa = go_line_parts(a)
+  let pb = go_line_parts(b)
+  for k in 0..3 {
+    if pa[k] != pb[k] {
+      return if pb[k] > pa[k] { b } else { a }
+    }
+  }
+  a
+}
+
+/// A go version's major, minor and patch, -1 for a missing part.
+fn go_line_parts(v: Str) -> List[Int] {
+  var out = [-1, -1, -1]
+  for (i, p) in v.split(".").indexed() {
+    if i < 3 {
+      var n = 0
+      var any = false
+      for c in p.bytes() {
+        if c < 48 || c > 57 {
+          break
+        }
+        n = n * 10 + Int(c) - 48
+        any = true
+      }
+      if any {
+        out[i] = n
+      }
+    }
+  }
+  out
 }
 
 /// Whether the program's modules or the prelude import the std module

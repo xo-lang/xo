@@ -82,7 +82,9 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
     if !hdr.standard {
       // gobind workspaceDeps: the binding workspace's go.mod and go.sum
       let ws = join(cache, "_mod")
-      c.mods[dep].go_require = go_mod_requires(c.fs.read_text(join(ws, "go.mod")).ok() ?? "")
+      let wsmod = c.fs.read_text(join(ws, "go.mod")).ok() ?? ""
+      c.mods[dep].go_require = go_mod_requires(wsmod)
+      c.mods[dep].go_line = go_mod_go_line(wsmod)
       c.mods[dep].go_sum = c.fs.read_text(join(ws, "go.sum")).ok() ?? ""
       if !pin.is_empty() && !hdr.mod_path.is_empty() {
         c.check_go_lock(f, u.span, root, hdr.mod_path, hdr.mod_version, c.mods[dep].go_sum)
@@ -188,6 +190,17 @@ struct GoBindHeader {
 
 /// gobind workspaceDeps: the requirements of a go.mod, the lines of a
 /// `require (` block and of single `require` lines, comments removed.
+/// The version of a go.mod's `go` line, or "".
+pub fn go_mod_go_line(text: Str) -> Str {
+  for l0 in text.split("\n") {
+    let fs = fields(l0.split("//")[0])
+    if fs.len() == 2 && fs[0] == "go" {
+      return fs[1]
+    }
+  }
+  ""
+}
+
 fn go_mod_requires(text: Str) -> List[Str] {
   var out: List[Str] = []
   var inside = false

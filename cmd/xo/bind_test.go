@@ -212,3 +212,59 @@ func TestInlineStrWarnsOffArm64(t *testing.T) {
 		}
 	}
 }
+
+// TestUseGoTidyFreshClone: Intel b17 (0.33.0): in a fresh clone (no
+// .xo/gobind) a `require go` pin has no go.sum hash to record, and tidy
+// exited 0 without writing xo.lock's lines; now it is XO1320 and writes
+// nothing.
+func TestUseGoTidyFreshClone(t *testing.T) {
+	t.Parallel()
+	setenv(t, "XO_GOBIND_DIR", "")
+	mod := "module example.com/b17\nedition preview\nrequire go github.com/google/uuid v1.6.0\n"
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  mod,
+		"main.xo": "use go \"github.com/google/uuid\"\n\nfn main(os: Os) {\n  os.stdio.println(uuid.new_string())\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	code := run(t, []string{"mod", "tidy", "--dir=" + dir}, &out, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), "XO1320") || !strings.Contains(errOut.String(), "run `xo check` once") {
+		t.Fatalf("tidy in a fresh clone: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "xo.mod")); string(data) != mod {
+		t.Fatalf("tidy changed xo.mod:\n%s", data)
+	}
+	if lock, err := os.ReadFile(filepath.Join(dir, "xo.lock")); err == nil && strings.Contains(string(lock), "github.com/google/uuid") {
+		t.Fatalf("tidy wrote the module's lines with no hashes known:\n%s", lock)
+	}
+}
+
+// TestUseGoPatchGoLine: Intel b16 (0.33.0): golang.org/x/text v0.43.0's
+// go.mod says `go 1.26.0`, above the generated `go 1.26` in Go's order,
+// and go build stopped with "updates to go.mod needed"; the generated
+// go line is now at least the binding workspace's.
+func TestUseGoPatchGoLine(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and fetches a Go module")
+	}
+	setenv(t, "XO_GOBIND_DIR", "")
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module example.com/b16\nedition preview\nrequire go golang.org/x/text v0.43.0\n",
+		"main.xo": "use go \"golang.org/x/text/language\"\n\nfn main(os: Os) {\n  os.stdio.println(language.make(\"tr\").string())\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	run(t, []string{"check", "--backend=go", dir}, &out, &errOut)
+	if strings.Contains(errOut.String(), "cannot bind") {
+		t.Skipf("the Go module cannot be fetched here: %s", errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"mod", "tidy", "--dir=" + dir}, &out, &errOut); code != 0 {
+		t.Fatalf("tidy: exit %d\n%s", code, errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != "tr" {
+		t.Fatalf("run: exit %d\nstdout %q\n%s", code, out.String(), errOut.String())
+	}
+}

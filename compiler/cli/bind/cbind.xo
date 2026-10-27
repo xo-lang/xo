@@ -13,6 +13,7 @@
 
 use std/crypto
 use github.com/xo-lang/xo/compiler/lexer
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// cbind.Version: the format version of generated C bindings.
 const CBIND_VERSION: Int = 1
@@ -111,10 +112,10 @@ struct Binder {
 
 /// filepath.Abs against the working directory.
 fn (b: Binder) abs(p: Str) -> Str {
-  if p.starts_with("/") || b.opts.wd.is_empty() {
+  if b.opts.wd.is_empty() {
     return clean(p)
   }
-  clean("${b.opts.wd}/${p}")
+  hostpath.abs(b.opts.wd, p)
 }
 
 /// locate finds the header and the link inputs.
@@ -125,7 +126,7 @@ fn (var b: Binder) locate(os: Os) -> () ! Str uses (fs, proc, env) {
     return Err("empty header path")
   }
   var local = join(o.mod_dir, o.header)
-  if o.header.starts_with("/") {
+  if hostpath.is_abs(o.header) {
     local = o.header
   }
   if let Some(st) = os.fs.stat(b.abs(local)).ok() ?? None {
@@ -149,7 +150,7 @@ fn (var b: Binder) locate(os: Os) -> () ! Str uses (fs, proc, env) {
       continue
     }
     var p = l
-    if !p.starts_with("/") {
+    if !hostpath.is_abs(p) {
       p = join(o.mod_dir, l)
     }
     let abs = b.abs(p)

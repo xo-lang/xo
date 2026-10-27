@@ -366,6 +366,16 @@ fn (var c: ModCtx) tidy(main_dir: Str) -> (List[Change], List[check.Problem]) us
     data = data.trim_suffix("\n") + "\nrequire go ${mp} ${v}\n"
     changes.push(Change{path: mp, new: v})
   }
+  // each pin's go.sum hashes known, or nothing is written (Intel b17,
+  // 0.33.0: in a fresh clone, with no binding workspace yet, tidy wrote
+  // an xo.lock without the pin's lines and exited 0)
+  let ents = c.go_lock_entries_of(main_dir, data)
+  for l in data.split("\n") {
+    let fs = check.fields(l)
+    if fs.len() >= 4 && fs[0] == "require" && fs[1] == "go" && !ents.contains("${fs[2]} ${fs[3]}") {
+      return ([], [check.Problem{code: "XO1320", file: main.file, msg: "Go module ${fs[2]} ${fs[3]} is pinned, but no binding has fetched it yet, so xo.lock cannot record its hash", notes: ["run `xo check` once (it binds the package with Go), then `xo mod tidy` again (decision 0356)"]}])
+    }
+  }
   if data != orig {
     match c.write_file(main.file, data.bytes()) {
       Ok(_) => {}
@@ -465,10 +475,15 @@ fn (c: ModCtx) go_binding_module(main_dir: Str, gopath: Str) -> (Str, Str) uses 
 /// $XO_GOBIND_DIR's), else the current xo.lock's line, so a rewrite keeps
 /// a pin no binding has fetched yet. A module no longer pinned is dropped.
 fn (c: ModCtx) go_lock_entries(main_dir: Str) -> Map[Str, Str] uses fs.read {
+  // xo:allow XO0903 an unreadable xo.mod pins nothing here; the load reports it
+  let modtext = c.os.fs.read_text("${c.abs(main_dir)}/xo.mod").ok() ?? ""
+  c.go_lock_entries_of(main_dir, modtext)
+}
+
+/// go_lock_entries of the xo.mod text modtext.
+fn (c: ModCtx) go_lock_entries_of(main_dir: Str, modtext: Str) -> Map[Str, Str] uses fs.read {
   var out: Map[Str, Str] = {}
   let dir = c.abs(main_dir)
-  // xo:allow XO0903 an unreadable xo.mod pins nothing here; the load reports it
-  let modtext = c.os.fs.read_text("${dir}/xo.mod").ok() ?? ""
   let set = c.getenv("XO_GOBIND_DIR")
   let cache = if set.is_empty() { "${dir}/.xo/gobind" } else { set }
   // xo:allow XO0903 no binding workspace yet: the current lines are kept

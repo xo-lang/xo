@@ -1,6 +1,7 @@
 // `xo query` (cmd/xo tools.go runQueryWith, hash.go queryHash).
 
 use github.com/xo-lang/xo/compiler/cli/cmdhelp
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// The usage text of `xo query` (compiler/cli/cmdhelp).
 fn query_usage() -> Str {
@@ -110,7 +111,7 @@ fn parse_pos(s: Str) -> (Str, Int, Int) ! Str {
 /// is there and none is under the working directory (xo mcp's query tool
 /// passes its dir argument as --dir; Intel field report 0.26.0).
 fn in_dir(os: Os, dir: Str, file: Str) -> Str uses fs.read {
-  if dir.is_empty() || file.starts_with("/") {
+  if dir.is_empty() || hostpath.is_abs(file) {
     return file
   }
   let joined = "${dir.trim_suffix("/")}/${file}"

@@ -1,0 +1,13 @@
+// go_line_max: the generated go.mod's go line is at least each binding
+// workspace's (Intel b16, 0.33.0: `go 1.26` against golang.org/x/text's
+// `go 1.26.0` stopped go build with "updates to go.mod needed").
+
+test "go_line_max orders go versions as Go does" {
+  expect(go_line_max("1.26", "1.26.0")) == "1.26.0"
+  expect(go_line_max("1.26.0", "1.26")) == "1.26.0"
+  expect(go_line_max("1.26.0", "1.26.2")) == "1.26.2"
+  expect(go_line_max("1.26", "1.25.9")) == "1.26"
+  expect(go_line_max("1.26", "1.27rc1")) == "1.27rc1"
+  expect(go_line_max("1.26", "")) == "1.26"
+  expect(go_line_max("1.9", "1.26")) == "1.26"
+}

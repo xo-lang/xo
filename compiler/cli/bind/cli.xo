@@ -72,7 +72,7 @@ pub fn run_std(os: Os, args: List[Str], std_dir: Str) -> Int uses (fs, proc, env
 /// projectRoot: the directory of the nearest xo.mod at or above dir, or
 /// dir itself (absolute).
 pub fn project_root(os: Os, wd: Str, dir: Str) -> Str uses fs.read {
-  let abs = if dir.starts_with("/") || wd.is_empty() { clean(dir) } else { clean("${wd}/${dir}") }
+  let abs = if wd.is_empty() { clean(dir) } else { hostpath.abs(wd, dir) }
   var d = abs
   while true {
     if is_file(os, join(d, "xo.mod")) {
@@ -338,25 +338,16 @@ pub fn gobind_helper(os: Os, std_dir: Str, wd: Str) -> (Str, Bool) ! Str uses (f
   if !named.is_empty() {
     return Ok((named, false))
   }
-  // beside this program (a release ships them together)
-  let prog = os.env.program()
-  if prog.contains("/") {
-    let beside = join(dir_of(prog), "xo-gobind")
-    if is_file(os, beside) {
-      return Ok((beside, false))
-    }
-  }
-  var std = std_dir
-  if !std.starts_with("/") && !wd.is_empty() {
-    std = clean("${wd}/${std}")
-  }
-  let up = dir_of(std)
-  for cand in [join(up, "../../bin/xo-gobind"), join(up, "xo-gobind"), join(up, "bin/xo-gobind")] {
+  // beside this program (a release ships them together), then the std
+  // directory's repository or release layout
+  let win = hostpath.windows()
+  for cand in gobind_candidates_w(os.env.program(), std_dir, wd, win) {
     if is_file(os, cand) {
       return Ok((cand, false))
     }
   }
-  let on_path = look_path(os, "xo-gobind")
+  let up = hostpath.dir_w(if wd.is_empty() { std_dir } else { hostpath.abs_w(wd, std_dir, win) }, win)
+  let on_path = look_path(os, "xo-gobind${if win { ".exe" } else { "" }}")
   if !on_path.is_empty() {
     return Ok((on_path, false))
   }
@@ -384,6 +375,27 @@ pub fn gobind_helper(os: Os, std_dir: Str, wd: Str) -> (Str, Bool) ! Str uses (f
     }
   }
   Ok((tmp, true))
+}
+
+/// The paths gobind_helper tries for xo-gobind, in order, by the host's
+/// path rules (win: Windows', testable on any host): beside the program
+/// prog when its path names a directory, then up from the std directory
+/// std_dir (against wd when relative): a release's bin/, the repository.
+/// (Windows tester, 0.33.0, bug 13: the name had no .exe, and only a
+/// program or std path holding `/`, or starting with it, counted.)
+pub fn gobind_candidates_w(prog0: Str, std_dir: Str, wd: Str, win: Bool) -> List[Str] {
+  let name = "xo-gobind${if win { ".exe" } else { "" }}"
+  let prog = if win { prog0.replace("\\", "/") } else { prog0 }
+  var out: List[Str] = []
+  if prog.contains("/") {
+    out.push(hostpath.join_w(hostpath.dir_w(prog, win), name, win))
+  }
+  let std = if wd.is_empty() { std_dir } else { hostpath.abs_w(wd, std_dir, win) }
+  let up = hostpath.dir_w(std, win)
+  for rel in ["../../bin/${name}", name, "bin/${name}"] {
+    out.push(hostpath.join_w(up, rel, win))
+  }
+  out
 }
 
 /// Binds Go package gopath into the binding cache of the project at root

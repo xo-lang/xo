@@ -1,0 +1,22 @@
+// Where `use go` looks for xo-gobind, by Windows' path rules on any host
+// (Windows tester, 0.33.0, bug 13: the shipped bin/xo-gobind.exe was not
+// found: no .exe, and C:\ paths were neither directories nor absolute).
+
+test "xo-gobind beside a Windows program and up from a C:/ std" {
+  let c = gobind_candidates_w("C:\\xo\\bin\\xo.exe", "C:/xo/lib/xo/std", "C:/work", true)
+  expect(c[0]) == "C:/xo/bin/xo-gobind.exe"
+  expect(c.contains("C:/xo/bin/xo-gobind.exe")) == true
+  expect(c.len()) == 4
+  expect(c[1]) == "C:/xo/bin/xo-gobind.exe"
+}
+
+test "a relative std directory is against the working directory on Windows" {
+  let c = gobind_candidates_w("xo", "lib/xo/std", "D:/w", true)
+  expect(c.len()) == 3
+  expect(c[0]) == "D:/w/bin/xo-gobind.exe"
+}
+
+test "the Unix candidates are unchanged" {
+  let c = gobind_candidates_w("/usr/local/xo/bin/xo", "/usr/local/xo/lib/xo/std", "/w", false)
+  expect(c) == ["/usr/local/xo/bin/xo-gobind", "/usr/local/xo/bin/xo-gobind", "/usr/local/xo/lib/xo/xo-gobind", "/usr/local/xo/lib/xo/bin/xo-gobind"]
+}

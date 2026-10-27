@@ -31,4 +31,14 @@ compiler or native runtime source names `TMPDIR` or a literal `/tmp` outside
 the listed files. `--tzdata=system` for a Windows program embeds the data and
 prints a note.
 
-Last verified: 2026-10-23
+Missed copies (Windows tester, 0.33.0, bugs 13 and 15): `use go` looked for
+`xo-gobind` with no `.exe`, took the program's path as a directory only when
+it held `/`, and split PATH on `:` (a drive letter's colon); `xo mod tidy`'s
+ModCtx.abs and is_local, and six other CLI sites, still tested
+`starts_with("/")` for an absolute path, so `C:/w/x` became `C:/w/C:/w/x`. They
+call hostpath now (gobind_candidates_w and is_local_w tested in Windows mode).
+Before adding a path check, `grep -rn 'starts_with("/")' compiler/cli
+compiler/xo`: what is left there is a slash path by design (archive entry
+names, module paths, URLs, the Linux-only $XDG_CACHE_HOME).
+
+Last verified: 2026-10-27
