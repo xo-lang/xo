@@ -100,18 +100,31 @@ fn pe_up(v: Int, a: Int) -> Int { (v + a - 1) / a * a }
 
 /// Output section k's size in memory: .data's with the uninitialized
 /// data (bss bytes) after it.
-fn pe_vsize(bufs: List[List[Int]], k: Int, bss: Int) -> Int { if k == PO_DATA { bufs[k].len() + bss } else { bufs[k].len() } }
+fn pe_vsize(bufs: List[BytesBuilder], k: Int, bss: Int) -> Int { if k == PO_DATA { bufs[k].len() + bss } else { bufs[k].len() } }
 
-fn put_le(var b: List[Int], at: Int, v: Int, n: Int) {
-  for k in 0..n {
-    b[at + k] = (v >> (8 * k)) & 0xff
+/// b padded with fill to a multiple of al.
+fn pe_pad(var b: BytesBuilder, al: Int, fill: Int) {
+  while b.len() % al != 0 {
+    b.write_byte(UInt8(fill))
   }
 }
 
-fn get_le(b: List[Int], at: Int, n: Int) -> Int {
+/// A fixup of n little-endian bytes of v at at, written over the
+/// section's bytes by pe_write.
+fn put_le(var ps: List[BytePatch], at: Int, v: Int, n: Int) {
+  ps.push(BytePatch{at: at, n: n, v: v})
+}
+
+/// n little-endian bytes of v at at of d (an input section's own bytes,
+/// as its relocations' addends; 0 past its end, an uninitialized
+/// section's), a 4 byte value sign extended.
+fn get_le(d: Bytes, at: Int, n: Int) -> Int {
+  if at < 0 || at + n > d.len() {
+    return 0
+  }
   var v = 0
   for k in 0..n {
-    v = v | (b[at + k] << (8 * k))
+    v = v | (Int(d[at + k]) << (8 * k))
   }
   if n == 4 && (v & 0x80000000) != 0 {
     v = v - 0x100000000
@@ -121,8 +134,17 @@ fn get_le(b: List[Int], at: Int, n: Int) -> Int {
 
 /// link_pe: the executable of objs, or why not.
 pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
-  // the input sections' places, in object order
-  var bufs: List[List[Int]] = [[], [], [], [], [], [], []]
+  // the input sections' places, in object order: each output section's
+  // bytes (an input section's appended whole) and its fixups, written
+  // over them by pe_write (2026-10-27: a List[Int] per section, one push
+  // per input byte and one u8 write per output byte, were most of the
+  // link's time)
+  var bufs: List[BytesBuilder] = []
+  var pats: List[List[BytePatch]] = []
+  for _ in 0..PO_DEBUG {
+    bufs.push(BytesBuilder.new())
+    pats.push([])
+  }
   var places: List[List[PEPlace]] = []
   // the uninitialized data (.bss) after .data's bytes, in no file bytes
   // (ThreadSanitizer's object, decision 0273, has 15 MiB of it): its
@@ -145,7 +167,8 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
         if k < 0 {
           k = PO_DEBUG + dnames.len()
           dnames.push(s.name)
-          bufs.push([])
+          bufs.push(BytesBuilder.new())
+          pats.push([])
         }
       }
       if k < 0 {
@@ -159,18 +182,12 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
         bss += s.size
         continue
       }
-      while bufs[k].len() % pe_align(s.chars) != 0 {
-        bufs[k].push(if k == PO_TEXT { 0xcc } else { 0 })
-      }
+      pe_pad(bufs[k], pe_align(s.chars), if k == PO_TEXT { 0xcc } else { 0 })
       let at = bufs[k].len()
       if s.data.is_empty() {
-        for _ in 0..s.size {
-          bufs[k].push(0)
-        }
+        bufs[k].write(Bytes.zeroed(s.size))
       } else {
-        for x in s.data {
-          bufs[k].push(Int(x))
-        }
+        bufs[k].write(s.data)
       }
       ps.push(PEPlace{out: k, off: at})
     }
@@ -266,37 +283,27 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   }
   // the import thunks at the end of .text, the linker's _tls_index in
   // .data
-  while bufs[PO_TEXT].len() % 16 != 0 {
-    bufs[PO_TEXT].push(0xcc)
-  }
+  pe_pad(bufs[PO_TEXT], 16, 0xcc)
   var thunk_at: Map[Str, Int] = {}
   for d in dlls {
     for f in by_dll.get(d) ?? [] {
       thunk_at[f] = bufs[PO_TEXT].len()
       // jmp *IAT(%rip), its displacement patched below
       for x in [0xff, 0x25, 0, 0, 0, 0, 0xcc, 0xcc] {
-        bufs[PO_TEXT].push(x)
+        bufs[PO_TEXT].write_byte(UInt8(x))
       }
     }
   }
-  while bufs[PO_DATA].len() % 8 != 0 {
-    bufs[PO_DATA].push(0)
-  }
+  pe_pad(bufs[PO_DATA], 8, 0)
   let tls_index_at = bufs[PO_DATA].len()
-  for _ in 0..8 {
-    bufs[PO_DATA].push(0)
-  }
-  while bufs[PO_DATA].len() % 64 != 0 {
-    bufs[PO_DATA].push(0)
-  }
+  bufs[PO_DATA].write(Bytes.zeroed(8))
+  pe_pad(bufs[PO_DATA], 64, 0)
   for (oi, pi) in bss_places {
     places[oi][pi].off += bufs[PO_DATA].len()
   }
   // .rdata's linker tables: the IAT first (as lld-link), then the import
   // directory, the lookup tables, the names, and the TLS directory
-  while bufs[PO_RDATA].len() % 8 != 0 {
-    bufs[PO_RDATA].push(0)
-  }
+  pe_pad(bufs[PO_RDATA], 8, 0)
   let iat_start = bufs[PO_RDATA].len()
   var iat_at: Map[Str, Int] = {}
   var dll_iat: List[Int] = []
@@ -304,60 +311,41 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
     dll_iat.push(bufs[PO_RDATA].len())
     for f in by_dll.get(d) ?? [] {
       iat_at[f] = bufs[PO_RDATA].len()
-      for _ in 0..8 {
-        bufs[PO_RDATA].push(0)
-      }
+      bufs[PO_RDATA].write(Bytes.zeroed(8))
     }
-    for _ in 0..8 {
-      bufs[PO_RDATA].push(0)
-    }
+    bufs[PO_RDATA].write(Bytes.zeroed(8))
   }
   let iat_size = bufs[PO_RDATA].len() - iat_start
   let idir = bufs[PO_RDATA].len()
-  for _ in 0..20 * (dlls.len() + 1) {
-    bufs[PO_RDATA].push(0)
-  }
+  bufs[PO_RDATA].write(Bytes.zeroed(20 * (dlls.len() + 1)))
   var dll_ilt: List[Int] = []
   for d in dlls {
     dll_ilt.push(bufs[PO_RDATA].len())
-    for _ in 0..8 * ((by_dll.get(d) ?? []).len() + 1) {
-      bufs[PO_RDATA].push(0)
-    }
+    bufs[PO_RDATA].write(Bytes.zeroed(8 * ((by_dll.get(d) ?? []).len() + 1)))
   }
   var hint_at: Map[Str, Int] = {}
   for d in dlls {
     for f in by_dll.get(d) ?? [] {
-      while bufs[PO_RDATA].len() % 2 != 0 {
-        bufs[PO_RDATA].push(0)
-      }
+      pe_pad(bufs[PO_RDATA], 2, 0)
       hint_at[f] = bufs[PO_RDATA].len()
-      bufs[PO_RDATA].push(0)
-      bufs[PO_RDATA].push(0)
-      for c in f.bytes() {
-        bufs[PO_RDATA].push(Int(c))
-      }
-      bufs[PO_RDATA].push(0)
+      bufs[PO_RDATA].write(Bytes.zeroed(2))
+      bufs[PO_RDATA].write_str(f)
+      bufs[PO_RDATA].write_byte(0)
     }
   }
   var dll_name_at: List[Int] = []
   for d in dlls {
     dll_name_at.push(bufs[PO_RDATA].len())
-    for c in d.bytes() {
-      bufs[PO_RDATA].push(Int(c))
-    }
-    bufs[PO_RDATA].push(0)
+    bufs[PO_RDATA].write_str(d)
+    bufs[PO_RDATA].write_byte(0)
   }
-  let has_tls = !bufs[PO_TLS].is_empty()
+  let has_tls = bufs[PO_TLS].len() > 0
   var tls_dir = -1
   if has_tls {
-    while bufs[PO_RDATA].len() % 8 != 0 {
-      bufs[PO_RDATA].push(0)
-    }
+    pe_pad(bufs[PO_RDATA], 8, 0)
     tls_dir = bufs[PO_RDATA].len()
     // the directory (40 bytes) and an empty callback list
-    for _ in 0..48 {
-      bufs[PO_RDATA].push(0)
-    }
+    bufs[PO_RDATA].write(Bytes.zeroed(48))
   }
   // the debug directory (one IMAGE_DEBUG_DIRECTORY, 28 bytes) and its
   // CodeView record: RSDS, the GUID (pdb.xo pe_pdb sets it), age 1, the
@@ -365,27 +353,17 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   var dbg = -1
   var rsds = -1
   if !o.pdb.is_empty() {
-    while bufs[PO_RDATA].len() % 4 != 0 {
-      bufs[PO_RDATA].push(0)
-    }
+    pe_pad(bufs[PO_RDATA], 4, 0)
     dbg = bufs[PO_RDATA].len()
-    for _ in 0..28 {
-      bufs[PO_RDATA].push(0)
-    }
+    bufs[PO_RDATA].write(Bytes.zeroed(28))
     rsds = bufs[PO_RDATA].len()
-    for c in "RSDS".bytes() {
-      bufs[PO_RDATA].push(Int(c))
-    }
-    for _ in 0..16 {
-      bufs[PO_RDATA].push(0)
-    }
+    bufs[PO_RDATA].write_str("RSDS")
+    bufs[PO_RDATA].write(Bytes.zeroed(16))
     for x in [1, 0, 0, 0] {
-      bufs[PO_RDATA].push(x)
+      bufs[PO_RDATA].write_byte(UInt8(x))
     }
-    for c in o.pdb.bytes() {
-      bufs[PO_RDATA].push(Int(c))
-    }
-    bufs[PO_RDATA].push(0)
+    bufs[PO_RDATA].write_str(o.pdb)
+    bufs[PO_RDATA].write_byte(0)
   }
   // layout: the headers, then each section that has contents (.reloc's
   // size known after the relocations: placed last)
@@ -397,7 +375,7 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   }
   var next = PE_SECT_ALIGN
   for k in [PO_TEXT, PO_RDATA, PO_DATA, PO_PDATA, PO_TLS] {
-    if bufs[k].is_empty() {
+    if bufs[k].len() == 0 {
       continue
     }
     rva[k] = next
@@ -406,7 +384,9 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   // .rsrc (its data entries hold RVAs: built at its place)
   if !o.resources.is_empty() {
     rva[PO_RSRC] = next
-    bufs[PO_RSRC] = pe_rsrc(o.resources, next)
+    for x in pe_rsrc(o.resources, next) {
+      bufs[PO_RSRC].write_byte(UInt8(x))
+    }
     next = pe_up(next + bufs[PO_RSRC].len(), PE_SECT_ALIGN)
   }
   rva[PO_RELOC] = next
@@ -435,31 +415,29 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
         }
         let at = p.off + r.addr
         let site = rva[p.out] + at
-        // in place: a copy of the section here would copy all of it at each
-        // relocation (a quadratic link of xo.exe, 2026-10-20)
         if r.typ >= IMAGE_REL_AMD64_REL32 && r.typ <= IMAGE_REL_AMD64_REL32 + 5 {
           let n = r.typ - IMAGE_REL_AMD64_REL32
-          let a = get_le(bufs[p.out], at, 4)
+          let a = get_le(s.data, r.addr, 4)
           let v = sym_rva(t) + a - (site + 4 + n)
           if v < -0x80000000 || v > 0x7fffffff {
             return Err("${ob.path}: REL32 out of range")
           }
-          put_le(bufs[p.out], at, v, 4)
+          put_le(pats[p.out], at, v, 4)
         } else if r.typ == IMAGE_REL_AMD64_ADDR64 {
-          let a = get_le(bufs[p.out], at, 8)
-          put_le(bufs[p.out], at, if t.abs { t.off + a } else { PE_BASE + sym_rva(t) + a }, 8)
+          let a = get_le(s.data, r.addr, 8)
+          put_le(pats[p.out], at, if t.abs { t.off + a } else { PE_BASE + sym_rva(t) + a }, 8)
           // (DWARF's addresses are not loaded: no base relocation; its
           // reader adds the image's distance from PE_BASE)
           if !t.abs && p.out < PO_DEBUG {
             based.push(site)
           }
         } else if r.typ == IMAGE_REL_AMD64_ADDR32NB {
-          put_le(bufs[p.out], at, sym_rva(t) + get_le(bufs[p.out], at, 4), 4)
+          put_le(pats[p.out], at, sym_rva(t) + get_le(s.data, r.addr, 4), 4)
         } else if r.typ == IMAGE_REL_AMD64_SECREL {
           // the offset in the target's output section (the TLS block,
           // or a .debug_ section)
           let p2 = places[t.obj][t.sect]
-          put_le(bufs[p.out], at, p2.off + t.off + get_le(bufs[p.out], at, 4), 4)
+          put_le(pats[p.out], at, p2.off + t.off + get_le(s.data, r.addr, 4), 4)
         } else {
           return Err("${ob.path}: relocation type ${r.typ}")
         }
@@ -469,26 +447,26 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   // the thunks' displacements, the import tables, the TLS directory
   for (f, at) in thunk_at {
     let site = rva[PO_TEXT] + at + 2
-    put_le(bufs[PO_TEXT], at + 2, rva[PO_RDATA] + (iat_at.get(f) ?? 0) - (site + 4), 4)
+    put_le(pats[PO_TEXT], at + 2, rva[PO_RDATA] + (iat_at.get(f) ?? 0) - (site + 4), 4)
   }
   for (di, d) in dlls.indexed() {
     let e = idir + 20 * di
-    put_le(bufs[PO_RDATA], e, rva[PO_RDATA] + dll_ilt[di], 4)
-    put_le(bufs[PO_RDATA], e + 12, rva[PO_RDATA] + dll_name_at[di], 4)
-    put_le(bufs[PO_RDATA], e + 16, rva[PO_RDATA] + dll_iat[di], 4)
+    put_le(pats[PO_RDATA], e, rva[PO_RDATA] + dll_ilt[di], 4)
+    put_le(pats[PO_RDATA], e + 12, rva[PO_RDATA] + dll_name_at[di], 4)
+    put_le(pats[PO_RDATA], e + 16, rva[PO_RDATA] + dll_iat[di], 4)
     for (fi, f) in (by_dll.get(d) ?? []).indexed() {
       let hn = rva[PO_RDATA] + (hint_at.get(f) ?? 0)
-      put_le(bufs[PO_RDATA], dll_ilt[di] + 8 * fi, hn, 8)
-      put_le(bufs[PO_RDATA], dll_iat[di] + 8 * fi, hn, 8)
+      put_le(pats[PO_RDATA], dll_ilt[di] + 8 * fi, hn, 8)
+      put_le(pats[PO_RDATA], dll_iat[di] + 8 * fi, hn, 8)
     }
   }
   if has_tls {
     let d = tls_dir
-    put_le(bufs[PO_RDATA], d, PE_BASE + rva[PO_TLS], 8)
-    put_le(bufs[PO_RDATA], d + 8, PE_BASE + rva[PO_TLS] + bufs[PO_TLS].len(), 8)
-    put_le(bufs[PO_RDATA], d + 16, PE_BASE + rva[PO_DATA] + tls_index_at, 8)
-    put_le(bufs[PO_RDATA], d + 24, PE_BASE + rva[PO_RDATA] + d + 40, 8)
-    put_le(bufs[PO_RDATA], d + 36, 0x400000, 4)
+    put_le(pats[PO_RDATA], d, PE_BASE + rva[PO_TLS], 8)
+    put_le(pats[PO_RDATA], d + 8, PE_BASE + rva[PO_TLS] + bufs[PO_TLS].len(), 8)
+    put_le(pats[PO_RDATA], d + 16, PE_BASE + rva[PO_DATA] + tls_index_at, 8)
+    put_le(pats[PO_RDATA], d + 24, PE_BASE + rva[PO_RDATA] + d + 40, 8)
+    put_le(pats[PO_RDATA], d + 36, 0x400000, 4)
     for k in 0..4 {
       based.push(rva[PO_RDATA] + d + 8 * k)
     }
@@ -506,22 +484,19 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
     var n = j - i
     let pad = n % 2
     let size = 8 + 2 * (n + pad)
-    var blk: List[Int] = []
     for x in [page, size] {
       for k in 0..4 {
-        blk.push((x >> (8 * k)) & 0xff)
+        bufs[PO_RELOC].write_byte(UInt8((x >> (8 * k)) & 0xff))
       }
     }
     for k in i..j {
       let e = (IMAGE_REL_BASED_DIR64 << 12) | (sorted[k] & 0xfff)
-      blk.push(e & 0xff)
-      blk.push(e >> 8)
+      bufs[PO_RELOC].write_byte(UInt8(e & 0xff))
+      bufs[PO_RELOC].write_byte(UInt8(e >> 8))
     }
     if pad == 1 {
-      blk.push(0)
-      blk.push(0)
+      bufs[PO_RELOC].write(Bytes.zeroed(2))
     }
-    bufs[PO_RELOC] = bufs[PO_RELOC] + blk
     i = j
     n = 0
   }
@@ -540,13 +515,13 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   if entry < 0 {
     return Err("the entry ${o.entry} is not defined")
   }
-  Ok(pe_write(bufs, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds))
+  Ok(pe_write(bufs, pats, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds))
 }
 
 /// The image: the DOS header, the PE headers and section table, the
 /// sections, then the COFF symbol table and string table.
-fn pe_write(bufs0: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int, dnames: List[Str], dbg: Int, rsds: Int) -> Bytes {
-  var bufs = bufs0
+fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int, dnames: List[Str], dbg: Int, rsds: Int) -> Bytes {
+  var pats = pats0
   var names = [".text", ".rdata", ".data", ".pdata", ".tls", ".rsrc", ".reloc"]
   var chars = [IMAGE_SCN_CNT_CODE + IMAGE_SCN_MEM_EXECUTE + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_WRITE, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ, IMAGE_SCN_CNT_INITIALIZED_DATA + IMAGE_SCN_MEM_READ + IMAGE_SCN_MEM_DISCARDABLE]
   for d in dnames {
@@ -557,7 +532,7 @@ fn pe_write(bufs0: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEO
   var foff: List[Int] = []
   for k in 0..bufs.len() {
     foff.push(0)
-    if !bufs[k].is_empty() {
+    if bufs[k].len() > 0 {
       present.push(k)
     }
   }
@@ -571,10 +546,10 @@ fn pe_write(bufs0: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEO
   if dbg >= 0 {
     // the debug directory: type CODEVIEW, the record's size, RVA and file
     // offset
-    put_le(bufs[PO_RDATA], dbg + 12, 2, 4)
-    put_le(bufs[PO_RDATA], dbg + 16, 24 + o.pdb.len() + 1, 4)
-    put_le(bufs[PO_RDATA], dbg + 20, rva[PO_RDATA] + rsds, 4)
-    put_le(bufs[PO_RDATA], dbg + 24, foff[PO_RDATA] + rsds, 4)
+    put_le(pats[PO_RDATA], dbg + 12, 2, 4)
+    put_le(pats[PO_RDATA], dbg + 16, 24 + o.pdb.len() + 1, 4)
+    put_le(pats[PO_RDATA], dbg + 20, rva[PO_RDATA] + rsds, 4)
+    put_le(pats[PO_RDATA], dbg + 24, foff[PO_RDATA] + rsds, 4)
   }
   // the symbol table: each object's external and static symbols that are
   // in the image (not sections, not removed), with the output section's
@@ -706,10 +681,10 @@ fn pe_write(bufs0: List[List[Int]], rva: List[Int], hdr: Int, entry: Int, o: PEO
   }
   w.zeros(hdr - w.n)
   for k in present {
-    for x in bufs[k] {
-      w.u8(x)
-    }
-    w.zeros(pe_up(bufs[k].len(), PE_FILE_ALIGN) - bufs[k].len())
+    let d = bufs[k].freeze()
+    write_patched(w.b, d, pats[k])
+    w.n += d.len()
+    w.zeros(pe_up(d.len(), PE_FILE_ALIGN) - d.len())
   }
   for (n, v, num, class) in syms {
     if n.len() > 8 {

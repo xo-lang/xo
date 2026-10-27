@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- The windows/amd64 linker builds each output section as bytes appended
+  whole, with its relocations written over them, where it pushed every input
+  byte into a list and wrote every output byte alone; the HTTP server's edit
+  719 to 694 ms (the .exe and .pdb byte for byte the same)
 - A windows/amd64 edit rebuild no longer rewrites the DWARF slots of every
   part's assembly text: the COFF parts are keyed and assembled with the
   placeholders and the real paths patched into each object, as the Mach-O
