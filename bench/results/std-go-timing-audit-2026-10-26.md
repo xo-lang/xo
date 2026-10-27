@@ -300,3 +300,10 @@ Per std/changes/websocket.md 2026-10-27. Quiet `xo bench --ab`, 15 rounds, the p
 (0.503 to 0.509), instructions 0.223; Xo / Go about 0.79 (estimate: 1.550 x 0.507), from 1.550. The 50,000
 round profile had hidden it: both programs spent their samples in sendto and read, and the extra 20 G
 instructions (about 12 a payload byte) showed only in the instruction count.
+
+## mail atoms and quoted strings (2026-10-27, Xo Lang 2)
+
+Per std/changes/mail.md 2026-10-27 ("atoms and quoted strings are read without a rune at a time"). Quiet `xo
+bench --ab`, 15 rounds, one pair per job, the parent's std as A (built by an xo whose only difference is a CLI
+message): list wall 0.468 (0.465 to 0.471), instructions 0.497; addr wall 0.527 (0.517 to 0.534), instructions
+0.511. Xo / Go about 0.66 for list (estimate: 1.42 x 0.468) and 0.73 for addr (1.38 x 0.527).

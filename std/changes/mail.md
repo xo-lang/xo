@@ -1,5 +1,22 @@
 # std/mail changes
 
+## 2026-10-27: perf: atoms and quoted strings are read without a rune at a time
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/mail list at 1.42x and addr at 1.38x Go; their CPU profiles (bytes_decode_rune 11 to 16%, is_atext 9%, a string per rune of a quoted string, contains("..") over each atom)
+- Go reference: net/mail consumeAtom, consumeQuotedString, skipSpace (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/mail (go, arm64, LLVM); internal/llvm and internal/arm64 mail_basic and mail_messages; twincheck bench/perf/mail
+
+An atom's ASCII bytes are checked against a 128 bit mask, with its
+leading, trailing and doubled dots noted as they go by (it searched the
+atom for them after); a quoted string copies the runs between escapes
+whole, and is the text itself when there is none (it wrote a string per
+rune), a byte that is not UTF-8 still becoming U+FFFD; skip_space slices
+only past a space. Results are the same. Quiet --ab, 15 rounds, the
+parent's std as A: list wall 0.468 (0.465 to 0.471), instructions
+0.497; addr wall 0.527 (0.517 to 0.534), instructions 0.511.
+
 ## 2026-10-27: perf: Address.display quotes a name by its bytes
 
 - Kind: perf

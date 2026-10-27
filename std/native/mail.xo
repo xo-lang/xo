@@ -31,6 +31,15 @@ fn is_atext(r: Rune, dot: Bool) -> Bool {
   is_vchar(r)
 }
 
+/// is_atext of the ASCII byte c other than '.': a bit of ATEXT_LO (0 to
+/// 63) or ATEXT_HI (64 to 127).
+const ATEXT_LO: Int = -6629389936724279296
+const ATEXT_HI: Int = 9223372035915251710
+
+fn atext_ascii(c: Int) -> Bool {
+  if c < 64 { (ATEXT_LO.shr_logical(c) & 1) == 1 } else { (ATEXT_HI.shr_logical(c - 64) & 1) == 1 }
+}
+
 fn is_qtext(r: Rune) -> Bool { r != '\\' && r != '"' && is_vchar(r) }
 
 fn is_dtext(r: Rune) -> Bool { r != '[' && r != ']' && r != '\\' && is_vchar(r) }
@@ -385,7 +394,9 @@ fn (var p: P) skip_space() {
   while i < b.len() && (b[i] == 32 || b[i] == 9) {
     i += 1
   }
-  p.s = p.s[i..]
+  if i > 0 {
+    p.s = p.s[i..]
+  }
 }
 
 fn (var p: P) consume_comment() -> (Str, Bool) {
@@ -424,26 +435,54 @@ fn (var p: P) skip_cfws() -> Bool {
   true
 }
 
+/// Go's consumeQuotedString, the runs between escapes (and the
+/// replacement character of a byte that is not UTF-8) copied whole: the
+/// text itself when there is no escape.
 fn (var p: P) consume_quoted_string() -> Str ! mail.MailErr {
   let b = p.s.bytes()
   var i = 1
   var out = StrBuilder.new()
+  var start = 1
+  var copied = false
   var escaped = false
   while i < b.len() {
+    let c = b[i]
+    if !escaped && c >= 32 && c < 127 && c != 34 && c != 92 {
+      i += 1
+      continue
+    }
     let (r, n) = b.decode_rune(i)
+    if n == 1 && r == '\u{FFFD}' && (escaped || is_qtext(r)) {
+      // a byte that is not UTF-8: the rune written is U+FFFD
+      out.write(p.s[start..i])
+      out.write("\u{FFFD}")
+      copied = true
+      escaped = false
+      i += 1
+      start = i
+      continue
+    }
     if escaped {
       if !is_vchar(r) && !is_wsp(r) {
         return Err(fail("mail: bad character in quoted-string: ${r.quote()}"))
       }
-      out.write("${r}")
       escaped = false
     } else if is_qtext(r) || is_wsp(r) {
-      out.write("${r}")
+      ()
     } else if r == '"' {
+      let text = if copied {
+        out.write(p.s[start..i])
+        out.freeze()
+      } else {
+        p.s[1..i]
+      }
       p.s = p.s[i + 1..]
-      return out.freeze()
+      return text
     } else if r == '\\' {
+      out.write(p.s[start..i])
+      copied = true
       escaped = true
+      start = i + 1
     } else {
       return Err(fail("mail: bad character in quoted-string: ${r.quote()}"))
     }
@@ -452,10 +491,31 @@ fn (var p: P) consume_quoted_string() -> Str ! mail.MailErr {
   Err(fail("mail: unclosed quoted-string"))
 }
 
+/// Go's consumeAtom, an ASCII byte checked against a mask and the dots
+/// counted as they go by.
 fn (var p: P) consume_atom(dot: Bool, permissive: Bool) -> Str ! mail.MailErr {
   let b = p.s.bytes()
   var i = 0
+  var double_dot = false
   while i < b.len() {
+    let c = Int(b[i])
+    if c == 46 {
+      if !dot {
+        break
+      }
+      if i > 0 && b[i - 1] == 46 {
+        double_dot = true
+      }
+      i += 1
+      continue
+    }
+    if c < 128 {
+      if !atext_ascii(c) {
+        break
+      }
+      i += 1
+      continue
+    }
     let (r, n) = b.decode_rune(i)
     if !is_atext(r, dot) {
       break
@@ -465,19 +525,19 @@ fn (var p: P) consume_atom(dot: Bool, permissive: Bool) -> Str ! mail.MailErr {
   if i == 0 {
     return Err(fail("mail: invalid string"))
   }
-  let atom = p.s[0..i]
-  p.s = p.s[i..]
   if !permissive {
-    if atom.starts_with(".") {
+    if b[0] == 46 {
       return Err(fail("mail: leading dot in atom"))
     }
-    if atom.contains("..") {
+    if double_dot {
       return Err(fail("mail: double dot in atom"))
     }
-    if atom.ends_with(".") {
+    if b[i - 1] == 46 {
       return Err(fail("mail: trailing dot in atom"))
     }
   }
+  let atom = p.s[0..i]
+  p.s = p.s[i..]
   atom
 }
 
