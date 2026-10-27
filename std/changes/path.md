@@ -1,5 +1,22 @@
 # std/path changes
 
+## 2026-10-27: perf: clean finds the elements once and returns a clean path as it is
+
+- Kind: perf
+- Commit: this commit
+- Found by: path's parts profile (clean 54%, its byte at a time List[UInt8] buffer 22%)
+- Go reference: path.Clean (its result; Go's lazybuf replaced)
+- Test: internal/stdtest/testdata/corpus/path (go, arm64, LLVM); twincheck bench/perf/path agrees on clean, join, parts, match
+- Timing: bench/perf/path, quiet --ab, 15 rounds: clean 0.850 of the parent's wall (instructions 0.649), 1.016 of Go's (was 1.15); join 0.981 of the parent (instructions 0.703), 1.11 of Go's; parts 1.54 of Go's, unchanged; match 0.975
+
+A path with no empty, `.` or `..` element and no trailing `/` is returned
+as it is with nothing allocated (dir's prefixes mostly are); any other is
+scanned once into its kept elements, a list of start and end offsets made
+at its final size (a list grown by pushes measured slower than the byte
+buffer), and written an element at a time. An output as long as the input
+is the input. parts stays at 1.54x Go's time: what is left is outside
+clean (the slice checks of split, base and ext).
+
 ## 2026-10-26: perf: is_match walks the pattern and the name by offset; base cuts once
 
 - Kind: perf

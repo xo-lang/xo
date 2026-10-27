@@ -92,7 +92,9 @@ match is at Go's time. parts is still over the bar. (Corrected the same evening:
 decision 0330, not a copy.) An XO_PROF=cpu profile of parts, 100x the passes, 109 samples: path.clean 54%
 cumulative (dir calls it, as Go's Dir does), of which path.Lazy.append 22% (its copy buffer, a List[UInt8]
 pushed a byte at a time) and the loop 28%; prelude.llrt_str_slice_chk 16.5% (each view's range and UTF-8
-boundary check); drop Str 7%. The next step is clean's buffer, written in runs rather than bytes.
+boundary check); drop Str 7%. The next step is clean's buffer, written in runs rather than bytes. Done 2026-10-27
+(std/changes/path.md: elements as offsets, a clean path returned as it is): clean 1.016 of Go's wall (0.850 of
+the parent), join 1.11 (0.981), match 0.975, parts 1.544 unchanged (its cost is outside clean now).
 
 ## uuid, base32, mime (same day, Xo Lang 2)
 

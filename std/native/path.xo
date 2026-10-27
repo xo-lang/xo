@@ -5,52 +5,37 @@
 
 use std/path
 
-/// Go's lazybuf: the output of clean, a prefix of the input until the
-/// first byte that differs, then its own bytes, a byte buffer made once
-/// at the input's length and written by index, as Go's.
-struct Lazy {
-  s: Bytes
-  buf: List[UInt8] = []
-  copied: Bool = false
-  w: Int = 0
-}
-
-fn (l: Lazy) index(i: Int) -> UInt8 { if l.copied { l.buf[i] } else { l.s[i] } }
-
-fn (var l: Lazy) append(c: UInt8) {
-  if !l.copied {
-    if l.w < l.s.len() && l.s[l.w] == c {
-      l.w += 1
-      return
+/// Whether path has no empty, `.` or `..` element and no trailing `/`
+/// (`/` alone counts as clean): clean returns such a path as it is.
+fn is_clean(path: Bytes) -> Bool {
+  let n = path.len()
+  if n == 1 && path[0] == 47 {
+    return true
+  }
+  if path[n - 1] == 47 {
+    return false
+  }
+  var r = if path[0] == 47 { 1 } else { 0 }
+  while r < n {
+    var e = r
+    while e < n && path[e] != 47 {
+      e += 1
     }
-    var buf = List[UInt8].with_capacity(l.s.len())
-    for i in 0..l.w {
-      buf.push(l.s[i])
+    let len = e - r
+    if len == 0 || len == 1 && path[r] == 46 || len == 2 && path[r] == 46 && path[r + 1] == 46 {
+      return false
     }
-    l.buf = buf
-    l.copied = true
+    r = e + 1
   }
-  if l.w < l.buf.len() {
-    l.buf[l.w] = c
-  } else {
-    l.buf.push(c)
-  }
-  l.w += 1
+  true
 }
 
-fn (l: Lazy) text(p: Str) -> Str {
-  if !l.copied {
-    // the input's own prefix: no copy (it ends at a separator or the end)
-    return if l.w == p.len() { p } else { p[0..l.w] }
-  }
-  var b = BytesBuilder.with_capacity(l.w)
-  for i in 0..l.w {
-    b.write_byte(l.buf[i])
-  }
-  b.freeze().to_str() ?? ""
-}
-
-/// Go's Clean: one scan, the input itself when nothing changes.
+/// Go's Clean: the shortest equivalent path (`.` and empty elements gone,
+/// `..` taken against the element before it, a rooted `..` at the root
+/// dropped), the input itself when nothing changes. Its elements are
+/// found once as ranges of the input, then the result is written an
+/// element at a time (2026-10-26: Go's lazybuf as a List[UInt8] written a
+/// byte at a time was 22% of path's parts profile, and clean 54%).
 fn clean(p: Str) -> Str {
   if p == "" {
     return "."
@@ -58,49 +43,78 @@ fn clean(p: Str) -> Str {
   let path = p.bytes()
   let n = path.len()
   let rooted = path[0] == 47
-  var out = Lazy{s: path}
-  var r = 0
-  var dotdot = 0
-  if rooted {
-    out.append(47)
-    r = 1
-    dotdot = 1
+  // already clean (no empty, `.` or `..` element, no trailing `/`): the
+  // path itself, with nothing allocated (dir's prefixes mostly are)
+  if is_clean(path) {
+    return p
   }
+  // the kept elements as (start, end) pairs; (-1, -1) is a `..` kept
+  // because nothing before it can absorb it
+  var segs = List[Int].with_capacity(n + 2)
+  var r = 0
   while r < n {
-    let c = path[r]
-    if c == 47 {
+    while r < n && path[r] == 47 {
       r += 1
-    } else if c == 46 && (r + 1 == n || path[r + 1] == 47) {
-      r += 1
-    } else if c == 46 && path[r + 1] == 46 && (r + 2 == n || path[r + 2] == 47) {
-      r += 2
-      if out.w > dotdot {
-        out.w -= 1
-        while out.w > dotdot && out.index(out.w) != 47 {
-          out.w -= 1
-        }
+    }
+    if r >= n {
+      break
+    }
+    var e = r
+    while e < n && path[e] != 47 {
+      e += 1
+    }
+    let len = e - r
+    if len == 1 && path[r] == 46 {
+      // `.`: nothing
+    } else if len == 2 && path[r] == 46 && path[r + 1] == 46 {
+      let k = segs.len()
+      if k > 0 && segs[k - 2] >= 0 {
+        let _ = segs.pop()
+        let _ = segs.pop()
       } else if !rooted {
-        if out.w > 0 {
-          out.append(47)
-        }
-        out.append(46)
-        out.append(46)
-        dotdot = out.w
+        segs.push(-1)
+        segs.push(-1)
       }
     } else {
-      if (rooted && out.w != 1) || (!rooted && out.w != 0) {
-        out.append(47)
-      }
-      while r < n && path[r] != 47 {
-        out.append(path[r])
-        r += 1
-      }
+      segs.push(r)
+      segs.push(e)
     }
+    r = e
   }
-  if out.w == 0 {
-    return "."
+  let count = segs.len() / 2
+  if count == 0 {
+    return if rooted { "/" } else { "." }
   }
-  out.text(p)
+  var total = if rooted { 1 } else { 0 }
+  total += count - 1
+  var k = 0
+  while k < segs.len() {
+    total += if segs[k] < 0 { 2 } else { segs[k + 1] - segs[k] }
+    k += 2
+  }
+  // clean drops bytes, it never reorders them: an output as long as the
+  // input is the input
+  if total == n {
+    return p
+  }
+  var b = BytesBuilder.with_capacity(total)
+  if rooted {
+    b.write_byte(47)
+  }
+  k = 0
+  while k < segs.len() {
+    if k > 0 {
+      b.write_byte(47)
+    }
+    if segs[k] < 0 {
+      b.write_byte(46)
+      b.write_byte(46)
+    } else {
+      b.write(path[segs[k]..segs[k + 1]])
+    }
+    k += 2
+  }
+  b.freeze().to_str() ?? ""
 }
 
 /// Go's Join of two elements: the non-empty ones joined by "/", cleaned.
