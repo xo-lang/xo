@@ -595,13 +595,16 @@ fn has_prefix(data: Bytes, p: Bytes) -> Bool {
   true
 }
 
-fn sig_match(s: Sig, data: Bytes, first: Int) -> Str {
+/// Whether data matches s (sniff.go's match); its type is sig_type's, made
+/// only on a match (a Str result per signature released an empty Str ~40
+/// times a call).
+fn sig_hit(s: Sig, data: Bytes, first: Int) -> Bool {
   match s {
     Html(h) => {
       // data from first, by offset (a view per pattern paid its checks,
       // count and drop)
       if data.len() - first < h.len() + 1 {
-        return ""
+        return false
       }
       for i in 0..h.len() {
         var db = data[first + i]
@@ -609,56 +612,66 @@ fn sig_match(s: Sig, data: Bytes, first: Int) -> Str {
           db = db & 0xDF
         }
         if h[i] != db {
-          return ""
+          return false
         }
       }
       let t = data[first + h.len()]
-      if t == 32 || t == 62 { "text/html; charset=utf-8" } else { "" }
+      t == 32 || t == 62
     }
-    Masked(mask, pat, skip_ws, ct) => {
+    Masked(mask, pat, skip_ws, _) => {
       let o = if skip_ws { first } else { 0 }
       if pat.len() != mask.len() || data.len() - o < pat.len() {
-        return ""
+        return false
       }
       for i in 0..pat.len() {
         if (data[o + i] & mask[i]) != pat[i] {
-          return ""
+          return false
         }
       }
-      ct
+      true
     }
-    Exact(sig, ct) => if has_prefix(data, sig) { ct } else { "" }
+    Exact(sig, _) => has_prefix(data, sig)
     Mp4 => {
       if data.len() < 12 {
-        return ""
+        return false
       }
       let box = (Int(data[0]) << 24) | (Int(data[1]) << 16) | (Int(data[2]) << 8) | Int(data[3])
       if data.len() < box || box % 4 != 0 {
-        return ""
+        return false
       }
       if data[4] != 102 || data[5] != 116 || data[6] != 121 || data[7] != 112 {
-        return ""
+        return false
       }
       var st = 8
       while st < box {
         if st != 12 && data[st] == 109 && data[st + 1] == 112 && data[st + 2] == 52 {
-          return "video/mp4"
+          return true
         }
         st += 4
       }
-      ""
+      false
     }
     Text => {
       var i = first
       while i < data.len() {
         let b = data[i]
         if b <= 8 || b == 11 || (b >= 14 && b <= 26) || (b >= 28 && b <= 31) {
-          return ""
+          return false
         }
         i += 1
       }
-      "text/plain; charset=utf-8"
+      true
     }
+  }
+}
+
+fn sig_type(s: Sig) -> Str {
+  match s {
+    Html(_) => "text/html; charset=utf-8"
+    Masked(_, _, _, ct) => ct
+    Exact(_, ct) => ct
+    Mp4 => "video/mp4"
+    Text => "text/plain; charset=utf-8"
   }
 }
 
@@ -669,9 +682,8 @@ fn detect_content_type(data0: Bytes) -> Str {
     first += 1
   }
   for s in SIGS {
-    let ct = sig_match(s, data, first)
-    if !ct.is_empty() {
-      return ct
+    if sig_hit(s, data, first) {
+      return sig_type(s)
     }
   }
   "application/octet-stream"
