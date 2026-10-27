@@ -1486,11 +1486,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       fail_unsupported(os, "the emitter skipped ${p.skipped[0]}")
     }
     // the functions nothing reaches emptied (arm64 hollow.xo): Mach-O
-    // (darwin) and ELF (linux) text, arm64 everywhere and amd64 on linux
-    // (x86's emptied bodies are `ud2`; darwin/amd64 is XO_PASSES=+hollow),
+    // (darwin) and ELF (linux) text, arm64 and amd64 (x86's emptied
+    // bodies are `ud2`; darwin/amd64 on since 2026-10-26, decision 0371),
     // a program whose link has no `use c` objects (they could call an
     // export by name), not `xo asm`; XO_PASSES=-hollow keeps them
-    let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && hollow_on(os, march, tgoos)
+    let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow")
     // a split darwin build through the back-end cache, part by part
     // (asmparts.xo incr_hollow): only the parts an edit changed are
     // scanned, hollowed and assembled; their texts hollowed later only if
@@ -2306,18 +2306,9 @@ fn passes_off(os: Os) -> List[Str] {
   off
 }
 
-/// The passes $XO_PASSES turns on (`+name`), empty unless one is named.
-fn passes_on(os: Os) -> List[Str] {
-  let (_off, on, err) = arm64.parse_passes(os.env.get("XO_PASSES") ?? "")
-  if !err.is_empty() {
-    fail(os, err)
-  }
-  on
-}
-
 /// Whether $XO_PASSES changes which passes run, with a `-name` or a
 /// `+name` entry. The caches' keys do not say which passes ran, so any
-/// entry turns them off (a `+hollow` build must not reuse a plain
+/// entry turns them off (a `-hollow` build must not reuse a plain
 /// build's entries, or the reverse).
 fn passes_changed(os: Os) -> Bool {
   let (off, on, err) = arm64.parse_passes(os.env.get("XO_PASSES") ?? "")
@@ -2325,20 +2316,6 @@ fn passes_changed(os: Os) -> Bool {
     fail(os, err)
   }
   !off.is_empty() || !on.is_empty()
-}
-
-/// Whether the hollow pass (hollow.xo, decision 0371) runs in this build:
-/// on for arm64 (Mach-O and ELF) and linux/amd64; darwin/amd64 is only
-/// with XO_PASSES=+hollow until its binaries can be run (2026-10-25: the
-/// development Mac has no Rosetta).
-fn hollow_on(os: Os, march: Str, tgoos: Str) -> Bool {
-  if !pass_on(os, "hollow") {
-    false
-  } else if march == "amd64" && tgoos == "darwin" {
-    passes_on(os).contains("hollow")
-  } else {
-    true
-  }
 }
 
 /// arm64's inlining of mi, and whether the inlined module is to be

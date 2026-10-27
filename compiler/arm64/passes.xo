@@ -82,8 +82,9 @@ pub fn pass_on(m: ssa.Module, name: Str) -> Bool {
 }
 
 /// The passes $XO_PASSES turns off (`-name` entries, comma separated) and
-/// on (`+name`: one the build leaves off for a target, today only hollow on
-/// darwin/amd64; decisions 0184, 0371), or why the value is wrong. Naming a
+/// on (`+name`: one the build leaves off for a target; none today, hollow on
+/// darwin/amd64 having been on by default since 2026-10-26; decisions 0184,
+/// 0371), or why the value is wrong. Naming a
 /// pass both ways, or twice one way, is an error.
 pub fn parse_passes(v: Str) -> (List[Str], List[Str], Str) {
   var off: List[Str] = []

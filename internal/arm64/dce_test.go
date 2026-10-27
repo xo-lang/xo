@@ -173,9 +173,10 @@ func TestHollowUnreached(t *testing.T) {
 // TestHollowUnreachedAmd64: the same pass on an amd64 build of the same
 // program (compiler/arm64 hollow.xo, decision 0371's amd64 addendum)
 // leaves the unreached export and drop helper one `ud2` each, and matches
-// XO_PASSES=-hollow. darwin/amd64 is off by default until its binaries can
-// be run (no Rosetta on the development Mac), so the pass is asked for
-// with XO_PASSES=+hollow.
+// XO_PASSES=-hollow. The pass is on by default for darwin/amd64 too
+// (2026-10-26, after its binaries ran on an Intel Mac), so the first build
+// names no pass; the binary itself does not run on the development Mac (no
+// Rosetta), and the test says so.
 func TestHollowUnreachedAmd64(t *testing.T) {
 	if testing.Short() {
 		t.Skip("cross builds a program twice and disassembles it")
@@ -222,7 +223,7 @@ func TestHollowUnreachedAmd64(t *testing.T) {
 		}
 		return one, run
 	}
-	on, runOn := build([]string{"XO_PASSES=+hollow"})
+	on, runOn := build(nil)
 	off, runOff := build([]string{"XO_PASSES=-hollow"})
 	if runOn != "" && runOn != "status 200\n" {
 		t.Errorf("printed %q, want %q", runOn, "status 200\n")
@@ -293,12 +294,13 @@ func otoolOneInstr(t *testing.T, bin string) map[string]string {
 	return one
 }
 
-// TestHollowPassesChangedCaches: a build with XO_PASSES=+hollow must not
-// be served a plain build's cached functions (nor the reverse), since the
+// TestHollowPassesChangedCaches: a build with XO_PASSES=-hollow must not
+// be served a plain build's cached results (nor the reverse), since the
 // cache keys do not say which passes ran (compiler/xo main.xo
-// passes_changed; compiler/xo bcache.xo). The plain build fills a private
-// cache, then the same program is built with +hollow in it: the second
-// binary must carry the ud2 bodies.
+// passes_changed; compiler/xo bcache.xo). The plain build (hollowed by
+// default on darwin/amd64 since 2026-10-26) fills a private cache, then
+// the same program is built with -hollow in it: the second binary must
+// carry no ud2 body where the plain one has.
 func TestHollowPassesChangedCaches(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program twice and disassembles it")
@@ -335,21 +337,21 @@ func TestHollowPassesChangedCaches(t *testing.T) {
 		return otoolOneInstr(t, bin)
 	}
 	plain := build()
-	withHollow := build("XO_PASSES=+hollow")
+	noHollow := build("XO_PASSES=-hollow")
 	const ud2 = "ud2"
 	var export string
-	for name, ins := range withHollow {
+	for name, ins := range plain {
 		if ins == ud2 && strings.HasPrefix(name, "_xo_x_") {
-			if plain[name] == ud2 {
-				t.Errorf("%s is ud2 in the plain build too", name)
+			if noHollow[name] == ud2 {
+				t.Errorf("%s is ud2 with XO_PASSES=-hollow over the plain build's cache", name)
 			}
 			export = name
 		}
 	}
 	if export == "" {
-		t.Error("no C ABI export (_xo_x_) is one ud2 with XO_PASSES=+hollow over a plain build's cache")
+		t.Error("no C ABI export (_xo_x_) is one ud2 in the plain build, so the test compares nothing")
 	}
-	t.Logf("one ud2 after the plain build filled the cache: export %s", export)
+	t.Logf("one ud2 in the plain build, a body with -hollow over its cache: export %s", export)
 }
 
 // TestMapLogStress runs the map_log_stress golden (decision 0372: copies

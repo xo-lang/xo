@@ -16,6 +16,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Checked on darwin and linux/arm64 (the arm64 backend with clang's
   ThreadSanitizer) and on windows/amd64 (CI run 40418639701: 120 of 120 runs,
   the planted race still reported in all 60 of its runs).
+- darwin/amd64 builds empty the functions nothing reaches by default, as every
+  other native target already did (the hollow pass, decision 0371; it was
+  `XO_PASSES=+hollow` until an x86_64 Mach-O binary of it had run: the Intel
+  tester's v0.32.0 round ran a hollowed web server through CRUD, 404, load and
+  SIGINT). `XO_PASSES=-hollow` turns it off.
 - Every native build is about 10 ms faster to start: the C toolchain's identity
   (`cc --version` and a stat(1) of it, which the run cache's key reads) is
   remembered across builds in the backend cache, keyed by the size and

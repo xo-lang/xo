@@ -233,6 +233,43 @@ reference count cache) now read `passes_changed(os)`, which is true for
 either a `-` or a `+` entry: a `+hollow` build neither stores nor
 reuses entries of a plain build.
 
+## Addendum: darwin/amd64 on by default (2026-10-26, xo-lang-4)
+
+The amd64 addendum left darwin/amd64 opt in (`XO_PASSES=+hollow`) until
+an x86_64 Mach-O binary of the pass had run. It has: the Intel tester's
+v0.32.0 round (macOS on an Intel Mac, darwin/amd64, release v0.32.0;
+~/xo-lead/notes/lead/field/intel-v0.32.0.md, lines 20 and 21) built hello
+and the web server with `XO_PASSES=+hollow`, and the hollowed server
+passed CRUD, 404, about 113k requests a second and SIGINT. A second run
+on the same Intel Mac, of hello and the CRUD server (bench/perf/http/xo)
+built by this change with no XO_PASSES, debug and release (the Xo Lead
+ran them on macOS 26.5.2, Intel Core i7-9750H, 2026-10-26): both hellos,
+both servers through POST, GET, PATCH and DELETE, an unknown route's 404,
+a bad JSON body's 400, a burst of 2,000 requests eight at a time (2,000
+answered 200) and SIGINT (exit 0), a transcript equal byte for byte to
+the same script's against darwin/arm64 builds.
+
+So darwin/amd64 now hollows like every other native target, and
+`XO_PASSES=-hollow` is the one switch. compiler/xo main.xo's hollow_on is
+gone (the condition reads `pass_on(os, "hollow")`); `+NAME` still parses
+(compiler/arm64 passes.xo parse_passes), turns nothing on that is not on
+already, and still turns the caches off as any XO_PASSES entry does.
+
+Release builds (`--release -s`), the same xo with XO_PASSES=-hollow and
+with nothing set, darwin/amd64 (file and __text bytes):
+
+| program | file off | file on | __text off | __text on | change (__text) |
+|---|---|---|---|---|---|
+| hello | 389,881 | 290,637 | 275,232 | 200,096 | -27.3% |
+| bench/perf/http/xo | 2,340,168 | 2,274,028 | 1,914,944 | 1,864,416 | -2.6% |
+
+Tests: internal/arm64 TestHollowUnreachedAmd64 builds the router program
+for darwin/amd64 with no XO_PASSES and checks the export and drop helper
+are one `ud2` against `XO_PASSES=-hollow` (before, it asked for the pass
+with `+hollow`); TestHollowPassesChangedCaches now fills a cache with the
+plain (hollowed) build and checks a `-hollow` build over it keeps the
+bodies. Incremental hollow already covered darwin/amd64 (1869a496a).
+
 ## Addendum 2026-10-25: conc.built, the scheduler out of programs that cannot use it (Xo Lang 3)
 
 `native/llrt/concflag.built()` is folded by the SSA builder to its `conc`

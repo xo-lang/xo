@@ -121,7 +121,8 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   binary was stripped, `xo dev symbolize PROG < REPORT` names the
   frames from the unstripped PROG (2026-10-22).
 - `XO_PASSES=-name,...` turns optional passes off; `XO_PASSES=+name`
-  turns on the one a target leaves off (hollow on darwin/amd64, 2026-10-25);
+  turns on one a target leaves off (none today: hollow is on for
+  darwin/amd64 too since 2026-10-26);
   `xo dev bisect-pass
   DIR` finds the first pass that changes a program's output.
 - `XO_LOWER=-name,...` turns optional SSA builder lowerings off
