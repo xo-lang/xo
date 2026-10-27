@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `==` on a Go value the package hands out by value (`netip.Addr`,
+  `language.Tag`) compares by value as Go does, where two equal addresses
+  were unequal (pointer identity); a struct the package passes only as `*T`
+  (`*url.URL`) still compares by pointer, as Go's `==` on the pointers;
+  bindings are regenerated (format 6) (Intel tester, 0.33.0, b15)
 - `use go` on Windows finds the shipped bin/xo-gobind.exe (beside xo.exe, a
   release layout, or PATH split on `;`), where it looked for `xo-gobind`
   with no `.exe` and took only `/` paths as directories (Windows tester,

@@ -1,0 +1,17 @@
+use go "net/netip"
+use go "net/url"
+
+// Go values keep Go's equality (core 2.9, 4.4): a comparable type Go hands
+// out as a value (netip.Addr) compares by value, as `==` on two Go values
+// does; a struct the API passes only by pointer (url.Parse's *url.URL)
+// compares by pointer, as `==` on two Go pointers does (Intel tester,
+// 0.33.0, b15: two equal netip.Addr were unequal).
+fn main(os: Os) -> () ! Error {
+  let a = netip.must_parse_addr("10.0.0.1")
+  let b = netip.must_parse_addr("10.0.0.1")
+  let c = netip.must_parse_addr("10.0.0.2")
+  os.stdio.println("addr ${a == b} ${a == a} ${a == c} ${a != c}")
+  let u = url.parse("https://example.com/x")?
+  let v = url.parse("https://example.com/x")?
+  os.stdio.println("url ${u == u} ${u == v}")
+}

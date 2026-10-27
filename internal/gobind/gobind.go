@@ -54,8 +54,9 @@ import (
 // are handles (time.AfterFunc binds). 5 (2026-10-09, decision 0093): Go
 // calls are recorded by `--record` and answered or re executed by `xo
 // replay` (rt.GoFxValue, rt.GoFxRerun); declarations carry a `Replay:`
-// doc line.
-const Version = 5
+// doc line. 6 (2026-10-27, Intel b15): a comparable struct handle with no
+// exported fields (netip.Addr) compares and hashes by value.
+const Version = 6
 
 // Binding is one bound Go package.
 type Binding struct {

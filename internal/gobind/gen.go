@@ -73,12 +73,15 @@ func identity(e string) string { return e }
 // structs and arrays (held by pointer), `struct{ V T }` for interfaces,
 // maps, slices, and functions.
 type handle struct {
-	obj     *types.TypeName
-	named   *types.Named
-	xo      string // Xo type name
-	goName  string // Go type name in package rt
-	gt      string // qualified Go type (without pointer)
-	byPtr   bool
+	obj    *types.TypeName
+	named  *types.Named
+	xo     string // Xo type name
+	goName string // Go type name in package rt
+	gt     string // qualified Go type (without pointer)
+	byPtr  bool
+	// byValue: some bound signature or field has the Go type T itself (not
+	// *T): Go hands it out as a value, and Go's == compares it so
+	byValue bool
 	foreign bool
 	names   map[string]bool // Xo method names in use
 	decls   []string
@@ -300,6 +303,7 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		if err != nil {
 			return conv{}, err
 		}
+		h.byValue = true
 		return g.handleValue(h), nil
 	case *types.Pointer:
 		if n, ok := types.Unalias(x.Elem()).(*types.Named); ok {
@@ -1279,8 +1283,13 @@ func (g *gen) adapterFile() ([]byte, error) {
 		fmt.Fprintf(&body, "// %s is the handle of Go %s.\ntype %s struct{ %s }\n\n", h.goName, disp, h.goName, field)
 		fmt.Fprintf(&body, "func (h %s) XoDebug(b *strings.Builder) { GoDebugHandle(b, %q) }\n\n", h.goName, disp)
 		switch {
-		case h.byPtr && types.Comparable(h.named) && !isStructType(h.named):
-			// arrays such as uuid.UUID compare by value
+		case h.byPtr && types.Comparable(h.named) && (!isStructType(h.named) || h.byValue):
+			// Go's equality (core 2.9): a comparable type Go hands out as a
+			// value (netip.Addr, language.Tag, arrays such as uuid.UUID)
+			// compares by value; a struct the API passes only as *T
+			// (url.Parse's *url.URL) compares by pointer, as Go's == on
+			// the pointers does (Intel b15, 0.33.0: two equal netip.Addr
+			// were unequal)
 			fmt.Fprintf(&body, "func (h %s) XoEq(o any) bool {\n\tx, ok := o.(%s)\n\treturn ok && (h.P == x.P || h.P != nil && x.P != nil && *h.P == *x.P)\n}\n\n", h.goName, h.goName)
 			fmt.Fprintf(&body, "func (h %s) XoHash() uint64 {\n\tif h.P == nil {\n\t\treturn 0\n\t}\n\treturn GoHashComparable(*h.P)\n}\n\n", h.goName)
 		case h.byPtr:
