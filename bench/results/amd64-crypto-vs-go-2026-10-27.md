@@ -75,3 +75,30 @@ block's rounds. A first measurement of the SubWord change read "no
 change" because the std file was edited while the previous kit was being
 built from the same tree, so both binaries had it; the A/B above is
 between two clean builds.
+
+## A second CPU: Windows CI, Xeon Platinum 8488C (2026-10-27)
+
+The two approved Windows CI runs (40525427807 and 40532204416, suite
+script, runner xo-windows; scripts/ci/l4-x86-check.sh on the CI branch,
+not merged) built the twins natively with xo 0.32.0 windows/amd64 and Go,
+N 20000 records, 11 rounds interleaved, the median wall ms of each side.
+"AVX2 off" is the same build from a copy of std whose cpu.hw() masks
+HW_AVX2, so ChaCha20-Poly1305 takes the SSE loop. Run 40532204416:
+
+| workload | Go ms | Xo ms | Xo / Go | AVX2 off ms | AVX2 off / Go |
+|---|---|---|---|---|---|
+| aesgcm seal1 | 83 | 100 | 1.205 | 99 | 1.193 |
+| aesgcm open1 | 79 | 98 | 1.241 | 96 | 1.215 |
+| aesgcm seal | 91 | 108 | 1.187 | 109 | 1.198 |
+| aesgcm open | 90 | 116 | 1.289 | 117 | 1.300 |
+| aesgcm key | 41 | 45 | 1.098 | 45 | 1.098 |
+| chacha seal | 182 | 225 | 1.236 | 367 | 2.016 |
+| chacha open | 184 | 234 | 1.272 | 375 | 2.038 |
+| chacha xor | 528 | 348 | 0.659 | 346 | 0.655 |
+| chacha poly | 134 | 180 | 1.343 | 179 | 1.336 |
+
+Run 40525427807 gave the same ratios within 0.04. On this CPU the AVX2
+loop is 1.6 times the SSE one (the i7-9750H's A/B: 0.638). The aead_diff
+golden (seal and open against Go at every block edge, 188 cases) passed
+with std as is, with HW_AVX2 masked and with HW_AVX2|HW_SSSE3 masked, in
+both runs.

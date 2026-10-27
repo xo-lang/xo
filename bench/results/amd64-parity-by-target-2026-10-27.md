@@ -18,13 +18,24 @@ should work, with no test or run on that target), **n/a**.
 |---|---|---|---|---|---|
 | list packing (pack=1, decision 0369) | on | done | done | done | compiler/xo/main.xo:676 (no OS gate); 59f191adb (2026-10-26) |
 | hollow (decision 0371) | darwin, linux | done (ec383109d, 2026-10-25) | done (abfac9234, 2026-10-26) | missing: hollow.xo scans Mach-O and ELF only | main.xo:1497; compiler/arm64/hollow.xo:61-72; internal/arm64/dce_test.go TestHollowUnreachedAmd64 |
-| incremental hollow (incr_hollow) | on | done: HTTP edit hollow 196 to 86 ms | done | missing: COFF parts assembled one by one, uncached | main.xo:1504, 1601-1611; 1869a496a; TestBackendCacheEditIdentity |
+| incremental hollow (incr_hollow) | on | done: HTTP edit hollow 196 to 86 ms | done | missing: hollow (above); the COFF objects are cached since e6e5558ec (next row) | main.xo:1504, 1601-1611; 1869a496a; TestBackendCacheEditIdentity |
 | object cache of assembled parts | on | done | done | done since 2026-10-27 (COFF objects keyed on the text with its real paths; HTTP body edit assemble 1897 to 162 ms, wall 2783 to 1179 against linux's 921) | main.xo cached_macho_objects (coff) |
-| per-function and part cache | on | done: HTTP body edit 1234 to 668 ms (arm64 589) | done: 1248 to 640 ms | missing on main; bb5392d32 (in gating, 2026-10-27) carries the Win64 thunks in the entries | main.xo:1459; bench/results/amd64-edit-cache-2026-10-26.md; gotchas/fn-cache-hit-skips-emit-side-tables.md |
+| per-function and part cache | on | done: HTTP body edit 1234 to 668 ms (arm64 589) | done: 1248 to 640 ms | done since f309fa7a9 (the entries carry the Win64 thunks) | main.xo:1459; bench/results/amd64-edit-cache-2026-10-26.md; gotchas/fn-cache-hit-skips-emit-side-tables.md |
 | first edit after a cold build reuses parts | on | done | untested (shared code) | needs the row above | compiler/xo/bcache.xo PART_PACK_FIRST_BYTES; a69d4a7b7; internal/arm64 TestFirstEditAfterColdParts (host arm64 and linux/amd64) |
 | lazy inline decode (0283 stage B) | on | done | done | done | main.xo:1389 (no OS gate) |
 | deferred inline verify | on | done | done | done | main.xo:2513-2514 |
 | inliner | on | done | done | done | compiler/arm64/inline.xo (no arch gate) |
+
+Native windows/amd64 (Windows CI run 40532204416, Xeon Platinum 8488C,
+xo 0.32.0 windows/amd64, a body edit through the cache after a cold
+build): llvm-fib cold 3209 ms, edit 811 (emit 63, assemble 108, pe.pdb
+68, pe_link 90; 571 of 572 functions and 13 of 14 objects from the
+cache); HTTP server cold 8250 ms, edit 1882 (emit 193, assemble 276,
+pe.pdb 235, pe_link 318; 1397 of 1398 functions, 36 of 37 objects). Each
+edit's .exe and .pdb equal the cache-off build's byte for byte, every
+section compared (scripts/ci/l4-pediff on the CI branch). Run
+40525427807 reported them different only because it named the two
+builds edit and off (gotchas/darwin-binary-identity-output-name.md).
 
 ## Code generation
 
