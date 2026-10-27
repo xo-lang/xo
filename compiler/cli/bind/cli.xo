@@ -399,9 +399,9 @@ pub fn gobind_candidates_w(prog0: Str, std_dir: Str, wd: Str, win: Bool) -> List
 }
 
 /// Binds Go package gopath into the binding cache of the project at root
-/// with xo-gobind (`xo bind --dir root gopath`); the error is the
-/// binder's reason (gobind.Error's Msg) or why the helper did not run.
-pub fn bind_go_package(os: Os, std_dir: Str, wd: Str, root: Str, gopath: Str) -> () ! Str uses (fs, proc, env) {
+/// with xo-gobind (`xo bind --dir root gopath`): the helper's path, or
+/// the binder's reason (gobind.Error's Msg) or why the helper did not run.
+pub fn bind_go_package(os: Os, std_dir: Str, wd: Str, root: Str, gopath: Str) -> Str ! Str uses (fs, proc, env) {
   let (helper, temp) = gobind_helper(os, std_dir, wd)?
   let r = os.proc.cmd(helper, ["--dir", root, gopath]).output()
   if temp {
@@ -412,7 +412,7 @@ pub fn bind_go_package(os: Os, std_dir: Str, wd: Str, root: Str, gopath: Str) ->
     Err(e) => return Err("xo-gobind: ${e}")
   }
   if out.code == 0 {
-    return Ok(())
+    return Ok(if temp { "a temporary build of cmd/xo-gobind" } else { helper })
   }
   var msg = (out.stderr.to_str() ?? "").trim()
   let pre = "xo bind: cannot bind Go package ${go_quote(gopath)}: "

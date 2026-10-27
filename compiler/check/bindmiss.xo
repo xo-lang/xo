@@ -76,7 +76,15 @@ pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str us
       tried.add(m.key)
       if !m.go_path.is_empty() {
         match bind.bind_go_package(os, c.std_dir, wd, m.root, m.go_path) {
-          Ok(_) => {}
+          Ok(helper) => {
+            // a helper of another xo writes another binding format, which
+            // this check never reads: say so instead of looping on "no
+            // current binding" (an old xo-gobind on PATH, 2026-10-27)
+            let v = go_binding_header((c.fs.read(join(m.cache, "${m.go_path}.xo")).ok() ?? None) ?? b"").version
+            if v >= 0 && v != GOBIND_VERSION {
+              failed[m.key] = "xo-gobind at ${helper} wrote binding format ${v}, this xo reads ${GOBIND_VERSION}: use the xo-gobind shipped with this xo (beside it in bin/), or set XO_GOBIND to one built from this xo's source at its version (go build -o xo-gobind ./cmd/xo-gobind)"
+            }
+          }
           Err(e) => failed[m.key] = e
         }
         again = true
