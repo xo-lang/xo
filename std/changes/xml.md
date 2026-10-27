@@ -1,5 +1,21 @@
 # std/xml changes
 
+## 2026-10-27: perf: encode keeps no stack of open tags
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/xmlcodec encode's CPU profile after the escape runs (Printer.pop_prefix 8.3%, write_end 6.7%, write_start 6.2%)
+- Go reference: encoding/xml marshal.go (printer.writeStart, writeEnd, markPrefix, popPrefix) (go1.26.1)
+- Test: internal/llvm/testdata/golden/xml_basic and xml_derive (arm64, LLVM); internal/stdtest/testdata/corpus/xml and xmlcodec (go, arm64, LLVM); twincheck bench/perf/xmlcodec; an encode differential (attribute prefixes declared on siblings, reused when nested, numbered on a clash, the xml prefix, an empty name, a comment holding -->) equal to the earlier std on go, arm64 and llvm
+
+Element.encode writes each end tag from the element it started, so Go's
+checks of an end tag against a stack of open tags cannot fail and the
+stack is gone; the attribute prefixes an element declares are undeclared
+back to a length kept for it, where a "" marker was pushed and popped
+for every element. Output is unchanged. Quiet --ab, 15 rounds, the
+parent's std as A: bench/perf/xmlcodec encode wall 0.801 (0.795 to
+0.805), instructions 0.835.
+
 ## 2026-10-27: perf: encode copies the text between escapes whole
 
 - Kind: perf

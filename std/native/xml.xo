@@ -1183,7 +1183,6 @@ struct Printer {
   attr_ns: Map[Str, Str] = {}
   attr_prefix: Map[Str, Str] = {}
   prefixes: List[Str] = []
-  tags: List[xml.Name] = []
   wrote: Bool = false
 }
 
@@ -1268,12 +1267,11 @@ fn (var p: Printer) create_attr_prefix(url: Str) -> Str {
   prefix
 }
 
-fn (var p: Printer) pop_prefix() {
-  while !p.prefixes.is_empty() {
+/// Undeclares the prefixes declared since p.prefixes had mark entries
+/// (Go's popPrefix, with a length in place of its "" marker).
+fn (var p: Printer) pop_prefix(mark: Int) {
+  while p.prefixes.len() > mark {
     let prefix = p.prefixes.pop() ?? ""
-    if prefix.is_empty() {
-      break
-    }
     let url = p.attr_ns.get(prefix) ?? ""
     let _a = p.attr_prefix.remove(url)
     let _b = p.attr_ns.remove(prefix)
@@ -1284,11 +1282,10 @@ fn (var p: Printer) write_start(name: xml.Name, attrs: List[xml.Attr]) -> () ! S
   if name.local.is_empty() {
     return Err("xml: start tag with no name")
   }
-  p.tags.push(name)
-  p.prefixes.push("")
+  p.wrote = true
   p.write_indent(1)
-  p.write("<")
-  p.write(name.local)
+  p.out.write("<")
+  p.out.write(name.local)
   if !name.space.is_empty() {
     p.write(" xmlns=\"")
     p.write_escaped(name.space, true)
@@ -1298,40 +1295,30 @@ fn (var p: Printer) write_start(name: xml.Name, attrs: List[xml.Attr]) -> () ! S
     if a.name.local.is_empty() {
       continue
     }
-    p.write(" ")
+    p.out.write(" ")
     if !a.name.space.is_empty() {
       let pre = p.create_attr_prefix(a.name.space)
-      p.write(pre)
-      p.write(":")
+      p.out.write(pre)
+      p.out.write(":")
     }
-    p.write(a.name.local)
-    p.write("=\"")
-    p.write_escaped(a.value, true)
-    p.write("\"")
+    p.out.write(a.name.local)
+    p.out.write("=\"")
+    escape_into(p.out, a.value, true)
+    p.out.write("\"")
   }
-  p.write(">")
+  p.out.write(">")
 }
 
-fn (var p: Printer) write_end(name: xml.Name) -> () ! Str {
-  if name.local.is_empty() {
-    return Err("xml: end tag with no name")
-  }
-  if p.tags.is_empty() || p.tags[p.tags.len() - 1].local.is_empty() {
-    return Err("xml: end tag </${name.local}> without start tag")
-  }
-  let top = p.tags[p.tags.len() - 1]
-  if top != name {
-    if top.local != name.local {
-      return Err("xml: end tag </${name.local}> does not match start tag <${top.local}>")
-    }
-    return Err("xml: end tag </${name.local}> in namespace ${name.space} does not match start tag <${top.local}> in namespace ${top.space}")
-  }
-  let _t = p.tags.pop()
+/// The end tag of the element write_start began, when p.prefixes had
+/// mark entries: encode_element pairs the two with one name, so Go's
+/// checks of an end tag against its open tags cannot fail and there is
+/// no stack of them.
+fn (var p: Printer) write_end(name: xml.Name, mark: Int) {
   p.write_indent(-1)
-  p.write("</")
-  p.write(name.local)
-  p.write(">")
-  p.pop_prefix()
+  p.out.write("</")
+  p.out.write(name.local)
+  p.out.write(">")
+  p.pop_prefix(mark)
 }
 
 /// Go's isValidDirective.
@@ -1372,6 +1359,7 @@ fn valid_directive(dir: Str) -> Bool {
 }
 
 fn (var p: Printer) encode_element(e: xml.Element) -> () ! Str {
+  let mark = p.prefixes.len()
   p.write_start(e.name, e.attrs)?
   for n in e.children {
     match n {
@@ -1408,7 +1396,8 @@ fn (var p: Printer) encode_element(e: xml.Element) -> () ! Str {
       }
     }
   }
-  p.write_end(e.name)
+  p.write_end(e.name, mark)
+  Ok(())
 }
 
 fn element_encode(e: xml.Element, indent: Str) -> Str ! xml.XmlErr {
