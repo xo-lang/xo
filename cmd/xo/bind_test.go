@@ -268,3 +268,26 @@ func TestUseGoPatchGoLine(t *testing.T) {
 		t.Fatalf("run: exit %d\nstdout %q\n%s", code, out.String(), errOut.String())
 	}
 }
+
+// TestUseGoSharedType: Intel b14 (0.33.0): a Go type two bound packages
+// use is one Xo type (decision 0392); net declared its own AddrPort,
+// which netip.AddrPort could not be passed as (XO0401).
+func TestUseGoSharedType(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("binds net and net/netip with go list")
+	}
+	setenv(t, "XO_GOBIND_DIR", "")
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module example.com/b14\nedition preview\n",
+		"main.xo": "use go \"net\"\nuse go \"net/netip\"\n\nfn main(os: Os) {\n" +
+			"  let ap = netip.addr_port_from(netip.must_parse_addr(\"10.0.0.1\"), 80)\n" +
+			"  match net.tcp_addr_from_addr_port(ap) {\n" +
+			"    Some(t) => os.stdio.println(t.string())\n" +
+			"    None => os.stdio.println(\"none\")\n  }\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != "10.0.0.1:80" {
+		t.Fatalf("run: exit %d\nstdout %q\n%s", code, out.String(), errOut.String())
+	}
+}

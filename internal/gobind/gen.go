@@ -82,6 +82,9 @@ type handle struct {
 	// byValue: some bound signature or field has the Go type T itself (not
 	// *T): Go hands it out as a value, and Go's == compares it so
 	byValue bool
+	// ref: a type of another package, bound in that package's binding
+	// (decision 0392): this binding names it there and declares nothing
+	ref     bool
 	foreign bool
 	names   map[string]bool // Xo method names in use
 	decls   []string
@@ -92,6 +95,9 @@ type gen struct {
 	b       *Binding
 	pkg     *types.Package
 	imports map[string]string // Go path -> alias in the adapter
+	// deps: the Go packages whose bindings this one refers to (decision
+	// 0392), Go path -> local name in the declaration file
+	deps    map[string]string
 	handles map[*types.TypeName]*handle
 	order   []*handle
 	queue   []*handle
@@ -123,7 +129,7 @@ var preludeTypes = func() map[string]bool {
 }()
 
 func newGen(b *Binding, pkg *types.Package) *gen {
-	g := &gen{b: b, pkg: pkg, imports: map[string]string{}, handles: map[*types.TypeName]*handle{}, scope: map[string]bool{"go": true}, rerun: map[string]bool{}}
+	g := &gen{b: b, pkg: pkg, imports: map[string]string{}, deps: map[string]string{}, handles: map[*types.TypeName]*handle{}, scope: map[string]bool{"go": true}, rerun: map[string]bool{}}
 	g.stats.Reasons = map[string]int{}
 	return g
 }
@@ -441,6 +447,88 @@ func (g *gen) display(t types.Type) string {
 	return types.TypeString(t, func(p *types.Package) string { return p.Name() })
 }
 
+// importable reports whether a program can import Go package path: not
+// internal to another module or package, not vendored.
+func importable(path string) bool {
+	for _, e := range strings.Split(path, "/") {
+		if e == "internal" || e == "vendor" {
+			return false
+		}
+	}
+	return path != "unsafe" && path != "C"
+}
+
+// depAlias is the declaration file's local name for the binding of
+// package p (decision 0392): its Go name, numbered when another package
+// or the bound one already has it.
+func (g *gen) depAlias(p *types.Package) string {
+	if a, ok := g.deps[p.Path()]; ok {
+		return a
+	}
+	a := p.Name()
+	taken := func(x string) bool {
+		if x == g.pkg.Name() || x == "go" || x == "std" {
+			return true
+		}
+		for _, v := range g.deps {
+			if v == x {
+				return true
+			}
+		}
+		return false
+	}
+	for i := 2; taken(a); i++ {
+		a = fmt.Sprintf("%s%d", p.Name(), i)
+	}
+	g.deps[p.Path()] = a
+	return a
+}
+
+// homeHandleName is the Xo name the binding of n's own package gives
+// n's handle, as its run names its types (in order, a name taken by the
+// prelude or an earlier type prefixed with the package name, then Go),
+// or false when that binding has none.
+func homeHandleName(n *types.Named) (string, bool) {
+	pkg := n.Obj().Pkg()
+	scope := pkg.Scope()
+	taken := map[string]bool{"go": true}
+	for _, name := range scope.Names() {
+		tn, ok := scope.Lookup(name).(*types.TypeName)
+		if !ok || !tn.Exported() || tn.IsAlias() {
+			continue
+		}
+		m, ok := tn.Type().(*types.Named)
+		if !ok || m.TypeParams().Len() > 0 {
+			continue
+		}
+		if _, basic := m.Underlying().(*types.Basic); basic {
+			continue
+		}
+		if pkg.Path() == "time" && (name == "Duration" || name == "Time") {
+			continue
+		}
+		xn := name
+		if preludeTypes[xn] || taken[xn] {
+			pn := pkg.Name()
+			xn = strings.ToUpper(pn[:1]) + pn[1:] + name
+			if preludeTypes[xn] || taken[xn] {
+				xn = "Go" + xn
+			}
+		}
+		if preludeTypes[xn] || taken[xn] {
+			if tn == n.Obj() {
+				return "", false
+			}
+			continue
+		}
+		taken[xn] = true
+		if tn == n.Obj() {
+			return xn, true
+		}
+	}
+	return "", false
+}
+
 // handleFor returns the handle of named type n, creating it.
 func (g *gen) handleFor(n *types.Named, depth int) (*handle, *skipErr) {
 	obj := n.Obj()
@@ -451,8 +539,24 @@ func (g *gen) handleFor(n *types.Named, depth int) (*handle, *skipErr) {
 	if !obj.Exported() {
 		return nil, skipf(catUnexport, "unexported type %s", g.display(n))
 	}
-	if foreign && depth > 0 {
-		return nil, skipf(catForeign, "type %s is from another package (only the package's own signatures may introduce foreign handles)", g.display(n))
+	if foreign {
+		// one Xo type per Go type (decision 0392): the type is bound in
+		// its own package's binding, and this one refers to it there
+		path := obj.Pkg().Path()
+		if !importable(path) {
+			return nil, skipf(catForeign, "type %s is from package %s, which a program cannot import", g.display(n), path)
+		}
+		hn, ok := homeHandleName(n)
+		if !ok {
+			return nil, skipf(catForeign, "type %s has no handle in package %s's binding", g.display(n), path)
+		}
+		_, byPtr := n.Underlying().(*types.Struct)
+		if _, arr := n.Underlying().(*types.Array); arr {
+			byPtr = true
+		}
+		h := &handle{obj: obj, named: n, xo: g.depAlias(obj.Pkg()) + "." + hn, goName: Prefix(path) + hn, gt: g.qual(n), byPtr: byPtr, ref: true, names: map[string]bool{}}
+		g.handles[obj] = h
+		return h, nil
 	}
 	name := obj.Name()
 	if preludeTypes[name] || g.scope[name] {
@@ -1229,6 +1333,9 @@ func (g *gen) declFile() []byte {
 		}
 	}
 	b.WriteString("\nuse std/go\n")
+	for _, path := range sortedKeys(g.deps) {
+		fmt.Fprintf(&b, "use go %q as %s\n", path, g.deps[path])
+	}
 	if len(g.consts) > 0 {
 		b.WriteString("\n// Constants\n\n")
 		for _, c := range g.consts {

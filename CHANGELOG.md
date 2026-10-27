@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `use go`: a Go type two bound packages use is one Xo type (decision 0392):
+  `net.tcp_addr_from_addr_port` takes the `netip.AddrPort` netip makes, and
+  golang.org/x/text/cases' functions take `language.Tag`, where each binding
+  declared its own copy that nothing converted (Intel tester, 0.33.0, b14);
+  bindings are regenerated (format 7)
 - `==` on a Go value the package hands out by value (`netip.Addr`,
   `language.Tag`) compares by value as Go does, where two equal addresses
   were unequal (pointer identity); a struct the package passes only as `*T`

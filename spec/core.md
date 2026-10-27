@@ -1709,7 +1709,11 @@ fn main(os: Os) ! {
   out as a value, `T` in a signature or field (`netip.Addr`, `uuid.UUID`),
   compares and hashes by value, a struct it passes only as `*T`
   (`url.Parse`'s `*url.URL`) by pointer, as Go's `==` on the pointers,
-  and an interface by its dynamic value;
+  and an interface by its dynamic value; a named Go type is one Xo type
+  in every binding that uses it, declared by its own package's binding
+  (`net`'s functions take `netip.AddrPort`), which is bound with it
+  even when the program does not name that package (decision 0392); a
+  type of a package a program cannot import (`internal`) is skipped;
   slices and maps are copied in and out; a `context.Context` parameter is
   supplied from the current task (deadline and cancellation); a panic becomes
   a fault.

@@ -3356,7 +3356,10 @@ experiment of its work queue item 6. Results and coverage:
   value calls live in `goCall_<prefix><name>`, declarations carry a
   `/// Replay:` line; 6 since 2026-10-27, Intel b15: a comparable struct
   handle the package hands out as a value, `T` in some bound signature or
-  field (netip.Addr), compares and hashes by value) or another module version
+  field (netip.Addr), compares and hashes by value; 7 since 2026-10-27,
+  decision 0392: a type of another package is that package's binding's,
+  named through a `use go "P" as alias` line of the declaration file,
+  which Bind binds in the same run) or another module version
   than the pin, or another `replay rerun go` list (header line
   `// replay-rerun: <names>`). Pins: `require go <module> <version>`
   lines in xo.mod. A binding made with a rerun list is cached as

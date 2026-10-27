@@ -1,7 +1,8 @@
 # 0392: One Xo type per Go type across `use go` bindings
 
-Status: Proposed (xo-lang-4, 2026-10-27; milestone 0.34.0 criterion 1,
-Intel tester 0.33.0 b14)
+Status: Accepted (owner, 2026-10-27: "Approved, go ahead with 0392";
+proposed by xo-lang-4; milestone 0.34.0 criterion 1, Intel tester 0.33.0
+b14). Implemented 2026-10-27 (see "As built").
 
 ## Context
 
@@ -85,13 +86,36 @@ declares it, and every other binding refers to that one.
   through net, language through cases and display); rejected for 0.34.0's
   field bug criterion.
 
-## Tests (to land with it)
+## As built (2026-10-27)
 
-- A cmd/xo test (std only, no network): b14's program, `use go "net"`
-  and `"net/netip"`, prints `10.0.0.1:80`; and with only `use go "net"`,
-  `net.tcp_addr_from_addr_port` takes the value of a `net` function that
-  returns a `netip.AddrPort`.
-- The spec-conformance golden for one Go type shared by two packages
-  (internal/gen/testdata/golden/go_shared_type).
-- internal/gobind: a foreign type is a reference with `go-deps`, its
-  depth no longer limits it, an internal package's type stays skipped.
+- internal/gobind: a foreign named type is a reference handle
+  (`handle.ref`): its Xo name is `<alias>.<name>`, where the name is the
+  one the home binding gives it (homeHandleName repeats the home run's
+  naming: types in order, a prelude or earlier name prefixed with the
+  package's name, then `Go`), and its rt type is `Go_<home prefix><name>`.
+  Nothing is declared for it, so equality, hashing and methods are the
+  home binding's. A package a program cannot import (`internal`,
+  `vendor`) keeps the skip (`catForeign`, with the reason).
+- The dependencies are the declaration file's `use go "P" as alias`
+  lines (the alias the Go package name, numbered when taken), not a
+  separate `go-deps` header: the checker loads them as any `use go`.
+  Bind binds each one in the same run (LoadOrBind, recursively), so one
+  check finds them all instead of the checker's bounded rebind rounds.
+- compiler/check: a binding's own `use go` (Module.go_path set) resolves
+  against the binding's project root (Module.go_root) and skips the vouch
+  (XO1316) and pin (XO1319) checks, which the program's own use already
+  passed.
+- Binding format 7.
+
+## Tests (landed with it)
+
+- cmd/xo TestUseGoSharedType (std only): b14's program prints
+  `10.0.0.1:80`.
+- The spec-conformance golden internal/gen go_shared_type: the netip
+  value through net and back, `==` across the two bindings, and a net
+  value's AddrPort.
+- internal/gobind TestSharedHandles: net's declaration has `use go
+  "net/netip" as netip` and takes `netip.AddrPort`, declares no AddrPort
+  of its own, and netip is bound in the same run; internal and vendor
+  packages are not importable. TestMapping: os/exec's Cmd.process returns
+  `os.Process?`.
