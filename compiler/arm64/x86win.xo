@@ -269,11 +269,14 @@ fn (g: G) c_entry_sym(n: Str) -> Str {
 /// The C ABI exports on windows/amd64 (x86_exports): each a Win64 shim of
 /// its function; and the shims of the C ABI entry functions (c_entry_sym).
 fn (var g: G) w64_exports() {
-  for f in g.m.funcs {
+  // the parameters' types from param_types: a function read from the
+  // per-function cache may be undecoded (decision 0283 stage B), with
+  // no blocks (an index fault on a warm windows build, 2026-10-27)
+  for (fi, f) in g.m.funcs.indexed() {
     if f.entry && f.export.is_empty() {
       var esig = StrBuilder.new()
-      for p in f.blocks[0].params {
-        for fp in g.layout(f.values[p].ty) {
+      for pt in g.m.param_types(fi) {
+        for fp in g.layout(pt) {
           esig.write(if fp { "f" } else { "i" })
         }
       }
@@ -289,8 +292,8 @@ fn (var g: G) w64_exports() {
       continue
     }
     var sig = StrBuilder.new()
-    for p in f.blocks[0].params {
-      for fp in g.layout(f.values[p].ty) {
+    for pt in g.m.param_types(fi) {
+      for fp in g.layout(pt) {
         sig.write(if fp { "f" } else { "i" })
       }
     }

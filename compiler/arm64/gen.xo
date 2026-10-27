@@ -441,8 +441,8 @@ fn (var g: G) entry(main: Int) {
   b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
   var ngp = 0
   var nfp = 0
-  for p in g.m.funcs[main].blocks[0].params {
-    for fp in g.layout(g.m.funcs[main].values[p].ty) {
+  for pt in g.m.param_types(main) {
+    for fp in g.layout(pt) {
       if fp {
         if nfp < 8 {
           b.push("\tfmov d${nfp}, xzr\n")
@@ -472,7 +472,7 @@ fn (var g: G) exports() {
     g.x86_exports()
     return
   }
-  for f in g.m.funcs {
+  for (fi, f) in g.m.funcs.indexed() {
     if f.export.is_empty() {
       continue
     }
@@ -484,8 +484,8 @@ fn (var g: G) exports() {
       continue
     }
     var ngp = 0
-    for p in f.blocks[0].params {
-      if g.m.types[f.values[p].ty].kind != ssa.Kind.Float {
+    for pt in g.m.param_types(fi) {
+      if g.m.types[pt].kind != ssa.Kind.Float {
         ngp += 1
       }
     }

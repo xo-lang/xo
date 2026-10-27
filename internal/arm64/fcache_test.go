@@ -3213,3 +3213,74 @@ func TestFirstEditAfterColdParts(t *testing.T) {
 		}
 	}
 }
+
+// TestWindowsWarmEditEntryShims: a windows/amd64 edit through the
+// per-function cache, of a program with C ABI entry functions (llvm-fib:
+// tasks, element drops, constant builders), builds and writes what a
+// build with the cache off writes. The entry functions' Win64 shims read
+// their parameters' types, which an undecoded cached function has no
+// blocks for (w64_exports faulted on index 0, 2026-10-27).
+func TestWindowsWarmEditEntryShims(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-winshim-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.CopyFS(src, os.DirFS(filepath.Join(root, "bench", "perf", "llvm", "xo", "fib"))); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	build := func(mode string) ([]byte, string) {
+		t.Helper()
+		n++
+		out := filepath.Join(work, fmt.Sprintf("out%d", n), "prog")
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "--phase-times", "-o", out, "."))
+		cmd.Dir = src
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache-"+mode), "XO_BACKEND_CACHE="+mode, "XO_WHOLE_BUILD=off")
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build (cache %s): %v\n%s", mode, err, log)
+		}
+		b, err := os.ReadFile(out + ".exe")
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b, string(log)
+	}
+	edit := func(from, to string) {
+		t.Helper()
+		f := filepath.Join(src, "main.xo")
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := strings.Replace(string(b), from, to, 1)
+		if e == string(b) {
+			t.Fatalf("main.xo has no %q", from)
+		}
+		if err := os.WriteFile(f, []byte(e), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	build("on")
+	edit("if n < 2 {", "if n < 3 {")
+	got, log := build("on")
+	if !regexp.MustCompile(`cache functions [1-9]\d*/\d+ reused`).MatchString(log) {
+		t.Fatalf("the edit read no function from the cache, so the test checks nothing:\n%s", log)
+	}
+	if want, _ := build("off"); !bytes.Equal(got, want) {
+		t.Errorf("the edit through the cache differs from a build with the cache off")
+	}
+}
