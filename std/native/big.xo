@@ -1121,11 +1121,23 @@ fn convert_words(q0: List[Int], var s: List[Int], lo: Int, hi0: Int, base: Int, 
       n -= 1
     }
     var j = 0
-    while j < nd && i > lo {
-      i -= 1
-      s[i] = r % base
-      r = r / base
-      j += 1
+    if base == 10 {
+      // Go's "hard-coded for speed": a division by the constant 10 is a
+      // multiply
+      while j < nd && i > lo {
+        i -= 1
+        let t = r / 10
+        s[i] = r - t * 10
+        r = t
+        j += 1
+      }
+    } else {
+      while j < nd && i > lo {
+        i -= 1
+        s[i] = r % base
+        r = r / base
+        j += 1
+      }
     }
   }
   while i > lo {

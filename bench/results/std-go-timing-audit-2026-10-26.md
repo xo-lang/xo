@@ -316,3 +316,9 @@ wall 0.859 (0.851 to 0.865), instructions 0.831 against the parent's std; range 
 to 0.999), instructions 0.994 against that. Xo / Go about 1.59 (estimate: 1.861 x 0.859 x 0.994), from 1.861.
 Left: the walk's dup and drop of V values (dup and drop of native.template.V about 12%), eval_command and
 at_arg.
+
+## big decimal text by a constant 10 (2026-10-27, Xo Lang 2)
+
+Per std/changes/big.md 2026-10-27 ("decimal text divides by a constant 10"). Quiet `xo bench --ab`, 15 rounds,
+the parent's std as A: text wall 0.907 (0.895 to 0.934), instructions 0.972; Xo / Go about 1.35 (estimate: 1.490
+x 0.907), from 1.490.

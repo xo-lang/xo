@@ -1,5 +1,19 @@
 # std/big changes
 
+## 2026-10-27: perf: decimal text divides by a constant 10
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/big text at 1.49x Go; its CPU profile (convert_words 29%: a divide and a remainder by the base in a variable for every digit)
+- Go reference: math/big natconv.go convertWords (the base 10 loop "hard-coded for speed") (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big (go, arm64, LLVM); internal/llvm and internal/arm64 big_basic; twincheck bench/perf/big
+
+A word's decimal digits are taken by a division by the constant 10,
+which the compiler turns into a multiply, and a subtraction, as Go's
+convertWords does; other bases keep the division by the base. Output is
+unchanged. Quiet --ab, 15 rounds, the parent's std as A: text wall 0.907 (0.895 to 0.934), instructions
+0.972 (the divisions removed were the slow instructions, not the many).
+
 ## 2026-10-27: perf: long division subtracts qhat times the divisor in one pass
 
 - Kind: perf
