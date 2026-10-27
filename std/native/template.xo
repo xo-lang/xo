@@ -1555,6 +1555,114 @@ fn ctx_text(c: Ctx) -> Str {
   }
 }
 
+const CTX_NODE: Int = 1
+const CTX_PIPE: Int = 2
+const CTX_ARG: Int = 3
+const CTX_CMD: Int = 4
+
+/// The index of a's variant (with its kind and position it names one
+/// argument of a tree: a PipeA and the first argument inside it share a
+/// position, never a variant).
+fn arg_tag(a: Arg) -> Int {
+  match a {
+    Field(..) => 0
+    Chain(..) => 1
+    Ident(..) => 2
+    PipeA(..) => 3
+    Variable(..) => 4
+    BoolA(..) => 5
+    Dot(..) => 6
+    NilA(..) => 7
+    Number(..) => 8
+    StringA(..) => 9
+  }
+}
+
+fn node_tag(n: Node) -> Int {
+  match n {
+    Text(..) => 0
+    Action(..) => 1
+    Comment(..) => 2
+    If(..) => 3
+    Range(..) => 4
+    With(..) => 5
+    TemplateN(..) => 6
+    Break(..) => 7
+    Continue(..) => 8
+    End(..) => 9
+    Else(..) => 10
+  }
+}
+
+/// The node of the tree an error names: kind, variant and position.
+fn ctx_find(list: List[Node], kind: Int, tag: Int, pos: Int) -> Ctx? {
+  if kind == 0 {
+    return None
+  }
+  for n in list {
+    if kind == CTX_NODE && node_tag(n) == tag && node_pos(n) == pos {
+      return Some(Ctx.OfNode(n))
+    }
+    let found = match n {
+      Action(_, _, pipe) => ctx_in_pipe(pipe, kind, tag, pos)
+      If(_, _, pipe, l, el) | Range(_, _, pipe, l, el) | With(_, _, pipe, l, el) => ctx_in_pipe(pipe, kind, tag, pos) ?? ctx_find(l, kind, tag, pos) ?? (match el {
+        Some(e) => ctx_find(e, kind, tag, pos)
+        None => None
+      })
+      TemplateN(_, _, _, pipe) => match pipe {
+        Some(p) => ctx_in_pipe(p, kind, tag, pos)
+        None => None
+      }
+      _ => None
+    }
+    if found is Some(_) {
+      return found
+    }
+  }
+  None
+}
+
+fn ctx_in_pipe(p: Pipe, kind: Int, tag: Int, pos: Int) -> Ctx? {
+  if kind == CTX_PIPE && p.pos == pos {
+    return Some(Ctx.OfPipe(p))
+  }
+  for c in p.cmds {
+    if kind == CTX_CMD && c.pos == pos {
+      return Some(Ctx.OfCmd(c))
+    }
+    let found = ctx_in_args(c.args, kind, tag, pos)
+    if found is Some(_) {
+      return found
+    }
+  }
+  None
+}
+
+fn ctx_in_args(args: List[Arg], kind: Int, tag: Int, pos: Int) -> Ctx? {
+  for a in args {
+    if kind == CTX_ARG && arg_tag(a) == tag && arg_pos(a) == pos {
+      return Some(Ctx.OfArg(a))
+    }
+    let found = match a {
+      Chain(_, node, _) => ctx_in_args(node, kind, tag, pos)
+      PipeA(ps) => {
+        var r: Ctx? = None
+        for q in ps {
+          if r is None {
+            r = ctx_in_pipe(q, kind, tag, pos)
+          }
+        }
+        r
+      }
+      _ => None
+    }
+    if found is Some(_) {
+      return found
+    }
+  }
+  None
+}
+
 /// The trees of a parsed set, kept in the Template (std Parsed, opaque).
 struct Parsed {
   trees: List[Tree] = []
@@ -1568,23 +1676,30 @@ struct Ex {
   vars: List[Var] = []
   depth: Int = 0
   node_pos: Int = -1
-  node_ctx: Ctx = Ctx.Nothing
+  /// What the error text names (state.node): its kind (CTX_*), its
+  /// variant's index, and node_pos; the node itself is found in tree only
+  /// when an error is made (ctx_find), so a visit stores no value.
+  node_kind: Int = 0
+  node_tag: Int = 0
   out: Str = ""
 }
 
 fn (var s: Ex) at_arg(a: Arg) {
   s.node_pos = arg_pos(a)
-  s.node_ctx = Ctx.OfArg(a)
+  s.node_kind = CTX_ARG
+  s.node_tag = arg_tag(a)
 }
 
 fn (var s: Ex) at_node(n: Node) {
   s.node_pos = node_pos(n)
-  s.node_ctx = Ctx.OfNode(n)
+  s.node_kind = CTX_NODE
+  s.node_tag = node_tag(n)
 }
 
 fn (var s: Ex) at_pipe(p: Pipe) {
   s.node_pos = p.pos
-  s.node_ctx = Ctx.OfPipe(p)
+  s.node_kind = CTX_PIPE
+  s.node_tag = 0
 }
 
 /// state.errorf: Go's text with the location and the node.
@@ -1603,7 +1718,7 @@ fn (s: Ex) err(msg: Str) -> Str {
     }
   }
   let col = if last_nl < 0 { pos } else { pos - (last_nl + 1) }
-  "template: ${s.tree.parse_name}:${lines}:${col}: executing ${go_quote(s.tree.name)} at <${ctx_text(s.node_ctx)}>: ${msg}"
+  "template: ${s.tree.parse_name}:${lines}:${col}: executing ${go_quote(s.tree.name)} at <${ctx_text(ctx_find(s.tree.root, s.node_kind, s.node_tag, s.node_pos) ?? Ctx.Nothing)}>: ${msg}"
 }
 
 fn (var s: Ex) var_value(name: Str) -> Val ! Str {
@@ -1831,7 +1946,7 @@ fn (var s: Ex) eval_command(dot: Val, c: Cmd, final: Val) -> Val ! Str {
       let recv = s.eval_arg(dot, node[0])?
       return s.eval_field_chain(dot, recv, first, field, c.args, final)
     }
-    Ident(_, name) => return s.eval_function(dot, first, name, c.args, final, c.pos, Ctx.OfCmd(c))
+    Ident(_, name) => return s.eval_function(dot, first, name, c.args, final, c.pos, CTX_CMD, 0)
     PipeA(p) => {
       s.not_a_function(c.args, final)?
       return s.eval_pipeline(dot, p[0])
@@ -1932,7 +2047,7 @@ fn (var s: Ex) eval_arg(dot: Val, a: Arg) -> Val ! Str {
       s.eval_field_chain(dot, v, a, ident[1..], [], val(V.Missing))
     }
     PipeA(p) => s.eval_pipeline(dot, p[0])
-    Ident(_, name) => s.eval_function(dot, a, name, [a], val(V.Missing), arg_pos(a), Ctx.OfArg(a))
+    Ident(_, name) => s.eval_function(dot, a, name, [a], val(V.Missing), arg_pos(a), CTX_ARG, arg_tag(a))
     Chain(_, node, field) => {
       let recv = s.eval_arg(dot, node[0])?
       s.eval_field_chain(dot, recv, a, field, [], val(V.Missing))
@@ -1959,7 +2074,7 @@ fn builtin_shape(name: Str) -> (Int, Bool) {
   }
 }
 
-fn (var s: Ex) eval_function(dot: Val, node: Arg, name: Str, args0: List[Arg], final: Val, cmd_pos: Int, cmd_ctx: Ctx) -> Val ! Str {
+fn (var s: Ex) eval_function(dot: Val, node: Arg, name: Str, args0: List[Arg], final: Val, cmd_pos: Int, cmd_kind: Int, cmd_tag: Int) -> Val ! Str {
   s.at_arg(node)
   let args = if args0.is_empty() { args0 } else { args0[1..] }
   let (fixed, variadic) = builtin_shape(name)
@@ -2011,7 +2126,8 @@ fn (var s: Ex) eval_function(dot: Val, node: Arg, name: Str, args0: List[Arg], f
     Err(e) => {
       // evalCall: s.at(node), the command (or the identifier as an argument)
       s.node_pos = cmd_pos
-      s.node_ctx = cmd_ctx
+      s.node_kind = cmd_kind
+      s.node_tag = cmd_tag
       Err(s.err("error calling ${name}: ${e}"))
     }
   }
