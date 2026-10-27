@@ -5,6 +5,7 @@
 // inflate.go, and hash/crc32's IEEE table. std/native/archive.xo and
 // std/native/compress.xo use it.
 use native/llrt/raw
+use native/rt
 // ---------------------------------------------------------------------------
 // Bytes
 
@@ -89,16 +90,16 @@ pub fn crc32(t: List[Int], crc0: Int, b: Bytes) -> Int {
 }
 
 /// crc32 of the bytes l[from..to] (each 0 to 255), without copying them.
-pub fn crc32_list(t: List[Int], crc0: Int, l: List[Int], from: Int, to: Int) -> Int {
+pub fn crc32_list(t: List[Int], crc0: Int, l: List[UInt8], from: Int, to: Int) -> Int {
   var c = crc0 ^ 0xffffffff
   var i = from
   while i + 8 <= to {
-    c = c ^ (l[i] | (l[i + 1] << 8) | (l[i + 2] << 16) | (l[i + 3] << 24))
-    c = t[1792 + (c & 255)] ^ t[1536 + ((c >> 8) & 255)] ^ t[1280 + ((c >> 16) & 255)] ^ t[1024 + (c >> 24)] ^ t[768 + l[i + 4]] ^ t[512 + l[i + 5]] ^ t[256 + l[i + 6]] ^ t[l[i + 7]]
+    c = c ^ (Int(l[i]) | (Int(l[i + 1]) << 8) | (Int(l[i + 2]) << 16) | (Int(l[i + 3]) << 24))
+    c = t[1792 + (c & 255)] ^ t[1536 + ((c >> 8) & 255)] ^ t[1280 + ((c >> 16) & 255)] ^ t[1024 + (c >> 24)] ^ t[768 + Int(l[i + 4])] ^ t[512 + Int(l[i + 5])] ^ t[256 + Int(l[i + 6])] ^ t[Int(l[i + 7])]
     i += 8
   }
   while i < to {
-    c = t[(c ^ l[i]) & 255] ^ (c >> 8)
+    c = t[(c ^ Int(l[i])) & 255] ^ (c >> 8)
     i += 1
   }
   c ^ 0xffffffff
@@ -108,8 +109,10 @@ pub fn crc32_list(t: List[Int], crc0: Int, l: List[Int], from: Int, to: Int) -> 
 // The bit writer and Huffman encoders (compress/flate huffman_bit_writer.go,
 // huffman_code.go): bits are written least significant first
 
+/// huffmanBitWriter's bit buffer: up to 63 bits pending (each write is
+/// at most 16), six bytes written once 48 are pending, as Go does.
 struct BitWriter {
-  out: List[Int]
+  out: List[UInt8]
   bits: Int
   nbits: Int
 }
@@ -117,26 +120,43 @@ struct BitWriter {
 fn (var w: BitWriter) write_bits(b: Int, nb: Int) {
   w.bits = w.bits | (b << w.nbits)
   w.nbits += nb
+  if w.nbits >= 48 {
+    let x = w.bits
+    w.out.push(UInt8(x & 255))
+    w.out.push(UInt8((x >> 8) & 255))
+    w.out.push(UInt8((x >> 16) & 255))
+    w.out.push(UInt8((x >> 24) & 255))
+    w.out.push(UInt8((x >> 32) & 255))
+    w.out.push(UInt8((x >> 40) & 255))
+    w.bits = x.shr_logical(48)
+    w.nbits -= 48
+  }
+}
+
+/// The whole bytes pending written out (fewer than 8 bits left).
+fn (var w: BitWriter) settle() {
   while w.nbits >= 8 {
-    w.out.push(w.bits & 255)
-    w.bits = w.bits >> 8
+    w.out.push(UInt8(w.bits & 255))
+    w.bits = w.bits.shr_logical(8)
     w.nbits -= 8
   }
 }
 
 /// flush: the last bits padded to a byte.
 fn (var w: BitWriter) flush() {
+  w.settle()
   if w.nbits > 0 {
-    w.out.push(w.bits & 255)
+    w.out.push(UInt8(w.bits & 255))
   }
   w.bits = 0
   w.nbits = 0
 }
 
 fn (var w: BitWriter) write_bytes(data: Bytes, lo: Int, hi: Int) {
+  w.settle()
   var i = lo
   while i < hi {
-    w.out.push(byte_of(data, i))
+    w.out.push(data[i])
     i += 1
   }
 }
@@ -756,8 +776,21 @@ fn (var d: Deflater) write_block(index: Int) {
   }
 }
 
+/// matchLen: 8 bytes a step (Go's binary.LittleEndian.Uint64 compare),
+/// the first differing byte from the xor's trailing zeros. a and b are
+/// below pos and at it, and max is at most the lookahead, so every load
+/// is inside the window.
 fn (d: Deflater) match_len(a: Int, b: Int, max: Int) -> Int {
+  let p = raw.bytes_addr(d.data).wrapping_add(d.base)
   var i = 0
+  while i + 8 <= max {
+    let x = rt.mem_load(p, a + i, 8) ^ rt.mem_load(p, b + i, 8)
+    if x != 0 {
+      return i + (x.trailing_zeros() >> 3)
+    }
+    i += 8
+  }
+  raw.alive(d.data)
   while i < max {
     if d.win(a + i) != d.win(b + i) {
       return i
@@ -1000,6 +1033,25 @@ fn hdec_init(lengths: List[Int]) -> HDec? {
 
 fn int_at(l: List[Int], i: Int) -> Int { l[i] }
 
+/// The bytes of l in one copy (a List[UInt8] is packed, one byte an
+/// element, at rt.layout(2) in its object).
+pub fn list_bytes(l: List[UInt8]) -> Bytes {
+  let n = l.len()
+  let b = raw.bytes_buf(n)
+  if n > 0 {
+    rt.mem_copy(raw.bytes_addr(b), rt.obj_addr(l).wrapping_add(rt.layout(2)), n)
+  }
+  keep_bytes(l)
+  b
+}
+
+/// A use of l after its last raw access (bigmod.keep).
+fn keep_bytes(l: List[UInt8]) {
+  if l.len() < 0 {
+    return
+  }
+}
+
 /// l[i], as a value of its own to update and put back.
 fn take_list(l: List[List[Int]], i: Int) -> List[Int] { l[i] }
 
@@ -1020,7 +1072,7 @@ pub struct Inflater {
   pub end: Int
   pub b: Int
   pub nb: Int
-  pub out: List[Int]
+  pub out: List[UInt8]
   pub out_start: Int
   /// The most bytes out may hold (-1: no limit); past it inflate stops
   /// with LIMIT (std/compress's max_size, decision 0305).
@@ -1189,7 +1241,7 @@ fn (var f: Inflater) huffman_block(hl: HDec, hd: HDec, fixed: Bool) -> () ! Str 
   while true {
     let v = f.huff_sym(hl)?
     if v < 256 {
-      f.out.push(v)
+      f.out.push(UInt8(v))
       if f.limit >= 0 && f.dropped + f.out.len() > f.limit {
         return Err(LIMIT)
       }
@@ -1283,7 +1335,7 @@ fn (var f: Inflater) data_block() -> () ! Str {
   }
   var i = 0
   while i < n {
-    f.out.push(byte_of(f.data, f.pos + i))
+    f.out.push(f.data[f.pos + i])
     i += 1
   }
   f.pos += n
@@ -1419,7 +1471,15 @@ struct Fast {
 
 fn new_fast() -> Fast { Fast{val: zeros(FAST_TABLE), off: zeros(FAST_TABLE), prev: b"", cur: MAX_STORE} }
 
-fn load32(b: Bytes, i: Int) -> Int { byte_of(b, i) | (byte_of(b, i + 1) << 8) | (byte_of(b, i + 2) << 16) | (byte_of(b, i + 3) << 24) }
+/// Four little endian bytes at i in one load (binary.LittleEndian.Uint32).
+fn load32(b: Bytes, i: Int) -> Int {
+  if i < 0 || i + 4 > b.len() {
+    fault("flate: load32 at ${i} of ${b.len()}")
+  }
+  let v = rt.mem_load(raw.bytes_addr(b), i, 4)
+  raw.alive(b)
+  v
+}
 
 fn fast_hash(u: Int) -> Int { ((u * 0x1e35a7bd) & 0xffffffff) >> FAST_SHIFT }
 
@@ -1458,7 +1518,17 @@ fn (e: Fast) match_len(s: Int, t: Int, src: Bytes) -> Int {
     s1 = src.len()
   }
   if t >= 0 {
+    // 8 bytes a step (Go's matchLen); t < s, so both loads are below s1
+    let p = raw.bytes_addr(src)
     var i = 0
+    while s + i + 8 <= s1 {
+      let x = rt.mem_load(p, s + i, 8) ^ rt.mem_load(p, t + i, 8)
+      if x != 0 {
+        return i + (x.trailing_zeros() >> 3)
+      }
+      i += 8
+    }
+    raw.alive(src)
     while s + i < s1 {
       if byte_of(src, s + i) != byte_of(src, t + i) {
         return i
@@ -1754,20 +1824,22 @@ pub fn (var s: Stream) close() {
 }
 
 /// The output made since the last take.
-pub fn (var s: Stream) take() -> List[Int] {
+pub fn (var s: Stream) take() -> Bytes {
   if s.level >= 2 {
+    s.d.blocks.w.settle()
     let out = s.d.blocks.w.out
     s.d.blocks.w.out = []
-    return out
+    return list_bytes(out)
   }
+  s.blocks.w.settle()
   let out = s.blocks.w.out
   s.blocks.w.out = []
-  out
+  list_bytes(out)
 }
 
 /// The raw DEFLATE stream of data at level (-2 to 9, -1 is 6), written
 /// once and closed as compress/flate's Writer does: the same bytes.
-pub fn deflate_level(data: Bytes, level: Int) -> List[Int] {
+pub fn deflate_level(data: Bytes, level: Int) -> Bytes {
   var s = new_stream(level)
   s.write(data)
   s.close()
@@ -1776,7 +1848,7 @@ pub fn deflate_level(data: Bytes, level: Int) -> List[Int] {
 
 /// data compressed by compress/flate at level 5 or 6 (std/archive's zip
 /// and gzip), written once and closed.
-pub fn deflate_bytes(data: Bytes, level: Int) -> List[Int] { deflate_level(data, level) }
+pub fn deflate_bytes(data: Bytes, level: Int) -> Bytes { deflate_level(data, level) }
 
 // ---------------------------------------------------------------------------
 // gzip members (compress/gzip Reader, multistream)
@@ -1844,11 +1916,11 @@ pub fn gzip_header(data: Bytes, pos: Int, t: List[Int]) -> Int ! Str {
 
 /// gzip.Reader over data's members (concatenated, multistream): the
 /// output, or Go's error text (LIMIT past limit, -1 for none).
-pub fn gunzip_members(data: Bytes, limit: Int) -> List[Int] ! Str {
+pub fn gunzip_members(data: Bytes, limit: Int) -> Bytes ! Str {
   let t = crc_table()
   let fixed = fixed_decoder()
   let n = data.len()
-  var out: List[Int] = []
+  var out: List[UInt8] = []
   var pos = gzip_header(data, 0, t)?
   while true {
     let member_start = out.len()
@@ -1875,7 +1947,7 @@ pub fn gunzip_members(data: Bytes, limit: Int) -> List[Int] ! Str {
       }
     }
   }
-  out
+  list_bytes(out)
 }
 
 // ---------------------------------------------------------------------------
@@ -1914,7 +1986,7 @@ fn (var s: InStream) drain() -> List[Int] {
   var i = s.emit
   let n = s.f.out.len()
   while i < n {
-    out.push(s.f.out[i])
+    out.push(Int(s.f.out[i]))
     i += 1
   }
   s.emit = n
@@ -1936,7 +2008,7 @@ fn (var s: InStream) drain() -> List[Int] {
   // keep the last WINDOW_SIZE bytes for back references
   if n > 2 * WINDOW_SIZE {
     let k = n - WINDOW_SIZE
-    var keep: List[Int] = []
+    var keep: List[UInt8] = []
     var j = k
     while j < n {
       keep.push(s.f.out[j])

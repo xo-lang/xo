@@ -60,7 +60,7 @@ fn archiveerr_display(e: archive.ArchiveErr) -> Str { "archive: ${e.msg}" }
 fn gzip(data: Bytes) -> Bytes {
   var b = BytesBuilder.new()
   b.write(b"\x1f\x8b\x08\x00\x00\x00\x00\x00\x00\xff")
-  b.write(bytes_of(flate.deflate_bytes(data, 6)))
+  b.write(flate.deflate_bytes(data, 6))
   let t = flate.crc_table()
   put_u32(b, flate.crc32(t, 0, data))
   put_u32(b, data.len() & 0xffffffff)
@@ -69,7 +69,7 @@ fn gzip(data: Bytes) -> Bytes {
 
 fn gunzip(data: Bytes) -> Bytes ! archive.ArchiveErr {
   match flate.gunzip_members(data, -1) {
-    Ok(out) => bytes_of(out)
+    Ok(out) => out
     Err(e) => Err(archive_err("gunzip: ${e}"))
   }
 }
@@ -1138,7 +1138,7 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
     out.write(hdr)
     count += hdr.len()
     if !e.is_dir {
-      let comp = bytes_of(flate.deflate_bytes(e.data, 5))
+      let comp = flate.deflate_bytes(e.data, 5)
       out.write(comp)
       count += comp.len()
       zf.crc = flate.crc32(t, 0, e.data)
@@ -1500,7 +1500,7 @@ fn zip_read(data: Bytes, zf: ZipFile, t: List[Int], fixed: flate.HDec) -> Bytes 
     if f.out.len() > zf.usize {
       return Err(ERR_FORMAT)
     }
-    content = bytes_of(f.out)
+    content = flate.list_bytes(f.out)
   } else {
     return Err("zip: unsupported compression algorithm")
   }
