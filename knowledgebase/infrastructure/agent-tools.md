@@ -560,6 +560,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- Ceilings before building (lead, 2026-10-27; Last verified: 2026-10-27):
+  before building a speedup step, measure the most it can save. Stub or
+  skip the phase on a throwaway branch (never pushed; output ignored),
+  time the target quiet with n=5 interleaved in the gate class, and only
+  build steps whose ceilings add up to the goal. A budget summed from
+  per-phase CPU time is not a wall estimate: ADR 0382 stage 2 was built
+  and gated against a CPU budget and broke even, and stage 3 plus the
+  chain delivered 11 ms of about 35 planned, while the oracle table
+  (Lang 1, o497) priced every remaining candidate in about an hour,
+  dropping two of them at about 0 ms.
 - Fewer instructions is not faster (agent poll 2026-10-26: the most
   misleading trap; Lang 3's cut_suffix ran +1.6% instructions and +9.7%
   wall, an IPC drop). `xo bench --ab` on macOS reports cycles,
