@@ -781,11 +781,17 @@ fn (var r: EntryR) bool() -> Bool {
 
 fn (var r: EntryR) ints() -> List[Int] {
   let n = r.uv()
-  var out: List[Int] = []
   if !r.ok || n > r.d.len() {
     r.ok = false
-    return out
+    return []
   }
+  if n == 0 {
+    return []
+  }
+  // sized once: grown by push, a decode's lists (every block's and
+  // value's) showed as alloc and memmove in llvm-fib's edit profile
+  // (2026-10-27); CPU only, the edit's wall time did not change
+  var out = List[Int].with_capacity(n)
   for _ in 0..n {
     out.push(r.sv())
   }
@@ -838,6 +844,8 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   if !r.ok || nt > d.len() {
     return None
   }
+  r.tys = List[Int].with_capacity(nt)
+  r.ops = List[Option[Op]].with_capacity(nt)
   for _ in 0..nt {
     let s = r.str()
     r.tys.push(m.type_at.get(s) ?? -1)
@@ -876,6 +884,7 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   if !r.ok || nb > d.len() {
     return None
   }
+  f.blocks = List[Block].with_capacity(nb)
   for _ in 0..nb {
     let ps = r.ints()
     let ins = r.ints()
@@ -886,6 +895,7 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   if !r.ok || nv > d.len() {
     return None
   }
+  f.values = List[Value].with_capacity(nv)
   for _ in 0..nv {
     let oi = r.uv()
     if !r.ok || oi >= r.ops.len() {
@@ -926,6 +936,7 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   if !r.ok || ne > d.len() {
     return None
   }
+  f.edges = List[Edge].with_capacity(ne)
   for _ in 0..ne {
     let from = r.sv()
     let to = r.sv()
