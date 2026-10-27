@@ -20,6 +20,10 @@ use native/rt
 pub const HW_AES: Int = 1
 pub const HW_CLMUL: Int = 2
 pub const HW_SHA256: Int = 8
+/// fma_hw (decision 0385 stage 3): x86-64's FMA3, which needs the CPU's
+/// FMA and AVX bits and the OS saving the AVX state (XGETBV); arm64's
+/// fmadd is always there and lowered directly (Float.fma).
+pub const HW_FMA: Int = 16
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -44,6 +48,17 @@ fn cpuid1_ecx() -> Int { 0 }
 /// off x86-64 and in the body (decision 0254, owner 2026-10-17).
 fn cpuid7_ebx() -> Int { 0 }
 
+/// The low word of x86-64's XCR0 (XGETBV with ECX 0: bit 1 SSE state, bit
+/// 2 AVX state saved by the OS); 0 off x86-64 and in the body (decision
+/// 0385 stage 3).
+fn xgetbv0() -> Int { 0 }
+
+/// x * y + z rounded once by the CPU's fused multiply-add (vfmadd231sd on
+/// x86-64, decision 0385 stage 3). Call it only when hw() has HW_FMA: the
+/// body (a wasm module, an older xo) never runs then, since hw() is 0
+/// there; it rounds twice and is not a fused multiply-add.
+pub fn fma_hw(x: Float, y: Float, z: Float) -> Float { x * y + z }
+
 /// The instructions of this CPU that the callers can use: HW_AES,
 /// HW_CLMUL, and HW_SHA256, looked up once a process (macOS on arm64:
 /// always; Linux on arm64: AT_HWCAP; x86-64: CPUID leaf 1 for AES and
@@ -54,7 +69,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -74,7 +89,11 @@ fn detect() -> Int {
     TargetArch.Amd64 => {
       let c = cpuid1_ecx()
       let b = cpuid7_ebx()
-      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 })
+      // FMA3: CPUID.1 ECX bit 12 (FMA), 27 (OSXSAVE), 28 (AVX), and XCR0
+      // with the SSE and AVX states (bits 1 and 2), as Go's x86HasFMA
+      let fma_bits = (1 << 12) | (1 << 27) | (1 << 28)
+      let fma = (c & fma_bits) == fma_bits && (xgetbv0() & 6) == 6
+      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 })
     }
     _ => 0
   }

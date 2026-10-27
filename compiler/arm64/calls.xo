@@ -1918,6 +1918,17 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         g.set(v, [g.def1(false, "mov $d0, #0", [])])
       }
     }
+    // x86-64's XCR0 low word (decision 0385 stage 3): xgetbv with ecx 0
+    "rt.xgetbv0" => {
+      if g.x86 {
+        g.set(v, [g.x86_atomic_def("xorl %ecx, %ecx\nxgetbv\nmovl %eax, $wd0", [], [XR_AX, XR_CX, XR_DX])])
+      } else {
+        g.set(v, [g.def1(false, "mov $d0, #0", [])])
+      }
+    }
+    // cpu.fma_hw (decision 0385 stage 3): reached on amd64 only (ssa
+    // cpu_call); the x86 retargeting turns fmadd into vfmadd231sd
+    "rt.fma_hw" => g.set(v, [g.def1(true, "fmadd $d0, $u0, $u1, $u2", [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])])
     // and on x86-64 CPUID leaf 1's ECX; rbx (callee saved) kept in r11
     "rt.cpuid1_ecx" => {
       if g.x86 {

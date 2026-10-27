@@ -1,9 +1,8 @@
 # 0385: An explicit fused multiply-add, Float.fma
 
 Status: Accepted (owner, 2026-10-26: explicit FMA only, no implicit
-fusing; written up by Xo Lang 2, 2026-10-26). Stages 1 and 2 built
-(2026-10-26: arm64 1.62 ns a call against Go's 1.75, the software body
-10.9 against Go's 10.4); stage 3 to do.
+fusing; written up by Xo Lang 2, 2026-10-26). Stages 1 to 3 built
+(2026-10-26).
 
 ## Context
 
@@ -101,6 +100,37 @@ library (zero C runtime); the call goes to the software body instead.
    software body, as the AES and SHA-NI paths do (decision 0231). Gated
    by the Docker amd64 sample, and a run under `qemu -cpu` without FMA
    for the fallback.
+
+## Stage 3 as built (2026-10-26)
+
+std/native/llrt/cpu.xo: HW_FMA in hw() when CPUID leaf 1's ECX has FMA
+(bit 12), OSXSAVE (27) and AVX (28) and XCR0 (a new intrinsic,
+`xgetbv0`) has the SSE and AVX states, as Go's x86HasFMA; `fma_hw`, a
+cpu call lowered on amd64 only. The native prelude's float_fma, which
+every target but arm64 calls, branches on hw() between fma_hw and the
+software body. Lowerings: compiler/arm64 calls.xo `rt.fma_hw` as fmadd,
+which the x86 retargeting (x86.xo) writes as movapd to xmm15,
+`vfmadd231sd`, movapd back (any of the operands may be the result);
+`rt.xgetbv0` as xgetbv; compiler/macho enc_amd64.xo encodes both
+(`c4 62 f9 b9 f9` for vfmadd231sd %xmm1, %xmm0, %xmm15; `0f 01 d0`);
+LLVM amd64 emits inline asm for both (llvm.fma.f64 would call libm's fma
+without +fma).
+
+Checked: golden float_fma on the owner's Intel Mac (darwin/amd64, FMA
+present: the hardware path) and in Docker linux/amd64 (FMA present), and
+the software path on x86 by a build with HW_FMA forced off, run in
+Docker; all equal to want.txt. Golden float_fma now prints a NaN result
+as `nan` and digests NaNs as one value: x86-64's default NaN has the
+sign bit set where arm64's does not, which IEEE 754 leaves open (the
+Intel run first differed only there, for `inf * 0 + 1` and
+`inf * 1 - inf`, results the software path computes as x * y + z).
+
+Timing on the Intel Mac (a chain of 10M dependent calls, median of
+three): the hardware path 3.0 ns a call against Go's math.FMA 1.9 ns
+(1.58: a call of float_fma and the hw() check per call, where Go inlines
+the instruction behind a hoisted feature flag); the software path 19.1
+ns against Go's fma.go as plain Go 15.4 (1.24). Inlining float_fma (or
+lowering Float.fma on amd64 to a branch on the hw word) is the next step.
 
 ## Tests
 

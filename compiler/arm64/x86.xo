@@ -791,6 +791,14 @@ fn (var g: G) x86_line(inst: Inst, var x: XT, m: Str, ops: List[Str], single: Bo
       x.lines.push("sqrtsd ${xop(ops[1], 8)}, ${xop(ops[0], 8)}")
       true
     }
+    "fmadd" => {
+      // d = n * m + a rounded once (decision 0385 stage 3; only behind
+      // cpu.hw()'s HW_FMA): through xmm15, so d may be any of n, m, a
+      x.lines.push("movapd ${xop(ops[3], 8)}, %xmm15")
+      x.lines.push("vfmadd231sd ${xop(ops[2], 8)}, ${xop(ops[1], 8)}, %xmm15")
+      x.lines.push("movapd %xmm15, ${xop(ops[0], 8)}")
+      true
+    }
     "frintz" | "frintm" | "frintp" => {
       let mode = match m {
         "frintz" => 3

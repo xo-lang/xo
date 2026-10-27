@@ -759,6 +759,12 @@ fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
       e.byte(0x0f)
       return e.byte(0xa2)
     }
+    // XCR0 in edx:eax for ecx 0 (decision 0385 stage 3's FMA check)
+    "xgetbv" => {
+      e.byte(0x0f)
+      e.byte(0x01)
+      return e.byte(0xd0)
+    }
     "syscall" => {
       e.byte(0x0f)
       return e.byte(0x05)
@@ -837,6 +843,23 @@ fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
     e.byte(0x38)
     e.byte(0xf6)
     return e.modrm(ops[1].reg, ops[0])
+  }
+  if mn == "vfmadd231sd" {
+    // VEX.LIG.66.0F38.W1 b9 /r (decision 0385 stage 3): AT&T order
+    // xmm3/m64, xmm2, xmm1; xmm1 = xmm2 * xmm3 + xmm1
+    if n != 3 || ops[1].kind != XO_REG || ops[2].kind != XO_REG || ops[1].rclass != RC_XMM || ops[2].rclass != RC_XMM {
+      return e.fail("vfmadd231sd takes xmm/m64, xmm, xmm")
+    }
+    e.seg(ops[0])
+    let rx = rm_rex(ops[0])
+    let r = if ops[2].reg >= 8 { 0 } else { 0x80 }
+    let x = if rx & 2 != 0 { 0 } else { 0x40 }
+    let b = if rx & 1 != 0 { 0 } else { 0x20 }
+    e.byte(0xc4)
+    e.byte(r | x | b | 0x02)
+    e.byte(0x80 | ((15 - ops[1].reg) << 3) | 0x01)
+    e.byte(0xb9)
+    return e.modrm(ops[2].reg, ops[0])
   }
   if mn is "mulxq" | "mulxl" {
     // VEX.LZ.F2.0F38.W1 f6 /r: mulx r/m, vvvv, reg

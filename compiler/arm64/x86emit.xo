@@ -2033,7 +2033,7 @@ fn x86_keeps_regs(l: Str, rs: List[Str]) -> Bool {
   let body = l[1..l.len()]
   let sp = body.find(" ") ?? body.len()
   let m = body[0..sp]
-  if m.starts_with("j") || m.starts_with("call") || m.starts_with("ret") || m.starts_with("push") || m.starts_with("pop") || m.starts_with("xchg") || m.starts_with("cmpxchg") || m.starts_with("xadd") || m is "leave" | "ud2" | "syscall" | "cqto" | "cqo" | "cltq" | "cltd" | "cpuid" | "rdtsc" || m.ends_with(":") {
+  if m.starts_with("j") || m.starts_with("call") || m.starts_with("ret") || m.starts_with("push") || m.starts_with("pop") || m.starts_with("xchg") || m.starts_with("cmpxchg") || m.starts_with("xadd") || m is "leave" | "ud2" | "syscall" | "cqto" | "cqo" | "cltq" | "cltd" | "cpuid" | "xgetbv" | "rdtsc" || m.ends_with(":") {
     return false
   }
   let ops = x86_ops(body[sp..body.len()].trim())

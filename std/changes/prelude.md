@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-10-26: perf: Float.fma uses x86-64's FMA3 when the CPU has it (decision 0385 stage 3)
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0385's plan
+- Go reference: math.FMA (Go uses vfmadd231sd behind x86HasFMA)
+- Test: golden float_fma on the owner's Intel Mac (hardware path), in Docker linux/amd64, and with HW_FMA forced off in Docker (software path): all equal to want.txt; arm64, LLVM, Go parity and wasm goldens unchanged; the golden prints NaN results as `nan` (x86's default NaN is negative)
+- Timing: Intel Mac, 10M dependent calls, median of three: 3.0 ns a call against Go's 1.9 (1.58; the call and the hw() check per call), the software path 19.1 against Go's fma.go 15.4
+
+On x86-64 a CPU with FMA, AVX and an OS that saves the AVX state runs
+`x.fma(y, z)` as vfmadd231sd; any other runs Go's software algorithm, with
+the same results.
 ## 2026-10-26: perf: Float.fma is one fmadd on arm64 (decision 0385 stage 2)
 
 - Kind: perf

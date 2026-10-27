@@ -6,6 +6,7 @@
 use native/llrt/atomic
 use native/llrt/cabi
 use native/llrt/chan
+use native/llrt/cpu
 use native/llrt/cabi_c
 use native/llrt/cabi_libc
 use native/llrt/cabi_wincrt
@@ -4343,7 +4344,14 @@ fn float_atan2(f: Float, x: Float) -> Float { gomath.atan2(f, x) }
 
 fn float_hypot(f: Float, y: Float) -> Float { gomath.hypot(f, y) }
 
-fn float_fma(f: Float, y: Float, z: Float) -> Float { gomath.fma(f, y, z) }
+/// Float.fma off arm64 (where it is fmadd, compiler/ssa): x86-64's FMA3
+/// when the CPU has it (decision 0385 stage 3), else Go's software body
+fn float_fma(f: Float, y: Float, z: Float) -> Float {
+  if (cpu.hw() & cpu.HW_FMA) != 0 {
+    return cpu.fma_hw(f, y, z)
+  }
+  gomath.fma(f, y, z)
+}
 
 fn float_mod(f: Float, y: Float) -> Float { gomath.mod(f, y) }
 

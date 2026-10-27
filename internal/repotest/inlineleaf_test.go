@@ -36,7 +36,7 @@ var inlineNotLeaf = map[string]string{
 	"rt.unwind_resume": "the unwinder", "rt.unwind_save": "the unwinder",
 	"rt.stack_switch": "a stack switch", "rt.fiber_start_addr": "a fiber's entry",
 	"rt.frame_addr": "the frame pointer chain",
-	"rt.cpuid1_ecx": "cpuid", "rt.cpuid7_ebx": "cpuid",
+	"rt.cpuid1_ecx": "cpuid", "rt.cpuid7_ebx": "cpuid", "rt.xgetbv0": "xgetbv",
 	"rt.ticks": "the clock's counter", "rt.ticks_hz": "the clock's counter",
 	"rt.tlocal_addr": "thread local storage", "rt.tlocal_get": "thread local storage", "rt.tlocal_set": "thread local storage",
 }
