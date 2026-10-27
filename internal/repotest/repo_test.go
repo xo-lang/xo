@@ -332,3 +332,91 @@ func TestAtomicOrderConstants(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+// rawAddrIssues finds, in the source of a std/native file, a local buffer
+// whose address is bound to a variable (`let t = raw.bytes_addr(b)` or
+// raw.data(b)) and which is not mentioned again in its function: reference
+// counting releases a value after its last use, so the Int address
+// outlives the buffer and later reads and writes through it hit freed
+// memory (lz4.compress, a SIGSEGV in cold xo builds when the large block
+// cache was full, 2026-10-27). A later mention keeps it alive:
+// `keep_bytes(b)` after the last raw access, or the buffer returned or
+// passed on. An address used inside the statement that takes it is
+// consumed before the release, and a literal is never released. Each
+// result is "line: name".
+func rawAddrIssues(src string) []string {
+	fnLine := regexp.MustCompile(`^\s*(?:pub\s+)?fn\s`)
+	local := regexp.MustCompile(`^\s*(?:let|var)\s+(\w+)\b`)
+	literal := regexp.MustCompile(`^\s*(?:let|var)\s+(\w+)(?:\s*:\s*\w+)?\s*=\s*b?"[^"$]*"\s*$`)
+	bound := regexp.MustCompile(`^\s*(?:let|var)\s+\w+(?:\s*:\s*\w+)?\s*=\s*raw\.(?:bytes_addr|data)\((\w+)\)`)
+	lines := strings.Split(src, "\n")
+	var out []string
+	start := 0
+	flush := func(end int) {
+		body := lines[start:end]
+		defined := map[string]bool{}
+		for _, l := range body {
+			if m := local.FindStringSubmatch(l); m != nil {
+				defined[m[1]] = true
+			}
+			if m := literal.FindStringSubmatch(l); m != nil {
+				defined[m[1]] = false // never released
+			}
+		}
+		for i, l := range body {
+			m := bound.FindStringSubmatch(l)
+			if m == nil || !defined[m[1]] {
+				continue // not bound to a variable, a parameter or a field, or a literal
+			}
+			word := regexp.MustCompile(`\b` + m[1] + `\b`)
+			kept := false
+			for _, later := range body[i+1:] {
+				if word.MatchString(later) {
+					kept = true
+				}
+			}
+			if !kept {
+				out = append(out, strconv.Itoa(start+i+1)+": "+m[1])
+			}
+		}
+	}
+	for i, l := range lines {
+		if fnLine.MatchString(l) {
+			flush(i)
+			start = i
+		}
+	}
+	flush(len(lines))
+	return out
+}
+
+// TestRawAddrKeepsBuffer: no function of std/native takes the address of
+// a local buffer it does not use again (see rawAddrIssues).
+func TestRawAddrKeepsBuffer(t *testing.T) {
+	bad := "fn f() {\n  let tab = raw.bytes_buf(8)\n  let t = raw.bytes_addr(tab)\n  rt.mem_set(t, 0, 8)\n}\n"
+	if got := rawAddrIssues(bad); len(got) != 1 || got[0] != "3: tab" {
+		t.Fatalf("the checker missed lz4.compress's old pattern: %v", got)
+	}
+	good := "fn f() {\n  let tab = raw.bytes_buf(8)\n  let t = raw.bytes_addr(tab)\n  rt.mem_set(t, 0, 8)\n  keep_bytes(tab)\n}\nfn g(p: Bytes) {\n  let a = raw.bytes_addr(p)\n}\n"
+	if got := rawAddrIssues(good); len(got) != 0 {
+		t.Fatalf("the checker flags a kept buffer or a parameter: %v", got)
+	}
+	err := filepath.WalkDir(filepath.Join(root, "std", "native"), func(p string, d os.DirEntry, err error) error {
+		if err != nil || d.IsDir() || !strings.HasSuffix(p, ".xo") || strings.HasSuffix(p, "_test.xo") {
+			return err
+		}
+		src, err := os.ReadFile(p)
+		if err != nil {
+			return err
+		}
+		rel, _ := filepath.Rel(root, p)
+		for _, issue := range rawAddrIssues(string(src)) {
+			ln, name, _ := strings.Cut(issue, ": ")
+			t.Errorf("%s:%s: the address of %s is taken and %s is not used again in the function; reference counting releases it after its last use (add keep_bytes(%s) after the last raw access)", filepath.ToSlash(rel), ln, name, name, name)
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+}

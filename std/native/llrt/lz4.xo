@@ -155,10 +155,22 @@ pub fn compress(src: Bytes) -> Bytes {
       // the position two back, for the next search
       rt.mem_store(t, 4 * hash4(u32_at(s, ip - 2), hlog), ip - 1, 4)
     }
+    keep_bytes(tab)
   }
   // the last literals
   o = put_seq(d, o, s, anchor, n, 0, 0)
   raw.bytes_len(dst, o)
+}
+
+/// A use of b after its last raw access: reference counting releases a
+/// value after its last use, and the table's address t outlives tab's
+/// last use as an Int (the 256 KiB table was released, then unmapped
+/// when the large block cache was full, under the memset and every
+/// probe: a SIGSEGV in a cold build, 2026-10-27).
+fn keep_bytes(b: Bytes) {
+  if b.len() < 0 {
+    return
+  }
 }
 
 /// The n bytes of the LZ4 block src[start..]; None when it is not a
