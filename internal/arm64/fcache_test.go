@@ -3284,3 +3284,90 @@ func TestWindowsWarmEditEntryShims(t *testing.T) {
 		t.Errorf("the edit through the cache differs from a build with the cache off")
 	}
 }
+
+// TestLinkKeyFollowsObjects: the link's cache key names each object by
+// its back-end cache key (2026-10-27), not by hashing its bytes. Through
+// one backend and one binary cache, a body edit, its revert, and the same
+// source built from another directory (with --trimpath=false the debug
+// information's slots name it, so its binary differs) each give the file a cold build in fresh caches writes: a key that
+// missed a change would serve the earlier binary.
+func TestLinkKeyFollowsObjects(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-linkkey-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	srcs := []string{filepath.Join(work, "a", "src"), filepath.Join(work, "b", "src")}
+	for _, s := range srcs {
+		if err := os.CopyFS(s, os.DirFS(filepath.Join(root, "bench", "perf", "llvm", "xo", "fib"))); err != nil {
+			t.Fatal(err)
+		}
+	}
+	n := 0
+	// build src through caches (or fresh ones when cold), the output named
+	// prog in a directory of its own (an ad hoc signature names the file)
+	build := func(src string, cold bool) []byte {
+		t.Helper()
+		n++
+		cache, bin := filepath.Join(work, "cache"), filepath.Join(work, "bin")
+		if cold {
+			cache, bin = filepath.Join(work, fmt.Sprintf("cold%d", n), "cache"), filepath.Join(work, fmt.Sprintf("cold%d", n), "bin")
+		}
+		out := filepath.Join(work, fmt.Sprintf("out%d", n), "prog")
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--phase-times", "--trimpath=false", "-o", out, "."))
+		cmd.Dir = src
+		// no run cache, so each build links (or takes its link from the
+		// binary cache)
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BIN_CACHE="+bin, "XO_BACKEND_CACHE=on", "XO_WHOLE_BUILD=off")
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build: %v\n%s", err, log)
+		}
+		if !strings.Contains(string(log), "cache parts ") {
+			t.Fatalf("not a split build, so no object has a cache key:\n%s", log)
+		}
+		b, err := os.ReadFile(out)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	edit := func(src, from, to string) {
+		t.Helper()
+		f := filepath.Join(src, "main.xo")
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		e := strings.Replace(string(b), from, to, 1)
+		if e == string(b) {
+			t.Fatalf("main.xo has no %q", from)
+		}
+		if err := os.WriteFile(f, []byte(e), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	first := build(srcs[0], false)
+	edit(srcs[0], "if n < 2 {", "if n < 3 {")
+	if got, want := build(srcs[0], false), build(srcs[0], true); !bytes.Equal(got, want) {
+		t.Errorf("the edited build differs from a cold build of the edit")
+	}
+	edit(srcs[0], "if n < 3 {", "if n < 2 {")
+	if got := build(srcs[0], false); !bytes.Equal(got, first) {
+		t.Errorf("the reverted build differs from the first build")
+	}
+	if got, want := build(srcs[1], false), build(srcs[1], true); !bytes.Equal(got, want) {
+		t.Errorf("the build from another directory differs from a cold build there")
+	}
+}

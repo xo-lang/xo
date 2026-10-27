@@ -1639,7 +1639,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           tl = lap(os, phases, "link.tz", tl)
         }
         // the build information (decision 0354 stage 2)
-        match binfo_object(os, dir, native_build_info(os, o, "amd64", "${tgoos}/${tgoarch}", inl_fb), tgoos, tgoarch, true) {
+        match binfo_object(os, dir, native_build_info(os, ctx, o, "amd64", "${tgoos}/${tgoarch}", inl_fb), tgoos, tgoarch, true) {
           Ok(p) => zsrcs.push(p)
           Err(e) => fail(os, "${e}")
         }
@@ -1710,6 +1710,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // the program's assembly: one file, or the files of a parallel
     // generation, which assemble apart (arm64.generate_parallel)
     var progs = [s]
+    // each object's cache key, for the link's (macho_bin_key)
+    var obj_keys: Map[Str, Str] = {}
     if p.parts.len() > 1 {
       progs = []
       for (i, part) in p.parts.indexed() {
@@ -1727,15 +1729,18 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       var objs: List[Str] = []
       var assembled: List[Result[Bytes, Str]] = []
       var nasm = 0
+      var okeys: List[Str] = []
       match inc {
         Some(r) => {
           assembled = r.objs
           nasm = r.nasm
+          okeys = r.okeys
         }
         None => {
-          let (a, n, _okeys) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", jobs)
+          let (a, n, ok) = cached_macho_objects(os, ctx, srcs, tgoos == "linux", march == "amd64", jobs)
           assembled = a
           nasm = n
+          okeys = ok
         }
       }
       for (i, r) in assembled.indexed() {
@@ -1743,7 +1748,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         match r {
           // the real paths in its .debug_str slots (a cached object
           // names no worktree)
-          Ok(b) => write_or_fail(os, dir, obj, if gm.debug_info { arm64.dw_slots_obj(b, gm.comp_dir, gm.std_root) } else { b })
+          Ok(b) => {
+            write_or_fail(os, dir, obj, if gm.debug_info { arm64.dw_slots_obj(b, gm.comp_dir, gm.std_root) } else { b })
+            // the link's key names the object by its cache key and what
+            // the slots took, not by hashing its bytes again (about 5 ms
+            // of llvm-fib's edit, 2026-10-27)
+            if i < okeys.len() && !okeys[i].is_empty() {
+              obj_keys[obj.trim_prefix("${dir}/")] = "obj ${okeys[i]} dw=${gm.debug_info} ${gm.comp_dir} ${gm.std_root}"
+            }
+          }
           Err(e) => fail(os, "assembler: ${e}")
         }
         objs.push(obj)
@@ -1766,7 +1779,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // --debug-info=split (decision 0355): the DWARF in PROG.debug
       // (linux) or PROG.dSYM (darwin) beside the program, not in it
       let split_dbg = gm.debug_info && debug_info_eff(o, release) == "split"
-      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }), srcs, o.strip, nl, race_rt, o.dsym, release)
+      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }), srcs, o.strip, nl, race_rt, o.dsym, release, obj_keys)
       let mst = stage(os, ctx, bin)
       let (mhit, mentry) = fetch_bin(os, ctx, mkey, mst.bin)
       if !mhit {
@@ -2107,7 +2120,7 @@ fn link_inputs(os: Os, ctx: Ctx, o: Opts, c: check.Checker, dir: Str, code: Str,
     lk.link_only = if tgoos == "darwin" { ["-Wl,-x"] } else { ["-s"] }
   }
   // the build information (decision 0354 stage 2)
-  match binfo_object(os, dir, native_build_info(os, o, backend, "${tgoos}/${tgoarch}", inline_fb), tgoos, tgoarch, no_cc) {
+  match binfo_object(os, dir, native_build_info(os, ctx, o, backend, "${tgoos}/${tgoarch}", inline_fb), tgoos, tgoarch, no_cc) {
     Ok(p) => {
       lk.srcs.push(p)
       if !no_cc {

@@ -249,6 +249,8 @@ struct IncrOut {
   nasm: Int = 0
   facts: List[arm64.HFacts] = []
   live: List[List[Bool]] = []
+  /// each object's key in the cache (hobj), which fixes its bytes
+  okeys: List[Str] = []
 }
 
 /// The objects of parts (Mach-O, arm64 or amd64) with the functions
@@ -404,6 +406,7 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, elf
     prune_backend_cache(os, "hobj", dir, stored)
   }
   out.nasm = amiss.len()
+  out.okeys = okeys
   out.undef = arm64.undef_combine(ufs)
   Some(out)
 }

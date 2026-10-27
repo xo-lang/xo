@@ -18,7 +18,7 @@ use std/crypto
 /// a native binary carries it as the symbol xo_buildinfo (binfo_object).
 /// `xo replay` and `xo version -m` find it by its `{"id":"` prefix.
 fn build_info_json(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o: Opts, backend: Str, target: Str) -> Str {
-  build_info(os, sources, dir, wd, std_dir, o, backend, target, "").0
+  build_info(os, sources, dir, wd, std_dir, o, backend, target, "", "").0
 }
 
 /// build_info_json and the one line a native crash report prints of it
@@ -27,7 +27,7 @@ fn build_info_json(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: S
 /// build fell back from (built without inlining; "" for none): recorded
 /// so `xo version -m` shows it and `xo bench --ab` refuses the binary
 /// (gotchas/arm64-inline-verify-fallback.md), outside the build ID.
-fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o: Opts, backend: Str, target: Str, inline_fb: Str) -> (Str, Str) {
+fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o: Opts, backend: Str, target: Str, inline_fb: Str, memo_dir: Str) -> (Str, Str) {
   let paths = sources.keys().sort()
   var h = StrBuilder.new()
   for p in paths {
@@ -49,23 +49,7 @@ fn build_info(os: Os, sources: Map[Str, Str], dir: Str, wd: Str, std_dir: Str, o
     h.write("stamp ${n}=${v.quote()}\n")
   }
   // the runtime's files, as embedded (rt/*.go, rt/*.s), in lexical order
-  var rt: List[Str] = []
-  match os.fs.read_dir("${std_dir}/rt") {
-    Ok(fis) => {
-      for fi in fis {
-        if fi.name.ends_with(".go") || fi.name.ends_with(".s") {
-          rt.push(fi.name)
-        }
-      }
-    }
-    // xo:allow XO0903 a wrong program id only misses the Go build cache
-    Err(_) => {}
-  }
-  for name in rt.sort() {
-    // xo:allow XO0903 a wrong program id only misses the Go build cache
-    let data = os.fs.read("${std_dir}/rt/${name}").ok() ?? b""
-    h.write("rt/${name} ${crypto.sha256(data).to_hex()}\n")
-  }
+  h.write(rt_sums(os, std_dir, memo_dir))
   let id = crypto.sha256(h.freeze().bytes()).to_hex().bytes()[0..24].to_str() ?? ""
   // a native binary records no directory (dir "": the path of the build
   // is not shipped, as Go's -trimpath); the Go backend's replay rebuilds
@@ -220,8 +204,58 @@ fn binfo_link_flags(goos: Str) -> List[Str] {
 /// build_info for a native build of o's directories, with the source
 /// hashes build_native took before lowering released the checker
 /// (decision 0352).
-fn native_build_info(os: Os, o: Opts, backend: Str, target: Str, inline_fb: Str) -> (Str, Str) {
-  build_info(os, o.binfo_sources, "", o.wd, o.std, o, backend, target, inline_fb)
+fn native_build_info(os: Os, ctx: Ctx, o: Opts, backend: Str, target: Str, inline_fb: Str) -> (Str, Str) {
+  build_info(os, o.binfo_sources, "", o.wd, o.std, o, backend, target, inline_fb, backend_cache_dir(os, ctx))
+}
+
+/// The lines `rt/NAME SHA256` of the runtime's files (build_info), from
+/// memo_dir's rtsum/ ("" for none) under the hash of every file's path,
+/// size and modified time (file_stamp, tool_id_memo's limit): hashing
+/// std/rt's 2.1 MB took about 6 ms of every native build, an edit's
+/// included (2026-10-27).
+fn rt_sums(os: Os, std_dir: Str, memo_dir: Str) -> Str {
+  var rt: List[Str] = []
+  match os.fs.read_dir("${std_dir}/rt") {
+    Ok(fis) => {
+      for fi in fis {
+        if fi.name.ends_with(".go") || fi.name.ends_with(".s") {
+          rt.push(fi.name)
+        }
+      }
+    }
+    // xo:allow XO0903 a wrong program id only misses the Go build cache
+    Err(_) => {}
+  }
+  let names = rt.sort()
+  var memo = ""
+  if !memo_dir.is_empty() {
+    var st = StrBuilder.new()
+    st.write("xo rt sums v1\n${std_dir}\n")
+    for name in names {
+      st.write(file_stamp(os, "${std_dir}/rt/${name}"))
+    }
+    memo = "${memo_dir}/rtsum/${crypto.sha256(st.freeze().bytes()).to_hex()}"
+    match os.fs.read(memo) {
+      Ok(b) => {
+        if let Some(v) = b.to_str() {
+          return v
+        }
+      }
+      // xo:allow XO0903 a memo: a failed read hashes the files
+      Err(_) => {}
+    }
+  }
+  var h = StrBuilder.new()
+  for name in names {
+    // xo:allow XO0903 a wrong program id only misses the Go build cache
+    let data = os.fs.read("${std_dir}/rt/${name}").ok() ?? b""
+    h.write("rt/${name} ${crypto.sha256(data).to_hex()}\n")
+  }
+  let out = h.freeze()
+  if !memo.is_empty() {
+    cache_put(os, memo, out.bytes())
+  }
+  out
 }
 
 /// The sha256 of each of the program's sources (not std's), keyed by its

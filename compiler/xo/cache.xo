@@ -191,7 +191,7 @@ fn bin_cache_dir(os: Os, ctx: Ctx, tests: Bool) -> Str {
 /// contents, sorted by path, skipping the top level directories skip
 /// names (a name ending in * is a prefix). false when a file cannot be
 /// read.
-fn key_tree(os: Os, var k: Key, dir: Str, skip: List[Str]) -> Bool {
+fn key_tree(os: Os, var k: Key, dir: Str, skip: List[Str], known: Map[Str, Str]) -> Bool {
   let all = match os.fs.walk(dir) {
     Ok(fs) => fs
     Err(_) => return false
@@ -216,6 +216,11 @@ fn key_tree(os: Os, var k: Key, dir: Str, skip: List[Str]) -> Bool {
     }
   }
   for rel in files.sort() {
+    if let Some(d) = known.get(rel) {
+      k.str(rel)
+      k.str(d)
+      continue
+    }
     match os.fs.read("${dir}/${rel}") {
       Ok(data) => {
         k.str(rel)
@@ -252,7 +257,7 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
     root = (os.fs.read_text(memo).ok() ?? "").trim()
   }
   k.str("sysroot ${root} ${os.env.get("XO_SYSROOT") ?? ""}")
-  if !key_tree(os, k, dir, ["bin"]) {
+  if !key_tree(os, k, dir, ["bin"], {}) {
     return ""
   }
   k.sum()
@@ -266,7 +271,7 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
 /// cache is off or an input cannot be read. A test build linked by
 /// compiler/macho never used the cache (internal/arm64: 9 lookups in a
 /// full run, 2026-10-20).
-fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs: List[Str], strip: Bool, nolibc: Bool, race_rt: Str, dsym: Bool, release: Bool) -> Str {
+fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs: List[Str], strip: Bool, nolibc: Bool, race_rt: Str, dsym: Bool, release: Bool, known: Map[Str, Str]) -> Str {
   if ctx.bin_cache.is_empty() {
     return ""
   }
@@ -294,7 +299,7 @@ fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs:
       }
     }
   }
-  if !key_tree(os, k, dir, ["bin"]) {
+  if !key_tree(os, k, dir, ["bin"], known) {
     return ""
   }
   k.sum()
@@ -319,7 +324,7 @@ fn go_bin_key(os: Os, ctx: Ctx, gocmd: Str, dir: Str, args: List[Str], t: Str, r
     }
     k.str(tool_id_memo(os, ctx, "cc", ["--version"]))
   }
-  if !key_tree(os, k, dir, ["bin", "llvm*", "arm64*"]) {
+  if !key_tree(os, k, dir, ["bin", "llvm*", "arm64*"], {}) {
     return ""
   }
   k.sum()
