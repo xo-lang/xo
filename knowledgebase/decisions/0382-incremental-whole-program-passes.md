@@ -145,6 +145,16 @@ code differed from a plain build's (TestDebugInfoSameCode), and TestBackendCache
 TestFrontCacheMovedBodies failed, while XO_BACKEND_CACHE=verify passed. The chained key leaves
 out an input that differs across programs or build flags. The default (off) is unaffected.
 
+Fixed (2026-10-27, Xo Lang 1; gotchas/key-by-entry-misses-replay-context.md): the replay sets more
+than the entry's bytes (absolute lines, the build's name, closure, constant and spawn site numbers),
+so the key also hashes those (ssa key_replayed, CLN v3), and every entry carries its body's full key,
+which XO_BACKEND_CACHE=verify compares (a key that left out an input fails verify even where the
+output agrees). internal/arm64 TestChainKeysSharedCache builds nine goldens into one cache, cold
+and warm, against the cache-off builds; it failed on 8 of 18 builds before the fix.
+Still open before a default: under XO_CHAIN_KEYS=1 an edit reads no part from the part cache
+(TestBackendCacheEditIdentity's part check on linux/arm64, linux/amd64 and darwin/amd64; functions
+718 of 719 reused, parts 0 of 16), on main's xo as well, so the edit regenerates every part.
+
 ## Expected effect (to be measured)
 
 The edit's middle phases (108 ms) fall toward the cost of the 10 changed functions and the key

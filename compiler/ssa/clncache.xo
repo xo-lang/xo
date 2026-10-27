@@ -12,7 +12,7 @@ use std/crypto
 
 /// The version of the keys (the entries are the reference counting
 /// cache's encoding, RC_CACHE_VERSION).
-const CLN_CACHE_VERSION = "xo cln cache v2"
+const CLN_CACHE_VERSION = "xo cln cache v3"
 
 /// What a key hashes besides a function's own SSA (decision 0382 stage
 /// 3): the front end entry each function's body replayed or was recorded
@@ -46,6 +46,7 @@ pub fn cln_key(m: Module, fi: Int, faults: List[Bool], tk: List[Str], id: Str, f
   b.write_str("${CLN_CACHE_VERSION}\n${id}\n${flags}\n${m.goarch}\n")
   if let Some(e) = facts.fe.get(fi) {
     b.write_str("fe ${crypto.sha256(e).to_hex()}\n")
+    key_replayed(b, f, tk)
   } else {
     key_func(b, f, tk)
   }
@@ -143,6 +144,58 @@ pub fn cln_keys(m: Module, faults: List[Bool], tk: List[Str], id: Str, flags: St
   keys
 }
 
+/// An entry's stored form: the function's entry (cln_entry), a newline,
+/// and the key its body has in full (cln_full_keys: no front end entry
+/// in place of the body), which verify compares with this build's to
+/// catch an input the key left out even where the output is the same.
+pub fn cln_seal(e: Bytes, full: Str) -> Bytes { e + b"\n" + full.bytes() }
+
+/// The function's entry of a stored one (cln_seal).
+pub fn cln_body(d: Bytes) -> Bytes { if d.len() < 65 { b"" } else { d[0..d.len() - 65] } }
+
+/// The full key a stored entry was made from (cln_seal).
+pub fn cln_full_of(d: Bytes) -> Str { if d.len() < 65 { "" } else { d[d.len() - 64..d.len()].to_str() ?? "" } }
+
+/// cln_key of functions idx with each body in full (key_func), not by
+/// its front end entry, on up to jobs tasks.
+pub fn cln_full_keys(m: Module, faults: List[Bool], tk: List[Str], id: Str, flags: Str, facts: ClnFacts, idx: List[Int], jobs: Int) -> Map[Int, Str] {
+  let ff = ClnFacts{pre: facts.pre, may: facts.may, known: facts.known}
+  let fl = flags
+  let n = idx.len()
+  var out: Map[Int, Str] = {}
+  if n == 0 {
+    return out
+  }
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min((n + 31) / 32).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, Str)] {
+        var mine: List[(Int, Str)] = []
+        while true {
+          let i = next.add(32) - 32
+          if i >= n {
+            break
+          }
+          for j in i..(i + 32).min(n) {
+            mine.push((idx[j], cln_key(m, idx[j], faults, tk, id, fl, ff)))
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Str)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  for (fi, k) in done {
+    out[fi] = k
+  }
+  out
+}
+
 /// Function f after the landings and the cleanup as a cache entry; none
 /// when it holds what an entry cannot (encode_func).
 pub fn cln_entry(m: Module, f: Func) -> Option[Bytes] { encode_func(m, f) }
@@ -181,7 +234,7 @@ pub fn cln_hits(m: Module, keys: List[Str], entries: Map[Str, Bytes], jobs: Int)
           }
           for j in i..(i + 32).min(n) {
             let fi = todo[j]
-            if let Some(g) = decode_func(mt, entries.get(keys[fi]) ?? b"", ops) {
+            if let Some(g) = decode_func(mt, cln_body(entries.get(keys[fi]) ?? b""), ops) {
               mine.push((fi, g))
             }
           }

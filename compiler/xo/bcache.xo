@@ -451,11 +451,33 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
   let verify = backend_cache_mode(os) == "verify"
   let faults = ssa.cln_faults(b.m)
   let tk = ssa.type_keys(b.m)
-  let keys = ssa.cln_keys(b.m, faults, tk, id, b.cln_flags("${settings}\nimm=${b.imm_rc} nolibc=${b.m.nolibc_start},${b.m.nolibc} opv=${b.m.op_verify}"), b.cln_facts(), jobs)
+  let flags = b.cln_flags("${settings}\nimm=${b.imm_rc} nolibc=${b.m.nolibc_start},${b.m.nolibc} opv=${b.m.op_verify}")
+  let facts = b.cln_facts()
+  let keys = ssa.cln_keys(b.m, faults, tk, id, flags, facts, jobs)
   t = lap(os, phases, "cln.keys", t)
   let (entries, pk) = cache_get_packed(os, dir, "cln", b.m.goarch, keys, jobs)
   let hits = ssa.cln_hits(b.m, keys, entries, jobs)
   t = lap(os, phases, "cln.read", t)
+  // the full key of each body an entry is stored for (a miss), and with
+  // verify of every one: an entry whose full key is not this body's was
+  // found by a key that left out an input
+  var fidx: List[Int] = []
+  for (fi, k) in keys.indexed() {
+    if verify || !entries.contains(k) {
+      fidx.push(fi)
+    }
+  }
+  let full = ssa.cln_full_keys(b.m, faults, tk, id, flags, facts, fidx, jobs)
+  var bad: List[Str] = []
+  if verify {
+    for (fi, k) in keys.indexed() {
+      if let Some(old) = entries.get(k) {
+        if ssa.cln_full_of(old) != (full.get(fi) ?? "") {
+          bad.push("${b.m.funcs[fi].name} (its key matched an entry made from another body: the key leaves out an input)")
+        }
+      }
+    }
+  }
   var skip: Map[Int, Bool] = {}
   if !verify {
     for (fi, _) in hits {
@@ -473,16 +495,15 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
     }
   }
   var stores: List[(Str, Bytes)] = []
-  var bad: List[Str] = []
   for (fi, e) in ssa.cln_encode(b.m, todo, jobs) {
     let k = keys[fi]
     match entries.get(k) {
       Some(old) => {
-        if verify && old != e {
+        if verify && ssa.cln_body(old) != e {
           bad.push(b.m.funcs[fi].name)
         }
       }
-      None => stores.push((k, e))
+      None => stores.push((k, ssa.cln_seal(e, full.get(fi) ?? "")))
     }
   }
   for (fi, g) in hits {

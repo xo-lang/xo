@@ -57,7 +57,7 @@ test "a cln key changes with a callee's may_fault bit, the flags and the identit
   expect(cln_key(m, m.func_index("f"), m.may_fault(), type_keys(m), "xo-id2", "fl", ClnFacts{}) == k) == false
 }
 
-test "a replayed body's cln key is its front end entry's, with its callees' prune_unwind and fold bits" {
+test "a replayed body's cln key is its front end entry's and what the replay set, with its callees' prune_unwind and fold bits" {
   let m = calls_module(false)
   let fi = m.func_index("f")
   let faults = m.may_fault()
@@ -66,12 +66,24 @@ test "a replayed body's cln key is its front end entry's, with its callees' prun
   let facts = ClnFacts{fe: {fi: b"fe entry"}, pre: [false, true, false], may: [false, false, false], known: ["", "", ""]}
   let k = cln_key(m, fi, faults, tk, "id", "fl", facts)
   expect(k == key_of(m, "f", "fl")) == false
-  // the body is not hashed: the entry's key stands for it
+  // the body's ops are not hashed: the entry's key stands for them
   var m2 = m
   var f2 = m2.funcs[fi]
-  let _c = f2.add(0, Op.Const, -1, Aux.I(n: 7), [])
+  f2.values[0].op = Op.Undef
   m2.funcs[fi] = f2
   expect(cln_key(m2, fi, faults, tk, "id", "fl", facts)) == k
+  // what a replay sets beyond the entry is (key_replayed): a line moved
+  // with its declaration, a constant numbered as this build numbers it
+  var m3 = m
+  var f3 = m3.funcs[fi]
+  f3.values[0].line += 4096
+  m3.funcs[fi] = f3
+  expect(cln_key(m3, fi, faults, tk, "id", "fl", facts) == k) == false
+  var m4 = m
+  var f4 = m4.funcs[fi]
+  let _c = f4.add(0, Op.Const, -1, Aux.I(n: 7), [])
+  m4.funcs[fi] = f4
+  expect(cln_key(m4, fi, faults, tk, "id", "fl", facts) == k) == false
   expect(cln_key(m, fi, faults, tk, "id", "fl", ClnFacts{fe: {fi: b"fe entry 2"}, pre: facts.pre, may: facts.may, known: facts.known}) == k) == false
   // a callee's bit before prune_unwind, its cancel bit and its constant
   expect(cln_key(m, fi, faults, tk, "id", "fl", ClnFacts{fe: facts.fe, pre: [false, true, true], may: facts.may, known: facts.known}) == k) == false
@@ -133,4 +145,11 @@ test "a function with a body id is keyed by it, one without by its body" {
   expect(changed == full) == false
   m.body_ids = []
   expect(body_key(m, fi)) == changed
+}
+
+test "a stored cln entry carries its body's full key" {
+  let d = cln_seal(b"entry bytes", "${"ab".repeat(32)}")
+  expect(cln_body(d)) == b"entry bytes"
+  expect(cln_full_of(d)) == "ab".repeat(32)
+  expect(cln_body(b"short")) == b""
 }

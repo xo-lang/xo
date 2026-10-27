@@ -333,6 +333,13 @@ fn tkey(tk: List[Str], t: Int) -> Str {
 /// straight into b (no text per value: it ran on every function of every
 /// build, twice), the bytes ints_line and interpolation wrote before.
 fn key_func(var b: BytesBuilder, f: Func, tk: List[Str]) {
+  key_head(b, f, tk)
+  key_blocks(b, f, tk)
+}
+
+/// What key_func writes of f but its blocks, values and edges: its
+/// name, flags, signature by type key and land_rest.
+fn key_head(var b: BytesBuilder, f: Func, tk: List[Str]) {
   b.write_str("func ")
   write_int(b, f.name.len())
   b.write_str(":${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[")
@@ -355,6 +362,10 @@ fn key_func(var b: BytesBuilder, f: Func, tk: List[Str]) {
   b.write_str("\nland_rest [")
   write_ints(b, lr.sort())
   b.write_str("]\n")
+}
+
+/// What key_func writes of f after key_head.
+fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str]) {
   for (bi, bl) in f.blocks.indexed() {
     b.write_byte('b')
     write_int(b, bi)
@@ -401,6 +412,37 @@ fn key_func(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_str(" [")
     write_ints(b, e.args)
     b.write_str("]\n")
+  }
+  for d in f.dvars {
+    b.write_str("dvar ${d.name.len()}:${d.name} ${tkey(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
+  }
+  for d in f.dbinds {
+    b.write_str("dbind ${d.dvar} ${d.value} ${d.line}\n")
+  }
+}
+
+/// What a front end replay (fecache.xo fe_replay) sets of a body beyond
+/// its entry's bytes, for a key that hashes those bytes in place of the
+/// body (clncache.xo cln_key): the header (the name and target this
+/// build gives it), and each value's line and position (shift_lines: an
+/// entry's lines are relative to its declaration's), aux (fe_rename's
+/// closure names, fe_const_ids' constant numbers, fe_site_ids' spawn
+/// sites) and type by key, and the debug rows' lines. A cache hit keyed
+/// by the entry alone took another build's numbering (2026-10-27: TLS
+/// goldens read the wrong constants, a moved body kept its old lines).
+fn key_replayed(var b: BytesBuilder, f: Func, tk: List[Str]) {
+  key_head(b, f, tk)
+  for x in f.values {
+    write_int(b, x.line)
+    b.write_byte(' ')
+    write_int(b, x.pos.len())
+    b.write_byte(':')
+    b.write_str(x.pos)
+    b.write_byte(' ')
+    key_aux(b, x.aux)
+    b.write_byte(' ')
+    b.write_str(tkey(tk, x.ty))
+    b.write_byte('\n')
   }
   for d in f.dvars {
     b.write_str("dvar ${d.name.len()}:${d.name} ${tkey(tk, d.ty)} ${d.line} ${d.param} ${d.inl}\n")
