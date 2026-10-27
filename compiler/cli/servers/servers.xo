@@ -7,6 +7,8 @@
 // `xo serve` answers) run this program again as a child process with
 // XO_NO_SERVE=1, where the Go implementation calls its `run` in process.
 
+use github.com/xo-lang/xo/compiler/hostpath
+
 /// The toolchain version lsp reports in serverInfo: cmd/xo version.go's
 /// `version` (TestXo1ServersVersion compares them).
 pub const XO_VERSION = "0.33.0"
@@ -24,7 +26,7 @@ pub fn is_command(cmd: Str) -> Bool {
 /// made absolute against the working directory when it is relative.
 pub fn self_program(os: Os) -> Str uses env {
   let p = os.env.program()
-  if p.contains("/") && !p.starts_with("/") {
+  if p.contains("/") && !hostpath.is_abs(p) {
     let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
     if !wd.is_empty() {
       return wd.trim_suffix("/") + "/" + p.trim_prefix("./")

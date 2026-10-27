@@ -248,7 +248,7 @@ fn tool_stamp(os: Os, goos: Str, name: Str) -> Str {
       Ok(Some(t)) => t
       _ => break
     }
-    p = if t.starts_with("/") { t } else { "${dir_name(p)}/${t}" }
+    p = if hostpath.is_abs(t) { t } else { "${dir_name(p)}/${t}" }
     hops += 1
   }
   if goos == "darwin" && p.starts_with("/usr/bin/") {

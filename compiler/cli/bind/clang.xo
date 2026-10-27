@@ -28,7 +28,8 @@ fn look_path(os: Os, name: Str) -> Str uses (env, fs.read) {
   if name.contains("/") {
     return if is_file(os, name) { name } else { "" }
   }
-  for d0 in (os.env.get("PATH") ?? "").split(":") {
+  // ";" separates on Windows, where ":" follows a drive letter
+  for d0 in (os.env.get("PATH") ?? "").split(if hostpath.windows() { ";" } else { ":" }) {
     let d = if d0.is_empty() { "." } else { d0 }
     let p = "${d}/${name}"
     if is_file(os, p) {

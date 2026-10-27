@@ -932,7 +932,7 @@ fn prof_tests(os: Os, o: TestOpts) uses (fs, stdio) {
 
 /// The XO_TRACE of `xo test --trace` (decision 0240): absolute, with %p.
 fn trace_path(o: TestOpts) -> Str {
-  let p = if o.trace.starts_with("/") { o.trace } else { "${o.profile_dir}/${o.trace}" }
+  let p = if hostpath.is_abs(o.trace) { o.trace } else { "${o.profile_dir}/${o.trace}" }
   if p.contains("%p") { p } else { "${p}.%p" }
 }
 

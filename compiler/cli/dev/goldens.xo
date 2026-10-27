@@ -15,6 +15,7 @@
 
 use std/task
 use github.com/xo-lang/xo/compiler/prune
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// One golden program.
 pub struct Prog {
@@ -349,7 +350,7 @@ fn run_one(os: Os, cfg: Config, key: Str, p: Prog) -> Outcome {
     args.push(a)
   }
   let wd = os.env.get("PWD") ?? "."
-  let abs = if p.dir.starts_with("/") { p.dir } else { "${wd}/${p.dir}" }
+  let abs = hostpath.abs(wd, p.dir)
   var c = os.proc.cmd(cfg.xo, args).dir(p.dir).stdin(h.stdin).set_env("XO_LEAKCHECK", "1").set_env("PWD", abs).set_env("XO_INLINE_STRICT", cfg.inline_strict)
   // env.txt is the program's environment, and xo sees it too: a HOME such
   // as env_dirs' /home/test has no user cache to build in

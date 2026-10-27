@@ -550,3 +550,8 @@ test "a user type with a generic method implements an interface's generic method
   expect(errs.len()) == 1
   expect(errs[0].contains("\"line\":15,") && errs[0].contains("found `Bad`")) == true
 }
+
+test "a go.mod's go line" {
+  expect(go_mod_go_line("module m\n\ngo 1.26.0 // the toolchain's\n\nrequire x v1\n")) == "1.26.0"
+  expect(go_mod_go_line("module m\n")) == ""
+}

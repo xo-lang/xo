@@ -8,6 +8,7 @@
 // for a header next to the module).
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/hostpath
 
 /// What `use c` adds to a link: C sources, objects, and archives, and -l
 /// flags; err is set when a binding cannot be linked.
@@ -64,7 +65,7 @@ fn c_inputs(os: Os, c: check.Checker, dir: Str) -> CInputs {
       for l in parts[1].split(",") {
         if !l.contains("/") && !base_name(l).contains(".") {
           mlibs.push(l)
-        } else if l.starts_with("/") {
+        } else if hostpath.is_abs(l) {
           files.push(l)
         } else {
           return CInputs{err: "`use c \"${m.c_header}\"` links ${l} relative to its module, which xo1 does not resolve for a header on the include path"}

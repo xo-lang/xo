@@ -254,6 +254,9 @@ pub struct Module {
   pub go_adapter: Str = ""
   pub go_require: List[Str] = []
   pub go_sum: Str = ""
+  /// the binding workspace's go line (`go mod` raises it to the highest
+  /// of its requirements'), "" for none
+  pub go_line: Str = ""
 }
 
 /// An import of a file: the module it names, -1 when the path did not

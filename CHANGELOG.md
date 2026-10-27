@@ -6,6 +6,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `use go` on Windows finds the shipped bin/xo-gobind.exe (beside xo.exe, a
+  release layout, or PATH split on `;`), where it looked for `xo-gobind`
+  with no `.exe` and took only `/` paths as directories (Windows tester,
+  0.33.0, bug 13)
+- `xo mod tidy` on Windows no longer doubles `C:/` paths (`C:/w/C:/w/x`):
+  its absolute path check, and six others in the CLI, use the host's path
+  rules (Windows tester, 0.33.0, bug 15)
+- `use go` of a Go module whose go.mod has a patch-level go line
+  (golang.org/x/text: `go 1.26.0`) builds with the Go backend: the generated
+  go.mod's go line is at least the binding workspace's, where `go 1.26`
+  stopped go build with "updates to go.mod needed" (Intel tester, 0.33.0,
+  b16)
+- `xo mod tidy` in a fresh clone with a `require go` pin and no binding yet
+  stops with XO1320 ("run `xo check` once, then `xo mod tidy` again")
+  instead of exiting 0 without the pin's xo.lock lines (Intel tester,
+  0.33.0, b17)
 - A windows/amd64 build writes its PDB faster: the DWARF reader pushes each
   variable and inlined call in place instead of copying its function out and
   back, keeps its abstract origins' records in a list indexed by a map, and

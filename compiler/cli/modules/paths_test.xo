@@ -1,0 +1,18 @@
+// is_local by Windows' path rules on any host (Windows tester, 0.33.0,
+// bug 15: `C:/...` passed as local, and tidy joined it to the working
+// directory, doubling the volume).
+
+test "a Windows path with a volume is not local" {
+  expect(is_local_w("C:/x/y", true)) == false
+  expect(is_local_w("C:x", true)) == false
+  expect(is_local_w("//srv/share/x", true)) == false
+  expect(is_local_w("/x", true)) == false
+  expect(is_local_w("x/y", true)) == true
+  expect(is_local_w("../x", true)) == false
+}
+
+test "the Unix rules are unchanged" {
+  expect(is_local_w("/x", false)) == false
+  expect(is_local_w("x/y", false)) == true
+  expect(is_local_w("C:/x", false)) == true
+}
