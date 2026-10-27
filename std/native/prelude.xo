@@ -20,7 +20,8 @@ use native/llrt/cabi_tw
 // exports.xo) lower to cabi_net's exports in every program that uses the
 // network: imported here, not only through std/native/http (a program
 // with os.net and no std/http linked only while every build loaded
-// std/testing, 2026-10-27)
+// std/testing, 2026-10-27); its exports are built only for a program
+// that makes a network call (ssa importer_built, uses_net)
 use native/llrt/cabi_net
 use native/llrt/fault
 use native/llrt/fsops

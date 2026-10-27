@@ -655,6 +655,14 @@ fn (var b: Builder) importer_built(mi: Int) -> Bool {
     if !b.decl_mods.contains(m.path) {
       continue
     }
+    // the native prelude imports cabi_net only so that os.net's runtime
+    // calls resolve in a program without std/http (03fadf54e): it is
+    // built in every program, so counting it built the network's
+    // runtime into each (llvm-fib: 129 functions, about 11 ms of an
+    // edit); uses_net above decides for os.net
+    if m.path == "native/prelude" && path == "native/llrt/cabi_net" {
+      continue
+    }
     for f in m.files {
       for (_, imp) in b.c.files[f].imports.entries() {
         if imp.module == mi {
@@ -2786,6 +2794,9 @@ fn (var b: Builder) rt(name: Str, t0: Int, args: List[Int]) -> Int {
   var t = t0
   if t < 0 {
     t = b.unit_t()
+  }
+  if net_rt(name) {
+    b.set_flag(2)
   }
   b.add(Op.Call, t, Aux.S(s: "rt.${name}"), args)
 }

@@ -52,3 +52,10 @@ pub fn rt_export(name: Str) -> Str {
 pub fn rt_export_none(name: Str) -> Bool {
   name is "rt.net_listen" | "rt.net_dial" | "rt.listener_accept" | "rt.listener_addr" | "rt.conn_read"
 }
+
+/// Whether the C runtime call rt.<name> lowers to an export of
+/// native/llrt/cabi_net (rt_export's netconn rows): a body that makes one
+/// sets uses_net, which builds cabi_net's exports (importer_built).
+fn net_rt(name: Str) -> Bool {
+  name is "listener_close" | "conn_write" | "conn_close" | "net_listen" | "net_dial" | "listener_accept" | "listener_addr" | "conn_read" | "net_status" | "net_msg"
+}
