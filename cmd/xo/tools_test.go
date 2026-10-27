@@ -2687,3 +2687,22 @@ func TestLookupsCompactText(t *testing.T) {
 		t.Errorf("refs --json (%v, %d references):\n%s", err, len(v.References), js)
 	}
 }
+
+// TestQueryStdModuleOutsideModule: `xo query api std/json` in a directory
+// with no module loads the std module, as def and callers do, and lists
+// its surface (std's declarations carry no pub); `deps std/json` says
+// std packages are not followed (they printed an empty list and "no
+// package ... among the checked modules", 2026-10-26).
+func TestQueryStdModuleOutsideModule(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"query", "api", "--dir=" + dir, "--text", "std/json"}, &out, &errOut); code != 0 || !strings.Contains(out.String(), "fn decode") {
+		t.Errorf("query api std/json outside a module: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"query", "deps", "--dir=" + dir, "--text", "std/json"}, &out, &errOut); code != 1 || !strings.Contains(errOut.String(), "is a std module") {
+		t.Errorf("query deps std/json: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+}

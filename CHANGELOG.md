@@ -21,6 +21,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `XO_PASSES=+hollow` until an x86_64 Mach-O binary of it had run: the Intel
   tester's v0.32.0 round ran a hollowed web server through CRUD, 404, load and
   SIGINT). `XO_PASSES=-hollow` turns it off.
+- `xo query api std/json` lists std/json's surface outside a module too (it
+  printed an empty list: the module was not loaded, and std's declarations
+  carry no `pub`); `xo query deps` and `imports` of a std module say std
+  packages are not followed instead of "no package among the checked
+  modules".
 - Every native build is about 10 ms faster to start: the C toolchain's identity
   (`cc --version` and a stat(1) of it, which the run cache's key reads) is
   remembered across builds in the backend cache, keyed by the size and

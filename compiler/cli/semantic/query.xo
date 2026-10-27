@@ -929,7 +929,11 @@ pub fn (s: Session) api(path: Str) -> (Str, List[QDef]) ! Str {
 
 /// The declarations of m, pub ones only unless all; test files and test
 /// blocks left out; files in path order.
-pub fn (s: Session) surface(m: Int, all: Bool) -> List[QDef] {
+pub fn (s: Session) surface(m: Int, all0: Bool) -> List[QDef] {
+  // a std module's declaration file is all surface: its declarations
+  // carry no `pub` (std/json.xo's `fn decode`; `xo query api std/json`
+  // listed nothing, 2026-10-26)
+  let all = all0 || s.c.mods[m].is_std
   var out: List[QDef] = []
   var files: List[(Str, Int)] = []
   for f in s.c.mods[m].files {
@@ -1054,7 +1058,11 @@ pub struct ImportsResult {
 /// std or a Go binding too.
 pub fn (s: Session) imports(path: Str, transitive: Bool) -> ImportsResult ! Str {
   let m0 = s.module_by_path(path)
-  if m0 < 0 || s.c.mods[m0].is_std {
+  if m0 >= 0 && s.c.mods[m0].is_std || m0 < 0 && (path.starts_with("std/") || path.starts_with("native/")) {
+    // imports and deps follow a program's packages; std's are not followed
+    return Err("${path.quote()} is a std module: imports and deps list a program's packages, and std ones are not followed (xo query api ${path} lists its surface)")
+  }
+  if m0 < 0 {
     return Err("no package ${path.quote()} among the checked modules")
   }
   var denied: Map[Str, Str] = {}
@@ -1141,7 +1149,9 @@ fn imports_json(r: ImportsResult) -> JVal {
 
 fn semantic_query(os: Os, kind: Str, dirs: List[Str], rest: List[Str], file: Str, line: Int, col: Int, as_json: Bool) -> Int uses env, fs, proc, stdio {
   // a name may be a std or runtime module's the program does not import
-  let names = if kind is "def" | "callers" | "effects" { rest } else { [] }
+  // (api names a module: a std one loads too, so `xo query api std/json`
+  // outside a module answers)
+  let names = if kind is "def" | "callers" | "effects" | "api" { rest } else { [] }
   // def, api, imports and deps read declarations only, and callers the
   // bodies that spell the name's last segment (XO_LOOKUP_EAGER=1: every
   // body; TestQueryLookupsEager)
