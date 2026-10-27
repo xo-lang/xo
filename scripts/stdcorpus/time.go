@@ -540,6 +540,11 @@ func timeCorpus() string {
 	}
 	o.WriteString("]\n")
 
+	// The negative year of the Date display test below: date() refuses years
+	// below 1, so only a Date value reaches that branch, and its oracle is
+	// Go's twin, time.Date(-44, 3, 15, ...).Format("2006-01-02").
+	negYear := time.Date(-44, 3, 15, 0, 0, 0, 0, time.UTC).Format("2006-01-02")
+
 	o.WriteString(`
 fn show3(bad: List[(Str, Str, Str)]) -> List[(Str, Str, Str)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
@@ -765,6 +770,26 @@ test "Date.days_until is the whole days between the two dates" {
 test "local with a fake Env reads no TZ and gives utc" {
   let z = time.local(os.env)?
   expect(z.name()) == "UTC"
+}
+
+test "a Date, a Zone and a ZoneErr display as std.md 13 and Go spell them" {
+  // the date's own test: four digit zero padded (std.md 2789 gives
+  // 2026-10-09), and a negative year keeps its sign instead of four digits;
+  // date() refuses years below 1, so that value is a Date literal and its
+  // expectation is Go's time.Date(-44, 3, 15).Format("2006-01-02")
+  expect(time.date(2026, 10, 9)?.display()) == "2026-10-09"
+  expect(time.date(5, 1, 2)?.display()) == "0005-01-02"
+  expect(time.Date{year: -44, month: 3, day: 15}.display()) == ` + xq(negYear) + `
+  // a zone displays as the label it was loaded by
+  expect(time.utc().display()) == "UTC"
+  expect(time.zone("Europe/Berlin")?.display()) == "Europe/Berlin"
+  // ZoneErr's two messages
+  let unknown = match time.zone("Nowhere/Nothing") {
+    Ok(z) => "loaded ${z.name()}"
+    Err(e) => e.display()
+  }
+  expect(unknown) == "unknown time zone \"Nowhere/Nothing\""
+  expect(time.ZoneErr.NoLocal(msg: "the system zone is not set").display()) == "cannot determine the local time zone: the system zone is not set"
 }
 `)
 	return o.String()
