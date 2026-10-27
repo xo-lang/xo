@@ -852,7 +852,7 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
     var imp: Import? = None
     if env.file >= 0 {
       imp = c.files[env.file].imports.get(mid.name)
-      if imp == None && mid.name == b"testing" && c.files[env.file].is_test {
+      if imp == None && mid.name == b"testing" && (c.files[env.file].is_test || (c.ctx >= 0 && c.ctxs[c.ctx].is_test)) {
         imp = Some(Import{module: c.testing_mod(), path: b"std/testing"})
       }
     }
