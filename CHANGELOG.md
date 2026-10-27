@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `use go` with an xo-gobind from another xo (an old one on PATH, or
+  XO_GOBIND) is XO1101 naming the helper and both binding formats
+  ("xo-gobind at PATH wrote binding format 5, this xo reads 7"), where every
+  check said only that no current binding existed
 - The windows/amd64 linker builds each output section as bytes appended
   whole, with its relocations written over them, where it pushed every input
   byte into a list and wrote every output byte alone; the HTTP server's edit
