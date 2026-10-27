@@ -97,8 +97,27 @@ func RunCachedClang(real string, args []string) int {
 	}
 	entry := filepath.Join(dir, "clang-"+key)
 	stored := filepath.Join(entry, "out")
+	// a link given -oso_prefix records its LTO object relative to that
+	// directory, so the object must stay where the build put it (moved into
+	// the entry, its debug map named a path outside the prefix and xo's
+	// dsymutil --oso-prepend-path found no DWARF, on a miss and a hit
+	// alike: 2026-10-26, ten internal/llvm debug info tests); the entry
+	// keeps a copy, restored on a hit with the modification time the debug
+	// map recorded
+	keepLTO := lto != "" && hasOSOPrefix(args)
+	ltoPath := strings.TrimPrefix(lto, ltoFlag)
+	storedLTO := ""
+	if lto != "" {
+		storedLTO = filepath.Join(entry, filepath.Base(ltoPath))
+	}
 	if isFile(filepath.Join(entry, "done")) {
 		if err := copyExe(stored, out); err == nil {
+			if keepLTO {
+				if err := copyKeepTime(storedLTO, ltoPath); err != nil {
+					// no object for the debug map: build it again
+					return runClang(real, args)
+				}
+			}
 			now := time.Now()
 			os.Chtimes(entry, now, now)
 			return 0
@@ -113,7 +132,7 @@ func RunCachedClang(real string, args []string) int {
 		return runClang(real, args)
 	}
 	run := args
-	if lto != "" {
+	if lto != "" && !keepLTO {
 		run = make([]string, len(args))
 		for i, a := range args {
 			if a == lto {
@@ -131,11 +150,50 @@ func RunCachedClang(real string, args []string) int {
 		os.RemoveAll(entry)
 		return 0
 	}
+	if keepLTO {
+		if err := copyKeepTime(ltoPath, storedLTO); err != nil {
+			os.RemoveAll(entry)
+			return 0
+		}
+	}
 	os.WriteFile(filepath.Join(entry, "done"), nil, 0o644)
 	return 0
 }
 
 const ltoFlag = "-Wl,-object_path_lto,"
+
+// hasOSOPrefix reports whether args give the link -oso_prefix.
+func hasOSOPrefix(args []string) bool {
+	for _, a := range args {
+		if strings.HasPrefix(a, osoFlag) {
+			return true
+		}
+	}
+	return false
+}
+
+// copyKeepTime copies the file src to dst with src's modification time
+// (a debug map records each object's, and dsymutil skips an object whose
+// time differs).
+func copyKeepTime(src, dst string) error {
+	st, err := os.Stat(src)
+	if err != nil {
+		return err
+	}
+	data, err := os.ReadFile(src)
+	if err != nil {
+		return err
+	}
+	tmp := dst + ".tmp-clangcache"
+	if err := os.WriteFile(tmp, data, 0o644); err != nil {
+		return err
+	}
+	if err := os.Chtimes(tmp, st.ModTime(), st.ModTime()); err != nil {
+		os.Remove(tmp)
+		return err
+	}
+	return os.Rename(tmp, dst)
+}
 
 // osoFlag strips a directory from the object paths of the debug map
 // (xo's darwin LLVM link).
@@ -165,7 +223,10 @@ func selfContainedC(src []byte) bool {
 // alone (no output, a C or assembly source, the preprocessor).
 func clangKey(real string, args []string) (key, out, lto string, ok bool) {
 	h := sha256.New()
-	fmt.Fprintf(h, "clang1\n%s\n%s\n%s/%s\n%s\n", real, ccVersion(real), runtime.GOOS, runtime.GOARCH, os.Getenv("XO_SYSROOT"))
+	// clang2: entries of -oso_prefix links made before their LTO object
+	// stayed in the build's directory hold binaries whose debug map names
+	// the cache entry's (2026-10-26); none is reused
+	fmt.Fprintf(h, "clang2\n%s\n%s\n%s/%s\n%s\n", real, ccVersion(real), runtime.GOOS, runtime.GOARCH, os.Getenv("XO_SYSROOT"))
 	for i := 0; i < len(args); i++ {
 		a := args[i]
 		switch {

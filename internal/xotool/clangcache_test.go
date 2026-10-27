@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 )
 
 // TestClangKey: the clang cache's key follows the inputs' contents and
@@ -65,5 +66,31 @@ func TestClangKey(t *testing.T) {
 	}
 	if key("-c", b) != "" {
 		t.Errorf("a call with no -o was cached")
+	}
+}
+
+// TestCopyKeepTime: a cached link's LTO object comes back with the
+// modification time the binary's debug map recorded, or dsymutil skips it
+// (an -oso_prefix link keeps the object in the build's directory, 2026-10-26).
+func TestCopyKeepTime(t *testing.T) {
+	dir := t.TempDir()
+	src := filepath.Join(dir, "lto.o")
+	if err := os.WriteFile(src, []byte("object"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	old := time.Date(2026, 10, 1, 12, 0, 0, 0, time.UTC)
+	if err := os.Chtimes(src, old, old); err != nil {
+		t.Fatal(err)
+	}
+	dst := filepath.Join(dir, "sub-lto.o")
+	if err := copyKeepTime(src, dst); err != nil {
+		t.Fatal(err)
+	}
+	st, err := os.Stat(dst)
+	if err != nil || !st.ModTime().Equal(old) {
+		t.Fatalf("copy's time %v (%v), want %v", st.ModTime(), err, old)
+	}
+	if !hasOSOPrefix([]string{"-O2", osoFlag + "/b/"}) || hasOSOPrefix([]string{"-O2"}) {
+		t.Error("hasOSOPrefix")
 	}
 }
