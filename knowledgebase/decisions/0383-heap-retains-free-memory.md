@@ -266,6 +266,27 @@ lacks cannot be built by it) and a seed bump needs the owner. Follow-up: replace
 intrinsic (rt.heap_scavenge, with its wasm lowering) after the next seed cut, so the flag does not become
 permanent by accident; the comments at alloc.xo free_mt and cabi.xo heap_grow say the same.
 
+## Per class central locks (2026-10-27)
+
+The cut path (a) cost about +3% wall on the cold self build (1.031, CI 1.027 to
+1.039) while the layout alone was free (1.003). Batching the cut under one lock hold
+per side did not help (1.038), and a CPU profile put the extra time in
+`alloc.alloc` and `alloc_pop` (cold reads of reused blocks), not in lock waits; the
+cost was the single `heapos.lock` being held across the cut by a growing thread while
+every other thread's refill and flush waited for it.
+
+Change: one lock word per size class instead of the one heap lock (as Go's mcentral):
+`cen + CLOCK (2048) + (c << 6)`, taken by `alloc.clock(h, cen, c)` (a CAS fast path;
+contended, `rt.heap_grow(h, LOCK_SLOW + c)` parks, counted in W_LOCKS) and released
+by `cunlock` (swap to 0; a 2 wakes through `LOCK_WAKE + c`). The central table page
+is 8 KiB. `cut_for` takes the donor class's lock to detach up to `XO_CUT` KiB
+(default 1024, 0 = off) of magazines, cuts them without a lock, and splices the
+result under the requested class's lock.
+
+Measured (20 rounds, quiet, cold self build of compiler/xo, A main, B this): wall
+1.001 (0.998 to 1.002), RSS within noise. The cut's 3% is gone and its footprint
+saving (-0.75 GB peak) stays.
+
 ## Gate (for every step)
 
 The fixed point (scripts/bootstrap-xo.sh s2 and s3 identical), a self build's peak RSS and peak

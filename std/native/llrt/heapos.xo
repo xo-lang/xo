@@ -419,6 +419,11 @@ const CUT_BYTES = 1048576
 const CUT_OFF = 1056
 
 /// XO_CUT=0: no growth cuts a magazine (decision 0383, (a)).
+pub fn set_cut_kb(kb: Int) {
+  let cen = rt.mem_load(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_CENTRAL, 8)
+  rt.mem_store(cen, CUT_OFF + 8, kb, 8)
+}
+
 pub fn set_cut_off() {
   let cen = rt.mem_load(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_CENTRAL, 8)
   rt.mem_store(cen, CUT_OFF, 1, 8)
@@ -464,31 +469,59 @@ pub fn cut_for(h: Int, n: Int) -> Bool {
   }
   let stride = size.wrapping_add(8)
   let cap = rt.mem_load(fl, H_MAG_CAP, 8)
+  // the magazines of the smallest larger class that has some, up to
+  // CUT_BYTES of them, detached from its list in one hold of that class's
+  // lock (a class is looked at without it, then again with it)
+  var want = rt.mem_load(cen, CUT_OFF + 8, 8).wrapping_shl(10)
+  if want == 0 {
+    want = CUT_BYTES
+  }
+  var d = c.wrapping_add(1)
+  var first = 0
+  var last = 0
+  var dsize = 0
+  var dstride = 0
+  while d <= CUT_MAX_CLASS && first == 0 {
+    if rt.slot_load(cen, d, RELAXED) != 0 {
+      clock(cen, d)
+      first = rt.slot_load(cen, d, RELAXED)
+      if first != 0 {
+        dsize = d.wrapping_shl(4)
+        if d > 64 {
+          dsize = (2048).wrapping_shl(d.wrapping_sub(65)) - 8
+        }
+        dstride = dsize.wrapping_add(8)
+        // a magazine is cap blocks of the donor class
+        var dcap = rt.mem_load(h.wrapping_add(d.wrapping_shl(3)), H_MAG_CAP, 8)
+        if dcap == 0 {
+          dcap = 8
+        }
+        var got = dcap.wrapping_mul(dstride)
+        last = first
+        while got < want && rt.mem_load(last, 8, 8) != 0 {
+          last = rt.mem_load(last, 8, 8)
+          got = got.wrapping_add(dcap.wrapping_mul(dstride))
+        }
+        rt.slot_store(cen, d, rt.mem_load(last, 8, 8), RELAXED)
+      }
+      cunlock(cen, d)
+    }
+    if first == 0 {
+      d = d.wrapping_add(1)
+    }
+  }
+  if first == 0 {
+    return false
+  }
+  rt.mem_store(last, 8, 0, 8)
+  // cut them; whole magazines of class c are chained by their link word
   var head = 0
   var have = 0
-  var cut = 0
-  while cut < CUT_BYTES {
-    // the smallest class above c with a magazine, taken off its list
-    lock()
-    var d = c.wrapping_add(1)
-    var m = 0
-    while d <= CUT_MAX_CLASS && m == 0 {
-      m = rt.slot_load(cen, d, RELAXED)
-      if m != 0 {
-        rt.slot_store(cen, d, rt.mem_load(m, 8, 8), RELAXED)
-      } else {
-        d = d.wrapping_add(1)
-      }
-    }
-    unlock()
-    if m == 0 {
-      break
-    }
-    var dsize = d.wrapping_shl(4)
-    if d > 64 {
-      dsize = (2048).wrapping_shl(d.wrapping_sub(65)) - 8
-    }
-    let dstride = dsize.wrapping_add(8)
+  var outhead = 0
+  var outtail = 0
+  var m = first
+  while m != 0 {
+    let nextm = rt.mem_load(m, 8, 8)
     var r = m
     while r != 0 {
       let next = rt.mem_load(r, 0, 8)
@@ -502,26 +535,66 @@ pub fn cut_for(h: Int, n: Int) -> Bool {
         head = p
         have = have.wrapping_add(1)
         if have == cap {
-          // a whole magazine to the central list
-          lock()
-          rt.mem_store(head, 8, rt.slot_load(cen, c, RELAXED), 8)
-          rt.slot_store(cen, c, head, RELAXED)
-          unlock()
+          rt.mem_store(head, 8, outhead, 8)
+          if outhead == 0 {
+            outtail = head
+          }
+          outhead = head
           head = 0
           have = 0
         }
         off = off.wrapping_add(stride)
       }
-      cut = cut.wrapping_add(dstride)
       r = next
     }
+    m = nextm
+  }
+  if outhead != 0 {
+    // the whole magazines to the central list in one hold
+    clock(cen, c)
+    rt.mem_store(outtail, 8, rt.slot_load(cen, c, RELAXED), 8)
+    rt.slot_store(cen, c, outhead, RELAXED)
+    cunlock(cen, c)
   }
   if have != 0 {
     rt.mem_store(fl, H_FREE_LISTS, head, 8)
     rt.mem_store(fl, H_NFREE, have, 8)
     return true
   }
-  rt.mem_load(h, H_CENTRAL, 8) != 0 && rt.slot_load(cen, c, RELAXED) != 0
+  rt.slot_load(cen, c, RELAXED) != 0
+}
+
+/// The central table page holds a lock word for each size class from CLOCK,
+/// 64 bytes apart (alloc.xo CLOCK, clock, cunlock).
+const CLOCK = 2048
+
+fn clock_word(cen: Int, c: Int) -> Int { cen.wrapping_add(CLOCK).wrapping_add(c.wrapping_shl(6)) }
+
+/// The contended path of alloc.xo's clock for class c: spins and sleeps on the
+/// word (pool.lock_slow).
+pub fn clock_slow(h: Int, c: Int) {
+  pool.lock_slow(clock_word(rt.mem_load(h, H_CENTRAL, 8), c))
+}
+
+/// Wakes a thread asleep on class c's lock word.
+pub fn clock_wake(h: Int, c: Int) {
+  pool.futex_wake(clock_word(rt.mem_load(h, H_CENTRAL, 8), c))
+}
+
+/// Takes class c's central lock for this module's own use (cut_for).
+fn clock(cen: Int, c: Int) {
+  let l = clock_word(cen, c)
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    pool.lock_slow(l)
+  }
+  pool.held(1)
+}
+
+fn cunlock(cen: Int, c: Int) {
+  pool.held(-1)
+  if rt.slot_swap(clock_word(cen, c), 0, 0, RELEASE) == 2 {
+    pool.futex_wake(clock_word(cen, c))
+  }
 }
 
 /// Takes the central lists' lock.
@@ -609,7 +682,7 @@ pub fn main_record() -> Int {
   rt.mem_store(h, H_MID_MAX, if sanhook.user_mode() || sanhook.gorace() { 0 } else { MID_MAX }, 8)
   rt.mem_store(h, H_COUNT, 1, 8)
   rt.mem_store(h, H_SAMPLE_AT, NEVER, 8)
-  rt.mem_store(h, H_CENTRAL, map(8 * NCLASS1), 8)
+  rt.mem_store(h, H_CENTRAL, map(8192), 8)
   rt.mem_store(rt.static_word(W_HEAPS), 0, h, 8)
   rt.mem_store(rt.static_word(W_HSIZE), 0, H_SIZE, 8)
   h

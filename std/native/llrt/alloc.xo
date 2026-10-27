@@ -92,6 +92,19 @@ const SCAVENGE = 2305843009213693952
 
 const SMALL_MAX = 1024
 
+/// The lock of each size class's central list (decision 0383): a word of
+/// its own, 64 bytes apart (a cache line each), in the central table page
+/// from CLOCK, taken as pool.lock takes a word (0 free, 1 held, 2 held and
+/// a waiter sleeps); the slow path and the wake ride on rt.heap_grow like
+/// SCAVENGE (cabi.xo heap_grow, heapos.xo clock_slow, clock_wake).
+const CLOCK = 2048
+const LOCK_SLOW = 1152921504606846976
+const LOCK_WAKE = 576460752303423488
+/// sched.xo TLS_W and layout.xo W_LOCKS: the worker's count of runtime locks
+/// held (pool.held), which keeps the preemption from yielding inside one.
+const TLS_W = 2
+const W_LOCKS = 3464
+
 /// The payload of the first class of the power of two blocks (class 65): a
 /// block of these classes is 2^k bytes with its 8 byte class word, so
 /// the blocks of a larger class are an exact number of the smaller class's
@@ -109,6 +122,32 @@ const MAG_BYTES = 65536
 
 /// The slot atomics' relaxed order.
 const RELAXED = 0
+const ACQUIRE = 1
+const RELEASE = 2
+
+/// Takes the lock of class c's central list (the table page cen of heap h).
+fn clock(h: Int, cen: Int, c: Int) {
+  let l = cen.wrapping_add(CLOCK).wrapping_add(c.wrapping_shl(6))
+  if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
+    let _s = rt.heap_grow(h, LOCK_SLOW.wrapping_add(c))
+  }
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    rt.mem_store(w, W_LOCKS, rt.mem_load(w, W_LOCKS, 8).wrapping_add(1), 8)
+  }
+}
+
+/// Gives it back, waking a thread that sleeps on it.
+fn cunlock(h: Int, cen: Int, c: Int) {
+  let w = rt.tlocal_get(TLS_W)
+  if w != 0 {
+    rt.mem_store(w, W_LOCKS, rt.mem_load(w, W_LOCKS, 8).wrapping_sub(1), 8)
+  }
+  let l = cen.wrapping_add(CLOCK).wrapping_add(c.wrapping_shl(6))
+  if rt.slot_swap(l, 0, 0, RELEASE) == 2 {
+    let _s = rt.heap_grow(h, LOCK_WAKE.wrapping_add(c))
+  }
+}
 
 /// A block of n bytes from heap h (xo_rt.c alloc_in): the head of its
 /// class's free list, else carved from the chunk, or a big block above
@@ -206,12 +245,12 @@ fn refill_alloc(h: Int, n: Int, c: Int, size: Int) -> Int {
   } else {
     // central_take: a magazine is linked by its first block's second word
     let cen = rt.mem_load(h, CENTRAL, 8)
-    rt.heap_lock()
+    clock(h, cen, c)
     m = rt.slot_load(cen, c, RELAXED)
     if m != 0 {
       rt.slot_store(cen, c, rt.mem_load(m, 8, 8), RELAXED)
     }
-    rt.heap_unlock()
+    cunlock(h, cen, c)
   }
   if m != 0 {
     rt.mem_store(fl, FREE_LISTS, m, 8)
@@ -360,12 +399,12 @@ pub fn refill(h: Int, n: Int) {
     if rt.slot_load(cen, c, RELAXED) == 0 {
       return
     }
-    rt.heap_lock()
+    clock(h, cen, c)
     m = rt.slot_load(cen, c, RELAXED)
     if m != 0 {
       rt.slot_store(cen, c, rt.mem_load(m, 8, 8), RELAXED)
     }
-    rt.heap_unlock()
+    cunlock(h, cen, c)
     if m == 0 {
       return
     }
@@ -460,21 +499,21 @@ pub fn free_mt(h: Int, p: Int) {
     // lock and before old is linked, while this thread alone holds it
     if c >= SCAVENGE_FROM {
       var k = 0
-      rt.heap_lock()
+      clock(h, cen, c)
       var w = rt.slot_load(cen, c, RELAXED)
       while w != 0 && k < SCAVENGE_KEEP {
         w = rt.mem_load(w, 8, 8)
         k = k.wrapping_add(1)
       }
-      rt.heap_unlock()
+      cunlock(h, cen, c)
       if k >= SCAVENGE_KEEP {
         let _g = rt.heap_grow(old, SCAVENGE.wrapping_add(c))
       }
     }
-    rt.heap_lock()
+    clock(h, cen, c)
     rt.mem_store(old, 8, rt.slot_load(cen, c, RELAXED), 8)
     rt.slot_store(cen, c, old, RELAXED)
-    rt.heap_unlock()
+    cunlock(h, cen, c)
   }
   rt.mem_store(fl, MAG, rt.mem_load(fl, FREE_LISTS, 8), 8)
   rt.mem_store(fl, FREE_LISTS, 0, 8)

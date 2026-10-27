@@ -275,6 +275,16 @@ fn heap_grow(h: Int, n: Int) -> Int {
     heapos.scavenge(h, n - SCAVENGE)
     return 0
   }
+  // the per class locks of the central lists (alloc.xo clock, cunlock): h is
+  // the heap, the class is added to the flag
+  if n >= LOCK_SLOW && n < SCAVENGE {
+    heapos.clock_slow(h, n - LOCK_SLOW)
+    return 0
+  }
+  if n >= LOCK_WAKE && n < LOCK_SLOW {
+    heapos.clock_wake(h, n - LOCK_WAKE)
+    return 0
+  }
   if prof.supported() && n >= SAMPLE {
     return heapprof.sampled(h, rt.mem_load(h, PSAMPLE, 8), n - SAMPLE)
   }
@@ -291,6 +301,9 @@ fn heap_grow(h: Int, n: Int) -> Int {
 const SAMPLE = 4611686018427387904
 /// alloc.xo's SCAVENGE: a request to scavenge the magazine passed as h.
 const SCAVENGE = 2305843009213693952
+/// alloc.xo's LOCK_SLOW and LOCK_WAKE.
+const LOCK_SLOW = 1152921504606846976
+const LOCK_WAKE = 576460752303423488
 const PSAMPLE = 10360
 
 fn heap_lock() { heapos.lock() }

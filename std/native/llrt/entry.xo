@@ -242,6 +242,9 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   let cutv = process.env_real_at("XO_CUT")
   if cutv != 0 && atoll(cutv) == 0 {
     heapos.set_cut_off()
+  } else if cutv != 0 {
+    // XO_CUT=N: at most N KiB of magazines are cut a growth (the default 1024)
+    heapos.set_cut_kb(atoll(cutv))
   }
   let mid = process.env_real_at("XO_HEAP_MID_MAX")
   if mid != 0 {
