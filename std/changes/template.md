@@ -1,5 +1,25 @@
 # std/template changes
 
+## 2026-10-27: perf: render converts its data once and ranges with no list of pairs
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/template render; its CPU profile (of_json 22%: a key list sorted and searched for every object of the data, every render; the variable list copied at every range iteration and if or with)
+- Go reference: text/template exec.go walkRange, oneIteration, state.pop (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/template (go, arm64, LLVM); internal/llvm and internal/arm64 template_basic; twincheck bench/perf/template
+
+An object of the data is sorted by key once (not at all when its keys
+are in order; a repeated key keeps the old form, every entry of it
+taking its first field's value), where every key was searched for among
+the fields; the variables a range iteration, if or with declared are
+dropped in place instead of copying the list, and only when there are
+some; range calls one iteration per element instead of building the
+list of (index, element) pairs first. Output is unchanged. Quiet --ab,
+15 rounds, one pair per job: render wall 0.859 (0.851 to 0.865), instructions
+0.831, for the data converted once and the variables dropped in place
+(the parent's std as A); 0.994 (0.989 to 0.999), instructions 0.994, for
+range with no list of pairs (against the first).
+
 ## 2026-10-27: perf: a node visit stores no value
 
 - Kind: perf

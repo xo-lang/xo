@@ -307,3 +307,12 @@ Per std/changes/mail.md 2026-10-27 ("atoms and quoted strings are read without a
 bench --ab`, 15 rounds, one pair per job, the parent's std as A (built by an xo whose only difference is a CLI
 message): list wall 0.468 (0.465 to 0.471), instructions 0.497; addr wall 0.527 (0.517 to 0.534), instructions
 0.511. Xo / Go about 0.66 for list (estimate: 1.42 x 0.468) and 0.73 for addr (1.38 x 0.527).
+
+## template render data and range (2026-10-27, Xo Lang 2)
+
+Per std/changes/template.md 2026-10-27 ("render converts its data once and ranges with no list of pairs").
+Quiet `xo bench --ab`, 15 rounds, one pair per job: of_json sorted once and variables dropped in place, render
+wall 0.859 (0.851 to 0.865), instructions 0.831 against the parent's std; range with no pairs list 0.994 (0.989
+to 0.999), instructions 0.994 against that. Xo / Go about 1.59 (estimate: 1.861 x 0.859 x 0.994), from 1.861.
+Left: the walk's dup and drop of V values (dup and drop of native.template.V about 12%), eval_command and
+at_arg.

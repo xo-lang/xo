@@ -1452,6 +1452,27 @@ fn of_json(j: json.Value, inner: Bool) -> V {
     Str(s) => V.StrV(s: s)
     List(items) => V.ListV(items: items.map(fn(x) { of_json(x, true) }))
     Object(fields) => {
+      // the fields in key order, sorted once (often already in order); a
+      // repeated key keeps the quadratic form below, where every entry of
+      // the key gets its first field's value
+      var sorted = true
+      for i in 1..fields.len() {
+        if fields[i - 1].0 > fields[i].0 {
+          sorted = false
+          break
+        }
+      }
+      let ps = if sorted { fields } else { fields.sort_by(fn(f: (Str, json.Value)) { f.0 }) }
+      var dup = false
+      for i in 1..ps.len() {
+        if ps[i - 1].0 == ps[i].0 {
+          dup = true
+          break
+        }
+      }
+      if !dup {
+        return V.MapV(fields: ps.map(fn(f: (Str, json.Value)) { (f.0, of_json(f.1, true)) }))
+      }
       let keys = fields.map(fn(f) { f.0 }).sort()
       var out: List[(Str, V)] = []
       for k in keys {
@@ -1781,6 +1802,13 @@ fn (var s: Ex) walk(dot: Val, n: Node) -> Int ! Str {
   }
 }
 
+/// Drops the variables declared since s.vars had mark entries, in place.
+fn (var s: Ex) trunc_vars(mark: Int) {
+  while s.vars.len() > mark {
+    let _v = s.vars.pop()
+  }
+}
+
 fn (var s: Ex) walk_if_with(with: Bool, dot: Val, pipe: Pipe, list: List[Node], el: List[Node]?) -> Int ! Str {
   let mark = s.vars.len()
   let v = s.eval_pipeline(dot, pipe)?
@@ -1797,10 +1825,39 @@ fn (var s: Ex) walk_if_with(with: Bool, dot: Val, pipe: Pipe, list: List[Node], 
       None => {}
     }
   }
-  s.vars = s.vars[0..mark]
+  s.trunc_vars(mark)
   Ok(r)
 }
 
+/// exec.go oneIteration: the range's variables set to index and elem, its
+/// list walked with elem as dot; 1 for a break.
+fn (var s: Ex) range_once(pipe: Pipe, list: List[Node], mark: Int, index: Val, elem: Val) -> Int ! Str {
+  // setTopVar(1, elem), setTopVar(2, index)
+  if !pipe.decl.is_empty() {
+    if pipe.is_assign {
+      if pipe.decl.len() > 1 {
+        s.set_var(pipe.decl[0], index)?
+      } else {
+        s.set_var(pipe.decl[0], elem)?
+      }
+    } else {
+      s.vars[s.vars.len() - 1].value = elem
+    }
+  }
+  if pipe.decl.len() > 1 {
+    if pipe.is_assign {
+      s.set_var(pipe.decl[1], elem)?
+    } else {
+      s.vars[s.vars.len() - 2].value = index
+    }
+  }
+  let r = s.walk_list(elem, list)?
+  s.trunc_vars(mark)
+  Ok(r)
+}
+
+/// exec.go walkRange: each element in turn, with no list of them built
+/// first.
 fn (var s: Ex) walk_range(dot: Val, n: Node) -> Int ! Str {
   let (pipe, list, el) = match n {
     Range(_, _, p, l, e) => (p, l, e)
@@ -1810,70 +1867,49 @@ fn (var s: Ex) walk_range(dot: Val, n: Node) -> Int ! Str {
   let mark0 = s.vars.len()
   let v = unbox(s.eval_pipeline(dot, pipe)?)
   let mark = s.vars.len()
-  var pairs: List[(Val, Val)] = []
-  var ok_kind = true
+  var any = false
   match v.v {
     IntV(k, ty) => {
       if pipe.decl.len() > 1 {
         return Err(s.err("can't use ${k} to iterate over more than one variable"))
       }
       for i in 0..(if k > 0 { k } else { 0 }) {
-        pairs.push((invalid(), val(V.IntV(n: i, ty: ty))))
+        any = true
+        if s.range_once(pipe, list, mark, invalid(), val(V.IntV(n: i, ty: ty)))? == 1 {
+          break
+        }
       }
     }
     ListV(items) => {
       for (i, x) in items.indexed() {
-        pairs.push((val(V.IntV(n: i, ty: "int")), Val{v: x, boxed: true}))
+        any = true
+        if s.range_once(pipe, list, mark, val(V.IntV(n: i, ty: "int")), Val{v: x, boxed: true})? == 1 {
+          break
+        }
       }
     }
     MapV(fields) => {
       for (k, x) in fields {
-        pairs.push((val(V.StrV(s: k)), Val{v: x, boxed: true}))
+        any = true
+        if s.range_once(pipe, list, mark, val(V.StrV(s: k)), Val{v: x, boxed: true})? == 1 {
+          break
+        }
       }
     }
     Invalid => {}
-    NilIface | Bool(..) | FloatV(..) | ComplexV(..) | StrV(..) | Missing => ok_kind = false
-  }
-  if !ok_kind {
-    return Err(s.err("range can't iterate over ${fmt_v(v.v, false)}"))
-  }
-  if !pairs.is_empty() {
-    for (index, elem) in pairs {
-      // exec.go oneIteration: setTopVar(1, elem), setTopVar(2, index)
-      if !pipe.decl.is_empty() {
-        if pipe.is_assign {
-          if pipe.decl.len() > 1 {
-            s.set_var(pipe.decl[0], index)?
-          } else {
-            s.set_var(pipe.decl[0], elem)?
-          }
-        } else {
-          s.vars[s.vars.len() - 1].value = elem
-        }
-      }
-      if pipe.decl.len() > 1 {
-        if pipe.is_assign {
-          s.set_var(pipe.decl[1], elem)?
-        } else {
-          s.vars[s.vars.len() - 2].value = index
-        }
-      }
-      let r = s.walk_list(elem, list)?
-      s.vars = s.vars[0..mark]
-      if r == 1 {
-        break
-      }
+    NilIface | Bool(..) | FloatV(..) | ComplexV(..) | StrV(..) | Missing => {
+      return Err(s.err("range can't iterate over ${fmt_v(v.v, false)}"))
     }
-    s.vars = s.vars[0..mark0]
-    return Ok(0)
   }
-  match el {
-    Some(e) => {
-      let _r = s.walk_list(dot, e)?
+  if !any {
+    match el {
+      Some(e) => {
+        let _r = s.walk_list(dot, e)?
+      }
+      None => {}
     }
-    None => {}
   }
-  s.vars = s.vars[0..mark0]
+  s.trunc_vars(mark0)
   Ok(0)
 }
 
