@@ -230,4 +230,68 @@ The second sweep therefore has to bind first: `xo bind --dir=DIR <imports>`
 for each `use go` program before its `xo dev edges` run, and the binding
 removed after, or the sweep reports those programs as failures instead.
 
+## Second sweep, 2026-10-27: the whole surface with the fixed walk
 
+The full recompute the corrections above called for. Every program
+`scripts/stdcoverage -programs` lists on the tree got one `xo dev edges`
+run, seven dump shards and seven comparison shards (`-edges` with an empty
+dirs file, so the uncovered sets intersect), 234,335,620 edge rows, 1.6 GB
+kept as .tsv.gz until the numbers were written and then deleted.
+
+- Tree `fe1a63473`, the xo built in pi-deepseek-33 at 2026-10-26 19:38
+  (`xo 0.32.0 darwin/arm64`), so the walk has 4ff76b0e2's front/body and
+  body-only nodes and the llrt files.
+- Bind first: `xo check DIR` for the 17 programs whose `use go`/`use c`
+  binding was not committed; it created 15 `.xo/gobind` trees, no failures
+  (`/tmp/cov3/bindings.txt`, log `ds2-bind2-cmd.log`). The binding trees
+  were removed after the sweep. They also landed in the program list,
+  which was regenerated after binding: the sweep ran 926 entries, the 907
+  programs of that tree plus 19 generated `.xo/gobind` directories. The
+  binding dumps reach none of the 155 declarations below (checked by
+  taking the target name column of all 19 dumps, 9,235 distinct names,
+  against the 155), so the counts are the program-only counts.
+- 1463 declarations.
+- Name scan over the same 926 dirs: 129 uncovered, 128 of them in
+  allow.txt. The one outside it is `prelude.merge_end_past`, the sort
+  merge's fault helper for a caller that broke its `hi <= len` clamp, which
+  no program reaches because every caller in std clamps first: this tree
+  left TestStdAPICovered red in `-short` and a1477fdf0 added the allow
+  line, so a tree with that commit has all 129 allowed.
+- Resolved edges: 155 uncovered, 1308 reached (89.4%).
+- The scan credits, no edge reaches: 26 (13 marked `[impl]`).
+- The scan misses, an edge reaches: 0.
+
+Against the 187 uncovered and 61 over of 2026-10-26 (890 dirs, before the
+walk fix), the uncovered set fell by 32 and the over set by 35. The 155 by
+module: prelude 120 (112 `llrt_*` helpers, the compiler's emitted targets,
+plus `int_range_list`, `list_sort_str`, `merge_end_past`, `slice_check`,
+`slice_fail`, `str_eq_lower`, `str_prefix7`, `texts`), testing 10,
+internal 7, debug 5, time 3, toml 2, and one each big, crypto, go, http,
+netip, tls, websocket, xml. Fifteen modules that had uncovered
+declarations on 10-26 now have none: sql (9 then), and base32, base64,
+cli, compress, csv, mail, metrics, mime, multipart, regexp, smtp,
+template, url, uuid (one each then), which is that day's corpora and the
+driver and metrics programs showing up in the walk.
+
+The 26 the scan credits and no edge reaches keep the reasons the section
+above gives, now much shorter: 13 interface-named `display`/`debug`
+methods (big.BigInt.debug, and display on crypto.KeyErr, go.Error,
+http.TlsErr, netip.Prefix, time.Date, time.Zone, time.ZoneErr, tls.TlsErr,
+toml.DecodeErr, toml.TomlErr, websocket.WsErr, xml.XmlErr), the 10
+`testing` fakes (FakeEnv.home/program/vars, FakeStdio.eprintln/lines/
+print/read_all/write, MemFs.cwd/cwd_path), `internal.SharedLock.unlock`
+(a toolchain caller), `prelude.texts` (called from the lowered `llrt_env_*`
+helpers) and `prelude.llrt_concat_int` (emitted by the compiler). Every
+other `.display` the 10-26 list named as over is reached now: the corpora
+call them through an interface-typed value.
+
+Three limits, stated so the numbers are not read as fresher than they
+are. (1) The tree is `fe1a63473`; main was `a5a0bf790` when this section
+was written, and its scan reports 1465 declarations and 131 uncovered,
+all 131 allowed, so the edge numbers are two declarations behind and the
+list may miss a declaration added after 19:38. (2) One comparison job
+started as six shards in one process group was stopped by the memory
+reaper at 16.4 GB (`ds2-cmp2to7-cmd.log`); one shard per job stays far
+under it, which is how the rest ran. (3) The dumps are deleted; the next
+audit is another full sweep, and it should regenerate the program list
+after binding so the 19 generated directories do not appear in it.
