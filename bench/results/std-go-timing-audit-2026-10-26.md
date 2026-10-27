@@ -281,3 +281,7 @@ rounds, the parent's std as A: encode wall 0.687 (0.677 to 0.694), instructions 
 
 Step 2 (no stack of open tags, prefix marks): encode wall 0.801 (0.795 to 0.805), instructions 0.835 against
 step 1; Xo / Go about 0.98 (estimate: 1.788 x 0.687 x 0.801).
+
+Step 3 (derive Xml writes through xmlcodec.Writer, no element tree; std/changes/xmlcodec.md 2026-10-27): encode
+wall 0.548 (0.544 to 0.553), instructions 0.598 against step 2; Xo / Go about 0.54 (estimate: 1.788 x 0.687 x
+0.801 x 0.548), from 1.788.

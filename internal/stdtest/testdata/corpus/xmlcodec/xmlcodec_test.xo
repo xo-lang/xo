@@ -1400,6 +1400,51 @@ test "build with open_path, leaf, chardata and comment is Go's printer" {
   expect(first_bad3(bad)) == []
 }
 
+test "a Writer given the pieces writes the text build's tree encodes to" {
+  var bad: List[(Str, Str, Str)] = []
+  for (name, attrs, pieces, _want) in PIECE_ROWS {
+    var comment = false
+    for p in pieces {
+      if p.kind == 4 {
+        comment = true
+      }
+    }
+    if comment {
+      continue
+    }
+    for indent in ["", "  "] {
+      let want = match xmlcodec.build(name, attrs, pieces).encode(indent) {
+        Ok(s) => s
+        Err(x) => err_text(x)
+      }
+      var w = xmlcodec.writer(indent)
+      xmlcodec.write_start(w, name, attrs)
+      for p in pieces {
+        if p.kind == 0 {
+          xmlcodec.write_open(w, p.parents)
+        } else if p.kind == 1 {
+          xmlcodec.write_leaf(w, p.parents, p.name, p.text)
+        } else if p.kind == 3 {
+          xmlcodec.write_chardata(w, p.text)
+        }
+      }
+      xmlcodec.write_end(w, name)
+      let got = xmlcodec.written(w)
+      if got != want {
+        bad.push((name, got, want))
+      }
+    }
+    for p in pieces {
+      var b = StrBuilder.new()
+      xml.escape_to(b, p.text)
+      if b.freeze() != xml.escape(p.text) {
+        bad.push((name, "escape_to ${p.text}", "escape"))
+      }
+    }
+  }
+  expect(first_bad3(bad)) == []
+}
+
 test "float_text is Go's FormatFloat 'g' -1 64" {
   var bad: List[(Str, Str, Str)] = []
   for (f, want) in FLOAT_TEXTS {

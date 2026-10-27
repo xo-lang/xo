@@ -16,4 +16,5 @@ var (
 	_ func(*Xml_Element, *Task) string                              = (*Xml_Element).M_text
 	_ func(*Xml_Element, *Task, string) Result[string, Xml_XmlErr]  = (*Xml_Element).M_encode
 	_ func(*Task, string) string                                    = Xml_escape
+	_ func(*Task, *StrBuilder, string)                              = Xml_escape_to
 )

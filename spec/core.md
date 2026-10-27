@@ -1005,7 +1005,7 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
     each alone, as an Option, or in a List (`XO0425` for another type, a
     struct with type parameters, or a struct that does not derive Xml).
   - The expansion is ordinary Xo: the checker parses generated functions
-    (`xml_tree__T`, `xml_zero__T`, `xml_merge__T`, `xml_from_tree__T`,
+    (`xml_write__T`, `xml_zero__T`, `xml_merge__T`, `xml_from_tree__T`,
     `xml_encode__T`, `xml_decode__T`) into the module as a file of its
     own, so every backend compiles the same code. A diagnostic in them is
     reported at the field. They are not declarations of the program:

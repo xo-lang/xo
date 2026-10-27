@@ -1172,6 +1172,8 @@ fn escape_text(s: Str, escape_newline: Bool) -> Str {
 
 fn escape(s: Str) -> Str { escape_text(s, true) }
 
+fn escape_to(var out: StrBuilder, s: Str) { escape_into(out, s, true) }
+
 struct Printer {
   out: StrBuilder
   indent: Str

@@ -78,6 +78,8 @@ fn (e: Element) text() -> Str
 fn (e: Element) encode(indent: Str = "") -> Str ! XmlErr
 /// Go's EscapeText of s.
 fn escape(s: Str) -> Str
+/// Go's EscapeText of s into out: the text escape returns, appended.
+fn escape_to(var out: StrBuilder, s: Str)
 
 /// Go's xml.MarshalIndent of a struct that derives Xml (indent "" is
 /// Marshal): attributes, character data, `a>b>c` paths, omitempty and `-`

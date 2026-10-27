@@ -4068,6 +4068,7 @@ pub fn parse(text: Str, strict: Bool = true) -> Element ! XmlErr
 fn (e: Element) attr(local) -> Str?;  child(local) -> Element?;  children_named(local);  text() -> Str
 fn (e: Element) encode(indent: Str = "") -> Str ! XmlErr
 pub fn escape(s: Str) -> Str
+pub fn escape_to(var out: StrBuilder, s: Str)
 pub fn encode_value[T: Xml](v: T, indent: Str = "") -> Str ! XmlErr   // Go's Marshal, MarshalIndent
 pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's Unmarshal
 ```
@@ -4090,7 +4091,8 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
   `xmlns` on each element of that space, and generated prefixes for
   attributes. Go's EncodeToken errors (a comment holding `-->`, an `xml`
   processing instruction after the start) are errors.
-- `escape` is Go's EscapeText.
+- `escape` is Go's EscapeText; `escape_to` appends the same text to a
+  builder.
 - No DTD processing and no external entities, as in Go.
 - `derive Xml` (decision 0315, core 2.9) is Go's Marshal and Unmarshal for
   a struct:
@@ -4112,9 +4114,9 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
     after the root element is a syntax error where Go stops reading;
     `innerxml`, `comment`, `any`, namespaces in tags, and XMLName are not
     supported yet.
-  - The generated code calls std/xmlcodec (`Piece`, `build`, `events`,
-    `int_of`, `float_of`, `bool_of`, `float_text`, `parse_root`), written
-    once in std/native/xmlcodec.xo and compiled by every backend
+  - The generated code calls std/xmlcodec (`Writer`, which writes an
+    encoded struct's text with no element tree, `events`, `int_of`,
+    `float_of`, `bool_of`, `float_text`, `parse_root`), written once in std/native/xmlcodec.xo and compiled by every backend
     (decision 0312). Programs do not call it.
   - Tests: a Go-generated corpus of 1,500 documents decoded into a
     struct and re-encoded (compact and indented) in the xml corpus, on

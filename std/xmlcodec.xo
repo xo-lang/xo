@@ -36,6 +36,40 @@ fn attr(name: Str, value: Str) -> xml.Attr
 /// (Go's printer: parents shared with the previous field stay open).
 fn build(name: Str, attrs: List[xml.Attr], pieces: List[Piece]) -> xml.Element
 
+/// The text of elements written in order, as Element.encode writes the
+/// tree build makes of the same pieces (Go's printer and its parent
+/// stack), with no tree: `write_start` an element, then its fields'
+/// `write_open`, `write_leaf` and `write_chardata` and nested starts, then
+/// `write_end` it. Names and attributes have no namespace.
+struct Writer {
+  out: StrBuilder
+  indent: Str
+  depth: Int = 0
+  indented_in: Bool = false
+  put_newline: Bool = false
+  /// the open parents of every started element
+  names: List[Str] = []
+  /// where each started element's parents begin in names
+  bases: List[Int] = []
+}
+
+/// A writer that indents by `indent` (none when empty).
+fn writer(indent: Str) -> Writer
+/// Starts element `name` with the attributes (an empty local name is
+/// left out).
+fn write_start(var w: Writer, name: Str, attrs: List[xml.Attr])
+/// Opens the path `parents` in the started element (open_path's piece):
+/// the parents the previous field opened stay open as far as they match.
+fn write_open(var w: Writer, parents: List[Str])
+/// The element `name` holding the text under `parents` (leaf's piece).
+fn write_leaf(var w: Writer, parents: List[Str], name: Str, text: Str)
+/// Character data where the writer is (chardata's piece).
+fn write_chardata(var w: Writer, text: Str)
+/// Closes the open parents and the element `name` write_start began.
+fn write_end(var w: Writer, name: Str)
+/// The text written.
+fn written(var w: Writer) -> Str
+
 /// The root element of text, as Go's Unmarshal finds it: a text with no
 /// element is `EOF`.
 fn parse_root(text: Str) -> xml.Element ! xml.XmlErr

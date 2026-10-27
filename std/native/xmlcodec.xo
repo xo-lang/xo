@@ -12,14 +12,14 @@ fn nm(local: Str) -> xml.Name { xml.Name{space: "", local: local} }
 fn open_path(parents: List[Str]) -> xmlcodec.Piece { xmlcodec.Piece{parents: parents, kind: 0} }
 
 fn leaf(parents: List[Str], name: Str, text: Str) -> xmlcodec.Piece {
-  xmlcodec.Piece{parents: parents, kind: 1, name: name, text: xml.escape(text)}
+  xmlcodec.Piece{parents: parents, kind: 1, name: name, text: text}
 }
 
 fn child(parents: List[Str], name: Str, el: xml.Element) -> xmlcodec.Piece {
   xmlcodec.Piece{parents: parents, kind: 2, name: name, el: Some(el)}
 }
 
-fn chardata(text: Str) -> xmlcodec.Piece { xmlcodec.Piece{parents: [], kind: 3, text: xml.escape(text)} }
+fn chardata(text: Str) -> xmlcodec.Piece { xmlcodec.Piece{parents: [], kind: 3, text: text} }
 
 fn comment(text: Str) -> xmlcodec.Piece { xmlcodec.Piece{parents: [], kind: 4, text: text} }
 
@@ -40,7 +40,7 @@ fn build(name: Str, attrs: List[xml.Attr], pieces: List[xmlcodec.Piece]) -> xml.
   for p in pieces {
     if p.kind == 3 {
       let last = kids.len() - 1
-      kids[last].push(xml.Node.Raw(p.text))
+      kids[last].push(xml.Node.Raw(xml.escape(p.text)))
       continue
     }
     if p.kind == 4 {
@@ -61,7 +61,7 @@ fn build(name: Str, attrs: List[xml.Attr], pieces: List[xmlcodec.Piece]) -> xml.
     }
     let last = kids.len() - 1
     if p.kind == 1 {
-      kids[last].push(xml.Node.Elem(xml.Element{name: nm(p.name), attrs: [], children: [xml.Node.Raw(p.text)]}))
+      kids[last].push(xml.Node.Elem(xml.Element{name: nm(p.name), attrs: [], children: [xml.Node.Raw(xml.escape(p.text))]}))
     } else if p.kind == 2 {
       if let Some(e) = p.el {
         kids[last].push(xml.Node.Elem(xml.Element{name: nm(p.name), attrs: e.attrs, children: e.children}))
@@ -73,6 +73,101 @@ fn build(name: Str, attrs: List[xml.Attr], pieces: List[xmlcodec.Piece]) -> xml.
   }
   xml.Element{name: nm(name), attrs: attrs, children: kids[0]}
 }
+
+/// build and Element.encode in one pass (Go's printer, marshalStruct's
+/// parentStack).
+fn writer(indent: Str) -> xmlcodec.Writer { xmlcodec.Writer{out: StrBuilder.new(), indent: indent} }
+
+/// xml's Printer.write_indent.
+fn indent_by(var w: xmlcodec.Writer, delta: Int) {
+  if w.indent.is_empty() {
+    return
+  }
+  if delta < 0 {
+    w.depth -= 1
+    if w.indented_in {
+      w.indented_in = false
+      return
+    }
+  }
+  if w.put_newline {
+    w.out.write("\n")
+  } else {
+    w.put_newline = true
+  }
+  for _i in 0..w.depth {
+    w.out.write(w.indent)
+  }
+  if delta > 0 {
+    w.depth += 1
+    w.indented_in = true
+  }
+}
+
+fn tag_open(var w: xmlcodec.Writer, name: Str, attrs: List[xml.Attr]) {
+  indent_by(w, 1)
+  w.out.write("<")
+  w.out.write(name)
+  for a in attrs {
+    if a.name.local.is_empty() {
+      continue
+    }
+    w.out.write(" ")
+    w.out.write(a.name.local)
+    w.out.write("=\"")
+    xml.escape_to(w.out, a.value)
+    w.out.write("\"")
+  }
+  w.out.write(">")
+}
+
+fn tag_close(var w: xmlcodec.Writer, name: Str) {
+  indent_by(w, -1)
+  w.out.write("</")
+  w.out.write(name)
+  w.out.write(">")
+}
+
+fn write_start(var w: xmlcodec.Writer, name: Str, attrs: List[xml.Attr]) {
+  tag_open(w, name, attrs)
+  w.bases.push(w.names.len())
+}
+
+fn write_open(var w: xmlcodec.Writer, parents: List[Str]) {
+  let base = if w.bases.is_empty() { 0 } else { w.bases[w.bases.len() - 1] }
+  var keep = 0
+  while keep < parents.len() && base + keep < w.names.len() && parents[keep] == w.names[base + keep] {
+    keep += 1
+  }
+  while w.names.len() > base + keep {
+    let n = w.names.pop() ?? ""
+    tag_close(w, n)
+  }
+  for i in keep..parents.len() {
+    w.names.push(parents[i])
+    tag_open(w, parents[i], [])
+  }
+}
+
+fn write_leaf(var w: xmlcodec.Writer, parents: List[Str], name: Str, text: Str) {
+  write_open(w, parents)
+  tag_open(w, name, [])
+  xml.escape_to(w.out, text)
+  tag_close(w, name)
+}
+
+fn write_chardata(var w: xmlcodec.Writer, text: Str) { xml.escape_to(w.out, text) }
+
+fn write_end(var w: xmlcodec.Writer, name: Str) {
+  let base = w.bases.pop() ?? 0
+  while w.names.len() > base {
+    let n = w.names.pop() ?? ""
+    tag_close(w, n)
+  }
+  tag_close(w, name)
+}
+
+fn written(var w: xmlcodec.Writer) -> Str { w.out.freeze() }
 
 fn parse_root(text: Str) -> xml.Element ! xml.XmlErr {
   match xml.parse(text) {

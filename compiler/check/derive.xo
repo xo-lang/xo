@@ -1,7 +1,7 @@
 // derive expansion (decision 0315, addendum 1): `derive Xml` becomes
 // ordinary Xo functions, parsed into the module as a file of their own.
 // A struct T gets
-//   xml_tree__T(v: T) -> xml.Element        the encoder
+//   xml_write__T(v: T, var w, name: Str)    the encoder, into an xmlcodec.Writer
 //   xml_from_tree__T(e: xml.Element) -> T   the decoder
 //   xml_encode__T(v: T, indent: Str = "")   what xml.encode_value[T] becomes
 //   xml_decode__T(text: Str) -> T           what xml.decode[T] becomes
@@ -251,21 +251,20 @@ fn (var c: Checker) xml_encoder(sd: parser.StructDecl, shapes: List[XmlShape?], 
   let sp = sd.name.span
   let n = text(sd.name.name)
   let pub_ = if sd.is_pub { "pub " } else { "" }
-  e.ln("${pub_}fn xml_tree__${n}(v: ${n}) -> xml.Element {", sp)
+  e.ln("${pub_}fn xml_write__${n}(v: ${n}, var w: xmlcodec.Writer, name: Str) {", sp)
   e.ln("  var attrs: List[xml.Attr] = []", sp)
-  e.ln("  var ps: List[xmlcodec.Piece] = []", sp)
+  // the attributes first: they are in the start tag
   for (i, f) in sd.fields.indexed() {
     let shape = match shapes[i] {
       Some(s) => s
       None => continue
     }
     let tag = tags[i]
-    if tag.skip {
+    if tag.skip || !tag.attr {
       continue
     }
     let fsp = f.name.span
-    let fname = text(f.name.name)
-    let v = "v.${fname}"
+    let v = "v.${text(f.name.name)}"
     if tag.attr {
       let name = quote_str(tag.name)
       let guard = if tag.omitempty { "  if ${nonempty(shape, v)} {" } else { "" }
@@ -280,46 +279,76 @@ fn (var c: Checker) xml_encoder(sd: parser.StructDecl, shapes: List[XmlShape?], 
       if tag.omitempty {
         e.ln("  }", fsp)
       }
+    }
+  }
+  e.ln("  xmlcodec.write_start(w, name, attrs)", sp)
+  for (i, f) in sd.fields.indexed() {
+    let shape = match shapes[i] {
+      Some(s) => s
+      None => continue
+    }
+    let tag = tags[i]
+    if tag.skip || tag.attr {
       continue
     }
+    let fsp = f.name.span
+    let v = "v.${text(f.name.name)}"
     if tag.chardata {
-      e.ln("  ps.push(xmlcodec.chardata(${v}))", fsp)
+      e.ln("  xmlcodec.write_chardata(w, ${v})", fsp)
       continue
     }
     let par = path_list(tag.parents)
     let name = quote_str(tag.name)
     let open = !tag.parents.is_empty()
-    // one element for x, a scalar's text or a struct's tree
-    var one = ""
+    // one element for x, a scalar's text or a struct's tree: the
+    // statements, a struct's parents opened first as a leaf opens them
+    var one: List[Str] = []
     if shape.scalar.is_empty() {
-      one = "ps.push(xmlcodec.child(${par}, ${name}, ${shape.qual}xml_tree__${shape.sname}(@)))"
+      one = ["xmlcodec.write_open(w, ${par})", "${shape.qual}xml_write__${shape.sname}(@, w, ${name})"]
     } else {
-      one = "ps.push(xmlcodec.leaf(${par}, ${name}, ${scalar_text(shape.scalar, "@")}))"
+      one = ["xmlcodec.write_leaf(w, ${par}, ${name}, ${scalar_text(shape.scalar, "@")})"]
     }
+    var head = ""
+    var x = "x"
     if shape.coll == 1 {
       // Go opens the parents unless the value is nil
-      let body = one.replace("@", "x")
-      let pre = if open { "ps.push(xmlcodec.open_path(${par})) " } else { "" }
-      e.ln("  if let Some(x) = ${v} { ${pre}${body} }", fsp)
+      head = "if let Some(x) = ${v} {"
+      if open {
+        one.insert(0, "xmlcodec.write_open(w, ${par})")
+      }
     } else if shape.coll == 2 {
       if open {
-        e.ln("  ps.push(xmlcodec.open_path(${par}))", fsp)
+        e.ln("  xmlcodec.write_open(w, ${par})", fsp)
       }
-      e.ln("  for x in ${v} { ${one.replace("@", "x")} }", fsp)
+      head = "for x in ${v} {"
     } else {
       if open {
-        e.ln("  ps.push(xmlcodec.open_path(${par}))", fsp)
+        e.ln("  xmlcodec.write_open(w, ${par})", fsp)
       }
+      x = v
       if tag.omitempty {
-        e.ln("  if ${nonempty(shape, v)} { ${one.replace("@", v)} }", fsp)
-      } else {
-        e.ln("  ${one.replace("@", v)}", fsp)
+        head = "if ${nonempty(shape, v)} {"
       }
     }
+    if head.is_empty() {
+      for st in one {
+        e.ln("  ${st.replace("@", x)}", fsp)
+      }
+    } else {
+      e.ln("  ${head}", fsp)
+      for st in one {
+        e.ln("    ${st.replace("@", x)}", fsp)
+      }
+      e.ln("  }", fsp)
+    }
   }
-  e.ln("  xmlcodec.build(${quote_str(n)}, attrs, ps)", sp)
+  e.ln("  xmlcodec.write_end(w, name)", sp)
   e.ln("}", sp)
-  e.ln("${pub_}fn xml_encode__${n}(v: ${n}, indent: Str = \"\") -> Str ! xml.XmlErr { xml_tree__${n}(v).encode(indent) }", sp)
+  e.ln("${pub_}fn xml_encode__${n}(v: ${n}, indent: Str = \"\") -> Str ! xml.XmlErr {", sp)
+  e.ln("  var w = xmlcodec.writer(indent)", sp)
+  e.ln("  xml_write__${n}(v, w, ${quote_str(n)})", sp)
+  e.ln("  Ok(xmlcodec.written(w))", sp)
+  e.ln("}", sp)
   e
 }
 

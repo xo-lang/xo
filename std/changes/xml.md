@@ -1,5 +1,16 @@
 # std/xml changes
 
+## 2026-10-27: feature: escape_to appends Go's EscapeText of a string to a builder
+
+- Kind: feature
+- Commit: this commit
+- Found by: derive Xml's encoder writing into one builder (std/changes/xmlcodec.md 2026-10-27)
+- Go reference: encoding/xml xml.go EscapeText (it writes to an io.Writer) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/xmlcodec (escape_to of every piece text against escape; go, arm64, LLVM)
+
+New: `xml.escape_to(out, s)` appends the text `xml.escape(s)` returns to
+the StrBuilder `out`, with no string of its own.
+
 ## 2026-10-27: perf: encode keeps no stack of open tags
 
 - Kind: perf

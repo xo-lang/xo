@@ -268,3 +268,9 @@ func Xml_escape(_ *Task, s string) string {
 	xml.EscapeText(&b, []byte(s))
 	return b.String()
 }
+
+func Xml_escape_to(_ *Task, out *StrBuilder, s string) {
+	var b bytes.Buffer
+	xml.EscapeText(&b, []byte(s))
+	out.b = append(out.b, b.Bytes()...)
+}
