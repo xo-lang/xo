@@ -36,6 +36,10 @@ pub fn nogc_diags(b: Builder) -> List[check.Diag] {
   var kept: List[BuildErr] = []
   // a native body's check errors (check_lazy) first, as themselves
   var out: List[check.Diag] = b.lazy_diags
+  // the uses of each `use go` package by file: one diagnostic at its
+  // `use go` line instead of one per call (0.33.0 tester's bug 17)
+  var go_uses: Map[Str, Int] = {}
+  var go_order: List[(Str, Str, Str)] = []
   for e in b.errs {
     if cascades(e, kept) {
       continue
@@ -44,10 +48,74 @@ pub fn nogc_diags(b: Builder) -> List[check.Diag] {
     if !b.lazy_diags.is_empty() && e.feature.contains("<error>") {
       continue
     }
+    let gp = go_package_of(e)
+    if !gp.is_empty() && !e.file.is_empty() {
+      let key = "${e.file}\n${gp}"
+      if let Some(n) = go_uses.get(key) {
+        go_uses[key] = n + 1
+      } else {
+        go_uses[key] = 1
+        go_order.push((key, e.file, gp))
+      }
+      continue
+    }
     kept.push(e)
     out.push(nogc_diag(e))
   }
+  for (key, file, gp) in go_order {
+    out.push(go_use_diag(b, file, gp, go_uses.get(key) ?? 1))
+  }
   out
+}
+
+/// The Go package a construct of a `use go` package names (the
+/// impossible features of call.xo and build.xo: "... of the Go package
+/// `P` (`use go`)"), or "".
+fn go_package_of(e: BuildErr) -> Str {
+  if !e.impossible {
+    return ""
+  }
+  let mark = " of the Go package `"
+  let i = e.feature.find(mark) ?? return ""
+  let rest = e.feature[i + mark.len()..]
+  let j = rest.find("` (`use go`)") ?? return ""
+  rest[0..j]
+}
+
+/// The one XO1201 of the n uses of Go package gp in file: at its `use go`
+/// declaration when the file has one, else at the first use.
+fn go_use_diag(b: Builder, file: Str, gp: Str, n: Int) -> check.Diag {
+  var line = 0
+  var col = 0
+  var end_line = 0
+  var end_col = 0
+  for f in b.c.files {
+    if f.path != file {
+      continue
+    }
+    for (_, imp) in f.imports {
+      if imp.module >= 0 && b.c.mods[imp.module].go_path == gp && imp.span.start.line > 0 {
+        line = imp.span.start.line
+        col = imp.span.start.col
+        end_line = imp.span.end.line
+        end_col = imp.span.end.col
+      }
+    }
+  }
+  if line == 0 {
+    for e in b.errs {
+      if e.file == file && go_package_of(e) == gp {
+        line = e.span.start.line
+        col = e.span.start.col
+        end_line = e.span.end.line
+        end_col = e.span.end.col
+        break
+      }
+    }
+  }
+  let count = if n == 1 { "1 use" } else { "${n} uses" }
+  let msg = "not available on the native backends (arm64, amd64, LLVM): the Go package `${gp}` (`use go`, ${count} in this file) (impossible: Go code needs Go's runtime)"
+  check.Diag{code: "XO1201", file: file, line: line, col: col, end_line: end_line, end_col: end_col, message: msg, notes: [check.DNote{message: "support: impossible; build with --backend=go to use it"}]}
 }
 
 fn before(al: Int, ac: Int, bl: Int, bc: Int) -> Bool {
