@@ -560,6 +560,17 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- One A/B per measure job, about 30 minutes at most (lead, 2026-10-27;
+  Last verified: 2026-10-27): every slot run waits while a measurement
+  holds the measure lock, so a job of four 20 round self build A/Bs
+  (la10, 02:07 to about 04:15) held both slots idle for two hours while
+  two milestone gates waited 115 minutes. Queue each A/B as its own
+  `HEAVY_CLASS=measure` job, launched with run_in_background (never a
+  trailing `&`: the job's PID is then lost), so gates run between them.
+- Before queueing a bulk gate, run its new tests alone in the gate class
+  (lead, 2026-10-27): g499's first bulk run failed only on its new
+  test's own expectations (a line number, a type annotation), and the
+  rerun queued for another hour.
 - Ceilings before building (lead, 2026-10-27; Last verified: 2026-10-27):
   before building a speedup step, measure the most it can save. Stub or
   skip the phase on a throwaway branch (never pushed; output ignored),
