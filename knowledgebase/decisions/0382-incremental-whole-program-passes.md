@@ -138,6 +138,13 @@ after the same kind of edit, warm GOCACHE):
 Still opt in (XO_CHAIN_KEYS=1) until the default's suites run; next, by measured ceilings (oracle
 runs) rather than CPU estimates.
 
+**Known unsafe (2026-10-27, Xo Lang 1): do not set XO_CHAIN_KEYS=1 until the fix lands.** The gate for
+making it the default found a miscompile: with goldens built in one shared cache, TLS and HTTP
+goldens ran wrong (tls_coalesced_finish: every post "tls: illegal parameter"), a debug build's
+code differed from a plain build's (TestDebugInfoSameCode), and TestBackendCacheEditIdentity and
+TestFrontCacheMovedBodies failed, while XO_BACKEND_CACHE=verify passed. The chained key leaves
+out an input that differs across programs or build flags. The default (off) is unaffected.
+
 ## Expected effect (to be measured)
 
 The edit's middle phases (108 ms) fall toward the cost of the 10 changed functions and the key
