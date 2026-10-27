@@ -562,8 +562,13 @@ pub fn expr(b: Bytes, asize: Int) -> List[Piece] {
 /// expr with the unit's address table (.debug_addr from addr_base) for
 /// DW_OP_addrx and DW_OP_constx.
 fn expr_in(b: Bytes, asize: Int, addr: Bytes, base: Int) -> List[Piece] {
+  expr_at(b, 0, b.len(), asize, addr, base)
+}
+
+/// expr_in of b[p..end], read in place.
+fn expr_at(b: Bytes, p: Int, end: Int, asize: Int, addr: Bytes, base: Int) -> List[Piece] {
   var out: List[Piece] = []
-  var r = Rd{b: b, p: 0, end: b.len()}
+  var r = Rd{b: b, p: p, end: end}
   var cur = Place.Gone
   var stack: List[Int] = []
   while r.p < r.end {
@@ -619,11 +624,29 @@ fn expr_in(b: Bytes, asize: Int, addr: Bytes, base: Int) -> List[Piece] {
   out
 }
 
+/// Whether b's n bytes at a and at c are the same.
+fn same_bytes(b: Bytes, a: Int, c: Int, n: Int) -> Bool {
+  var i = 0
+  while i < n {
+    if b[a + i] != b[c + i] {
+      return false
+    }
+    i += 1
+  }
+  true
+}
+
 /// The location list at offset off of .debug_loclists (DWARF 5).
 fn loclist(s: Sections, u: Unit, off: Int) -> List[Loc] {
   var out: List[Loc] = []
   var r = Rd{b: s.loclists, p: off, end: s.loclists.len()}
   var base = u.low
+  // the last entry's expression (its start, length) and pieces: an entry
+  // with the same expression shares them; each is read in place, not
+  // sliced out (a Bytes slice copies)
+  var pp = -1
+  var pn = 0
+  var prev: List[Piece] = []
   while r.p < r.end {
     let k = r.byte()
     var lo = 0
@@ -668,7 +691,12 @@ fn loclist(s: Sections, u: Unit, off: Int) -> List[Loc] {
     if r.p + n > r.end {
       break
     }
-    out.push(Loc{lo: lo, hi: hi, pieces: expr_in(s.loclists[r.p..r.p + n], u.asize, s.addr, u.addr_base)})
+    if !(pp >= 0 && pn == n && same_bytes(s.loclists, pp, r.p, n)) {
+      prev = expr_at(s.loclists, r.p, r.p + n, u.asize, s.addr, u.addr_base)
+      pp = r.p
+      pn = n
+    }
+    out.push(Loc{lo: lo, hi: hi, pieces: prev})
     r.p += n
   }
   out

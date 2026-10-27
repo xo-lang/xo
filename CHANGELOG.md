@@ -11,7 +11,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   back, keeps its abstract origins' records in a list indexed by a map, and
   the module stream is sized first and then written into one buffer, and an
   inline site's ranges are sorted only when out of order and its children
-  found once; the HTTP server's edit spends 70 ms in the PDB instead of 105
+  found once, and a location list's expressions are read in place (one
+  that repeats the entry before shares its pieces); the HTTP server's edit
+  spends 66 ms in the PDB instead of 105
   (the PDB and the .exe byte for byte the same)
 - A windows/amd64 edit rebuild assembles only the parts it changed (their
   objects kept in the back-end cache, the rest assembled on parallel tasks as
