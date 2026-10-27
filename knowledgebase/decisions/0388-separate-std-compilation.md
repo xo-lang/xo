@@ -1,7 +1,9 @@
 # 0388: Std compiled once to objects and export data; an edit compiles only the program's modules
 
-Status: Proposed (Xo Lang 1, 2026-10-27, for the owner; the 0.33.0 edit-rebuild criterion's
-structural option, decision 0382's measurements)
+Status: Proposed (Xo Lang 1, 2026-10-27, for the owner's approval: milestone 0.34.0, "edit
+rebuilds at Go's speed", criterion 2; first written as the 0.33.0 edit-rebuild criterion's
+structural option, from decision 0382's measurements; the oracles and the DWARF decision below
+were added the same day)
 
 ## Context
 
@@ -44,6 +46,21 @@ anything near Go's 99.
    module (as Go stencils its instances per package).
 3. Dead code is removed at the link (per-function sections or subsections, the linker's
    dead_strip) instead of by hollow's whole-text pass over std's code.
+4. Debug information stays as decision 0346 has it: every build, edit builds included, embeds
+   its DWARF in the executable (crash tracebacks, atos and lldb read it there), std's DWARF
+   coming from std's object and joined at the link. No debug map and no separate DWARF for edit
+   builds: the oracles below show the join's cost was the linker's, not the DWARF's (see "The
+   DWARF join").
+5. Landing gates (milestone 0.34.0): a fib edit at most 230 ms and an HTTP server edit at most
+   500 ms on darwin/arm64, every cache warm, and no runtime regression on the release-vs-go
+   workloads (the risk named under "What it costs"). The fixed point, the goldens and the timing
+   suites re-baseline once, in the landing change.
+
+Stages, each measured with `--ab` against its parent before the next: (1) the export data format
+and std's object, built once per xo identity, target and flags into the back-end cache; (2) the
+program's modules checked against the export data instead of std's sources; (3) SSA and the
+whole-program passes over the program's functions only, with std's exported facts; (4) the link
+of the program's objects with std's, dead code stripped by symbol.
 
 ## What it costs (to decide on)
 
@@ -105,6 +122,22 @@ referenced from a dSYM-style debug map (as ld64's N_OSO entries do), or written 
 object and copied, are the options to weigh. With today's embedded DWARF the floor stays at 57
 to 62 ms.
 
+### The DWARF join
+
+A CPU profile of the HTTP link (40 links in one process, 1000 Hz) put about 13 of its 18 ms of
+CPU in the linker's DWARF join (compiler/macho dsym.xo dwarf_data): every DWARF byte copied into
+a List[Int], the joined lists copied once per object, and the result written a byte at a time,
+with the memory mapping and unmapping that came with them. f59cab86a joins the sections as
+Bytes, copied in slices around their patches, with the output the same byte for byte (the
+__DWARF sections of llvm-fib and the HTTP server, and their --dsym bundles). Quiet `--ab`, n=10
+interleaved, A built at its parent: llvm-fib's edit 245.0 to 242.1 ms mean, its link phase 11.9
+to 7.0; the HTTP server's edit 603.5 to 587.8, its link phase 43.7 to 27.1. The HTTP link
+without DWARF is about 13.5 ms, so about 14 ms of DWARF remains (writing the larger file is
+part of it); the floor of a fib edit under this decision with embedded DWARF is about 9 + 27 +
+5 to 10, 41 to 46 ms, and 23 to 33 with no DWARF to join. The rest is the next profile's to
+place before stage 4; if it cannot be brought down, std's DWARF prejoined once per std object
+(its offsets moved by the program's pieces at the link) is the fallback, still embedded.
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle
@@ -113,5 +146,8 @@ to 62 ms.
 - The compile server (0283): keeps the whole program's state in memory between builds, so an
   edit re-runs only what changed without reading caches; complementary, costs resident memory and
   a daemon, and is not a one-shot `xo build`.
+- A debug map for edit builds (the objects keep their DWARF, the executable names them, as
+  ld64's N_OSO entries do): not needed once the join was fixed, and it would reverse part of
+  0346 (a traceback or lldb session would depend on objects in a cache a prune can remove).
 - Keep the whole-program build for `--release` and use separate compilation only for edit
   rebuilds (Go has one mode; two modes double what is tested): a variant of this decision to weigh.
