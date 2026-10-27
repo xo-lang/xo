@@ -131,6 +131,41 @@ func TestUncoveredResolvedCrossesImplementationBodies(t *testing.T) {
 
 // TestCallsIn: the scanner finds a bare call, a qualified call, one with
 // type arguments, and a call after a field access.
+// TestDeclaredGenericFunctions: a generic function's name is followed by its
+// type parameters in brackets (`fn map_all[T](xs: List[T])`), so the
+// function and interface method patterns have to accept `[` as well as `(`;
+// until 2026-10-27 they did not, and no generic std function or interface
+// method (Rand.shuffle) was ever counted, covered or reported.
+func TestDeclaredGenericFunctions(t *testing.T) {
+	p := filepath.Join(t.TempDir(), "example.xo")
+	text := "fn plain(x: Int) -> Int\n" +
+		"pub fn generic[T](x: T) -> T\n" +
+		"fn two[K, V](m: Map[K, V]) -> Int\n" +
+		"fn (xs: List[T]) first_of() -> T\n" +
+		"interface Pick {\n  fn one(self) -> Int\n  fn many[T](self, xs: List[T]) -> List[T]\n}\n"
+	if err := os.WriteFile(p, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	ds, err := declared("example", p)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]string{}
+	for _, d := range ds {
+		got[d.Symbol] = d.Kind
+	}
+	want := map[string]string{"plain": "fn", "generic": "fn", "two": "fn", "List.first_of": "method",
+		"Pick.one": "ifmethod", "Pick.many": "ifmethod"}
+	for sym, kind := range want {
+		if got[sym] != kind {
+			t.Errorf("%s: kind %q, want %q (declared %v)", sym, got[sym], kind, got)
+		}
+	}
+	if len(got) != len(want) {
+		t.Errorf("declared %v, want exactly %v", got, want)
+	}
+}
+
 func TestCallsIn(t *testing.T) {
 	calls := callsIn(`let x = s.contains("a") + y.find_where[E](f) + Int.parse(s) + t.await`)
 	for _, want := range []string{"contains", "s.contains", "find_where", "y.find_where", "parse", "Int.parse"} {

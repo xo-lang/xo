@@ -50,11 +50,13 @@ type decl struct {
 }
 
 var (
-	topRe      = regexp.MustCompile(`^(?:pub\s+)?(?:extern\s+)?(?:fn|struct|type|enum|impl|const|use|test|trait|var|let|interface|module)\b`)
-	fnRe       = regexp.MustCompile(`^(?:pub\s+)?fn\s+([a-z_][A-Za-z0-9_]*)\s*[(<]`)
+	topRe = regexp.MustCompile(`^(?:pub\s+)?(?:extern\s+)?(?:fn|struct|type|enum|impl|const|use|test|trait|var|let|interface|module)\b`)
+	// `[` starts a generic function's or interface method's type parameters
+	// (TestDeclaredGenericFunctions)
+	fnRe       = regexp.MustCompile(`^(?:pub\s+)?fn\s+([a-z_][A-Za-z0-9_]*)\s*[(<\[]`)
 	methodRe   = regexp.MustCompile(`^fn\s*\(\s*(?:var\s+)?[A-Za-z_][A-Za-z0-9_]*\s*:\s*([A-Za-z0-9_\[\]?, ]+?)\s*\)\s+([a-z_][A-Za-z0-9_]*)`)
 	ifaceRe    = regexp.MustCompile(`^(?:pub\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)`)
-	ifaceMeth  = regexp.MustCompile(`^\s+fn\s+([a-z_][A-Za-z0-9_]*)\s*\(`)
+	ifaceMeth  = regexp.MustCompile(`^\s+fn\s+([a-z_][A-Za-z0-9_]*)\s*[(\[]`)
 	genericRe  = regexp.MustCompile(`\[.*`)
 	awaitRe    = regexp.MustCompile(`\.await\b`)
 	identChars = func(c byte) bool {
