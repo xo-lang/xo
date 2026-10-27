@@ -295,3 +295,64 @@ reaper at 16.4 GB (`ds2-cmp2to7-cmd.log`); one shard per job stays far
 under it, which is how the rest ran. (3) The dumps are deleted; the next
 audit is another full sweep, and it should regenerate the program list
 after binding so the 19 generated directories do not appear in it.
+
+## Closing the 26, 2026-10-27
+
+Ten test only commits close 13 of the 26: exactly the sweep's 13
+interface-named `display`/`debug` entries, `big.BigInt.debug` among them.
+They came in two shapes.
+
+- A corpus call on the concrete value: `netip.Prefix.display`
+  (67e01a32b, compared with Go's `Prefix.String()`), `big.BigInt.debug`
+  (75127fe2c, the decimal text Go's `z.Text(10)` gives), `crypto.KeyErr`
+  (afc79717c), `http.TlsErr` (5c15be995) and `time.Date`, `time.Zone`,
+  `time.ZoneErr` (5607dd065; the ZoneErr message is std.md 2891's, and the
+  negative-year Date, which `date()` cannot produce because it refuses
+  years outside 1..9999, is compared with Go's
+  `time.Date(-44, 3, 15).Format("2006-01-02")`), all compared with the
+  message the error carries, and `xml.XmlErr` (99f282ee8, Go's
+  `XML syntax error on line N: msg`).
+- A golden that already printed a concrete error through `${e}`, rewritten
+  as `${e.display()}`: toml `DecodeErr`/`TomlErr` (01403e8f7), websocket
+  `WsErr` (5fb1d3227), tls `TlsErr` (73263cba2) and go `Error`
+  (8c6cf2f89). `display` prints exactly what the interpolation printed, so
+  want.txt did not change; the go_url golden first failed on the stack's
+  `main.xo:44`, because three comment lines above the failing `?` moved it
+  to 46, and the fix keeps origin/main's line count.
+
+Each commit carries the same proof: one `xo dev edges` run over the program
+that changed, merged with `scripts/stdcoverage -edges`, with the module's
+declarations absent from both the over and the under list. A `use go`
+golden needs `xo check DIR` first, which writes `.xo/gobind`; the generated
+tree was deleted after the proof and is not committed.
+
+The 13 that remain are the ones no program can reach, and the reasons are
+now measured rather than assumed.
+
+- the 10 `testing` fakes (FakeEnv.home/program/vars, FakeStdio.eprintln/
+  lines/print/read_all/write, MemFs.cwd/cwd_path): nothing in std calls
+  them; `cmd/xo`'s own tests do, through the test runner, and a corpus
+  program is not that caller.
+- `internal.SharedLock.unlock`: a toolchain caller, and it is in
+  `internal`, not in the std API surface a program imports.
+- `prelude.texts` and `prelude.llrt_concat_int`: compiler-emitted. On
+  2026-10-27 a probe program that calls `os.env.get` with a non-constant
+  name, `os.env.vars` and `os.env.args`, concatenates an `Int` into a
+  string and prints through `os.stdio` was dumped with `xo dev edges`
+  (`/tmp/ds2-prelprobe2.tsv`, 254,525 rows) and merged the same way. It
+  reaches 37 declarations, among them `prelude.env_get`, `prelude.env_vars`,
+  `prelude.env_admits` and the lowered `prelude.int_*` helpers, and it
+  reaches neither `texts` nor `llrt_concat_int`: the call from the Env
+  implementation to `llrt_env_get`, which is what calls `texts`, is
+  synthesized by the compiler and exists in no source call graph, so no
+  site edge can enter it. The same reason covers the 112 `llrt_*` helpers
+  the name scan already allows.
+
+So the next audit should read 26 over to 13, with nothing newly uncovered.
+The 13 are a walk limit, not a test gap, and adding them to `allow.txt`
+would state the opposite of what they are: reachable at run time, invisible
+to a source level walk.
+
+`scripts/stdcoverage -check` passes on main `8c6cf2f89` (2026-10-27): 1465
+declarations, 131 uncovered, all 131 already in `allow.txt`. That run is the
+baseline the next drift is measured from.
