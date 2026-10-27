@@ -703,6 +703,18 @@ test "a value of the interface reads its status and its display" {
   expect(e.status()) == 418
   expect(e.display()) == "teapot"
 }
+
+test "a TlsErr displays the message it carries (std.md 4.6)" {
+  // std.md 4.6 says "TlsErr their message", so the display is checked
+  // against the error's own msg rather than a frozen text: the wording
+  // belongs to std/tls and pinning it here would test that module's text
+  let (shown, msg) = match http.tls_cert(b"not a certificate", b"not a key") {
+    Ok(_) => ("accepted a garbage certificate", "")
+    Err(e) => (e.display(), e.msg)
+  }
+  expect(msg.is_empty()) == false
+  expect(shown) == msg
+}
 `
 
 const httpHeaderTests = `
