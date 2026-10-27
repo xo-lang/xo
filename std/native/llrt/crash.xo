@@ -76,6 +76,10 @@ const R_REPORTED = 120
 const R_TV = 128
 /// a timespec of 0.1 s (written once by install)
 const R_TS = 160
+/// XO_CRASH_SLEEP seconds a SIGSEGV or SIGBUS report holds the process
+/// after phase 1 (0: none), so `vmmap -v PID` can name the mapping around
+/// the fault address
+const R_HOLD = 176
 const R_PCS = 192
 const DEPTH = 64
 const R_REGS = R_PCS + 8 * DEPTH
@@ -222,6 +226,13 @@ pub fn install() {
     }
   }
   st(r, R_TIMEOUT, t)
+  let hv = process.env_real_at("XO_CRASH_SLEEP")
+  if hv != 0 {
+    let n = atoi(hv)
+    if n >= 1 && n <= 3600 {
+      st(r, R_HOLD, n)
+    }
+  }
   st(r, R_TS + 8, 100000000)
   st(rt.static_word(W_CRASH), 0, r)
   if windows() {
@@ -405,6 +416,7 @@ pub fn on_crash(sig: Int, info: Int, uc: Int) {
   st(r, R_POS, 0)
   stdio.flush_try()
   phase1(r, sig, info, uc)
+  hold(r, sig)
   phase2(r)
   // the default action from here (macOS ignores SA_RESETHAND for
   // SIGILL and SIGTRAP: their handler stays)
@@ -417,6 +429,32 @@ pub fn on_crash(sig: Int, info: Int, uc: Int) {
     } else {
       let _k = linux.kill(linux.getpid(), sig)
     }
+  }
+}
+
+/// XO_CRASH_SLEEP=N: after phase 1 of a SIGSEGV or SIGBUS report, the
+/// process says its pid and waits N seconds (opt in, for `vmmap -v PID`
+/// and `lldb -p PID` on the live process; off by default).
+fn hold(r: Int, sig: Int) {
+  let n = ld(r, R_HOLD)
+  if n == 0 || windows() || !(sig == SIGSEGV || sig == sigbus()) {
+    return
+  }
+  st(r, R_POS, 0)
+  w_str(r, "crash: holding for ")
+  w_dec(r, n)
+  w_str(r, " s, pid ")
+  if darwin() {
+    w_dec(r, Int(sys_darwin.getpid()))
+  } else {
+    w_dec(r, linux.getpid())
+  }
+  w_str(r, "\n")
+  flush(r)
+  var i = 0
+  while i < n * 10 {
+    sleep(r)
+    i += 1
   }
 }
 

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
@@ -98,6 +99,19 @@ func testCrashReport(t *testing.T, be string) {
 	_, got, sig = run("XO_CRASH_KIND=task")
 	if sig != syscall.SIGSEGV || !strings.HasPrefix(got, "fatal error: SIGSEGV") || !regexp.MustCompile(`crashc_write\n  poke \(main\.xo:17\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n`).MatchString(got) {
 		t.Errorf("task: signal %v\n%s", sig, got)
+	}
+	// XO_CRASH_SLEEP=1: the process names its pid and holds a second after
+	// phase 1 (for vmmap), then ends with the same signal; unset, it does not
+	t0 := time.Now()
+	_, got, sig = run("XO_CRASH_KIND=segv", "XO_CRASH_SLEEP=1")
+	held := time.Since(t0)
+	if sig != syscall.SIGSEGV || !regexp.MustCompile(`(?m)^crash: holding for 1 s, pid [0-9]+$`).MatchString(got) || held < 900*time.Millisecond {
+		t.Errorf("XO_CRASH_SLEEP=1: signal %v, held %v, stderr:\n%s", sig, held, got)
+	}
+	t0 = time.Now()
+	_, got, _ = run("XO_CRASH_KIND=segv")
+	if strings.Contains(got, "crash: holding") || time.Since(t0) > 900*time.Millisecond {
+		t.Errorf("no XO_CRASH_SLEEP: held %v, stderr:\n%s", time.Since(t0), got)
 	}
 	// off: no report, the same signal
 	_, got, sig = run("XO_CRASH_KIND=segv", "XO_CRASH_REPORT=0")
