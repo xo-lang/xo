@@ -1,0 +1,78 @@
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"io"
+	"net/mail"
+	"os"
+)
+
+var addrs = []string{
+	"Ann Lee <ann@example.com>",
+	"bob@example.org",
+	"\"Lee, Ann\" <ann.lee@mail.example.com>",
+	"=?utf-8?q?J=C3=B6rg_Doe?= <joerg@example.de>",
+	"not an address",
+}
+
+const list = "Ann Lee <ann@example.com>, bob@example.org, \"Carol D\" <carol@example.net>, dave@example.com"
+
+var dates = []string{
+	"Mon, 02 Jan 2006 15:04:05 -0700",
+	"2 Jan 2006 15:04:05 +0000",
+	"Tue, 13 Oct 2026 08:30:00 GMT",
+	"Fri, 21 Nov 1997 09:55:06 -0600",
+}
+
+const msg = "From: Ann Lee <ann@example.com>\r\nTo: bob@example.org\r\nSubject: Quarterly report\r\nDate: Mon, 02 Jan 2006 15:04:05 -0700\r\nMessage-ID: <1234@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\nX-Long: a header value that goes on\r\n and continues on the next line\r\n\r\nHello Bob,\r\n\r\nThe report is attached.\r\n"
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	a0, _ := mail.ParseAddress(addrs[0])
+	a2, _ := mail.ParseAddress(addrs[2])
+	mb := []byte(msg)
+	sum := 0
+	for i := 0; i < 100000; i++ {
+		switch w {
+		case "addr":
+			a, err := mail.ParseAddress(addrs[i%5])
+			if err == nil {
+				sum += len(a.Name) + len(a.Address)
+			} else {
+				sum++
+			}
+		case "list":
+			l, err := mail.ParseAddressList(list)
+			if err != nil {
+				panic(err)
+			}
+			sum += len(l) + len(l[i%4].Address)
+		case "display":
+			a := a0
+			if i%2 != 0 {
+				a = a2
+			}
+			sum += len(a.String())
+		case "msg":
+			m, err := mail.ReadMessage(bytes.NewReader(mb))
+			if err != nil {
+				panic(err)
+			}
+			body, _ := io.ReadAll(m.Body)
+			sum += len(body) + len(m.Header.Get("subject")) + len(m.Header.Get("X-Long"))
+		case "date":
+			t, err := mail.ParseDate(dates[i%4])
+			if err != nil {
+				panic(err)
+			}
+			sum += int(t.Unix() % 1000)
+		default:
+			sum += len(addrs[i%5]) + len(dates[i%4])
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

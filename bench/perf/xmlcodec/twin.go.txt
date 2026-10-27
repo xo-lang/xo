@@ -1,0 +1,71 @@
+package main
+
+import (
+	"encoding/xml"
+	"fmt"
+	"os"
+)
+
+type Customer struct {
+	Name  string `xml:"name"`
+	Email string `xml:"email"`
+}
+
+type Line struct {
+	Sku   string  `xml:"sku,attr"`
+	Qty   int     `xml:"qty"`
+	Price float64 `xml:"price"`
+	Note  *string `xml:"note,omitempty"`
+}
+
+type Order struct {
+	XMLName  xml.Name `xml:"Order"`
+	ID       int      `xml:"id,attr"`
+	Customer Customer `xml:"customer"`
+	Lines    []Line   `xml:"items>line"`
+	Paid     bool     `xml:"paid"`
+}
+
+func order() Order {
+	var ls []Line
+	for i := 0; i < 20; i++ {
+		var note *string
+		if i%4 == 0 {
+			s := "gift & wrap"
+			note = &s
+		}
+		ls = append(ls, Line{Sku: fmt.Sprintf("SKU-%d", 1000+i), Qty: i%5 + 1, Price: float64(i)*2.5 + 0.25, Note: note})
+	}
+	return Order{ID: 42, Customer: Customer{Name: "Ann Lee", Email: "ann@example.com"}, Lines: ls, Paid: true}
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	o := order()
+	text, err := xml.Marshal(o)
+	if err != nil {
+		panic(err)
+	}
+	sum := 0
+	switch w {
+	case "encode":
+		for i := 0; i < 20000; i++ {
+			b, _ := xml.Marshal(o)
+			sum += len(b)
+		}
+	case "decode":
+		for i := 0; i < 20000; i++ {
+			var d Order
+			if err := xml.Unmarshal(text, &d); err != nil {
+				panic(err)
+			}
+			sum += d.ID + len(d.Lines) + d.Lines[7].Qty + len(d.Customer.Name)
+		}
+	default:
+		sum = len(text) + len(o.Lines)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

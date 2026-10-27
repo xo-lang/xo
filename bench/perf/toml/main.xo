@@ -1,0 +1,50 @@
+// toml: std/toml's decode into a struct against
+// github.com/pelletier/go-toml/v2's Unmarshal (twin.go.txt): a config of
+// tables, an array of tables, arrays, strings, ints, floats and bools,
+// 20,000 times; `none` is the setup alone. Usage: `<program> none|decode`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/toml
+
+struct Server {
+  host: Str
+  port: Int
+  tls: Bool
+} derive Json
+
+struct Database {
+  url: Str
+  max_conn: Int
+  timeout: Float
+  replicas: List[Str]
+} derive Json
+
+struct Feature {
+  name: Str
+  enabled: Bool
+  weight: Int
+} derive Json
+
+struct Config {
+  title: Str
+  server: Server
+  database: Database
+  features: List[Feature]
+} derive Json
+
+const TEXT: Str = "# service config\ntitle = \"orders\"\n\n[server]\nhost = \"0.0.0.0\"\nport = 8080\ntls = true\n\n[database]\nurl = \"postgres://db.internal:5432/orders\"\nmax_conn = 32\ntimeout = 2.5\nreplicas = [\"db-a\", \"db-b\", \"db-c\"]\n\n[[features]]\nname = \"search\"\nenabled = true\nweight = 10\n\n[[features]]\nname = \"export\"\nenabled = false\nweight = 3\n\n[[features]]\nname = \"audit\"\nenabled = true\nweight = 7\n"
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  if w == "decode" {
+    for i in 0..20000 {
+      let c: Config = toml.decode(TEXT).ok() ?? fault("decode")
+      sum += c.server.port + c.database.max_conn + c.features.len() + c.features[i % 3].weight + c.database.replicas[i % 3].len()
+    }
+  } else {
+    for i in 0..20000 {
+      sum += TEXT.len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

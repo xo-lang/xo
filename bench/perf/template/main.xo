@@ -1,0 +1,46 @@
+// template: std/template against Go's text/template (twin.go.txt): parse
+// of a page template (range, if/else, with, len and $), 20,000 times, and
+// its render over data decoded from JSON (an object with a list of 30
+// items), 20,000 times; `none` is the setup alone. Usage:
+// `<program> none|parse|render`. Prints `<workload> <checksum>`; the twin
+// prints the same.
+use std/json
+use std/template
+
+const SRC: Str = "<h1>{{.title}}</h1>\n<ul>{{range .items}}\n<li class=\"{{if .done}}done{{else}}todo{{end}}\">{{.name}} x{{.qty}}</li>{{end}}\n</ul>\n{{with .owner}}<p>{{.name}} ({{len $.items}} items)</p>{{end}}\n"
+
+fn data_text() -> Str {
+  var b = StrBuilder.new()
+  b.write("{\"title\": \"Orders\", \"owner\": {\"name\": \"Ada\"}, \"items\": [")
+  for i in 0..30 {
+    if i > 0 {
+      b.write(", ")
+    }
+    b.write("{\"name\": \"item${i}\", \"qty\": ${i % 7 + 1}, \"done\": ${i % 3 == 0}}")
+  }
+  b.write("]}")
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let data = json.parse_value(data_text()).ok() ?? fault("data")
+  let t = template.parse("page", SRC).ok() ?? fault("parse")
+  var sum = 0
+  if w == "parse" {
+    for i in 0..20000 {
+      let p = template.parse("page", SRC).ok() ?? fault("parse")
+      sum += p.name.len() + i % 3
+    }
+  } else if w == "render" {
+    for _ in 0..20000 {
+      let out = t.render(data).ok() ?? fault("render")
+      sum += out.len() + Int(out.bytes()[out.len() - 2])
+    }
+  } else {
+    for i in 0..20000 {
+      sum += SRC.len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

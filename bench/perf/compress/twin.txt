@@ -1,0 +1,7 @@
+# twincheck: compress: six workloads (none is the setup alone), the same names on both sides.
+- - none
+- - gzip
+- - gzip1
+- - gunzip
+- - deflate
+- - inflate

@@ -1,0 +1,75 @@
+// websocket: std/websocket against github.com/gorilla/websocket
+// (twin.go.txt): an echo server and a client in one program on
+// 127.0.0.1:0; `small` is 20,000 round trips of a 64 byte text message,
+// `big` 5,000 of a 16 KB binary one, `dial` 500 handshakes (dial, one
+// round trip, close); `none` serves and dials once. Usage:
+// `<program> none|small|big|dial`. Prints `<workload> <checksum>`; the
+// twin prints the same.
+use std/http
+use std/websocket
+
+fn echo(c: websocket.WsConn) {
+  while true {
+    match c.read() {
+      Ok(m) => {
+        if c.write(m) is Err(_) {
+          return
+        }
+      }
+      Err(_) => return
+    }
+  }
+}
+
+fn round(c: websocket.WsConn, m: websocket.Message) -> Int {
+  c.write(m).ok() ?? fault("write")
+  let got = c.read().ok() ?? fault("read")
+  got.data.len() + Int(got.data[got.data.len() - 1])
+}
+
+fn run(os: Os, addr: Str, w: Str) -> Int {
+  var sum = 0
+  if w == "dial" {
+    for i in 0..500 {
+      let c = websocket.dial(os.net, "ws://${addr}/echo").ok() ?? fault("dial")
+      sum += round(c, websocket.Message{kind: websocket.Kind.Text, data: "hello ${i % 10}".bytes()})
+      c.close().ignore_err("bench")
+    }
+    return sum
+  }
+  let c = websocket.dial(os.net, "ws://${addr}/echo").ok() ?? fault("dial")
+  if w == "small" {
+    let m = websocket.Message{kind: websocket.Kind.Text, data: "0123456789abcdef".repeat(4).bytes()}
+    for _ in 0..20000 {
+      sum += round(c, m)
+    }
+  } else if w == "big" {
+    var b = BytesBuilder.with_capacity(16384)
+    for i in 0..16384 {
+      b.write_byte(UInt8(i % 251))
+    }
+    let m = websocket.Message{kind: websocket.Kind.Binary, data: b.freeze()}
+    for _ in 0..5000 {
+      sum += round(c, m)
+    }
+  } else {
+    sum = round(c, websocket.Message{kind: websocket.Kind.Text, data: "x".bytes()})
+  }
+  c.close().ignore_err("bench")
+  sum
+}
+
+fn main(os: Os) uses stdio, env, net {
+  let w = os.env.args().get(0) ?? "none"
+  var r = http.router()
+  r.handle("GET /echo", fn(req) { websocket.upgrade(req, echo, max_message: 1 << 20) })
+  let l = os.net.listen("127.0.0.1:0").ok() ?? fault("listen")
+  let srv = http.server(l, r)
+  let addr = srv.addr()
+  var sum = 0
+  scope s {
+    s.spawn_background(fn() { srv.serve().ignore_err("bench") })
+    sum = run(os, addr, w)
+  }
+  os.stdio.println("${w} ${sum}")
+}

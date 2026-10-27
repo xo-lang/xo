@@ -1,0 +1,59 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/pelletier/go-toml/v2"
+)
+
+type Server struct {
+	Host string `toml:"host"`
+	Port int    `toml:"port"`
+	TLS  bool   `toml:"tls"`
+}
+
+type Database struct {
+	URL      string   `toml:"url"`
+	MaxConn  int      `toml:"max_conn"`
+	Timeout  float64  `toml:"timeout"`
+	Replicas []string `toml:"replicas"`
+}
+
+type Feature struct {
+	Name    string `toml:"name"`
+	Enabled bool   `toml:"enabled"`
+	Weight  int    `toml:"weight"`
+}
+
+type Config struct {
+	Title    string    `toml:"title"`
+	Server   Server    `toml:"server"`
+	Database Database  `toml:"database"`
+	Features []Feature `toml:"features"`
+}
+
+const text = "# service config\ntitle = \"orders\"\n\n[server]\nhost = \"0.0.0.0\"\nport = 8080\ntls = true\n\n[database]\nurl = \"postgres://db.internal:5432/orders\"\nmax_conn = 32\ntimeout = 2.5\nreplicas = [\"db-a\", \"db-b\", \"db-c\"]\n\n[[features]]\nname = \"search\"\nenabled = true\nweight = 10\n\n[[features]]\nname = \"export\"\nenabled = false\nweight = 3\n\n[[features]]\nname = \"audit\"\nenabled = true\nweight = 7\n"
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "decode":
+		for i := 0; i < 20000; i++ {
+			var c Config
+			if err := toml.Unmarshal([]byte(text), &c); err != nil {
+				panic(err)
+			}
+			sum += c.Server.Port + c.Database.MaxConn + len(c.Features) + c.Features[i%3].Weight + len(c.Database.Replicas[i%3])
+		}
+	default:
+		for i := 0; i < 20000; i++ {
+			sum += len(text) + i%3
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

@@ -1,0 +1,6 @@
+# twincheck: websocket: four workloads over loopback (none serves and dials once); Go is github.com/gorilla/websocket.
+require github.com/gorilla/websocket v1.5.3
+- - none
+- - small
+- - big
+- - dial

@@ -1,0 +1,102 @@
+package main
+
+import (
+	"fmt"
+	"net"
+	"net/http"
+	"os"
+	"strings"
+
+	"github.com/gorilla/websocket"
+)
+
+var up = websocket.Upgrader{}
+
+func echo(w http.ResponseWriter, r *http.Request) {
+	c, err := up.Upgrade(w, r, nil)
+	if err != nil {
+		return
+	}
+	defer c.Close()
+	for {
+		t, m, err := c.ReadMessage()
+		if err != nil {
+			return
+		}
+		if c.WriteMessage(t, m) != nil {
+			return
+		}
+	}
+}
+
+func round(c *websocket.Conn, t int, m []byte) int {
+	if err := c.WriteMessage(t, m); err != nil {
+		panic(err)
+	}
+	_, got, err := c.ReadMessage()
+	if err != nil {
+		panic(err)
+	}
+	return len(got) + int(got[len(got)-1])
+}
+
+func dial(addr string) *websocket.Conn {
+	c, _, err := websocket.DefaultDialer.Dial("ws://"+addr+"/echo", nil)
+	if err != nil {
+		panic(err)
+	}
+	return c
+}
+
+func closeConn(c *websocket.Conn) {
+	c.WriteMessage(websocket.CloseMessage, websocket.FormatCloseMessage(1000, ""))
+	c.Close()
+}
+
+func run(addr, w string) int {
+	sum := 0
+	if w == "dial" {
+		for i := 0; i < 500; i++ {
+			c := dial(addr)
+			sum += round(c, websocket.TextMessage, []byte(fmt.Sprintf("hello %d", i%10)))
+			closeConn(c)
+		}
+		return sum
+	}
+	c := dial(addr)
+	switch w {
+	case "small":
+		m := []byte(strings.Repeat("0123456789abcdef", 4))
+		for i := 0; i < 20000; i++ {
+			sum += round(c, websocket.TextMessage, m)
+		}
+	case "big":
+		m := make([]byte, 16384)
+		for i := range m {
+			m[i] = byte(i % 251)
+		}
+		for i := 0; i < 5000; i++ {
+			sum += round(c, websocket.BinaryMessage, m)
+		}
+	default:
+		sum = round(c, websocket.TextMessage, []byte("x"))
+	}
+	closeConn(c)
+	return sum
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	l, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	mux := http.NewServeMux()
+	mux.HandleFunc("/echo", echo)
+	go http.Serve(l, mux)
+	sum := run(l.Addr().String(), w)
+	fmt.Printf("%s %d\n", w, sum)
+}

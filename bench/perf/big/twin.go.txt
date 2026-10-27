@@ -1,0 +1,70 @@
+package main
+
+import (
+	"fmt"
+	"math/big"
+	"os"
+	"strings"
+)
+
+func next(x int) int { return (x*1103515245 + 12345) % 2147483648 }
+
+func hexs(s, n int) string {
+	var b strings.Builder
+	for i := 0; i < n; i++ {
+		s = next(s)
+		d := (s >> 8) % 16
+		if i == 0 && d == 0 {
+			d = 1
+		}
+		b.WriteByte("0123456789abcdef"[d])
+	}
+	return b.String()
+}
+
+func num(s, bits int) *big.Int {
+	x, ok := new(big.Int).SetString(hexs(s, bits/4), 16)
+	if !ok {
+		panic("hex")
+	}
+	return x
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	a, b, c := num(1, 2048), num(2, 2048), num(3, 4096)
+	m := new(big.Int).Or(num(4, 1024), big.NewInt(1))
+	e, g := num(5, 1024), num(6, 1024)
+	dec := a.Text(10)
+	sum := 0
+	switch w {
+	case "mul":
+		for i := 0; i < 20000; i++ {
+			sum += new(big.Int).Mul(a, b).BitLen()
+		}
+	case "quorem":
+		for i := 0; i < 10000; i++ {
+			q, r := new(big.Int).QuoRem(c, b, new(big.Int))
+			sum += q.BitLen() + r.BitLen()
+		}
+	case "text":
+		for i := 0; i < 2000; i++ {
+			sum += len(a.Text(10))
+		}
+	case "parse":
+		for i := 0; i < 2000; i++ {
+			x, _ := new(big.Int).SetString(dec, 10)
+			sum += x.BitLen()
+		}
+	case "exp":
+		for i := 0; i < 200; i++ {
+			sum += new(big.Int).Exp(g, e, m).BitLen()
+		}
+	default:
+		sum = a.BitLen() + b.BitLen() + c.BitLen() + m.BitLen() + len(dec)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

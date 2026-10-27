@@ -1,0 +1,7 @@
+# twincheck: big: six workloads (none is the setup alone), the same names on both sides.
+- - none
+- - mul
+- - quorem
+- - text
+- - parse
+- - exp

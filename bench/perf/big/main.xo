@@ -1,0 +1,61 @@
+// big: std/big against Go's math/big (twin.go.txt): numbers made from the
+// same hex digits on both sides; mul of 2048 bit numbers, quo_rem of a
+// 4096 bit by a 2048 bit one, text (decimal) and parse (decimal) of a 2048
+// bit number, and exp of a 1024 bit base and exponent modulo a 1024 bit
+// odd number; `none` is the setup alone. Usage:
+// `<program> none|mul|quorem|text|parse|exp`. Prints `<workload>
+// <checksum>`; the twin prints the same.
+use std/big
+
+fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+/// n hex digits from seed s, the first not zero.
+fn hex(s0: Int, n: Int) -> Str {
+  var s = s0
+  var b = StrBuilder.new()
+  for i in 0..n {
+    s = next(s)
+    let d = (s >> 8) % 16
+    b.write("0123456789abcdef"[(if i == 0 && d == 0 { 1 } else { d })..(if i == 0 && d == 0 { 2 } else { d + 1 })])
+  }
+  b.freeze()
+}
+
+fn num(s: Int, bits: Int) -> big.BigInt { big.parse(hex(s, bits / 4), 16).ok() ?? fault("hex") }
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let a = num(1, 2048)
+  let b = num(2, 2048)
+  let c = num(3, 4096)
+  let m = num(4, 1024).or(big.from_int(1))
+  let e = num(5, 1024)
+  let g = num(6, 1024)
+  let dec = a.text()
+  var sum = 0
+  if w == "mul" {
+    for _ in 0..20000 {
+      sum += a.mul(b).bit_len()
+    }
+  } else if w == "quorem" {
+    for _ in 0..10000 {
+      let (q, r) = c.quo_rem(b)
+      sum += q.bit_len() + r.bit_len()
+    }
+  } else if w == "text" {
+    for _ in 0..2000 {
+      sum += a.text().len()
+    }
+  } else if w == "parse" {
+    for _ in 0..2000 {
+      sum += (big.parse(dec).ok() ?? fault("dec")).bit_len()
+    }
+  } else if w == "exp" {
+    for _ in 0..200 {
+      sum += g.exp(e, Some(m)).bit_len()
+    }
+  } else {
+    sum = a.bit_len() + b.bit_len() + c.bit_len() + m.bit_len() + dec.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

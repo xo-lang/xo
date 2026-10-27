@@ -1,0 +1,54 @@
+// xmlcodec: derive Xml (std/xml encode_value and decode, std/xmlcodec)
+// against Go's encoding/xml Marshal and Unmarshal (twin.go.txt): an order
+// with an attribute, a nested element and 20 lines under items>line,
+// encoded and decoded 20,000 times; `none` is the setup alone. Usage:
+// `<program> none|encode|decode`. Prints `<workload> <checksum>`; the
+// twin prints the same.
+use std/xml
+
+struct Customer {
+  name: Str
+  email: Str
+} derive Xml
+
+struct Line {
+  sku xml "sku,attr": Str
+  qty: Int
+  price: Float
+  note xml "note,omitempty": Str?
+} derive Xml
+
+struct Order {
+  id xml "id,attr": Int
+  customer: Customer
+  lines xml "items>line": List[Line]
+  paid: Bool
+} derive Xml
+
+fn order() -> Order {
+  var ls: List[Line] = []
+  for i in 0..20 {
+    ls.push(Line{sku: "SKU-${1000 + i}", qty: i % 5 + 1, price: Float(i) * 2.5 + 0.25, note: if i % 4 == 0 { Some("gift & wrap") } else { None }})
+  }
+  Order{id: 42, customer: Customer{name: "Ann Lee", email: "ann@example.com"}, lines: ls, paid: true}
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let o = order()
+  let text = xml.encode_value(o).ok() ?? fault("encode")
+  var sum = 0
+  if w == "encode" {
+    for _ in 0..20000 {
+      sum += (xml.encode_value(o).ok() ?? fault("encode")).len()
+    }
+  } else if w == "decode" {
+    for _ in 0..20000 {
+      let d = xml.decode[Order](text).ok() ?? fault("decode")
+      sum += d.id + d.lines.len() + d.lines[7].qty + d.customer.name.len()
+    }
+  } else {
+    sum = text.len() + o.lines.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

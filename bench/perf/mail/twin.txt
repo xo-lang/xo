@@ -1,0 +1,7 @@
+# twincheck: mail: six workloads (none is the loop alone), the same names on both sides.
+- - none
+- - addr
+- - list
+- - display
+- - msg
+- - date

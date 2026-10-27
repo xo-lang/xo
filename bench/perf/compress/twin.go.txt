@@ -1,0 +1,97 @@
+package main
+
+import (
+	"bytes"
+	"compress/flate"
+	"compress/gzip"
+	"fmt"
+	"io"
+	"os"
+)
+
+var words = []string{"the", "cache", "stores", "every", "entry", "once", "by", "key", "and", "reads", "it", "back", "with", "a", "check", "of", "its", "version", "before", "use", "\n"}
+
+func next(x int) int { return (x*1103515245 + 12345) % 2147483648 }
+
+func inputs() [][]byte {
+	var out [][]byte
+	r := 777
+	for i := 0; i < 40; i++ {
+		var b bytes.Buffer
+		for b.Len() < 32768 {
+			r = next(r)
+			b.WriteString(words[(r>>8)%21])
+			b.WriteByte(' ')
+		}
+		out = append(out, b.Bytes())
+	}
+	return out
+}
+
+func gz(s []byte, level int) []byte {
+	var b bytes.Buffer
+	w, _ := gzip.NewWriterLevel(&b, level)
+	w.Write(s)
+	w.Close()
+	return b.Bytes()
+}
+
+func df(s []byte) []byte {
+	var b bytes.Buffer
+	w, _ := flate.NewWriter(&b, flate.DefaultCompression)
+	w.Write(s)
+	w.Close()
+	return b.Bytes()
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	ins := inputs()
+	sum := 0
+	switch w {
+	case "gzip", "gzip1", "deflate":
+		for p := 0; p < 10; p++ {
+			for _, s := range ins {
+				var c []byte
+				switch w {
+				case "gzip":
+					c = gz(s, gzip.DefaultCompression)
+				case "gzip1":
+					c = gz(s, gzip.BestSpeed)
+				default:
+					c = df(s)
+				}
+				sum += len(c) + int(c[len(c)-1])
+			}
+		}
+	case "gunzip", "inflate":
+		var cs [][]byte
+		for _, s := range ins {
+			if w == "gunzip" {
+				cs = append(cs, gz(s, gzip.DefaultCompression))
+			} else {
+				cs = append(cs, df(s))
+			}
+		}
+		for p := 0; p < 10; p++ {
+			for _, c := range cs {
+				var r io.Reader
+				if w == "gunzip" {
+					r, _ = gzip.NewReader(bytes.NewReader(c))
+				} else {
+					r = flate.NewReader(bytes.NewReader(c))
+				}
+				d, _ := io.ReadAll(r)
+				sum += len(d) + int(d[len(d)-1])
+			}
+		}
+	default:
+		for _, s := range ins {
+			sum += len(s) + int(s[len(s)-1])
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

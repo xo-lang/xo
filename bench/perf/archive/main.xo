@@ -1,0 +1,59 @@
+// archive: std/archive's tar and zip against Go's archive/tar and
+// archive/zip (twin.go.txt): 50 files of 1 to 4 KB of generated text and 3
+// directories, written as a tar and as a deflated zip, and read back, 200
+// passes each; `none` is the setup alone. The checksums count entries and
+// content bytes, not archive bytes (the two writers' headers may differ
+// and still be valid). Usage: `<program> none|tar|untar|zip|unzip`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/archive
+
+const WORDS: List[Str] = ["alpha", "beta", "gamma", "delta", "cache", "entry", "key", "value", "\n"]
+
+fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+fn entries() -> List[archive.Entry] {
+  var out: List[archive.Entry] = [archive.dir("a/"), archive.dir("a/b/"), archive.dir("c/")]
+  var r = 99
+  for i in 0..50 {
+    r = next(r)
+    let n = 1024 + (r >> 8) % 3072
+    var b = BytesBuilder.with_capacity(n + 8)
+    while b.len() < n {
+      r = next(r)
+      b.write_str(WORDS[(r >> 8) % 9])
+      b.write_byte(32)
+    }
+    let dir = if i % 3 == 0 { "a/" } else if i % 3 == 1 { "a/b/" } else { "c/" }
+    out.push(archive.file("${dir}f${i}.txt", b.freeze()))
+  }
+  out
+}
+
+fn content(es: List[archive.Entry]) -> Int {
+  var s = es.len()
+  for e in es {
+    s += e.data.len()
+  }
+  s
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let es = entries()
+  var sum = 0
+  if w == "tar" || w == "zip" {
+    for _ in 0..200 {
+      let a = (if w == "tar" { archive.tar(es) } else { archive.zip(es) }).ok() ?? fault("write")
+      sum += if a.len() > 0 { content(es) } else { 0 }
+    }
+  } else if w == "untar" || w == "unzip" {
+    let a = (if w == "untar" { archive.tar(es) } else { archive.zip(es) }).ok() ?? fault("write")
+    for _ in 0..200 {
+      let got = (if w == "untar" { archive.untar(a) } else { archive.unzip(a) }).ok() ?? fault("read")
+      sum += content(got)
+    }
+  } else {
+    sum = content(es)
+  }
+  os.stdio.println("${w} ${sum}")
+}

@@ -1,0 +1,151 @@
+package main
+
+import (
+	"archive/tar"
+	"archive/zip"
+	"bytes"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+	"time"
+)
+
+var words = []string{"alpha", "beta", "gamma", "delta", "cache", "entry", "key", "value", "\n"}
+
+func next(x int) int { return (x*1103515245 + 12345) % 2147483648 }
+
+type entry struct {
+	path  string
+	data  []byte
+	isDir bool
+}
+
+func entries() []entry {
+	out := []entry{{"a/", nil, true}, {"a/b/", nil, true}, {"c/", nil, true}}
+	r := 99
+	for i := 0; i < 50; i++ {
+		r = next(r)
+		n := 1024 + (r>>8)%3072
+		var b bytes.Buffer
+		for b.Len() < n {
+			r = next(r)
+			b.WriteString(words[(r>>8)%9])
+			b.WriteByte(' ')
+		}
+		dir := "c/"
+		if i%3 == 0 {
+			dir = "a/"
+		} else if i%3 == 1 {
+			dir = "a/b/"
+		}
+		out = append(out, entry{fmt.Sprintf("%sf%d.txt", dir, i), b.Bytes(), false})
+	}
+	return out
+}
+
+func content(es []entry) int {
+	s := len(es)
+	for _, e := range es {
+		s += len(e.data)
+	}
+	return s
+}
+
+func writeTar(es []entry) []byte {
+	var b bytes.Buffer
+	w := tar.NewWriter(&b)
+	for _, e := range es {
+		h := &tar.Header{Name: e.path, Mode: 0o644, ModTime: time.Unix(0, 0), Typeflag: tar.TypeReg, Size: int64(len(e.data))}
+		if e.isDir {
+			h.Mode, h.Typeflag, h.Size = 0o755, tar.TypeDir, 0
+		}
+		w.WriteHeader(h)
+		w.Write(e.data)
+	}
+	w.Close()
+	return b.Bytes()
+}
+
+func writeZip(es []entry) []byte {
+	var b bytes.Buffer
+	w := zip.NewWriter(&b)
+	for _, e := range es {
+		h := &zip.FileHeader{Name: e.path, Method: zip.Deflate, Modified: time.Unix(0, 0)}
+		if e.isDir {
+			h.Method = zip.Store
+		}
+		f, _ := w.CreateHeader(h)
+		f.Write(e.data)
+	}
+	w.Close()
+	return b.Bytes()
+}
+
+func readTar(a []byte) []entry {
+	var out []entry
+	r := tar.NewReader(bytes.NewReader(a))
+	for {
+		h, err := r.Next()
+		if err != nil {
+			break
+		}
+		d, _ := io.ReadAll(r)
+		out = append(out, entry{h.Name, d, h.Typeflag == tar.TypeDir})
+	}
+	return out
+}
+
+func readZip(a []byte) []entry {
+	var out []entry
+	r, _ := zip.NewReader(bytes.NewReader(a), int64(len(a)))
+	for _, f := range r.File {
+		rc, _ := f.Open()
+		d, _ := io.ReadAll(rc)
+		rc.Close()
+		out = append(out, entry{f.Name, d, strings.HasSuffix(f.Name, "/")})
+	}
+	return out
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	es := entries()
+	sum := 0
+	switch w {
+	case "tar", "zip":
+		for p := 0; p < 200; p++ {
+			var a []byte
+			if w == "tar" {
+				a = writeTar(es)
+			} else {
+				a = writeZip(es)
+			}
+			if len(a) > 0 {
+				sum += content(es)
+			}
+		}
+	case "untar", "unzip":
+		var a []byte
+		if w == "untar" {
+			a = writeTar(es)
+		} else {
+			a = writeZip(es)
+		}
+		for p := 0; p < 200; p++ {
+			var got []entry
+			if w == "untar" {
+				got = readTar(a)
+			} else {
+				got = readZip(a)
+			}
+			sum += content(got)
+		}
+	default:
+		sum = content(es)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

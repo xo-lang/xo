@@ -1,0 +1,56 @@
+// mail: std/mail against Go's net/mail (twin.go.txt): parse_address over
+// five forms (one malformed), parse_address_list, Address.display,
+// read_message of a header block and body with a header lookup, and
+// parse_date over four RFC 5322 dates, 100,000 passes each; `none` is the
+// loop alone. Usage: `<program> none|addr|list|display|msg|date`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/mail
+
+const ADDRS: List[Str] = [
+  "Ann Lee <ann@example.com>",
+  "bob@example.org",
+  "\"Lee, Ann\" <ann.lee@mail.example.com>",
+  "=?utf-8?q?J=C3=B6rg_Doe?= <joerg@example.de>",
+  "not an address",
+]
+
+const LIST: Str = "Ann Lee <ann@example.com>, bob@example.org, \"Carol D\" <carol@example.net>, dave@example.com"
+
+const DATES: List[Str] = [
+  "Mon, 02 Jan 2006 15:04:05 -0700",
+  "2 Jan 2006 15:04:05 +0000",
+  "Tue, 13 Oct 2026 08:30:00 GMT",
+  "Fri, 21 Nov 1997 09:55:06 -0600",
+]
+
+const MSG: Str = "From: Ann Lee <ann@example.com>\r\nTo: bob@example.org\r\nSubject: Quarterly report\r\nDate: Mon, 02 Jan 2006 15:04:05 -0700\r\nMessage-ID: <1234@example.com>\r\nContent-Type: text/plain; charset=utf-8\r\nX-Long: a header value that goes on\r\n and continues on the next line\r\n\r\nHello Bob,\r\n\r\nThe report is attached.\r\n"
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let a0 = mail.parse_address(ADDRS[0]).ok() ?? fault("addr")
+  let a2 = mail.parse_address(ADDRS[2]).ok() ?? fault("addr")
+  let msg = MSG.bytes()
+  var sum = 0
+  for i in 0..100000 {
+    if w == "addr" {
+      match mail.parse_address(ADDRS[i % 5]) {
+        Ok(a) => sum += a.name.len() + a.address.len()
+        Err(_) => sum += 1
+      }
+    } else if w == "list" {
+      let l = mail.parse_address_list(LIST).ok() ?? fault("list")
+      sum += l.len() + l[i % 4].address.len()
+    } else if w == "display" {
+      sum += (if i % 2 == 0 { a0 } else { a2 }).display().len()
+    } else if w == "msg" {
+      let m = mail.read_message(msg).ok() ?? fault("msg")
+      sum += m.body.len() + (m.header("subject") ?? "").len() + (m.header("X-Long") ?? "").len()
+    } else if w == "date" {
+      let t = mail.parse_date(DATES[i % 4]).ok() ?? fault("date")
+      sum += t.unix() % 1000
+    } else {
+      sum += ADDRS[i % 5].len() + DATES[i % 4].len()
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
