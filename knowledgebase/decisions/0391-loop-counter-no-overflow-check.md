@@ -1,6 +1,6 @@
 # 0391: A loop counter that only counts up by 1 needs no overflow check
 
-Status: Accepted (owner, 2026-10-27, relayed by the lead; Xo Lang 3). Implementation in progress.
+Status: Accepted (owner, 2026-10-27, relayed by the lead; Xo Lang 3); implemented and measured, no wall gain (pmap 1.003, collatz 0.995), not landed; the branch is kept (local branch loop-counter-0391 and a patch in the lead's notes, xo-lang-3/loop-counter-0391.patch). A rule that changes what the spec allows needs a gain; do not retry it without a loop where the check is on the critical path.
 
 ## Context
 
@@ -26,12 +26,28 @@ The range analysis (compiler/arm64/ranges.xo) gives such a parameter the interva
 removes the check on the `+ 1`. Other facts derived from that interval hold under the same
 unreachability assumption.
 
+## Measured (2026-10-27)
+
+Built and checked: counted-loop codegen patterns (arm64 and amd64: the positive case drops `adds` and `b.vs`;
+a variable step, a counter that also decreases and a variable start keep them; they fail on the parent's xo),
+`xo test compiler/arm64` 55 of 55, `TestGoldenRun`, fixed point (s2 and s3 identical), the Docker amd64 sample
+48 of 48. `xo bench --ab`, 20 rounds, A the parent's xo and std, B this tree's, the same program built by each:
+
+| program | wall B/A | 95% interval | cpu |
+|---|---|---|---|
+| bench/perf/conc pmap (`steps` inlined into a task) | 1.003 | 0.992 to 1.015 | 590 ms both |
+| serial Collatz over 3,000,000 starts | 0.995 | 0.990 to 1.000 | 470 to 460 ms |
+
+The loop in pmap's output lost `adds` and `b.vs` (`add x12, x12, #1`), two instructions an iteration, and no
+cycles: the check is a perfectly predicted branch off the loop's critical path (the chain through `n`). The ceiling
+I gave for it (4% of pmap's cycles, from the checks) was wrong; replacing the `3 * n` check with a wrapping
+multiply was no faster either (1.016 worse, 478.8 to 486.5 ms). pmap's gap to Go is not these checks.
+
 ## Consequences
 
 - spec/core.md's overflow section states the rule, so the fault's absence there is
   specified, not an accident.
-- LLVM and Go backends need nothing (LLVM already proves counters; the Go backend does not
-  use the arm64 analysis).
+- The LLVM and Go backends use their own analyses and would not change (not measured).
 - Code size and speed: measured in the commit that lands it (pmap, counting loops).
 
 ## Alternatives
