@@ -34,10 +34,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   2026-10-26 (each cache entry carries the Win64 thunks its functions call through)
 - An edit rebuild is a few ms faster: the checker's syntax trees and tables are
   released on a task beside the passes after the SSA is built, not on the build's
-  thread. Opt in (XO_CHAIN_KEYS=1, decision 0382): the landings and the cleanup
-  per function through the back-end cache, keyed by the front end entry each body
-  came from, and the reference counting's keys chained from them (llvm-fib edit
-  284 to 274 ms, the HTTP server 596 to 564 ms).
+  thread. The landings and the cleanup per function go through the back-end
+  cache (decision 0382, default on; XO_CHAIN_KEYS=0 turns it off), keyed by the
+  front end entry each body came from and what its replay set, and the reference
+  counting's keys are chained from each body's cleaned-up form: quiet --ab, one
+  xo with it off and on, the HTTP server's edit 603.5 to 580.8 ms, llvm-fib's
+  263.8 to 259.8 ms.
 - `--backend=amd64` edit rebuilds on darwin and linux reuse every unchanged
   function and part, as arm64 builds do (the per-function and part back-end
   cache, lazy inline-cache decode and the deferred inline verification): a body

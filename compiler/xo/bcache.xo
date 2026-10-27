@@ -428,7 +428,8 @@ fn fe_settings(c: check.Checker, root: Str, tests: Bool, release: Bool, real: Bo
 }
 
 /// add_landings and cleanup through the cleanup cache (decision 0382,
-/// opt in with XO_CHAIN_KEYS=1): after fold_known_calls, each function's
+/// default on since 2026-10-27, XO_CHAIN_KEYS=0 turns it off): after
+/// fold_known_calls, each function's
 /// cln key (ssa clncache.xo); a function whose entry decodes takes its
 /// form after the cleanup from the entry and neither pass runs for it;
 /// the others run as before and are stored, but for one whose landings
@@ -440,7 +441,7 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
   var t = os.clock.now()
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
-  let id = if (os.env.get("XO_CHAIN_KEYS") ?? "") != "1" || dir.is_empty() || release || b.m.funcs.len() < 256 || !b.m.passes_off.is_empty() { "" } else { cache_id(os) }
+  let id = if (os.env.get("XO_CHAIN_KEYS") ?? "") == "0" || dir.is_empty() || release || b.m.funcs.len() < 256 || !b.m.passes_off.is_empty() { "" } else { cache_id(os) }
   if id.is_empty() {
     b.add_landings()
     t = lap(os, phases, "add_landings", t)
