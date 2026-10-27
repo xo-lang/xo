@@ -402,6 +402,128 @@ pub fn chunk(h: Int) {
 /// The chunks mapped so far.
 pub fn chunks() -> Int { rt.slot_load(rt.static_word(W_CHUNKS), 0, RELAXED) }
 
+/// The heap record's per class words this module reads for a cut (alloc.xo
+/// NFREE, MAG_CAP; FREE_LISTS and MAG are H_FREE_LISTS and H_MAG above).
+const H_NFREE = 664
+
+/// The classes whose central magazines a growing thread may cut into a
+/// smaller class's blocks: 2 KiB and up are the power of two blocks, the
+/// classes below 32 KiB the resident ones (a class of 32 KiB or more is
+/// given back by scavenge, so cutting it saves no footprint); and the
+/// bytes of magazines a growth cuts at most.
+const CUT_MAX_CLASS = 68
+const CUT_BYTES = 1048576
+
+/// The word of the central table that turns the cut off (XO_CUT=0): the
+/// table is a page, its classes' words the first 73.
+const CUT_OFF = 1056
+
+/// XO_CUT=0: no growth cuts a magazine (decision 0383, (a)).
+pub fn set_cut_off() {
+  let cen = rt.mem_load(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_CENTRAL, 8)
+  rt.mem_store(cen, CUT_OFF, 1, 8)
+}
+
+/// A thread's chunk is used up for a request of n bytes (cabi.xo heap_grow):
+/// when a class above n's has magazines on the central lists, the smallest
+/// such class's are cut into blocks of n's class (each block's bytes are an
+/// exact number of the smaller class's blocks for the power of two classes,
+/// and the tail of one of the others is left), up to CUT_BYTES, rather than
+/// map a new chunk (decision 0383, (a): the free memory of the classes that
+/// stopped being asked for is reused by the one that is). The cut blocks
+/// go to the central list in whole magazines and the rest becomes the
+/// thread's free list. True when alloc will find a block now, false when a
+/// chunk must be mapped. Blocks only get smaller: a cut block never joins
+/// into a larger one.
+pub fn cut_for(h: Int, n: Int) -> Bool {
+  let cen = rt.mem_load(h, H_CENTRAL, 8)
+  if cen == 0 || rt.mem_load(cen, CUT_OFF, 8) != 0 {
+    return false
+  }
+  var c = 65
+  var size = 2040
+  if n <= 1024 {
+    c = n.wrapping_add(15).shr_logical(4)
+    if c == 0 {
+      c = 1
+    }
+    size = c.wrapping_shl(4)
+  } else {
+    while size < n {
+      size = size.wrapping_shl(1).wrapping_add(8)
+      c = c.wrapping_add(1)
+    }
+  }
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  // a block is there already (a list, the spare, or the central list got one)
+  if rt.mem_load(fl, H_FREE_LISTS, 8) != 0 || rt.mem_load(fl, H_MAG, 8) != 0 || rt.slot_load(cen, c, RELAXED) != 0 {
+    return true
+  }
+  if c >= CUT_MAX_CLASS {
+    return false
+  }
+  let stride = size.wrapping_add(8)
+  let cap = rt.mem_load(fl, H_MAG_CAP, 8)
+  var head = 0
+  var have = 0
+  var cut = 0
+  while cut < CUT_BYTES {
+    // the smallest class above c with a magazine, taken off its list
+    lock()
+    var d = c.wrapping_add(1)
+    var m = 0
+    while d <= CUT_MAX_CLASS && m == 0 {
+      m = rt.slot_load(cen, d, RELAXED)
+      if m != 0 {
+        rt.slot_store(cen, d, rt.mem_load(m, 8, 8), RELAXED)
+      } else {
+        d = d.wrapping_add(1)
+      }
+    }
+    unlock()
+    if m == 0 {
+      break
+    }
+    var dsize = d.wrapping_shl(4)
+    if d > 64 {
+      dsize = (2048).wrapping_shl(d.wrapping_sub(65)) - 8
+    }
+    let dstride = dsize.wrapping_add(8)
+    var r = m
+    while r != 0 {
+      let next = rt.mem_load(r, 0, 8)
+      let b = r.wrapping_sub(8)
+      var off = 0
+      while off.wrapping_add(stride) <= dstride {
+        let nb = b.wrapping_add(off)
+        rt.mem_store(nb, 0, c, 8)
+        let p = nb.wrapping_add(8)
+        rt.mem_store(p, 0, head, 8)
+        head = p
+        have = have.wrapping_add(1)
+        if have == cap {
+          // a whole magazine to the central list
+          lock()
+          rt.mem_store(head, 8, rt.slot_load(cen, c, RELAXED), 8)
+          rt.slot_store(cen, c, head, RELAXED)
+          unlock()
+          head = 0
+          have = 0
+        }
+        off = off.wrapping_add(stride)
+      }
+      cut = cut.wrapping_add(dstride)
+      r = next
+    }
+  }
+  if have != 0 {
+    rt.mem_store(fl, H_FREE_LISTS, head, 8)
+    rt.mem_store(fl, H_NFREE, have, 8)
+    return true
+  }
+  rt.mem_load(h, H_CENTRAL, 8) != 0 && rt.slot_load(cen, c, RELAXED) != 0
+}
+
 /// Takes the central lists' lock.
 pub fn lock() {
   let l = rt.static_word(W_LOCK)
@@ -472,7 +594,7 @@ const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73
 const H_MAG_CAP = 10368
 /// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).
 const MAG_BYTES = 65536
-const MID_MAX = 262144
+const MID_MAX = 262136
 const NCLASS1 = 73
 
 /// Makes the main heap record and the central lists (C main, before
@@ -501,7 +623,7 @@ fn mag_caps(h: Int) {
   while c < NCLASS1 {
     var size = c.wrapping_shl(4)
     if c > 64 {
-      size = (2048).wrapping_shl(c.wrapping_sub(65))
+      size = (2048).wrapping_shl(c.wrapping_sub(65)) - 8
     }
     // MAG_BYTES / size by long division (no `/`: this module's rule)
     var q = 0
@@ -687,7 +809,7 @@ pub fn scavenge(m: Int, c: Int) {
   if sanhook.sanitized() || sanhook.gorace() {
     return
   }
-  let size = (2048).wrapping_shl(c.wrapping_sub(65))
+  let size = (2048).wrapping_shl(c.wrapping_sub(65)) - 8
   var r = m
   while r != 0 {
     let lo = (r + 16 + SCAV_PAGE - 1).shr_logical(14).wrapping_shl(14)

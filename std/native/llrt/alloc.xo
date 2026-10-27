@@ -91,6 +91,13 @@ const SAMPLE = 4611686018427387904
 const SCAVENGE = 2305843009213693952
 
 const SMALL_MAX = 1024
+
+/// The payload of the first class of the power of two blocks (class 65): a
+/// block of these classes is 2^k bytes with its 8 byte class word, so
+/// the blocks of a larger class are an exact number of the smaller class's
+/// (decision 0383, (a): a magazine can be cut into blocks of a smaller class
+/// with nothing left over). Each next class's payload is twice that plus 8.
+const BIG_FIRST = 2040
 /// The first class (32 KiB) whose blocks on the central lists give their
 /// inner pages back to the system (heapos.xo scavenge, decision 0383).
 const SCAVENGE_FROM = 69
@@ -122,7 +129,7 @@ pub fn alloc(h: Int, n: Int) -> Int {
   }
   // the size class (size_class)
   var c = 65
-  var size = 2048
+  var size = BIG_FIRST
   if n <= SMALL_MAX {
     c = n.wrapping_add(15).shr_logical(4)
     if c == 0 {
@@ -131,7 +138,7 @@ pub fn alloc(h: Int, n: Int) -> Int {
     size = c.wrapping_shl(4)
   } else {
     while size < n {
-      size = size.wrapping_shl(1)
+      size = size.wrapping_shl(1).wrapping_add(8)
       c = c.wrapping_add(1)
     }
   }
@@ -327,7 +334,7 @@ pub fn refill(h: Int, n: Int) {
     return
   }
   var c = 65
-  var size = 2048
+  var size = BIG_FIRST
   if n <= SMALL_MAX {
     c = n.wrapping_add(15).shr_logical(4)
     if c == 0 {
@@ -336,7 +343,7 @@ pub fn refill(h: Int, n: Int) {
     size = c.wrapping_shl(4)
   } else {
     while size < n {
-      size = size.wrapping_shl(1)
+      size = size.wrapping_shl(1).wrapping_add(8)
       c = c.wrapping_add(1)
     }
   }
@@ -503,7 +510,7 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
     return 0
   }
   var c = 65
-  var size = 2048
+  var size = BIG_FIRST
   if n <= SMALL_MAX {
     c = n.wrapping_add(15).shr_logical(4)
     if c == 0 {
@@ -512,7 +519,7 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
     size = c.wrapping_shl(4)
   } else {
     while size < n {
-      size = size.wrapping_shl(1)
+      size = size.wrapping_shl(1).wrapping_add(8)
       c = c.wrapping_add(1)
     }
   }

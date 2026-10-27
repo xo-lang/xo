@@ -47,7 +47,7 @@ const THIS_PROCESS = -1
 const W_OVERFLOW_COUNT = 61
 
 /// xo_rt.c XO_MID_MAX: the largest block the size classes serve.
-const MID_MAX = 262144
+const MID_MAX = 262136
 
 /// XO_NCLASS (64 + 8 classes) and XO_CHUNK (4 MiB).
 const NCLASS = 72
@@ -236,6 +236,12 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   // (alloc.xo COUNT; a budget turns them on again)
   if process.env_real_at("XO_LEAKCHECK") == 0 && process.env_real_at("XO_HEAPSTATS") == 0 && process.env_real_at("XO_RTSTATS") == 0 {
     heapos.counting_off()
+  }
+  // XO_CUT=0: the growth of a thread's chunk never cuts a larger class's
+  // central magazines into smaller blocks (decision 0383, (a))
+  let cutv = process.env_real_at("XO_CUT")
+  if cutv != 0 && atoll(cutv) == 0 {
+    heapos.set_cut_off()
   }
   let mid = process.env_real_at("XO_HEAP_MID_MAX")
   if mid != 0 {

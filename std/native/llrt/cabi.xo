@@ -278,6 +278,11 @@ fn heap_grow(h: Int, n: Int) -> Int {
   if prof.supported() && n >= SAMPLE {
     return heapprof.sampled(h, rt.mem_load(h, PSAMPLE, 8), n - SAMPLE)
   }
+  // decision 0383 (a): a cut of the central magazines of a larger class
+  // before a new chunk
+  if heapos.cut_for(h, n) {
+    return alloc.alloc(h, n)
+  }
   heapos.chunk(h)
   alloc.alloc(h, n)
 }
