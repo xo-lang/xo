@@ -1699,6 +1699,23 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.chacha_blocks4" | "rt.chacha_stream4" if g.x86 => {
+      // SSSE3, two blocks' rows at a time (ssa.chacha4_x86_lines): rax,
+      // rcx, r8 to r10 and xmm0 to xmm13 clobbered, r11 the emitter's
+      // scratch
+      var cl = [XR_AX, XR_CX, 8, 9, 10]
+      for r in ssa.chacha4_x86_xmms() {
+        cl.push(FP_BASE + r)
+      }
+      var us: List[Int] = []
+      for a in x.args {
+        us.push(g.real(g.word(a)))
+      }
+      let n = if aux_str(x.aux) == "rt.chacha_stream4" { "$u3" } else { "" }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.chacha4_x86_lines("$u0", "$u1", "$u2", n).join("\n"), us: us, x86: true, clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.chacha_blocks4" => {
       // decision 0329: the four blocks in vector registers, one 32 bit
       // lane each (ssa.chacha4_neon_lines), clobbering the caller saved V

@@ -221,10 +221,10 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // and amd64 (AES-NI and PCLMULQDQ, ssa x86aesgcm8.xo, 2026-10-27)
     "aes_gcm8_enc10" | "aes_gcm8_enc12" | "aes_gcm8_enc14" | "aes_gcm8_dec10" | "aes_gcm8_dec12" | "aes_gcm8_dec14" => if b.goarch == "arm64" || b.goarch == "amd64" { b.obj_name(fo) } else { "" }
     "sha256_block" => "sha256_block"
-    // decision 0329: arm64 only (NEON, and LLVM's vectors there); amd64
-    // runs the portable body until it has its own lowering
-    "chacha_blocks4" => if b.goarch == "arm64" { "chacha_blocks4" } else { "" }
-    "chacha_stream4" => if b.goarch == "arm64" { "chacha_stream4" } else { "" }
+    // decision 0329: NEON on arm64 (and LLVM's vectors there); SSSE3 on
+    // amd64 (ssa x86chacha.xo, 2026-10-27)
+    "chacha_blocks4" => if b.goarch == "arm64" || b.goarch == "amd64" { "chacha_blocks4" } else { "" }
+    "chacha_stream4" => if b.goarch == "arm64" || b.goarch == "amd64" { "chacha_stream4" } else { "" }
     // the generic timer on arm64; elsewhere the body (mono_ns, 1e9 a
     // second)
     "ticks" | "ticks_hz" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }

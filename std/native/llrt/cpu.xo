@@ -24,6 +24,10 @@ pub const HW_SHA256: Int = 8
 /// FMA and AVX bits and the OS saving the AVX state (XGETBV); arm64's
 /// fmadd is always there and lowered directly (Float.fma).
 pub const HW_FMA: Int = 16
+/// x86-64's SSSE3 and SSE4.1 (CPUID.1 ECX bits 9 and 19), which the SSE
+/// ChaCha20 kernels use (pshufb, pinsrd; ssa x86chacha.xo): x86-64's
+/// baseline is SSE2 only, as Go's GOAMD64=v1 (2026-10-27).
+pub const HW_SSSE3: Int = 32
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -69,7 +73,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -93,7 +97,8 @@ fn detect() -> Int {
       // with the SSE and AVX states (bits 1 and 2), as Go's x86HasFMA
       let fma_bits = (1 << 12) | (1 << 27) | (1 << 28)
       let fma = (c & fma_bits) == fma_bits && (xgetbv0() & 6) == 6
-      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 })
+      let sse_bits = (1 << 9) | (1 << 19)
+      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 }) | (if (c & sse_bits) == sse_bits { HW_SSSE3 } else { 0 })
     }
     _ => 0
   }
@@ -1121,6 +1126,19 @@ pub fn chacha_stream4(dst: Int, src: Int, st: Int, n: Int) {
   var i = 0
   while i < n {
     chacha_blocks4(dst.wrapping_add(i), src.wrapping_add(i), st)
+    for b in 0..4 {
+      rt.mem_store(st, 64 + 4 * b, (rt.mem_load(st, 64 + 4 * b, 4) + 4) & 0xFFFFFFFF, 4)
+    }
+    i += 256
+  }
+}
+
+/// chacha_stream4 with the portable block: an x86-64 CPU without SSSE3,
+/// where the lowered chacha_stream4 cannot run.
+pub fn chacha_stream4_soft(dst: Int, src: Int, st: Int, n: Int) {
+  var i = 0
+  while i < n {
+    chacha_blocks4_soft(dst.wrapping_add(i), src.wrapping_add(i), st)
     for b in 0..4 {
       rt.mem_store(st, 64 + 4 * b, (rt.mem_load(st, 64 + 4 * b, 4) + 4) & 0xFFFFFFFF, 4)
     }

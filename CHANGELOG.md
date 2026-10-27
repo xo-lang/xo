@@ -13,6 +13,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - ChaCha20 is about 4 times faster where it runs the portable code (amd64,
   wasm): its block keeps the state in locals instead of lists (ChaCha20-Poly1305
   on an i7-9750H 5.9 times Go's time, from 20.4)
+- ChaCha20 is about 4 times faster where it runs the portable code (wasm): its
+  block keeps the state in locals instead of lists; on amd64 it runs SSSE3, two
+  blocks at a time, about 10 times faster than before (ChaCha20-Poly1305 on an
+  i7-9750H 3.1 times Go's time, from 20.4)
 - The first edit after a cold build of a mid-sized program (the HTTP server's 35
   parts) regenerates only the edited part instead of all of them: its parts
   are kept from the first build when they are under 128 MiB in all (before, only

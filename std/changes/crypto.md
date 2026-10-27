@@ -30,6 +30,29 @@ since this commit), B Xo, N=20000 records of 16 KiB, 11 rounds: seal1
 wall 1.089 (1.077 to 1.097), open1 1.021 (1.004 to 1.04), from 3.671
 and 3.486; seal 1.133 (1.114 to 1.153), open 1.148 (1.13 to 1.165); a
 key and an empty seal 1.276 (1.252 to 1.291).
+## 2026-10-27: perf: ChaCha20 on amd64 with SSSE3, two blocks' rows at a time (ChaCha20 0.382 of the time, ChaCha20-Poly1305 0.519)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 4's amd64 parity audit (bench/results/amd64-chacha-2026-10-27.md)
+- Go reference: golang.org/x/crypto/chacha20poly1305 chacha20poly1305_amd64.s (the SSE path's horizontal layout)
+- Test: internal/llvm golden chacha_blocks4 (Go's output) built for darwin/amd64 native and LLVM and run on an i7-9750H; the chacha twin's checksums equal Go's; xo dev codegen test/codegen (intrinsics: chacha.xor_stream's pshufb and pshufd, which fail without the lowering); Docker amd64 goldens in the gate
+
+cpu.chacha_blocks4 and chacha_stream4, NEON-only until now, are lowered on
+amd64 (compiler/ssa x86chacha.xo; the native backend for both, LLVM's own
+vectors for blocks4 and the same lines as inline asm for stream4): a
+block's four rows in four xmm registers, a half round's quarter rounds on
+the four columns at once, pshufd bringing the diagonals into columns,
+pshufb rotating by 16 and 8, two blocks interleaved. It runs when the CPU has SSSE3 and SSE4.1
+(cpu.HW_SSSE3, CPUID leaf 1; x86-64's baseline is SSE2 only, as Go's
+GOAMD64=v1, and Go's own SSE kernel checks SSSE3 too), else the portable
+block. `xo bench --ab` on
+the i7-9750H, A the portable body (with its locals), B this, N=20000
+records of 16 KiB, 11 rounds: ChaCha20 0.382 (0.379 to 0.387),
+ChaCha20-Poly1305 seal 0.519 (0.517 to 0.524); against Go 1.26.1,
+ChaCha20 0.486 (x/crypto's ChaCha20 is Go code on amd64) and seal 3.098
+(Go's AVX2 kernel with Poly1305 interleaved).
+
 ## 2026-10-27: perf: ChaCha20's portable block keeps its words in locals (amd64 ChaCha20 4.1 times faster, ChaCha20-Poly1305 3.4 times)
 
 - Kind: perf

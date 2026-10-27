@@ -1,0 +1,121 @@
+// ChaCha20 on x86-64 with SSSE3 (pshufb), for rt.chacha_blocks4 and
+// rt.chacha_stream4 (std/native/llrt/cpu.xo): the instruction sequence
+// both x86-64 lowerings use (compiler/arm64 calls.xo, compiler/llvm
+// call.xo). The layout is the horizontal one of Go's SSE ChaCha20
+// (golang.org/x/crypto/chacha20poly1305 chacha20poly1305_amd64.s,
+// BSD-style license, Copyright The Go Authors): a block's four rows of
+// four words in four xmm registers, a half round's four quarter rounds
+// on the four columns at once, the diagonal round's words brought into
+// columns by pshufd. Two blocks go together, step by step, for the
+// instruction level parallelism the vertical layout of arm64's NEON
+// (ssa a64chacha.xo) gets from 32 registers.
+//
+// Registers: xmm0 to xmm3 block P's rows A, B, C, D; xmm4 to xmm7 block
+// Q's; xmm8, xmm9 the rotations' scratch (P's, Q's); xmm10 pshufb's
+// table of a rotation left by 16, xmm11 by 8; xmm12, xmm13 P's and Q's
+// row D as loaded (their counters), added back after the rounds. r8 dst,
+// r9 src, r10 the bytes left, rcx the double rounds left, rax a counter.
+
+/// The general registers chacha4_x86_lines writes besides r11 (the
+/// native emitter's scratch): caller saved on System V and Windows both.
+pub fn chacha4_x86_gprs() -> List[Str] { ["rax", "rcx", "r8", "r9", "r10"] }
+
+/// The xmm registers chacha4_x86_lines writes.
+pub fn chacha4_x86_xmms() -> List[Int] { [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13] }
+
+/// One step of a quarter round on a block's rows (x += y; z ^= x;
+/// z rotated left by r), with t its scratch register.
+fn x86_chacha_step(x: Int, y: Int, z: Int, r: Int, t: Int) -> List[Str] {
+  var s = ["paddd %xmm${y}, %xmm${x}", "pxor %xmm${x}, %xmm${z}"]
+  if r == 16 {
+    s.push("pshufb %xmm10, %xmm${z}")
+  } else if r == 8 {
+    s.push("pshufb %xmm11, %xmm${z}")
+  } else {
+    s = s + ["movdqa %xmm${z}, %xmm${t}", "pslld $${r}, %xmm${z}", "psrld $${32 - r}, %xmm${t}", "por %xmm${t}, %xmm${z}"]
+  }
+  s
+}
+
+/// A half round of both blocks: the quarter round's four steps on the
+/// columns, P's and Q's interleaved.
+fn x86_chacha_half() -> List[Str] {
+  var t: List[Str] = []
+  // (a, b, d, r): a += b; d ^= a; d <<<= r
+  for (a, b, d, r) in [(0, 1, 3, 16), (2, 3, 1, 12), (0, 1, 3, 8), (2, 3, 1, 7)] {
+    t = t + x86_chacha_step(a, b, d, r, 8) + x86_chacha_step(a + 4, b + 4, d + 4, r, 9)
+  }
+  t
+}
+
+/// The rows B, C, D of both blocks rotated by lanes: imms (B's, C's, D's)
+/// for pshufd (0x39, 0x4e, 0x93 into the diagonals, the reverse back).
+fn x86_chacha_diag(b: Int, c: Int, d: Int) -> List[Str] {
+  var t: List[Str] = []
+  for o in [0, 4] {
+    t = t + ["pshufd $${b}, %xmm${1 + o}, %xmm${1 + o}", "pshufd $${c}, %xmm${2 + o}, %xmm${2 + o}", "pshufd $${d}, %xmm${3 + o}, %xmm${3 + o}"]
+  }
+  t
+}
+
+/// Blocks k and k + 1 of the group at r8/r9 (their counters at st's
+/// words 16 + k and 17 + k): the rows loaded, 20 rounds, the state added
+/// back, xored with src's 128 bytes into dst's.
+fn x86_chacha_pair(k: Int, st: Str) -> List[Str] {
+  var t: List[Str] = []
+  for (o, b) in [(0, k), (4, k + 1)] {
+    t = t + [
+      "movdqu (${st}), %xmm${o}",
+      "movdqu 16(${st}), %xmm${o + 1}",
+      "movdqu 32(${st}), %xmm${o + 2}",
+      "movdqu 48(${st}), %xmm${o + 3}",
+      "movl ${64 + 4 * b}(${st}), %eax",
+      "pinsrd $0, %eax, %xmm${o + 3}",
+      "movdqa %xmm${o + 3}, %xmm${12 + o / 4}",
+    ]
+  }
+  t = t + ["movl $10, %ecx", "2:"]
+  t = t + x86_chacha_half() + x86_chacha_diag(57, 78, 147) + x86_chacha_half() + x86_chacha_diag(147, 78, 57)
+  t = t + ["subl $1, %ecx", "jnz 2b"]
+  for (o, b) in [(0, k), (4, k + 1)] {
+    let at = 64 * b
+    t = t + ["movdqu (${st}), %xmm8", "paddd %xmm8, %xmm${o}", "movdqu 16(${st}), %xmm8", "paddd %xmm8, %xmm${o + 1}", "movdqu 32(${st}), %xmm8", "paddd %xmm8, %xmm${o + 2}", "paddd %xmm${12 + o / 4}, %xmm${o + 3}"]
+    for r in 0..4 {
+      t = t + ["movdqu ${at + 16 * r}(%r9), %xmm8", "pxor %xmm8, %xmm${o + r}", "movdqu %xmm${o + r}, ${at + 16 * r}(%r8)"]
+    }
+  }
+  t
+}
+
+/// ChaCha20's key stream four blocks at a time, xored from src s into
+/// dst d, from the 80 byte state at st (16 words, then the four blocks'
+/// counters). With n empty, one 256 byte group (rt.chacha_blocks4);
+/// otherwise n bytes (a multiple of 256), the counters at st advanced by
+/// 4 for each group (rt.chacha_stream4).
+pub fn chacha4_x86_lines(d: Str, s: Str, st: Str, n: Str) -> List[Str] {
+  // pshufb's tables: each 32 bit lane's bytes 2, 3, 0, 1 (left by 16)
+  // and 3, 0, 1, 2 (left by 8)
+  var t = [
+    "movabsq $361421592464458498, %rax",
+    "movq %rax, %xmm10",
+    "movabsq $940142975169071882, %rax",
+    "movq %rax, %xmm8",
+    "punpcklqdq %xmm8, %xmm10",
+    "movabsq $433757367256023043, %rax",
+    "movq %rax, %xmm11",
+    "movabsq $1012478749960636427, %rax",
+    "movq %rax, %xmm8",
+    "punpcklqdq %xmm8, %xmm11",
+    "movq ${d}, %r8",
+    "movq ${s}, %r9",
+  ]
+  if n.is_empty() {
+    return t + x86_chacha_pair(0, st) + x86_chacha_pair(2, st)
+  }
+  t = t + ["movq ${n}, %r10", "testq %r10, %r10", "jz 9f", "1:"]
+  t = t + x86_chacha_pair(0, st) + x86_chacha_pair(2, st)
+  for b in 0..4 {
+    t = t + ["movl ${64 + 4 * b}(${st}), %eax", "addl $4, %eax", "movl %eax, ${64 + 4 * b}(${st})"]
+  }
+  t + ["addq $256, %r8", "addq $256, %r9", "subq $256, %r10", "jnz 1b", "9:"]
+}

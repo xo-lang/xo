@@ -82,7 +82,13 @@ fn xor_stream(s0: Str, key: Bytes, ctr0: Int, nonce: Bytes, src: Bytes) -> Str {
       rt.mem_store(st, 64 + 4 * b, (ctr + b) & M32, 4)
     }
     i = n & -256
-    cpu.chacha_stream4(raw.data(s).wrapping_add(d), raw.bytes_addr(src), st, i)
+    // amd64's lowering needs SSSE3 (cpu.HW_SSSE3); without it the
+    // portable block
+    if target.arch != TargetArch.Amd64 || (cpu.hw() & cpu.HW_SSSE3) != 0 {
+      cpu.chacha_stream4(raw.data(s).wrapping_add(d), raw.bytes_addr(src), st, i)
+    } else {
+      cpu.chacha_stream4_soft(raw.data(s).wrapping_add(d), raw.bytes_addr(src), st, i)
+    }
     ctr = (ctr + i / 64) & M32
     s = rt.rs_set_len(s, d + i)
   }

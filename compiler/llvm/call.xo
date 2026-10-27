@@ -875,6 +875,23 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
     }
     "rt.ticks" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntvct_el0\", \"=r\"()")
     "rt.ticks_hz" => g.set(v, "call i64 asm sideeffect \"mrs $0, cntfrq_el0\", \"=r\"()")
+    "rt.chacha_stream4" if g.arch() == "amd64" => {
+      // ssa.chacha4_x86_lines' loop as inline asm (AT&T: its immediates'
+      // `$` doubled), its registers clobbered
+      var t: List[Str] = []
+      for l in ssa.chacha4_x86_lines("@0@", "@1@", "@2@", "@3@") {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3"))
+      }
+      var clob = "r,r,r,r"
+      for r in ssa.chacha4_x86_gprs() {
+        clob = clob + ",~{${r}}"
+      }
+      for r in ssa.chacha4_x86_xmms() {
+        clob = clob + ",~{xmm${r}}"
+      }
+      clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
+      g.emit("call void asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(ptr ${g.raw_ptr(x.args[0])}, ptr ${g.raw_ptr(x.args[1])}, ptr ${g.raw_ptr(x.args[2])}, i64 ${g.op(x.args[3])})")
+    }
     "rt.chacha_stream4" => {
       // arm64 only (ssa call.xo): ssa.chacha4_neon_lines' loop as inline
       // asm, x9 to x11 and its V registers clobbered
