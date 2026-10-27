@@ -2210,6 +2210,82 @@ const ESCAPES: List[(Str, Str)] = [
   ("é￾'\r>￾&", "é�&#39;&#xD;&gt;�&amp;"),
 ]
 
+/// (document, the text std/xml's XmlErr.display writes for the decoder's error)
+const ERRTEXTS: List[(Str, Str)] = [
+  ("<a>", "XML syntax error on line 1: unexpected EOF"),
+  ("<a><b></a>", "XML syntax error on line 1: element <b> closed by </a>"),
+  ("<a>&nope;</a>", "XML syntax error on line 1: invalid character entity &nope;"),
+  ("<a>\u{1}</a>", "XML syntax error on line 1: illegal character code U+0001"),
+  ("</a>", "XML syntax error on line 1: unexpected end element </a>"),
+  ("<a><![CDATA[x</a>", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("<!-- a -- b --><a/>", "XML syntax error on line 1: invalid sequence \"--\" not allowed in comments"),
+  ("<1a/>", "XML syntax error on line 1: invalid XML name: 1a"),
+  ("<a><b></b></a></a>", "XML syntax error on line 1: unexpected end element </a>"),
+  ("<ns:el a=\"v\"><list><!----><a /></list><![CDATA[x</ns:el>", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("< xmlns:", "XML syntax error on line 1: expected element name after <"),
+  ("<!-- head --><1bad xmlns:ns=\"\" xml:lang=''", "XML syntax error on line 1: invalid XML name: 1bad"),
+  ("<b><!-- a--b --><row/><!-- a--b --></b>", "XML syntax error on line 1: invalid sequence \"--\" not allowed in comments"),
+  ("<a.b-c id=\"http://e.com/ns\" id='&lt;'><![CDATA[x</x></a.b-c>tail", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("<é><![CDATA[x</é>", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("<x:y a=&#x42; id='x\ty\nz'></x:y> <x/>", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<Root xmln", "XML syntax error on line 1: unexpected EOF"),
+  ("<a.b-c a=\"&#xZZ;\"><ns:el xmlns:p=\"2\" xmlns:x=\"http://e.com/ns\" /></x><row x:y='a&amp;b' id='&#65;'><xml:lang xmlns='http://e.com/ns'><!-- a--b -->&#233;</xml:lang><a.b-c>word<![CDATA[<raw> & ]]></a.b-c></row></a.b-c>\n", "XML syntax error on line 1: invalid character entity &#x (no semicolon)"),
+  ("<ns:el id=&lt;></ns:el>", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<!-- head --><a b xmlns:x=\"a&amp;b\" xmlns='http://e.com/ns'/>", "XML syntax error on line 1: attribute name without = in element"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><p:q:r><row class=é xmlns:x=2/></p:q:r>", "xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<item id='a<b' a=\"\">\r\n <![CDATA[<raw> & ]]></item> <x/>", "XML syntax error on line 1: unescaped < inside quoted string"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><list x:y=\"&#x42;\" id=\"&lt;\"><x:y x:y=\"2\" id=\"&lt;\"><!----></></list>", "XML syntax error on line 1: expected element name after </"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><_n b=\"&#65;\"><![CDATA[x <![CDATA[<raw> & ]]></_n>", "xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<?xml version=\"1.0\"?>\n<a x:y=a<b xmlns:ns=\"urn:x\"><!-- c --><?xml-stylesheet href='a'?></a>", "XML syntax error on line 2: unquoted or missing attribute value in element"),
+  ("<p:q xmlns=\"v\" xmlns:p=\"v\">\n  <!-- x -- --></p:q>", "XML syntax error on line 2: invalid sequence \"--\" not allowed in comments"),
+  ("<xmlns a=\"2\"> &bogus;</xmlns>", "XML syntax error on line 1: invalid character entity &bogus;"),
+  ("<!DOCTYPE html>\n<xml:lang id=\"a&b\">&quot;&apos;</xml:lang>\n", "XML syntax error on line 2: invalid character entity &b (no semicolon)"),
+  ("<a b=\"\" xmlns='1'><![CDATA[x</a>", "XML syntax error on line 1: unexpected EOF in CDATA section"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><a id=\"\" x:y=\"x\ty\nz\"><item a='&#65;' xmlns=\"&lt;\"/>a &amp; b</a> <x/>", "xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<b id=\"http://e.com/ns\" xml:lang=\"http://e.com/ns\">\n  <![CDATA[x</b>", "XML syntax error on line 2: unexpected EOF in CDATA section"),
+  ("<?xml version=\"1.1\"?><xml:lang x:y=\"2\"/>", "xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><é id=\"&#65;\"><?target?><![CDATA[<raw", "xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<item class='x\ty\nz' id='1'><![CDATA[a]]b]]><!-- a--b --></item>", "XML syntax error on line 2: invalid sequence \"--\" not allowed in comments"),
+  ("<!DOCTYPE html>\n<a.b-c><!---->]]></a.b-c>", "XML syntax error on line 2: unescaped ]]> not in CDATA section"),
+  ("<?xml version=\"1.1\"?><x:y b=\"urn:x\" id=\"&#x42;\" />", "xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<> <?xml-stylesheet href='a'?></>", "XML syntax error on line 1: expected element name after <"),
+  ("<row class=\"x\ty\nz\" a='v'>word&#0;<xml:lang id='&#65;' /><b b=\"2\"></b></row><!-- t -->", "XML syntax error on line 2: illegal character code U+0000"),
+  ("<?xml version=\"1.1\"?><a.b-c xmlns='urn:x' class='urn:x'></a.b-c>", "xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<_n xmlns:ns=\"&nbsp;\"><Root xml:lang='urn:x' id=\"1\" />]]></_n>tail", "XML syntax error on line 1: invalid character entity &nbsp;"),
+  ("<é id='&#xZZ;' class=\"http://e.com/ns\"/>", "XML syntax error on line 1: invalid character entity &#x (no semicolon)"),
+  ("<row><row>text <item xmlns:p=\"a&b\" x:y=\"a&b\"></item></row>é日&#x1F600;</row>tail", "XML syntax error on line 1: invalid character entity &b (no semicolon)"),
+  ("<ns:el x:y='&nbsp;'/>", "XML syntax error on line 1: invalid character entity &nbsp;"),
+  ("<?xml version=\"1.0\"?>\n<b xmlns='&nbsp;' x:y='é'>]]></b>", "XML syntax error on line 2: invalid character entity &nbsp;"),
+  ("<p:q xmlns:x=\"&nbsp;\" x:y=\"é\"><?target?></p:q>", "XML syntax error on line 1: invalid character entity &nbsp;"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><é b=http://e.com/ns class=\"&#x42;\" />", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><Root><x:y class=\"\"><Root class=\"2\" xmlns:ns=\"&#65;\">< a=\"&#x42;\"/><?xml-stylesheet href='a'?></Root></x:y>&#x1F600;<![CDATA[x</Root>", "XML syntax error on line 1: expected element name after <"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><b xmlns=\"v\" class=\"&#xZZ;\"><?pi data?><a.b-c xmlns=http://e.com/ns id='1'><?xml-stylesheet href='a'?></a.b-c></b>", "XML syntax error on line 1: invalid character entity &#x (no semicolon)"),
+  ("<b xmlns:p=&lt; xmlns:ns=a&amp;b><!-- x -- --></b>tail", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<xmlns xmlns:p=&#65;>a &amp; b</xmlns>", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><item xmlns:x=\"v\"><p>unclosed</item> <x/>", "XML syntax error on line 1: element <p> closed by </item>"),
+  ("<!DOCTYPE html>\n<>&\n  </>", "XML syntax error on line 2: expected element name after <"),
+  ("<a.b-c xml:lang=a<b class=\"a&amp;b\">&#233;<list></list>\r\n</a.b-c><!-- t -->", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<1bad><!-- a--b --><é xml:lang='é'><é id=\"2\" xmlns:ns=\"é\" /></é><é><x:y x:y=\"\"></x:y></é></1bad>", "XML syntax error on line 1: invalid XML name: 1bad"),
+  ("<?xml version=\"1.0\" encoding=\"utf-8\"?><a id='urn:x' a=\"&#xZZ;\"/>", "XML syntax error on line 1: invalid character entity &#x (no semicolon)"),
+  ("<?xml version=\"1.0\" encoding=\"UTF-8\"?><b class='a&amp;b'><!-- x -- --><row><ns:el b=1> <b xmlns:ns=\"x\ty\nz\" xmlns:ns=\"urn:x\">\r\n<!-- a--b -->é日</b><ns:el b=''/></ns:el></row></b>", "XML syntax error on line 1: invalid sequence \"--\" not allowed in comments"),
+  ("<ns:el><!-- a--b --></ns:el>\n", "XML syntax error on line 1: invalid sequence \"--\" not allowed in comments"),
+  ("<x:y b=\"1\" xmlns:p=\"http://e.com/ns\"><a.b-c a=\"urn:x\"><![CDATA[]]></a.b-c></xml:lang>", "XML syntax error on line 1: element <y> closed by </lang>"),
+  ("<p:q:r a=\"x\ty\nz\"><list xmlns:x='&#xZZ;' />text</p:q:r>", "XML syntax error on line 1: expected element name after <"),
+  ("<list a='a&amp;b' a=a\"b/>", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<row><br></row>", "XML syntax error on line 1: element <br> closed by </row>"),
+  ("<?xml version=\"1.1\"?><list id=\"a&amp;b\">\r\n<b xmlns:ns=\"&lt", "xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<b b='1' id=&#65;/>", "XML syntax error on line 1: unquoted or missing attribute value in element"),
+  ("<!DOCTYPE html>\n<a.b-c>é日<!---->é日&nbsp;</a.b-c>", "XML syntax error on line 2: invalid character entity &nbsp;"),
+  ("<?xml version=\"1.1\"?><_n id='x\ty\nz' xmlns:ns=\"&#65;\"><?xml version=\"1.0\"?><Root id=\"é\"></Root><_n id=\"v\" xmlns:ns=\"http://e.com/ns\">word</xml:lang></_n>", "xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<><br></>", "XML syntax error on line 1: expected element name after <"),
+  ("<?xml version=\"1.0\" encoding=\"latin1\"?><a b xml:lang=\"http://e.com/ns\"></a b>", "xml: encoding \"latin1\" declared but Decoder.CharsetReader is nil"),
+  ("<?xml version=\"1.1\"?><p:q class=\"&lt;\"><_n b='1'/><!-- a--b --></p:q>tail", "xml: unsupported version \"1.1\"; only version 1.0 is supported"),
+  ("<p:", "XML syntax error on line 1: unexpected EOF"),
+]
+
+/// The ERRTEXTS rows the generator wrote; the corpus checks the list against it, so an empty or truncated list fails instead of passing
+const ERRTEXT_COUNT: Int = 69
+
 fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len() } else { 20 })] }
 
 fn nm(n: xml.Name) -> Str { "${n.space}:${n.local}" }
@@ -2274,6 +2350,24 @@ test "escape is Go's EscapeText" {
     let got = xml.escape(s)
     if got != want {
       bad.push((s, got, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "an XmlErr displays as Go's error text (std/xml XmlErr)" {
+  // the count is written by the generator beside the list, so an empty or
+  // short list fails here instead of looping zero times and passing
+  expect(ERRTEXT_COUNT) > 0
+  expect(ERRTEXTS.len()) == ERRTEXT_COUNT
+  var bad: List[(Str, Str, Str)] = []
+  for (doc, want) in ERRTEXTS {
+    let got = match xml.tokens(doc) {
+      Ok(_) => "the decoder accepted it"
+      Err(e) => e.display()
+    }
+    if got != want {
+      bad.push((doc, got, want))
     }
   }
   expect(first_bad(bad)) == []

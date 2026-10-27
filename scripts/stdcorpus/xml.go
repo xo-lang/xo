@@ -42,6 +42,32 @@ func xmlErrText(err error) string {
 	return "err 0 " + textOf(err.Error())
 }
 
+// xmlErrDisplay is std/xml's XmlErr.display: Go's SyntaxError.Error() when
+// the decoder reports a line ("XML syntax error on line N: MSG"), and the
+// message alone otherwise.
+func xmlErrDisplay(err error) string {
+	var se *xml.SyntaxError
+	if errors.As(err, &se) && se.Line > 0 {
+		return fmt.Sprintf("XML syntax error on line %d: %s", se.Line, textOf(se.Msg))
+	}
+	return textOf(err.Error())
+}
+
+// xmlFirstErr is the first error the strict Decoder reports on text, nil
+// when it reads the text to EOF.
+func xmlFirstErr(text string) error {
+	d := xml.NewDecoder(strings.NewReader(text))
+	for {
+		_, err := d.Token()
+		if err == io.EOF {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+	}
+}
+
 // xmlToks is std/rt's tokens or raw_tokens: the tokens' texts joined, or
 // err LINE MSG.
 func xmlToks(text string, strict, raw bool) string {
@@ -205,6 +231,24 @@ func xmlDoc(r *rand.Rand) string {
 	return textOf(s)
 }
 
+// xmlBadDocs are documents the strict decoder rejects, one per error shape
+// Go reports (an unexpected end, a bad entity, a bad character, a second
+// root, a mismatched end tag, and errors after the first line).
+var xmlBadDocs = []string{
+	"<a>",
+	"<a><b></a>",
+	"<a>&nope;</a>",
+	"<a>\x01</a>",
+	"<a>x</a><b/>",
+	"<a>\n<b>\n<c>&#xD800;</c>\n</b>\n</a>",
+	"<a b='1' b='2'/>",
+	"</a>",
+	"<a><![CDATA[x</a>",
+	"<!-- a -- b --><a/>",
+	"<1a/>",
+	"<a><b></b></a></a>",
+}
+
 func xmlCorpus() string {
 	r := rand.New(rand.NewSource(13))
 	var o strings.Builder
@@ -224,7 +268,26 @@ func xmlCorpus() string {
 		xml.EscapeText(&e, []byte(b.String()))
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(textOf(b.String())), xq(textOf(e.String())))
 	}
-	o.WriteString("]\n")
+	o.WriteString("]\n\n/// (document, the text std/xml's XmlErr.display writes for the decoder's error)\nconst ERRTEXTS: List[(Str, Str)] = [\n")
+	count := 0
+	for _, s := range xmlBadDocs {
+		if err := xmlFirstErr(s); err != nil {
+			fmt.Fprintf(&o, "  (%s, %s),\n", xq(s), xq(xmlErrDisplay(err)))
+			count++
+		}
+	}
+	for i, n := 0, 0; i < 20000 && n < 60; i++ {
+		s := xmlDoc(r)
+		if err := xmlFirstErr(s); err != nil {
+			fmt.Fprintf(&o, "  (%s, %s),\n", xq(s), xq(xmlErrDisplay(err)))
+			n++
+			count++
+		}
+	}
+	if count == 0 {
+		panic("stdcorpus: xml wrote no ERRTEXTS rows, so the corpus would test nothing")
+	}
+	fmt.Fprintf(&o, "]\n\n/// The ERRTEXTS rows the generator wrote; the corpus checks the list against it, so an empty or truncated list fails instead of passing\nconst ERRTEXT_COUNT: Int = %d\n", count)
 	o.WriteString(xmlTests)
 	xmlDeriveCorpus(&o)
 	return o.String()
@@ -295,6 +358,24 @@ test "escape is Go's EscapeText" {
     let got = xml.escape(s)
     if got != want {
       bad.push((s, got, want))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
+test "an XmlErr displays as Go's error text (std/xml XmlErr)" {
+  // the count is written by the generator beside the list, so an empty or
+  // short list fails here instead of looping zero times and passing
+  expect(ERRTEXT_COUNT) > 0
+  expect(ERRTEXTS.len()) == ERRTEXT_COUNT
+  var bad: List[(Str, Str, Str)] = []
+  for (doc, want) in ERRTEXTS {
+    let got = match xml.tokens(doc) {
+      Ok(_) => "the decoder accepted it"
+      Err(e) => e.display()
+    }
+    if got != want {
+      bad.push((doc, got, want))
     }
   }
   expect(first_bad(bad)) == []
