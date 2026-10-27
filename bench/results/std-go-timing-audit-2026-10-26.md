@@ -246,3 +246,15 @@ Per std/changes/compress.md 2026-10-27 ("length and offset codes by Go's tables"
 
 BestSpeed is under the bar. What is left of gzip1 (profile at 1000 Hz): BitWriter.write_bits a call per
 code, offset_code not inlined, load32; the next step keeps the bit buffer in locals over write_tokens.
+
+## big quorem one-pass subtract (2026-10-27, Xo Lang 2)
+
+Per std/changes/big.md 2026-10-27 ("long division subtracts qhat times the divisor in one pass"). Quiet
+`xo bench --ab`, 15 rounds, one pair per job:
+
+| step | A | wall | instructions |
+|---|---|---|---|
+| msub_row fused (one loop) | the parent's std | 0.89 (0.885 to 0.897) | 0.699 |
+| msub_row unrolled by 4, adc chains | the fused row | 0.857 (0.84 to 0.873) | 0.895 |
+
+Xo / Go: about 1.48 (estimate: 1.945 x 0.89 x 0.857), from 1.945; a measured row against the Go twin follows.

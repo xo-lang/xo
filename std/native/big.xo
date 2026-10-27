@@ -7,7 +7,6 @@
 // operands of thousands of bits). Variable time: not for secrets.
 use std/big
 use native/llrt/bigmod
-use native/llrt/cpu
 use native/llrt/raw
 use native/rt
 
@@ -537,8 +536,6 @@ fn nat_divmod_basic(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
   let vtop = vn[n - 1]
   let vsec = vn[n - 2]
   let rec = reciprocal_word(vtop)
-  let qv = raw.zero_ints(n + 1)
-  let pq = bigmod.addr(qv)
   let pv = bigmod.addr(vn)
   var j = m
   while j >= 0 {
@@ -566,23 +563,12 @@ fn nat_divmod_basic(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
         }
       }
     }
-    // un[j..j+n+1] -= qhat * vn, as Go's mulAddVWW then subVV: the
-    // product in qv (bigmod.mac_row over zeros), then one borrow chain
-    rt.mem_set(pq, 0, 8 * n)
-    rt.mem_store(pq, 8 * n, bigmod.mac_row(pq, pv, qhat, n), 8)
-    let pu = bigmod.addr(un).wrapping_add(8 * j)
-    var b1 = 0
-    var o = 0
-    while o <= 8 * n {
-      let x = rt.mem_load(pu, o, 8)
-      let y = rt.mem_load(pq, o, 8)
-      let d1 = x.wrapping_sub(y)
-      let d = d1.wrapping_sub(b1)
-      rt.mem_store(pu, o, d, 8)
-      b1 = cpu.borrow(x, y) | cpu.borrow(d1, b1)
-      o += 8
-    }
-    if b1 != 0 {
+    // un[j..j+n+1] -= qhat * vn in one pass (Go's mulAddVWW then subVV:
+    // bigmod.msub_row), the last word's borrow from the word it returns
+    let c = bigmod.msub_row(bigmod.addr(un).wrapping_add(8 * j), pv, qhat, n)
+    let top = un[j + n]
+    un[j + n] = top.wrapping_sub(c)
+    if top.lt_unsigned(c) {
       // one too many: add vn back
       qhat = qhat.wrapping_sub(1)
       var c = 0
@@ -596,7 +582,6 @@ fn nat_divmod_basic(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
     q[j] = qhat
     j -= 1
   }
-  bigmod.keep(qv)
   bigmod.keep(vn)
   (norm(q), nat_shr(norm(un[0..n]), s))
 }

@@ -1,5 +1,23 @@
 # std/big changes
 
+## 2026-10-27: perf: long division subtracts qhat times the divisor in one pass
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/big quorem at 1.95x Go; its CPU profile (nat_divmod_basic 84%, a serial carry chain)
+- Go reference: math/big arith.go subVV and mulAddVWW as used by nat.go divBasic (go1.26.1)
+- Test: internal/stdtest big corpus (go, arm64, llvm); internal/llvm and internal/arm64 big_basic, big_struct and tls_rsa goldens; TestStdAPICovered
+
+nat_divmod_basic cleared a row, filled it with qhat times the divisor
+(mac_row) and then ran a second borrow chain to subtract it; it now calls
+bigmod.msub_row, which subtracts src times k from dst in one pass and
+returns the borrow word: unrolled by 4, the product chain as mac_row's
+and the subtraction an add of the product's complement with a not-borrow
+carry. Quiet --ab, 15 rounds: the fused row against the parent's std,
+quorem wall 0.89 (0.885 to 0.897), instructions 0.699; the unrolled
+chains against the fused row, wall 0.857 (0.84 to 0.873), instructions
+0.895.
+
 ## 2026-10-27: perf: multiplication and division by machine word rows
 
 - Kind: perf

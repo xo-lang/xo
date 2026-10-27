@@ -261,6 +261,87 @@ fn final_sub(md: Mod, h: Int, t: Int, top: Int) {
   }
 }
 
+/// dst[j] -= src[j] k plus the borrow word for j below len, one pass
+/// (the subtracting twin of mac_row, for long division: Go's divBasic
+/// does mulAddVWW into a row and then subVV): each word's product plus
+/// the carry word as in mac_row, then dst minus it as dst plus its
+/// complement and the not-borrow (x - p - b = x + ^p + (1 - b)), so
+/// both chains are cpu.adc; unrolled by 4 with wrapping offsets. The word
+/// still to subtract from dst[len] out: the carry word plus the last
+/// borrow.
+pub fn msub_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
+  var cw = 0
+  // 1 - borrow
+  var nb = 1
+  var o = 0
+  let end = len.wrapping_shl(3)
+  let end4 = end & -32
+  while o < end4 {
+    let o1 = o.wrapping_add(8)
+    let o2 = o.wrapping_add(16)
+    let o3 = o.wrapping_add(24)
+    let a0 = ld(src, o)
+    let a1 = ld(src, o1)
+    let a2 = ld(src, o2)
+    let a3 = ld(src, o3)
+    let x0 = ld(dst, o)
+    let x1 = ld(dst, o1)
+    let x2 = ld(dst, o2)
+    let x3 = ld(dst, o3)
+    let l0 = a0.wrapping_mul(k)
+    let h0 = a0.mul_hi_unsigned(k)
+    let p0 = cpu.adc(l0, cw, 0)
+    let pc0 = cpu.adc_carry(l0, cw, 0)
+    let c0 = cpu.adc(h0, 0, pc0)
+    let n0 = p0 ^ -1
+    st(dst, o, cpu.adc(x0, n0, nb))
+    let b0 = cpu.adc_carry(x0, n0, nb)
+    let l1 = a1.wrapping_mul(k)
+    let h1 = a1.mul_hi_unsigned(k)
+    let p1 = cpu.adc(l1, c0, 0)
+    let pc1 = cpu.adc_carry(l1, c0, 0)
+    let c1 = cpu.adc(h1, 0, pc1)
+    let n1 = p1 ^ -1
+    st(dst, o1, cpu.adc(x1, n1, b0))
+    let b1 = cpu.adc_carry(x1, n1, b0)
+    let l2 = a2.wrapping_mul(k)
+    let h2 = a2.mul_hi_unsigned(k)
+    let p2 = cpu.adc(l2, c1, 0)
+    let pc2 = cpu.adc_carry(l2, c1, 0)
+    let c2 = cpu.adc(h2, 0, pc2)
+    let n2 = p2 ^ -1
+    st(dst, o2, cpu.adc(x2, n2, b1))
+    let b2 = cpu.adc_carry(x2, n2, b1)
+    let l3 = a3.wrapping_mul(k)
+    let h3 = a3.mul_hi_unsigned(k)
+    let p3 = cpu.adc(l3, c2, 0)
+    let pc3 = cpu.adc_carry(l3, c2, 0)
+    let c3 = cpu.adc(h3, 0, pc3)
+    let n3 = p3 ^ -1
+    st(dst, o3, cpu.adc(x3, n3, b2))
+    let b3 = cpu.adc_carry(x3, n3, b2)
+    cw = c3
+    nb = b3
+    o = o.wrapping_add(32)
+  }
+  while o < end {
+    let a0 = ld(src, o)
+    let x0 = ld(dst, o)
+    let l0 = a0.wrapping_mul(k)
+    let h0 = a0.mul_hi_unsigned(k)
+    let p0 = cpu.adc(l0, cw, 0)
+    let pc0 = cpu.adc_carry(l0, cw, 0)
+    let c0 = cpu.adc(h0, 0, pc0)
+    let n0 = p0 ^ -1
+    st(dst, o, cpu.adc(x0, n0, nb))
+    let b0 = cpu.adc_carry(x0, n0, nb)
+    cw = c0
+    nb = b0
+    o = o.wrapping_add(8)
+  }
+  cw.wrapping_add(1 - nb)
+}
+
 /// dst[j] += src[j] k plus the carry word for j below len, one pass:
 /// each word's low half added with cpu.adc (decision 0231's addendum)
 /// and the next carry word its high half plus the two carries (it
