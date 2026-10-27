@@ -1,5 +1,20 @@
 # std/websocket changes
 
+## 2026-10-27: perf: masking runs a word at a time
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/websocket big at 1.55x gorilla, 2.8x its instructions (about 12 more a payload byte: the byte at a time mask and unmask loops)
+- Go reference: github.com/gorilla/websocket mask.go maskBytes (a word at a time once aligned) (v1.5.3)
+- Test: internal/llvm/testdata/golden/websocket and websocket_tls (arm64, LLVM); twincheck bench/perf/websocket; a differential against gorilla in both directions (an Xo client of gorilla's echo server, a gorilla client of an Xo echo server; binary and text messages of 0 to 200,003 bytes, 2, 4 and 10 byte length headers, text read in pieces at any key offset), 44 messages each, equal on arm64 and LLVM
+
+On the native backends a client masked its payload, and either side
+unmasked one, a byte at a time through a BytesBuilder; both now XOR
+eight bytes at a time with the key repeated (rotated to where a piece
+starts) and write the frame, header, key and payload, into one buffer.
+Quiet --ab, 15 rounds, the parent's std as A: bench/perf/websocket big
+wall 0.507 (0.503 to 0.509), instructions 0.223.
+
 ## 2026-10-21: fix: invalid UTF-8 in a text message fails at its fragment
 
 - Kind: fix

@@ -293,3 +293,10 @@ parent's std as A: archive unzip wall 0.965 (0.958 to 0.984), instructions 0.923
 (0.982 to 0.997), instructions 0.986. Xo / Go about 1.41 for unzip (estimate: 1.460 x 0.965) and 1.28 for
 gunzip (1.293 x 0.987). Left in unzip: huffman_block and huff_sym (57%); Go's arm64 CRC-32 uses the CRC32
 instructions (crc32x), which Xo has no intrinsic for yet.
+
+## websocket masking a word at a time (2026-10-27, Xo Lang 2)
+
+Per std/changes/websocket.md 2026-10-27. Quiet `xo bench --ab`, 15 rounds, the parent's std as A: big wall 0.507
+(0.503 to 0.509), instructions 0.223; Xo / Go about 0.79 (estimate: 1.550 x 0.507), from 1.550. The 50,000
+round profile had hidden it: both programs spent their samples in sendto and read, and the extra 20 G
+instructions (about 12 a payload byte) showed only in the instruction count.

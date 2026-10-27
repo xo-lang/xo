@@ -121,7 +121,36 @@ fn close_message(code: Int, text: Str) -> Bytes {
   b.freeze()
 }
 
-/// Writes one final frame (masked from a client).
+/// gorilla's maskBytes: the n bytes of src from at, XORed with the key
+/// whose four bytes are the little endian word k, starting at key byte
+/// pos, stored at address d: a word at a time, then the bytes left.
+fn mask_to(d: Int, src: Bytes, at: Int, n: Int, k: Int, pos: Int) {
+  let s = raw.bytes_addr(src) + at
+  // byte i of k32 is key byte (pos + i) & 3 (a 4 byte load may come back
+  // sign extended)
+  let k0 = k & 4294967295
+  let r = (pos & 3) * 8
+  let k32 = if r == 0 { k0 } else { (k0.shr_logical(r) | (k0 << (32 - r))) & 4294967295 }
+  let w = k32 | k32.wrapping_shl(32)
+  var i = 0
+  while i + 8 <= n {
+    rt.mem_store(d, i, rt.mem_load(s, i, 8) ^ w, 8)
+    i += 8
+  }
+  while i < n {
+    rt.mem_store(d, i, rt.mem_load(s, i, 1) ^ ((k32 >> ((i & 3) * 8)) & 255), 1)
+    i += 1
+  }
+}
+
+/// The n bytes of src from at, unmasked with key from key byte pos.
+fn unmask(src: Bytes, at: Int, n: Int, key: Bytes, pos: Int) -> Bytes {
+  let out = raw.bytes_buf(n)
+  mask_to(raw.bytes_addr(out), src, at, n, rt.mem_load(raw.bytes_addr(key), 0, 4), pos)
+  out
+}
+
+/// Writes one final frame (masked from a client), built in one buffer.
 fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
   // the outcome as the closure's value: an Err from with's closure would
   // undo close_sent (spec 5.4)
@@ -130,36 +159,35 @@ fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
       return Err(protocol_err("close sent"))
     }
     let n = data.len()
-    var b = BytesBuilder.with_capacity(14 + n)
-    b.write_byte(UInt8(128 | op))
+    let hl = if n <= 125 { 2 } else if n <= 65535 { 4 } else { 10 }
+    let kl = if c.server { 0 } else { 4 }
+    let frame = raw.bytes_buf(hl + kl + n)
+    let a = raw.bytes_addr(frame)
+    rt.mem_store(a, 0, 128 | op, 1)
     let mb = if c.server { 0 } else { 128 }
     if n <= 125 {
-      b.write_byte(UInt8(mb | n))
+      rt.mem_store(a, 1, mb | n, 1)
     } else if n <= 65535 {
-      b.write_byte(UInt8(mb | 126))
-      b.write_byte(UInt8((n >> 8) & 255))
-      b.write_byte(UInt8(n & 255))
+      rt.mem_store(a, 1, mb | 126, 1)
+      rt.mem_store(a, 2, (n >> 8) & 255, 1)
+      rt.mem_store(a, 3, n & 255, 1)
     } else {
-      b.write_byte(UInt8(mb | 127))
-      var k = 56
-      while k >= 0 {
-        b.write_byte(UInt8((n >> k) & 255))
-        k -= 8
+      rt.mem_store(a, 1, mb | 127, 1)
+      for j in 0..8 {
+        rt.mem_store(a, 2 + j, (n >> (56 - 8 * j)) & 255, 1)
       }
     }
     if c.server {
-      b.write(data)
+      rt.mem_copy(a + hl, raw.bytes_addr(data), n)
     } else {
-      let key = llrand.next_bytes(4)
-      b.write(key)
-      for i in 0..n {
-        b.write_byte(data[i] ^ key[i & 3])
-      }
+      let k = rt.mem_load(raw.bytes_addr(llrand.next_bytes(4)), 0, 4)
+      rt.mem_store(a, hl, k, 4)
+      mask_to(a + hl + 4, data, 0, n, k, 0)
     }
     if op == OP_CLOSE {
       w.close_sent = true
     }
-    let err = c.wire.send(b.freeze())
+    let err = c.wire.send(frame)
     if !err.is_empty() {
       return Err(net_err(err))
     }
@@ -346,11 +374,7 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
       while got < n {
         var piece = c.read_some(st, n - got)?
         if mask {
-          var u = BytesBuilder.with_capacity(piece.len())
-          for i in 0..piece.len() {
-            u.write_byte(piece[i] ^ key[(got + i) & 3])
-          }
-          piece = u.freeze()
+          piece = unmask(piece, 0, piece.len(), key, got)
         }
         let chunk = if pend.len() == 0 { piece } else { pend + piece }
         let cut = utf8_cut(chunk)
@@ -364,11 +388,7 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
     } else {
       payload = c.read_n(st, n)?
       if mask {
-        var u = BytesBuilder.with_capacity(n)
-        for i in 0..n {
-          u.write_byte(payload[i] ^ key[i & 3])
-        }
-        payload = u.freeze()
+        payload = unmask(payload, 0, n, key, 0)
       }
     }
     if op == OP_PONG {
