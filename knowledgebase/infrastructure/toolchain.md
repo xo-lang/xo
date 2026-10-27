@@ -1014,7 +1014,7 @@ instructions and +9.7% wall). Last verified: 2026-10-26.
 
 Last verified: 2026-10-25
 
-- `--inline-str` (decision 0370; arm64 and amd64 native only, default off): a
+- `--inline-str` (decision 0370; arm64 native only, default off; amd64 refuses it with a warning, compiler/xo/main.xo:678): a
   Str of at most 11 bytes keeps its text in its two words, with no heap object.
   A list of one million short keys takes 0.38 of the memory, a `Map[Str, Int]`
   0.69, its sort 0.62; instructions on the Str heavy benches rise 1 to 11%

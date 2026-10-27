@@ -1,5 +1,10 @@
 # amd64 against arm64: what the native backend does differently (2026-10-26)
 
+Updated per target in
+[amd64-parity-by-target-2026-10-27.md](amd64-parity-by-target-2026-10-27.md):
+the fn/part cache, lazy inline decode, deferred verification and
+Float.fma rows below closed on 2026-10-26.
+
 Milestone 0.33.0, exit criterion 2 ("amd64 at arm64 parity"). A code
 audit of compiler/ at origin/main fe1a63473 (the darwin/amd64 hollow
 default below was then in review, xo-lang-4): every optional pass in compiler/arm64 passes.xo
