@@ -338,3 +338,60 @@ func TestUseGoHelperFormatMismatch(t *testing.T) {
 		t.Fatalf("check with an old helper: exit %d\n%s", code, errOut.String())
 	}
 }
+
+// TestUseGoOfflineProxy: `use go` of real third-party modules with no
+// network (owner, 2026-10-27, after the 0.33.0 testers' use-go bugs):
+// testdata/goproxy is a GOPROXY file tree holding github.com/google/uuid
+// v1.6.0 (a go.mod with no go line) and golang.org/x/sync v0.23.0 (a
+// patch-level `go 1.26.0` line), copied from the module cache with their
+// real metadata, read through a fresh GOMODCACHE with GOSUMDB off; xo.lock
+// pins both with their real hashes.
+func TestUseGoOfflineProxy(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	proxy, err := filepath.Abs(filepath.Join("testdata", "goproxy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	// the module cache's files are read only: made writable before
+	// t.TempDir removes it (cleanups run last registered first)
+	modcache := t.TempDir()
+	t.Cleanup(func() {
+		filepath.WalkDir(modcache, func(p string, d os.DirEntry, err error) error {
+			if err == nil {
+				os.Chmod(p, 0o755)
+			}
+			return nil
+		})
+	})
+	for k, v := range map[string]string{
+		"GOPROXY": "file://" + filepath.ToSlash(proxy), "GOSUMDB": "off", "GOFLAGS": "-mod=mod",
+
+		"GOMODCACHE": modcache, "GOTOOLCHAIN": "local", "GOPRIVATE": "", "GONOSUMDB": "", "GONOPROXY": "",
+		"XO_GOBIND_DIR": "",
+	} {
+		setenv(t, k, v)
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module offline\n\nrequire go github.com/google/uuid v1.6.0\nrequire go golang.org/x/sync v0.23.0\n",
+		"xo.lock": "go github.com/google/uuid v1.6.0 h1:NIvaJDMOsjHA8n1jAhLSgzrAzy1Hgr+hNrb57e+94F0=\n" +
+			"go github.com/google/uuid v1.6.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=\n" +
+			"go golang.org/x/sync v0.23.0 h1:KameEIfc1IkluZyXWLn39Wd4tURc6GbCiISGiZm2bQk=\n" +
+			"go golang.org/x/sync v0.23.0/go.mod h1:sUUOizhqBxiL6pEWpqNLUiaJn1ShEbZ6BBqskPbjZm0=\n",
+		"main.xo": "use go \"github.com/google/uuid\"\nuse go \"golang.org/x/sync/semaphore\"\n\n" +
+			"fn main(os: Os) -> () ! Error {\n" +
+			"  let id = uuid.parse(\"6ba7b810-9dad-11d1-80b4-00c04fd430c8\")?\n" +
+			"  let s = semaphore.new_weighted(2)\n" +
+			"  os.stdio.println(\"${id.string()} v${id.version()} ${s.try_acquire(2)} ${s.try_acquire(1)}\")\n" +
+			"}\n",
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	if got, want := strings.TrimSpace(out.String()), "6ba7b810-9dad-11d1-80b4-00c04fd430c8 v1 true false"; got != want {
+		t.Errorf("output %q, want %q", got, want)
+	}
+}
