@@ -1,5 +1,18 @@
 # std/base32 changes
 
+## 2026-10-26: perf: encode takes whole five byte blocks as one word
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 2's twin against encoding/base32 (bench/perf/base32, std-go-timing-audit)
+- Go reference: encoding/base32's Encode loop
+- Test: internal/stdtest/testdata/corpus/base32 (go, arm64, LLVM); twincheck bench/perf/base32 agrees on none, encode, decode
+- Timing: bench/perf/base32 (2000 buffers of 0 to 3,000 bytes, 20 passes), quiet --ab, Xo / Go wall: encode 2.08 to 1.13, decode 0.85, none 0.57; encode against the parent 0.524
+
+Each whole block is read into one 40 bit word and written as eight
+symbols, with no per byte test of the block's length; the last, partial
+block keeps the general loop.
+
 ## 2026-10-21: perf: decode through a table, eight symbols at a time
 
 - Kind: perf

@@ -1,5 +1,22 @@
 # std/uuid changes
 
+## 2026-10-26: perf: parse, bytes and from_bytes write and read the canonical text directly
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 2's twin against github.com/google/uuid (bench/perf/uuid, std-go-timing-audit)
+- Go reference: google/uuid's Parse (xvalues by position) and encodeHex
+- Test: internal/stdtest/testdata/corpus/uuid (go, arm64, LLVM); twincheck bench/perf/uuid agrees on none, parse, string, bytes
+- Timing: bench/perf/uuid, quiet --ab, 15 rounds, Xo / Go wall: parse 2.79 to 1.53, bytes (bytes() and from_bytes) 9.66 to 7.14, string 0.35, none 0.90; against the parent: parse 0.541, bytes 0.739
+
+parse writes the canonical text straight from the input's hex digits,
+lowercased, by offset (it sliced, decoded 16 bytes, then formatted them
+with to_hex and an interpolation, and built a list of positions per call);
+from_bytes writes the 36 characters once; bytes() decodes the text in
+place (it was a replace and from_hex). Still over Go: a Uuid holds its
+text, so from_bytes formats where google/uuid copies 16 bytes, a write
+call a character.
+
 ## 2026-10-21: behavior: the Go backend runs uuid.xo too
 
 - Kind: behavior

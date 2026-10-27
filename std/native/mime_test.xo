@@ -1364,3 +1364,14 @@ test "go detect_content_type" {
     expect(detect_content_type(Bytes.from_hex(input) ?? b"")) == want
   }
 }
+
+test "builtin_type answers every BUILTIN extension, as BUILTIN does" {
+  // the match is generated from BUILTIN (extensions_by_type walks the
+  // list): a pair added to one only fails here
+  for (k, v) in BUILTIN {
+    expect(builtin_type(k)) == Some(v)
+  }
+  expect(builtin_type(".nope")) == None
+  expect(type_by_extension(".HTML")) == Some("text/html; charset=utf-8")
+  expect(type_by_extension(".nope")) == None
+}

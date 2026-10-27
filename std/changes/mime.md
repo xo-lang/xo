@@ -1,5 +1,21 @@
 # std/mime changes
 
+## 2026-10-26: perf: detect_content_type matches by offset over constant signatures; type_by_extension is a match
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 2's twin against Go's mime and net/http (bench/perf/mime, std-go-timing-audit)
+- Go reference: net/http sniff.go (DetectContentType, sniffSignatures) and mime.TypeByExtension's builtin table
+- Test: internal/stdtest/testdata/corpus/mime (go, arm64, LLVM); std/native/mime_test.xo: builtin_type answers every BUILTIN pair; twincheck bench/perf/mime agrees on none, parse, format, ext, detect
+- Timing: bench/perf/mime (200,000 passes each), quiet --ab, Xo / Go wall: detect 8.26 to 1.22, ext 5.45 to 0.76, format 1.23 and parse 1.05 unchanged, none 0.67
+
+The signatures are a constant (sigs() built the list, and every HTML
+pattern's Bytes, on each call) and are matched by offset into the data
+(each HTML pattern sliced a copy of the data from its first non space
+byte). type_by_extension is a match generated from BUILTIN (it walked the
+list of pairs twice), and an extension with no upper case or non ASCII
+byte skips the lowered pass.
+
 ## 2026-10-22: perf: parse_media_type copies its tokens of a long value
 
 - Kind: perf

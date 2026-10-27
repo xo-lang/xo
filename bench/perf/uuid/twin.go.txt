@@ -1,0 +1,55 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/google/uuid"
+)
+
+var texts = []string{
+	"6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+	"urn:uuid:6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+	"{6ba7b812-9dad-11d1-80b4-00c04fd430c8}",
+	"6ba7b8139dad11d180b400c04fd430c8",
+	"F47AC10B-58CC-4372-A567-0E02B2C3D479",
+	"6ba7b810-9dad-11d1-80b4-00c04fd430",
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	var us []uuid.UUID
+	for _, t := range texts {
+		if u, err := uuid.Parse(t); err == nil {
+			us = append(us, u)
+		}
+	}
+	sum := 0
+	for i := 0; i < 300000; i++ {
+		switch w {
+		case "parse":
+			u, err := uuid.Parse(texts[i%6])
+			if err == nil {
+				sum += int(u.Version()) + len(u.String())
+			} else {
+				sum++
+			}
+		case "string":
+			sum += len(us[i%5].String()) + i%7
+		case "bytes":
+			b, _ := us[i%5].MarshalBinary()
+			u, err := uuid.FromBytes(b)
+			if err == nil {
+				sum += int(b[i%16]) + int(u.Version())
+			} else {
+				sum++
+			}
+		default:
+			sum += len(texts[i%6]) + i%7
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

@@ -1,0 +1,6 @@
+# twincheck: uuid: four workloads, the same names on both sides; Go is github.com/google/uuid.
+require github.com/google/uuid v1.6.0
+- - none
+- - parse
+- - string
+- - bytes

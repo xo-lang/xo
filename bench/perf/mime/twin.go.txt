@@ -1,0 +1,64 @@
+package main
+
+import (
+	"fmt"
+	"mime"
+	"net/http"
+	"os"
+)
+
+var values = []string{
+	"text/html; charset=utf-8",
+	"multipart/form-data; boundary=\"----abc def\"",
+	"application/json",
+	"text/plain; charset=\"us-ascii\"; format=flowed",
+	"image/png;",
+	"bad type/",
+}
+
+var exts = []string{".html", ".css", ".js", ".json", ".png", ".svg", ".pdf", ".nope"}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	heads := [][]byte{
+		[]byte("<!DOCTYPE html><html><body>hi</body></html>"),
+		[]byte("\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR"),
+		[]byte("%PDF-1.4 something"),
+		[]byte("{\"a\": 1, \"b\": [2, 3]}"),
+		[]byte("GIF89a...."),
+		[]byte("plain words of text, nothing else here"),
+		[]byte("\x00\x01\x02\x03\x04\x05\x06\x07"),
+	}
+	params := map[string]string{"charset": "utf-8", "q": "a b"}
+	sum := 0
+	for i := 0; i < 200000; i++ {
+		switch w {
+		case "parse":
+			kind, ps, err := mime.ParseMediaType(values[i%6])
+			if err == nil {
+				sum += len(kind) + len(ps)
+				for _, v := range ps {
+					sum += len(v)
+				}
+			} else {
+				sum++
+			}
+		case "format":
+			k := "text/plain"
+			if i%2 != 0 {
+				k = "application/x-thing"
+			}
+			sum += len(mime.FormatMediaType(k, params))
+		case "ext":
+			sum += len(mime.TypeByExtension(exts[i%8]))
+		case "detect":
+			sum += len(http.DetectContentType(heads[i%7]))
+		default:
+			sum += len(values[i%6]) + len(exts[i%8])
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

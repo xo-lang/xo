@@ -1,0 +1,55 @@
+// mime: std/mime against Go's mime package and net/http's
+// DetectContentType (twin.go.txt): parse_media_type over six values (one
+// malformed), format_media_type, type_by_extension and
+// detect_content_type over seven headers, 200,000 passes each; `none` is
+// the loop alone. Usage: `<program> none|parse|format|ext|detect`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/mime
+
+const VALUES: List[Str] = [
+  "text/html; charset=utf-8",
+  "multipart/form-data; boundary=\"----abc def\"",
+  "application/json",
+  "text/plain; charset=\"us-ascii\"; format=flowed",
+  "image/png;",
+  "bad type/",
+]
+
+const EXTS: List[Str] = [".html", ".css", ".js", ".json", ".png", ".svg", ".pdf", ".nope"]
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let heads: List[Bytes] = [
+    "<!DOCTYPE html><html><body>hi</body></html>".bytes(),
+    b"\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR",
+    "%PDF-1.4 something".bytes(),
+    "{\"a\": 1, \"b\": [2, 3]}".bytes(),
+    "GIF89a....".bytes(),
+    "plain words of text, nothing else here".bytes(),
+    b"\x00\x01\x02\x03\x04\x05\x06\x07",
+  ]
+  let params: Map[Str, Str] = {"charset": "utf-8", "q": "a b"}
+  var sum = 0
+  for i in 0..200000 {
+    if w == "parse" {
+      match mime.parse_media_type(VALUES[i % 6]) {
+        Ok(m) => {
+          sum += m.kind.len() + m.params.len()
+          for (_, v) in m.params {
+            sum += v.len()
+          }
+        }
+        Err(_) => sum += 1
+      }
+    } else if w == "format" {
+      sum += mime.format_media_type(if i % 2 == 0 { "text/plain" } else { "application/x-thing" }, params).len()
+    } else if w == "ext" {
+      sum += (mime.type_by_extension(EXTS[i % 8]) ?? "").len()
+    } else if w == "detect" {
+      sum += mime.detect_content_type(heads[i % 7]).len()
+    } else {
+      sum += VALUES[i % 6].len() + EXTS[i % 8].len()
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

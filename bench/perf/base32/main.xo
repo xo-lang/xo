@@ -1,0 +1,57 @@
+// base32: std/base32 encode and decode of 2000 buffers of 0 to 3,000 bytes,
+// 20 passes, against Go's encoding/base32 (twin.go.txt). Usage:
+// `<program> encode|decode|none` (none: the setup alone). Prints `<workload> <checksum>`; the twin prints
+// the same.
+use std/base32
+
+fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+fn inputs() -> List[Bytes] {
+  var out: List[Bytes] = []
+  var r = 12345
+  for _ in 0..2000 {
+    r = next(r)
+    let n = (r >> 8) % 3001
+    var bb = BytesBuilder.with_capacity(n)
+    var i = 0
+    while i < n {
+      r = next(r)
+      bb.write_byte(UInt8(48 + (r >> 8) % 10))
+      i += 1
+    }
+    out.push(bb.freeze())
+  }
+  out
+}
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "encode"
+  let ins = inputs()
+  var sum = 0
+  if w == "encode" {
+    for _ in 0..20 {
+      for s in ins {
+        let e = base32.encode(s)
+        sum += e.len()
+        if e.len() > 0 {
+          sum += Int(e.bytes()[e.len() - 1])
+        }
+      }
+    }
+  } else if w == "decode" {
+    var encoded: List[Str] = []
+    for s in ins {
+      encoded.push(base32.encode(s))
+    }
+    for _ in 0..20 {
+      for e in encoded {
+        let d = base32.decode(e).ok() ?? fault("decode")
+        sum += d.len()
+        if d.len() > 0 {
+          sum += Int(d[d.len() - 1])
+        }
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

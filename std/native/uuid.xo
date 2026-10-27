@@ -9,9 +9,23 @@ fn uuiderr_display(e: uuid.UuidErr) -> Str { e.msg }
 
 fn fail(msg: Str) -> uuid.UuidErr { uuid.UuidErr{msg: msg} }
 
+/// The lowercase hex digit of v (0 to 15).
+fn hex_digit(v: Int) -> UInt8 { UInt8(if v < 10 { 48 + v } else { 87 + v }) }
+
+/// The canonical text of 16 bytes, written once (google/uuid's
+/// encodeHex; 2026-10-26: to_hex, five slices and an interpolation made
+/// from_bytes and bytes() 9.7x Go's time).
 fn text_of(b: Bytes) -> uuid.Uuid {
-  let h = b.to_hex()
-  uuid.Uuid("${h[0..8]}-${h[8..12]}-${h[12..16]}-${h[16..20]}-${h[20..32]}")
+  var o = BytesBuilder.with_capacity(36)
+  for i in 0..16 {
+    if i == 4 || i == 6 || i == 8 || i == 10 {
+      o.write_byte(45)
+    }
+    let x = Int(b[i])
+    o.write_byte(hex_digit(x >> 4))
+    o.write_byte(hex_digit(x & 15))
+  }
+  uuid.Uuid(o.freeze().to_str() ?? "")
 }
 
 fn with_bits(b: Bytes, version: Int) -> Bytes {
@@ -55,47 +69,84 @@ fn hex_val(c: UInt8) -> Int {
   -1
 }
 
+/// Whether s[off..off + 9] is "urn:uuid:" in any case.
+fn urn_at(s: Bytes, off: Int) -> Bool {
+  let want = "urn:uuid:".bytes()
+  for k in 0..9 {
+    var c = Int(s[off + k])
+    if c >= 65 && c <= 90 {
+      c += 32
+    }
+    if c != Int(want[k]) {
+      return false
+    }
+  }
+  true
+}
+
+/// The lowercase form of the hex digit c, or 0 when c is not one.
+fn lower_hex(c: UInt8) -> UInt8 {
+  if c >= 48 && c <= 57 || c >= 97 && c <= 102 {
+    return c
+  }
+  if c >= 65 && c <= 70 {
+    return c + 32
+  }
+  0
+}
+
+/// google/uuid's Parse. The canonical text is written straight from the
+/// input's digits (lowercased), with offsets into it rather than slices,
+/// which copy (2026-10-26: parse ran at 2.8x Go's time).
 fn parse(s0: Str) -> uuid.Uuid ! uuid.UuidErr {
-  var s = s0.bytes()
-  var out = BytesBuilder.with_capacity(16)
+  let s = s0.bytes()
+  var off = 0
   match s.len() {
     36 => {}
     45 => {
-      if s0[0..9].to_lower() != "urn:uuid:" {
+      if !urn_at(s, 0) {
         return Err(fail("invalid urn prefix: ${s0[0..9].quote()}"))
       }
-      s = s[9..]
+      off = 9
     }
     // google/uuid takes the 36 characters after the first without
     // checking the braces
-    38 => s = s[1..]
+    38 => off = 1
     32 => return parse_hex(s)
     n => return Err(fail("invalid UUID length: ${n}"))
   }
-  if s[8] != 45 || s[13] != 45 || s[18] != 45 || s[23] != 45 {
+  if s[off + 8] != 45 || s[off + 13] != 45 || s[off + 18] != 45 || s[off + 23] != 45 {
     return Err(fail("invalid UUID format"))
   }
-  for x in [0, 2, 4, 6, 9, 11, 14, 16, 19, 21, 24, 26, 28, 30, 32, 34] {
-    let v = xtob(s[x], s[x + 1])
-    if v < 0 {
+  var o = BytesBuilder.with_capacity(36)
+  for k in 0..36 {
+    if k == 8 || k == 13 || k == 18 || k == 23 {
+      o.write_byte(45)
+      continue
+    }
+    let c = lower_hex(s[off + k])
+    if c == 0 {
       return Err(fail("invalid UUID format"))
     }
-    out.write_byte(UInt8(v))
+    o.write_byte(c)
   }
-  text_of(out.freeze())
+  Ok(uuid.Uuid(o.freeze().to_str() ?? ""))
 }
 
 /// 32 hex digits without dashes.
 fn parse_hex(s: Bytes) -> uuid.Uuid ! uuid.UuidErr {
-  var out = BytesBuilder.with_capacity(16)
-  for i in 0..16 {
-    let v = xtob(s[2 * i], s[2 * i + 1])
-    if v < 0 {
+  var o = BytesBuilder.with_capacity(36)
+  for k in 0..32 {
+    if k == 8 || k == 12 || k == 16 || k == 20 {
+      o.write_byte(45)
+    }
+    let c = lower_hex(s[k])
+    if c == 0 {
       return Err(fail("invalid UUID format"))
     }
-    out.write_byte(UInt8(v))
+    o.write_byte(c)
   }
-  text_of(out.freeze())
+  Ok(uuid.Uuid(o.freeze().to_str() ?? ""))
 }
 
 fn from_bytes(b: Bytes) -> uuid.Uuid ! uuid.UuidErr {
@@ -107,7 +158,25 @@ fn from_bytes(b: Bytes) -> uuid.Uuid ! uuid.UuidErr {
 
 fn nil() -> uuid.Uuid { uuid.Uuid("00000000-0000-0000-0000-000000000000") }
 
-fn uuid_bytes(u: uuid.Uuid) -> Bytes { Bytes.from_hex(u.0.replace("-", "")) ?? b"" }
+/// The 16 bytes of the canonical text, decoded in place (it was a
+/// replace, then from_hex).
+fn uuid_bytes(u: uuid.Uuid) -> Bytes {
+  let t = u.0.bytes()
+  if t.len() != 36 {
+    return b""
+  }
+  var o = BytesBuilder.with_capacity(16)
+  var k = 0
+  while k < 36 {
+    if k == 8 || k == 13 || k == 18 || k == 23 {
+      k += 1
+      continue
+    }
+    o.write_byte(UInt8(xtob(t[k], t[k + 1])))
+    k += 2
+  }
+  o.freeze()
+}
 
 fn uuid_version(u: uuid.Uuid) -> Int { hex_val(u.0.bytes()[14]) }
 

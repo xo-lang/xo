@@ -91,3 +91,31 @@ twin, B the Xo program:
 match is at Go's time. parts is still over the bar: each of split, dir, base and ext returns a new Str (a Str
 slice copies; Go's substrings share the bytes), so what is left is allocation, not the algorithm; it needs
 substring views that do not allocate, a runtime change rather than a std port.
+
+## uuid, base32, mime (same day, Xo Lang 2)
+
+Twins: bench/perf/uuid (github.com/google/uuid v1.6.0; twin.txt's require line), bench/perf/base32
+(encoding/base32), bench/perf/mime (mime and net/http's DetectContentType); twincheck agrees on every
+workload, and each has a `none` workload (the setup and loop alone). `xo bench --ab`, quiet, 15 rounds, A the
+Go twin, B the Xo program; Xo / Go wall before and after the changes in std/changes (uuid.md, base32.md,
+mime.md, 2026-10-26):
+
+| workload | before | after | note |
+|---|---|---|---|
+| uuid none | 0.887 | 0.904 | |
+| uuid parse (five forms and one bad text, 300,000) | 2.794 | 1.529 | text written from the input's digits |
+| uuid string (display) | 0.354 | 0.355 | Xo keeps the canonical text |
+| uuid bytes (bytes() and from_bytes) | 9.655 | 7.141 | over: a Uuid holds text, from_bytes formats 36 characters where google/uuid copies 16 bytes |
+| base32 none | 0.570 | 0.568 | |
+| base32 encode (2000 buffers, 20 passes) | 2.082 | 1.130 | whole blocks as one word |
+| base32 decode | 0.845 | | |
+| mime none | 0.708 | 0.669 | |
+| mime parse (6 values) | 1.064 | 1.051 | |
+| mime format | 1.234 | 1.231 | over by 0.03 |
+| mime ext (8 extensions) | 5.453 | 0.760 | a match generated from the table |
+| mime detect (7 headers) | 8.256 | 1.216 | constant signatures, offsets instead of slices |
+
+Still over the 1.2x bar: uuid parse and bytes (the representation: a Uuid is its canonical text, and each
+character is a write call; a native word writer, as base64's to_base64, is the next step), mime format (1.23)
+and detect (1.22, at the edge), path parts (1.53, the substring allocations above).
+

@@ -1,0 +1,45 @@
+// uuid: std/uuid against github.com/google/uuid (twin.go.txt): parse over
+// the five accepted forms and an invalid text, the canonical text of a
+// parsed UUID, and the bytes and from_bytes, 300,000 passes each; `none`
+// is the loop alone. Usage: `<program> none|parse|string|bytes`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/uuid
+
+const TEXTS: List[Str] = [
+  "6ba7b810-9dad-11d1-80b4-00c04fd430c8",
+  "urn:uuid:6ba7b811-9dad-11d1-80b4-00c04fd430c8",
+  "{6ba7b812-9dad-11d1-80b4-00c04fd430c8}",
+  "6ba7b8139dad11d180b400c04fd430c8",
+  "F47AC10B-58CC-4372-A567-0E02B2C3D479",
+  "6ba7b810-9dad-11d1-80b4-00c04fd430",
+]
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var us: List[uuid.Uuid] = []
+  for t in TEXTS {
+    if let Ok(u) = uuid.parse(t) {
+      us.push(u)
+    }
+  }
+  var sum = 0
+  for i in 0..300000 {
+    if w == "parse" {
+      match uuid.parse(TEXTS[i % 6]) {
+        Ok(u) => sum += u.version() + u.0.len()
+        Err(_) => sum += 1
+      }
+    } else if w == "string" {
+      sum += us[i % 5].display().len() + i % 7
+    } else if w == "bytes" {
+      let b = us[i % 5].bytes()
+      match uuid.from_bytes(b) {
+        Ok(u) => sum += Int(b[i % 16]) + u.version()
+        Err(_) => sum += 1
+      }
+    } else {
+      sum += TEXTS[i % 6].len() + i % 7
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

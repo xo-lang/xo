@@ -408,20 +408,96 @@ const BUILTIN: List[(Str, Str)] = [
   (".zip", "application/zip"),
 ]
 
+/// BUILTIN's type of ext as it is (a match: walking the list of tuples ran
+/// type_by_extension at 5.5x Go's map lookup, 2026-10-26; generated from
+/// BUILTIN, which extensions_by_type still walks).
+fn builtin_type(ext: Str) -> Str? {
+  match ext {
+    ".ai" => Some("application/postscript")
+    ".apk" => Some("application/vnd.android.package-archive")
+    ".apng" => Some("image/apng")
+    ".avif" => Some("image/avif")
+    ".bin" => Some("application/octet-stream")
+    ".bmp" => Some("image/bmp")
+    ".com" => Some("application/octet-stream")
+    ".css" => Some("text/css; charset=utf-8")
+    ".csv" => Some("text/csv; charset=utf-8")
+    ".doc" => Some("application/msword")
+    ".docx" => Some("application/vnd.openxmlformats-officedocument.wordprocessingml.document")
+    ".ehtml" => Some("text/html; charset=utf-8")
+    ".eml" => Some("message/rfc822")
+    ".eps" => Some("application/postscript")
+    ".exe" => Some("application/octet-stream")
+    ".flac" => Some("audio/flac")
+    ".gif" => Some("image/gif")
+    ".gz" => Some("application/gzip")
+    ".htm" => Some("text/html; charset=utf-8")
+    ".html" => Some("text/html; charset=utf-8")
+    ".ico" => Some("image/vnd.microsoft.icon")
+    ".ics" => Some("text/calendar; charset=utf-8")
+    ".jfif" => Some("image/jpeg")
+    ".jpeg" => Some("image/jpeg")
+    ".jpg" => Some("image/jpeg")
+    ".js" => Some("text/javascript; charset=utf-8")
+    ".json" => Some("application/json")
+    ".m4a" => Some("audio/mp4")
+    ".mjs" => Some("text/javascript; charset=utf-8")
+    ".mp3" => Some("audio/mpeg")
+    ".mp4" => Some("video/mp4")
+    ".oga" => Some("audio/ogg")
+    ".ogg" => Some("audio/ogg")
+    ".ogv" => Some("video/ogg")
+    ".opus" => Some("audio/ogg")
+    ".pdf" => Some("application/pdf")
+    ".pjp" => Some("image/jpeg")
+    ".pjpeg" => Some("image/jpeg")
+    ".png" => Some("image/png")
+    ".ppt" => Some("application/vnd.ms-powerpoint")
+    ".pptx" => Some("application/vnd.openxmlformats-officedocument.presentationml.presentation")
+    ".ps" => Some("application/postscript")
+    ".rdf" => Some("application/rdf+xml")
+    ".rtf" => Some("application/rtf")
+    ".shtml" => Some("text/html; charset=utf-8")
+    ".svg" => Some("image/svg+xml")
+    ".text" => Some("text/plain; charset=utf-8")
+    ".tif" => Some("image/tiff")
+    ".tiff" => Some("image/tiff")
+    ".txt" => Some("text/plain; charset=utf-8")
+    ".vtt" => Some("text/vtt; charset=utf-8")
+    ".wasm" => Some("application/wasm")
+    ".wav" => Some("audio/wav")
+    ".webm" => Some("audio/webm")
+    ".webp" => Some("image/webp")
+    ".xbl" => Some("text/xml; charset=utf-8")
+    ".xbm" => Some("image/x-xbitmap")
+    ".xht" => Some("application/xhtml+xml")
+    ".xhtml" => Some("application/xhtml+xml")
+    ".xls" => Some("application/vnd.ms-excel")
+    ".xlsx" => Some("application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+    ".xml" => Some("text/xml; charset=utf-8")
+    ".xsl" => Some("text/xml; charset=utf-8")
+    ".zip" => Some("application/zip")
+    _ => None
+  }
+}
+
 fn type_by_extension(ext: Str) -> Str? {
-  for (k, v) in BUILTIN {
-    if k == ext {
-      return Some(v)
+  if let Some(t) = builtin_type(ext) {
+    return Some(t)
+  }
+  // Go lowers ASCII letters, or the whole text when it is not ASCII; an
+  // extension with neither (most misses) cannot match lowered
+  var upper = false
+  for c in ext.bytes() {
+    if c >= 65 && c <= 90 || c >= 128 {
+      upper = true
+      break
     }
   }
-  // Go lowers ASCII letters, or the whole text when it is not ASCII
-  let lower = ext.to_lower()
-  for (k, v) in BUILTIN {
-    if k == lower {
-      return Some(v)
-    }
+  if !upper {
+    return None
   }
-  None
+  builtin_type(ext.to_lower())
 }
 
 fn extensions_by_type(kind: Str) -> List[Str] ! mime.MimeErr {
@@ -446,12 +522,27 @@ enum Sig {
   Text
 }
 
-fn sigs() -> List[Sig] {
-  var out: List[Sig] = []
-  for h in ["<!DOCTYPE HTML", "<HTML", "<HEAD", "<SCRIPT", "<IFRAME", "<H1", "<DIV", "<FONT", "<TABLE", "<A", "<STYLE", "<TITLE", "<B", "<BODY", "<BR", "<P", "<!--"] {
-    out.push(Sig.Html(p: h.bytes()))
-  }
-  out = out + [
+/// sniff.go's sniffSignatures in order, made once (sigs() built the list,
+/// and each HTML pattern's Bytes, on every call: 2026-10-26, with the
+/// slices below, detect_content_type ran at 8.3x Go's time).
+const SIGS: List[Sig] = [
+  Sig.Html(p: b"<!DOCTYPE HTML"),
+  Sig.Html(p: b"<HTML"),
+  Sig.Html(p: b"<HEAD"),
+  Sig.Html(p: b"<SCRIPT"),
+  Sig.Html(p: b"<IFRAME"),
+  Sig.Html(p: b"<H1"),
+  Sig.Html(p: b"<DIV"),
+  Sig.Html(p: b"<FONT"),
+  Sig.Html(p: b"<TABLE"),
+  Sig.Html(p: b"<A"),
+  Sig.Html(p: b"<STYLE"),
+  Sig.Html(p: b"<TITLE"),
+  Sig.Html(p: b"<B"),
+  Sig.Html(p: b"<BODY"),
+  Sig.Html(p: b"<BR"),
+  Sig.Html(p: b"<P"),
+  Sig.Html(p: b"<!--"),
     Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\xFF", pat: b"<?xml", skip_ws: true, ct: "text/xml; charset=utf-8"),
     Sig.Exact(sig: b"%PDF-", ct: "application/pdf"),
     Sig.Exact(sig: b"%!PS-Adobe-", ct: "application/postscript"),
@@ -486,23 +577,32 @@ fn sigs() -> List[Sig] {
     Sig.Exact(sig: b"Rar!\x1A\x07\x01\x00", ct: "application/x-rar-compressed"),
     Sig.Exact(sig: b"\x00\x61\x73\x6D", ct: "application/wasm"),
     Sig.Text,
-  ]
-  out
-}
+]
 
 fn is_ws(b: UInt8) -> Bool { b == 9 || b == 10 || b == 12 || b == 13 || b == 32 }
 
-fn has_prefix(data: Bytes, p: Bytes) -> Bool { data.len() >= p.len() && data[0..p.len()] == p }
+/// Whether data starts with p, compared in place (a slice copies).
+fn has_prefix(data: Bytes, p: Bytes) -> Bool {
+  if data.len() < p.len() {
+    return false
+  }
+  for i in 0..p.len() {
+    if data[i] != p[i] {
+      return false
+    }
+  }
+  true
+}
 
 fn sig_match(s: Sig, data: Bytes, first: Int) -> Str {
   match s {
     Html(h) => {
-      let d = data[first..]
-      if d.len() < h.len() + 1 {
+      // data from first, by offset (a slice copied the data per pattern)
+      if data.len() - first < h.len() + 1 {
         return ""
       }
       for i in 0..h.len() {
-        var db = d[i]
+        var db = data[first + i]
         if h[i] >= 65 && h[i] <= 90 {
           db = db & 0xDF
         }
@@ -510,16 +610,16 @@ fn sig_match(s: Sig, data: Bytes, first: Int) -> Str {
           return ""
         }
       }
-      let t = d[h.len()]
+      let t = data[first + h.len()]
       if t == 32 || t == 62 { "text/html; charset=utf-8" } else { "" }
     }
     Masked(mask, pat, skip_ws, ct) => {
-      let d = if skip_ws { data[first..] } else { data }
-      if pat.len() != mask.len() || d.len() < pat.len() {
+      let o = if skip_ws { first } else { 0 }
+      if pat.len() != mask.len() || data.len() - o < pat.len() {
         return ""
       }
       for i in 0..pat.len() {
-        if (d[i] & mask[i]) != pat[i] {
+        if (data[o + i] & mask[i]) != pat[i] {
           return ""
         }
       }
@@ -534,12 +634,12 @@ fn sig_match(s: Sig, data: Bytes, first: Int) -> Str {
       if data.len() < box || box % 4 != 0 {
         return ""
       }
-      if data[4..8] != b"ftyp" {
+      if data[4] != 102 || data[5] != 116 || data[6] != 121 || data[7] != 112 {
         return ""
       }
       var st = 8
       while st < box {
-        if st != 12 && data[st..st + 3] == b"mp4" {
+        if st != 12 && data[st] == 109 && data[st + 1] == 112 && data[st + 2] == 52 {
           return "video/mp4"
         }
         st += 4
@@ -547,10 +647,13 @@ fn sig_match(s: Sig, data: Bytes, first: Int) -> Str {
       ""
     }
     Text => {
-      for b in data[first..] {
+      var i = first
+      while i < data.len() {
+        let b = data[i]
         if b <= 8 || b == 11 || (b >= 14 && b <= 26) || (b >= 28 && b <= 31) {
           return ""
         }
+        i += 1
       }
       "text/plain; charset=utf-8"
     }
@@ -563,7 +666,7 @@ fn detect_content_type(data0: Bytes) -> Str {
   while first < data.len() && is_ws(data[first]) {
     first += 1
   }
-  for s in sigs() {
+  for s in SIGS {
     let ct = sig_match(s, data, first)
     if !ct.is_empty() {
       return ct

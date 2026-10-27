@@ -28,7 +28,25 @@ const DEC_HEX: Bytes = b"\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xff\xf
 fn encode(data: Bytes, enc: base32.Base32 = base32.Base32.Std) -> Str {
   let a = alphabet(enc)
   var out = BytesBuilder.with_capacity((data.len() + 4) / 5 * 8)
+  // whole five byte blocks: one 40 bit word, eight symbols, no per byte
+  // test (Go's Encode loop; 2026-10-26: the block loop below ran encode at
+  // 2.1x Go's time)
+  let n = data.len()
+  let full = n - n % 5
   var si = 0
+  while si < full {
+    let v = (Int(data[si]) << 32) | (Int(data[si + 1]) << 24) | (Int(data[si + 2]) << 16) | (Int(data[si + 3]) << 8) | Int(data[si + 4])
+    out.write_byte(a[(v >> 35) & 31])
+    out.write_byte(a[(v >> 30) & 31])
+    out.write_byte(a[(v >> 25) & 31])
+    out.write_byte(a[(v >> 20) & 31])
+    out.write_byte(a[(v >> 15) & 31])
+    out.write_byte(a[(v >> 10) & 31])
+    out.write_byte(a[(v >> 5) & 31])
+    out.write_byte(a[v & 31])
+    si += 5
+  }
+  // the last, partial block
   while si < data.len() {
     let remain = (data.len() - si).min(5)
     // the block's 40 bits, zero filled past the data
