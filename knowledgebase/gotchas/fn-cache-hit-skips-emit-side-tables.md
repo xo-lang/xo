@@ -25,5 +25,5 @@ functions recorded, as an optional tail (put_w64) written only when one
 is non-empty, so other targets' entries and keys are unchanged; a hit
 adds them back (place_text, gen_part's merge). The other per-function
 tables an emitter fills are the ref flags, wants, strings and positions,
-which the entry already carried. The general rule: before serving a function's text from a cache, list every
+which the entry already carried. A second trap on the same path: a function served from the cache may also be undecoded (lazy inline decode, decision 0283 stage B), so module-level code that reads a function's blocks (the Win64 entry shims, w64_exports) faulted on a warm windows build; such code reads m.param_types (TestWindowsWarmEditEntryShims). The general rule: before serving a function's text from a cache, list every
 table its emission writes outside its text.

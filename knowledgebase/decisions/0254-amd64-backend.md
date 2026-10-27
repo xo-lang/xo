@@ -556,11 +556,12 @@ knowledgebase/gotchas/amd64-retarget-semantic-gaps.md:
   (Builder.soft_cpu); AES, SHA-256 and carry-less multiply run their Xo
   bodies until stage 3.
 
-Not yet: darwin/amd64 and windows/amd64 (Mach-O and PE, stage 4's
-rest), DWARF variable locations (debug_info is off for
-amd64), native x86 selection where the
-translation costs (the bench/perf comparison with LLVM, the lead's third
-condition). Shrink wrapping (decision 0224) runs for amd64 since
+Not yet: native x86 selection where the translation costs (the bench/perf
+comparison with LLVM, the lead's third condition); per target, what
+amd64 lacks against arm64 is in
+bench/results/amd64-parity-by-target-2026-10-27.md (darwin/amd64 since
+stage 6a, windows/amd64 since 6b, and DWARF lines and variables since
+2026-10-20 are done). Shrink wrapping (decision 0224) runs for amd64 since
 2026-10-17. The per-function and part cache, lazy inline decode and the
 deferred verification run for amd64 on darwin and linux since 2026-10-26
 (bench/results/amd64-edit-cache-2026-10-26.md) and on windows since
