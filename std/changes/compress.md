@@ -1,5 +1,20 @@
 # std/compress changes
 
+## 2026-10-27: perf: flate's length and offset codes by Go's tables
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/compress gzip1 (BestSpeed) at 1.57x Go after the first flate fixes; its CPU profile (write_tokens and index_tokens about half)
+- Go reference: compress/flate token.go lengthCodes, offsetCodes and offsetCode (go1.26.1)
+- Test: internal/llvm/testdata/golden/archive_formats, lz4_roundtrip, http_gzip, http_gzip_responses (and internal/arm64's); internal/stdtest corpora; twincheck bench/perf/compress and archive; the outputs of gzip, gzip1, deflate and zip byte for byte the parent's
+
+length_code and offset_code searched the base tables a step at a time for
+every match token, twice a block (index_tokens counts, write_tokens
+writes); they are now Go's 256 entry tables, an offset above 255 looked
+up as off >> 7 (+ 14) or off >> 14 (+ 28). Quiet --ab, 15 rounds, the
+parent's std as A: gzip1 0.553, gzip 0.917, archive zip 0.883. Against
+Go: gzip1 0.858 (from 1.57).
+
 ## 2026-10-27: perf: packed byte output and Go's fast paths in flate
 
 - Kind: perf

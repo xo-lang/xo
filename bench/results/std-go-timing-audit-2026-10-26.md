@@ -232,3 +232,17 @@ Template's ceiling, a stub that kept no node context: 0.771 against the parent, 
 all of that and more (no Ctx made per visit). Still over 1.2x: BestSpeed (write_tokens and index_tokens),
 zip and unzip (flate plus the archive's own copies), template render (the walk itself), big quorem
 (nat_divmod_basic's qhat estimate, division by a word per step) and the rest of the earlier list.
+
+## flate code tables (2026-10-27, Xo Lang 2)
+
+Per std/changes/compress.md 2026-10-27 ("length and offset codes by Go's tables"). Quiet `xo bench --ab`,
+15 rounds, one pair per job:
+
+| workload | parent (wall, instructions) | Xo / Go before | Xo / Go now |
+|---|---|---|---|
+| compress gzip1 (BestSpeed) | 0.553, 0.565 | 1.569 | 0.858 (measured; instructions 1.371) |
+| compress gzip | 0.917, 0.891 | 1.251 | about 1.15 (estimate: 1.251 x 0.917) |
+| archive zip | 0.883, 0.886 | 1.360 | about 1.20 (estimate: 1.360 x 0.883) |
+
+BestSpeed is under the bar. What is left of gzip1 (profile at 1000 Hz): BitWriter.write_bits a call per
+code, offset_code not inlined, load32; the next step keeps the bit buffer in locals over write_tokens.
