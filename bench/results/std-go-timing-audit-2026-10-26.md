@@ -260,4 +260,5 @@ Per std/changes/big.md 2026-10-27 ("long division subtracts qhat times the divis
 | msub_row fused (one loop) | the parent's std | 0.89 (0.885 to 0.897) | 0.699 |
 | msub_row unrolled by 4, adc chains | the fused row | 0.857 (0.84 to 0.873) | 0.895 |
 
-Xo / Go: about 1.48 (estimate: 1.945 x 0.89 x 0.857), from 1.945; a measured row against the Go twin follows.
+Xo / Go: 1.42 (1.398 to 1.448; instructions 1.574), from 1.945: quiet --ab, 15 rounds, the Go twin as A and
+0e18046f5's std as B (the estimate from the two steps was 1.48).
