@@ -104,7 +104,7 @@ func netipCorpus() string {
 		}
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(s), xq(w))
 	}
-	o.WriteString("]\n\n/// (text, Go's result: STRING|MASKED|contains of each probe, or err TEXT)\nconst PREFIXES: List[(Str, Str)] = [\n")
+	o.WriteString("]\n\n/// (text, Go's result: STRING|MASKED|contains of each probe, then Go's STRING again as display, or err TEXT)\nconst PREFIXES: List[(Str, Str)] = [\n")
 	for i := 0; i < 1200; i++ {
 		// a valid address of each family most of the time, then a length
 		a := good[r.Intn(len(good))].String()
@@ -134,7 +134,7 @@ func netipCorpus() string {
 					cs = append(cs, '0')
 				}
 			}
-			w = textOf(p.String()) + "|" + textOf(p.Masked().String()) + "|" + string(cs)
+			w = textOf(p.String()) + "|" + textOf(p.Masked().String()) + "|" + string(cs) + "|" + textOf(p.String())
 		}
 		fmt.Fprintf(&o, "  (%s, %s),\n", xq(s), xq(w))
 	}
@@ -197,7 +197,7 @@ test "parse_prefix gives Go's prefix, masked prefix, contains, and errors" {
         for k in 0..8 {
           cs = cs + bit(p.contains(g[(i * 8 + k) % g.len()]))
         }
-        "${p}|${p.masked()}|${cs}"
+        "${p}|${p.masked()}|${cs}|${p.display()}"
       }
       Err(e) => "err ${e.display()}"
     }
