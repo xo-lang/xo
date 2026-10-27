@@ -116,3 +116,31 @@ fn (var o: Out) sleb(v: Int) -> Int {
 fn (var o: Out) done() -> Bytes {
   o.b.freeze()
 }
+
+/// A change to a section's bytes: n little endian bytes of v at offset
+/// at (relocations, patched offsets; write_patched).
+struct BytePatch {
+  at: Int
+  n: Int
+  v: Int
+}
+
+/// d written to out with the patches ps in place of the bytes they cover,
+/// d copied as slices between them, never a byte at a time (the Mach-O
+/// linker's DWARF join, 2026-10-27). ps need not be sorted; a patch that
+/// overlaps an earlier one is skipped.
+fn write_patched(var out: BytesBuilder, d: Bytes, ps: List[BytePatch]) {
+  let sorted = ps.sort_by(fn(p: BytePatch) -> Int { p.at })
+  var prev = 0
+  for p in sorted {
+    if p.at < prev {
+      continue
+    }
+    out.write(d[prev..p.at])
+    for k in 0..p.n {
+      out.write_byte(UInt8((p.v >> (8 * k)) & 255))
+    }
+    prev = p.at + p.n
+  }
+  out.write(d[prev..])
+}

@@ -1443,7 +1443,7 @@ fn (var l: Linker) write() -> Bytes {
   l.segs[le].vmsize = align_up(l.segs[le].filesize, PAGE)
 
   // the contents of the segments before __LINKEDIT
-  var dw: List[List[Int]] = []
+  var dw: List[Bytes] = []
   if !l.dw_sizes.is_empty() {
     dw = l.dwarf_data()
     for (i, d) in dw.indexed() {
@@ -1459,9 +1459,7 @@ fn (var l: Linker) write() -> Bytes {
     if g.name == "__DWARF" {
       body.zeros(g.fileoff - body.n)
       for d in dw {
-        for c in d {
-          body.u8(c)
-        }
+        body.bytes(d)
       }
       body.zeros(g.fileoff + g.filesize - body.n)
       continue

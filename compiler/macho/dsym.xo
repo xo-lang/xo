@@ -70,133 +70,156 @@ fn (var l: Linker) dsym() -> Bytes {
 }
 
 /// The DWARF sections of dwarf_names, joined (empty when no input has
-/// DWARF).
-fn (var l: Linker) dwarf_data() -> List[List[Int]] {
+/// DWARF): each object's section copied as one piece around its patches,
+/// not byte by byte (a std sized link spent about 13 ms of CPU in the
+/// byte lists, 2026-10-27).
+fn (var l: Linker) dwarf_data() -> List[Bytes] {
   // only the arm64 emitter's objects (a compile unit with producer
   // "xo"): another compiler's Mach-O DWARF refers between its sections by
   // offsets in its own object, with no relocations, which joining would
   // break (ld64 leaves them in the objects for dsymutil)
   let names = dwarf_names()
-  // per section: the joined bytes, and per object the chunk's offset
-  var data: List[List[Int]] = []
+  // per section: its pieces (object, section index) and per object the
+  // piece's offset in the joined section
+  var parts: List[List[(Int, Int)]] = []
   var at: List[Map[Int, Int]] = []
   var any = false
   for nm in names {
-    var buf: List[Int] = []
+    var ps: List[(Int, Int)] = []
     var offs: Map[Int, Int] = {}
+    var n = 0
     for o in 0..l.objs.len() {
       if !l.objs[o].live || !l.xo_dwarf(o) {
         continue
       }
-      for s in l.objs[o].sects {
+      for (k, s) in l.objs[o].sects.indexed() {
         if s.seg != "__DWARF" || s.name != nm {
           continue
         }
         any = true
-        offs[o] = buf.len()
-        var bs: List[Int] = []
-        for c in s.data {
-          bs.push(Int(c))
-        }
-        // the 64 bit addresses (.quad label): relocated
-        for r in s.relocs {
-          if r.typ != R_UNSIGNED || r.len != 3 || r.pcrel {
-            continue
-          }
-          let content = rd64(s.data, r.addr)
-          let t = l.target(o, r, content)
-          if t.imp >= 0 {
-            continue
-          }
-          for k in 0..8 {
-            bs[r.addr + k] = (t.addr >> (8 * k)) & 255
-          }
-        }
-        buf = buf + bs
+        offs[o] = n
+        ps.push((o, k))
+        n += s.data.len()
       }
     }
-    data.push(buf)
+    parts.push(ps)
     at.push(offs)
   }
   if !any {
     return []
   }
-  // the xo compile units: their abbreviation and line offsets, and an
-  // address range each
-  var info = data[2]
-  var ar = data[3]
-  for (o, off) in at[2] {
-    // one unit per object, starting at its chunk
-    if off + 36 > info.len() || info[off + 33] != 120 || info[off + 34] != 111 || info[off + 35] != 0 {
-      continue
-    }
-    let ab = at[1].get(o) ?? 0
-    let ln = at[0].get(o) ?? 0
-    put32(info, off + 8, get32(info, off + 8) + ab)
-    put32(info, off + 13, get32(info, off + 13) + ln)
-    if off + 46 <= info.len() {
-      put32(info, off + 38, get32(info, off + 38) + (at[4].get(o) ?? 0))
-      put32(info, off + 42, get32(info, off + 42) + (at[5].get(o) ?? 0))
-    }
-    if off + 50 <= info.len() {
-      // DW_AT_comp_dir, DW_FORM_strp
-      put32(info, off + 46, get32(info, off + 46) + (at[6].get(o) ?? 0))
-    }
-    let lo = get64(info, off + 17)
-    let hi = get64(info, off + 25)
-    // a set: length, version 2, the unit's offset, address size 8,
-    // segment size 0, padding to 16, (low, length), (0, 0)
-    let at0 = ar.len()
-    for _ in 0..48 {
-      ar.push(0)
-    }
-    put32(ar, at0, 44)
-    ar[at0 + 4] = 2
-    put32(ar, at0 + 6, off)
-    ar[at0 + 10] = 8
-    put64(ar, at0 + 16, lo)
-    put64(ar, at0 + 24, hi - lo)
-  }
-  // the paths (DW_FORM_line_strp into the object's __debug_line_str
-  // slots, 2026-10-22): the line table's directories at bytes 34 and 38
-  // (their count at 33, the form at 32)
-  var line = data[0]
-  for (o, off) in at[0] {
-    let so = at[7].get(o) ?? 0
-    if off + 38 > line.len() || line[off + 32] != 0x1f {
-      continue
-    }
-    put32(line, off + 34, get32(line, off + 34) + so)
-    if line[off + 33] == 2 && off + 42 <= line.len() {
-      put32(line, off + 38, get32(line, off + 38) + so)
-    }
-    // the file names (line_strp since 2026-10-22, after the slots):
-    // format count 2, (path, line_strp), (directory index, udata), the
-    // count, then each name's offset and its directory index
-    var p = off + 34 + 4 * line[off + 33]
-    if p + 5 > line.len() || line[p] != 2 || line[p + 1] != 1 || line[p + 2] != 0x1f {
-      continue
-    }
-    p += 5
-    let (n, q) = get_uleb(line, p)
-    p = q
-    for _ in 0..n {
-      if p + 4 > line.len() {
-        break
+  var data: List[Bytes] = []
+  // the xo compile units' address ranges, one set each (.debug_aranges)
+  var sets = BytesBuilder.new()
+  for (i, ps) in parts.indexed() {
+    var out = BytesBuilder.with_capacity(if i < l.dw_sizes.len() { l.dw_sizes[i] } else { 0 })
+    for (o, k) in ps {
+      let s = l.objs[o].sects[k]
+      var ch: List[BytePatch] = []
+      // the 64 bit addresses (.quad label): relocated
+      for r in s.relocs {
+        if r.typ != R_UNSIGNED || r.len != 3 || r.pcrel {
+          continue
+        }
+        let t = l.target(o, r, rd64(s.data, r.addr))
+        if t.imp >= 0 {
+          continue
+        }
+        ch.push(BytePatch{at: r.addr, n: 8, v: t.addr})
       }
-      put32(line, p, get32(line, p) + so)
-      let (_, r) = get_uleb(line, p + 4)
-      p = r
+      if i == 2 {
+        dw_unit(o, s, ch, at, out.len(), sets)
+      } else if i == 0 {
+        dw_line(s.data, ch, at[7].get(o) ?? 0)
+      }
+      write_patched(out, s.data, ch)
     }
+    data.push(out.freeze())
   }
-  data[0] = line
-  data[2] = info
-  data[3] = ar
+  data[3] = data[3] + sets.freeze()
   data
 }
 
+/// The patches of an xo compile unit (one per object, at the start of
+/// its __debug_info piece s, placed at off in the joined section): its
+/// abbreviation, line, loclists, addr and comp_dir offsets moved by where
+/// the object's pieces of those sections went, and its address range
+/// set appended to sets.
+fn dw_unit(o: Int, s: ISect, var ch: List[BytePatch], at: List[Map[Int, Int]], off: Int, var sets: BytesBuilder) {
+  let d = s.data
+  if d.len() < 36 || Int(d[33]) != 120 || Int(d[34]) != 111 || Int(d[35]) != 0 {
+    return
+  }
+  ch.push(BytePatch{at: 8, n: 4, v: rd32(d, 8) + (at[1].get(o) ?? 0)})
+  ch.push(BytePatch{at: 13, n: 4, v: rd32(d, 13) + (at[0].get(o) ?? 0)})
+  if d.len() >= 46 {
+    ch.push(BytePatch{at: 38, n: 4, v: rd32(d, 38) + (at[4].get(o) ?? 0)})
+    ch.push(BytePatch{at: 42, n: 4, v: rd32(d, 42) + (at[5].get(o) ?? 0)})
+  }
+  if d.len() >= 50 {
+    // DW_AT_comp_dir, DW_FORM_strp
+    ch.push(BytePatch{at: 46, n: 4, v: rd32(d, 46) + (at[6].get(o) ?? 0)})
+  }
+  // low_pc and high_pc, relocated
+  var lo = rd64(d, 17)
+  var hi = rd64(d, 25)
+  for p in ch {
+    if p.at == 17 && p.n == 8 {
+      lo = p.v
+    } else if p.at == 25 && p.n == 8 {
+      hi = p.v
+    }
+  }
+  // a set: length, version 2, the unit's offset, address size 8,
+  // segment size 0, padding to 16, (low, length), (0, 0)
+  var a = new_out(48)
+  a.u32(44)
+  a.u16(2)
+  a.u32(off)
+  a.u8(8)
+  a.zeros(16 - a.n)
+  a.u64(lo)
+  a.u64(hi - lo)
+  a.zeros(48 - a.n)
+  sets.write(a.done())
+}
+
+/// The patches of a __debug_line piece d: the paths (DW_FORM_line_strp
+/// into the object's __debug_line_str slots, 2026-10-22) moved by so,
+/// where the object's __debug_line_str went: the line table's
+/// directories at bytes 34 and 38 (their count at 33, the form at 32) and
+/// the file names.
+fn dw_line(d: Bytes, var ch: List[BytePatch], so: Int) {
+  if d.len() < 38 || Int(d[32]) != 0x1f {
+    return
+  }
+  ch.push(BytePatch{at: 34, n: 4, v: rd32(d, 34) + so})
+  let nd = Int(d[33])
+  if nd == 2 && d.len() >= 42 {
+    ch.push(BytePatch{at: 38, n: 4, v: rd32(d, 38) + so})
+  }
+  // the file names (line_strp since 2026-10-22, after the slots):
+  // format count 2, (path, line_strp), (directory index, udata), the
+  // count, then each name's offset and its directory index
+  var p = 34 + 4 * nd
+  if p + 5 > d.len() || Int(d[p]) != 2 || Int(d[p + 1]) != 1 || Int(d[p + 2]) != 0x1f {
+    return
+  }
+  p += 5
+  let (n, q) = get_uleb(d, p)
+  p = q
+  for _ in 0..n {
+    if p + 4 > d.len() {
+      break
+    }
+    ch.push(BytePatch{at: p, n: 4, v: rd32(d, p) + so})
+    let (_, r) = get_uleb(d, p + 4)
+    p = r
+  }
+}
+
 /// The dSYM file of the joined DWARF data.
-fn (var l: Linker) dsym_file(data: List[List[Int]]) -> Bytes {
+fn (var l: Linker) dsym_file(data: List[Bytes]) -> Bytes {
   let names = dwarf_names()
   // MH_DSYM: header, LC_UUID, the executable's segments and sections
   // without contents (lldb maps addresses through them, as in a dSYM of
@@ -296,9 +319,7 @@ fn (var l: Linker) dsym_file(data: List[List[Int]]) -> Bytes {
     addr += data[i].len()
   }
   for d in data {
-    for c in d {
-      hdr.u8(c)
-    }
+    hdr.bytes(d)
   }
   hdr.done()
 }
@@ -314,12 +335,12 @@ fn (l: Linker) xo_dwarf(o: Int) -> Bool {
 }
 
 /// The ULEB128 at b[o] and the offset after it.
-fn get_uleb(b: List[Int], o: Int) -> (Int, Int) {
+fn get_uleb(b: Bytes, o: Int) -> (Int, Int) {
   var v = 0
   var sh = 0
   var p = o
   while p < b.len() {
-    let c = b[p]
+    let c = Int(b[p])
     p += 1
     v = v | shl(c & 0x7f, sh)
     sh += 7
@@ -328,24 +349,4 @@ fn get_uleb(b: List[Int], o: Int) -> (Int, Int) {
     }
   }
   (v, p)
-}
-
-fn get64(b: List[Int], o: Int) -> Int {
-  get32(b, o) | (get32(b, o + 4) << 32)
-}
-
-fn put64(var b: List[Int], o: Int, v: Int) {
-  for k in 0..8 {
-    b[o + k] = (v >> (8 * k)) & 255
-  }
-}
-
-fn get32(b: List[Int], o: Int) -> Int {
-  b[o] | (b[o + 1] << 8) | (b[o + 2] << 16) | (b[o + 3] << 24)
-}
-
-fn put32(var b: List[Int], o: Int, v: Int) {
-  for k in 0..4 {
-    b[o + k] = (v >> (8 * k)) & 255
-  }
 }
