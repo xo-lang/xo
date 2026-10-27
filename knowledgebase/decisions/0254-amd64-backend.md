@@ -558,7 +558,9 @@ knowledgebase/gotchas/amd64-retarget-semantic-gaps.md:
 
 Not yet: darwin/amd64 and windows/amd64 (Mach-O and PE, stage 4's
 rest), DWARF variable locations (debug_info is off for
-amd64), the per-function cache, native x86 selection where the
+amd64), the per-function cache on windows/amd64 (darwin and linux since
+2026-10-26, with lazy inline decode and the deferred verification:
+bench/results/amd64-edit-cache-2026-10-26.md), native x86 selection where the
 translation costs (the bench/perf comparison with LLVM, the lead's third
 condition). Shrink wrapping (decision 0224) runs for amd64 since
 2026-10-17.

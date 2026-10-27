@@ -84,7 +84,10 @@ cluster_mem (isel.xo:135-149).
 1. Edit loop (criterion 3 also): the per-function and part cache on
    amd64, then lazy inline decode and deferred verification, measured on
    llvm-fib and the HTTP server with `xo bench`'s edit rebuild on
-   darwin/amd64 and linux/amd64 (Docker).
+   darwin/amd64 and linux/amd64 (Docker). Done for darwin and linux
+   2026-10-26 (amd64-edit-cache-2026-10-26.md: edit rebuilds within 1 to
+   14% of arm64's); windows/amd64's per-function cache needs its C thunks
+   in the cache entries first (gotchas/fn-cache-hit-skips-emit-side-tables.md).
 2. TLS throughput: the wide crypto intrinsics on amd64 (AES-NI x4,
    PCLMULQDQ ghash4, SSE2 ChaCha x4), with the Go differential corpora.
 3. Small codegen gaps, each with `--ab` on linux/amd64 in Docker and the

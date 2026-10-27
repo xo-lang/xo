@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `--backend=amd64` edit rebuilds on darwin and linux reuse every unchanged
+  function and part, as arm64 builds do (the per-function and part back-end
+  cache, lazy inline-cache decode and the deferred inline verification): a body
+  edit of the HTTP server for linux/amd64 rebuilds in 676 ms instead of
+  1244 ms (arm64: 596 ms), llvm-fib in 290 ms instead of 465 ms, and each
+  edited binary is byte for byte a cold build's
+  (bench/results/amd64-edit-cache-2026-10-26.md). windows/amd64 keeps building
+  every function on an edit for now.
 - An unchanged `xo build`, `xo run` or `xo test` (a run cache hit) checks its
   inputs on tasks: the program's own files first in order, so an edit still misses
   at its first file, then the std files (hundreds) in parallel.

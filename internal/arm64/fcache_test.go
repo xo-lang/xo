@@ -79,9 +79,10 @@ func TestBackendCacheModuleFacts(t *testing.T) {
 // functions (enough for the per-function caches) and one cache directory:
 // a first build, a second, an edit of one function's constant, a
 // statement added to it, and the revert; after each, the cached build's
-// binary must equal the binary of XO_BACKEND_CACHE=off, for the host and
-// for linux/arm64 (an ELF with DWARF: a decoded function that lost its
-// inline sites changed only that, 2026-10-18). XO_BACKEND_CACHE=on is
+// binary must equal the binary of XO_BACKEND_CACHE=off, for the host, for
+// linux/arm64 (an ELF with DWARF: a decoded function that lost its
+// inline sites changed only that, 2026-10-18), and for linux/amd64,
+// darwin/amd64 and windows/amd64 (the amd64 backend's caches, 2026-10-26). XO_BACKEND_CACHE=on is
 // set, since a gate may export off (scripts/gate.sh).
 func TestBackendCacheEditIdentity(t *testing.T) {
 	if testing.Short() {
@@ -126,7 +127,11 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 	build := func(t *testing.T, name, target string, env ...string) ([]byte, string) {
 		// the same file name in both directories: a Mach-O signature names it
 		out := filepath.Join(work, name, strings.ReplaceAll(target, "/", "-"), "prog")
-		args := []string{"build", "--backend=arm64", "--phase-times", "-o", out}
+		backend := "--backend=arm64"
+		if strings.HasSuffix(target, "/amd64") {
+			backend = "--backend=amd64"
+		}
+		args := []string{"build", backend, "--phase-times", "-o", out}
 		if target != "" {
 			args = append(args, "--targets="+target)
 		}
@@ -136,6 +141,9 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("%s: %v\n%s", name, err, log)
+		}
+		if strings.HasPrefix(target, "windows/") {
+			out += ".exe" // a PE build adds it
 		}
 		b, err := os.ReadFile(out)
 		if err != nil {
@@ -156,7 +164,13 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 		if err := os.WriteFile(filepath.Join(src, "main.xo"), []byte(gen(s.k, s.stmt)), 0o644); err != nil {
 			t.Fatal(err)
 		}
-		for _, target := range []string{"", "linux/arm64"} {
+		// the amd64 backend's per-function and part caches too (2026-10-26):
+		// an x86 ELF and an x86_64 Mach-O, cross built here; a PE has no
+		// per-function or part cache (its C functions' thunks are recorded
+		// while a function is emitted) but the rest of the edit path, checked
+		// the same
+		for _, target := range []string{"", "linux/arm64", "linux/amd64", "darwin/amd64", "windows/amd64"} {
+			pe := strings.HasPrefix(target, "windows/")
 			on, log := build(t, "on", target, "XO_BACKEND_CACHE=on")
 			off, _ := build(t, "off", target, "XO_BACKEND_CACHE=off")
 			if !bytes.Equal(on, off) {
@@ -167,13 +181,13 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 			if s.name != "first" && !regexp.MustCompile(`cache fe [1-9]\d*/\d+ bodies`).MatchString(log) {
 				t.Errorf("%s %s: no function body read from the front end cache:\n%s", s.name, target, log)
 			}
-			if s.name != "first" && (!reused(log, "rc") || !reused(log, "functions")) {
+			if s.name != "first" && (!reused(log, "rc") || !pe && !reused(log, "functions")) {
 				t.Errorf("%s %s: no function read from the cache, so the test compares nothing:\n%s", s.name, target, log)
 			}
 			// from the third build on (the parts are in the target's pack
 			// only, written by the second), an unchanged part is read
 			// whole (stage D 2e) and the edited function's is generated
-			if s.name != "first" && s.name != "again" && !reused(log, "parts") {
+			if s.name != "first" && s.name != "again" && !pe && !reused(log, "parts") {
 				t.Errorf("%s %s: no part read from the cache, so the part cache is not tested:\n%s", s.name, target, log)
 			}
 			// from the third build on, functions whose inlining is read

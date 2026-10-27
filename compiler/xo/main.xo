@@ -1386,7 +1386,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let later = defer_inline_verify(os, o, march, release)
   // the inline cache's hits left undecoded until read (decision 0283
   // stage B), where the per-function cache is used
-  let lazy_inl = march == "arm64" && !o.race && !release && o.cmd != "asm" && !passes_changed(os) && backend_cache_mode(os) != "verify" && (os.env.get("XO_LAZY_INLINE") ?? "") != "off" && (os.env.get("XO_INLINE_BREAK") ?? "").is_empty()
+  let lazy_inl = (march == "arm64" || march == "amd64") && !o.race && !release && o.cmd != "asm" && !passes_changed(os) && backend_cache_mode(os) != "verify" && (os.env.get("XO_LAZY_INLINE") ?? "") != "off" && (os.env.get("XO_INLINE_BREAK") ?? "").is_empty()
   let (inl0, pend0, fb0) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
   var inl = inl0
   var pend = pend0
@@ -1448,11 +1448,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       b.m = ssa.Module{}
       lo.b.m = ssa.Module{}
     }
-    // no per-function cache for amd64 yet (its canonical text is
-    // arm64's), nor with $XO_PASSES changed either way (+ or -: its keys
+    // the per-function and part cache, for arm64 and amd64 (their keys
+    // and target directories name the architecture, m.goarch; amd64 since
+    // 2026-10-26), not with $XO_PASSES changed either way (+ or -: its keys
     // do not say so), nor for --race (its instrumented code has the same
-    // keys)
-    let (fc, fdir, fpk) = if march == "amd64" || passes_changed(os) || gm.race { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release, pre) }
+    // keys), nor for windows: emitting a function records the C functions
+    // it calls in g.w64 (x86win.xo w64_sym), whose thunks w64_thunks
+    // writes, and a cached function is not emitted, so its thunks would be
+    // missing (an undefined xo_w64_WaitOnAddress, 2026-10-26)
+    let (fc, fdir, fpk) = if passes_changed(os) || gm.race || tgoos == "windows" { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release, pre) }
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }
@@ -2479,12 +2483,12 @@ fn inline_verified(os: Os, errs: List[Str]) -> Bool {
 /// function removal and the generation flags, where the per-function
 /// cache's keys (arm64.function_keys) serve both it and the cache: they
 /// were computed twice an edit build, 0.2 to 0.5 s each for xo. Only
-/// where the cache is used (arm64, no XO_PASSES, no --race, not
+/// where the cache is used (arm64 and amd64, no XO_PASSES, no --race, not
 /// --release or verify) and not with XO_INLINE_BREAK=1, whose test
 /// breaks a function dead function removal may drop (XO_INLINE_BREAK=late
 /// breaks one after it, for the test of this path).
 fn defer_inline_verify(os: Os, o: Opts, march: Str, release: Bool) -> Bool {
-  march == "arm64" && !o.race && !release && !passes_changed(os) && (os.env.get("XO_INLINE_BREAK") ?? "") != "1" && backend_cache_mode(os) != "verify" && !cache_id(os).is_empty()
+  (march == "arm64" || march == "amd64") && !o.race && !release && !passes_changed(os) && (os.env.get("XO_INLINE_BREAK") ?? "") != "1" && backend_cache_mode(os) != "verify" && !cache_id(os).is_empty()
 }
 
 /// The checker's path of the std module `xo test --std-module` names
