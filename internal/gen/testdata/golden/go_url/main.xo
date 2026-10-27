@@ -21,11 +21,11 @@ fn main(os: Os) -> () ! Error {
   os.stdio.println("${url.query_escape("a b&c")} ${url.path_escape("a b/c")}")
   match url.parse("http://[::1") {
     Ok(_) => os.stdio.println("unexpected success")
-    // display (the interpolation), go_type and message are the three
-    // methods std/go.xo declares on go.Error, and no other program calls
-    // message (the 2026-10-26 coverage audit listed it unreached)
+    // display, go_type and message are the three methods std/go.xo declares
+    // on go.Error; display is called on the concrete type, because an error
+    // interface slot credits only the interface's method (2026-10-27 sweep)
     Err(e) => {
-      os.stdio.println("error: ${e} (${e.go_type()})")
+      os.stdio.println("error: ${e.display()} (${e.go_type()})")
       os.stdio.println("message: ${e.message()}")
     }
   }
