@@ -269,3 +269,6 @@ Per std/changes/toml.md 2026-10-27. Quiet `xo bench --ab`, 15 rounds, the parent
 (0.703 to 0.714), instructions 0.745; Xo / Go about 1.58 (estimate: 2.230 x 0.709), from 2.230. Left (profile
 at 1000 Hz, 400,000 decodes): the parser 48% (key lists, set's two map lookups, TomlVal copies), the JSON text
 round trip (writer plus jsontext.scan and the decode) about 40%.
+
+Step 2 (one lookup per new key, no view of the rest per value, plain integers kept, decode from Bytes): decode wall
+0.942 (0.921 to 0.955), instructions 0.94 against step 1; Xo / Go about 1.49 (estimate: 2.230 x 0.709 x 0.942).

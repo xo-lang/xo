@@ -87,10 +87,9 @@ fn (var p: TomlParser) add_table(t: TomlTable) -> Int {
   p.tables.len() - 1
 }
 
+/// Adds k, which the caller has found absent from table t.
 fn (var p: TomlParser) set(t: Int, k: Str, v: TomlVal) {
-  if !p.tables[t].vals.contains(k) {
-    p.tables[t].keys.push(k)
-  }
+  p.tables[t].keys.push(k)
   p.tables[t].vals.put(k, v)
 }
 
@@ -389,12 +388,11 @@ fn (var p: TomlParser) value() -> TomlVal ! toml.TomlErr {
   if p.eof() {
     return Err(p.err("expected a value"))
   }
-  let rest = raw.str_slice(p.s, p.i, p.s.len())
   let c = p.peek()
-  if rest.starts_with("\"\"\"") {
+  if p.rest_has("\"\"\"") {
     return Ok(TomlVal.Text(s: p.multiline(false)?))
   }
-  if rest.starts_with("'''") {
+  if p.rest_has("'''") {
     return Ok(TomlVal.Text(s: p.multiline(true)?))
   }
   if c == 34 {
@@ -409,11 +407,11 @@ fn (var p: TomlParser) value() -> TomlVal ! toml.TomlErr {
   if c == 123 {
     return p.inline_table()
   }
-  if rest.starts_with("true") && !word_byte_at(rest, 4) {
+  if p.rest_has("true") && !word_byte_at(p.s, p.i + 4) {
     p.i += 4
     return Ok(TomlVal.Flag(b: true))
   }
-  if rest.starts_with("false") && !word_byte_at(rest, 5) {
+  if p.rest_has("false") && !word_byte_at(p.s, p.i + 5) {
     p.i += 5
     return Ok(TomlVal.Flag(b: false))
   }
@@ -505,6 +503,22 @@ fn underscores(s: Str, base: Int) -> Str? {
 
 /// The decimal text of an integer token, or None.
 fn int_token(tok: Str) -> Str? {
+  // Up to 18 decimal digits, an optional `-` and no leading zero are
+  // already the JSON text.
+  let lead = if tok.starts_with("-") { 1 } else { 0 }
+  let n = tok.len() - lead
+  if n >= 1 && n <= 18 && !(n > 1 && raw.str_byte(tok, lead) == 48) && !(lead == 1 && n == 1 && raw.str_byte(tok, 1) == 48) {
+    var plain = true
+    for i in lead..tok.len() {
+      if !is_dec(raw.str_byte(tok, i)) {
+        plain = false
+        break
+      }
+    }
+    if plain {
+      return Some(tok)
+    }
+  }
   var base = 10
   var digits = tok
   var neg = false
@@ -940,20 +954,22 @@ fn (p: TomlParser) write_json(var out: BytesBuilder, v: TomlVal) {
   }
 }
 
-fn to_json(text: Str) -> Str ! toml.TomlErr {
+fn json_bytes(text: Str) -> Bytes ! toml.TomlErr {
   var p = TomlParser{s: text, i: 0, line: 1, tables: [], arrays: []}
   p.document()?
   var out = BytesBuilder.new()
   p.write_json(out, TomlVal.Tab(id: 0))
-  out.freeze().to_str() ?? ""
+  out.freeze()
 }
 
+fn to_json(text: Str) -> Str ! toml.TomlErr { json_bytes(text)?.to_str() ?? "" }
+
 fn decode[T: Json](text: Str) -> T ! toml.DecodeErr {
-  let j = match to_json(text) {
-    Ok(s) => s
+  let j = match json_bytes(text) {
+    Ok(b) => b
     Err(e) => return Err(toml.DecodeErr.Syntax(err: e))
   }
-  match js.decode_str[T](j) {
+  match js.decode[T](j) {
     Ok(v) => Ok(v)
     Err(e) => Err(toml.DecodeErr.Value(err: e))
   }
