@@ -7,7 +7,9 @@
 // operands of thousands of bits). Variable time: not for secrets.
 use std/big
 use native/llrt/bigmod
+use native/llrt/cpu
 use native/llrt/raw
+use native/rt
 
 fn bigerr_display(e: big.BigErr) -> Str { e.msg }
 
@@ -262,24 +264,21 @@ fn nat_mul(x: List[Int], y: List[Int]) -> List[Int] {
   if x.len() >= KARATSUBA && y.len() >= KARATSUBA {
     return nat_mul_karatsuba(x, y)
   }
-  var z = raw.zero_ints(x.len() + y.len())
+  // per word of x, z[i..] += xi * y (Go's addMulVVW: bigmod.mac_row, the
+  // RSA code's row, unrolled by 4); its carry is z[i + len(y)], still 0
+  let z = raw.zero_ints(x.len() + y.len())
+  let pz = bigmod.addr(z)
+  let py = bigmod.addr(y)
+  let n = y.len()
   for i in 0..x.len() {
     let xi = x[i]
     if xi == 0 {
       continue
     }
-    var c = 0
-    for j in 0..y.len() {
-      // z[i+j] + xi*y[j] + c fits two words
-      let lo = xi.wrapping_mul(y[j])
-      let hi = xi.mul_hi_unsigned(y[j])
-      let (s1, c1) = add_ww(lo, z[i + j], 0)
-      let (s2, c2) = add_ww(s1, c, 0)
-      z[i + j] = s2
-      c = hi.wrapping_add(c1).wrapping_add(c2)
-    }
-    z[i + y.len()] = c
+    let row = pz.wrapping_add(8 * i)
+    rt.mem_store(row, 8 * n, bigmod.mac_row(row, py, xi, n), 8)
   }
+  bigmod.keep(y)
   norm(z)
 }
 
@@ -538,6 +537,9 @@ fn nat_divmod_basic(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
   let vtop = vn[n - 1]
   let vsec = vn[n - 2]
   let rec = reciprocal_word(vtop)
+  let qv = raw.zero_ints(n + 1)
+  let pq = bigmod.addr(qv)
+  let pv = bigmod.addr(vn)
   var j = m
   while j >= 0 {
     // the estimate from the top two words, corrected with the third
@@ -564,20 +566,22 @@ fn nat_divmod_basic(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
         }
       }
     }
-    // un[j..j+n+1] -= qhat * vn
-    var borrow = 0
-    var carry = 0
-    for i in 0..n {
-      let lo = qhat.wrapping_mul(vn[i])
-      let hi = qhat.mul_hi_unsigned(vn[i])
-      let (p, c1) = add_ww(lo, carry, 0)
-      carry = hi.wrapping_add(c1)
-      let (d, b1) = sub_ww(un[i + j], p, borrow)
-      un[i + j] = d
-      borrow = b1
+    // un[j..j+n+1] -= qhat * vn, as Go's mulAddVWW then subVV: the
+    // product in qv (bigmod.mac_row over zeros), then one borrow chain
+    rt.mem_set(pq, 0, 8 * n)
+    rt.mem_store(pq, 8 * n, bigmod.mac_row(pq, pv, qhat, n), 8)
+    let pu = bigmod.addr(un).wrapping_add(8 * j)
+    var b1 = 0
+    var o = 0
+    while o <= 8 * n {
+      let x = rt.mem_load(pu, o, 8)
+      let y = rt.mem_load(pq, o, 8)
+      let d1 = x.wrapping_sub(y)
+      let d = d1.wrapping_sub(b1)
+      rt.mem_store(pu, o, d, 8)
+      b1 = cpu.borrow(x, y) | cpu.borrow(d1, b1)
+      o += 8
     }
-    let (d, b1) = sub_ww(un[j + n], carry, borrow)
-    un[j + n] = d
     if b1 != 0 {
       // one too many: add vn back
       qhat = qhat.wrapping_sub(1)
@@ -592,6 +596,8 @@ fn nat_divmod_basic(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
     q[j] = qhat
     j -= 1
   }
+  bigmod.keep(qv)
+  bigmod.keep(vn)
   (norm(q), nat_shr(norm(un[0..n]), s))
 }
 
