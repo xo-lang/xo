@@ -1,7 +1,8 @@
 # 0383: The heap hands back none of the memory the build frees, so xo building itself peaks at 10.4 GB with 0.2 GB live
 
-Status: Proposed for (a) and (b); (c), the scavenge of big classes' central magazines with a threshold of 4,
-Accepted (owner, 2026-10-26) and pushed as 811c4fb8d (Xo Lang 3, 2026-10-26). Follows the
+Status: (c), the scavenge of big classes' central magazines with a threshold of 4, Accepted (owner, 2026-10-26)
+and pushed as 811c4fb8d; (a), cross class reuse by cutting, approved as a branch and landed as 85d08254a
+(Xo Lang 3, 2026-10-26); (b) Proposed, not built (it recovers nothing alone). Follows the
 cold peak study the lead asked for after tokens as offsets proved not to be the peak lever.
 
 ## Context
@@ -237,6 +238,26 @@ chunks), 11% of the 7.4 GB footprint. The growth is avoided only if a cut block'
 the cut anticipated, and the exact tiling of the layout change below is not modelled (requests of 2,041 to
 2,048 bytes move up a class). So (a) after (c) bounds 0.8 GB, not 3.2 GB: the 3.2 GB counted donors (c)
 already empties.
+
+(a) built and landed (2026-10-26, 85d08254a; the owner approved it as a branch that lands if the --ab is
+within noise and the footprint drops). Two changes. The big classes (class 65, 2 KiB, up) are now exact
+powers of two with the class word: payload 2^k - 8 (2040, 4088, ...; the largest request a class serves is
+262,136 bytes, so a 256 KiB request is a big block), so a magazine of a larger class cuts into an exact
+number of a smaller class's blocks. And a thread whose chunk is used up (cabi.xo heap_grow) first cuts the
+central magazines of the smallest larger class below 32 KiB into blocks of the requested class, whole
+magazines to the central list and the rest its own list, up to 1 MiB, before it maps a chunk (heapos.xo
+cut_for; the donor classes above 16 KiB are already given back by (c), so cutting them would save nothing);
+XO_CUT=0 turns it off in the same binary. The layout alone changed nothing (peak footprint 7.07 and 7.09 GB
+against 7.03 and 7.12). Cold self build of compiler/xo, two runs each: peak memory footprint 7.03 and 7.03
+GB (main) to 6.22 and 6.31 GB (-0.75 GB, -11%), the same binary with XO_CUT=0 7.09 and 7.00, max RSS 8.8 to
+8.0 GB. Quiet `xo bench --ab`, 15 rounds, against main: alloc small 1.02, mixed 0.963, grow 0.977, strings
+1.022, maps 0.986, tasks 0.78 (0.64 to 1.10), conc fanout 0.958, pmap 0.987, spawn 0.982 (wall; instructions
+1.000 to 1.006, RSS equal): all within noise or better. Cold self build wall, 5 rounds, quiet-ish: 34.0 to
+34.9 s (1.025, 0.953 to 1.089), instructions 0.991, cycles 0.974. Gates: the fixed point from the seed (s2 =
+s3), TestRuntime*, cmd/xo's heap stats test, a size-phase allocation stress (pattern checks, cross thread
+frees) with the cut on and off. The ledger predicted 0.8 GB; the build gives 0.75 GB. What it cannot reach: the
+256 KiB class and the classes of 32 KiB and up (given back by (c) but never cut), and anything only coalescing
+could free. With (c) and (a) the self build's peak footprint is 8.8 GB to about 6.2 GB.
 
 A seed workaround: the request rides on rt.heap_grow, whose n argument carries a flag bit (2^61, below
 the heap profile's 2^62) and whose heap argument is the magazine, because a new rt.* name needs the seed's
