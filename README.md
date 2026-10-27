@@ -7,7 +7,7 @@ programs with fast, structured feedback. It keeps what makes Go productive
 standard library, a compatibility promise) and moves the bugs tests usually
 miss into the compiler.
 
-Status: experimental, toolchain 0.32.0. The compiler and the `xo`
+Status: experimental, toolchain 0.33.0. The compiler and the `xo`
 toolchain are written in Xo and compile to native code (arm64, amd64,
 LLVM), Go, and WebAssembly. Xo stays on 0.x and expect breaking changes until
 1.0.
