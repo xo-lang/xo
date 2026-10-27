@@ -886,3 +886,24 @@ test "ed25519 refuses malleable, non-canonical and malformed signatures" {
   }
   expect(show3(bad)) == []
 }
+
+test "a KeyErr displays the message it carries (std/crypto KeyErr)" {
+  // KeyErr is a struct with one field, msg, documented as Go's error texts,
+  // so the display is checked against that field rather than a frozen text:
+  // the wording belongs to the parsers (Go's x509 and encoding/pem)
+  let (shown, msg) = match crypto.parse_public_key(b"not a DER key") {
+    Ok(_) => ("accepted a garbage key", "")
+    Err(e) => (e.display(), e.msg)
+  }
+  expect(msg.is_empty()) == false
+  expect(shown) == msg
+  // std/crypto.xo:121: pem_encode gives a KeyErr for a header key holding a
+  // colon, Go's encoding/pem behavior (Go itself returns a plain error, so
+  // the message wording is Xo's own and is only checked to be non-empty)
+  let (pem_shown, pem_msg) = match crypto.pem_encode(crypto.PemBlock{kind: "CERTIFICATE", headers: {"a:b": "c"}, bytes: b"x"}) {
+    Ok(_) => ("accepted a header key with a colon", "")
+    Err(e) => (e.display(), e.msg)
+  }
+  expect(pem_msg.is_empty()) == false
+  expect(pem_shown) == pem_msg
+}
