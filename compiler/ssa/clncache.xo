@@ -294,3 +294,88 @@ pub fn cln_encode(m: Module, idx: List[Int], jobs: Int) -> List[(Int, Bytes)] {
   }
   done.sort_by(fn(x) { x.0 })
 }
+
+/// The body id of each function of m that ents holds an entry for (its
+/// form after the cleanup, cln_entry), "" for the others, on up to jobs
+/// tasks (Module.body_ids): the SHA-256 of the entry, the fields an entry
+/// does not carry (target, skip), and the key of every type it names (an
+/// entry names types by name; the key is the layout). By content, so one
+/// body has one id however the build came to it.
+pub fn body_ids_of(m: Module, ents: Map[Int, Bytes], tk: List[Str], jobs: Int) -> List[Str] {
+  let n = m.funcs.len()
+  var idx: List[Int] = []
+  for fi in 0..n {
+    if ents.contains(fi) {
+      idx.push(fi)
+    }
+  }
+  let ni = idx.len()
+  let next = Atomic[Int].new(0)
+  let done = scope s {
+    var ts = []
+    for _ in 0..jobs.min((ni + 63) / 64).max(1) {
+      ts.push(s.spawn(fn() -> List[(Int, Str)] {
+        var mine: List[(Int, Str)] = []
+        while true {
+          let i = next.add(64) - 64
+          if i >= ni {
+            break
+          }
+          for j in i..(i + 64).min(ni) {
+            let fi = idx[j]
+            let e = ents.get(fi) ?? b""
+            if !e.is_empty() {
+              mine.push((fi, body_id(m.funcs[fi], e, tk)))
+            }
+          }
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Str)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var ids: List[Str] = []
+  for _ in 0..n {
+    ids.push("")
+  }
+  for (fi, id) in done {
+    ids[fi] = id
+  }
+  ids
+}
+
+fn body_id(f: Func, e: Bytes, tk: List[Str]) -> Str {
+  var b = BytesBuilder.new()
+  b.write_str("${CLN_CACHE_VERSION} body\ntarget=${f.target} skip=${f.skip.len()}:${f.skip}\ntypes")
+  var seen: Map[Int, Bool] = {}
+  var ts: List[Int] = []
+  for t in f.results + f.captures {
+    if !seen.contains(t) {
+      seen[t] = true
+      ts.push(t)
+    }
+  }
+  for x in f.values {
+    if !seen.contains(x.ty) {
+      seen[x.ty] = true
+      ts.push(x.ty)
+    }
+  }
+  for d in f.dvars {
+    if !seen.contains(d.ty) {
+      seen[d.ty] = true
+      ts.push(d.ty)
+    }
+  }
+  for t in ts {
+    b.write_byte(' ')
+    b.write_str(tkey(tk, t))
+  }
+  b.write_byte('\n')
+  b.write(e)
+  "cb ${crypto.sha256(b.freeze()).to_hex()}"
+}

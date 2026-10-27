@@ -495,7 +495,10 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
     }
   }
   var stores: List[(Str, Bytes)] = []
+  // each function's entry as the cleanup left it, for its body id
+  var ents: Map[Int, Bytes] = {}
   for (fi, e) in ssa.cln_encode(b.m, todo, jobs) {
+    ents[fi] = e
     let k = keys[fi]
     match entries.get(k) {
       Some(old) => {
@@ -509,16 +512,16 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
   for (fi, g) in hits {
     if !verify {
       b.m.funcs[fi] = g
+      ents[fi] = ssa.cln_body(entries.get(keys[fi]) ?? b"")
     }
   }
-  // each function's key fixes its body as the cleanup left it: the
-  // reference counting's keys hash it in place of the body (one whose
-  // landings grew the module is keyed by its body)
-  var ids: List[Str] = []
-  for fi in 0..keys.len() {
-    ids.push(if grew[fi] { "" } else { "cln ${keys[fi]}" })
-  }
-  b.m.body_ids = ids
+  // each function's body id, which the reference counting's keys hash in
+  // place of the body: the hash of what the cleanup left (its entry, by
+  // content, not by the key that found it: a cold build that runs its
+  // front end twice keyed one body two ways, 2026-10-27); one whose
+  // landings grew the module, or that an entry cannot hold, is keyed by
+  // its body
+  b.m.body_ids = ssa.body_ids_of(b.m, ents, tk, jobs)
   pack_store(os, pk, entries, stores)
   let n = store_entries(os, dir, "cln", pk, stores)
   if !stores.is_empty() {
