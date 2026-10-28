@@ -301,3 +301,105 @@ pub fn std_facts_of_std(m: Module, b: Builder, plan: RcPlan) -> List[StdFact] {
   }
   out
 }
+
+/// How one set of std facts (got: std's object builder's) compares with
+/// another (want: a whole-program build's, XO_STD_FACTS_DUMP) for the
+/// functions both name: errors are differences got may not have (the
+/// calling convention: borrowed, var parameters, catches; or a fact less
+/// conservative than want's); conservative counts, per kind, the
+/// functions where got is safely more conservative, a lost optimization
+/// (decision 0388 1c's runtime estimate), with their names.
+pub struct FactsDiff {
+  pub common: Int = 0
+  pub only_want: Int = 0
+  pub only_got: Int = 0
+  pub errors: List[Str] = []
+  pub conservative: Map[Str, List[Str]] = {}
+  /// the body facts' bytes differ (compared as bytes: a kind of their own)
+  pub body: List[Str] = []
+}
+
+fn note_cons(var d: FactsDiff, kind: Str, name: Str) {
+  var xs = d.conservative.get(kind) ?? []
+  xs.push(name)
+  d.conservative[kind] = xs
+}
+
+/// The comparison (FactsDiff) of got against want.
+pub fn diff_std_facts(want: List[StdFact], got: List[StdFact]) -> FactsDiff {
+  var d = FactsDiff{}
+  var by: Map[Str, StdFact] = {}
+  for x in got {
+    by[x.name] = x
+  }
+  var seen: Map[Str, Bool] = {}
+  for w in want {
+    seen[w.name] = true
+    let g = match by.get(w.name) {
+      Some(x) => x
+      None => {
+        d.only_want += 1
+        continue
+      }
+    }
+    d.common += 1
+    let n = w.name
+    if g.borrowed != w.borrowed {
+      d.errors.push("${n}: borrowed ${bools_str(g.borrowed)}, want ${bools_str(w.borrowed)} (the calling convention)")
+    }
+    if g.var_params != w.var_params {
+      d.errors.push("${n}: var parameters differ")
+    }
+    if g.catches != w.catches {
+      d.errors.push("${n}: catches ${g.catches}, want ${w.catches}")
+    }
+    if g.faults != w.faults {
+      if g.faults { note_cons(d, "faults", n) } else { d.errors.push("${n}: does not fault, but the whole program's may") }
+    }
+    if g.cancels != w.cancels {
+      if g.cancels { note_cons(d, "cancels", n) } else { d.errors.push("${n}: is not canceled, but the whole program's may be") }
+    }
+    for (i, u) in g.unique.indexed() {
+      let wu = i < w.unique.len() && w.unique[i]
+      if u && !wu {
+        d.errors.push("${n}: result ${i} unique, the whole program's not")
+      } else if !u && wu {
+        note_cons(d, "unique", n)
+      }
+    }
+    if w.unique.len() > g.unique.len() && w.unique[g.unique.len()..].any(fn(v) { v }) {
+      note_cons(d, "unique", n)
+    }
+    match w.known {
+      None => {
+        if g.known != Aux.None {
+          d.errors.push("${n}: a known result the whole program's lacks")
+        }
+      }
+      I(..) | F(..) | B(..) | S(..) | Bs(..) | P(..) => {
+        if g.known == Aux.None {
+          note_cons(d, "known", n)
+        } else if g.known != w.known {
+          d.errors.push("${n}: a different known result")
+        }
+      }
+    }
+    if g.body != w.body {
+      d.body.push(n)
+    }
+  }
+  for x in got {
+    if !seen.contains(x.name) {
+      d.only_got += 1
+    }
+  }
+  d
+}
+
+fn bools_str(xs: List[Bool]) -> Str {
+  var s = ""
+  for x in xs {
+    s = s + (if x { "1" } else { "0" })
+  }
+  s
+}

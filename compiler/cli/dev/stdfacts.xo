@@ -1,0 +1,42 @@
+// xo dev stdfacts WANT GOT: two std facts files compared (decision 0388):
+// WANT a whole-program build's (XO_STD_FACTS_DUMP), GOT std's object
+// builder's stdf. Exit 1 on an error (a calling convention that differs,
+// or a fact less conservative than the whole program's), else 0.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+fn stdfacts_cmd(os: Os, args: List[Str]) -> Int uses (fs.read, stdio) {
+  if args.len() != 2 {
+    os.stdio.eprintln("usage: xo dev stdfacts WANT GOT")
+    return 2
+  }
+  var sets: List[List[ssa.StdFact]] = []
+  for p in args {
+    let d = match os.fs.read(p) {
+      Ok(b) => b
+      Err(e) => {
+        os.stdio.eprintln("xo dev stdfacts: ${p}: ${e}")
+        return 2
+      }
+    }
+    match ssa.decode_std_facts(d) {
+      Some(fs) => sets.push(fs)
+      None => {
+        os.stdio.eprintln("xo dev stdfacts: ${p}: not std facts of ${ssa.STD_FACTS_VERSION}")
+        return 2
+      }
+    }
+  }
+  let d = ssa.diff_std_facts(sets[0], sets[1])
+  os.stdio.println("common ${d.common}, only in WANT ${d.only_want}, only in GOT ${d.only_got}, errors ${d.errors.len()}")
+  for e in d.errors {
+    os.stdio.println("error: ${e}")
+  }
+  for (k, ns) in d.conservative {
+    os.stdio.println("more conservative ${k}: ${ns.len()} (${ns[0..ns.len().min(8)].join(" ")}${if ns.len() > 8 { " ..." } else { "" }})")
+  }
+  if !d.body.is_empty() {
+    os.stdio.println("body facts differ: ${d.body.len()} (${d.body[0..d.body.len().min(8)].join(" ")}${if d.body.len() > 8 { " ..." } else { "" }})")
+  }
+  if d.errors.is_empty() { 0 } else { 1 }
+}

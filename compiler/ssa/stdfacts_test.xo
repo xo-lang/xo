@@ -41,3 +41,18 @@ test "a std extern is a body-less shell its facts answer" {
   r.init_borrows(m.funcs)
   expect(r.borrowed[fi]) == [true, false]
 }
+
+test "two std facts sets compare: conventions must match, conservative facts are counted" {
+  let want = [StdFact{name: "a", borrowed: [true], faults: false}, StdFact{name: "b", faults: true}, StdFact{name: "c", known: Aux.I(n: 3)}]
+  let same = diff_std_facts(want, want)
+  expect(same.errors.len()) == 0
+  expect(same.common) == 3
+  let got = [StdFact{name: "a", borrowed: [true], faults: true}, StdFact{name: "b", faults: false}, StdFact{name: "c"}, StdFact{name: "d"}]
+  let d = diff_std_facts(want, got)
+  expect(d.errors.len()) == 1
+  expect((d.conservative.get("faults") ?? []).len()) == 1
+  expect((d.conservative.get("known") ?? []).len()) == 1
+  expect(d.only_got) == 1
+  let bad = diff_std_facts(want, [StdFact{name: "a", borrowed: [false], faults: false}])
+  expect(bad.errors.len()) == 1
+}

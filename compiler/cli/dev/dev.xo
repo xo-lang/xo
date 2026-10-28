@@ -40,7 +40,7 @@ pub struct Host {
 }
 
 pub fn usage() -> Str {
-  "usage: xo dev goldens|errorcheck|codegen|bisect-pass|dwarf|unwind|symbolize|debug|compare|new-code|new-golden|dump|edges|record [flags] ..."
+  "usage: xo dev goldens|errorcheck|codegen|bisect-pass|dwarf|unwind|symbolize|debug|compare|new-code|new-golden|stdfacts|dump|edges|record [flags] ..."
 }
 
 /// run runs `xo dev <args>` for the commands of this module and returns
@@ -62,6 +62,7 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, f
     "compare" => compare_cmd(os, args[1..])
     "new-code" => new_code_cmd(os, args[1..])
     "new-golden" => new_golden_cmd(os, h, args[1..])
+    "stdfacts" => stdfacts_cmd(os, args[1..])
     _ => {
       os.stdio.eprintln("xo dev: unknown command ${args[0].quote()}\n${usage()}")
       2
