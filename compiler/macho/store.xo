@@ -323,15 +323,74 @@ pub fn (var s: StoreLink) resolve() -> Str {
     }
     live2.push(row)
   }
-  for o in 0..s.n {
+  for o in 0..s.l.objs.len() {
     for k in 0..s.l.objs[o].sects.len() {
       let x = s.l.objs[o].sects[k]
       if x.seg == "__LD" && x.name == "__compact_unwind" {
-        s.l.objs[o].sects[k] = s.l.live_unwind(o, x, live2)
+        if o < s.n {
+          s.l.objs[o].sects[k] = s.l.live_unwind(o, x, live2)
+        } else {
+          s.l.objs[o].sects[k] = s.l.uncoalesced_unwind(o, x)
+        }
       }
     }
   }
   ""
+}
+
+/// A program object's compact unwind section without the entries of its
+/// weak definitions the link takes from another object (a helper or an
+/// instance std's store defines too, decision 0388): their FDEs name the
+/// symbol, which is the other object's, so the copy has no FDE of its
+/// own, and nothing reaches it (every reference resolves to the kept one).
+fn (l: Linker) uncoalesced_unwind(o: Int, s: ISect) -> ISect {
+  // the addresses of this object's weak definitions taken from another
+  var gone: Set[(Int, Int)] = #{}
+  for (i, y) in l.objs[o].syms.indexed() {
+    if is_ext(y) && is_defined(y) && (y.desc & 0x80) != 0 && y.sect >= 1 {
+      match l.globals.get(y.name) {
+        Some(g) => if g != (o, i) {
+          gone.add((y.sect, y.value))
+        }
+        None => {}
+      }
+    }
+  }
+  if gone.is_empty() {
+    return s
+  }
+  var keep: List[Int] = []
+  for r in s.relocs {
+    if r.addr % 32 != 0 {
+      continue
+    }
+    // the entry's function: a symbol, or a section and an address
+    let f = if r.ext {
+      let y = l.objs[o].syms[r.sym]
+      (y.sect, y.value)
+    } else {
+      (r.sym, rd64(s.data, r.addr))
+    }
+    if !gone.contains(f) {
+      keep.push(r.addr)
+    }
+  }
+  var out = s
+  var b = BytesBuilder.new()
+  out.relocs = []
+  for (n, at) in keep.indexed() {
+    b.write(s.data[at..at + 32])
+    for r in s.relocs {
+      if r.addr >= at && r.addr < at + 32 {
+        var r2 = r
+        r2.addr = r.addr - at + 32 * n
+        out.relocs.push(r2)
+      }
+    }
+  }
+  out.data = b.freeze()
+  out.size = 32 * keep.len()
+  out
 }
 
 /// The executable and the dSYM's DWARF (link_debug's), or the error.

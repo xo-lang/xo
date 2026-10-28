@@ -388,6 +388,14 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   before the cache: a release's std never changes, so no file times are needed. Other targets
   follow their store adapters (ELF, COFF).
 
+- A link through the store (XO_SEPCOMP_STORE) keeps the program's objects whole, so a weak
+  helper or instance the program and std both define stays in the program's text after the
+  link took std's copy. Its compact unwind entry names the program's copy by address, while
+  its FDE names the symbol, std's copy, so unwind_info found no FDE for it (`no FDE for the
+  DWARF mode function`, Lang 1's TestSepcompLinks, 2026-10-28). StoreLink.resolve drops a
+  program object's compact unwind entries for weak definitions the link took from another
+  object (uncoalesced_unwind); nothing reaches those copies.
+
 ### std's variants: conc (xo-lang-4, 2026-10-28)
 
 - Every XO_STD_ROOTS build was conc=true: rooting every std function builds bodies that need
