@@ -128,33 +128,34 @@ fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
   write_or_fail(os, prog, "${prog}/main.xo", "fn main(os: Os) {\n}\n".bytes())
   let xo = check.executable(os.env, os.fs)
   let base = ["PWD=${prog}", "XO_STD_CONC=${conc}", "XO_DCE=off"]
-  var code = 0
-  match os.proc.run("env", base + ["XO_STD_OBJ=${out}", "XO_PASSES=-hollow", xo, "build"] + (if target.is_empty() { [] } else { [target] }) + ["-o", "${prog}/x", prog]) {
-    Ok(r) => {
-      os.stdio.eprint(r.stderr.to_str() ?? "")
-      code = r.code
-    }
-    Err(e) => {
-      os.stdio.eprintln("xo dev stdobj: ${e}")
-      code = 1
-    }
+  let tg: List[Str] = if target.is_empty() { [] } else { [target] }
+  let obj_args = base + ["XO_STD_OBJ=${out}", "XO_PASSES=-hollow", xo, "build"] + tg + ["-o", "${prog}/x", prog]
+  let facts_args = base + ["XO_STD_ROOTS=1", "XO_STD_FACTS_DUMP=${facts}", "XO_BACKEND_CACHE_DIR=${prog}/cache", "XO_BUILD_DIR=${prog}/build", xo, "build"] + tg + ["-o", "${prog}/xf", prog]
+  // the object and the facts at once: two builds of std whole, each
+  // most of the time (about 8 s each on the Mac, 2026-10-28)
+  let results = scope s {
+    let a = s.spawn(fn() -> (Int, Str) { stdobj_run(os, obj_args) })
+    let b = s.spawn(fn() -> (Int, Str) { if facts.is_empty() { (0, "") } else { stdobj_run(os, facts_args) } })
+    [a.await, b.await]
   }
-  if code == 0 && !facts.is_empty() {
-    match os.proc.run("env", base + ["XO_STD_ROOTS=1", "XO_STD_FACTS_DUMP=${facts}", "XO_BACKEND_CACHE_DIR=${prog}/cache", "XO_BUILD_DIR=${prog}/build", xo, "build"] + (if target.is_empty() { [] } else { [target] }) + ["-o", "${prog}/x", prog]) {
-      Ok(r) => {
-        if r.code != 0 {
-          os.stdio.eprint(r.stderr.to_str() ?? "")
-        }
-        code = r.code
-      }
-      Err(e) => {
-        os.stdio.eprintln("xo dev stdobj: ${e}")
-        code = 1
-      }
+  var code = 0
+  for (c, err) in results {
+    if c != 0 {
+      os.stdio.eprint(err)
+      code = c
     }
   }
   os.fs.remove_all(prog).ignore_err("only disk: a leftover empty program")
   code
+}
+
+/// One build of `xo dev stdobj` (env and its command): its exit code
+/// and standard error.
+fn stdobj_run(os: Os, args: List[Str]) -> (Int, Str) {
+  match os.proc.run("env", args) {
+    Ok(r) => (r.code, r.stderr.to_str() ?? "")
+    Err(e) => (1, "xo dev stdobj: ${e}\n")
+  }
 }
 
 /// build_each_cmd is `xo dev build-each [build flags] -- OUT DIR [OUT DIR
