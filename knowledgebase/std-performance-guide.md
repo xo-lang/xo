@@ -100,6 +100,15 @@ keeps the symptoms as first observed. Last verified: 2026-10-28.
 - Counting pieces first for split: a second walk costs more than the
   geometric growth it saves (strsplit 1.07 to 1.50x).
 - A per-value memo in a Map (gotcha cf877cd68).
+- A sized StrBuilder (a prototype `StrBuilder.with_capacity`) for clean's
+  result: each Str write is a str.concat, dearer than write_byte plus the
+  UTF-8 check it saves (path clean instructions 1.082, parts 1.042).
+- Go's lazybuf prefix case in clean (return p[0..total] when the kept
+  elements are p's start): the check cost more than it saved (parts wall
+  1.047, clean 1.059).
+- hdec_init's link tables written in place (`h.links[v][off] = x`) instead
+  of taken out and stored back: the take moves, so nothing was copied
+  (unzip instructions 1.008).
 
 ## 9. A new std module
 
