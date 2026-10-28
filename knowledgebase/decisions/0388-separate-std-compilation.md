@@ -775,3 +775,18 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   on every target (Windows did already; the front end's cache keys hold race), so the
   guarded weak calls go; __sanitizer_start_switch_fiber stays (ASan can come from a `use c`
   object in any build).
+
+## Stage 2 built (2026-10-28, xo-lang-6 on Lang 1's design, opt in)
+
+Pieces 1 to 4 of ~/xo-lead/notes/lang1/design-0388-stage2.md: the stdx
+entry's header (file and directory stamps with the 2 s rule, the hashes
+of the parsed bytes, no header for a file changed after the build's
+start) decides before loading; the module closure (StdModRec,
+StdFileRec) makes std's modules and files from the record; under
+separate compilation only the files holding a generic object are parsed
+before install and the other trees join on demand (need_tree); a std
+body outside the facts that meets a pending tree makes the driver join
+every tree and build the front end again. xo build and run only; doc,
+def, refs, the LSP and test keep every tree. Numbers:
+bench/results/sepcomp-edit-stage2-2026-10-28.md (fib's check 33 to 18
+ms, the HTTP server's 60 to 27).

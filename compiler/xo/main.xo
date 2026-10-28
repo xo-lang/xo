@@ -778,16 +778,23 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
         // the entry's header: when its stamps of std's files and
         // directories hold, its fingerprint is std's without a read
         if !c.std_export_verify {
+          var why = "no entry"
           if let Some((h, _)) = check.decode_std_header(c.std_export_in) {
+            why = "header failed"
             if check.header_holds(os.fs, h) {
               c.std_header_fp = h.fp
+              why = "header held, no record"
               // piece 1: std's modules from the record's closure, no std
               // file read or parsed until a tree is needed
               if let Some(e) = check.decode_std_record(c.std_export_in, h.fp) {
                 c.load_std_record(e)
                 c.std_record = Some(e)
+                why = "record loaded (${e.closure.len()} modules)"
               }
             }
+          }
+          if (os.env.get("XO_CACHE_STATS") ?? "") == "1" {
+            os.stdio.eprintln("cache stdx ${why}")
           }
         }
       }

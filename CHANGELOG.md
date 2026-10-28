@@ -17,6 +17,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   --release, --race, a cc link, a program that uses C, and flags or
   variables that change std's code build the whole program as before;
   XO_SEPCOMP_DEFAULT=0 or XO_SEPCOMP=0 turns it off.
+- Separate compilation (decision 0388) stage 2, opt in with
+  XO_STD_EXPORT=1: the stdx entry carries a header (std's files and
+  directories stamped by size and time, the content hashed within 2 s
+  of recording) and std's module closure, so a build whose stamps hold
+  makes std's modules from the record without reading a std file, and
+  a separately compiled build parses only the std files holding a
+  generic object (23 of 239), joining other trees on demand; a std body
+  outside the facts that meets a pending tree rebuilds the front end
+  with every tree. fib's edit checks in 18 ms instead of 33, the HTTP
+  server's in 27 instead of 60; the edits take 0.08 and 0.16 s
+  (bench/results/sepcomp-edit-stage2-2026-10-28.md).
 - Compiler: reference counting insertion (compiler/ssa rc.xo) does the
   same work with fewer copies: the live leaf sets sort by one Int key
   (the paths' ranks, no string compared), the walk's lists are made with
