@@ -10,6 +10,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   length or equality (XO0913) and a small List made and only read every
   iteration (XO0914); a repo test keeps std free of new ones
   (knowledgebase/std-performance-guide.md).
+- Native backends: a loop that dispatches through a jump table (a `match` of
+  8 or more arms, decision 0051) gets its latch, header and dispatch copied
+  into each arm, so each arm ends in its own table branch (decision 0397,
+  compiler/arm64 threadsw.xo; XO_PASSES=-thread_switch turns it off). The
+  interp benchmark ran 204.5M to 281.4M cycles depending only on where its
+  one `br` landed; threaded it runs 158.4M to 169.1M over the same 16
+  placements (bench/results/interp-placement-2026-10-28.md). `XO_ARM64_PAD=K`
+  puts K nops before every function label for such placement sweeps
+  (decision 0075's knob, in the Xo emitter)
 - `xo bench --ab` started by heavy.sh as a gate or a slot run exits 2 at once
   saying to run it as its own HEAVY_CLASS=measure job, where it waited for the
   quiet window that was waiting for it (a 28 minute deadlock, 2026-10-27)
