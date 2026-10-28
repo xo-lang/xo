@@ -340,19 +340,19 @@ if [ "$dry" != 1 ]; then
 fi
 
 # decision 0388: std's prebuilt stores for the targets that have a store
-# adapter (Mach-O arm64 so far), both concurrency variants, built by the
+# adapter (Mach-O and ELF arm64), both concurrency variants, built by the
 # release's xo from the staged std into lib/xo/stdstore with the code
 # generation key they belong to, so a user's first separately compiled
 # build skips building them (compiler/xo stdcache.xo std_released)
 if [ "$dry" = 1 ]; then
-	echo "+ lib/xo/stdstore/darwin-arm64-conc{0,1}.{store,stdf,id}: $xo1 dev stdcache --target=darwin/arm64 --conc=0|1" >&2
+	echo "+ lib/xo/stdstore/{darwin,linux}-arm64-conc{0,1}.{store,stdf,id}: $xo1 dev stdcache --target=darwin/arm64|linux/arm64 --conc=0|1" >&2
 else
 	codegen=""
 	for a in "${stamp[@]}"; do
 		case "$a" in XO_CODEGEN_KEY=*) codegen="${a#XO_CODEGEN_KEY=}" ;; esac
 	done
 	[ -n "$codegen" ] || { echo "release.sh: no XO_CODEGEN_KEY in the stamps: no std stores" >&2; exit 1; }
-	for st_t in darwin/arm64; do
+	for st_t in darwin/arm64 linux/arm64; do
 		st=$(stage_of "$st_t")
 		name="${st_t%/*}-${st_t#*/}"
 		mkdir -p "$st/lib/xo/stdstore"

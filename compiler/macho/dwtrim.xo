@@ -161,13 +161,22 @@ fn (l: Linker) dw_fn_at(o: Int, s: ISect, rel_at: Map[Int, Int], off: Int) -> (I
 /// covering it; [] when it is not one this reader cuts (it is kept
 /// whole).
 fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSeg] {
-  let d = s.data
   var rel_at: Map[Int, Int] = {}
   for (i, r) in s.relocs.indexed() {
     if r.typ == R_UNSIGNED && r.len == 3 && !r.pcrel {
       rel_at[r.addr] = i
     }
   }
+  dw_runs(s.data, info, s.name == "__debug_loclists", abbrev, fn(off: Int) -> (Int, Int) { l.dw_fn_at(o, s, rel_at, off) })
+}
+
+/// The runs of an xo unit's .debug_info (info), .debug_line or
+/// .debug_loclists (loclists) bytes d (abbrev: the object's abbreviations;
+/// fn_at: the function atom an 8 byte address at an offset names, (-1,
+/// -1) for none), in order, covering it; [] when it is not one this
+/// reader cuts (it is kept whole). Mach-O's (dw_segs) and ELF's
+/// (elfstrip.xo).
+fn dw_runs(d: Bytes, info: Bool, loclists: Bool, abbrev: Bytes, fn_at: fn(Int) -> (Int, Int)) -> List[DwSeg] {
   var runs: List[DwSeg] = []
   if info {
     if d.len() < 36 || Int(d[33]) != 120 || Int(d[34]) != 111 || Int(d[35]) != 0 || rd32(d, 0) + 4 != d.len() {
@@ -199,7 +208,7 @@ fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSe
       if q < 0 {
         return []
       }
-      let (fo, fk) = if a.tag == 0x2e && lo >= 0 { l.dw_fn_at(o, s, rel_at, lo) } else { (-1, -1) }
+      let (fo, fk) = if a.tag == 0x2e && lo >= 0 { fn_at(lo) } else { (-1, -1) }
       // the types the emitter writes (base, structure, pointer, array,
       // enumeration, union, typedef) and an abstract subprogram (an
       // inlined callee's, no address)
@@ -213,7 +222,7 @@ fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSe
     out.push(DwSeg{start: keep_to, end: d.len()})
     return out
   }
-  if s.name == "__debug_loclists" {
+  if loclists {
     // the header (12 bytes), an offset per list, then the lists, each a
     // function's variable's: its first entry the function's start
     // (DW_LLE_base_address), an empty one only its end
@@ -239,7 +248,7 @@ fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSe
         p += 1
         if e == 6 {
           if fo < 0 {
-            let (a, b) = l.dw_fn_at(o, s, rel_at, p)
+            let (a, b) = fn_at(p)
             fo = a
             fk = b
           }
@@ -302,7 +311,7 @@ fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSe
     if !ended || p > d.len() {
       return []
     }
-    let (fo, fk) = if first >= 0 { l.dw_fn_at(o, s, rel_at, first) } else { (-1, -1) }
+    let (fo, fk) = if first >= 0 { fn_at(first) } else { (-1, -1) }
     out.push(DwSeg{start: start, end: p, fo: fo, fk: fk})
   }
   out

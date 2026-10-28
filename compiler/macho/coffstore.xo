@@ -111,7 +111,7 @@ pub fn coff_store_encode(objs0: List[CObj]) -> Result[Bytes, Str] {
     }
     cobjs.push(CoreObj{path: ob.path, sects: cs, syms: syms, split: {}, unit_fns: []})
   }
-  Ok(store_write(cobjs, defs))
+  Ok(store_write(cobjs, defs, 12))
 }
 
 /// Whether a store section is kept whatever reaches it: DWARF, the TLS
@@ -175,7 +175,7 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[Cof
         let nr = rec_nrel(store, q)
         var rs: List[CReloc] = List.with_capacity(nr)
         for j in 0..nr {
-          let at = ra + 12 * j
+          let at = ra + v.rel_size * j
           rs.push(CReloc{addr: rd32(store, at), sym: rd32(store, at + 4), typ: rd32(store, at + 8)})
         }
         newk.push(sects.len())

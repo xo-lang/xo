@@ -67,7 +67,7 @@ pub struct CoreObj {
 
 /// The store of objs, with defs, the global definitions (name, store
 /// atom; the adapter chose between a weak and a strong one).
-pub fn store_write(objs: List[CoreObj], defs: List[(Bytes, Int)]) -> Bytes {
+pub fn store_write(objs: List[CoreObj], defs: List[(Bytes, Int)], rel_size: Int) -> Bytes {
   var total = 0
   for ob in objs {
     total += ob.sects.len()
@@ -76,6 +76,8 @@ pub fn store_write(objs: List[CoreObj], defs: List[(Bytes, Int)]) -> Bytes {
   var db = BytesBuilder.new()
   sw32(hb, objs.len())
   sw32(hb, total)
+  // the relocation records' size (the format's: Mach-O 12, ELF 20)
+  sw32(hb, rel_size)
   // the section names (segment, section), once each
   var name_ix: Map[Str, Int] = {}
   var names: List[(Str, Str)] = []
@@ -193,6 +195,8 @@ pub struct StoreView {
   /// the objects, and the atoms in all
   pub n: Int
   pub total: Int
+  /// the relocation records' size
+  pub rel_size: Int
   /// the section names (segment, section) records index
   pub names: List[(Str, Str)]
   /// the global definitions' table: its place and length
@@ -224,6 +228,7 @@ pub fn store_view(store: Bytes) -> Result[StoreView, Str] {
   var r = SR{b: store, at: 12}
   let n = r.u32()
   let total = r.u32()
+  let rel_size = r.u32()
   var names: List[(Str, Str)] = []
   for _ in 0..r.u32() {
     let sg = bstr(r.bytes())
@@ -232,7 +237,7 @@ pub fn store_view(store: Bytes) -> Result[StoreView, Str] {
   let ndefs = r.u32()
   let dt = r.at
   r.at += 12 * ndefs
-  var v = StoreView{b: store, data0: data0, n: n, total: total, names: names, dt: dt, ndefs: ndefs, paths: List.with_capacity(n), recs: List.with_capacity(n), nsects: List.with_capacity(n), syms_at: List.with_capacity(n), nsyms: List.with_capacity(n), splits: List.with_capacity(n), unit_fns: List.with_capacity(n), base: List.with_capacity(n), edge_at: List.with_capacity(total)}
+  var v = StoreView{b: store, data0: data0, n: n, total: total, rel_size: rel_size, names: names, dt: dt, ndefs: ndefs, paths: List.with_capacity(n), recs: List.with_capacity(n), nsects: List.with_capacity(n), syms_at: List.with_capacity(n), nsyms: List.with_capacity(n), splits: List.with_capacity(n), unit_fns: List.with_capacity(n), base: List.with_capacity(n), edge_at: List.with_capacity(total)}
   for _ in 0..n {
     v.base.push(v.edge_at.len())
     v.paths.push(bstr(r.bytes()))
@@ -363,7 +368,7 @@ pub fn (v: StoreView) cut(q: Int, live: List[Bool], loclists: Bool) -> (Bytes, L
     }
     let gr = v.data0 + rd32(store, ga + STORE_RUN * i + 12)
     for j in 0..rd32(store, ga + STORE_RUN * i + 16) {
-      let rq = gr + 12 * j
+      let rq = gr + v.rel_size * j
       rels.push((rq, rd32(store, rq) - g.start + at[i]))
     }
   }

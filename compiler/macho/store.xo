@@ -17,7 +17,7 @@
 // the file's format: a new one for every change of its layout (a store
 // from an older xo then fails cleanly, `not an xo std store`, instead of
 // being misread: gotchas/store-format-magic.md)
-const STORE_MAGIC = "XOSTORE2"
+const STORE_MAGIC = "XOSTORE3"
 
 fn sw32(var b: BytesBuilder, v: Int) {
   b.write_byte(UInt8(v & 255))
@@ -215,7 +215,7 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
     }
     objs.push(CoreObj{path: ob.path, sects: cs, syms: syms, split: ob.split, unit_fns: fns})
   }
-  Ok(store_write(objs, defs))
+  Ok(store_write(objs, defs, 12))
 }
 
 /// A section's record in the header: its name's index, alignment,

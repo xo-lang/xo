@@ -1,0 +1,267 @@
+// std's indexed store on ELF (decision 0388 stage 4): the ELF adapter
+// over store_core.xo, beside store.xo's Mach-O one. An atoms mode
+// object's atoms are its sections (elfstrip.xo: one per symbol), their
+// edges what elflink's strip walks (relocations, a function's FDE
+// references and unsafe range record; .eh_frame, never stripped,
+// reaching what its CIEs name). link_store_elf reads only the live
+// sections' bytes and relocations, cuts the DWARF and drops the dead
+// functions' FDEs as the strip does, and links the rest as elflink does:
+// the parts' link, byte for byte.
+
+/// A relocation record (20 bytes): its offset, symbol, type, addend.
+const ELF_REL = 20
+
+fn sw_erel(var b: BytesBuilder, r: ERel) {
+  sw32(b, r.off)
+  sw32(b, r.sym)
+  sw32(b, r.typ)
+  sw64(b, r.addend)
+}
+
+fn rd_erel(b: Bytes, at: Int) -> ERel {
+  ERel{off: rd32(b, at), sym: rd32(b, at + 4), typ: rd32(b, at + 8), addend: rd64(b, at + 12)}
+}
+
+/// A section the strip never drops (elfstrip.xo gc_sections' roots and
+/// the sections it does not walk): not allocated, .eh_frame, a note, the
+/// init and fini arrays.
+fn elf_whole(name: Str, typ: Int, flags: Int) -> Bool {
+  (flags & SHF_ALLOC) == 0 || name == ".eh_frame" || typ == SHT_NOTE || typ == 14 || typ == 15 || typ == 16 || name.starts_with(".init_array") || name.starts_with(".fini_array") || name == ".preinit_array"
+}
+
+/// The store of ELF objects assembled in atoms mode, or the first error.
+pub fn store_encode_elf(inputs: List[LinkInput]) -> Result[Bytes, Str] {
+  var l = ELinker{opts: ElfLinkOpts{}}
+  for inp in inputs {
+    match parse_elf_object(inp.path, inp.data) {
+      Ok(o) => l.objs.push(o)
+      Err(e) => return Err(e)
+    }
+  }
+  let n = l.objs.len()
+  var atoms: List[Bool] = []
+  for o in 0..n {
+    if !l.atoms_obj(o) {
+      return Err("${l.objs[o].path}: not made with .subsections_via_symbols")
+    }
+    atoms.push(true)
+    l.add_globals(o)
+  }
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  var base: List[Int] = []
+  var total = 0
+  for ob in l.objs {
+    base.push(total)
+    total += ob.sects.len()
+  }
+  let (follows, cie_refs) = l.elf_follows(atoms)
+  let id = fn(t: (Int, Int)) -> Int { base[t.0] + t.1 }
+  var defs: List[(Bytes, Int)] = []
+  var seen: Set[Bytes] = #{}
+  for ob in l.objs {
+    for x in ob.syms {
+      let bind = sym_bind(x)
+      if bind != STB_LOCAL && x.shndx > 0 && x.shndx < SHN_LORESERVE && !seen.contains(x.name) {
+        // the strong one, as add_globals keeps it
+        match l.globals.get(x.name) {
+          Some((d, i)) => {
+            seen.add(x.name)
+            defs.push((x.name, base[d] + l.objs[d].syms[i].shndx))
+          }
+          None => {}
+        }
+      }
+    }
+  }
+  var objs: List[CoreObj] = []
+  for (o, ob) in l.objs.indexed() {
+    var abbrev = "".bytes()
+    for s in ob.sects {
+      if s.name == ".debug_abbrev" {
+        abbrev = s.data
+      }
+    }
+    var cs: List[CoreSect] = []
+    var unit_fns: List[Int] = []
+    for (k, s) in ob.sects.indexed() {
+      // (the record's segment name holds the section's type, its address
+      // the sh_info)
+      var c = CoreSect{seg: "${s.typ}", name: s.name, align: s.align, flags: s.flags, addr: s.info, size: s.size, data: s.data, relocs: "".bytes(), nrel: 0}
+      var runs: List[DwSeg] = []
+      if s.name is ".debug_info" | ".debug_line" | ".debug_loclists" {
+        var at: Map[Int, ERel] = {}
+        for r in s.relocs {
+          if r.typ == R_AARCH64_ABS64 {
+            at[r.off] = r
+          }
+        }
+        runs = dw_runs(s.data, s.name == ".debug_info", s.name == ".debug_loclists", abbrev, fn(off: Int) -> (Int, Int) {
+          match at.get(off) {
+            Some(r) => l.rel_sect(o, r)
+            None => (-1, -1)
+          }
+        })
+        if s.name == ".debug_info" && dw_droppable(runs) {
+          for g in runs {
+            if g.fo >= 0 {
+              unit_fns.push(base[g.fo] + g.fk)
+            }
+          }
+        }
+      }
+      if runs.is_empty() {
+        var rb = BytesBuilder.new()
+        for r in s.relocs {
+          sw_erel(rb, r)
+        }
+        c.relocs = rb.freeze()
+        c.nrel = s.relocs.len()
+      }
+      for g in runs {
+        var rs: List[ERel] = []
+        for r in s.relocs {
+          if r.off >= g.start && r.off < g.end {
+            rs.push(r)
+          }
+        }
+        var rb = BytesBuilder.new()
+        for r in rs.sort_by(fn(r: ERel) -> Int { r.off }) {
+          sw_erel(rb, r)
+        }
+        c.runs.push(CoreRun{start: g.start, end: g.end, fn_atom: if g.fo < 0 { -1 } else { base[g.fo] + g.fk }, typ: g.typ, refs: g.refs, relocs: rb.freeze(), nrel: rs.len()})
+      }
+      // the edges: an allocated section's relocations (not .eh_frame's,
+      // whose FDEs follow their functions) and what follows it; what
+      // .eh_frame's CIEs name
+      var ids: List[Int] = []
+      var sn: Set[Int] = #{}
+      var refs: List[(Int, Int)] = []
+      if (s.flags & SHF_ALLOC) != 0 && s.name != ".eh_frame" {
+        for r in s.relocs {
+          refs.push(l.rel_sect(o, r))
+        }
+      }
+      if s.name == ".eh_frame" {
+        refs = refs + cie_refs
+      }
+      for t in follows.get((o, k)) ?? [] {
+        refs.push(t)
+      }
+      for t in refs {
+        if t.0 >= 0 && !sn.contains(id(t)) {
+          sn.add(id(t))
+          ids.push(id(t))
+        }
+      }
+      c.edges = ids
+      cs.push(c)
+    }
+    var syms: List[CoreSym] = []
+    for x in ob.syms {
+      syms.push(CoreSym{name: x.name, typ: x.info | (x.other << 8), sect: x.shndx, desc: x.size, value: x.value})
+    }
+    objs.push(CoreObj{path: ob.path, sects: cs, syms: syms, split: {}, unit_fns: unit_fns})
+  }
+  Ok(store_write(objs, defs, ELF_REL))
+}
+
+/// link_elf_split of the program's inputs and the store's objects,
+/// reading only the sections the program reaches.
+pub fn link_store_elf(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts) -> Result[(Bytes, Bytes), Str] {
+  let v = match store_view(store) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  if v.rel_size != ELF_REL {
+    return Err("not an ELF store")
+  }
+  var l = ELinker{opts: opts}
+  var prog: List[EObj] = []
+  for inp in inputs {
+    match parse_elf_object(inp.path, inp.data) {
+      Ok(o) => prog.push(o)
+      Err(e) => return Err(e)
+    }
+  }
+  // the walk: what the program names, its entry, the sections never
+  // stripped
+  var roots: List[Int] = []
+  for ob in prog {
+    for x in ob.syms {
+      if sym_bind(x) != STB_LOCAL && x.shndx == 0 {
+        roots.push(v.def(x.name))
+      }
+    }
+  }
+  roots.push(v.def(opts.entry.bytes()))
+  let live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { elf_whole(nm, Int.parse(sg) ?? 0, flags) })
+  let dropped = v.dw_dropped(live)
+  let store = v.b
+  for i in 0..v.n {
+    var ob = EObj{path: v.paths[i], stored: true}
+    for k in 0..v.nsects[i] {
+      let q = v.recs[i] + STORE_REC * k
+      let (sg, nm) = v.names[rec_name(store, q)]
+      let flags = rec_flags(store, q)
+      let typ = Int.parse(sg) ?? 0
+      let info = rec_addr(store, q)
+      let align = rec_align(store, q)
+      if nm.starts_with(".debug_") && dropped[i] {
+        ob.sects.push(ESect{name: nm, typ: typ, flags: flags, align: align, info: info, data: "".bytes(), size: 0, store_dead: true})
+      } else if rec_nseg(store, q) > 0 {
+        let (data, rels) = v.cut(q, live, nm == ".debug_loclists")
+        var t = ESect{name: nm, typ: typ, flags: flags, align: align, info: info, data: data, size: data.len()}
+        for (rq, off) in rels {
+          var r = rd_erel(store, rq)
+          r.off = off
+          t.relocs.push(r)
+        }
+        ob.sects.push(t)
+      } else if elf_whole(nm, typ, flags) || live[v.base[i] + k] {
+        let da = v.data0 + rec_data_at(store, q)
+        let ra = v.data0 + rec_rel_at(store, q)
+        var t = ESect{name: nm, typ: typ, flags: flags, align: align, info: info, data: store[da..da + rec_data_len(store, q)], size: rec_size(store, q)}
+        for j in 0..rec_nrel(store, q) {
+          t.relocs.push(rd_erel(store, ra + ELF_REL * j))
+        }
+        ob.sects.push(t)
+      } else {
+        ob.sects.push(ESect{name: nm, typ: typ, flags: flags, align: align, info: info, data: "".bytes(), size: rec_size(store, q), store_dead: true})
+      }
+    }
+    for j in 0..v.nsyms[i] {
+      let y = v.sym(i, j)
+      ob.syms.push(ESym{name: y.name, info: y.typ & 255, other: (y.typ >> 8) & 255, shndx: y.sect, value: y.value, size: y.desc})
+    }
+    l.objs.push(ob)
+  }
+  let n = v.n
+  l.objs = l.objs + prog
+  // the dead functions' FDEs, as the strip drops them: the globals first
+  // (rel_sect resolves through them), in a linker of their own (its
+  // COMDAT bookkeeping would make the link's drop every group's copy)
+  var t = ELinker{opts: opts}
+  t.objs = l.objs
+  for o in 0..n {
+    t.add_globals(o)
+  }
+  var live2: List[List[Bool]] = []
+  for o in 0..l.objs.len() {
+    var row: List[Bool] = []
+    for k in 0..l.objs[o].sects.len() {
+      row.push(o >= n || live[v.base[o] + k])
+    }
+    live2.push(row)
+  }
+  for o in 0..n {
+    for k in 0..l.objs[o].sects.len() {
+      let s = l.objs[o].sects[k]
+      if s.name == ".eh_frame" {
+        l.objs[o].sects[k] = t.eh_live(o, s, live2)
+      }
+    }
+  }
+  l.link_rest()
+}

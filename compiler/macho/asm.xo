@@ -563,6 +563,9 @@ fn (var a: Asm) define_sym(i: Int, name: Bytes) {
     a.fail("${bstr(name)} is defined twice")
     return
   }
+  if a.elf && a.atoms && !a.syms[i].temp && (a.sects[a.cur].eflags & SHF_ALLOC) != 0 && a.sect_used(a.cur) {
+    a.elf_split()
+  }
   a.syms[i].sect = a.cur
   a.register(i)
   if a.syms[i].temp {
@@ -722,6 +725,13 @@ fn (var a: Asm) directive(l: Bytes) {
       // link marks the object for pelink (pestrip.xo coff_atoms)
       let back = a.cur
       a.coff_section(".xoatoms", IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE, 0)
+      a.cur = back
+    } else if a.elf {
+      // nor has ELF: an empty note marks the object for elflink's
+      // section strip (elfstrip.xo); its sections are one per symbol
+      // (elf_split)
+      let back = a.cur
+      a.elf_new_section(".note.xo.atoms", SHT_NOTE, 0, 0, -1)
       a.cur = back
     }
     return

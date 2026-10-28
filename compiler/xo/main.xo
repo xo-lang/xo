@@ -1529,7 +1529,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // decision 0388's std store: the parts split into atoms, which the
     // link strips by symbol (every object path below assembles these)
     // (windows/amd64's COFF too: pelink strips by atom, pestrip.xo)
-    if ((os.env.get("XO_STD_ROOTS") ?? "") == "1" || !std_obj_dir(os).is_empty() || gm.sepcomp_program) && (tgoos is "darwin" | "windows") {
+    if ((os.env.get("XO_STD_ROOTS") ?? "") == "1" || !std_obj_dir(os).is_empty() || gm.sepcomp_program) && (tgoos is "darwin" | "windows" | "linux") {
       p.parts = p.parts.map(fn(x) { "\t.subsections_via_symbols\n${x}" })
     }
     // a split darwin build through the back-end cache, part by part
@@ -1834,7 +1834,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // std's object: its parts and their indexed store in the
         // directory, not linked (the program's main is not in them)
         let sod = std_obj_dir(os)
-        write_std_obj(os, sod, objs)
+        write_std_obj(os, sod, objs, tgoos == "linux")
         os.stdio.eprintln("std object: ${objs.len()} parts and std.store in ${sod}")
         lap(os, phases, "std_obj", t)
         continue

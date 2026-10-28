@@ -167,3 +167,36 @@ test "crc32 is zlib's" {
   expect(crc32("123456789".bytes())) == 0xcbf43926
   expect(crc32("".bytes())) == 0
 }
+
+/// A program in atoms mode (decision 0388): main calls used, which reads
+/// a table; unused_fn and its table nothing reaches; each function has an
+/// unsafe range record in `xounsafe` naming it, which the program finds
+/// between __start_xounsafe and __stop_xounsafe.
+const ATOMS_SRC = "\t.subsections_via_symbols\n\t.text\n\t.globl main\n\t.p2align 2\nmain:\n\tbl used\n\tadrp x0, __start_xounsafe\n\tadd x0, x0, :lo12:__start_xounsafe\n\tadrp x1, __stop_xounsafe\n\tadd x1, x1, :lo12:__stop_xounsafe\n\tret\n\t.globl used\n\t.p2align 2\nused:\n\tadrp x0, tab\n\tret\n\t.globl unused_fn\n\t.p2align 2\nunused_fn:\n\tadrp x0, dead_tab\n\tmov x0, #7\n\tret\n\t.section .data,\"aw\",@progbits\n\t.globl tab\n\t.p2align 3\ntab:\n\t.quad 1\n\t.globl dead_tab\n\t.p2align 3\ndead_tab:\n\t.quad 2\n\t.section xounsafe,\"aw\",@progbits\n\t.p2align 3\nused_ui:\n\t.quad used\n\t.section xounsafe,\"aw\",@progbits\n\t.p2align 3\nunused_ui:\n\t.quad unused_fn\n"
+
+test "an ELF object in atoms mode has a section per symbol, and the link keeps what main reaches (decision 0388)" {
+  let obj = assemble_elf(ATOMS_SRC.bytes()).or_fault("assemble")
+  let o = parse_elf_object("a.o", obj).or_fault("parse")
+  var texts = 0
+  var unsafe = 0
+  var marked = false
+  for s in o.sects {
+    if s.name == ".text" && s.size > 0 {
+      texts += 1
+    }
+    if s.name == "xounsafe" && s.size > 0 {
+      unsafe += 1
+    }
+    marked = marked || s.name == ".note.xo.atoms"
+  }
+  expect(texts) == 3
+  expect(unsafe) == 2
+  expect(marked) == true
+  let exe = link_elf([LinkInput{path: "a.o", data: obj}], ElfLinkOpts{static: true, entry: "main"}).or_fault("link")
+  // unused_fn's code (mov x0, #7: 0xd28000e0) and its table are gone,
+  // and only used's unsafe record stays between the bounds
+  expect(exe.find(b"\xe0\x00\x80\xd2") == None) == true
+  let whole = link_elf([LinkInput{path: "w.o", data: assemble_elf(ATOMS_SRC.trim_prefix("\t.subsections_via_symbols\n").bytes()).or_fault("assemble")}], ElfLinkOpts{static: true, entry: "main"}).or_fault("link")
+  expect(whole.find(b"\xe0\x00\x80\xd2") != None) == true
+  expect(exe.len() < whole.len()) == true
+}

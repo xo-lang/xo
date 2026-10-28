@@ -150,6 +150,10 @@ struct ESect {
   off: Int = 0
   /// a member of a COMDAT group kept from another object
   dead: Bool = false
+  /// a section of std's store the walk did not reach (elfstore.xo):
+  /// dead once the symbols are resolved (gc_sections), as the strip
+  /// marks its sections, so a symbol in it still defines its name
+  store_dead: Bool = false
 }
 
 struct ERel {
@@ -175,6 +179,9 @@ struct EObj {
   sects: List[ESect] = []
   syms: List[ESym] = []
   live: Bool = true
+  /// read from std's store (elfstore.xo): its dead sections are marked
+  /// already, and its undefined symbols are those its kept sections name
+  stored: Bool = false
 }
 
 struct EOSect {
@@ -238,6 +245,12 @@ struct ELinker {
   err: Str = ""
   /// the debug file of a split link (ElfLinkOpts.debug_link)
   debug_file: Bytes = zeros(0)
+  /// gc_sections ran (undefined then counts only kept references)
+  gc_done: Bool = false
+  /// the sections the objects name the bounds of (__start_NAME,
+  /// __stop_NAME, as GNU ld defines them), each placed together at the
+  /// end of its output section: name -> (output section, start, end)
+  bounds: Map[Str, (Int, Int, Int)] = {}
 }
 
 /// link_elf: the linux/arm64 executable of the inputs (objects and
@@ -285,11 +298,20 @@ pub fn link_elf_split(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[(Byt
       l.opts.interp = "/lib64/ld-linux-x86-64.so.2"
     }
   }
+  l.link_rest()
+}
+
+/// The link from the objects read: the symbols, the strip, the layout,
+/// the relocations, the file (and a split link's debug file).
+fn (var l: ELinker) link_rest() -> Result[(Bytes, Bytes), Str] {
   l.resolve()
   if l.err.is_empty() {
     l.synthesize_start()
   }
   if l.err.is_empty() {
+    // decision 0388: the sections of atoms mode objects nothing reaches
+    // (elfstrip.xo), before the imports: what only they named is none
+    l.gc_sections()
     l.collect_imports()
   }
   if l.err.is_empty() {
@@ -303,6 +325,19 @@ pub fn link_elf_split(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[(Byt
   }
   l.layout()
   // the linker's own symbols, now that the layout has placed them
+  // __start_NAME and __stop_NAME: the bounds of NAME's sections (an
+  // empty range at 0 when none was placed)
+  for (name, (out, bs, be)) in l.bounds.entries() {
+    let base = if out >= 0 { l.osects[out].addr } else { 0 }
+    for (pre, v) in [("__start_", bs), ("__stop_", be)] {
+      match l.globals.get("${pre}${name}".bytes()) {
+        Some((o, i)) => if l.objs[o].path == "<start>" {
+          l.objs[o].syms[i].value = if out >= 0 { base + v } else { 0 }
+        }
+        None => {}
+      }
+    }
+  }
   match l.globals.get("_DYNAMIC".bytes()) {
     Some((o, i)) => {
       if l.objs[o].path == "<start>" {
@@ -552,7 +587,25 @@ fn (l: ELinker) undefined() -> List[(Bytes, Bool)] {
     if !l.objs[o].live {
       continue
     }
-    for s in l.objs[o].syms {
+    // after the strip (elfstrip.xo), an atoms mode object's undefined
+    // symbols are those its kept sections' relocations name
+    var named: Set[Int] = #{}
+    // (before it, a stored object's too: the outline atomics synthesized
+    // in order of first use come out in the parts' link's order)
+    let stripped = l.gc_done && (l.atoms_obj(o) || l.objs[o].stored)
+    if stripped {
+      for x in l.objs[o].sects {
+        if !x.dead {
+          for r in x.relocs {
+            named.add(r.sym)
+          }
+        }
+      }
+    }
+    for (j, s) in l.objs[o].syms.indexed() {
+      if stripped && !named.contains(j) {
+        continue
+      }
       if sym_bind(s) == STB_LOCAL || s.shndx != SHN_UNDEF || s.name.is_empty() || l.globals.contains(s.name) || seen.contains(s.name) {
         continue
       }
@@ -615,6 +668,17 @@ fn (var l: ELinker) synthesize_start() {
           var dynamic = false
           for (n, _) in l.undefined() {
             dynamic = dynamic || n == "_DYNAMIC".bytes()
+          }
+          // __start_NAME and __stop_NAME (decision 0388: the gathered
+          // unsafe range index, `xounsafe`): absolute, set once the
+          // layout places the sections named NAME (link_elf)
+          for (n, _) in l.undefined() {
+            let ns = bstr(n)
+            if ns.starts_with("__start_") || ns.starts_with("__stop_") {
+              let sect = if ns.starts_with("__start_") { ns.trim_prefix("__start_") } else { ns.trim_prefix("__stop_") }
+              l.bounds[sect] = (-1, 0, 0)
+              o.syms.push(ESym{name: n, info: STB_GLOBAL * 16, other: 0, shndx: SHN_ABS, value: 0, size: 0})
+            }
           }
           if !l.opts.static && dynamic {
             // _DYNAMIC, the dynamic section's address (as GNU ld defines
@@ -949,6 +1013,7 @@ fn (var l: ELinker) place() {
     l.osects.push(EOSect{name: n, typ: typ, flags: flags})
   }
   var arrays: List[(Int, Int, Int)] = []
+  var bounded: List[(Int, Int)] = []
   for o in 0..l.objs.len() {
     if !l.objs[o].live {
       continue
@@ -967,6 +1032,11 @@ fn (var l: ELinker) place() {
       if s.name == ".ctors" || s.name == ".dtors" || s.name.starts_with(".ctors.") || s.name.starts_with(".dtors.") {
         l.fail("${l.objs[o].path}: ${s.name}: .ctors and .dtors are not supported (only the init and fini arrays)")
         return
+      }
+      if l.bounds.contains(s.name) {
+        // placed together below (__start_/__stop_ bounds)
+        bounded.push((o, k))
+        continue
       }
       if out == O_INITA || out == O_FINIA {
         // placed below in their priority order (.init_array.N first by
@@ -1007,6 +1077,25 @@ fn (var l: ELinker) place() {
     l.osects[out].size = off + s.size
     l.osects[out].align = l.osects[out].align.max(al)
     l.osects[out].chunks.push((o, k))
+  }
+  // the sections a __start_/__stop_ pair bounds, each name's together
+  for name in l.bounds.keys().sort() {
+    for (o, k) in bounded {
+      let s = l.objs[o].sects[k]
+      if s.name != name {
+        continue
+      }
+      let out = classify(s)
+      let al = s.align.max(1)
+      let off = align_up(l.osects[out].size, al)
+      let (bo, bs, _) = l.bounds.get(name) ?? (-1, 0, 0)
+      l.bounds[name] = (out, if bo < 0 { off } else { bs }, off + s.size)
+      l.objs[o].sects[k].out = out
+      l.objs[o].sects[k].off = off
+      l.osects[out].size = off + s.size
+      l.osects[out].align = l.osects[out].align.max(al)
+      l.osects[out].chunks.push((o, k))
+    }
   }
   // the common symbols each name's definition chose, after the .bss
   // sections: aligned to their value (ELF's alignment of a common

@@ -160,7 +160,9 @@ fn (g: G) unsafe_parts(nss: List[Str]) -> Str {
       // MSVC's grouped sections), their labels its bounds
       b.push("\t.quad xo_unsafe_ix_start\n\t.quad xo_unsafe_ix_end\n\t.section .xounsafe$a,\"dw\"\n\t.p2align 3\nxo_unsafe_ix_start:\n\t.section .xounsafe$z,\"dw\"\n\t.p2align 3\nxo_unsafe_ix_end:\n")
     } else {
-      b.push("\t.quad section$start$__DATA$xounsafe\n\t.quad section$end$__DATA$xounsafe\n")
+      // ld64's section$start/end; ELF's __start_/__stop_ of a section
+      // named as an identifier
+      b.push(if g.os == "darwin" { "\t.quad section$start$__DATA$xounsafe\n\t.quad section$end$__DATA$xounsafe\n" } else { "\t.quad __start_xounsafe\n\t.quad __stop_xounsafe\n" })
     }
   }
   b.join("")
@@ -237,7 +239,7 @@ fn (g: G) unsafe_fn_table(f: Str, ls: List[Str]) -> Str {
     o.push("\t.long ${ls[i]} - ${f}\n\t.long ${ls[i + 1]} - ${f}\n")
     i += 2
   }
-  let isect = if g.os == "windows" { "\t.section .xounsafe$m,\"dw\"\n" } else { "\t.section __DATA,xounsafe\n" }
+  let isect = if g.os == "windows" { "\t.section .xounsafe$m,\"dw\"\n" } else if g.os == "linux" { "\t.section xounsafe,\"aw\",@progbits\n" } else { "\t.section __DATA,xounsafe\n" }
   o.push("${isect}\t.p2align 3\n${ix}:\n\t.quad ${f}\n\t.quad ${t}\n")
   o.join("")
 }

@@ -277,11 +277,48 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
     return bad
   }
   let _f = flags
+  // decision 0388 stage 4's indexed store on ELF, as macho_link's:
+  // XO_STD_STORE=PATH packs the parts (prog-linux.N.o) into it when it
+  // is not there, else links through it; XO_STD_STORE_CHECK=1 also links
+  // the parts and fails on a difference
+  let store_path = os.env.get("XO_STD_STORE") ?? ""
+  var store = "".bytes()
+  if !store_path.is_empty() {
+    match os.fs.read(store_path) {
+      Ok(b) => store = b
+      Err(_) => {}
+    }
+  }
+  // a separately compiled program through std's store (as macho_link)
+  if store_path.is_empty() && !(os.env.get("XO_SEPCOMP_STORE") ?? "").is_empty() {
+    let sp = os.env.get("XO_SEPCOMP_STORE") ?? ""
+    match os.fs.read(sp) {
+      Ok(b) => store = b
+      Err(e) => return "XO_SEPCOMP_STORE=${sp}: ${fs_reason(e)}"
+    }
+  }
+  let store_check = !store_path.is_empty() && !store.is_empty() && (os.env.get("XO_STD_STORE_CHECK") ?? "") == "1"
   var ins: List[macho.LinkInput] = []
+  var parts: List[macho.LinkInput] = []
   for p in objs {
+    let part = !store_path.is_empty() && base_name(p).starts_with("prog-linux.") && p.ends_with(".o")
+    if part && !store.is_empty() && !store_check {
+      continue
+    }
     match os.fs.read(p) {
-      Ok(b) => ins.push(macho.LinkInput{path: p, data: b})
+      Ok(b) => if part { parts.push(macho.LinkInput{path: p, data: b}) } else { ins.push(macho.LinkInput{path: p, data: b}) }
       Err(e) => return "${p}: ${e}"
+    }
+  }
+  if !store_path.is_empty() && store.is_empty() {
+    match macho.store_encode_elf(parts) {
+      Ok(b) => {
+        match os.fs.write(store_path, b) {
+          Ok(_) => {}
+          Err(e) => return "XO_STD_STORE=${store_path}: ${fs_reason(e)}"
+        }
+      }
+      Err(e) => return "XO_STD_STORE=${store_path}: ${e}"
     }
   }
   if !whole.is_empty() {
@@ -291,7 +328,26 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
     }
   }
   let debug_link = if split { "${base_name(out)}.debug" } else { "" }
-  match macho.link_elf_split(ins, macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link, release: release}) {
+  let eopts = macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link, release: release}
+  let ts = os.clock.now()
+  let linked = if store.is_empty() { macho.link_elf_split(parts + ins, eopts) } else { macho.link_store_elf(ins, store, eopts) }
+  if !store_path.is_empty() && !store.is_empty() {
+    os.stdio.eprintln("store link ${os.clock.since(ts).nanos() / 1000} us (${store.len()} store bytes)")
+  }
+  if store_check {
+    match (linked, macho.link_elf_split(parts + ins, eopts)) {
+      (Ok((b1, d1)), Ok((b2, d2))) => if b1 != b2 || d1 != d2 {
+        // both kept beside the output, to compare
+        os.fs.write("${store_path}.store-link", b1).ignore_err("only for comparing")
+        os.fs.write("${store_path}.parts-link", b2).ignore_err("only for comparing")
+        return "XO_STD_STORE_CHECK=1: the store's link differs from the parts' (${b1.len()} and ${b2.len()} bytes; ${store_path}.store-link and .parts-link)"
+      }
+      (Err(e), _) => return "XO_STD_STORE_CHECK=1: the store's link failed: ${e}"
+      (_, Err(e)) => return "XO_STD_STORE_CHECK=1: the parts' link failed: ${e}"
+    }
+    os.stdio.eprintln("store check: the store's link is the parts' byte for byte")
+  }
+  match linked {
     Ok((b, dbg)) => {
       if split {
         match os.fs.write("${out}.debug", dbg) {
@@ -962,7 +1018,7 @@ fn pdb_parts(os: Os, objs: List[macho.CObj], cdir: Str, keys: List[Str]) -> List
 
 /// std's object (XO_STD_OBJ=DIR, decision 0388 stage 4): the part
 /// objects objs copied into sod, with their indexed store, std.store.
-fn write_std_obj(os: Os, sod: Str, objs: List[Str]) {
+fn write_std_obj(os: Os, sod: Str, objs: List[Str], elf: Bool) {
   var ins: List[macho.LinkInput] = []
   for ob in objs {
     match os.fs.read(ob) {
@@ -973,7 +1029,7 @@ fn write_std_obj(os: Os, sod: Str, objs: List[Str]) {
       Err(e) => fail(os, "${ob}: ${e}")
     }
   }
-  match macho.store_encode(ins) {
+  match if elf { macho.store_encode_elf(ins) } else { macho.store_encode(ins) } {
     Ok(b) => write_or_fail(os, sod, "${sod}/std.store", b)
     Err(e) => fail(os, "XO_STD_OBJ=${sod}: ${e}")
   }

@@ -57,6 +57,9 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   if dir.is_empty() {
+    if phases {
+      os.stdio.eprintln("cache std off (XO_BACKEND_CACHE=off): the whole program is built")
+    }
     return None
   }
   let key = std_cache_key(os, ctx.std, tgoos, tgoarch, conc)

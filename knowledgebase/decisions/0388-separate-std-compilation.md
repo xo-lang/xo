@@ -531,3 +531,37 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   0346 (a traceback or lldb session would depend on objects in a cache a prune can remove).
 - Keep the whole-program build for `--release` and use separate compilation only for edit
   rebuilds (Go has one mode; two modes double what is tested): a variant of this decision to weigh.
+
+### ELF (xo-lang-4, 2026-10-28)
+
+- Atoms mode on ELF (compiler/macho elf.xo elf_split): `.subsections_via_symbols` gives each
+  symbol defined in an allocated section that already holds something a section of its own, of
+  the same name and flags (as -ffunction-sections and -fdata-sections), and an empty
+  `.note.xo.atoms` marks the object. A `.section NAME` returns to the newest of the name.
+- linux store builds (std_store on linux): the per-function unsafe range records go in a
+  section named `xounsafe` (an identifier), whose bounds `__start_xounsafe`/`__stop_xounsafe`
+  elflink now defines as GNU ld does (the sections of that name placed together at the end of
+  their output section; ELinker.bounds).
+- elflink strips by section (elfstrip.xo gc_sections, ld's --gc-sections): roots are a whole
+  object's allocated sections, notes, the init and fini arrays, the entry's section and what
+  the CIEs name (the personality routine's data word, DW.ref.*: missing it, a fault's unwinding
+  called address 0); edges are the RELA relocations, a function's FDE references (its LSDA)
+  and its unsafe range record. The dead functions' FDEs are dropped from .eh_frame (each CIE
+  pointer recomputed), so .eh_frame_hdr names none. The imports and the static link's
+  undefined check come after the strip and count only what kept sections name (a std root
+  calling qsort no longer fails a no-libc link). The DWARF is cut as on Mach-O (dwtrim.xo
+  dw_runs, the run finder now format-neutral).
+- The ELF store (elfstore.xo store_encode_elf, link_store_elf over store_core.xo): atoms are
+  sections; 20 byte relocation records (with the addend; the store header now holds the record
+  size: XOSTORE3); .eh_frame is a whole root whose edges are what its CIEs name. The link reads
+  the live sections, cuts the DWARF and drops the dead FDEs as elflink's strip, and is the
+  parts' link byte for byte (XO_STD_STORE_CHECK on linux/arm64).
+- Proof (Docker, linux/arm64): async_preempt_alloc and _regs 5 of 5 in store and normal builds,
+  the caught fault and the traceback the same as a normal build's.
+- A link through the ELF store applies its dead marks after the symbols resolve
+  (ESect.store_dead, applied in gc_sections), and counts a stored object's undefined
+  symbols as only its kept sections' after the strip, so the outline atomics elflink
+  synthesizes before it come out in the parts' link's order. XO_STD_OBJ, XO_SEPCOMP_STORE,
+  `xo dev stdobj --target=linux/arm64` and `xo dev stdcache --target=linux/arm64` work on
+  linux; release.sh ships the linux/arm64 stores beside darwin's.
+

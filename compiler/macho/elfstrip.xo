@@ -1,0 +1,347 @@
+// Dead stripping by section on ELF (decision 0388 stage 4): an object
+// assembled in atoms mode (`.subsections_via_symbols`, marked by an
+// empty `.note.xo.atoms`) holds each function and data object in a
+// section of its own, as -ffunction-sections and -fdata-sections do, so
+// elflink keeps the sections the entry and the other objects reach
+// through relocations, as ld's --gc-sections (strip.xo is Mach-O's). A
+// function's FDE roots what it names besides the function (its LSDA),
+// and its unsafe range record (a `xounsafe` section) lives with it; the
+// FDEs of dead functions are dropped from .eh_frame.
+
+/// Whether object o was assembled in atoms mode.
+fn (l: ELinker) atoms_obj(o: Int) -> Bool {
+  l.objs[o].sects.any(fn(s: ESect) -> Bool { s.name == ".note.xo.atoms" })
+}
+
+/// The section a relocation of object o reaches, (-1, -1) for an import
+/// or an absolute symbol.
+fn (l: ELinker) rel_sect(o: Int, r: ERel) -> (Int, Int) {
+  if r.sym <= 0 || r.sym >= l.objs[o].syms.len() {
+    return (-1, -1)
+  }
+  let (d, i) = l.def_of(o, r.sym)
+  if d < 0 {
+    return (-1, -1)
+  }
+  let sh = l.objs[d].syms[i].shndx
+  if sh == 0 || sh >= SHN_LORESERVE {
+    return (-1, -1)
+  }
+  (d, sh)
+}
+
+/// The start of each record of an .eh_frame section (a CIE or an FDE).
+fn elf_eh_records(d: Bytes) -> List[Int] {
+  var out: List[Int] = []
+  var off = 0
+  while off + 4 <= d.len() {
+    let n = rd32(d, off)
+    if n == 0 || n == 0xffffffff {
+      break
+    }
+    out.push(off)
+    off += 4 + n
+  }
+  out
+}
+
+/// What follows a function section of the atoms mode objects (atoms):
+/// its FDE's other references (its LSDA), its unsafe range record (a
+/// xounsafe section naming it first); and what the CIEs name (the
+/// personality routine's data word, DW.ref.*), which stays as they do.
+fn (l: ELinker) elf_follows(atoms: List[Bool]) -> (Map[(Int, Int), List[(Int, Int)]], List[(Int, Int)]) {
+  var follows: Map[(Int, Int), List[(Int, Int)]] = {}
+  var cie_refs: List[(Int, Int)] = []
+  for o in 0..l.objs.len() {
+    if !atoms[o] {
+      continue
+    }
+    for (k, s) in l.objs[o].sects.indexed() {
+      if s.name == ".eh_frame" {
+        for rec in elf_eh_records(s.data) {
+          if rec + 8 <= s.data.len() && rd32(s.data, rec + 4) == 0 {
+            // a CIE: what it names (the personality routine's data word,
+            // DW.ref.*) is a root, as the CIE always stays
+            let end = rec + 4 + rd32(s.data, rec)
+            for r in s.relocs {
+              if r.off >= rec && r.off < end {
+                cie_refs.push(l.rel_sect(o, r))
+              }
+            }
+            continue
+          }
+          if rec + 12 > s.data.len() {
+            continue
+          }
+          let end = rec + 4 + rd32(s.data, rec)
+          var fn_t = (-1, -1)
+          var other: List[(Int, Int)] = []
+          for r in s.relocs {
+            if r.off == rec + 8 {
+              fn_t = l.rel_sect(o, r)
+            } else if r.off > rec + 8 && r.off < end {
+              other.push(l.rel_sect(o, r))
+            }
+          }
+          if fn_t.0 >= 0 {
+            follows[fn_t] = (follows.get(fn_t) ?? []) + other
+          }
+        }
+      } else if s.name == "xounsafe" {
+        for r in s.relocs {
+          if r.off == 0 {
+            let t = l.rel_sect(o, r)
+            if t.0 >= 0 {
+              follows[t] = (follows.get(t) ?? []) + [(o, k)]
+            }
+          }
+        }
+      }
+    }
+  }
+  (follows, cie_refs)
+}
+
+/// Strips the sections of atoms mode objects no root reaches: marks
+/// them dead (classify drops them) and drops their FDEs.
+fn (var l: ELinker) gc_sections() {
+  // std's store's objects: their dead sections, now that the symbols
+  // are resolved (elfstore.xo)
+  for o in 0..l.objs.len() {
+    if l.objs[o].stored {
+      l.gc_done = true
+      for k in 0..l.objs[o].sects.len() {
+        if l.objs[o].sects[k].store_dead {
+          l.objs[o].sects[k].dead = true
+        }
+      }
+    }
+  }
+  var any = false
+  var atoms: List[Bool] = []
+  for o in 0..l.objs.len() {
+    let a = l.objs[o].live && l.atoms_obj(o)
+    atoms.push(a)
+    any = any || a
+  }
+  if !any {
+    return
+  }
+  l.gc_done = true
+  var live: List[List[Bool]] = []
+  for ob in l.objs {
+    var row: List[Bool] = []
+    for _ in ob.sects {
+      row.push(false)
+    }
+    live.push(row)
+  }
+  let (follows, cie_refs) = l.elf_follows(atoms)
+  // the roots: every allocated section of a whole object, the arrays,
+  // notes, and the entry's section
+  var work: List[(Int, Int)] = []
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for (k, s) in l.objs[o].sects.indexed() {
+      if (s.flags & SHF_ALLOC) == 0 || s.name == ".eh_frame" || (atoms[o] && s.name == "xounsafe") {
+        continue
+      }
+      let keep = !atoms[o] || s.typ == SHT_NOTE || s.typ == 14 || s.typ == 15 || s.typ == 16 || s.name.starts_with(".init_array") || s.name.starts_with(".fini_array") || s.name == ".preinit_array"
+      if keep && !live[o][k] {
+        live[o][k] = true
+        work.push((o, k))
+      }
+    }
+  }
+  for (d, j) in cie_refs {
+    if d >= 0 && !live[d][j] {
+      live[d][j] = true
+      work.push((d, j))
+    }
+  }
+  if let Some((eo, ei)) = l.globals.get(l.opts.entry.bytes()) {
+    let sh = l.objs[eo].syms[ei].shndx
+    if sh > 0 && sh < SHN_LORESERVE && !live[eo][sh] {
+      live[eo][sh] = true
+      work.push((eo, sh))
+    }
+  }
+  while let Some((o, k)) = work.pop() {
+    var refs: List[(Int, Int)] = []
+    for r in l.objs[o].sects[k].relocs {
+      refs.push(l.rel_sect(o, r))
+    }
+    for t in follows.get((o, k)) ?? [] {
+      refs.push(t)
+    }
+    for (d, j) in refs {
+      if d >= 0 && !live[d][j] {
+        live[d][j] = true
+        work.push((d, j))
+      }
+    }
+  }
+  for o in 0..l.objs.len() {
+    if !atoms[o] {
+      continue
+    }
+    for k in 0..l.objs[o].sects.len() {
+      let s = l.objs[o].sects[k]
+      if s.name == ".eh_frame" {
+        l.objs[o].sects[k] = l.eh_live(o, s, live)
+      } else if (s.flags & SHF_ALLOC) != 0 && !live[o][k] && s.typ != SHT_NOTE {
+        l.objs[o].sects[k].dead = true
+      }
+    }
+    l.dw_strip(o, live)
+  }
+}
+
+/// An .eh_frame section without the FDEs of dead functions: the CIEs
+/// and the live FDEs, each FDE's CIE pointer (the distance back to its
+/// CIE) recomputed, the relocations moved.
+fn (l: ELinker) eh_live(o: Int, s: ESect, live: List[List[Bool]]) -> ESect {
+  let d = s.data
+  let recs = elf_eh_records(d)
+  var keep: List[Bool] = []
+  for rec in recs {
+    var k = true
+    if rec + 12 <= d.len() && rd32(d, rec + 4) != 0 {
+      for r in s.relocs {
+        if r.off == rec + 8 {
+          let (t, j) = l.rel_sect(o, r)
+          k = t < 0 || live[t][j]
+        }
+      }
+    }
+    keep.push(k)
+  }
+  // each record's new place
+  var at: Map[Int, Int] = {}
+  var n = 0
+  for (i, rec) in recs.indexed() {
+    at[rec] = n
+    if keep[i] {
+      n += 4 + rd32(d, rec)
+    }
+  }
+  var b = BytesBuilder.with_capacity(n)
+  var shift: Map[Int, Int] = {}
+  for (i, rec) in recs.indexed() {
+    if !keep[i] {
+      continue
+    }
+    let len = 4 + rd32(d, rec)
+    let na = at.get(rec) ?? 0
+    shift[rec] = na - rec
+    if rd32(d, rec + 4) == 0 {
+      b.write(d[rec..rec + len])
+      continue
+    }
+    // the CIE pointer: from this field back to its CIE
+    let cie = rec + 4 - rd32(d, rec + 4)
+    b.write(d[rec..rec + 4])
+    sw32(b, na + 4 - (at.get(cie) ?? 0))
+    b.write(d[rec + 8..rec + len])
+  }
+  // the terminator and anything after the records, as they were
+  let tail = if recs.is_empty() { 0 } else { recs[recs.len() - 1] + 4 + rd32(d, recs[recs.len() - 1]) }
+  b.write(d[tail..d.len()])
+  var out = s
+  out.data = b.freeze()
+  out.size = out.data.len()
+  out.relocs = []
+  for r in s.relocs {
+    // the record holding it (by binary search of the starts)
+    var lo = 0
+    var hi = recs.len()
+    while lo < hi {
+      let m = (lo + hi) / 2
+      if recs[m] <= r.off {
+        lo = m + 1
+      } else {
+        hi = m
+      }
+    }
+    let rec = if lo > 0 { recs[lo - 1] } else { -1 }
+    if rec >= 0 && shift.contains(rec) {
+      var r2 = r
+      r2.off = r.off + (shift.get(rec) ?? 0)
+      out.relocs.push(r2)
+    }
+  }
+  out
+}
+
+/// The DWARF of atoms mode object o after the strip (dwtrim.xo, as on
+/// Mach-O): a unit describing only dead functions loses its debug
+/// sections; otherwise its dead functions' subprograms, line sequences
+/// and location lists, and the types no kept entry refers to, are cut.
+fn (var l: ELinker) dw_strip(o: Int, live: List[List[Bool]]) {
+  var abbrev = "".bytes()
+  for s in l.objs[o].sects {
+    if s.name == ".debug_abbrev" {
+      abbrev = s.data
+    }
+  }
+  if abbrev.is_empty() {
+    return
+  }
+  var runs: Map[Int, List[DwSeg]] = {}
+  var drop = false
+  for (k, s) in l.objs[o].sects.indexed() {
+    if !(s.name is ".debug_info" | ".debug_line" | ".debug_loclists") {
+      continue
+    }
+    // an 8 byte address's function section, by its relocation
+    var at: Map[Int, ERel] = {}
+    for r in s.relocs {
+      if r.typ == R_AARCH64_ABS64 {
+        at[r.off] = r
+      }
+    }
+    let g = dw_runs(s.data, s.name == ".debug_info", s.name == ".debug_loclists", abbrev, fn(off: Int) -> (Int, Int) {
+      match at.get(off) {
+        Some(r) => l.rel_sect(o, r)
+        None => (-1, -1)
+      }
+    })
+    if g.is_empty() {
+      continue
+    }
+    if s.name == ".debug_info" && dw_droppable(g) && !g.any(fn(x: DwSeg) -> Bool { x.fo >= 0 && live[x.fo][x.fk] }) {
+      drop = true
+    }
+    runs[k] = g
+  }
+  if drop {
+    for k in 0..l.objs[o].sects.len() {
+      if l.objs[o].sects[k].name.starts_with(".debug_") {
+        l.objs[o].sects[k].dead = true
+      }
+    }
+    return
+  }
+  for (k, segs) in runs {
+    let s = l.objs[o].sects[k]
+    let keep = dw_keep(segs, fn(g: DwSeg) -> Bool { live[g.fo][g.fk] })
+    let (at, n) = dw_new_starts(segs, keep)
+    var b = BytesBuilder.with_capacity(n)
+    dw_write_runs(b, s.data, 0, s.name == ".debug_loclists", n, segs, keep, at)
+    var t = s
+    t.data = b.freeze()
+    t.size = n
+    t.relocs = []
+    for r in s.relocs {
+      let i = dw_run_at(segs, r.off)
+      if i >= 0 && keep[i] {
+        var r2 = r
+        r2.off = r.off - segs[i].start + at[i]
+        t.relocs.push(r2)
+      }
+    }
+    l.objs[o].sects[k] = t
+  }
+}

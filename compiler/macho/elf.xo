@@ -81,12 +81,39 @@ pub fn assemble_elf(src: Bytes) -> Result[Bytes, Str] {
 /// and group signature (a symbol, -1 for none) when new. LLVM registers
 /// the group signature, then the section symbol.
 fn (var a: Asm) elf_section(name: Str, typ: Int, flags: Int, entsize: Int, group: Int) {
-  for (i, s) in a.sects.indexed() {
-    if s.name == name {
+  // the newest of the name: atoms mode splits one into several (elf_split)
+  var i = a.sects.len() - 1
+  while i >= 0 {
+    if a.sects[i].name == name {
       a.cur = i
       return
     }
+    i -= 1
   }
+  a.elf_new_section(name, typ, flags, entsize, group)
+}
+
+/// Atoms mode on ELF (decision 0388, `.subsections_via_symbols`): a
+/// symbol defined in an allocated section that already holds something
+/// starts a section of its own, of the same name and flags, as
+/// -ffunction-sections and -fdata-sections do, so the linker keeps or
+/// drops it whole (elflink.xo).
+fn (var a: Asm) elf_split() {
+  let s = a.sects[a.cur]
+  let al = s.align
+  a.elf_new_section(s.name, s.etype, s.eflags, s.entsize, s.group)
+  a.sects[a.cur].align = al
+}
+
+/// Whether section si holds anything yet (its start label aside).
+fn (a: Asm) sect_used(si: Int) -> Bool {
+  if a.sects[si].code {
+    return a.code_len(si) > 0
+  }
+  a.sects[si].items.len() > 1 || (a.pend_si == si && a.pend.len() > 0)
+}
+
+fn (var a: Asm) elf_new_section(name: Str, typ: Int, flags: Int, entsize: Int, group: Int) {
   if group >= 0 {
     a.register(group)
   }
