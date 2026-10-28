@@ -132,7 +132,7 @@ Ldata:
 test "each darwin/amd64 test file assembles to clang's Mach-O object" {
   var bad: List[Str] = []
   for (name, src, want) in AMD64_MACHO_OBJECTS {
-    match assemble_macho_amd64(src.bytes(), (11, 0)) {
+    match assemble_macho_amd64_raw(src.bytes(), (11, 0)) {
       Ok(o) => {
         let got = hex_of(o)
         if got != want {

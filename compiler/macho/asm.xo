@@ -265,6 +265,17 @@ pub struct Asm {
   xfixes: List[XFx] = []
   /// x86-64: the CFA offset of the open frame, for .cfi_adjust_cfa_offset
   cfa_off: Int = 0
+  /// x86-64 jump padding (decision 0398, asm_amd64.xo x86_jump_pad):
+  /// on unless the caller wants clang's bytes; the last plain
+  /// instruction (its section, offset, length, line) and whether a jcc
+  /// macro-fuses with it; the offset of the last label defined in code
+  xjpad: Bool = true
+  xlast_sect: Int = -1
+  xlast_at: Int = -1
+  xlast_len: Int = 0
+  xlast_line: Int = -1
+  xlast_fuse: Bool = false
+  xlabel_at: Int = -1
   /// a COFF object (coff.xo; with elf for the ELF path's parse): the
   /// functions' .seh unwind data
   coff: Bool = false
@@ -575,6 +586,7 @@ fn (var a: Asm) define_sym(i: Int, name: Bytes) {
   }
   if a.sects[a.cur].code {
     a.syms[i].off = a.code_len(a.cur)
+    a.xlabel_at = a.syms[i].off
   } else {
     a.push_item(a.cur, Item.Label(i))
   }
@@ -1101,6 +1113,15 @@ fn (var a: Asm) finish() {
     a.coff_weak_section()
   }
   a.flush_pend()
+  if a.amd64 && a.xjpad {
+    // the padding counts offsets from the section start, so the linker
+    // keeps it on a 32 byte boundary (decision 0398)
+    for i in 0..a.sects.len() {
+      if a.sects[i].code && a.sects[i].align < 5 {
+        a.sects[i].align = 5
+      }
+    }
+  }
   for i in 0..a.syms.len() {
     let sy = a.syms[i]
     if sy.temp && sy.sect < 0 {

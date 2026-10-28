@@ -71,20 +71,33 @@ struct XFx {
 /// assemble_elf_amd64: the ELF64 relocatable object of src (the amd64
 /// emitter's linux/amd64 assembly), or the first error as "line N: why".
 pub fn assemble_elf_amd64(src: Bytes) -> Result[Bytes, Str] {
-  assemble_amd64(src, true, (0, 0))
+  assemble_amd64(src, true, (0, 0), true)
+}
+
+/// assemble_elf_amd64_raw: assemble_elf_amd64 without the jump padding
+/// (decision 0398): the bytes `clang -c` writes, for the encoder's
+/// clang goldens.
+pub fn assemble_elf_amd64_raw(src: Bytes) -> Result[Bytes, Str] {
+  assemble_amd64(src, true, (0, 0), false)
 }
 
 /// assemble_macho_amd64: the Mach-O x86_64 object of src (the amd64
 /// emitter's darwin/amd64 assembly), as `clang -c -arch x86_64` writes
 /// it (decision 0254 stage 6a), with the minimum macOS version minos.
 pub fn assemble_macho_amd64(src: Bytes, minos: (Int, Int)) -> Result[Bytes, Str] {
-  assemble_amd64(src, false, minos)
+  assemble_amd64(src, false, minos, true)
 }
 
-fn assemble_amd64(src: Bytes, elf: Bool, minos: (Int, Int)) -> Result[Bytes, Str] {
+/// assemble_macho_amd64_raw: assemble_macho_amd64 without the jump
+/// padding (decision 0398), clang's bytes.
+pub fn assemble_macho_amd64_raw(src: Bytes, minos: (Int, Int)) -> Result[Bytes, Str] {
+  assemble_amd64(src, false, minos, false)
+}
+
+fn assemble_amd64(src: Bytes, elf: Bool, minos: (Int, Int), jpad: Bool) -> Result[Bytes, Str] {
   var long: Map[Int, Bool] = {}
   while true {
-    var a = Asm{elf: elf, amd64: true, xlong: long, minos: minos}
+    var a = Asm{elf: elf, amd64: true, xlong: long, minos: minos, xjpad: jpad}
     a.parse(src)
     if !a.err.is_empty() {
       return Err(a.err)
@@ -148,6 +161,11 @@ struct XMemo {
   r: XEnc = XEnc{}
   rex: Bool = false
   relax: Bool = false
+  /// jump padding (decision 0398): a jcc can macro-fuse with it (cmp,
+  /// test, add, sub, and, inc, dec); it is a jump itself (an indirect
+  /// jmp or call, a ret)
+  fuse: Bool = false
+  jump: Bool = false
 }
 
 /// line's XMemo, worked out from its text.
@@ -171,7 +189,21 @@ fn x86_memo(l: Bytes) -> XMemo {
   if !r.err.is_empty() {
     return XMemo{r: r}
   }
-  XMemo{r: r, rex: x86_has_rex(r.b), relax: x86_gotpcrel_relaxable(r.b)}
+  let base = x86_base_mnemonic(m)
+  let fuse = r.fixes.is_empty() && base is "cmp" | "test" | "add" | "sub" | "and" | "inc" | "dec"
+  let jump = base is "ret" | "jmp" | "call"
+  XMemo{r: r, rex: x86_has_rex(r.b), relax: x86_gotpcrel_relaxable(r.b), fuse: fuse, jump: jump}
+}
+
+/// The mnemonic m without its operand size suffix (cmpq, testl, retq).
+fn x86_base_mnemonic(m: Str) -> Str {
+  if m.len() > 2 && (m.ends_with("q") || m.ends_with("l") || m.ends_with("w") || m.ends_with("b")) {
+    let s = m[0..m.len() - 1]
+    if s is "cmp" | "test" | "add" | "sub" | "and" | "inc" | "dec" | "ret" | "jmp" | "call" {
+      return s
+    }
+  }
+  m
 }
 
 /// An instruction line: each distinct line parsed and encoded once (as
@@ -192,7 +224,15 @@ fn (var a: Asm) x86_instruction(l: Bytes) {
   if !r.err.is_empty() {
     return a.fail(r.err)
   }
+  if mm.jump {
+    a.x86_jump_pad(r.b.len())
+  }
   let base = a.code_len(a.cur)
+  a.xlast_sect = a.cur
+  a.xlast_at = base
+  a.xlast_len = r.b.len()
+  a.xlast_line = a.line
+  a.xlast_fuse = mm.fuse
   let rex = mm.rex
   let relax = mm.relax
   for f in r.fixes {
@@ -253,15 +293,18 @@ fn (var a: Asm) x86_branch(cc: Int, t0: Bytes) {
   let name = unquote(t) ?? t
   let s = a.label_sym(name)
   a.register(s)
+  let seq = a.xseq
+  let long = cc != -2 && a.xlong.contains(seq)
+  // a call or a long jmp is 5 bytes, a long jcc 6, a short branch 2
+  a.x86_jump_pad(if cc == -2 || long && cc < 0 { 5 } else if long { 6 } else { 2 })
+  a.xlast_fuse = false
   let at = a.code_len(a.cur)
   if cc == -2 {
     a.push_code([0xe8, 0, 0, 0, 0])
     a.xfixes.push(XFx{sect: a.cur, at: at + 1, size: 4, pcrel: true, sym: s, addend: -4, rel: "PLT", line: a.line, atom: a.sects[a.cur].last_atom, end: at + 5})
     return
   }
-  let seq = a.xseq
   a.xseq += 1
-  let long = a.xlong.contains(seq)
   a.xbrs.push(XBr{seq: seq, sect: a.cur, at: at, long: long, sym: s, cc: cc, line: a.line, atom: a.sects[a.cur].last_atom})
   if !long {
     a.push_code([if cc < 0 { 0xeb } else { 0x70 + cc }, 0])
@@ -274,6 +317,73 @@ fn (var a: Asm) x86_branch(cc: Int, t0: Bytes) {
   } else {
     a.push_code([0x0f, 0x80 + cc, 0, 0, 0, 0])
     a.xfixes.push(XFx{sect: a.cur, at: at + 2, size: 4, pcrel: true, sym: s, addend: -4, rel: "PLT", line: a.line, atom: a.sects[a.cur].last_atom, end: at + 6})
+  }
+}
+
+/// Whether the n bytes at `at` cross a 32 byte boundary or end on one.
+fn x86_straddles(at: Int, n: Int) -> Bool {
+  (at + n - 1) / 32 != at / 32 || (at + n) % 32 == 0
+}
+
+/// Jump padding (decision 0398): a jump (jmp, jcc, call, ret, direct or
+/// not) that crosses a 32 byte boundary or ends on one, or the cmp, test,
+/// add, sub, and, inc or dec a jcc macro-fuses with, runs from the legacy
+/// decoder instead of the decoded uop cache on the CPUs with the JCC
+/// erratum (Intel Skylake through Comet Lake, the microcode fix of
+/// 2019); a loop whose exit branch straddles one ran 10 to 23 percent
+/// slower on an i7-9750H (bench/results/sort1m-x86-2026-10-28.md). NOPs
+/// before the jump, or before the pair, as Go's assembler pads
+/// (cmd/internal/obj/x86 padJump and fusedJump), keep every jump inside
+/// one 32 byte block; a label on the fused instruction moves with it,
+/// so a loop entered through it never runs the NOPs. n is the jump's
+/// length; a fused instruction is the one just before it on the previous
+/// source line (no label or directive between), in this section, with
+/// no fixup.
+fn (var a: Asm) x86_jump_pad(n: Int) {
+  if !a.xjpad {
+    return
+  }
+  let at = a.code_len(a.cur)
+  let fused = a.xlast_fuse && a.xlast_sect == a.cur && a.xlast_line == a.line - 1 && a.xlast_at + a.xlast_len == at
+  let start = if fused { a.xlast_at } else { at }
+  let span = if fused { a.xlast_len + n } else { n }
+  if !x86_straddles(start, span) {
+    return
+  }
+  let pad = 32 - start % 32
+  if !fused {
+    a.x86_nops(pad)
+    return
+  }
+  // the fused instruction's bytes come out, the NOPs go in, it goes back
+  var tail: List[Int] = []
+  for _ in 0..a.xlast_len {
+    tail.push(a.sects[a.cur].words.pop() ?? 0)
+  }
+  a.x86_nops(pad)
+  var k = tail.len()
+  while k > 0 {
+    k -= 1
+    a.sects[a.cur].words.push(tail[k])
+  }
+  if a.xlabel_at == a.xlast_at {
+    for i in 0..a.syms.len() {
+      if a.syms[i].sect == a.cur && a.syms[i].off == a.xlast_at {
+        a.syms[i].off = a.xlast_at + pad
+      }
+    }
+    a.xlabel_at = a.xlast_at + pad
+  }
+  a.xlast_at += pad
+}
+
+/// n bytes of LLVM's long NOPs, 10 at a time.
+fn (var a: Asm) x86_nops(n0: Int) {
+  var n = n0
+  while n > 0 {
+    let k = n.min(10)
+    a.push_code(x86_nop(k))
+    n -= k
   }
 }
 

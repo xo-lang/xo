@@ -997,7 +997,7 @@ fn hex_of(b: Bytes) -> Str {
 test "each amd64 test file assembles to clang's ELF object" {
   var bad: List[Str] = []
   for (name, src, want) in AMD64_OBJECTS {
-    match assemble_elf_amd64(src.bytes()) {
+    match assemble_elf_amd64_raw(src.bytes()) {
       Ok(o) => {
         let got = hex_of(o)
         if got != want {

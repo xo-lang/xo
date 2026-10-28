@@ -63,9 +63,19 @@ struct Seh {
 /// assemble_coff_amd64: the COFF object of src (the amd64 emitter's
 /// windows/amd64 assembly), or the first error as "line N: why".
 pub fn assemble_coff_amd64(src: Bytes) -> Result[Bytes, Str] {
+  assemble_coff(src, true)
+}
+
+/// assemble_coff_amd64_raw: assemble_coff_amd64 without the jump
+/// padding (decision 0398), llvm-mc's bytes, for the goldens.
+pub fn assemble_coff_amd64_raw(src: Bytes) -> Result[Bytes, Str] {
+  assemble_coff(src, false)
+}
+
+fn assemble_coff(src: Bytes, jpad: Bool) -> Result[Bytes, Str] {
   var long: Map[Int, Bool] = {}
   while true {
-    var a = Asm{elf: true, coff: true, amd64: true, xlong: long}
+    var a = Asm{elf: true, coff: true, amd64: true, xlong: long, xjpad: jpad}
     a.coff_defaults()
     a.parse(src)
     if !a.err.is_empty() {

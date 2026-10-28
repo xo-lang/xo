@@ -10,6 +10,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   load before its first round plus 3 (at least 6), not a fixed 6, and
   prints that baseline in its load line: an idle machine at 4.4 to 5 lost
   most rounds of multi-threaded workloads.
+- amd64: Xo's x86-64 assembler pads every jump (jmp, jcc, call, ret) and
+  every cmp/test/add/sub/and/inc/dec a jcc macro-fuses with off 32 byte
+  boundaries with NOPs before it, and 32 byte aligns code sections, so
+  no jump runs from the legacy decoder on the Intel cores with the JCC
+  erratum (Skylake through Comet Lake; decision 0398, compiler/macho
+  asm_amd64.xo x86_jump_pad). sort1M on an i7-9750H ran 73 to 90 ms over
+  32 placements of the same code (Go 67) depending only on where
+  pdq_partition's loops landed; 69 to 72 ms over the same 32 placements (Go 67), every one under the unpadded best of 73; interp 160 to 128 ms
+  (bench/results/sort1m-x86-2026-10-28.md). `assemble_elf_amd64_raw` and
+  `assemble_macho_amd64_raw` keep clang's bytes for the encoder goldens.
 - `xo vet --cost` notes a Str or Bytes slice in a loop read only by index,
   length or equality (XO0913) and a small List made and only read every
   iteration (XO0914); a repo test keeps std free of new ones

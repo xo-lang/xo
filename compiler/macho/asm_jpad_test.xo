@@ -1,0 +1,86 @@
+// Jump padding (decision 0398): a jump, or the instruction a jcc fuses
+// with, that would cross or end on a 32 byte boundary gets NOPs before
+// it; a label on the fused instruction moves with it; the code section
+// is 32 byte aligned; the raw entry points leave clang's bytes.
+
+/// n one byte NOPs then the lines, as a .text source.
+fn jpad_src(n: Int, lines: List[Str]) -> Bytes {
+  var b = StrBuilder.new()
+  b.write("\t.text\n\t.globl f\nf:\nL0:\n")
+  for _ in 0..n {
+    b.write("\tnop\n")
+  }
+  for l in lines {
+    b.write("${l}\n")
+  }
+  b.freeze().bytes()
+}
+
+/// The .text bytes of the ELF object of src, as a list of byte values.
+fn jpad_text(src: Bytes, raw: Bool) -> List[Int] {
+  let obj = (if raw { assemble_elf_amd64_raw(src) } else { assemble_elf_amd64(src) }).or_fault("assemble")
+  let t = elf_section(obj, ".text") ?? fault("no .text")
+  var out: List[Int] = []
+  for v in t {
+    out.push(Int(v))
+  }
+  out
+}
+
+test "a fused cmp and jcc straddling a 32 byte boundary move past it with their label" {
+  // 29 NOPs, then L: cmpq (3 bytes at 29) and jne L (2 bytes at 32): the
+  // pair crosses the boundary, so a 3 byte NOP fills to 32, the cmp is
+  // at 32, the jne at 35 jumps back 5 to the cmp (the label moved), not
+  // to the NOP
+  let t = jpad_text(jpad_src(29, ["L:", "\tcmpq %rax, %rbx", "\tjne L"]), false)
+  expect(t.len()) == 37
+  expect(t[29..32]) == [0x0f, 0x1f, 0x00]
+  expect(t[32..35]) == [0x48, 0x39, 0xc3]
+  expect(t[35..37]) == [0x75, 0xfb]
+  // the raw entry point writes clang's bytes: no NOP, the jne back 5 to L
+  let r = jpad_text(jpad_src(29, ["L:", "\tcmpq %rax, %rbx", "\tjne L"]), true)
+  expect(r.len()) == 34
+  expect(r[29..32]) == [0x48, 0x39, 0xc3]
+  expect(r[32..34]) == [0x75, 0xfb]
+}
+
+test "a jump ending on a 32 byte boundary moves past it; one inside a block stays" {
+  // 30 NOPs then a short jmp at 30 (to the local label L0 at f: a jmp
+  // to the global f is relocated, so long): its last byte would be 31,
+  // so a 2 byte NOP fills to 32 and the jmp starts there
+  let t = jpad_text(jpad_src(30, ["\tjmp L0"]), false)
+  expect(t.len()) == 34
+  expect(t[30..32]) == [0x66, 0x90]
+  expect(t[32]) == 0xeb
+  // a ret as the 32nd byte ends on the boundary too
+  let u = jpad_text(jpad_src(31, ["\tretq"]), false)
+  expect(u.len()) == 33
+  expect(u[31]) == 0x90
+  expect(u[32]) == 0xc3
+  // 20 NOPs, cmp at 20, jne at 23: inside the block, nothing added
+  let v = jpad_text(jpad_src(20, ["L:", "\tcmpq %rax, %rbx", "\tjne L"]), false)
+  expect(v.len()) == 25
+  expect(v[20..23]) == [0x48, 0x39, 0xc3]
+}
+
+test "a label or directive between the cmp and the jcc keeps the pair unfused" {
+  // the cmp at 29 ends in the block; the jne at 32 starts a new block:
+  // neither straddles alone, so with a label between (the jne is the
+  // target) nothing is added
+  let t = jpad_text(jpad_src(29, ["\tcmpq %rax, %rbx", "L:", "\tjne L"]), false)
+  expect(t.len()) == 34
+  expect(t[29..32]) == [0x48, 0x39, 0xc3]
+  expect(t[32..34]) == [0x75, 0xfe]
+}
+
+test "the padded code section is 32 byte aligned" {
+  var a = Asm{elf: true, amd64: true}
+  a.parse(jpad_src(1, ["\tretq"]))
+  a.finish()
+  expect(a.err) == ""
+  expect(a.sects[0].align) == 5
+  var r = Asm{elf: true, amd64: true, xjpad: false}
+  r.parse(jpad_src(1, ["\tretq"]))
+  r.finish()
+  expect(r.sects[0].align) == 0
+}
