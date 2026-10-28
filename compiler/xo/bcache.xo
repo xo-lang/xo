@@ -240,6 +240,26 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
   let (sums, spk) = if lazy { cache_get_packed(os, dir, "sum", b.m.goarch, plan.keys, jobs) } else { ({}, Pack{}) }
   t = lap(os, phases, "insert_rc.read", t)
   let out = b.insert_rc_apply(plan, entries, sums, backend_cache_mode(os) == "verify", jobs)
+  // decision 0388: std's facts from this whole-program build, in stdf's
+  // codec (the stand-in for std's object builder's, and what it must
+  // write for the same std and flags)
+  let sfd = os.env.get("XO_STD_FACTS_DUMP") ?? ""
+  if !sfd.is_empty() {
+    let fs = ssa.std_facts_of_std(b.m, b, plan)
+    match os.fs.write(sfd, ssa.encode_std_facts(fs)) {
+      Ok(_) => {}
+      Err(e) => fail(os, "XO_STD_FACTS_DUMP=${sfd}: ${e}")
+    }
+    if phases {
+      var nb = 0
+      for x in fs {
+        if x.borrowed.any(fn(v) { v }) {
+          nb += 1
+        }
+      }
+      os.stdio.eprintln("stdf ${fs.len()} std functions written to ${sfd} (${nb} with a borrowed parameter)")
+    }
+  }
   t = lap(os, phases, "insert_rc.apply", t)
   pack_store(os, pk, entries, out.stores)
   if lazy {

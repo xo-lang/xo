@@ -34,11 +34,14 @@ pub struct StdFact {
 /// unwind facts by name (keep_unwind_names).
 pub fn std_facts(m: Module, b: Builder, plan: RcPlan) -> List[StdFact] {
   var out: List[StdFact] = []
-  for f in m.funcs {
+  for (fi, f) in m.funcs.indexed() {
     var x = StdFact{name: f.name, var_params: f.var_params, catches: f.catches}
     if !f.blocks.is_empty() {
       x.body = encode_facts(m, body_facts(f, m.types)) ?? b""
       x.known = known_result(f) ?? Aux.None
+    } else if let Some(bf) = m.facts.get(fi) {
+      // an undecoded cache hit (decision 0283 B): its body's facts
+      x.body = encode_facts(m, bf) ?? b""
     }
     let ci = plan.r.fidx.get(f.name) ?? -1
     if ci >= 0 && ci < plan.r.borrowed.len() {
@@ -272,6 +275,28 @@ pub fn (m: Module) extern_borrows() -> Map[Str, (List[Bool], Int)] {
         None => -1
       }
       out[f.name] = (x.borrowed, p0)
+    }
+  }
+  out
+}
+
+/// Whether a function of file (Func.file) is std's own: under std's
+/// directory, the checker's spelling of it (a program file is relative
+/// to the program's root). A generic instance (a name with `[`) is the
+/// program's, compiled where it is used (decision 0388).
+pub fn std_func(name: Str, file: Str) -> Bool {
+  !name.contains("[") && (file.starts_with("std/") || file.contains("/std/"))
+}
+
+/// The facts of m's std functions only (std_func), for XO_STD_FACTS_DUMP:
+/// a whole-program build's, the stand-in for and the expected output of
+/// std's object builder's stdf.
+pub fn std_facts_of_std(m: Module, b: Builder, plan: RcPlan) -> List[StdFact] {
+  var out: List[StdFact] = []
+  for x in std_facts(m, b, plan) {
+    let fi = m.func_index(x.name)
+    if fi >= 0 && std_func(x.name, m.funcs[fi].file) {
+      out.push(x)
     }
   }
   out

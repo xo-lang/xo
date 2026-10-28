@@ -79,6 +79,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_CHAIN_KEYS":           {"none", ""}, // the cleanup cache (decision 0382); every build writes the same binary
 	"XO_CHK_CACHE":            {"none", ""},
 	"XO_STD_EXPORT":           {"none", ""}, // std's declarations from records (decision 0388); the same tables
+	"XO_STD_FACTS_DUMP":       {"none", ""}, // writes std's facts to a file (decision 0388); the build is the same
 	"XO_FE_CACHE":             {"none", ""},
 	"XO_FE_STATS":             {"none", ""},
 	"XO_LAZY_PARSE":           {"none", ""},
