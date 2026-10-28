@@ -398,8 +398,17 @@ fn main(os: Os) ! {
   }
   // separate compilation by default where it applies (decision 0388
   // stage 3, step d)
+  let whole_os = bos
   bos = sepcomp_default(bos, ctx, o, backend)
-  let nb = build_native(bos, ctx, o, backend)
+  var nb = build_native(bos, ctx, o, backend)
+  if nb.whole {
+    // a program that uses C links with cc, which cannot read std's store:
+    // the default's build is the whole program's instead
+    if !sepcomp_facts_path(whole_os).is_empty() {
+      fail(os, "XO_SEPCOMP: a program that uses C (`use c`) is linked by cc, which cannot read std's store; build it with XO_SEPCOMP=0")
+    }
+    nb = build_native(whole_os, ctx, o, backend)
+  }
   if let Some(st) = ctx.cstats {
     os.stdio.eprint(cache_stats_text(st))
   }
@@ -476,6 +485,9 @@ struct Native {
   pc: Map[Str, check.ParseEntry] = {}
   /// Why the targets were skipped (Opts.skip_unsupported), "" when built.
   skipped: Str = ""
+  /// Nothing built: the program uses C, which separate compilation
+  /// cannot link (decision 0388), so it is to be built whole.
+  whole: Bool = false
 }
 
 /// The native backend that builds target tg ("" for none): arm64 for
@@ -1000,6 +1012,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     c.det = o.topts.seed != 0 || o.explore > 0 || tests_seeded(c)
   }
   t = lap(os, phases, "check", t)
+  // a module that uses C links with cc, which cannot read std's store
+  // (decision 0388): the caller builds the whole program
+  if !sepcomp_facts_path(os).is_empty() && c.mods.any(fn(m) { !m.c_prefix.is_empty() }) {
+    return Native{whole: true}
+  }
   if o.backend_auto {
     // a program with `use go` builds only with the Go backend: say so,
     // rather than the native build's errors on each Go use (decision 0248)

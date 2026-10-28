@@ -262,7 +262,8 @@ fn (b: Builder) spec_callee_at(var ok: List[Int], ci: Int) -> Bool {
     ok.push(0)
   }
   if ok[ci] == 0 {
-    ok[ci] = if spec_callee(b.m.funcs[ci]) { 1 } else { 2 }
+    // an extern (std's, decision 0388 stage 3) has no body here to copy
+    ok[ci] = if !b.m.externs.contains(b.m.funcs[ci].name) && spec_callee(b.m.funcs[ci]) { 1 } else { 2 }
   }
   ok[ci] == 1
 }

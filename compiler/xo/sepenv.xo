@@ -66,7 +66,7 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
   if os.env.get("XO_SEPCOMP") != None || (os.env.get("XO_SEPCOMP_DEFAULT") ?? "") != "1" {
     return os
   }
-  if !(o.cmd is "build" | "run") || backend != "arm64" || host_os(os) != "darwin" || host_arch() != "arm64" || o.release || o.race || passes_changed(os) {
+  if !(o.cmd is "build" | "run") || backend != "arm64" || host_os(os) != "darwin" || host_arch() != "arm64" || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {
     return os
   }
   if !(o.targets.is_empty() || o.targets == "darwin/arm64") {
@@ -81,4 +81,23 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
     None => return os
   }
   with_env(os, {"XO_SEPCOMP": "1", "XO_SEPCOMP_FACTS": v0.1, "XO_SEPCOMP_FACTS_CONC": v1.1, "XO_SEPCOMP_STORE": v0.0, "XO_SEPCOMP_STORE_CONC": v1.0})
+}
+
+/// The variables that change the code std's functions compile to
+/// (TestStdCodeEnvListed keeps it to codegen_test.go's keyed and bypass
+/// variables, and XO_LLRT_C and XO_STD_CONC): std's variants are
+/// built without them (stdcache.xo clears them), so a build that sets
+/// one compiles the whole program.
+const STD_CODE_ENV = ["XO_ARM64_PAD", "XO_ARM64_REGS", "XO_ASYNC_PREEMPT", "XO_HEAP_GUARD", "XO_INLINE_DENY", "XO_LOWER", "XO_MAP_LOG", "XO_NATIVE_RACE", "XO_NOLIBC", "XO_POISON_FRAMES", "XO_PREEMPT_POLLS", "XO_LLRT_C", "XO_STD_CONC"]
+
+/// Whether this build compiles std's functions to other code than its
+/// variants hold, which are built with the default settings: a variable
+/// of STD_CODE_ENV set, or a flag that changes std's code (--seed and
+/// --explore: the deterministic scheduler; the memory, preemption and
+/// release settings; profiling and tracing support; --hybrid).
+fn std_code_changed(os: Os, o: Opts) -> Bool {
+  if STD_CODE_ENV.any(fn(n) { !(os.env.get(n) ?? "").is_empty() }) {
+    return true
+  }
+  o.topts.seed != 0 || o.explore > 0 || o.no_mono || o.no_arenas || o.no_preempt || o.no_gc || o.holes || o.hybrid || !o.opt.is_empty() || !o.profile.is_empty() || !o.record.is_empty() || o.error_args != -1 || o.debug_contracts != -1 || o.dbg != -1 || o.trace_support != -1 || o.profile_support != -1 || !o.pack_lists || o.inline_str
 }

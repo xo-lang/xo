@@ -681,3 +681,27 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   its own in atoms mode (std_store and a split assembly; a normal build keeps temporary
   labels): the empty program's __TEXT,__const 28.9 KB, its binary 2.21 MB to 1.85 MB (the
   whole program's 1.76 MB); std's store 0.6 MB larger (the symbols).
+- The default-on gate's other failures (Lang 1, 2026-10-28; the flip's gate on
+  lang1-0388-flip: TestGoldenRun with XO_BACKEND_CACHE=on, the cmd/xo suite):
+  (a) specialize_args (decision 0368) cloned a std extern for a constant argument
+  (`debug.router(os.clock, allow)`: metrics_text, debug_routes, trace_ring, TestProfURL),
+  a copy with no instructions that reference counting faulted on (rc.xo walk, `index -1`);
+  spec_callee_at now refuses an extern (Module.externs). (b) A program that uses C links
+  with cc, which cannot read std's store (use_c_add, TestBuildCCLinkOSOPaths, TestVouchesC):
+  build_native returns Native.whole after the check when XO_SEPCOMP is on and a module has
+  a C prefix, and the default's build is made again whole (an explicit XO_SEPCOMP=1 fails
+  saying so); --ld=cc and --as=cc skip the default. (c) std's variants are built with the
+  default settings, so a build whose flags or variables change std's code builds the whole
+  program: --seed and --explore (TestRunSeedNative: the deterministic scheduler), the
+  memory, preemption, release, profiling and tracing settings, --hybrid (sepenv.xo
+  std_code_changed), and the variables of STD_CODE_ENV, which the variant's own build
+  clears; internal/xotool TestStdCodeEnvListed keeps STD_CODE_ENV to codegen_test.go's
+  keyed and bypass variables. (d) A program that reaches concurrency only through std
+  (debug.router's Atomic) was built without it and std's conc0 code faulted
+  "concurrency in a build without it" at run time: std's facts (v2) carry StdFact.conc
+  (the body needs concurrency, Builder.conc_names from set_flag and a front end entry's
+  flag, or it calls or makes a closure of a function that does, to a fixed point), and a
+  program marking such an extern sets need_conc, so it is built again with concurrency and
+  std's conc1 variant, as a whole program is. Tests: TestSepcompLinks's second program
+  (debug.router with a function constant, concurrent), TestStdCodeEnvListed, ssa
+  stdfacts_test's round trip.

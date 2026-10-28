@@ -433,3 +433,32 @@ func TestCodegenKeyChanges(t *testing.T) {
 		}
 	}
 }
+
+// TestStdCodeEnvListed: every variable classified keyed or bypass above
+// changes generated code, so separate compilation by default (compiler/xo
+// sepenv.xo, decision 0388) must build the whole program when one is set:
+// each is in sepenv.xo's STD_CODE_ENV, except the separate compilation
+// variables themselves.
+func TestStdCodeEnvListed(t *testing.T) {
+	root := codegenRepoRoot(t)
+	b, err := os.ReadFile(filepath.Join(root, CompilerDir(root), "xo", "sepenv.xo"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var list string
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.HasPrefix(l, "const STD_CODE_ENV = [") {
+			list = l
+		}
+	}
+	if list == "" {
+		t.Fatal("compiler/xo sepenv.xo has no `const STD_CODE_ENV = [` line")
+	}
+	for n, c := range codegenEnv {
+		if (c.class == "keyed" || c.class == "bypass") && !strings.HasPrefix(n, "XO_SEPCOMP") && n != "XO_PASSES" && n != "XO_THREAD_SWITCH" {
+			if !strings.Contains(list, `"`+n+`"`) {
+				t.Errorf("%s is classified %s but is not in compiler/xo sepenv.xo's STD_CODE_ENV: separate compilation would link std's default code into a build that changes it", n, c.class)
+			}
+		}
+	}
+}

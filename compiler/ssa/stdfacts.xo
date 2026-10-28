@@ -7,7 +7,7 @@
 // fault and be canceled, no bounds, not inlined.
 
 /// The version of the facts' encoding.
-pub const STD_FACTS_VERSION = "xo std facts v1"
+pub const STD_FACTS_VERSION = "xo std facts v2"
 
 /// One std function's facts, by its name.
 pub struct StdFact {
@@ -23,6 +23,10 @@ pub struct StdFact {
   /// may fault, may be canceled (prune_unwind)
   pub faults: Bool = true
   pub cancels: Bool = true
+  /// its body or a function it calls or makes a closure of needs
+  /// concurrency (Builder.conc_names): a program that calls it is built
+  /// with concurrency, as the whole program would be
+  pub conc: Bool = false
   /// its constant result (fold_known_calls), Aux.None for none
   pub known: Aux = Aux.None
   /// its body for the inliner (encode_func), empty for none
@@ -61,6 +65,36 @@ pub fn std_facts(m: Module, b: Builder, plan: RcPlan) -> List[StdFact] {
       x.cancels = ca
     }
     out.push(x)
+  }
+  // conc: the functions that need concurrency themselves, then their
+  // callers (calls and closures made), to a fixed point
+  var conc: Map[Str, Bool] = b.conc_names
+  var changed = true
+  while changed {
+    changed = false
+    for f in m.funcs {
+      if conc.contains(f.name) {
+        continue
+      }
+      var hit = false
+      for bl in f.blocks {
+        for v in bl.instrs {
+          let x = f.values[v]
+          if x.op == Op.Call || x.op == Op.Closure {
+            if let S(s) = x.aux {
+              hit = hit || conc.contains(s)
+            }
+          }
+        }
+      }
+      if hit {
+        conc[f.name] = true
+        changed = true
+      }
+    }
+  }
+  for i in 0..out.len() {
+    out[i].conc = conc.contains(out[i].name)
   }
   out
 }
@@ -162,7 +196,7 @@ pub fn encode_std_facts(fs: List[StdFact]) -> Bytes {
     }
     w.bools(x.borrowed)
     w.bools(x.unique)
-    w.bools([x.catches, x.faults, x.cancels])
+    w.bools([x.catches, x.faults, x.cancels, x.conc])
     match x.known {
       I(n) => {
         w.uv(1)
@@ -223,12 +257,13 @@ pub fn decode_std_facts(d: Bytes) -> Option[List[StdFact]] {
     x.borrowed = r.bools()
     x.unique = r.bools()
     let fl = r.bools()
-    if fl.len() != 3 {
+    if fl.len() != 4 {
       return None
     }
     x.catches = fl[0]
     x.faults = fl[1]
     x.cancels = fl[2]
+    x.conc = fl[3]
     x.known = match r.uv() {
       1 => Aux.I(n: r.sv())
       2 => Aux.B(b: r.uv() == 1)

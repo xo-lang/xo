@@ -2,7 +2,7 @@
 
 test "std facts encode and decode to the same records" {
   let fs = [
-    StdFact{name: "strings.trim", body: b"\x01\x02", var_params: [0, 2], borrowed: [true, false], unique: [true], catches: true, faults: false, cancels: false, known: Aux.I(n: -7), inline: b"body"},
+    StdFact{name: "strings.trim", body: b"\x01\x02", var_params: [0, 2], borrowed: [true, false], unique: [true], catches: true, faults: false, cancels: false, conc: true, known: Aux.I(n: -7), inline: b"body"},
     StdFact{name: "prelude.list_len", known: Aux.S(s: "x")},
     StdFact{name: "f", known: Aux.F(f: 2.5)},
     StdFact{name: "g", known: Aux.B(b: true)},

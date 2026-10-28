@@ -1135,6 +1135,7 @@ fn (var b: Builder) fe_replay(d: Bytes, fi: Int) -> Bool {
   b.nvar += dvar
   if (flagbits & 1) != 0 {
     b.need_conc = true
+    b.conc_names[g.name] = true
   }
   if (flagbits & 2) != 0 {
     b.uses_net = true

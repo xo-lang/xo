@@ -186,6 +186,9 @@ pub struct Builder {
   /// again with unwinding checks (conc), as build_program does; the
   /// constructs themselves are outside stage 1.
   pub need_conc: Bool = false
+  /// the functions whose own body needs concurrency (set_flag 1, a front
+  /// end cache entry's flag), for std's facts (StdFact.conc)
+  pub conc_names: Map[Str, Bool] = {}
   /// A test binary (Options.Tests, testmode.xo).
   pub tests: Bool = false
   pub conc: Bool = false
@@ -779,6 +782,11 @@ fn (var b: Builder) run_job(j: Job) {
         }
         if let Some(x) = b.sep.get(b.m.funcs[fi].name) {
           b.m.mark_extern(fi, x)
+          // a std function that needs concurrency: the program is built
+          // with it (build_program_fe), as the whole program would be
+          if x.conc {
+            b.need_conc = true
+          }
           return
         }
       }
@@ -2082,6 +2090,7 @@ fn (var b: Builder) declare(fo: Int, targs: List[Int]) -> Int {
 fn (var b: Builder) set_flag(k: Int) {
   if k == 1 {
     b.need_conc = true
+    b.conc_names[b.s.f.name] = true
   } else {
     b.uses_net = true
   }

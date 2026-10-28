@@ -17,7 +17,10 @@ import (
 // runs as the program built whole does, before and after an edit; the
 // whole program's own std facts verify against std's (XO_STD_FACTS_VERIFY).
 // The program passes a closure to std, has a by-reference var parameter
-// of its own, and calls std's list, string and sort functions.
+// of its own, and calls std's list, string and sort functions. A second,
+// concurrent program (std's conc1 variant) passes a function constant to
+// std (debug.router: specialize_args once cloned the extern, a body with
+// no instructions, 2026-10-28).
 func TestSepcompLinks(t *testing.T) {
 	if !native() {
 		t.Skip("the host is not arm64")
@@ -146,6 +149,45 @@ fn main(os: Os) {
 		if got != want {
 			t.Fatalf("edit %d: the separately compiled program prints %q, the whole program %q", edit, got, want)
 		}
+	}
+	// the concurrent variant: a facts directory (conc0.stdf, conc1.stdf)
+	// and both stores, as the default sets them
+	cmd = testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=1"))
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
+	paths1, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("xo dev stdcache --conc=1: %v", err)
+	}
+	lines1 := strings.Fields(string(paths1))
+	if len(lines1) != 2 {
+		t.Fatalf("xo dev stdcache --conc=1 printed %q, want the store and the facts", paths1)
+	}
+	fdir := filepath.Join(work, "facts")
+	if err := os.MkdirAll(fdir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, f := range map[string]string{"conc0.stdf": facts, "conc1.stdf": lines1[1]} {
+		if err := os.Symlink(f, filepath.Join(fdir, name)); err != nil {
+			t.Fatal(err)
+		}
+	}
+	prog2 := filepath.Join(work, "prog2")
+	write(prog2, `use std/debug
+use std/http
+
+fn allow(_req: http.Request) -> Bool { true }
+
+fn main(os: Os) {
+  let r = debug.router(os.clock, allow)
+  os.stdio.println("${r.call(http.new_request("GET", "/nothing")).status} ${r.call(http.new_request("GET", "/sched")).status}")
+}
+`)
+	whole := filepath.Join(work, "whole", "prog2")
+	build(prog2, whole, "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-whole"))
+	sepc := filepath.Join(work, "sep", "prog2")
+	build(prog2, sepc, "XO_SEPCOMP=1", "XO_SEPCOMP_FACTS="+fdir, "XO_SEPCOMP_STORE="+store, "XO_SEPCOMP_STORE_CONC="+lines1[0], "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-sep"))
+	if want, got := run(whole), run(sepc); got != want {
+		t.Fatalf("debug.router: the separately compiled program prints %q, the whole program %q", got, want)
 	}
 }
 
