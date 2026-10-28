@@ -570,3 +570,6 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   compiled build reads the whole store (about 52 MB), and hashing it for the run cache's
   entry costs about as much as the link. The run key holds the xo's identity, which fixes
   the store it shipped.
+- The cache's windows store keeps its PDB parts beside it (compiler/xo stdcache.xo:
+  obj/std.store.pdb renamed to <key>.store.pdb before the store, kept used with it), which
+  pe_link reads next to XO_SEPCOMP_STORE; without them the link reads std's DWARF instead.

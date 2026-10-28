@@ -72,6 +72,10 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
   if have {
     prune.mark_used_within(os.fs, os.clock, store, BACKEND_TOUCH)
     prune.mark_used_within(os.fs, os.clock, facts, BACKEND_TOUCH)
+    // xo:allow XO0903 only a windows store has its PDB parts
+    if os.fs.exists("${store}.pdb").ok() ?? false {
+      prune.mark_used_within(os.fs, os.clock, "${store}.pdb", BACKEND_TOUCH)
+    }
     if phases {
       os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} reused")
     }
@@ -89,6 +93,14 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
   }
   var done = false
   if ok {
+    // a windows store's PDB parts (coffstore.xo coff_store_pdb), which
+    // pe_link reads beside XO_SEPCOMP_STORE, before the store: a reader
+    // that sees the store sees them (without them the link reads std's
+    // DWARF for the PDB, slower and the same)
+    // xo:allow XO0903 only a windows store has them
+    if os.fs.exists("${tmp}/obj/std.store.pdb").ok() ?? false {
+      os.fs.rename("${tmp}/obj/std.store.pdb", "${store}.pdb").ignore_err("the link reads std's DWARF instead")
+    }
     let a = os.fs.rename("${tmp}/obj/std.store", store).is_ok()
     let b = a && os.fs.rename("${tmp}/std.stdf", facts).is_ok()
     done = b
