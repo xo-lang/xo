@@ -766,8 +766,11 @@ struct Deflater {
   offset: Int
   max_insert_index: Int
   chain_head: Int
-  hash_head: List[Int]
-  hash_prev: List[Int]
+  /// UInt32 as Go's hashHead and hashPrev: half the bytes to zero for
+  /// each stream and to read in the match search (2026-10-28: zeroing
+  /// was 12% of bench/perf/archive zip)
+  hash_head: List[UInt32]
+  hash_prev: List[UInt32]
   hash_offset: Int
   blocks: Blocks
 }
@@ -782,7 +785,7 @@ fn (d: Deflater) hash4(i: Int) -> Int {
 fn (var d: Deflater) insert_hash(i: Int) {
   let h = d.hash4(i)
   d.hash_prev[i & WINDOW_MASK] = d.hash_head[h]
-  d.hash_head[h] = i + d.hash_offset
+  d.hash_head[h] = UInt32(i + d.hash_offset)
 }
 
 /// fillDeflate: the window shifted when it is nearly full, then up to n
@@ -804,14 +807,14 @@ fn (var d: Deflater) fill(n: Int) -> Int {
       d.chain_head -= delta
       var i = 0
       while i < WINDOW_SIZE {
-        let v = d.hash_prev[i]
-        d.hash_prev[i] = if v > delta { v - delta } else { 0 }
+        let v = Int(d.hash_prev[i])
+        d.hash_prev[i] = UInt32(if v > delta { v - delta } else { 0 })
         i += 1
       }
       i = 0
       while i < HASH_SIZE {
-        let v = d.hash_head[i]
-        d.hash_head[i] = if v > delta { v - delta } else { 0 }
+        let v = Int(d.hash_head[i])
+        d.hash_head[i] = UInt32(if v > delta { v - delta } else { 0 })
         i += 1
       }
     }
@@ -897,7 +900,7 @@ fn (d: Deflater) find_match(pos: Int, prev_head: Int, prev_length: Int, lookahea
     if i == min_index {
       break
     }
-    i = d.hash_prev[i & WINDOW_MASK] - d.hash_offset
+    i = Int(d.hash_prev[i & WINDOW_MASK]) - d.hash_offset
     if i < min_index || i < 0 {
       break
     }
@@ -931,9 +934,9 @@ fn (var d: Deflater) deflate() {
     }
     if d.index < d.max_insert_index {
       let h = d.hash4(d.index)
-      d.chain_head = d.hash_head[h]
-      d.hash_prev[d.index & WINDOW_MASK] = d.chain_head
-      d.hash_head[h] = d.index + d.hash_offset
+      d.chain_head = Int(d.hash_head[h])
+      d.hash_prev[d.index & WINDOW_MASK] = UInt32(d.chain_head)
+      d.hash_head[h] = UInt32(d.index + d.hash_offset)
     }
     let prev_length = d.length
     let prev_offset = d.offset
@@ -1772,7 +1775,7 @@ fn deflater_for(level: Int) -> Deflater {
     8 => (32, 128, 258, 1024, SKIP_NEVER)
     _ => (32, 258, 258, 4096, SKIP_NEVER)
   }
-  Deflater{good: cfg.0, lazy: cfg.1, nice: cfg.2, chain: cfg.3, fast_skip: cfg.4, data: b"", base: 0, index: 0, window_end: 0, block_start: 0, byte_available: false, sync: false, tokens: [], length: MIN_MATCH - 1, offset: 0, max_insert_index: 0, chain_head: -1, hash_head: if level >= 2 { zeros(HASH_SIZE) } else { [] }, hash_prev: if level >= 2 { zeros(WINDOW_SIZE) } else { [] }, hash_offset: 1, blocks: new_blocks()}
+  Deflater{good: cfg.0, lazy: cfg.1, nice: cfg.2, chain: cfg.3, fast_skip: cfg.4, data: b"", base: 0, index: 0, window_end: 0, block_start: 0, byte_available: false, sync: false, tokens: [], length: MIN_MATCH - 1, offset: 0, max_insert_index: 0, chain_head: -1, hash_head: if level >= 2 { raw.zero_u32s(HASH_SIZE) } else { [] }, hash_prev: if level >= 2 { raw.zero_u32s(WINDOW_SIZE) } else { [] }, hash_offset: 1, blocks: new_blocks()}
 }
 
 /// A Writer at level (-2 HuffmanOnly, 0 NoCompression, 1 BestSpeed, 2 to

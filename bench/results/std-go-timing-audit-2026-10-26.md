@@ -496,3 +496,9 @@ Xo / Go about 1.08 (estimate: 1.156 x 0.934), from 1.156.
 Per std/changes/mime.md 2026-10-28 ("format_media_type escapes a quoted value in one pass"). Quiet `xo bench
 --ab`, 15 rounds, the parent's std as A: format wall 0.961 (0.938 to 0.991), instructions 0.953; Xo / Go about
 1.16 (estimate: 1.204 x 0.961), from 1.204.
+
+## flate hash tables as UInt32 (2026-10-28, xo-lang-5)
+
+Per std/changes/compress.md 2026-10-28 ("the deflater's hash tables hold UInt32, as Go's do"). Quiet `xo bench
+--ab`, 15 rounds, the parent's std as A: archive zip wall 0.959 (0.950 to 0.964), instructions 0.969; Xo / Go
+about 1.17 (estimate: 1.222 x 0.959), from 1.222.

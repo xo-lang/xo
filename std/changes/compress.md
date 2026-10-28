@@ -1,5 +1,19 @@
 # std/compress changes
 
+## 2026-10-28: perf: the deflater's hash tables hold UInt32, as Go's do
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/archive zip at 1.222x Go (measured on main 55af0adc5); its CPU profile (_bzero 12%: a new 131,072 and 32,768 entry table of 8 byte Ints zeroed for every deflate stream, one per zip entry)
+- Go reference: compress/flate deflate.go (hashHead [hashSize]uint32, hashPrev [windowSize]uint32) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/compress and archive (go, arm64, LLVM; the compressed bytes equal Go's); internal/arm64 archive_formats, http_gzip, crc32_vectors; TestSelfhostWasm archive_formats and crc32_vectors; twincheck's checksums agree on zip, gzip, deflate, unzip
+
+hash_head and hash_prev are List[UInt32] (raw.zero_u32s: packed four
+bytes an element natively, a word an element on wasm), the same table
+sizes, so the matches and the output are unchanged; half the bytes to zero
+for each stream and to read in the match search. Quiet --ab, 15 rounds,
+the parent's std as A: archive zip wall 0.959 (0.950 to 0.964); Xo / Go about 1.17 (estimate: 1.222 x 0.959), from 1.222, instructions 0.969; gzip
+and deflate (one stream each) instructions within 0.2%.
 ## 2026-10-28: fix: gunzip and unzip on wasm
 
 - Kind: fix
