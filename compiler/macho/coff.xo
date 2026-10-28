@@ -288,6 +288,9 @@ fn (var a: Asm) coff_directive(d: Str, rest: Bytes) -> Bool {
       let e = a.new_numeric(".Lseh_end".bytes())
       a.syms[e].sect = a.cur
       a.syms[e].off = a.code_len(a.cur)
+      // in the function's atom (decision 0388): its end, not the next
+      // function's start
+      a.syms[e].atom = a.sects[a.cur].last_atom
       a.sehs[k].end = e
       if a.sehs[k].info < 0 {
         // a function with no handler data: its unwind information now,

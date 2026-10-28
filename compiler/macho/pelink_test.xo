@@ -214,3 +214,34 @@ test "an icon file: its images and the group that lists them" {
     Err(e) => expect(e) == "not an icon file"
   }
 }
+
+// Decision 0388 on windows/amd64: in atoms mode a function nothing reaches
+// is stripped, with what only it references.
+fn pe_strip_src(directive: Bool) -> Bytes {
+  "${if directive { "\t.subsections_via_symbols\n" } else { "" }}\t.text\n\t.globl start\nstart:\n\tcallq used\n\tretq\n\t.globl used\nused:\n\tretq\n\t.globl unused_fn\nunused_fn:\n\tcallq nowhere\n\tretq\n".bytes()
+}
+
+fn pe_strip_link(directive: Bool) -> Result[Bytes, Str] {
+  let obj = match assemble_coff_amd64(pe_strip_src(directive)) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  let co = match read_coff("s.obj", obj) {
+    Ok(c) => c
+    Err(e) => fault(e)
+  }
+  link_pe([co], PEOpts{entry: "start", imports: {}})
+}
+
+test "atoms mode: pelink strips a function nothing reaches" {
+  // unused_fn's call to an undefined symbol fails the whole object's link,
+  // and goes with unused_fn when it is stripped
+  match pe_strip_link(false) {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.contains("undefined symbol nowhere")) == true
+  }
+  match pe_strip_link(true) {
+    Ok(_) => {}
+    Err(e) => fault(e)
+  }
+}

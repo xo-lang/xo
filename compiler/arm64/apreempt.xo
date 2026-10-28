@@ -154,7 +154,14 @@ fn (g: G) unsafe_parts(nss: List[Str]) -> Str {
     b.push("\t.quad ${g.sym("xo_unsafe_${ns}")}\n")
   }
   if g.m.std_store {
-    b.push("\t.quad section$start$__DATA$xounsafe\n\t.quad section$end$__DATA$xounsafe\n")
+    if g.os == "windows" {
+      // COFF has no section bounds: the index is .xounsafe$m, which
+      // pelink places between .xounsafe$a and $z (sorted by name, as
+      // MSVC's grouped sections), their labels its bounds
+      b.push("\t.quad xo_unsafe_ix_start\n\t.quad xo_unsafe_ix_end\n\t.section .xounsafe$a,\"dw\"\n\t.p2align 3\nxo_unsafe_ix_start:\n\t.section .xounsafe$z,\"dw\"\n\t.p2align 3\nxo_unsafe_ix_end:\n")
+    } else {
+      b.push("\t.quad section$start$__DATA$xounsafe\n\t.quad section$end$__DATA$xounsafe\n")
+    }
   }
   b.join("")
 }
@@ -190,6 +197,10 @@ fn (var g: G) unsafe_fn_tables(text: Str) -> Str {
       continue
     }
     let name = l[0..l.len() - 1]
+    // a numeric local label (`8:`, the x86 emitter's) is in its function
+    if is_digits(name) {
+      continue
+    }
     if name.starts_with("L") || name.starts_with(".L") {
       let at = name.find("_du") ?? -1
       if at >= 0 && at + 3 < name.len() && is_digits(name[at + 3..name.len()]) {
@@ -226,6 +237,7 @@ fn (g: G) unsafe_fn_table(f: Str, ls: List[Str]) -> Str {
     o.push("\t.long ${ls[i]} - ${f}\n\t.long ${ls[i + 1]} - ${f}\n")
     i += 2
   }
-  o.push("\t.section __DATA,xounsafe\n\t.p2align 3\n${ix}:\n\t.quad ${f}\n\t.quad ${t}\n")
+  let isect = if g.os == "windows" { "\t.section .xounsafe$m,\"dw\"\n" } else { "\t.section __DATA,xounsafe\n" }
+  o.push("${isect}\t.p2align 3\n${ix}:\n\t.quad ${f}\n\t.quad ${t}\n")
   o.join("")
 }

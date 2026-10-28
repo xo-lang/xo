@@ -529,7 +529,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
         // image path, XO_PDB_OBJ=0; an HTTP server edit's 64 ms to 31)
         let per_obj = (os.env.get("XO_PDB_OBJ") ?? "") != "0"
         let pdb_r = if per_obj {
-          let pre = macho.pre_procs(pdb_parts(os, objs, cdir, keys), objs, layout)
+          let pre = macho.pre_procs(pdb_parts(os, layout.objs, cdir, keys), layout.objs, layout)
           t = lap(os, phases, "pe.pdb_parts", t)
           macho.pe_pdb_facts(img0, None, Some(pre))
         } else {
@@ -543,7 +543,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
             // object's own DWARF against the image's, function by function
             let check = os.env.get("XO_PDB_OBJ_CHECK") ?? ""
             if check == "1" {
-              os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK: ${macho.obj_check(img0, objs)}")
+              os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK: ${macho.obj_check(img0, layout.objs)}")
             }
             // step 2a: the PDB from the objects' DWARF and the layout
             // against the image's, byte for byte
@@ -552,12 +552,12 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
             if check == "3" {
               let t3 = os.clock.now()
               var parts: List[macho.ObjPdb?] = []
-              for ob in objs {
+              for ob in layout.objs {
                 parts.push(macho.obj_pdb(ob).ok())
               }
               let parts_ms = os.clock.since(t3).millis()
               let tp = os.clock.now()
-              let pre = macho.pre_procs(parts, objs, layout)
+              let pre = macho.pre_procs(parts, layout.objs, layout)
               let pre_ms = os.clock.since(tp).millis()
               let tq = os.clock.now()
               match macho.pe_pdb_facts(img0, None, Some(pre)) {
@@ -567,7 +567,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
             }
             if check == "2" {
               let t2 = os.clock.now()
-              let facts = macho.merge_facts(objs, layout)
+              let facts = macho.merge_facts(layout.objs, layout)
               let merge_ms = os.clock.since(t2).millis()
               let tm = os.clock.now()
               match macho.pe_pdb_facts(img0, Some(facts), None) {

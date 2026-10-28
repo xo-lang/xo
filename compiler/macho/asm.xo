@@ -717,6 +717,13 @@ fn (var a: Asm) directive(l: Bytes) {
     // the object splits into atoms at its symbols (decision 0388's std
     // store; ld64's contract): every reference between atoms is relocated
     a.atoms = true
+    if a.coff {
+      // COFF has no such header flag: an empty section removed at the
+      // link marks the object for pelink (pestrip.xo coff_atoms)
+      let back = a.cur
+      a.coff_section(".xoatoms", IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE, 0)
+      a.cur = back
+    }
     return
   }
   if d == ".weak_definition" {

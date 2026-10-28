@@ -1,0 +1,275 @@
+// Dead stripping by atom for pelink (decision 0388 stage 4 on
+// windows/amd64): an object assembled with `.subsections_via_symbols`
+// (its .xoatoms marker) is split into atoms, its sections cut at their
+// symbols, .pdata per record and .xdata where a record's unwind
+// information starts; the atoms nothing reaches are left unplaced
+// (PEPlace out -1), as compiler/macho strip.xo does for Mach-O.
+
+/// Whether ob was assembled in atoms mode.
+fn coff_atoms(ob: CObj) -> Bool {
+  for s in ob.sects {
+    if s.name == ".xoatoms" {
+      return true
+    }
+  }
+  false
+}
+
+/// Whether symbol i of ob is a section's symbol (static, value 0, its
+/// auxiliary record next).
+fn coff_secsym(ob: CObj, i: Int) -> Bool {
+  let s = ob.syms[i]
+  s.class == IMAGE_SYM_CLASS_STATIC && s.value == 0 && i + 1 < ob.syms.len() && ob.syms[i + 1].aux && s.sect > 0 && ob.sects[s.sect - 1].name == s.name
+}
+
+/// The width of a relocation's field (its in-place value).
+fn coff_rel_width(typ: Int) -> Int {
+  if typ == IMAGE_REL_AMD64_ADDR64 { 8 } else { 4 }
+}
+
+/// ob split into atoms: each section's cuts, its pieces as sections of
+/// their own (relocations moved with their fields), every symbol moved to
+/// its piece, a reference by a section's symbol moved to the piece its
+/// in-place offset falls in (a new section symbol for each piece after the
+/// first), unless the offset is the section's end.
+fn coff_split(ob: CObj) -> CObj {
+  let n = ob.sects.len()
+  // the cuts of each section, sorted, starting at 0
+  var cuts: List[List[Int]] = []
+  for _ in 0..n {
+    cuts.push([0])
+  }
+  for (i, s) in ob.sects.indexed() {
+    if s.data.is_empty() || s.name.starts_with(".debug") || (s.chars & IMAGE_SCN_LNK_REMOVE) != 0 {
+      continue
+    }
+    if s.name == ".pdata" {
+      var c: List[Int] = []
+      var k = 0
+      while k < s.size {
+        c.push(k)
+        k += 12
+      }
+      cuts[i] = c
+    }
+  }
+  // .xdata: where each .pdata record's unwind information starts (its
+  // third field, relocated to .xdata's section symbol)
+  for s in ob.sects {
+    if s.name != ".pdata" {
+      continue
+    }
+    for r in s.relocs {
+      if r.addr % 12 != 8 || !coff_secsym(ob, r.sym) {
+        continue
+      }
+      let xi = ob.syms[r.sym].sect - 1
+      if ob.sects[xi].name == ".xdata" {
+        let off = get_le(s.data, r.addr, 4)
+        if off > 0 && off < ob.sects[xi].size {
+          cuts[xi].push(off)
+        }
+      }
+    }
+  }
+  // the other sections at their symbols
+  for (si, sy) in ob.syms.indexed() {
+    if sy.aux || sy.sect <= 0 || coff_secsym(ob, si) || !(sy.class == IMAGE_SYM_CLASS_EXTERNAL || sy.class == IMAGE_SYM_CLASS_STATIC) {
+      continue
+    }
+    let i = sy.sect - 1
+    let s = ob.sects[i]
+    if s.data.is_empty() || s.name.starts_with(".debug") || s.name == ".pdata" || s.name == ".xdata" || (s.chars & IMAGE_SCN_LNK_REMOVE) != 0 {
+      continue
+    }
+    if sy.value > 0 && sy.value < s.size {
+      cuts[i].push(sy.value)
+    }
+  }
+  for i in 0..n {
+    let c = cuts[i].sort()
+    var u: List[Int] = []
+    for x in c {
+      if u.is_empty() || u[u.len() - 1] != x {
+        u.push(x)
+      }
+    }
+    cuts[i] = u
+  }
+  // the pieces: first[i] the new index of section i's first piece
+  var first: List[Int] = []
+  var nsects: List[CSect] = []
+  for (i, s) in ob.sects.indexed() {
+    first.push(nsects.len())
+    let c = cuts[i]
+    for (j, a) in c.indexed() {
+      let b = if j + 1 < c.len() { c[j + 1] } else { s.size }
+      nsects.push(CSect{name: s.name, chars: s.chars, data: if s.data.is_empty() { s.data } else { s.data[a..b] }, size: b - a, relocs: []})
+    }
+  }
+  // the piece of section i holding offset off (the last at its end)
+  let piece = fn(i: Int, off: Int) -> Int {
+    let c = cuts[i]
+    var j = c.len() - 1
+    while j > 0 && c[j] > off {
+      j -= 1
+    }
+    j
+  }
+  // symbols: moved to their pieces; a section symbol for each later piece
+  var syms = ob.syms
+  var secsym_of: List[Int] = []
+  for _ in 0..nsects.len() {
+    secsym_of.push(-1)
+  }
+  for (si, sy) in ob.syms.indexed() {
+    if sy.aux || sy.sect <= 0 {
+      continue
+    }
+    let i = sy.sect - 1
+    if coff_secsym(ob, si) {
+      secsym_of[first[i]] = si
+      syms[si] = sy with {sect: first[i] + 1}
+      continue
+    }
+    let j = piece(i, sy.value)
+    syms[si] = sy with {sect: first[i] + j + 1, value: sy.value - cuts[i][j]}
+  }
+  for (k, s) in nsects.indexed() {
+    if secsym_of[k] < 0 {
+      secsym_of[k] = syms.len()
+      syms.push(CSym{name: s.name, value: 0, sect: k + 1, class: IMAGE_SYM_CLASS_STATIC})
+    }
+  }
+  // relocations: each with its field's piece; a section symbol's moved to
+  // the piece its in-place offset names, the field less that piece's start
+  for (i, s) in ob.sects.indexed() {
+    for r in s.relocs {
+      let j = piece(i, r.addr)
+      let k = first[i] + j
+      var target = r.sym
+      if coff_secsym(ob, r.sym) && r.typ != IMAGE_REL_AMD64_SECREL {
+        let ti = ob.syms[r.sym].sect - 1
+        if cuts[ti].len() > 1 {
+          let w = coff_rel_width(r.typ)
+          let v = get_le(s.data, r.addr, w)
+          // a .pdata record's end address is its function's end: the piece
+          // of the byte before it, not the next function's
+          let tj = if s.name == ".pdata" && r.addr % 12 == 4 && v > 0 { piece(ti, v - 1) } else { piece(ti, v) }
+          if tj > 0 {
+            target = secsym_of[first[ti] + tj]
+            // the field less the piece's start, in this piece's copy
+            nsects[k].relocs.push(CReloc{addr: r.addr - cuts[i][j], sym: target, typ: r.typ})
+            nsects[k] = nsects[k] with {data: bytes_le_put(nsects[k].data, r.addr - cuts[i][j], v - cuts[ti][tj], w)}
+            continue
+          }
+        }
+      }
+      nsects[k].relocs.push(CReloc{addr: r.addr - cuts[i][j], sym: target, typ: r.typ})
+    }
+  }
+  CObj{path: ob.path, sects: nsects, syms: syms}
+}
+
+/// d with the n byte little endian v at at.
+fn bytes_le_put(d: Bytes, at: Int, v: Int, n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(d.len())
+  b.write(d[0..at])
+  for k in 0..n {
+    b.write_byte(UInt8((v >> (8 * k)) & 0xff))
+  }
+  b.write(d[at + n..d.len()])
+  b.freeze()
+}
+
+/// The sections of objs a link keeps: every section of an object not in
+/// atoms mode, and of the others what the entry, .tls and .CRT sections
+/// reach by relocations (through the globals), a .pdata record with its
+/// function. live[o][s]; debug sections are kept and reach nothing.
+fn coff_live(objs: List[CObj], entry: Str) -> List[List[Bool]] {
+  var live: List[List[Bool]] = []
+  var atoms: List[Bool] = []
+  for ob in objs {
+    var l: List[Bool] = []
+    for _ in ob.sects {
+      l.push(false)
+    }
+    live.push(l)
+    atoms.push(coff_atoms(ob))
+  }
+  var globals: Map[Str, (Int, Int)] = {}
+  for (oi, ob) in objs.indexed() {
+    for s in ob.syms {
+      if !s.aux && s.class == IMAGE_SYM_CLASS_EXTERNAL && s.sect > 0 && !globals.contains(s.name) {
+        globals[s.name] = (oi, s.sect - 1)
+      }
+    }
+  }
+  // a function's .pdata records and its unsafe range index record
+  // (.xounsafe$m, decision 0388): by the section their first field names
+  var assoc: Map[Int, List[Int]] = {}
+  for (oi, ob) in objs.indexed() {
+    if !atoms[oi] {
+      continue
+    }
+    for (si, s) in ob.sects.indexed() {
+      if s.name != ".pdata" && s.name != ".xounsafe$m" {
+        continue
+      }
+      for r in s.relocs {
+        if r.addr == 0 {
+          let t = ob.syms[r.sym]
+          if t.sect > 0 {
+            let key = (oi << 32) | (t.sect - 1)
+            var l = assoc.get(key) ?? []
+            l.push(si)
+            assoc[key] = l
+          }
+        }
+      }
+    }
+  }
+  var work: List[(Int, Int)] = []
+  for (oi, ob) in objs.indexed() {
+    for (si, s) in ob.sects.indexed() {
+      if !atoms[oi] || s.name.starts_with(".debug") || s.name.starts_with(".tls") || s.name.starts_with(".CRT") || (s.chars & IMAGE_SCN_LNK_REMOVE) != 0 || s.name == ".drectve" {
+        coff_mark(live, work, oi, si)
+      }
+    }
+  }
+  if let Some((eo, es)) = globals.get(entry) {
+    coff_mark(live, work, eo, es)
+  }
+  while !work.is_empty() {
+    let (oi, si) = work[work.len() - 1]
+    work = work[0..work.len() - 1]
+    let ob = objs[oi]
+    let s = ob.sects[si]
+    if s.name.starts_with(".debug") {
+      continue
+    }
+    for p in assoc.get((oi << 32) | si) ?? [] {
+      coff_mark(live, work, oi, p)
+    }
+    for r in s.relocs {
+      let t = ob.syms[r.sym]
+      var to = (-1, -1)
+      if t.sect > 0 {
+        to = (oi, t.sect - 1)
+      } else if t.sect == 0 {
+        to = globals.get(t.name) ?? (-1, -1)
+      }
+      if to.0 >= 0 {
+        coff_mark(live, work, to.0, to.1)
+      }
+    }
+  }
+  live
+}
+
+fn coff_mark(var live: List[List[Bool]], var work: List[(Int, Int)], o: Int, s: Int) {
+  if !live[o][s] {
+    live[o][s] = true
+    work.push((o, s))
+  }
+}

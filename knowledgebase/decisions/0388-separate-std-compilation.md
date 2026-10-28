@@ -369,6 +369,41 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   them; an audit found no wrong code in 0.33.0, the empty list could only have faulted the build);
   a warm build folds target constants as a cold one does (the binaries are byte for byte the same;
   a Windows LLVM split build links cold and warm, ThinLTO and none).
+### COFF: atoms and pelink's strip (Xo Lang 2, 2026-10-28)
+
+- Step 1 (c8872ec8b): `.subsections_via_symbols` in the COFF assembler (no
+  header flag: an empty `.xoatoms` LNK_REMOVE section marks the object). A
+  branch or rip relative reference resolves only within its own atom; a
+  temporary label in another atom is relocated to that atom's symbol with
+  its offset, in code and in data words; `.Lseh_end` belongs to its
+  function's atom. Atoms are spans at symbols in one `.text`, as Mach-O's,
+  not a COMDAT section per function (about 6,000 section headers an object
+  saved, and the store core's adapter has Mach-O's shape).
+- Step 2: pelink splits an atoms object (compiler/macho pestrip.xo
+  coff_split): sections at their symbols, `.pdata` per 12 byte record,
+  `.xdata` where a record's unwind information starts, a section symbol's
+  reference moved to the piece its in-place offset names (a `.pdata` end
+  field by the byte before it). coff_live walks relocations from the
+  entry and from every section of a whole object, `.tls`, `.CRT`,
+  `.drectve`; a `.pdata` record and a `.xounsafe$m` index record follow the
+  function their first field names. A dead piece is unplaced; DWARF's
+  references to it are 0, any other is an error.
+- The unsafe range index on COFF: a windows store build (std_store) writes
+  apreempt's per-function tables, the index records in `.xounsafe$m`, its
+  bounds labels in `.xounsafe$a` and `$z`, which pelink places after the
+  other data sorted by name (one run, no padding: 16 byte records, 8
+  aligned). unsafe_fn_tables skips numeric local labels (`8:`, the x86
+  emitter's), which it took for functions (darwin/amd64's store build
+  failed on `8$ut`).
+- A std-roots llvm-fib for windows/amd64 (XO_STD_ROOTS=1 XO_DCE=off
+  XO_PASSES=-hollow): 8,553 text atoms, 579 live, .text 346 KB (the normal
+  hollow-free windows build 505 KB); it runs under Wine (Box64) with the
+  normal build's output. Two leaks found on the way: the per-part unsafe
+  tables rooting every part's first function (gone with the index), and
+  each `.pdata` end field resolving into the next function (2.1 MB of
+  text kept before). Async preemption and the debugger on the stripped
+  build wait for the batched Windows CI run (Wine does not model thread
+  suspension).
 
 ## Alternatives
 

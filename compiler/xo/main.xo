@@ -1528,7 +1528,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow")
     // decision 0388's std store: the parts split into atoms, which the
     // link strips by symbol (every object path below assembles these)
-    if ((os.env.get("XO_STD_ROOTS") ?? "") == "1" || !std_obj_dir(os).is_empty()) && tgoos == "darwin" {
+    // (windows/amd64's COFF too: pelink strips by atom, pestrip.xo)
+    if ((os.env.get("XO_STD_ROOTS") ?? "") == "1" || !std_obj_dir(os).is_empty()) && (tgoos is "darwin" | "windows") {
       p.parts = p.parts.map(fn(x) { "\t.subsections_via_symbols\n${x}" })
     }
     // a split darwin build through the back-end cache, part by part
