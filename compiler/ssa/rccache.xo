@@ -49,7 +49,7 @@ pub struct LazyFn {
 /// inliner must see it without decoding the body (a build without debug
 /// information keeps the readers' stubs this way, 2026-10-25).
 fn lazy_shell(f: Func, key: Str, borrowed: List[Bool]) -> Func {
-  Func{name: f.name, file: f.file, results: f.results, indirect: f.indirect, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, borrowed: borrowed, ckey: "rc ${key}"}
+  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, borrowed: borrowed, ckey: "rc ${key}"}
 }
 
 /// Decodes the lazy functions idx of m (all of them for idx []) in

@@ -348,7 +348,7 @@ pub fn diff_std_facts(want: List[StdFact], got: List[StdFact]) -> FactsDiff {
       d.errors.push("${n}: borrowed ${bools_str(g.borrowed)}, want ${bools_str(w.borrowed)} (the calling convention)")
     }
     if g.var_params != w.var_params {
-      d.errors.push("${n}: var parameters differ")
+      d.errors.push("${n}: var parameters [${g.var_params.map(fn(i) { "${i}" }).join(" ")}], want [${w.var_params.map(fn(i) { "${i}" }).join(" ")}]")
     }
     if g.catches != w.catches {
       d.errors.push("${n}: catches ${g.catches}, want ${w.catches}")

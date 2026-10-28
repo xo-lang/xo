@@ -196,11 +196,13 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
   // (with XO_PASSES, either way, the entries' keys do not say which
   // passes ran; passes_changed reads both - and + names)
   if dir.is_empty() || release || b.m.funcs.len() < 256 || passes_changed(os) {
+    no_std_facts_dump(os)
     b.insert_rc_jobs(jobs)
     return []
   }
   let id = cache_id(os)
   if id.is_empty() {
+    no_std_facts_dump(os)
     b.insert_rc_jobs(jobs)
     return []
   }
@@ -1932,4 +1934,13 @@ fn iface_check_cmd(os: Os, dir: Str) -> Int {
   }
   os.stdio.println("iface-check: ${files} files, ${cases} cases, ${bad} differ")
   if bad > 0 { 1 } else { 0 }
+}
+
+/// XO_STD_FACTS_DUMP is written where insert_rc takes the cache's path
+/// (rc_cached): a build that does not fails instead of writing nothing.
+fn no_std_facts_dump(os: Os) {
+  let p = os.env.get("XO_STD_FACTS_DUMP") ?? ""
+  if !p.is_empty() {
+    fail(os, "XO_STD_FACTS_DUMP=${p} is not written by this build: its reference counting does not take the backend cache's path (XO_BACKEND_CACHE=off, XO_PASSES, --release, or a program of under 256 functions)")
+  }
 }
