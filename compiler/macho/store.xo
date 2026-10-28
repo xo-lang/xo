@@ -326,7 +326,10 @@ pub fn (var s: StoreLink) resolve() -> Str {
   for o in 0..s.l.objs.len() {
     for k in 0..s.l.objs[o].sects.len() {
       let x = s.l.objs[o].sects[k]
-      if x.seg == "__LD" && x.name == "__compact_unwind" {
+      if is_eh(x) && o < s.n && !s.l.x86 {
+        // the dead functions' FDEs, as dead_strip drops them
+        s.l.objs[o].sects[k] = s.l.eh_live(o, x, live2)
+      } else if x.seg == "__LD" && x.name == "__compact_unwind" {
         if o < s.n {
           s.l.objs[o].sects[k] = s.l.live_unwind(o, x, live2)
         } else {

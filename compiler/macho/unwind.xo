@@ -212,6 +212,16 @@ fn (var l: Linker) unwind_info() {
     }
     var at = 0
     while at + 32 <= s.size {
+      // an entry of a dead function (an atom the strip dropped, or one a
+      // store link folded into its object's empty __dead section) is
+      // left out, as its FDE is (strip.xo eh_live)
+      if let Some(fr) = rs.get(at) {
+        let (fd, fj) = l.reloc_sect(o, s, fr)
+        if fd >= 0 && fj >= 0 && l.objs[fd].sects[fj].dead {
+          at += 32
+          continue
+        }
+      }
       let func = l.cu_field(o, s, rs, at)
       let len = rd32(s.data, at + 8)
       var enc = rd32(s.data, at + 12)

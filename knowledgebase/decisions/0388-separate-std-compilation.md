@@ -636,3 +636,15 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
 - A released windows store counts only with its PDB parts beside it
   (lib/xo/stdstore/windows-amd64-concN.store.pdb; stdcache.xo std_released), as the cache's
   are kept together (Lang 2's release.sh copies them when XO_RELEASE_STDSTORES=1).
+- Mach-O __eh_frame without dead functions' FDEs (2026-10-28): the store link (and the
+  parts', byte for byte) kept every dead function's FDE, pointing at 0 (an HTTP server's
+  __eh_frame 243 KB against a whole program's 59 KB, 4456 FDEs for about 2700 functions).
+  compiler/macho strip.xo eh_live (arm64) writes an atoms mode object's __eh_frame again
+  without the FDEs whose function's own atom is dead: later records move back, each moved
+  SUBTRACTOR field's addend (minus its offset from the section's start, cfi.xo) becomes
+  addend - shift, each FDE's CIE pointer is recomputed, and the last kept record grows by
+  DW_CFA_nop bytes so the section keeps its size modulo its alignment (the link's zero
+  padding between objects otherwise reads as the terminator). Applied in dead_strip and
+  StoreLink.resolve; unwind.xo unwind_info leaves out a compact entry whose function atom
+  is dead (a store link folds those into the object's __dead section). Normal builds are
+  unchanged (identity 202 of 202).
