@@ -269,6 +269,11 @@ pub fn (var b: Builder) fold_known_calls() {
     }
   }
   b.fold_known = known
+  if b.keep_unwind_names {
+    for (fi, a) in known {
+      b.known_names[b.m.funcs[fi].name] = a
+    }
+  }
   if known.is_empty() {
     return
   }

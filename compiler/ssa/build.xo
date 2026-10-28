@@ -203,6 +203,9 @@ pub struct Builder {
   sep: Map[Str, StdFact] = {}
   sep_read: Bool = false
   pub unwind_names: Map[Str, (Bool, Bool)] = {}
+  /// with keep_unwind_names, fold_known_calls's constant results by name
+  /// (a decoded cache hit is no longer Func.target: std_facts)
+  pub known_names: Map[Str, Aux] = {}
   /// the constants fold_known_calls folded calls of these functions to
   pub fold_known: Map[Int, Aux] = {}
   /// The program is lowered for the wasm backend (decision 0207): rt.layout

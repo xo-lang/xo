@@ -277,6 +277,32 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
       os.stdio.eprintln("stdf ${fs.len()} std functions written to ${sfd} (${nb} with a borrowed parameter)")
     }
   }
+  // decision 0388: std's object builder's facts against this whole-program
+  // build's, by name: a calling convention that differs (borrowed or var
+  // parameters, catches) or a fact less conservative fails the build
+  let sfv = os.env.get("XO_STD_FACTS_VERIFY") ?? ""
+  if !sfv.is_empty() {
+    let got = match os.fs.read(sfv) {
+      Ok(d) => {
+        match ssa.decode_std_facts(d) {
+          Some(fs) => fs
+          None => fail(os, "XO_STD_FACTS_VERIFY=${sfv}: not std facts of ${ssa.STD_FACTS_VERSION}")
+        }
+      }
+      Err(e) => fail(os, "XO_STD_FACTS_VERIFY=${sfv}: ${e}")
+    }
+    let d = ssa.diff_std_facts(ssa.std_facts_of_std(b.m, b, plan), got)
+    if !d.errors.is_empty() {
+      fail(os, "XO_STD_FACTS_VERIFY=${sfv}: ${d.errors.len()} of the ${d.common} std functions both name differ from this build's, the first: ${d.errors[0]}")
+    }
+    if phases {
+      var kinds: List[Str] = []
+      for (k, ns) in d.conservative {
+        kinds.push("${k} ${ns.len()}")
+      }
+      os.stdio.eprintln("stdf verify: ${d.common} std functions, 0 errors; more conservative: ${if kinds.is_empty() { "none" } else { kinds.join(", ") }}")
+    }
+  }
   t = lap(os, phases, "insert_rc.apply", t)
   pack_store(os, pk, entries, out.stores)
   if lazy {
@@ -1951,10 +1977,11 @@ fn iface_check_cmd(os: Os, dir: Str) -> Int {
   if bad > 0 { 1 } else { 0 }
 }
 
-/// XO_STD_FACTS_DUMP is written where insert_rc takes the cache's path
-/// (rc_cached): a build that does not fails instead of writing nothing.
+/// XO_STD_FACTS_DUMP is written, and XO_STD_FACTS_VERIFY checked, where
+/// insert_rc takes the cache's path (rc_cached): a build that does not
+/// fails instead of doing neither.
 fn no_std_facts_dump(os: Os) {
-  let p = os.env.get("XO_STD_FACTS_DUMP") ?? ""
+  let p = os.env.get("XO_STD_FACTS_DUMP") ?? os.env.get("XO_STD_FACTS_VERIFY") ?? ""
   if !p.is_empty() {
     fail(os, "XO_STD_FACTS_DUMP=${p} is not written by this build: its reference counting does not take the backend cache's path (XO_BACKEND_CACHE=off, XO_PASSES, --release, or a program of under 256 functions)")
   }

@@ -2103,7 +2103,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
     // b.run_passes(), timed; may_fault's scans on tasks
     b.m.jobs = emit_jobs(os)
     let tp = t
-    b.keep_unwind_names = !(os.env.get("XO_STD_FACTS_DUMP") ?? "").is_empty()
+    b.keep_unwind_names = !(os.env.get("XO_STD_FACTS_DUMP") ?? "").is_empty() || !(os.env.get("XO_STD_FACTS_VERIFY") ?? "").is_empty()
     b.prune_unwind()
     t = lap(os, o.phases, "prune_unwind.unwind", t)
     b.fold_known_calls()
