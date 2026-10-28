@@ -144,7 +144,18 @@ fn last_slash(p: Str) -> Int {
   -1
 }
 
-fn dir(p: Str) -> Str { clean(p[0..last_slash(p) + 1]) }
+/// Go's Dir: Clean(path[:lastSlash+1]). Clean drops a trailing `/` of a
+/// path longer than `/`, so the prefix is cleaned without it: an already
+/// clean directory is then returned as a view, with nothing allocated
+/// (2026-10-27: with the `/` kept, is_clean never held and every dir
+/// built its result, 70% of the parts row).
+fn dir(p: Str) -> Str {
+  let i = last_slash(p)
+  if i <= 0 {
+    return clean(p[0..i + 1])
+  }
+  clean(p[0..i])
+}
 
 /// Go's Base: the last element, trailing slashes dropped; found by index
 /// and cut once (the port cut a copy per trailing slash and per step).

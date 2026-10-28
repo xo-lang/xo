@@ -1,5 +1,23 @@
 # std/path changes
 
+## 2026-10-27: perf: dir cleans its prefix without the trailing slash
+
+- Kind: perf
+- Commit: this commit
+- Found by: path's parts profile (dir 70%: clean of a prefix ending in `/`, which is never clean, so every dir built its result and validated it as UTF-8)
+- Go reference: path.Dir (Clean(path[:lastSlash+1]); Clean drops a trailing `/`)
+- Test: internal/stdtest/testdata/corpus/path (go, arm64, LLVM), with dir's edges added to the generator (`a//b`, `//a`, `///a`, `a//`, `/a/`, `a/b//`, `/../a`, `..//a` and more); twincheck's checksums agree on clean, join, parts, match
+- Timing: bench/perf/path, quiet --ab, 15 rounds: parts 0.865 of the parent's wall (0.857 to 0.889), instructions 0.844; Xo / Go about 1.38 (estimate: 1.596 x 0.865), from 1.596
+
+dir passed `p[0..i+1]` to clean, a prefix that always ends in `/`, so
+is_clean never held and every call built the cleaned text. Clean drops a
+trailing `/` of anything longer than `/`, so dir now passes `p[0..i]`
+(and `p[0..1]` when the only `/` leads): the same result, and an already
+clean directory comes back as a view with nothing allocated. parts stays
+over the 1.2x bar: what is left is the other half of dir's prefixes (those
+with `.`, `..` or repeated slashes, which clean rebuilds) and the checked
+Str slices of split, base and ext.
+
 ## 2026-10-27: perf: clean finds the elements once and returns a clean path as it is
 
 - Kind: perf

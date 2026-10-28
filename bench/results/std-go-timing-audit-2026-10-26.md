@@ -332,3 +332,25 @@ x 0.907), from 1.490.
 Per decision 0387 part 2 and std/changes/uuid.md 2026-10-27. Quiet `xo bench --ab`, 15 rounds, the Go twin
 (google/uuid) as A, Xo / Go wall: parse 1.181 (1.135 to 1.213), string 1.018 (0.999 to 1.061), bytes 1.749
 (1.696 to 1.903), from 1.23, 0.35 and 4.24. bytes is over the bar on allocation (the 16 byte Bytes).
+
+## Re-measured on main d088ecee3, and path dir (2026-10-27, xo-lang-5)
+
+Quiet `xo bench --ab`, 15 rounds, one pair per job, A the Go twin, B the Xo program (native arm64,
+--release, main d088ecee3); twincheck's checksums agree on every workload of the five directories:
+
+| workload | Go wall | Xo wall | wall | instructions | cycles |
+|---|---|---|---|---|---|
+| path parts | 9.39 ms | 14.99 ms | 1.596 (1.557 to 1.675) | 1.597 | 1.693 |
+| template render | 210.9 ms | 336.4 ms | 1.595 (1.583 to 1.602) | 1.108 | 1.562 |
+| toml decode | 49.8 ms | 72.5 ms | 1.454 (1.437 to 1.472) | 1.366 | 1.447 |
+| big quorem | 12.0 ms | 17.4 ms | 1.451 (1.439 to 1.479) | 1.575 | 1.478 |
+| compress gzip1 (BestSpeed) | 85.2 ms | 73.1 ms | 0.858 (0.849 to 0.866) | 1.214 | 0.755 |
+
+gzip1 is under the bar (the code table and bit buffer steps above), so flate BestSpeed is done. big
+quorem measures 1.45 against the 1.42 recorded after its unrolled row.
+
+path dir (std/changes/path.md 2026-10-27, "dir cleans its prefix without the trailing slash"): parts
+0.865 of the parent's wall (0.857 to 0.889), instructions 0.844; Xo / Go about 1.38 (estimate: 1.596 x
+0.865). Still over: in its profile with the fix, clean is 59% (the dir prefixes with `.`, `..` or
+repeated slashes, its segment list and builder), and the checked Str slices of split, base and ext
+(prelude.llrt_str_slice_chk, a call at every `s[lo..hi]`) 26%.

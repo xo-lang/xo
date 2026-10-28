@@ -1420,6 +1420,11 @@ func pathCorpus() string {
 	for _, s := range []string{"", "/", "//", "///", ".", "./", "../", "a//b//c", "a/b/", "/a/./b/../c", "x/../../y"} {
 		add(s)
 	}
+	// dir's edges: it cleans the prefix before the last `/` without that
+	// `/` (repeated slashes, a root prefix, a dot or dot-dot element last)
+	for _, s := range []string{"a//b", "//a", "///a", "a//", "/a/", "a/b//", "//a//b", "../a//b", "/../a", "a/../b", "./a", "a/./b", "/./a", "..//a", "a/..//b"} {
+		add(s)
+	}
 	for i := 0; i < 1200; i++ {
 		add(pathRandom(r))
 	}
