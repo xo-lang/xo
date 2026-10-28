@@ -189,6 +189,24 @@ fn parse_object(path: Str, b: Bytes) -> Result[IObj, Str] {
   Ok(obj)
 }
 
+/// defined_symbols: the external symbols an object defines (in a
+/// section or absolute), for a driver that checks a link's undefined
+/// names before it (decision 0388: std's object), or the error.
+pub fn defined_symbols(path: Str, b: Bytes) -> Result[List[Str], Str] {
+  match parse_object(path, b) {
+    Ok(o) => {
+      var out: List[Str] = []
+      for s in o.syms {
+        if (s.typ & N_STAB) == 0 && (s.typ & N_EXT) != 0 && ((s.typ & N_TYPE) == 0x0e || (s.typ & N_TYPE) == N_ABS) {
+          out.push(bstr(s.name))
+        }
+      }
+      Ok(out)
+    }
+    Err(e) => Err(e)
+  }
+}
+
 /// parse_archive: the objects of a BSD archive (long names `#1/N`),
 /// none of them live yet.
 fn parse_archive(path: Str, b: Bytes) -> Result[List[IObj], Str] {

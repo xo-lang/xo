@@ -165,7 +165,7 @@ fn (var g: G) alias(key: Str) -> Str {
   // size) valgrind and perf dropped it, and profiles showed every
   // helper as ??? (Xo Lang 3, 2026-10-17)
   let ty = if g.os == "linux" { "\t.type ${ext}, %function\n" } else { "" }
-  "${named}${g.hidden_global(ext)}${ty}${ext}:\n"
+  "${named}${g.hidden_global(ext)}${g.weak_def(ext)}${ty}${ext}:\n"
 }
 
 /// Generates the helper a part wanted (Want), once.
@@ -287,7 +287,7 @@ pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program {
 /// generated (with fc.verify, generated and compared with it).
 pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Program {
   var m = m0
-  let plist = part_lists(m)
+  var plist = part_lists(m)
   let np = plist.len()
   if np <= 1 {
     ssa.force_lazy(m, [], jobs)
@@ -327,6 +327,14 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
   }
   let taken = g.addr_taken
   let names = part_names(m, plist)
+  if m.std_obj {
+    // std's object: the program's own functions are its object's
+    // (ssa.std_func; a generic instance is emitted here too, weak, and a
+    // generated function with no file, a std global's value among them)
+    for p in 0..np {
+      plist[p] = plist[p].filter(fn(fi: Int) -> Bool { m.funcs[fi].file.is_empty() || ssa.std_func(m.funcs[fi].name, m.funcs[fi].file) || m.funcs[fi].name.contains("[") })
+    }
+  }
   var parts: List[Part] = []
   let w = jobs.min(np)
   if w <= 1 {

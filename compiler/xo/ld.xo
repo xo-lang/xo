@@ -832,3 +832,22 @@ fn pdb_parts(os: Os, objs: List[macho.CObj], cdir: Str, keys: List[Str]) -> List
   }
   out
 }
+
+/// std's object (XO_STD_OBJ=DIR, decision 0388 stage 4): the part
+/// objects objs copied into sod, with their indexed store, std.store.
+fn write_std_obj(os: Os, sod: Str, objs: List[Str]) {
+  var ins: List[macho.LinkInput] = []
+  for ob in objs {
+    match os.fs.read(ob) {
+      Ok(b) => {
+        write_or_fail(os, sod, "${sod}/${base_name(ob)}", b)
+        ins.push(macho.LinkInput{path: base_name(ob), data: b})
+      }
+      Err(e) => fail(os, "${ob}: ${e}")
+    }
+  }
+  match macho.store_encode(ins) {
+    Ok(b) => write_or_fail(os, sod, "${sod}/std.store", b)
+    Err(e) => fail(os, "XO_STD_OBJ=${sod}: ${e}")
+  }
+}

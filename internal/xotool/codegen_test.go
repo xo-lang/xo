@@ -44,6 +44,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_LLRT_C":               {"content", ""},
 	"XO_CHECK_EAGER":          {"content", ""},
 	"XO_STD_ROOTS":            {"content", ""}, // decision 0388 1b: every std function a root; the module's content says so
+	"XO_STD_OBJ":              {"content", ""}, // decision 0388 stage 4: std's object (XO_STD_ROOTS, the program's functions left out, weak helpers: " weak=1" in the fn and part keys); written to a directory, not linked
 	"XO_CHECK_NO_PARSE_CACHE": {"none", ""},
 	"XO_STD":                  {"content", ""},
 	"XO_ZONEINFO":             {"content", ""},

@@ -90,6 +90,9 @@ struct Sym {
   /// visibility, .size, a mapping symbol ($x, $d) or section symbol
   kind: Int = 0
   weak: Bool = false
+  /// Mach-O `.weak_definition` (N_WEAK_DEF): another object may define
+  /// it too, and the link keeps the first
+  weak_def: Bool = false
   hidden: Bool = false
   size: Int = 0
   mapsym: Bool = false
@@ -714,6 +717,11 @@ fn (var a: Asm) directive(l: Bytes) {
     // the object splits into atoms at its symbols (decision 0388's std
     // store; ld64's contract): every reference between atoms is relocated
     a.atoms = true
+    return
+  }
+  if d == ".weak_definition" {
+    let i = a.sym(rest)
+    a.syms[i].weak_def = true
     return
   }
   if d == ".private_extern" {

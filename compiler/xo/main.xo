@@ -640,7 +640,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   c.lazy = native && (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
   // decision 0388 stage 1b's prototype: std's every non generic function
   // built, as std's object will be
-  c.std_roots = (os.env.get("XO_STD_ROOTS") ?? "") == "1"
+  c.std_roots = (os.env.get("XO_STD_ROOTS") ?? "") == "1" || !std_obj_dir(os).is_empty()
   if c.std_roots {
     // every body is built, so every body is checked first
     c.lazy = false
@@ -1528,7 +1528,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow")
     // decision 0388's std store: the parts split into atoms, which the
     // link strips by symbol (every object path below assembles these)
-    if (os.env.get("XO_STD_ROOTS") ?? "") == "1" && tgoos == "darwin" {
+    if ((os.env.get("XO_STD_ROOTS") ?? "") == "1" || !std_obj_dir(os).is_empty()) && tgoos == "darwin" {
       p.parts = p.parts.map(fn(x) { "\t.subsections_via_symbols\n${x}" })
     }
     // a split darwin build through the back-end cache, part by part
@@ -1553,7 +1553,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // a symbol of the program that nothing defines (arm64 undef.xo): an
     // rt.* intrinsic no backend lowers, called directly, would stop the
     // link with no hint of the call
-    if tgoos == "darwin" && o.cmd != "asm" {
+    if tgoos == "darwin" && o.cmd != "asm" && !gm.std_obj {
       let und = match inc {
         Some(r) => r.undef
         None => arm64.undefined_xo(if p.parts.len() > 1 { p.parts } else { [p.asm] })
@@ -1820,6 +1820,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       progs = objs
       t = lap(os, phases, "assemble", t)
       cache_note(os, phases, "objects", srcs.len() - nasm, srcs.len())
+      if gm.std_obj {
+        // std's object: its parts and their indexed store in the
+        // directory, not linked (the program's main is not in them)
+        let sod = std_obj_dir(os)
+        write_std_obj(os, sod, objs)
+        os.stdio.eprintln("std object: ${objs.len()} parts and std.store in ${sod}")
+        lap(os, phases, "std_obj", t)
+        continue
+      }
     }
     let srcs = progs + lk.srcs
     if no_cc {
@@ -2474,6 +2483,9 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
     t = lap(os, phases, "dce", t)
   }
   gm.passes_off = passes_off(os)
+  // decision 0388 stage 4: XO_STD_OBJ=DIR builds std's object
+  gm.std_obj = !std_obj_dir(os).is_empty() && gm.std_store
+  gm.weak_shared = gm.std_obj
   // XO_DUMP_FN=NAME: that function's SSA and MIR to a file (write_dumps)
   gm.dump_fn = os.env.get("XO_DUMP_FN") ?? ""
   gm.race = o.race
@@ -2615,4 +2627,11 @@ fn hollow_parts(ps: List[Str], march: Str, elf: Bool) -> List[Str] {
     arm64.hollow_unreached(ps)
   }
   hp
+}
+
+/// XO_STD_OBJ=DIR (decision 0388 stage 4): an XO_STD_ROOTS build that
+/// writes std's object (its parts without the program's functions, and
+/// their store) to DIR instead of linking; "" for none (darwin/arm64).
+fn std_obj_dir(os: Os) -> Str {
+  os.env.get("XO_STD_OBJ") ?? ""
 }

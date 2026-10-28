@@ -255,7 +255,7 @@ pub fn hollow_scan(p: Str, elf: Bool, extra: Map[Str, Bool], first: List[Bool]) 
           named[name] = true
           f.names.push((name, cur))
         }
-      } else if c0 == 9 && (starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.hidden") || starts_at(b, i, j, "\t.type") || starts_at(b, i, j, "\t.size")) {
+      } else if c0 == 9 && (starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.weak_definition") || starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.hidden") || starts_at(b, i, j, "\t.type") || starts_at(b, i, j, "\t.size")) {
         // a symbol's declaration names it without using it (the next
         // function's .globl sits in the range of the one above)
       } else if c0 == 9 && dwarf {
@@ -496,7 +496,7 @@ fn elf_extra_at(b: Bytes, k: Int, j: Int, p: Str, extra: Map[Str, Bool]) -> Bool
 /// Whether line b[i..j] is a layout or symbol directive a dead function or
 /// data object keeps.
 fn keep_line(b: Bytes, i: Int, j: Int) -> Bool {
-  starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.align") || starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.hidden") || starts_at(b, i, j, "\t.type") || starts_at(b, i, j, "\t.size")
+  starts_at(b, i, j, "\t.p2align") || starts_at(b, i, j, "\t.align") || starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.weak_definition") || starts_at(b, i, j, "\t.hidden") || starts_at(b, i, j, "\t.type") || starts_at(b, i, j, "\t.size")
 }
 
 /// Whether line b[i..j] starts with t.

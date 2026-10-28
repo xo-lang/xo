@@ -464,6 +464,14 @@ pub struct Module {
   /// of its own, indexed in __DATA,xounsafe, so the link may strip and
   /// reorder functions (std_roots)
   pub std_store: Bool = false
+  /// decision 0388 stage 4: std's object (XO_STD_OBJ): only std's
+  /// functions and the generic instances are emitted, the program's are
+  /// left to the program's object
+  pub std_obj: Bool = false
+  /// helpers (xo_h*) and generic instances are weak definitions, so std's
+  /// object and a program's may both define one (std_obj; separate
+  /// compilation): the link keeps the first
+  pub weak_shared: Bool = false
   /// loops without preemption polls (`--no-preempt`, decision 0286 step 3)
   pub no_preempt: Bool = false
   /// a deterministic run (decision 0350, check.Checker.det): in the fn and

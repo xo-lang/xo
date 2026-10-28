@@ -276,6 +276,27 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   3.3 ms), wall min 19.5 ms and median 20.9 at a load average of 25 to 59, binary 2.71 MB
   (__DWARF 1.62 MB); the store check passes.
 
+### std's object (xo-lang-4, 2026-10-28)
+
+- XO_STD_OBJ=DIR (with XO_DCE=off XO_PASSES=-hollow; it implies XO_STD_ROOTS=1), built from an
+  empty program (`fn main(os: Os) {}`), writes std's object to DIR instead of linking: the part
+  objects (prog-darwin.N.o) and their store (std.store). Only std's functions are emitted
+  (ssa.std_func), plus the generic instances and the generated functions with no file (a std
+  global's value, a zero function); the program module's are left to the program's object. The
+  last part keeps the runtime's glue, the entry, `_main`, the exports and the helpers. The
+  object leaves `_xo_f_main` undefined, plus what the link's own inputs define
+  (`_xo_buildinfo_line`, `_xo_tz_table`, `_xo_tsan_runtime`) and the section bounds.
+- Helpers (`xo_h` + base62(FNV-1a(key)), the key a kind and a type or function name) and generic
+  instances are weak definitions (N_WEAK_DEF: `.weak_definition` on Mach-O, `.weak` on ELF) when
+  Module.weak_shared is set: std's object, and the program's under separate compilation, may
+  each define one, and the link keeps the first (add_globals). A std function defined twice
+  stays an error. weak=1 is in the function and part cache keys. Normal builds set neither flag
+  and write the same objects as before.
+- macho.defined_symbols(path, bytes) lists an object's external definitions, for the driver's
+  undefined-symbol check under separate compilation.
+- The conc0 std object, 2026-10-28: 41 parts, 8,275 global definitions, 1,825 of them weak
+  (1,211 helpers, 614 instances), no name defined twice.
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle

@@ -335,6 +335,22 @@ fn (g: G) func_header(var b: List[Str], s: Str, global: Bool) {
   b.push("${s}:\n")
 }
 
+/// The directive that makes s a weak definition (Module.weak_shared: a
+/// helper or a generic instance that std's object and a program's object
+/// may both define; the link keeps the first), "" otherwise.
+fn (g: G) weak_def(s: Str) -> Str {
+  if !g.m.weak_shared || !g.split {
+    return ""
+  }
+  if g.os == "darwin" {
+    return "\t.weak_definition ${s}\n"
+  }
+  if g.os == "linux" {
+    return "\t.weak ${s}\n"
+  }
+  ""
+}
+
 /// The directives that make s a global symbol of hidden visibility: the
 /// other files of a split assembly (generate_parallel) reach it, the
 /// program does not export it.

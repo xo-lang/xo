@@ -223,7 +223,8 @@ fn (var a: Asm) write_object() -> Bytes {
     } else {
       o.u8(N_SECT | (if s.global { N_EXT } else { 0 }) | (if s.global && s.hidden { N_PEXT } else { 0 }))
       o.u8(s.sect + 1)
-      o.u16(0)
+      // N_WEAK_DEF
+      o.u16(if s.weak_def { 0x80 } else { 0 })
       o.u64(a.sects[s.sect].addr + s.off)
     }
   }
