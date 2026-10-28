@@ -766,8 +766,24 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       if sx == "1" || sx == "verify" {
         c.std_export_on = true
         c.std_export_verify = sx == "verify"
-        c.std_export_key = crypto.sha256("stdx\n${c.mod_flags}\nnative=${c.native} skip_tests=${c.skip_tests}".bytes()).to_hex()
+        // one entry per std tree too (stage 2 piece 2): agents' worktrees
+        // share one user cache, and one entry per flags would fail each
+        // other's stamps and be rewritten every build
+        // xo:allow XO0903 the working directory from $PWD when getcwd fails
+        let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
+        let std_abs = if o.std.starts_with("/") { o.std } else { "${wd}/${o.std}" }
+        c.std_export_key = crypto.sha256("stdx\n${c.mod_flags}\nnative=${c.native} skip_tests=${c.skip_tests}\nstd=${std_abs}".bytes()).to_hex()
         c.std_export_in = entry_get(os, dir, "stdx", c.std_export_key) ?? b""
+        c.std_now_ms = os.clock.now().unix_millis()
+        // the entry's header: when its stamps of std's files and
+        // directories hold, its fingerprint is std's without a read
+        if !c.std_export_verify {
+          if let Some((h, _)) = check.decode_std_header(c.std_export_in) {
+            if check.header_holds(os.fs, h) {
+              c.std_header_fp = h.fp
+            }
+          }
+        }
       }
     }
   }

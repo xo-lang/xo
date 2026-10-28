@@ -1261,24 +1261,130 @@ pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
   true
 }
 
-/// A cache entry: the fingerprint, then the records.
-pub fn encode_std_entry(fp: Str, e: StdExport) -> Bytes {
+/// What std the records were declared from (decision 0388 stage 2,
+/// piece 2): the fingerprint of its sources, and the stamps of its files
+/// and directories, so a loader can tell the records still describe the
+/// std tree without reading or hashing a file (header_holds).
+pub struct StdHeader {
+  pub fp: Str
+  pub files: List[FileStamp] = []
+  pub dirs: List[DirStamp] = []
+}
+
+const ENTRY_VERSION = "xo std entry v2 (header: fingerprint, file and directory stamps)"
+
+/// A cache entry: the header, then the records.
+pub fn encode_std_entry(h: StdHeader, e: StdExport) -> Bytes {
   var w = ExW{b: BytesBuilder.new()}
-  w.str(fp)
+  w.str(ENTRY_VERSION)
+  w.str(h.fp)
+  w.uv(h.files.len())
+  for st in h.files {
+    w.str(st.path)
+    w.uv(st.size)
+    w.uv(st.mtime)
+    w.str(st.sha)
+  }
+  w.uv(h.dirs.len())
+  for ds in h.dirs {
+    w.str(ds.path)
+    w.uv(ds.mtime)
+    w.uv(ds.names.len())
+    for n in ds.names {
+      w.str(n)
+    }
+  }
   w.b.write(encode_std_export(e))
   w.b.freeze()
 }
 
-/// The records of entry d when its fingerprint is fp.
-fn decode_std_entry(d: Bytes, fp: Str) -> Option[StdExport] {
+/// The header of entry d and where the records start; None for an entry
+/// of another version.
+pub fn decode_std_header(d: Bytes) -> Option[(StdHeader, Int)] {
   if d.is_empty() {
     return None
   }
   var r = ExR{d: d}
-  if r.str() != fp || !r.ok {
+  if r.str() != ENTRY_VERSION || !r.ok {
     return None
   }
-  decode_std_export(d[r.at..])
+  var h = StdHeader{fp: r.str()}
+  let nf = r.uv()
+  for _ in 0..nf {
+    if !r.ok {
+      return None
+    }
+    let path = r.str()
+    let size = r.uv()
+    let mtime = r.uv()
+    let sha = r.str()
+    h.files.push(FileStamp{path: path, size: size, mtime: mtime, sha: sha})
+  }
+  let nd = r.uv()
+  for _ in 0..nd {
+    if !r.ok {
+      return None
+    }
+    let path = r.str()
+    let mtime = r.uv()
+    let nn = r.uv()
+    var names: List[Str] = []
+    for _ in 0..nn {
+      names.push(r.str())
+    }
+    h.dirs.push(DirStamp{path: path, mtime: mtime, names: names})
+  }
+  if !r.ok {
+    return None
+  }
+  Some((h, r.at))
+}
+
+/// The records of entry d when its fingerprint is fp.
+fn decode_std_entry(d: Bytes, fp: Str) -> Option[StdExport] {
+  match decode_std_header(d) {
+    Some((h, at)) => {
+      if h.fp != fp {
+        return None
+      }
+      decode_std_export(d[at..])
+    }
+    None => None
+  }
+}
+
+/// The header of the records declared from std_mods, fingerprint fp, at
+/// now (milliseconds since 1970): every std file's stamp and every
+/// directory's; a header with no files (a file or directory that could
+/// not be stamped) never holds.
+pub fn (c: Checker) std_header(std_mods: List[Int], fp: Str, now: Int) -> StdHeader uses fs.read {
+  var paths: List[Str] = []
+  var dirs: Map[Str, Bool] = {}
+  for m in std_mods {
+    for f in c.mods[m].files {
+      if c.files[f].generated {
+        continue
+      }
+      let p = c.source_path(c.files[f].path)
+      paths.push(p)
+      dirs[parent_dir(p)] = true
+    }
+  }
+  let files = match stamp_files(c.fs, paths, now) {
+    Some(st) => st
+    None => return StdHeader{fp: fp}
+  }
+  let ds = match stamp_dirs(c.fs, dirs.keys().sort(), now) {
+    Some(st) => st
+    None => return StdHeader{fp: fp}
+  }
+  StdHeader{fp: fp, files: files, dirs: ds}
+}
+
+/// Whether the std tree is as header h stamped it: every file and
+/// directory holds (stamps_hold, dir_stamps_hold).
+pub fn header_holds(fs: Fs, h: StdHeader) -> Bool uses fs.read {
+  !h.files.is_empty() && stamps_hold(fs, h.files) && dir_stamps_hold(fs, h.dirs)
 }
 
 /// XO_STD_EXPORT=verify: "" when the entry in std_export_in (if its
@@ -1424,6 +1530,80 @@ pub fn stamp_files(fs: Fs, paths: List[Str], now: Int) -> Option[List[FileStamp]
     out.push(st)
   }
   Some(out)
+}
+
+/// A directory as the records saw it (decision 0388 stage 2, piece 2):
+/// its modification time (a file added or removed changes it), and for
+/// one modified within STAMP_SETTLE_MS of now its .xo entries' names,
+/// sorted, which dir_stamps_hold compares by read_dir. Every directory
+/// is stamped on its own: a subdirectory's change leaves its parent's
+/// time alone.
+pub struct DirStamp {
+  pub path: Str
+  pub mtime: Int
+  pub names: List[Str] = []
+}
+
+/// The .xo entries of directory p, sorted.
+fn xo_names(fs: Fs, p: Str) -> Option[List[Str]] uses fs.read {
+  match fs.read_dir(p) {
+    Ok(fis) => {
+      var names: List[Str] = []
+      for fi in fis {
+        if !fi.is_dir && fi.name.ends_with(".xo") {
+          names.push(fi.name)
+        }
+      }
+      Some(names.sort())
+    }
+    Err(_) => None
+  }
+}
+
+/// The stamps of directories paths at now: each one's time and, for one
+/// not settled, its .xo names; None when one cannot be read.
+pub fn stamp_dirs(fs: Fs, paths: List[Str], now: Int) -> Option[List[DirStamp]] uses fs.read {
+  var out: List[DirStamp] = []
+  for p in paths {
+    let info = match fs.stat(p) {
+      Ok(Some(i)) => i
+      _ => return None
+    }
+    var st = DirStamp{path: p, mtime: info.modified.unix_millis()}
+    if now - st.mtime <= STAMP_SETTLE_MS {
+      match xo_names(fs, p) {
+        Some(ns) => st.names = ns
+        None => return None
+      }
+    }
+    out.push(st)
+  }
+  Some(out)
+}
+
+/// Whether every directory is still as stamped: the same time and, for
+/// a stamp with names, the same .xo entries.
+pub fn dir_stamps_hold(fs: Fs, stamps: List[DirStamp]) -> Bool uses fs.read {
+  for st in stamps {
+    let info = match fs.stat(st.path) {
+      Ok(Some(i)) => i
+      _ => return false
+    }
+    if info.modified.unix_millis() != st.mtime {
+      return false
+    }
+    if !st.names.is_empty() {
+      match xo_names(fs, st.path) {
+        Some(ns) => {
+          if ns != st.names {
+            return false
+          }
+        }
+        None => return false
+      }
+    }
+  }
+  true
 }
 
 /// Whether every file is still as stamped: the same size and time and,

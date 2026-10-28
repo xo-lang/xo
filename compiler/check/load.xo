@@ -42,6 +42,12 @@ pub struct Checker {
   pub sepcomp_facts_conc: Bytes = b""
   pub std_export_key: Str = ""
   pub std_export_in: Bytes = b""
+  /// stage 2 piece 2: the fingerprint of std_export_in's header when its
+  /// stamps held at load (header_holds), "" otherwise (the fingerprint is
+  /// then hashed from std's sources as before); the time the driver
+  /// started, for the stamps the entry written gets (std_header)
+  pub std_header_fp: Str = ""
+  pub std_now_ms: Int = 0
   pub std_export_out: Bytes = b""
   pub std_export_used: Bool = false
   /// XO_STD_EXPORT=verify: std declared as usual and its records, when

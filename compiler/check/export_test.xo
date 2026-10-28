@@ -91,3 +91,54 @@ test "a settled std file is trusted by its size and time" {
     None => expect("stamped") == "None"
   }
 }
+
+test "an entry's header round trips and holds until a std file, directory or name changes" {
+  os.fs.create_dir_all("std/sub")?
+  os.fs.write("std/c.xo", b"fn c() -> Int { 1 }\n")?
+  os.fs.write("std/sub/d.xo", b"fn d() -> Int { 1 }\n")?
+  let info = (os.fs.stat("std/c.xo")? ?? FileInfo{name: "", path: "", is_dir: false, size: 0, modified: Time.UNIX_EPOCH})
+  // settled: 10 s after the writes, so the stamps are sizes and times alone
+  let now = info.modified.unix_millis() + 10000
+  let files = stamp_files(os.fs, ["std/c.xo", "std/sub/d.xo"], now) ?? []
+  let dirs = stamp_dirs(os.fs, ["std", "std/sub"], now) ?? []
+  expect(files.len()) == 2
+  expect(dirs.len()) == 2
+  expect(dirs[0].names.is_empty()) == true
+  let h = StdHeader{fp: "fp1", files: files, dirs: dirs}
+  let d = encode_std_entry(h, StdExport{block: StdBlock{}})
+  match decode_std_header(d) {
+    Some((h2, at)) => {
+      expect(h2.fp) == "fp1"
+      expect(h2.files.len()) == 2
+      expect(h2.dirs.len()) == 2
+      expect(h2.dirs[1].path) == "std/sub"
+      expect(at > 0) == true
+      expect(header_holds(os.fs, h2)) == true
+      // a file added to a subdirectory: its directory's time moves, the
+      // parent's does not
+      os.fs.write("std/sub/e.xo", b"fn e() -> Int { 1 }\n")?
+      expect(header_holds(os.fs, h2)) == false
+      os.fs.remove("std/sub/e.xo")?
+    }
+    None => expect("decoded") == "None"
+  }
+  // an entry of another version has no header
+  expect(decode_std_header(b"xo std entry v1\n") == None) == true
+  // a header with no files never holds
+  expect(header_holds(os.fs, StdHeader{fp: "x"})) == false
+}
+
+test "a directory changed within the clock's grain is stamped by its names" {
+  os.fs.create_dir_all("std/fresh")?
+  os.fs.write("std/fresh/a.xo", b"fn a() -> Int { 1 }\n")?
+  let info = (os.fs.stat("std/fresh")? ?? FileInfo{name: "", path: "", is_dir: false, size: 0, modified: Time.UNIX_EPOCH})
+  // stamped at once: not settled, so the names are kept
+  let ds = stamp_dirs(os.fs, ["std/fresh"], info.modified.unix_millis()) ?? []
+  expect(ds.len()) == 1
+  expect(ds[0].names) == ["a.xo"]
+  expect(dir_stamps_hold(os.fs, ds)) == true
+  // a file removed and another added in the same second: seen by the names
+  os.fs.remove("std/fresh/a.xo")?
+  os.fs.write("std/fresh/b.xo", b"fn b() -> Int { 1 }\n")?
+  expect(dir_stamps_hold(os.fs, ds)) == false
+}
