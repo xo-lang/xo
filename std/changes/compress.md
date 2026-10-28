@@ -1,5 +1,20 @@
 # std/compress changes
 
+## 2026-10-28: perf: inflate copies a back-reference in bulk
+
+- Kind: perf
+- Commit: this commit
+- Found by: archive unzip at about 1.26x Go; its CPU profile at main f516907c7 (huffman_block's byte at a time copy loop, `f.out[from + k]` then a push, 186 of 684 ms: 27%)
+- Go reference: compress/flate dict_decoder.go (writeCopy: copy() in chunks, the overlapping case repeating its pattern)
+- Test: std/native/llrt/raw_test.xo (u8s_copy_back against the byte loop for every distance and length up to 40, shared, unique and full lists); internal/stdtest/testdata/corpus/compress and archive (go, arm64, LLVM); TestSelfhostWasm crc32_vectors and archive_formats
+- Timing: quiet --ab, 15 rounds, the parent's std as A: archive unzip wall 0.834 (0.825 to 0.852), instructions 0.814, cycles 0.835; compress gunzip wall 0.941 (0.927 to 0.949), instructions 0.889; compress inflate wall 0.938 (0.925 to 0.944), instructions 0.883. Against Go (bench/perf/archive and compress twin.go.txt builds as A): unzip wall 1.052 (1.037 to 1.062, was about 1.26), gunzip 1.002 (0.986 to 1.007, within noise)
+
+huffman_block appends a back-reference with raw.u8s_copy_back: one
+mem_copy when the distance covers the length, else chunks that double
+from the pattern's start, in place when the output list is unique and
+has room (a shared or full one moves to a list of twice the capacity
+first). wasm, whose List[UInt8] holds a word an element, keeps the loop.
+
 ## 2026-10-28: perf: the CRC-32 table is a constant
 
 - Kind: perf

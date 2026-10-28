@@ -109,6 +109,58 @@ pub fn zero_ints(n: Int) -> List[Int] {
   xs
 }
 
+/// Appends length bytes of out starting dist bytes before its end, as a
+/// byte at a time copy would (deflate's back-reference: when dist <
+/// length the copy repeats the last dist bytes). Natively by mem_copy in
+/// place when out is unique and has room, in chunks that double for an
+/// overlapping copy (compress/flate dict_decoder.go writeCopy); a shared
+/// or full list moves to a new one first. On wasm a List[UInt8] holds a
+/// word an element, so it pushes (gotchas/packed-list-raw-copy-wasm.md).
+/// The caller checks 0 < dist <= out.len().
+pub fn u8s_copy_back(var out: List[UInt8], dist: Int, length: Int) {
+  let n = out.len()
+  if target.arch == TargetArch.Wasm32 {
+    let from = n - dist
+    var k = 0
+    while k < length {
+      out.push(out[from + k])
+      k += 1
+    }
+    return
+  }
+  if length <= 0 {
+    return
+  }
+  var a = rt.obj_addr(out)
+  // the count as obj.reserve reads it (relaxed; a shared count is never
+  // unique here)
+  if rt.slot_load(a, 0, 0) != 1 || rt.mem_load(a, 16, 8) < n + length {
+    let cap = rt.mem_load(a, 16, 8)
+    let want = if 2 * cap > n + length { 2 * cap } else { n + length }
+    let nl = List[UInt8].with_capacity(want)
+    let b = rt.obj_addr(nl)
+    rt.mem_copy(b + 24, a + 24, n)
+    rt.mem_store(b, 8, n, 8)
+    out = nl
+    a = b
+  }
+  let src = a + 24 + n - dist
+  let dst = a + 24 + n
+  if dist >= length {
+    rt.mem_copy(dst, src, length)
+  } else {
+    // k stays a multiple of dist, so src's first k + dist bytes repeat
+    // the pattern the output continues
+    var k = 0
+    while k < length {
+      let c = if length - k < k + dist { length - k } else { k + dist }
+      rt.mem_copy(dst + k, src, c)
+      k += c
+    }
+  }
+  rt.mem_store(a, 8, n + length, 8)
+}
+
 /// zero_ints for UInt32 elements: packed four bytes an element on the
 /// native targets, a word an element on wasm (gotchas/packed-list-raw-copy-wasm.md).
 pub fn zero_u32s(n: Int) -> List[UInt32] {

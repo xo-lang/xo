@@ -32,3 +32,49 @@ test "a view of a view" {
   expect(byte_at(data(w), 0) == 105)
   expect(str_byte(w, 1) == 106)
 }
+
+fn copy_back_bytewise(xs: List[UInt8], dist: Int, length: Int) -> List[UInt8] {
+  var out = xs
+  let from = out.len() - dist
+  var k = 0
+  while k < length {
+    out.push(out[from + k])
+    k += 1
+  }
+  out
+}
+
+test "u8s_copy_back is a byte at a time copy, overlapping or not" {
+  for n in 1..12 {
+    for dist in 1..n + 1 {
+      for length in 0..40 {
+        var base: List[UInt8] = []
+        for i in 0..n {
+          base.push(UInt8(i * 7 + 1))
+        }
+        let want = copy_back_bytewise(base, dist, length)
+        var got = base
+        u8s_copy_back(got, dist, length)
+        expect(got) == want
+        // got was shared with base: base is unchanged
+        expect(base.len()) == n
+      }
+    }
+  }
+}
+
+test "u8s_copy_back in place and past the capacity" {
+  var out = List[UInt8].with_capacity(64)
+  out.push(1)
+  out.push(2)
+  out.push(3)
+  u8s_copy_back(out, 3, 10)
+  expect(out) == [1, 2, 3, 1, 2, 3, 1, 2, 3, 1, 2, 3, 1]
+  var want = out
+  for _ in 0..200 {
+    want = copy_back_bytewise(want, 5, 37)
+    u8s_copy_back(out, 5, 37)
+  }
+  expect(out) == want
+  expect(out.len()) == 13 + 200 * 37
+}

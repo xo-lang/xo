@@ -1622,13 +1622,8 @@ fn (var f: Inflater) huffman_block(hl: HDec, hd: HDec, fixed: Bool) -> () ! Str 
     if dist > hist {
       return Err(f.corrupt())
     }
-    var k = 0
-    let from = f.out.len() - dist
-    while k < length {
-      let c = f.out[from + k]
-      f.out.push(c)
-      k += 1
-    }
+    // in bulk (2026-10-28: the byte at a time loop was 27% of unzip)
+    raw.u8s_copy_back(f.out, dist, length)
     if f.limit >= 0 && f.dropped + f.out.len() > f.limit {
       return Err(LIMIT)
     }
