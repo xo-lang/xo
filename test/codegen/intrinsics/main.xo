@@ -5,6 +5,7 @@
 // llvm.usub.with.overflow. AES-GCM's rounds and GHASH's products are
 // AESE/AESMC and PMULL (inline asm on LLVM); SHA-256's compression is
 // SHA256H, SHA256H2, SHA256SU0, and SHA256SU1.
+use std/compress
 use std/internal
 
 fn main(os: Os) {
@@ -24,7 +25,9 @@ fn main(os: Os) {
   let ys = xs[0..n]
   internal.list_swap_at(xs, n, n + 1)
   internal.list_swap_both(xs, ys, ys)
-  os.stdio.println("${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()} ${h.to_hex()} ${s3.to_hex()} ${f.len() + u.len()}")
+  // gzip's CRC-32 of its input (flate.crc32)
+  let z = compress.gzip(k)
+  os.stdio.println("${z.len()} ${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()} ${h.to_hex()} ${s3.to_hex()} ${f.len() + u.len()}")
 }
 
 // ASCII case folding on mixed case text is one 16 byte lane: the range
@@ -83,6 +86,14 @@ fn main(os: Os) {
 // arm64: "subs x[0-9]+, x[0-9]+, x[0-9]+\n\tsbcs x[0-9]+, x[0-9]+, x[0-9]+" "adcs"
 // amd64: "sbbq " "adcq "
 // llvm: "llvm.uadd.with.overflow.i64"
+
+// The CRC-32 of gzip and zip a word a step with arm64's crc32x (decision
+// 0231 addendum, 2026-10-28): the IEEE polynomial, inline asm on LLVM;
+// amd64's crc32 is Castagnoli only, so the slicing loop stays there.
+// func flate.crc32
+// arm64: "crc32x w[0-9]+, w[0-9]+, x[0-9]+"
+// amd64: -"crc32x"
+// llvm/arm64: "crc32x \$\{0:w\}"
 
 // The CPU's AES rounds (hw4 and encrypt_n call hw_n).
 // func aesgcm.hw_n

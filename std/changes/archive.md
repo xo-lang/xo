@@ -1,5 +1,24 @@
 # std/archive changes
 
+## 2026-10-28: perf: CRC-32 a word a step with arm64's crc32x
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/archive unzip at 1.41x Go and compress gunzip at 1.23x (measured on main 55af0adc5); unzip's profile: flate.crc32 13%
+- Go reference: hash/crc32 crc32_arm64.go (ieeeUpdate with the CRC32X instructions) (go1.26.1)
+- Test: std/native/llrt/flate_test.xo (zlib's IEEE values, whole and split at every offset, crc32_list) and cpu_test.xo (crc32x against its body) on arm64 and llvm; internal/llvm and internal/arm64 archive_formats and http_gzip with Go parity; linux/arm64 in Docker (the AT_HWCAP path); fixed point; test/codegen/intrinsics flate.crc32
+
+std/compress, std/archive and std/http's gzip share flate.crc32: where
+the CPU has arm64's CRC32 instructions (every Apple arm64 CPU; Linux's
+AT_HWCAP bit), it takes eight bytes a step with one crc32x (cpu.crc32x,
+decision 0231's addendum of 2026-10-28), and keeps slicing-by-8
+elsewhere (amd64, whose crc32 instruction is the Castagnoli polynomial,
+and wasm). Results unchanged. Quiet --ab, 15 rounds, the parent's xo and
+std as A: compress gunzip 0.949 (0.941 to 0.953), instructions 0.956;
+archive unzip 0.893 (0.888 to 0.902), instructions 0.915. Xo / Go about
+1.17 for gunzip (estimate: 1.228 x 0.949) and 1.26 for unzip (1.406 x
+0.893).
+
 ## 2026-10-21: fix: untar and unzip read as Go's archive/tar and archive/zip
 
 - Kind: fix

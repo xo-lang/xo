@@ -5,6 +5,7 @@
 // inflate.go, and hash/crc32's IEEE table. std/native/archive.xo and
 // std/native/compress.xo use it.
 use native/llrt/raw
+use native/llrt/cpu
 use native/rt
 // ---------------------------------------------------------------------------
 // Bytes
@@ -79,6 +80,14 @@ pub fn crc32(t: List[Int], crc0: Int, b: Bytes) -> Int {
   var c = crc0 ^ 0xffffffff
   var i = 0
   let n = b.len()
+  // arm64's crc32x, a word a step, where the CPU has it (Go's
+  // hash/crc32 arm64 path; decision 0231 addendum, 2026-10-28)
+  if (cpu.hw() & cpu.HW_CRC32) != 0 {
+    while i + 8 <= n {
+      c = cpu.crc32x(c, rt.bytes_word(b, i))
+      i += 8
+    }
+  }
   while i + 8 <= n {
     let w = rt.bytes_word(b, i)
     c = c ^ (w & 0xffffffff)
@@ -97,6 +106,14 @@ pub fn crc32(t: List[Int], crc0: Int, b: Bytes) -> Int {
 pub fn crc32_list(t: List[Int], crc0: Int, l: List[UInt8], from: Int, to: Int) -> Int {
   var c = crc0 ^ 0xffffffff
   var i = from
+  if (cpu.hw() & cpu.HW_CRC32) != 0 {
+    while i + 8 <= to {
+      let lo = Int(l[i]) | (Int(l[i + 1]) << 8) | (Int(l[i + 2]) << 16) | (Int(l[i + 3]) << 24)
+      let hi = Int(l[i + 4]) | (Int(l[i + 5]) << 8) | (Int(l[i + 6]) << 16) | (Int(l[i + 7]) << 24)
+      c = cpu.crc32x(c, lo | hi.wrapping_shl(32))
+      i += 8
+    }
+  }
   while i + 8 <= to {
     c = c ^ (Int(l[i]) | (Int(l[i + 1]) << 8) | (Int(l[i + 2]) << 16) | (Int(l[i + 3]) << 24))
     c = t[1792 + (c & 255)] ^ t[1536 + ((c >> 8) & 255)] ^ t[1280 + ((c >> 16) & 255)] ^ t[1024 + (c >> 24)] ^ t[768 + Int(l[i + 4])] ^ t[512 + Int(l[i + 5])] ^ t[256 + Int(l[i + 6])] ^ t[Int(l[i + 7])]

@@ -792,6 +792,11 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       let r = g.def("call <2 x i64> ${asm}(<2 x i64> ${a}, <2 x i64> ${b})")
       g.set(v, "extractelement <2 x i64> ${r}, i32 ${if aux_str(x.aux) == "rt.clmul_lo" { 0 } else { 1 }}")
     }
+    // decision 0231 addendum: arm64's crc32x as inline asm (no target
+    // feature on the function); the w result is zero extended
+    "rt.crc32x" => {
+      g.set(v, "call i64 asm \".arch_extension crc\\0Acrc32x \${0:w}, \${1:w}, $2\", \"=r,r,r\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+    }
     "rt.chacha_blocks4" => g.chacha4(g.raw_ptr(x.args[0]), g.raw_ptr(x.args[1]), g.raw_ptr(x.args[2]))
     "rt.ghash4" => {
       // arm64 only (ssa cpu_call, decision 0339): ssa.ghash4_neon_lines

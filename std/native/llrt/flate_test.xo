@@ -1,0 +1,47 @@
+// Tests of flate.xo's CRC-32 (`xo test --std-module=native/llrt/flate`,
+// run by internal/stdtest): hash/crc32's IEEE values (computed with zlib's
+// crc32, the same polynomial), through the word path a CPU with crc32x
+// takes (decision 0231 addendum) and the slicing path, whole and in pieces.
+
+
+const CRC_CASES: List[(Str, Int)] = [
+  ("", 0),
+  ("a", 3904355907),
+  ("ab", 2659403885),
+  ("abc", 891568578),
+  ("abcdefg", 824863398),
+  ("abcdefgh", 2934909520),
+  ("abcdefghi", 2376698031),
+  ("123456789", 3421780262),
+  ("Discard medicine more than two years old.", 1805443047),
+  ("He who has a shady past knows that nice guys finish last.", 3373201215),
+  ("The quick brown fox jumps over the lazy dog, then the lazy dog sleeps for a long, long time.", 3738247350),
+]
+
+test "crc32 is hash/crc32's IEEE CRC, whole and continued" {
+  let t = crc_table()
+  for (s, want) in CRC_CASES {
+    expect(crc32(t, 0, s.bytes())) == want
+    // continued from a split at every offset, as gzip's writer does
+    let b = s.bytes()
+    for k in 0..b.len() + 1 {
+      expect(crc32(t, crc32(t, 0, b[0..k]), b[k..b.len()])) == want
+    }
+  }
+}
+
+test "crc32 over every byte value, and crc32_list agrees" {
+  let t = crc_table()
+  var bb = BytesBuilder.new()
+  var l: List[UInt8] = []
+  for _ in 0..5 {
+    for v in 0..256 {
+      bb.write_byte(UInt8(v))
+      l.push(UInt8(v))
+    }
+  }
+  let b = bb.freeze()
+  expect(crc32(t, 0, b)) == 511339812
+  expect(crc32_list(t, 0, l, 0, l.len())) == 511339812
+  expect(crc32_list(t, crc32_list(t, 0, l, 0, 7), l, 7, l.len())) == 511339812
+}

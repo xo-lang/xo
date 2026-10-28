@@ -339,6 +339,7 @@ const ENCODINGS: List[(Str, Int)] = [
   ("lsl x0, x1, #63", 0xd3410020),
   ("udiv x0, x1, x2", 0x9ac20820),
   ("umulh x0, x1, x2", 0x9bc27c20),
+  ("crc32x w1, w2, x3", 0x9ac34c41),
   ("umull x0, w1, w2", 0x9ba27c20),
   ("smull x0, w1, w2", 0x9b227c20),
   ("umaddl x0, w1, w2, x3", 0x9ba20c20),

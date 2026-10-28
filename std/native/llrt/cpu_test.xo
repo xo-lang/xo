@@ -20,3 +20,22 @@ test "ticks advance and ticks_ns converts a difference" {
   expect(ticks_ns(hz * 3 + hz / 2) == 3500000000)
   expect(ticks_ns(0) == 0)
 }
+
+test "crc32x is its body (the instruction where the CPU has it)" {
+  // a seeded walk over crc and word values, the high bits of crc ignored
+  var x = 88172645463325252
+  for _ in 0..2000 {
+    x = x ^ x.wrapping_shl(13)
+    x = x ^ x.shr_logical(7)
+    x = x ^ x.wrapping_shl(17)
+    let crc = x.shr_logical(29)
+    let w = x.wrapping_mul(2685821657736338717)
+    let want = crc32x_soft(crc & 0xffffffff, w)
+    if (hw() & HW_CRC32) != 0 {
+      expect(crc32x(crc & 0xffffffff, w)) == want
+    }
+    expect(want & 0xffffffff) == want
+  }
+  // "12345678" from the IEEE initial value, then inverted: zlib's crc32
+  expect(crc32x_soft(0xffffffff, 0x3837363534333231) ^ 0xffffffff) == 2598427311
+}

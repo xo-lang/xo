@@ -472,3 +472,15 @@ big mul against Go, measured (the Go twin as A, a7c4d9bc8's std as B): 1.165 (1.
 1.443, cycles 1.134: under the bar. big text (std/changes/big.md 2026-10-28, "results are trimmed in place;
 the digit divisors grow in place"): quiet `xo bench --ab`, 15 rounds, the parent's std as A: 0.945 (0.934
 to 0.950), instructions 0.929; Xo / Go about 1.28 (estimate: 1.35 x 0.945), still over.
+
+## Remaining rows screened, and CRC-32 with crc32x (2026-10-28, xo-lang-5)
+
+Measured on main 55af0adc5 against Go (quiet `xo bench --ab`, 15 rounds, the Go twin as A): compress gzip
+1.126, gunzip 1.228, deflate 1.111, inflate 1.139; archive tar 1.193, zip 1.222, unzip 1.406; mime format
+1.204, detect 0.867; uuid parse 1.211, bytes 1.966. big text 1.024 (1.001 to 1.057), measured.
+
+CRC-32 with arm64's crc32x (decision 0231's addendum of 2026-10-28; std/changes compress.md and archive.md):
+the parent's xo and std as A, gunzip 0.949 (0.941 to 0.953), unzip 0.893 (0.888 to 0.902); Xo / Go about
+1.17 and 1.26. unzip's next lever is hdec_init (12%: its Huffman tables rebuilt for every block of 50 small
+files). uuid bytes is the 16 byte Bytes each bytes() allocates (39% of its run), where Go's u[:] is a slice of
+the value's own array: a compiler or runtime question (a Bytes that does not escape kept on the stack), not std.

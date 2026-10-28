@@ -32,6 +32,11 @@ pub const HW_SSSE3: Int = 32
 /// CPUID.1's OSXSAVE and AVX, XCR0's SSE and AVX states): the AVX2
 /// ChaCha20-Poly1305 kernel (ssa x86chachapoly8.xo, 2026-10-27).
 pub const HW_AVX2: Int = 64
+/// arm64's CRC32 instructions (crc32x: the IEEE polynomial, as gzip, zip
+/// and PNG use; decision 0231 addendum, 2026-10-28): every Apple arm64
+/// CPU, and Linux's AT_HWCAP CRC32 bit. Not set on x86-64, whose SSE4.2
+/// crc32 is the Castagnoli polynomial only.
+pub const HW_CRC32: Int = 128
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -42,6 +47,7 @@ const AT_HWCAP = 16
 const HWCAP_AES = 8
 const HWCAP_PMULL = 16
 const HWCAP_SHA2 = 64
+const HWCAP_CRC32 = 128
 
 /// 1 when the emitter lowers this module's calls to instructions, else 0
 /// (the body: a wasm module, or code an xo older than decision 0231
@@ -77,7 +83,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -87,10 +93,10 @@ pub fn hw() -> Int {
 fn detect() -> Int {
   match target.arch {
     TargetArch.Arm64 => match target.os {
-      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256
+      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256 | HW_CRC32
       TargetOs.Linux => {
         let h = linux.auxval(AT_HWCAP)
-        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 })
+        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 }) | (if (h & HWCAP_CRC32) != 0 { HW_CRC32 } else { 0 })
       }
       _ => 0
     }
@@ -108,6 +114,26 @@ fn detect() -> Int {
     }
     _ => 0
   }
+}
+
+/// The CRC-32 (IEEE, reflected; hash/crc32's IEEETable) of crc's low 32
+/// bits carried over the eight bytes of w, the lowest first, with no
+/// inversion before or after (arm64's crc32x; decision 0231 addendum).
+/// Call it only when hw() has HW_CRC32; the body is the reference.
+pub fn crc32x(crc: Int, w: Int) -> Int { crc32x_soft(crc, w) }
+
+/// crc32x a bit at a time, with no branch on the data: each step shifts
+/// one bit out and adds the polynomial under a mask of that bit.
+pub fn crc32x_soft(crc: Int, w: Int) -> Int {
+  var c = (crc ^ w) & 0xffffffff
+  for _ in 0..32 {
+    c = c.shr_logical(1) ^ (0xEDB88320 & (0 - (c & 1)))
+  }
+  c = c ^ (w.shr_logical(32) & 0xffffffff)
+  for _ in 0..32 {
+    c = c.shr_logical(1) ^ (0xEDB88320 & (0 - (c & 1)))
+  }
+  c
 }
 
 /// The carry out of x + y as UInt64s, 0 or 1 (bits.Add64's): the carry

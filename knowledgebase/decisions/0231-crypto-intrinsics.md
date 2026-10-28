@@ -259,3 +259,33 @@ would reach the compiler's own native build, which seed 0.18.0 lowers to
 an undefined C symbol (gotchas/seed-older-than-intrinsics.md).
 TestSelfhostWasm no longer counts the entropy fault as unsupported
 (wasm_test.go wasmCCallRE).
+
+## Addendum (2026-10-28): CRC-32 a word at a time (crc32x)
+
+Context: gzip's and zip's CRC-32 (std/native/llrt/flate.xo crc32 and
+crc32_list, hash/crc32's slicing-by-8 table) was 13% of bench/perf/archive
+unzip, the row furthest over the 1.2x-of-Go bar (1.41; gunzip 1.23).
+Go's hash/crc32 uses arm64's CRC32X on arm64.
+
+Decision: cpu.xo gains `crc32x(crc, w)`, the IEEE CRC-32 (reflected, no
+inversion) of crc's low 32 bits carried over the eight bytes of w, the
+lowest first, with a constant-time portable body (crc32x_soft, a bit a
+step), and hw() gains HW_CRC32: every Apple arm64 CPU, Linux's AT_HWCAP
+CRC32 bit (bit 7) on arm64, never on x86-64. The SSA builder lowers
+calls on arm64 only (ssa call.xo cpu_call): the arm64 emitter writes
+`crc32x wD, wN, xM` (compiler/arm64 calls.xo, encoded by
+compiler/macho op.xo crc32x_word), LLVM inline asm with
+`.arch_extension crc` (no target feature on the function), and the
+native inliner treats it as an instruction. amd64, wasm and an older
+xo run the body; flate.crc32 and crc32_list take the word path only when
+hw() has HW_CRC32 and keep slicing-by-8 otherwise.
+
+Consequences: no new rt declaration and no seed: an xo that does not
+know crc32x compiles the body, and hw() is 0 there, so the slicing path
+runs. x86-64's SSE4.2 crc32 is the Castagnoli polynomial only, so IEEE
+on amd64 would need Go's PCLMULQDQ folding (hash/crc32/crc32_amd64.s),
+a separate step. Tests: cpu_test "crc32x is its body" (the instruction
+against the body on arm64 and LLVM), flate_test (zlib's IEEE values,
+whole and split at every offset, crc32_list), compiler/macho's encoding
+table, test/codegen/intrinsics flate.crc32 (crc32x on arm64 and
+llvm/arm64, absent on amd64).

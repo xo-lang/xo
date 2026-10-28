@@ -276,6 +276,7 @@ pub fn encode_op(o: Op) -> Int {
     "csel" | "csinc" | "csinv" | "csneg" | "cset" | "csetm" | "cinc" | "cneg" => return csel_word(o.m, o.ops)
     "ccmp" | "ccmn" => return ccmp_word(o.m, o.ops)
     "rev" | "rbit" | "clz" => return unary_word(o.m, o.ops)
+    "crc32x" => return crc32x_word(o.ops)
     "stadd" | "ldaddal" | "ldadd" | "ldaddl" | "ldadda" | "staddl" | "swp" | "swpa" | "swpl" | "swpal" => return atomic_word(o.m, o.ops)
     "cas" | "casa" | "casl" | "casal" => return cas_word(o.m, o.ops)
     "ldxr" | "ldaxr" | "stxr" | "stlxr" | "ldar" | "stlr" => return excl_word(o.m, o.ops)
@@ -600,6 +601,20 @@ fn cond_of(x: Operand) -> Int {
 }
 
 /// mul, mneg, madd, msub, smulh, umulh, sdiv, udiv.
+/// crc32x wD, wN, xM (decision 0231 addendum): CRC32X, sf 1, sz 11.
+fn crc32x_word(o: List[Operand]) -> Int {
+  if o.len() != 3 {
+    return -1
+  }
+  let (d, fd) = gp_of(o[0], false)
+  let (n, fn_) = gp_of(o[1], false)
+  let (m, fm) = gp_of(o[2], false)
+  if d < 0 || n < 0 || m < 0 || fd != 0 || fn_ != 0 || fm != 1 {
+    return -1
+  }
+  0x9ac04c00 | (m * 0x10000) | (n * 32) | d
+}
+
 fn muldiv_word(m: Str, o: List[Operand]) -> Int {
   let n = o.len()
   var rs: List[Int] = []

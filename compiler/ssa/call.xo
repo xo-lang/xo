@@ -237,6 +237,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "ticks" | "ticks_hz" => if b.goarch == "arm64" { b.obj_name(fo) } else { "" }
     // decision 0339: NEON on arm64; amd64 runs the portable body
     "ghash4" => if b.goarch == "arm64" { "ghash4" } else { "" }
+    // the decision 0231 addendum's CRC-32 (IEEE): arm64 only; x86-64's
+    // crc32 is Castagnoli, so amd64 and wasm run the body
+    "crc32x" => if b.goarch == "arm64" { "crc32x" } else { "" }
     "ghash_blocks" => if b.goarch == "arm64" { "ghash_blocks" } else { "" }
     // SSE2 on amd64 (x86mlkem.xo), NEON on arm64 (a64mlkem.xo)
     "mlkem_ntt" | "mlkem_inverse_ntt" | "mlkem_mul_acc" => if b.goarch == "amd64" || b.goarch == "arm64" { b.obj_name(fo) } else { "" }
