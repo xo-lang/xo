@@ -579,6 +579,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- A new std module, or a port of a Go package, reads
+  knowledgebase/std-performance-guide.md first and ships a Go twin
+  (bench/perf/<module>, twincheck) with a timing row in the std timing
+  audit (owner, 2026-10-28).
+
 - Measure the build that ships, and check a stand-in before trusting it
   (lead, 2026-10-27; Last verified: 2026-10-27): three 0377 runs measured
   a fixed cap with no raise while the default to flip was mode 3, and

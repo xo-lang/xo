@@ -1,5 +1,8 @@
 # Std ports: Go's idioms that are free in Go cost in Xo
 
+The rules this taught, with measured cases, are in
+[../std-performance-guide.md](../std-performance-guide.md).
+
 Retired since: the "slicing a Str or Bytes copies" bullet below. Decision
 0330 (2026-10-22) made `s[a..b]` and `b[a..b]` views on arm64, x86 and
 LLVM (a count on the parent, no copy; wasm still copies): what a slice
