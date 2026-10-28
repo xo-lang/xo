@@ -197,12 +197,22 @@ fn coff_live(objs: List[CObj], entry: Str) -> List[List[Bool]] {
     live.push(l)
     atoms.push(coff_atoms(ob))
   }
+  // the globals as link_pe_layout resolves them: the first definition,
+  // a strong one over a weak one (.xoweak)
   var globals: Map[Str, (Int, Int)] = {}
   for (oi, ob) in objs.indexed() {
+    let weak = coff_weak_names(ob)
     for s in ob.syms {
-      if !s.aux && s.class == IMAGE_SYM_CLASS_EXTERNAL && s.sect > 0 && !globals.contains(s.name) {
-        globals[s.name] = (oi, s.sect - 1)
+      if s.aux || s.class != IMAGE_SYM_CLASS_EXTERNAL || s.sect <= 0 {
+        continue
       }
+      if let Some((po, _)) = globals.get(s.name) {
+        if !weak.contains(s.name) && coff_weak_names(objs[po]).contains(s.name) {
+          globals[s.name] = (oi, s.sect - 1)
+        }
+        continue
+      }
+      globals[s.name] = (oi, s.sect - 1)
     }
   }
   // a function's .pdata records and its unsafe range index record

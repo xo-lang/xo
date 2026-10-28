@@ -245,3 +245,28 @@ test "atoms mode: pelink strips a function nothing reaches" {
     Err(e) => fault(e)
   }
 }
+
+// Decision 0388 on windows/amd64: a weak definition (`.weak_definition`,
+// listed in .xoweak) may be defined by two objects; the link keeps one.
+fn weak_obj(name: Str, weak: Bool, entry: Bool) -> CObj {
+  let src = "\t.text\n${if entry { "\t.globl start\nstart:\n\tcallq h\n\tretq\n" } else { "" }}\t.globl h\n${if weak { "\t.weak_definition h\n" } else { "" }}h:\n\tretq\n"
+  let obj = match assemble_coff_amd64(src.bytes()) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  match read_coff(name, obj) {
+    Ok(c) => c
+    Err(e) => fault(e)
+  }
+}
+
+test "a weak definition in two objects links; two strong ones do not" {
+  match link_pe([weak_obj("a.obj", true, true), weak_obj("b.obj", true, false)], PEOpts{entry: "start", imports: {}}) {
+    Ok(_) => {}
+    Err(e) => fault(e)
+  }
+  match link_pe([weak_obj("a.obj", false, true), weak_obj("b.obj", false, false)], PEOpts{entry: "start", imports: {}}) {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.contains("defined twice")) == true
+  }
+}

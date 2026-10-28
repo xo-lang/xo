@@ -688,3 +688,24 @@ fn coff_strtab(names: List[Bytes]) -> (Bytes, Map[Bytes, Int]) {
   }
   (o.done(), m)
 }
+
+/// COFF has no weak definition (decision 0388: std's helpers and generic
+/// instances, which the program's object may define too): the names of
+/// this object's `.weak_definition` symbols, NUL ended, in an `.xoweak`
+/// section removed at the link, which pelink reads (coff_weak_names).
+fn (var a: Asm) coff_weak_section() {
+  var b = BytesBuilder.new()
+  for s in a.syms {
+    if s.weak_def && s.sect >= 0 && !s.temp {
+      b.write(s.name)
+      b.write_byte(0)
+    }
+  }
+  if b.len() == 0 {
+    return
+  }
+  let back = a.cur
+  a.coff_section(".xoweak", IMAGE_SCN_LNK_INFO | IMAGE_SCN_LNK_REMOVE, 0)
+  a.push_item(a.cur, Item.Raw(b.freeze()))
+  a.cur = back
+}

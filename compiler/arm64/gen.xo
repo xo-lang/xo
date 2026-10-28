@@ -352,6 +352,10 @@ fn (g: G) weak_def(s: Str) -> Str {
   if g.os == "linux" {
     return "\t.weak ${s}\n"
   }
+  if g.os == "windows" {
+    // COFF: the assembler lists it in .xoweak for pelink
+    return "\t.weak_definition ${s}\n"
+  }
   ""
 }
 

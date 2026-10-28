@@ -1087,6 +1087,9 @@ fn unquote(b: Bytes) -> Bytes? {
 // After the pass: layout, fixups, unwind information
 
 fn (var a: Asm) finish() {
+  if a.coff {
+    a.coff_weak_section()
+  }
   a.flush_pend()
   for i in 0..a.syms.len() {
     let sy = a.syms[i]

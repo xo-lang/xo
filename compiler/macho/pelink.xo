@@ -256,7 +256,18 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
       if s.aux || s.class != IMAGE_SYM_CLASS_EXTERNAL || s.sect <= 0 {
         continue
       }
-      if globals.contains(s.name) {
+      if let Some((po, _)) = globals.get(s.name) {
+        // a weak definition (.xoweak) yields: the first kept, a strong
+        // one over a weak one (as compiler/macho's add_globals)
+        let w_new = coff_weak_names(ob).contains(s.name)
+        let w_old = coff_weak_names(objs[po]).contains(s.name)
+        if w_old && !w_new {
+          globals[s.name] = (oi, si)
+          continue
+        }
+        if w_old || w_new {
+          continue
+        }
         return Err("${ob.path}: ${s.name} is defined twice")
       }
       globals[s.name] = (oi, si)
@@ -766,4 +777,24 @@ fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[In
   }
   w.bytes(strs)
   w.done()
+}
+
+/// The names an object's `.xoweak` section lists (its weak definitions).
+fn coff_weak_names(ob: CObj) -> Map[Str, Bool] {
+  var out: Map[Str, Bool] = {}
+  for s in ob.sects {
+    if s.name != ".xoweak" {
+      continue
+    }
+    var at = 0
+    for i in 0..s.data.len() {
+      if s.data[i] == 0 {
+        if i > at {
+          out[s.data[at..i].to_str() ?? ""] = true
+        }
+        at = i + 1
+      }
+    }
+  }
+  out
 }

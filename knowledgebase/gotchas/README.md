@@ -901,3 +901,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [run-next-pair-starves-timers.md](run-next-pair-starves-timers.md): a ping pong pair on one worker kept the run-next slot full and starved the ring, timers and the network (fixed in find_work, decision 0394)
 - [test-inherits-gate-cache-off.md](test-inherits-gate-cache-off.md): Observed 2026-10-28: gate.sh exports XO_BACKEND_CACHE=off, so a test that needs the back-end cache sets XO_BACKEND_CACHE=on on each build (the PDB part tests failed only in the full tier)
 - [windows-thinlto-module-path.md](windows-thinlto-module-path.md): a Windows ThinLTO split build named promoted locals by the modules' random build paths; compile each module by its base name (Observed)
+- [wine-box64-exit-codes.md](wine-box64-exit-codes.md): Observed 2026-10-28: under Box64 Wine even a normal windows/amd64 program exits 29, 1, 132 or 139 at random after correct output; judge by output, not exit code
