@@ -1,0 +1,64 @@
+// The assembler's atoms mode (`.subsections_via_symbols`, decision 0388's
+// std store): a branch between two functions of one section is a
+// relocation, so the linker may place them apart or drop one; without the
+// directive it is patched in place, as before.
+
+fn atoms_src(directive: Bool) -> Bytes {
+  "${if directive { "\t.subsections_via_symbols\n" } else { "" }}\t.text\n\t.globl _f\n_f:\n\tbl _g\n\tb Lout\nLout:\n\tb _g\n\t.globl _g\n_g:\n\tret\n".bytes()
+}
+
+fn text_relocs(src: Bytes) -> (Int, Int) {
+  let b = match assemble(src) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  let o = match parse_object("t.o", b) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  var n = 0
+  for s in o.sects {
+    if s.name == "__text" {
+      for r in s.relocs {
+        if r.typ == R_BRANCH26 {
+          n += 1
+        }
+      }
+    }
+  }
+  (n, rd32(b, 24))
+}
+
+test "atoms mode relocates a branch to another atom of the section" {
+  let (n, flags) = text_relocs(atoms_src(true))
+  // `bl _g` and `b _g`; `b Lout` stays in _f's atom, patched
+  expect(n) == 2
+  expect(flags & 0x2000) == 0x2000
+}
+
+test "without the directive a branch in its section is patched" {
+  let (n, flags) = text_relocs(atoms_src(false))
+  expect(n) == 0
+  expect(flags & 0x2000) == 0
+}
+
+fn strip_link(directive: Bool) -> Bytes {
+  let src = "${if directive { "\t.subsections_via_symbols\n" } else { "" }}\t.text\n\t.globl _main\n\t.p2align 2\n_main:\n\tbl _used\n\tmov x0, #0\n\tret\n\t.globl _used\n\t.p2align 2\n_used:\n\tret\n\t.globl _unused_fn\n\t.p2align 2\n_unused_fn:\n\tmov x0, #7\n\tmov x1, #8\n\tret\n".bytes()
+  let ob = match assemble(src) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  match link([LinkInput{path: "s.o", data: ob}], LinkOpts{name: "s", embed_dwarf: false}) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+}
+
+test "atoms mode: the link strips a function nothing reaches" {
+  let kept = strip_link(false)
+  let stripped = strip_link(true)
+  // the unused function's name and its 12 bytes are gone
+  expect(kept.find("_unused_fn".bytes()) != None) == true
+  expect(stripped.find("_unused_fn".bytes()) == None) == true
+  expect(stripped.find("_used".bytes()) != None) == true
+}

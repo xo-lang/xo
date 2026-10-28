@@ -99,7 +99,8 @@ fn (var a: Asm) write_object() -> Bytes {
   o.u32(MH_OBJECT)
   o.u32(4)
   o.u32(cmds_size)
-  o.u32(0)
+  // MH_SUBSECTIONS_VIA_SYMBOLS for an object that splits at its symbols
+  o.u32(if a.atoms { 0x2000 } else { 0 })
   o.u32(0)
   // LC_SEGMENT_64
   o.u32(LC_SEGMENT_64)

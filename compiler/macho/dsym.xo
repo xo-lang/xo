@@ -129,6 +129,7 @@ fn (var l: Linker) dwarf_write(var out: BytesBuilder) -> List[Int] {
   // the xo compile units' address ranges, one set each (.debug_aranges,
   // after its pieces)
   var sets = BytesBuilder.new()
+  l.dw_dead_zero = true
   for (i, ps) in parts.indexed() {
     let start = out.len()
     for (o, k) in ps {
@@ -158,6 +159,7 @@ fn (var l: Linker) dwarf_write(var out: BytesBuilder) -> List[Int] {
     }
     lens.push(out.len() - start)
   }
+  l.dw_dead_zero = false
   lens
 }
 

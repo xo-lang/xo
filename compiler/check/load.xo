@@ -93,6 +93,9 @@ pub struct Checker {
   /// module.name): the SSA builder declares each non generic one as a
   /// root, so a function main does not reach is built too.
   pub dump_roots: List[Str] = []
+  /// every non generic function of a std module is a root of the build
+  /// (decision 0388 stage 1b: std's object, XO_STD_ROOTS=1)
+  pub std_roots: Bool = false
   /// Native mode (check.Options.Native): the implementation modules of
   /// the native backends are loaded and checked too (load_native).
   pub native: Bool = false
@@ -479,6 +482,16 @@ pub fn (var c: Checker) check_dirs(dirs: List[Str]) -> () ! Str uses fs.read {
   }
   if !c.std_test.is_empty() {
     return c.check_std_test()
+  }
+  if c.std_roots {
+    // decision 0388 1b: std's object holds every std module, whether the
+    // program imports it or not
+    for e in c.list_dir(c.std_dir) {
+      let n = e.name.trim_suffix(".xo")
+      if !e.is_dir && e.name.ends_with(".xo") && !e.name.ends_with("_test.xo") && !(n is "prelude" | "go") {
+        let _m = c.load_std(n)
+      }
+    }
   }
   for d in dirs {
     let st = c.fs.stat(d).ok() ?? None

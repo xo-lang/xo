@@ -1615,34 +1615,57 @@ fn pin_pop(w: Int) -> Int {
 /// apreempt.xo): the second word is the text's end, and no ranges.
 fn async_pc_ok(pc: Int) -> Bool {
   let parts = rt.mem_load(rt.static_word(W_UNSAFE), 0, 8)
-  let n = rt.mem_load(parts, 0, 8)
+  let raw = rt.mem_load(parts, 0, 8)
+  // bit 40: a std store's index of per-function tables follows the list
+  // (decision 0388, compiler/arm64 apreempt.xo unsafe_fn_tables)
+  let n = raw & 0xffffffff
   var i = 0
   while i < n {
-    let t = rt.mem_load(parts, 8 + 8 * i, 8)
-    let base = rt.mem_load(t, 0, 8)
-    let off = pc.wrapping_sub(base)
-    let nr = rt.mem_load(t, 16, 8)
-    let size = if nr < 0 { rt.mem_load(t, 8, 8).wrapping_sub(base) } else { rt.mem_load(t, 8, 8) }
-    if off >= 0 && off < size {
-      if nr < 0 {
-        return true
-      }
-      // the last range starting at or before off
-      var lo = 0
-      var hi = nr
-      while lo < hi {
-        let mid = (lo + hi) / 2
-        if rt.mem_load(t, 24 + 8 * mid, 4) <= off {
-          lo = mid + 1
-        } else {
-          hi = mid
-        }
-      }
-      return lo == 0 || off >= rt.mem_load(t, 24 + 8 * (lo - 1) + 4, 4)
+    let r = unsafe_in(rt.mem_load(parts, 8 + 8 * i, 8), pc)
+    if r >= 0 {
+      return r == 1
     }
     i += 1
   }
+  if (raw >> 40) & 1 != 0 {
+    var at = rt.mem_load(parts, 8 + 8 * n, 8)
+    let end = rt.mem_load(parts, 16 + 8 * n, 8)
+    while at < end {
+      let r = unsafe_in(rt.mem_load(at, 8, 8), pc)
+      if r >= 0 {
+        return r == 1
+      }
+      at += 16
+    }
+  }
   false
+}
+
+/// pc against one unsafe range table t: -1 outside its text, 1 in it and
+/// in no range, 0 in a range.
+fn unsafe_in(t: Int, pc: Int) -> Int {
+  let base = rt.mem_load(t, 0, 8)
+  let off = pc.wrapping_sub(base)
+  let nr = rt.mem_load(t, 16, 8)
+  let size = if nr < 0 { rt.mem_load(t, 8, 8).wrapping_sub(base) } else { rt.mem_load(t, 8, 8) }
+  if off < 0 || off >= size {
+    return -1
+  }
+  if nr < 0 {
+    return 1
+  }
+  // the last range starting at or before off
+  var lo = 0
+  var hi = nr
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if rt.mem_load(t, 24 + 8 * mid, 4) <= off {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  if lo == 0 || off >= rt.mem_load(t, 24 + 8 * (lo - 1) + 4, 4) { 1 } else { 0 }
 }
 
 /// SIGURG's handler (cabi.xo on_urg) with the interrupted thread's

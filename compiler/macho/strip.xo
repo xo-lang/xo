@@ -1,0 +1,332 @@
+// Dead stripping by atom (decision 0388 stage 4, std's indexed store): an
+// object made with `.subsections_via_symbols` (MH_SUBSECTIONS_VIA_SYMBOLS)
+// splits into atoms at its symbols, as ld64 splits one, and the link keeps
+// only the atoms the entry and the other objects reach through
+// relocations. A compact unwind entry or an FDE stays with its function's
+// atom and roots the function's LSDA; a CIE always stays. An object
+// without the flag is kept whole, as before, and roots what it names.
+
+/// S_ATTR_NO_DEAD_STRIP: a section kept whatever reaches it.
+const S_ATTR_NO_DEAD_STRIP = 0x10000000
+
+/// The ordinal of the atom of split section ordinal (of object o) that
+/// holds address a; ordinal itself when the section was not split.
+fn atom_ordinal(o: IObj, ordinal: Int, a: Int) -> Int {
+  match o.split.get(ordinal) {
+    Some(l) => {
+      var lo = 0
+      var hi = l.len()
+      while lo < hi {
+        let m = (lo + hi) / 2
+        if l[m].0 <= a {
+          lo = m + 1
+        } else {
+          hi = m
+        }
+      }
+      if lo == 0 { l[0].1 } else { l[lo - 1].1 }
+    }
+    None => ordinal
+  }
+}
+
+/// Whether a section is never split: the linker's own (__LD), DWARF, and
+/// sections with no symbols to split at (literals).
+fn whole_sect(s: ISect) -> Bool {
+  s.seg == "__LD" || s.seg == "__DWARF" || (s.flags & S_ATTR_DEBUG_FLAG) != 0 || is_eh(s)
+}
+
+/// __eh_frame: kept whole (its FDEs' SUBTRACTOR addends are offsets from
+/// the section's start, so it cannot lose records without being written
+/// again), never walked: a dead function's FDE points to 0, and
+/// __unwind_info names only the live functions' FDEs.
+fn is_eh(s: ISect) -> Bool {
+  s.seg == "__TEXT" && s.name == "__eh_frame"
+}
+
+/// Splits each splittable section of object o into atoms at its defined
+/// symbols (and at its start); __eh_frame into its CIE and FDE records.
+fn (var l: Linker) atomize(o: Int) {
+  let ob = l.objs[o]
+  var by_sect: List[List[Int]] = []
+  for _ in ob.sects {
+    by_sect.push([])
+  }
+  for s in ob.syms {
+    if (s.typ & N_STAB) == 0 && (s.typ & N_TYPE) == 0x0e && s.sect >= 1 && s.sect <= ob.sects.len() {
+      by_sect[s.sect - 1].push(s.value)
+    }
+  }
+  var sects: List[ISect] = []
+  var split: Map[Int, List[(Int, Int)]] = {}
+  for (k, s) in ob.sects.indexed() {
+    var starts: List[Int] = []
+    if !whole_sect(s) {
+      starts.push(s.addr)
+      for v in by_sect[k].sort() {
+        if v > s.addr && v < s.addr + s.size && v != starts[starts.len() - 1] {
+          starts.push(v)
+        }
+      }
+    }
+    if starts.len() <= 1 {
+      sects.push(s)
+      split[k + 1] = [(s.addr, sects.len())]
+      continue
+    }
+    var atoms: List[(Int, Int)] = []
+    for (i, a) in starts.indexed() {
+      let e = if i + 1 < starts.len() { starts[i + 1] } else { s.addr + s.size }
+      var t = ISect{seg: s.seg, name: s.name, addr: a, size: e - a, align: s.align, flags: s.flags, data: if s.data.is_empty() { s.data } else { s.data[a - s.addr..e - s.addr] }}
+      for r in s.relocs {
+        let at = r.addr + s.addr
+        if at >= a && at < e {
+          var r2 = r
+          r2.addr = at - a
+          t.relocs.push(r2)
+        }
+      }
+      sects.push(t)
+      atoms.push((a, sects.len()))
+    }
+    split[k + 1] = atoms
+  }
+  // each defined symbol moves to the atom holding it
+  var syms = ob.syms
+  for i in 0..syms.len() {
+    let s = syms[i]
+    if (s.typ & N_STAB) == 0 && (s.typ & N_TYPE) == 0x0e && s.sect >= 1 {
+      syms[i].sect = atom_ordinal(IObj{path: "", split: split}, s.sect, s.value)
+    }
+  }
+  l.objs[o].sects = sects
+  l.objs[o].syms = syms
+  l.objs[o].split = split
+}
+
+/// The start addresses of __eh_frame's records (a CIE or an FDE each).
+fn eh_records(s: ISect) -> List[Int] {
+  var out: List[Int] = []
+  var off = 0
+  while off + 4 <= s.data.len() {
+    let len = rd32(s.data, off)
+    if len == 0 || len == 0xffffffff {
+      break
+    }
+    out.push(s.addr + off)
+    off += 4 + len
+  }
+  out
+}
+
+/// The (object, section) a relocation of object o reaches, (-1, -1) for an
+/// import or an absolute symbol.
+fn (l: Linker) reloc_sect(o: Int, s: ISect, r: IReloc) -> (Int, Int) {
+  if r.typ == R_ADDEND {
+    return (-1, -1)
+  }
+  if r.ext {
+    let (d, i) = l.def_of(o, r.sym)
+    if d < 0 {
+      return (-1, -1)
+    }
+    let t = l.objs[d].syms[i]
+    if (t.typ & N_TYPE) != 0x0e || t.sect < 1 {
+      return (-1, -1)
+    }
+    return (d, t.sect - 1)
+  }
+  // a section relative reference: the atom of the address the content
+  // holds (a pointer), else every atom of that section
+  let ord = r.sym
+  if l.objs[o].split.contains(ord) {
+    if r.typ == R_UNSIGNED && r.len == 3 {
+      return (o, atom_ordinal(l.objs[o], ord, rd64(s.data, r.addr)) - 1)
+    }
+    return (o, -1 - ord)
+  }
+  (o, ord - 1)
+}
+
+/// dead_strip: atomizes the objects made with .subsections_via_symbols and
+/// marks every atom no root reaches dead (place skips it).
+fn (var l: Linker) dead_strip() {
+  var any = false
+  for o in 0..l.objs.len() {
+    if l.objs[o].live && l.objs[o].subsections {
+      l.atomize(o)
+      any = true
+    }
+  }
+  if !any {
+    return
+  }
+  var live: List[List[Bool]] = []
+  for ob in l.objs {
+    var row: List[Bool] = []
+    for _ in ob.sects {
+      row.push(false)
+    }
+    live.push(row)
+  }
+  var work: List[(Int, Int)] = []
+  // what each function atom's FDE and compact unwind entry name besides
+  // the function (its LSDA, its personality): live with the function
+  var unw: Map[(Int, Int), List[(Int, Int)]] = {}
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for (k, s) in l.objs[o].sects.indexed() {
+      if is_eh(s) {
+        for rec in eh_records(s) {
+          let at = rec - s.addr
+          if s.data.len() < at + 8 || rd32(s.data, at + 4) == 0 {
+            continue
+          }
+          var fn_t = (-1, -1)
+          var other: List[(Int, Int)] = []
+          for r in s.relocs {
+            if r.addr >= at + 8 && r.addr < at + 4 + rd32(s.data, at) + 4 && r.typ != R_SUBTRACTOR {
+              if r.addr == at + 8 {
+                fn_t = l.reloc_sect(o, s, r)
+              } else {
+                other.push(l.reloc_sect(o, s, r))
+              }
+            }
+          }
+          var e = unw.get(fn_t) ?? []
+          unw[fn_t] = e + other
+        }
+      } else if s.name == "xounsafe" && l.objs[o].subsections {
+        // a function's unsafe range index record (decision 0388): live
+        // with the function its first word names, with its table
+        var fn_t = (-1, -1)
+        var other: List[(Int, Int)] = [(o, k)]
+        for r in s.relocs {
+          if r.addr == 0 {
+            fn_t = l.reloc_sect(o, s, r)
+          } else {
+            other.push(l.reloc_sect(o, s, r))
+          }
+        }
+        var e = unw.get(fn_t) ?? []
+        unw[fn_t] = e + other
+      } else if s.seg == "__LD" && s.name == "__compact_unwind" {
+        var by_entry: Map[Int, (Int, Int)] = {}
+        for r in s.relocs {
+          if r.addr % 32 == 0 {
+            by_entry[r.addr] = l.reloc_sect(o, s, r)
+          }
+        }
+        for r in s.relocs {
+          if r.addr % 32 != 0 {
+            let f2 = by_entry.get(r.addr / 32 * 32) ?? (-1, -1)
+            var e = unw.get(f2) ?? []
+            e.push(l.reloc_sect(o, s, r))
+            unw[f2] = e
+          }
+        }
+      }
+    }
+  }
+  // the roots: every section of a whole object, the sections nothing may
+  // strip, CIEs, and the entry's atom
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live {
+      continue
+    }
+    for (k, s) in l.objs[o].sects.indexed() {
+      // DWARF and __eh_frame name every function: never walked
+      if s.seg == "__LD" || s.seg == "__DWARF" || (s.flags & S_ATTR_DEBUG_FLAG) != 0 || is_eh(s) {
+        continue
+      }
+      let keep = !l.objs[o].subsections || (s.flags & S_ATTR_NO_DEAD_STRIP) != 0 || (s.flags & 0xff) == S_MOD_INIT_FUNC_POINTERS
+      if keep {
+        live[o][k] = true
+        work.push((o, k))
+      }
+    }
+  }
+  if let Some((eo, ei)) = l.globals.get(l.opts.entry.bytes()) {
+    let es = l.objs[eo].syms[ei]
+    if es.sect >= 1 && !live[eo][es.sect - 1] {
+      live[eo][es.sect - 1] = true
+      work.push((eo, es.sect - 1))
+    }
+  }
+  while let Some((o, k)) = work.pop() {
+    let s = l.objs[o].sects[k]
+    var refs: List[(Int, Int)] = []
+    for r in s.relocs {
+      refs.push(l.reloc_sect(o, s, r))
+    }
+    // what the function's FDE and unwind entry name (LSDA, personality)
+    for t in unw.get((o, k)) ?? [] {
+      refs.push(t)
+    }
+    for (d, j) in refs {
+      if d < 0 {
+        continue
+      }
+      if j < 0 {
+        // every atom of a split section, for a reference by section
+        let ord = -1 - j
+        for (_, n) in l.objs[d].split.get(ord) ?? [] {
+          if !live[d][n - 1] {
+            live[d][n - 1] = true
+            work.push((d, n - 1))
+          }
+        }
+        continue
+      }
+      if !live[d][j] {
+        live[d][j] = true
+        work.push((d, j))
+      }
+    }
+  }
+  // the dead atoms, and the compact unwind entries of dead functions
+  for o in 0..l.objs.len() {
+    if !l.objs[o].live || !l.objs[o].subsections {
+      continue
+    }
+    for k in 0..l.objs[o].sects.len() {
+      let s = l.objs[o].sects[k]
+      if s.seg == "__LD" && s.name == "__compact_unwind" {
+        l.objs[o].sects[k] = l.live_unwind(o, s, live)
+      } else if !live[o][k] && !whole_sect(s) {
+        l.objs[o].sects[k].dead = true
+      }
+    }
+  }
+}
+
+/// A compact unwind section with only the entries of live functions.
+fn (l: Linker) live_unwind(o: Int, s: ISect, live: List[List[Bool]]) -> ISect {
+  var keep: List[Int] = []
+  for r in s.relocs {
+    if r.addr % 32 == 0 {
+      let (d, j) = l.reloc_sect(o, s, r)
+      if d >= 0 && j >= 0 && live[d][j] {
+        keep.push(r.addr)
+      }
+    }
+  }
+  var out = s
+  var b = BytesBuilder.new()
+  out.relocs = []
+  for (n, at) in keep.indexed() {
+    b.write(s.data[at..at + 32])
+    for r in s.relocs {
+      if r.addr >= at && r.addr < at + 32 {
+        var r2 = r
+        r2.addr = r.addr - at + 32 * n
+        out.relocs.push(r2)
+      }
+    }
+  }
+  out.data = b.freeze()
+  out.size = 32 * keep.len()
+  out
+}

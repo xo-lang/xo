@@ -137,11 +137,70 @@ fn du_pair(a: Str, b: Str) -> Bool {
 
 /// The list of every file's table (the last file's), held in static word
 /// 77 (end_data).
+/// A std store build (decision 0388) sets bit 40 of the count and ends
+/// the list with the start and end of the gathered per-function index
+/// (unsafe_fn_tables), which the linker defines.
 fn (g: G) unsafe_parts(nss: List[Str]) -> Str {
   let s = g.sym("xo_unsafe_parts")
-  var b: List[Str] = ["${g.section("rodata")}${g.hidden_global(s)}\t.p2align 3\n${s}:\n\t.quad ${nss.len()}\n"]
+  let count = if g.m.std_store { nss.len() + UNSAFE_INDEX_FLAG } else { nss.len() }
+  var b: List[Str] = ["${g.section("rodata")}${g.hidden_global(s)}\t.p2align 3\n${s}:\n\t.quad ${count}\n"]
   for ns in nss {
     b.push("\t.quad ${g.sym("xo_unsafe_${ns}")}\n")
   }
+  if g.m.std_store {
+    b.push("\t.quad section$start$__DATA$xounsafe\n\t.quad section$end$__DATA$xounsafe\n")
+  }
   b.join("")
+}
+
+/// Bit 40 of xo_unsafe_parts' count: an index of per-function tables
+/// follows the list (pool.xo async_pc_ok).
+const UNSAFE_INDEX_FLAG = 1099511627776
+
+/// A std store build's unsafe range tables (decision 0388): one per
+/// function with ranges, in an atom of its own, its ranges as offsets
+/// from the function's own label (so they hold wherever the link places
+/// the function, and the table goes when the function is stripped), and
+/// an index record (the function, its table) in __DATA,xounsafe, which
+/// the linker gathers and keeps only for live functions.
+fn (var g: G) unsafe_fn_tables(text: Str) -> Str {
+  var out: List[Str] = []
+  var fname = ""
+  var labs: List[Str] = []
+  for l in text.split("\n") {
+    if !l.ends_with(":") || l.starts_with("\t") {
+      continue
+    }
+    let name = l[0..l.len() - 1]
+    if name.starts_with("L") || name.starts_with(".L") {
+      let at = name.find("_du") ?? -1
+      if at >= 0 && at + 3 < name.len() && is_digits(name[at + 3..name.len()]) {
+        labs.push(name)
+      }
+      continue
+    }
+    out.push(g.unsafe_fn_table(fname, labs))
+    fname = name
+    labs = []
+  }
+  out.push(g.unsafe_fn_table(fname, labs))
+  out.join("")
+}
+
+/// One function's table and index record (unsafe_fn_tables), "" for a
+/// function with no unsafe range.
+fn (g: G) unsafe_fn_table(f: Str, ls: List[Str]) -> Str {
+  if f.is_empty() || ls.len() < 2 {
+    return ""
+  }
+  let t = "${f}$ut"
+  let ix = "${f}$ui"
+  var o: List[Str] = ["${g.section("rodata")}\t.p2align 3\n${t}:\n\t.quad ${f}\n\t.quad ${ls[ls.len() - 1]} - ${f}\n\t.quad ${ls.len() / 2}\n"]
+  var i = 0
+  while i + 1 < ls.len() {
+    o.push("\t.long ${ls[i]} - ${f}\n\t.long ${ls[i + 1]} - ${f}\n")
+    i += 2
+  }
+  o.push("\t.section __DATA,xounsafe\n\t.p2align 3\n${ix}:\n\t.quad ${f}\n\t.quad ${t}\n")
+  o.join("")
 }

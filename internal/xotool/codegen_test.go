@@ -43,6 +43,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_DCE":                  {"content", ""},
 	"XO_LLRT_C":               {"content", ""},
 	"XO_CHECK_EAGER":          {"content", ""},
+	"XO_STD_ROOTS":            {"content", ""}, // decision 0388 1b: every std function a root; the module's content says so
 	"XO_CHECK_NO_PARSE_CACHE": {"none", ""},
 	"XO_STD":                  {"content", ""},
 	"XO_ZONEINFO":             {"content", ""},

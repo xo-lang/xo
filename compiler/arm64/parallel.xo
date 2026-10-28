@@ -433,7 +433,7 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
   g.shared_code(out)
   g.data(out)
   if m.async_preempt {
-    out.push(g.unsafe_parts(names))
+    out.push(g.unsafe_parts(if m.std_store { [] } else { names }))
   }
   g.end_data(out)
   files.push(out.join(""))
@@ -526,7 +526,7 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: S
   let text = g.text.join("")
   // decision 0318: the functions' text between two labels, and its unsafe
   // ranges' table
-  let (ubase, uend, utbl) = if m.async_preempt { g.unsafe_table(text, ns) } else { ("", "", "") }
+  let (ubase, uend, utbl) = if m.async_preempt && m.std_store { ("", "", g.unsafe_fn_tables(text)) } else if m.async_preempt { g.unsafe_table(text, ns) } else { ("", "", "") }
   out.push(ubase)
   out.push(text)
   out.push(uend)

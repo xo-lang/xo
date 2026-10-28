@@ -486,6 +486,7 @@ fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool,
   b.goos = goos
   b.goarch = goarch
   b.m.async_preempt = c.async_preempt_ok && !c.no_preempt && !c.det && ((goarch is "arm64" | "amd64") && (goos is "darwin" | "linux") || (goarch == "amd64" && goos == "windows" && !c.async_preempt_llvm)) && !wasm
+  b.m.std_store = c.std_roots && goos == "darwin"
   b.wasm = wasm
   b.conc = conc
   b
@@ -543,8 +544,12 @@ pub fn (var b: Builder) build() uses fs.read {
     }
   }
   b.run_queue()
-  b.declare_exports()
+  // the dump's and std's roots first, so the C ABI exports of the modules
+  // they build are declared too (a feature's exports are declared once its
+  // importer is built)
   b.declare_dump_roots()
+  b.run_queue()
+  b.declare_exports()
   b.run_queue()
 }
 
@@ -552,7 +557,7 @@ pub fn (var b: Builder) build() uses fs.read {
 /// (`xo dev dump ssa --fn=NAME`: `Type.method`, `name`, or either with
 /// its module's name before) as roots of the build.
 fn (var b: Builder) declare_dump_roots() {
-  if b.c.dump_roots.is_empty() {
+  if b.c.dump_roots.is_empty() && !b.c.std_roots {
     return
   }
   for o in 0..b.c.objs.len() {
@@ -561,6 +566,22 @@ fn (var b: Builder) declare_dump_roots() {
       continue
     }
     if ob.recv >= 0 && !b.c.objs[ob.recv].tparams.is_empty() {
+      continue
+    }
+    // the std modules and their implementations; the runtime's modules
+    // (native/llrt) only as their callers reach them, since some exist for
+    // one build mode (the test world's, --race's) and their C exports are
+    // declared only in it
+    let mpath = b.c.mods[ob.module].path
+    if b.c.std_roots && b.c.mods[ob.module].std_tree && !mpath.starts_with("native/llrt/") && (b.tests || !(mpath is "std/testing" | "native/testing" | "native/rttest")) && (b.tests || !txt(ob.name).starts_with("llrt_tw_")) {
+      // a declaration whose body is elsewhere (a std API function the
+      // native implementation provides) has no bound parameters: the
+      // implementation's function is the root instead
+      let bound = (ob.params.is_empty() || b.c.param_vars.contains(o)) && (ob.recv < 0 || b.c.recv_var.contains(o))
+      let has_body = !ob.fn_decl.is_empty() && (ob.fn_decl[0].body != None || ob.fn_decl[0].lazy != None)
+      if bound && has_body {
+        let _s = b.declare(o, [])
+      }
       continue
     }
     let dn = b.c.display_name(o)

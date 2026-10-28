@@ -455,6 +455,10 @@ pub struct Module {
   /// asynchronous preemption (decision 0318): no loop polls; the emitter
   /// writes the unsafe range tables the SIGURG handler reads
   pub async_preempt: Bool = false
+  /// decision 0388's std store: each function's unsafe ranges are a table
+  /// of its own, indexed in __DATA,xounsafe, so the link may strip and
+  /// reorder functions (std_roots)
+  pub std_store: Bool = false
   /// loops without preemption polls (`--no-preempt`, decision 0286 step 3)
   pub no_preempt: Bool = false
   /// a deterministic run (decision 0350, check.Checker.det): in the fn and

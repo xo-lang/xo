@@ -222,6 +222,12 @@ pub struct Asm {
   /// of the symbol table: a label when it is defined or first named by an
   /// instruction or a data directive, whichever comes first
   reg_order: List[Int] = []
+  /// `.subsections_via_symbols`: a fix whose label is in another atom of
+  /// its section is relocated, not patched (decision 0388), and the
+  /// object says so (MH_SUBSECTIONS_VIA_SYMBOLS)
+  atoms: Bool = false
+  /// atoms: each section's atom starts (offset, symbol), by offset
+  atom_starts: List[List[(Int, Int)]] = []
   /// the unwind sections, -1 when absent
   cu_sect: Int = -1
   eh_sect: Int = -1
@@ -678,6 +684,12 @@ fn (var a: Asm) directive(l: Bytes) {
   if d == ".globl" {
     let i = a.sym(rest)
     a.syms[i].global = true
+    return
+  }
+  if d == ".subsections_via_symbols" {
+    // the object splits into atoms at its symbols (decision 0388's std
+    // store; ld64's contract): every reference between atoms is relocated
+    a.atoms = true
     return
   }
   if d == ".private_extern" {
@@ -1274,6 +1286,9 @@ fn (var a: Asm) emit_data(si: Int) {
 /// Patches the text words whose labels are in the same section, and
 /// turns the others into relocations.
 fn (var a: Asm) apply_fixes() {
+  if a.atoms {
+    a.find_atom_starts()
+  }
   for f in a.fixes {
     let s = a.syms[f.sym]
     let pc = f.at * 4
@@ -1289,7 +1304,7 @@ fn (var a: Asm) apply_fixes() {
       a.sects[f.sect].words[f.at] = w
       continue
     }
-    let local = s.sect == f.sect
+    let local = s.sect == f.sect && (!a.atoms || a.atom_at(f.sect, pc) == (if s.temp { s.atom } else { f.sym }))
     if f.kind == FX_PAGE21 || f.kind == FX_PAGEOFF12 {
       // always relocated: pages depend on the final layout
       let typ = if f.kind == FX_PAGE21 { R_PAGE21 } else { R_PAGEOFF12 }
@@ -1311,7 +1326,7 @@ fn (var a: Asm) apply_fixes() {
         a.reloc_to(f.sect, pc, R_BRANCH26, true, f.sym)
         continue
       }
-      a.err = "line ${f.line}: ${bstr(s.name)} is not defined in this section"
+      a.err = if s.sect == f.sect { "line ${f.line}: ${bstr(s.name)} is in another atom (.subsections_via_symbols), which this instruction cannot reach through a relocation" } else { "line ${f.line}: ${bstr(s.name)} is not defined in this section" }
       return
     }
     let d = s.off - pc
@@ -1343,6 +1358,41 @@ fn (var a: Asm) apply_fixes() {
     }
     a.sects[f.sect].words[f.at] = w
   }
+}
+
+/// atoms: the starts of the atoms of each section, the non temporary
+/// symbols defined in it, by offset.
+fn (var a: Asm) find_atom_starts() {
+  var by: List[List[(Int, Int)]] = []
+  for _ in a.sects {
+    by.push([])
+  }
+  for (i, s) in a.syms.indexed() {
+    if !s.temp && s.sect >= 0 {
+      by[s.sect].push((s.off, i))
+    }
+  }
+  a.atom_starts = []
+  for l in by {
+    a.atom_starts.push(l.sort())
+  }
+}
+
+/// atoms: the symbol whose atom holds offset off of section si (the last
+/// start at or before it), -1 for the section's start.
+fn (a: Asm) atom_at(si: Int, off: Int) -> Int {
+  let l = a.atom_starts[si]
+  var lo = 0
+  var hi = l.len()
+  while lo < hi {
+    let m = (lo + hi) / 2
+    if l[m].0 <= off {
+      lo = m + 1
+    } else {
+      hi = m
+    }
+  }
+  if lo == 0 { -1 } else { l[lo - 1].1 }
 }
 
 /// The relocation of a pointer at off of a data section to sym: the

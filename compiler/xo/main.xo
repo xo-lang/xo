@@ -638,10 +638,17 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // a native build checks the runtime's bodies as it builds them
   // (decision 0247); XO_CHECK_EAGER=1 checks them all first, as before
   c.lazy = native && (os.env.get("XO_CHECK_EAGER") ?? "") != "1"
+  // decision 0388 stage 1b's prototype: std's every non generic function
+  // built, as std's object will be
+  c.std_roots = (os.env.get("XO_STD_ROOTS") ?? "") == "1"
+  if c.std_roots {
+    // every body is built, so every body is checked first
+    c.lazy = false
+  }
   // the native modules' function bodies parsed lazily too (decision 0351
   // stage 2): xo build and run only, opt in while it is measured
   // on by default (owner, 2026-10-23); XO_LAZY_PARSE=off parses every body
-  c.lazy_parse = (o.cmd == "build" || o.cmd == "run") && (os.env.get("XO_LAZY_PARSE") ?? "") != "off"
+  c.lazy_parse = (o.cmd == "build" || o.cmd == "run") && (os.env.get("XO_LAZY_PARSE") ?? "") != "off" && !c.std_roots
   // decision 0291 (the switch, owner 2026-10-21): Map and Set are the
   // hybrid (the lists until written while shared twice, then the log);
   // XO_MAP_LOG=0 builds the lists alone (wasm too, since its hybrid's
@@ -1508,6 +1515,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // a program whose link has no `use c` objects (they could call an
     // export by name), not `xo asm`; XO_PASSES=-hollow keeps them
     let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow")
+    // decision 0388's std store: the parts split into atoms, which the
+    // link strips by symbol (every object path below assembles these)
+    if (os.env.get("XO_STD_ROOTS") ?? "") == "1" && tgoos == "darwin" {
+      p.parts = p.parts.map(fn(x) { "\t.subsections_via_symbols\n${x}" })
+    }
     // a split darwin build through the back-end cache, part by part
     // (asmparts.xo incr_hollow): only the parts an edit changed are
     // scanned, hollowed and assembled; their texts hollowed later only if

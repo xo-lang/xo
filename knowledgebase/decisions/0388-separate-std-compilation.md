@@ -200,7 +200,33 @@ strings, shared and not per function, are 0.21 MB in all (__debug_abbrev 0.01, _
 __debug_line_str 0.12) and are copied once per link; __debug_info (2.49 MB), __debug_line (2.47)
 and __debug_loclists (4.93) split by function with the code, except their shared type DIEs, to
 be measured when the store's DWARF is split. A fib link from the store is then about today's
-7.5 ms plus the union and the shared DWARF: about 8 to 10 ms.
+7.5 ms plus the union and the shared DWARF: about 8 to 10 ms. Walking the edge list at the link
+(122,507 edges, 0.49 MB as 4 byte indexes) from fib's roots takes 17 us and gives the same live
+set as the closures, so the store keeps the edges and no bitsets (Lead's check).
+
+### Groundwork landed (xo-lang-4, 2026-10-27)
+
+- compiler/macho's assembler has an atoms mode (`.subsections_via_symbols`): a branch to another
+  atom of its section is relocated, not patched, and the object says MH_SUBSECTIONS_VIA_SYMBOLS.
+- The linker splits such an object at its symbols and strips by atom (strip.xo): roots are the
+  entry and every section of a whole object; every relocation is an edge; a function's compact
+  unwind entry, FDE and unsafe range record stay with it and root what they name (the LSDA, the
+  personality, the table). __eh_frame stays whole and is never walked (its FDEs' SUBTRACTOR
+  addends are offsets from the section's start, which ld64 handles by writing the section
+  again): a dead function's FDE points to 0, and __unwind_info names only the live functions'.
+  DWARF of a stripped atom resolves to 0 for now (the per atom DWARF is next).
+  section$start$SEG$SECT and section$end$SEG$SECT are defined as ld64 defines them.
+- Async preemption's unsafe range tables were one per part, offsets from the part's first text
+  label resolved by the assembler (40 tables, 29,162 entries in std): stripping or reordering
+  atoms would have pointed them at the wrong code with no error. A store build writes one table
+  per function instead, in an atom of its own, its ranges offsets from the function's label, and
+  a record (function, table) in __DATA,xounsafe, which the linker gathers for live functions; the
+  runtime (llrt pool.xo async_pc_ok) scans that index when bit 40 of xo_unsafe_parts' count is
+  set, after the per part tables. Normal builds set no bit and write the same tables as before.
+- XO_STD_ROOTS=1 (with XO_DCE=off XO_PASSES=-hollow) builds std whole that way. The std-all
+  program: __text 5.05 MB unstripped, 0.31 MB stripped (hollow's size), and it runs;
+  async_preempt_alloc and async_preempt_regs built so match their want.txt in 5 of 5 runs each
+  (402 live functions in the index, 6,432 bytes, scanned linearly per SIGURG).
 
 ## Alternatives
 

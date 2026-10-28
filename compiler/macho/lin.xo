@@ -36,6 +36,8 @@ struct ISect {
   out: Int = -1
   /// the offset in the output section
   off: Int = 0
+  /// an atom no root reaches (strip.xo): not placed
+  dead: Bool = false
 }
 
 struct IReloc {
@@ -68,6 +70,12 @@ struct IObj {
   /// RX_* (64 plus the X86_64_RELOC_ type), but for R_UNSIGNED and
   /// R_SUBTRACTOR, which mean what arm64's do
   x86: Bool = false
+  /// MH_SUBSECTIONS_VIA_SYMBOLS: the object splits into atoms at its
+  /// symbols (strip.xo, decision 0388)
+  subsections: Bool = false
+  /// after atomize: each split section's ordinal, its atoms' (start
+  /// address, new ordinal), by start
+  split: Map[Int, List[(Int, Int)]] = {}
 }
 
 fn rd8(b: Bytes, o: Int) -> Int {
@@ -134,7 +142,7 @@ fn parse_object(path: Str, b: Bytes) -> Result[IObj, Str] {
   if !(rd32(b, 4) == CPU_TYPE_ARM64 || x86) || rd32(b, 12) != MH_OBJECT {
     return Err("${path}: not an arm64 or x86_64 object")
   }
-  var obj = IObj{path: path, x86: x86}
+  var obj = IObj{path: path, x86: x86, subsections: (rd32(b, 24) & 0x2000) != 0}
   let ncmds = rd32(b, 16)
   var off = 32
   for _ in 0..ncmds {

@@ -194,6 +194,8 @@ struct Linker {
   isl_ix: List[Map[Str, Int]] = []
   isl_of: Map[(Int, Int), Int] = {}
   isl_done: Set[Int] = #{}
+  /// while the DWARF is written: an address in a stripped atom is 0
+  dw_dead_zero: Bool = false
   err: Str = ""
 }
 
@@ -236,6 +238,12 @@ pub fn link_debug(inputs: List[LinkInput], opts: LinkOpts) -> Result[(Bytes, Byt
   if !l.err.is_empty() {
     return Err(l.err)
   }
+  // decision 0388 stage 4: objects made with .subsections_via_symbols
+  // keep only the atoms the link reaches
+  l.dead_strip()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
   l.place()
   l.scan()
   if !l.err.is_empty() {
@@ -247,6 +255,7 @@ pub fn link_debug(inputs: List[LinkInput], opts: LinkOpts) -> Result[(Bytes, Byt
     return Err(l.err)
   }
   l.relocate()
+  l.dw_dead_zero = false
   if !l.err.is_empty() {
     return Err(l.err)
   }
@@ -376,6 +385,7 @@ fn (var l: Linker) resolve() {
     l.objs.push(c)
     l.add_globals(l.objs.len() - 1)
   }
+  l.section_bounds()
   // the imports, sorted by name
   var names: Set[Bytes] = #{}
   var strong: Set[Bytes] = #{}
@@ -414,6 +424,40 @@ fn (var l: Linker) resolve() {
   for (i, n) in l.imports.indexed() {
     l.import_ix.put(n, i)
   }
+}
+
+/// section$start$SEG$SECT and section$end$SEG$SECT, as ld64 defines
+/// them: an empty marker section each, placed first or last in the output
+/// section (place), which a symbol at offset 0 names (decision 0388: the
+/// gathered unsafe range index).
+fn (var l: Linker) section_bounds() {
+  var want: List[Bytes] = []
+  for o in l.objs {
+    if !o.live {
+      continue
+    }
+    for s in o.syms {
+      let n = bstr(s.name)
+      if is_ext(s) && !is_defined(s) && !l.globals.contains(s.name) && (n.starts_with("section$start$") || n.starts_with("section$end$")) && !want.contains(s.name) {
+        want.push(s.name)
+      }
+    }
+  }
+  if want.is_empty() {
+    return
+  }
+  var c = IObj{path: "<section bounds>"}
+  for n in want {
+    let parts = bstr(n).split("$")
+    if parts.len() != 4 {
+      l.fail("${bstr(n)}: want section$start$SEG$SECT")
+      return
+    }
+    c.sects.push(ISect{seg: parts[2], name: parts[3], addr: 0, size: 0, align: 0, flags: 0, data: "".bytes()})
+    c.syms.push(ISym{name: n, typ: N_SECT | N_EXT, sect: c.sects.len(), desc: 0, value: 0})
+  }
+  l.objs.push(c)
+  l.add_globals(l.objs.len() - 1)
 }
 
 fn (var l: Linker) add_globals(o: Int) {
@@ -462,6 +506,10 @@ fn (l: Linker) sym_addr(o: Int, i: Int) -> Int {
     return s.value
   }
   let sect = l.objs[o].sects[s.sect - 1]
+  if sect.out < 0 {
+    // a stripped atom's symbol (strip.xo), which only DWARF names
+    return 0
+  }
   l.osects[sect.out].addr + sect.off + (s.value - sect.addr)
 }
 
@@ -478,13 +526,19 @@ fn (l: Linker) is_text_sect(out: Int) -> Bool {
 
 /// The output address of an object address in a section of the object
 /// (non extern relocations).
-fn (var l: Linker) translate(o: Int, ordinal: Int, a: Int) -> Int {
+fn (var l: Linker) translate(o: Int, ordinal0: Int, a: Int) -> Int {
+  // a split section's ordinal names its atom holding a (strip.xo)
+  let ordinal = if l.objs[o].split.is_empty() { ordinal0 } else { atom_ordinal(l.objs[o], ordinal0, a) }
   if ordinal < 1 || ordinal > l.objs[o].sects.len() {
     l.fail("${l.objs[o].path}: relocation to section ${ordinal}")
     return 0
   }
   let sect = l.objs[o].sects[ordinal - 1]
   if sect.out < 0 {
+    if sect.dead && l.dw_dead_zero {
+      // DWARF of a stripped atom: its addresses are 0
+      return 0
+    }
     l.fail("${l.objs[o].path}: relocation into ${sect.seg},${sect.name}")
     return 0
   }
@@ -555,7 +609,7 @@ fn (var l: Linker) place() {
     for k in 0..l.objs[o].sects.len() {
       let s = l.objs[o].sects[k]
       let (seg, name) = out_name(s.seg, s.name, s.flags)
-      if seg.is_empty() {
+      if seg.is_empty() || s.dead {
         continue
       }
       let oi = l.osect(seg, name, s.flags & 0xffffff00 | (s.flags & 0xff))
@@ -567,6 +621,28 @@ fn (var l: Linker) place() {
       if (s.flags & 0xff) == S_THREAD_LOCAL_VARIABLES {
         l.has_tlv = true
       }
+    }
+  }
+  // section$start$ markers first in their output sections, section$end$
+  // last (section_bounds)
+  for i in 0..l.osects.len() {
+    var first: List[(Int, Int)] = []
+    var mid: List[(Int, Int)] = []
+    var last: List[(Int, Int)] = []
+    for (o, k) in l.osects[i].chunks {
+      if l.objs[o].path == "<section bounds>" {
+        let n = bstr(l.objs[o].syms[k].name)
+        if n.starts_with("section$start$") {
+          first.push((o, k))
+        } else {
+          last.push((o, k))
+        }
+      } else {
+        mid.push((o, k))
+      }
+    }
+    if !first.is_empty() || !last.is_empty() {
+      l.osects[i].chunks = first + mid + last
     }
   }
 }
@@ -848,6 +924,8 @@ fn (var l: Linker) relocate() {
       if s.out < 0 || s.relocs.is_empty() {
         continue
       }
+      // a stripped function's FDE (strip.xo): its addresses are 0
+      l.dw_dead_zero = is_eh(s)
       let base = l.osects[s.out].addr + s.off
       let tvars = (s.flags & 0xff) == S_THREAD_LOCAL_VARIABLES
       var addend = 0
