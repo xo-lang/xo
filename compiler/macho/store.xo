@@ -129,6 +129,31 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
     swbytes(hb, sg.bytes())
     swbytes(hb, nm.bytes())
   }
+  // the global definitions by name (a strong one over a weak one, else
+  // the first, as add_globals): name place and length in the data
+  // region, the atom; sorted by name for the link's binary search
+  var gdefs: Map[Bytes, (Int, Bool)] = {}
+  for (o, ob) in l.objs.indexed() {
+    for x in ob.syms {
+      if is_ext(x) && is_defined(x) && (x.typ & N_TYPE) == N_SECT && x.sect >= 1 {
+        let weak = (x.desc & 0x80) != 0
+        match gdefs.get(x.name) {
+          Some((_, w)) => if w && !weak {
+            gdefs[x.name] = (base[o] + x.sect - 1, false)
+          }
+          None => gdefs[x.name] = (base[o] + x.sect - 1, weak)
+        }
+      }
+    }
+  }
+  let gnames = gdefs.keys().sort_by(fn(b: Bytes) -> Str { bstr(b) })
+  sw32(hb, gnames.len())
+  for nm in gnames {
+    sw32(hb, db.len())
+    sw32(hb, nm.len())
+    db.write(nm)
+    sw32(hb, (gdefs.get(nm) ?? (0, false)).0)
+  }
   for (o, ob) in l.objs.indexed() {
     let segs = l.dw_all_segs(o)
     swbytes(hb, ob.path.bytes())
@@ -178,9 +203,12 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
       sw64(hb, s.addr)
       sw64(hb, s.size)
     }
+    // the symbols as STORE_SYM byte records, names in the data region
     sw32(hb, ob.syms.len())
     for s in ob.syms {
-      swbytes(hb, s.name)
+      sw32(hb, db.len())
+      sw32(hb, s.name.len())
+      db.write(s.name)
       sw32(hb, s.typ)
       sw32(hb, s.sect)
       sw32(hb, s.desc)
@@ -267,6 +295,44 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
 /// its address and size.
 const STORE_REC = 52
 
+/// A symbol's record: its name's place and length in the data region,
+/// its type, section (an atom's ordinal), desc and value.
+const STORE_SYM = 28
+
+/// The atom of the global definition named name in the store's sorted
+/// table (nd records of 12 bytes at dt), -1 for none.
+fn store_def(store: Bytes, data0: Int, dt: Int, nd: Int, name: Bytes) -> Int {
+  var lo = 0
+  var hi = nd
+  while lo < hi {
+    let m = (lo + hi) / 2
+    let q = dt + 12 * m
+    let c = cmp_at(store, data0 + rd32(store, q), rd32(store, q + 4), name)
+    if c == 0 {
+      return rd32(store, q + 8)
+    }
+    if c < 0 {
+      lo = m + 1
+    } else {
+      hi = m
+    }
+  }
+  -1
+}
+
+/// store[at..at + n] against b, as bytes: -1, 0 or 1 (no copy).
+fn cmp_at(store: Bytes, at: Int, n: Int, b: Bytes) -> Int {
+  let k = if n < b.len() { n } else { b.len() }
+  for i in 0..k {
+    let x = Int(store[at + i])
+    let y = Int(b[i])
+    if x != y {
+      return if x < y { -1 } else { 1 }
+    }
+  }
+  if n == b.len() { 0 } else if n < b.len() { -1 } else { 1 }
+}
+
 /// The fields of the section record at q (STORE_REC).
 fn rec_name(b: Bytes, q: Int) -> Int { rd32(b, q) }
 fn rec_align(b: Bytes, q: Int) -> Int { rd32(b, q + 4) }
@@ -307,11 +373,10 @@ pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Resu
 /// symbols, the live compact unwind entries), finish (link_rest).
 pub struct StoreLink {
   l: Linker
-  /// the store's objects (the first n of l.objs), each one's first atom
-  /// number, and each atom's liveness
+  /// the store's objects (the first n of l.objs), compacted, and each
+  /// one's dead section (-1 for none)
   n: Int
-  base: List[Int]
-  live: List[Bool]
+  stubs: List[Int]
 }
 
 /// The symbols resolved and the dead functions' compact unwind entries
@@ -325,7 +390,7 @@ pub fn (var s: StoreLink) resolve() -> Str {
   for o in 0..s.l.objs.len() {
     var row: List[Bool] = []
     for k in 0..s.l.objs[o].sects.len() {
-      row.push(if o < s.n { s.live[s.base[o] + k] } else { true })
+      row.push(o >= s.n || k != s.stubs[o])
     }
     live2.push(row)
   }
@@ -372,12 +437,17 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     let sg = bstr(r.bytes())
     names.push((sg, bstr(r.bytes())))
   }
-  // each object's first section record, and each atom's edges' place
+  let ndefs = r.u32()
+  let dt = r.at
+  r.at += 12 * ndefs
+  // each object's first section and symbol record, and each atom's
+  // edges' place
   var recs: List[Int] = List.with_capacity(n)
+  var syms_at: List[Int] = List.with_capacity(n)
+  var nsyms: List[Int] = List.with_capacity(n)
+  var splits: List[List[(Int, List[(Int, Int)])]] = List.with_capacity(n)
   var edge_at: List[Int] = List.with_capacity(total)
   var base: List[Int] = []
-  // the store's global definitions: name -> store atom
-  var defs: Map[Bytes, Int] = {}
   // each object's droppable unit's function atoms (none: kept)
   var unit_fns: List[List[Int]] = []
   var nsects: List[Int] = []
@@ -389,34 +459,22 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     recs.push(r.at)
     r.at += STORE_REC * ns
     let nsym = r.u32()
-    ob.syms = List.with_capacity(nsym)
-    for _ in 0..nsym {
-      let name = r.bytes()
-      let typ = r.u32()
-      let sect = r.u32()
-      let desc = r.u32()
-      let value = r.u64()
-      let s = ISym{name: name, typ: typ, sect: sect, desc: desc, value: value}
-      if is_ext(s) && is_defined(s) && (typ & N_TYPE) == N_SECT && sect >= 1 {
-        let id = base[base.len() - 1] + sect - 1
-        // a weak definition gives way to a strong one (add_globals)
-        if !defs.contains(name) || (desc & 0x80) == 0 {
-          defs[name] = id
-        }
-      }
-      ob.syms.push(s)
-    }
+    nsyms.push(nsym)
+    syms_at.push(r.at)
+    r.at += STORE_SYM * nsym
     let nsplit = r.u32()
+    var sp: List[(Int, List[(Int, Int)])] = List.with_capacity(nsplit)
     for _ in 0..nsplit {
       let k = r.u32()
       let na = r.u32()
-      var atoms: List[(Int, Int)] = []
+      var atoms: List[(Int, Int)] = List.with_capacity(na)
       for _ in 0..na {
         let a = r.u64()
         atoms.push((a, r.u32()))
       }
-      ob.split[k] = atoms
+      sp.push((k, atoms))
     }
+    splits.push(sp)
     let nfn = r.u32()
     var ufns: List[Int] = []
     for _ in 0..nfn {
@@ -446,20 +504,18 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     }
     for s in ob.syms {
       if is_ext(s) && !is_defined(s) {
-        if let Some(id) = defs.get(s.name) {
-          if !live[id] {
-            live[id] = true
-            work.push(id)
-          }
+        let id = store_def(store, data0, dt, ndefs, s.name)
+        if id >= 0 && !live[id] {
+          live[id] = true
+          work.push(id)
         }
       }
     }
   }
-  if let Some(id) = defs.get(opts.entry.bytes()) {
-    if !live[id] {
-      live[id] = true
-      work.push(id)
-    }
+  let eid = store_def(store, data0, dt, ndefs, opts.entry.bytes())
+  if eid >= 0 && !live[eid] {
+    live[eid] = true
+    work.push(eid)
   }
   for i in 0..n {
     for k in 0..nsects[i] {
@@ -487,17 +543,31 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
   for fs in unit_fns {
     dw_dropped.push(!fs.is_empty() && !fs.any(fn(id: Int) -> Bool { live[id] }))
   }
-  // the store's sections: a live atom's bytes and relocations, a whole
-  // section's, a dead atom empty
+  // each store object compacted: its kept sections (a live atom's bytes
+  // and relocations, a whole section's, a cut DWARF section's runs) in
+  // order, then one empty dead section standing for every dead atom (a
+  // reference to one, from DWARF or an FDE, is 0: translate); its kept
+  // symbols (those of kept sections, those a kept relocation names, and
+  // every undefined one: the imports are the parts link's) in order,
+  // renumbered. The link is the one over every atom, byte for byte.
+  var stubs: List[Int] = List.with_capacity(n)
+  var newks: List[List[Int]] = List.with_capacity(n)
+  var nameds: List[List[Bool]] = List.with_capacity(n)
+  var elsewhere: Set[Bytes] = #{}
   for i in 0..n {
-    var sects: List[ISect] = List.with_capacity(nsects[i])
-    for k in 0..nsects[i] {
+    let ns = nsects[i]
+    var newk: List[Int] = List.with_capacity(ns)
+    var sects: List[ISect] = List.with_capacity(ns)
+    var any_dead = false
+    for k in 0..ns {
       let q = recs[i] + STORE_REC * k
       let (sg, nm) = names[rec_name(store, q)]
       let flags = rec_flags(store, q)
       if sg == "__DWARF" && dw_dropped[i] {
+        newk.push(sects.len())
         sects.push(ISect{seg: sg, name: nm, addr: rec_addr(store, q), size: 0, align: rec_align(store, q), flags: flags, data: "".bytes()})
       } else if rec_nseg(store, q) > 0 {
+        newk.push(sects.len())
         sects.push(store_cut(store, data0, q, sg, nm, live))
       } else if whole_name(sg, nm, flags) || live[base[i] + k] {
         let da = data0 + rec_data_at(store, q)
@@ -507,14 +577,90 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
         for j in 0..nr {
           t.relocs.push(rd_reloc(store, ra + 12 * j))
         }
+        newk.push(sects.len())
         sects.push(t)
       } else {
-        sects.push(ISect{seg: sg, name: nm, addr: rec_addr(store, q), size: rec_size(store, q), align: rec_align(store, q), flags: flags, data: "".bytes(), dead: true})
+        newk.push(-1)
+        any_dead = true
+      }
+    }
+    let stub = if any_dead { sects.len() } else { -1 }
+    if any_dead {
+      sects.push(ISect{seg: "__TEXT", name: "__dead", addr: 0, size: 0, align: 0, flags: 0, data: "".bytes(), dead: true})
+    }
+    stubs.push(stub)
+    // the symbols a kept relocation names, and the names of those
+    // another object defines
+    let nsym = nsyms[i]
+    var named: List[Bool] = List.with_capacity(nsym)
+    for _ in 0..nsym {
+      named.push(false)
+    }
+    for t in sects {
+      for x in t.relocs {
+        if x.ext && x.typ != R_ADDEND && x.sym < nsym && !named[x.sym] {
+          named[x.sym] = true
+          let q = syms_at[i] + STORE_SYM * x.sym
+          if (rd32(store, q + 8) & N_TYPE) == N_UNDF {
+            let na = data0 + rd32(store, q)
+            elsewhere.add(store[na..na + rd32(store, q + 4)])
+          }
+        }
       }
     }
     l.objs[i].sects = sects
+    newks.push(newk)
+    nameds.push(named)
   }
-  Ok(StoreLink{l: l, n: n, base: base, live: live})
+  // the symbols of each object: kept, renumbered (a definition in a dead
+  // atom is kept when a kept relocation names it, here or elsewhere: a
+  // DWARF address of a dead constant is 0, not an undefined symbol)
+  for i in 0..n {
+    let newk = newks[i]
+    let named = nameds[i]
+    let stub = stubs[i]
+    let nsym = nsyms[i]
+    var sects = l.objs[i].sects
+    // an atom's new ordinal (1 based)
+    let ord = fn(o: Int) -> Int { if newk[o - 1] >= 0 { newk[o - 1] + 1 } else { stub + 1 } }
+    var symnew: List[Int] = List.with_capacity(nsym)
+    var syms: List[ISym] = []
+    for j in 0..nsym {
+      let q = syms_at[i] + STORE_SYM * j
+      let typ = rd32(store, q + 8)
+      let sect = rd32(store, q + 12)
+      let in_sect = (typ & N_STAB) == 0 && (typ & N_TYPE) == N_SECT && sect >= 1
+      let na = data0 + rd32(store, q)
+      // an undefined symbol nothing kept names stays only when the store
+      // defines it nowhere (an import, as the parts' link binds it)
+      let undef = (typ & N_STAB) == 0 && (typ & N_TYPE) == N_UNDF
+      let keep = named[j] || (typ & N_STAB) != 0 || (undef && store_def(store, data0, dt, ndefs, store[na..na + rd32(store, q + 4)]) < 0) || (!undef && !in_sect) || (in_sect && newk[sect - 1] >= 0) || (in_sect && (typ & N_EXT) != 0 && elsewhere.contains(store[na..na + rd32(store, q + 4)]))
+      if !keep {
+        symnew.push(-1)
+        continue
+      }
+      symnew.push(syms.len())
+      syms.push(ISym{name: store[na..na + rd32(store, q + 4)], typ: typ, sect: if in_sect { ord(sect) } else { sect }, desc: rd32(store, q + 16), value: rd64(store, q + 20)})
+    }
+    for k in 0..sects.len() {
+      for j in 0..sects[k].relocs.len() {
+        let x = sects[k].relocs[j]
+        if x.ext && x.typ != R_ADDEND && x.sym < nsym {
+          sects[k].relocs[j].sym = symnew[x.sym]
+        }
+      }
+    }
+    l.objs[i].sects = sects
+    l.objs[i].syms = syms
+    for (key, atoms) in splits[i] {
+      var a2: List[(Int, Int)] = List.with_capacity(atoms.len())
+      for (a, o) in atoms {
+        a2.push((a, ord(o)))
+      }
+      l.objs[i].split[key] = a2
+    }
+  }
+  Ok(StoreLink{l: l, n: n, stubs: stubs})
 }
 
 /// A cut DWARF section of the store, its record at q (dw_cut's result
@@ -554,3 +700,4 @@ fn store_cut(store: Bytes, data0: Int, q: Int, sg: Str, nm: Str, live: List[Bool
   t.data = b.freeze()
   t
 }
+

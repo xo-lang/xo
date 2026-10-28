@@ -291,6 +291,17 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   resolve 3.1, finish 8.7 (4.9 with no DWARF: the DWARF is about 4 ms; the binary 2.72 MB, 1.07
   without). Prepare and resolve read every symbol and section of std's 37 parts; the next round
   compacts each store object to its live atoms and the symbols they name.
+- Fifth round (2026-10-28): each store object is compacted as it is read. Its kept sections (live
+  atoms, whole sections, cut DWARF) come in order, then one empty dead section stands for every
+  dead atom (a DWARF or FDE reference into one is 0). Its kept symbols, renumbered in order, are:
+  those in kept sections; those a kept relocation names; a dead atom's external definition
+  when a kept relocation anywhere names it (a DWARF address of a dead constant is 0, not an
+  undefined symbol); and an undefined one only when named or defined nowhere in the store (an
+  import, as the parts' link binds it). Symbols are fixed 28 byte records with names in the
+  data region, and the global definitions a table sorted by name for a binary search (no map
+  built per link). llvm-fib: min 13.8 ms, median 14.6 (n=21; round four 16.0 and 16.3); the
+  store check passes. The check caught two wrong first rules: an undefined symbol kept with
+  its definition dropped, and a dead definition another part's DWARF names dropped.
 
 ### std's object (xo-lang-4, 2026-10-28)
 
