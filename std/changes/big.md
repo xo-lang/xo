@@ -1,5 +1,20 @@
 # std/big changes
 
+## 2026-10-28: perf: decimal text writes eight digit characters a word into a Str sized once
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/big text CPU profile after the trims (writing the text a byte a digit into a BytesBuilder, then its UTF-8 check: 17%)
+- Go reference: math/big natconv.go itoa (the digits written into one []byte, made a string once) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big (go, arm64, LLVM; it compares the text with Go's); twincheck's checksums agree on none, mul, quorem, text, parse, exp
+
+A number past LEAF words writes its digits' characters into a Str of
+its final length (rt.rs_with_cap), eight to a word (rt.rs_push_word),
+with no builder and no UTF-8 check of digits it made itself. Output is
+unchanged. Quiet --ab, 15 rounds, the parent's std as A: text wall 0.958
+(0.951 to 0.965), instructions 0.959; Xo / Go about 1.23 (estimate: 1.35
+x 0.945 x 0.958).
+
 ## 2026-10-28: perf: results are trimmed in place; the digit divisors grow in place
 
 - Kind: perf

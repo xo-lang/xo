@@ -1239,10 +1239,6 @@ fn bigint_text(x: big.BigInt, base: Int) -> Str {
     nd += 1
   }
   let ds = DIGITS.bytes()
-  var out = BytesBuilder.new()
-  if xn {
-    out.write_byte(45)
-  }
   if xa.len() > LEAF {
     // Go's itoa: split large numbers recursively by the divisor table
     let width = Int(Float(nat_bit_len(xa)) / Float(base).log2()) + 2
@@ -1253,10 +1249,31 @@ fn bigint_text(x: big.BigInt, base: Int) -> Str {
     while start < width - 1 && s[start] == 0 {
       start += 1
     }
-    for k in start..width {
-      out.write_byte(ds[s[k]])
+    // the digits' characters eight to a word into a Str sized once
+    // (2026-10-28: a BytesBuilder byte a digit, then the UTF-8 check of
+    // the text, was 17% of bench/perf/big text)
+    var t = rt.rs_with_cap(width - start + 1)
+    if xn {
+      t = rt.rs_push_byte(t, 45)
     }
-    return out.freeze().to_str() ?? ""
+    var k = start
+    while width - k >= 8 {
+      var w = 0
+      for j in 0..8 {
+        w = w | Int(ds[s[k + j]]).wrapping_shl(8 * j)
+      }
+      t = rt.rs_push_word(t, w, 8)
+      k += 8
+    }
+    while k < width {
+      t = rt.rs_push_byte(t, Int(ds[s[k]]))
+      k += 1
+    }
+    return t
+  }
+  var out = BytesBuilder.new()
+  if xn {
+    out.write_byte(45)
   }
   // the base^nd chunks from the lowest, dividing a copy in place
   var chunks: List[Int] = []
