@@ -56,6 +56,8 @@ struct Use {
 /// rcInfo.funcs), the borrowed parameters per function, and the function
 /// being worked on.
 struct Rc {
+  /// the paths' ranks by pid (path_ranks), [] until asked
+  ranks: List[Int] = []
   /// std externs' borrowed flags and first parameter types (decision
   /// 0388 stage 3, Module.extern_borrows): fixed, never inferred
   ext: Map[Str, (List[Bool], Int)] = {}
@@ -141,7 +143,33 @@ fn (var r: Rc) leaf(root: Int, path: Str) -> Leaf {
   }
   let n = r.pids.len() + 1
   r.pids[path] = n
+  r.ranks = []
   Leaf{root: root, path: path, pid: n}
+}
+
+/// The rank of each path by number (index pid): its place in the order
+/// of all the paths seen (the empty path, pid 0, first), so a sort by
+/// (root, rank) is a sort by (root, path) with no string compared
+/// (sorted_leaves). Rebuilt after a new path (leaf), from a sort of the
+/// paths: a few thousand per module, once per new path.
+fn (var r: Rc) path_ranks() -> List[Int] {
+  if r.ranks.len() == r.pids.len() + 1 {
+    return r.ranks
+  }
+  var paths = List[Str].with_capacity(r.pids.len())
+  for (p, _) in r.pids {
+    paths.push(p)
+  }
+  let sorted = paths.sort()
+  var ranks = List[Int].with_capacity(r.pids.len() + 1)
+  for _ in 0..r.pids.len() + 1 {
+    ranks.push(0)
+  }
+  for (i, p) in sorted.indexed() {
+    ranks[r.pids.get(p) ?? 0] = i + 1
+  }
+  r.ranks = ranks
+  ranks
 }
 
 /// The runtime calls whose operand modes matter (runtimeModes), or
@@ -1324,7 +1352,7 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.um_fi = -1
   r.liveness(f, c)
   for s in c.live_in {
-    c.live_sorted.push(sorted_leaves(f, s))
+    c.live_sorted.push(r.sorted_leaves(f, s))
   }
   r.insert(f, c)
   r.cancel(f)
@@ -1693,7 +1721,7 @@ fn (k: EdgeNeed) order() -> List[Leaf] {
 }
 
 /// A leaf set ordered by root ID and path (sortedLeaves).
-fn sorted_leaves(f: Func, s: Map[Int, Leaf]) -> List[Leaf] {
+fn (var r: Rc) sorted_leaves(f: Func, s: Map[Int, Leaf]) -> List[Leaf] {
   let n = s.len()
   var out = List[Leaf].with_capacity(n)
   for (_, l) in s {
@@ -1702,46 +1730,25 @@ fn sorted_leaves(f: Func, s: Map[Int, Leaf]) -> List[Leaf] {
   if n <= 1 {
     return out
   }
-  // by root, then path. The roots first, as one Int sort of root * n +
-  // index (a value id times the set's size cannot wrap), then each run of
-  // one root by path: an insertion sort here was quadratic in the live
-  // set, at every edge (2.7 s of a cold build of xo, 2026-10-19), and
-  // sort_by with the (root, path) tuple as the key was 7.2 s of a cold
-  // self-build's 175 s CPU (2026-10-28: the keys, the index list and the
-  // merge sort's lists all grown by push, a Str retained per key, and
-  // the Leaf structs moved twice); a run of one root is rare and short
-  // (a struct with several heap fields), so the paths are compared
-  // almost never.
+  // by (root, path) as one Int sort of root * R + rank(path), R the
+  // number of ranks (a value id times a few thousand cannot wrap): no
+  // string compared, no Leaf moved but once. sort_by with the (root,
+  // path) tuple key was 7.2 s of a cold self-build's 174.7 s CPU
+  // (2026-10-28: the keys, the index list and the merge sort's lists
+  // grown by push, a Str retained per key, the Leaf structs moved
+  // twice); a run of one root is long here (a struct of many heap
+  // fields live across a function), so the paths must not be compared
+  // per run either (an insertion sort of the runs was 21 s).
+  let ranks = r.path_ranks()
+  let rn = ranks.len() + 1
   var ks = List[Int].with_capacity(n)
   for (i, l) in out.indexed() {
-    ks.push(l.root * n + i)
+    ks.push((l.root * rn + ranks[l.pid]) * n + i)
   }
   let sorted = ks.sort()
   var res = List[Leaf].with_capacity(n)
   for k in sorted {
     res.push(out[k % n])
-  }
-  var i = 0
-  while i < n {
-    var j = i + 1
-    while j < n && res[j].root == res[i].root {
-      j += 1
-    }
-    if j - i > 1 {
-      // the run [i, j) by path, in place
-      var a = i + 1
-      while a < j {
-        let x = res[a]
-        var b = a
-        while b > i && x.path < res[b - 1].path {
-          res[b] = res[b - 1]
-          b -= 1
-        }
-        res[b] = x
-        a += 1
-      }
-    }
-    i = j
   }
   res
 }
@@ -1786,7 +1793,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
         }
         needs.push(k)
       }
-      let held = sorted_leaves(f, live)
+      let held = r.sorted_leaves(f, live)
       // on the cleanup path of a landing check, the operation checked
       // produced nothing (decision 0085)
       let (site, _) = landing_site(f, bl)
