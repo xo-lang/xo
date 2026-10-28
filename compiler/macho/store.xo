@@ -339,13 +339,12 @@ pub fn (var s: StoreLink) finish() -> Result[(Bytes, Bytes), Str] {
 /// The walk from the program's inputs and the store's live atoms read
 /// (link_store's first step).
 pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Result[StoreLink, Str] {
-  if store.len() < 12 || bstr(store[0..8]) != STORE_MAGIC {
-    return Err("not an xo std store")
+  let v = match store_view(store) {
+    Ok(x) => x
+    Err(e) => return Err(e)
   }
-  let hlen = rd32(store, 8)
-  let data0 = 12 + hlen
-  // (read in place: a slice is a copy)
-  var r = SR{b: store, at: 12}
+  let n = v.n
+  let data0 = v.data0
   var l = Linker{opts: opts}
   // the program's objects after the store's (a build passes its parts
   // first), whole: what they name roots the walk
@@ -356,146 +355,56 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
   for i in 0..prog.len() {
     prog[i].subsections = false
   }
-  let n = r.u32()
-  let total = r.u32()
-  var names: List[(Str, Str)] = []
-  for _ in 0..r.u32() {
-    let sg = bstr(r.bytes())
-    names.push((sg, bstr(r.bytes())))
-  }
-  let ndefs = r.u32()
-  let dt = r.at
-  r.at += 12 * ndefs
-  // each object's first section and symbol record, and each atom's
-  // edges' place
-  var recs: List[Int] = List.with_capacity(n)
-  var syms_at: List[Int] = List.with_capacity(n)
-  var nsyms: List[Int] = List.with_capacity(n)
-  var splits: List[List[(Int, List[(Int, Int)])]] = List.with_capacity(n)
-  var edge_at: List[Int] = List.with_capacity(total)
-  var base: List[Int] = []
-  // each object's droppable unit's function atoms (none: kept)
-  var unit_fns: List[List[Int]] = []
-  var nsects: List[Int] = []
-  for _ in 0..n {
-    base.push(edge_at.len())
-    var ob = IObj{path: bstr(r.bytes()), subsections: true}
-    let ns = r.u32()
-    nsects.push(ns)
-    recs.push(r.at)
-    r.at += STORE_REC * ns
-    let nsym = r.u32()
-    nsyms.push(nsym)
-    syms_at.push(r.at)
-    r.at += STORE_SYM * nsym
-    let nsplit = r.u32()
-    var sp: List[(Int, List[(Int, Int)])] = List.with_capacity(nsplit)
-    for _ in 0..nsplit {
-      let k = r.u32()
-      let na = r.u32()
-      var atoms: List[(Int, Int)] = List.with_capacity(na)
-      for _ in 0..na {
-        let a = r.u64()
-        atoms.push((a, r.u32()))
-      }
-      sp.push((k, atoms))
-    }
-    splits.push(sp)
-    let nfn = r.u32()
-    var ufns: List[Int] = []
-    for _ in 0..nfn {
-      ufns.push(r.u32())
-    }
-    unit_fns.push(ufns)
-    for _ in 0..ns {
-      edge_at.push(r.at)
-      r.at += 4 + 4 * rd32(store, r.at)
-    }
-    l.objs.push(ob)
-  }
-  if edge_at.len() != total {
-    return Err("a damaged xo std store")
-  }
-  l.objs = l.objs + prog
   // the walk: the program's undefined symbols the store defines, the
   // entry, and the store's sections nothing may strip
-  var live: List[Bool] = List.with_capacity(total)
-  for _ in 0..total {
-    live.push(false)
-  }
-  var work: List[Int] = []
+  var roots: List[Int] = []
   for ob in prog {
     if !ob.live {
       continue
     }
     for s in ob.syms {
       if is_ext(s) && !is_defined(s) {
-        let id = store_def(store, data0, dt, ndefs, s.name)
-        if id >= 0 && !live[id] {
-          live[id] = true
-          work.push(id)
-        }
+        roots.push(v.def(s.name))
       }
     }
   }
-  let eid = store_def(store, data0, dt, ndefs, opts.entry.bytes())
-  if eid >= 0 && !live[eid] {
-    live[eid] = true
-    work.push(eid)
-  }
-  for i in 0..n {
-    for k in 0..nsects[i] {
-      let q = recs[i] + STORE_REC * k
-      let flags = rec_flags(store, q)
-      let (sg, nm) = names[rec_name(store, q)]
-      if !whole_name(sg, nm, flags) && ((flags & S_ATTR_NO_DEAD_STRIP) != 0 || (flags & 0xff) == S_MOD_INIT_FUNC_POINTERS) && !live[base[i] + k] {
-        live[base[i] + k] = true
-        work.push(base[i] + k)
-      }
-    }
-  }
-  while let Some(id) = work.pop() {
-    let e = edge_at[id]
-    for j in 0..rd32(store, e) {
-      let t = rd32(store, e + 4 + 4 * j)
-      if !live[t] {
-        live[t] = true
-        work.push(t)
-      }
-    }
-  }
-  // an object whose xo unit describes only dead functions: no DWARF
-  var dw_dropped: List[Bool] = []
-  for fs in unit_fns {
-    dw_dropped.push(!fs.is_empty() && !fs.any(fn(id: Int) -> Bool { live[id] }))
-  }
+  roots.push(v.def(opts.entry.bytes()))
+  let live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { !whole_name(sg, nm, flags) && ((flags & S_ATTR_NO_DEAD_STRIP) != 0 || (flags & 0xff) == S_MOD_INIT_FUNC_POINTERS) })
+  let dw_dropped = v.dw_dropped(live)
   // each store object compacted: its kept sections (a live atom's bytes
   // and relocations, a whole section's, a cut DWARF section's runs) in
   // order, then one empty dead section standing for every dead atom (a
   // reference to one, from DWARF or an FDE, is 0: translate); its kept
-  // symbols (those of kept sections, those a kept relocation names, and
-  // every undefined one: the imports are the parts link's) in order,
-  // renumbered. The link is the one over every atom, byte for byte.
+  // symbols renumbered (store_core.xo keep_syms). The link is the one
+  // over every atom, byte for byte.
   var stubs: List[Int] = List.with_capacity(n)
   var newks: List[List[Int]] = List.with_capacity(n)
   var nameds: List[List[Bool]] = List.with_capacity(n)
   var elsewhere: Set[Bytes] = #{}
   for i in 0..n {
-    let ns = nsects[i]
+    l.objs.push(IObj{path: v.paths[i], subsections: true})
+    let ns = v.nsects[i]
     var newk: List[Int] = List.with_capacity(ns)
     var sects: List[ISect] = List.with_capacity(ns)
     var any_dead = false
     for k in 0..ns {
-      let q = recs[i] + STORE_REC * k
-      let (sg, nm) = names[rec_name(store, q)]
+      let q = v.recs[i] + STORE_REC * k
+      let (sg, nm) = v.names[rec_name(store, q)]
       let flags = rec_flags(store, q)
       if sg == "__DWARF" && dw_dropped[i] {
         newk.push(sects.len())
         sects.push(ISect{seg: sg, name: nm, addr: rec_addr(store, q), size: 0, align: rec_align(store, q), flags: flags, data: "".bytes()})
       } else if rec_nseg(store, q) > 0 {
+        let (data, rels) = v.cut(q, live, nm == "__debug_loclists")
+        var t = ISect{seg: sg, name: nm, addr: rec_addr(store, q), size: data.len(), align: rec_align(store, q), flags: flags, data: data, relocs: List.with_capacity(rels.len())}
+        for (rq, addr) in rels {
+          var x = rd_reloc(store, rq)
+          x.addr = addr
+          t.relocs.push(x)
+        }
         newk.push(sects.len())
-        sects.push(store_cut(store, data0, q, sg, nm, live))
-      } else if whole_name(sg, nm, flags) || live[base[i] + k] {
+        sects.push(t)
+      } else if whole_name(sg, nm, flags) || live[v.base[i] + k] {
         let da = data0 + rec_data_at(store, q)
         let ra = data0 + rec_rel_at(store, q)
         let nr = rec_nrel(store, q)
@@ -515,9 +424,9 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
       sects.push(ISect{seg: "__TEXT", name: "__dead", addr: 0, size: 0, align: 0, flags: 0, data: "".bytes(), dead: true})
     }
     stubs.push(stub)
-    // the symbols a kept relocation names, and the names of those
-    // another object defines
-    let nsym = nsyms[i]
+    // the symbols a kept relocation names, and the names of the
+    // undefined ones (another object's definitions)
+    let nsym = v.nsyms[i]
     var named: List[Bool] = List.with_capacity(nsym)
     for _ in 0..nsym {
       named.push(false)
@@ -526,10 +435,9 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
       for x in t.relocs {
         if x.ext && x.typ != R_ADDEND && x.sym < nsym && !named[x.sym] {
           named[x.sym] = true
-          let q = syms_at[i] + STORE_SYM * x.sym
-          if (rd32(store, q + 8) & N_TYPE) == N_UNDF {
-            let na = data0 + rd32(store, q)
-            elsewhere.add(store[na..na + rd32(store, q + 4)])
+          let y = v.sym(i, x.sym)
+          if (y.typ & N_TYPE) == N_UNDF {
+            elsewhere.add(y.name)
           }
         }
       }
@@ -538,36 +446,35 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     newks.push(newk)
     nameds.push(named)
   }
-  // the symbols of each object: kept, renumbered (a definition in a dead
-  // atom is kept when a kept relocation names it, here or elsewhere: a
-  // DWARF address of a dead constant is 0, not an undefined symbol)
+  l.objs = l.objs + prog
+  let kind = fn(typ: Int) -> SymKind {
+    if (typ & N_STAB) != 0 {
+      SymKind.Stab
+    } else if (typ & N_TYPE) == N_UNDF {
+      SymKind.Undef
+    } else if (typ & N_TYPE) == N_SECT {
+      SymKind.InSect
+    } else {
+      SymKind.Other
+    }
+  }
   for i in 0..n {
     let newk = newks[i]
-    let named = nameds[i]
     let stub = stubs[i]
-    let nsym = nsyms[i]
-    var sects = l.objs[i].sects
+    let nsym = v.nsyms[i]
     // an atom's new ordinal (1 based)
     let ord = fn(o: Int) -> Int { if newk[o - 1] >= 0 { newk[o - 1] + 1 } else { stub + 1 } }
-    var symnew: List[Int] = List.with_capacity(nsym)
+    let symnew = v.keep_syms(i, newk, nameds[i], elsewhere, kind, fn(typ: Int) -> Bool { (typ & N_EXT) != 0 })
     var syms: List[ISym] = []
     for j in 0..nsym {
-      let q = syms_at[i] + STORE_SYM * j
-      let typ = rd32(store, q + 8)
-      let sect = rd32(store, q + 12)
-      let in_sect = (typ & N_STAB) == 0 && (typ & N_TYPE) == N_SECT && sect >= 1
-      let na = data0 + rd32(store, q)
-      // an undefined symbol nothing kept names stays only when the store
-      // defines it nowhere (an import, as the parts' link binds it)
-      let undef = (typ & N_STAB) == 0 && (typ & N_TYPE) == N_UNDF
-      let keep = named[j] || (typ & N_STAB) != 0 || (undef && store_def(store, data0, dt, ndefs, store[na..na + rd32(store, q + 4)]) < 0) || (!undef && !in_sect) || (in_sect && newk[sect - 1] >= 0) || (in_sect && (typ & N_EXT) != 0 && elsewhere.contains(store[na..na + rd32(store, q + 4)]))
-      if !keep {
-        symnew.push(-1)
+      if symnew[j] < 0 {
         continue
       }
-      symnew.push(syms.len())
-      syms.push(ISym{name: store[na..na + rd32(store, q + 4)], typ: typ, sect: if in_sect { ord(sect) } else { sect }, desc: rd32(store, q + 16), value: rd64(store, q + 20)})
+      let y = v.sym(i, j)
+      let in_sect = (y.typ & N_STAB) == 0 && (y.typ & N_TYPE) == N_SECT && y.sect >= 1
+      syms.push(ISym{name: y.name, typ: y.typ, sect: if in_sect { ord(y.sect) } else { y.sect }, desc: y.desc, value: y.value})
     }
+    var sects = l.objs[i].sects
     for k in 0..sects.len() {
       for j in 0..sects[k].relocs.len() {
         let x = sects[k].relocs[j]
@@ -578,7 +485,7 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     }
     l.objs[i].sects = sects
     l.objs[i].syms = syms
-    for (key, atoms) in splits[i] {
+    for (key, atoms) in v.splits[i] {
       var a2: List[(Int, Int)] = List.with_capacity(atoms.len())
       for (a, o) in atoms {
         a2.push((a, ord(o)))
@@ -588,42 +495,3 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
   }
   Ok(StoreLink{l: l, n: n, stubs: stubs})
 }
-
-/// A cut DWARF section of the store, its record at q (dw_cut's result
-/// for it): the runs of live functions and the others, the unit length
-/// patched.
-fn store_cut(store: Bytes, data0: Int, q: Int, sg: Str, nm: Str, live: List[Bool]) -> ISect {
-  let ns = rec_nseg(store, q)
-  let ga = data0 + rec_seg_at(store, q)
-  var segs: List[DwSeg] = List.with_capacity(ns)
-  var keep: List[Bool] = List.with_capacity(ns)
-  for i in 0..ns {
-    let g = ga + 20 * i
-    let gf = rd32(store, g + 8)
-    segs.push(DwSeg{start: rd32(store, g), end: rd32(store, g + 4)})
-    keep.push(gf == 0xffffffff || live[gf])
-  }
-  let (at, n) = dw_new_starts(segs, keep)
-  var b = BytesBuilder.with_capacity(n)
-  var t = ISect{seg: sg, name: nm, addr: rec_addr(store, q), size: n, align: rec_align(store, q), flags: rec_flags(store, q), data: "".bytes()}
-  let da = data0 + rec_data_at(store, q)
-  for (i, g) in segs.indexed() {
-    if !keep[i] {
-      continue
-    }
-    if g.start == 0 {
-      dw_head(b, store[da..da + g.end], nm == "__debug_loclists", n, segs, at)
-    } else {
-      b.write(store[da + g.start..da + g.end])
-    }
-    let gr = rd32(store, ga + 20 * i + 12)
-    for j in 0..rd32(store, ga + 20 * i + 16) {
-      var r = rd_reloc(store, data0 + gr + 12 * j)
-      r.addr = r.addr - g.start + at[i]
-      t.relocs.push(r)
-    }
-  }
-  t.data = b.freeze()
-  t
-}
-

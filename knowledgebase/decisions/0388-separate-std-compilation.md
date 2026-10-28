@@ -303,6 +303,20 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   store check passes. The check caught two wrong first rules: an undefined symbol kept with
   its definition dropped, and a dead definition another part's DWARF names dropped.
 
+### The store's format-neutral core (xo-lang-4, 2026-10-28)
+
+- compiler/macho store_core.xo holds what does not depend on the object format, so Lang 2's COFF
+  adapter (pelink) shares it. The writer, store_write, takes CoreObj values: atoms with
+  their bytes, opaque fixed-size relocation records (12 bytes: field 0 the address in the
+  atom, field 1 a symbol index or section ordinal), DWARF runs and edges as store atom numbers;
+  symbols; the split map; the droppable unit's functions; and the global definitions. The
+  reader is store_view (the header, read in place), def (binary search), walk (from roots and
+  the sections the adapter says nothing may strip), dw_dropped, cut (a cut DWARF section's bytes
+  and its kept relocation records' places with their new addresses) and keep_syms (the
+  compaction's symbol rule, the adapter giving each symbol type's kind: in a section,
+  undefined, a debugger entry, other). store.xo's store_encode and store_prepare are the
+  Mach-O adapter; the file and the link are unchanged (the store check passes).
+
 ### std's object (xo-lang-4, 2026-10-28)
 
 - XO_STD_OBJ=DIR (with XO_DCE=off XO_PASSES=-hollow; it implies XO_STD_ROOTS=1), built from an
