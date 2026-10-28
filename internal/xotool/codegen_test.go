@@ -86,6 +86,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_STD_FACTS_DUMP":       {"none", ""},                            // writes std's facts to a file (decision 0388); the build is the same
 	"XO_STD_FACTS_VERIFY":     {"none", ""},                            // compares a std facts file with the build's own (decision 0388); the build is the same
 	"XO_STD_STORE":            {"none", ""},                            // links through std's indexed store (decision 0388 stage 4); the parts' binary, byte for byte
+	"XO_SEPCOMP_STORE":        {"none", ""},                            // links a separately compiled program through std's store (decision 0388); the same binary as through std's objects
 	"XO_STD_STORE_CHECK":      {"none", ""},                            // also links the parts and fails on a difference
 	"XO_STD_STORE_REPEAT":     {"none", ""},                            // times N more store links (a measurement)
 	"XO_SEPCOMP":              {"keyed", "sepcomp ${crypto.sha256(d)"}, // std's functions as externs (decision 0388 stage 3): cache_id holds the facts' hash

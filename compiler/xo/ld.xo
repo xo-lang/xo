@@ -43,7 +43,17 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
       Err(_) => {}
     }
   }
-  let store_check = !store.is_empty() && (os.env.get("XO_STD_STORE_CHECK") ?? "") == "1"
+  // decision 0388 stage 3: a separately compiled program links through
+  // std's store (XO_SEPCOMP_STORE=PATH, xo dev stdobj's std.store):
+  // every input is the program's, kept whole, and std is read from PATH
+  let sep_store = if tgoos == "darwin" && store_path.is_empty() { os.env.get("XO_SEPCOMP_STORE") ?? "" } else { "" }
+  if !sep_store.is_empty() {
+    match os.fs.read(sep_store) {
+      Ok(b) => store = b
+      Err(e) => return "XO_SEPCOMP_STORE=${sep_store}: ${fs_reason(e)}"
+    }
+  }
+  let store_check = !store_path.is_empty() && !store.is_empty() && (os.env.get("XO_STD_STORE_CHECK") ?? "") == "1"
   var ins: List[macho.LinkInput] = []
   var parts: List[macho.LinkInput] = []
   for p in objs {
@@ -90,7 +100,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   let ts = os.clock.now()
   let linked = if store.is_empty() { macho.link_debug(parts + ins, opts) } else { macho.link_store(ins, store, opts) }
   if !store.is_empty() {
-    os.stdio.eprintln("store link ${os.clock.since(ts).nanos() / 1000} us (${store.len()} store bytes)")
+    if !store_path.is_empty() {
+      os.stdio.eprintln("store link ${os.clock.since(ts).nanos() / 1000} us (${store.len()} store bytes)")
+    }
     // XO_STD_STORE_REPEAT=N: N more links, timed (a measurement)
     let rep = Int.parse(os.env.get("XO_STD_STORE_REPEAT") ?? "0") ?? 0
     for _ in 0..rep {

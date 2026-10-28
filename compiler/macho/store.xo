@@ -14,6 +14,9 @@
 // never split: DWARF, __eh_frame, compact unwind). All integers are
 // little-endian u32, addresses and values u64.
 
+// the file's format: a new one for every change of its layout (a store
+// from an older xo then fails cleanly, `not an xo std store`, instead of
+// being misread: gotchas/store-format-magic.md)
 const STORE_MAGIC = "XOSTORE2"
 
 fn sw32(var b: BytesBuilder, v: Int) {
@@ -363,7 +366,10 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
       continue
     }
     for s in ob.syms {
-      if is_ext(s) && !is_defined(s) {
+      // what it names, and what it defines weak (a helper or an instance
+      // std's store defines too: the link keeps the store's, the first,
+      // so its atom must be live)
+      if is_ext(s) && (!is_defined(s) || (s.desc & 0x80) != 0) {
         roots.push(v.def(s.name))
       }
     }
