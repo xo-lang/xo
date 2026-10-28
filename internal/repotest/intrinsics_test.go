@@ -10,6 +10,56 @@ import (
 	"testing"
 )
 
+// lowerFns are the functions where each backend lowers a runtime call by
+// name: arm64's and LLVM's rt_call dispatch and the inline_rt, inline_raw
+// and atomic arms it reaches (LLVM also its xo_export table), wasm's call
+// and the helpers it lowers through.
+var lowerFns = map[string][]string{
+	"arm64": {"rt_call", "inline_rt", "inline_raw", "atomic"},
+	"llvm":  {"rt_call", "inline_rt", "inline_raw", "atomic", "xo_export"},
+	"wasm":  {"call", "slot_op", "atomics_to_runtime", "rt3_blocking"},
+}
+
+// loweringText is the text of the functions fns in the files of pat, and
+// fails when one of them is gone (renamed: update lowerFns).
+func loweringText(t *testing.T, pat string, fns []string) string {
+	t.Helper()
+	files, err := filepath.Glob(filepath.Join(root, pat))
+	if err != nil || len(files) == 0 {
+		t.Fatalf("no files for %s: %v", pat, err)
+	}
+	want := map[string]bool{}
+	for _, f := range fns {
+		want[f] = true
+	}
+	found := map[string]bool{}
+	fnRe := regexp.MustCompile(`^(?:pub )?fn (?:\([^)]*\) )?(\w+)`)
+	var b strings.Builder
+	for _, f := range files {
+		data, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatal(err)
+		}
+		fn := ""
+		for _, line := range strings.Split(string(data), "\n") {
+			if m := fnRe.FindStringSubmatch(line); m != nil {
+				fn = m[1]
+			}
+			if want[fn] {
+				found[fn] = true
+				b.WriteString(line)
+				b.WriteByte('\n')
+			}
+		}
+	}
+	for _, f := range fns {
+		if !found[f] {
+			t.Fatalf("%s: no function %s, where runtime calls are lowered: update lowerFns", pat, f)
+		}
+	}
+	return b.String()
+}
+
 // TestRuntimeIntrinsicsLowered fails when an rt.* intrinsic declared in
 // std/native/rt.xo (a top level fn with no body) has no lowering in a
 // backend that compiles std/native, and the gap is not in
@@ -17,7 +67,9 @@ import (
 // arm64, amd64, and LLVM lowering but none in the wasm runtime, and 20
 // wasm goldens were unsupported until the slow TestSelfhostWasm ran
 // (gotchas/new-rt-intrinsic-needs-wasm.md). A backend lowers a name when
-// its sources name it ("rt.NAME", "NAME", or the wasm runtime's $NAME);
+// one of its lowering functions (lowerFns) names it ("rt.NAME" or "NAME"),
+// or the wasm runtime's text has $NAME; a mention anywhere else (a pass
+// that recognizes a call by name) lowers nothing;
 // arm64 (whose lowering amd64 retargets) and LLVM also through a function
 // of std/native/llrt/cabi*.xo, the exports their calls reach, or the
 // exports of compiler/ssa/exports.xo. A name compiler/ssa handles itself
@@ -66,11 +118,17 @@ func TestRuntimeIntrinsicsLowered(t *testing.T) {
 		cabi[m[1]] = true
 	}
 	exports := read("compiler/ssa/exports.xo")
+	// a quoted name lowers only inside a backend's lowering functions: a
+	// pass that merely recognizes a call by name (arm64 stacksmall.xo's
+	// read list) lowers nothing (2da18dd89's "rt.cast" made the cast gap
+	// look closed; gotchas/intrinsic-test-reads-quoted-names.md)
 	sources := map[string]string{
-		"arm64": glob("compiler/arm64/*.xo") + exports,
-		"llvm":  glob("compiler/llvm/*.xo") + exports,
-		"wasm":  glob("compiler/wasm/*.xo"),
+		"arm64": loweringText(t, "compiler/arm64/*.xo", lowerFns["arm64"]) + exports,
+		"llvm":  loweringText(t, "compiler/llvm/*.xo", lowerFns["llvm"]) + exports,
+		"wasm":  loweringText(t, "compiler/wasm/*.xo", lowerFns["wasm"]),
 	}
+	// the wasm runtime's own functions ($name in its text) lower too
+	wasmAll := glob("compiler/wasm/*.xo")
 	lowered := func(be, n string) bool {
 		s := sources[be]
 		if strings.Contains(s, `"rt.`+n+`"`) || strings.Contains(s, `"`+n+`"`) {
@@ -78,7 +136,7 @@ func TestRuntimeIntrinsicsLowered(t *testing.T) {
 		}
 		if be == "wasm" {
 			for _, c := range []string{" ", ")", "\n"} {
-				if strings.Contains(s, "$"+n+c) {
+				if strings.Contains(wasmAll, "$"+n+c) {
 					return true
 				}
 			}

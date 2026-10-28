@@ -27,30 +27,12 @@ const STACK_SMALL_MAX = 64
 /// length set, its type relabelled, a view of it): the result is followed
 /// as the object.
 fn same_object_call(name: Str) -> Bool {
-  rt_named(name, " rs_set_len str_view cast ")
-}
-
-/// Whether name is rt.N or rt.N[...] (an instance) for a word N of the
-/// space-separated words. The
-/// runtime names are not written as quoted literals here: repotest's
-/// TestRuntimeIntrinsicsLowered reads any quoted rt.N in compiler/arm64 as
-/// arm64 lowering N (2da18dd89 named rt.cast that way and the test took the
-/// cast gap, still open, as closed).
-fn rt_named(name: Str, words: Str) -> Bool {
-  if !name.starts_with("rt.") {
-    return false
-  }
-  let n = name.trim_prefix("rt.")
-  let base = match n.find("[") {
-    Some(i) => n[0..i]
-    None => n
-  }
-  words.contains(" ${base} ")
+  name is "rt.rs_set_len" | "rt.str_view" || name.starts_with("rt.cast")
 }
 
 /// Calls that read their arguments and keep nothing of them past the call.
 fn read_call(name: Str) -> Bool {
-  name is "Str.len" | "Bytes.len" | "bytes.index" | "str.index" | "str.eq" | "str.ne" | "bytes.eq" || rt_named(name, " bytes_word obj_addr mem_load mem_store mem_copy str_eq bytes_eq16 bytes_high16 utf8_valid ")
+  name is "Str.len" | "Bytes.len" | "bytes.index" | "str.index" | "str.eq" | "str.ne" | "bytes.eq" | "rt.bytes_word" | "rt.obj_addr" | "rt.mem_load" | "rt.mem_store" | "rt.mem_copy" | "rt.str_eq" | "rt.bytes_eq16" | "rt.bytes_high16" | "rt.utf8_valid"
 }
 
 /// The facts the rule reads: each value's instruction uses, the edges
