@@ -44,14 +44,38 @@ pub struct StdExport {
   pub mod_ids: List[(Int, Str)] = []
   pub mod_objs: List[(Int, Str)] = []
   pub file_ids: List[(Int, Str)] = []
-  /// std's module closure (decision 0388 stage 2): each std module in
-  /// check order, its files and the modules its files import, by path,
-  /// so a loader can make std's modules without parsing them for their
-  /// imports
-  pub closure: List[(Str, List[Str], List[Str])] = []
+  /// std's module closure (decision 0388 stage 2 piece 1): each std
+  /// module in check order with its files and their imports, so a loader
+  /// makes std's modules from the record without reading or parsing a
+  /// std file (load_std_record)
+  pub closure: List[StdModRec] = []
 }
 
-const EXPORT_VERSION = "xo std export v2"
+/// One std module of the closure, as new_module and the loaders set it.
+pub struct StdModRec {
+  pub path: Str
+  pub name: Str
+  pub dir: Str
+  pub is_prelude: Bool = false
+  pub native: Bool = false
+  pub implements: Str = ""
+  pub files: List[StdFileRec] = []
+}
+
+/// One file of a std module: what SrcFile holds without its parse (the
+/// interface hash for the caches' keys, the content's hash for a key
+/// that would hash the source), and its imports (the local name, the
+/// `use` path as written, the module it names).
+pub struct StdFileRec {
+  pub path: Str
+  pub iface: Str = ""
+  pub sha: Str = ""
+  pub sig: Bool = false
+  pub is_test: Bool = false
+  pub imports: List[(Str, Str, Str)] = []
+}
+
+const EXPORT_VERSION = "xo std export v3 (module records in the closure)"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {
@@ -82,18 +106,22 @@ pub fn (c: Checker) std_export() -> StdExport {
       ms.push((k, o))
     }
     e.members.push((md.path, ms))
-    var fps: List[Str] = []
-    var imps: List[Str] = []
+    var rec = StdModRec{path: md.path, name: md.name, dir: md.dir, is_prelude: md.is_prelude, native: md.native, implements: md.implements}
     for f in md.files {
-      fps.push(c.files[f].path)
-      for (_, im) in c.files[f].imports.entries() {
-        let ip = if im.module >= 0 { c.mods[im.module].path } else { text(im.path) }
-        if !imps.contains(ip) {
-          imps.push(ip)
+      let sf = c.files[f]
+      var fr = StdFileRec{path: sf.path, iface: sf.iface, sha: crypto.sha256(sf.src).to_hex(), sig: sf.sig, is_test: sf.is_test}
+      var locals: List[Str] = []
+      for (k, _) in sf.imports.entries() {
+        locals.push(text(k))
+      }
+      for k in locals.sort() {
+        if let Some(im) = sf.imports.get(k.bytes()) {
+          fr.imports.push((k, text(im.path), if im.module >= 0 { c.mods[im.module].path } else { "" }))
         }
       }
+      rec.files.push(fr)
     }
-    e.closure.push((md.path, fps, imps))
+    e.closure.push(rec)
     e.mod_ids.push((c.mod_index.get(md.path) ?? -1, md.path))
     e.mod_objs.push((md.obj, md.path))
     for f in md.files {
@@ -662,15 +690,26 @@ pub fn encode_std_export(e: StdExport) -> Bytes {
     }
   }
   w.uv(e.closure.len())
-  for (p, fs, is) in e.closure {
-    w.str(p)
-    w.uv(fs.len())
-    for f in fs {
-      w.str(f)
-    }
-    w.uv(is.len())
-    for i in is {
-      w.str(i)
+  for rec in e.closure {
+    w.str(rec.path)
+    w.str(rec.name)
+    w.str(rec.dir)
+    w.bool(rec.is_prelude)
+    w.bool(rec.native)
+    w.str(rec.implements)
+    w.uv(rec.files.len())
+    for fr in rec.files {
+      w.str(fr.path)
+      w.str(fr.iface)
+      w.str(fr.sha)
+      w.bool(fr.sig)
+      w.bool(fr.is_test)
+      w.uv(fr.imports.len())
+      for (k, raw, mp) in fr.imports {
+        w.str(k)
+        w.str(raw)
+        w.str(mp)
+      }
     }
   }
   w.b.freeze()
@@ -783,24 +822,31 @@ pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
     if !r.ok {
       return None
     }
-    let p = r.str()
-    var fs: List[Str] = []
+    var rec = StdModRec{path: r.str(), name: r.str(), dir: r.str()}
+    rec.is_prelude = r.bool()
+    rec.native = r.bool()
+    rec.implements = r.str()
     let nf = r.uv()
     for _ in 0..nf {
       if !r.ok {
         return None
       }
-      fs.push(r.str())
-    }
-    var is: List[Str] = []
-    let ni = r.uv()
-    for _ in 0..ni {
-      if !r.ok {
-        return None
+      var fr = StdFileRec{path: r.str(), iface: r.str(), sha: r.str()}
+      fr.sig = r.bool()
+      fr.is_test = r.bool()
+      let ni = r.uv()
+      for _ in 0..ni {
+        if !r.ok {
+          return None
+        }
+        let k = r.str()
+        let raw = r.str()
+        let mp = r.str()
+        fr.imports.push((k, raw, mp))
       }
-      is.push(r.str())
+      rec.files.push(fr)
     }
-    e.closure.push((p, fs, is))
+    e.closure.push(rec)
   }
   if !r.ok || r.at != d.len() || e.objs.len() != b.obj_hi - b.obj_lo || e.tys.len() != b.ty_hi - b.ty_lo {
     return None
@@ -1340,6 +1386,10 @@ pub fn decode_std_header(d: Bytes) -> Option[(StdHeader, Int)] {
   Some((h, r.at))
 }
 
+/// The records of entry d when its fingerprint is fp (the loader's,
+/// load_std_record).
+pub fn decode_std_record(d: Bytes, fp: Str) -> Option[StdExport] { decode_std_entry(d, fp) }
+
 /// The records of entry d when its fingerprint is fp.
 fn decode_std_entry(d: Bytes, fp: Str) -> Option[StdExport] {
   match decode_std_header(d) {
@@ -1359,6 +1409,7 @@ fn decode_std_entry(d: Bytes, fp: Str) -> Option[StdExport] {
 /// not be stamped) never holds.
 pub fn (c: Checker) std_header(std_mods: List[Int], fp: Str, now: Int) -> StdHeader uses fs.read {
   var paths: List[Str] = []
+  var srcs: List[Bytes] = []
   var dirs: Map[Str, Bool] = {}
   for m in std_mods {
     for f in c.mods[m].files {
@@ -1367,16 +1418,37 @@ pub fn (c: Checker) std_header(std_mods: List[Int], fp: Str, now: Int) -> StdHea
       }
       let p = c.source_path(c.files[f].path)
       paths.push(p)
+      srcs.push(c.files[f].src)
       dirs[parent_dir(p)] = true
     }
   }
-  let files = match stamp_files(c.fs, paths, now) {
+  // a header that never holds: the next build takes the full path
+  let none = StdHeader{fp: fp}
+  var files = match stamp_files(c.fs, paths, now) {
     Some(st) => st
-    None => return StdHeader{fp: fp}
+    None => return none
+  }
+  // a file or directory changed after the build started (now) may not
+  // be what the records were declared from (a std edit during the
+  // declaring build): no header; and a hash kept for a file inside the
+  // settle window is the hash of the bytes the checker parsed, not of a
+  // fresh read, so a mid-build edit fails the next build's stamps
+  for (i, st) in files.indexed() {
+    if st.mtime > now {
+      return none
+    }
+    if !st.sha.is_empty() {
+      files[i].sha = crypto.sha256(srcs[i]).to_hex()
+    }
   }
   let ds = match stamp_dirs(c.fs, dirs.keys().sort(), now) {
     Some(st) => st
-    None => return StdHeader{fp: fp}
+    None => return none
+  }
+  for st in ds {
+    if st.mtime > now {
+      return none
+    }
   }
   StdHeader{fp: fp, files: files, dirs: ds}
 }

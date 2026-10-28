@@ -227,6 +227,10 @@ pub struct Module {
   /// implements ("std/prelude" for the prelude's).
   pub native: Bool = false
   pub implements: Str = ""
+  /// Made from a std record (load_std_record, decision 0388 stage 2):
+  /// its files unparsed until ensure_tree
+  pub from_record: Bool = false
+  pub tree_loaded: Bool = false
   /// 0 new, 1 loading its imports, 2 loaded (cycle detection).
   pub state: Int = 0
   /// The Module object that names it in records.
@@ -284,6 +288,11 @@ pub struct SrcFile {
   pub imports: Map[Bytes, Import] = {}
   /// The name ends in _test.xo.
   pub is_test: Bool = false
+  /// Parsed as a signature file (a std module's std/<name>.xo).
+  pub sig: Bool = false
+  /// Made from a std record (load_std_record): no parse, no source,
+  /// until ensure_tree reads and parses it.
+  pub unloaded: Bool = false
   /// The expansion of the derives of another file (derive.xo): its
   /// diagnostics are reported at the fields they came from, and it has
   /// no naming or style findings.

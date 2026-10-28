@@ -22,12 +22,23 @@ fn (var c: Checker) run() -> () ! Str {
   }
   let at = StdBlock{obj_lo: c.objs.len(), ty_lo: c.tys.len(), eset_lo: c.esets.len(), evar_lo: c.evars.len()}
   var fp = ""
+  // stage 2 piece 1: modules made from the record have no trees yet;
+  // install_std joins every recorded object's trees (its declaration,
+  // defaults), so they are read now (pieces 3 and 4 narrow this to what
+  // the check and the rest of the build ask for)
+  for m in std_mods {
+    c.ensure_tree(m)
+  }
   if c.std_export_on {
     // piece 2: the entry's own fingerprint when its stamps held (no std
     // source read or hashed); verify always hashes
     fp = if !c.std_header_fp.is_empty() && !c.std_export_verify { c.std_header_fp } else { c.std_fingerprint(std_mods) }
     if !c.std_export_verify {
-      if let Some(e) = decode_std_entry(c.std_export_in, fp) {
+      let found = match c.std_record {
+        Some(e) => Some(e)
+        None => decode_std_entry(c.std_export_in, fp)
+      }
+      if let Some(e) = found {
         if let Some(r) = c.relocate_export(e, at) {
           c.std_export_used = c.install_std(r)
         }
@@ -39,12 +50,32 @@ fn (var c: Checker) run() -> () ! Str {
     for m in std_mods {
       c.declare(m)
     }
+  } else {
+    // a std module the program imports that the record lacks (loaded
+    // and parsed as before): declared after the records, its objects
+    // past the block
+    for m in std_mods {
+      if !c.mods[m].from_record {
+        c.declare(m)
+      }
+    }
   }
   let missing = c.prelude_missing()
   if !missing.is_empty() {
     return Err(missing)
   }
-  if !c.std_export_used {
+  if c.std_export_used {
+    for m in std_mods {
+      if !c.mods[m].from_record {
+        c.resolve_types(m)
+      }
+    }
+    for m in std_mods {
+      if !c.mods[m].from_record {
+        c.resolve_sigs(m)
+      }
+    }
+  } else {
     for m in std_mods {
       c.resolve_types(m)
     }

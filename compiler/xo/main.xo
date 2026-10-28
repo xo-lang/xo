@@ -781,6 +781,12 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
           if let Some((h, _)) = check.decode_std_header(c.std_export_in) {
             if check.header_holds(os.fs, h) {
               c.std_header_fp = h.fp
+              // piece 1: std's modules from the record's closure, no std
+              // file read or parsed until a tree is needed
+              if let Some(e) = check.decode_std_record(c.std_export_in, h.fp) {
+                c.load_std_record(e)
+                c.std_record = Some(e)
+              }
             }
           }
         }

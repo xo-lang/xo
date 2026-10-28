@@ -48,6 +48,9 @@ pub struct Checker {
   /// started, for the stamps the entry written gets (std_header)
   pub std_header_fp: Str = ""
   pub std_now_ms: Int = 0
+  /// the entry's records when the driver loaded std's modules from them
+  /// (load_std_record), so run installs them without decoding again
+  pub std_record: Option[StdExport] = None
   pub std_export_out: Bytes = b""
   pub std_export_used: Bool = false
   /// XO_STD_EXPORT=verify: std declared as usual and its records, when
@@ -1134,13 +1137,24 @@ fn (var c: Checker) new_module(path: Str, name: Str, dir: Str, is_std: Bool) -> 
 /// decision 0087, and resynchronization after hard ones), which is
 /// checked as usual.
 fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
+  let (r, ast) = c.parse_file_ast(path, src, sig)
+  let f = c.files.len()
+  c.files.push(SrcFile{path: path, module: m, ast: ast, iface: r.iface, is_test: path.ends_with("_test.xo"), sig: sig, src: src})
+  c.mods[m].files.push(f)
+  if !c.mods[m].is_std && !sig {
+    c.add_derived_file(m, path, f, r)
+  }
+}
+
+/// The parse of src as path (parse_cached), its diagnostics reported,
+/// and its tree with the test blocks cut for a build.
+fn (var c: Checker) parse_file_ast(path: Str, src: Bytes, sig: Bool) -> (parser.ParseResult, parser.File) {
   let r = c.parse_cached(path, src, sig)
   c.parsed.push((path, sig))
   c.diags = c.diags + parse_diags(path, r.diags)
   if !r.diags.is_empty() {
     c.parse_failed[path] = true
   }
-  let f = c.files.len()
   var ast = r.file
   if c.skip_tests {
     // a build or run reads no test block (decision 0389, as 0348 reads
@@ -1159,10 +1173,92 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
       ast.decls = ds
     }
   }
-  c.files.push(SrcFile{path: path, module: m, ast: ast, iface: r.iface, is_test: path.ends_with("_test.xo"), src: src})
-  c.mods[m].files.push(f)
-  if !c.mods[m].is_std && !sig {
-    c.add_derived_file(m, path, f, r)
+  (r, ast)
+}
+
+/// std's modules from the records' closure (decision 0388 stage 2 piece
+/// 1): every module and file of e.closure made as the loaders would
+/// make them, in the record's order (the check order of the run that
+/// declared them), with no std file read or parsed: a file holds its
+/// path, interface hash and imports; its tree and source come with
+/// ensure_tree when something needs them. Runs before the prelude is
+/// loaded, so load_std and load_impl find each module made.
+pub fn (var c: Checker) load_std_record(e: StdExport) {
+  var made: List[Int] = []
+  for rec in e.closure {
+    if c.mod_index.contains(rec.path) {
+      made.push(c.mod_index.get(rec.path) ?? -1)
+      continue
+    }
+    let m = c.new_module(rec.path, rec.name, rec.dir, !rec.native)
+    c.mods[m].std_tree = true
+    c.mods[m].is_prelude = rec.is_prelude
+    c.mods[m].native = rec.native
+    c.mods[m].implements = rec.implements
+    c.mods[m].from_record = true
+    if rec.is_prelude {
+      c.prelude = m
+    }
+    for fr in rec.files {
+      let f = c.files.len()
+      let z = parser.Pos{offset: 0, line: 0, col: 0}
+      c.files.push(SrcFile{path: fr.path, module: m, ast: parser.File{span: Span{start: z, end: z}, name: fr.path.bytes()}, iface: fr.iface, is_test: fr.is_test, sig: fr.sig, unloaded: true})
+      c.mods[m].files.push(f)
+    }
+    made.push(m)
+  }
+  // the imports, once every module they name exists
+  for (i, rec) in e.closure.indexed() {
+    let m = made[i]
+    if m < 0 || !c.mods[m].from_record {
+      continue
+    }
+    for (j, fr) in rec.files.indexed() {
+      if j >= c.mods[m].files.len() {
+        break
+      }
+      let f = c.mods[m].files[j]
+      var im: Map[Bytes, Import] = {}
+      for (k, raw, mp) in fr.imports {
+        im[k.bytes()] = Import{module: if mp.is_empty() { -1 } else { c.mod_index.get(mp) ?? -1 }, path: raw.bytes(), used: true}
+      }
+      c.files[f].imports = im
+    }
+  }
+  for m in made {
+    if m >= 0 && c.mods[m].from_record && c.mods[m].state < 2 {
+      c.mods[m].state = 2
+      c.order.push(m)
+    }
+  }
+}
+
+/// The trees of a module made from a std record (load_std_record): its
+/// files read and parsed, once, where a check needs a declaration's
+/// tree (install_std's join, const_type) or a body.
+pub fn (var c: Checker) ensure_tree(m: Int) uses fs.read {
+  if m < 0 || !c.mods[m].from_record || c.mods[m].tree_loaded {
+    return
+  }
+  c.mods[m].tree_loaded = true
+  for f in c.mods[m].files {
+    if !c.files[f].unloaded {
+      continue
+    }
+    let path = c.files[f].path
+    let data = match c.fs.read(c.source_path(path)) {
+      Ok(b) => b
+      // a file gone since the record: its declarations stay as recorded;
+      // the next build's header fails and declares again
+      Err(_) => continue
+    }
+    let (r, ast) = c.parse_file_ast(path, data, c.files[f].sig)
+    c.files[f].ast = ast
+    c.files[f].src = data
+    c.files[f].unloaded = false
+    if !c.mods[m].is_std && !c.files[f].sig {
+      c.add_derived_file(m, path, f, r)
+    }
   }
 }
 
