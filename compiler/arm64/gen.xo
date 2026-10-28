@@ -366,7 +366,12 @@ fn (g: G) func_header(var b: List[Str], s: Str, global: Bool) {
 /// zero.fn(Int, fn(Str, Bool) -> Str) -> Bool in the sql ones were
 /// defined twice).
 fn (g: G) shared_def() -> Bool {
-  let n = g.f.name
+  shared_name(g.f.name)
+}
+
+/// Whether function n is one std's object and a program's may both
+/// define (shared_def; x86win.xo's Win64 entry shims follow it).
+fn shared_name(n: Str) -> Bool {
   n.contains("[") || n.starts_with("xo.") || n.starts_with("zero.")
 }
 

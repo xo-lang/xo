@@ -287,9 +287,10 @@ fn (var g: G) w64_exports() {
       }
       let es = esig.freeze()
       if w64_shim_fits(es) {
-        // a generic instance's shim is weak as the instance is (std's
-        // object and the program's may both have it, decision 0388)
-        let wk = if f.name.contains("[") { g.weak_def("xo_w64e_${g.fname(f.name)}") } else { "" }
+        // a shared function's shim (a generic instance, xo.*, zero.*) is
+        // weak as the function is (std's object and the program's may
+        // both have it, decision 0388)
+        let wk = if shared_name(f.name) { g.weak_def("xo_w64e_${g.fname(f.name)}") } else { "" }
         g.text.push(wk + w64_shim("xo_w64e_${g.fname(f.name)}", g.fname(f.name), es, false))
       } else {
         g.fail("the entry function ${f.name} takes too many words for Win64")
