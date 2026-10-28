@@ -46,6 +46,14 @@ fn std_cache_key(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool) -> Str 
 /// failed (the caller builds the whole program). phases: one line on
 /// standard error saying which.
 fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: Bool) -> (Str, Str)? {
+  // a release's own (lib/xo/stdstore beside its std, which never
+  // changes): this xo's, by its identity
+  if let Some(p) = std_released(os, ctx.std, tgoos, tgoarch, conc) {
+    if phases {
+      os.stdio.eprintln("cache std released conc=${conc}")
+    }
+    return Some(p)
+  }
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   if dir.is_empty() {
@@ -87,4 +95,22 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} ${if done { "built" } else { "failed: the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
   }
   if done { Some((store, facts)) } else { None }
+}
+
+/// The release's store and facts for the target and variant: in
+/// lib/xo/stdstore beside std (std at <prefix>/lib/xo/std, the release
+/// layout), <os>-<arch>-conc<N>.store and .stdf, used when the .id file
+/// beside them names this xo's code generation identity; None otherwise.
+fn std_released(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool) -> (Str, Str)? {
+  if XO_CODEGEN_KEY.len() != 64 || !std.trim_suffix("/").ends_with("/lib/xo/std") {
+    return None
+  }
+  let base = "${dir_name(std.trim_suffix("/"))}/stdstore/${tgoos}-${tgoarch}-conc${if conc { 1 } else { 0 }}"
+  // xo:allow XO0903 no release store: the cache's is used
+  let id = (os.fs.read("${base}.id").ok() ?? b"").to_str() ?? ""
+  if id.trim() != XO_CODEGEN_KEY {
+    return None
+  }
+  let have = (os.fs.exists("${base}.store").ok() ?? false) && (os.fs.exists("${base}.stdf").ok() ?? false)
+  if have { Some(("${base}.store", "${base}.stdf")) } else { None }
 }

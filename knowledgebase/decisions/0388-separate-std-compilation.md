@@ -381,6 +381,12 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
 - Lang 1's step (d) calls std_variant once the build knows its conc. The 0.34 release ships
   the host target's conc0 and conc1 stores beside std (Lead, 2026-10-28) so a first build
   after install skips the build; cross targets and other variants build lazily.
+- The release (scripts/release.sh) builds them for darwin/arm64, both variants, with the
+  release's xo from the staged std (`xo dev stdcache`) into lib/xo/stdstore/<os>-<arch>-
+  conc<N>.store and .stdf, with a .id file holding the code generation key. std_variant takes
+  those (std_released) when std is a release's (<prefix>/lib/xo/std) and the .id names this xo,
+  before the cache: a release's std never changes, so no file times are needed. Other targets
+  follow their store adapters (ELF, COFF).
 
 ### std's variants: conc (xo-lang-4, 2026-10-28)
 

@@ -51,6 +51,8 @@
 #                                                        native --race and its license
 #                                                        (decision 0273; darwin/arm64
 #                                                        and linux/arm64, built first)
+#   xo-<version>-<os>-<arch>/lib/xo/stdstore/            std's prebuilt store and facts
+#                                                        (decision 0388; darwin/arm64)
 #   xo-<version>-<os>-<arch>/README.md (getting started from scripts/release-readme.md, then the repository README.md), CHANGELOG.md, LICENSE,
 #                                                        THIRD_PARTY_NOTICES (the binaries
 #                                                        carry Go's and musl's code, whose
@@ -334,6 +336,35 @@ if [ "$dry" != 1 ]; then
 				exit 1
 			fi
 		done
+	done
+fi
+
+# decision 0388: std's prebuilt stores for the targets that have a store
+# adapter (Mach-O arm64 so far), both concurrency variants, built by the
+# release's xo from the staged std into lib/xo/stdstore with the code
+# generation key they belong to, so a user's first separately compiled
+# build skips building them (compiler/xo stdcache.xo std_released)
+if [ "$dry" = 1 ]; then
+	echo "+ lib/xo/stdstore/darwin-arm64-conc{0,1}.{store,stdf,id}: $xo1 dev stdcache --target=darwin/arm64 --conc=0|1" >&2
+else
+	codegen=""
+	for a in "${stamp[@]}"; do
+		case "$a" in XO_CODEGEN_KEY=*) codegen="${a#XO_CODEGEN_KEY=}" ;; esac
+	done
+	[ -n "$codegen" ] || { echo "release.sh: no XO_CODEGEN_KEY in the stamps: no std stores" >&2; exit 1; }
+	for st_t in darwin/arm64; do
+		st=$(stage_of "$st_t")
+		name="${st_t%/*}-${st_t#*/}"
+		mkdir -p "$st/lib/xo/stdstore"
+		sc=$(mktemp -d)
+		for c in 0 1; do
+			paths=$(XO_STD="$st/lib/xo/std" XO_BACKEND_CACHE_DIR="$sc/cache" "$xo1" dev stdcache --conc=$c --target="$st_t") ||
+				{ echo "release.sh: no std store for $st_t conc$c" >&2; exit 1; }
+			cp "$(echo "$paths" | sed -n 1p)" "$st/lib/xo/stdstore/$name-conc$c.store"
+			cp "$(echo "$paths" | sed -n 2p)" "$st/lib/xo/stdstore/$name-conc$c.stdf"
+			printf '%s\n' "$codegen" > "$st/lib/xo/stdstore/$name-conc$c.id"
+		done
+		rm -rf "${sc:?}"
 	done
 fi
 
