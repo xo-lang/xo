@@ -17,7 +17,7 @@
 // the file's format: a new one for every change of its layout (a store
 // from an older xo then fails cleanly, `not an xo std store`, instead of
 // being misread: gotchas/store-format-magic.md)
-const STORE_MAGIC = "XOSTORE3"
+const STORE_MAGIC = "XOSTORE4"
 
 fn sw32(var b: BytesBuilder, v: Int) {
   b.write_byte(UInt8(v & 255))
