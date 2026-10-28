@@ -416,7 +416,10 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
 /// the path it will have: the debug directory names out's PDB (trim: by its
 /// file name only).
 /// phases: each step's time on stderr (--phase-times, as pe.NAME).
-fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool) -> Str {
+/// cdir and keys: the back-end cache and the first objects' keys for their
+/// PDB parts (the PDB from each object's cached part, pdb_parts, unless
+/// XO_PDB_OBJ=0).
+fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys: List[Str]) -> Str {
   var t = os.clock.now()
   var objs: List[macho.CObj] = []
   for p in paths {
@@ -456,7 +459,17 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
       t = lap(os, phases, "pe.link_pe ${img0.len()} bytes", t)
       var img = img0
       if dwarf {
-        match macho.pe_pdb(img0) {
+        // each object's part from the back-end cache (the same bytes as the
+        // image path, XO_PDB_OBJ=0; an HTTP server edit's 64 ms to 31)
+        let per_obj = (os.env.get("XO_PDB_OBJ") ?? "") != "0"
+        let pdb_r = if per_obj {
+          let pre = macho.pre_procs(pdb_parts(os, objs, cdir, keys), objs, layout)
+          t = lap(os, phases, "pe.pdb_parts", t)
+          macho.pe_pdb_facts(img0, None, Some(pre))
+        } else {
+          macho.pe_pdb(img0)
+        }
+        match pdb_r {
           Ok((i2, p)) => {
             img = i2
             t = lap(os, phases, "pe.pdb ${p.len()} bytes", t)
@@ -736,4 +749,34 @@ fn watch_stages(os: Os, ch: Chan[Str], done: Chan[()]) {
     os.stdio.eprintln("xo: interrupted")
     os.proc.exit(130)
   })
+}
+
+/// Each object's PDB part (macho obj_pdb): from the back-end cache under
+/// "pdb" by its key, else made and stored; an object with no key (the
+/// zone data's, a build with no cache) is made each time.
+fn pdb_parts(os: Os, objs: List[macho.CObj], cdir: Str, keys: List[Str]) -> List[macho.ObjPdb?] {
+  var out: List[macho.ObjPdb?] = []
+  var stored = 0
+  for (i, o) in objs.indexed() {
+    let k = if i < keys.len() && !cdir.is_empty() { keys[i] } else { "" }
+    if !k.is_empty() {
+      if let Some(b) = entry_get(os, cdir, "pdb", k) {
+        if let Some(p) = macho.dec_obj_pdb(b) {
+          out.push(Some(p))
+          continue
+        }
+      }
+    }
+    let p = macho.obj_pdb(o).ok()
+    if !k.is_empty() {
+      if let Some(x) = p {
+        stored += entry_put(os, cdir, "pdb", k, macho.enc_obj_pdb(x))
+      }
+    }
+    out.push(p)
+  }
+  if stored > 0 {
+    prune_backend_cache(os, "pdb", cdir, stored)
+  }
+  out
 }

@@ -1614,6 +1614,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // clang's assembler and lld-link (win_amd64_link)
       let wbin = bin_path(sdir, out, name, tg, o.many_targets)
       var wsrcs = [s]
+      // each object's key for its PDB part (pe_link, cvobj obj_pdb): the
+      // part's cache key and what dw_slots_obj patches into it
+      var wkeys: List[Str] = []
       if p.parts.len() > 1 {
         wsrcs = []
         for (i, part) in p.parts.indexed() {
@@ -1634,7 +1637,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // them in every part's text first was about 74 ms of the HTTP
         // server's edit, 2026-10-27)
         let texts = if p.parts.len() > 1 { p.parts } else { [code] }
-        let (assembled, nasm, _okeys) = cached_macho_objects(os, ctx, texts, false, true, true, jobs)
+        let (assembled, nasm, okeys) = cached_macho_objects(os, ctx, texts, false, true, true, jobs)
+        if gm.debug_info && okeys.len() == texts.len() {
+          for k in okeys {
+            wkeys.push(crypto.sha256("pdb v1 ${k} ${gm.comp_dir} ${gm.std_root}".bytes()).to_hex())
+          }
+        }
         // the cache's keys, reads and the changed parts' assembly, then
         // the objects' slots patched and written for the PE linker
         t = lap(os, phases, "assemble.objects", t)
@@ -1693,7 +1701,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
         let wst = stage(os, ctx, wbin)
         tl = lap(os, phases, "link.stage", tl)
-        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, o.stamps, o.race, phases, trimpath_eff(o))
+        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, o.stamps, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys)
         tl = lap(os, phases, "link.pe_link", tl)
         if !why.is_empty() {
           fail_stage(os, wst, why)

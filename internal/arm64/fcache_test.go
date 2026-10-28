@@ -3436,4 +3436,111 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	if !strings.Contains(string(log), "XO_PDB_OBJ_CHECK=3: the PDB from the objects' parts is identical") {
 		t.Fatalf("XO_PDB_OBJ_CHECK=3: want an identical PDB:\n%s", log)
 	}
+	// the default PDB, from each object's cached part (cold in out, warm in
+	// out3), is the image path's (XO_PDB_OBJ=0) byte for byte
+	if ents, err := os.ReadDir(filepath.Join(work, "cache", "pdb")); err != nil || len(ents) == 0 {
+		t.Fatalf("no PDB parts in the back-end cache (%v)", err)
+	}
+	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out4", "prog"), "."))
+	cmd.Dir = src
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_PDB_OBJ=0")
+	if log, err = cmd.CombinedOutput(); err != nil {
+		t.Fatalf("xo build: %v\n%s", err, log)
+	}
+	want, err := os.ReadFile(filepath.Join(work, "out4", "prog.pdb"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, d := range []string{"out", "out3"} {
+		got, err := os.ReadFile(filepath.Join(work, d, "prog.pdb"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, want) {
+			t.Errorf("%s/prog.pdb (from the objects' parts) differs from the image path's (%d and %d bytes)", d, len(got), len(want))
+		}
+	}
+}
+
+// A PDB part from the back-end cache is never one made for other debug
+// settings: --trimpath=off (other paths in the objects' DWARF; trimmed is
+// the default), --debug-info=off
+// (no PDB) and back, and entries that do not decode give the image path's
+// PDB (XO_PDB_OBJ=0) byte for byte. The xo's identity is in every key
+// through the object's (compiler/macho and compiler/debug are codegen
+// inputs, xotool.CodegenRoots).
+func TestWindowsPDBPartKeys(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-pdbkeys-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.CopyFS(src, os.DirFS(filepath.Join(root, "bench", "perf", "http", "xo"))); err != nil {
+		t.Fatal(err)
+	}
+	cache := filepath.Join(work, "cache")
+	// every build to one path: with --trimpath=off the image names its PDB
+	// by its full path, which the GUID hashes
+	build := func(out string, env []string, flags ...string) []byte {
+		t.Helper()
+		os.Remove(filepath.Join(work, "o", "prog.pdb"))
+		args := append([]string{"build", "--backend=amd64", "--targets=windows/amd64"}, flags...)
+		args = append(args, "-o", filepath.Join(work, "o", "prog"), ".")
+		cmd := testtmp.Guard(exec.Command(xo, args...))
+		cmd.Dir = src
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		if log, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo build %v: %v\n%s", flags, err, log)
+		}
+		b, err := os.ReadFile(filepath.Join(work, "o", "prog.pdb"))
+		if err != nil {
+			return nil
+		}
+		return b
+	}
+	img := []string{"XO_PDB_OBJ=0"}
+	plain := build("a", nil)
+	if plain == nil || !bytes.Equal(plain, build("aref", img)) {
+		t.Fatal("the default PDB differs from the image path's")
+	}
+	trim := build("t", nil, "--trimpath=off")
+	if bytes.Equal(trim, plain) {
+		t.Fatal("--trimpath=off gave the same PDB: the test cannot see a stale part")
+	}
+	if !bytes.Equal(trim, build("tref", img, "--trimpath=off")) {
+		t.Error("--trimpath=off after a plain build: the PDB differs from the image path's (a stale part)")
+	}
+	if b := build("off", nil, "--debug-info=off"); b != nil {
+		t.Error("--debug-info=off wrote a PDB")
+	}
+	if !bytes.Equal(build("a2", nil), plain) {
+		t.Error("a plain build after --trimpath=off and --debug-info=off: the PDB differs (a stale part)")
+	}
+	// every part entry unreadable: the parts are made again
+	n := 0
+	filepath.WalkDir(filepath.Join(cache, "pdb"), func(p string, d os.DirEntry, err error) error {
+		if err == nil && !d.IsDir() {
+			n++
+			return os.WriteFile(p, []byte("not a part"), 0o644)
+		}
+		return nil
+	})
+	if n == 0 {
+		t.Fatal("no PDB parts in the back-end cache")
+	}
+	if !bytes.Equal(build("a3", nil), plain) {
+		t.Error("with unreadable part entries: the PDB differs")
+	}
 }

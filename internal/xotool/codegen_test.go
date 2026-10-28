@@ -51,6 +51,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_GOBIND":               {"content", ""},
 	"XO_GOBIND_DIR":           {"content", ""},
 	"XO_GOBIND_LOCAL":         {"content", ""}, // which helper writes a binding (decision 0393), as XO_GOBIND
+	"XO_PDB_OBJ":              {"none", ""},    // 0: the PDB from the image, not each object's cached part: the same bytes
 	"XO_PDB_OBJ_CHECK":        {"none", ""},    // prints the per-object DWARF check, changes no output
 	"XO_MODCACHE":             {"content", ""},
 	"XO_OFFLINE":              {"none", ""},

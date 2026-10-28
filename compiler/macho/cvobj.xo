@@ -476,3 +476,240 @@ fn locals_ty(ls: List[PdbLocal], m: ObjMap) -> List[PdbLocal] {
   }
   out
 }
+
+// ---- an object's PDB part as cache bytes (enc_obj_pdb, dec_obj_pdb)
+
+const OBJPDB_MAGIC = "xo objpdb 1\n"
+
+fn (var w: Out) pstr(s: Str) {
+  let b = s.bytes()
+  let _n = w.sleb(b.len())
+  w.bytes(b)
+}
+
+fn (var w: Out) pint(v: Int) {
+  let _n = w.sleb(v)
+}
+
+fn enc_locals(var w: Out, ls: List[PdbLocal]) {
+  w.pint(ls.len())
+  for l in ls {
+    w.pstr(l.name)
+    w.pint(l.ty)
+    w.pint(if l.param { 1 } else { 0 })
+    w.pint(l.defs.len())
+    for (kind, b) in l.defs {
+      w.pint(kind)
+      w.pint(b.len())
+      w.bytes(b)
+    }
+  }
+}
+
+/// p as bytes for the back-end cache (dec_obj_pdb reads them back).
+pub fn enc_obj_pdb(p: ObjPdb) -> Bytes {
+  var w = new_out(4096)
+  w.bytes(OBJPDB_MAGIC.bytes())
+  w.pint(p.types.len())
+  for (off, t) in p.types {
+    w.pint(off)
+    w.pint(t.tag)
+    w.pstr(t.name)
+    w.pint(t.size)
+    w.pint(t.enc)
+    w.pint(t.of)
+    w.pint(t.count)
+    w.pint(t.members.len())
+    for m in t.members {
+      w.pstr(m.name)
+      w.pint(m.ty)
+      w.pint(m.offset)
+    }
+  }
+  w.pint(p.tys.len())
+  for x in p.tys {
+    w.pint(x)
+  }
+  w.pint(p.files.len())
+  for f in p.files {
+    w.pstr(f)
+  }
+  w.pint(p.fns.len())
+  for f in p.fns {
+    w.pstr(f.name)
+    w.pint(f.lo)
+    w.pint(f.hi)
+    w.pint(f.sect_off)
+    w.pint(f.rows.len())
+    for (off, fi, line, st) in f.rows {
+      w.pint(off)
+      w.pint(fi)
+      w.pint(line)
+      w.pint(if st { 1 } else { 0 })
+    }
+    w.pint(f.sites.len())
+    for s in f.sites {
+      w.pstr(s.name)
+      w.pint(s.parent)
+      w.pint(s.ranges.len())
+      for (lo, hi) in s.ranges {
+        w.pint(lo)
+        w.pint(hi)
+      }
+      w.pint(s.entries.len())
+      for (a, fi, line) in s.entries {
+        w.pint(a)
+        w.pint(fi)
+        w.pint(line)
+      }
+      enc_locals(w, s.locals)
+    }
+    enc_locals(w, f.locals)
+  }
+  w.done()
+}
+
+/// A reader of enc_obj_pdb's bytes; bad once it read past the end.
+struct PRd {
+  b: Bytes
+  at: Int = 0
+  bad: Bool = false
+}
+
+fn (var r: PRd) int() -> Int {
+  var v = 0
+  var shift = 0
+  while {
+    if r.at >= r.b.len() {
+      r.bad = true
+      return 0
+    }
+    let byte = Int(r.b[r.at])
+    r.at += 1
+    if shift < 63 {
+      v = v | ((byte & 127) << shift)
+    }
+    shift += 7
+    if (byte & 128) == 0 {
+      if shift < 64 && (byte & 64) != 0 {
+        v = v | (-1 << shift)
+      }
+      return v
+    }
+  }
+}
+
+/// A count: a negative one or one longer than what is left is bad.
+fn (var r: PRd) count() -> Int {
+  let n = r.int()
+  if n < 0 || n > r.b.len() - r.at {
+    r.bad = true
+    return 0
+  }
+  n
+}
+
+fn (var r: PRd) raw() -> Bytes {
+  let n = r.count()
+  let b = r.b[r.at..r.at + n]
+  r.at += n
+  b
+}
+
+fn (var r: PRd) str() -> Str { r.raw().to_str() ?? "" }
+
+fn dec_locals(var r: PRd) -> List[PdbLocal] {
+  let n = r.count()
+  var out = List[PdbLocal].with_capacity(n)
+  for _ in 0..n {
+    let name = r.str()
+    let ty = r.int()
+    let param = r.int() != 0
+    let nd = r.count()
+    var defs = List[(Int, Bytes)].with_capacity(nd)
+    for _ in 0..nd {
+      let kind = r.int()
+      defs.push((kind, r.raw()))
+    }
+    out.push(PdbLocal{name: name, ty: ty, param: param, defs: defs})
+  }
+  out
+}
+
+/// enc_obj_pdb's bytes read back (None: not such bytes).
+pub fn dec_obj_pdb(b: Bytes) -> ObjPdb? {
+  let m = OBJPDB_MAGIC.bytes()
+  if b.len() < m.len() || b[0..m.len()] != m {
+    return None
+  }
+  var r = PRd{b: b, at: m.len()}
+  var types: Map[Int, debug.Type] = {}
+  for _ in 0..r.count() {
+    let off = r.int()
+    let tag = r.int()
+    let name = r.str()
+    let size = r.int()
+    let enc = r.int()
+    let of = r.int()
+    let cnt = r.int()
+    let nm = r.count()
+    var ms = List[debug.Member].with_capacity(nm)
+    for _ in 0..nm {
+      let mn = r.str()
+      let mt = r.int()
+      ms.push(debug.Member{name: mn, ty: mt, offset: r.int()})
+    }
+    types[off] = debug.Type{tag: tag, name: name, size: size, enc: enc, of: of, members: ms, count: cnt}
+  }
+  let nt = r.count()
+  var tys = List[Int].with_capacity(nt)
+  for _ in 0..nt {
+    tys.push(r.int())
+  }
+  let nf = r.count()
+  var files = List[Str].with_capacity(nf)
+  for _ in 0..nf {
+    files.push(r.str())
+  }
+  let nfn = r.count()
+  var fns = List[ObjFn].with_capacity(nfn)
+  for _ in 0..nfn {
+    let name = r.str()
+    let lo = r.int()
+    let hi = r.int()
+    let so = r.int()
+    let nr = r.count()
+    var rows = List[(Int, Int, Int, Bool)].with_capacity(nr)
+    for _ in 0..nr {
+      let off = r.int()
+      let fi = r.int()
+      let line = r.int()
+      rows.push((off, fi, line, r.int() != 0))
+    }
+    let ns = r.count()
+    var sites = List[PdbSite].with_capacity(ns)
+    for _ in 0..ns {
+      let sn = r.str()
+      let parent = r.int()
+      let nrg = r.count()
+      var ranges = List[(Int, Int)].with_capacity(nrg)
+      for _ in 0..nrg {
+        let a = r.int()
+        ranges.push((a, r.int()))
+      }
+      let ne = r.count()
+      var es = List[(Int, Int, Int)].with_capacity(ne)
+      for _ in 0..ne {
+        let a = r.int()
+        let fi = r.int()
+        es.push((a, fi, r.int()))
+      }
+      sites.push(PdbSite{name: sn, parent: parent, ranges: ranges, entries: es, locals: dec_locals(r)})
+    }
+    fns.push(ObjFn{name: name, lo: lo, hi: hi, rows: rows, sites: sites, locals: dec_locals(r), sect_off: so})
+  }
+  if r.bad || r.at != b.len() {
+    return None
+  }
+  Some(ObjPdb{types: types, tys: tys, files: files, fns: fns})
+}
