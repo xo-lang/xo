@@ -287,7 +287,7 @@ pub fn coff_store_pdb_read(b: Bytes) -> List[ObjPdb?] {
     if at + len > b.len() {
       return []
     }
-    out.push(if len == 0 { None } else { dec_obj_pdb(b[at..at + len]) })
+    out.push(if len == 0 { None } else { dec_obj_pdb_lazy(b[at..at + len], true) })
     at += len
   }
   out

@@ -392,6 +392,10 @@ pub struct ObjPdb {
   fn_tys: List[(Int, Int)] = []
   files: List[Str]
   fns: List[ObjFn]
+  /// read lazily (dec_obj_pdb_lazy): the encoding, and each function's
+  /// first address, record place and length in it, fns left empty
+  raw: Bytes = "".bytes()
+  fn_index: List[(Int, Int, Int)] = []
 }
 
 /// o's part of the PDB, made as pe_pdb makes a function's rows and inline
@@ -514,7 +518,15 @@ pub fn pre_procs_store(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout,
       }
     }
     let gf = fn(x: Int) -> Int { if x >= 0 && x < fmap.len() { fmap[x] } else { x } }
-    for fnp in part.fns {
+    var pfns = part.fns
+    if !part.fn_index.is_empty() {
+      for (lo, at, _) in part.fn_index {
+        if m.placed(lo) {
+          pfns.push(part_fn(part, at))
+        }
+      }
+    }
+    for fnp in pfns {
       if oi < smaps.len() && !m.placed(fnp.lo) {
         continue
       }
@@ -547,7 +559,7 @@ fn locals_ty(ls: List[PdbLocal], m: ObjMap) -> List[PdbLocal] {
 
 // ---- an object's PDB part as cache bytes (enc_obj_pdb, dec_obj_pdb)
 
-const OBJPDB_MAGIC = "xo objpdb 2\n"
+const OBJPDB_MAGIC = "xo objpdb 3\n"
 
 fn (var w: Out) pstr(s: Str) {
   let b = s.bytes()
@@ -609,6 +621,20 @@ pub fn enc_obj_pdb(p: ObjPdb) -> Bytes {
   }
   w.pint(p.fns.len())
   for f in p.fns {
+    // its first address and its record's length, so a reader may skip it
+    // (coff_store_pdb_read: only the live functions' are decoded)
+    let fb = enc_fn(f)
+    w.pint(f.lo)
+    w.pint(fb.len())
+    w.bytes(fb)
+  }
+  w.done()
+}
+
+/// One function's record of enc_obj_pdb.
+fn enc_fn(f: ObjFn) -> Bytes {
+  var w = new_out(256)
+  {
     w.pstr(f.name)
     w.pint(f.lo)
     w.pint(f.hi)
@@ -710,7 +736,10 @@ fn dec_locals(var r: PRd) -> List[PdbLocal] {
 }
 
 /// enc_obj_pdb's bytes read back (None: not such bytes).
-pub fn dec_obj_pdb(b: Bytes) -> ObjPdb? {
+pub fn dec_obj_pdb(b: Bytes) -> ObjPdb? { dec_obj_pdb_lazy(b, false) }
+
+/// dec_obj_pdb; lazy: the functions' records left in raw, by fn_index.
+pub fn dec_obj_pdb_lazy(b: Bytes, lazy: Bool) -> ObjPdb? {
   let m = OBJPDB_MAGIC.bytes()
   if b.len() < m.len() || b[0..m.len()] != m {
     return None
@@ -751,8 +780,32 @@ pub fn dec_obj_pdb(b: Bytes) -> ObjPdb? {
     files.push(r.str())
   }
   let nfn = r.count()
-  var fns = List[ObjFn].with_capacity(nfn)
+  var fns = List[ObjFn].with_capacity(if lazy { 0 } else { nfn })
+  var index = List[(Int, Int, Int)].with_capacity(if lazy { nfn } else { 0 })
   for _ in 0..nfn {
+    let lo = r.int()
+    let n = r.count()
+    if lazy {
+      index.push((lo, r.at, n))
+      r.at += n
+      continue
+    }
+    let end = r.at + n
+    let f = dec_fn(r)
+    if r.at != end {
+      return None
+    }
+    fns.push(f)
+  }
+  if r.bad || r.at != b.len() {
+    return None
+  }
+  Some(ObjPdb{types: types, tys: tys, fn_tys: fn_tys, files: files, fns: fns, raw: if lazy { b } else { "".bytes() }, fn_index: index})
+}
+
+/// A function's record (enc_fn) at r.
+fn dec_fn(var r: PRd) -> ObjFn {
+  {
     let name = r.str()
     let lo = r.int()
     let hi = r.int()
@@ -785,10 +838,12 @@ pub fn dec_obj_pdb(b: Bytes) -> ObjPdb? {
       }
       sites.push(PdbSite{name: sn, parent: parent, ranges: ranges, entries: es, locals: dec_locals(r)})
     }
-    fns.push(ObjFn{name: name, lo: lo, hi: hi, rows: rows, sites: sites, locals: dec_locals(r), sect_off: so})
+    ObjFn{name: name, lo: lo, hi: hi, rows: rows, sites: sites, locals: dec_locals(r), sect_off: so}
   }
-  if r.bad || r.at != b.len() {
-    return None
-  }
-  Some(ObjPdb{types: types, tys: tys, fn_tys: fn_tys, files: files, fns: fns})
+}
+
+/// The function of a lazily read part (fn_index) at its record's place.
+fn part_fn(p: ObjPdb, at: Int) -> ObjFn {
+  var r = PRd{b: p.raw, at: at}
+  dec_fn(r)
 }
