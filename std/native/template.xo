@@ -114,16 +114,9 @@ fn is_alnum(r: Int) -> Bool { r == 95 || (r >= 0 && (Rune(r).is_letter() || Rune
 
 fn has_prefix_at(b: Bytes, at: Int, p: Bytes) -> Bool { at + p.len() <= b.len() && b[at..at + p.len()] == p }
 
-fn index_of(b: Bytes, from: Int, p: Bytes) -> Int {
-  var i = from
-  while i + p.len() <= b.len() {
-    if b[i..i + p.len()] == p {
-      return i - from
-    }
-    i += 1
-  }
-  -1
-}
+/// strings.Index of p in b from from, relative to from; -1 when absent
+/// (Bytes.find's scan, not a slice compared at every offset: XO0913).
+fn index_of(b: Bytes, from: Int, p: Bytes) -> Int { b[from..b.len()].find(p) ?? -1 }
 
 fn count_nl(b: Bytes, lo: Int, hi: Int) -> Int {
   var n = 0

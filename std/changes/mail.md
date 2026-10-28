@@ -1,5 +1,16 @@
 # std/mail changes
 
+## 2026-10-28: perf: parse_date's layout lists are constants
+
+- Kind: perf
+- Commit: this commit
+- Found by: xo vet --cost XO0914 (cmd/xo TestVetCostStd): four list literals inside parse_date's nested loops were made and freed on every iteration
+- Go reference: net/mail parseDate (its layouts are a package-level slice built once)
+- Test: internal/stdtest/testdata/corpus/mail (go, arm64, LLVM)
+
+Not measured on its own (no mail date row); the same layouts in the same
+order.
+
 ## 2026-10-27: perf: atoms and quoted strings are read without a rune at a time
 
 - Kind: perf

@@ -3090,6 +3090,8 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0910` | note | vet --cost | a value over 8 words copied where the source shows no copy: captured by a closure, or, in a loop, an element of a collection wrapped whole in an Option or enum value (decision 0327) |
 | `XO0911` | note | vet --cost | a view of a parameter's text or bytes (a slice, trim or cut made in a loop, or an element of its split or lines) stored in a field or a returned collection keeps the whole input alive; `clone()` it (decision 0330) |
 | `XO0912` | warning | vet | retired in 0.34.0 (no longer reported): `u.0`, the pattern `uuid.Uuid(p)`, or `uuid.Uuid(s)` on a `uuid.Uuid` was deprecated in 0.33.0; a `uuid.Uuid` is now two Ints and those uses are type errors (std.md 24, decision 0387) |
+| `XO0913` | note | vet --cost | in a loop, a slice of a Str or Bytes read only by index, length or equality: each iteration makes a view (a range check, a count and a drop); read the whole by offsets (knowledgebase/std-performance-guide.md) |
+| `XO0914` | note | vet --cost | in a loop, a List of at most 8 elements made and only filled and read in the iteration: an allocation and a free every iteration; keep the values in locals or reuse one list made before the loop (knowledgebase/std-performance-guide.md) |
 | `XO0904` | warning | vet | a file an embed constant embeds is ignored or untracked by git, so a build of a clean checkout embeds something else or fails (decision 0304) |
 | `XO1001` | error | reserved | `std/sys/<os>` used outside the matching target arm (core 12.2) |
 | `XO1101` | error | checker | Go package cannot be bound (not found, does not build, main package, or binding error) |

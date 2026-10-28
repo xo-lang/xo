@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo vet --cost` notes a Str or Bytes slice in a loop read only by index,
+  length or equality (XO0913) and a small List made and only read every
+  iteration (XO0914); a repo test keeps std free of new ones
+  (knowledgebase/std-performance-guide.md).
 - `xo bench --ab` started by heavy.sh as a gate or a slot run exits 2 at once
   saying to run it as its own HEAVY_CLASS=measure job, where it waited for the
   quiet window that was waiting for it (a 28 minute deadlock, 2026-10-27)

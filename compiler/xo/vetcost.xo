@@ -50,11 +50,15 @@ fn vet_cost(os: Os, args: List[Str]) -> List[check.Diag] {
   }
   let root = line_root(os, o.wd, o.dirs[0])
   let lo = lower(os, o, c, false, root, false, false, uses_time, host_os(os), host_arch(), false, false, os.clock.now())
-  // the root modules' own files, as the functions name them
+  // the root modules' own files, as the functions name them; with
+  // --cost-std, every other module's (the std the program reaches)
+  let std_only = args.contains("--cost-std")
   var keep: List[Str] = []
-  for m in c.root_mods {
-    for f in c.mods[m].files {
-      keep.push(c.files[f].path)
+  for (m, md) in c.mods.indexed() {
+    if c.root_mods.contains(m) != std_only {
+      for f in md.files {
+        keep.push(c.files[f].path)
+      }
     }
   }
   var out: List[check.Diag] = []

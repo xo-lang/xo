@@ -2723,3 +2723,95 @@ func TestQueryStdModuleOutsideModule(t *testing.T) {
 		t.Errorf("query deps std/json: exit %d\n%s%s", code, out.String(), errOut.String())
 	}
 }
+
+// vetCostLoopProg: a Str and a Bytes slice in a loop read only by index,
+// length or equality (XO0913, lines 6 and 19); a four element list made
+// and only read each iteration (XO0914, line 29); a list kept past its
+// iteration is not noted (line 38).
+const vetCostLoopProg = `
+fn count_ab(s: Str, p: Str) -> Int {
+  var n = 0
+  var i = 0
+  while i + p.len() <= s.len() {
+    let w = s[i..i + p.len()]
+    if w == p {
+      n += 1
+    }
+    i += 1
+  }
+  n
+}
+
+fn first_bytes(b: Bytes) -> Int {
+  var t = 0
+  var i = 0
+  while i + 4 <= b.len() {
+    let q = b[i..i + 4]
+    t += Int(q[0]) + Int(q[3]) + q.len()
+    i += 4
+  }
+  t
+}
+
+fn quads(xs: List[Int]) -> Int {
+  var t = 0
+  for x in xs {
+    let q = [x, x + 1, x + 2, x + 3]
+    t += q[0] + q[3] + q.len()
+  }
+  t
+}
+
+fn kept(xs: List[Int]) -> List[List[Int]] {
+  var out: List[List[Int]] = []
+  for x in xs {
+    let q = [x, x + 1]
+    out.push(q)
+  }
+  out
+}
+
+fn main(os: Os) {
+  os.stdio.println("${count_ab("abab", "ab")} ${first_bytes(b"abcdefgh")} ${quads([1, 2])} ${kept([1]).len()}")
+}
+`
+
+// vetCostCodes runs xo vet --cost --json over src and returns the lines
+// of each code's notes.
+func vetCostCodes(t *testing.T, src string) map[string][]int {
+	t.Helper()
+	dir := writeFiles(t, map[string]string{"main.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", "--cost", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	got := map[string][]int{}
+	for _, d := range res.Diagnostics {
+		got[d.Code] = append(got[d.Code], d.Span.Line)
+	}
+	return got
+}
+
+// TestVetCostLoopSlicesAndLists: XO0913 and XO0914 (the std timing audit's
+// lessons, knowledgebase/std-performance-guide.md 3 and 4).
+func TestVetCostLoopSlicesAndLists(t *testing.T) {
+	t.Parallel()
+	got := vetCostCodes(t, vetCostLoopProg)
+	if fmt.Sprint(got["XO0913"]) != "[6 19]" {
+		t.Errorf("XO0913 at lines %v, want [6 19]", got["XO0913"])
+	}
+	if fmt.Sprint(got["XO0914"]) != "[29]" {
+		t.Errorf("XO0914 at lines %v, want [29]", got["XO0914"])
+	}
+}

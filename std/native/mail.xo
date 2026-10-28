@@ -1287,6 +1287,12 @@ fn try_layout(s: Bytes, dow: Bool, day2: Bool, year4: Bool, secs: Bool, zone: In
   Some((days_from_civil(year, mon + 1, day) * 86400 + hour * 3600 + min * 60 + sec - offset, nsec))
 }
 
+// parse_date's layout choices as constants: a list literal inside its
+// loops was made and freed on every iteration (xo vet --cost XO0914)
+const FALSE_TRUE: List[Bool] = [false, true]
+const TRUE_FALSE: List[Bool] = [true, false]
+const ZONE_FORMS: List[Int] = [0, 1, 2]
+
 fn parse_date(s: Str) -> Time ! mail.MailErr {
   let date0 = s.replace("\r\n", "")
   if date0.contains("\r") {
@@ -1324,10 +1330,10 @@ fn parse_date(s: Str) -> Time ! mail.MailErr {
   }
   let db = date.bytes()
   for dow in [false, true] {
-    for day2 in [false, true] {
-      for year4 in [true, false] {
-        for secs in [true, false] {
-          for zone in [0, 1, 2] {
+    for day2 in FALSE_TRUE {
+      for year4 in TRUE_FALSE {
+        for secs in TRUE_FALSE {
+          for zone in ZONE_FORMS {
             match try_layout(db, dow, day2, year4, secs, zone) {
               Some((t, ns)) => {
                 if t < -9223372036 || t > 9223372036 || (t == 9223372036 && ns > 854775807) {

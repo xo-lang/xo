@@ -1,7 +1,7 @@
 # 0327: `xo vet --cost`, notes on costs the source does not show
 
 Status: Accepted (owner, 2026-10-21, from the agents' language poll; design
-reviewed by the lead). Implemented: XO0907 (stage 1), XO0908, XO0909, XO0910, XO0911.
+reviewed by the lead). Implemented: XO0907 (stage 1), XO0908, XO0909, XO0910, XO0911, XO0913, XO0914.
 XO0909 (Xo Lang 3).
 
 ## Context
@@ -120,3 +120,14 @@ none in a hot path; 18 when sort_by was included); none in the CRUD
 server.
 TestVetCostCallbacks. Decision 0337 (Proposed) would remove the cost
 itself; until then the note names it.
+
+## Addendum 2026-10-28: XO0913 and XO0914 (xo-lang-5)
+
+Two notes from the std timing audit (knowledgebase/std-performance-guide.md),
+enforced on std by internal/repotest TestVetCostStd against
+internal/repotest/testdata/vetcost-std-allow.txt (each allowed note with
+its reason): XO0913, a Str or Bytes slice in a loop whose every use is an
+index, a length or an equality; XO0914, a List literal of at most 8
+elements in a loop whose value, and the lists its pushes and sets make,
+are only read (never passed on an edge, stored, returned or given to a
+call that keeps it).

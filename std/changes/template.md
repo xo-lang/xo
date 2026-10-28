@@ -1,5 +1,18 @@
 # std/template changes
 
+## 2026-10-28: perf: the lexer finds `{{` and `*/` with Bytes.find
+
+- Kind: perf
+- Commit: this commit
+- Found by: xo vet --cost XO0913 (cmd/xo TestVetCostStd): index_of compared a slice of the input at every offset
+- Go reference: text/template/parse lex.go (strings.Index(l.input[l.pos:], l.leftDelim))
+- Test: internal/stdtest/testdata/corpus/template (go, arm64, LLVM)
+
+index_of is `b[from..].find(p)`, Go's strings.Index, where it made and
+compared a view at each offset. Quiet --ab, 15 rounds, the parent's std as
+A (instructions, /usr/bin/time -l): bench/perf/template parse 0.956,
+render 1.000; the wall A/B follows in the timing audit.
+
 ## 2026-10-28: perf: an integer is written into the output in place
 
 - Kind: perf

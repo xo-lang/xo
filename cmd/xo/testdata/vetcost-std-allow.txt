@@ -1,0 +1,3 @@
+# xo vet --cost notes std keeps (TestVetCostStd), one a line:
+# FILE<TAB>CODE<TAB>TRIMMED SOURCE LINE<TAB>REASON (measured, with the commit)
+std/native/archive.xo	XO0913	if rest[rest_n - 1..rest_n] != "\n" {	once per pax record header, not per byte: a one byte view compared to the record terminator (2026-10-28)

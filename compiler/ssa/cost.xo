@@ -4,7 +4,9 @@
 // (XO0907), an element counted up and down every iteration (XO0908), a
 // value over 8 words captured or wrapped inline (XO0910), a list update
 // that may copy the whole list every iteration (XO0909), a small view of a
-// parameter's text or bytes stored long-lived (XO0911). Notes only, never errors; the driver turns them into vet's
+// parameter's text or bytes stored long-lived (XO0911), a slice in a loop
+// only read by index or length (XO0913), a small list made and dropped
+// every iteration (XO0914). Notes only, never errors; the driver turns them into vet's
 // findings (compiler/xo vetcost.xo).
 
 /// A cost note at a source position of function fn_name.
@@ -39,7 +41,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(m, f, inloop) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(m, f, inloop) + slices_read_in_loop(f, inloop) + small_lists_in_loop(f, inloop) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -810,6 +812,127 @@ fn view_stores(m: Module, f: Func, inloop: List[Bool]) -> List[CostNote] {
     }
     seen[line] = true
     out.push(CostNote{code: "XO0911", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this view of a parameter's text is stored long-lived (in a field, a collection, or a returned struct): this keeps the whole input alive; clone() it"})
+  }
+  out
+}
+
+/// Calls that only read their Str, Bytes or List argument, keeping
+/// nothing of it (XO0913, XO0914).
+fn read_only_call(name: Str) -> Bool {
+  name is "Str.len" | "Bytes.len" | "str.index" | "bytes.index" | "str.eq" | "str.ne" | "bytes.eq" | "bytes.ne" | "list.len" | "list.index" | "list.get"
+}
+
+/// The users of every value of f by instructions, and whether each is an
+/// edge argument.
+fn cost_uses(f: Func) -> (List[List[Int]], List[Bool]) {
+  var users: List[List[Int]] = []
+  var edge: List[Bool] = []
+  for _ in f.values {
+    users.push([])
+    edge.push(false)
+  }
+  for bl in f.blocks {
+    for v in bl.instrs {
+      for a in f.values[v].args {
+        if a >= 0 && a < users.len() {
+          users[a].push(v)
+        }
+      }
+    }
+  }
+  for ed in f.edges {
+    for a in ed.args {
+      if a >= 0 && a < edge.len() {
+        edge[a] = true
+      }
+    }
+  }
+  (users, edge)
+}
+
+/// XO0913: in a loop, a slice of a Str or Bytes (decision 0330: a view)
+/// whose every use reads it by index, length or equality: each iteration
+/// pays the slice's range and boundary check, a count and a drop, where
+/// indexing the whole by offsets pays none (std-performance-guide.md 4;
+/// path's is_match by offset, 1.70x to 1.00x Go's time).
+fn slices_read_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
+  var out: List[CostNote] = []
+  var seen: Map[Int, Bool] = {}
+  let (users, edge) = cost_uses(f)
+  for (vi, x) in f.values.indexed() {
+    let line = x.line / 4096
+    if x.op != Op.Call || !named(aux_name(x.aux), "rt.str_view") || x.block < 0 || x.block >= inloop.len() || !inloop[x.block] || line <= 0 || seen.contains(line) || edge[vi] || users[vi].is_empty() {
+      continue
+    }
+    var reads = true
+    for u in users[vi] {
+      let w = f.values[u]
+      if !(w.op == Op.Call && read_only_call(aux_name(w.aux))) && !(w.op is Op.Eq | Op.Ne | Op.Retain | Op.Release | Op.Drop) {
+        reads = false
+      }
+    }
+    if !reads {
+      continue
+    }
+    seen[line] = true
+    out.push(CostNote{code: "XO0913", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this slice makes a view on every iteration only to read it by index or length (a range check, a count and a drop each time); read the whole text or bytes by offsets instead"})
+  }
+  out
+}
+
+/// XO0914: in a loop, a List made with at most 8 elements (a literal, or
+/// with_capacity of a constant) that is only filled and read in the
+/// iteration: an allocation and a free every iteration, where locals (or
+/// one list made before the loop) need none (std-performance-guide.md 3;
+/// path's clean in locals, parts 0.927; base64's per-quantum list).
+fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
+  var out: List[CostNote] = []
+  var seen: Map[Int, Bool] = {}
+  let (users, edge) = cost_uses(f)
+  for (vi, x) in f.values.indexed() {
+    let line = x.line / 4096
+    if x.op != Op.Call || aux_name(x.aux) != "list.new" || x.args.len() != 1 || x.block < 0 || x.block >= inloop.len() || !inloop[x.block] || line <= 0 || seen.contains(line) {
+      continue
+    }
+    let c = f.values[x.args[0]]
+    let n = match c.aux {
+      Aux.I(k) => k
+      _ => -1
+    }
+    if c.op != Op.Const || n < 1 || n > 8 {
+      continue
+    }
+    // the list and the lists its pushes and sets make: only filled and read
+    var work = [vi]
+    var local = true
+    var walked: Map[Int, Bool] = {}
+    while local && !work.is_empty() {
+      let l = work.pop() ?? -1
+      if walked.contains(l) {
+        continue
+      }
+      walked[l] = true
+      if edge[l] {
+        local = false
+      }
+      for u in users[l] {
+        let w = f.values[u]
+        let name = aux_name(w.aux)
+        if w.op is Op.Retain | Op.Release | Op.Drop {
+          continue
+        }
+        if w.op == Op.Call && (name == "list.push" || name == "list.set") && w.args.len() > 0 && w.args[0] == l {
+          work.push(u)
+        } else if !(w.op == Op.Call && read_only_call(name) && w.args.len() > 0 && w.args[0] == l) {
+          local = false
+        }
+      }
+    }
+    if !local {
+      continue
+    }
+    seen[line] = true
+    out.push(CostNote{code: "XO0914", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this list is allocated and freed on every iteration and only filled and read in it; keep its values in locals, or make one list before the loop and reuse it"})
   }
   out
 }

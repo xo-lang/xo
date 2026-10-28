@@ -579,6 +579,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- `xo vet --cost --cost-std DIR` notes the cost patterns (XO0907 to
+  XO0914) in the std code program DIR reaches; cmd/xo TestVetCostStd runs
+  it over bench/perf and keeps std free of new XO0913 and XO0914 notes
+  (allow-list: cmd/xo/testdata/vetcost-std-allow.txt, a reason a line).
 - A new std module, or a port of a Go package, reads
   knowledgebase/std-performance-guide.md first and ships a Go twin
   (bench/perf/<module>, twincheck) with a timing row in the std timing

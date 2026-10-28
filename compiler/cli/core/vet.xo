@@ -13,6 +13,7 @@ fn run_vet(os: Os, ctx: Ctx, args: List[Str], extra: List[Diag]) -> Int {
   fl.bool_flag("json", "print the findings as JSON")
   // the driver computes these notes and passes them in (extra)
   fl.bool_flag("cost", "also note costs the compiled program has in loops that its source does not show (decision 0327)")
+  fl.bool_flag("cost-std", "with --cost, note the costs in the std functions the program uses instead of in its own (the std check, cmd/xo TestVetCostStd)")
   fl.str_flag("std-module", "", "vet one std or runtime module as `xo test --std-module` checks it, with its private declarations (json, native/http, native/llrt/pool)")
   if !fl.parse(os, args) {
     return 2

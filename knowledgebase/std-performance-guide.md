@@ -103,6 +103,11 @@ keeps the symptoms as first observed. Last verified: 2026-10-28.
 
 ## 9. A new std module
 
+- `xo vet --cost --cost-std bench/perf/<module>` before pushing: XO0913
+  (a slice read only by index or length in a loop) and XO0914 (a small
+  list made every iteration) fail cmd/xo TestVetCostStd unless fixed or
+  allow-listed with a reason.
+
 - A Go twin and a timing row in the audit; a Go-generated corpus; a
   profile before optimizing; a std/changes/<module>.md entry per change in
   decision 0276's format.
