@@ -461,7 +461,7 @@ func TestGobindNewerGo(t *testing.T) {
 	log := filepath.Join(rel, "builds.log")
 	fake := filepath.Join(rel, "go")
 	script := "#!/bin/sh\n" +
-		"if [ \"$1\" = env ] && [ \"$2\" = GOVERSION ]; then echo go1.99.0; exit 0; fi\n" +
+		"if [ \"$1\" = env ] && [ \"$2\" = GOVERSION ]; then echo ${FAKE_GOVERSION:-go1.99.0}; exit 0; fi\n" +
 		"if [ \"$1\" = version ] && [ $# -eq 2 ]; then echo \"$2: go1.26.1\"; exit 0; fi\n" +
 		"if [ \"$1\" = build ] && [ \"$2\" = -o ] && [ \"$4\" = ./cmd/xo-gobind ]; then pwd -P >> '" + log + "'; cp '" + shipped + "' \"$3\"; exit $?; fi\n" +
 		"exec '" + realGo + "' \"$@\"\n"
@@ -490,5 +490,17 @@ func TestGobindNewerGo(t *testing.T) {
 	more, _ := filepath.Glob(filepath.Join(home, "*", "xo", "gobind", "*-go1.99.0", "xo-gobind"))
 	if len(got)+len(more) != 1 {
 		t.Fatalf("cached helper %v %v, want one under %s", got, more, home)
+	}
+	// XO_GOBIND_LOCAL=1 builds it with an installed Go no newer than the
+	// shipped helper's (the release smoke's case on a runner with that Go)
+	setenv(t, "FAKE_GOVERSION", "go1.26.1")
+	setenv(t, "XO_GOBIND_LOCAL", "1")
+	var out, errOut bytes.Buffer
+	if code := execCLI(t, xo, []string{"bind", "--dir", dir, "errors"}, &out, &errOut); code != 0 {
+		t.Fatalf("bind errors with XO_GOBIND_LOCAL=1: exit %d: %s", code, errOut.String())
+	}
+	data, _ = os.ReadFile(log)
+	if n := len(strings.Split(strings.TrimSpace(string(data)), "\n")); n != 2 {
+		t.Fatalf("helper builds %d, want 2 (XO_GOBIND_LOCAL=1 builds one for go1.26.1)", n)
 	}
 }

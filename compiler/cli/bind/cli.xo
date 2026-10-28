@@ -462,6 +462,7 @@ fn helper_source_key(os: Os, src: Str) -> Str uses fs.read {
 /// helper's source is under src (a release's lib/xo, or a checkout), a
 /// build of that source with the installed Go, made once into <user
 /// cache>/xo/gobind/<source key>-<go version>/; else helper.
+/// XO_GOBIND_LOCAL=1 makes that build whatever the versions.
 fn helper_for_go(os: Os, helper: Str, src: Str) -> Str ! Str uses (fs, proc, env) {
   if !is_file(os, join(src, "cmd/xo-gobind/main.go")) {
     return Ok(helper)
@@ -473,7 +474,11 @@ fn helper_for_go(os: Os, helper: Str, src: Str) -> Str ! Str uses (fs, proc, env
   let built = built_line[(built_line.rfind(" ") ?? -1) + 1..]
   let (lmaj, lmin) = go_lang(local)
   let (bmaj, bmin) = go_lang(built)
-  if lmaj == 0 || bmaj == 0 || lmaj < bmaj || (lmaj == bmaj && lmin <= bmin) {
+  // XO_GOBIND_LOCAL=1 builds it with the installed Go whatever the
+  // versions (the release smoke runs this path on a runner whose Go is
+  // the helper's)
+  let force = (os.env.get("XO_GOBIND_LOCAL") ?? "") == "1"
+  if !force && (lmaj == 0 || bmaj == 0 || lmaj < bmaj || (lmaj == bmaj && lmin <= bmin)) {
     return Ok(helper)
   }
   let cache = hostpath.user_cache_dir(os.env)
