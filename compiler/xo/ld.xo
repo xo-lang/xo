@@ -460,6 +460,11 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
           Ok((i2, p)) => {
             img = i2
             t = lap(os, phases, "pe.pdb ${p.len()} bytes", t)
+            // per-object CodeView, step 1 (Xo Lang 2's design note): each
+            // object's own DWARF against the image's, function by function
+            if (os.env.get("XO_PDB_OBJ_CHECK") ?? "") == "1" {
+              os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK: ${macho.obj_check(img0, objs)}")
+            }
             if let Err(e) = os.fs.write(pdb, p) {
               return "${pdb}: ${e}"
             }

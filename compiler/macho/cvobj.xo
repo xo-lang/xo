@@ -1,0 +1,176 @@
+// The DWARF of one COFF object, read where the object itself puts its code
+// (design note: Xo Lang 2's pdb-cache-design.md, tier 2, step 1): the
+// first step to CodeView made per object and merged by the PE linker, so
+// an edit rebuilds the CodeView of the parts it assembles, not of the whole
+// image. An object's relocations are applied against bases of its own
+// (its code sections laid end to end from 0, its other sections in a
+// range of their own), so the result depends on the object's bytes alone,
+// not on where a link places it.
+
+use github.com/xo-lang/xo/compiler/debug
+
+/// Where obj_dwarf puts the sections that hold no code (data the DWARF
+/// names, such as a global's address): far past any object's code.
+const CVOBJ_DATA_BASE: Int = 1099511627776
+
+/// The base of each section of o (in o.sects' order): code sections end
+/// to end from 0, each 16 aligned; the others the same way from
+/// CVOBJ_DATA_BASE; debug sections 0 (a reference into one is an offset).
+pub fn obj_bases(o: CObj) -> List[Int] {
+  var code = 0
+  var data = CVOBJ_DATA_BASE
+  var out: List[Int] = []
+  for s in o.sects {
+    if s.name.starts_with(".debug_") {
+      out.push(0)
+    } else if (s.chars & IMAGE_SCN_CNT_CODE) != 0 {
+      out.push(code)
+      code = (code + s.size + 15) & -16
+    } else {
+      out.push(data)
+      data = (data + s.size + 15) & -16
+    }
+  }
+  out
+}
+
+/// o's DWARF sections with its relocations applied against obj_bases:
+/// an ADDR64 is the target's base plus the symbol's value plus the addend
+/// the contents hold, a SECREL the symbol's value plus the addend (an
+/// offset in the debug section it names), an ADDR32NB as ADDR64 in four
+/// bytes. Format "pe", as debug.sections names an image's.
+pub fn obj_dwarf(o: CObj) -> debug.Sections ! Str {
+  let bases = obj_bases(o)
+  var s = debug.Sections{format: "pe"}
+  var any = false
+  for sec in o.sects {
+    if !sec.name.starts_with(".debug_") {
+      continue
+    }
+    let data = relocated(o, bases, sec)?
+    match sec.name.trim_prefix(".debug_") {
+      "info" => s.info = data
+      "abbrev" => s.abbrev = data
+      "str" => s.str = data
+      "line_str" => s.line_str = data
+      "str_offsets" | "str_offs" => s.str_offsets = data
+      "addr" => s.addr = data
+      "loclists" => s.loclists = data
+      "rnglists" => s.rnglists = data
+      "line" => s.line = data
+      _ => {}
+    }
+    any = true
+  }
+  if !any || s.info.is_empty() {
+    return Err("${o.path}: no .debug_info")
+  }
+  Ok(s)
+}
+
+/// sec's contents with each relocation's value written in place.
+fn relocated(o: CObj, bases: List[Int], sec: CSect) -> Bytes ! Str {
+  if sec.relocs.is_empty() {
+    return Ok(sec.data)
+  }
+  let rs = sec.relocs.sort_by(fn(r: CReloc) { r.addr })
+  var b = BytesBuilder.with_capacity(sec.data.len())
+  var last = 0
+  for r in rs {
+    var n = 0
+    if r.typ == IMAGE_REL_AMD64_ADDR64 {
+      n = 8
+    } else if r.typ == IMAGE_REL_AMD64_SECREL || r.typ == IMAGE_REL_AMD64_ADDR32NB {
+      n = 4
+    } else {
+      return Err("${o.path}: ${sec.name}: relocation type ${r.typ} at ${r.addr} in DWARF")
+    }
+    if r.addr < last || r.addr + n > sec.data.len() || r.sym < 0 || r.sym >= o.syms.len() {
+      return Err("${o.path}: ${sec.name}: a bad relocation at ${r.addr}")
+    }
+    let sym = o.syms[r.sym]
+    var addend = 0
+    for k in 0..n {
+      addend = addend | Int(sec.data[r.addr + k]).wrapping_shl(8 * k)
+    }
+    var v = sym.value + addend
+    if r.typ != IMAGE_REL_AMD64_SECREL && sym.sect >= 1 && sym.sect <= bases.len() {
+      v = v + bases[sym.sect - 1]
+    }
+    b.write(sec.data[last..r.addr])
+    for k in 0..n {
+      b.write_byte(UInt8((v >> (8 * k)) & 255))
+    }
+    last = r.addr + n
+  }
+  b.write(sec.data[last..sec.data.len()])
+  Ok(b.freeze())
+}
+
+/// The DWARF facts of a function the PDB is made from, relative to its
+/// start: its size, its inlined calls' depths and ranges, its variables'
+/// names, and its line rows' offsets, files and lines.
+fn fn_facts(f: debug.Func, lns: debug.Lines) -> Str {
+  var b = StrBuilder.new()
+  b.write("size ${f.hi - f.lo}")
+  for c in f.inlined {
+    b.write(" call ${c.name} depth ${c.depth} line ${c.call_line}")
+    for (lo, hi) in c.ranges {
+      b.write(" [${lo - f.lo},${hi - f.lo})")
+    }
+  }
+  for v in f.vars {
+    b.write(" var ${v.name}")
+  }
+  for r in lns.rows {
+    if !r.end && r.addr >= f.lo && r.addr < f.hi {
+      b.write(" row ${r.addr - f.lo}:${if r.file >= 0 && r.file < lns.files.len() { lns.files[r.file] } else { "?" }}:${r.line}")
+    }
+  }
+  b.freeze()
+}
+
+/// XO_PDB_OBJ_CHECK (tier 2, step 1): each function of each object read
+/// from the object's own DWARF (obj_dwarf) against the same function in
+/// the image's DWARF, which pe_pdb reads: "N functions, M differ" and the
+/// first differences, or why an object could not be read.
+pub fn obj_check(img: Bytes, objs: List[CObj]) -> Str {
+  let s = match debug.sections(img) {
+    Ok(x) => x
+    Err(e) => return "the image's DWARF: ${e}"
+  }
+  let info = debug.read(s)
+  let lns = debug.lines(s)
+  var want: Map[Str, Str] = {}
+  for f in info.funcs {
+    if f.hi > f.lo {
+      want[f.name] = fn_facts(f, lns)
+    }
+  }
+  var n = 0
+  var bad = 0
+  var first: List[Str] = []
+  for o in objs {
+    let os = match obj_dwarf(o) {
+      Ok(x) => x
+      Err(_) => continue
+    }
+    let oi = debug.read(os)
+    let ol = debug.lines(os)
+    for f in oi.funcs {
+      if f.hi <= f.lo {
+        continue
+      }
+      n += 1
+      let got = fn_facts(f, ol)
+      let w = want.get(f.name) ?? "(not in the image)"
+      if got != w {
+        bad += 1
+        if first.len() < 3 {
+          first.push("${f.name} in ${o.path}:\n  object ${got}\n  image  ${w}")
+        }
+      }
+    }
+  }
+  "${n} functions, ${bad} differ${if first.is_empty() { "" } else { ":\n" + first.join("\n") }}"
+}

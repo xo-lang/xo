@@ -3371,3 +3371,45 @@ func TestLinkKeyFollowsObjects(t *testing.T) {
 		t.Errorf("the build from another directory differs from a cold build there")
 	}
 }
+
+// TestWindowsPDBObjCheck (tier 2 of the PDB design, step 1): every
+// function of a windows/amd64 build read from its own object's DWARF, with
+// the object's relocations applied against bases of its own (macho
+// obj_dwarf), has the facts the PDB is made from (size, inlined calls and
+// their ranges, variables, line rows) that the same function has in the
+// linked image's DWARF, relative to its start (XO_PDB_OBJ_CHECK=1 prints
+// "N functions, M differ"). The HTTP server's 1299 functions matched on
+// 2026-10-27; this program has inlining and a split build's parts.
+func TestWindowsPDBObjCheck(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-pdbobj-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	src := filepath.Join(work, "src")
+	if err := os.CopyFS(src, os.DirFS(filepath.Join(root, "bench", "perf", "http", "xo"))); err != nil {
+		t.Fatal(err)
+	}
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out", "prog"), "."))
+	cmd.Dir = src
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_PDB_OBJ_CHECK=1")
+	log, err := cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("xo build: %v\n%s", err, log)
+	}
+	m := regexp.MustCompile(`XO_PDB_OBJ_CHECK: (\d+) functions, (\d+) differ`).FindStringSubmatch(string(log))
+	if m == nil || m[1] == "0" || m[2] != "0" {
+		t.Fatalf("XO_PDB_OBJ_CHECK: want some functions and 0 differ:\n%s", log)
+	}
+}
