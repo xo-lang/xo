@@ -813,6 +813,15 @@ fn (var p: TomlParser) assign(t0: Int, k: List[Str], v: TomlVal) -> () ! toml.To
   Ok(())
 }
 
+/// assign of a one part key: the key set in table t unless it is there.
+fn (var p: TomlParser) assign_one(t: Int, k: Str, v: TomlVal) -> () ! toml.TomlErr {
+  if p.lookup(t, k) is Some(_) {
+    return Err(p.err("key ${k.quote()} is already defined"))
+  }
+  p.set(t, k, v)
+  Ok(())
+}
+
 fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
   var t = 0
   for i in 0..k.len() {
@@ -902,7 +911,10 @@ fn (var p: TomlParser) document() -> () ! toml.TomlErr {
       p.eol()?
       continue
     }
-    let k = p.key()?
+    // a single bare key (the usual line) is read as one Str, with no
+    // list of parts; anything else goes through key()
+    let one = p.bare_key_alone()
+    let k = if one == "" { p.key()? } else { [] }
     p.ws()
     if p.peek() != 61 {
       return Err(p.err("expected = after a key"))
@@ -913,9 +925,36 @@ fn (var p: TomlParser) document() -> () ! toml.TomlErr {
       return Err(p.err("expected a value after ="))
     }
     let v = p.value()?
-    p.assign(cur, k, v)?
+    if one == "" {
+      p.assign(cur, k, v)?
+    } else {
+      p.assign_one(cur, one, v)?
+    }
     p.eol()?
   }
+}
+
+/// A bare key standing alone at i (not followed by `.` past spaces): the
+/// key, with i after it; "" with i unchanged otherwise.
+fn (var p: TomlParser) bare_key_alone() -> Str {
+  let st = p.i
+  var j = st
+  let n = p.s.len()
+  while j < n && bare_key_byte(raw.str_byte(p.s, j)) {
+    j += 1
+  }
+  if j == st {
+    return ""
+  }
+  var e = j
+  while e < n && (raw.str_byte(p.s, e) == 32 || raw.str_byte(p.s, e) == 9) {
+    e += 1
+  }
+  if e < n && raw.str_byte(p.s, e) == 46 {
+    return ""
+  }
+  p.i = j
+  raw.str_slice(p.s, st, j)
 }
 
 /// Writes s as a JSON string; text with nothing to escape is copied whole.

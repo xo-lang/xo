@@ -1,5 +1,20 @@
 # std/toml changes
 
+## 2026-10-27: perf: a key line of one bare key is read with no list of parts
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/toml decode at about 1.27x Go after the table change; key() builds a List[Str] for every key line, while most are one bare key
+- Go reference: github.com/pelletier/go-toml/v2 v2.4.3 unstable/parser.go (a simple key parsed in place)
+- Test: internal/llvm/testdata/golden/toml_basic (and internal/arm64's); twincheck's checksums agree on none, decode; an 18-document to_json differential (bare, dotted, spaced-dot, quoted and literal keys, keys that look like numbers and booleans, a key redefined as a table and a table as a key, missing keys and values, tables of 11 keys, inline tables, arrays of tables) equal on the Go backend (std/rt's own toml), arm64 and llvm
+
+A document line whose key is one bare key, not followed by `.`, is read
+as one Str and assigned with assign_one; any other key (dotted, quoted,
+or a header's) goes through key() as before, as do the errors. Output is
+unchanged. Quiet --ab, 15 rounds, the parent's std as A: decode wall
+0.937 (0.927 to 0.957), instructions 0.940; Xo / Go about 1.19
+(estimate: 1.454 x 0.873 x 0.937), from 1.27.
+
 ## 2026-10-27: perf: a small table keeps its values in a list; a value is told by its first byte
 
 - Kind: perf

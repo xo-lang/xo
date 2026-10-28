@@ -385,3 +385,9 @@ Per std/changes/big.md 2026-10-27 ("long division's row runs its two carry chain
 Quiet `xo bench --ab`, 15 rounds, the parent's std as A: quorem wall 0.779 (0.770 to 0.792), instructions
 0.889, cycles 0.752; Xo / Go about 1.01 (estimate: 1.451 x 0.898 x 0.779), from 1.45 this morning: under the
 1.2x bar.
+
+## toml single bare keys (2026-10-27, xo-lang-5)
+
+Per std/changes/toml.md 2026-10-27 ("a key line of one bare key is read with no list of parts"). Quiet
+`xo bench --ab`, 15 rounds, the parent's std as A: decode wall 0.937 (0.927 to 0.957), instructions 0.940;
+Xo / Go about 1.19 (estimate: 1.454 x 0.873 x 0.937), at the bar; a measured row against Go follows.
