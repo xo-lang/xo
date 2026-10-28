@@ -120,7 +120,12 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] { pe_pdb_facts(img, Non
 /// object's own DWARF and the link's layout) instead of read from img.
 /// With pre (pre_procs: each function's rows and inline sites made from
 /// its own object), only the locals, the types and the file are made here.
-pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs?) -> Result[(Bytes, Bytes), Str] {
+pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs?) -> Result[(Bytes, Bytes), Str] { pe_pdb_seeded(img, facts, pre, b"") }
+
+/// pe_pdb_facts with the GUID and time stamp from seed (what made the
+/// image: its objects' cache keys and the link's options, ld.xo pdb_seed)
+/// instead of the image's own hash; an empty seed hashes the image.
+pub fn pe_pdb_seeded(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs?, seed: Bytes) -> Result[(Bytes, Bytes), Str] {
   if img.len() < 64 || img[0] != 77 || img[1] != 90 {
     return Err("not a PE image")
   }
@@ -146,8 +151,9 @@ pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs
     return Err("the image's debug directory has no CodeView record")
   }
   let rsds = le_b(img, dfile + 24, 4)
-  // the GUID: the image's hash (its GUID and time stamp are still zero)
-  let h = crypto.sha256(img)
+  // the GUID: the seed's hash, else the image's (its GUID and time stamp
+  // are still zero)
+  let h = if seed.is_empty() { crypto.sha256(img) } else { crypto.sha256(seed) }
   let guid = h[0..16]
   let stamp = le_b(h, 16, 4)
   var b = BytesBuilder.with_capacity(img.len())

@@ -6,6 +6,7 @@
 // linux/arm64 (stage 3) into an ELF executable that imports glibc.
 
 use github.com/xo-lang/xo/compiler/macho
+use std/crypto
 use github.com/xo-lang/xo/compiler/tzsel
 use std/task
 
@@ -517,7 +518,11 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   var objs: List[macho.CObj] = []
   var parts: List[macho.CObj] = []
   var rest: List[macho.CObj] = []
-  for p in paths {
+  // what the PDB's GUID is made from (pdb_seed): each object's cache key,
+  // or for one with none its bytes' hash
+  var seed = BytesBuilder.new()
+  seed.write_str("xo pdb guid v1\n")
+  for (pi, p) in paths.indexed() {
     let part = !store_path.is_empty() && base_name(p).starts_with("prog-windows.") && p.ends_with(".obj")
     if part && !store.is_empty() && !store_check {
       continue
@@ -525,6 +530,11 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
     let b = match os.fs.read(p) {
       Ok(b) => b
       Err(e) => return "${p}: ${e}"
+    }
+    if pi < keys.len() && !keys[pi].is_empty() {
+      seed.write_str("key ${keys[pi]}\n")
+    } else if !keys.is_empty() {
+      seed.write_str("obj ${crypto.sha256(b).to_hex()}\n")
     }
     match macho.read_coff(p, b) {
       Ok(o) => {
@@ -594,7 +604,8 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   // the debug directory names it with backslashes, as MSVC's and lld's
   // linkers do: dbghelp finds a PDB moved since by its base name, which
   // an older one takes after the last backslash only
-  let peo = macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb_named.replace("/", "\\")}
+  let res = pe_resources(bin, stamps)
+  let peo = macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: res, fixed_base: race, pdb: pdb_named.replace("/", "\\")}
   if store_check {
     // the store's link against the parts' (strip by atom): the same image
     match (macho.link_pe(objs, peo), macho.link_pe(check_objs, peo)) {
@@ -613,6 +624,9 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
         // each object's part from the back-end cache (the same bytes as the
         // image path, XO_PDB_OBJ=0; an HTTP server edit's 64 ms to 31)
         let per_obj = (os.env.get("XO_PDB_OBJ") ?? "") != "0"
+        // (no keys, no back-end cache or a link through the store: the
+        // image's own hash, cheaper than hashing every object)
+        let sd = if keys.is_empty() { b"" } else { pdb_seed(seed, race, pdb_named, res) }
         let pdb_r = if per_obj {
           // through the store: its objects' parts from std.store.pdb, the
           // other objects' made
@@ -620,10 +634,10 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
           let parts = if nst > 0 { store_parts + pdb_parts(os, layout.objs[nst..layout.objs.len()], cdir, []) } else { pdb_parts(os, layout.objs, cdir, keys) }
           let pre = macho.pre_procs_store(parts, layout.objs, layout, if nst > 0 { smaps } else { [] })
           t = lap(os, phases, "pe.pdb_parts", t)
-          let r = macho.pe_pdb_facts(img0, None, Some(pre))
+          let r = macho.pe_pdb_seeded(img0, None, Some(pre), sd)
           if store_check && nst > 0 {
             // the store's parts' PDB against the image's DWARF's
-            match (r, macho.pe_pdb(img0)) {
+            match (r, macho.pe_pdb_seeded(img0, None, None, sd)) {
               (Ok((_, a)), Ok((_, b))) => if a != b {
                 return "XO_STD_STORE_CHECK=1: the PDB from the store's parts differs from the image's (${a.len()} and ${b.len()} bytes)"
               }
@@ -632,7 +646,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
           }
           r
         } else {
-          macho.pe_pdb(img0)
+          macho.pe_pdb_seeded(img0, None, None, sd)
         }
         match pdb_r {
           Ok((i2, p)) => {
@@ -659,7 +673,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
               let pre = macho.pre_procs(parts, layout.objs, layout)
               let pre_ms = os.clock.since(tp).millis()
               let tq = os.clock.now()
-              match macho.pe_pdb_facts(img0, None, Some(pre)) {
+              match macho.pe_pdb_seeded(img0, None, Some(pre), sd) {
                 Ok((i3, p3)) => os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK=3: the PDB from the objects' parts ${if p3 == p && i3 == i2 { "is identical" } else { "differs (sizes ${p3.len()} and ${p.len()})" }}; parts ${parts_ms} ms, merge ${pre_ms} ms, pdb ${os.clock.since(tq).millis()} ms")
                 Err(e) => os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK=3: ${e}")
               }
@@ -669,7 +683,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
               let facts = macho.merge_facts(layout.objs, layout)
               let merge_ms = os.clock.since(t2).millis()
               let tm = os.clock.now()
-              match macho.pe_pdb_facts(img0, Some(facts), None) {
+              match macho.pe_pdb_seeded(img0, Some(facts), None, sd) {
                 Ok((i3, p3)) => {
                   var diff = -1
                   let n = if p3.len() < p.len() { p3.len() } else { p.len() }
@@ -985,4 +999,17 @@ fn write_std_obj_coff(os: Os, sod: Str, objs: List[Str]) {
     Err(e) => fail(os, "XO_STD_OBJ=${sod}: ${e}")
   }
   write_or_fail(os, sod, "${sod}/std.store.pdb", macho.coff_store_pdb(cs))
+}
+
+/// The PDB GUID's seed: the objects' part of it (pe_link) and the link's
+/// own inputs (the base, the PDB's name, the resources), so equal builds
+/// get equal GUIDs and a change to code, debug information or the image's
+/// options a new one, with no hash of the whole image (about 3 ms of an
+/// HTTP server edit, 2026-10-28).
+fn pdb_seed(var seed: BytesBuilder, race: Bool, pdb: Str, res: List[macho.PERes]) -> Bytes {
+  seed.write_str("race ${race}\npdb ${pdb}\n")
+  for r in res {
+    seed.write_str("res ${r.typ} ${r.id} ${r.lang} ${crypto.sha256(r.data).to_hex()}\n")
+  }
+  seed.freeze()
 }
