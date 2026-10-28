@@ -571,6 +571,18 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
     }
   }
   let store_check = !store.is_empty() && (os.env.get("XO_STD_STORE_CHECK") ?? "") == "1"
+  // decision 0388 stage 3: a separately compiled program links through
+  // std's store (XO_SEPCOMP_STORE=PATH, std.store of `xo dev stdobj` or
+  // the std cache): every input is the program's, kept whole, std read
+  // from PATH and its PDB parts from PATH.pdb
+  let sep_store = if store_path.is_empty() { os.env.get("XO_SEPCOMP_STORE") ?? "" } else { "" }
+  if !sep_store.is_empty() {
+    match os.fs.read(sep_store) {
+      Ok(b) => store = b
+      Err(e) => return "XO_SEPCOMP_STORE=${sep_store}: ${fs_reason(e)}"
+    }
+  }
+  let store_file = if sep_store.is_empty() { store_path } else { sep_store }
   var objs: List[macho.CObj] = []
   var parts: List[macho.CObj] = []
   var rest: List[macho.CObj] = []
@@ -630,11 +642,23 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
         }
         objs = so.objs + rest
         smaps = so.maps
-        store_parts = macho.coff_store_pdb_read(os.fs.read("${store_path}.pdb").ok() ?? "".bytes())
-        // (the parts' PDB part keys name objects no longer linked)
-        keys = []
+        store_parts = macho.coff_store_pdb_read(os.fs.read("${store_file}.pdb").ok() ?? "".bytes())
+        if sep_store.is_empty() {
+          // (the parts' PDB part keys name objects no longer linked)
+          keys = []
+        } else {
+          // the program's objects keep theirs, after the store's
+          var k2: List[Str] = List.with_capacity(so.objs.len() + keys.len())
+          for _ in so.objs {
+            k2.push("")
+          }
+          keys = k2 + keys
+          // std's store is part of what made the image (its path is its
+          // std cache key)
+          seed.write_str("store ${sep_store}\n")
+        }
       }
-      Err(e) => return "XO_STD_STORE=${store_path}: ${e}"
+      Err(e) => return "XO_STD_STORE=${store_file}: ${e}"
     }
     os.stdio.eprintln("store objects ${os.clock.since(ts).nanos() / 1000} us (${store.len()} store bytes)")
   }
@@ -687,7 +711,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
           // through the store: its objects' parts from std.store.pdb, the
           // other objects' made
           let nst = if store_parts.len() == smaps.len() { smaps.len() } else { 0 }
-          let parts = if nst > 0 { store_parts + pdb_parts(os, layout.objs[nst..layout.objs.len()], cdir, []) } else { pdb_parts(os, layout.objs, cdir, keys) }
+          let parts = if nst > 0 { store_parts + pdb_parts(os, layout.objs[nst..layout.objs.len()], cdir, if keys.len() > nst { keys[nst..keys.len()] } else { [] }) } else { pdb_parts(os, layout.objs, cdir, keys) }
           let pre = macho.pre_procs_store(parts, layout.objs, layout, if nst > 0 { smaps } else { [] })
           t = lap(os, phases, "pe.pdb_parts", t)
           let r = macho.pe_pdb_seeded(img0, None, Some(pre), sd)

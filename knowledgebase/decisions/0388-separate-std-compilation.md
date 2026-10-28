@@ -537,6 +537,23 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   the passes as they are, the backend cache on; XO_SEPCOMP=1 or 0 is the user's choice and
   wins.
 
+- Separate compilation on windows/amd64 (Xo Lang 2, 2026-10-28): pe_link
+  reads XO_SEPCOMP_STORE (the program's objects whole, std from the COFF
+  store through coff_store_objs, std's PDB parts from PATH.pdb; the store's
+  path in the PDB GUID's seed), the store walk is also rooted by the
+  program's weak definitions std defines, the amd64 emitter marks generic
+  instances, and their Win64 entry shims, weak under weak_shared
+  (x86emit.xo, emit.xo's twin; x86win.xo: the HTTP server's map.put
+  instance and a droplist shim were defined twice), x86_exports and
+  w64_exports skip externs (std's shims and wrappers are std's object's),
+  and the PE link passes the zone table for any separate build. `xo dev
+  stdcache --target=windows/amd64 --conc=0` builds windows' variant (28.5
+  MB store, 1.8 MB facts, 53 s cold). llvm-fib built against it prints the
+  whole program's output under Wine; the HTTP server links. Normal builds
+  unchanged (identity: 153 programs of windows, linux and darwin amd64, 0
+  differing; docker amd64 sample 48 of 48). Edit timings next.
+  Test: internal/arm64 TestSepcompLinksWindows.
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle

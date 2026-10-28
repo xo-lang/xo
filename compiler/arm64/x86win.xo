@@ -273,6 +273,11 @@ fn (var g: G) w64_exports() {
   // per-function cache may be undecoded (decision 0283 stage B), with
   // no blocks (an index fault on a warm windows build, 2026-10-27)
   for (fi, f) in g.m.funcs.indexed() {
+    // (separate compilation, decision 0388: a std function's shims and
+    // export wrapper are std's object's)
+    if g.m.is_extern(fi) {
+      continue
+    }
     if f.entry && f.export.is_empty() {
       var esig = StrBuilder.new()
       for pt in g.m.param_types(fi) {
@@ -282,7 +287,10 @@ fn (var g: G) w64_exports() {
       }
       let es = esig.freeze()
       if w64_shim_fits(es) {
-        g.text.push(w64_shim("xo_w64e_${g.fname(f.name)}", g.fname(f.name), es, false))
+        // a generic instance's shim is weak as the instance is (std's
+        // object and the program's may both have it, decision 0388)
+        let wk = if f.name.contains("[") { g.weak_def("xo_w64e_${g.fname(f.name)}") } else { "" }
+        g.text.push(wk + w64_shim("xo_w64e_${g.fname(f.name)}", g.fname(f.name), es, false))
       } else {
         g.fail("the entry function ${f.name} takes too many words for Win64")
       }

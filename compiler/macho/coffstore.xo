@@ -143,8 +143,12 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[Cof
   }
   var roots: List[Int] = []
   for ob in prog {
+    // and the program's weak definitions std defines too (separate
+    // compilation's helpers and instances): the link keeps the store's,
+    // which must then be live
+    let weak = coff_weak_names(ob)
     for s in ob.syms {
-      if !s.aux && s.class == IMAGE_SYM_CLASS_EXTERNAL && s.sect == 0 {
+      if !s.aux && s.class == IMAGE_SYM_CLASS_EXTERNAL && (s.sect == 0 || (s.sect > 0 && weak.contains(s.name))) {
         roots.push(v.def(s.name.bytes()))
       }
     }

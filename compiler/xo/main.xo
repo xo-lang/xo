@@ -1710,7 +1710,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // link's steps under --phase-times, as link.NAME (2026-10-23:
         // CI's windows builds spent 540 s in link, the rest normal)
         var tl = os.clock.now()
-        if uses_time {
+        // (separate compilation, decision 0388: std's object names the
+        // zone table whether the program uses time or not)
+        if uses_time || !sepcomp_facts_path(os).is_empty() {
           let sel = tzsel.tz_select(os, ctx.std, cur_tu, o.tzdata, tgoos)
           if !sel.err.is_empty() {
             fail(os, sel.err)

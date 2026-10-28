@@ -548,7 +548,9 @@ fn (var g: G) x86_exports() {
     return
   }
   for (fi, f) in g.m.funcs.indexed() {
-    if f.export.is_empty() {
+    // (separate compilation, decision 0388: std's exports are std's
+    // object's)
+    if f.export.is_empty() || g.m.is_extern(fi) {
       continue
     }
     var b: List[Str] = []
