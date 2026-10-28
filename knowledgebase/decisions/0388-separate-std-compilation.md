@@ -555,7 +555,13 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   Mac, quiet measure window, 8 interleaved runs each, mean ms, whole against
   XO_SEPCOMP): llvm-fib 292 to 170 (link 15 to 63), the HTTP server 628 to
   348 (ssa 95 to 30, assemble 49 to 24, link 46 to 126); the store link is
-  separate builds' largest phase.
+  separate builds' largest phase. Measured again 2026-10-28 after the
+  link fixes (a03b10200 coff_live's work list and weak sets, 0b2a769a5
+  ObjMap's binary search), with std's store in the build's own cache
+  directory as a real build has it (the earlier runs kept it in a second
+  one, so the recorder hashed the 28.5 MB store and its PDB parts on each
+  link, about 10 ms): llvm-fib 295 to 143 (link 15.5 to 37), the HTTP
+  server 619 to 280 (ssa 92 to 29, assemble 50 to 25, link 47 to 61).
   Test: internal/arm64 TestSepcompLinksWindows.
 
 ## Alternatives
