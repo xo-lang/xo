@@ -70,7 +70,7 @@ fn (var c: Checker) run() -> () ! Str {
         match c.relocate_export(e, at) {
           Some(r) => {
             c.std_export_used = c.install_std(r)
-            if !c.std_export_used {
+            if !c.std_export_used && c.std_export_why.is_empty() {
               c.std_export_why = "the records did not install"
             }
           }
