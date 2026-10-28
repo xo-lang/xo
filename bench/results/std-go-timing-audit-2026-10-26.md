@@ -437,3 +437,19 @@ parent's std as A: parts 0.927 (0.904 to 0.971), instructions 0.947, cycles 0.91
 with a bit mask and no list (0.982), a StrBuilder result (instructions 1.066). Left in an unclean dir: its
 two allocations (Go also makes two) and the UTF-8 check of the result (scan.utf8_valid, 11% of it), which a
 pure module (decision 0312: path is compiled by the Go backend too) cannot skip.
+
+## The five open rows, measured (2026-10-28, xo-lang-5)
+
+Quiet `xo bench --ab`, 15 rounds, one pair per job, A the Go twin, B the Xo program built from main with
+each row's last change (native arm64, --release); twincheck's checksums agree:
+
+| workload | wall (interval) | instructions | cycles | at |
+|---|---|---|---|---|
+| compress gzip1 (BestSpeed) | 0.858 (0.849 to 0.866) | 1.214 | 0.755 | d088ecee3 |
+| big quorem | 1.011 (0.995 to 1.03) | 1.135 | 0.980 | 96fdde33a |
+| toml decode | 1.126 (1.112 to 1.161) | 1.091 | | bfae1d3c1 |
+| template render | 1.156 (1.141 to 1.171) | 0.812 | | 4329f0674 |
+| path parts | 1.165 (1.145 to 1.217) | 1.140 | 1.236 | 67aa9537e |
+
+All five medians are under the 1.2x bar; path parts' interval reaches 1.217. Morning values (main
+d088ecee3): 0.858, 1.451, 1.454, 1.595, 1.596.
