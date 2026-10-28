@@ -1763,7 +1763,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
         let wst = stage(os, ctx, wbin)
         tl = lap(os, phases, "link.stage", tl)
-        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, o.stamps, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys)
+        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, o.stamps, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys, !o.strip && debug_info_eff(o, release) != "off")
         tl = lap(os, phases, "link.pe_link", tl)
         if !why.is_empty() {
           fail_stage(os, wst, why)

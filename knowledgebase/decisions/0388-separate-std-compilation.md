@@ -578,6 +578,11 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   whose parts come from whole DWARF, reads the store and links with
   DWARF whole (coff_store_objs and PEOpts dwtrim false). Wine runs
   llvm-fib from the parts, the store and XO_SEPCOMP.
+  `-s` and --debug-info=off on windows (2026-10-28): std's store carries
+  DWARF a program's build left out, and pe_link wrote a PDB when any
+  object had .debug_info, so an XO_SEPCOMP `-s` build got std's DWARF and
+  a PDB; PEOpts.debug false leaves every .debug_ section out and no PDB
+  is written (darwin: macho_link's embed_dwarf and dsym, xo-lang-4).
 
 ## Alternatives
 

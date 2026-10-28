@@ -51,6 +51,10 @@ pub struct PEOpts {
   /// not run); XO_STD_STORE_CHECK's PDB check, whose parts are made from
   /// whole DWARF
   pub dwtrim: Bool = true
+  /// false: the objects' .debug_ sections are left out (`-s` or
+  /// --debug-info=off, whose program objects have none but std's store's
+  /// do, decision 0388)
+  pub debug: Bool = true
 }
 
 /// An input section's place: its output section and offset there.
@@ -184,7 +188,7 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
   // (the layout keeps the objects as split: a PDB part is made from an
   // object's own DWARF and cached under its key, whatever a link cuts)
   let split = objs
-  if any_atoms && o.dwtrim {
+  if any_atoms && o.dwtrim && o.debug {
     for i in 0..objs.len() {
       if !coff_atoms(objs0[i]) {
         continue
@@ -227,7 +231,7 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
     var ps: List[PEPlace] = []
     for (si, s) in ob.sects.indexed() {
       var k = pe_out(s)
-      if !live.is_empty() && !live[oi][si] {
+      if (!live.is_empty() && !live[oi][si]) || (!o.debug && s.name.starts_with(".debug_")) {
         ps.push(PEPlace{out: -1, off: 0})
         continue
       }
