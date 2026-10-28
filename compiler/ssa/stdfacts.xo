@@ -239,3 +239,40 @@ pub fn decode_std_facts(d: Bytes) -> Option[List[StdFact]] {
   }
   Some(out)
 }
+
+/// Whether function fi of m is a std extern (decision 0388 stage 3).
+pub fn (m: Module) is_extern(fi: Int) -> Bool {
+  fi >= 0 && fi < m.funcs.len() && m.externs.contains(m.funcs[fi].name)
+}
+
+/// Adds f, std's function by its name and signature with no blocks, as
+/// an extern answered by x: its body facts are x's (its own faults, and
+/// no callees: those are inside std). Its index.
+pub fn (var m: Module) add_extern(f: Func, x: StdFact) -> Int {
+  let fi = m.funcs.len()
+  m.funcs.push(f)
+  m.func_at[f.name] = fi
+  var bf = decode_facts(m, x.body) ?? BodyFacts{}
+  bf.faults = x.faults
+  bf.names = []
+  m.facts[fi] = bf
+  m.externs[f.name] = x
+  fi
+}
+
+/// Each extern's borrowed flags (exact: the calling convention std's
+/// object was built with) and its first parameter's type, -1 for none,
+/// by name, for the borrow inference (Rc.init_borrows).
+pub fn (m: Module) extern_borrows() -> Map[Str, (List[Bool], Int)] {
+  var out: Map[Str, (List[Bool], Int)] = {}
+  for (fi, f) in m.funcs.indexed() {
+    if let Some(x) = m.externs.get(f.name) {
+      let p0 = match m.facts.get(fi) {
+        Some(bf) => if bf.params.is_empty() { -1 } else { bf.params[0] }
+        None => -1
+      }
+      out[f.name] = (x.borrowed, p0)
+    }
+  }
+  out
+}

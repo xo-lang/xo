@@ -240,7 +240,7 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
       c.hard = true
       c.why = "frame_addr"
     }
-    if ci >= 0 && reader_hidden(m, m.funcs[ci], vis) {
+    if ci >= 0 && (reader_hidden(m, m.funcs[ci], vis) || m.is_extern(ci)) {
       // a DWARF reader, or a function only a build with debug
       // information has: one instruction, as a call to a function this
       // build's module does not hold (both builds' cost, so both inline

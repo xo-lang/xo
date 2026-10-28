@@ -1118,7 +1118,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
 
 /// The verifier's checker over the module after reference counting.
 fn rc_checker(m: Module) -> Rc {
-  var r = Rc{types: m.types, imm_ret: m.immortal_returns_m()}
+  var r = Rc{types: m.types, imm_ret: m.immortal_returns_m(), ext: m.extern_borrows()}
   for (i, f) in m.funcs.indexed() {
     r.fidx[f.name] = i
     r.borrowed.push(f.borrowed)

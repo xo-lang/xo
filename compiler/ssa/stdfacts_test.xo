@@ -27,3 +27,17 @@ test "damaged, truncated and other versions of std facts decode to None" {
   expect(decode_std_facts(d + b"x").is_none()) == true
   expect(decode_std_facts(b"\x10xo std facts v0").is_none()) == true
 }
+
+test "a std extern is a body-less shell its facts answer" {
+  var m = Module{}
+  let fi = m.add_extern(Func{name: "strings.trim"}, StdFact{name: "strings.trim", borrowed: [true, false], faults: false, cancels: true})
+  expect(m.is_extern(fi)) == true
+  expect(m.funcs[fi].blocks.is_empty()) == true
+  expect(m.func_index("strings.trim")) == fi
+  let (mf, cs) = m.fault_facts(fi)
+  expect(mf) == false
+  expect(cs.len()) == 0
+  var r = Rc{types: [], ext: m.extern_borrows()}
+  r.init_borrows(m.funcs)
+  expect(r.borrowed[fi]) == [true, false]
+}

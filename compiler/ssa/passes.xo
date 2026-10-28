@@ -180,6 +180,15 @@ pub fn (var b: Builder) prune_unwind() {
         callers[gs[ci]].push(c.fi)
       }
     }
+    // a std extern may be canceled as its facts say (decision 0388)
+    for fi in 0..n {
+      if let Some(x) = b.m.externs.get(b.m.funcs[fi].name) {
+        if x.cancels && !may[fi] {
+          may[fi] = true
+          work.push(fi)
+        }
+      }
+    }
     while let Some(i) = work.pop() {
       for f in callers[i] {
         if !may[f] {

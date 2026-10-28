@@ -56,6 +56,9 @@ struct Use {
 /// rcInfo.funcs), the borrowed parameters per function, and the function
 /// being worked on.
 struct Rc {
+  /// std externs' borrowed flags and first parameter types (decision
+  /// 0388 stage 3, Module.extern_borrows): fixed, never inferred
+  ext: Map[Str, (List[Bool], Int)] = {}
   types: List[SType]
   paths: Map[Int, List[Str]] = {}
   heaps: Map[Int, Bool] = {}
@@ -670,6 +673,11 @@ fn (var r: Rc) init_borrows(funcs: List[Func]) {
   r.borrowed = []
   r.fparam0 = []
   for f in funcs {
+    if let Some((bs, p0)) = r.ext.get(f.name) {
+      r.fparam0.push(p0)
+      r.borrowed.push(bs)
+      continue
+    }
     let ps = f.blocks[0].params
     r.fparam0.push(if ps.is_empty() { -1 } else { f.values[ps[0]].ty })
     var bs: List[Bool] = []
@@ -1065,7 +1073,7 @@ pub fn (var b: Builder) insert_rc_jobs(jobs: Int) {
 /// The whole-program half of insert_rc: the `var` List parameters made
 /// unique, then borrow inference.
 pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
-  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc}
+  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc, ext: b.m.extern_borrows()}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i
     if !f.var_params.is_empty() {
@@ -1098,7 +1106,7 @@ pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
 /// builder, made first) found the same flags (true without check).
 pub fn (var b: Builder) rc_prepare_incr(jobs: Int, id: Str, prev: Map[Str, List[Bool]], check: Bool) -> (Rc, Map[Str, List[Bool]], Int, Bool) {
   let full = if check { full_borrows(b, jobs) } else { [] }
-  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc}
+  var r = Rc{types: b.m.types, imm_ret: immortal_returns(b.m.funcs), skip_imm: b.imm_rc, ext: b.m.extern_borrows()}
   for (i, f) in b.m.funcs.indexed() {
     r.fidx[f.name] = i
     if !f.var_params.is_empty() {

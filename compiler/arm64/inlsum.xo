@@ -120,6 +120,10 @@ fn module_sums_jobs(m: ssa.Module, jobs: Int) -> List[FnSum] {
 
 /// The summary of function fi: its lazy entry's, or its body's.
 fn sum_at(m: ssa.Module, fi: Int) -> FnSum {
+  if m.is_extern(fi) {
+    // std's body is not here (decision 0388): never inlined, a call
+    return FnSum{badpad: true, instrs: 1 << 20}
+  }
   if let Some(l) = m.lazy.get(fi) {
     match decode_sum(l.sum) {
       Some(s) => s
