@@ -73,7 +73,13 @@ assembler and the flag reached nothing
   list reads. A follow up can pad only loops: a jcc whose target label
   is already defined is a back edge, and the jumps between the target
   and the back edge are the loop's; everything else stays unpadded.
-  Measure it against the 32 placement sweep before switching.
+  Measured (2026-10-28, lead: not pursued): keyed on back edges alone
+  it saved only 190 KB of the 2.9 MB (109,025,096 bytes), since in the
+  emitter's block layout a backward jump is rarely a loop. The future
+  size lever is loop headers marked by the emitter (MIR polls sit at
+  loop headers; a comment line clang ignores that Xo's assembler reads
+  before stripping comments), padding only from a header to its last
+  back edge, judged by the 32 placement sweep.
 - Every amd64 object changes bytes (NOPs, section alignment): the amd64
   cross build identity against the parent is a known change of this
   push; the arm64 output is byte identical (the assembler is x86 only).
