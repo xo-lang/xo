@@ -1277,7 +1277,11 @@ pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
     let owner = if x.iface && x.recv >= lo && x.recv - lo < e.objs.len() { Some(e.objs[x.recv - lo]) } else { None }
     match c.join_trees(x, e.trees[i], owner) {
       Some(y) => objs.push(y)
-      None => return false
+      None => {
+        let fp = if x.decl_file >= 0 && x.decl_file < c.files.len() { "${c.files[x.decl_file].path} unloaded=${c.files[x.decl_file].unloaded}" } else { "file ${x.decl_file}" }
+        c.std_export_why = "the trees of ${text(x.name)} (${fp}, counts ${e.trees[i].len()}) are not where the record says"
+        return false
+      }
     }
   }
   for (o, t, recv) in pending {
