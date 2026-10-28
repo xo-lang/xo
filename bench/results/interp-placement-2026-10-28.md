@@ -83,6 +83,10 @@ every pad; off at pad 0 in the same window 283.4M. The pass is on by
 default (passes.xo thread_switch; XO_PASSES=-thread_switch turns it
 off).
 
-## Pending
+## text (time.format_items threaded)
 
-text off/on with `xo bench --ab` (time.format_items).
+`xo bench --ab --rounds=11` of bench/perf/text, the pass off (A) and
+on (B), load 4.14 in a quiet window: wall 4.72 vs 4.65 ms (B/A 0.985,
+0.938 to 1.029), cycles 12.08M vs 11.96M (0.99, 0.963 to 1.029),
+instructions 45.98M vs 45.96M (1.0): within noise. The threaded
+function is not the program's hot path; it does not lose.
