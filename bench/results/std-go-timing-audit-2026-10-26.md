@@ -425,3 +425,15 @@ Per std/changes/toml.md 2026-10-27 ("the JSON text is sized once; whitespace and
 local index"). Quiet `xo bench --ab`, 15 rounds, the parent's std as A: decode wall 0.954 (0.936 to 0.965),
 instructions 0.956. Against Go, measured (the Go twin as A, this change's xo and std as B): 1.126 (1.112 to
 1.161), instructions 1.091: toml decode is under the 1.2x bar.
+
+## path clean in locals (2026-10-28, xo-lang-5)
+
+path parts measured against Go on main 4329f0674 (the Go twin as A): 1.265 (1.247 to 1.306), instructions
+1.208, cycles 1.346. A dir-only twin put the gap in unclean prefixes (1.70x Go's cycles; already clean ones
+are faster than Go's), and a stub without clean ran parts in 0.508 of the time. Per std/changes/path.md
+2026-10-27 ("clean keeps up to 8 elements in locals, with no list"): quiet `xo bench --ab`, 15 rounds, the
+parent's std as A: parts 0.927 (0.904 to 0.971), instructions 0.947, cycles 0.918; Xo / Go about 1.17
+(estimate: 1.265 x 0.927). Measured without gain: one word an element in the list (0.988), a backward pass
+with a bit mask and no list (0.982), a StrBuilder result (instructions 1.066). Left in an unclean dir: its
+two allocations (Go also makes two) and the UTF-8 check of the result (scan.utf8_valid, 11% of it), which a
+pure module (decision 0312: path is compiled by the Go backend too) cannot skip.

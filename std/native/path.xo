@@ -48,6 +48,122 @@ fn clean(p: Str) -> Str {
   if is_clean(path) {
     return p
   }
+  // up to 8 kept elements in locals, each its start and end in one word
+  // (start << 32 | end; a Str is under 4 GiB), -1 a `..` kept because
+  // nothing before it absorbs it: no list to allocate (2026-10-27: the
+  // list was 21% of an unclean dir); more go to clean_list
+  var s0 = 0
+  var s1 = 0
+  var s2 = 0
+  var s3 = 0
+  var s4 = 0
+  var s5 = 0
+  var s6 = 0
+  var s7 = 0
+  var k = 0
+  var bytes = 0
+  var r = 0
+  while r < n {
+    while r < n && path[r] == 47 {
+      r += 1
+    }
+    if r >= n {
+      break
+    }
+    var e = r
+    while e < n && path[e] != 47 {
+      e += 1
+    }
+    let len = e - r
+    var v = 0
+    var push = true
+    if len == 1 && path[r] == 46 {
+      push = false
+    } else if len == 2 && path[r] == 46 && path[r + 1] == 46 {
+      let top = match k {
+        0 => -1
+        1 => s0
+        2 => s1
+        3 => s2
+        4 => s3
+        5 => s4
+        6 => s5
+        7 => s6
+        _ => s7
+      }
+      if k > 0 && top >= 0 {
+        k -= 1
+        bytes -= (top & 0xFFFFFFFF) - top.shr_logical(32)
+        push = false
+      } else if rooted {
+        push = false
+      } else {
+        v = -1
+        bytes += 2
+      }
+    } else {
+      v = r.wrapping_shl(32) | e
+      bytes += len
+    }
+    if push {
+      if k == 8 {
+        return clean_list(p)
+      }
+      match k {
+        0 => s0 = v
+        1 => s1 = v
+        2 => s2 = v
+        3 => s3 = v
+        4 => s4 = v
+        5 => s5 = v
+        6 => s6 = v
+        _ => s7 = v
+      }
+      k += 1
+    }
+    r = e
+  }
+  if k == 0 {
+    return if rooted { "/" } else { "." }
+  }
+  let total = bytes + k - 1 + (if rooted { 1 } else { 0 })
+  if total == n {
+    return p
+  }
+  var b = BytesBuilder.with_capacity(total)
+  if rooted {
+    b.write_byte(47)
+  }
+  for j in 0..k {
+    if j > 0 {
+      b.write_byte(47)
+    }
+    let sg = match j {
+      0 => s0
+      1 => s1
+      2 => s2
+      3 => s3
+      4 => s4
+      5 => s5
+      6 => s6
+      _ => s7
+    }
+    if sg < 0 {
+      b.write_byte(46)
+      b.write_byte(46)
+    } else {
+      b.write(path[sg.shr_logical(32)..sg & 0xFFFFFFFF])
+    }
+  }
+  b.freeze().to_str() ?? ""
+}
+
+/// clean of a path that keeps more than 8 elements at once: their ranges
+/// in a list.
+fn clean_list(p: Str) -> Str {
+  let path = p.bytes()
+  let n = path.len()
+  let rooted = path[0] == 47
   // the kept elements as (start, end) pairs; (-1, -1) is a `..` kept
   // because nothing before it can absorb it
   var segs = List[Int].with_capacity(n + 2)

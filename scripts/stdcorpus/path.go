@@ -1425,6 +1425,11 @@ func pathCorpus() string {
 	for _, s := range []string{"a//b", "//a", "///a", "a//", "/a/", "a/b//", "//a//b", "../a//b", "/../a", "a/../b", "./a", "a/./b", "/./a", "..//a", "a/..//b"} {
 		add(s)
 	}
+	// clean's kept elements past 8 (its list form): deep paths with `..`
+	// late and early, and leading `..` of a relative path
+	for _, s := range []string{"a/b/c/d/e/f/g/h/i", "/a/b/c/d/e/f/g/h/i/j/k/l/", "a/b/c/d/e/f/g/h/i/../j/./k", "/a/b/c/d/e/f/g/h/i/../../../x", "../../../../../../../../../a", "../../a/b/c/d/e/f/g/h/i/j/..", "a/b/c/d/e/f/g/h/../../../../../../../../..", "/a/./b/./c/./d/./e/./f/./g/./h/./i/./"} {
+		add(s)
+	}
 	for i := 0; i < 1200; i++ {
 		add(pathRandom(r))
 	}

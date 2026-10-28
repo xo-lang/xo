@@ -1,5 +1,23 @@
 # std/path changes
 
+## 2026-10-27: perf: clean keeps up to 8 elements in locals, with no list
+
+- Kind: perf
+- Commit: this commit
+- Found by: path parts at 1.265x Go (measured); a dir-only twin: unclean prefixes at 1.70x Go's cycles (1.28x its instructions), the list of element offsets 21% of an unclean dir (allocation and free); a stub without clean ran parts in 0.508 of the time
+- Go reference: path.Clean (lazybuf: one buffer, no list)
+- Test: internal/stdtest/testdata/corpus/path (go, arm64, LLVM), the generator adding deep paths for the over-8 form (9 to 12 kept elements, `..` late and early, leading `..`); twincheck's checksums agree on clean, join, parts, match
+- Timing: bench/perf/path, quiet --ab, 15 rounds, the parent's std as A: parts 0.927 (0.904 to 0.971), instructions 0.947, cycles 0.918; Xo / Go about 1.17 (estimate: 1.265 x 0.927), from 1.265
+
+clean keeps the kept elements, each its start and end in one word, in
+eight locals, and counts their bytes as they come and go, so a path of up
+to 8 kept elements at a time allocates only its result; a deeper one is
+cleaned by clean_list, the list form before. Three other shapes measured
+no gain and were left out: the list packed one word an element (0.988),
+no list at all with a backward pass marking kept elements in a bit mask
+(0.982; instructions 1.042), and a StrBuilder result, which skips the
+UTF-8 check of BytesBuilder's freeze().to_str() (instructions 1.066).
+
 ## 2026-10-27: perf: dir cleans its prefix without the trailing slash
 
 - Kind: perf
