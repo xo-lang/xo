@@ -163,6 +163,26 @@ enc_amd64.xo the amd64 emitter's; both are reached only through text
   XO_OP_VERIFY sweep of half the goldens and the compiler, darwin and
   linux (236 builds, the backend caches off), found no difference.
 
+- 2026-10-28, the edit ceiling (Xo Lang 2, taking the decision over from
+  the stall after step 3 stage 1; steps 2 and 3 stage 1 are on main, the
+  direct-mc-* branches gone): an edit assembles exactly one part, about 1
+  MB of text. Quiet, 8 edits each (a log or print string changed), the
+  changed part's assembly timed and subtracted from the wall, which is
+  what stubbing it would save:
+
+  | program, target | edit wall | assembling the part | share |
+  |---|---|---|---|
+  | HTTP server, darwin/arm64 | 549 to 588 ms | 6.7 to 6.9 ms (992 KB) | 1.2% |
+  | HTTP server, windows/amd64 | 600 to 659 ms | 55.5 to 56.7 ms (984 KB) | 9% |
+  | llvm-fib, darwin/arm64 | 241 to 267 ms | 4.5 to 4.8 ms (762 KB) | 1.9% |
+  | llvm-fib, windows/amd64 | 276 to 294 ms | 25.0 to 25.8 ms (828 KB) | 9% |
+
+  So stage 4 can save an arm64 edit at most 5 to 7 ms; it is judged on
+  cold builds (the 6.2% parse of the measurement below). The edit cost is
+  the amd64 text assembler, 7 to 8 times arm64's per byte (Asm.parse_line:
+  x86_instruction 37%, x86_branch 30%, directives 19%), which comes first:
+  the amd64 assembler toward arm64's cost, objects byte for byte the same.
+
 ## Step 3 for arm64: design notes (2026-10-21, before the measurement)
 
 What the text costs now, per function (compiler/arm64 emit.xo): selection
