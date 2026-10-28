@@ -1,5 +1,23 @@
 # std/toml changes
 
+## 2026-10-27: perf: the JSON text is sized once; whitespace and bare keys are scanned with a local index
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/toml decode at 1.226x Go (measured); its CPU profile (the JSON builder grown from empty, reserve_slow and resize 12%; ws() reading peek() twice and eof() per byte through the parser, 8%)
+- Go reference: github.com/pelletier/go-toml/v2 v2.4.3 unstable/parser.go (whitespace and bare keys scanned by index over the input)
+- Test: internal/llvm/testdata/golden/toml_basic (and internal/arm64's); twincheck's checksums agree on none, decode; a 12-document to_json differential (tabs, trailing and whole-line comments, every escape, a control character, quoted and spaced-dot keys, non-ASCII text) equal on the Go backend (std/rt's own toml), arm64 and llvm
+
+The JSON text's builder starts at the TOML text's length and a quarter,
+where it grew from empty; ws() and a bare key part scan with a local
+index and one byte read a step, stored back once; write_json_string's
+check for bytes to escape reads the string's Bytes by index. Reading
+every parser byte through Bytes instead of raw.str_byte measured worse
+(instructions 1.016) and was left out. Output is unchanged. Quiet --ab,
+15 rounds, the parent's std as A: decode wall 0.954 (0.936 to 0.965),
+instructions 0.956; against Go (measured, the Go twin as A): 1.126
+(1.112 to 1.161), from 1.226.
+
 ## 2026-10-27: perf: a key line of one bare key is read with no list of parts
 
 - Kind: perf

@@ -418,3 +418,10 @@ Measured against Go (quiet `xo bench --ab`, 15 rounds, A the Go twin, B main 96f
 
 big quorem is at Go's time. toml decode is still over the bar by 0.03 (the estimate from the steps was
 1.19).
+
+## toml builder size and local scans (2026-10-27, xo-lang-5)
+
+Per std/changes/toml.md 2026-10-27 ("the JSON text is sized once; whitespace and bare keys are scanned with a
+local index"). Quiet `xo bench --ab`, 15 rounds, the parent's std as A: decode wall 0.954 (0.936 to 0.965),
+instructions 0.956. Against Go, measured (the Go twin as A, this change's xo and std as B): 1.126 (1.112 to
+1.161), instructions 1.091: toml decode is under the 1.2x bar.
