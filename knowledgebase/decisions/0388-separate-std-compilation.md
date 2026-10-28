@@ -504,6 +504,19 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   the compacted objects have no part keys, so every link parses each
   store object's whole DWARF; the PDB's parts per atom, made when the
   store is written and cut with it, are next.
+- The PDB through the store: each part's PDB part (cvobj.xo obj_pdb of
+  its split object: functions' rows, inline sites, finished locals, its
+  variables' types by function) is written beside the store
+  (std.store.pdb, coffstore.xo coff_store_pdb) when it is made; a link
+  through the store reads them, maps each split section to where pelink
+  placed its compacted one (StoreMap, obj_map_store), and leaves out the
+  stripped functions and their variables' types (the image's DWARF has
+  only the live functions': debug.read skips a subprogram at 0).
+  XO_STD_STORE_CHECK=1 also requires the PDB from the store's parts to
+  equal the one made from the image's DWARF. A std-roots llvm-fib: the
+  store link's pe.pdb_parts 360 ms to 17 to 23 (the parts read and decoded
+  in the store objects step, 7 to 28 ms: decoding only the live functions'
+  records is next), the link 416 to 85 to 96 ms; the check passes.
 
 ## Alternatives
 
