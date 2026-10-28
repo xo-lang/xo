@@ -33,11 +33,21 @@ each indirect branch sees only that op's successors.
   gets its own fault stub, the landing pad shared through the stub's
   call site; no call, poll or frame access), with one latch chain into
   the header (the blocks each the only body predecessor of the next,
-  up to four) and 2 to 16 arms jumping to it, the chain and the path
-  (at most 24 instructions together) are copied into each arm, placed
-  right after it; the arm's jump goes to its copy, the copy's switch to
-  the shared arms. The original header stays for the loop's entry; the
-  latch nothing reaches any more is dropped (`thread`).
+  up to four) and 2 to 16 hot arms jumping to it, the chain and the
+  path (at most 24 instructions together) are copied into each arm,
+  placed right after it; the arm's jump goes to its copy, the copy's
+  switch to the shared arms. A cold block that jumps to the latch (one
+  only a landing pad reaches: a Map update's fault-catching
+  continuation, compiler/xo trace.xo analyze) keeps the shared
+  dispatch, since a copy there never runs hot (the first version made
+  it copies and placed them in neither block list: the self build
+  faulted in regalloc; internal/arm64 testdata/run/thread_switch_cold).
+  The original header stays for the loop's entry; the latch nothing
+  reaches any more is dropped (`thread`).
+- `XO_THREAD_SWITCH=TEXT`, `!TEXT` or `@FILE` threads only the
+  functions whose name contains TEXT, all but those, or those named in
+  FILE (bisecting a self build by function); it bypasses the backend
+  caches like XO_PASSES.
 - The pass is on by default on arm64 and amd64 (`XO_PASSES=
   -thread_switch` turns it off); it is in passes.xo's order, so `xo
   dev bisect-pass` can name it.
