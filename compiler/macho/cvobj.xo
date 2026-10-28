@@ -188,6 +188,31 @@ struct ObjMap {
 }
 
 fn obj_map(o: CObj, oi: Int, layout: PELayout) -> ObjMap {
+  var ks: List[Int] = []
+  for si in 0..o.sects.len() {
+    ks.push(si)
+  }
+  obj_map_k(o, ks, oi, layout)
+}
+
+/// An object of std's store (coffstore.xo): its split sections (the
+/// shells: name, characteristics, size), which its PDB part's addresses
+/// are against, and each one's section in the compacted object pelink
+/// linked (-1: stripped).
+pub struct StoreMap {
+  pub secs: List[CSect]
+  pub newk: List[Int]
+}
+
+/// obj_map of a store object: the split object's sections placed where
+/// pelink put their compacted ones.
+fn obj_map_store(sm: StoreMap, oi: Int, layout: PELayout) -> ObjMap {
+  obj_map_k(CObj{path: "", sects: sm.secs, syms: []}, sm.newk, oi, layout)
+}
+
+/// obj_map with section si of o linked as layout's section ks[si] of
+/// object oi (-1: not linked).
+fn obj_map_k(o: CObj, ks: List[Int], oi: Int, layout: PELayout) -> ObjMap {
   let bases = obj_bases(o)
   var sizes: List[Int] = []
   var at: List[Int] = []
@@ -195,7 +220,7 @@ fn obj_map(o: CObj, oi: Int, layout: PELayout) -> ObjMap {
   var line = 0
   for (si, s) in o.sects.indexed() {
     sizes.push(s.size)
-    let p = layout.places[oi][si]
+    let p = if ks[si] < 0 { PEPlace{out: -1, off: 0} } else { layout.places[oi][ks[si]] }
     if p.out < 0 {
       at.push(-1)
     } else if s.name.starts_with(".debug_") {
@@ -230,6 +255,16 @@ fn (m: ObjMap) addr(a: Int) -> Int {
 }
 
 fn (m: ObjMap) ty(t: Int) -> Int { if t < 0 { t } else { t + m.info } }
+
+/// Whether a placed section holds address a (a function that is linked).
+fn (m: ObjMap) placed(a: Int) -> Bool {
+  for i in 0..m.bases.len() {
+    if m.at[i] >= 0 && a >= m.bases[i] && a < m.bases[i] + m.sizes[i] {
+      return true
+    }
+  }
+  false
+}
 
 fn (m: ObjMap) var_of(v: debug.Var) -> debug.Var {
   var locs: List[debug.Loc] = []
@@ -351,6 +386,10 @@ pub struct ObjPdb {
   /// the types by offset, and every variable's type in cv_types' order
   types: Map[Int, debug.Type]
   tys: List[Int]
+  /// tys by function, in order: each function's first address and how
+  /// many of tys are its (a link through the store counts only the live
+  /// functions', as the image's DWARF has only theirs)
+  fn_tys: List[(Int, Int)] = []
   files: List[Str]
   fns: List[ObjFn]
 }
@@ -401,7 +440,15 @@ pub fn obj_pdb(o: CObj) -> ObjPdb ! Str {
     let (_, so) = seg_off(osects, f.lo)
     fns.push(ObjFn{name: f.name, lo: f.lo, hi: f.hi, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), sites: sites, locals: cv_locals_at(f.vars, [(f.lo, f.hi)], osects, 0), sect_off: so})
   }
-  Ok(ObjPdb{types: info.types, tys: var_tys(info), files: lns.files, fns: fns})
+  var fn_tys: List[(Int, Int)] = []
+  for f in info.funcs {
+    var k = f.vars.len()
+    for c in f.inlined {
+      k += c.vars.len()
+    }
+    fn_tys.push((f.lo, k))
+  }
+  Ok(ObjPdb{types: info.types, tys: var_tys(info), fn_tys: fn_tys, files: lns.files, fns: fns})
 }
 
 /// The PDB's inputs from the objects' parts (obj_pdb) and the link's
@@ -416,7 +463,12 @@ pub struct PreProcs {
   procs: List[PdbProc]
 }
 
-pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> PreProcs {
+pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> PreProcs { pre_procs_store(parts, objs, layout, []) }
+
+/// pre_procs with the first smaps.len() objects std's store's (their parts
+/// against their split sections, StoreMap), whose stripped functions are
+/// left out.
+pub fn pre_procs_store(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout, smaps: List[StoreMap]) -> PreProcs {
   var info = debug.Info{}
   var tys: List[Int] = []
   var files: List[Str] = []
@@ -427,7 +479,7 @@ pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> Pr
       Some(x) => x
       None => continue
     }
-    let m = obj_map(objs[oi], oi, layout)
+    let m = if oi < smaps.len() { obj_map_store(smaps[oi], oi, layout) } else { obj_map(objs[oi], oi, layout) }
     for (off, t) in part.types {
       var ms: List[debug.Member] = []
       for mb in t.members {
@@ -435,8 +487,21 @@ pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> Pr
       }
       info.types[m.ty(off)] = t with {of: m.ty(t.of), members: ms}
     }
-    for ty in part.tys {
-      tys.push(m.ty(ty))
+    if oi < smaps.len() {
+      // only the live functions' variables
+      var at = 0
+      for (lo, k) in part.fn_tys {
+        if m.placed(lo) {
+          for j in at..at + k {
+            tys.push(m.ty(part.tys[j]))
+          }
+        }
+        at += k
+      }
+    } else {
+      for ty in part.tys {
+        tys.push(m.ty(ty))
+      }
     }
     var fmap: List[Int] = []
     for f in part.files {
@@ -450,6 +515,9 @@ pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> Pr
     }
     let gf = fn(x: Int) -> Int { if x >= 0 && x < fmap.len() { fmap[x] } else { x } }
     for fnp in part.fns {
+      if oi < smaps.len() && !m.placed(fnp.lo) {
+        continue
+      }
       var rows: List[(Int, Int, Int, Bool)] = []
       for (off, f, l, st) in fnp.rows {
         rows.push((off, gf(f), l, st))
@@ -479,7 +547,7 @@ fn locals_ty(ls: List[PdbLocal], m: ObjMap) -> List[PdbLocal] {
 
 // ---- an object's PDB part as cache bytes (enc_obj_pdb, dec_obj_pdb)
 
-const OBJPDB_MAGIC = "xo objpdb 1\n"
+const OBJPDB_MAGIC = "xo objpdb 2\n"
 
 fn (var w: Out) pstr(s: Str) {
   let b = s.bytes()
@@ -529,6 +597,11 @@ pub fn enc_obj_pdb(p: ObjPdb) -> Bytes {
   w.pint(p.tys.len())
   for x in p.tys {
     w.pint(x)
+  }
+  w.pint(p.fn_tys.len())
+  for (lo, k) in p.fn_tys {
+    w.pint(lo)
+    w.pint(k)
   }
   w.pint(p.files.len())
   for f in p.files {
@@ -666,6 +739,12 @@ pub fn dec_obj_pdb(b: Bytes) -> ObjPdb? {
   for _ in 0..nt {
     tys.push(r.int())
   }
+  let nft = r.count()
+  var fn_tys = List[(Int, Int)].with_capacity(nft)
+  for _ in 0..nft {
+    let lo = r.int()
+    fn_tys.push((lo, r.int()))
+  }
   let nf = r.count()
   var files = List[Str].with_capacity(nf)
   for _ in 0..nf {
@@ -711,5 +790,5 @@ pub fn dec_obj_pdb(b: Bytes) -> ObjPdb? {
   if r.bad || r.at != b.len() {
     return None
   }
-  Some(ObjPdb{types: types, tys: tys, files: files, fns: fns})
+  Some(ObjPdb{types: types, tys: tys, fn_tys: fn_tys, files: files, fns: fns})
 }

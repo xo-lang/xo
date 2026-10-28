@@ -129,7 +129,14 @@ fn coff_never_strip(name: Str, flags: Int) -> Bool {
 /// compacted to its kept sections in order and one dead stub (removed at
 /// the link: a reference to a dead atom is DWARF's 0 or pelink's error),
 /// its symbols renumbered. Not in atoms mode, so pelink takes them whole.
-pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[List[CObj], Str] {
+/// coff_store_objs' result: the compacted objects, and for each the map
+/// its PDB part needs (cvobj.xo StoreMap).
+pub struct CoffStore {
+  pub objs: List[CObj]
+  pub maps: List[StoreMap]
+}
+
+pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[CoffStore, Str] {
   let v = match store_view(store) {
     Ok(x) => x
     Err(e) => return Err(e)
@@ -145,6 +152,7 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[Lis
   roots.push(v.def(entry.bytes()))
   let live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { coff_never_strip(nm, flags) })
   var out: List[CObj] = []
+  var maps: List[StoreMap] = []
   var elsewhere: Set[Bytes] = #{}
   var all_sects: List[List[CSect]] = []
   var newks: List[List[Int]] = []
@@ -154,11 +162,13 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[Lis
     let ns = v.nsects[i]
     var newk: List[Int] = List.with_capacity(ns)
     var sects: List[CSect] = List.with_capacity(ns)
+    var shells: List[CSect] = List.with_capacity(ns)
     var any_dead = false
     for k in 0..ns {
       let q = v.recs[i] + STORE_REC * k
       let (_, nm) = v.names[rec_name(store, q)]
       let flags = rec_flags(store, q)
+      shells.push(CSect{name: nm, chars: flags, data: "".bytes(), size: rec_size(store, q), relocs: []})
       if nm != ".xoatoms" && (coff_never_strip(nm, flags) || live[v.base[i] + k]) {
         let da = v.data0 + rec_data_at(store, q)
         let ra = v.data0 + rec_rel_at(store, q)
@@ -196,6 +206,7 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[Lis
       }
     }
     all_sects.push(sects)
+    maps.push(StoreMap{secs: shells, newk: newk})
     newks.push(newk)
     stubs.push(stub)
     nameds.push(named)
@@ -232,5 +243,52 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[Lis
     }
     out.push(CObj{path: v.paths[i], sects: sects, syms: syms})
   }
-  Ok(out)
+  Ok(CoffStore{objs: out, maps: maps})
+}
+
+const STORE_PDB_MAGIC = "xo coff store pdb 1\n"
+
+/// Each part's PDB part (cvobj.xo obj_pdb of its split object, whose
+/// sections the store's records are), for std.store.pdb beside the store:
+/// a link through the store reads them instead of the parts' DWARF.
+pub fn coff_store_pdb(objs: List[CObj]) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_str(STORE_PDB_MAGIC)
+  sw32(b, objs.len())
+  for ob in objs {
+    match obj_pdb(coff_split(ob)) {
+      Ok(p) => {
+        let e = enc_obj_pdb(p)
+        sw32(b, e.len())
+        b.write(e)
+      }
+      Err(_) => sw32(b, 0)
+    }
+  }
+  b.freeze()
+}
+
+/// coff_store_pdb's parts read back (an empty list: not such bytes).
+pub fn coff_store_pdb_read(b: Bytes) -> List[ObjPdb?] {
+  let m = STORE_PDB_MAGIC.bytes()
+  if b.len() < m.len() + 4 || b[0..m.len()] != m {
+    return []
+  }
+  var at = m.len()
+  let n = rd32(b, at)
+  at += 4
+  var out: List[ObjPdb?] = []
+  for _ in 0..n {
+    if at + 4 > b.len() {
+      return []
+    }
+    let len = rd32(b, at)
+    at += 4
+    if at + len > b.len() {
+      return []
+    }
+    out.push(if len == 0 { None } else { dec_obj_pdb(b[at..at + len]) })
+    at += len
+  }
+  out
 }

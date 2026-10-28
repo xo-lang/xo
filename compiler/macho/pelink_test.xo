@@ -301,7 +301,7 @@ test "a link through the COFF store is the strip's link of the same objects" {
     Ok(x) => x
     Err(e) => fault(e)
   }
-  match link_pe(objs + [prog], opts) {
+  match link_pe(objs.objs + [prog], opts) {
     Ok(b) => expect(b == want) == true
     Err(e) => fault(e)
   }
