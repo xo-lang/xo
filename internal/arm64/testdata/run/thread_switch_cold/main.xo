@@ -1,0 +1,35 @@
+// A dispatch loop (a jump table from 8 values, decision 0051) whose arms
+// update a Map through its fault-catching path and build strings: a cold
+// block (reached through a landing pad) jumps to the loop's latch too.
+// thread_switch (decision 0397) copies the dispatch into the hot arms
+// only: a cold arm's copies were placed in neither block list, and the
+// self build faulted in regalloc (compiler/xo trace.xo analyze,
+// 2026-10-28).
+fn main(os: Os) {
+  let ops = [0, 1, 2, 3, 4, 5, 6, 7, 8, 1, 2, 3, 0, 8]
+  var counts: Map[Str, Int] = {}
+  var names: List[Str] = []
+  var acc = 0
+  var i = 0
+  while i < ops.len() {
+    match ops[i] {
+      0 => counts["zero"] = (counts.get("zero") ?? 0) + 1
+      1 => counts["one"] = (counts.get("one") ?? 0) + 1
+      2 => {
+        names.push("n${i}")
+        acc += 2
+      }
+      3 => acc += 3
+      4 => acc += 4
+      5 => acc += 5
+      6 => acc += 6
+      7 => acc += 7
+      _ => {
+        let k = "k${acc}"
+        counts[k] = (counts.get(k) ?? 0) + 1
+      }
+    }
+    i += 1
+  }
+  os.stdio.println("acc ${acc} zero ${counts.get("zero") ?? 0} one ${counts.get("one") ?? 0} names ${names.join(",")} keys ${counts.len()}")
+}

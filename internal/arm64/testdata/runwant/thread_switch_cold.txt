@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+acc 32 zero 2 one 2 names n2,n10 keys 4
+--- stderr
