@@ -1089,6 +1089,15 @@ fn int_at(l: List[Int], i: Int) -> Int { l[i] }
 /// element, at rt.layout(2) in its object).
 pub fn list_bytes(l: List[UInt8]) -> Bytes {
   let n = l.len()
+  if target.arch == TargetArch.Wasm32 {
+    // wasm's lists keep a word an element: copied a byte at a time
+    // (2026-10-28: the packed copy gave inflate garbage there)
+    var bb = BytesBuilder.with_capacity(n)
+    for x in l {
+      bb.write_byte(x)
+    }
+    return bb.freeze()
+  }
   let b = raw.bytes_buf(n)
   if n > 0 {
     rt.mem_copy(raw.bytes_addr(b), rt.obj_addr(l).wrapping_add(rt.layout(2)), n)

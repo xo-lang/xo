@@ -1,5 +1,19 @@
 # std/compress changes
 
+## 2026-10-28: fix: gunzip and unzip on wasm
+
+- Kind: fix
+- Commit: this commit
+- Found by: internal/selfhost TestSelfhostWasm archive_formats failing on main (zip checksum error); bisected to 124e378a9 (2026-10-27, inflate's output as a packed List[UInt8])
+- Go reference: none (a layout difference between Xo's backends)
+- Test: internal/llvm/testdata/golden/crc32_vectors (new: hash/crc32's values through gzip's trailer, every length 0 to 40 round-tripped, a zip of a stored and a deflated file; checked against zlib) on wasm, arm64, LLVM and the Go backend; archive_formats on wasm
+
+flate.list_bytes copied a List[UInt8]'s bytes in one copy from the
+native packed layout, which wasm lists do not have (a word an element),
+so every inflate on wasm returned garbage (gotchas/packed-list-raw-copy-wasm.md).
+On wasm it now copies a byte at a time; the native targets keep the one
+copy.
+
 ## 2026-10-27: perf: CRC-32 reads a word a step and Huffman tables reverse codes without a loop
 
 - Kind: perf
