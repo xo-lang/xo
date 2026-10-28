@@ -270,3 +270,39 @@ test "a weak definition in two objects links; two strong ones do not" {
     Err(e) => expect(e.contains("defined twice")) == true
   }
 }
+
+// Decision 0388 on windows/amd64: a link through std's store (the COFF
+// adapter, coffstore.xo) is the strip's link of the same objects, byte for
+// byte, and leaves out what nothing reaches.
+fn store_obj(name: Str, src: Str) -> CObj {
+  let obj = match assemble_coff_amd64(src.bytes()) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  match read_coff(name, obj) {
+    Ok(c) => c
+    Err(e) => fault(e)
+  }
+}
+
+test "a link through the COFF store is the strip's link of the same objects" {
+  let lib = store_obj("lib.obj", "\t.subsections_via_symbols\n\t.text\n\t.globl start\nstart:\n\tcallq prog_main\n\tretq\n\t.globl used\nused:\n\tleaq .Lx(%rip), %rax\n\tretq\n.Lx:\n\tnop\n\t.globl unused_fn\nunused_fn:\n\tcallq nowhere\n\tretq\n")
+  let prog = store_obj("prog.obj", "\t.text\n\t.globl prog_main\nprog_main:\n\tcallq used\n\tretq\n")
+  let opts = PEOpts{entry: "start", imports: {}}
+  let want = match link_pe([lib, prog], opts) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  let store = match coff_store_encode([lib]) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  let objs = match coff_store_objs(store, [prog], "start") {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  match link_pe(objs + [prog], opts) {
+    Ok(b) => expect(b == want) == true
+    Err(e) => fault(e)
+  }
+}

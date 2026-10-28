@@ -442,6 +442,36 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   build wait for the batched Windows CI run (Wine does not model thread
   suspension).
 
+### COFF: weak definitions and the store (Xo Lang 2, 2026-10-28)
+
+- Weak definitions (10766a60e): COFF has no defined weak symbol, so the
+  assembler lists an object's `.weak_definition` names in an `.xoweak`
+  LNK_REMOVE section, and pelink and the strip keep the first definition,
+  a strong one over a weak one (as add_globals).
+- The store's COFF adapter (compiler/macho coffstore.xo) on xo-lang-4's
+  core (store_core.xo, 2cd461a10): coff_store_encode splits each part
+  (coff_split), drops the auxiliary symbol records, and gives each piece
+  as a core section whose edges are its relocations' targets (an undefined
+  name through the store's definitions, strong over weak) and, for a
+  function, its `.pdata` and `.xounsafe$m` records; the symbol record's
+  type is the storage class with bits for undefined and absolute.
+  coff_store_objs walks from the program's undefined names and the entry
+  (never stripped: DWARF, `.tls`, `.CRT`, `.drectve`, removed sections,
+  the unsafe index's `$a` and `$z`), compacts each store object to its
+  live pieces and one removed dead stub, and renumbers its symbols
+  (keep_syms); pelink takes the result whole. XO_STD_STORE=PATH and
+  XO_STD_STORE_CHECK=1 work for windows/amd64 as for darwin (the check:
+  the store's image is the strip's of the parts, byte for byte), and
+  XO_STD_OBJ writes windows/amd64's std object and store.
+- A std-roots windows/amd64 llvm-fib (the program's own functions in the
+  store too, as darwin's stand-in): the store 29.9 MB; the store check
+  passes; through the store, warm: the store objects 6.8 to 7.3 ms, pe.read
+  21 to 23, pe.link_pe 9; it runs under Wine. XO_STD_OBJ (an empty
+  program, conc0): 39 parts and a 28.5 MB store. pe.pdb_parts is 360 ms:
+  the compacted objects have no part keys, so every link parses each
+  store object's whole DWARF; the PDB's parts per atom, made when the
+  store is written and cut with it, are next.
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle

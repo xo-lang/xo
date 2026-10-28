@@ -485,18 +485,70 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
 /// cdir and keys: the back-end cache and the first objects' keys for their
 /// PDB parts (the PDB from each object's cached part, pdb_parts, unless
 /// XO_PDB_OBJ=0).
-fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys: List[Str]) -> Str {
+fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str]) -> Str {
   var t = os.clock.now()
+  var keys = keys0
+  // decision 0388 stage 4's store for windows/amd64: XO_STD_STORE=PATH on
+  // an XO_STD_ROOTS=1 build packs the build's parts (prog-windows.N.obj)
+  // into the store at PATH when it is not there, else links through it
+  // without reading them (XO_STD_STORE_CHECK=1: and the parts' link, which
+  // must be the same bytes)
+  let store_path = os.env.get("XO_STD_STORE") ?? ""
+  var store = "".bytes()
+  if !store_path.is_empty() {
+    match os.fs.read(store_path) {
+      Ok(b) => store = b
+      Err(_) => {}
+    }
+  }
+  let store_check = !store.is_empty() && (os.env.get("XO_STD_STORE_CHECK") ?? "") == "1"
   var objs: List[macho.CObj] = []
+  var parts: List[macho.CObj] = []
+  var rest: List[macho.CObj] = []
   for p in paths {
+    let part = !store_path.is_empty() && base_name(p).starts_with("prog-windows.") && p.ends_with(".obj")
+    if part && !store.is_empty() && !store_check {
+      continue
+    }
     let b = match os.fs.read(p) {
       Ok(b) => b
       Err(e) => return "${p}: ${e}"
     }
     match macho.read_coff(p, b) {
-      Ok(o) => objs.push(o)
+      Ok(o) => {
+        objs.push(o)
+        if part {
+          parts.push(o)
+        } else {
+          rest.push(o)
+        }
+      }
       Err(e) => return e
     }
+  }
+  var check_objs: List[macho.CObj] = []
+  if !store_path.is_empty() && store.is_empty() {
+    match macho.coff_store_encode(parts) {
+      Ok(b) => match os.fs.write(store_path, b) {
+        Ok(_) => {}
+        Err(e) => return "XO_STD_STORE=${store_path}: ${fs_reason(e)}"
+      }
+      Err(e) => return "XO_STD_STORE=${store_path}: ${e}"
+    }
+  } else if !store.is_empty() {
+    let ts = os.clock.now()
+    match macho.coff_store_objs(store, rest, "xo_win_start") {
+      Ok(so) => {
+        if store_check {
+          check_objs = objs
+        }
+        objs = so + rest
+        // (the parts' PDB part keys name objects no longer linked)
+        keys = []
+      }
+      Err(e) => return "XO_STD_STORE=${store_path}: ${e}"
+    }
+    os.stdio.eprintln("store objects ${os.clock.since(ts).nanos() / 1000} us (${store.len()} store bytes)")
   }
   // a program with DWARF gets a PDB next to it (decision 0344), which its
   // debug directory names
@@ -520,7 +572,18 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   // the debug directory names it with backslashes, as MSVC's and lld's
   // linkers do: dbghelp finds a PDB moved since by its base name, which
   // an older one takes after the last backslash only
-  match macho.link_pe_layout(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb_named.replace("/", "\\")}) {
+  let peo = macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb_named.replace("/", "\\")}
+  if store_check {
+    // the store's link against the parts' (strip by atom): the same image
+    match (macho.link_pe(objs, peo), macho.link_pe(check_objs, peo)) {
+      (Ok(a), Ok(b)) => if a != b {
+        return "XO_STD_STORE_CHECK=1: the store's link differs from the parts' (${a.len()} and ${b.len()} bytes)"
+      }
+      (Err(e), _) => return "XO_STD_STORE_CHECK=1: the store's link: ${e}"
+      (_, Err(e)) => return "XO_STD_STORE_CHECK=1: the parts' link: ${e}"
+    }
+  }
+  match macho.link_pe_layout(objs, peo) {
     Ok((img0, layout)) => {
       t = lap(os, phases, "pe.link_pe ${img0.len()} bytes", t)
       var img = img0
@@ -861,6 +924,27 @@ fn write_std_obj(os: Os, sod: Str, objs: List[Str]) {
     }
   }
   match macho.store_encode(ins) {
+    Ok(b) => write_or_fail(os, sod, "${sod}/std.store", b)
+    Err(e) => fail(os, "XO_STD_OBJ=${sod}: ${e}")
+  }
+}
+
+/// write_std_obj for windows/amd64's COFF parts (coffstore.xo).
+fn write_std_obj_coff(os: Os, sod: Str, objs: List[Str]) {
+  var cs: List[macho.CObj] = []
+  for ob in objs {
+    match os.fs.read(ob) {
+      Ok(b) => {
+        write_or_fail(os, sod, "${sod}/${base_name(ob)}", b)
+        match macho.read_coff(base_name(ob), b) {
+          Ok(c) => cs.push(c)
+          Err(e) => fail(os, "${ob}: ${e}")
+        }
+      }
+      Err(e) => fail(os, "${ob}: ${e}")
+    }
+  }
+  match macho.coff_store_encode(cs) {
     Ok(b) => write_or_fail(os, sod, "${sod}/std.store", b)
     Err(e) => fail(os, "XO_STD_OBJ=${sod}: ${e}")
   }

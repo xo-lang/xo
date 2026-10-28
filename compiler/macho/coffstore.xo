@@ -1,0 +1,236 @@
+// std's indexed store for windows/amd64 (decision 0388 stage 4): the COFF
+// adapter of store_core.xo. The writer takes std's part objects, made
+// with `.subsections_via_symbols`, split into atoms (pestrip.xo
+// coff_split); the reader walks from the program's undefined names and
+// the entry and gives pelink each store object compacted to its live
+// atoms, as store.xo does for Mach-O.
+
+/// A store symbol record's type for COFF: the storage class, with these
+/// bits for what the class does not say.
+const CS_UNDEF = 0x10000
+const CS_ABS = 0x20000
+
+/// The store of objs (std's parts, each in atoms mode).
+pub fn coff_store_encode(objs0: List[CObj]) -> Result[Bytes, Str] {
+  var objs: List[CObj] = []
+  for ob in objs0 {
+    if !coff_atoms(ob) {
+      return Err("${ob.path}: not made with .subsections_via_symbols")
+    }
+    objs.push(coff_split(ob))
+  }
+  var base: List[Int] = []
+  var total = 0
+  for ob in objs {
+    base.push(total)
+    total += ob.sects.len()
+  }
+  // the global definitions: the first, a strong one over a weak one
+  // (.xoweak), as pelink resolves them
+  var gdefs: Map[Str, (Int, Bool)] = {}
+  var gorder: List[Str] = []
+  for (o, ob) in objs.indexed() {
+    let weak = coff_weak_names(ob)
+    for s in ob.syms {
+      if s.aux || s.class != IMAGE_SYM_CLASS_EXTERNAL || s.sect <= 0 {
+        continue
+      }
+      let w = weak.contains(s.name)
+      match gdefs.get(s.name) {
+        Some((_, ow)) => if ow && !w {
+          gdefs[s.name] = (base[o] + s.sect - 1, false)
+        }
+        None => {
+          gdefs[s.name] = (base[o] + s.sect - 1, w)
+          gorder.push(s.name)
+        }
+      }
+    }
+  }
+  var defs: List[(Bytes, Int)] = []
+  for nm in gorder {
+    defs.push((nm.bytes(), (gdefs.get(nm) ?? (0, false)).0))
+  }
+  var cobjs: List[CoreObj] = []
+  for (o, ob) in objs.indexed() {
+    // the symbols without their auxiliary records, renumbered
+    var symnew: List[Int] = []
+    var syms: List[CoreSym] = []
+    for s in ob.syms {
+      if s.aux {
+        symnew.push(-1)
+        continue
+      }
+      symnew.push(syms.len())
+      let typ = s.class | (if s.sect == 0 { CS_UNDEF } else if s.sect < 0 { CS_ABS } else { 0 })
+      syms.push(CoreSym{name: s.name.bytes(), typ: typ, sect: if s.sect > 0 { s.sect } else { 0 }, desc: 0, value: s.value})
+    }
+    // a function's .pdata and unsafe index records follow it
+    var assoc: Map[Int, List[Int]] = {}
+    for (k, s) in ob.sects.indexed() {
+      if s.name != ".pdata" && s.name != ".xounsafe$m" {
+        continue
+      }
+      for r in s.relocs {
+        if r.addr == 0 && ob.syms[r.sym].sect > 0 {
+          let f = ob.syms[r.sym].sect - 1
+          var l = assoc.get(f) ?? []
+          l.push(k)
+          assoc[f] = l
+        }
+      }
+    }
+    var cs: List[CoreSect] = []
+    for (k, s) in ob.sects.indexed() {
+      var rb = BytesBuilder.with_capacity(12 * s.relocs.len())
+      for r in s.relocs {
+        sw32(rb, r.addr)
+        sw32(rb, symnew[r.sym])
+        sw32(rb, r.typ)
+      }
+      var edges: List[Int] = []
+      if !s.name.starts_with(".debug") && (s.chars & IMAGE_SCN_LNK_REMOVE) == 0 {
+        var seen: Set[Int] = #{}
+        for r in s.relocs {
+          let t = ob.syms[r.sym]
+          let id = if t.sect > 0 { base[o] + t.sect - 1 } else if t.sect == 0 { (gdefs.get(t.name) ?? (-1, false)).0 } else { -1 }
+          if id >= 0 && !seen.contains(id) {
+            seen.add(id)
+            edges.push(id)
+          }
+        }
+        for p in assoc.get(k) ?? [] {
+          let id = base[o] + p
+          if !seen.contains(id) {
+            seen.add(id)
+            edges.push(id)
+          }
+        }
+      }
+      cs.push(CoreSect{seg: "", name: s.name, align: 0, flags: s.chars, addr: 0, size: s.size, data: s.data, relocs: rb.freeze(), nrel: s.relocs.len(), edges: edges})
+    }
+    cobjs.push(CoreObj{path: ob.path, sects: cs, syms: syms, split: {}, unit_fns: []})
+  }
+  Ok(store_write(cobjs, defs))
+}
+
+/// Whether a store section is kept whatever reaches it: DWARF, the TLS
+/// template and initializers, the linker's directives and removed
+/// sections (but not the atoms marker), the unsafe index's bounds.
+fn coff_never_strip(name: Str, flags: Int) -> Bool {
+  if name == ".xoatoms" {
+    return false
+  }
+  name.starts_with(".debug") || name.starts_with(".tls") || name.starts_with(".CRT") || name == ".drectve" || name == ".xounsafe$a" || name == ".xounsafe$z" || (flags & IMAGE_SCN_LNK_REMOVE) != 0
+}
+
+/// The store's objects for a link with the program's objects prog (whole):
+/// the walk from prog's undefined names and the entry, each store object
+/// compacted to its kept sections in order and one dead stub (removed at
+/// the link: a reference to a dead atom is DWARF's 0 or pelink's error),
+/// its symbols renumbered. Not in atoms mode, so pelink takes them whole.
+pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[List[CObj], Str] {
+  let v = match store_view(store) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  var roots: List[Int] = []
+  for ob in prog {
+    for s in ob.syms {
+      if !s.aux && s.class == IMAGE_SYM_CLASS_EXTERNAL && s.sect == 0 {
+        roots.push(v.def(s.name.bytes()))
+      }
+    }
+  }
+  roots.push(v.def(entry.bytes()))
+  let live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { coff_never_strip(nm, flags) })
+  var out: List[CObj] = []
+  var elsewhere: Set[Bytes] = #{}
+  var all_sects: List[List[CSect]] = []
+  var newks: List[List[Int]] = []
+  var stubs: List[Int] = []
+  var nameds: List[List[Bool]] = []
+  for i in 0..v.n {
+    let ns = v.nsects[i]
+    var newk: List[Int] = List.with_capacity(ns)
+    var sects: List[CSect] = List.with_capacity(ns)
+    var any_dead = false
+    for k in 0..ns {
+      let q = v.recs[i] + STORE_REC * k
+      let (_, nm) = v.names[rec_name(store, q)]
+      let flags = rec_flags(store, q)
+      if nm != ".xoatoms" && (coff_never_strip(nm, flags) || live[v.base[i] + k]) {
+        let da = v.data0 + rec_data_at(store, q)
+        let ra = v.data0 + rec_rel_at(store, q)
+        let nr = rec_nrel(store, q)
+        var rs: List[CReloc] = List.with_capacity(nr)
+        for j in 0..nr {
+          let at = ra + 12 * j
+          rs.push(CReloc{addr: rd32(store, at), sym: rd32(store, at + 4), typ: rd32(store, at + 8)})
+        }
+        newk.push(sects.len())
+        sects.push(CSect{name: nm, chars: flags, data: store[da..da + rec_data_len(store, q)], size: rec_size(store, q), relocs: rs})
+      } else {
+        newk.push(-1)
+        any_dead = true
+      }
+    }
+    let stub = if any_dead { sects.len() } else { -1 }
+    if any_dead {
+      sects.push(CSect{name: ".xodead", chars: IMAGE_SCN_LNK_REMOVE, data: "".bytes(), size: 0, relocs: []})
+    }
+    let nsym = v.nsyms[i]
+    var named: List[Bool] = List.with_capacity(nsym)
+    for _ in 0..nsym {
+      named.push(false)
+    }
+    for t in sects {
+      for r in t.relocs {
+        if r.sym < nsym && !named[r.sym] {
+          named[r.sym] = true
+          let y = v.sym(i, r.sym)
+          if (y.typ & CS_UNDEF) != 0 {
+            elsewhere.add(y.name)
+          }
+        }
+      }
+    }
+    all_sects.push(sects)
+    newks.push(newk)
+    stubs.push(stub)
+    nameds.push(named)
+  }
+  let kind = fn(typ: Int) -> SymKind {
+    if (typ & CS_UNDEF) != 0 {
+      SymKind.Undef
+    } else if (typ & CS_ABS) != 0 {
+      SymKind.Other
+    } else {
+      SymKind.InSect
+    }
+  }
+  for i in 0..v.n {
+    let newk = newks[i]
+    let stub = stubs[i]
+    let symnew = v.keep_syms(i, newk, nameds[i], elsewhere, kind, fn(typ: Int) -> Bool { (typ & 0xff) == IMAGE_SYM_CLASS_EXTERNAL })
+    var syms: List[CSym] = []
+    for j in 0..v.nsyms[i] {
+      if symnew[j] < 0 {
+        continue
+      }
+      let y = v.sym(i, j)
+      let sect = if (y.typ & CS_UNDEF) != 0 { 0 } else if (y.typ & CS_ABS) != 0 { -1 } else if newk[y.sect - 1] >= 0 { newk[y.sect - 1] + 1 } else { stub + 1 }
+      syms.push(CSym{name: y.name.to_str() ?? "", value: y.value, sect: sect, class: y.typ & 0xff})
+    }
+    var sects: List[CSect] = List.with_capacity(all_sects[i].len())
+    for t in all_sects[i] {
+      var rs: List[CReloc] = List.with_capacity(t.relocs.len())
+      for r in t.relocs {
+        rs.push(r with {sym: symnew[r.sym]})
+      }
+      sects.push(t with {relocs: rs})
+    }
+    out.push(CObj{path: v.paths[i], sects: sects, syms: syms})
+  }
+  Ok(out)
+}

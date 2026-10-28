@@ -1670,6 +1670,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         wsrcs = objs
         t = lap(os, phases, "assemble.write", t)
         cache_note(os, phases, "objects", texts.len() - nasm, texts.len())
+        if gm.std_obj {
+          // std's object for windows/amd64: its parts and their indexed
+          // store (coffstore.xo) in the directory, not linked
+          let sod = std_obj_dir(os)
+          write_std_obj_coff(os, sod, objs)
+          os.stdio.eprintln("std object: ${objs.len()} parts and std.store in ${sod}")
+          lap(os, phases, "std_obj", t)
+          continue
+        }
       }
       write_or_fail(os, dir_name(wbin), "", b"")
       if nolibc(os, o, c, tgoos) {
