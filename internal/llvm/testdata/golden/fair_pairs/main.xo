@@ -1,0 +1,58 @@
+// fair_pairs (decision 0394): with default threads, 24 ping pong pairs
+// (more than the workers) keep every worker's run-next slot full, and a task
+// that sleeps 20 ms still wakes in time: the worst wake is under 300 ms late.
+// 0.33.0 woke it 350 to 380 ms late with 1.5M rounds a pair, and 2.3 to 2.8
+// s late with 7.5M (find_work never reached the inject queue or the poller);
+// the rounds here make the pairs run for seconds on a parent without the
+// fairness step. The program's output does not depend on the timing.
+
+fn pair(n: Int) -> Int {
+  let ping = Chan[Int].new()
+  let pong = Chan[Int].new()
+  scope s {
+    s.spawn(fn() {
+      for v in ping {
+        pong.send(v + 1)
+      }
+      pong.close()
+    })
+    var v = 0
+    for _ in 0..n {
+      ping.send(v)
+      v = pong.recv() ?? -1
+    }
+    ping.close()
+    v
+  }
+}
+
+fn main(os: Os) {
+  let out = Chan[Int].new(1)
+  let sums = Chan[Int].new(24)
+  scope s {
+    for _ in 0..24 {
+      s.spawn(fn() {
+        sums.send(pair(4000000))
+      })
+    }
+    s.spawn(fn() {
+      var worst = 0
+      for _ in 0..5 {
+        let t0 = os.clock.now()
+        os.clock.sleep(20ms)
+        let late = os.clock.since(t0).millis() - 20
+        if late > worst {
+          worst = late
+        }
+      }
+      out.send(worst)
+    })
+  }
+  var total = 0
+  for _ in 0..24 {
+    total += sums.recv() ?? 0
+  }
+  let worst = out.recv() ?? -1
+  os.stdio.println("pairs: ${total}")
+  os.stdio.println("worst wake under 300 ms late: ${worst < 300}")
+}

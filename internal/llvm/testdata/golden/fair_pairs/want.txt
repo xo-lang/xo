@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+pairs: 96000000
+worst wake under 300 ms late: true
+--- stderr

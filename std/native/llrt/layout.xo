@@ -228,7 +228,12 @@ pub const W_RUNF = 3520
 /// The worker's index among the worker threads in start order (roots 0):
 /// a worker at or over the cap (decision 0377) is not woken or started.
 pub const W_IDX = 3528
-pub const W_SIZE = 3536
+/// find_work's calls (every 64th looks at the clock for the fairness step).
+pub const W_TICK = 3536
+/// When find_work last took from the ring, the inject queue and the poller
+/// before the run-next slot (once a slice at most).
+pub const W_FAIR_AT = 3544
+pub const W_SIZE = 3552
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 /// The spawn sites' average run times (pool.xo site_note): 256 words after

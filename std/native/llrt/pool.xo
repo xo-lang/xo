@@ -73,6 +73,8 @@ const W_NEXT_I = layout.W_NEXT_I
 const W_NEXT_AT = layout.W_NEXT_AT
 const W_LIVE = layout.W_LIVE
 const W_HOOKS = layout.W_HOOKS
+const W_TICK = layout.W_TICK
+const W_FAIR_AT = layout.W_FAIR_AT
 const W_WAKEW = layout.W_WAKEW
 const W_WAKEW_I = layout.W_WAKEW_I
 const W_IDLE_NEXT = layout.W_IDLE_NEXT
@@ -1115,7 +1117,34 @@ pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
     let _n = np_poll(p, w, 0)
     return det.pick()
   }
-  var t = take_local(w)
+  var t = 0
+  let tick = rt.mem_load(w, W_TICK, 8).wrapping_add(1)
+  rt.mem_store(w, W_TICK, tick, 8)
+  if (tick & 63) == 0 {
+    // fairness: a pair of fibers handing off through the run-next slot
+    // keeps it full, and the ring, the inject queue, timers and the
+    // network were never reached (a 20 ms timer fired after two minutes
+    // on one worker, 0.4 to 2.8 s late with a pair on every worker). Once
+    // a slice they come before the slot, as Go's schedule checks the
+    // global queue every 61st round and its sysmon polls the network; the
+    // slot's fiber stays there.
+    let now = cpu.ticks()
+    let at = rt.mem_load(w, W_FAIR_AT, 8)
+    if at == 0 || cpu.ticks_ns(now.wrapping_sub(at)) >= SLICE_NS {
+      rt.mem_store(w, W_FAIR_AT, now, 8)
+      owner_check(w)
+      t = sched.rq_get(w)
+      if t == 0 {
+        t = inject_pop(p, w)
+      }
+      if t == 0 && np_poll(p, w, 0) > 0 {
+        t = sched.rq_get(w)
+      }
+    }
+  }
+  if t == 0 {
+    t = take_local(w)
+  }
   if t == 0 {
     t = inject_pop(p, w)
   }
