@@ -1,0 +1,241 @@
+// The facts std exports per function (decision 0388): what a program's
+// passes read of a std callee whose body they do not have once std is
+// compiled apart (stage 3). This is the record's SSA section; the
+// emitter's section (by_ref, kept results, entry, export) is written by
+// std's object builder after it. A function with no record, or a fact it
+// lacks, gets the conservative answer: not borrowed, not unique, may
+// fault and be canceled, no bounds, not inlined.
+
+/// The version of the facts' encoding.
+pub const STD_FACTS_VERSION = "xo std facts v1"
+
+/// One std function's facts, by its name.
+pub struct StdFact {
+  pub name: Str
+  /// body_facts, encoded (encode_facts); empty for none
+  pub body: Bytes = b""
+  pub var_params: List[Int] = []
+  /// its parameters' borrowed flags and the results it hands back unique
+  /// (decision 0322), from the borrow inference; empty for none
+  pub borrowed: List[Bool] = []
+  pub unique: List[Bool] = []
+  pub catches: Bool = false
+  /// may fault, may be canceled (prune_unwind)
+  pub faults: Bool = true
+  pub cancels: Bool = true
+  /// its constant result (fold_known_calls), Aux.None for none
+  pub known: Aux = Aux.None
+  /// its body for the inliner (encode_func), empty for none
+  pub inline: Bytes = b""
+}
+
+/// The facts of every function of m, after the passes a program's build
+/// runs before the emit: plan is the borrow inference's, and b kept the
+/// unwind facts by name (keep_unwind_names).
+pub fn std_facts(m: Module, b: Builder, plan: RcPlan) -> List[StdFact] {
+  var out: List[StdFact] = []
+  for f in m.funcs {
+    var x = StdFact{name: f.name, var_params: f.var_params, catches: f.catches}
+    if !f.blocks.is_empty() {
+      x.body = encode_facts(m, body_facts(f, m.types)) ?? b""
+      x.known = known_result(f) ?? Aux.None
+    }
+    let ci = plan.r.fidx.get(f.name) ?? -1
+    if ci >= 0 && ci < plan.r.borrowed.len() {
+      x.borrowed = plan.r.borrowed[ci]
+    }
+    if ci >= 0 && ci < plan.r.uq.len() {
+      x.unique = plan.r.uq[ci]
+    }
+    if let Some((fa, ca)) = b.unwind_names.get(f.name) {
+      x.faults = fa
+      x.cancels = ca
+    }
+    out.push(x)
+  }
+  out
+}
+
+struct SfW {
+  b: BytesBuilder
+}
+
+fn (var w: SfW) uv(v0: Int) {
+  var v = v0
+  while v >= 128 {
+    w.b.write_byte(UInt8((v & 127) | 128))
+    v = v >> 7
+  }
+  w.b.write_byte(UInt8(v))
+}
+
+fn (var w: SfW) sv(v: Int) {
+  w.uv(if v < 0 { ((-v) << 1) - 1 } else { v << 1 })
+}
+
+fn (var w: SfW) bytes(d: Bytes) {
+  w.uv(d.len())
+  w.b.write(d)
+}
+
+fn (var w: SfW) bools(xs: List[Bool]) {
+  w.uv(xs.len())
+  for x in xs {
+    w.uv(if x { 1 } else { 0 })
+  }
+}
+
+struct SfR {
+  d: Bytes
+  at: Int = 0
+  ok: Bool = true
+}
+
+fn (var r: SfR) uv() -> Int {
+  var v = 0
+  var sh = 0
+  while true {
+    if r.at >= r.d.len() || sh > 63 {
+      r.ok = false
+      return 0
+    }
+    let c = Int(r.d[r.at])
+    r.at += 1
+    v = v | ((c & 127) << sh)
+    if c < 128 {
+      break
+    }
+    sh += 7
+  }
+  v
+}
+
+fn (var r: SfR) sv() -> Int {
+  let u = r.uv()
+  if (u & 1) == 1 { -((u + 1) >> 1) } else { u >> 1 }
+}
+
+fn (var r: SfR) bytes() -> Bytes {
+  let n = r.uv()
+  if !r.ok || n > r.d.len() - r.at {
+    r.ok = false
+    return b""
+  }
+  let out = r.d[r.at..r.at + n]
+  r.at += n
+  out
+}
+
+fn (var r: SfR) bools() -> List[Bool] {
+  let n = r.uv()
+  if !r.ok || n > r.d.len() {
+    r.ok = false
+    return []
+  }
+  var out = List[Bool].with_capacity(n)
+  for _ in 0..n {
+    out.push(r.uv() == 1)
+  }
+  out
+}
+
+/// The facts as bytes: the version, then each function's record.
+pub fn encode_std_facts(fs: List[StdFact]) -> Bytes {
+  var w = SfW{b: BytesBuilder.new()}
+  w.bytes(STD_FACTS_VERSION.bytes())
+  w.uv(fs.len())
+  for x in fs {
+    w.bytes(x.name.bytes())
+    w.bytes(x.body)
+    w.uv(x.var_params.len())
+    for p in x.var_params {
+      w.uv(p)
+    }
+    w.bools(x.borrowed)
+    w.bools(x.unique)
+    w.bools([x.catches, x.faults, x.cancels])
+    match x.known {
+      I(n) => {
+        w.uv(1)
+        w.sv(n)
+      }
+      B(v) => {
+        w.uv(2)
+        w.uv(if v { 1 } else { 0 })
+      }
+      S(s) => {
+        w.uv(3)
+        w.bytes(s.bytes())
+      }
+      F(v) => {
+        // the bits as two halves: all 64 do not fit a zigzag varint
+        let bits = v.to_bits()
+        w.uv(4)
+        w.sv(bits >> 32)
+        w.uv(bits & 0xffffffff)
+      }
+      Bs(v) => {
+        w.uv(5)
+        w.bytes(v)
+      }
+      None => w.uv(0)
+      P(tag: _, field: _) => w.uv(0)
+    }
+    w.bytes(x.inline)
+  }
+  w.b.freeze()
+}
+
+/// The facts of d, or None when d is not facts of this version or is
+/// damaged (a miss: every callee then gets the conservative answer).
+pub fn decode_std_facts(d: Bytes) -> Option[List[StdFact]] {
+  var r = SfR{d: d}
+  if r.bytes() != STD_FACTS_VERSION.bytes() || !r.ok {
+    return None
+  }
+  let n = r.uv()
+  if !r.ok || n > d.len() {
+    return None
+  }
+  var out: List[StdFact] = []
+  for _ in 0..n {
+    if !r.ok {
+      return None
+    }
+    var x = StdFact{name: r.bytes().to_str() ?? ""}
+    x.body = r.bytes()
+    let np = r.uv()
+    if !r.ok || np > d.len() {
+      return None
+    }
+    for _ in 0..np {
+      x.var_params.push(r.uv())
+    }
+    x.borrowed = r.bools()
+    x.unique = r.bools()
+    let fl = r.bools()
+    if fl.len() != 3 {
+      return None
+    }
+    x.catches = fl[0]
+    x.faults = fl[1]
+    x.cancels = fl[2]
+    x.known = match r.uv() {
+      1 => Aux.I(n: r.sv())
+      2 => Aux.B(b: r.uv() == 1)
+      3 => Aux.S(s: r.bytes().to_str() ?? "")
+      4 => {
+        let hi = r.sv()
+        Aux.F(f: Float.from_bits((hi << 32) | r.uv()))
+      }
+      5 => Aux.Bs(b: r.bytes())
+      _ => Aux.None
+    }
+    x.inline = r.bytes()
+    out.push(x)
+  }
+  if !r.ok || r.at != d.len() {
+    return None
+  }
+  Some(out)
+}

@@ -192,6 +192,11 @@ pub fn (var b: Builder) prune_unwind() {
   let faults = b.m.may_fault()
   b.unwind_faults = faults
   b.unwind_may = may
+  if b.keep_unwind_names {
+    for i in 0..n {
+      b.unwind_names[b.m.funcs[i].name] = (faults[i], may[i])
+    }
+  }
   for (ci, c) in b.checks.indexed() {
     let g = gs[ci]
     if b.conc && (c.callee.is_empty() || (g >= 0 && may[g])) {

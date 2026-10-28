@@ -194,6 +194,11 @@ pub struct Builder {
   /// callee's)
   pub unwind_faults: List[Bool] = []
   pub unwind_may: List[Bool] = []
+  /// a std-facts build (decision 0388): prune_unwind also keeps each
+  /// function's (faults, may be canceled) by name, which later passes'
+  /// renumbering leaves valid (std_facts)
+  pub keep_unwind_names: Bool = false
+  pub unwind_names: Map[Str, (Bool, Bool)] = {}
   /// the constants fold_known_calls folded calls of these functions to
   pub fold_known: Map[Int, Aux] = {}
   /// The program is lowered for the wasm backend (decision 0207): rt.layout

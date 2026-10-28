@@ -1,0 +1,29 @@
+// The std facts' codec (decision 0388).
+
+test "std facts encode and decode to the same records" {
+  let fs = [
+    StdFact{name: "strings.trim", body: b"\x01\x02", var_params: [0, 2], borrowed: [true, false], unique: [true], catches: true, faults: false, cancels: false, known: Aux.I(n: -7), inline: b"body"},
+    StdFact{name: "prelude.list_len", known: Aux.S(s: "x")},
+    StdFact{name: "f", known: Aux.F(f: 2.5)},
+    StdFact{name: "g", known: Aux.B(b: true)},
+    StdFact{name: "h", known: Aux.Bs(b: b"\x00\xff")},
+  ]
+  let d = encode_std_facts(fs)
+  match decode_std_facts(d) {
+    Some(gs) => {
+      expect(gs.len()) == fs.len()
+      expect(encode_std_facts(gs) == d) == true
+      expect(gs[0].var_params) == [0, 2]
+      expect(gs[0].faults) == false
+      expect(gs[1].faults) == true
+    }
+    None => expect("decoded") == "None"
+  }
+}
+
+test "damaged, truncated and other versions of std facts decode to None" {
+  let d = encode_std_facts([StdFact{name: "a"}])
+  expect(decode_std_facts(d[0..d.len() - 1]).is_none()) == true
+  expect(decode_std_facts(d + b"x").is_none()) == true
+  expect(decode_std_facts(b"\x10xo std facts v0").is_none()) == true
+}
