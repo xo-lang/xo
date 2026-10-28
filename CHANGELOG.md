@@ -4,6 +4,73 @@ Xo stays on 0.x until the owner declares 1.0 (decision 0089). The toolchain
 minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
+## v0.33.1 (2026-10-28)
+
+A fix release: the 0.33.0 testers' `use go` and Windows bugs, a crash and a
+silent-corruption hazard in the runtime, a wasm gunzip bug, and a scheduler
+starvation. It carries fixes only: nothing is added to the language or the
+library, and nothing is made faster on purpose.
+
+- A program whose workers are all kept busy by tasks that hand work to each
+  other over channels (one ping pong pair of unbuffered channels on every
+  worker) delayed timers, sleeps, timeouts and socket readiness until those
+  tasks finished: a 20 ms sleep woke 0.35 s late with 24 pairs on 12 cores,
+  and 2.3 to 2.8 s late with five times the rounds. The scheduler now serves
+  its ring, the inject queue and the poller before the run-next slot once a
+  slice (10 ms), so the same sleep wakes 10 to 21 ms late
+  (gotchas/run-next-pair-starves-timers.md)
+- `lz4.compress`'s match table (the back-end cache's compressed entries) could
+  be unmapped under the compressor when the large block cache was full: a
+  SIGSEGV in a cold build with `XO_CACHE_COMPRESS` on; ChaCha20's scratch had
+  the same latent hazard (a reference counted buffer's address outlived its
+  last use). Both keep their buffers alive to their last raw access
+  (gotchas/raw-address-outlives-buffer.md)
+- `gunzip` and `unzip` on wasm returned garbage (a checksum error): the packed
+  copy in `flate.list_bytes` assumed the native list layout
+  (gotchas/packed-list-raw-copy-wasm.md)
+- `use go` on Windows finds the shipped bin/xo-gobind.exe (beside xo.exe, a
+  release layout, or PATH split on `;`), where it looked for `xo-gobind`
+  with no `.exe` and took only `/` paths as directories (Windows tester,
+  0.33.0, bug 13)
+- `xo mod tidy` on Windows no longer doubles `C:/` paths (`C:/w/C:/w/x`):
+  its absolute path check, and six others in the CLI, use the host's path
+  rules (Windows tester, 0.33.0, bug 15)
+- `use go` of a Go module whose go.mod has a patch-level go line
+  (golang.org/x/text: `go 1.26.0`) builds with the Go backend: the generated
+  go.mod's go line is at least the binding workspace's, where `go 1.26`
+  stopped go build with "updates to go.mod needed" (Intel tester, 0.33.0,
+  b16)
+- `xo mod tidy` in a fresh clone with a `require go` pin and no binding yet
+  stops with XO1320 ("run `xo check` once, then `xo mod tidy` again")
+  instead of exiting 0 without the pin's xo.lock lines (Intel tester,
+  0.33.0, b17)
+- `==` on a Go value the package hands out by value (`netip.Addr`,
+  `language.Tag`) compares by value as Go does, where two equal addresses
+  were unequal (pointer identity); a struct the package passes only as `*T`
+  (`*url.URL`) still compares by pointer, as Go's `==` on the pointers;
+  bindings are regenerated (format 6) (Intel tester, 0.33.0, b15)
+- `use go`: a Go type two bound packages use is one Xo type (decision 0392):
+  `net.tcp_addr_from_addr_port` takes the `netip.AddrPort` netip makes, and
+  golang.org/x/text/cases' functions take `language.Tag`, where each binding
+  declared its own copy that nothing converted (Intel tester, 0.33.0, b14);
+  bindings are regenerated (format 7)
+- `xo check --no-gc` (and a native build) of a `use go` program reports one
+  XO1201 per Go package and file, at its `use go` line with the count of its
+  uses, instead of one per Go call (a tester's program had 45)
+- `use go` with an xo-gobind from another xo (an old one on PATH, or
+  XO_GOBIND) is XO1101 naming the helper and both binding formats
+  ("xo-gobind at PATH wrote binding format 5, this xo reads 7"), where every
+  check said only that no current binding existed
+- `use go` keeps working when the installed Go is newer than the one the
+  release's xo-gobind was built with (decision 0393; a 0.33.0 tester with Go
+  1.27 had every bind panic on its export data): a release carries the
+  helper's Go source under lib/xo (go.mod, cmd/xo-gobind, internal/gobind,
+  internal/gotool: 96 KB, about 30 KB more in the archive), and xo builds
+  the helper with the installed Go once into
+  `<user cache>/xo/gobind/<source>-<go version>/` and uses that build. A
+  helper that still meets newer export data says so, naming both Go
+  versions and the XO_GOBIND workaround, instead of panicking.
+
 ## Unreleased
 
 - A windows/amd64 edit rebuild assembles only the parts it changed (their
