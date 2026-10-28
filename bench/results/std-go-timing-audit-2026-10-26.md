@@ -508,3 +508,9 @@ about 1.17 (estimate: 1.222 x 0.959), from 1.222.
 Per std/changes/uuid.md 2026-10-28. Quiet `xo bench --ab`, 15 rounds: bytes against the parent's xo and std,
 wall 0.504 (0.479 to 0.525), instructions 0.717, cycles 0.371; against Go 0.965 (0.931 to 1.001), from 1.966.
 parse against Go (no change in it): 1.062 (1.01 to 1.081), instructions 0.974.
+
+## template index_of by Bytes.find (2026-10-28, xo-lang-5)
+
+Per std/changes/template.md 2026-10-28 (found by xo vet --cost XO0913, d6ea14cdb). Quiet `xo bench --ab`, 15
+rounds, the parent's std as A: parse wall 0.948 (0.943 to 0.956), instructions 0.957, cycles 0.948; render
+unchanged.

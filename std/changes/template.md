@@ -11,7 +11,7 @@
 index_of is `b[from..].find(p)`, Go's strings.Index, where it made and
 compared a view at each offset. Quiet --ab, 15 rounds, the parent's std as
 A (instructions, /usr/bin/time -l): bench/perf/template parse 0.956,
-render 1.000; the wall A/B follows in the timing audit.
+render 1.000; quiet --ab, 15 rounds: parse wall 0.948 (0.943 to 0.956).
 
 ## 2026-10-28: perf: an integer is written into the output in place
 
