@@ -6,6 +6,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Compiler: reference counting insertion (compiler/ssa rc.xo) does the
+  same work with fewer copies: the live leaf sets sort by one Int key
+  (the paths' ranks, no string compared), the walk's lists are made with
+  their capacity and the block's pre-code list is no longer copied on
+  every edge, dead field reads go in one worklist pass,. A cold
+  self build of xo retires 4.4 percent fewer instructions (2,157 to
+  2,062 billion; insert_rc was 24 percent of the build's CPU, its
+  largest single cost); output identity against the parent (202 compared,
+  0 differing) and the fixed point hold
+  (bench/results/insert-rc-2026-10-28.md).
 - `xo bench --ab` without --max-load counts a round as loaded from the
   load before its first round plus 3 (at least 6), not a fixed 6, and
   prints that baseline in its load line: an idle machine at 4.4 to 5 lost
