@@ -142,6 +142,8 @@ var codegenFields = map[string]inputClass{
 	"rc_check":      {"none", ""},                            // XO_RC_CHECK: marks Reuse values in the SSA bodies every cache key hashes
 	"jobs":          {"none", ""},                            // the tasks of may_fault's scan; its result does not depend on them
 	"op_verify":     {"none", ""},                            // XO_OP_VERIFY: checks, never changes, the emitter's output
+	"weak_shared":   {"keyed", "${if m.weak_shared"},         // " weak=1" in the fn and part keys (decision 0388 stage 4)
+	"std_obj":       {"keyed", "${if m.weak_shared"},         // set only with weak_shared (XO_STD_OBJ), whose " weak=1" keys the parts it leaves the program's functions out of
 }
 
 // codegenFS are the closure's files that use the file system, with why
