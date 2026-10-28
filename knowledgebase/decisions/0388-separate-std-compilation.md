@@ -154,6 +154,53 @@ place before stage 4; if it cannot be brought down, std's DWARF prejoined once p
 - Split (Lead, 2026-10-27): xo-lang-4 builds std's object (1b), its cache kinds and xo dev stdobj,
   and stage 4's dead stripping; Xo Lang 1 stages 1a, 2 and 3 and the facts std exports
   (ssa.std_facts; an emitter section per function from 1b's builder).
+- Stage 1b prototype (xo-lang-4, 2026-10-27, unpushed branch l4-stdobj): XO_STD_ROOTS=1 builds
+  std alone as one program: every std module loaded, every body checked, and every function with a
+  body in std or its implementations (native/NAME) a root, but not the runtime's own modules
+  (native/llrt: some exist for one build mode, their C exports declared only in it) and not the
+  test world's (std/testing, rttest, llrt_tw_*) outside a test build; the dump's and std's roots
+  are declared before the C ABI exports. 1,991 roots, 6,594 functions, __text 5.05 MB (21 MB of
+  part objects with DWARF), about 4 s cold and 1.3 GB, verifying clean with DCE and hollow off.
+  The builder's own flags of 2,380 builds in this Mac's cache came in 5 combinations, 71%
+  conc=false and 27% conc=true: the object is built per combination, lazily (conc=true adds
+  shield calls to deferred code and keeps cancellation checks).
+
+### The shape of std's object: an indexed atom store (Lead, 2026-10-27)
+
+The link ceiling, Xo Lang 1's oracle harness (macho_link of a build's dumped inputs alone, n=8
+interleaved, medians, xo's 8.5 ms start subtracted):
+
+| Link inputs | With DWARF (ms) | Without (ms) |
+|---|---|---|
+| fib today: 13 hollowed objects, 2.1 MB | 7.5 | 3.5 |
+| std's unhollowed parts, every function: 43 objects, 21 MB | 71 | 34.5 |
+
+So a link that reads std's whole object is over the edit budget before any strip: even without
+DWARF, reading and placing 21 MB is 34.5 ms, and dead stripping only shrinks what is written.
+Std's object is therefore an indexed store: per function, its code, relocations, unwind entry and
+DWARF ranges; a symbol index; and each global symbol's reachability closure, computed once when
+the store is built. A link unions the closures of the std symbols the program references and
+copies those atoms only, as Go's linker has loaded only reachable symbols from its indexed object
+format since Go 1.15.
+
+The emulation (a scratch reader of the same 43 objects: atoms at symbols, every relocation an
+edge, so calls, function values and tables all root atoms; fib's 13 objects' symbols as the
+roots, which include its generic instances' calls into std):
+
+| | |
+|---|---|
+| std's atoms, global symbols | 13,133, 8,401 |
+| store build: read and graph, closures (once per variant) | 53 ms, 56 ms (21.6 MB of bitsets) |
+| fib's roots into std, the union of their closures | 823, 0.2 ms |
+| live atoms | 926, 0.48 MB (0.41 MB of text) |
+| fib's hollowed objects today | 0.35 MB of text |
+
+The closure is a superset of hollow's reach by about 17% of text. DWARF: std's abbreviations and
+strings, shared and not per function, are 0.21 MB in all (__debug_abbrev 0.01, __debug_str 0.08,
+__debug_line_str 0.12) and are copied once per link; __debug_info (2.49 MB), __debug_line (2.47)
+and __debug_loclists (4.93) split by function with the code, except their shared type DIEs, to
+be measured when the store's DWARF is split. A fib link from the store is then about today's
+7.5 ms plus the union and the shared DWARF: about 8 to 10 ms.
 
 ## Alternatives
 
