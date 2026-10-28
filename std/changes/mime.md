@@ -1,5 +1,18 @@
 # std/mime changes
 
+## 2026-10-28: perf: format_media_type escapes a quoted value in one pass
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/mime format at 1.204x Go (measured on main 55af0adc5)
+- Go reference: mime.FormatMediaType (one loop over the value, a backslash before each `"` and `\`) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/mime (go, arm64, LLVM); twincheck's checksums agree on none, parse, format, ext, detect
+
+A parameter value that is not a token is written quoted in one pass, the
+runs between `"` and `\` copied whole, where two replace calls each
+scanned and copied it. Output is unchanged. Quiet --ab, 15 rounds, the
+parent's std as A: format wall 0.961 (0.938 to 0.991); Xo / Go about 1.16 (estimate: 1.204 x 0.961), from 1.204, instructions 0.953.
+
 ## 2026-10-27: perf: detect_content_type makes a type only on a match
 
 - Kind: perf

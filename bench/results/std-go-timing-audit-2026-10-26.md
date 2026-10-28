@@ -490,3 +490,9 @@ the value's own array: a compiler or runtime question (a Bytes that does not esc
 Per std/changes/template.md 2026-10-28 ("an integer is written into the output in place"). Quiet `xo bench
 --ab`, 15 rounds, the parent's std as A: render wall 0.934 (0.931 to 0.943), instructions 0.974, cycles 0.938;
 Xo / Go about 1.08 (estimate: 1.156 x 0.934), from 1.156.
+
+## mime format one-pass escape (2026-10-28, xo-lang-5)
+
+Per std/changes/mime.md 2026-10-28 ("format_media_type escapes a quoted value in one pass"). Quiet `xo bench
+--ab`, 15 rounds, the parent's std as A: format wall 0.961 (0.938 to 0.991), instructions 0.953; Xo / Go about
+1.16 (estimate: 1.204 x 0.961), from 1.204.

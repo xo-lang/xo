@@ -98,8 +98,19 @@ fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str {
       b.write(value)
       continue
     }
+    // the quoted string in one pass (Go's FormatMediaType loop), where
+    // two replace calls each scanned and copied the value
     b.write("\"")
-    b.write(value.replace("\\", "\\\\").replace("\"", "\\\""))
+    let vb = value.bytes()
+    var from = 0
+    for k in 0..vb.len() {
+      if vb[k] == 92 || vb[k] == 34 {
+        b.write(value[from..k])
+        b.write("\\")
+        from = k
+      }
+    }
+    b.write(value[from..vb.len()])
     b.write("\"")
   }
   b.freeze()
