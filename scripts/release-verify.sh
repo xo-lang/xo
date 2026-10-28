@@ -30,6 +30,9 @@
 #      and overlaps, Earlier never after Later) matches; on darwin, atos
 #      names main.xo for a function of a built binary (the embedded DWARF,
 #      decision 0346; CoreSymbolication on the Intel laptop's macOS).
+#      And decision 0388's first use: a first build goes whole program and
+#      starts std's variant in the background, and a later edit links
+#      through it (sepcomp-first-use; UNSUPPORTED until the default is on).
 #   3. with Go: a hello program on the Go backend, a `use go` program
 #      (bin/xo-gobind), then cmd/xo's whole suite (no -short) with XO_CLI
 #      = the archive's bin/xo, no XO_STD (the switch point B gate; since
@@ -181,6 +184,28 @@ done
     "$out/civil/civil" > "$out/civil/got.txt" 2>&1
     if cmp -s "$out/civil/got.txt" "$out/civil/want.txt"; then pass native-$nb-civil-output
     else fail native-$nb-civil-output; diff "$out/civil/got.txt" "$out/civil/want.txt" | head -5 | sed 's/^/  /'; fi
+  fi
+  # decision 0388's first use (lead, 2026-10-28): the release ships no std
+  # stores, so a user's first build goes whole program and starts std's
+  # variant in the background (stdcache.xo std_variant_peek); a later
+  # build links through it. UNSUPPORTED while this xo's default is not
+  # separate compilation (no "std variant" line).
+  sc="$out/sepcomp"; mkdir -p "$sc/p"; cp "$out/hello/main.xo" "$sc/p/main.xo"
+  XO_SEPCOMP_BG=1 XO_BACKEND_CACHE_DIR="$sc/cache" "$xo" build --phase-times -o "$sc/b1" "$sc/p" > "$sc/1.txt" 2>&1
+  if ! grep -q "std variant" "$sc/1.txt"; then
+    echo "UNSUPPORTED sepcomp-first-use (this xo's default is the whole program)"
+  elif ! grep -q "std variant: miss, building in the background" "$sc/1.txt" || [ ! -x "$sc/b1" ]; then
+    fail sepcomp-first-use; grep "std variant\|xo:" "$sc/1.txt" | head -3 | sed 's/^/  /'
+  else
+    hit=0
+    for i in $(seq 1 60); do
+      sleep 2
+      printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the released xo, edit %s")\n}\n' "$i" > "$sc/p/main.xo"
+      XO_SEPCOMP_BG=1 XO_BACKEND_CACHE_DIR="$sc/cache" "$xo" build --phase-times -o "$sc/b2" "$sc/p" > "$sc/2.txt" 2>&1
+      if grep -q "^cache std .* reused" "$sc/2.txt"; then hit=$i; break; fi
+    done
+    if [ "$hit" != 0 ] && "$sc/b2" | grep -q "edit $hit"; then pass "sepcomp-first-use (the variant ready after about $((hit * 2)) s, then an edit linked through it)"
+    else fail sepcomp-first-use; tail -3 "$sc/2.txt" | sed 's/^/  /'; fi
   fi
   # --targets=all: the six binaries a native backend builds
   check native-targets-all "$xo" build --targets=all -o "$out/all/" "$out/hello"

@@ -51,7 +51,7 @@
 #                                                        native --race and its license
 #                                                        (decision 0273; darwin/arm64
 #                                                        and linux/arm64, built first)
-#   xo-<version>-<os>-<arch>/lib/xo/stdstore/            std's prebuilt store and facts
+#   xo-<version>-<os>-<arch>/lib/xo/stdstore/            std's prebuilt store and facts (XO_RELEASE_STDSTORES=1 only)
 #                                                        (decision 0388; darwin/arm64)
 #   xo-<version>-<os>-<arch>/README.md (getting started from scripts/release-readme.md, then the repository README.md), CHANGELOG.md, LICENSE,
 #                                                        THIRD_PARTY_NOTICES (the binaries
@@ -344,7 +344,14 @@ fi
 # release's xo from the staged std into lib/xo/stdstore with the code
 # generation key they belong to, so a user's first separately compiled
 # build skips building them (compiler/xo stdcache.xo std_released)
-if [ "$dry" = 1 ]; then
+# Off by default (2026-10-28): the stores roughly double an archive
+# (about 8.5 MB gzipped per darwin store, 11.3 per linux store, two
+# variants each), and a user's first build makes them in the background
+# instead (stdcache.xo std_variant_peek), going whole program meanwhile.
+# XO_RELEASE_STDSTORES=1 ships them.
+if [ "${XO_RELEASE_STDSTORES:-0}" != 1 ]; then
+	echo "+ lib/xo/stdstore: not shipped (XO_RELEASE_STDSTORES=1 ships them)" >&2
+elif [ "$dry" = 1 ]; then
 	echo "+ lib/xo/stdstore/{darwin,linux}-arm64-conc{0,1}.{store,stdf,id}: $xo1 dev stdcache --target=darwin/arm64|linux/arm64 --conc=0|1" >&2
 else
 	codegen=""

@@ -601,3 +601,18 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   with its process, so a builder that died blocks nothing), and std/.bg-info says what it
   builds for `xo dev stdcache`. XO_SEPCOMP_BG=0 turns it off (internal/xotool sets it for the Go
   tests, heavy.sh for agents' runs); none on windows yet (no detached child there, as prune_bins).
+
+- Releases ship no std stores (Lead, 2026-10-28; release.sh's step behind
+  XO_RELEASE_STDSTORES=1, off). Measured gzip -9 per variant: darwin/arm64 store 8.5 MB
+  (30.0 raw), linux/arm64 11.3 MB (50.0 raw), facts 0.27 MB each; both variants would
+  roughly double a 16 to 20 MB archive (linux more than double). With std_variant_peek a
+  user's first build goes whole program while the variant builds in the background (7 to
+  10 s cold), so no build waits on it. What a store holds (its part objects, before the
+  store's own tables of about 8.5 MB darwin, 19 MB linux): darwin DWARF 9.8 MB (46%),
+  symbols and relocations 5.5 (26%), code 4.8 (22%); linux symbols and relocations 14.4
+  (47%, RELA with addends), DWARF 10.1 (33%), code 4.9 (16%). Size levers if instant first
+  edits are wanted later: (a) a shipped store without DWARF, std's debug information built
+  in the background (-46% darwin, -33% linux); (b) a compact relocation record (ELF's are
+  20 bytes, most fit in 8: about -15 to 20% linux). release-verify.sh's sepcomp-first-use
+  checks the path users take: the first build whole program and the variant started, a
+  later edit through it.
