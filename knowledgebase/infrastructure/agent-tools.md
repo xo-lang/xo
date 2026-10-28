@@ -579,6 +579,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- `xo bench --ab` with no --max-load counts a round as loaded when a side
+  starts at the load sampled before the first round plus 3 (at least 6);
+  the load line prints that baseline (2026-10-28,
+  gotchas/bench-fixed-load-limit.md).
+
 - `xo vet --cost --cost-std DIR` notes the cost patterns (XO0907 to
   XO0914) in the std code program DIR reaches; cmd/xo TestVetCostStd runs
   it over bench/perf and keeps std free of new XO0913 and XO0914 notes

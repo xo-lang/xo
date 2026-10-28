@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo bench --ab` without --max-load counts a round as loaded from the
+  load before its first round plus 3 (at least 6), not a fixed 6, and
+  prints that baseline in its load line: an idle machine at 4.4 to 5 lost
+  most rounds of multi-threaded workloads.
 - `xo vet --cost` notes a Str or Bytes slice in a loop read only by index,
   length or equality (XO0913) and a small List made and only read every
   iteration (XO0914); a repo test keeps std free of new ones

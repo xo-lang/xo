@@ -143,6 +143,26 @@ test "a round started at load 6 or more is loaded with no --max-load" {
   expect(started_loaded(m, 20.0)) == false
 }
 
+test "the loaded limit is the baseline plus the margin, never under 6" {
+  var o = match parse_opts(["--ab", "a", "b"]) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  // an idle Mac at 4.6: a round loaded only from 7.6
+  o.base_load = 4.6
+  expect(started_loaded(o, 6.5)) == false
+  expect(started_loaded(o, 7.6)) == true
+  // a quiet machine keeps the old floor
+  o.base_load = 1.0
+  expect(started_loaded(o, 5.9)) == false
+  expect(started_loaded(o, 6.0)) == true
+  let s = Sample{vals: {}, ok: true, why: ""}
+  o.base_load = 4.6
+  let n = load_note(o, [Round{a: s, b: s, load_a: 5.0, load_b: 6.8, a_first: true, loaded: false}])
+  expect(n.contains("loaded: 0 of 1 rounds")) == true
+  expect(n.contains("baseline 4.6 + 3")) == true
+}
+
 test "the load note counts loaded rounds and warns at a busy median" {
   let o = match parse_opts(["--ab", "a", "b"]) {
     Ok(x) => x

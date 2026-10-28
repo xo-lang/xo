@@ -32,6 +32,9 @@ struct Opts {
   args_b: List[Str] = []
   common: List[Str] = []
   max_load: Float = 0.0
+  /// the 1 minute load before the first round (0: not taken), which
+  /// the loaded limit is relative to (load_limit)
+  base_load: Float = 0.0
   load_wait: Duration = Duration.from_secs_int(600)
   guard: Str = ""
   no_guard: Bool = false
@@ -212,28 +215,44 @@ fn window_open(os: Os) -> Bool uses (clock, env, fs.read) {
   }
 }
 
-/// The 1 minute load at or above which a round is loaded when no
-/// --max-load is given (it is then left out unless --keep-loaded; the
-/// guard does not wait for it): the idle Claude sessions hold the Mac near
-/// 2 (lead, 2026-10-26: a run at a steady load of 20 reported "0 loaded",
-/// since without --max-load no round ever was).
+/// The least 1 minute load at which a round is loaded when no --max-load
+/// is given (it is then left out unless --keep-loaded; the guard does not
+/// wait for it) (lead, 2026-10-26: a run at a steady load of 20 reported
+/// "0 loaded", since without --max-load no round ever was).
 const WARN_LOAD = 6.0
+
+/// How far over the load before the first round a round may start and
+/// still count: the limit is relative, since the idle Mac's load moves
+/// with the sessions on it (2026-10-28: idle at 4.4 to 5, a multi-threaded
+/// workload put nearly every round over a fixed 6, and an A/B lost 18 of
+/// its 20 workloads; gotchas/bench-fixed-load-limit.md).
+const LOAD_MARGIN = 3.0
+
+/// The load at or above which a round is loaded: --max-load when given,
+/// else the baseline plus LOAD_MARGIN, never under WARN_LOAD.
+fn load_limit(o: Opts) -> Float {
+  if o.max_load > 0.0 {
+    return o.max_load
+  }
+  let rel = o.base_load + LOAD_MARGIN
+  if rel > WARN_LOAD { rel } else { WARN_LOAD }
+}
 
 /// Whether a side that starts at 1 minute load ld makes its round loaded
 /// without the guard having waited: only with no --max-load (with one,
 /// wait_ok waits, and a round it gave up on is loaded).
 fn started_loaded(o: Opts, ld: Float) -> Bool {
-  o.max_load == 0.0 && ld >= WARN_LOAD
+  o.max_load == 0.0 && ld >= load_limit(o)
 }
 
 /// The summary's load line: the median load of each side and how many
-/// rounds were loaded (started at or above --max-load, else WARN_LOAD),
-/// with a warning when a median is over the limit; "" with no rounds.
+/// rounds were loaded (started at or above load_limit), with the baseline
+/// it came from and a warning when a median is over it; "" with no rounds.
 fn load_note(o: Opts, rounds: List[Round]) -> Str {
   if rounds.is_empty() {
     return ""
   }
-  let lim = if o.max_load > 0.0 { o.max_load } else { WARN_LOAD }
+  let lim = load_limit(o)
   var la: List[Float] = []
   var lb: List[Float] = []
   var over = 0
@@ -246,7 +265,7 @@ fn load_note(o: Opts, rounds: List[Round]) -> Str {
   }
   let ma = median(la)
   let mb = median(lb)
-  var line = "load: median ${fmt(ma)} (A) / ${fmt(mb)} (B); loaded: ${over} of ${rounds.len()} rounds (at or above ${fmt(lim)})"
+  var line = "load: median ${fmt(ma)} (A) / ${fmt(mb)} (B); loaded: ${over} of ${rounds.len()} rounds (at or above ${fmt(lim)}${if o.max_load == 0.0 { "; baseline ${fmt(o.base_load)} + ${fmt(LOAD_MARGIN)}, at least ${fmt(WARN_LOAD)}" } else { "" }})"
   if ma >= lim || mb >= lim {
     line = "${line}\nwarning: the machine was busy through the run (median load at or above ${fmt(lim)}): wall and cpu ratios are not reliable; measure with HEAVY_CLASS=measure (agent-tools.md Measuring) or --max-load"
   }
@@ -632,22 +651,22 @@ fn inline_fallback(os: Os, prog: Str) -> Str uses fs.read {
 }
 
 pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, proc, stdio) {
-  let o = match parse_opts(args) {
-    Ok(o) => o
+  let o0 = match parse_opts(args) {
+    Ok(x) => x
     Err(e) => {
       os.stdio.eprintln("xo bench: ${e}\n${usage()}")
       return 2
     }
   }
-  let refusal = slot_refusal(os, o)
+  let refusal = slot_refusal(os, o0)
   if !refusal.is_empty() {
     os.stdio.eprintln("xo bench: ${refusal}")
     return 2
   }
-  let pa = o.progs[0]
-  let pb = if o.progs.len() == 2 { o.progs[1] } else { pa }
-  if !o.allow_fallback {
-    for p in o.progs {
+  let pa = o0.progs[0]
+  let pb = if o0.progs.len() == 2 { o0.progs[1] } else { pa }
+  if !o0.allow_fallback {
+    for p in o0.progs {
       let why = inline_fallback(os, p)
       if !why.is_empty() {
         os.stdio.eprintln("xo bench: ${p} was built without inlining (its inlined module did not verify: ${why}), so its numbers are not the program's; fix the build, or pass --allow-fallback")
@@ -655,6 +674,10 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
       }
     }
   }
+  // the load before any round runs: the limit a round is loaded at is
+  // relative to it (load_limit)
+  var o = o0
+  o.base_load = load1(os, h.goos)
   let aa = side_args(o, true)
   let ab = side_args(o, false)
   var rounds: List[Round] = []
