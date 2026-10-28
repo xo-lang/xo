@@ -196,6 +196,11 @@ fn (g: G) end_data(var out: List[Str]) {
   let zh = g.sym("xo_zero_handle")
   out.push("${g.section("data")}${g.hidden_global(el)}\t.p2align 3\n${el}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n\t.quad 0\n" +
     "${g.hidden_global(zh)}\t.p2align 3\n${zh}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n")
+  if g.sched_ref && g.os == "darwin" && !g.x86 {
+    // the published thread local key and offset (tl_base, xo_tlv_slow):
+    // after the placeholders, which stay at the data's start
+    out.push("${g.section("data")}\t.globl _xo_tlv\n\t.p2align 3\n_xo_tlv:\n\t.quad 0\n\t.quad 0\n")
+  }
   if g.words_ref {
     // rt.sys_words (decision 0206 stage 2): 16 words, zero at start
     out.push("${g.section("data")}${g.tramp_def("xo_sys_words")}\t.p2align 3\n${g.tramp("xo_sys_words")}:\n")

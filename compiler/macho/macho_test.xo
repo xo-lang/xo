@@ -509,6 +509,7 @@ const ENCODINGS: List[(Str, Int)] = [
   ("mrs x9, nzcv", 0xd53b4209),
   ("msr nzcv, x9", 0xd51b4209),
   ("mrs x9, tpidr_el0", 0xd53bd049),
+  ("mrs x17, tpidrro_el0", 0xd53bd071),
   ("stlr x9, [x10]", 0xc89ffd49),
   ("cmp x19, w19, sxtw", 0xeb33c27f),
   ("cmp x1, w1, sxth", 0xeb21a03f),
@@ -548,7 +549,7 @@ test "every encoding round trips through Op (decision 0274 step 2)" {
     }
     for x in o.ops {
       if let Operand.Raw(b: r) = x {
-        if !(bstr(r) is "ish" | "ishld" | "nzcv" | "tpidr_el0" | "#0.0" | "b30" | "sxtb" | "sxth" | "sxtw" | "uxtb" | "uxth" | "uxtw") {
+        if !(bstr(r) is "ish" | "ishld" | "nzcv" | "tpidr_el0" | "tpidrro_el0" | "#0.0" | "b30" | "sxtb" | "sxth" | "sxtw" | "uxtb" | "uxth" | "uxtw") {
           raw.push("${ins}: `${bstr(r)}`")
         }
       }

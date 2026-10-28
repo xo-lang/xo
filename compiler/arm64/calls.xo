@@ -2681,7 +2681,14 @@ fn (var g: G) tl_base() -> Int {
     }
   }
   let v = g.new_vreg(false)
-  let i = g.plain("stp x0, x30, [sp, #-16]!\nadrp x0, _xo_tlocal@TLVPPAGE\nldr x0, [x0, _xo_tlocal@TLVPPAGEOFF]\nldr x16, [x0]\nblr x16\nmov x17, x0\nldp x0, x30, [sp], #16\nmov $d0, x17", [v], [])
+  // the fast path of dyld's thunk inline: _xo_tlv holds the thread
+  // local key plus 1 and the variable's offset (xo_tlv_slow publishes
+  // them after checking that the descriptor's thunk is dyld's: eight
+  // known words), the key's slot of the read only thread register's
+  // table is this thread's block unless it is not made yet (0: the slow
+  // path), and only x16 and x17 (the emitter's scratch, so the result
+  // register may be one of them) are written until the last move
+  let i = g.plain("adrp x16, _xo_tlv@PAGE\nadd x16, x16, _xo_tlv@PAGEOFF\nldr x17, [x16]\ncbz x17, 1f\nsub w17, w17, #1\nmrs x16, tpidrro_el0\nand x16, x16, #-8\nldr x17, [x16, x17, lsl #3]\ncbz x17, 1f\nadrp x16, _xo_tlv@PAGE\nadd x16, x16, _xo_tlv@PAGEOFF\nldr x16, [x16]\nlsr x16, x16, #32\nadd x17, x17, x16\nb 2f\n1:\nstp x0, x30, [sp, #-16]!\nbl _xo_tlv_slow\nldp x0, x30, [sp], #16\n2:\nmov $d0, x17", [v], [])
   // not moved, merged, or dropped by a later pass (the base is only valid
   // until the next call)
   g.blocks[g.cur].insts[i].keep = true

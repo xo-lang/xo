@@ -947,6 +947,11 @@ pub fn encode_op_fix(o: Op, elf: Bool) -> Enc {
       if k == RX && sr == "nzcv" {
         return Enc{w: (if o.m == "mrs" { 0xd53b4200 } else { 0xd51b4200 }) | r}
       }
+      // darwin's read only thread register, which the thread local table
+      // lives behind (arm64 calls.xo tl_base)
+      if k == RX && o.m == "mrs" && sr == "tpidrro_el0" {
+        return Enc{w: 0xd53bd060 | r}
+      }
       // the generic timer's virtual count and its frequency, read only
       // (cpu.ticks, cpu.ticks_hz)
       if k == RX && o.m == "mrs" && sr == "cntvct_el0" {

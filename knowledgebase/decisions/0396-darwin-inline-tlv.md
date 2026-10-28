@@ -37,7 +37,14 @@ runtime's `xo_tlocal_get`, `xo_tlocal_set` and `xo_tlocal_addr` assembly functio
 
 Measured (`xo bench --ab`, 20 rounds, baseline xo at the same base against this one): instructions mutex 0.924,
 spawn 0.947, fanout 0.945, ping pong 0.925; wall mutex 0.926 (0.907 to 0.958), spawn 0.964, fanout 0.935
-(0.917 to 0.947). To be added: pmap, the HTTP rows, `__text` size, the fixed point and the codegen gates.
+(0.917 to 0.947), ping pong 0.915 (0.908 to 0.93, a rerun on a quiet machine), pmap 1.000 (instructions) and 1.005
+(wall). HTTP (CRUD, 32 and 128 connections): unchanged within noise (128: 150.4 to 153.1k requests a second before,
+149.2 to 152.3k after). The `xo` binary grew from 113676041 to 113725753 bytes. These rows were taken with the first
+form of the template; the final one reloads the offset from `_xo_tlv` (3 more instructions on the fast path), because
+the emitter's spill scratch registers x16 and x17 can be the result register and the template may not write the result
+before its last move (found by TestGoldenRunSpill with XO_ARM64_REGS=2). `_xo_tlv` is emitted after the immortal
+placeholders (gen.xo end_data), so `_xo_empty_list` stays at page offset 0 (TestEmptyListAtPageStart). Gates: macho and
+arm64 unit tests, 231 codegen patterns, TestGoldenAsm, TestGoldenRun, the spill goldens, the fixed point.
 
 Risks: a macOS whose dyld changed the thunk or the descriptor (guarded by the word check: falls back to the call);
 a program that spawns threads through a path that does not initialize the thread's slot (the slot is empty: the

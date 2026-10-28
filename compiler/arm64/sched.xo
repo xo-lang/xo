@@ -55,6 +55,54 @@ fn sched_fn(os: Str, name: Str, global: Bool, body: List[Str]) -> Str {
   b.join("")
 }
 
+/// dyld's thread local thunk (_tlv_get_addr)'s fast path: the eight words
+/// xo_tlv_slow checks before it publishes the key and offset the inline
+/// reads of arm64 calls.xo tl_base use (ldr w16, [x0, #8]; mrs x17,
+/// tpidrro_el0; and x17, x17, #-8; ldr x17, [x17, x16, lsl #3]; cbz x17;
+/// ldr w16, [x0, #12]; add x0, x17, x16; ret).
+const TLV_THUNK_WORDS = [0xb9400810, 0xd53bd071, 0x927df231, 0xf8707a31, 0xb4000091, 0xb9400c10, 0x8b100220, 0xd65f03c0]
+
+/// xo_tlv_slow (darwin): the table's address of this thread in x17, for a
+/// thread local read whose inline fast path found no key published (_xo_tlv
+/// 0) or no block yet (the thread's first). It calls the descriptor's
+/// thunk, which makes the block and the descriptor's key and offset, then
+/// publishes key + 1 and the offset in the one word _xo_tlv unless
+/// the thunk is not dyld's known one (the word after it, set, then keeps
+/// every read on the call). Keeps every register but x0, x16 and x17 (the
+/// flags too: it saves them); the site saves x0 and x30.
+fn tlv_slow_body() -> List[Str] {
+  var t = ["str x30, [sp, #-16]!", "stp x1, x2, [sp, #-16]!", "stp x3, x4, [sp, #-16]!", "mrs x4, nzcv",
+    "adrp x0, _xo_tlocal@TLVPPAGE", "ldr x0, [x0, _xo_tlocal@TLVPPAGEOFF]", "mov x1, x0", "ldr x17, [x0]", "blr x17",
+    "adrp x2, _xo_tlv@PAGE", "add x2, x2, _xo_tlv@PAGEOFF", "ldr x3, [x2]", "cbnz x3, 3f", "ldr x3, [x2, #8]", "cbnz x3, 3f",
+    "ldr x16, [x1]"]
+  var i = 0
+  for w in TLV_THUNK_WORDS {
+    t.push("ldr w3, [x16, #${i * 4}]")
+    t.push("mov w17, #${w & 0xffff}")
+    t.push("movk w17, #${w >> 16}, lsl #16")
+    t.push("cmp w3, w17")
+    t.push("b.ne 2f")
+    i += 1
+  }
+  t.push("ldr w3, [x1, #8]")
+  t.push("ldr w17, [x1, #12]")
+  t.push("add w3, w3, #1")
+  t.push("orr x3, x3, x17, lsl #32")
+  t.push("str x3, [x2]")
+  t.push("b 3f")
+  t.push("2:")
+  t.push("mov x3, #1")
+  t.push("str x3, [x2, #8]")
+  t.push("3:")
+  t.push("mov x17, x0")
+  t.push("msr nzcv, x4")
+  t.push("ldp x3, x4, [sp], #16")
+  t.push("ldp x1, x2, [sp], #16")
+  t.push("ldr x30, [sp], #16")
+  t.push("ret")
+  t
+}
+
 /// The text of the functions and the thread local table on os; with
 /// split (a split generation, generate_parallel) the fiber entry is a
 /// hidden global symbol, which the other files reach.
@@ -82,6 +130,8 @@ fn sched_asm(os: Str, split: Bool) -> Str {
     b.push(sched_fn(os, "xo_tlocal_get", true, ["mov x9, x0"] + tlv + ["ldr x0, [x0, x9, lsl #3]", "ret x10"]))
     b.push(sched_fn(os, "xo_tlocal_set", true, ["mov x9, x0", "mov x11, x1"] + tlv + ["str x11, [x0, x9, lsl #3]", "ret x10"]))
     b.push(sched_fn(os, "xo_tlocal_addr", true, tlv + ["ret x10"]))
+    b.push(sched_fn(os, "xo_tlv_slow", true, tlv_slow_body()))
+    b.push("\t.section __TEXT,__text,regular,pure_instructions\n")
     b.push("\t.section __DATA,__thread_data,thread_local_regular\n\t.p2align 3\n_xo_tlocal_init:\n")
     b.push("\t.quad 0\n".repeat(16))
     b.push("\t.section __DATA,__thread_vars,thread_local_variables\n\t.globl _xo_tlocal\n\t.p2align 3\n_xo_tlocal:\n")
