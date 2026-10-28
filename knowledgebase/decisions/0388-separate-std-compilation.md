@@ -551,7 +551,11 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   MB store, 1.8 MB facts, 53 s cold). llvm-fib built against it prints the
   whole program's output under Wine; the HTTP server links. Normal builds
   unchanged (identity: 153 programs of windows, linux and darwin amd64, 0
-  differing; docker amd64 sample 48 of 48). Edit timings next.
+  differing; docker amd64 sample 48 of 48). Edit timings (cross-built on the
+  Mac, quiet measure window, 8 interleaved runs each, mean ms, whole against
+  XO_SEPCOMP): llvm-fib 292 to 170 (link 15 to 63), the HTTP server 628 to
+  348 (ssa 95 to 30, assemble 49 to 24, link 46 to 126); the store link is
+  separate builds' largest phase.
   Test: internal/arm64 TestSepcompLinksWindows.
 
 ## Alternatives
