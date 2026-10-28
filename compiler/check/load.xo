@@ -51,6 +51,13 @@ pub struct Checker {
   /// the entry's records when the driver loaded std's modules from them
   /// (load_std_record), so run installs them without decoding again
   pub std_record: Option[StdExport] = None
+  /// stage 2 pieces 3 and 4: std's trees joined only where needed (the
+  /// driver sets it for a separately compiled build, whose SSA lowers no
+  /// std body): install_std leaves an object of an unparsed file without
+  /// its trees and keeps their counts here (object to (counts, owner
+  /// object or -1)); need_tree joins one on demand
+  pub trees_lazy: Bool = false
+  pub tree_pending: Map[Int, (List[Int], Int)] = {}
   pub std_export_out: Bytes = b""
   pub std_export_used: Bool = false
   /// XO_STD_EXPORT=verify: std declared as usual and its records, when

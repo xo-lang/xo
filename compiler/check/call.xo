@@ -1350,7 +1350,15 @@ fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, 
   }
   var missing: List[Str] = []
   for (i, p) in params.indexed() {
-    if assigned[i] < 0 && p.default.is_empty() {
+    if assigned[i] < 0 {
+      // the default's presence: the callee's trees joined now if std's
+      // record left them pending (trees_lazy)
+      if ref_fo >= 0 {
+        c.need_tree(ref_fo)
+      }
+    }
+    let has_default = if assigned[i] >= 0 { true } else if ref_fo >= 0 && i < c.objs[ref_fo].params.len() { !c.objs[ref_fo].params[i].default.is_empty() } else { !p.default.is_empty() }
+    if assigned[i] < 0 && !has_default {
       missing.push(text(p.name))
     }
   }

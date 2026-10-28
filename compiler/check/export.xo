@@ -1257,12 +1257,31 @@ fn (c: Checker) join_trees(x0: Obj, t: List[Int], owner: Option[Obj]) -> Option[
 pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
   let lo = e.block.obj_lo
   var objs: List[Obj] = []
+  var pending: List[(Int, List[Int], Int)] = []
   for (i, x) in e.objs.indexed() {
+    // an object of a file not parsed (trees_lazy): installed without
+    // its trees, its counts kept for need_tree
+    if c.trees_lazy && x.decl_file >= 0 && x.decl_file < c.files.len() && c.files[x.decl_file].unloaded {
+      var has = false
+      for t in e.trees[i] {
+        if t > 0 {
+          has = true
+        }
+      }
+      if has {
+        pending.push((lo + i, e.trees[i], if x.iface { x.recv } else { -1 }))
+      }
+      objs.push(x)
+      continue
+    }
     let owner = if x.iface && x.recv >= lo && x.recv - lo < e.objs.len() { Some(e.objs[x.recv - lo]) } else { None }
     match c.join_trees(x, e.trees[i], owner) {
       Some(y) => objs.push(y)
       None => return false
     }
+  }
+  for (o, t, recv) in pending {
+    c.tree_pending[o] = (t, recv)
   }
   var fpath: Map[Str, Int] = {}
   for (f, sf) in c.files.indexed() {
@@ -1318,6 +1337,35 @@ pub struct StdHeader {
 }
 
 const ENTRY_VERSION = "xo std entry v2 (header: fingerprint, file and directory stamps)"
+
+/// The trees of object o joined when install_std left them pending
+/// (trees_lazy): its file parsed (ensure_tree), its owner's too, and the
+/// object replaced by its joined self. Nothing for an object with its
+/// trees already.
+pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
+  let (t, recv) = match c.tree_pending.get(o) {
+    Some(p) => p
+    None => return
+  }
+  c.tree_pending.remove(o)
+  let f = c.objs[o].decl_file
+  if f < 0 || f >= c.files.len() {
+    return
+  }
+  c.ensure_tree(c.files[f].module)
+  var owner: Option[Obj] = None
+  if recv >= 0 && recv < c.objs.len() {
+    let rf = c.objs[recv].decl_file
+    if rf >= 0 && rf < c.files.len() {
+      c.ensure_tree(c.files[rf].module)
+    }
+    owner = Some(c.objs[recv])
+  }
+  match c.join_trees(c.objs[o], t, owner) {
+    Some(y) => c.objs[o] = y
+    None => fault("internal: the trees of ${text(c.objs[o].name)} are not where std's record says (${c.files[f].path})")
+  }
+}
 
 /// A cache entry: the header, then the records.
 pub fn encode_std_entry(h: StdHeader, e: StdExport) -> Bytes {
@@ -1384,6 +1432,27 @@ pub fn decode_std_header(d: Bytes) -> Option[(StdHeader, Int)] {
     return None
   }
   Some((h, r.at))
+}
+
+/// The path of the recording run's file id f (file_ids), None when it
+/// is not a std file of the record.
+pub fn (e: StdExport) file_index(f: Int) -> Option[Str] {
+  for (i, p) in e.file_ids {
+    if i == f {
+      return Some(p)
+    }
+  }
+  None
+}
+
+/// The index of the file at path p, None when the checker has none.
+pub fn (c: Checker) file_by_path(p: Str) -> Option[Int] {
+  for (i, sf) in c.files.indexed() {
+    if sf.path == p {
+      return Some(i)
+    }
+  }
+  None
 }
 
 /// The records of entry d when its fingerprint is fp (the loader's,

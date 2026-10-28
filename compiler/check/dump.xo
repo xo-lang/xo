@@ -22,12 +22,38 @@ fn (var c: Checker) run() -> () ! Str {
   }
   let at = StdBlock{obj_lo: c.objs.len(), ty_lo: c.tys.len(), eset_lo: c.esets.len(), evar_lo: c.evars.len()}
   var fp = ""
-  // stage 2 piece 1: modules made from the record have no trees yet;
-  // install_std joins every recorded object's trees (its declaration,
-  // defaults), so they are read now (pieces 3 and 4 narrow this to what
-  // the check and the rest of the build ask for)
-  for m in std_mods {
-    c.ensure_tree(m)
+  // stage 2 piece 1: modules made from the record have no trees yet.
+  // install_std joins each recorded object's trees (its declaration,
+  // defaults) from its file's parse: every file for a whole-program
+  // build (its SSA lowers std bodies); for a separately compiled build
+  // (trees_lazy, pieces 3 and 4) only the files holding a generic object
+  // now (the SSA builder instantiates std generics transitively, inside
+  // bodies the check never visits, so those trees must be there before
+  // it runs), the rest on demand (need_tree: a constant's initializer,
+  // a default's presence, a lazy body)
+  if c.trees_lazy && c.std_record != None && !c.std_export_verify {
+    if let Some(e) = c.std_record {
+      for x in e.objs {
+        if x.decl_file >= 0 {
+          var generic = !x.tparams.is_empty()
+          if !generic && x.recv >= 0 {
+            let ri = x.recv - e.block.obj_lo
+            generic = ri >= 0 && ri < e.objs.len() && !e.objs[ri].tparams.is_empty()
+          }
+          if generic {
+            if let Some(f) = e.file_index(x.decl_file) {
+              if let Some(fi) = c.file_by_path(f) {
+                c.ensure_tree(c.files[fi].module)
+              }
+            }
+          }
+        }
+      }
+    }
+  } else {
+    for m in std_mods {
+      c.ensure_tree(m)
+    }
   }
   if c.std_export_on {
     // piece 2: the entry's own fingerprint when its stamps held (no std

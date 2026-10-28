@@ -1842,6 +1842,14 @@ fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldI
   }
   var missing: List[Str] = []
   for fo in c.objs[obj].fields {
+    if !seen.contains(fo.name) {
+      // the default's presence: the type's trees joined now if std's
+      // record left them pending (trees_lazy)
+      c.need_tree(obj)
+      break
+    }
+  }
+  for fo in c.objs[obj].fields {
     if !seen.contains(fo.name) && fo.default.is_empty() {
       missing.push(text(fo.name))
     }

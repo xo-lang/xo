@@ -797,6 +797,9 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // std's facts (stdf, std's object builder's)
   let sp = sepcomp_facts_path(os)
   if !sp.is_empty() {
+    // stage 2 pieces 3 and 4: std's trees joined only where needed (its
+    // SSA lowers no std body)
+    c.trees_lazy = true
     let (f0, f1) = sepcomp_fact_files(os, sp)
     match os.fs.read(f0) {
       Ok(d) => {
