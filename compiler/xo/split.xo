@@ -829,8 +829,12 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
     while ti < todo.len() && running.len() < c.jobs {
       let next = todo[ti]
       ti += 1
-      let args = [c.opt] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", lls[next], "-o", objs[next]]
-      match os.proc.cmd(clang, args).merge_stderr().spawn() {
+      // in the module's directory, by its base name: the bitcode records
+      // its source file's name, which ThinLTO's names of promoted locals
+      // hash, so the build's random directory made two builds of the same
+      // IR differ (gotchas/windows-thinlto-module-path.md)
+      let args = [c.opt] + lto_flags(c.lto) + target + ["-Wno-override-module", "-fexceptions", "-funwind-tables", "-c", base_name(lls[next]), "-o", base_name(objs[next])]
+      match os.proc.cmd(clang, args).dir(dir_name(lls[next])).merge_stderr().spawn() {
         Ok(ch) => running.push((next, ch))
         Err(e) => fails.push("${lls[next]}: ${e}\n")
       }
