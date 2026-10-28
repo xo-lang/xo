@@ -465,3 +465,10 @@ mail, strsplit and jsontwin rows, and was dropped.
 big mul (std/changes/big.md 2026-10-28, "bit_len and trailing_zeros read the key; make trims without a
 copy"): quiet `xo bench --ab`, 15 rounds, the parent's std as A: wall 0.906 (0.892 to 0.917), instructions
 0.927; Xo / Go about 1.17 (estimate: 1.291 x 0.906).
+
+## big mul measured; big text trims (2026-10-28, xo-lang-5)
+
+big mul against Go, measured (the Go twin as A, a7c4d9bc8's std as B): 1.165 (1.134 to 1.19), instructions
+1.443, cycles 1.134: under the bar. big text (std/changes/big.md 2026-10-28, "results are trimmed in place;
+the digit divisors grow in place"): quiet `xo bench --ab`, 15 rounds, the parent's std as A: 0.945 (0.934
+to 0.950), instructions 0.929; Xo / Go about 1.28 (estimate: 1.35 x 0.945), still over.

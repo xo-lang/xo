@@ -1,5 +1,22 @@
 # std/big changes
 
+## 2026-10-28: perf: results are trimmed in place; the digit divisors grow in place
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/big text at about 1.35x Go; its CPU profile (norm's List slice, a copy whenever a result's top word is zero, 9%; divisors trying each larger power of the base as a new product)
+- Go reference: math/big nat.go norm (a reslice, no copy) and natconv.go divisors (mulAddVWW in place while it leaves no carry) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big (go, arm64, LLVM); twincheck's checksums agree on none, mul, quorem, text, parse, exp
+
+The functions that build a result in a list of their own (nat_mul,
+nat_mul_add_ww, nat_div_w, the shifts and the add and subtract) drop its
+zero top words in place (trim), where norm sliced, and so copied, the
+list. divisors multiplies each table entry by the base in place while
+mul_carry says no word carries out, where it made a product per try.
+Output is unchanged. Quiet --ab, 15 rounds, the parent's std as A: text
+wall 0.945 (0.934 to 0.950), instructions 0.929; Xo / Go about 1.28
+(estimate: 1.35 x 0.945); mul, quorem and exp instructions within 0.1%.
+
 ## 2026-10-28: perf: bit_len and trailing_zeros read the key; make trims without a copy
 
 - Kind: perf

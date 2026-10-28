@@ -215,7 +215,8 @@ fn nat_add(x0: List[Int], y0: List[Int]) -> List[Int] {
     c = c2
   }
   z[x.len()] = c
-  norm(z)
+  trim(z)
+  z
 }
 
 /// x - y for x >= y.
@@ -228,7 +229,8 @@ fn nat_sub(x: List[Int], y: List[Int]) -> List[Int] {
     z[i] = d
     b = b2
   }
-  norm(z)
+  trim(z)
+  z
 }
 
 /// Go's karatsubaThreshold: operands of fewer words multiply by rows.
@@ -269,7 +271,7 @@ fn nat_mul(x: List[Int], y: List[Int]) -> List[Int] {
   }
   // per word of x, z[i..] += xi * y (Go's addMulVVW: bigmod.mac_row, the
   // RSA code's row, unrolled by 4); its carry is z[i + len(y)], still 0
-  let z = raw.zero_ints(x.len() + y.len())
+  var z = raw.zero_ints(x.len() + y.len())
   let pz = bigmod.addr(z)
   let py = bigmod.addr(y)
   let n = y.len()
@@ -282,7 +284,8 @@ fn nat_mul(x: List[Int], y: List[Int]) -> List[Int] {
     rt.mem_store(row, 8 * n, bigmod.mac_row(row, py, xi, n), 8)
   }
   bigmod.keep(y)
-  norm(z)
+  trim(z)
+  z
 }
 
 /// x * w + a.
@@ -297,7 +300,8 @@ fn nat_mul_add_ww(x: List[Int], w: Int, a: Int) -> List[Int] {
     c = hi.wrapping_add(c1)
   }
   z[x.len()] = c
-  norm(z)
+  trim(z)
+  z
 }
 
 /// x / w and x % w for a word w != 0.
@@ -312,7 +316,8 @@ fn nat_div_w(x: List[Int], w: Int) -> (List[Int], Int) {
     r = ri
     i -= 1
   }
-  (norm(q), r)
+  trim(q)
+  (q, r)
 }
 
 /// x / w in place (its length kept, the top limbs zero) and the
@@ -331,6 +336,18 @@ fn nat_div_w_in(var x: List[Int], n: Int, w: Int, m: Int) -> Int {
 
 /// z * w + a in place (Go's mulAddWW): the carry out of the top limb
 /// is pushed as a new limb.
+/// The word x * w carries out of x's top limb, with nothing stored.
+fn mul_carry(x: List[Int], w: Int) -> Int {
+  var c = 0
+  for i in 0..x.len() {
+    let lo = x[i].wrapping_mul(w)
+    let hi = x[i].mul_hi_unsigned(w)
+    let (_s, c1) = add_ww(lo, c, 0)
+    c = hi.wrapping_add(c1)
+  }
+  c
+}
+
 fn nat_mul_add_in(var z: List[Int], w: Int, a: Int) {
   var c = a
   for i in 0..z.len() {
@@ -356,7 +373,8 @@ fn nat_shl(x: List[Int], s: Int) -> List[Int] {
     for i in 0..x.len() {
       z[i + words] = x[i]
     }
-    return norm(z)
+    trim(z)
+    return z
   }
   var carry = 0
   for i in 0..x.len() {
@@ -364,7 +382,8 @@ fn nat_shl(x: List[Int], s: Int) -> List[Int] {
     carry = x[i].shr_logical(64 - bits)
   }
   z[x.len() + words] = carry
-  norm(z)
+  trim(z)
+  z
 }
 
 fn nat_shr(x: List[Int], s: Int) -> List[Int] {
@@ -384,7 +403,8 @@ fn nat_shr(x: List[Int], s: Int) -> List[Int] {
       z[i] = lo.shr_logical(bits) | hi.wrapping_shl(64 - bits)
     }
   }
-  norm(z)
+  trim(z)
+  z
 }
 
 fn nat_bit_len(x: List[Int]) -> Int {
@@ -430,7 +450,8 @@ fn nat_low(x: List[Int], k: Int) -> List[Int] {
     let one = 1
     z[words] = x[words] & one.wrapping_shl(bits).wrapping_sub(1)
   }
-  norm(z)
+  trim(z)
+  z
 }
 
 /// Burnikel-Ziegler's 2n-by-n step (as CPython's _div2n1n): a / b and
@@ -1128,12 +1149,10 @@ fn divisors(m: Int, base: Int, nd: Int, bb: Int) -> List[Divisor] {
       bbb = nat_mul(prev.bbb, prev.bbb)
       d = 2 * prev.nd
     }
-    while {
-      let larger = nat_mul_add_ww(bbb, base, 0)
-      if larger.len() != bbb.len() {
-        break
-      }
-      bbb = larger
+    // multiplied by base in place while that leaves no carry out (Go's
+    // "aggregated extra bits" loop), where each try allocated a product
+    while mul_carry(bbb, base) == 0 {
+      nat_mul_add_in(bbb, base, 0)
       d += 1
     }
     table.push(Divisor{bbb: bbb, nbits: nat_bit_len(bbb), nd: d})
