@@ -1,0 +1,241 @@
+// Threaded dispatch (2026-10-28, the interp placement item): a loop whose
+// header runs, through a few plain blocks, into a jump table (K_SWITCH,
+// jumptab.xo) and whose arms jump back through one latch dispatches a
+// whole program's worth of tags through one `br`, whose indirect
+// predictor must learn the tag sequence from that one address and its
+// history: interp's 16 op cycle ran 63 to 74 ms by where the `br` landed
+// (notes xo-lang-6). The latch, the header and the dispatch blocks are
+// copied into each arm (tail_dup's copy, carried on through the switch),
+// so each arm ends in its own table branch, which predicts only that
+// arm's successors.
+
+/// The most instructions copied into one arm (the latch, the header and
+/// the dispatch blocks, their terminators not counted).
+const THREAD_SW_MAX = 24
+
+/// The most arms a dispatch is copied into.
+const THREAD_SW_ARMS = 16
+
+/// Whether block b may be copied whole: plain instructions and parallel
+/// moves (a checked one gets its own fault stub per copy, its landing
+/// pad shared: the stub's call site names it, emit.xo) before a jump, a
+/// conditional branch or a switch. A call, a poll or a frame access
+/// keeps the block where it is.
+fn (g: G) dup_block_ok(b: Int) -> Bool {
+  let ins = g.blocks[b].insts
+  let n = ins.len()
+  if n == 0 {
+    return false
+  }
+  let t = ins[n - 1]
+  if !(t.kind == K_SWITCH || t.kind == K_CONDBR || t.kind == K_JUMP) {
+    return false
+  }
+  for k in 0..n - 1 {
+    let inst = ins[k]
+    if inst.kind == K_PMOVE {
+      continue
+    }
+    if inst.kind == K_PLAIN && !inst.poll && !inst.frame {
+      continue
+    }
+    return false
+  }
+  true
+}
+
+/// The blocks from b to the switch its branches lead to within depth
+/// blocks of the loop body, each copyable, or none: a jump follows its
+/// target, a conditional branch the one of its targets that leads there
+/// (the other, an arm or an exit, stays shared). A branch back to the
+/// loop's header h (an arm, through the latch) is not a way there.
+fn (g: G) switch_path(b: Int, h: Int, body: List[Bool], depth: Int) -> List[Int] {
+  if !body[b] || !g.dup_block_ok(b) {
+    return []
+  }
+  let n = g.blocks[b].insts.len()
+  let t = g.blocks[b].insts[n - 1]
+  if t.kind == K_SWITCH {
+    return [b]
+  }
+  if depth == 0 {
+    return []
+  }
+  var found: List[Int] = []
+  let outs = if t.kind == K_JUMP { [t.targets[0]] } else { t.targets }
+  for x in outs {
+    if x == b || x == h {
+      continue
+    }
+    let p = g.switch_path(x, h, body, depth - 1)
+    if !p.is_empty() {
+      if !found.is_empty() {
+        // two ways to a switch: not a dispatch path
+        return []
+      }
+      found = p
+    }
+  }
+  if found.is_empty() {
+    return []
+  }
+  [b] + found
+}
+
+/// Whether block b ends in a jump (its pad, if any, as a second target)
+/// to block t.
+fn (g: G) jumps_to(b: Int, t: Int) -> Bool {
+  let n = g.blocks[b].insts.len()
+  n > 0 && g.blocks[b].insts[n - 1].kind == K_JUMP && g.blocks[b].insts[n - 1].targets[0] == t
+}
+
+/// Copies the latch, the header and the dispatch blocks of each loop that
+/// dispatches through a jump table into every arm that jumps back to it.
+/// The loops are those found before any copy (a copy's blocks make
+/// cycles with no header of their own, which are never threaded again),
+/// the predecessors are read again after each loop's copies.
+fn (var g: G) thread_switch() {
+  if g.hot.is_empty() {
+    return
+  }
+  var changed = false
+  var preds = g.mpreds_all(g.all_blocks())
+  let loops = g.dfs_loops(g.hot[0], preds)
+  for (h, body) in loops {
+    let path = g.switch_path(h, h, body, 4)
+    if path.is_empty() {
+      continue
+    }
+    // the latch: the one body block that jumps to the header, and the
+    // chain of blocks each the only body predecessor of the next (a
+    // parallel move block, the counter's increment), all copyable; the
+    // arms: the body blocks that jump to the chain's first block
+    var lp = -1
+    var bad = false
+    for p in preds[h] {
+      if p >= body.len() || !body[p] || p == h {
+        continue
+      }
+      if lp >= 0 || !g.jumps_to(p, h) {
+        bad = true
+        break
+      }
+      lp = p
+    }
+    if bad || lp < 0 {
+      continue
+    }
+    // the chain, last block first
+    var chain = [lp]
+    var head = lp
+    while chain.len() < 4 {
+      if !g.dup_block_ok(head) || path.contains(head) {
+        bad = true
+        break
+      }
+      var ps: List[Int] = []
+      for q in preds[head] {
+        if q < body.len() && body[q] && q != head && g.jumps_to(q, head) {
+          ps.push(q)
+        } else if q < body.len() && body[q] && q != head {
+          // a conditional branch into the chain: it stays shared
+          ps.push(-1)
+        }
+      }
+      if ps.len() == 1 && ps[0] >= 0 && g.blocks[head].insts.len() == 1 {
+        // (a block of only a jump never survives thread; kept for form)
+        chain.push(ps[0])
+        head = ps[0]
+        continue
+      }
+      if ps.len() == 1 && ps[0] >= 0 && !path.contains(ps[0]) && g.dup_block_ok(ps[0]) {
+        chain.push(ps[0])
+        head = ps[0]
+        continue
+      }
+      break
+    }
+    if bad {
+      continue
+    }
+    var arms: List[Int] = []
+    for q in preds[head] {
+      if q < body.len() && body[q] && q != head && g.jumps_to(q, head) && !path.contains(q) && !chain.contains(q) {
+        arms.push(q)
+      }
+    }
+    if arms.len() < 2 || arms.len() > THREAD_SW_ARMS {
+      continue
+    }
+    // the copy's size: the chain and the path
+    var size = 0
+    for b in chain {
+      size += g.blocks[b].insts.len() - 1
+    }
+    for b in path {
+      size += g.blocks[b].insts.len() - 1
+    }
+    if size > THREAD_SW_MAX {
+      continue
+    }
+    // the blocks copied, in the order they run: the chain from the arm
+    // up, then the path
+    var srcs: List[Int] = []
+    var ci = chain.len() - 1
+    while ci >= 0 {
+      srcs.push(chain[ci])
+      ci -= 1
+    }
+    for b in path {
+      srcs.push(b)
+    }
+    for a in arms {
+      // the copies, each after the arm in the hot order
+      var copy: Map[Int, Int] = {}
+      var made: List[Int] = []
+      for b in srcs {
+        let nb = g.new_block(false)
+        copy[b] = nb
+        made.push(nb)
+      }
+      for b in srcs {
+        var ins: List[Inst] = []
+        for inst in g.blocks[b].insts {
+          var x = inst
+          if x.kind == K_JUMP || x.kind == K_CONDBR || x.kind == K_SWITCH {
+            var ts: List[Int] = []
+            for t in x.targets {
+              ts.push(copy.get(t) ?? t)
+            }
+            x.targets = ts
+          }
+          ins.push(x)
+        }
+        g.put_insts(copy.get(b) ?? b, ins)
+      }
+      var ai = g.take_insts(a)
+      let na = ai.len()
+      ai[na - 1].targets[0] = copy.get(srcs[0]) ?? h
+      g.put_insts(a, ai)
+      var hot: List[Int] = []
+      for b in g.hot {
+        if made.contains(b) {
+          continue
+        }
+        hot.push(b)
+        if b == a {
+          for nb in made {
+            hot.push(nb)
+          }
+        }
+      }
+      g.hot = hot
+      changed = true
+    }
+    preds = g.mpreds_all(g.all_blocks())
+  }
+  if changed {
+    // the latches and headers nothing reaches any more are dropped
+    g.thread()
+  }
+}

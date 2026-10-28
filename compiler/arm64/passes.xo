@@ -63,6 +63,8 @@ pub fn passes() -> List[Str] {
     "reuse_loads",
     "reuse_flags",
     "tail_dup",
+    // threadsw.xo: a jump table dispatch copied into each arm of its loop
+    "thread_switch",
     "place_latches",
     "mark_tails",
     "cold_saves",

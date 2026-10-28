@@ -79,6 +79,9 @@ fn (var g: G) function(fi: Int) {
     if g.on("tail_dup") {
       g.tail_dup()
     }
+    if g.on("thread_switch") {
+      g.thread_switch()
+    }
     if g.on("place_latches") {
       g.place_latches()
     }
@@ -137,6 +140,9 @@ fn (var g: G) function(fi: Int) {
   }
   if g.on("tail_dup") {
     g.tail_dup()
+  }
+  if g.on("thread_switch") {
+    g.thread_switch()
   }
   if g.on("reuse_flags") {
     g.reuse_flags()
