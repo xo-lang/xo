@@ -565,3 +565,8 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   `xo dev stdobj --target=linux/arm64` and `xo dev stdcache --target=linux/arm64` work on
   linux; release.sh ships the linux/arm64 stores beside darwin's.
 
+- The run cache's recorder (compiler/xo recorder.xo rec_skip) leaves a release's
+  lib/xo/stdstore/ out of a build's recorded reads, as it does the caches: a separately
+  compiled build reads the whole store (about 52 MB), and hashing it for the run cache's
+  entry costs about as much as the link. The run key holds the xo's identity, which fixes
+  the store it shipped.

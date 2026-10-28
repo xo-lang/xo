@@ -37,3 +37,17 @@ test "a file opened is recorded without a hash for the entry to fill" {
   expect(seen.contains("/w/src/b.xo")) == true
   expect(seen.get("/w/src/b.xo") ?? "x") == ""
 }
+
+test "a release's prebuilt std stores are left out of the recorded reads" {
+  let got = Mutex[List[List[Str]]].new([])
+  let code = testing.run_main(fn(o: Os) -> () ! Error {
+    let rel = rec_skip(o, Ctx{goos: "darwin", std: "/opt/xo/lib/xo/std", xo: "/opt/xo/bin/xo", cache: "/c"})
+    let dev = rec_skip(o, Ctx{goos: "darwin", std: "/src/xo/std", xo: "/src/xo/bin/xo", cache: "/c"})
+    got.with(fn(var g) { g.push(rel); g.push(dev) })
+  }, os)
+  expect(code) == 0
+  let g = got.with(fn(x) { x })
+  // the 52 MB store was hashed on every edit build otherwise
+  expect(g[0].contains("/opt/xo/lib/xo/stdstore/")) == true
+  expect(g[1].filter(fn(p) { p.ends_with("/stdstore/") }).len()) == 0
+}
