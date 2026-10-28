@@ -3403,7 +3403,7 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	}
 	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out", "prog"), "."))
 	cmd.Dir = src
-	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_PDB_OBJ_CHECK=1")
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_PDB_OBJ_CHECK=1")
 	log, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("xo build: %v\n%s", err, log)
@@ -3416,7 +3416,7 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	// layout (macho merge_facts, pe_pdb_facts) is the image's, byte for byte
 	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out2", "prog"), "."))
 	cmd.Dir = src
-	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_PDB_OBJ_CHECK=2")
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_PDB_OBJ_CHECK=2")
 	log, err = cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("xo build: %v\n%s", err, log)
@@ -3428,7 +3428,7 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	// object (macho obj_pdb, pre_procs): the same PDB
 	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out3", "prog"), "."))
 	cmd.Dir = src
-	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_PDB_OBJ_CHECK=3")
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_PDB_OBJ_CHECK=3")
 	log, err = cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("xo build: %v\n%s", err, log)
@@ -3443,7 +3443,7 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	}
 	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out4", "prog"), "."))
 	cmd.Dir = src
-	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_PDB_OBJ=0")
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BACKEND_CACHE=on", "XO_PDB_OBJ=0")
 	if log, err = cmd.CombinedOutput(); err != nil {
 		t.Fatalf("xo build: %v\n%s", err, log)
 	}
@@ -3500,7 +3500,7 @@ func TestWindowsPDBPartKeys(t *testing.T) {
 		args = append(args, "-o", filepath.Join(work, "o", "prog"), ".")
 		cmd := testtmp.Guard(exec.Command(xo, args...))
 		cmd.Dir = src
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+cache, "XO_BACKEND_CACHE=on"), env...)
 		if log, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("xo build %v: %v\n%s", flags, err, log)
 		}
