@@ -705,3 +705,12 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   std's conc1 variant, as a whole program is. Tests: TestSepcompLinks's second program
   (debug.router with a function constant, concurrent), TestStdCodeEnvListed, ssa
   stdfacts_test's round trip.
+- A separately compiled program's debug information is a whole program's (Lang 1's flip
+  gate, 2026-10-28, TestDebugLineDarwin): the store link joined std's compile units first
+  (object order; a reader of the first unit took std's DW_AT_comp_dir "."), and -s or
+  --debug-info=off still embedded std's DWARF and wrote a dSYM, which the program's own
+  build had left out. compiler/macho dsym.xo dwarf_write joins the units of objects linked
+  whole before the atoms mode ones (a normal build has none, so its order is unchanged);
+  ld.xo macho_link turns DWARF off under -s and sets LinkOpts.program_dwarf for a
+  separately compiled link, with which store_prepare drops std's DWARF when no program
+  object carries any. Test: internal/arm64 TestSepcompDebugInfo.

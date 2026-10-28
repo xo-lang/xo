@@ -515,6 +515,16 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     nameds.push(named)
   }
   l.objs = l.objs + prog
+  if opts.program_dwarf {
+    var dw = false
+    for o in n..l.objs.len() {
+      dw = dw || l.xo_dwarf(o)
+    }
+    if !dw {
+      l.opts.embed_dwarf = false
+      l.opts.dsym = false
+    }
+  }
   let kind = fn(typ: Int) -> SymKind {
     if (typ & N_STAB) != 0 {
       SymKind.Stab

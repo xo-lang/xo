@@ -75,6 +75,10 @@ pub struct LinkOpts {
   pub embed_dwarf: Bool = true
   /// link_debug also gives the dSYM's DWARF file (`--dsym`)
   pub dsym: Bool = false
+  /// A separately compiled program's link through std's store (decision
+  /// 0388): the debug information follows the program's own objects, so
+  /// when they carry none (-s, --debug-info=off) std's is left out too
+  pub program_dwarf: Bool = false
 }
 
 /// An input file: its path (for messages) and contents.

@@ -101,11 +101,26 @@ fn (var l: Linker) dwarf_write(var out: BytesBuilder) -> List[Int] {
   var parts: List[List[(Int, Int)]] = []
   var at: List[Map[Int, Int]] = []
   var any = false
+  // the objects linked whole before the atoms mode ones (std's store or
+  // parts): a separately compiled program's own compile unit is the
+  // first, as a whole program's is (its DW_AT_comp_dir is what a reader
+  // of the first unit takes; std's is "."); a normal build has none
+  var order: List[Int] = []
+  for o in 0..l.objs.len() {
+    if !l.objs[o].subsections {
+      order.push(o)
+    }
+  }
+  for o in 0..l.objs.len() {
+    if l.objs[o].subsections {
+      order.push(o)
+    }
+  }
   for nm in names {
     var ps: List[(Int, Int)] = []
     var offs: Map[Int, Int] = {}
     var n = 0
-    for o in 0..l.objs.len() {
+    for o in order {
       if !l.objs[o].live || !l.xo_dwarf(o) {
         continue
       }

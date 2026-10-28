@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -315,5 +316,80 @@ func TestSepcompSharedMade(t *testing.T) {
 		if out, err := run.CombinedOutput(); err != nil {
 			t.Fatalf("%s: not the golden's output: %v\n%s", g, err, out)
 		}
+	}
+}
+
+// TestSepcompDebugInfo (decision 0388): a separately compiled program's
+// debug information is a whole program's. Its first compile unit is its
+// own (DW_AT_comp_dir the module's directory with --trimpath=off, as
+// TestDebugLineDarwin wants: the store's std units came first, with
+// "."), and -s or --debug-info=off leaves none, embedded or in a dSYM
+// (std's store carries DWARF the program's own build left out).
+func TestSepcompDebugInfo(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds std's variants and programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-sepdbg-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
+	paths, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("xo dev stdcache: %v", err)
+	}
+	lines := strings.Fields(string(paths))
+	if len(lines) != 2 {
+		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
+	}
+	prog := filepath.Join(work, "prog")
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"debug\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	build := func(out string, flags ...string) string {
+		t.Helper()
+		bin := filepath.Join(work, out)
+		b := testtmp.Guard(exec.Command(xo, append(append([]string{"build", "--backend=arm64"}, flags...), "-o", bin, ".")...))
+		b.Dir = prog
+		b.Env = append(os.Environ(), "XO_SEPCOMP=1", "XO_SEPCOMP_FACTS="+lines[1], "XO_SEPCOMP_STORE="+lines[0], "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-"+out))
+		if log, err := b.CombinedOutput(); err != nil {
+			t.Fatalf("xo build %s: %v\n%s", strings.Join(flags, " "), err, log)
+		}
+		return bin
+	}
+	ci, err := exec.Command("dwarfdump", "--debug-info", build("full", "--trimpath=off")).CombinedOutput()
+	if err != nil {
+		t.Fatalf("dwarfdump: %v\n%s", err, ci)
+	}
+	cd := regexp.MustCompile(`DW_AT_comp_dir\s+\("([^"]*)"\)`).FindSubmatch(ci)
+	want, _ := filepath.EvalSymlinks(prog)
+	if cd == nil {
+		t.Fatalf("no DW_AT_comp_dir in\n%s", ci)
+	}
+	if got, _ := filepath.EvalSymlinks(string(cd[1])); got != want {
+		t.Errorf("the first unit's DW_AT_comp_dir is %s, want the program's %s", cd[1], prog)
+	}
+	// --debug-info=off: the program compiles none, and std's is left out
+	if segs, _ := exec.Command("otool", "-l", build("off", "--debug-info=off")).CombinedOutput(); strings.Contains(string(segs), "segname __DWARF") {
+		t.Errorf("--debug-info=off left a __DWARF segment")
+	}
+	stripped := build("q", "-s", "--dsym")
+	if _, err := os.Stat(stripped + ".dSYM"); err == nil {
+		t.Errorf("-s wrote %s.dSYM", stripped)
+	}
+	if segs, _ := exec.Command("otool", "-l", stripped).CombinedOutput(); strings.Contains(string(segs), "segname __DWARF") {
+		t.Errorf("-s left a __DWARF segment in %s", stripped)
 	}
 }
