@@ -59,10 +59,18 @@ fn cache_id(os: Os) -> Str {
   if id.is_empty() || sp.is_empty() {
     return id
   }
-  match os.fs.read(sp) {
-    Ok(d) => "${id} sepcomp ${crypto.sha256(d).to_hex()}"
-    Err(_) => id
+  let (f0, f1) = sepcomp_fact_files(os, sp)
+  var h = BytesBuilder.new()
+  for f in [f0, f1] {
+    if !f.is_empty() {
+      match os.fs.read(f) {
+        Ok(d) => h.write(d)
+        Err(_) => return id
+      }
+    }
   }
+  let d = h.freeze()
+  "${id} sepcomp ${crypto.sha256(d).to_hex()}"
 }
 
 /// XO_SEPCOMP_FACTS when XO_SEPCOMP=1, else "".

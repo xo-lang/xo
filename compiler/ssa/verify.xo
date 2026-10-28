@@ -31,6 +31,11 @@ fn (m: Module) long_string(f: Func, v: Int) -> Str {
 
 /// The structural checks of f (verifyFunc).
 fn (var m: Module) verify_func(f: Func) -> List[Str] {
+  // a std extern (decision 0388) has only its signature's entry block;
+  // its body is std's object's
+  if m.externs.contains(f.name) {
+    return []
+  }
   var errs: List[Str] = []
   let pre = "${f.name}: "
   let nb = f.blocks.len()

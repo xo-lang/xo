@@ -91,6 +91,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_STD_STORE_REPEAT":     {"none", ""},                            // times N more store links (a measurement)
 	"XO_SEPCOMP":              {"keyed", "sepcomp ${crypto.sha256(d)"}, // std's functions as externs (decision 0388 stage 3): cache_id holds the facts' hash
 	"XO_SEPCOMP_FACTS":        {"keyed", "sepcomp ${crypto.sha256(d)"},
+	"XO_SEPCOMP_OBJS":         {"link", ""}, // std's object files an XO_SEPCOMP build links (decision 0388 stage 3); the binary key holds their names, sizes and times
 	"XO_FE_CACHE":             {"none", ""},
 	"XO_FE_STATS":             {"none", ""},
 	"XO_LAZY_PARSE":           {"none", ""},

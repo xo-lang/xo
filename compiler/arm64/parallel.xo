@@ -289,7 +289,10 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
   var m = m0
   var plist = part_lists(m)
   let np = plist.len()
-  if np <= 1 {
+  // a separately compiled program (decision 0388) takes the parts' path
+  // even as one part: its entry file leaves std's runtime to std's object
+  // and its parts are in store mode, which generate does not do
+  if np <= 1 && !m.sepcomp_program {
     ssa.force_lazy(m, [], jobs)
     var g = new_gen(m, os)
     return g.generate()

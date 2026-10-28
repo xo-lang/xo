@@ -36,6 +36,10 @@ pub struct Checker {
   /// the SSA builder makes each std function they name an extern
   /// instead of building its body
   pub sepcomp_facts: Bytes = b""
+  /// the facts of std built with concurrency on, for a build whose
+  /// builder turns it on (XO_SEPCOMP_FACTS a directory: conc1.stdf);
+  /// empty when one file serves both
+  pub sepcomp_facts_conc: Bytes = b""
   pub std_export_key: Str = ""
   pub std_export_in: Bytes = b""
   pub std_export_out: Bytes = b""

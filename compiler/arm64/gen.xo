@@ -504,7 +504,9 @@ fn (var g: G) exports() {
     return
   }
   for (fi, f) in g.m.funcs.indexed() {
-    if f.export.is_empty() {
+    // a std extern's export (decision 0388: cabi's _main) is std's
+    // object's, beside its body
+    if f.export.is_empty() || g.m.is_extern(fi) {
       continue
     }
     var b: List[Str] = []

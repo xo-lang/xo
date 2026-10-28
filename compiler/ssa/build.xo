@@ -770,7 +770,10 @@ fn (var b: Builder) run_job(j: Job) {
       if sub.is_empty() && b.c.mods[b.obj_mod(fo)].std_tree {
         if !b.sep_read {
           b.sep_read = true
-          for x in decode_std_facts(b.c.sepcomp_facts) ?? [] {
+          // std's variant for this builder's concurrency (a program that
+          // spawns is built again with it on, build_program_fe)
+          let fb = if b.conc && !b.c.sepcomp_facts_conc.is_empty() { b.c.sepcomp_facts_conc } else { b.c.sepcomp_facts }
+          for x in decode_std_facts(fb) ?? [] {
             b.sep[x.name] = x
           }
         }

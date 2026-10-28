@@ -54,6 +54,7 @@
 use std/crypto
 use std/debug
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/macho
 use github.com/xo-lang/xo/compiler/ssa
 use github.com/xo-lang/xo/compiler/arm64
 use github.com/xo-lang/xo/compiler/llvm
@@ -759,11 +760,20 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   // std's facts (stdf, std's object builder's)
   let sp = sepcomp_facts_path(os)
   if !sp.is_empty() {
-    match os.fs.read(sp) {
+    let (f0, f1) = sepcomp_fact_files(os, sp)
+    match os.fs.read(f0) {
       Ok(d) => {
         c.sepcomp_facts = d
       }
-      Err(e) => fail(os, "XO_SEPCOMP_FACTS=${sp}: ${e}")
+      Err(e) => fail(os, "XO_SEPCOMP_FACTS: ${f0}: ${e}")
+    }
+    if !f1.is_empty() {
+      match os.fs.read(f1) {
+        Ok(d) => {
+          c.sepcomp_facts_conc = d
+        }
+        Err(e) => fail(os, "XO_SEPCOMP_FACTS: ${f1}: ${e}")
+      }
     }
   }
   if !pdir.is_empty() {
@@ -1525,7 +1535,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // bodies are `ud2`; darwin/amd64 on since 2026-10-26, decision 0371),
     // a program whose link has no `use c` objects (they could call an
     // export by name), not `xo asm`; XO_PASSES=-hollow keeps them
-    let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow")
+    // decision 0388 stage 3: std's object, linked with the program's
+    // (XO_SEPCOMP); its functions call the program's main, which a reach
+    // over the program's parts alone cannot see, so no hollowing
+    let (sep_objs, sep_key) = sepcomp_objs(os, b.conc)
+    let hollow_now = (tgoos is "darwin" | "linux") && (march == "arm64" || march == "amd64") && o.cmd != "asm" && !c.mods.any(fn(m) { !m.c_prefix.is_empty() }) && pass_on(os, "hollow") && sepcomp_facts_path(os).is_empty()
     // decision 0388's std store: the parts split into atoms, which the
     // link strips by symbol (every object path below assembles these)
     // (windows/amd64's COFF too: pelink strips by atom, pestrip.xo)
@@ -1555,10 +1569,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // rt.* intrinsic no backend lowers, called directly, would stop the
     // link with no hint of the call
     if tgoos == "darwin" && o.cmd != "asm" && !gm.std_obj {
-      let und = match inc {
+      let und0 = match inc {
         Some(r) => r.undef
         None => arm64.undefined_xo(if p.parts.len() > 1 { p.parts } else { [p.asm] })
       }
+      let und = sepcomp_undefined(os, und0, sep_objs)
       if !und.is_empty() {
         let (sym, at) = und[0]
         let rt = if sym.starts_with("_xo_x_") { "" } else { " (the runtime call rt.${sym.trim_prefix("_xo_")}: no backend lowers it, so call it through its std wrapper)" }
@@ -1771,7 +1786,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
     }
     let bin = bin_path(sdir, out, name, tg, o.many_targets)
-    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time, cur_tu, no_cc, tgoos, march, march, inl_fb)
+    // std's object (decision 0388) reads the zone table whether or not
+    // this program uses time: a separately compiled program always has one
+    let lk = link_inputs(os, ctx, o, c, dir, code, uses_time || !sepcomp_facts_path(os).is_empty(), cur_tu, no_cc, tgoos, march, march, inl_fb)
     let flags = ["-O2"] + lk.flags
     // the program's assembly: one file, or the files of a parallel
     // generation, which assemble apart (arm64.generate_parallel)
@@ -1840,7 +1857,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         continue
       }
     }
-    let srcs = progs + lk.srcs
+    // through std's store (XO_SEPCOMP_STORE, macho_link) std's objects
+    // are not inputs: they stay for the undefined symbol check only
+    let srcs = progs + lk.srcs + (if (os.env.get("XO_SEPCOMP_STORE") ?? "").is_empty() { sep_objs } else { [] })
     if no_cc {
       let nl = nolibc(os, o, c, tgoos)
       var race_rt = ""
@@ -1854,7 +1873,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // --debug-info=split (decision 0355): the DWARF in PROG.debug
       // (linux) or PROG.dSYM (darwin) beside the program, not in it
       let split_dbg = gm.debug_info && debug_info_eff(o, release) == "split"
-      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }), srcs, o.strip, nl, race_rt, o.dsym, release, obj_keys)
+      let mkey = macho_bin_key(os, ctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }) + (if sep_key.is_empty() { [] } else { [sep_key] }), srcs, o.strip, nl, race_rt, o.dsym, release, obj_keys)
       let mst = stage(os, ctx, bin)
       let (mhit, mentry) = fetch_bin(os, ctx, mkey, mst.bin)
       if !mhit {
@@ -2498,6 +2517,7 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   // decision 0388 stage 3: a separately compiled program's side
   // (sepcomp_program, set by XO_SEPCOMP) has its helpers weak and its
   // parts in store mode, as std's object
+  gm.sepcomp_program = !sepcomp_facts_path(os).is_empty()
   gm.weak_shared = gm.std_obj || gm.sepcomp_program
   if gm.sepcomp_program {
     gm.std_store = true
@@ -2651,4 +2671,103 @@ fn hollow_parts(ps: List[Str], march: Str, elf: Bool) -> List[Str] {
 /// their store) to DIR instead of linking; "" for none (darwin/arm64).
 fn std_obj_dir(os: Os) -> Str {
   os.env.get("XO_STD_OBJ") ?? ""
+}
+
+/// std's object files for an XO_SEPCOMP build (decision 0388 stage 3):
+/// the .o files of XO_SEPCOMP_OBJS, in name order, and a key token of
+/// their names, sizes and times for the binary cache; none otherwise.
+fn sepcomp_objs(os: Os, conc: Bool) -> (List[Str], Str) {
+  if sepcomp_facts_path(os).is_empty() {
+    return ([], "")
+  }
+  // through std's store (XO_SEPCOMP_STORE, macho_link reads it): no
+  // object files; the key token is the store's size and time
+  let store = os.env.get("XO_SEPCOMP_STORE") ?? ""
+  if !store.is_empty() {
+    match os.fs.stat(store) {
+      Ok(Some(i)) => return ([], "sepcomp-store ${i.size}:${i.modified}")
+      _ => fail(os, "XO_SEPCOMP_STORE=${store}: not found")
+    }
+  }
+  let dir0 = os.env.get("XO_SEPCOMP_OBJS") ?? ""
+  // a directory of both variants: conc0-std and conc1-std
+  let sub = "${dir0}/${if conc { "conc1-std" } else { "conc0-std" }}"
+  let dir = if os.fs.exists(sub).ok() ?? false { sub } else { dir0 }
+  if dir.is_empty() {
+    fail(os, "XO_SEPCOMP=1 links with std's object: set XO_SEPCOMP_OBJS to the directory of its .o files")
+  }
+  var names: List[Str] = []
+  var info: Map[Str, Str] = {}
+  for fi in os.fs.read_dir(dir).ok() ?? [] {
+    if !fi.is_dir && fi.name.ends_with(".o") {
+      names.push(fi.name)
+      info[fi.name] = "${fi.size}:${fi.modified}"
+    }
+  }
+  if names.is_empty() {
+    fail(os, "XO_SEPCOMP_OBJS=${dir}: no .o file")
+  }
+  var paths: List[Str] = []
+  var key = "sepcomp-objs"
+  for n in names.sort() {
+    paths.push("${dir}/${n}")
+    key = "${key} ${n}=${info.get(n) ?? ""}"
+  }
+  (paths, key)
+}
+
+/// und without the names std's object files define (decision 0388): a
+/// program's call of a std function is an undefined symbol its object
+/// leaves to std's.
+fn sepcomp_undefined(os: Os, und: List[(Str, Str)], objs: List[Str]) -> List[(Str, Str)] {
+  if und.is_empty() {
+    return und
+  }
+  var defs: Set[Str] = #{}
+  let store = if sepcomp_facts_path(os).is_empty() { "" } else { os.env.get("XO_SEPCOMP_STORE") ?? "" }
+  if !store.is_empty() {
+    match os.fs.read(store) {
+      Ok(b) => {
+        match macho.store_defs(b) {
+          Ok(ss) => {
+            for s in ss {
+              defs.add(s)
+            }
+          }
+          Err(e) => fail(os, "XO_SEPCOMP_STORE=${store}: ${e}")
+        }
+      }
+      Err(e) => fail(os, "XO_SEPCOMP_STORE=${store}: ${e}")
+    }
+    return und.filter(fn(u) { !defs.contains(u.0) })
+  }
+  if objs.is_empty() {
+    return und
+  }
+  for p in objs {
+    match os.fs.read(p) {
+      Ok(b) => {
+        match macho.defined_symbols(p, b) {
+          Ok(ss) => {
+            for s in ss {
+              defs.add(s)
+            }
+          }
+          Err(e) => fail(os, "XO_SEPCOMP_OBJS: ${e}")
+        }
+      }
+      Err(e) => fail(os, "XO_SEPCOMP_OBJS: ${p}: ${e}")
+    }
+  }
+  und.filter(fn(u) { !defs.contains(u.0) })
+}
+
+/// XO_SEPCOMP_FACTS's files: a file serves both concurrency variants; a
+/// directory holds conc0.stdf and conc1.stdf, std built with it off and
+/// on (decision 0388: concurrency changes std's facts).
+fn sepcomp_fact_files(os: Os, p: Str) -> (Str, Str) {
+  match os.fs.stat(p) {
+    Ok(Some(i)) => if i.is_dir { ("${p}/conc0.stdf", "${p}/conc1.stdf") } else { (p, "") }
+    _ => (p, "")
+  }
 }
