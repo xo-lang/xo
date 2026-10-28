@@ -1798,7 +1798,13 @@ fn (var s: Ex) walk(dot: Val, n: Node) -> Int ! Str {
       let v = s.eval_pipeline(dot, pipe)?
       if pipe.decl.is_empty() {
         s.at(CTX_NODE, 1, pos)
-        s.out = s.out + fmt_v(v.v, true)
+        match v.v {
+          // an integer's digits appended to the output in place
+          // (llrt_concat_int), where fmt_v made its text first (2026-10-28:
+          // that text was 37% of render's allocations)
+          IntV(n, _) => s.out = "${s.out}${n}"
+          _ => s.out = s.out + fmt_v(v.v, true)
+        }
       }
       Ok(0)
     }

@@ -484,3 +484,9 @@ the parent's xo and std as A, gunzip 0.949 (0.941 to 0.953), unzip 0.893 (0.888 
 1.17 and 1.26. unzip's next lever is hdec_init (12%: its Huffman tables rebuilt for every block of 50 small
 files). uuid bytes is the 16 byte Bytes each bytes() allocates (39% of its run), where Go's u[:] is a slice of
 the value's own array: a compiler or runtime question (a Bytes that does not escape kept on the stack), not std.
+
+## template integer output in place (2026-10-28, xo-lang-5)
+
+Per std/changes/template.md 2026-10-28 ("an integer is written into the output in place"). Quiet `xo bench
+--ab`, 15 rounds, the parent's std as A: render wall 0.934 (0.931 to 0.943), instructions 0.974, cycles 0.938;
+Xo / Go about 1.08 (estimate: 1.156 x 0.934), from 1.156.

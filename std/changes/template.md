@@ -1,5 +1,19 @@
 # std/template changes
 
+## 2026-10-28: perf: an integer is written into the output in place
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/template render's heap profile (num.append_int 37.5% of its allocations: an IntV's "${n}" text made by fmt_v, then appended to the output and dropped)
+- Go reference: text/template exec.go printValue (fmt.Fprint into the writer, no intermediate string for an int)
+- Test: internal/stdtest/testdata/corpus/template (go, arm64, LLVM); twincheck's checksums agree on none, parse, render
+
+An action whose value is an integer appends its digits to the output
+(`"${s.out}${n}"`, which llrt_concat_int writes in place when the output
+is unique), where fmt_v first made the number's text as a Str of its own.
+Other values print as before. Output is unchanged. Quiet --ab, 15
+rounds, the parent's std as A: render wall 0.934 (0.931 to 0.943); Xo / Go about 1.08 (estimate: 1.156 x 0.934), from 1.156, instructions 0.974.
+
 ## 2026-10-27: perf: a visit sets its node context from the variant it already matched
 
 - Kind: perf
