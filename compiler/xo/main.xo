@@ -1667,7 +1667,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // them in every part's text first was about 74 ms of the HTTP
         // server's edit, 2026-10-27)
         let texts = if p.parts.len() > 1 { p.parts } else { [code] }
-        let (assembled, nasm, okeys) = cached_macho_objects(os, ctx, texts, false, true, true, jobs)
+        let (assembled, nasm, okeys0) = cached_macho_objects(os, ctx, texts, false, true, true, jobs)
+        // the keys with the cache off too: the PDB's GUID comes from them
+        // (ld.xo pdb_seed), and a build must be the same with or without
+        // the cache (internal/arm64 TestBackendCacheEditIdentity)
+        let okeys = if okeys0.len() == texts.len() { okeys0 } else { macho_object_keys(os, texts, false, true, jobs) }
         if gm.debug_info && okeys.len() == texts.len() {
           for k in okeys {
             wkeys.push(crypto.sha256("pdb v1 ${k} ${gm.comp_dir} ${gm.std_root}".bytes()).to_hex())

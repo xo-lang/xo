@@ -186,6 +186,18 @@ fn part_keys(prefix: Str, tags: List[Str], srcs: List[Str], jobs: Int) -> List[S
 /// of one file does not use the cache.
 /// Also the objects' keys ([] without the cache), which a tail entry
 /// records (tail_put).
+/// The back-end cache's keys of the objects of srcs (cached_macho_objects'),
+/// computed with the cache on or off; [] for one part or no xo identity.
+/// windows/amd64's COFF objects since 2026-10-27 (their own keys; the
+/// Mach-O and ELF keys as before).
+fn macho_object_keys(os: Os, srcs: List[Str], elf: Bool, coff: Bool, jobs: Int) -> List[Str] {
+  let id = cache_id(os)
+  if srcs.len() < 2 || id.is_empty() {
+    return []
+  }
+  part_keys("xo backend v1 obj macho elf=${elf}${if coff { " coff=true" } else { "" }} ${id}", [], srcs, jobs)
+}
+
 fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int, List[Str]) {
   let dir = backend_cache_dir(os, ctx)
   if dir.is_empty() || srcs.len() < 2 {
@@ -195,9 +207,7 @@ fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Boo
   if id.is_empty() {
     return (macho_objects(srcs, elf, amd64, coff, jobs), srcs.len(), [])
   }
-  // windows/amd64's COFF objects since 2026-10-27 (their own keys; the
-  // Mach-O and ELF keys as before)
-  let keys = part_keys("xo backend v1 obj macho elf=${elf}${if coff { " coff=true" } else { "" }} ${id}", [], srcs, jobs)
+  let keys = macho_object_keys(os, srcs, elf, coff, jobs)
   var out: List[Result[Bytes, Str]] = []
   var miss: List[Int] = []
   var msrcs: List[Str] = []
