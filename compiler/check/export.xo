@@ -1343,16 +1343,23 @@ const ENTRY_VERSION = "xo std entry v2 (header: fingerprint, file and directory 
 /// object replaced by its joined self. Nothing for an object with its
 /// trees already.
 pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
+  if o < 0 || o >= c.objs.len() {
+    return
+  }
+  let f = c.objs[o].decl_file
+  if f < 0 || f >= c.files.len() {
+    return
+  }
+  // the file's tree first (a constant's initializer is read from the
+  // tree itself, with no joined part to count)
+  if c.files[f].unloaded {
+    c.ensure_tree(c.files[f].module)
+  }
   let (t, recv) = match c.tree_pending.get(o) {
     Some(p) => p
     None => return
   }
   c.tree_pending.remove(o)
-  let f = c.objs[o].decl_file
-  if f < 0 || f >= c.files.len() {
-    return
-  }
-  c.ensure_tree(c.files[f].module)
   var owner: Option[Obj] = None
   if recv >= 0 && recv < c.objs.len() {
     let rf = c.objs[recv].decl_file
