@@ -93,7 +93,10 @@ var codegenEnv = map[string]inputClass{
 	"XO_STD_BG_CHILD":         {"none", ""},                                    // the background build of std's variant (stdcache.xo std_variant_peek's child): it takes the lock; the same entries
 	"XO_SEPCOMP":              {"keyed", "sepcomp ${crypto.sha256(b.freeze()"}, // std's functions as externs (decision 0388 stage 3): cache_id holds the facts' hash
 	"XO_SEPCOMP_FACTS":        {"keyed", "sepcomp ${crypto.sha256(b.freeze()"},
-	"XO_SEPCOMP_OBJS":         {"link", ""}, // std's object files an XO_SEPCOMP build links (decision 0388 stage 3); the binary key holds their names, sizes and times
+	"XO_SEPCOMP_FACTS_CONC":   {"keyed", "sepcomp ${crypto.sha256(b.freeze()"}, // the concurrent variant's facts (the default sets it; sepcomp_fact_files)
+	"XO_SEPCOMP_STORE_CONC":   {"none", ""},                                    // the concurrent variant's store (the default sets it; sepcomp_store)
+	"XO_SEPCOMP_DEFAULT":      {"keyed", "sepcomp ${crypto.sha256(b.freeze()"}, // separate compilation by default (decision 0388 step d): sets XO_SEPCOMP and the facts, which cache_id holds
+	"XO_SEPCOMP_OBJS":         {"link", ""},                                    // std's object files an XO_SEPCOMP build links (decision 0388 stage 3); the binary key holds their names, sizes and times
 	"XO_FE_CACHE":             {"none", ""},
 	"XO_FE_STATS":             {"none", ""},
 	"XO_LAZY_PARSE":           {"none", ""},

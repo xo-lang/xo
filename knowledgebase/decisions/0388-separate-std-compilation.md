@@ -518,6 +518,25 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   in the store objects step, 7 to 28 ms: decoding only the live functions'
   records is next), the link 416 to 85 to 96 ms; the check passes.
 
+- Stage 3 step (c) (2026-10-28, 3291afbe8): XO_SEPCOMP=1 with XO_SEPCOMP_FACTS and
+  XO_SEPCOMP_STORE builds a program against std's store, opt in. A llvm-fib edit 229.0 to
+  111.5 ms median against the 0.33.0 release (n=20; bench/results/sepcomp-edit-fib-2026-10-28.md).
+- Stage 3 step (d), the default: the policy on a miss (Lead, approved 2026-10-28). std's
+  variant's key holds every std file's stamp, so any std edit misses, and building it
+  costs 11 to 16 s per concurrency variant against about 1 s for a whole program. A build
+  that finds std's variant (a release's prebuilt one, or the cache's) builds separately; one
+  that misses builds the whole program, as before, and starts the variant's build in the
+  background, so the next build hits. No build is slower than a whole-program build.
+  Conditions: XO_SEPCOMP_BG=0 turns the background build off (heavy.sh and the Go test
+  harness set it, so no test spawns builds the memory reaper cannot see); one lock per cache
+  directory, stale when its holder's PID is gone or it is a few minutes old; the build
+  writes through std_variant's atomic rename, so a killed build leaves nothing; one
+  background build at a time across variants; --phase-times prints "std variant: miss,
+  building in the background", and `xo dev stdcache` shows a build in progress. Where the
+  default applies: a native darwin/arm64 build or run for the host, not --release or --race,
+  the passes as they are, the backend cache on; XO_SEPCOMP=1 or 0 is the user's choice and
+  wins.
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle

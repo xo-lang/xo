@@ -47,7 +47,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   // decision 0388 stage 3: a separately compiled program links through
   // std's store (XO_SEPCOMP_STORE=PATH, xo dev stdobj's std.store):
   // every input is the program's, kept whole, and std is read from PATH
-  let sep_store = if tgoos == "darwin" && store_path.is_empty() { os.env.get("XO_SEPCOMP_STORE") ?? "" } else { "" }
+  let sep_store = if tgoos == "darwin" && store_path.is_empty() { ctx.sep_store } else { "" }
   if !sep_store.is_empty() {
     match os.fs.read(sep_store) {
       Ok(b) => store = b
@@ -290,8 +290,8 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
     }
   }
   // a separately compiled program through std's store (as macho_link)
-  if store_path.is_empty() && !(os.env.get("XO_SEPCOMP_STORE") ?? "").is_empty() {
-    let sp = os.env.get("XO_SEPCOMP_STORE") ?? ""
+  if store_path.is_empty() && !ctx.sep_store.is_empty() {
+    let sp = ctx.sep_store
     match os.fs.read(sp) {
       Ok(b) => store = b
       Err(e) => return "XO_SEPCOMP_STORE=${sp}: ${fs_reason(e)}"

@@ -148,3 +148,81 @@ fn main(os: Os) {
 		}
 	}
 }
+
+// TestSepcompDefault (decision 0388 stage 3, step d): with the default on
+// (XO_SEPCOMP_DEFAULT=1 until it is flipped), a build for the host takes
+// std's variants from the std cache and links separately (its phase line
+// says so), runs as the whole program (XO_SEPCOMP=0) does, and
+// XO_SEPCOMP=0 is never answered from the separately compiled entries.
+func TestSepcompDefault(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds std's variants")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-sepdef-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	prog := filepath.Join(work, "prog")
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "fn main(os: Os) {\n  let ws = \"a b c\".split(\" \")\n  os.stdio.println(\"${ws.len()} ${ws[2].to_upper()}\")\n}\n"
+	if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	build := func(out string, env ...string) string {
+		t.Helper()
+		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, "."))
+		cmd.Dir = prog
+		// one cache for both modes: a whole program's entries and a
+		// separate build's must not answer each other
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_SEPCOMP_BG=0"), env...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo build (%s): %v\n%s", strings.Join(env, " "), err, log)
+		}
+		return string(log)
+	}
+	run := func(bin string) string {
+		t.Helper()
+		out, err := testtmp.Guard(exec.Command(bin)).CombinedOutput()
+		if err != nil {
+			t.Fatalf("%s: %v\n%s", bin, err, out)
+		}
+		return string(out)
+	}
+	// std's variants in the test's cache first: a miss would build the
+	// whole program (the Go tests run with XO_SEPCOMP_BG=0, so no
+	// background build either)
+	for _, c := range []string{"0", "1"} {
+		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+c))
+		cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"))
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo dev stdcache --conc=%s: %v\n%s", c, err, out)
+		}
+	}
+	whole := filepath.Join(work, "whole")
+	build(whole, "XO_SEPCOMP=0")
+	sep := filepath.Join(work, "sep")
+	log := build(sep, "XO_SEPCOMP_DEFAULT=1")
+	if !strings.Contains(log, "cache std ") {
+		t.Fatalf("the default build did not ask the std cache:\n%s", log)
+	}
+	if got, want := run(sep), run(whole); got != want || want != "3 C\n" {
+		t.Fatalf("separately compiled %q, whole %q, want %q", got, want, "3 C\n")
+	}
+	// the whole program again from the shared cache: still whole
+	whole2 := filepath.Join(work, "whole2")
+	build(whole2, "XO_SEPCOMP=0")
+	if run(whole2) != "3 C\n" {
+		t.Fatal("the whole program rebuilt from the shared cache runs wrong")
+	}
+}

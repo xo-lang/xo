@@ -1,0 +1,84 @@
+// Separate compilation by default (decision 0388 stage 3, step d): the
+// build's environment with the std variant the driver chose, so every
+// reader of XO_SEPCOMP, XO_SEPCOMP_FACTS and XO_SEPCOMP_STORE (the
+// opt in's variables) sees the default's choice.
+
+/// An environment with some variables replaced.
+struct SepEnv {
+  inner: Env
+  over: Map[Str, Str]
+}
+
+fn (e: SepEnv) get(name: Str) -> Str? uses env {
+  match e.over.get(name) {
+    Some(v) => Some(v)
+    None => e.inner.get(name)
+  }
+}
+
+fn (e: SepEnv) vars() -> Map[Str, Str] uses env {
+  var all = e.inner.vars()
+  for (k, v) in e.over {
+    all[k] = v
+  }
+  all
+}
+
+fn (e: SepEnv) args() -> List[Str] uses env { e.inner.args() }
+fn (e: SepEnv) program() -> Str uses env { e.inner.program() }
+fn (e: SepEnv) home() -> Str ! EnvErr uses env { e.inner.home() }
+fn (e: SepEnv) only(names: List[Str]) -> Env { e.inner.only(names) }
+fn (e: SepEnv) config_dir() -> Str ! EnvErr uses env { e.inner.config_dir() }
+fn (e: SepEnv) cache_dir() -> Str ! EnvErr uses env { e.inner.cache_dir() }
+
+/// os with the variables of over set.
+fn with_env(os: Os, over: Map[Str, Str]) -> Os {
+  Os{net: os.net, fs: os.fs, clock: os.clock, rand: os.rand, env: SepEnv{inner: os.env, over: over}, proc: os.proc, stdio: os.stdio, tasks: os.tasks}
+}
+
+/// std's store a separately compiled build links with, for its
+/// concurrency: XO_SEPCOMP_STORE, or XO_SEPCOMP_STORE_CONC when the
+/// program is concurrent and it is set (the default sets both); "" for a
+/// whole program.
+fn sepcomp_store(os: Os, conc: Bool) -> Str {
+  if sepcomp_facts_path(os).is_empty() {
+    return ""
+  }
+  let sc = if conc { os.env.get("XO_SEPCOMP_STORE_CONC") ?? "" } else { "" }
+  if !sc.is_empty() {
+    return sc
+  }
+  os.env.get("XO_SEPCOMP_STORE") ?? ""
+}
+
+/// Separate compilation by default (decision 0388 stage 3, step d): os
+/// with XO_SEPCOMP and std's variants (both concurrency settings, the
+/// build picks one) when this build can take it, else os unchanged.
+/// XO_SEPCOMP set (1 or 0) is the user's choice and wins. Only a native
+/// darwin/arm64 build or run for the host, not --release or --race,
+/// with the passes as they are; std's variants from the std cache
+/// (std_variant_peek: a release's prebuilt ones, else the cache's; a
+/// miss builds the whole program, as before, and starts the variant's
+/// build in the background, so no build is slower than a whole program's;
+/// ADR 0388 Progress). Until the default is on, XO_SEPCOMP_DEFAULT=1
+/// asks for it.
+fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
+  if os.env.get("XO_SEPCOMP") != None || (os.env.get("XO_SEPCOMP_DEFAULT") ?? "") != "1" {
+    return os
+  }
+  if !(o.cmd is "build" | "run") || backend != "arm64" || host_os(os) != "darwin" || host_arch() != "arm64" || o.release || o.race || passes_changed(os) {
+    return os
+  }
+  if !(o.targets.is_empty() || o.targets == "darwin/arm64") {
+    return os
+  }
+  let v0 = match std_variant_peek(os, ctx, "darwin", "arm64", false, o.phases) {
+    Some(v) => v
+    None => return os
+  }
+  let v1 = match std_variant_peek(os, ctx, "darwin", "arm64", true, o.phases) {
+    Some(v) => v
+    None => return os
+  }
+  with_env(os, {"XO_SEPCOMP": "1", "XO_SEPCOMP_FACTS": v0.1, "XO_SEPCOMP_FACTS_CONC": v1.1, "XO_SEPCOMP_STORE": v0.0, "XO_SEPCOMP_STORE_CONC": v1.0})
+}
