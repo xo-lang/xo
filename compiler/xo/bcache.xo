@@ -59,18 +59,20 @@ fn cache_id(os: Os) -> Str {
   if id.is_empty() || sp.is_empty() {
     return id
   }
+  // each facts file by its path, size and time, hashed only while its
+  // time is within Go's 2 s settling window (check.stamp_files): every
+  // cache asks for the id, and hashing the facts each time cost about
+  // 4 ms a build
   let (f0, f1) = sepcomp_fact_files(os, sp)
-  var h = BytesBuilder.new()
-  for f in [f0, f1] {
-    if !f.is_empty() {
-      match os.fs.read(f) {
-        Ok(d) => h.write(d)
-        Err(_) => return id
-      }
-    }
+  let stamps = match check.stamp_files(os.fs, [f0, f1].filter(fn(f) { !f.is_empty() }), os.clock.now().unix_millis()) {
+    Some(ss) => ss
+    None => return id
   }
-  let d = h.freeze()
-  "${id} sepcomp ${crypto.sha256(d).to_hex()}"
+  var b = StrBuilder.new()
+  for st in stamps {
+    b.write("${st.path.len()}:${st.path} ${st.size} ${st.mtime} ${st.sha}\n")
+  }
+  "${id} sepcomp ${crypto.sha256(b.freeze().bytes()).to_hex()}"
 }
 
 /// XO_SEPCOMP_FACTS when XO_SEPCOMP=1, else "".
