@@ -108,31 +108,10 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
     total += ob.sects.len()
   }
   let unw = l.unwind_refs()
-  var hb = BytesBuilder.new()
-  var db = BytesBuilder.new()
-  sw32(hb, n)
-  sw32(hb, total)
-  // the section names (segment, section), once each
-  var name_ix: Map[Str, Int] = {}
-  var names: List[(Str, Str)] = []
-  for ob in l.objs {
-    for s in ob.sects {
-      let key = "${s.seg},${s.name}"
-      if !name_ix.contains(key) {
-        name_ix[key] = names.len()
-        names.push((s.seg, s.name))
-      }
-    }
-  }
-  sw32(hb, names.len())
-  for (sg, nm) in names {
-    swbytes(hb, sg.bytes())
-    swbytes(hb, nm.bytes())
-  }
-  // the global definitions by name (a strong one over a weak one, else
-  // the first, as add_globals): name place and length in the data
-  // region, the atom; sorted by name for the link's binary search
+  // the global definitions (a strong one over a weak one, else the
+  // first, as add_globals)
   var gdefs: Map[Bytes, (Int, Bool)] = {}
+  var gorder: List[Bytes] = []
   for (o, ob) in l.objs.indexed() {
     for x in ob.syms {
       if is_ext(x) && is_defined(x) && (x.typ & N_TYPE) == N_SECT && x.sect >= 1 {
@@ -141,108 +120,49 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
           Some((_, w)) => if w && !weak {
             gdefs[x.name] = (base[o] + x.sect - 1, false)
           }
-          None => gdefs[x.name] = (base[o] + x.sect - 1, weak)
+          None => {
+            gdefs[x.name] = (base[o] + x.sect - 1, weak)
+            gorder.push(x.name)
+          }
         }
       }
     }
   }
-  let gnames = gdefs.keys().sort_by(fn(b: Bytes) -> Str { bstr(b) })
-  sw32(hb, gnames.len())
-  for nm in gnames {
-    sw32(hb, db.len())
-    sw32(hb, nm.len())
-    db.write(nm)
-    sw32(hb, (gdefs.get(nm) ?? (0, false)).0)
+  var defs: List[(Bytes, Int)] = []
+  for nm in gorder {
+    defs.push((nm, (gdefs.get(nm) ?? (0, false)).0))
   }
+  var objs: List[CoreObj] = []
   for (o, ob) in l.objs.indexed() {
     let segs = l.dw_all_segs(o)
-    swbytes(hb, ob.path.bytes())
-    sw32(hb, ob.sects.len())
-    // a record of STORE_REC bytes a section (store_cut, link_store)
+    var cs: List[CoreSect] = []
     for (k, s) in ob.sects.indexed() {
-      sw32(hb, name_ix.get("${s.seg},${s.name}") ?? 0)
-      sw32(hb, s.align)
-      sw32(hb, s.flags)
-      sw32(hb, db.len())
-      sw32(hb, s.data.len())
-      db.write(s.data)
-      // a cut DWARF section's relocations go with its runs (below)
+      var c = CoreSect{seg: s.seg, name: s.name, align: s.align, flags: s.flags, addr: s.addr, size: s.size, data: s.data, relocs: "".bytes(), nrel: 0}
+      // a cut DWARF section's relocations go with its runs, by address,
+      // so its patches are one run in order (out.xo patches_in_order)
       let g = segs.get(k) ?? []
-      sw32(hb, db.len())
-      sw32(hb, if g.is_empty() { s.relocs.len() } else { 0 })
       if g.is_empty() {
+        var rb = BytesBuilder.new()
         for r in s.relocs {
-          sw_reloc(db, r)
+          sw_reloc(rb, r)
         }
+        c.relocs = rb.freeze()
+        c.nrel = s.relocs.len()
       }
-      // its runs, in the data region: bytes, the function's atom (or
-      // none), relocations
-      var gb = BytesBuilder.new()
       for x in g {
-        sw32(gb, x.start)
-        sw32(gb, x.end)
-        sw32(gb, if x.fo < 0 { 0xffffffff } else { base[x.fo] + x.fk })
-        sw32(gb, db.len())
-        // by address, so a cut section's patches are one run in order
-        // (out.xo patches_in_order: no sort of the whole list)
         var rs: List[IReloc] = []
         for r in s.relocs {
           if r.addr >= x.start && r.addr < x.end {
             rs.push(r)
           }
         }
-        let nr = rs.len()
+        var rb = BytesBuilder.new()
         for r in rs.sort_by(fn(r: IReloc) -> Int { r.addr }) {
-          sw_reloc(db, r)
+          sw_reloc(rb, r)
         }
-        sw32(gb, nr)
+        c.runs.push(CoreRun{start: x.start, end: x.end, fn_atom: if x.fo < 0 { -1 } else { base[x.fo] + x.fk }, relocs: rb.freeze(), nrel: rs.len()})
       }
-      sw32(hb, g.len())
-      sw32(hb, db.len())
-      db.write(gb.freeze())
-      sw64(hb, s.addr)
-      sw64(hb, s.size)
-    }
-    // the symbols as STORE_SYM byte records, names in the data region
-    sw32(hb, ob.syms.len())
-    for s in ob.syms {
-      sw32(hb, db.len())
-      sw32(hb, s.name.len())
-      db.write(s.name)
-      sw32(hb, s.typ)
-      sw32(hb, s.sect)
-      sw32(hb, s.desc)
-      sw64(hb, s.value)
-    }
-    let keys = ob.split.keys().sort()
-    sw32(hb, keys.len())
-    for k in keys {
-      let atoms = ob.split.get(k) ?? []
-      sw32(hb, k)
-      sw32(hb, atoms.len())
-      for (a, ord) in atoms {
-        sw64(hb, a)
-        sw32(hb, ord)
-      }
-    }
-    // its xo unit's functions, when the unit goes with them
-    // (dw_droppable): the atoms
-    var fns: List[Int] = []
-    for (k, g) in segs {
-      if ob.sects[k].name == "__debug_info" && dw_droppable(g) {
-        for x in g {
-          if x.fo >= 0 {
-            fns.push(base[x.fo] + x.fk)
-          }
-        }
-      }
-    }
-    sw32(hb, fns.len())
-    for id in fns {
-      sw32(hb, id)
-    }
-    // each section's edges, as store atom numbers
-    for (k, s) in ob.sects.indexed() {
+      // its edges, as store atom numbers
       var refs: List[(Int, Int)] = []
       if !(s.seg == "__LD" || s.seg == "__DWARF" || (s.flags & S_ATTR_DEBUG_FLAG) != 0 || is_eh(s)) {
         for r in s.relocs {
@@ -252,7 +172,6 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
       for t in unw.get((o, k)) ?? [] {
         refs.push(t)
       }
-      var ids: List[Int] = []
       var seen: Set[Int] = #{}
       for (d, j) in refs {
         if d < 0 {
@@ -263,7 +182,7 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
             let id = base[d] + m - 1
             if !seen.contains(id) {
               seen.add(id)
-              ids.push(id)
+              c.edges.push(id)
             }
           }
           continue
@@ -271,22 +190,29 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
         let id = base[d] + j
         if !seen.contains(id) {
           seen.add(id)
-          ids.push(id)
+          c.edges.push(id)
         }
       }
-      sw32(hb, ids.len())
-      for id in ids {
-        sw32(hb, id)
+      cs.push(c)
+    }
+    var syms: List[CoreSym] = []
+    for x in ob.syms {
+      syms.push(CoreSym{name: x.name, typ: x.typ, sect: x.sect, desc: x.desc, value: x.value})
+    }
+    // its xo unit's functions, when the unit goes with them
+    var fns: List[Int] = []
+    for (k, g) in segs {
+      if ob.sects[k].name == "__debug_info" && dw_droppable(g) {
+        for x in g {
+          if x.fo >= 0 {
+            fns.push(base[x.fo] + x.fk)
+          }
+        }
       }
     }
+    objs.push(CoreObj{path: ob.path, sects: cs, syms: syms, split: ob.split, unit_fns: fns})
   }
-  var out = BytesBuilder.new()
-  out.write(STORE_MAGIC.bytes())
-  let h = hb.freeze()
-  sw32(out, h.len())
-  out.write(h)
-  out.write(db.freeze())
-  Ok(out.freeze())
+  Ok(store_write(objs, defs))
 }
 
 /// A section's record in the header: its name's index, alignment,

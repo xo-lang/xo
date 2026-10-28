@@ -1,0 +1,168 @@
+// The store's format-neutral core (decision 0388 stage 4): what an
+// object format's adapter hands store_write (store.xo is Mach-O's; a
+// COFF adapter goes beside it). An object is split into atoms by its
+// adapter; each atom carries its bytes, its relocation records (opaque,
+// a fixed size per format: field 0, a u32, its address in the atom),
+// the DWARF runs it is cut into (dwtrim.xo) and its edges as store atom
+// numbers. The file's layout is store.xo's (STORE_REC, STORE_SYM).
+
+/// An atom (or a section kept whole) for store_write.
+pub struct CoreSect {
+  pub seg: Str
+  pub name: Str
+  pub align: Int
+  pub flags: Int
+  pub addr: Int
+  pub size: Int
+  pub data: Bytes
+  /// its relocation records and their count (none when it has runs)
+  pub relocs: Bytes
+  pub nrel: Int
+  /// a cut DWARF section's runs, each with its own relocation records
+  pub runs: List[CoreRun] = []
+  /// the store atoms it reaches
+  pub edges: List[Int] = []
+}
+
+/// A run of a cut DWARF section (dwtrim.xo DwSeg): its bytes, its
+/// function's store atom (-1: always kept) and its relocation records,
+/// by address.
+pub struct CoreRun {
+  pub start: Int
+  pub end: Int
+  pub fn_atom: Int
+  pub relocs: Bytes
+  pub nrel: Int
+}
+
+/// A symbol: its name, the format's type, section ordinal (an atom's,
+/// 1 based; 0 for none), desc and value.
+pub struct CoreSym {
+  pub name: Bytes
+  pub typ: Int
+  pub sect: Int
+  pub desc: Int
+  pub value: Int
+}
+
+/// An object: its atoms, its symbols, its split map (an original
+/// section's ordinal -> its atoms' start addresses and ordinals) and the
+/// store atoms of the functions its xo unit describes when the unit goes
+/// with them (dwtrim.xo dw_droppable).
+pub struct CoreObj {
+  pub path: Str
+  pub sects: List[CoreSect]
+  pub syms: List[CoreSym]
+  pub split: Map[Int, List[(Int, Int)]]
+  pub unit_fns: List[Int]
+}
+
+/// The store of objs, with defs, the global definitions (name, store
+/// atom; the adapter chose between a weak and a strong one).
+pub fn store_write(objs: List[CoreObj], defs: List[(Bytes, Int)]) -> Bytes {
+  var total = 0
+  for ob in objs {
+    total += ob.sects.len()
+  }
+  var hb = BytesBuilder.new()
+  var db = BytesBuilder.new()
+  sw32(hb, objs.len())
+  sw32(hb, total)
+  // the section names (segment, section), once each
+  var name_ix: Map[Str, Int] = {}
+  var names: List[(Str, Str)] = []
+  for ob in objs {
+    for s in ob.sects {
+      let key = "${s.seg},${s.name}"
+      if !name_ix.contains(key) {
+        name_ix[key] = names.len()
+        names.push((s.seg, s.name))
+      }
+    }
+  }
+  sw32(hb, names.len())
+  for (sg, nm) in names {
+    swbytes(hb, sg.bytes())
+    swbytes(hb, nm.bytes())
+  }
+  // the global definitions sorted by name, for the link's binary search
+  let sorted = defs.sort_by(fn(d: (Bytes, Int)) -> Str { bstr(d.0) })
+  sw32(hb, sorted.len())
+  for (nm, atom) in sorted {
+    sw32(hb, db.len())
+    sw32(hb, nm.len())
+    db.write(nm)
+    sw32(hb, atom)
+  }
+  for ob in objs {
+    swbytes(hb, ob.path.bytes())
+    sw32(hb, ob.sects.len())
+    // a record of STORE_REC bytes a section
+    for s in ob.sects {
+      sw32(hb, name_ix.get("${s.seg},${s.name}") ?? 0)
+      sw32(hb, s.align)
+      sw32(hb, s.flags)
+      sw32(hb, db.len())
+      sw32(hb, s.data.len())
+      db.write(s.data)
+      sw32(hb, db.len())
+      sw32(hb, s.nrel)
+      db.write(s.relocs)
+      // its runs, in the data region
+      var gb = BytesBuilder.new()
+      for x in s.runs {
+        sw32(gb, x.start)
+        sw32(gb, x.end)
+        sw32(gb, if x.fn_atom < 0 { 0xffffffff } else { x.fn_atom })
+        sw32(gb, db.len())
+        db.write(x.relocs)
+        sw32(gb, x.nrel)
+      }
+      sw32(hb, s.runs.len())
+      sw32(hb, db.len())
+      db.write(gb.freeze())
+      sw64(hb, s.addr)
+      sw64(hb, s.size)
+    }
+    // the symbols as STORE_SYM byte records, names in the data region
+    sw32(hb, ob.syms.len())
+    for s in ob.syms {
+      sw32(hb, db.len())
+      sw32(hb, s.name.len())
+      db.write(s.name)
+      sw32(hb, s.typ)
+      sw32(hb, s.sect)
+      sw32(hb, s.desc)
+      sw64(hb, s.value)
+    }
+    let keys = ob.split.keys().sort()
+    sw32(hb, keys.len())
+    for k in keys {
+      let atoms = ob.split.get(k) ?? []
+      sw32(hb, k)
+      sw32(hb, atoms.len())
+      for (a, ord) in atoms {
+        sw64(hb, a)
+        sw32(hb, ord)
+      }
+    }
+    sw32(hb, ob.unit_fns.len())
+    for id in ob.unit_fns {
+      sw32(hb, id)
+    }
+    // each atom's edges
+    for s in ob.sects {
+      sw32(hb, s.edges.len())
+      for id in s.edges {
+        sw32(hb, id)
+      }
+    }
+  }
+  var out = BytesBuilder.new()
+  out.write(STORE_MAGIC.bytes())
+  let h = hb.freeze()
+  sw32(out, h.len())
+  out.write(h)
+  out.write(db.freeze())
+  out.freeze()
+}
