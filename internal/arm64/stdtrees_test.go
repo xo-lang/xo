@@ -42,14 +42,22 @@ func TestStdTreesRebuild(t *testing.T) {
 		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
 	}
 	store, facts := lines[0], lines[1]
-	src := `fn main(os: Os) {
-  var xs: List[Int] = []
+	// a generic std function instantiated with the program's own type:
+	// not among std's precompiled instances, so the SSA builder lowers
+	// its body from the tree
+	src := `struct Rec {
+  key: Int
+  name: Str
+}
+
+fn main(os: Os) {
+  var rs: List[Rec] = []
   for i in 0..20 {
-    xs.push((i * 7) % 13)
+    rs.push(Rec{key: (i * 7) % 13, name: "r${i}"})
   }
-  let ys = xs.sort()
-  let names = ["b", "a", "c"].sort_by(fn(s) { s })
-  os.stdio.println("${ys[0]} ${ys[19]} ${names.join(",")} edit 0")
+  let sorted = rs.sort_by(fn(r) { r.key })
+  let names = sorted.map(fn(r) { r.name })
+  os.stdio.println("${sorted[0].key} ${sorted[19].key} ${names[0]} edit 0")
 }
 `
 	prog := filepath.Join(work, "prog")
