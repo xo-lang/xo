@@ -249,6 +249,19 @@ fn (g: G) sym(name: Str) -> Str {
 }
 
 /// An assembler local label.
+/// The label of a literal (a string's record, a fault position's text):
+/// temporary, except in std's store's atoms mode (decision 0388), where a
+/// local symbol of its own makes each literal an atom, so a link keeps
+/// only the ones a kept function names (without it every literal of an
+/// object was one atom, and an empty program carried about 412 KB of
+/// std's strings, Lang 1, 2026-10-28)
+fn (g: G) lit_label(name: Str) -> Str {
+  if g.m.std_store && g.split {
+    return "${name}_l"
+  }
+  g.local(name)
+}
+
 fn (g: G) local(name: Str) -> Str {
   if g.os == "darwin" {
     return "L${name}"
@@ -419,7 +432,7 @@ fn (var g: G) str_obj(s: Bytes) -> Str {
   if let Some(l) = g.strs.get(s) {
     return l
   }
-  let l = g.local("xo_${g.ns}str${g.strs.len()}")
+  let l = g.lit_label("xo_${g.ns}str${g.strs.len()}")
   g.strs[s] = l
   g.str_ord.push(s)
   l
@@ -433,7 +446,7 @@ fn (var g: G) loc_label(s: Str) -> Str {
   if let Some(l) = g.locs.get(s) {
     return l
   }
-  let l = g.local("xo_${g.ns}loc${g.locs.len()}")
+  let l = g.lit_label("xo_${g.ns}loc${g.locs.len()}")
   g.locs[s] = l
   g.loc_ord.push(s)
   l

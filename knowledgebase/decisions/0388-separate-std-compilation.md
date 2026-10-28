@@ -673,3 +673,11 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   program's is coalesced (StoreLink.resolve uncoalesced_unwind). Test:
   internal/arm64 TestSepcompSharedMade (net_echo and sql_driver, separately compiled,
   print their goldens).
+- std's literals are atoms (Lang 1's startup A/B, 2026-10-28: a separately compiled empty
+  program's __TEXT,__const was 413.6 KB against a whole program's 30.9 KB, 7% slower to
+  start, +80 KB peak): string records and fault positions had temporary labels (L…, .L…),
+  so the strip could not split at them and each object's literals were one atom, kept
+  whole when any was named. compiler/arm64 gen.xo lit_label gives each a local symbol of
+  its own in atoms mode (std_store and a split assembly; a normal build keeps temporary
+  labels): the empty program's __TEXT,__const 28.9 KB, its binary 2.21 MB to 1.85 MB (the
+  whole program's 1.76 MB); std's store 0.6 MB larger (the symbols).
