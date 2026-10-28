@@ -44,9 +44,14 @@ pub struct StdExport {
   pub mod_ids: List[(Int, Str)] = []
   pub mod_objs: List[(Int, Str)] = []
   pub file_ids: List[(Int, Str)] = []
+  /// std's module closure (decision 0388 stage 2): each std module in
+  /// check order, its files and the modules its files import, by path,
+  /// so a loader can make std's modules without parsing them for their
+  /// imports
+  pub closure: List[(Str, List[Str], List[Str])] = []
 }
 
-const EXPORT_VERSION = "xo std export v1"
+const EXPORT_VERSION = "xo std export v2"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {
@@ -77,6 +82,18 @@ pub fn (c: Checker) std_export() -> StdExport {
       ms.push((k, o))
     }
     e.members.push((md.path, ms))
+    var fps: List[Str] = []
+    var imps: List[Str] = []
+    for f in md.files {
+      fps.push(c.files[f].path)
+      for (_, im) in c.files[f].imports.entries() {
+        let ip = if im.module >= 0 { c.mods[im.module].path } else { text(im.path) }
+        if !imps.contains(ip) {
+          imps.push(ip)
+        }
+      }
+    }
+    e.closure.push((md.path, fps, imps))
     e.mod_ids.push((c.mod_index.get(md.path) ?? -1, md.path))
     e.mod_objs.push((md.obj, md.path))
     for f in md.files {
@@ -644,6 +661,18 @@ pub fn encode_std_export(e: StdExport) -> Bytes {
       w.str(p)
     }
   }
+  w.uv(e.closure.len())
+  for (p, fs, is) in e.closure {
+    w.str(p)
+    w.uv(fs.len())
+    for f in fs {
+      w.str(f)
+    }
+    w.uv(is.len())
+    for i in is {
+      w.str(i)
+    }
+  }
   w.b.freeze()
 }
 
@@ -748,6 +777,30 @@ pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
     e.mod_ids = maps[0]
     e.mod_objs = maps[1]
     e.file_ids = maps[2]
+  }
+  let ncl = r.uv()
+  for _ in 0..ncl {
+    if !r.ok {
+      return None
+    }
+    let p = r.str()
+    var fs: List[Str] = []
+    let nf = r.uv()
+    for _ in 0..nf {
+      if !r.ok {
+        return None
+      }
+      fs.push(r.str())
+    }
+    var is: List[Str] = []
+    let ni = r.uv()
+    for _ in 0..ni {
+      if !r.ok {
+        return None
+      }
+      is.push(r.str())
+    }
+    e.closure.push((p, fs, is))
   }
   if !r.ok || r.at != d.len() || e.objs.len() != b.obj_hi - b.obj_lo || e.tys.len() != b.ty_hi - b.ty_lo {
     return None
@@ -1009,6 +1062,7 @@ pub fn (c: Checker) relocate_export(e: StdExport, at: StdBlock) -> Option[StdExp
   for (f, p) in e.file_ids {
     out.file_ids.push((r.idx(r.files, f), p))
   }
+  out.closure = e.closure
   if !r.ok {
     return None
   }
@@ -1325,4 +1379,74 @@ fn export_diff(a: StdExport, b: StdExport) -> Str {
     return "the inferred or realtime functions differ"
   }
   "the records differ in their module, file or Module object maps"
+}
+
+// ---------------------------------------------------------------------------
+// Std's files by their stat (decision 0388 stage 2, piece 2): a build that
+// does not read std's sources still knows they are the ones the records
+// were made from. Go's file hash cache rule: a file's size and modification
+// time stand for its content only when it was last modified more than two
+// seconds before they were recorded (an edit within the clock's grain
+// keeps both); a younger file's content hash is recorded and checked.
+
+/// One file as the records saw it.
+pub struct FileStamp {
+  pub path: Str
+  pub size: Int
+  /// its modification time, milliseconds since 1970
+  pub mtime: Int
+  /// the SHA-256 of its content, kept only when it was not settled
+  pub sha: Str = ""
+}
+
+/// The settling window of Go's rule, in milliseconds.
+const STAMP_SETTLE_MS = 2000
+
+/// The stamps of paths at now (milliseconds since 1970): each file's size
+/// and time, and for one modified within STAMP_SETTLE_MS of now its
+/// content's hash; None when a file cannot be read.
+pub fn stamp_files(fs: Fs, paths: List[Str], now: Int) -> Option[List[FileStamp]] uses fs.read {
+  var out: List[FileStamp] = []
+  for p in paths {
+    let info = match fs.stat(p) {
+      Ok(Some(i)) => i
+      _ => return None
+    }
+    var st = FileStamp{path: p, size: info.size, mtime: info.modified.unix_millis()}
+    if now - st.mtime <= STAMP_SETTLE_MS {
+      match fs.read(p) {
+        Ok(b) => {
+          st.sha = crypto.sha256(b).to_hex()
+        }
+        Err(_) => return None
+      }
+    }
+    out.push(st)
+  }
+  Some(out)
+}
+
+/// Whether every file is still as stamped: the same size and time and,
+/// for a stamp with a hash, the same content.
+pub fn stamps_hold(fs: Fs, stamps: List[FileStamp]) -> Bool uses fs.read {
+  for st in stamps {
+    let info = match fs.stat(st.path) {
+      Ok(Some(i)) => i
+      _ => return false
+    }
+    if info.size != st.size || info.modified.unix_millis() != st.mtime {
+      return false
+    }
+    if !st.sha.is_empty() {
+      match fs.read(st.path) {
+        Ok(b) => {
+          if crypto.sha256(b).to_hex() != st.sha {
+            return false
+          }
+        }
+        Err(_) => return false
+      }
+    }
+  }
+  true
 }

@@ -161,6 +161,7 @@ var codegenFS = map[string]string{
 	"ssa/main.xo":               "the standalone tool's main",
 	"wasm/main.xo":              "the standalone tool's main",
 	"wasm/play.xo":              "the playground's own build",
+	"check/export.xo":           "stat stamps of std's files (decision 0388): they decide whether std's records still match its files, and the records' fingerprint, in the stdx entry's key, holds the files' contents",
 	"wasm/rt4.xo":               "the wasm runtime, read as program input",
 	"ssa/build.xo":              "reads the program's sources (program input, in the entries' keys)",
 	"ssa/expr.xo":               "reads the program's sources",

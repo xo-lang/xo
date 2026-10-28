@@ -47,3 +47,47 @@ test "records exported by one program, relocated, equal another program's own" {
     None => expect("relocated") == "None"
   }
 }
+
+test "the records hold std's module closure: each std module's files and imports" {
+  let c = export_checker(os)?
+  let e = c.std_export()
+  expect(e.closure.len() > 0) == true
+  let (p0, fs0, _) = e.closure[0]
+  expect(p0.is_empty()) == false
+  expect(fs0.len() > 0) == true
+  match decode_std_export(encode_std_export(e)) {
+    Some(e2) => expect(e2.closure.len()) == e.closure.len()
+    None => expect("decoded") == "None"
+  }
+}
+
+test "a std file edited within the clock's grain, its size kept, is seen" {
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/a.xo", b"fn a() -> Int { 1 }\n")?
+  let info = (os.fs.stat("std/a.xo")? ?? FileInfo{name: "", path: "", is_dir: false, size: 0, modified: Time.UNIX_EPOCH})
+  // stamped at once: the file is not settled, so its content is hashed
+  let now = info.modified.unix_millis()
+  match stamp_files(os.fs, ["std/a.xo"], now) {
+    Some(st) => {
+      expect(st[0].sha.is_empty()) == false
+      expect(stamps_hold(os.fs, st)) == true
+      // the same size, the same second
+      os.fs.write("std/a.xo", b"fn a() -> Int { 2 }\n")?
+      expect(stamps_hold(os.fs, st)) == false
+    }
+    None => expect("stamped") == "None"
+  }
+}
+
+test "a settled std file is trusted by its size and time" {
+  os.fs.create_dir_all("std")?
+  os.fs.write("std/b.xo", b"fn b() -> Int { 1 }\n")?
+  let info = (os.fs.stat("std/b.xo")? ?? FileInfo{name: "", path: "", is_dir: false, size: 0, modified: Time.UNIX_EPOCH})
+  match stamp_files(os.fs, ["std/b.xo"], info.modified.unix_millis() + 10000) {
+    Some(st) => {
+      expect(st[0].sha.is_empty()) == true
+      expect(stamps_hold(os.fs, st)) == true
+    }
+    None => expect("stamped") == "None"
+  }
+}
