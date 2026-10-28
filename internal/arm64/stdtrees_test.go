@@ -64,7 +64,7 @@ fn main(os: Os) {
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	env := append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_STD_EXPORT=1",
+	env := append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_STD_EXPORT=1", "XO_CACHE_STATS=1",
 		"XO_SEPCOMP=1", "XO_SEPCOMP_FACTS="+facts, "XO_SEPCOMP_STORE="+store)
 	build := func(edit int, extra ...string) (string, string) {
 		if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(strings.Replace(src, "edit 0", "edit "+string(rune('0'+edit)), 1)), 0o644); err != nil {
