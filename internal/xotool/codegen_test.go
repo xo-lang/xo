@@ -193,6 +193,7 @@ var codegenFS = map[string]string{
 	"check/modfile.xo":          "xo.mod: program input",
 	"check/locate.xo":           "finds std: program input",
 	"check/stmt.xo":             "module loading: program input",
+	"check/timelayout.xo":       "a std constant's tree read on demand (decision 0388 stage 2 need_tree): std's sources, program input in the entries' keys",
 	"check/query.xo":            "module loading: program input",
 	"check/vouch.xo":            "module loading: program input",
 	"cli/bind/cbind.xo":         "C bindings: program input",
