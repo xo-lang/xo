@@ -84,6 +84,8 @@ var codegenEnv = map[string]inputClass{
 	"XO_STD_STORE":            {"none", ""}, // links through std's indexed store (decision 0388 stage 4); the parts' binary, byte for byte
 	"XO_STD_STORE_CHECK":      {"none", ""}, // also links the parts and fails on a difference
 	"XO_STD_STORE_REPEAT":     {"none", ""}, // times N more store links (a measurement)
+	"XO_SEPCOMP":              {"keyed", "sepcomp ${crypto.sha256(d)"}, // std's functions as externs (decision 0388 stage 3): cache_id holds the facts' hash
+	"XO_SEPCOMP_FACTS":        {"keyed", "sepcomp ${crypto.sha256(d)"},
 	"XO_FE_CACHE":             {"none", ""},
 	"XO_FE_STATS":             {"none", ""},
 	"XO_LAZY_PARSE":           {"none", ""},
@@ -227,7 +229,8 @@ func TestCodegenInputsClassified(t *testing.T) {
 		files = append(files, fs...)
 	}
 	var headers strings.Builder
-	for _, h := range []string{"arm64/fcache.xo", "arm64/partcache.xo", "arm64/inlcache.xo", "ssa/rccache.xo", "ssa/fecache.xo"} {
+	// xo/bcache.xo's cache_id: the identity every one of those keys starts with
+	for _, h := range []string{"arm64/fcache.xo", "arm64/partcache.xo", "arm64/inlcache.xo", "ssa/rccache.xo", "ssa/fecache.xo", "xo/bcache.xo"} {
 		b, err := os.ReadFile(filepath.Join(cdir, h))
 		if err != nil {
 			t.Fatal(err)

@@ -531,7 +531,7 @@ fn fn_key(m: ssa.Module, fi: Int, os: Str, id: Str, taken: Map[Str, Bool], by_na
   b.write("self ${func_sig(m, f.name, taken, by_name, tk, rb)} main=${f.name == "main"}\n")
   var names: List[Str] = []
   var seen: Map[Str, Bool] = {}
-  if f.ckey.is_empty() && m.facts.contains(fi) {
+  if f.ckey.is_empty() && m.facts.contains(fi) && !m.is_extern(fi) {
     // a function not decoded has the key of its entry (decision 0283 B)
     fault("arm64.fn_key: ${f.name} has body facts but no cache key")
   }

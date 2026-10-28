@@ -52,10 +52,25 @@ fn backend_cache_dir(os: Os, ctx: Ctx) -> Str {
 /// (self_id) when unstamped. The binary and test run caches keep
 /// self_id: a link and a test run read the driver too.
 fn cache_id(os: Os) -> Str {
-  if XO_CODEGEN_KEY.len() == 64 {
-    return "codegen ${XO_CODEGEN_KEY}"
+  let id = if XO_CODEGEN_KEY.len() == 64 { "codegen ${XO_CODEGEN_KEY}" } else { self_id(os) }
+  // a separately compiled build (decision 0388 stage 3) by the facts it
+  // read: its entries are not a whole-program build's
+  let sp = sepcomp_facts_path(os)
+  if id.is_empty() || sp.is_empty() {
+    return id
   }
-  self_id(os)
+  match os.fs.read(sp) {
+    Ok(d) => "${id} sepcomp ${crypto.sha256(d).to_hex()}"
+    Err(_) => id
+  }
+}
+
+/// XO_SEPCOMP_FACTS when XO_SEPCOMP=1, else "".
+fn sepcomp_facts_path(os: Os) -> Str {
+  if (os.env.get("XO_SEPCOMP") ?? "") != "1" {
+    return ""
+  }
+  os.env.get("XO_SEPCOMP_FACTS") ?? ""
 }
 
 fn self_id(os: Os) -> Str {

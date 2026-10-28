@@ -263,6 +263,16 @@ pub fn (var m: Module) add_extern(f: Func, x: StdFact) -> Int {
   fi
 }
 
+/// Makes function fi of m, declared and not built, an extern answered by
+/// x (add_extern's, in place).
+pub fn (var m: Module) mark_extern(fi: Int, x: StdFact) {
+  var bf = decode_facts(m, x.body) ?? BodyFacts{}
+  bf.faults = x.faults
+  bf.names = []
+  m.facts[fi] = bf
+  m.externs[m.funcs[fi].name] = x
+}
+
 /// Each extern's borrowed flags (exact: the calling convention std's
 /// object was built with) and its first parameter's type, -1 for none,
 /// by name, for the borrow inference (Rc.init_borrows).

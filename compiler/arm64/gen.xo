@@ -77,7 +77,9 @@ fn (var g: G) generate() -> Program {
     return Program{asm: "", err: "arm64 backend: no main", skipped: []}
   }
   for fi in 0..g.m.funcs.len() {
-    g.function(fi)
+    if !g.m.is_extern(fi) {
+      g.function(fi)
+    }
   }
   g.entry(main)
   g.exports()

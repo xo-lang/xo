@@ -32,6 +32,10 @@ pub struct Checker {
   /// and resolved, and their entry left in std_export_out for the driver
   /// to store under std_export_key
   pub std_export_on: Bool = false
+  /// decision 0388 stage 3 (XO_SEPCOMP=1): std's facts (stdf's bytes);
+  /// the SSA builder makes each std function they name an extern
+  /// instead of building its body
+  pub sepcomp_facts: Bytes = b""
   pub std_export_key: Str = ""
   pub std_export_in: Bytes = b""
   pub std_export_out: Bytes = b""

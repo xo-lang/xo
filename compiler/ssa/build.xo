@@ -198,6 +198,10 @@ pub struct Builder {
   /// function's (faults, may be canceled) by name, which later passes'
   /// renumbering leaves valid (std_facts)
   pub keep_unwind_names: Bool = false
+  /// decision 0388 stage 3: std's facts by name (Checker.sepcomp_facts,
+  /// decoded at the first job), the std functions to make externs
+  sep: Map[Str, StdFact] = {}
+  sep_read: Bool = false
   pub unwind_names: Map[Str, (Bool, Bool)] = {}
   /// the constants fold_known_calls folded calls of these functions to
   pub fold_known: Map[Int, Aux] = {}
@@ -756,6 +760,24 @@ fn (var b: Builder) run_queue() {
 }
 
 fn (var b: Builder) run_job(j: Job) {
+  // decision 0388 stage 3: a std function whose facts std's object
+  // exports is an extern; its body is std's object's
+  if !b.c.sepcomp_facts.is_empty() {
+    if let Body(fo, fi, sub) = j {
+      if sub.is_empty() && b.c.mods[b.obj_mod(fo)].std_tree {
+        if !b.sep_read {
+          b.sep_read = true
+          for x in decode_std_facts(b.c.sepcomp_facts) ?? [] {
+            b.sep[x.name] = x
+          }
+        }
+        if let Some(x) = b.sep.get(b.m.funcs[fi].name) {
+          b.m.mark_extern(fi, x)
+          return
+        }
+      }
+    }
+  }
   b.run_job_fe(j)
 }
 

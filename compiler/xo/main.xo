@@ -755,6 +755,17 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       }
     }
   }
+  // decision 0388 stage 3 (opt in): std's functions as externs, from
+  // std's facts (stdf, std's object builder's)
+  let sp = sepcomp_facts_path(os)
+  if !sp.is_empty() {
+    match os.fs.read(sp) {
+      Ok(d) => {
+        c.sepcomp_facts = d
+      }
+      Err(e) => fail(os, "XO_SEPCOMP_FACTS=${sp}: ${e}")
+    }
+  }
   if !pdir.is_empty() {
     parse_prefetch(os, c, pdir)
   }

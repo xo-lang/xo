@@ -207,6 +207,10 @@ pub fn part_lists(m: ssa.Module) -> List[List[Int]] {
   var rest: List[Int] = []
   var rt: List[Int] = []
   for (fi, f) in m.funcs.indexed() {
+    // a std extern (decision 0388) is std's object's, not emitted here
+    if m.is_extern(fi) {
+      continue
+    }
     all.push(fi)
     if f.file.starts_with("native/llrt/") {
       rt.push(fi)
