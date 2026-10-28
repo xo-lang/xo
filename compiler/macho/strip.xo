@@ -148,30 +148,11 @@ fn (l: Linker) reloc_sect(o: Int, s: ISect, r: IReloc) -> (Int, Int) {
   (o, ord - 1)
 }
 
-/// dead_strip: atomizes the objects made with .subsections_via_symbols and
-/// marks every atom no root reaches dead (place skips it).
-fn (var l: Linker) dead_strip() {
-  var any = false
-  for o in 0..l.objs.len() {
-    if l.objs[o].live && l.objs[o].subsections {
-      l.atomize(o)
-      any = true
-    }
-  }
-  if !any {
-    return
-  }
-  var live: List[List[Bool]] = []
-  for ob in l.objs {
-    var row: List[Bool] = []
-    for _ in ob.sects {
-      row.push(false)
-    }
-    live.push(row)
-  }
-  var work: List[(Int, Int)] = []
-  // what each function atom's FDE and compact unwind entry name besides
-  // the function (its LSDA, its personality): live with the function
+/// What each function atom's FDE, compact unwind entry and unsafe range
+/// record name besides the function (its LSDA, its personality, its
+/// table): live with the function. Keyed by the function's (object,
+/// section).
+fn (l: Linker) unwind_refs() -> Map[(Int, Int), List[(Int, Int)]] {
   var unw: Map[(Int, Int), List[(Int, Int)]] = {}
   for o in 0..l.objs.len() {
     if !l.objs[o].live {
@@ -230,6 +211,32 @@ fn (var l: Linker) dead_strip() {
       }
     }
   }
+  unw
+}
+
+/// dead_strip: atomizes the objects made with .subsections_via_symbols and
+/// marks every atom no root reaches dead (place skips it).
+fn (var l: Linker) dead_strip() {
+  var any = false
+  for o in 0..l.objs.len() {
+    if l.objs[o].live && l.objs[o].subsections {
+      l.atomize(o)
+      any = true
+    }
+  }
+  if !any {
+    return
+  }
+  var live: List[List[Bool]] = []
+  for ob in l.objs {
+    var row: List[Bool] = []
+    for _ in ob.sects {
+      row.push(false)
+    }
+    live.push(row)
+  }
+  var work: List[(Int, Int)] = []
+  let unw = l.unwind_refs()
   // the roots: every section of a whole object, the sections nothing may
   // strip, CIEs, and the entry's atom
   for o in 0..l.objs.len() {
@@ -286,10 +293,14 @@ fn (var l: Linker) dead_strip() {
       }
     }
   }
-  // the dead atoms, and the compact unwind entries of dead functions
+  // the dead atoms, the compact unwind entries of dead functions, and
+  // their subprograms and line sequences (dwtrim.xo)
   for o in 0..l.objs.len() {
     if !l.objs[o].live || !l.objs[o].subsections {
       continue
+    }
+    for (k, g) in l.dw_all_segs(o) {
+      l.objs[o].sects[k] = dw_cut(l.objs[o].sects[k], g, live)
     }
     for k in 0..l.objs[o].sects.len() {
       let s = l.objs[o].sects[k]

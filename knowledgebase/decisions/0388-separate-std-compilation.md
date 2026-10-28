@@ -228,6 +228,44 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   async_preempt_alloc and async_preempt_regs built so match their want.txt in 5 of 5 runs each
   (402 live functions in the index, 6,432 bytes, scanned linearly per SIGURG).
 
+### The store link (xo-lang-4, 2026-10-28)
+
+- compiler/macho store.xo: `store_encode` packs objects made with `.subsections_via_symbols` into
+  one file. It holds every atom (strip.xo atomize) with its bytes and relocations in a data
+  region, the symbols, each split section's atoms, and each atom's edges as store atom numbers:
+  what its relocations reach (a reference by section expanded to every atom of it), plus what its
+  FDE, compact unwind entry and unsafe range record name (strip.xo unwind_refs). `link_store`
+  walks the edges from what the program's objects (kept whole) leave undefined, the entry, and
+  the sections nothing may strip. It reads only the live atoms' bytes and relocations; a dead
+  atom stays an empty section, so every ordinal the relocations and DWARF name holds. It then
+  runs link_debug's tail (link_rest). The result is the binary link_debug writes for the store's
+  objects and the program's, byte for byte.
+- DWARF by function (dwtrim.xo), in the strip and the store alike. The arm64 emitter writes each
+  function's subprogram last among its unit's entries, its line sequence on its own, and each
+  variable's location list in __debug_loclists starting with the function's address. So a dead
+  function's subprogram, sequence and lists are cut. Only the unit length is patched, plus the
+  list offsets table, whose entries move with their lists; nothing else refers into those runs.
+  The store keeps each run's bytes and relocations apart, so a link copies only live runs.
+- XO_STD_STORE=PATH on an XO_STD_ROOTS=1 build (darwin): the first build writes the store of its
+  parts (prog-darwin.N.o); later builds link through it without reading the parts.
+  XO_STD_STORE_CHECK=1 also links the parts and fails on any difference; XO_STD_STORE_REPEAT=N
+  times N more links.
+- llvm-fib through the store, 2026-10-28 (the program's own functions are in the store too,
+  the stand-in until stage 3 compiles the program apart; the store is 29.2 MB, the parts' link
+  is the same binary):
+
+  | store link                                | min ms | median ms | binary   |
+  |-------------------------------------------|-------:|----------:|---------:|
+  | DWARF whole                               | 50.7   | (1 run)   | 11.42 MB |
+  | dead subprograms and line sequences cut   | 26.7   | 27.1      | 7.26 MB  |
+  | and their location lists                  | 22.6   | 24.9      | 2.97 MB  |
+
+  n=21 per row (20 repeats plus the first) on a loaded Mac (load average 15 to 26). The last
+  row's CPU profile, 101 links: 21 ms of CPU each. Of that, link_rest is 9.7 ms (the output's
+  copies and growth about 3, the signature's and UUID's SHA-256 2.3, DWARF 1.5, relocation 1.4),
+  store_cut 2.9, the run tables' decoding 2, resolve 1.8. __DWARF left: 1.88 MB (info 635 KB,
+  mostly each part's own types; line 262 KB; line_str 115 KB). The target is 8 to 12 ms.
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle

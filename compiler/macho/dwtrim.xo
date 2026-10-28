@@ -1,0 +1,400 @@
+// The DWARF of an object split into atoms (decision 0388 stage 4): the
+// arm64 emitter's compile unit (compiler/arm64 debug.xo) writes each
+// function's subprogram last among the unit's entries, after the types
+// and the abstract subprograms the inlined calls name, and each
+// function's line sequence on its own, so a dead function's subprogram
+// and sequence are cut without moving anything another entry refers to;
+// the unit's length is the only field patched. The strip (strip.xo) and
+// the store (store.xo) cut the same runs, so a link through the store is
+// the parts' link.
+
+/// A run of an xo unit's __debug_info or __debug_line, bytes [start,
+/// end): one function's subprogram or line sequence, kept with the
+/// function's atom (fo, fk); the other runs (fo -1) are always kept.
+struct DwSeg {
+  start: Int
+  end: Int
+  fo: Int = -1
+  fk: Int = -1
+}
+
+/// An abbreviation: its tag, whether it has children, its attributes'
+/// (name, form).
+struct DwAbbrev {
+  tag: Int
+  children: Bool
+  attrs: List[(Int, Int)]
+}
+
+fn dw_abbrevs(d: Bytes) -> Map[Int, DwAbbrev] {
+  var out: Map[Int, DwAbbrev] = {}
+  var p = 0
+  while p < d.len() {
+    let (code, p1) = get_uleb(d, p)
+    if code == 0 {
+      break
+    }
+    let (tag, p2) = get_uleb(d, p1)
+    if p2 >= d.len() {
+      break
+    }
+    let ch = Int(d[p2]) != 0
+    p = p2 + 1
+    var attrs: List[(Int, Int)] = []
+    while p < d.len() {
+      let (a, q1) = get_uleb(d, p)
+      let (f, q2) = get_uleb(d, q1)
+      p = q2
+      if a == 0 && f == 0 {
+        break
+      }
+      attrs.push((a, f))
+    }
+    out[code] = DwAbbrev{tag: tag, children: ch, attrs: attrs}
+  }
+  out
+}
+
+/// The offset after an attribute value of form f at p, -1 for a form
+/// this reader does not know.
+fn dw_skip_form(d: Bytes, p: Int, f: Int) -> Int {
+  match f {
+    0x01 => p + 8
+    0x05 => p + 2
+    0x06 => p + 4
+    0x07 => p + 8
+    0x08 => {
+      var q = p
+      while q < d.len() && d[q] != 0 {
+        q += 1
+      }
+      q + 1
+    }
+    0x0b => p + 1
+    0x0c => p + 1
+    0x0d => skip_leb(d, p)
+    0x0e => p + 4
+    0x0f => skip_leb(d, p)
+    0x11 => p + 1
+    0x12 => p + 2
+    0x13 => p + 4
+    0x17 => p + 4
+    0x18 => {
+      let (n, q) = get_uleb(d, p)
+      q + n
+    }
+    0x19 => p
+    0x1b => skip_leb(d, p)
+    0x1f => p + 4
+    0x22 => skip_leb(d, p)
+    _ => -1
+  }
+}
+
+/// The entry at p (and its children): the offset after it, and the
+/// offset of its DW_AT_low_pc value (-1 for none); (-1, -1) when it
+/// cannot be read.
+fn dw_skip_die(d: Bytes, p: Int, ab: Map[Int, DwAbbrev]) -> (Int, Int) {
+  let (code, q0) = get_uleb(d, p)
+  if code == 0 {
+    return (q0, -1)
+  }
+  let a = match ab.get(code) {
+    Some(x) => x
+    None => return (-1, -1)
+  }
+  var q = q0
+  var lo = -1
+  for (at, f) in a.attrs {
+    if at == 0x11 {
+      lo = q
+    }
+    q = dw_skip_form(d, q, f)
+    if q < 0 || q > d.len() {
+      return (-1, -1)
+    }
+  }
+  if a.children {
+    while q < d.len() {
+      if d[q] == 0 {
+        q += 1
+        return (q, lo)
+      }
+      let (q2, _) = dw_skip_die(d, q, ab)
+      if q2 < 0 {
+        return (-1, -1)
+      }
+      q = q2
+    }
+    return (-1, -1)
+  }
+  (q, lo)
+}
+
+/// The function atom a DWARF address at off of section s (object o) names,
+/// (-1, -1) for none.
+fn (l: Linker) dw_fn_at(o: Int, s: ISect, rel_at: Map[Int, Int], off: Int) -> (Int, Int) {
+  match rel_at.get(off) {
+    Some(i) => {
+      let (d, j) = l.reloc_sect(o, s, s.relocs[i])
+      if d >= 0 && j >= 0 { (d, j) } else { (-1, -1) }
+    }
+    None => (-1, -1)
+  }
+}
+
+/// The runs of an xo unit's __debug_info (info) or __debug_line section
+/// s of object o (abbrev: the object's __debug_abbrev bytes), in order,
+/// covering it; [] when it is not one this reader cuts (it is kept
+/// whole).
+fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSeg] {
+  let d = s.data
+  var rel_at: Map[Int, Int] = {}
+  for (i, r) in s.relocs.indexed() {
+    if r.typ == R_UNSIGNED && r.len == 3 && !r.pcrel {
+      rel_at[r.addr] = i
+    }
+  }
+  var runs: List[DwSeg] = []
+  if info {
+    if d.len() < 36 || Int(d[33]) != 120 || Int(d[34]) != 111 || Int(d[35]) != 0 || rd32(d, 0) + 4 != d.len() {
+      return []
+    }
+    let ab = dw_abbrevs(abbrev)
+    // the unit's own entry, then its children up to the closing 0
+    let (code, q0) = get_uleb(d, 12)
+    let cu = match ab.get(code) {
+      Some(x) => x
+      None => return []
+    }
+    var p = q0
+    for (_, f) in cu.attrs {
+      p = dw_skip_form(d, p, f)
+      if p < 0 {
+        return []
+      }
+    }
+    var keep_to = p
+    var last_other = p
+    while p < d.len() && d[p] != 0 {
+      let (code2, _) = get_uleb(d, p)
+      let a = match ab.get(code2) {
+        Some(x) => x
+        None => return []
+      }
+      let (q, lo) = dw_skip_die(d, p, ab)
+      if q < 0 {
+        return []
+      }
+      let (fo, fk) = if a.tag == 0x2e && lo >= 0 { l.dw_fn_at(o, s, rel_at, lo) } else { (-1, -1) }
+      if fo >= 0 {
+        runs.push(DwSeg{start: p, end: q, fo: fo, fk: fk})
+      } else {
+        last_other = q
+        runs.push(DwSeg{start: p, end: q})
+      }
+      p = q
+    }
+    keep_to = p
+    // a subprogram before another entry may be what it refers to: none
+    // cut there (the emitter writes none)
+    for r in runs {
+      if r.fo >= 0 && r.start < last_other {
+        return []
+      }
+    }
+    var out: List[DwSeg] = [DwSeg{start: 0, end: if runs.is_empty() { keep_to } else { runs[0].start }}]
+    out = out + runs
+    out.push(DwSeg{start: keep_to, end: d.len()})
+    return out
+  }
+  if s.name == "__debug_loclists" {
+    // the header (12 bytes), an offset per list, then the lists, each a
+    // function's variable's: its first entry the function's start
+    // (DW_LLE_base_address), an empty one only its end
+    if d.len() < 12 || rd32(d, 0) + 4 != d.len() || rd16(d, 4) != 5 {
+      return []
+    }
+    let count = rd32(d, 8)
+    let lists = 12 + 4 * count
+    if lists > d.len() {
+      return []
+    }
+    var out: List[DwSeg] = [DwSeg{start: 0, end: lists}]
+    var p = lists
+    for i in 0..count {
+      if 12 + rd32(d, 12 + 4 * i) != p {
+        return []
+      }
+      let start = p
+      var fo = -1
+      var fk = -1
+      while p < d.len() && d[p] != 0 {
+        let e = Int(d[p])
+        p += 1
+        if e == 6 {
+          if fo < 0 {
+            let (a, b) = l.dw_fn_at(o, s, rel_at, p)
+            fo = a
+            fk = b
+          }
+          p += 8
+        } else if e == 4 {
+          p = skip_leb(d, p)
+          p = skip_leb(d, p)
+          let (n, q) = get_uleb(d, p)
+          p = q + n
+        } else {
+          return []
+        }
+      }
+      p += 1
+      out.push(DwSeg{start: start, end: p, fo: fo, fk: fk})
+    }
+    if p != d.len() {
+      return []
+    }
+    return out
+  }
+  // __debug_line: one unit (DWARF 5), its header, then sequences
+  if d.len() < 18 || rd32(d, 0) + 4 != d.len() || rd16(d, 4) != 5 {
+    return []
+  }
+  let prog = 12 + rd32(d, 8)
+  let opbase = Int(d[17])
+  var lens: List[Int] = []
+  for k in 0..opbase - 1 {
+    lens.push(Int(d[18 + k]))
+  }
+  var p = prog
+  var out: List[DwSeg] = [DwSeg{start: 0, end: prog}]
+  while p < d.len() {
+    let start = p
+    var first = -1
+    var ended = false
+    while p < d.len() && !ended {
+      let op = Int(d[p])
+      p += 1
+      if op == 0 {
+        let (n, q) = get_uleb(d, p)
+        if q >= d.len() {
+          return []
+        }
+        let sub = Int(d[q])
+        if sub == 2 && first < 0 {
+          first = q + 1
+        }
+        ended = sub == 1
+        p = q + n
+      } else if op == 9 {
+        p += 2
+      } else if op < opbase {
+        for _ in 0..lens[op - 1] {
+          p = skip_leb(d, p)
+        }
+      }
+    }
+    if !ended || p > d.len() {
+      return []
+    }
+    let (fo, fk) = if first >= 0 { l.dw_fn_at(o, s, rel_at, first) } else { (-1, -1) }
+    out.push(DwSeg{start: start, end: p, fo: fo, fk: fk})
+  }
+  out
+}
+
+/// Where each run starts once the dead ones are cut, and the cut
+/// length: a dead run's start is where it would have been.
+fn dw_new_starts(segs: List[DwSeg], keep: List[Bool]) -> (List[Int], Int) {
+  var at: List[Int] = []
+  var n = 0
+  for (i, g) in segs.indexed() {
+    at.push(n)
+    if keep[i] {
+      n += g.end - g.start
+    }
+  }
+  (at, n)
+}
+
+/// The first run of a cut section (head: its bytes): its unit length n -
+/// 4, and for __debug_loclists each list's offset where its run went.
+fn dw_head(var b: BytesBuilder, head: Bytes, loclists: Bool, n: Int, segs: List[DwSeg], at: List[Int]) {
+  sw32(b, n - 4)
+  if !loclists {
+    b.write(head[4..head.len()])
+    return
+  }
+  b.write(head[4..12])
+  // list i is run i + 1 (dw_segs)
+  for i in 0..rd32(head, 8) {
+    sw32(b, at[i + 1] - 12)
+  }
+}
+
+/// Section s cut to its runs whose function is live (live[o][k]) and
+/// the others, its unit length (and a list's offsets) patched, its
+/// relocations moved with their runs.
+fn dw_cut(s: ISect, segs: List[DwSeg], live: List[List[Bool]]) -> ISect {
+  var keep: List[Bool] = []
+  for g in segs {
+    keep.push(g.fo < 0 || live[g.fo][g.fk])
+  }
+  let (at, n) = dw_new_starts(segs, keep)
+  var b = BytesBuilder.with_capacity(n)
+  for (i, g) in segs.indexed() {
+    if !keep[i] {
+      continue
+    }
+    if g.start == 0 {
+      dw_head(b, s.data[0..g.end], s.name == "__debug_loclists", n, segs, at)
+    } else {
+      b.write(s.data[g.start..g.end])
+    }
+  }
+  var out = s
+  out.data = b.freeze()
+  out.size = n
+  out.relocs = []
+  for r in s.relocs {
+    // the run holding it (by binary search of the starts)
+    var lo = 0
+    var hi = segs.len()
+    while lo < hi {
+      let m = (lo + hi) / 2
+      if segs[m].start <= r.addr {
+        lo = m + 1
+      } else {
+        hi = m
+      }
+    }
+    let i = lo - 1
+    if i >= 0 && keep[i] {
+      var r2 = r
+      r2.addr = r.addr - segs[i].start + at[i]
+      out.relocs.push(r2)
+    }
+  }
+  out
+}
+
+/// The __debug_info, __debug_line and __debug_loclists runs of each split object's xo unit
+/// (by object, then section index), for dw_cut.
+fn (l: Linker) dw_all_segs(o: Int) -> Map[Int, List[DwSeg]] {
+  var out: Map[Int, List[DwSeg]] = {}
+  var abbrev = "".bytes()
+  for s in l.objs[o].sects {
+    if s.seg == "__DWARF" && s.name == "__debug_abbrev" {
+      abbrev = s.data
+    }
+  }
+  for (k, s) in l.objs[o].sects.indexed() {
+    if s.seg == "__DWARF" && (s.name is "__debug_info" | "__debug_line" | "__debug_loclists") {
+      let g = l.dw_segs(o, s, s.name == "__debug_info", abbrev)
+      if !g.is_empty() {
+        out[k] = g
+      }
+    }
+  }
+  out
+}

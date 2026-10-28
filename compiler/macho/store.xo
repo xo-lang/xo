@@ -1,0 +1,457 @@
+// std's indexed store (decision 0388 stage 4): std's objects, made with
+// `.subsections_via_symbols`, split into atoms once (strip.xo atomize),
+// with each atom's edges (what its relocations reach, and what its FDE,
+// compact unwind entry and unsafe range record name) resolved to atoms of
+// the store. A link through the store walks the edges from what the
+// program's objects name and the entry, and reads only the live atoms'
+// bytes and relocations; a dead atom stays as an empty section (dead), so
+// the ordinals the relocations and DWARF name hold. The program's objects
+// are kept whole. link_store gives the bytes link_debug gives for the
+// store's objects and the program's, byte for byte.
+//
+// The file: STORE_MAGIC, then a header region the link reads in full and
+// a data region it reads by offset (the live atoms', and the sections
+// never split: DWARF, __eh_frame, compact unwind). All integers are
+// little-endian u32, addresses and values u64.
+
+const STORE_MAGIC = "XOSTORE1"
+
+fn sw32(var b: BytesBuilder, v: Int) {
+  b.write_byte(UInt8(v & 255))
+  b.write_byte(UInt8((v >> 8) & 255))
+  b.write_byte(UInt8((v >> 16) & 255))
+  b.write_byte(UInt8((v >> 24) & 255))
+}
+
+fn sw64(var b: BytesBuilder, v: Int) {
+  sw32(b, v & 0xffffffff)
+  sw32(b, (v >> 32) & 0xffffffff)
+}
+
+fn swbytes(var b: BytesBuilder, x: Bytes) {
+  sw32(b, x.len())
+  b.write(x)
+}
+
+/// A reader of the header region.
+struct SR {
+  b: Bytes
+  at: Int = 0
+}
+
+fn (var r: SR) u32() -> Int {
+  let v = rd32(r.b, r.at)
+  r.at += 4
+  v
+}
+
+fn (var r: SR) u64() -> Int {
+  let v = rd64(r.b, r.at)
+  r.at += 8
+  v
+}
+
+fn (var r: SR) bytes() -> Bytes {
+  let n = r.u32()
+  let v = r.b[r.at..r.at + n]
+  r.at += n
+  v
+}
+
+/// A relocation in 12 bytes: its address, its symbol or ordinal, and its
+/// flags (pcrel, len, ext, the type).
+fn sw_reloc(var b: BytesBuilder, x: IReloc) {
+  sw32(b, x.addr)
+  sw32(b, x.sym)
+  sw32(b, (if x.pcrel { 1 } else { 0 }) | (x.len << 1) | (if x.ext { 8 } else { 0 }) | (x.typ << 4))
+}
+
+fn rd_reloc(b: Bytes, at: Int) -> IReloc {
+  let f = rd32(b, at + 8)
+  IReloc{addr: rd32(b, at), sym: rd32(b, at + 4), pcrel: (f & 1) != 0, len: (f >> 1) & 3, ext: (f & 8) != 0, typ: f >> 4}
+}
+
+/// store_encode: the store of objects (each made with
+/// `.subsections_via_symbols`), or the first error.
+pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
+  var l = Linker{opts: LinkOpts{name: "store"}}
+  for inp in inputs {
+    match parse_object(inp.path, inp.data) {
+      Ok(o) => {
+        if !o.subsections {
+          return Err("${inp.path}: not made with .subsections_via_symbols")
+        }
+        if o.x86 {
+          return Err("${inp.path}: the store holds arm64 objects")
+        }
+        l.objs.push(o)
+      }
+      Err(e) => return Err(e)
+    }
+  }
+  let n = l.objs.len()
+  // the store's own definitions only: what it does not define (the
+  // program's, imports) is no edge, the program's objects being whole
+  for o in 0..n {
+    l.add_globals(o)
+  }
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  for o in 0..n {
+    l.atomize(o)
+  }
+  var base: List[Int] = []
+  var total = 0
+  for ob in l.objs {
+    base.push(total)
+    total += ob.sects.len()
+  }
+  let unw = l.unwind_refs()
+  var hb = BytesBuilder.new()
+  var db = BytesBuilder.new()
+  sw32(hb, n)
+  sw32(hb, total)
+  for (o, ob) in l.objs.indexed() {
+    let segs = l.dw_all_segs(o)
+    swbytes(hb, ob.path.bytes())
+    sw32(hb, ob.sects.len())
+    for (k, s) in ob.sects.indexed() {
+      swbytes(hb, s.seg.bytes())
+      swbytes(hb, s.name.bytes())
+      sw64(hb, s.addr)
+      sw64(hb, s.size)
+      sw32(hb, s.align)
+      sw32(hb, s.flags)
+      sw32(hb, db.len())
+      sw32(hb, s.data.len())
+      db.write(s.data)
+      // a cut DWARF section's relocations go with its runs (below)
+      let g = segs.get(k) ?? []
+      sw32(hb, db.len())
+      sw32(hb, if g.is_empty() { s.relocs.len() } else { 0 })
+      if g.is_empty() {
+        for r in s.relocs {
+          sw_reloc(db, r)
+        }
+      }
+      // its runs: bytes, the function's atom (or none), relocations
+      sw32(hb, g.len())
+      for x in g {
+        sw32(hb, x.start)
+        sw32(hb, x.end)
+        sw32(hb, if x.fo < 0 { 0xffffffff } else { base[x.fo] + x.fk })
+        sw32(hb, db.len())
+        var nr = 0
+        for r in s.relocs {
+          if r.addr >= x.start && r.addr < x.end {
+            sw_reloc(db, r)
+            nr += 1
+          }
+        }
+        sw32(hb, nr)
+      }
+    }
+    sw32(hb, ob.syms.len())
+    for s in ob.syms {
+      swbytes(hb, s.name)
+      sw32(hb, s.typ)
+      sw32(hb, s.sect)
+      sw32(hb, s.desc)
+      sw64(hb, s.value)
+    }
+    let keys = ob.split.keys().sort()
+    sw32(hb, keys.len())
+    for k in keys {
+      let atoms = ob.split.get(k) ?? []
+      sw32(hb, k)
+      sw32(hb, atoms.len())
+      for (a, ord) in atoms {
+        sw64(hb, a)
+        sw32(hb, ord)
+      }
+    }
+    // each section's edges, as store atom numbers
+    for (k, s) in ob.sects.indexed() {
+      var refs: List[(Int, Int)] = []
+      if !(s.seg == "__LD" || s.seg == "__DWARF" || (s.flags & S_ATTR_DEBUG_FLAG) != 0 || is_eh(s)) {
+        for r in s.relocs {
+          refs.push(l.reloc_sect(o, s, r))
+        }
+      }
+      for t in unw.get((o, k)) ?? [] {
+        refs.push(t)
+      }
+      var ids: List[Int] = []
+      var seen: Set[Int] = #{}
+      for (d, j) in refs {
+        if d < 0 {
+          continue
+        }
+        if j < 0 {
+          for (_, m) in l.objs[d].split.get(-1 - j) ?? [] {
+            let id = base[d] + m - 1
+            if !seen.contains(id) {
+              seen.add(id)
+              ids.push(id)
+            }
+          }
+          continue
+        }
+        let id = base[d] + j
+        if !seen.contains(id) {
+          seen.add(id)
+          ids.push(id)
+        }
+      }
+      sw32(hb, ids.len())
+      for id in ids {
+        sw32(hb, id)
+      }
+    }
+  }
+  var out = BytesBuilder.new()
+  out.write(STORE_MAGIC.bytes())
+  let h = hb.freeze()
+  sw32(out, h.len())
+  out.write(h)
+  out.write(db.freeze())
+  Ok(out.freeze())
+}
+
+/// A store section before it is read: where its bytes and relocations
+/// are in the data region.
+struct SSect {
+  seg: Str
+  name: Str
+  addr: Int
+  size: Int
+  align: Int
+  flags: Int
+  data_at: Int
+  data_len: Int
+  rel_at: Int
+  nrel: Int
+  /// a cut DWARF section's runs (dwtrim.xo): start, end, the function's
+  /// store atom (-1: kept), its relocations' place and count
+  segs: List[(Int, Int, Int, Int, Int)] = []
+}
+
+/// link_store: link_debug of the program's inputs and the store's
+/// objects, reading only the atoms the program reaches.
+pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Result[(Bytes, Bytes), Str] {
+  if store.len() < 12 || bstr(store[0..8]) != STORE_MAGIC {
+    return Err("not an xo std store")
+  }
+  let hlen = rd32(store, 8)
+  let data0 = 12 + hlen
+  var r = SR{b: store[12..12 + hlen]}
+  var l = Linker{opts: opts}
+  // the program's objects after the store's (a build passes its parts
+  // first), whole: what they name roots the walk
+  var prog = match parse_inputs(inputs) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  for i in 0..prog.len() {
+    prog[i].subsections = false
+  }
+  let n = r.u32()
+  let total = r.u32()
+  var ssects: List[List[SSect]] = []
+  var edges: List[List[Int]] = []
+  var base: List[Int] = []
+  // the store's global definitions: name -> store atom
+  var defs: Map[Bytes, Int] = {}
+  for _ in 0..n {
+    base.push(edges.len())
+    var ob = IObj{path: bstr(r.bytes()), subsections: true}
+    let ns = r.u32()
+    var ss: List[SSect] = []
+    for _ in 0..ns {
+      let seg = bstr(r.bytes())
+      let name = bstr(r.bytes())
+      let addr = r.u64()
+      let size = r.u64()
+      let align = r.u32()
+      let flags = r.u32()
+      let da = r.u32()
+      let dl = r.u32()
+      let ra = r.u32()
+      let nr = r.u32()
+      let ng = r.u32()
+      var segs: List[(Int, Int, Int, Int, Int)] = []
+      for _ in 0..ng {
+        let gs = r.u32()
+        let ge = r.u32()
+        let gf = r.u32()
+        let gr = r.u32()
+        segs.push((gs, ge, if gf == 0xffffffff { -1 } else { gf }, gr, r.u32()))
+      }
+      ss.push(SSect{seg: seg, name: name, addr: addr, size: size, align: align, flags: flags, data_at: da, data_len: dl, rel_at: ra, nrel: nr, segs: segs})
+    }
+    let nsym = r.u32()
+    for _ in 0..nsym {
+      let name = r.bytes()
+      let typ = r.u32()
+      let sect = r.u32()
+      let desc = r.u32()
+      let value = r.u64()
+      let s = ISym{name: name, typ: typ, sect: sect, desc: desc, value: value}
+      if is_ext(s) && is_defined(s) && (typ & N_TYPE) == N_SECT && sect >= 1 {
+        let id = base[base.len() - 1] + sect - 1
+        // a weak definition gives way to a strong one (add_globals)
+        if !defs.contains(name) || (desc & 0x80) == 0 {
+          defs[name] = id
+        }
+      }
+      ob.syms.push(s)
+    }
+    let nsplit = r.u32()
+    for _ in 0..nsplit {
+      let k = r.u32()
+      let na = r.u32()
+      var atoms: List[(Int, Int)] = []
+      for _ in 0..na {
+        let a = r.u64()
+        atoms.push((a, r.u32()))
+      }
+      ob.split[k] = atoms
+    }
+    for _ in 0..ns {
+      let ne = r.u32()
+      var e: List[Int] = []
+      for _ in 0..ne {
+        e.push(r.u32())
+      }
+      edges.push(e)
+    }
+    ssects.push(ss)
+    l.objs.push(ob)
+  }
+  if edges.len() != total {
+    return Err("a damaged xo std store")
+  }
+  l.objs = l.objs + prog
+  // the walk: the program's undefined symbols the store defines, the
+  // entry, and the store's sections nothing may strip
+  var live: List[Bool] = []
+  for _ in 0..total {
+    live.push(false)
+  }
+  var work: List[Int] = []
+  for ob in prog {
+    if !ob.live {
+      continue
+    }
+    for s in ob.syms {
+      if is_ext(s) && !is_defined(s) {
+        if let Some(id) = defs.get(s.name) {
+          if !live[id] {
+            live[id] = true
+            work.push(id)
+          }
+        }
+      }
+    }
+  }
+  if let Some(id) = defs.get(opts.entry.bytes()) {
+    if !live[id] {
+      live[id] = true
+      work.push(id)
+    }
+  }
+  for i in 0..n {
+    for (k, s) in ssects[i].indexed() {
+      let never = s.seg == "__LD" || s.seg == "__DWARF" || (s.flags & S_ATTR_DEBUG_FLAG) != 0 || (s.seg == "__TEXT" && s.name == "__eh_frame")
+      if !never && ((s.flags & S_ATTR_NO_DEAD_STRIP) != 0 || (s.flags & 0xff) == S_MOD_INIT_FUNC_POINTERS) && !live[base[i] + k] {
+        live[base[i] + k] = true
+        work.push(base[i] + k)
+      }
+    }
+  }
+  while let Some(id) = work.pop() {
+    for t in edges[id] {
+      if !live[t] {
+        live[t] = true
+        work.push(t)
+      }
+    }
+  }
+  // the store's sections: a live atom's bytes and relocations, a whole
+  // section's, a dead atom empty
+  for i in 0..n {
+    var sects: List[ISect] = []
+    for (k, s) in ssects[i].indexed() {
+      let whole = s.seg == "__LD" || s.seg == "__DWARF" || (s.flags & S_ATTR_DEBUG_FLAG) != 0 || (s.seg == "__TEXT" && s.name == "__eh_frame")
+      if !s.segs.is_empty() {
+        sects.push(store_cut(store, data0, s, live))
+      } else if whole || live[base[i] + k] {
+        let da = data0 + s.data_at
+        let ra = data0 + s.rel_at
+        var t = ISect{seg: s.seg, name: s.name, addr: s.addr, size: s.size, align: s.align, flags: s.flags, data: store[da..da + s.data_len]}
+        for j in 0..s.nrel {
+          t.relocs.push(rd_reloc(store, ra + 12 * j))
+        }
+        sects.push(t)
+      } else {
+        sects.push(ISect{seg: s.seg, name: s.name, addr: s.addr, size: s.size, align: s.align, flags: s.flags, data: "".bytes(), dead: true})
+      }
+    }
+    l.objs[i].sects = sects
+  }
+  l.resolve()
+  if !l.err.is_empty() {
+    return Err(l.err)
+  }
+  // the compact unwind entries of the live functions only
+  var live2: List[List[Bool]] = []
+  for o in 0..l.objs.len() {
+    var row: List[Bool] = []
+    for k in 0..l.objs[o].sects.len() {
+      row.push(if o < n { live[base[o] + k] } else { true })
+    }
+    live2.push(row)
+  }
+  for o in 0..n {
+    for k in 0..l.objs[o].sects.len() {
+      let s = l.objs[o].sects[k]
+      if s.seg == "__LD" && s.name == "__compact_unwind" {
+        l.objs[o].sects[k] = l.live_unwind(o, s, live2)
+      }
+    }
+  }
+  l.link_rest()
+}
+
+/// A cut DWARF section of the store (dw_cut's result for it): the runs
+/// of live functions and the others, the unit length patched.
+fn store_cut(store: Bytes, data0: Int, s: SSect, live: List[Bool]) -> ISect {
+  var segs: List[DwSeg] = []
+  var keep: List[Bool] = []
+  for (gs, ge, gf, _, _) in s.segs {
+    segs.push(DwSeg{start: gs, end: ge})
+    keep.push(gf < 0 || live[gf])
+  }
+  let (at, n) = dw_new_starts(segs, keep)
+  var b = BytesBuilder.with_capacity(n)
+  var t = ISect{seg: s.seg, name: s.name, addr: s.addr, size: n, align: s.align, flags: s.flags, data: "".bytes()}
+  let da = data0 + s.data_at
+  for (i, (gs, ge, _, gr, gn)) in s.segs.indexed() {
+    if !keep[i] {
+      continue
+    }
+    if gs == 0 {
+      dw_head(b, store[da..da + ge], s.name == "__debug_loclists", n, segs, at)
+    } else {
+      b.write(store[da + gs..da + ge])
+    }
+    for j in 0..gn {
+      var r = rd_reloc(store, data0 + gr + 12 * j)
+      r.addr = r.addr - gs + at[i]
+      t.relocs.push(r)
+    }
+  }
+  t.data = b.freeze()
+  t
+}

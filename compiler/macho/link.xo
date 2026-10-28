@@ -213,18 +213,9 @@ pub fn link(inputs: List[LinkInput], opts: LinkOpts) -> Result[Bytes, Str] {
 /// the first error.
 pub fn link_debug(inputs: List[LinkInput], opts: LinkOpts) -> Result[(Bytes, Bytes), Str] {
   var l = Linker{opts: opts}
-  for inp in inputs {
-    if inp.data.len() >= 8 && bstr(inp.data[0..8]) == "!<arch>\n" {
-      match parse_archive(inp.path, inp.data) {
-        Ok(ms) => l.objs = l.objs + ms
-        Err(e) => return Err(e)
-      }
-    } else {
-      match parse_object(inp.path, inp.data) {
-        Ok(o) => l.objs.push(o)
-        Err(e) => return Err(e)
-      }
-    }
+  match parse_inputs(inputs) {
+    Ok(x) => l.objs = x
+    Err(e) => return Err(e)
   }
   if !l.objs.is_empty() {
     l.x86 = l.objs[0].x86
@@ -244,6 +235,32 @@ pub fn link_debug(inputs: List[LinkInput], opts: LinkOpts) -> Result[(Bytes, Byt
   if !l.err.is_empty() {
     return Err(l.err)
   }
+  l.link_rest()
+}
+
+/// The objects of the inputs: each object, and each archive's members
+/// (not live until resolve takes them).
+fn parse_inputs(inputs: List[LinkInput]) -> Result[List[IObj], Str] {
+  var objs: List[IObj] = []
+  for inp in inputs {
+    if inp.data.len() >= 8 && bstr(inp.data[0..8]) == "!<arch>\n" {
+      match parse_archive(inp.path, inp.data) {
+        Ok(ms) => objs = objs + ms
+        Err(e) => return Err(e)
+      }
+    } else {
+      match parse_object(inp.path, inp.data) {
+        Ok(o) => objs.push(o)
+        Err(e) => return Err(e)
+      }
+    }
+  }
+  Ok(objs)
+}
+
+/// The link after the strip: placing, layout, relocation, the output
+/// (and with opts.dsym the dSYM's DWARF).
+fn (var l: Linker) link_rest() -> Result[(Bytes, Bytes), Str] {
   l.place()
   l.scan()
   if !l.err.is_empty() {

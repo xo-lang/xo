@@ -62,3 +62,35 @@ test "atoms mode: the link strips a function nothing reaches" {
   expect(stripped.find("_unused_fn".bytes()) == None) == true
   expect(stripped.find("_used".bytes()) != None) == true
 }
+
+fn asm_or_fault(src: Str) -> Bytes {
+  match assemble(src.bytes()) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+}
+
+test "a link through the store is the link of the store's objects" {
+  // std's part: one function the program calls, one it reaches through
+  // it, one nothing reaches; the program's object is kept whole
+  let part = asm_or_fault("\t.subsections_via_symbols\n\t.text\n\t.globl _used\n\t.p2align 2\n_used:\n\tbl _inner\n\tret\n\t.globl _unused_fn\n\t.p2align 2\n_unused_fn:\n\tmov x0, #7\n\tret\n\t.globl _inner\n\t.p2align 2\n_inner:\n\tadrp x0, _tab@PAGE\n\tret\n\t.section __DATA,__data\n\t.globl _tab\n_tab:\n\t.quad _inner\n\t.globl _dead_tab\n_dead_tab:\n\t.quad _unused_fn\n")
+  let prog = asm_or_fault("\t.text\n\t.globl _main\n\t.p2align 2\n_main:\n\tbl _used\n\tmov x0, #0\n\tret\n")
+  let opts = LinkOpts{name: "s", embed_dwarf: false}
+  let want = match link([LinkInput{path: "part.o", data: part}, LinkInput{path: "prog.o", data: prog}], opts) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  let store = match store_encode([LinkInput{path: "part.o", data: part}]) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  let got = match link_store([LinkInput{path: "prog.o", data: prog}], store, opts) {
+    Ok((x, _)) => x
+    Err(e) => fault(e)
+  }
+  expect(got == want) == true
+  // and the stripped function is gone from both
+  expect(got.find("_unused_fn".bytes()) == None) == true
+  expect(got.find("_dead_tab".bytes()) == None) == true
+  expect(got.find("_inner".bytes()) != None) == true
+}
