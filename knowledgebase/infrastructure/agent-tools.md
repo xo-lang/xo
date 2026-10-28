@@ -594,6 +594,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   two milestone gates waited 115 minutes. Queue each A/B as its own
   `HEAVY_CLASS=measure` job, launched with run_in_background (never a
   trailing `&`: the job's PID is then lost), so gates run between them.
+- `xo bench --ab` only as its own measure job (2026-10-27): inside a gate
+  or slot run it would wait for the quiet window that waits for that gate,
+  so it exits 2 there with that advice (XO_HEAVY_SLOT set by heavy.sh, not
+  `measure`, not the window's own run, and no --no-guard or --guard;
+  gotchas/bench-ab-inside-gate-deadlock.md). A quick instruction count in a
+  gate reads `/usr/bin/time -l`'s "instructions retired" line instead.
 - Before queueing a bulk gate, run its new tests alone in the gate class
   (lead, 2026-10-27): g499's first bulk run failed only on its new
   test's own expectations (a line number, a type annotation), and the

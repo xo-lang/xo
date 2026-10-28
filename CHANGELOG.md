@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo bench --ab` started by heavy.sh as a gate or a slot run exits 2 at once
+  saying to run it as its own HEAVY_CLASS=measure job, where it waited for the
+  quiet window that was waiting for it (a 28 minute deadlock, 2026-10-27)
 - `use go` with an xo-gobind from another xo (an old one on PATH, or
   XO_GOBIND) is XO1101 naming the helper and both binding formats
   ("xo-gobind at PATH wrote binding format 5, this xo reads 7"), where every

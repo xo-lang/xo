@@ -188,6 +188,22 @@ fn in_window_run(os: Os) -> Bool uses env {
   (os.env.get("HEAVY_QUIET") ?? "") == "1" || (os.env.get("XO_BENCH_IN_WINDOW") ?? "") == "1"
 }
 
+/// Why this --ab may not run where it was started, or "": heavy.sh sets
+/// XO_HEAVY_SLOT for every run it starts ("gate", a slot's name, or
+/// "measure"), and a gate or slot run that waits for a quiet window
+/// deadlocks, since the window's measurement waits for the gates and
+/// slots to finish (2026-10-27: a gate's instruction check sat 28 minutes
+/// against Lang 1's measurement; gotchas/bench-ab-inside-gate-deadlock.md).
+/// The window's own runs (in_window_run) and runs that do not wait for
+/// the window (--no-guard, --guard=CMD; wait_ok) may run.
+fn slot_refusal(os: Os, o: Opts) -> Str uses env {
+  let slot = os.env.get("XO_HEAVY_SLOT") ?? ""
+  if slot == "" || slot == "measure" || in_window_run(os) || o.no_guard || !o.guard.is_empty() {
+    return ""
+  }
+  "run --ab as its own HEAVY_CLASS=measure job (a gate or slot would deadlock against a measure window); this run is heavy.sh's ${slot}"
+}
+
 fn window_open(os: Os) -> Bool uses (clock, env, fs.read) {
   let t = (os.fs.read_text(quiet_file(os)).ok() ?? "").trim()
   match Int.parse(t) {
@@ -622,6 +638,11 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
       os.stdio.eprintln("xo bench: ${e}\n${usage()}")
       return 2
     }
+  }
+  let refusal = slot_refusal(os, o)
+  if !refusal.is_empty() {
+    os.stdio.eprintln("xo bench: ${refusal}")
+    return 2
   }
   let pa = o.progs[0]
   let pb = if o.progs.len() == 2 { o.progs[1] } else { pa }

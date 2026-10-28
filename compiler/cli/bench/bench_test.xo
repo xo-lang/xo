@@ -92,6 +92,41 @@ test "a quiet window holds a run unless it is the window's measurement" {
   expect(ok("", "")) == 1
 }
 
+test "a gate or slot run of --ab is refused; a measure job and the window's own runs are not" {
+  // slot_refusal with the environment set as named: 0 allowed, 1 refused
+  // with the advice, 3 refused without it
+  let refused = fn(slot: Str, heavy: Str, inwin: Str, flag: Str) -> Int {
+    os.env.set("XO_HEAVY_SLOT", slot)
+    os.env.set("HEAVY_QUIET", heavy)
+    os.env.set("XO_BENCH_IN_WINDOW", inwin)
+    testing.run_main(fn(o: Os) -> () ! Error {
+      let args = if flag.is_empty() { ["--ab", "a", "b"] } else { ["--ab", flag, "a", "b"] }
+      let op = match parse_opts(args) {
+        Ok(x) => x
+        Err(_) => o.proc.exit(2)
+      }
+      let why = slot_refusal(o, op)
+      if !why.is_empty() {
+        o.proc.exit(if why.contains("HEAVY_CLASS=measure") { 1 } else { 3 })
+      }
+      Ok(())
+    }, os)
+  }
+  // not started by heavy.sh, or a measure job
+  expect(refused("", "", "", "")) == 0
+  expect(refused("measure", "1", "", "")) == 0
+  // a gate, and a slot (heavy.sh names it by its lock file)
+  expect(refused("gate", "", "", "")) == 1
+  expect(refused("slot1", "", "", "")) == 1
+  // the window's own runs never wait for it
+  expect(refused("gate", "1", "", "")) == 0
+  expect(refused("gate", "", "1", "")) == 0
+  // nor does a run with no window guard (internal/arm64's inline test)
+  // or its own
+  expect(refused("gate", "", "", "--no-guard")) == 0
+  expect(refused("gate", "", "", "--guard=true")) == 0
+}
+
 test "a round started at load 6 or more is loaded with no --max-load" {
   let o = match parse_opts(["--ab", "a", "b"]) {
     Ok(x) => x
