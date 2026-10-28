@@ -186,6 +186,10 @@ pub struct Builder {
   /// again with unwinding checks (conc), as build_program does; the
   /// constructs themselves are outside stage 1.
   pub need_conc: Bool = false
+  /// a std object's body was asked for with its tree still pending in
+  /// the checker's record (trees_lazy, decision 0388 stage 2): the
+  /// build is made again with every tree joined (build_program_fe)
+  pub trees_missing: Bool = false
   /// the functions whose own body needs concurrency (set_flag 1, a front
   /// end cache entry's flag), for std's facts (StdFact.conc)
   pub conc_names: Map[Str, Bool] = {}

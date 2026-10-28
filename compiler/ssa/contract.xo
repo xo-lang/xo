@@ -63,6 +63,13 @@ fn (var b: Builder) check_lazy(fo: Int) {
 /// invariant (contractBody), else directly (bodyOf).
 fn (var b: Builder) body(fo: Int, fi: Int, sub: Map[Int, Int]) {
   b.check_lazy(fo)
+  if b.c.objs[fo].fn_decl.is_empty() && b.c.tree_pending.contains(fo) {
+    // a std function the facts did not make extern, lowered from its
+    // body, whose tree the record left pending: never a body-less
+    // build, the whole build runs again with every tree
+    b.trees_missing = true
+    return
+  }
   let decl = b.c.objs[fo].fn_decl
   if !decl.is_empty() && decl[0].body != None {
     let ens = b.ensures_of(fo)

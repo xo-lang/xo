@@ -1374,6 +1374,21 @@ pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
   }
 }
 
+/// Every std tree joined (the SSA builder's fallback, build_program_fe):
+/// each record module's files parsed and each pending object joined.
+pub fn (var c: Checker) join_all_trees() uses fs.read {
+  for m in 0..c.mods.len() {
+    c.ensure_tree(m)
+  }
+  var pending: List[Int] = []
+  for (o, _) in c.tree_pending {
+    pending.push(o)
+  }
+  for o in pending.sort() {
+    c.need_tree(o)
+  }
+}
+
 /// A cache entry: the header, then the records.
 pub fn encode_std_entry(h: StdHeader, e: StdExport) -> Bytes {
   var w = ExW{b: BytesBuilder.new()}

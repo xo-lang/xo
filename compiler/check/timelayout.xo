@@ -63,6 +63,56 @@ fn (c: Checker) const_str_ref(f: Int, id: Ident, depth: Int) -> Str? {
   None
 }
 
+/// const_str with a std constant's tree joined first (the check's layout
+/// validation under trees_lazy); const_str itself stays a pure read for
+/// the Go backend.
+/// The value of e of file f when it is a compile time string: a literal
+/// without interpolation, a module constant, or a `+` of them
+/// (timelayout.go constStr).
+pub fn (var c: Checker) const_str_lazy(f: Int, e: Expr, depth: Int) -> Str? uses fs.read {
+  if depth > 32 {
+    return None
+  }
+  match e {
+    ParenExpr(x: x, ..) => c.const_str_lazy(f, x, depth + 1)
+    StringLit(s) => {
+      var b = StrBuilder.new()
+      for p in s.parts {
+        if let Some(_) = p.expr {
+          return None
+        }
+        b.write(text(p.text))
+      }
+      Some(b.freeze())
+    }
+    BinaryExpr(op: op, x: x, y: y, ..) => {
+      if op != parser.Kind.Plus {
+        return None
+      }
+      let a = c.const_str_lazy(f, x, depth + 1)?
+      let b = c.const_str_lazy(f, y, depth + 1)?
+      Some(a + b)
+    }
+    Ident(id) => c.const_str_ref_lazy(f, id, depth)
+    SelectorExpr(sel: sel, ..) => c.const_str_ref_lazy(f, sel, depth)
+    _ => None
+  }
+}
+
+fn (var c: Checker) const_str_ref_lazy(f: Int, id: Ident, depth: Int) -> Str? {
+  let o = c.const_obj_at(f, id)
+  if o < 0 {
+    return None
+  }
+  // a std constant's tree (time.RFC3339 as a layout) when its record
+  // left the file unparsed (trees_lazy)
+  c.need_tree(o)
+  if let ConstDecl(d: cd) = c.files[c.objs[o].decl_file].ast.decls[c.objs[o].decl_idx] {
+    return c.const_str_lazy(c.objs[o].decl_file, cd.value, depth + 1)
+  }
+  None
+}
+
 /// The index of the layout parameter of a std/time function, or -1.
 fn time_layout_param(name: Bytes) -> Int {
   if name == b"format" {
@@ -191,7 +241,7 @@ fn call_arg(args: List[parser.Arg], idx: Int, name: Bytes) -> Expr? {
 /// Reports a constant layout that is bad, at the string literal that
 /// holds it (timelayout.go checkTimeLayout).
 fn (var c: Checker) check_time_layout(arg: Expr) {
-  let layout = match c.const_str(c.cur_file, arg, 0) {
+  let layout = match c.const_str_lazy(c.cur_file, arg, 0) {
     Some(s) => s
     None => return
   }

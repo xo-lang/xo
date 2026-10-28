@@ -72,6 +72,11 @@ fn (var c: Checker) run() -> () ! Str {
     }
   }
   if !c.std_export_used {
+    // the full path (no entry, a header that failed, or records that
+    // did not install): every tree, declared from the sources
+    for m in std_mods {
+      c.ensure_tree(m)
+    }
     c.std_block = at
     for m in std_mods {
       c.declare(m)
@@ -113,6 +118,15 @@ fn (var c: Checker) run() -> () ! Str {
     c.std_block.eset_hi = c.esets.len()
     c.std_block.evar_hi = c.evars.len()
     if c.std_export_on {
+      // never a record from a tree still pending: the declare path read
+      // every tree above
+      for m in std_mods {
+        for f in c.mods[m].files {
+          if c.files[f].unloaded {
+            fault("internal: a std record from an unparsed file (${c.files[f].path})")
+          }
+        }
+      }
       let mine = c.std_export()
       if c.std_export_verify {
         c.std_export_bad = c.verify_std_entry(fp, at, mine)

@@ -798,8 +798,9 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
   let sp = sepcomp_facts_path(os)
   if !sp.is_empty() {
     // stage 2 pieces 3 and 4: std's trees joined only where needed (its
-    // SSA lowers no std body)
-    c.trees_lazy = true
+    // SSA lowers no std body); a build or run only: xo doc, def, refs,
+    // the LSP and test read declarations in full
+    c.trees_lazy = o.cmd is "build" | "run"
     let (f0, f1) = sepcomp_fact_files(os, sp)
     match os.fs.read(f0) {
       Ok(d) => {
@@ -2122,6 +2123,16 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
   // the runtime's overrun check (XO_HEAP_GUARD=1, ssa Builder.heap_guard)
   let heap_guard = !wasm && (os.env.get("XO_HEAP_GUARD") ?? "") == "1"
   var b = fe_cached_build(os, c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, trace_support_eff(o, release), soft_cpu, heap_guard, o.phases, o.stamps)
+  if b.trees_missing {
+    // a std body the facts did not make extern met a tree the record
+    // left pending (ssa contract.xo body, decision 0388 stage 2): every
+    // tree joined, the front end built again; never a body-less build
+    c.join_all_trees()
+    b = fe_cached_build(os, c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, trace_support_eff(o, release), soft_cpu, heap_guard, o.phases, o.stamps)
+    if o.phases {
+      os.stdio.eprintln("phase std_trees_rebuild (a std body outside the facts: every tree joined, built again)")
+    }
+  }
   b.imm_rc = o.backend != "llvm"
   b.m.nolibc_start = !wasm && nolibc(os, o, c, tgoos)
   b.m.nolibc = !wasm && nolibc(os, o, c, tgoos)
