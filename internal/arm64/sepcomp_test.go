@@ -226,3 +226,52 @@ func TestSepcompDefault(t *testing.T) {
 		t.Fatal("the whole program rebuilt from the shared cache runs wrong")
 	}
 }
+
+// TestSepcompSharedMade (decision 0388): a function the compiler makes on
+// demand under a fixed name (xo.neterr for a network result, zero.T for
+// a function type's zero value) is in std's store and in the program's
+// part alike; both are weak, so the separately compiled link keeps one
+// (Lang 1's default-on gate: `duplicate symbol _xo_f_xo_2eneterr` in the
+// net goldens, `_xo_f_zero_2efn_28Int_...` in sql_driver), and the
+// program prints its golden's output.
+func TestSepcompSharedMade(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds std's variants and programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-sepmade-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=1"))
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-std"))
+	paths, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("xo dev stdcache: %v", err)
+	}
+	lines := strings.Fields(string(paths))
+	if len(lines) != 2 {
+		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
+	}
+	for _, g := range []string{"net_echo", "sql_driver"} {
+		dir := filepath.Join("..", "llvm", "testdata", "golden", g)
+		bin := filepath.Join(work, g)
+		b := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", bin, "."))
+		b.Dir = dir
+		b.Env = append(os.Environ(), "XO_SEPCOMP=1", "XO_SEPCOMP_FACTS="+lines[1], "XO_SEPCOMP_STORE="+lines[0], "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "c-"+g))
+		if log, err := b.CombinedOutput(); err != nil {
+			t.Fatalf("%s: xo build: %v\n%s", g, err, log)
+		}
+		run := testtmp.Guard(exec.Command("sh", filepath.Join("..", "..", "scripts", "golden-run.sh"), bin, dir))
+		if out, err := run.CombinedOutput(); err != nil {
+			t.Fatalf("%s: not the golden's output: %v\n%s", g, err, out)
+		}
+	}
+}

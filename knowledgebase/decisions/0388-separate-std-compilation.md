@@ -663,3 +663,13 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   catch and trace for linux/amd64, run in Docker (fib, 5 of 5 each, the caught fault, the
   traceback). darwin/amd64 follows (x86_64 Mach-O's pc relative pointers without
   relocations need dead atoms kept at their addresses).
+- Functions the compiler makes on demand under a fixed name are shared like instances
+  (Lang 1's default-on gate, 2026-10-28: `duplicate symbol _xo_f_xo_2eneterr` in 18 net,
+  http, tls and websocket goldens, `_xo_f_zero_2efn_28Int_...` in 2 sql ones). xo.neterr
+  (compiler/ssa conc.xo net_err_func), zero.T for a function type (build.xo zero_func) and
+  the xo.KIND[T] helpers are built in whichever object needs them, std's and the program's
+  alike; under weak_shared, compiler/arm64 gen.xo shared_def makes a function named with
+  `[`, `xo.` or `zero.` weak (emit.xo, x86emit.xo), so the link keeps std's copy and the
+  program's is coalesced (StoreLink.resolve uncoalesced_unwind). Test:
+  internal/arm64 TestSepcompSharedMade (net_echo and sql_driver, separately compiled,
+  print their goldens).

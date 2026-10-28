@@ -344,6 +344,19 @@ fn (g: G) func_header(var b: List[Str], s: Str, global: Bool) {
   b.push("${s}:\n")
 }
 
+/// Whether the current function is one std's object and a program's may
+/// both define (decision 0388): a generic instance (its closures too), or
+/// a function the compiler makes on demand under a name of its own, the
+/// same in both (compiler/ssa: xo.neterr, zero.T for a function type T,
+/// and the xo.KIND[T] helpers). weak_def makes it weak, so the link keeps
+/// one (Lang 1's default-on gate: xo.neterr in the net goldens and
+/// zero.fn(Int, fn(Str, Bool) -> Str) -> Bool in the sql ones were
+/// defined twice).
+fn (g: G) shared_def() -> Bool {
+  let n = g.f.name
+  n.contains("[") || n.starts_with("xo.") || n.starts_with("zero.")
+}
+
 /// The directive that makes s a weak definition (Module.weak_shared: a
 /// helper or a generic instance that std's object and a program's object
 /// may both define; the link keeps the first), "" otherwise.

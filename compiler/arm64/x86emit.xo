@@ -204,7 +204,7 @@ fn (var g: G) x86_emit_once() {
   g.shrink_plan()
   var b: List[Str] = []
   b.push("# func ${g.f.name}\n")
-  if g.f.name.contains("[") {
+  if g.shared_def() {
     // a generic instance std's object and the program's may both have
     // (decision 0388; emit.xo's arm64 twin)
     b.push(g.weak_def(g.fname(g.f.name)))

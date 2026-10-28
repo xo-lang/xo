@@ -244,7 +244,7 @@ fn (var g: G) emit() {
   g.shrink_plan()
   var b: List[Str] = []
   b.push("${g.cmt()} func ${g.f.name}\n")
-  if g.f.name.contains("[") {
+  if g.shared_def() {
     // a generic instance std's object and the program's may both have
     b.push(g.weak_def(g.fname(g.f.name)))
   }
