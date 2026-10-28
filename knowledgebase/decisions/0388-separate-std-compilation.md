@@ -341,6 +341,35 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   conc0 file against a whole-program fib dump (conc0): 0 errors, 9 functions' body facts
   differ (pool and sched). conc0's std object: 37 parts; conc1's 41.
 
+- Stage 2 (2026-10-27, parked behind stage 3): an oracle that parses std only to its imports and
+  installs the records cut a fib edit's check from 31.0 to 16.0 ms (median, n=8); the rest is
+  reading every std file (3.2 ms of CPU), relocation (2.6), decoding (1.8), the import parse (1.75),
+  walks (1.45): a floor of about 8 to 10 ms with the module closure from the record and a
+  stat based fingerprint (Go's rule: size and mtime trusted only when the mtime is more than 2 s
+  old when recorded). It needs the program check's reads of std trees served on demand (defaults,
+  constants' values); its wall gain arrives with stage 3, which stops parsing std for the passes.
+- Stage 3 oracles (2026-10-28): (a) runtime, one xo with std's callees opaque to program code
+  (no inlining of std into it, no specialize_args clones, may fault and be canceled, no result
+  bounds; std's parameters owned): llvm-fib, sort, strings, collatz within noise to +2%, interp
+  15% faster (logged as an inliner item), the HTTP server 145,658 and 145,771 requests a second,
+  CPU 26.28 and 26.82 us a request: std's facts are needed for correctness, not speed. Making the
+  runtime's (native/llrt) parameters owned made the HTTP server fault on its first request, which
+  no verifier saw: borrowed parameters (and var parameters, by-reference passing) are the calling
+  convention and must be exact. (b) compile time, std's bodies not built: a warm llvm-fib edit
+  238 to 95 ms, the HTTP server's 542 to 168 (ssa 108 to 25, insert_rc 55 to 10, inline 57 to 12,
+  hollow 34 to 4), before the link with std's object and the facts' decoding.
+- Stage 3 steps landed: std externs, body-less shells std's facts answer (a47b8b476); the facts'
+  record and codec (e4338ea59), XO_STD_FACTS_DUMP (5c07f468b), xo dev stdfacts (0e5b9ab0f),
+  XO_STD_FACTS_VERIFY with TestStdFactsVerify (479e8bab1, 02e7139c9); XO_SEPCOMP=1 with
+  XO_SEPCOMP_FACTS, std's functions built as externs (825392145). Std's object (xo-lang-4):
+  XO_STD_OBJ (std functions only, xo_h helpers and generic instances weak, the program's
+  `_xo_entry`), conc=0 and conc=1 variants (XO_STD_CONC; conc changes 441 facts, so each program
+  takes its variant's), macho.defined_symbols, the indexed store (fib links in 14.0 ms).
+- Findings on the way: an undecoded cache hit's shell had no var parameters (6bf1b9158: it keeps
+  them; an audit found no wrong code in 0.33.0, the empty list could only have faulted the build);
+  a warm build folds target constants as a cold one does (the binaries are byte for byte the same;
+  a Windows LLVM split build links cold and warm, ThinLTO and none).
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle
