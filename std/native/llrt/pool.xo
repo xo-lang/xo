@@ -1134,12 +1134,13 @@ pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
     if at == 0 || cpu.ticks_ns(now.wrapping_sub(at)) >= SLICE_NS {
       rt.mem_store(w, W_FAIR_AT, now, 8)
       owner_check(w)
+      // the poll first: a ring or an inject queue that is never empty (more
+      // tasks than workers, each pair keeping its worker busy) came before
+      // it, and a 20 ms timer fired 3 to 5 s late on 2 workers with 24 pairs
+      let _n = np_poll(p, w, 0)
       t = sched.rq_get(w)
       if t == 0 {
         t = inject_pop(p, w)
-      }
-      if t == 0 && np_poll(p, w, 0) > 0 {
-        t = sched.rq_get(w)
       }
     }
   }
