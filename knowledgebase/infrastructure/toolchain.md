@@ -4401,9 +4401,18 @@ scripts/bootstrap-xo.sh SEED` uses SEED as s1 when SEED is this tree's
 compiler/xo just built by `go run ./scripts/xobuild` (hourly.sh and
 gate.sh's fp step set it), so the fixed point builds xo twice (s2, s3).
 Measured on a gate on 2026-10-21 under load: xobuild 112 s, s1 62 s,
-s2 155 s, s3 10 s (s3 reuses s2's backend cache entries). Of about 423
-fixed points to that day, 16 failed, none an s2/s3 difference. Last
-verified: 2026-10-21.
+s2 155 s, s3 10 s (s3 reused s2's backend cache entries). Of about 423
+fixed points to that day, 16 failed, none an s2/s3 difference. Since
+2026-10-27 every stage (and every seed chain hop) has its own back-end
+cache under OUTDIR (`XO_BACKEND_CACHE_DIR=OUTDIR/cache-sN/backend`), as
+it already had its own build directory and runtime object cache: the
+stages shared the user's back-end cache, with each other and with every
+xo on the machine, so s3 could take s2's objects instead of compiling
+them, and an intermittent s2 != s3 seen under load that day could not be
+told from a cache entry another xo wrote (gotchas/fixed-point-shared-cache.md).
+A stage now compiles everything itself: s3 takes about as long as s2,
+and OUTDIR holds the stages' caches too (delete it after a run). Last
+verified: 2026-10-27.
 
 The bootstrap chain: the first Xo `xo` on a new host is built by the
 previous release's binary (or any self hosted xo1), never by the Go

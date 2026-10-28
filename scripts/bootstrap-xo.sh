@@ -18,8 +18,10 @@
 # unless $XO_LLVM_LTO says thin, as internal/selfdriver builds xo1,
 # decision 0168; --asm writes the LLVM IR). OUTDIR defaults to
 # .tools/bootstrap. The stages, each with an empty build directory,
-# runtime object cache, and binary cache (so nothing is reused from an
-# earlier build):
+# runtime object cache, back-end cache and binary cache (so nothing is
+# reused from an earlier build, another stage, or another xo; until
+# 2026-10-27 the back-end cache was the user's, shared with every xo on
+# the machine and between s2 and s3, gotchas/fixed-point-shared-cache.md):
 #
 #   s1: SEED builds compiler/xo
 #   s2: s1 builds compiler/xo
@@ -163,7 +165,7 @@ stage() {
   strict=0
   [ "$n" -gt 1 ] && strict=1
   if XO_INLINE_STRICT=$strict XO_BUILD_DIR="$out/cache-s$n/build" XO_RTOBJ_CACHE="$out/cache-s$n/rtobj" \
-    "$bin" build --backend="$backend" --std="$root/std" -o "$out/s$n/xo" $asm $stamps compiler/xo >> "$log" 2>&1; then
+    XO_BACKEND_CACHE_DIR="$out/cache-s$n/backend" "$bin" build --backend="$backend" --std="$root/std" -o "$out/s$n/xo" $asm $stamps compiler/xo >> "$log" 2>&1; then
     echo "s$n $(( $(date +%s) - t0 )) s" >> "$times"
   else
     say "FAIL: stage s$n (see $log)"
@@ -191,7 +193,9 @@ if [ -n "${XO_SEED_CHAIN:-}" ]; then
     cdir=compiler; [ -d "$out/chain$n/tree/compiler/xo" ] || cdir=selfhost  # selfhost/ before decision 0249
     say "hop $n: $seed builds $c's $cdir/xo against $sc's std"
     t0=$(date +%s)
-    if (cd "$out/chain$n/tree" && XO_BUILD_DIR="$out/chain$n/build" "$seed" build --backend="$backend" \
+    # an old xo with a private back-end cache: its prune never reaches the
+    # user's (gotchas/fixed-point-shared-cache.md)
+    if (cd "$out/chain$n/tree" && XO_BUILD_DIR="$out/chain$n/build" XO_BACKEND_CACHE_DIR="$out/chain$n/backend" "$seed" build --backend="$backend" \
       --std="$out/chain$n/std/std" -o "$out/chain$n/xo" "./$cdir/xo") >> "$log" 2>&1; then
       echo "hop$n $(( $(date +%s) - t0 )) s" >> "$times"
       seed=$out/chain$n/xo
@@ -232,7 +236,7 @@ say "s3 version: $("$out/s3/xo" version 2>&1 | head -1)"
 mkdir -p "$out/hello"
 printf 'fn main(os: Os) uses (stdio) {\n  os.stdio.println("hello from the bootstrapped xo")\n}\n' > "$out/hello/main.xo"
 if XO_BUILD_DIR="$out/cache-s3/build" XO_RTOBJ_CACHE="$out/cache-s3/rtobj" \
-  "$out/s3/xo" run --backend="$backend" --std="$root/std" "$out/hello" > "$out/hello.txt" 2>> "$log"; then
+  XO_BACKEND_CACHE_DIR="$out/cache-s3/backend" "$out/s3/xo" run --backend="$backend" --std="$root/std" "$out/hello" > "$out/hello.txt" 2>> "$log"; then
   say "s3 builds and runs a hello program: $(head -1 "$out/hello.txt")"
 else
   say "FAIL: s3 cannot build and run a hello program"
