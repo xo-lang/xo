@@ -3412,4 +3412,16 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	if m == nil || m[1] == "0" || m[2] != "0" {
 		t.Fatalf("XO_PDB_OBJ_CHECK: want some functions and 0 differ:\n%s", log)
 	}
+	// step 2a: the PDB made from the objects' own DWARF and the link's
+	// layout (macho merge_facts, pe_pdb_facts) is the image's, byte for byte
+	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out2", "prog"), "."))
+	cmd.Dir = src
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_PDB_OBJ_CHECK=2")
+	log, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("xo build: %v\n%s", err, log)
+	}
+	if !strings.Contains(string(log), "XO_PDB_OBJ_CHECK=2: the PDB from the objects is identical") {
+		t.Fatalf("XO_PDB_OBJ_CHECK=2: want an identical PDB:\n%s", log)
+	}
 }

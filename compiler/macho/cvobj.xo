@@ -174,3 +174,151 @@ pub fn obj_check(img: Bytes, objs: List[CObj]) -> Str {
   }
   "${n} functions, ${bad} differ${if first.is_empty() { "" } else { ":\n" + first.join("\n") }}"
 }
+
+/// How one object's own addresses and DWARF offsets (obj_dwarf's) map to
+/// the image's: each section's base in the object, size and image
+/// address (-1: not placed), and where its .debug_info and .debug_line
+/// start in the image's.
+struct ObjMap {
+  bases: List[Int]
+  sizes: List[Int]
+  at: List[Int]
+  info: Int
+  line: Int
+}
+
+fn obj_map(o: CObj, oi: Int, layout: PELayout) -> ObjMap {
+  let bases = obj_bases(o)
+  var sizes: List[Int] = []
+  var at: List[Int] = []
+  var info = 0
+  var line = 0
+  for (si, s) in o.sects.indexed() {
+    sizes.push(s.size)
+    let p = layout.places[oi][si]
+    if p.out < 0 {
+      at.push(-1)
+    } else if s.name.starts_with(".debug_") {
+      at.push(-1)
+      if s.name == ".debug_info" {
+        info = p.off
+      } else if s.name == ".debug_line" {
+        line = p.off
+      }
+    } else {
+      at.push(layout.base + layout.rva[p.out] + p.off)
+    }
+  }
+  ObjMap{bases: bases, sizes: sizes, at: at, info: info, line: line}
+}
+
+/// a, an address in the object (obj_bases), in the image; a itself when no
+/// placed section holds it.
+fn (m: ObjMap) addr(a: Int) -> Int {
+  for i in 0..m.bases.len() {
+    if m.at[i] >= 0 && a >= m.bases[i] && a < m.bases[i] + m.sizes[i] {
+      return m.at[i] + (a - m.bases[i])
+    }
+  }
+  // the end of a section (a range's hi)
+  for i in 0..m.bases.len() {
+    if m.at[i] >= 0 && a == m.bases[i] + m.sizes[i] {
+      return m.at[i] + m.sizes[i]
+    }
+  }
+  a
+}
+
+fn (m: ObjMap) ty(t: Int) -> Int { if t < 0 { t } else { t + m.info } }
+
+fn (m: ObjMap) var_of(v: debug.Var) -> debug.Var {
+  var locs: List[debug.Loc] = []
+  for l in v.locs {
+    var pieces: List[debug.Piece] = []
+    for pc in l.pieces {
+      pieces.push(match pc.place {
+        Addr(a) => debug.Piece{place: debug.Place.Addr(addr: m.addr(a)), size: pc.size}
+        _ => pc
+      })
+    }
+    let every = l.lo == 0 && l.hi == -1
+    locs.push(debug.Loc{lo: if every { 0 } else { m.addr(l.lo) }, hi: if every { -1 } else { m.addr(l.hi) }, pieces: pieces})
+  }
+  v with {ty: m.ty(v.ty), locs: locs}
+}
+
+fn (m: ObjMap) ranges(rs: List[(Int, Int)]) -> List[(Int, Int)] {
+  var out: List[(Int, Int)] = []
+  for (lo, hi) in rs {
+    out.push((m.addr(lo), m.addr(hi)))
+  }
+  out
+}
+
+/// The image's DWARF facts as debug.read and debug.lines give them,
+/// made from each object's own (obj_dwarf) and the link's layout: the
+/// functions, globals and line tables in object order (the image's
+/// .debug_info and .debug_line are the objects' in that order),
+/// addresses and DWARF offsets moved to where the link placed them, the
+/// files numbered in the order they first appear.
+pub fn merge_facts(objs: List[CObj], layout: PELayout) -> (debug.Info, debug.Lines) {
+  var info = debug.Info{}
+  var lns = debug.Lines{}
+  var file_at: Map[Str, Int] = {}
+  for (oi, o) in objs.indexed() {
+    let s = match obj_dwarf(o) {
+      Ok(x) => x
+      Err(_) => continue
+    }
+    let m = obj_map(o, oi, layout)
+    let oinfo = debug.read(s)
+    let olns = debug.lines(s)
+    for f in oinfo.funcs {
+      var inl: List[debug.Inlined] = []
+      for c in f.inlined {
+        var vs: List[debug.Var] = []
+        for v in c.vars {
+          vs.push(m.var_of(v))
+        }
+        inl.push(c with {ranges: m.ranges(c.ranges), unit_line: if c.unit_line < 0 { c.unit_line } else { c.unit_line + m.line }, vars: vs})
+      }
+      var vs: List[debug.Var] = []
+      for v in f.vars {
+        vs.push(m.var_of(v))
+      }
+      info.funcs.push(f with {lo: m.addr(f.lo), hi: m.addr(f.hi), vars: vs, inlined: inl})
+    }
+    for g in oinfo.globals {
+      info.globals.push(m.var_of(g))
+    }
+    for (off, t) in oinfo.types {
+      var ms: List[debug.Member] = []
+      for mb in t.members {
+        ms.push(mb with {ty: m.ty(mb.ty)})
+      }
+      info.types[m.ty(off)] = t with {of: m.ty(t.of), members: ms}
+    }
+    // the object's files by the merged numbering
+    var fmap: List[Int] = []
+    for f in olns.files {
+      if let Some(i) = file_at.get(f) {
+        fmap.push(i)
+      } else {
+        file_at[f] = lns.files.len()
+        fmap.push(lns.files.len())
+        lns.files.push(f)
+      }
+    }
+    for r in olns.rows {
+      lns.rows.push(r with {addr: m.addr(r.addr), file: if r.file >= 0 && r.file < fmap.len() { fmap[r.file] } else { r.file }})
+    }
+    for (u, fs) in olns.unit_files {
+      var g: List[Int] = []
+      for x in fs {
+        g.push(if x >= 0 && x < fmap.len() { fmap[x] } else { x })
+      }
+      lns.unit_files[u + m.line] = g
+    }
+  }
+  (info, lns)
+}

@@ -111,7 +111,11 @@ struct PdbSect {
 /// The image img with its RSDS record's GUID and the debug directory's
 /// time stamp set, and its PDB; an error when img has no CodeView debug
 /// directory or no DWARF.
-pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
+pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] { pe_pdb_facts(img, None) }
+
+/// pe_pdb with the DWARF facts given (merge_facts: made from each
+/// object's own DWARF and the link's layout) instead of read from img.
+pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?) -> Result[(Bytes, Bytes), Str] {
   if img.len() < 64 || img[0] != 77 || img[1] != 90 {
     return Err("not a PE image")
   }
@@ -149,12 +153,16 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] {
   b.write(img[rsds + 20..img.len()])
   let out = b.freeze()
   // the functions: DWARF's, by name as the traceback shows them
-  let s = match debug.sections(img) {
-    Ok(x) => x
-    Err(e) => return Err("the image's DWARF: ${e}")
+  let (info, lns) = match facts {
+    Some(f) => f
+    None => {
+      let s = match debug.sections(img) {
+        Ok(x) => x
+        Err(e) => return Err("the image's DWARF: ${e}")
+      }
+      (debug.read(s), debug.lines(s))
+    }
   }
-  let info = debug.read(s)
-  let lns = debug.lines(s)
   // the line rows by address (a sequence's end row starts no code)
   var keyed: List[(Int, Int)] = []
   for (i, r) in lns.rows.indexed() {

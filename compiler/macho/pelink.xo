@@ -50,9 +50,9 @@ pub struct PEOpts {
 }
 
 /// An input section's place: its output section and offset there.
-struct PEPlace {
-  out: Int
-  off: Int
+pub struct PEPlace {
+  pub out: Int
+  pub off: Int
 }
 
 /// What a symbol of an object resolves to: an object's section and offset
@@ -134,6 +134,26 @@ fn get_le(d: Bytes, at: Int, n: Int) -> Int {
 
 /// link_pe: the executable of objs, or why not.
 pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
+  match link_pe_layout(objs, o) {
+    Ok((img, _)) => Ok(img)
+    Err(e) => Err(e)
+  }
+}
+
+/// Where a link put its input sections (per-object CodeView, the PDB
+/// design note's tier 2): each object's sections' places (out -1: not
+/// placed), each output section's RVA (the .debug_ ones from PO_DEBUG
+/// have none: their offsets are within them), the .debug_ sections'
+/// names by output section from PO_DEBUG, and the image base.
+pub struct PELayout {
+  pub places: List[List[PEPlace]]
+  pub rva: List[Int]
+  pub dnames: List[Str]
+  pub base: Int
+}
+
+/// link_pe and the layout it made.
+pub fn link_pe_layout(objs: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout), Str] {
   // the input sections' places, in object order: each output section's
   // bytes (an input section's appended whole) and its fixups, written
   // over them by pe_write (2026-10-27: a List[Int] per section, one push
@@ -515,7 +535,8 @@ pub fn link_pe(objs: List[CObj], o: PEOpts) -> Result[Bytes, Str] {
   if entry < 0 {
     return Err("the entry ${o.entry} is not defined")
   }
-  Ok(pe_write(bufs, pats, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds))
+  let img = pe_write(bufs, pats, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds)
+  Ok((img, PELayout{places: places, rva: rva, dnames: dnames, base: PE_BASE}))
 }
 
 /// The image: the DOS header, the PE headers and section table, the

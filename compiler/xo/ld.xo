@@ -451,8 +451,8 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   // the debug directory names it with backslashes, as MSVC's and lld's
   // linkers do: dbghelp finds a PDB moved since by its base name, which
   // an older one takes after the last backslash only
-  match macho.link_pe(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb_named.replace("/", "\\")}) {
-    Ok(img0) => {
+  match macho.link_pe_layout(objs, macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: pe_resources(bin, stamps), fixed_base: race, pdb: pdb_named.replace("/", "\\")}) {
+    Ok((img0, layout)) => {
       t = lap(os, phases, "pe.link_pe ${img0.len()} bytes", t)
       var img = img0
       if dwarf {
@@ -462,8 +462,32 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
             t = lap(os, phases, "pe.pdb ${p.len()} bytes", t)
             // per-object CodeView, step 1 (Xo Lang 2's design note): each
             // object's own DWARF against the image's, function by function
-            if (os.env.get("XO_PDB_OBJ_CHECK") ?? "") == "1" {
+            let check = os.env.get("XO_PDB_OBJ_CHECK") ?? ""
+            if check == "1" {
               os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK: ${macho.obj_check(img0, objs)}")
+            }
+            // step 2a: the PDB from the objects' DWARF and the layout
+            // against the image's, byte for byte
+            if check == "2" {
+              let t2 = os.clock.now()
+              let facts = macho.merge_facts(objs, layout)
+              let merge_ms = os.clock.since(t2).millis()
+              let tm = os.clock.now()
+              match macho.pe_pdb_facts(img0, Some(facts)) {
+                Ok((i3, p3)) => {
+                  var diff = -1
+                  let n = if p3.len() < p.len() { p3.len() } else { p.len() }
+                  for k in 0..n {
+                    if p3[k] != p[k] {
+                      diff = k
+                      break
+                    }
+                  }
+                  let same = diff < 0 && p3.len() == p.len() && i3 == i2
+                  os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK=2: the PDB from the objects ${if same { "is identical" } else { "differs (first byte ${diff}, sizes ${p3.len()} and ${p.len()}, image ${if i3 == i2 { "same" } else { "differs" }})" }}; merge ${merge_ms} ms, pdb ${os.clock.since(tm).millis()} ms")
+                }
+                Err(e) => os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK=2: ${e}")
+              }
             }
             if let Err(e) = os.fs.write(pdb, p) {
               return "${pdb}: ${e}"
