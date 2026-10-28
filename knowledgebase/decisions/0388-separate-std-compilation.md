@@ -282,6 +282,15 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   for every relocation of the placed sections (it was copied as it grew: 2.5 ms). llvm-fib: min
   17.2 ms, median 17.9 (n=21, load average about 50; the second round's 19.5 and 20.9 at a
   similar load); the store check passes.
+- Fourth round (2026-10-28): a section's patches are put in address order by merging their
+  runs (out.xo patches_in_order: a section's relocations, which compiler/macho's assembler writes
+  in descending order, then a unit's or line table's header fields, one per file name), not by
+  sorting the list (2.5 ms of a merge sort's copies per link); the store keeps each cut run's
+  relocations in address order. link_store is three steps a caller can time (store_prepare,
+  StoreLink.resolve, finish), and XO_STD_STORE_REPEAT prints them. llvm-fib: prepare 5.8 ms,
+  resolve 3.1, finish 8.7 (4.9 with no DWARF: the DWARF is about 4 ms; the binary 2.72 MB, 1.07
+  without). Prepare and resolve read every symbol and section of std's 37 parts; the next round
+  compacts each store object to its live atoms and the symbols they name.
 
 ### std's object (xo-lang-4, 2026-10-28)
 

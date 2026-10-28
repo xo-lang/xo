@@ -158,12 +158,17 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
         sw32(gb, x.end)
         sw32(gb, if x.fo < 0 { 0xffffffff } else { base[x.fo] + x.fk })
         sw32(gb, db.len())
-        var nr = 0
+        // by address, so a cut section's patches are one run in order
+        // (out.xo patches_in_order: no sort of the whole list)
+        var rs: List[IReloc] = []
         for r in s.relocs {
           if r.addr >= x.start && r.addr < x.end {
-            sw_reloc(db, r)
-            nr += 1
+            rs.push(r)
           }
+        }
+        let nr = rs.len()
+        for r in rs.sort_by(fn(r: IReloc) -> Int { r.addr }) {
+          sw_reloc(db, r)
         }
         sw32(gb, nr)
       }
@@ -284,6 +289,65 @@ fn whole_name(seg: Str, name: Str, flags: Int) -> Bool {
 /// link_store: link_debug of the program's inputs and the store's
 /// objects, reading only the atoms the program reaches.
 pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Result[(Bytes, Bytes), Str] {
+  match store_prepare(inputs, store, opts) {
+    Ok(s) => {
+      var sl = s
+      let err = sl.resolve()
+      if !err.is_empty() {
+        return Err(err)
+      }
+      sl.finish()
+    }
+    Err(e) => Err(e)
+  }
+}
+
+/// A link through the store in its steps, which a caller may time:
+/// store_prepare (the walk and the live atoms read), resolve (the
+/// symbols, the live compact unwind entries), finish (link_rest).
+pub struct StoreLink {
+  l: Linker
+  /// the store's objects (the first n of l.objs), each one's first atom
+  /// number, and each atom's liveness
+  n: Int
+  base: List[Int]
+  live: List[Bool]
+}
+
+/// The symbols resolved and the dead functions' compact unwind entries
+/// dropped; the error, "" for none.
+pub fn (var s: StoreLink) resolve() -> Str {
+  s.l.resolve()
+  if !s.l.err.is_empty() {
+    return s.l.err
+  }
+  var live2: List[List[Bool]] = []
+  for o in 0..s.l.objs.len() {
+    var row: List[Bool] = []
+    for k in 0..s.l.objs[o].sects.len() {
+      row.push(if o < s.n { s.live[s.base[o] + k] } else { true })
+    }
+    live2.push(row)
+  }
+  for o in 0..s.n {
+    for k in 0..s.l.objs[o].sects.len() {
+      let x = s.l.objs[o].sects[k]
+      if x.seg == "__LD" && x.name == "__compact_unwind" {
+        s.l.objs[o].sects[k] = s.l.live_unwind(o, x, live2)
+      }
+    }
+  }
+  ""
+}
+
+/// The executable and the dSYM's DWARF (link_debug's), or the error.
+pub fn (var s: StoreLink) finish() -> Result[(Bytes, Bytes), Str] {
+  s.l.link_rest()
+}
+
+/// The walk from the program's inputs and the store's live atoms read
+/// (link_store's first step).
+pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Result[StoreLink, Str] {
   if store.len() < 12 || bstr(store[0..8]) != STORE_MAGIC {
     return Err("not an xo std store")
   }
@@ -450,28 +514,7 @@ pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Resu
     }
     l.objs[i].sects = sects
   }
-  l.resolve()
-  if !l.err.is_empty() {
-    return Err(l.err)
-  }
-  // the compact unwind entries of the live functions only
-  var live2: List[List[Bool]] = []
-  for o in 0..l.objs.len() {
-    var row: List[Bool] = []
-    for k in 0..l.objs[o].sects.len() {
-      row.push(if o < n { live[base[o] + k] } else { true })
-    }
-    live2.push(row)
-  }
-  for o in 0..n {
-    for k in 0..l.objs[o].sects.len() {
-      let s = l.objs[o].sects[k]
-      if s.seg == "__LD" && s.name == "__compact_unwind" {
-        l.objs[o].sects[k] = l.live_unwind(o, s, live2)
-      }
-    }
-  }
-  l.link_rest()
+  Ok(StoreLink{l: l, n: n, base: base, live: live})
 }
 
 /// A cut DWARF section of the store, its record at q (dw_cut's result

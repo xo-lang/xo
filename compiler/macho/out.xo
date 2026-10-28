@@ -130,17 +130,60 @@ struct BytePatch {
 /// linker's DWARF join, 2026-10-27). ps need not be sorted (in order or
 /// in reverse, as Mach-O lists relocations, it is not sorted again); a
 /// patch that overlaps an earlier one is skipped.
-fn write_patched(var out: BytesBuilder, d: Bytes, ps: List[BytePatch]) {
-  var up = true
-  var down = true
-  for i in 1..ps.len() {
-    if ps[i].at < ps[i - 1].at {
-      up = false
-    } else if ps[i].at > ps[i - 1].at {
-      down = false
-    }
+/// ps by address. Usually a few runs in order: a section's relocations
+/// (up or down), then a DWARF unit's or line table's header fields
+/// (dsym.xo dw_unit, dw_line: one per file name). Each run is kept and
+/// the runs merged, stable, not the whole list sorted (std's store link:
+/// 2.5 ms of a merge sort's copies, 2026-10-28); past 8 runs, a sort.
+fn patches_in_order(ps: List[BytePatch]) -> List[BytePatch] {
+  if ps.len() < 2 {
+    return ps
   }
-  let sorted = if up { ps } else if down { ps.reverse() } else { ps.sort_by(fn(p: BytePatch) -> Int { p.at }) }
+  // the runs as index ranges (a slice is a copy): start, end, down (no
+  // two patches of a descending run share an address)
+  var runs: List[(Int, Int, Bool)] = []
+  var i = 0
+  while i < ps.len() {
+    var j = i + 1
+    let down = j < ps.len() && ps[j].at < ps[i].at
+    while j < ps.len() && (if down { ps[j].at < ps[j - 1].at } else { ps[j].at >= ps[j - 1].at }) {
+      j += 1
+    }
+    runs.push((i, j, down))
+    if runs.len() > 8 {
+      return ps.sort_by(fn(p: BytePatch) -> Int { p.at })
+    }
+    i = j
+  }
+  if runs.len() == 1 {
+    return if runs[0].2 { ps.reverse() } else { ps }
+  }
+  // each run's next patch: taken from the run with the lowest address,
+  // the earliest run on a tie (a stable sort's order)
+  var next: List[Int] = []
+  for (s0, e0, d0) in runs {
+    next.push(if d0 { e0 - 1 } else { s0 })
+  }
+  var out: List[BytePatch] = List.with_capacity(ps.len())
+  while out.len() < ps.len() {
+    var best = -1
+    for (k, (s0, e0, d0)) in runs.indexed() {
+      let n = next[k]
+      if (if d0 { n < s0 } else { n >= e0 }) {
+        continue
+      }
+      if best < 0 || ps[n].at < ps[next[best]].at {
+        best = k
+      }
+    }
+    out.push(ps[next[best]])
+    next[best] = if runs[best].2 { next[best] - 1 } else { next[best] + 1 }
+  }
+  out
+}
+
+fn write_patched(var out: BytesBuilder, d: Bytes, ps: List[BytePatch]) {
+  let sorted = patches_in_order(ps)
   var prev = 0
   for p in sorted {
     if p.at < prev {

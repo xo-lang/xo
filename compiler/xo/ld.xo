@@ -94,9 +94,23 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     // XO_STD_STORE_REPEAT=N: N more links, timed (a measurement)
     let rep = Int.parse(os.env.get("XO_STD_STORE_REPEAT") ?? "0") ?? 0
     for _ in 0..rep {
+      // the steps timed: prepare (the walk, the live atoms read), resolve,
+      // finish (layout, relocation, the image)
       let t1 = os.clock.now()
-      macho.link_store(ins, store, opts).ignore_err("a timing run: the first link reported")
-      os.stdio.eprintln("store link ${os.clock.since(t1).nanos() / 1000} us")
+      match macho.store_prepare(ins, store, opts) {
+        Ok(s0) => {
+          var s = s0
+          let dp = os.clock.since(t1).nanos() / 1000
+          let t2 = os.clock.now()
+          let _e = s.resolve()
+          let dr = os.clock.since(t2).nanos() / 1000
+          let t3 = os.clock.now()
+          s.finish().ignore_err("a timing run: the first link reported")
+          let df = os.clock.since(t3).nanos() / 1000
+          os.stdio.eprintln("store link ${dp + dr + df} us (prepare ${dp}, resolve ${dr}, finish ${df})")
+        }
+        Err(_) => {}
+      }
     }
   }
   if store_check {
