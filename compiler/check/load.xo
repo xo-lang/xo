@@ -57,6 +57,10 @@ pub struct Checker {
   /// its trees and keeps their counts here (object to (counts, owner
   /// object or -1)); need_tree joins one on demand
   pub trees_lazy: Bool = false
+  /// XO_STD_TREES_TEST=1 (the rebuild's test): no tree parsed before
+  /// install, every recorded object pending, so the SSA builder meets a
+  /// pending tree and the driver's rebuild runs
+  pub trees_test_pend: Bool = false
   pub tree_pending: Map[Int, (List[Int], Int)] = {}
   pub std_export_out: Bytes = b""
   pub std_export_used: Bool = false

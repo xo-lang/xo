@@ -808,6 +808,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
     // SSA lowers no std body); a build or run only: xo doc, def, refs,
     // the LSP and test read declarations in full
     c.trees_lazy = o.cmd is "build" | "run"
+    c.trees_test_pend = c.trees_lazy && (os.env.get("XO_STD_TREES_TEST") ?? "") == "1"
     let (f0, f1) = sepcomp_fact_files(os, sp)
     match os.fs.read(f0) {
       Ok(d) => {

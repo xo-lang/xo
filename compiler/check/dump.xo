@@ -33,7 +33,9 @@ fn (var c: Checker) run() -> () ! Str {
   // a default's presence, a lazy body)
   if c.trees_lazy && c.std_record != None && !c.std_export_verify {
     if let Some(e) = c.std_record {
-      for x in e.objs {
+      // the rebuild's test: nothing parsed now, every tree pending
+      let objs = if c.trees_test_pend { [] } else { e.objs }
+      for x in objs {
         if x.decl_file >= 0 {
           var generic = !x.tparams.is_empty()
           if !generic && x.recv >= 0 {
