@@ -31,3 +31,19 @@ test "a damaged or truncated export decodes to None" {
   expect(decode_std_export(b"xo std export v0").is_none()) == true
   expect(decode_std_export(d + b"x").is_none()) == true
 }
+
+test "records exported by one program, relocated, equal another program's own" {
+  let a = export_checker(os)?
+  // a second root module: one more Module object before the std block
+  os.fs.create_dir_all("lib")?
+  os.fs.write("lib/lib.xo", b"fn helper() -> Int {\n  1\n}\n")?
+  var c = new_checker(os.fs, "std")
+  if let Err(e) = c.check_dirs(["app", "lib"]) {
+    expect(e) == ""
+  }
+  expect(c.std_block.obj_lo != a.std_block.obj_lo) == true
+  match c.relocate_export(a.std_export(), c.std_block) {
+    Some(e) => expect(encode_std_export(e) == encode_std_export(c.std_export())) == true
+    None => expect("relocated") == "None"
+  }
+}

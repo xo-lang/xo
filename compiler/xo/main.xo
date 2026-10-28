@@ -51,6 +51,7 @@
 // internal/build does. It is not the released `xo` (decision 0150: that
 // is the owner's decision after the fixed point).
 
+use std/crypto
 use std/debug
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/ssa
@@ -734,6 +735,16 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       c.mod_skip_auto = cc == "auto"
       for p in o.chk_noskip {
         c.mod_noskip[p] = true
+      }
+      // std's declarations from their records (decision 0388 stage
+      // 1a-ii, opt in): one entry per xo, std and flags, its fingerprint
+      // naming the std files it was declared from
+      let sx = os.env.get("XO_STD_EXPORT") ?? ""
+      if sx == "1" || sx == "verify" {
+        c.std_export_on = true
+        c.std_export_verify = sx == "verify"
+        c.std_export_key = crypto.sha256("stdx\n${c.mod_flags}\nnative=${c.native} skip_tests=${c.skip_tests}".bytes()).to_hex()
+        c.std_export_in = entry_get(os, dir, "stdx", c.std_export_key) ?? b""
       }
     }
   }

@@ -20,24 +20,47 @@ fn (var c: Checker) run() -> () ! Str {
       prog_mods.push(m)
     }
   }
-  c.std_block = StdBlock{obj_lo: c.objs.len(), ty_lo: c.tys.len(), eset_lo: c.esets.len(), evar_lo: c.evars.len()}
-  for m in std_mods {
-    c.declare(m)
+  let at = StdBlock{obj_lo: c.objs.len(), ty_lo: c.tys.len(), eset_lo: c.esets.len(), evar_lo: c.evars.len()}
+  var fp = ""
+  if c.std_export_on {
+    fp = c.std_fingerprint(std_mods)
+    if !c.std_export_verify {
+      if let Some(e) = decode_std_entry(c.std_export_in, fp) {
+        if let Some(r) = c.relocate_export(e, at) {
+          c.std_export_used = c.install_std(r)
+        }
+      }
+    }
+  }
+  if !c.std_export_used {
+    c.std_block = at
+    for m in std_mods {
+      c.declare(m)
+    }
   }
   let missing = c.prelude_missing()
   if !missing.is_empty() {
     return Err(missing)
   }
-  for m in std_mods {
-    c.resolve_types(m)
+  if !c.std_export_used {
+    for m in std_mods {
+      c.resolve_types(m)
+    }
+    for m in std_mods {
+      c.resolve_sigs(m)
+    }
+    c.std_block.obj_hi = c.objs.len()
+    c.std_block.ty_hi = c.tys.len()
+    c.std_block.eset_hi = c.esets.len()
+    c.std_block.evar_hi = c.evars.len()
+    if c.std_export_on {
+      let mine = c.std_export()
+      if c.std_export_verify {
+        c.std_export_bad = c.verify_std_entry(fp, at, mine)
+      }
+      c.std_export_out = encode_std_entry(fp, mine)
+    }
   }
-  for m in std_mods {
-    c.resolve_sigs(m)
-  }
-  c.std_block.obj_hi = c.objs.len()
-  c.std_block.ty_hi = c.tys.len()
-  c.std_block.eset_hi = c.esets.len()
-  c.std_block.evar_hi = c.evars.len()
   for m in prog_mods {
     c.declare(m)
   }

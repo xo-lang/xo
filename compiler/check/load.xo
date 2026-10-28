@@ -26,6 +26,21 @@ pub struct Checker {
   /// The std tree's block in objs, tys, esets and evars (Checker.run,
   /// decision 0388): what std_export records
   pub std_block: StdBlock = StdBlock{}
+  /// decision 0388 stage 1a-ii (XO_STD_EXPORT=1): std's declarations
+  /// from the records in std_export_in (an entry of the back-end cache,
+  /// read by the driver) when their fingerprint matches; else declared
+  /// and resolved, and their entry left in std_export_out for the driver
+  /// to store under std_export_key
+  pub std_export_on: Bool = false
+  pub std_export_key: Str = ""
+  pub std_export_in: Bytes = b""
+  pub std_export_out: Bytes = b""
+  pub std_export_used: Bool = false
+  /// XO_STD_EXPORT=verify: std declared as usual and its records, when
+  /// an entry matches, compared with it; std_export_bad says how they
+  /// differ
+  pub std_export_verify: Bool = false
+  pub std_export_bad: Str = ""
   pub mods: List[Module] = []
   pub mod_index: Map[Str, Int] = {}
   pub files: List[SrcFile] = []

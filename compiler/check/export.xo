@@ -5,6 +5,7 @@
 // parameter's or field's default and a constant's value are counted, not
 // stored: their trees come from the files' parses, joined by position.
 
+use std/crypto
 use github.com/xo-lang/xo/compiler/parser
 
 /// The bounds of the std tree's block in each of the checker's tables,
@@ -38,6 +39,11 @@ pub struct StdExport {
   pub named0: List[(Int, Int)] = []
   pub inferred_fns: List[Int] = []
   pub realtime_fns: List[Int] = []
+  /// the indices outside the block the records name, by path: the std
+  /// modules, their Module objects and their files
+  pub mod_ids: List[(Int, Str)] = []
+  pub mod_objs: List[(Int, Str)] = []
+  pub file_ids: List[(Int, Str)] = []
 }
 
 const EXPORT_VERSION = "xo std export v1"
@@ -59,7 +65,10 @@ pub fn (c: Checker) std_export() -> StdExport {
   for v in b.evar_lo..b.evar_hi {
     e.evars.push(c.evars[v])
   }
-  for md in c.mods {
+  // in the order the std phases ran (c.order), not the modules' load
+  // order, which a second check of the same program can change
+  for mi in c.order {
+    let md = c.mods[mi]
     if !md.std_tree {
       continue
     }
@@ -68,7 +77,10 @@ pub fn (c: Checker) std_export() -> StdExport {
       ms.push((k, o))
     }
     e.members.push((md.path, ms))
+    e.mod_ids.push((c.mod_index.get(md.path) ?? -1, md.path))
+    e.mod_objs.push((md.obj, md.path))
     for f in md.files {
+      e.file_ids.push((f, c.files[f].path))
       e.decl_objs.push((c.files[f].path, c.files[f].decl_objs))
     }
   }
@@ -625,6 +637,13 @@ pub fn encode_std_export(e: StdExport) -> Bytes {
   }
   w.ints(e.inferred_fns)
   w.ints(e.realtime_fns)
+  for xs in [e.mod_ids, e.mod_objs, e.file_ids] {
+    w.uv(xs.len())
+    for (i, p) in xs {
+      w.sv(i)
+      w.str(p)
+    }
+  }
   w.b.freeze()
 }
 
@@ -712,8 +731,598 @@ pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
   }
   e.inferred_fns = r.ints()
   e.realtime_fns = r.ints()
+  var maps: List[List[(Int, Str)]] = []
+  for _ in 0..3 {
+    let n = r.uv()
+    var xs: List[(Int, Str)] = []
+    for _ in 0..n {
+      if !r.ok {
+        return None
+      }
+      let i = r.sv()
+      xs.push((i, r.str()))
+    }
+    maps.push(xs)
+  }
+  if maps.len() == 3 {
+    e.mod_ids = maps[0]
+    e.mod_objs = maps[1]
+    e.file_ids = maps[2]
+  }
   if !r.ok || r.at != d.len() || e.objs.len() != b.obj_hi - b.obj_lo || e.tys.len() != b.ty_hi - b.ty_lo {
     return None
   }
   Some(e)
+}
+
+// ---------------------------------------------------------------------------
+// Relocation: the records renumbered for another checker, whose std block
+// starts where its tables end now and whose modules and files are found
+// by path.
+
+/// The index maps of a relocation.
+struct Reloc {
+  b: StdBlock
+  d_obj: Int
+  d_ty: Int
+  d_eset: Int
+  d_evar: Int
+  objs: Map[Int, Int] = {}
+  mods: Map[Int, Int] = {}
+  files: Map[Int, Int] = {}
+  ok: Bool = true
+}
+
+fn (var r: Reloc) obj(o: Int) -> Int {
+  if o < 0 {
+    return o
+  }
+  if o >= r.b.obj_lo && o < r.b.obj_hi {
+    return o + r.d_obj
+  }
+  match r.objs.get(o) {
+    Some(n) => n
+    None => {
+      r.ok = false
+      o
+    }
+  }
+}
+
+/// A type outside the block is one of the checker's first two, unit and
+/// `<error>` (new_checker), the same in every checker.
+fn (var r: Reloc) ty(t: Int) -> Int {
+  if t < 0 {
+    return t
+  }
+  if t >= r.b.ty_lo && t < r.b.ty_hi {
+    return t + r.d_ty
+  }
+  if t > 1 {
+    r.ok = false
+  }
+  t
+}
+
+fn (var r: Reloc) eset(s: Int) -> Int {
+  if s >= r.b.eset_lo && s < r.b.eset_hi {
+    return s + r.d_eset
+  }
+  if s >= 0 {
+    r.ok = false
+  }
+  s
+}
+
+fn (var r: Reloc) evar(v: Int) -> Int {
+  if v >= r.b.evar_lo && v < r.b.evar_hi {
+    return v + r.d_evar
+  }
+  if v >= 0 {
+    r.ok = false
+  }
+  v
+}
+
+fn (var r: Reloc) idx(m: Map[Int, Int], i: Int) -> Int {
+  if i < 0 {
+    return i
+  }
+  match m.get(i) {
+    Some(n) => n
+    None => {
+      r.ok = false
+      i
+    }
+  }
+}
+
+fn (var r: Reloc) objs_of(xs: List[Int]) -> List[Int] {
+  var out = List[Int].with_capacity(xs.len())
+  for x in xs {
+    out.push(r.obj(x))
+  }
+  out
+}
+
+fn (var r: Reloc) tys_of(xs: List[Int]) -> List[Int] {
+  var out = List[Int].with_capacity(xs.len())
+  for x in xs {
+    out.push(r.ty(x))
+  }
+  out
+}
+
+fn (var r: Reloc) eff_item(e: EffItem) -> EffItem {
+  var x = e
+  x.param = r.obj(e.param)
+  x.evar = r.evar(e.evar)
+  x.fn_obj = r.obj(e.fn_obj)
+  var sub: Map[Int, Int] = {}
+  for (k, v) in e.sub.entries() {
+    sub[r.obj(k)] = r.ty(v)
+  }
+  x.sub = sub
+  x
+}
+
+fn (var r: Reloc) obj_rec(x0: Obj) -> Obj {
+  var x = x0
+  x.module = r.idx(r.mods, x0.module)
+  x.tparams = r.objs_of(x0.tparams)
+  var fs: List[FieldInfo] = []
+  for f in x0.fields {
+    var g = f
+    g.ty = r.ty(f.ty)
+    fs.push(g)
+  }
+  x.fields = fs
+  var vs: List[VariantInfo] = []
+  for v in x0.variants {
+    var w = v
+    var vfs: List[VFieldInfo] = []
+    for vf in v.fields {
+      var g = vf
+      g.ty = r.ty(vf.ty)
+      vfs.push(g)
+    }
+    w.fields = vfs
+    vs.push(w)
+  }
+  x.variants = vs
+  x.iface_meths = r.objs_of(x0.iface_meths)
+  x.target = r.ty(x0.target)
+  var ms: Map[Bytes, Int] = {}
+  for (k, f) in x0.methods.entries() {
+    ms[k] = r.obj(f)
+  }
+  x.methods = ms
+  var ss: Map[Bytes, Int] = {}
+  for (k, f) in x0.statics.entries() {
+    ss[k] = r.obj(f)
+  }
+  x.statics = ss
+  x.decl_file = r.idx(r.files, x0.decl_file)
+  var ps: List[ParamInfo] = []
+  for p in x0.params {
+    var g = p
+    g.ty = r.ty(p.ty)
+    ps.push(g)
+  }
+  x.params = ps
+  x.result = r.ty(x0.result)
+  x.err = r.ty(x0.err)
+  x.recv = r.obj(x0.recv)
+  x.recv_ty = r.ty(x0.recv_ty)
+  x.declared = r.eset(x0.declared)
+  x.body_eff = r.eset(x0.body_eff)
+  x.ty = r.ty(x0.ty)
+  x.constraint = r.ty(x0.constraint)
+  x
+}
+
+fn (var r: Reloc) ty_rec(t0: Ty) -> Ty {
+  var t = t0
+  t.obj = r.obj(t0.obj)
+  t.args = r.tys_of(t0.args)
+  t.result = r.ty(t0.result)
+  t.err = r.ty(t0.err)
+  t.ref = r.ty(t0.ref)
+  t.eff = r.eset(t0.eff)
+  t
+}
+
+/// e renumbered for c, whose std block starts at at's lows (the ends of
+/// its tables when the std phases would run) and whose std modules and
+/// files are already loaded; None when a module or file e names is not
+/// loaded in c, or a record refers outside what relocation knows (then
+/// the records cannot serve c).
+pub fn (c: Checker) relocate_export(e: StdExport, at: StdBlock) -> Option[StdExport] {
+  let b = e.block
+  var r = Reloc{b: b, d_obj: at.obj_lo - b.obj_lo, d_ty: at.ty_lo - b.ty_lo, d_eset: at.eset_lo - b.eset_lo, d_evar: at.evar_lo - b.evar_lo}
+  for (i, p) in e.mod_ids {
+    match c.mod_index.get(p) {
+      Some(m) => {
+        r.mods[i] = m
+      }
+      None => return None
+    }
+  }
+  for (o, p) in e.mod_objs {
+    match c.mod_index.get(p) {
+      Some(m) => {
+        r.objs[o] = c.mods[m].obj
+      }
+      None => return None
+    }
+  }
+  var fpath: Map[Str, Int] = {}
+  for (f, sf) in c.files.indexed() {
+    fpath[sf.path] = f
+  }
+  for (f, p) in e.file_ids {
+    match fpath.get(p) {
+      Some(n) => {
+        r.files[f] = n
+      }
+      None => return None
+    }
+  }
+  var out = StdExport{block: StdBlock{obj_lo: at.obj_lo, obj_hi: at.obj_lo + (b.obj_hi - b.obj_lo), ty_lo: at.ty_lo, ty_hi: at.ty_lo + (b.ty_hi - b.ty_lo), eset_lo: at.eset_lo, eset_hi: at.eset_lo + (b.eset_hi - b.eset_lo), evar_lo: at.evar_lo, evar_hi: at.evar_lo + (b.evar_hi - b.evar_lo)}, trees: e.trees}
+  for x in e.objs {
+    out.objs.push(r.obj_rec(x))
+  }
+  for t in e.tys {
+    out.tys.push(r.ty_rec(t))
+  }
+  for s in e.esets {
+    var items: List[EffItem] = []
+    for it in s {
+      items.push(r.eff_item(it))
+    }
+    out.esets.push(items)
+  }
+  for v in e.evars {
+    out.evars.push(r.eset(v))
+  }
+  for (p, ms) in e.members {
+    var ns: List[(Bytes, Int)] = []
+    for (k, o) in ms {
+      ns.push((k, r.obj(o)))
+    }
+    out.members.push((p, ns))
+  }
+  for (p, ds) in e.decl_objs {
+    out.decl_objs.push((p, r.objs_of(ds)))
+  }
+  for (o, t) in e.named0 {
+    out.named0.push((r.obj(o), r.ty(t)))
+  }
+  out.inferred_fns = r.objs_of(e.inferred_fns)
+  out.realtime_fns = r.objs_of(e.realtime_fns)
+  for (i, p) in e.mod_ids {
+    out.mod_ids.push((r.idx(r.mods, i), p))
+  }
+  for (o, p) in e.mod_objs {
+    out.mod_objs.push((r.obj(o), p))
+  }
+  for (f, p) in e.file_ids {
+    out.file_ids.push((r.idx(r.files, f), p))
+  }
+  if !r.ok {
+    return None
+  }
+  Some(out)
+}
+
+// ---------------------------------------------------------------------------
+// Installing: the records in place of the std phases, their trees joined
+// from the files' parses.
+
+/// What the std block is declared from: the flags the loader and the std
+/// phases read and each std module's files with their contents' digests,
+/// in order; records serve a checker only with the same fingerprint.
+pub fn (c: Checker) std_fingerprint(std_mods: List[Int]) -> Str {
+  var h = BytesBuilder.new()
+  h.write_str("${EXPORT_VERSION}\n${c.native} ${c.lazy} ${c.lazy_parse} ${c.decls_only} ${c.skip_tests} ${c.std_test} ${c.runtime_files} ${c.llrt_c.join(",")} ${c.body_words.join(",")}\n")
+  for m in std_mods {
+    h.write_str("${c.mods[m].path}\n")
+    for f in c.mods[m].files {
+      h.write_str("${c.files[f].path} ${c.files[f].src.len()} ")
+      h.write(crypto.sha256(c.files[f].src))
+      h.write_str("\n")
+    }
+  }
+  crypto.sha256(h.freeze()).to_hex()
+}
+
+/// The top level declaration i of file f, if the file has one there.
+fn (c: Checker) top_decl(f: Int, i: Int) -> Option[parser.Decl] {
+  if f < 0 || f >= c.files.len() || i < 0 || i >= c.files[f].ast.decls.len() {
+    return None
+  }
+  Some(c.files[f].ast.decls[i])
+}
+
+/// x with its trees (counted in t) joined from the parses of c's files:
+/// a function's declaration (an interface method's from its interface,
+/// whose record is ty_rec), parameters' and fields' defaults; None when one
+/// is not where the record says.
+fn (c: Checker) join_trees(x0: Obj, t: List[Int], owner: Option[Obj]) -> Option[Obj] {
+  var x = x0
+  var ti = 0
+  if !x.fields.is_empty() {
+    var sfields: List[parser.Field] = []
+    if let Some(d) = c.top_decl(x.decl_file, x.decl_idx) {
+      match d {
+        StructDecl(d: sd) => {
+          sfields = sd.fields
+        }
+        _ => {}
+      }
+    }
+    var fs: List[FieldInfo] = []
+    for f in x.fields {
+      var g = f
+      if t[ti] > 0 {
+        var found = false
+        for fl in sfields {
+          if fl.name.name == f.name {
+            if let Some(e) = fl.default {
+              g.default = [e]
+              found = true
+            }
+            break
+          }
+        }
+        if !found {
+          return None
+        }
+      }
+      ti += 1
+      fs.push(g)
+    }
+    x.fields = fs
+  }
+  if t[ti] > 0 {
+    var fd: Option[parser.FnDecl] = None
+    if x.iface {
+      if let Some(ow) = owner {
+        if let Some(d) = c.top_decl(ow.decl_file, ow.decl_idx) {
+          match d {
+            InterfaceDecl(d: id) => {
+              for md in id.methods {
+                if md.name.name == x.name && md.name.span.start.line == x.line && md.name.span.start.col == x.col {
+                  fd = Some(md)
+                  break
+                }
+              }
+            }
+            _ => {}
+          }
+        }
+      }
+    } else if let Some(d) = c.top_decl(x.decl_file, x.decl_idx) {
+      match d {
+        FnDecl(d: f) => {
+          if f.name.name == x.name {
+            fd = Some(f)
+          }
+        }
+        _ => {}
+      }
+    }
+    match fd {
+      Some(f) => {
+        x.fn_decl = [f]
+      }
+      None => return None
+    }
+  }
+  ti += 1
+  var ps: List[ParamInfo] = []
+  for p in x.params {
+    var g = p
+    if t[ti] > 0 {
+      var found = false
+      if !x.fn_decl.is_empty() {
+        for q in x.fn_decl[0].params {
+          if q.name.name == p.name {
+            if let Some(e) = q.default {
+              g.default = [e]
+              found = true
+            }
+            break
+          }
+        }
+      }
+      if !found {
+        return None
+      }
+    }
+    ti += 1
+    ps.push(g)
+  }
+  x.params = ps
+  // a constant's or let's value: only locals have them, never std's block
+  if t[ti] > 0 || t[ti + 1] > 0 {
+    return None
+  }
+  Some(x)
+}
+
+/// Installs e, relocated for c (its block starting at the ends of c's
+/// tables), in place of the std phases: true when it did; false, with
+/// nothing changed, when a tree cannot be joined.
+pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
+  let lo = e.block.obj_lo
+  var objs: List[Obj] = []
+  for (i, x) in e.objs.indexed() {
+    let owner = if x.iface && x.recv >= lo && x.recv - lo < e.objs.len() { Some(e.objs[x.recv - lo]) } else { None }
+    match c.join_trees(x, e.trees[i], owner) {
+      Some(y) => objs.push(y)
+      None => return false
+    }
+  }
+  var fpath: Map[Str, Int] = {}
+  for (f, sf) in c.files.indexed() {
+    fpath[sf.path] = f
+  }
+  for o in objs {
+    c.objs.push(o)
+  }
+  for t in e.tys {
+    c.tys.push(t)
+  }
+  for s in e.esets {
+    c.esets.push(s)
+  }
+  for v in e.evars {
+    c.evars.push(v)
+  }
+  for (p, ms) in e.members {
+    if let Some(m) = c.mod_index.get(p) {
+      var mm: Map[Bytes, Int] = {}
+      for (k, o) in ms {
+        mm[k] = o
+      }
+      c.mods[m].members = mm
+    }
+  }
+  for (p, ds) in e.decl_objs {
+    if let Some(f) = fpath.get(p) {
+      c.files[f].decl_objs = ds
+    }
+  }
+  for (o, t) in e.named0 {
+    c.named0[o] = t
+  }
+  for f in e.inferred_fns {
+    c.inferred_fns.push(f)
+  }
+  for f in e.realtime_fns {
+    c.realtime_fns.push(f)
+  }
+  c.std_block = e.block
+  true
+}
+
+/// A cache entry: the fingerprint, then the records.
+pub fn encode_std_entry(fp: Str, e: StdExport) -> Bytes {
+  var w = ExW{b: BytesBuilder.new()}
+  w.str(fp)
+  w.b.write(encode_std_export(e))
+  w.b.freeze()
+}
+
+/// The records of entry d when its fingerprint is fp.
+fn decode_std_entry(d: Bytes, fp: Str) -> Option[StdExport] {
+  if d.is_empty() {
+    return None
+  }
+  var r = ExR{d: d}
+  if r.str() != fp || !r.ok {
+    return None
+  }
+  decode_std_export(d[r.at..])
+}
+
+/// XO_STD_EXPORT=verify: "" when the entry in std_export_in (if its
+/// fingerprint is fp) relocates to at and joins its trees to exactly
+/// mine, the records this checker declared; else how it differs.
+fn (c: Checker) verify_std_entry(fp: Str, at: StdBlock, mine: StdExport) -> Str {
+  let e = match decode_std_entry(c.std_export_in, fp) {
+    Some(x) => x
+    None => return ""
+  }
+  let r = match c.relocate_export(e, at) {
+    Some(x) => x
+    None => return "the records do not relocate"
+  }
+  if encode_std_export(r) != encode_std_export(mine) {
+    return export_diff(r, mine)
+  }
+  let lo = r.block.obj_lo
+  for (i, x) in r.objs.indexed() {
+    let owner = if x.iface && x.recv >= lo && x.recv - lo < r.objs.len() { Some(r.objs[x.recv - lo]) } else { None }
+    match c.join_trees(x, r.trees[i], owner) {
+      Some(y) => {
+        let z = c.objs[lo + i]
+        if y.fn_decl.len() != z.fn_decl.len() || (!y.fn_decl.is_empty() && y.fn_decl[0].span != z.fn_decl[0].span) {
+          return "object ${lo + i} (${text(z.name)}): its declaration joins elsewhere"
+        }
+        for (j, p) in y.params.indexed() {
+          if p.default.len() != z.params[j].default.len() {
+            return "object ${lo + i} (${text(z.name)}): parameter ${j}'s default"
+          }
+        }
+        for (j, f) in y.fields.indexed() {
+          if f.default.len() != z.fields[j].default.len() {
+            return "object ${lo + i} (${text(z.name)}): field ${j}'s default"
+          }
+        }
+      }
+      None => return "object ${lo + i} (${text(x.name)}): a tree does not join"
+    }
+  }
+  ""
+}
+
+/// Where two exports first differ (XO_STD_EXPORT=verify's message).
+fn export_diff(a: StdExport, b: StdExport) -> Str {
+  if a.objs.len() != b.objs.len() || a.tys.len() != b.tys.len() || a.esets.len() != b.esets.len() || a.evars.len() != b.evars.len() {
+    return "the blocks' sizes differ: objects ${a.objs.len()} and ${b.objs.len()}, types ${a.tys.len()} and ${b.tys.len()}, effect sets ${a.esets.len()} and ${b.esets.len()}, effect variables ${a.evars.len()} and ${b.evars.len()}"
+  }
+  for (i, x) in a.objs.indexed() {
+    var wa = ExW{b: BytesBuilder.new()}
+    wa.obj(x, a.trees[i])
+    var wb = ExW{b: BytesBuilder.new()}
+    wb.obj(b.objs[i], b.trees[i])
+    if wa.b.freeze() != wb.b.freeze() {
+      return "object ${a.block.obj_lo + i} (${text(x.name)}, ${x.file}:${x.line}) differs"
+    }
+  }
+  for (i, t) in a.tys.indexed() {
+    var wa = ExW{b: BytesBuilder.new()}
+    wa.ty(t)
+    var wb = ExW{b: BytesBuilder.new()}
+    wb.ty(b.tys[i])
+    if wa.b.freeze() != wb.b.freeze() {
+      return "type ${a.block.ty_lo + i} differs (kind ${ty_kind_int(t.kind)} and ${ty_kind_int(b.tys[i].kind)}, object ${t.obj} and ${b.tys[i].obj})"
+    }
+  }
+  for (i, s) in a.esets.indexed() {
+    if s.len() != b.esets[i].len() {
+      return "effect set ${a.block.eset_lo + i} differs in size"
+    }
+  }
+  if a.evars != b.evars {
+    return "the effect variables differ"
+  }
+  if a.members.len() != b.members.len() || a.decl_objs.len() != b.decl_objs.len() {
+    return "the modules or files listed differ"
+  }
+  for (i, (p, ms)) in a.members.indexed() {
+    let (q, ns) = b.members[i]
+    if p != q || ms.len() != ns.len() {
+      var ka: List[Str] = []
+      for (k, _) in ms {
+        ka.push(text(k))
+      }
+      var kb: List[Str] = []
+      for (k, _) in ns {
+        kb.push(text(k))
+      }
+      let only_a = ka.filter(fn(k) { !kb.contains(k) })
+      let only_b = kb.filter(fn(k) { !ka.contains(k) })
+      return "module ${p}'s members differ: ${ms.len()} and ${ns.len()}; only in the records: ${only_a.join(" ")}; only declared: ${only_b.join(" ")}"
+    }
+  }
+  if a.named0 != b.named0 {
+    return "the named types differ"
+  }
+  if a.inferred_fns != b.inferred_fns || a.realtime_fns != b.realtime_fns {
+    return "the inferred or realtime functions differ"
+  }
+  "the records differ in their module, file or Module object maps"
 }

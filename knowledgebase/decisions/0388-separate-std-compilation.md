@@ -138,6 +138,23 @@ part of it); the floor of a fib edit under this decision with embedded DWARF is 
 place before stage 4; if it cannot be brought down, std's DWARF prejoined once per std object
 (its offsets moved by the program's pieces at the link) is the fallback, still embedded.
 
+## Progress
+
+- Stage 1a-i (d65aa66ad, 2026-10-27): the std tree's modules are declared and resolved before the
+  program's, so std's objects, types and effect sets are one block of the checker's tables; no
+  output change (identity 200 of 200, `xo check --json` of every errorcheck directory the same).
+- Stage 1a-ii (aa7cb9da2 and the opt in XO_STD_EXPORT, 2026-10-27): that block as records with
+  no syntax tree, renumbered for another program by one offset per table and by path for modules
+  and files, installed in place of the std phases with the trees joined from the parses. A fib
+  edit's check (33 ms) was profiled first: std's parses on the prefetch tasks (39 ms of CPU) and
+  the main thread's 16.6 ms (declare 4.3, resolve_sigs 4.7). So the records alone buy nothing
+  (measured: check 29.9 and 30.7 ms off and on); the gain is stage 3's, when an edit neither parses
+  nor lowers std (generic instances in fib's emitted code: 44 of 1,373; the HTTP server's 415 of
+  3,391).
+- Split (Lead, 2026-10-27): xo-lang-4 builds std's object (1b), its cache kinds and xo dev stdobj,
+  and stage 4's dead stripping; Xo Lang 1 stages 1a, 2 and 3 and the facts std exports
+  (ssa.std_facts; an emitter section per function from 1b's builder).
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle

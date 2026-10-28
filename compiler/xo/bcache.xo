@@ -644,6 +644,12 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   // with the module skip off by default every build wrote entries no
   // build read (cache chk 0/21 on each xo build, 2026-10-22)
   let chk_on = c.mod_skip_on || c.mod_verify
+  if !c.std_export_bad.is_empty() {
+    fail(os, "XO_STD_EXPORT=verify: std's records differ from its declarations: ${c.std_export_bad}")
+  }
+  if !c.std_export_out.is_empty() && !c.std_export_key.is_empty() {
+    let _n = entry_put(os, c.mod_cache_dir, "stdx", c.std_export_key, c.std_export_out)
+  }
   var mn = 0
   var mdiff: List[Str] = []
   for (k, e) in if chk_on { c.mod_cache_entries(b.mod_scans, b.nofe_mods, b.nofe_fos) } else { [] } {
@@ -678,6 +684,9 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
       os.stdio.eprintln("cache chk ${c.mod_skip.len()}/${c.mod_keys.len()} modules")
     } else {
       os.stdio.eprintln("cache chk off (XO_CHK_CACHE=off)")
+    }
+    if c.std_export_on {
+      os.stdio.eprintln("cache stdx ${if c.std_export_used { "used" } else { "declared" }}")
     }
   }
   b
