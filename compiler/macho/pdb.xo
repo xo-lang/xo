@@ -78,6 +78,8 @@ struct PdbProc {
   lo: Int = 0
   sites: List[PdbSite] = []
   locals: List[PdbLocal] = []
+  /// its variables, when its locals are made later (pre_procs)
+  vars: List[debug.Var] = []
 }
 
 /// A call inlined into a function: the callee's name, the enclosing
@@ -111,11 +113,13 @@ struct PdbSect {
 /// The image img with its RSDS record's GUID and the debug directory's
 /// time stamp set, and its PDB; an error when img has no CodeView debug
 /// directory or no DWARF.
-pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] { pe_pdb_facts(img, None) }
+pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] { pe_pdb_facts(img, None, None) }
 
 /// pe_pdb with the DWARF facts given (merge_facts: made from each
 /// object's own DWARF and the link's layout) instead of read from img.
-pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?) -> Result[(Bytes, Bytes), Str] {
+/// With pre (pre_procs: each function's rows and inline sites made from
+/// its own object), only the locals, the types and the file are made here.
+pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs?) -> Result[(Bytes, Bytes), Str] {
   if img.len() < 64 || img[0] != 77 || img[1] != 90 {
     return Err("not a PE image")
   }
@@ -152,6 +156,30 @@ pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?) -> Result[(By
   b.write(guid)
   b.write(img[rsds + 20..img.len()])
   let out = b.freeze()
+  if let Some(pp) = pre {
+    var types = cv_types(pp.info)
+    var procs: List[PdbProc] = []
+    for p0 in pp.procs {
+      let (seg, off) = seg_off(sects, p0.lo - base)
+      if seg > 0 {
+        var sites = p0.sites
+        for i in 0..sites.len() {
+          var st = sites[i]
+          st.locals = cv_locals(types, pp.info, st.vars, st.ranges, sects, base)
+          sites[i] = st
+        }
+        procs.push(p0 with {seg: seg, off: off, sites: sites, locals: cv_locals(types, pp.info, p0.vars, [(p0.lo, p0.lo + p0.size)], sects, base), vars: []})
+      }
+    }
+    var pubs: List[PdbProc] = []
+    for (a, n) in debug.tables(img).syms {
+      let (seg, off) = seg_off(sects, a - base)
+      if seg > 0 {
+        pubs.push(PdbProc{name: n, seg: seg, off: off, size: 0})
+      }
+    }
+    return Ok((out, pdb_file(guid, stamp, sects, procs, pubs, pp.files, types)))
+  }
   // the functions: DWARF's, by name as the traceback shows them
   let (info, lns) = match facts {
     Some(f) => f

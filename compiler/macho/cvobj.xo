@@ -273,31 +273,7 @@ pub fn merge_facts(objs: List[CObj], layout: PELayout) -> (debug.Info, debug.Lin
     let m = obj_map(o, oi, layout)
     let oinfo = debug.read(s)
     let olns = debug.lines(s)
-    for f in oinfo.funcs {
-      var inl: List[debug.Inlined] = []
-      for c in f.inlined {
-        var vs: List[debug.Var] = []
-        for v in c.vars {
-          vs.push(m.var_of(v))
-        }
-        inl.push(c with {ranges: m.ranges(c.ranges), unit_line: if c.unit_line < 0 { c.unit_line } else { c.unit_line + m.line }, vars: vs})
-      }
-      var vs: List[debug.Var] = []
-      for v in f.vars {
-        vs.push(m.var_of(v))
-      }
-      info.funcs.push(f with {lo: m.addr(f.lo), hi: m.addr(f.hi), vars: vs, inlined: inl})
-    }
-    for g in oinfo.globals {
-      info.globals.push(m.var_of(g))
-    }
-    for (off, t) in oinfo.types {
-      var ms: List[debug.Member] = []
-      for mb in t.members {
-        ms.push(mb with {ty: m.ty(mb.ty)})
-      }
-      info.types[m.ty(off)] = t with {of: m.ty(t.of), members: ms}
-    }
+    merge_info(oinfo, m, info)
     // the object's files by the merged numbering
     var fmap: List[Int] = []
     for f in olns.files {
@@ -321,4 +297,151 @@ pub fn merge_facts(objs: List[CObj], layout: PELayout) -> (debug.Info, debug.Lin
     }
   }
   (info, lns)
+}
+
+/// oinfo's functions, globals and types, moved by m, appended to info.
+fn merge_info(oinfo: debug.Info, m: ObjMap, var info: debug.Info) {
+  for f in oinfo.funcs {
+    var inl: List[debug.Inlined] = []
+    for c in f.inlined {
+      var vs: List[debug.Var] = []
+      for v in c.vars {
+        vs.push(m.var_of(v))
+      }
+      inl.push(c with {ranges: m.ranges(c.ranges), unit_line: if c.unit_line < 0 { c.unit_line } else { c.unit_line + m.line }, vars: vs})
+    }
+    var vs: List[debug.Var] = []
+    for v in f.vars {
+      vs.push(m.var_of(v))
+    }
+    info.funcs.push(f with {lo: m.addr(f.lo), hi: m.addr(f.hi), vars: vs, inlined: inl})
+  }
+  for g in oinfo.globals {
+    info.globals.push(m.var_of(g))
+  }
+  for (off, t) in oinfo.types {
+    var ms: List[debug.Member] = []
+    for mb in t.members {
+      ms.push(mb with {ty: m.ty(mb.ty)})
+    }
+    info.types[m.ty(off)] = t with {of: m.ty(t.of), members: ms}
+  }
+}
+
+/// A function's PDB rows and inline sites, made from its own object
+/// (obj_pdb): addresses the object's, files numbered by the object's line
+/// tables.
+struct ObjFn {
+  name: Str
+  lo: Int
+  hi: Int
+  rows: List[(Int, Int, Int, Bool)]
+  sites: List[PdbSite]
+}
+
+/// What one object brings to the PDB, from its bytes alone: its DWARF
+/// facts, its line tables' files, and each function's rows and inline
+/// sites (pe_pdb's per-function work).
+pub struct ObjPdb {
+  info: debug.Info
+  files: List[Str]
+  fns: List[ObjFn]
+}
+
+/// o's part of the PDB, made as pe_pdb makes a function's rows and inline
+/// sites, from o's own DWARF.
+pub fn obj_pdb(o: CObj) -> ObjPdb ! Str {
+  let s = obj_dwarf(o)?
+  let info = debug.read(s)
+  let lns = debug.lines(s)
+  var keyed: List[(Int, Int)] = []
+  for (i, r) in lns.rows.indexed() {
+    if !r.end && r.file >= 0 {
+      keyed.push((r.addr, i))
+    }
+  }
+  let by_addr = keyed.sort()
+  var file_of: Map[Str, Int] = {}
+  for (i, f) in lns.files.indexed() {
+    file_of[f] = i
+  }
+  var fns: List[ObjFn] = []
+  for f in info.funcs {
+    if f.hi <= f.lo {
+      continue
+    }
+    var calls: List[(List[(Int, Int)], Int, Int)] = []
+    for c in f.inlined {
+      if c.depth == 1 {
+        let cf = file_of.get(lns.call_file(c.unit_line, c.call_file)) ?? -1
+        calls.push((c.ranges, cf, c.call_line))
+      }
+    }
+    fns.push(ObjFn{name: f.name, lo: f.lo, hi: f.hi, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), sites: inline_sites(lns, by_addr, file_of, f)})
+  }
+  Ok(ObjPdb{info: info, files: lns.files, fns: fns})
+}
+
+/// The PDB's inputs from the objects' parts (obj_pdb) and the link's
+/// layout: the merged DWARF facts (merge_info), the files in the order
+/// they first appear, and each function's PdbProc (no locals yet: they
+/// need the merged types) with its vars, at the image's addresses.
+pub struct PreProcs {
+  info: debug.Info
+  files: List[Str]
+  procs: List[PdbProc]
+}
+
+pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> PreProcs {
+  var info = debug.Info{}
+  var files: List[Str] = []
+  var file_at: Map[Str, Int] = {}
+  var procs: List[PdbProc] = []
+  for (oi, po) in parts.indexed() {
+    let part = match po {
+      Some(x) => x
+      None => continue
+    }
+    let m = obj_map(objs[oi], oi, layout)
+    let first = info.funcs.len()
+    merge_info(part.info, m, info)
+    var fmap: List[Int] = []
+    for f in part.files {
+      if let Some(i) = file_at.get(f) {
+        fmap.push(i)
+      } else {
+        file_at[f] = files.len()
+        fmap.push(files.len())
+        files.push(f)
+      }
+    }
+    let gf = fn(x: Int) -> Int { if x >= 0 && x < fmap.len() { fmap[x] } else { x } }
+    // the functions with code, in the object's order (merge_info kept it)
+    var fi = first
+    for fnp in part.fns {
+      while fi < info.funcs.len() && !(info.funcs[fi].name == fnp.name && info.funcs[fi].hi > info.funcs[fi].lo) {
+        fi += 1
+      }
+      let mf = if fi < info.funcs.len() { info.funcs[fi] } else { debug.Func{name: fnp.name, lo: m.addr(fnp.lo), hi: m.addr(fnp.hi), vars: []} }
+      fi += 1
+      var rows: List[(Int, Int, Int, Bool)] = []
+      for (off, f, l, st) in fnp.rows {
+        rows.push((off, gf(f), l, st))
+      }
+      var sites: List[PdbSite] = []
+      for st in fnp.sites {
+        var es: List[(Int, Int, Int)] = []
+        for (a, f, l) in st.entries {
+          es.push((m.addr(a), gf(f), l))
+        }
+        var vs: List[debug.Var] = []
+        for v in st.vars {
+          vs.push(m.var_of(v))
+        }
+        sites.push(st with {ranges: m.ranges(st.ranges), entries: es, vars: vs})
+      }
+      procs.push(PdbProc{name: fnp.name, seg: 0, off: 0, size: fnp.hi - fnp.lo, rows: rows, lo: m.addr(fnp.lo), sites: sites, vars: mf.vars})
+    }
+  }
+  PreProcs{info: info, files: files, procs: procs}
 }

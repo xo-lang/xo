@@ -3424,4 +3424,16 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 	if !strings.Contains(string(log), "XO_PDB_OBJ_CHECK=2: the PDB from the objects is identical") {
 		t.Fatalf("XO_PDB_OBJ_CHECK=2: want an identical PDB:\n%s", log)
 	}
+	// step 2a': each function's rows and inline sites made from its own
+	// object (macho obj_pdb, pre_procs): the same PDB
+	cmd = testtmp.Guard(exec.Command(xo, "build", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(work, "out3", "prog"), "."))
+	cmd.Dir = src
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_PDB_OBJ_CHECK=3")
+	log, err = cmd.CombinedOutput()
+	if err != nil {
+		t.Fatalf("xo build: %v\n%s", err, log)
+	}
+	if !strings.Contains(string(log), "XO_PDB_OBJ_CHECK=3: the PDB from the objects' parts is identical") {
+		t.Fatalf("XO_PDB_OBJ_CHECK=3: want an identical PDB:\n%s", log)
+	}
 }

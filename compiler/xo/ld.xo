@@ -468,12 +468,30 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
             }
             // step 2a: the PDB from the objects' DWARF and the layout
             // against the image's, byte for byte
+            // step 2a': each function's rows and inline sites from its own
+            // object (macho obj_pdb, pre_procs)
+            if check == "3" {
+              let t3 = os.clock.now()
+              var parts: List[macho.ObjPdb?] = []
+              for ob in objs {
+                parts.push(macho.obj_pdb(ob).ok())
+              }
+              let parts_ms = os.clock.since(t3).millis()
+              let tp = os.clock.now()
+              let pre = macho.pre_procs(parts, objs, layout)
+              let pre_ms = os.clock.since(tp).millis()
+              let tq = os.clock.now()
+              match macho.pe_pdb_facts(img0, None, Some(pre)) {
+                Ok((i3, p3)) => os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK=3: the PDB from the objects' parts ${if p3 == p && i3 == i2 { "is identical" } else { "differs (sizes ${p3.len()} and ${p.len()})" }}; parts ${parts_ms} ms, merge ${pre_ms} ms, pdb ${os.clock.since(tq).millis()} ms")
+                Err(e) => os.stdio.eprintln("xo: XO_PDB_OBJ_CHECK=3: ${e}")
+              }
+            }
             if check == "2" {
               let t2 = os.clock.now()
               let facts = macho.merge_facts(objs, layout)
               let merge_ms = os.clock.since(t2).millis()
               let tm = os.clock.now()
-              match macho.pe_pdb_facts(img0, Some(facts)) {
+              match macho.pe_pdb_facts(img0, Some(facts), None) {
                 Ok((i3, p3)) => {
                   var diff = -1
                   let n = if p3.len() < p.len() { p3.len() } else { p.len() }
