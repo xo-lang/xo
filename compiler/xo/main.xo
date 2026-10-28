@@ -1529,7 +1529,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // decision 0388's std store: the parts split into atoms, which the
     // link strips by symbol (every object path below assembles these)
     // (windows/amd64's COFF too: pelink strips by atom, pestrip.xo)
-    if ((os.env.get("XO_STD_ROOTS") ?? "") == "1" || !std_obj_dir(os).is_empty()) && (tgoos is "darwin" | "windows") {
+    if ((os.env.get("XO_STD_ROOTS") ?? "") == "1" || !std_obj_dir(os).is_empty() || gm.sepcomp_program) && (tgoos is "darwin" | "windows") {
       p.parts = p.parts.map(fn(x) { "\t.subsections_via_symbols\n${x}" })
     }
     // a split darwin build through the back-end cache, part by part
@@ -2486,7 +2486,13 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   gm.passes_off = passes_off(os)
   // decision 0388 stage 4: XO_STD_OBJ=DIR builds std's object
   gm.std_obj = !std_obj_dir(os).is_empty() && gm.std_store
-  gm.weak_shared = gm.std_obj
+  // decision 0388 stage 3: a separately compiled program's side
+  // (sepcomp_program, set by XO_SEPCOMP) has its helpers weak and its
+  // parts in store mode, as std's object
+  gm.weak_shared = gm.std_obj || gm.sepcomp_program
+  if gm.sepcomp_program {
+    gm.std_store = true
+  }
   // XO_DUMP_FN=NAME: that function's SSA and MIR to a file (write_dumps)
   gm.dump_fn = os.env.get("XO_DUMP_FN") ?? ""
   gm.race = o.race

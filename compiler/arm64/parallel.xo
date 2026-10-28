@@ -443,15 +443,26 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
   out.push(g.section("text"))
   out.push(g.text.join(""))
   out.push(g.helpers.join(""))
-  g.trampolines(out)
+  // a separately compiled program: std's object has the runtime's code
+  // and data (sepcomp_program)
+  let own_rt = !m.sepcomp_program
+  if own_rt {
+    g.trampolines(out)
+  }
   out.push(g.lsdas.join(""))
-  out.push(g.debug_sections(g.static_ref))
-  g.shared_code(out)
+  out.push(g.debug_sections(g.static_ref && own_rt))
+  if own_rt {
+    g.shared_code(out)
+  }
   g.data(out)
   if m.async_preempt {
-    out.push(g.unsafe_parts(if m.std_store { [] } else { names }))
+    if own_rt {
+      out.push(g.unsafe_parts(if m.std_store { [] } else { names }))
+    }
   }
-  g.end_data(out)
+  if own_rt {
+    g.end_data(out)
+  }
   files.push(out.join(""))
   // the module's own symbols are not weak (weak_ref), each file on a
   // task (a serial pass over xo's 1.1 GB was 0.3 s of an edit build)

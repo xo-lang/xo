@@ -129,24 +129,26 @@ var codegenEnv = map[string]inputClass{
 
 // codegenFields classifies the module fields compiler/xo sets.
 var codegenFields = map[string]inputClass{
-	"body_ids":      {"none", ""}, // the cleanup cache's keys (XO_CHAIN_KEYS, decision 0382), which the caches hash in place of the bodies they fix
-	"comp_dir":      {"none", ""}, // only in the .debug_str path slots, filled after the caches (arm64 debug.xo dw_slots_obj, 2026-10-22)
-	"std_root":      {"none", ""}, // only in the .debug_str path slots, filled after the caches (arm64 debug.xo dw_slots_obj, 2026-10-22)
-	"debug_info":    {"keyed", "debug=${m.debug_info}"},
-	"dw_data_addrs": {"keyed", "dwaddr=${m.dw_data_addrs}"},
-	"nolibc":        {"keyed", "nolibc=${m.nolibc}"},
-	"nolibc_start":  {"keyed", "nolibc=${m.nolibc}"}, // nolibc and not wasm
-	"poison_frames": {"keyed", "poison=${m.poison_frames}"},
-	"race":          {"keyed", "race=${m.race}"},
-	"inline_deny":   {"keyed", "deny ${m.inline_deny"},
-	"passes_off":    {"keyed", "passes ${m.passes_off"},
-	"reader_bodies": {"keyed", "readers ${m.reader_bodies}"}, // the inliner decides for the DWARF readers and what only they reach differently (arm64/inline.xo release_view)
-	"dump_fn":       {"keyed", "dumpfn=${m.dump_fn}"},        // XO_DUMP_FN: the code is the same, but a cached function would not be generated and dumped
-	"rc_check":      {"none", ""},                            // XO_RC_CHECK: marks Reuse values in the SSA bodies every cache key hashes
-	"jobs":          {"none", ""},                            // the tasks of may_fault's scan; its result does not depend on them
-	"op_verify":     {"none", ""},                            // XO_OP_VERIFY: checks, never changes, the emitter's output
-	"weak_shared":   {"keyed", "${if m.weak_shared"},         // " weak=1" in the fn and part keys (decision 0388 stage 4)
-	"std_obj":       {"keyed", "${if m.weak_shared"},         // set only with weak_shared (XO_STD_OBJ), whose " weak=1" keys the parts it leaves the program's functions out of
+	"body_ids":        {"none", ""}, // the cleanup cache's keys (XO_CHAIN_KEYS, decision 0382), which the caches hash in place of the bodies they fix
+	"comp_dir":        {"none", ""}, // only in the .debug_str path slots, filled after the caches (arm64 debug.xo dw_slots_obj, 2026-10-22)
+	"std_root":        {"none", ""}, // only in the .debug_str path slots, filled after the caches (arm64 debug.xo dw_slots_obj, 2026-10-22)
+	"debug_info":      {"keyed", "debug=${m.debug_info}"},
+	"dw_data_addrs":   {"keyed", "dwaddr=${m.dw_data_addrs}"},
+	"nolibc":          {"keyed", "nolibc=${m.nolibc}"},
+	"nolibc_start":    {"keyed", "nolibc=${m.nolibc}"}, // nolibc and not wasm
+	"poison_frames":   {"keyed", "poison=${m.poison_frames}"},
+	"race":            {"keyed", "race=${m.race}"},
+	"inline_deny":     {"keyed", "deny ${m.inline_deny"},
+	"passes_off":      {"keyed", "passes ${m.passes_off"},
+	"reader_bodies":   {"keyed", "readers ${m.reader_bodies}"}, // the inliner decides for the DWARF readers and what only they reach differently (arm64/inline.xo release_view)
+	"dump_fn":         {"keyed", "dumpfn=${m.dump_fn}"},        // XO_DUMP_FN: the code is the same, but a cached function would not be generated and dumped
+	"rc_check":        {"none", ""},                            // XO_RC_CHECK: marks Reuse values in the SSA bodies every cache key hashes
+	"jobs":            {"none", ""},                            // the tasks of may_fault's scan; its result does not depend on them
+	"op_verify":       {"none", ""},                            // XO_OP_VERIFY: checks, never changes, the emitter's output
+	"weak_shared":     {"keyed", "${if m.weak_shared"},         // " weak=1" in the fn and part keys (decision 0388 stage 4)
+	"std_obj":         {"keyed", "${if m.weak_shared"},         // set only with weak_shared (XO_STD_OBJ), whose " weak=1" keys the parts it leaves the program's functions out of
+	"sepcomp_program": {"keyed", "${if m.weak_shared"},         // set only with weak_shared (XO_SEPCOMP): changes the entry file, which no cache holds, and the parts as weak_shared and std_store key them
+	"std_store":       {"keyed", "${if m.std_store"},           // " store=1" in the part key: a part's per-function unsafe tables
 }
 
 // codegenFS are the closure's files that use the file system, with why

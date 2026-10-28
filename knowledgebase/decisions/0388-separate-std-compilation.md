@@ -340,6 +340,19 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
 - The conc0 std object, 2026-10-28: 41 parts, 8,275 global definitions, 1,825 of them weak
   (1,211 helpers, 614 instances), no name defined twice.
 
+### The program's side (xo-lang-4, 2026-10-28)
+
+- ssa Module.sepcomp_program (the driver sets it under XO_SEPCOMP, Lang 1's stage 3 (c)): the
+  program's entry file keeps `_xo_entry` (g.entry), the program's own exports, its helpers
+  (weak), literals, LSDAs and DWARF, and leaves out what std's object defines: the system call
+  trampolines, the task switch code (shared_code), the unsafe range list, the end data
+  (`_xo_empty_list`, `_xo_zero_handle`, `_xo_sys_words`, `_xo_static`) and xo_static's DWARF
+  variable. It implies std_store (`.subsections_via_symbols`, per-function unsafe tables
+  gathered into the one index std's `_xo_unsafe_parts` names) and weak_shared. The part cache
+  key gains " store=1" (a part's per-function unsafe tables), so a store mode part is never
+  taken for a normal one. fib so built (whole program, the flag forced): the entry file defines
+  `_xo_entry` and none of std's runtime symbols, 544 index records, 66 weak definitions.
+
 ### std's variants: conc (xo-lang-4, 2026-10-28)
 
 - Every XO_STD_ROOTS build was conc=true: rooting every std function builds bodies that need

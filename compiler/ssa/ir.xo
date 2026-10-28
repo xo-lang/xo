@@ -478,6 +478,12 @@ pub struct Module {
   /// object and a program's may both define one (std_obj; separate
   /// compilation): the link keeps the first
   pub weak_shared: Bool = false
+  /// decision 0388 stage 3: the program's side of a separately compiled
+  /// build (XO_SEPCOMP): its entry file leaves out what std's object
+  /// defines (the system call trampolines, the task switch code, the
+  /// unsafe range list, the end data), its parts are in store mode
+  /// (std_store) and its helpers weak (weak_shared), as std's object's
+  pub sepcomp_program: Bool = false
   /// loops without preemption polls (`--no-preempt`, decision 0286 step 3)
   pub no_preempt: Bool = false
   /// a deterministic run (decision 0350, check.Checker.det): in the fn and
