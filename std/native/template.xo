@@ -1451,41 +1451,45 @@ fn of_json(j: json.Value, inner: Bool) -> V {
     Num(n) => V.FloatV(f: n)
     Str(s) => V.StrV(s: s)
     List(items) => V.ListV(items: items.map(fn(x) { of_json(x, true) }))
-    Object(fields) => {
-      // the fields in key order, sorted once (often already in order); a
-      // repeated key keeps the quadratic form below, where every entry of
-      // the key gets its first field's value
-      var sorted = true
-      for i in 1..fields.len() {
-        if fields[i - 1].0 > fields[i].0 {
-          sorted = false
-          break
-        }
-      }
-      let ps = if sorted { fields } else { fields.sort_by(fn(f: (Str, json.Value)) { f.0 }) }
-      var dup = false
-      for i in 1..ps.len() {
-        if ps[i - 1].0 == ps[i].0 {
-          dup = true
-          break
-        }
-      }
-      if !dup {
-        return V.MapV(fields: ps.map(fn(f: (Str, json.Value)) { (f.0, of_json(f.1, true)) }))
-      }
-      let keys = fields.map(fn(f) { f.0 }).sort()
-      var out: List[(Str, V)] = []
-      for k in keys {
-        for f in fields {
-          if f.0 == k {
-            out.push((k, of_json(f.1, true)))
-            break
-          }
-        }
-      }
-      V.MapV(fields: out)
+    // in the data's order: a lookup takes a key's first field either
+    // way, and map_order sorts only where the order shows (range, %v)
+    Object(fields) => V.MapV(fields: fields.map(fn(f: (Str, json.Value)) { (f.0, of_json(f.1, true)) }))
+  }
+}
+
+/// A map's fields in key order, as Go ranges over and prints a map: sorted
+/// here, where the order shows, not in of_json at each render
+/// (2026-10-27: sorting every object of the data was 11% of render);
+/// a repeated key keeps every entry, each with its first field's value.
+fn map_order(fields: List[(Str, V)]) -> List[(Str, V)] {
+  var sorted = true
+  for i in 1..fields.len() {
+    if fields[i - 1].0 > fields[i].0 {
+      sorted = false
+      break
     }
   }
+  let ps = if sorted { fields } else { fields.sort_by(fn(f: (Str, V)) { f.0 }) }
+  var dup = false
+  for i in 1..ps.len() {
+    if ps[i - 1].0 == ps[i].0 {
+      dup = true
+      break
+    }
+  }
+  if !dup {
+    return ps
+  }
+  var out: List[(Str, V)] = []
+  for p in ps {
+    for f in fields {
+      if f.0 == p.0 {
+        out.push((p.0, f.1))
+        break
+      }
+    }
+  }
+  out
 }
 
 /// The Go type of a value (reflect.Value.Type().String()).
@@ -1527,7 +1531,7 @@ fn fmt_v(v: V, top: Bool) -> Str {
     ComplexV(re, im) => "(" + go_float(re) + (if im >= 0.0 || im.is_nan() { "+" } else { "" }) + go_float(im) + "i)"
     StrV(s) => s
     ListV(items) => "[" + items.map(fn(x) { fmt_v(x, false) }).join(" ") + "]"
-    MapV(fields) => "map[" + fields.map(fn(f) { f.0 + ":" + fmt_v(f.1, false) }).join(" ") + "]"
+    MapV(fields) => "map[" + map_order(fields).map(fn(f) { f.0 + ":" + fmt_v(f.1, false) }).join(" ") + "]"
     Missing => "{}"
   }
 }
@@ -1889,7 +1893,7 @@ fn (var s: Ex) walk_range(dot: Val, n: Node) -> Int ! Str {
       }
     }
     MapV(fields) => {
-      for (k, x) in fields {
+      for (k, x) in map_order(fields) {
         any = true
         if s.range_once(pipe, list, mark, val(V.StrV(s: k)), Val{v: x, boxed: true})? == 1 {
           break
@@ -3013,7 +3017,7 @@ fn fmt_arg(x: Val, verb: Rune, sp: Spec) -> Str {
     }
     StrV(s) => fmt_str(s, verb, sp) ?? bad_verb(verb, x, sp)
     ListV(items) => "[" + items.map(fn(e) { fmt_elem(e, verb, sp) }).join(" ") + "]"
-    MapV(fields) => "map[" + fields.map(fn(f) { fmt_arg(val(V.StrV(s: f.0)), verb, sp) + ":" + fmt_elem(f.1, verb, sp) }).join(" ") + "]"
+    MapV(fields) => "map[" + map_order(fields).map(fn(f) { fmt_arg(val(V.StrV(s: f.0)), verb, sp) + ":" + fmt_elem(f.1, verb, sp) }).join(" ") + "]"
     Missing => "{}"
   }
 }

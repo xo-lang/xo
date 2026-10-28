@@ -361,3 +361,10 @@ Per std/changes/big.md 2026-10-27 ("long division shifts into its buffers and tr
 `xo bench --ab`, 15 rounds, the parent's std as A: quorem wall 0.898 (0.883 to 0.907), instructions 0.811,
 cycles 0.878; Xo / Go about 1.30 (estimate: 1.451 x 0.898), from 1.451. Still over the bar; the rest is
 the msub_row kernel (Go's is assembly) and the per-call buffers (Go's divBasic reuses z and u).
+
+## template map order (2026-10-27, xo-lang-5)
+
+Per std/changes/template.md 2026-10-27 ("a map's fields are sorted only where their order shows"). Quiet
+`xo bench --ab`, 15 rounds, the parent's std as A: render wall 0.789 (0.785 to 0.795), instructions 0.817,
+cycles 0.787; Xo / Go about 1.26 (estimate: 1.595 x 0.789), from 1.595. Still over the bar: the walk's dup
+and drop of V values, eval_command, and the node context kept at each visit (at_node, at_arg).

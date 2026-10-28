@@ -1,5 +1,23 @@
 # std/template changes
 
+## 2026-10-27: perf: a map's fields are sorted only where their order shows
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/template render at 1.60x Go (re-measured on main d088ecee3); its CPU profile (of_json 18% cumulative, list_sort_by of every object's fields 11%, at every render)
+- Go reference: text/template exec.go walkRange (a map ranged in sorted key order) and fmt's sorted map printing; a field read is a map lookup (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/template (go, arm64, LLVM); internal/llvm and internal/arm64 template_basic; twincheck's checksums agree on none, parse, render
+
+render converted each object of its data to a map sorted by key, every
+render. A field read, index and len do not depend on the order (a read
+takes a key's first field either way, as before), so the fields now
+stay in the data's order and map_order sorts them where the order shows:
+a range over a map and a map printed with %v. A repeated key keeps the
+old form there, every entry of it taking its first field's value. Output
+is unchanged. Quiet --ab, 15 rounds, the parent's std as A: render wall
+0.789 (0.785 to 0.795), instructions 0.817; Xo / Go about 1.26
+(estimate: 1.595 x 0.789), from 1.595.
+
 ## 2026-10-27: perf: render converts its data once and ranges with no list of pairs
 
 - Kind: perf
