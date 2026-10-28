@@ -18,7 +18,11 @@ enum TomlVal {
 
 struct TomlTable {
   keys: List[Str]
-  vals: Map[Str, TomlVal]
+  /// keys[i]'s value
+  vals: List[TomlVal]
+  /// key to position, kept only past SMALL_TABLE keys (lookup scans
+  /// keys below that)
+  index: Map[Str, Int]
   header: Bool
   dotted: Bool
   inline: Bool
@@ -80,7 +84,29 @@ fn rune_str(r: Rune) -> Str {
   b.freeze().to_str() ?? ""
 }
 
-fn new_table() -> TomlTable { TomlTable{keys: [], vals: {}, header: false, dotted: false, inline: false, implicit: false} }
+/// A table this small is searched by its keys list; a larger one keeps a
+/// Map from key to position (2026-10-27: a Map per table, put and read
+/// back by the JSON writer, was about 9% of decode).
+const SMALL_TABLE: Int = 8
+
+fn new_table() -> TomlTable { TomlTable{keys: [], vals: [], index: {}, header: false, dotted: false, inline: false, implicit: false} }
+
+/// The value of key k in table t, or None.
+fn (p: TomlParser) lookup(t: Int, k: Str) -> TomlVal? {
+  let tb = p.tables[t]
+  if tb.keys.len() > SMALL_TABLE {
+    return match tb.index.get(k) {
+      Some(i) => Some(tb.vals[i])
+      None => None
+    }
+  }
+  for i in 0..tb.keys.len() {
+    if tb.keys[i] == k {
+      return Some(tb.vals[i])
+    }
+  }
+  None
+}
 
 fn (var p: TomlParser) add_table(t: TomlTable) -> Int {
   p.tables.push(t)
@@ -90,7 +116,15 @@ fn (var p: TomlParser) add_table(t: TomlTable) -> Int {
 /// Adds k, which the caller has found absent from table t.
 fn (var p: TomlParser) set(t: Int, k: Str, v: TomlVal) {
   p.tables[t].keys.push(k)
-  p.tables[t].vals.put(k, v)
+  p.tables[t].vals.push(v)
+  let n = p.tables[t].keys.len()
+  if n == SMALL_TABLE + 1 {
+    for i in 0..n {
+      p.tables[t].index.put(p.tables[t].keys[i], i)
+    }
+  } else if n > SMALL_TABLE + 1 {
+    p.tables[t].index.put(k, n - 1)
+  }
 }
 
 fn (var p: TomlParser) ws() {
@@ -388,17 +422,19 @@ fn (var p: TomlParser) value() -> TomlVal ! toml.TomlErr {
   if p.eof() {
     return Err(p.err("expected a value"))
   }
+  // by the first byte: the three-quote forms, true and false are looked
+  // for only after the byte that starts them
   let c = p.peek()
-  if p.rest_has("\"\"\"") {
-    return Ok(TomlVal.Text(s: p.multiline(false)?))
-  }
-  if p.rest_has("'''") {
-    return Ok(TomlVal.Text(s: p.multiline(true)?))
-  }
   if c == 34 {
+    if p.rest_has("\"\"\"") {
+      return Ok(TomlVal.Text(s: p.multiline(false)?))
+    }
     return Ok(TomlVal.Text(s: p.basic_string()?))
   }
   if c == 39 {
+    if p.rest_has("'''") {
+      return Ok(TomlVal.Text(s: p.multiline(true)?))
+    }
     return Ok(TomlVal.Text(s: p.literal_string()?))
   }
   if c == 91 {
@@ -407,11 +443,11 @@ fn (var p: TomlParser) value() -> TomlVal ! toml.TomlErr {
   if c == 123 {
     return p.inline_table()
   }
-  if p.rest_has("true") && !word_byte_at(p.s, p.i + 4) {
+  if c == 116 && p.rest_has("true") && !word_byte_at(p.s, p.i + 4) {
     p.i += 4
     return Ok(TomlVal.Flag(b: true))
   }
-  if p.rest_has("false") && !word_byte_at(p.s, p.i + 5) {
+  if c == 102 && p.rest_has("false") && !word_byte_at(p.s, p.i + 5) {
     p.i += 5
     return Ok(TomlVal.Flag(b: false))
   }
@@ -753,7 +789,7 @@ fn (var p: TomlParser) assign(t0: Int, k: List[Str], v: TomlVal) -> () ! toml.To
   var t = t0
   for i in 0..k.len() - 1 {
     let part = k[i]
-    match p.tables[t].vals.get(part) {
+    match p.lookup(t, part) {
       None => {
         let n = p.add_table(new_table() with {dotted: true})
         p.set(t, part, TomlVal.Tab(id: n))
@@ -770,7 +806,7 @@ fn (var p: TomlParser) assign(t0: Int, k: List[Str], v: TomlVal) -> () ! toml.To
     }
   }
   let last = k[k.len() - 1]
-  if p.tables[t].vals.contains(last) {
+  if p.lookup(t, last) is Some(_) {
     return Err(p.err("key ${k.join(".").quote()} is already defined"))
   }
   p.set(t, last, v)
@@ -782,7 +818,7 @@ fn (var p: TomlParser) header(k: List[Str], array: Bool) -> Int ! toml.TomlErr {
   for i in 0..k.len() {
     let part = k[i]
     let last = i == k.len() - 1
-    match p.tables[t].vals.get(part) {
+    match p.lookup(t, part) {
       None => {
         if last && array {
           let n = p.add_table(new_table() with {header: true})
@@ -936,7 +972,7 @@ fn (p: TomlParser) write_json(var out: BytesBuilder, v: TomlVal) {
         let k = t.keys[i]
         write_json_string(out, k)
         out.write_byte(58)
-        p.write_json(out, t.vals.get(k) ?? TomlVal.Flag(b: false))
+        p.write_json(out, t.vals[i])
       }
       out.write_byte(125)
     }

@@ -1,5 +1,25 @@
 # std/toml changes
 
+## 2026-10-27: perf: a small table keeps its values in a list; a value is told by its first byte
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/toml decode at 1.45x Go (re-measured on main d088ecee3); its CPU profile (a Map per table, put by the parser and read back key by key by the JSON writer, about 9%; value() probing for `"""`, `'''`, `true` and `false` before looking at the byte, scan.has_at 5.5%)
+- Go reference: github.com/pelletier/go-toml/v2 v2.4.3 unstable/parser.go (parseVal switches on the first byte)
+- Test: internal/llvm/testdata/golden/toml_basic (and internal/arm64's); twincheck bench/perf/toml; a 16-document to_json differential (tables of 9 to 11 keys, a key redefined in small and large tables and inline tables, dotted keys through a large table, arrays of tables under one, true, false and words that start like them) equal on the Go backend (std/rt's own toml), arm64 and llvm, and to the parent's std
+
+A table's values are a list beside its keys, searched by key while the
+table has at most 8 keys, with a Map from key to position built past
+that; the JSON writer walks the two lists in order, where it read each
+key back from the Map. value() switches on the value's first byte and
+looks for the three-quote forms, `true` and `false` only after the byte
+that starts them. Output is unchanged. Quiet --ab, 15 rounds, the
+parent's std as A: decode wall 0.873 (0.863 to 0.893), instructions
+0.889; Xo / Go about 1.27 (estimate: 1.454 x 0.873), from 1.454. The way
+to Go's time is decoding straight from the parsed tree, with no JSON
+text between; derive Json reads only text, so that is a compiler change
+(the audit's note).
+
 ## 2026-10-27: perf: toml's parser looks a key up once and keeps plain integers as written
 
 - Kind: perf
