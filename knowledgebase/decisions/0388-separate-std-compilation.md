@@ -633,3 +633,6 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   20 bytes, most fit in 8: about -15 to 20% linux). release-verify.sh's sepcomp-first-use
   checks the path users take: the first build whole program and the variant started, a
   later edit through it.
+- A released windows store counts only with its PDB parts beside it
+  (lib/xo/stdstore/windows-amd64-concN.store.pdb; stdcache.xo std_released), as the cache's
+  are kept together (Lang 2's release.sh copies them when XO_RELEASE_STDSTORES=1).

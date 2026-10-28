@@ -239,6 +239,9 @@ fn std_released(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool) -> (Str,
   if id.trim() != XO_CODEGEN_KEY {
     return None
   }
-  let have = (os.fs.exists("${base}.store").ok() ?? false) && (os.fs.exists("${base}.stdf").ok() ?? false)
+  // a windows store's PDB parts beside it (pe_link reads PATH.pdb): one
+  // shipped without them is not used, as the cache's are kept together
+  let pdb = tgoos != "windows" || (os.fs.exists("${base}.store.pdb").ok() ?? false)
+  let have = pdb && (os.fs.exists("${base}.store").ok() ?? false) && (os.fs.exists("${base}.stdf").ok() ?? false)
   if have { Some(("${base}.store", "${base}.stdf")) } else { None }
 }
