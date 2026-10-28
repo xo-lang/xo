@@ -197,52 +197,51 @@ xo_f_sieve:
 .LpGL1jtk_f2_b9:
 	add x13, x22, #1
 .LpGL1jtk_f2_b11:
-	mov x11, #2
+	mov x10, #2
 	mov x20, #0
 	add x12, x21, #24
 .LpGL1jtk_f2_b12:
-	cmp x11, x13
+	cmp x10, x13
 	b.ge .LpGL1jtk_f2_b32
 .LpGL1jtk_f2_b13:
-	cmp x11, x19
+	cmp x10, x19
 	b.hs .LpGL1jtk_f2_fault2
 .LpGL1jtk_f2_b13_c:
-	ldrb w9, [x12, x11]
+	ldrb w9, [x12, x10]
 .LpGL1jtk_f2_b14:
 	cbnz x9, .LpGL1jtk_f2_b15
-.LpGL1jtk_f2_b31:
-	add x11, x11, #1
-	cmp x11, x13
+.LpGL1jtk_f2_b29:
+	add x10, x10, #1
+	cmp x10, x13
 	b.lt .LpGL1jtk_f2_b13
 	b .LpGL1jtk_f2_b32
 .LpGL1jtk_f2_b15:
 	adds x20, x20, #1
 	b.vs .LpGL1jtk_f2_fault3
 .LpGL1jtk_f2_b17:
-	mul x9, x11, x11
-	smulh x10, x11, x11
-	cmp x10, x9, asr #63
+	mul x9, x10, x10
+	smulh x11, x10, x10
+	cmp x11, x9, asr #63
 	b.ne .LpGL1jtk_f2_fault4
 .LpGL1jtk_f2_b20:
-	mov x10, x12
+	mov x11, x12
 .LpGL1jtk_f2_b21:
 	cmp x9, x22
-	b.le .LpGL1jtk_f2_b22
-	add x11, x11, #1
-	cmp x11, x13
-	b.lt .LpGL1jtk_f2_b13
-	b .LpGL1jtk_f2_b32
+	b.gt .LpGL1jtk_f2_b28
 .LpGL1jtk_f2_b22:
 	cmp x9, x19
 	b.hs .LpGL1jtk_f2_fault5
 .LpGL1jtk_f2_b22_c:
-	strb wzr, [x10, x9]
+	strb wzr, [x11, x9]
 .LpGL1jtk_f2_b24:
-	adds x9, x9, x11
+	adds x9, x9, x10
 	b.vs .LpGL1jtk_f2_fault6
 	cmp x9, x22
 	b.le .LpGL1jtk_f2_b22
-	b .LpGL1jtk_f2_b31
+.LpGL1jtk_f2_b28:
+	add x10, x10, #1
+	cmp x10, x13
+	b.lt .LpGL1jtk_f2_b13
 .LpGL1jtk_f2_b32:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
@@ -302,8 +301,8 @@ xo_f_sieve:
 	b .LpGL1jtk_f2_b19
 .LpGL1jtk_f2_fault2:
 	sub sp, sp, #16
-	str x11, [sp, #0]
-	mov x0, x11
+	str x10, [sp, #0]
+	mov x0, x10
 	mov x1, x19
 	adrp x2, .Lxo_pGL1jtk_loc0
 	add x2, x2, :lo12:.Lxo_pGL1jtk_loc0
@@ -315,7 +314,7 @@ xo_f_sieve:
 	brk #1
 .LpGL1jtk_f2_fault3:
 	sub sp, sp, #16
-	str x11, [sp, #0]
+	str x10, [sp, #0]
 	mov x17, #1
 	sub x15, x20, x17
 	mov x0, x15
@@ -331,9 +330,9 @@ xo_f_sieve:
 	brk #1
 .LpGL1jtk_f2_fault4:
 	sub sp, sp, #16
-	stp x9, x11, [sp, #0]
-	mov x0, x11
-	mov x2, x11
+	stp x9, x10, [sp, #0]
+	mov x0, x10
+	mov x2, x10
 	mov x1, #42
 	adrp x3, .Lxo_pGL1jtk_loc0
 	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
@@ -348,7 +347,7 @@ xo_f_sieve:
 	b .LpGL1jtk_f2_b23
 .LpGL1jtk_f2_fault5:
 	sub sp, sp, #16
-	stp x9, x11, [sp, #0]
+	stp x9, x10, [sp, #0]
 	mov x0, x9
 	mov x1, x19
 	adrp x2, .Lxo_pGL1jtk_loc0
@@ -364,10 +363,10 @@ xo_f_sieve:
 	b .LpGL1jtk_f2_b25
 .LpGL1jtk_f2_fault6:
 	sub sp, sp, #16
-	stp x9, x11, [sp, #0]
-	sub x15, x9, x11
+	stp x9, x10, [sp, #0]
+	sub x15, x9, x10
 	mov x0, x15
-	mov x2, x11
+	mov x2, x10
 	mov x1, #43
 	adrp x3, .Lxo_pGL1jtk_loc0
 	add x3, x3, :lo12:.Lxo_pGL1jtk_loc0
