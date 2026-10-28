@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-10-27: perf: a Str slice in a loop checks its range inline
+
+- Kind: perf
+- Commit: this commit
+- Found by: path's parts profile (prelude.llrt_str_slice_chk 19%, a call at every `s[lo..hi]`: 102 inliner instructions, refused for its landing pads)
+- Go reference: none (Go's slice bounds check is inline code with a call to panicSlice*)
+- Test: test/codegen/strs count_ab (arm64 and amd64: the cold str_slice_bad is named and llrt_str_slice_chk is not; both fail on the parent's xo); internal/stdtest corpora; fixed point (s2 and s3 identical)
+- Timing: quiet --ab, 15 rounds, the parent's xo and std as A: bench/perf/path parts 0.922 (0.902 to 0.937), instructions 0.896; strsplit split 0.994, strsplit lines 0.998, mail list 1.002, trimchars trim 0.990 (within noise); xo __text 63,508,348 to 63,521,500 bytes (+0.02%), s2 42 s to 43 s
+
+llrt_str_slice_chk tests `0 <= lo <= hi <= n` as two unsigned compares
+and the bytes at lo and hi for a UTF-8 continuation, and calls the new
+str_slice_bad for anything else, which raises the same faults as before
+(the range one, or "splits a UTF-8 sequence"). str_slice_bad is a slow
+path of ssa.cold_fn, so the check is 58 inliner instructions: inlined at
+call sites in a loop, still a call elsewhere (16 sites over the budget of
+40). Counting a cold call once for the whole function, not once per site,
+is the way to inline it everywhere (the timing audit's note).
+
 ## 2026-10-27: perf: List[Int].sort is Go's pdqsort
 
 - Kind: perf

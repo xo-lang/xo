@@ -1141,8 +1141,12 @@ fn float_text(x: Float) -> Str {
 /// putbody (0372's stage 0 follow-up) only runs when a put does not find
 /// the values list held once: inlined into the cold putrest and slowput it
 /// costs every one of those a second copy of the lists' put (2026-10-25).
+/// prelude.str_slice_bad is the fault of a Str slice out of range or
+/// splitting a UTF-8 sequence: a call, so llrt_str_slice_chk (every
+/// `s[lo..hi]` on a Str) inlines (2026-10-27: it was a call at each slice,
+/// 19% of path's parts row).
 pub fn cold_fn(name: Str) -> Bool {
-  name is "rt.const_once" | "raw.str_cut_copy" | "prelude.slice_fail" | "pool.lock_slow" | "alloc.refill_alloc" | "alloc.mag_count" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" | "jsontext.key_eq_slow" | "jsontext.keys_match_slow" | "jsontext.keys_eq_slow" ||
+  name is "rt.const_once" | "raw.str_cut_copy" | "prelude.slice_fail" | "prelude.str_slice_bad" | "pool.lock_slow" | "alloc.refill_alloc" | "alloc.mag_count" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" | "jsontext.key_eq_slow" | "jsontext.keys_match_slow" | "jsontext.keys_eq_slow" ||
     name.starts_with("xo.map.rebuild[") || name.starts_with("xo.mlog.findx[") || name.starts_with("xo.mlog.newdir[") ||
     name.starts_with("xo.maph.putbody[") ||
     name.starts_with("xo.maph.slowput[") || name.starts_with("xo.maph.slowrem[") || name.starts_with("xo.maph.loglookup[") || name.starts_with("xo.maph.putrest[") || name.starts_with("xo.maph.remrest[") || name.starts_with("xo.maph.logget[") || name.starts_with("xo.maph.logkvl[")

@@ -4111,12 +4111,25 @@ fn llrt_exit(code: Int) {
 /// `s[lo..hi]` on a Str (compiler/ssa expr.xo; was xo_bytes.c's): the
 /// range must be one of s, its ends on UTF-8 boundaries.
 fn llrt_str_slice_chk(s: Str, lo: Int, hi: Int, loc: Str) {
-  slice_check(lo, hi, s.len(), "Str", loc)
-  let p = raw.data(s)
   let n = s.len()
-  if (lo < n && rt.mem_load(p, lo, 1) & 0xC0 == 0x80) || (hi < n && rt.mem_load(p, hi, 1) & 0xC0 == 0x80) {
-    fault.raise_str_at("slice ${lo}..${hi} of Str splits a UTF-8 sequence", raw.data(loc), loc.len())
+  // 0 <= lo <= hi <= n as two unsigned compares, then neither end inside
+  // a UTF-8 sequence; any other range goes to str_slice_bad, a call of
+  // its own (ssa.cold_fn), so this check inlines at each `s[lo..hi]`
+  // (2026-10-27: it was a call at each slice, 19% of path's parts row)
+  if hi.le_unsigned(n) && lo.le_unsigned(hi) {
+    let p = raw.data(s)
+    if (lo == n || rt.mem_load(p, lo, 1) & 0xC0 != 0x80) && (hi == n || rt.mem_load(p, hi, 1) & 0xC0 != 0x80) {
+      return
+    }
   }
+  str_slice_bad(s, lo, hi, loc)
+}
+
+/// llrt_str_slice_chk's fault: the range is not one of s, or an end splits
+/// a UTF-8 sequence.
+fn str_slice_bad(s: Str, lo: Int, hi: Int, loc: Str) {
+  slice_check(lo, hi, s.len(), "Str", loc)
+  fault.raise_str_at("slice ${lo}..${hi} of Str splits a UTF-8 sequence", raw.data(loc), loc.len())
 }
 
 /// The check of `b[lo..hi]` on Bytes (the compiler then builds the view).

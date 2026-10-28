@@ -148,10 +148,28 @@ fn half_after(b: Bytes) -> Int {
   Int(b[b.len() / 2])
 }
 
+// A Str slice in a loop inlines its check (prelude.llrt_str_slice_chk:
+// two unsigned compares and the two boundary loads), its fault a cold
+// call of its own (prelude.str_slice_bad, ssa.cold_fn), where every
+// `s[lo..hi]` was a call (2026-10-27: 19% of path's parts row). Outside a
+// loop the check is still a call: 58 instructions with 16 sites is over
+// the inliner's budget.
+fn count_ab(hs: List[Str]) -> Int {
+  // arm64: "str__slice__bad" -"llrt__str__slice__chk"
+  // amd64: "str__slice__bad" -"llrt__str__slice__chk"
+  var n = 0
+  for h in hs {
+    if h.len() > 2 && h[1..3] == "ab" {
+      n += 1
+    }
+  }
+  n
+}
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
   os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
   let b = "abcde".bytes()
   os.stdio.println("${half_byte(b)} ${half_shift(b)} ${half_unguarded(b)} ${half_none(b, 2)} ${half_elem(hs)}")
-  os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)}")
+  os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)} ${count_ab(hs)}")
 }

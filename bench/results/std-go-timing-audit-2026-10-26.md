@@ -391,3 +391,14 @@ Quiet `xo bench --ab`, 15 rounds, the parent's std as A: quorem wall 0.779 (0.77
 Per std/changes/toml.md 2026-10-27 ("a key line of one bare key is read with no list of parts"). Quiet
 `xo bench --ab`, 15 rounds, the parent's std as A: decode wall 0.937 (0.927 to 0.957), instructions 0.940;
 Xo / Go about 1.19 (estimate: 1.454 x 0.873 x 0.937), at the bar; a measured row against Go follows.
+
+## Str slice check inlined in loops (2026-10-27, xo-lang-5)
+
+Per std/changes/prelude.md 2026-10-27 ("a Str slice in a loop checks its range inline"). Quiet `xo bench
+--ab`, 15 rounds, the parent's xo and std as A: path parts 0.922 (0.902 to 0.937), instructions 0.896, so
+Xo / Go about 1.27 (estimate: 1.596 x 0.865 x 0.922); strsplit split 0.994, lines 0.998, mail list 1.002,
+trimchars trim 0.990, all within noise; xo __text +13,152 bytes (+0.02%), s2 42 s to 43 s. The check is
+inlined only at call sites in a loop: 58 inliner instructions with 16 sites is over the budget of 40 (a
+nested early-exit shape measured 66, each fault call site counted). The route to inlining it at every
+site: the inliner's cost model counts a call of a cold function once per function, not once per site
+(compiler/arm64 inline.xo inline_walk), not started.
