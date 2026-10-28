@@ -22,7 +22,7 @@ xo=$1
 work=$2
 shift 2
 root=$(cd "$(dirname "$0")/.." && pwd)
-X=${XO_WINXC:-$HOME/Library/Caches/xo/winxc}
+X=${XO_WINXC:-$HOME/xo-tools/winxc}
 mkdir -p "$work"
 work=$(cd "$work" && pwd)
 W=$work/win

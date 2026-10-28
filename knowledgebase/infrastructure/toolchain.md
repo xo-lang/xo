@@ -4081,13 +4081,13 @@ i-EXAMPLE03).
 Set up 2026-10-15 (xo-fa; the owner accepted Microsoft's SDK license
 for this Mac, for xwin). Homebrew could not install llvm, lld, or xwin
 (it does not know macOS 27: "unknown or unsupported macOS version"), so
-everything is in the user cache, `~/Library/Caches/xo/winxc` (9.3 GB:
+everything is in `~/xo-tools/winxc`, outside every cache directory (owner, 2026-10-28: the copy in `~/Library/Caches/xo/winxc` disappeared and was rebuilt here with the recipe below; Last verified: 2026-10-28, clang 23.1.3, xwin 0.10.0) (9.3 GB:
 the LLVM release 7.6 GB unpacked, the sysroot 1.1 GB, a minimal Rust
 toolchain and xwin the rest; rebuilt 2026-10-16 on the main drive with
 the recipe below in 134 s, 9.3 GB after removing the 832 MB LLVM
 tarball), no sudo, no shell profile change:
 
-    X=~/Library/Caches/xo/winxc
+    X=~/xo-tools/winxc
     gh release download llvmorg-23.1.3 -R llvm/llvm-project -p 'LLVM-23.1.3-macOS-ARM64.tar.zst' -D $X
     zstd --long=30 -dc $X/LLVM-23.1.3-macOS-ARM64.tar.zst > $X/llvm.tar && tar -xf $X/llvm.tar -C $X
     rm $X/llvm.tar $X/LLVM-23.1.3-macOS-ARM64.tar.zst
@@ -4208,7 +4208,7 @@ Win64 only in thunks at the OS boundary, compiler/arm64 x86win.xo) and
 links it with clang's assembler and lld-link (compiler/xo link.xo
 win_amd64_link), from a Mac through winxc:
 
-    X=~/Library/Caches/xo/winxc
+    X=~/xo-tools/winxc
     XO_CLANG=$X/LLVM-23.1.3-macOS-ARM64/bin/clang XO_WINSYSROOT=$X/winsysroot \
       xo build --backend=amd64 --targets=windows/amd64 -o prog.exe .
 

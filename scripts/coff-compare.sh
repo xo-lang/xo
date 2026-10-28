@@ -6,7 +6,7 @@
 #   scripts/coff-compare.sh XO MACHO LLVM_MC WORK [NAME...]
 #
 # XO a built xo, MACHO a built compiler/macho (`xo build -o MACHO
-# compiler/macho`), LLVM_MC winxc's (~/Library/Caches/xo/winxc/LLVM-*/bin/
+# compiler/macho`), LLVM_MC winxc's (~/xo-tools/winxc/LLVM-*/bin/
 # llvm-mc), WORK a scratch directory; a differing golden's assembly and
 # both objects stay in WORK. Prints the count the same and each that
 # differs.
