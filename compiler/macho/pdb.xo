@@ -717,12 +717,32 @@ fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees:
   // parent and end in front, were a fifth of the PDB's time). The first
   // finds each record's body size, the record holding its parent and its
   // closing record, so the second writes every record once, in place.
-  var sizes: List[Int] = [7]
-  var parents: List[Int] = [-1]
-  var ends: List[Int] = [-1]
+  // the records' count first, so the lists never grow (growth takes the
+  // runtime's slow path while the link's other threads live)
+  var nrec = 1
+  var nsites = 0
+  for p in procs {
+    nrec += 2
+    for l in p.locals {
+      nrec += 1 + l.defs.len()
+    }
+    for st in p.sites {
+      nrec += 2
+      nsites += 1
+      for l in st.locals {
+        nrec += 1 + l.defs.len()
+      }
+    }
+  }
+  var sizes = List[Int].with_capacity(nrec)
+  var parents = List[Int].with_capacity(nrec)
+  var ends = List[Int].with_capacity(nrec)
+  sizes.push(7)
+  parents.push(-1)
+  ends.push(-1)
   // each site's annotations, made once
-  var anns: List[Bytes] = []
-  var proc_rec: List[Int] = []
+  var anns = List[Bytes].with_capacity(nsites)
+  var proc_rec = List[Int].with_capacity(procs.len())
   for p in procs {
     let pr = sizes.len()
     proc_rec.push(pr)
@@ -770,7 +790,7 @@ fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees:
     ends.push(-1)
   }
   // the records' offsets (after the signature)
-  var offs: List[Int] = []
+  var offs = List[Int].with_capacity(sizes.len())
   var o = 4
   for n in sizes {
     offs.push(o)
