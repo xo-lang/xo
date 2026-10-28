@@ -100,7 +100,7 @@ fn (var a: Asm) elf_section(name: Str, typ: Int, flags: Int, entsize: Int, group
   a.register(t)
   a.sects[a.cur].ltmp = t
   if !code {
-    a.sects[a.cur].items.push(Item.Label(t))
+    a.push_item(a.cur, Item.Label(t))
   }
 }
 
@@ -340,7 +340,7 @@ fn (var a: Asm) map_sym(name: Str) {
   if a.sects[a.cur].code {
     a.syms[i].off = a.code_len(a.cur)
   } else {
-    a.sects[a.cur].items.push(Item.Label(i))
+    a.push_item(a.cur, Item.Label(i))
   }
 }
 

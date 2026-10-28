@@ -121,7 +121,7 @@ fn (var a: Asm) coff_section(name: Str, ch: Int, al: Int) {
   a.syms.push(Sym{name: name.bytes(), sect: a.cur, secsym: true})
   a.sects[a.cur].ltmp = t
   if !code {
-    a.sects[a.cur].items.push(Item.Label(t))
+    a.push_item(a.cur, Item.Label(t))
   }
 }
 
@@ -360,17 +360,17 @@ fn (var a: Asm) seh_info(k: Int) {
     b.push(v >> 8)
   }
   let si = a.cur
-  a.sects[si].items.push(Item.Align(2))
+  a.push_item(si, Item.Align(2))
   let lab = a.new_numeric(".Lseh_info".bytes())
   a.syms[lab].sect = si
-  a.sects[si].items.push(Item.Label(lab))
-  a.sects[si].items.push(Item.Raw(int_bytes(b)))
+  a.push_item(si, Item.Label(lab))
+  a.push_item(si, Item.Raw(int_bytes(b)))
   if s.handler >= 0 {
     a.register(s.handler)
-    a.sects[si].items.push(Item.Word(n: 4, a: s.handler, b: -1, k: 0))
+    a.push_item(si, Item.Word(n: 4, a: s.handler, b: -1, k: 0))
   } else if n == 0 {
     // an UNWIND_INFO is 8 bytes at least: LLVM pads one with no codes
-    a.sects[si].items.push(Item.Raw(int_bytes([0, 0, 0, 0])))
+    a.push_item(si, Item.Raw(int_bytes([0, 0, 0, 0])))
   }
   a.sehs[k].info = lab
   if back >= 0 && a.sehs[k].end >= 0 {

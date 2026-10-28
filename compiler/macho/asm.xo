@@ -206,10 +206,18 @@ pub struct Asm {
   /// the encoding run once per distinct line; a fixup still records each
   /// use)
   enc_memo: Map[Bytes, Enc] = {}
+  /// each amd64 instruction line's XMemo by its text
+  xmemo: Map[Bytes, XMemo] = {}
   syms: List[Sym] = []
   names: Map[Bytes, Int] = {}
   sects: List[Sect] = []
   cur: Int = -1
+  /// constant data bytes not yet an item, of section pend_si (-1: none):
+  /// a .byte, .long or .quad of a number joins them instead of being an
+  /// Item.Word of its own (the amd64 DWARF's millions of them were a third
+  /// of its assembler)
+  pend: BytesBuilder = BytesBuilder.with_capacity(0)
+  pend_si: Int = -1
   fixes: List[Fix] = []
   frames: List[Frame] = []
   open: Bool = false
@@ -562,7 +570,7 @@ fn (var a: Asm) define_sym(i: Int, name: Bytes) {
   if a.sects[a.cur].code {
     a.syms[i].off = a.code_len(a.cur)
   } else {
-    a.sects[a.cur].items.push(Item.Label(i))
+    a.push_item(a.cur, Item.Label(i))
   }
 }
 
@@ -571,6 +579,22 @@ fn (var a: Asm) register(i: Int) {
     a.syms[i].registered = true
     a.reg_order.push(i)
   }
+}
+
+/// it appended to section si's items, after the constant bytes pending.
+fn (var a: Asm) push_item(si: Int, it: Item) {
+  a.flush_pend()
+  a.sects[si].items.push(it)
+}
+
+/// The pending constant bytes as an Item.Raw of their section.
+fn (var a: Asm) flush_pend() {
+  if a.pend_si >= 0 && a.pend.len() > 0 {
+    let b = a.pend.freeze()
+    a.sects[a.pend_si].items.push(Item.Raw(b))
+    a.pend = BytesBuilder.with_capacity(256)
+  }
+  a.pend_si = -1
 }
 
 fn (var a: Asm) register_expr(x: Int, y: Int) {
@@ -607,7 +631,7 @@ fn (var a: Asm) switch_section(seg: Str, name: Str, flags: Int) {
   if code {
     a.syms[t].off = 0
   } else {
-    a.sects[a.cur].items.push(Item.Label(t))
+    a.push_item(a.cur, Item.Label(t))
   }
 }
 
@@ -749,7 +773,7 @@ fn (var a: Asm) directive(l: Bytes) {
         a.sects[a.cur].words.push(NOP)
       }
     } else {
-      a.sects[a.cur].items.push(Item.Align(p))
+      a.push_item(a.cur, Item.Align(p))
     }
     return
   }
@@ -805,7 +829,7 @@ fn (var a: Asm) directive(l: Bytes) {
     for _ in 0..n {
       b.write_byte(UInt8(fill))
     }
-    a.sects[a.cur].items.push(Item.Raw(b.freeze()))
+    a.push_item(a.cur, Item.Raw(b.freeze()))
     return
   }
   if d == ".byte" || d == ".short" || d == ".long" || d == ".quad" || (a.elf && d == ".xword") {
@@ -815,15 +839,26 @@ fn (var a: Asm) directive(l: Bytes) {
     let n = if d == ".byte" { 1 } else if d == ".short" { 2 } else if d == ".long" { 4 } else { 8 }
     for part in split_operands(rest) {
       let (x, y, k) = a.expr(part)
+      if x < 0 && y < 0 {
+        // a number: its little endian bytes, as emit_data writes a Word
+        if a.pend_si != a.cur {
+          a.flush_pend()
+          a.pend_si = a.cur
+        }
+        for j in 0..n {
+          a.pend.write_byte(UInt8((k >> (8 * j)) & 0xff))
+        }
+        continue
+      }
       a.register_expr(x, y)
-      a.sects[a.cur].items.push(Item.Word(n: n, a: x, b: y, k: k))
+      a.push_item(a.cur, Item.Word(n: n, a: x, b: y, k: k))
     }
     return
   }
   if d == ".uleb128" {
     let (x, y, k) = a.expr(rest)
     a.register_expr(x, y)
-    a.sects[a.cur].items.push(Item.Uleb(a: x, b: y, k: k))
+    a.push_item(a.cur, Item.Uleb(a: x, b: y, k: k))
     return
   }
   if d == ".ascii" || d == ".asciz" {
@@ -832,9 +867,9 @@ fn (var a: Asm) directive(l: Bytes) {
     }
     match unquote(rest) {
       Some(b) => {
-        a.sects[a.cur].items.push(Item.Raw(b))
+        a.push_item(a.cur, Item.Raw(b))
         if d == ".asciz" {
-          a.sects[a.cur].items.push(Item.Word(n: 1, a: -1, b: -1, k: 0))
+          a.push_item(a.cur, Item.Word(n: 1, a: -1, b: -1, k: 0))
         }
       }
       None => a.fail("bad string ${bstr(rest)}")
@@ -1037,6 +1072,7 @@ fn unquote(b: Bytes) -> Bytes? {
 // After the pass: layout, fixups, unwind information
 
 fn (var a: Asm) finish() {
+  a.flush_pend()
   for i in 0..a.syms.len() {
     let sy = a.syms[i]
     if sy.temp && sy.sect < 0 {

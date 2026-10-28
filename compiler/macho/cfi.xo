@@ -214,6 +214,7 @@ fn (var a: Asm) add_raw_section(seg: Str, name: Str, flags: Int, align: Int) -> 
   a.switch_section(seg, name, flags)
   let i = a.cur
   // the start symbol is the section's only label
+  a.flush_pend()
   a.sects[i].items = []
   a.sects[i].align = align
   a.sects[i].raw = true
