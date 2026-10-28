@@ -186,7 +186,8 @@ fn bytes_le_put(d: Bytes, at: Int, v: Int, n: Int) -> Bytes {
 /// atoms mode, and of the others what the entry, .tls and .CRT sections
 /// reach by relocations (through the globals), a .pdata record with its
 /// function. live[o][s]; debug sections are kept and reach nothing.
-fn coff_live(objs: List[CObj], entry: Str) -> List[List[Bool]] {
+/// weaks[o]: objs[o]'s weak definitions (coff_weak_names).
+fn coff_live(objs: List[CObj], entry: Str, weaks: List[Map[Str, Bool]]) -> List[List[Bool]] {
   var live: List[List[Bool]] = []
   var atoms: List[Bool] = []
   for ob in objs {
@@ -201,13 +202,13 @@ fn coff_live(objs: List[CObj], entry: Str) -> List[List[Bool]] {
   // a strong one over a weak one (.xoweak)
   var globals: Map[Str, (Int, Int)] = {}
   for (oi, ob) in objs.indexed() {
-    let weak = coff_weak_names(ob)
+    let weak = weaks[oi]
     for s in ob.syms {
       if s.aux || s.class != IMAGE_SYM_CLASS_EXTERNAL || s.sect <= 0 {
         continue
       }
       if let Some((po, _)) = globals.get(s.name) {
-        if !weak.contains(s.name) && coff_weak_names(objs[po]).contains(s.name) {
+        if !weak.contains(s.name) && weaks[po].contains(s.name) {
           globals[s.name] = (oi, s.sect - 1)
         }
         continue
@@ -250,9 +251,9 @@ fn coff_live(objs: List[CObj], entry: Str) -> List[List[Bool]] {
   if let Some((eo, es)) = globals.get(entry) {
     coff_mark(live, work, eo, es)
   }
-  while !work.is_empty() {
-    let (oi, si) = work[work.len() - 1]
-    work = work[0..work.len() - 1]
+  // (pop: a slice of the rest copied the list at each step, 24 ms of a
+  // windows separate build's 128 ms link)
+  while let Some((oi, si)) = work.pop() {
     let ob = objs[oi]
     let s = ob.sects[si]
     if s.name.starts_with(".debug") {

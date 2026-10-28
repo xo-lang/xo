@@ -634,7 +634,6 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
       Err(e) => return "XO_STD_STORE=${store_path}.pdb: ${fs_reason(e)}"
     }
   } else if !store.is_empty() {
-    let ts = os.clock.now()
     match macho.coff_store_objs(store, rest, "xo_win_start") {
       Ok(so) => {
         if store_check {
@@ -660,7 +659,6 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
       }
       Err(e) => return "XO_STD_STORE=${store_file}: ${e}"
     }
-    os.stdio.eprintln("store objects ${os.clock.since(ts).nanos() / 1000} us (${store.len()} store bytes)")
   }
   // a program with DWARF gets a PDB next to it (decision 0344), which its
   // debug directory names

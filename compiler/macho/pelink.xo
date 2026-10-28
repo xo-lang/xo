@@ -167,7 +167,13 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
       any_atoms = true
     }
   }
-  let live = if any_atoms { coff_live(objs, o.entry) } else { [] }
+  // each object's weak definitions, once (each duplicate name made them
+  // again)
+  var weaks: List[Map[Str, Bool]] = List.with_capacity(objs.len())
+  for ob in objs {
+    weaks.push(coff_weak_names(ob))
+  }
+  let live = if any_atoms { coff_live(objs, o.entry, weaks) } else { [] }
   // the input sections' places, in object order: each output section's
   // bytes (an input section's appended whole) and its fixups, written
   // over them by pe_write (2026-10-27: a List[Int] per section, one push
@@ -259,8 +265,8 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
       if let Some((po, _)) = globals.get(s.name) {
         // a weak definition (.xoweak) yields: the first kept, a strong
         // one over a weak one (as compiler/macho's add_globals)
-        let w_new = coff_weak_names(ob).contains(s.name)
-        let w_old = coff_weak_names(objs[po]).contains(s.name)
+        let w_new = weaks[oi].contains(s.name)
+        let w_old = weaks[po].contains(s.name)
         if w_old && !w_new {
           globals[s.name] = (oi, si)
           continue
