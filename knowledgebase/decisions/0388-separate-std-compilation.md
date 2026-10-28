@@ -299,8 +299,10 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   objects (prog-darwin.N.o) and their store (std.store). Only std's functions are emitted
   (ssa.std_func), plus the generic instances and the generated functions with no file (a std
   global's value, a zero function); the program module's are left to the program's object. The
-  last part keeps the runtime's glue, the entry, `_main`, the exports and the helpers. The
-  object leaves `_xo_f_main` undefined, plus what the link's own inputs define
+  last part keeps the runtime's glue, the static data, std's exports (`_main` among them,
+  cabi.c.main's C wrapper) and the helpers; `_xo_entry` (g.entry: main's signature, conc,
+  budgets) is the program's, which defines it too under separate compilation. The object
+  leaves `_xo_f_main` and `_xo_entry` undefined, plus what the link's own inputs define
   (`_xo_buildinfo_line`, `_xo_tz_table`, `_xo_tsan_runtime`) and the section bounds.
 - Helpers (`xo_h` + base62(FNV-1a(key)), the key a kind and a type or function name) and generic
   instances are weak definitions (N_WEAK_DEF: `.weak_definition` on Mach-O, `.weak` on ELF) when

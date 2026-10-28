@@ -388,7 +388,11 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
   // the last file: the entry and exports, and the program wide code the
   // parts use
   g.split = true
-  g.entry(main)
+  if !m.std_obj {
+    // std's object leaves xo_entry (it calls the program's main) to the
+    // program's object (decision 0388)
+    g.entry(main)
+  }
   g.exports()
   var files: List[Str] = []
   var skipped: List[Str] = []
