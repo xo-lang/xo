@@ -14,7 +14,7 @@
 // never split: DWARF, __eh_frame, compact unwind). All integers are
 // little-endian u32, addresses and values u64.
 
-const STORE_MAGIC = "XOSTORE1"
+const STORE_MAGIC = "XOSTORE2"
 
 fn sw32(var b: BytesBuilder, v: Int) {
   b.write_byte(UInt8(v & 255))
@@ -160,7 +160,7 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
         for r in rs.sort_by(fn(r: IReloc) -> Int { r.addr }) {
           sw_reloc(rb, r)
         }
-        c.runs.push(CoreRun{start: x.start, end: x.end, fn_atom: if x.fo < 0 { -1 } else { base[x.fo] + x.fk }, relocs: rb.freeze(), nrel: rs.len()})
+        c.runs.push(CoreRun{start: x.start, end: x.end, fn_atom: if x.fo < 0 { -1 } else { base[x.fo] + x.fk }, typ: x.typ, refs: x.refs, relocs: rb.freeze(), nrel: rs.len()})
       }
       // its edges, as store atom numbers
       var refs: List[(Int, Int)] = []

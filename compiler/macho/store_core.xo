@@ -6,6 +6,9 @@
 // the DWARF runs it is cut into (dwtrim.xo) and its edges as store atom
 // numbers. The file's layout is store.xo's (STORE_REC, STORE_SYM).
 
+/// A cut run's record in the data region (store_write, cut).
+const STORE_RUN = 28
+
 /// An atom (or a section kept whole) for store_write.
 pub struct CoreSect {
   pub seg: Str
@@ -31,6 +34,11 @@ pub struct CoreRun {
   pub start: Int
   pub end: Int
   pub fn_atom: Int
+  /// a type's or an abstract subprogram's run: kept when a kept run
+  /// refers to it (dwtrim.xo dw_keep)
+  pub typ: Bool = false
+  /// its unit relative references: each field's place, its target
+  pub refs: List[(Int, Int)] = []
   pub relocs: Bytes
   pub nrel: Int
 }
@@ -110,13 +118,22 @@ pub fn store_write(objs: List[CoreObj], defs: List[(Bytes, Int)]) -> Bytes {
       db.write(s.relocs)
       // its runs, in the data region
       var gb = BytesBuilder.new()
+      // (STORE_RUN bytes each: start, end, the function's atom, or
+      // 0xffffffff always kept, 0xfffffffe a type's; relocations' place
+      // and count; references' place and count, 8 bytes each)
       for x in s.runs {
         sw32(gb, x.start)
         sw32(gb, x.end)
-        sw32(gb, if x.fn_atom < 0 { 0xffffffff } else { x.fn_atom })
+        sw32(gb, if x.fn_atom >= 0 { x.fn_atom } else if x.typ { 0xfffffffe } else { 0xffffffff })
         sw32(gb, db.len())
         db.write(x.relocs)
         sw32(gb, x.nrel)
+        sw32(gb, db.len())
+        for (pos, t) in x.refs {
+          sw32(db, pos)
+          sw32(db, t)
+        }
+        sw32(gb, x.refs.len())
       }
       sw32(hb, s.runs.len())
       sw32(hb, db.len())
@@ -318,28 +335,29 @@ pub fn (v: StoreView) cut(q: Int, live: List[Bool], loclists: Bool) -> (Bytes, L
   let ns = rec_nseg(store, q)
   let ga = v.data0 + rec_seg_at(store, q)
   var segs: List[DwSeg] = List.with_capacity(ns)
-  var keep: List[Bool] = List.with_capacity(ns)
   for i in 0..ns {
-    let g = ga + 20 * i
+    let g = ga + STORE_RUN * i
     let gf = rd32(store, g + 8)
-    segs.push(DwSeg{start: rd32(store, g), end: rd32(store, g + 4)})
-    keep.push(gf == 0xffffffff || live[gf])
+    var refs: List[(Int, Int)] = []
+    let ra = v.data0 + rd32(store, g + 20)
+    for j in 0..rd32(store, g + 24) {
+      refs.push((rd32(store, ra + 8 * j), rd32(store, ra + 8 * j + 4)))
+    }
+    // a function's run: its store atom in fo (dw_keep asks live)
+    segs.push(DwSeg{start: rd32(store, g), end: rd32(store, g + 4), fo: if gf < 0xfffffffe { gf } else { -1 }, typ: gf == 0xfffffffe, refs: refs})
   }
+  let keep = dw_keep(segs, fn(g: DwSeg) -> Bool { live[g.fo] })
   let (at, n) = dw_new_starts(segs, keep)
   var b = BytesBuilder.with_capacity(n)
-  var rels: List[(Int, Int)] = []
   let da = v.data0 + rec_data_at(store, q)
+  dw_write_runs(b, store, da, loclists, n, segs, keep, at)
+  var rels: List[(Int, Int)] = []
   for (i, g) in segs.indexed() {
     if !keep[i] {
       continue
     }
-    if g.start == 0 {
-      dw_head(b, store[da..da + g.end], loclists, n, segs, at)
-    } else {
-      b.write(store[da + g.start..da + g.end])
-    }
-    let gr = v.data0 + rd32(store, ga + 20 * i + 12)
-    for j in 0..rd32(store, ga + 20 * i + 16) {
+    let gr = v.data0 + rd32(store, ga + STORE_RUN * i + 12)
+    for j in 0..rd32(store, ga + STORE_RUN * i + 16) {
       let rq = gr + 12 * j
       rels.push((rq, rd32(store, rq) - g.start + at[i]))
     }

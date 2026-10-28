@@ -3,8 +3,10 @@
 // function's subprogram last among the unit's entries, after the types
 // and the abstract subprograms the inlined calls name, and each
 // function's line sequence on its own, so a dead function's subprogram
-// and sequence are cut without moving anything another entry refers to;
-// the unit's length is the only field patched. The strip (strip.xo) and
+// and sequence are cut; the types and abstract subprograms no kept entry
+// refers to (DW_FORM_ref4, unit relative) go too, and every kept
+// reference is moved by its target's shift; the unit's length is
+// patched. The strip (strip.xo) and
 // the store (store.xo) cut the same runs, so a link through the store is
 // the parts' link.
 
@@ -18,6 +20,12 @@ struct DwSeg {
   fk: Int = -1
   /// a __debug_info run's entry's tag (0 for the others)
   tag: Int = 0
+  /// a type or an abstract subprogram: kept only when a kept run refers
+  /// to it (dw_keep)
+  typ: Bool = false
+  /// its unit relative references (DW_FORM_ref4): each field's place in
+  /// the section and its target
+  refs: List[(Int, Int)] = []
 }
 
 /// An abbreviation: its tag, whether it has children, its attributes'
@@ -96,7 +104,7 @@ fn dw_skip_form(d: Bytes, p: Int, f: Int) -> Int {
 /// The entry at p (and its children): the offset after it, and the
 /// offset of its DW_AT_low_pc value (-1 for none); (-1, -1) when it
 /// cannot be read.
-fn dw_skip_die(d: Bytes, p: Int, ab: Map[Int, DwAbbrev]) -> (Int, Int) {
+fn dw_skip_die(d: Bytes, p: Int, ab: Map[Int, DwAbbrev], var refs: List[(Int, Int)]) -> (Int, Int) {
   let (code, q0) = get_uleb(d, p)
   if code == 0 {
     return (q0, -1)
@@ -111,6 +119,9 @@ fn dw_skip_die(d: Bytes, p: Int, ab: Map[Int, DwAbbrev]) -> (Int, Int) {
     if at == 0x11 {
       lo = q
     }
+    if f == 0x13 && q + 4 <= d.len() {
+      refs.push((q, rd32(d, q)))
+    }
     q = dw_skip_form(d, q, f)
     if q < 0 || q > d.len() {
       return (-1, -1)
@@ -122,7 +133,7 @@ fn dw_skip_die(d: Bytes, p: Int, ab: Map[Int, DwAbbrev]) -> (Int, Int) {
         q += 1
         return (q, lo)
       }
-      let (q2, _) = dw_skip_die(d, q, ab)
+      let (q2, _) = dw_skip_die(d, q, ab, refs)
       if q2 < 0 {
         return (-1, -1)
       }
@@ -177,34 +188,26 @@ fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSe
       }
     }
     var keep_to = p
-    var last_other = p
     while p < d.len() && d[p] != 0 {
       let (code2, _) = get_uleb(d, p)
       let a = match ab.get(code2) {
         Some(x) => x
         None => return []
       }
-      let (q, lo) = dw_skip_die(d, p, ab)
+      var refs: List[(Int, Int)] = []
+      let (q, lo) = dw_skip_die(d, p, ab, refs)
       if q < 0 {
         return []
       }
       let (fo, fk) = if a.tag == 0x2e && lo >= 0 { l.dw_fn_at(o, s, rel_at, lo) } else { (-1, -1) }
-      if fo >= 0 {
-        runs.push(DwSeg{start: p, end: q, fo: fo, fk: fk, tag: a.tag})
-      } else {
-        last_other = q
-        runs.push(DwSeg{start: p, end: q, tag: a.tag})
-      }
+      // the types the emitter writes (base, structure, pointer, array,
+      // enumeration, union, typedef) and an abstract subprogram (an
+      // inlined callee's, no address)
+      let typ = fo < 0 && ((a.tag is 0x24 | 0x13 | 0x0f | 0x01 | 0x04 | 0x17 | 0x16) || (a.tag == 0x2e && lo < 0))
+      runs.push(DwSeg{start: p, end: q, fo: fo, fk: fk, tag: a.tag, typ: typ, refs: refs})
       p = q
     }
     keep_to = p
-    // a subprogram before another entry may be what it refers to: none
-    // cut there (the emitter writes none)
-    for r in runs {
-      if r.fo >= 0 && r.start < last_other {
-        return []
-      }
-    }
     var out: List[DwSeg] = [DwSeg{start: 0, end: if runs.is_empty() { keep_to } else { runs[0].start }}]
     out = out + runs
     out.push(DwSeg{start: keep_to, end: d.len()})
@@ -305,6 +308,73 @@ fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSe
   out
 }
 
+/// Which runs stay: a function's when it is live (fn_live), a type's or
+/// an abstract subprogram's when a kept run refers to it, the others
+/// always.
+fn dw_keep(segs: List[DwSeg], fn_live: fn(DwSeg) -> Bool) -> List[Bool] {
+  var keep: List[Bool] = List.with_capacity(segs.len())
+  var work: List[Int] = []
+  for (i, g) in segs.indexed() {
+    let k = if g.fo >= 0 { fn_live(g) } else { !g.typ }
+    keep.push(k)
+    if k && !g.refs.is_empty() {
+      work.push(i)
+    }
+  }
+  while let Some(i) = work.pop() {
+    for (_, t) in segs[i].refs {
+      let j = dw_run_at(segs, t)
+      if j >= 0 && !keep[j] {
+        keep[j] = true
+        work.push(j)
+      }
+    }
+  }
+  keep
+}
+
+/// The run holding offset a, -1 for none.
+fn dw_run_at(segs: List[DwSeg], a: Int) -> Int {
+  var lo = 0
+  var hi = segs.len()
+  while lo < hi {
+    let m = (lo + hi) / 2
+    if segs[m].start <= a {
+      lo = m + 1
+    } else {
+      hi = m
+    }
+  }
+  lo - 1
+}
+
+/// The kept runs of a cut section written to b (its bytes at src[off +
+/// x] for its offset x): the first run's unit length (and a list's
+/// offsets) patched (dw_head), and each kept reference moved by its
+/// target's shift.
+fn dw_write_runs(var b: BytesBuilder, src: Bytes, off: Int, loclists: Bool, n: Int, segs: List[DwSeg], keep: List[Bool], at: List[Int]) {
+  for (i, g) in segs.indexed() {
+    if !keep[i] {
+      continue
+    }
+    if g.start == 0 {
+      dw_head(b, src[off..off + g.end], loclists, n, segs, at)
+      continue
+    }
+    var cur = g.start
+    for (pos, t) in g.refs {
+      let j = dw_run_at(segs, t)
+      if j < 0 {
+        continue
+      }
+      b.write(src[off + cur..off + pos])
+      sw32(b, t - segs[j].start + at[j])
+      cur = pos + 4
+    }
+    b.write(src[off + cur..off + g.end])
+  }
+}
+
 /// Where each run starts once the dead ones are cut, and the cut
 /// length: a dead run's start is where it would have been.
 fn dw_new_starts(segs: List[DwSeg], keep: List[Bool]) -> (List[Int], Int) {
@@ -338,22 +408,10 @@ fn dw_head(var b: BytesBuilder, head: Bytes, loclists: Bool, n: Int, segs: List[
 /// the others, its unit length (and a list's offsets) patched, its
 /// relocations moved with their runs.
 fn dw_cut(s: ISect, segs: List[DwSeg], live: List[List[Bool]]) -> ISect {
-  var keep: List[Bool] = []
-  for g in segs {
-    keep.push(g.fo < 0 || live[g.fo][g.fk])
-  }
+  let keep = dw_keep(segs, fn(g: DwSeg) -> Bool { live[g.fo][g.fk] })
   let (at, n) = dw_new_starts(segs, keep)
   var b = BytesBuilder.with_capacity(n)
-  for (i, g) in segs.indexed() {
-    if !keep[i] {
-      continue
-    }
-    if g.start == 0 {
-      dw_head(b, s.data[0..g.end], s.name == "__debug_loclists", n, segs, at)
-    } else {
-      b.write(s.data[g.start..g.end])
-    }
-  }
+  dw_write_runs(b, s.data, 0, s.name == "__debug_loclists", n, segs, keep, at)
   var out = s
   out.data = b.freeze()
   out.size = n
