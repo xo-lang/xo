@@ -1,0 +1,90 @@
+// std's object for separately compiled builds (decision 0388): its
+// store (link_store's input) and its facts (the program's front end's)
+// for one target and concurrency variant, kept in the back-end cache as
+// two files, std/<key>.store and std/<key>.stdf, and built on the first
+// build that wants them (xo dev stdobj, in a directory of its own, then
+// renamed into place: concurrent builds each build it and the last
+// rename wins, the same bytes). The prune treats them as any entry; a
+// pair with one file gone is built again. Any failure leaves the build
+// whole-program.
+
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/prune
+use std/crypto
+
+/// The version of std's entries: a new one when the store's layout or
+/// the facts' codec changes (with STORE_MAGIC, gotchas/store-format-magic.md).
+const STD_CACHE_VERSION = 1
+
+/// The key of std's entries for target and conc: the code generation
+/// identity of this xo (cache_id's, without a separately compiled
+/// build's facts, which these are), the target, the variant, and every
+/// std source's path, size and modification time (a body edit in a
+/// development std changes the object, unlike std_tree_sum's interface
+/// hash); "" when xo's identity or std cannot be read.
+fn std_cache_key(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool) -> Str {
+  let id = if XO_CODEGEN_KEY.len() == 64 { "codegen ${XO_CODEGEN_KEY}" } else { self_id(os) }
+  if id.is_empty() {
+    return ""
+  }
+  let files = match os.fs.walk(std) {
+    Ok(fs) => fs
+    Err(_) => return ""
+  }
+  var b = BytesBuilder.new()
+  b.write_str("xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n")
+  for f in files.sort_by(fn(f: FileInfo) -> Str { f.path }) {
+    if !f.is_dir && f.path.ends_with(".xo") {
+      b.write_str("${f.path.trim_prefix(std)} ${f.size} ${f.modified.unix_millis()}\n")
+    }
+  }
+  crypto.sha256(b.freeze()).to_hex()
+}
+
+/// The paths of std's store and facts for the target and variant, built
+/// into the cache when missing; None when the cache is off or the build
+/// failed (the caller builds the whole program). phases: one line on
+/// standard error saying which.
+fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: Bool) -> (Str, Str)? {
+  let host = host_os(os)
+  let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
+  if dir.is_empty() {
+    return None
+  }
+  let key = std_cache_key(os, ctx.std, tgoos, tgoarch, conc)
+  if key.is_empty() {
+    return None
+  }
+  let store = "${dir}/std/${key}.store"
+  let facts = "${dir}/std/${key}.stdf"
+  let have = (os.fs.exists(store).ok() ?? false) && (os.fs.exists(facts).ok() ?? false)
+  if have {
+    prune.mark_used_within(os.fs, os.clock, store, BACKEND_TOUCH)
+    prune.mark_used_within(os.fs, os.clock, facts, BACKEND_TOUCH)
+    if phases {
+      os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} reused")
+    }
+    return Some((store, facts))
+  }
+  // built in a directory of its own under the cache, then each file
+  // renamed into place (a reader sees a whole file or none)
+  let tmp = "${dir}/std/.build-${os.rand.bytes(6).to_hex()}"
+  let t0 = os.clock.now()
+  let xo = check.executable(os.env, os.fs)
+  let env = ["XO_STD=${ctx.std}", "XO_BACKEND_CACHE_DIR=${tmp}/cache", "XO_SEPCOMP=", "XO_SEPCOMP_FACTS=", "XO_SEPCOMP_STORE=", "XO_STD_OBJ=", "XO_STD_ROOTS=", "XO_STD_STORE="]
+  let ok = match os.proc.run("env", env + [xo, "dev", "stdobj", "--target=${tgoos}/${tgoarch}", "--conc=${if conc { "1" } else { "0" }}", "--facts=${tmp}/std.stdf", "${tmp}/obj"]) {
+    Ok(r) => r.code == 0
+    Err(_) => false
+  }
+  var done = false
+  if ok {
+    let a = os.fs.rename("${tmp}/obj/std.store", store).is_ok()
+    let b = a && os.fs.rename("${tmp}/std.stdf", facts).is_ok()
+    done = b
+  }
+  os.fs.remove_all(tmp).ignore_err("only disk: the prune takes a leftover build directory")
+  if phases {
+    os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} ${if done { "built" } else { "failed: the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
+  }
+  if done { Some((store, facts)) } else { None }
+}

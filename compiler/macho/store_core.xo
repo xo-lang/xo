@@ -416,3 +416,21 @@ pub fn (v: StoreView) sym(i: Int, j: Int) -> CoreSym {
   let na = v.data0 + rd32(v.b, q)
   CoreSym{name: v.b[na..na + rd32(v.b, q + 4)], typ: rd32(v.b, q + 8), sect: rd32(v.b, q + 12), desc: rd32(v.b, q + 16), value: rd64(v.b, q + 20)}
 }
+
+/// The names the store's objects define globally (its definitions'
+/// table, sorted), for a separately compiled build's undefined-symbol
+/// check without std's object files; the error when it is not a store.
+pub fn store_defs(store: Bytes) -> Result[List[Str], Str] {
+  match store_view(store) {
+    Ok(v) => {
+      var out: List[Str] = List.with_capacity(v.ndefs)
+      for m in 0..v.ndefs {
+        let q = v.dt + 12 * m
+        let at = v.data0 + rd32(store, q)
+        out.push(bstr(store[at..at + rd32(store, q + 4)]))
+      }
+      Ok(out)
+    }
+    Err(e) => Err(e)
+  }
+}

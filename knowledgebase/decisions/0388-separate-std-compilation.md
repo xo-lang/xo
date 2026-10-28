@@ -363,6 +363,25 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   taken for a normal one. fib so built (whole program, the flag forced): the entry file defines
   `_xo_entry` and none of std's runtime symbols, 544 index records, 66 weak definitions.
 
+### std's object by default: the cache (xo-lang-4, 2026-10-28)
+
+- compiler/xo stdcache.xo std_variant(os, ctx, tgoos, tgoarch, conc, phases) gives the paths of
+  std's store and facts for a target and concurrency variant, from the back-end cache:
+  std/<key>.store and std/<key>.stdf. The key hashes this xo's code generation identity
+  (without a separately compiled build's facts), the target, the variant, STD_CACHE_VERSION
+  and every std source's path, size and modification time, so a body edit in a development std
+  makes a new one. A miss builds it with `xo dev stdobj --target --conc --facts` into a
+  directory of its own under the cache and renames each file into place. Concurrent builds
+  each build it and the last rename wins: the same bytes. The prune treats the two files as
+  any entry, and a pair with one file gone is built again. None (the cache off, xo's identity
+  or std unreadable, the build failed) leaves the build whole-program.
+  `--phase-times` says `cache std KEY conc=C reused|built|failed`.
+- macho.store_defs(store) lists the store's global definitions (its sorted table, no atoms
+  read), so the undefined-symbol check needs no part objects.
+- Lang 1's step (d) calls std_variant once the build knows its conc. The 0.34 release ships
+  the host target's conc0 and conc1 stores beside std (Lead, 2026-10-28) so a first build
+  after install skips the build; cross targets and other variants build lazily.
+
 ### std's variants: conc (xo-lang-4, 2026-10-28)
 
 - Every XO_STD_ROOTS build was conc=true: rooting every std function builds bodies that need
