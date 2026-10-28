@@ -602,8 +602,15 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   let host = host_os(os)
   let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
   let id = if dir.is_empty() || (os.env.get("XO_FE_CACHE") ?? "") == "off" { "" } else { cache_id(os) }
+  // decision 0388: XO_STD_CONC=0|1 fixes the unwinding checks (std's
+  // object and facts, one per variant)
+  let conc_fixed = match os.env.get("XO_STD_CONC") ?? "" {
+    "0" => 0
+    "1" => 1
+    _ => -1
+  }
   if id.is_empty() {
-    return ssa.build_program_guard(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)
+    return ssa.build_program_fe(c, root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard, ssa.FeCache{conc_fixed: conc_fixed})
   }
   var t = os.clock.now()
   var fe = ssa.FeCache{on: true, verify: backend_cache_mode(os) == "verify", break_name: os.env.get("XO_FE_BREAK") ?? "", recorder: self_id(os)}
@@ -628,6 +635,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   }
   let owns = if hint.is_empty() { ssa.fe_common_owns() } else { [hint] }
   fe.start_conc = hint.starts_with("conc=true ")
+  fe.conc_fixed = conc_fixed
   var keys: List[Str] = []
   for (_, k) in fe.keys {
     for own in owns {

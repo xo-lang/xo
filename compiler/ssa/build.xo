@@ -431,9 +431,9 @@ pub fn build_program_guard(c: check.Checker, line_root: Str, tests: Bool, releas
 
 /// build_program_guard through the front end cache fe (fecache.xo).
 pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: Bool, real_tests: Bool, goos: Str, goarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace_support: Bool, soft_cpu: Bool, heap_guard: Bool, fe: FeCache) -> Builder uses fs.read {
-  var b = program_builder(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, fe, fe.start_conc)
+  var b = program_builder(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, fe, if fe.conc_fixed >= 0 { fe.conc_fixed == 1 } else { fe.start_conc })
   b.build()
-  if b.need_conc != b.conc {
+  if b.need_conc != b.conc && fe.conc_fixed < 0 {
     // built again with unwinding checks (a body needs concurrency), or
     // without them when fe.start_conc guessed wrong: the first build is
     // dropped, its stores and counts with it
@@ -757,7 +757,7 @@ fn (var b: Builder) run_queue() {
   }
   // built: a later run (the exports, declare_exports) starts empty
   b.queue = []
-  if b.need_conc && !b.conc {
+  if b.need_conc && !b.conc && b.fe.conc_fixed < 0 {
     b.why = "concurrency: built again with unwinding checks"
   }
 }
@@ -2811,6 +2811,20 @@ fn (var b: Builder) unit() -> Int {
 
 fn (var b: Builder) undef(t: Int) -> Int {
   b.add(Op.Undef, t, Aux.None, [])
+}
+
+/// A value of type t where a body needs concurrency and the build has
+/// none: undef, the build then made again with it (build_program_fe),
+/// or with the unwinding checks fixed off (XO_STD_CONC=0, decision 0388:
+/// std's object without concurrency, where every std function is a root)
+/// a fault, so the body verifies; a program without concurrency never
+/// calls it.
+fn (var b: Builder) conc_off(t: Int) -> Int {
+  if b.fe.conc_fixed == 0 {
+    b.fault(b.const_str("concurrency in a build without it (XO_STD_CONC=0)"), "")
+    b.dead()
+  }
+  b.undef(t)
 }
 
 /// The value in a Box; other values as they are.

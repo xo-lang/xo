@@ -1108,7 +1108,7 @@ fn (var b: Builder) own_os_field(e: Expr, v: Int, name: Str) -> Int {
     // main (tasks_main)
     b.set_flag(1)
     if !b.conc {
-      return b.undef(t)
+      return b.conc_off(t)
     }
     return b.rt("prog_group", t, [])
   }

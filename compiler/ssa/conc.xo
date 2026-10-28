@@ -175,7 +175,7 @@ fn (var b: Builder) scope_expr(e: Expr) -> Int {
   b.set_flag(1)
   let t = b.nat_of(e)
   if !b.conc {
-    return b.undef(t)
+    return b.conc_off(t)
   }
   let sh = b.m.handle("Scope", [])
   let h = b.rt("scope_open", sh, [])
@@ -738,7 +738,7 @@ fn (var b: Builder) await_expr(e: Expr, x: Expr) -> Int {
   b.set_flag(1)
   let t = b.nat_of(e)
   if !b.conc {
-    return b.undef(t)
+    return b.conc_off(t)
   }
   let h = b.expr(x)
   let l = b.rt("task_await", b.m.list(t), [h, b.loc(parser.expr_span(e))])
@@ -775,7 +775,7 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
   }
   b.set_flag(1)
   if !b.conc {
-    return b.undef(nt)
+    return b.conc_off(nt)
   }
   let es = arg_exprs(b.c.objs[fo].params, args)
   let key = "${recv}.${fname}"
@@ -1115,7 +1115,7 @@ fn (var b: Builder) select_expr(e: Expr) -> Int {
   b.set_flag(1)
   let t = b.type_of(e)
   if !b.conc {
-    return b.undef(t)
+    return b.conc_off(t)
   }
   let it = b.int_t()
   let bt = b.bool_t()
@@ -1549,7 +1549,7 @@ fn (var b: Builder) conn_method(name: Str, recv: Int, args: List[Int], want: Int
   // operations that wait: the program needs unwinding checks
   b.set_flag(1)
   if !b.conc {
-    return Some(b.undef(want))
+    return Some(b.conc_off(want))
   }
   if name == "read" {
     let l = b.rt("conn_read", b.m.list(b.str_t()), [recv, args[0]])

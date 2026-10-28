@@ -304,6 +304,21 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
 - The conc0 std object, 2026-10-28: 41 parts, 8,275 global definitions, 1,825 of them weak
   (1,211 helpers, 614 instances), no name defined twice.
 
+### std's variants: conc (xo-lang-4, 2026-10-28)
+
+- Every XO_STD_ROOTS build was conc=true: rooting every std function builds bodies that need
+  concurrency (proc_run, the waiting natives, tasks), which set need_conc, and build_program_fe
+  builds again with unwinding checks. So the first conc0 files were conc1 (the fe-hint of a
+  fib roots build says conc=true; a normal fib build's says conc=false).
+- XO_STD_CONC=0|1 fixes the builder's conc (FeCache.conc_fixed) with no second build. With 0, a
+  body that needs concurrency faults where it would (Builder.conc_off, a fault then dead code,
+  where a build that will be made again keeps undef), so every root verifies; a program without
+  concurrency never calls one.
+- conc changes the facts: true conc0 (6,041 functions, 2,402 with a borrowed parameter) against
+  conc1 (6,198, 2,451): 441 errors, most `is not canceled, but the whole program's may be`. The
+  conc0 file against a whole-program fib dump (conc0): 0 errors, 9 functions' body facts
+  differ (pool and sched). conc0's std object: 37 parts; conc1's 41.
+
 ## Alternatives
 
 - More per-pass caching (0382 stage 3 and its successors, 0380 stage 3): bounded by the oracle

@@ -44,6 +44,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_LLRT_C":               {"content", ""},
 	"XO_CHECK_EAGER":          {"content", ""},
 	"XO_STD_ROOTS":            {"content", ""}, // decision 0388 1b: every std function a root; the module's content says so
+	"XO_STD_CONC":             {"content", ""}, // decision 0388: the unwinding checks fixed on or off; the SSA bodies every key hashes differ
 	"XO_STD_OBJ":              {"content", ""}, // decision 0388 stage 4: std's object (XO_STD_ROOTS, the program's functions left out, weak helpers: " weak=1" in the fn and part keys); written to a directory, not linked
 	"XO_CHECK_NO_PARSE_CACHE": {"none", ""},
 	"XO_STD":                  {"content", ""},
@@ -80,12 +81,12 @@ var codegenEnv = map[string]inputClass{
 	"XO_BIN_CACHE":            {"none", ""},
 	"XO_CHAIN_KEYS":           {"none", ""}, // the cleanup cache (decision 0382); every build writes the same binary
 	"XO_CHK_CACHE":            {"none", ""},
-	"XO_STD_EXPORT":           {"none", ""}, // std's declarations from records (decision 0388); the same tables
-	"XO_STD_FACTS_DUMP":       {"none", ""}, // writes std's facts to a file (decision 0388); the build is the same
-	"XO_STD_FACTS_VERIFY":     {"none", ""}, // compares a std facts file with the build's own (decision 0388); the build is the same
-	"XO_STD_STORE":            {"none", ""}, // links through std's indexed store (decision 0388 stage 4); the parts' binary, byte for byte
-	"XO_STD_STORE_CHECK":      {"none", ""}, // also links the parts and fails on a difference
-	"XO_STD_STORE_REPEAT":     {"none", ""}, // times N more store links (a measurement)
+	"XO_STD_EXPORT":           {"none", ""},                            // std's declarations from records (decision 0388); the same tables
+	"XO_STD_FACTS_DUMP":       {"none", ""},                            // writes std's facts to a file (decision 0388); the build is the same
+	"XO_STD_FACTS_VERIFY":     {"none", ""},                            // compares a std facts file with the build's own (decision 0388); the build is the same
+	"XO_STD_STORE":            {"none", ""},                            // links through std's indexed store (decision 0388 stage 4); the parts' binary, byte for byte
+	"XO_STD_STORE_CHECK":      {"none", ""},                            // also links the parts and fails on a difference
+	"XO_STD_STORE_REPEAT":     {"none", ""},                            // times N more store links (a measurement)
 	"XO_SEPCOMP":              {"keyed", "sepcomp ${crypto.sha256(d)"}, // std's functions as externs (decision 0388 stage 3): cache_id holds the facts' hash
 	"XO_SEPCOMP_FACTS":        {"keyed", "sepcomp ${crypto.sha256(d)"},
 	"XO_FE_CACHE":             {"none", ""},

@@ -46,6 +46,12 @@ pub struct FeCache {
   /// the build starts with unwinding checks (Builder.conc): the last
   /// build of the program needed them (xo bcache.xo's hint)
   pub start_conc: Bool = false
+  /// the build's unwinding checks fixed (XO_STD_CONC=0|1, decision 0388:
+  /// std's object and facts per variant): 0 off, 1 on, -1 as the bodies
+  /// need. Off, a body that needs concurrency is lowered as undef, as an
+  /// unreachable one is in a whole program without it, and the build is
+  /// not built again
+  pub conc_fixed: Int = -1
   /// the keys of entries whose checks passed but whose commit did not
   /// (a front end cache bug): the driver builds again without them
   pub bad: List[Str] = []

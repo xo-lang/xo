@@ -134,7 +134,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if b.is_proc_run(fo) {
       b.set_flag(1)
       if !b.conc {
-        return b.undef(b.nat_of(x))
+        return b.conc_off(b.nat_of(x))
       }
       let pm = b.native_mod("std/prelude")
       if pm >= 0 {
@@ -150,7 +150,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     if b.native_waits(fo) {
       b.set_flag(1)
       if !b.conc {
-        return b.undef(b.nat_of(x))
+        return b.conc_off(b.nat_of(x))
       }
     }
     if let Some(v) = b.word_method(x, ci) {
@@ -1928,7 +1928,7 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
           // reads wait on the event loop
           b.set_flag(1)
           if !b.conc {
-            return b.undef(nt)
+            return b.conc_off(nt)
           }
         }
         let pm = b.native_mod("std/prelude")
@@ -2182,7 +2182,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
       // waits, polling on the event loop's timers (decision 0172)
       b.set_flag(1)
       if !b.conc {
-        return Some(b.undef(b.nat_of(x)))
+        return Some(b.conc_off(b.nat_of(x)))
       }
     }
     let pm = b.native_mod("std/prelude")
@@ -2201,7 +2201,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     if stdio_reads(fname) {
       b.set_flag(1)
       if !b.conc {
-        return Some(b.undef(b.nat_of(x)))
+        return Some(b.conc_off(b.nat_of(x)))
       }
     }
     let pm = b.native_mod("std/prelude")
@@ -2228,7 +2228,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     // operations that wait: the program needs unwinding checks
     b.set_flag(1)
     if !b.conc {
-      return Some(b.undef(nt))
+      return Some(b.conc_off(nt))
     }
   }
   let pos = b.pos_line(span)

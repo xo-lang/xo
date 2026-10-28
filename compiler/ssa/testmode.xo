@@ -377,7 +377,7 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
     "Clock.advance" => {
       b.set_flag(1)
       if !b.conc {
-        return Some(b.undef(nt))
+        return Some(b.conc_off(nt))
       }
       b.tw_rt("test_advance", -1, [b.tc_arg(es, 0, it)])
       return Some(b.unit())
@@ -577,7 +577,7 @@ fn (var b: Builder) run_main(x: Expr, ci: check.CallInfo) -> Int {
   let bt = b.bool_t()
   b.set_flag(1)
   if !b.conc {
-    return b.undef(it)
+    return b.conc_off(it)
   }
   let es = arg_exprs(b.c.objs[fo].params, cargs)
   let (e0, e1) = match (es[0], es[1]) {
