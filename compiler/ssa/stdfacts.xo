@@ -38,11 +38,16 @@ pub fn std_facts(m: Module, b: Builder, plan: RcPlan) -> List[StdFact] {
     var x = StdFact{name: f.name, var_params: f.var_params, catches: f.catches}
     if !f.blocks.is_empty() {
       x.body = encode_facts(m, body_facts(f, m.types)) ?? b""
-      x.known = b.known_names.get(f.name) ?? known_result(f) ?? Aux.None
+      x.known = known_result(f) ?? Aux.None
     } else if let Some(bf) = m.facts.get(fi) {
       // an undecoded cache hit (decision 0283 B): its body's facts
       x.body = encode_facts(m, bf) ?? b""
-      x.known = b.known_names.get(f.name) ?? Aux.None
+    }
+    // fold_known_calls's result, whatever the body's state now (a shell
+    // with no facts has none to read; a warm build's std functions are
+    // shells: decision 0388's verify found 12 target constants missing)
+    if let Some(a) = b.known_names.get(f.name) {
+      x.known = a
     }
     let ci = plan.r.fidx.get(f.name) ?? -1
     if ci >= 0 && ci < plan.r.borrowed.len() {

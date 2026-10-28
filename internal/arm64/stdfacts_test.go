@@ -13,8 +13,8 @@ import (
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
-// TestStdFactsVerify: a build's std facts (XO_STD_FACTS_DUMP) verify
-// against themselves (XO_STD_FACTS_VERIFY), and a facts file with one
+// TestStdFactsVerify: a cold build's std facts (XO_STD_FACTS_DUMP)
+// verify against a warm build's (XO_STD_FACTS_VERIFY), and a facts file with one
 // borrowed parameter made owned fails the build naming it. A std
 // function's borrowed parameters are its calling convention: decision
 // 0388's stage 3 oracle made the runtime's owned and the HTTP server
@@ -51,12 +51,10 @@ func TestStdFactsVerify(t *testing.T) {
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
-	// warm first: the dump and the verify then read the same cached state
-	// (a replayed body is not Func.target, so a cold build folds target
-	// constants a warm one does not)
-	if out, err := build(); err != nil {
-		t.Fatalf("build: %v\n%s", err, out)
-	}
+	// the dump on a cold build, the verify on a warm one: a warm build's
+	// std functions are undecoded shells, and their facts must be a cold
+	// build's (fold_known_calls's constant results of the target
+	// functions were missing from them, 2026-10-28)
 	facts := filepath.Join(work, "facts.stdf")
 	if out, err := build("XO_STD_FACTS_DUMP=" + facts); err != nil {
 		t.Fatalf("dump: %v\n%s", err, out)
