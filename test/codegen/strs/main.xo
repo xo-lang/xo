@@ -3,6 +3,8 @@
 // The prefix's last word is read from the literal at compile time: "rer "
 // (0x20726572) is an immediate, not a load (compiler/arm64 literal_load,
 // with fold_consts's Str.len of a literal, 2026-10-23).
+use std/uuid
+
 fn token_len(hs: List[Str]) -> Int {
   // arm64: "movk x[0-9]+, #8306, lsl #16"
   // amd64: "\$544367986"
@@ -166,10 +168,20 @@ fn count_ab(hs: List[Str]) -> Int {
   n
 }
 
+// A uuid's 16 bytes, only read here, are made in the frame (decision
+// 0395, stacksmall.xo): no call of the string allocator on arm64; amd64
+// and LLVM keep the heap.
+fn uuid_byte(u: uuid.Uuid, k: Int) -> Int {
+  // arm64: -"rs_with_cap"
+  // amd64: "rs_with_cap"
+  let b = u.bytes()
+  Int(b[k % 16]) + b.len()
+}
+
 fn main(os: Os) {
   let hs = ["Bearer abc", "x", "Bearer", "nobody"]
   os.stdio.println("${token_len(hs)} ${count_nobody(hs)} ${count_long(hs)} ${cut_len(hs.len())}")
   let b = "abcde".bytes()
   os.stdio.println("${half_byte(b)} ${half_shift(b)} ${half_unguarded(b)} ${half_none(b, 2)} ${half_elem(hs)}")
-  os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)} ${count_ab(hs)}")
+  os.stdio.println("${half_other(b, b)} ${half_else(b)} ${half_after(b)} ${count_ab(hs)} ${uuid_byte(uuid.nil(), b.len())}")
 }

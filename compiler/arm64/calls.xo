@@ -1605,6 +1605,21 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     // decision 0231 addendum: the CRC-32 of a word (cpu.crc32x, run only
     // when cpu.hw() has HW_CRC32); its w result is the crc zero extended
+    // decision 0395: a small Str object in the frame (stacksmall.xo): its
+    // header (the immortal count, then the capacity; obj.xo S_HDR) and
+    // its bytes in the frame's memory, the Str its address and length 0
+    "rt.rs_stack" => {
+      let (cap, _k) = g.const_int(x.args[0])
+      let off = g.mem_bytes
+      g.mem_bytes += 16 + 8 * ((cap + 7) / 8)
+      let a = g.area_addr(off)
+      let im = g.def1(false, mov_imm(-9223372036854775807 - 1), [])
+      g.store("str $u0, [$u1, #0]", [im, a])
+      let c = g.def1(false, mov_imm(cap), [])
+      g.store("str $u0, [$u1, #8]", [c, a])
+      let z = g.def1(false, "mov $d0, #0", [])
+      g.set(v, [a, z])
+    }
     "rt.crc32x" => {
       if !g.has_val[v] {
         g.set(v, [g.def1(false, "crc32x $wd0, $wu0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])

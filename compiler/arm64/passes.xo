@@ -35,6 +35,9 @@ pub fn passes() -> List[Str] {
     "sink_retains",
     // viewlen.xo: a Str view used only for its length is the length
     "view_lens",
+    // stacksmall.xo (decision 0395): a small Str or Bytes this function
+    // only reads, in its frame (arm64)
+    "stack_small",
     "hoist_fields",
     "fold_tuples",
     "cse",

@@ -1,5 +1,19 @@
 # std/uuid changes
 
+## 2026-10-28: perf: bytes() made and read in one function stays in the frame
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/uuid bytes at 1.966x Go (measured on main 55af0adc5); 39% of the run allocating and freeing the 16 byte Bytes
+- Go reference: google/uuid's `u[:]` (a slice of the value's own array, kept on the stack by Go's escape analysis)
+- Test: internal/gen TestStackSmallProperty (decision 0395); internal/llvm and internal/arm64 uuid_basic and parse_edge_formats; test/codegen/strs uuid_byte; twincheck's checksums agree on none, parse, string, bytes
+
+No change to std/uuid itself: decision 0395's stack_small pass (arm64)
+builds the 16 bytes of a uuid's bytes() in the caller's frame when the
+caller only reads them (the index, the length, from_bytes, comparisons),
+where each call allocated and freed a heap object. Quiet --ab, 15 rounds:
+the parent's xo and std as A, bytes wall 0.504 (0.479 to 0.525), instructions 0.717, cycles 0.371; against Go 0.965 (0.931 to 1.001; was 1.966); parse, unchanged by this, 1.062 of Go.
+
 ## 2026-10-27: behavior: a Uuid is two Ints (breaking)
 
 - Kind: behavior

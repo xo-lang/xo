@@ -502,3 +502,9 @@ Per std/changes/mime.md 2026-10-28 ("format_media_type escapes a quoted value in
 Per std/changes/compress.md 2026-10-28 ("the deflater's hash tables hold UInt32, as Go's do"). Quiet `xo bench
 --ab`, 15 rounds, the parent's std as A: archive zip wall 0.959 (0.950 to 0.964), instructions 0.969; Xo / Go
 about 1.17 (estimate: 1.222 x 0.959), from 1.222.
+
+## uuid bytes in the frame (decision 0395, 2026-10-28, xo-lang-5)
+
+Per std/changes/uuid.md 2026-10-28. Quiet `xo bench --ab`, 15 rounds: bytes against the parent's xo and std,
+wall 0.504 (0.479 to 0.525), instructions 0.717, cycles 0.371; against Go 0.965 (0.931 to 1.001), from 1.966.
+parse against Go (no change in it): 1.062 (1.01 to 1.081), instructions 0.974.

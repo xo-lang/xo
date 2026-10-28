@@ -1,0 +1,239 @@
+// Small Str and Bytes objects that do not escape, in the frame
+// (stack_small, decision 0395): after inlining, an `rt.rs_with_cap(c)`
+// with c a constant of at most STACK_SMALL_MAX bytes whose object is
+// only read in this function becomes `rt.rs_stack(c)`, which the emitter
+// builds in a frame slot with the immortal count (obj.xo IMMORTAL): the
+// retains and releases insert_rc placed stay, and are no-ops on that count
+// (rc.xo inc_text and dec_text). uuid's bytes() was 39% allocation and
+// free (bench/perf/uuid, 2026-10-28).
+//
+// The rule looks at this function's own SSA after inlining and nothing
+// else, so a cold build and a warm one (decision 0283's undecoded
+// callees) decide alike: a call of any function that is not on the read
+// list below is an escape, whatever the callee does (Xo Lang 1's review,
+// 2026-10-28).
+//
+// One slot serves every execution of a site, which is safe because the
+// object is dead before the site runs again: a value crosses from one
+// loop iteration to the next only through a loop header's parameter, and
+// an edge into one counts as an escape.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// The most bytes an object made in the frame holds.
+const STACK_SMALL_MAX = 64
+
+/// Calls whose result is the same object as their first argument (its
+/// length set, its type relabelled, a view of it): the result is followed
+/// as the object.
+fn same_object_call(name: Str) -> Bool {
+  name is "rt.rs_set_len" | "rt.str_view" || name.starts_with("rt.cast")
+}
+
+/// Calls that read their arguments and keep nothing of them past the call.
+fn read_call(name: Str) -> Bool {
+  name is "Str.len" | "Bytes.len" | "bytes.index" | "str.index" | "str.eq" | "str.ne" | "bytes.eq" | "rt.bytes_word" | "rt.obj_addr" | "rt.mem_load" | "rt.mem_store" | "rt.mem_copy" | "rt.str_eq" | "rt.bytes_eq16" | "rt.bytes_high16" | "rt.utf8_valid"
+}
+
+/// The facts the rule reads: each value's instruction uses, the edges
+/// that pass it (edge, argument index), the edge into each block, and
+/// which blocks are loop headers.
+struct SsFacts {
+  vuses: List[List[Int]]
+  euses: List[List[(Int, Int)]]
+  header: List[Bool]
+}
+
+fn ss_facts(f: ssa.Func) -> SsFacts {
+  let n = f.values.len()
+  var vuses: List[List[Int]] = []
+  var euses: List[List[(Int, Int)]] = []
+  for _ in 0..n {
+    vuses.push([])
+    euses.push([])
+  }
+  for b in 0..f.blocks.len() {
+    for u in f.blocks[b].instrs {
+      for a in f.values[u].args {
+        vuses[a].push(u)
+      }
+      for e in f.values[u].succs {
+        for (k, a) in f.edges[e].args.indexed() {
+          euses[a].push((e, k))
+        }
+      }
+    }
+  }
+  SsFacts{vuses: vuses, euses: euses, header: loop_headers(f)}
+}
+
+/// The blocks an edge from a block on the depth first path from the entry
+/// reaches (the targets of back edges): the loop headers.
+fn loop_headers(f: ssa.Func) -> List[Bool] {
+  let nb = f.blocks.len()
+  var header: List[Bool] = []
+  // 0 unseen, 1 on the path, 2 done
+  var state: List[Int] = []
+  for _ in 0..nb {
+    header.push(false)
+    state.push(0)
+  }
+  if nb == 0 {
+    return header
+  }
+  // the path as (block, index of its next successor edge)
+  var path: List[(Int, Int)] = [(0, 0)]
+  state[0] = 1
+  while !path.is_empty() {
+    let (b, k) = path[path.len() - 1]
+    let succ = block_succs(f, b)
+    if k >= succ.len() {
+      state[b] = 2
+      let _p = path.pop()
+      continue
+    }
+    path[path.len() - 1] = (b, k + 1)
+    let t = succ[k]
+    if state[t] == 1 {
+      header[t] = true
+    } else if state[t] == 0 {
+      state[t] = 1
+      path.push((t, 0))
+    }
+  }
+  header
+}
+
+/// The target blocks of b's terminator, in order.
+fn block_succs(f: ssa.Func, b: Int) -> List[Int] {
+  var out: List[Int] = []
+  let is = f.blocks[b].instrs
+  if is.is_empty() {
+    return out
+  }
+  for e in f.values[is[is.len() - 1]].succs {
+    out.push(f.edges[e].to)
+  }
+  out
+}
+
+/// v's constant Int, following parameters of blocks entered by one edge
+/// to the argument that edge passes; -1 when it is not a constant.
+fn const_through(f: ssa.Func, v0: Int, fx: SsFacts) -> Int {
+  var v = v0
+  for _ in 0..8 {
+    let x = f.values[v]
+    if x.op == ssa.Op.Const {
+      return match x.aux {
+        ssa.Aux.I(k) => k
+        _ => -1
+      }
+    }
+    if x.op != ssa.Op.Param || x.block < 0 {
+      return -1
+    }
+    let bl = f.blocks[x.block]
+    let k = bl.params.index_of(v) ?? -1
+    if k < 0 || bl.preds.len() != 1 {
+      return -1
+    }
+    // the one edge into the block (Block.preds holds edges)
+    let e = bl.preds[0]
+    if e < 0 || e >= f.edges.len() || k >= f.edges[e].args.len() {
+      return -1
+    }
+    v = f.edges[e].args[k]
+  }
+  -1
+}
+
+/// Rewrites f's small non-escaping rs_with_cap calls to rs_stack; whether
+/// it changed f.
+fn stack_small(var f: ssa.Func) -> Bool {
+  var fx: SsFacts? = None
+  var changed = false
+  for b in 0..f.blocks.len() {
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || aux_str(x.aux) != "rt.rs_with_cap" || x.args.len() != 1 {
+        continue
+      }
+      if fx is None {
+        fx = Some(ss_facts(f))
+      }
+      let facts = fx ?? ss_facts(f)
+      let cap = const_through(f, x.args[0], facts)
+      if cap < 0 || cap > STACK_SMALL_MAX {
+        continue
+      }
+      if escapes(f, v, facts) {
+        continue
+      }
+      f.values[v].aux = ssa.Aux.S("rt.rs_stack")
+      changed = true
+    }
+  }
+  changed
+}
+
+/// Whether the object v makes reaches anything but reads, its own views
+/// and relabellings, reference counting, and parameters of blocks that
+/// are not loop headers.
+fn escapes(f: ssa.Func, v: Int, fx: SsFacts) -> Bool {
+  var seen: Map[Int, Bool] = {}
+  var work = [v]
+  while !work.is_empty() {
+    let a = work.pop() ?? -1
+    if seen.contains(a) {
+      continue
+    }
+    seen[a] = true
+    for (e, k) in fx.euses[a] {
+      let to = f.edges[e].to
+      if fx.header[to] || k >= f.blocks[to].params.len() {
+        return true
+      }
+      work.push(f.blocks[to].params[k])
+    }
+    for u in fx.vuses[a] {
+      let y = f.values[u]
+      match y.op {
+        ssa.Op.Retain | ssa.Op.Release | ssa.Op.Drop => {}
+        ssa.Op.Call => {
+          let name = aux_str(y.aux)
+          if same_object_call(name) && y.args.len() > 0 && y.args[0] == a {
+            work.push(u)
+          } else if !read_call(name) {
+            return true
+          }
+        }
+        _ => return true
+      }
+    }
+  }
+  false
+}
+
+/// The rs_stack objects of f that the rule no longer allows (a later pass
+/// gave one a use that keeps it), as "v<n>" texts; empty when every one
+/// is still only read here. The module verifier fails the build on any
+/// (decision 0395: an escaping frame object is a use after return).
+fn stack_small_violations(f: ssa.Func) -> List[Str] {
+  var out: List[Str] = []
+  var fx: SsFacts? = None
+  for b in 0..f.blocks.len() {
+    for v in f.blocks[b].instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || aux_str(x.aux) != "rt.rs_stack" {
+        continue
+      }
+      if fx is None {
+        fx = Some(ss_facts(f))
+      }
+      if escapes(f, v, fx ?? ss_facts(f)) {
+        out.push("v${v}")
+      }
+    }
+  }
+  out
+}
