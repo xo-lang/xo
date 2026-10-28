@@ -122,6 +122,12 @@ fn (var g: G) unsafe_table(text: Str, ns: Str) -> (Str, Str, Str) {
   ("${g.hidden_global(base)}${base}:\n", "${g.hidden_global(end)}${end}:\n", b.join(""))
 }
 
+/// Whether a range label (`_du<n>`) starts a range: n even.
+fn du_start(a: Str) -> Bool {
+  let i = a.rfind("_du") ?? -1
+  i >= 0 && (Int.parse(a[i + 3..a.len()]) ?? 1) % 2 == 0
+}
+
 /// Whether labels a and b are a range's start and end: one prefix, a's
 /// number even and b's the next.
 fn du_pair(a: Str, b: Str) -> Bool {
@@ -163,11 +169,23 @@ const UNSAFE_INDEX_FLAG = 1099511627776
 /// the function, and the table goes when the function is stripped), and
 /// an index record (the function, its table) in __DATA,xounsafe, which
 /// the linker gathers and keeps only for live functions.
+/// A runtime function bracketed whole (push_fn_text) has its start label
+/// before its own label: no instruction between them, so the range is
+/// the function's, from its label (the start label is in the atom before
+/// it, which the link may place anywhere; 2026-10-28: every such function,
+/// alloc.alloc among them, had no table, and a preemption in the
+/// allocator corrupted the heap in 2 of 40 runs of async_preempt_alloc).
 fn (var g: G) unsafe_fn_tables(text: Str) -> Str {
   var out: List[Str] = []
   var fname = ""
   var labs: List[Str] = []
+  // the range labels since the last instruction
+  var pending = 0
   for l in text.split("\n") {
+    if l.starts_with("\t") && !l.starts_with("\t.") {
+      pending = 0
+      continue
+    }
     if !l.ends_with(":") || l.starts_with("\t") {
       continue
     }
@@ -176,12 +194,19 @@ fn (var g: G) unsafe_fn_tables(text: Str) -> Str {
       let at = name.find("_du") ?? -1
       if at >= 0 && at + 3 < name.len() && is_digits(name[at + 3..name.len()]) {
         labs.push(name)
+        pending += 1
       }
       continue
     }
-    out.push(g.unsafe_fn_table(fname, labs))
+    // a start label (an even number) right before the label is the
+    // function's own: its label stands for it (an end label there is the
+    // function before's)
+    let moves = pending > 0 && du_start(labs[labs.len() - 1])
+    let mine = if moves { labs.len() - 1 } else { labs.len() }
+    out.push(g.unsafe_fn_table(fname, labs[0..mine]))
     fname = name
-    labs = []
+    labs = if moves { [name] } else { [] }
+    pending = 0
   }
   out.push(g.unsafe_fn_table(fname, labs))
   out.join("")

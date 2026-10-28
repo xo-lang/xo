@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [atom-label-before-function.md](atom-label-before-function.md): Observed 2026-10-28: a runtime function's unsafe range start label precedes its own label, so per-function tables (std store builds) gave it to the function before and the allocator had no table (SIGSEGV in alloc.alloc, 2 of 40 runs); a start label right before a function's label is that function's
 - [amd64-baseline-sse2.md](amd64-baseline-sse2.md): amd64's baseline is SSE2 (Go's GOAMD64=v1); an SSSE3 or later instruction needs a cpu.hw() check, with TestX86SIMDGated and a bit-off fallback run
 - [poly1305-64bit-limbs-slower-on-apple-arm64.md](poly1305-64bit-limbs-slower-on-apple-arm64.md): Go's 64 bit limb Poly1305 was 0.656 of the time on x86 but 1.174 on Apple arm64 with 0.667 of the instructions; amd64 only, --ab each architecture
 - [readrequest-not-the-server-layer.md](readrequest-not-the-server-layer.md): Observed 2026-10-26: `parse_head` is the server's parser, so a differential against `net/http.ReadRequest` reads three server-only checks (`Host` required and well formed, a header name with a space) as parser divergences; the oracle applies `ValidHeaderFieldName` and keeps Host valid, which took 300 seeded raw-head cases from 125 failures to zero, and on the response side `RespHead.clen` is readTransfer's realLength (not `ContentLength`) and `close` is shouldClose (not `resp.Close`)
