@@ -21,10 +21,12 @@ fn signature_size(code_size: Int, id: Str) -> Int {
   CS_SUPERBLOB_SIZE + CS_BLOB_SIZE + hash_off + nhashes * 32
 }
 
-/// The signature of data (the whole file before it): flags adhoc and
-/// linker signed, the executable segment (__TEXT) of a main binary.
-fn code_signature(data: Bytes, id: Str, text_off: Int, text_size: Int) -> Bytes {
-  let code_size = data.len()
+/// The signature of head + tail (the whole file before it, in two
+/// pieces, so the caller joins them once): flags adhoc and linker
+/// signed, the executable segment (__TEXT) of a main binary.
+fn code_signature(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_size: Int) -> Bytes {
+  let hl = head.len()
+  let code_size = hl + tail.len()
   let nhashes = (code_size + CS_PAGE - 1) / CS_PAGE
   let id_off = CS_CODEDIRECTORY_SIZE
   let hash_off = id_off + id.len() + 1
@@ -65,7 +67,17 @@ fn code_signature(data: Bytes, id: Str, text_off: Int, text_size: Int) -> Bytes 
   var p = 0
   while p < code_size {
     let end = imin(code_size, p + CS_PAGE)
-    o.bytes(crypto.sha256(data[p..end]))
+    if p >= hl {
+      o.bytes(crypto.sha256(tail[p - hl..end - hl]))
+    } else {
+      // a page holding the head's end
+      var x = crypto.hasher(crypto.Hash.Sha256)
+      x.write(head[p..imin(end, hl)])
+      if end > hl {
+        x.write(tail[0..end - hl])
+      }
+      o.bytes(x.sum())
+    }
     p = end
   }
   o.done()

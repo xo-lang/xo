@@ -265,6 +265,16 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   copies and growth about 3, the signature's and UUID's SHA-256 2.3, DWARF 1.5, relocation 1.4),
   store_cut 2.9, the run tables' decoding 2, resolve 1.8. __DWARF left: 1.88 MB (info 635 KB,
   mostly each part's own types; line 262 KB; line_str 115 KB). The target is 8 to 12 ms.
+- Second round (2026-10-28): the store's header is read in place (it was sliced, a copy, each
+  link), a cut section's run table is read only when its section is used, and an object whose
+  xo unit describes only dead functions (and no variable: xo_static stays) loses all its DWARF,
+  in the strip and the store alike (dw_droppable). The executable is assembled in one buffer:
+  the body is written after the header's place, the UUID hashes the header's zeros and the body
+  with a streaming SHA-256 (the same bytes as before), and code_signature takes the header and
+  the body apart, so the file is one copy, not three fresh 3 MB buffers (link.xo write
+  4.6 ms of the 21 at line 1746). llvm-fib: 17.2 ms of CPU a link (1.74 s over 101; write 7.1 to
+  3.3 ms), wall min 19.5 ms and median 20.9 at a load average of 25 to 59, binary 2.71 MB
+  (__DWARF 1.62 MB); the store check passes.
 
 ## Alternatives
 

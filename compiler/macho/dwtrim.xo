@@ -16,6 +16,8 @@ struct DwSeg {
   end: Int
   fo: Int = -1
   fk: Int = -1
+  /// a __debug_info run's entry's tag (0 for the others)
+  tag: Int = 0
 }
 
 /// An abbreviation: its tag, whether it has children, its attributes'
@@ -188,10 +190,10 @@ fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSe
       }
       let (fo, fk) = if a.tag == 0x2e && lo >= 0 { l.dw_fn_at(o, s, rel_at, lo) } else { (-1, -1) }
       if fo >= 0 {
-        runs.push(DwSeg{start: p, end: q, fo: fo, fk: fk})
+        runs.push(DwSeg{start: p, end: q, fo: fo, fk: fk, tag: a.tag})
       } else {
         last_other = q
-        runs.push(DwSeg{start: p, end: q})
+        runs.push(DwSeg{start: p, end: q, tag: a.tag})
       }
       p = q
     }
@@ -376,6 +378,25 @@ fn dw_cut(s: ISect, segs: List[DwSeg], live: List[List[Bool]]) -> ISect {
     }
   }
   out
+}
+
+/// Whether an xo unit's __debug_info runs (dw_segs) let the object's
+/// DWARF go when every function they describe is dead: it describes at
+/// least one, and no variable (xo_static, which the debugger finds the
+/// runtime's records through, decision 0253).
+fn dw_droppable(g: List[DwSeg]) -> Bool {
+  g.any(fn(x: DwSeg) -> Bool { x.fo >= 0 }) && !g.any(fn(x: DwSeg) -> Bool { x.tag == 0x34 })
+}
+
+/// Whether object o's DWARF goes (dw_droppable, every function dead),
+/// given its runs by section index (dw_all_segs).
+fn (l: Linker) dw_drop(o: Int, segs: Map[Int, List[DwSeg]], live: List[List[Bool]]) -> Bool {
+  for (k, g) in segs {
+    if l.objs[o].sects[k].name == "__debug_info" && dw_droppable(g) {
+      return !g.any(fn(x: DwSeg) -> Bool { x.fo >= 0 && live[x.fo][x.fk] })
+    }
+  }
+  false
 }
 
 /// The __debug_info, __debug_line and __debug_loclists runs of each split object's xo unit

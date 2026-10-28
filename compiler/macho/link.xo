@@ -1537,8 +1537,12 @@ fn (var l: Linker) write() -> Bytes {
   l.segs[le].filesize = link_bytes.len() + sig_size
   l.segs[le].vmsize = align_up(l.segs[le].filesize, PAGE)
 
-  // the contents of the segments before __LINKEDIT
-  var body = new_out(le_off + link_bytes.len())
+  // the contents of the segments before __LINKEDIT, after the header
+  // and load commands (hl bytes, written last): one buffer, so the file
+  // is one more copy, not three (a 3 MB program spent about 4.6 ms of a
+  // 21 ms link in fresh buffers, 2026-10-28)
+  let hl = 32 + l.cmds_size
+  var body = Out{b: BytesBuilder.with_capacity(le_off + link_bytes.len() - hl), n: hl}
   for gi in 1..le {
     let g = l.segs[gi]
     if g.name == "__DWARF" {
@@ -1566,8 +1570,11 @@ fn (var l: Linker) write() -> Bytes {
   }
   body.bytes(link_bytes)
   let rest = body.done()
-  // the UUID: a hash of everything but the header
-  let uuid = crypto.sha256(rest)[0..16]
+  // the UUID: a hash of everything but the header (as zeros)
+  var uh = crypto.hasher(crypto.Hash.Sha256)
+  uh.write(zeros(hl))
+  uh.write(rest)
+  let uuid = uh.sum()[0..16]
   l.uuid = uuid
 
   var h = new_out(32 + l.cmds_size)
@@ -1741,9 +1748,13 @@ fn (var l: Linker) write() -> Bytes {
   }
   // the header and load commands fill the start of __TEXT's first page
   let head = h.done()
-  let file = head + rest[head.len()..]
   let text = l.segs[1]
-  file + code_signature(file, l.opts.name, text.fileoff, text.filesize)
+  let sig = code_signature(head, rest, l.opts.name, text.fileoff, text.filesize)
+  var file = BytesBuilder.with_capacity(head.len() + rest.len() + sig.len())
+  file.write(head)
+  file.write(rest)
+  file.write(sig)
+  file.freeze()
 }
 
 /// The exports trie: __mh_execute_header at offset 0.

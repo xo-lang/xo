@@ -241,5 +241,5 @@ pub fn embed_dwarf(exe: Bytes, dsym: Bytes, name: Str) -> Bytes ! Str {
   if sig_cmd < 0 {
     return Ok(file)
   }
-  Ok(file + code_signature(file, ident, text_off, text_size))
+  Ok(file + code_signature(file, "".bytes(), ident, text_off, text_size))
 }

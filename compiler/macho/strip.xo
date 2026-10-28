@@ -299,8 +299,20 @@ fn (var l: Linker) dead_strip() {
     if !l.objs[o].live || !l.objs[o].subsections {
       continue
     }
-    for (k, g) in l.dw_all_segs(o) {
-      l.objs[o].sects[k] = dw_cut(l.objs[o].sects[k], g, live)
+    let segs = l.dw_all_segs(o)
+    if l.dw_drop(o, segs, live) {
+      // its unit describes only dead functions: no DWARF at all
+      for k in 0..l.objs[o].sects.len() {
+        if l.objs[o].sects[k].seg == "__DWARF" {
+          l.objs[o].sects[k].data = "".bytes()
+          l.objs[o].sects[k].size = 0
+          l.objs[o].sects[k].relocs = []
+        }
+      }
+    } else {
+      for (k, g) in segs {
+        l.objs[o].sects[k] = dw_cut(l.objs[o].sects[k], g, live)
+      }
     }
     for k in 0..l.objs[o].sects.len() {
       let s = l.objs[o].sects[k]

@@ -171,6 +171,22 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
         sw32(hb, ord)
       }
     }
+    // its xo unit's functions, when the unit goes with them
+    // (dw_droppable): the atoms
+    var fns: List[Int] = []
+    for (k, g) in segs {
+      if ob.sects[k].name == "__debug_info" && dw_droppable(g) {
+        for x in g {
+          if x.fo >= 0 {
+            fns.push(base[x.fo] + x.fk)
+          }
+        }
+      }
+    }
+    sw32(hb, fns.len())
+    for id in fns {
+      sw32(hb, id)
+    }
     // each section's edges, as store atom numbers
     for (k, s) in ob.sects.indexed() {
       var refs: List[(Int, Int)] = []
@@ -232,9 +248,11 @@ struct SSect {
   data_len: Int
   rel_at: Int
   nrel: Int
-  /// a cut DWARF section's runs (dwtrim.xo): start, end, the function's
-  /// store atom (-1: kept), its relocations' place and count
-  segs: List[(Int, Int, Int, Int, Int)] = []
+  /// a cut DWARF section's runs (dwtrim.xo), nseg of them at seg_at in
+  /// the header: start, end, the function's store atom (or 0xffffffff:
+  /// kept), its relocations' place and count
+  seg_at: Int = 0
+  nseg: Int = 0
 }
 
 /// link_store: link_debug of the program's inputs and the store's
@@ -245,7 +263,8 @@ pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Resu
   }
   let hlen = rd32(store, 8)
   let data0 = 12 + hlen
-  var r = SR{b: store[12..12 + hlen]}
+  // (read in place: a slice is a copy)
+  var r = SR{b: store, at: 12}
   var l = Linker{opts: opts}
   // the program's objects after the store's (a build passes its parts
   // first), whole: what they name roots the walk
@@ -263,6 +282,8 @@ pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Resu
   var base: List[Int] = []
   // the store's global definitions: name -> store atom
   var defs: Map[Bytes, Int] = {}
+  // each object's droppable unit's function atoms (none: kept)
+  var unit_fns: List[List[Int]] = []
   for _ in 0..n {
     base.push(edges.len())
     var ob = IObj{path: bstr(r.bytes()), subsections: true}
@@ -280,15 +301,9 @@ pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Resu
       let ra = r.u32()
       let nr = r.u32()
       let ng = r.u32()
-      var segs: List[(Int, Int, Int, Int, Int)] = []
-      for _ in 0..ng {
-        let gs = r.u32()
-        let ge = r.u32()
-        let gf = r.u32()
-        let gr = r.u32()
-        segs.push((gs, ge, if gf == 0xffffffff { -1 } else { gf }, gr, r.u32()))
-      }
-      ss.push(SSect{seg: seg, name: name, addr: addr, size: size, align: align, flags: flags, data_at: da, data_len: dl, rel_at: ra, nrel: nr, segs: segs})
+      let ga = r.at
+      r.at += 20 * ng
+      ss.push(SSect{seg: seg, name: name, addr: addr, size: size, align: align, flags: flags, data_at: da, data_len: dl, rel_at: ra, nrel: nr, seg_at: ga, nseg: ng})
     }
     let nsym = r.u32()
     for _ in 0..nsym {
@@ -318,6 +333,12 @@ pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Resu
       }
       ob.split[k] = atoms
     }
+    let nfn = r.u32()
+    var ufns: List[Int] = []
+    for _ in 0..nfn {
+      ufns.push(r.u32())
+    }
+    unit_fns.push(ufns)
     for _ in 0..ns {
       let ne = r.u32()
       var e: List[Int] = []
@@ -378,13 +399,20 @@ pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Resu
       }
     }
   }
+  // an object whose xo unit describes only dead functions: no DWARF
+  var dw_dropped: List[Bool] = []
+  for fs in unit_fns {
+    dw_dropped.push(!fs.is_empty() && !fs.any(fn(id: Int) -> Bool { live[id] }))
+  }
   // the store's sections: a live atom's bytes and relocations, a whole
   // section's, a dead atom empty
   for i in 0..n {
     var sects: List[ISect] = []
     for (k, s) in ssects[i].indexed() {
       let whole = s.seg == "__LD" || s.seg == "__DWARF" || (s.flags & S_ATTR_DEBUG_FLAG) != 0 || (s.seg == "__TEXT" && s.name == "__eh_frame")
-      if !s.segs.is_empty() {
+      if s.seg == "__DWARF" && dw_dropped[i] {
+        sects.push(ISect{seg: s.seg, name: s.name, addr: s.addr, size: 0, align: s.align, flags: s.flags, data: "".bytes()})
+      } else if s.nseg > 0 {
         sects.push(store_cut(store, data0, s, live))
       } else if whole || live[base[i] + k] {
         let da = data0 + s.data_at
@@ -429,26 +457,29 @@ pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Resu
 fn store_cut(store: Bytes, data0: Int, s: SSect, live: List[Bool]) -> ISect {
   var segs: List[DwSeg] = []
   var keep: List[Bool] = []
-  for (gs, ge, gf, _, _) in s.segs {
-    segs.push(DwSeg{start: gs, end: ge})
-    keep.push(gf < 0 || live[gf])
+  for i in 0..s.nseg {
+    let g = s.seg_at + 20 * i
+    let gf = rd32(store, g + 8)
+    segs.push(DwSeg{start: rd32(store, g), end: rd32(store, g + 4)})
+    keep.push(gf == 0xffffffff || live[gf])
   }
   let (at, n) = dw_new_starts(segs, keep)
   var b = BytesBuilder.with_capacity(n)
   var t = ISect{seg: s.seg, name: s.name, addr: s.addr, size: n, align: s.align, flags: s.flags, data: "".bytes()}
   let da = data0 + s.data_at
-  for (i, (gs, ge, _, gr, gn)) in s.segs.indexed() {
+  for (i, g) in segs.indexed() {
     if !keep[i] {
       continue
     }
-    if gs == 0 {
-      dw_head(b, store[da..da + ge], s.name == "__debug_loclists", n, segs, at)
+    if g.start == 0 {
+      dw_head(b, store[da..da + g.end], s.name == "__debug_loclists", n, segs, at)
     } else {
-      b.write(store[da + gs..da + ge])
+      b.write(store[da + g.start..da + g.end])
     }
-    for j in 0..gn {
+    let gr = rd32(store, s.seg_at + 20 * i + 12)
+    for j in 0..rd32(store, s.seg_at + 20 * i + 16) {
       var r = rd_reloc(store, data0 + gr + 12 * j)
-      r.addr = r.addr - gs + at[i]
+      r.addr = r.addr - g.start + at[i]
       t.relocs.push(r)
     }
   }
