@@ -82,6 +82,23 @@ fn (g: G) switch_path(b: Int, h: Int, body: List[Bool], depth: Int) -> List[Int]
   [b] + found
 }
 
+/// Whether the pass runs on function name under the XO_THREAD_SWITCH
+/// filter: every function when it is empty, those whose name contains
+/// the text, with a leading `!` every function but those, or with
+/// `@FILE` the names read from it (Module.thread_switch_names).
+fn tsw_wanted(filter: Str, names: Map[Str, Bool], name: Str) -> Bool {
+  if filter.is_empty() {
+    return true
+  }
+  if filter.starts_with("@") {
+    return names.contains(name)
+  }
+  if filter.starts_with("!") {
+    return !name.contains(filter[1..filter.len()])
+  }
+  name.contains(filter)
+}
+
 /// Whether block b ends in a jump (its pad, if any, as a second target)
 /// to block t.
 fn (g: G) jumps_to(b: Int, t: Int) -> Bool {
@@ -95,7 +112,7 @@ fn (g: G) jumps_to(b: Int, t: Int) -> Bool {
 /// cycles with no header of their own, which are never threaded again),
 /// the predecessors are read again after each loop's copies.
 fn (var g: G) thread_switch() {
-  if g.hot.is_empty() {
+  if g.hot.is_empty() || !tsw_wanted(g.m.thread_switch_only, g.m.thread_switch_names, g.f.name) {
     return
   }
   var changed = false

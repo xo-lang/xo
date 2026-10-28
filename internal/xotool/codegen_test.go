@@ -30,6 +30,7 @@ type inputClass struct {
 var codegenEnv = map[string]inputClass{
 	"XO_ARM64_REGS":           {"keyed", "regs=${m.arm64_regs}"},
 	"XO_ARM64_PAD":            {"keyed", "pad=${m.arm64_pad}"},
+	"XO_THREAD_SWITCH":        {"bypass", "passes_changed(os)"}, // decision 0397's per function filter, for bisecting
 	"XO_POISON_FRAMES":        {"keyed", "poison=${m.poison_frames}"},
 	"XO_HEAP_GUARD":           {"keyed", "guard=${m.heap_guard}"},
 	"XO_NOLIBC":               {"keyed", "nolibc=${m.nolibc}"},

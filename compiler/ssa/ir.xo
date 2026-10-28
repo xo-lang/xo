@@ -413,6 +413,13 @@ pub struct Module {
   /// placement effect from a cost of the code's shape (0, the default:
   /// none).
   pub arm64_pad: Int = 0
+  /// Triage of threaded dispatch (decision 0397, $XO_THREAD_SWITCH):
+  /// only the functions whose name contains this text are threaded, or
+  /// with a leading `!` every function but those, or with `@FILE` the
+  /// functions named in FILE, one a line (bisecting a self build by
+  /// function); the backend caches are bypassed while it is set.
+  pub thread_switch_only: Str = ""
+  pub thread_switch_names: Map[Str, Bool] = {}
   /// The arm64 backend fills each frame's spill slots, outgoing argument
   /// words and memory area (frame homes, aggregates) with POISON in the
   /// prologue (XO_POISON_FRAMES=1): a read before any write sees a value

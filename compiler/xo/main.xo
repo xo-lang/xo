@@ -2447,7 +2447,9 @@ fn passes_changed(os: Os) -> Bool {
   if !err.is_empty() {
     fail(os, err)
   }
-  !off.is_empty() || !on.is_empty()
+  // XO_THREAD_SWITCH (a per function filter of decision 0397's pass, for
+  // bisecting) changes the code the same way
+  !off.is_empty() || !on.is_empty() || !(os.env.get("XO_THREAD_SWITCH") ?? "").is_empty()
 }
 
 /// arm64's inlining of mi, and whether the inlined module is to be
@@ -2538,6 +2540,15 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   gm.race = o.race
   gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
   gm.arm64_pad = Int.parse(os.env.get("XO_ARM64_PAD") ?? "") ?? 0
+  gm.thread_switch_only = os.env.get("XO_THREAD_SWITCH") ?? ""
+  if gm.thread_switch_only.starts_with("@") {
+    let nf = gm.thread_switch_only[1..gm.thread_switch_only.len()]
+    for n in (os.fs.read_text(nf).ok() ?? "").split("\n") {
+      if !n.trim().is_empty() {
+        gm.thread_switch_names[n.trim()] = true
+      }
+    }
+  }
   gm.poison_frames = (os.env.get("XO_POISON_FRAMES") ?? "") == "1"
   // DWARF line tables (decision 0239): on, except for `xo asm`, -s, and
   // a release build without --debug-info
