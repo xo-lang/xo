@@ -302,6 +302,16 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   built per link). llvm-fib: min 13.8 ms, median 14.6 (n=21; round four 16.0 and 16.3); the
   store check passes. The check caught two wrong first rules: an undefined symbol kept with
   its definition dropped, and a dead definition another part's DWARF names dropped.
+- Sixth round, DWARF types (2026-10-28): a unit's types (base, structure, pointer, array,
+  enumeration, union, typedef) and abstract subprograms are kept only when a kept entry refers
+  to them (DW_FORM_ref4, closed over: types refer to types; dwtrim.xo dw_keep_with), and every
+  kept reference is moved by its target's shift as the runs are written (dw_write_runs), in the
+  strip and the store alike. The store's run records carry each run's references (STORE_RUN 28
+  bytes; the file is XOSTORE2), read only for kept runs. llvm-fib: __debug_info 635 to 248 KB,
+  __DWARF 1.64 to 1.36 MB, binary 2.72 to 2.44 MB; dwarfdump --verify clean; TestStdStoreUnwind
+  (lldb's backtrace) passes; the store check passes. Interleaved with main's xo on one loaded
+  Mac (n=40 each): median 15.8 ms against 16.5 (min 15.6 and 15.3). Reading every run's
+  references first cost more than the cut saved (17.0 against 16.6).
 
 ### The store's format-neutral core (xo-lang-4, 2026-10-28)
 

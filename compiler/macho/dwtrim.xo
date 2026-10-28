@@ -310,18 +310,20 @@ fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSe
 
 /// Which runs stay: a function's when it is live (fn_live), a type's or
 /// an abstract subprogram's when a kept run refers to it, the others
-/// always.
-fn dw_keep(segs: List[DwSeg], fn_live: fn(DwSeg) -> Bool) -> List[Bool] {
+/// always. A kept run's references are read with refs(i) (the store's
+/// are in place: only the kept runs' are decoded) into segs[i].refs.
+fn dw_keep_with(var segs: List[DwSeg], fn_live: fn(DwSeg) -> Bool, refs: fn(Int) -> List[(Int, Int)]) -> List[Bool] {
   var keep: List[Bool] = List.with_capacity(segs.len())
   var work: List[Int] = []
   for (i, g) in segs.indexed() {
     let k = if g.fo >= 0 { fn_live(g) } else { !g.typ }
     keep.push(k)
-    if k && !g.refs.is_empty() {
+    if k {
       work.push(i)
     }
   }
   while let Some(i) = work.pop() {
+    segs[i].refs = refs(i)
     for (_, t) in segs[i].refs {
       let j = dw_run_at(segs, t)
       if j >= 0 && !keep[j] {
@@ -331,6 +333,12 @@ fn dw_keep(segs: List[DwSeg], fn_live: fn(DwSeg) -> Bool) -> List[Bool] {
     }
   }
   keep
+}
+
+/// dw_keep_with for runs whose references are read already.
+fn dw_keep(segs: List[DwSeg], fn_live: fn(DwSeg) -> Bool) -> List[Bool] {
+  var g2 = segs
+  dw_keep_with(g2, fn_live, fn(i: Int) -> List[(Int, Int)] { segs[i].refs })
 }
 
 /// The run holding offset a, -1 for none.

@@ -338,15 +338,20 @@ pub fn (v: StoreView) cut(q: Int, live: List[Bool], loclists: Bool) -> (Bytes, L
   for i in 0..ns {
     let g = ga + STORE_RUN * i
     let gf = rd32(store, g + 8)
-    var refs: List[(Int, Int)] = []
+    // a function's run: its store atom in fo (dw_keep asks live)
+    segs.push(DwSeg{start: rd32(store, g), end: rd32(store, g + 4), fo: if gf < 0xfffffffe { gf } else { -1 }, typ: gf == 0xfffffffe})
+  }
+  // the references of the kept runs only, read in place
+  let keep = dw_keep_with(segs, fn(g: DwSeg) -> Bool { live[g.fo] }, fn(i: Int) -> List[(Int, Int)] {
+    let g = ga + STORE_RUN * i
     let ra = v.data0 + rd32(store, g + 20)
-    for j in 0..rd32(store, g + 24) {
+    let nr = rd32(store, g + 24)
+    var refs: List[(Int, Int)] = List.with_capacity(nr)
+    for j in 0..nr {
       refs.push((rd32(store, ra + 8 * j), rd32(store, ra + 8 * j + 4)))
     }
-    // a function's run: its store atom in fo (dw_keep asks live)
-    segs.push(DwSeg{start: rd32(store, g), end: rd32(store, g + 4), fo: if gf < 0xfffffffe { gf } else { -1 }, typ: gf == 0xfffffffe, refs: refs})
-  }
-  let keep = dw_keep(segs, fn(g: DwSeg) -> Bool { live[g.fo] })
+    refs
+  })
   let (at, n) = dw_new_starts(segs, keep)
   var b = BytesBuilder.with_capacity(n)
   let da = v.data0 + rec_data_at(store, q)
