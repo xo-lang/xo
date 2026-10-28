@@ -89,6 +89,8 @@ var codegenEnv = map[string]inputClass{
 	"XO_SEPCOMP_STORE":        {"none", ""},                                    // links a separately compiled program through std's store (decision 0388); the same binary as through std's objects
 	"XO_STD_STORE_CHECK":      {"none", ""},                                    // also links the parts and fails on a difference
 	"XO_STD_STORE_REPEAT":     {"none", ""},                                    // times N more store links (a measurement)
+	"XO_SEPCOMP_BG":           {"none", ""},                                    // 0: a miss of std's variant starts no background build (decision 0388); the build is whole program either way
+	"XO_STD_BG_CHILD":         {"none", ""},                                    // the background build of std's variant (stdcache.xo std_variant_peek's child): it takes the lock; the same entries
 	"XO_SEPCOMP":              {"keyed", "sepcomp ${crypto.sha256(b.freeze()"}, // std's functions as externs (decision 0388 stage 3): cache_id holds the facts' hash
 	"XO_SEPCOMP_FACTS":        {"keyed", "sepcomp ${crypto.sha256(b.freeze()"},
 	"XO_SEPCOMP_OBJS":         {"link", ""}, // std's object files an XO_SEPCOMP build links (decision 0388 stage 3); the binary key holds their names, sizes and times

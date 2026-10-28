@@ -573,3 +573,12 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
 - The cache's windows store keeps its PDB parts beside it (compiler/xo stdcache.xo:
   obj/std.store.pdb renamed to <key>.store.pdb before the store, kept used with it), which
   pe_link reads next to XO_SEPCOMP_STORE; without them the link reads std's DWARF instead.
+- A miss of std's variant does not wait (step d, Lead and Lang 1, 2026-10-28): compiler/xo
+  stdcache.xo std_variant_peek answers a released or cached variant, and on a miss starts
+  its build as a detached, niced `xo dev stdcache` child and returns None, so that build
+  goes whole program (never slower than without separate compilation) and the next edit
+  finds it. The child builds only while it holds the advisory lock std/.bg.lock in the
+  cache (Fs.try_lock: one background build at a time across variants, and the lock goes
+  with its process, so a builder that died blocks nothing), and std/.bg-info says what it
+  builds for `xo dev stdcache`. XO_SEPCOMP_BG=0 turns it off (internal/xotool sets it for the Go
+  tests, heavy.sh for agents' runs); none on windows yet (no detached child there, as prune_bins).

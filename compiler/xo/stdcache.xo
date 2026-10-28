@@ -54,8 +54,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     }
     return Some(p)
   }
-  let host = host_os(os)
-  let dir = backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
+  let dir = std_cache_dir(os)
   if dir.is_empty() {
     if phases {
       os.stdio.eprintln("cache std off (XO_BACKEND_CACHE=off): the whole program is built")
@@ -81,12 +80,25 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     }
     return Some((store, facts))
   }
+  // the background child (std_variant_peek's) builds only while it
+  // holds the lock: one background build at a time, every variant; the
+  // lock goes with its process, so a builder that died leaves none
+  let child = (os.env.get("XO_STD_BG_CHILD") ?? "") == "1"
+  var held: FileLock? = None
+  if child {
+    os.fs.create_dir_all("${dir}/std").ignore_err("the lock's open reports it")
+    match os.fs.try_lock("${dir}/std/${STD_BG_LOCK}") {
+      Ok(Some(l)) => held = Some(l)
+      _ => return None
+    }
+    os.fs.write("${dir}/std/${STD_BG_INFO}", "${tgoos}/${tgoarch} conc=${conc} since ${os.clock.now().format_rfc3339()}\n".bytes()).ignore_err("only what xo dev stdcache shows")
+  }
   // built in a directory of its own under the cache, then each file
   // renamed into place (a reader sees a whole file or none)
   let tmp = "${dir}/std/.build-${os.rand.bytes(6).to_hex()}"
   let t0 = os.clock.now()
   let xo = check.executable(os.env, os.fs)
-  let env = ["XO_STD=${ctx.std}", "XO_BACKEND_CACHE_DIR=${tmp}/cache", "XO_SEPCOMP=", "XO_SEPCOMP_FACTS=", "XO_SEPCOMP_STORE=", "XO_STD_OBJ=", "XO_STD_ROOTS=", "XO_STD_STORE="]
+  let env = ["XO_STD=${ctx.std}", "XO_BACKEND_CACHE_DIR=${tmp}/cache", "XO_SEPCOMP=", "XO_SEPCOMP_FACTS=", "XO_SEPCOMP_STORE=", "XO_STD_OBJ=", "XO_STD_ROOTS=", "XO_STD_STORE=", "XO_STD_BG_CHILD=", "XO_SEPCOMP_BG=0"]
   let ok = match os.proc.run("env", env + [xo, "dev", "stdobj", "--target=${tgoos}/${tgoarch}", "--conc=${if conc { "1" } else { "0" }}", "--facts=${tmp}/std.stdf", "${tmp}/obj"]) {
     Ok(r) => r.code == 0
     Err(_) => false
@@ -106,10 +118,111 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     done = b
   }
   os.fs.remove_all(tmp).ignore_err("only disk: the prune takes a leftover build directory")
+  if let Some(l) = held {
+    os.fs.remove("${dir}/std/${STD_BG_INFO}").ignore_err("only what xo dev stdcache shows")
+    l.unlock()
+  }
   if phases {
     os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} ${if done { "built" } else { "failed: the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
   }
   if done { Some((store, facts)) } else { None }
+}
+
+/// The lock a background build of std's variants holds, and what it is
+/// building, in the cache's std directory.
+const STD_BG_LOCK = ".bg.lock"
+const STD_BG_INFO = ".bg-info"
+
+/// The paths of std's store and facts for the target and variant when
+/// they are ready (a release's, or the cache's), else None after starting
+/// their build in the background (a detached, niced `xo dev stdcache`)
+/// for the next build: the build that asked goes whole program, never
+/// slower than without separate compilation (decision 0388, the default).
+/// XO_SEPCOMP_BG=0 starts none; one runs at a time; phases: a line on
+/// standard error saying which.
+fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: Bool) -> (Str, Str)? {
+  if let Some(p) = std_released(os, ctx.std, tgoos, tgoarch, conc) {
+    if phases {
+      os.stdio.eprintln("cache std released conc=${conc}")
+    }
+    return Some(p)
+  }
+  let dir = std_cache_dir(os)
+  if dir.is_empty() {
+    return None
+  }
+  let key = std_cache_key(os, ctx.std, tgoos, tgoarch, conc)
+  if key.is_empty() {
+    return None
+  }
+  let store = "${dir}/std/${key}.store"
+  let facts = "${dir}/std/${key}.stdf"
+  if (os.fs.exists(store).ok() ?? false) && (os.fs.exists(facts).ok() ?? false) {
+    prune.mark_used_within(os.fs, os.clock, store, BACKEND_TOUCH)
+    prune.mark_used_within(os.fs, os.clock, facts, BACKEND_TOUCH)
+    // xo:allow XO0903 only a windows store has its PDB parts
+    if os.fs.exists("${store}.pdb").ok() ?? false {
+      prune.mark_used_within(os.fs, os.clock, "${store}.pdb", BACKEND_TOUCH)
+    }
+    if phases {
+      os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} reused")
+    }
+    return Some((store, facts))
+  }
+  let say = fn(why: Str) {
+    if phases {
+      os.stdio.eprintln("std variant: miss, ${why}")
+    }
+  }
+  if (os.env.get("XO_SEPCOMP_BG") ?? "") == "0" {
+    say("the whole program is built (XO_SEPCOMP_BG=0)")
+    return None
+  }
+  if host_os(os) == "windows" {
+    // no detached child there yet (prune_bins runs inline the same way)
+    say("the whole program is built (no background build on windows)")
+    return None
+  }
+  // one background build at a time: a held lock is a build running
+  os.fs.create_dir_all("${dir}/std").ignore_err("the lock's open reports it")
+  match os.fs.try_lock("${dir}/std/${STD_BG_LOCK}") {
+    Ok(Some(l)) => l.unlock()
+    Ok(None) => {
+      say("a background build is running, the whole program is built")
+      return None
+    }
+    Err(_) => return None
+  }
+  let xo = check.executable(os.env, os.fs)
+  // its own std, cache and target (the child holds the lock while it
+  // builds; two that start at once build one, the other finds it held)
+  let script = "XO_STD_BG_CHILD=1 XO_STD=\"$1\" XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT= nice -n 10 \"$0\" dev stdcache --conc=$2 --target=$3 </dev/null >/dev/null 2>&1 &"
+  os.proc.cmd("/bin/sh", ["-c", script, xo, ctx.std, if conc { "1" } else { "0" }, "${tgoos}/${tgoarch}"]).run().ignore_err("a build that does not start starts on a later build")
+  say("building in the background, the whole program is built")
+  None
+}
+
+/// What a background build of std's variants is building ("" for none).
+fn std_bg_running(os: Os) -> Str {
+  let dir = std_cache_dir(os)
+  if dir.is_empty() {
+    return ""
+  }
+  match os.fs.try_lock("${dir}/std/${STD_BG_LOCK}") {
+    Ok(Some(l)) => {
+      l.unlock()
+      ""
+    }
+    Ok(None) => ((os.fs.read("${dir}/std/${STD_BG_INFO}").ok() ?? b"").to_str() ?? "").trim()
+    Err(_) => ""
+  }
+}
+
+/// The back-end cache's directory std's entries live under ("" when the
+/// cache is off).
+fn std_cache_dir(os: Os) -> Str {
+  let host = host_os(os)
+  backend_cache_dir(os, Ctx{goos: host, std: "", xo: "", cache: user_cache_dir(os, host)})
 }
 
 /// The release's store and facts for the target and variant: in

@@ -289,6 +289,12 @@ func init() {
 	if os.Getenv("XO_INLINE_STRICT") == "" {
 		os.Setenv("XO_INLINE_STRICT", "1")
 	}
+	// no background build of std's variants (decision 0388,
+	// stdcache.xo std_variant_peek): a test's builds must not leave a
+	// detached child building std behind them
+	if os.Getenv("XO_SEPCOMP_BG") == "" {
+		os.Setenv("XO_SEPCOMP_BG", "0")
+	}
 }
 
 func Command() ([]string, error) {

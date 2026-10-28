@@ -48,18 +48,22 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
   }
 }
 
-/// stdcache_cmd is `xo dev stdcache [--conc=0|1] [--target=OS/ARCH]`:
+/// stdcache_cmd is `xo dev stdcache [--conc=0|1] [--target=OS/ARCH] [--peek]`:
 /// std's store and facts for the variant from the back-end cache
 /// (stdcache.xo std_variant, built on a miss), their paths on two lines;
 /// exit 1 when there are none (decision 0388). The release prebuilds the
-/// host's with it.
+/// host's with it. --peek: std_variant_peek's answer instead (a miss
+/// starts the build in the background and exits 1).
 fn stdcache_cmd(os: Os, args: List[Str]) -> Int {
   let host = host_os(os)
   var conc = false
   var goos = host
   var goarch = host_arch()
+  var peek = false
   for a in args {
-    if a == "--conc=1" {
+    if a == "--peek" {
+      peek = true
+    } else if a == "--conc=1" {
       conc = true
     } else if a == "--conc=0" {
       conc = false
@@ -68,12 +72,19 @@ fn stdcache_cmd(os: Os, args: List[Str]) -> Int {
       goos = t[0]
       goarch = t[1]
     } else {
-      os.stdio.eprintln("usage: xo dev stdcache [--conc=0|1] [--target=OS/ARCH]")
+      os.stdio.eprintln("usage: xo dev stdcache [--conc=0|1] [--target=OS/ARCH] [--peek]")
       return 2
     }
   }
   let ctx = Ctx{goos: host, std: check.std_dir(os.env, os.fs), xo: "", cache: user_cache_dir(os, host)}
-  match std_variant(os, ctx, goos, goarch, conc, true) {
+  if (os.env.get("XO_STD_BG_CHILD") ?? "") != "1" {
+    let bg = std_bg_running(os)
+    if !bg.is_empty() {
+      os.stdio.eprintln("xo dev stdcache: a background build is running (${bg})")
+    }
+  }
+  let got = if peek { std_variant_peek(os, ctx, goos, goarch, conc, true) } else { std_variant(os, ctx, goos, goarch, conc, true) }
+  match got {
     Some((store, facts)) => {
       os.stdio.println(store)
       os.stdio.println(facts)
