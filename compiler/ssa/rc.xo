@@ -2247,40 +2247,85 @@ fn (var r: Rc) group_leaves(f: Func, root: Int, comp: Int) -> List[Leaf] {
 }
 
 fn remove_dead_fields(var f: Func) {
-  var changed = true
-  while changed {
-    changed = false
-    var used: List[Bool] = []
-    for _ in 0..f.values.len() {
-      used.push(false)
-    }
-    for bl in f.blocks {
-      for v in bl.instrs {
-        for a in f.values[v].args {
-          if a >= 0 {
-            used[a] = true
-          }
+  // use counts once, then a worklist: a field read with no use goes, and
+  // its own operand, if a field read, is checked again (a chain a.b.c
+  // dies inner-most last). One pass over the function, and only a block
+  // with a dead read gets a new instruction list (the fixed point of
+  // whole rescans rebuilt every block each round, two rounds at least:
+  // 3.75 s of a cold self-build's 174.7 s CPU, 2026-10-28). The same
+  // reads go as before: a read is dead exactly when nothing nuse it once
+  // the dead reads using it are gone.
+  let nv = f.values.len()
+  var nuse = List[Int].with_capacity(nv)
+  for _ in 0..nv {
+    nuse.push(0)
+  }
+  for bl in f.blocks {
+    for v in bl.instrs {
+      for a in f.values[v].args {
+        if a >= 0 {
+          nuse[a] += 1
         }
-        for e in f.values[v].succs {
-          for a in f.edges[e].args {
-            if a >= 0 {
-              used[a] = true
-            }
+      }
+      for e in f.values[v].succs {
+        for a in f.edges[e].args {
+          if a >= 0 {
+            nuse[a] += 1
           }
         }
       }
     }
-    for bl in 0..f.blocks.len() {
-      var out: List[Int] = []
-      for v in f.blocks[bl].instrs {
-        if f.values[v].op == Op.Field && !used[v] {
-          changed = true
-          continue
+  }
+  var dead = List[Bool].with_capacity(nv)
+  for _ in 0..nv {
+    dead.push(false)
+  }
+  var work: List[Int] = []
+  for bl in f.blocks {
+    for v in bl.instrs {
+      if f.values[v].op == Op.Field && nuse[v] == 0 {
+        work.push(v)
+      }
+    }
+  }
+  var any = false
+  while !work.is_empty() {
+    let v = work.pop() ?? 0
+    if dead[v] {
+      continue
+    }
+    dead[v] = true
+    any = true
+    for a in f.values[v].args {
+      if a >= 0 {
+        nuse[a] -= 1
+        if nuse[a] == 0 && f.values[a].op == Op.Field {
+          work.push(a)
         }
+      }
+    }
+  }
+  if !any {
+    return
+  }
+  for bl in 0..f.blocks.len() {
+    var has = false
+    for v in f.blocks[bl].instrs {
+      if dead[v] {
+        has = true
+        break
+      }
+    }
+    if !has {
+      continue
+    }
+    var out = List[Int].with_capacity(f.blocks[bl].instrs.len())
+    for v in f.blocks[bl].instrs {
+      if !dead[v] {
         out.push(v)
       }
-      f.blocks[bl].instrs = out
     }
+    f.blocks[bl].instrs = out
   }
 }
 
