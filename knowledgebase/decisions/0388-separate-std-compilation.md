@@ -275,6 +275,13 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   4.6 ms of the 21 at line 1746). llvm-fib: 17.2 ms of CPU a link (1.74 s over 101; write 7.1 to
   3.3 ms), wall min 19.5 ms and median 20.9 at a load average of 25 to 59, binary 2.71 MB
   (__DWARF 1.62 MB); the store check passes.
+- Third round (2026-10-28): the store's sections are fixed 52 byte records (STORE_REC: a name
+  index into one table of the section names, the alignment, flags, data and relocation places,
+  the cut runs' place, the address and size) read in place, each atom's edges read in place
+  (no list per atom), the lists built at their final size, and relocate's patches list sized
+  for every relocation of the placed sections (it was copied as it grew: 2.5 ms). llvm-fib: min
+  17.2 ms, median 17.9 (n=21, load average about 50; the second round's 19.5 and 20.9 at a
+  similar load); the store check passes.
 
 ### std's object (xo-lang-4, 2026-10-28)
 

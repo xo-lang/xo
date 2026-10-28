@@ -929,6 +929,21 @@ fn (var l: Linker) target(o: Int, r: IReloc, addend: Int) -> RelocTarget {
 /// Applies the relocations of every placed input section: patches of
 /// instruction immediates and data words, and fixups for dyld.
 fn (var l: Linker) relocate() {
+  // a patch per relocation at most: room for them all, so the list is
+  // not copied as it grows (std's store link: 2.5 ms, 2026-10-28)
+  var nrel = 0
+  for ob in l.objs {
+    if ob.live {
+      for s in ob.sects {
+        if s.out >= 0 {
+          nrel += s.relocs.len()
+        }
+      }
+    }
+  }
+  if l.patches.is_empty() {
+    l.patches = List.with_capacity(nrel)
+  }
   for o in 0..l.objs.len() {
     if !l.objs[o].live {
       continue
