@@ -215,7 +215,19 @@ pub fn decompress(src: Bytes, start: Int, n: Int) -> Bytes? {
       rt.mem_store(d, op, rt.mem_load(s, ip, 8), 8)
       rt.mem_store(d, op + 8, rt.mem_load(s, ip + 8, 8), 8)
     } else if ll > 0 {
-      rt.mem_copy(d + op, s + ip, ll)
+      if ip + ll + 16 <= sn {
+        // a long run with 16 bytes of source to spare: 16 byte moves
+        // that may write up to 15 bytes past the run (WILD), as lz4.c's
+        // wildcopy; the next sequence writes them again
+        var k = 0
+        while k < ll {
+          rt.mem_store(d, op + k, rt.mem_load(s, ip + k, 8), 8)
+          rt.mem_store(d, op + k + 8, rt.mem_load(s, ip + k + 8, 8), 8)
+          k += 16
+        }
+      } else {
+        rt.mem_copy(d + op, s + ip, ll)
+      }
     }
     ip += ll
     op += ll
@@ -260,8 +272,25 @@ pub fn decompress(src: Bytes, start: Int, n: Int) -> Bytes? {
         k += 8
       }
       op += ml
-    } else if off >= ml {
-      rt.mem_copy(d + op, d + from, ml)
+    } else if off >= 16 {
+      // a long match 16 bytes or more behind: 16 byte moves, each
+      // reading only bytes already written (the read ends before the
+      // write begins), the last past the match by at most 15 bytes
+      var k = 0
+      while k < ml {
+        rt.mem_store(d, op + k, rt.mem_load(d, from + k, 8), 8)
+        rt.mem_store(d, op + k + 8, rt.mem_load(d, from + k + 8, 8), 8)
+        k += 16
+      }
+      op += ml
+    } else if ml <= 64 {
+      // an overlapping match 1 to 15 bytes behind, short: a byte at a
+      // time (the bytes repeat with period off)
+      var k = 0
+      while k < ml {
+        rt.mem_store(d, op + k, rt.mem_load(d, from + k, 1), 1)
+        k += 1
+      }
       op += ml
     } else {
       var left = ml
