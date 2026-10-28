@@ -2357,7 +2357,7 @@ func TestBuildSweepsStaleAsm(t *testing.T) {
 		t.Helper()
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "prog"), "."))
 		cmd.Dir = dir
-		cmd.Env = append(append(os.Environ(), "XO_BUILD_DIR="+bd, "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BUILD_DIR="+bd, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache")), env...)
 		if log, err := cmd.CombinedOutput(); err != nil {
 			t.Fatalf("xo build: %v\n%s", err, log)
 		}
@@ -2422,7 +2422,7 @@ func TestStdModuleRunCache(t *testing.T) {
 		t.Helper()
 		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=native/path"))
 		cmd.Dir = work
-		cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"))
+		cmd.Env = append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"))
 		log, err := cmd.CombinedOutput()
 		if err != nil {
 			t.Fatalf("xo test: %v\n%s", err, log)

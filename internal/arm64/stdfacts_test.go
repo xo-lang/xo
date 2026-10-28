@@ -47,7 +47,7 @@ func TestStdFactsVerify(t *testing.T) {
 	build := func(env ...string) (string, error) {
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "-o", filepath.Join(work, "bin"), "."))
 		cmd.Dir = prog
-		cmd.Env = append(os.Environ(), append([]string{"XO_BACKEND_CACHE_DIR=" + filepath.Join(work, "cache")}, env...)...)
+		cmd.Env = append(os.Environ(), append([]string{"XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=" + filepath.Join(work, "cache")}, env...)...)
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}

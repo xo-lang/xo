@@ -30,7 +30,7 @@ func TestInlineFallbackLoud(t *testing.T) {
 		args := append(append([]string{}, cli[1:]...), "build", "--backend=arm64", "-o", filepath.Join(dir, "prog"), ".")
 		cmd := testtmp.Guard(exec.Command(cli[0], args...))
 		cmd.Dir = dir
-		cmd.Env = append(os.Environ(), "XO_INLINE_BREAK="+brk, "XO_INLINE_STRICT="+strict, "XO_BACKEND_CACHE_DIR="+filepath.Join(dir, "cache"))
+		cmd.Env = append(os.Environ(), "XO_INLINE_BREAK="+brk, "XO_INLINE_STRICT="+strict, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(dir, "cache"))
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
@@ -102,7 +102,7 @@ func TestAssumptionCheck(t *testing.T) {
 		args := append(append([]string{}, cli[1:]...), "build", "--backend="+backend, "-o", filepath.Join(dir, "prog-"+backend), ".")
 		cmd := testtmp.Guard(exec.Command(cli[0], args...))
 		cmd.Dir = dir
-		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE_DIR="+filepath.Join(dir, "cache")), env...)
+		cmd.Env = append(append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(dir, "cache")), env...)
 		out, err := cmd.CombinedOutput()
 		return string(out), err
 	}
