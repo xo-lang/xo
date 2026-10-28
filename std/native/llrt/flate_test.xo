@@ -45,3 +45,19 @@ test "crc32 over every byte value, and crc32_list agrees" {
   expect(crc32_list(t, 0, l, 0, l.len())) == 511339812
   expect(crc32_list(t, crc32_list(t, 0, l, 0, 7), l, 7, l.len())) == 511339812
 }
+
+test "CRC_TABLE is hash/crc32's slicing-by-8 table of 0xedb88320" {
+  var t: List[Int] = []
+  for i in 0..256 {
+    var c = i
+    for _ in 0..8 {
+      c = if (c & 1) == 1 { (c >> 1) ^ 0xedb88320 } else { c >> 1 }
+    }
+    t.push(c)
+  }
+  for i in 256..2048 {
+    let p = t[i - 256]
+    t.push((p >> 8) ^ t[p & 255])
+  }
+  expect(crc_table()) == t
+}

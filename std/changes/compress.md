@@ -1,5 +1,17 @@
 # std/compress changes
 
+## 2026-10-28: perf: the CRC-32 table is a constant
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/compress and archive profiles (crc_table built for every inflate stream, every gzip write call, every zip reader)
+- Go reference: hash/crc32 (its slicing-by-8 table is built once, ieeeOnce)
+- Test: std/native/llrt/flate_test.xo (the constant equals the generating loop; hash/crc32's vectors); internal/stdtest/testdata/corpus/compress and archive (go, arm64, LLVM); TestSelfhostWasm crc32_vectors and archive_formats
+
+crc_table() returns CRC_TABLE, the same 2,048 entries, where each call
+built them (2,048 stores and a 2 KiB zeroing). Quiet --ab, 15 rounds,
+the parent's std as A: archive unzip wall 0.997 (0.985 to 1.002, within noise), instructions 0.995, cycles 0.989; compress gunzip wall 0.983 (0.962 to 1.003, within noise), instructions 0.987, cycles 0.984. A small fixed cost per stream, not the inflate loop: the unzip and gunzip rows against Go stay where they were.
+
 ## 2026-10-28: perf: the deflater's hash tables hold UInt32, as Go's do
 
 - Kind: perf

@@ -514,3 +514,7 @@ parse against Go (no change in it): 1.062 (1.01 to 1.081), instructions 0.974.
 Per std/changes/template.md 2026-10-28 (found by xo vet --cost XO0913, d6ea14cdb). Quiet `xo bench --ab`, 15
 rounds, the parent's std as A: parse wall 0.948 (0.943 to 0.956), instructions 0.957, cycles 0.948; render
 unchanged.
+
+## CRC-32 table as a constant (2026-10-28, xo-lang-5)
+
+Per std/changes/compress.md 2026-10-28. Quiet `xo bench --ab`, 15 rounds, the parent's std as A: archive unzip wall 0.997 (0.985 to 1.002, within noise), instructions 0.995, cycles 0.989; compress gunzip wall 0.983 (0.962 to 1.003, within noise), instructions 0.987, cycles 0.984. A small fixed cost per stream, not the inflate loop: the unzip and gunzip rows against Go stay where they were.
