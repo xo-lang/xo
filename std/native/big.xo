@@ -35,9 +35,13 @@ fn parts(x: big.BigInt) -> (Bool, List[Int]) {
 }
 
 /// The BigInt of a sign and limbs (normalized here).
-fn make(neg: Bool, ws0: List[Int]) -> big.BigInt {
-  let ws = norm(ws0)
-  let n = ws.len()
+fn make(neg: Bool, ws: List[Int]) -> big.BigInt {
+  // the limbs past the top nonzero one are skipped, not cut off (norm's
+  // slice copies the list)
+  var n = ws.len()
+  while n > 0 && ws[n - 1] == 0 {
+    n -= 1
+  }
   if n == 0 {
     return big.BigInt{key: [0]}
   }
@@ -962,14 +966,36 @@ fn bigint_bit(x: big.BigInt, i: Int) -> Int {
   nat_bit(xa, i)
 }
 
+/// Read from the key, with no copy of the limbs (2026-10-27: parts'
+/// copy was 8% of bench/perf/big mul, which takes bit_len of each
+/// product): the key holds the limb count and then the limbs, the most
+/// significant first, each flipped by its sign's mask (parts).
 fn bigint_bit_len(x: big.BigInt) -> Int {
-  let (_xn, xa) = parts(x)
-  nat_bit_len(xa)
+  let k = x.key
+  if k.is_empty() || k[0] == 0 {
+    return 0
+  }
+  let neg = k[0] < 0
+  let n = if neg { -k[0] } else { k[0] }
+  let top = if neg { k[1] ^ MAX } else { k[1] ^ MIN }
+  (n - 1) * 64 + 64 - top.leading_zeros()
 }
 
 fn bigint_trailing_zeros(x: big.BigInt) -> Int {
-  let (_xn, xa) = parts(x)
-  nat_trailing_zeros(xa)
+  let k = x.key
+  if k.is_empty() || k[0] == 0 {
+    return 0
+  }
+  let neg = k[0] < 0
+  let n = if neg { -k[0] } else { k[0] }
+  // limb i (least significant first) is key word n - i
+  for i in 0..n {
+    let w = if neg { k[n - i] ^ MAX } else { k[n - i] ^ MIN }
+    if w != 0 {
+      return i * 64 + w.trailing_zeros()
+    }
+  }
+  0
 }
 
 // ---------------------------------------------------------------------------

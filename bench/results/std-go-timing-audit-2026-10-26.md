@@ -453,3 +453,15 @@ each row's last change (native arm64, --release); twincheck's checksums agree:
 
 All five medians are under the 1.2x bar; path parts' interval reaches 1.217. Morning values (main
 d088ecee3): 0.858, 1.451, 1.454, 1.595, 1.596.
+
+## path parts at 30 rounds; big mul key reads (2026-10-28, xo-lang-5)
+
+Correction to the table above: path parts at 30 rounds (the same binaries as its 15-round row, the Go twin
+as A) is 1.225 (1.201 to 1.251), instructions 1.141, cycles 1.266, so it is still over the 1.2x bar; runs
+of it spread about 4% (1.165 and 1.225). A short-input fast path in scan.utf8_valid (Go's Valid: 8 ASCII
+bytes a step inline) measured 1.014 (0.985 to 1.051) on parts and 0.998 to 1.004 instructions on toml,
+mail, strsplit and jsontwin rows, and was dropped.
+
+big mul (std/changes/big.md 2026-10-28, "bit_len and trailing_zeros read the key; make trims without a
+copy"): quiet `xo bench --ab`, 15 rounds, the parent's std as A: wall 0.906 (0.892 to 0.917), instructions
+0.927; Xo / Go about 1.17 (estimate: 1.291 x 0.906).

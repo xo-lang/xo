@@ -1,5 +1,22 @@
 # std/big changes
 
+## 2026-10-28: perf: bit_len and trailing_zeros read the key; make trims without a copy
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/big mul at 1.29x Go; its CPU profile (parts 15% and make 16%: the key unpacked into a list of limbs and packed back at every operation; bit_len unpacked a whole copy to read the top limb)
+- Go reference: math/big nat.go bitLen and trailingZeroBits (read the limbs in place) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big (go, arm64, LLVM); twincheck's checksums agree on none, mul, quorem, text, parse, exp
+
+bit_len and trailing_zeros read the limb count and the limb they need
+straight from the key (the count, then the limbs most significant first,
+each flipped by its sign's mask), where each copied every limb out first;
+make finds the top nonzero limb in place, where norm sliced (copied) the
+list when its top word was zero, as a product's often is. Output is
+unchanged. Quiet --ab, 15 rounds, the parent's std as A: mul wall 0.906
+(0.892 to 0.917), instructions 0.927; quorem instructions 0.939; Xo / Go
+for mul about 1.17 (estimate: 1.291 x 0.906).
+
 ## 2026-10-27: perf: long division's row runs its two carry chains one after the other
 
 - Kind: perf
