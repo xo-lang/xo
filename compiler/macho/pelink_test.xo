@@ -297,7 +297,7 @@ test "a link through the COFF store is the strip's link of the same objects" {
     Ok(b) => b
     Err(e) => fault(e)
   }
-  let objs = match coff_store_objs(store, [prog], "start") {
+  let objs = match coff_store_objs(store, [prog], "start", true) {
     Ok(x) => x
     Err(e) => fault(e)
   }

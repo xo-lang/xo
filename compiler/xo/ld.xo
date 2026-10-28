@@ -636,7 +636,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
       Err(e) => return "XO_STD_STORE=${store_path}.pdb: ${fs_reason(e)}"
     }
   } else if !store.is_empty() {
-    match macho.coff_store_objs(store, rest, "xo_win_start") {
+    match macho.coff_store_objs(store, rest, "xo_win_start", true) {
       Ok(so) => {
         if store_check {
           check_objs = objs
@@ -716,8 +716,20 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
           t = lap(os, phases, "pe.pdb_parts", t)
           let r = macho.pe_pdb_seeded(img0, None, Some(pre), sd)
           if store_check && nst > 0 {
-            // the store's parts' PDB against the image's DWARF's
-            match (r, macho.pe_pdb_seeded(img0, None, None, sd)) {
+            // the store's parts' PDB against the image's DWARF's, in a link
+            // that keeps the DWARF whole (the parts are made from whole
+            // DWARF; the image's own is cut to its live functions)
+            let wso = match macho.coff_store_objs(store, rest, "xo_win_start", false) {
+              Ok(x) => x
+              Err(e) => return "XO_STD_STORE_CHECK=1: the store with whole DWARF: ${e}"
+            }
+            let whole = match macho.link_pe_layout(wso.objs + rest, peo with {dwtrim: false}) {
+              Ok(x) => x
+              Err(e) => return "XO_STD_STORE_CHECK=1: the link with whole DWARF: ${e}"
+            }
+            let (wimg, wl) = whole
+            let wpre = macho.pre_procs_store(parts, wl.objs, wl, wso.maps)
+            match (macho.pe_pdb_seeded(wimg, None, Some(wpre), sd), macho.pe_pdb_seeded(wimg, None, None, sd)) {
               (Ok((_, a)), Ok((_, b))) => if a != b {
                 return "XO_STD_STORE_CHECK=1: the PDB from the store's parts differs from the image's (${a.len()} and ${b.len()} bytes)"
               }

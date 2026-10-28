@@ -284,3 +284,61 @@ fn coff_mark(var live: List[List[Bool]], var work: List[(Int, Int)], o: Int, s: 
     work.push((o, s))
   }
 }
+
+/// The DWARF of atoms mode object ob (objs[o] of a link) after the strip
+/// (dwtrim.xo, as elfstrip.xo dw_strip): its dead functions'
+/// subprograms, line sequences and location lists, and the types no kept
+/// entry refers to, are cut; a unit describing only dead functions
+/// drops its debug sections whole (the second result: true).
+fn coff_dw_strip(ob: CObj, o: Int, live: List[List[Bool]]) -> (CObj, Bool) {
+  var abbrev = "".bytes()
+  for s in ob.sects {
+    if s.name == ".debug_abbrev" {
+      abbrev = s.data
+    }
+  }
+  if abbrev.is_empty() {
+    return (ob, false)
+  }
+  var runs: Map[Int, List[DwSeg]] = {}
+  for (k, s) in ob.sects.indexed() {
+    if !(s.name is ".debug_info" | ".debug_line" | ".debug_loclists") {
+      continue
+    }
+    // an 8 byte address's function section, by its relocation's symbol
+    var at: Map[Int, Int] = {}
+    for r in s.relocs {
+      if r.typ == IMAGE_REL_AMD64_ADDR64 {
+        at[r.addr] = ob.syms[r.sym].sect
+      }
+    }
+    let g = dw_runs(s.data, s.name == ".debug_info", s.name == ".debug_loclists", abbrev, fn(off: Int) -> (Int, Int) {
+      let t = at.get(off) ?? 0
+      if t > 0 { (o, t - 1) } else { (-1, -1) }
+    })
+    if g.is_empty() {
+      continue
+    }
+    if s.name == ".debug_info" && dw_droppable(g) && !g.any(fn(x: DwSeg) -> Bool { x.fo >= 0 && live[x.fo][x.fk] }) {
+      return (ob, true)
+    }
+    runs[k] = g
+  }
+  var out = ob
+  for (k, segs) in runs {
+    let s = ob.sects[k]
+    let keep = dw_keep(segs, fn(g: DwSeg) -> Bool { live[g.fo][g.fk] })
+    let (at, n) = dw_new_starts(segs, keep)
+    var b = BytesBuilder.with_capacity(n)
+    dw_write_runs(b, s.data, 0, s.name == ".debug_loclists", n, segs, keep, at)
+    var rs: List[CReloc] = []
+    for r in s.relocs {
+      let i = dw_run_at(segs, r.addr)
+      if i >= 0 && keep[i] {
+        rs.push(r with {addr: r.addr - segs[i].start + at[i]})
+      }
+    }
+    out.sects[k] = CSect{name: s.name, chars: s.chars, data: b.freeze(), size: n, relocs: rs}
+  }
+  (out, false)
+}

@@ -47,6 +47,10 @@ pub struct PEOpts {
   /// the PDB the debug directory names (decision 0344, pdb.xo pe_pdb
   /// writes it and the record's GUID); "": no debug directory
   pub pdb: Str = ""
+  /// false: the atoms mode objects' DWARF is kept whole (coff_dw_strip
+  /// not run); XO_STD_STORE_CHECK's PDB check, whose parts are made from
+  /// whole DWARF
+  pub dwtrim: Bool = true
 }
 
 /// An input section's place: its output section and offset there.
@@ -173,7 +177,29 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
   for ob in objs {
     weaks.push(coff_weak_names(ob))
   }
-  let live = if any_atoms { coff_live(objs, o.entry, weaks) } else { [] }
+  var live = if any_atoms { coff_live(objs, o.entry, weaks) } else { [] }
+  // the atoms mode objects' DWARF without their dead functions' (as on
+  // Mach-O and ELF: a windows XO_SEPCOMP HTTP server kept every std
+  // function's, 10.2 MB of debug sections against the whole program's 4.5)
+  // (the layout keeps the objects as split: a PDB part is made from an
+  // object's own DWARF and cached under its key, whatever a link cuts)
+  let split = objs
+  if any_atoms && o.dwtrim {
+    for i in 0..objs.len() {
+      if !coff_atoms(objs0[i]) {
+        continue
+      }
+      let (ob, drop) = coff_dw_strip(objs[i], i, live)
+      objs[i] = ob
+      if drop {
+        for (k, s) in ob.sects.indexed() {
+          if s.name.starts_with(".debug_") {
+            live[i][k] = false
+          }
+        }
+      }
+    }
+  }
   // the input sections' places, in object order: each output section's
   // bytes (an input section's appended whole) and its fixups, written
   // over them by pe_write (2026-10-27: a List[Int] per section, one push
@@ -597,7 +623,7 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
     return Err("the entry ${o.entry} is not defined")
   }
   let img = pe_write(bufs, pats, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds)
-  Ok((img, PELayout{objs: objs, places: places, rva: rva, dnames: dnames, base: PE_BASE}))
+  Ok((img, PELayout{objs: split, places: places, rva: rva, dnames: dnames, base: PE_BASE}))
 }
 
 /// The image: the DOS header, the PE headers and section table, the

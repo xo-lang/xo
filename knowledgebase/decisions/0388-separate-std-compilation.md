@@ -563,6 +563,21 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   link, about 10 ms): llvm-fib 295 to 143 (link 15.5 to 37), the HTTP
   server 619 to 280 (ssa 92 to 29, assemble 50 to 25, link 47 to 61).
   Test: internal/arm64 TestSepcompLinksWindows.
+  DWARF by unit on windows (2026-10-28), as the Mach-O store has it
+  (dwtrim.xo): coff_store_encode records each .debug_info, .debug_line and
+  .debug_loclists run with its relocations and each droppable unit's
+  functions; coff_store_objs cuts a section to its live functions' runs
+  (StoreView.cut) and leaves out a unit with no live function
+  (dw_dropped); the parts' link trims an atoms object's DWARF the same way
+  (pestrip.xo coff_dw_strip), its PDB parts still made from the object's
+  whole DWARF and cached under its key. The XO_SEPCOMP HTTP server's
+  executable 13.1 to 6.15 MB (the whole program's 7.26), its debug
+  sections 10.2 to 3.62 MB (4.49), its PDB 2.38 MB (2.92); link 59 to 67
+  ms over four edits (61 before). XO_STD_STORE_CHECK: the store's link
+  equals the parts' (also XO_PDB_OBJ=0 and the cache off); its PDB check,
+  whose parts come from whole DWARF, reads the store and links with
+  DWARF whole (coff_store_objs and PEOpts dwtrim false). Wine runs
+  llvm-fib from the parts, the store and XO_SEPCOMP.
 
 ## Alternatives
 

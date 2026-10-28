@@ -80,13 +80,60 @@ pub fn coff_store_encode(objs0: List[CObj]) -> Result[Bytes, Str] {
         }
       }
     }
+    var abbrev = "".bytes()
+    for s in ob.sects {
+      if s.name == ".debug_abbrev" {
+        abbrev = s.data
+      }
+    }
+    var unit_fns: List[Int] = []
     var cs: List[CoreSect] = []
     for (k, s) in ob.sects.indexed() {
+      // a DWARF section cut into runs, each a function's or always kept
+      // (dwtrim.xo; pestrip.xo coff_dw_strip cuts the parts' the same)
+      var runs: List[DwSeg] = []
+      if !abbrev.is_empty() && (s.name is ".debug_info" | ".debug_line" | ".debug_loclists") {
+        var at: Map[Int, Int] = {}
+        for r in s.relocs {
+          if r.typ == IMAGE_REL_AMD64_ADDR64 {
+            at[r.addr] = ob.syms[r.sym].sect
+          }
+        }
+        runs = dw_runs(s.data, s.name == ".debug_info", s.name == ".debug_loclists", abbrev, fn(off: Int) -> (Int, Int) {
+          let t = at.get(off) ?? 0
+          if t > 0 { (o, t - 1) } else { (-1, -1) }
+        })
+        if s.name == ".debug_info" && dw_droppable(runs) {
+          for g in runs {
+            if g.fo >= 0 {
+              unit_fns.push(base[g.fo] + g.fk)
+            }
+          }
+        }
+      }
+      var core_runs: List[CoreRun] = []
+      for g in runs {
+        var rs: List[CReloc] = []
+        for r in s.relocs {
+          if r.addr >= g.start && r.addr < g.end {
+            rs.push(r)
+          }
+        }
+        var gb = BytesBuilder.with_capacity(12 * rs.len())
+        for r in rs.sort_by(fn(r: CReloc) -> Int { r.addr }) {
+          sw32(gb, r.addr)
+          sw32(gb, symnew[r.sym])
+          sw32(gb, r.typ)
+        }
+        core_runs.push(CoreRun{start: g.start, end: g.end, fn_atom: if g.fo < 0 { -1 } else { base[g.fo] + g.fk }, typ: g.typ, refs: g.refs, relocs: gb.freeze(), nrel: rs.len()})
+      }
       var rb = BytesBuilder.with_capacity(12 * s.relocs.len())
-      for r in s.relocs {
-        sw32(rb, r.addr)
-        sw32(rb, symnew[r.sym])
-        sw32(rb, r.typ)
+      if runs.is_empty() {
+        for r in s.relocs {
+          sw32(rb, r.addr)
+          sw32(rb, symnew[r.sym])
+          sw32(rb, r.typ)
+        }
       }
       var edges: List[Int] = []
       if !s.name.starts_with(".debug") && (s.chars & IMAGE_SCN_LNK_REMOVE) == 0 {
@@ -107,9 +154,9 @@ pub fn coff_store_encode(objs0: List[CObj]) -> Result[Bytes, Str] {
           }
         }
       }
-      cs.push(CoreSect{seg: "", name: s.name, align: 0, flags: s.chars, addr: 0, size: s.size, data: s.data, relocs: rb.freeze(), nrel: s.relocs.len(), edges: edges})
+      cs.push(CoreSect{seg: "", name: s.name, align: 0, flags: s.chars, addr: 0, size: s.size, data: s.data, relocs: rb.freeze(), nrel: if runs.is_empty() { s.relocs.len() } else { 0 }, runs: core_runs, edges: edges})
     }
-    cobjs.push(CoreObj{path: ob.path, sects: cs, syms: syms, split: {}, unit_fns: []})
+    cobjs.push(CoreObj{path: ob.path, sects: cs, syms: syms, split: {}, unit_fns: unit_fns})
   }
   Ok(store_write(cobjs, defs, 12))
 }
@@ -136,7 +183,7 @@ pub struct CoffStore {
   pub maps: List[StoreMap]
 }
 
-pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[CoffStore, Str] {
+pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str, dwtrim: Bool) -> Result[CoffStore, Str] {
   let v = match store_view(store) {
     Ok(x) => x
     Err(e) => return Err(e)
@@ -155,6 +202,15 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[Cof
   }
   roots.push(v.def(entry.bytes()))
   let live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { coff_never_strip(nm, flags) })
+  // the units that describe only dead functions (their DWARF goes);
+  // !dwtrim: every unit's DWARF whole (XO_STD_STORE_CHECK's PDB check)
+  let dropped = if dwtrim { v.dw_dropped(live) } else { [] }
+  var dlive = live
+  if !dwtrim {
+    for i in 0..dlive.len() {
+      dlive[i] = true
+    }
+  }
   var out: List[CObj] = []
   var maps: List[StoreMap] = []
   var elsewhere: Set[Bytes] = #{}
@@ -173,7 +229,19 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str) -> Result[Cof
       let (_, nm) = v.names[rec_name(store, q)]
       let flags = rec_flags(store, q)
       shells.push(CSect{name: nm, chars: flags, data: "".bytes(), size: rec_size(store, q), relocs: []})
-      if nm != ".xoatoms" && (coff_never_strip(nm, flags) || live[v.base[i] + k]) {
+      if nm.starts_with(".debug_") && dwtrim && dropped[i] {
+        newk.push(-1)
+        any_dead = true
+      } else if rec_nseg(store, q) > 0 {
+        // a DWARF section cut to its live functions' runs (dwtrim.xo)
+        let (data, rels) = v.cut(q, dlive, nm == ".debug_loclists")
+        var rs: List[CReloc] = List.with_capacity(rels.len())
+        for (rq, off) in rels {
+          rs.push(CReloc{addr: off, sym: rd32(store, rq + 4), typ: rd32(store, rq + 8)})
+        }
+        newk.push(sects.len())
+        sects.push(CSect{name: nm, chars: flags, data: data, size: data.len(), relocs: rs})
+      } else if nm != ".xoatoms" && (coff_never_strip(nm, flags) || live[v.base[i] + k]) {
         let da = v.data0 + rec_data_at(store, q)
         let ra = v.data0 + rec_rel_at(store, q)
         let nr = rec_nrel(store, q)
