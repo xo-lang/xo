@@ -84,9 +84,6 @@ pub fn store_encode(inputs: List[LinkInput]) -> Result[Bytes, Str] {
         if !o.subsections {
           return Err("${inp.path}: not made with .subsections_via_symbols")
         }
-        if o.x86 {
-          return Err("${inp.path}: the store holds arm64 objects")
-        }
         l.objs.push(o)
       }
       Err(e) => return Err(e)
@@ -319,7 +316,7 @@ pub fn (var s: StoreLink) resolve() -> Str {
   for o in 0..s.l.objs.len() {
     var row: List[Bool] = []
     for k in 0..s.l.objs[o].sects.len() {
-      row.push(o >= s.n || k != s.stubs[o])
+      row.push(o >= s.n || (k != s.stubs[o] && !s.l.objs[o].sects[k].dead))
     }
     live2.push(row)
   }
@@ -420,6 +417,9 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
   for i in 0..prog.len() {
     prog[i].subsections = false
   }
+  // x86_64 or arm64 by the program's objects (the store names no cpu;
+  // link_debug reads its first object's)
+  l.x86 = !prog.is_empty() && prog[0].x86
   // the walk: the program's undefined symbols the store defines, the
   // entry, and the store's sections nothing may strip
   var roots: List[Int] = []
@@ -450,7 +450,7 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
   var nameds: List[List[Bool]] = List.with_capacity(n)
   var elsewhere: Set[Bytes] = #{}
   for i in 0..n {
-    l.objs.push(IObj{path: v.paths[i], subsections: true})
+    l.objs.push(IObj{path: v.paths[i], subsections: true, x86: l.x86})
     let ns = v.nsects[i]
     var newk: List[Int] = List.with_capacity(ns)
     var sects: List[ISect] = List.with_capacity(ns)
@@ -482,6 +482,12 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
         }
         newk.push(sects.len())
         sects.push(t)
+      } else if l.x86 {
+        // x86_64: an FDE points into its function by address, with no
+        // relocation (link.xo x86_eh_pointer), so a dead atom keeps a
+        // dead section of its own at its address, as in the parts' link
+        newk.push(sects.len())
+        sects.push(ISect{seg: sg, name: nm, addr: rec_addr(store, q), size: rec_size(store, q), align: rec_align(store, q), flags: flags, data: "".bytes(), dead: true})
       } else {
         newk.push(-1)
         any_dead = true

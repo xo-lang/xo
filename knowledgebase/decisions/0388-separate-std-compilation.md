@@ -745,3 +745,17 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   and HTTP 579.5 to 225.0 ms median against 0.33.0; runtime release-vs-go rows within noise
   but startup (std's literals, fixed 66950ecf0) and collatz (same code, placement; the
   XO_ARM64_PAD sweep decides it).
+- darwin/amd64 std store (2026-10-28): x86_64 Mach-O in atoms mode had never been linked
+  (the parts' link failed as the store's did). Four gaps, all in compiler/macho:
+  store_encode refused x86_64 objects; a link through the store took its cpu from its
+  first object, a stored one (now the program's, store_prepare); an x86_64 FDE points at
+  its function and LSDA pc relative with no relocation, so x86_eh_pointer resolved those
+  pointers through translate with a split object's atom index taken for the object's own
+  ordinal (a function pointer landed in a dead __gcc_except_tab atom; now the atom's
+  output address directly, a dead target 0), the strip's FDE references (unwind_refs)
+  were read from relocations only, so every LSDA was dead and no fault was caught (now
+  decoded from the pointers, x86_eh_atom), and the store keeps each dead atom as a dead
+  section at its address on x86_64 (its FDE still points into it). Proof:
+  XO_STD_STORE_CHECK byte for byte on fib, async_preempt_alloc/_regs, catch and trace for
+  darwin/amd64, run on the Intel laptop (fib, 5 of 5 each, the caught faults, the
+  traceback); normal darwin/amd64 builds unchanged byte for byte.

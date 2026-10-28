@@ -1401,18 +1401,25 @@ fn (var l: Linker) x86_eh_pointer(o: Int, s: ISect, base: Int, relocated: Set[In
     return
   }
   let t = s.addr + at + v
-  var ord = 0
+  // the section (an atom, after the strip's split) holding the target:
+  // its output address directly (translate takes the object's own
+  // ordinals, which a split object's index no longer is)
+  var hold = -1
   for (k, os) in l.objs[o].sects.indexed() {
-    if t >= os.addr && t < os.addr + os.size {
-      ord = k + 1
+    if t >= os.addr && t < os.addr + os.size && (hold < 0 || !os.dead) {
+      hold = k
     }
   }
-  if ord == 0 {
+  if hold < 0 {
     l.fail("${l.objs[o].path}: an __eh_frame pointer outside the object's sections")
     return
   }
+  let ts = l.objs[o].sects[hold]
   let p = base + at
-  l.patch(p, size, (l.translate(o, ord, t) - p) & (if size == 8 { -1 } else { 0xffffffff }))
+  // a dead function's FDE, or its LSDA: 0, which __unwind_info never
+  // names and no live function's pc is
+  let dest = if ts.out < 0 { 0 } else { l.osects[ts.out].addr + ts.off + (t - ts.addr) }
+  l.patch(p, size, (dest - p) & (if size == 8 { -1 } else { 0xffffffff }))
 }
 
 /// A 24 bit field as a signed Int.

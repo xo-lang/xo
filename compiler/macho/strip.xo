@@ -159,7 +159,35 @@ fn (l: Linker) unwind_refs() -> Map[(Int, Int), List[(Int, Int)]] {
       continue
     }
     for (k, s) in l.objs[o].sects.indexed() {
-      if is_eh(s) {
+      if is_eh(s) && l.objs[o].x86 {
+        // x86_64: an FDE points at its function and LSDA pc relative,
+        // with no relocation (link.xo x86_eh_frame), so its references
+        // are read from the pointers; without them every LSDA atom was
+        // dead and no fault was caught (darwin/amd64 atoms, 2026-10-28)
+        var cies: Map[Int, (Int, Int)] = {}
+        for rec in eh_records(s) {
+          let at = rec - s.addr
+          if s.data.len() < at + 8 {
+            continue
+          }
+          let id = rd32(s.data, at + 4)
+          if id == 0 {
+            cies.put(at, cie_encodings(s.data, at + 8))
+            continue
+          }
+          let (fenc, lenc) = cies.get(at + 4 - id) ?? (0x10, -1)
+          let fn_t = l.x86_eh_atom(o, s, at + 8, fenc)
+          var other: List[(Int, Int)] = []
+          if lenc >= 0 {
+            let t = l.x86_eh_atom(o, s, skip_leb(s.data, at + 8 + 2 * enc_size(fenc)), lenc)
+            if t.0 >= 0 {
+              other.push(t)
+            }
+          }
+          var e = unw.get(fn_t) ?? []
+          unw[fn_t] = e + other
+        }
+      } else if is_eh(s) {
         for rec in eh_records(s) {
           let at = rec - s.addr
           if s.data.len() < at + 8 || rd32(s.data, at + 4) == 0 {
@@ -212,6 +240,34 @@ fn (l: Linker) unwind_refs() -> Map[(Int, Int), List[(Int, Int)]] {
     }
   }
   unw
+}
+
+/// The atom an x86_64 __eh_frame pointer at offset at (encoding enc,
+/// pc relative, no relocation) points into, (-1, -1) for none or null.
+fn (l: Linker) x86_eh_atom(o: Int, s: ISect, at: Int, enc: Int) -> (Int, Int) {
+  if (enc & 0x70) != 0x10 {
+    return (-1, -1)
+  }
+  for r in s.relocs {
+    if r.addr == at {
+      return (-1, -1)
+    }
+  }
+  let size = enc_size(enc)
+  if at + size > s.data.len() {
+    return (-1, -1)
+  }
+  let v = if size == 8 { rd64(s.data, at) } else { sext32(rd32(s.data, at)) }
+  if v == 0 {
+    return (-1, -1)
+  }
+  let t = s.addr + at + v
+  for (k, x) in l.objs[o].sects.indexed() {
+    if t >= x.addr && t < x.addr + x.size && !is_eh(x) {
+      return (o, k)
+    }
+  }
+  (-1, -1)
 }
 
 /// dead_strip: atomizes the objects made with .subsections_via_symbols and
