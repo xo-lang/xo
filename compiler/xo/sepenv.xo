@@ -55,7 +55,8 @@ fn sepcomp_store(os: Os, conc: Bool) -> Str {
 /// with XO_SEPCOMP and std's variants (both concurrency settings, the
 /// build picks one) when this build can take it, else os unchanged.
 /// XO_SEPCOMP set (1 or 0) is the user's choice and wins. Only a native
-/// darwin or linux, arm64 or amd64, build or run for the host, not
+/// darwin or linux, arm64 or amd64, or windows/amd64, build or run for
+/// the host, not
 /// --release, --race or a cc link,
 /// with the passes as they are; std's variants from the std cache
 /// (std_variant_peek: a release's prebuilt ones, else the cache's; a
@@ -69,9 +70,9 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
   }
   let host = host_os(os)
   let arch = host_arch()
-  // darwin and linux, arm64 and amd64 (std's Mach-O and ELF stores,
-  // decision 0388)
-  let served = (host is "darwin" | "linux") && (arch is "arm64" | "amd64")
+  // darwin and linux, arm64 and amd64, and windows/amd64 (std's Mach-O,
+  // ELF and COFF stores, decision 0388)
+  let served = ((host is "darwin" | "linux") && (arch is "arm64" | "amd64")) || (host == "windows" && arch == "amd64")
   if !(o.cmd is "build" | "run") || backend != arch || !served || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {
     return os
   }
