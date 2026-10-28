@@ -185,6 +185,12 @@ struct ObjMap {
   at: List[Int]
   info: Int
   line: Int
+  // the sections with bytes but debug's, by base (addr and placed search
+  // them: a scan of every section for each address, with an atoms mode
+  // object's section per function, was most of pre_procs_store), and
+  // each placed one's end (the first section's in object order)
+  order: List[Int]
+  ends: Map[Int, Int]
 }
 
 fn obj_map(o: CObj, oi: Int, layout: PELayout) -> ObjMap {
@@ -234,22 +240,49 @@ fn obj_map_k(o: CObj, ks: List[Int], oi: Int, layout: PELayout) -> ObjMap {
       at.push(layout.base + layout.rva[p.out] + p.off)
     }
   }
-  ObjMap{bases: bases, sizes: sizes, at: at, info: info, line: line}
+  var order: List[Int] = []
+  var ends: Map[Int, Int] = {}
+  for (si, s) in o.sects.indexed() {
+    if s.size > 0 && !s.name.starts_with(".debug_") {
+      order.push(si)
+    }
+    if at[si] >= 0 && !ends.contains(bases[si] + s.size) {
+      ends[bases[si] + s.size] = si
+    }
+  }
+  ObjMap{bases: bases, sizes: sizes, at: at, info: info, line: line, order: order.sort_by(fn(i: Int) { bases[i] }), ends: ends}
+}
+
+/// The section holding address a (-1: none).
+fn (m: ObjMap) holding(a: Int) -> Int {
+  // the last section whose base is at most a
+  var lo = 0
+  var hi = m.order.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    if m.bases[m.order[mid]] <= a {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  if lo == 0 {
+    return -1
+  }
+  let i = m.order[lo - 1]
+  if a < m.bases[i] + m.sizes[i] { i } else { -1 }
 }
 
 /// a, an address in the object (obj_bases), in the image; a itself when no
 /// placed section holds it.
 fn (m: ObjMap) addr(a: Int) -> Int {
-  for i in 0..m.bases.len() {
-    if m.at[i] >= 0 && a >= m.bases[i] && a < m.bases[i] + m.sizes[i] {
-      return m.at[i] + (a - m.bases[i])
-    }
+  let i = m.holding(a)
+  if i >= 0 && m.at[i] >= 0 {
+    return m.at[i] + (a - m.bases[i])
   }
   // the end of a section (a range's hi)
-  for i in 0..m.bases.len() {
-    if m.at[i] >= 0 && a == m.bases[i] + m.sizes[i] {
-      return m.at[i] + m.sizes[i]
-    }
+  if let Some(e) = m.ends.get(a) {
+    return m.at[e] + m.sizes[e]
   }
   a
 }
@@ -258,12 +291,8 @@ fn (m: ObjMap) ty(t: Int) -> Int { if t < 0 { t } else { t + m.info } }
 
 /// Whether a placed section holds address a (a function that is linked).
 fn (m: ObjMap) placed(a: Int) -> Bool {
-  for i in 0..m.bases.len() {
-    if m.at[i] >= 0 && a >= m.bases[i] && a < m.bases[i] + m.sizes[i] {
-      return true
-    }
-  }
-  false
+  let i = m.holding(a)
+  i >= 0 && m.at[i] >= 0
 }
 
 fn (m: ObjMap) var_of(v: debug.Var) -> debug.Var {
