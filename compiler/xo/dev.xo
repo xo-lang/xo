@@ -26,6 +26,7 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
     "dump" => dump_cmd(os, args[1..])
     "edges" => servers.edges_cmd(os, args[1..])
     "build-each" => build_each_cmd(os, args[1..])
+    "stdobj" => stdobj_cmd(os, args[1..])
     // parser.iface_text_lex against iface_text on every file under a
     // directory and mutations of it (TestIfaceLexMatchesParse)
     "iface-check" => if args.len() == 2 { iface_check_cmd(os, args[1]) } else { 2 }
@@ -44,6 +45,75 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
       dev.run(os, h, args)
     }
   }
+}
+
+/// stdobj_cmd is `xo dev stdobj [--conc=0|1] [--facts=FILE] OUT`: std's
+/// object for one variant (decision 0388): the part objects and their
+/// store (std.store) in OUT, built from an empty program (XO_STD_OBJ,
+/// XO_STD_CONC, no dead function removal, no hollowing), and with
+/// --facts its facts (an XO_STD_ROOTS build's XO_STD_FACTS_DUMP, in a
+/// cold cache of its own: a warm one's undecoded bodies carry fewer known
+/// results). conc defaults to 0. The empty program and the cache go when
+/// it is done.
+fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
+  var conc = "0"
+  var facts = ""
+  var out = ""
+  for a in args {
+    if a.starts_with("--conc=") {
+      conc = a.trim_prefix("--conc=")
+    } else if a.starts_with("--facts=") {
+      facts = a.trim_prefix("--facts=")
+    } else if out.is_empty() && !a.starts_with("-") {
+      out = a
+    } else {
+      out = ""
+      break
+    }
+  }
+  if out.is_empty() || !(conc is "0" | "1") {
+    os.stdio.eprintln("usage: xo dev stdobj [--conc=0|1] [--facts=FILE] OUT")
+    return 2
+  }
+  let wd = os.env.get("PWD") ?? "."
+  if !out.starts_with("/") {
+    out = "${wd}/${out}"
+  }
+  if !facts.is_empty() && !facts.starts_with("/") {
+    facts = "${wd}/${facts}"
+  }
+  let prog = "${out}/.stdobj-prog"
+  write_or_fail(os, prog, "${prog}/xo.mod", "module stdobj\nedition preview\n".bytes())
+  write_or_fail(os, prog, "${prog}/main.xo", "fn main(os: Os) {\n}\n".bytes())
+  let xo = check.executable(os.env, os.fs)
+  let base = ["PWD=${prog}", "XO_STD_CONC=${conc}", "XO_DCE=off"]
+  var code = 0
+  match os.proc.run("env", base + ["XO_STD_OBJ=${out}", "XO_PASSES=-hollow", xo, "build", "-o", "${prog}/x", prog]) {
+    Ok(r) => {
+      os.stdio.eprint(r.stderr.to_str() ?? "")
+      code = r.code
+    }
+    Err(e) => {
+      os.stdio.eprintln("xo dev stdobj: ${e}")
+      code = 1
+    }
+  }
+  if code == 0 && !facts.is_empty() {
+    match os.proc.run("env", base + ["XO_STD_ROOTS=1", "XO_STD_FACTS_DUMP=${facts}", "XO_BACKEND_CACHE_DIR=${prog}/cache", "XO_BUILD_DIR=${prog}/build", xo, "build", "-o", "${prog}/x", prog]) {
+      Ok(r) => {
+        if r.code != 0 {
+          os.stdio.eprint(r.stderr.to_str() ?? "")
+        }
+        code = r.code
+      }
+      Err(e) => {
+        os.stdio.eprintln("xo dev stdobj: ${e}")
+        code = 1
+      }
+    }
+  }
+  os.fs.remove_all(prog).ignore_err("only disk: a leftover empty program")
+  code
 }
 
 /// build_each_cmd is `xo dev build-each [build flags] -- OUT DIR [OUT DIR
