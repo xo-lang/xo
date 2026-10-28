@@ -49,6 +49,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_CBIND_DIR":            {"content", ""},
 	"XO_GOBIND":               {"content", ""},
 	"XO_GOBIND_DIR":           {"content", ""},
+	"XO_GOBIND_LOCAL":         {"content", ""}, // which helper writes a binding (decision 0393), as XO_GOBIND
 	"XO_MODCACHE":             {"content", ""},
 	"XO_OFFLINE":              {"none", ""},
 	"XO_WHOLE_BUILD":          {"none", ""}, // off: a build or run does not use the run cache (decision 0360), whose key holds every XO_ value

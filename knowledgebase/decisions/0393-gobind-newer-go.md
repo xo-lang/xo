@@ -43,7 +43,9 @@ with.
    build from then on. Without the source (a checkout's bin, a helper on
    PATH) it uses the helper as before.
 3. `XO_GOBIND` still wins over everything; a checkout still builds from
-   its own cmd/xo-gobind as today.
+   its own cmd/xo-gobind as today. `XO_GOBIND_LOCAL=1` makes the local
+   build whatever the versions (added the same day so the release smoke
+   runs this path on a CI runner whose Go is the shipped helper's).
 4. A build failure is an error naming the go command, its version and
    the build output; the prebuilt helper is not tried after it (it cannot
    read the newer export data).

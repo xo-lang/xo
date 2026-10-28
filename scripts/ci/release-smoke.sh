@@ -173,6 +173,17 @@ if command -v go >/dev/null; then
   if [ "$("$xo" run --backend=go "$(np "$w/usego")" 2>"$o/use-go-std.txt" | tr -d '\r')" = GO ]; then pass use-go-std; else
     fail use-go-std; tail -8 "$o/use-go-std.txt" | sed 's/^/  /' | tee -a "$sum"
   fi
+  # the helper built with the installed Go from the archive's lib/xo source
+  # into a fresh user cache (decision 0393, bug 14; XO_GOBIND_LOCAL=1
+  # forces it where the runner's Go is the shipped helper's)
+  mkdir -p "$w/usego2" "$w/lad"
+  printf 'module example.com/usego2\nedition preview\n' > "$w/usego2/xo.mod"
+  printf 'use go "strconv"\n\nfn main(os: Os) {\n  os.stdio.println(strconv.itoa(27))\n}\n' > "$w/usego2/main.xo"
+  got=$(XO_GOBIND_LOCAL=1 LocalAppData="$(np "$w/lad")" XDG_CACHE_HOME="$w/lad" HOME="$w/lad/home" "$xo" run --backend=go "$(np "$w/usego2")" 2>"$o/use-go-local.txt" | tr -d '\r')
+  built=$(find "$w/lad" -path '*/xo/gobind/*' -name "xo-gobind$exe" | head -1)
+  if [ "$got" = 27 ] && [ -n "$built" ]; then pass "use-go-local-helper ($(basename "$(dirname "$built")"))"; else
+    fail "use-go-local-helper (out '$got', built '${built}')"; tail -8 "$o/use-go-local.txt" | sed 's/^/  /' | tee -a "$sum"
+  fi
   printf 'module example.com/pin\nedition preview\nrequire go github.com/google/uuid v1.6.0\n' > "$w/pin/xo.mod"
   printf 'use go "github.com/google/uuid"\n\nfn main(os: Os) {\n  os.stdio.println("${uuid.new_string().len()}")\n}\n' > "$w/pin/main.xo"
   pin=$(np "$w/pin")
