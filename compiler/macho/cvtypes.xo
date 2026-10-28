@@ -34,7 +34,28 @@ struct CvTypes {
 /// The types of info: every structure's forward reference, then the
 /// types its variables need, then each structure's members and full
 /// definition.
-fn cv_types(info: debug.Info) -> CvTypes {
+fn cv_types(info: debug.Info) -> CvTypes { cv_types_of(info, var_tys(info)) }
+
+/// The types of info's variables (the DWARF offsets), in the order
+/// cv_types first meets them: each function's, then its inlined calls'.
+fn var_tys(info: debug.Info) -> List[Int] {
+  var out: List[Int] = []
+  for f in info.funcs {
+    for v in f.vars {
+      out.push(v.ty)
+    }
+    for c in f.inlined {
+      for v in c.vars {
+        out.push(v.ty)
+      }
+    }
+  }
+  out
+}
+
+/// cv_types with the variables' types given in order (var_tys): the
+/// structures by offset, then tys, then the structures' members.
+fn cv_types_of(info: debug.Info, tys: List[Int]) -> CvTypes {
   var t = CvTypes{}
   var structs: List[(Str, Int)] = []
   var offs: List[Int] = []
@@ -57,15 +78,8 @@ fn cv_types(info: debug.Info) -> CvTypes {
       structs.push((ty.name, off))
     }
   }
-  for f in info.funcs {
-    for v in f.vars {
-      let _i = cv_index(t, info, v.ty)
-    }
-    for c in f.inlined {
-      for v in c.vars {
-        let _i = cv_index(t, info, v.ty)
-      }
-    }
+  for ty in tys {
+    let _i = cv_index(t, info, ty)
   }
   // each structure's members and full definition
   for (name, off) in structs {
@@ -296,6 +310,18 @@ struct PdbLocal {
 /// list repeats a stack slot in every entry where another piece moves:
 /// xo.exe had 2.1 million S_DEFRANGE_REGISTER_REL, 42 MB, before).
 fn cv_locals(var t: CvTypes, info: debug.Info, vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbSect], base: Int) -> List[PdbLocal] {
+  var out = cv_locals_at(vars, whole, sects, base)
+  for i in 0..out.len() {
+    var l = out[i]
+    l.ty = cv_index(t, info, l.ty)
+    out[i] = l
+  }
+  out
+}
+
+/// cv_locals with each local's type its DWARF offset (cv_index converts
+/// it): a function's locals made from its own object (cvobj obj_pdb).
+fn cv_locals_at(vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbSect], base: Int) -> List[PdbLocal] {
   var out: List[PdbLocal] = []
   for v in vars {
     // the places in first seen order (kind, register, offset, the
@@ -362,10 +388,22 @@ fn cv_locals(var t: CvTypes, info: debug.Info, vars: List[debug.Var], whole: Lis
       }
     }
     if !defs.is_empty() {
-      out.push(PdbLocal{name: v.name, ty: cv_index(t, info, v.ty), param: v.param, defs: defs})
+      out.push(PdbLocal{name: v.name, ty: v.ty, param: v.param, defs: defs})
     }
   }
   out
+}
+
+/// A def's record (cv_locals_at) moved by delta bytes in its section, which
+/// is seg: its section offset and section rewritten.
+fn def_moved(kind: Int, b: Bytes, delta: Int, seg: Int) -> Bytes {
+  let at = if kind == S_DEFRANGE_REGISTER { 4 } else { 8 }
+  var w = new_out(b.len())
+  w.bytes(b[0..at])
+  w.u32((le_b(b, at, 4) + delta) & 0xffffffff)
+  w.u16(seg)
+  w.bytes(b[at + 6..b.len()])
+  w.done()
 }
 
 /// rs in order; a list already in order (DWARF's usually are) is

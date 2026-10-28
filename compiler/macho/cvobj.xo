@@ -336,14 +336,21 @@ struct ObjFn {
   lo: Int
   hi: Int
   rows: List[(Int, Int, Int, Bool)]
+  /// its inline sites with their locals made (no vars)
   sites: List[PdbSite]
+  /// its locals (cv_locals_at: types DWARF offsets, section offsets the
+  /// object section's), and its own offset in that section
+  locals: List[PdbLocal]
+  sect_off: Int
 }
 
 /// What one object brings to the PDB, from its bytes alone: its DWARF
 /// facts, its line tables' files, and each function's rows and inline
 /// sites (pe_pdb's per-function work).
 pub struct ObjPdb {
-  info: debug.Info
+  /// the types by offset, and every variable's type in cv_types' order
+  types: Map[Int, debug.Type]
+  tys: List[Int]
   files: List[Str]
   fns: List[ObjFn]
 }
@@ -365,6 +372,13 @@ pub fn obj_pdb(o: CObj) -> ObjPdb ! Str {
   for (i, f) in lns.files.indexed() {
     file_of[f] = i
   }
+  // the object's sections as the image's are to cv_locals (debug sections
+  // hold no code: empty)
+  let bases = obj_bases(o)
+  var osects: List[PdbSect] = []
+  for (i, sc) in o.sects.indexed() {
+    osects.push(PdbSect{rva: bases[i], vsize: if sc.name.starts_with(".debug_") { 0 } else { sc.size }, chars: 0, header: b""})
+  }
   var fns: List[ObjFn] = []
   for f in info.funcs {
     if f.hi <= f.lo {
@@ -377,23 +391,34 @@ pub fn obj_pdb(o: CObj) -> ObjPdb ! Str {
         calls.push((c.ranges, cf, c.call_line))
       }
     }
-    fns.push(ObjFn{name: f.name, lo: f.lo, hi: f.hi, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), sites: inline_sites(lns, by_addr, file_of, f)})
+    var sites = inline_sites(lns, by_addr, file_of, f)
+    for i in 0..sites.len() {
+      var st = sites[i]
+      st.locals = cv_locals_at(st.vars, st.ranges, osects, 0)
+      st.vars = []
+      sites[i] = st
+    }
+    let (_, so) = seg_off(osects, f.lo)
+    fns.push(ObjFn{name: f.name, lo: f.lo, hi: f.hi, rows: fn_rows(lns, by_addr, f.lo, f.hi, calls), sites: sites, locals: cv_locals_at(f.vars, [(f.lo, f.hi)], osects, 0), sect_off: so})
   }
-  Ok(ObjPdb{info: info, files: lns.files, fns: fns})
+  Ok(ObjPdb{types: info.types, tys: var_tys(info), files: lns.files, fns: fns})
 }
 
 /// The PDB's inputs from the objects' parts (obj_pdb) and the link's
-/// layout: the merged DWARF facts (merge_info), the files in the order
-/// they first appear, and each function's PdbProc (no locals yet: they
-/// need the merged types) with its vars, at the image's addresses.
+/// layout: the types (offsets the image's), every variable's type in
+/// cv_types' order, the files in the order they first appear, and each
+/// function's PdbProc at the image's addresses (its locals' types and
+/// section offsets still the object's: pe_pdb_facts finishes them).
 pub struct PreProcs {
   info: debug.Info
+  tys: List[Int]
   files: List[Str]
   procs: List[PdbProc]
 }
 
 pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> PreProcs {
   var info = debug.Info{}
+  var tys: List[Int] = []
   var files: List[Str] = []
   var file_at: Map[Str, Int] = {}
   var procs: List[PdbProc] = []
@@ -403,8 +428,16 @@ pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> Pr
       None => continue
     }
     let m = obj_map(objs[oi], oi, layout)
-    let first = info.funcs.len()
-    merge_info(part.info, m, info)
+    for (off, t) in part.types {
+      var ms: List[debug.Member] = []
+      for mb in t.members {
+        ms.push(mb with {ty: m.ty(mb.ty)})
+      }
+      info.types[m.ty(off)] = t with {of: m.ty(t.of), members: ms}
+    }
+    for ty in part.tys {
+      tys.push(m.ty(ty))
+    }
     var fmap: List[Int] = []
     for f in part.files {
       if let Some(i) = file_at.get(f) {
@@ -416,14 +449,7 @@ pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> Pr
       }
     }
     let gf = fn(x: Int) -> Int { if x >= 0 && x < fmap.len() { fmap[x] } else { x } }
-    // the functions with code, in the object's order (merge_info kept it)
-    var fi = first
     for fnp in part.fns {
-      while fi < info.funcs.len() && !(info.funcs[fi].name == fnp.name && info.funcs[fi].hi > info.funcs[fi].lo) {
-        fi += 1
-      }
-      let mf = if fi < info.funcs.len() { info.funcs[fi] } else { debug.Func{name: fnp.name, lo: m.addr(fnp.lo), hi: m.addr(fnp.hi), vars: []} }
-      fi += 1
       var rows: List[(Int, Int, Int, Bool)] = []
       for (off, f, l, st) in fnp.rows {
         rows.push((off, gf(f), l, st))
@@ -434,14 +460,19 @@ pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> Pr
         for (a, f, l) in st.entries {
           es.push((m.addr(a), gf(f), l))
         }
-        var vs: List[debug.Var] = []
-        for v in st.vars {
-          vs.push(m.var_of(v))
-        }
-        sites.push(st with {ranges: m.ranges(st.ranges), entries: es, vars: vs})
+        sites.push(st with {ranges: m.ranges(st.ranges), entries: es, locals: locals_ty(st.locals, m)})
       }
-      procs.push(PdbProc{name: fnp.name, seg: 0, off: 0, size: fnp.hi - fnp.lo, rows: rows, lo: m.addr(fnp.lo), sites: sites, vars: mf.vars})
+      procs.push(PdbProc{name: fnp.name, seg: 0, off: 0, size: fnp.hi - fnp.lo, rows: rows, lo: m.addr(fnp.lo), sites: sites, locals: locals_ty(fnp.locals, m), sect_off: fnp.sect_off})
     }
   }
-  PreProcs{info: info, files: files, procs: procs}
+  PreProcs{info: info, tys: tys, files: files, procs: procs}
+}
+
+/// ls with their types' offsets the image's.
+fn locals_ty(ls: List[PdbLocal], m: ObjMap) -> List[PdbLocal] {
+  var out = List[PdbLocal].with_capacity(ls.len())
+  for l in ls {
+    out.push(l with {ty: m.ty(l.ty)})
+  }
+  out
 }

@@ -78,8 +78,9 @@ struct PdbProc {
   lo: Int = 0
   sites: List[PdbSite] = []
   locals: List[PdbLocal] = []
-  /// its variables, when its locals are made later (pre_procs)
-  vars: List[debug.Var] = []
+  /// made from its object (pre_procs): its offset in the object's section,
+  /// by which its locals' section offsets move
+  sect_off: Int = -1
 }
 
 /// A call inlined into a function: the callee's name, the enclosing
@@ -157,18 +158,19 @@ pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs
   b.write(img[rsds + 20..img.len()])
   let out = b.freeze()
   if let Some(pp) = pre {
-    var types = cv_types(pp.info)
+    var types = cv_types_of(pp.info, pp.tys)
     var procs: List[PdbProc] = []
     for p0 in pp.procs {
       let (seg, off) = seg_off(sects, p0.lo - base)
       if seg > 0 {
+        let delta = off - p0.sect_off
         var sites = p0.sites
         for i in 0..sites.len() {
           var st = sites[i]
-          st.locals = cv_locals(types, pp.info, st.vars, st.ranges, sects, base)
+          st.locals = locals_placed(st.locals, types, pp.info, delta, seg)
           sites[i] = st
         }
-        procs.push(p0 with {seg: seg, off: off, sites: sites, locals: cv_locals(types, pp.info, p0.vars, [(p0.lo, p0.lo + p0.size)], sects, base), vars: []})
+        procs.push(p0 with {seg: seg, off: off, sites: sites, locals: locals_placed(p0.locals, types, pp.info, delta, seg)})
       }
     }
     var pubs: List[PdbProc] = []
@@ -238,6 +240,20 @@ pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs
     }
   }
   Ok((out, pdb_file(guid, stamp, sects, procs, pubs, lns.files, types)))
+}
+
+/// ls (made from an object, pre_procs) with their CodeView types and
+/// their records moved delta bytes into section seg.
+fn locals_placed(ls: List[PdbLocal], var types: CvTypes, info: debug.Info, delta: Int, seg: Int) -> List[PdbLocal] {
+  var out = List[PdbLocal].with_capacity(ls.len())
+  for l in ls {
+    var defs = List[(Int, Bytes)].with_capacity(l.defs.len())
+    for (kind, b) in l.defs {
+      defs.push((kind, def_moved(kind, b, delta, seg)))
+    }
+    out.push(l with {ty: cv_index(types, info, l.ty), defs: defs})
+  }
+  out
 }
 
 /// The inline sites of f (decision 0344 stage 3): each inlined call,
