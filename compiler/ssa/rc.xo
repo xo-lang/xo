@@ -375,8 +375,9 @@ fn (r: Rc) leaves_stale(f: Func, v: Int) {
 /// leaves without the memo.
 fn (var r: Rc) leaves_fresh(f: Func, v: Int) -> List[Leaf] {
   let b = r.base(f, v)
-  var out: List[Leaf] = []
-  for lp in r.leaf_paths(f.values[v].ty) {
+  let lps = r.leaf_paths(f.values[v].ty)
+  var out = List[Leaf].with_capacity(lps.len())
+  for lp in lps {
     if b.path.is_empty() {
       out.push(r.leaf(b.root, lp))
     } else {
@@ -567,8 +568,8 @@ fn (var r: Rc) leaf_uses(f: Func, v: Int) -> List[Use] {
 
 /// leaf_uses without the memo.
 fn (var r: Rc) leaf_uses_fresh(f: Func, v: Int) -> List[Use] {
-  var out: List[Use] = []
   let x = f.values[v]
+  var out = List[Use].with_capacity(x.args.len())
   for (i, m) in r.modes(f, v).indexed() {
     if m == Mode.No {
       continue
@@ -1041,30 +1042,32 @@ fn landing_site(f: Func, bl: Int) -> (Int, Int) {
 /// (counted): consumes and borrows.
 struct Counted {
   order: List[Leaf] = []
-  cons: Map[Int, Int] = {}
-  bors: Map[Int, Int] = {}
+  /// by leaf key: consumes * COUNT_BASE + borrows (one map, not two: a
+  /// Counted is made for every instruction and edge of the walk)
+  counts: Map[Int, Int] = {}
 }
+
+const COUNT_BASE = 1048576
 
 fn (var k: Counted) add(l: Leaf, m: Mode) {
   let key = leaf_key(l)
-  if !k.cons.contains(key) {
+  let c = k.counts.get(key)
+  if c.is_none() {
     k.order.push(l)
-    k.cons[key] = 0
-    k.bors[key] = 0
   }
-  if m == Mode.Consume {
-    k.cons[key] = (k.cons.get(key) ?? 0) + 1
-  } else {
-    k.bors[key] = (k.bors.get(key) ?? 0) + 1
-  }
+  k.counts[key] = (c ?? 0) + (if m == Mode.Consume { COUNT_BASE } else { 1 })
+}
+
+fn (k: Counted) has(key: Int) -> Bool {
+  k.counts.contains(key)
 }
 
 fn (k: Counted) consumes(l: Leaf) -> Int {
-  k.cons.get(leaf_key(l)) ?? 0
+  (k.counts.get(leaf_key(l)) ?? 0) / COUNT_BASE
 }
 
 fn (k: Counted) borrows(l: Leaf) -> Int {
-  k.bors.get(leaf_key(l)) ?? 0
+  (k.counts.get(leaf_key(l)) ?? 0) % COUNT_BASE
 }
 
 /// The per function state of the pass (rcFunc).
@@ -1674,7 +1677,10 @@ fn (var r: Rc) insert(var f: Func, var c: RcFunc) {
     r.walk(f, c, bi)
   }
   for (bl, code) in c.pre {
-    var ins = code
+    var ins = List[Int].with_capacity(code.len() + f.blocks[bl].instrs.len())
+    for v in code {
+      ins.push(v)
+    }
     for v in f.blocks[bl].instrs {
       ins.push(v)
     }
@@ -1713,7 +1719,7 @@ fn (k: EdgeNeed) consumes(l: Leaf) -> Int {
 fn (k: EdgeNeed) order() -> List[Leaf] {
   var out = k.args.order
   for l in k.sorted {
-    if !k.args.cons.contains(leaf_key(l)) {
+    if !k.args.has(leaf_key(l)) {
       out.push(l)
     }
   }
@@ -1760,7 +1766,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
   let body = f.blocks[bl].instrs[0..ni - 1]
   var live: Map[Int, Leaf] = {}
   // the new instruction list, reversed
-  var rev: List[Int] = []
+  var rev = List[Int].with_capacity(ni + ni / 2 + 4)
   match f.values[term].op {
     Jump => {
       let need = r.edge_need(f, c, f.values[term].succs[0])
@@ -1984,7 +1990,9 @@ fn (var r: Rc) edge_code(var f: Func, var c: RcFunc, e: Int, need: EdgeNeed, hel
   if f.blocks[to].preds.len() == 1 && f.edges[e].args.is_empty() {
     let x = r.branch_code(f, need, held, first, site, to)
     if !x.is_empty() {
-      var p = c.pre.get(to) ?? []
+      // the map's reference dropped first, so the push does not copy
+      // the list (1.56 s of a cold self-build's CPU, 2026-10-28)
+      var p = c.pre.remove(to) ?? []
       for v in x {
         p.push(v)
       }
