@@ -4585,6 +4585,18 @@ paths (2026-10-18). Let seed-cut.sh make the version commit; if main
 already carries a `Version X.Y.0` commit at its head (a manual bump),
 it cuts from that commit as is instead of refusing.
 
+A patch seed (lead, 2026-10-28) cuts a tag that already exists, such as
+a release branch's v0.33.1: `XO_SEED_TAG=v0.33.1 scripts/seed-cut.sh
+0.33.1 /dev/null WORKDIR` (NOTES is unused; XO_SEED_TAG must be
+`v` plus VERSION, X.Y.Z). Step 1 makes the tree a worktree of that tag
+and refuses unless cli.xo, servers.xo and std/VERSION there say X.Y.Z; it
+makes no bump commit, step 4 pushes and tags nothing, and no push lock is
+taken. Steps 2, 3, 5 and 6 (-short, the gate and fixed point, the
+darwin-arm64 build, the cross builds, race runtimes and packs) run as for
+X.Y.0, from the tag's own scripts. The running seed-cut.sh must still
+match origin/main's. Rehearse with `XO_SEED_DRY_RUN=1 XO_SEED_TAG=...`;
+the X.Y.0 path is unchanged. Docker must be up for step 6.
+
 With agents running (lead, 2026-10-27; Last verified: 2026-10-27):
 freeze main and pause measure jobs first, and run the cut with
 `XO_HEAVY="$HOME/xo-lead/agents/heavy.sh NAME" HEAVY_PRIORITY=1`: each

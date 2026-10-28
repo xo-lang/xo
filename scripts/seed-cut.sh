@@ -32,6 +32,13 @@
 #   7. WORKDIR/out holds the five tarballs, their .sha256, manifest.txt,
 #      and SEED (the seed's name, VERSION-<commit, 8 hex>)
 #
+# XO_SEED_TAG=vX.Y.Z (a patch seed, X.Y.Z with Z above 0, VERSION the same
+# X.Y.Z): cuts the seed of a tag that already exists (a release branch's
+# vX.Y.Z). Step 1 makes the tree a worktree of that tag and checks that
+# the three version files say X.Y.Z; there is no bump commit, no step 4
+# push or tag, and no push lock. NOTES is unused. Steps 2, 3, 5 and 6 run
+# as for X.Y.0. This script itself must still match origin/main's.
+#
 # XO_SEED_DRY_RUN=1 does every step but the pushes (no commit reaches
 # main, no tag is made): a rehearsal; seed-upload.sh refuses its output.
 # XO_SEED_REF (dry runs only, default origin/main) is the commit the cut
@@ -58,8 +65,9 @@ heavy() {
   if [ -n "${XO_HEAVY:-}" ]; then $XO_HEAVY sh -c 'l=$1; shift; exec "$@" > "$l" 2>&1' sh "$l" "$@"; else "$@" > "$l" 2>&1; fi
 }
 
-[ $# -eq 3 ] || die "usage: seed-cut.sh VERSION NOTES WORKDIR"
+[ $# -eq 3 ] || die "usage: seed-cut.sh VERSION NOTES WORKDIR (XO_SEED_TAG=vX.Y.Z for a patch seed)"
 version=$1
+patch_tag=${XO_SEED_TAG:-}
 notes=$(cd "$(dirname "$2")" && pwd)/$(basename "$2")
 work=$3
 dry=${XO_SEED_DRY_RUN:-0}
@@ -69,9 +77,14 @@ if [ -n "${XO_SEED_REF:-}" ]; then
   ref=$XO_SEED_REF
 fi
 
-echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.0$' || die "version $version: want X.Y.0"
-[ -s "$notes" ] || die "$notes: write the tag's message first"
-head -1 "$notes" | grep -qx "Xo v$version" || die "$notes: its first line must be \"Xo v$version\""
+if [ -n "$patch_tag" ]; then
+  echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || die "version $version: want X.Y.Z"
+  [ "$patch_tag" = "v$version" ] || die "XO_SEED_TAG $patch_tag: want v$version"
+else
+  echo "$version" | grep -Eq '^[0-9]+\.[0-9]+\.0$' || die "version $version: want X.Y.0"
+  [ -s "$notes" ] || die "$notes: write the tag's message first"
+  head -1 "$notes" | grep -qx "Xo v$version" || die "$notes: its first line must be \"Xo v$version\""
+fi
 [ "$(uname -s)-$(uname -m)" = Darwin-arm64 ] || die "run on the development Mac (darwin/arm64): the darwin-arm64 seed is built natively"
 command -v go >/dev/null && command -v clang >/dev/null || die "needs go and clang"
 # before anything is pushed: step 6 builds linux-arm64's race runtime in it
@@ -95,7 +108,7 @@ log=$work/logs
 mkdir -p "$log"
 
 locked=""
-if [ -n "${XO_PUSH_LOCK:-}" ] && [ "$dry" != 1 ]; then
+if [ -n "${XO_PUSH_LOCK:-}" ] && [ "$dry" != 1 ] && [ -z "$patch_tag" ]; then
   waited=0
   until mkdir "$XO_PUSH_LOCK" 2>/dev/null; do
     holder=$(cat "$XO_PUSH_LOCK/who" 2>/dev/null || true); hpid=${holder##*@}
@@ -111,14 +124,25 @@ if [ -n "${XO_PUSH_LOCK:-}" ] && [ "$dry" != 1 ]; then
 fi
 
 git -C "$repo" fetch -q origin --tags
-if git -C "$repo" rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
+if [ -n "$patch_tag" ]; then
+  git -C "$repo" rev-parse -q --verify "refs/tags/$patch_tag^{commit}" >/dev/null || die "tag $patch_tag does not exist"
+elif git -C "$repo" rev-parse -q --verify "refs/tags/v$version" >/dev/null; then
   die "tag v$version exists"
 fi
 cur=$(git -C "$repo" show "$ref":compiler/cli/core/cli.xo | sed -n 's/^pub const VERSION = "\(.*\)"$/\1/p')
 [ -n "$cur" ] || die "no VERSION in origin/main's compiler/cli/core/cli.xo"
 newest=$(printf '%s\n%s\n' "$cur" "$version" | sort -t. -k1,1n -k2,2n -k3,3n | tail -1)
 prebumped=0
-if [ "$version" = "$cur" ]; then
+if [ -n "$patch_tag" ]; then
+  # the tag carries its own version: check all three files there
+  t=refs/tags/$patch_tag
+  for f in compiler/cli/core/cli.xo compiler/cli/servers/servers.xo std/VERSION; do
+    git -C "$repo" show "$t:$f" | grep -qx "\(pub const \(XO_\)\{0,1\}VERSION = \)\{0,1\}\"\{0,1\}$version\"\{0,1\}" ||
+      die "$patch_tag's $f does not say $version"
+  done
+  prebumped=1
+  ref=$t
+elif [ "$version" = "$cur" ]; then
   # main already carries the bump (2026-10-18: a manual "Version X" commit):
   # cut from origin/main as is when its head is that commit
   git -C "$repo" log -1 --format=%s "$ref" | grep -q "^Version $version " ||
@@ -159,7 +183,9 @@ GOMAXPROCS=6 heavy "$log/boot.log" sh scripts/bootstrap-xo.sh "$tree/bin/xo" "$w
   { tail -20 "$log/boot.log"; die "fixed point failed"; }
 grep -q 'fixed point: s2 and s3 binaries identical' "$log/boot.log" || die "fixed point not reached ($log/boot.log)"
 
-if [ "$dry" = 1 ]; then
+if [ -n "$patch_tag" ]; then
+  step "4. patch seed: $patch_tag exists at $commit, nothing to push"
+elif [ "$dry" = 1 ]; then
   step "4. dry run: not pushing $commit, no tag"
 else
   step "4. push $commit to main, tag v$version"
