@@ -1,0 +1,14 @@
+// An uncaught fault in a callback std's List.map calls: the traceback
+// names the callback, map and main.
+fn cb(x: Int) -> Int {
+  if x == 3 {
+    fault("callback fault at ${x}")
+  }
+  x * 2
+}
+
+fn main(os: Os) {
+  let xs = [1, 2, 3, 4]
+  let ys = xs.map(fn(x) { cb(x) })
+  os.stdio.println("${ys.len()}")
+}

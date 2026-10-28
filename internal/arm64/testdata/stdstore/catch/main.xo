@@ -1,0 +1,31 @@
+// A fault in a callback that std's List.map calls unwinds through map's
+// frames (the prelude's) to task.isolate, which turns it into a value; the
+// list map built is released (the leak check counts it).
+use std/task
+
+enum E {
+  Bad(msg: Str)
+} derive Display
+
+fn cb(x: Int) -> Int {
+  if x == 3 {
+    fault("callback fault at ${x}")
+  }
+  x * 2
+}
+
+fn work() -> Int ! E {
+  let xs = [1, 2, 3, 4]
+  let ys = xs.map(fn(x) { cb(x) })
+  ys.len()
+}
+
+fn main(os: Os) {
+  for _ in 0..3 {
+    match task.isolate(fn() -> Int ! E { work() }) {
+      Ok(v) => os.stdio.println("ok ${v}")
+      Err(task.Isolated.Faulted(info)) => os.stdio.println("fault ${info.msg} at ${info.location}")
+      Err(task.Isolated.Failed(e)) => os.stdio.println("failed ${e}")
+    }
+  }
+}
