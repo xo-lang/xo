@@ -117,6 +117,11 @@ fn (a: Asm) x86_short_reaches(br: XBr) -> Bool {
     if !a.x86_macho_local(br.sym, br.sect, br.atom) {
       return false
     }
+  } else if a.coff && a.atoms {
+    // COFF atoms (decision 0388): a branch to another atom is relocated
+    if !a.x86_macho_local(br.sym, br.sect, br.atom) {
+      return false
+    }
   } else if s.sect != br.sect || ((s.global || s.weak) && !a.coff) {
     // (COFF resolves a branch to a global symbol of its own section:
     // nothing interposes it)
@@ -334,7 +339,8 @@ fn (var a: Asm) x86_apply_fixes() {
       }
       continue
     }
-    let local = s.sect == f.sect && ((!s.global && !s.weak) || a.coff)
+    // (COFF atoms, decision 0388: only within the fixup's own atom)
+    let local = if a.coff && a.atoms { a.x86_macho_local(f.sym, f.sect, f.atom) } else { s.sect == f.sect && ((!s.global && !s.weak) || a.coff) }
     if a.coff && !(f.rel is "" | "PLT" && f.pcrel && local) {
       a.coff_x86_fix(f)
       if !a.err.is_empty() {

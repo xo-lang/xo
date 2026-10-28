@@ -478,8 +478,15 @@ fn (var a: Asm) coff_x86_fix(f: XFx) {
     return
   }
   if s.temp && s.sect >= 0 {
-    target = a.sects[s.sect].ltmp
-    inplace += s.off
+    if a.atoms && s.atom >= 0 {
+      // atoms (decision 0388): a label in an atom is relocated to the
+      // atom's symbol, so the reference is an edge to that atom
+      target = s.atom
+      inplace += s.off - a.syms[s.atom].off
+    } else {
+      target = a.sects[s.sect].ltmp
+      inplace += s.off
+    }
   }
   a.register(target)
   a.syms[target].used = true
@@ -496,8 +503,13 @@ fn (var a: Asm) coff_data_reloc(si: Int, off: Int, n: Int, sym: Int, k: Int) -> 
   var target = sym
   var v = k
   if s.temp && s.sect >= 0 {
-    target = a.sects[s.sect].ltmp
-    v += s.off
+    if a.atoms && s.atom >= 0 {
+      target = s.atom
+      v += s.off - a.syms[s.atom].off
+    } else {
+      target = a.sects[s.sect].ltmp
+      v += s.off
+    }
   }
   a.register(target)
   a.syms[target].used = true

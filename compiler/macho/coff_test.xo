@@ -154,3 +154,41 @@ test "a prologue past 255 bytes is an error, not a wrapped UNWIND_INFO" {
     Err(e) => expect(e.contains("UNWIND_INFO")) == true
   }
 }
+
+// COFF atoms (decision 0388): with `.subsections_via_symbols` a branch or a
+// reference to another function of the section, or to a label inside one,
+// is a relocation naming that function, so pelink may strip by atom;
+// without it they are resolved in place, as before.
+fn coff_atoms_src(directive: Bool) -> Bytes {
+  "${if directive { "\t.subsections_via_symbols\n" } else { "" }}\t.text\n\t.globl f\nf:\n\tcallq g\n\tjmp .Lout\n.Lout:\n\tjmp .Lin\n\tleaq .Lin(%rip), %rax\n\tretq\n\t.globl g\ng:\n\tnop\n.Lin:\n\tretq\n".bytes()
+}
+
+fn coff_text_relocs(src: Bytes) -> List[Str] {
+  let obj = match assemble_coff_amd64(src) {
+    Ok(o) => o
+    Err(e) => fault(e)
+  }
+  let c = match read_coff("t.obj", obj) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  var out: List[Str] = []
+  for s in c.sects {
+    if s.name == ".text" {
+      for r in s.relocs {
+        out.push(c.syms[r.sym].name)
+      }
+    }
+  }
+  out
+}
+
+test "COFF atoms: references into another function are relocations to it" {
+  // callq g, jmp .Lin and leaq .Lin: all name g (.Lin is in g's atom);
+  // jmp .Lout stays in f's atom, resolved
+  expect(coff_text_relocs(coff_atoms_src(true))) == ["g", "g", "g"]
+}
+
+test "COFF without atoms: the same references are resolved in place" {
+  expect(coff_text_relocs(coff_atoms_src(false))) == []
+}
