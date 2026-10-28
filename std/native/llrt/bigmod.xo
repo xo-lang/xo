@@ -288,39 +288,42 @@ pub fn msub_row(dst: Int, src: Int, k: Int, len: Int) -> Int {
     let x1 = ld(dst, o1)
     let x2 = ld(dst, o2)
     let x3 = ld(dst, o3)
+    // the four products as one carry chain (each high half added to the
+    // next word's low half), then the four subtractions as another: one
+    // chain at a time keeps each carry in the flags, where interleaving
+    // the two moved the borrow through a register at every word
+    // (2026-10-27: about 10 instructions a word to 7)
     let l0 = a0.wrapping_mul(k)
     let h0 = a0.mul_hi_unsigned(k)
-    let p0 = cpu.adc(l0, cw, 0)
-    let pc0 = cpu.adc_carry(l0, cw, 0)
-    let c0 = cpu.adc(h0, 0, pc0)
-    let n0 = p0 ^ -1
-    st(dst, o, cpu.adc(x0, n0, nb))
-    let b0 = cpu.adc_carry(x0, n0, nb)
     let l1 = a1.wrapping_mul(k)
     let h1 = a1.mul_hi_unsigned(k)
-    let p1 = cpu.adc(l1, c0, 0)
-    let pc1 = cpu.adc_carry(l1, c0, 0)
-    let c1 = cpu.adc(h1, 0, pc1)
-    let n1 = p1 ^ -1
-    st(dst, o1, cpu.adc(x1, n1, b0))
-    let b1 = cpu.adc_carry(x1, n1, b0)
     let l2 = a2.wrapping_mul(k)
     let h2 = a2.mul_hi_unsigned(k)
-    let p2 = cpu.adc(l2, c1, 0)
-    let pc2 = cpu.adc_carry(l2, c1, 0)
-    let c2 = cpu.adc(h2, 0, pc2)
-    let n2 = p2 ^ -1
-    st(dst, o2, cpu.adc(x2, n2, b1))
-    let b2 = cpu.adc_carry(x2, n2, b1)
     let l3 = a3.wrapping_mul(k)
     let h3 = a3.mul_hi_unsigned(k)
-    let p3 = cpu.adc(l3, c2, 0)
-    let pc3 = cpu.adc_carry(l3, c2, 0)
-    let c3 = cpu.adc(h3, 0, pc3)
+    let p0 = cpu.adc(l0, cw, 0)
+    let c0 = cpu.adc_carry(l0, cw, 0)
+    let p1 = cpu.adc(l1, h0, c0)
+    let c1 = cpu.adc_carry(l1, h0, c0)
+    let p2 = cpu.adc(l2, h1, c1)
+    let c2 = cpu.adc_carry(l2, h1, c1)
+    let p3 = cpu.adc(l3, h2, c2)
+    let c3 = cpu.adc_carry(l3, h2, c2)
+    // a high half is at most 2^64 - 2: plus a carry it cannot overflow
+    let c4 = cpu.adc(h3, 0, c3)
+    let n0 = p0 ^ -1
+    let n1 = p1 ^ -1
+    let n2 = p2 ^ -1
     let n3 = p3 ^ -1
+    st(dst, o, cpu.adc(x0, n0, nb))
+    let b0 = cpu.adc_carry(x0, n0, nb)
+    st(dst, o1, cpu.adc(x1, n1, b0))
+    let b1 = cpu.adc_carry(x1, n1, b0)
+    st(dst, o2, cpu.adc(x2, n2, b1))
+    let b2 = cpu.adc_carry(x2, n2, b1)
     st(dst, o3, cpu.adc(x3, n3, b2))
     let b3 = cpu.adc_carry(x3, n3, b2)
-    cw = c3
+    cw = c4
     nb = b3
     o = o.wrapping_add(32)
   }

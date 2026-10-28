@@ -378,3 +378,10 @@ writer that finds escape runs eight bytes a step (scan.span) measured 1.009 (no 
 and was dropped. The path to Go's time and below is decoding into T straight from the parsed tree, with no JSON
 text between (the writer, jsontext's scan and json.decode are about 37% of decode); derive Json reads only
 text, so that needs a compiler change and is not started.
+
+## big quorem carry chains (2026-10-27, xo-lang-5)
+
+Per std/changes/big.md 2026-10-27 ("long division's row runs its two carry chains one after the other").
+Quiet `xo bench --ab`, 15 rounds, the parent's std as A: quorem wall 0.779 (0.770 to 0.792), instructions
+0.889, cycles 0.752; Xo / Go about 1.01 (estimate: 1.451 x 0.898 x 0.779), from 1.45 this morning: under the
+1.2x bar.

@@ -1,5 +1,23 @@
 # std/big changes
 
+## 2026-10-27: perf: long division's row runs its two carry chains one after the other
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/big quorem at about 1.30x Go after the buffer change; the arm64 code of bigmod.msub_row (inlined into nat_divmod_basic): the multiply chain and the subtract chain interleaved word by word, so the borrow went through a register at every word (cmp, adcs, cset): about 11 instructions a word
+- Go reference: math/big arith_arm64.s (mulAddVWW and subVV: one carry chain per loop) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big (go, arm64, LLVM); internal/llvm and internal/arm64 big_basic; a differential of 3,000 quo_rem calls over 1 to 70 word dividends and 2 to 65 word divisors (top words near all ones and near zero for the add-back case) equal on the Go backend (math/big), arm64 and llvm; twincheck's checksums agree on mul, quorem, text, exp
+
+Each 4-word round of msub_row now forms the four products as one carry
+chain (each high half added into the next word's low half, the last high
+half plus the carry as the next carry word) and then subtracts them as
+another, so each chain stays in the flags: per round 4 loads of pairs, 8
+multiplies, 5 adds, 4 complements, one compare, 4 adds with carry, one
+carry set and 2 stores of pairs, about 8 instructions a word. Output is
+unchanged. Quiet --ab, 15 rounds, the parent's std as A: quorem wall
+0.779 (0.770 to 0.792), instructions 0.889, cycles 0.752; Xo / Go about
+1.01 (estimate: 1.451 x 0.898 x 0.779), from 1.30.
+
 ## 2026-10-27: perf: long division shifts into its buffers and trims in place
 
 - Kind: perf
