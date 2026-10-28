@@ -98,3 +98,12 @@ interp cross built here with Xo's amd64 backend (`--backend=amd64
 on the laptop (wall, one placement): off 198 ms (193 to 199), on 157
 ms (155 to 167): 21 percent less. The Docker linux/amd64 golden sample
 with the pass on: 48 of 48.
+
+## Code size
+
+xo's own native `__text` (compiler/xo built by this xo, the pass off
+and on): 65,680,892 to 65,681,164 bytes, 272 more (the compiler has
+few jump table loops with a copyable latch). Full gate: internal/arm64
+(TestGoldenAsm, TestRun with testdata/run/thread_switch_cold,
+TestThreadedDispatch), the fixed point, chkcache, cross, the codegen
+patterns (22 programs, 231 patterns), the Docker amd64 sample.

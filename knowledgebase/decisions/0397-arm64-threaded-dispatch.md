@@ -64,7 +64,7 @@ each indirect branch sees only that op's successors.
   one under the unthreaded best.
 - Code size: a threaded loop grows by (arms times the copied
   instructions plus a jump table per copy): interp's run 491 to 957
-  lines. Over 14 bench programs the pass changes two functions: run,
+  lines; xo's own `__text` 272 bytes more (65,680,892 to 65,681,164). Over 14 bench programs the pass changes two functions: run,
   and std time.format_items (the layout item dispatch; its row in the
   results file).
 - The same function has several jump tables; each copy's table is
