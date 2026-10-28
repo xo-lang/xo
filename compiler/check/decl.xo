@@ -164,6 +164,8 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
   c.set_file(f)
   var env = c.env_with(TypeEnv{file: f, mod: c.objs[t].module}, c.objs[t].tparams)
   env.elided = true
+  // a std type's tree, when its record left the file unparsed
+  c.need_tree(t)
   let d = c.files[f].ast.decls[c.objs[t].decl_idx]
   match d {
     StructDecl(d: sd) => {
