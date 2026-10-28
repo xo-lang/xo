@@ -652,3 +652,14 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   StoreLink.resolve; unwind.xo unwind_info leaves out a compact entry whose function atom
   is dead (a store link folds those into the object's __dead section). Normal builds are
   unchanged (identity 202 of 202).
+- amd64 std stores (Lead, 2026-10-28: the default covers every 0.34 target but windows,
+  which is Lang 2's): the atoms mode and store code were already target neutral; two gaps.
+  The DWARF run finder (elfstore.xo, elfstrip.xo dw_strip) took only R_AARCH64_ABS64 for an
+  address, now R_X86_64_64 too; and a link through a store read its machine from its first
+  object, a stored one that names none, so linux/amd64 took arm64's relocation rules
+  (`__tsan_switch_to_fiber ... relocation 42, which needs a copy relocation`): link_store_elf
+  and now takes the machine (ELF e_machine) from the program's
+  objects. Proof: XO_STD_STORE_CHECK byte for byte on fib, async_preempt_alloc and _regs,
+  catch and trace for linux/amd64, run in Docker (fib, 5 of 5 each, the caught fault, the
+  traceback). darwin/amd64 follows (x86_64 Mach-O's pc relative pointers without
+  relocations need dead atoms kept at their addresses).

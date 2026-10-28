@@ -93,7 +93,7 @@ pub fn store_encode_elf(inputs: List[LinkInput]) -> Result[Bytes, Str] {
       if s.name is ".debug_info" | ".debug_line" | ".debug_loclists" {
         var at: Map[Int, ERel] = {}
         for r in s.relocs {
-          if r.typ == R_AARCH64_ABS64 {
+          if r.typ == R_AARCH64_ABS64 || r.typ == R_X86_64_64 {
             at[r.off] = r
           }
         }
@@ -200,7 +200,8 @@ pub fn link_store_elf(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts) 
   let dropped = v.dw_dropped(live)
   let store = v.b
   for i in 0..v.n {
-    var ob = EObj{path: v.paths[i], stored: true}
+    // the machine the program's objects name (the store has none)
+    var ob = EObj{path: v.paths[i], stored: true, machine: if prog.is_empty() { 0 } else { prog[0].machine }}
     for k in 0..v.nsects[i] {
       let q = v.recs[i] + STORE_REC * k
       let (sg, nm) = v.names[rec_name(store, q)]
@@ -239,6 +240,9 @@ pub fn link_store_elf(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts) 
   }
   let n = v.n
   l.objs = l.objs + prog
+  // x86-64's relocations and GOT forms (link_elf_split's check, which
+  // reads the first object: here a stored one)
+  l.amd64 = !prog.is_empty() && prog[0].machine == 62
   // the dead functions' FDEs, as the strip drops them: the globals first
   // (rel_sect resolves through them), in a linker of their own (its
   // COMDAT bookkeeping would make the link's drop every group's copy)

@@ -298,7 +298,7 @@ fn (var l: ELinker) dw_strip(o: Int, live: List[List[Bool]]) {
     // an 8 byte address's function section, by its relocation
     var at: Map[Int, ERel] = {}
     for r in s.relocs {
-      if r.typ == R_AARCH64_ABS64 {
+      if r.typ == R_AARCH64_ABS64 || r.typ == R_X86_64_64 {
         at[r.off] = r
       }
     }
