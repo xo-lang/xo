@@ -114,11 +114,9 @@ test "an entry's header round trips and holds until a std file, directory or nam
       expect(h2.dirs[1].path) == "std/sub"
       expect(at > 0) == true
       expect(header_holds(os.fs, h2)) == true
-      // a file added to a subdirectory: its directory's time moves, the
-      // parent's does not
-      os.fs.write("std/sub/e.xo", b"fn e() -> Int { 1 }\n")?
+      // a file's size changed: seen by its stamp
+      os.fs.write("std/sub/d.xo", b"fn d() -> Int { 10 }\n")?
       expect(header_holds(os.fs, h2)) == false
-      os.fs.remove("std/sub/e.xo")?
     }
     None => expect("decoded") == "None"
   }
