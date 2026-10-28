@@ -119,6 +119,12 @@ fn setup(p: Int) {
   if !lc.is_empty() && lc[0] == "1" {
     rt.slot_store[Int](rt.mem_load(p, P_DLK, 8), pool.DLK_LOCKCHECK, 1, RELEASE)
   }
+  // the direct fiber switch (decision 0394): a park hands off to the next
+  // fiber of its worker without the scheduler, unless XO_DIRECT=0
+  let dv = process.env_real("XO_DIRECT")
+  if !dv.is_empty() && dv[0] == "0" {
+    rt.slot_store[Int](rt.mem_load(p, P_DLK, 8), pool.DLK_NODIRECT, 1, RELEASE)
+  }
   // XO_PREEMPT=0: no worker is asked to yield (decision 0286 step 3's
   // kill switch; the polls stay and never fire)
   let pe = process.env_real("XO_PREEMPT")

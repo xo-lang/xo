@@ -73,6 +73,10 @@ const W_NEXT_I = layout.W_NEXT_I
 const W_NEXT_AT = layout.W_NEXT_AT
 const W_LIVE = layout.W_LIVE
 const W_HOOKS = layout.W_HOOKS
+const W_DCOUNT = layout.W_DCOUNT
+const W_TICK = layout.W_TICK
+const W_FAIR_AT = layout.W_FAIR_AT
+const W_LASTF = layout.W_LASTF
 const W_WAKEW = layout.W_WAKEW
 const W_WAKEW_I = layout.W_WAKEW_I
 const W_IDLE_NEXT = layout.W_IDLE_NEXT
@@ -1115,7 +1119,33 @@ pub fn find_work(p: Int, w: Int, spinning: Int) -> Int {
     let _n = np_poll(p, w, 0)
     return det.pick()
   }
-  var t = take_local(w)
+  var t = 0
+  let tick = rt.mem_load(w, W_TICK, 8).wrapping_add(1)
+  rt.mem_store(w, W_TICK, tick, 8)
+  if (tick & 63) == 0 || rt.mem_load(w, W_DCOUNT, 8) < 0 {
+    // fairness (decision 0394): a pair of fibers handing off through the
+    // run-next slot keeps it full, and the ring, the inject queue, timers
+    // and the network were never reached (a 20 ms timer fired after two
+    // minutes on one worker). Once a slice they come before the slot, as
+    // Go's schedule checks the global queue every 61st round and its
+    // sysmon polls the network; the slot's fiber stays there.
+    let now = cpu.ticks()
+    let at = rt.mem_load(w, W_FAIR_AT, 8)
+    if at == 0 || cpu.ticks_ns(now.wrapping_sub(at)) >= SLICE_NS {
+      rt.mem_store(w, W_FAIR_AT, now, 8)
+      owner_check(w)
+      t = sched.rq_get(w)
+      if t == 0 {
+        t = inject_pop(p, w)
+      }
+      if t == 0 && np_poll(p, w, 0) > 0 {
+        t = sched.rq_get(w)
+      }
+    }
+  }
+  if t == 0 {
+    t = take_local(w)
+  }
   if t == 0 {
     t = inject_pop(p, w)
   }
@@ -1351,10 +1381,14 @@ pub fn run_item(p: Int, w: Int, it: Int) {
 
 /// Runs fiber f on w until it parks or ends (then its stack is kept;
 /// main's tells its root, root_main).
-fn run_fiber(p: Int, w: Int, f: Int) {
+fn run_fiber(p: Int, w: Int, f0: Int) {
   rt.slot_store(w, W_RUN_AT_I, cpu.ticks(), RELAXED)
-  rt.slot_store(w, W_RUNF / 8, f, RELEASE)
-  let r = sched.fiber_run(w, f)
+  rt.mem_store(w, W_DCOUNT, 0, 8)
+  rt.slot_store(w, W_RUNF / 8, f0, RELEASE)
+  let r = sched.fiber_run(w, f0)
+  // the fiber that came back: f0, or the last of a chain of direct
+  // switches (decision 0394)
+  let f = rt.mem_load(w, W_LASTF, 8)
   rt.slot_store(w, W_RUNF / 8, 0, RELEASE)
   rt.slot_store(w, W_RUN_AT_I, 0, RELAXED)
   if rt.mem_load(w, W_LOCKS, 8) != 0 && rt.slot_load(rt.mem_load(p, P_DLK, 8), DLK_LOCKCHECK, RELAXED) != 0 {
@@ -2178,6 +2212,7 @@ const DLK_MAINF = layout.DLK_MAINF
 pub const DLK_NOPREEMPT = layout.DLK_NOPREEMPT
 const DLK_NPBLK = layout.DLK_NPBLK
 pub const DLK_MNOYIELD = layout.DLK_MNOYIELD
+pub const DLK_NODIRECT = layout.DLK_NODIRECT
 
 /// Whether a Mutex release that wakes a writer may put it in next and
 /// yield to it (mutex.xo wake, decision 0118's 2026-10-22 addendum): not
@@ -2520,7 +2555,7 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
       rt.mem_store(p, PK_FIBER, f, 8)
       sched.fiber_parking(f)
       unlock(p)
-      sched.fiber_park(f)
+      park_switch(f)
       klock(p)
       rt.mem_store(p, PK_FIBER, 0, 8)
       if main {
@@ -2588,6 +2623,71 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
   }
 }
 
+/// Switches fiber f away to park: straight to the fiber its wake left in
+/// this worker's run-next slot when direct_take allows (decision 0394),
+/// else to the scheduler.
+fn park_switch(f: Int) {
+  if rt.mem_load(f, F_HOOKS, 8) == 0 && !(tracerec.built() && tracerec.on()) {
+    let w = rt.tlocal_get(TLS_W)
+    if w != 0 && rt.slot_load(rt.mem_load(rt.mem_load(w, W_POOL, 8), P_DLK, 8), DLK_NODIRECT, RELAXED) == 0 {
+      let g = direct_take(w, f)
+      if g != 0 {
+        sched.fiber_direct(f, g)
+        return
+      }
+    }
+  }
+  sched.fiber_park(f)
+}
+
+/// The fiber a direct switch from parking fiber f goes to, taken out of
+/// w's run-next slot, or 0 for the scheduler. Only when f is parking (not
+/// yielding or woken already), the slot holds a fiber (a woken one: bit 0),
+/// no preemption was asked of this worker, the ring has room for the
+/// requeue of f if it is woken as it switches (sched.xo finish_prev), and
+/// the slice has not run out: direct switches inherit the slice of the
+/// fiber the scheduler started (run_fiber sets W_RUN_AT_I and clears
+/// W_DCOUNT), and every 64th reads the clock, so the scheduler runs at
+/// least every SLICE_NS (a pair handing off cannot hold a worker from its
+/// ring, timers, or the poller; Go's runnext inherits the time slice for
+/// the same reason).
+fn direct_take(w: Int, f: Int) -> Int {
+  if !sched.fiber_is_parking(f) {
+    return 0
+  }
+  let nx = rt.slot_load(w, W_NEXT_I, RELAXED)
+  if nx == 0 || (nx & 1) == 0 || rt.slot_load(w, W_PREEMPT_I, RELAXED) != 0 {
+    return 0
+  }
+  if rt.mem_load(w, RQ_TAIL_AT, 8).wrapping_sub(rt.slot_load(w, 0, ACQUIRE)) >= RUNQ_HALF {
+    return 0
+  }
+  let n = rt.mem_load(w, W_DCOUNT, 8).wrapping_add(1)
+  rt.mem_store(w, W_DCOUNT, n, 8)
+  if (n & 63) == 0 {
+    let at = rt.slot_load(w, W_RUN_AT_I, RELAXED)
+    if at == 0 || cpu.ticks_ns(cpu.ticks().wrapping_sub(at)) >= SLICE_NS {
+      // the scheduler's find_work takes the fairness step next
+      rt.mem_store(w, W_DCOUNT, -1, 8)
+      return 0
+    }
+  }
+  let t = rt.slot_swap(w, W_NEXT_I, 0, SEQ_CST)
+  if t == 0 {
+    return 0
+  }
+  if t == (f | 1) {
+    // (a wake of f queues it only when it had parked: not while it parks)
+    let _r = sched.rq_put(w, t)
+    return 0
+  }
+  if rt.slot_load(w, W_DEFER_AT_W, RELAXED) != 0 {
+    // this worker runs its own work: no wake is owed
+    rt.slot_store(w, W_DEFER_AT_W, 0, RELAXED)
+  }
+  t & -2
+}
+
 /// park_wait of a task on a fiber that is not main's counted wait (the
 /// common park: a channel, a mutex, a join). The same steps as the loop
 /// in park_wait, with the worker record looked up once for the locks
@@ -2611,7 +2711,7 @@ fn park_wait_fiber(pl: Int, c: Int, cancelable: Int, counted: Int, f: Int, node:
     rt.mem_store(p, PK_FIBER, f, 8)
     sched.fiber_parking(f)
     unlock_w(w, p)
-    sched.fiber_park(f)
+    park_switch(f)
     w = rt.tlocal_get(TLS_W)
     klock_w(w, p)
     rt.mem_store(p, PK_FIBER, 0, 8)

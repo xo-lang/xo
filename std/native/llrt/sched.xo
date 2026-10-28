@@ -62,6 +62,8 @@ const RQ_SLOT = 17
 /// pointer, and whether the fiber code calls xo_sched_hook (byte
 /// offsets).
 const W_SCHED_SP = 2208
+const W_PREV = layout.W_PREV
+const W_LASTF = layout.W_LASTF
 const W_HOOKS = layout.W_HOOKS
 /// xo_fiber: the saved stack pointer (byte 0), the task, the context
 /// running on it, the state (word 5), whether it ended.
@@ -271,6 +273,25 @@ pub fn fiber_main(f: Int) {
   rt.stack_switch(f, rt.mem_load(w, W_SCHED_SP, 8))
 }
 
+/// Whether fiber f is parking (not yet woken, not yielding): the state a
+/// direct switch needs (pool.xo direct_take).
+pub fn fiber_is_parking(f: Int) -> Bool { rt.slot_load(f, F_STATE, RELAXED) == F_PARKING }
+
+/// The park of the fiber a direct switch left (decision 0394), done by the
+/// fiber that resumed, as fiber_run does after a switch back: it parked
+/// (a waker queues it), or it was woken while it switched (this worker
+/// queues it again: the ring has room, direct_take checked).
+fn finish_prev(w: Int) {
+  let prev = rt.mem_load(w, W_PREV, 8)
+  if prev == 0 {
+    return
+  }
+  rt.mem_store(w, W_PREV, 0, 8)
+  if !rt.slot_cas(prev, F_STATE, F_PARKING, F_PARKED, ACQ_REL) {
+    let _r = rq_put(w, prev | 1)
+  }
+}
+
 /// Marks fiber f about to park (its park's lock held).
 pub fn fiber_parking(f: Int) { rt.slot_store(f, F_STATE, F_PARKING, RELEASE) }
 
@@ -286,9 +307,28 @@ pub fn fiber_park(f: Int) {
     rt.sched_hook(HOOK_PARK, w, f)
   }
   rt.stack_switch(f, rt.mem_load(w, W_SCHED_SP, 8))
+  finish_prev(rt.mem_load(rt.tlocal_addr(), TLS_W_AT, 8))
   if hooks != 0 {
     rt.sched_hook(HOOK_RESUMED, rt.mem_load(rt.tlocal_addr(), TLS_W_AT, 8), f)
   }
+}
+
+/// Switches from parking fiber f straight to fiber g, which a waker queued
+/// in this worker's run-next slot and direct_take took (decision 0394): no
+/// hop through the scheduler. f's park is finished by g when it runs
+/// (W_PREV); the worker's slice goes on (W_RUN_AT_I is not touched). Only
+/// with no scheduler hooks (F_HOOKS 0).
+pub fn fiber_direct(f: Int, g: Int) {
+  let t = rt.tlocal_addr()
+  rt.mem_store(f, F_CUR, rt.mem_load(t, TLS_CUR_AT, 8), 8)
+  let w = rt.mem_load(t, TLS_W_AT, 8)
+  rt.mem_store(w, W_PREV, f, 8)
+  rt.slot_store(w, layout.W_RUNF / 8, g, RELEASE)
+  rt.slot_store(g, F_STATE, F_RUNNING, RELAXED)
+  rt.mem_store(t, TLS_FIB_AT, g, 8)
+  rt.mem_store(t, TLS_CUR_AT, rt.mem_load(g, F_CUR, 8), 8)
+  rt.stack_switch(f, rt.mem_load(g, 0, 8))
+  finish_prev(rt.mem_load(rt.tlocal_addr(), TLS_W_AT, 8))
 }
 
 /// Switches fiber f away to be queued again by its scheduler (fiber_run
@@ -304,10 +344,13 @@ pub fn fiber_wake(f: Int) -> Int {
   if rt.slot_swap(f, F_STATE, F_WOKEN, ACQ_REL) == F_PARKED { 1 } else { 0 }
 }
 
-/// Runs fiber f on worker w until it parks (0), ends (1: the caller
-/// frees it), or yields (2: the caller queues it again). The thread's current context is restored after (a root
+/// Runs fiber f0 on worker w until a fiber parks (0), ends (1: the caller
+/// frees it), or yields (2: the caller queues it again): the fiber is f0,
+/// or the last of a chain of direct switches (fiber_direct), which
+/// W_LASTF names. The thread's current context is restored after (a root
 /// thread runs fibers while it waits).
-pub fn fiber_run(w: Int, f: Int) -> Int {
+pub fn fiber_run(w: Int, f0: Int) -> Int {
+  var f = f0
   // the table of this thread, whose scheduler stack never moves to
   // another: valid across the switches
   let t = rt.tlocal_addr()
@@ -315,15 +358,19 @@ pub fn fiber_run(w: Int, f: Int) -> Int {
   let hooks = rt.mem_load(w, W_HOOKS, 8)
   while true {
     rt.slot_store(f, F_STATE, F_RUNNING, RELAXED)
+    rt.mem_store(w, W_PREV, 0, 8)
     rt.mem_store(t, TLS_FIB_AT, f, 8)
     rt.mem_store(t, TLS_CUR_AT, rt.mem_load(f, F_CUR, 8), 8)
     if hooks != 0 {
       rt.sched_hook(HOOK_RUN, w, f)
     }
     rt.stack_switch(w.wrapping_add(W_SCHED_SP), rt.mem_load(f, 0, 8))
+    // the fiber that switched back (a direct switch may have changed it)
+    f = rt.mem_load(t, TLS_FIB_AT, 8)
     if hooks != 0 {
       rt.sched_hook(HOOK_BACK, w, f)
     }
+    rt.mem_store(w, W_LASTF, f, 8)
     rt.mem_store(t, TLS_FIB_AT, 0, 8)
     rt.mem_store(t, TLS_CUR_AT, saved, 8)
     if rt.mem_load(f, F_DONE, 8) != 0 {

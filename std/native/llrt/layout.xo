@@ -117,7 +117,9 @@ pub const DLK_NPBLK = 8
 /// XO_MUTEX_YIELD=1 (always).
 pub const DLK_MNOYIELD = 9
 /// the record's bytes (ten words)
-pub const DLK_SIZE = 80
+/// 1 when XO_DIRECT=0: a park goes through the scheduler (decision 0394).
+pub const DLK_NODIRECT = 10
+pub const DLK_SIZE = 88
 
 /// The pool record (pool.xo; made by ctx.xo init; word indexes for the slot atomics and
 /// byte offsets for loads): its lock (pool.mu: the idle list,
@@ -228,7 +230,21 @@ pub const W_RUNF = 3520
 /// The worker's index among the worker threads in start order (roots 0):
 /// a worker at or over the cap (decision 0377) is not woken or started.
 pub const W_IDX = 3528
-pub const W_SIZE = 3536
+/// The fiber that switched away straight to another one (decision 0394):
+/// the fiber it resumed finishes its park (PARKING to PARKED) when it runs.
+pub const W_PREV = 3536
+/// The fiber that switched back to the scheduler last (fiber_run: a chain of
+/// direct switches may end on another than the one it started).
+pub const W_LASTF = 3544
+/// The direct switches since the scheduler last ran this worker's fiber
+/// (the clock is read every 64th, for the slice).
+pub const W_DCOUNT = 3552
+/// find_work's calls (every 64th looks at the clock for the fairness step).
+pub const W_TICK = 3560
+/// When find_work last took from the ring, the inject queue and the poller
+/// before the run-next slot (once a slice at most).
+pub const W_FAIR_AT = 3568
+pub const W_SIZE = 3576
 /// The pool record's size (pool.xo P_*: 16 words, then the 4096 worker
 /// records' addresses; ctx.xo makes it).
 /// The spawn sites' average run times (pool.xo site_note): 256 words after

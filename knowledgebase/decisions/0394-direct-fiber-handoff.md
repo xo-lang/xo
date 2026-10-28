@@ -1,7 +1,6 @@
 # 0394: A park hands off straight to the fiber its wake queued
 
-Status: Proposed (Xo Lang 3, 2026-10-27; the lead approved the work, the 0.34 milestone's criterion 4, ping-pong).
-Implementation in progress; the numbers follow with the code.
+Status: Accepted (Xo Lang 3, 2026-10-28; the lead approved the work, the 0.34 milestone's criterion 4, ping-pong).
 
 ## Context
 
@@ -34,9 +33,24 @@ old path and their tests stay valid; in deterministic mode (no run-next slot the
 
 ## Consequences
 
-To be filled with the measurements (ping-pong, the concurrency rows, HTTP) and the gates (concurrency goldens
-on arm64 and in the Docker amd64 sample, a --race run of the channel goldens, the fixed point, a fairness test
-with a ping-pong pair, a CPU-bound fiber and a timer on one worker).
+Measured (`xo bench --ab`, 20 rounds, quiet, 12 CPU Mac):
+
+- ping pong, 2M iterations, one binary, `XO_DIRECT=0` against the default: wall 0.698 (0.694 to 0.702), CPU 0.69,
+  instructions -8%. Against Go: 0.864 (0.856 to 0.869); with `XO_DIRECT=0` it was 1.244 (1.237 to 1.26).
+- bench/perf/conc, baseline xo against this one: pingpong 0.734 (0.723 to 0.746), 0.745 (0.741 to 0.752) after the flag moved into the pool record; fanout 1.014, mutex 1.010,
+  pmap 1.001, rwmutex 1.001, spawn 1.006, all within noise.
+
+Fairness. The golden `direct_fair` (one worker: a ping pong pair, a CPU bound task, a timer) found that a pair
+handing off through the run-next slot starves everything else on its worker, with or without this change:
+`find_work` took the slot and the ring before the inject queue and the poller, so a 20 ms timer fired after 124 s
+on the old path (633 s with the direct switch, which does not restart the slice). `find_work` now takes the ring,
+the inject queue and the poller (timers, the network) before the slot once a slice (SLICE_NS) at most, checking
+the clock every 64th call or when a direct switch ran out the slice; the slot's fiber stays there. The timer
+now fires in 41 to 50 ms on both settings. gotchas/run-next-pair-starves-timers.md.
+
+Gates: the 28 concurrency, channel, select, timer and preemption goldens on LLVM, `--race` runs of
+conc_channels, conc_select, conc_stress, conc_send_closed, conc_scopes and direct_fair (hooks on keep the old path),
+the fixed point (s2 and s3 identical), the Docker amd64 sample (48 of 48). Not measured: bench/perf/http.
 
 Windows: the fibers share pool.xo and sched.xo; the next Windows CI run should cover it (W_RUNF, which the
 monitor's thread reads for asynchronous preemption, follows the direct switch).

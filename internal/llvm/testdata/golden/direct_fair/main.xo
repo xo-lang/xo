@@ -1,0 +1,55 @@
+// direct_fair (decision 0394): on one worker (XO_THREADS=1) a ping pong
+// pair hands off straight from park to park (no trip through the
+// scheduler), and a CPU bound task and a timer still run: the pair stops
+// only when the timer has fired, so a worker held by the pair would hang
+// this program, and the CPU task's sum is unchanged.
+
+fn burn(n: Int) -> Int {
+  var x = 88172645463325252
+  var sum = 0
+  for _ in 0..n {
+    x = x ^ x.wrapping_shl(13)
+    x = x ^ x.shr_logical(7)
+    x = x ^ x.wrapping_shl(17)
+    sum = sum.wrapping_add(x & 255)
+  }
+  sum
+}
+
+fn main(os: Os) {
+  let ping = Chan[Int].new()
+  let pong = Chan[Int].new()
+  let fired = Chan[Int].new(1)
+  let start = os.clock.now()
+  var rounds = 0
+  var last = 0
+  let cpu = scope s {
+    s.spawn(fn() {
+      for v in ping {
+        pong.send(v + 1)
+      }
+      pong.close()
+    })
+    s.spawn(fn() {
+      os.clock.sleep(20ms)
+      fired.send(1)
+    })
+    let t = s.spawn(fn() -> Int { burn(20000000) })
+    var v = 0
+    while true {
+      if fired.try_recv() != None {
+        break
+      }
+      ping.send(v)
+      v = pong.recv() ?? -1
+      rounds += 1
+    }
+    last = v
+    ping.close()
+    t.await
+  }
+  let el = os.clock.since(start)
+  os.stdio.println("pair progressed: ${rounds > 0 && last == rounds}")
+  os.stdio.println("timer fired in time: ${el < 5s}")
+  os.stdio.println("cpu: ${cpu}")
+}

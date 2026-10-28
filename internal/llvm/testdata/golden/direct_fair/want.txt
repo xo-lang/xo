@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+pair progressed: true
+timer fired in time: true
+cpu: 2550183649
+--- stderr
