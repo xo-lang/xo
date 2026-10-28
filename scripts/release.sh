@@ -340,7 +340,8 @@ if [ "$dry" != 1 ]; then
 fi
 
 # decision 0388: std's prebuilt stores for the targets that have a store
-# adapter (Mach-O and ELF arm64), both concurrency variants, built by the
+# adapter (Mach-O and ELF arm64, COFF amd64 with its PDB parts beside the
+# store), both concurrency variants, built by the
 # release's xo from the staged std into lib/xo/stdstore with the code
 # generation key they belong to, so a user's first separately compiled
 # build skips building them (compiler/xo stdcache.xo std_released)
@@ -352,14 +353,14 @@ fi
 if [ "${XO_RELEASE_STDSTORES:-0}" != 1 ]; then
 	echo "+ lib/xo/stdstore: not shipped (XO_RELEASE_STDSTORES=1 ships them)" >&2
 elif [ "$dry" = 1 ]; then
-	echo "+ lib/xo/stdstore/{darwin,linux}-arm64-conc{0,1}.{store,stdf,id}: $xo1 dev stdcache --target=darwin/arm64|linux/arm64 --conc=0|1" >&2
+	echo "+ lib/xo/stdstore/{darwin,linux}-arm64-conc{0,1}.{store,stdf,id}, windows-amd64-conc{0,1}.{store,store.pdb,stdf,id}: $xo1 dev stdcache --target=darwin/arm64|linux/arm64|windows/amd64 --conc=0|1" >&2
 else
 	codegen=""
 	for a in "${stamp[@]}"; do
 		case "$a" in XO_CODEGEN_KEY=*) codegen="${a#XO_CODEGEN_KEY=}" ;; esac
 	done
 	[ -n "$codegen" ] || { echo "release.sh: no XO_CODEGEN_KEY in the stamps: no std stores" >&2; exit 1; }
-	for st_t in darwin/arm64 linux/arm64; do
+	for st_t in darwin/arm64 linux/arm64 windows/amd64; do
 		st=$(stage_of "$st_t")
 		name="${st_t%/*}-${st_t#*/}"
 		mkdir -p "$st/lib/xo/stdstore"
@@ -368,6 +369,11 @@ else
 			paths=$(XO_STD="$st/lib/xo/std" XO_BACKEND_CACHE_DIR="$sc/cache" "$xo1" dev stdcache --conc=$c --target="$st_t") ||
 				{ echo "release.sh: no std store for $st_t conc$c" >&2; exit 1; }
 			cp "$(echo "$paths" | sed -n 1p)" "$st/lib/xo/stdstore/$name-conc$c.store"
+			# windows/amd64: the store's PDB parts beside it (pe_link reads
+			# STORE.pdb)
+			if [ -f "$(echo "$paths" | sed -n 1p).pdb" ]; then
+				cp "$(echo "$paths" | sed -n 1p).pdb" "$st/lib/xo/stdstore/$name-conc$c.store.pdb"
+			fi
 			cp "$(echo "$paths" | sed -n 2p)" "$st/lib/xo/stdstore/$name-conc$c.stdf"
 			printf '%s\n' "$codegen" > "$st/lib/xo/stdstore/$name-conc$c.id"
 		done
