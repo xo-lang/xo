@@ -318,9 +318,14 @@ fn (var g: G) w64_entry_name() -> Str { g.local("xo_entry_sysv") }
 /// functions themselves (the export symbols are Win64 shims), and its
 /// calls of C library functions through their thunks. One pass over the
 /// text, as drop_own_weak; other OSes' text is returned as it is.
-fn (g: G) win_text(text: Str) -> Str {
+fn (g: G) win_text(text: Str) -> Str { win_retarget_both(text, g.win_map()) }
+
+/// The calls and jumps win_text retargets on windows/amd64 (none
+/// elsewhere): the C library's names to the xo_w64_ shims, an export's
+/// name to its function.
+fn (g: G) win_map() -> Map[Str, Str] {
   if !(g.x86 && g.os == "windows") {
-    return text
+    return {}
   }
   var to: Map[Str, Str] = {}
   for (k, _) in w64_libc() {
@@ -334,24 +339,28 @@ fn (g: G) win_text(text: Str) -> Str {
     }
   }
   // a shim's own call of its function is already direct
-  win_retarget(win_retarget(text, "\tcallq ", to), "\tjmp ", to)
+  to
 }
 
-/// text with each line `op TARGET` whose TARGET is a key of to rewritten
-/// to its value; text itself (no copy) when none is. A scan for op
-/// (2026-10-27: splitting and rebuilding every part's lines was 56 ms of
-/// an HTTP server edit's windows build, the parts on one thread).
-fn win_retarget(text: Str, op: Str, to: Map[Str, Str]) -> Str {
+/// text with each `\tcallq TARGET` and `\tjmp TARGET` line whose TARGET
+/// is a key of to rewritten to its value, in one scan and at most one
+/// copy (two passes, one per op, copied every part's text twice: about 27
+/// ms of an HTTP server edit's windows build, 2026-10-27); text itself
+/// when to is empty or nothing matches.
+fn win_retarget_both(text: Str, to: Map[Str, Str]) -> Str {
+  if to.is_empty() {
+    return text
+  }
+  let ops = ["\tcallq ", "\tjmp "]
+  // the next match of each op at or after pos (-1: none left)
+  var at = [next_op(text, ops[0], 0), next_op(text, ops[1], 0)]
   var out = StrBuilder.new()
   var last = 0
-  var pos = 0
   var any = false
-  while pos < text.len() {
-    let k = match text[pos..text.len()].find(op) {
-      Some(k0) => pos + k0
-      None => break
-    }
-    let ls = k + op.len()
+  while at[0] >= 0 || at[1] >= 0 {
+    let w = if at[1] < 0 || (at[0] >= 0 && at[0] < at[1]) { 0 } else { 1 }
+    let k = at[w]
+    let ls = k + ops[w].len()
     let le = match text[ls..text.len()].find("\n") {
       Some(e) => ls + e
       None => text.len()
@@ -364,13 +373,24 @@ fn win_retarget(text: Str, op: Str, to: Map[Str, Str]) -> Str {
         any = true
       }
     }
-    pos = le
+    at[w] = next_op(text, ops[w], le)
   }
   if !any {
     return text
   }
   out.write(text[last..text.len()])
   out.freeze()
+}
+
+/// The offset of op in text at or after pos, -1 for none.
+fn next_op(text: Str, op: Str, pos: Int) -> Int {
+  if pos >= text.len() {
+    return -1
+  }
+  match text[pos..text.len()].find(op) {
+    Some(k) => pos + k
+    None => -1
+  }
 }
 
 /// The task switch and thread locals on windows/amd64 (x86_sched_asm).

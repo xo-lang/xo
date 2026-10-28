@@ -1487,6 +1487,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       if !p.mismatches.is_empty() {
         fail(os, "XO_BACKEND_CACHE=verify: ${p.mismatches.len()} functions differ from their cache entries, the first ${p.mismatches[0]}")
       }
+      // the per-function and part cache's stores (they were counted in
+      // the next lap: darwin's hollow, windows' write)
+      t = lap(os, phases, "fn_store", t)
     }
     write_dumps(os, p.dumps)
     let want = os.env.get("XO_DUMP_FN") ?? ""
@@ -1620,6 +1623,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         // server's edit, 2026-10-27)
         let texts = if p.parts.len() > 1 { p.parts } else { [code] }
         let (assembled, nasm, _okeys) = cached_macho_objects(os, ctx, texts, false, true, true, jobs)
+        // the cache's keys, reads and the changed parts' assembly, then
+        // the objects' slots patched and written for the PE linker
+        t = lap(os, phases, "assemble.objects", t)
         var objs: List[Str] = []
         for (i, r) in assembled.indexed() {
           let obj = if texts.len() > 1 { "${dir}/prog-${tgoos}.${i}.obj" } else { "${dir}/prog-${tgoos}.obj" }
@@ -1630,7 +1636,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
           objs.push(obj)
         }
         wsrcs = objs
-        t = lap(os, phases, "assemble", t)
+        t = lap(os, phases, "assemble.write", t)
         cache_note(os, phases, "objects", texts.len() - nasm, texts.len())
       }
       write_or_fail(os, dir_name(wbin), "", b"")
