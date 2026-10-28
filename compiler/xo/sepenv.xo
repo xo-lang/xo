@@ -60,10 +60,10 @@ fn sepcomp_store(os: Os, conc: Bool) -> Str {
 /// (std_variant_peek: a release's prebuilt ones, else the cache's; a
 /// miss builds the whole program, as before, and starts the variant's
 /// build in the background, so no build is slower than a whole program's;
-/// ADR 0388 Progress). Until the default is on, XO_SEPCOMP_DEFAULT=1
-/// asks for it.
+/// ADR 0388 Progress). On by default since 2026-10-28;
+/// XO_SEPCOMP_DEFAULT=0 (or XO_SEPCOMP=0) turns it off.
 fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
-  if os.env.get("XO_SEPCOMP") != None || (os.env.get("XO_SEPCOMP_DEFAULT") ?? "") != "1" {
+  if os.env.get("XO_SEPCOMP") != None || (os.env.get("XO_SEPCOMP_DEFAULT") ?? "") == "0" {
     return os
   }
   if !(o.cmd is "build" | "run") || backend != "arm64" || host_os(os) != "darwin" || host_arch() != "arm64" || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {

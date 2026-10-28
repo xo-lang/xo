@@ -714,3 +714,13 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   ld.xo macho_link turns DWARF off under -s and sets LinkOpts.program_dwarf for a
   separately compiled link, with which store_prepare drops std's DWARF when no program
   object carries any. Test: internal/arm64 TestSepcompDebugInfo.
+- Step (d), the default flipped (Lang 1, 2026-10-28): separate compilation is on by default
+  for a native darwin/arm64 build or run for the host (XO_SEPCOMP_DEFAULT=0 or XO_SEPCOMP=0
+  turns it off). The default-change gate: internal/arm64's goldens with the cache on (std's
+  variants prebuilt) and its full suite, cmd/xo's full suite, the fixed point, and xo built
+  separately building and running llvm-fib. Its first run found the five failures fixed in
+  ada872969 and f35923ba3, and TestDebugLineDarwin (the store link's -s and the program's
+  compile unit first, xo-lang-4's fix). Measured before the flip: fib edit 229.0 to 111.5 ms
+  and HTTP 579.5 to 225.0 ms median against 0.33.0; runtime release-vs-go rows within noise
+  but startup (std's literals, fixed 66950ecf0) and collatz (same code, placement; the
+  XO_ARM64_PAD sweep decides it).

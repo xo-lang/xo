@@ -6,6 +6,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- `xo build` and `xo run` compile separately by default on darwin/arm64
+  (decision 0388 stage 3): std's functions come from std's prebuilt
+  variants in the backend cache (its store and facts), so an edit
+  compiles and links only the program's own code. An llvm-fib edit
+  takes 111.5 ms median against 229.0 with 0.33.0, the HTTP server's
+  225.0 against 579.5 (bench/results/sepcomp-edit-fib-2026-10-28.md,
+  sepcomp-edit-http-2026-10-28.md). The first build after std changes
+  builds the whole program and std's variants in the background.
+  --release, --race, a cc link, a program that uses C, and flags or
+  variables that change std's code build the whole program as before;
+  XO_SEPCOMP_DEFAULT=0 or XO_SEPCOMP=0 turns it off.
 - Compiler: reference counting insertion (compiler/ssa rc.xo) does the
   same work with fewer copies: the live leaf sets sort by one Int key
   (the paths' ranks, no string compared), the walk's lists are made with

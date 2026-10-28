@@ -193,7 +193,7 @@ fn main(os: Os) {
 }
 
 // TestSepcompDefault (decision 0388 stage 3, step d): with the default on
-// (XO_SEPCOMP_DEFAULT=1 until it is flipped), a build for the host takes
+// (on by default; XO_SEPCOMP_DEFAULT=0 turns it off), a build for the host takes
 // std's variants from the std cache and links separately (its phase line
 // says so), runs as the whole program (XO_SEPCOMP=0) does, and
 // XO_SEPCOMP=0 is never answered from the separately compiled entries.
@@ -255,7 +255,7 @@ func TestSepcompDefault(t *testing.T) {
 	whole := filepath.Join(work, "whole")
 	build(whole, "XO_SEPCOMP=0")
 	sep := filepath.Join(work, "sep")
-	log := build(sep, "XO_SEPCOMP_DEFAULT=1")
+	log := build(sep)
 	if !strings.Contains(log, "cache std ") {
 		t.Fatalf("the default build did not ask the std cache:\n%s", log)
 	}
