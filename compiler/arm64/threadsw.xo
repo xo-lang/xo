@@ -175,9 +175,12 @@ fn (var g: G) thread_switch() {
     if bad {
       continue
     }
+    // the arms: hot blocks only (a cold block that jumps to the latch,
+    // reached through a landing pad, keeps the shared dispatch: a copy
+    // there never runs hot; 2026-10-28, compiler/xo trace.xo analyze)
     var arms: List[Int] = []
     for q in preds[head] {
-      if q < body.len() && body[q] && q != head && g.jumps_to(q, head) && !path.contains(q) && !chain.contains(q) {
+      if q < body.len() && body[q] && q != head && !g.blocks[q].cold && g.jumps_to(q, head) && !path.contains(q) && !chain.contains(q) {
         arms.push(q)
       }
     }
@@ -207,11 +210,15 @@ fn (var g: G) thread_switch() {
       srcs.push(b)
     }
     for a in arms {
-      // the copies, each after the arm in the hot order
+      // the copies, each after the arm in its list (hot, or cold for a
+      // cold arm: the copies of a hot arm placed in the hot order left a
+      // cold arm's copies in neither list, so regalloc's block index of
+      // them was -1 and the self build faulted, 2026-10-28)
+      let cold = g.blocks[a].cold
       var copy: Map[Int, Int] = {}
       var made: List[Int] = []
       for b in srcs {
-        let nb = g.new_block(false)
+        let nb = g.new_block(cold)
         copy[b] = nb
         made.push(nb)
       }
@@ -234,19 +241,23 @@ fn (var g: G) thread_switch() {
       let na = ai.len()
       ai[na - 1].targets[0] = copy.get(srcs[0]) ?? h
       g.put_insts(a, ai)
-      var hot: List[Int] = []
-      for b in g.hot {
+      var order: List[Int] = []
+      for b in (if cold { g.cold } else { g.hot }) {
         if made.contains(b) {
           continue
         }
-        hot.push(b)
+        order.push(b)
         if b == a {
           for nb in made {
-            hot.push(nb)
+            order.push(nb)
           }
         }
       }
-      g.hot = hot
+      if cold {
+        g.cold = order
+      } else {
+        g.hot = order
+      }
       changed = true
     }
     preds = g.mpreds_all(g.all_blocks())
