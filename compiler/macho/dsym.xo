@@ -147,7 +147,7 @@ fn (var l: Linker) dwarf_write(var out: BytesBuilder) -> List[Int] {
         ch.push(BytePatch{at: r.addr, n: 8, v: t.addr})
       }
       if i == 2 {
-        dw_unit(o, s, ch, at, out.len() - start, sets)
+        dw_unit(o, s, ch, at, out.len() - start, sets, if l.objs[o].subsections { l.live_text(o) } else { None })
       } else if i == 0 {
         dw_line(s.data, ch, at[7].get(o) ?? 0)
       }
@@ -168,7 +168,7 @@ fn (var l: Linker) dwarf_write(var out: BytesBuilder) -> List[Int] {
 /// abbreviation, line, loclists, addr and comp_dir offsets moved by where
 /// the object's pieces of those sections went, and its address range
 /// set appended to sets.
-fn dw_unit(o: Int, s: ISect, var ch: List[BytePatch], at: List[Map[Int, Int]], off: Int, var sets: BytesBuilder) {
+fn dw_unit(o: Int, s: ISect, var ch: List[BytePatch], at: List[Map[Int, Int]], off: Int, var sets: BytesBuilder, live: (Int, Int)?) {
   let d = s.data
   if d.len() < 36 || Int(d[33]) != 120 || Int(d[34]) != 111 || Int(d[35]) != 0 {
     return
@@ -193,6 +193,22 @@ fn dw_unit(o: Int, s: ISect, var ch: List[BytePatch], at: List[Map[Int, Int]], o
       hi = p.v
     }
   }
+  if let Some((llo, lhi)) = live {
+    // an object split into atoms (strip.xo): the unit covers its live
+    // functions, placed together, not its first and last label, which
+    // may be gone (decision 0388)
+    var kept: List[BytePatch] = []
+    for p in ch {
+      if !(p.n == 8 && (p.at == 17 || p.at == 25)) {
+        kept.push(p)
+      }
+    }
+    kept.push(BytePatch{at: 17, n: 8, v: llo})
+    kept.push(BytePatch{at: 25, n: 8, v: lhi})
+    ch = kept
+    lo = llo
+    hi = lhi
+  }
   // a set: length, version 2, the unit's offset, address size 8,
   // segment size 0, padding to 16, (low, length), (0, 0)
   var a = new_out(48)
@@ -205,6 +221,26 @@ fn dw_unit(o: Int, s: ISect, var ch: List[BytePatch], at: List[Map[Int, Int]], o
   a.u64(hi - lo)
   a.zeros(48 - a.n)
   sets.write(a.done())
+}
+
+/// The live functions' text of object o (a split one): from the first
+/// placed __TEXT,__text atom's address to the last one's end, or None.
+fn (l: Linker) live_text(o: Int) -> (Int, Int)? {
+  var lo = -1
+  var hi = -1
+  for s in l.objs[o].sects {
+    if s.out < 0 || s.seg != "__TEXT" || s.name != "__text" {
+      continue
+    }
+    let a = l.osects[s.out].addr + s.off
+    if lo < 0 || a < lo {
+      lo = a
+    }
+    if a + s.size > hi {
+      hi = a + s.size
+    }
+  }
+  if lo < 0 { None } else { Some((lo, hi)) }
 }
 
 /// The patches of a __debug_line piece d: the paths (DW_FORM_line_strp
