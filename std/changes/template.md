@@ -1,5 +1,22 @@
 # std/template changes
 
+## 2026-10-27: perf: a visit sets its node context from the variant it already matched
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/template render at about 1.26x Go after the map order change; its CPU profile (at_node, at_arg and at_pipe about 20%: node_pos and node_tag, or arg_pos and arg_tag, each a match over the variant at every visit); a stub that set no context measured 0.886 of the instructions
+- Go reference: text/template exec.go state.at (a pointer stored per visit)
+- Test: internal/stdtest/testdata/corpus/template (go, arm64, LLVM; its error cases name the node at the failure); internal/llvm and internal/arm64 template_basic; twincheck's checksums agree on none, parse, render
+
+walk sets the context (kind, variant index and position) in each arm of
+its match on the node, eval_command in the arms of its match on the
+first argument (fields, chains, variables) and walk_range from the range
+node it unpacks, through Ex.at, where at_node and at_arg matched the
+node again for its position and again for its variant. The context an
+error names is unchanged. Quiet --ab, 15 rounds, the parent's std as A:
+render wall 0.920 (0.915 to 0.926), instructions 0.893; Xo / Go about
+1.16 (estimate: 1.595 x 0.789 x 0.920), from 1.26.
+
 ## 2026-10-27: perf: a map's fields are sorted only where their order shows
 
 - Kind: perf

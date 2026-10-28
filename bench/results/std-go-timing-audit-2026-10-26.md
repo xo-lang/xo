@@ -402,3 +402,19 @@ inlined only at call sites in a loop: 58 inliner instructions with 16 sites is o
 nested early-exit shape measured 66, each fault call site counted). The route to inlining it at every
 site: the inliner's cost model counts a call of a cold function once per function, not once per site
 (compiler/arm64 inline.xo inline_walk), not started.
+
+## template node context, and measured big and toml rows (2026-10-27, xo-lang-5)
+
+Per std/changes/template.md 2026-10-27 ("a visit sets its node context from the variant it already
+matched"). Quiet `xo bench --ab`, 15 rounds, the parent's std as A: render wall 0.920 (0.915 to 0.926),
+instructions 0.893; Xo / Go about 1.16 (estimate: 1.595 x 0.789 x 0.920).
+
+Measured against Go (quiet `xo bench --ab`, 15 rounds, A the Go twin, B main 96fdde33a's xo and std):
+
+| workload | Go wall | Xo wall | wall | instructions | cycles |
+|---|---|---|---|---|---|
+| big quorem | 12.04 ms | 12.18 ms | 1.011 (0.995 to 1.03) | 1.135 | 0.980 |
+| toml decode | 50.04 ms | 61.33 ms | 1.226 (1.206 to 1.233) | 1.142 | 1.215 |
+
+big quorem is at Go's time. toml decode is still over the bar by 0.03 (the estimate from the steps was
+1.19).

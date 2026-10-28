@@ -1721,6 +1721,16 @@ fn (var s: Ex) at_node(n: Node) {
   s.node_tag = node_tag(n)
 }
 
+/// The context set from a node or argument whose variant the caller has
+/// already matched: its kind, variant index (node_tag, arg_tag) and
+/// position, with no match of its own (2026-10-27: at_node and at_arg
+/// matched each node twice at every visit, about 11% of render).
+fn (var s: Ex) at(kind: Int, tag: Int, pos: Int) {
+  s.node_pos = pos
+  s.node_kind = kind
+  s.node_tag = tag
+}
+
 fn (var s: Ex) at_pipe(p: Pipe) {
   s.node_pos = p.pos
   s.node_kind = CTX_PIPE
@@ -1781,28 +1791,51 @@ fn (var s: Ex) walk_list(dot: Val, list: List[Node]) -> Int ! Str {
 }
 
 fn (var s: Ex) walk(dot: Val, n: Node) -> Int ! Str {
-  s.at_node(n)
+  // s.at with each variant's node_tag: the node is matched once
   match n {
-    Action(_, _, pipe) => {
+    Action(pos, _, pipe) => {
+      s.at(CTX_NODE, 1, pos)
       let v = s.eval_pipeline(dot, pipe)?
       if pipe.decl.is_empty() {
-        s.at_node(n)
+        s.at(CTX_NODE, 1, pos)
         s.out = s.out + fmt_v(v.v, true)
       }
       Ok(0)
     }
-    Break(..) => Ok(1)
-    Continue(..) => Ok(2)
-    Comment(..) => Ok(0)
-    If(_, _, pipe, list, el) => s.walk_if_with(false, dot, pipe, list, el)
-    With(_, _, pipe, list, el) => s.walk_if_with(true, dot, pipe, list, el)
+    Break(pos, _) => {
+      s.at(CTX_NODE, 7, pos)
+      Ok(1)
+    }
+    Continue(pos, _) => {
+      s.at(CTX_NODE, 8, pos)
+      Ok(2)
+    }
+    Comment(pos) => {
+      s.at(CTX_NODE, 2, pos)
+      Ok(0)
+    }
+    If(pos, _, pipe, list, el) => {
+      s.at(CTX_NODE, 3, pos)
+      s.walk_if_with(false, dot, pipe, list, el)
+    }
+    With(pos, _, pipe, list, el) => {
+      s.at(CTX_NODE, 5, pos)
+      s.walk_if_with(true, dot, pipe, list, el)
+    }
     Range(..) => s.walk_range(dot, n)
-    TemplateN(_, _, name, pipe) => s.walk_template(dot, name, pipe)
-    Text(_, text) => {
+    TemplateN(pos, _, name, pipe) => {
+      s.at(CTX_NODE, 6, pos)
+      s.walk_template(dot, name, pipe)
+    }
+    Text(pos, text) => {
+      s.at(CTX_NODE, 0, pos)
       s.out = s.out + text
       Ok(0)
     }
-    End(..) | Else(..) => Err(s.err("unknown node: ${node_text(n)}"))
+    End(..) | Else(..) => {
+      s.at_node(n)
+      Err(s.err("unknown node: ${node_text(n)}"))
+    }
   }
 }
 
@@ -1863,11 +1896,11 @@ fn (var s: Ex) range_once(pipe: Pipe, list: List[Node], mark: Int, index: Val, e
 /// exec.go walkRange: each element in turn, with no list of them built
 /// first.
 fn (var s: Ex) walk_range(dot: Val, n: Node) -> Int ! Str {
-  let (pipe, list, el) = match n {
-    Range(_, _, p, l, e) => (p, l, e)
+  let (pos, pipe, list, el) = match n {
+    Range(at, _, p, l, e) => (at, p, l, e)
     _ => return Ok(0)
   }
-  s.at_node(n)
+  s.at(CTX_NODE, 4, pos)
   let mark0 = s.vars.len()
   let v = unbox(s.eval_pipeline(dot, pipe)?)
   let mark = s.vars.len()
@@ -1973,12 +2006,12 @@ fn (var s: Ex) not_a_function(args: List[Arg], final: Val) -> () ! Str {
 fn (var s: Ex) eval_command(dot: Val, c: Cmd, final: Val) -> Val ! Str {
   let first = c.args[0]
   match first {
-    Field(_, ident) => {
-      s.at_arg(first)
+    Field(pos, ident) => {
+      s.at(CTX_ARG, 0, pos)
       return s.eval_field_chain(dot, dot, first, ident, c.args, final)
     }
-    Chain(_, node, field) => {
-      s.at_arg(first)
+    Chain(pos, node, field) => {
+      s.at(CTX_ARG, 1, pos)
       match node[0] {
         NilA(..) => return Err(s.err("indirection through explicit nil in ${arg_text(first)}"))
         _ => {}
@@ -1991,8 +2024,8 @@ fn (var s: Ex) eval_command(dot: Val, c: Cmd, final: Val) -> Val ! Str {
       s.not_a_function(c.args, final)?
       return s.eval_pipeline(dot, p[0])
     }
-    Variable(_, ident) => {
-      s.at_arg(first)
+    Variable(pos, ident) => {
+      s.at(CTX_ARG, 4, pos)
       let v = s.var_value(ident[0])?
       if ident.len() == 1 {
         s.not_a_function(c.args, final)?
