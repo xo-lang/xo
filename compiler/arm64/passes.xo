@@ -59,6 +59,7 @@ pub fn passes() -> List[Str] {
     "copy_prop",
     "reuse_loads",
     "reuse_flags",
+    "tail_dup",
     "place_latches",
     "mark_tails",
     "cold_saves",

@@ -76,6 +76,9 @@ fn (var g: G) function(fi: Int) {
   if g.x86 {
     // x86_64 (decision 0254): each branch keeps its compare (no reused
     // flags); the templates become x86
+    if g.on("tail_dup") {
+      g.tail_dup()
+    }
     if g.on("place_latches") {
       g.place_latches()
     }
@@ -131,6 +134,9 @@ fn (var g: G) function(fi: Int) {
     g.dump_named()
     g.x86_emit()
     return
+  }
+  if g.on("tail_dup") {
+    g.tail_dup()
   }
   if g.on("reuse_flags") {
     g.reuse_flags()

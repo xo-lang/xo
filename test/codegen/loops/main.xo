@@ -1,0 +1,52 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): loop layout.
+
+// A loop whose body branches in two arms that meet in a small latch
+// (tail_dup, 2026-10-27): the latch is copied into each arm, so the even
+// arm of a collatz step ends in the loop's test and takes one branch an
+// iteration, where it took the jump to the join and then the join's
+// branch back (the arm's `asr` was followed by `b` to the latch). With
+// XO_PASSES=-tail_dup the pattern fails.
+fn collatz(x: Int) -> Int {
+  // arm64: "asr x[0-9]+, x[0-9]+, #1\n(?:[^\n]*:\n)*\tadds" -"asr x[0-9]+, x[0-9]+, #1\n(?:[^\n]*:\n)*\tb L"
+  var n = x
+  var c = 0
+  while n > 1 {
+    if n % 2 == 0 {
+      n = n / 2
+    } else {
+      n = 3 * n + 1
+    }
+    c = c + 1
+  }
+  c
+}
+
+// A latch with a call stays one block (a call is not copied): one call to
+// slow, which recursion keeps from being inlined, where a copy into both
+// arms would make two.
+fn slow(x: Int) -> Int {
+  if x > 100000000 {
+    return slow(x - 1)
+  }
+  x
+}
+
+fn latch_call(x: Int) -> Int {
+  // arm64: "bl _xo_f_slow" -"bl _xo_f_slow[\s\S]*bl _xo_f_slow"
+  var n = x
+  var c = 0
+  while n > 1 {
+    if n % 2 == 0 {
+      n = n / 2
+    } else {
+      n = 3 * n + 1
+    }
+    c = slow(c) + 1
+  }
+  c
+}
+
+fn main(os: Os) {
+  let n = os.env.args().len() + 27
+  os.stdio.println("${collatz(n)} ${latch_call(n)}")
+}

@@ -1,0 +1,93 @@
+// Tail duplication of loop latches (2026-10-27, the 0.34 pmap item): a
+// block that ends a loop's iteration (a few plain instructions and a
+// jump to the loop's header) and that several arms of a branching body
+// jump to is copied into each arm, so an arm's last jump goes straight to
+// the header: with the loop laid out as the header's test and the arms
+// jumping back to it, the even arm of a collatz step takes one branch an
+// iteration where it took two (the arm's jump to the join, then the
+// join's branch back; the hand-written layouts: 0.948 of the serial
+// kernel's wall with the latch copied into the arms, 0.931 with Go's
+// shape, bench/results/ pmap's loop).
+
+/// The most instructions before the terminator of a block that is copied.
+const TAIL_DUP_MAX = 4
+
+/// The most predecessors a latch has to be copied into.
+const TAIL_DUP_PREDS = 4
+
+/// Whether latch block j may be copied: plain instructions and parallel
+/// moves (a checked one included: its fault stub is made for each copy),
+/// then a jump with no landing pad. A call, a poll, or a frame access
+/// stays where it is.
+fn (g: G) dup_latch_ok(j: Int) -> Bool {
+  let ins = g.blocks[j].insts
+  let n = ins.len()
+  if n < 2 || n > TAIL_DUP_MAX + 1 {
+    return false
+  }
+  let t = ins[n - 1]
+  if t.kind != K_JUMP || t.targets.len() != 1 {
+    return false
+  }
+  for k in 0..n - 1 {
+    let inst = ins[k]
+    if inst.kind == K_PMOVE {
+      continue
+    }
+    if inst.kind == K_PLAIN && !inst.poll && !inst.frame && inst.pad < 0 {
+      continue
+    }
+    return false
+  }
+  true
+}
+
+/// Copies each latch of a loop into the arms that jump to it.
+fn (var g: G) tail_dup() {
+  if g.hot.is_empty() {
+    return
+  }
+  var changed = false
+  var preds = g.mpreds_all(g.all_blocks())
+  let loops = g.dfs_loops(g.hot[0], preds)
+  for (h, body) in loops {
+    for j in g.hot {
+      if !body[j] || j == h || !g.dup_latch_ok(j) {
+        continue
+      }
+      let nj = g.blocks[j].insts.len()
+      if g.blocks[j].insts[nj - 1].targets[0] != h {
+        continue
+      }
+      // the arms: predecessors in the same loop that end in a plain jump
+      var arms: List[Int] = []
+      var others = 0
+      for p in preds[j] {
+        let np = g.blocks[p].insts.len()
+        if p != j && body[p] && np > 0 && g.blocks[p].insts[np - 1].kind == K_JUMP && g.blocks[p].insts[np - 1].targets.len() == 1 {
+          arms.push(p)
+        } else {
+          others += 1
+        }
+      }
+      if arms.len() < 2 || arms.len() > TAIL_DUP_PREDS || others > 0 {
+        continue
+      }
+      let latch = g.blocks[j].insts
+      for p in arms {
+        var pi = g.take_insts(p)
+        let _jump = pi.pop()
+        for inst in latch {
+          pi.push(inst)
+        }
+        g.put_insts(p, pi)
+      }
+      changed = true
+      preds = g.mpreds_all(g.all_blocks())
+    }
+  }
+  if changed {
+    // the latches nothing reaches any more are dropped
+    g.thread()
+  }
+}
