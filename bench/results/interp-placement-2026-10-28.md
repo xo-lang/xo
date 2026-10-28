@@ -90,3 +90,11 @@ on (B), load 4.14 in a quiet window: wall 4.72 vs 4.65 ms (B/A 0.985,
 0.938 to 1.029), cycles 12.08M vs 11.96M (0.99, 0.963 to 1.029),
 instructions 45.98M vs 45.96M (1.0): within noise. The threaded
 function is not the program's hot path; it does not lose.
+
+## amd64 (the owner's Intel laptop, i7-9750H)
+
+interp cross built here with Xo's amd64 backend (`--backend=amd64
+--targets=darwin/amd64`), the pass off and on, 11 rounds interleaved
+on the laptop (wall, one placement): off 198 ms (193 to 199), on 157
+ms (155 to 167): 21 percent less. The Docker linux/amd64 golden sample
+with the pass on: 48 of 48.
