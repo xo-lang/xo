@@ -2491,6 +2491,7 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   gm.dump_fn = os.env.get("XO_DUMP_FN") ?? ""
   gm.race = o.race
   gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
+  gm.arm64_pad = Int.parse(os.env.get("XO_ARM64_PAD") ?? "") ?? 0
   gm.poison_frames = (os.env.get("XO_POISON_FRAMES") ?? "") == "1"
   // DWARF line tables (decision 0239): on, except for `xo asm`, -s, and
   // a release build without --debug-info

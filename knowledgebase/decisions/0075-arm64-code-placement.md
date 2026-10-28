@@ -40,6 +40,10 @@ can be judged on their merit.
   percent slower, 0.3 and 0.2 percent faster.
 
 ## Consequences
+- Update 2026-10-28: the pad knob is in the Xo emitter as `XO_ARM64_PAD=K`
+  (compiler/arm64 gen.xo func_header; 0158 had ported no layout
+  instrument). The alignment settings (`func=`, `loop=`, `fall=`, `off=`)
+  were not ported: none was a win.
 - No change to generated code or speed. `TestLayoutRun` builds the bench
   programs and seven run programs with two layouts and requires the same
   output and zero live allocations, so the knob stays usable.
