@@ -767,7 +767,7 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
       os.stdio.eprintln("cache chk off (XO_CHK_CACHE=off)")
     }
     if c.std_export_on {
-      os.stdio.eprintln("cache stdx ${if c.std_export_used { "used" } else { "declared" }}")
+      os.stdio.eprintln("cache stdx ${if c.std_export_used { "used" } else { "declared" }}${if c.std_export_why.is_empty() { "" } else { " (${c.std_export_why})" }}")
     }
   }
   b

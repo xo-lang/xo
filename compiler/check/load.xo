@@ -61,6 +61,8 @@ pub struct Checker {
   /// install, every recorded object pending, so the SSA builder meets a
   /// pending tree and the driver's rebuild runs
   pub trees_test_pend: Bool = false
+  /// why the records were not used, for XO_CACHE_STATS ("" when used)
+  pub std_export_why: Str = ""
   pub tree_pending: Map[Int, (List[Int], Int)] = {}
   pub std_export_out: Bytes = b""
   pub std_export_used: Bool = false
