@@ -67,7 +67,22 @@ code of two: interp, and text's time.format_items (the layout item
 dispatch of time formatting, 1 to 14 `br`, 1533 to 1885 lines). Every
 other program is byte-identical, so there is nothing to lose there.
 
+## The threaded code at 16 placements
+
+Same method, same window kind (load 4.6), the pass on at every pad and
+off at pad 0.
+
+| pad | 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| cycles M | 162.0 | 160.4 | 163.1 | 162.4 | 166.4 | 168.5 | 161.3 | 158.4 | 164.2 | 167.0 | 164.2 | 163.2 | 162.5 | 162.1 | 169.1 | 164.5 |
+| wall ms | 50 | 51 | 51 | 50 | 51 | 52 | 50 | 49 | 50 | 50 | 50 | 51 | 50 | 50 | 53 | 52 |
+
+158.4M to 169.1M: a 6.8 percent spread (38 before), every placement
+under the unthreaded code's best (204.5M); 1338.5M instructions at
+every pad; off at pad 0 in the same window 283.4M. The pass is on by
+default (passes.xo thread_switch; XO_PASSES=-thread_switch turns it
+off).
+
 ## Pending
 
-The threaded version's own 16 pad sweep (its spread), and text off/on
-with `xo bench --ab`.
+text off/on with `xo bench --ab` (time.format_items).
