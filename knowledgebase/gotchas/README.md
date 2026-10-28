@@ -117,6 +117,8 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [panic-valued-fault-stack.md](panic-valued-fault-stack.md): a fault raised as a plain panic value must become a `*FaultErr` at the first recover, or its stack lists the wrong frames.
 - [range-over-func-loop-cost.md](range-over-func-loop-cost.md): `for i in a..b` through `rt.Range.All()` cost a closure call per iteration and an extra fault frame; range literals are counted loops.
 - [build-dir-shared-across-xo-versions.md](build-dir-shared-across-xo-versions.md): older xo binaries failed on build directories a newer xo wrote; the build hash carries a layout tag.
+- [packed-list-raw-copy-wasm.md](packed-list-raw-copy-wasm.md): a raw copy of a List[UInt8] by address assumes native packing; wasm keeps a word an element, so it needs a wasm branch.
+- [bench-ab-inside-gate-deadlock.md](bench-ab-inside-gate-deadlock.md): `xo bench --ab` in a gate or slot run waits for the quiet window that waits for it; it is refused now, run it as its own measure job.
 - [bench-host-timing-drift.md](bench-host-timing-drift.md): host clock drift moves benchmark times by up to 10 percent; interleave before and after runs.
 - [sync-pool-drops-on-gc.md](sync-pool-drops-on-gc.md): a `sync.Pool` empties at every GC, so request arenas pooled in one were barely reused; use a bounded channel.
 - [closed-loop-latency-confound.md](closed-loop-latency-confound.md): with a closed loop load generator a slower server shows lower latency; compare latency only at equal throughput.

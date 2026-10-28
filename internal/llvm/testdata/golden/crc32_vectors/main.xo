@@ -1,0 +1,44 @@
+// CRC-32 (IEEE) as gzip writes it and gzip and zip check it, on every
+// backend, wasm included (2026-10-28: a wasm zip read reported a checksum
+// error on an archive Go wrote): the trailer CRC of fixed texts and of
+// every length from 0 to 40 (the word steps and their tails), and a zip
+// of a stored and a deflated file read back. The values are hash/crc32's.
+use std/archive
+use std/compress
+
+const TEXTS: List[Str] = ["", "a", "abc", "123456789", "abcdefgh", "abcdefghi", "Discard medicine more than two years old.", "The quick brown fox jumps over the lazy dog, then the lazy dog sleeps."]
+
+const ZIP_MIXED: Str = "504b0304140008000000216c4a5b0000000000000000000000000a00000073746f7265642e74787473746f7265642064617461504b07081155d7990b0000000b000000504b0304140008000800a320432a00000000000000000000000008000900626573742e747874555405000172837b3a4a494dcb492c494d5148aa5448cccb2fc9482d52c8492d4bcd511895199519593280000000ffff504b0708f2fb8b96270000000c030000504b01021403140008000000216c4a5b1155d7990b0000000b0000000a0000000000000000000000a0810000000073746f7265642e747874504b0102140b140008000800a320432af2fb8b96270000000c030000080009000000000000000100000043000000626573742e747874555405000172837b3a504b0506000000000200020077000000a90000000000"
+
+fn trailer_crc(z: Bytes) -> Int {
+  let n = z.len()
+  Int(z[n - 8]) | (Int(z[n - 7]) << 8) | (Int(z[n - 6]) << 16) | (Int(z[n - 5]) << 24)
+}
+
+fn main(os: Os) uses stdio {
+  for t in TEXTS {
+    os.stdio.println("${t.quote()} ${trailer_crc(compress.gzip(t.bytes()))}")
+  }
+  var b = BytesBuilder.new()
+  for n in 0..41 {
+    let d = b.freeze()
+    let z = compress.gzip(d)
+    let back = match compress.gunzip(z) {
+      Ok(x) => if x == d { "ok" } else { "differs" }
+      Err(e) => "${e}"
+    }
+    os.stdio.println("len ${n} ${trailer_crc(z)} ${back}")
+    b = BytesBuilder.new()
+    b.write(d)
+    b.write_byte(UInt8(32 + (n * 37) % 95))
+  }
+  let zip = Bytes.from_hex(ZIP_MIXED) ?? b""
+  match archive.unzip(zip) {
+    Ok(l) => {
+      for e in l {
+        os.stdio.println("zip ${e.path} ${e.data.len()}")
+      }
+    }
+    Err(e) => os.stdio.println("zip error ${e}")
+  }
+}
