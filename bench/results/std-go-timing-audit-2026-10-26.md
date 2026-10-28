@@ -354,3 +354,10 @@ path dir (std/changes/path.md 2026-10-27, "dir cleans its prefix without the tra
 0.865). Still over: in its profile with the fix, clean is 59% (the dir prefixes with `.`, `..` or
 repeated slashes, its segment list and builder), and the checked Str slices of split, base and ext
 (prelude.llrt_str_slice_chk, a call at every `s[lo..hi]`) 26%.
+
+## big quorem buffers (2026-10-27, xo-lang-5)
+
+Per std/changes/big.md 2026-10-27 ("long division shifts into its buffers and trims in place"). Quiet
+`xo bench --ab`, 15 rounds, the parent's std as A: quorem wall 0.898 (0.883 to 0.907), instructions 0.811,
+cycles 0.878; Xo / Go about 1.30 (estimate: 1.451 x 0.898), from 1.451. Still over the bar; the rest is
+the msub_row kernel (Go's is assembly) and the per-call buffers (Go's divBasic reuses z and u).

@@ -526,12 +526,12 @@ fn nat_divmod_basic(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
   let n = v.len()
   let m = u.len() - n
   let s = v[n - 1].leading_zeros()
-  let vn = nat_shl(v, s)
+  // v and u shifted left by s straight into their buffers (natdiv.go's
+  // shlVU into vIn and u): no shifted copy, no trim of it
+  var vn = raw.zero_ints(n)
+  let _vc = shl_into(vn, v, s)
   var un = raw.zero_ints(u.len() + 1)
-  let us = nat_shl(u, s)
-  for i in 0..us.len() {
-    un[i] = us[i]
-  }
+  un[u.len()] = shl_into(un, u, s)
   var q = raw.zero_ints(m + 1)
   let vtop = vn[n - 1]
   let vsec = vn[n - 2]
@@ -583,7 +583,39 @@ fn nat_divmod_basic(u: List[Int], v: List[Int]) -> (List[Int], List[Int]) {
     j -= 1
   }
   bigmod.keep(vn)
-  (norm(q), nat_shr(norm(un[0..n]), s))
+  // the remainder is un[0..n] shifted back, written into a list of its
+  // own; both results trimmed in place (a slice of a List copies it)
+  var r = raw.zero_ints(n)
+  for i in 0..n {
+    r[i] = if s == 0 { un[i] } else { un[i].shr_logical(s) | un[i + 1].wrapping_shl(64 - s) }
+  }
+  trim(r)
+  trim(q)
+  (q, r)
+}
+
+// shl_into writes x shifted left by s (0 <= s < 64) into z[0..x.len()]
+// and returns the bits shifted out of the top word.
+fn shl_into(var z: List[Int], x: List[Int], s: Int) -> Int {
+  if s == 0 {
+    for i in 0..x.len() {
+      z[i] = x[i]
+    }
+    return 0
+  }
+  var carry = 0
+  for i in 0..x.len() {
+    z[i] = x[i].wrapping_shl(s) | carry
+    carry = x[i].shr_logical(64 - s)
+  }
+  carry
+}
+
+// trim drops x's zero top words in place (norm without the copy).
+fn trim(var x: List[Int]) {
+  while x.len() > 0 && x[x.len() - 1] == 0 {
+    let _ = x.pop()
+  }
 }
 
 fn nat_sqrt(x: List[Int]) -> List[Int] {

@@ -1,5 +1,24 @@
 # std/big changes
 
+## 2026-10-27: perf: long division shifts into its buffers and trims in place
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/big quorem at 1.45x Go (re-measured on main d088ecee3); its CPU profile (msub_row 58%, and about 20% in the temporaries around it: two nat_shl copies, the copy of u into un, norm's slices, un[0..n], nat_shr)
+- Go reference: math/big natdiv.go divBasic and divLarge (shlVU into the divisor and u buffers, the remainder shifted back with shrVU, norm in place) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/big (go, arm64, LLVM); internal/llvm and internal/arm64 big_basic; twincheck's checksums agree on all six bench/perf/big workloads
+
+nat_divmod_basic shifted the divisor and the dividend into new lists,
+copied the dividend into its working buffer, and built the remainder by
+slicing that buffer (a List slice copies), trimming it and shifting it
+into another list; the quotient was trimmed by a slice too. The divisor
+and the dividend are now shifted straight into their buffers, the
+remainder is written once from the working buffer, and both results are
+trimmed by popping their zero top words. Output is unchanged. Quiet --ab,
+15 rounds, the parent's std as A: quorem wall 0.898 (0.883 to 0.907),
+instructions 0.811; Xo / Go about 1.30 (estimate: 1.451 x 0.898), from
+1.451.
+
 ## 2026-10-27: perf: decimal text divides by a constant 10
 
 - Kind: perf
