@@ -69,4 +69,14 @@ the first-build cost of writing the entry measured
 | the fixed point with XO_STD_EXPORT=1 | bootstrap ok (s2 and s3 identical; xobuild 98 s) |
 | a brand-new user's first build and the edit after it, plain against XO_STD_EXPORT=1 (fresh HOME each round, pairs interleaved, n=5, a measure window at load 5 to 23) | fib first build 1059, 1838, 2358, 2817, 2925 ms plain against 1311, 2001, 2829, 2680, 3003 (the rounds drift 3x; mean +8%); fib edit 232 to 481 against 258 to 449; HTTP first build 8771, 3768, 3897, 3906, 3847 against 4616, 3908, 3761, 3737, 3501; HTTP edit 702 to 815 against 644 to 822. Instructions retired (fib first build, fresh HOME, n=6, load 4): plain 19.55, 19.45, 19.54, 19.50, 19.55, 19.58 G against 19.54, 19.60, 19.53, 19.59, 19.67, 19.60 G: +0.3% (the export, the header's stamps and a 400 KB entry write); the check phase 58 to 400 ms plain against 62 to 309 with the record, no phase added. The +8% wall is the drift, not the record. |
 
+The default on main c462dd4e1 (2026-10-29, a quiet measure window at load 4
+to 7, std's variants built first with `xo dev stdcache --conc=0|1`, six fib
+edits): every edit prints `cache std ... reused` twice and `cache stdx record
+loaded (101 modules)`, `cache parse 9/9 reused`, check 23 ms on the first
+edit then 18, 18, 17, 17, 17, heap 75 MB; with XO_STD_EXPORT=0 the same
+edits take check 54 ms (std parsed again) then 32, heap 116 MB. The same
+as the opt-in numbers above. A gate's "default edit" step that did not
+build the variants first measured whole-program builds at 44 to 53 ms
+(gotchas/sepcomp-default-check-needs-std-variants.md).
+
 What the flip itself needs when it comes (a default change, CLAUDE.md): the touched packages' full suites and a self build (s2) with it on, in its gate; the stdx entry's first-build write measured above.
