@@ -16,6 +16,7 @@ use native/llrt/hserve
 use native/rt
 use native/llrt/h2srv
 use native/llrt/http1
+use native/llrt/http1w
 use native/llrt/hclient
 use native/llrt/rand as llrand
 use native/llrt/srvtls
@@ -51,6 +52,13 @@ struct Request {
   /// value, ...], canonical names in order; [] when every name has one
   /// value (headers is then all of it). Hidden from Xo code.
   fields: List[Str] = []
+  /// The request target's path as sent (escaped_path) and the Host header
+  /// as sent (host); "" for a request built as a struct literal. Hidden
+  /// from Xo code (std/rt's XRawPath, XHost).
+  raw_path: Str = ""
+  raw_host: Str = ""
+  /// Whether the request came over TLS (std/rt's XTLS). Hidden.
+  over_tls: Bool = false
   /// with_timeout's limit in nanoseconds, 0 for the client's (decision
   /// 0404). Hidden from Xo code.
   timeout_ns: Int = 0
@@ -916,6 +924,198 @@ fn request_with_header(r: Request, name: Str, value: Str) -> Request {
   h.put(k, value)
   r with {headers: h, fields: without_field(r.fields, k)}
 }
+
+/// The path of a request target as sent: the target up to its query (an
+/// absolute target's path after its authority).
+fn target_path(target: Str) -> Str {
+  var t = target
+  if let Some(i) = t.find("?") {
+    t = t[0..i]
+  }
+  if t.starts_with("http://") || t.starts_with("https://") {
+    let rest = t[t.find("//").or_fault("scheme") + 2..]
+    return match rest.find("/") {
+      Some(j) => rest[j..]
+      None => "/"
+    }
+  }
+  t
+}
+
+fn request_host(r: Request) -> Str { r.raw_host }
+fn request_tls(r: Request) -> Bool { r.over_tls }
+fn request_raw_query(r: Request) -> Str { r.raw_query }
+
+/// Go's URL.EscapedPath: the raw path when it unescapes to the path and
+/// is a valid escaping, else the path escaped.
+fn request_escaped_path(r: Request) -> Str {
+  if !r.raw_path.is_empty() {
+    match url.path_unescape(r.raw_path) {
+      Ok(p) => {
+        if p == r.path && valid_encoded_path(r.raw_path) {
+          return r.raw_path
+        }
+      }
+      Err(_) => {}
+    }
+  }
+  escape_path_keep(r.path)
+}
+
+/// url.escape(s, encodePath): Go's EscapedPath form of a path: the
+/// unreserved characters and `$&+,/:;=@` kept, everything else %XX
+/// (upper case hex); std/url's path_escape is PathEscape, which escapes
+/// `/` as a segment's.
+fn escape_path_keep(s: Str) -> Str {
+  var b = BytesBuilder.new()
+  let hex = b"0123456789ABCDEF"
+  var any = false
+  for c in s.bytes() {
+    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46 || c == 126 || c == 36 || c == 38 || c == 43 || c == 44 || c == 47 || c == 58 || c == 59 || c == 61 || c == 64 {
+      b.write_byte(c)
+    } else {
+      any = true
+      b.write_byte(37)
+      b.write_byte(hex[Int(c) / 16])
+      b.write_byte(hex[Int(c) % 16])
+    }
+  }
+  if !any {
+    return s
+  }
+  b.freeze().to_str() ?? s
+}
+
+/// url.go validEncoded for a path: unreserved, sub delimiters, `:@/`
+/// and `%` (the escapes were checked by path_unescape).
+fn valid_encoded_path(s: Str) -> Bool {
+  for c in s.bytes() {
+    if c == 33 || c == 36 || c == 38 || c == 39 || c == 40 || c == 41 || c == 42 || c == 43 || c == 44 || c == 59 || c == 61 || c == 58 || c == 64 || c == 91 || c == 93 || c == 37 || c == 47 {
+      continue
+    }
+    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46 || c == 126 {
+      continue
+    }
+    return false
+  }
+  true
+}
+
+/// Go's Redirect (server.go): the Location, resolved for a relative url.
+fn redirect(req: http.Request, url0: Str, status: Int) -> http.Response {
+  var u = url0
+  // a url with no scheme and no host is relative to the request's path
+  let has_scheme = match u.find(":") {
+    Some(i) => !u[0..i].contains("/") && i > 0
+    None => false
+  }
+  // url.Parse: `//host/x` has a host, `///x` an empty one (resolved)
+  if !has_scheme && !(u.starts_with("//") && !u.starts_with("///")) {
+    var oldpath = request_escaped_path(rt.cast[http.Request, Request](req))
+    if oldpath.is_empty() {
+      oldpath = "/"
+    }
+    if u.is_empty() || !u.starts_with("/") {
+      // path.Split: the directory with its slash
+      let olddir = match oldpath.rfind("/") {
+        Some(i) => oldpath[0..i + 1]
+        None => ""
+      }
+      u = olddir + u
+    }
+    var query = ""
+    if let Some(i) = u.find("?") {
+      query = u[i..]
+      u = u[0..i]
+    }
+    let trailing = u.ends_with("/")
+    u = path_clean(u)
+    if trailing && !u.ends_with("/") {
+      u = u + "/"
+    }
+    u = u + query
+  }
+  var resp = http.Response{status: status, headers: {}, body: "".bytes()}
+  resp = resp.with_header("Location", hex_escape_non_ascii(u))
+  if req.method == "GET" || req.method == "HEAD" {
+    resp = resp.with_header("Content-Type", "text/html; charset=utf-8")
+  }
+  if req.method == "GET" {
+    let text = http1w.status_text(status)
+    resp = resp with {body: ("<a href=\"" + html_escape(u) + "\">" + text + "</a>.\n").bytes()}
+  }
+  resp
+}
+
+/// path.Clean (Go's path package: `.` and `..` resolved, a rooted path
+/// stays rooted, "" is ".").
+fn path_clean(p: Str) -> Str {
+  if p.is_empty() {
+    return "."
+  }
+  let rooted = p.starts_with("/")
+  var out: List[Str] = []
+  for s in p.split("/") {
+    if s.is_empty() || s == "." {
+      continue
+    }
+    if s == ".." {
+      if !out.is_empty() && out[out.len() - 1] != ".." {
+        out.pop()
+        continue
+      }
+      if rooted {
+        continue
+      }
+    }
+    out.push(s)
+  }
+  let body = out.join("/")
+  if rooted {
+    return "/" + body
+  }
+  if body.is_empty() {
+    return "."
+  }
+  body
+}
+
+/// net/http's hexEscapeNonASCII: every byte from 0x80 as %XX (lower case).
+fn hex_escape_non_ascii(s: Str) -> Str {
+  let b = s.bytes()
+  var any = false
+  for c in b {
+    if c >= 128 {
+      any = true
+      break
+    }
+  }
+  if !any {
+    return s
+  }
+  var out = BytesBuilder.new()
+  let hex = b"0123456789abcdef"
+  for c in b {
+    if c >= 128 {
+      out.write_byte(37)
+      out.write_byte(hex[Int(c) / 16])
+      out.write_byte(hex[Int(c) % 16])
+    } else {
+      out.write_byte(c)
+    }
+  }
+  out.freeze().to_str() ?? s
+}
+
+/// net/http's htmlEscape (the five characters).
+fn html_escape(s: Str) -> Str { s.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;").replace("\"", "&#34;").replace("'", "&#39;") }
+
+/// Go's Error.
+fn error_page(status: Int, msg: Str) -> http.Response {
+  http.Response{status: status, headers: {"Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff"}, body: (msg + "\n").bytes()}
+}
+
+fn not_found() -> http.Response { error_page(404, "404 page not found") }
 
 fn request_header_values(r: Request, name: Str) -> List[Str] { values_of(r.headers, r.fields, name) }
 
@@ -2050,8 +2250,12 @@ fn head_request(rd: http1.Reader, q: http1.Req) -> Request {
   if q.port >= 0 {
     port = Some(q.port)
   }
-  let url = http.Url{scheme: q.scheme, host: q.host, port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn()), raw_query: q.rawquery, fields: q.fields}
+  // the connection's TLS gives the scheme (Go's r.TLS; a proxy's
+  // X-Forwarded-Proto reads it)
+  let tls = hconn.is_tls(rd.conn())
+  let scheme = if q.scheme.is_empty() && tls { "https" } else { q.scheme }
+  let url = http.Url{scheme: scheme, host: q.host, port: port, path: upath, query: query}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn()), raw_query: q.rawquery, fields: q.fields, raw_path: target_path(q.target), raw_host: q.rawhost, over_tls: tls}
 }
 
 /// The request of an HTTP/2 stream (std/rt's serve).
@@ -2079,7 +2283,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
     port = Some(p)
   }
   let url = http.Url{scheme: q.scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  let req = Request{method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
+  let req = Request{over_tls: true, raw_host: q.urlhost, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
   if !q.streamed {
     return req
   }

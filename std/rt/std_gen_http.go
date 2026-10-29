@@ -25,6 +25,9 @@ type Http_Request struct {
 	XTimeout    Duration
 	XIdle       Duration
 	XSrc        bodySrc
+	XRawPath    string
+	XHost       string
+	XTLS        bool
 }
 
 func (v Http_Request) XoEq(x any) bool {

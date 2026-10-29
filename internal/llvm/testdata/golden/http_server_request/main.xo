@@ -1,0 +1,48 @@
+// What a server's handler sees of a request's host, TLS state, raw query
+// and escaped path (std.md 4.3), and the redirect and error page
+// builders, over a plain connection on 127.0.0.1:0.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("/see", fn(req) {
+    http.text(200, "host=${req.host().split(":").first() ?? ""} tls=${req.tls()} scheme=${req.url.scheme} path=${req.path} escaped=${req.escaped_path()} raw_query=${req.raw_query()} q=${req.query("q") ?? "-"}")
+  })
+  r.handle("/esc/{name}", fn(req) { http.text(200, "name=${req.param("name")} path=${req.path} escaped=${req.escaped_path()}") })
+  r.handle("GET /go", fn(req) { http.redirect(req, "../see?q=1", 302) })
+  r.handle("GET /missing", fn(_req) { http.not_found() })
+  r.handle("GET /oops", fn(_req) { http.error_page(503, "503 try later") })
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${resp.header("Content-Type") ?? "-"} ${resp.header("X-Content-Type-Options") ?? "-"} ${resp.body.to_str() ?? "?"}")
+    Err(_) => os.stdio.println("${label}: error")
+  }
+}
+
+fn main(os: Os) uses net, stdio {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes())
+      let base = "http://${srv.addr()}"
+      let c = http.client(os.net)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        show(os, "see", c.get(base + "/see?q=a%20b&x=1"))
+        show(os, "escaped", c.get(base + "/esc/a%20b%2B"))
+        show(os, "go", c.get(base + "/go"))
+        show(os, "missing", c.get(base + "/missing"))
+        show(os, "oops", c.get(base + "/oops"))
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

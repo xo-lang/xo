@@ -1318,7 +1318,14 @@ fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr   //
 fn (r: Request) header(name: Str) -> Str?           // case insensitive for a token name; any other name matches only exactly
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
-fn (r: Request) header_values(name: Str) -> List[Str]   // every field of name, in order (decision 0288); found the way header is
+fn (r: Request) header_values(name: Str) -> List[Str]
+fn (r: Request) host() -> Str                 // Go's Request.Host: the Host header as sent (HTTP/2's :authority)
+fn (r: Request) tls() -> Bool                 // Go's r.TLS != nil; url.scheme is then "https"
+fn (r: Request) raw_query() -> Str            // Go's URL.RawQuery
+fn (r: Request) escaped_path() -> Str         // Go's URL.EscapedPath
+pub fn redirect(req: Request, url: Str, status: Int) -> Response   // Go's Redirect: Location resolved against the path, an HTML body on GET
+pub fn error_page(status: Int, msg: Str) -> Response                // Go's Error: text/plain, nosniff, msg and a newline
+pub fn not_found() -> Response                                      // Go's NotFound   // every field of name, in order (decision 0288); found the way header is
 fn (r: Request) add_header(name: Str, value: Str) -> Request   // one more field of name
 fn (r: Request) cookie(name: Str) -> Cookie?        // the first Cookie pair of that name (Go's Request.Cookie)
 fn (r: Request) cookies() -> List[Cookie]           // every Cookie pair that parses

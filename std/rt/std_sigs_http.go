@@ -21,6 +21,10 @@ var (
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_idle_timeout
 	_ func(*Http_Request, *Task, Http_BodyReader) Http_Request                                                                                          = (*Http_Request).M_with_body_reader
 	_ func(*Http_Request, *Task, string) List[string]                                                                                                   = (*Http_Request).M_header_values
+	_ func(*Http_Request, *Task) string                                                                                                                 = (*Http_Request).M_host
+	_ func(*Http_Request, *Task) bool                                                                                                                   = (*Http_Request).M_tls
+	_ func(*Http_Request, *Task) string                                                                                                                 = (*Http_Request).M_raw_query
+	_ func(*Http_Request, *Task) string                                                                                                                 = (*Http_Request).M_escaped_path
 	_ func(*Http_Request, *Task, string, string) Http_Request                                                                                           = (*Http_Request).M_add_header
 	_ func(*Http_Request, *Task, List[Netip_Prefix], Http_ProxyHeader) Option[Netip_Addr]                                                               = (*Http_Request).M_client_ip
 	_ func(*Http_Request, *Task, string) Option[Http_Cookie]                                                                                            = (*Http_Request).M_cookie
@@ -34,6 +38,9 @@ var (
 	_ func(*Task, Http_Request, string, Option[Time], Bytes, Map[string, string]) Http_Response                                                         = Http_serve_content
 	_ func(*Task, int64, string) Http_Response                                                                                                          = Http_text
 	_ func(*Task, int64) Http_Response                                                                                                                  = Http_empty
+	_ func(*Task, Http_Request, string, int64) Http_Response                                                                                            = Http_redirect
+	_ func(*Task, int64, string) Http_Response                                                                                                          = Http_error_page
+	_ func(*Task) Http_Response                                                                                                                         = Http_not_found
 	_ func(*Http_BodyReader, *Task, int64) Result[Option[Bytes], IoErr]                                                                                 = (*Http_BodyReader).M_read
 	_ func(*Http_BodyReader, *Task) Result[Bytes, IoErr]                                                                                                = (*Http_BodyReader).M_read_all
 	_ func(*Http_BodyReader, *Task, Http_Request) Result[Http_PartReader, Multipart_MultipartErr]                                                       = (*Http_BodyReader).M_multipart

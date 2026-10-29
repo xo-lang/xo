@@ -1707,6 +1707,10 @@ pub struct Req {
   pub rawquery: Str
   /// Head.fields (decision 0288)
   pub fields: List[Str] = []
+  /// The request target as sent (Request.escaped_path).
+  pub target: Str = ""
+  /// The Host header as sent (Request.host).
+  pub rawhost: Str = ""
 }
 
 /// The next request (its body read: body), or None when the connection
@@ -2309,7 +2313,7 @@ fn req_of(h: Head) -> Req {
       port = v
     }
   }
-  Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query, rawquery: h.url.rawquery, fields: h.fields}
+  Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query, rawquery: h.url.rawquery, fields: h.fields, target: h.target, rawhost: h.host}
 }
 
 // ---------------------------------------------------------------------------

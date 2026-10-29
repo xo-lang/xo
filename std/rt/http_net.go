@@ -99,7 +99,10 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		if host, _, err := net.SplitHostPort(ip); err == nil {
 			ip = host
 		}
-		req := Http_Request{F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
+		if hr.TLS != nil && u.F_scheme == "" {
+			u.F_scheme = "https"
+		}
+		req := Http_Request{XRawPath: hr.URL.EscapedPath(), XHost: urlTextOf(hr.Host), XTLS: hr.TLS != nil, F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
 		if stream {
 			req = withStreamBody(req, hr.Body)
 		}

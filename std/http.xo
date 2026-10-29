@@ -68,6 +68,18 @@ fn (r: Request) with_idle_timeout(d: Duration) -> Request
 fn (r: Request) with_body_reader(b: BodyReader) -> Request
 /// Every field of name, in order (decision 0288).
 fn (r: Request) header_values(name: Str) -> List[Str]
+/// Go's Request.Host: the Host header as sent (host, or host:port;
+/// HTTP/2's :authority); `url.host` is the name alone. "" for a request
+/// built as a struct literal (std.md 4.3).
+fn (r: Request) host() -> Str
+/// Whether the request came over TLS (Go's `r.TLS != nil`); `url.scheme`
+/// is then "https".
+fn (r: Request) tls() -> Bool
+/// Go's URL.RawQuery: the query as sent, before any unescaping.
+fn (r: Request) raw_query() -> Str
+/// Go's URL.EscapedPath: the path as sent when it is a valid escaping of
+/// `path`, else `path` escaped (std/url's path_escape).
+fn (r: Request) escaped_path() -> Str
 /// The request with one more field of name.
 fn (r: Request) add_header(name: Str, value: Str) -> Request
 /// The client's address behind trusted proxies (std.md 4.3): the peer
@@ -160,6 +172,18 @@ fn json[T: Json](status: Int, v: T) -> Response
 fn serve_content(req: Request, name: Str, modtime: Time?, content: Bytes, headers: Map[Str, Str] = {}) -> Response
 fn text(status: Int, s: Str) -> Response
 fn empty(status: Int) -> Response
+/// Go's Redirect: a response of status with `Location: url`; a url with
+/// no scheme and no host is resolved against req's escaped path (Go's
+/// rules: the path's directory, `.` and `..` cleaned, a trailing slash
+/// kept, the query kept apart), non ASCII bytes of the Location percent
+/// encoded; a GET or HEAD gets `text/html; charset=utf-8` and a GET the
+/// body `<a href="URL">Status Text</a>.` on a line.
+fn redirect(req: Request, url: Str, status: Int) -> Response
+/// Go's Error: `text/plain; charset=utf-8`, `X-Content-Type-Options:
+/// nosniff`, the body msg and a newline.
+fn error_page(status: Int, msg: Str) -> Response
+/// Go's NotFound: error_page(404, "404 page not found").
+fn not_found() -> Response
 fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> Response uses fx
 
 /// The body of a request to a handle_stream route (decision 0310).

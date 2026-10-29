@@ -1727,3 +1727,53 @@ test "parse_url accepts and rejects as Go's url.Parse, with its error texts" {
   }
   expect(bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]) == []
 }
+
+test "go TestRedirect: Location resolved against the request's path, non ASCII escaped" {
+  let req = http.Request{method: "GET", path: "/qux/", url: http.Url{scheme: "http", host: "example.com", port: None, path: "/qux/", query: {}}, headers: {}, body: "".bytes(), remote_ip: ""}
+  let cases: List[(Str, Str)] = [
+    ("http://foobar.com/baz", "http://foobar.com/baz"),
+    ("https://foobar.com/baz", "https://foobar.com/baz"),
+    ("test://foobar.com/baz", "test://foobar.com/baz"),
+    ("//foobar.com/baz", "//foobar.com/baz"),
+    ("/foobar.com/baz", "/foobar.com/baz"),
+    ("foobar.com/baz", "/qux/foobar.com/baz"),
+    ("../quux/foobar.com/baz", "/quux/foobar.com/baz"),
+    ("///foobar.com/baz", "/foobar.com/baz"),
+    ("/foo?next=http://bar.com/", "/foo?next=http://bar.com/"),
+    ("http://localhost:8080/_ah/login?continue=http://localhost:8080/", "http://localhost:8080/_ah/login?continue=http://localhost:8080/"),
+    ("/фубар", "/%d1%84%d1%83%d0%b1%d0%b0%d1%80"),
+    ("http://foo.com/фубар", "http://foo.com/%d1%84%d1%83%d0%b1%d0%b0%d1%80"),
+  ]
+  var bad: List[(Str, Str)] = []
+  for (target, want) in cases {
+    let resp = http.redirect(req, target, 302)
+    let got = resp.header("Location") ?? ""
+    if got != want || resp.status != 302 {
+      bad.push((target, got))
+    }
+  }
+  expect(bad) == []
+  // a GET gets the html body, a HEAD the type alone, a POST neither
+  let r = http.redirect(req, "/x", 302)
+  expect(r.header("Content-Type")) == Some("text/html; charset=utf-8")
+  expect(r.body.to_str()) == Some("<a href=\"/x\">Found</a>.\n")
+  let h = http.redirect(req with {method: "HEAD"}, "/x", 301)
+  expect((h.header("Content-Type"), h.body.len())) == (Some("text/html; charset=utf-8"), 0)
+  let p = http.redirect(req with {method: "POST"}, "/x?a=<b>", 303)
+  expect((p.header("Content-Type"), p.header("Location"))) == (None, Some("/x?a=<b>"))
+}
+
+test "go Error and NotFound: text/plain, nosniff, the message and a newline" {
+  let e = http.error_page(500, "boom")
+  expect((e.status, e.header("Content-Type"), e.header("X-Content-Type-Options"), e.body.to_str())) == (500, Some("text/plain; charset=utf-8"), Some("nosniff"), Some("boom\n"))
+  let n = http.not_found()
+  expect((n.status, n.body.to_str())) == (404, Some("404 page not found\n"))
+}
+
+test "escaped_path, raw_query, host and tls of a request built as a struct literal" {
+  let req = http.Request{method: "GET", path: "/a b/ü", url: http.Url{scheme: "", host: "", port: None, path: "/a b/ü", query: {}}, headers: {}, body: "".bytes(), remote_ip: ""}
+  expect(req.escaped_path()) == "/a%20b/%C3%BC"
+  expect(req.raw_query()) == ""
+  expect(req.host()) == ""
+  expect(req.tls()) == false
+}

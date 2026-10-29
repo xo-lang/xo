@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-10-29: feature: Request host, tls, raw_query, escaped_path; redirect, error_page, not_found (server gaps, part 1)
+
+- Kind: feature
+- Commit: this commit
+- Found by: std-coverage.md rank 11 (the lead's list)
+- Go reference: net/http Request.Host, Request.TLS, URL.RawQuery, URL.EscapedPath, Redirect, Error, NotFound (go1.26.1)
+- Test: std/native/http_test.xo (Go's TestRedirect table, Error's text, escaped_path cases), internal/llvm golden http_server_request
+
+`req.host()`, `req.tls()` (and `url.scheme` "https" over TLS, for a proxy's
+X-Forwarded-Proto), `req.raw_query()`, `req.escaped_path()`; `http.redirect`
+(Go's relative resolution and Location escaping), `http.error_page`,
+`http.not_found`. Part 2: the server's timeouts, header and body limits.
+
 ## 2026-10-29: feature: WebSocket and other protocol switches through http.reverse_proxy
 
 - Kind: feature

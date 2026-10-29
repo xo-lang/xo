@@ -5,6 +5,7 @@ import (
 	"io"
 	"net/textproto"
 	"net/url"
+	"path"
 	"reflect"
 	"strconv"
 	"strings"
@@ -705,6 +706,125 @@ func Http_text(tk *Task, status int64, s string) Http_Response {
 
 // Http_empty is `http.empty(status)`.
 func Http_empty(_ *Task, status int64) Http_Response { return Http_Response{F_status: status} }
+
+// M_host is `req.host()`: Go's Request.Host.
+func (r Http_Request) M_host(_ *Task) string { return r.XHost }
+
+// M_tls is `req.tls()`: whether the request came over TLS.
+func (r Http_Request) M_tls(_ *Task) bool { return r.XTLS }
+
+// M_raw_query is `req.raw_query()`.
+func (r Http_Request) M_raw_query(_ *Task) string { return r.XRawQuery }
+
+// M_escaped_path is `req.escaped_path()`: Go's URL.EscapedPath.
+func (r Http_Request) M_escaped_path(_ *Task) string {
+	if r.XRawPath != "" {
+		return r.XRawPath
+	}
+	return (&url.URL{Path: r.F_path}).EscapedPath()
+}
+
+// Http_redirect is `http.redirect(req, url, status)`: net/http's Redirect
+// without net/http (std/rt builds with xo_nohttp too): a url with no scheme
+// and no host is resolved against the request's escaped path.
+func Http_redirect(tk *Task, req Http_Request, target string, status int64) Http_Response {
+	if u, err := url.Parse(target); err == nil && u.Scheme == "" && u.Host == "" {
+		oldpath := req.M_escaped_path(tk)
+		if oldpath == "" {
+			oldpath = "/"
+		}
+		if target == "" || target[0] != '/' {
+			olddir, _ := path.Split(oldpath)
+			target = olddir + target
+		}
+		var query string
+		if i := strings.Index(target, "?"); i != -1 {
+			target, query = target[:i], target[i:]
+		}
+		trailing := strings.HasSuffix(target, "/")
+		target = path.Clean(target)
+		if trailing && !strings.HasSuffix(target, "/") {
+			target += "/"
+		}
+		target += query
+	}
+	h := mapCap[string, string](2)
+	Map_put(tk, &h, "Location", hexEscapeNonASCII(target))
+	var body Bytes
+	if req.F_method == "GET" || req.F_method == "HEAD" {
+		Map_put(tk, &h, "Content-Type", "text/html; charset=utf-8")
+	}
+	if req.F_method == "GET" {
+		body = Bytes("<a href=\"" + htmlEscapeText(target) + "\">" + redirectStatusText(status) + "</a>.\n")
+	}
+	return Http_Response{F_status: status, F_headers: h, F_body: body}
+}
+
+// hexEscapeNonASCII is net/http's: every byte from 0x80 as %XX.
+func hexEscapeNonASCII(s string) string {
+	n := 0
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			n += 3
+		} else {
+			n++
+		}
+	}
+	if n == len(s) {
+		return s
+	}
+	b := make([]byte, 0, n)
+	const hexd = "0123456789abcdef"
+	for i := 0; i < len(s); i++ {
+		if s[i] >= 0x80 {
+			b = append(b, '%', hexd[s[i]>>4], hexd[s[i]&0xF])
+		} else {
+			b = append(b, s[i])
+		}
+	}
+	return string(b)
+}
+
+var htmlEscapeTextReplacer = strings.NewReplacer("&", "&amp;", "<", "&lt;", ">", "&gt;", `"`, "&#34;", "'", "&#39;")
+
+func htmlEscapeText(s string) string { return htmlEscapeTextReplacer.Replace(s) }
+
+// redirectStatusText is net/http's StatusText for the codes a redirect
+// uses (the body names the status).
+func redirectStatusText(code int64) string {
+	switch code {
+	case 300:
+		return "Multiple Choices"
+	case 301:
+		return "Moved Permanently"
+	case 302:
+		return "Found"
+	case 303:
+		return "See Other"
+	case 304:
+		return "Not Modified"
+	case 307:
+		return "Temporary Redirect"
+	case 308:
+		return "Permanent Redirect"
+	case 200:
+		return "OK"
+	case 201:
+		return "Created"
+	}
+	return ""
+}
+
+// Http_error_page is `http.error_page(status, msg)`: Go's Error.
+func Http_error_page(tk *Task, status int64, msg string) Http_Response {
+	h := mapCap[string, string](2)
+	Map_put(tk, &h, "Content-Type", "text/plain; charset=utf-8")
+	Map_put(tk, &h, "X-Content-Type-Options", "nosniff")
+	return Http_Response{F_status: status, F_headers: h, F_body: Bytes(msg + "\n")}
+}
+
+// Http_not_found is `http.not_found()`.
+func Http_not_found(tk *Task) Http_Response { return Http_error_page(tk, 404, "404 page not found") }
 
 // Http_stream is `http.stream(status, f)`: the body is produced by f while
 // the response is sent. Dispatched in process, the body is collected.

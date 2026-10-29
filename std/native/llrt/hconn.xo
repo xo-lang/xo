@@ -336,6 +336,9 @@ pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
 }
 
 /// Whether h's server is stopping (no other request on the connection).
+/// Whether connection h speaks TLS (Request.tls, std.md 4.3).
+pub fn is_tls(h: rthttp.HConn) -> Bool { ld(rec(h), HC_TLS) != 0 }
+
 pub fn stopping(h: rthttp.HConn) -> Bool {
   let s = ld(rec(h), HC_SRV)
   if s == 0 {
