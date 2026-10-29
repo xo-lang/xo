@@ -27,7 +27,7 @@ on:
       runner:
         description: "Runner label for a single job suite; planned: auto plans its own jobs, others take xo-arm64-big for full, merge, and measure, xo-windows for windows, else xo-arm64"
         type: choice
-        options: [planned, xo-arm64, xo-arm64-big, xo-windows]
+        options: [planned, xo-arm64, xo-arm64-big, xo-amd64, xo-windows]
         default: planned
 
 # The seed bucket is a repository variable, not a value in the repository
