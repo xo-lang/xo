@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-10-29: feature: an HTTP/2 response body read as it arrives
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0404 stage B2 (B1 buffered an HTTP/2 body whole)
+- Go reference: net/http h2_bundle.go transportResponseBody.Read and
+  Close (RST_STREAM CANCEL); decision 0404 stage B2
+- Test: internal/llvm/testdata/golden/http_tls (stream big, stream early,
+  after early; native and Go)
+
+`Client.open` over https with h2 no longer reads the whole body first:
+each `read` returns the next DATA frame's bytes, so memory stays flat as the
+body grows. `close` before the end sends RST_STREAM CANCEL and keeps the
+connection pooled for the next request.
+
 ## 2026-10-29: feature: a response body read as it arrives (Client.open)
 
 - Kind: feature

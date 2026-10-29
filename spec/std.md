@@ -1561,10 +1561,11 @@ limit over its whole body, and a `Timeout` from `read` means the head was
 received. `close` releases the connection and again does nothing; a
 stream dropped without `close` is released when its last copy goes. A
 body read to its end gives its connection back to the client's pool; any
-other HTTP/1.1 connection is closed. Until stage B2 of decision 0404 an
-HTTP/2 response's body (https with ALPN h2) is read in full before
-`open` returns, so its memory grows with the body; the bytes and errors
-are the same.
+other HTTP/1.1 connection is closed. Over HTTP/2 each `read` takes the
+next DATA frame's bytes as it arrives (the window updated as they are
+received), `close` before the end resets the stream (RST_STREAM CANCEL)
+and the connection stays pooled, and a stream dropped without `close`
+before its end closes its connection.
 
 `parse_url` accepts absolute RFC 3986 URLs with an
 `http` or `https` scheme and a host; anything else is a `UrlErr`. An

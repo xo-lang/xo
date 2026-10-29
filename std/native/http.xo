@@ -2131,8 +2131,10 @@ struct StreamState {
   addr: Str
   name: Str
   roots: rthttp.Roots
-  /// an HTTP/2 response's whole body until stage B2, and how much of it
-  /// was returned
+  /// an HTTP/2 stream's open exchange (decision 0404 stage B2)
+  h2: http1.H2X?
+  /// bytes received and not yet returned (an HTTP/2 DATA payload, a
+  /// response read whole), and how much of them was returned
   buffered: Bytes
   off: Int
   gz: compress.Decompressor?
@@ -2156,7 +2158,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   if testworld.fake(4) {
     // FakeNet: the whole response, read as a stream
     let resp = send_mem(req, raw)?
-    let st = StreamState{conn: None, read: http1.BodyRead{mode: 0, done: true}, https: false, addr: "", name: "", roots: c.roots, buffered: resp.body, off: 0, gz: None, pending: b"", done: false, idle_ns: 0}
+    let st = StreamState{conn: None, h2: None, read: http1.BodyRead{mode: 0, done: true}, https: false, addr: "", name: "", roots: c.roots, buffered: resp.body, off: 0, gz: None, pending: b"", done: false, idle_ns: 0}
     return Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: resp.status, headers: resp.headers}, st: Mutex[StreamState].new(st)}))
   }
   let (names, values) = header_lists(req)
@@ -2173,7 +2175,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   let (h, _) = fields_in(r.headers)
   let gz = if r.gz { Some(compress.decompressor(compress.Format.Gzip)) } else { None }
   let idle = if req.idle_ns > 0 { req.idle_ns } else { c.timeout.nanos() }
-  let st = StreamState{conn: if r.open { r.conn } else { None }, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle}
+  let st = StreamState{conn: if r.open { r.conn } else { None }, h2: r.h2, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle}
   Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: r.status, headers: h}, st: Mutex[StreamState].new(st)}))
 }
 
@@ -2181,6 +2183,40 @@ fn (s: ClientStream) head() -> http.ResponseHead { s.hd }
 
 /// The next raw (undecoded) bytes of the body, None at its end.
 fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
+  if s.off < s.buffered.len() {
+    let end = if s.buffered.len() - s.off < max { s.buffered.len() } else { s.off + max }
+    let b = s.buffered[s.off..end]
+    s.off = end
+    return Ok(Some(b))
+  }
+  if let Some(x0) = s.h2 {
+    var x = x0
+    let r = s.conn ?? fault("http: an HTTP/2 stream without its connection")
+    hclient.set_deadline(r, s.idle_ns)
+    http1.h2_pump(r, x, http1.H2_TO_DATA)
+    if hclient.h2_body_n(r) > 0 {
+      s.h2 = Some(x)
+      s.buffered = hclient.h2_take_body(r)
+      s.off = 0
+      return raw_next(s, max)
+    }
+    // the end, or a failure: the connection back to the pool
+    s.h2 = None
+    s.conn = None
+    http1.h2_done(r, x)
+    let e = hclient.err(r)
+    if e == 0 {
+      return Ok(None)
+    }
+    if e == 3 {
+      return Err(http.ClientErr.Timeout)
+    }
+    if e == 5 {
+      return Err(http.ClientErr.Canceled)
+    }
+    let m = hclient.msg(r)
+    return Err(http.ClientErr.Protocol(msg: if m.is_empty() { "unexpected EOF" } else { m }))
+  }
   match s.conn {
     None => {
       if s.off >= s.buffered.len() {
@@ -2294,6 +2330,16 @@ fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! http.Client
 
 fn (s: ClientStream) close() {
   s.st.with(fn(var x: StreamState) {
+    if let Some(e0) = x.h2 {
+      // RST_STREAM CANCEL unless it ended; the connection stays pooled
+      var e = e0
+      if let Some(r) = x.conn {
+        http1.h2_cancel(r, e)
+        http1.h2_done(r, e)
+      }
+      x.h2 = None
+      x.conn = None
+    }
     match x.conn {
       Some(r) => {
         if x.read.done {

@@ -2,7 +2,7 @@
 
 Status: Proposed (lead request, 2026-10-29: item 1 of the 0.35 std list;
 Xo Lang 2). Reviewed by Xo Lang 3 and the lead (2026-10-29). Stage A
-landed in 440f5b333; B1 (HTTP/1.1) landed 2026-10-29; B2 (HTTP/2) in progress.
+landed in 440f5b333; B1 (HTTP/1.1) and B2 (HTTP/2) landed 2026-10-29.
 
 ## Context
 

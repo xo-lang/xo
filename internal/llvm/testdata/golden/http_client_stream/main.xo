@@ -112,7 +112,7 @@ fn main(os: Os) {
           Err(e) => os.stdio.println("gzip: ${describe(e)}")
         }
         match c.open(http.new_request("GET", base + "/redirect")) {
-          Ok(st) => os.stdio.println("redirect: ${st.head().status} ${drain(st, 100)}")
+          Ok(st) => os.stdio.println("redirect: ${st.head().status} ${drain(st, 7)}")
           Err(e) => os.stdio.println("redirect: ${describe(e)}")
         }
         match c.open(http.new_request("GET", "http://${raw.addr()}/cut")) {

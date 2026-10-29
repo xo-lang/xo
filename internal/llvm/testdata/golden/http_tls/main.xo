@@ -172,6 +172,21 @@ fn main(os: Os) {
       }
       Err(e) => os.stdio.println("stream gzip: ${describe(e, addrs)}")
     }
+    // closed early: RST_STREAM CANCEL, and the connection serves the next
+    // request (decision 0404 stage B2)
+    match c.open(http.new_request("GET", base + "/big")) {
+      Ok(st) => {
+        match st.read(1000) {
+          Ok(Some(b)) => os.stdio.println("stream early: ${b.len() > 0}")
+          Ok(None) => os.stdio.println("stream early: empty?")
+          Err(e) => os.stdio.println("stream early: ${describe(e, addrs)}")
+        }
+        st.close()
+        st.close()
+      }
+      Err(e) => os.stdio.println("stream early: ${describe(e, addrs)}")
+    }
+    show(os, "after early", addrs, c.get(base + "/hello"))
     // the text depends on the verifier (macOS: the Security framework,
     // which also rejects certificates valid for 100 years)
     match system.get(base + "/hello") {

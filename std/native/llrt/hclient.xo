@@ -1126,9 +1126,27 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
 /// Closes r's connection (TLS, the poll descriptor, the socket), if it
 /// has one: an HTTP/1.1 exchange ends.
 /// Sets r's connection's deadline to timeout ns from now (0: none), for a
-/// streamed body's next read (decision 0404's idle limit).
+/// streamed body's next read (decision 0404's idle limit): an HTTP/2
+/// exchange's pooled connection, else r's own.
 pub fn set_deadline(r: rthttp.CResp, timeout: Int) {
-  st(rec(r) + R_C, C_WHEN, if timeout > 0 { cl_deadline(timeout) } else { 0 })
+  let when = if timeout > 0 { cl_deadline(timeout) } else { 0 }
+  let x = ld(rec(r), R_H2)
+  if x != 0 && ld(x, X_PC) != 0 {
+    st(ld(x, X_PC) + P_C, C_WHEN, when)
+    return
+  }
+  st(rec(r) + R_C, C_WHEN, when)
+}
+
+/// The bytes of an HTTP/2 response's body received and not yet taken
+/// (decision 0404 stage B2).
+pub fn h2_body_n(r: rthttp.CResp) -> Int { ld(rec(r), R_BODY_N) }
+
+/// Takes the HTTP/2 body bytes received so far (h2_body_n of them).
+pub fn h2_take_body(r: rthttp.CResp) -> Bytes {
+  let b = body(r)
+  st(rec(r), R_BODY_N, 0)
+  b
 }
 
 pub fn cl_close(r: rthttp.CResp) { close_at(rec(r)) }

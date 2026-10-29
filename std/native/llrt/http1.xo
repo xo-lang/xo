@@ -2584,7 +2584,9 @@ fn inflow_add(avail: Int, unsent: Int, n: Int) -> (Int, Int, Int) {
 }
 
 /// One HTTP/2 exchange (xo_h2.c's h2x and h2rq until audit item B29).
-struct H2X {
+/// An HTTP/2 exchange's state (h2_begin, h2_pump, h2_done); a stream
+/// keeps it between reads (decision 0404 stage B2).
+pub struct H2X {
   st: H2State
   method: Str
   body: Str
@@ -2879,6 +2881,36 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
 /// state back to the pool (hclient.h2_end). hclient.retry tells whether
 /// the request goes again on a new connection.
 fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) {
+  var x = h2_begin(r, method, target, host, names, values, bn)
+  h2_pump(r, x, H2_TO_END)
+  h2_done(r, x)
+}
+
+/// An HTTP/2 exchange on r: whole (h2_exchange), or for a stream up to
+/// the response's head, kept open (Some) unless it failed or ended there.
+fn h2_run(r: rthttp.CResp, stream: Bool, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) -> H2X? {
+  if !stream {
+    h2_exchange(r, method, target, host, names, values, bn)
+    return None
+  }
+  var x = h2_begin(r, method, target, host, names, values, bn)
+  h2_pump(r, x, H2_TO_HEAD)
+  if x.res != CC_OK || x.ended {
+    h2_done(r, x)
+    return None
+  }
+  Some(x)
+}
+
+/// h2_pump's stops: the exchange's end, the response's header, the next
+/// DATA payload (hclient.h2_body_n > 0) or the end.
+pub const H2_TO_END: Int = 0
+pub const H2_TO_HEAD: Int = 1
+pub const H2_TO_DATA: Int = 2
+
+/// h2_exchange's start: the connection's state taken from the pool and
+/// the request's header frames sent.
+pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) -> H2X {
   var st = h2_state()
   let kept = hclient.h2_take(r)
   if let Some(a) = kept.get(0) {
@@ -2921,8 +2953,19 @@ fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
     }
     let _ok = x.flush(r)
   }
+  x
+}
+
+/// Runs the exchange x on r until stop (H2_TO_*), a failure, or its end.
+pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
   let bn2 = x.body.len()
   while x.res == CC_OK && !x.ended {
+    if stop == H2_TO_HEAD && x.headers && !x.dec {
+      break
+    }
+    if stop == H2_TO_DATA && hclient.h2_body_n(r) > 0 {
+      break
+    }
     // the body, as the windows allow
     while x.off < bn2 && !x.ended {
       var k = bn2 - x.off
@@ -2988,6 +3031,22 @@ fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
     }
     let _ok = x.flush(r)
   }
+}
+
+/// A stream given up before its end (decision 0404): RST_STREAM CANCEL,
+/// the connection staying usable.
+pub fn h2_cancel(r: rthttp.CResp, var x: H2X) {
+  if x.res == CC_OK && !x.ended && x.id != 0 {
+    x.out = push_be32(push_frame(x.out, 4, H2T_RST, 0, x.id), 8)
+    let _ok = x.flush(r)
+    x.ended = true
+  }
+}
+
+/// h2_exchange's end: the connection and its state back to the pool
+/// (hclient.h2_end).
+pub fn h2_done(r: rthttp.CResp, var x: H2X) {
+  let bn2 = x.body.len()
   var fl = 0
   if x.broken {
     fl = fl | XF_BROKEN
@@ -3767,6 +3826,8 @@ pub struct CResult {
   pub addr: Str = ""
   pub name: Str = ""
   pub gz: Bool = false
+  /// an HTTP/2 stream's exchange (h2_pump with H2_TO_DATA reads on)
+  pub h2: H2X? = None
 }
 
 fn cfail(err: Int, msg: Str) -> CResult { CResult{err: err, msg: msg, status: 0, headers: [], body: b""} }
@@ -3907,14 +3968,17 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     }
     let prefix = url_op(method) + " " + q
     var r = hclient.cl_start(https, addr, name, body, when, roots, prefix, true)
+    // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
+    // after the head
+    var h2x: H2X? = None
     if hclient.h2(r) {
-      h2_exchange(r, method, target, u.host, hk, hv, body.len())
+      h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len())
       if hclient.retry(r) {
         // the server did not take the request on the pooled connection:
         // it goes on a new one, as Transport retries it
         r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false)
         if hclient.h2(r) {
-          h2_exchange(r, method, target, u.host, hk, hv, body.len())
+          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len())
         }
       }
     }
@@ -3939,7 +4003,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false)
         h1 = hclient.reading(r)
         if hclient.h2(r) {
-          h2_exchange(r, method, target, u.host, hk, hv, body.len())
+          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len())
         } else if h1 && stream {
           let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
           hb = hr.b
@@ -3964,7 +4028,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     if err != 0 {
       return cfail(err, hclient.msg(r))
     }
-    if stream && h1 {
+    if stream && (h1 || h2x is Some(_)) {
       let li0 = field_at(headers, "Location")
       let hop = max_redirects > 0 && (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && li0 >= 0 && !headers[li0 + 1].is_empty()
       if !hop {
@@ -3978,10 +4042,18 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
             headers = without_fields(headers, "Content-Encoding", "Content-Length")
           }
         }
-        return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: https, addr: addr, name: name, gz: gz}
+        return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: https, addr: addr, name: name, gz: gz, h2: h2x}
       }
       // a redirect: its body read and dropped, its connection pooled
       // before the next hop
+      if let Some(x0) = h2x {
+        var x = x0
+        h2_pump(r, x, H2_TO_END)
+        h2_done(r, x)
+        if hclient.err(r) != 0 {
+          return cfail(hclient.err(r), hclient.msg(r))
+        }
+      }
       while !hb.done {
         let st = cbody_next(r, hb, 65536)
         if st.s != CC_OK {

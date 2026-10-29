@@ -16,6 +16,8 @@ moved: 200 hello, scheme ""
 gzip: 200 encoding=- decoded over tls
 stream big: 200 100000 bytes, several reads
 stream gzip: decoded over tls
+stream early: true
+after early: 200 hello, scheme ""
 system roots: Protocol
 expired: Protocol(Get "https://ADDR1/hello": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time NOW is after 2001-01-01T00:00:00Z)
 future: Protocol(Get "https://ADDR2/hello": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time NOW is before 2100-01-01T00:00:00Z)
