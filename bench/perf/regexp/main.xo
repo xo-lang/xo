@@ -1,0 +1,101 @@
+// regexp: std/regexp against Go's regexp (twin.go.txt), the workloads of
+// bench/results/regexp-time-csv-vs-go-2026-10-21.md: a text of 1,500
+// generated clauses (emails, dates, key=value pairs and words); compile
+// the three patterns 20,000 times; is_match on 8 short strings 300,000
+// times; find_all of the three over the text 20 times; replace_all of two
+// over it 20 times; captures of the three on each clause 3 times. `none`
+// is the setup alone. Usage: `<program> none|compile|match|find_all|
+// replace_all|captures`. Prints `<workload> <checksum>`; the twin prints
+// the same.
+use std/regexp
+
+const WORDS: List[Str] = ["alpha", "beta", "gamma", "delta", "cache", "entry", "key", "value", "node", "list"]
+const PATS: List[Str] = ["[a-z]+[0-9]*@[a-z]+\\.com", "(\\d{4})-(\\d{2})-(\\d{2})", "(\\w+)=(\\w+)"]
+const SHORT: List[Str] = ["bob42@mail.com", "2026-10-28", "key=value", "no match here", "x@y", "1999-01-02 and more", "a=b c=d", "alpha beta gamma"]
+
+fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+fn clauses() -> List[Str] {
+  var out: List[Str] = []
+  var r = 7
+  for _ in 0..1500 {
+    var b = StrBuilder.new()
+    for _ in 0..6 {
+      r = next(r)
+      let c = (r >> 8) % 13
+      if c == 0 {
+        b.write("${WORDS[(r >> 12) % 10]}${(r >> 4) % 100}@${WORDS[(r >> 16) % 10]}.com")
+      } else if c == 1 {
+        b.write("${1900 + (r >> 6) % 200}-${10 + (r >> 10) % 3}-${10 + (r >> 14) % 19}")
+      } else if c == 2 {
+        b.write("${WORDS[(r >> 12) % 10]}=${(r >> 4) % 1000}")
+      } else {
+        b.write(WORDS[(r >> 12) % 10])
+      }
+      b.write(" ")
+    }
+    b.write(".")
+    out.push(b.freeze())
+  }
+  out
+}
+
+fn musts() -> List[regexp.Regex] {
+  var rs: List[regexp.Regex] = []
+  for p in PATS {
+    rs.push(regexp.must(p))
+  }
+  rs
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let cs = clauses()
+  let text = cs.join(" ")
+  var sum = 0
+  if w == "compile" {
+    for _ in 0..20000 {
+      for p in PATS {
+        sum += regexp.must(p).pattern().len()
+      }
+    }
+  } else if w == "match" {
+    let rs = musts()
+    for i in 0..300000 {
+      if rs[i % 3].is_match(SHORT[i % 8]) {
+        sum += 1
+      }
+    }
+  } else if w == "find_all" {
+    let rs = musts()
+    for _ in 0..20 {
+      for r in rs {
+        for m in r.find_all(text) {
+          sum += m.len() + 1
+        }
+      }
+    }
+  } else if w == "replace_all" {
+    let d = regexp.must(PATS[1])
+    let kv = regexp.must(PATS[2])
+    for _ in 0..20 {
+      sum += d.replace_all(text, "$3/$2/$1").len() + kv.replace_all(text, "$2=$1").len()
+    }
+  } else if w == "captures" {
+    let rs = musts()
+    for _ in 0..3 {
+      for c in cs {
+        for r in rs {
+          if let Some(gs) = r.captures(c) {
+            for g in gs {
+              sum += (g ?? "").len() + 1
+            }
+          }
+        }
+      }
+    }
+  } else {
+    sum = text.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}

@@ -1,0 +1,7 @@
+# twincheck: regexp: six workloads (none is the setup alone); checksums sum match and group lengths.
+- - none
+- - compile
+- - match
+- - find_all
+- - replace_all
+- - captures

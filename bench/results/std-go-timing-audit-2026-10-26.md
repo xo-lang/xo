@@ -526,3 +526,15 @@ Per std/changes/compress.md 2026-10-28. Quiet `xo bench --ab`, 15 rounds, the pa
 ## hdec_init tables in locals (2026-10-28, xo-lang-5)
 
 Per std/changes/compress.md 2026-10-28. Quiet `xo bench --ab`, 15 rounds, the copy-back commit's std as A: archive unzip instructions 0.951, wall 0.996 (0.974 to 1.013, within noise), cycles 0.988 (within noise). With the copy-back commit, against Go (twin.go.txt builds as A): unzip wall 1.036 (1.027 to 1.048), instructions 1.209; gunzip wall 1.01 (1.006 to 1.013), cycles 0.987.
+
+## regexp bench with a Go twin (2026-10-28, xo-lang-5)
+
+bench/perf/regexp (main.xo, twin.go.txt): the workloads of
+regexp-time-csv-vs-go-2026-10-21.md, which had no committed program; the
+checksums equal Go's on all six. Quiet `xo bench --ab`, 15 rounds, Go's
+build as A and Xo native (main at 3de077d62) as B: compile wall 1.68
+(1.645 to 1.686), instructions 1.492; match 1.085 (1.063 to 1.102),
+instructions 1.101; find_all 0.814 (0.804 to 0.838); replace_all 1.107
+(1.093 to 1.123); captures 0.861 (0.849 to 0.87). compile is the row past
+1.2x (the next std item); the backtracker's visited bits taken into a
+local made no difference to any of them (instructions 0.9998 to 1.0026).
