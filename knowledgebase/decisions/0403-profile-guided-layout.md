@@ -103,3 +103,14 @@ and the store link places std's atoms in the store's order.
 - An instrumented build (counters per block): exact counts, but a second
   build kind and a run under instrumentation; the sampling profiler is
   already there and its line attribution is enough for blocks.
+
+## Stage 1 built (2026-10-29, xo-lang-6)
+
+`xo prof --layout` (compiler/xo prof.xo prof_layout, layout_lines),
+the layout file read and ordered (layout.xo parse_layout, layout_order),
+the driver (main.xo: the module root's xo.layout or --layout, the hash
+among the build info's sources, a foreign target ignored), the order in
+the parts (compiler/arm64 parallel.xo fn_order_of, used by part_lists
+and gen.xo). Tests: layout_lines, parse_layout and layout_order in
+prof_test.xo; internal/arm64 TestLayoutIdentity. The first measurement
+(the alignment experiment and the pad sweeps) follows in bench/results.

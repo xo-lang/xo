@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Profile-guided code layout, stage 1 (decision 0403): `xo prof FILE
+  --layout=xo.layout` reduces a CPU profile to a layout file, and `xo
+  build` and `xo run` order the program's functions by it (the sampled
+  ones first by weight, a callee after its caller) when the module root
+  has `xo.layout` or `--layout=FILE` names one; `--layout=off` ignores it.
+  The file is a source of the build (its hash is in the build info); a
+  layout of another target is ignored with one line.
 - Windows: the path variables (XO_STD, XO_MODCACHE, XO_BACKEND_CACHE_DIR,
   the XO_SEPCOMP_STORE and _FACTS paths, XO_STD_STORE, the sysroots,
   XO_BUILD_DIR, XO_GOBIND, XO_GOCACHE and the binding directories) given
