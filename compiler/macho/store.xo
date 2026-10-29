@@ -423,6 +423,14 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
   // x86_64 or arm64 by the program's objects (the store names no cpu;
   // link_debug reads its first object's)
   l.x86 = !prog.is_empty() && prog[0].x86
+  // the debug information follows the program's objects (program_dwarf,
+  // a separately compiled link): with none there (-s, --debug-info=off),
+  // std's is neither cut nor written
+  if opts.program_dwarf && !prog.any(fn(ob) { obj_xo_dwarf(ob) }) {
+    l.opts.embed_dwarf = false
+    l.opts.dsym = false
+  }
+  let no_dwarf = !l.opts.embed_dwarf && !l.opts.dsym
   // the walk: the program's undefined symbols the store defines, the
   // entry, and the store's sections nothing may strip
   var roots: List[Int] = []
@@ -441,7 +449,14 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
   }
   roots.push(v.def(opts.entry.bytes()))
   let live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { !whole_name(sg, nm, flags) && ((flags & S_ATTR_NO_DEAD_STRIP) != 0 || (flags & 0xff) == S_MOD_INIT_FUNC_POINTERS) })
-  let dw_dropped = v.dw_dropped(live)
+  var dw_dropped: List[Bool] = []
+  if no_dwarf {
+    for _ in 0..n {
+      dw_dropped.push(true)
+    }
+  } else {
+    dw_dropped = v.dw_dropped(live)
+  }
   // each store object compacted: its kept sections (a live atom's bytes
   // and relocations, a whole section's, a cut DWARF section's runs) in
   // order, then one empty dead section standing for every dead atom (a
@@ -524,16 +539,6 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     nameds.push(named)
   }
   l.objs = l.objs + prog
-  if opts.program_dwarf {
-    var dw = false
-    for o in n..l.objs.len() {
-      dw = dw || l.xo_dwarf(o)
-    }
-    if !dw {
-      l.opts.embed_dwarf = false
-      l.opts.dsym = false
-    }
-  }
   let kind = fn(typ: Int) -> SymKind {
     if (typ & N_STAB) != 0 {
       SymKind.Stab
@@ -561,7 +566,11 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
       let in_sect = (y.typ & N_STAB) == 0 && (y.typ & N_TYPE) == N_SECT && y.sect >= 1
       syms.push(ISym{name: y.name, typ: y.typ, sect: if in_sect { ord(y.sect) } else { y.sect }, desc: y.desc, value: y.value})
     }
+    // taken out of the object while renumbered: shared with it, the first
+    // write copied every section's relocations (3.4 ms of an HTTP
+    // server's store link, 2026-10-28)
     var sects = l.objs[i].sects
+    l.objs[i].sects = []
     for k in 0..sects.len() {
       for j in 0..sects[k].relocs.len() {
         let x = sects[k].relocs[j]

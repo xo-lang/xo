@@ -400,7 +400,13 @@ fn (var l: Linker) dsym_file(data: List[Bytes]) -> Bytes {
 
 /// Whether object o's __debug_info is the arm64 emitter's (debug.xo).
 fn (l: Linker) xo_dwarf(o: Int) -> Bool {
-  for s in l.objs[o].sects {
+  obj_xo_dwarf(l.objs[o])
+}
+
+/// Whether an object carries DWARF the arm64 emitter made (a compile unit
+/// with producer "xo").
+fn obj_xo_dwarf(ob: IObj) -> Bool {
+  for s in ob.sects {
     if s.seg == "__DWARF" && s.name == "__debug_info" {
       return s.data.len() > 36 && Int(s.data[33]) == 120 && Int(s.data[34]) == 111 && Int(s.data[35]) == 0
     }
