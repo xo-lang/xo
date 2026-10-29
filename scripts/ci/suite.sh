@@ -53,6 +53,17 @@ base=${XO_CI_BASE:-origin/main}
 
 step() { echo; echo "::group::$*"; }
 end() { echo "::endgroup::"; }
+# x86 linux: clang as the C compiler. The native backend's linux assembly
+# carries the arm64 crypto .arch_extension directives (compiler/arm64
+# gen.xo), which GNU as rejects on x86 ("unknown pseudo-op") while clang's
+# assembler takes them; the default on linux links without C, but
+# xotool's seed smoke build and the self build set XO_NOLIBC=0 and go
+# through cc (run 40814169486 on xo-ci-amd64-big, 2026-10-28). The
+# compiler side (no arm64 directives in x86 assembly) is a separate fix;
+# the seeds built before it still need this.
+if [ "$(uname -s)" = Linux ] && [ "$(uname -m)" = x86_64 ] && [ -z "${XO_CC:-}" ] && command -v clang >/dev/null; then
+  export XO_CC=clang
+fi
 
 all_pkgs() { go list -e ./... | grep -v /runs/; }
 changed() { git diff --name-only "$base...HEAD"; }
