@@ -659,3 +659,23 @@ with a 256 entry table once, where the Xo version's two passes read
 every byte twice through bounds checked indexing, so the next step is a
 single pass with the table in a Bytes constant and the copy by
 BytesBuilder.write of whole runs, measured with XO_PROF=cpu first.
+
+## HTTP server limits, no regression (2026-10-29, xo-lang-6 and Xo Lang 2; part 2 8ae2d9627)
+
+The server's reads take a deadline (hconn.recv_until through poll.pd_wait) on every
+connection, so the row is wall time (the I/O rule): a server with two routes and a client
+making 20,000 requests over 8 kept alive connections, built by main's xo before part 2 (A)
+and by part 2's (B), `xo bench --ab`, 10 rounds, both orders, plus the one-binary control
+(A against A); the development Mac (arm64), quiet measure window, load 6.5 to 6.9, 0 of 10
+rounds loaded in each run (job xl57-ab4). Instructions retired, from the same runs, are the
+secondary line.
+
+| run | wall A (ms) | wall B (ms) | wall B / A (95%) | instructions B / A (95%) |
+|---|---|---|---|---|
+| control A/A | 143.3 | 143.1 | 0.999 (0.988 to 1.02) | 0.999 (0.998 to 1.002) |
+| A main, B part 2 | 143.8 | 143.0 | 0.994 (0.978 to 1.009) | 0.999 (0.998 to 1.001) |
+| A part 2, B main | 143.3 | 144.3 | 1.007 (0.995 to 1.024) | 1.003 (1.001 to 1.004) |
+
+No wall time regression: every wall ratio is within noise in both orders. The reversed
+run's instructions read 0.3% more for main's binary in the B slot, the same size as the
+control's spread, and the forward run shows the opposite sign within noise.
