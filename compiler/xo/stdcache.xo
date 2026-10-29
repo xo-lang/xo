@@ -118,10 +118,12 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
   let t0 = os.clock.now()
   let xo = check.executable(os.env, os.fs)
   let env = ["XO_STD=${ctx.std}", "XO_BACKEND_CACHE_DIR=${tmp}/cache", "XO_SEPCOMP=", "XO_SEPCOMP_FACTS=", "XO_SEPCOMP_STORE=", "XO_SEPCOMP_FACTS_CONC=", "XO_SEPCOMP_STORE_CONC=", "XO_SEPCOMP_DEFAULT=", "XO_STD_OBJ=", "XO_STD_ROOTS=", "XO_STD_STORE=", "XO_STD_BG_CHILD=", "XO_SEPCOMP_BG=0"] + STD_CODE_ENV.map(fn(n) { "${n}=" })
-  let ok = match env_command(os, env + [xo, "dev", "stdobj", "--target=${tgoos}/${tgoarch}", "--conc=${if conc { "1" } else { "0" }}", "--facts=${tmp}/std.stdf", "${tmp}/obj"]).output() {
-    Ok(r) => r.code == 0
-    Err(_) => false
+  let run = match env_command(os, env + [xo, "dev", "stdobj", "--target=${tgoos}/${tgoarch}", "--conc=${if conc { "1" } else { "0" }}", "--facts=${tmp}/std.stdf", "${tmp}/obj"]).output() {
+    Ok(r) => (r.code == 0, if r.code == 0 { "" } else { "xo dev stdobj exit ${r.code}: ${(r.stderr.to_str() ?? "").trim().split("\n").last() ?? ""}" })
+    Err(e) => (false, "starting ${xo}: ${e}")
   }
+  let (ok, why0) = run
+  var why = why0
   var done = false
   if ok {
     // a windows store's PDB parts (coffstore.xo coff_store_pdb), which
@@ -132,9 +134,15 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     if os.fs.exists("${tmp}/obj/std.store.pdb").ok() ?? false {
       os.fs.rename("${tmp}/obj/std.store.pdb", "${store}.pdb").ignore_err("the link reads std's DWARF instead")
     }
-    let a = os.fs.rename("${tmp}/obj/std.store", store).is_ok()
-    let b = a && os.fs.rename("${tmp}/std.stdf", facts).is_ok()
-    done = b
+    match os.fs.rename("${tmp}/obj/std.store", store) {
+      Ok(_) => {
+        match os.fs.rename("${tmp}/std.stdf", facts) {
+          Ok(_) => { done = true }
+          Err(e) => { why = "renaming the facts: ${e}" }
+        }
+      }
+      Err(e) => { why = "renaming the store: ${e}" }
+    }
   }
   os.fs.remove_all(tmp).ignore_err("only disk: the prune takes a leftover build directory")
   if let Some(l) = held {
@@ -142,7 +150,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     l.unlock()
   }
   if phases {
-    os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} ${if done { "built" } else { "failed: the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
+    os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} ${if done { "built" } else { "failed (${why}): the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
   }
   if done { Some((store, facts)) } else { None }
 }

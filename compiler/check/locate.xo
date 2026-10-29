@@ -32,6 +32,12 @@ pub fn executable(env: Env, fs: Fs) -> Str uses (env, fs.read) {
     }
     p = join(wd, p)
   }
+  // Windows: argv[0] without its .exe (Git Bash's `/c/x/bin/xo`), which
+  // starting the executable by that path does not find (CI 40814911770:
+  // xo dev stdcache's child failed in 12 ms)
+  if is_windows_target() && !p.to_lower().ends_with(".exe") && !(fs.exists(p).ok() ?? false) && (fs.exists("${p}.exe").ok() ?? false) {
+    p = "${p}.exe"
+  }
   eval_links(fs, clean(p))
 }
 
