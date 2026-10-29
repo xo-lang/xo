@@ -591,3 +591,31 @@ times 1.002 (within noise; instructions 0.81). Parse was 1.358 before the
 PEM scan compared a marker's first byte before calling mem_eq at every
 position (tlsname find_at; XO_PROF=cpu had 75% of parse_pem in pem_next):
 0.865 wall of the parent, instructions 0.714.
+## html, htmltemplate (2026-10-29, xo-lang-6)
+
+Twins: bench/perf/html (std/html against Go's html: escape_string of a 6 KB text
+with the five characters every few words, 20,000 times; unescape_string of its
+escaped form with named, legacy and numeric references, 20,000 times) and
+bench/perf/htmltemplate (std/template's html mode against html/template: `parse`
+is parse_html plus the first render, 5,000 times, so both sides count the
+escaping walk once; `render` is 20,000 renders of the escaped page over 30 items
+with a URL attribute, a title attribute, a script value and a CSS value).
+twincheck agrees on all 6 workloads. `xo bench --ab`, quiet, 15 rounds, A the Go
+twin, B the Xo program (native arm64, --release, main at 82bb7a74e, the html mode commit); Xo / Go:
+
+| workload | Go wall | Xo wall | wall | instructions |
+|---|---|---|---|---|
+| html none | 3.24 ms | 2.70 ms | 0.833 | 0.749 |
+| html escape (6 KB, 20,000) | 123.2 ms | 470.3 ms | 3.818 | 3.337 |
+| html unescape | 304.2 ms | 1187 ms | 3.902 | 2.825 |
+| htmltemplate none | 3.73 ms | 2.93 ms | 0.785 | 0.636 |
+| htmltemplate parse (parse_html + first render, 5,000) | 507.3 ms | 383.1 ms | 0.755 | 0.613 |
+| htmltemplate render (30 items, 20,000) | 1668 ms | 1222 ms | 0.733 | 0.569 |
+
+The html mode renders at 0.73 of html/template's wall time and parses at 0.76 (the escaping
+walk included on both sides). std/html's escape_string and unescape_string run at 3.8 and 3.9
+times Go's: the port walks the text a byte at a time into a BytesBuilder (gotchas/std-port-costly-
+go-idioms.md); Go's EscapeString is a strings.Replacer and UnescapeString copies runs between
+`&`. Follow-up: copy runs between special bytes (find_any for the five characters, find for `&`)
+and append the replacement, as the html mode's own htmlReplacer port does (its render row above
+is the faster one).

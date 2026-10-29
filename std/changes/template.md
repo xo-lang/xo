@@ -12,6 +12,15 @@
 values of `template.html` and its siblings pass through in their context.
 The escaping is done once at parse_html (and add) for the root template
 and kept with the parsed set; render of another name escapes from it.
+The four TestEscape cases left out, none a bug (the data is a json.Value):
+- `typedNilValue` (`{{.Z}}` over a nil `*int` prints `&lt;nil&gt;`) and
+  `jsNilValueTyped` (`typeof{{.Z}}` gives ` null `): JSON has no typed nil,
+  a `null` is Go's untyped nil, whose cases (`nilValue`, `jsNilValue`) pass.
+- `badMarshaler` (a `json.Marshaler` whose MarshalJSON returns bad JSON
+  renders ` /* json: error calling MarshalJSON ... */null `) and
+  `jsMarshaler` (a custom MarshalJSON): a json.Value carries no
+  marshaler; a program converts with `json.to_value` first, so the text a
+  template marshals is always valid JSON.
 Timing against Go's html/template: see bench/perf/template.
 
 ## 2026-10-29: feature: custom functions (FuncMap) and the trusted content constructors

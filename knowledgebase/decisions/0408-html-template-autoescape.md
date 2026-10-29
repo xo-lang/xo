@@ -82,6 +82,15 @@ is random, so renders stay deterministic and std/template stays pure.
   as its corpus; bench/perf/htmltemplate and its timing row against
   html/template beside it.
 - Programs that matched json.Value exhaustively need the arm (above).
+- The four TestEscape cases left out, none a bug (the data is a json.Value):
+  - `typedNilValue` (`{{.Z}}` over a nil `*int` prints `&lt;nil&gt;`) and
+    `jsNilValueTyped` (`typeof{{.Z}}` gives ` null `): JSON has no typed nil,
+    a `null` is Go's untyped nil, whose cases (`nilValue`, `jsNilValue`) pass.
+  - `badMarshaler` (a `json.Marshaler` whose MarshalJSON returns bad JSON
+    renders ` /* json: error calling MarshalJSON ... */null `) and
+    `jsMarshaler` (a custom MarshalJSON): a json.Value carries no
+    marshaler; a program converts with `json.to_value` first, so the text a
+    template marshals is always valid JSON.
 
 ## Alternatives
 
