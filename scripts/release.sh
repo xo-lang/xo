@@ -273,6 +273,38 @@ targets="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"
 for target in $targets; do
 	layout "$target"
 done
+
+# xo built for wasip1/wasm (decision 0405), shipped with XO_RELEASE_WASI=1
+# once its module loads (a function over V8's 7,654,321 bytes did not
+# until Lang 1's wide values): a launcher for Node, the runner it uses,
+# std, and the docs. No xo-gobind, no race runtime, no stdstore here
+# (a WASI build uses a release's stores from the native archives' build
+# only through the whole program build; see the decision's Consequences).
+wasi=${XO_RELEASE_WASI:-0}
+layout_wasi() {
+	local stage
+	stage=$(stage_of wasip1/wasm)
+	if [ "$dry" = 1 ]; then
+		echo "+ layout $stage: bin/xo.wasm (xo1 build --targets=wasip1/wasm compiler/xo), bin/xo (Node launcher), lib/xo/wasi/run.mjs, lib/xo/std, docs" >&2
+		return
+	fi
+	mkdir -p "$stage/bin" "$stage/lib/xo/wasi"
+	git ls-files -z std | rsync -a --from0 --files-from=- ./ "$stage/lib/xo/"
+	cp compiler/wasm/run.mjs "$stage/lib/xo/wasi/run.mjs"
+	cat > "$stage/bin/xo" <<'LAUNCH'
+#!/bin/sh
+# xo built for WASI preview1, run by Node (decision 0405): `bin/xo build ...`
+here=$(cd "$(dirname "$0")" && pwd)
+XO_STD=${XO_STD:-$here/../lib/xo/std} exec node --no-warnings "$here/../lib/xo/wasi/run.mjs" "$here/xo.wasm" "$@"
+LAUNCH
+	chmod +x "$stage/bin/xo"
+	cp CHANGELOG.md LICENSE THIRD_PARTY_NOTICES "$stage/"
+	{
+		sed -e "s/@VERSION@/$version/g" -e "s/@PLATFORM@/wasip1-wasm/g" scripts/release-readme.md
+		cat README.md
+	} > "$stage/README.md"
+}
+[ "$wasi" = 1 ] && layout_wasi
 darwin=$(stage_of darwin/arm64)
 darwin_amd64=$(stage_of darwin/amd64)
 linux_arm64=$(stage_of linux/arm64)
@@ -324,6 +356,12 @@ elif [ "$win" = llvm ]; then
 		XO_LLVM_JOBS="${XO_RELEASE_WIN_JOBS:-4}" XO_LLVM_OPT=O2 \
 		run "$xo1" build --backend=llvm "${stamp[@]}" --targets=windows/amd64 \
 		-o "$(stage_of windows/amd64)/bin/xo.exe" compiler/xo >&2
+fi
+
+if [ "$wasi" = 1 ]; then
+	echo "== wasip1/wasm: xo1 builds xo for WASI (decision 0405)" >&2
+	run "$xo1" build "${stamp[@]}" --targets=wasip1/wasm \
+		-o "$(stage_of wasip1/wasm)/bin/xo.wasm" compiler/xo >&2
 fi
 
 # no executable of the release holds the path of this checkout or of the
@@ -404,6 +442,7 @@ if [ "$winsign" = 1 ]; then
 	run win_sign "$wst/bin/xo.exe" "$wst/bin/xo-gobind.exe" >&2
 fi
 
+[ "$wasi" = 1 ] && targets="$targets wasip1/wasm"
 for target in $targets; do
 	stage=$(stage_of "$target")
 	run go run ./scripts/disttar -o "$stage.tar.gz" "$stage"
