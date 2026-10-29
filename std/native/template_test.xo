@@ -263,7 +263,7 @@ test "custom functions (decision 0408): arguments, pipelines, errors, unknown na
     }
     got.push(r)
   }
-  expect(got) == ["HELLO", "HELLO", "7", "3", "err template: t:1:2: executing \"t\" at <upper>: error calling upper: nothing to upper", "err template: t:1:2: executing \"t\" at <add>: error calling add: not an int", "13"]
+  expect(got) == ["HELLO", "HELLO", "7", "3", "err template: t:1:2: executing \"t\" at <upper .missing>: error calling upper: nothing to upper", "err template: t:1:2: executing \"t\" at <add .s>: error calling add: not an int", "13"]
   match template.parse("t", "{{nope 1}}") {
     Ok(_) => expect(false)
     Err(e) => expect(e.msg) == "template: t:1: function \"nope\" not defined"

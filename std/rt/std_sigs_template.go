@@ -6,10 +6,17 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Template_TemplateErr, *Task) string                                                       = (*Template_TemplateErr).M_display
-	_ func(*Task, string, string, string, string) Result[Template_Template, Template_TemplateErr]     = Template_parse
-	_ func(*Template_Template, *Task, string, string) Result[Template_Template, Template_TemplateErr] = (*Template_Template).M_add
-	_ func(*Template_Template, *Task, bool) Template_Template                                         = (*Template_Template).M_missing_key
-	_ func(*Template_Template, *Task, Json_Value) Result[string, Template_TemplateErr]                = (*Template_Template).M_render
-	_ func(*Template_Template, *Task, string, Json_Value) Result[string, Template_TemplateErr]        = (*Template_Template).M_render_named
+	_ func(*Template_TemplateErr, *Task) string                                                                                                                          = (*Template_TemplateErr).M_display
+	_ func(*Task, string, string, string, string, Map[string, func(*Task, List[Json_Value]) Result[Json_Value, string]]) Result[Template_Template, Template_TemplateErr] = Template_parse
+	_ func(*Template_Template, *Task, string, string) Result[Template_Template, Template_TemplateErr]                                                                    = (*Template_Template).M_add
+	_ func(*Template_Template, *Task, bool) Template_Template                                                                                                            = (*Template_Template).M_missing_key
+	_ func(*Template_Template, *Task, Json_Value) Result[string, Template_TemplateErr]                                                                                   = (*Template_Template).M_render
+	_ func(*Template_Template, *Task, string, Json_Value) Result[string, Template_TemplateErr]                                                                           = (*Template_Template).M_render_named
+	_ func(*Task, string) Json_Value                                                                                                                                     = Template_html
+	_ func(*Task, string) Json_Value                                                                                                                                     = Template_css
+	_ func(*Task, string) Json_Value                                                                                                                                     = Template_js
+	_ func(*Task, string) Json_Value                                                                                                                                     = Template_jsstr
+	_ func(*Task, string) Json_Value                                                                                                                                     = Template_url
+	_ func(*Task, string) Json_Value                                                                                                                                     = Template_attr
+	_ func(*Task, string) Json_Value                                                                                                                                     = Template_srcset
 )

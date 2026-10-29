@@ -1440,7 +1440,7 @@ fn invalid() -> Val { Val{v: V.Invalid} }
 
 /// A user function's call (decision 0408): every argument evaluated, the
 /// values as json.Values, the result back as a value.
-fn (var s: Ex) call_user(dot: Val, name: Str, args0: List[Arg], final: Val) -> Val ! Str {
+fn (var s: Ex) call_user(dot: Val, name: Str, args0: List[Arg], final: Val, cmd_pos: Int, cmd_kind: Int, cmd_tag: Int) -> Val ! Str {
   let f = match s.funcs.get(name) {
     Some(f) => f
     None => return Err(s.err("function ${go_quote(name)} not defined"))
@@ -1448,14 +1448,20 @@ fn (var s: Ex) call_user(dot: Val, name: Str, args0: List[Arg], final: Val) -> V
   let args = if args0.is_empty() { args0 } else { args0[1..] }
   var jargs: List[json.Value] = []
   for a in args {
-    jargs.push(json_of(unbox(s.eval_arg(dot, a)?)))
+    jargs.push(json_of(unbox(s.eval_arg(dot, a)?).v))
   }
   if !is_missing(final) {
-    jargs.push(json_of(unbox(final)))
+    jargs.push(json_of(unbox(final).v))
   }
   match f(jargs) {
     Ok(j) => Ok(val(of_json(j, true)))
-    Err(e) => Err(s.err("error calling ${name}: ${e}"))
+    Err(e) => {
+      // evalCall: the error is at the command
+      s.node_pos = cmd_pos
+      s.node_kind = cmd_kind
+      s.node_tag = cmd_tag
+      Err(s.err("error calling ${name}: ${e}"))
+    }
   }
 }
 
@@ -2191,7 +2197,7 @@ fn builtin_shape(name: Str) -> (Int, Bool) {
 fn (var s: Ex) eval_function(dot: Val, node: Arg, name: Str, args0: List[Arg], final: Val, cmd_pos: Int, cmd_kind: Int, cmd_tag: Int) -> Val ! Str {
   s.at_arg(node)
   if !BUILTINS.contains(name) {
-    return s.call_user(dot, name, args0, final)
+    return s.call_user(dot, name, args0, final, cmd_pos, cmd_kind, cmd_tag)
   }
   let args = if args0.is_empty() { args0 } else { args0[1..] }
   let (fixed, variadic) = builtin_shape(name)

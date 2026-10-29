@@ -64,10 +64,10 @@ func templateFuncs(tk *Task, t Template_Template) template.FuncMap {
 				xs[i] = jsonValueOf(a)
 			}
 			r := f(tk, ListFromSlice(xs))
-			if r.IsErr() {
-				return nil, errors.New(r.UnwrapErr())
+			if !r.Ok {
+				return nil, errors.New(r.E)
 			}
-			return jsonValueAny(r.Unwrap()), nil
+			return jsonValueAny(r.V), nil
 		}
 		return true
 	})
