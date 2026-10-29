@@ -157,6 +157,11 @@ struct Linker {
   opts: LinkOpts
   objs: List[IObj] = []
   globals: Map[Bytes, (Int, Int)] = {}
+  /// per live object, each symbol's definition as def_of finds it,
+  /// filled once globals and the imports are final (memo_defs): a
+  /// relocation reads it instead of hashing its symbol's name (an HTTP
+  /// store link's relocate and DWARF, about 2 ms, 2026-10-29)
+  defs: List[List[(Int, Int)]] = []
   imports: List[Bytes] = []
   /// the imports every reference to which is weak (N_WEAK_REF, decision
   /// 0232): bound as weak imports, which dyld leaves 0 when no image
@@ -282,6 +287,7 @@ fn (var l: Linker) link_rest() -> Result[(Bytes, Bytes), Str] {
 /// link_rest's first step: the sections placed and laid out, the
 /// branch islands, the relocations applied; the error, "" for none.
 fn (var l: Linker) rest_layout() -> Str {
+  l.memo_defs()
   l.place()
   l.scan()
   if !l.err.is_empty() {
@@ -563,6 +569,14 @@ fn (var l: Linker) add_globals(o: Int) {
 /// The definition a symbol of an object refers to: (obj, sym), or (-1,
 /// import) for an import.
 fn (l: Linker) def_of(o: Int, i: Int) -> (Int, Int) {
+  if o < l.defs.len() && i < l.defs[o].len() {
+    return l.defs[o][i]
+  }
+  l.find_def(o, i)
+}
+
+/// def_of's lookup by name.
+fn (l: Linker) find_def(o: Int, i: Int) -> (Int, Int) {
   let s = l.objs[o].syms[i]
   if is_defined(s) {
     if is_ext(s) {
@@ -575,6 +589,23 @@ fn (l: Linker) def_of(o: Int, i: Int) -> (Int, Int) {
     Some(d) => d
     None => (-1, l.import_ix.get(s.name) ?? -1)
   }
+}
+
+/// Fills l.defs: each live object's symbols' definitions (find_def), so
+/// def_of reads them; called once globals and the imports are final.
+fn (var l: Linker) memo_defs() {
+  var all: List[List[(Int, Int)]] = List.with_capacity(l.objs.len())
+  for (o, ob) in l.objs.indexed() {
+    var ds: List[(Int, Int)] = []
+    if ob.live {
+      ds = List.with_capacity(ob.syms.len())
+      for i in 0..ob.syms.len() {
+        ds.push(l.find_def(o, i))
+      }
+    }
+    all.push(ds)
+  }
+  l.defs = all
 }
 
 /// The address of a defined symbol.
