@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows: the path variables (XO_STD, XO_MODCACHE, XO_BACKEND_CACHE_DIR,
+  the XO_SEPCOMP_STORE and _FACTS paths, XO_STD_STORE, the sysroots,
+  XO_BUILD_DIR, XO_GOBIND, XO_GOCACHE and the binding directories) given
+  as `C:\x` are taken as `C:/x` when xo starts, as the path flags already
+  were (compiler/xo opts.xo path_env): a backslashed one was taken as a
+  relative path.
 - Windows: xo starts its child builds without an `env` program, which a
   Windows host has only under Git Bash: `xo dev stdcache` (std's
   variants for separate compilation) failed in 30 ms, and `--backend=go`

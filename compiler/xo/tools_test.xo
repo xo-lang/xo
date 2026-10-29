@@ -28,3 +28,18 @@ test "look_path_windows does not take a file without an extension" {
   os.fs.write("C:/Temp/xo-clangcache-1/clang.exe", b"")?
   expect(look_path_windows(os.env, os.fs, "C:/Temp/xo-clangcache-1/clang")) == "C:/Temp/xo-clangcache-1/clang.exe"
 }
+
+test "path_env_over gives a Windows host's path variables with / and leaves the rest" {
+  let vars = {"XO_STD": "C:\\xo\\std", "XO_BACKEND_CACHE_DIR": "C:\\Users\\u\\AppData\\Local\\xo", "XO_MODCACHE": "D:/mods", "XO_SEPCOMP_STORE": "\\\\server\\share\\std.store", "XO_INLINE_DENY": "a\\b", "XO_BUILD_DIR": "rel\\dir"}
+  let over = path_env_over(vars, true)
+  expect(over.get("XO_STD")) == Some("C:/xo/std")
+  expect(over.get("XO_BACKEND_CACHE_DIR")) == Some("C:/Users/u/AppData/Local/xo")
+  expect(over.get("XO_SEPCOMP_STORE")) == Some("//server/share/std.store")
+  expect(over.get("XO_BUILD_DIR")) == Some("rel/dir")
+  // already slashed: unchanged, so not overridden
+  expect(over.get("XO_MODCACHE")) == None
+  // not a path variable
+  expect(over.get("XO_INLINE_DENY")) == None
+  // elsewhere \ is part of a name
+  expect(path_env_over(vars, false).len()) == 0
+}

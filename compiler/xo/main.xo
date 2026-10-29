@@ -68,7 +68,10 @@ use github.com/xo-lang/xo/compiler/cli/cmdhelp
 use github.com/xo-lang/xo/compiler/cli/bench
 use github.com/xo-lang/xo/compiler/hostpath
 
-fn main(os: Os) ! {
+fn main(os0: Os) ! {
+  // the path variables given as C:\x on Windows, as the path flags are
+  // (opts.xo path_env)
+  let os = path_env(os0)
   // decision 0349's default (owner, 2026-10-22): three quarters of
   // physical memory, at least 16 GiB (18 GiB on a 24 GB Mac), counting
   // the bytes the heap hands out; a self build of xo peaks at 9.9 GB cold

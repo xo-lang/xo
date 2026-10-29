@@ -301,6 +301,46 @@ fn os_path(p: Str) -> Str {
   if is_windows() { p.replace("\\", "/") } else { p }
 }
 
+/// The XO_ variables that name a file or directory, which os_path's rule
+/// covers as it does the path flags: a Windows user gives them as `C:\x`
+/// (CI 40815894916: XO_BACKEND_CACHE_DIR=C:\x was taken as relative,
+/// check.path_volume knowing only C:/).
+const PATH_ENV = ["XO_STD", "XO_MODCACHE", "XO_BACKEND_CACHE_DIR", "XO_SEPCOMP_STORE", "XO_SEPCOMP_STORE_CONC", "XO_SEPCOMP_FACTS", "XO_SEPCOMP_FACTS_CONC", "XO_STD_STORE", "XO_STD_OBJ", "XO_SYSROOT", "XO_WINSYSROOT", "XO_LINUXSYSROOT", "XO_GOBIND", "XO_GOCACHE", "XO_BUILD_DIR", "XO_CBIND_DIR", "XO_GOBIND_DIR"]
+
+/// The path variables of vars given with `\`, each with `/` (win: a
+/// Windows host; elsewhere `\` is a character of a name and none
+/// change).
+fn path_env_over(vars: Map[Str, Str], win: Bool) -> Map[Str, Str] {
+  var over: Map[Str, Str] = {}
+  if !win {
+    return over
+  }
+  for n in PATH_ENV {
+    if let Some(v) = vars.get(n) {
+      if v.contains("\\") {
+        over[n] = v.replace("\\", "/")
+      }
+    }
+  }
+  over
+}
+
+/// os with its path variables as os_path takes a path (path_env_over),
+/// for every reader of them in this process.
+fn path_env(os: Os) -> Os {
+  if !is_windows() {
+    return os
+  }
+  var vars: Map[Str, Str] = {}
+  for n in PATH_ENV {
+    if let Some(v) = os.env.get(n) {
+      vars[n] = v
+    }
+  }
+  let over = path_env_over(vars, true)
+  if over.is_empty() { os } else { with_env(os, over) }
+}
+
 /// arg with os_path applied to the value of a path flag (`-o=C:\x`,
 /// `--std=C:\x`); other arguments unchanged.
 fn path_arg(arg: Str) -> Str {
