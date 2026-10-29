@@ -97,6 +97,18 @@ flagged (worse than 0.33.0 by more than 3%): 7
    ('coll get', 'wall_ms', 0.602, 0.627)
 
 
+## The flagged sieve row, directly (2026-10-29)
+
+The 0.33.0 release xo's sieve against main c462dd4e1's, `xo bench --ab`,
+20 rounds, load 2.5, nothing else running: wall 109.0 against 105.7 ms,
+B/A 0.969 (0.92 to 1.055), within noise; cpu 100 against 100; sieve's
+round spread is 9 to 13%. The report's 0.926 to 0.996 against Go was two
+single runs' noise, not a regression. The other six flagged ratios are
+within their rows' spreads too (nbody cpu 3%, strings cpu 2 ms, coll
+putget and get 2 to 4%); llvm sort's peak RSS 0.417 to 0.454 is the one
+left unexplained (18.1 MB either way for sieve; sort's own RSS figures are
+in the run below).
+
 ## The run (Xo against Go: xo 0.33.0 darwin/arm64 (2026-10-29))
 
 scripts/release-vs-go.sh on Darwin arm64, 24 GB,

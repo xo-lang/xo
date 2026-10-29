@@ -55,8 +55,16 @@ load1() { sysctl -n vm.loadavg | awk '{print int($2)}'; }
 # settle: waits up to WAIT_MIN minutes for a load under MAX_LOAD; prints
 # the load it starts at
 settle() {
-	local end=$(($(date +%s) + WAIT_MIN * 60))
+	local start=$(date +%s) end=$(($(date +%s) + WAIT_MIN * 60)) said=0
 	while [ "$(load1)" -ge "$MAX_LOAD" ] && [ "$(date +%s)" -lt "$end" ]; do
+		# progress on standard error (the callers capture standard output),
+		# at the start and every 3 minutes: a quiet log looked hung to the
+		# lead's hang check (2026-10-29, 29 quiet minutes behind load 6)
+		local now=$(date +%s)
+		if [ $((now - said)) -ge 180 ]; then
+			echo "release-vs-go: waiting for load under $MAX_LOAD (load $(load1), $(((now - start) / 60)) min of $WAIT_MIN)" >&2
+			said=$now
+		fi
 		sleep 15
 	done
 	load1
@@ -95,6 +103,10 @@ compile() {
 		for conc in 0 1; do
 			(cd "$d" && env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BACKEND_CACHE=on "$XO" dev stdcache --conc=$conc >"$OUT/stdcache-$name-$conc.log" 2>&1) || echo "stdcache --conc=$conc failed for $name (see $OUT/stdcache-$name-$conc.log)" >&2
 		done
+		# the first separately compiled build writes the std records (stage
+		# 2) and parses std for them; untimed, so the edit row is the loader,
+		# a user's steady state (the second and warm rows are run cache hits)
+		(cd "$d" && "${build[@]}" >"$OUT/build-$side-$name-records.log" 2>&1) || true
 	fi
 	second=$(cd "$d" && timed "$OUT/build-$side-$name-second.log" "${build[@]}")
 	warm=$(cd "$d" && timed "$OUT/build-$side-$name-warm.log" "${build[@]}")
@@ -110,12 +122,17 @@ compile() {
 	local size
 	size=$(stat -f %z "$bin")
 	# the path the edit build took, from its cache statistics
+	# "cache std ... reused" prints with --phase-times only; the "cache
+	# stdx" lookup line prints with the statistics and only on a separately
+	# compiled build (the records' default)
 	local path=-
 	if [ "$side" = xo ]; then
 		path=whole
-		if grep -q '^cache std .* reused' "$OUT/build-$side-$name-edit.log"; then
+		local elog=$OUT/build-$side-$name-edit.log
+		if grep -q '^cache std .* reused' "$elog" || grep -q '^cache stdx' "$elog"; then
 			path=separate
-			grep -q '^cache stdx record loaded' "$OUT/build-$side-$name-edit.log" && path="separate, std records"
+			grep -q '^cache stdx record loaded' "$elog" && path="separate, std records"
+			grep -q '^cache stdx no entry' "$elog" && path="separate, std records written"
 		fi
 	fi
 	set -- $cold $second $warm $edit

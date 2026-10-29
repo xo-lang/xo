@@ -255,7 +255,13 @@ create`. The order:
    Go: compile cold, a second build, warm (the third unchanged build:
    xo writes a directory's parts pack on the second build and reads it
    from the third, 2026-10-23) and after a one function edit, peak build
-   memory, binary size, and each workload's run under `xo bench --ab`
+   memory, binary size, and each workload's run under `xo bench --ab`.
+   After the cold row it builds std's variants (`xo dev stdcache`, conc
+   0 and 1; 2026-10-29: a fresh xo has none and its first builds are
+   whole-program while they build in the background, so the 0.33.0 and
+   pre-cut reports' edit rows were whole-program builds), and the table's
+   last column says which path the edit build took (separate, with the
+   std records, or whole), from `XO_CACHE_STATS=1`'s lines in the log
    (wall, CPU, peak RSS; Go is A, Xo is B). Last verified: 2026-10-22
    (smoke run, 3 workloads).
 8. the website's comparison pages (owner, 2026-10-23): refresh the
