@@ -393,3 +393,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0400-macho-uuid-hash.md](0400-macho-uuid-hash.md): Accepted: the Mach-O LC_UUID from the code signature's page hashes, one SHA-256 pass over the image instead of two
 - [0399-bytesbuilder-put.md](0399-bytesbuilder-put.md): BytesBuilder.put_le and put_be overwrite bytes in place (Accepted)
 - [0403-profile-guided-layout.md](0403-profile-guided-layout.md): Proposed (stub): code layout from a recorded profile (hot functions together, hot and cold blocks split), reproducible and keyed, with separate compilation and the std store
+- [0404-http-client-streaming.md](0404-http-client-streaming.md): Proposed: the HTTP client streams response and request bodies, takes a redirect policy and a timeout per request, and http.reverse_proxy builds on it (0.35 std item 1)
