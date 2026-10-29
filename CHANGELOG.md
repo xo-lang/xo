@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- xo: the host OS is the OS xo was built for (compiler/hostpath host),
+  not a `uname -s` subprocess run four times a build; the run cache's
+  miss check on a fib edit drops from 3 to 17 ms to 0 (8 interleaved
+  edits against main, a loaded machine).
 - `xo build` and `xo run` compile separately by default on darwin/arm64
   (decision 0388 stage 3): std's functions come from std's prebuilt
   variants in the backend cache (its store and facts), so an edit
