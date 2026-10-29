@@ -619,3 +619,22 @@ go-idioms.md); Go's EscapeString is a strings.Replacer and UnescapeString copies
 `&`. Follow-up: copy runs between special bytes (find_any for the five characters, find for `&`)
 and append the replacement, as the html mode's own htmlReplacer port does (its render row above
 is the faster one).
+
+## jsonindent (2026-10-30, xo-lang-6; S3, the twin data fixed in this commit)
+
+Twin: bench/perf/jsonindent (encoding/json's MarshalIndent and RawMessage: `indent` is
+encode_indent_str of a 30 item page, 20,000 times; `rawfield` decodes a record with a
+json.Value field holding the 30 items then encodes it, 20,000 times). twincheck agrees on all 3
+workloads. `xo bench --ab`, quiet, 15 rounds, A the Go twin, B the Xo program (native arm64,
+--release, main at a83f3f4ed); Xo / Go:
+
+| workload | Go wall | Xo wall | wall | instructions |
+|---|---|---|---|---|
+| jsonindent none | 3.20 ms | 2.77 ms | 0.864 | 0.673 |
+| jsonindent indent (MarshalIndent of a 30 item page, 20,000) | 136.9 ms | 112.4 ms | 0.821 | 0.844 |
+| jsonindent rawfield (RawMessage field decode + encode, 20,000) | 200.2 ms | 138.8 ms | 0.693 | 0.711 |
+
+Indent runs at 0.82 of MarshalIndent's wall time and the RawMessage round trip at 0.69
+(the tape walk of indent; the earlier twin summed a longer Go output
+because Marshal HTML-escapes `<`, `>` and `&`, so these rows replace nothing: they are the
+first ones).

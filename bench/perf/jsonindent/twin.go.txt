@@ -26,9 +26,9 @@ type Record struct {
 func page() Page {
 	var items []Item
 	for i := 0; i < 30; i++ {
-		items = append(items, Item{Name: fmt.Sprintf("item %d <x>", i), Qty: i%7 + 1, Done: i%3 == 0})
+		items = append(items, Item{Name: fmt.Sprintf("item %d x", i), Qty: i%7 + 1, Done: i%3 == 0})
 	}
-	return Page{Title: "Orders & co", Items: items}
+	return Page{Title: "Orders and co", Items: items}
 }
 
 func main() {

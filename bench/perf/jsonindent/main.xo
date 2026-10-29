@@ -27,9 +27,9 @@ struct Record {
 fn page() -> Page {
   var items: List[Item] = []
   for i in 0..30 {
-    items.push(Item{name: "item ${i} <x>", qty: i % 7 + 1, done: i % 3 == 0})
+    items.push(Item{name: "item ${i} x", qty: i % 7 + 1, done: i % 3 == 0})
   }
-  Page{title: "Orders & co", items: items}
+  Page{title: "Orders and co", items: items}
 }
 
 fn main(os: Os) uses stdio, env {
