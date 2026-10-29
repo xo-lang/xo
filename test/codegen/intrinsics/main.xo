@@ -133,14 +133,15 @@ fn main(os: Os) {
 
 // std/native/sys_c.xo (decision 0232): a strong C call, and a symbol's
 // presence read through the GOT (arm64) or compared with null (LLVM);
-// ThreadSanitizer's presence is known false outside --race (compiler/ssa
-// call.xo sym_present), so no ___tsan_ reference is left (14 failed weak
+// ThreadSanitizer's presence is known false outside --race on the native
+// backends (compiler/ssa call.xo sym_present; LLVM keeps it, its IR may be
+// compiled with -fsanitize=thread: TestSysCTSan), so no ___tsan_ reference is left (14 failed weak
 // lookups at every launch before, 2026-10-28; --race keeps it:
 // internal/llvm TestRaceDefaultNative)
 // func internal.sysc_op
 // arm64: "bl _getpid" "_getpid@GOTPAGE\n\tldr x[0-9]+, \[x[0-9]+, _getpid@GOTPAGEOFF\]" -"___tsan_acquire"
 // amd64: "callq _getpid" "_getpid@GOTPCREL\(%rip\)" -"___tsan_acquire"
-// llvm: "call i32 @getpid\(\)" "icmp ne ptr @getpid, null" -"@__tsan_acquire"
+// llvm: "call i32 @getpid\(\)" "icmp ne ptr @getpid, null" "icmp ne ptr @__tsan_acquire, null"
 
 // ChaCha20's adds modulo 2^32 are 32 bit adds (add_w32), not an add and
 // an and; Poly1305's limb products have no overflow checks.

@@ -1500,9 +1500,14 @@ fn (var b: Builder) sym_present(x: Expr, es: List[Expr?]) -> Int {
     b.s.f.target = true
     return b.cbool(false)
   }
-  if sym.starts_with("__tsan_") && !b.c.race {
-    // ThreadSanitizer's runtime links only into a --race build (the
-    // front end's cache keys hold race): known false, so the guarded
+  if sym.starts_with("__tsan_") && !b.c.race && !b.c.async_preempt_llvm && !b.c.mods.any(fn(m) { !m.c_prefix.is_empty() }) {
+    // ThreadSanitizer's runtime links only into a --race build, with a
+    // `use c` object built with -fsanitize=thread, or into LLVM IR a
+    // harness compiles with it (TestSysCTSan: xotool.LLVMIR, then clang
+    // -fsanitize=thread; c.async_preempt_llvm is the LLVM backend's
+    // flag); the front end's cache keys hold race, llvm and the modules.
+    // With none,
+    // known false, so the guarded
     // weak calls go and the program imports none of ___tsan_* (14 failed
     // weak lookups at every launch, about 8% of an empty program's
     // startup; Lang 1, 2026-10-28)
