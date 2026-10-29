@@ -5386,8 +5386,18 @@ fn (c: Counter) add(n: Float, values: List[Str] = [])
 fn (g: Gauge) set(v: Float, values: List[Str] = [])
 fn (g: Gauge) add(v: Float, values: List[Str] = [])
 fn (h: Histogram) observe(v: Float, values: List[Str] = [])
-fn (r: Registry) text() -> Str
+fn (r: Registry) summary(name: Str, help: Str, labels: List[Str] = [], objectives: List[(Float, Float)] = [], max_age: Duration = 10m, age_buckets: Int = 5) -> Summary
+fn (s: Summary) observe(v: Float, values: List[Str] = [])
+fn (r: Registry) gauge_func(name: Str, help: Str, f: fn() -> Float)
+fn (r: Registry) counter_func(name: Str, help: Str, f: fn() -> Float)
+fn (r: Registry) collector(name: Str, help: Str, kind: Kind, labels: List[Str], f: fn() -> List[Sample])
+struct Sample { values: List[Str], value: Float }
+enum Kind { Counter, Gauge }
+fn (c: Counter) remove(values: List[Str]) -> Bool   // also Gauge, Histogram, Summary
+fn (c: Counter) reset()                             // also Gauge, Histogram, Summary
+fn (r: Registry) text(now: Time? = None) -> Str
 fn (r: Registry) handler() -> fn(http.Request) -> http.Response
+fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Response uses clock
 ```
 
 - A name is a Prometheus name (letters, digits, `_` and `:`, not
@@ -5412,6 +5422,23 @@ fn (r: Registry) handler() -> fn(http.Request) -> http.Response
   integral values without a fraction, and label values escaped (`\\`,
   `\"`, `\n`). `handler()` answers it as
   `text/plain; version=0.0.4; charset=utf-8`.
+- Summaries (decision 0411, Prometheus client_golang's Summary): each
+  objective `(quantile, error)` is a `name{...,quantile="Q"}` series,
+  computed by CKMS targeted quantiles (beorn7/perks' stream, ported: below
+  500 observations the exact sorted value), then `_sum` and `_count`. The
+  quantiles cover the last `max_age`, kept in `age_buckets` streams that
+  every observation enters; the oldest is reset when its time runs out.
+  The time is a scrape's, not the observation's, so `observe` stays pure:
+  `text(now)` and `handler_at(clock)` age the buckets, while `text()`
+  and `handler()` never do (a summary scraped without a time keeps every
+  observation). A summary with no objectives is `_sum` and `_count` only,
+  as Go's default.
+- `gauge_func`, `counter_func` and `collector` read their values when
+  `text` runs (Go's GaugeFunc, CounterFunc and Collector): a collector's
+  `f` returns one Sample per series (values one per label), sorted by
+  label values in the output. `remove(values)` deletes a series and says
+  whether there was one (DeleteLabelValues); `reset()` deletes every
+  series.
 
 ## 38. std/trace
 

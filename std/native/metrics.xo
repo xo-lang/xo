@@ -32,12 +32,12 @@ fn valid_name(s: Str, colon: Bool) -> Bool {
   true
 }
 
-fn make(r: metrics.Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds: List[Float]) -> metrics.Family {
+fn make(r: metrics.Registry, kind: Int, name: Str, help: Str, labels: List[Str], bounds: List[Float], reads: List[fn() -> List[metrics.Sample]] = [], objectives: List[(Float, Float)] = [], max_age_ms: Int = 0, age_buckets: Int = 0) -> metrics.Family {
   if !valid_name(name, true) {
     fault("metrics: invalid metric name ${name.quote()}")
   }
   for l in labels {
-    if !valid_name(l, false) || l.starts_with("__") || l == "le" {
+    if !valid_name(l, false) || l.starts_with("__") || l == "le" || (kind == 3 && l == "quantile") {
       fault("metrics: invalid label name ${l.quote()}")
     }
   }
@@ -46,7 +46,7 @@ fn make(r: metrics.Registry, kind: Int, name: Str, help: Str, labels: List[Str],
       fault("metrics: histogram buckets must increase")
     }
   }
-  let f = metrics.Family{name: name, help: help, kind: kind, labels: labels, bounds: bounds, series: Mutex[Map[Str, metrics.Series]].new({}), dropped: r.dropped}
+  let f = metrics.Family{name: name, help: help, kind: kind, labels: labels, bounds: bounds, series: Mutex[Map[Str, metrics.Series]].new({}), dropped: r.dropped, reads: reads, objectives: objectives, max_age_ms: max_age_ms, age_buckets: age_buckets}
   let dup = r.families.with(fn(var fs: List[metrics.Family]) -> Bool {
     for g in fs {
       if g.name == name {
@@ -74,6 +74,212 @@ fn registry_histogram(r: metrics.Registry, name: Str, help: Str, labels: List[St
   metrics.Histogram{f: make(r, 2, name, help, labels, buckets)}
 }
 
+fn registry_summary(r: metrics.Registry, name: Str, help: Str, labels: List[Str] = [], objectives: List[(Float, Float)] = [], max_age: Duration = 10m, age_buckets: Int = 5) -> metrics.Summary {
+  for (q, e) in objectives {
+    if q < 0.0 || q > 1.0 || e < 0.0 || e > 1.0 {
+      fault("metrics: summary objective ${q} with error ${e} is out of [0, 1]")
+    }
+  }
+  if age_buckets < 1 {
+    fault("metrics: a summary needs at least 1 age bucket")
+  }
+  let sorted = objectives.sort_by(fn(o: (Float, Float)) -> Float { o.0 })
+  metrics.Summary{f: make(r, 3, name, help, labels, [], [], sorted, max_age.nanos() / 1000000, age_buckets)}
+}
+
+fn summary_observe(s: metrics.Summary, v: Float, values: List[Str] = []) {
+  if let Some(x) = series_of(s.f, values) {
+    let objs = s.f.objectives
+    if !objs.is_empty() {
+      x.q[0].with(fn(var st: metrics.QState) {
+        for i in 0..st.streams.len() {
+          qinsert(st.streams[i], v, objs)
+        }
+      })
+    }
+    let _c = x.count.add(1)
+    add_float(x.sum, v)
+  }
+}
+
+fn registry_gauge_func(r: metrics.Registry, name: Str, help: Str, f: fn() -> Float) {
+  let _f = make(r, 1, name, help, [], [], [fn() -> List[metrics.Sample] { [metrics.Sample{values: [], value: f()}] }])
+}
+
+fn registry_counter_func(r: metrics.Registry, name: Str, help: Str, f: fn() -> Float) {
+  let _f = make(r, 0, name, help, [], [], [fn() -> List[metrics.Sample] { [metrics.Sample{values: [], value: f()}] }])
+}
+
+fn registry_collector(r: metrics.Registry, name: Str, help: Str, kind: metrics.Kind, labels: List[Str], f: fn() -> List[metrics.Sample]) {
+  let _f = make(r, if kind is metrics.Kind.Counter { 0 } else { 1 }, name, help, labels, [], [f])
+}
+
+/// Removes the series of values from f: whether there was one.
+fn remove_series(f: metrics.Family, values: List[Str]) -> Bool {
+  if values.len() != f.labels.len() {
+    fault("metrics: ${f.name} has ${f.labels.len()} labels, got ${values.len()} values")
+  }
+  let key = values.join(SEP)
+  f.series.with(fn(var m: Map[Str, metrics.Series]) -> Bool { m.remove(key) is Some(_) })
+}
+
+fn reset_series(f: metrics.Family) {
+  f.series.with(fn(var m: Map[Str, metrics.Series]) { m = {} })
+}
+
+fn counter_remove(c: metrics.Counter, values: List[Str]) -> Bool { remove_series(c.f, values) }
+fn gauge_remove(g: metrics.Gauge, values: List[Str]) -> Bool { remove_series(g.f, values) }
+fn histogram_remove(h: metrics.Histogram, values: List[Str]) -> Bool { remove_series(h.f, values) }
+fn summary_remove(s: metrics.Summary, values: List[Str]) -> Bool { remove_series(s.f, values) }
+fn counter_reset(c: metrics.Counter) { reset_series(c.f) }
+fn gauge_reset(g: metrics.Gauge) { reset_series(g.f) }
+fn histogram_reset(h: metrics.Histogram) { reset_series(h.f) }
+fn summary_reset(s: metrics.Summary) { reset_series(s.f) }
+
+// ---- CKMS targeted quantiles (beorn7/perks quantile/stream.go) ----
+
+/// perks' buffer size: a stream merges its buffer when it holds this many.
+const QBUF = 500
+
+fn qstream_new() -> metrics.QStream { metrics.QStream{l: [], b: [], n: 0.0} }
+
+fn qstate_new(k: Int) -> metrics.QState {
+  var ss: List[metrics.QStream] = []
+  for _ in 0..k {
+    ss.push(qstream_new())
+  }
+  metrics.QState{streams: ss, head: 0, exp_ms: 0}
+}
+
+/// NewTargeted's invariant: the allowed rank error at rank r.
+fn qf(objs: List[(Float, Float)], n: Float, r: Float) -> Float {
+  var m = 1.7976931348623157e308
+  for (q, e) in objs {
+    let f = if q * n <= r { (2.0 * e * r) / q } else { (2.0 * e * (n - r)) / (1.0 - q) }
+    if f < m {
+      m = f
+    }
+  }
+  m
+}
+
+fn qinsert(var s: metrics.QStream, v: Float, objs: List[(Float, Float)]) {
+  s.b.push(v)
+  if s.b.len() >= QBUF {
+    qflush(s, objs)
+  }
+}
+
+fn qflush(var s: metrics.QStream, objs: List[(Float, Float)]) {
+  let b = s.b.sort()
+  s.b = []
+  // merge
+  var r = 0.0
+  var i = 0
+  var l = s.l
+  for v in b {
+    var placed = false
+    while i < l.len() {
+      let c = l[i]
+      if c.v > v {
+        let d = qf(objs, s.n, r).floor() - 1.0
+        l.insert(i, metrics.QSample{v: v, w: 1.0, d: if d > 0.0 { d } else { 0.0 }})
+        i += 1
+        placed = true
+        break
+      }
+      r += c.w
+      i += 1
+    }
+    if !placed {
+      l.push(metrics.QSample{v: v, w: 1.0, d: 0.0})
+      i += 1
+    }
+    s.n += 1.0
+    r += 1.0
+  }
+  s.l = qcompress(l, s.n, objs)
+}
+
+fn qcompress(var l: List[metrics.QSample], n: Float, objs: List[(Float, Float)]) -> List[metrics.QSample] {
+  if l.len() < 2 {
+    return l
+  }
+  var xi = l.len() - 1
+  var x = l[xi]
+  var r = n - 1.0 - x.w
+  var i = l.len() - 2
+  while i >= 0 {
+    let c = l[i]
+    if c.w + x.w + x.d <= qf(objs, n, r) {
+      x = x with {w: x.w + c.w}
+      l[xi] = x
+      let _r = l.remove_at(i)
+      xi -= 1
+    } else {
+      x = c
+      xi = i
+    }
+    r -= c.w
+    i -= 1
+  }
+  l
+}
+
+/// The q quantile of s (NaN when it holds nothing): perks' Query.
+fn qquery(var s: metrics.QStream, q: Float, objs: List[(Float, Float)]) -> Float {
+  if s.l.is_empty() {
+    // the fast path over the buffer alone
+    let k = s.b.len()
+    if k == 0 {
+      return 0.0 / 0.0
+    }
+    var i = Int((Float(k) * q).ceil())
+    if i > 0 {
+      i -= 1
+    }
+    return s.b.sort()[i]
+  }
+  qflush(s, objs)
+  var t = (q * s.n).ceil()
+  t += (qf(objs, s.n, t) / 2.0).ceil()
+  var p = s.l[0]
+  var r = 0.0
+  for c in s.l[1..s.l.len()] {
+    r += p.w
+    if r + c.w + c.d > t {
+      return p.v
+    }
+    p = c
+  }
+  p.v
+}
+
+/// Rotates st's streams whose time ran out by now_ms (client_golang's
+/// maybeRotateStreams), each step max_age / age_buckets.
+fn qrotate(var st: metrics.QState, now_ms: Int, max_age_ms: Int) {
+  let k = st.streams.len()
+  let step = if k > 0 { max_age_ms / k } else { 0 }
+  if step <= 0 {
+    return
+  }
+  if st.exp_ms == 0 {
+    st.exp_ms = now_ms + step
+    return
+  }
+  var n = 0
+  while now_ms >= st.exp_ms && n <= k {
+    st.streams[st.head] = qstream_new()
+    st.head = (st.head + 1) % k
+    st.exp_ms += step
+    n += 1
+  }
+  if now_ms >= st.exp_ms {
+    // idle past every bucket: start over from now
+    st.exp_ms = now_ms + step
+  }
+}
+
 /// The series of the label values, made on first use; None when the
 /// instrument holds MAX_SERIES already (counted as dropped).
 fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
@@ -95,7 +301,8 @@ fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
     for _ in f.bounds {
       bs.push(Atomic[Int].new(0))
     }
-    let s = metrics.Series{values: values, v: Atomic[Int].new(0), buckets: bs, count: Atomic[Int].new(0), sum: Atomic[Int].new(0)}
+    let q = if f.kind == 3 { [Mutex[metrics.QState].new(qstate_new(f.age_buckets))] } else { [] }
+    let s = metrics.Series{values: values, v: Atomic[Int].new(0), buckets: bs, count: Atomic[Int].new(0), sum: Atomic[Int].new(0), q: q}
     m.put(key, s)
     Some(s)
   })
@@ -197,16 +404,50 @@ fn head(name: Str, labels: List[Str], values: List[Str], extra: Str) -> Str {
   if parts.is_empty() { name } else { "${name}{${parts.join(",")}}" }
 }
 
-fn expose(f: metrics.Family) -> List[Str] {
+fn expose(f: metrics.Family, now_ms: Int) -> List[Str] {
   var out: List[Str] = []
   out.push("# HELP ${f.name} ${escape_help(f.help)}")
-  out.push("# TYPE ${f.name} ${if f.kind == 0 { "counter" } else if f.kind == 1 { "gauge" } else { "histogram" }}")
+  out.push("# TYPE ${f.name} ${if f.kind == 0 { "counter" } else if f.kind == 1 { "gauge" } else if f.kind == 2 { "histogram" } else { "summary" }}")
+  if let Some(read) = f.reads.get(0) {
+    // read at scrape time (GaugeFunc, CounterFunc, a Collector), sorted
+    // by label values as the instruments' series are
+    var ss = read()
+    for x in ss {
+      if x.values.len() != f.labels.len() {
+        fault("metrics: ${f.name} has ${f.labels.len()} labels, a sample has ${x.values.len()} values")
+      }
+    }
+    ss = ss.sort_by(fn(x: metrics.Sample) -> Str { x.values.join(SEP) })
+    for x in ss {
+      out.push("${head(f.name, f.labels, x.values, "")} ${num(x.value)}")
+    }
+    return out
+  }
   let m = f.series.with_read(fn(m: Map[Str, metrics.Series]) -> Map[Str, metrics.Series] { m })
   let keys = m.keys().sort()
   for k in keys {
     let s = m.get(k) ?? continue
     if f.kind < 2 {
       out.push("${head(f.name, f.labels, s.values, "")} ${num(load(s.v))}")
+    } else if f.kind == 3 {
+      let objs = f.objectives
+      if !objs.is_empty() {
+        let qs = s.q[0].with(fn(var st: metrics.QState) -> List[Float] {
+          if now_ms > 0 {
+            qrotate(st, now_ms, f.max_age_ms)
+          }
+          var vs: List[Float] = []
+          for (q, _) in objs {
+            vs.push(qquery(st.streams[st.head], q, objs))
+          }
+          vs
+        })
+        for (i, (q, _)) in objs.indexed() {
+          out.push("${head(f.name, f.labels, s.values, "quantile=\"${num(q)}\"")} ${num(qs[i])}")
+        }
+      }
+      out.push("${head("${f.name}_sum", f.labels, s.values, "")} ${num(load(s.sum))}")
+      out.push("${head("${f.name}_count", f.labels, s.values, "")} ${s.count.get()}")
     } else {
       for (i, b) in f.bounds.indexed() {
         out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"${num(b)}\"")} ${s.buckets[i].get()}")
@@ -220,11 +461,15 @@ fn expose(f: metrics.Family) -> List[Str] {
   out
 }
 
-fn registry_text(r: metrics.Registry) -> Str {
+fn registry_text(r: metrics.Registry, now: Time? = None) -> Str {
   let fs = r.families.with_read(fn(l: List[metrics.Family]) -> List[metrics.Family] { l })
+  let now_ms = match now {
+    Some(t) => t.unix_millis()
+    None => 0
+  }
   var out: List[Str] = []
   for f in fs {
-    out = out + expose(f)
+    out = out + expose(f, now_ms)
   }
   out.push("# HELP xo_metrics_dropped_total Series dropped past the per instrument limit.")
   out.push("# TYPE xo_metrics_dropped_total counter")
@@ -235,6 +480,12 @@ fn registry_text(r: metrics.Registry) -> Str {
 fn registry_handler(r: metrics.Registry) -> fn(http.Request) -> http.Response {
   fn(_req) -> http.Response {
     http.Response{status: 200, headers: {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}, body: registry_text(r).bytes()}
+  }
+}
+
+fn registry_handler_at(r: metrics.Registry, clock: Clock) -> fn(http.Request) -> http.Response uses clock {
+  fn(_req) -> http.Response {
+    http.Response{status: 200, headers: {"Content-Type": "text/plain; version=0.0.4; charset=utf-8"}, body: registry_text(r, Some(clock.now())).bytes()}
   }
 }
 

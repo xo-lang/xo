@@ -1,0 +1,75 @@
+// std/metrics' summary, scrape-time readers and series removal (decision
+// 0411): a summary's quantiles (exact below perks' 500 sample buffer,
+// within each objective's error above it), _sum and _count; age buckets
+// rotated by a scrape's time; gauge_func, counter_func and a collector
+// read at each scrape; remove and reset.
+use std/metrics
+
+fn main(os: Os) {
+  let r = metrics.registry()
+  let s = r.summary("rpc_seconds", "RPC latency.", ["method"], objectives: [(0.5, 0.05), (0.9, 0.01), (0.99, 0.001)])
+  for i in 1..101 {
+    s.observe(Float(i), ["get"])
+  }
+  // 10,000 distinct values in a scrambled order (7 is a primitive root
+  // mod 10007, so no value repeats): the CKMS stream answers within
+  // each objective's rank error
+  var x = 1
+  for _ in 0..10000 {
+    x = (x * 7) % 10007
+    s.observe(Float(x), ["put"])
+  }
+  let text = r.text()
+  for line in text.split("\n") {
+    if line.starts_with("rpc_seconds{method=\"get\"") || line.starts_with("rpc_seconds_sum{method=\"get\"") || line.starts_with("rpc_seconds_count") || line.starts_with("# TYPE rpc") {
+      os.stdio.println(line)
+    }
+    if line.starts_with("rpc_seconds{method=\"put\"") {
+      let parts = line.split(" ")
+      let q = Float.parse(parts[0].split("quantile=\"")[1].split("\"")[0]) ?? 0.0
+      let v = Float.parse(parts[1]) ?? 0.0
+      let e = if q == 0.5 { 0.05 } else if q == 0.9 { 0.01 } else { 0.001 }
+      // the values are a permutation of 1..10006 less one: rank ~ value
+      let ok = (v - q * 10006.0).abs() <= e * 10006.0 + 1.0
+      os.stdio.println("put q=${q} within error: ${ok}")
+    }
+  }
+  // age buckets: one bucket of 1s; a scrape 2s after the first one ages
+  // the observations out (quantiles NaN), while _sum and _count stay
+  let aged = r.summary("aged", "Aged.", objectives: [(0.5, 0.05)], max_age: 1s, age_buckets: 1)
+  aged.observe(3.0)
+  let t0 = Time.from_unix(1000000)
+  let first = r.text(Some(t0))
+  let later = r.text(Some(Time.from_unix(1000002)))
+  for (label, t) in [("first", first), ("later", later)] {
+    for line in t.split("\n") {
+      if line.starts_with("aged") {
+        os.stdio.println("${label}: ${line}")
+      }
+    }
+  }
+  // read at scrape time
+  var n = 0
+  let depth = Atomic[Int].new(7)
+  r.gauge_func("queue_depth", "Items queued.", fn() -> Float { Float(depth.get()) })
+  r.counter_func("ticks_total", "Ticks.", fn() -> Float { 42.0 })
+  r.collector("pool_conns", "Connections by state.", metrics.Kind.Gauge, ["state"], fn() -> List[metrics.Sample] {
+    [metrics.Sample{values: ["idle"], value: 3.0}, metrics.Sample{values: ["busy"], value: Float(depth.get() - 5)}]
+  })
+  depth.set(9)
+  for line in r.text().split("\n") {
+    if line.starts_with("queue_depth") || line.starts_with("ticks_total") || line.starts_with("pool_conns") || line.starts_with("# TYPE pool") {
+      os.stdio.println(line)
+    }
+  }
+  // remove and reset
+  let g = r.gauge("temp", "Temperature.", ["room"])
+  g.set(20.0, ["a"])
+  g.set(21.0, ["b"])
+  os.stdio.println("remove a: ${g.remove(["a"])}, again: ${g.remove(["a"])}")
+  os.stdio.println("left: ${r.text().split("\n").filter(fn(l: Str) -> Bool { l.starts_with("temp{") }).join(" ")}")
+  g.reset()
+  os.stdio.println("after reset: ${r.text().split("\n").filter(fn(l: Str) -> Bool { l.starts_with("temp{") }).len()}")
+  n += 1
+  os.stdio.println("done ${n}")
+}

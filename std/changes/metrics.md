@@ -1,5 +1,21 @@
 # std/metrics changes
 
+## 2026-10-29: feature: summaries, scrape-time readers, removing series
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md rank 10): an
+  exporter that reads its state at scrape time
+- Go reference: prometheus/client_golang Summary (Objectives, MaxAge,
+  AgeBuckets), GaugeFunc, CounterFunc, Collector, DeleteLabelValues,
+  Reset; beorn7/perks quantile stream; decision 0411
+- Test: internal/llvm/testdata/golden/metrics_summary (native and Go)
+
+`r.summary(...)` reports quantile objectives, `_sum` and `_count`, aged over
+`max_age` by a scrape's time (`text(now)`, `handler_at(clock)`).
+`gauge_func`, `counter_func` and `collector` read values at each scrape;
+`remove` and `reset` delete series.
+
 ## 2026-10-26: fix: `histogram` without buckets builds on the Go backend
 
 - Kind: fix

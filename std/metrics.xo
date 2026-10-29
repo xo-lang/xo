@@ -14,9 +14,46 @@ struct Series {
   buckets: List[Atomic[Int]]
   count: Atomic[Int]
   sum: Atomic[Int]
+  /// a summary's quantile streams (one Mutex, none for another kind)
+  q: List[Mutex[QState]]
 }
 
-/// One instrument: kind 0 counter, 1 gauge, 2 histogram. Internal.
+/// A CKMS targeted quantile stream (beorn7/perks, which Prometheus'
+/// client uses): samples (value, width, delta), the unsorted buffer, and
+/// the count. Internal.
+struct QSample {
+  v: Float
+  w: Float
+  d: Float
+}
+struct QStream {
+  l: List[QSample]
+  b: List[Float]
+  n: Float
+}
+/// A summary series' age buckets (client_golang's streams): every
+/// observation goes into each; the head one answers; at a scrape with a
+/// time, the head is reset and the next becomes head once its time ran
+/// out. Internal.
+struct QState {
+  streams: List[QStream]
+  head: Int
+  exp_ms: Int
+}
+
+/// A value read at scrape time from a collector: its label values and
+/// value (decision 0411).
+struct Sample {
+  values: List[Str]
+  value: Float
+}
+
+/// The kind of a collector's series.
+enum Kind { Counter, Gauge }
+
+/// One instrument: kind 0 counter, 1 gauge, 2 histogram, 3 summary;
+/// reads: a scrape time reader (gauge_func, counter_func, collector);
+/// objectives, max_age_ms and age_buckets: a summary's. Internal.
 struct Family {
   name: Str
   help: Str
@@ -25,6 +62,10 @@ struct Family {
   bounds: List[Float]
   series: Mutex[Map[Str, Series]]
   dropped: Atomic[Int]
+  reads: List[fn() -> List[Sample]]
+  objectives: List[(Float, Float)]
+  max_age_ms: Int
+  age_buckets: Int
 }
 
 /// A set of instruments. Cloning shares it. Its fields are internal.
@@ -47,6 +88,11 @@ struct Gauge {
 }
 /// Observations counted in buckets, with their count and sum.
 struct Histogram {
+  f: Family
+}
+/// Observations summarized as quantiles (within each objective's error),
+/// with their count and sum.
+struct Summary {
   f: Family
 }
 
@@ -73,14 +119,45 @@ fn (g: Gauge) set(v: Float, values: List[Str] = [])
 fn (g: Gauge) add(v: Float, values: List[Str] = [])
 fn (h: Histogram) observe(v: Float, values: List[Str] = [])
 
+/// A summary (Prometheus client_golang's Summary, decision 0411): each
+/// objective (quantile, allowed error) is reported as a `quantile` series
+/// (CKMS targeted quantiles, beorn7/perks), with `_sum` and `_count`. The
+/// quantiles cover the last `max_age` in `age_buckets` steps, aged when a
+/// scrape passes the time (`text(now)`, `handler_at(clock)`): a summary
+/// never scraped with a time keeps every observation.
+fn (r: Registry) summary(name: Str, help: Str, labels: List[Str] = [], objectives: List[(Float, Float)] = [], max_age: Duration = 10m, age_buckets: Int = 5) -> Summary
+fn (s: Summary) observe(v: Float, values: List[Str] = [])
+
+/// A gauge (counter) whose value f returns at each scrape (GaugeFunc,
+/// CounterFunc).
+fn (r: Registry) gauge_func(name: Str, help: Str, f: fn() -> Float)
+fn (r: Registry) counter_func(name: Str, help: Str, f: fn() -> Float)
+/// An instrument whose series f returns at each scrape (a Collector):
+/// one Sample per series, its values one per label.
+fn (r: Registry) collector(name: Str, help: Str, kind: Kind, labels: List[Str], f: fn() -> List[Sample])
+
+/// Removes the series of the label values (DeleteLabelValues): whether
+/// there was one.
+fn (c: Counter) remove(values: List[Str]) -> Bool
+fn (g: Gauge) remove(values: List[Str]) -> Bool
+fn (h: Histogram) remove(values: List[Str]) -> Bool
+fn (s: Summary) remove(values: List[Str]) -> Bool
+/// Removes every series (Reset).
+fn (c: Counter) reset()
+fn (g: Gauge) reset()
+fn (h: Histogram) reset()
+fn (s: Summary) reset()
+
 /// The text exposition: `# HELP` and `# TYPE` lines and the series,
 /// instruments in the order they were made, series sorted by label
 /// values, histograms as cumulative `_bucket{le=...}`, `_sum` and
 /// `_count`, and `xo_metrics_dropped_total`.
-fn (r: Registry) text() -> Str
+fn (r: Registry) text(now: Time? = None) -> Str
 /// A handler answering `text()` as `text/plain; version=0.0.4`:
 /// `router.handle("GET /metrics", reg.handler())`.
 fn (r: Registry) handler() -> fn(http.Request) -> http.Response
+/// handler, each scrape passing the clock's time to text (summaries age).
+fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Response uses clock
 
 /// A middleware (`router.wrap(reg.middleware(clock, label))`) that counts
 /// every request in `http_requests_total{method,route,status}`, times it

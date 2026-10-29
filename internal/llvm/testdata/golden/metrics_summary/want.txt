@@ -1,0 +1,28 @@
+exit 0
+--- stdout
+# TYPE rpc_seconds summary
+rpc_seconds{method="get",quantile="0.5"} 50
+rpc_seconds{method="get",quantile="0.9"} 90
+rpc_seconds{method="get",quantile="0.99"} 99
+rpc_seconds_sum{method="get"} 5050
+rpc_seconds_count{method="get"} 100
+put q=0.5 within error: true
+put q=0.9 within error: true
+put q=0.99 within error: true
+rpc_seconds_count{method="put"} 10000
+first: aged{quantile="0.5"} 3
+first: aged_sum 3
+first: aged_count 1
+later: aged{quantile="0.5"} NaN
+later: aged_sum 3
+later: aged_count 1
+queue_depth 9
+ticks_total 42
+# TYPE pool_conns gauge
+pool_conns{state="busy"} 4
+pool_conns{state="idle"} 3
+remove a: true, again: false
+left: temp{room="b"} 21
+after reset: 0
+done 1
+--- stderr
