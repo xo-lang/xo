@@ -42,6 +42,11 @@ if [ -n "$seed" ]; then
   (cd "$tmp/h" && "$seed" build --backend=amd64 --std="$OLDPWD/std" -o "$tmp/h/s1" . 2>&1 | head -30; echo "rc=$?")
   echo "== smoke replica with the seed's own std:"
   (cd "$tmp/h" && "$seed" build --backend=amd64 --std="$(dirname "$seed")/../std" -o "$tmp/h/s2" . 2>&1 | head -30; echo "rc=$?")
+  echo "== smoke replica as xotool runs it: XO_NOLIBC=0 (the cc link with libc), the checkout's std:"
+  (cd "$tmp/h" && XO_NOLIBC=0 XO_TEST_JOBS=2 "$seed" build --backend=amd64 --std="$OLDPWD/std" -o "$tmp/h/s3" . 2>&1 | head -40; echo "rc=$?")
+  echo "== cc static hello:"; cc -static -o "$tmp/ts" "$tmp/t.c" 2>&1 | head -5; [ -x "$tmp/ts" ] && "$tmp/ts"
+  echo "== cc -no-pie hello:"; cc -no-pie -o "$tmp/tn" "$tmp/t.c" 2>&1 | head -5
+  echo "== glibc-static, libc.a:"; rpm -q glibc-static 2>&1; ls /usr/lib64/libc.a /usr/lib64/libm.a /usr/lib64/libpthread.a 2>&1
   echo "== the checkout std's C parts (std/native, llrt) compiled by cc alone:"
   for c in $(ls "$OLDPWD"/std/native/*.c "$OLDPWD"/std/llrt/*.c 2>/dev/null | head -40); do cc -c -O2 -o "$tmp/o.o" "$c" 2>&1 | head -3 | sed "s#^#$(basename "$c"): #"; done
 fi
