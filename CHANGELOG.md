@@ -46,6 +46,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/crypto: Ed25519 key generation, signing and verification on Go's
   edwards25519 algorithms (a fixed base table, a variable time double
   multiplication for verify): 0.27, 0.35 and 0.40 of their time.
+- std/rate: a token bucket rate limiter, golang.org/x/time/rate's
+  Limiter (`allow`, `reserve`, `wait`, `set_limit`, `every`), reading
+  the Clock it is given, so tests run on the virtual clock.
 - std/x509: creating certificates and requests and parsing CRLs, as Go's
   crypto/x509: `create_certificate` from a `Template` (self-signed or
   issued by a parent), `self_signed(r, hosts, now)` for development

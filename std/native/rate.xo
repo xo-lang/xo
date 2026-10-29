@@ -1,0 +1,201 @@
+// std/rate on the native backends and, through std/go_compiled.txt, on
+// the Go backend (decision 0312): one source, golang.org/x/time/rate
+// v0.16.0's rate.go (Copyright 2015 The Go Authors, BSD-style license)
+// with the limiter's clock in place of the *At methods' times.
+use std/rate
+
+const MAX_NANOS: Int = 9223372036854775807
+/// rate.INF, here so the Go backend's compile of this file needs no
+/// constant of std/rate's (it inlines them only in user code).
+const INF: Float = 1.7976931348623157e308
+
+fn inf_duration() -> Duration { Duration.from_nanos(MAX_NANOS) }
+
+/// The latest Time: an event that waits InfDuration (a limit of 0) acts
+/// then. Go's Time reaches year 2293 there; Xo's Unix nanoseconds stop
+/// at 2262, so t + wait saturates.
+fn time_end() -> Time { Time.UNIX_EPOCH + inf_duration() }
+
+/// t + d, or time_end() past it (d >= 0).
+fn add_sat(t: Time, d: Duration) -> Time {
+  if d.nanos() >= MAX_NANOS - (t - Time.UNIX_EPOCH).nanos() {
+    return time_end()
+  }
+  t + d
+}
+
+fn new(limit: Float, burst: Int, clock: Clock) -> rate.Limiter {
+  let st = rate.LimitState{limit: limit, burst: burst, tokens: Float(burst), last: Time.UNIX_EPOCH, last_event: Time.UNIX_EPOCH}
+  rate.Limiter{st: Mutex[rate.LimitState].new(st), clock: clock}
+}
+
+fn every(interval: Duration) -> Float {
+  if interval <= 0s {
+    return INF
+  }
+  1.0 / interval.seconds()
+}
+
+fn rateerr_display(e: rate.RateErr) -> Str {
+  match e {
+    rate.RateErr.Exceeds(n, burst) => "rate: Wait(n=${n}) exceeds limiter's burst ${burst}"
+    rate.RateErr.Canceled => "rate: canceled"
+  }
+}
+
+fn limiter_limit(l: rate.Limiter) -> Float { l.st.with_read(fn(s: rate.LimitState) { s.limit }) }
+
+fn limiter_burst(l: rate.Limiter) -> Int { l.st.with_read(fn(s: rate.LimitState) { s.burst }) }
+
+fn limiter_tokens(l: rate.Limiter) -> Float uses clock {
+  let t = l.clock.now()
+  l.st.with_read(fn(s: rate.LimitState) { advance(s, t) })
+}
+
+fn limiter_allow(l: rate.Limiter) -> Bool uses clock { reserve_at(l, l.clock.now(), 1, 0s).ok }
+
+fn limiter_allow_n(l: rate.Limiter, n: Int) -> Bool uses clock { reserve_at(l, l.clock.now(), n, 0s).ok }
+
+fn limiter_reserve(l: rate.Limiter) -> rate.Reservation uses clock { reserve_at(l, l.clock.now(), 1, inf_duration()) }
+
+fn limiter_reserve_n(l: rate.Limiter, n: Int) -> rate.Reservation uses clock { reserve_at(l, l.clock.now(), n, inf_duration()) }
+
+fn limiter_wait(l: rate.Limiter) -> () ! rate.RateErr uses clock { limiter_wait_n(l, 1) }
+
+fn limiter_wait_n(l: rate.Limiter, n: Int) -> () ! rate.RateErr uses clock {
+  let (burst, limit) = l.st.with_read(fn(s: rate.LimitState) { (s.burst, s.limit) })
+  if n > burst && limit != INF {
+    return Err(rate.RateErr.Exceeds(n: n, burst: burst))
+  }
+  let t = l.clock.now()
+  let r = reserve_at(l, t, n, inf_duration())
+  let d = delay_from(r, t)
+  if d == 0s {
+    return
+  }
+  match l.clock.sleep_or_cancel(d) {
+    Ok(_) => ()
+    Err(_) => {
+      cancel_at(r, l.clock.now())
+      return Err(rate.RateErr.Canceled)
+    }
+  }
+}
+
+fn limiter_set_limit(l: rate.Limiter, limit: Float) uses clock {
+  let t = l.clock.now()
+  l.st.with(fn(var s: rate.LimitState) {
+    s.tokens = advance(s, t)
+    s.last = t
+    s.limit = limit
+  })
+}
+
+fn limiter_set_burst(l: rate.Limiter, burst: Int) uses clock {
+  let t = l.clock.now()
+  l.st.with(fn(var s: rate.LimitState) {
+    s.tokens = advance(s, t)
+    s.last = t
+    s.burst = burst
+  })
+}
+
+fn reservation_ok(r: rate.Reservation) -> Bool { r.ok }
+
+fn reservation_delay(r: rate.Reservation) -> Duration uses clock { delay_from(r, r.lim.clock.now()) }
+
+fn reservation_cancel(r: rate.Reservation) uses clock { cancel_at(r, r.lim.clock.now()) }
+
+fn delay_from(r: rate.Reservation, t: Time) -> Duration {
+  if !r.ok {
+    return inf_duration()
+  }
+  // Go's Sub saturates: t.Add(InfDuration).Sub(t) is InfDuration
+  if r.time_to_act == time_end() {
+    return inf_duration()
+  }
+  let d = r.time_to_act - t
+  if d < 0s {
+    return 0s
+  }
+  d
+}
+
+// CancelAt
+fn cancel_at(r: rate.Reservation, t: Time) {
+  if !r.ok {
+    return
+  }
+  r.lim.st.with(fn(var s: rate.LimitState) {
+    if s.limit == INF || r.tokens == 0 || r.time_to_act < t {
+      return
+    }
+    let restore = Float(r.tokens) - tokens_from_duration(r.limit, s.last_event - r.time_to_act)
+    if restore <= 0.0 {
+      return
+    }
+    var tokens = advance(s, t) + restore
+    if tokens > Float(s.burst) {
+      tokens = Float(s.burst)
+    }
+    s.last = t
+    s.tokens = tokens
+    if r.time_to_act == s.last_event {
+      let prev = r.time_to_act + duration_from_tokens(r.limit, -Float(r.tokens))
+      if !(prev < t) {
+        s.last_event = prev
+      }
+    }
+  })
+}
+
+// reserveN
+fn reserve_at(l: rate.Limiter, t: Time, n: Int, max_future: Duration) -> rate.Reservation {
+  l.st.with(fn(var s: rate.LimitState) -> rate.Reservation {
+    if s.limit == INF {
+      return rate.Reservation{ok: true, lim: l, tokens: n, time_to_act: t, limit: 0.0}
+    }
+    let tokens = advance(s, t) - Float(n)
+    var wait = 0s
+    if tokens < 0.0 {
+      wait = duration_from_tokens(s.limit, -tokens)
+    }
+    let ok = n <= s.burst && wait <= max_future
+    if !ok {
+      return rate.Reservation{ok: false, lim: l, tokens: 0, time_to_act: Time.UNIX_EPOCH, limit: s.limit}
+    }
+    let act = add_sat(t, wait)
+    s.last = t
+    s.tokens = tokens
+    s.last_event = act
+    rate.Reservation{ok: true, lim: l, tokens: n, time_to_act: act, limit: s.limit}
+  })
+}
+
+// advance: the tokens at t, not stored
+fn advance(s: rate.LimitState, t: Time) -> Float {
+  let last = if t < s.last { t } else { s.last }
+  let tokens = s.tokens + tokens_from_duration(s.limit, t - last)
+  if tokens > Float(s.burst) {
+    return Float(s.burst)
+  }
+  tokens
+}
+
+fn duration_from_tokens(limit: Float, tokens: Float) -> Duration {
+  if limit <= 0.0 {
+    return inf_duration()
+  }
+  let ns = (tokens / limit) * 1e9
+  if ns >= 9.223372036854775807e18 {
+    return inf_duration()
+  }
+  Duration.from_nanos(Int(ns))
+}
+
+fn tokens_from_duration(limit: Float, d: Duration) -> Float {
+  if limit <= 0.0 {
+    return 0.0
+  }
+  d.seconds() * limit
+}

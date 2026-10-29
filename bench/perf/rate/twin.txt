@@ -1,0 +1,4 @@
+# twincheck: rate: two workloads (none is the loop alone); Go is golang.org/x/time/rate.
+require golang.org/x/time v0.16.0
+- - none
+- - allow

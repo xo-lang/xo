@@ -45,6 +45,7 @@ entries yet.
 - [metrics.md](metrics.md): std/metrics (spec/std.md 37)
 - [tabwriter.md](tabwriter.md): std/tabwriter (spec/std.md 40)
 - [backoff.md](backoff.md): std/backoff (spec/std.md 43)
+- [rate.md](rate.md): std/rate (spec/std.md 42)
 - [trace.md](trace.md): std/trace (spec/std.md 38)
 - [cli.md](cli.md): std/cli (spec/std.md 14)
 - [html.md](html.md): std/html (escape_string, unescape_string)

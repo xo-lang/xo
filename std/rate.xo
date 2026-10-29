@@ -1,0 +1,81 @@
+// std/rate (spec/std.md 42, std survey gap 15). Declaration file;
+// encoding rules are listed at the top of std/prelude.xo. A token bucket
+// rate limiter, golang.org/x/time/rate's Limiter: limit tokens a second
+// fill a bucket of burst tokens, which starts full; an event takes n.
+// The limiter holds the Clock it reads, so a test's virtual clock makes
+// it deterministic.
+
+/// A limit that allows every event (rate.Inf).
+const INF: Float = 1.7976931348623157e308
+
+/// A limiter's state. Internal: use the methods.
+struct LimitState {
+  limit: Float
+  burst: Int
+  tokens: Float
+  last: Time
+  last_event: Time
+}
+
+/// A token bucket: `limit` tokens a second, at most `burst` at once.
+/// A handle: copies share the bucket, and tasks may use it at once.
+struct Limiter {
+  st: Mutex[LimitState]
+  clock: Clock
+}
+
+/// The tokens an event reserved and when it may happen (rate.Reservation).
+struct Reservation {
+  ok: Bool
+  lim: Limiter
+  tokens: Int
+  time_to_act: Time
+  limit: Float
+}
+
+/// Why wait failed.
+enum RateErr {
+  /// n is more than the burst (and the limit is not INF).
+  Exceeds(n: Int, burst: Int)
+  /// The task was cancelled while waiting; the tokens went back.
+  Canceled
+}
+
+/// `rate: Wait(n=5) exceeds limiter's burst 3`, `rate: canceled`.
+fn (e: RateErr) display() -> Str
+
+/// A limiter of limit tokens a second and a bucket of burst, full
+/// (rate.NewLimiter); limit 0 with burst 0 allows nothing, INF everything.
+fn new(limit: Float, burst: Int, clock: Clock) -> Limiter
+/// The limit of one token per interval (rate.Every; INF for 0 or less).
+fn every(interval: Duration) -> Float
+
+fn (l: Limiter) limit() -> Float
+fn (l: Limiter) burst() -> Int
+/// The tokens in the bucket now (negative while reservations wait).
+fn (l: Limiter) tokens() -> Float uses clock
+/// Whether one event may happen now; takes its token if so (rate.Allow).
+fn (l: Limiter) allow() -> Bool uses clock
+/// Whether n events may happen now; takes n tokens if so.
+fn (l: Limiter) allow_n(n: Int) -> Bool uses clock
+/// Reserves a token for an event: act after `delay()`, or `cancel()` to
+/// give the token back (rate.Reserve). Not ok when n is over the burst.
+fn (l: Limiter) reserve() -> Reservation uses clock
+fn (l: Limiter) reserve_n(n: Int) -> Reservation uses clock
+/// Sleeps on the clock until one event may happen (rate.Wait).
+fn (l: Limiter) wait() -> () ! RateErr uses clock
+/// Sleeps until n events may happen; Exceeds when n is over the burst.
+fn (l: Limiter) wait_n(n: Int) -> () ! RateErr uses clock
+/// Changes the limit, the tokens so far kept (rate.SetLimit).
+fn (l: Limiter) set_limit(limit: Float) uses clock
+/// Changes the burst (rate.SetBurst).
+fn (l: Limiter) set_burst(burst: Int) uses clock
+
+/// False when the limiter can never allow the event (n over the burst).
+fn (r: Reservation) ok() -> Bool
+/// How long to wait before acting: 0 when now is fine; the longest
+/// Duration when not ok.
+fn (r: Reservation) delay() -> Duration uses clock
+/// Gives back the reservation's tokens, as far as later reservations
+/// have not counted on them (rate.CancelAt).
+fn (r: Reservation) cancel() uses clock

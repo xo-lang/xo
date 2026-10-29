@@ -1,0 +1,32 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"golang.org/x/time/rate"
+)
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	n := 5000000
+	allowed := 0
+	if w == "allow" {
+		l := rate.NewLimiter(1, 100)
+		for i := 0; i < n; i++ {
+			if l.Allow() {
+				allowed++
+			}
+		}
+	} else {
+		for i := 0; i < n; i++ {
+			if i%50000 == 0 {
+				allowed++
+			}
+		}
+	}
+	fmt.Printf("%s %d %v\n", w, n, allowed >= 100 && allowed < 1000)
+}

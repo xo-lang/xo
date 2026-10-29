@@ -12,3 +12,4 @@ mail
 smtp
 metrics
 trace
+rate

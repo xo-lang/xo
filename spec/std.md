@@ -5816,6 +5816,54 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
   verifier, std/native/llrt/x509cert.xo and x509verify.xo) and Go
   (crypto/x509).
 
+## 42. std/rate
+
+A token bucket rate limiter, golang.org/x/time/rate's `Limiter`: `limit`
+tokens a second fill a bucket of `burst` tokens, which starts full; an
+event takes n tokens. The limiter holds the `Clock` it reads, given at
+`new`, so a test's virtual clock (`os.clock` in a test) makes it
+deterministic. A `Limiter` is a handle: copies share the bucket, and
+tasks may use it at once.
+
+```xo
+const INF: Float                                     // allows every event
+fn new(limit: Float, burst: Int, clock: Clock) -> Limiter
+fn every(interval: Duration) -> Float                // one token per interval
+fn (l: Limiter) limit() -> Float
+fn (l: Limiter) burst() -> Int
+fn (l: Limiter) tokens() -> Float uses clock
+fn (l: Limiter) allow() -> Bool uses clock
+fn (l: Limiter) allow_n(n: Int) -> Bool uses clock
+fn (l: Limiter) reserve() -> Reservation uses clock
+fn (l: Limiter) reserve_n(n: Int) -> Reservation uses clock
+fn (l: Limiter) wait() -> () ! RateErr uses clock
+fn (l: Limiter) wait_n(n: Int) -> () ! RateErr uses clock
+fn (l: Limiter) set_limit(limit: Float) uses clock
+fn (l: Limiter) set_burst(burst: Int) uses clock
+fn (r: Reservation) ok() -> Bool
+fn (r: Reservation) delay() -> Duration uses clock
+fn (r: Reservation) cancel() uses clock
+enum RateErr { Exceeds(n: Int, burst: Int), Canceled }
+```
+
+- `allow_n` takes n tokens when the bucket has them and answers whether
+  it did; `reserve_n` always takes them (the bucket may go negative) and
+  says when the event may act: `delay()` is 0 when now is fine. A
+  reservation of more than the burst is not `ok` and its delay is the
+  longest Duration. `cancel` gives back the tokens later reservations
+  have not counted on (Go's CancelAt).
+- `wait_n` sleeps on the limiter's clock until n events may happen; it
+  fails with `Exceeds` when n is over the burst (the limit not `INF`)
+  and with `Canceled` when the task is cancelled while it waits, the
+  tokens going back. Display: `rate: Wait(n=4) exceeds limiter's burst
+  3`, `rate: canceled`.
+- `set_limit` and `set_burst` keep the tokens so far. A limit of 0
+  allows the burst once and then nothing; `INF` allows everything,
+  whatever the burst. `every(d)` is `INF` for d of 0 or less.
+- Go's API without a Context: Go's `WaitN(ctx, n)` deadline check is the
+  task's cancellation; `AllowN(t, n)` and the other `*At` forms are the
+  clock's time (a test sets it).
+
 ## 43. std/backoff
 
 Exponential backoff with jitter and a retry loop, cenkalti/backoff v4's

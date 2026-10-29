@@ -1,0 +1,29 @@
+// rate: std/rate's Limiter.allow against golang.org/x/time/rate's Allow
+// (twin.go.txt), 5,000,000 calls on a limiter of 1 token a second and a
+// burst of 100 (the first 100 allowed, then about one a second), so every
+// call runs reserveN's float arithmetic and the clock read; `none` is the
+// loop alone. Usage: `<program> none|allow`. Prints `<workload> <calls>
+// <ok>` where ok is whether the burst was allowed and the rest mostly
+// refused; the twin prints the same.
+use std/rate
+
+fn main(os: Os) uses stdio, env, clock {
+  let w = os.env.args().get(0) ?? "none"
+  let n = 5000000
+  var allowed = 0
+  if w == "allow" {
+    let l = rate.new(1.0, 100, os.clock)
+    for _ in 0..n {
+      if l.allow() {
+        allowed += 1
+      }
+    }
+  } else {
+    for i in 0..n {
+      if i % 50000 == 0 {
+        allowed += 1
+      }
+    }
+  }
+  os.stdio.println("${w} ${n} ${allowed >= 100 && allowed < 1000}")
+}
