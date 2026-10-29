@@ -1,0 +1,42 @@
+// Float.to_fixed, to_exp and to_general over pseudo-random floats of every
+// magnitude and precisions 0 to 20 (decision 0410): the digits of up to 18
+// take Go's fixedFtoa path, more the exact path. The checksum of all the
+// text is Go's own (the Go backend runs strconv.FormatFloat; want.txt is its
+// output, so the native backends must produce the same text).
+fn fnv(h: Int, s: Str) -> Int {
+  var x = h
+  for b in s.bytes() {
+    x = (x ^ Int(b)).wrapping_mul(1099511628211)
+  }
+  x
+}
+
+fn main(os: Os) {
+  var seed = 88172645463325252
+  var h = -3750763034362895579
+  var n = 0
+  for _ in 0..3000 {
+    seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407)
+    let bits = seed
+    let f = Float.from_bits(bits)
+    if f.is_nan() || f.is_inf() {
+      continue
+    }
+    for prec in 0..21 {
+      h = fnv(h, f.to_fixed(prec))
+      h = fnv(h, f.to_exp(prec))
+      h = fnv(h, f.to_general(prec))
+      n += 3
+    }
+  }
+  // round numbers and halves
+  for i in 0..2000 {
+    let f = Float(i) / 8.0
+    for prec in 0..5 {
+      h = fnv(h, f.to_fixed(prec))
+      h = fnv(h, f.to_exp(prec))
+      n += 2
+    }
+  }
+  os.stdio.println("${n} ${h}")
+}
