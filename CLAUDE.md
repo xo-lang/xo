@@ -91,8 +91,9 @@ Update the knowledgebase in the same change as the work, not later:
   Port Go's fast paths too, not only its general algorithm, and give
   every port a timing row against Go's package beside its corpus
   (owner, 2026-10-21: ports that matched Go's output ran 3 to 10x
-  slower; gotchas/std-port-costly-go-idioms.md: Str/Bytes slicing
-  copies, small Lists allocate, no package-level caches).
+  slower; gotchas/std-port-costly-go-idioms.md: small Lists
+  allocate, no package-level caches; Str/Bytes slices are views since
+  decision 0330).
 - **Gotchas**: when something breaks unexpectedly, behaves surprisingly, or
   costs more than one attempt to get right, add a gotcha with symptom, cause,
   and fix. Mark it `Observed` or `Anticipated`; flip anticipated entries to
