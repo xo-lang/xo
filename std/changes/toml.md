@@ -1,5 +1,18 @@
 # std/toml changes
 
+## 2026-10-29: perf: toml.encode writes into one builder
+
+- Kind: perf
+- Commit: this commit
+- Found by: toml.encode's timing row (1.454x go-toml's Marshal wall)
+- Go reference: go-toml v2 marshaler.go, which appends to one []byte
+- Test: golden toml_encode (output unchanged, still go-toml's) on arm64, LLVM and the Go backend; bench/perf/toml twincheck
+- Timing: bench/perf/toml encode, quiet --ab, 15 rounds, the parent's std as A: wall 0.839 (0.818 to 0.854), instructions 0.892; Xo / Go wall 1.236 (1.22 to 1.26, was 1.454), instructions 1.016
+
+The encoder appended each key and value to a Str, and an escaped string
+copied the document so far into a builder of its own; it now writes into
+one BytesBuilder, an escaped string's unescaped runs whole.
+
 ## 2026-10-29: feature: toml.encode
 
 - Kind: feature

@@ -1074,8 +1074,12 @@ fn decode[T: Json](text: Str) -> T ! toml.DecodeErr {
 // encodeArrayTable, writeTableHeader, appendValue, appendString) over
 // the json.Value of v, so the Go backend's toml.go gives the same text.
 
+// The text is written into one builder (Go's []byte appends): no Str
+// temporary per value, and an escaped string no longer copies the
+// document so far.
 struct TomlEnc {
-  out: Str
+  out: BytesBuilder
+  started: Bool
   last_header: Bool
 }
 
@@ -1132,9 +1136,11 @@ fn (var e: TomlEnc) table(keys: List[Str], fields: List[(Str, js.Value)]) -> () 
     if enc_is_null(v) || enc_is_table(v) {
       continue
     }
-    e.out = enc_key(e.out, k) + " = "
-    e.out = enc_value(e.out, v)?
-    e.out = e.out + "\n"
+    e.key(k)
+    e.out.write_str(" = ")
+    e.value(v)?
+    e.out.write_byte(10)
+    e.started = true
     e.last_header = false
   }
   for (k, v) in fields {
@@ -1163,69 +1169,72 @@ fn (var e: TomlEnc) table(keys: List[Str], fields: List[(Str, js.Value)]) -> () 
 }
 
 fn (var e: TomlEnc) header(keys: List[Str], array: Bool) {
-  var o = e.out
-  if o != "" && !e.last_header {
-    o = o + "\n"
+  if e.started && !e.last_header {
+    e.out.write_byte(10)
   }
-  o = o + (if array { "[[" } else { "[" })
+  e.out.write_str(if array { "[[" } else { "[" })
   for (i, k) in keys.indexed() {
     if i > 0 {
-      o = o + "."
+      e.out.write_byte(46)
     }
-    o = enc_key(o, k)
+    e.key(k)
   }
-  e.out = o + (if array { "]]\n" } else { "]\n" })
+  e.out.write_str(if array { "]]\n" } else { "]\n" })
+  e.started = true
   e.last_header = true
 }
 
 fn enc_bare_byte(c: Int) -> Bool { c >= 65 && c <= 90 || c >= 97 && c <= 122 || c >= 48 && c <= 57 || c == 45 || c == 95 }
 
-fn enc_key(out: Str, k: Str) -> Str {
+fn (var e: TomlEnc) key(k: Str) {
   if k == "" {
-    return enc_string(out, k)
+    e.string(k)
+    return
   }
   for i in 0..k.len() {
     if !enc_bare_byte(raw.str_byte(k, i)) {
-      return enc_string(out, k)
+      e.string(k)
+      return
     }
   }
-  out + k
+  e.out.write_str(k)
 }
 
-fn enc_value(out: Str, v: js.Value) -> Str ! toml.TomlErr {
+fn (var e: TomlEnc) value(v: js.Value) -> () ! toml.TomlErr {
   match v {
-    js.Value.Null => Err(enc_err("cannot encode a None in an array"))
-    js.Value.Bool(b) => out + (if b { "true" } else { "false" })
-    js.Value.Int(n) => out + "${n}"
-    js.Value.Num(f) => out + enc_float(f)
-    js.Value.Str(s) => enc_string(out, s)
+    js.Value.Null => return Err(enc_err("cannot encode a None in an array"))
+    js.Value.Bool(b) => e.out.write_str(if b { "true" } else { "false" })
+    js.Value.Int(n) => e.out.write_str("${n}")
+    js.Value.Num(f) => e.out.write_str(enc_float(f))
+    js.Value.Str(s) => e.string(s)
     // a trusted fragment (decision 0408) is its text, as json encodes it
-    js.Value.Trusted(_, s) => enc_string(out, s)
+    js.Value.Trusted(_, s) => e.string(s)
     js.Value.List(items) => {
-      var o = out + "["
+      e.out.write_byte(91)
       for (i, x) in items.indexed() {
         if i > 0 {
-          o = o + ", "
+          e.out.write_str(", ")
         }
-        o = enc_value(o, x)?
+        e.value(x)?
       }
-      o + "]"
+      e.out.write_byte(93)
     }
     js.Value.Object(fs) => {
-      var o = out + "{"
+      e.out.write_byte(123)
       var first = true
       for (k, x) in fs {
         if enc_is_null(x) {
           continue
         }
         if !first {
-          o = o + ", "
+          e.out.write_str(", ")
         }
         first = false
-        o = enc_key(o, k) + " = "
-        o = enc_value(o, x)?
+        e.key(k)
+        e.out.write_str(" = ")
+        e.value(x)?
       }
-      o + "}"
+      e.out.write_byte(125)
     }
   }
 }
@@ -1286,48 +1295,58 @@ fn enc_literal_ok(s: Str) -> Bool {
   true
 }
 
-fn enc_string(out: Str, s: Str) -> Str {
+// appendString: a literal string when it can be, else a basic string
+// with Go's escapes; the runs between escapes are written whole.
+fn (var e: TomlEnc) string(s: Str) {
   if enc_literal_ok(s) {
-    return out + "'" + s + "'"
+    e.out.write_byte(39)
+    e.out.write_str(s)
+    e.out.write_byte(39)
+    return
   }
-  var b = BytesBuilder.new()
-  b.write_str(out)
-  b.write_byte(34)
+  e.out.write_byte(34)
   let hex = "0123456789ABCDEF"
+  var run = 0
   for i in 0..s.len() {
     let c = raw.str_byte(s, i)
-    if c == 34 || c == 92 {
-      b.write_byte(92)
-      b.write_byte(UInt8(c))
-    } else if c == 8 {
-      b.write_str("\\b")
-    } else if c == 12 {
-      b.write_str("\\f")
-    } else if c == 10 {
-      b.write_str("\\n")
-    } else if c == 13 {
-      b.write_str("\\r")
-    } else if c == 9 {
-      b.write_str("\\t")
-    } else if c < 32 || c == 127 {
-      b.write_str("\\u00")
-      b.write_byte(UInt8(raw.str_byte(hex, c / 16)))
-      b.write_byte(UInt8(raw.str_byte(hex, c % 16)))
-    } else {
-      b.write_byte(UInt8(c))
+    if c == 34 || c == 92 || c < 32 || c == 127 {
+      if i > run {
+        e.out.write_str(raw.str_slice(s, run, i))
+      }
+      run = i + 1
+      if c == 34 || c == 92 {
+        e.out.write_byte(92)
+        e.out.write_byte(UInt8(c))
+      } else if c == 8 {
+        e.out.write_str("\\b")
+      } else if c == 12 {
+        e.out.write_str("\\f")
+      } else if c == 10 {
+        e.out.write_str("\\n")
+      } else if c == 13 {
+        e.out.write_str("\\r")
+      } else if c == 9 {
+        e.out.write_str("\\t")
+      } else {
+        e.out.write_str("\\u00")
+        e.out.write_byte(UInt8(raw.str_byte(hex, c / 16)))
+        e.out.write_byte(UInt8(raw.str_byte(hex, c % 16)))
+      }
     }
   }
-  b.write_byte(34)
-  b.freeze().to_str() ?? out
+  if run < s.len() {
+    e.out.write_str(raw.str_slice(s, run, s.len()))
+  }
+  e.out.write_byte(34)
 }
 
 fn encode[T: Json](v: T) -> Str ! toml.TomlErr {
   let x = js.to_value(v)
   match x {
     js.Value.Object(fs) => {
-      var e = TomlEnc{out: "", last_header: false}
+      var e = TomlEnc{out: BytesBuilder.new(), started: false, last_header: false}
       e.table([], fs)?
-      e.out
+      e.out.freeze().to_str() ?? ""
     }
     _ => Err(enc_err("cannot encode ${enc_kind(x)} as a document root"))
   }
