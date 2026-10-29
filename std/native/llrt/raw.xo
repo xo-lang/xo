@@ -440,7 +440,7 @@ pub fn put(s: Str, at: Int, v: Int, n: Int, be: Int) -> Str {
   }
   var w = v
   if be != 0 {
-    w = rt.int_wrap(7, v, 0).shr_logical(64 - 8 * n)
+    w = v.swap_bytes().shr_logical(64 - 8 * n)
   }
   let d = data(t) + at
   if n == 4 {
