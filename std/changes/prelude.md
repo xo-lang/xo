@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-10-29: feature: Str.pad_left, pad_right and center, and Int.to_str_width
+
+- Kind: feature
+- Commit: this commit
+- Found by: the std-vs-Go survey (item 12: CLI programs padded text by hand)
+- Go reference: fmt/format.go fmtInteger and padString (`%8d`, `%08d`, `%-8d`, `%+d`, `%x`, `%b`, `%*s`, `%-*s`)
+- Test: std/native/prelude_test.xo, 720 rows of Int.to_str_width against Go's fmt (every width, zero, minus and plus combination in bases 10, 16 and 2, including the smallest Int) and rune width cases of the pad methods
+- Timing: none (not a hot path: one repeat and one concatenation; the 720 rows run in 2 ms)
+
+`s.pad_left(width, fill)`, `pad_right` and `center` pad to `width` runes with one rune of fill (a space by default), returning `s` itself when it is that long already. `n.to_str_width(width, base, zero, plus)` is Go's integer verbs with a width: spaces on the left, zeros after the sign with `zero`, spaces on the right for a negative width, `+` for a positive number with `plus`. Fixed precision floats follow in the next entry (decision 0410 stage 1b).
+
 ## 2026-10-29: feature: Net.dial_timeout and Net.lookup_host
 
 - Kind: feature

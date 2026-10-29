@@ -113,6 +113,7 @@ fn (n: Int) lt_unsigned(m: Int) -> Bool      // also le_unsigned: compared as un
 fn (n: Int) saturating_add(m: Int) -> Int    // also saturating_sub, saturating_mul
 fn (n: Int) checked_add(m: Int) -> Int?      // also checked_sub, checked_mul, checked_div
 fn (n: Int) to_str_base(base: Int) -> Str    // base 2 to 36, lower case digits
+fn (n: Int) to_str_width(width: Int, base: Int = 10, zero: Bool = false, plus: Bool = false) -> Str  // Go's %8d, %08d, %-8d, %+d, %x (decision 0410)
 fn (n: Int) leading_zeros() -> Int           // also trailing_zeros, ones_count: math/bits on the word
 
 fn (f: Float) floor() -> Float               // also ceil, round, trunc, abs, sqrt
@@ -212,6 +213,7 @@ fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str !
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str  // the first n copies (strings.Replace); n below 0 for every one, 0 for none
 fn (s: Str) repeat(n: Int) -> Str            // strings.Repeat; empty for 0, a fault below 0
+fn (s: Str) pad_left(width: Int, fill: Str = " ") -> Str   // to width runes (a minimum, as Go's %*s); also pad_right, center (decision 0410)
 fn (s: Str) clone() -> Str                   // an explicit copy in a buffer of its own (a slice or split piece shares its source on native targets)
 fn (s: Str) runes() -> List[Rune]
 fn (s: Str) bytes() -> Bytes
@@ -4402,7 +4404,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-440 declarations.
+444 declarations.
 
 ### Range
 
@@ -4434,6 +4436,7 @@ fn debug(self) -> Str
 fn (static: Int) parse(s: Str) -> Int?
 fn (static: Int) parse_base(s: Str, base: Int) -> Int?
 fn (n: Int) to_str_base(base: Int) -> Str
+fn (n: Int) to_str_width(width: Int, base: Int = 10, zero: Bool = false, plus: Bool = false) -> Str
 fn (n: Int) abs() -> Int
 fn (n: Int) pow(e: Int) -> Int
 fn (n: Int) wrapping_add(m: Int) -> Int
@@ -4622,6 +4625,9 @@ fn (s: Str) map_runes[E, fx: Effects](f: fn(Rune) -> Rune? ! E uses fx) -> Str !
 fn (s: Str) replace(old: Str, new: Str) -> Str
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str
 fn (s: Str) repeat(n: Int) -> Str
+fn (s: Str) pad_left(width: Int, fill: Str = " ") -> Str
+fn (s: Str) pad_right(width: Int, fill: Str = " ") -> Str
+fn (s: Str) center(width: Int, fill: Str = " ") -> Str
 fn (s: Str) clone() -> Str
 fn (s: Str) runes() -> List[Rune]
 fn (s: Str) bytes() -> Bytes
