@@ -1,0 +1,117 @@
+// A store link's prepare cache: what store_prepare derives from the
+// store and the std definitions the program names, kept between builds
+// (an edit of a function body rarely changes which of std's atoms are
+// live). The driver (compiler/xo ld.xo) reads and writes it; this file
+// only encodes it.
+
+const PREP_MAGIC = "XOPREP1\n"
+
+/// The decisions store_prepare made for one store and root set: which
+/// atoms are live, which objects' DWARF goes, each cut DWARF section's
+/// kept runs (in the order prepare visits them), each store object's
+/// symbols renumbered (keep_syms).
+pub struct Prep {
+  pub live: List[Bool] = []
+  pub dw_dropped: List[Bool] = []
+  pub keeps: List[List[Bool]] = []
+  pub symnews: List[List[Int]] = []
+}
+
+fn put_bits(var b: BytesBuilder, xs: List[Bool]) {
+  sw32(b, xs.len())
+  var acc = 0
+  var k = 0
+  for x in xs {
+    if x {
+      acc = acc | (1 << k)
+    }
+    k += 1
+    if k == 8 {
+      b.write_byte(UInt8(acc))
+      acc = 0
+      k = 0
+    }
+  }
+  if k > 0 {
+    b.write_byte(UInt8(acc))
+  }
+}
+
+fn get_bits(var r: SR) -> List[Bool]? {
+  if r.at + 4 > r.b.len() {
+    return None
+  }
+  let n = r.u32()
+  if n < 0 || r.at + (n + 7) / 8 > r.b.len() {
+    return None
+  }
+  var out: List[Bool] = List.with_capacity(n)
+  for i in 0..n {
+    out.push((Int(r.b[r.at + i / 8]) >> (i % 8)) & 1 != 0)
+  }
+  r.at += (n + 7) / 8
+  Some(out)
+}
+
+/// p's bytes (prep_decode reads them back).
+pub fn prep_encode(p: Prep) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_str(PREP_MAGIC)
+  put_bits(b, p.live)
+  put_bits(b, p.dw_dropped)
+  sw32(b, p.keeps.len())
+  for k in p.keeps {
+    put_bits(b, k)
+  }
+  sw32(b, p.symnews.len())
+  for s in p.symnews {
+    sw32(b, s.len())
+    for x in s {
+      // -1 (dropped) as 0xffffffff
+      sw32(b, x & 0xffffffff)
+    }
+  }
+  b.freeze()
+}
+
+/// The Prep in b, None when b is not one (a short or foreign file: the
+/// link then decides afresh).
+pub fn prep_decode(b: Bytes) -> Prep? {
+  if b.len() < PREP_MAGIC.len() || b[0..PREP_MAGIC.len()] != PREP_MAGIC.bytes() {
+    return None
+  }
+  var r = SR{b: b, at: PREP_MAGIC.len()}
+  var p = Prep{}
+  p.live = get_bits(r)?
+  p.dw_dropped = get_bits(r)?
+  if r.at + 4 > b.len() {
+    return None
+  }
+  let nk = r.u32()
+  for _ in 0..nk {
+    p.keeps.push(get_bits(r)?)
+  }
+  if r.at + 4 > b.len() {
+    return None
+  }
+  let ns = r.u32()
+  for _ in 0..ns {
+    if r.at + 4 > b.len() {
+      return None
+    }
+    let m = r.u32()
+    if r.at + 4 * m > b.len() {
+      return None
+    }
+    var s: List[Int] = List.with_capacity(m)
+    for _ in 0..m {
+      let x = r.u32()
+      s.push(if x == 0xffffffff { -1 } else { x })
+    }
+    p.symnews.push(s)
+  }
+  if r.at != b.len() {
+    return None
+  }
+  Some(p)
+}

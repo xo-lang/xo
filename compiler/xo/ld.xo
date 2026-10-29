@@ -109,7 +109,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, order: ctx.layout_order, embed_dwarf: !split && !strip, dsym: (dsym || split) && !strip, release: release, program_dwarf: !sep_store.is_empty()}
   let _in = lap(os, ctx.phases, "link.inputs", tin)
   let ts = os.clock.now()
-  let linked = if store.is_empty() { macho.link_debug(parts + ins, opts) } else { link_store_laps(os, ctx, ins, store, opts) }
+  let linked = if store.is_empty() { macho.link_debug(parts + ins, opts) } else { link_store_laps(os, ctx, ins, store, opts, prep_dir(os, sep_store)) }
   if !store.is_empty() {
     if !store_path.is_empty() {
       os.stdio.eprintln("store link ${os.clock.since(ts).nanos() / 1000} us (${store.len()} store bytes)")
@@ -120,7 +120,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
       // the steps timed: prepare (the walk, the live atoms read), resolve,
       // finish (layout, relocation, the image)
       let t1 = os.clock.now()
-      match macho.store_prepare(ins, store, opts) {
+      match macho.store_prepare_cached(ins, store, opts, prep_load(os, prep_file_for(os, prep_dir(os, sep_store), sep_store, store.len(), ins, opts))) {
         Ok(s0) => {
           var s = s0
           let dp = os.clock.since(t1).nanos() / 1000
@@ -1120,12 +1120,14 @@ fn pdb_seed(var seed: BytesBuilder, race: Bool, pdb: Str, res: List[macho.PERes]
 /// macho.link_store in its steps, each a link.* lap under --phase-times
 /// (link.store_prepare, link.resolve, link.layout, link.synthesize,
 /// link.write): the same link, its time by step.
-fn link_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, opts: macho.LinkOpts) -> Result[(Bytes, Bytes), Str] {
+fn link_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, opts: macho.LinkOpts, pdir: Str) -> Result[(Bytes, Bytes), Str] {
   var t = os.clock.now()
-  var s = match macho.store_prepare(ins, store, opts) {
+  let pf = prep_file_for(os, pdir, ctx.sep_store, store.len(), ins, opts)
+  var s = match macho.store_prepare_cached(ins, store, opts, prep_load(os, pf)) {
     Ok(x) => x
     Err(e) => return Err(e)
   }
+  prep_save(os, pf, s)
   t = lap(os, ctx.phases, "link.store_prepare", t)
   let er = s.resolve()
   if !er.is_empty() {
@@ -1145,4 +1147,53 @@ fn link_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, o
   let r = s.write()
   let _t = lap(os, ctx.phases, "link.write", t)
   r
+}
+
+/// The prepare cache's directory for a separately compiled link through
+/// std's store at store (macho prepcache.xo): beside std's entries in
+/// the back-end cache, "" (no cache) when the store is not one std's
+/// cache named by its content (only that name stands for its bytes
+/// without hashing them) or XO_PREP_CACHE=off.
+fn prep_dir(os: Os, store: Str) -> Str {
+  let base = base_name(store)
+  if store.is_empty() || (os.env.get("XO_PREP_CACHE") ?? "") == "off" || base.len() != 70 || !base.ends_with(".store") {
+    return ""
+  }
+  "${dir_name(dir_name(store))}/prep"
+}
+
+/// The prepare cache's file for this link ("" for none): named by xo's
+/// own identity, the store's path (named by its content) and length,
+/// and macho.prep_key.
+fn prep_file_for(os: Os, dir: Str, store: Str, n: Int, ins: List[macho.LinkInput], opts: macho.LinkOpts) -> Str {
+  if dir.is_empty() {
+    return ""
+  }
+  match macho.prep_key(ins, opts) {
+    Ok(k) => "${dir}/${crypto.sha256("${self_id(os)}\n${store}\n${n}\n".bytes() + k).to_hex()[0..40]}"
+    Err(_) => ""
+  }
+}
+
+/// The cached decisions in f, marked used (pruned with the cache), or
+/// None.
+fn prep_load(os: Os, f: Str) -> macho.Prep? {
+  if f.is_empty() {
+    return None
+  }
+  match cache_get(os, f) {
+    Some(b) => macho.prep_decode(b)
+    None => None
+  }
+}
+
+/// A miss's decisions written to f for the next link (tmp and rename).
+fn prep_save(os: Os, f: Str, s: macho.StoreLink) {
+  if f.is_empty() || s.hit {
+    return
+  }
+  let b = macho.prep_encode(s.prep)
+  cache_put(os, f, b)
+  // the back-end cache's store accounting (store-log, the prune's burst)
+  prune_backend_cache(os, "prep", dir_name(dir_name(f)), b.len())
 }

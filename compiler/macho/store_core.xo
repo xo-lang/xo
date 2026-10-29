@@ -336,6 +336,14 @@ pub fn (v: StoreView) dw_dropped(live: List[Bool]) -> List[Bool] {
 /// length (and the lists' offsets) patched, and each kept relocation
 /// record's place in the store with its new address.
 pub fn (v: StoreView) cut(q: Int, live: List[Bool], loclists: Bool) -> (Bytes, List[(Int, Int)]) {
+  let (data, rels, _k) = v.cut_with(q, live, [], loclists)
+  (data, rels)
+}
+
+/// cut, with the runs kept given (given: a previous cut's keep for the
+/// same live set, a store link's prepare cache) or decided from live
+/// (given empty); also returns the runs kept.
+pub fn (v: StoreView) cut_with(q: Int, live: List[Bool], given: List[Bool], loclists: Bool) -> (Bytes, List[(Int, Int)], List[Bool]) {
   let store = v.b
   let ns = rec_nseg(store, q)
   let ga = v.data0 + rec_seg_at(store, q)
@@ -347,7 +355,7 @@ pub fn (v: StoreView) cut(q: Int, live: List[Bool], loclists: Bool) -> (Bytes, L
     segs.push(DwSeg{start: rd32(store, g), end: rd32(store, g + 4), fo: if gf < 0xfffffffe { gf } else { -1 }, typ: gf == 0xfffffffe})
   }
   // the references of the kept runs only, read in place
-  let keep = dw_keep_with(segs, fn(g: DwSeg) -> Bool { live[g.fo] }, fn(i: Int) -> List[(Int, Int)] {
+  let refs_at = fn(i: Int) -> List[(Int, Int)] {
     let g = ga + STORE_RUN * i
     let ra = v.data0 + rd32(store, g + 20)
     let nr = rd32(store, g + 24)
@@ -356,7 +364,17 @@ pub fn (v: StoreView) cut(q: Int, live: List[Bool], loclists: Bool) -> (Bytes, L
       refs.push((rd32(store, ra + 8 * j), rd32(store, ra + 8 * j + 4)))
     }
     refs
-  })
+  }
+  var keep: List[Bool] = given
+  if given.len() == ns {
+    for i in 0..ns {
+      if keep[i] {
+        segs[i].refs = refs_at(i)
+      }
+    }
+  } else {
+    keep = dw_keep_with(segs, fn(g: DwSeg) -> Bool { live[g.fo] }, refs_at)
+  }
   let (at, n) = dw_new_starts(segs, keep)
   var b = BytesBuilder.with_capacity(n)
   let da = v.data0 + rec_data_at(store, q)
@@ -380,7 +398,7 @@ pub fn (v: StoreView) cut(q: Int, live: List[Bool], loclists: Bool) -> (Bytes, L
       rels.push((rq, rd32(store, rq) - g.start + at[i]))
     }
   }
-  (b.freeze(), rels)
+  (b.freeze(), rels, keep)
 }
 
 /// The kinds of a symbol for keep_syms (the adapter's reading of its

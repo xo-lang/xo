@@ -304,6 +304,11 @@ pub struct StoreLink {
   /// one's dead section (-1 for none)
   n: Int
   stubs: List[Int]
+  /// the prepare cache (prepcache.xo): what its key is made of (the
+  /// roots and the options prepare read), the decisions made, and
+  /// whether they came from the cache
+  pub prep: Prep = Prep{}
+  pub hit: Bool = false
 }
 
 /// The symbols resolved and the dead functions' compact unwind entries
@@ -412,6 +417,47 @@ pub fn (var s: StoreLink) write() -> Result[(Bytes, Bytes), Str] { s.l.rest_writ
 /// The walk from the program's inputs and the store's live atoms read
 /// (link_store's first step).
 pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Result[StoreLink, Str] {
+  store_prepare_cached(inputs, store, opts, None)
+}
+
+/// What a store link's prepare decisions depend on besides the store:
+/// the names the program's objects take from it (undefined, or defined
+/// weak), the entry, the cpu and whether DWARF is cut. The caller adds
+/// the store's and xo's identity (compiler/xo ld.xo prep_file).
+pub fn prep_key(inputs: List[LinkInput], opts: LinkOpts) -> Result[Bytes, Str] {
+  let prog = match parse_inputs(inputs) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  let x86 = !prog.is_empty() && prog[0].x86
+  let dwarf = !(opts.program_dwarf && !prog.any(fn(ob) { obj_xo_dwarf(ob) })) && (opts.embed_dwarf || opts.dsym)
+  var names: List[Bytes] = []
+  for ob in prog {
+    if !ob.live {
+      continue
+    }
+    for s in ob.syms {
+      if is_ext(s) && (!is_defined(s) || (s.desc & 0x80) != 0) {
+        names.push(s.name)
+      }
+    }
+  }
+  var b = BytesBuilder.new()
+  b.write_str("prep1 x86=${x86} dwarf=${dwarf} entry=${opts.entry}\n")
+  for nm in names.sort_by(fn(x: Bytes) -> Bytes { x }) {
+    b.write(nm)
+    b.write_byte(0)
+  }
+  Ok(b.freeze())
+}
+
+/// store_prepare with a prepare cache: cached holds the decisions a link
+/// with the same prep_key (and store) made, None to decide afresh; the
+/// StoreLink returns the decisions made (prep) and whether they were
+/// the cache's (hit). The decisions only choose which of the store's
+/// atoms, runs and symbols are kept, so a hit links the same bytes as a
+/// miss.
+pub fn store_prepare_cached(inputs: List[LinkInput], store: Bytes, opts: LinkOpts, cached: Prep?) -> Result[StoreLink, Str] {
   let v = match store_view(store) {
     Ok(x) => x
     Err(e) => return Err(e)
@@ -456,15 +502,28 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     }
   }
   roots.push(v.def(opts.entry.bytes()))
-  let live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { !whole_name(sg, nm, flags) && ((flags & S_ATTR_NO_DEAD_STRIP) != 0 || (flags & 0xff) == S_MOD_INIT_FUNC_POINTERS) })
-  var dw_dropped: List[Bool] = []
-  if no_dwarf {
-    for _ in 0..n {
-      dw_dropped.push(true)
-    }
-  } else {
-    dw_dropped = v.dw_dropped(live)
+  let hit = match cached {
+    Some(p) => p.live.len() == v.total && p.dw_dropped.len() == n && p.symnews.len() == n
+    None => false
   }
+  let given = if hit { cached ?? Prep{} } else { Prep{} }
+  var live: List[Bool] = []
+  var dw_dropped: List[Bool] = []
+  if hit {
+    live = given.live
+    dw_dropped = given.dw_dropped
+  } else {
+    live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { !whole_name(sg, nm, flags) && ((flags & S_ATTR_NO_DEAD_STRIP) != 0 || (flags & 0xff) == S_MOD_INIT_FUNC_POINTERS) })
+    if no_dwarf {
+      for _ in 0..n {
+        dw_dropped.push(true)
+      }
+    } else {
+      dw_dropped = v.dw_dropped(live)
+    }
+  }
+  var keeps: List[List[Bool]] = []
+  var symnews: List[List[Int]] = List.with_capacity(n)
   // each store object compacted: its kept sections (a live atom's bytes
   // and relocations, a whole section's, a cut DWARF section's runs) in
   // order, then one empty dead section standing for every dead atom (a
@@ -489,7 +548,9 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
         newk.push(sects.len())
         sects.push(ISect{seg: sg, name: nm, addr: rec_addr(store, q), size: 0, align: rec_align(store, q), flags: flags, data: "".bytes()})
       } else if rec_nseg(store, q) > 0 {
-        let (data, rels) = v.cut(q, live, nm == "__debug_loclists")
+        let ci = keeps.len()
+        let (data, rels, keep) = v.cut_with(q, live, if hit && ci < given.keeps.len() { given.keeps[ci] } else { [] }, nm == "__debug_loclists")
+        keeps.push(keep)
         var t = ISect{seg: sg, name: nm, addr: rec_addr(store, q), size: data.len(), align: rec_align(store, q), flags: flags, data: data, relocs: List.with_capacity(rels.len())}
         for (rq, addr) in rels {
           var x = rd_reloc(store, rq)
@@ -531,7 +592,8 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     for _ in 0..nsym {
       named.push(false)
     }
-    for t in sects {
+    // (only keep_syms reads them: a cache hit has its answer)
+    for t in if hit { [] } else { sects } {
       for x in t.relocs {
         if x.ext && x.typ != R_ADDEND && x.sym < nsym && !named[x.sym] {
           named[x.sym] = true
@@ -564,7 +626,8 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
     let nsym = v.nsyms[i]
     // an atom's new ordinal (1 based)
     let ord = fn(o: Int) -> Int { if newk[o - 1] >= 0 { newk[o - 1] + 1 } else { stub + 1 } }
-    let symnew = v.keep_syms(i, newk, nameds[i], elsewhere, kind, fn(typ: Int) -> Bool { (typ & N_EXT) != 0 })
+    let symnew = if hit && given.symnews[i].len() == nsym { given.symnews[i] } else { v.keep_syms(i, newk, nameds[i], elsewhere, kind, fn(typ: Int) -> Bool { (typ & N_EXT) != 0 }) }
+    symnews.push(symnew)
     var syms: List[ISym] = []
     for j in 0..nsym {
       if symnew[j] < 0 {
@@ -597,5 +660,5 @@ pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> R
       l.objs[i].split[key] = a2
     }
   }
-  Ok(StoreLink{l: l, n: n, stubs: stubs})
+  Ok(StoreLink{l: l, n: n, stubs: stubs, prep: Prep{live: live, dw_dropped: dw_dropped, keeps: keeps, symnews: symnews}, hit: hit})
 }

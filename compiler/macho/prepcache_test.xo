@@ -1,0 +1,76 @@
+// The prepare cache (prepcache.xo): a link from cached decisions is the
+// link that made them, the encoding reads back, and the key follows what
+// the program takes from the store.
+
+fn prep_part() -> Bytes {
+  asm_or_fault("\t.subsections_via_symbols\n\t.text\n\t.globl _used\n\t.p2align 2\n_used:\n\tbl _inner\n\tret\n\t.globl _unused_fn\n\t.p2align 2\n_unused_fn:\n\tmov x0, #7\n\tret\n\t.globl _inner\n\t.p2align 2\n_inner:\n\tadrp x0, _tab@PAGE\n\tret\n\t.section __DATA,__data\n\t.globl _tab\n_tab:\n\t.quad _inner\n\t.globl _dead_tab\n_dead_tab:\n\t.quad _unused_fn\n")
+}
+
+fn prep_prog(callee: Str) -> Bytes {
+  asm_or_fault("\t.text\n\t.globl _main\n\t.p2align 2\n_main:\n\tbl ${callee}\n\tmov x0, #0\n\tret\n")
+}
+
+fn prep_link(ins: List[LinkInput], store: Bytes, opts: LinkOpts, cached: Prep?) -> (Bytes, StoreLink) {
+  var s = match store_prepare_cached(ins, store, opts, cached) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  let er = s.resolve()
+  if !er.is_empty() {
+    fault(er)
+  }
+  match s.finish() {
+    Ok((b, _)) => (b, s)
+    Err(e) => fault(e)
+  }
+}
+
+test "a store link from cached decisions is the link that made them" {
+  let store = match store_encode([LinkInput{path: "part.o", data: prep_part()}]) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  let ins = [LinkInput{path: "prog.o", data: prep_prog("_used")}]
+  let opts = LinkOpts{name: "p", embed_dwarf: false}
+  let (first, s1) = prep_link(ins, store, opts, None)
+  expect(s1.hit) == false
+  let back = match prep_decode(prep_encode(s1.prep)) {
+    Some(p) => p
+    None => fault("the encoding does not read back")
+  }
+  expect(back.live == s1.prep.live) == true
+  expect(back.symnews == s1.prep.symnews) == true
+  let (second, s2) = prep_link(ins, store, opts, Some(back))
+  expect(s2.hit) == true
+  expect(second == first) == true
+  expect(second.find("_unused_fn".bytes()) == None) == true
+}
+
+test "a foreign or short prepare cache entry is a miss" {
+  expect(prep_decode("XOPREP1\n".bytes()) == None) == true
+  expect(prep_decode("nonsense".bytes()) == None) == true
+  let ok = prep_encode(Prep{live: [true, false, true], dw_dropped: [false], keeps: [[true]], symnews: [[0, -1]]})
+  expect(prep_decode(ok[0..ok.len() - 1]) == None) == true
+  match prep_decode(ok) {
+    Some(p) => expect(p.symnews[0][1]) == -1
+    None => fault("a whole entry did not read back")
+  }
+}
+
+test "the prepare key follows what the program takes from the store" {
+  let opts = LinkOpts{name: "p", embed_dwarf: false}
+  let k = fn(callee: Str) -> Bytes {
+    match prep_key([LinkInput{path: "prog.o", data: prep_prog(callee)}], opts) {
+      Ok(x) => x
+      Err(e) => fault(e)
+    }
+  }
+  expect(k("_used") == k("_used")) == true
+  expect(k("_used") != k("_unused_fn")) == true
+  // the options prepare reads are in it too
+  let kd = match prep_key([LinkInput{path: "prog.o", data: prep_prog("_used")}], LinkOpts{name: "p", embed_dwarf: true}) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  expect(kd != k("_used")) == true
+}

@@ -84,13 +84,14 @@ var codegenEnv = map[string]inputClass{
 	"XO_CHAIN_KEYS":           {"none", ""}, // the cleanup cache (decision 0382); every build writes the same binary
 	"XO_CHK_CACHE":            {"none", ""},
 	"XO_STD_EXPORT":           {"none", ""},
-	"XO_STD_TREES_TEST":       {"none", ""}, // stage 2's rebuild test: every std tree pending, the front end built again (same output)                                    // std's declarations from records (decision 0388); the same tables
+	"XO_STD_TREES_TEST":       {"none", ""},                                    // stage 2's rebuild test: every std tree pending, the front end built again (same output)                                    // std's declarations from records (decision 0388); the same tables
 	"XO_STD_FACTS_DUMP":       {"none", ""},                                    // writes std's facts to a file (decision 0388); the build is the same
 	"XO_STD_FACTS_VERIFY":     {"none", ""},                                    // compares a std facts file with the build's own (decision 0388); the build is the same
 	"XO_STD_STORE":            {"none", ""},                                    // links through std's indexed store (decision 0388 stage 4); the parts' binary, byte for byte
 	"XO_SEPCOMP_STORE":        {"none", ""},                                    // links a separately compiled program through std's store (decision 0388); the same binary as through std's objects
 	"XO_STD_STORE_CHECK":      {"none", ""},                                    // also links the parts and fails on a difference
 	"XO_STD_STORE_REPEAT":     {"none", ""},                                    // times N more store links (a measurement)
+	"XO_PREP_CACHE":           {"none", ""},                                    // off: a store link decides its kept atoms afresh (macho prepcache.xo); a hit links the same bytes
 	"XO_SEPCOMP_BG":           {"none", ""},                                    // 0: a miss of std's variant starts no background build (decision 0388); the build is whole program either way
 	"XO_STD_BG_CHILD":         {"none", ""},                                    // the background build of std's variant (stdcache.xo std_variant_peek's child): it takes the lock; the same entries
 	"XO_SEPCOMP":              {"keyed", "sepcomp ${crypto.sha256(b.freeze()"}, // std's functions as externs (decision 0388 stage 3): cache_id holds the facts' hash
@@ -160,7 +161,7 @@ var codegenFields = map[string]inputClass{
 	"std_obj":             {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_STD_OBJ), whose " weak=1" keys the parts it leaves the program's functions out of
 	"sepcomp_program":     {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_SEPCOMP): changes the entry file, which no cache holds, and the parts as weak_shared and std_store key them
 	"std_store":           {"keyed", "${if m.std_store"},   // " store=1" in the part key: a part's per-function unsafe tables
-	"fn_order":            {"none", ""},                   // decision 0403: the functions' order across the parts; a function's own code is the same at any position, and a part's key hashes its text, so another order is another part key by itself
+	"fn_order":            {"none", ""},                    // decision 0403: the functions' order across the parts; a function's own code is the same at any position, and a part's key hashes its text, so another order is another part key by itself
 }
 
 // codegenFS are the closure's files that use the file system, with why
