@@ -6,6 +6,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/cli: `float_flag` and `Parsed.float` and `float_opt`, a floating
+  point flag in `Float.parse` syntax (Go's flag.Float64).
 - Fix (`use go`, a Windows tester's bug 18): a Go function that writes
   into a `[]byte` parameter (an `io.Reader`'s `Read(p)`, a
   `Decode(dst, src)`) is skipped, as `use c` skips mutable buffers: an

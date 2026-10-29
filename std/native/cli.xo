@@ -15,6 +15,7 @@ const INT: Int = 2
 const DUR: Int = 3
 const CHOICE: Int = 4
 const STRS: Int = 5
+const FLOAT: Int = 6
 
 struct Flag {
   name: Str
@@ -25,6 +26,7 @@ struct Flag {
   def_str: Str
   def_int: Int
   def_dur: Duration
+  def_float: Float
   required: Bool
   value: Str
   choices: List[Str]
@@ -53,6 +55,7 @@ struct Val {
   s: Str
   i: Int
   d: Duration
+  f: Float
   l: List[Str]
 }
 
@@ -67,11 +70,11 @@ struct Parsed {
 }
 
 fn kind_name(k: Int) -> Str {
-  ["bool", "str", "int", "duration", "choice", "strs"][k]
+  ["bool", "str", "int", "duration", "choice", "strs", "float"][k]
 }
 
 fn readers(k: Int) -> Str {
-  ["bool", "str or str_opt", "int or int_opt", "duration or duration_opt", "str or str_opt", "strs"][k]
+  ["bool", "str or str_opt", "int or int_opt", "duration or duration_opt", "str or str_opt", "strs", "float or float_opt"][k]
 }
 
 fn clierr_display(e: cli.CliErr) -> Str {
@@ -94,7 +97,7 @@ fn command(name: Str, help: Str, flags: List[Flag] = [], args: List[Arg] = [], c
 }
 
 fn new_flag(name: Str, help: Str, short: Str, env: Str, kind: Int) -> Flag {
-  Flag{name: name, short: short, help: help, env: env, kind: kind, def_str: "", def_int: 0, def_dur: 0s, required: false, value: "", choices: []}
+  Flag{name: name, short: short, help: help, env: env, kind: kind, def_str: "", def_int: 0, def_dur: 0s, def_float: 0.0, required: false, value: "", choices: []}
 }
 
 fn bool_flag(name: Str, help: Str, short: Str = "", env: Str = "") -> Flag {
@@ -111,6 +114,10 @@ fn int_flag(name: Str, help: Str, short: Str = "", default: Int = 0, env: Str = 
 
 fn duration_flag(name: Str, help: Str, short: Str = "", default: Duration = 0s, env: Str = "", required: Bool = false) -> Flag {
   new_flag(name, help, short, env, DUR) with {def_dur: default, required: required, value: "duration"}
+}
+
+fn float_flag(name: Str, help: Str, short: Str = "", default: Float = 0.0, env: Str = "", required: Bool = false) -> Flag {
+  new_flag(name, help, short, env, FLOAT) with {def_float: default, required: required, value: "float"}
 }
 
 fn choice_flag(name: Str, help: Str, choices: List[Str], short: Str = "", default: Str = "", env: Str = "", required: Bool = false) -> Flag {
@@ -304,6 +311,9 @@ fn flag_help(f: Flag) -> Str {
   if f.kind == DUR && f.def_dur != 0s {
     s = add_note(s, "[default: ${f.def_dur}]")
   }
+  if f.kind == FLOAT && f.def_float != 0.0 {
+    s = add_note(s, "[default: ${f.def_float}]")
+  }
   if f.env != "" {
     s = add_note(s, "[env: ${f.env}]")
   }
@@ -464,6 +474,11 @@ fn set_val(f: Flag, var x: Val, v: Str, env: Str) -> () ! Str {
       Ok(d) => x.d = d
       Err(_) => return Err(value_err(f, v, env, "a duration such as 30s or 1m30s"))
     }
+  } else if f.kind == FLOAT {
+    match Float.parse(v) {
+      Some(n) => x.f = n
+      None => return Err(value_err(f, v, env, "a number"))
+    }
   } else if env != "" {
     x.l = x.l + v.split(",")
   } else {
@@ -493,7 +508,7 @@ fn index_of_short(fs: List[Flag], c: Str) -> Int? {
   r
 }
 
-fn empty_val() -> Val { Val{set: false, b: false, s: "", i: 0, d: 0s, l: []} }
+fn empty_val() -> Val { Val{set: false, b: false, s: "", i: 0, d: 0s, f: 0.0, l: []} }
 
 /// The parse of args; Err(the CliErr) for help, version, or a usage error.
 fn run_parse(root: Command, args: List[Str], env: Env, at: rt.Loc) -> Parsed ! cli.CliErr uses env {
@@ -831,13 +846,29 @@ fn (p: Parsed) duration_opt(name: Str, at: rt.Loc) -> Duration? {
   None
 }
 
+fn (p: Parsed) float(name: Str, at: rt.Loc) -> Float {
+  let (f, v) = p.flag(name, [FLOAT], at)
+  if v.set {
+    return v.f
+  }
+  f.def_float
+}
+
+fn (p: Parsed) float_opt(name: Str, at: rt.Loc) -> Float? {
+  let (_, v) = p.flag(name, [FLOAT], at)
+  if v.set {
+    return Some(v.f)
+  }
+  None
+}
+
 fn (p: Parsed) strs(name: Str, at: rt.Loc) -> List[Str] {
   let (_, v) = p.flag(name, [STRS], at)
   v.l
 }
 
 fn (p: Parsed) is_set(name: Str, at: rt.Loc) -> Bool {
-  let (_, v) = p.flag(name, [BOOL, STR, INT, DUR, CHOICE, STRS], at)
+  let (_, v) = p.flag(name, [BOOL, STR, INT, DUR, CHOICE, STRS, FLOAT], at)
   v.set
 }
 

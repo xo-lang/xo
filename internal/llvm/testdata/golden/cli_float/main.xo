@@ -1,0 +1,39 @@
+// std/cli float_flag (Go's flag.Float64): a value on the command line,
+// the default, its variable, Float.parse syntax (exponents, inf, NaN),
+// a value that is not a number, and the help line, with the same text
+// on every backend.
+use std/cli
+
+/// The tool, its variable named with prefix p.
+fn app(p: Str) -> cli.Command {
+  cli.command("tool", "Scales widgets.",
+    flags: [
+      cli.float_flag("rate", "how fast", short: "r", default: 1.5, env: p + "RATE"),
+      cli.float_flag("ratio", "the ratio", required: false),
+    ])
+}
+
+fn attempt(out: Stdio, env: Env, p: Str, args: List[Str]) uses (env, stdio) {
+  let line = "$ tool ${args.join(" ")}"
+  match cli.parse(app(p), args, env) {
+    Ok(x) => out.println("${line}\nrate=${x.float("rate")} rate_opt=${x.float_opt("rate") ?? -1.0} ratio=${x.float("ratio")} set=${x.is_set("ratio")}")
+    Err(e) => out.println("${line}\n[exit ${e.exit_code()}] ${e}")
+  }
+}
+
+fn main(os: Os) {
+  // env.txt sets TOOL_RATE and BAD_RATE; no NONE_ variable is set
+  let env = os.env
+  let out = os.stdio
+  attempt(out, env, "NONE_", [])
+  attempt(out, env, "NONE_", ["--rate", "3"])
+  attempt(out, env, "NONE_", ["-r", "-0.125", "--ratio=1e3"])
+  attempt(out, env, "NONE_", ["--rate=inf", "--ratio", "NaN"])
+  attempt(out, env, "NONE_", ["--rate", "1_000.5"])
+  attempt(out, env, "TOOL_", [])
+  attempt(out, env, "TOOL_", ["--rate", "4"])
+  attempt(out, env, "BAD_", [])
+  attempt(out, env, "NONE_", ["--rate", "fast"])
+  attempt(out, env, "NONE_", ["--rate"])
+  out.println(cli.help(app("NONE_")))
+}

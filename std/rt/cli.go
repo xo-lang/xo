@@ -17,12 +17,13 @@ const (
 	cliDur
 	cliChoice
 	cliStrs
+	cliFloat
 )
 
-var cliKindName = [...]string{"bool", "str", "int", "duration", "choice", "strs"}
+var cliKindName = [...]string{"bool", "str", "int", "duration", "choice", "strs", "float"}
 
 // cliReaders names the accessors of each kind of flag.
-var cliReaders = [...]string{"bool", "str or str_opt", "int or int_opt", "duration or duration_opt", "str or str_opt", "strs"}
+var cliReaders = [...]string{"bool", "str or str_opt", "int or int_opt", "duration or duration_opt", "str or str_opt", "strs", "float or float_opt"}
 
 type cliFlag struct {
 	name, short, help, env string
@@ -30,6 +31,7 @@ type cliFlag struct {
 	defStr                 string
 	defInt                 int64
 	defDur                 Duration
+	defFloat               float64
 	required               bool
 	value                  string
 	choices                []string
@@ -67,6 +69,7 @@ type cliVal struct {
 	s   string
 	i   int64
 	d   Duration
+	f   float64
 	l   []string
 }
 
@@ -151,6 +154,11 @@ func Cli_int_flag(_ *Task, name, help, short string, def int64, env string, requ
 // Cli_duration_flag is `cli.duration_flag(...)`.
 func Cli_duration_flag(_ *Task, name, help, short string, def Duration, env string, required bool) Cli_Flag {
 	return Cli_Flag{&cliFlag{name: name, short: short, help: help, env: env, kind: cliDur, defDur: def, required: required, value: "duration"}}
+}
+
+// Cli_float_flag is `cli.float_flag(...)`.
+func Cli_float_flag(_ *Task, name, help, short string, def float64, env string, required bool) Cli_Flag {
+	return Cli_Flag{&cliFlag{name: name, short: short, help: help, env: env, kind: cliFloat, defFloat: def, required: required, value: "float"}}
 }
 
 // Cli_choice_flag is `cli.choice_flag(...)`.
@@ -366,6 +374,10 @@ func cliFlagHelp(f *cliFlag) string {
 		if f.defDur != 0 {
 			add("[default: " + f.defDur.String() + "]")
 		}
+	case cliFloat:
+		if f.defFloat != 0 {
+			add("[default: " + FloatStr(f.defFloat) + "]")
+		}
 	}
 	if f.env != "" {
 		add("[env: " + f.env + "]")
@@ -547,6 +559,12 @@ func cliSet(vals map[*cliFlag]*cliVal, f *cliFlag, v, env string) *cliUsageErr {
 			return cliValueErr(f, v, env, "a duration such as 30s or 1m30s")
 		}
 		x.d = d
+	case cliFloat:
+		n := Float_parse(nil, v)
+		if !n.Some {
+			return cliValueErr(f, v, env, "a number")
+		}
+		x.f = n.V
 	case cliStrs:
 		if env != "" {
 			x.l = append(x.l, strings.Split(v, ",")...)
@@ -909,13 +927,29 @@ func (p Cli_Parsed) M_duration_opt(_ *Task, name string) Option[Duration] {
 	return None[Duration]()
 }
 
+func (p Cli_Parsed) M_float(_ *Task, name string) float64 {
+	f, v := p.p.flag(name, cliFloat)
+	if v.set {
+		return v.f
+	}
+	return f.defFloat
+}
+
+func (p Cli_Parsed) M_float_opt(_ *Task, name string) Option[float64] {
+	_, v := p.p.flag(name, cliFloat)
+	if v.set {
+		return Some(v.f)
+	}
+	return None[float64]()
+}
+
 func (p Cli_Parsed) M_strs(_ *Task, name string) List[string] {
 	_, v := p.p.flag(name, cliStrs)
 	return ListOf(v.l...)
 }
 
 func (p Cli_Parsed) M_is_set(_ *Task, name string) bool {
-	_, v := p.p.flag(name, cliBool, cliStr, cliInt, cliDur, cliChoice, cliStrs)
+	_, v := p.p.flag(name, cliBool, cliStr, cliInt, cliDur, cliChoice, cliStrs, cliFloat)
 	return v.set
 }
 

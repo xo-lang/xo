@@ -13,6 +13,7 @@ var (
 	_ func(*Task, string, string, string, string, string, bool, string) Cli_Flag                        = Cli_str_flag
 	_ func(*Task, string, string, string, int64, string, bool) Cli_Flag                                 = Cli_int_flag
 	_ func(*Task, string, string, string, Duration, string, bool) Cli_Flag                              = Cli_duration_flag
+	_ func(*Task, string, string, string, float64, string, bool) Cli_Flag                               = Cli_float_flag
 	_ func(*Task, string, string, List[string], string, string, string, bool) Cli_Flag                  = Cli_choice_flag
 	_ func(*Task, string, string, string, string, string) Cli_Flag                                      = Cli_strs_flag
 	_ func(*Task, string, string, bool) Cli_Arg                                                         = Cli_arg
@@ -29,6 +30,8 @@ var (
 	_ func(*Cli_Parsed, *Task, string) Option[int64]                                                    = (*Cli_Parsed).M_int_opt
 	_ func(*Cli_Parsed, *Task, string) Duration                                                         = (*Cli_Parsed).M_duration
 	_ func(*Cli_Parsed, *Task, string) Option[Duration]                                                 = (*Cli_Parsed).M_duration_opt
+	_ func(*Cli_Parsed, *Task, string) float64                                                          = (*Cli_Parsed).M_float
+	_ func(*Cli_Parsed, *Task, string) Option[float64]                                                  = (*Cli_Parsed).M_float_opt
 	_ func(*Cli_Parsed, *Task, string) List[string]                                                     = (*Cli_Parsed).M_strs
 	_ func(*Cli_Parsed, *Task, string) bool                                                             = (*Cli_Parsed).M_is_set
 	_ func(*Cli_Parsed, *Task, string) string                                                           = (*Cli_Parsed).M_arg

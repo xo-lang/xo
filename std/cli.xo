@@ -51,6 +51,9 @@ fn str_flag(name: Str, help: Str, short: Str = "", default: Str = "", env: Str =
 fn int_flag(name: Str, help: Str, short: Str = "", default: Int = 0, env: Str = "", required: Bool = false) -> Flag
 /// A duration flag, in `Duration.parse` syntax (`30s`, `1m30s`).
 fn duration_flag(name: Str, help: Str, short: Str = "", default: Duration = 0s, env: Str = "", required: Bool = false) -> Flag
+/// A floating point flag, in `Float.parse` syntax (`1.5`, `2e-3`, `inf`;
+/// Go's flag.Float64).
+fn float_flag(name: Str, help: Str, short: Str = "", default: Float = 0.0, env: Str = "", required: Bool = false) -> Flag
 /// A text flag whose value must be one of `choices`.
 fn choice_flag(name: Str, help: Str, choices: List[Str], short: Str = "", default: Str = "", env: Str = "", required: Bool = false) -> Flag
 /// A text flag that may be repeated (`-t a -t b`); its variable, if any, is
@@ -90,6 +93,8 @@ fn (p: Parsed) int(name: Str) -> Int
 fn (p: Parsed) int_opt(name: Str) -> Int?
 fn (p: Parsed) duration(name: Str) -> Duration
 fn (p: Parsed) duration_opt(name: Str) -> Duration?
+fn (p: Parsed) float(name: Str) -> Float
+fn (p: Parsed) float_opt(name: Str) -> Float?
 /// Every value of a `strs_flag`, in order.
 fn (p: Parsed) strs(name: Str) -> List[Str]
 /// Whether the flag was given on the command line or in its variable.

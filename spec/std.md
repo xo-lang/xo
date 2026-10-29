@@ -3296,6 +3296,8 @@ pub fn int_flag(name: Str, help: Str, short: Str = "", default: Int = 0, env: St
                 required: Bool = false) -> Flag
 pub fn duration_flag(name: Str, help: Str, short: Str = "", default: Duration = 0s, env: Str = "",
                      required: Bool = false) -> Flag
+pub fn float_flag(name: Str, help: Str, short: Str = "", default: Float = 0.0, env: Str = "",
+                  required: Bool = false) -> Flag   // Float.parse syntax: 1.5, 2e-3, inf, NaN
 pub fn choice_flag(name: Str, help: Str, choices: List[Str], short: Str = "", default: Str = "",
                    env: Str = "", required: Bool = false) -> Flag
 pub fn strs_flag(name: Str, help: Str, short: Str = "", env: Str = "", value: Str = "str") -> Flag
@@ -3422,6 +3424,7 @@ fn (p: Parsed) str(name: Str) -> Str     // also choice flags; the value, else t
 fn (p: Parsed) str_opt(name: Str) -> Str?
 fn (p: Parsed) int(name: Str) -> Int     // also int_opt
 fn (p: Parsed) duration(name: Str) -> Duration   // also duration_opt
+fn (p: Parsed) float(name: Str) -> Float // also float_opt
 fn (p: Parsed) strs(name: Str) -> List[Str]
 fn (p: Parsed) is_set(name: Str) -> Bool // given on the command line or in its variable
 fn (p: Parsed) arg(name: Str) -> Str     // a required positional argument
