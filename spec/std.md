@@ -1501,6 +1501,7 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr   // 4.6
 fn (c: Client) with_redirects(max: Int) -> Client          // decision 0404
 fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
 fn (r: Request) with_idle_timeout(d: Duration) -> Request  // decision 0404
+fn (r: Request) with_body_reader(b: BodyReader) -> Request // decision 0404
 
 fn (c: Client) open(req: Request) -> ClientStream ! ClientErr uses net.dial
 struct ResponseHead { status: Int, headers: Map[Str, Str] }
@@ -1566,6 +1567,16 @@ next DATA frame's bytes as it arrives (the window updated as they are
 received), `close` before the end resets the stream (RST_STREAM CANCEL)
 and the connection stays pooled, and a stream dropped without `close`
 before its end closes its connection.
+
+`req.with_body_reader(b)` sends a `handle_stream` route's body (or any
+BodyReader) as it is read, in place of `body`: with the request's own
+`Content-Length` field when it has one, else chunked (HTTP/1.1) or as
+DATA frames up to the end of the source (HTTP/2). Such a body is read
+once: a 307 or 308 is returned as it came instead of followed, a 301,
+302 or 303 is followed as a GET without a body, and a request that fails
+on a dead pooled connection is not sent again. An error reading the
+source fails the request with `Protocol` and the source's text. It is a
+client side builder.
 
 `parse_url` accepts absolute RFC 3986 URLs with an
 `http` or `https` scheme and a host; anything else is a `UrlErr`. An

@@ -2,7 +2,8 @@
 
 Status: Proposed (lead request, 2026-10-29: item 1 of the 0.35 std list;
 Xo Lang 2). Reviewed by Xo Lang 3 and the lead (2026-10-29). Stage A
-landed in 440f5b333; B1 (HTTP/1.1) and B2 (HTTP/2) landed 2026-10-29.
+landed in 440f5b333; B1 (HTTP/1.1) and B2 (HTTP/2) landed 2026-10-29; C's with_body_reader
+landed 2026-10-29, with_body_file deferred (below).
 
 ## Context
 
@@ -108,6 +109,13 @@ DATA frames (HTTP/2). Such a request is not replayed: a 307 or 308 that
 would resend its body returns the 3xx, and a dead pooled connection
 fails the request instead of retrying it (Go's `GetBody` absent). A 301,
 302 or 303 turns the request into a GET without a body, as `send` does.
+
+Deferred (2026-10-29): `with_body_file`. A File's read needs `uses
+fs.read`, and the body source is read later inside `send` (`uses
+net.dial`), so the builder would hide an effect from the caller's
+signature. Until a design keeps the effect visible (a `send` overload
+taking the File, or a source type that carries its effects), a file is
+sent with `os.fs.read` into `body`, or through a BodyReader.
 
 **D. A reverse proxy.**
 

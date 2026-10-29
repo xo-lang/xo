@@ -19,6 +19,7 @@ var (
 	_ func(*Http_Request, *Task, string, string) Http_Request                                                                                           = (*Http_Request).M_with_header
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_timeout
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_idle_timeout
+	_ func(*Http_Request, *Task, Http_BodyReader) Http_Request                                                                                          = (*Http_Request).M_with_body_reader
 	_ func(*Http_Request, *Task, string) List[string]                                                                                                   = (*Http_Request).M_header_values
 	_ func(*Http_Request, *Task, string, string) Http_Request                                                                                           = (*Http_Request).M_add_header
 	_ func(*Http_Request, *Task, List[Netip_Prefix], Http_ProxyHeader) Option[Netip_Addr]                                                               = (*Http_Request).M_client_ip

@@ -24,6 +24,7 @@ type Http_Request struct {
 	XFields     []string
 	XTimeout    Duration
 	XIdle       Duration
+	XSrc        bodySrc
 }
 
 func (v Http_Request) XoEq(x any) bool {

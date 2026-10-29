@@ -62,6 +62,10 @@ fn (r: Request) with_timeout(d: Duration) -> Request
 /// The limit for each read of an opened stream's body in place of its
 /// client's timeout; a client side builder (decision 0404).
 fn (r: Request) with_idle_timeout(d: Duration) -> Request
+/// The request with its body read from b as it is sent (a handle_stream
+/// route's body, decision 0404): chunked unless the header gives
+/// Content-Length, never sent twice (a 307 or 308 returns the 3xx).
+fn (r: Request) with_body_reader(b: BodyReader) -> Request
 /// Every field of name, in order (decision 0288).
 fn (r: Request) header_values(name: Str) -> List[Str]
 /// The request with one more field of name.

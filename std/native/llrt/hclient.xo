@@ -266,6 +266,31 @@ fn alert(r: Int) -> Str {
 /// Whether cl_start connected r for an HTTP/1.1 exchange: Xo
 /// sends the request (request) and reads the response, then ends it
 /// (end).
+/// Sends the next piece of a streamed request body (decision 0404 stage
+/// C): framed as a chunk when the request is chunked, the last chunk when
+/// last; CC_OK or the write's failure (the caller ends the exchange).
+pub fn send_chunk(r: rthttp.CResp, data: Bytes, chunked: Bool, last: Bool) -> Int {
+  let a = rec(r)
+  var out = BytesBuilder.with_capacity(data.len() + 16)
+  if chunked && data.len() > 0 {
+    out.write("${data.len().to_str_base(16)}\r\n".bytes())
+    out.write(data)
+    out.write("\r\n".bytes())
+  } else {
+    out.write(data)
+  }
+  if chunked && last {
+    out.write("0\r\n\r\n".bytes())
+  }
+  let b = out.freeze()
+  if b.is_empty() {
+    return CC_OK
+  }
+  let s = send(a + R_C, raw.bytes_addr(b), b.len())
+  raw.alive(b)
+  s
+}
+
 pub fn reading(r: rthttp.CResp) -> Bool { rt.mem_load(rec(r), R_READING, 4) != 0 }
 
 /// Sends the request on r's connection (net/http's Request.write with
@@ -275,12 +300,14 @@ pub fn reading(r: rthttp.CResp) -> Bool { rt.mem_load(rec(r), R_READING, 4) != 0
 /// five), Accept-Encoding gzip unless the header asks for an encoding or
 /// a Range or the method is HEAD, then the body. A failure ends the
 /// exchange: the connection closes and r has the error.
-pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes) {
+pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, chunked: Bool = false) {
   let a = rec(r)
   let hn = if names.len() < values.len() { names.len() } else { values.len() }
   var head = method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\n"
   var ua = -1
   var ae = false
+  // a streamed body's own Content-Length (decision 0404 stage C)
+  var cl = ""
   var room = 0
   // the fields as the C's hpairs (key, length, value, length) for
   // http1w.fields; names and values keep their bytes alive
@@ -300,6 +327,9 @@ pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
     if k == "Accept-Encoding" || k == "Range" {
       ae = true
     }
+    if k == "Content-Length" && chunked && cl.is_empty() {
+      cl = v
+    }
     i += 1
   }
   if ua < 0 {
@@ -308,7 +338,11 @@ pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
     head = head + "User-Agent: " + values[ua] + "\r\n"
   }
   let bn = body.len()
-  if bn > 0 || method == "POST" || method == "PUT" || method == "PATCH" {
+  if chunked {
+    // a streamed body (decision 0404 stage C): its length when the
+    // request gave it, else chunked; the bytes follow (send_chunk)
+    head = head + (if cl.is_empty() { "Transfer-Encoding: chunked\r\n" } else { "Content-Length: ${cl}\r\n" })
+  } else if bn > 0 || method == "POST" || method == "PUT" || method == "PATCH" {
     head = head + "Content-Length: ${bn}\r\n"
   }
   let tail = if !ae && method != "HEAD" { "Accept-Encoding: gzip\r\n\r\n" } else { "\r\n" }

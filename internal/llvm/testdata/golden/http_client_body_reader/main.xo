@@ -1,0 +1,69 @@
+// A streamed request body (decision 0404 stage C): a handle_stream
+// route forwards its body to another server with
+// Request.with_body_reader, chunked or with the Content-Length its
+// request gave; a 307 is returned as it came (the body cannot be sent
+// twice) while a 303 is followed as a GET without a body.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("POST /echo", fn(req) {
+    let te = req.header("Transfer-Encoding") ?? "-"
+    let cl = req.header("Content-Length") ?? "-"
+    http.text(200, "echo ${req.body.len()} bytes te=${te} cl=${cl} starts ${(req.body[0..(if req.body.len() < 6 { req.body.len() } else { 6 })]).to_str() ?? "?"}")
+  })
+  r.handle("POST /again", fn(_req) { http.empty(307).with_header("Location", "/echo") })
+  r.handle("POST /seeother", fn(_req) { http.empty(303).with_header("Location", "/got") })
+  r.handle("GET /got", fn(req) { http.text(200, "got ${req.method} ${req.body.len()} bytes") })
+  r
+}
+
+fn front(os: Os, upstream: Str) -> http.Router {
+  var r = http.router()
+  r.handle_stream("POST /fwd/{to}", fn(req, body) {
+    let c = http.client(os.net)
+    var out = http.new_request("POST", "${upstream}/${req.param("to")}").with_body_reader(body)
+    if let Some(n) = req.header("X-Length") {
+      out = out.with_header("Content-Length", n)
+    }
+    match c.send(out) {
+      Ok(resp) => http.text(200, "${resp.status} ${resp.text() ?? "?"}")
+      Err(e) => http.text(502, "${e}")
+    }
+  })
+  r
+}
+
+fn main(os: Os) {
+  match (os.net.listen("127.0.0.1:0"), os.net.listen("127.0.0.1:0")) {
+    (Ok(l1), Ok(l2)) => {
+      let up = http.server(l1, routes())
+      let fr = http.server(l2, front(os, "http://${l1.addr()}"))
+      let base = "http://${l2.addr()}"
+      let c = http.client(os.net)
+      let big = "abcdefghij".repeat(20000)
+      scope s {
+        for srv in [up, fr] {
+          s.spawn_background(fn() {
+            match srv.serve() {
+              Ok(_) => ()
+              Err(e) => os.stdio.println("serve failed: ${e}")
+            }
+          })
+        }
+        for (label, path, hdr) in [("chunked", "/fwd/echo", ""), ("length", "/fwd/echo", "200000"), ("307", "/fwd/again", ""), ("303", "/fwd/seeother", "")] {
+          var req = http.new_request("POST", base + path, {}, big.bytes())
+          if !hdr.is_empty() {
+            req = req.with_header("X-Length", hdr)
+          }
+          match c.send(req) {
+            Ok(resp) => os.stdio.println("${label}: ${resp.text() ?? "?"}")
+            Err(e) => os.stdio.println("${label}: ${e}")
+          }
+        }
+      }
+      os.stdio.println("done")
+    }
+    _ => os.stdio.println("listen failed")
+  }
+}

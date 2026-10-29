@@ -2618,7 +2618,15 @@ pub struct H2X {
   dec: Bool
   // the response
   status: Int
+  /// a streamed request body (decision 0404 stage C): its source, and
+  /// whether it ended
+  src: List[fn(Int) -> BodyPart] = []
+  src_end: Bool = false
 }
+
+/// Whether the request body has bytes left to send (x.body past x.off,
+/// or a source not yet ended).
+fn (x: H2X) pending() -> Bool { x.off < x.body.len() || (!x.src.is_empty() && !x.src_end) }
 
 /// Sends x.out; false when the write failed (x.res).
 fn (var x: H2X) flush(r: rthttp.CResp) -> Bool {
@@ -2880,20 +2888,20 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
 /// Transport.RoundTrip on one stream), then hands the connection and its
 /// state back to the pool (hclient.h2_end). hclient.retry tells whether
 /// the request goes again on a new connection.
-fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) {
-  var x = h2_begin(r, method, target, host, names, values, bn)
+fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart] = []) {
+  var x = h2_begin(r, method, target, host, names, values, bn, src)
   h2_pump(r, x, H2_TO_END)
   h2_done(r, x)
 }
 
 /// An HTTP/2 exchange on r: whole (h2_exchange), or for a stream up to
 /// the response's head, kept open (Some) unless it failed or ended there.
-fn h2_run(r: rthttp.CResp, stream: Bool, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) -> H2X? {
+fn h2_run(r: rthttp.CResp, stream: Bool, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart] = []) -> H2X? {
   if !stream {
-    h2_exchange(r, method, target, host, names, values, bn)
+    h2_exchange(r, method, target, host, names, values, bn, src)
     return None
   }
-  var x = h2_begin(r, method, target, host, names, values, bn)
+  var x = h2_begin(r, method, target, host, names, values, bn, src)
   h2_pump(r, x, H2_TO_HEAD)
   if x.res != CC_OK || x.ended {
     h2_done(r, x)
@@ -2910,7 +2918,7 @@ pub const H2_TO_DATA: Int = 2
 
 /// h2_exchange's start: the connection's state taken from the pool and
 /// the request's header frames sent.
-pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int) -> H2X {
+pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart] = []) -> H2X {
   var st = h2_state()
   let kept = hclient.h2_take(r)
   if let Some(a) = kept.get(0) {
@@ -2922,6 +2930,7 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: Lis
   var x = H2X{st: st, method: method, body: hclient.h2_body(r), off: 0, close: has_c && cv == "close", out: "", res: CC_OK, why: "", broken: false, goaway: false, goaway_last: 0, goaway_code: 0, goaway_debug: "", id: 0, swin: 0, sin_avail: 0, sin_unsent: 0, headers: false, ended: false, seen: false, refused: false, hb: "", hb_on: false, hb_flags: 0, hb_sid: 0, dec: false, status: 0}
   x.st.enc.set_sizes(x.st.sizes)
   x.st.sizes = ""
+  x.src = src
   let why = h2_check(names, values)
   if !why.is_empty() {
     x.why = why
@@ -2944,7 +2953,7 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: Lis
       if off + k == blk.len() {
         fl = fl | H2F_END_HEADERS
       }
-      if first && x.body.is_empty() {
+      if first && x.body.is_empty() && x.src.is_empty() {
         fl = fl | H2F_END_STREAM
       }
       x.out = push_frame(x.out, k, if first { H2T_HEADERS } else { H2T_CONT }, fl, x.id) + rawb.str_slice(blk, off, off + k)
@@ -2958,7 +2967,6 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: Lis
 
 /// Runs the exchange x on r until stop (H2_TO_*), a failure, or its end.
 pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
-  let bn2 = x.body.len()
   while x.res == CC_OK && !x.ended {
     if stop == H2_TO_HEAD && x.headers && !x.dec {
       break
@@ -2967,7 +2975,32 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
       break
     }
     // the body, as the windows allow
-    while x.off < bn2 && !x.ended {
+    while !x.ended {
+      if x.off >= x.body.len() && !x.src.is_empty() && !x.src_end {
+        // the source's next piece (decision 0404 stage C)
+        let p = x.src[0](32768)
+        if !p.err.is_empty() {
+          // the stream is reset; the connection stays usable
+          x.out = push_be32(push_frame(x.out, 4, H2T_RST, 0, x.id), 8)
+          let _ok = x.flush(r)
+          x.fail(false, p.err)
+          x.ended = true
+          break
+        }
+        x.body = p.data
+        x.off = 0
+        x.src_end = p.end
+        if x.body.is_empty() {
+          if x.src_end {
+            x.out = push_frame(x.out, 0, H2T_DATA, H2F_END_STREAM, x.id)
+          }
+          continue
+        }
+      }
+      let bn2 = x.body.len()
+      if x.off >= bn2 {
+        break
+      }
       var k = bn2 - x.off
       if k > x.st.peer_frame {
         k = x.st.peer_frame
@@ -2981,7 +3014,7 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
       if k <= 0 {
         break
       }
-      x.out = push_frame(x.out, k, H2T_DATA, if x.off + k == bn2 { H2F_END_STREAM } else { 0 }, x.id) + rawb.str_slice(x.body, x.off, x.off + k)
+      x.out = push_frame(x.out, k, H2T_DATA, if x.off + k == bn2 && (x.src.is_empty() || x.src_end) { H2F_END_STREAM } else { 0 }, x.id) + rawb.str_slice(x.body, x.off, x.off + k)
       x.off += k
       x.swin -= k
       x.st.win -= k
@@ -2993,7 +3026,7 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
       if !x.flush(r) {
         break
       }
-      if x.off < bn2 && x.swin > 0 && x.st.win > 0 {
+      if x.pending() && x.swin > 0 && x.st.win > 0 {
         continue
       }
     }
@@ -3046,7 +3079,6 @@ pub fn h2_cancel(r: rthttp.CResp, var x: H2X) {
 /// h2_exchange's end: the connection and its state back to the pool
 /// (hclient.h2_end).
 pub fn h2_done(r: rthttp.CResp, var x: H2X) {
-  let bn2 = x.body.len()
   var fl = 0
   if x.broken {
     fl = fl | XF_BROKEN
@@ -3063,7 +3095,7 @@ pub fn h2_done(r: rthttp.CResp, var x: H2X) {
   if x.headers {
     fl = fl | XF_HEADERS
   }
-  if x.off < bn2 {
+  if x.pending() {
     fl = fl | XF_UNSENT
   }
   if x.goaway {
@@ -3590,10 +3622,15 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
 /// the request's header does not count, as Transport looks only at
 /// Request.Close), else closed. A request
 /// that could not be written is an exchange with no response byte.
-fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots) -> Exchange {
-  hclient.request(r, method, target, host, hk, hv, body)
+fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart] = []) -> Exchange {
+  hclient.request(r, method, target, host, hk, hv, body, !src.is_empty())
   if hclient.err(r) != 0 {
     return ex_none(CC_ERR, "")
+  }
+  let sx = send_src(r, src, hk)
+  if sx.s != CC_OK {
+    hclient.end_keep(r, false, https, addr, name, roots, sx.s, sx.why)
+    return sx
   }
   let x = read_response(r, method)
   hclient.end_keep(r, x.keep, https, addr, name, roots, x.s, x.why)
@@ -3781,16 +3818,46 @@ pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
 
 /// h1_round up to the response's head (decision 0404): the connection
 /// stays r's for the body (cbody_next), or is closed on a failure.
-fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots) -> HeadRead {
-  hclient.request(r, method, target, host, hk, hv, body)
+fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart] = []) -> HeadRead {
+  hclient.request(r, method, target, host, hk, hv, body, !src.is_empty())
   if hclient.err(r) != 0 {
     return HeadRead{x: ex_none(CC_ERR, ""), b: BodyRead{mode: 0, done: true}}
+  }
+  let sx = send_src(r, src, hk)
+  if sx.s != CC_OK {
+    hclient.end_keep(r, false, https, addr, name, roots, sx.s, sx.why)
+    return HeadRead{x: sx, b: BodyRead{mode: 0, done: true}}
   }
   let hr = read_head(r, method)
   if hr.x.s != CC_OK {
     hclient.end_keep(r, false, https, addr, name, roots, hr.x.s, hr.x.why)
   }
   hr
+}
+
+/// Sends a streamed request body (decision 0404 stage C) after its head:
+/// chunked unless the request gave its Content-Length. A source's error
+/// fails the request with its text (Go's Client: the body's Read error).
+fn send_src(r: rthttp.CResp, src: List[fn(Int) -> BodyPart], hk: List[Str]) -> Exchange {
+  let f = match src.get(0) {
+    Some(g) => g
+    None => return Exchange{s: CC_OK, why: "", status: 0, headers: [], body: b"", keep: false, none: false}
+  }
+  let chunked = !has_key(hk, "Content-Length")
+  while true {
+    let p = f(32768)
+    if !p.err.is_empty() {
+      return ex_fail(CC_ERR, p.err)
+    }
+    let s = hclient.send_chunk(r, p.data.bytes(), chunked, p.end)
+    if s != CC_OK {
+      return ex_fail(s, "")
+    }
+    if p.end {
+      break
+    }
+  }
+  Exchange{s: CC_OK, why: "", status: 0, headers: [], body: b"", keep: false, none: false}
 }
 
 /// Whether a request may be sent again after its pooled connection
@@ -3865,7 +3932,7 @@ fn valid_method(m: Str) -> Bool {
 /// the attenuation lists of the client's Net (decision 0175), following
 /// redirects as net/http's Client does (redirectBehavior,
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = []) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -3886,6 +3953,9 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
   var raw = url
   var body = body0
   var include_body = true
+  // a streamed request body (decision 0404 stage C): read once, so never
+  // replayed or sent again by a 307 or 308
+  var src = src0
   var strip_sensitive = false
   var ihost = "" // the initial request's host
   var has_ihost = false
@@ -3972,13 +4042,18 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     // after the head
     var h2x: H2X? = None
     if hclient.h2(r) {
-      h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len())
+      h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src)
+      if hclient.retry(r) && !src.is_empty() {
+        // a streamed body cannot be sent again (Go's error without
+        // Request.GetBody)
+        return cfail(4, op + " " + go_quote(raw) + ": http2: Transport: cannot retry err after Request.Body was written; define Request.GetBody to avoid this error")
+      }
       if hclient.retry(r) {
         // the server did not take the request on the pooled connection:
         // it goes on a new one, as Transport retries it
         r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false)
         if hclient.h2(r) {
-          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len())
+          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src)
         }
       }
     }
@@ -3990,26 +4065,26 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     var hb = BodyRead{mode: 0, done: true}
     if h1 {
       var x = if stream {
-        let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+        let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src)
         hb = hr.b
         hr.x
       } else {
-        h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+        h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src)
       }
-      if x.none && hclient.reused(r) && replayable(method, hk) {
+      if x.none && hclient.reused(r) && replayable(method, hk) && src.is_empty() {
         // the pooled connection was dead (the server closed it): the
         // request goes once more on a new one, as Transport retries it
         // (decision 0303)
         r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false)
         h1 = hclient.reading(r)
         if hclient.h2(r) {
-          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len())
+          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src)
         } else if h1 && stream {
-          let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+          let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src)
           hb = hr.b
           x = hr.x
         } else if h1 {
-          x = h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+          x = h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src)
         }
       }
       if h1 && hclient.err(r) == 0 {
@@ -4030,7 +4105,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     }
     if stream && (h1 || h2x is Some(_)) {
       let li0 = field_at(headers, "Location")
-      let hop = max_redirects > 0 && (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && li0 >= 0 && !headers[li0 + 1].is_empty()
+      let hop = max_redirects > 0 && (status == 301 || status == 302 || status == 303 || (src.is_empty() && (status == 307 || status == 308))) && li0 >= 0 && !headers[li0 + 1].is_empty()
       if !hop {
         // the last response: its body is read as it arrives, a gzip one
         // decoded by the client on send's terms
@@ -4081,7 +4156,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     }
     // redirects (Client.Do's redirectBehavior)
     let li = field_at(headers, "Location")
-    let follow = (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && li >= 0 && !headers[li + 1].is_empty()
+    let follow = (status == 301 || status == 302 || status == 303 || (src.is_empty() && (status == 307 || status == 308))) && li >= 0 && !headers[li + 1].is_empty()
     if !follow || max_redirects <= 0 {
       // (max_redirects 0: CheckRedirect's ErrUseLastResponse, the 3xx
       // with its Location as sent; decision 0404)
@@ -4126,6 +4201,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       }
       // once a hop drops the body, it is never sent again
       include_body = false
+      src = []
     }
     if !include_body {
       body = b""

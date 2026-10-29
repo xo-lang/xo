@@ -45,6 +45,33 @@ func (r Http_Request) M_with_idle_timeout(_ *Task, d Duration) Http_Request {
 	return r
 }
 
+// M_with_body_reader is `r.with_body_reader(b)` (decision 0404 stage C):
+// the body read from b as it is sent, never replayed.
+func (r Http_Request) M_with_body_reader(_ *Task, b Http_BodyReader) Http_Request {
+	r.F_body = ""
+	r.XSrc = bodyReaderSrc{b.r}
+	return r
+}
+
+// bodySrc is a request body sent as it is read (Http_Request.XSrc).
+type bodySrc = io.Reader
+
+// bodyReaderSrc reads a BodyReader's source for a client request.
+type bodyReaderSrc struct{ r *bodyReader }
+
+func (s bodyReaderSrc) Read(p []byte) (int, error) {
+	s.r.mu.Lock()
+	defer s.r.mu.Unlock()
+	if s.r.eof {
+		return 0, io.EOF
+	}
+	n, err := s.r.src.Read(p)
+	if err == io.EOF {
+		s.r.eof = true
+	}
+	return n, err
+}
+
 // M_open is `c.open(req)`: the head, the body left on the stream.
 func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream, Http_ClientErr] {
 	if tk.Canceled() {

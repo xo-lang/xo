@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-10-29: feature: a request body sent as it is read (Request.with_body_reader)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0404 stage C (a proxy or upload relay had to hold the
+  whole request body)
+- Go reference: net/http NewRequest with an io.Reader body (ContentLength
+  -1, no GetBody: transfer.go chunked writing; client.go redirectBehavior
+  returns a 307/308 without GetBody); decision 0404 stage C
+- Test: internal/llvm/testdata/golden/http_client_body_reader (native and Go)
+
+`Request.with_body_reader(b)` sends a BodyReader's bytes as they are read,
+chunked unless the request gives Content-Length, over HTTP/1.1 and HTTP/2
+(DATA frames as the window allows). The body is never sent twice: a 307 or
+308 is returned, a 303 is followed as a GET without it.
+
 ## 2026-10-29: fix: std builds for separate compilation again after Client.open
 
 - Kind: fix

@@ -335,9 +335,23 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 		case <-ctx.Done():
 		}
 	}()
-	hr, err := http.NewRequestWithContext(ctx, req.F_method, rawURL, bytes.NewReader([]byte(req.F_body)))
+	var body io.Reader = bytes.NewReader([]byte(req.F_body))
+	if req.XSrc != nil {
+		// with_body_reader (decision 0404 stage C): sent as it is read,
+		// no GetBody, so never replayed
+		body = req.XSrc
+	}
+	hr, err := http.NewRequestWithContext(ctx, req.F_method, rawURL, body)
 	if err != nil {
 		return nil, nil, head, clientErr(1, err.Error())
+	}
+	if req.XSrc != nil {
+		hr.ContentLength = -1
+		if v := Map_get(tk, req.F_headers, "Content-Length"); v.Some {
+			if n, err := strconv.ParseInt(v.V, 10, 64); err == nil && n >= 0 {
+				hr.ContentLength = n
+			}
+		}
 	}
 	for k, v := range Map_All(req.F_headers) {
 		if len(req.XFields) == 0 {

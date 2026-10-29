@@ -57,6 +57,10 @@ struct Request {
   /// with_idle_timeout's limit in nanoseconds for each read of a stream,
   /// 0 for the client's timeout (decision 0404). Hidden from Xo code.
   idle_ns: Int = 0
+  /// with_body_reader's source of the body sent as it is read (decision
+  /// 0404 stage C), its pieces as the server's BodyPart (data the raw
+  /// bytes, never shown as text). Hidden from Xo code.
+  src: List[fn(Int) -> http1.BodyPart] = []
 }
 
 struct ReqValue {
@@ -2112,6 +2116,45 @@ fn (r: Request) with_timeout(d: Duration) -> Request { r with {timeout_ns: if d.
 /// 0404), the client's timeout when unset.
 fn (r: Request) with_idle_timeout(d: Duration) -> Request { r with {idle_ns: if d.nanos() > 0 { d.nanos() } else { 0 }} }
 
+/// req with its streamed body read whole (FakeNet's in memory exchange).
+fn src_whole(req: Request) -> Request ! http.ClientErr {
+  let f = match req.src.get(0) {
+    Some(g) => g
+    None => return Ok(req)
+  }
+  var out = BytesBuilder.new()
+  while true {
+    let p = f(32768)
+    if !p.err.is_empty() {
+      return Err(http.ClientErr.Protocol(msg: p.err))
+    }
+    if p.end {
+      break
+    }
+    out.write(p.data.bytes())
+  }
+  Ok(req with {body: out.freeze(), src: []})
+}
+
+/// The request with a body read from b as it is sent (decision 0404 stage
+/// C): chunked unless the request's header gives Content-Length; never
+/// sent twice (a 307 or 308 returns the 3xx, no retry on a dead pooled
+/// connection).
+fn (r: Request) with_body_reader(b: http.BodyReader) -> Request {
+  let f = fn(max: Int) -> http1.BodyPart {
+    match b.read(max) {
+      Ok(Some(d)) => {
+        let t = raw.str_at(raw.bytes_addr(d), d.len())
+        raw.alive(d)
+        http1.BodyPart{data: t, end: false, err: ""}
+      }
+      Ok(None) => http1.BodyPart{data: "", end: true, err: ""}
+      Err(e) => http1.BodyPart{data: "", end: false, err: "${e}"}
+    }
+  }
+  r with {body: b"", src: [f]}
+}
+
 // ---------------------------------------------------------------------------
 // A streamed response (decision 0404 stage B1)
 
@@ -2157,13 +2200,13 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   }
   if testworld.fake(4) {
     // FakeNet: the whole response, read as a stream
-    let resp = send_mem(req, raw)?
+    let resp = send_mem(src_whole(req)?, raw)?
     let st = StreamState{conn: None, h2: None, read: http1.BodyRead{mode: 0, done: true}, https: false, addr: "", name: "", roots: c.roots, buffered: resp.body, off: 0, gz: None, pending: b"", done: false, idle_ns: 0}
     return Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: resp.status, headers: resp.headers}, st: Mutex[StreamState].new(st)}))
   }
   let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
-  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, true)
+  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, true, req.src)
   match r.err {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))
@@ -2476,11 +2519,11 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   }
   if testworld.fake(4) {
     // FakeNet (a test without `uses net` and `xo test --real`)
-    return send_mem(req, raw)
+    return send_mem(src_whole(req)?, raw)
   }
   let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
-  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects)
+  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, false, req.src)
   match r.err {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))
