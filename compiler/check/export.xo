@@ -1378,6 +1378,13 @@ pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
     Some(y) => c.objs[o] = y
     None => fault("internal: the trees of ${text(c.objs[o].name)} are not where std's record says (${if f >= 0 && f < c.files.len() { c.files[f].path } else { "an interface's method" }})")
   }
+  // a body joined after check_module ran over its (then empty) file:
+  // marked for the lazy check as check_module would have, so the SSA
+  // builder's check_lazy checks it before lowering it
+  if !c.objs[o].fn_decl.is_empty() && c.objs[o].module >= 0 && c.lazy_mod(c.objs[o].module) && !c.lazy_fns.contains(o) {
+    c.lazy_fns[o] = true
+    c.check_fn_defaults(o)
+  }
 }
 
 /// Every std tree joined (the SSA builder's fallback, build_program_fe):
