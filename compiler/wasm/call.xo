@@ -17,13 +17,30 @@ fn (var g: Gen) call(v: Int) {
       g.home_call(v, ci)
       return
     }
+    let wide = g.wide_result(ci)
+    let n = g.nleaves(x.ty)
+    if wide && n != g.result_leaves(ci) {
+      g.fail("the wasm backend: the call of `${name}` takes ${n} result leaves, it returns ${g.result_leaves(ci)}")
+      return
+    }
+    let blk = if wide { g.sret_block(ci) } else { -1 }
     let id = if g.susp.len() > ci && g.susp[ci] { g.resume_point() } else { -1 }
     for a in x.args {
       g.push(a)
     }
+    if wide {
+      g.get(blk)
+    }
     g.e("call $f${ci}")
     g.suspend_check(id)
-    g.def(v)
+    if wide {
+      g.mem_push(blk, 0, g.leaves(x.ty))
+      g.def(v)
+      g.get(blk)
+      g.e("call $free")
+    } else {
+      g.def(v)
+    }
     g.check_fault(v)
     return
   }
@@ -542,9 +559,29 @@ fn (var g: Gen) call(v: Int) {
 /// A call of function ci, which takes parameters by reference
 /// (home.xo): a home of this function when the argument is its chain
 /// value given up here, else a temporary copy read back after the call.
+/// A zeroed block for the wide result of a call of function ci
+/// (wide_result; a fault exit stores none), in a new local: allocated
+/// before the call's resume point, so a resumed call passes the same one,
+/// and freed after the call reads it.
+fn (var g: Gen) sret_block(ci: Int) -> Int {
+  let n = g.result_leaves(ci)
+  let blk = g.tmps(["i32"])
+  g.e("i32.const ${8 * n}")
+  g.e("call $alloc")
+  g.set(blk)
+  g.get(blk)
+  g.e("i32.const 0")
+  g.e("i32.const ${8 * n}")
+  g.e("memory.fill")
+  blk
+}
+
 fn (var g: Gen) home_call(v: Int, ci: Int) {
   let x = g.f.values[v]
   let cf = g.m.funcs[ci]
+  // a wide result (wide_result): the callee stores its results but those
+  // left in homes at the block passed after the arguments
+  let blk = if g.wide_result(ci) { g.sret_block(ci) } else { -1 }
   let id = if g.susp.len() > ci && g.susp[ci] { g.resume_point() } else { -1 }
   // per `var` result: the temporary block holding it (-1: none)
   var tmp: List[Int] = []
@@ -595,12 +632,22 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
       }
     }
   }
+  if blk >= 0 {
+    g.get(blk)
+  }
   g.e("call $f${ci}")
   g.suspend_check(id)
   // the results the callee returns, into the tuple's locals
   if g.homes[ci].len() == g.rhomes[ci].len() {
     // only read only homes: the results are the SSA's
+    if blk >= 0 {
+      g.mem_push(blk, 0, g.leaves(x.ty))
+    }
     g.def(v)
+    if blk >= 0 {
+      g.get(blk)
+      g.e("call $free")
+    }
     for t in frees {
       g.get(t)
       g.e("call $free")
@@ -611,12 +658,27 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
   let rt = x.ty
   let tys = g.field_tys(rt)
   let base = g.loc(v)
-  var k = tys.len() - 1
-  while k >= 0 {
-    if !g.home_result(ci, k) {
-      g.set_range(base + g.field_off(rt, k), g.nleaves(tys[k]))
+  if blk >= 0 {
+    // in order from the block, as the callee's Return stored them
+    var at = 0
+    for (k1, ft) in tys.indexed() {
+      if !g.home_result(ci, k1) {
+        let ls = g.leaves(ft)
+        g.mem_push(blk, 8 * at, ls)
+        g.set_range(base + g.field_off(rt, k1), ls.len())
+        at += ls.len()
+      }
     }
-    k -= 1
+    g.get(blk)
+    g.e("call $free")
+  } else {
+    var k = tys.len() - 1
+    while k >= 0 {
+      if !g.home_result(ci, k) {
+        g.set_range(base + g.field_off(rt, k), g.nleaves(tys[k]))
+      }
+      k -= 1
+    }
   }
   for (k2, t) in tmp.indexed() {
     if t >= 0 {

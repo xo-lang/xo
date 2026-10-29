@@ -64,6 +64,14 @@ fn (var g: Gen) func(fi: Int) {
       rs.push(l)
     }
   }
+  // a wide result is stored at the address of one more parameter
+  // (wide_result), and the function returns none
+  g.sret = -1
+  if g.wide_result(fi) {
+    g.sret = ps.len()
+    ps.push("i32")
+    rs = []
+  }
   g.cur = FnText{nparams: ps.len()}
   g.nres_leaves = rs.len()
   g.zexit = false
@@ -215,6 +223,7 @@ fn (var g: Gen) func(fi: Int) {
   g.coalesce_locals(g.pc_local)
   g.renumber_locals()
   g.memory_frame()
+  g.check_arity("${f.name}", ps, rs)
   var head = "(func $f${fi}"
   if !ps.is_empty() {
     head = "${head} (param ${ps.join(" ")})"
@@ -999,7 +1008,10 @@ fn (var g: Gen) release_run(instrs: List[Int], j: Int) -> Int {
     g.e("call ${g.drop_mem_fields_fn(g.vty(c), fields)}")
     return k - j
   }
-  if cost <= g.nleaves(g.vty(c)) + 2 {
+  if cost <= g.nleaves(g.vty(c)) + 2 || g.nleaves(g.vty(c)) > WIDE_RC {
+    // (a wide value's fields are released one by one, each through its
+    // address when wide itself: a helper taking all its leaves could
+    // pass the 1000 parameters a browser accepts)
     return 0
   }
   if g.alloc_leaves(c).len() < g.nleaves(g.vty(c)) {
@@ -1424,9 +1436,20 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
           stores.push((h, g.loc(a)))
         }
       }
+      var at = 0
       for (k, a) in x.args.indexed() {
         if g.result_home(k) < 0 {
-          g.push(a)
+          if g.sret >= 0 {
+            let ls = g.leaves(g.vty(a))
+            for (j, l) in ls.indexed() {
+              g.get(g.sret)
+              g.push_part(a, j, j + 1)
+              g.e("${l}.store offset=${8 * (at + j)}")
+            }
+            at += ls.len()
+          } else {
+            g.push(a)
+          }
         }
       }
       for (h, b) in stores {

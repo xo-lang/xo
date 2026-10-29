@@ -925,6 +925,7 @@ fn simple_op(op: Str) -> Int {
     "i64.trunc_f64_s" => 0xB0
     "i32.trunc_f64_s" => 0xAA
     "f32.convert_i64_s" => 0xB4
+    "f32.convert_i64_u" => 0xB5
     "f32.demote_f64" => 0xB6
     "f64.convert_i32_s" => 0xB7
     "f64.convert_i64_s" => 0xB9

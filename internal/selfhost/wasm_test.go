@@ -125,7 +125,11 @@ func TestSelfhostWasm(t *testing.T) {
 				return
 			}
 			if !strings.HasPrefix(line, "== ok ") {
-				if strings.HasPrefix(line, "== unsupported ") {
+				// the backend's own assembler rejecting its output is a bug,
+				// not an unsupported construct (u64_to_float32's
+				// f32.convert_i64_u counted as unsupported from 2026-10-23 to
+				// 2026-10-29)
+				if strings.HasPrefix(line, "== unsupported ") && !strings.Contains(line, "the assembler:") {
 					unsupported++
 					why = append(why, name+": "+strings.TrimPrefix(line, "== unsupported "))
 					return

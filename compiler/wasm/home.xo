@@ -99,6 +99,30 @@ fn (g: Gen) home_result(fi: Int, k: Int) -> Bool {
   g.homes[fi].contains(g.m.funcs[fi].var_params[k - 1])
 }
 
+/// The leaves function fi returns (its results but those left in homes).
+fn (var g: Gen) result_leaves(fi: Int) -> Int {
+  var n = 0
+  for (k, r) in g.m.funcs[fi].results.indexed() {
+    if !g.home_result(fi, k) {
+      n += g.nleaves(r)
+    }
+  }
+  n
+}
+
+/// The most result leaves a function returns as values: past it they
+/// are stored at an address the caller passes (a block it allocates),
+/// since a WebAssembly engine accepts at most 1000 results (the SSA
+/// builder's Builder, returned by ssa.build_program_*, has more).
+const MAX_RESULTS = 1000
+
+/// Whether function fi returns its results through memory: more than
+/// MAX_RESULTS leaves, called only directly.
+fn (var g: Gen) wide_result(fi: Int) -> Bool {
+  let f = g.m.funcs[fi]
+  !f.indirect && !f.entry && g.result_leaves(fi) > MAX_RESULTS
+}
+
 /// The home of the current function that holds `var` result k, -1 for
 /// none.
 fn (g: Gen) result_home(k: Int) -> Int {
@@ -957,8 +981,21 @@ fn (var g: Gen) rc_addr_fn(op: Str, t: Int) -> Str {
   g.dropf[key] = name
   let saved = g.cur
   g.begin_helper(["i32"])
-  g.mem_push(0, 0, g.leaves(t))
-  g.e("call ${g.rc_fn(op, t)}")
+  if g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple {
+    // field by field from memory: the helper that takes the value's
+    // leaves as parameters would pass every leaf, and a struct of more
+    // than 1000 (the SSA builder's, compiler/wasm built for the
+    // playground) is a module no browser loads (2026-10-29)
+    let tys = g.field_tys(t)
+    for i in 0..tys.len() {
+      if g.heap(tys[i]) {
+        g.mem_rc(op, tys[i], 0, 8 * g.field_off(t, i))
+      }
+    }
+  } else {
+    g.mem_push(0, 0, g.leaves(t))
+    g.e("call ${g.rc_fn(op, t)}")
+  }
   g.end_helper(name, ["i32"], [], "${op} ${g.m.types[t].name} in memory")
   g.cur = saved
   name
@@ -982,10 +1019,27 @@ fn (var g: Gen) drop_mem_fields_fn(t: Int, fs: List[Int]) -> Str {
   g.begin_helper(["i32"])
   let tys = g.field_tys(t)
   for i in sorted {
-    g.mem_push(0, 8 * g.field_off(t, i), g.leaves(tys[i]))
-    g.e("call ${g.rc_fn("drop", tys[i])}")
+    g.mem_rc("drop", tys[i], 0, 8 * g.field_off(t, i))
   }
   g.end_helper(name, ["i32"], [], "drop fields ${ks.join(" ")} of ${g.m.types[t].name} in memory")
   g.cur = saved
   name
+}
+
+/// Retains (op "dup") or releases ("drop") the value of type t at offset
+/// off of the memory at local p: a wide struct or tuple (more than
+/// WIDE_RC leaves) through its address, field by field (rc_addr_fn),
+/// else its leaves pushed to the helper that takes them.
+fn (var g: Gen) mem_rc(op: Str, t: Int, p: Int, off: Int) {
+  if g.nleaves(t) > WIDE_RC && g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple {
+    g.get(p)
+    if off > 0 {
+      g.e("i32.const ${off}")
+      g.e("i32.add")
+    }
+    g.e("call ${g.rc_addr_fn(op, t)}")
+    return
+  }
+  g.mem_push(p, off, g.leaves(t))
+  g.e("call ${g.rc_fn(op, t)}")
 }

@@ -122,6 +122,9 @@ pub struct Gen {
   /// The result leaves of the function being lowered, and whether a
   /// fault exit branches to its shared zero results (`$Z`).
   nres_leaves: Int = 0
+  /// The parameter holding the address the current function stores its
+  /// results at (a wide result, wide_result), -1 for none.
+  sret: Int = -1
   zexit: Bool = false
   /// Per value of the function being lowered: its uses.
   nuse: List[Int] = []
@@ -641,8 +644,18 @@ fn (var g: Gen) begin_helper(ps: List[Str]) {
   g.cur = FnText{nparams: ps.len()}
 }
 
+/// Fails the build when a function's parameters or results pass the
+/// 1000 that V8 (and so Node and the browsers) accepts in a function
+/// type: the module would not load at all.
+fn (var g: Gen) check_arity(name: Str, ps: List[Str], rs: List[Str]) {
+  if ps.len() > 1000 || rs.len() > 1000 {
+    g.fail("the wasm backend made ${name} with ${ps.len()} parameters and ${rs.len()} results: more than the 1000 a WebAssembly engine accepts")
+  }
+}
+
 /// The text of the helper in the current buffer.
 fn (var g: Gen) end_helper(name: Str, ps: List[Str], rs: List[Str], comment: Str) {
+  g.check_arity(name, ps, rs)
   g.coalesce_locals(-1)
   var head = "(func ${name}"
   if !ps.is_empty() {
@@ -1174,11 +1187,24 @@ fn (var g: Gen) eq_leaves(t: Int, a: Int, b: Int) {
 // The module
 
 /// Whether the program uses the task runtime (rt3.xo), and which
-/// functions can suspend: those that call a blocking runtime function or
-/// a function value, and their callers.
+/// functions can suspend: those that call a blocking runtime function, or
+/// a function value that can reach one that suspends, and their callers.
 fn (var g: Gen) find_susp() {
   g.susp = []
   var calls: List[List[Int]] = []
+  // the functions a function value can name (closures, Rebind's), and
+  // each function's calls through a function value, by the parameter
+  // types of their call_indirect (the leaves of every argument): a call
+  // reaches only a function of its exact type, so it can suspend only
+  // when one with those parameters can. Without it one task in the
+  // program made every call through a function value a suspension point
+  // and every caller save its frame: compiler/wasm for the playground
+  // grew from 19.7 to 87.9 MB when ssa's passes took tasks (2026-10-29).
+  var target: List[Bool] = []
+  for f in g.m.funcs {
+    target.push(f.indirect)
+  }
+  var cvs: List[List[Str]] = []
   // a call through a function value can suspend only when some function
   // of the program waits: a program that uses the clock (rt3.xo) but no
   // blocking call never suspends, and its functions keep no frames (the
@@ -1192,6 +1218,12 @@ fn (var g: Gen) find_susp() {
             blocks = true
           }
         }
+      } else if x.op == ssa.Op.Rebind {
+        if let S(n) = x.aux {
+          if let Some(ci) = g.by_name.get(n) {
+            target[ci] = true
+          }
+        }
       }
     }
   }
@@ -1199,9 +1231,10 @@ fn (var g: Gen) find_susp() {
   for f in g.m.funcs {
     var s = false
     var cs: List[Int] = []
+    var cv: List[Str] = []
     for x in f.values {
       if x.op == ssa.Op.CallValue && blocks {
-        s = true
+        cv.push(g.args_key(f, x.args))
       }
       if x.op == ssa.Op.Call {
         let name = match x.aux {
@@ -1222,12 +1255,22 @@ fn (var g: Gen) find_susp() {
     }
     g.susp.push(s)
     calls.push(cs)
+    cvs.push(cv)
   }
   if !g.conc {
     for i in 0..g.susp.len() {
       g.susp[i] = false
     }
     return
+  }
+  // the parameter types of the targets that can suspend
+  var skeys: Set[Str] = #{}
+  var tkeys: List[Str] = []
+  for (fi, f) in g.m.funcs.indexed() {
+    tkeys.push(if target[fi] { g.args_key(f, f.blocks[0].params) } else { "" })
+    if target[fi] && g.susp[fi] {
+      skeys.add(tkeys[fi])
+    }
   }
   var changed = true
   while changed {
@@ -1236,15 +1279,43 @@ fn (var g: Gen) find_susp() {
       if g.susp[fi] {
         continue
       }
+      var s = false
       for ci in cs {
         if g.susp[ci] {
-          g.susp[fi] = true
-          changed = true
+          s = true
           break
+        }
+      }
+      if !s {
+        for k in cvs[fi] {
+          if skeys.contains(k) {
+            s = true
+            break
+          }
+        }
+      }
+      if s {
+        g.susp[fi] = true
+        changed = true
+        if target[fi] {
+          skeys.add(tkeys[fi])
         }
       }
     }
   }
+}
+
+/// The wasm parameter types of values vs of function f (their leaves in
+/// order), a call_indirect's parameters.
+fn (var g: Gen) args_key(f: ssa.Func, vs: List[Int]) -> Str {
+  var b = StrBuilder.new()
+  for v in vs {
+    for l in g.leaves(f.values[v].ty) {
+      b.write(l)
+      b.write(" ")
+    }
+  }
+  b.freeze()
 }
 
 /// Appends the names of the functions text calls (`call $name`) to out.
