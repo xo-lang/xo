@@ -24,7 +24,29 @@ fn signature_size(code_size: Int, id: Str) -> Int {
 /// The signature of head + tail (the whole file before it, in two
 /// pieces, so the caller joins them once): flags adhoc and linker
 /// signed, the executable segment (__TEXT) of a main binary.
+/// The SHA-256 of each code signature page of head + tail that lies wholly
+/// in tail (from the first page boundary at or past head's end): what
+/// code_signature hashes there, computed before head is known (link.xo
+/// takes the executable's UUID from them, decision 0400).
+fn tail_page_hashes(hl: Int, tail: Bytes) -> List[Bytes] {
+  let code_size = hl + tail.len()
+  var p = (hl + CS_PAGE - 1) / CS_PAGE * CS_PAGE
+  var out: List[Bytes] = List.with_capacity((code_size - p + CS_PAGE - 1) / CS_PAGE + 1)
+  while p < code_size {
+    let end = imin(code_size, p + CS_PAGE)
+    out.push(crypto.sha256(tail[p - hl..end - hl]))
+    p = end
+  }
+  out
+}
+
 fn code_signature(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_size: Int) -> Bytes {
+  code_signature_with(head, tail, id, text_off, text_size, [])
+}
+
+/// code_signature, with tail_page_hashes(head.len(), tail) already made
+/// (pre; [] to make them here).
+fn code_signature_with(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_size: Int, pre: List[Bytes]) -> Bytes {
   let hl = head.len()
   let code_size = hl + tail.len()
   let nhashes = (code_size + CS_PAGE - 1) / CS_PAGE
@@ -65,9 +87,13 @@ fn code_signature(head: Bytes, tail: Bytes, id: Str, text_off: Int, text_size: I
   o.bytes(id.bytes())
   o.u8(0)
   var p = 0
+  var pi = 0
   while p < code_size {
     let end = imin(code_size, p + CS_PAGE)
-    if p >= hl {
+    if p >= hl && pi < pre.len() {
+      o.bytes(pre[pi])
+      pi += 1
+    } else if p >= hl {
       o.bytes(crypto.sha256(tail[p - hl..end - hl]))
     } else {
       // a page holding the head's end

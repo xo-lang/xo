@@ -1627,10 +1627,19 @@ fn (var l: Linker) write() -> Bytes {
   }
   body.bytes(link_bytes)
   let rest = body.done()
-  // the UUID: a hash of everything but the header (as zeros)
+  // the UUID: a hash of everything but the header (as zeros), from the
+  // code signature's own page hashes of the pages past the header, which
+  // the signature then reuses, and the bytes before the first of them:
+  // one pass over the image instead of two (decision 0400: the image's
+  // own SHA-256 was 2.4 ms of an HTTP server's 41 ms store link)
+  let pages = tail_page_hashes(hl, rest)
   var uh = crypto.hasher(crypto.Hash.Sha256)
   uh.write(zeros(hl))
-  uh.write(rest)
+  let first = imin(rest.len(), (hl + CS_PAGE - 1) / CS_PAGE * CS_PAGE - hl)
+  uh.write(rest[0..first])
+  for ph in pages {
+    uh.write(ph)
+  }
   let uuid = uh.sum()[0..16]
   l.uuid = uuid
 
@@ -1806,7 +1815,7 @@ fn (var l: Linker) write() -> Bytes {
   // the header and load commands fill the start of __TEXT's first page
   let head = h.done()
   let text = l.segs[1]
-  let sig = code_signature(head, rest, l.opts.name, text.fileoff, text.filesize)
+  let sig = code_signature_with(head, rest, l.opts.name, text.fileoff, text.filesize, pages)
   var file = BytesBuilder.with_capacity(head.len() + rest.len() + sig.len())
   file.write(head)
   file.write(rest)
