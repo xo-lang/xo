@@ -423,13 +423,23 @@ fn (l: Linker) eh_live(o: Int, s: ISect, live: List[List[Bool]]) -> ISect {
       return s
     }
   }
+  // each FDE's function pointer's relocation, found by its place once
+  // (a scan of every relocation per record was most of eh_live: about
+  // 1.5 ms of an HTTP store link, 2026-10-29); the last at a place wins,
+  // as the scan's did
+  var fn_rel: Map[Int, IReloc] = {}
+  for r in s.relocs {
+    if r.typ == R_UNSIGNED && r.ext {
+      fn_rel[r.addr] = r
+    }
+  }
   var keep: List[Bool] = []
   var dropped = false
   for rec in recs {
     var k = true
     if rec + 16 <= d.len() && rd32(d, rec + 4) != 0 {
-      for r in s.relocs {
-        if r.addr == rec + 8 && r.typ == R_UNSIGNED && r.ext && sub_at.contains(rec + 8) && rd64(d, rec + 8) + rec + 8 == 0 {
+      if let Some(r) = fn_rel.get(rec + 8) {
+        if sub_at.contains(rec + 8) && rd64(d, rec + 8) + rec + 8 == 0 {
           // the function's own atom in this object (an FDE describes
           // this object's code; the name may resolve to another
           // object's copy of a weak definition)
