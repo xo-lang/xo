@@ -2309,7 +2309,12 @@ fn stream_request(q: h2srv.H2Req) -> Request {
   if p >= 0 {
     port = Some(p)
   }
-  let url = http.Url{scheme: q.scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
+  // HTTP/2 is reached through with_tls only (decision 0244): the scheme
+  // is https when the :scheme pseudo header did not say (Go's server
+  // fills URL.Scheme from it; TestH2Diff on windows/amd64 printed an
+  // empty one, 2026-10-29)
+  let scheme = if q.scheme.is_empty() { "https" } else { q.scheme }
+  let url = http.Url{scheme: scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
   let req = Request{over_tls: true, raw_host: q.urlhost, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
   if !q.streamed {
     return req

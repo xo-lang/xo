@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-10-30: fix: an HTTP/2 request's url.scheme is https when the :scheme pseudo header is missing
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestH2Diff on windows/amd64 (CI run 40926030751: native `scheme=` against Go's `scheme=https`)
+- Go reference: net/http's HTTP/2 server fills URL.Scheme from :scheme
+- Test: internal/llvm TestH2Diff (the Mac), golden http_server_request
+
+stream_request (std/native/http.xo) takes "https" when h2srv's request
+has no scheme; HTTP/2 is reached through with_tls only, so the scheme is
+known. The HTTP/1.1 path got the same from the connection's TLS state in
+53b878858.
+
 ## 2026-10-29: feature: server timeouts and limits (server gaps, part 2)
 
 - Kind: feature
