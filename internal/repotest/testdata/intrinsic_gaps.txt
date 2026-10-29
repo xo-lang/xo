@@ -217,6 +217,7 @@ wasm sched_hook the native runtime's (stacks, scheduler, unwinder, native heap):
 wasm sched_run_task the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
 wasm stack_switch the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
 wasm status_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
+wasm str_at not on wasm (decision 0402): read_mapped is read there, and nothing else calls it; a name the wasm backend lacks makes a program unsupported
 wasm str_inline --inline-str is arm64 only (decision 0370): a build for another backend never has an inline Str
 wasm sym_addr lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm sym_present lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
