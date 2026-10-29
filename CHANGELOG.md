@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- xo build: when std's store build fails (a std edit only the store's
+  full check rejects), every separately compiled build prints one
+  warning with the std file:line and builds the whole program; before,
+  the fallback was silent. internal/arm64 TestStdStoreBuilds (run under
+  -short too) builds the store from scratch.
 - Profile-guided code layout, stage 1 (decision 0403): `xo prof FILE
   --layout=xo.layout` reduces a CPU profile to a layout file, and `xo
   build` and `xo run` order the program's functions by it (the sampled
