@@ -1039,8 +1039,6 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // the link's context: its target OS (a cross build's)
   var lctx = ctx
   lctx.tgoos = ltarget.split("/")[0]
-  // decision 0403 stage 1b: the layout's symbol order for a store link
-  lctx.layout_order = o.layout_syms
   let tests = o.cmd == "test"
   let release = o.release && !tests
   var t = os.clock.now()
@@ -1982,6 +1980,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       if !mhit {
         var lctx = ctx
         lctx.sep_store = sepcomp_store(os, b.conc)
+        // decision 0403 stage 1b: the layout's symbol order for the store
+        // link (read after lctx was made, so set here)
+        lctx.layout_order = o.layout_syms
         let why = macho_link(os, lctx, tgoos, flags, srcs, mst.bin, o.strip, nl, race_rt, o.dsym, split_dbg, release)
         if !why.is_empty() {
           fail_stage(os, mst, why)
