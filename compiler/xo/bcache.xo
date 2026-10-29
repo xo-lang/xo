@@ -524,7 +524,7 @@ fn stamp_root(root: Str, stamps: List[(Str, Str)]) -> Str {
 /// the compiler's identity: the checker's and the builder's flags; the
 /// cleanup cache's keys hash it too (decision 0382).
 fn fe_settings(c: check.Checker, root: Str, tests: Bool, release: Bool, real: Bool, tgoos: Str, tgoarch: Str, wasm: Bool, nolibc: Bool, prof: Bool, trace: Bool, soft_cpu: Bool, heap_guard: Bool) -> Str {
-  "maplog=${c.map_log}\nmapcore=${c.map_core}\nmapbr=${c.map_branch}\nnopreempt=${c.no_preempt}\ndet=${c.det}\nsettings=${c.set_debug_contracts},${c.set_dbg},${c.set_error_args},${c.set_trace}\ndwarf=${c.dwarf}\ninlstr=${c.inline_str}\nrace=${c.race}\nllvm=${c.async_preempt_llvm}\nasync=${c.async_preempt_ok}\n${ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}"
+  "maplog=${c.map_log}\nmapcore=${c.map_core}\nmapbr=${c.map_branch}\nnopreempt=${c.no_preempt}\ndet=${c.det}\nsettings=${c.set_debug_contracts},${c.set_dbg},${c.set_error_args},${c.set_trace}\ndwarf=${c.dwarf}\ninlstr=${c.inline_str}\nrace=${c.race}\nllvm=${c.async_preempt_llvm}\nusec=${c.mods.any(fn(m) { !m.c_prefix.is_empty() })}\nasync=${c.async_preempt_ok}\n${ssa.fe_flags(root, tests, release, real, tgoos, tgoarch, wasm, nolibc, prof, trace, soft_cpu, heap_guard)}"
 }
 
 /// add_landings and cleanup through the cleanup cache (decision 0382,
