@@ -66,12 +66,22 @@ and the store link places std's atoms in the store's order.
 5. Default: `xo build` and `xo run` use `./xo.layout` of the main package
    when it exists; `--layout=FILE` names another, `--layout=off` (or
    `XO_LAYOUT=off`) ignores it. Nothing changes for a program without one.
+   The profile names the target it was taken on (`target OS/ARCH` on its
+   first line, from the .xoraw's build info): a build for another target,
+   or with --race, or by the LLVM or Go backend, ignores the file with one
+   line on standard error (`layout: xo.layout is darwin/arm64's, ignored
+   for linux/amd64`); stage 1's ordering could apply across targets, but a
+   profile taken elsewhere says little about this target's placement, so
+   nothing is applied rather than half.
 
 6. Measured by: interp, collatz and strings at the 16 `XO_ARM64_PAD`
    placements, quiet `xo bench --ab` against the same binary without the
    layout. The goal is the spread (max over min cycles across placements)
    shrinking to the noise, with the median no worse; a result that only
    moves the median at one placement is the thing 0075 warned about.
+   Stage 2's alignment pays bytes at every hot loop head and `br` block, so
+   its results carry a code-size row (the program's and xo's own `__text`,
+   as every codegen change does) beside the spread and the median.
 
 ## Consequences
 
