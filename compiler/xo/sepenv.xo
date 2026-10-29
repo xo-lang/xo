@@ -30,7 +30,9 @@ fn (e: SepEnv) home() -> Str ! EnvErr uses env { e.inner.home() }
 fn (e: SepEnv) only(names: List[Str]) -> Env { e.inner.only(names) }
 fn (e: SepEnv) config_dir() -> Str ! EnvErr uses env { e.inner.config_dir() }
 fn (e: SepEnv) cache_dir() -> Str ! EnvErr uses env { e.inner.cache_dir() }
-fn (e: SepEnv) hostname() -> Str uses env { e.inner.hostname() }
+/// "" until a released seed can compile a call of Env.hostname in
+/// compiler/ (decision 0410), as RecEnv's.
+fn (e: SepEnv) hostname() -> Str uses env { "" }
 
 /// os with the variables of over set.
 fn with_env(os: Os, over: Map[Str, Str]) -> Os {
