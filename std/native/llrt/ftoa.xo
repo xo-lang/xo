@@ -199,70 +199,86 @@ fn shortest(f: Float) -> Dec {
 
 fn at(d: Dec, i: Int) -> Int { if i >= 0 && i < d.d.len() { d.d[i] } else { 0 } }
 
-/// fmtE: d.ddde+XX with prec digits after the point.
-fn fmt_e(out: Str, neg: Bool, d: Dec, prec: Int, e: Int) -> Str {
-  var s = out
-  if neg {
-    s = s + "-"
-  }
-  s = s + (if d.d.len() == 0 { "0" } else { "${d.d[0]}" })
-  if prec > 0 {
-    s = s + "."
-    var i = 1
-    let m = if d.d.len() < prec + 1 { d.d.len() } else { prec + 1 }
-    while i < m {
-      s = s + "${d.d[i]}"
-      i += 1
-    }
-    while i <= prec {
-      s = s + "0"
-      i += 1
-    }
-  }
-  s = s + (if e == 69 { "E" } else { "e" })
+/// The digit v (0 to 9) as a byte.
+fn dig(v: Int) -> UInt8 { UInt8(48 + v) }
+
+/// b's exponent text: e+XX (two digits at least).
+fn put_exp(var b: BytesBuilder, e: Int, d: Dec) {
+  b.write_byte(if e == 69 { 69 } else { 101 })
   var exp = d.dp - 1
   if d.d.len() == 0 {
     exp = 0
   }
   if exp < 0 {
-    s = s + "-"
+    b.write_byte(45)
     exp = 0 - exp
   } else {
-    s = s + "+"
+    b.write_byte(43)
   }
   if exp < 10 {
-    s = s + "0${exp}"
+    b.write_byte(48)
+    b.write_byte(dig(exp))
+  } else if exp < 100 {
+    b.write_byte(dig(exp / 10))
+    b.write_byte(dig(exp % 10))
   } else {
-    s = s + "${exp}"
+    b.write_byte(dig(exp / 100))
+    b.write_byte(dig(exp / 10 % 10))
+    b.write_byte(dig(exp % 10))
   }
-  s
+}
+
+/// fmtE: d.ddde+XX with prec digits after the point.
+fn fmt_e(out: Str, neg: Bool, d: Dec, prec: Int, e: Int) -> Str {
+  var b = BytesBuilder.with_capacity(out.len() + prec + 12)
+  b.write_str(out)
+  if neg {
+    b.write_byte(45)
+  }
+  b.write_byte(if d.d.len() == 0 { 48 } else { dig(d.d[0]) })
+  if prec > 0 {
+    b.write_byte(46)
+    var i = 1
+    let m = if d.d.len() < prec + 1 { d.d.len() } else { prec + 1 }
+    while i < m {
+      b.write_byte(dig(d.d[i]))
+      i += 1
+    }
+    while i <= prec {
+      b.write_byte(48)
+      i += 1
+    }
+  }
+  put_exp(b, e, d)
+  b.freeze().to_str() ?? ""
 }
 
 /// fmtF: ddd.ddd with prec digits after the point.
 fn fmt_f(out: Str, neg: Bool, d: Dec, prec: Int) -> Str {
-  var s = out
+  var b = BytesBuilder.with_capacity(out.len() + prec + (if d.dp > 0 { d.dp } else { 1 }) + 3)
+  b.write_str(out)
   if neg {
-    s = s + "-"
+    b.write_byte(45)
   }
   if d.dp > 0 {
     var m = if d.d.len() < d.dp { d.d.len() } else { d.dp }
     for j in 0..m {
-      s = s + "${d.d[j]}"
+      b.write_byte(dig(d.d[j]))
     }
     while m < d.dp {
-      s = s + "0"
+      b.write_byte(48)
       m += 1
     }
   } else {
-    s = s + "0"
+    b.write_byte(48)
   }
   if prec > 0 {
-    s = s + "."
+    b.write_byte(46)
     for i in 0..prec {
-      s = s + "${at(d, d.dp + i)}"
+      b.write_byte(dig(at(d, d.dp + i)))
     }
   }
-  s
+  b.freeze().to_str() ?? ""
 }
 
 /// strconv.FormatFloat(f, verb, prec, 64): verb 'e' (101), 'E' (69), 'f'
