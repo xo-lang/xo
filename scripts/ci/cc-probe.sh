@@ -9,7 +9,7 @@
 # the xo build and ends the job with its status.
 #   gh workflow run ci.yml -f ref=BRANCH -f suite=script -f runner=xo-amd64 -f packages=scripts/ci/cc-probe.sh
 set -uo pipefail
-cd "$(dirname "$0")/../.."
+cd "$(dirname "$0")/../.."; OLDPWD=$PWD
 out=${XO_CI_OUT:-$(mktemp -d)}
 mkdir -p "$out"
 echo "== machine: $(uname -m) $(uname -r); $(grep PRETTY_NAME /etc/os-release 2>/dev/null)"
@@ -36,7 +36,14 @@ if [ -n "$seed" ]; then
   echo "== seed xo $seed: a hello program, its stderr:"
   mkdir -p "$tmp/h" && printf 'fn main(os: Os) {\n  os.stdio.println("hi")\n}\n' > "$tmp/h/main.xo" && printf 'module example.com/h\n' > "$tmp/h/xo.mod"
   (cd "$tmp/h" && XO_STD="$(dirname "$seed")/../std" "$seed" build -o "$tmp/h/h" . 2>&1 | head -20; "$tmp/h/h" 2>&1 | head -2)
-  echo "== the same with XO_CC_VERBOSE / --verbose if any:"; (cd "$tmp/h" && XO_STD="$(dirname "$seed")/../std" XO_VERBOSE=1 "$seed" build --verbose -o "$tmp/h/h2" . 2>&1 | head -20)
+  # xotool's smoke build itself (SmokeXo): the native backend named, the
+  # CHECKOUT's std (not the seed's), full stderr
+  echo "== smoke replica: seed xo, --backend=amd64, the checkout's std:"
+  (cd "$tmp/h" && "$seed" build --backend=amd64 --std="$OLDPWD/std" -o "$tmp/h/s1" . 2>&1 | head -30; echo "rc=$?")
+  echo "== smoke replica with the seed's own std:"
+  (cd "$tmp/h" && "$seed" build --backend=amd64 --std="$(dirname "$seed")/../std" -o "$tmp/h/s2" . 2>&1 | head -30; echo "rc=$?")
+  echo "== the checkout std's C parts (std/native, llrt) compiled by cc alone:"
+  for c in $(ls "$OLDPWD"/std/native/*.c "$OLDPWD"/std/llrt/*.c 2>/dev/null | head -40); do cc -c -O2 -o "$tmp/o.o" "$c" 2>&1 | head -3 | sed "s#^#$(basename "$c"): #"; done
 fi
 cp -R "$tmp" "$out/probe" 2>/dev/null || true
 echo "cc-probe done"
