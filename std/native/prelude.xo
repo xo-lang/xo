@@ -4553,6 +4553,64 @@ fn int_parse_base(s: Str, base0: Int) -> Int? {
   acc.checked_mul(-1)
 }
 
+/// The fill of pad_left, pad_right and center: one rune (decision 0410).
+fn pad_fill_ok(fill: Str, what: Str) {
+  if scan.rune_count(fill) != 1 {
+    let q = "?"
+    fault.raise_str_at("Str.${what}: the fill ${fill.quote()} is not one rune", raw.data(q), 0)
+  }
+}
+
+fn str_pad_left(s: Str, width: Int, fill: Str) -> Str {
+  pad_fill_ok(fill, "pad_left")
+  let n = scan.rune_count(s)
+  if n >= width {
+    return s
+  }
+  fill.repeat(width - n) + s
+}
+
+fn str_pad_right(s: Str, width: Int, fill: Str) -> Str {
+  pad_fill_ok(fill, "pad_right")
+  let n = scan.rune_count(s)
+  if n >= width {
+    return s
+  }
+  s + fill.repeat(width - n)
+}
+
+fn str_center(s: Str, width: Int, fill: Str) -> Str {
+  pad_fill_ok(fill, "center")
+  let n = scan.rune_count(s)
+  if n >= width {
+    return s
+  }
+  let left = (width - n) / 2
+  fill.repeat(left) + s + fill.repeat(width - n - left)
+}
+
+fn int_to_str_width(n: Int, width: Int, base: Int, zero: Bool, plus: Bool) -> Str {
+  var body = int_to_str_base(n, base)
+  var sign = if plus { "+" } else { "" }
+  if body.starts_with("-") {
+    sign = "-"
+    body = body[1..]
+  }
+  let used = sign.len() + body.len()
+  if width < 0 {
+    // left justified: spaces on the right
+    let w = 0 - width
+    return if used >= w { sign + body } else { sign + body + " ".repeat(w - used) }
+  }
+  if used >= width {
+    return sign + body
+  }
+  if zero {
+    return sign + "0".repeat(width - used) + body
+  }
+  " ".repeat(width - used) + sign + body
+}
+
 fn int_to_str_base(n: Int, base: Int) -> Str {
   if base < 2 || base > 36 {
     let q = "?"

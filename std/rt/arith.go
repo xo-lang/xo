@@ -4,6 +4,7 @@ import (
 	"math"
 	"math/bits"
 	"strconv"
+	"strings"
 	"unicode/utf8"
 	"unsafe"
 )
@@ -512,6 +513,77 @@ func Int_parse_base(_ *Task, s string, base int64) Option[int64] {
 		return Option[int64]{}
 	}
 	return Some(n)
+}
+
+// Str_pad_left, Str_pad_right and Str_center are `s.pad_left(width, fill)`
+// and the others (decision 0410): fill one rune, a width in runes.
+func Str_pad_left(_ *Task, s string, width int64, fill string) string {
+	n := padFill(s, width, fill, "pad_left")
+	if n < 0 {
+		return s
+	}
+	return strings.Repeat(fill, int(width)-n) + s
+}
+
+func Str_pad_right(_ *Task, s string, width int64, fill string) string {
+	n := padFill(s, width, fill, "pad_right")
+	if n < 0 {
+		return s
+	}
+	return s + strings.Repeat(fill, int(width)-n)
+}
+
+func Str_center(_ *Task, s string, width int64, fill string) string {
+	n := padFill(s, width, fill, "center")
+	if n < 0 {
+		return s
+	}
+	left := (int(width) - n) / 2
+	return strings.Repeat(fill, left) + s + strings.Repeat(fill, int(width)-n-left)
+}
+
+// padFill checks the fill and returns the rune count of s, or -1 when s is
+// already width runes long.
+func padFill(s string, width int64, fill, what string) int {
+	if utf8.RuneCountInString(fill) != 1 {
+		FaultHere("Str.%s: the fill %q is not one rune", what, fill)
+	}
+	n := utf8.RuneCountInString(s)
+	if int64(n) >= width {
+		return -1
+	}
+	return n
+}
+
+// Int_to_str_width is `n.to_str_width(width, base, zero, plus)` (decision 0410).
+func Int_to_str_width(_ *Task, n, width, base int64, zero, plus bool) string {
+	if base < 2 || base > 36 {
+		FaultHere("Int.to_str_base: base %d is not 2 to 36", base)
+	}
+	body := strconv.FormatInt(n, int(base))
+	sign := ""
+	if plus {
+		sign = "+"
+	}
+	if strings.HasPrefix(body, "-") {
+		sign = "-"
+		body = body[1:]
+	}
+	used := len(sign) + len(body)
+	if width < 0 {
+		w := int(-width)
+		if used >= w {
+			return sign + body
+		}
+		return sign + body + strings.Repeat(" ", w-used)
+	}
+	if used >= int(width) {
+		return sign + body
+	}
+	if zero {
+		return sign + strings.Repeat("0", int(width)-used) + body
+	}
+	return strings.Repeat(" ", int(width)-used) + sign + body
 }
 
 // Int_to_str_base is `n.to_str_base(base)` (decision 0287).

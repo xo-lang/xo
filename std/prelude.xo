@@ -158,6 +158,12 @@ fn (static: Int) parse_base(s: Str, base: Int) -> Int?
 /// Go's FormatInt(n, base): base 2 to 36, lower case digits; faults on
 /// another base (decision 0287).
 fn (n: Int) to_str_base(base: Int) -> Str
+/// n as text in base (2 to 36, lower case) in at least `width` characters:
+/// padded on the left with spaces, or after the sign with zeros when `zero`
+/// is set (`%08d`), or on the right with spaces when width is negative
+/// (`%-8d`, zero ignored); `plus` writes a `+` before a positive n (`%+d`),
+/// as Go's fmt (decision 0410).
+fn (n: Int) to_str_width(width: Int, base: Int = 10, zero: Bool = false, plus: Bool = false) -> Str
 /// Go's ParseBool: 1, t, T, TRUE, true, True; 0, f, F, FALSE, false,
 /// False (decision 0287).
 fn (static: Bool) parse(s: Str) -> Bool?
@@ -346,6 +352,13 @@ fn (s: Str) replace(old: Str, new: Str) -> Str
 /// nothing changes.
 fn (s: Str) replace_n(old: Str, new: Str, n: Int) -> Str
 fn (s: Str) repeat(n: Int) -> Str
+/// s with `fill` (one rune) added on the left (pad_left), on the right
+/// (pad_right) or on both sides (center, the extra one on the right) until
+/// it is `width` runes; s itself when it is that long already (Go's fmt
+/// width, `%*s` and `%-*s`, is a minimum; decision 0410).
+fn (s: Str) pad_left(width: Int, fill: Str = " ") -> Str
+fn (s: Str) pad_right(width: Int, fill: Str = " ") -> Str
+fn (s: Str) center(width: Int, fill: Str = " ") -> Str
 /// An explicit copy of s in a buffer of its own: a slice, a `split` piece or
 /// a `trim` result shares its source's buffer on native targets (core 3.6),
 /// so a small piece to keep for long copies it to let a large source go.
