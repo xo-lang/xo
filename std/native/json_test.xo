@@ -3097,3 +3097,87 @@ test "Value.Trusted (decision 0408): encoded as the plain string, never parsed, 
     Err(e) => expect(e.display()) == ""
   }
 }
+
+struct WithRaw {
+  id: Int
+  raw: json.Value
+  note: Str = ""
+} derive Json
+
+test "json.Value as a field (S3): Go's RawMessage and any, null included" {
+  let cases: List[(Str, Str)] = [
+    ("{\"id\":1,\"raw\":123}", "{\"id\":1,\"raw\":123,\"note\":\"\"}"),
+    ("{\"id\":2,\"raw\":{\"a\":[1,2,{\"b\":null}],\"c\":\"<x>\"}}", "{\"id\":2,\"raw\":{\"a\":[1,2,{\"b\":null}],\"c\":\"<x>\"},\"note\":\"\"}"),
+    ("{\"id\":3,\"raw\":null}", "{\"id\":3,\"raw\":null,\"note\":\"\"}"),
+    ("{\"id\":4,\"raw\":\"s\",\"note\":\"n\"}", "{\"id\":4,\"raw\":\"s\",\"note\":\"n\"}"),
+  ]
+  var bad: List[(Str, Str)] = []
+  for (text, want) in cases {
+    let got = match json.decode_str[WithRaw](text) {
+      Ok(w) => json.encode_str(w)
+      Err(e) => "err ${e.display()}"
+    }
+    if got != want {
+      bad.push((text, got))
+    }
+  }
+  expect(bad) == []
+  match json.decode_str[WithRaw]("{\"id\":3,\"raw\":null}") {
+    Ok(w) => expect(w.raw) == json.Value.Null
+    Err(e) => expect(e.display()) == ""
+  }
+  match json.decode_str[WithRaw]("{\"id\":5}") {
+    Ok(_) => expect(false)
+    Err(e) => expect(e.display()) == "at $: missing field `raw`"
+  }
+  let v = WithRaw{id: 6, raw: json.Value.List(items: [json.Value.Int(n: 1), json.Value.Str(s: "x")])}
+  expect(json.encode_str(v)) == "{\"id\":6,\"raw\":[1,\"x\"],\"note\":\"\"}"
+}
+
+test "indent and compact (S3): Go's TestCompactAndIndent" {
+  let cases: List[(Str, Str)] = [
+    ("1", "1"),
+    ("{}", "{}"),
+    ("[]", "[]"),
+    ("{\"\":2}", "{\n\t\"\": 2\n}"),
+    ("[3]", "[\n\t3\n]"),
+    ("[1,2,3]", "[\n\t1,\n\t2,\n\t3\n]"),
+    ("{\"x\":1}", "{\n\t\"x\": 1\n}"),
+    ("[true,false,null,\"x\",1,1.5,0,-5e+2]", "[\n\ttrue,\n\tfalse,\n\tnull,\n\t\"x\",\n\t1,\n\t1.5,\n\t0,\n\t-5e+2\n]"),
+    ("{\"\":\"<>&\u{2028}\u{2029}\"}", "{\n\t\"\": \"<>&\u{2028}\u{2029}\"\n}"),
+  ]
+  var bad: List[(Str, Str, Str)] = []
+  for (c, ind) in cases {
+    let a = json.compact(c).ok() ?? "err"
+    let b = json.compact(ind).ok() ?? "err"
+    let d = json.indent(ind, "", "\t").ok() ?? "err"
+    let e = json.indent(c, "", "\t").ok() ?? "err"
+    if a != c {
+      bad.push(("compact", c, a))
+    }
+    if b != c {
+      bad.push(("compact of indented", ind, b))
+    }
+    if d != ind {
+      bad.push(("indent", ind, d))
+    }
+    if e != ind {
+      bad.push(("indent of compact", c, e))
+    }
+  }
+  expect(bad) == []
+  // the text's own whitespace goes (Go 1.26: `null \n\r\t` compacts to null)
+  expect(json.compact("null \n\r\t").ok()) == Some("null")
+  expect(json.indent(" [ 1 , {\"a\" : \"b\\u0041\\n\"} ] ", "> ", "  ").ok()) == Some("[\n>   1,\n>   {\n>     \"a\": \"b\\u0041\\n\"\n>   }\n> ]")
+  // Go's TestIndentErrors: a text that is not JSON
+  expect(json.indent("{\"X\": \"foo\", \"Y\"}", "", " ").is_err()) == true
+  expect(json.indent("{\"X\": \"foo\" \"Y\": \"bar\"}", "", " ").is_err()) == true
+  expect(json.compact("[1,").is_err()) == true
+}
+
+test "encode_indent (S3): Go's MarshalIndent of a struct" {
+  let v = WithRaw{id: 7, raw: json.Value.Object(fields: [("k", json.Value.List(items: []))]), note: "x\ty"}
+  expect(json.encode_indent_str(v, "", " ")) == "{\n \"id\": 7,\n \"raw\": {\n  \"k\": []\n },\n \"note\": \"x\\ty\"\n}"
+  expect(json.encode_indent_str(v)) == "{\n  \"id\": 7,\n  \"raw\": {\n    \"k\": []\n  },\n  \"note\": \"x\\ty\"\n}"
+  expect(json.encode_indent(v, "", "").to_str()) == Some("{\n\"id\": 7,\n\"raw\": {\n\"k\": []\n},\n\"note\": \"x\\ty\"\n}")
+}

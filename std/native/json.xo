@@ -176,6 +176,112 @@ fn value_append(out: Str, v: json.Value) -> Str {
 
 fn value_encode(v: json.Value) -> Str { value_append("", v) }
 
+fn encode_indent[T: Json](v: T, prefix: Str, indent: Str) -> Bytes { encode_indent_str(v, prefix, indent).bytes() }
+
+fn encode_indent_str[T: Json](v: T, prefix: Str, indent: Str) -> Str {
+  // the encoder's text is valid JSON, so the walk cannot fail
+  indent_text(encode_str(v), prefix, indent).ok() ?? ""
+}
+
+fn indent(text: Str, prefix: Str, indent: Str) -> Str ! json.DecodeErr { indent_text(text, prefix, indent) }
+
+fn indent_text(text: Str, prefix: Str, indent: Str) -> Str ! json.DecodeErr { walk_text(text, prefix, indent, true) }
+
+fn walk_text(text: Str, prefix: Str, indent: Str, pretty: Bool) -> Str ! json.DecodeErr {
+  let src = text.bytes()
+  let tape = jsontext.parse(src)
+  if tape.is_empty() {
+    return Err(json.DecodeErr{path: "$", msg: "invalid JSON: ${jsontext.parse_err(src)}"})
+  }
+  var out = BytesBuilder.new()
+  write_node(src, tape, 0, prefix, indent, 0, pretty, out)
+  Ok(out.freeze().to_str() ?? text)
+}
+
+fn compact(text: Str) -> Str ! json.DecodeErr { walk_text(text, "", "", false) }
+
+/// A string node's b holds its raw length under jsontext's flag bits.
+const RAW_LEN_MASK: Int = 2305843009213693951
+
+/// Indent's walk over the tape (Go's appendIndent over its scanner's
+/// events): scalars are copied from the text as they are; an array or
+/// object opens, puts each element on a new line one level deeper, and
+/// closes on a line of its own, except an empty one, which stays `[]` or
+/// `{}`; a key is followed by `: `; with an empty prefix and indent the
+/// output is Compact's.
+fn write_node(src: Bytes, tape: List[Int], i: Int, prefix: Str, ind: Str, depth: Int, pretty: Bool, var out: BytesBuilder) {
+  let k = tape[i]
+  if k == 0 {
+    out.write_str("null")
+  } else if k == 1 {
+    out.write_str("false")
+  } else if k == 2 {
+    out.write_str("true")
+  } else if k == 3 {
+    out.write(src[tape[i + 1]..tape[i + 1] + tape[i + 2]])
+  } else if k == 4 {
+    let n = tape[i + 2] & RAW_LEN_MASK
+    out.write_byte(34)
+    out.write(src[tape[i + 1]..tape[i + 1] + n])
+    out.write_byte(34)
+  } else if k == 5 {
+    out.write_byte(91)
+    var j = i + 3
+    var first = true
+    while j < tape[i + 2] {
+      if !first {
+        out.write_byte(44)
+      }
+      first = false
+      newline(prefix, ind, depth + 1, pretty, out)
+      write_node(src, tape, j, prefix, ind, depth + 1, pretty, out)
+      j = jsontext.next(tape, j)
+    }
+    if !first {
+      newline(prefix, ind, depth, pretty, out)
+    }
+    out.write_byte(93)
+  } else {
+    out.write_byte(123)
+    var j = i + 3
+    var first = true
+    while j < tape[i + 2] {
+      if !first {
+        out.write_byte(44)
+      }
+      first = false
+      newline(prefix, ind, depth + 1, pretty, out)
+      // the key as it is spelled
+      let n = tape[j + 2] & RAW_LEN_MASK
+      out.write_byte(34)
+      out.write(src[tape[j + 1]..tape[j + 1] + n])
+      out.write_byte(34)
+      out.write_byte(58)
+      if pretty {
+        out.write_byte(32)
+      }
+      let vj = jsontext.next(tape, j)
+      write_node(src, tape, vj, prefix, ind, depth + 1, pretty, out)
+      j = jsontext.next(tape, vj)
+    }
+    if !first {
+      newline(prefix, ind, depth, pretty, out)
+    }
+    out.write_byte(125)
+  }
+}
+
+fn newline(prefix: Str, ind: Str, depth: Int, pretty: Bool, var out: BytesBuilder) {
+  if !pretty {
+    return
+  }
+  out.write_byte(10)
+  out.write_str(prefix)
+  for _ in 0..depth {
+    out.write_str(ind)
+  }
+}
+
 fn value_get(v: json.Value, key: Str) -> json.Value? {
   match v {
     Object(fields) => {

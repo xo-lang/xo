@@ -6,6 +6,8 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
+	_ func(*Task, string, string, string) Result[string, Json_DecodeErr]         = Json_indent
+	_ func(*Task, string) Result[string, Json_DecodeErr]                         = Json_compact
 	_ func(*Task, string) Result[Json_Value, Json_DecodeErr]                     = Json_parse_value
 	_ func(*Json_Value, *Task) string                                            = (*Json_Value).M_encode
 	_ func(*Json_Value, *Task, string) Option[Json_Value]                        = (*Json_Value).M_get

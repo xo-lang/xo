@@ -1,5 +1,21 @@
 # std/json changes
 
+## 2026-10-29: feature: json.Value as a field; encode_indent, indent, compact (S3)
+
+- Kind: feature
+- Commit: this commit
+- Found by: milestone 0.35 S3 (the lead's list)
+- Go reference: encoding/json RawMessage and `any` fields, MarshalIndent, Indent, Compact (go1.26.1)
+- Test: std/native/json_test.xo (Go's TestCompactAndIndent cases, TestIndentErrors, a Value field's round trip with Go's RawMessage null case, a struct's MarshalIndent text)
+
+A struct deriving Json may have a `json.Value` field (any JSON value as it
+is; the checker accepts the type, the derived encoder writes its text and
+the decoder reads the node, on the Go backend through XoJsonEnc and
+XoJsonDec on Json_Value). `encode_indent[T](v, prefix, indent)` and
+`encode_indent_str` (MarshalIndent), `indent(text, prefix, indent)` and
+`compact(text)` (Indent and Compact) over the parsed tape with scalars
+copied as spelled. Timing: bench/perf/jsonindent against encoding/json.
+
 ## 2026-10-29: feature: the Trusted variant of Value (decision 0408)
 
 - Kind: feature (breaking for exhaustive matches on Value)

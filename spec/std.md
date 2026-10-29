@@ -1813,6 +1813,10 @@ pub fn encode[T: Json](v: T) -> Bytes
 pub fn encode_str[T: Json](v: T) -> Str
 pub fn decode[T: Json](data: Bytes) -> T ! DecodeErr
 pub fn decode_str[T: Json](s: Str) -> T ! DecodeErr
+pub fn encode_indent[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Bytes      // Go's MarshalIndent
+pub fn encode_indent_str[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Str
+pub fn indent(text: Str, prefix: Str = "", indent: Str = "  ") -> Str ! DecodeErr      // Go's Indent over a text
+pub fn compact(text: Str) -> Str ! DecodeErr                                            // Go's Compact
 
 struct DecodeErr { path: Str, msg: Str }    // displays as "at $.user.email: expected string"
 
@@ -1843,9 +1847,18 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | `Duration` | string `"1.5s"` (any `Duration.parse` form decodes) |
 | `Time` | RFC 3339 string (decoding refuses a time outside the range of `Time`, decision 0364) |
 | `Bytes` | base64 string |
+| `json.Value` | any JSON value as it is (Go's `any` and `RawMessage`; decision 0408 S3): encodes to its own text, decodes to the node (a `null` is `Value.Null`) |
 
 Builtin types listed above implement `Json`, so `http.json(200, {"msg": "hi"})`
 works without a struct.
+
+- `encode_indent` is `encode` then `indent` (Go's MarshalIndent): every
+  element and member on its own line, prefixed by `prefix` and one
+  `indent` per level, `: ` after a key, an empty `[]` or `{}` as it is;
+  `indent` over a text keeps every number's and string's spelling (the
+  escapes of a string too) and drops the text's own whitespace; `compact`
+  drops it and nothing else. A text that is not JSON is `parse_value`'s
+  `DecodeErr`.
 
 ---
 

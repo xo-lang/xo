@@ -1,0 +1,57 @@
+// jsonindent: std/json's S3 features against encoding/json (twin.go.txt):
+// `indent` is encode_indent_str of a 30 item page (Go's MarshalIndent),
+// 20,000 times; `rawfield` is decode of a record with a json.Value field
+// holding a 30 item array (Go's RawMessage), 20,000 times, then its
+// encode; `none` is the setup alone. Usage: `<program>
+// none|indent|rawfield`. Prints `<workload> <checksum>`; the twin prints
+// the same.
+use std/json
+
+struct Item {
+  name: Str
+  qty: Int
+  done: Bool
+} derive Json
+
+struct Page {
+  title: Str
+  items: List[Item]
+} derive Json
+
+struct Record {
+  id: Int
+  payload: json.Value
+  tag: Str
+} derive Json
+
+fn page() -> Page {
+  var items: List[Item] = []
+  for i in 0..30 {
+    items.push(Item{name: "item ${i} <x>", qty: i % 7 + 1, done: i % 3 == 0})
+  }
+  Page{title: "Orders & co", items: items}
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let p = page()
+  let rec = "{\"id\": 1, \"payload\": " + json.encode_str(p.items) + ", \"tag\": \"t\"}"
+  var sum = 0
+  if w == "indent" {
+    for i in 0..20000 {
+      let s = json.encode_indent_str(p, "", "  ")
+      sum += s.len() + i % 3
+    }
+  } else if w == "rawfield" {
+    for i in 0..20000 {
+      let r = json.decode_str[Record](rec).ok() ?? fault("decode")
+      let s = json.encode_str(r)
+      sum += s.len() + r.id + i % 3
+    }
+  } else {
+    for i in 0..20000 {
+      sum += rec.len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

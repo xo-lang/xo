@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"bytes"
 	"encoding/json"
 	"math"
 	"strconv"
@@ -143,4 +144,57 @@ func (v Json_Value) M_get(_ *Task, key string) Option[Json_Value] {
 		}
 	}
 	return Option[Json_Value]{}
+}
+
+// XoJsonEnc writes v as it is: a json.Value field encodes to its own text
+// (std.md 5; Go's any and RawMessage).
+func (v Json_Value) XoJsonEnc(tk *Task, w *JsonW) {
+	var b strings.Builder
+	v.appendTo(tk, &b)
+	w.b = append(w.b, b.String()...)
+}
+
+// XoJsonDec reads any JSON value into v.
+func (v *Json_Value) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
+	*v = jsonValueOf(x)
+	return nil
+}
+
+// Json_encode_indent is `json.encode_indent(v, prefix, indent)`: Go's
+// MarshalIndent (Marshal then Indent).
+func Json_encode_indent[T any](tk *Task, v T, prefix string, indent string) Bytes {
+	var b bytes.Buffer
+	if err := json.Indent(&b, []byte(Json_encode(tk, v)), prefix, indent); err != nil {
+		return Json_encode(tk, v)
+	}
+	return Bytes(b.Bytes())
+}
+
+func Json_encode_indent_str[T any](tk *Task, v T, prefix string, indent string) string {
+	return string(Json_encode_indent(tk, v, prefix, indent))
+}
+
+// Json_indent is `json.indent(text, prefix, indent)`: Go's Indent; a text
+// that is not JSON is parse_value's error.
+func Json_indent(tk *Task, text string, prefix string, indent string) Result[string, Json_DecodeErr] {
+	if r := Json_parse_value(tk, text); !r.Ok {
+		return Err[string](r.E)
+	}
+	var b bytes.Buffer
+	if err := json.Indent(&b, []byte(text), prefix, indent); err != nil {
+		return Err[string](Json_DecodeErr{F_path: "$", F_msg: "invalid JSON: " + err.Error()})
+	}
+	return Ok[string, Json_DecodeErr](b.String())
+}
+
+// Json_compact is `json.compact(text)`: Go's Compact.
+func Json_compact(tk *Task, text string) Result[string, Json_DecodeErr] {
+	if r := Json_parse_value(tk, text); !r.Ok {
+		return Err[string](r.E)
+	}
+	var b bytes.Buffer
+	if err := json.Compact(&b, []byte(text)); err != nil {
+		return Err[string](Json_DecodeErr{F_path: "$", F_msg: "invalid JSON: " + err.Error()})
+	}
+	return Ok[string, Json_DecodeErr](b.String())
 }

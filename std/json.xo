@@ -5,6 +5,16 @@
 
 fn encode[T: Json](v: T) -> Bytes
 fn encode_str[T: Json](v: T) -> Str
+/// Go's MarshalIndent: `encode` then `indent` (each element on its own
+/// line, prefixed by prefix and one indent per level; `{}` and `[]` stay
+/// as they are).
+fn encode_indent[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Bytes
+fn encode_indent_str[T: Json](v: T, prefix: Str = "", indent: Str = "  ") -> Str
+/// Go's Indent over a JSON text: numbers and strings keep their spelling;
+/// a text that is not JSON is the DecodeErr of `parse_value`.
+fn indent(text: Str, prefix: Str = "", indent: Str = "  ") -> Str ! DecodeErr
+/// Go's Compact: the text with its insignificant whitespace removed.
+fn compact(text: Str) -> Str ! DecodeErr
 fn decode[T: Json](data: Bytes) -> T ! DecodeErr
 fn decode_str[T: Json](s: Str) -> T ! DecodeErr
 

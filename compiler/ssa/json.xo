@@ -191,6 +191,33 @@ fn (var b: Builder) decode_err_type() -> Int {
   -1
 }
 
+/// Whether ct is json.Value (a field of any JSON value, std.md 5).
+fn (var b: Builder) is_json_value(ct: Int) -> Bool {
+  let o = b.named_obj(ct)
+  if o < 0 {
+    return false
+  }
+  let om = b.obj_mod(o)
+  om >= 0 && b.c.mods[om].path == "std/json" && b.obj_name(o) == "Value"
+}
+
+/// A call of std/native/json's function name (value_append, value_at)
+/// from a derived encoder or decoder, or -1 without the native std.
+fn (var b: Builder) json_native_call(name: Str, t: Int, args: List[Int]) -> Int {
+  let nm = b.native_mod("std/json")
+  if nm < 0 {
+    b.unsupported("json.Value fields without the native std")
+    return b.undef(t)
+  }
+  let impl = b.member(nm, name)
+  if impl < 0 {
+    b.unsupported("json.Value fields without std/native/json's ${name}")
+    return b.undef(t)
+  }
+  let f = b.declare(impl, [])
+  b.call(b.m.funcs[f].name, b.m.funcs[f].results[0], "", args)
+}
+
 /// Whether ct is json.Patch[T] (isJSONPatch).
 fn (var b: Builder) is_json_patch(ct: Int) -> Bool {
   let o = b.named_obj(ct)
@@ -231,6 +258,11 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
   let bt = b.bool_t()
   let acc = b.param(0)
   let v = b.param(1)
+  if b.is_json_value(ct) {
+    // a json.Value field: its text as it is
+    b.retv(b.json_native_call("value_append", st, [acc, v]))
+    return
+  }
   if b.is_prelude_named(ct, ["Duration"]) {
     let a = b.lit(acc, "\"")
     let r = b.llrt("append_duration", st, [a, v])
@@ -740,6 +772,12 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   let bt = b.bool_t()
   let t = d.t
   let i = d.i
+  if b.is_json_value(ct) {
+    // a json.Value field: the node as it is (None only for a number out
+    // of Float's range, parse_value's error)
+    b.dec_opt(d, b.json_native_call("value_at", t, [d.src, d.tape, i]), "number out of range")
+    return
+  }
   if b.is_prelude_named(ct, ["Duration"]) {
     b.dec_need(d, JK_STR, "expected duration string")
     let txt = b.dec_str(d, i)

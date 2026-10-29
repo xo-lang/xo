@@ -1,0 +1,70 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"os"
+)
+
+type Item struct {
+	Name string `json:"name"`
+	Qty  int    `json:"qty"`
+	Done bool   `json:"done"`
+}
+
+type Page struct {
+	Title string `json:"title"`
+	Items []Item `json:"items"`
+}
+
+type Record struct {
+	ID      int             `json:"id"`
+	Payload json.RawMessage `json:"payload"`
+	Tag     string          `json:"tag"`
+}
+
+func page() Page {
+	var items []Item
+	for i := 0; i < 30; i++ {
+		items = append(items, Item{Name: fmt.Sprintf("item %d <x>", i), Qty: i%7 + 1, Done: i%3 == 0})
+	}
+	return Page{Title: "Orders & co", Items: items}
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	p := page()
+	ib, _ := json.Marshal(p.Items)
+	rec := "{\"id\": 1, \"payload\": " + string(ib) + ", \"tag\": \"t\"}"
+	sum := 0
+	switch w {
+	case "indent":
+		for i := 0; i < 20000; i++ {
+			s, err := json.MarshalIndent(p, "", "  ")
+			if err != nil {
+				panic(err)
+			}
+			sum += len(s) + i%3
+		}
+	case "rawfield":
+		for i := 0; i < 20000; i++ {
+			var r Record
+			if err := json.Unmarshal([]byte(rec), &r); err != nil {
+				panic(err)
+			}
+			s, err := json.Marshal(r)
+			if err != nil {
+				panic(err)
+			}
+			sum += len(s) + r.ID + i%3
+		}
+	default:
+		for i := 0; i < 20000; i++ {
+			sum += len(rec) + i%3
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

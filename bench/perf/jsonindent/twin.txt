@@ -1,0 +1,4 @@
+# twincheck: jsonindent: three workloads (none is the setup alone), the same names on both sides.
+- - none
+- - indent
+- - rawfield
