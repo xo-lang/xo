@@ -58,7 +58,7 @@ user_caps # the wasm backend does not support processes (`proc.run`): WASI previ
 websocket # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 websocket_tls # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 
-# Known broken, to fix (rt.heap_big in alloc.alloc is not lowered for wasm):
+# The native heap's big blocks (rt.heap_big in alloc.alloc) have no wasm lowering:
 debug_routes # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 http_handler_fault # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 http_router_paths # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
