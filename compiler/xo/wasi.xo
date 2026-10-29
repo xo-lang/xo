@@ -1,0 +1,40 @@
+// wasi.xo: what xo built for WASI preview1 does not offer (decision 0405).
+// The WASI build checks, formats, vets, explains and builds for every
+// native target with Xo's own backends, assemblers and linkers; a command
+// that starts a process, listens on a socket or runs a program is refused
+// with XO1513 before it runs.
+
+/// The command word (or `command --option`) of args that the WASI build
+/// does not offer, "" for one it does. args is xo's command line after any
+/// leading --std= and --wd= options.
+fn wasi_unavailable(args: List[Str]) -> Str {
+  var i = 0
+  while i < args.len() && (args[i].starts_with("--std=") || args[i].starts_with("--wd=")) {
+    i += 1
+  }
+  if i >= args.len() {
+    return ""
+  }
+  let cmd = args[i]
+  if cmd is "run" | "test" | "bench" | "serve" | "lsp" | "mcp" | "replay" | "dump" | "dev" | "bind" | "get" | "mod" | "vendor" | "publish" | "audit" {
+    return cmd
+  }
+  if cmd is "build" | "asm" {
+    for a in args[i + 1..] {
+      if a is "--backend=llvm" | "--backend=go" | "--watch" | "--race" || a.starts_with("--ld=system") {
+        return "${cmd} ${a}"
+      }
+    }
+  }
+  ""
+}
+
+/// Refuses an unavailable command (XO1513, exit status 2) in the WASI
+/// build; `match target.os` folds, so no other build contains this.
+fn wasi_gate(os: Os, args: List[Str]) uses stdio, proc {
+  let what = wasi_unavailable(args)
+  if !what.is_empty() {
+    os.stdio.eprint("xo: ${what} is not available in the WASI build (XO1513): it needs a process, a socket or a system tool that WASI preview1 does not have\n")
+    os.proc.exit(2)
+  }
+}

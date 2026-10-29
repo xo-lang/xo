@@ -1,0 +1,15 @@
+// Tests of the WASI build's refusals (wasi.xo, decision 0405).
+
+test "the WASI build offers check, fmt, vet and build, and refuses what needs a process" {
+  expect(wasi_unavailable(["check", "."])) == ""
+  expect(wasi_unavailable(["fmt", "."])) == ""
+  expect(wasi_unavailable(["vet", "."])) == ""
+  expect(wasi_unavailable(["build", "--targets=linux/arm64", "-o", "x", "."])) == ""
+  expect(wasi_unavailable(["--std=std", "--wd=/w", "run", "."])) == "run"
+  expect(wasi_unavailable(["test", "."])) == "test"
+  expect(wasi_unavailable(["serve"])) == "serve"
+  expect(wasi_unavailable(["get", "example.com/m"])) == "get"
+  expect(wasi_unavailable(["build", "--backend=llvm", "."])) == "build --backend=llvm"
+  expect(wasi_unavailable(["asm", "--ld=system", "."])) == "asm --ld=system"
+  expect(wasi_unavailable([])) == ""
+}
