@@ -521,68 +521,96 @@ fn add64(x: Int, y: Int, c: Int) -> (Int, Int) {
   (s, ((x & y) | ((x | y) & ~s)).shr_logical(63))
 }
 
-/// The little endian words of x modulo L, bit by bit from the top
-/// (constant time in x): r = 2r + bit, then r - L when that does not
-/// borrow. r < L < 2^253 before a step and below 2^254 after the
-/// doubling, so four words hold it.
-fn sc_reduce(x: List[Int]) -> List[Int] {
-  var r0 = 0
-  var r1 = 0
-  var r2 = 0
-  var r3 = 0
-  var wi = x.len() - 1
-  while wi >= 0 {
-    let xw = x[wi]
-    var b = 63
-    while b >= 0 {
-      r3 = r3.wrapping_shl(1) | r2.shr_logical(63)
-      r2 = r2.wrapping_shl(1) | r1.shr_logical(63)
-      r1 = r1.wrapping_shl(1) | r0.shr_logical(63)
-      r0 = r0.wrapping_shl(1) | (xw.shr_logical(b) & 1)
-      // t = r - L with the borrows of Go's bits.Sub64
-      let t0 = r0.wrapping_sub(L0)
-      let c0 = ((~r0 & L0) | (~(r0 ^ L0) & t0)).shr_logical(63)
-      let t1 = r1.wrapping_sub(L1).wrapping_sub(c0)
-      let c1 = ((~r1 & L1) | (~(r1 ^ L1) & t1)).shr_logical(63)
-      let t2 = r2.wrapping_sub(c1)
-      let c2 = (~r2 & t2).shr_logical(63)
-      let t3 = r3.wrapping_sub(L3).wrapping_sub(c2)
-      let c3 = ((~r3 & L3) | (~(r3 ^ L3) & t3)).shr_logical(63)
-      // all ones when r >= L (no borrow)
-      let mask = ct.mask_bit((1).wrapping_sub(c3))
-      r0 = ct.pick(mask, t0, r0)
-      r1 = ct.pick(mask, t1, r1)
-      r2 = ct.pick(mask, t2, r2)
-      r3 = ct.pick(mask, t3, r3)
-      b -= 1
-    }
-    wi -= 1
-  }
-  [r0, r1, r2, r3]
+/// -L^-1 modulo 2^64, R^2 and R^3 modulo L (R = 2^256; words past
+/// 2^63 written negative, the unsigned value after //): the Montgomery
+/// constants of Go's fiat-crypto scalar field (scalar_fiat.go,
+/// SetUniformBytes).
+const MINV: Int = -0x2d4ae25cedab81e5 // 0xd2b51da312547e1b
+const R2_0: Int = -0x5bf9ee1cbb63f0ff // 0xa40611e3449c0f01
+const R2_1: Int = -0x2ff1e458977a6cb9 // 0xd00e1ba768859347
+const R2_2: Int = -0x31138c2de80a419b // 0xceec73d217f5be65
+const R2_3: Int = 0x0399411b7c309a3d
+const R3_0: Int = 0x2a9e49687b83a2db
+const R3_1: Int = 0x278324e6aef7f3ec
+const R3_2: Int = -0x7f9a2393fb13a49b // 0x8065dc6c04ec5b65
+const R3_3: Int = 0x0e530b773599cec7
+
+/// x - y - b and its borrow (Go's bits.Sub64).
+fn sub64(x: Int, y: Int, b: Int) -> (Int, Int) {
+  let d = x.wrapping_sub(y).wrapping_sub(b)
+  (d, ((~x & y) | (~(x ^ y) & d)).shr_logical(63))
 }
 
-/// (r + k * a) modulo L.
+/// The low and high words of a * b + c + d (never past 128 bits).
+fn mac(a: Int, b: Int, c: Int, d: Int) -> (Int, Int) {
+  let (s1, c1) = add64(a.wrapping_mul(b), c, 0)
+  let (s2, c2) = add64(s1, d, 0)
+  (s2, a.mul_hi_unsigned(b).wrapping_add(c1).wrapping_add(c2))
+}
+
+/// t0..t4 minus L when that does not borrow (constant time): t < 2L to
+/// below L.
+fn sc_sub_l(t0: Int, t1: Int, t2: Int, t3: Int, t4: Int) -> List[Int] {
+  let (s0, b0) = sub64(t0, L0, 0)
+  let (s1, b1) = sub64(t1, L1, b0)
+  let (s2, b2) = sub64(t2, 0, b1)
+  let (s3, b3) = sub64(t3, L3, b2)
+  let (_, b4) = sub64(t4, 0, b3)
+  // all ones when t >= L
+  let mask = ct.mask_bit((1).wrapping_sub(b4))
+  [ct.pick(mask, s0, t0), ct.pick(mask, s1, t1), ct.pick(mask, s2, t2), ct.pick(mask, s3, t3)]
+}
+
+/// One word of a Montgomery product (CIOS): t + a * bi, then plus m * L
+/// with m chosen so the low word is zero, shifted down a word.
+fn mont_row(t: (Int, Int, Int, Int, Int), a: List[Int], bi: Int) -> (Int, Int, Int, Int, Int) {
+  let (t0, t1, t2, t3, t4) = t
+  let (u0, c0) = mac(a[0], bi, t0, 0)
+  let (u1, c1) = mac(a[1], bi, t1, c0)
+  let (u2, c2) = mac(a[2], bi, t2, c1)
+  let (u3, c3) = mac(a[3], bi, t3, c2)
+  let (u4, u5) = add64(t4, c3, 0)
+  let m = u0.wrapping_mul(MINV)
+  let (_, d0) = mac(m, L0, u0, 0)
+  let (v0, d1) = mac(m, L1, u1, d0)
+  let (v1, d2) = add64(u2, d1, 0)
+  let (v2, d3) = mac(m, L3, u3, d2)
+  let (v3, d4) = add64(u4, d3, 0)
+  (v0, v1, v2, v3, u5.wrapping_add(d4))
+}
+
+/// a * b / R modulo L, below L, for a * b < L * R (constant time).
+fn sc_mont(a: List[Int], b0: Int, b1: Int, b2: Int, b3: Int) -> List[Int] {
+  var t = mont_row((0, 0, 0, 0, 0), a, b0)
+  t = mont_row(t, a, b1)
+  t = mont_row(t, a, b2)
+  t = mont_row(t, a, b3)
+  let (t0, t1, t2, t3, t4) = t
+  sc_sub_l(t0, t1, t2, t3, t4)
+}
+
+/// (a + b) modulo L for a and b below L.
+fn sc_add(a: List[Int], b: List[Int]) -> List[Int] {
+  let (s0, c0) = add64(a[0], b[0], 0)
+  let (s1, c1) = add64(a[1], b[1], c0)
+  let (s2, c2) = add64(a[2], b[2], c1)
+  let (s3, c3) = add64(a[3], b[3], c2)
+  sc_sub_l(s0, s1, s2, s3, c3)
+}
+
+/// The eight little endian words of x modulo L (constant time), as Go's
+/// SetUniformBytes reduces with Montgomery products: lo * R^2 / R plus
+/// hi * R^3 / R is x * R, and a product with 1 divides out R.
+fn sc_reduce(x: List[Int]) -> List[Int] {
+  let lo = sc_mont([x[0], x[1], x[2], x[3]], R2_0, R2_1, R2_2, R2_3)
+  let hi = sc_mont([x[4], x[5], x[6], x[7]], R3_0, R3_1, R3_2, R3_3)
+  sc_mont(sc_add(lo, hi), 1, 0, 0, 0)
+}
+
+/// (r + k * a) modulo L: k * a / R, times R^2 / R, is k * a.
 fn sc_muladd(k: List[Int], a: List[Int], r: List[Int]) -> List[Int] {
-  var x = raw.zero_ints(9)
-  for i in 0..4 {
-    var carry = 0
-    for j in 0..4 {
-      let lo = k[i].wrapping_mul(a[j])
-      let hi = k[i].mul_hi_unsigned(a[j])
-      let (s1, c1) = add64(lo, x[i + j], 0)
-      let (s2, c2) = add64(s1, carry, 0)
-      x[i + j] = s2
-      carry = hi.wrapping_add(c1).wrapping_add(c2)
-    }
-    x[i + 4] = carry
-  }
-  var c = 0
-  for i in 0..9 {
-    let (s, co) = add64(x[i], if i < 4 { r[i] } else { 0 }, c)
-    x[i] = s
-    c = co
-  }
-  sc_reduce(x)
+  let t = sc_mont(k, a[0], a[1], a[2], a[3])
+  sc_add(sc_mont(t, R2_0, R2_1, R2_2, R2_3), r)
 }
 
 /// Whether the scalar s (public) is below L.

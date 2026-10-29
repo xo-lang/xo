@@ -36,8 +36,9 @@ fn main(os: Os) {
 // edwards25519 port, 2026-10-29): key generation's and signing's fixed
 // base multiplication (x25519.ed_base and base_mult, Go's ScalarBaseMult:
 // the signed radix 16 digits by wrapping arithmetic, each table row read
-// whole in madd_digit below), and the scalar reduction's conditional
-// subtraction select with masks (the branches left are loops and bounds
+// whole in madd_digit below), and the scalar field's conditional
+// subtraction of L after a Montgomery product or an add (sc_sub_l, Go's
+// fiat-crypto scalar) select with masks (the branches left are loops and bounds
 // checks on public indices).
 // func x25519.base_mult
 // arm64: -"csel" -"cset"
@@ -47,8 +48,12 @@ fn main(os: Os) {
 // arm64: -"csel" -"cset"
 // amd64: -"\tcmov" -"\tset[a-z]+ "
 // llvm: -"select"
-// func ed25519.sc_reduce
+// func ed25519.sc_sub_l
 // llvm: "call i64 @\"x.ct.mask_bit\"" "call i64 @\"x.ct.pick\"" -"select"
+// arm64: -"csel" -"cset"
+// amd64: -"\tcmov" -"\tset[a-z]+ "
+// func ed25519.sc_reduce
+// llvm: -"select"
 // arm64: -"csel" -"cset"
 // amd64: -"\tcmov" -"\tset[a-z]+ "
 

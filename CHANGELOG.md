@@ -7,6 +7,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 ## Unreleased
 
 - **Fix** (0.34.0): a linux/arm64 build assembled through a stock `cc` (GNU as, or clang with its default processor) failed on `crc32x` ("selected processor does not support" / "instruction requires: crc"): the assembly header declares `.arch_extension crc` beside crypto, aes and sha2.
+- std/crypto: Ed25519 signing reduces its scalars with Go's Montgomery
+  products instead of bit by bit: sign 0.66 and verify 0.89 of their
+  time (sign 1.19x Go's, was 1.81x).
 - BREAKING: prelude `FileInfo` gains `is_symlink: Bool` (default
   false): `read_dir` and `walk` report a symbolic link itself (Go's
   Lstat), `stat` follows it. A pattern that destructures FileInfo field

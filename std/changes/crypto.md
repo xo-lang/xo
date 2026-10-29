@@ -1,6 +1,24 @@
 # std/crypto changes
 
 
+## 2026-10-29: perf: Ed25519's scalars on Go's fiat-crypto Montgomery products (sign 0.656, verify 0.892 of their time)
+
+- Kind: perf (port)
+- Commit: this commit
+- Found by: the Ed25519 port's timing row (sign 1.81x Go's wall at 1.09x its instructions): sc_reduce reduced a 512 bit hash bit by bit, 512 dependent steps, twice per signature and once per verify
+- Go reference: crypto/internal/fips140/edwards25519 scalar.go (SetUniformBytes, MultiplyAdd) and scalar_fiat.go (fiatScalarMul's Montgomery constant 0xd2b51da312547e1b)
+- Test: corpora crypto, x509 and x509create on arm64, LLVM and Go; the TLS goldens; TestConstantTimeLLVM; test/codegen/consttime (the masks moved to sc_sub_l, the conditional subtraction of L); bench/perf/ed25519 twincheck; fixed point
+- Timing: bench/perf/ed25519, quiet --ab, 15 rounds, the parent's std as A: sign wall 0.656 (0.655 to 0.657), instructions 0.795; verify 0.892 (0.889 to 0.894), 0.944. Xo / Go wall: sign 1.185 (was 1.812), instructions 0.865; verify 0.795, instructions 0.511
+
+sc_reduce splits the hash into its low and high 256 bits and sums
+lo * R^2 / R and hi * R^3 / R (R = 2^256), which is x * R, then a
+Montgomery product with 1 divides R out: three 4x4 word products (CIOS,
+as fiat-crypto's) where Go splits into 21 byte pieces; sc_muladd is
+k * a / R, times R^2 / R, plus r. Every step is constant time: the final
+subtraction of L keeps its result by masks. A Go uint64 constant past
+2^63 is written negative (gotchas/hex-literal-past-int-max.md).
+
+
 ## 2026-10-29: perf: Ed25519 on Go's edwards25519 algorithms over the x25519 fe64 field (sign 0.352 and verify 0.404 of their time)
 
 - Kind: perf (port)
