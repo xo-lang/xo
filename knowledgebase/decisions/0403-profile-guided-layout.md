@@ -138,3 +138,20 @@ xo-lang-6's worktree notes); on main: stage 1 (the function order) and
 hot when it lies between sampled blocks in the CFG, measured on a run
 long enough that the floor is under a percent, and the measurement rule
 (agent-tools.md "Measuring": the one-binary control beside every sweep).
+
+## Stage 2b measured (2026-10-29): held
+
+bench/results/pgo-layout-stage2b-2026-10-29.md. The split that keeps a
+block hot when it has a sampled line or dominates or post-dominates a
+sampled block (so a loop's header, a sampled block's only successor and
+the merge after a sampled branch stay hot), measured on 370 to 740 ms
+runs of collatz, strings and interp with quiet `xo bench --ab` (15
+rounds, the one-binary floor beside every pair, placements 0 and 8):
+every pair is inside its floor (collatz 0.995 and 1.004, strings 1.006
+and 0.979 beside a placement pair of 1.027, interp 0.997 and 1.004), and
+the split moves almost nothing: a 10 kHz profile samples every block of
+a hot loop, so collatz and interp keep every block in place and strings
+moves a few error-path blocks. Held like stage 2: the code stays out of
+main (xo-lang-6's notes, 0403-stage2b-split.diff); on main stage 1 and
+1b. A block level stage would need a program with real cold paths inside
+hot functions; none of the three has one.
