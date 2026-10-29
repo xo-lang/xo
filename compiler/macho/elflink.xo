@@ -1679,6 +1679,10 @@ fn (var l: ELinker) contents(i: Int, ps: List[Patch]) -> Bytes {
     let c = l.objs[ob].sects[k]
     o.zeros(c.off - o.n)
     let base = s.addr + c.off
+    // the chunk whole, then each patch stored in place (BytesBuilder
+    // put_le, decision 0399)
+    let start = o.n
+    o.bytes(c.data)
     var at = 0
     while pi < ps.len() && ps[pi].addr < base + c.data.len() {
       let p = ps[pi]
@@ -1687,12 +1691,10 @@ fn (var l: ELinker) contents(i: Int, ps: List[Patch]) -> Bytes {
         l.fail("overlapping relocations at ${p.addr}")
         return o.done()
       }
-      o.bytes(c.data[at..rel])
-      o.le(p.value, p.size)
+      o.b.put_le(start + rel, p.value, p.size)
       at = rel + p.size
       pi += 1
     }
-    o.bytes(c.data[at..])
   }
   o.zeros(s.size - o.n)
   o.done()
@@ -2171,18 +2173,16 @@ fn (l: ELinker) shindex(shown: List[Int], i: Int) -> Int {
 
 /// data at addr with the patches that fall in it.
 fn patch_bytes(data: Bytes, addr: Int, ps: List[Patch]) -> Bytes {
+  // data once, then each patch in range stored in place (BytesBuilder
+  // put_le, decision 0399)
   var o = new_out(data.len())
-  var at = 0
+  o.bytes(data)
   for p in ps {
     if p.addr < addr || p.addr >= addr + data.len() {
       continue
     }
-    let rel = p.addr - addr
-    o.bytes(data[at..rel])
-    o.le(p.value, p.size)
-    at = rel + p.size
+    o.b.put_le(p.addr - addr, p.value, p.size)
   }
-  o.bytes(data[at..])
   o.done()
 }
 

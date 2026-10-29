@@ -1492,6 +1492,11 @@ fn (var l: Linker) synthesize() {
     for (off, data) in pieces {
       o.zeros(off - o.n)
       let base = s.addr + off
+      // the piece whole, then each patch stored in place (BytesBuilder
+      // put_le, decision 0399; it was the piece sliced between patches,
+      // each slice a copy, and each patch a byte at a time)
+      let start = o.n
+      o.bytes(data)
       var at = 0
       while pi < ps.len() && ps[pi].addr < base + data.len() {
         let p = ps[pi]
@@ -1500,12 +1505,10 @@ fn (var l: Linker) synthesize() {
           l.fail("overlapping patches at ${p.addr}")
           return
         }
-        o.bytes(data[at..rel])
-        o.le(p.value, p.size)
+        o.b.put_le(start + rel, p.value, p.size)
         at = rel + p.size
         pi += 1
       }
-      o.bytes(data[at..])
     }
     o.zeros(s.size - o.n)
     l.osects[i].bytes = o.done()
