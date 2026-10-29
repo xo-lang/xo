@@ -527,6 +527,12 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
+      if g.wasi_xo && name == "rt.task_stopping" {
+        // tasks are cooperative on this runtime: nothing asks one to stop
+        g.e("i32.const 0")
+        g.def(v)
+        return
+      }
       if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "call_c4" | "sys_words" | "auxval" | "sys_clone" | "tw_fake" | "fs_set_err" | "test_log" | "frame_addr" | "fn_addr" {
         // --lax: the call faults when it runs; so do the Linux system
         // calls of std/native/llrt/linux.xo and sysio.xo (decision 0206),
@@ -535,7 +541,7 @@ fn (var g: Gen) call(v: Int) {
         // and the native heap's blocks of sysio.set_err's native arm
         // (behind sysio.layer() == 0 in a WASI module); a function or
         // frame address (decision 0233) has no meaning in wasm
-        let msg = "the wasm backend does not support the call `${name}`"
+        let msg = if g.wasi_xo { "xo: this needs a process, a socket or a system tool (`${name}`), which is not available in the WASI build (XO1513)" } else { "the wasm backend does not support the call `${name}`" }
         g.e("i32.const ${g.str_obj(msg.bytes())}")
         g.e("i32.const ${msg.len()}")
         g.e(g.litp(comment_text(g.f.name)))

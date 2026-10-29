@@ -102,6 +102,11 @@ pub struct Gen {
   /// An unsupported call faults when it runs instead of failing the build
   /// (`compiler/wasm --lax`, to see how far a program gets).
   lax: Bool = false
+  /// The program is xo itself built for WASI (decision 0405: it declares
+  /// wasi_gate): what WASI preview1 lacks (processes, sockets, the native
+  /// scheduler) faults when it runs with XO1513's text, as lax does, and
+  /// the task runtime's stop poll is false (cooperative tasks).
+  wasi_xo: Bool = false
   /// Per function: it can suspend (it waits, or calls what can).
   susp: List[Bool] = []
   /// Why the function just lowered took the dispatch loop (--annotate).
@@ -216,6 +221,10 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
   for (i, f) in m.funcs.indexed() {
     g.by_name[f.name] = i
   }
+  if g.by_name.contains("wasi_gate") {
+    g.wasi_xo = true
+    g.lax = true
+  }
   g.no_processes()
   // the zone data of std/time (compiler/tzsel) in a list of one when the
   // driver chose it (generate_tz: xo build; compiler/wasm's own runs and
@@ -241,6 +250,9 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
 /// has none, as it has no sockets. Before the functions are generated, so
 /// the reason is this one and not the first native call of that code.
 fn (var g: Gen) no_processes() {
+  if g.wasi_xo {
+    return
+  }
   for f in g.m.funcs {
     for x in f.values {
       if x.op != ssa.Op.Call {

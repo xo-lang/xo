@@ -673,7 +673,14 @@ fn (var a: Asm) encode() -> List[Int] {
     if a.funcs[fi].imported {
       continue
     }
-    codes.push(a.encode_body(fi))
+    let body = a.encode_body(fi)
+    // V8 (so Node and the browsers) and the other engines refuse a body
+    // over 7654321 bytes: name the function that grew past it (xo's own
+    // build_native did, 12.4 MB, in the WASI build, decision 0405)
+    if a.err.is_empty() && body.len() > 7654321 {
+      a.err = "the function ${a.funcs[fi].name} is ${body.len()} bytes: more than the 7654321 a WebAssembly engine accepts; split it"
+    }
+    codes.push(body)
     ndef += 1
     if !a.err.is_empty() {
       return []
