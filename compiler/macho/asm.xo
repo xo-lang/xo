@@ -1026,13 +1026,10 @@ fn shl(x: Int, k: Int) -> Int {
   if k >= 64 {
     return 0
   }
-  // the bits that stay, below bit 63 - k, then bit 63
-  let keep = x & (pow2(63 - k) - 1)
-  var r = keep * pow2(k)
-  if (x >> (63 - k)) & 1 != 0 {
-    r = r | MIN_INT
-  }
-  r
+  // one shift (it was a multiply by pow2's loop, twice a call: every
+  // rd64 of a link's DWARF and relocations, a fifth of a Linux store
+  // link's time, 2026-10-28)
+  x.wrapping_shl(k)
 }
 
 /// x >> k as an unsigned shift.
@@ -1043,22 +1040,16 @@ fn lsr(x: Int, k: Int) -> Int {
   if k >= 64 {
     return 0
   }
-  (x >> k) & (pow2(64 - k) - 1)
+  (x >> k) & 1.wrapping_shl(64 - k).wrapping_sub(1)
 }
 
 /// 2^k for 0 <= k <= 63 (2^63 as the bit pattern MIN_INT, and
 /// pow2(63) - 1 as the maximum Int).
 fn pow2(k: Int) -> Int {
-  if k == 63 {
-    return MIN_INT
+  if k <= 0 {
+    return 1
   }
-  var n = 1
-  var i = 0
-  while i < k {
-    n = n * 2
-    i += 1
-  }
-  n
+  1.wrapping_shl(k)
 }
 
 /// The bytes of a quoted string with the escapes of the emitter

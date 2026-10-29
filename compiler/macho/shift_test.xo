@@ -1,0 +1,66 @@
+// shl, lsr and pow2 (asm.xo) as one shift each, against the loops they
+// replaced (2026-10-28), for every shift and values with each high bit
+// pattern.
+
+/// The former pow2: 2^k by doubling (2^63 as MIN_INT).
+fn pow2_loop(k: Int) -> Int {
+  if k == 63 {
+    return MIN_INT
+  }
+  var n = 1
+  var i = 0
+  while i < k {
+    n = n * 2
+    i += 1
+  }
+  n
+}
+
+/// The former shl: the low bits multiplied up, bit 63 set apart.
+fn shl_loop(x: Int, k: Int) -> Int {
+  if k <= 0 {
+    return x
+  }
+  if k >= 64 {
+    return 0
+  }
+  let keep = x & (pow2_loop(63 - k) - 1)
+  var r = keep * pow2_loop(k)
+  if (x >> (63 - k)) & 1 != 0 {
+    r = r | MIN_INT
+  }
+  r
+}
+
+/// The former lsr.
+fn lsr_loop(x: Int, k: Int) -> Int {
+  if k <= 0 {
+    return x
+  }
+  if k >= 64 {
+    return 0
+  }
+  (x >> k) & (pow2_loop(64 - k) - 1)
+}
+
+const SHIFT_VALUES = [0, 1, -1, 2, 0x7fffffff, 0xffffffff, 0x123456789abcdef, MIN_INT, -9223372036854775807, 0x4000000000000000, -2, 0x5555555555555555]
+
+test "shl and lsr shift as the loops did for every k and value" {
+  for x in SHIFT_VALUES {
+    for k in -1..66 {
+      expect(shl(x, k)) == shl_loop(x, k)
+      // (the loop's lsr faulted at k = 1: pow2(63) - 1 overflowed)
+      if k == 1 {
+        expect(lsr(x, 1)) == (x >> 1) & 0x7fffffffffffffff
+      } else {
+        expect(lsr(x, k)) == lsr_loop(x, k)
+      }
+    }
+  }
+}
+
+test "pow2 is 2^k for 0 to 63 and 1 below" {
+  for k in -2..64 {
+    expect(pow2(k)) == (if k < 0 { 1 } else { pow2_loop(k) })
+  }
+}
