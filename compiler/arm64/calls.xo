@@ -2657,6 +2657,11 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       g.retain(x.ty, [a])
       g.set(v, [a])
     }
+    "rt.str_at" => {
+      // the two words as a Str, no count taken (decision 0402): the caller's
+      // reference becomes the value's
+      g.set(v, [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))])
+    }
     _ => return false
   }
   true

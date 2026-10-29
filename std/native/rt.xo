@@ -21,6 +21,14 @@ fn str_slice(s: Str, lo: Int, hi: Int) -> Str
 /// and both ends on UTF-8 boundaries (lowered inline: the same object,
 /// counted once more; native only).
 fn str_view(s: Str, lo: Int, hi: Int) -> Str
+/// The Str whose object is at a and whose length word is w1 (decision
+/// 0330's `len | off << 32`: a view at offset off), taking no count: the
+/// caller hands over a reference it holds (decision 0402, the mapped file
+/// read_mapped returns as a view at offset 8). Lowered inline on the native
+/// backends; wasm and the Go backend do not have it (read_mapped is read
+/// there). Added before its first use so the seed that builds the runtime
+/// knows it (gotchas/seed-older-than-intrinsics.md).
+fn str_at(a: Int, w1: Int) -> Str
 fn str_rune_count(s: Str) -> Int
 fn str_repeat(s: Str, n: Int) -> Str
 /// Whether s parses as an Int (strconv.ParseInt(s, 10, 64)).

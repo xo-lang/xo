@@ -3,6 +3,8 @@
 // object pointer is the view's first byte, so data and str_byte read the
 // view (2026-10-25, from the first duration digit loop work).
 
+use native/rt
+
 test "a view is its own bytes" {
   let v = str_slice("hello world", 6, 11)
   expect(v == "world")
@@ -77,4 +79,20 @@ test "u8s_copy_back in place and past the capacity" {
   }
   expect(out) == want
   expect(out.len()) == 13 + 200 * 37
+}
+
+test "str_at makes the Str of an object and a length word" {
+  // decision 0402: an owned string, a second reference taken by hand, and
+  // the view at offset 2 of 3 bytes made from the object and the word
+  let t = str_copy(data("abcdefgh"), 8)
+  let a = rt.obj_addr(t)
+  rt.mem_store(a, 0, rt.mem_load(a, 0, 8) + 1, 8)
+  let v = rt.str_at(a, 3 | (2 << 32))
+  expect(v == "cde")
+  expect(v.len() == 3)
+  expect(t == "abcdefgh")
+  // a view: appending copies, the object is unchanged
+  let w = v + "!"
+  expect(w == "cde!")
+  expect(t == "abcdefgh")
 }

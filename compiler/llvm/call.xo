@@ -1585,6 +1585,10 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       g.emit("call void ${g.rc_fn("dup", x.ty)}(ptr ${p})")
       g.alias(v, p)
     }
+    "rt.str_at" => {
+      // the two words as a Str, no count taken (decision 0402), as arm64
+      g.mk_str(v, g.raw_ptr(x.args[0]), g.op(x.args[1]))
+    }
     _ => return false
   }
   true
