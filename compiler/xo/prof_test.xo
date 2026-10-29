@@ -60,3 +60,21 @@ test "a layout file: functions, lines and edges by weight, the outermost frame o
   expect(o[8]) == "edge main run 4"
   expect(o.len()) == 9
 }
+
+test "a layout file parses: names with spaces, the weight the last word, a bad line named" {
+  let l = parse_layout("xo layout v1\ntarget darwin/arm64\nsamples 5 hz 1000\nfn run 4\nfn xo.map.put[Map[Str, Int]] 2\nline run 5 3\nedge main run 4\n").or_fault("parse")
+  expect(l.target) == "darwin/arm64"
+  expect(l.samples) == 5
+  expect(l.fns.get("run") ?? 0) == 4
+  expect(l.fns.get("xo.map.put[Map[Str, Int]]") ?? 0) == 2
+  expect(l.lines.get("run 5") ?? 0) == 3
+  expect(l.edges.get("main run") ?? 0) == 4
+  match parse_layout("xo layout v1\nfn run x\n") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.starts_with("line 2:")) == true
+  }
+  match parse_layout("hello\n") {
+    Ok(_) => expect(false) == true
+    Err(e) => expect(e.starts_with("line 1: not a layout file")) == true
+  }
+}

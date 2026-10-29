@@ -1,0 +1,88 @@
+// A layout profile (decision 0403): `xo prof --layout` writes it, a build
+// reads it (./xo.layout beside the main package, or --layout=FILE) and
+// orders code by it. Stale entries are harmless: a function the program
+// no longer has is ignored, one that changed keeps its weight.
+
+/// A layout file read: the functions' weights by name, the sampled lines'
+/// weights by "NAME LINE", the caller to callee weights by "CALLER CALLEE",
+/// and the target it was taken on.
+struct Layout {
+  target: Str = ""
+  samples: Int = 0
+  fns: Map[Str, Int] = {}
+  lines: Map[Str, Int] = {}
+  edges: Map[Str, Int] = {}
+}
+
+/// Parses a layout file's text; Err names the first bad line (the version
+/// line must be prof.xo's LAYOUT_VERSION).
+fn parse_layout(text: Str) -> Layout ! Str {
+  var l = Layout{}
+  var first = true
+  for (i, raw) in text.split("\n").indexed() {
+    let line = raw.trim()
+    if line.is_empty() || line.starts_with("#") {
+      continue
+    }
+    if first {
+      if line != LAYOUT_VERSION {
+        return Err("line 1: not a layout file (want \"${LAYOUT_VERSION}\", got \"${line}\")")
+      }
+      first = false
+      continue
+    }
+    let ws = line.split(" ")
+    let bad = fn() -> Result[Layout, Str] { Err("line ${i + 1}: cannot read \"${line}\"") }
+    match ws[0] {
+      "target" => {
+        if ws.len() != 2 {
+          return bad()
+        }
+        l.target = ws[1]
+      }
+      "samples" => {
+        if ws.len() < 2 {
+          return bad()
+        }
+        l.samples = Int.parse(ws[1]) ?? 0
+      }
+      "fn" => {
+        // the name may hold spaces (a generic instance: `f[Map[Str, Int]]`):
+        // the weight is the last word, the name the rest
+        if ws.len() < 3 {
+          return bad()
+        }
+        let w = match Int.parse(ws[ws.len() - 1]) {
+          Some(n) => n
+          None => return bad()
+        }
+        l.fns[ws[1..ws.len() - 1].join(" ")] = w
+      }
+      "line" => {
+        if ws.len() < 4 {
+          return bad()
+        }
+        let w = match Int.parse(ws[ws.len() - 1]) {
+          Some(n) => n
+          None => return bad()
+        }
+        l.lines[ws[1..ws.len() - 1].join(" ")] = w
+      }
+      "edge" => {
+        if ws.len() < 4 {
+          return bad()
+        }
+        let w = match Int.parse(ws[ws.len() - 1]) {
+          Some(n) => n
+          None => return bad()
+        }
+        l.edges[ws[1..ws.len() - 1].join(" ")] = w
+      }
+      _ => return bad()
+    }
+  }
+  if first {
+    return Err("empty layout file")
+  }
+  l
+}
