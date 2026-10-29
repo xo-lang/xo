@@ -161,12 +161,17 @@ fn (g: Gen) home_callee(v: Int) -> Int {
 /// range over blocks in their order (not dominance order), so a value
 /// used in a loop would never die at the call that gives it up.
 fn (var g: Gen) dies_at(a: Int, v: Int) -> Bool {
-  g.dies_except(a, v, [])
+  g.dies_except(a, v, [], -1)
 }
 
 /// dies_at, not counting the uses by the instructions in skip (field
-/// reads the call snapshots: snap_reads).
-fn (var g: Gen) dies_except(a: Int, v: Int, skip: List[Int]) -> Bool {
+/// reads the call snapshots: snap_reads). With to >= 0, v is a
+/// terminator giving a up along its edge to block to: only that
+/// successor counts, since a branch's other targets are on paths the
+/// edge is not (a loop's `if` whose arm updates b while the other passes
+/// it to the loop's latch made every Builder method's home copy b: 47% of
+/// the playground compiler's instructions, 2026-10-29).
+fn (var g: Gen) dies_except(a: Int, v: Int, skip: List[Int], to: Int) -> Bool {
   let f = g.f
   let bi = g.blk[v]
   let b = f.blocks[bi]
@@ -195,7 +200,7 @@ fn (var g: Gen) dies_except(a: Int, v: Int, skip: List[Int]) -> Bool {
   let li = if skip.is_empty() { g.live_in(a) } else { g.live_in_except(a, skip) }
   for w in b.instrs {
     for e in f.values[w].succs {
-      if li[f.edges[e].to] {
+      if li[f.edges[e].to] && (to < 0 || w != v || f.edges[e].to == to) {
         return false
       }
     }
@@ -341,6 +346,7 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
     g.moff.push(0)
   }
   g.hok = []
+  g.hwhy = []
   g.livein = {}
   g.hbefore = []
   g.pass = {}
@@ -371,6 +377,7 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
   g.snapat = {}
   g.snapdef = {}
   for h in 0..g.hval.len() {
+    g.hwhy.push("")
     g.hok.push(g.plan_home(h, pos, hi, bend))
   }
   g.plan_fields(pos)
@@ -458,6 +465,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
       }
     }
   }
+  var dropped: List[Str] = []
   var changed = true
   while changed {
     changed = false
@@ -469,9 +477,13 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
           }
           for e in b.preds {
             let a = f.edges[e].args[k]
-            if a < 0 || !chain[a] || !g.gives_up(a, f.term(f.edges[e].from), g.members(a, partof, cparts)) {
+            if a < 0 || !chain[a] || !g.gives_up(a, f.term(f.edges[e].from), g.members(a, partof, cparts), bi) {
               chain[x] = false
               changed = true
+              if g.annotate {
+                let why = if a < 0 { "no value" } else if !chain[a] { "v${a} (${ssa.op_name(f.values[a].op)}) not in the chain" } else { "v${a} used after the edge" }
+                dropped.push("b${bi} param v${x}: ${why}")
+              }
               break
             }
           }
@@ -481,14 +493,17 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
         let x = f.values[v]
         if x.op == ssa.Op.SetField && chain[v] {
           let a = x.args[0]
-          if !chain[a] || !g.gives_up(a, v, g.members(a, partof, cparts)) {
+          if !chain[a] || !g.gives_up(a, v, g.members(a, partof, cparts), -1) {
             chain[v] = false
             changed = true
+            if g.annotate {
+              dropped.push("set v${v}: ${if !chain[a] { "v${a} (${ssa.op_name(f.values[a].op)}) not in the chain" } else { "v${a} used after it" }}")
+            }
           }
         }
         if cpar[v] >= 0 {
           let a = x.args[cpar[v]]
-          let ok = chain[a] && g.gives_up(a, v, g.members(a, partof, cparts))
+          let ok = chain[a] && g.gives_up(a, v, g.members(a, partof, cparts), -1)
           for w in cparts[v] {
             if chain[w] && !ok {
               chain[w] = false
@@ -501,6 +516,17 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
         }
       }
     }
+  }
+  // (--annotate: the calls of a `var` callee given a value of the home's
+  // type that do not pass the home, so copy it)
+  var nbroken = 0
+  for v in 0..nv {
+    if cpar[v] == -2 {
+      nbroken += 1
+    }
+  }
+  if nbroken > 0 || !dropped.is_empty() {
+    g.hwhy[h] = "${nbroken} calls copy; ${dropped.len()} dropped [${dropped.join("; ")}]"
   }
   // the calls that pass the home, and the part each leaves in it
   var after: List[Int] = []
@@ -531,12 +557,13 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
   var group: Map[Str, Int] = {}
   var snaps: List[(Int, Int, Int)] = []
   for (bi, b) in f.blocks.indexed() {
-    var gone: List[(Int, Int)] = []
+    // (the value, where it is given up, and for an edge its target)
+    var gone: List[(Int, Int, Int)] = []
     if bi > 0 {
       for e in b.preds {
         for (k, a) in f.edges[e].args.indexed() {
           if a >= 0 && chain[a] && chain[b.params[k]] {
-            gone.push((a, f.term(f.edges[e].from)))
+            gone.push((a, f.term(f.edges[e].from), bi))
           }
         }
       }
@@ -544,16 +571,20 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
     for v in b.instrs {
       let x = f.values[v]
       if x.op == ssa.Op.SetField && chain[v] {
-        gone.push((x.args[0], v))
+        gone.push((x.args[0], v, -1))
       }
       if cpar[v] >= 0 {
-        gone.push((x.args[cpar[v]], v))
+        gone.push((x.args[cpar[v]], v, -1))
       }
     }
-    for (a, at) in gone {
+    for (a, at, to) in gone {
       let ms = g.members(a, partof, cparts)
       let d = if partof[a] >= 0 { partof[a] } else { a }
-      let reach = g.reach_from(g.blk[at])
+      // given up along an edge: only the blocks from its target on
+      var reach = if to >= 0 { g.reach_from(to) } else { g.reach_from(g.blk[at]) }
+      if to >= 0 {
+        reach[to] = true
+      }
       for m in ms {
         for w in g.users[m] {
           if f.values[w].op != ssa.Op.Field || g.nleaves(f.values[w].ty) == 0 || snapped[w] {
@@ -650,15 +681,18 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
           continue
         }
         if a >= 0 && chain[a] && st != TOP && g.canon[a] != st {
+          g.hwhy[h] = "v${v} (${ssa.op_name(x.op)}) uses v${a} where the home holds ${if st == CONFLICT { "conflicting values" } else { "v${st}" }}"
           return g.drop_home(h)
         }
         if a >= 0 && chain[a] && x.op == ssa.Op.Return && k > 0 && g.result_home(k) != h && g.result_home(k) >= 0 {
+          g.hwhy[h] = "returned as another home's result"
           return g.drop_home(h)
         }
       }
       for e in x.succs {
         for a in f.edges[e].args {
           if a >= 0 && chain[a] && st != TOP && g.canon[a] != st {
+            g.hwhy[h] = "an edge of v${v} passes v${a} where the home holds ${if st == CONFLICT { "conflicting values" } else { "v${st}" }}"
             return g.drop_home(h)
           }
         }
@@ -675,6 +709,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
     if chain[v] && g.held[v] >= 0 {
       // another home of the type claims it (never expected: each chain
       // starts at its own parameter)
+      g.hwhy[h] = "v${v} is another home's"
       return g.drop_home(h)
     }
   }
@@ -707,7 +742,7 @@ fn (g: Gen) members(a: Int, partof: List[Int], cparts: List[List[Int]]) -> List[
 
 /// Whether the chain value whose values are ms can be given up at v: none
 /// is used after v except by field reads, which then read a snapshot.
-fn (var g: Gen) gives_up(a: Int, v: Int, ms: List[Int]) -> Bool {
+fn (var g: Gen) gives_up(a: Int, v: Int, ms: List[Int], to: Int) -> Bool {
   for m in ms {
     var skip: List[Int] = []
     for w in g.users[m] {
@@ -715,7 +750,7 @@ fn (var g: Gen) gives_up(a: Int, v: Int, ms: List[Int]) -> Bool {
         skip.push(w)
       }
     }
-    if !g.dies_except(m, v, skip) {
+    if !g.dies_except(m, v, skip, to) {
       return false
     }
   }

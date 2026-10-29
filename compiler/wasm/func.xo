@@ -240,7 +240,8 @@ fn (var g: Gen) func(fi: Int) {
     // which homes keep their chain in memory (home.xo)
     var hs: List[Str] = []
     for (h, ok) in g.hok.indexed() {
-      hs.push(if g.hro[h] { "ro" } else if ok { "held" } else { "fallback" })
+      let why = if h < g.hwhy.len() && !g.hwhy[h].is_empty() { ": ${g.hwhy[h]}" } else { "" }
+      hs.push("${if g.hro[h] { "ro" } else if ok { "held" } else { "fallback" }}${why}")
     }
     note = " (homes: ${hs.join(" ")})"
   }

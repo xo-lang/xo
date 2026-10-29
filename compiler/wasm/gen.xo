@@ -152,6 +152,9 @@ pub struct Gen {
   hparam: List[Int] = []
   hval: List[Int] = []
   hok: List[Bool] = []
+  /// Per home, why it fell back or how many calls could not pass it
+  /// (--annotate).
+  hwhy: List[Str] = []
   hbefore: List[List[Int]] = []
   /// Per value: the home holding it (-1 for none), the value standing for
   /// it in the dataflow, and for a field read loaded where it is used the
