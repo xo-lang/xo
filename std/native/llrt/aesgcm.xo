@@ -267,6 +267,88 @@ fn expand(var sk: List[Int], c: Int) {
 /// the length).
 pub fn new(key: Bytes) -> Cipher { schedule(key, true) }
 
+/// RotWord of a word loaded little endian.
+fn rot_word(x: Int) -> Int { (shl(x, 24) | shr(x, 8)) & 0xFFFFFFFF }
+
+/// The round keys (Cipher.rk) with the CPU's AES instructions, Go's
+/// expandKeyAsm (crypto/internal/fips140/aes/aes_arm64.s ks128, ks192,
+/// ks256): the key's words stay in locals and a round's words are
+/// written as they are made, two to a slot of rk, where the generic
+/// loop pushed every word to a list and read it back nk words later
+/// (2026-10-29: that loop was 36% of an AES-GCM key's setup).
+fn schedule_hw(key: Bytes, nk: Int, nr: Int) -> List[Int] {
+  var rk = raw.zero_ints(2 * (nr + 1))
+  var sw = [0, 0]
+  let zk = [0, 0]
+  var w0 = le32(key, 0)
+  var w1 = le32(key, 4)
+  var w2 = le32(key, 8)
+  var w3 = le32(key, 12)
+  rk[0] = w0 | shl(w1, 32)
+  rk[1] = w2 | shl(w3, 32)
+  var rcon = 1
+  if nk == 4 {
+    for r in 1..11 {
+      w0 = w0 ^ sub_word_hw(rot_word(w3), sw, zk) ^ rcon
+      w1 = w1 ^ w0
+      w2 = w2 ^ w1
+      w3 = w3 ^ w2
+      rk[2 * r] = w0 | shl(w1, 32)
+      rk[2 * r + 1] = w2 | shl(w3, 32)
+      rcon = if rcon < 0x80 { shl(rcon, 1) } else { 0x1B }
+    }
+  } else if nk == 6 {
+    // six words a step, three slots; the last step's first four words
+    // only (52 words)
+    var w4 = le32(key, 16)
+    var w5 = le32(key, 20)
+    rk[2] = w4 | shl(w5, 32)
+    for g in 1..9 {
+      w0 = w0 ^ sub_word_hw(rot_word(w5), sw, zk) ^ rcon
+      w1 = w1 ^ w0
+      w2 = w2 ^ w1
+      w3 = w3 ^ w2
+      w4 = w4 ^ w3
+      w5 = w5 ^ w4
+      rk[3 * g] = w0 | shl(w1, 32)
+      rk[3 * g + 1] = w2 | shl(w3, 32)
+      if g < 8 {
+        rk[3 * g + 2] = w4 | shl(w5, 32)
+      }
+      rcon = shl(rcon, 1)
+    }
+  } else {
+    // eight words a step, four slots; the last step's first four words
+    // only (60 words)
+    var w4 = le32(key, 16)
+    var w5 = le32(key, 20)
+    var w6 = le32(key, 24)
+    var w7 = le32(key, 28)
+    rk[2] = w4 | shl(w5, 32)
+    rk[3] = w6 | shl(w7, 32)
+    for g in 1..8 {
+      w0 = w0 ^ sub_word_hw(rot_word(w7), sw, zk) ^ rcon
+      w1 = w1 ^ w0
+      w2 = w2 ^ w1
+      w3 = w3 ^ w2
+      rk[4 * g] = w0 | shl(w1, 32)
+      rk[4 * g + 1] = w2 | shl(w3, 32)
+      if g < 7 {
+        w4 = w4 ^ sub_word_hw(w3, sw, zk)
+        w5 = w5 ^ w4
+        w6 = w6 ^ w5
+        w7 = w7 ^ w6
+        rk[4 * g + 2] = w4 | shl(w5, 32)
+        rk[4 * g + 3] = w6 | shl(w7, 32)
+      }
+      rcon = shl(rcon, 1)
+    }
+  }
+  keep(sw)
+  keep(zk)
+  rk
+}
+
 /// new, the bitsliced round keys (sk: the encryption without AES
 /// instructions, and every decryption) only when bitsliced is true or
 /// the CPU has no AES instructions: AES-GCM only encrypts, and with
@@ -278,6 +360,10 @@ const RCON: List[Int] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0
 fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
   let nk = key.len() / 4
   let nr = nk + 6
+  let hw = cpu.hw()
+  if !bitsliced && (hw & cpu.HW_AES) != 0 {
+    return Cipher{nr: nr, sk: [], rk: schedule_hw(key, nk, nr), hw: hw}
+  }
   let nkf = 4 * (nr + 1)
   // made once a key with its final length (2026-10-29: a key's setup
   // was 1.5 times Go's, std/crypto's aead_key)
@@ -285,7 +371,6 @@ fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
   for i in 0..nk {
     w.push(le32(key, 4 * i))
   }
-  let hw = cpu.hw()
   // with AES instructions, SubWord is one last round with a zero key of a
   // block whose four columns are the word (ShiftRows then moves nothing):
   // the bitsliced S-box was most of a key's setup (about 1.8 us of each
@@ -805,8 +890,9 @@ fn (g: Gcm) ghash_o(y1a: Int, y0a: Int, b: Bytes, o: Int, n: Int) -> (Int, Int) 
 /// The AES-GCM key of a 16, 24, or 32 byte AES key.
 pub fn new_gcm(key: Bytes) -> Gcm {
   let c = schedule(key, false)
+  // H is one block: with AES instructions only that one is encrypted
   var io = [0, 0, 0, 0, 0, 0, 0, 0]
-  encrypt4(c, io)
+  encrypt_n(c, io, 1)
   let h1 = io[0].swap_bytes()
   let h0 = io[1].swap_bytes()
   let h0r = rev64(h0)
@@ -829,7 +915,7 @@ pub fn new_gcm(key: Bytes) -> Gcm {
   let (v1, v0) = if arm { g.mul(u1, u0) } else { (0, 0) }
   let (w1, w0) = if arm { g.mul(v1, v0) } else { (0, 0) }
   let (z1, z0) = if arm { g.mul(w1, w0) } else { (0, 0) }
-  Gcm{c: c, hw: c.hw, h0: h0, h1: h1, h2: h0 ^ h1, h0r: h0r, h1r: h1r, h2r: h0r ^ h1r, hk: [z0, z1, z0 ^ z1, w0, w1, w0 ^ w1, v0, v1, v0 ^ v1, u0, u1, u0 ^ u1, t0, t1, t0 ^ t1, r0, r1, r0 ^ r1, q0, q1, q0 ^ q1, h0, h1, h0 ^ h1]}
+  g with {hk: [z0, z1, z0 ^ z1, w0, w1, w0 ^ w1, v0, v1, v0 ^ v1, u0, u1, u0 ^ u1, t0, t1, t0 ^ t1, r0, r1, r0 ^ r1, q0, q1, q0 ^ q1, h0, h1, h0 ^ h1]}
 }
 
 /// The first n bytes of src xor the key stream from counter ctr (32

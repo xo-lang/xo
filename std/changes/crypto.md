@@ -1,6 +1,5 @@
 # std/crypto changes
 
-
 ## 2026-10-29: feature: marshal_private_key
 
 - Kind: feature
@@ -12,6 +11,20 @@
 `marshal_private_key(k)` is k as PKCS #8 DER, Go's encoding: PKCS #1
 inside for RSA, an ECPrivateKey with its public key and without its
 curve (the algorithm names it) for ECDSA, the seed for Ed25519.
+## 2026-10-29: perf: the AES key schedule on the CPU's AES instructions keeps its words in registers
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/aead gcm_key still 1.357 times Go's time after the schedule above; the generic loop pushed every word to a list and read it back nk words later (36% of a key's setup)
+- Go reference: crypto/internal/fips140/aes/aes_arm64.s expandKeyAsm (ks128, ks192, ks256)
+- Test: internal/stdtest/testdata/corpus/aead and crypto; goldens aead_diff, crypto_prims and http_tls on arm64
+
+aesgcm.schedule_hw makes the round keys for 128, 192 and 256 bit keys
+with the words in locals, written two to a slot of the round key list
+as they are made, where the CPU has AES instructions. Quiet --ab, 15
+rounds, the parent's std as A: an AES-256 key made (gcm_key) wall 0.884
+(0.878 to 0.897), instructions 0.689; small seals (gcm_small) within
+noise. Against Go's crypto/aes: 1.204 (1.183 to 1.212), from 1.357.
 
 ## 2026-10-29: feature: AEAD (AES-GCM, ChaCha20-Poly1305) and HKDF
 
