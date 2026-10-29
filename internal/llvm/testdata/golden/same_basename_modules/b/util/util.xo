@@ -1,0 +1,13 @@
+pub const SCALE = 1000
+
+pub struct Box {
+  pub n: Int
+}
+
+pub fn (b: Box) get() -> Int {
+  b.n * SCALE
+}
+
+pub fn parse(s: Str) -> Int {
+  s.len() * SCALE
+}

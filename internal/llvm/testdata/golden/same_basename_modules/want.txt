@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+a.parse 3
+b.parse 3000
+a.SCALE 1 b.SCALE 1000
+a.Box.get 2 b.Box.get 2000
+--- stderr

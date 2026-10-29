@@ -1,0 +1,11 @@
+use github.com/xo-lang/xo/internal/llvm/testdata/golden/same_basename_modules/a/util
+use github.com/xo-lang/xo/internal/llvm/testdata/golden/same_basename_modules/b/util as bu
+
+fn main(os: Os) {
+  os.stdio.println("a.parse ${util.parse("abc")}")
+  os.stdio.println("b.parse ${bu.parse("abc")}")
+  os.stdio.println("a.SCALE ${util.SCALE} b.SCALE ${bu.SCALE}")
+  let x = util.Box{n: 2}
+  let y = bu.Box{n: 2}
+  os.stdio.println("a.Box.get ${x.get()} b.Box.get ${y.get()}")
+}

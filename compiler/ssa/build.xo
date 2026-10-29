@@ -177,6 +177,10 @@ pub struct Builder {
   nclos: Int = 0
   /// The names of types two loaded user modules both declare.
   ambiguous: Map[Str, Bool] = {}
+  /// The modules whose functions and constants are named by their path,
+  /// not their default name, since another module of the program has
+  /// that name (mod_prefix).
+  path_named: Set[Int] = #{}
   /// Implementation modules by the std path they implement.
   natives: Map[Str, Int] = {}
   /// The module holding main.
@@ -510,6 +514,7 @@ fn program_builder(c: check.Checker, line_root: Str, tests: Bool, release: Bool,
 pub fn new_builder(c: check.Checker, line_root: Str) -> Builder {
   var b = Builder{c: c, line_root: line_root}
   b.ambiguous = b.ambiguous_type_names()
+  b.path_named = b.path_named_mods()
   b
 }
 
@@ -1839,6 +1844,48 @@ fn (var b: Builder) reaches(t0: Int, owner: Str, seen0: List[Str]) -> (Bool, Lis
 
 /// The names of the types declared by more than one user module
 /// (ambiguousTypeNames).
+/// The modules named by their path in SSA names: every program module
+/// whose default name another module of the build has (app/a/util and
+/// app/b/util; a program's util and a std util). std modules keep their
+/// names, which the std store holds whatever a build loads, so two std
+/// modules sharing one (std/trace and std/native/llrt/trace) may not
+/// declare the same function (internal/repotest
+/// TestStdSameNameModulesDisjoint).
+/// Before, both modules' functions were `util.parse`: one of the two
+/// bodies was called for both on the native and wasm backends, and LLVM
+/// refused the duplicate (2026-10-29, found by xo-lang-5 through std/x509
+/// and std/native/llrt/x509).
+fn (var b: Builder) path_named_mods() -> Set[Int] {
+  var by: Map[Str, List[Int]] = {}
+  for (m, md) in b.c.mods.indexed() {
+    var l = by.get(md.name) ?? []
+    l.push(m)
+    by[md.name] = l
+  }
+  var out: Set[Int] = #{}
+  for (_, ms) in by {
+    if ms.len() < 2 {
+      continue
+    }
+    for m in ms {
+      if !b.c.mods[m].is_std && !b.c.mods[m].native {
+        out.add(m)
+      }
+    }
+  }
+  out
+}
+
+/// The prefix of module m's functions and constants in SSA names: its
+/// default name, or its path when another module has that name
+/// (path_named_mods).
+fn (b: Builder) mod_prefix(m: Int) -> Str {
+  if b.path_named.contains(m) {
+    return b.c.mods[m].path
+  }
+  b.c.mods[m].name
+}
+
 fn (var b: Builder) ambiguous_type_names() -> Map[Str, Bool] {
   var owner: Map[Str, Int] = {}
   var out: Map[Str, Bool] = {}
@@ -2061,7 +2108,7 @@ fn (var b: Builder) func_name(fo: Int) -> Str {
   var n = b.c.display_name(fo)
   let om = b.obj_mod(fo)
   if om >= 0 && om != b.main_mod {
-    n = "${b.c.mods[om].name}.${n}"
+    n = "${b.mod_prefix(om)}.${n}"
   }
   if b.tests && n == "main" {
     // a test binary's main is the test entry; the program's main is an

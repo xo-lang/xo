@@ -1,0 +1,18 @@
+// Two modules whose last path segment is the same (a/util and b/util):
+// their functions, constants and methods must stay apart (2026-10-29: both
+// were `util.parse`, and the native and wasm backends called one body for
+// both).
+
+pub const SCALE = 1
+
+pub struct Box {
+  pub n: Int
+}
+
+pub fn (b: Box) get() -> Int {
+  b.n * SCALE
+}
+
+pub fn parse(s: Str) -> Int {
+  s.len() * SCALE
+}

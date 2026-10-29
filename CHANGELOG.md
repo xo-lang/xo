@@ -12,7 +12,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   never do; `encode` writes the plain string). An exhaustive `match` on
   json.Value needs an arm: `xo fix` adds it as a hole (XO0301), or add a
   wildcard.
-
+- Fix (miscompile): two modules whose paths end in the same name
+  (app/a/util and app/b/util, used with `as`) had their functions,
+  methods and constants share one name, so on the native and wasm
+  backends a call to one ran the other's body (LLVM refused the build;
+  the Go backend was right). Such a module is now named by its path.
 - xo build: when std's store build fails (a std edit only the store's
   full check rejects), every separately compiled build prints one
   warning with the std file:line and builds the whole program; before,

@@ -669,7 +669,7 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   // whatever its type (decision 0332)
   let it = b.int_t()
   let lt = b.m.list(t)
-  let name = "xo.const[${b.c.mods[b.obj_mod(c)].name}.${b.obj_name(c)}]"
+  let name = "xo.const[${b.mod_prefix(b.obj_mod(c))}.${b.obj_name(c)}]"
   var id = b.consts.get(name) ?? -1
   let made = id < 0
   if made {
@@ -688,7 +688,7 @@ fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
     // an initializer that runs code is built by a function of its own,
     // which the entry function calls under a landing (decision 0332)
     let runs = !b.c.is_compile_time(f, value)
-    let body = if runs { "xo.const_body[${b.c.mods[b.obj_mod(c)].name}.${b.obj_name(c)}]" } else { name }
+    let body = if runs { "xo.const_body[${b.mod_prefix(b.obj_mod(c))}.${b.obj_name(c)}]" } else { name }
     let fi = b.m.new_func(body, [], [lt])
     b.m.funcs[fi].entry = !runs
     let saved = b.begin(fi, f)
