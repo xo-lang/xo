@@ -43,7 +43,7 @@ unsettled stamps, directory names, a file written after the build's start,
 the closure's records), XO_STD_EXPORT=verify under separate compilation
 and whole-program (0 differences), a program formatting with time.RFC3339
 and one with a bad literal layout (its error kept), identity and the fixed
-point: IDENTITY_FP.
+point: identity (scripts/identity ada872969 against this head, plain and with XO_STD_EXPORT=1 exported) compared 202, differing 0 both times; the fixed point bootstrap ok (s2 and s3 identical), chkcache and cross ok; TestStdTreesRebuild (the rebuild fallback) passes.
 
 ## What XO_STD_EXPORT=1 gains over today's default, and the default
 
