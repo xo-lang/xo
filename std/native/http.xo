@@ -3278,3 +3278,123 @@ fn urlerr_display(e: http.UrlErr) -> Str { e.msg }
 fn cookieerr_display(e: http.CookieErr) -> Str { e.msg }
 
 fn tlserr_display(e: http.TlsErr) -> Str { e.msg }
+// ---------------------------------------------------------------------------
+// A reverse proxy (decision 0404 stage D; net/http/httputil ReverseProxy
+// with Rewrite, SetURL and SetXForwarded)
+
+/// The header fields that belong to one connection (httputil's
+/// hopHeaders), removed both ways.
+const HOP_HEADERS: List[Str] = ["Connection", "Proxy-Connection", "Keep-Alive", "Proxy-Authenticate", "Proxy-Authorization", "Te", "Trailer", "Transfer-Encoding", "Upgrade"]
+
+/// h without the hop-by-hop fields and the names its Connection field
+/// lists (httputil's removeHopByHopHeaders).
+fn without_hop(h: Map[Str, Str]) -> Map[Str, Str] {
+  var out = h
+  if let Some(c) = h.get("Connection") {
+    for f in c.split(",") {
+      let n = http1.canonical_key(f.trim())
+      if !n.is_empty() {
+        let _ = out.remove(n)
+      }
+    }
+  }
+  for n in HOP_HEADERS {
+    let _ = out.remove(n)
+  }
+  out
+}
+
+/// a and b joined with one slash (httputil's singleJoiningSlash).
+fn joining_slash(a: Str, b: Str) -> Str {
+  let aslash = a.ends_with("/")
+  let bslash = b.starts_with("/")
+  if aslash && bslash {
+    return a + b[1..b.len()]
+  }
+  if !aslash && !bslash {
+    return a + "/" + b
+  }
+  a + b
+}
+
+/// http.ReverseProxy: the client (redirects off), the target, and the
+/// rewrite hooks (none or one).
+struct ReverseProxy {
+  c: Client
+  target: http.Url
+  rewrite: List[fn(http.Request, http.Request) -> http.Request]
+}
+
+pub fn reverse_proxy(client: http.Client, target: http.Url) -> http.ReverseProxy {
+  rt.cast[ReverseProxy, http.ReverseProxy](ReverseProxy{c: rt.cast[http.Client, Client](client).with_redirects(0), target: target, rewrite: []})
+}
+
+fn (p: ReverseProxy) with_rewrite(f: fn(http.Request, http.Request) -> http.Request) -> http.ReverseProxy {
+  rt.cast[ReverseProxy, http.ReverseProxy](p with {rewrite: [f]})
+}
+
+fn (p: ReverseProxy) serve(req0: http.Request, body: http.BodyReader) -> http.Response uses net.dial {
+  let target = p.target
+  let c = p.c
+  let req = rt.cast[http.Request, Request](req0)
+  // SetURL: the target's scheme and host, its path joined before the
+  // request's, the queries merged; Host is the target's
+  var u = target
+  u.path = joining_slash(target.path, req.url.path)
+  var q = target.query
+  for (k, v) in req.url.query {
+    q.put(k, v)
+  }
+  u.query = q
+  var h = without_hop(req.headers)
+  // SetXForwarded after the incoming X-Forwarded-* are dropped (Rewrite's
+  // rule: a client cannot forge the chain; a rewrite hook that trusts it
+  // copies it from in)
+  let _ = h.remove("X-Forwarded-For")
+  let _ = h.remove("X-Forwarded-Host")
+  let _ = h.remove("X-Forwarded-Proto")
+  h.put("X-Forwarded-For", req.remote_ip)
+  if let Some(host) = req.headers.get("Host") {
+    h.put("X-Forwarded-Host", host)
+  }
+  h.put("X-Forwarded-Proto", if req.url.scheme.is_empty() { "http" } else { req.url.scheme })
+  let _ = h.remove("Host")
+  var out = rt.cast[Request, http.Request](req with {url: u, headers: h, fields: [], body: b""})
+  if let Some(f) = p.rewrite.get(0) {
+    out = f(req0, out)
+  }
+  let sent = rt.cast[http.Request, Request](out).with_body_reader(body)
+  match c.open(sent) {
+    Err(e) => {
+      log.error("http: proxy error", {"error": e.display()})
+      return http.empty(if e is http.ClientErr.Timeout { 504 } else { 502 })
+    }
+    Ok(st) => {
+      let head = st.head()
+      let rh = without_hop(head.headers)
+      // a body without a length or an event stream is flushed as it
+      // arrives (FlushInterval -1)
+      let flush = !rh.contains("Content-Length") || (rh.get("Content-Type") ?? "").starts_with("text/event-stream")
+      var resp = http.stream(head.status, fn(w: http.BodyWriter) -> () ! IoErr uses net.dial {
+        loop: while true {
+          match st.read(32768) {
+            Ok(Some(b)) => {
+              w.write(b)?
+              if flush {
+                w.flush()?
+              }
+            }
+            Ok(None) => break loop
+            Err(e) => {
+              st.close()
+              return Err(IoErr.Io(msg: "${e}"))
+            }
+          }
+        }
+        st.close()
+        Ok(())
+      })
+      resp with {headers: rh}
+    }
+  }
+}

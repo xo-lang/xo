@@ -1503,6 +1503,11 @@ fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
 fn (r: Request) with_idle_timeout(d: Duration) -> Request  // decision 0404
 fn (r: Request) with_body_reader(b: BodyReader) -> Request // decision 0404
 
+pub fn reverse_proxy(client: Client, target: Url) -> ReverseProxy   // decision 0404
+struct ReverseProxy {}
+fn (p: ReverseProxy) with_rewrite(f: fn(Request, Request) -> Request) -> ReverseProxy
+fn (p: ReverseProxy) serve(req: Request, body: BodyReader) -> Response uses net.dial
+
 fn (c: Client) open(req: Request) -> ClientStream ! ClientErr uses net.dial
 struct ResponseHead { status: Int, headers: Map[Str, Str] }
 struct ClientStream {}
@@ -1577,6 +1582,40 @@ once: a 307 or 308 is returned as it came instead of followed, a 301,
 on a dead pooled connection is not sent again. An error reading the
 source fails the request with `Protocol` and the source's text. It is a
 client side builder.
+
+`reverse_proxy(client, target)` forwards a `handle_stream` route's
+requests (`r.handle_stream("/api/{rest...}", fn(req, body) { p.serve(req,
+body) })`) as Go's `httputil.ReverseProxy` with `Rewrite`, `SetURL` and
+`SetXForwarded` does: the target's scheme and host, its path joined
+before the request's (one slash between), the target's query merged with
+the request's; the hop-by-hop fields (`Connection` and the names it lists,
+`Proxy-Connection`, `Keep-Alive`, `Proxy-Authenticate`,
+`Proxy-Authorization`, `Te`, `Trailer`, `Transfer-Encoding`, `Upgrade`)
+removed from the request and the response; `X-Forwarded-For`
+set to the peer's `remote_ip` after the client's own `X-Forwarded-*`
+fields are dropped (Go's Rewrite: a client cannot forge the chain; behind
+a trusted proxy the `with_rewrite(f)` hook, which gets the received
+request and the outgoing one, copies the chain from the first),
+`X-Forwarded-Host` the request's `Host`,
+`X-Forwarded-Proto` its scheme (`http` when unknown); then the
+`with_rewrite` hook. The request body is sent as it is read
+(`with_body_reader`), redirects are returned as they came, and the
+response body is streamed back, flushed after each piece when it has no
+`Content-Length` or is `text/event-stream`. A failure to reach the
+target is an empty 502, a timeout 504, each logged as `http: proxy
+error` with the error. Upgrade (WebSocket) tunnels are not proxied yet
+(decision 0404 stage E).
+
+Behind a trusted proxy, the hook keeps the chain it received:
+
+```xo
+let p = http.reverse_proxy(client, target).with_rewrite(fn(inb: http.Request, out: http.Request) -> http.Request {
+  match inb.header("X-Forwarded-For") {
+    Some(prior) => out.with_header("X-Forwarded-For", "${prior}, ${inb.remote_ip}")
+    None => out
+  }
+})
+```
 
 `parse_url` accepts absolute RFC 3986 URLs with an
 `http` or `https` scheme and a host; anything else is a `UrlErr`. An

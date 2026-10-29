@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+hello: 200 path=/base/api/hello q=1,2 X-Forwarded-For=127.0.0.1 X-Forwarded-Host=- X-Forwarded-Proto=http X-Drop=- Keep-Alive=- X-Rewritten=/api/hello X-Keep=k
+hello header: X-Up=yes X-Hop=- Connection=-
+echo: 200 echo 100000 bytes
+moved: 302 /elsewhere
+events: 200 text/event-stream data: 0||data: 1||data: 2||
+smuggle: HTTP/1.1 200 OK echo 0 bytes
+dead: 502
+done
+--- stderr
+<time> ERROR http: proxy error error=dial tcp 127.0.0.1:1: connect: connection refused

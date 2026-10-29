@@ -1,5 +1,22 @@
 # std/http changes
 
+## 2026-10-29: feature: a reverse proxy (http.reverse_proxy)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md): an API gateway
+- Go reference: net/http/httputil reverseproxy.go (ReverseProxy, Rewrite,
+  ProxyRequest.SetURL and SetXForwarded, removeHopByHopHeaders,
+  joinURLPath/singleJoiningSlash, flushInterval); decision 0404 stage D
+- Test: internal/llvm/testdata/golden/http_reverse_proxy (native and Go)
+
+`http.reverse_proxy(client, target)` and `ReverseProxy.serve(req, body)` for a
+`handle_stream` route: path joined and query merged as SetURL does, hop-by-hop
+fields dropped both ways, X-Forwarded-For/-Host/-Proto set, a `with_rewrite`
+hook, both bodies streamed (decision 0404 stages B and C), redirects passed
+through, event streams flushed, 502 and 504 on failures. Not yet: Upgrade
+tunnels (stage E).
+
 ## 2026-10-29: feature: a request body sent as it is read (Request.with_body_reader)
 
 - Kind: feature

@@ -1,0 +1,118 @@
+// http.reverse_proxy (decision 0404 stage D; httputil.ReverseProxy with
+// Rewrite, SetURL and SetXForwarded): a handle_stream route forwards to
+// an upstream under a base path; the queries merge; hop-by-hop fields
+// (and those its Connection field names) are dropped both ways;
+// X-Forwarded-For and -Host are set; a rewrite hook runs last; request
+// and response bodies stream through; a redirect comes back as it was;
+// an upstream nobody serves is 502 (logged); a request with both
+// Content-Length and Transfer-Encoding is read as chunked.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /base/api/hello", fn(req) {
+    let seen = ["X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto", "X-Drop", "Keep-Alive", "X-Rewritten", "X-Keep"].map(fn(k: Str) -> Str { "${k}=${req.header(k) ?? "-"}" }).join(" ")
+    http.text(200, "path=${req.path} q=${req.query("a") ?? "-"},${req.query("b") ?? "-"} ${seen}")
+      .with_header("Connection", "X-Hop")
+      .with_header("X-Hop", "1")
+      .with_header("X-Up", "yes")
+  })
+  r.handle("POST /base/api/echo", fn(req) { http.text(200, "echo ${req.body.len()} bytes") })
+  r.handle("GET /base/api/moved", fn(_req) { http.empty(302).with_header("Location", "/elsewhere") })
+  r.handle("GET /base/api/events", fn(_req) {
+    http.stream(200, fn(w) {
+      for i in 0..3 {
+        w.write("data: ${i}\n\n".bytes())?
+        w.flush()?
+      }
+    }).with_header("Content-Type", "text/event-stream")
+  })
+  r
+}
+
+fn front(os: Os, up: Str, dead: Str) -> http.Router {
+  var r = http.router()
+  let c = http.client(os.net)
+  let p = http.reverse_proxy(c, http.parse_url("http://${up}/base?a=1").or_fault("url"))
+    .with_rewrite(fn(inb: http.Request, out: http.Request) -> http.Request { out.with_header("X-Rewritten", inb.path) })
+  let gone = http.reverse_proxy(c, http.parse_url("http://${dead}/").or_fault("url"))
+  r.handle_stream("/api/{rest...}", fn(req, body) { p.serve(req, body) })
+  r.handle_stream("/dead/{rest...}", fn(req, body) { gone.serve(req, body) })
+  r
+}
+
+fn main(os: Os) {
+  match (os.net.listen("127.0.0.1:0"), os.net.listen("127.0.0.1:0"), os.net.listen("127.0.0.1:0")) {
+    (Ok(l1), Ok(l2), Ok(l3)) => {
+      // port 1: nobody serves it, and the logged error names it
+      let dead = "127.0.0.1:1"
+      l3.close()
+      let up = http.server(l1, routes())
+      let fr = http.server(l2, front(os, l1.addr(), dead))
+      let base = "http://${l2.addr()}"
+      let c = http.client(os.net).with_redirects(0)
+      scope s {
+        for srv in [up, fr] {
+          s.spawn_background(fn() {
+            match srv.serve() {
+              Ok(_) => ()
+              Err(e) => os.stdio.println("serve failed: ${e}")
+            }
+          })
+        }
+        let hello = http.new_request("GET", base + "/api/hello?b=2")
+          .with_header("Connection", "X-Drop")
+          .with_header("X-Drop", "1")
+          .with_header("Keep-Alive", "timeout=5")
+          .with_header("X-Keep", "k")
+          .with_header("X-Forwarded-For", "10.0.0.9")
+        match c.send(hello) {
+          Ok(resp) => {
+            os.stdio.println("hello: ${resp.status} ${resp.text() ?? "?"}")
+            os.stdio.println("hello header: X-Up=${resp.header("X-Up") ?? "-"} X-Hop=${resp.header("X-Hop") ?? "-"} Connection=${resp.header("Connection") ?? "-"}")
+          }
+          Err(e) => os.stdio.println("hello: ${e}")
+        }
+        match c.send(http.new_request("POST", base + "/api/echo", {}, "x".repeat(100000).bytes())) {
+          Ok(resp) => os.stdio.println("echo: ${resp.status} ${resp.text() ?? "?"}")
+          Err(e) => os.stdio.println("echo: ${e}")
+        }
+        match c.get(base + "/api/moved") {
+          Ok(resp) => os.stdio.println("moved: ${resp.status} ${resp.header("Location") ?? "-"}")
+          Err(e) => os.stdio.println("moved: ${e}")
+        }
+        match c.get(base + "/api/events") {
+          Ok(resp) => os.stdio.println("events: ${resp.status} ${resp.header("Content-Type") ?? "-"} ${(resp.text() ?? "?").replace("\n", "|")}")
+          Err(e) => os.stdio.println("events: ${e}")
+        }
+        // request smuggling: with both Content-Length and Transfer-Encoding
+        // the chunked framing wins (Go's server; RFC 9112 6.1), so the
+        // body is the empty chunked one and nothing hides behind it
+        match os.net.dial(l2.addr()) {
+          Ok(conn) => {
+            let sent = conn.write("POST /api/echo HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: 5\r\nTransfer-Encoding: chunked\r\n\r\n0\r\n\r\n".bytes())
+            // the whole answer: the server closes after it
+            var got = BytesBuilder.new()
+            loop: while true {
+              match conn.read(4096) {
+                Ok(Some(b)) => got.write(b)
+                _ => break loop
+              }
+            }
+            let lines = (got.freeze().to_str() ?? "?").split("\r\n")
+            let line = if sent is Ok(_) { "${lines[0]} ${lines[lines.len() - 1]}" } else { "no answer" }
+            os.stdio.println("smuggle: ${line}")
+            conn.close()
+          }
+          Err(e) => os.stdio.println("smuggle: ${e}")
+        }
+        match c.get(base + "/dead/x") {
+          Ok(resp) => os.stdio.println("dead: ${resp.status}")
+          Err(e) => os.stdio.println("dead: ${e}")
+        }
+      }
+      os.stdio.println("done")
+    }
+    _ => os.stdio.println("listen failed")
+  }
+}

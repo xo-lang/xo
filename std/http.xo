@@ -248,6 +248,23 @@ fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses n
 /// The client trusting the certificates of pem instead of the system's
 /// roots for https (std.md 4.6).
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
+/// A reverse proxy to target, for a handle_stream route:
+/// `r.handle_stream("/api/", fn(req, body) { p.serve(req, body) })`. It forwards each request to
+/// target (decision 0404, httputil.ReverseProxy with SetURL and
+/// SetXForwarded): the target's scheme and host, its path joined before
+/// the request's, the queries merged; hop-by-hop fields removed both
+/// ways; X-Forwarded-For, -Host and -Proto set; rewrite applied last;
+/// the body streamed both ways, redirects returned as they came. A
+/// failure to reach the target is 502, a timeout 504.
+pub fn reverse_proxy(client: Client, target: Url) -> ReverseProxy
+struct ReverseProxy {}
+/// The proxy applying f(in, out) to each outgoing request out after its
+/// own rewrite, in being the request received (httputil's Rewrite with
+/// ProxyRequest.In and Out).
+fn (p: ReverseProxy) with_rewrite(f: fn(Request, Request) -> Request) -> ReverseProxy
+/// Forwards req, its body read from body, and returns the target's
+/// response with its body streamed back.
+fn (p: ReverseProxy) serve(req: Request, body: BodyReader) -> Response uses net.dial
 /// A response's status and header, without its body (decision 0404).
 struct ResponseHead {
   status: Int

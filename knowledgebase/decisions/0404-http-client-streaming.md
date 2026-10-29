@@ -3,7 +3,8 @@
 Status: Proposed (lead request, 2026-10-29: item 1 of the 0.35 std list;
 Xo Lang 2). Reviewed by Xo Lang 3 and the lead (2026-10-29). Stage A
 landed in 440f5b333; B1 (HTTP/1.1) and B2 (HTTP/2) landed 2026-10-29; C's with_body_reader
-landed 2026-10-29, with_body_file deferred (below).
+landed 2026-10-29, with_body_file deferred (below); D landed 2026-10-29 as a
+ReverseProxy value (below).
 
 ## Context
 
@@ -134,6 +135,12 @@ body streamed (C) and redirects off (A), and the response streamed back
 tunnels (stage E, with a connection hijack), trailers, FlushInterval
 (each read is written and flushed).
 
+
+As built (2026-10-29): `reverse_proxy(client, target) -> ReverseProxy`,
+`with_rewrite(f)` and `serve(req, body) -> Response uses net.dial`, in
+place of a returned handler function: a function type with `uses` in a
+return position reads as the outer function's clause, and a value with a
+method keeps the effect on `serve`, as Go's `ReverseProxy.ServeHTTP`.
 **E (later). Upgrade tunnels** for a proxied WebSocket, after a server
 side hijack exists.
 

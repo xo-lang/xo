@@ -60,6 +60,9 @@ var (
 	_ func(*Http_Client, *Task, string) Result[Http_Response, Http_ClientErr]                                                                           = (*Http_Client).M_get
 	_ func(*Http_Client, *Task, Http_Request) Result[Http_Response, Http_ClientErr]                                                                     = (*Http_Client).M_send
 	_ func(*Http_Client, *Task, Bytes) Result[Http_Client, Http_TlsErr]                                                                                 = (*Http_Client).M_with_roots
+	_ func(*Task, Http_Client, Http_Url) Http_ReverseProxy                                                                                              = Http_reverse_proxy
+	_ func(*Http_ReverseProxy, *Task, func(*Task, Http_Request, Http_Request) Result[Http_Request, Never]) Http_ReverseProxy                            = (*Http_ReverseProxy).M_with_rewrite
+	_ func(*Http_ReverseProxy, *Task, Http_Request, Http_BodyReader) Http_Response                                                                      = (*Http_ReverseProxy).M_serve
 	_ func(*Http_Client, *Task, Http_Request) Result[Http_ClientStream, Http_ClientErr]                                                                 = (*Http_Client).M_open
 	_ func(*Http_ClientStream, *Task) Http_ResponseHead                                                                                                 = (*Http_ClientStream).M_head
 	_ func(*Http_ClientStream, *Task, int64) Result[Option[Bytes], Http_ClientErr]                                                                      = (*Http_ClientStream).M_read

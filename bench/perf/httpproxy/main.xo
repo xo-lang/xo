@@ -1,0 +1,15 @@
+// The proxy of bench/perf/httpproxy (decision 0404 stage D): serves
+// ADDR, forwarding every request to UPSTREAM with http.reverse_proxy.
+// Prints "ready" once listening; runs until killed.
+use std/http
+
+fn main(os: Os) ! {
+  let addr = os.env.get("ADDR") ?? "127.0.0.1:18099"
+  let up = os.env.get("UPSTREAM") ?? "127.0.0.1:18097"
+  let l = os.net.listen(addr)?
+  let p = http.reverse_proxy(http.client(os.net, 300s), http.parse_url("http://${up}/")?)
+  var r = http.router()
+  r.handle_stream("/{rest...}", fn(req, body) { p.serve(req, body) })
+  os.stdio.println("ready")
+  http.server(l, r).serve()?
+}
