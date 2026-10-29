@@ -136,6 +136,12 @@ pub fn sections(data: Bytes) -> Result[Sections, Str] {
           let off = rd32(data, sc + 48)
           if name.starts_with("__debug_") && off > 0 && off + size <= data.len() {
             s.set(name[8..], data[off..off + size])
+          } else if name.starts_with("__xo_") && off > 0 && off + size <= data.len() {
+            // a separately compiled binary's own copy of the tables Xo's
+            // tools read (segment __XODW, decision 0401: lldb reads its
+            // DWARF through the debug map, and would ignore the map were
+            // there a __debug_ section)
+            s.set(name[5..], data[off..off + size])
           }
         }
       }

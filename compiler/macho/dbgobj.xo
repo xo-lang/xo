@@ -1,0 +1,82 @@
+// A debug map's object (decision 0401): the copy of an object that lldb
+// and dsymutil read through a binary's N_OSO entries, never linked.
+
+/// obj with each pointer of its DWARF to a symbol defined in a loaded
+/// section rewritten as clang writes it: the object's address in place
+/// (the symbol's value plus the addend the assembler left there) and a
+/// section relocation (r_extern 0, the symbol's section), since lldb
+/// takes a mapped object's DWARF as written and never applies its
+/// relocations (asm.xo pointer_reloc writes only the addend, against
+/// the atom's symbol). A pointer into a debug section (an offset) and
+/// one to an undefined symbol stay. obj itself when it is not a 64-bit
+/// little-endian Mach-O object or has no such pointer.
+pub fn debug_map_object(obj: Bytes) -> Bytes {
+  if obj.len() < 32 || rd32(obj, 0) != 0xfeedfacf {
+    return obj
+  }
+  // (reloff, nreloc, debug) per section, 1-based like n_sect
+  var sects: List[(Int, Int, Bool)] = [(0, 0, false)]
+  var symoff = 0
+  var nsyms = 0
+  let ncmds = rd32(obj, 16)
+  var at = 32
+  for _ in 0..ncmds {
+    let cmd = rd32(obj, at)
+    let size = rd32(obj, at + 4)
+    if cmd == LC_SEGMENT_64 {
+      let n = rd32(obj, at + 64)
+      for k in 0..n {
+        let s = at + 72 + 80 * k
+        let flags = rd32(obj, s + 64)
+        sects.push((s, rd32(obj, s + 60), (flags & S_ATTR_DEBUG_FLAG) != 0))
+      }
+    } else if cmd == LC_SYMTAB {
+      symoff = rd32(obj, at + 8)
+      nsyms = rd32(obj, at + 12)
+    }
+    at += size
+  }
+  // (offset, value, bytes): written over obj below (not BytesBuilder
+  // put_le, which the 0.33 seeds that build compiler/ lack)
+  var ps: List[(Int, Int, Int)] = []
+  for (si, sc) in sects.indexed() {
+    let (hdr, nreloc, debug) = sc
+    if si == 0 || !debug || nreloc == 0 {
+      continue
+    }
+    let data = rd32(obj, hdr + 48)
+    let reloff = rd32(obj, hdr + 56)
+    for k in 0..nreloc {
+      let r = reloff + 8 * k
+      let addr = rd32(obj, r)
+      let info = rd32(obj, r + 4)
+      let sym = info & 0xffffff
+      let len = (info >> 25) & 3
+      let ext = (info >> 27) & 1
+      let typ = (info >> 28) & 0xf
+      if ext == 0 || typ != 0 || len != 3 || sym >= nsyms {
+        continue
+      }
+      let y = symoff + 16 * sym
+      let ty = Int(obj[y + 4])
+      let sect = Int(obj[y + 5])
+      if (ty & 0x0e) != 0x0e || sect < 1 || sect >= sects.len() || sects[sect].2 {
+        continue
+      }
+      ps.push((data + addr, rd64(obj, y + 8) + rd64(obj, data + addr), 8))
+      ps.push((r + 4, sect | (3 << 25), 4))
+    }
+  }
+  if ps.is_empty() {
+    return obj
+  }
+  var o = new_out(obj.len())
+  var done = 0
+  for (off, v, n) in ps.sort_by(fn(p: (Int, Int, Int)) -> Int { p.0 }) {
+    o.bytes(obj[done..off])
+    o.le(v, n)
+    done = off + n
+  }
+  o.bytes(obj[done..])
+  o.done()
+}

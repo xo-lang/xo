@@ -15,6 +15,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   type that implements `Proc` needs the three methods (interfaces have no
   default bodies, core 2.4); a wrapper forwards them to its inner `Proc`.
 - **Breaking** (decision 0410): the prelude's `Env` interface gains `hostname()`, so a user type that implements `Env` needs the method (interfaces have no default bodies, core 2.4); a wrapper forwards it to its inner `Env`.
+- macOS edit builds (separate compilation, the default): the binary no
+  longer embeds std's DWARF. Xo's own tracebacks read segment __XODW, and
+  lldb and dsymutil read std's full DWARF (variables included) through a
+  debug map from std's part objects and the program's objects kept in the
+  back-end cache (decision 0401). A small program's binary went from 2.03
+  to 1.32 MB; the link time is unchanged. A binary copied elsewhere after
+  the cache was pruned still prints tracebacks with lines; lldb then has no
+  std names or variables, and `dsymutil ./prog` keeps them for good.
 - Windows: a path given with backslashes (a path flag, a package
   argument, or a path variable such as XO_STD, XO_SEPCOMP_STORE or
   XO_DUMP_DIR) is read as the `/` form at entry, and a UNC path

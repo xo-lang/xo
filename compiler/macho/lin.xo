@@ -19,6 +19,13 @@ const N_PEXT = 0x10
 const N_TYPE = 0x0e
 const N_UNDF = 0x0
 const N_ABS = 0x2
+/// stab n_types (a debug map, decision 0401)
+const N_SO = 0x64
+const N_OSO = 0x66
+const N_FUN = 0x24
+const N_STSYM = 0x26
+const N_BNSYM = 0x2e
+const N_ENSYM = 0x4e
 
 /// An input section.
 struct ISect {

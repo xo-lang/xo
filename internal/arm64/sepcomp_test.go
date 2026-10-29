@@ -369,7 +369,13 @@ func TestSepcompDebugInfo(t *testing.T) {
 		}
 		return bin
 	}
-	ci, err := exec.Command("dwarfdump", "--debug-info", build("full", "--trimpath=off")).CombinedOutput()
+	// the DWARF through the binary's debug map (decision 0401: no __DWARF
+	// in a separately compiled darwin binary): dsymutil's dSYM
+	full := build("full", "--trimpath=off")
+	if log, err := exec.Command("dsymutil", full, "-o", full+".dSYM").CombinedOutput(); err != nil {
+		t.Fatalf("dsymutil: %v\n%s", err, log)
+	}
+	ci, err := exec.Command("dwarfdump", "--debug-info", full+".dSYM").CombinedOutput()
 	if err != nil {
 		t.Fatalf("dwarfdump: %v\n%s", err, ci)
 	}
@@ -382,14 +388,14 @@ func TestSepcompDebugInfo(t *testing.T) {
 		t.Errorf("the first unit's DW_AT_comp_dir is %s, want the program's %s", cd[1], prog)
 	}
 	// --debug-info=off: the program compiles none, and std's is left out
-	if segs, _ := exec.Command("otool", "-l", build("off", "--debug-info=off")).CombinedOutput(); strings.Contains(string(segs), "segname __DWARF") {
-		t.Errorf("--debug-info=off left a __DWARF segment")
+	if segs, _ := exec.Command("otool", "-l", build("off", "--debug-info=off")).CombinedOutput(); strings.Contains(string(segs), "segname __DWARF") || strings.Contains(string(segs), "segname __XODW") {
+		t.Errorf("--debug-info=off left a __DWARF or __XODW segment")
 	}
 	stripped := build("q", "-s", "--dsym")
 	if _, err := os.Stat(stripped + ".dSYM"); err == nil {
 		t.Errorf("-s wrote %s.dSYM", stripped)
 	}
-	if segs, _ := exec.Command("otool", "-l", stripped).CombinedOutput(); strings.Contains(string(segs), "segname __DWARF") {
-		t.Errorf("-s left a __DWARF segment in %s", stripped)
+	if segs, _ := exec.Command("otool", "-l", stripped).CombinedOutput(); strings.Contains(string(segs), "segname __DWARF") || strings.Contains(string(segs), "segname __XODW") {
+		t.Errorf("-s left a __DWARF or __XODW segment in %s", stripped)
 	}
 }

@@ -87,6 +87,13 @@ pub struct LinkOpts {
   /// 0388): the debug information follows the program's own objects, so
   /// when they carry none (-s, --debug-info=off) std's is left out too
   pub program_dwarf: Bool = false
+  /// std's part objects' directory (decision 0401): a separately compiled
+  /// link names them in a debug map (N_OSO stabs) for lldb and dsymutil,
+  /// "" for none
+  pub std_parts: Str = ""
+  /// with std_parts: the program's own objects' kept copies (input path,
+  /// cached path), which the debug map names too
+  pub prog_osos: List[(Str, Str)] = []
 }
 
 /// An input file: its path (for messages) and contents.
@@ -1762,9 +1769,13 @@ fn (var l: Linker) write() -> Bytes {
       // no access (as Go's), its sections the joined DWARF, each with
       // S_ATTR_DEBUG
       let names = dwarf_names()
+      // with a debug map (decision 0401): segment __XODW, its sections
+      // __xo_*, which lldb does not take for DWARF (it would then ignore
+      // the map) and Xo's readers do (dwline, compiler/debug)
+      let xodw = !l.opts.std_parts.is_empty()
       h.u32(LC_SEGMENT_64)
       h.u32(72 + 80 * names.len())
-      h.name(g.name, 16)
+      h.name(if xodw { "__XODW" } else { g.name }, 16)
       h.u64(g.vmaddr)
       h.u64(g.vmsize)
       h.u64(g.fileoff)
@@ -1775,15 +1786,15 @@ fn (var l: Linker) write() -> Bytes {
       h.u32(0)
       var off = g.fileoff
       for (i, nm) in names.indexed() {
-        h.name(nm, 16)
-        h.name("__DWARF", 16)
+        h.name(if xodw { "__xo_${nm.trim_prefix("__debug_")}" } else { nm }, 16)
+        h.name(if xodw { "__XODW" } else { "__DWARF" }, 16)
         h.u64(g.vmaddr + off - g.fileoff)
         h.u64(l.dw_sizes[i])
         h.u32(off)
         h.u32(0)
         h.u32(0)
         h.u32(0)
-        h.u32(S_ATTR_DEBUG_FLAG)
+        h.u32(if xodw { 0 } else { S_ATTR_DEBUG_FLAG })
         h.u32(0)
         h.u32(0)
         h.u32(0)
@@ -1944,8 +1955,89 @@ fn exports_trie() -> Bytes {
 /// The symbol table (local functions and data, the defined externals and
 /// __mh_execute_header, the imports), its names, the counts, and the
 /// indirect symbol table of __stubs and __got.
+/// The debug map (decision 0401): for each std part object of a
+/// separately compiled link (l.opts.std_parts), N_SO, N_OSO (its path in
+/// the std cache, time 0: lldb then reads it whatever its mtime, so the
+/// cache may mark it used), then per kept function N_BNSYM, N_FUN with
+/// its address, N_FUN with its size, N_ENSYM, per kept data symbol
+/// N_STSYM, and N_SO to end it. Each entry (name, n_type, n_sect, n_desc,
+/// n_value); none without std_parts.
+fn (l: Linker) debug_map() -> List[(Bytes, Int, Int, Int, Int)] {
+  var out: List[(Bytes, Int, Int, Int, Int)] = []
+  if l.opts.std_parts.is_empty() {
+    return out
+  }
+  let dir = l.opts.std_parts.trim_suffix("/")
+  var osos: Map[Str, Str] = {}
+  for (a, b) in l.opts.prog_osos {
+    osos[a] = b
+  }
+  // the program's objects first: dsymutil's dSYM then starts with the
+  // program's units, as the embedded DWARF does (dwarf_write)
+  var order: List[Int] = []
+  for pass in 0..2 {
+    for (o, ob) in l.objs.indexed() {
+      if osos.contains(ob.path) == (pass == 0) {
+        order.push(o)
+      }
+    }
+  }
+  for o in order {
+    let ob = l.objs[o]
+    let prog_path = osos.get(ob.path) ?? ""
+    if !ob.live || (!ob.subsections && prog_path.is_empty()) {
+      continue
+    }
+    var fns: List[(Int, Bytes, Int, Int)] = []
+    for (i, y) in ob.syms.indexed() {
+      if (y.typ & N_STAB) != 0 || (y.typ & N_TYPE) != N_SECT || y.sect < 1 || y.name.is_empty() {
+        continue
+      }
+      let c = y.name[0]
+      if c == 'l' || c == 'L' {
+        continue
+      }
+      let x = ob.sects[y.sect - 1]
+      if x.out < 0 || x.dead || x.seg == "__DWARF" || x.seg == "__LD" {
+        continue
+      }
+      // an atom per symbol (strip.xo): its size is the rest of its
+      // section; a program object's section holds several: to the next
+      // symbol (sized below)
+      fns.push((l.sym_addr(o, i), y.name, x.out + 1, x.addr + x.size - y.value))
+    }
+    if fns.is_empty() {
+      continue
+    }
+    let parts = ob.path.split("/")
+    let base = parts[parts.len() - 1]
+    out.push((if prog_path.is_empty() { "std/" } else { "./" }.bytes(), N_SO, 0, 0, 0))
+    out.push((base.bytes(), N_SO, 0, 0, 0))
+    out.push((if prog_path.is_empty() { "${dir}/${base}" } else { prog_path }.bytes(), N_OSO, 0, 1, 0))
+    let sorted = fns.sort_by(fn(f: (Int, Bytes, Int, Int)) -> Int { f.0 })
+    for (k, f) in sorted.indexed() {
+      let (a, n, sect, size0) = f
+      // a whole section's symbol ends at the next one in its section
+      let size = if k + 1 < sorted.len() && sorted[k + 1].2 == sect && sorted[k + 1].0 - a < size0 { sorted[k + 1].0 - a } else { size0 }
+      if l.is_text_sect(sect - 1) {
+        out.push(("".bytes(), N_BNSYM, sect, 0, a))
+        out.push((n, N_FUN, sect, 0, a))
+        out.push(("".bytes(), N_FUN, 0, 0, size))
+        out.push(("".bytes(), N_ENSYM, sect, 0, size))
+      } else {
+        out.push((n, N_STSYM, sect, 0, a))
+      }
+    }
+    out.push(("".bytes(), N_SO, 1, 0, 0))
+  }
+  out
+}
+
 fn (var l: Linker) symbols() -> (Bytes, Bytes, Int, Int, Int, Bytes) {
   var locs: List[(Bytes, Int, Int)] = []
+  // the debug map's stabs first (decision 0401): each std object's, with
+  // its type, section and value in their own list (n_type, n_sect, n_desc)
+  let stabs = l.debug_map()
   var exts: List[(Bytes, Int, Int)] = []
   for o in 0..l.objs.len() {
     if !l.objs[o].live {
@@ -1991,6 +2083,19 @@ fn (var l: Linker) symbols() -> (Bytes, Bytes, Int, Int, Int, Bytes) {
   var names = new_out(64 * (locs.len() + exts.len() + l.imports.len()))
   names.u8(32)
   names.u8(0)
+  for (n, typ, sect, desc, a) in stabs {
+    if n.is_empty() {
+      st.u32(1)
+    } else {
+      st.u32(names.n)
+      names.bytes(n)
+      names.u8(0)
+    }
+    st.u8(typ)
+    st.u8(sect)
+    st.u16(desc)
+    st.u64(a)
+  }
   for (n, sect, a) in locs {
     st.u32(names.n)
     names.bytes(n)
@@ -2022,7 +2127,7 @@ fn (var l: Linker) symbols() -> (Bytes, Bytes, Int, Int, Int, Bytes) {
     st.u64(0)
   }
   names.pad(8)
-  let undef0 = locs.len() + exts.len()
+  let undef0 = stabs.len() + locs.len() + exts.len()
   // the indirect symbols: the stubs, then the GOT slots
   var ind = new_out(4 * (l.stubs.len() + l.got.len()))
   if l.s_stubs >= 0 {
@@ -2037,7 +2142,7 @@ fn (var l: Linker) symbols() -> (Bytes, Bytes, Int, Int, Int, Bytes) {
       ind.u32(if imp >= 0 { undef0 + imp } else { INDIRECT_SYMBOL_LOCAL })
     }
   }
-  (st.done(), names.done(), locs.len(), exts.len(), l.imports.len(), ind.done())
+  (st.done(), names.done(), stabs.len() + locs.len(), exts.len(), l.imports.len(), ind.done())
 }
 
 /// LC_DYLD_CHAINED_FIXUPS: the header, the starts of each segment's

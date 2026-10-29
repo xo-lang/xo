@@ -39,7 +39,7 @@ fn (l: Linker) dwarf_sizes() -> List[Int] {
       continue
     }
     for s in l.objs[o].sects {
-      if s.seg != "__DWARF" {
+      if s.seg != "__DWARF" || l.dw_mapped(o, s.name) {
         continue
       }
       for (i, nm) in names.indexed() {
@@ -125,7 +125,7 @@ fn (var l: Linker) dwarf_write(var out: BytesBuilder) -> List[Int] {
         continue
       }
       for (k, s) in l.objs[o].sects.indexed() {
-        if s.seg != "__DWARF" || s.name != nm {
+        if s.seg != "__DWARF" || s.name != nm || l.dw_mapped(o, nm) {
           continue
         }
         any = true
@@ -441,4 +441,12 @@ fn get_uleb(b: Bytes, o: Int) -> (Int, Int) {
     }
   }
   (v, p)
+}
+
+/// Whether object o's DWARF section nm stays out of the image (decision
+/// 0401): with a debug map, std's location lists and addresses, which
+/// only a debugger reads (lldb from std's part object through the map;
+/// Xo's tracebacks read lines and inline frames, kept in __XODW).
+fn (l: Linker) dw_mapped(o: Int, nm: Str) -> Bool {
+  !l.opts.std_parts.is_empty() && l.objs[o].subsections && (nm is "__debug_loclists" | "__debug_addr")
 }

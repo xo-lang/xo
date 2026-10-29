@@ -6,6 +6,7 @@
 // linux/arm64 (stage 3) into an ELF executable that imports glibc.
 
 use github.com/xo-lang/xo/compiler/macho
+use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 use github.com/xo-lang/xo/compiler/tzsel
 use std/task
@@ -106,7 +107,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   if (os.env.get("XO_CACHE_STATS") ?? "") == "1" && !ctx.layout_order.is_empty() {
     os.stdio.eprintln("link: layout order of ${ctx.layout_order.len()} symbols, first ${ctx.layout_order[0]}")
   }
-  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, order: ctx.layout_order, embed_dwarf: !split && !strip, dsym: (dsym || split) && !strip, release: release, program_dwarf: !sep_store.is_empty(), hash_pages: Some(par_page_hashes)}
+  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, order: ctx.layout_order, embed_dwarf: !split && !strip, dsym: (dsym || split) && !strip, release: release, program_dwarf: !sep_store.is_empty(), std_parts: std_parts_dir(os, sep_store), prog_osos: prog_debug_objects(os, sep_store, ins), hash_pages: Some(par_page_hashes)}
   let _in = lap(os, ctx.phases, "link.inputs", tin)
   let ts = os.clock.now()
   let linked = if store.is_empty() { macho.link_debug(parts + ins, opts) } else { link_store_laps(os, ctx, ins, store, opts, prep_dir(os, sep_store)) }
@@ -1248,6 +1249,48 @@ fn par_page_hashes(b: Bytes, pages: List[(Int, Int)]) -> List[Bytes] {
     for h in hs {
       out.push(h)
     }
+  }
+  out
+}
+
+/// std's part objects beside a separately compiled link's store (decision
+/// 0401: its debug map names them), "" when there are none (another
+/// target's store, or one the cache made before it kept them).
+fn std_parts_dir(os: Os, store: Str) -> Str {
+  if store.is_empty() {
+    return ""
+  }
+  let d = "${store}.parts"
+  // xo:allow XO0903 none: the link embeds std's DWARF as before
+  if os.fs.exists("${d}/prog-darwin.0.o").ok() ?? false { d } else { "" }
+}
+
+/// The program's objects kept for a separately compiled link's debug map
+/// (decision 0401): each copied once to the back-end cache's dbgobj/,
+/// named by its bytes' SHA-256 (the same object, the same path), and
+/// marked used by every link that names it (the map gives it time 0, so
+/// lldb reads it whatever its mtime); (input path, kept path) each. None
+/// without std's parts beside the store (no map).
+fn prog_debug_objects(os: Os, store: Str, ins: List[macho.LinkInput]) -> List[(Str, Str)] {
+  if std_parts_dir(os, store).is_empty() {
+    return []
+  }
+  let dir = "${dir_name(dir_name(store))}/dbgobj"
+  os.fs.create_dir_all(dir).ignore_err("the map then names objects that are not there: lldb shows no program variables")
+  var out: List[(Str, Str)] = []
+  for inp in ins {
+    let kept = "${dir}/${crypto.sha256(inp.data).to_hex()[0..32]}.o"
+    // xo:allow XO0903 a first build writes it
+    if os.fs.exists(kept).ok() ?? false {
+      prune.mark_used_within(os.fs, os.clock, kept, BACKEND_TOUCH)
+    } else {
+      let tmp = "${kept}.tmp-${os.rand.bytes(6).to_hex()}"
+      if os.fs.write(tmp, macho.debug_map_object(inp.data)).is_ok() {
+        os.fs.rename(tmp, kept).ignore_err("another build kept it")
+      }
+      os.fs.remove(tmp).ignore_err("renamed, or a failed write")
+    }
+    out.push((inp.path, kept))
   }
   out
 }

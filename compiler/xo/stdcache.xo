@@ -9,6 +9,7 @@
 // whole-program.
 
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/macho
 use github.com/xo-lang/xo/compiler/prune
 use std/crypto
 
@@ -102,6 +103,9 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     if os.fs.exists("${store}.pdb").ok() ?? false {
       prune.mark_used_within(os.fs, os.clock, "${store}.pdb", BACKEND_TOUCH)
     }
+    // a darwin store's part objects (decision 0401), which a debug map
+    // names with a time of 0, so marking them used keeps lldb reading them
+    std_parts_used(os, "${store}.parts")
     if phases {
       os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} reused")
     }
@@ -150,6 +154,14 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
         }
       }
       Err(e) => { why = "renaming the store: ${e}" }
+    }
+    if done && tgoos == "darwin" {
+      // std's part objects, which a separately compiled program's debug
+      // map names (decision 0401: lldb reads std's DWARF from them); the
+      // directory renamed into place whole, each object's DWARF
+      // pointers first made what lldb reads (macho debug_map_object)
+      debug_map_parts(os, "${tmp}/obj")
+      os.fs.rename("${tmp}/obj", "${store}.parts").ignore_err("another build placed them, or the debug map falls back to std's embedded DWARF")
     }
   }
   os.fs.remove_all(tmp).ignore_err("only disk: the prune takes a leftover build directory")
@@ -221,6 +233,7 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phas
     if os.fs.exists("${store}.pdb").ok() ?? false {
       prune.mark_used_within(os.fs, os.clock, "${store}.pdb", BACKEND_TOUCH)
     }
+    std_parts_used(os, "${store}.parts")
     if phases {
       os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} reused")
     }
@@ -307,4 +320,44 @@ fn std_released(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool) -> (Str,
   let pdb = tgoos != "windows" || (os.fs.exists("${base}.store.pdb").ok() ?? false)
   let have = pdb && (os.fs.exists("${base}.store").ok() ?? false) && (os.fs.exists("${base}.stdf").ok() ?? false)
   if have { Some(("${base}.store", "${base}.stdf")) } else { None }
+}
+
+/// Marks each of a store's part objects used (decision 0401: they go
+/// with the store, which the prune keeps while builds use it).
+fn std_parts_used(os: Os, dir: Str) {
+  match os.fs.read_dir(dir) {
+    Ok(fs) => {
+      for f in fs {
+        if !f.is_dir {
+          prune.mark_used_within(os.fs, os.clock, f.path, BACKEND_TOUCH)
+        }
+      }
+    }
+    Err(_) => {}
+  }
+}
+
+/// Each part object of dir rewritten for a debug map (macho
+/// debug_map_object); a part it cannot rewrite stays as built (lldb then
+/// misplaces its functions' addresses).
+fn debug_map_parts(os: Os, dir: Str) {
+  match os.fs.read_dir(dir) {
+    Ok(fs) => {
+      for f in fs {
+        if f.is_dir || !f.path.ends_with(".o") {
+          continue
+        }
+        match os.fs.read(f.path) {
+          Ok(b) => {
+            let m = macho.debug_map_object(b)
+            if m.len() == b.len() && m != b {
+              os.fs.write(f.path, m).ignore_err("the part stays as built")
+            }
+          }
+          Err(_) => {}
+        }
+      }
+    }
+    Err(_) => {}
+  }
 }
