@@ -52,10 +52,14 @@ fn (var l: ELinker) debug_sections() -> List[(Str, Bytes)] {
   if sizes[2] == 0 {
     return []
   }
+  // each section's chunks written whole with their relocations as
+  // patches (write_patched), no byte list: a List[Int] per chunk joined
+  // with `+` was 32 ms of a 100 ms separately compiled HTTP server's link
+  // on Linux (2026-10-28)
   var out: List[(Str, Bytes)] = []
-  var info: List[Int] = []
+  var info = "".bytes()
   for (k, nm) in names.indexed() {
-    var buf: List[Int] = []
+    var buf = BytesBuilder.with_capacity(sizes[k])
     for o in 0..l.objs.len() {
       if !l.objs[o].live {
         continue
@@ -64,10 +68,7 @@ fn (var l: ELinker) debug_sections() -> List[(Str, Bytes)] {
         if s.name != nm || s.dead {
           continue
         }
-        var bs: List[Int] = []
-        for c in s.data {
-          bs.push(Int(c))
-        }
+        var ps: List[BytePatch] = List.with_capacity(s.relocs.len())
         for r in s.relocs {
           let sym = l.objs[o].syms[r.sym]
           var v = r.addend
@@ -90,20 +91,19 @@ fn (var l: ELinker) debug_sections() -> List[(Str, Bytes)] {
           // an x86_64 object's too (2026-10-20: its addresses were left 0,
           // and no pc found a line or a variable)
           let width = if r.typ == R_AARCH64_ABS64 || r.typ == R_X86_64_64 { 8 } else if r.typ == R_AARCH64_ABS32 || r.typ == R_X86_64_32 { 4 } else { 0 }
-          if width == 0 || r.off + width > bs.len() {
+          if width == 0 || r.off + width > s.data.len() {
             continue
           }
-          for b in 0..width {
-            bs[r.off + b] = (v >> (8 * b)) & 255
-          }
+          ps.push(BytePatch{at: r.off, n: width, v: v})
         }
-        buf = buf + bs
+        write_patched(buf, s.data, ps)
       }
     }
+    let d = buf.freeze()
     if k == 2 {
-      info = buf
+      info = d
     }
-    out.push((nm, bytes_of(buf)))
+    out.push((nm, d))
   }
   // .debug_aranges: a set per xo compile unit
   var ar: List[Int] = []
@@ -111,8 +111,8 @@ fn (var l: ELinker) debug_sections() -> List[(Str, Bytes)] {
     if off + 36 > info.len() || info[off + 33] != 120 || info[off + 34] != 111 || info[off + 35] != 0 {
       continue
     }
-    let lo = le_at(info, off + 17, 8)
-    let hi = le_at(info, off + 25, 8)
+    let lo = rd64(info, off + 17)
+    let hi = rd64(info, off + 25)
     let a0 = ar.len()
     for _ in 0..48 {
       ar.push(0)
@@ -129,11 +129,10 @@ fn (var l: ELinker) debug_sections() -> List[(Str, Bytes)] {
     var merged = false
     for (k, (nm, d)) in out.indexed() {
       if nm == ".debug_aranges" {
-        var all: List[Int] = []
-        for c in d {
-          all.push(Int(c))
-        }
-        out[k] = (nm, bytes_of(all + ar))
+        var all = BytesBuilder.with_capacity(d.len() + ar.len())
+        all.write(d)
+        all.write(bytes_of(ar))
+        out[k] = (nm, all.freeze())
         merged = true
       }
     }
@@ -157,14 +156,6 @@ fn bytes_of(b: List[Int]) -> Bytes {
     o.u8(c)
   }
   o.done()
-}
-
-fn le_at(b: List[Int], o: Int, n: Int) -> Int {
-  var v = 0
-  for k in 0..n {
-    v = v | (b[o + k] << (8 * k))
-  }
-  v
 }
 
 fn le_put(var b: List[Int], o: Int, n: Int, v: Int) {
