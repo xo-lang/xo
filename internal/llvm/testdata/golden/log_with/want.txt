@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+done
+--- stderr
+<time> INFO start req=r1 user=7
+<time> WARN slow req=r1 user=8 step=load ms=120
+<time> ERROR failed req=r1 user=7 err=timeout
+<time> INFO plain k=v

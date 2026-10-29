@@ -17,6 +17,41 @@ fn warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, fields, logstat
 
 fn error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, fields, logstate.take_from()) }
 
+/// log.Logger: the fields every record gets and the module the logger was
+/// made in (decision 0173's attribution, taken when `with` ran).
+struct Logger {
+  fields: Map[Str, Debug]
+  from: Str
+}
+
+fn with(fields: Map[Str, Debug]) -> log.Logger {
+  rt.cast[Logger, log.Logger](Logger{fields: fields, from: logstate.take_from()})
+}
+
+/// a's fields then b's, b's value kept for a name in both.
+fn merged(a: Map[Str, Debug], b: Map[Str, Debug]) -> Map[Str, Debug] {
+  if b.is_empty() {
+    return a
+  }
+  var m = a
+  for (k, v) in b {
+    m.put(k, v)
+  }
+  m
+}
+
+fn (l: Logger) with(fields: Map[Str, Debug]) -> log.Logger {
+  rt.cast[Logger, log.Logger](l with {fields: merged(l.fields, fields)})
+}
+
+fn (l: Logger) debug(msg: Str, fields: Map[Str, Debug] = {}) { record(1, msg, merged(l.fields, fields), l.from) }
+
+fn (l: Logger) info(msg: Str, fields: Map[Str, Debug] = {}) { record(2, msg, merged(l.fields, fields), l.from) }
+
+fn (l: Logger) warn(msg: Str, fields: Map[Str, Debug] = {}) { record(3, msg, merged(l.fields, fields), l.from) }
+
+fn (l: Logger) error(msg: Str, fields: Map[Str, Debug] = {}) { record(4, msg, merged(l.fields, fields), l.from) }
+
 fn configure(out: Stdio, level: log.Level = log.Level.Info, format: log.Format = log.Format.Text) uses stdio {
   let n = match level {
     log.Level.Debug => 1

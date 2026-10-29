@@ -367,7 +367,7 @@ fn (var b: Builder) log_from(fo: Int) -> Str {
   if o.recv >= 0 || o.module < 0 || b.c.mods[o.module].path != "std/log" || b.s.file < 0 {
     return ""
   }
-  if !(b.obj_name(fo) is "debug" | "info" | "warn" | "error") {
+  if !(b.obj_name(fo) is "debug" | "info" | "warn" | "error" | "with") {
     return ""
   }
   let m = b.c.files[b.s.file].module

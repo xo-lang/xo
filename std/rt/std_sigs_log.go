@@ -6,9 +6,15 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Task, string, Map[string, IDebug])  = Log_debug
-	_ func(*Task, string, Map[string, IDebug])  = Log_info
-	_ func(*Task, string, Map[string, IDebug])  = Log_warn
-	_ func(*Task, string, Map[string, IDebug])  = Log_error
-	_ func(*Task, Stdio, Log_Level, Log_Format) = Log_configure
+	_ func(*Task, string, Map[string, IDebug])                 = Log_debug
+	_ func(*Task, string, Map[string, IDebug])                 = Log_info
+	_ func(*Task, string, Map[string, IDebug])                 = Log_warn
+	_ func(*Task, string, Map[string, IDebug])                 = Log_error
+	_ func(*Task, Stdio, Log_Level, Log_Format)                = Log_configure
+	_ func(*Task, Map[string, IDebug]) Log_Logger              = Log_with
+	_ func(*Log_Logger, *Task, Map[string, IDebug]) Log_Logger = (*Log_Logger).M_with
+	_ func(*Log_Logger, *Task, string, Map[string, IDebug])    = (*Log_Logger).M_debug
+	_ func(*Log_Logger, *Task, string, Map[string, IDebug])    = (*Log_Logger).M_info
+	_ func(*Log_Logger, *Task, string, Map[string, IDebug])    = (*Log_Logger).M_warn
+	_ func(*Log_Logger, *Task, string, Map[string, IDebug])    = (*Log_Logger).M_error
 )

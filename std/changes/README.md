@@ -12,6 +12,7 @@ entries yet.
 - [path.md](path.md): std/path (spec/std.md 9)
 - [go.md](go.md): std/go (spec/std.md 12)
 - [udp.md](udp.md): std/udp (spec/std.md 3.2a)
+- [log.md](log.md): std/log (spec/std.md 6)
 - [archive.md](archive.md): std/archive (spec/std.md 18)
 - [compress.md](compress.md): std/compress (spec/std.md 32)
 - [big.md](big.md): std/big (spec/std.md 33)

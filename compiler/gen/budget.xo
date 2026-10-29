@@ -127,7 +127,7 @@ fn (g: Gen) log_from(fo: Int) -> Str {
   if o.recv >= 0 || !g.ostd(fo) || g.c.mods[o.module].path != "std/log" {
     return ""
   }
-  if !(g.oname(fo) is "debug" | "info" | "warn" | "error") {
+  if !(g.oname(fo) is "debug" | "info" | "warn" | "error" | "with") {
     return ""
   }
   if g.f.file < 0 {

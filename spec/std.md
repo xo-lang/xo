@@ -2077,6 +2077,30 @@ struct Record { level: Level, msg: Str, fields: Map[Str, Str], module: Str }   /
 log.info("listening", {"addr": addr, "port": port})
 ```
 
+A `Logger` carries fields onto every record it writes (decision 0413,
+log/slog's `Logger.With`):
+
+```
+struct Logger {}
+pub fn with(fields: Map[Str, Debug]) -> Logger
+fn (l: Logger) with(fields: Map[Str, Debug]) -> Logger         // the logger's fields plus these
+fn (l: Logger) info(msg: Str, fields: Map[Str, Debug] = {}) uses log   // also debug, warn, error
+```
+
+```
+let rl = log.with({"req": req_id})
+rl.info("start")                       // ... INFO start req=r1
+rl.warn("slow", {"ms": 120})           // ... WARN slow req=r1 ms=120
+```
+
+A record has the logger's fields first, in the order they were given
+(a derived logger's after its parent's), then its own; a record's field
+replaces the logger's value of the same name in the logger's place. A `Logger` is
+a value: copies are independent and it is safe to share between tasks.
+Records go to the same sink, level and format as the module functions'
+(`configure` applies to both). A logger made in a dependency's code
+names that dependency (below), wherever its methods are called.
+
 Every record includes the time. A record written by the code of a
 dependency (a required module version, not the main module or a
 workspace module) names it, `<module path>@<version>` (decision 0173):

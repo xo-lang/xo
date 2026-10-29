@@ -8,6 +8,19 @@ fn warn(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn error(msg: Str, fields: Map[Str, Debug] = {}) uses log
 fn configure(out: Stdio, level: Level = Level.Info, format: Format = Format.Text) uses stdio
 
+/// A logger that adds fields to every record it writes (log/slog's
+/// Logger.With; decision 0413): a value, so a handler can make one per
+/// request and pass it on. A record's own fields override a logger's of
+/// the same name. A logger made in a dependency's code keeps that
+/// dependency as its records' module (decision 0173).
+struct Logger {}
+fn with(fields: Map[Str, Debug]) -> Logger
+fn (l: Logger) with(fields: Map[Str, Debug]) -> Logger
+fn (l: Logger) debug(msg: Str, fields: Map[Str, Debug] = {}) uses log
+fn (l: Logger) info(msg: Str, fields: Map[Str, Debug] = {}) uses log
+fn (l: Logger) warn(msg: Str, fields: Map[Str, Debug] = {}) uses log
+fn (l: Logger) error(msg: Str, fields: Map[Str, Debug] = {}) uses log
+
 enum Level {
   Debug
   Info

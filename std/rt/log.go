@@ -236,3 +236,63 @@ func Log_configure(tk *Task, out Stdio, level Log_Level, format Log_Format) {
 }
 
 var _ = sort.Strings
+
+// Log_Logger is `log.Logger` (decision 0413): fields every record gets
+// and the dependency the logger was made in (decision 0173).
+type Log_Logger struct {
+	fields Map[string, IDebug]
+	from   string
+}
+
+// XoDebug implements Debug.
+func (Log_Logger) XoDebug(b *strings.Builder) { b.WriteString("<logger>") }
+
+// Log_with is `log.with(fields)`.
+func Log_with(_ *Task, fields Map[string, IDebug]) Log_Logger {
+	return Log_Logger{fields: fields}
+}
+
+// Log_withFrom is `log.with(fields)` called in the code of the dependency
+// from (decision 0173).
+func Log_withFrom(_ *Task, from string, fields Map[string, IDebug]) Log_Logger {
+	return Log_Logger{fields: fields, from: from}
+}
+
+// logMerged is a's fields then b's, b's value kept for a name in both.
+func logMerged(tk *Task, a, b Map[string, IDebug]) Map[string, IDebug] {
+	if Map_len(tk, b) == 0 {
+		return a
+	}
+	m := a
+	m.XoMark() // a value copy: the put must not reach a
+	for k, v := range Map_All(b) {
+		Map_put(tk, &m, k, v)
+	}
+	return m
+}
+
+// M_with is `l.with(fields)`.
+func (l Log_Logger) M_with(tk *Task, fields Map[string, IDebug]) Log_Logger {
+	l.fields = logMerged(tk, l.fields, fields)
+	return l
+}
+
+// M_debug is `l.debug(msg, fields)`.
+func (l Log_Logger) M_debug(tk *Task, msg string, fields Map[string, IDebug]) {
+	logRecord(tk, levelDebug, msg, logFields(tk, logMerged(tk, l.fields, fields)), l.from)
+}
+
+// M_info is `l.info(msg, fields)`.
+func (l Log_Logger) M_info(tk *Task, msg string, fields Map[string, IDebug]) {
+	logRecord(tk, levelInfo, msg, logFields(tk, logMerged(tk, l.fields, fields)), l.from)
+}
+
+// M_warn is `l.warn(msg, fields)`.
+func (l Log_Logger) M_warn(tk *Task, msg string, fields Map[string, IDebug]) {
+	logRecord(tk, levelWarn, msg, logFields(tk, logMerged(tk, l.fields, fields)), l.from)
+}
+
+// M_error is `l.error(msg, fields)`.
+func (l Log_Logger) M_error(tk *Task, msg string, fields Map[string, IDebug]) {
+	logRecord(tk, levelError, msg, logFields(tk, logMerged(tk, l.fields, fields)), l.from)
+}

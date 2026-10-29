@@ -1,0 +1,16 @@
+// log.with (decision 0413, log/slog's Logger.With): a logger's fields go
+// on every record it writes, a derived logger adds more, a record's own
+// field overrides the logger's of the same name, and the level filter
+// still applies.
+use std/log
+
+fn main(os: Os) {
+  let l = log.with({"req": "r1", "user": 7})
+  l.info("start")
+  let l2 = l.with({"step": "load"})
+  l2.warn("slow", {"ms": 120, "user": 8})
+  l.debug("hidden below info")
+  l.error("failed", {"err": "timeout"})
+  log.info("plain", {"k": "v"})
+  os.stdio.println("done")
+}
