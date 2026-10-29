@@ -106,7 +106,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   if (os.env.get("XO_CACHE_STATS") ?? "") == "1" && !ctx.layout_order.is_empty() {
     os.stdio.eprintln("link: layout order of ${ctx.layout_order.len()} symbols, first ${ctx.layout_order[0]}")
   }
-  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, order: ctx.layout_order, embed_dwarf: !split && !strip, dsym: (dsym || split) && !strip, release: release, program_dwarf: !sep_store.is_empty()}
+  let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, order: ctx.layout_order, embed_dwarf: !split && !strip, dsym: (dsym || split) && !strip, release: release, program_dwarf: !sep_store.is_empty(), hash_pages: Some(par_page_hashes)}
   let _in = lap(os, ctx.phases, "link.inputs", tin)
   let ts = os.clock.now()
   let linked = if store.is_empty() { macho.link_debug(parts + ins, opts) } else { link_store_laps(os, ctx, ins, store, opts, prep_dir(os, sep_store)) }
@@ -1196,4 +1196,58 @@ fn prep_save(os: Os, f: Str, s: macho.StoreLink) {
   cache_put(os, f, b)
   // the back-end cache's store accounting (store-log, the prune's burst)
   prune_backend_cache(os, "prep", dir_name(dir_name(f)), b.len())
+}
+
+/// The code signature's page hashes (macho LinkOpts.hash_pages) on up to
+/// 4 workers, 32 pages a claim: an HTTP server's image is about 1700
+/// pages, hashed one after another 2.5 ms of its 23 ms store link
+/// (2026-10-29).
+fn par_page_hashes(b: Bytes, pages: List[(Int, Int)]) -> List[Bytes] {
+  let n = pages.len()
+  let chunk = 32
+  let nc = (n + chunk - 1) / chunk
+  let w = nc.min(4).max(1)
+  let next = Atomic[Int].new(0)
+  let parts = scope sc {
+    var ts = []
+    for _ in 0..w {
+      ts.push(sc.spawn(fn() -> List[(Int, List[Bytes])] {
+        var mine: List[(Int, List[Bytes])] = []
+        while true {
+          let c = next.add(1) - 1
+          if c >= nc {
+            break
+          }
+          let lo = c * chunk
+          let hi = (lo + chunk).min(n)
+          var hs: List[Bytes] = List.with_capacity(hi - lo)
+          for i in lo..hi {
+            let (s, e) = pages[i]
+            hs.push(crypto.sha256(b[s..e]))
+          }
+          mine.push((c, hs))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, List[Bytes])] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var by: List[List[Bytes]] = List.with_capacity(nc)
+  for _ in 0..nc {
+    by.push([])
+  }
+  for (c, hs) in parts {
+    by[c] = hs
+  }
+  var out: List[Bytes] = List.with_capacity(n)
+  for hs in by {
+    for h in hs {
+      out.push(h)
+    }
+  }
+  out
 }

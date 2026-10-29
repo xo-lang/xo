@@ -48,6 +48,11 @@ const S_ATTR_DEBUG_FLAG = 0x02000000
 /// identifier), the macOS versions of LC_BUILD_VERSION, the dylibs, the
 /// entry point.
 pub struct LinkOpts {
+  /// the code signature's page hashes (sign.xo tail_page_hashes): given
+  /// the bytes and each page's [start, end), its SHA-256 in order; the
+  /// driver hands in one that hashes in parallel (compiler/xo ld.xo
+  /// par_page_hashes), None hashes here, one page after another
+  pub hash_pages: (fn(Bytes, List[(Int, Int)]) -> List[Bytes])? = None
   pub name: Str
   pub minos: (Int, Int) = (11, 0)
   pub sdk: (Int, Int) = (11, 0)
@@ -1727,7 +1732,7 @@ fn (var l: Linker) write() -> Bytes {
   // the signature then reuses, and the bytes before the first of them:
   // one pass over the image instead of two (decision 0400: the image's
   // own SHA-256 was 2.4 ms of an HTTP server's 41 ms store link)
-  let pages = tail_page_hashes(hl, rest)
+  let pages = tail_page_hashes_with(hl, rest, l.opts.hash_pages)
   var uh = crypto.hasher(crypto.Hash.Sha256)
   uh.write(zeros(hl))
   let first = imin(rest.len(), (hl + CS_PAGE - 1) / CS_PAGE * CS_PAGE - hl)

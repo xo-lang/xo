@@ -29,6 +29,23 @@ fn signature_size(code_size: Int, id: Str) -> Int {
 /// code_signature hashes there, computed before head is known (link.xo
 /// takes the executable's UUID from them, decision 0400).
 fn tail_page_hashes(hl: Int, tail: Bytes) -> List[Bytes] {
+  tail_page_hashes_with(hl, tail, None)
+}
+
+/// tail_page_hashes, by hash when given (each page of tail as [start,
+/// end) in tail).
+fn tail_page_hashes_with(hl: Int, tail: Bytes, hash: (fn(Bytes, List[(Int, Int)]) -> List[Bytes])?) -> List[Bytes] {
+  if let Some(h) = hash {
+    let code_size = hl + tail.len()
+    var p = (hl + CS_PAGE - 1) / CS_PAGE * CS_PAGE
+    var pages: List[(Int, Int)] = List.with_capacity((code_size - p + CS_PAGE - 1) / CS_PAGE + 1)
+    while p < code_size {
+      let end = imin(code_size, p + CS_PAGE)
+      pages.push((p - hl, end - hl))
+      p = end
+    }
+    return h(tail, pages)
+  }
   let code_size = hl + tail.len()
   var p = (hl + CS_PAGE - 1) / CS_PAGE * CS_PAGE
   var out: List[Bytes] = List.with_capacity((code_size - p + CS_PAGE - 1) / CS_PAGE + 1)
