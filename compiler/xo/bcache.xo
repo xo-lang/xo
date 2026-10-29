@@ -73,8 +73,11 @@ fn cache_id(os: Os) -> Str {
   // two builds after each touch (2026-10-28, found in the linux/arm64
   // Docker check of the std records: an edit more than a minute after
   // the previous one rebuilt std's entries twice).
+  // a facts path through a link (the scripts' linked facts directories)
+  // by the entry it reaches
   let (f0, f1) = sepcomp_fact_files(os, sp)
-  let stamps = match check.stamp_files(os.fs, [f0, f1].filter(fn(f) { !f.is_empty() }), os.clock.now().unix_millis()) {
+  let files = [f0, f1].filter(fn(f) { !f.is_empty() }).map(fn(f) { check.real_path(os.fs, f) })
+  let stamps = match check.stamp_files(os.fs, files, os.clock.now().unix_millis()) {
     Some(ss) => ss
     None => return id
   }
