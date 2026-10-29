@@ -41,3 +41,9 @@ internal.list_swap_both  a swap at two list lengths, for the codegen pattern
 # The system's roots depend on the host (the macOS keychain, the Linux CA
 # files), so no corpus or golden can state what they are.
 x509.system_roots  reads the host's root store, which differs per machine
+
+# go.Any (decision 0412) exists only at the `use go` boundary, which only
+# the Go backend builds; the corpora and the LLVM and arm64 goldens are
+# native. cmd/xo TestUseGoAny, TestUseGoAnyNoGoValue and TestUseGoAnyReplay
+# call every method.
+go.Any.*  a use go value: needs the Go backend, covered by cmd/xo TestUseGoAny*
