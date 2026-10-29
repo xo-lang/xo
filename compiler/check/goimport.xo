@@ -14,7 +14,7 @@ use std/crypto
 use github.com/xo-lang/xo/compiler/parser
 
 /// gobind.Version: bindings of another binder version are stale.
-const GOBIND_VERSION: Int = 11
+const GOBIND_VERSION: Int = 12
 
 /// gobind purePackages: the Go std packages whose `use go` in a dependency
 /// is not an escape hatch (decision 0156).

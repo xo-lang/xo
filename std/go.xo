@@ -18,6 +18,12 @@ fn (e: Error) message() -> Str
 /// The Go dynamic type of the error, for example `*url.Error`.
 fn (e: Error) go_type() -> Str
 
+/// A Go error with text `message` (Go's `errors.New`), for an Xo
+/// function a Go library calls to return (decision 0416): an Xo
+/// callback's `! go.Error` is the callback's Go `error`. An Error that
+/// came from Go goes back as that Go error, so Go's `errors.Is` sees it.
+fn error(message: Str) -> Error
+
 /// A Go `any` (`interface{}`) value a `use go` binding takes or returns
 /// (decision 0412): opaque to Xo. Make one with `go.any(x)` (a list
 /// literal written for a `...any` parameter converts its elements

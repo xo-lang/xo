@@ -133,3 +133,14 @@ case is small in count and large in use: it is how Go composes I/O.
    serialization.
 3. Scope of the first version (decision 6): io, net/http, sort, fmt,
    error; anything to add or drop? **As drafted.**
+
+## As built, step 1: callbacks that return errors (Lang 1, 2026-10-29)
+
+- Prerequisite of the Fns structs (each implemented method that returns `error` is such a callback), and
+  useful alone: a callback parameter whose Go type ends in `error` (`func(int) error`, `func(string) (int,
+  error)`) binds as `fn(..) -> T ! go.Error uses fx` (`-> () ! go.Error` with no other result), where it
+  was skipped before. internal/gobind callbackConv; the adapter returns `GoErrorOf(r.E)` on an Err.
+- std/go gains `fn error(message: Str) -> Error` (rt Go_error, Go's errors.New). rt GoErrorOf gives back
+  the Go error a go.Error was made from, so an error that came from Go (io.EOF, a sentinel) keeps its
+  identity for `errors.Is`; a replayed error, which has only its text, becomes errors.New(text).
+- Binding format 12.

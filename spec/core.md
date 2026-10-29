@@ -1750,6 +1750,12 @@ fn main(os: Os) ! {
   a child of the calling task (canceled with it), with its own held mutexes
   (decision 0067); under the deterministic scheduler such a call waits for
   a turn like a spawned task and is recorded by `--record` (core 7.4, 11.3).
+- A callback whose Go type ends in an `error` result (`func(int) error`,
+  `func(string) (int, error)`) is an Xo function `-> T ! go.Error` (`-> ()
+  ! go.Error` with no other result; decision 0416): its `Err(e)` is Go's
+  error, the Go error `e` came from when Go made it (so `errors.Is` sees a
+  sentinel such as `io.EOF`), else one with `e`'s text; `go.error(msg)`
+  makes one.
 - Every call into Go performs the effect `go`, which `pub` functions must
   declare. Go code can reach files and the network without a capability, so
   `uses go` marks that authority escape in signatures.

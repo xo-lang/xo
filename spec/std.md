@@ -3045,6 +3045,7 @@ struct Error {}                      // handle; implements Display, so it conver
 fn (e: Error) display() -> Str       // the Go error's Error() text, captured at the boundary
 fn (e: Error) message() -> Str       // the same text
 fn (e: Error) go_type() -> Str       // the Go dynamic type, for example "*url.Error"
+fn error(message: Str) -> Error      // Go's errors.New, for an Xo callback's Err (decision 0416)
 
 struct Any {}                        // a Go `any` value (decision 0412); Go's == and hash
 fn (a: Any) display() -> Str         // Go's %v

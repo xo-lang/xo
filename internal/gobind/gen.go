@@ -870,7 +870,13 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 	if s.Variadic() || s.TypeParams().Len() > 0 {
 		return conv{}, skipf(catFunc, "callback %s", g.display(s))
 	}
-	if s.Results().Len() > 1 {
+	// a final error result is the callback's `! go.Error` (decision 0416)
+	nres := s.Results().Len()
+	hasErr := nres > 0 && isError(s.Results().At(nres-1).Type())
+	if hasErr {
+		nres--
+	}
+	if nres > 1 {
 		return conv{}, skipf(catFunc, "callback %s has several results", g.display(s))
 	}
 	var xps, rps, gps []string
@@ -886,7 +892,7 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 		pcs = append(pcs, pc)
 	}
 	var rc *conv
-	if s.Results().Len() == 1 {
+	if nres == 1 {
 		c, err := g.mapType(s.Results().At(0).Type(), depth)
 		if err != nil {
 			return conv{}, skipf(catFunc, "callback %s: %s", g.display(s), err.detail)
@@ -901,8 +907,22 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 		rres = rc.rt
 		gres = " " + rc.gt
 	}
+	rerr := "Never"
+	if hasErr {
+		if rc == nil {
+			xo += " -> ()"
+		}
+		xo += " ! go.Error"
+		rerr = "Go_Error"
+		switch {
+		case rc != nil:
+			gres = " (" + rc.gt + ", error)"
+		default:
+			gres = " error"
+		}
+	}
 	xo += " uses fx"
-	rt := "func(" + strings.Join(append([]string{"*Task"}, rps...), ", ") + ") Result[" + rres + ", Never]"
+	rt := "func(" + strings.Join(append([]string{"*Task"}, rps...), ", ") + ") Result[" + rres + ", " + rerr + "]"
 	// Go may call the callback on the passing task's goroutine during a Go
 	// call (strings.Map) or on another goroutine, during or after the call
 	// that passed it (sync.WaitGroup.Go, a timer): rt.GoCallback decides
@@ -927,7 +947,14 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 		}
 		begin := strings.Join(conv, "") + "ctk := cb.Begin(" + argf + "); defer cb.End(ctk); "
 		fn := "func(" + strings.Join(gps, ", ") + ") { " + begin + call + " }"
-		if rc != nil {
+		switch {
+		case hasErr && rc != nil:
+			// an Xo error is Go's error: the Go error it came from, or
+			// one with its message (rt GoErrorOf)
+			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "r := " + call + "; if !r.Ok { var z " + rc.gt + "; return z, GoErrorOf(r.E) }; return " + rc.toGo("r.V") + ", nil }"
+		case hasErr:
+			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "r := " + call + "; if !r.Ok { return GoErrorOf(r.E) }; return nil }"
+		case rc != nil:
 			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "return " + rc.toGo(call+".V") + " }"
 		}
 		return "func(cb *GoCallback) " + gt + " { return " + fn + " }(NewGoCallback(tk))"

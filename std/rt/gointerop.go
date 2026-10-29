@@ -2,6 +2,7 @@ package rt
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"hash/maphash"
 	"slices"
@@ -23,6 +24,19 @@ type Go_Error struct {
 
 // GoErr wraps a non nil Go error.
 func GoErr(err error) Go_Error { return Go_Error{err: err, msg: err.Error()} }
+
+// Go_error is `go.error(message)` (decision 0416): Go's errors.New.
+func Go_error(_ *Task, msg string) Go_Error { return GoErr(errors.New(msg)) }
+
+// GoErrorOf is the Go error of an Xo `go.Error` an Xo callback returns
+// to Go (decision 0416): the Go error it came from, so errors.Is sees
+// io.EOF, or one with its text (a replayed error).
+func GoErrorOf(e Go_Error) error {
+	if e.err != nil {
+		return e.err
+	}
+	return errors.New(e.msg)
+}
 
 // M_display is the Go error's text.
 func (e Go_Error) M_display(*Task) string { return e.msg }

@@ -588,3 +588,61 @@ func (s *Strs[S]) Len() int { return len(s.v) }
 		t.Errorf("Strs.len skipped %q, want a constraint with no Xo form (skipped: %v)", why, b.Skipped)
 	}
 }
+
+// TestCallbackErrors (decision 0416 step 1): a callback parameter with a
+// final error result is an Xo function `-> T ! go.Error`, its Err given
+// to Go as the error (rt GoErrorOf).
+func TestCallbackErrors(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "cb")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/cb\n\ngo 1.21\n",
+		"cb.go": `package cb
+
+func Each(n int, f func(int) error) error { return nil }
+
+func Lengths(xs []string, f func(string) (int, error)) ([]int, error) { return nil, nil }
+
+func Two(f func() (int, string, error)) {}
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/cb v0.0.0\n\nreplace example.com/cb => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/cb", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl, adapter := string(b.Decl), string(b.Adapter)
+	for _, want := range []string{
+		"fn each[fx: Effects](n: Int, f: fn(Int) -> () ! go.Error uses fx) ! go.Error uses go, fx",
+		"fn lengths[fx: Effects](xs: List[Str], f: fn(Str) -> Int ! go.Error uses fx) -> List[Int] ! go.Error uses go, fx",
+	} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("no %q in the declarations:\n%s", want, decl)
+		}
+	}
+	for _, want := range []string{"return GoErrorOf(r.E)", "return z, GoErrorOf(r.E)"} {
+		if !strings.Contains(adapter, want) {
+			t.Errorf("no %q in the adapter:\n%s", want, adapter)
+		}
+	}
+	if why := b.Skipped["two"]; !strings.Contains(why, "several results") {
+		t.Errorf("two skipped %q, want several results (skipped: %v)", why, b.Skipped)
+	}
+}

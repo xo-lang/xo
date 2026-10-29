@@ -13,6 +13,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/backoff: exponential backoff with jitter and `retry`, cenkalti/
   backoff v4's ExponentialBackOff and Retry, over the Clock and Rand it
   is given; `retryable` decides which errors are retried.
+- `use go` binds Go callbacks that return an error (decision 0416, step
+  1): `func(int) error` is an Xo `fn(Int) -> () ! go.Error`, its `Err`
+  Go's error (the Go error itself when it came from Go, so `errors.Is`
+  works); `go.error(msg)` makes one (Go's `errors.New`). Binding
+  format 12.
 - `use go` binds generic Go functions (decision 0415, stage 1): a Go
   generic is an Xo generic with its constraints mapped (`any`: none,
   `comparable`: `Eq`, `cmp.Ordered`: `Ord`, `~[]E`: `List[E]`,
