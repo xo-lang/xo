@@ -7,35 +7,58 @@
 /// (what browsers substitute for the C1 controls).
 const REPLACEMENT: List[Str] = ["\u{20AC}", "\u{0081}", "\u{201A}", "\u{0192}", "\u{201E}", "\u{2026}", "\u{2020}", "\u{2021}", "\u{02C6}", "\u{2030}", "\u{0160}", "\u{2039}", "\u{0152}", "\u{008D}", "\u{017D}", "\u{008F}", "\u{0090}", "\u{2018}", "\u{2019}", "\u{201C}", "\u{201D}", "\u{2022}", "\u{2013}", "\u{2014}", "\u{02DC}", "\u{2122}", "\u{0161}", "\u{203A}", "\u{0153}", "\u{009D}", "\u{017E}", "\u{0178}"]
 
+// Go's EscapeString is a byteStringReplacer: one pass sizes the result,
+// the builder is made once at that size, and a second pass copies the
+// runs between the five characters by index (a find_any call per run was
+// 52% of the profile: its set is built on every call, and the runs here
+// are a few bytes; a byte at a time into a builder ran at 3.8 times Go's,
+// 2026-10-29)
 fn escape_string(s: Str) -> Str {
   let b = s.bytes()
-  var n = 0
-  for c in b {
-    if c == 38 || c == 39 || c == 60 || c == 62 || c == 34 {
-      n += 1
+  let n = b.len()
+  var extra = 0
+  var i = 0
+  while i < n {
+    let c = b[i]
+    if c == 38 {
+      extra += 4
+    } else if c == 60 || c == 62 {
+      extra += 3
+    } else if c == 39 || c == 34 {
+      extra += 4
     }
+    i += 1
   }
-  if n == 0 {
+  if extra == 0 {
     return s
   }
-  var out = BytesBuilder.new()
+  var out = BytesBuilder.with_capacity(n + extra)
   var start = 0
-  for (i, c) in b.indexed() {
-    let rep = match c {
-      38 => "&amp;"
-      39 => "&#39;"
-      60 => "&lt;"
-      62 => "&gt;"
-      34 => "&#34;"
-      _ => ""
-    }
-    if !rep.is_empty() {
-      out.write(b[start..i])
-      out.write_str(rep)
+  i = 0
+  while i < n {
+    let c = b[i]
+    if c == 38 || c == 60 || c == 62 || c == 39 || c == 34 {
+      if i > start {
+        out.write(b[start..i])
+      }
+      if c == 38 {
+        out.write_str("&amp;")
+      } else if c == 60 {
+        out.write_str("&lt;")
+      } else if c == 62 {
+        out.write_str("&gt;")
+      } else if c == 39 {
+        out.write_str("&#39;")
+      } else {
+        out.write_str("&#34;")
+      }
       start = i + 1
     }
+    i += 1
   }
-  out.write(b[start..])
+  if start < n {
+    out.write(b[start..])
+  }
   out.freeze().to_str() ?? s
 }
 
@@ -70,19 +93,68 @@ fn entity2_of(name: Str) -> Str {
 
 fn unescape_string(s: Str) -> Str {
   let b = s.bytes()
-  if !b.contains(b"&") {
+  let n = b.len()
+  var i = 0
+  while i < n && b[i] != 38 {
+    i += 1
+  }
+  if i == n {
     return s
   }
-  var out = BytesBuilder.new()
-  var i = 0
-  let n = b.len()
+  // the result is never longer than the input (Go unescapes in place)
+  var out = BytesBuilder.with_capacity(n)
+  out.write(b[0..i])
   while i < n {
-    let c = b[i]
-    if c != 38 {
-      out.write_byte(c)
-      i += 1
+    // the run up to the next `&` as it is (Go's UnescapeString copies
+    // between entities too), by index: a find call and a slice per run
+    // cost more than the runs are long
+    var run_end = i
+    while run_end < n && b[run_end] != 38 {
+      run_end += 1
+    }
+    if run_end > i {
+      out.write(b[i..run_end])
+      i = run_end
+    }
+    if i >= n {
+      break
+    }
+    // the five references EscapeString writes, and &quot;, by their
+    // bytes: what the tables give, without the name's Str and the
+    // binary search (the search's compares were 30% of the profile and
+    // the names' drops 8%, 2026-10-29)
+    let rest = n - i
+    if rest >= 4 && b[i + 1] == 108 && b[i + 2] == 116 && b[i + 3] == 59 {
+      out.write_byte(60)
+      i += 4
       continue
     }
+    if rest >= 4 && b[i + 1] == 103 && b[i + 2] == 116 && b[i + 3] == 59 {
+      out.write_byte(62)
+      i += 4
+      continue
+    }
+    if rest >= 5 && b[i + 1] == 97 && b[i + 2] == 109 && b[i + 3] == 112 && b[i + 4] == 59 {
+      out.write_byte(38)
+      i += 5
+      continue
+    }
+    if rest >= 5 && b[i + 1] == 35 && b[i + 2] == 51 && b[i + 3] == 52 && b[i + 4] == 59 {
+      out.write_byte(34)
+      i += 5
+      continue
+    }
+    if rest >= 5 && b[i + 1] == 35 && b[i + 2] == 51 && b[i + 3] == 57 && b[i + 4] == 59 {
+      out.write_byte(39)
+      i += 5
+      continue
+    }
+    if rest >= 6 && b[i + 1] == 113 && b[i + 2] == 117 && b[i + 3] == 111 && b[i + 4] == 116 && b[i + 5] == 59 {
+      out.write_byte(34)
+      i += 6
+      continue
+    }
+    let c = b[i]
     // unescapeEntity at i
     if n - i <= 1 {
       out.write_byte(c)

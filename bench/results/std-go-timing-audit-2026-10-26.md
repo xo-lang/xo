@@ -638,3 +638,24 @@ Indent runs at 0.82 of MarshalIndent's wall time and the RawMessage round trip a
 (the tape walk of indent; the earlier twin summed a longer Go output
 because Marshal HTML-escapes `<`, `>` and `&`, so these rows replace nothing: they are the
 first ones).
+
+## std/html escape and unescape (2026-10-29, xo-lang-6)
+
+Per std/changes/html.md 2026-10-30: bench/perf/html (html.EscapeString
+and UnescapeString, twin.go.txt), twincheck agrees on all three
+workloads. Quiet `xo bench --ab`, 15 rounds, A the Go twin, B the Xo
+program (native arm64, --release), Xo / Go wall: none 0.837 (0.79 to
+0.896), escape 2.523 (2.502 to 2.537; 310.7 against 123.1 ms;
+instructions 2.392), unescape 0.617 (0.612 to 0.623; 187.9 against
+304.7 ms; instructions 0.745). The audit's rows were escape 3.818 and
+unescape 3.902; a first rewrite with find_any (the special set rebuilt
+per call, 52% of the profile) and the entity binary search for every
+entity (its memcmp 25% of unescape) measured 2.793 and 4.019. Now
+escape has Go's byteStringReplacer shape (a size pass, then one sized
+copy by index) and unescape scans to each `&` by index into a builder
+sized to the input with a byte fast path for the six common entities.
+Escape is still 2.5 of Go: a rolling row; Go's replacer walks the input
+with a 256 entry table once, where the Xo version's two passes read
+every byte twice through bounds checked indexing, so the next step is a
+single pass with the table in a Bytes constant and the copy by
+BytesBuilder.write of whole runs, measured with XO_PROF=cpu first.
