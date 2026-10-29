@@ -1,7 +1,8 @@
 # 0404: the HTTP client streams bodies, takes a redirect policy and a timeout per request, and a reverse proxy builds on it
 
 Status: Proposed (lead request, 2026-10-29: item 1 of the 0.35 std list;
-Xo Lang 2). Design for review; no code yet.
+Xo Lang 2). Reviewed by Xo Lang 3 and the lead (2026-10-29). Stage A
+landed in 440f5b333; B in progress.
 
 ## Context
 
@@ -43,26 +44,56 @@ it a non-data value. `ClientErr.Connect` is documented as "the request
 did not reach the server" (no connection or no TLS handshake: safe to
 retry any method), `Timeout` and `Protocol` as possibly having reached it.
 
-**B. A streamed response body.**
+**B. A streamed response body.** (Revised 2026-10-29 after Xo Lang 3's
+review and the lead's: the handle with `close`, as File and Conn.)
 
 ```xo
 fn (c: Client) open(req: Request) -> ClientStream ! ClientErr uses net.dial
-struct ClientStream {}                                 // a response whose body is read as it arrives
-fn (s: ClientStream) response() -> Response            // status and headers; body empty
-fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! ClientErr  // the next bytes, None at the end
-fn (s: ClientStream) read_all() -> Bytes ! ClientErr
-fn (s: ClientStream) close()                           // read to the end: the connection is reused; else closed
+struct ResponseHead { status: Int, headers: Map[Str, Str] }   // with header and header_values as Response's
+struct ClientStream {}                                   // a response whose body is read as it arrives
+fn (s: ClientStream) head() -> ResponseHead
+fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! ClientErr uses net.dial  // the next bytes, None at the end
+fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! ClientErr uses net.dial
+fn (s: ClientStream) close()                             // as Conn.close: no error, again does nothing
+fn (r: Request) with_idle_timeout(d: Duration) -> Request    // open: the head within d, then each read within d
 ```
 
-`open` follows redirects as `send` does (each hop but the last read in
-full and discarded, as Go's Client does). The body is gunzipped as it is
-read on the same terms as `send` (compress's streaming Decompressor). A
-stream is a handle like `File` and `Conn`: the program closes it, usually
-`defer s.close()`; a task's end closes what it left open. The timeout
-covers `open` and every `read`. Natively: `h1_round` and `h2_exchange`
-split into "send and read the head" and "read the next body bytes"
-(content length, chunked, until close; HTTP/2 DATA frames with flow
-control), hclient's pool taking the connection back at `close`.
+- Capabilities mirror Conn: `open`, `read` and `read_all` use `net.dial`;
+  a function handed a stream needs the capability to read it.
+- The head is a type of its own, so no caller reads an empty `body`.
+- `open` follows redirects as `send` does (A's policy); each hop's
+  connection is released before the next.
+- Timeouts: `send` and `get` keep a total deadline over the whole
+  exchange (Go's Client.Timeout). A stream has no total deadline (it
+  would cut a long download or an event stream): the head must arrive
+  within the client's timeout (or `with_timeout`'s), and then each `read`
+  within `with_idle_timeout`'s limit (the client's timeout when unset).
+  A `Timeout` from `read` means the head had been received.
+- Errors after `open` are never `Connect`: a reset or a read failure is
+  `Protocol` with the transport's text, an idle limit `Timeout`, a
+  cancelled task `Canceled`. A body cut short (end of stream before its
+  Content-Length, a chunked body cut, an HTTP/2 stream reset) is
+  `Protocol` (Go's io.ErrUnexpectedEOF), never a clean `None`.
+- gzip: decoded as it is read on the same terms as `send` (only when the
+  client added `Accept-Encoding` itself), through std/compress's streaming
+  Decompressor with its 1 GiB `max_size` (decision 0305); `read_all`'s
+  `max_size` bounds the rest of the body the same way.
+- Release: the stream is a counted runtime handle (decision 0295). When
+  its last reference goes (close, or the value dropped at its scope's end
+  or its task's) the connection is returned to the pool if the body was
+  read to its end, and otherwise closed (HTTP/1.1) or the stream reset
+  with RST_STREAM CANCEL (HTTP/2, the connection staying pooled). `close`
+  is idempotent.
+- Natively `h1_round` and `h2_exchange` split into "send and read the
+  head" and "read the next body bytes" (Content-Length, chunked, until
+  close; HTTP/2 DATA frames with flow control), and `send` becomes
+  `open` plus `read_all`, one path for both.
+- Tests: Go's client_test.go TestClientRedirects and TestClientTimeout*,
+  transport_test.go TestTransportBodyReadError and the early close cases
+  (a stream closed or dropped before its end: its connection is not
+  reused, no fiber leaks, under XO_LEAKCHECK), and a timing row against a
+  Go twin: a 100 MB download streamed against `send`'s buffered one,
+  wall time and peak RSS (flat for the stream).
 
 **C. A streamed request body.**
 
@@ -71,11 +102,12 @@ fn (r: Request) with_body_reader(b: BodyReader) -> Request  // a handle_stream r
 fn (r: Request) with_body_file(f: File) -> Request          // a file's bytes from its position
 ```
 
-Sent with `Content-Length` when the request sets it, else chunked
-(HTTP/1.1) or as DATA frames (HTTP/2). Such a request is not replayed:
-a redirect that would resend its body (307, 308) returns the 3xx, and a
-dead pooled connection fails the request instead of retrying it (Go's
-`GetBody` absent).
+Client side builders (a handler's own Request ignores them). Sent with
+`Content-Length` when the request sets it, else chunked (HTTP/1.1) or as
+DATA frames (HTTP/2). Such a request is not replayed: a 307 or 308 that
+would resend its body returns the 3xx, and a dead pooled connection
+fails the request instead of retrying it (Go's `GetBody` absent). A 301,
+302 or 303 turns the request into a GET without a body, as `send` does.
 
 **D. A reverse proxy.**
 
