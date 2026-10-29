@@ -1,11 +1,16 @@
 # 0126: Module proxy protocol and XO_PROXY
 
 Status: Accepted (2026-10-10), implemented. Builds the optional proxy of
-decision 0086. Code: `internal/mod/fetch.go` (sources, `Download`,
-`Versions`), `internal/mod/proxy.go` (client, `ProxyHandler`,
-`ZipModule`), `cmd/xo/mod.go` (`xo mod proxy serve`). Tests:
-`internal/mod/proxy_test.go` (TestProxy, TestProxyUntrusted,
-TestProxyServe), `cmd/xo/proxy_test.go` (TestModProxy). Spec: core 4.2.
+decision 0086. Code (since decision 0215, 2026-10-13, in Xo):
+`compiler/cli/modules/fetch.xo` (`XO_PROXY` and `XO_NOPROXY` parsed by
+parse_proxy, the client: proxy_list, proxy_fetch, proxy_get) and
+`compiler/cli/modules/proxyserve.xo` (`xo mod proxy serve`:
+proxy_answer, zip_module). Test: `cmd/xo/proxy_test.go` (TestModProxy).
+Spec: core 4.2. The Go implementation first cited here
+(`internal/mod/fetch.go`, `proxy.go`, `cmd/xo/mod.go`) and its tests
+(`internal/mod/proxy_test.go`) were deleted with the Go compiler
+(decision 0215). No public Xo proxy runs yet (maturity-gaps.md 2;
+verified 2026-10-29).
 
 ## Context
 

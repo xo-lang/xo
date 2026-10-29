@@ -1,14 +1,20 @@
 # 0124: Checksum log (XO_SUMDB)
 
 Status: Accepted (2026-10-10), implemented. Builds the optional public
-checksum log of decision 0086. Code: `internal/sumdb` (tree arithmetic
-`tlog.go`, keys and signed tree heads `note.go`, `client.go`,
-`server.go`), `internal/mod/fetch.go` (`checkLog`, `LogRecord`,
-`settingsFor`). Tests: `internal/sumdb/sumdb_test.go` (every proof of
-trees up to 40 records, keys, forks, rollback),
-`internal/mod/log_test.go` (TestChecksumLog,
-TestChecksumLogThroughProxy), `cmd/xo/proxy_test.go`
-(TestChecksumLogCommand). Spec: core 4.3, codes XO1313 and XO1314.
+checksum log of decision 0086. Code (since decision 0215, 2026-10-13, in
+Xo): `compiler/cli/modules/sumdb.xo` (verifier keys and signed tree
+heads, Ed25519 from std/crypto; RFC 6962 Merkle proofs; the client) and
+`compiler/cli/modules/fetch.xo` (the log record of a fetched tree,
+`checkLog`, and `XO_SUMDB` and `XO_NOSUMDB` in the fetch settings).
+Spec: core 4.3, codes XO1313 and XO1314. The Go implementation this
+decision first cited (`internal/sumdb`, its log server, and
+`internal/mod/fetch.go`) was deleted with the Go compiler; so were its
+tests (`internal/sumdb/sumdb_test.go`, `internal/mod/log_test.go`,
+TestChecksumLogCommand: its loopback log server was the Go one; decision
+0215, "Tests not carried over"). No public Xo log runs yet, so
+`XO_SUMDB` defaults to `off`, and the client has no end-to-end test
+against a log until a log server exists again (maturity-gaps.md 2;
+verified 2026-10-29).
 
 ## Context
 

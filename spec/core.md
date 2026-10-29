@@ -170,7 +170,8 @@ specified in std.md 13 (decision 0094).
   command; `xo test` takes `--cases=N`, not `--fuzz` (10.1).
 - **[later]** markers for what is specified but not built: `xo why`,
   `xo debug`, the task line of error
-  traces, spans and OpenTelemetry, SBOMs, `std/sys`, `OpenApi` and `Proto`
+  traces, automatic spans and OpenTelemetry export (std/trace's spans and
+  std/metrics exist, 11.6), SBOMs, `std/sys`, `OpenApi` and `Proto`
   derives.
 - Modules (4.2, 4.3; decision 0086 steps 1 and 2): `require <path>
   <version>` of Xo modules with minimal version selection, git fetch into
@@ -3325,14 +3326,21 @@ one takes the next `v`, as an `XOnnnn` code keeps its meaning.
 **[P1]** The generated Go code carries `//line file.xo:N` directives, so Delve,
 Go stack traces, and pprof report Xo source locations.
 
-### 11.6 Observability [later]
+### 11.6 Observability [P1, export later]
 
-Not implemented yet: no spans exist, log records carry no span or request
-id, and `XO_OTEL_ENDPOINT` is not read.
+What exists (decision 0325): `std/metrics` (std.md 37) has counters,
+gauges and histograms with label values in a registry that main makes and
+passes on, their Prometheus text exposition (`Registry.text`, the
+`GET /metrics` handler `Registry.handler`), and an HTTP middleware that
+counts and times every request. `std/trace` (std.md 38) gives each request
+an id and keeps a bounded ring of spans (a request's span and a program's
+own), which a handler reads; it has no exporter.
 
-- Every `scope` and every effect call is a trace span. `std/log` is structured
-  and attaches the current span and request id automatically.
-- OpenTelemetry export is enabled by setting `XO_OTEL_ENDPOINT`.
+Not implemented yet [later]: spans are a program's own (a `scope` or an
+effect call is not a span by itself), log records do not carry the
+current span or request id automatically, and there is no OpenTelemetry
+(OTLP) export: `XO_OTEL_ENDPOINT` is not read. A `traceparent`-style
+exporter is a program's own code over `Ring.spans`.
 
 ---
 
