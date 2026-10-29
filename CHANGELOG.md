@@ -15,6 +15,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `.exe` in argv[0], an `XO_BACKEND_CACHE_DIR` given as `C:\x` is taken
   as absolute, and `xo dev stdobj` takes `C:/x` as absolute (it prefixed
   the working directory to any path not starting with `/`).
+- xo build: the first build of a program (which writes the std record)
+  and every later one (which load it) have the same build id and bytes;
+  the loader hashed empty sources for the std files it had not parsed
+  into the build info's `<std>` entry (112 bytes of id strings differed,
+  130 on Windows with the PDB GUID; code identical).
 - xo build on x86 Linux: a build that assembles through cc (`XO_NOLIBC=0`,
   xotool's seed smoke build, the self build) failed with GNU as ("unknown
   pseudo-op: .arch_extension"): the linux assembly carried the arm64
