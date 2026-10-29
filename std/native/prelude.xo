@@ -23,6 +23,8 @@ use native/llrt/cabi_tw
 // std/testing, 2026-10-27); its exports are built only for a program
 // that makes a network call (ssa importer_built, uses_net)
 use native/llrt/cabi_net
+use native/llrt/netconn
+use native/llrt/tasks
 use native/llrt/fault
 use native/llrt/fsops
 use native/llrt/gomath
@@ -3531,6 +3533,42 @@ fn env_admits(lists: Str, name: Str) -> Bool {
 }
 
 fn env_only(e: Env, names: List[Str]) -> Env { rt.env_new(cap_lists_add(rt.env_lists(e), names)) }
+
+/// The NetErr of the calling context's failed network operation
+/// (netconn's tags, as generated code builds it for Net.dial).
+fn net_err_now() -> NetErr {
+  match netconn.status() {
+    1 => NetErr.InvalidAddr(msg: netconn.last_msg())
+    2 => NetErr.Refused
+    3 => NetErr.Timeout
+    5 => NetErr.Canceled
+    6 => NetErr.Denied(addr: netconn.last_msg())
+    _ => NetErr.Io(msg: netconn.last_msg())
+  }
+}
+
+/// Net.dial_timeout (decision 0406): Net.dial with the caller's limit
+/// over the lookup and the connect, Timeout when it passes.
+fn net_dial_timeout(n: Net, addr: Str, d: Duration) -> Conn ! NetErr uses net.dial {
+  let p = netconn.dial_limit(rt.net_lists(n), addr, d.nanos())
+  if p == 0 {
+    return Err(net_err_now())
+  }
+  // dial's handle holds one reference, which the Conn takes over
+  let c = rt.obj_at[Conn](p)
+  tasks.h_release(p)
+  Ok(c)
+}
+
+/// Net.lookup_host (decision 0406): the addresses dial would try for
+/// host, as text.
+fn net_lookup_host(n: Net, host: Str) -> List[Str] ! NetErr uses net.dial {
+  let addrs = netconn.lookup_host(rt.net_lists(n), host)
+  if netconn.status() != 0 {
+    return Err(net_err_now())
+  }
+  Ok(addrs)
+}
 
 /// Net.only (decision 0175): the entries trimmed and lowered (std/rt's
 /// normHosts); the C runtime checks dial and listen against the lists

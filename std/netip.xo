@@ -1,6 +1,6 @@
 // std/netip (spec/std.md 28, decision 0287). Declaration file; encoding
 // rules are listed at the top of std/prelude.xo. Go's net/netip: IP
-// addresses and prefixes as values. Pure.
+// addresses and prefixes as values. Pure but for lookup (decision 0406).
 
 /// An IP address: `bits` is 32 for IPv4, 128 for IPv6, 0 for the zero
 /// value; `ip` its 16 bytes (an IPv4 address as ::ffff:a.b.c.d); `zone`
@@ -26,6 +26,9 @@ fn (e: ParseErr) display() -> Str
 
 /// Go's ParseAddr: IPv4 (no leading zeros), IPv6, IPv4 in IPv6, zones.
 fn parse_addr(s: Str) -> Addr ! ParseErr
+/// The addresses of host, in the order Net.dial tries them (Go's
+/// net.LookupIP through Net.lookup_host; decision 0406).
+fn lookup(n: Net, host: Str) -> List[Addr] ! NetErr uses net.dial
 /// Go's ParsePrefix: `10.0.0.0/8`, `2001:db8::/32`.
 fn parse_prefix(s: Str) -> Prefix ! ParseErr
 /// The address of 4 or 16 bytes (AddrFrom4, AddrFrom16); None for another length.

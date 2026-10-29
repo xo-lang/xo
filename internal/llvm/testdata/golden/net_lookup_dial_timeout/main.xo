@@ -1,0 +1,47 @@
+// Net.lookup_host, netip.lookup and Net.dial_timeout (decision 0406):
+// localhost and IP literals resolve as dial resolves them, an unknown
+// name is Go's `no such host`, Net.only refuses a host it does not list,
+// a dial within the limit connects, and one to an address that never
+// answers (192.0.2.1, TEST-NET-1) is Timeout where Net.dial would wait
+// 30 seconds.
+use std/netip
+
+fn main(os: Os) {
+  match os.net.lookup_host("localhost") {
+    Ok(xs) => os.stdio.println("localhost: has 127.0.0.1 ${xs.contains("127.0.0.1")}")
+    Err(e) => os.stdio.println("localhost: ${e}")
+  }
+  match os.net.lookup_host("127.0.0.1") {
+    Ok(xs) => os.stdio.println("literal: ${xs.join(",")}")
+    Err(e) => os.stdio.println("literal: ${e}")
+  }
+  match os.net.lookup_host("no-such-host.invalid") {
+    Ok(xs) => os.stdio.println("unknown: ${xs.join(",")}?")
+    Err(e) => os.stdio.println("unknown: ${e}")
+  }
+  match os.net.only(["example.com"]).lookup_host("localhost") {
+    Ok(xs) => os.stdio.println("only: ${xs.join(",")}?")
+    Err(e) => os.stdio.println("only: ${e}")
+  }
+  match netip.lookup(os.net, "localhost") {
+    Ok(xs) => os.stdio.println("netip: has loopback ${xs.any(fn(a: netip.Addr) -> Bool { a.is_loopback() })}")
+    Err(e) => os.stdio.println("netip: ${e}")
+  }
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      match os.net.dial_timeout(l.addr(), 5s) {
+        Ok(c) => {
+          os.stdio.println("dial: connected")
+          c.close()
+        }
+        Err(e) => os.stdio.println("dial: ${e}")
+      }
+      l.close()
+    }
+    Err(e) => os.stdio.println("listen: ${e}")
+  }
+  match os.net.dial_timeout("192.0.2.1:9", 200ms) {
+    Ok(_) => os.stdio.println("blackhole: connected?")
+    Err(e) => os.stdio.println("blackhole: ${e}")
+  }
+}

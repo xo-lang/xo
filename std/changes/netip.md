@@ -1,5 +1,16 @@
 # std/netip changes
 
+## 2026-10-29: feature: netip.lookup
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md S7)
+- Go reference: net.LookupIP; decision 0406
+- Test: internal/llvm/testdata/golden/net_lookup_dial_timeout
+
+`netip.lookup(net, host)` returns host's addresses as `netip.Addr`, through
+`Net.lookup_host`.
+
 ## 2026-10-22: perf: parse and display without per group strings and lists
 
 - Kind: perf

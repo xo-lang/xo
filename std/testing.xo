@@ -40,6 +40,8 @@ fn fake_db(schema: Str) -> sql.Db ! sql.SqlErr
 struct FakeNet {}
 fn (n: FakeNet) listen(addr: Str) -> Listener ! NetErr uses net.listen
 fn (n: FakeNet) dial(addr: Str) -> Conn ! NetErr uses net.dial
+fn (n: FakeNet) dial_timeout(addr: Str, d: Duration) -> Conn ! NetErr uses net.dial
+fn (n: FakeNet) lookup_host(host: Str) -> List[Str] ! NetErr uses net.dial   // localhost and IP literals (decision 0406)
 fn (n: FakeNet) only(hosts: List[Str]) -> Net
 fn (n: FakeNet) handle(pattern: Str, h: fn(http.Request) -> http.Response)
 /// Every matching request fails, until clear_failures.

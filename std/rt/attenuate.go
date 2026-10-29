@@ -123,6 +123,20 @@ func (n *onlyNet) M_dial(tk *Task, addr string) Result[Conn, NetErr] {
 	return n.inner.M_dial(tk, addr)
 }
 
+func (n *onlyNet) M_dial_timeout(tk *Task, addr string, d Duration) Result[Conn, NetErr] {
+	if !n.admitsAddr(addr) {
+		return Err[Conn](netDenied(addr))
+	}
+	return n.inner.M_dial_timeout(tk, addr, d)
+}
+
+func (n *onlyNet) M_lookup_host(tk *Task, host string) Result[List[string], NetErr] {
+	if !n.admits(strings.ToLower(host), "0") {
+		return Err[List[string]](netDenied(host))
+	}
+	return n.inner.M_lookup_host(tk, host)
+}
+
 func (n *onlyNet) M_only(_ *Task, hosts List[string]) Net { return newOnlyNet(n, hosts) }
 
 // XoDebug implements Debug.

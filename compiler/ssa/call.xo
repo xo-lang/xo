@@ -2245,7 +2245,7 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   let it = b.int_t()
   let st = b.str_t()
   let es = arg_exprs(b.c.objs[fo].params, args)
-  if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Listener.accept" | "Conn.read" | "Conn.write" | "ServerConn.read" | "ServerConn.write" | "Proc.pipeline" {
+  if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Net.dial_timeout" | "Net.lookup_host" | "Listener.accept" | "Conn.read" | "Conn.write" | "ServerConn.read" | "ServerConn.write" | "Proc.pipeline" {
     // operations that wait: the program needs unwinding checks
     b.set_flag(1)
     if !b.conc {
@@ -2509,6 +2509,8 @@ fn cap_impl(key: Str) -> Str {
     "Env.only" => "env_only"
     "Proc.only" => "proc_only"
     "Net.only" => "net_only"
+    "Net.dial_timeout" => "net_dial_timeout"
+    "Net.lookup_host" => "net_lookup_host"
     "Proc.cmd" => "proc_cmd"
     "Proc.pipeline" => "proc_pipeline"
     "Proc.kill" => "proc_kill"

@@ -263,6 +263,12 @@ pub fn msg_list() -> Int {
   list_of(if m != 0 { str_of(m) } else { raw.str_at(0, 0) }, 0)
 }
 
+/// The message of the calling context's last Io or InvalidAddr error.
+pub fn last_msg() -> Str {
+  let m = ld(ctx.cur(), ctx.C_NET_MSG)
+  if m != 0 { str_of(m) } else { "" }
+}
+
 /// The descriptor's socket (poll.xo D_FD, a C int; stable while an
 /// operation runs).
 fn pd_fd(pd: Int) -> Int {
@@ -781,6 +787,78 @@ pub fn dial(lists: Str, addr: Str) -> Int {
   dial_timeout(addr, 30000000000)
 }
 
+/// `net.dial_timeout(addr, d)` (decision 0406): dial with the caller's
+/// limit, Timeout (3) when it passes; Net.only's lists first.
+pub fn dial_limit(lists: Str, addr: Str, d: Int) -> Int {
+  if !netpolicy.admits_addr(lists, addr) {
+    fail(ctx.cur(), 6, addr)
+    return 0
+  }
+  dial_timeout(addr, if d > 0 { d } else { 1 }, 3)
+}
+
+/// `net.lookup_host(host)` (decision 0406): host's addresses as text, in
+/// the order dial tries them (the same resolver), or an empty list with
+/// the error recorded: Go's `lookup HOST: no such host` for a name no
+/// source knows.
+pub fn lookup_host(lists: Str, host: Str) -> List[Str] {
+  let c = ctx.cur()
+  if !netpolicy.admits(lists, host, "0") {
+    fail(c, 6, host)
+    return []
+  }
+  if twflags.fake(TW_REAL_NET) {
+    // FakeNet: localhost and IP literals only (decision 0406)
+    if host == "localhost" {
+      ok(c)
+      return ["127.0.0.1", "::1"]
+    }
+    if dns.v4_at(raw.data(host), host.len()) >= 0 || host.contains(":") {
+      ok(c)
+      return [host]
+    }
+    fail(c, 4, "lookup ${host}: no such host")
+    return []
+  }
+  let out = rt.heap_large(NADDR * SA).wrapping_sub(8)
+  let n = resolve(host, "0", 0, false, out, NADDR)
+  if n < 0 {
+    mfree(out)
+    let noname = n == dns.EAI_NONAME || (os() == 2 && n == -8) || (os() == 3 && n == -11001)
+    fail(c, 4, if noname { "lookup ${host}: no such host" } else { "lookup ${host}: ${gai_text(n)}" })
+    return []
+  }
+  var addrs: List[Str] = []
+  for i in 0..n {
+    let a = fmt_addr(out + SA * i)
+    // fmt_addr's "ip:port" or "[ip]:port": the address alone, each once
+    let ip = ip_of(a)
+    if !addrs.contains(ip) {
+      addrs.push(ip)
+    }
+  }
+  mfree(out)
+  ok(c)
+  addrs
+}
+
+/// The address of fmt_addr's "ip:port" or "[ip]:port".
+fn ip_of(a: Str) -> Str {
+  let b = a.bytes()
+  if b.len() > 0 && b[0] == 91 {
+    var i = 1
+    while i < b.len() && b[i] != 93 {
+      i += 1
+    }
+    return raw.str_at(raw.data(a) + 1, i - 1)
+  }
+  var j = b.len() - 1
+  while j > 0 && b[j] != 58 {
+    j -= 1
+  }
+  raw.str_at(raw.data(a), j)
+}
+
 /// Waits for the connect in progress on fd: 0 connected, a negative
 /// errno, 1 canceled, 2 the time is up.
 fn connect_wait(c: Int, pd: Int, fd: Int, when: Int) -> Int {
@@ -799,7 +877,7 @@ fn connect_wait(c: Int, pd: Int, fd: Int, when: Int) -> Int {
 
 /// dial giving up after d ns (d <= 0: no limit): the connection, or 0
 /// with the error recorded (xo_http.c's client dials with it too).
-pub fn dial_timeout(addr: Str, d: Int) -> Int {
+pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4) -> Int {
   let when = if d > 0 { poll.deadline(d) } else { 0 }
   let c = ctx.cur()
   if poll.canceled() {
@@ -878,7 +956,13 @@ pub fn dial_timeout(addr: Str, d: Int) -> Int {
   if e == 1 {
     fail(c, 5, "")
   } else if e == 2 {
-    fail(c, 4, "dial tcp ${addr}: i/o timeout")
+    // Net.dial's own limit is Io's text; Net.dial_timeout's is Timeout
+    // (decision 0406)
+    if timeout_tag == 3 {
+      fail(c, 3, "")
+    } else {
+      fail(c, 4, "dial tcp ${addr}: i/o timeout")
+    }
   } else if e == 0 - econnrefused() {
     fail(c, 2, "")
   } else {

@@ -778,6 +778,8 @@ MSG for `Io`, `canceled`, and `denied by Net.only: ADDR` (decision 0358).
 
 fn (n: Net) listen(addr: Str) -> Listener ! NetErr uses net.listen
 fn (n: Net) dial(addr: Str) -> Conn ! NetErr       uses net.dial
+fn (n: Net) dial_timeout(addr: Str, d: Duration) -> Conn ! NetErr uses net.dial   // decision 0406
+fn (n: Net) lookup_host(host: Str) -> List[Str] ! NetErr uses net.dial            // decision 0406
 fn (n: Net) only(hosts: List[Str]) -> Net          // attenuation (below)
 fn (l: Listener) addr() -> Str                     // "host:port" actually bound
 fn (l: Listener) accept() -> ServerConn ! NetErr   uses net.listen
@@ -809,7 +811,19 @@ there) and `None` at the end of the stream; `write` returns when every
 byte is written. All three are cancellation points that report
 cancellation as `Canceled` (core 7.2). `close` is idempotent and makes a
 waiting `accept`, `read`, or `write` on the same listener or connection
-fail with `Io`. A refused `dial` is `Refused`.
+fail with `Io`. A refused `dial` is `Refused`. `dial` gives up after 30
+seconds with `Io` (`dial tcp ADDR: i/o timeout`); `dial_timeout(addr, d)`
+gives up after `d`, over the lookup and the connect, with `Timeout`
+(decision 0406).
+
+Names (decision 0406): `lookup_host(host)` returns host's addresses as
+text, in the order `dial` tries them, from the resolver `dial` uses (the
+system's getaddrinfo on macOS and Windows, Xo's own reading /etc/hosts
+and resolv.conf on Linux); an IP literal returns itself and a name no
+source knows is `Io` (`lookup NAME: no such host`, Go's text). An
+attenuated `Net` refuses a host it does not admit (`Denied`). FakeNet
+answers `localhost` and IP literals. `netip.lookup(net, host)` (section
+28) is the typed form.
 
 `addr` reports the port the system chose for `listen(":0")`. An unspecified
 host (`:0`, `0.0.0.0`, `[::]`) is reported as the loopback address
@@ -3958,7 +3972,8 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
 Status: implemented on every backend (decision 0287, 2026-10-20): Go's
 net/netip, ported natively (`std/native/netip.xo`; Go's results on 3,323
 address and prefix cases in `netip_test.xo`) and through net/netip on
-the Go backend. Pure.
+the Go backend. Pure but for `lookup` (decision 0406: host's addresses
+through `Net.lookup_host`, section 3.2).
 
 ```
 struct Addr { bits: Int, ip: Bytes, zone: Str } derive Ord   // 32, 128, or 0; 16 bytes; an IPv6 zone
@@ -3968,6 +3983,7 @@ struct ParseErr { msg: Str }   // ParseAddr("1.2.3"): IPv4 address too short
 pub fn parse_addr(s: Str) -> Addr ! ParseErr
 pub fn parse_prefix(s: Str) -> Prefix ! ParseErr
 pub fn addr_from_bytes(b: Bytes) -> Addr?      // 4 or 16 bytes
+pub fn lookup(n: Net, host: Str) -> List[Addr] ! NetErr uses net.dial   // decision 0406
 fn (a: Addr) is_4() -> Bool                   // also is_6, is_4in6, is_loopback, is_private,
                                               // is_unspecified, is_link_local_unicast, is_multicast
 fn (a: Addr) unmap() -> Addr
@@ -4314,7 +4330,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-438 declarations.
+440 declarations.
 
 ### Range
 
@@ -4912,6 +4928,8 @@ fn close(self)
 ```
 fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen
 fn dial(self, addr: Str) -> Conn ! NetErr uses net.dial
+fn dial_timeout(self, addr: Str, d: Duration) -> Conn ! NetErr uses net.dial
+fn lookup_host(self, host: Str) -> List[Str] ! NetErr uses net.dial
 fn only(self, hosts: List[Str]) -> Net
 ```
 

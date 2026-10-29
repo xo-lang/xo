@@ -711,6 +711,58 @@ func (n realNet) M_dial(tk *Task, addr string) Result[Conn, NetErr] {
 	return fx(tk, "net.dial", false, func() []any { return []any{addr} }, func() Result[Conn, NetErr] { return n.dial(tk, addr) })
 }
 
+// M_dial_timeout is `n.dial_timeout(addr, d)` (decision 0406): Timeout
+// when d passes.
+func (n realNet) M_dial_timeout(tk *Task, addr string, d Duration) Result[Conn, NetErr] {
+	return fx(tk, "net.dial", false, func() []any { return []any{addr} }, func() Result[Conn, NetErr] { return n.dialFor(tk, addr, time.Duration(d)) })
+}
+
+// M_lookup_host is `n.lookup_host(host)` (decision 0406): Go's
+// net.LookupHost.
+func (realNet) M_lookup_host(tk *Task, host string) Result[List[string], NetErr] {
+	if tk.Canceled() {
+		return Err[List[string]](netErr(5, ""))
+	}
+	addrs, err := net.LookupHost(host)
+	if err != nil {
+		var de *net.DNSError
+		if errors.As(err, &de) && de.IsNotFound {
+			return Err[List[string]](netErr(4, "lookup "+host+": no such host"))
+		}
+		return Err[List[string]](netErr(4, err.Error()))
+	}
+	return Ok[List[string], NetErr](ListFromSlice(addrs))
+}
+
+// dialFor dials with the limit d, Timeout when it passes.
+func (realNet) dialFor(tk *Task, addr string, d time.Duration) Result[Conn, NetErr] {
+	if tk.Canceled() {
+		return Err[Conn](netErr(5, ""))
+	}
+	if runtime.GOOS == "wasip1" {
+		return Err[Conn](netErr(4, "dial "+addr+": "+noSockets))
+	}
+	network := "tcp"
+	if path, ok := unixPath(addr); ok {
+		network, addr = "unix", path
+	}
+	if d <= 0 {
+		d = 1
+	}
+	c, err := net.DialTimeout(network, addr, d)
+	if err != nil {
+		var ne net.Error
+		if errors.As(err, &ne) && ne.Timeout() {
+			return Err[Conn](netErr(3, ""))
+		}
+		if errors.Is(err, syscall.ECONNREFUSED) {
+			return Err[Conn](netErr(2, ""))
+		}
+		return Err[Conn](netErr(4, err.Error()))
+	}
+	return Ok[Conn, NetErr](Conn{c: c})
+}
+
 func (realNet) dial(tk *Task, addr string) Result[Conn, NetErr] {
 	if tk.Canceled() {
 		return Err[Conn](netErr(5, ""))

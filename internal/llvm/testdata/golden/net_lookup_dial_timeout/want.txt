@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+localhost: has 127.0.0.1 true
+literal: 127.0.0.1
+unknown: lookup no-such-host.invalid: no such host
+only: denied by Net.only: localhost
+netip: has loopback true
+dial: connected
+blackhole: i/o timeout
+--- stderr

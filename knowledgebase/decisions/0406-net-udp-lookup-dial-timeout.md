@@ -1,7 +1,9 @@
 # 0406: S7: UDP sockets, a DNS lookup API and a dial timeout in std's Net
 
-Status: Accepted (lead, 2026-10-29: 0.35 std item S7; Xo Lang 2). Not yet
-implemented.
+Status: Accepted (lead, 2026-10-29: 0.35 std item S7; Xo Lang 2); revised
+the same day (lead): lookup_ip became netip.lookup and UDP a std/udp
+module (below, "As built"). dial_timeout and the lookups landed first;
+UDP follows.
 
 ## Context
 
@@ -56,6 +58,32 @@ fn (c: UdpConn) close()
 - Natively UDP is netconn's socket code with SOCK_DGRAM (recvfrom and
   sendto, nonblocking under the poller); on Windows the same through
   Winsock (WSARecvFrom/WSASendTo on the IOCP path).
+
+### As built (2026-10-29)
+
+```xo
+fn (n: Net) dial_timeout(addr: Str, d: Duration) -> Conn ! NetErr uses net.dial   // prelude, Net interface
+fn (n: Net) lookup_host(host: Str) -> List[Str] ! NetErr uses net.dial             // prelude, Net interface
+pub fn lookup(n: Net, host: Str) -> List[netip.Addr] ! NetErr uses net.dial        // std/netip
+pub fn listen(n: Net, addr: Str) -> UdpConn ! NetErr uses net.listen               // std/udp
+pub fn dial(n: Net, addr: Str) -> UdpConn ! NetErr uses net.dial                   // std/udp
+```
+
+- The prelude cannot name a std type, so `lookup_ip`'s typed form is
+  `netip.lookup`, built on `lookup_host`.
+- A prelude handle (Conn, Listener, File, ...) is a list in the checker
+  (compiler/check infer.xo is_handle) with a lowering in every backend, so
+  a prelude UdpConn would be compiler work across ssa, gen, LLVM and wasm,
+  and the compiler could not use it before the next seed. std/udp's
+  UdpConn is a std struct over a counted llrt handle (decision 0295), as
+  http.ClientStream is: no compiler change. Go's own shape for UDP is a
+  package function (net.ListenPacket, net.DialUDP).
+- `dial_timeout` and `lookup_host` are Net methods implemented by the
+  native prelude (compiler/ssa call.xo cap_impl: net_dial_timeout,
+  net_lookup_host over llrt/netconn.xo dial_limit and lookup_host), by Go's
+  net on the Go backend, and by FakeNet (localhost and IP literals).
+- `Net.dial`'s own 30 second limit stays `Io("dial tcp ADDR: i/o
+  timeout")`; `dial_timeout`'s limit is `Timeout` (spec 3.2 says so).
 
 ## Consequences
 

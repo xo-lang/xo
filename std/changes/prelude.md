@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-29: feature: Net.dial_timeout and Net.lookup_host
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md S7): an exporter
+- Go reference: net.DialTimeout, net.LookupHost (DNSError.IsNotFound's
+  "no such host"); decision 0406
+- Test: internal/llvm/testdata/golden/net_lookup_dial_timeout (native and Go)
+
+`Net.dial_timeout(addr, d)` bounds the lookup and the connect, `Timeout` past
+`d`. `Net.lookup_host(host)` returns the addresses `dial` would try, from the
+same resolver; an unknown name is `lookup NAME: no such host`; Net.only and
+FakeNet apply. `netip.lookup` is its typed form.
+
 ## 2026-10-28: fix: a timer or network wake is not left behind a busy pair of tasks
 
 - Kind: fix

@@ -851,6 +851,12 @@ interface Stream {
 interface Net {
   fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen
   fn dial(self, addr: Str) -> Conn ! NetErr uses net.dial
+  /// dial giving up after d over the lookup and the connect: `Timeout`
+  /// then, where dial's own 30 second limit is `Io` (decision 0406).
+  fn dial_timeout(self, addr: Str, d: Duration) -> Conn ! NetErr uses net.dial
+  /// The addresses of host, as text, in the order dial tries them (Go's
+  /// net.LookupHost; decision 0406).
+  fn lookup_host(self, host: Str) -> List[Str] ! NetErr uses net.dial
   /// A Net that dials and listens only on the listed hosts: `host`,
   /// `*.domain`, or `host:port`, and `unix:PATH` for a Unix domain
   /// socket (std.md 3.2, decisions 0156 and 0190).

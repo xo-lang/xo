@@ -5,6 +5,7 @@ import (
 	"flag"
 	"fmt"
 	"math/rand/v2"
+	"net"
 	"os"
 	"path"
 	"strconv"
@@ -1005,6 +1006,30 @@ func (f Testing_FakeNet) M_listen(tk *Task, addr string) Result[Listener, NetErr
 		f.n.listeners["localhost:"+port] = l
 	}
 	return Ok[Listener, NetErr](Listener{mem: l})
+}
+
+// M_dial_timeout is M_dial with the real network's limit (decision
+// 0406); an in memory dial does not wait.
+func (f Testing_FakeNet) M_dial_timeout(tk *Task, addr string, d Duration) Result[Conn, NetErr] {
+	if f.n.real != nil {
+		return f.n.real.M_dial_timeout(tk, addr, d)
+	}
+	return f.M_dial(tk, addr)
+}
+
+// M_lookup_host answers localhost and IP literals (decision 0406), as
+// the native FakeNet does.
+func (f Testing_FakeNet) M_lookup_host(tk *Task, host string) Result[List[string], NetErr] {
+	if f.n.real != nil {
+		return f.n.real.M_lookup_host(tk, host)
+	}
+	if host == "localhost" {
+		return Ok[List[string], NetErr](ListOf("127.0.0.1", "::1"))
+	}
+	if net.ParseIP(host) != nil {
+		return Ok[List[string], NetErr](ListOf(host))
+	}
+	return Err[List[string]](netErr(4, "lookup "+host+": no such host"))
 }
 
 // M_dial connects to the in memory listener at addr (decision 0292):

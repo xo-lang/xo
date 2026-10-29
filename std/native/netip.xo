@@ -205,6 +205,17 @@ fn parse_ipv6(input: Str) -> netip.Addr ! netip.ParseErr {
   netip.Addr{bits: 128, ip: t, zone: zone}
 }
 
+fn lookup(n: Net, host: Str) -> List[netip.Addr] ! NetErr uses net.dial {
+  var out: List[netip.Addr] = []
+  for t in n.lookup_host(host)? {
+    match parse_addr(t) {
+      Ok(a) => out.push(a)
+      Err(e) => return Err(NetErr.Io(msg: "lookup ${host}: ${e.msg}"))
+    }
+  }
+  Ok(out)
+}
+
 fn parse_addr(s: Str) -> netip.Addr ! netip.ParseErr {
   for c in s.bytes() {
     if c == 46 {
