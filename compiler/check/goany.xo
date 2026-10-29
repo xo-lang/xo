@@ -122,11 +122,13 @@ fn (var c: Checker) need_go_comparable(fo: Int, p: Int, at: Int, cn: Int, sp: Sp
   if c.objs[co].module != c.prelude {
     return
   }
-  let cname = text(c.objs[co].name)
-  if !(cname is "Eq" | "Hash" | "Ord") {
+  // the comparison derives (Eq, Hash, Ord): the markers of equality or
+  // order in derivables.xo
+  let dv = derivable(text(c.objs[co].name)) ?? return
+  if !dv.marker || !(dv.kind == DeriveKind.Equality || dv.kind == DeriveKind.Order) {
     return
   }
-  let ordered = cname == "Ord"
+  let ordered = dv.kind == DeriveKind.Order
   if c.has_go_comparable(at, ordered) {
     return
   }
