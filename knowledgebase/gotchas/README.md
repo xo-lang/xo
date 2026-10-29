@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [ab-scripts-shared-output-dir.md](ab-scripts-shared-output-dir.md): Observed 2026-10-28: two A/B scripts sharing one scratch directory (caches, std variants, binaries) deleted each other's state mid-run; a private directory per run
 - [store-format-magic.md](store-format-magic.md): Observed 2026-10-28: a std store an older xo wrote faulted in store_view (out of range) because a layout change kept the magic; change STORE_MAGIC with every layout change
 - [atom-label-before-function.md](atom-label-before-function.md): Observed 2026-10-28: a runtime function's unsafe range start label precedes its own label, so per-function tables (std store builds) gave it to the function before and the allocator had no table (SIGSEGV in alloc.alloc, 2 of 40 runs); a start label right before a function's label is that function's
 - [amd64-baseline-sse2.md](amd64-baseline-sse2.md): amd64's baseline is SSE2 (Go's GOAMD64=v1); an SSSE3 or later instruction needs a cpu.hw() check, with TestX86SIMDGated and a bit-off fallback run
