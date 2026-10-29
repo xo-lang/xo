@@ -1008,6 +1008,10 @@ interface Proc {
   /// Time between a stop request and the cancellation of main's root scope
   /// (core 7.5, default 30s; 0s cancels at the first signal).
   fn set_grace(self, d: Duration) uses proc
+  /// This process's ID (0 under WASI).
+  fn pid(self) -> Int uses proc
+  /// The parent process's ID (0 on Windows and under WASI).
+  fn ppid(self) -> Int uses proc
   fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
   /// A Proc that runs only the listed commands (std.md 3.7, decision
   /// 0156).

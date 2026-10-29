@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+pid positive true
+ppid positive true
+distinct true
+--- stderr

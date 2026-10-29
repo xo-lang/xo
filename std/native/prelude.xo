@@ -44,6 +44,7 @@ use native/llrt/rand
 use native/llrt/raw
 use native/llrt/report
 use native/llrt/scan
+use native/llrt/procid
 use native/llrt/sigsub
 use native/llrt/stop
 use native/llrt/selects
@@ -3628,6 +3629,12 @@ fn proc_stop_notify(p: Proc, c: Chan[Signal]) uses proc {
     c.close()
   }
 }
+
+/// Proc.pid (decision 0410).
+fn proc_pid(p: Proc) -> Int uses proc { procid.pid() }
+
+/// Proc.ppid (decision 0410).
+fn proc_ppid(p: Proc) -> Int uses proc { procid.ppid() }
 
 /// Proc.request_stop (decision 0407): core 7.5's phase 1 once.
 fn proc_request_stop(p: Proc) uses proc {

@@ -152,3 +152,15 @@ func (f Testing_FakeProc) M_request_stop(tk *Task) {
 		f.p.real.M_request_stop(tk)
 	}
 }
+
+// M_pid is `os.proc.pid()` (decision 0410).
+func (realProc) M_pid(tk *Task) int64 { return int64(os.Getpid()) }
+
+// M_ppid is `os.proc.ppid()`.
+func (realProc) M_ppid(tk *Task) int64 { return int64(os.Getppid()) }
+
+func (p *onlyProc) M_pid(tk *Task) int64  { return p.inner.M_pid(tk) }
+func (p *onlyProc) M_ppid(tk *Task) int64 { return p.inner.M_ppid(tk) }
+
+func (f Testing_FakeProc) M_pid(tk *Task) int64  { return 1 }
+func (f Testing_FakeProc) M_ppid(tk *Task) int64 { return 0 }

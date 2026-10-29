@@ -2517,6 +2517,8 @@ fn cap_impl(key: Str) -> Str {
     "Proc.notify" => "proc_notify"
     "Proc.stop_notify" => "proc_stop_notify"
     "Proc.request_stop" => "proc_request_stop"
+    "Proc.pid" => "proc_pid"
+    "Proc.ppid" => "proc_ppid"
     _ => ""
   }
 }

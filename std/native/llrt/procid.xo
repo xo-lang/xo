@@ -1,0 +1,25 @@
+// Process IDs (decision 0410): Proc.pid and Proc.ppid. Windows answers its
+// own ID and 0 for the parent, WASI 0 for both (no process model).
+
+use native/llrt/linux
+use native/sys_darwin
+use native/sys_windows
+
+/// This process's ID.
+pub fn pid() -> Int {
+  match target.os {
+    TargetOs.Darwin => Int(sys_darwin.getpid())
+    TargetOs.Linux => linux.getpid()
+    TargetOs.Windows => Int(sys_windows.GetCurrentProcessId())
+    TargetOs.Wasi => 0
+  }
+}
+
+/// The parent process's ID, or 0 where the system cannot say.
+pub fn ppid() -> Int {
+  match target.os {
+    TargetOs.Darwin => Int(sys_darwin.getppid())
+    TargetOs.Linux => linux.getppid()
+    TargetOs.Windows | TargetOs.Wasi => 0
+  }
+}

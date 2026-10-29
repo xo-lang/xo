@@ -1,0 +1,9 @@
+// Proc.pid and Proc.ppid (decision 0410): a real process has a positive
+// ID and, on Unix, a parent.
+fn main(os: Os) {
+  let pid = os.proc.pid()
+  let ppid = os.proc.ppid()
+  os.stdio.println("pid positive ${pid > 0}")
+  os.stdio.println("ppid positive ${ppid > 0}")
+  os.stdio.println("distinct ${pid != ppid}")
+}

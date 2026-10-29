@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **Breaking** (decision 0410): the prelude's `Proc` interface gains
+  `pid()` and `ppid()`, so a user type that implements `Proc` needs the
+  two methods (interfaces have no default bodies, core 2.4); a wrapper
+  forwards them to its inner `Proc`.
 - **Breaking** (decision 0407): the prelude's `Proc` interface gains
   `notify(signals)`, `stop_notify(c)` and `request_stop()`, so a user
   type that implements `Proc` needs the three methods (interfaces have no

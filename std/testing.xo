@@ -161,6 +161,8 @@ fn (p: FakeProc) kill(pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc
 fn (p: FakeProc) notify(signals: List[Signal]) -> Chan[Signal] uses proc   // decision 0407
 fn (p: FakeProc) stop_notify(c: Chan[Signal]) uses proc
 fn (p: FakeProc) request_stop() uses proc
+fn (p: FakeProc) pid() -> Int uses proc   // decision 0410: 1
+fn (p: FakeProc) ppid() -> Int uses proc   // 0
 /// The signals kill recorded, as "NAME PID", oldest first.
 fn (p: FakeProc) killed() -> List[Str]
 

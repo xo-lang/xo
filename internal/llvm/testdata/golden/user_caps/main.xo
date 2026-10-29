@@ -43,6 +43,8 @@ fn (p: EchoProc) kill(pid: Int, signal: Str = "TERM") -> () ! ProcErr { Err(Proc
 fn (p: EchoProc) notify(signals: List[Signal]) -> Chan[Signal] { Chan[Signal].new(1) }
 fn (p: EchoProc) stop_notify(c: Chan[Signal]) { c.close() }
 fn (p: EchoProc) request_stop() {}
+fn (p: EchoProc) pid() -> Int { 7 }
+fn (p: EchoProc) ppid() -> Int { 1 }
 
 struct NoNet {}
 

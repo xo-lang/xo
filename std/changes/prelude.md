@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-10-29: feature: Proc.pid and Proc.ppid
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md S8, os pid)
+- Go reference: os.Getpid, os.Getppid; decision 0410
+- Test: internal/llvm/testdata/golden/proc_pid (native and Go)
+
+`os.proc.pid()` and `os.proc.ppid()` return the process and parent IDs
+(Windows: the parent is 0; WASI: both 0). Breaking: a user type that
+implements `Proc` needs the two methods. No hot path, so no timing row.
+
 ## 2026-10-29: feature: Proc.notify, stop_notify and request_stop
 
 - Kind: feature
