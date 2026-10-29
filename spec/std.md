@@ -4074,13 +4074,22 @@ built in functions, and fmt's printing); Go's output and error texts on
 
 ```
 struct TemplateErr { msg: Str }                          // Go's texts; displays the message (decision 0358)
-struct Template { name: Str, sources: List[(Str, Str)], left: Str = "{{", right: Str = "}}", missing_key_error: Bool = false, parsed: Parsed }
+type TemplateFn = fn(List[json.Value]) -> json.Value ! Str      // a template function (FuncMap, decision 0408)
+struct Template { name: Str, sources: List[(Str, Str)], left: Str = "{{", right: Str = "}}", missing_key_error: Bool = false, funcs: Map[Str, TemplateFn] = {}, parsed: Parsed }
 
-pub fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}") -> Template ! TemplateErr
+pub fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}", funcs: Map[Str, TemplateFn] = {}) -> Template ! TemplateErr
 fn (t: Template) add(name: Str, src: Str) -> Template ! TemplateErr
 fn (t: Template) missing_key(error: Bool) -> Template
 fn (t: Template) render(data: json.Value) -> Str ! TemplateErr
 fn (t: Template) render_named(name: Str, data: json.Value) -> Str ! TemplateErr
+
+pub fn html(s: Str) -> json.Value      // trusted content (decision 0408): json.Value.Trusted("html", s); Go's template.HTML
+pub fn css(s: Str) -> json.Value       // CSS
+pub fn js(s: Str) -> json.Value        // JS
+pub fn jsstr(s: Str) -> json.Value     // JSStr
+pub fn url(s: Str) -> json.Value       // URL
+pub fn attr(s: Str) -> json.Value      // HTMLAttr
+pub fn srcset(s: Str) -> json.Value    // Srcset
 ```
 
 - `Template.parsed` is an opaque `Parsed` (std internal state, decision 0319): `parse` and `add` fill it with the parsed trees, which only the native implementation reads, so a render does not parse the sources again. A program does not build or read it; the Go backend leaves it empty.
@@ -4099,7 +4108,19 @@ fn (t: Template) render_named(name: Str, data: json.Value) -> Str ! TemplateErr
   `le`, `gt`, `ge`, `print`, `println`, `printf` (fmt's verbs and flags),
   `html`, `js`, `urlquery`, and `call` (no function values in JSON data,
   so `call` always fails). A missing field prints `<no value>`;
-  `missing_key(true)` makes it an error. No custom functions.
+  `missing_key(true)` makes it an error.
+- Custom functions (Go's FuncMap, decision 0408) are `parse`'s `funcs`:
+  a name the templates call as they call a built in one (`{{upper .s}}`,
+  `{{.s | upper}}`); the set's `add`ed templates see them too. A function
+  gets its arguments as json.Values (the data's values, a constant as its
+  value, a missing field as Null) and returns the value the template
+  prints or passes on; an Err is Go's `error calling NAME: text`. A name
+  neither built in nor in `funcs` is the parse error `function "x" not
+  defined`. Functions are pure (`TemplateFn` has no effects).
+- Trusted content (decision 0408): `template.html(s)` and the six other
+  constructors make a `json.Value.Trusted` the html mode (`parse_html`)
+  passes through unescaped in its context; a template parsed with `parse`
+  prints its string.
 - Errors are Go's: parse errors `template: t:1: function "nope" not
   defined`, execution errors `template: t:1:7: executing "t" at
   <.name.x>: can't evaluate field x in type interface {}`.

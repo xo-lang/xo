@@ -1,5 +1,18 @@
 # std/template changes
 
+## 2026-10-29: feature: custom functions (FuncMap) and the trusted content constructors
+
+- Kind: feature
+- Commit: this commit
+- Found by: milestone 0.35 S6 (decision 0408)
+- Go reference: text/template Funcs, html/template HTML, CSS, JS, JSStr, URL, HTMLAttr, Srcset
+- Test: std/native/template_test.xo ("custom functions", "trusted content prints its string")
+
+`parse(..., funcs: Map[Str, TemplateFn])`: a `TemplateFn` takes its
+arguments as json.Values and returns one, or an Err text (`error calling
+NAME: text`); `template.html(s)` and the six siblings make
+`json.Value.Trusted` values for the html mode to come.
+
 ## 2026-10-28: perf: the lexer finds `{{` and `*/` with Bytes.find
 
 - Kind: perf

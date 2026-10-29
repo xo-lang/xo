@@ -810,6 +810,8 @@ struct Tree {
 const BUILTINS: List[Str] = ["and", "call", "html", "index", "slice", "js", "len", "not", "or", "print", "printf", "println", "urlquery", "eq", "ge", "gt", "le", "lt", "ne"]
 
 struct Parser {
+  /// the user functions' names (template.Template.funcs, decision 0408)
+  funcs: List[Str] = []
   lex: Lexer
   name: Str
   parse_name: Str
@@ -1247,7 +1249,7 @@ fn (var p: Parser) operand() -> Arg? {
 fn (var p: Parser) term() -> Arg? {
   let t = p.next_non_space()
   if t.typ == I_IDENT {
-    if !BUILTINS.contains(t.val) {
+    if !BUILTINS.contains(t.val) && !p.funcs.contains(t.val) {
       p.fail("function ${go_quote(t.val)} not defined")
     }
     return Some(Arg.Ident(pos: t.pos, name: t.val))
@@ -1435,6 +1437,41 @@ struct Val {
 fn val(v: V) -> Val { Val{v: v} }
 
 fn invalid() -> Val { Val{v: V.Invalid} }
+
+/// A user function's call (decision 0408): every argument evaluated, the
+/// values as json.Values, the result back as a value.
+fn (var s: Ex) call_user(dot: Val, name: Str, args0: List[Arg], final: Val) -> Val ! Str {
+  let f = match s.funcs.get(name) {
+    Some(f) => f
+    None => return Err(s.err("function ${go_quote(name)} not defined"))
+  }
+  let args = if args0.is_empty() { args0 } else { args0[1..] }
+  var jargs: List[json.Value] = []
+  for a in args {
+    jargs.push(json_of(unbox(s.eval_arg(dot, a)?)))
+  }
+  if !is_missing(final) {
+    jargs.push(json_of(unbox(final)))
+  }
+  match f(jargs) {
+    Ok(j) => Ok(val(of_json(j, true)))
+    Err(e) => Err(s.err("error calling ${name}: ${e}"))
+  }
+}
+
+/// A value as a json.Value (call_user's arguments).
+fn json_of(v: V) -> json.Value {
+  match v {
+    Invalid | NilIface | Missing => json.Value.Null
+    Bool(b) => json.Value.Bool(b: b)
+    IntV(n, _) => json.Value.Int(n: n)
+    FloatV(f) => json.Value.Num(n: f)
+    ComplexV(re, _) => json.Value.Num(n: re)
+    StrV(s) => json.Value.Str(s: s)
+    ListV(items) => json.Value.List(items: items.map(fn(x) { json_of(x) }))
+    MapV(fields) => json.Value.Object(fields: fields.map(fn(f: (Str, V)) { (f.0, json_of(f.1)) }))
+  }
+}
 
 fn of_json(j: json.Value, inner: Bool) -> V {
   match j {
@@ -1692,6 +1729,8 @@ struct Parsed {
 /// One template of the set as the executor sees it.
 struct Ex {
   trees: List[Tree]
+  /// the user functions (decision 0408)
+  funcs: Map[Str, template.TemplateFn] = {}
   missing_error: Bool
   tree: Tree
   vars: List[Var] = []
@@ -1970,7 +2009,7 @@ fn (var s: Ex) walk_template(dot: Val, name: Str, pipe: Pipe?) -> Int ! Str {
     Some(p) => s.eval_pipeline(dot, p)?
     None => invalid()
   }
-  var sub = Ex{trees: s.trees, missing_error: s.missing_error, tree: t, vars: [Var{name: "$", value: d}], depth: s.depth + 1}
+  var sub = Ex{trees: s.trees, funcs: s.funcs, missing_error: s.missing_error, tree: t, vars: [Var{name: "$", value: d}], depth: s.depth + 1}
   let _r = sub.walk_list(d, t.root)?
   s.out = s.out + sub.out
   Ok(0)
@@ -2151,6 +2190,9 @@ fn builtin_shape(name: Str) -> (Int, Bool) {
 
 fn (var s: Ex) eval_function(dot: Val, node: Arg, name: Str, args0: List[Arg], final: Val, cmd_pos: Int, cmd_kind: Int, cmd_tag: Int) -> Val ! Str {
   s.at_arg(node)
+  if !BUILTINS.contains(name) {
+    return s.call_user(dot, name, args0, final)
+  }
   let args = if args0.is_empty() { args0 } else { args0[1..] }
   let (fixed, variadic) = builtin_shape(name)
   var num_in = args.len()
@@ -3185,7 +3227,11 @@ fn sprintf(format: Str, args: List[Val]) -> Str {
 fn parse_set(t: template.Template) -> List[Tree] ! template.TemplateErr {
   var trees: List[Tree] = []
   for (name, src) in t.sources {
-    var p = Parser{lex: Lexer{input: src.bytes(), left: t.left.bytes(), right: t.right.bytes()}, name: name, parse_name: name, text: src.bytes(), trees: trees}
+    var fnames: List[Str] = []
+    for (k, _) in t.funcs {
+      fnames.push(k)
+    }
+    var p = Parser{lex: Lexer{input: src.bytes(), left: t.left.bytes(), right: t.right.bytes()}, name: name, parse_name: name, text: src.bytes(), trees: trees, funcs: fnames}
     let root = p.parse()
     if !p.err.is_empty() {
       return Err(template.TemplateErr{msg: p.err})
@@ -3199,8 +3245,16 @@ fn parse_set(t: template.Template) -> List[Tree] ! template.TemplateErr {
   Ok(trees)
 }
 
-fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}") -> template.Template ! template.TemplateErr {
-  let t = template.Template{name: name, sources: [(name, src)], left: if left.is_empty() { "{{" } else { left }, right: if right.is_empty() { "}}" } else { right }, parsed: rt.cast[Parsed, template.Parsed](Parsed{})}
+fn html(s: Str) -> json.Value { json.Value.Trusted(kind: "html", s: s) }
+fn css(s: Str) -> json.Value { json.Value.Trusted(kind: "css", s: s) }
+fn js(s: Str) -> json.Value { json.Value.Trusted(kind: "js", s: s) }
+fn jsstr(s: Str) -> json.Value { json.Value.Trusted(kind: "jsstr", s: s) }
+fn url(s: Str) -> json.Value { json.Value.Trusted(kind: "url", s: s) }
+fn attr(s: Str) -> json.Value { json.Value.Trusted(kind: "attr", s: s) }
+fn srcset(s: Str) -> json.Value { json.Value.Trusted(kind: "srcset", s: s) }
+
+fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}", funcs: Map[Str, template.TemplateFn] = {}) -> template.Template ! template.TemplateErr {
+  let t = template.Template{name: name, sources: [(name, src)], funcs: funcs, left: if left.is_empty() { "{{" } else { left }, right: if right.is_empty() { "}}" } else { right }, parsed: rt.cast[Parsed, template.Parsed](Parsed{})}
   let trees = parse_set(t)?
   Ok(t with {parsed: rt.cast[Parsed, template.Parsed](Parsed{trees: trees})})
 }
@@ -3232,7 +3286,7 @@ fn template_render_named(t: template.Template, name: Str, data: json.Value) -> S
     None => return Err(template.TemplateErr{msg: "template: no template ${go_quote(name)} associated with template ${go_quote(t.name)}"})
   }
   let dot = val(of_json(data, false))
-  var s = Ex{trees: trees, missing_error: t.missing_key_error, tree: tr, vars: [Var{name: "$", value: dot}]}
+  var s = Ex{trees: trees, funcs: t.funcs, missing_error: t.missing_key_error, tree: tr, vars: [Var{name: "$", value: dot}]}
   match s.walk_list(dot, tr.root) {
     Ok(_) => Ok(s.out)
     Err(e) => Err(template.TemplateErr{msg: e})

@@ -1,6 +1,7 @@
 package rt
 
 import (
+	"errors"
 	"strings"
 	"text/template"
 )
@@ -45,15 +46,44 @@ func jsonValueAny(v Json_Value) any {
 }
 
 // templateSet parses t's sources into one set.
-func templateSet(t Template_Template) (*template.Template, error) {
+// TemplateFn is std/template's TemplateFn on this backend: the arguments
+// as json.Values, the result or the call's error text.
+type TemplateFn = func(*Task, List[Json_Value]) Result[Json_Value, string]
+
+// templateFuncs is t's functions as text/template's FuncMap (decision
+// 0408): each takes any arguments, hands them to the Xo function as
+// json.Values, and returns its result as text/template sees data.
+func templateFuncs(tk *Task, t Template_Template) template.FuncMap {
+	fm := template.FuncMap{}
+	m := t.F_funcs
+	Map_each(&m, func(e *mentry[string, TemplateFn], f TemplateFn) bool {
+		name := e.k
+		fm[name] = func(args ...any) (any, error) {
+			xs := make([]Json_Value, len(args))
+			for i, a := range args {
+				xs[i] = jsonValueOf(a)
+			}
+			r := f(tk, ListFromSlice(xs))
+			if r.IsErr() {
+				return nil, errors.New(r.UnwrapErr())
+			}
+			return jsonValueAny(r.Unwrap()), nil
+		}
+		return true
+	})
+	return fm
+}
+
+func templateSet(tk *Task, t Template_Template) (*template.Template, error) {
 	var root *template.Template
+	fm := templateFuncs(tk, t)
 	for _, s := range t.F_sources.s {
 		var x *template.Template
 		if root == nil {
-			root = template.New(s.F0).Delims(t.F_left, t.F_right)
+			root = template.New(s.F0).Delims(t.F_left, t.F_right).Funcs(fm)
 			x = root
 		} else {
-			x = root.New(s.F0)
+			x = root.New(s.F0).Funcs(fm)
 		}
 		if _, err := x.Parse(s.F1); err != nil {
 			return nil, err
@@ -69,19 +99,19 @@ func templateErr[T any](err error) Result[T, Template_TemplateErr] {
 	return Err[T](Template_TemplateErr{F_msg: err.Error()})
 }
 
-func Template_parse(_ *Task, name string, src string, left string, right string) Result[Template_Template, Template_TemplateErr] {
-	t := Template_Template{F_name: name, F_sources: ListOf(Tuple2[string, string]{F0: name, F1: src}), F_left: left, F_right: right}
-	if _, err := templateSet(t); err != nil {
+func Template_parse(tk *Task, name string, src string, left string, right string, funcs Map[string, TemplateFn]) Result[Template_Template, Template_TemplateErr] {
+	t := Template_Template{F_name: name, F_sources: ListOf(Tuple2[string, string]{F0: name, F1: src}), F_left: left, F_right: right, F_funcs: funcs}
+	if _, err := templateSet(tk, t); err != nil {
 		return templateErr[Template_Template](err)
 	}
 	return Ok[Template_Template, Template_TemplateErr](t)
 }
 
-func (t Template_Template) M_add(_ *Task, name string, src string) Result[Template_Template, Template_TemplateErr] {
+func (t Template_Template) M_add(tk *Task, name string, src string) Result[Template_Template, Template_TemplateErr] {
 	srcs := append(append([]Tuple2[string, string]{}, t.F_sources.s...), Tuple2[string, string]{F0: name, F1: src})
 	n := t
 	n.F_sources = ListFromSlice(srcs)
-	if _, err := templateSet(n); err != nil {
+	if _, err := templateSet(tk, n); err != nil {
 		return templateErr[Template_Template](err)
 	}
 	return Ok[Template_Template, Template_TemplateErr](n)
@@ -96,8 +126,20 @@ func (t Template_Template) M_render(tk *Task, data Json_Value) Result[string, Te
 	return t.M_render_named(tk, t.F_name, data)
 }
 
-func (t Template_Template) M_render_named(_ *Task, name string, data Json_Value) Result[string, Template_TemplateErr] {
-	set, err := templateSet(t)
+func trusted(kind, s string) Json_Value {
+	return Json_Value{Tag: 8, P: Json_Value_Trusted{F_kind: kind, F_s: s}}
+}
+
+func Template_html(_ *Task, s string) Json_Value   { return trusted("html", s) }
+func Template_css(_ *Task, s string) Json_Value    { return trusted("css", s) }
+func Template_js(_ *Task, s string) Json_Value     { return trusted("js", s) }
+func Template_jsstr(_ *Task, s string) Json_Value  { return trusted("jsstr", s) }
+func Template_url(_ *Task, s string) Json_Value    { return trusted("url", s) }
+func Template_attr(_ *Task, s string) Json_Value   { return trusted("attr", s) }
+func Template_srcset(_ *Task, s string) Json_Value { return trusted("srcset", s) }
+
+func (t Template_Template) M_render_named(tk *Task, name string, data Json_Value) Result[string, Template_TemplateErr] {
+	set, err := templateSet(tk, t)
 	if err != nil {
 		return templateErr[string](err)
 	}

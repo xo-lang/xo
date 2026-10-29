@@ -231,3 +231,56 @@ test "Go's text/template output and errors" {
   }
   expect(bad) == []
 }
+
+test "custom functions (decision 0408): arguments, pipelines, errors, unknown names" {
+  let upper: template.TemplateFn = fn(args: List[json.Value]) -> json.Value ! Str {
+    match args.first() {
+      Some(Str(s)) => Ok(json.Value.Str(s: s.to_upper()))
+      Some(Null) => Err("nothing to upper")
+      _ => Ok(json.Value.Str(s: "?"))
+    }
+  }
+  let add: template.TemplateFn = fn(args: List[json.Value]) -> json.Value ! Str {
+    var n = 0
+    for a in args {
+      match a {
+        Int(x) => n += x
+        _ => return Err("not an int")
+      }
+    }
+    Ok(json.Value.Int(n: n))
+  }
+  let funcs: Map[Str, template.TemplateFn] = {"upper": upper, "add": add}
+  let data = json.parse_value("{\"s\":\"hello\",\"n\":4,\"l\":[1,2]}").ok() ?? json.Value.Null
+  var got: List[Str] = []
+  for src in ["{{upper .s}}", "{{.s | upper}}", "{{add 1 2 .n}}", "{{add 1 | add 2}}", "{{upper .missing}}", "{{add .s}}", "{{range $i, $x := .l}}{{add $i $x}}{{end}}"] {
+    let r = match template.parse("t", src, funcs: funcs) {
+      Ok(t) => match t.render(data) {
+        Ok(s) => s
+        Err(e) => "err ${e.msg}"
+      }
+      Err(e) => "err ${e.msg}"
+    }
+    got.push(r)
+  }
+  expect(got) == ["HELLO", "HELLO", "7", "3", "err template: t:1:2: executing \"t\" at <upper>: error calling upper: nothing to upper", "err template: t:1:2: executing \"t\" at <add>: error calling add: not an int", "13"]
+  match template.parse("t", "{{nope 1}}") {
+    Ok(_) => expect(false)
+    Err(e) => expect(e.msg) == "template: t:1: function \"nope\" not defined"
+  }
+  // a function an added template calls
+  let set = match template.parse("t", "{{template \"u\" .}}", funcs: funcs) {
+    Ok(t) => t.add("u", "{{upper .s}}").ok()
+    Err(_) => None
+  }
+  expect(set.map(fn(t) { t.render(data).ok() ?? "err" })) == Some("HELLO")
+}
+
+test "trusted content (decision 0408) prints its string outside the html mode" {
+  let data = json.Value.Object(fields: [("h", template.html("<b>x</b>")), ("u", template.url("/a?b=c"))])
+  let got = match template.parse("t", "{{.h}} {{.u}} {{len .h}}") {
+    Ok(t) => t.render(data).ok() ?? "err"
+    Err(e) => "err ${e.msg}"
+  }
+  expect(got) == "<b>x</b> /a?b=c 8"
+}

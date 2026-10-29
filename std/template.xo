@@ -13,6 +13,13 @@ struct TemplateErr {
 /// The message, Go's text (decision 0358).
 fn (e: TemplateErr) display() -> Str
 
+/// A template function (FuncMap, decision 0408): its arguments as the
+/// executor's values, its result a value the template prints or passes
+/// on (escaped by the html mode's context); Err text is the call's
+/// error, `error calling NAME: text`. Pure: a function with effects
+/// cannot be called from a render.
+type TemplateFn = fn(List[json.Value]) -> json.Value ! Str
+
 /// A set of named templates (template.Template and its associated
 /// templates): each name's source, in the order added, the action
 /// delimiters, and whether a missing object key is an error
@@ -23,6 +30,9 @@ struct Template {
   left: Str = "{{"
   right: Str = "}}"
   missing_key_error: Bool = false
+  /// The functions the templates may call by name, given to parse (a
+  /// name the parser does not know is Go's "function NAME not defined").
+  funcs: Map[Str, TemplateFn] = {}
   /// The parsed set (internal: filled by parse and add, so a render does
   /// not parse again).
   parsed: Parsed
@@ -33,7 +43,7 @@ struct Parsed {}
 
 /// template.New(name).Delims(left, right).Parse(src): the template, or
 /// Go's parse error. `{{define}}` blocks become templates of the set.
-fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}") -> Template ! TemplateErr
+fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}", funcs: Map[Str, TemplateFn] = {}) -> Template ! TemplateErr
 /// Another named template in the set (t.New(name).Parse(src)).
 fn (t: Template) add(name: Str, src: Str) -> Template ! TemplateErr
 /// The set with Option("missingkey=error") (true) or the default.
@@ -42,3 +52,15 @@ fn (t: Template) missing_key(error: Bool) -> Template
 fn (t: Template) render(data: json.Value) -> Str ! TemplateErr
 /// ExecuteTemplate: the output of the template name of the set.
 fn (t: Template) render_named(name: Str, data: json.Value) -> Str ! TemplateErr
+
+/// Trusted content for the html mode (decision 0408; Go's template.HTML,
+/// CSS, JS, JSStr, URL, HTMLAttr, Srcset): a json.Value only these make,
+/// passed through unescaped in its own context, escaped as text in any
+/// other, and the plain string to every other reader.
+fn html(s: Str) -> json.Value
+fn css(s: Str) -> json.Value
+fn js(s: Str) -> json.Value
+fn jsstr(s: Str) -> json.Value
+fn url(s: Str) -> json.Value
+fn attr(s: Str) -> json.Value
+fn srcset(s: Str) -> json.Value
