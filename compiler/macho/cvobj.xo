@@ -496,12 +496,12 @@ pub struct PreProcs {
   procs: List[PdbProc]
 }
 
-pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> PreProcs { pre_procs_store(parts, objs, layout, []) }
+pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> PreProcs { pre_procs_store(parts, objs, layout, [], true) }
 
 /// pre_procs with the first smaps.len() objects std's store's (their parts
 /// against their split sections, StoreMap), whose stripped functions are
 /// left out.
-pub fn pre_procs_store(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout, smaps: List[StoreMap]) -> PreProcs {
+pub fn pre_procs_store(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout, smaps: List[StoreMap], trim_types: Bool) -> PreProcs {
   var info = debug.Info{}
   var tys: List[Int] = []
   var files: List[Str] = []
@@ -513,7 +513,61 @@ pub fn pre_procs_store(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout,
       None => continue
     }
     let m = if oi < smaps.len() { obj_map_store(smaps[oi], oi, layout) } else { obj_map(objs[oi], oi, layout) }
+    var pfns = part.fns
+    if !part.fn_index.is_empty() {
+      for (lo, at, _) in part.fn_index {
+        if m.placed(lo) {
+          pfns.push(part_fn(part, at))
+        }
+      }
+    }
+    // a store part's types: only those its live functions' variables
+    // reach (a std part holds every std function's; in an XO_SEPCOMP HTTP
+    // server 1865 of 6317 were reachable); trim_types false: all of them
+    // (XO_STD_STORE_CHECK's PDB check, against the image's whole DWARF)
+    let trim = trim_types && oi < smaps.len()
+    var reach: Set[Int] = #{}
+    if trim {
+      var work: List[Int] = []
+      var at = 0
+      for (lo, k) in part.fn_tys {
+        if m.placed(lo) {
+          for j in at..at + k {
+            work.push(part.tys[j])
+          }
+        }
+        at += k
+      }
+      for fnp in pfns {
+        if !m.placed(fnp.lo) {
+          continue
+        }
+        for l in fnp.locals {
+          work.push(l.ty)
+        }
+        for st in fnp.sites {
+          for l in st.locals {
+            work.push(l.ty)
+          }
+        }
+      }
+      while let Some(t) = work.pop() {
+        if reach.contains(t) {
+          continue
+        }
+        reach.add(t)
+        if let Some(ty) = part.types.get(t) {
+          work.push(ty.of)
+          for mb in ty.members {
+            work.push(mb.ty)
+          }
+        }
+      }
+    }
     for (off, t) in part.types {
+      if trim && !reach.contains(off) {
+        continue
+      }
       var ms: List[debug.Member] = []
       for mb in t.members {
         ms.push(mb with {ty: m.ty(mb.ty)})
@@ -547,14 +601,6 @@ pub fn pre_procs_store(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout,
       }
     }
     let gf = fn(x: Int) -> Int { if x >= 0 && x < fmap.len() { fmap[x] } else { x } }
-    var pfns = part.fns
-    if !part.fn_index.is_empty() {
-      for (lo, at, _) in part.fn_index {
-        if m.placed(lo) {
-          pfns.push(part_fn(part, at))
-        }
-      }
-    }
     for fnp in pfns {
       if oi < smaps.len() && !m.placed(fnp.lo) {
         continue

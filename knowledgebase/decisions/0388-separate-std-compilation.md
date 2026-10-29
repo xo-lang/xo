@@ -583,6 +583,16 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   object had .debug_info, so an XO_SEPCOMP `-s` build got std's DWARF and
   a PDB; PEOpts.debug false leaves every .debug_ section out and no PDB
   is written (darwin: macho_link's embed_dwarf and dsym, xo-lang-4).
+  PDB types by reachability (2026-10-28): a link through the store keeps
+  each std part's PDB types that its live functions' variables reach
+  (cvobj.xo pre_procs_store: a walk of the types' `of` and members from
+  the placed functions' tys and locals); in the XO_SEPCOMP HTTP server
+  1865 of 6317 types were reachable (the whole program's 2773 of 2781).
+  Its PDB 2.38 to 2.25 MB, 4600 to 2127 type records, every local's type
+  defined (llvm-pdbutil dump --all); quiet A/B, 10 rounds interleaved,
+  parent against this: pe.pdb 15.5 to 13.4 ms, link 56.2 to 53.2.
+  XO_STD_STORE_CHECK's PDB check keeps every type, as it compares against
+  the image's whole DWARF.
 
 ## Alternatives
 

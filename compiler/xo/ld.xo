@@ -713,7 +713,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
           // other objects' made
           let nst = if store_parts.len() == smaps.len() { smaps.len() } else { 0 }
           let parts = if nst > 0 { store_parts + pdb_parts(os, layout.objs[nst..layout.objs.len()], cdir, if keys.len() > nst { keys[nst..keys.len()] } else { [] }) } else { pdb_parts(os, layout.objs, cdir, keys) }
-          let pre = macho.pre_procs_store(parts, layout.objs, layout, if nst > 0 { smaps } else { [] })
+          let pre = macho.pre_procs_store(parts, layout.objs, layout, if nst > 0 { smaps } else { [] }, true)
           t = lap(os, phases, "pe.pdb_parts", t)
           let r = macho.pe_pdb_seeded(img0, None, Some(pre), sd)
           if store_check && nst > 0 {
@@ -729,7 +729,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
               Err(e) => return "XO_STD_STORE_CHECK=1: the link with whole DWARF: ${e}"
             }
             let (wimg, wl) = whole
-            let wpre = macho.pre_procs_store(parts, wl.objs, wl, wso.maps)
+            let wpre = macho.pre_procs_store(parts, wl.objs, wl, wso.maps, false)
             match (macho.pe_pdb_seeded(wimg, None, Some(wpre), sd), macho.pe_pdb_seeded(wimg, None, None, sd)) {
               (Ok((_, a)), Ok((_, b))) => if a != b {
                 return "XO_STD_STORE_CHECK=1: the PDB from the store's parts differs from the image's (${a.len()} and ${b.len()} bytes)"
