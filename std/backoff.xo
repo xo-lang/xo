@@ -1,0 +1,34 @@
+// std/backoff (spec/std.md 43, std survey gap 15). Declaration file;
+// encoding rules are listed at the top of std/prelude.xo. Exponential
+// backoff with jitter and a retry loop, cenkalti/backoff v4's
+// ExponentialBackOff and Retry. The Clock and Rand are given per call,
+// so a test's virtual clock and seeded Rand make it deterministic.
+
+/// The schedule (cenkalti/backoff v4's defaults): the first delay is
+/// `initial`, each next one `multiplier` times the last up to
+/// `max_interval`, each randomized within `randomization` of itself.
+struct Backoff {
+  initial: Duration = 500ms
+  multiplier: Float = 1.5
+  /// A delay d is drawn from [d - r d, d + r d]; 0 is no jitter.
+  randomization: Float = 0.5
+  max_interval: Duration = 60s
+  /// retry stops when the next sleep would pass this since the first
+  /// try; 0s is no limit.
+  max_elapsed: Duration = 15m
+  /// The most calls of op; 0 is no limit.
+  max_tries: Int = 0
+}
+
+/// The delay before retry number attempt (0 for the first retry):
+/// `initial` times `multiplier` attempt times, capped at `max_interval`,
+/// randomized with one `rand.float()`.
+fn (b: Backoff) delay(attempt: Int, rand: Rand) -> Duration uses rand
+
+/// Calls op until it succeeds, `retryable(e)` is false, or a limit of b
+/// runs out, and then answers op's last result; sleeps on clock between
+/// tries (a cancellation point: a cancelled task unwinds there).
+fn retry[T, E, fx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool) -> T ! E uses (clock, rand, fx)
+
+/// A retryable that retries every error.
+fn always[E]() -> fn(E) -> Bool

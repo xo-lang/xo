@@ -1,0 +1,65 @@
+// std/backoff on the native backends and the Go backend (spec/std.md
+// 43): cenkalti/backoff v4's ExponentialBackOff (NextBackOff,
+// incrementCurrentInterval, getRandomValueFromInterval; Copyright (c)
+// 2014 Cenk Altı, MIT license) and Retry, over the Clock and Rand the
+// caller gives.
+use std/backoff
+
+/// The interval before randomizing for retry number attempt: Go's
+/// currentInterval after attempt calls of incrementCurrentInterval.
+fn interval(b: backoff.Backoff, attempt: Int) -> Duration {
+  var ci = b.initial
+  var k = 0
+  while k < attempt && ci != b.max_interval {
+    // Go: float64(ci) >= float64(MaxInterval)/Multiplier caps it
+    if Float(ci.nanos()) >= Float(b.max_interval.nanos()) / b.multiplier {
+      ci = b.max_interval
+    } else {
+      ci = Duration.from_nanos(Int(Float(ci.nanos()) * b.multiplier))
+    }
+    k += 1
+  }
+  ci
+}
+
+/// Go's getRandomValueFromInterval: min + r (max - min + 1) nanoseconds.
+fn randomized(factor: Float, r: Float, ci: Duration) -> Duration {
+  if factor == 0.0 {
+    return ci
+  }
+  let c = Float(ci.nanos())
+  let delta = factor * c
+  let lo = c - delta
+  let hi = c + delta
+  Duration.from_nanos(Int(lo + r * (hi - lo + 1.0)))
+}
+
+fn backoff_delay(b: backoff.Backoff, attempt: Int, rand: Rand) -> Duration uses rand {
+  randomized(b.randomization, rand.float(), interval(b, attempt))
+}
+
+fn retry[T, E, fx: Effects](b: backoff.Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool) -> T ! E uses (clock, rand, fx) {
+  let start = clock.now()
+  var tries = 0
+  while {
+    tries += 1
+    match op() {
+      Ok(v) => return Ok(v)
+      Err(e) => {
+        if !retryable(e) || (b.max_tries > 0 && tries >= b.max_tries) {
+          return Err(e)
+        }
+        let d = backoff_delay(b, tries - 1, rand)
+        // Go's NextBackOff: Stop once elapsed + next passes MaxElapsedTime
+        if b.max_elapsed > 0s && clock.since(start) + d > b.max_elapsed {
+          return Err(e)
+        }
+        clock.sleep(d)
+      }
+    }
+  }
+}
+
+fn always[E]() -> fn(E) -> Bool {
+  fn(_e: E) { true }
+}

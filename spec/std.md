@@ -5783,3 +5783,36 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
 - Backends: native (std/native/x509.xo over the TLS stack's parser and
   verifier, std/native/llrt/x509cert.xo and x509verify.xo) and Go
   (crypto/x509).
+
+## 43. std/backoff
+
+Exponential backoff with jitter and a retry loop, cenkalti/backoff v4's
+`ExponentialBackOff` and `Retry`. The Clock and Rand are given per call,
+so a test's virtual clock and a seeded or scripted Rand make it
+deterministic.
+
+```xo
+struct Backoff {
+  initial: Duration = 500ms
+  multiplier: Float = 1.5
+  randomization: Float = 0.5     // d drawn from [d - r d, d + r d]
+  max_interval: Duration = 60s
+  max_elapsed: Duration = 15m    // 0s: no limit
+  max_tries: Int = 0             // calls of op; 0: no limit
+}
+fn (b: Backoff) delay(attempt: Int, rand: Rand) -> Duration uses rand
+fn retry[T, E, fx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool) -> T ! E uses (clock, rand, fx)
+fn always[E]() -> fn(E) -> Bool
+```
+
+- `delay(k, rand)` is the delay before retry k (0 first): `initial`
+  multiplied k times by `multiplier`, truncated to whole nanoseconds at
+  each step and capped at `max_interval`, then randomized as Go's
+  getRandomValueFromInterval with one `rand.float()`.
+- `retry` calls op; on `Err(e)` it answers `Err(e)` when `retryable(e)`
+  is false, when `max_tries` calls were made, or when sleeping the next
+  delay would pass `max_elapsed` since the first call; otherwise it
+  sleeps that delay on clock (a cancellation point) and calls op again.
+  `retryable` is required: `backoff.always()` retries every error, the
+  same as cenkalti's default (its Permanent errors are `retryable`
+  answering false).
