@@ -103,3 +103,18 @@ Do not generalize the other way: an intrinsic reached from std code that
 xo's own modules import *and call* (the http.xo, case_fold16 and Windows
 import rows above) still needs the seed first.
 
+
+The other direction, observed 2026-10-29: a new std method called from
+compiler/ before a seed has it. 5c7f4ae61 made compiler/macho/out.xo's
+write_patched call `BytesBuilder.put_le` (decision 0399, added in
+c716e6d1b that evening); compiler/xo builds compiler/macho (xo links with
+its own linkers), and the 0.33.0 seed rejected the call (`error XO1201:
+not available on the native backends yet: the method BytesBuilder.put_le`),
+so no seed could build main's xo (Windows CI 40819910203). The Mac did
+not see it: xobuild there took the newest cached build, already newer
+than c716e6d1b. The fix was the seed, as above (the 0.34.0 cut, already
+due, built by an xo with put_le), not a revert. Before calling a std
+method or intrinsic added since the newest seed from anything under
+compiler/, build xo with that seed (`XO_SEED=<the seed's xo> go run
+./scripts/xobuild`), not only the tree's own bin/xo, and if it fails
+hold the change for the next seed.
