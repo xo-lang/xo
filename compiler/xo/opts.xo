@@ -313,7 +313,7 @@ fn os_path(p: Str) -> Str {
 /// covers as it does the path flags: a Windows user gives them as `C:\x`
 /// (CI 40815894916: XO_BACKEND_CACHE_DIR=C:\x was taken as relative,
 /// check.path_volume knowing only C:/).
-const PATH_ENV = ["XO_STD", "XO_MODCACHE", "XO_BACKEND_CACHE_DIR", "XO_SEPCOMP_STORE", "XO_SEPCOMP_STORE_CONC", "XO_SEPCOMP_FACTS", "XO_SEPCOMP_FACTS_CONC", "XO_STD_STORE", "XO_STD_OBJ", "XO_SYSROOT", "XO_WINSYSROOT", "XO_LINUXSYSROOT", "XO_GOBIND", "XO_GOCACHE", "XO_BUILD_DIR", "XO_CBIND_DIR", "XO_GOBIND_DIR"]
+const PATH_ENV = ["XO_STD", "XO_MODCACHE", "XO_BACKEND_CACHE_DIR", "XO_SEPCOMP_STORE", "XO_SEPCOMP_STORE_CONC", "XO_SEPCOMP_FACTS", "XO_SEPCOMP_FACTS_CONC", "XO_STD_STORE", "XO_STD_OBJ", "XO_SYSROOT", "XO_WINSYSROOT", "XO_LINUXSYSROOT", "XO_GOBIND", "XO_GOCACHE", "XO_BUILD_DIR", "XO_CBIND_DIR", "XO_GOBIND_DIR", "XO_BIN_CACHE", "XO_DUMP_DIR", "XO_FE_KEEP_DIR", "XO_STD_FACTS_DUMP"]
 
 /// The path variables of vars given with `\`, each with `/` (win: a
 /// Windows host; elsewhere `\` is a character of a name and none

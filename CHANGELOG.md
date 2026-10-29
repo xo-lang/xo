@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows: a path given with backslashes (a path flag, a package
+  argument, or a path variable such as XO_STD, XO_SEPCOMP_STORE or
+  XO_DUMP_DIR) is read as the `/` form at entry, and a UNC path
+  (`\\server\share\x`) keeps its share as its volume; before, some
+  variables were taken as relative paths and a UNC root lost a slash.
+
 - **Breaking** (decision 0406): the prelude's `Net` interface gains
   `dial_timeout(addr, d)` and `lookup_host(host)`, so a user type that
   implements `Net` (a fake or wrapper passed where a `Net` is expected)

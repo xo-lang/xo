@@ -1731,15 +1731,25 @@ fn major_suffix(path: Str) -> Str {
 }
 
 /// The volume of an absolute Windows path with / separators ("C:" of
-/// "C:/x", the form paths reach Xo in there, std.md 3.1); "" for every
-/// other path, and on every other host.
+/// "C:/x", the form paths reach Xo in there, std.md 3.1, and
+/// "//server/share" of a UNC path given as \\server\share, hostpath's
+/// volume_w rule); "" for every other path, and on every other host.
 pub fn path_volume(p: Str) -> Str {
   let windows = match target.os {
     Windows => true
     Darwin | Linux | Wasi => false
   }
-  if windows && p.len() >= 3 && p[1..2] == ":" && p[2..3] == "/" {
+  if !windows {
+    return ""
+  }
+  if p.len() >= 3 && p[1..2] == ":" && p[2..3] == "/" {
     return p[0..2]
+  }
+  if p.starts_with("//") && !p.starts_with("///") {
+    let parts = p[2..].split("/")
+    if parts.len() >= 2 && !parts[0].is_empty() && !parts[1].is_empty() {
+      return "//${parts[0]}/${parts[1]}"
+    }
   }
   ""
 }
@@ -1757,7 +1767,10 @@ fn clean(p: Str) -> Str {
   }
   let vol = path_volume(p)
   if !vol.is_empty() {
-    return vol + clean(p[2..])
+    // the rest is cleaned as rooted at the volume (`//srv/share/a/..` is
+    // `//srv/share/`, as filepath.Clean keeps a UNC root)
+    let rest = clean(p[vol.len()..])
+    return if vol.starts_with("//") && rest == "/" { vol + "/" } else { vol + rest }
   }
   let rooted = p.starts_with("/")
   var out: List[Str] = []

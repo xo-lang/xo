@@ -75,6 +75,32 @@ test "paths clean, join, and relate like Go's path package" {
   expect(base("x/y/z")) == "z"
 }
 
+test "windows volumes: drives and UNC shares (hostpath's rule), on a windows target" {
+  let win = match target.os {
+    Windows => true
+    Darwin | Linux | Wasi => false
+  }
+  if win {
+    expect(path_volume("C:/x/y")) == "C:"
+    expect(path_volume("//srv/share/x")) == "//srv/share"
+    expect(path_volume("//srv")) == ""
+    expect(path_volume("///x")) == ""
+    expect(path_volume("C:x")) == ""
+    expect(is_rooted("C:/x")) == true
+    expect(is_rooted("//srv/share")) == true
+    expect(is_rooted("x/y")) == false
+    expect(clean("C:/a/../b/./c")) == "C:/b/c"
+    expect(clean("//srv/share/a/../b")) == "//srv/share/b"
+    expect(clean("//srv/share/a/..")) == "//srv/share/"
+    expect(join("//srv/share", "x/../y")) == "//srv/share/y"
+  } else {
+    expect(path_volume("C:/x/y")) == ""
+    expect(path_volume("//srv/share/x")) == ""
+    expect(is_rooted("//srv/share")) == true
+    expect(clean("//srv/share/a/..")) == "/srv/share"
+  }
+}
+
 test "an import's local name is its last segment" {
   expect(local_name("std/http")) == ("http", true)
   expect(local_name("example.com/rate-limit")) == ("rate_limit", true)

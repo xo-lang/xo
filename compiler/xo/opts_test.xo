@@ -1,0 +1,22 @@
+// The command line's path normalization on a Windows host (opts.xo
+// os_path, path_env_over): `\` as `/`, UNC paths, and nothing changed on
+// other hosts (a `\` is a character of a name there).
+
+test "path variables given with backslashes are normalized on a windows host only" {
+  let vars: Map[Str, Str] = {"XO_STD": "C:\\xo\\std", "XO_SEPCOMP_STORE": "\\\\srv\\share\\store", "XO_BACKEND_CACHE_DIR": "D:/cache", "XO_DUMP_DIR": "C:\\tmp", "HOME": "C:\\Users\\x", "XO_PASSES": "a\\b"}
+  let over = path_env_over(vars, true)
+  expect(over.get("XO_STD")) == Some("C:/xo/std")
+  expect(over.get("XO_SEPCOMP_STORE")) == Some("//srv/share/store")
+  expect(over.get("XO_DUMP_DIR")) == Some("C:/tmp")
+  // already in / form, not a path variable, not a known variable: untouched
+  expect(over.get("XO_BACKEND_CACHE_DIR")) == None
+  expect(over.get("HOME")) == None
+  expect(over.get("XO_PASSES")) == None
+  expect(path_env_over(vars, false).len()) == 0
+}
+
+test "every classified path variable is a PATH_ENV entry" {
+  for n in ["XO_STD", "XO_MODCACHE", "XO_BACKEND_CACHE_DIR", "XO_SEPCOMP_STORE", "XO_SEPCOMP_STORE_CONC", "XO_SEPCOMP_FACTS", "XO_SEPCOMP_FACTS_CONC", "XO_STD_STORE", "XO_STD_OBJ", "XO_SYSROOT", "XO_WINSYSROOT", "XO_LINUXSYSROOT", "XO_GOBIND", "XO_GOCACHE", "XO_BUILD_DIR", "XO_CBIND_DIR", "XO_GOBIND_DIR", "XO_BIN_CACHE", "XO_DUMP_DIR", "XO_FE_KEEP_DIR", "XO_STD_FACTS_DUMP"] {
+    expect(PATH_ENV.contains(n)) == true
+  }
+}
