@@ -33,9 +33,13 @@ func TestStdStoreBuilds(t *testing.T) {
 	cache := filepath.Join(work, "cache")
 	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
 	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
-	out, err := cmd.CombinedOutput()
+	// the paths on standard output; the build's lines (and a failure's
+	// diagnostic) on standard error
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
-		t.Fatalf("std's store does not build: %v\n%s", err, out)
+		t.Fatalf("std's store does not build: %v\n%s", err, stderr.String())
 	}
 	lines := strings.Fields(string(out))
 	if len(lines) != 2 {
