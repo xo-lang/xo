@@ -323,7 +323,8 @@ fn dw_runs(d: Bytes, info: Bool, loclists: Bool, abbrev: Bytes, fn_at: fn(Int) -
 /// are in place: only the kept runs' are decoded) into segs[i].refs.
 fn dw_keep_with(var segs: List[DwSeg], fn_live: fn(DwSeg) -> Bool, refs: fn(Int) -> List[(Int, Int)]) -> List[Bool] {
   var keep: List[Bool] = List.with_capacity(segs.len())
-  var work: List[Int] = []
+  // each run is pushed once at most
+  var work: List[Int] = List.with_capacity(segs.len())
   for (i, g) in segs.indexed() {
     let k = if g.fo >= 0 { fn_live(g) } else { !g.typ }
     keep.push(k)
@@ -378,24 +379,24 @@ fn dw_write_runs(var b: BytesBuilder, src: Bytes, off: Int, loclists: Bool, n: I
       dw_head(b, src[off..off + g.end], loclists, n, segs, at)
       continue
     }
-    var cur = g.start
+    // the run whole, then each reference to a kept run stored in place
+    // (BytesBuilder.put_le, decision 0399; it was the run sliced at each
+    // reference and the new offset written a byte at a time)
+    let base = b.len() - g.start
+    b.write(src[off + g.start..off + g.end])
     for (pos, t) in g.refs {
       let j = dw_run_at(segs, t)
-      if j < 0 {
-        continue
+      if j >= 0 {
+        b.put_le(base + pos, t - segs[j].start + at[j], 4)
       }
-      b.write(src[off + cur..off + pos])
-      sw32(b, t - segs[j].start + at[j])
-      cur = pos + 4
     }
-    b.write(src[off + cur..off + g.end])
   }
 }
 
 /// Where each run starts once the dead ones are cut, and the cut
 /// length: a dead run's start is where it would have been.
 fn dw_new_starts(segs: List[DwSeg], keep: List[Bool]) -> (List[Int], Int) {
-  var at: List[Int] = []
+  var at: List[Int] = List.with_capacity(segs.len())
   var n = 0
   for (i, g) in segs.indexed() {
     at.push(n)

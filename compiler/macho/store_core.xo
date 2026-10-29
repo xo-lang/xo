@@ -361,7 +361,15 @@ pub fn (v: StoreView) cut(q: Int, live: List[Bool], loclists: Bool) -> (Bytes, L
   var b = BytesBuilder.with_capacity(n)
   let da = v.data0 + rec_data_at(store, q)
   dw_write_runs(b, store, da, loclists, n, segs, keep, at)
-  var rels: List[(Int, Int)] = []
+  // sized first: grown by doubling it was a third of the cut's time
+  // (obj.hmove, a std HTTP link 2026-10-29)
+  var nrel = 0
+  for i in 0..ns {
+    if keep[i] {
+      nrel += rd32(store, ga + STORE_RUN * i + 16)
+    }
+  }
+  var rels: List[(Int, Int)] = List.with_capacity(nrel)
   for (i, g) in segs.indexed() {
     if !keep[i] {
       continue
