@@ -22,6 +22,13 @@ The module then fails to load: a function may have at most 1000 parameters and 1
 - Every new use of a process or the network in compiler/ must be reachable only through a command that is gated, or the build's generator refuses it.
 - `XO1513` is new; the spec lists it and `xo explain` describes it.
 
+### Packaging plan (stage 4; written before the code, 2026-10-29)
+
+- One more archive per release, `xo-VERSION-wasip1-wasm.tar.gz`, built by scripts/release.sh from the darwin xo1 (`xo build --targets=wasip1/wasm -o bin/xo.wasm compiler/xo`) with the same disttar determinism as the others. Layout: `bin/xo.wasm`, `bin/xo.mjs` (a small Node launcher: compiler/wasm/run.mjs's worker with the 1 GiB stack and eager compilation, setting XO_STD to `../lib/xo/std`, preopening the working directory and `/`), `lib/xo/std/` (as the native archives), `lib/xo/stdstore/` (the prebuilt std stores and facts for darwin/arm64, linux/arm64 and the other native targets whose stores a release builds: without them a WASI build compiles all of std each time, because it starts no process to build the cache), README.md (how to run it under Node and under wasmtime: `wasmtime run --dir=/ --dir=. --env XO_STD ... bin/xo.wasm -- build ...`), CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES. No `xo-gobind`, no `lib/xo/race` (`use go` and `--race` are unavailable).
+- Size: about 160 MB uncompressed today (a 12.4 MB function is still over V8's cap; Lang 1's wide-value work shrinks it); the archive is smaller gzipped. No wasm-opt in the toolchain. It is listed on the release page beside the native archives, marked as the WASI build.
+- Release checks: scripts/release-verify.sh runs scripts/wasi-smoke.sh against the unpacked archive under Node (and wasmtime when present): version, check, build hello for darwin/arm64 and linux/arm64, run the darwin result natively on a darwin host, run and test refused with XO1513. A WASI archive that cannot load fails the release, not the other archives.
+- Not signed or notarized (not an executable of the platform); sha256 beside it like the others.
+
 ## Alternatives
 
 - A WASI preview2 / threads build: wasmtime-only, sockets and threads not in the Node runtime the playground uses; not needed for the scope above.
