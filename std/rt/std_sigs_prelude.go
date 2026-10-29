@@ -24,6 +24,7 @@ var (
 	_ func(*Task, string) Option[int64]                             = Int_parse
 	_ func(*Task, string, int64) Option[int64]                      = Int_parse_base
 	_ func(*Task, int64, int64) string                              = Int_to_str_base
+	_ func(*Task, int64, int64, int64, bool, bool) string           = Int_to_str_width
 	_ func(*Task, string) Option[bool]                              = Bool_parse
 	_ func(*Task, string) Option[float64]                           = Float_parse
 	_ func(*Task, int64) Option[int8]                               = Int8_try
@@ -126,6 +127,9 @@ var (
 	_ func(*Task, string, string, string) string                    = Str_replace
 	_ func(*Task, string, string, string, int64) string             = Str_replace_n
 	_ func(*Task, string, int64) string                             = Str_repeat
+	_ func(*Task, string, int64, string) string                     = Str_pad_left
+	_ func(*Task, string, int64, string) string                     = Str_pad_right
+	_ func(*Task, string, int64, string) string                     = Str_center
 	_ func(*Task, string) string                                    = Str_clone
 	_ func(*Task, string) List[Rune]                                = Str_runes
 	_ func(*Task, string) Bytes                                     = Str_bytes
