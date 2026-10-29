@@ -48,12 +48,16 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   // std's store (XO_SEPCOMP_STORE=PATH, xo dev stdobj's std.store):
   // every input is the program's, kept whole, and std is read from PATH
   let sep_store = if tgoos == "darwin" && store_path.is_empty() { ctx.sep_store } else { "" }
+  let tr = os.clock.now()
   if !sep_store.is_empty() {
     match os.fs.read(sep_store) {
       Ok(b) => store = b
       Err(e) => return "XO_SEPCOMP_STORE=${sep_store}: ${fs_reason(e)}"
     }
+    let _r = lap(os, ctx.phases, "link.read_store", tr)
   }
+  // the program's objects read and the link's options (link.inputs)
+  let tin = os.clock.now()
   let store_check = !store_path.is_empty() && !store.is_empty() && (os.env.get("XO_STD_STORE_CHECK") ?? "") == "1"
   var ins: List[macho.LinkInput] = []
   var parts: List[macho.LinkInput] = []
@@ -100,8 +104,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   // -s: no debug information either way (a separately compiled program's
   // std store carries DWARF the program's own build left out)
   let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, embed_dwarf: !split && !strip, dsym: (dsym || split) && !strip, release: release, program_dwarf: !sep_store.is_empty()}
+  let _in = lap(os, ctx.phases, "link.inputs", tin)
   let ts = os.clock.now()
-  let linked = if store.is_empty() { macho.link_debug(parts + ins, opts) } else { macho.link_store(ins, store, opts) }
+  let linked = if store.is_empty() { macho.link_debug(parts + ins, opts) } else { link_store_laps(os, ctx, ins, store, opts) }
   if !store.is_empty() {
     if !store_path.is_empty() {
       os.stdio.eprintln("store link ${os.clock.since(ts).nanos() / 1000} us (${store.len()} store bytes)")
@@ -143,7 +148,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
     Ok((b, dsym)) => {
       // a new file, renamed over the old: the kernel caches the
       // signature of a file it ran
+      let tw = os.clock.now()
       let werr = write_exe(os, out, b)
+      let _w = lap(os, ctx.phases, "link.write_exe", tw)
       if !werr.is_empty() {
         return werr
       }
@@ -1105,4 +1112,34 @@ fn pdb_seed(var seed: BytesBuilder, race: Bool, pdb: Str, res: List[macho.PERes]
     seed.write_str("res ${r.typ} ${r.id} ${r.lang} ${crypto.sha256(r.data).to_hex()}\n")
   }
   seed.freeze()
+}
+
+/// macho.link_store in its steps, each a link.* lap under --phase-times
+/// (link.store_prepare, link.resolve, link.layout, link.synthesize,
+/// link.write): the same link, its time by step.
+fn link_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, opts: macho.LinkOpts) -> Result[(Bytes, Bytes), Str] {
+  var t = os.clock.now()
+  var s = match macho.store_prepare(ins, store, opts) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  t = lap(os, ctx.phases, "link.store_prepare", t)
+  let er = s.resolve()
+  if !er.is_empty() {
+    return Err(er)
+  }
+  t = lap(os, ctx.phases, "link.resolve", t)
+  let el = s.layout()
+  if !el.is_empty() {
+    return Err(el)
+  }
+  t = lap(os, ctx.phases, "link.layout", t)
+  let es = s.synthesize()
+  if !es.is_empty() {
+    return Err(es)
+  }
+  t = lap(os, ctx.phases, "link.synthesize", t)
+  let r = s.write()
+  let _t = lap(os, ctx.phases, "link.write", t)
+  r
 }

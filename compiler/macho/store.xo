@@ -296,7 +296,8 @@ pub fn link_store(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Resu
 
 /// A link through the store in its steps, which a caller may time:
 /// store_prepare (the walk and the live atoms read), resolve (the
-/// symbols, the live compact unwind entries), finish (link_rest).
+/// symbols, the live compact unwind entries), then link_rest's: layout,
+/// synthesize and write (finish is the three).
 pub struct StoreLink {
   l: Linker
   /// the store's objects (the first n of l.objs), compacted, and each
@@ -400,6 +401,13 @@ fn (l: Linker) uncoalesced_unwind(o: Int, s: ISect) -> ISect {
 pub fn (var s: StoreLink) finish() -> Result[(Bytes, Bytes), Str] {
   s.l.link_rest()
 }
+
+/// finish's steps, for a caller that times them (compiler/xo ld.xo's
+/// link.layout, link.synthesize and link.write laps): the error, "" for
+/// none, and the last the image and the dSYM's DWARF.
+pub fn (var s: StoreLink) layout() -> Str { s.l.rest_layout() }
+pub fn (var s: StoreLink) synthesize() -> Str { s.l.rest_synthesize() }
+pub fn (var s: StoreLink) write() -> Result[(Bytes, Bytes), Str] { s.l.rest_write() }
 
 /// The walk from the program's inputs and the store's live atoms read
 /// (link_store's first step).

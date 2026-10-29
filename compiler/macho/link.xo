@@ -268,25 +268,44 @@ fn parse_inputs(inputs: List[LinkInput]) -> Result[List[IObj], Str] {
 /// The link after the strip: placing, layout, relocation, the output
 /// (and with opts.dsym the dSYM's DWARF).
 fn (var l: Linker) link_rest() -> Result[(Bytes, Bytes), Str] {
+  let e1 = l.rest_layout()
+  if !e1.is_empty() {
+    return Err(e1)
+  }
+  let e2 = l.rest_synthesize()
+  if !e2.is_empty() {
+    return Err(e2)
+  }
+  l.rest_write()
+}
+
+/// link_rest's first step: the sections placed and laid out, the
+/// branch islands, the relocations applied; the error, "" for none.
+fn (var l: Linker) rest_layout() -> Str {
   l.place()
   l.scan()
   if !l.err.is_empty() {
-    return Err(l.err)
+    return l.err
   }
   l.layout()
   l.islands()
   if !l.err.is_empty() {
-    return Err(l.err)
+    return l.err
   }
   l.relocate()
   l.dw_dead_zero = false
-  if !l.err.is_empty() {
-    return Err(l.err)
-  }
+  l.err
+}
+
+/// link_rest's second step: the linker's own sections (stubs, the GOT,
+/// fixups, unwind info, the symbol table); the error, "" for none.
+fn (var l: Linker) rest_synthesize() -> Str {
   l.synthesize()
-  if !l.err.is_empty() {
-    return Err(l.err)
-  }
+  l.err
+}
+
+/// link_rest's last step: the image written, and the dSYM's DWARF.
+fn (var l: Linker) rest_write() -> Result[(Bytes, Bytes), Str] {
   let out = l.write()
   if !l.err.is_empty() {
     return Err(l.err)

@@ -42,6 +42,8 @@ struct Ctx {
   // the C tool ids this process asked for (tool_id_memo): the run cache's
   // key and the backend's keys ask the same `cc --version` in one build
   tools: Mutex[Map[Str, Str]]? = None
+  // --phase-times: the link's own steps as link.* laps (ld.xo)
+  phases: Bool = false
   // std's .xo files as std_cache_key lists them, by std directory, made
   // once a process (sepcomp_default asks for both variants' keys)
   std_trees: Mutex[Map[Str, Str]]? = None

@@ -189,6 +189,7 @@ fn main(os0: Os) ! {
   }
   let goos = host_os(os)
   var ctx = Ctx{goos: goos, std: o.std, xo: dir_name(o.std.trim_suffix("/")), cache: user_cache_dir(os, goos), tools: Some(Mutex[Map[Str, Str]].new({})), std_trees: Some(Mutex[Map[Str, Str]].new({}))}
+  ctx.phases = o.phases
   ctx.bin_cache = bin_cache_dir(os, ctx, o.cmd == "test")
   if o.cmd is "build" | "run" | "test" {
     // the hidden stages of the final outputs, removed on a SIGINT or
