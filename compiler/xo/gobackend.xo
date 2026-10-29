@@ -342,7 +342,7 @@ fn go_build(os: Os, ctx: Ctx, gocmd: Str, tree: Str, tags: List[Str], ld: Str, o
   let cgo = if race { "CGO_ENABLED=1" } else { "CGO_ENABLED=0" }
   let env = ["GOOS=${parts[0]}", "GOARCH=${parts[1]}", "GOWORK=off", "GOFLAGS=", "GOCACHE=${go_cache_dir(os, ctx)}", cgo]
   let held = hold_go_cache(os, ctx)
-  let br = match os.proc.run("env", env + [gocmd, "-C", tree] + args + ["-o", out, "."]) {
+  let br = match env_command(os, env + [gocmd, "-C", tree] + args + ["-o", out, "."]).output() {
     Ok(r) => r
     Err(e) => {
       release_go_cache(held)

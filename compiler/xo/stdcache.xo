@@ -118,7 +118,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
   let t0 = os.clock.now()
   let xo = check.executable(os.env, os.fs)
   let env = ["XO_STD=${ctx.std}", "XO_BACKEND_CACHE_DIR=${tmp}/cache", "XO_SEPCOMP=", "XO_SEPCOMP_FACTS=", "XO_SEPCOMP_STORE=", "XO_SEPCOMP_FACTS_CONC=", "XO_SEPCOMP_STORE_CONC=", "XO_SEPCOMP_DEFAULT=", "XO_STD_OBJ=", "XO_STD_ROOTS=", "XO_STD_STORE=", "XO_STD_BG_CHILD=", "XO_SEPCOMP_BG=0"] + STD_CODE_ENV.map(fn(n) { "${n}=" })
-  let ok = match os.proc.run("env", env + [xo, "dev", "stdobj", "--target=${tgoos}/${tgoarch}", "--conc=${if conc { "1" } else { "0" }}", "--facts=${tmp}/std.stdf", "${tmp}/obj"]) {
+  let ok = match env_command(os, env + [xo, "dev", "stdobj", "--target=${tgoos}/${tgoarch}", "--conc=${if conc { "1" } else { "0" }}", "--facts=${tmp}/std.stdf", "${tmp}/obj"]).output() {
     Ok(r) => r.code == 0
     Err(_) => false
   }

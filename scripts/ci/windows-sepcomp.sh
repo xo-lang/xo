@@ -41,9 +41,22 @@ note "xo $("$xo" version 2>&1 | head -1); std $XO_STD"
 export XO_BACKEND_CACHE_DIR
 XO_BACKEND_CACHE_DIR=$(np "$w/cache")
 
+# a PATH with no env program (Git Bash's usr/bin has one; PowerShell's
+# and cmd's PATH do not): go's directory and System32 only, as a user's
+# shell (CI 40810568719: xo spawned env(1) and failed in 30 ms)
+gobin=$(dirname "$(command -v go)")
+CLEAN="$gobin:/c/Windows/System32:/c/Windows"
+note "the clean PATH: $CLEAN (env there: $(PATH=$CLEAN command -v env || echo none))"
 # std's variants, as the default finds them
-"$xo" dev stdcache --conc=0 > "$w/sc0.txt" 2> "$o/stdcache-conc0.err" || { note "FAIL xo dev stdcache --conc=0: $(tail -3 "$o/stdcache-conc0.err")"; exit 1; }
-"$xo" dev stdcache --conc=1 > "$w/sc1.txt" 2> "$o/stdcache-conc1.err" || { note "FAIL xo dev stdcache --conc=1: $(tail -3 "$o/stdcache-conc1.err")"; exit 1; }
+PATH=$CLEAN "$xo" dev stdcache --conc=0 > "$w/sc0.txt" 2> "$o/stdcache-conc0.err" || { note "FAIL xo dev stdcache --conc=0: $(tail -3 "$o/stdcache-conc0.err")"; exit 1; }
+PATH=$CLEAN "$xo" dev stdcache --conc=1 > "$w/sc1.txt" 2> "$o/stdcache-conc1.err" || { note "FAIL xo dev stdcache --conc=1: $(tail -3 "$o/stdcache-conc1.err")"; exit 1; }
+note "ok   xo dev stdcache with no env program on PATH"
+# the Go backend, the same way (0.33.1's go_build spawned env(1) too)
+gp="$w/goprog"; mkdir -p "$gp"
+printf 'module goprog\nedition preview\n' > "$gp/xo.mod"
+printf 'fn main(os: Os) {\n  os.stdio.println("go backend ${[1, 2, 3].len()}")\n}\n' > "$gp/main.xo"
+got=$(cd "$gp" && PATH=$CLEAN "$xo" run --backend=go . 2> "$o/goback.err" | tr -d '\r')
+[ "$got" = "go backend 3" ]; check "xo run --backend=go with no env program on PATH" $? "got '$got': $(tail -3 "$o/goback.err")"
 ST0=$(sed -n 1p "$w/sc0.txt" | tr -d '\r'); FA0=$(sed -n 2p "$w/sc0.txt" | tr -d '\r')
 ST1=$(sed -n 1p "$w/sc1.txt" | tr -d '\r'); FA1=$(sed -n 2p "$w/sc1.txt" | tr -d '\r')
 note "std store conc0 $ST0 ($(wc -c < "$(up "$ST0")") bytes), conc1 $ST1"

@@ -377,3 +377,25 @@ fn files_under(os: Os, dir: Str) -> List[Str] ! FsErr {
   }
   out.sort()
 }
+
+/// The command env(1) would run for args (`NAME=VALUE`... then the
+/// program and its arguments): the program with each variable set on the
+/// command, `NAME=` an empty one (not removed), the rest of the
+/// environment inherited. A windows host has no env program, so
+/// `os.proc.run("env", ...)` failed there (CI 40810568719: `xo dev
+/// stdcache` in 30 ms; `--backend=go` outside Git Bash).
+fn env_command(os: Os, args: List[Str]) -> Cmd {
+  var i = 0
+  while i < args.len() && (args[i].find("=") ?? 0) > 0 {
+    i += 1
+  }
+  if i >= args.len() {
+    return os.proc.cmd("env", args)
+  }
+  var cmd = os.proc.cmd(args[i], args[i + 1..])
+  for kv in args[0..i] {
+    let at = kv.find("=") ?? kv.len()
+    cmd = cmd.set_env(kv[0..at], kv[at + 1..])
+  }
+  cmd
+}
