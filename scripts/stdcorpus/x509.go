@@ -400,6 +400,36 @@ func x509Corpus() string {
 	}
 	o.WriteString("]\n")
 
+	// VerifyHostname: each parseable certificate's names, and names
+	// around them (a wildcard's label, case, a trailing dot, an IP)
+	o.WriteString("\n/// (DER index in PARSE_ROWS, host, Go's VerifyHostname: ok or the error)\nconst HOST_ROWS: List[(Int, Str, Str)] = [\n")
+	hosts := 0
+	for i, x := range rows {
+		c, err := x509.ParseCertificate(x.der)
+		if err != nil || hosts > 400 {
+			continue
+		}
+		cands := []string{"example.com", "127.0.0.1", "::1", "[::1]", ""}
+		for _, d := range c.DNSNames {
+			cands = append(cands, d, strings.ToUpper(d), d+".", "x."+strings.TrimPrefix(d, "*."), "a.b."+strings.TrimPrefix(d, "*."))
+		}
+		for _, a := range c.IPAddresses {
+			cands = append(cands, a.String())
+		}
+		if c.Subject.CommonName != "" {
+			cands = append(cands, c.Subject.CommonName)
+		}
+		for _, h := range cands {
+			want := "ok"
+			if err := c.VerifyHostname(h); err != nil {
+				want = err.Error()
+			}
+			fmt.Fprintf(&o, "  (%d, %s, %s),\n", i, xq(h), xq(want))
+			hosts++
+		}
+	}
+	o.WriteString("]\n")
+
 	o.WriteString("\n/// verify_test.go's verifyTests with roots: (name, leaf, intermediates, roots, Unix time, DNS name, key usages, Go's chains or error)\nconst VERIFY_ROWS: List[(Str, Str, List[Str], List[Str], Int, Str, List[x509.ExtKeyUsage], Str)] = [\n")
 	for _, t := range tests {
 		var ks []string
@@ -533,6 +563,21 @@ test "verify_test.go's verifyTests verify as Go's Verify: the chains or the erro
     }
     if got != want {
       bad.push("${name}:\n  got  ${got}\n  want ${want}")
+    }
+  }
+  expect(shown(bad)) == []
+}
+
+test "verify_hostname answers as Go's VerifyHostname: ok or the error" {
+  var bad: List[Str] = []
+  for (i, host, want) in HOST_ROWS {
+    let c = x509.parse(PARSE_ROWS[i].0).ok() ?? fault("parse")
+    let got = match c.verify_hostname(host) {
+      Ok(_) => "ok"
+      Err(e) => e.display()
+    }
+    if got != want {
+      bad.push("${PARSE_ROWS[i].2} ${host.quote()}:\n  got  ${got}\n  want ${want}")
     }
   }
   expect(shown(bad)) == []

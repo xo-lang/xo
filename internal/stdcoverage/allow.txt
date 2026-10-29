@@ -37,3 +37,7 @@ internal.uuid_word  std/uuid's hook; the uuid corpus reaches it through uuid.fro
 # so the swap would not reach the caller's list.
 internal.list_swap_at  a swap at two runtime indexes, for the codegen pattern
 internal.list_swap_both  a swap at two list lengths, for the codegen pattern
+
+# The system's roots depend on the host (the macOS keychain, the Linux CA
+# files), so no corpus or golden can state what they are.
+x509.system_roots  reads the host's root store, which differs per machine

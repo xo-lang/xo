@@ -352,8 +352,15 @@ pub fn host_ok(nm: Names, h: Str) -> Bool {
 
 /// x509.HostnameError's text for host and a certificate with the names,
 /// whether it has the subject alternative name extension, and its
-/// subject's common name.
-pub fn hostname_msg(nm: Names, has_san: Bool, cn: Str, host: Str) -> Str {
+/// subject's common name. A bracketed IP address ("[::1]") is named
+/// without its brackets, as VerifyHostname gives HostnameError the IP.
+pub fn hostname_msg(nm: Names, has_san: Bool, cn: Str, h: Str) -> Str {
+  var host = h
+  if h.len() >= 3 && h.starts_with("[") && h.ends_with("]") {
+    if let Some(_) = parse_ip(h[1..h.len() - 1]) {
+      host = h[1..h.len() - 1]
+    }
+  }
   if !has_san && match_hostnames(cn, host) {
     return "x509: certificate relies on legacy Common Name field, use SANs instead"
   }
