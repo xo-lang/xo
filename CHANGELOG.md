@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- xo build on x86 Linux: a build that assembles through cc (`XO_NOLIBC=0`,
+  xotool's seed smoke build, the self build) failed with GNU as ("unknown
+  pseudo-op: .arch_extension"): the linux assembly carried the arm64
+  crypto directives on every architecture; they are arm64 only now.
+  xotool's seed smoke message keeps the assembler's and linker's error
+  lines (it said only "cc failed").
 - xo: an edit more than a minute after the previous one no longer
   rebuilds std's cached entries twice: the backend cache's identity
   named a std facts entry by its modification time, which the cache's

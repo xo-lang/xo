@@ -1139,7 +1139,11 @@ func firstErrors(s string, n int) string {
 	var out []string
 	ls := strings.Split(strings.TrimRight(s, "\n"), "\n")
 	for i, l := range ls {
-		if strings.Contains(l, ": error ") && len(out) < n {
+		// xo's diagnostics (": error XO1234"), and the assembler's and
+		// linker's ("Error: unknown pseudo-op", "error: ld returned"): a
+		// seed smoke build on the amd64 runner said only "cc failed" with
+		// GNU as's three lines dropped (2026-10-28)
+		if (strings.Contains(l, ": error ") || strings.Contains(l, "Error:") || strings.Contains(l, "error:")) && len(out) < n {
 			out = append(out, l)
 			if i+1 < len(ls) && strings.HasPrefix(ls[i+1], "  ") {
 				out = append(out, ls[i+1])

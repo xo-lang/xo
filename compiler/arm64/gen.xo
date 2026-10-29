@@ -119,8 +119,14 @@ fn (g: G) file_header(var out: List[Str]) {
     // which an assembler for plain ARMv8 rejects without it (the code
     // runs them only when the CPU has them); LLVM 14's assembler (Debian
     // bookworm's clang) takes aes and sha2 only by those names
-    // (gotchas/clang14-arch-extension-crypto.md)
-    out.push("\t.arch_extension crypto\n\t.arch_extension aes\n\t.arch_extension sha2\n")
+    // (gotchas/clang14-arch-extension-crypto.md). arm64 only: GNU as on
+    // x86 rejects the directive ("unknown pseudo-op"), which failed
+    // every XO_NOLIBC=0 build through gcc's cc on x86 Linux (the seed
+    // smoke build on the amd64 CI runner, 2026-10-28; clang's assembler
+    // took it, so Debian's Docker and the Macs never saw it)
+    if !g.x86 {
+      out.push("\t.arch_extension crypto\n\t.arch_extension aes\n\t.arch_extension sha2\n")
+    }
   }
 }
 
