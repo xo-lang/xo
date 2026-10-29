@@ -14,6 +14,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `notify(signals)`, `stop_notify(c)` and `request_stop()`, so a user
   type that implements `Proc` needs the three methods (interfaces have no
   default bodies, core 2.4); a wrapper forwards them to its inner `Proc`.
+- **Breaking** (decision 0410): the prelude's `Env` interface gains `hostname()`, so a user type that implements `Env` needs the method (interfaces have no default bodies, core 2.4); a wrapper forwards it to its inner `Env`.
 - Windows: a path given with backslashes (a path flag, a package
   argument, or a path variable such as XO_STD, XO_SEPCOMP_STORE or
   XO_DUMP_DIR) is read as the `/` form at entry, and a UNC path
