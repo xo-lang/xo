@@ -119,7 +119,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
   let xo = check.executable(os.env, os.fs)
   let env = ["XO_STD=${ctx.std}", "XO_BACKEND_CACHE_DIR=${tmp}/cache", "XO_SEPCOMP=", "XO_SEPCOMP_FACTS=", "XO_SEPCOMP_STORE=", "XO_SEPCOMP_FACTS_CONC=", "XO_SEPCOMP_STORE_CONC=", "XO_SEPCOMP_DEFAULT=", "XO_STD_OBJ=", "XO_STD_ROOTS=", "XO_STD_STORE=", "XO_STD_BG_CHILD=", "XO_SEPCOMP_BG=0"] + STD_CODE_ENV.map(fn(n) { "${n}=" })
   let run = match env_command(os, env + [xo, "dev", "stdobj", "--target=${tgoos}/${tgoarch}", "--conc=${if conc { "1" } else { "0" }}", "--facts=${tmp}/std.stdf", "${tmp}/obj"]).output() {
-    Ok(r) => (r.code == 0, if r.code == 0 { "" } else { "xo dev stdobj exit ${r.code}: ${(r.stderr.to_str() ?? "").trim().split("\n").last() ?? ""}" })
+    Ok(r) => (r.code == 0, if r.code == 0 { "" } else { "xo dev stdobj exit ${r.code}: ${stdobj_said(r.stderr.to_str() ?? "")}" })
     Err(e) => (false, "starting ${xo}: ${e}")
   }
   let (ok, why0) = run
@@ -145,6 +145,16 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     }
   }
   os.fs.remove_all(tmp).ignore_err("only disk: the prune takes a leftover build directory")
+  // a failed build leaves its reason beside the store's name, so the
+  // builds that find no store say why instead of going whole program in
+  // silence (2026-10-29: a std edit that only the store's full check
+  // rejected hid every separately compiled build for hours); the key
+  // changes with std's files, so a fixed std builds again
+  if !done {
+    os.fs.write("${store}.failed", "${why}\n".bytes()).ignore_err("only the warning")
+  } else {
+    os.fs.remove("${store}.failed").ignore_err("none was there")
+  }
   if let Some(l) = held {
     os.fs.remove("${dir}/std/${STD_BG_INFO}").ignore_err("only what xo dev stdcache shows")
     l.unlock()
@@ -153,6 +163,18 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} ${if done { "built" } else { "failed (${why}): the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
   }
   if done { Some((store, facts)) } else { None }
+}
+
+/// What a failed `xo dev stdobj` said: its first diagnostic line (file:
+/// line: error ...), else its last line.
+fn stdobj_said(stderr: Str) -> Str {
+  let lines = stderr.trim().split("\n")
+  for l in lines {
+    if l.contains(": error ") {
+      return l.trim()
+    }
+  }
+  lines.last() ?? ""
 }
 
 /// The lock a background build of std's variants holds, and what it is
@@ -200,6 +222,12 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phas
     if phases {
       os.stdio.eprintln("std variant: miss, ${why}")
     }
+  }
+  // a build of this variant failed: one warning, every build, no retry
+  // until std changes (the key follows std's files)
+  if let Ok(b) = os.fs.read("${store}.failed") {
+    os.stdio.eprintln("xo: warning: separate compilation is off: std's store build failed (${(b.to_str() ?? "").trim()}); the whole program is built")
+    return None
   }
   if (os.env.get("XO_SEPCOMP_BG") ?? "") == "0" {
     say("the whole program is built (XO_SEPCOMP_BG=0)")
