@@ -122,12 +122,16 @@ fn main(os: Os) {
 // amd64: "pclmulqdq "
 // llvm/arm64: "pmull \$0.1q"
 
-// std/native/sys_c.xo (decision 0232): a strong C call, and weak
-// references read through the GOT (arm64) or compared with null (LLVM).
+// std/native/sys_c.xo (decision 0232): a strong C call, and a symbol's
+// presence read through the GOT (arm64) or compared with null (LLVM);
+// ThreadSanitizer's presence is known false outside --race (compiler/ssa
+// call.xo sym_present), so no ___tsan_ reference is left (14 failed weak
+// lookups at every launch before, 2026-10-28; --race keeps it:
+// internal/llvm TestRaceDefaultNative)
 // func internal.sysc_op
-// arm64: "bl _getpid" "\.weak_reference ___tsan_acquire" "adrp x[0-9]+, ___tsan_acquire@GOTPAGE\n\tldr x[0-9]+, \[x[0-9]+, ___tsan_acquire@GOTPAGEOFF\]"
-// amd64: "callq _getpid" "\.weak_reference ___tsan_acquire" "___tsan_acquire@GOTPCREL\(%rip\)"
-// llvm: "call i32 @getpid\(\)" "icmp ne ptr @__tsan_acquire, null"
+// arm64: "bl _getpid" "_getpid@GOTPAGE\n\tldr x[0-9]+, \[x[0-9]+, _getpid@GOTPAGEOFF\]" -"___tsan_acquire"
+// amd64: "callq _getpid" "_getpid@GOTPCREL\(%rip\)" -"___tsan_acquire"
+// llvm: "call i32 @getpid\(\)" "icmp ne ptr @getpid, null" -"@__tsan_acquire"
 
 // ChaCha20's adds modulo 2^32 are 32 bit adds (add_w32), not an add and
 // an and; Poly1305's limb products have no overflow checks.
