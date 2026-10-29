@@ -3435,6 +3435,11 @@ fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   if !cap_admits(rt.proc_lists(p), cmd) {
     return Err(ProcErr.Denied(cmd))
   }
+  // WASI preview1 has no processes (decision 0405): an error, not a fault
+  match target.os {
+    Wasi => return Err(ProcErr.Io(WASI_NO_PROC))
+    Linux | Darwin | Windows => {}
+  }
   var r: List[Str] = []
   if testworld.fake(testworld.REAL_PROC) {
     // FakeProc.on_run's outputs (std/native/llrt/testworld.xo)
@@ -3732,6 +3737,9 @@ fn cmd_spec(c: Cmd, var out: List[Str]) {
 }
 
 /// The ProcErr of a failed outcome (status st, detail d).
+/// What a process call reports on WASI (preview1 has none; decision 0405).
+const WASI_NO_PROC: Str = "processes are not available in the WASI build (XO1513)"
+
 fn proc_err(st: Str, d: Str) -> ProcErr {
   match st {
     "1" => ProcErr.NotFound(d)
@@ -3753,6 +3761,10 @@ fn proc_outcome(r: List[Str]) -> ProcOutput ! ProcErr {
 /// FakeProc.on_run registered (std/native/llrt/testworld.xo): canceled,
 /// no command, or std/rt's fakeProc output, runTerm, and pipeline.
 fn proc_exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[Str] {
+  match target.os {
+    Wasi => return ["2", WASI_NO_PROC]
+    Linux | Darwin | Windows => {}
+  }
   if !testworld.fake(testworld.REAL_PROC) {
     // std/native/llrt/proc.xo (work item B25)
     return proc.exec(spec, input, has_input, mode)
@@ -3793,6 +3805,10 @@ fn cmd_run(c: Cmd) -> Int ! ProcErr uses proc {
 
 fn cmd_spawn(c: Cmd) -> Child ! ProcErr uses proc {
   cmd_check(c)?
+  match target.os {
+    Wasi => return Err(ProcErr.Io(WASI_NO_PROC))
+    Linux | Darwin | Windows => {}
+  }
   var spec: List[Str] = []
   cmd_spec(c, spec)
   // std/native/llrt/proc.xo's children (work item B25)
