@@ -94,15 +94,15 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 		return Ok[Http_ClientStream, Http_ClientErr](Http_ClientStream{Xhead: Http_ResponseHead{F_status: resp.F_status, F_headers: resp.F_headers}, Xs: s})
 	}
 	return fx(tk, "http.open", true, func() []any { return []any{req.F_method, rawURL} }, func() Result[Http_ClientStream, Http_ClientErr] {
-		resp, cancel, head, e := c.do(tk, req, rawURL, true)
-		if resp == nil {
+		body, cancel, head, e := c.openNet(tk, req, rawURL)
+		if body == nil {
 			return Err[Http_ClientStream](e)
 		}
 		idle := time.Duration(c.timeout)
 		if req.XIdle > 0 {
 			idle = time.Duration(req.XIdle)
 		}
-		s := &clientStream{body: resp.Body, idle: idle, cancel: cancel}
+		s := &clientStream{body: body, idle: idle, cancel: cancel}
 		// a dropped stream closes its body (the native counted handle's
 		// free hook)
 		runtime.SetFinalizer(s, func(x *clientStream) { x.release() })

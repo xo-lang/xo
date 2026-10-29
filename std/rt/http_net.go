@@ -317,6 +317,18 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body), XFields: fields})
 }
 
+// openNet is Client.open's exchange (decision 0404): the response's body
+// to read (nil on a failure, then e), the cancel that ends it, the head.
+// http_nonet.go has its stub, so a program without std/http links no
+// net/http.
+func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.ReadCloser, func(), Http_ResponseHead, Http_ClientErr) {
+	resp, cancel, head, e := c.do(tk, req, rawURL, true)
+	if resp == nil {
+		return nil, nil, head, e
+	}
+	return resp.Body, cancel, head, e
+}
+
 // do sends req and reads the response's head: the response (nil on a
 // failure, then e), the cancel that ends the exchange (after the body),
 // and the head. stream (Client.open, decision 0404): the client's

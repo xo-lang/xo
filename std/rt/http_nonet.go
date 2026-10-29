@@ -2,6 +2,8 @@
 
 package rt
 
+import "io"
+
 // The real server and client of std/http (http_net.go) in a program that
 // does not load std/http: such a program has no Http_Server or
 // Http_Client value to call them with, so they are never reached. The
@@ -13,6 +15,10 @@ const noHTTP = "rt: std/http is not linked into this program (built with the tag
 func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] { panic(noHTTP) }
 
 func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
+	panic(noHTTP)
+}
+
+func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.ReadCloser, func(), Http_ResponseHead, Http_ClientErr) {
 	panic(noHTTP)
 }
 
