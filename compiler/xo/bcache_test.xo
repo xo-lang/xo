@@ -30,6 +30,6 @@ test "cache_id names a facts cache entry by its key, not its time" {
   // a facts file that is not a cache entry (XO_SEPCOMP_FACTS to a file of
   // one's own, a release's lib/xo/stdstore) keeps its stamp, time included
   let p = facts_id_line(check.FileStamp{path: "/w/mine.stdf", size: 10, mtime: 1000})
-  expect(p) == "11:/w/mine.stdf 10 1000 \n"
+  expect(p) == "12:/w/mine.stdf 10 1000 \n"
   expect(facts_id_line(check.FileStamp{path: "/w/mine.stdf", size: 10, mtime: 2000})) != p
 }
