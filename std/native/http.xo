@@ -2195,10 +2195,20 @@ fn serve_conn_isolated(hc: rthttp.HConn, r: Router, h2: fn(rthttp.HConn, Int, Ro
   }
 }
 
+/// When a TLS handshake must end (net/http's tlsHandshakeTimeout: the
+/// smaller positive of the read and head timeouts), 0 for no limit.
+fn handshake_deadline(lim: http1.Limits) -> Int {
+  var d = lim.read_ns
+  if lim.head_ns > 0 && (d == 0 || lim.head_ns < d) {
+    d = lim.head_ns
+  }
+  if d > 0 { hconn.deadline(d) } else { 0 }
+}
+
 /// Serves the requests of one connection until it closes.
 fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> (), lim: http1.Limits) {
   defer hserve.hc_close(hc)
-  let h2 = hserve.hc_h2(hc)
+  let h2 = hserve.hc_h2(hc, handshake_deadline(lim))
   if h2 != 0 {
     serve_h2(hc, h2, r)
     return

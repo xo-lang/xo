@@ -255,7 +255,8 @@ fn (s: Server) addr() -> Str
 fn (s: Server) with_tls(certs: List[TlsCert]) -> Server
 /// Go's Server.ReadTimeout: the time a request's head and body may take
 /// to arrive, from its first byte; a connection whose request is late
-/// closes without a reply, as net/http's does.
+/// closes without a reply, as net/http's does; over TLS the handshake's
+/// waits count too.
 fn (s: Server) with_read_timeout(d: Duration) -> Server
 /// Go's Server.ReadHeaderTimeout: the time the head alone may take.
 fn (s: Server) with_read_header_timeout(d: Duration) -> Server

@@ -498,6 +498,25 @@ pub fn hc_read(t: Int, p: Int, n: Int) -> Int {
 /// read, 0 at the end, -1 when it failed, -2 when no record is complete.
 pub fn nb_read(t: Int, p: Int, n: Int) -> Int { read(t, p, n, true) }
 
+/// The deadline of the connection's waits from now on (monotonic ns, 0
+/// none; std.md 4.4: a server's read, head and idle timeouts reach a TLS
+/// connection's handshake and record reads through it).
+pub fn set_deadline(t: Int, when: Int) {
+  if let Some(x) = take_conn(t) {
+    var c = x
+    c.when = when
+    save(t, c)
+  }
+}
+
+/// Whether the last read or handshake wait of t passed its deadline.
+pub fn timed_out(t: Int) -> Bool {
+  match load(t) {
+    Some(c) => c.status == CC_TIMEOUT
+    None => false
+  }
+}
+
 fn read(t: Int, p: Int, n: Int, nb: Bool) -> Int {
   var c = match take_conn(t) {
     Some(x) => x

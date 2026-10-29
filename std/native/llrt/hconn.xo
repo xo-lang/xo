@@ -263,8 +263,8 @@ pub fn set_idle(hc: Int, idle: Bool) {
 pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int { recv_until(h, p, cap, idle, 0) }
 
 /// recv with a deadline (monotonic ns, 0 none; std.md 4.4): -2 when it
-/// passed before a byte came. A TLS connection's reads have no deadline
-/// (the handshake and decrypt op take none).
+/// passed before a byte came, on a plain and on a TLS connection (the
+/// handshake's waits included).
 pub fn recv_until(h: rthttp.HConn, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
   let hc = rec(h)
   let s = ld(hc, HC_SRV)
@@ -280,8 +280,15 @@ pub fn recv_until(h: rthttp.HConn, p: Int, cap: Int, idle: Bool, deadline: Int) 
   if poll.canceled() {
     r = -1
   } else if tls != 0 {
-    // the handshake first, then decrypted bytes
+    // the handshake first, then decrypted bytes; both wait with the
+    // deadline (std.md 4.4), so a slow client cannot hold a TLS
+    // connection past the read or head timeout
+    tlssrv.set_deadline(tls, deadline)
     r = rt.call_c4(tls_op(TO_READ), tls, p, cap, 0)
+    if r < 0 && deadline != 0 && tlssrv.timed_out(tls) {
+      r = -2
+    }
+    tlssrv.set_deadline(tls, 0)
   } else {
     let pd = conn_pd(hc)
     if poll.pd_begin(pd) {

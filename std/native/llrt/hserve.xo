@@ -245,13 +245,20 @@ pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
 /// Finishes the TLS handshake of a server connection; when ALPN chose
 /// HTTP/2, the connection's record (h2srv.conn_new, freed with the
 /// connection; its requests come from h2srv's H2Conn), else 0: HTTP/1.1
-/// (or the handshake failed, which http1.xo's reads find).
-pub fn hc_h2(h: rthttp.HConn) -> Int {
+/// (or the handshake failed, which http1.xo's reads find). The
+/// handshake's waits end at `when` (monotonic ns, 0 none: net/http's
+/// handshake deadline, the smaller of the read and head timeouts), after
+/// which the handshake fails and the connection closes without a reply;
+/// the handshake runs before the connection's limits are stored, so a
+/// silent client held a TLS connection's task for ever (2026-10-30).
+pub fn hc_h2(h: rthttp.HConn, when: Int) -> Int {
   let hc = hconn.rec(h)
   let tls = ld(hc, hconn.HC_TLS)
   if tls == 0 || ld(hc, hconn.HC_CONN) == 0 {
     return 0
   }
+  tlssrv.set_deadline(tls, when)
+  defer tlssrv.set_deadline(tls, 0)
   let s = ld(hc, hconn.HC_SRV)
   if s != 0 {
     // the mark first, then stopping (hconn.stopping_at)

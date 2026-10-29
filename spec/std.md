@@ -1592,9 +1592,12 @@ enum HttpErr { Io(msg: Str), Canceled }
   (net/http's conn.serve treats a timeout as a common read error); the
   idle timeout (the read timeout when 0) closes a kept alive connection
   waiting for its next request. The header cap has net/http's 4096 bytes
-  of slack over `with_max_header_bytes`. On the
-  native backends a TLS connection's reads take no deadline yet (the
-  handshake and decrypt op have none); the Go backend applies them.
+  of slack over `with_max_header_bytes`. A TLS connection's record reads
+  take the same deadlines, and its handshake the smaller of the read and
+  header timeouts (net/http's handshake deadline), so a client that
+  connects and sends nothing, or a slow one, cannot hold an HTTPS
+  connection past them; a handshake past its deadline closes the
+  connection without a reply.
 - A body over `with_max_body` is `413` with MaxBytesReader's text and the
   connection closes, before the handler runs; a body over the default cap
   (no `with_max_body`) reaches the handler cut to the cap with the

@@ -30,6 +30,23 @@ stream_request (std/native/http.xo) takes "https" when h2srv's request
 has no scheme; HTTP/2 is reached through with_tls only, so the scheme is
 known. The HTTP/1.1 path got the same from the connection's TLS state in
 53b878858.
+## 2026-10-30: fix: the server's timeouts reach TLS connections (server gaps, part 3 item 1)
+
+- Kind: fix
+- Commit: this commit
+- Found by: the lead's review of part 2 (a slow client held an HTTPS connection open for ever: the slowloris case)
+- Go reference: net/http's ReadTimeout and ReadHeaderTimeout apply to a TLS conn's handshake and reads
+- Test: golden http_server_limits (a client that connects to the HTTPS server and sends nothing is closed after the head timeout)
+
+hconn.recv_until gives the TLS connection its deadline (tlssrv.set_deadline)
+around each record read, and a timed out wait is the same -2 as a plain
+socket's; the handshake, which hserve.hc_h2 runs before the connection's
+limits are stored, gets net/http's handshake deadline (the smaller of the
+read and head timeouts, http.xo handshake_deadline) and fails past it, so
+the connection closes without a reply. Before, a TLS read waited without
+a deadline; a first draft that set it only in recv_until left the
+handshake unbounded, and the golden's silent client hung the recording
+(gotchas/tls-handshake-before-limits.md).
 
 ## 2026-10-29: feature: server timeouts and limits (server gaps, part 2)
 

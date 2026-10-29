@@ -15,6 +15,9 @@ fn routes() -> http.Router {
   r
 }
 
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }
+
 fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) uses stdio {
   match r {
     Ok(resp) => os.stdio.println("${label}: ${resp.status} ${(resp.body.to_str() ?? "?").trim()}")
@@ -55,6 +58,34 @@ fn main(os: Os) uses net, stdio {
           }
           Err(_) => os.stdio.println("late head: dial error")
         }
+      }
+      // the same over TLS: a client that connects and sends nothing is
+      // closed when the head timeout passes (the handshake's wait ends at
+      // the smaller of the read and head timeouts, net/http's handshake
+      // deadline)
+      match os.net.listen("127.0.0.1:0") {
+        Ok(l2) => {
+          let cert = http.tls_cert(good_cert(), good_key()).or_fault("cert")
+          let tsrv = http.server(l2, routes()).with_tls([cert]).with_read_timeout(2s).with_read_header_timeout(300ms)
+          let taddr = tsrv.addr()
+          scope s2 {
+            s2.spawn_background(fn() {
+              match tsrv.serve() {
+                Ok(_) => ()
+                Err(e) => os.stdio.println("tls serve failed: ${e}")
+              }
+            })
+            match os.net.dial(taddr) {
+              Ok(conn) => match conn.read(4096) {
+                Ok(None) => os.stdio.println("tls silent client: closed")
+                Ok(Some(b)) => os.stdio.println("tls silent client: ${b.len()} bytes")
+                Err(_) => os.stdio.println("tls silent client: read error")
+              }
+              Err(_) => os.stdio.println("tls silent client: dial error")
+            }
+          }
+        }
+        Err(e) => os.stdio.println("listen failed: ${e}")
       }
       os.stdio.println("done")
     }

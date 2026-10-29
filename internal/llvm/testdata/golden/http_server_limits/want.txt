@@ -6,5 +6,6 @@ tiny ok: 200 tiny 5
 tiny over: 413 http: request body too large
 big header: 431 431 Request Header Fields Too Large
 late head: closed
+tls silent client: closed
 done
 --- stderr
