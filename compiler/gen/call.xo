@@ -572,10 +572,24 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
     // a std function the Go backend compiles from its native
     // implementation (decision 0312): the implementation's own call, a
     // method's receiver as its first argument (natively TYPE_method)
-    if g.c.objs[fo].recv >= 0 {
-      return g.emit_call(impl, sub, "", [recv0] + args, at)
+    // the implementation's type parameters are objects of its own: the
+    // call's type arguments follow by position (else every explicit type
+    // argument came out as rt.Unit)
+    var isub = sub
+    let ftp = g.c.objs[fo].tparams
+    let itp = g.c.objs[impl].tparams
+    if !sub.is_empty() && ftp.len() == itp.len() {
+      isub = {}
+      for (i, tp) in ftp.indexed() {
+        if let t = sub.get(tp) {
+          isub[itp[i]] = t
+        }
+      }
     }
-    return g.emit_call(impl, sub, recv0, args, at)
+    if g.c.objs[fo].recv >= 0 {
+      return g.emit_call(impl, isub, "", [recv0] + args, at)
+    }
+    return g.emit_call(impl, isub, recv0, args, at)
   }
   let o = g.c.objs[fo]
   var call = ""
