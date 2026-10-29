@@ -22,6 +22,7 @@ type Http_Request struct {
 	XValues     *reqValues
 	XRawQuery   string
 	XFields     []string
+	XTimeout    Duration
 }
 
 func (v Http_Request) XoEq(x any) bool {

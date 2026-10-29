@@ -50,6 +50,9 @@ struct Request {
   /// value, ...], canonical names in order; [] when every name has one
   /// value (headers is then all of it). Hidden from Xo code.
   fields: List[Str] = []
+  /// with_timeout's limit in nanoseconds, 0 for the client's (decision
+  /// 0404). Hidden from Xo code.
+  timeout_ns: Int = 0
 }
 
 struct ReqValue {
@@ -104,6 +107,9 @@ struct Client {
   /// the attenuation lists of the Net it was made from (Net.only,
   /// decision 0175): "" for none
   lists: Str = ""
+  /// the redirects followed at most (with_redirects, decision 0404); 0
+  /// returns the 3xx itself
+  redirects: Int = 10
 }
 
 /// http.TlsCert (std.md 4.6).
@@ -2087,8 +2093,16 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
   if !e.is_empty() {
     return Err(http.TlsErr{msg: e})
   }
-  Client{timeout: c.timeout, roots: r, lists: c.lists}
+  Client{timeout: c.timeout, roots: r, lists: c.lists, redirects: c.redirects}
 }
+
+/// The client following at most max redirects (decision 0404): 0 returns
+/// a 3xx response as it came, its Location as the server sent it.
+fn (c: Client) with_redirects(max: Int) -> Client { c with {redirects: if max < 0 { 0 } else { max }} }
+
+/// The request with its own time limit in place of the client's (decision
+/// 0404): the whole exchange, the body included, as Go's Client.Timeout.
+fn (r: Request) with_timeout(d: Duration) -> Request { r with {timeout_ns: if d.nanos() > 0 { d.nanos() } else { 0 }} }
 
 fn (c: Client) get(url: Str) -> http.Response ! http.ClientErr uses net.dial { c.send(new_request("GET", url)) }
 
@@ -2175,7 +2189,8 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
       values.push(x)
     }
   }
-  let r = http1.client_do(req.method, raw, names, values, req.body, c.timeout.nanos(), c.roots, c.lists)
+  let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
+  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects)
   match r.err {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))

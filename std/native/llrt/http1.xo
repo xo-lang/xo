@@ -3599,7 +3599,7 @@ fn valid_method(m: Str) -> Bool {
 /// the attenuation lists of the client's Net (decision 0175), following
 /// redirects as net/http's Client does (redirectBehavior,
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -3766,13 +3766,17 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     // redirects (Client.Do's redirectBehavior)
     let li = field_at(headers, "Location")
     let follow = (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && li >= 0 && !headers[li + 1].is_empty()
-    if !follow {
+    if !follow || max_redirects <= 0 {
+      // (max_redirects 0: CheckRedirect's ErrUseLastResponse, the 3xx
+      // with its Location as sent; decision 0404)
       return CResult{err: 0, msg: "", status: status, headers: headers, body: rbody}
     }
     last_loc = headers[li + 1]
-    if redirects == 9 {
-      // defaultCheckRedirect: the error names the Location
-      return cfail(4, op + " " + go_quote(last_loc) + ": stopped after 10 redirects")
+    if redirects >= max_redirects {
+      // max_redirects followed (the spec's "up to 10"; Go's
+      // defaultCheckRedirect counts requests, so it follows 9): the error
+      // names the Location
+      return cfail(4, op + " " + go_quote(last_loc) + ": stopped after ${max_redirects} redirects")
     }
     // the Referer: this request's URL (url.URL.String)
     referer = u.scheme + "://" + u.host + escape_path(u.path)

@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-10-29: feature: the client's redirect policy and a request's own time limit
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md): an API gateway could
+  not pass a 3xx through
+- Go reference: net/http client.go Client.CheckRedirect (ErrUseLastResponse,
+  defaultCheckRedirect), Client.Timeout; decision 0404 stage A
+- Test: internal/llvm/testdata/golden/http_client_policy (native and Go)
+
+`Client.with_redirects(max)` follows at most max redirects: 0 returns the 3xx
+as it came with its Location untouched (a proxy passes it through), and past
+max the request fails with `Protocol` (`stopped after MAX redirects`). The
+default stays 10 and now follows 10 (the spec's "up to 10"; Go's
+defaultCheckRedirect counts requests and followed 9 here before).
+`Request.with_timeout(d)` gives one request its own limit for the whole
+exchange in place of its client's. A redirect to another host already
+dropped Authorization and cookies; spec 4.5 now says so.
+
 ## 2026-10-26: fix: an Expires date outside Time's range has no Expires on the Go backend
 
 - Kind: fix

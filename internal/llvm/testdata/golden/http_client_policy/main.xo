@@ -1,0 +1,67 @@
+// The std/http client's redirect policy and a request's own time limit
+// (decision 0404): with_redirects(0) returns the 3xx as it came, its
+// Location untouched (Go's ErrUseLastResponse); with_redirects(n) stops a
+// loop after n; the default follows 10. A request's with_timeout replaces
+// its client's limit both ways.
+use std/http
+
+fn describe(e: http.ClientErr) -> Str {
+  match e {
+    http.ClientErr.InvalidUrl(msg) => "InvalidUrl(${msg})"
+    http.ClientErr.Connect(_) => "Connect"
+    http.ClientErr.Timeout => "Timeout"
+    // the text after the URL (Go names the absolute URL, with its port)
+    http.ClientErr.Protocol(msg) => "Protocol(${msg.split(": ").last() ?? msg})"
+    http.ClientErr.Canceled => "Canceled"
+  }
+}
+
+fn routes(os: Os) -> http.Router uses clock {
+  var r = http.router()
+  r.handle("GET /target", fn(_req) { http.text(200, "arrived") })
+  r.handle("GET /moved", fn(_req) { http.empty(302).with_header("Location", "/target?x=1") })
+  r.handle("GET /hop2", fn(_req) { http.empty(301).with_header("Location", "/moved") })
+  r.handle("GET /loop", fn(_req) { http.empty(302).with_header("Location", "/loop") })
+  r.handle("GET /slow", fn(_req) {
+    os.clock.sleep(400ms)
+    http.text(200, "late")
+  })
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} location=${resp.header("Location") ?? "-"} body=${resp.text() ?? "?"}")
+    Err(e) => os.stdio.println("${label}: ${describe(e)}")
+  }
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes(os))
+      let base = "http://${srv.addr()}"
+      let c = http.client(os.net)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        show(os, "default", c.get(base + "/hop2"))
+        show(os, "none", c.with_redirects(0).get(base + "/hop2"))
+        show(os, "one", c.with_redirects(1).get(base + "/hop2"))
+        show(os, "two", c.with_redirects(2).get(base + "/hop2"))
+        show(os, "loop of 3", c.with_redirects(3).get(base + "/loop"))
+        show(os, "negative", c.with_redirects(-1).get(base + "/moved"))
+        let quick = http.client(os.net, timeout: 100ms)
+        show(os, "client limit", quick.get(base + "/slow"))
+        show(os, "request longer", quick.send(http.new_request("GET", base + "/slow").with_timeout(5s)))
+        show(os, "request shorter", c.send(http.new_request("GET", base + "/slow").with_timeout(100ms)))
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

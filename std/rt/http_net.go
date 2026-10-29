@@ -14,6 +14,7 @@ import (
 	"crypto/tls"
 	"crypto/x509"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net"
@@ -328,25 +329,37 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 	if c.tr != nil {
 		tr = c.tr.(*http.Transport)
 	}
-	hc := &http.Client{Timeout: time.Duration(c.timeout), Transport: tr}
-	if o, ok := c.net.(*onlyNet); ok {
-		// a redirect must stay within an attenuated Net (decision 0156)
-		hc.CheckRedirect = func(r *http.Request, via []*http.Request) error {
-			if len(via) >= 10 {
-				return errors.New("stopped after 10 redirects")
-			}
-			port := r.URL.Port()
-			if port == "" {
-				port = "80"
-				if r.URL.Scheme == "https" {
-					port = "443"
-				}
-			}
-			if !o.admits(r.URL.Hostname(), port) {
-				return errors.New("denied by Net.only: redirect to " + net.JoinHostPort(r.URL.Hostname(), port))
-			}
+	timeout := c.timeout
+	if req.XTimeout > 0 {
+		// with_timeout (decision 0404)
+		timeout = req.XTimeout
+	}
+	hc := &http.Client{Timeout: time.Duration(timeout), Transport: tr}
+	o, only := c.net.(*onlyNet)
+	// with_redirects (decision 0404): 0 returns the 3xx as it came;
+	// a redirect must stay within an attenuated Net (decision 0156)
+	hc.CheckRedirect = func(r *http.Request, via []*http.Request) error {
+		if c.redirects <= 0 {
+			return http.ErrUseLastResponse
+		}
+		// at most c.redirects followed (via holds the requests made)
+		if len(via) > int(c.redirects) {
+			return fmt.Errorf("stopped after %d redirects", c.redirects)
+		}
+		if !only {
 			return nil
 		}
+		port := r.URL.Port()
+		if port == "" {
+			port = "80"
+			if r.URL.Scheme == "https" {
+				port = "443"
+			}
+		}
+		if !o.admits(r.URL.Hostname(), port) {
+			return errors.New("denied by Net.only: redirect to " + net.JoinHostPort(r.URL.Hostname(), port))
+		}
+		return nil
 	}
 	tk.leave()
 	resp, err := hc.Do(hr)

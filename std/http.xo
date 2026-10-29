@@ -55,6 +55,10 @@ fn (r: Request) multipart_form() -> multipart.Form ! multipart.MultipartErr
 fn (r: Request) header(name: Str) -> Str?
 fn (r: Request) json[T: Json]() -> T ! json.DecodeErr
 fn (r: Request) with_header(name: Str, value: Str) -> Request
+/// The request with its own time limit in place of its client's, for the
+/// whole exchange with the body (Go's Client.Timeout); a client side
+/// builder (decision 0404).
+fn (r: Request) with_timeout(d: Duration) -> Request
 /// Every field of name, in order (decision 0288).
 fn (r: Request) header_values(name: Str) -> List[Str]
 /// The request with one more field of name.
@@ -237,6 +241,10 @@ fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses n
 /// The client trusting the certificates of pem instead of the system's
 /// roots for https (std.md 4.6).
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
+/// The client following at most max redirects (10 by default); 0 returns
+/// a 3xx response as it came, its Location as the server sent it (Go's
+/// ErrUseLastResponse; decision 0404).
+fn (c: Client) with_redirects(max: Int) -> Client
 
 enum ClientErr {
   InvalidUrl(msg: Str)

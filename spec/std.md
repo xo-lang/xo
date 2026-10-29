@@ -1498,6 +1498,8 @@ fn (c: Client) get(url: Str) -> Response ! ClientErr uses net.dial
 fn (c: Client) send(req: Request) -> Response ! ClientErr uses net.dial
 fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses net.dial
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr   // 4.6
+fn (c: Client) with_redirects(max: Int) -> Client          // decision 0404
+fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
 
 enum ClientErr {
   InvalidUrl(msg: Str)
@@ -1521,7 +1523,19 @@ Any HTTP status is a successful `Response`; only transport failures are
 `ClientErr`. A request's query is sent as it was given (Go's `URL.RawQuery`:
 repeated keys and their order kept) unless its `url.query` was changed,
 then as `url.query` builds it. The client does not retry. It follows up to 10 redirects for
-`GET` and `HEAD`. `parse_url` accepts absolute RFC 3986 URLs with an
+`GET` and `HEAD` (Go's Client counts requests, so it follows 9), or as
+many as `with_redirects(max)` says: `with_redirects(0)` returns a 3xx
+response as it came, its `Location` as the server sent it (Go's
+`ErrUseLastResponse`), and past `max` the request fails with `Protocol`
+(`stopped after MAX redirects`). A redirect to another host does not
+carry `Authorization`, `Cookie`, or their proxy forms (Go drops them
+only for a host that is not the same or a subdomain). A request's
+`with_timeout(d)` limits its whole exchange, the body included, in place
+of the client's `timeout` (Go's `Client.Timeout`); it is a client side
+builder, and a handler's own Request ignores it. `ClientErr.Connect`
+means the request did not reach the server (no connection or no TLS
+handshake), so any method may be retried; `Timeout` and `Protocol` may
+have reached it. `parse_url` accepts absolute RFC 3986 URLs with an
 `http` or `https` scheme and a host; anything else is a `UrlErr`. An
 `https` URL is requested over TLS (4.6).
 

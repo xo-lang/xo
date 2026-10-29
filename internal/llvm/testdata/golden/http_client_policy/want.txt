@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+default: 200 location=- body=arrived
+none: 301 location=/moved body=
+one: Protocol(stopped after 1 redirects)
+two: 200 location=- body=arrived
+loop of 3: Protocol(stopped after 3 redirects)
+negative: 302 location=/target?x=1 body=
+client limit: Timeout
+request longer: 200 location=- body=late
+request shorter: Timeout
+done
+--- stderr

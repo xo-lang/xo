@@ -930,6 +930,28 @@ type Http_Client struct {
 	// with_roots (std.md 4.6): the transport trusting those roots
 	// (*http.Transport, http_net.go), nil for the shared one
 	tr any
+	// with_redirects (decision 0404): the redirects followed at most; 0
+	// returns the 3xx itself
+	redirects int64
+}
+
+// M_with_redirects is `c.with_redirects(max)` (decision 0404).
+func (c Http_Client) M_with_redirects(_ *Task, max int64) Http_Client {
+	if max < 0 {
+		max = 0
+	}
+	c.redirects = max
+	return c
+}
+
+// M_with_timeout is `r.with_timeout(d)` (decision 0404): the request's
+// own limit for the whole exchange, in place of its client's.
+func (r Http_Request) M_with_timeout(_ *Task, d Duration) Http_Request {
+	if d < 0 {
+		d = 0
+	}
+	r.XTimeout = d
+	return r
 }
 
 // M_with_roots is `c.with_roots(pem)`: https trusts the certificates of
@@ -948,7 +970,7 @@ func (Http_Client) XoDebug(b *strings.Builder) { b.WriteString("<client>") }
 
 // Http_client is `http.client(net, timeout)`.
 func Http_client(_ *Task, n Net, timeout Duration) Http_Client {
-	return Http_Client{net: n, timeout: timeout}
+	return Http_Client{net: n, timeout: timeout, redirects: 10}
 }
 
 func clientErr(tag int, msg string) Http_ClientErr {
