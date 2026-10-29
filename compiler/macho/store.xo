@@ -335,7 +335,10 @@ pub fn (var s: StoreLink) resolve() -> Str {
       }
     }
   }
-  ""
+  // the imports again, from what the kept sections name
+  s.l.stripped = true
+  s.l.collect_imports()
+  s.l.err
 }
 
 /// A program object's compact unwind section without the entries of its

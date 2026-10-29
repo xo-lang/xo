@@ -381,6 +381,9 @@ fn (var l: Linker) dead_strip() {
       }
     }
   }
+  // the imports again, from what the kept atoms name
+  l.stripped = true
+  l.collect_imports()
 }
 
 /// Object o's __eh_frame without the FDEs of dead functions (decision

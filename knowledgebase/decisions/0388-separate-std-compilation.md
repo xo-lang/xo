@@ -764,3 +764,14 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   XO_STD_STORE_CHECK byte for byte on fib, async_preempt_alloc/_regs, catch and trace for
   darwin/amd64, run on the Intel laptop (fib, 5 of 5 each, the caught faults, the
   traceback); normal darwin/amd64 builds unchanged byte for byte.
+- Imports and startup (Lang 1's startup diagnosis, 2026-10-28): a separately compiled empty
+  program bound 112 symbols at launch against a whole program's 54, the 58 more the C
+  imports of std functions the strip had dropped (posix_spawn, the sockets, getaddrinfo,
+  dlopen, ...; 7 failed weak lookups), and every non-race program bound 14 weak ___tsan_*
+  that never resolve (about 8% of an empty program's startup). compiler/macho link.xo
+  collect_imports runs again after the strip (dead_strip, StoreLink.resolve): an atoms mode
+  object's imports are what its kept sections' relocations name (objects linked whole as
+  before). compiler/ssa call.xo folds rt.sym_present("__tsan_...") to false outside --race
+  on every target (Windows did already; the front end's cache keys hold race), so the
+  guarded weak calls go; __sanitizer_start_switch_fiber stays (ASan can come from a `use c`
+  object in any build).

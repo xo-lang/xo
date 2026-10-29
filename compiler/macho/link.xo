@@ -162,6 +162,9 @@ struct Linker {
   /// 0232): bound as weak imports, which dyld leaves 0 when no image
   /// defines them
   weak_imports: Set[Bytes] = #{}
+  /// The strip ran (dead_strip, a store link's resolve): an atoms mode
+  /// object's imports are what its kept sections name (collect_imports).
+  stripped: Bool = false
   import_ix: Map[Bytes, Int] = {}
   /// GOT slots, by import or by defined symbol (obj, sym)
   got_imp: Map[Int, Int] = {}
@@ -407,14 +410,42 @@ fn (var l: Linker) resolve() {
     l.add_globals(l.objs.len() - 1)
   }
   l.section_bounds()
-  // the imports, sorted by name
+  l.collect_imports()
+}
+
+/// The imports, sorted by name: what the live objects use and no object
+/// defines. After the strip (l.stripped), an atoms mode object's are only
+/// the names its kept sections' relocations use (decision 0388: a std
+/// function the strip dropped bound its C imports at every launch, 58
+/// of them for an empty program, 7 failed weak lookups; Lang 1,
+/// 2026-10-28).
+fn (var l: Linker) collect_imports() {
+  l.imports = []
+  l.weak_imports = #{}
+  l.import_ix = {}
   var names: Set[Bytes] = #{}
   var strong: Set[Bytes] = #{}
   for o in l.objs {
     if !o.live {
       continue
     }
-    for s in o.syms {
+    var named: Set[Int] = #{}
+    let kept = l.stripped && o.subsections
+    if kept {
+      for x in o.sects {
+        if !x.dead {
+          for r in x.relocs {
+            if r.ext && r.typ != R_ADDEND {
+              named.add(r.sym)
+            }
+          }
+        }
+      }
+    }
+    for (j, s) in o.syms.indexed() {
+      if kept && !named.contains(j) {
+        continue
+      }
       if is_ext(s) && !is_defined(s) && !l.globals.contains(s.name) {
         names.add(s.name)
         if (s.desc & 0x40) == 0 {
