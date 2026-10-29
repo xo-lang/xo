@@ -313,6 +313,11 @@ fn (e: RecEnv) home() -> Str ! EnvErr uses env { e.inner.home() }
 fn (e: RecEnv) only(names: List[Str]) -> Env { e.inner.only(names) }
 fn (e: RecEnv) config_dir() -> Str ! EnvErr uses env { e.inner.config_dir() }
 fn (e: RecEnv) cache_dir() -> Str ! EnvErr uses env { e.inner.cache_dir() }
+fn (e: RecEnv) hostname() -> Str uses env {
+  let h = e.inner.hostname()
+  e.note("\x00hostname", Some(h))
+  h
+}
 
 /// What a stat answered, in the form an entry keeps.
 fn stat_answer(r: Result[FileInfo?, FsErr]) -> Str {

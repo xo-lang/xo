@@ -29,6 +29,7 @@ use native/llrt/fault
 use native/llrt/ftoa
 use native/llrt/fsops
 use native/llrt/gomath
+use native/llrt/host
 use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
@@ -4098,6 +4099,9 @@ fn env_user_dir(e: Env, cache: Bool) -> Str ! EnvErr uses env {
 }
 
 fn env_config_dir(e: Env) -> Str ! EnvErr uses env { env_user_dir(e, false) }
+
+/// Env.hostname (decision 0410): std/native/llrt/host.xo.
+fn env_hostname(e: Env) -> Str uses env { host.hostname() }
 
 fn env_cache_dir(e: Env) -> Str ! EnvErr uses env { env_user_dir(e, true) }
 

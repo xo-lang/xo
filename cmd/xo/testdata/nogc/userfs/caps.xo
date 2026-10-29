@@ -23,6 +23,7 @@ fn (e: OverEnv) home() -> Str ! EnvErr uses env { e.inner.home() }
 fn (e: OverEnv) only(names: List[Str]) -> Env { OverEnv{inner: e.inner.only(names), name: e.name, value: e.value} }
 fn (e: OverEnv) config_dir() -> Str ! EnvErr uses env { e.inner.config_dir() }
 fn (e: OverEnv) cache_dir() -> Str ! EnvErr uses env { e.inner.cache_dir() }
+fn (e: OverEnv) hostname() -> Str uses env { e.inner.hostname() }
 
 /// A Net that refuses one host and passes the rest on.
 struct BlockNet {

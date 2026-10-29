@@ -1,0 +1,50 @@
+// Host facts (decision 0410): the host name. uname's nodename on Linux,
+// gethostname(3) on macOS; "" on Windows and under WASI, where the
+// system call is not wired yet (Env.hostname documents it).
+
+use native/llrt/raw
+use native/rt
+use native/sys_darwin
+
+/// The host's name, or "" when the system cannot say.
+pub fn hostname() -> Str {
+  match target.os {
+    TargetOs.Darwin => {
+      let buf = raw.bytes_buf(256)
+      let a = raw.bytes_addr(buf)
+      rt.mem_set(a, 0, 256)
+      let r = sys_darwin.gethostname(a, 255)
+      var n = 0
+      if r == 0 {
+        while n < 255 && rt.mem_load(a, n, 1) != 0 {
+          n += 1
+        }
+      }
+      let s = buf[0..n].to_str() ?? ""
+      raw.alive(buf)
+      s
+    }
+    TargetOs.Linux => {
+      // uname (160 on arm64, 63 on x86_64): struct utsname's six fields
+      // of 65 bytes, the node name second
+      let buf = raw.bytes_buf(390)
+      let a = raw.bytes_addr(buf)
+      rt.mem_set(a, 0, 390)
+      let nr = match target.arch {
+        TargetArch.Arm64 => 160
+        TargetArch.Amd64 => 63
+        TargetArch.Wasm32 => -1
+      }
+      var n = 0
+      if rt.sys6(nr, a, 0, 0, 0, 0, 0) >= 0 {
+        while n < 64 && rt.mem_load(a, 65 + n, 1) != 0 {
+          n += 1
+        }
+      }
+      let s = buf[65..65 + n].to_str() ?? ""
+      raw.alive(buf)
+      s
+    }
+    TargetOs.Windows | TargetOs.Wasi => ""
+  }
+}

@@ -587,6 +587,26 @@ func userDir(tk *Task, e Env, cache bool) Result[string, EnvErr] {
 
 func (e realEnv) M_config_dir(tk *Task) Result[string, EnvErr]  { return userDir(tk, e, false) }
 func (e realEnv) M_cache_dir(tk *Task) Result[string, EnvErr]   { return userDir(tk, e, true) }
+
+// M_hostname is `env.hostname()` (decision 0410): os.Hostname, "" on error.
+func (realEnv) M_hostname(tk *Task) string {
+	return fx(tk, "env.hostname", false, nil, func() string {
+		h, err := os.Hostname()
+		if err != nil {
+			return ""
+		}
+		return textOf(h)
+	})
+}
+
+func (e *onlyEnv) M_hostname(tk *Task) string { return e.inner.M_hostname(tk) }
+
+func (f Testing_FakeEnv) M_hostname(tk *Task) string {
+	if h := f.M_get(tk, "HOSTNAME"); h.Some {
+		return h.V
+	}
+	return "test"
+}
 func (e *onlyEnv) M_config_dir(tk *Task) Result[string, EnvErr] { return userDir(tk, e, false) }
 func (e *onlyEnv) M_cache_dir(tk *Task) Result[string, EnvErr]  { return userDir(tk, e, true) }
 func (f Testing_FakeEnv) M_config_dir(tk *Task) Result[string, EnvErr] {

@@ -1,0 +1,26 @@
+// Env.hostname (decision 0410): a host name has no blanks around it and
+// fits a host name field; an Env that lists no variable still reports it
+// (the host's name is not an environment variable); a user's own Env
+// answers for itself.
+struct MyEnv {}
+
+fn (e: MyEnv) get(name: Str) -> Str? { None }
+fn (e: MyEnv) vars() -> Map[Str, Str] { {} }
+fn (e: MyEnv) args() -> List[Str] { [] }
+fn (e: MyEnv) program() -> Str { "p" }
+fn (e: MyEnv) home() -> Str ! EnvErr { Err(EnvErr.Missing(name: "HOME")) }
+fn (e: MyEnv) only(names: List[Str]) -> Env { e }
+fn (e: MyEnv) config_dir() -> Str ! EnvErr { Err(EnvErr.Missing(name: "HOME")) }
+fn (e: MyEnv) cache_dir() -> Str ! EnvErr { Err(EnvErr.Missing(name: "HOME")) }
+fn (e: MyEnv) hostname() -> Str { "mine" }
+
+fn describe(env: Env) -> Str {
+  let h = env.hostname()
+  "${h == h.trim() && h.len() < 256}"
+}
+
+fn main(os: Os) {
+  os.stdio.println(describe(os.env))
+  os.stdio.println(describe(os.env.only([])))
+  os.stdio.println(MyEnv{}.hostname())
+}

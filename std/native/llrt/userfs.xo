@@ -116,6 +116,7 @@ pub interface UserEnv {
   /// Where a program keeps its cache: XDG_CACHE_HOME, else ~/.cache,
   /// ~/Library/Caches, or %LocalAppData%.
   fn cache_dir(self) -> Str ! EnvErr uses env
+  fn hostname(self) -> Str uses env
 }
 
 /// The Stdio methods of a user value converted to Stdio (decision 0307,

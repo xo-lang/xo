@@ -21,6 +21,7 @@ fn (e: MapEnv) only(names: List[Str]) -> Env {
 }
 fn (e: MapEnv) config_dir() -> Str ! EnvErr { Ok("/home/fake/.config") }
 fn (e: MapEnv) cache_dir() -> Str ! EnvErr { Ok("/home/fake/.cache") }
+fn (e: MapEnv) hostname() -> Str { "fakehost" }
 
 fn home_of(e: Env) -> Str uses env { e.home().ok() ?? "?" }
 

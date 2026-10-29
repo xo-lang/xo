@@ -965,6 +965,7 @@ fn (e: Env) home() -> Str ! EnvErr
 fn (e: Env) only(names: List[Str]) -> Env   // attenuation (below)
 fn (e: Env) config_dir() -> Str ! EnvErr     // where configuration goes (below)
 fn (e: Env) cache_dir() -> Str ! EnvErr
+fn (e: Env) hostname() -> Str              // Go's os.Hostname; "" where the system cannot say (Windows and WASI for now)
 ```
 
 `program()` is the name the program was started with (argv[0]), and

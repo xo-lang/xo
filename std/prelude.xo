@@ -946,6 +946,9 @@ interface Env {
   /// Where a program keeps its cache: XDG_CACHE_HOME, else ~/.cache,
   /// ~/Library/Caches, or %LocalAppData%.
   fn cache_dir(self) -> Str ! EnvErr uses env
+  /// The host's name (Go's os.Hostname): "" where the system cannot say
+  /// (decision 0410).
+  fn hostname(self) -> Str uses env
 }
 
 enum IoErr {

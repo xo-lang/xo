@@ -118,6 +118,8 @@ fn (e: FakeEnv) home() -> Str ! EnvErr uses env
 fn (e: FakeEnv) only(names: List[Str]) -> Env
 fn (e: FakeEnv) config_dir() -> Str ! EnvErr uses env
 fn (e: FakeEnv) cache_dir() -> Str ! EnvErr uses env
+/// "test", or the value of HOSTNAME when the FakeEnv has one.
+fn (e: FakeEnv) hostname() -> Str uses env
 fn (e: FakeEnv) set(name: Str, value: Str)
 fn (e: FakeEnv) set_args(args: List[Str])
 

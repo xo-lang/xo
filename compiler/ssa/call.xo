@@ -2503,6 +2503,7 @@ fn cap_impl(key: Str) -> Str {
     "Rand.shuffle" => "rand_shuffle"
     "Env.config_dir" => "env_config_dir"
     "Env.cache_dir" => "env_cache_dir"
+    "Env.hostname" => "env_hostname"
     "Env.get" => "env_get"
     "Env.vars" => "env_vars"
     "Env.home" => "env_home"

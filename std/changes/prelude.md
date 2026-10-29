@@ -49,6 +49,17 @@ or Terminate no longer starts the shutdown until `os.proc.request_stop()`;
 
 A list of `Ord` elements is a binary min heap: `heap_push(x)` adds x, `heap_pop()` removes and returns the least (the first of the list), `heap_remove(i)` and `heap_fix(i)` take an index as Go's do (find it with `xs.index_of(x)`; `xs.set(i, y)` then `xs.heap_fix(i)` is Go's `h[i] = y; heap.Fix(h, i)`), and `heapify()` is `heap.Init`. A priority queue by a key is a heap of (key, value) pairs. Each is O(log n).
 
+## 2026-10-29: feature: Env.hostname
+
+- Kind: feature
+- Commit: this commit
+- Found by: the std-vs-Go survey (item 9: an exporter or scheduler labels its output with the host's name)
+- Go reference: os.Hostname (uname's nodename on Linux, gethostname on macOS)
+- Test: the env_hostname golden (a real Env, an Env that lists no variable, and a user's own Env) on arm64, LLVM and the Go backend, and a FakeEnv test
+- Timing: none (one system call)
+
+`env.hostname()` is the host's name, or "" where the system cannot say (Windows and WASI for now). It is an environment fact and not a variable, so `env.only([])` still reports it; a FakeEnv answers its HOSTNAME variable, else "test". Breaking: a type that implements the `Env` interface needs a `hostname` method (decision 0410).
+
 ## 2026-10-29: feature: Str.pad_left, pad_right and center, and Int.to_str_width
 
 - Kind: feature

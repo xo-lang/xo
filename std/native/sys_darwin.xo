@@ -183,6 +183,9 @@ fn getpid() -> Int32
 /// getppid(2) (std/native/llrt/procid.xo).
 fn getppid() -> Int32
 
+/// gethostname(3) into n bytes at the address buf: 0, or -1 (std/native/llrt/host.xo).
+fn gethostname(buf: Int, n: Int) -> Int32
+
 /// setitimer(2): which (ITIMER_PROF 2), the struct itimerval at new and
 /// old (or 0): 0, or -1 with errno set (std/native/llrt/prof.xo).
 fn setitimer(which: Int, new: Int, old: Int) -> Int32
