@@ -105,6 +105,26 @@ case "$(basename "$archive")" in
     exit
     ;;
 esac
+case "$(basename "$archive")" in
+  *-wasip1-wasm*)
+    # xo built for WASI preview1 (decision 0405): the layout, then
+    # scripts/wasi-smoke.sh against the archive's xo.wasm and std, run by
+    # Node (bin/xo is the Node launcher)
+    for f in bin/xo bin/xo.wasm lib/xo/wasi/run.mjs lib/xo/std/prelude.xo LICENSE THIRD_PARTY_NOTICES; do
+      if [ -e "$rel/$f" ]; then pass "layout-$f"; else fail "layout-$f"; fi
+    done
+    if command -v node > /dev/null 2>&1; then
+      if bash "$root/scripts/wasi-smoke.sh" "$rel/bin/xo.wasm" "$rel/lib/xo/std" "$out/wasi-smoke" > "$out/wasi-smoke.txt" 2>&1; then
+        pass "wasi-smoke"
+      else fail "wasi-smoke"; tail -5 "$out/wasi-smoke.txt" | sed 's/^/  /'; fi
+    else
+      echo "UNSUPPORTED wasi-smoke (node not found)"
+    fi
+    echo "release-verify: $fails failed (a wasip1/wasm archive)"
+    [ "$fails" = 0 ]
+    exit
+    ;;
+esac
 # xo-gobind's source (decision 0393): there, and it builds with this Go
 for f in lib/xo/go.mod lib/xo/cmd/xo-gobind/main.go lib/xo/internal/gobind/gobind.go lib/xo/internal/gotool/gotool.go; do
   if [ -f "$rel/$f" ]; then pass "layout-$f"; else fail "layout-$f"; fi
