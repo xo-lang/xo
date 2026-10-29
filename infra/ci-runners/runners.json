@@ -17,5 +17,14 @@
     ],
     "az": "us-east-1a",
     "import_id": "i-EXAMPLE47"
+  },
+  "amd64-big": {
+    "type": "c7i.8xlarge",
+    "arch": "amd64",
+    "labels": [
+      "xo-amd64"
+    ],
+    "az": "us-east-1c",
+    "import_id": "i-EXAMPLE02"
   }
 }
