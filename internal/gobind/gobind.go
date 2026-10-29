@@ -63,7 +63,9 @@ import (
 // file, not a copy. 8 (2026-10-29, the Windows tester's bugs 18 and 19):
 // a []byte parameter Go writes into and a parameter of an unexported type
 // are skipped.
-const Version = 8
+// 9 (2026-10-29, decision 0412): Go's any is go.Any; a handle has its Go
+// value both ways (XoGoValue, XoFromGo) for go.any and go.Any.as_handle.
+const Version = 9
 
 // Binding is one bound Go package.
 type Binding struct {

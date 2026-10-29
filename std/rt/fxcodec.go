@@ -75,6 +75,7 @@ var (
 	listenerType = reflect.TypeFor[Listener]()
 	connType     = reflect.TypeFor[Conn]()
 	goErrorType  = reflect.TypeFor[Go_Error]()
+	goAnyType    = reflect.TypeFor[Go_Any]()
 )
 
 func isEnum(t reflect.Type) bool {
@@ -110,6 +111,14 @@ func fxEnc(v reflect.Value) any {
 	case t == goErrorType:
 		e := v.Interface().(Go_Error)
 		return map[string]any{"msg": encStr(e.msg), "type": e.goType()}
+	case t == goAnyType:
+		// decision 0412 7: a Go value is recorded by its %#v text and
+		// replays as a value that only displays
+		a := v.Interface().(Go_Any)
+		if a.isReplay {
+			return map[string]any{"go": encStr(a.replayed)}
+		}
+		return map[string]any{"go": encStr(fmt.Sprintf("%v", a.V))}
 	case t.Implements(seqType) && v.CanInterface():
 		s := v.Interface().(fxSeq).fxSlice()
 		out := make([]any, s.Len())
@@ -204,6 +213,10 @@ func fxDec(x any, t reflect.Type) reflect.Value {
 		out.Set(reflect.ValueOf(Listener{id: id, replay: true, addr: addr}))
 		return out
 	case t == connType:
+		return out
+	case t == goAnyType:
+		m := x.(map[string]any)
+		out.Set(reflect.ValueOf(GoAnyReplayed(fxDec(m["go"], reflect.TypeFor[string]()).String())))
 		return out
 	case t == goErrorType:
 		m := x.(map[string]any)

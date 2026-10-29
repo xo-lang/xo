@@ -1017,7 +1017,7 @@ pub struct User { ... } derive Display, Ord, Json, OpenApi
 
 ### 2.10 Implicit conversions
 
-There are exactly three, and each applies only where the target type is
+There are exactly four, and each applies only where the target type is
 already known:
 
 1. A `T` where a `T?` is expected becomes `Some(T)`.
@@ -1026,6 +1026,10 @@ already known:
    implements it. This includes passing a capability fake where the
    capability interface is expected.
 3. An error at a `?` site converts to the enclosing error type (2.6).
+4. An element of a list literal written as the argument for a
+   `List[go.Any]` parameter of a `use go` function (Go's `...any`)
+   becomes a `go.Any`, as `go.any(x)` would (4.4, decision 0412); a type
+   with no Go value is `XO1106`.
 
 Conversions are not applied when joining branches (`if`/`match` arms must
 already agree) or to the `else` value of `requires`. Comparing `opt == v`
@@ -1719,7 +1723,14 @@ fn main(os: Os) ! {
   parameter Go writes into (a `Read*` function's, or one named `dst`,
   unless a result is a `[]byte`: a Bytes is a value and cannot carry
   Go's writes back);
-  slices and maps are copied in and out; a `context.Context` parameter is
+  slices and maps are copied in and out; Go's `any` (`interface{}`, or a
+  named empty interface) is `go.Any`, an opaque Go value (decision 0412,
+  std.md 12): `go.any(x)` makes one from a value with a Go form, the
+  elements of a list literal for `...any` convert implicitly (2.10),
+  `as_int()`, `as_str()`, ... read one back (None on another Go type),
+  and a Go function that fills a value through `any` (`rows.scan`,
+  `json.unmarshal`) takes `go.out[T]()`'s `.any()`, read with `.get()`
+  after the call; a `context.Context` parameter is
   supplied from the current task (deadline and cancellation); a panic becomes
   a fault.
 - An Xo function passed to Go as a callback that Go calls during the Go call,
@@ -3109,6 +3120,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1103` | note | vet | per module report of `use go` packages and the functions that perform `go` (decision 0041) |
 | `XO1104` | error | checker | C header cannot be bound (not found, clang cannot read it, a `link` file is missing, or an unknown effect in its `uses`) |
 | `XO1105` | error | checker | C function exists in the header but its signature does not map to Xo, so the binding skipped it |
+| `XO1106` | error | checker | a value with no Go value passed to Go as `any`: `go.any(x)`'s argument or an element of a list literal for a `...any` parameter (decision 0412) |
 | `XO1201` | error | no GC check, checker (`use c` without `--no-gc`) | construct, std API, or effect not available on the native backends (arm64, amd64, LLVM); planned or impossible |
 | `XO1301` | error | modules | malformed xo.mod require or deny line, xo.lock, or xo.work line, or a deny rule naming a package that does not exist (core 4.2, 4.3) |
 | `XO1302` | error | modules | module version cannot be fetched from git or a module proxy (XO_PROXY): repository, tag, or version missing, or its xo.mod declares another path |

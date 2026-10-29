@@ -10,6 +10,7 @@ publishes these files as they are.
 Files are added as modules change; a module without a file has no
 entries yet.
 - [path.md](path.md): std/path (spec/std.md 9)
+- [go.md](go.md): std/go (spec/std.md 12)
 - [udp.md](udp.md): std/udp (spec/std.md 3.2a)
 - [archive.md](archive.md): std/archive (spec/std.md 18)
 - [compress.md](compress.md): std/compress (spec/std.md 32)

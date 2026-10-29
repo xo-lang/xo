@@ -17,3 +17,65 @@ fn (e: Error) message() -> Str
 
 /// The Go dynamic type of the error, for example `*url.Error`.
 fn (e: Error) go_type() -> Str
+
+/// A Go `any` (`interface{}`) value a `use go` binding takes or returns
+/// (decision 0412): opaque to Xo. Make one with `go.any(x)` (a list
+/// literal written for a `...any` parameter converts its elements
+/// implicitly); read one with the `as_*` methods, None on another Go
+/// type. Compares as Go's `==` on the interface. A value a replay rebuilt
+/// only displays, unless its function is `replay rerun` (core 11.3).
+struct Any {}
+
+/// The value as Go's `%v`.
+fn (a: Any) display() -> Str
+
+/// The value's Go type, as Go's `%T` (`int`, `*sql.Rows`, `<nil>`).
+fn (a: Any) type_name() -> Str
+
+/// Whether the value is Go's nil, or a nil pointer, slice or map.
+fn (a: Any) is_nil() -> Bool
+
+/// The value as an Int when it is one of Go's integer types and fits.
+fn (a: Any) as_int() -> Int?
+
+/// The value as a Float when it is a float64 or float32.
+fn (a: Any) as_float() -> Float?
+
+/// The value as a Bool when it is one.
+fn (a: Any) as_bool() -> Bool?
+
+/// The value as a Str when its Go kind is string.
+fn (a: Any) as_str() -> Str?
+
+/// The value as Bytes when it is a []byte (copied).
+fn (a: Any) as_bytes() -> Bytes?
+
+/// The elements of a Go slice or array.
+fn (a: Any) as_list() -> List[Any]?
+
+/// The entries of a Go map with string keys.
+fn (a: Any) as_map() -> Map[Str, Any]?
+
+/// The `use go` handle of type T that holds the value, when the value's
+/// Go type is T's.
+fn (a: Any) as_handle[T]() -> T?
+
+/// An Xo value as the Go value a binding passes for it: Int as int64,
+/// Float as float64, Str as string, Bytes as []byte, Duration as
+/// time.Duration, Time as time.Time, a handle as its Go value, a List as a
+/// slice, a Map as a map, an Option as its value or nil.
+fn any[T](x: T) -> Any
+
+/// A Go pointer a Go function fills through `any` (`rows.scan`,
+/// `json.unmarshal`): pass `.any()`, read `.get()` after the call.
+struct Out[T] {}
+
+/// A new Go pointer to the zero value of T's Go type (T a value type
+/// `go.any` takes, a handle, or `go.Any`).
+fn out[T]() -> Out[T]
+
+/// The pointer, as the `go.Any` the Go function takes.
+fn (o: Out[T]) any() -> Any
+
+/// The value Go wrote; a fault when Go wrote another type.
+fn (o: Out[T]) get() -> T

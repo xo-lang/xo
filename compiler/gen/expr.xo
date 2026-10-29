@@ -150,6 +150,10 @@ fn (var g: Gen) coerce(code: Str, from: Int, to: Int) -> Str {
   if ft == tt {
     return code
   }
+  if g.c.is_go_any(to) && !g.c.is_go_any(from) {
+    // an element of a list literal for Go's `...any` (decision 0412)
+    return "${g.rt()}GoAnyOf(${code})"
+  }
   if tt == "int64" && ft is "int8" | "int16" | "int32" | "uint8" | "uint16" | "uint32" | "uint64" {
     // a sized integer index widened to Int (decision 0331): a uint64 above
     // Int's range wraps negative, which the bounds check rejects

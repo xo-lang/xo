@@ -109,3 +109,24 @@ comes with the first build (see Measurement).
    and `.get()` (decision 4).
 3. Replay of go.Any results: display-only replay or require `replay rerun` for any-returning functions? **Display-only**
    (decision 7): `as_*` on a replayed value faults unless the function is `replay rerun`.
+
+## As built (Lang 1, 2026-10-29)
+
+- The implicit conversion applies to a list literal written for a `List[go.Any]` parameter of a Go binding's
+  function: the binding declares Go's `...any` and `[]any` alike (a variadic is a List in Xo, core 3.2), and the
+  checker sees only the declaration, so a `[]any` parameter converts too. Single `any` parameters and every other
+  place take `go.any(x)`. The checker hook is compiler/check goany.xo go_any_list, called from check_args; the Go
+  backend lowers the element as `rt.GoAnyOf(x)` (compiler/gen expr.xo coerce).
+- A value with no Go value is `XO1106` (a new code), for `go.any(x)` and for an element of such a list.
+- The Go value of an Xo value is made at run time from the Go backend's representation (std/rt goany.go
+  goValueOf): numbers and Str as themselves, Bytes as []byte, Duration as time.Duration, Time as time.Time in
+  UTC, a handle by its `XoGoValue()` (generated per handle), a List as a slice of its elements' one Go type
+  (`[]any` when they differ), a Map likewise, an Option as its value or nil.
+- `as[T]()` is `as_handle[T]()` (`as` is a keyword); it and `go.Out[T].get()` of a handle type use the handle's
+  generated `XoFromGo`.
+- Replay records a go.Any by its display text (Go's `%v`, what `display()` shows), not `%#v`, so a replayed value
+  displays as the recorded run did.
+- Binding format 9.
+- Measured (bench/results/usego-coverage-2026-10-29.md, the tester's 87 packages, same module versions): std
+  78.8% to 86.3% of functions and methods bound, third party 76.9% to 93.2%; no `any` skip remains, and generics
+  (decision 0415) are the largest remaining reason.

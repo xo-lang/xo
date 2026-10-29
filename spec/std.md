@@ -3023,7 +3023,33 @@ struct Error {}                      // handle; implements Display, so it conver
 fn (e: Error) display() -> Str       // the Go error's Error() text, captured at the boundary
 fn (e: Error) message() -> Str       // the same text
 fn (e: Error) go_type() -> Str       // the Go dynamic type, for example "*url.Error"
+
+struct Any {}                        // a Go `any` value (decision 0412); Go's == and hash
+fn (a: Any) display() -> Str         // Go's %v
+fn (a: Any) type_name() -> Str       // Go's %T ("<nil>" for nil)
+fn (a: Any) is_nil() -> Bool         // nil, or a nil pointer, slice or map
+fn (a: Any) as_int() -> Int?         // Go's integer types that fit; None on another type
+fn (a: Any) as_float() -> Float?     // float64, float32
+fn (a: Any) as_bool() -> Bool?
+fn (a: Any) as_str() -> Str?         // Go kind string
+fn (a: Any) as_bytes() -> Bytes?     // []byte, copied
+fn (a: Any) as_list() -> List[Any]?  // a slice or array
+fn (a: Any) as_map() -> Map[Str, Any]?  // a map with string keys, in key order
+fn (a: Any) as_handle[T]() -> T?     // the `use go` handle T holding the value
+fn any[T](x: T) -> Any               // Int as int64, Float as float64, Str as string, Bytes as []byte,
+                                     // Duration, Time, a handle's Go value, List/Map/Option of those (else XO1106)
+struct Out[T] {}                     // a Go *T a Go function fills through any
+fn out[T]() -> Out[T]                // a new pointer to T's Go zero value
+fn (o: Out[T]) any() -> Any          // the pointer, passed where Go takes any
+fn (o: Out[T]) get() -> T            // the value Go wrote; a fault on another type
 ```
+
+`fmt.sprintf("%d %s", [n, s])`: the elements of a list literal written for
+a `List[go.Any]` parameter of a Go binding's function (Go's `...any` or
+`[]any`) convert implicitly as `go.any(x)` (core 2.10). In a replay, a
+go.Any a Go call returned is rebuilt from its recorded display text: it
+displays, and its other methods fault unless the function is `replay
+rerun` (core 11.3).
 
 Calling these performs no Go call (no `go` effect). The native backends do
 not build `use go` code at all (`XO1201`, impossible).

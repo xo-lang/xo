@@ -355,3 +355,36 @@ func Ok(n int) int { return n }
 		}
 	}
 }
+
+// TestAnyValues (decision 0412): Go's any is go.Any, ...any a
+// List[go.Any], and every handle has its Go value both ways for go.any
+// and go.Any.as.
+func TestAnyValues(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	fmtDecl, _, _ := bindDecl(t, "fmt")
+	for _, want := range []string{"fn sprintf(format: Str, a: List[go.Any]) -> Str", "fn sprint(a: List[go.Any]) -> Str"} {
+		if !strings.Contains(fmtDecl, want) {
+			t.Errorf("fmt: no %q:\n%s", want, grep(fmtDecl, "sprint"))
+		}
+	}
+	jsonDecl, _, _ := bindDecl(t, "encoding/json")
+	if !strings.Contains(jsonDecl, "fn unmarshal(data: Bytes, v: go.Any)") || !strings.Contains(jsonDecl, "fn marshal(v: go.Any) -> Bytes ! go.Error") {
+		t.Errorf("encoding/json: marshal or unmarshal not bound with go.Any:\n%s", grep(jsonDecl, "marshal("))
+	}
+	sqlDecl, _, _ := bindDecl(t, "database/sql")
+	if !strings.Contains(sqlDecl, ") scan(dest: List[go.Any])") {
+		t.Errorf("database/sql: Rows.scan not bound:\n%s", grep(sqlDecl, "scan("))
+	}
+	_, b, _ := bindDecl(t, "net/url")
+	a := string(b.Adapter)
+	if !strings.Contains(a, ") XoGoValue() any { return h.P }") || !strings.Contains(a, ") XoFromGo(v any) (any, bool) {") {
+		t.Errorf("net/url: a handle without XoGoValue or XoFromGo:\n%s", grep(a, "XoGo"))
+	}
+	for name, why := range b.Skipped {
+		if strings.Contains(why, "interface{}") {
+			t.Errorf("net/url: %s still skipped for any: %s", name, why)
+		}
+	}
+}

@@ -21,7 +21,6 @@ import (
 // Reason categories of skipped declarations (Stats.Reasons).
 const (
 	catGeneric   = "generic function or type"
-	catAny       = "interface{} or any"
 	catIface     = "unnamed interface or struct"
 	catChan      = "channel"
 	catFunc      = "function result or unmappable callback"
@@ -310,6 +309,14 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		if isContext(x) {
 			return conv{}, skipf(catCtx, "context.Context outside the first parameter")
 		}
+		if it, ok := x.Underlying().(*types.Interface); ok && it.Empty() && x.TypeParams().Len() == 0 {
+			// a named empty interface (yaml's Node values, sql.Scanner's
+			// src) is Go's any by another name (decision 0412)
+			q := g.qual(x)
+			return conv{xo: "go.Any", rt: "Go_Any", gt: q,
+				toXo: func(e string) string { return "Go_Any{V: " + e + "}" },
+				toGo: func(e string) string { return "GoAnyTo[" + q + "](" + e + ")" }}, nil
+		}
 		if obj.Pkg().Path() == "time" && obj.Name() == "Duration" {
 			a := g.aliasPath("time")
 			return conv{xo: "Duration", rt: "Duration", gt: a + ".Duration",
@@ -400,7 +407,7 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		return conv{}, skipf(catFunc, "function type %s", g.display(x))
 	case *types.Interface:
 		if x.Empty() {
-			return conv{}, skipf(catAny, "interface{} (any)")
+			return anyConv(), nil
 		}
 		return conv{}, skipf(catIface, "unnamed interface %s", g.display(x))
 	case *types.Struct:
@@ -641,6 +648,14 @@ func (g *gen) paramName(name string, i int, used map[string]bool) string {
 	}
 	used[n] = true
 	return n
+}
+
+// anyConv maps Go's any (interface{}) to go.Any (decision 0412): the
+// adapter wraps and unwraps the Go value.
+func anyConv() conv {
+	return conv{xo: "go.Any", rt: "Go_Any", gt: "any",
+		toXo: func(e string) string { return "Go_Any{V: " + e + "}" },
+		toGo: func(e string) string { return e + ".V" }}
 }
 
 // callbackConv maps a func parameter to an Xo function type with an effect
@@ -1433,6 +1448,20 @@ func (g *gen) adapterFile() ([]byte, error) {
 		}
 		fmt.Fprintf(&body, "// %s is the handle of Go %s.\ntype %s struct{ %s }\n\n", h.goName, disp, h.goName, field)
 		fmt.Fprintf(&body, "func (h %s) XoDebug(b *strings.Builder) { GoDebugHandle(b, %q) }\n\n", h.goName, disp)
+		// go.any(h) and go.Any.as[H]() (decision 0412)
+		switch {
+		case h.byPtr && h.byValue:
+			// a type Go hands out as a value (netip.Addr): its value, and a
+			// *T read back too
+			fmt.Fprintf(&body, "func (h %s) XoGoValue() any {\n\tif h.P == nil {\n\t\treturn nil\n\t}\n\treturn *h.P\n}\n\n", h.goName)
+			fmt.Fprintf(&body, "func (%s) XoFromGo(v any) (any, bool) {\n\tif p, ok := v.(*%s); ok {\n\t\treturn %s{P: p}, true\n\t}\n\tx, ok := v.(%s)\n\treturn %s{P: &x}, ok\n}\n\n", h.goName, h.gt, h.goName, h.gt, h.goName)
+		case h.byPtr:
+			fmt.Fprintf(&body, "func (h %s) XoGoValue() any { return h.P }\n\n", h.goName)
+			fmt.Fprintf(&body, "func (%s) XoFromGo(v any) (any, bool) {\n\tp, ok := v.(*%s)\n\treturn %s{P: p}, ok\n}\n\n", h.goName, h.gt, h.goName)
+		default:
+			fmt.Fprintf(&body, "func (h %s) XoGoValue() any { return h.V }\n\n", h.goName)
+			fmt.Fprintf(&body, "func (%s) XoFromGo(v any) (any, bool) {\n\tx, ok := v.(%s)\n\treturn %s{V: x}, ok\n}\n\n", h.goName, h.gt, h.goName)
+		}
 		switch {
 		case h.byPtr && types.Comparable(h.named) && (!isStructType(h.named) || h.byValue):
 			// Go's equality (core 2.9): a comparable type Go hands out as a

@@ -15,6 +15,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   certificates and requests are byte for byte Go's (corpus x509create).
 - std/cli: `float_flag` and `Parsed.float` and `float_opt`, a floating
   point flag in `Float.parse` syntax (Go's flag.Float64).
+- `use go` binds Go's `any` (decision 0412): a parameter or result of
+  type `any` is a `go.Any`, an opaque Go value; `go.any(x)` makes one
+  (the elements of a list literal for `...any` convert implicitly:
+  `fmt.sprintf("%d %s", [n, s])`), `as_int()`, `as_str()`, `as_list()`,
+  `as_map()` and `as_handle[T]()` read one back, and `go.out[T]()` is a pointer
+  a Go function fills (`rows.scan`, `json.unmarshal`). A value with no Go
+  value is `XO1106`. Bindings an earlier xo cached are made again
+  (binding format 9).
 - Fix (`use go`, a Windows tester's bug 18): a Go function that writes
   into a `[]byte` parameter (an `io.Reader`'s `Read(p)`, a
   `Decode(dst, src)`) is skipped, as `use c` skips mutable buffers: an

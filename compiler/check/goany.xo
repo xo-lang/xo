@@ -1,0 +1,80 @@
+// go.Any at the `use go` boundary (decision 0412): which Xo types have a
+// Go value (`go.any(x)`'s argument), and the one implicit conversion to
+// go.Any, the elements of a list literal written for a `List[go.Any]`
+// parameter of a Go binding's function (Go's `...any`).
+
+use github.com/xo-lang/xo/compiler/parser
+
+/// Whether t is std/go's `Any`.
+pub fn (c: Checker) is_go_any(t: Int) -> Bool {
+  let o = c.named_obj(t)
+  o >= 0 && c.objs[o].module >= 0 && c.mods[c.objs[o].module].path == "std/go" && c.objs[o].name == b"Any"
+}
+
+/// Whether fo is std/go's `any` function.
+fn (c: Checker) is_go_any_fn(fo: Int) -> Bool {
+  fo >= 0 && c.objs[fo].module >= 0 && c.mods[c.objs[fo].module].path == "std/go" && c.objs[fo].name == b"any"
+}
+
+/// Whether a value of type t has a Go value `go.any` can make: the
+/// numbers, Bool, Str, Bytes, Duration, Time, a `use go` handle, go.Any,
+/// and a List, Map or Option of those (decision 0412 2).
+fn (c: Checker) has_go_value(t0: Int) -> Bool {
+  let t = c.resolve(t0)
+  if c.is_bad(t) || c.is_numeric(t) || c.is_go_any(t) {
+    return true
+  }
+  let o = c.named_obj(t)
+  if o < 0 {
+    return false
+  }
+  if c.objs[o].module == c.prelude {
+    let n = text(c.objs[o].name)
+    if n is "Bool" | "Str" | "Bytes" | "Duration" | "Time" {
+      return true
+    }
+    if n is "List" | "Option" {
+      return c.has_go_value(c.tys[t].args[0])
+    }
+    if n == "Map" {
+      return c.has_go_value(c.tys[t].args[0]) && c.has_go_value(c.tys[t].args[1])
+    }
+    return false
+  }
+  c.objs[o].module >= 0 && !c.mods[c.objs[o].module].go_path.is_empty()
+}
+
+/// XO1106 when t has no Go value, at sp.
+fn (var c: Checker) need_go_value(t: Int, sp: Span, what: Str) {
+  if c.has_go_value(t) {
+    return
+  }
+  let d = c.error("XO1106", sp, "${what}: `${c.show(t)}` has no Go value")
+  c.note(d, "a value passed to Go as `any` is a number, Bool, Str, Bytes, Duration, Time, a `use go` handle, a go.Any, or a List, Map or Option of those (decision 0412)")
+}
+
+/// The implicit conversion: a list literal e written for parameter type
+/// pt of a Go binding's function fo, where pt is `List[go.Any]`; each
+/// element converts as `go.any(x)` would. False when the rule does not
+/// apply (the caller checks e as usual).
+fn (var c: Checker) go_any_list(fo: Int, e: Expr, pt: Int) -> Bool {
+  if fo < 0 || c.objs[fo].module < 0 || c.mods[c.objs[fo].module].go_path.is_empty() {
+    return false
+  }
+  let h = c.resolve(pt)
+  if !(c.tys[h].kind == TyKind.Named && c.is_prelude(h, "List")) || !c.is_go_any(c.tys[h].args[0]) {
+    return false
+  }
+  if let ListLit(elems: elems, ..) = e {
+    let at = c.tys[h].args[0]
+    for x in elems {
+      let t = c.infer(x, -1)
+      c.need_go_value(t, parser.expr_span(x), "an element of a list passed to Go as `...any`")
+      c.set_type(x, at)
+    }
+    c.set_type(e, h)
+    c.nat_at[c.expr_key(e)] = h
+    return true
+  }
+  false
+}

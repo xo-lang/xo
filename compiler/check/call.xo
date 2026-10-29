@@ -1386,8 +1386,11 @@ fn (var c: Checker) check_args(params: List[ParamInfo], call: Expr, fname: Str, 
       }
       if i == 0 && ref_fo >= 0 && c.objs[ref_fo].module == c.prelude && c.display_name(ref_fo) == "List.get" {
         c.check_index(e)
-      } else {
+      } else if !c.go_any_list(ref_fo, e, params[i].ty) {
         c.check_ty(e, params[i].ty)
+        if c.is_go_any_fn(ref_fo) {
+          c.need_go_value(c.nat_at.get(c.expr_key(e)) ?? c.bad_ty, parser.expr_span(e), "`go.any`'s argument")
+        }
       }
       if params[i].is_var {
         c.require_mutable(e, "XO0502", "passing to `var` parameter `${text(params[i].name)}`")
