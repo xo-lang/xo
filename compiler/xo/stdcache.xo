@@ -22,23 +22,42 @@ const STD_CACHE_VERSION = 1
 /// std source's path, size and modification time (a body edit in a
 /// development std changes the object, unlike std_tree_sum's interface
 /// hash); "" when xo's identity or std cannot be read.
-fn std_cache_key(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool) -> Str {
+fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Bool) -> Str {
   let id = if XO_CODEGEN_KEY.len() == 64 { "codegen ${XO_CODEGEN_KEY}" } else { self_id(os) }
   if id.is_empty() {
     return ""
+  }
+  let tree = std_tree_lines(os, ctx, std)
+  if tree.is_empty() {
+    return ""
+  }
+  crypto.sha256("xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n${tree}".bytes()).to_hex()
+}
+
+/// std's .xo files under std, one "PATH SIZE MTIME" line each in path
+/// order, the part of std_cache_key every variant shares: walked once a
+/// process (Ctx.std_trees); "" when std cannot be walked.
+fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
+  if let Some(m) = ctx.std_trees {
+    if let Some(t) = m.with(fn(t) { t.get(std) }) {
+      return t
+    }
   }
   let files = match os.fs.walk(std) {
     Ok(fs) => fs
     Err(_) => return ""
   }
-  var b = BytesBuilder.new()
-  b.write_str("xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n")
+  var b = StrBuilder.new()
   for f in files.sort_by(fn(f: FileInfo) -> Str { f.path }) {
     if !f.is_dir && f.path.ends_with(".xo") {
-      b.write_str("${f.path.trim_prefix(std)} ${f.size} ${f.modified.unix_millis()}\n")
+      b.write("${f.path.trim_prefix(std)} ${f.size} ${f.modified.unix_millis()}\n")
     }
   }
-  crypto.sha256(b.freeze()).to_hex()
+  let t = b.freeze()
+  if let Some(m) = ctx.std_trees {
+    m.with(fn(var tr) { tr[std] = t })
+  }
+  t
 }
 
 /// The paths of std's store and facts for the target and variant, built
@@ -61,7 +80,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     }
     return None
   }
-  let key = std_cache_key(os, ctx.std, tgoos, tgoarch, conc)
+  let key = std_cache_key(os, ctx, ctx.std, tgoos, tgoarch, conc)
   if key.is_empty() {
     return None
   }
@@ -151,7 +170,7 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phas
   if dir.is_empty() {
     return None
   }
-  let key = std_cache_key(os, ctx.std, tgoos, tgoarch, conc)
+  let key = std_cache_key(os, ctx, ctx.std, tgoos, tgoarch, conc)
   if key.is_empty() {
     return None
   }

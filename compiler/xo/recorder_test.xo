@@ -51,3 +51,26 @@ test "a release's prebuilt std stores are left out of the recorded reads" {
   expect(g[0].contains("/opt/xo/lib/xo/stdstore/")) == true
   expect(g[1].filter(fn(p) { p.ends_with("/stdstore/") }).len()) == 0
 }
+
+test "a listing and a walk carry the digests the run cache would compute" {
+  let rec = Mutex[Rec].new(Rec{})
+  let want = Mutex[(Str, Str)].new(("", ""))
+  let code = testing.run_main(fn(o: Os) -> () ! Error {
+    o.fs.create_dir_all("/w/src/sub")?
+    o.fs.write("/w/src/a.xo", b"fn a() {}")?
+    o.fs.write("/w/src/sub/b.xo", b"fn b() {}")?
+    let r = rec_os(o, rec, "/w", [])
+    let _l = r.fs.read_dir("/w/src")?
+    let _w = r.fs.walk("/w/src")?
+    let d = listing_of(o, "/w/src")
+    let w = walk_of(o, "/w/src")
+    want.with(fn(var x) { x = (d, w) })
+  }, os)
+  expect(code) == 0
+  let sums = rec.with(fn(x) { x.list_sums })
+  // run_store writes these instead of listing and walking again
+  let (want_dir, want_walk) = want.with(fn(x) { x })
+  expect(want_dir.is_empty()) == false
+  expect(sums.get("dir /w/src") ?? "") == want_dir
+  expect(sums.get("walk /w/src") ?? "") == want_walk
+}

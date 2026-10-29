@@ -21,6 +21,10 @@ struct Rec {
   probes: Map[Str, Str] = {}
   /// directories listed ("dir") or walked ("walk")
   lists: Map[Str, Str] = {}
+  /// "KIND PATH" (dir or walk) to the digest of what that listing or walk
+  /// returned (testcache.xo listing_digest, walk_digest), so the run
+  /// cache's entry needs no second listing; the last one wins
+  list_sums: Map[Str, Str] = {}
   /// paths the build wrote: never inputs
   written: Map[Str, Bool] = {}
   /// environment variables read: "=VALUE", or "!" when unset
@@ -139,12 +143,30 @@ fn (f: RecFs) read_text(path: Str) -> Str ! FsErr uses fs.read {
 
 fn (f: RecFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
   f.note_list("dir", dir)
-  f.inner.read_dir(dir)
+  let fis = f.inner.read_dir(dir)?
+  f.note_sum("dir", dir, listing_digest(fis))
+  Ok(fis)
 }
 
 fn (f: RecFs) walk(dir: Str) -> List[FileInfo] ! FsErr uses fs.read {
   f.note_list("walk", dir)
-  f.inner.walk(dir)
+  let fis = f.inner.walk(dir)?
+  // walk's paths start with dir as given: the digest is the one a walk of
+  // the absolute path gives only when dir is absolute already
+  if f.abs(dir) == dir {
+    f.note_sum("walk", dir, walk_digest(fis))
+  }
+  Ok(fis)
+}
+
+/// Notes what a listing ("dir") or walk ("walk") of dir returned
+/// (Rec.list_sums).
+fn (f: RecFs) note_sum(kind: Str, dir: Str, sum: Str) {
+  let p = f.abs(dir)
+  if f.skipped(p) {
+    return
+  }
+  f.rec.with(fn(var r) { r.list_sums["${kind} ${p}"] = sum })
 }
 
 fn (f: RecFs) write(path: Str, data: Bytes) -> () ! FsErr uses fs.write {

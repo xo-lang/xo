@@ -156,30 +156,36 @@ fn sha_of(os: Os, p: Str) -> Str {
 /// directory's), "none" when it cannot be read.
 fn listing_of(os: Os, dir: Str) -> Str {
   match os.fs.read_dir(dir) {
-    Ok(fis) => {
-      var ns: List[Str] = []
-      for fi in fis {
-        ns.push(if fi.is_dir { "${fi.name}/" } else { fi.name })
-      }
-      crypto.sha256(ns.sort().join("\n").bytes()).to_hex()
-    }
+    Ok(fis) => listing_digest(fis)
     Err(_) => "none"
   }
+}
+
+/// listing_of's digest of the entries fis.
+fn listing_digest(fis: List[FileInfo]) -> Str {
+  var ns: List[Str] = []
+  for fi in fis {
+    ns.push(if fi.is_dir { "${fi.name}/" } else { fi.name })
+  }
+  crypto.sha256(ns.sort().join("\n").bytes()).to_hex()
 }
 
 /// The SHA-256 of every path under dir (a slash after a directory's),
 /// sorted; "none" when it cannot be walked.
 fn walk_of(os: Os, dir: Str) -> Str {
   match os.fs.walk(dir) {
-    Ok(all) => {
-      var names: List[Str] = []
-      for fi in all {
-        names.push(if fi.is_dir { "${fi.path}/" } else { fi.path })
-      }
-      crypto.sha256(names.sort().join("\n").bytes()).to_hex()
-    }
+    Ok(all) => walk_digest(all)
     Err(_) => "none"
   }
+}
+
+/// walk_of's digest of the walk all.
+fn walk_digest(all: List[FileInfo]) -> Str {
+  var names: List[Str] = []
+  for fi in all {
+    names.push(if fi.is_dir { "${fi.path}/" } else { fi.path })
+  }
+  crypto.sha256(names.sort().join("\n").bytes()).to_hex()
 }
 
 /// How many of an entry's files run_fetch hashes one by one before the
@@ -399,6 +405,8 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
   var sums: Map[Str, Str] = {}
   var dirs: List[Str] = []
   var walks: List[Str] = []
+  // what the build's own listings and walks returned (Rec.list_sums)
+  var list_sums: Map[Str, Str] = {}
   var extra: List[Str] = []
   // a build's own outputs and what it wrote are not its inputs: a
   // probe of the output before it existed would miss every next build
@@ -415,6 +423,7 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
       let own = fn(p: Str) -> Bool { made.contains(p) }
       files = rec.reads.keys().sort().filter(fn(p) { !own(p) })
       sums = rec.reads
+      list_sums = rec.list_sums
       for p in rec.lists.keys().sort() {
         if own(p) {
           continue
@@ -476,11 +485,19 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
     let sum = sums.get(p) ?? ""
     b.write("file ${if sum.is_empty() { sha_of(os, p) } else { sum }} ${hex_field(p)}\n")
   }
+  // a listing the build saw before it wrote into that directory (its
+  // output binary in the module's directory) is not the one the next
+  // build sees: list such a directory again
+  let wrote_in = fn(d: Str, under: Bool) -> Bool {
+    made.keys().any(fn(p) { if under { p.starts_with("${d}/") } else { dir_name(p) == d } })
+  }
   for d in dirs {
-    b.write("dir ${listing_of(os, d)} ${hex_field(d)}\n")
+    let sum = if wrote_in(d, false) { "" } else { list_sums.get("dir ${d}") ?? "" }
+    b.write("dir ${if sum.is_empty() { listing_of(os, d) } else { sum }} ${hex_field(d)}\n")
   }
   for d in walks {
-    b.write("walk ${walk_of(os, d)} ${hex_field(d)}\n")
+    let sum = if wrote_in(d, true) { "" } else { list_sums.get("walk ${d}") ?? "" }
+    b.write("walk ${if sum.is_empty() { walk_of(os, d) } else { sum }} ${hex_field(d)}\n")
   }
   for l in extra {
     b.write(l)
