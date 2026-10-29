@@ -85,7 +85,10 @@ compile() {
 		# the cache statistics name the path the build took (its last lines
 		# in the log): "cache std ... reused" is separate compilation against
 		# std's variants, "cache stdx record loaded" the std records
-		build=(env XO_BACKEND_CACHE_DIR="$cache/backend" XO_CACHE_STATS=1 "$XO" build -o "$bin" .)
+		# XO_BIN_CACHE=off: no whole-build run cache, which lives in the user
+		# cache and served a second run of this script with the same OUT its
+		# cold row in 70 ms (2026-10-29)
+		build=(env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BIN_CACHE=off XO_CACHE_STATS=1 "$XO" build -o "$bin" .)
 	else
 		build=(env GOCACHE="$cache/go" GOFLAGS=-trimpath go build -o "$bin" .)
 	fi
@@ -104,9 +107,12 @@ compile() {
 			(cd "$d" && env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BACKEND_CACHE=on "$XO" dev stdcache --conc=$conc >"$OUT/stdcache-$name-$conc.log" 2>&1) || echo "stdcache --conc=$conc failed for $name (see $OUT/stdcache-$name-$conc.log)" >&2
 		done
 		# the first separately compiled build writes the std records (stage
-		# 2) and parses std for them; untimed, so the edit row is the loader,
-		# a user's steady state (the second and warm rows are run cache hits)
+		# 2) and parses std for them: an untimed build of a one-function
+		# edit (an unchanged build could be served from a cache), restored
+		# after, so the edit row is the loader, a user's steady state
+		printf '\nfn release_vs_go_records() -> Int {\n  1\n}\n' >>"$d/$mainf"
 		(cd "$d" && "${build[@]}" >"$OUT/build-$side-$name-records.log" 2>&1) || true
+		cp "$src/$mainf" "$d/$mainf"
 	fi
 	second=$(cd "$d" && timed "$OUT/build-$side-$name-second.log" "${build[@]}")
 	warm=$(cd "$d" && timed "$OUT/build-$side-$name-warm.log" "${build[@]}")
