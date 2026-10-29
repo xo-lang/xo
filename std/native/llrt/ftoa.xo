@@ -18,6 +18,10 @@ use native/rt
 struct Dec {
   d: List[Int] = []
   dp: Int = 0
+  /// The digits as an integer of n digits (the fixed path, up to 18), or -1
+  /// when they are in d.
+  v: Int = -1
+  n: Int = 0
 }
 
 /// The exact digits of mant * 2^e2 (mant below 2^53).
@@ -197,7 +201,19 @@ fn shortest(f: Float) -> Dec {
   Dec{d: res, dp: dp - lead}
 }
 
-fn at(d: Dec, i: Int) -> Int { if i >= 0 && i < d.d.len() { d.d[i] } else { 0 } }
+/// The digit count of d: of the integer v when the fixed path made it,
+/// else of the list.
+fn dlen(d: Dec) -> Int { if d.v >= 0 { d.n } else { d.d.len() } }
+
+/// Digit i of d (0 is the first).
+fn dget(d: Dec, i: Int) -> Int {
+  if d.v >= 0 {
+    return d.v / num.pow10(d.n - 1 - i) % 10
+  }
+  d.d[i]
+}
+
+fn at(d: Dec, i: Int) -> Int { if i >= 0 && i < dlen(d) { dget(d, i) } else { 0 } }
 
 /// The digit v (0 to 9) as a byte.
 fn dig(v: Int) -> UInt8 { UInt8(48 + v) }
@@ -206,7 +222,7 @@ fn dig(v: Int) -> UInt8 { UInt8(48 + v) }
 fn put_exp(var b: BytesBuilder, e: Int, d: Dec) {
   b.write_byte(if e == 69 { 69 } else { 101 })
   var exp = d.dp - 1
-  if d.d.len() == 0 {
+  if dlen(d) == 0 {
     exp = 0
   }
   if exp < 0 {
@@ -235,13 +251,13 @@ fn fmt_e(out: Str, neg: Bool, d: Dec, prec: Int, e: Int) -> Str {
   if neg {
     b.write_byte(45)
   }
-  b.write_byte(if d.d.len() == 0 { 48 } else { dig(d.d[0]) })
+  b.write_byte(if dlen(d) == 0 { 48 } else { dig(dget(d, 0)) })
   if prec > 0 {
     b.write_byte(46)
     var i = 1
-    let m = if d.d.len() < prec + 1 { d.d.len() } else { prec + 1 }
+    let m = if dlen(d) < prec + 1 { dlen(d) } else { prec + 1 }
     while i < m {
-      b.write_byte(dig(d.d[i]))
+      b.write_byte(dig(dget(d, i)))
       i += 1
     }
     while i <= prec {
@@ -261,9 +277,9 @@ fn fmt_f(out: Str, neg: Bool, d: Dec, prec: Int) -> Str {
     b.write_byte(45)
   }
   if d.dp > 0 {
-    var m = if d.d.len() < d.dp { d.d.len() } else { d.dp }
+    var m = if dlen(d) < d.dp { dlen(d) } else { d.dp }
     for j in 0..m {
-      b.write_byte(dig(d.d[j]))
+      b.write_byte(dig(dget(d, j)))
     }
     while m < d.dp {
       b.write_byte(48)
@@ -333,18 +349,7 @@ pub fn format(f: Float, verb: Int, prec0: Int) -> Str {
             v = v / 10
             nd -= 1
           }
-          var rev: List[Int] = []
-          for _ in 0..nd {
-            rev.push(v % 10)
-            v = v / 10
-          }
-          var ds: List[Int] = []
-          var i = nd - 1
-          while i >= 0 {
-            ds.push(rev[i])
-            i -= 1
-          }
-          d = Dec{d: ds, dp: dp}
+          d = Dec{dp: dp, v: v, n: nd}
         }
       } else {
         d = exact(mant, e2)
@@ -353,11 +358,11 @@ pub fn format(f: Float, verb: Int, prec0: Int) -> Str {
   }
   if shortest_digits {
     if verb == 101 || verb == 69 {
-      prec = d.d.len() - 1
+      prec = dlen(d) - 1
     } else if verb == 102 {
-      prec = if d.d.len() - d.dp > 0 { d.d.len() - d.dp } else { 0 }
+      prec = if dlen(d) - d.dp > 0 { dlen(d) - d.dp } else { 0 }
     } else {
-      prec = d.d.len()
+      prec = dlen(d)
     }
   } else if !fast {
     if verb == 101 || verb == 69 {
@@ -379,8 +384,8 @@ pub fn format(f: Float, verb: Int, prec0: Int) -> Str {
   }
   // 'g' and 'G'
   var eprec = prec
-  if eprec > d.d.len() && d.d.len() >= d.dp {
-    eprec = d.d.len()
+  if eprec > dlen(d) && dlen(d) >= d.dp {
+    eprec = dlen(d)
   }
   if shortest_digits {
     eprec = 6
@@ -388,14 +393,14 @@ pub fn format(f: Float, verb: Int, prec0: Int) -> Str {
   let exp = d.dp - 1
   if exp < -4 || exp >= eprec {
     var p = prec
-    if p > d.d.len() {
-      p = d.d.len()
+    if p > dlen(d) {
+      p = dlen(d)
     }
     return fmt_e("", neg, d, p - 1, if verb == 71 { 69 } else { 101 })
   }
   var p = prec
   if p > d.dp {
-    p = d.d.len()
+    p = dlen(d)
   }
   fmt_f("", neg, d, if p - d.dp > 0 { p - d.dp } else { 0 })
 }

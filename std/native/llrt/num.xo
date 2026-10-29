@@ -181,7 +181,7 @@ const P10: Bytes = b"\x01\x00\x00\x00\x00\x00\x00\x00\x0a\x00\x00\x00\x00\x00\x0
 /// 10^k (0 <= k <= 18): one load from P10 (2026-10-23: five tests and
 /// five checked multiplies, a call at json_layout's sites; json
 /// enc_floats).
-fn pow10(k: Int) -> Int { word_at(P10, 8 * k) }
+pub fn pow10(k: Int) -> Int { word_at(P10, 8 * k) }
 
 /// The number of decimal digits of v (1 <= v < 10^18).
 fn ndigits(v: Int) -> Int {
