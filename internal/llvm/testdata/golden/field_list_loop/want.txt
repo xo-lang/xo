@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+copy 0 loop 60
+none 60
+nested 2 75 9 copy 0
+tuple 3 15
+param 30 75
+shared 5 30 30
+elem 130 30
+--- stderr

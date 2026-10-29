@@ -2506,100 +2506,154 @@ fn (var r: Rc) handed_unique(f: Func, u: Uniq, l: Leaf, at: Int) -> Bool {
 /// back edge, then checks and copies it once before the loop instead of
 /// at the update of every iteration. Each edge in must leave a block
 /// that only jumps; the list must not be retained. A loop that runs no
-/// iteration copies a shared list it did not need to.
+/// iteration copies a shared list it did not need to. A List field of a
+/// struct or tuple parameter is one too (2026-10-28: `h.chunks[off] = c`
+/// in a loop that carries h checked and reloaded the list each store, as
+/// a local list did not): the edge in passes the value with that field
+/// reused (`field k`, `reuse`, `setfield k`, the shape of the update in
+/// the loop).
 fn (var r: Rc) hoist_reuse(var f: Func) {
   let u = r.unique(f)
   var idom: List[Int] = []
   for h in 1..f.blocks.len() {
     let ps = f.blocks[h].params
     for (i, p) in ps.indexed() {
-      if f.values[p].ty < 0 || r.types[f.values[p].ty].kind != Kind.List {
+      let pt = f.values[p].ty
+      if pt < 0 {
         continue
       }
-      let pl = Leaf{root: p, path: ""}
-      if u.retained.contains(leaf_key(pl)) || r.uniq(f, u, pl) {
-        continue
-      }
-      if idom.is_empty() {
-        idom = dominators(f)
-      }
-      if idom[h] < 0 {
-        continue
-      }
-      var backs: List[Int] = []
-      var entries: List[Int] = []
-      var ok = true
-      for e in f.blocks[h].preds {
-        let from = f.edges[e].from
-        if from < 0 || idom[from] < 0 {
-          ok = false
-          break
+      // the field of p that is the list, -1 for p itself
+      var ks: List[Int] = []
+      if r.types[pt].kind == Kind.List {
+        ks = [-1]
+      } else if r.decomposable(pt) {
+        for k in 0..r.num_fields(pt) {
+          let ft = r.field_type(pt, k)
+          if ft >= 0 && r.types[ft].kind == Kind.List {
+            ks.push(k)
+          }
         }
-        let ea = f.edges[e].args
-        if dominates(idom, h, from) {
-          backs.push(e)
-          let a = ea[i]
-          if a != p && !r.uniq(f, u, r.leaves(f, a)[0]) {
+      }
+      for k in ks {
+        let sub = if k < 0 { "" } else { ".${k}" }
+        let pl = r.leaf(p, sub)
+        if u.retained.contains(leaf_key(pl)) || r.uniq(f, u, pl) {
+          continue
+        }
+        if idom.is_empty() {
+          idom = dominators(f)
+        }
+        if idom[h] < 0 {
+          continue
+        }
+        var backs: List[Int] = []
+        var entries: List[Int] = []
+        var ok = true
+        for e in f.blocks[h].preds {
+          let from = f.edges[e].from
+          if from < 0 || idom[from] < 0 {
+            ok = false
+            break
+          }
+          let ea = f.edges[e].args
+          if dominates(idom, h, from) {
+            backs.push(e)
+            let a = ea[i]
+            if a != p {
+              let ab = r.base(f, a)
+              if !r.uniq(f, u, r.leaf(ab.root, "${ab.path}${sub}")) {
+                ok = false
+              }
+            }
+            continue
+          }
+          entries.push(e)
+          let ins = f.blocks[from].instrs
+          if ins.is_empty() || f.values[ins[ins.len() - 1]].op != Op.Jump {
             ok = false
           }
-          continue
-        }
-        entries.push(e)
-        let ins = f.blocks[from].instrs
-        if ins.is_empty() || f.values[ins[ins.len() - 1]].op != Op.Jump {
-          ok = false
-        }
-        for (k, a) in ea.indexed() {
-          if k != i && a == ea[i] {
-            ok = false
+          let root = r.base(f, ea[i]).root
+          for (j, a) in ea.indexed() {
+            if j != i && (a == ea[i] || (k >= 0 && r.base(f, a).root == root)) {
+              ok = false
+            }
           }
         }
-      }
-      if !ok || backs.is_empty() || entries.is_empty() {
-        continue
-      }
-      // an update of p on every iteration
-      var every = false
-      for b in 0..f.blocks.len() {
-        if every {
-          break
-        }
-        if !dominates(idom, h, b) {
+        if !ok || backs.is_empty() || entries.is_empty() {
           continue
         }
-        var all = true
-        for e in backs {
-          all = all && dominates(idom, b, f.edges[e].from)
-        }
-        if !all {
-          continue
-        }
-        for v in f.blocks[b].instrs {
-          let x = f.values[v]
-          if x.op == Op.Call && is_update_call(aux_name(x.aux)) && x.args[0] == p {
-            every = true
+        // an update of p (or of its field k) on every iteration
+        var every = false
+        for b in 0..f.blocks.len() {
+          if every {
+            break
+          }
+          if !dominates(idom, h, b) {
+            continue
+          }
+          var all = true
+          for e in backs {
+            all = all && dominates(idom, b, f.edges[e].from)
+          }
+          if !all {
+            continue
+          }
+          for v in f.blocks[b].instrs {
+            let x = f.values[v]
+            if x.op == Op.Call && is_update_call(aux_name(x.aux)) && (if k < 0 { x.args[0] == p } else { field_of(f, x.args[0], p, k) }) {
+              every = true
+            }
           }
         }
-      }
-      if !every {
-        continue
-      }
-      for e in entries {
-        let a = f.edges[e].args[i]
-        if r.uniq(f, u, r.leaves(f, a)[0]) {
+        if !every {
           continue
         }
-        let pb = f.edges[e].from
-        let w = new_value(f, pb, Op.Reuse, f.values[a].ty, Aux.None, [a])
-        var ins = f.blocks[pb].instrs
-        let t = ins.pop() ?? -1
-        ins.push(w)
-        ins.push(t)
-        f.blocks[pb].instrs = ins
-        f.edges[e].args[i] = w
+        for e in entries {
+          let a = f.edges[e].args[i]
+          let ab = r.base(f, a)
+          if r.uniq(f, u, r.leaf(ab.root, "${ab.path}${sub}")) {
+            continue
+          }
+          let pb = f.edges[e].from
+          var ins = f.blocks[pb].instrs
+          let t = ins.pop() ?? -1
+          var w = -1
+          if k < 0 {
+            w = new_value(f, pb, Op.Reuse, f.values[a].ty, Aux.None, [a])
+            ins.push(w)
+          } else {
+            let ft = r.field_type(pt, k)
+            let fv = new_value(f, pb, Op.Field, ft, Aux.I(n: k), [a])
+            let ru = new_value(f, pb, Op.Reuse, ft, Aux.None, [fv])
+            w = new_value(f, pb, Op.SetField, f.values[a].ty, Aux.I(n: k), [a, ru])
+            ins.push(fv)
+            ins.push(ru)
+            ins.push(w)
+          }
+          ins.push(t)
+          f.blocks[pb].instrs = ins
+          f.edges[e].args[i] = w
+        }
       }
     }
   }
+}
+
+/// Whether v reads field k of p, through setfields of p's other fields.
+fn field_of(f: Func, v: Int, p: Int, k: Int) -> Bool {
+  let x = f.values[v]
+  if x.op != Op.Field || aux_int(x.aux) != k {
+    return false
+  }
+  var s = x.args[0]
+  while s != p {
+    let sx = f.values[s]
+    if sx.op != Op.SetField || aux_int(sx.aux) == k {
+      return false
+    }
+    s = sx.args[0]
+  }
+  true
 }
 
 /// Puts `reuse` before each list update whose list is not provably

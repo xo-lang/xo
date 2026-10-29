@@ -1,0 +1,85 @@
+// A loop that stores into a List field of a struct it carries: the
+// field's copy-on-write check moves to the loop's entry (rc.xo
+// hoist_reuse, decision 0208 addendum 2026-10-28). A copy of the struct
+// made before the loop keeps its list.
+struct T {
+  n: Int
+  xs: List[Int]
+  ys: List[Int]
+}
+
+fn sum(l: List[Int]) -> Int {
+  var s = 0
+  for x in l {
+    s += x
+  }
+  s
+}
+
+fn fill(var t: T, k: Int) {
+  var i = 0
+  while i < t.xs.len() {
+    t.xs[i] = i * k
+    i += 1
+  }
+}
+
+fn main(os: Os) uses stdio {
+  var t = T{n: 0, xs: [0, 0, 0, 0, 0], ys: [1, 1, 1]}
+  // a copy before the loop: the loop's stores copy the list once
+  let before = t
+  var i = 0
+  while i < 5 {
+    t.xs[i] = i + 10
+    i += 1
+  }
+  os.stdio.println("copy ${sum(before.xs)} loop ${sum(t.xs)}")
+
+  // no iteration
+  var j = 7
+  while j < 3 {
+    t.xs[j] = 0
+    j += 1
+  }
+  os.stdio.println("none ${sum(t.xs)}")
+
+  // two fields, another field set in the loop, a nested loop
+  var a = 0
+  while a < 3 {
+    t.n = a
+    var b = 0
+    while b < 5 {
+      t.xs[b] = t.xs[b] + a
+      b += 1
+    }
+    t.ys[a] = t.ys[a] * (a + 2)
+    a += 1
+  }
+  os.stdio.println("nested ${t.n} ${sum(t.xs)} ${sum(t.ys)} copy ${sum(before.xs)}")
+
+  // a tuple carried by the loop
+  var p = (3, [5, 5, 5])
+  let q = p
+  var c = 0
+  while c < 3 {
+    p.1[c] = c
+    c += 1
+  }
+  os.stdio.println("tuple ${sum(p.1)} ${sum(q.1)}")
+
+  // through a var parameter, the caller's copy kept
+  let keep = t
+  fill(t, 3)
+  os.stdio.println("param ${sum(t.xs)} ${sum(keep.xs)}")
+
+  // a struct shared by a list of them
+  var ts = [t, t]
+  var d = 0
+  while d < 5 {
+    t.xs[d] = 1
+    d += 1
+  }
+  os.stdio.println("shared ${sum(t.xs)} ${sum(ts[0].xs)} ${sum(ts[1].xs)}")
+  ts[0].xs[0] = 100
+  os.stdio.println("elem ${sum(ts[0].xs)} ${sum(ts[1].xs)}")
+}

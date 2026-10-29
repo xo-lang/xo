@@ -55,3 +55,36 @@ it did not need to. Generated code changes wherever lists are indexed
   copy for a loop that runs no iteration, but code size per loop.
 - Make interprocedural length facts (a callee that only sets elements
   keeps the length): left for later; a source guard does it now.
+
+## Addendum (2026-10-28): List fields of a loop's struct
+
+Item 5 covers a List field of a struct or tuple parameter of a loop
+header too (compiler/ssa rc.xo hoist_reuse): when every iteration
+updates `field k` of the parameter (past setfields of its other fields),
+every back edge passes that field back unique, and the field is not
+retained, each edge into the loop passes the value with that field
+reused (`field k`, `reuse`, `setfield k`: the shape the loop's own
+update has), so the loop's updates need none. Before, `h.chunks[off] =
+c` in a loop that carried h checked the list's count and reloaded its
+length and data address at every store, where a local list did not
+(flate hdec_init, 44 of its 76 ms in unzip's profile, 2026-10-28). No
+change to what is counted or when a list is copied: the reuse the loop
+did at its first iteration's update now happens on the way in, as item 5
+does for a List parameter (and, like it, a loop that runs no iteration
+copies a shared list it did not need to).
+
+Instructions against the parent's xo (outputs equal): flate's hdec_init
+in its earlier field form (std at 07a089cec), archive unzip 0.9567 (the
+hand-hoisted locals, 3de077d62: 0.9509); SHA3-256 of 1 MiB 0.962, its
+quiet --ab wall 0.987 (0.981 to 0.993); archive zip 0.994 (wall within
+noise); a 512-store fill through a struct field 2.403G to 2.299G
+instructions, a local list's 2.298G.
+
+The length of such a field travels with a loop header's struct or tuple
+parameter as a List parameter's does (compiler/arm64 isel.xo len_param,
+plan_field_lens), for the List fields the function indexes or sets through
+a field of that parameter: the store is then a compare and the store, as
+for a local list. Every List field of every struct parameter carried its
+length in a first version: a register each across the loop, and flate's
+hdec_init spilled twice as often (57 to 118 spill and reload lines),
+slower than without it.

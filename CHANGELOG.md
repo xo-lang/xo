@@ -10,6 +10,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   not a `uname -s` subprocess run four times a build; the run cache's
   miss check on a fib edit drops from 3 to 17 ms to 0 (8 interleaved
   edits against main, a loaded machine).
+- Compiler: a loop that stores into a List field of a struct it carries
+  (`h.chunks[off] = c`, `s.lanes[l] ^= w`) checks the list's copy on
+  write once on the way into the loop, as a loop over a local list
+  already did (compiler/ssa rc.xo hoist_reuse, decision 0208 addendum),
+  and the loop keeps such a field's length in a register (compiler/arm64
+  isel.xo): the store was a count check, a length load and an address
+  computation each time. Instructions against the parent's xo (outputs
+  equal): flate's hdec_init in its earlier field form (std at
+  07a089cec), archive unzip 0.9567 (the hand-hoisted locals, 3de077d62:
+  0.9509); SHA3-256 of 1 MiB 0.962, its quiet --ab wall 0.987 (0.981 to
+  0.993); archive zip 0.994 (wall within noise); a 512-store fill
+  through a struct field 2.403G to 2.299G instructions, a local list's
+  2.298G.
 - `xo build` and `xo run` compile separately by default on darwin/arm64
   (decision 0388 stage 3): std's functions come from std's prebuilt
   variants in the backend cache (its store and facts), so an edit

@@ -733,10 +733,15 @@ fn (var g: G) isel() {
           // (f32_param_move), and its Float32 operations read it
           g.f32s[p] = g.new_vreg(true)
         }
-        if g.vkind(p) == ssa.Kind.List {
-          // the list's length travels with it (see opt.xo)
+        // the list's length travels with it (see opt.xo), and so does
+        // the length of a List field of a struct or tuple (2026-10-28: a
+        // loop storing into h.chunks loaded its length at every store)
+        if header {
+          g.plan_field_lens(p)
+        }
+        for w in g.list_words(p) {
           let c = g.new_vreg(false)
-          g.len_param[g.vals[p][0]] = c
+          g.len_param[g.vals[p][w]] = c
         }
       }
       g.lsr_params(b)
@@ -791,13 +796,15 @@ fn (var g: G) isel() {
     }
     if i > 0 {
       for p in g.f.blocks[b].params {
-        if g.vkind(p) != ssa.Kind.List || !g.has_val[p] {
+        if !g.has_val[p] {
           continue
         }
-        let r = g.vals[p][0]
-        if let Some(c) = g.len_param.get(r) {
-          let _mi = g.m_()
-          g.cm.lens[r] = c
+        for w in g.list_words(p) {
+          let r = g.vals[p][w]
+          if let Some(c) = g.len_param.get(r) {
+            let _mi = g.m_()
+            g.cm.lens[r] = c
+          }
         }
       }
     }
@@ -907,16 +914,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       srcs.push(rsrc(aw[k]))
     }
     g.f32_param_move(p, g.f.edges[e].args[i], dsts, srcs)
-    if g.vkind(p) != ssa.Kind.List {
-      continue
-    }
-    if let Some(c) = g.len_param.get(pw[0]) {
-      let n = g.list_len(aw[0])
-      if n != c {
-        dsts.push(c)
-        srcs.push(rsrc(n))
-      }
-    }
+    g.len_moves(p, pw, aw, dsts, srcs)
   }
   g.lsr_moves(e, dsts, srcs)
 }
@@ -2863,14 +2861,74 @@ fn (var g: G) param_moves(p: Int, a: Int, var dsts: List[Int], var srcs: List[Sr
     }
   }
   g.f32_param_move(p, a, dsts, srcs)
-  if g.vkind(p) != ssa.Kind.List {
+  g.len_moves(p, pw, aw, dsts, srcs)
+}
+
+/// The words of block parameter p whose lengths travel with it
+/// (len_param): word 0 of a List; the words of the List fields of a loop
+/// header's struct or tuple parameter that plan_field_lens chose.
+fn (var g: G) list_words(p: Int) -> List[Int] {
+  if g.vkind(p) == ssa.Kind.List {
+    return [0]
+  }
+  g.field_lens.get(p) ?? []
+}
+
+/// Chooses the List fields of struct or tuple parameter p of a loop
+/// header whose lengths travel with it: those the function indexes or
+/// sets through a field of p itself (`h.chunks[off] = c` in the loop),
+/// so a length no bounds check reads takes no register across the loop.
+fn (var g: G) plan_field_lens(p: Int) {
+  let k = g.vkind(p)
+  if k != ssa.Kind.Struct && k != ssa.Kind.Tuple {
     return
   }
-  if let Some(c) = g.len_param.get(pw[0]) {
-    let n = g.list_len(aw[0])
-    if n != c {
-      dsts.push(c)
-      srcs.push(rsrc(n))
+  let t = g.vty(p)
+  var out: List[Int] = []
+  for v in 0..g.f.values.len() {
+    let x = g.f.values[v]
+    if x.op != ssa.Op.Call || x.args.len() < 2 || !(aux_str(x.aux) is "list.index" | "list.set") {
+      continue
+    }
+    let fx = g.f.values[x.args[0]]
+    if fx.op != ssa.Op.Field || fx.args[0] != p {
+      continue
+    }
+    let i = match fx.aux {
+      I(n) => n
+      _ => -1
+    }
+    if i < 0 {
+      continue
+    }
+    let ft = if k == ssa.Kind.Struct { g.m.types[t].fields[i].ty } else { g.m.types[t].elems[i] }
+    if g.kind(ft) != ssa.Kind.List {
+      continue
+    }
+    let w = g.field_words(t, i).0
+    if !out.contains(w) {
+      out.push(w)
+    }
+  }
+  if !out.is_empty() {
+    g.field_lens[p] = out
+  }
+}
+
+/// The moves of the lengths of p's lists (len_param) from the words aw.
+fn (var g: G) len_moves(p: Int, pw: List[Int], aw: List[Int], var dsts: List[Int], var srcs: List[Src]) {
+  for w in g.list_words(p) {
+    // a struct with no value on this edge (its zero words) has no list
+    // to measure
+    if g.vkind(p) != ssa.Kind.List && aw[w] == 0 {
+      continue
+    }
+    if let Some(c) = g.len_param.get(pw[w]) {
+      let n = g.list_len(aw[w])
+      if n != c {
+        dsts.push(c)
+        srcs.push(rsrc(n))
+      }
     }
   }
 }

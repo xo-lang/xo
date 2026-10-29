@@ -313,6 +313,9 @@ struct G {
   /// the register of a List block parameter to the register of its
   /// length, a parameter too
   len_param: Map[Int, Int] = {}
+  /// the List field words of each loop header's struct or tuple
+  /// parameter whose list the function indexes (list_words)
+  field_lens: Map[Int, List[Int]] = {}
   /// the memo at the end of each lowered SSA block, -1 for none
   end_memo: List[Int] = []
   /// compares lowered into the branch that uses them
@@ -517,6 +520,7 @@ fn (var g: G) begin_func(fi: Int) {
     g.pads.push(false)
   }
   g.len_param = {}
+  g.field_lens = {}
   g.out = false
   g.lsr = {}
   g.plans = []
