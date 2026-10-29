@@ -54,6 +54,11 @@ func (e *ClangError) Error() string { return "clang: " + e.Output }
 // raises faults through every frame, decision 0085), the -l flags after
 // the sources, and -lm -lpthread (or lld on Windows); on macOS it tries
 // the SDKs of sysrootCandidates until one links.
+// WindowsLinkLibs are the import libraries a windows/amd64 program of Xo's
+// runtime needs (std/native/sys_windows.xo's DLLs): the same list as
+// compiler/xo link.xo's sys_link_args, which TestWindowsLinkLibs checks.
+var WindowsLinkLibs = []string{"kernel32", "ws2_32", "bcrypt", "synchronization", "ntdll", "shell32", "crypt32"}
+
 func compileC(flags, srcs []string, bin string) error {
 	clang, err := Clang()
 	if err != nil {
@@ -76,6 +81,14 @@ func compileC(flags, srcs []string, bin string) error {
 		args = append(args, libs...)
 		if runtime.GOOS == "windows" {
 			args = append(args, "-fuse-ld=lld", "-Wl,/Brepro")
+			// the import libraries of the DLLs the runtime calls, as xo's own
+			// link adds them (compiler/xo link.xo sys_link_args; TestWindowsLinkLibs
+			// keeps the two lists equal): without synchronization.lib a program
+			// reaching the futex (pool.xo's WaitOnAddress) failed to link in the
+			// LLVM runtime tests on xo-windows (CI 40926030751, 2026-10-29)
+			for _, l := range WindowsLinkLibs {
+				args = append(args, "-l"+l)
+			}
 		} else {
 			args = append(args, "-lm", "-lpthread")
 		}

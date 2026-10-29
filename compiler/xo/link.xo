@@ -291,6 +291,8 @@ fn try_link(os: Os, ctx: Ctx, cc: Str, flags: List[Str], libs: List[Str], srcs: 
 /// 0206), with the .eh_frame_hdr table the Xo unwinder searches (a
 /// static link has none by default).
 fn sys_link_args(goos: Str, flags: List[Str]) -> List[Str] {
+  // the import libraries are internal/xotool's WindowsLinkLibs too (the test
+  // harness's own links, cc.go compileC; TestWindowsLinkLibs keeps them equal)
   if goos == "windows" {
     return ["-fuse-ld=lld", "-Wl,/Brepro", "-Wl,/debug:symtab", "-lkernel32", "-lws2_32", "-lbcrypt", "-lsynchronization", "-lntdll", "-lshell32", "-lcrypt32"]
   }
