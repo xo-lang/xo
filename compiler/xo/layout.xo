@@ -86,3 +86,52 @@ fn parse_layout(text: Str) -> Layout ! Str {
   }
   l
 }
+
+/// The order the functions named in names take under layout l (decision
+/// 0403 stage 1): the sampled ones first by weight, a caller placed
+/// before its heaviest sampled callee when the callee is not heavier
+/// (so the pair sits together), then the unsampled in their given order.
+/// Indices into names.
+fn layout_order(names: List[Str], l: Layout) -> List[Int] {
+  var hot: List[Int] = []
+  var cold: List[Int] = []
+  for (i, n) in names.indexed() {
+    if (l.fns.get(n) ?? 0) > 0 {
+      hot.push(i)
+    } else {
+      cold.push(i)
+    }
+  }
+  // by weight down, then name, as the file is
+  let sorted = hot.sort_by(fn(i) { "${layout_wkey(l.fns.get(names[i]) ?? 0)} ${names[i]}" })
+  // a callee pulled up to just after its heaviest caller when the edge
+  // carries at least half the callee's samples (the call is where it is
+  // reached from); one pass, in weight order, so hotter pairs win
+  var placed: List[Int] = []
+  var done: Map[Int, Bool] = {}
+  for i in sorted {
+    if done.get(i) ?? false {
+      continue
+    }
+    placed.push(i)
+    done[i] = true
+    // the heaviest callee of i among the hot ones not yet placed
+    var best = -1
+    var bw = 0
+    for j in sorted {
+      if done.get(j) ?? false {
+        continue
+      }
+      let w = l.edges.get("${names[i]} ${names[j]}") ?? 0
+      if w > bw && 2 * w >= (l.fns.get(names[j]) ?? 0) {
+        best = j
+        bw = w
+      }
+    }
+    if best >= 0 {
+      placed.push(best)
+      done[best] = true
+    }
+  }
+  placed + cold
+}

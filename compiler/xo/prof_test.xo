@@ -78,3 +78,14 @@ test "a layout file parses: names with spaces, the weight the last word, a bad l
     Err(e) => expect(e.starts_with("line 1: not a layout file")) == true
   }
 }
+
+test "layout_order: hot by weight, a callee after its caller, the rest in place" {
+  var l = Layout{}
+  l.fns = {"main": 1, "run": 40, "step": 30, "dump": 2}
+  l.edges = {"run step": 25, "main run": 40}
+  // declared: a, main, step, dump, run, b
+  let o = layout_order(["a", "main", "step", "dump", "run", "b"], l)
+  // run (40) first, then step pulled after it (the edge carries 25 of
+  // its 30), then dump (2), main (1); the unsampled a and b last
+  expect(o) == [4, 2, 3, 1, 0, 5]
+}
