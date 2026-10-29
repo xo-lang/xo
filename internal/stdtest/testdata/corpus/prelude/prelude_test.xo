@@ -756,6 +756,32 @@ test "create_dir_all_mode gives only the directories it makes the mode" {
   expect(create_dir_all_mode(os.fs, "f.txt/sub", 0o700).is_err()) == true
 }
 
+test "walk_dir visits as Go's WalkDir: name order, SkipDir on a directory and on a file, Stop" {
+  for d in ["a/b", "a/c", "a/e"] {
+    os.fs.create_dir_all(d)?
+  }
+  for p in ["a/x.txt", "a/b/y.txt", "a/b/z.txt", "a/c/w.txt", "a/d.txt", "a/e/v.txt", "a/f.txt"] {
+    os.fs.write(p, b"")?
+  }
+  let all = walk_dir(os.fs, "a", fn(fi) { WalkStep.Continue })?
+  expect(all.map(fn(fi) { fi.path })) == ["a/b", "a/b/y.txt", "a/b/z.txt", "a/c", "a/c/w.txt", "a/d.txt", "a/e", "a/e/v.txt", "a/f.txt", "a/x.txt"]
+  expect(all.map(fn(fi) { fi.path })) == os.fs.walk("a")?.map(fn(fi) { fi.path })
+  // SkipDir on a directory skips its contents
+  let skip = walk_dir(os.fs, "a", fn(fi) { if fi.name == "b" { WalkStep.SkipDir } else { WalkStep.Continue } })?
+  expect(skip.map(fn(fi) { fi.path })) == ["a/b", "a/c", "a/c/w.txt", "a/d.txt", "a/e", "a/e/v.txt", "a/f.txt", "a/x.txt"]
+  // SkipDir on a file skips the rest of its directory
+  let rest = walk_dir(os.fs, "a", fn(fi) { if fi.name == "y.txt" || fi.name == "d.txt" { WalkStep.SkipDir } else { WalkStep.Continue } })?
+  expect(rest.map(fn(fi) { fi.path })) == ["a/b", "a/b/y.txt", "a/c", "a/c/w.txt", "a/d.txt"]
+  // Stop ends the walk at once
+  let stop = walk_dir(os.fs, "a", fn(fi) { if fi.name == "w.txt" { WalkStep.Stop } else { WalkStep.Continue } })?
+  expect(stop.map(fn(fi) { fi.path })) == ["a/b", "a/b/y.txt", "a/b/z.txt", "a/c", "a/c/w.txt"]
+  expect(walk_dir(os.fs, "a/b/y.txt", fn(fi) { WalkStep.Continue }).is_err()) == true
+  match walk_dir(os.fs, "missing", fn(fi) { WalkStep.Continue }) {
+    Ok(_) => fault("a missing directory walked")
+    Err(e) => expect("${e}".ends_with("no such file or directory")) == true
+  }
+}
+
 test "read_text_or and read_or answer the default only when the file is missing" {
   os.fs.write("present.txt", b"hello")?
   expect(read_text_or(os.fs, "present.txt", "none")?) == "hello"
