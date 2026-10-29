@@ -50,16 +50,16 @@ func TestLayoutStoreOrder(t *testing.T) {
 	if err := os.MkdirAll(prog, 0o755); err != nil {
 		t.Fatal(err)
 	}
-	src := `fn hot(s: Str) -> Int {
-  var n = 0
-  for w in s.split(",") {
-    n += w.trim_suffix("x").len()
+	// hot is recursive, so it is not inlined into main and keeps its symbol
+	src := `fn hot(s: Str, d: Int) -> Int {
+  if d == 0 {
+    return s.split(",").len()
   }
-  n
+  hot(s, d - 1) + s.trim_suffix("x").len()
 }
 
 fn main(os: Os) {
-  os.stdio.println("${hot("ax,bx,cx")}")
+  os.stdio.println("${hot("ax,bx,cx", 3)}")
 }
 `
 	if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(src), 0o644); err != nil {
