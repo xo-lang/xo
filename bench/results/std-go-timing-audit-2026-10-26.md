@@ -522,3 +522,7 @@ Per std/changes/compress.md 2026-10-28. Quiet `xo bench --ab`, 15 rounds, the pa
 ## inflate back-reference copy in bulk (2026-10-28, xo-lang-5)
 
 Per std/changes/compress.md 2026-10-28. Quiet `xo bench --ab`, 15 rounds, the parent's std as A: archive unzip wall 0.834 (0.825 to 0.852), instructions 0.814, cycles 0.835; compress gunzip wall 0.941 (0.927 to 0.949), instructions 0.889; compress inflate wall 0.938 (0.925 to 0.944), instructions 0.883. Against Go (bench/perf/archive and compress twin.go.txt builds as A): unzip wall 1.052 (1.037 to 1.062, was about 1.26), gunzip 1.002 (0.986 to 1.007, within noise). Unzip was the one compress row past 1.2x; gunzip is at parity on wall (instructions 1.33, cycles 0.981).
+
+## hdec_init tables in locals (2026-10-28, xo-lang-5)
+
+Per std/changes/compress.md 2026-10-28. Quiet `xo bench --ab`, 15 rounds, the copy-back commit's std as A: archive unzip instructions 0.951, wall 0.996 (0.974 to 1.013, within noise), cycles 0.988 (within noise). With the copy-back commit, against Go (twin.go.txt builds as A): unzip wall 1.036 (1.027 to 1.048), instructions 1.209; gunzip wall 1.01 (1.006 to 1.013), cycles 0.987.

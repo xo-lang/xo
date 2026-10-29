@@ -1262,7 +1262,11 @@ fn reverse16(x0: Int) -> Int {
 
 /// huffmanDecoder.init: None for lengths that are not a complete code.
 fn hdec_init(lengths: List[Int]) -> HDec? {
-  var h = HDec{min: 0, chunks: zeros(512), links: [], link_mask: 0}
+  // the tables in locals until the end: a store through h.chunks
+  // was most of this function (2026-10-28)
+  var chunks = zeros(512)
+  var links: List[List[Int]] = []
+  var link_mask = 0
   var count = zeros(17)
   var min = 0
   var max = 0
@@ -1279,7 +1283,7 @@ fn hdec_init(lengths: List[Int]) -> HDec? {
     count[n] = count[n] + 1
   }
   if max == 0 {
-    return Some(h)
+    return Some(HDec{min: 0, chunks: chunks, links: links, link_mask: 0})
   }
   var code = 0
   var nextcode = zeros(17)
@@ -1293,17 +1297,16 @@ fn hdec_init(lengths: List[Int]) -> HDec? {
   if code != (1 << max) && !(code == 1 && max == 1) {
     return None
   }
-  h.min = min
   if max > 9 {
     let num_links = 1 << (max - 9)
-    h.link_mask = num_links - 1
+    link_mask = num_links - 1
     let link = nextcode[10] >> 1
     var j = link
     while j < 512 {
       let reverse = reverse16(j) >> 7
       let off = j - link
-      h.chunks[reverse] = (off << 4) | 10
-      h.links.push(zeros(num_links))
+      chunks[reverse] = (off << 4) | 10
+      links.push(zeros(num_links))
       j += 1
     }
   }
@@ -1321,24 +1324,24 @@ fn hdec_init(lengths: List[Int]) -> HDec? {
     if n <= 9 {
       var off = reverse
       while off < 512 {
-        h.chunks[off] = chunk
+        chunks[off] = chunk
         off += 1 << n
       }
     } else {
       let j = reverse & 511
-      let value = h.chunks[j] >> 4
-      var linktab = take_list(h.links, value)
+      let value = chunks[j] >> 4
+      var linktab = take_list(links, value)
       reverse = reverse >> 9
       var off = reverse
       while off < linktab.len() {
         linktab[off] = chunk
         off += 1 << (n - 9)
       }
-      h.links[value] = linktab
+      links[value] = linktab
     }
     li += 1
   }
-  Some(h)
+  Some(HDec{min: min, chunks: chunks, links: links, link_mask: link_mask})
 }
 
 fn int_at(l: List[Int], i: Int) -> Int { l[i] }

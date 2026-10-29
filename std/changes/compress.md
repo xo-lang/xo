@@ -1,5 +1,17 @@
 # std/compress changes
 
+## 2026-10-28: perf: hdec_init builds its tables in locals
+
+- Kind: perf
+- Commit: this commit
+- Found by: archive unzip's profile at main f516907c7 (hdec_init 13%, 44 of its 76 ms the fill loop's `h.chunks[off] = chunk`: a store through the struct's field each time)
+- Go reference: compress/flate inflate.go (huffmanDecoder.init)
+- Test: internal/stdtest/testdata/corpus/compress and archive (go, arm64, LLVM); TestSelfhostWasm crc32_vectors and archive_formats
+- Timing: quiet --ab, 15 rounds, the parent's std as A: archive unzip instructions 0.951, wall 0.996 (0.974 to 1.013, within noise), cycles 0.988 (within noise). With the copy-back commit, against Go (twin.go.txt builds as A): unzip wall 1.036 (1.027 to 1.048), instructions 1.209; gunzip wall 1.01 (1.006 to 1.013), cycles 0.987
+
+The chunk and link tables are local lists until the decoder is made at
+the end, so the fill loop stores into a list it owns.
+
 ## 2026-10-28: perf: inflate copies a back-reference in bulk
 
 - Kind: perf
