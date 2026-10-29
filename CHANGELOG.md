@@ -23,8 +23,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   0.993); archive zip 0.994 (wall within noise); a 512-store fill
   through a struct field 2.403G to 2.299G instructions, a local list's
   2.298G.
-- `xo build` and `xo run` compile separately by default on darwin/arm64
-  (decision 0388 stage 3): std's functions come from std's prebuilt
+- `xo build` and `xo run` compile separately by default on darwin and
+  linux, arm64 and amd64 (decision 0388 stage 3): std's functions come from std's prebuilt
   variants in the backend cache (its store and facts), so an edit
   compiles and links only the program's own code. An llvm-fib edit
   takes 111.5 ms median against 229.0 with 0.33.0, the HTTP server's

@@ -805,3 +805,10 @@ every tree and build the front end again (XO_STD_TREES_TEST=1 forces it; TestStd
 def, refs, the LSP and test keep every tree. Numbers:
 bench/results/sepcomp-edit-stage2-2026-10-28.md (fib's check 33 to 18
 ms, the HTTP server's 60 to 27).
+- The default on darwin and linux, arm64 and amd64 (Lang 1, 2026-10-28; std's ELF store b7eb24acf
+  and darwin/amd64's Mach-O store 0d9901645, xo-lang-4): sepenv.xo serves a host darwin or linux
+  on arm64 or amd64, the backend the host's, the target the host's pair, std_variant_peek for that
+  pair. Checked on each: linux/arm64 and linux/amd64 in Docker (scripts/docker-linux.sh),
+  darwin/amd64 on the Intel laptop: std's variants built, a default build of llvm-fib and of a
+  split program each against XO_SEPCOMP=0, the outputs the same and the default's build taking
+  the cache's variants (`cache std ... reused`). windows/amd64 follows (Lang 2, after its CI run).
