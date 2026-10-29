@@ -1960,9 +1960,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // --debug-info=split (decision 0355): the DWARF in PROG.debug
       // (linux) or PROG.dSYM (darwin) beside the program, not in it
       let split_dbg = gm.debug_info && debug_info_eff(o, release) == "split"
+      // the link's own steps under --phase-times (link.key, link.fetch,
+      // the link's link.* steps, link.store_bin, link.commit), as windows'
+      var tl = os.clock.now()
       let mkey = macho_bin_key(os, ctx, dir, tgoos, flags + (if split_dbg { ["debug-info=split"] } else { [] }) + (if sep_key.is_empty() { [] } else { [sep_key] }), srcs, o.strip, nl, race_rt, o.dsym, release, obj_keys)
+      tl = lap(os, phases, "link.key", tl)
       let mst = stage(os, ctx, bin)
       let (mhit, mentry) = fetch_bin(os, ctx, mkey, mst.bin)
+      tl = lap(os, phases, "link.fetch", tl)
       if !mhit {
         var lctx = ctx
         lctx.sep_store = sepcomp_store(os, b.conc)
@@ -1970,12 +1975,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         if !why.is_empty() {
           fail_stage(os, mst, why)
         }
+        tl = os.clock.now()
         store_bin(os, ctx, mentry, mst.bin)
+        tl = lap(os, phases, "link.store_bin", tl)
       }
       let merr = mst.commit(os)
       if !merr.is_empty() {
         fail(os, merr)
       }
+      let _tc = lap(os, phases, "link.commit", tl)
       if !race_rt.is_empty() && tgoos == "darwin" {
         // a cached link skipped macho_link's copy: the runtime beside
         // this output too

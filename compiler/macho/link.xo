@@ -448,21 +448,28 @@ fn (var l: Linker) collect_imports() {
     if !o.live {
       continue
     }
-    var named: Set[Int] = #{}
+    // the symbols a live section's relocation names, by symbol number (a
+    // dense list: a Set[Int] of them was half of a store link's
+    // collect_imports, 2026-10-29)
     let kept = l.stripped && o.subsections
+    var named: List[Bool] = []
     if kept {
+      named = List.with_capacity(o.syms.len())
+      for _ in 0..o.syms.len() {
+        named.push(false)
+      }
       for x in o.sects {
         if !x.dead {
           for r in x.relocs {
-            if r.ext && r.typ != R_ADDEND {
-              named.add(r.sym)
+            if r.ext && r.typ != R_ADDEND && r.sym >= 0 && r.sym < named.len() {
+              named[r.sym] = true
             }
           }
         }
       }
     }
     for (j, s) in o.syms.indexed() {
-      if kept && !named.contains(j) {
+      if kept && !named[j] {
         continue
       }
       if is_ext(s) && !is_defined(s) && !l.globals.contains(s.name) {
