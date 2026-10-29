@@ -66,7 +66,11 @@ keeps them now, as native MemFs does. No hot path, so no timing row.
 directory or stop; it returns the visited entries. Differences from Go:
 dir itself is not visited, and the first read error ends the walk. A
 free function, so a user type that implements `Fs` still does. Timing
-against Go's WalkDir: see bench/perf/walkdir (measured before the push).
+against Go's filepath.WalkDir (bench/perf/walkdir walk, quiet --ab, 15
+rounds, Go as A, 2026-10-29): instructions 1.263 (1.256 to 1.27),
+slower; wall 1.35 (1.208 to 1.466) on a loaded machine (28% spread), so
+the instruction ratio is the figure. Each entry is an lstat and a
+FileInfo where Go's DirEntry reads the type from the directory listing.
 
 ## 2026-10-29: feature: Proc.pid and Proc.ppid
 
