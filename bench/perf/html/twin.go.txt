@@ -1,0 +1,43 @@
+package main
+
+import (
+	"fmt"
+	"html"
+	"os"
+	"strings"
+)
+
+func text() string {
+	var b strings.Builder
+	for i := 0; i < 100; i++ {
+		fmt.Fprintf(&b, "item %d: <a href=\"/x?a=1&b=2\">Tom & Jerry's \"show\"</a> ", i)
+	}
+	return b.String()
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	t := text()
+	e := html.EscapeString(t) + " &copy; &#169; &#xa9; &notin; &gesl; &amp &lt &unknown;"
+	sum := 0
+	switch w {
+	case "escape":
+		for i := 0; i < 20000; i++ {
+			s := html.EscapeString(t)
+			sum += len(s) + i%3
+		}
+	case "unescape":
+		for i := 0; i < 20000; i++ {
+			s := html.UnescapeString(e)
+			sum += len(s) + i%3
+		}
+	default:
+		for i := 0; i < 20000; i++ {
+			sum += len(t) + i%3
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

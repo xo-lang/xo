@@ -6,6 +6,7 @@
 // error texts as std/rt's template.go, which runs text/template itself.
 use std/json
 use std/template
+use std/html
 use std/url
 use native/rt
 
@@ -1420,6 +1421,9 @@ enum V {
   FloatV(f: Float)
   ComplexV(re: Float, im: Float)
   StrV(s: Str)
+  /// trusted content (decision 0408): kind html, css, js, jsstr, url,
+  /// attr or srcset; a string to everything but the html mode's escapers
+  TrustedV(kind: Str, s: Str)
   ListV(items: List[V])
   /// map[string]interface {}: keys sorted
   MapV(fields: List[(Str, V)])
@@ -1465,6 +1469,114 @@ fn (var s: Ex) call_user(dot: Val, name: Str, args0: List[Arg], final: Val, cmd_
   }
 }
 
+/// An escaping function the html mode inserted (escape.go's funcMap).
+fn is_esc_fn(name: Str) -> Bool { name.starts_with("_html_template_") || name == "_eval_args_" }
+
+/// stringify (content.go): one string or trusted argument as it is with
+/// its content type, anything else printed (nil arguments dropped) as
+/// plain text.
+fn stringify(argv: List[Val]) -> (Str, Int) {
+  if argv.len() == 1 {
+    match unbox(argv[0]).v {
+      StrV(s) => return (s, CONTENT_TYPE_PLAIN)
+      TrustedV(kind, s) => return (s, content_type_of_kind(kind))
+      _ => {}
+    }
+  }
+  var kept: List[Val] = []
+  for a in argv {
+    match unbox(a).v {
+      Invalid | NilIface => {}
+      _ => kept.push(a)
+    }
+  }
+  (sprint(kept), CONTENT_TYPE_PLAIN)
+}
+
+/// jsValEscaper's input: a trusted JS value is its text, a trusted JS
+/// string is quoted, one value is its JSON encoding (nil is null),
+/// several are their printed text as a JSON string.
+fn js_val_json(argv: List[Val]) -> Str {
+  if argv.len() == 1 {
+    let v = unbox(argv[0]).v
+    match v {
+      TrustedV(kind, s) => {
+        if kind == "js" {
+          return s
+        }
+        if kind == "jsstr" {
+          return "\"" + s + "\""
+        }
+      }
+      Invalid | NilIface => return "null"
+      _ => {}
+    }
+    return json_html_safe(json_of(v).encode())
+  }
+  json_html_safe(json.Value.Str(s: sprint(argv)).encode())
+}
+
+/// encoding/json's Marshal escapes `<`, `>` and `&` inside strings as
+/// \u003c, \u003e and \u0026 (std/json's encode does not); in a JSON
+/// text they occur only inside strings, so the text is replaced whole.
+fn json_html_safe(j: Str) -> Str {
+  if !j.contains_any("<>&") {
+    return j
+  }
+  j.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+}
+
+/// An escaper's call: its arguments evaluated, the function applied.
+fn (var s: Ex) call_escaper(dot: Val, name: Str, args0: List[Arg], final: Val) -> Val ! Str {
+  let args = if args0.is_empty() { args0 } else { args0[1..] }
+  var argv: List[Val] = []
+  for a in args {
+    argv.push(s.eval_arg(dot, a)?)
+  }
+  if !is_missing(final) {
+    argv.push(final)
+  }
+  if name == "_html_template_jsvalescaper" {
+    if argv.len() == 1 {
+      match unbox(argv[0]).v {
+        TrustedV(kind, s) => {
+          if kind == "js" {
+            return Ok(val(V.StrV(s: s)))
+          }
+          if kind == "jsstr" {
+            return Ok(val(V.StrV(s: "\"" + s + "\"")))
+          }
+        }
+        _ => {}
+      }
+    }
+    return Ok(val(V.StrV(s: js_val_escaper_json(js_val_json(argv)))))
+  }
+  if name == "_eval_args_" {
+    return Ok(val(V.StrV(s: eval_args(argv))))
+  }
+  let (text, t) = stringify(argv)
+  let out = match name {
+    "_html_template_attrescaper" => attr_escaper(text, t)
+    "_html_template_commentescaper" => comment_escaper(text, t)
+    "_html_template_cssescaper" => css_escaper(text, t)
+    "_html_template_cssvaluefilter" => css_value_filter(text, t)
+    "_html_template_htmlnamefilter" => html_name_filter(text, t)
+    "_html_template_htmlescaper" => html_escaper(text, t)
+    "_html_template_jsregexpescaper" => js_regexp_escaper(text, t)
+    "_html_template_jsstrescaper" => js_str_escaper(text, t)
+    "_html_template_jstmpllitescaper" => js_tmpl_lit_escaper(text, t)
+    "_html_template_nospaceescaper" => html_nospace_escaper(text, t)
+    "_html_template_rcdataescaper" => rcdata_escaper(text, t)
+    "_html_template_srcsetescaper" => srcset_filter_and_escaper(text, t)
+    "_html_template_urlescaper" => url_escaper(text, t)
+    "_html_template_urlfilter" => url_filter(text, t)
+    "_html_template_urlnormalizer" => url_normalizer(text, t)
+    _ => return Err("function ${go_quote(name)} not defined")
+  }
+  Ok(val(V.StrV(s: out)))
+}
+
 /// A value as a json.Value (call_user's arguments).
 fn json_of(v: V) -> json.Value {
   match v {
@@ -1474,6 +1586,7 @@ fn json_of(v: V) -> json.Value {
     FloatV(f) => json.Value.Num(n: f)
     ComplexV(re, _) => json.Value.Num(n: re)
     StrV(s) => json.Value.Str(s: s)
+    TrustedV(kind, s) => json.Value.Trusted(kind: kind, s: s)
     ListV(items) => json.Value.List(items: items.map(fn(x) { json_of(x) }))
     MapV(fields) => json.Value.Object(fields: fields.map(fn(f: (Str, V)) { (f.0, json_of(f.1)) }))
   }
@@ -1488,7 +1601,7 @@ fn of_json(j: json.Value, inner: Bool) -> V {
     Str(s) => V.StrV(s: s)
     // trusted content (decision 0408): a string until the html mode's
     // escaper reads the kind
-    Trusted(_, s) => V.StrV(s: s)
+    Trusted(kind, s) => V.TrustedV(kind: kind, s: s)
     List(items) => V.ListV(items: items.map(fn(x) { of_json(x, true) }))
     // in the data's order: a lookup takes a key's first field either
     // way, and map_order sorts only where the order shows (range, %v)
@@ -1544,6 +1657,7 @@ fn type_name(x: Val) -> Str {
     FloatV(..) => "float64"
     ComplexV(..) => "complex128"
     StrV(..) => "string"
+    TrustedV(kind, _) => go_trusted_type(kind)
     ListV(..) => "[]interface {}"
     MapV(..) => "map[string]interface {}"
     Missing => "template.missingValType"
@@ -1569,6 +1683,7 @@ fn fmt_v(v: V, top: Bool) -> Str {
     FloatV(f) => go_float(f)
     ComplexV(re, im) => "(" + go_float(re) + (if im >= 0.0 || im.is_nan() { "+" } else { "" }) + go_float(im) + "i)"
     StrV(s) => s
+    TrustedV(_, s) => s
     ListV(items) => "[" + items.map(fn(x) { fmt_v(x, false) }).join(" ") + "]"
     MapV(fields) => "map[" + map_order(fields).map(fn(f) { f.0 + ":" + fmt_v(f.1, false) }).join(" ") + "]"
     Missing => "{}"
@@ -1585,6 +1700,7 @@ fn truth_of(x: Val) -> Bool? {
     FloatV(f) => Some(f != 0.0)
     ComplexV(re, im) => Some(re != 0.0 || im != 0.0)
     StrV(s) => Some(!s.is_empty())
+    TrustedV(_, s) => Some(!s.is_empty())
     ListV(items) => Some(!items.is_empty())
     MapV(fields) => Some(!fields.is_empty())
     Missing => Some(true)
@@ -1730,6 +1846,10 @@ fn ctx_in_args(args: List[Arg], kind: Int, tag: Int, pos: Int) -> Ctx? {
 /// The trees of a parsed set, kept in the Template (std Parsed, opaque).
 struct Parsed {
   trees: List[Tree] = []
+  /// the html mode (decision 0408): the trees escaped from the root
+  /// template, or the escaping error (reported by render, as Go does)
+  escaped: List[Tree] = []
+  esc_err: Str = ""
 }
 
 /// One template of the set as the executor sees it.
@@ -1981,7 +2101,7 @@ fn (var s: Ex) walk_range(dot: Val, n: Node) -> Int ! Str {
       }
     }
     Invalid => {}
-    NilIface | Bool(..) | FloatV(..) | ComplexV(..) | StrV(..) | Missing => {
+    NilIface | Bool(..) | FloatV(..) | ComplexV(..) | StrV(..) | TrustedV(..) | Missing => {
       return Err(s.err("range can't iterate over ${fmt_v(v.v, false)}"))
     }
   }
@@ -2196,6 +2316,9 @@ fn builtin_shape(name: Str) -> (Int, Bool) {
 
 fn (var s: Ex) eval_function(dot: Val, node: Arg, name: Str, args0: List[Arg], final: Val, cmd_pos: Int, cmd_kind: Int, cmd_tag: Int) -> Val ! Str {
   s.at_arg(node)
+  if is_esc_fn(name) {
+    return s.call_escaper(dot, name, args0, final)
+  }
   if !BUILTINS.contains(name) {
     return s.call_user(dot, name, args0, final, cmd_pos, cmd_kind, cmd_tag)
   }
@@ -2236,7 +2359,7 @@ fn (var s: Ex) eval_function(dot: Val, node: Arg, name: Str, args0: List[Arg], f
   if !is_missing(final) {
     if name == "printf" && args.is_empty() {
       match unbox(final).v {
-        StrV(..) => argv.push(final)
+        StrV(..) | TrustedV(..) => argv.push(final)
         Invalid => return Err(s.err("invalid value; expected string"))
         _ => return Err(s.err("wrong type for value; expected string; got ${type_name(unbox(final))}"))
       }
@@ -2270,7 +2393,7 @@ fn (var s: Ex) eval_string_arg(dot: Val, a: Arg) -> Val ! Str {
     Field(..) | Chain(..) | Ident(..) | PipeA(..) | Variable(..) | Dot(..) => {
       let v = s.eval_arg(dot, a)?
       match unbox(v).v {
-        StrV(..) => Ok(unbox(v))
+        StrV(..) | TrustedV(..) => Ok(unbox(v))
         Invalid => Err(s.err("invalid value; expected string"))
         _ => Err(s.err("wrong type for value; expected string; got ${type_name(unbox(v))}"))
       }
@@ -2323,7 +2446,31 @@ fn call_builtin(name: Str, args: List[Arg], argv: List[Val]) -> Val ! Str {
 fn fmt_text(x: Val) -> Str {
   match unbox(x).v {
     StrV(s) => s
+    TrustedV(_, s) => s
     _ => ""
+  }
+}
+
+/// The string of a string value (a trusted one too), or None.
+fn str_of(v: V) -> Str? {
+  match v {
+    StrV(s) => Some(s)
+    TrustedV(_, s) => Some(s)
+    _ => None
+  }
+}
+
+/// The Go type name of a trusted kind (template.HTML and its siblings).
+fn go_trusted_type(kind: Str) -> Str {
+  match kind {
+    "html" => "template.HTML"
+    "css" => "template.CSS"
+    "js" => "template.JS"
+    "jsstr" => "template.JSStr"
+    "url" => "template.URL"
+    "attr" => "template.HTMLAttr"
+    "srcset" => "template.Srcset"
+    _ => "string"
   }
 }
 
@@ -2332,6 +2479,7 @@ fn eval_args(argv: List[Val]) -> Str {
   if argv.len() == 1 {
     match argv[0].v {
       StrV(s) => return s
+      TrustedV(_, s) => return s
       _ => {}
     }
   }
@@ -2351,6 +2499,7 @@ fn fn_len(x: Val) -> Val ! Str {
   }
   match unbox(x).v {
     StrV(s) => Ok(val(V.IntV(n: s.len(), ty: "int")))
+    TrustedV(_, s) => Ok(val(V.IntV(n: s.len(), ty: "int")))
     ListV(items) => Ok(val(V.IntV(n: items.len(), ty: "int")))
     MapV(fields) => Ok(val(V.IntV(n: fields.len(), ty: "int")))
     Invalid => Err("reflect: call of reflect.Value.Type on zero Value")
@@ -2400,10 +2549,18 @@ fn fn_index(item0: Val, indexes: List[Val]) -> Val ! Str {
         }
         item = val(V.IntV(n: Int(str.bytes()[x]), ty: "uint8"))
       }
+      TrustedV(_, str) => {
+        let x = index_arg(ix, str.len())?
+        if x == str.len() {
+          return Err("reflect: string index out of range")
+        }
+        item = val(V.IntV(n: Int(str.bytes()[x]), ty: "uint8"))
+      }
       MapV(fields) => {
         let k = unbox(ix)
         let key = match k.v {
           StrV(ks) => ks
+          TrustedV(_, ks) => ks
           Invalid => return Err("value is nil; should be of type string")
           _ => return Err("value has type ${type_name(k)}; should be string")
         }
@@ -2484,7 +2641,7 @@ fn basic_kind(x: Val) -> Int {
     IntV(_, ty) => if ty == "uint8" { 6 } else { 3 }
     FloatV(..) => 4
     ComplexV(..) => 2
-    StrV(..) => 5
+    StrV(..) | TrustedV(..) => 5
     Invalid | NilIface | ListV(..) | MapV(..) | Missing => 0
   }
 }
@@ -2521,6 +2678,9 @@ fn fn_eq(a0: Val, rest: List[Val]) -> Bool ! Str {
         (ComplexV(a1, b1), ComplexV(a2, b2)) => t = a1 == a2 && b1 == b2
         (IntV(x, _), IntV(y, _)) => t = x == y
         (StrV(x), StrV(y)) => t = x == y
+        (StrV(x), TrustedV(_, y)) => t = x == y
+        (TrustedV(_, x), StrV(y)) => t = x == y
+        (TrustedV(_, x), TrustedV(_, y)) => t = x == y
         _ => {
           let n1 = !valid(a)
           let n2 = !valid(b)
@@ -2568,6 +2728,9 @@ fn fn_lt(a0: Val, b0: Val) -> Bool ! Str {
     (FloatV(x), FloatV(y)) => Ok(x < y)
     (IntV(x, _), IntV(y, _)) => Ok(x < y)
     (StrV(x), StrV(y)) => Ok(x < y)
+    (StrV(x), TrustedV(_, y)) => Ok(x < y)
+    (TrustedV(_, x), StrV(y)) => Ok(x < y)
+    (TrustedV(_, x), TrustedV(_, y)) => Ok(x < y)
     _ => Err("invalid type for comparison")
   }
 }
@@ -2622,7 +2785,7 @@ fn js_escape(s: Str) -> Str {
 // ---------------------------------------------------------------------------
 // fmt's Sprint, Sprintln, and Sprintf over the values
 
-fn is_str_arg(x: Val) -> Bool { unbox(x).v is StrV(..) }
+fn is_str_arg(x: Val) -> Bool { unbox(x).v is StrV(..) || unbox(x).v is TrustedV(..) }
 
 fn sprint(args: List[Val]) -> Str {
   var out = ""
@@ -3099,6 +3262,7 @@ fn fmt_arg(x: Val, verb: Rune, sp: Spec) -> Str {
       }
     }
     StrV(s) => fmt_str(s, verb, sp) ?? bad_verb(verb, x, sp)
+    TrustedV(_, s) => fmt_str(s, verb, sp) ?? bad_verb(verb, x, sp)
     ListV(items) => "[" + items.map(fn(e) { fmt_elem(e, verb, sp) }).join(" ") + "]"
     MapV(fields) => "map[" + map_order(fields).map(fn(f) { fmt_arg(val(V.StrV(s: f.0)), verb, sp) + ":" + fmt_elem(f.1, verb, sp) }).join(" ") + "]"
     Missing => "{}"
@@ -3265,10 +3429,25 @@ fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}", funcs: Map[St
   Ok(t with {parsed: rt.cast[Parsed, template.Parsed](Parsed{trees: trees})})
 }
 
+fn parse_html(name: Str, src: Str, left: Str = "{{", right: Str = "}}", funcs: Map[Str, template.TemplateFn] = {}) -> template.Template ! template.TemplateErr {
+  let t = parse(name, src, left, right, funcs)?
+  Ok(with_escaped(t with {html: true}))
+}
+
+/// The html mode's trees escaped from the root (its error kept for render).
+fn with_escaped(t: template.Template) -> template.Template {
+  let pp = rt.cast[template.Parsed, Parsed](t.parsed)
+  match escape_set(pp.trees, t.name) {
+    Ok(esc) => t with {parsed: rt.cast[Parsed, template.Parsed](pp with {escaped: esc, esc_err: ""})}
+    Err(e) => t with {parsed: rt.cast[Parsed, template.Parsed](pp with {escaped: [], esc_err: e.msg})}
+  }
+}
+
 fn template_add(t: template.Template, name: Str, src: Str) -> template.Template ! template.TemplateErr {
   let n = t with {sources: t.sources + [(name, src)]}
   let trees = parse_set(n)?
-  Ok(n with {parsed: rt.cast[Parsed, template.Parsed](Parsed{trees: trees})})
+  let out = n with {parsed: rt.cast[Parsed, template.Parsed](Parsed{trees: trees})}
+  Ok(if n.html { with_escaped(out) } else { out })
 }
 
 fn template_missing_key(t: template.Template, error: Bool) -> template.Template { t with {missing_key_error: error} }
@@ -3280,6 +3459,15 @@ fn template_render_named(t: template.Template, name: Str, data: json.Value) -> S
   var trees = pp.trees
   if trees.is_empty() {
     trees = parse_set(t)?
+  }
+  if t.html {
+    if name == t.name && pp.esc_err.is_empty() && !pp.escaped.is_empty() {
+      trees = pp.escaped
+    } else if name == t.name && !pp.esc_err.is_empty() {
+      return Err(template.TemplateErr{msg: pp.esc_err})
+    } else {
+      trees = escape_set(trees, name)?
+    }
   }
   var tree: Tree? = None
   for x in trees {
@@ -3297,4 +3485,2443 @@ fn template_render_named(t: template.Template, name: Str, data: json.Value) -> S
     Ok(_) => Ok(s.out)
     Err(e) => Err(template.TemplateErr{msg: e})
   }
+}
+
+// ---------------------------------------------------------------------------
+// escape.go, in std/native/template.xo (the tree's types live there):
+// the walk over the parsed trees that inserts the escaping functions.
+// Go edits nodes in place at commit; here the walk returns the rewritten
+// nodes, and each (template, context) pair's rewritten tree is kept by
+// its derived name, so commit is replacing the set's trees.
+
+const ESC_FUNCS: List[Str] = ["_html_template_attrescaper", "_html_template_commentescaper", "_html_template_cssescaper", "_html_template_cssvaluefilter", "_html_template_htmlnamefilter", "_html_template_htmlescaper", "_html_template_jsregexpescaper", "_html_template_jsstrescaper", "_html_template_jstmpllitescaper", "_html_template_jsvalescaper", "_html_template_nospaceescaper", "_html_template_rcdataescaper", "_html_template_srcsetescaper", "_html_template_urlescaper", "_html_template_urlfilter", "_html_template_urlnormalizer", "_eval_args_"]
+
+/// A context at a break or continue, with the action's line (Go's c.n).
+struct RangeCtx {
+  /// (the context, the action's position and line)
+  breaks: List[(Context, Int, Int)] = []
+  continues: List[(Context, Int, Int)] = []
+}
+
+struct Escaper {
+  /// the set's trees by name (the parse result)
+  trees: List[Tree]
+  /// the output context of each template (by derived name) that has
+  /// been, or is being, escaped
+  output: Map[Str, Context] = {}
+  /// the rewritten root of each template or derived template, by name
+  rewritten: Map[Str, List[Node]] = {}
+  /// the parse name of each derived template's original (error texts)
+  derived_from: Map[Str, Str] = {}
+  called: Map[Str, Bool] = {}
+  /// the range loops being walked, innermost last
+  range_ctx: List[RangeCtx] = []
+  /// the tree whose text positions the error contexts use
+  cur: Tree
+}
+
+/// Go's ErrorContext of a node: `parse_name:line:col`.
+fn (e: Escaper) loc(pos: Int) -> Str {
+  let text = e.cur.text[0..pos]
+  let line = 1 + text.count(b"\n")
+  let col = match text.rfind(b"\n") {
+    Some(i) => pos - (i + 1)
+    None => pos
+  }
+  "${e.cur.parse_name}:${line}:${col}"
+}
+
+fn (e: Escaper) err_node(code: Int, pos: Int, desc: Str) -> Context {
+  Context{state: STATE_ERROR, err: Some(EscErr{code: code, name: e.loc(pos), line: 0, desc: desc})}
+}
+
+fn err_line(code: Int, line: Int, desc: Str) -> Context {
+  Context{state: STATE_ERROR, err: Some(EscErr{code: code, name: "", line: line, desc: desc})}
+}
+
+/// escapeTemplate: the set's template name escaped from the text
+/// context, its trees rewritten; Go's error otherwise.
+fn escape_set(trees: List[Tree], name: Str) -> List[Tree] ! template.TemplateErr {
+  var e = Escaper{trees: trees, cur: trees[0]}
+  let (c, _) = e.escape_tree(Context{}, -1, name, 0)
+  match c.err {
+    Some(er) => {
+      // the error names the template when it has no location
+      // Go's escapeTemplate names the root template in an error with no
+      // node location of its own
+      let named = if er.name.is_empty() { er with {name: name} } else { er }
+      return Err(template.TemplateErr{msg: named.display()})
+    }
+    None => {}
+  }
+  if c.state != STATE_TEXT {
+    return Err(template.TemplateErr{msg: EscErr{code: ERR_END_CONTEXT, name: name, line: 0, desc: "ends in a non-text context: ${c.text()}"}.display()})
+  }
+  e.commit()
+}
+
+/// commit: the trees with their rewritten roots, the derived ones added.
+fn (e: Escaper) commit() -> List[Tree] ! template.TemplateErr {
+  var out: List[Tree] = []
+  var seen: List[Str] = []
+  for t in e.trees {
+    match e.rewritten.get(t.name) {
+      Some(root) => out.push(t with {root: root})
+      None => out.push(t)
+    }
+    seen.push(t.name)
+  }
+  for (dname, root) in e.rewritten {
+    if seen.contains(dname) {
+      continue
+    }
+    let from = e.derived_from.get(dname) ?? dname
+    let orig = e.find_tree(from) ?? e.trees[0]
+    out.push(Tree{name: dname, parse_name: orig.parse_name, text: orig.text, root: root})
+  }
+  Ok(out)
+}
+
+fn (e: Escaper) find_tree(name: Str) -> Tree? {
+  for t in e.trees {
+    if t.name == name {
+      return Some(t)
+    }
+  }
+  None
+}
+
+fn (var e: Escaper) escape(c: Context, n: Node) -> (Context, Node) {
+  match n {
+    Action(pos, line, pipe) => e.escape_action(c, pos, line, pipe)
+    Break(pos, line) => {
+      e.push_break(c, pos, line)
+      (Context{state: STATE_DEAD}, n)
+    }
+    Comment(..) => (c, n)
+    Continue(pos, line) => {
+      e.push_continue(c, pos, line)
+      (Context{state: STATE_DEAD}, n)
+    }
+    If(pos, line, pipe, list, else_list) => {
+      let (c1, l1, el1) = e.escape_branch(c, pos, line, list, else_list, "if")
+      (c1, Node.If(pos: pos, line: line, pipe: pipe, list: l1, else_list: el1))
+    }
+    Range(pos, line, pipe, list, else_list) => {
+      let (c1, l1, el1) = e.escape_branch(c, pos, line, list, else_list, "range")
+      (c1, Node.Range(pos: pos, line: line, pipe: pipe, list: l1, else_list: el1))
+    }
+    With(pos, line, pipe, list, else_list) => {
+      let (c1, l1, el1) = e.escape_branch(c, pos, line, list, else_list, "with")
+      (c1, Node.With(pos: pos, line: line, pipe: pipe, list: l1, else_list: el1))
+    }
+    TemplateN(pos, line, name, pipe) => {
+      let (c1, dname) = e.escape_tree(c, pos, name, line)
+      (c1, Node.TemplateN(pos: pos, line: line, name: dname, pipe: pipe))
+    }
+    Text(pos, text) => {
+      let (c1, t1) = escape_text(c, text)
+      (c1, Node.Text(pos: pos, text: t1))
+    }
+    End(..) | Else(..) => (c, n)
+  }
+}
+
+fn (var e: Escaper) push_break(c: Context, pos: Int, line: Int) {
+  if e.range_ctx.is_empty() {
+    return
+  }
+  let last = e.range_ctx.len() - 1
+  var rc = e.range_ctx[last]
+  rc.breaks.push((c, pos, line))
+  e.range_ctx[last] = rc
+}
+
+fn (var e: Escaper) push_continue(c: Context, pos: Int, line: Int) {
+  if e.range_ctx.is_empty() {
+    return
+  }
+  let last = e.range_ctx.len() - 1
+  var rc = e.range_ctx[last]
+  rc.continues.push((c, pos, line))
+  e.range_ctx[last] = rc
+}
+
+const PREDEFINED_ESCAPERS: List[Str] = ["html", "urlquery"]
+
+fn cmd_ident(cmd: Cmd) -> Str? {
+  if cmd.args.is_empty() {
+    return None
+  }
+  match cmd.args[0] {
+    Ident(_, name) => Some(name)
+    _ => None
+  }
+}
+
+/// escapeAction: the escaping functions an action needs in its context,
+/// appended to its pipeline.
+fn (var e: Escaper) escape_action(c0: Context, pos: Int, line: Int, pipe: Pipe) -> (Context, Node) {
+  let node = Node.Action(pos: pos, line: line, pipe: pipe)
+  if !pipe.decl.is_empty() {
+    return (c0, node)
+  }
+  var c = nudge(c0)
+  for (k, cmd) in pipe.cmds.indexed() {
+    let ident = match cmd_ident(cmd) {
+      Some(x) => x
+      None => continue
+    }
+    if PREDEFINED_ESCAPERS.contains(ident) {
+      if k < pipe.cmds.len() - 1 || (c.state == STATE_ATTR && c.delim == DELIM_SPACE_OR_TAG_END && ident == "html") {
+        return (e.err_node(ERR_PREDEFINED_ESCAPER, pos, "predefined escaper ${go_quote(ident)} disallowed in template"), node)
+      }
+    }
+  }
+  var s: List[Str] = []
+  let st = c.state
+  if st == STATE_ERROR {
+    return (c, node)
+  } else if st == STATE_URL || st == STATE_CSS_DQ_STR || st == STATE_CSS_SQ_STR || st == STATE_CSS_DQ_URL || st == STATE_CSS_SQ_URL || st == STATE_CSS_URL {
+    if c.url_part == URL_PART_NONE || c.url_part == URL_PART_PRE_QUERY {
+      if c.url_part == URL_PART_NONE {
+        s.push("_html_template_urlfilter")
+      }
+      if st == STATE_CSS_DQ_STR || st == STATE_CSS_SQ_STR {
+        s.push("_html_template_cssescaper")
+      } else {
+        s.push("_html_template_urlnormalizer")
+      }
+    } else if c.url_part == URL_PART_QUERY_OR_FRAG {
+      s.push("_html_template_urlescaper")
+    } else {
+      return (e.err_node(ERR_AMBIG_CONTEXT, pos, "${action_text(pipe)} appears in an ambiguous context within a URL"), node)
+    }
+  } else if st == STATE_META_CONTENT {
+    // nothing
+  } else if st == STATE_META_CONTENT_URL {
+    s.push("_html_template_urlfilter")
+  } else if st == STATE_JS {
+    s.push("_html_template_jsvalescaper")
+    c.js_ctx = JS_CTX_DIV_OP
+  } else if st == STATE_JS_DQ_STR || st == STATE_JS_SQ_STR {
+    s.push("_html_template_jsstrescaper")
+  } else if st == STATE_JS_TMPL_LIT {
+    s.push("_html_template_jstmpllitescaper")
+  } else if st == STATE_JS_REGEXP {
+    s.push("_html_template_jsregexpescaper")
+  } else if st == STATE_CSS {
+    s.push("_html_template_cssvaluefilter")
+  } else if st == STATE_TEXT {
+    s.push("_html_template_htmlescaper")
+  } else if st == STATE_RCDATA {
+    s.push("_html_template_rcdataescaper")
+  } else if st == STATE_ATTR {
+    // nothing
+  } else if st == STATE_ATTR_NAME || st == STATE_TAG {
+    c.state = STATE_ATTR_NAME
+    s.push("_html_template_htmlnamefilter")
+  } else if st == STATE_SRCSET {
+    s.push("_html_template_srcsetescaper")
+  } else if is_comment(st) {
+    s.push("_html_template_commentescaper")
+  }
+  if c.delim == DELIM_SPACE_OR_TAG_END {
+    s.push("_html_template_nospaceescaper")
+  } else if c.delim != DELIM_NONE {
+    s.push("_html_template_attrescaper")
+  }
+  (c, Node.Action(pos: pos, line: line, pipe: ensure_pipeline_contains(pipe, s)))
+}
+
+/// `{{pipeline}}` as Go prints an action node (the ambiguous URL error).
+fn action_text(pipe: Pipe) -> Str { "{{" + pipe_text(pipe) + "}}" }
+
+const EQUIV_ESCAPERS: List[(Str, Str)] = [("_html_template_attrescaper", "html"), ("_html_template_htmlescaper", "html"), ("_html_template_rcdataescaper", "html"), ("_html_template_urlescaper", "urlquery"), ("_html_template_urlnormalizer", "urlquery")]
+
+fn normalize_esc_fn(e: Str) -> Str {
+  for (k, v) in EQUIV_ESCAPERS {
+    if k == e {
+      return v
+    }
+  }
+  e
+}
+
+/// redundantFuncs: (last, next) pairs where next adds nothing after last.
+const REDUNDANT_FUNCS: List[(Str, Str)] = [("_html_template_commentescaper", "_html_template_attrescaper"), ("_html_template_commentescaper", "_html_template_htmlescaper"), ("_html_template_cssescaper", "_html_template_attrescaper"), ("_html_template_jsregexpescaper", "_html_template_attrescaper"), ("_html_template_jsstrescaper", "_html_template_attrescaper"), ("_html_template_jstmpllitescaper", "_html_template_attrescaper"), ("_html_template_urlescaper", "_html_template_urlnormalizer")]
+
+fn ident_cmd(name: Str, pos: Int) -> Cmd { Cmd{pos: pos, args: [Arg.Ident(pos: pos, name: name)]} }
+
+fn append_cmd(cmds: List[Cmd], cmd: Cmd) -> List[Cmd] {
+  if !cmds.is_empty() {
+    match (cmd_ident(cmds[cmds.len() - 1]), cmd_ident(cmd)) {
+      (Some(last), Some(next)) => {
+        for (a, b) in REDUNDANT_FUNCS {
+          if a == last && b == next {
+            return cmds
+          }
+        }
+      }
+      _ => {}
+    }
+  }
+  cmds + [cmd]
+}
+
+/// ensurePipelineContains: the escapers s appended to the pipeline,
+/// a predefined escaper (`html`, `urlquery`) at its end kept in place
+/// of its equivalent and moved after its arguments' evaluation.
+fn ensure_pipeline_contains(p: Pipe, s0: List[Str]) -> Pipe {
+  if s0.is_empty() {
+    return p
+  }
+  var s = s0
+  var cmds = p.cmds
+  var pipeline_len = cmds.len()
+  if pipeline_len > 0 {
+    let last_cmd = cmds[pipeline_len - 1]
+    match cmd_ident(last_cmd) {
+      Some(esc) => {
+        if PREDEFINED_ESCAPERS.contains(esc) {
+          if cmds.len() == 1 && last_cmd.args.len() > 1 {
+            var args = last_cmd.args
+            args[0] = Arg.Ident(pos: arg_pos(last_cmd.args[0]), name: "_eval_args_")
+            cmds[0] = last_cmd with {args: args}
+            cmds = append_cmd(cmds, ident_cmd(esc, p.pos))
+            pipeline_len += 1
+          }
+          var dup = false
+          for (i, escaper) in s0.indexed() {
+            if normalize_esc_fn(esc) == normalize_esc_fn(escaper) {
+              s[i] = esc
+              dup = true
+            }
+          }
+          if dup {
+            pipeline_len -= 1
+          }
+        }
+      }
+      None => {}
+    }
+  }
+  var new_cmds: List[Cmd] = []
+  var inserted: List[Str] = []
+  var i = 0
+  while i < pipeline_len {
+    let cmd = cmds[i]
+    new_cmds.push(cmd)
+    match cmd_ident(cmd) {
+      Some(id) => inserted.push(normalize_esc_fn(id))
+      None => {}
+    }
+    i += 1
+  }
+  for name in s {
+    if !inserted.contains(normalize_esc_fn(name)) {
+      new_cmds = append_cmd(new_cmds, ident_cmd(name, p.pos))
+    }
+  }
+  p with {cmds: new_cmds}
+}
+
+/// escapeBranch: both branches walked, their end contexts joined; a
+/// range body is walked twice (re-entry) with its breaks and continues.
+fn (var e: Escaper) escape_branch(c: Context, pos: Int, line: Int, list: List[Node], else_list: List[Node]?, node_name: Str) -> (Context, List[Node], List[Node]?) {
+  if node_name == "range" {
+    e.range_ctx.push(RangeCtx{})
+  }
+  let (c00, l0) = e.escape_list(c, list)
+  var c0 = c00
+  if node_name == "range" {
+    if c0.state != STATE_ERROR {
+      c0 = e.join_range(c0, e.range_ctx[e.range_ctx.len() - 1])
+    }
+    e.range_ctx.pop()
+    if c0.state == STATE_ERROR {
+      return (c0, l0, else_list)
+    }
+    e.range_ctx.push(RangeCtx{})
+    let (c1, _, _) = e.escape_list_conditionally(c0, list, false, "")
+    c0 = e.join(c0, c1, pos, node_name)
+    if c0.state == STATE_ERROR {
+      e.range_ctx.pop()
+      return (with_line_prefix(c0, line, "on range loop re-entry: "), l0, else_list)
+    }
+    c0 = e.join_range(c0, e.range_ctx[e.range_ctx.len() - 1])
+    e.range_ctx.pop()
+    if c0.state == STATE_ERROR {
+      return (c0, l0, else_list)
+    }
+  }
+  match else_list {
+    Some(el) => {
+      let (c1, el1) = e.escape_list(c, el)
+      (e.join(c0, c1, pos, node_name), l0, Some(el1))
+    }
+    None => (e.join(c0, c, pos, node_name), l0, None)
+  }
+}
+
+/// Go sets the error's Line and prefixes its description; an error with
+/// a node location keeps showing that location (Error() checks the node
+/// first).
+fn with_line_prefix(c: Context, line: Int, prefix: Str) -> Context {
+  match c.err {
+    Some(er) => c with {err: Some(er with {line: if er.name.is_empty() { line } else { er.line }, desc: prefix + er.desc})}
+    None => c
+  }
+}
+
+/// joinRange: the loop's end context joined with each break's and
+/// continue's (an error is at that action).
+fn (e: Escaper) join_range(c00: Context, rc: RangeCtx) -> Context {
+  var c0 = c00
+  for (c, pos, line) in rc.breaks {
+    c0 = e.join(c0, c, pos, "range")
+    if c0.state == STATE_ERROR {
+      return with_line_prefix(c0, line, "at range loop break: ")
+    }
+  }
+  for (c, pos, line) in rc.continues {
+    c0 = e.join(c0, c, pos, "range")
+    if c0.state == STATE_ERROR {
+      return with_line_prefix(c0, line, "at range loop continue: ")
+    }
+  }
+  c0
+}
+
+fn (e: Escaper) join(a: Context, b: Context, pos: Int, node_name: Str) -> Context {
+  let c = join_plain(a, b, node_name)
+  match c.err {
+    Some(er) => {
+      if er.code == ERR_BRANCH_END && er.name.is_empty() {
+        return c with {err: Some(er with {name: e.loc(pos)})}
+      }
+      c
+    }
+    None => c
+  }
+}
+
+/// join: the context after two branches, or the branch end error (its
+/// location is filled in by the caller).
+fn join_plain(a: Context, b: Context, node_name: Str) -> Context {
+  if a.state == STATE_ERROR {
+    return a
+  }
+  if b.state == STATE_ERROR {
+    return b
+  }
+  if a.state == STATE_DEAD {
+    return b
+  }
+  if b.state == STATE_DEAD {
+    return a
+  }
+  if a.eq(b) {
+    return a
+  }
+  var c = a with {url_part: b.url_part}
+  if c.eq(b) {
+    return c with {url_part: URL_PART_UNKNOWN}
+  }
+  c = a with {js_ctx: b.js_ctx}
+  if c.eq(b) {
+    return c with {js_ctx: JS_CTX_UNKNOWN}
+  }
+  let na = nudge(a)
+  let nb = nudge(b)
+  if !(na.eq(a) && nb.eq(b)) {
+    let j = join_plain(na, nb, node_name)
+    if j.state != STATE_ERROR {
+      return j
+    }
+  }
+  Context{state: STATE_ERROR, err: Some(EscErr{code: ERR_BRANCH_END, name: "", line: 0, desc: "{{${node_name}}} branches end in different contexts: ${a.text()}, ${b.text()}"})}
+}
+
+fn (var e: Escaper) escape_list(c0: Context, nodes: List[Node]) -> (Context, List[Node]) {
+  var c = c0
+  var out: List[Node] = []
+  var dead = false
+  for m in nodes {
+    if dead {
+      out.push(m)
+      continue
+    }
+    let (c1, m1) = e.escape(c, m)
+    c = c1
+    out.push(m1)
+    if c.state == STATE_DEAD {
+      dead = true
+    }
+  }
+  (c, out)
+}
+
+/// escapeListConditionally: the list walked by a copy of the escaper,
+/// whose results are kept only when the filter accepts the end context
+/// (keep: the template body's rule, with its name; false for the range
+/// re-entry probe).
+fn (var e: Escaper) escape_list_conditionally(c: Context, nodes: List[Node], keep: Bool, tname: Str) -> (Context, Bool, List[Node]) {
+  // Go's makeEscaper: the copy starts with the output contexts and no
+  // calls of its own (the filter asks whether the body called itself)
+  var e1 = e
+  e1.called = {}
+  let (c1, out) = e1.escape_list(c, nodes)
+  var ok = false
+  if keep {
+    if c1.state == STATE_ERROR {
+      ok = false
+    } else if !(e1.called.get(tname) ?? false) {
+      ok = true
+    } else {
+      ok = c.eq(c1)
+    }
+  }
+  if ok {
+    e.output = e1.output
+    e.rewritten = e1.rewritten
+    e.derived_from = e1.derived_from
+    for (k, v) in e1.called {
+      e.called.put(k, v)
+    }
+  }
+  // the range contexts (breaks and continues) of the probe are kept
+  // either way, as Go's shared rangeContext pointer does
+  e.range_ctx = e1.range_ctx
+  (c1, ok, out)
+}
+
+/// escapeTree: the template name walked from c, by its derived name.
+fn (var e: Escaper) escape_tree(c: Context, pos: Int, name: Str, line: Int) -> (Context, Str) {
+  let dname = c.mangle(name)
+  e.called.put(dname, true)
+  match e.output.get(dname) {
+    Some(out) => return (out, dname)
+    None => {}
+  }
+  let t = match e.find_tree(name) {
+    Some(t) => t
+    None => {
+      let desc = if e.has_empty(name) { "${go_quote(name)} is an incomplete or empty template" } else { "no such template ${go_quote(name)}" }
+      if pos >= 0 {
+        return (e.err_node(ERR_NO_SUCH_TEMPLATE, pos, desc), dname)
+      }
+      return (err_line(ERR_NO_SUCH_TEMPLATE, line, desc), dname)
+    }
+  }
+  if dname != name {
+    e.derived_from.put(dname, name)
+  }
+  (e.compute_out_ctx(c, t, dname), dname)
+}
+
+/// A name the set declares with no tree (`{{define "x"}}{{end}}` parsed
+/// to nothing): Go's "incomplete or empty template".
+fn (e: Escaper) has_empty(name: Str) -> Bool { false }
+
+fn (var e: Escaper) compute_out_ctx(c: Context, t: Tree, dname: Str) -> Context {
+  let (c10, ok0) = e.escape_template_body(c, t, dname)
+  var c1 = c10
+  var ok = ok0
+  if !ok {
+    let (c2, ok2) = e.escape_template_body(c1, t, dname)
+    if ok2 {
+      c1 = c2
+      ok = true
+    }
+  }
+  if !ok && c1.state != STATE_ERROR {
+    return Context{state: STATE_ERROR, err: Some(EscErr{code: ERR_OUTPUT_CONTEXT, name: "", line: 0, desc: "cannot compute output context for template ${dname}"})}
+  }
+  c1
+}
+
+fn (var e: Escaper) escape_template_body(c: Context, t: Tree, dname: Str) -> (Context, Bool) {
+  e.output.put(dname, c)
+  let saved = e.cur
+  e.cur = t
+  let (c1, ok, out) = e.escape_list_conditionally(c, t.root, true, dname)
+  e.cur = saved
+  if ok {
+    e.rewritten.put(dname, out)
+  }
+  (c1, ok)
+}
+
+// ===========================================================================
+// html/template's context machine and escapers (decision
+// 0408), ported from Go's html/template (go1.26.1): context.go,
+// transition.go, html.go, attr.go, url.go, js.go, css.go, error.go. The
+// walk over the parsed tree lives in std/native/template.xo (the tree's
+// types are there); these are pure functions over Bytes and Str (one file per std module, so they live here).
+
+// ---------------------------------------------------------------------------
+// context.go
+
+/// The states (state_string.go gives the names).
+const STATE_TEXT = 0
+const STATE_TAG = 1
+const STATE_ATTR_NAME = 2
+const STATE_AFTER_NAME = 3
+const STATE_BEFORE_VALUE = 4
+const STATE_HTML_CMT = 5
+const STATE_RCDATA = 6
+const STATE_ATTR = 7
+const STATE_URL = 8
+const STATE_SRCSET = 9
+const STATE_JS = 10
+const STATE_JS_DQ_STR = 11
+const STATE_JS_SQ_STR = 12
+const STATE_JS_TMPL_LIT = 13
+const STATE_JS_REGEXP = 14
+const STATE_JS_BLOCK_CMT = 15
+const STATE_JS_LINE_CMT = 16
+const STATE_JS_HTML_OPEN_CMT = 17
+const STATE_JS_HTML_CLOSE_CMT = 18
+const STATE_CSS = 19
+const STATE_CSS_DQ_STR = 20
+const STATE_CSS_SQ_STR = 21
+const STATE_CSS_DQ_URL = 22
+const STATE_CSS_SQ_URL = 23
+const STATE_CSS_URL = 24
+const STATE_CSS_BLOCK_CMT = 25
+const STATE_CSS_LINE_CMT = 26
+const STATE_ERROR = 27
+const STATE_META_CONTENT = 28
+const STATE_META_CONTENT_URL = 29
+const STATE_DEAD = 30
+
+const STATE_NAMES: List[Str] = ["stateText", "stateTag", "stateAttrName", "stateAfterName", "stateBeforeValue", "stateHTMLCmt", "stateRCDATA", "stateAttr", "stateURL", "stateSrcset", "stateJS", "stateJSDqStr", "stateJSSqStr", "stateJSTmplLit", "stateJSRegexp", "stateJSBlockCmt", "stateJSLineCmt", "stateJSHTMLOpenCmt", "stateJSHTMLCloseCmt", "stateCSS", "stateCSSDqStr", "stateCSSSqStr", "stateCSSDqURL", "stateCSSSqURL", "stateCSSURL", "stateCSSBlockCmt", "stateCSSLineCmt", "stateError", "stateMetaContent", "stateMetaContentURL", "stateDead"]
+
+const DELIM_NONE = 0
+const DELIM_DOUBLE_QUOTE = 1
+const DELIM_SINGLE_QUOTE = 2
+const DELIM_SPACE_OR_TAG_END = 3
+const DELIM_NAMES: List[Str] = ["delimNone", "delimDoubleQuote", "delimSingleQuote", "delimSpaceOrTagEnd"]
+
+const URL_PART_NONE = 0
+const URL_PART_PRE_QUERY = 1
+const URL_PART_QUERY_OR_FRAG = 2
+const URL_PART_UNKNOWN = 3
+const URL_PART_NAMES: List[Str] = ["urlPartNone", "urlPartPreQuery", "urlPartQueryOrFrag", "urlPartUnknown"]
+
+const JS_CTX_REGEXP = 0
+const JS_CTX_DIV_OP = 1
+const JS_CTX_UNKNOWN = 2
+const JS_CTX_NAMES: List[Str] = ["jsCtxRegexp", "jsCtxDivOp", "jsCtxUnknown"]
+
+const ELEMENT_NONE = 0
+const ELEMENT_SCRIPT = 1
+const ELEMENT_STYLE = 2
+const ELEMENT_TEXTAREA = 3
+const ELEMENT_TITLE = 4
+const ELEMENT_META = 5
+const ELEMENT_NAMES: List[Str] = ["elementNone", "elementScript", "elementStyle", "elementTextarea", "elementTitle", "elementMeta"]
+
+const ATTR_NONE = 0
+const ATTR_SCRIPT = 1
+const ATTR_SCRIPT_TYPE = 2
+const ATTR_STYLE = 3
+const ATTR_URL = 4
+const ATTR_SRCSET = 5
+const ATTR_META_CONTENT = 6
+const ATTR_NAMES: List[Str] = ["attrNone", "attrScript", "attrScriptType", "attrStyle", "attrURL", "attrSrcset", "attrMetaContent"]
+
+/// An escaping error (error.go): the code (ERR_*), the template name and
+/// line, and the description; display is Go's text.
+struct EscErr {
+  code: Int
+  name: Str
+  line: Int
+  desc: Str
+}
+
+fn (e: EscErr) display() -> Str {
+  if e.line != 0 {
+    "html/template:${e.name}:${e.line}: ${e.desc}"
+  } else if !e.name.is_empty() {
+    "html/template:${e.name}: ${e.desc}"
+  } else {
+    "html/template: ${e.desc}"
+  }
+}
+
+const OK = 0
+const ERR_AMBIG_CONTEXT = 1
+const ERR_BAD_HTML = 2
+const ERR_BRANCH_END = 3
+const ERR_END_CONTEXT = 4
+const ERR_NO_SUCH_TEMPLATE = 5
+const ERR_OUTPUT_CONTEXT = 6
+const ERR_PARTIAL_CHARSET = 7
+const ERR_PARTIAL_ESCAPE = 8
+const ERR_RANGE_LOOP_REENTRY = 9
+const ERR_SLASH_AMBIG = 10
+const ERR_PREDEFINED_ESCAPER = 11
+const ERR_JS_TMPL_LIT = 12
+
+/// The escaper's context (context.go): where the next byte of output
+/// lands. `n` (the template whose context is being computed, for
+/// range break and continue) is the native walk's own record; `err`
+/// is None until the first error.
+struct Context {
+  /// the defaults are STATE_TEXT, DELIM_NONE, URL_PART_NONE, JS_CTX_REGEXP,
+  /// ATTR_NONE and ELEMENT_NONE (0 each; a field default names no constant
+  /// on the native backends)
+  state: Int = 0
+  delim: Int = 0
+  url_part: Int = 0
+  js_ctx: Int = 0
+  js_brace_depth: List[Int] = []
+  attr: Int = 0
+  element: Int = 0
+  err: EscErr? = None
+}
+
+fn (c: Context) text() -> Str {
+  let err = match c.err {
+    Some(e) => e.display()
+    None => "<nil>"
+  }
+  "{${STATE_NAMES[c.state]} ${DELIM_NAMES[c.delim]} ${URL_PART_NAMES[c.url_part]} ${JS_CTX_NAMES[c.js_ctx]} ${ATTR_NAMES[c.attr]} ${ELEMENT_NAMES[c.element]} ${err}}"
+}
+
+/// context.eq: the fields but js_brace_depth (Go compares the error
+/// pointer; here the errors' values).
+fn (c: Context) eq(d: Context) -> Bool {
+  c.state == d.state && c.delim == d.delim && c.url_part == d.url_part && c.js_ctx == d.js_ctx && c.attr == d.attr && c.element == d.element && c.err == d.err
+}
+
+/// context.mangle: the derived template's name for a context.
+fn (c: Context) mangle(template_name: Str) -> Str {
+  if c.state == STATE_TEXT {
+    return template_name
+  }
+  var s = template_name + "$htmltemplate_" + STATE_NAMES[c.state]
+  if c.delim != DELIM_NONE {
+    s = s + "_" + DELIM_NAMES[c.delim]
+  }
+  if c.url_part != URL_PART_NONE {
+    s = s + "_" + URL_PART_NAMES[c.url_part]
+  }
+  if c.js_ctx != JS_CTX_REGEXP {
+    s = s + "_" + JS_CTX_NAMES[c.js_ctx]
+  }
+  if c.attr != ATTR_NONE {
+    s = s + "_" + ATTR_NAMES[c.attr]
+  }
+  if c.element != ELEMENT_NONE {
+    s = s + "_" + ELEMENT_NAMES[c.element]
+  }
+  s
+}
+
+fn is_comment(s: Int) -> Bool {
+  s == STATE_HTML_CMT || s == STATE_JS_BLOCK_CMT || s == STATE_JS_LINE_CMT || s == STATE_JS_HTML_OPEN_CMT || s == STATE_JS_HTML_CLOSE_CMT || s == STATE_CSS_BLOCK_CMT || s == STATE_CSS_LINE_CMT
+}
+
+fn is_in_tag(s: Int) -> Bool {
+  s == STATE_TAG || s == STATE_ATTR_NAME || s == STATE_AFTER_NAME || s == STATE_BEFORE_VALUE || s == STATE_ATTR
+}
+
+fn is_in_script_literal(s: Int) -> Bool {
+  s == STATE_JS_DQ_STR || s == STATE_JS_SQ_STR || s == STATE_JS_TMPL_LIT || s == STATE_JS_REGEXP
+}
+
+// ---------------------------------------------------------------------------
+// transition.go: a function per state over the text, returning the
+// context after it and how many bytes it consumed
+
+fn esc_err(code: Int, desc: Str) -> Context {
+  Context{state: STATE_ERROR, err: Some(EscErr{code: code, name: "", line: 0, desc: desc})}
+}
+
+/// Go's %q of bytes (strconv.Quote of the text).
+fn go_quote_bytes(s: Bytes) -> Str { (s.to_str() ?? "").debug() }
+
+fn transition(c: Context, s: Bytes) -> (Context, Int) { transition_in(c.state, c, s) }
+
+/// transitionFunc[st](c, s): the state's function, with c as it is
+/// (stripTags runs the RCDATA one on a context in another state).
+fn transition_in(st: Int, c: Context, s: Bytes) -> (Context, Int) {
+  if st == STATE_TEXT {
+    return t_text(c, s)
+  } else if st == STATE_TAG {
+    return t_tag(c, s)
+  } else if st == STATE_ATTR_NAME {
+    return t_attr_name(c, s)
+  } else if st == STATE_AFTER_NAME {
+    return t_after_name(c, s)
+  } else if st == STATE_BEFORE_VALUE {
+    return t_before_value(c, s)
+  } else if st == STATE_HTML_CMT {
+    return t_html_cmt(c, s)
+  } else if st == STATE_RCDATA {
+    return t_special_tag_end(c, s)
+  } else if st == STATE_ATTR {
+    return (c, s.len())
+  } else if st == STATE_URL {
+    return t_url(c, s)
+  } else if st == STATE_META_CONTENT {
+    return t_meta_content(c, s)
+  } else if st == STATE_META_CONTENT_URL {
+    return t_meta_content_url(c, s)
+  } else if st == STATE_SRCSET {
+    return t_url(c, s)
+  } else if st == STATE_JS {
+    return t_js(c, s)
+  } else if st == STATE_JS_DQ_STR {
+    return t_js_delimited(c, s)
+  } else if st == STATE_JS_SQ_STR {
+    return t_js_delimited(c, s)
+  } else if st == STATE_JS_REGEXP {
+    return t_js_delimited(c, s)
+  } else if st == STATE_JS_TMPL_LIT {
+    return t_js_tmpl(c, s)
+  } else if st == STATE_JS_BLOCK_CMT {
+    return t_block_cmt(c, s)
+  } else if st == STATE_JS_LINE_CMT {
+    return t_line_cmt(c, s)
+  } else if st == STATE_JS_HTML_OPEN_CMT {
+    return t_line_cmt(c, s)
+  } else if st == STATE_JS_HTML_CLOSE_CMT {
+    return t_line_cmt(c, s)
+  } else if st == STATE_CSS {
+    return t_css(c, s)
+  } else if st == STATE_CSS_DQ_STR {
+    return t_css_str(c, s)
+  } else if st == STATE_CSS_SQ_STR {
+    return t_css_str(c, s)
+  } else if st == STATE_CSS_DQ_URL {
+    return t_css_str(c, s)
+  } else if st == STATE_CSS_SQ_URL {
+    return t_css_str(c, s)
+  } else if st == STATE_CSS_URL {
+    return t_css_str(c, s)
+  } else if st == STATE_CSS_BLOCK_CMT {
+    return t_block_cmt(c, s)
+  } else if st == STATE_CSS_LINE_CMT {
+    return t_line_cmt(c, s)
+  }
+  (c, s.len())
+}
+
+const COMMENT_START: Bytes = b"<!--"
+const COMMENT_END: Bytes = b"-->"
+
+fn t_text(c: Context, s: Bytes) -> (Context, Int) {
+  var k = 0
+  while true {
+    var i = match s[k..].find(b"<") {
+      Some(x) => k + x
+      None => return (c, s.len())
+    }
+    if i + 1 == s.len() {
+      return (c, s.len())
+    }
+    if i + 4 <= s.len() && s[i..i + 4] == COMMENT_START {
+      return (Context{state: STATE_HTML_CMT}, i + 4)
+    }
+    i += 1
+    var end = false
+    if s[i] == 47 {
+      if i + 1 == s.len() {
+        return (c, s.len())
+      }
+      end = true
+      i += 1
+    }
+    let (j, e0) = eat_tag_name(s, i)
+    if j != i {
+      let e = if end { ELEMENT_NONE } else { e0 }
+      return (Context{state: STATE_TAG, element: e}, j)
+    }
+    k = j
+  }
+  (c, s.len())
+}
+
+const ELEMENT_CONTENT_TYPE: List[Int] = [STATE_TEXT, STATE_JS, STATE_CSS, STATE_RCDATA, STATE_RCDATA, STATE_TEXT]
+
+fn t_tag(c: Context, s: Bytes) -> (Context, Int) {
+  let i = eat_white_space(s, 0)
+  if i == s.len() {
+    return (c, s.len())
+  }
+  if s[i] == 62 {
+    if c.element == ELEMENT_META {
+      return (Context{state: STATE_TEXT, element: ELEMENT_NONE}, i + 1)
+    }
+    return (Context{state: ELEMENT_CONTENT_TYPE[c.element], element: c.element}, i + 1)
+  }
+  let (j, err) = eat_attr_name(s, i)
+  match err {
+    Some(e) => return (Context{state: STATE_ERROR, err: Some(e)}, s.len())
+    None => {}
+  }
+  if i == j {
+    return (esc_err(ERR_BAD_HTML, "expected space, attr name, or end of tag, but got ${go_quote_bytes(s[i..])}"), s.len())
+  }
+  let attr_name = (s[i..j].to_str() ?? "").to_lower()
+  var attr = ATTR_NONE
+  if c.element == ELEMENT_SCRIPT && attr_name == "type" {
+    attr = ATTR_SCRIPT_TYPE
+  } else if c.element == ELEMENT_META && attr_name == "content" {
+    attr = ATTR_META_CONTENT
+  } else {
+    let at = attr_type(attr_name)
+    if at == CONTENT_TYPE_URL {
+      attr = ATTR_URL
+    } else if at == CONTENT_TYPE_CSS {
+      attr = ATTR_STYLE
+    } else if at == CONTENT_TYPE_JS {
+      attr = ATTR_SCRIPT
+    } else if at == CONTENT_TYPE_SRCSET {
+      attr = ATTR_SRCSET
+    }
+  }
+  let state = if j == s.len() { STATE_ATTR_NAME } else { STATE_AFTER_NAME }
+  (Context{state: state, element: c.element, attr: attr}, j)
+}
+
+fn t_attr_name(c: Context, s: Bytes) -> (Context, Int) {
+  let (i, err) = eat_attr_name(s, 0)
+  match err {
+    Some(e) => return (Context{state: STATE_ERROR, err: Some(e)}, s.len())
+    None => {}
+  }
+  if i != s.len() {
+    return (c with {state: STATE_AFTER_NAME}, i)
+  }
+  (c, i)
+}
+
+fn t_after_name(c: Context, s: Bytes) -> (Context, Int) {
+  let i = eat_white_space(s, 0)
+  if i == s.len() {
+    return (c, s.len())
+  }
+  if s[i] != 61 {
+    return (c with {state: STATE_TAG}, i)
+  }
+  (c with {state: STATE_BEFORE_VALUE}, i + 1)
+}
+
+const ATTR_START_STATES: List[Int] = [STATE_ATTR, STATE_JS, STATE_ATTR, STATE_CSS, STATE_URL, STATE_SRCSET, STATE_META_CONTENT]
+
+fn t_before_value(c: Context, s: Bytes) -> (Context, Int) {
+  var i = eat_white_space(s, 0)
+  if i == s.len() {
+    return (c, s.len())
+  }
+  var delim = DELIM_SPACE_OR_TAG_END
+  if s[i] == 39 {
+    delim = DELIM_SINGLE_QUOTE
+    i += 1
+  } else if s[i] == 34 {
+    delim = DELIM_DOUBLE_QUOTE
+    i += 1
+  }
+  (c with {state: ATTR_START_STATES[c.attr], delim: delim}, i)
+}
+
+fn t_html_cmt(c: Context, s: Bytes) -> (Context, Int) {
+  match s.find(COMMENT_END) {
+    Some(i) => (Context{}, i + 3)
+    None => (c, s.len())
+  }
+}
+
+const SPECIAL_TAG_END_MARKERS: List[Bytes] = [b"", b"script", b"style", b"textarea", b"title", b""]
+const SPECIAL_TAG_END_PREFIX: Bytes = b"</"
+const TAG_END_SEPARATORS: Str = "> \t\n\u{0C}/"
+
+fn t_special_tag_end(c: Context, s: Bytes) -> (Context, Int) {
+  if c.element != ELEMENT_NONE {
+    if c.element == ELEMENT_SCRIPT && (is_in_script_literal(c.state) || is_comment(c.state)) {
+      return (c, s.len())
+    }
+    match index_tag_end(s, SPECIAL_TAG_END_MARKERS[c.element]) {
+      Some(i) => return (Context{}, i)
+      None => {}
+    }
+  }
+  (c, s.len())
+}
+
+/// indexTagEnd: where `</tag` followed by a separator starts, case
+/// insensitively.
+fn index_tag_end(s0: Bytes, tag: Bytes) -> Int? {
+  var s = s0
+  var res = 0
+  let plen = SPECIAL_TAG_END_PREFIX.len()
+  while s.len() > 0 {
+    let i = match s.find(SPECIAL_TAG_END_PREFIX) {
+      Some(x) => x
+      None => return None
+    }
+    s = s[i + plen..]
+    if tag.len() <= s.len() && tag.equal_fold(s[0..tag.len()]) {
+      s = s[tag.len()..]
+      if s.len() > 0 && TAG_END_SEPARATORS.bytes().contains(s[0..1]) {
+        return Some(res + i)
+      }
+      res += tag.len()
+    }
+    res += i + plen
+  }
+  None
+}
+
+fn t_url(c: Context, s: Bytes) -> (Context, Int) {
+  if s.contains_any("#?") {
+    return (c with {url_part: URL_PART_QUERY_OR_FRAG}, s.len())
+  }
+  if s.len() != eat_white_space(s, 0) && c.url_part == URL_PART_NONE {
+    return (c with {url_part: URL_PART_PRE_QUERY}, s.len())
+  }
+  (c, s.len())
+}
+
+fn t_js(c0: Context, s: Bytes) -> (Context, Int) {
+  var c = c0
+  var i = match s.find_any("\"`'/{}<-#") {
+    Some(x) => x
+    None => return (c with {js_ctx: next_js_ctx(s, c.js_ctx)}, s.len())
+  }
+  c.js_ctx = next_js_ctx(s[0..i], c.js_ctx)
+  match s[i] {
+    34 => {
+      c.state = STATE_JS_DQ_STR
+      c.js_ctx = JS_CTX_REGEXP
+    }
+    39 => {
+      c.state = STATE_JS_SQ_STR
+      c.js_ctx = JS_CTX_REGEXP
+    }
+    96 => {
+      c.state = STATE_JS_TMPL_LIT
+      c.js_ctx = JS_CTX_REGEXP
+    }
+    47 => {
+      if i + 1 < s.len() && s[i + 1] == 47 {
+        c.state = STATE_JS_LINE_CMT
+        i += 1
+      } else if i + 1 < s.len() && s[i + 1] == 42 {
+        c.state = STATE_JS_BLOCK_CMT
+        i += 1
+      } else if c.js_ctx == JS_CTX_REGEXP {
+        c.state = STATE_JS_REGEXP
+      } else if c.js_ctx == JS_CTX_DIV_OP {
+        c.js_ctx = JS_CTX_REGEXP
+      } else {
+        return (esc_err(ERR_SLASH_AMBIG, "'/' could start a division or regexp: ${go_quote_prefix(s[i..], 32)}"), s.len())
+      }
+    }
+    60 => {
+      if i + 3 < s.len() && s[i..i + 4] == COMMENT_START {
+        c.state = STATE_JS_HTML_OPEN_CMT
+        i += 3
+      }
+    }
+    45 => {
+      if i + 2 < s.len() && s[i..i + 3] == COMMENT_END {
+        c.state = STATE_JS_HTML_CLOSE_CMT
+        i += 2
+      }
+    }
+    35 => {
+      if i + 1 < s.len() && s[i + 1] == 33 {
+        c.state = STATE_JS_LINE_CMT
+        i += 1
+      }
+    }
+    123 => {
+      if c.js_brace_depth.is_empty() {
+        return (c, i + 1)
+      }
+      let last = c.js_brace_depth.len() - 1
+      c.js_brace_depth[last] = c.js_brace_depth[last] + 1
+    }
+    125 => {
+      if c.js_brace_depth.is_empty() {
+        return (c, i + 1)
+      }
+      let last = c.js_brace_depth.len() - 1
+      c.js_brace_depth[last] = c.js_brace_depth[last] - 1
+      if c.js_brace_depth[last] >= 0 {
+        return (c, i + 1)
+      }
+      c.js_brace_depth = c.js_brace_depth[0..last]
+      c.state = STATE_JS_TMPL_LIT
+    }
+    _ => {}
+  }
+  (c, i + 1)
+}
+
+/// Go's %.32q: the quoted text cut to n runes.
+fn go_quote_prefix(s: Bytes, n: Int) -> Str {
+  let t = s.to_str() ?? ""
+  if t.rune_count() <= n {
+    return t.debug()
+  }
+  var out = BytesBuilder.new()
+  var k = 0
+  for r in t.runes() {
+    if k == n {
+      break
+    }
+    out.write_rune(r)
+    k += 1
+  }
+  (out.freeze().to_str() ?? "").debug()
+}
+
+fn t_js_tmpl(c0: Context, s: Bytes) -> (Context, Int) {
+  var c = c0
+  var k = 0
+  while true {
+    var i = match s[k..].find_any("`\\$") {
+      Some(x) => k + x
+      None => break
+    }
+    match s[i] {
+      92 => {
+        i += 1
+        if i == s.len() {
+          return (esc_err(ERR_PARTIAL_ESCAPE, "unfinished escape sequence in JS string: ${go_quote_bytes(s)}"), s.len())
+        }
+      }
+      36 => {
+        if s.len() >= i + 2 && s[i + 1] == 123 {
+          c.js_brace_depth.push(0)
+          c.state = STATE_JS
+          return (c, i + 2)
+        }
+      }
+      _ => {
+        c.state = STATE_JS
+        return (c, i + 1)
+      }
+    }
+    k = i + 1
+  }
+  (c, s.len())
+}
+
+fn t_js_delimited(c0: Context, s: Bytes) -> (Context, Int) {
+  var c = c0
+  var specials = "\\\""
+  if c.state == STATE_JS_SQ_STR {
+    specials = "\\'"
+  } else if c.state == STATE_JS_REGEXP {
+    specials = "\\/[]"
+  }
+  var k = 0
+  var in_charset = false
+  while true {
+    var i = match s[k..].find_any(specials) {
+      Some(x) => k + x
+      None => break
+    }
+    match s[i] {
+      92 => {
+        i += 1
+        if i == s.len() {
+          return (esc_err(ERR_PARTIAL_ESCAPE, "unfinished escape sequence in JS string: ${go_quote_bytes(s)}"), s.len())
+        }
+      }
+      91 => in_charset = true
+      93 => in_charset = false
+      47 => {
+        if i > 0 && i + 7 <= s.len() && s[i - 1..i + 7].to_lower() == b"</script" {
+          i += 1
+        } else if !in_charset {
+          c.state = STATE_JS
+          c.js_ctx = JS_CTX_DIV_OP
+          return (c, i + 1)
+        }
+      }
+      _ => {
+        if !in_charset {
+          c.state = STATE_JS
+          c.js_ctx = JS_CTX_DIV_OP
+          return (c, i + 1)
+        }
+      }
+    }
+    k = i + 1
+  }
+  if in_charset {
+    return (esc_err(ERR_PARTIAL_CHARSET, "unfinished JS regexp charset: ${go_quote_bytes(s)}"), s.len())
+  }
+  (c, s.len())
+}
+
+fn t_block_cmt(c: Context, s: Bytes) -> (Context, Int) {
+  let i = match s.find(b"*/") {
+    Some(x) => x
+    None => return (c, s.len())
+  }
+  let st = if c.state == STATE_JS_BLOCK_CMT { STATE_JS } else { STATE_CSS }
+  (c with {state: st}, i + 2)
+}
+
+fn t_line_cmt(c: Context, s: Bytes) -> (Context, Int) {
+  let (terminators, end_state) = if c.state == STATE_CSS_LINE_CMT {
+    ("\n\u{0C}\r", STATE_CSS)
+  } else {
+    ("\n\r\u{2028}\u{2029}", STATE_JS)
+  }
+  match s.find_any(terminators) {
+    Some(i) => (c with {state: end_state}, i)
+    None => (c, s.len())
+  }
+}
+
+
+const CSS_SPACE: Str = "\t\n\u{0C}\r "
+
+fn t_css(c0: Context, s: Bytes) -> (Context, Int) {
+  var c = c0
+  var k = 0
+  while true {
+    let i = match s[k..].find_any("(\"'/") {
+      Some(x) => k + x
+      None => return (c, s.len())
+    }
+    match s[i] {
+      40 => {
+        let p = trim_right_bytes(s[0..i], CSS_SPACE)
+        if ends_with_css_keyword(p, "url") {
+          var j = s.len() - trim_left_bytes(s[i + 1..], CSS_SPACE).len()
+          if j != s.len() && s[j] == 34 {
+            c.state = STATE_CSS_DQ_URL
+            j += 1
+          } else if j != s.len() && s[j] == 39 {
+            c.state = STATE_CSS_SQ_URL
+            j += 1
+          } else {
+            c.state = STATE_CSS_URL
+          }
+          return (c, j)
+        }
+      }
+      47 => {
+        if i + 1 < s.len() {
+          if s[i + 1] == 47 {
+            c.state = STATE_CSS_LINE_CMT
+            return (c, i + 2)
+          } else if s[i + 1] == 42 {
+            c.state = STATE_CSS_BLOCK_CMT
+            return (c, i + 2)
+          }
+        }
+      }
+      34 => {
+        c.state = STATE_CSS_DQ_STR
+        return (c, i + 1)
+      }
+      39 => {
+        c.state = STATE_CSS_SQ_STR
+        return (c, i + 1)
+      }
+      _ => {}
+    }
+    k = i + 1
+  }
+  (c, s.len())
+}
+
+fn t_css_str(c0: Context, s: Bytes) -> (Context, Int) {
+  var c = c0
+  let end_and_esc = if c.state == STATE_CSS_DQ_STR || c.state == STATE_CSS_DQ_URL {
+    "\\\""
+  } else if c.state == STATE_CSS_SQ_STR || c.state == STATE_CSS_SQ_URL {
+    "\\'"
+  } else {
+    "\\\t\n\u{0C}\r )"
+  }
+  var k = 0
+  while true {
+    var i = match s[k..].find_any(end_and_esc) {
+      Some(x) => k + x
+      None => {
+        let (c2, nread) = t_url(c, decode_css(s[k..]))
+        return (c2, k + nread)
+      }
+    }
+    if s[i] == 92 {
+      i += 1
+      if i == s.len() {
+        return (esc_err(ERR_PARTIAL_ESCAPE, "unfinished escape sequence in CSS string: ${go_quote_bytes(s)}"), s.len())
+      }
+    } else {
+      c.state = STATE_CSS
+      return (c, i + 1)
+    }
+    let (c3, _) = t_url(c, decode_css(s[0..i + 1]))
+    c = c3
+    k = i + 1
+  }
+  (c, s.len())
+}
+
+fn t_meta_content(c: Context, s: Bytes) -> (Context, Int) {
+  var i = 0
+  while i < s.len() {
+    if i + 3 <= s.len() - 1 && s[i..i + 4].to_lower() == b"url=" {
+      return (c with {state: STATE_META_CONTENT_URL}, i + 4)
+    }
+    i += 1
+  }
+  (c, s.len())
+}
+
+fn t_meta_content_url(c: Context, s: Bytes) -> (Context, Int) {
+  var i = 0
+  while i < s.len() {
+    if s[i] == 59 {
+      return (c with {state: STATE_META_CONTENT}, i + 1)
+    }
+    i += 1
+  }
+  (c, s.len())
+}
+
+/// eatAttrName: the end of the attribute name at i, or the error for a
+/// quote or `<` inside it.
+fn eat_attr_name(s: Bytes, i: Int) -> (Int, EscErr?) {
+  var j = i
+  while j < s.len() {
+    let x = s[j]
+    if x == 32 || x == 9 || x == 10 || x == 12 || x == 13 || x == 61 || x == 62 {
+      return (j, None)
+    }
+    if x == 39 || x == 34 || x == 60 {
+      return (-1, Some(EscErr{code: ERR_BAD_HTML, name: "", line: 0, desc: "${go_quote_bytes(s[j..j + 1])} in attribute name: ${go_quote_prefix(s, 32)}"}))
+    }
+    j += 1
+  }
+  (s.len(), None)
+}
+
+fn ascii_alpha(c: UInt8) -> Bool { (c >= 65 && c <= 90) || (c >= 97 && c <= 122) }
+fn ascii_alpha_num(c: UInt8) -> Bool { ascii_alpha(c) || (c >= 48 && c <= 57) }
+
+fn element_of(name: Str) -> Int {
+  match name {
+    "script" => ELEMENT_SCRIPT
+    "style" => ELEMENT_STYLE
+    "textarea" => ELEMENT_TEXTAREA
+    "title" => ELEMENT_TITLE
+    "meta" => ELEMENT_META
+    _ => ELEMENT_NONE
+  }
+}
+
+fn eat_tag_name(s: Bytes, i: Int) -> (Int, Int) {
+  if i == s.len() || !ascii_alpha(s[i]) {
+    return (i, ELEMENT_NONE)
+  }
+  var j = i + 1
+  while j < s.len() {
+    let x = s[j]
+    if ascii_alpha_num(x) {
+      j += 1
+      continue
+    }
+    if (x == 58 || x == 45) && j + 1 < s.len() && ascii_alpha_num(s[j + 1]) {
+      j += 2
+      continue
+    }
+    break
+  }
+  (j, element_of((s[i..j].to_str() ?? "").to_lower()))
+}
+
+fn eat_white_space(s: Bytes, i: Int) -> Int {
+  var j = i
+  while j < s.len() {
+    let x = s[j]
+    if x == 32 || x == 9 || x == 10 || x == 12 || x == 13 {
+      j += 1
+      continue
+    }
+    return j
+  }
+  s.len()
+}
+
+fn trim_right_bytes(s: Bytes, chars: Str) -> Bytes {
+  var n = s.len()
+  while n > 0 && chars.bytes().contains(s[n - 1..n]) {
+    n -= 1
+  }
+  s[0..n]
+}
+
+fn trim_left_bytes(s: Bytes, chars: Str) -> Bytes {
+  var i = 0
+  while i < s.len() && chars.bytes().contains(s[i..i + 1]) {
+    i += 1
+  }
+  s[i..]
+}
+
+/// nudge: a context between attributes moved to where an action's
+/// output would land (escape.go).
+fn nudge(c: Context) -> Context {
+  if c.state == STATE_TAG {
+    return c with {state: STATE_ATTR_NAME}
+  }
+  if c.state == STATE_BEFORE_VALUE {
+    return c with {state: ATTR_START_STATES[c.attr], delim: DELIM_SPACE_OR_TAG_END, attr: ATTR_NONE}
+  }
+  if c.state == STATE_AFTER_NAME {
+    return c with {state: STATE_ATTR_NAME, attr: ATTR_NONE}
+  }
+  c
+}
+
+/// specialScriptTagRE: `<script`, `</script` or `<!--`, case
+/// insensitively, at or after i.
+fn find_special_script_tag(s: Bytes, from: Int) -> (Int, Int)? {
+  var i = from
+  while i < s.len() {
+    let j = match s[i..].find(b"<") {
+      Some(x) => i + x
+      None => return None
+    }
+    let rest = s[j + 1..]
+    if rest.len() >= 6 && rest[0..6].to_lower() == b"script" {
+      return Some((j, 7))
+    }
+    if rest.len() >= 7 && rest[0..7].to_lower() == b"/script" {
+      return Some((j, 8))
+    }
+    if rest.starts_with(b"!--") {
+      return Some((j, 4))
+    }
+    i = j + 1
+  }
+  None
+}
+
+fn contains_special_script_tag(s: Bytes) -> Bool {
+  match find_special_script_tag(s, 0) {
+    Some(_) => true
+    None => false
+  }
+}
+
+/// escapeSpecialScriptTags: each match's `<` as `\x3C`.
+fn escape_special_script_tags(s: Bytes) -> Bytes {
+  var b = BytesBuilder.new()
+  var written = 0
+  var i = 0
+  while true {
+    match find_special_script_tag(s, i) {
+      Some((j, n)) => {
+        b.write(s[written..j])
+        b.write_str("\\x3C")
+        b.write(s[j + 1..j + n])
+        written = j + n
+        i = j + n
+      }
+      None => break
+    }
+  }
+  b.write(s[written..])
+  b.freeze()
+}
+
+/// contextAfterText: the context after a text run and how much of it
+/// the transition read (an attribute value's end is its delimiter).
+fn context_after_text(c: Context, s: Bytes) -> (Context, Int) {
+  if c.delim == DELIM_NONE {
+    let (c1, i) = t_special_tag_end(c, s)
+    if i == 0 {
+      return (c1, 0)
+    }
+    return transition(c, s[0..i])
+  }
+  var i = s.find_any(DELIM_ENDS[c.delim]) ?? s.len()
+  if c.delim == DELIM_SPACE_OR_TAG_END {
+    match s[0..i].find_any("\"'<=`") {
+      Some(j) => return (esc_err(ERR_BAD_HTML, "${go_quote_bytes(s[j..j + 1])} in unquoted attr: ${go_quote_bytes(s[0..i])}"), s.len())
+      None => {}
+    }
+  }
+  if i == s.len() {
+    // the value continues past this text: its entities decoded, run
+    // through the state's transitions
+    var c2 = c
+    var u = html.unescape_string(s.to_str() ?? "").bytes()
+    while !u.is_empty() {
+      let (c3, i1) = transition(c2, u)
+      c2 = c3
+      u = u[i1..]
+    }
+    return (c2, s.len())
+  }
+  var element = c.element
+  if c.state == STATE_ATTR && c.element == ELEMENT_SCRIPT && c.attr == ATTR_SCRIPT_TYPE && !is_js_type(s[0..i].to_str() ?? "") {
+    element = ELEMENT_NONE
+  }
+  if c.delim != DELIM_SPACE_OR_TAG_END {
+    i += 1
+  }
+  (Context{state: STATE_TAG, element: element}, i)
+}
+
+/// escapeText: the context after a text node, and the text with `<`
+/// in text escaped where a tag could start, comments dropped, and
+/// `<script` inside script literals escaped.
+fn escape_text(c0: Context, text: Str) -> (Context, Str) {
+  let s = text.bytes()
+  var c = c0
+  var written = 0
+  var i = 0
+  var b = BytesBuilder.new()
+  while i != s.len() {
+    let (c1, nread) = context_after_text(c, s[i..])
+    let i1 = i + nread
+    if c.state == STATE_TEXT || c.state == STATE_RCDATA {
+      var end = i1
+      if c1.state != c.state {
+        var j = end - 1
+        while j >= i {
+          if s[j] == 60 {
+            end = j
+            break
+          }
+          j -= 1
+        }
+      }
+      var j = i
+      while j < end {
+        if s[j] == 60 && !(s.len() - j >= 9 && s[j..j + 9].to_upper() == b"<!DOCTYPE") {
+          b.write(s[written..j])
+          b.write_str("&lt;")
+          written = j + 1
+        }
+        j += 1
+      }
+    } else if is_comment(c.state) && c.delim == DELIM_NONE {
+      if c.state == STATE_JS_BLOCK_CMT {
+        if s[written..i1].contains_any("\n\r\u{2028}\u{2029}") {
+          b.write_byte(10)
+        } else {
+          b.write_byte(32)
+        }
+      } else if c.state == STATE_CSS_BLOCK_CMT {
+        b.write_byte(32)
+      }
+      written = i1
+    }
+    if c.state != c1.state && is_comment(c1.state) && c1.delim == DELIM_NONE {
+      var cs = i1 - 2
+      if c1.state == STATE_HTML_CMT || c1.state == STATE_JS_HTML_OPEN_CMT {
+        cs -= 2
+      } else if c1.state == STATE_JS_HTML_CLOSE_CMT {
+        cs -= 1
+      }
+      b.write(s[written..cs])
+      written = i1
+    }
+    if is_in_script_literal(c.state) && contains_special_script_tag(s[i..i1]) {
+      b.write(s[written..i])
+      b.write(escape_special_script_tags(s[i..i1]))
+      written = i1
+    }
+    if i == i1 && c.state == c1.state {
+      // Go panics ("infinite loop"); the port stops the text here
+      return (esc_err(ERR_BAD_HTML, "infinite loop from ${c.text()} to ${c1.text()} on ${go_quote_bytes(s[0..i])}..${go_quote_bytes(s[i..])}"), text)
+    }
+    c = c1
+    i = i1
+  }
+  if written != 0 && c.state != STATE_ERROR {
+    if !is_comment(c.state) || c.delim != DELIM_NONE {
+      b.write(s[written..])
+    }
+    return (c, b.freeze().to_str() ?? text)
+  }
+  (c, text)
+}
+
+
+// ---------------------------------------------------------------------------
+// content.go and attr.go
+
+const CONTENT_TYPE_PLAIN = 0
+const CONTENT_TYPE_CSS = 1
+const CONTENT_TYPE_HTML = 2
+const CONTENT_TYPE_HTML_ATTR = 3
+const CONTENT_TYPE_JS = 4
+const CONTENT_TYPE_JS_STR = 5
+const CONTENT_TYPE_URL = 6
+const CONTENT_TYPE_SRCSET = 7
+const CONTENT_TYPE_UNSAFE = 8
+
+/// The content type of a Trusted value's kind (std/template's constructors).
+fn content_type_of_kind(kind: Str) -> Int {
+  match kind {
+    "html" => CONTENT_TYPE_HTML
+    "css" => CONTENT_TYPE_CSS
+    "js" => CONTENT_TYPE_JS
+    "jsstr" => CONTENT_TYPE_JS_STR
+    "url" => CONTENT_TYPE_URL
+    "attr" => CONTENT_TYPE_HTML_ATTR
+    "srcset" => CONTENT_TYPE_SRCSET
+    _ => CONTENT_TYPE_PLAIN
+  }
+}
+
+/// attrTypeMap: the attribute names whose content type is not told by
+/// the name (sorted by name for a binary search).
+const ATTR_TYPES: List[(Str, Int)] = [
+  ("accept", CONTENT_TYPE_PLAIN),
+  ("accept-charset", CONTENT_TYPE_UNSAFE),
+  ("action", CONTENT_TYPE_URL),
+  ("alt", CONTENT_TYPE_PLAIN),
+  ("archive", CONTENT_TYPE_URL),
+  ("async", CONTENT_TYPE_UNSAFE),
+  ("autocomplete", CONTENT_TYPE_PLAIN),
+  ("autofocus", CONTENT_TYPE_PLAIN),
+  ("autoplay", CONTENT_TYPE_PLAIN),
+  ("background", CONTENT_TYPE_URL),
+  ("border", CONTENT_TYPE_PLAIN),
+  ("challenge", CONTENT_TYPE_UNSAFE),
+  ("charset", CONTENT_TYPE_UNSAFE),
+  ("checked", CONTENT_TYPE_PLAIN),
+  ("cite", CONTENT_TYPE_URL),
+  ("class", CONTENT_TYPE_PLAIN),
+  ("classid", CONTENT_TYPE_URL),
+  ("codebase", CONTENT_TYPE_URL),
+  ("cols", CONTENT_TYPE_PLAIN),
+  ("colspan", CONTENT_TYPE_PLAIN),
+  ("content", CONTENT_TYPE_UNSAFE),
+  ("contenteditable", CONTENT_TYPE_PLAIN),
+  ("contextmenu", CONTENT_TYPE_PLAIN),
+  ("controls", CONTENT_TYPE_PLAIN),
+  ("coords", CONTENT_TYPE_PLAIN),
+  ("crossorigin", CONTENT_TYPE_UNSAFE),
+  ("data", CONTENT_TYPE_URL),
+  ("datetime", CONTENT_TYPE_PLAIN),
+  ("default", CONTENT_TYPE_PLAIN),
+  ("defer", CONTENT_TYPE_UNSAFE),
+  ("dir", CONTENT_TYPE_PLAIN),
+  ("dirname", CONTENT_TYPE_PLAIN),
+  ("disabled", CONTENT_TYPE_PLAIN),
+  ("draggable", CONTENT_TYPE_PLAIN),
+  ("dropzone", CONTENT_TYPE_PLAIN),
+  ("enctype", CONTENT_TYPE_UNSAFE),
+  ("for", CONTENT_TYPE_PLAIN),
+  ("form", CONTENT_TYPE_UNSAFE),
+  ("formaction", CONTENT_TYPE_URL),
+  ("formenctype", CONTENT_TYPE_UNSAFE),
+  ("formmethod", CONTENT_TYPE_UNSAFE),
+  ("formnovalidate", CONTENT_TYPE_UNSAFE),
+  ("formtarget", CONTENT_TYPE_PLAIN),
+  ("headers", CONTENT_TYPE_PLAIN),
+  ("height", CONTENT_TYPE_PLAIN),
+  ("hidden", CONTENT_TYPE_PLAIN),
+  ("high", CONTENT_TYPE_PLAIN),
+  ("href", CONTENT_TYPE_URL),
+  ("hreflang", CONTENT_TYPE_PLAIN),
+  ("http-equiv", CONTENT_TYPE_UNSAFE),
+  ("icon", CONTENT_TYPE_URL),
+  ("id", CONTENT_TYPE_PLAIN),
+  ("ismap", CONTENT_TYPE_PLAIN),
+  ("keytype", CONTENT_TYPE_UNSAFE),
+  ("kind", CONTENT_TYPE_PLAIN),
+  ("label", CONTENT_TYPE_PLAIN),
+  ("lang", CONTENT_TYPE_PLAIN),
+  ("language", CONTENT_TYPE_UNSAFE),
+  ("list", CONTENT_TYPE_PLAIN),
+  ("longdesc", CONTENT_TYPE_URL),
+  ("loop", CONTENT_TYPE_PLAIN),
+  ("low", CONTENT_TYPE_PLAIN),
+  ("manifest", CONTENT_TYPE_URL),
+  ("max", CONTENT_TYPE_PLAIN),
+  ("maxlength", CONTENT_TYPE_PLAIN),
+  ("media", CONTENT_TYPE_PLAIN),
+  ("mediagroup", CONTENT_TYPE_PLAIN),
+  ("method", CONTENT_TYPE_UNSAFE),
+  ("min", CONTENT_TYPE_PLAIN),
+  ("multiple", CONTENT_TYPE_PLAIN),
+  ("name", CONTENT_TYPE_PLAIN),
+  ("novalidate", CONTENT_TYPE_UNSAFE),
+  ("open", CONTENT_TYPE_PLAIN),
+  ("optimum", CONTENT_TYPE_PLAIN),
+  ("pattern", CONTENT_TYPE_UNSAFE),
+  ("placeholder", CONTENT_TYPE_PLAIN),
+  ("poster", CONTENT_TYPE_URL),
+  ("preload", CONTENT_TYPE_PLAIN),
+  ("profile", CONTENT_TYPE_URL),
+  ("pubdate", CONTENT_TYPE_PLAIN),
+  ("radiogroup", CONTENT_TYPE_PLAIN),
+  ("readonly", CONTENT_TYPE_PLAIN),
+  ("rel", CONTENT_TYPE_UNSAFE),
+  ("required", CONTENT_TYPE_PLAIN),
+  ("reversed", CONTENT_TYPE_PLAIN),
+  ("rows", CONTENT_TYPE_PLAIN),
+  ("rowspan", CONTENT_TYPE_PLAIN),
+  ("sandbox", CONTENT_TYPE_UNSAFE),
+  ("scope", CONTENT_TYPE_PLAIN),
+  ("scoped", CONTENT_TYPE_PLAIN),
+  ("seamless", CONTENT_TYPE_PLAIN),
+  ("selected", CONTENT_TYPE_PLAIN),
+  ("shape", CONTENT_TYPE_PLAIN),
+  ("size", CONTENT_TYPE_PLAIN),
+  ("sizes", CONTENT_TYPE_PLAIN),
+  ("span", CONTENT_TYPE_PLAIN),
+  ("spellcheck", CONTENT_TYPE_PLAIN),
+  ("src", CONTENT_TYPE_URL),
+  ("srcdoc", CONTENT_TYPE_HTML),
+  ("srclang", CONTENT_TYPE_PLAIN),
+  ("srcset", CONTENT_TYPE_SRCSET),
+  ("start", CONTENT_TYPE_PLAIN),
+  ("step", CONTENT_TYPE_PLAIN),
+  ("style", CONTENT_TYPE_CSS),
+  ("tabindex", CONTENT_TYPE_PLAIN),
+  ("target", CONTENT_TYPE_PLAIN),
+  ("title", CONTENT_TYPE_PLAIN),
+  ("type", CONTENT_TYPE_UNSAFE),
+  ("usemap", CONTENT_TYPE_URL),
+  ("value", CONTENT_TYPE_UNSAFE),
+  ("width", CONTENT_TYPE_PLAIN),
+  ("wrap", CONTENT_TYPE_PLAIN),
+  ("xmlns", CONTENT_TYPE_URL),
+]
+
+fn attr_type_lookup(name: Str) -> Int? {
+  var lo = 0
+  var hi = ATTR_TYPES.len()
+  while lo < hi {
+    let mid = (lo + hi) / 2
+    let (n, t) = ATTR_TYPES[mid]
+    if n == name {
+      return Some(t)
+    }
+    if n < name {
+      lo = mid + 1
+    } else {
+      hi = mid
+    }
+  }
+  None
+}
+
+/// attrType: the content type of an attribute's value by its name.
+fn attr_type(name0: Str) -> Int {
+  var name = name0
+  if name.starts_with("data-") {
+    name = name[5..]
+  } else {
+    match name.find(":") {
+      Some(i) => {
+        if name[0..i] == "xmlns" {
+          return CONTENT_TYPE_URL
+        }
+        name = name[i + 1..]
+      }
+      None => {}
+    }
+  }
+  match attr_type_lookup(name) {
+    Some(t) => return t
+    None => {}
+  }
+  if name.starts_with("on") {
+    return CONTENT_TYPE_JS
+  }
+  if name.contains("src") || name.contains("uri") || name.contains("url") {
+    return CONTENT_TYPE_URL
+  }
+  CONTENT_TYPE_PLAIN
+}
+
+
+// ---------------------------------------------------------------------------
+// html.go: the escapers take the command's text and content type (the
+// walk in std/native/template.xo does stringify: one Trusted argument
+// is (s, its kind's type), anything else the printed text and Plain)
+
+/// filterFailsafe (url.go): what a filter returns for an unsafe value.
+const FILTER_FAILSAFE: Str = "ZgotmplZ"
+
+fn html_nospace_escaper(s: Str, t: Int) -> Str {
+  if s.is_empty() {
+    return FILTER_FAILSAFE
+  }
+  if t == CONTENT_TYPE_HTML {
+    return html_replacer(strip_tags(s), HTML_NOSPACE_NORM, false)
+  }
+  html_replacer(s, HTML_NOSPACE, false)
+}
+
+fn attr_escaper(s: Str, t: Int) -> Str {
+  if t == CONTENT_TYPE_HTML {
+    return html_replacer(strip_tags(s), HTML_NORM, true)
+  }
+  html_replacer(s, HTML_TABLE, true)
+}
+
+fn rcdata_escaper(s: Str, t: Int) -> Str {
+  if t == CONTENT_TYPE_HTML {
+    return html_replacer(s, HTML_NORM, true)
+  }
+  html_replacer(s, HTML_TABLE, true)
+}
+
+fn html_escaper(s: Str, t: Int) -> Str {
+  if t == CONTENT_TYPE_HTML {
+    return s
+  }
+  html_replacer(s, HTML_TABLE, true)
+}
+
+/// A replacement table: (byte, replacement), sorted by byte; the ones
+/// of html.go.
+const HTML_TABLE: List[(Int, Str)] = [(0, "\u{FFFD}"), (34, "&#34;"), (38, "&amp;"), (39, "&#39;"), (43, "&#43;"), (60, "&lt;"), (62, "&gt;")]
+const HTML_NORM: List[(Int, Str)] = [(0, "\u{FFFD}"), (34, "&#34;"), (39, "&#39;"), (43, "&#43;"), (60, "&lt;"), (62, "&gt;")]
+const HTML_NOSPACE: List[(Int, Str)] = [(0, "&#xfffd;"), (9, "&#9;"), (10, "&#10;"), (11, "&#11;"), (12, "&#12;"), (13, "&#13;"), (32, "&#32;"), (34, "&#34;"), (38, "&amp;"), (39, "&#39;"), (43, "&#43;"), (60, "&lt;"), (61, "&#61;"), (62, "&gt;"), (96, "&#96;")]
+const HTML_NOSPACE_NORM: List[(Int, Str)] = [(0, "&#xfffd;"), (9, "&#9;"), (10, "&#10;"), (11, "&#11;"), (12, "&#12;"), (13, "&#13;"), (32, "&#32;"), (34, "&#34;"), (39, "&#39;"), (43, "&#43;"), (60, "&lt;"), (61, "&#61;"), (62, "&gt;"), (96, "&#96;")]
+
+fn table_get(table: List[(Int, Str)], r: Int) -> Str {
+  for (k, rep) in table {
+    if k == r {
+      return rep
+    }
+    if k > r {
+      break
+    }
+  }
+  ""
+}
+
+/// htmlReplacer: each rune in the table replaced; with bad_runes false,
+/// the noncharacters U+FDD0 to U+FDEF and U+FFF0 to U+FFFF as numeric
+/// references too.
+fn html_replacer(s: Str, table: List[(Int, Str)], bad_runes: Bool) -> Str {
+  let b = s.bytes()
+  var out = BytesBuilder.new()
+  var written = 0
+  var i = 0
+  while i < b.len() {
+    let (r0, w) = b.decode_rune(i)
+    let r = Int(r0)
+    if r < 128 {
+      let rep = table_get(table, r)
+      if !rep.is_empty() {
+        out.write(b[written..i])
+        out.write_str(rep)
+        written = i + w
+      }
+    } else if bad_runes {
+      // the caller renders them as they are
+    } else if (0xFDD0 <= r && r <= 0xFDEF) || (0xFFF0 <= r && r <= 0xFFFF) {
+      out.write(b[written..i])
+      out.write_str("&#x${hex_lower(r)};")
+      written = i + w
+    }
+    i += w
+  }
+  if written == 0 {
+    return s
+  }
+  out.write(b[written..])
+  out.freeze().to_str() ?? s
+}
+
+const DELIM_ENDS: List[Str] = ["", "\"", "'", "\t\n\u{0C}\r >"]
+
+/// stripTags: the text of html with its tags, comments and the content
+/// of script and style elements removed.
+fn strip_tags(html: Str) -> Str {
+  let s = html.bytes()
+  var out = BytesBuilder.new()
+  var c = Context{}
+  var i = 0
+  var all_text = true
+  while i != s.len() {
+    if c.delim == DELIM_NONE {
+      var st = c.state
+      if c.element != ELEMENT_NONE && !is_in_tag(st) {
+        st = STATE_RCDATA
+      }
+      let (d, nread) = transition_in(st, c, s[i..])
+      let i1 = i + nread
+      if c.state == STATE_TEXT || c.state == STATE_RCDATA {
+        var j = i1
+        if d.state != c.state {
+          var j1 = j - 1
+          while j1 >= i {
+            if s[j1] == 60 {
+              j = j1
+              break
+            }
+            j1 -= 1
+          }
+        }
+        out.write(s[i..j])
+      } else {
+        all_text = false
+      }
+      c = d
+      i = i1
+      continue
+    }
+    let i1 = match s[i..].find_any(DELIM_ENDS[c.delim]) {
+      Some(x) => i + x
+      None => break
+    }
+    var next = i1
+    if c.delim != DELIM_SPACE_OR_TAG_END {
+      next += 1
+    }
+    c = Context{state: STATE_TAG, element: c.element}
+    i = next
+  }
+  if all_text {
+    return html
+  }
+  if c.state == STATE_TEXT || c.state == STATE_RCDATA {
+    out.write(s[i..])
+  }
+  out.freeze().to_str() ?? ""
+}
+
+/// htmlNameFilter: an attribute name a template computes, or the failsafe.
+fn html_name_filter(s0: Str, t: Int) -> Str {
+  if t == CONTENT_TYPE_HTML_ATTR {
+    return s0
+  }
+  if s0.is_empty() {
+    return FILTER_FAILSAFE
+  }
+  let s = s0.to_lower()
+  if attr_type(s) != CONTENT_TYPE_PLAIN {
+    return FILTER_FAILSAFE
+  }
+  for c in s.bytes() {
+    if (c >= 48 && c <= 57) || (c >= 97 && c <= 122) {
+      continue
+    }
+    return FILTER_FAILSAFE
+  }
+  s
+}
+
+fn comment_escaper(s: Str, t: Int) -> Str { "" }
+
+/// %x of a non negative Int.
+fn hex_lower(n0: Int) -> Str {
+  if n0 == 0 {
+    return "0"
+  }
+  var n = n0
+  var digits: List[Int] = []
+  while n > 0 {
+    digits.push(n % 16)
+    n = n / 16
+  }
+  var b = BytesBuilder.new()
+  for d in digits.reverse() {
+    b.write_byte(HEX_DIGITS[d])
+  }
+  b.freeze().to_str() ?? ""
+}
+
+
+// ---------------------------------------------------------------------------
+// url.go
+
+fn url_filter(s: Str, t: Int) -> Str {
+  if t == CONTENT_TYPE_URL {
+    return s
+  }
+  if !is_safe_url(s) {
+    return "#" + FILTER_FAILSAFE
+  }
+  s
+}
+
+fn is_safe_url(s: Str) -> Bool {
+  match s.find(":") {
+    Some(i) => {
+      let protocol = s[0..i]
+      if !protocol.contains("/") {
+        let p = protocol.to_lower()
+        if p != "http" && p != "https" && p != "mailto" {
+          return false
+        }
+      }
+    }
+    None => {}
+  }
+  true
+}
+
+fn url_escaper(s: Str, t: Int) -> Str { url_processor(false, s, t) }
+fn url_normalizer(s: Str, t: Int) -> Str { url_processor(true, s, t) }
+
+fn url_processor(norm0: Bool, s: Str, t: Int) -> Str {
+  let norm = norm0 || t == CONTENT_TYPE_URL
+  var b = BytesBuilder.new()
+  if process_url_onto(s, norm, b) {
+    return b.freeze().to_str() ?? s
+  }
+  s
+}
+
+fn is_hex(c: UInt8) -> Bool { (c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70) }
+
+const HEX_DIGITS: Bytes = b"0123456789abcdef"
+
+/// processURLOnto: s percent encoded onto b (normalized keeps the
+/// reserved characters and valid escapes); true when anything changed.
+fn process_url_onto(s: Str, norm: Bool, var b: BytesBuilder) -> Bool {
+  let bs = s.bytes()
+  var written = 0
+  var i = 0
+  let n = bs.len()
+  while i < n {
+    let c = bs[i]
+    var keep = false
+    if c == 33 || c == 35 || c == 36 || c == 38 || c == 42 || c == 43 || c == 44 || c == 47 || c == 58 || c == 59 || c == 61 || c == 63 || c == 64 || c == 91 || c == 93 {
+      keep = norm
+    } else if c == 45 || c == 46 || c == 95 || c == 126 {
+      keep = true
+    } else if c == 37 {
+      keep = norm && i + 2 < n && is_hex(bs[i + 1]) && is_hex(bs[i + 2])
+    } else if (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) {
+      keep = true
+    }
+    if !keep {
+      b.write(bs[written..i])
+      b.write_byte(37)
+      b.write_byte(HEX_DIGITS[Int(c) / 16])
+      b.write_byte(HEX_DIGITS[Int(c) % 16])
+      written = i + 1
+    }
+    i += 1
+  }
+  b.write(bs[written..])
+  written != 0
+}
+
+fn srcset_filter_and_escaper(s0: Str, t: Int) -> Str {
+  if t == CONTENT_TYPE_SRCSET {
+    return s0
+  }
+  if t == CONTENT_TYPE_URL {
+    var b = BytesBuilder.new()
+    var s = s0
+    if process_url_onto(s0, true, b) {
+      s = b.freeze().to_str() ?? s0
+    }
+    return s.replace(",", "%2c")
+  }
+  let bs = s0.bytes()
+  var b = BytesBuilder.new()
+  var written = 0
+  var i = 0
+  while i < bs.len() {
+    if bs[i] == 44 {
+      filter_srcset_element(bs, written, i, b)
+      b.write_str(",")
+      written = i + 1
+    }
+    i += 1
+  }
+  filter_srcset_element(bs, written, bs.len(), b)
+  b.freeze().to_str() ?? s0
+}
+
+/// htmlSpaceAndASCIIAlnumBytes: a bit set over the bytes below 0x80.
+const HTML_SPACE_AND_ALNUM: Bytes = b"\x00\x36\x00\x00\x01\x00\xff\x03\xfe\xff\xff\x07\xfe\xff\xff\x07"
+
+fn is_html_space(c: UInt8) -> Bool {
+  c <= 0x20 && (Int(HTML_SPACE_AND_ALNUM[Int(c) / 8]) & (1 << (Int(c) % 8))) != 0
+}
+
+fn is_html_space_or_ascii_alnum(c: UInt8) -> Bool {
+  c < 0x80 && (Int(HTML_SPACE_AND_ALNUM[Int(c) / 8]) & (1 << (Int(c) % 8))) != 0
+}
+
+fn filter_srcset_element(s: Bytes, left: Int, right: Int, var b: BytesBuilder) {
+  var start = left
+  while start < right && is_html_space(s[start]) {
+    start += 1
+  }
+  var end = right
+  var i = start
+  while i < right {
+    if is_html_space(s[i]) {
+      end = i
+      break
+    }
+    i += 1
+  }
+  let url = s[start..end].to_str() ?? ""
+  if is_safe_url(url) {
+    var metadata_ok = true
+    var j = end
+    while j < right {
+      if !is_html_space_or_ascii_alnum(s[j]) {
+        metadata_ok = false
+        break
+      }
+      j += 1
+    }
+    if metadata_ok {
+      b.write(s[left..start])
+      let _ = process_url_onto(url, true, b)
+      b.write(s[end..right])
+      return
+    }
+  }
+  b.write_str("#")
+  b.write_str(FILTER_FAILSAFE)
+}
+
+
+// ---------------------------------------------------------------------------
+// css.go
+
+/// The start of the last rune of b (a UTF-8 continuation byte scan).
+fn last_rune_start(b: Bytes) -> Int {
+  var i = b.len() - 1
+  while i > 0 && (Int(b[i]) & 0xC0) == 0x80 {
+    i -= 1
+  }
+  i
+}
+
+fn ends_with_css_keyword(b: Bytes, kw: Str) -> Bool {
+  let i = b.len() - kw.len()
+  if i < 0 {
+    return false
+  }
+  if i != 0 {
+    let head = b[0..i]
+    let (r, _) = head.decode_rune(last_rune_start(head))
+    if is_css_nmchar(Int(r)) {
+      return false
+    }
+  }
+  (b[i..].to_lower().to_str() ?? "") == kw
+}
+
+fn is_css_nmchar(r: Int) -> Bool {
+  (r >= 97 && r <= 122) || (r >= 65 && r <= 90) || (r >= 48 && r <= 57) || r == 45 || r == 95 || (0x80 <= r && r <= 0xD7FF) || (0xE000 <= r && r <= 0xFFFD) || (0x10000 <= r && r <= 0x10FFFF)
+}
+
+/// decodeCSS: the CSS escapes of s decoded (`\\41 ` is `A`).
+fn decode_css(s0: Bytes) -> Bytes {
+  if !s0.contains(b"\\") {
+    return s0
+  }
+  var s = s0
+  var b = BytesBuilder.new()
+  while s.len() != 0 {
+    let i = s.find(b"\\") ?? s.len()
+    b.write(s[0..i])
+    s = s[i..]
+    if s.len() < 2 {
+      break
+    }
+    if is_hex(s[1]) {
+      var j = 2
+      while j < s.len() && j < 7 && is_hex(s[j]) {
+        j += 1
+      }
+      var r = hex_decode(s[1..j])
+      if r > 0x10FFFF {
+        r = r / 16
+        j -= 1
+      }
+      b.write_rune(Rune.try(r) ?? Rune.try(0xFFFD).or_fault("rune"))
+      s = skip_css_space(s[j..])
+    } else {
+      let (_, n) = s.decode_rune(1)
+      b.write(s[1..1 + n])
+      s = s[1 + n..]
+    }
+  }
+  b.freeze()
+}
+
+fn hex_decode(s: Bytes) -> Int {
+  var n = 0
+  for c in s {
+    n = n * 16
+    if c >= 48 && c <= 57 {
+      n = n | (Int(c) - 48)
+    } else if c >= 97 && c <= 102 {
+      n = n | (Int(c) - 97 + 10)
+    } else {
+      n = n | (Int(c) - 65 + 10)
+    }
+  }
+  n
+}
+
+fn skip_css_space(c: Bytes) -> Bytes {
+  if c.is_empty() {
+    return c
+  }
+  let x = c[0]
+  if x == 9 || x == 10 || x == 12 || x == 32 {
+    return c[1..]
+  }
+  if x == 13 {
+    if c.len() >= 2 && c[1] == 10 {
+      return c[2..]
+    }
+    return c[1..]
+  }
+  c
+}
+
+fn is_css_space(b: UInt8) -> Bool { b == 9 || b == 10 || b == 12 || b == 13 || b == 32 }
+
+const CSS_TABLE: List[(Int, Str)] = [(0, "\\0"), (9, "\\9"), (10, "\\a"), (12, "\\c"), (13, "\\d"), (34, "\\22"), (38, "\\26"), (39, "\\27"), (40, "\\28"), (41, "\\29"), (43, "\\2b"), (47, "\\2f"), (58, "\\3a"), (59, "\\3b"), (60, "\\3c"), (62, "\\3e"), (92, "\\\\"), (123, "\\7b"), (125, "\\7d")]
+
+fn css_escaper(s: Str, t: Int) -> Str {
+  let bs = s.bytes()
+  var b = BytesBuilder.new()
+  var written = 0
+  var i = 0
+  while i < bs.len() {
+    let (r0, w) = bs.decode_rune(i)
+    let r = Int(r0)
+    let repl = if r < 128 { table_get(CSS_TABLE, r) } else { "" }
+    if repl.is_empty() {
+      i += w
+      continue
+    }
+    b.write(bs[written..i])
+    b.write_str(repl)
+    written = i + w
+    if repl != "\\\\" && (written == bs.len() || is_hex(bs[written]) || is_css_space(bs[written])) {
+      b.write_byte(32)
+    }
+    i += w
+  }
+  if written == 0 {
+    return s
+  }
+  b.write(bs[written..])
+  b.freeze().to_str() ?? s
+}
+
+fn css_value_filter(s: Str, t: Int) -> Str {
+  if t == CONTENT_TYPE_CSS {
+    return s
+  }
+  let b = decode_css(s.bytes())
+  var id = BytesBuilder.new()
+  for (i, c) in b.indexed() {
+    if c == 0 || c == 34 || c == 39 || c == 40 || c == 41 || c == 47 || c == 59 || c == 64 || c == 91 || c == 92 || c == 93 || c == 96 || c == 123 || c == 125 || c == 60 || c == 62 {
+      return FILTER_FAILSAFE
+    }
+    if c == 45 {
+      if i != 0 && b[i - 1] == 45 {
+        return FILTER_FAILSAFE
+      }
+    } else if c < 0x80 && is_css_nmchar(Int(c)) {
+      id.write_byte(c)
+    }
+  }
+  let idl = id.freeze().to_lower()
+  if idl.contains(b"expression") || idl.contains(b"mozbinding") {
+    return FILTER_FAILSAFE
+  }
+  b.to_str() ?? s
+}
+
+
+// ---------------------------------------------------------------------------
+// js.go
+
+const JS_WHITESPACE: Str = "\u{0C}\n\r\t\u{0B}\u{20}\u{A0}\u{1680}\u{2000}\u{2001}\u{2002}\u{2003}\u{2004}\u{2005}\u{2006}\u{2007}\u{2008}\u{2009}\u{200A}\u{2028}\u{2029}\u{202F}\u{205F}\u{3000}\u{FEFF}"
+
+const REGEXP_PRECEDER_KEYWORDS: List[Str] = ["break", "case", "continue", "delete", "do", "else", "finally", "in", "instanceof", "return", "throw", "try", "typeof", "void"]
+
+/// nextJSCtx: whether a `/` after s starts a regexp or divides.
+fn next_js_ctx(s0: Bytes, preceding: Int) -> Int {
+  let s = trim_right_runes(s0, JS_WHITESPACE)
+  if s.is_empty() {
+    return preceding
+  }
+  let n = s.len()
+  let c = s[n - 1]
+  if c == 43 || c == 45 {
+    var start = n - 1
+    while start > 0 && s[start - 1] == c {
+      start -= 1
+    }
+    if ((n - start) & 1) == 1 {
+      return JS_CTX_REGEXP
+    }
+    return JS_CTX_DIV_OP
+  }
+  if c == 46 {
+    if n != 1 && s[n - 2] >= 48 && s[n - 2] <= 57 {
+      return JS_CTX_DIV_OP
+    }
+    return JS_CTX_REGEXP
+  }
+  if c == 44 || c == 60 || c == 62 || c == 61 || c == 42 || c == 37 || c == 38 || c == 124 || c == 94 || c == 63 || c == 33 || c == 126 || c == 40 || c == 91 || c == 58 || c == 59 || c == 123 || c == 125 {
+    return JS_CTX_REGEXP
+  }
+  var j = n
+  while j > 0 && is_js_ident_part(Int(s[j - 1])) {
+    j -= 1
+  }
+  if REGEXP_PRECEDER_KEYWORDS.contains(s[j..].to_str() ?? "") {
+    return JS_CTX_REGEXP
+  }
+  JS_CTX_DIV_OP
+}
+
+/// bytes.TrimRight with a rune set.
+fn trim_right_runes(s: Bytes, chars: Str) -> Bytes {
+  var n = s.len()
+  while n > 0 {
+    let st = last_rune_start(s[0..n])
+    let (r, _) = s.decode_rune(st)
+    if !chars.contains_rune(r) {
+      break
+    }
+    n = st
+  }
+  s[0..n]
+}
+
+/// jsValEscaper over the value's JSON text (the walk marshals the
+/// value: a Trusted js is its text, a Trusted jsstr is quoted, several
+/// arguments their printed text as a JSON string; a value that cannot
+/// be marshaled is " /* error */null " as Go writes it).
+fn js_val_escaper_json(b0: Str) -> Str {
+  let b = b0.bytes()
+  if b.is_empty() {
+    return " null "
+  }
+  let (first, _) = b.decode_rune(0)
+  let (last, _) = b.decode_rune(last_rune_start(b))
+  let pad = is_js_ident_part(Int(first)) || is_js_ident_part(Int(last))
+  var buf = BytesBuilder.new()
+  if pad {
+    buf.write_byte(32)
+  }
+  var written = 0
+  var i = 0
+  var any = false
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    let repl = if Int(r) == 0x2028 { "\\u2028" } else if Int(r) == 0x2029 { "\\u2029" } else { "" }
+    if !repl.is_empty() {
+      buf.write(b[written..i])
+      buf.write_str(repl)
+      written = i + n
+      any = true
+    }
+    i += n
+  }
+  if any || pad {
+    buf.write(b[written..])
+    if pad {
+      buf.write_byte(32)
+    }
+    return buf.freeze().to_str() ?? b0
+  }
+  b0
+}
+
+fn js_str_escaper(s: Str, t: Int) -> Str {
+  if t == CONTENT_TYPE_JS_STR {
+    return js_replace(s, JS_STR_NORM)
+  }
+  js_replace(s, JS_STR)
+}
+
+fn js_tmpl_lit_escaper(s: Str, t: Int) -> Str { js_replace(s, JS_BQ_STR) }
+
+fn js_regexp_escaper(s0: Str, t: Int) -> Str {
+  let s = js_replace(s0, JS_REGEXP)
+  if s.is_empty() {
+    return "(?:)"
+  }
+  s
+}
+
+const LOW_UNICODE: List[Str] = ["\\u0000", "\\u0001", "\\u0002", "\\u0003", "\\u0004", "\\u0005", "\\u0006", "\\u0007", "\\u0008", "\\t", "\\n", "\\u000b", "\\f", "\\r", "\\u000e", "\\u000f", "\\u0010", "\\u0011", "\\u0012", "\\u0013", "\\u0014", "\\u0015", "\\u0016", "\\u0017", "\\u0018", "\\u0019", "\\u001a", "\\u001b", "\\u001c", "\\u001d", "\\u001e", "\\u001f"]
+
+const JS_STR: List[(Int, Str)] = [(0, "\\u0000"), (9, "\\t"), (10, "\\n"), (11, "\\u000b"), (12, "\\f"), (13, "\\r"), (34, "\\u0022"), (38, "\\u0026"), (39, "\\u0027"), (43, "\\u002b"), (47, "\\/"), (60, "\\u003c"), (62, "\\u003e"), (92, "\\\\"), (96, "\\u0060")]
+const JS_BQ_STR: List[(Int, Str)] = [(0, "\\u0000"), (9, "\\t"), (10, "\\n"), (11, "\\u000b"), (12, "\\f"), (13, "\\r"), (34, "\\u0022"), (36, "\\u0024"), (38, "\\u0026"), (39, "\\u0027"), (43, "\\u002b"), (47, "\\/"), (60, "\\u003c"), (62, "\\u003e"), (92, "\\\\"), (96, "\\u0060"), (123, "\\u007b"), (125, "\\u007d")]
+const JS_STR_NORM: List[(Int, Str)] = [(0, "\\u0000"), (9, "\\t"), (10, "\\n"), (11, "\\u000b"), (12, "\\f"), (13, "\\r"), (34, "\\u0022"), (38, "\\u0026"), (39, "\\u0027"), (43, "\\u002b"), (47, "\\/"), (60, "\\u003c"), (62, "\\u003e"), (96, "\\u0060")]
+const JS_REGEXP: List[(Int, Str)] = [(0, "\\u0000"), (9, "\\t"), (10, "\\n"), (11, "\\u000b"), (12, "\\f"), (13, "\\r"), (34, "\\u0022"), (36, "\\$"), (38, "\\u0026"), (39, "\\u0027"), (40, "\\("), (41, "\\)"), (42, "\\*"), (43, "\\u002b"), (45, "\\-"), (46, "\\."), (47, "\\/"), (60, "\\u003c"), (62, "\\u003e"), (63, "\\?"), (91, "\\["), (92, "\\\\"), (93, "\\]"), (94, "\\^"), (123, "\\{"), (124, "\\|"), (125, "\\}")]
+
+/// replace: the low control characters, the table's runes, and U+2028
+/// and U+2029 escaped.
+fn js_replace(s: Str, table: List[(Int, Str)]) -> Str {
+  let bs = s.bytes()
+  var b = BytesBuilder.new()
+  var written = 0
+  var i = 0
+  while i < bs.len() {
+    let (r0, w) = bs.decode_rune(i)
+    let r = Int(r0)
+    var repl = ""
+    if r < 32 {
+      repl = LOW_UNICODE[r]
+    } else if r < 128 {
+      repl = table_get(table, r)
+    } else if r == 0x2028 {
+      repl = "\\u2028"
+    } else if r == 0x2029 {
+      repl = "\\u2029"
+    }
+    if repl.is_empty() {
+      i += w
+      continue
+    }
+    b.write(bs[written..i])
+    b.write_str(repl)
+    written = i + w
+    i += w
+  }
+  if written == 0 {
+    return s
+  }
+  b.write(bs[written..])
+  b.freeze().to_str() ?? s
+}
+
+fn is_js_ident_part(r: Int) -> Bool {
+  r == 36 || (r >= 48 && r <= 57) || (r >= 65 && r <= 90) || r == 95 || (r >= 97 && r <= 122)
+}
+
+const JS_MIME_TYPES: List[Str] = ["application/ecmascript", "application/javascript", "application/json", "application/ld+json", "application/x-ecmascript", "application/x-javascript", "module", "text/ecmascript", "text/javascript", "text/javascript1.0", "text/javascript1.1", "text/javascript1.2", "text/javascript1.3", "text/javascript1.4", "text/javascript1.5", "text/jscript", "text/livescript", "text/x-ecmascript", "text/x-javascript"]
+
+/// isJSType: whether a script type attribute names JavaScript (or JSON).
+fn is_js_type(mime0: Str) -> Bool {
+  var mime = mime0
+  match mime.find(";") {
+    Some(i) => mime = mime[0..i]
+    None => {}
+  }
+  JS_MIME_TYPES.contains(mime.to_lower().trim())
 }

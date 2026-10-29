@@ -1,0 +1,49 @@
+// htmltemplate: std/template's html mode against Go's html/template
+// (twin.go.txt): `parse` is parse_html of a page template plus its first
+// render (Go escapes on the first Execute, Xo at parse_html, so both
+// sides count the escaping walk once), 5,000 times; `render` is the
+// render of the escaped template over data decoded from JSON (an object
+// with a list of 30 items, a URL, a script value), 20,000 times; `none`
+// is the setup alone. Usage: `<program> none|parse|render`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/json
+use std/template
+
+const SRC: Str = "<h1>{{.title}}</h1>\n<ul>{{range .items}}\n<li class=\"{{if .done}}done{{else}}todo{{end}}\"><a href=\"/item?id={{.id}}&q={{.name}}\" title='{{.name}}'>{{.name}}</a> x{{.qty}}</li>{{end}}\n</ul>\n<script>var owner = {{.owner}}; var n = {{len .items}};</script>\n<style>p { color: {{.color}} }</style>\n{{with .owner}}<p>{{.name}}</p>{{end}}\n"
+
+fn data_text() -> Str {
+  var b = StrBuilder.new()
+  b.write("{\"title\": \"Orders <2026>\", \"color\": \"#ff0000\", \"owner\": {\"name\": \"Ada & Co\"}, \"items\": [")
+  for i in 0..30 {
+    if i > 0 {
+      b.write(", ")
+    }
+    b.write("{\"id\": ${i}, \"name\": \"item ${i} <x>\", \"qty\": ${i % 7 + 1}, \"done\": ${i % 3 == 0}}")
+  }
+  b.write("]}")
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let data = json.parse_value(data_text()).ok() ?? fault("data")
+  let t = template.parse_html("page", SRC).ok() ?? fault("parse")
+  var sum = 0
+  if w == "parse" {
+    for i in 0..5000 {
+      let p = template.parse_html("page", SRC).ok() ?? fault("parse")
+      let out = p.render(data).ok() ?? fault("render")
+      sum += out.len() + i % 3
+    }
+  } else if w == "render" {
+    for _ in 0..20000 {
+      let out = t.render(data).ok() ?? fault("render")
+      sum += out.len() + Int(out.bytes()[out.len() - 2])
+    }
+  } else {
+    for i in 0..20000 {
+      sum += SRC.len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

@@ -24,11 +24,21 @@ module's declared types (`url.EscapeErr`); a module whose
 implementation needs none (std/native/binary.xo) has no such line, and
 an unused one is the usual XO0110.
 
+A `native/X` helper module is not a second file of the module either: it
+loads as the intrinsics modules do (load_native_rt), so its functions are
+runtime calls with the runtime ABI, and a call across the boundary with a
+struct argument or an Option result fails at code generation (`arm64
+backend: the runtime call rt.eq takes a htmlesc.Context`, `the runtime
+call rt.index_tag_end returns a Int?`; html/template's escaper, 2026-10-29).
+Its tests cannot run on their own either (`xo test --std-module=native/X`
+finds no std module to load it with).
+
 ## Fix
 
-Keep the tables in the module's file (std/html's entity table is a
-section at the end of std/native/html.xo), or make them a `native/X`
-module and `use native/X`. Write `use std/NAME` only when the file
+Keep the tables and the helper code in the module's file (std/html's entity table is a
+section at the end of std/native/html.xo; html/template's 1800 line
+escaper is a section of std/native/template.xo). A `native/X` module
+fits only plain functions over scalars, Str and Bytes. Write `use std/NAME` only when the file
 names a type of the module. Run the module's tests with
 `xo test --std-module=native/NAME` from the repository root with
 XO_STD set (the module name is the test file's path under std without

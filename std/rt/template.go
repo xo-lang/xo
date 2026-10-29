@@ -2,6 +2,8 @@ package rt
 
 import (
 	"errors"
+	htmltemplate "html/template"
+	"io"
 	"strings"
 	"text/template"
 )
@@ -26,8 +28,25 @@ func jsonValueAny(v Json_Value) any {
 		return v.P.(Json_Value_Num).F_n
 	case 5:
 		return v.P.(Json_Value_Str).F_s
-	case 8: // trusted template content (decision 0408): a string to text/template
-		return v.P.(Json_Value_Trusted).F_s
+	case 8: // trusted template content (decision 0408): html/template's types
+		t := v.P.(Json_Value_Trusted)
+		switch t.F_kind {
+		case "html":
+			return htmltemplate.HTML(t.F_s)
+		case "css":
+			return htmltemplate.CSS(t.F_s)
+		case "js":
+			return htmltemplate.JS(t.F_s)
+		case "jsstr":
+			return htmltemplate.JSStr(t.F_s)
+		case "url":
+			return htmltemplate.URL(t.F_s)
+		case "attr":
+			return htmltemplate.HTMLAttr(t.F_s)
+		case "srcset":
+			return htmltemplate.Srcset(t.F_s)
+		}
+		return t.F_s
 	case 6:
 		items := v.P.(Json_Value_List).F_items.s
 		out := make([]any, len(items))
@@ -74,6 +93,40 @@ func templateFuncs(tk *Task, t Template_Template) template.FuncMap {
 	return fm
 }
 
+// executor is what both template packages' sets do (decision 0408).
+type executor interface {
+	ExecuteTemplate(wr io.Writer, name string, data any) error
+}
+
+// htmlSet is templateSet for the html mode: html/template's set.
+func htmlSet(tk *Task, t Template_Template) (*htmltemplate.Template, error) {
+	var root *htmltemplate.Template
+	fm := htmltemplate.FuncMap(templateFuncs(tk, t))
+	for _, s := range t.F_sources.s {
+		var x *htmltemplate.Template
+		if root == nil {
+			root = htmltemplate.New(s.F0).Delims(t.F_left, t.F_right).Funcs(fm)
+			x = root
+		} else {
+			x = root.New(s.F0).Funcs(fm)
+		}
+		if _, err := x.Parse(s.F1); err != nil {
+			return nil, err
+		}
+	}
+	if t.F_missing_key_error {
+		root.Option("missingkey=error")
+	}
+	return root, nil
+}
+
+func anySet(tk *Task, t Template_Template) (executor, error) {
+	if t.F_html {
+		return htmlSet(tk, t)
+	}
+	return templateSet(tk, t)
+}
+
 func templateSet(tk *Task, t Template_Template) (*template.Template, error) {
 	var root *template.Template
 	fm := templateFuncs(tk, t)
@@ -107,11 +160,19 @@ func Template_parse(tk *Task, name string, src string, left string, right string
 	return Ok[Template_Template, Template_TemplateErr](t)
 }
 
+func Template_parse_html(tk *Task, name string, src string, left string, right string, funcs Map[string, TemplateFn]) Result[Template_Template, Template_TemplateErr] {
+	t := Template_Template{F_name: name, F_sources: ListOf(Tuple2[string, string]{F0: name, F1: src}), F_left: left, F_right: right, F_funcs: funcs, F_html: true}
+	if _, err := htmlSet(tk, t); err != nil {
+		return templateErr[Template_Template](err)
+	}
+	return Ok[Template_Template, Template_TemplateErr](t)
+}
+
 func (t Template_Template) M_add(tk *Task, name string, src string) Result[Template_Template, Template_TemplateErr] {
 	srcs := append(append([]Tuple2[string, string]{}, t.F_sources.s...), Tuple2[string, string]{F0: name, F1: src})
 	n := t
 	n.F_sources = ListFromSlice(srcs)
-	if _, err := templateSet(tk, n); err != nil {
+	if _, err := anySet(tk, n); err != nil {
 		return templateErr[Template_Template](err)
 	}
 	return Ok[Template_Template, Template_TemplateErr](n)
@@ -139,7 +200,7 @@ func Template_attr(_ *Task, s string) Json_Value   { return trusted("attr", s) }
 func Template_srcset(_ *Task, s string) Json_Value { return trusted("srcset", s) }
 
 func (t Template_Template) M_render_named(tk *Task, name string, data Json_Value) Result[string, Template_TemplateErr] {
-	set, err := templateSet(tk, t)
+	set, err := anySet(tk, t)
 	if err != nil {
 		return templateErr[string](err)
 	}

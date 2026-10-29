@@ -33,6 +33,11 @@ struct Template {
   /// The functions the templates may call by name, given to parse (a
   /// name the parser does not know is Go's "function NAME not defined").
   funcs: Map[Str, TemplateFn] = {}
+  /// Contextual autoescaping (html/template, decision 0408): set by
+  /// parse_html; every action's output is escaped for the HTML, attribute,
+  /// URL, JavaScript or CSS context it lands in, and trusted content
+  /// (`html(s)` and the other constructors) passes through in its own.
+  html: Bool = false
   /// The parsed set (internal: filled by parse and add, so a render does
   /// not parse again).
   parsed: Parsed
@@ -44,6 +49,12 @@ struct Parsed {}
 /// template.New(name).Delims(left, right).Parse(src): the template, or
 /// Go's parse error. `{{define}}` blocks become templates of the set.
 fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}", funcs: Map[Str, TemplateFn] = {}) -> Template ! TemplateErr
+/// html/template's New(name).Parse(src): `parse` with contextual
+/// autoescaping (decision 0408). The escaping errors (a template that
+/// ends inside a tag, branches ending in different contexts, an action
+/// in an ambiguous URL part, a predefined escaper in a pipeline) are
+/// render's, as Go reports them on Execute.
+fn parse_html(name: Str, src: Str, left: Str = "{{", right: Str = "}}", funcs: Map[Str, TemplateFn] = {}) -> Template ! TemplateErr
 /// Another named template in the set (t.New(name).Parse(src)).
 fn (t: Template) add(name: Str, src: Str) -> Template ! TemplateErr
 /// The set with Option("missingkey=error") (true) or the default.

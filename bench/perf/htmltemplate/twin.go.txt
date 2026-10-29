@@ -1,0 +1,62 @@
+package main
+
+import (
+	"encoding/json"
+	"fmt"
+	"html/template"
+	"os"
+	"strings"
+)
+
+const src = "<h1>{{.title}}</h1>\n<ul>{{range .items}}\n<li class=\"{{if .done}}done{{else}}todo{{end}}\"><a href=\"/item?id={{.id}}&q={{.name}}\" title='{{.name}}'>{{.name}}</a> x{{.qty}}</li>{{end}}\n</ul>\n<script>var owner = {{.owner}}; var n = {{len .items}};</script>\n<style>p { color: {{.color}} }</style>\n{{with .owner}}<p>{{.name}}</p>{{end}}\n"
+
+func dataText() string {
+	var b strings.Builder
+	b.WriteString("{\"title\": \"Orders <2026>\", \"color\": \"#ff0000\", \"owner\": {\"name\": \"Ada & Co\"}, \"items\": [")
+	for i := 0; i < 30; i++ {
+		if i > 0 {
+			b.WriteString(", ")
+		}
+		fmt.Fprintf(&b, "{\"id\": %d, \"name\": \"item %d <x>\", \"qty\": %d, \"done\": %v}", i, i, i%7+1, i%3 == 0)
+	}
+	b.WriteString("]}")
+	return b.String()
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	var data any
+	if err := json.Unmarshal([]byte(dataText()), &data); err != nil {
+		panic(err)
+	}
+	t := template.Must(template.New("page").Parse(src))
+	sum := 0
+	switch w {
+	case "parse":
+		for i := 0; i < 5000; i++ {
+			p := template.Must(template.New("page").Parse(src))
+			var b strings.Builder
+			if err := p.Execute(&b, data); err != nil {
+				panic(err)
+			}
+			sum += len(b.String()) + i%3
+		}
+	case "render":
+		for i := 0; i < 20000; i++ {
+			var b strings.Builder
+			if err := t.Execute(&b, data); err != nil {
+				panic(err)
+			}
+			out := b.String()
+			sum += len(out) + int(out[len(out)-2])
+		}
+	default:
+		for i := 0; i < 20000; i++ {
+			sum += len(src) + i%3
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

@@ -12,5 +12,5 @@ The first version of the module: `escape_string` (the five characters) and
 two-character names of Go's table, the legacy names without a semicolon by
 longest prefix, decimal and hexadecimal references with the C1 and invalid
 code point rules). The entity lookup is a binary search over the sorted
-table. Timing row against Go's package: to come with the html/template
-step (decision 0408).
+table. Timing row against Go's package: bench/perf/html (escape,
+unescape), in the std timing audit with the html mode's rows.

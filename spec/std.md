@@ -4078,6 +4078,7 @@ type TemplateFn = fn(List[json.Value]) -> json.Value ! Str      // a template fu
 struct Template { name: Str, sources: List[(Str, Str)], left: Str = "{{", right: Str = "}}", missing_key_error: Bool = false, funcs: Map[Str, TemplateFn] = {}, parsed: Parsed }
 
 pub fn parse(name: Str, src: Str, left: Str = "{{", right: Str = "}}", funcs: Map[Str, TemplateFn] = {}) -> Template ! TemplateErr
+pub fn parse_html(name: Str, src: Str, left: Str = "{{", right: Str = "}}", funcs: Map[Str, TemplateFn] = {}) -> Template ! TemplateErr   // html/template: contextual autoescaping (decision 0408)
 fn (t: Template) add(name: Str, src: Str) -> Template ! TemplateErr
 fn (t: Template) missing_key(error: Bool) -> Template
 fn (t: Template) render(data: json.Value) -> Str ! TemplateErr
@@ -4117,10 +4118,33 @@ pub fn srcset(s: Str) -> json.Value    // Srcset
   prints or passes on; an Err is Go's `error calling NAME: text`. A name
   neither built in nor in `funcs` is the parse error `function "x" not
   defined`. Functions are pure (`TemplateFn` has no effects).
+- The html mode (`parse_html`, decision 0408) is Go's html/template:
+  the same language, with every action's output escaped for the context
+  it lands in (HTML text, RCDATA, an attribute name or value, a URL and
+  its query, JavaScript code, strings, template literals and regexps,
+  CSS and its strings and `url()`; comments are dropped), Go's context
+  machine ported (context.go, transition.go, the escapers of html.go,
+  attr.go, url.go, js.go, css.go, and the walk over the parsed trees of
+  escape.go, all in `std/native/template.xo`);
+  the Go backend runs html/template. The escaping errors are render's,
+  as Go's are Execute's: a template ending inside a tag or script
+  (`html/template:t: ends in a non-text context: {stateJS ...}`),
+  branches ending in different contexts (`html/template:t:1:5: {{if}}
+  branches end in different contexts: ...`), an action in an ambiguous
+  part of a URL, a predefined escaper (`html`, `urlquery`) in a pipeline
+  (`predefined escaper "html" disallowed in template`), an unfinished
+  JS escape or regexp charset, a `/` that could start a division or a
+  regexp. Go's TestEscape (the cases over Go's data as JSON, generated
+  by a Go program), TestErrors and TestEscapeSet, and the escapers' own tests, are in
+  `template_test.xo`.
 - Trusted content (decision 0408): `template.html(s)` and the six other
-  constructors make a `json.Value.Trusted` the html mode (`parse_html`)
-  passes through unescaped in its context; a template parsed with `parse`
-  prints its string.
+  constructors make a `json.Value.Trusted` the html mode passes through
+  unescaped in its own context (an `html` value in HTML text, a `url` in
+  an attribute's URL, a `js` in a script) and escapes as text in any
+  other (an `html` value in an attribute is its text with the tags
+  stripped, as Go does); a template parsed with `parse` prints its
+  string. Decoded JSON never makes one: `{"$html": "<script>"}` is an
+  object and renders escaped.
 - Errors are Go's: parse errors `template: t:1: function "nope" not
   defined`, execution errors `template: t:1:7: executing "t" at
   <.name.x>: can't evaluate field x in type interface {}`.

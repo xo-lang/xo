@@ -1,5 +1,19 @@
 # std/template changes
 
+## 2026-10-29: feature: the html mode (contextual autoescaping, decision 0408)
+
+- Kind: feature
+- Commit: this commit
+- Found by: milestone 0.35 S6
+- Go reference: html/template (go1.26.1: context.go, transition.go, escape.go, html.go, attr.go, url.go, js.go, css.go, content.go, error.go)
+- Test: std/native/template_test.xo (Go's TestEscape over its data as JSON, TestErrors, TestEscapeSet, trusted content, and Go's escaper tests)
+
+`parse_html`: Go's html/template as a mode of the set; the Trusted
+values of `template.html` and its siblings pass through in their context.
+The escaping is done once at parse_html (and add) for the root template
+and kept with the parsed set; render of another name escapes from it.
+Timing against Go's html/template: see bench/perf/template.
+
 ## 2026-10-29: feature: custom functions (FuncMap) and the trusted content constructors
 
 - Kind: feature

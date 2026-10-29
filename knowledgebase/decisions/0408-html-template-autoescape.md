@@ -24,9 +24,15 @@ controls.
    html/template escaping: the context machine (escape.go, context.go,
    transition.go), the escapers (html.go, attr.go, url.go, js.go, css.go)
    and their errors (ErrAmbigContext and the others, with Go's texts)
-   ported to std/native/template.xo; the Go backend runs html/template
-   itself. A template parsed with `parse` escapes nothing, as before.
-   `add` keeps the set's mode.
+   ported to std/native/template.xo (as a section of it: a std module's
+   native implementation is one file, and a `native/X` helper module is
+   an rt module whose ABI takes no struct or Option across it); the Go
+   backend runs html/template itself. The walk returns rewritten trees
+   (Go edits nodes in place at commit), one per (template, context)
+   pair under Go's derived names, and runs once at `parse_html` (and
+   `add`); its errors are kept and reported by `render`, as Go reports
+   them on Execute. A template parsed with `parse` escapes nothing, as
+   before. `add` keeps the set's mode.
 2. **std/html** (spec 39): Go's html package, `escape_string` and
    `unescape_string`, with Go's entity table; the html mode's attribute
    escaper uses it.
@@ -70,8 +76,11 @@ is random, so renders stay deterministic and std/template stays pure.
   jsonvalue.go and template.go, and std/native/template.xo's loader
   carry the arm; the repo's other matches (sql, pg, the cli servers)
   are updated in the same change.
-- The html mode is a port of about 2500 lines of Go with Go's escape
-  tests as its corpus; a timing row against html/template beside it.
+- The html mode is a port of 3900 lines of Go (1850 of Xo) with Go's
+  TestEscape table (107 of its 111 cases, over its data as JSON, generated
+  by a Go program), TestErrors, TestEscapeSet and the escapers' own tests
+  as its corpus; bench/perf/htmltemplate and its timing row against
+  html/template beside it.
 - Programs that matched json.Value exhaustively need the arm (above).
 
 ## Alternatives

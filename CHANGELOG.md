@@ -12,6 +12,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   needs both methods; interfaces have no default bodies (core 2.4). A
   wrapper forwards them to its inner `Net`; a refusing fake returns
   `Err(NetErr.Denied(addr: ...))` as its `dial` does.
+- std/template: Go's html/template as the html mode (decision 0408):
+  `parse_html` escapes every action's output for the HTML, attribute,
+  URL, JavaScript or CSS context it lands in; `template.html(s)`, `css`,
+  `js`, `jsstr`, `url`, `attr` and `srcset` make trusted content that
+  passes through in its own context; custom functions through
+  `parse(funcs:)` (`TemplateFn`, Go's FuncMap). std/html (spec 39):
+  `escape_string` and `unescape_string`, Go's html package.
 - **Breaking** (decision 0408): `json.Value` gains the variant
   `Trusted(kind: Str, s: Str)`, content a template trusts in one context
   (`template.html(s)` and its siblings make it; `parse_value` and `decode`

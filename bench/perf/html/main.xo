@@ -1,0 +1,38 @@
+// html: std/html against Go's html package (twin.go.txt): escape_string
+// of a 2 KB text with the five characters every few words, 20,000 times;
+// unescape_string of its escaped form plus named and numeric references,
+// 20,000 times; `none` is the setup alone. Usage: `<program>
+// none|escape|unescape`. Prints `<workload> <checksum>`; the twin prints
+// the same.
+use std/html
+
+fn text() -> Str {
+  var b = StrBuilder.new()
+  for i in 0..100 {
+    b.write("item ${i}: <a href=\"/x?a=1&b=2\">Tom & Jerry's \"show\"</a> ")
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let t = text()
+  let e = html.escape_string(t) + " &copy; &#169; &#xa9; &notin; &gesl; &amp &lt &unknown;"
+  var sum = 0
+  if w == "escape" {
+    for i in 0..20000 {
+      let s = html.escape_string(t)
+      sum += s.len() + i % 3
+    }
+  } else if w == "unescape" {
+    for i in 0..20000 {
+      let s = html.unescape_string(e)
+      sum += s.len() + i % 3
+    }
+  } else {
+    for i in 0..20000 {
+      sum += t.len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

@@ -8,6 +8,7 @@ package rt
 var (
 	_ func(*Template_TemplateErr, *Task) string                                                                                                                          = (*Template_TemplateErr).M_display
 	_ func(*Task, string, string, string, string, Map[string, func(*Task, List[Json_Value]) Result[Json_Value, string]]) Result[Template_Template, Template_TemplateErr] = Template_parse
+	_ func(*Task, string, string, string, string, Map[string, func(*Task, List[Json_Value]) Result[Json_Value, string]]) Result[Template_Template, Template_TemplateErr] = Template_parse_html
 	_ func(*Template_Template, *Task, string, string) Result[Template_Template, Template_TemplateErr]                                                                    = (*Template_Template).M_add
 	_ func(*Template_Template, *Task, bool) Template_Template                                                                                                            = (*Template_Template).M_missing_key
 	_ func(*Template_Template, *Task, Json_Value) Result[string, Template_TemplateErr]                                                                                   = (*Template_Template).M_render
