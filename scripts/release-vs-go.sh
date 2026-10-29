@@ -155,6 +155,9 @@ compile() {
 	echo "The edit's path is what xo's cache statistics say the edit build did: separate (against"
 	echo "std's variants, built after the cold row as a user's second build would have them),"
 	echo "with the std records, or whole (the whole program)."
+	echo "xo's builds run with the whole-build run cache off (XO_BIN_CACHE=off), so the second and"
+	echo "warm rows are compiles through the back-end caches, not a cached result (before 2026-10-29"
+	echo "they could be the run cache's 10 to 20 ms)."
 	echo "Size is the default build's binary."
 	echo
 	echo "## Compile and size"
