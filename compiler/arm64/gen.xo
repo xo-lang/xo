@@ -278,7 +278,12 @@ fn (g: G) local(name: Str) -> Str {
 
 /// The symbol of Xo function n: letters and digits are kept, `_` is
 /// doubled, anything else is `_` and two hex digits.
-fn (g: G) fname(n: Str) -> Str {
+fn (g: G) fname(n: Str) -> Str { g.sym(mangle_fn(n)) }
+
+/// The symbol of the function named n (fname's rule), for the driver's
+/// layout order (decision 0403 stage 1b: the profile names functions as
+/// the symbolizer demangles them).
+pub fn mangle_fn(n: Str) -> Str {
   var b = StrBuilder.new()
   b.write("xo_f_")
   let bs = n.bytes()
@@ -306,7 +311,7 @@ fn (g: G) fname(n: Str) -> Str {
     }
     i += 1
   }
-  g.sym(b.freeze())
+  b.freeze()
 }
 
 /// The two instructions that put the address of symbol s in register r.

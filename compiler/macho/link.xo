@@ -56,6 +56,9 @@ pub struct LinkOpts {
   /// order: --race's ThreadSanitizer runtime (decision 0273)
   pub rpaths: List[Str] = []
   pub entry: Str = "_main"
+  /// Text atoms placed first, in this order, by symbol (decision 0403
+  /// stage 1b: a layout file's hot functions); the rest keep their order.
+  pub order: List[Str] = []
   /// No local symbols in the symbol table (`xo build -s`, as `ld -x`):
   /// the exports, the imports, and __mh_execute_header stay
   pub strip: Bool = false
@@ -750,7 +753,37 @@ fn (var l: Linker) place() {
         mid.push((o, k))
       }
     }
-    if !first.is_empty() || !last.is_empty() {
+    // the layout's order (decision 0403 stage 1b): the text atoms named
+    // in opts.order first, in that order, the rest as they came
+    if !l.opts.order.is_empty() && l.osects[i].seg == "__TEXT" && l.osects[i].name == "__text" {
+      var rank: Map[Bytes, Int] = {}
+      for (r, n) in l.opts.order.indexed() {
+        rank[n.bytes()] = r
+      }
+      var hot: List[(Int, Int, Int)] = []
+      var rest: List[(Int, Int)] = []
+      for (o, k) in mid {
+        var r = -1
+        let a = l.objs[o].sects[k].addr
+        for s in l.objs[o].syms {
+          if s.sect == k + 1 && s.value == a {
+            if let Some(x) = rank.get(s.name) {
+              r = x
+              break
+            }
+          }
+        }
+        if r >= 0 {
+          hot.push((r, o, k))
+        } else {
+          rest.push((o, k))
+        }
+      }
+      if !hot.is_empty() {
+        mid = hot.sort_by(fn(h) { h.0 }).map(fn(h) { (h.1, h.2) }) + rest
+      }
+    }
+    if !first.is_empty() || !last.is_empty() || !l.opts.order.is_empty() {
       l.osects[i].chunks = first + mid + last
     }
   }

@@ -26,6 +26,9 @@ struct Opts {
   layout: Str = ""
   /// The layout file's text once read (main.xo), "" for none.
   layout_text: Str = ""
+  /// The layout file's functions as symbols, hot first (main.xo, from
+  /// the file; decision 0403 stage 1b: the store link's atom order).
+  layout_syms: List[Str] = []
   /// --targets (comma separated os/arch, or all) or xo1's --target.
   targets: Str = ""
   /// --backend as given ("" when not given: go, or arm64 with --no-gc and

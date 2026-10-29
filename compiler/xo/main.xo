@@ -1039,6 +1039,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // the link's context: its target OS (a cross build's)
   var lctx = ctx
   lctx.tgoos = ltarget.split("/")[0]
+  // decision 0403 stage 1b: the layout's symbol order for a store link
+  lctx.layout_order = o.layout_syms
   let tests = o.cmd == "test"
   let release = o.release && !tests
   var t = os.clock.now()
@@ -1112,6 +1114,15 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         Ok(b) => {
           o.layout_text = b.to_str() ?? ""
           o.binfo_sources["xo.layout"] = crypto.sha256(b).to_hex()
+          // the file's functions as symbols, hot first, for the link
+          // (stage 1b); a bad file is reported where the order is made
+          if let Ok(l) = parse_layout(o.layout_text) {
+            var names: List[Str] = []
+            for (n, _) in l.fns {
+              names.push(n)
+            }
+            o.layout_syms = layout_order(names, l).map(fn(i) { "_${arm64.mangle_fn(names[i])}" })
+          }
         }
         Err(e) => if !o.layout.is_empty() {
           fail(os, "--layout: ${lp}: ${e}")

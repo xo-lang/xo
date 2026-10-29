@@ -16,6 +16,9 @@ struct Ctx {
   // 0388 stage 3: sepcomp_store, for the build's concurrency); "" for
   // a whole program
   sep_store: Str = ""
+  // the text atoms' order for a store link (decision 0403 stage 1b):
+  // symbols, hot first; empty for the store's order
+  layout_order: List[Str] = []
   // the OS a link targets when it is not goos (an LLVM cross build for
   // Windows, decision 0197); "" for the host
   tgoos: Str = ""
