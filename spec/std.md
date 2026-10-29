@@ -4499,7 +4499,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-457 declarations.
+458 declarations.
 
 ### Range
 
@@ -5156,6 +5156,7 @@ fn home(self) -> Str ! EnvErr uses env
 fn only(self, names: List[Str]) -> Env
 fn config_dir(self) -> Str ! EnvErr uses env
 fn cache_dir(self) -> Str ! EnvErr uses env
+fn hostname(self) -> Str uses env
 ```
 
 ### IoErr

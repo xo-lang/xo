@@ -68,6 +68,7 @@ var (
 	_ func(*Testing_FakeEnv, *Task, List[string]) Env                                               = (*Testing_FakeEnv).M_only
 	_ func(*Testing_FakeEnv, *Task) Result[string, EnvErr]                                          = (*Testing_FakeEnv).M_config_dir
 	_ func(*Testing_FakeEnv, *Task) Result[string, EnvErr]                                          = (*Testing_FakeEnv).M_cache_dir
+	_ func(*Testing_FakeEnv, *Task) string                                                          = (*Testing_FakeEnv).M_hostname
 	_ func(*Testing_FakeEnv, *Task, string, string)                                                 = (*Testing_FakeEnv).M_set
 	_ func(*Testing_FakeEnv, *Task, List[string])                                                   = (*Testing_FakeEnv).M_set_args
 	_ func(*Testing_FakeStdio, *Task, string)                                                       = (*Testing_FakeStdio).M_print
