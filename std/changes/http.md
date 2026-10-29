@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-10-29: fix: std builds for separate compilation again after Client.open
+
+- Kind: fix
+- Commit: this commit
+- Found by: xo-lang-6 (`xo dev stdobj` failed with XO0510 in std/native/http.xo)
+- Go reference: none (an Xo checker rule, core 5.3)
+- Test: `xo dev stdobj` in the gate; http_client_stream and http_tls goldens
+
+ClientStream.read moved its gzip Decompressor (move only) inside its loop,
+which the full check of std rejects; default builds fell back to the
+whole-program build. The decoder now moves in a helper outside the loop.
+
 ## 2026-10-29: feature: an HTTP/2 response body read as it arrives
 
 - Kind: feature

@@ -2261,6 +2261,37 @@ fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
   }
 }
 
+/// Feeds b to the stream's gzip decoder (its output to pending), or
+/// finishes it when last; the decoder moves out of s and back (move only,
+/// so outside read's loop).
+fn gz_step(var s: StreamState, b: Bytes, last: Bool) -> Result[(), http.ClientErr] {
+  let d = s.gz
+  s.gz = None
+  match d {
+    None => Ok(())
+    Some(dec0) => {
+      var dec = dec0
+      if last {
+        return match dec.finish() {
+          Ok(rest) => {
+            s.pending = rest
+            Ok(())
+          }
+          Err(e) => Err(http.ClientErr.Protocol(msg: e.msg))
+        }
+      }
+      match dec.write(b) {
+        Ok(out) => {
+          s.pending = out
+          s.gz = Some(dec)
+          Ok(())
+        }
+        Err(e) => Err(http.ClientErr.Protocol(msg: e.msg))
+      }
+    }
+  }
+}
+
 fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! http.ClientErr uses net.dial {
   let lim = if max > 0 { max } else { 32768 }
   let r = s.st.with(fn(var x: StreamState) -> Result[Bytes?, http.ClientErr] {
@@ -2281,13 +2312,9 @@ fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! http.ClientErr uses net.
         }
         Ok(None) => {
           x.done = true
-          let d = x.gz
-          x.gz = None
-          if let Some(dec0) = d {
-            var dec = dec0
-            match dec.finish() {
-              Ok(rest) => x.pending = rest
-              Err(e) => return Err(http.ClientErr.Protocol(msg: e.msg))
+          if x.gz is Some(_) {
+            if let Err(e) = gz_step(x, b"", true) {
+              return Err(e)
             }
             continue
           }
@@ -2295,16 +2322,10 @@ fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! http.ClientErr uses net.
         }
         Ok(Some(b)) => {
           if x.gz is Some(_) {
-            var dec = x.gz ?? compress.decompressor(compress.Format.Gzip)
-            match dec.write(b) {
-              Ok(out) => x.pending = out
-              Err(e) => {
-                x.done = true
-                x.gz = None
-                return Err(http.ClientErr.Protocol(msg: e.msg))
-              }
+            if let Err(e) = gz_step(x, b, false) {
+              x.done = true
+              return Err(e)
             }
-            x.gz = Some(dec)
             continue
           }
           return Ok(Some(b))
