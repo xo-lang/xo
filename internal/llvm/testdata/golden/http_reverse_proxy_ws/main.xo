@@ -1,0 +1,91 @@
+// WebSocket through http.reverse_proxy (decision 0404 stage E;
+// httputil's handleUpgradeResponse): the Upgrade the client asks for
+// survives the hop-by-hop removal, the target's 101 is handed back with
+// its header, and frames are copied both ways until either side ends;
+// a target that switches to another protocol than the one asked for is
+// 502.
+use std/http
+use std/websocket
+
+fn echo(c: websocket.WsConn) {
+  while true {
+    match c.read() {
+      Ok(m) => {
+        if c.write(m) is Err(_) {
+          return
+        }
+      }
+      Err(_) => return
+    }
+  }
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /ws", fn(req) { websocket.upgrade(req, echo, protocols: ["chat"]) })
+  r.handle("GET /bye", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      c.write_text("hello").ignore_err("test")
+      c.close(code: 1001, reason: "bye").ignore_err("test")
+    })
+  })
+  // a 101 to another protocol than the one asked for
+  r.handle("GET /other", fn(_req) { http.empty(101).with_header("Connection", "Upgrade").with_header("Upgrade", "other") })
+  r
+}
+
+fn show(m: websocket.Message) -> Str {
+  match m.kind {
+    websocket.Kind.Text => "text ${m.data.to_str() ?? "?"}"
+    websocket.Kind.Binary => "binary ${m.data.len()} bytes"
+  }
+}
+
+fn client(os: Os, addr: Str) -> () ! websocket.WsErr {
+  let c = websocket.dial(os.net, "ws://${addr}/ws", protocols: ["chat"])?
+  os.stdio.println("subprotocol: ${c.subprotocol()}")
+  c.write_text("hi")?
+  os.stdio.println("echo: ${show(c.read()?)}")
+  c.write(websocket.Message{kind: websocket.Kind.Binary, data: "x".repeat(100000).bytes()})?
+  os.stdio.println("echo: ${show(c.read()?)}")
+  c.close()?
+  let b = websocket.dial(os.net, "ws://${addr}/bye")?
+  os.stdio.println("bye: ${show(b.read()?)}")
+  match b.read() {
+    Ok(m) => os.stdio.println("bye: ${show(m)}?")
+    Err(e) => os.stdio.println("bye: ${e.display()}")
+  }
+  Ok(())
+}
+
+fn main(os: Os) {
+  match (os.net.listen("127.0.0.1:0"), os.net.listen("127.0.0.1:0")) {
+    (Ok(l1), Ok(l2)) => {
+      let up = http.server(l1, routes())
+      let p = http.reverse_proxy(http.client(os.net), http.parse_url("http://${l1.addr()}/").or_fault("url"))
+      var fr = http.router()
+      fr.handle_stream("/{rest...}", fn(req, body) { p.serve(req, body) })
+      let front = http.server(l2, fr)
+      scope s {
+        for srv in [up, front] {
+          s.spawn_background(fn() {
+            match srv.serve() {
+              Ok(_) => ()
+              Err(e) => os.stdio.println("serve failed: ${e}")
+            }
+          })
+        }
+        match client(os, l2.addr()) {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("client: ${e.display()}")
+        }
+        match websocket.dial(os.net, "ws://${l2.addr()}/other") {
+          Ok(_) => os.stdio.println("other: connected?")
+          Err(e) => os.stdio.println("other: ${e.display()}")
+        }
+      }
+      os.stdio.println("done")
+    }
+    _ => os.stdio.println("listen failed")
+  }
+}

@@ -18,7 +18,7 @@ PX=${PX:-18099}
 mkdir -p "$OUT"
 (cd "$SRC/../httpstream/serve" && go build -o "$OUT/serve" .)
 (cd "$SRC/../httpstream/gotwin" && go build -o "$OUT/client" .)
-(cd "$SRC/goproxy" && go build -o "$OUT/p-go" .)
+(cd "$SRC/goproxy" && go build -o "$OUT/p-gotwin" .)
 for be in "$@"; do
 	rm -rf "$OUT/src-$be"
 	mkdir -p "$OUT/src-$be"
@@ -41,9 +41,9 @@ spid=$!
 ppid=""
 trap 'kill $spid 2>/dev/null || true; [ -n "$ppid" ] && kill $ppid 2>/dev/null || true' EXIT
 wait_ready "$OUT/serve.txt"
-for p in "$@" go; do
-	if [ "$p" = go ]; then
-		"$OUT/p-go" -addr 127.0.0.1:$PX -upstream 127.0.0.1:$UP >"$OUT/proxy.txt" 2>&1 &
+for p in "$@" gotwin; do
+	if [ "$p" = gotwin ]; then
+		"$OUT/p-gotwin" -addr 127.0.0.1:$PX -upstream 127.0.0.1:$UP >"$OUT/proxy.txt" 2>&1 &
 	else
 		ADDR=127.0.0.1:$PX UPSTREAM=127.0.0.1:$UP "$OUT/p-$p" >"$OUT/proxy.txt" 2>&1 &
 	fi

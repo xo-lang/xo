@@ -3304,6 +3304,110 @@ fn without_hop(h: Map[Str, Str]) -> Map[Str, Str] {
   out
 }
 
+/// The protocol h asks to switch to: its Upgrade field when its
+/// Connection field lists upgrade (httputil's upgradeType), else "".
+fn upgrade_type(h: Map[Str, Str]) -> Str {
+  let c = h.get("Connection") ?? ""
+  for t in c.split(",") {
+    if t.trim().to_lower() == "upgrade" {
+      return h.get("Upgrade") ?? ""
+    }
+  }
+  ""
+}
+
+/// Whether s is printable ASCII (httputil's ascii.IsPrint).
+fn printable_ascii(s: Str) -> Bool {
+  for b in s.bytes() {
+    if Int(b) < 32 || Int(b) > 126 {
+      return false
+    }
+  }
+  true
+}
+
+fn go_quote_s(s: Str) -> Str { "\"" + s + "\"" }
+
+/// A 101 from the target (httputil's handleUpgradeResponse): the
+/// protocol must be the one asked for (else 502); the client's
+/// connection is handed over (decision 0319's hand-off), the 101 written
+/// with the target's header as it came, then bytes are copied both ways
+/// until either side ends.
+fn tunnel(st: http.ClientStream, head: http.ResponseHead, req_up: Str) -> http.Response uses net.dial {
+  let res_up = upgrade_type(head.headers)
+  if !printable_ascii(res_up) {
+    log.error("http: proxy error", {"error": "backend tried to switch to invalid protocol ${go_quote_s(res_up)}"})
+    st.close()
+    return http.empty(502)
+  }
+  if res_up.to_lower() != req_up.to_lower() {
+    log.error("http: proxy error", {"error": "backend tried to switch protocol ${go_quote_s(res_up)} when ${go_quote_s(req_up)} was requested"})
+    st.close()
+    return http.empty(502)
+  }
+  let cs = rt.cast[http.ClientStream, ClientStream](st)
+  let up_conn = cs.st.with(fn(var x: StreamState) -> rthttp.CResp? { x.conn })
+  // the hand-off runs with the request's effects (websocket.xo's rule)
+  handoff_response(rt.launder1(fn(h: rthttp.HConn) -> () uses net.dial {
+    var text = "HTTP/1.1 101 Switching Protocols\r\n"
+    for (k, v) in head.headers {
+      text = text + k + ": " + v + "\r\n"
+    }
+    text = text + "\r\n"
+    if !hconn.send_at(h, raw.data(text), text.len()) {
+      st.close()
+      return
+    }
+    raw.alive_str(text)
+    let r = match up_conn {
+      Some(c) => c
+      None => {
+        hconn.shut_wr(h)
+        st.close()
+        return
+      }
+    }
+    // what the server read past the request's head goes first
+    let rest = http1.take_rest(h)
+    if rest.len() > 0 && hclient.send_chunk(r, rest, false, false) != hclient.CC_OK {
+      st.close()
+      return
+    }
+    scope s {
+      // the client to the target
+      s.spawn(fn() {
+        let b = raw.bytes_buf(32768)
+        while true {
+          let n = hconn.recv(h, raw.bytes_addr(b), 32768, true)
+          if n <= 0 {
+            break
+          }
+          if hclient.send_chunk(r, raw.bytes_len(b, n), false, false) != hclient.CC_OK {
+            break
+          }
+        }
+        raw.alive(b)
+        hclient.shut_wr(r)
+      })
+      // the target to the client
+      loop: while true {
+        match st.read(32768) {
+          Ok(Some(d)) => {
+            let ok = hconn.send_at(h, raw.bytes_addr(d), d.len())
+            raw.alive(d)
+            if !ok {
+              break loop
+            }
+          }
+          _ => break loop
+        }
+      }
+      hconn.shut_wr(h)
+    }
+    st.close()
+  }))
+}
+
 /// a and b joined with one slash (httputil's singleJoiningSlash).
 fn joining_slash(a: Str, b: Str) -> Str {
   let aslash = a.ends_with("/")
@@ -3346,7 +3450,17 @@ fn (p: ReverseProxy) serve(req0: http.Request, body: http.BodyReader) -> http.Re
     q.put(k, v)
   }
   u.query = q
+  // a protocol switch the client asks for (Upgrade with Connection:
+  // upgrade) survives the hop-by-hop removal (decision 0404 stage E)
+  let up = upgrade_type(req.headers)
+  if !up.is_empty() && !printable_ascii(up) {
+    return http.text(400, "client tried to switch to invalid protocol ${go_quote_s(up)}")
+  }
   var h = without_hop(req.headers)
+  if !up.is_empty() {
+    h.put("Connection", "Upgrade")
+    h.put("Upgrade", up)
+  }
   // SetXForwarded after the incoming X-Forwarded-* are dropped (Rewrite's
   // rule: a client cannot forge the chain; a rewrite hook that trusts it
   // copies it from in)
@@ -3371,6 +3485,9 @@ fn (p: ReverseProxy) serve(req0: http.Request, body: http.BodyReader) -> http.Re
     }
     Ok(st) => {
       let head = st.head()
+      if head.status == 101 {
+        return tunnel(st, head, up)
+      }
       let rh = without_hop(head.headers)
       // a body without a length or an event stream is flushed as it
       // arrives (FlushInterval -1)

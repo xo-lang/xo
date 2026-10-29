@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+subprotocol: chat
+echo: text hi
+echo: binary 100000 bytes
+bye: text hello
+bye: websocket: close 1001 (going away): bye
+other: websocket: bad handshake
+done
+--- stderr
+<time> ERROR http: proxy error error=backend tried to switch protocol "other" when "websocket" was requested

@@ -3699,6 +3699,11 @@ pub fn read_head(r: rthttp.CResp, method: Str) -> HeadRead {
     }
     let open = !h.close && code != 101
     let x = Exchange{s: CC_OK, why: "", status: code, headers: h.headers, body: b"", keep: open, none: false}
+    if code == 101 {
+      // switched protocols (decision 0404 stage E): the connection's
+      // bytes from here on, both ways, until it closes
+      return HeadRead{x: x, b: BodyRead{mode: 3, keep: false}}
+    }
     if h.chunked && h.clen != 0 {
       return HeadRead{x: x, b: BodyRead{mode: 2, keep: open}}
     }

@@ -266,6 +266,16 @@ fn alert(r: Int) -> Str {
 /// Whether cl_start connected r for an HTTP/1.1 exchange: Xo
 /// sends the request (request) and reads the response, then ends it
 /// (end).
+/// Shuts the write side of r's connection (a switched protocol's tunnel
+/// whose other side ended, decision 0404 stage E).
+pub fn shut_wr(r: rthttp.CResp) {
+  let c = rec(r) + R_C
+  if ld(c, C_TLS) != 0 {
+    return
+  }
+  let _r = sock.shutdown(rt.mem_load(c, C_FD, 4), 1)
+}
+
 /// Sends the next piece of a streamed request body (decision 0404 stage
 /// C): framed as a chunk when the request is chunked, the last chunk when
 /// last; CC_OK or the write's failure (the caller ends the exchange).

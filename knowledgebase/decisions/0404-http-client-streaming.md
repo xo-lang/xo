@@ -1,10 +1,10 @@
 # 0404: the HTTP client streams bodies, takes a redirect policy and a timeout per request, and a reverse proxy builds on it
 
-Status: Proposed (lead request, 2026-10-29: item 1 of the 0.35 std list;
+Status: Accepted (lead, 2026-10-29: item 1 of the 0.35 std list;
 Xo Lang 2). Reviewed by Xo Lang 3 and the lead (2026-10-29). Stage A
 landed in 440f5b333; B1 (HTTP/1.1) and B2 (HTTP/2) landed 2026-10-29; C's with_body_reader
 landed 2026-10-29, with_body_file deferred (below); D landed 2026-10-29 as a
-ReverseProxy value (below).
+ReverseProxy value (below); E landed 2026-10-29 (HTTP/1.1).
 
 ## Context
 

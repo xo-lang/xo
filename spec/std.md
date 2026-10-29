@@ -1603,8 +1603,15 @@ request and the outgoing one, copies the chain from the first),
 response body is streamed back, flushed after each piece when it has no
 `Content-Length` or is `text/event-stream`. A failure to reach the
 target is an empty 502, a timeout 504, each logged as `http: proxy
-error` with the error. Upgrade (WebSocket) tunnels are not proxied yet
-(decision 0404 stage E).
+error` with the error. A protocol switch (WebSocket, decision 0404 stage
+E) goes through as httputil's: the `Upgrade` the client asks for (with
+`Connection: upgrade`) is kept on the outgoing request, the target's 101
+is written back with its header as it came, and the bytes are copied
+both ways over the client's connection (handed over as std/websocket's
+upgrade hands it, decision 0313) until either side ends. A target that
+switches to another protocol than the one asked for is a 502 (`backend
+tried to switch protocol "X" when "Y" was requested`); a requested
+protocol that is not printable ASCII is a 400. Over HTTP/1.1 only.
 
 Behind a trusted proxy, the hook keeps the chain it received:
 

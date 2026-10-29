@@ -1,8 +1,13 @@
 package rt
 
 import (
+	"fmt"
+	"io"
+	"net/http"
 	"net/textproto"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // A reverse proxy (decision 0404 stage D): httputil.ReverseProxy's
@@ -25,6 +30,98 @@ func withoutHop(tk *Task, h Map[string, string]) Map[string, string] {
 		Map_remove(tk, &out, n)
 	}
 	return out
+}
+
+// upgradeType is httputil's: h's Upgrade field when its Connection field
+// lists upgrade, else "".
+func upgradeType(tk *Task, h Map[string, string]) string {
+	c := Map_get(tk, h, "Connection")
+	if !c.Some {
+		return ""
+	}
+	for _, t := range strings.Split(c.V, ",") {
+		if strings.EqualFold(strings.TrimSpace(t), "upgrade") {
+			if u := Map_get(tk, h, "Upgrade"); u.Some {
+				return u.V
+			}
+			return ""
+		}
+	}
+	return ""
+}
+
+func printableASCII(s string) bool {
+	for i := 0; i < len(s); i++ {
+		if s[i] < 32 || s[i] > 126 {
+			return false
+		}
+	}
+	return true
+}
+
+// tunnel is httputil's handleUpgradeResponse: the protocol must be the
+// one asked for (else 502); the client's connection is hijacked, the 101
+// written with the target's header, and bytes copied both ways until
+// either side ends.
+func tunnel(tk *Task, st Http_ClientStream, head Http_ResponseHead, reqUp string) Http_Response {
+	resUp := upgradeType(tk, head.F_headers)
+	fail := func(msg string) Http_Response {
+		logRecord(tk, levelError, "http: proxy error", []logField{{k: "error", v: msg}}, "")
+		st.M_close(tk)
+		return Http_empty(tk, 502)
+	}
+	if !printableASCII(resUp) {
+		return fail("backend tried to switch to invalid protocol " + strconv.Quote(resUp))
+	}
+	if !strings.EqualFold(resUp, reqUp) {
+		return fail(fmt.Sprintf("backend tried to switch protocol %q when %q was requested", resUp, reqUp))
+	}
+	up, ok := st.Xs.body.(io.ReadWriter)
+	if !ok {
+		return fail("internal error: 101 switching protocols response with non-writable body")
+	}
+	return Http_Response{F_status: 101, XStream: func(tk *Task, bw Http_BodyWriter) Result[Unit, IoErr] {
+		defer st.M_close(tk)
+		if bw.w == nil || bw.w.rw == nil {
+			return Ok[Unit, IoErr](Unit{})
+		}
+		hj, ok := bw.w.rw.(http.Hijacker)
+		if !ok {
+			return Ok[Unit, IoErr](Unit{})
+		}
+		conn, brw, err := hj.Hijack()
+		if err != nil {
+			return Ok[Unit, IoErr](Unit{})
+		}
+		defer conn.Close()
+		conn.SetDeadline(time.Time{})
+		var b strings.Builder
+		b.WriteString("HTTP/1.1 101 Switching Protocols\r\n")
+		for k, v := range Map_All(head.F_headers) {
+			b.WriteString(k + ": " + v + "\r\n")
+		}
+		b.WriteString("\r\n")
+		if _, err := conn.Write([]byte(b.String())); err != nil {
+			return Ok[Unit, IoErr](Unit{})
+		}
+		done := make(chan struct{})
+		go func() {
+			// the client to the target (what the server buffered first)
+			io.Copy(up, brw.Reader)
+			if cw, ok := up.(interface{ CloseWrite() error }); ok {
+				cw.CloseWrite()
+			}
+			close(done)
+		}()
+		tk.leave()
+		io.Copy(conn, st.Xs.body)
+		if cw, ok := conn.(interface{ CloseWrite() error }); ok {
+			cw.CloseWrite()
+		}
+		<-done
+		tk.enter()
+		return Ok[Unit, IoErr](Unit{})
+	}}
 }
 
 func joiningSlash(a, b string) string {
@@ -69,7 +166,17 @@ func (p Http_ReverseProxy) M_serve(tk *Task, req Http_Request, body Http_BodyRea
 		Map_put(tk, &q, k, v)
 	}
 	u.F_query = q
+	// a protocol switch the client asks for survives the hop-by-hop
+	// removal (decision 0404 stage E)
+	up := upgradeType(tk, req.F_headers)
+	if up != "" && !printableASCII(up) {
+		return Http_text(tk, 400, "client tried to switch to invalid protocol "+strconv.Quote(up))
+	}
 	h := withoutHop(tk, req.F_headers)
+	if up != "" {
+		Map_put(tk, &h, "Connection", "Upgrade")
+		Map_put(tk, &h, "Upgrade", up)
+	}
 	// SetXForwarded after the incoming X-Forwarded-* are dropped
 	// (Rewrite's rule)
 	for _, n := range []string{"X-Forwarded-For", "X-Forwarded-Host", "X-Forwarded-Proto"} {
@@ -104,6 +211,9 @@ func (p Http_ReverseProxy) M_serve(tk *Task, req Http_Request, body Http_BodyRea
 	}
 	st := r.V
 	head := st.M_head(tk)
+	if head.F_status == 101 {
+		return tunnel(tk, st, head, up)
+	}
 	rh := withoutHop(tk, head.F_headers)
 	ct := Map_get(tk, rh, "Content-Type")
 	flush := !Map_get(tk, rh, "Content-Length").Some || (ct.Some && strings.HasPrefix(ct.V, "text/event-stream"))

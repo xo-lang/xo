@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-10-29: feature: WebSocket and other protocol switches through http.reverse_proxy
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0404 stage E (a gateway in front of a WebSocket service)
+- Go reference: net/http/httputil reverseproxy.go handleUpgradeResponse,
+  upgradeType; decision 0404 stage E
+- Test: internal/llvm/testdata/golden/http_reverse_proxy_ws (native and Go)
+
+ReverseProxy.serve keeps a requested `Upgrade` on the outgoing request and, on
+the target's 101, hands the client's connection over and copies bytes both ways
+until either side ends: a WebSocket echo, a 100 KB binary message, the
+subprotocol and a server close pass through. A switch to another protocol than
+the one asked for is 502. A client stream on a 101 now reads the connection's
+raw bytes (llrt/http1.xo read_head).
+
 ## 2026-10-29: feature: a reverse proxy (http.reverse_proxy)
 
 - Kind: feature
