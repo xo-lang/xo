@@ -103,5 +103,7 @@ var (
 	_ func(*Testing_FakeProc, *Task, List[Signal]) *Chan[Signal]                                    = (*Testing_FakeProc).M_notify
 	_ func(*Testing_FakeProc, *Task, *Chan[Signal])                                                 = (*Testing_FakeProc).M_stop_notify
 	_ func(*Testing_FakeProc, *Task)                                                                = (*Testing_FakeProc).M_request_stop
+	_ func(*Testing_FakeProc, *Task) int64                                                          = (*Testing_FakeProc).M_pid
+	_ func(*Testing_FakeProc, *Task) int64                                                          = (*Testing_FakeProc).M_ppid
 	_ func(*Testing_FakeProc, *Task) List[string]                                                   = (*Testing_FakeProc).M_killed
 )

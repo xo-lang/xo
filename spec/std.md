@@ -4498,7 +4498,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-455 declarations.
+457 declarations.
 
 ### Range
 
@@ -5194,6 +5194,8 @@ fn (e: ProcErr) display() -> Str
 ```
 fn exit(self, code: Int) -> Never uses proc
 fn set_grace(self, d: Duration) uses proc
+fn pid(self) -> Int uses proc
+fn ppid(self) -> Int uses proc
 fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
 fn only(self, cmds: List[Str]) -> Proc
 fn cmd(self, name: Str, args: List[Str] = []) -> Cmd
