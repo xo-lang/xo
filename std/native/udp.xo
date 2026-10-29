@@ -1,0 +1,82 @@
+// std/udp on the native backends (decision 0406): a datagram socket in
+// llrt/netconn.xo's connection handle (udp_open, udp_read, udp_write),
+// held as a prelude Conn so its count closes it when the last copy goes.
+use std/udp
+use native/rt
+use native/llrt/netconn
+use native/llrt/tasks
+
+/// udp.UdpConn: the socket, the Net's attenuation lists (write_to's
+/// check), and whether it is connected.
+struct UdpConn {
+  c: Conn
+  lists: Str
+  dialed: Bool
+}
+
+/// The NetErr of the calling context's failed operation (netconn's tags).
+fn err_now() -> NetErr {
+  match netconn.status() {
+    1 => NetErr.InvalidAddr(msg: netconn.last_msg())
+    2 => NetErr.Refused
+    3 => NetErr.Timeout
+    5 => NetErr.Canceled
+    6 => NetErr.Denied(addr: netconn.last_msg())
+    _ => NetErr.Io(msg: netconn.last_msg())
+  }
+}
+
+fn open(n: Net, addr: Str, dial: Bool) -> udp.UdpConn ! NetErr {
+  let lists = rt.net_lists(n)
+  let p = netconn.udp_open(lists, addr, dial)
+  if p == 0 {
+    return Err(err_now())
+  }
+  // the handle's one reference goes to the Conn
+  let c = rt.obj_at[Conn](p)
+  tasks.h_release(p)
+  Ok(rt.cast[UdpConn, udp.UdpConn](UdpConn{c: c, lists: lists, dialed: dial}))
+}
+
+pub fn listen(n: Net, addr: Str) -> udp.UdpConn ! NetErr uses net.listen { open(n, addr, false) }
+
+pub fn dial(n: Net, addr: Str) -> udp.UdpConn ! NetErr uses net.dial { open(n, addr, true) }
+
+fn (u: UdpConn) read_from(max: Int = 65535) -> (Bytes, Str) ! NetErr uses net {
+  let r = netconn.udp_read(rt.obj_addr(u.c), max)
+  if netconn.status() != 0 {
+    return Err(err_now())
+  }
+  Ok((r.data, r.from))
+}
+
+fn (u: UdpConn) write_to(data: Bytes, addr: Str) -> () ! NetErr uses net {
+  netconn.udp_write(u.lists, rt.obj_addr(u.c), data, addr)
+  if netconn.status() != 0 {
+    return Err(err_now())
+  }
+  Ok(())
+}
+
+fn (u: UdpConn) read(max: Int = 65535) -> Bytes ! NetErr uses net {
+  if !u.dialed {
+    return Err(NetErr.Io(msg: "read udp: not connected"))
+  }
+  let (b, _) = u.read_from(max)?
+  Ok(b)
+}
+
+fn (u: UdpConn) write(data: Bytes) -> () ! NetErr uses net {
+  if !u.dialed {
+    return Err(NetErr.Io(msg: "write udp: destination address required"))
+  }
+  netconn.udp_write(u.lists, rt.obj_addr(u.c), data, "")
+  if netconn.status() != 0 {
+    return Err(err_now())
+  }
+  Ok(())
+}
+
+fn (u: UdpConn) local_addr() -> Str { netconn.udp_local_addr(rt.obj_addr(u.c)) }
+
+fn (u: UdpConn) close() { u.c.close() }

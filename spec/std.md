@@ -832,6 +832,33 @@ host (`:0`, `0.0.0.0`, `[::]`) is reported as the loopback address
 `127.0.0.1:49152`, `127.0.0.1:49153`, ... for `:0`. Under record and
 replay (core 11.3) the recorded address is returned (decision 0055).
 
+### 3.2a std/udp (decision 0406)
+
+```
+struct UdpConn {}
+pub fn listen(n: Net, addr: Str) -> UdpConn ! NetErr uses net.listen   // Go's net.ListenPacket("udp", addr)
+pub fn dial(n: Net, addr: Str) -> UdpConn ! NetErr uses net.dial       // Go's net.DialUDP
+fn (c: UdpConn) read_from(max: Int = 65535) -> (Bytes, Str) ! NetErr uses net   // a datagram and its sender
+fn (c: UdpConn) write_to(data: Bytes, addr: Str) -> () ! NetErr uses net
+fn (c: UdpConn) read(max: Int = 65535) -> Bytes ! NetErr uses net      // a dialed socket's peer
+fn (c: UdpConn) write(data: Bytes) -> () ! NetErr uses net
+fn (c: UdpConn) local_addr() -> Str
+fn (c: UdpConn) close()
+```
+
+One call sends or receives one datagram. A datagram longer than
+`read_from`'s `max` is cut to `max` and the rest discarded, as Go's
+ReadFrom. `read` and `write` need a socket from `dial` (`Io("read udp:
+not connected")`, `Io("write udp: destination address required")`
+otherwise). An attenuated `Net` checks `dial`'s address and each
+`write_to` destination (`Denied`). `local_addr` reports the port the
+system chose for `:0` (an unspecified host as the loopback address, as
+`Listener.addr`). The reads and writes are cancellation points
+(`Canceled`); `close` makes a waiting read fail with `Io`. The fake
+network of tests has no UDP yet (`Io`; run with `xo test --real`). A
+UdpConn is a std module's handle rather than the prelude's because a
+prelude handle is a compiler list (decision 0406).
+
 **Unix domain sockets** (decision 0190): an address `unix:PATH` listens
 on or dials the socket file PATH (`os.net.listen("unix:/tmp/app.sock")`).
 `addr` returns the address as given; closing the listener removes the

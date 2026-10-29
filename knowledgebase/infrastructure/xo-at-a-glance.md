@@ -92,7 +92,7 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
 http (server, router, client with keep-alive, HTTP/2, streaming bodies,
 multipart, ServeContent, gzip), tls, websocket, json (derive, Value,
 streaming decoder), xml (tokens, tree, derive), sql (Postgres driver),
-csv, toml, regexp, time, url, netip, mime, mail, smtp, multipart,
+csv, toml, regexp, time, url, netip, udp, mime, mail, smtp, multipart,
 template, embed, compress, big, base64/base32, binary, uuid, path,
 crypto, archive, log, task, testing, cli, term, go (`use go` bindings).
 `time` layouts are named fields (`"{year}-{month}-{day}"`), checked at

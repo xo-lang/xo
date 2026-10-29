@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+bound: true
+dial echo: hello
+cut echo: trunc
+listen echo: ping from server true
+unaddressed write: write udp: destination address required
+only: denied true
+done
+--- stderr

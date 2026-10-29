@@ -247,6 +247,31 @@ pub fn peername(fd: Int, sa: Int, lenp: Int) -> Int {
   rt.sys6(nr(205, 52), fd, sa, lenp, 0, 0, 0)
 }
 
+/// sendto(2) of the datagram of n bytes at p to the address sa of salen
+/// bytes (std/udp, decision 0406).
+pub fn send_to(fd: Int, p: Int, n: Int, sa: Int, salen: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.sendto(fd, p, n, 0, sa, salen)))
+  }
+  if darwin() {
+    return dret(sys_darwin.sendto(fd, p, n, 0, sa, salen))
+  }
+  rt.sys6(nr(206, 44), fd, p, n, 0, sa, salen)
+}
+
+/// recvfrom(2) of the next datagram into p (at most n bytes, the rest of
+/// a longer one discarded) with its sender's address at sa (*lenp bytes
+/// of room, set to the address's length).
+pub fn recv_from(fd: Int, p: Int, n: Int, sa: Int, lenp: Int) -> Int {
+  if windows() {
+    return wret(Int(sys_windows.recvfrom(fd, p, n, 0, sa, lenp)))
+  }
+  if darwin() {
+    return dret(sys_darwin.recvfrom(fd, p, n, 0, sa, lenp))
+  }
+  rt.sys6(nr(207, 45), fd, p, n, 0, sa, lenp)
+}
+
 /// sendto(2) of n bytes at p with flags, to the connected peer.
 pub fn send(fd: Int, p: Int, n: Int, flags: Int) -> Int {
   if windows() {

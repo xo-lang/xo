@@ -1,0 +1,63 @@
+// std/udp (decision 0406): a server bound to 127.0.0.1:0 echoes each
+// datagram to its sender; a dialed client and a listening one send to it;
+// a datagram longer than read_from's max is cut; Net.only refuses an
+// address it does not list; a dialed socket's write needs no address and
+// a listening one's does.
+use std/udp
+
+fn main(os: Os) {
+  match udp.listen(os.net, "127.0.0.1:0") {
+    Ok(srv) => {
+      let addr = srv.local_addr()
+      os.stdio.println("bound: ${addr.starts_with("127.0.0.1:") && !addr.ends_with(":0")}")
+      scope s {
+        s.spawn_background(fn() {
+          var n = 0
+          while n < 4 {
+            match srv.read_from(5) {
+              Ok((b, from)) => {
+                srv.write_to(b, from).ignore_err("the peer may be gone")
+                n += 1
+              }
+              Err(_) => return
+            }
+          }
+        })
+        match udp.dial(os.net, addr) {
+          Ok(c) => {
+            c.write("hello".bytes()).or_fault("write")
+            os.stdio.println("dial echo: ${(c.read().or_fault("read")).to_str() ?? "?"}")
+            c.write("truncated datagram".bytes()).or_fault("write")
+            os.stdio.println("cut echo: ${(c.read().or_fault("read")).to_str() ?? "?"}")
+            c.close()
+          }
+          Err(e) => os.stdio.println("dial: ${e}")
+        }
+        match udp.listen(os.net, "127.0.0.1:0") {
+          Ok(cl) => {
+            cl.write_to("ping".bytes(), addr).or_fault("write_to")
+            match cl.read_from() {
+              Ok((b, from)) => os.stdio.println("listen echo: ${b.to_str() ?? "?"} from server ${from == addr}")
+              Err(e) => os.stdio.println("listen echo: ${e}")
+            }
+            match cl.write("x".bytes()) {
+              Ok(_) => os.stdio.println("unaddressed write: ok?")
+              Err(e) => os.stdio.println("unaddressed write: ${e}")
+            }
+            cl.write_to("last".bytes(), addr).or_fault("write_to")
+            let _ = cl.read_from().ignore_err("the echo of last")
+            cl.close()
+          }
+          Err(e) => os.stdio.println("listen: ${e}")
+        }
+        match udp.dial(os.net.only(["example.com"]), addr) {
+          Ok(_) => os.stdio.println("only: dialed?")
+          Err(e) => os.stdio.println("only: denied ${e is NetErr.Denied(_)}")
+        }
+      }
+      srv.close()
+    }
+    Err(e) => os.stdio.println("listen: ${e}")
+  }
+  os.stdio.println("done")
+}

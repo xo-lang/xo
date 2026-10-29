@@ -1185,3 +1185,233 @@ pub fn conn_close(cn: Int) {
   }
   poll.pd_close(ld(cn, C_PD))
 }
+
+// ---------------------------------------------------------------------------
+// UDP (std/udp, decision 0406): a datagram socket in a connection handle
+// (conn_new's record and free hook), bound by udp_open's listen form or
+// connected by its dial form.
+
+/// `udp.listen(net, addr)` (dial false) or `udp.dial(net, addr)` (dial
+/// true): the socket's handle, or 0 with the error recorded.
+pub fn udp_open(lists: Str, addr: Str, dial: Bool) -> Int {
+  let c = ctx.cur()
+  let op = if dial { "dial" } else { "listen" }
+  if !netpolicy.admits_addr(lists, addr) {
+    fail(c, 6, addr)
+    return 0
+  }
+  if poll.canceled() {
+    fail(c, 5, "")
+    return 0
+  }
+  if twflags.fake(TW_REAL_NET) {
+    fail(c, 4, "${op} udp ${addr}: the fake network has no UDP (xo test --real)")
+    return 0
+  }
+  let (has, host, port) = netpolicy.split_hostport(addr)
+  if !has || host.len() >= 256 || port.len() >= 32 {
+    fail(c, 4, "${op} udp ${addr}: address ${addr}: missing port in address")
+    return 0
+  }
+  if netpolicy.port_out_of_range(port) {
+    fail(c, 4, "${op} udp ${addr}: address ${port}: invalid port")
+    return 0
+  }
+  ok(c)
+  let out = rt.heap_large(NADDR * SA).wrapping_sub(8)
+  let rhost = if dial && host.is_empty() { "localhost" } else { host }
+  let n = resolve(rhost, port, if !dial && host.is_empty() { sock.af_inet6() } else { 0 }, !dial, out, NADDR)
+  if n < 0 {
+    mfree(out)
+    fail(c, 4, "${op} udp ${addr}: ${gai_text(n)}")
+    return 0
+  }
+  var e = 0
+  var cn = 0
+  for i in 0..n {
+    let sa = out + SA * i
+    let f = family(sa)
+    let fd = sock.socket(f, sock.SOCK_DGRAM | cloexec(), 17)
+    if fd < 0 {
+      e = fd
+      continue
+    }
+    if !dial && f == sock.af_inet6() && host.is_empty() {
+      let _v = sock.set_int(fd, 41, ipv6_v6only(), 0)
+    }
+    let r = if dial { sock.connect(fd, sa, sa_len(f)) } else { sock.bind(fd, sa, sa_len(f)) }
+    if r != 0 {
+      e = r
+      let _c = sock.close(fd)
+      continue
+    }
+    let _b = sock.nonblock(fd)
+    cn = conn_new(c, fd, 0)
+    if cn != 0 {
+      break
+    }
+  }
+  mfree(out)
+  if cn != 0 {
+    ok(c)
+    return cn
+  }
+  if st_failed(c) {
+    return 0
+  }
+  fail(c, 4, "${op} udp ${addr}: ${if dial { "connect" } else { "bind" }}: ${err_text(0 - e)}")
+  0
+}
+
+/// Whether the context's last operation recorded a failure.
+fn st_failed(c: Int) -> Bool { ld(c, ctx.C_NET_STATUS) != 0 }
+
+/// A datagram read by udp_read: its bytes and its sender ("ip:port").
+pub struct UdpIn {
+  pub data: Bytes
+  pub from: Str
+}
+
+/// The next datagram on the UDP handle cn, at most max bytes (the rest
+/// of a longer one discarded, as Go's ReadFrom), with its sender.
+pub fn udp_read(cn: Int, max0: Int) -> UdpIn {
+  let c = ctx.cur()
+  let none = UdpIn{data: b"", from: ""}
+  if poll.canceled() {
+    fail(c, 5, "")
+    return none
+  }
+  let max = if max0 < 1 { 1 } else if max0 > 65535 { 65535 } else { max0 }
+  let pd = ld(cn, C_PD)
+  if !poll.pd_begin(pd) {
+    fail(c, 4, "read udp: ${CLOSED_TEXT}")
+    return none
+  }
+  let buf = raw.bytes_buf(max)
+  let a = raw.bytes_addr(buf)
+  let sa = rt.heap_large(SA + 16).wrapping_sub(8)
+  let lenp = sa + SA
+  while true {
+    rt.mem_set(sa, 0, SA)
+    rt.mem_store(lenp, 0, SA, 4)
+    let r = sock.recv_from(pd_fd(pd), a, max, sa, lenp)
+    if r >= 0 || (sock.windows() && r == -10040) {
+      // WSAEMSGSIZE: Windows reports a truncated datagram as an error
+      // after filling the buffer
+      let k = if r >= 0 { r } else { max }
+      poll.pd_end(pd)
+      let from = fmt_addr(sa)
+      mfree(sa)
+      ok(c)
+      return UdpIn{data: raw.bytes_len(buf, k), from: from}
+    }
+    if r == 0 - EINTR {
+      continue
+    }
+    if would_block(r) {
+      let w = poll.pd_wait_ctx(pd, false, c, 0)
+      if w == poll.READY {
+        continue
+      }
+      poll.pd_end(pd)
+      mfree(sa)
+      if w == poll.CANCELED {
+        fail(c, 5, "")
+      } else {
+        fail(c, 4, "read udp: ${CLOSED_TEXT}")
+      }
+      return none
+    }
+    poll.pd_end(pd)
+    mfree(sa)
+    fail(c, 4, "read udp: ${err_text(0 - r)}")
+    return none
+  }
+  none
+}
+
+/// Sends data as one datagram on cn: to addr, or to the connected peer
+/// when addr is empty. Net.only's lists check addr.
+pub fn udp_write(lists: Str, cn: Int, data: Bytes, addr: Str) {
+  let c = ctx.cur()
+  if poll.canceled() {
+    fail(c, 5, "")
+    return
+  }
+  var sa = 0
+  var salen = 0
+  var out = 0
+  if !addr.is_empty() {
+    if !netpolicy.admits_addr(lists, addr) {
+      fail(c, 6, addr)
+      return
+    }
+    let (has, host, port) = netpolicy.split_hostport(addr)
+    if !has || netpolicy.port_out_of_range(port) {
+      fail(c, 4, "write udp ${addr}: address ${addr}: missing port in address")
+      return
+    }
+    out = rt.heap_large(NADDR * SA).wrapping_sub(8)
+    let n = resolve(if host.is_empty() { "localhost" } else { host }, port, 0, false, out, NADDR)
+    if n < 0 {
+      mfree(out)
+      fail(c, 4, "write udp ${addr}: ${gai_text(n)}")
+      return
+    }
+    sa = out
+    salen = sa_len(family(out))
+  }
+  let pd = ld(cn, C_PD)
+  if !poll.pd_begin(pd) {
+    if out != 0 {
+      mfree(out)
+    }
+    fail(c, 4, "write udp: ${CLOSED_TEXT}")
+    return
+  }
+  let p = raw.bytes_addr(data)
+  while true {
+    let r = if sa != 0 { sock.send_to(pd_fd(pd), p, data.len(), sa, salen) } else { sock.send(pd_fd(pd), p, data.len(), 0) }
+    if r >= 0 {
+      break
+    }
+    if r == 0 - EINTR {
+      continue
+    }
+    if would_block(r) {
+      let w = poll.pd_wait_ctx(pd, true, c, 0)
+      if w == poll.READY {
+        continue
+      }
+      poll.pd_end(pd)
+      if out != 0 {
+        mfree(out)
+      }
+      if w == poll.CANCELED { fail(c, 5, "") } else { fail(c, 4, "write udp: ${CLOSED_TEXT}") }
+      return
+    }
+    poll.pd_end(pd)
+    if out != 0 {
+      mfree(out)
+    }
+    fail(c, 4, "write udp ${addr}: ${err_text(0 - r)}")
+    return
+  }
+  poll.pd_end(pd)
+  raw.alive(data)
+  if out != 0 {
+    mfree(out)
+  }
+  ok(c)
+}
+
+/// The local address of the UDP handle cn ("ip:port").
+pub fn udp_local_addr(cn: Int) -> Str {
+  let sa = rt.heap_large(SA + 16).wrapping_sub(8)
+  rt.mem_set(sa, 0, SA)
+  rt.mem_store(sa + SA, 0, SA, 4)
+  let _r = sock.sockname(pd_fd(ld(cn, C_PD)), sa, sa + SA)
+  let s = fmt_addr(sa)
+  mfree(sa)
+  s
+}

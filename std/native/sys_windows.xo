@@ -143,6 +143,9 @@ fn getsockname(s: Int, sa: Int, lenp: Int) -> Int32
 fn getpeername(s: Int, sa: Int, lenp: Int) -> Int32
 fn send(s: Int, p: Int, n: Int, flags: Int) -> Int32
 fn recv(s: Int, p: Int, n: Int, flags: Int) -> Int32
+/// sendto and recvfrom (std/udp, decision 0406).
+fn sendto(s: Int, p: Int, n: Int, flags: Int, to: Int, tolen: Int) -> Int32
+fn recvfrom(s: Int, p: Int, n: Int, flags: Int, from: Int, fromlenp: Int) -> Int32
 fn setsockopt(s: Int, level: Int, opt: Int, v: Int, n: Int) -> Int32
 fn getsockopt(s: Int, level: Int, opt: Int, v: Int, lenp: Int) -> Int32
 fn shutdown(s: Int, how: Int) -> Int32

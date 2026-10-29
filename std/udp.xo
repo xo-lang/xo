@@ -1,0 +1,28 @@
+// std/udp (spec/std.md 3.2a, decision 0406). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's net.ListenPacket
+// and net.DialUDP: UDP datagrams over a Net.
+
+/// A UDP socket: bound by `listen` (any peer) or connected by `dial`
+/// (one peer). A handle; `close` is idempotent.
+struct UdpConn {}
+
+/// A socket bound to addr ("host:port"; port 0 lets the system choose,
+/// `local_addr` reports it): Go's net.ListenPacket("udp", addr).
+pub fn listen(n: Net, addr: Str) -> UdpConn ! NetErr uses net.listen
+/// A socket connected to addr: `read` and `write` exchange datagrams
+/// with that peer only (Go's net.DialUDP).
+pub fn dial(n: Net, addr: Str) -> UdpConn ! NetErr uses net.dial
+
+/// The next datagram and its sender ("ip:port"); a datagram longer than
+/// max is cut to max, the rest discarded (Go's ReadFrom).
+fn (c: UdpConn) read_from(max: Int = 65535) -> (Bytes, Str) ! NetErr uses net
+/// Sends data as one datagram to addr; Net.only checks addr.
+fn (c: UdpConn) write_to(data: Bytes, addr: Str) -> () ! NetErr uses net
+/// The next datagram from a dialed socket's peer.
+fn (c: UdpConn) read(max: Int = 65535) -> Bytes ! NetErr uses net
+/// Sends data as one datagram to a dialed socket's peer.
+fn (c: UdpConn) write(data: Bytes) -> () ! NetErr uses net
+/// The socket's own address ("ip:port").
+fn (c: UdpConn) local_addr() -> Str
+/// Closes the socket; a waiting read fails with `Io`.
+fn (c: UdpConn) close()
