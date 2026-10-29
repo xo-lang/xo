@@ -7,6 +7,7 @@ use std/toml
 use std/json as js
 use native/llrt/scan
 use native/llrt/raw
+use native/llrt/jsontext
 
 enum TomlVal {
   Text(s: Str)
@@ -42,7 +43,12 @@ struct TomlParser {
   arrays: List[TomlArray]
 }
 
-fn tomlerr_display(e: toml.TomlErr) -> Str { "toml: line ${e.line}: ${e.msg}" }
+fn tomlerr_display(e: toml.TomlErr) -> Str {
+  if e.line == 0 {
+    return "toml: ${e.msg}"
+  }
+  "toml: line ${e.line}: ${e.msg}"
+}
 
 fn decodeerr_display(e: toml.DecodeErr) -> Str {
   match e {
@@ -1061,5 +1067,268 @@ fn decode[T: Json](text: Str) -> T ! toml.DecodeErr {
   match js.decode[T](j) {
     Ok(v) => Ok(v)
     Err(e) => Err(toml.DecodeErr.Value(err: e))
+  }
+}
+
+// encode (std.md 19): pelletier/go-toml/v2's Marshal (encodeTable,
+// encodeArrayTable, writeTableHeader, appendValue, appendString) over
+// the json.Value of v, so the Go backend's toml.go gives the same text.
+
+struct TomlEnc {
+  out: Str
+  last_header: Bool
+}
+
+fn enc_err(msg: Str) -> toml.TomlErr { toml.TomlErr{line: 0, msg: msg} }
+
+fn enc_kind(v: js.Value) -> Str {
+  match v {
+    js.Value.Null => "a None"
+    js.Value.Bool(_) => "a Bool"
+    js.Value.Int(_) => "an Int"
+    js.Value.Num(_) => "a Float"
+    js.Value.Str(_) => "a Str"
+    js.Value.Trusted(_, _) => "a Str"
+    js.Value.List(_) => "a List"
+    js.Value.Object(_) => "a record"
+  }
+}
+
+// An array of tables: not empty, every element an object (isArrayOfTables).
+fn enc_table_array(v: js.Value) -> Bool {
+  match v {
+    js.Value.List(items) => {
+      if items.len() == 0 {
+        return false
+      }
+      for x in items {
+        match x {
+          js.Value.Object(_) => {}
+          _ => return false
+        }
+      }
+      true
+    }
+    _ => false
+  }
+}
+
+fn enc_is_table(v: js.Value) -> Bool {
+  match v {
+    js.Value.Object(_) => true
+    _ => enc_table_array(v)
+  }
+}
+
+fn enc_is_null(v: js.Value) -> Bool {
+  match v {
+    js.Value.Null => true
+    _ => false
+  }
+}
+
+fn (var e: TomlEnc) table(keys: List[Str], fields: List[(Str, js.Value)]) -> () ! toml.TomlErr {
+  for (k, v) in fields {
+    if enc_is_null(v) || enc_is_table(v) {
+      continue
+    }
+    e.out = enc_key(e.out, k) + " = "
+    e.out = enc_value(e.out, v)?
+    e.out = e.out + "\n"
+    e.last_header = false
+  }
+  for (k, v) in fields {
+    if enc_is_null(v) || !enc_is_table(v) {
+      continue
+    }
+    var sub = keys
+    sub.push(k)
+    match v {
+      js.Value.Object(fs) => {
+        e.header(sub, false)
+        e.table(sub, fs)?
+      }
+      js.Value.List(items) => {
+        for x in items {
+          e.header(sub, true)
+          match x {
+            js.Value.Object(fs) => e.table(sub, fs)?
+            _ => {}
+          }
+        }
+      }
+      _ => {}
+    }
+  }
+}
+
+fn (var e: TomlEnc) header(keys: List[Str], array: Bool) {
+  var o = e.out
+  if o != "" && !e.last_header {
+    o = o + "\n"
+  }
+  o = o + (if array { "[[" } else { "[" })
+  for (i, k) in keys.indexed() {
+    if i > 0 {
+      o = o + "."
+    }
+    o = enc_key(o, k)
+  }
+  e.out = o + (if array { "]]\n" } else { "]\n" })
+  e.last_header = true
+}
+
+fn enc_bare_byte(c: Int) -> Bool { c >= 65 && c <= 90 || c >= 97 && c <= 122 || c >= 48 && c <= 57 || c == 45 || c == 95 }
+
+fn enc_key(out: Str, k: Str) -> Str {
+  if k == "" {
+    return enc_string(out, k)
+  }
+  for i in 0..k.len() {
+    if !enc_bare_byte(raw.str_byte(k, i)) {
+      return enc_string(out, k)
+    }
+  }
+  out + k
+}
+
+fn enc_value(out: Str, v: js.Value) -> Str ! toml.TomlErr {
+  match v {
+    js.Value.Null => Err(enc_err("cannot encode a None in an array"))
+    js.Value.Bool(b) => out + (if b { "true" } else { "false" })
+    js.Value.Int(n) => out + "${n}"
+    js.Value.Num(f) => out + enc_float(f)
+    js.Value.Str(s) => enc_string(out, s)
+    // a trusted fragment (decision 0408) is its text, as json encodes it
+    js.Value.Trusted(_, s) => enc_string(out, s)
+    js.Value.List(items) => {
+      var o = out + "["
+      for (i, x) in items.indexed() {
+        if i > 0 {
+          o = o + ", "
+        }
+        o = enc_value(o, x)?
+      }
+      o + "]"
+    }
+    js.Value.Object(fs) => {
+      var o = out + "{"
+      var first = true
+      for (k, x) in fs {
+        if enc_is_null(x) {
+          continue
+        }
+        if !first {
+          o = o + ", "
+        }
+        first = false
+        o = enc_key(o, k) + " = "
+        o = enc_value(o, x)?
+      }
+      o + "}"
+    }
+  }
+}
+
+// appendFloat: strconv's 'f' format with the shortest digits and ".0"
+// when there is no fraction; jsontext gives the digits, in 'e' form
+// below 1e-6 and from 1e21, which is written out here.
+fn enc_float(f: Float) -> Str {
+  let j = jsontext.append_float("", f)
+  var e = -1
+  for i in 0..j.len() {
+    if raw.str_byte(j, i) == 101 {
+      e = i
+    }
+  }
+  var s = j
+  if e >= 0 {
+    let neg = raw.str_byte(j, 0) == 45
+    let mant = raw.str_slice(j, if neg { 1 } else { 0 }, e)
+    let exp = Int.parse(raw.str_slice(j, e + 1, j.len())) ?? 0
+    var digits = ""
+    var point = mant.len()
+    for i in 0..mant.len() {
+      let c = raw.str_byte(mant, i)
+      if c == 46 {
+        point = i
+      } else {
+        digits = digits + raw.str_slice(mant, i, i + 1)
+      }
+    }
+    let p = point + exp
+    var t = if neg { "-" } else { "" }
+    if p <= 0 {
+      t = t + "0." + "0".repeat(0 - p) + digits
+    } else if p >= digits.len() {
+      t = t + digits + "0".repeat(p - digits.len())
+    } else {
+      t = t + raw.str_slice(digits, 0, p) + "." + raw.str_slice(digits, p, digits.len())
+    }
+    s = t
+  }
+  for i in 0..s.len() {
+    if raw.str_byte(s, i) == 46 {
+      return s
+    }
+  }
+  s + ".0"
+}
+
+// canBeLiteral: no single quote, DEL or control byte.
+fn enc_literal_ok(s: Str) -> Bool {
+  for i in 0..s.len() {
+    let c = raw.str_byte(s, i)
+    if c == 39 || c == 127 || c < 32 {
+      return false
+    }
+  }
+  true
+}
+
+fn enc_string(out: Str, s: Str) -> Str {
+  if enc_literal_ok(s) {
+    return out + "'" + s + "'"
+  }
+  var b = BytesBuilder.new()
+  b.write_str(out)
+  b.write_byte(34)
+  let hex = "0123456789ABCDEF"
+  for i in 0..s.len() {
+    let c = raw.str_byte(s, i)
+    if c == 34 || c == 92 {
+      b.write_byte(92)
+      b.write_byte(UInt8(c))
+    } else if c == 8 {
+      b.write_str("\\b")
+    } else if c == 12 {
+      b.write_str("\\f")
+    } else if c == 10 {
+      b.write_str("\\n")
+    } else if c == 13 {
+      b.write_str("\\r")
+    } else if c == 9 {
+      b.write_str("\\t")
+    } else if c < 32 || c == 127 {
+      b.write_str("\\u00")
+      b.write_byte(UInt8(raw.str_byte(hex, c / 16)))
+      b.write_byte(UInt8(raw.str_byte(hex, c % 16)))
+    } else {
+      b.write_byte(UInt8(c))
+    }
+  }
+  b.write_byte(34)
+  b.freeze().to_str() ?? out
+}
+
+fn encode[T: Json](v: T) -> Str ! toml.TomlErr {
+  let x = js.to_value(v)
+  match x {
+    js.Value.Object(fs) => {
+      var e = TomlEnc{out: "", last_header: false}
+      e.table([], fs)?
+      e.out
+    }
+    _ => Err(enc_err("cannot encode ${enc_kind(x)} as a document root"))
   }
 }

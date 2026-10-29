@@ -3771,10 +3771,12 @@ the same JSON text and errors (golden `toml_basic`).
 use std/json
 
 struct TomlErr { line: Int, msg: Str }   // displays as `toml: line 3: expected a value after =`
+                                         // (line 0, an encode error: `toml: msg`)
 enum DecodeErr { Syntax(err: TomlErr), Value(err: json.DecodeErr) }   // displays as the inner error
 
 pub fn decode[T: Json](text: Str) -> T ! DecodeErr
 pub fn to_json(text: Str) -> Str ! TomlErr
+pub fn encode[T: Json](v: T) -> Str ! TomlErr
 ```
 
 ```
@@ -3806,6 +3808,25 @@ fn load(fs: Fs) -> Config ! Error uses fs.read {
   errors with their line.
 - `to_json` gives the JSON text, for code that wants to read a document
   without a struct (`json.decode[Map[Str, ...]]`) or print it.
+- `encode(v)` writes a document in the layout of
+  pelletier/go-toml/v2's `Marshal` (std survey gap 16; golden
+  `toml_encode`, whose `gotoml.go.txt` gives the same text through
+  go-toml): in each table its plain keys first, then its tables
+  (`[a.b]`, an empty line before a header that does not follow a
+  header) and arrays of tables (`[[a]]`, a list of records that is not
+  empty), in field order; other lists and records inside lists inline
+  (`[1, 2]`, `{k = 'v'}`); a key bare when it is letters, digits, `_` and
+  `-`, else quoted; a string a literal string (`'...'`) unless it holds
+  `'` or a control character, then a basic string with `\b \t \n \f \r
+  \" \\` and `\u00XX`; a float in decimal, never an exponent, with `.0`
+  when it has no fraction. v is read through `json.to_value`, so a None
+  field is left out, a `Time` or `Duration` is its JSON string (Go writes
+  a `time.Time` as a bare date-time), a `Float` without a fraction is an
+  integer, and a map's keys come in its JSON order (Go sorts them);
+  `decode` reads each back. A root that is not a record or a map, and a
+  None inside a list (Go writes a nil pointer's zero value), are
+  `TomlErr` with line 0: `toml: cannot encode an Int as a document
+  root`, `toml: cannot encode a None in an array`.
 
 
 ---

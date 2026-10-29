@@ -13,6 +13,9 @@ import (
 
 // M_display is `toml: line 3: msg`.
 func (e Toml_TomlErr) M_display(*Task) string {
+	if e.F_line == 0 {
+		return "toml: " + e.F_msg
+	}
 	return "toml: line " + strconv.FormatInt(e.F_line, 10) + ": " + e.F_msg
 }
 
@@ -882,4 +885,239 @@ func Toml_decode[T any](tk *Task, text string) Result[T, Toml_DecodeErr] {
 		return Err[T](Toml_DecodeErr{Tag: 2, P: Toml_DecodeErr_Value{F_err: *e}})
 	}
 	return Ok[T, Toml_DecodeErr](v)
+}
+
+// Toml_encode is `toml.encode(v)`: pelletier/go-toml/v2's Marshal layout
+// over v's JSON tree, as std/native/toml.xo encode.
+func Toml_encode[T any](tk *Task, v T) Result[string, Toml_TomlErr] {
+	x, perr := jsonParse([]byte(Json_encode(tk, v)))
+	if perr != nil {
+		x = nil
+	}
+	o, ok := x.(*jsonObj)
+	if !ok {
+		return Err[string](Toml_TomlErr{F_msg: "cannot encode " + tomlKind(x) + " as a document root"})
+	}
+	e := &tomlEnc{}
+	if err := e.table(nil, o); err != nil {
+		return Err[string](*err)
+	}
+	return Ok[string, Toml_TomlErr](e.b.String())
+}
+
+type tomlEnc struct {
+	b          strings.Builder
+	lastHeader bool
+}
+
+func tomlKind(x any) string {
+	switch t := x.(type) {
+	case nil:
+		return "a None"
+	case bool:
+		return "a Bool"
+	case json.Number:
+		if _, err := strconv.ParseInt(string(t), 10, 64); err == nil {
+			return "an Int"
+		}
+		return "a Float"
+	case string:
+		return "a Str"
+	case []any:
+		return "a List"
+	}
+	return "a record"
+}
+
+func tomlTableArray(x any) bool {
+	l, ok := x.([]any)
+	if !ok || len(l) == 0 {
+		return false
+	}
+	for _, e := range l {
+		if _, ok := e.(*jsonObj); !ok {
+			return false
+		}
+	}
+	return true
+}
+
+func tomlIsTable(x any) bool {
+	if _, ok := x.(*jsonObj); ok {
+		return true
+	}
+	return tomlTableArray(x)
+}
+
+func (e *tomlEnc) table(keys []string, o *jsonObj) *Toml_TomlErr {
+	for _, k := range o.keys {
+		v := o.vals[k]
+		if v == nil || tomlIsTable(v) {
+			continue
+		}
+		tomlKey(&e.b, k)
+		e.b.WriteString(" = ")
+		if err := tomlValue(&e.b, v); err != nil {
+			return err
+		}
+		e.b.WriteByte('\n')
+		e.lastHeader = false
+	}
+	for _, k := range o.keys {
+		v := o.vals[k]
+		if v == nil || !tomlIsTable(v) {
+			continue
+		}
+		sub := append(keys[:len(keys):len(keys)], k)
+		if t, ok := v.(*jsonObj); ok {
+			e.header(sub, false)
+			if err := e.table(sub, t); err != nil {
+				return err
+			}
+			continue
+		}
+		for _, x := range v.([]any) {
+			e.header(sub, true)
+			if err := e.table(sub, x.(*jsonObj)); err != nil {
+				return err
+			}
+		}
+	}
+	return nil
+}
+
+func (e *tomlEnc) header(keys []string, array bool) {
+	if e.b.Len() > 0 && !e.lastHeader {
+		e.b.WriteByte('\n')
+	}
+	e.b.WriteByte('[')
+	if array {
+		e.b.WriteByte('[')
+	}
+	for i, k := range keys {
+		if i > 0 {
+			e.b.WriteByte('.')
+		}
+		tomlKey(&e.b, k)
+	}
+	e.b.WriteByte(']')
+	if array {
+		e.b.WriteByte(']')
+	}
+	e.b.WriteByte('\n')
+	e.lastHeader = true
+}
+
+func tomlKey(b *strings.Builder, k string) {
+	bare := k != ""
+	for i := 0; i < len(k); i++ {
+		c := k[i]
+		if !(c >= 'A' && c <= 'Z' || c >= 'a' && c <= 'z' || c >= '0' && c <= '9' || c == '-' || c == '_') {
+			bare = false
+			break
+		}
+	}
+	if bare {
+		b.WriteString(k)
+		return
+	}
+	tomlString(b, k)
+}
+
+func tomlValue(b *strings.Builder, x any) *Toml_TomlErr {
+	switch t := x.(type) {
+	case nil:
+		return &Toml_TomlErr{F_msg: "cannot encode a None in an array"}
+	case bool:
+		b.WriteString(strconv.FormatBool(t))
+	case json.Number:
+		if n, err := strconv.ParseInt(string(t), 10, 64); err == nil {
+			b.WriteString(strconv.FormatInt(n, 10))
+			return nil
+		}
+		f, _ := strconv.ParseFloat(string(t), 64)
+		s := strconv.FormatFloat(f, 'f', -1, 64)
+		b.WriteString(s)
+		if !strings.ContainsAny(s, ".eE") {
+			b.WriteString(".0")
+		}
+	case string:
+		tomlString(b, t)
+	case []any:
+		b.WriteByte('[')
+		for i, e := range t {
+			if i > 0 {
+				b.WriteString(", ")
+			}
+			if err := tomlValue(b, e); err != nil {
+				return err
+			}
+		}
+		b.WriteByte(']')
+	case *jsonObj:
+		b.WriteByte('{')
+		first := true
+		for _, k := range t.keys {
+			v := t.vals[k]
+			if v == nil {
+				continue
+			}
+			if !first {
+				b.WriteString(", ")
+			}
+			first = false
+			tomlKey(b, k)
+			b.WriteString(" = ")
+			if err := tomlValue(b, v); err != nil {
+				return err
+			}
+		}
+		b.WriteByte('}')
+	}
+	return nil
+}
+
+// tomlString is go-toml's appendString: a literal string when it can be,
+// else a basic string with Go's escapes.
+func tomlString(b *strings.Builder, s string) {
+	lit := true
+	for i := 0; i < len(s); i++ {
+		if c := s[i]; c == '\'' || c == 0x7f || c < 0x20 {
+			lit = false
+			break
+		}
+	}
+	if lit && utf8.ValidString(s) {
+		b.WriteByte('\'')
+		b.WriteString(s)
+		b.WriteByte('\'')
+		return
+	}
+	const hex = "0123456789ABCDEF"
+	b.WriteByte('"')
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '"' || c == '\\':
+			b.WriteByte('\\')
+			b.WriteByte(c)
+		case c == '\b':
+			b.WriteString(`\b`)
+		case c == '\f':
+			b.WriteString(`\f`)
+		case c == '\n':
+			b.WriteString(`\n`)
+		case c == '\r':
+			b.WriteString(`\r`)
+		case c == '\t':
+			b.WriteString(`\t`)
+		case c < 0x20 || c == 0x7f:
+			b.WriteString(`\u00`)
+			b.WriteByte(hex[c>>4])
+			b.WriteByte(hex[c&15])
+		default:
+			b.WriteByte(c)
+		}
+	}
+	b.WriteByte('"')
 }

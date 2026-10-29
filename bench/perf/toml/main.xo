@@ -1,7 +1,9 @@
 // toml: std/toml's decode into a struct against
 // github.com/pelletier/go-toml/v2's Unmarshal (twin.go.txt): a config of
 // tables, an array of tables, arrays, strings, ints, floats and bools,
-// 20,000 times; `none` is the setup alone. Usage: `<program> none|decode`.
+// 20,000 times; `encode` writes that config back with toml.encode against
+// Marshal 20,000 times (the same text); `none` is the setup alone. Usage:
+// `<program> none|decode|encode`.
 // Prints `<workload> <checksum>`; the twin prints the same.
 use std/toml
 
@@ -40,6 +42,12 @@ fn main(os: Os) uses stdio, env {
     for i in 0..20000 {
       let c: Config = toml.decode(TEXT).ok() ?? fault("decode")
       sum += c.server.port + c.database.max_conn + c.features.len() + c.features[i % 3].weight + c.database.replicas[i % 3].len()
+    }
+  } else if w == "encode" {
+    let c: Config = toml.decode(TEXT).ok() ?? fault("decode")
+    for i in 0..20000 {
+      let out = toml.encode(c).ok() ?? fault("encode")
+      sum += out.len() + Int(out.bytes()[i % out.len()])
     }
   } else {
     for i in 0..20000 {

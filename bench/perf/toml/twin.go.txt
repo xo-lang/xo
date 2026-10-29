@@ -50,6 +50,18 @@ func main() {
 			}
 			sum += c.Server.Port + c.Database.MaxConn + len(c.Features) + c.Features[i%3].Weight + len(c.Database.Replicas[i%3])
 		}
+	case "encode":
+		var c Config
+		if err := toml.Unmarshal([]byte(text), &c); err != nil {
+			panic(err)
+		}
+		for i := 0; i < 20000; i++ {
+			out, err := toml.Marshal(c)
+			if err != nil {
+				panic(err)
+			}
+			sum += len(out) + int(out[i%len(out)])
+		}
 	default:
 		for i := 0; i < 20000; i++ {
 			sum += len(text) + i%3

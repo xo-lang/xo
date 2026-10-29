@@ -1,0 +1,100 @@
+// The cases of main.xo through github.com/pelletier/go-toml/v2 v2.4.3's
+// Marshal: run in a module that requires it; its output equals main.xo's
+// up to the "errors" line.
+package main
+
+import (
+	"fmt"
+
+	"github.com/pelletier/go-toml/v2"
+)
+
+type Server struct {
+	Host string `toml:"host"`
+	Port int    `toml:"port"`
+	TLS  bool   `toml:"tls"`
+}
+type Feature struct {
+	Name    string `toml:"name"`
+	Enabled bool   `toml:"enabled"`
+	Weight  int    `toml:"weight"`
+}
+type Config struct {
+	Title    string    `toml:"title"`
+	Server   Server    `toml:"server"`
+	Features []Feature `toml:"features"`
+	Replicas []string  `toml:"replicas"`
+}
+type Strs struct {
+	Plain string `toml:"plain"`
+	Quote string `toml:"quote"`
+	NL    string `toml:"nl"`
+	Tab   string `toml:"tab"`
+	DQ    string `toml:"dq"`
+	BS    string `toml:"bs"`
+	Ctl   string `toml:"ctl"`
+	Del   string `toml:"del"`
+	Uni   string `toml:"uni"`
+	Empty string `toml:"empty"`
+}
+type Opts struct {
+	Some   *int           `toml:"some"`
+	None   *int           `toml:"none"`
+	Empty  []int          `toml:"empty"`
+	Inner  map[string]int `toml:"inner"`
+	Nested [][]int        `toml:"nested"`
+	Inline [][]Feature    `toml:"inline"`
+	Mixed  []Server       `toml:"mixed"`
+}
+type Floats struct {
+	A float64 `toml:"a"`
+	B float64 `toml:"b"`
+	C float64 `toml:"c"`
+	D float64 `toml:"d"`
+	E float64 `toml:"e"`
+	F float64 `toml:"f"`
+	G float64 `toml:"g"`
+}
+type Leaf struct {
+	X int `toml:"x"`
+}
+type Mid struct {
+	C Leaf `toml:"c"`
+}
+type Top struct {
+	B Mid `toml:"b"`
+}
+type Sub struct {
+	K string `toml:"k"`
+}
+type Item struct {
+	N   int `toml:"n"`
+	Sub Sub `toml:"sub"`
+}
+type Deep struct {
+	A     Top    `toml:"a"`
+	Items []Item `toml:"items"`
+	Last  int    `toml:"last"`
+}
+
+func show(name string, v any) {
+	fmt.Printf("--- %s\n", name)
+	b, err := toml.Marshal(v)
+	if err != nil {
+		fmt.Printf("error %v\n", err)
+		return
+	}
+	fmt.Print(string(b))
+}
+
+func main() {
+	one := 1
+	show("config", Config{Title: "orders", Server: Server{"0.0.0.0", 8080, true},
+		Features: []Feature{{"search", true, 10}, {"export", false, 3}}, Replicas: []string{"db-a", "db-b"}})
+	show("strings", Strs{"hello", "it's", "a\nb", "a\tb", "say \"hi\"", "C:\\dir", "\x01x", "\x7f", "h\u00e9llo \u2713", ""})
+	show("keys", map[string]int{"": 2, "a.b": 1, "ok_key-1": 4, "with space": 3})
+	show("opts", Opts{Some: &one, Empty: []int{}, Inner: map[string]int{}, Nested: [][]int{{1, 2}, {3}},
+		Inline: [][]Feature{{{"a", true, 1}}}, Mixed: []Server{}})
+	show("floats", Floats{0.1, 1e-7, 1e21, -2.5, 123456.789, 1.5e300, 2.5e-10})
+	show("deep", Deep{A: Top{Mid{Leaf{1}}}, Items: []Item{{1, Sub{"v"}}, {2, Sub{"w"}}}, Last: 9})
+}

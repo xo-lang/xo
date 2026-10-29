@@ -1,0 +1,137 @@
+// toml.encode (std.md 19) against pelletier/go-toml/v2 v2.4.3's Marshal:
+// gotoml.go.txt is the same cases in Go, and its output equals this
+// one's up to the "errors" case (Go has no counterpart for those texts).
+use std/toml
+
+struct Server {
+  host: Str
+  port: Int
+  tls: Bool
+} derive Json
+
+struct Feature {
+  name: Str
+  enabled: Bool
+  weight: Int
+} derive Json
+
+struct Config {
+  title: Str
+  server: Server
+  features: List[Feature]
+  replicas: List[Str]
+} derive Json
+
+struct Strs {
+  plain: Str
+  quote: Str
+  nl: Str
+  tab: Str
+  dq: Str
+  bs: Str
+  ctl: Str
+  del: Str
+  uni: Str
+  empty: Str
+} derive Json
+
+struct Opts {
+  some: Int?
+  none: Int?
+  empty: List[Int]
+  inner: Map[Str, Int]
+  nested: List[List[Int]]
+  inline: List[List[Feature]]
+  mixed: List[Server]
+} derive Json
+
+struct Floats {
+  a: Float
+  b: Float
+  c: Float
+  d: Float
+  e: Float
+  f: Float
+  g: Float
+} derive Json
+
+struct Leaf {
+  x: Int
+} derive Json
+
+struct Mid {
+  c: Leaf
+} derive Json
+
+struct Top {
+  b: Mid
+} derive Json
+
+struct Sub {
+  k: Str
+} derive Json
+
+struct Item {
+  n: Int
+  sub: Sub
+} derive Json
+
+struct Deep {
+  a: Top
+  items: List[Item]
+  last: Int
+} derive Json
+
+fn show(out: Stdio, name: Str, r: Result[Str, toml.TomlErr]) {
+  out.println("--- ${name}")
+  match r {
+    Ok(s) => out.print(s)
+    Err(e) => out.println("error ${e}")
+  }
+}
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  show(out, "config", toml.encode(Config{
+    title: "orders",
+    server: Server{host: "0.0.0.0", port: 8080, tls: true},
+    features: [Feature{name: "search", enabled: true, weight: 10}, Feature{name: "export", enabled: false, weight: 3}],
+    replicas: ["db-a", "db-b"],
+  }))
+  show(out, "strings", toml.encode(Strs{
+    plain: "hello",
+    quote: "it's",
+    nl: "a\nb",
+    tab: "a\tb",
+    dq: "say \"hi\"",
+    bs: "C:\\dir",
+    ctl: "\u{1}x",
+    del: "\u{7f}",
+    uni: "h\u{e9}llo \u{2713}",
+    empty: "",
+  }))
+  let keys: Map[Str, Int] = {"": 2, "a.b": 1, "ok_key-1": 4, "with space": 3}
+  show(out, "keys", toml.encode(keys))
+  show(out, "opts", toml.encode(Opts{
+    some: Some(1),
+    none: None,
+    empty: [],
+    inner: {},
+    nested: [[1, 2], [3]],
+    inline: [[Feature{name: "a", enabled: true, weight: 1}]],
+    mixed: [],
+  }))
+  show(out, "floats", toml.encode(Floats{a: 0.1, b: 1e-7, c: 1e21, d: -2.5, e: 123456.789, f: 1.5e300, g: 2.5e-10}))
+  show(out, "deep", toml.encode(Deep{
+    a: Top{b: Mid{c: Leaf{x: 1}}},
+    items: [Item{n: 1, sub: Sub{k: "v"}}, Item{n: 2, sub: Sub{k: "w"}}],
+    last: 9,
+  }))
+  out.println("--- errors")
+  show(out, "int root", toml.encode(5))
+  show(out, "list root", toml.encode([1, 2]))
+  let holes: Map[Str, List[Int?]] = {"xs": [Some(1), None]}
+  show(out, "none in an array", toml.encode(holes))
+  let back: Config = toml.decode(toml.encode(Config{title: "t", server: Server{host: "h", port: 1, tls: false}, features: [], replicas: []})?)?
+  out.println("round trip ${back.title} ${back.server.host} ${back.server.port}")
+}

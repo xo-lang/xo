@@ -1,0 +1,80 @@
+exit 0
+--- stdout
+--- config
+title = 'orders'
+replicas = ['db-a', 'db-b']
+
+[server]
+host = '0.0.0.0'
+port = 8080
+tls = true
+
+[[features]]
+name = 'search'
+enabled = true
+weight = 10
+
+[[features]]
+name = 'export'
+enabled = false
+weight = 3
+--- strings
+plain = 'hello'
+quote = "it's"
+nl = "a\nb"
+tab = "a\tb"
+dq = 'say "hi"'
+bs = 'C:\dir'
+ctl = "\u0001x"
+del = "\u007F"
+uni = 'héllo ✓'
+empty = ''
+--- keys
+'' = 2
+'a.b' = 1
+ok_key-1 = 4
+'with space' = 3
+--- opts
+some = 1
+empty = []
+nested = [[1, 2], [3]]
+inline = [[{name = 'a', enabled = true, weight = 1}]]
+mixed = []
+
+[inner]
+--- floats
+a = 0.1
+b = 0.0000001
+c = 1000000000000000000000.0
+d = -2.5
+e = 123456.789
+f = 1500000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000.0
+g = 0.00000000025
+--- deep
+last = 9
+
+[a]
+[a.b]
+[a.b.c]
+x = 1
+
+[[items]]
+n = 1
+
+[items.sub]
+k = 'v'
+
+[[items]]
+n = 2
+
+[items.sub]
+k = 'w'
+--- errors
+--- int root
+error toml: cannot encode an Int as a document root
+--- list root
+error toml: cannot encode a List as a document root
+--- none in an array
+error toml: cannot encode a None in an array
+round trip t h 1
+--- stderr

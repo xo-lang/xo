@@ -1,5 +1,23 @@
 # std/toml changes
 
+## 2026-10-29: feature: toml.encode
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md gap 16: writing a configuration file)
+- Go reference: github.com/pelletier/go-toml/v2 v2.4.3 marshaler.go (Marshal: encodeTable, encodeArrayTable, writeTableHeader, appendValue, appendFloat, appendString)
+- Test: internal/llvm/testdata/golden/toml_encode (a config, every string escape and literal string, quoted keys, None, empty and nested lists, inline tables, floats from 1e-7 to 1.5e300, nested tables and arrays of tables, the errors, a round trip through decode; its gotoml.go.txt is the same cases through go-toml, whose output equals the golden's) on the Go backend, arm64 and LLVM; bench/perf/toml encode twin
+- Timing: bench/perf/toml encode (the decode workload's config written 20,000 times), quiet --ab, 15 rounds, Xo / Go (go-toml v2.4.3 Marshal) wall: 1.454 (1.438 to 1.502), instructions 1.147
+
+`toml.encode(v)` writes v as a TOML document in go-toml v2's Marshal
+layout, through `json.to_value(v)`; the Go backend (std/rt/toml.go)
+writes the same text from the same JSON tree. Differences from Go, all
+from going through JSON: a `Time` is a quoted RFC 3339 string, a Float
+with no fraction is an integer, a map keeps its JSON key order, and a
+None in a list is an error. A json.Value `Trusted` string (raw JSON a
+derive passed through) is written as its string. A `TomlErr` with line 0
+now displays as `toml: msg`.
+
 ## 2026-10-27: perf: the JSON text is sized once; whitespace and bare keys are scanned with a local index
 
 - Kind: perf

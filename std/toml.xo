@@ -5,7 +5,8 @@
 // text. Pure.
 use std/json
 
-/// Displays as `toml: line 3: expected a value after =`.
+/// Displays as `toml: line 3: expected a value after =`; an encode error
+/// has line 0 and displays as `toml: msg`.
 struct TomlErr {
   line: Int
   msg: Str
@@ -18,6 +19,16 @@ fn (e: TomlErr) display() -> Str
 fn decode[T: Json](text: Str) -> T ! DecodeErr
 /// The document as JSON text, its keys in document order.
 fn to_json(text: Str) -> Str ! TomlErr
+/// v as a TOML document, laid out as pelletier/go-toml/v2's Marshal: a
+/// table's plain keys first, then its tables (`[a.b]`, a blank line
+/// before each) and arrays of tables (`[[a]]`) in field order; strings as
+/// literal strings ('...') when they can be, else basic strings with
+/// Go's escapes; an array of values or mixed values inline. v goes
+/// through json.to_value, so a None field is left out, Time and Duration
+/// are their JSON strings, and a Float with no fraction is an integer
+/// (decode reads each back). TomlErr (line 0) when v is not a record or
+/// map, or an array holds a None.
+fn encode[T: Json](v: T) -> Str ! TomlErr
 
 /// Why decode failed: the text is not TOML, or its values do not fit T.
 enum DecodeErr {
