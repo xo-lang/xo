@@ -439,10 +439,12 @@ pub fn conn(h: Int, pd: Int) -> Int {
   for c in cs[1..cs.len()] {
     cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
   }
-  // the connection's list, the handshake state (save)
-  let t = rt.heap_large(16)
+  // the connection's list, the handshake state (save), and what the
+  // handshake negotiated (handshake, negotiated)
+  let t = rt.heap_large(24)
   rt.mem_store(t, 0, 0, 8)
   rt.mem_store(t, 8, 0, 8)
+  rt.mem_store(t, NEG, 0, 8)
   cf.handoff = true
   save(t, Conn{s: tls13srv.server(cf), s12: [], pd: pd, when: 0, status: 0, first: b"", eof: false, done: 0, pend: b""})
   t
@@ -467,6 +469,10 @@ pub fn handshake(t: Int) -> Bool {
   let ok = done(c) && flush(c)
   if ok {
     c.done = 1
+    // what was negotiated, kept apart from the Conn: a request's
+    // tls_state reads it from the handler's task while the connection's
+    // task reads and writes the Conn (TSan, 2026-10-29)
+    rt.mem_store(t, NEG, keep(rt.any_of(negotiated_of(c))), 8)
   } else {
     c.done = -1
     let _sent = flush(c)
@@ -641,16 +647,34 @@ pub struct Negotiated {
   pub resumed: Bool
 }
 
+/// The block's word holding the Negotiated of a finished handshake (the
+/// record of an Any, as a server's SrvTls; 0 before and after a failed
+/// one). Read by any task, so it is written once, before the first
+/// request's task exists, and never loads the Conn (which the
+/// connection's task owns: a load alongside its write was a data race,
+/// internal/llvm TestGoldenTasks/http_tls, 2026-10-29).
+const NEG = 16
+
 /// The negotiated state of connection t (after its handshake; empty
-/// strings for a freed connection).
+/// strings before it finished, or for a freed connection).
 pub fn negotiated(t: Int) -> Negotiated {
-  match load(t) {
-    Some(c) => if c.s12.is_empty() {
-      Negotiated{version: "TLS 1.3", cipher: tlsrec.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed}
-    } else {
-      Negotiated{version: "TLS 1.2", cipher: suite_name12(c.s12[0].suite), server_name: c.s12[0].host, resumed: c.s12[0].resumed}
-    }
-    None => Negotiated{version: "", cipher: "", server_name: "", resumed: false}
+  let none = Negotiated{version: "", cipher: "", server_name: "", resumed: false}
+  if t == 0 {
+    return none
+  }
+  let w = rt.mem_load(t, NEG, 8)
+  if w == 0 {
+    return none
+  }
+  rt.any_get[Negotiated](rt.obj_at[rt.Any](w)) ?? none
+}
+
+/// What connection c's finished handshake negotiated.
+fn negotiated_of(c: Conn) -> Negotiated {
+  if c.s12.is_empty() {
+    Negotiated{version: "TLS 1.3", cipher: tlsrec.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed}
+  } else {
+    Negotiated{version: "TLS 1.2", cipher: suite_name12(c.s12[0].suite), server_name: c.s12[0].host, resumed: c.s12[0].resumed}
   }
 }
 
@@ -686,6 +710,10 @@ pub fn free(h: Int) {
     return
   }
   release_conn(h)
+  let n = rt.mem_load(h, NEG, 8)
+  if n != 0 {
+    tasks.h_release(n)
+  }
   rt.heap_release(h - 8)
 }
 

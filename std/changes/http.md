@@ -1,5 +1,22 @@
 # std/http changes
 
+## 2026-10-29: fix: tls_state no longer reads the TLS connection's state from the handler's task (a data race over HTTP/2)
+
+- Kind: fix
+- Commit: this commit
+- Found by: internal/llvm TestGoldenTasks/http_tls under ThreadSanitizer, 3 of 3 runs on main after edd6fd640 (Xo Lang 2's bisect): tlssrv load in the handler's task against the connection's write on another thread
+- Go reference: crypto/tls's ConnectionState is read under the connection's handshake mutex; Xo records it once instead
+- Test: TestGoldenTasks/http_tls and http_tls_state (XO_THREADS 1, 2 and default), TestGoldenRun/http_tls and http_tls_state
+
+`Request.tls_state` (edd6fd640) read the connection's TLS state with
+tlssrv.negotiated, which loaded the Conn from the connection's block in
+the request's task while an HTTP/2 connection's writer, on another
+thread, was moving the same Conn out and back (take_conn, stash).
+The handshake now records what it negotiated once, when it completes,
+in a third word of the connection's block (an Any, as the server's
+SrvTls), before any request's task exists; negotiated reads that word
+and never the Conn, and free releases it. The values are the same.
+
 ## 2026-10-30: test: the http_tls golden expects url.scheme "https" over TLS (on purpose, unlike Go)
 
 - Kind: test
