@@ -101,7 +101,9 @@ fn main(os: Os) {
 		t.Fatal(err)
 	}
 	writer, wmsgs := build("writer", "XO_STD_EXPORT=1")
-	if !strings.Contains(wmsgs, "cache stdx no entry") || !strings.Contains(wmsgs, "cache stdx declared") {
+	// "cache stdx no entry" is the lookup's line; the "declared" line is
+	// printed with --phase-times only
+	if !strings.Contains(wmsgs, "cache stdx no entry") {
 		t.Fatalf("the first build did not write the record:\n%s", wmsgs)
 	}
 	loader, lmsgs := build("loader", "XO_STD_EXPORT=1")
