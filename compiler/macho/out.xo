@@ -183,17 +183,18 @@ fn patches_in_order(ps: List[BytePatch]) -> List[BytePatch] {
 }
 
 fn write_patched(var out: BytesBuilder, d: Bytes, ps: List[BytePatch]) {
+  // d once, then each patch stored in place (BytesBuilder.put_le,
+  // decision 0399): it was d sliced between patches (each slice a copy)
+  // and each patch a byte at a time, half of a windows link's layout
+  let base = out.len()
+  out.write(d)
   let sorted = patches_in_order(ps)
   var prev = 0
   for p in sorted {
     if p.at < prev {
       continue
     }
-    out.write(d[prev..p.at])
-    for k in 0..p.n {
-      out.write_byte(UInt8((p.v >> (8 * k)) & 255))
-    }
+    out.put_le(base + p.at, p.v, p.n)
     prev = p.at + p.n
   }
-  out.write(d[prev..])
 }
