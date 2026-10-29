@@ -13,8 +13,9 @@ vendor packages) to the Xo module that covers it, with a status:
 "Prelude" means the builtin types and capabilities every module sees
 (spec/std.md sections 1 to 3). Spec sections are spec/std.md's.
 
-Last verified: 2026-10-20 (main 4ec9c647; spec/std.md, std/*.xo,
-std/native, THIRD_PARTY_NOTICES).
+Last verified: 2026-10-29 (main c21a17a84; spec/std.md, `xo doc` of the
+prelude types, `xo symbols --module=std/... --pub` of every module, the
+partial and planned rows rechecked; done rows from 2026-10-20 stand).
 
 ## Modules and change logs
 
@@ -50,7 +51,15 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/multipart | 26 | `std/changes/multipart.md` |
 | std/smtp | 29 | `std/changes/smtp.md` |
 | std/netip | 28 | `std/changes/netip.md` |
+| std/template | 30 | `std/changes/template.md` |
+| std/embed | 31 | `std/changes/embed.md` |
+| std/compress | 32 | `std/changes/compress.md` |
+| std/big | 33 | `std/changes/big.md` |
+| std/xml | 34 | `std/changes/xml.md`, `std/changes/xmlcodec.md` |
 | std/websocket | 35 | `std/changes/websocket.md` |
+| std/debug | 36 | `std/changes/debug.md` |
+| std/metrics | 37 | `std/changes/metrics.md` |
+| std/trace | 38 | `std/changes/trace.md` |
 
 ## Go packages
 
@@ -58,13 +67,13 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| strings | prelude Str | partial | Has contains, find, rfind (LastIndex, 2026-10-21), split, lines, trim*, replace, repeat, to_lower/upper, join, StrBuilder. Missing: count, fields, cut, equal_fold, index of a rune or any, split_n, title, Map, Replacer. |
-| bytes | prelude Bytes, BytesBuilder | partial | Has len, slicing, `+`, hex, base64, decode_rune, find and rfind (Index, LastIndex), zeroed (make([]byte, n)), BytesBuilder (2026-10-21). Missing: split, contains, equal, trim, has_prefix on Bytes; a Reader. |
+| strings | prelude Str | done | contains, find, rfind, count, fields, split, split_n, split_after(_n), cut, cut_prefix, cut_suffix, equal_fold, find_any, rfind_any, contains_any, contains_rune, the `_where` forms (IndexFunc, FieldsFunc, TrimFunc...), trim_chars (Trim, TrimLeft, TrimRight), replace_n, map_runes (Map), repeat, lines, to_lower/upper, join, StrBuilder (2026-10-29). Not offered: Replacer (one pass over several replacements), Title (deprecated in Go). |
+| bytes | prelude Bytes, BytesBuilder | done | Str's methods on Bytes: find, rfind, count, contains (any, rune, where), split (n, after), cut, fields, trim (prefix, suffix, where), replace(_n), to_lower/upper, equal_fold, starts_with, ends_with; `==` is Equal; hex, base64, decode_rune, zeroed; BytesBuilder with put_le and put_be (decision 0399) (2026-10-29). Missing: a Reader (streams are per handle). |
 | strconv | prelude Int.parse, parse_base, to_str_base, Float.parse, Bool.parse, quote, unquote | done | ParseInt, FormatInt, ParseBool, Unquote added (decision 0287). Not planned: the Append functions (StrBuilder covers them). |
-| unicode | prelude Rune | partial | is_letter, is_digit, is_space, is_print, to_lower, to_upper (Go's tables, decision 0079). Missing: is_upper, is_lower, is_punct, is_control, range tables by name. |
+| unicode | prelude Rune | done | is_letter, is_digit, is_number, is_space, is_upper, is_lower, is_title, is_punct, is_control, is_graphic, is_mark, is_symbol, is_print, to_lower, to_upper, to_title (Go's tables, decision 0079) (2026-10-29). Not offered: range tables by name (unicode.In, unicode.Han). |
 | unicode/utf8 | prelude Str, Bytes | done | rune_count, decode_rune, UTF-8 validity rules (decision 0259). |
 | unicode/utf16 | none | planned | Needed for Windows and JSON surrogate work only inside std today; no user API. |
-| encoding/json | std/json | partial | `derive Json`, Patch, typed decode with paths, wire key names (`kind as "type"` and `derive Json(case: ...)`, decision 0277), json.Value for JSON of any shape (2026-10-21), `as "key,omitempty"` and the push-style json.Decoder of value streams (decision 0309). Missing: Encoder.SetIndent, Number, RawMessage. |
+| encoding/json | std/json | partial | `derive Json`, Patch, typed decode with paths, wire key names (`kind as "type"` and `derive Json(case: ...)`, decision 0277), json.Value for JSON of any shape (2026-10-21), `as "key,omitempty"` and the push-style json.Decoder of value streams (decision 0309). Missing: json.Value as a field of a `derive Json` struct or a `post_json` argument (RawMessage, `any`), indented output (MarshalIndent), Number. |
 | encoding/base64 | std/base64, prelude Bytes | done | Std, Url, RawStd, RawUrl with Go's decoding rules (decision 0279). |
 | encoding/base32 | std/base32 | done | Std, Hex, RawStd, RawHex (decision 0279). |
 | encoding/hex | prelude Bytes | done | to_hex, from_hex, the same as EncodeToString and DecodeString on 1,500 strings (2026-10-20). Dump is not offered. |
@@ -79,9 +88,9 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | mime | std/mime | partial | ParseMediaType, FormatMediaType, TypeByExtension and ExtensionsByType (Go's builtin table only, no system files), and net/http's DetectContentType (decision 0282). Missing: encoded words (WordEncoder, WordDecoder, RFC 2047). |
 | mime/multipart | std/multipart | partial | Reader (NextPart, ReadForm), Writer, Request.multipart_form, in memory (decision 0282). Missing: streaming parts, multipart/mixed responses. |
 | mime/quotedprintable | inside std/native/multipart and mail | partial | The decoder (multipart parts) and the encoder (mail.compose, decision 0290). Missing: a public module. |
-| html | none | planned | EscapeString for server rendered pages. |
+| html | none (std/xml escape) | planned | EscapeString and UnescapeString for server rendered pages; std/xml's `escape` covers text and quoted attributes today but not unescaping HTML entities. |
 | html/template | none | planned | Contextual escaping templates; after html. |
-| text/template | std/template | done | Go's text/template over json.Value data (decision 0299); no custom function maps, no html/template. |
+| text/template | std/template | done | Go's text/template over json.Value data (decision 0299). Not offered: custom function maps (FuncMap), Clone and Lookup, ParseFS. |
 | text/tabwriter | none | planned | CLI tables; std/cli and std/term cover most tool output. |
 | text/scanner | none | not planned | Go source tokenizer; Xo's own lexer is in selfhost. |
 | regexp, regexp/syntax | std/regexp | done | Go's parser, compiler, and Pike VM ported, with every Unicode class of Go's regexp natively (2026-10-21); Go's results on re2-search.txt and on each class. |
@@ -92,7 +101,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| sort, slices, maps, cmp | prelude List, Map, Set, Ord | done | sort, sort_by (stable), min, max, clamp, filter, map, fold, keys, values. Binary search is missing. |
+| sort, slices, maps, cmp | prelude List, Map, Set, Ord | done | sort, sort_by (stable), sort_in_place, group_by, filter, map, fold, find, index_of, keys, values; min, max, clamp on any Ord value. Missing: binary search, List min and max (slices.Min), dedup (slices.Compact), chunks. |
 | container/heap | none | planned | A priority queue type for schedulers and timers. |
 | container/list, container/ring | none | not planned | List and Buf cover them. |
 | iter | for loops over List, Map, Set, Range | not planned | No iterator protocol in the language (core). |
@@ -102,7 +111,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| math | prelude Float | partial | Go's portable algorithms bit for bit on every backend (decision 0287): pow, exp, exp2, expm1, log, log2, log10, log1p, trigonometric and hyperbolic functions, cbrt, hypot, mod, is_inf, to_bits. Missing: constants (Float.PI, Float.INF; a compiler change), erf, gamma, Nextafter, FMA. |
+| math | prelude Float | partial | Go's portable algorithms bit for bit on every backend (decision 0287): pow, exp, exp2, expm1, log, log2, log10, log1p, trigonometric and hyperbolic functions, cbrt, hypot, fma, mod, is_inf, to_bits, from_bits. Missing: constants (Float.PI, Float.INF; a compiler change), erf, gamma, Nextafter. |
 | math/bits | prelude Int word methods | done | rotate, swap_bytes, mul_hi_unsigned, unsigned compare (decision 0260); leading_zeros, trailing_zeros, ones_count (decision 0287). |
 | math/big | std/big | partial | big.BigInt (Go's Int, immutable; decision 0311, 2026-10-21) with Go's results on every backend; natively schoolbook (no Karatsuba or recursive division yet). Missing: Rat, Float, Json. |
 | math/rand, math/rand/v2 | prelude Rand capability | done | Secure in programs, seeded in tests. |
@@ -130,7 +139,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | crypto/ecdsa, crypto/rsa, crypto/elliptic | std/crypto | partial | Sign and verify (PKCS #1 v1.5, PSS, ECDSA DER and raw), ECDSA and Ed25519 key generation (decision 0285). Missing: RSA key generation, OAEP encryption, ECDH as an API. |
 | crypto/mlkem | inside std/native/llrt/mlkem.xo | partial | TLS key exchange only. |
 | crypto/hpke | none | planned | After a public AEAD and ECDH. |
-| crypto/x509, crypto/x509/pkix | std/crypto (keys); inside std/native/llrt (x509.xo, x509verify.xo) | partial | Key parsing and marshaling in std/crypto (decision 0285); chain verification for the HTTP client. Missing: a certificate API (parsing, CSRs, generating test certificates). |
+| crypto/x509, crypto/x509/pkix | std/crypto (keys); inside std/native/llrt (x509.xo, x509verify.xo) | partial | Key parsing and marshaling in std/crypto (decision 0285); chain verification for the HTTP client. Missing: a certificate API (parsing: NotAfter, subject, SANs; CSRs; generating test certificates) and a TLS connection's peer certificates (ConnectionState). |
 | crypto/tls | std/http (with_tls, with_roots, tls_cert), std/tls (client) | partial | TLS 1.2 and 1.3 in Xo (decision 0202); `tls.client` on a dialed Conn (decision 0281: Postgres sslmode, SMTP STARTTLS, Redis). Missing: a server on a Net listener outside HTTP, client certificates. |
 | crypto | none | not planned | The Go registry of hash functions; Xo calls functions directly. |
 | crypto/des, crypto/dsa, crypto/rc4 | none | not planned | Broken or deprecated algorithms. |
@@ -140,15 +149,15 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| net | prelude Net (TCP, Unix sockets), DNS in std/native/llrt/dns.xo | partial | listen, dial, attenuation. Missing: UDP, a name lookup API (LookupHost, SRV, TXT, MX), IP and CIDR types, deadlines on a Conn. |
+| net | prelude Net (TCP, Unix sockets), DNS in std/native/llrt/dns.xo | partial | listen, dial, attenuation. Missing: UDP (ListenPacket), a name lookup API (LookupHost, SRV, TXT, MX), a dial timeout, JoinHostPort and SplitHostPort, network interfaces, IP and CIDR types outside std/netip, deadlines on a Conn. |
 | net/netip | std/netip | done | Addr, Prefix, ParseAddr, ParsePrefix, Contains, Masked, the Is predicates (decision 0287). Missing: AddrPort, Prefix.Overlaps, Next and Prev. |
 | net/url | std/url, std/http parse_url and Url | partial | Escaping (QueryEscape, PathEscape and their inverses) and Values (ParseQuery, Encode) are done (decision 0279). Request.form and query_all are in std/http. Missing: relative references, userinfo, a full URL type outside std/http. |
-| net/http (server) | std/http | partial | Router, middleware, mount, JSON, streaming, TLS, HTTP/2, gzip_responses (decision 0305). Has Request.form (urlencoded) and query_all (decision 0279). Has repeated header fields (header_values) and cookies (decision 0288), multipart forms (decision 0282). Missing: a streaming request body (whole body in memory, 64 MiB natively), ServeContent and FileServer (Range, If-Modified-Since), MaxBytesReader per route, timeouts per server. |
-| net/http (client) | std/http Client | partial | GET, send, post_json, redirects, gzip, HTTP/2, TLS roots. Missing: cookie jar, proxies, streaming response bodies, per request timeouts. |
+| net/http (server) | std/http | partial | Router, middleware, mount, JSON, streaming responses, TLS, HTTP/2, gzip_responses (decision 0305), Request.form and query_all (decision 0279), repeated header fields and cookies (decision 0288), multipart forms (decision 0282), streamed request bodies (`handle_stream`, BodyReader, decision 0310), `serve_content` (ServeContent: Range, conditional requests), client_ip behind proxies (2026-10-29). Missing: FileServer over an Fs directory, MaxBytesReader per route, read and idle timeouts per server. |
+| net/http (client) | std/http Client | partial | get, send, post_json, redirects, gzip, HTTP/2, TLS roots, one timeout per client. Missing: cookie jar, proxies, streaming response bodies (Response.body is whole), a timeout per request. |
 | net/http/httptest | std/testing FakeNet, Router.call | done | In process servers and fakes (section 8). |
 | net/http/httputil | none | planned | ReverseProxy and DumpRequest. |
 | net/http/cookiejar | none | planned | With client cookies. |
-| net/http/pprof | runtime profiler (decision 0238, XO_PROF) | partial | CPU and heap profiles as files; no HTTP endpoint. |
+| net/http/pprof | std/debug router (decision 0325) | done | CPU and heap profiles over HTTP under a prefix the program mounts, behind its auth function; XO_PROF for files (decision 0238). |
 | net/http/httptrace | none | not planned | Tracing is the runtime's (decision 0240). |
 | net/http/cgi, net/http/fcgi | none | not planned | Legacy deployment models. |
 | net/smtp | std/smtp | done | SendMail as `smtp.send` (STARTTLS required by default, PLAIN, CRAM-MD5), decision 0290. Not planned: the step by step Client. |
@@ -160,9 +169,9 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| os | prelude Fs, Env, Proc, Stdio | done | Capability based (sections 3.1 to 3.7). File has no seek or read_at. |
+| os | prelude Fs, Env, Proc, Stdio | partial | Capability based (sections 3.1 to 3.7). Missing (survey 2026-10-29): Hostname, Getpid, process rusage, statfs (disk size and free space); File has no seek or read_at. |
 | os/exec | prelude Proc, Cmd, Child | done | Section 3.8. |
-| os/signal | core 7.5 shutdown, task.stop_requested, Proc.kill | done | Two phase stop on SIGTERM and SIGINT. |
+| os/signal | core 7.5 shutdown, task.stop_requested, Proc.kill | partial | Two phase stop on SIGTERM and SIGINT. Missing: subscribing to other signals (SIGHUP for a reload, SIGUSR1), signal.Notify (2 of 5 services in the 2026-10-29 survey). |
 | os/user | Env.home | partial | Home directory only. |
 | io, io/fs, bufio, io/ioutil | File, Conn, Child read and write, Fs.walk | partial | Byte streams exist per handle. Missing: a common reader and writer interface, buffered readers over a Conn. |
 | path | std/path | done | Clean, Join, Dir, Base, Ext, Split and IsAbs, and Go's Match as `is_match` (ErrBadPattern as `PathErr`, 2026-10-23). |
@@ -170,9 +179,9 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | embed | std/embed (with core 3.1's `embed`) | done | a constant of `Str`, `Bytes`, or `embed.Dir` set to `embed("path or glob")`, decision 0304: one file as text or bytes, or a tree; `Dir.fs()` is a read-only `Fs` over it (decision 0307), as embed.FS is an fs.FS. Not covered: `open` as a stream over an embedded file (read the whole file). |
 | syscall | none | not planned | Capabilities replace raw system calls. |
 | log | std/log | done | |
-| log/slog | std/log fields, Format.Json | partial | Structured fields and JSON. Missing: span and request id (marked later in section 6), handlers. |
+| log/slog | std/log fields, Format.Json, std/trace | partial | Structured fields and JSON; request ids and a ring of spans in std/trace (decision 0325). Missing: handlers (a sink per level or destination), attributes carried by a logger value. |
 | log/syslog | none | not planned | Services log to standard error; the platform collects it. |
-| expvar | none | planned | Metrics endpoint; a Prometheus text helper fits better. |
+| expvar | std/metrics | done | Counters, gauges, histograms with labels in a Registry, its Prometheus text and handler (decision 0325, section 37). expvar's JSON form is not offered. |
 | flag | std/cli | done | Decision 0160. |
 | time | prelude Time, Duration, std/time | done | Zones, civil time, named layouts (decision 0094). |
 | time/tzdata | std/tzdata, embedded per use | done | |
@@ -184,8 +193,8 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| database/sql | std/sql | partial | API, pool limits, transactions, derive SqlRow, an in memory driver; Blob, JsonText, and Array values and SQLSTATE codes (decision 0278 stage A). A Postgres driver written in Xo, `sql.open(net, "postgres", dsn)` with sslmode through std/tls, on every native target (decision 0278). Missing: other network drivers (MySQL), prepared statements, row streaming. |
-| database/sql/driver | none | planned | A driver interface in Xo so drivers are std/sql modules (Postgres first). |
+| database/sql | std/sql | partial | API, pool limits, transactions, derive SqlRow, an in memory driver; Blob, JsonText, and Array values and SQLSTATE codes (decision 0278 stage A); the Postgres driver written in Xo, `sql.open(net, "postgres", dsn)` with sslmode through std/tls (decision 0278); a public Driver interface and `open_driver`. Missing: prepared statements, row streaming (a query returns every row), other network drivers (MySQL). |
+| database/sql/driver | std/sql Driver, DriverConn, DriverRows, open_driver | done | A driver is an Xo value passed to `sql.open_driver` (2026-10-29). |
 | compress/gzip, compress/flate | std/compress (and std/archive gzip, gunzip) | done | Every level, Go's bytes and errors, max_size, streaming Compressor and Decompressor (decision 0305, 2026-10-21). http.gzip_responses next. |
 | compress/zlib | std/compress zlib, unzlib | done | Go's writer and reader (decision 0305, 2026-10-21). |
 | compress/bzip2, compress/lzw | none | not planned | Read only legacy formats. |
@@ -216,7 +225,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Need | Go source | Xo | Status | Notes |
 |---|---|---|---|---|
-| Postgres driver | github.com/jackc/pgx, lib/pq | none | planned | Pure Xo wire protocol (v3, SCRAM-SHA-256, TLS) over Net, as a std/sql driver. |
+| Postgres driver | github.com/jackc/pgx, lib/pq | std/sql | done | Pure Xo wire protocol (v3, SCRAM-SHA-256, TLS) over Net (decision 0278). |
 | MySQL driver | go-sql-driver/mysql | none | planned | After Postgres. |
 | SQLite | modernc.org/sqlite, mattn/go-sqlite3 | none | planned | Through `use c` or a port; after Postgres. |
 | Redis client | redis/go-redis | none | planned | RESP over Net. |
@@ -231,9 +240,58 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | TOTP | pquerna/otp | none | planned | Needs HMAC-SHA1 and base32. |
 | Migrations | golang-migrate, goose | none | planned | std/embed landed (28b3fe3b), so migration files can be embedded. |
 | Cron schedules | robfig/cron | none | planned | |
-| Prometheus exposition | prometheus/client_golang | none | planned | |
+| Prometheus exposition | prometheus/client_golang | std/metrics | done | Registry, counters, gauges, histograms, text exposition and handler (section 37). |
 | S3 and AWS SigV4 | aws-sdk-go-v2 | none | not planned | A third party module; std provides HMAC and SHA-256. |
 | gRPC, protobuf | google.golang.org/grpc | none | not planned | Large; a module, after HTTP/2 trailers are exposed. |
+
+## Survey of backend gaps (2026-10-29)
+
+Five services written from spec/std.md and spec/core.md alone, without
+reading std's sources, and type checked with `xo check` (each 0 errors),
+each missing piece marked where the code needed it: an API gateway with
+a reverse proxy (468 lines), a server rendered web app with templates,
+encrypted cookie sessions and CSRF (575), an ops CLI with tables and a
+concurrent hashing walk (719), a job scheduler with priorities, cron and
+retries on Postgres (726), and a node metrics exporter and sidecar with
+statsd, DNS discovery and certificate expiry checks (583). Ranked by how
+many services hit the gap, blockers (no workaround) first:
+
+| Rank | Gap | Services | Blocking | Go reference | Size |
+|---|---|---|---|---|---|
+| 1 | HTTP client: streamed response and request bodies, a redirect policy, a timeout per request, whether a failed request reached the server; then a reverse proxy | gateway (and every proxy or large download) | blocker | net/http Response.Body, Request.Body, CheckRedirect, httputil.ReverseProxy | M |
+| 2 | Signals other than SIGINT and SIGTERM (SIGHUP reload) | gateway, exporter | blocker | os/signal Notify | S |
+| 3 | json.Value as a Json field or argument (RawMessage, `any`); indented output | scheduler, CLI | blocker | encoding/json RawMessage, MarshalIndent | S |
+| 4 | Public AEAD (AES-GCM, ChaCha20-Poly1305) and HKDF, for encrypted cookies and data at rest (both exist inside TLS) | web app | blocker | crypto/cipher, crypto/aes, crypto/hkdf, x/crypto/chacha20poly1305 | S |
+| 5 | HTML escaping and contextual auto escaping templates, a trusted HTML type, template functions | web app | blocker (XSS by default) | html, html/template, template.FuncMap | L |
+| 6 | UDP sockets and a DNS lookup API (host, SRV), a dial timeout | exporter | blocker | net.ListenPacket, net.LookupSRV, net.DialTimeout | M |
+| 7 | X.509 certificate parsing and a TLS connection's peer certificates | exporter | blocker | crypto/x509 ParseCertificate, tls.ConnectionState | M (the parser exists inside TLS) |
+| 8 | Cron schedules | scheduler | blocker | robfig/cron (outside Go's std) | M |
+| 9 | Host facts: Hostname, Getpid, rusage, statfs, network interfaces | exporter, scheduler | blocker (statfs), awkward | os, syscall.Statfs, net.Interfaces | S each |
+| 10 | std/metrics: gauges and collectors read at scrape time, deleting a series, Summary quantiles | exporter, scheduler | awkward | prometheus Collector, GaugeFunc, Summary | S to M |
+| 11 | HTTP server: read and idle timeouts, header limits, a body limit per route, Request host, TLS state, raw query and escaped path, HTML error pages, Redirect | gateway, web app | awkward | net/http Server, MaxBytesReader, Request.Host, URL.RawQuery | S each |
+| 12 | Text formatting: width, padding, zero padding, fixed precision floats; an aligned table writer | CLI | awkward | fmt verbs, strconv.FormatFloat, text/tabwriter | S |
+| 13 | A priority queue with Remove and Fix | scheduler | awkward | container/heap | S |
+| 14 | A logger that carries fields (Logger.With) | scheduler | awkward | log/slog | S |
+| 15 | Rate limiting (token bucket), backoff, migrations | gateway, web app, scheduler | awkward | x/time/rate, cenkalti/backoff, golang-migrate (all outside Go's std) | S each |
+| 16 | Fs walk with SkipDir and early stop, the symlink bit in FileInfo, a mode on create_dir_all and atomic writes; a TOML encoder; a float flag | CLI | awkward | filepath.WalkDir, os.WriteFile, BurntSushi/toml | S each |
+| 17 | Time.truncate, a Weekday number, a ticker | scheduler | minor | time | S |
+
+Language obstacles the services met (not std, for the language owners):
+a sort with a comparator (`sort_by` takes a key only, so a descending
+`Str` sort cannot be written); `T??` does not parse (XO0160), so "leave
+this optional field unchanged" is `Option[T?]`; no storable cancel
+handle for one task (context.WithCancel); `after (expr) =>` in a
+`select` parses as a call to `after`; no literal for json.Value objects.
+
+Found wrong in the spec: spec/std.md section 27's TLS example returns
+`Err(Error.msg("server refused TLS"))`, but Error has no `msg` (XO0601);
+the services had to declare their own message error type, as Go's
+`errors.New` would give them.
+
+Proposed for 0.35 (the blockers that are small or that unblock a class
+of service, in order): 1, 2, 3, 4, 7, 5, 6, then a small batch of 12, 13
+and 9 (Hostname, Getpid). Cron (8) belongs in a module outside std, as
+it is outside Go's.
 
 ## Survey of backend gaps (2026-10-20)
 
