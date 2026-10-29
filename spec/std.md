@@ -503,12 +503,20 @@ fn ([var] b: BytesBuilder) write(data: Bytes)
 fn ([var] b: BytesBuilder) write_byte(x: UInt8)
 fn ([var] b: BytesBuilder) write_str(s: Str)  // its UTF-8 bytes
 fn ([var] b: BytesBuilder) write_rune(r: Rune) // its UTF-8 encoding
+fn ([var] b: BytesBuilder) put_le(at: Int, v: Int, n: Int) // overwrite n (1, 2, 4, 8) bytes in place; put_be too
 fn (b: BytesBuilder) len() -> Int            // also on StrBuilder
 fn (b: BytesBuilder) freeze() -> Bytes       // moves b
 
 Secret[T].new(v: T) -> Secret[T]
 fn (s: Secret[T]) reveal() -> T
 ```
+
+`BytesBuilder.put_le` and `put_be` (decision 0399) overwrite the `n` bytes
+`at..at + n` of what has been written, in place (Go's
+`binary.LittleEndian.PutUint32` on a slice): the low `n` bytes of `v`, lowest
+first (`put_le`) or highest first (`put_be`), the rest of `v` dropped. `n` is
+1, 2, 4 or 8 and the range must lie within `len()`; any other `n`, or a range
+outside, is a fault. The length does not change and nothing is copied.
 
 `Mutex.with_read` (decision 0063) is shared read only access: many readers
 or one writer. `f` gets the value read only (mutating it is an error, and
@@ -4147,7 +4155,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-436 declarations.
+438 declarations.
 
 ### Range
 
@@ -4631,6 +4639,8 @@ fn (var b: BytesBuilder) write(data: Bytes)
 fn (var b: BytesBuilder) write_byte(x: UInt8)
 fn (var b: BytesBuilder) write_str(s: Str)
 fn (var b: BytesBuilder) write_rune(r: Rune)
+fn (var b: BytesBuilder) put_le(at: Int, v: Int, n: Int)
+fn (var b: BytesBuilder) put_be(at: Int, v: Int, n: Int)
 fn (b: BytesBuilder) len() -> Int
 fn (b: BytesBuilder) freeze() -> Bytes
 ```

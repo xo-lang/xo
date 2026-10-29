@@ -4191,6 +4191,20 @@ fn llrt_str_repeat(s: Str, n: Int) -> Str { raw.str_repeat(s, n) }
 /// BytesBuilder.write_rune (the SSA builders call it with a Rune value).
 fn llrt_rs_push_rune(s: Str, r: Rune) -> Str { raw.push_rune(s, Int(r)) }
 
+/// BytesBuilder.put_le and put_be (decision 0399; raw.xo put).
+fn llrt_rs_put(s: Str, at: Int, v: Int, n: Int, be: Int, loc: Str) -> Str {
+  let len = s.len()
+  if (n != 1 && n != 2 && n != 4 && n != 8) || at < 0 || at > len - n {
+    put_fail(loc)
+  }
+  raw.put(s, at, v, n, be)
+}
+
+/// llrt_rs_put's fault, out of line.
+fn put_fail(loc: Str) {
+  fault.raise_str_at("BytesBuilder.put: width must be 1, 2, 4 or 8 and at..at + width must lie within the builder", raw.data(loc), loc.len())
+}
+
 /// `stdio.set_tty(width)` of a test binary (compiler/ssa testmode.xo).
 fn llrt_tw_set_tty(width: Int) { stdinrt.set_tty(width) }
 

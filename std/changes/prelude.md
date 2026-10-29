@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-10-28: feature: BytesBuilder.put_le and put_be store in place
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Lang 2 (the linkers apply relocations by slicing and byte-at-a-time writes: about 5 of 10 ms of a Windows link's layout)
+- Go reference: encoding/binary LittleEndian.PutUint16/32/64 and BigEndian on a slice (std/binary.xo has the append and read forms)
+- Test: bytesbuilder_put golden (every width, both orders, truncation, a shared builder, the faults)
+- Timing: macOS arm64, a 1 MB image with 65536 four byte patches (the linkers' write_patched shape: gap slices plus byte writes, A; one write plus put_le per patch, B), quiet `xo bench --ab`, 10 rounds: wall 36.6 ms to 10.0 ms (ratio 0.273, 0.268 to 0.281), instructions 0.203, cycles 0.242.
+
+`b.put_le(at, v, n)` and `b.put_be(at, v, n)` overwrite the `n` bytes (1, 2, 4 or 8) at `at` with the low bytes of `v`, in place: no copy, no growth. A range outside `0..len()` or another width is a fault. See decision 0399.
+
 ## 2026-10-28: perf: Fs.copy clones on macOS and copies in the kernel on Linux
 
 - Kind: perf

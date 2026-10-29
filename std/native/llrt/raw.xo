@@ -423,6 +423,38 @@ pub fn push_rune(s: Str, r0: Int) -> Str {
   rt.rs_push_word(s, (0xF0 | (r >> 18)) | ((0x80 | ((r >> 12) & 0x3F)) << 8) | ((0x80 | ((r >> 6) & 0x3F)) << 16) | ((0x80 | (r & 0x3F)) << 24), 4)
 }
 
+/// BytesBuilder.put_le and put_be (decision 0399; the caller, prelude.xo
+/// llrt_rs_put, checked n and the range): the n (1, 2, 4 or 8) low
+/// bytes of v stored over s[at..at + n], lowest first (be 0) or highest
+/// first (be 1), in place: one store at the builder's data. A builder is
+/// move only, so its object is unique (an odd count is made unique by a
+/// push of no bytes). s is an object, not an inline Str (compiler/ssa
+/// call.xo promotes one under --inline-str).
+pub fn put(s: Str, at: Int, v: Int, n: Int, be: Int) -> Str {
+  // a builder is move only, so its object is held by this one owner: the
+  // store goes straight into it. Any other count (never made by the
+  // language) takes the copy, which also makes a view an object.
+  var t = s
+  if rt.slot_load(rt.obj_addr(s), 0, 0) != 1 {
+    t = rt.rs_push_word(s, 0, 0)
+  }
+  var w = v
+  if be != 0 {
+    w = rt.int_wrap(7, v, 0).shr_logical(64 - 8 * n)
+  }
+  let d = data(t) + at
+  if n == 4 {
+    rt.mem_store(d, 0, w, 4)
+  } else if n == 8 {
+    rt.mem_store(d, 0, w, 8)
+  } else if n == 2 {
+    rt.mem_store(d, 0, w, 2)
+  } else {
+    rt.mem_store(d, 0, w, 1)
+  }
+  t
+}
+
 /// Uses b so that a raw address into it (bytes_addr) stays valid up to
 /// here: a value is released right after its last use, even inside the
 /// arguments of the call that uses its address (gotchas

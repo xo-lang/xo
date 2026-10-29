@@ -2263,13 +2263,34 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     b.unsupported("`${b.c.display_name(fo)}`")
     return Some(b.undef(nt))
   }
-  if key is "StrBuilder.write" | "BytesBuilder.write" | "BytesBuilder.write_str" | "BytesBuilder.write_byte" | "BytesBuilder.write_rune" {
+  if key is "StrBuilder.write" | "BytesBuilder.write" | "BytesBuilder.write_str" | "BytesBuilder.write_byte" | "BytesBuilder.write_rune" | "BytesBuilder.put_le" | "BytesBuilder.put_be" {
     var p = b.place(ci.recv[0])
     if !p.ok {
       return Some(b.undef(nt))
     }
     let cur = b.place_get(p)
     match fname {
+      "put_le" | "put_be" => {
+        // decision 0399: the n low bytes of v stored in place over the
+        // builder's bytes at `at`; a builder stays an object (an inline Str
+        // has no bytes to store into: it is copied to one first)
+        let at = b.io_arg(fo, es, 0, it)
+        let v = b.io_arg(fo, es, 1, it)
+        let n = b.io_arg(fo, es, 2, it)
+        if b.wasm {
+          b.put_check_wasm(cur, at, n, pos)
+        }
+        var cb = cur
+        if b.c.inline_str {
+          cb = b.call("str.concat_obj", st, "", [b.const_str(""), cur])
+        }
+        let be = b.cint(if fname == "put_be" { 1 } else { 0 })
+        if let Some(r) = b.llrt_or_none("rs_put", st, [cb, at, v, n, be, b.const_str(pos)]) {
+          b.place_set(p, r)
+        } else {
+          b.place_set(p, b.rt("rs_put", st, [cb, at, v, n, be]))
+        }
+      }
       "write_byte" => {
         let a = b.io_arg(fo, es, 0, b.m.int_type("UInt8"))
         b.place_set(p, b.rt("rs_push_byte", st, [cur, a]))
@@ -2397,6 +2418,42 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   }
   b.unsupported("the method `${b.c.display_name(fo)}`")
   Some(b.undef(nt))
+}
+
+/// The checks of BytesBuilder.put_le and put_be in the wasm build (decision
+/// 0399; the native prelude's llrt_rs_put and std/rt's put do their own):
+/// n is 1, 2, 4 or 8 and at..at + n lies within the builder, else the
+/// fault text they raise.
+fn (var b: Builder) put_check_wasm(cur: Int, at: Int, n: Int, pos: Str) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let wok = b.new_block()
+  let bad = b.new_block()
+  for w in [1, 2, 4] {
+    let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [n, b.cint(w)]))
+    b.s.cur = yes
+    b.jump(wok, [])
+    b.s.cur = no
+  }
+  let (y8, n8) = b.branch(b.add(Op.Eq, bt, Aux.None, [n, b.cint(8)]))
+  b.s.cur = y8
+  b.jump(wok, [])
+  b.s.cur = n8
+  b.jump(bad, [])
+  b.seal(wok)
+  b.s.cur = wok
+  let len = b.call("Str.len", it, "", [cur])
+  let (neg, nn) = b.branch(b.add(Op.Lt, bt, Aux.None, [at, b.cint(0)]))
+  b.s.cur = neg
+  b.jump(bad, [])
+  b.s.cur = nn
+  let (over, ok) = b.branch(b.add(Op.Gt, bt, Aux.None, [at, b.add(Op.Sub, it, Aux.None, [len, n])]))
+  b.s.cur = over
+  b.jump(bad, [])
+  b.seal(bad)
+  b.s.cur = bad
+  b.fault(b.const_str("BytesBuilder.put: width must be 1, 2, 4 or 8 and at..at + width must lie within the builder"), pos)
+  b.s.cur = ok
 }
 
 /// Argument i of an ioCall, or the parameter's default (arg).

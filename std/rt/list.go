@@ -849,6 +849,28 @@ func (b *BytesBuilder) M_write_str(_ *Task, s string) { b.b = append(b.b, s...) 
 // M_write_rune is `b.write_rune(r)`: its UTF-8 encoding.
 func (b *BytesBuilder) M_write_rune(_ *Task, r Rune) { b.b = utf8.AppendRune(b.b, rune(r)) }
 
+// M_put_le is `b.put_le(at, v, n)`: the n (1, 2, 4 or 8) low bytes of v
+// over b[at:at+n], lowest first, in place (decision 0399).
+func (b *BytesBuilder) M_put_le(_ *Task, at, v, n int64) { b.put(at, v, n, false) }
+
+// M_put_be is `b.put_be(at, v, n)`: highest byte first.
+func (b *BytesBuilder) M_put_be(_ *Task, at, v, n int64) { b.put(at, v, n, true) }
+
+func (b *BytesBuilder) put(at, v, n int64, be bool) {
+	if (n != 1 && n != 2 && n != 4 && n != 8) || at < 0 || at > int64(len(b.b))-n {
+		FaultHere("BytesBuilder.put: width must be 1, 2, 4 or 8 and at..at + width must lie within the builder")
+	}
+	p := b.b[at : at+n]
+	for i := int64(0); i < n; i++ {
+		x := byte(v >> (8 * uint(i)))
+		if be {
+			p[n-1-i] = x
+		} else {
+			p[i] = x
+		}
+	}
+}
+
 // M_len is `b.len()`.
 func (b BytesBuilder) M_len(*Task) int64 { return int64(len(b.b)) }
 

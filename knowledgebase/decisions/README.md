@@ -390,3 +390,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0397-arm64-threaded-dispatch.md](0397-arm64-threaded-dispatch.md): a loop that dispatches through a jump table gets its latch, header and dispatch copied into each arm, so each arm ends in its own `br` (interp 284.8M to 161.7M cycles; placement spread 38 to 6.8 percent).
 - [0401-std-debug-map.md](0401-std-debug-map.md): Proposed: a separately compiled darwin link carries std's DWARF as a debug map (N_OSO to the cached part objects), its line tables embedded
 - [0400-macho-uuid-hash.md](0400-macho-uuid-hash.md): Accepted: the Mach-O LC_UUID from the code signature's page hashes, one SHA-256 pass over the image instead of two
+- [0399-bytesbuilder-put.md](0399-bytesbuilder-put.md): BytesBuilder.put_le and put_be overwrite bytes in place (Accepted)

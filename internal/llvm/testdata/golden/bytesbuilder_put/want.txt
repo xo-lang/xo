@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+len 16
+8 7 6 5 4 3 2 1 10 11 12 13 63 47 18 52 
+254 255 255 255 255 254 7 8 
+aCCdefghijklmnopqrstuvwxyz0123456DE9
+ABD
+--- stderr

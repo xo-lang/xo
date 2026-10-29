@@ -1,0 +1,7 @@
+// BytesBuilder.put_le past len() is a fault (decision 0399).
+fn main(os: Os) {
+  var b = BytesBuilder.new()
+  b.write_str("abcd")
+  b.put_le(1, 7, 4)
+  os.stdio.println("not reached")
+}

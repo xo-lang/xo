@@ -1,0 +1,47 @@
+// BytesBuilder.put_le and put_be (decision 0399): every width in both
+// orders, truncation of v, a store below len that leaves the length alone,
+// a builder longer than a small string, and a builder used again after a store.
+
+fn dump(os: Os, b: Bytes) {
+  var s = ""
+  for x in b {
+    s = s + "${x} "
+  }
+  os.stdio.println(s)
+}
+
+fn main(os: Os) {
+  var b = BytesBuilder.with_capacity(16)
+  for _ in 0..16 {
+    b.write_byte(0)
+  }
+  b.put_le(0, 0x0102030405060708, 8)
+  b.put_be(8, 0x0A0B0C0D, 4)
+  b.put_le(12, 0x1F2F3F, 2)
+  b.put_le(14, 511, 1)
+  b.put_be(14, 0x1234, 2)
+  os.stdio.println("len ${b.len()}")
+  dump(os, b.freeze())
+
+  var w = BytesBuilder.new()
+  for _ in 0..8 {
+    w.write_byte(0xAA)
+  }
+  w.put_be(0, 0x0102030405060708, 8)
+  w.put_le(0, -2, 4)
+  w.put_be(4, -2, 2)
+  dump(os, w.freeze())
+
+  var c = BytesBuilder.new()
+  c.write_str("abcdefghijklmnopqrstuvwxyz0123456789")
+  c.put_le(1, 0x4343, 2)
+  c.put_be(33, 0x4445, 2)
+  os.stdio.println(c.freeze().to_str() ?? "?")
+
+  var e = BytesBuilder.new()
+  e.write_str("xy")
+  e.put_le(0, 0x4241, 2)
+  e.write_byte(0x43)
+  e.put_le(2, 0x44, 1)
+  os.stdio.println(e.freeze().to_str() ?? "?")
+}
