@@ -160,6 +160,7 @@ var codegenFields = map[string]inputClass{
 	"std_obj":             {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_STD_OBJ), whose " weak=1" keys the parts it leaves the program's functions out of
 	"sepcomp_program":     {"keyed", "${if m.weak_shared"}, // set only with weak_shared (XO_SEPCOMP): changes the entry file, which no cache holds, and the parts as weak_shared and std_store key them
 	"std_store":           {"keyed", "${if m.std_store"},   // " store=1" in the part key: a part's per-function unsafe tables
+	"fn_order":            {"none", ""},                   // decision 0403: the functions' order across the parts; a function's own code is the same at any position, and a part's key hashes its text, so another order is another part key by itself
 }
 
 // codegenFS are the closure's files that use the file system, with why
