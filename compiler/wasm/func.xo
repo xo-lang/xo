@@ -120,6 +120,9 @@ fn (var g: Gen) func(fi: Int) {
       g.zero_exit()
       continue
     }
+    if g.static_unwind(bi) {
+      continue
+    }
     var j = 0
     while j < b.instrs.len() {
       g.scr_n = {}
@@ -245,6 +248,19 @@ fn (var g: Gen) func(fi: Int) {
     }
     note = " (homes: ${hs.join(" ")})"
   }
+  if g.annotate && !g.mstat.is_empty() {
+    // the most leaves moved, by op and way (mstat_add)
+    let snapshot = g.mstat
+    var ks = g.mstat.keys().sort_by(fn(k: Str) -> Int { 0 - (snapshot.get(k) ?? 0) })
+    var top: List[Str] = []
+    for k in ks {
+      if top.len() < 8 {
+        top.push("${k} ${g.mstat.get(k) ?? 0}")
+      }
+    }
+    note = "${note} (moves: ${top.join(", ")})"
+  }
+  g.mstat = {}
   if g.annotate && !g.why_dispatch.is_empty() {
     note = "${note} (dispatch: ${g.why_dispatch})"
   }
@@ -498,6 +514,72 @@ fn (var g: Gen) resume_point() -> Int {
   g.nres += 1
   g.e("@resume ${label}")
   id
+}
+
+/// Retains (op "dup") or releases ("drop") the struct or tuple of type t
+/// whose leaves are the locals from base, field by field: a wide field of
+/// a struct or tuple the same way, any other heap field through its
+/// helper with its leaves pushed.
+fn (var g: Gen) rc_fields(op: Str, t: Int, base: Int) {
+  let tys = g.field_tys(t)
+  for (i, ft) in tys.indexed() {
+    if !g.heap(ft) {
+      continue
+    }
+    let off = g.field_off(t, i)
+    if g.nleaves(ft) > WIDE_RC && g.kind(ft) is ssa.Kind.Struct | ssa.Kind.Tuple {
+      g.rc_fields(op, ft, base + off)
+    } else {
+      g.push_range(base + off, g.nleaves(ft))
+      g.e("call ${g.rc_fn(op, ft)}")
+    }
+  }
+}
+
+/// Lowers edge e's moves pair by pair (move_range: coalescing may then
+/// share an argument's locals with its parameter's and drop the pair; an
+/// edge's 1039 leaves of the SSA builder's Builder, pushed whole then set,
+/// interfered, and the moves were 47% of the playground compiler's code,
+/// 2026-10-29) when no argument's locals overlap a parameter's and every
+/// argument is in locals; false when the edge needs the parallel form.
+fn (var g: Gen) edge_moves(e: Int) -> Bool {
+  let ed = g.f.edges[e]
+  let ps = g.f.blocks[ed.to].params
+  var dst: List[(Int, Int)] = []
+  for (k, a) in ed.args.indexed() {
+    if a < 0 || g.held[ps[k]] >= 0 {
+      continue
+    }
+    let (mp, _) = g.mem_of(a)
+    if mp >= 0 || ps.contains(a) {
+      return false
+    }
+    let n = g.nleaves(g.vty(ps[k]))
+    dst.push((g.loc(ps[k]), n))
+  }
+  for (k, a) in ed.args.indexed() {
+    if a < 0 || g.held[ps[k]] >= 0 {
+      continue
+    }
+    let s = g.loc(a)
+    let n = g.nleaves(g.vty(a))
+    if s == g.loc(ps[k]) {
+      // the parameter has the argument's locals already (plan_locals)
+      continue
+    }
+    for (d, dn) in dst {
+      if s < d + dn && d < s + n {
+        return false
+      }
+    }
+  }
+  for (k, a) in ed.args.indexed() {
+    if a < 0 || g.held[ps[k]] >= 0 || g.loc(a) == g.loc(ps[k]) {
+      continue
+    }
+    g.move_range(g.loc(a), g.loc(ps[k]), g.nleaves(g.vty(ps[k])))
+  }
+  true
 }
 
 /// After the call of resume point id: when the callee suspended, this
@@ -896,6 +978,216 @@ fn (var g: Gen) zero_exit() {
 /// this block uses), in a program where no task waits, so unwinding is
 /// always a fault and the caller reads no result. A `Checker` method's
 /// unwind exit built and returned its 253 leaves.
+/// The unwind exit bi of a program where a task waits (unwind_block does
+/// not apply: a cancellation's caller reads the results), when its results
+/// are constants (the builder's placeholders: zeros, empty lists, "",
+/// aggregates of them): lowered with each wide result copied from one
+/// data segment of its leaves (memory.copy into its home or sret block),
+/// the others pushed. Built leaf by leaf, the SSA builder's 652 Builder
+/// methods each built and stored a 1045 leaf placeholder (a fifth of the
+/// playground compiler's code once its ssa passes took tasks, 2026-10-29).
+fn (var g: Gen) static_unwind(bi: Int) -> Bool {
+  if !g.blocks_wait {
+    return false
+  }
+  let b = g.f.blocks[bi]
+  if !b.params.is_empty() || b.instrs.is_empty() {
+    return false
+  }
+  var cont = false
+  for (k, v) in b.instrs.indexed() {
+    let x = g.f.values[v]
+    let last = k == b.instrs.len() - 1
+    if last != (x.op == ssa.Op.Return) {
+      return false
+    }
+    match x.op {
+      Return | Const | Struct | Tuple | Variant => {}
+      Retain | Release => {
+        // of a placeholder: immortal
+        if g.blk[x.args[0]] != bi {
+          return false
+        }
+      }
+      Call => {
+        let name = match x.aux {
+          S(s) => s
+          _ => ""
+        }
+        if name == "rt.fault_continue" {
+          cont = true
+        } else if name != "rt.rl_empty" {
+          return false
+        }
+      }
+      _ => return false
+    }
+  }
+  if !cont {
+    return false
+  }
+  let ret = g.f.values[b.instrs[b.instrs.len() - 1]]
+  var words: List[List[Int]] = []
+  var wide = false
+  for (k, a) in ret.args.indexed() {
+    let wo = g.const_words(a)
+    if wo == None {
+      return false
+    }
+    let w = wo ?? []
+    if w.len() != g.nleaves(g.vty(a)) {
+      return false
+    }
+    if g.result_home(k) >= 0 || (g.sret >= 0 && w.len() > 0) {
+      wide = true
+    }
+    words.push(w)
+  }
+  if !wide {
+    return false
+  }
+  if g.annotate {
+    g.e(";; @unwind_exit (static)")
+  }
+  g.e("global.get $faulting")
+  g.e("global.set $prop")
+  var at = 0
+  for (k, a) in ret.args.indexed() {
+    let ls = g.leaves(g.vty(a))
+    let h = g.result_home(k)
+    if h >= 0 || g.sret >= 0 {
+      if ls.is_empty() {
+        continue
+      }
+      let src = g.static_words(words[k])
+      if h >= 0 {
+        g.get(g.hptr[h])
+      } else {
+        g.get(g.sret)
+        if at > 0 {
+          g.e("i32.const ${8 * at}")
+          g.e("i32.add")
+        }
+        at += ls.len()
+      }
+      g.e("i32.const ${src}")
+      g.e("i32.const ${8 * ls.len()}")
+      g.e("memory.copy")
+      continue
+    }
+    for (j, l) in ls.indexed() {
+      if l == "f64" {
+        g.e("i64.const ${words[k][j]}")
+        g.e("f64.reinterpret_i64")
+      } else {
+        g.e("${l}.const ${words[k][j]}")
+      }
+    }
+  }
+  g.e("return")
+  true
+}
+
+/// The address of a data segment holding the leaf words ws (8 bytes a
+/// leaf, a home's layout), one per distinct content.
+fn (var g: Gen) static_words(ws: List[Int]) -> Int {
+  var key = StrBuilder.new()
+  for w in ws {
+    key.write("${w},")
+  }
+  let k = key.freeze()
+  if let Some(a) = g.static_data.get(k) {
+    return a
+  }
+  var bs = "".bytes()
+  for w in ws {
+    bs = bs + le64(w)
+  }
+  let a = g.place(bs)
+  g.static_data[k] = a
+  a
+}
+
+/// The leaf words of value v when it is a constant the builder makes a
+/// placeholder of (Int, Bool, Float, Str and Bytes constants, rt.rl_empty,
+/// structs and tuples of them), else None.
+fn (var g: Gen) const_words(v: Int) -> List[Int]? {
+  if v < 0 {
+    return None
+  }
+  let x = g.f.values[v]
+  match x.op {
+    Const => {
+      match x.aux {
+        I(n) => return Some([if g.kind(x.ty) == ssa.Kind.Float { float_bits(Float(n)) } else { n }])
+        F(f) => return Some([float_bits(f)])
+        B(b) => return Some([if b { 1 } else { 0 }])
+        S(s) => return Some([g.str_obj(s.bytes()), s.len()])
+        Bs(bs) => return Some([g.str_obj(bs), bs.len()])
+        _ => return None
+      }
+    }
+    Call => {
+      if let S(n) = x.aux {
+        if n == "rt.rl_empty" && g.nleaves(x.ty) == 1 {
+          return Some([g.empty_list])
+        }
+      }
+      return None
+    }
+    Struct | Tuple => {
+      var out: List[Int] = []
+      for a in x.args {
+        let wo = g.const_words(a)
+        if wo == None {
+          return None
+        }
+        let w = wo ?? []
+        if w.len() != g.nleaves(g.vty(a)) {
+          return None
+        }
+        out = out + w
+      }
+      if out.len() != g.nleaves(x.ty) {
+        return None
+      }
+      return Some(out)
+    }
+    Variant => {
+      // the tag, the payload's leaves as words (to_word: an i32
+      // unsigned, a Float's bits), zeros to the enum's words
+      var out = [match x.aux {
+        I(n) => n
+        _ => return None
+      }]
+      for a in x.args {
+        let wo = g.const_words(a)
+        if wo == None {
+          return None
+        }
+        let w = wo ?? []
+        if w.len() != g.nleaves(g.vty(a)) {
+          return None
+        }
+        for (j, l) in g.leaves(g.vty(a)).indexed() {
+          if l == "i32" && w[j] < 0 {
+            return None
+          }
+          out.push(w[j])
+        }
+      }
+      while out.len() < 1 + g.words(x.ty) {
+        out.push(0)
+      }
+      if out.len() != g.nleaves(x.ty) {
+        return None
+      }
+      return Some(out)
+    }
+    _ => return None
+  }
+}
+
 fn (var g: Gen) unwind_block(bi: Int) -> Bool {
   if g.blocks_wait {
     return false
@@ -1065,6 +1357,10 @@ fn (var g: Gen) check_fault(v: Int) {
 fn (var g: Gen) edge(e: Int, bi: Int) {
   let ed = g.f.edges[e]
   let ps = g.f.blocks[ed.to].params
+  if g.edge_moves(e) {
+    g.e("@edge ${ed.to}")
+    return
+  }
   for (k, a) in ed.args.indexed() {
     if a >= 0 && g.held[ps[k]] < 0 {
       g.push(a)
@@ -1104,6 +1400,9 @@ fn (var g: Gen) checked(v: Int, fname: Str, nargs: Int) {
 fn (var g: Gen) instr(v: Int, bi: Int) {
   let x = g.f.values[v]
   let t = x.ty
+  if g.annotate {
+    g.mop = ssa.op_name(x.op)
+  }
   match x.op {
     Param | Cap | Undef | Share => {}
     Const => g.constant(v)
@@ -1202,7 +1501,14 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         return
       }
       let off = g.field_off(g.vty(a), i)
-      g.push_part(a, off, off + g.nleaves(t))
+      let n = g.nleaves(t)
+      let (mp, _) = g.mem_of(a)
+      if mp < 0 && n > 1 {
+        // a struct's leaves copied pair by pair (move_range)
+        g.move_range(g.loc(a) + off, g.loc(v), n)
+        return
+      }
+      g.push_part(a, off, off + n)
       g.def(v)
     }
     SetField => {
@@ -1214,6 +1520,22 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       }
       let off = g.field_off(at, i)
       let n = g.nleaves(g.field_ty(at, i))
+      let nested = x.args[1] >= 0 && g.inhome.len() > x.args[1] && g.inhome[x.args[1]]
+      if g.inhome.len() > v && g.inhome[v] {
+        // a field of a field the home holds, updated in the home
+        // (plan_nested); a nested update's field is there already
+        if n > 0 && !nested {
+          let mv = x.args[0]
+          let b = g.loc(x.args[1])
+          g.mem_store(g.hptr[g.mfield[mv]], g.moff[mv] + 8 * off, b, g.leaves(g.field_ty(at, i)))
+        }
+        return
+      }
+      if g.held[v] >= 0 && nested {
+        // its field was updated in the home (plan_nested)
+        g.take_snaps(v)
+        return
+      }
       if g.held[v] >= 0 {
         // the struct dies here and its home holds v (home.xo)
         if n > 0 {
@@ -1229,6 +1551,20 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
           g.push(x.args[1])
           g.set_range(g.loc(v) + off, n)
         }
+        return
+      }
+      let (mp, _) = g.mem_of(a)
+      let (mp1, _) = g.mem_of(x.args[1])
+      if mp < 0 && mp1 < 0 && g.nleaves(at) > WIDE_RC {
+        // a wide struct's copy pair by pair (move_range), the field from
+        // its value's locals
+        let src = g.loc(a)
+        let dst = g.loc(v)
+        g.move_range(src, dst, off)
+        if n > 0 {
+          g.move_range(g.loc(x.args[1]), dst + off, n)
+        }
+        g.move_range(src + off + n, dst + off + n, g.nleaves(at) - off - n)
         return
       }
       g.push_part(a, 0, off)
@@ -1359,6 +1695,14 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
             g.e("i32.add")
           }
           g.e("call ${g.rc_addr_fn(op, at)}")
+          return
+        }
+        if g.kind(at) is ssa.Kind.Struct | ssa.Kind.Tuple {
+          // in locals: field by field from them, no block (each push is
+          // one field's leaves; the block took a store per leaf: 1039 for
+          // the SSA builder's Builder at every retain and release,
+          // 2026-10-29)
+          g.rc_fields(op, at, g.loc(a))
           return
         }
         let bl = g.tmps(["i32"])

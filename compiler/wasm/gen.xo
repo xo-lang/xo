@@ -167,6 +167,14 @@ pub struct Gen {
   held: List[Int] = []
   canon: List[Int] = []
   mfield: List[Int] = []
+  /// Per value: a SetField of a field the home holds, made where the home
+  /// holds it (home.xo plan_nested).
+  inhome: List[Bool] = []
+  /// --annotate: the leaves moved per lowering op and way (mstat_add).
+  mstat: Map[Str, Int] = {}
+  /// Data segments of constant leaf words by content (static_words).
+  static_data: Map[Str, Int] = {}
+  mop: Str = ""
   mroot: List[Int] = []
   moff: List[Int] = []
   /// call -> the field reads of the value it gives up that it loads
@@ -559,13 +567,34 @@ fn (var g: Gen) set(i: Int) {
   g.e("local.set ${i}")
 }
 
+/// Copies n locals from src to dst as adjacent `local.get`/`local.set`
+/// pairs, which local coalescing takes for copies (their locals may
+/// share, and a shared pair is dropped); the ranges must not overlap.
+fn (var g: Gen) move_range(src: Int, dst: Int, n: Int) {
+  g.mstat_add("move", n)
+  for k in 0..n {
+    g.get(src + k)
+    g.set(dst + k)
+  }
+}
+
 fn (var g: Gen) push_range(base: Int, n: Int) {
   for k in 0..n {
     g.e("local.get ${base + k}")
   }
 }
 
+/// Counts n leaves moved a way under the current op (--annotate only).
+fn (var g: Gen) mstat_add(way: Str, n: Int) {
+  if !g.annotate || n < 16 {
+    return
+  }
+  let k = "${g.mop}:${way}"
+  g.mstat[k] = (g.mstat.get(k) ?? 0) + n
+}
+
 fn (var g: Gen) set_range(base: Int, n: Int) {
+  g.mstat_add("set", n)
   var k = n - 1
   while k >= 0 {
     g.e("local.set ${base + k}")

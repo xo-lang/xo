@@ -381,6 +381,7 @@ fn (var g: Gen) plan_homes(pos: List[Int], hi: List[Int], bend: List[Int]) {
     g.hok.push(g.plan_home(h, pos, hi, bend))
   }
   g.plan_fields(pos)
+  g.plan_nested()
 }
 
 /// The chain of home h; false when it falls back.
@@ -830,6 +831,86 @@ fn (g: Gen) mem_root(v: Int) -> Int {
 /// The field reads of held values that load where they are used: each
 /// use must be where the home holds the value read from, else the read
 /// loads at its definition (it then has locals of its own).
+/// Nested updates made in the home: a SetField w of a field view mv of a
+/// home (`b.m` in `b.m.funcs = l`), whose only use is the SetField u that
+/// puts w back into the same field (`b.m = w`), u being the home's own
+/// update or such a nested one, with nothing between w and u in their
+/// block using the home's values. w stores its field at its place in the
+/// home and u then stores nothing for it. Before, each `b.m.x = ..` of the
+/// SSA builder loaded and stored all of Module's leaves (half of the
+/// playground compiler's code, 2026-10-29).
+fn (var g: Gen) plan_nested() {
+  let f = g.f
+  let nv = f.values.len()
+  g.inhome = []
+  for _ in 0..nv {
+    g.inhome.push(false)
+  }
+  if g.hval.is_empty() {
+    return
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for v in 0..nv {
+      let x = f.values[v]
+      if g.inhome[v] || x.op != ssa.Op.SetField || g.held[v] >= 0 || x.args.len() < 2 {
+        continue
+      }
+      let mv = x.args[0]
+      if mv < 0 || g.mfield[mv] < 0 || f.values[mv].op != ssa.Op.Field {
+        continue
+      }
+      if g.users[mv].len() != 1 || g.users[v].len() != 1 || g.inedge[v] || g.inedge[mv] {
+        continue
+      }
+      let u = g.users[v][0]
+      let ux = f.values[u]
+      if ux.op != ssa.Op.SetField || ux.args.len() < 2 || ux.args[1] != v || ux.args[0] != f.values[mv].args[0] {
+        continue
+      }
+      let fi = match f.values[mv].aux {
+        I(n) => n
+        _ => -1
+      }
+      let ui = match ux.aux {
+        I(n) => n
+        _ => -2
+      }
+      if fi != ui || !(g.held[u] >= 0 || g.inhome[u]) {
+        continue
+      }
+      if g.blk[mv] != g.blk[v] || g.blk[v] != g.blk[u] || !g.quiet_between(v, u, g.mfield[mv]) {
+        continue
+      }
+      g.inhome[v] = true
+      changed = true
+    }
+  }
+}
+
+/// Whether no instruction strictly between v and u (one block) uses a
+/// value home h holds or a field view of it.
+fn (g: Gen) quiet_between(v: Int, u: Int, h: Int) -> Bool {
+  var on = false
+  for w in g.f.blocks[g.blk[v]].instrs {
+    if w == u {
+      return on
+    }
+    if on {
+      for a in g.f.values[w].args {
+        if a >= 0 && (g.held[a] == h || g.mfield[a] == h) {
+          return false
+        }
+      }
+    }
+    if w == v {
+      on = true
+    }
+  }
+  false
+}
+
 fn (var g: Gen) plan_fields(pos: List[Int]) {
   let f = g.f
   let nv = f.values.len()
@@ -963,6 +1044,7 @@ fn (var g: Gen) take_snaps(d: Int) {
 
 /// Pushes leaves ls stored from offset off of the memory at local p.
 fn (var g: Gen) mem_push(p: Int, off: Int, ls: List[Str]) {
+  g.mstat_add("load", ls.len())
   for (k, l) in ls.indexed() {
     g.get(p)
     g.e("${l}.load offset=${off + 8 * k}")
@@ -972,6 +1054,7 @@ fn (var g: Gen) mem_push(p: Int, off: Int, ls: List[Str]) {
 /// Stores the leaves in locals from b at offset off of the memory at
 /// local p.
 fn (var g: Gen) mem_store(p: Int, off: Int, b: Int, ls: List[Str]) {
+  g.mstat_add("store", ls.len())
   for (k, l) in ls.indexed() {
     g.get(p)
     g.get(b + k)

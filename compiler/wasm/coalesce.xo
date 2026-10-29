@@ -297,6 +297,11 @@ fn (var g: Gen) coalesce_locals(pc: Int) {
   for _ in 0..nu * w {
     adj.push(0)
   }
+  // per local, the locals it is copied from or to (coloring's preference)
+  var partner: List[List[Int]] = []
+  for _ in 0..nu {
+    partner.push([])
+  }
   var live: List[Int] = []
   for _ in 0..w {
     live.push(0)
@@ -324,6 +329,10 @@ fn (var g: Gen) coalesce_locals(pc: Int) {
           var y = -1
           if op[i] == OP_SET && i > 0 && op[i - 1] == OP_GET {
             y = arg[i - 1]
+            if y != a {
+              partner[a].push(y)
+              partner[y].push(a)
+            }
           }
           let ybit = if y >= 0 { 1 << (y % CW) } else { 0 }
           let had = y >= 0 && live[y / CW] & ybit != 0
@@ -400,9 +409,19 @@ fn (var g: Gen) coalesce_locals(pc: Int) {
         c += 1
       }
     }
-    var c = 0
-    while c < nc && mark[c] == a {
-      c += 1
+    // a copy partner's color when free, so the copy's pair can go
+    // (move_range); else the first free one
+    var c = -1
+    for y in partner[a] {
+      if c < 0 && y != pcd && color[y] >= 0 && color[y] < nc && g.cur.locals[orig[y]] == t && mark[color[y]] != a {
+        c = color[y]
+      }
+    }
+    if c < 0 {
+      c = 0
+      while c < nc && mark[c] == a {
+        c += 1
+      }
     }
     color[a] = c
     var sl = slot.get(t) ?? []
@@ -418,7 +437,13 @@ fn (var g: Gen) coalesce_locals(pc: Int) {
   for i in 0..n {
     if arg[i] >= 0 {
       let l = lines[i]
-      outl.push("${l[0..10]}${newidx[arg[i]]}")
+      let nl2 = "${l[0..10]}${newidx[arg[i]]}"
+      // a copy whose locals now share is no copy
+      if op[i] == OP_SET && i > 0 && op[i - 1] == OP_GET && arg[i - 1] >= 0 && newidx[arg[i - 1]] == newidx[arg[i]] && !outl.is_empty() {
+        let _ = outl.pop()
+        continue
+      }
+      outl.push(nl2)
     } else {
       outl.push(lines[i])
     }
