@@ -10,6 +10,7 @@
 
 use github.com/xo-lang/xo/compiler/arm64
 use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/hostpath
 use github.com/xo-lang/xo/compiler/lexer
 use github.com/xo-lang/xo/compiler/parser
 use github.com/xo-lang/xo/compiler/prune
@@ -59,10 +60,19 @@ fn cache_id(os: Os) -> Str {
   if id.is_empty() || sp.is_empty() {
     return id
   }
-  // each facts file by its path, size and time, hashed only while its
-  // time is within Go's 2 s settling window (check.stamp_files): every
-  // cache asks for the id, and hashing the facts each time cost about
-  // 4 ms a build
+  // each facts file by its name when it is a cache entry (std/<key>.stdf:
+  // the key is std_cache_key's, over this xo's identity, the target, the
+  // variant and every std source's size and time, so the name says what
+  // the file holds), else by its path, size and time, hashed only while
+  // its time is within Go's 2 s settling window (check.stamp_files):
+  // every cache asks for the id, and hashing the facts each time cost
+  // about 4 ms a build. Not the entry's time: the backend cache's
+  // mark_used sets it when an entry is read more than BACKEND_TOUCH
+  // after its last touch, and a stamp with the time changed the id (and
+  // so missed every id-keyed entry, cln, fe and the std records) on the
+  // two builds after each touch (2026-10-28, found in the linux/arm64
+  // Docker check of the std records: an edit more than a minute after
+  // the previous one rebuilt std's entries twice).
   let (f0, f1) = sepcomp_fact_files(os, sp)
   let stamps = match check.stamp_files(os.fs, [f0, f1].filter(fn(f) { !f.is_empty() }), os.clock.now().unix_millis()) {
     Some(ss) => ss
@@ -70,9 +80,20 @@ fn cache_id(os: Os) -> Str {
   }
   var b = StrBuilder.new()
   for st in stamps {
-    b.write("${st.path.len()}:${st.path} ${st.size} ${st.mtime} ${st.sha}\n")
+    b.write(facts_id_line(st))
   }
   "${id} sepcomp ${crypto.sha256(b.freeze().bytes()).to_hex()}"
+}
+
+/// A facts file's line in cache_id: a cache entry (its name a 64 digit
+/// hex key and .stdf) by its name alone, any other file by its stamp
+/// (path, size, time and the settling window's hash).
+fn facts_id_line(st: check.FileStamp) -> Str {
+  let name = hostpath.base(st.path)
+  if name.len() == 69 && name.ends_with(".stdf") && name[0..64].runes().all(fn(r: Rune) -> Bool { r.is_digit() || (r >= 'a' && r <= 'f') }) {
+    return "key ${name}\n"
+  }
+  "${st.path.len()}:${st.path} ${st.size} ${st.mtime} ${st.sha}\n"
 }
 
 /// XO_SEPCOMP_FACTS when XO_SEPCOMP=1, else "".

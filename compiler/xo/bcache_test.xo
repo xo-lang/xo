@@ -1,5 +1,7 @@
 // Tests of the back-end cache (bcache.xo).
 
+use github.com/xo-lang/xo/compiler/check
+
 test "a build target's words leave out flags and the values of flags" {
   // scripts/xobuild's command line: the stamps change with every tree
   // key and must not make each one a new build target (its pack)
@@ -13,4 +15,21 @@ test "a build target's words leave out flags and the values of flags" {
   expect(pack_words(["test", "-run", "X", "-v", "./pkg"])) == ["test", "./pkg"]
   // a program's arguments still name the target
   expect(pack_words(["run", ".", "--", "serve"])) == ["run", ".", "serve"]
+}
+
+test "cache_id names a facts cache entry by its key, not its time" {
+  // the backend cache's mark_used sets an entry's time a minute after
+  // its last touch; the id must not move with it (2026-10-28)
+  let key = "4840877e21201a5fa195d75c7fdfcdab7beff62b8175e8440b503e613319c069"
+  let a = facts_id_line(check.FileStamp{path: "/c/std/${key}.stdf", size: 1874259, mtime: 1793241376000})
+  let b = facts_id_line(check.FileStamp{path: "/c/std/${key}.stdf", size: 1874259, mtime: 1793241568000, sha: "abc"})
+  expect(a) == b
+  expect(a) == "key ${key}.stdf\n"
+  // another key is another line
+  expect(facts_id_line(check.FileStamp{path: "/c/std/ff${key[2..]}.stdf", size: 1874259, mtime: 1793241376000})) != a
+  // a facts file that is not a cache entry (XO_SEPCOMP_FACTS to a file of
+  // one's own, a release's lib/xo/stdstore) keeps its stamp, time included
+  let p = facts_id_line(check.FileStamp{path: "/w/mine.stdf", size: 10, mtime: 1000})
+  expect(p) == "11:/w/mine.stdf 10 1000 \n"
+  expect(facts_id_line(check.FileStamp{path: "/w/mine.stdf", size: 10, mtime: 2000})) != p
 }
