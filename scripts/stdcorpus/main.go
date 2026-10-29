@@ -75,6 +75,7 @@ var generators = map[string]func() string{
 	"trimchars":  trimcharsCorpus,
 	"strings":    stringsCorpus,
 	"tabwriter":  tabwriterCorpus,
+	"heapops":    heapopsCorpus,
 }
 
 func main() {

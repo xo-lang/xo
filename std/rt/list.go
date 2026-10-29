@@ -648,6 +648,104 @@ func List_sort_by[T, K, E any](tk *Task, l List[T], key func(*Task, T) Result[K,
 	return Ok[List[T], E](ListOf(out...))
 }
 
+// The binary min heap in a list, container/heap's up and down by the Ord
+// of T (decision 0410).
+func heapUp[T any](s []T, j int) {
+	for j > 0 {
+		i := (j - 1) / 2
+		if Cmp(s[j], s[i]) >= 0 {
+			break
+		}
+		s[i], s[j] = s[j], s[i]
+		j = i
+	}
+}
+
+func heapDown[T any](s []T, i0, n int) bool {
+	i := i0
+	for {
+		j1 := 2*i + 1
+		if j1 >= n {
+			break
+		}
+		j := j1
+		if j2 := j1 + 1; j2 < n && Cmp(s[j2], s[j1]) < 0 {
+			j = j2
+		}
+		if Cmp(s[j], s[i]) >= 0 {
+			break
+		}
+		s[i], s[j] = s[j], s[i]
+		i = j
+	}
+	return i > i0
+}
+
+// List_heap_push is `xs.heap_push(x)`.
+func List_heap_push[T any](tk *Task, l *List[T], x T) {
+	List_push(tk, l, x)
+	List_own(l, 0)
+	heapUp(l.s, len(l.s)-1)
+	markElems(l.s)
+}
+
+// List_heap_pop is `xs.heap_pop()`.
+func List_heap_pop[T any](tk *Task, l *List[T]) Option[T] {
+	n := len(l.s) - 1
+	if n < 0 {
+		return Option[T]{}
+	}
+	List_own(l, 0)
+	l.s[0], l.s[n] = l.s[n], l.s[0]
+	heapDown(l.s, 0, n)
+	markElems(l.s)
+	return List_pop(tk, l)
+}
+
+// List_heap_remove is `xs.heap_remove(i)`.
+func List_heap_remove[T any](tk *Task, l *List[T], i int64) T {
+	n := len(l.s) - 1
+	if i < 0 || i > int64(n) {
+		FaultHere("List.heap_remove: index %d out of range for List of length %d", i, n+1)
+	}
+	List_own(l, 0)
+	if n != int(i) {
+		l.s[i], l.s[n] = l.s[n], l.s[i]
+		if !heapDown(l.s, int(i), n) {
+			heapUp(l.s, int(i))
+		}
+	}
+	markElems(l.s)
+	r := List_pop(tk, l)
+	return r.V
+}
+
+// List_heap_fix is `xs.heap_fix(i)`.
+func List_heap_fix[T any](_ *Task, l *List[T], i int64) {
+	n := len(l.s)
+	if i < 0 || i >= int64(n) {
+		FaultHere("List.heap_fix: index %d out of range for List of length %d", i, n)
+	}
+	List_own(l, 0)
+	if !heapDown(l.s, int(i), n) {
+		heapUp(l.s, int(i))
+	}
+	markElems(l.s)
+}
+
+// List_heapify is `xs.heapify()`.
+func List_heapify[T any](_ *Task, l *List[T]) {
+	n := len(l.s)
+	if n < 2 {
+		return
+	}
+	List_own(l, 0)
+	for i := n/2 - 1; i >= 0; i-- {
+		heapDown(l.s, i, n)
+	}
+	markElems(l.s)
+}
+
 // List_sort_in_place is `xs.sort_in_place()` on a `var` list: stable, by
 // the Ord of T, and it sorts the receiver (decision 0374). A list another
 // binding shares is copied first, as a push copies one, so the other

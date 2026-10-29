@@ -555,6 +555,19 @@ fn (var xs: List[T]) pop() -> T?
 fn (var xs: List[T]) insert(i: Int, x: T)
 fn (var xs: List[T]) remove_at(i: Int) -> T
 fn (var xs: List[T]) set(i: Int, x: T)
+/// A binary min heap in the list, as Go's container/heap keeps one in a
+/// slice by the Ord of T (decision 0410): `heap_push` adds x and restores
+/// the order, `heap_pop` removes and returns the least element (the first
+/// of the list, None for an empty list), `heap_remove(i)` removes and
+/// returns the element at index i (a fault outside the list), `heap_fix(i)`
+/// restores the order after the element at i changed (set, then fix), and
+/// `heapify` makes any list a heap. Each is O(log n), heapify O(n). A
+/// priority queue by a key is a heap of (key, value) pairs.
+fn (var xs: List[T]) heap_push(x: T)
+fn (var xs: List[T]) heap_pop() -> T?
+fn (var xs: List[T]) heap_remove(i: Int) -> T
+fn (var xs: List[T]) heap_fix(i: Int)
+fn (var xs: List[T]) heapify()
 
 // ---------------------------------------------------------------------------
 // Map[K, V] and Set[T] (std.md 2.4)

@@ -1945,6 +1945,106 @@ fn merge_runs_in_place[T](var xs: List[T], var scratch: List[T], lo: Int, mid: I
   }
 }
 
+/// container/heap's up: the element at j moves toward the root while it
+/// is less than its parent.
+fn heap_up[T: Ord](var xs: List[T], j0: Int) {
+  var j = j0
+  while j > 0 {
+    let i = (j - 1) / 2
+    if !(xs[j] < xs[i]) {
+      break
+    }
+    let a = xs[i]
+    let b = xs[j]
+    xs[i] = b
+    xs[j] = a
+    j = i
+  }
+}
+
+/// container/heap's down: the element at i0 moves toward the leaves
+/// within the first n; whether it moved.
+fn heap_down[T: Ord](var xs: List[T], i0: Int, n: Int) -> Bool {
+  var i = i0
+  while true {
+    let j1 = 2 * i + 1
+    if j1 >= n {
+      break
+    }
+    var j = j1
+    let j2 = j1 + 1
+    if j2 < n && xs[j2] < xs[j1] {
+      j = j2
+    }
+    if !(xs[j] < xs[i]) {
+      break
+    }
+    let a = xs[i]
+    let b = xs[j]
+    xs[i] = b
+    xs[j] = a
+    i = j
+  }
+  i > i0
+}
+
+/// the position text of the heap faults (none: raised from the std)
+const HEAP_LOC: Str = "?"
+
+fn list_heap_push[T: Ord](var xs: List[T], x: T) {
+  xs.push(x)
+  heap_up(xs, xs.len() - 1)
+}
+
+fn list_heap_pop[T: Ord](var xs: List[T]) -> T? {
+  let n = xs.len() - 1
+  if n < 0 {
+    return None
+  }
+  let a = xs[0]
+  let b = xs[n]
+  xs[0] = b
+  xs[n] = a
+  let _m = heap_down(xs, 0, n)
+  xs.pop()
+}
+
+fn list_heap_remove[T: Ord](var xs: List[T], i: Int) -> T {
+  let n = xs.len() - 1
+  if i < 0 || i > n {
+    fault.raise_str_at("List.heap_remove: index ${i} out of range for List of length ${n + 1}", raw.data(HEAP_LOC), 0)
+  }
+  if n != i {
+    let a = xs[i]
+    let b = xs[n]
+    xs[i] = b
+    xs[n] = a
+    if !heap_down(xs, i, n) {
+      heap_up(xs, i)
+    }
+  }
+  xs.remove_at(n)
+}
+
+fn list_heap_fix[T: Ord](var xs: List[T], i: Int) {
+  let n = xs.len()
+  if i < 0 || i >= n {
+    fault.raise_str_at("List.heap_fix: index ${i} out of range for List of length ${n}", raw.data(HEAP_LOC), 0)
+  }
+  if !heap_down(xs, i, n) {
+    heap_up(xs, i)
+  }
+}
+
+fn list_heapify[T: Ord](var xs: List[T]) {
+  let n = xs.len()
+  var i = n / 2 - 1
+  while i >= 0 {
+    let _m = heap_down(xs, i, n)
+    i -= 1
+  }
+}
+
 /// list_sort's sort in place, for a var receiver: the compiler has already
 /// copied the list when another binding shares it, so the receiver's array
 /// is the only one the sort writes.

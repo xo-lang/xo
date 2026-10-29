@@ -343,6 +343,11 @@ fn ([var] xs: List[T]) push(x: T)
 fn ([var] xs: List[T]) pop() -> T?           // removes the last element
 fn ([var] xs: List[T]) insert(i: Int, x: T)
 fn ([var] xs: List[T]) remove_at(i: Int) -> T
+fn (var xs: List[T]) heap_push(x: T)           // T: Ord; a binary min heap in the list (decision 0410)
+fn (var xs: List[T]) heap_pop() -> T?           // the least element, None for an empty list
+fn (var xs: List[T]) heap_remove(i: Int) -> T   // the element at i; a fault outside the list
+fn (var xs: List[T]) heap_fix(i: Int)           // after the element at i changed (set, then fix)
+fn (var xs: List[T]) heapify()                  // make any list a heap
 fn ([var] xs: List[T]) set(i: Int, x: T)     // also xs[i] = x on a var list
 fn (var xs: List[T]) sort_in_place()         // T: Ord, stable, sorts the receiver
 fn (var xs: List[T]) sort_in_place_by[K: Ord](key: fn(T) -> K)   // stable
@@ -4788,6 +4793,11 @@ fn (var xs: List[T]) pop() -> T?
 fn (var xs: List[T]) insert(i: Int, x: T)
 fn (var xs: List[T]) remove_at(i: Int) -> T
 fn (var xs: List[T]) set(i: Int, x: T)
+fn (var xs: List[T]) heap_push(x: T)
+fn (var xs: List[T]) heap_pop() -> T?
+fn (var xs: List[T]) heap_remove(i: Int) -> T
+fn (var xs: List[T]) heap_fix(i: Int)
+fn (var xs: List[T]) heapify()
 ```
 
 ### Map
