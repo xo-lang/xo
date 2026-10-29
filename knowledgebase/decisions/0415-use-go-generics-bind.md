@@ -155,3 +155,18 @@ constraints, monomorphized, type arguments inferred at the call or given
   handle the signature cannot show.
 - Generic types (`lru.Cache[K, V]`, methods of generic receivers, iterators of generic types) are stage 2.
 - Binding format 10.
+
+## As built, stage 2: generic types (Lang 1, 2026-10-29)
+
+- A generic named type with constraints stage 1 maps (no core type constraint) is a generic handle:
+  `struct Cache[K: Eq, V] {}` over `type Go_P_Cache[K comparable, V any] struct{ P *p.Cache[K, V] }`;
+  its methods and field accessors are bound with the type parameters in scope (a method that renames them,
+  `func (b *Box[X])`, is mapped by position through RecvTypeParams). No `new()` static for a generic handle.
+- An instance `p.Cache[A, B]` (in a parameter, result, or field) maps to `Cache[A', B']` when each argument
+  is a type parameter in scope or a type whose Xo representation is Go's own (`string`, `bool`, `int64`,
+  `float64`, ...), since the handle's field holds the Go instance itself; an argument that is converted at
+  the boundary (Go's `int` as Xo's `Int`) skips the signature.
+- A generic handle compares by pointer (its instances need not be comparable in Go).
+- Generic types of another package are skipped (their home binding names them; a cross-package instance
+  is a later step), and homeHandleName counts the generic types its home binding names.
+- Binding format 11.

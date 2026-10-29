@@ -108,3 +108,53 @@ fn main(os: Os) {
 		t.Fatalf("check: exit %d\n%s%s", code, out.String(), e)
 	}
 }
+
+// The h1 hashes of testdata/goproxy's synthetic example.com/gentype v1.0.0.
+const (
+	gentypeSum    = "h1:X2+GsPNSkVi8XdX743XN+FkJO4A0LcVF78+7QX+QAOE="
+	gentypeModSum = "h1:jjKSHTGxoPeBbz3sz9jEJ5DKu0Zfi0iDAYpk4mimgkQ="
+)
+
+// TestUseGoGenericTypes (decision 0415 stage 2): generic Go types as
+// generic handles: a Box[T] made by a generic constructor with its
+// methods and field, a Set[K comparable] over Str, and a
+// Top[T cmp.Ordered] over Float whose method returns (T, bool).
+func TestUseGoGenericTypes(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	useGoProxy(t)
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module gt\n\nrequire go example.com/gentype v1.0.0\n",
+		"xo.lock": "go example.com/gentype v1.0.0 " + gentypeSum + "\n" +
+			"go example.com/gentype v1.0.0/go.mod " + gentypeModSum + "\n",
+		"main.xo": `use go "example.com/gentype"
+
+fn main(os: Os) {
+  let b = gentype.new_box(41)
+  b.set(b.get() + 1)
+  os.stdio.println("${b.get()} ${b.val()}")
+  let s = gentype.new_set[Str]()
+  s.add("a")
+  s.add("b")
+  s.add("a")
+  os.stdio.println("${s.len()} ${s.has("a")} ${s.has("z")}")
+  let t = gentype.new_top[Float]()
+  t.offer(1.5)
+  t.offer(3.25)
+  t.offer(2.0)
+  let (m, ok) = t.max()
+  os.stdio.println("${m} ${ok}")
+}
+`,
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	want := "42 42\n2 true false\n3.25 true"
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("output\n%s\nwant\n%s", got, want)
+	}
+}

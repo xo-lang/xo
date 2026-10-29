@@ -22,6 +22,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and `maps` stay unbound (the prelude covers them). Generic types are
   stage 2. Bindings an earlier xo cached are made again (binding
   format 10).
+- `use go` binds generic Go types (decision 0415, stage 2): a generic
+  type is a generic handle (`lru.Cache[K, V]` is `Cache[K: Eq, V]`) with
+  its methods and fields bound over its type parameters, and a function
+  or method that takes or returns an instance (`*Cache[K, V]`) uses it.
+  Instances over a type Go and Xo represent differently (`Int` for Go's
+  `int`) and generic types of another package are skipped. Binding
+  format 11.
 - std/x509: creating certificates and requests and parsing CRLs, as Go's
   crypto/x509: `create_certificate` from a `Template` (self-signed or
   issued by a parent), `self_signed(r, hosts, now)` for development

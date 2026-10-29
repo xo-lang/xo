@@ -491,3 +491,100 @@ func Show[T interface{ String() string }](v T) string { return v.String() }
 		t.Errorf("slices.index skipped %q, want the prelude pointer", why)
 	}
 }
+
+// TestGenericTypes (decision 0415 stage 2): a generic Go type is a
+// generic handle, its methods bound with its type parameters in scope,
+// and an instance over type parameters (a constructor's *Box[T]) is the
+// handle's instance; a type whose constraint has no Xo form is skipped
+// with its methods.
+func TestGenericTypes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "gen")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/gen\n\ngo 1.21\n",
+		"gen.go": `package gen
+
+type Box[T any] struct {
+	Val T
+}
+
+func NewBox[T any](v T) *Box[T] { return &Box[T]{Val: v} }
+
+func (b *Box[T]) Get() T { return b.Val }
+
+func (b *Box[X]) Set(v X) { b.Val = v }
+
+type Set[K comparable] struct{ m map[K]bool }
+
+func NewSet[K comparable]() *Set[K] { return &Set[K]{m: map[K]bool{}} }
+
+func (s *Set[K]) Add(k K)          { s.m[k] = true }
+func (s *Set[K]) Has(k K) bool     { return s.m[k] }
+func (s *Set[K]) Len() int         { return len(s.m) }
+func (s *Set[K]) Union(o *Set[K]) *Set[K] {
+	for k := range o.m {
+		s.m[k] = true
+	}
+	return s
+}
+
+type Strs[S ~[]string] struct{ v S }
+
+func (s *Strs[S]) Len() int { return len(s.v) }
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/gen v0.0.0\n\nreplace example.com/gen => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/gen", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl, adapter := string(b.Decl), string(b.Adapter)
+	for _, want := range []string{
+		"struct Box[T] {}",
+		"struct GenSet[K: Eq] {}",
+		"fn new_box[T](v: T) -> Box[T] uses go",
+		"fn (recv: Box[T]) get() -> T uses go",
+		"fn (recv: Box[T]) set(v: T) uses go",
+		"fn (recv: Box[T]) val() -> T uses go",
+		"fn new_set[K: Eq]() -> GenSet[K] uses go",
+		"fn (recv: GenSet[K]) union(o: GenSet[K]) -> GenSet[K]? uses go",
+	} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("no %q in the declarations:\n%s", want, decl)
+		}
+	}
+	for _, want := range []string{
+		"type Go_example_com_gen_Box[T any] struct{ P *",
+		"type Go_example_com_gen_GenSet[K comparable] struct{ P *",
+		"func (h Go_example_com_gen_Box[T]) M_get(tk *Task) T {",
+		"func (h Go_example_com_gen_GenSet[K]) M_union(tk *Task, a0 Go_example_com_gen_GenSet[K]) Option[Go_example_com_gen_GenSet[K]] {",
+		"func (h Go_example_com_gen_Box[T]) XoEq(o any) bool",
+	} {
+		if !strings.Contains(adapter, want) {
+			t.Errorf("no %q in the adapter:\n%s", want, adapter)
+		}
+	}
+	if strings.Contains(decl, "struct Strs") {
+		t.Errorf("Strs is bound:\n%s", grep(decl, "struct Strs"))
+	}
+	if why := b.Skipped["Strs.len"]; !strings.Contains(why, "has no Xo form") {
+		t.Errorf("Strs.len skipped %q, want a constraint with no Xo form (skipped: %v)", why, b.Skipped)
+	}
+}

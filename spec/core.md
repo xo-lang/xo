@@ -1737,7 +1737,11 @@ fn main(os: Os) ! {
   (the prelude's List and Map methods cover them); a type argument for
   `comparable` or `cmp.Ordered` needs a Go value Go can compare or order,
   else `XO1106`, while one for `any` may be any Xo type, which Go holds
-  without looking inside; a `context.Context` parameter is
+  without looking inside; a generic Go type is a generic handle
+  (`lru.Cache[K, V]` is `Cache[K: Eq, V]`, its methods bound with `K`
+  and `V`) when its constraints map, and an instance over type
+  parameters or types Go and Xo share (`Str`, `Bool`, a type parameter)
+  is that handle's instance; a `context.Context` parameter is
   supplied from the current task (deadline and cancellation); a panic becomes
   a fault.
 - An Xo function passed to Go as a callback that Go calls during the Go call,

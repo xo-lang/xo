@@ -88,6 +88,14 @@ type handle struct {
 	foreign bool
 	names   map[string]bool // Xo method names in use
 	decls   []string
+	// a generic type (decision 0415): tps are its type parameters in
+	// order, xoT and rtT its Xo and rt types over them (`Cache[K, V]`,
+	// `Go_lru_Cache[K, V]`), xoDecl and rtDecl their declarations
+	// (`Cache[K: Eq, V]`, `Go_lru_Cache[K comparable, V any]`); for any
+	// other type all four are the names
+	tps            []*tparam
+	xoT, rtT       string
+	xoDecl, rtDecl string
 }
 
 // gen generates one binding.
@@ -133,11 +141,11 @@ type tparam struct {
 // constraint, comparable to Eq, cmp.Ordered to Ord, a core type
 // constraint ~[]E or ~map[K]V to List[E] or Map[K, V]; any other
 // constraint has no Xo form.
-func (g *gen) typeParams(sig *types.Signature) (map[*types.TypeParam]*tparam, []*types.TypeParam, *skipErr) {
+func (g *gen) typeParams(list *types.TypeParamList) (map[*types.TypeParam]*tparam, []*types.TypeParam, *skipErr) {
 	m := map[*types.TypeParam]*tparam{}
 	var order []*types.TypeParam
-	for i := 0; i < sig.TypeParams().Len(); i++ {
-		tp := sig.TypeParams().At(i)
+	for i := 0; i < list.Len(); i++ {
+		tp := list.At(i)
 		name := tp.Obj().Name()
 		if name == "" || name == "_" || !unicode.IsUpper([]rune(name)[0]) {
 			return nil, nil, skipf(catGeneric, "type parameter %s has no Xo name", name)
@@ -420,7 +428,10 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		if obj.Pkg().Path() == "iter" && (obj.Name() == "Seq" || obj.Name() == "Seq2") && x.TypeArgs().Len() > 0 {
 			return g.seqConv(x, depth)
 		}
-		if x.TypeArgs().Len() > 0 || x.TypeParams().Len() > 0 {
+		if x.TypeArgs().Len() > 0 {
+			return g.instConv(x, false, depth)
+		}
+		if x.TypeParams().Len() > 0 {
 			return conv{}, skipf(catGeneric, "generic type %s", g.display(x))
 		}
 		if !obj.Exported() {
@@ -440,6 +451,9 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		h.byValue = true
 		return g.handleValue(h), nil
 	case *types.Pointer:
+		if n, ok := types.Unalias(x.Elem()).(*types.Named); ok && n.TypeArgs().Len() > 0 && n.Obj().Pkg() != nil {
+			return g.instConv(n, true, depth)
+		}
 		if n, ok := types.Unalias(x.Elem()).(*types.Named); ok {
 			if _, basic := n.Underlying().(*types.Basic); !basic && n.Obj().Pkg() != nil && !isContext(n) && n.TypeArgs().Len() == 0 && n.TypeParams().Len() == 0 && !(n.Obj().Pkg().Path() == "time" && !timeHandles[n.Obj().Name()]) {
 				h, err := g.handleFor(n, depth)
@@ -514,6 +528,57 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		return conv{xo: tp.name, rt: tp.name, gt: tp.name, id: true, toXo: identity, toGo: identity}, nil
 	}
 	return conv{}, skipf(catIface, "Go type %s", g.display(t))
+}
+
+// instConv maps an instance of a generic type (decision 0415), *T when
+// ptr: lru.Cache[K, V] is the handle Cache[K, V] when every type argument
+// is a type parameter in scope or a type Go and Xo share, since the
+// handle's field holds the Go instance itself.
+func (g *gen) instConv(x *types.Named, ptr bool, depth int) (conv, *skipErr) {
+	disp := g.display(x)
+	if ptr {
+		disp = "*" + disp
+	}
+	if !x.Obj().Exported() {
+		return conv{}, skipf(catUnexport, "unexported type %s", g.display(x))
+	}
+	h, err := g.handleFor(x.Origin(), depth)
+	if err != nil {
+		return conv{}, err
+	}
+	var xs, rs []string
+	for i := 0; i < x.TypeArgs().Len(); i++ {
+		a := x.TypeArgs().At(i)
+		c, err := g.mapType(a, depth)
+		if err != nil {
+			return conv{}, err
+		}
+		if !c.id {
+			return conv{}, skipf(catGeneric, "type argument %s of %s is converted at the boundary", g.display(a), disp)
+		}
+		xs = append(xs, c.xo)
+		rs = append(rs, c.rt)
+	}
+	xo := h.xo + "[" + strings.Join(xs, ", ") + "]"
+	rt := h.goName + "[" + strings.Join(rs, ", ") + "]"
+	gt := g.qual(x)
+	switch {
+	case ptr && !h.byPtr:
+		return conv{}, skipf(catPointer, "pointer type %s", disp)
+	case ptr:
+		return conv{xo: xo, rt: rt, gt: "*" + gt, nilable: true, hnd: h, hpkgs: h.pkgs(),
+			toXo: func(e string) string { return rt + "{P: " + e + "}" },
+			toGo: func(e string) string { return e + ".P" }}, nil
+	}
+	h.byValue = true
+	if h.byPtr {
+		return conv{xo: xo, rt: rt, gt: gt, hpkgs: h.pkgs(),
+			toXo: func(e string) string { return rt + "{P: GoPtrTo(" + e + ")}" },
+			toGo: func(e string) string { return "*" + e + ".P" }}, nil
+	}
+	return conv{xo: xo, rt: rt, gt: gt, hpkgs: h.pkgs(),
+		toXo: func(e string) string { return rt + "{V: " + e + "}" },
+		toGo: func(e string) string { return e + ".V" }}, nil
 }
 
 // seqConv maps an iterator result (iter.Seq[T], iter.Seq2[K, V]) to a List
@@ -634,7 +699,7 @@ func homeHandleName(n *types.Named) (string, bool) {
 			continue
 		}
 		m, ok := tn.Type().(*types.Named)
-		if !ok || m.TypeParams().Len() > 0 {
+		if !ok || m.TypeParams().Len() > 0 && !genericBindable(m) {
 			continue
 		}
 		if _, basic := m.Underlying().(*types.Basic); basic {
@@ -665,6 +730,20 @@ func homeHandleName(n *types.Named) (string, bool) {
 	return "", false
 }
 
+// genericBindable reports whether generic type n gets a handle in its
+// own package's binding: each type parameter's constraint is any,
+// comparable or an Ordered (typeParams without core types).
+func genericBindable(n *types.Named) bool {
+	for i := 0; i < n.TypeParams().Len(); i++ {
+		c := n.TypeParams().At(i).Constraint()
+		it, _ := c.Underlying().(*types.Interface)
+		if !(it != nil && it.Empty() || types.Identical(c, types.Universe.Lookup("comparable").Type()) || isOrdered(c)) {
+			return false
+		}
+	}
+	return true
+}
+
 // handleFor returns the handle of named type n, creating it.
 func (g *gen) handleFor(n *types.Named, depth int) (*handle, *skipErr) {
 	obj := n.Obj()
@@ -682,6 +761,9 @@ func (g *gen) handleFor(n *types.Named, depth int) (*handle, *skipErr) {
 		if !importable(path) {
 			return nil, skipf(catForeign, "type %s is from package %s, which a program cannot import", g.display(n), path)
 		}
+		if n.TypeParams().Len() > 0 {
+			return nil, skipf(catGeneric, "generic type %s of package %s", g.display(n), path)
+		}
 		hn, ok := homeHandleName(n)
 		if !ok {
 			return nil, skipf(catForeign, "type %s has no handle in package %s's binding", g.display(n), path)
@@ -691,6 +773,7 @@ func (g *gen) handleFor(n *types.Named, depth int) (*handle, *skipErr) {
 			byPtr = true
 		}
 		h := &handle{obj: obj, named: n, xo: g.depAlias(obj.Pkg()) + "." + hn, goName: Prefix(path) + hn, gt: g.qual(n), byPtr: byPtr, ref: true, names: map[string]bool{}}
+		h.xoT, h.rtT, h.xoDecl, h.rtDecl = h.xo, h.goName, h.xo, h.goName
 		g.handles[obj] = h
 		return h, nil
 	}
@@ -711,6 +794,33 @@ func (g *gen) handleFor(n *types.Named, depth int) (*handle, *skipErr) {
 		byPtr = true
 	}
 	h := &handle{obj: obj, named: n, xo: name, goName: g.b.Prefix + name, gt: g.qual(n), byPtr: byPtr, foreign: foreign, names: map[string]bool{}}
+	h.xoT, h.rtT, h.xoDecl, h.rtDecl = h.xo, h.goName, h.xo, h.goName
+	if n.TypeParams().Len() > 0 {
+		// a generic type (decision 0415): Cache[K: Eq, V] over
+		// lru.Cache[K, V], its methods bound with K and V in scope
+		m, order, err := g.typeParams(n.TypeParams())
+		if err != nil {
+			return nil, err
+		}
+		var names, xds, rds []string
+		for _, tp := range order {
+			t := m[tp]
+			if t.core != nil {
+				return nil, skipf(catGeneric, "type parameter %s of %s has a core type constraint", t.name, g.display(n))
+			}
+			h.tps = append(h.tps, t)
+			names = append(names, t.name)
+			rds = append(rds, t.name+" "+t.goBound)
+			if t.xoBound != "" {
+				xds = append(xds, t.name+": "+t.xoBound)
+			} else {
+				xds = append(xds, t.name)
+			}
+		}
+		args := "[" + strings.Join(names, ", ") + "]"
+		h.xoT, h.rtT, h.gt = h.xo+args, h.goName+args, g.alias(obj.Pkg())+"."+obj.Name()+args
+		h.xoDecl, h.rtDecl = h.xo+"["+strings.Join(xds, ", ")+"]", h.goName+"["+strings.Join(rds, ", ")+"]"
+	}
 	g.handles[obj] = h
 	g.scope[name] = true
 	g.order = append(g.order, h)
@@ -834,7 +944,7 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 			// Map methods cover them
 			return skipf(catGeneric, "generic function of Go's %s: use the prelude's List and Map methods (decision 0415)", p)
 		}
-		tps, order, err := g.typeParams(sig)
+		tps, order, err := g.typeParams(sig.TypeParams())
 		if err != nil {
 			return err
 		}
@@ -935,9 +1045,8 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		if !c.nilable {
 			return c
 		}
-		h := c.hnd
 		return conv{xo: c.xo + "?", rt: "Option[" + c.rt + "]", hpkgs: c.hpkgs, toXo: func(e string) string {
-			return "Option[" + h.goName + "]{Some: " + e + " != nil, V: " + h.goName + "{P: " + e + "}}"
+			return "Option[" + c.rt + "]{Some: " + e + " != nil, V: " + c.rt + "{P: " + e + "}}"
 		}}
 	}
 	switch {
@@ -971,7 +1080,7 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	fmt.Fprintf(&d, "/// Replay: %s\n", replayDoc[mode])
 	d.WriteString("fn ")
 	if s.recv != nil {
-		fmt.Fprintf(&d, "(%s: %s) ", recvName, s.recv.xo)
+		fmt.Fprintf(&d, "(%s: %s) ", recvName, s.recv.xoT)
 	}
 	d.WriteString(s.xoName)
 	var dtps, gtps, targs []string
@@ -1019,7 +1128,7 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	}
 	params := strings.Join(append([]string{"tk *Task"}, gps...), ", ")
 	if s.recv != nil {
-		fmt.Fprintf(&a, "func (h %s) M_%s(%s)%s {\n", s.recv.goName, s.xoName, params, goRet)
+		fmt.Fprintf(&a, "func (h %s) M_%s(%s)%s {\n", s.recv.rtT, s.xoName, params, goRet)
 	} else {
 		tpl := ""
 		if len(gtps) > 0 {
@@ -1181,7 +1290,7 @@ func (g *gen) run() {
 			continue
 		}
 		n, ok := tn.Type().(*types.Named)
-		if !ok || n.TypeParams().Len() > 0 {
+		if !ok {
 			continue
 		}
 		if _, basic := n.Underlying().(*types.Basic); basic {
@@ -1190,7 +1299,9 @@ func (g *gen) run() {
 		if tn.Pkg().Path() == "time" && (name == "Duration" || name == "Time") {
 			continue
 		}
-		g.handleFor(n, 0)
+		if _, err := g.handleFor(n, 0); err != nil && n.TypeParams().Len() > 0 {
+			g.skipMethods(n, err.cat, err.detail)
+		}
 	}
 	for _, name := range names {
 		switch o := scope.Lookup(name).(type) {
@@ -1229,21 +1340,9 @@ func (g *gen) run() {
 			if !ok {
 				continue
 			}
-			if _, basic := n.Underlying().(*types.Basic); basic || n.TypeParams().Len() > 0 {
-				// methods of named basic and generic types are not bound
-				ms := types.NewMethodSet(types.NewPointer(n))
-				for i := 0; i < ms.Len(); i++ {
-					f := ms.At(i).Obj()
-					if !f.Exported() {
-						continue
-					}
-					g.stats.Methods++
-					cat := catNamedBase
-					if !basic {
-						cat = catGeneric
-					}
-					g.skip(o.Name()+"."+xoName(snake(f.Name())), "("+g.display(n)+")."+f.Name(), skipf(cat, "method of %s", g.display(n)), true)
-				}
+			if _, basic := n.Underlying().(*types.Basic); basic {
+				// methods of named basic types are not bound
+				g.skipMethods(n, catNamedBase, "method of "+g.display(n))
 			}
 		}
 	}
@@ -1254,7 +1353,29 @@ func (g *gen) run() {
 	}
 }
 
+// skipMethods records each exported method of n as skipped.
+func (g *gen) skipMethods(n *types.Named, cat, detail string) {
+	ms := types.NewMethodSet(types.NewPointer(n))
+	for i := 0; i < ms.Len(); i++ {
+		f := ms.At(i).Obj()
+		if !f.Exported() {
+			continue
+		}
+		g.stats.Methods++
+		g.skip(n.Obj().Name()+"."+xoName(snake(f.Name())), "("+g.display(n)+")."+f.Name(), &skipErr{cat: cat, detail: detail}, true)
+	}
+}
+
 func (g *gen) bindHandle(h *handle) {
+	if len(h.tps) > 0 {
+		// K and V of Cache[K, V] are in scope in its methods, under the
+		// type's names (a method may rename them: RecvTypeParams)
+		g.tps = map[*types.TypeParam]*tparam{}
+		for i, t := range h.tps {
+			g.tps[h.named.TypeParams().At(i)] = t
+		}
+		defer func() { g.tps = nil }()
+	}
 	depth := 0
 	if h.foreign {
 		depth = 1
@@ -1289,6 +1410,11 @@ func (g *gen) bindHandle(h *handle) {
 			continue
 		}
 		sig := f.Type().(*types.Signature)
+		if rtp := sig.RecvTypeParams(); rtp != nil && len(h.tps) == rtp.Len() {
+			for j, t := range h.tps {
+				g.tps[rtp.At(j)] = t
+			}
+		}
 		xn := xoName(snake(f.Name()))
 		display := "(" + g.display(types.NewPointer(h.named)) + ")." + f.Name()
 		if !h.byPtr {
@@ -1344,19 +1470,18 @@ func (g *gen) bindHandle(h *handle) {
 		h.names[xn] = true
 		rc := c
 		if c.nilable {
-			hh := c.hnd
 			rc = conv{xo: c.xo + "?", rt: "Option[" + c.rt + "]", toXo: func(e string) string {
-				return "Option[" + hh.goName + "]{Some: " + e + " != nil, V: " + hh.goName + "{P: " + e + "}}"
+				return "Option[" + c.rt + "]{Some: " + e + " != nil, V: " + c.rt + "{P: " + e + "}}"
 			}}
 		}
-		h.decls = append(h.decls, fmt.Sprintf("/// Go: field %s %s\nfn (recv: %s) %s() -> %s uses go", fv.Name(), g.display(fv.Type()), h.xo, xn, rc.xo))
-		fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task) %s {\n\tdefer GoBoundary(%q)\n\tv := h.P.%s\n\treturn %s\n}\n\n", h.goName, xn, rc.rt, display, fv.Name(), rc.toXo("v"))
+		h.decls = append(h.decls, fmt.Sprintf("/// Go: field %s %s\nfn (recv: %s) %s() -> %s uses go", fv.Name(), g.display(fv.Type()), h.xoT, xn, rc.xo))
+		fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task) %s {\n\tdefer GoBoundary(%q)\n\tv := h.P.%s\n\treturn %s\n}\n\n", h.rtT, xn, rc.rt, display, fv.Name(), rc.toXo("v"))
 		sn := "set_" + snake(fv.Name())
 		h.names[sn] = true
-		h.decls = append(h.decls, fmt.Sprintf("/// Go: assigns field %s\nfn (recv: %s) %s(v: %s) uses go", fv.Name(), h.xo, sn, c.xo))
-		fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task, a0 %s) {\n\tdefer GoBoundary(%q)\n\th.P.%s = %s\n}\n\n", h.goName, sn, c.rt, display, fv.Name(), c.toGo("a0"))
+		h.decls = append(h.decls, fmt.Sprintf("/// Go: assigns field %s\nfn (recv: %s) %s(v: %s) uses go", fv.Name(), h.xoT, sn, c.xo))
+		fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task, a0 %s) {\n\tdefer GoBoundary(%q)\n\th.P.%s = %s\n}\n\n", h.rtT, sn, c.rt, display, fv.Name(), c.toGo("a0"))
 	}
-	if !h.names["new"] {
+	if !h.names["new"] && len(h.tps) == 0 {
 		h.names["new"] = true
 		h.decls = append(h.decls, fmt.Sprintf("/// Go: new(%s), the zero value\nfn (static: %s) new() -> %s uses go", g.display(h.named), h.xo, h.xo))
 		fmt.Fprintf(&g.adapt, "func %s_new(tk *Task) %s {\n\treturn %s{P: new(%s)}\n}\n\n", h.goName, h.goName, h.goName, h.gt)
@@ -1484,9 +1609,9 @@ func (g *gen) bindVar(o *types.Var) {
 		return
 	}
 	if c.nilable {
-		hh := c.hnd
-		c = conv{xo: c.xo + "?", rt: "Option[" + c.rt + "]", toXo: func(e string) string {
-			return "Option[" + hh.goName + "]{Some: " + e + " != nil, V: " + hh.goName + "{P: " + e + "}}"
+		crt := c.rt
+		c = conv{xo: c.xo + "?", rt: "Option[" + crt + "]", toXo: func(e string) string {
+			return "Option[" + crt + "]{Some: " + e + " != nil, V: " + crt + "{P: " + e + "}}"
 		}}
 	}
 	g.scope[name] = true
@@ -1546,7 +1671,7 @@ func (g *gen) declFile() []byte {
 			if !h.byPtr {
 				kind = g.display(h.named)
 			}
-			fmt.Fprintf(&b, "/// Go: %s\nstruct %s {}\n", kind, h.xo)
+			fmt.Fprintf(&b, "/// Go: %s\nstruct %s {}\n", kind, h.xoDecl)
 		}
 	}
 	if len(g.funcs) > 0 {
@@ -1584,38 +1709,38 @@ func (g *gen) adapterFile() ([]byte, error) {
 		if h.byPtr {
 			disp = "*" + disp
 		}
-		fmt.Fprintf(&body, "// %s is the handle of Go %s.\ntype %s struct{ %s }\n\n", h.goName, disp, h.goName, field)
-		fmt.Fprintf(&body, "func (h %s) XoDebug(b *strings.Builder) { GoDebugHandle(b, %q) }\n\n", h.goName, disp)
+		fmt.Fprintf(&body, "// %s is the handle of Go %s.\ntype %s struct{ %s }\n\n", h.goName, disp, h.rtDecl, field)
+		fmt.Fprintf(&body, "func (h %s) XoDebug(b *strings.Builder) { GoDebugHandle(b, %q) }\n\n", h.rtT, disp)
 		// go.any(h) and go.Any.as[H]() (decision 0412)
 		switch {
 		case h.byPtr && h.byValue:
 			// a type Go hands out as a value (netip.Addr): its value, and a
 			// *T read back too
-			fmt.Fprintf(&body, "func (h %s) XoGoValue() any {\n\tif h.P == nil {\n\t\treturn nil\n\t}\n\treturn *h.P\n}\n\n", h.goName)
-			fmt.Fprintf(&body, "func (%s) XoFromGo(v any) (any, bool) {\n\tif p, ok := v.(*%s); ok {\n\t\treturn %s{P: p}, true\n\t}\n\tx, ok := v.(%s)\n\treturn %s{P: &x}, ok\n}\n\n", h.goName, h.gt, h.goName, h.gt, h.goName)
+			fmt.Fprintf(&body, "func (h %s) XoGoValue() any {\n\tif h.P == nil {\n\t\treturn nil\n\t}\n\treturn *h.P\n}\n\n", h.rtT)
+			fmt.Fprintf(&body, "func (%s) XoFromGo(v any) (any, bool) {\n\tif p, ok := v.(*%s); ok {\n\t\treturn %s{P: p}, true\n\t}\n\tx, ok := v.(%s)\n\treturn %s{P: &x}, ok\n}\n\n", h.rtT, h.gt, h.rtT, h.gt, h.rtT)
 		case h.byPtr:
-			fmt.Fprintf(&body, "func (h %s) XoGoValue() any { return h.P }\n\n", h.goName)
-			fmt.Fprintf(&body, "func (%s) XoFromGo(v any) (any, bool) {\n\tp, ok := v.(*%s)\n\treturn %s{P: p}, ok\n}\n\n", h.goName, h.gt, h.goName)
+			fmt.Fprintf(&body, "func (h %s) XoGoValue() any { return h.P }\n\n", h.rtT)
+			fmt.Fprintf(&body, "func (%s) XoFromGo(v any) (any, bool) {\n\tp, ok := v.(*%s)\n\treturn %s{P: p}, ok\n}\n\n", h.rtT, h.gt, h.rtT)
 		default:
-			fmt.Fprintf(&body, "func (h %s) XoGoValue() any { return h.V }\n\n", h.goName)
-			fmt.Fprintf(&body, "func (%s) XoFromGo(v any) (any, bool) {\n\tx, ok := v.(%s)\n\treturn %s{V: x}, ok\n}\n\n", h.goName, h.gt, h.goName)
+			fmt.Fprintf(&body, "func (h %s) XoGoValue() any { return h.V }\n\n", h.rtT)
+			fmt.Fprintf(&body, "func (%s) XoFromGo(v any) (any, bool) {\n\tx, ok := v.(%s)\n\treturn %s{V: x}, ok\n}\n\n", h.rtT, h.gt, h.rtT)
 		}
 		switch {
-		case h.byPtr && types.Comparable(h.named) && (!isStructType(h.named) || h.byValue):
+		case h.byPtr && len(h.tps) == 0 && types.Comparable(h.named) && (!isStructType(h.named) || h.byValue):
 			// Go's equality (core 2.9): a comparable type Go hands out as a
 			// value (netip.Addr, language.Tag, arrays such as uuid.UUID)
 			// compares by value; a struct the API passes only as *T
 			// (url.Parse's *url.URL) compares by pointer, as Go's == on
 			// the pointers does (Intel b15, 0.33.0: two equal netip.Addr
 			// were unequal)
-			fmt.Fprintf(&body, "func (h %s) XoEq(o any) bool {\n\tx, ok := o.(%s)\n\treturn ok && (h.P == x.P || h.P != nil && x.P != nil && *h.P == *x.P)\n}\n\n", h.goName, h.goName)
-			fmt.Fprintf(&body, "func (h %s) XoHash() uint64 {\n\tif h.P == nil {\n\t\treturn 0\n\t}\n\treturn GoHashComparable(*h.P)\n}\n\n", h.goName)
+			fmt.Fprintf(&body, "func (h %s) XoEq(o any) bool {\n\tx, ok := o.(%s)\n\treturn ok && (h.P == x.P || h.P != nil && x.P != nil && *h.P == *x.P)\n}\n\n", h.rtT, h.rtT)
+			fmt.Fprintf(&body, "func (h %s) XoHash() uint64 {\n\tif h.P == nil {\n\t\treturn 0\n\t}\n\treturn GoHashComparable(*h.P)\n}\n\n", h.rtT)
 		case h.byPtr:
-			fmt.Fprintf(&body, "func (h %s) XoEq(o any) bool {\n\tx, ok := o.(%s)\n\treturn ok && h.P == x.P\n}\n\n", h.goName, h.goName)
-			fmt.Fprintf(&body, "func (h %s) XoHash() uint64 { return GoHashComparable(h.P) }\n\n", h.goName)
+			fmt.Fprintf(&body, "func (h %s) XoEq(o any) bool {\n\tx, ok := o.(%s)\n\treturn ok && h.P == x.P\n}\n\n", h.rtT, h.rtT)
+			fmt.Fprintf(&body, "func (h %s) XoHash() uint64 { return GoHashComparable(h.P) }\n\n", h.rtT)
 		case isInterfaceType(h.named):
-			fmt.Fprintf(&body, "func (h %s) XoEq(o any) bool {\n\tx, ok := o.(%s)\n\treturn ok && GoEqIface(h.V, x.V)\n}\n\n", h.goName, h.goName)
-			fmt.Fprintf(&body, "func (h %s) XoHash() uint64 { return GoHashIface(h.V) }\n\n", h.goName)
+			fmt.Fprintf(&body, "func (h %s) XoEq(o any) bool {\n\tx, ok := o.(%s)\n\treturn ok && GoEqIface(h.V, x.V)\n}\n\n", h.rtT, h.rtT)
+			fmt.Fprintf(&body, "func (h %s) XoHash() uint64 { return GoHashIface(h.V) }\n\n", h.rtT)
 		}
 	}
 	body.Write(g.adapt.Bytes())
