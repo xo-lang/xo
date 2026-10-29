@@ -1,0 +1,66 @@
+# Goldens TestSelfhostWasm expects to be unsupported on wasm (2026-10-29).
+# A golden that is not listed and becomes unsupported fails the test, so a
+# regression such as 0.34.0's (Chan programs refused for wasm for twelve days)
+# cannot hide in the unsupported count. Reason after the name, for reading only.
+
+cmd_inherit # the wasm backend does not support processes (`proc.exec`): WASI preview1 has none
+conn_iface # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+fs_cwd_path # no working directory under WASI
+fs_dir_errors # operation not supported (WASI has no file modes or locks)
+fs_files # operation not supported (WASI has no file modes or locks)
+fs_ops_edges # WASI has no times before 1970
+handle_drop_leak # the wasm backend does not support processes (`proc.spawn`): WASI preview1 has none
+http_client # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_body_reader # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_keepalive # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_policy # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_responses # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_client_stream # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_conn_fault # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_fault # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_form # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_gzip # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_gzip_responses # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_header_fields # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_multipart_stream # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_reverse_proxy # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_reverse_proxy_ws # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_server # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_server_limits # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_server_request # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_stream # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_stream_body # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_stream_body_h2 # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_tls # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_tls_keys # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_wire # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+lock_drop_relock # operation not supported (WASI has no file modes or locks)
+multipart_basic # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+native_sql # the wasm backend does not support the network (`rt.net_dial`): WASI preview1 has no sockets
+net_echo # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+net_lookup_dial_timeout # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+net_only # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
+net_short_str # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+proc_children_load # the wasm backend does not support processes (`proc.exec`): WASI preview1 has none
+proc_cmd # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
+rt_addrs # the wasm backend does not support the call `rt.fn_addr`
+signal_notify # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
+sys_c # the platform call `getpid` of c on another OS
+term_stdio # the wasm backend does not support the call `rt.call_c2`
+tls_client # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_coalesced_finish # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_peer_certs # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+tz_table # std/time's zones need the zone data that `xo build --backend=wasm` embeds
+udp_echo # the wasm backend does not support the network (`rt.conn_close`): WASI preview1 has no sockets
+unix_kill # the wasm backend does not support processes (`proc.spawn`): WASI preview1 has none
+use_c_add # use c without the binding of addc.h in internal/llvm/testdata/golden/use_c_add/.xo/cbind (a Go build
+user_caps # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
+websocket # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+websocket_tls # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+
+# Known broken, to fix (rt.heap_big in alloc.alloc is not lowered for wasm):
+debug_routes # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
+http_handler_fault # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
+http_router_paths # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
+metrics_text # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
+trace_ring # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc

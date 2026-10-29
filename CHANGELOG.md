@@ -43,6 +43,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   left out (`go build` runs with `-mod=mod`); a Go module failure shows
   go's message and says that removing `.xo/gobind` binds every package
   again, instead of "a code generator bug".
+- **Fix** (0.34.0): a program that uses `scope`, `spawn` or `Chan` failed to build with `--backend=wasm` ("the wasm backend does not support the call `rt.stack_switch`, in sched.fiber_direct"): `Chan` word operations (decision 0353) are native only now. TestSelfhostWasm fails when a golden becomes unsupported that is not in `internal/selfhost/testdata/wasm_unsupported.txt`.
 - **Breaking** (decision 0410): the prelude's `Proc` interface gains
   `pid()` and `ppid()`, so a user type that implements `Proc` needs the
   two methods (interfaces have no default bodies, core 2.4); a wrapper

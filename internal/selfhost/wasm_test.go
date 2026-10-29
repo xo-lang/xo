@@ -178,6 +178,27 @@ func TestSelfhostWasm(t *testing.T) {
 	for _, w := range why {
 		t.Logf("unsupported %s", w)
 	}
+	// a golden that stops building or running for wasm must not hide in the
+	// unsupported count (0.34.0: every scope, spawn and Chan golden went
+	// unsupported at once): only the goldens of testdata/wasm_unsupported.txt
+	// may be, and a new one is an error
+	if os.Getenv("XO_WASM_GOLDENS") == "" && !filtered {
+		expected := map[string]bool{}
+		if b, err := os.ReadFile(filepath.Join(root, "internal", "selfhost", "testdata", "wasm_unsupported.txt")); err == nil {
+			for _, l := range strings.Split(string(b), "\n") {
+				l, _, _ = strings.Cut(l, "#")
+				if l = strings.TrimSpace(l); l != "" {
+					expected[l] = true
+				}
+			}
+		}
+		for _, w := range why {
+			name, _, _ := strings.Cut(w, ":")
+			if !expected[name] {
+				t.Errorf("golden %s became unsupported for wasm (%s); fix the backend, or list it in internal/selfhost/testdata/wasm_unsupported.txt if it can never run there", name, w)
+			}
+		}
+	}
 	if os.Getenv("XO_WASM_GOLDENS") == "" && !filtered && pass < wasmMinPass {
 		t.Errorf("%d goldens pass, want at least %d (wasmMinPass)", pass, wasmMinPass)
 	}
