@@ -1260,8 +1260,13 @@ pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
   var pending: List[(Int, List[Int], Int)] = []
   for (i, x) in e.objs.indexed() {
     // an object of a file not parsed (trees_lazy): installed without
-    // its trees, its counts kept for need_tree
-    if c.trees_lazy && x.decl_file >= 0 && x.decl_file < c.files.len() && c.files[x.decl_file].unloaded {
+    // its trees, its counts kept for need_tree; an interface's method
+    // (no file of its own) by its interface's file
+    var tf = x.decl_file
+    if x.iface && x.recv >= lo && x.recv - lo < e.objs.len() {
+      tf = e.objs[x.recv - lo].decl_file
+    }
+    if c.trees_lazy && tf >= 0 && tf < c.files.len() && c.files[tf].unloaded {
       var has = false
       for t in e.trees[i] {
         if t > 0 {
@@ -1351,12 +1356,9 @@ pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
     return
   }
   let f = c.objs[o].decl_file
-  if f < 0 || f >= c.files.len() {
-    return
-  }
   // the file's tree first (a constant's initializer is read from the
   // tree itself, with no joined part to count)
-  if c.files[f].unloaded {
+  if f >= 0 && f < c.files.len() && c.files[f].unloaded {
     c.ensure_tree(c.files[f].module)
   }
   let (t, recv) = match c.tree_pending.get(o) {
@@ -1374,7 +1376,7 @@ pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
   }
   match c.join_trees(c.objs[o], t, owner) {
     Some(y) => c.objs[o] = y
-    None => fault("internal: the trees of ${text(c.objs[o].name)} are not where std's record says (${c.files[f].path})")
+    None => fault("internal: the trees of ${text(c.objs[o].name)} are not where std's record says (${if f >= 0 && f < c.files.len() { c.files[f].path } else { "an interface's method" }})")
   }
 }
 
