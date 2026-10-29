@@ -1,0 +1,10 @@
+// Tests of the phase lines' time (main.xo lap, ms2).
+
+test "a phase's time has two decimals, rounded down" {
+  expect(ms2(3420us)) == "3.42"
+  expect(ms2(3429999ns)) == "3.42"
+  expect(ms2(5ms)) == "5.00"
+  expect(ms2(70us)) == "0.07"
+  expect(ms2(0ns)) == "0.00"
+  expect(ms2(12345678ns)) == "12.34"
+}
