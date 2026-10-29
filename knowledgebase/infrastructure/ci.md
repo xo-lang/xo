@@ -119,8 +119,9 @@ outputs are read: `aws s3 rm --recursive
 s3://$XO_SEED_BUCKET/dev/ci-out/RUN_ID/`. `aws s3 ls
 s3://$XO_SEED_BUCKET/dev/ci-out/` lists what is left.
 
-Users: release-smoke.sh, windows-race.sh, windows-crash.sh, win-crash-cdb.ps1 and
-win-cdb-watch.ps1. A new script that writes anything but small text
+Users: release-smoke.sh, windows-race.sh, windows-crash.sh, win-crash-cdb.ps1,
+win-cdb-watch.ps1 and windows-fixed-point.sh (the windows/amd64 self-build
+fixed point on the runner: s2 by XO_CLI, s3 by s2, compared; 2026-10-29). A new script that writes anything but small text
 into `XO_CI_OUT` uses the same helper. Last verified: 2026-10-22 (on
 the Mac with a local archive; not yet on a runner).
 
