@@ -38,6 +38,13 @@ fn (n: BlockNet) dial(addr: Str) -> Conn ! NetErr uses net.dial {
   }
   n.inner.dial(addr)
 }
+fn (n: BlockNet) dial_timeout(addr: Str, d: Duration) -> Conn ! NetErr uses net.dial {
+  if addr.starts_with(n.blocked + ":") {
+    return Err(NetErr.Denied(addr: addr))
+  }
+  n.inner.dial_timeout(addr, d)
+}
+fn (n: BlockNet) lookup_host(host: Str) -> List[Str] ! NetErr uses net.dial { n.inner.lookup_host(host) }
 fn (n: BlockNet) only(hosts: List[Str]) -> Net { BlockNet{inner: n.inner.only(hosts), blocked: n.blocked} }
 
 /// The greeting for the user the environment names.

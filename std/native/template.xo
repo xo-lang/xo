@@ -113,7 +113,19 @@ fn is_space_r(r: Int) -> Bool { r == 32 || r == 9 || r == 13 || r == 10 }
 
 fn is_alnum(r: Int) -> Bool { r == 95 || (r >= 0 && (Rune(r).is_letter() || Rune(r).is_digit())) }
 
-fn has_prefix_at(b: Bytes, at: Int, p: Bytes) -> Bool { at + p.len() <= b.len() && b[at..at + p.len()] == p }
+/// Whether p is in b at at, compared by index (no slice: a call in a scan
+/// loop makes no view, XO0913).
+fn has_prefix_at(b: Bytes, at: Int, p: Bytes) -> Bool {
+  if at + p.len() > b.len() {
+    return false
+  }
+  for j in 0..p.len() {
+    if b[at + j] != p[j] {
+      return false
+    }
+  }
+  true
+}
 
 /// strings.Index of p in b from from, relative to from; -1 when absent
 /// (Bytes.find's scan, not a slice compared at every offset: XO0913).
@@ -4324,7 +4336,7 @@ fn t_text(c: Context, s: Bytes) -> (Context, Int) {
     if i + 1 == s.len() {
       return (c, s.len())
     }
-    if i + 4 <= s.len() && s[i..i + 4] == COMMENT_START {
+    if has_prefix_at(s, i, COMMENT_START) {
       return (Context{state: STATE_HTML_CMT}, i + 4)
     }
     i += 1
@@ -4524,7 +4536,7 @@ fn t_js(c0: Context, s: Bytes) -> (Context, Int) {
       }
     }
     60 => {
-      if i + 3 < s.len() && s[i..i + 4] == COMMENT_START {
+      if has_prefix_at(s, i, COMMENT_START) {
         c.state = STATE_JS_HTML_OPEN_CMT
         i += 3
       }
