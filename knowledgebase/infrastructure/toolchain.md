@@ -1597,7 +1597,9 @@ Last verified: 2026-10-07
   verified: 2026-10-08): `XO_ARM64_LAYOUT=pad=K xo build --backend=arm64`
   puts K nops (never run) before every function label, moving all code;
   build K = 0 to 15 and compare the median cycles over the 16 binaries
-  (and 16 copies of one binary as the noise floor) to judge a code shape
+  (and 16 copies of one binary as the noise floor: not optional, a run
+  under about 100 ms varies about 14 percent run to run, interp
+  2026-10-29, agent-tools.md "Measuring") to judge a code shape
   change. Also `func=N` and `loop=N` (log2 alignment of functions and
   innermost loop tops), `fall=1`, `off=K`, `outer=1`. Unset is the
   default placement; a bad value fails the build. The build directory is

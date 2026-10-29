@@ -579,6 +579,15 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- A placement claim (a sweep over XO_ARM64_PAD, an alignment, a layout)
+  carries the one-binary control beside it: the same statistic with one
+  binary in every slot (16 slots x the rounds); only a spread above that
+  floor is placement. A run under about 100 ms varies about 14 percent
+  run to run on the Mac even in a quiet window (interp, 50 ms: one
+  binary as 16 placements gave 1.139, the same as every sweep that day,
+  2026-10-29, gotchas/placement-sweep-noise-floor.md); a 600 ms run's
+  floor is under a percent (collatz 1.008). Make the run long or carry
+  the floor (owner, lead, 2026-10-29).
 - `xo bench --ab` with no --max-load counts a round as loaded when a side
   starts at the load sampled before the first round plus 3 (at least 6);
   the load line prints that baseline (2026-10-28,
