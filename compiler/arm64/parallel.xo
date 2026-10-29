@@ -206,7 +206,8 @@ pub fn part_lists(m: ssa.Module) -> List[List[Int]] {
   var all: List[Int] = []
   var rest: List[Int] = []
   var rt: List[Int] = []
-  for (fi, f) in m.funcs.indexed() {
+  for fi in fn_order_of(m) {
+    let f = m.funcs[fi]
     // a std extern (decision 0388) is std's object's, not emitted here
     if m.is_extern(fi) {
       continue
@@ -223,6 +224,32 @@ pub fn part_lists(m: ssa.Module) -> List[List[Int]] {
   }
   let div = if n < PART_SMALL { PART_SMALL_DIV } else { 1 }
   cut_parts(m, rest, div) + cut_parts(m, rt, div)
+}
+
+/// The order the functions take in the text (decision 0403): the layout
+/// file's (m.fn_order) when it names each function once, else the
+/// declared one. Both the parts (part_lists) and a one-part program
+/// (gen.xo) follow it.
+pub fn fn_order_of(m: ssa.Module) -> List[Int] {
+  let n = m.funcs.len()
+  if m.fn_order.len() == n {
+    var seen: Map[Int, Bool] = {}
+    var ok = true
+    for fi in m.fn_order {
+      if fi < 0 || fi >= n || (seen.get(fi) ?? false) {
+        ok = false
+      }
+      seen[fi] = true
+    }
+    if ok {
+      return m.fn_order
+    }
+  }
+  var order: List[Int] = []
+  for fi in 0..n {
+    order.push(fi)
+  }
+  order
 }
 
 /// Group fis cut into parts by contents (PART_MIN, PART_CUT, PART_MAX,
