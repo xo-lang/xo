@@ -4,6 +4,15 @@
 // that starts a process, listens on a socket or runs a program is refused
 // with XO1513 before it runs.
 
+/// Whether this xo is the WASI build (preview1: no processes, decision
+/// 0405). `match target.os` folds, so it is a constant in every build.
+fn on_wasi() -> Bool {
+  match target.os {
+    Wasi => true
+    Linux | Darwin | Windows => false
+  }
+}
+
 /// The command word (or `command --option`) of args that the WASI build
 /// does not offer, "" for one it does. args is xo's command line after any
 /// leading --std= and --wd= options.

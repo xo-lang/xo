@@ -1148,7 +1148,7 @@ fn prune_backend_cache(os: Os, kind: Str, dir: Str, stored: Int) {
   if !backend_prune_allowed(os, dir, p) || !prune_version_ok(os, dir) {
     return
   }
-  if (os.env.get("XO_PRUNE_DETACH") ?? "") == "off" || host_os(os) == "windows" {
+  if (os.env.get("XO_PRUNE_DETACH") ?? "") == "off" || host_os(os) == "windows" || on_wasi() {
     let _s = prune.run(os.fs, os.clock, dir, p)
     return
   }

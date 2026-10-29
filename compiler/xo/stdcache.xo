@@ -73,6 +73,14 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     }
     return Some(p)
   }
+  if on_wasi() {
+    // no process builds std's store here (decision 0405): a release's
+    // prebuilt one above, else the whole program is built
+    if phases {
+      os.stdio.eprintln("cache std off (the WASI build starts no process): the whole program is built")
+    }
+    return None
+  }
   let dir = std_cache_dir(os)
   if dir.is_empty() {
     if phases {
@@ -197,7 +205,7 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phas
     return Some(p)
   }
   let dir = std_cache_dir(os)
-  if dir.is_empty() {
+  if dir.is_empty() || on_wasi() {
     return None
   }
   let key = std_cache_key(os, ctx, ctx.std, tgoos, tgoarch, conc)
