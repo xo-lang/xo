@@ -65,7 +65,8 @@ import (
 // are skipped.
 // 9 (2026-10-29, decision 0412): Go's any is go.Any; a handle has its Go
 // value both ways (XoGoValue, XoFromGo) for go.any and go.Any.as_handle.
-const Version = 9
+// 10 (2026-10-29, decision 0415): generic functions bind as Xo generics.
+const Version = 10
 
 // Binding is one bound Go package.
 type Binding struct {

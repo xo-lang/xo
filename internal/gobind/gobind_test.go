@@ -388,3 +388,106 @@ func TestAnyValues(t *testing.T) {
 		}
 	}
 }
+
+// TestGenericFunctions (decision 0415): a generic Go function is an Xo
+// generic with its constraints mapped (any: none, comparable: Eq,
+// cmp.Ordered: Ord, ~[]E: List[E], ~map[K]V: Map[K, V]); its adapter is a
+// Go generic that instantiates the Go function explicitly; any other
+// constraint stays skipped, and so do Go's slices and maps (the prelude
+// covers them).
+func TestGenericFunctions(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "gen")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/gen\n\ngo 1.21\n",
+		"gen.go": `package gen
+
+import "cmp"
+
+func Index[S ~[]E, E comparable](s S, v E) int {
+	for i := range s {
+		if s[i] == v {
+			return i
+		}
+	}
+	return -1
+}
+
+func Max[T cmp.Ordered](a, b T) T { return max(a, b) }
+
+func Keep[T any](v T) T { return v }
+
+func Zero[T any]() T {
+	var z T
+	return z
+}
+
+func Keys[M ~map[K]V, K comparable, V any](m M) []K {
+	var ks []K
+	for k := range m {
+		ks = append(ks, k)
+	}
+	return ks
+}
+
+func Show[T interface{ String() string }](v T) string { return v.String() }
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/gen v0.0.0\n\nreplace example.com/gen => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/gen", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl, adapter := string(b.Decl), string(b.Adapter)
+	for _, want := range []string{
+		"fn index[E: Eq](s: List[E], v: E) -> Int uses go",
+		"fn max[T: Ord](a: T, b: T) -> T uses go",
+		"fn keep[T](v: T) -> T uses go",
+		"fn zero[T]() -> T uses go",
+		"fn keys[K: Eq, V](m: Map[K, V]) -> List[K] uses go",
+	} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("no %q in the declarations:\n%s", want, decl)
+		}
+	}
+	for _, want := range []string{"[E comparable](tk *Task", ".Ordered](tk *Task", ".Index[[]E, E](", ".Zero[T]()", ".Keys[map[K]V, K, V]("} {
+		if !strings.Contains(adapter, want) {
+			t.Errorf("no %q in the adapter:\n%s", want, adapter)
+		}
+	}
+	skipped := func(b *Binding, name string) string {
+		for k, why := range b.Skipped {
+			if k == name || strings.HasSuffix(k, "."+name) {
+				return why
+			}
+		}
+		return ""
+	}
+	if why := skipped(b, "show"); !strings.Contains(why, "has no Xo form") {
+		t.Errorf("show: skipped %q, want a constraint with no Xo form (skipped: %v)", why, b.Skipped)
+	}
+	sl, sb, _ := bindDecl(t, "slices")
+	if strings.Contains(sl, "fn index[") {
+		t.Errorf("slices.index is bound:\n%s", grep(sl, "fn index["))
+	}
+	if why := skipped(sb, "index"); !strings.Contains(why, "prelude's List and Map") {
+		t.Errorf("slices.index skipped %q, want the prelude pointer", why)
+	}
+}

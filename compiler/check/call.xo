@@ -1221,7 +1221,9 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
     if c.tys[cn].kind != TyKind.Named {
       continue
     }
-    if !c.implements(at, cn, span) {
+    if c.implements(at, cn, span) {
+      c.need_go_comparable(fo, p, at, cn, span)
+    } else {
       let d = c.error("XO0404", span, "`${c.show(at)}` does not implement `${c.show_raw(cn)}`, required by `${text(c.objs[p].name)}` of `${c.display_name(fo)}`")
       let co = c.tys[cn].obj
       if c.objs[co].module == c.prelude {

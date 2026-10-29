@@ -113,6 +113,94 @@ type gen struct {
 	rerunKey string
 	skips    []string // "name: reason" in declaration order
 	stats    Stats
+	// tps: the type parameters of the generic function being bound
+	// (decision 0415), nil otherwise
+	tps map[*types.TypeParam]*tparam
+}
+
+// tparam is a type parameter of a bound generic function (decision 0415):
+// a plain one is a type parameter of the Xo declaration and the adapter
+// with its constraint mapped; a core one (`S ~[]E`, `M ~map[K]V`) is not
+// a parameter in Xo: a value of it is the List or Map of its core type.
+type tparam struct {
+	name    string     // the Go name, also the Xo name of a plain one
+	xoBound string     // the Xo constraint ("" for none)
+	goBound string     // the adapter's constraint
+	core    types.Type // the core type (a *types.Slice or *types.Map), nil for a plain one
+}
+
+// typeParams maps the type parameters of sig (decision 0415): any to no
+// constraint, comparable to Eq, cmp.Ordered to Ord, a core type
+// constraint ~[]E or ~map[K]V to List[E] or Map[K, V]; any other
+// constraint has no Xo form.
+func (g *gen) typeParams(sig *types.Signature) (map[*types.TypeParam]*tparam, []*types.TypeParam, *skipErr) {
+	m := map[*types.TypeParam]*tparam{}
+	var order []*types.TypeParam
+	for i := 0; i < sig.TypeParams().Len(); i++ {
+		tp := sig.TypeParams().At(i)
+		name := tp.Obj().Name()
+		if name == "" || name == "_" || !unicode.IsUpper([]rune(name)[0]) {
+			return nil, nil, skipf(catGeneric, "type parameter %s has no Xo name", name)
+		}
+		c := tp.Constraint()
+		it, _ := c.Underlying().(*types.Interface)
+		t := &tparam{name: name}
+		switch {
+		case it != nil && it.Empty():
+			t.goBound = "any"
+		case types.Identical(c, types.Universe.Lookup("comparable").Type()):
+			t.xoBound, t.goBound = "Eq", "comparable"
+		case isOrdered(c):
+			t.xoBound, t.goBound = "Ord", g.qual(c)
+		case it != nil && it.NumEmbeddeds() == 1 && it.NumExplicitMethods() == 0:
+			u, _ := it.EmbeddedType(0).(*types.Union)
+			if u == nil || u.Len() != 1 || !u.Term(0).Tilde() {
+				return nil, nil, skipf(catGeneric, "type constraint %s has no Xo form", g.display(c))
+			}
+			switch ct := u.Term(0).Type().(type) {
+			case *types.Slice:
+				if _, ok := ct.Elem().(*types.TypeParam); !ok {
+					return nil, nil, skipf(catGeneric, "type constraint %s has no Xo form", g.display(c))
+				}
+				t.core = ct
+			case *types.Map:
+				_, k := ct.Key().(*types.TypeParam)
+				_, v := ct.Elem().(*types.TypeParam)
+				if !k || !v {
+					return nil, nil, skipf(catGeneric, "type constraint %s has no Xo form", g.display(c))
+				}
+				t.core = ct
+			default:
+				return nil, nil, skipf(catGeneric, "type constraint %s has no Xo form", g.display(c))
+			}
+		default:
+			return nil, nil, skipf(catGeneric, "type constraint %s has no Xo form", g.display(c))
+		}
+		m[tp] = t
+		order = append(order, tp)
+	}
+	return m, order, nil
+}
+
+// coreGo is a core type in the adapter's terms: []E, map[K]V.
+func (g *gen) coreGo(t types.Type) string {
+	switch c := t.(type) {
+	case *types.Slice:
+		return "[]" + c.Elem().(*types.TypeParam).Obj().Name()
+	case *types.Map:
+		return "map[" + c.Key().(*types.TypeParam).Obj().Name() + "]" + c.Elem().(*types.TypeParam).Obj().Name()
+	}
+	return g.qual(t)
+}
+
+// isOrdered is cmp.Ordered or golang.org/x/exp/constraints.Ordered.
+func isOrdered(t types.Type) bool {
+	n, ok := types.Unalias(t).(*types.Named)
+	if !ok || n.Obj().Pkg() == nil || n.Obj().Name() != "Ordered" {
+		return false
+	}
+	p := n.Obj().Pkg().Path()
+	return p == "cmp" || p == "golang.org/x/exp/constraints"
 }
 
 var preludeTypes = func() map[string]bool {
@@ -415,7 +503,15 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 	case *types.Chan:
 		return conv{}, skipf(catChan, "channel type %s", g.display(x))
 	case *types.TypeParam:
-		return conv{}, skipf(catGeneric, "type parameter %s", x)
+		tp := g.tps[x]
+		if tp == nil {
+			return conv{}, skipf(catGeneric, "type parameter %s", x)
+		}
+		if tp.core != nil {
+			// S ~[]E is List[E], M ~map[K]V is Map[K, V]
+			return g.mapType(tp.core, depth)
+		}
+		return conv{xo: tp.name, rt: tp.name, gt: tp.name, id: true, toXo: identity, toGo: identity}, nil
 	}
 	return conv{}, skipf(catIface, "Go type %s", g.display(t))
 }
@@ -731,8 +827,19 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 // bindFunc writes the declaration and adapter of one function or method.
 func (g *gen) bindFunc(s fnSpec) *skipErr {
 	sig := s.sig
+	var tpOrder []*types.TypeParam
 	if sig.TypeParams().Len() > 0 {
-		return skipf(catGeneric, "generic function")
+		if p := g.pkg.Path(); p == "slices" || p == "maps" {
+			// owner, 2026-10-29 (decision 0415): the prelude's List and
+			// Map methods cover them
+			return skipf(catGeneric, "generic function of Go's %s: use the prelude's List and Map methods (decision 0415)", p)
+		}
+		tps, order, err := g.typeParams(sig)
+		if err != nil {
+			return err
+		}
+		g.tps, tpOrder = tps, order
+		defer func() { g.tps = nil }()
 	}
 	used := map[string]bool{}
 	recvName := "h"
@@ -817,6 +924,10 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		hpkgs = append(hpkgs, c.hpkgs...)
 	}
 	mode := g.replayMode(s, fx, hpkgs)
+	if len(tpOrder) > 0 && mode == replayValue {
+		// a type argument may be a handle the signature cannot show
+		mode = replayHandle
+	}
 	// result types and the Xo value of the results r0..rn
 	var xoRes, rtRes, val string
 	var checks []string
@@ -863,8 +974,27 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		fmt.Fprintf(&d, "(%s: %s) ", recvName, s.recv.xo)
 	}
 	d.WriteString(s.xoName)
+	var dtps, gtps, targs []string
+	for _, tp := range tpOrder {
+		t := g.tps[tp]
+		switch {
+		case t.core != nil:
+			targs = append(targs, g.coreGo(t.core))
+		case t.xoBound != "":
+			dtps = append(dtps, t.name+": "+t.xoBound)
+		default:
+			dtps = append(dtps, t.name)
+		}
+		if t.core == nil {
+			gtps = append(gtps, t.name+" "+t.goBound)
+			targs = append(targs, t.name)
+		}
+	}
 	if fx {
-		d.WriteString("[fx: Effects]")
+		dtps = append(dtps, "fx: Effects")
+	}
+	if len(dtps) > 0 {
+		d.WriteString("[" + strings.Join(dtps, ", ") + "]")
 	}
 	d.WriteString("(" + strings.Join(xps, ", ") + ")")
 	if xoRes != "" {
@@ -891,7 +1021,11 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	if s.recv != nil {
 		fmt.Fprintf(&a, "func (h %s) M_%s(%s)%s {\n", s.recv.goName, s.xoName, params, goRet)
 	} else {
-		fmt.Fprintf(&a, "func %s%s(%s)%s {\n", g.b.Prefix, s.xoName, params, goRet)
+		tpl := ""
+		if len(gtps) > 0 {
+			tpl = "[" + strings.Join(gtps, ", ") + "]"
+		}
+		fmt.Fprintf(&a, "func %s%s%s(%s)%s {\n", g.b.Prefix, s.xoName, tpl, params, goRet)
 	}
 	// record and replay (decision 0093, std/rt gofx.go)
 	qual := g.b.Name + "." + s.xoName
@@ -920,6 +1054,10 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	}
 	fmt.Fprintf(&a, "\tGoEnter(tk)\n\tdefer GoExit(tk, %q)\n", s.display)
 	call := s.goCall + "(" + strings.Join(args, ", ") + ")"
+	if len(targs) > 0 {
+		// explicit, so a type parameter only a result names is known
+		call = s.goCall + "[" + strings.Join(targs, ", ") + "](" + strings.Join(args, ", ") + ")"
+	}
 	var lhs []string
 	for i := 0; i < nv; i++ {
 		lhs = append(lhs, fmt.Sprintf("r%d", i))

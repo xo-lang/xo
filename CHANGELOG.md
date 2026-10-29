@@ -13,6 +13,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/backoff: exponential backoff with jitter and `retry`, cenkalti/
   backoff v4's ExponentialBackOff and Retry, over the Clock and Rand it
   is given; `retryable` decides which errors are retried.
+- `use go` binds generic Go functions (decision 0415, stage 1): a Go
+  generic is an Xo generic with its constraints mapped (`any`: none,
+  `comparable`: `Eq`, `cmp.Ordered`: `Ord`, `~[]E`: `List[E]`,
+  `~map[K]V`: `Map[K, V]`), instantiated by Go at build; an Xo struct or
+  List passes through an `any` type parameter untouched; a type argument
+  Go must compare with no comparable Go value is `XO1106`. Go's `slices`
+  and `maps` stay unbound (the prelude covers them). Generic types are
+  stage 2. Bindings an earlier xo cached are made again (binding
+  format 10).
 - std/x509: creating certificates and requests and parsing CRLs, as Go's
   crypto/x509: `create_certificate` from a `Template` (self-signed or
   issued by a parent), `self_signed(r, hosts, now)` for development

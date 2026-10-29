@@ -1730,7 +1730,14 @@ fn main(os: Os) ! {
   `as_int()`, `as_str()`, ... read one back (None on another Go type),
   and a Go function that fills a value through `any` (`rows.scan`,
   `json.unmarshal`) takes `go.out[T]()`'s `.any()`, read with `.get()`
-  after the call; a `context.Context` parameter is
+  after the call; a generic Go function is an Xo generic (decision 0415):
+  `any` is no constraint, `comparable` is `Eq`, `cmp.Ordered` is `Ord`, a
+  `~[]E` or `~map[K]V` type parameter is `List[E]` or `Map[K, V]`, other
+  constraints are skipped, and Go's `slices` and `maps` are not bound
+  (the prelude's List and Map methods cover them); a type argument for
+  `comparable` or `cmp.Ordered` needs a Go value Go can compare or order,
+  else `XO1106`, while one for `any` may be any Xo type, which Go holds
+  without looking inside; a `context.Context` parameter is
   supplied from the current task (deadline and cancellation); a panic becomes
   a fault.
 - An Xo function passed to Go as a callback that Go calls during the Go call,

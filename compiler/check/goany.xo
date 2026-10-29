@@ -78,3 +78,59 @@ fn (var c: Checker) go_any_list(fo: Int, e: Expr, pt: Int) -> Bool {
   }
   false
 }
+
+/// Whether a value of type t has a Go value Go can compare (`comparable`,
+/// decision 0415): the numbers, Bool, Str, Bytes, Duration, Time, a `use
+/// go` handle, go.Any, and an Option of those; ordered (`cmp.Ordered`)
+/// when it is a number, Str, Bytes, Duration or Time.
+fn (c: Checker) has_go_comparable(t0: Int, ordered: Bool) -> Bool {
+  let t = c.resolve(t0)
+  if c.is_bad(t) || c.is_numeric(t) {
+    return true
+  }
+  let o = c.named_obj(t)
+  if o < 0 {
+    return false
+  }
+  if c.objs[o].module == c.prelude {
+    let n = text(c.objs[o].name)
+    if n is "Str" | "Bytes" | "Duration" | "Time" {
+      return true
+    }
+    if ordered {
+      return false
+    }
+    if n == "Bool" {
+      return true
+    }
+    if n == "Option" {
+      return c.has_go_comparable(c.tys[t].args[0], false)
+    }
+    return false
+  }
+  !ordered && (c.is_go_any(t) || c.objs[o].module >= 0 && !c.mods[c.objs[o].module].go_path.is_empty())
+}
+
+/// XO1106 for a type argument of a Go binding's generic function fo whose
+/// constraint cn (Eq, Hash or Ord) needs a value Go can compare or order
+/// (decision 0415).
+fn (var c: Checker) need_go_comparable(fo: Int, p: Int, at: Int, cn: Int, sp: Span) {
+  if fo < 0 || c.objs[fo].module < 0 || c.mods[c.objs[fo].module].go_path.is_empty() {
+    return
+  }
+  let co = c.tys[cn].obj
+  if c.objs[co].module != c.prelude {
+    return
+  }
+  let cname = text(c.objs[co].name)
+  if !(cname is "Eq" | "Hash" | "Ord") {
+    return
+  }
+  let ordered = cname == "Ord"
+  if c.has_go_comparable(at, ordered) {
+    return
+  }
+  let what = if ordered { "ordered" } else { "comparable" }
+  let d = c.error("XO1106", sp, "type argument `${text(c.objs[p].name)}` of `${c.display_name(fo)}`: `${c.show(at)}` has no ${what} Go value")
+  c.note(d, "a type argument a Go generic compares is a number, Bool, Str, Bytes, Duration, Time, a `use go` handle or a go.Any (ordered: a number, Str, Bytes, Duration or Time); an Xo struct, enum, List or Map passes only where the Go constraint is `any` (decision 0415)")
+}

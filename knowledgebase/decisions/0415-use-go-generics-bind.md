@@ -136,3 +136,22 @@ constraints, monomorphized, type arguments inferred at the call or given
    skipped list names the prelude's List or Map method instead.
 3. Is instantiation at build time (step 3) acceptable for `xo check`
    speed, given check validates through the mapping table only? **Yes**, at build time.
+
+## As built, stage 1: generic functions (Lang 1, 2026-10-29)
+
+- Steps 2 and 3 are one step: the adapter is itself a Go generic that forwards the Xo declaration's type
+  parameters (`func Go_P_index[E comparable](tk *Task, a0 List[E], a1 E) int64`) and instantiates the Go
+  function explicitly (`p.Index[[]E, E](GoSliceCopy(a0), a1)`). The Go backend already calls a bodiless
+  generic as `Prefix_fn[T](...)` with T's Go representation, so Go's compiler makes each instance at build:
+  no instance list, no second binder run, and the binding stays per package. A value of a type parameter
+  crosses as Xo's representation (identity), which is what 4a asks for under `any` and is Go's own value for
+  the comparable and ordered types the checker admits.
+- `comparable` maps to `Eq` alone (`T: Hash + Eq` is not Xo syntax, XO0177); Map has no key constraint in
+  its declaration.
+- The checker's call constraint loop (compiler/check call.xo, goany.xo need_go_comparable) reports XO1106
+  for an `Eq` or `Ord` type argument of a Go binding's generic whose Go value Go cannot compare or order
+  (a List, Map, Xo struct or enum, or an ordered Bool), before Go's build would fail.
+- A generic call is re-executed in a replay (decision 0093's handle mode), since a type argument may be a
+  handle the signature cannot show.
+- Generic types (`lru.Cache[K, V]`, methods of generic receivers, iterators of generic types) are stage 2.
+- Binding format 10.
