@@ -33,6 +33,7 @@ use native/llrt/num
 use native/llrt/inlstr
 use native/llrt/obj
 use native/llrt/poll
+use native/llrt/sigsub
 use native/llrt/prof
 use native/llrt/pool
 use native/llrt/process
@@ -562,9 +563,16 @@ fn scope_deadline(s: Int, d: Int) { tasks.scope_deadline(s, d) }
 
 fn scope_timed_out(s: Int) -> Int { if tasks.scope_timed_out(s) { 1 } else { 0 } }
 
-/// The SIGINT and SIGTERM handler that entry.xo installs (sigaction's
-/// handler: the signal number, unused).
-fn on_signal(sig: Int) { poll.on_signal() }
+/// The handler entry.xo installs for SIGINT and SIGTERM, and sigsub.xo
+/// for a subscribed signal (sigaction's handler: the signal number).
+fn on_signal(sig: Int) { poll.on_signal(sig) }
+
+/// Hands Signal index i to its subscribers (sigsub.xo, decision 0407),
+/// on the poller's thread.
+fn sig_deliver(i: Int, _b: Int) -> Int {
+  sigsub.deliver(i)
+  0
+}
 
 /// SIGQUIT's handler (decision 0251: `xo dump`).
 fn on_quit(sig: Int) { poll.on_quit() }

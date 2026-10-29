@@ -100,5 +100,8 @@ var (
 	_ func(*Testing_FakeProc, *Task, Duration)                                                      = (*Testing_FakeProc).M_signal_after
 	_ func(*Testing_FakeProc, *Task, string, ProcOutput)                                            = (*Testing_FakeProc).M_on_run
 	_ func(*Testing_FakeProc, *Task, int64, string) Result[Unit, ProcErr]                           = (*Testing_FakeProc).M_kill
+	_ func(*Testing_FakeProc, *Task, List[Signal]) *Chan[Signal]                                    = (*Testing_FakeProc).M_notify
+	_ func(*Testing_FakeProc, *Task, *Chan[Signal])                                                 = (*Testing_FakeProc).M_stop_notify
+	_ func(*Testing_FakeProc, *Task)                                                                = (*Testing_FakeProc).M_request_stop
 	_ func(*Testing_FakeProc, *Task) List[string]                                                   = (*Testing_FakeProc).M_killed
 )

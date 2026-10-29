@@ -1,0 +1,146 @@
+// Proc.notify's subscriptions (decision 0407): a table of (channel,
+// signal mask) entries in the poller's ev record (poll.xo EV_SUBTAB, its
+// length EV_SUBN, under the lock word EV_SUBMU), the mask of every
+// subscribed signal (EV_SUBS, which the handlers read), and the
+// handlers installed for the signals the runtime does not catch itself.
+// The poller hands each pending signal to deliver on its own thread.
+use native/llrt/chan
+use native/llrt/linux
+use native/llrt/pool
+use native/llrt/poll
+use native/llrt/rc
+use native/llrt/tasks
+use native/rt
+use native/sys_darwin
+
+/// An entry: the channel (counted once by the table) and its mask.
+const ENT = 16
+const SA_RESTART_LINUX = 268435456
+const SA_RESTART_DARWIN = 2
+const SIG_DFL = 0
+
+fn ld(a: Int, off: Int) -> Int { rt.mem_load(a, off, 8) }
+fn st(a: Int, off: Int, v: Int) { rt.mem_store(a, off, v, 8) }
+
+/// Installs the handler h (or SIG_DFL) for Signal index i.
+fn install(i: Int, h: Int) {
+  let sig = poll.sig_number(i)
+  match target.os {
+    TargetOs.Linux => {
+      let _r = linux.sigaction(sig, h, if h == SIG_DFL { 0 } else { SA_RESTART_LINUX })
+    }
+    TargetOs.Darwin => {
+      let sa = rt.heap_large(16)
+      rt.mem_store(sa, 0, h, 8)
+      rt.mem_store(sa, 8, 0, 4)
+      rt.mem_store(sa, 12, if h == SIG_DFL { 0 } else { SA_RESTART_DARWIN }, 4)
+      let _r = sys_darwin.sigaction(sig, sa, 0)
+      rt.heap_release(sa - 8)
+    }
+    _ => {}
+  }
+}
+
+/// Whether the runtime catches Signal index i itself (INT and TERM for
+/// the shutdown, QUIT for the dump): its handler stays installed.
+fn caught(i: Int) -> Bool { i == poll.SIG_INT || i == poll.SIG_TERM || i == poll.SIG_QUIT }
+
+/// The mask of every entry (under the lock).
+fn mask_all(e: Int) -> Int {
+  let tab = ld(e, poll.EV_SUBTAB)
+  var m = 0
+  for k in 0..ld(e, poll.EV_SUBN) {
+    m = m | ld(tab, k * ENT + 8)
+  }
+  m
+}
+
+/// Sets the mask the handlers read to the table's and installs or
+/// removes the handlers of the signals whose subscription began or ended.
+fn apply(e: Int, before: Int, after: Int) {
+  rt.slot_store(e + poll.EV_SUBS, 0, after, 3)
+  for i in 0..7 {
+    let was = ((before >> i) & 1) != 0
+    let now = ((after >> i) & 1) != 0
+    if was == now || caught(i) {
+      continue
+    }
+    install(i, if now { rt.fn_addr("on_signal") } else { SIG_DFL })
+  }
+}
+
+/// Subscribes the channel at c to the signals of mask.
+pub fn subscribe(c: Int, mask: Int) {
+  let e = poll.ev_rec()
+  if e == 0 {
+    return
+  }
+  pool.lock(e + poll.EV_SUBMU)
+  let before = mask_all(e)
+  let n = ld(e, poll.EV_SUBN)
+  let old = ld(e, poll.EV_SUBTAB)
+  let tab = rt.heap_large((n + 1) * ENT)
+  if n > 0 {
+    rt.mem_copy(tab, old, n * ENT)
+    rt.heap_release(old - 8)
+  }
+  rc.inc(c)
+  // fed from outside the program's tasks: a receive on it is not a
+  // deadlock (as task.stopping()'s channel; gotchas/ext-channel-deadlock.md)
+  rt.mem_store(c, chan.CH_EXT, 1, 4)
+  st(tab, n * ENT, c)
+  st(tab, n * ENT + 8, mask)
+  st(e, poll.EV_SUBTAB, tab)
+  st(e, poll.EV_SUBN, n + 1)
+  apply(e, before, mask_all(e))
+  pool.unlock(e + poll.EV_SUBMU)
+}
+
+/// Ends the subscription of the channel at c, if any: whether it had one.
+pub fn unsubscribe(c: Int) -> Bool {
+  let e = poll.ev_rec()
+  if e == 0 {
+    return false
+  }
+  pool.lock(e + poll.EV_SUBMU)
+  let before = mask_all(e)
+  let n = ld(e, poll.EV_SUBN)
+  let tab = ld(e, poll.EV_SUBTAB)
+  var found = -1
+  for k in 0..n {
+    if ld(tab, k * ENT) == c {
+      found = k
+      break
+    }
+  }
+  if found < 0 {
+    pool.unlock(e + poll.EV_SUBMU)
+    return false
+  }
+  if found < n - 1 {
+    rt.mem_copy(tab + found * ENT, tab + (found + 1) * ENT, (n - 1 - found) * ENT)
+  }
+  st(e, poll.EV_SUBN, n - 1)
+  apply(e, before, mask_all(e))
+  pool.unlock(e + poll.EV_SUBMU)
+  tasks.h_release(c)
+  true
+}
+
+/// Sends Signal index i to every channel subscribed to it, dropping it
+/// for a channel that is full (Go's signal.Notify), on the poller's
+/// thread.
+pub fn deliver(i: Int) {
+  let e = poll.ev_rec()
+  pool.lock(e + poll.EV_SUBMU)
+  let tab = ld(e, poll.EV_SUBTAB)
+  for k in 0..ld(e, poll.EV_SUBN) {
+    if ((ld(tab, k * ENT + 8) >> i) & 1) != 0 {
+      let c = ld(tab, k * ENT)
+      if chan.is_word(c) {
+        let _s = chan.try_send_w(c, i)
+      }
+    }
+  }
+  pool.unlock(e + poll.EV_SUBMU)
+}

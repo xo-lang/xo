@@ -2429,6 +2429,11 @@ fn reader(os: Os, queue: Chan[Str]) -> () ! IoErr {
 }
 ```
 
+A program can take SIGINT and SIGTERM over with `os.proc.notify` (std.md
+3.7, decision 0407): while it is subscribed, that signal goes to its
+channel instead of starting phase 1, and `os.proc.request_stop()` starts
+phase 1 when the program chooses.
+
 In tests, `os.proc.signal_after(d)` delivers the first signal to a program run
 by `testing.run_main`; `os.proc.signal_after(d)` called again delivers the
 next one.

@@ -44,6 +44,8 @@ use native/llrt/rand
 use native/llrt/raw
 use native/llrt/report
 use native/llrt/scan
+use native/llrt/sigsub
+use native/llrt/stop
 use native/llrt/selects
 use native/llrt/show
 use native/llrt/stdin as stdinrt
@@ -3493,6 +3495,47 @@ fn cap_admits(lists: Str, name: Str) -> Bool {
 /// Proc.kill (std.md 3.7, decision 0190): std/rt prockill.go. An
 /// attenuated Proc must list "kill"; std/native/llrt/proc.xo sends the
 /// signal, or records it for a test's FakeProc.
+/// Proc.notify (decision 0407): the channel, holding one of each listed
+/// signal, subscribed in llrt/sigsub.xo; the signals' bits by the
+/// prelude's order of Signal.
+fn proc_notify(p: Proc, signals: List[Signal]) -> Chan[Signal] uses proc {
+  var mask = 0
+  for s in signals {
+    mask = mask | (1 << signal_index(s))
+  }
+  let c = Chan[Signal].new(if signals.is_empty() { 1 } else { signals.len() })
+  if mask != 0 {
+    sigsub.subscribe(rt.obj_addr(c), mask)
+  }
+  c
+}
+
+fn signal_index(s: Signal) -> Int {
+  match s {
+    Signal.Hangup => 0
+    Signal.Interrupt => 1
+    Signal.Quit => 2
+    Signal.Terminate => 3
+    Signal.User1 => 4
+    Signal.User2 => 5
+    Signal.WindowChange => 6
+  }
+}
+
+/// Proc.stop_notify (decision 0407): the subscription ended, c closed.
+fn proc_stop_notify(p: Proc, c: Chan[Signal]) uses proc {
+  if sigsub.unsubscribe(rt.obj_addr(c)) {
+    c.close()
+  }
+}
+
+/// Proc.request_stop (decision 0407): core 7.5's phase 1 once.
+fn proc_request_stop(p: Proc) uses proc {
+  if !stop.requested() {
+    stop.signal()
+  }
+}
+
 fn proc_kill(p: Proc, pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc {
   if !cap_admits(rt.proc_lists(p), "kill") {
     return Err(ProcErr.Denied("kill"))

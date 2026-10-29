@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-10-29: feature: Proc.notify, stop_notify and request_stop
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md S2): a gateway's
+  reload on SIGHUP
+- Go reference: os/signal Notify and Stop (a full channel drops the
+  signal; a subscribed SIGINT loses its default), Windows console events
+  as SIGINT/SIGTERM; decision 0407
+- Test: internal/llvm/testdata/golden/signal_notify (native and Go)
+
+`os.proc.notify([Signal.Hangup, ...])` delivers Hangup, Interrupt, Quit,
+Terminate, User1, User2 and WindowChange to a channel; a subscribed Interrupt
+or Terminate no longer starts the shutdown until `os.proc.request_stop()`;
+`stop_notify` restores the defaults.
 ## 2026-10-29: feature: Float.to_fixed, to_exp and to_general
 
 - Kind: feature

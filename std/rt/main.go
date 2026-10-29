@@ -222,8 +222,17 @@ func RunMain(main func(*Task, Os) Result[Unit, IError]) (code int) {
 		// a replay takes its signals from the trace
 		sig := make(chan os.Signal, 3)
 		signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
+		requestStop = func() {
+			if !st.requested.Load() {
+				st.signal()
+			}
+		}
 		go func() {
-			for range sig {
+			for s := range sig {
+				if sigTaken(s) {
+					// a Proc.notify subscription takes it (decision 0407)
+					continue
+				}
 				if rs := realSched; rs != nil && rs.rec != nil {
 					rs.post(schedEv{tok: func() string { return "g" }, run: st.signal})
 				} else {

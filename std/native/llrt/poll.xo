@@ -233,7 +233,7 @@ pub fn pd_ready(pd: Int, mode: Int) {
 const W_EV = 43
 /// Its size: the words below, Windows', then the network poll's of
 /// decision 0324.
-const EV_SIZE = 152
+const EV_SIZE = 240
 
 /// The event loop's record's words: the start's state
 /// (0 not started, 1 starting, 2 running), the lock word, the self
@@ -272,6 +272,19 @@ const EV_LAST = 120
 const EV_PSLEEP = 128
 const EV_BUF = 136
 const EV_ON = 144
+/// Proc.notify (decision 0407): the mask of subscribed signals (bit i:
+/// Signal i in the prelude's order: Hangup, Interrupt, Quit, Terminate,
+/// User1, User2, WindowChange), each signal's count not yet delivered (7
+/// words), and the subscription table's lock word (sigsub.xo's array
+/// sits in the next two words: its address and length).
+pub const EV_SUBS = 152
+pub const EV_PENDN = 160
+pub const EV_SUBMU = 216
+pub const EV_SUBTAB = 224
+pub const EV_SUBN = 232
+
+/// The ev record's address (sigsub.xo).
+pub fn ev_rec() -> Int { ev() }
 const TOK_FREE = 0
 const TOK_WORKER = 1
 const TOK_BLOCKED = 2
@@ -832,9 +845,17 @@ fn wait(c: Int) {
 /// signal safe: no allocation, lock, or scratch buffer (the byte written
 /// is a literal's), and errno kept (libSystem's write may set it; Linux's
 /// is a system call).
-pub fn on_signal() {
+pub fn on_signal(sig: Int) {
   let e = ev()
-  let _n = rt.slot_add(addw(e, EV_SIGS), 0, 1, ACQ_REL)
+  let i = sig_index(sig)
+  if i >= 0 && ((rt.slot_load(addw(e, EV_SUBS), 0, ACQUIRE) >> i) & 1) != 0 {
+    // a subscription takes it (decision 0407): delivered by the poller
+    let _p = rt.slot_add(addw(e, EV_PENDN + 8 * i), 0, 1, ACQ_REL)
+  } else if i == SIG_QUIT {
+    let _q = rt.slot_add(addw(e, EV_QUITS), 0, 1, ACQ_REL)
+  } else {
+    let _n = rt.slot_add(addw(e, EV_SIGS), 0, 1, ACQ_REL)
+  }
   let b = "s"
   let w = s32(rt.mem_load(e, EV_PIPE_W, 4))
   match target.os {
@@ -851,12 +872,59 @@ pub fn on_signal() {
   }
 }
 
+/// Signal indexes (the prelude's Signal enum, decision 0407).
+pub const SIG_HUP = 0
+pub const SIG_INT = 1
+pub const SIG_QUIT = 2
+pub const SIG_TERM = 3
+pub const SIG_USR1 = 4
+pub const SIG_USR2 = 5
+pub const SIG_WINCH = 6
+
+/// The Signal index of the system's signal number sig, or -1.
+pub fn sig_index(sig: Int) -> Int {
+  let s = sig & 4294967295
+  if s == 1 { return SIG_HUP }
+  if s == 2 { return SIG_INT }
+  if s == 3 { return SIG_QUIT }
+  if s == 15 { return SIG_TERM }
+  if s == 28 { return SIG_WINCH }
+  match target.os {
+    TargetOs.Darwin => {
+      if s == 30 { return SIG_USR1 }
+      if s == 31 { return SIG_USR2 }
+    }
+    _ => {
+      if s == 10 { return SIG_USR1 }
+      if s == 12 { return SIG_USR2 }
+    }
+  }
+  -1
+}
+
+/// The system's signal number of Signal index i (sig_index's inverse).
+pub fn sig_number(i: Int) -> Int {
+  match i {
+    0 => 1
+    1 => 2
+    2 => 3
+    3 => 15
+    4 => if target.os is TargetOs.Darwin { 30 } else { 10 }
+    5 => if target.os is TargetOs.Darwin { 31 } else { 12 }
+    _ => 28
+  }
+}
+
 /// SIGQUIT's handler (cabi.xo on_quit, decision 0251): counts it and
 /// wakes the poller, whose thread writes the task tree (`xo dump`); async
 /// signal safe as on_signal.
 pub fn on_quit() {
   let e = ev()
-  let _n = rt.slot_add(addw(e, EV_QUITS), 0, 1, ACQ_REL)
+  if ((rt.slot_load(addw(e, EV_SUBS), 0, ACQUIRE) >> SIG_QUIT) & 1) != 0 {
+    let _p = rt.slot_add(addw(e, EV_PENDN + 8 * SIG_QUIT), 0, 1, ACQ_REL)
+  } else {
+    let _n = rt.slot_add(addw(e, EV_QUITS), 0, 1, ACQ_REL)
+  }
   let b = "q"
   let w = s32(rt.mem_load(e, EV_PIPE_W, 4))
   match target.os {
@@ -873,6 +941,17 @@ pub fn on_quit() {
   }
 }
 
+/// Hands each subscribed signal that arrived to sigsub.xo's subscribers
+/// (decision 0407), on the poller's thread (cabi.xo sig_deliver: sigsub
+/// sits above this module).
+fn deliver_pending(e: Int) {
+  for i in 0..7 {
+    if rt.slot_swap(addw(e, EV_PENDN + 8 * i), 0, 0, ACQ_REL) > 0 {
+      let _d = rt.call_c2(rt.fn_addr("sig_deliver"), i, 0)
+    }
+  }
+}
+
 /// Windows' console handler (cabi.xo on_console, which entry.xo installs
 /// with SetConsoleCtrlHandler; was xo_rt.c's): Ctrl-C, Ctrl-Break,
 /// closing the console, and shutdown (CTRL_C_EVENT 0, CTRL_BREAK_EVENT
@@ -884,11 +963,18 @@ pub fn on_quit() {
 pub fn on_console(kind0: Int) -> Int {
   // a DWORD: the register's high half is not defined
   let kind = kind0 & 4294967295
-  if kind != 0 && kind != 1 && kind != 2 && kind != 6 {
+  if kind != 0 && kind != 1 && kind != 2 && kind != 5 && kind != 6 {
     return 0
   }
   let e = ev()
-  let _n = rt.slot_add(addw(e, EV_SIGS), 0, 1, ACQ_REL)
+  // Go's mapping (decision 0407): Ctrl-C and Ctrl-Break are Interrupt;
+  // the console's close, a logoff (5) and a shutdown are Terminate
+  let i = if kind <= 1 { SIG_INT } else { SIG_TERM }
+  if ((rt.slot_load(addw(e, EV_SUBS), 0, ACQUIRE) >> i) & 1) != 0 {
+    let _p = rt.slot_add(addw(e, EV_PENDN + 8 * i), 0, 1, ACQ_REL)
+  } else {
+    let _n = rt.slot_add(addw(e, EV_SIGS), 0, 1, ACQ_REL)
+  }
   match target.os {
     TargetOs.Windows => {
       if rt.mem_load(e, EV_AFD, 8) != 0 {
@@ -1252,6 +1338,7 @@ fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
         stop.signal()
         k = subw(k, 1)
       }
+      deliver_pending(ev())
       // SIGQUIT: the task tree, on this thread (cabi.xo dump_now)
       if rt.slot_swap(addw(sigs, EV_QUITS - EV_SIGS), 0, 0, ACQ_REL) > 0 {
         let _d = rt.call_c2(rt.fn_addr("dump_now"), 0, 0)
@@ -1886,5 +1973,6 @@ fn poll_main_wsa(e: Int) {
       stop.signal()
       sg = subw(sg, 1)
     }
+    deliver_pending(e)
   }
 }

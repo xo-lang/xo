@@ -1,7 +1,13 @@
 # 0407: S2: subscribing to signals beyond INT and TERM (Proc.notify)
 
-Status: Accepted (lead, 2026-10-29: 0.35 std item S2; Xo Lang 2). Not yet
-implemented.
+Status: Accepted (lead, 2026-10-29: 0.35 std item S2; Xo Lang 2).
+Implemented 2026-10-29 (Signal in the prelude, not proc.Signal: the
+prelude's Proc names it). Natively: poll.xo's handlers route a subscribed
+signal to a per-signal pending count (EV_PENDN) that the poller hands to
+llrt/sigsub.xo's table (a word channel's try_send); handlers for Hangup,
+User1, User2 and WindowChange are installed at the first subscription and
+SIG_DFL restored at the last. Go: signal.Notify per subscription, and
+main.go's INT/TERM watcher skips a subscribed signal.
 
 ## Context
 

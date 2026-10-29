@@ -1009,7 +1009,23 @@ interface Proc {
   /// CONT, STOP) to the process pid; an attenuated Proc must list "kill"
   /// (std.md 3.7, decision 0190).
   fn kill(self, pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc
+  /// A channel that receives each listed signal as it arrives (Go's
+  /// signal.Notify): one pending signal of each kind, a repeat dropped.
+  /// While any subscription lists Interrupt or Terminate, that signal no
+  /// longer starts the shutdown (core 7.5); stop_notify gives it back
+  /// (std.md 3.7, decision 0407).
+  fn notify(self, signals: List[Signal]) -> Chan[Signal] uses proc
+  /// Ends c's subscription and closes c.
+  fn stop_notify(self, c: Chan[Signal]) uses proc
+  /// Starts core 7.5's phase 1 as the first signal does: the stop state
+  /// set, `task.stopping()` closed, servers draining.
+  fn request_stop(self) uses proc
 }
+
+/// A signal a program can subscribe to (Proc.notify, decision 0407).
+/// Windows delivers Interrupt (Ctrl-C, Ctrl-Break) and Terminate (the
+/// console's close, a logoff, a shutdown) only.
+enum Signal { Hangup, Interrupt, Quit, Terminate, User1, User2, WindowChange }
 
 /// A command that has not run (std.md 3.8, decision 0161). A value: each
 /// builder method returns a changed copy.

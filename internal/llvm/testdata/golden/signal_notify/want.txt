@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+got Hangup (sent Hangup)
+got User1 (sent User1)
+got Interrupt (sent Interrupt)
+late signal received
+stop requested after Interrupt: false
+stop requested after request_stop: true
+closed: true
+--- stderr

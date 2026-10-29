@@ -1,0 +1,45 @@
+// Proc.notify (decision 0407): a program subscribes to Hangup, User1 and
+// Interrupt and sends them to itself through a child (`kill -SIG
+// $PPID`): each arrives on the channel, and Interrupt does not start the
+// shutdown while subscribed; request_stop then does, as Go's graceful
+// pattern; stop_notify closes the channel. A signal that comes while
+// main waits on nothing else is not a deadlock.
+use std/task
+
+fn name_of(s: Signal) -> Str {
+  match s {
+    Signal.Hangup => "Hangup"
+    Signal.User1 => "User1"
+    Signal.Interrupt => "Interrupt"
+    _ => "other"
+  }
+}
+
+fn send(os: Os, sig: Str) {
+  os.proc.run("sh", ["-c", "kill -${sig} $PPID"]).or_fault("kill")
+}
+
+fn main(os: Os) {
+  let sigs = os.proc.notify([Signal.Hangup, Signal.User1, Signal.Interrupt])
+  for (name, want) in [("HUP", "Hangup"), ("USR1", "User1"), ("INT", "Interrupt")] {
+    send(os, name)
+    match sigs.recv() {
+      Some(s) => os.stdio.println("got ${name_of(s)} (sent ${want})")
+      None => os.stdio.println("closed?")
+    }
+  }
+  // main waits on the channel alone while a detached child sends the
+  // signal later: a wait on a signal channel is not a deadlock
+  os.proc.run("sh", ["-c", "(sleep 0.5; kill -USR2 $PPID) >/dev/null 2>&1 &"]).or_fault("spawn")
+  let late = os.proc.notify([Signal.User2])
+  match late.recv() {
+    Some(_) => os.stdio.println("late signal received")
+    None => os.stdio.println("late: closed?")
+  }
+  os.proc.stop_notify(late)
+  os.stdio.println("stop requested after Interrupt: ${task.stop_requested()}")
+  os.proc.request_stop()
+  os.stdio.println("stop requested after request_stop: ${task.stop_requested()}")
+  os.proc.stop_notify(sigs)
+  os.stdio.println("closed: ${sigs.recv() is None}")
+}

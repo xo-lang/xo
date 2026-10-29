@@ -158,6 +158,9 @@ fn (p: FakeProc) signal_after(d: Duration)
 fn (p: FakeProc) on_run(cmd: Str, out: ProcOutput)
 /// Records the signal; nothing is sent (decision 0190).
 fn (p: FakeProc) kill(pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc
+fn (p: FakeProc) notify(signals: List[Signal]) -> Chan[Signal] uses proc   // decision 0407
+fn (p: FakeProc) stop_notify(c: Chan[Signal]) uses proc
+fn (p: FakeProc) request_stop() uses proc
 /// The signals kill recorded, as "NAME PID", oldest first.
 fn (p: FakeProc) killed() -> List[Str]
 

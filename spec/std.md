@@ -1053,7 +1053,45 @@ fn (p: Proc) only(cmds: List[Str]) -> Proc   // attenuation (below)
 fn (p: Proc) cmd(name: Str, args: List[Str] = []) -> Cmd       // a command, not started (3.8)
 fn (p: Proc) pipeline(cmds: List[Cmd]) -> ProcOutput ! ProcErr // (3.8)
 fn (p: Proc) kill(pid: Int, signal: Str = "TERM") -> () ! ProcErr  // signals another process
+fn (p: Proc) notify(signals: List[Signal]) -> Chan[Signal]    // decision 0407
+fn (p: Proc) stop_notify(c: Chan[Signal])
+fn (p: Proc) request_stop()
+enum Signal { Hangup, Interrupt, Quit, Terminate, User1, User2, WindowChange }
 ```
+
+**Signals** (decision 0407, Go's `os/signal`): `notify(signals)` returns a
+channel that receives each listed signal as it arrives; it holds one
+pending signal of each listed kind and drops a repeat while one is
+pending, as Go drops a send to a full channel. Several subscriptions to
+one signal each receive it. While any subscription lists `Interrupt`
+(or `Terminate`), that signal no longer starts the shutdown of core 7.5:
+the program decides, and other signals keep their default (a `Hangup`
+subscription leaves Ctrl-C alone). A subscribed `Quit` replaces the task
+dump. `stop_notify(c)` ends c's subscription, closes c, and gives each
+signal with no subscription left its default back (Hangup, User1 and
+User2 end the program then, as they do unsubscribed). `request_stop()`
+starts core 7.5's phase 1 as the first signal does, so a program that
+took over Interrupt shuts down the same way:
+
+```xo
+let sigs = os.proc.notify([Signal.Interrupt, Signal.Terminate, Signal.Hangup])
+loop: while true {
+  match sigs.recv() {
+    Some(Signal.Hangup) => reload(os)
+    Some(_) => {
+      log.info("shutting down")
+      os.proc.request_stop()       // servers stop accepting and drain
+      break loop
+    }
+    None => break loop
+  }
+}
+```
+
+On Windows Ctrl-C and Ctrl-Break are `Interrupt`, and the console's close,
+a logoff and a system shutdown are `Terminate` (Go's mapping); the other
+kinds are accepted and never arrive. A test's FakeProc gives a channel
+that receives nothing.
 
 `kill` (decision 0190) sends the named signal to the process `pid`: one
 of `HUP`, `INT`, `QUIT`, `KILL`, `TERM`, `USR1`, `USR2`, `CONT`, `STOP`
@@ -4425,7 +4463,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-447 declarations.
+450 declarations.
 
 ### Range
 
@@ -5121,6 +5159,9 @@ fn only(self, cmds: List[Str]) -> Proc
 fn cmd(self, name: Str, args: List[Str] = []) -> Cmd
 fn pipeline(self, cmds: List[Cmd]) -> ProcOutput ! ProcErr uses proc
 fn kill(self, pid: Int, signal: Str = "TERM") -> () ! ProcErr uses proc
+fn notify(self, signals: List[Signal]) -> Chan[Signal] uses proc
+fn stop_notify(self, c: Chan[Signal]) uses proc
+fn request_stop(self) uses proc
 ```
 
 ### Cmd
