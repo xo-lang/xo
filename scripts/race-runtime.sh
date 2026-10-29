@@ -170,7 +170,11 @@ elif [ "$goos" = linux ]; then
 fi
 if [ "$goos" = darwin ]; then
   platform=(-DCOMPILER_RT_ENABLE_IOS=OFF -DCOMPILER_RT_ENABLE_WATCHOS=OFF -DCOMPILER_RT_ENABLE_TVOS=OFF
-    -DCOMPILER_RT_ENABLE_XROS=OFF -DCMAKE_OSX_ARCHITECTURES=$darch -DDARWIN_osx_ARCHS=$darch)
+    -DCOMPILER_RT_ENABLE_XROS=OFF -DCMAKE_OSX_ARCHITECTURES=$darch -DDARWIN_osx_ARCHS=$darch
+    "-DCMAKE_SHARED_LINKER_FLAGS=-Wl,-oso_prefix,$work/")
+  # ld64 records each object's path in the dylib's debug map (N_OSO);
+  # -ffile-prefix-map does not reach those, -oso_prefix does (the 0.34.0
+  # seed cut's darwin pack held 100+ WORKDIR/race/build paths, 2026-10-29)
 fi
 cmake -G Ninja -S "$src/compiler-rt" -B "$build" \
   -DCMAKE_BUILD_TYPE=Release -DCMAKE_C_COMPILER=clang -DCMAKE_CXX_COMPILER=clang++ \
@@ -178,7 +182,7 @@ cmake -G Ninja -S "$src/compiler-rt" -B "$build" \
   -DCOMPILER_RT_BUILD_BUILTINS=OFF -DCOMPILER_RT_BUILD_XRAY=OFF -DCOMPILER_RT_BUILD_LIBFUZZER=OFF \
   -DCOMPILER_RT_BUILD_PROFILE=OFF -DCOMPILER_RT_BUILD_MEMPROF=OFF -DCOMPILER_RT_BUILD_ORC=OFF \
   -DCOMPILER_RT_BUILD_CTX_PROFILE=OFF -DCOMPILER_RT_INCLUDE_TESTS=OFF \
-  "-DCMAKE_C_FLAGS=$cflags" "-DCMAKE_CXX_FLAGS=$cxxflags" \
+  "-DCMAKE_C_FLAGS=$cflags" "-DCMAKE_CXX_FLAGS=$cxxflags" "-DCMAKE_ASM_FLAGS=$pmap" \
   ${platform[@]+"${platform[@]}"} \
   >"$work/configure.txt" 2>&1 || { tail -30 "$work/configure.txt"; exit 1; }
 ninja -C "$build" "$target" >"$work/build.txt" 2>&1 || { tail -30 "$work/build.txt"; exit 1; }
