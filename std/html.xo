@@ -1,0 +1,15 @@
+// std/html (spec/std.md 39, decision 0408). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's html package: the
+// five HTML special characters escaped, and entities (named, including
+// the legacy ones without a semicolon, decimal and hexadecimal numeric)
+// unescaped. Pure.
+
+/// html.EscapeString: `<`, `>`, `&`, `'` and `"` as `&lt;`, `&gt;`,
+/// `&amp;`, `&#39;` and `&#34;`.
+fn escape_string(s: Str) -> Str
+/// html.UnescapeString: every entity reference unescaped (named, the
+/// legacy names without a semicolon such as `&amp` and `&copy`, decimal
+/// `&#916;` and hexadecimal `&#x3bb;` numeric references, the C1 control
+/// code points replaced as browsers do, invalid ones as U+FFFD);
+/// `unescape_string(escape_string(s)) == s` always, the converse not.
+fn unescape_string(s: Str) -> Str

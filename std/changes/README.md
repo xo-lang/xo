@@ -42,3 +42,4 @@ entries yet.
 - [toml.md](toml.md): std/toml (spec/std.md 19)
 - [metrics.md](metrics.md): std/metrics (spec/std.md 37)
 - [trace.md](trace.md): std/trace (spec/std.md 38)
+- [html.md](html.md): std/html (escape_string, unescape_string)

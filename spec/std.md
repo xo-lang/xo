@@ -5280,3 +5280,25 @@ fn (r: Ring) handler(auth: fn(http.Request) -> Bool) -> fn(http.Request) -> http
   of at least `min` newest first, at most `n` (all when n <= 0).
   `handler(auth)` answers them as JSON (`?slow=MILLIS&n=N`, defaults 0 and
   100); 403 when `auth` answers false.
+
+## 39. std/html
+
+Status: implemented on every backend (decision 0408, 2026-10-29): Go's
+html package, run by the Go backend itself (`std/rt/html.go`) and ported
+natively (`std/native/html.xo`, its entity table generated from Go's
+entity.go); Go's results on its
+escape_test.go cases (`html_test.xo`). Pure.
+
+```
+pub fn escape_string(s: Str) -> Str      // html.EscapeString: < > & ' " as &lt; &gt; &amp; &#39; &#34;
+pub fn unescape_string(s: Str) -> Str    // html.UnescapeString: named (legacy names without ; too), decimal and hex references
+```
+
+- `unescape_string(escape_string(s)) == s` always; the converse does
+  not hold (`&amp` unescapes, nothing escapes to it).
+- Numeric references in 0x80 to 0x9F become what browsers substitute
+  (`&#x87;` is U+2021); 0, surrogates and code points past U+10FFFF
+  become U+FFFD; `&#` and `&#x` with no digits stay as they are.
+- html/template's contextual autoescaping is std/template's html mode
+  (section 30, decision 0408), which uses this module for attribute
+  values.

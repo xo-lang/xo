@@ -1,0 +1,41 @@
+// std/html: Go's escape_test.go cases (go1.26.1) and the round trip.
+use std/html
+
+/// (description, html, unescaped): Go's unescapeTests.
+const UNESCAPE: List[(Str, Str, Str)] = [
+  ("copy", "A\ttext\nstring", "A\ttext\nstring"),
+  ("simple", "&amp; &gt; &lt;", "& > <"),
+  ("stringEnd", "&amp &amp", "& &"),
+  ("multiCodepoint", "text &gesl; blah", "text \u{22DB}\u{FE00} blah"),
+  ("decimalEntity", "Delta = &#916; ", "Delta = \u{0394} "),
+  ("hexadecimalEntity", "Lambda = &#x3bb; = &#X3Bb ", "Lambda = \u{03BB} = \u{03BB} "),
+  ("numericEnds", "&# &#x &#128;43 &copy = &#169f = &#xa9", "&# &#x \u{20AC}43 \u{00A9} = \u{00A9}f = \u{00A9}"),
+  ("numericReplacements", "Footnote&#x87;", "Footnote\u{2021}"),
+  ("copySingleAmpersand", "&", "&"),
+  ("copyAmpersandNonEntity", "text &test", "text &test"),
+  ("copyAmpersandHash", "text &#", "text &#"),
+]
+
+test "unescape_string: Go's cases" {
+  for (desc, h, want) in UNESCAPE {
+    expect(html.unescape_string(h)) == want
+    let _ = desc
+  }
+}
+
+test "escape_string: the five characters, and the round trip" {
+  expect(html.escape_string("<a href=\"x\">&'</a>")) == "&lt;a href=&#34;x&#34;&gt;&amp;&#39;&lt;/a&gt;"
+  expect(html.escape_string("plain")) == "plain"
+  for s in ["", "A\ttext\nstring", "<>&'\"", "\u{20AC} \u{03BB} \u{22DB}\u{FE00}", "&amp; stays &amp;", "x&#; &#x; &zzz;"] {
+    expect(html.unescape_string(html.escape_string(s))) == s
+  }
+}
+
+test "unescape_string: legacy names, prefixes and a name followed by text" {
+  // &copy without a semicolon, &copyright as the prefix copy + "right"
+  expect(html.unescape_string("&copy &copyright &notit")) == "\u{00A9} \u{00A9}right \u{00AC}it"
+  // an unknown name stays
+  expect(html.unescape_string("&xyzzy; &xyzzy")) == "&xyzzy; &xyzzy"
+  // invalid numeric references: U+FFFD, surrogates, beyond the range
+  expect(html.unescape_string("&#0; &#xD800; &#x110000;")) == "\u{FFFD} \u{FFFD} \u{FFFD}"
+}
