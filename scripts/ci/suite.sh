@@ -235,6 +235,12 @@ case "$suite" in
     # xo-windows runner C:\Windows\SystemTemp): kept in the uploaded
     # output, since the runner cannot be reached (run 39776978669)
     keep_crashes() { for d in "${TEMP:-}" "${TMPDIR:-}" /tmp /c/Windows/SystemTemp; do [ -n "$d" ] && [ -d "$d" ] && find "$d" -maxdepth 1 -name '*.xocrash' -mmin -120 -exec cp {} "$out/" \; 2>/dev/null; done; true; }
+    # a probe of the runner itself (its second line "# xo-ci: before
+    # xobuild", scripts/ci/cc-probe.sh) runs ahead of the xo build, whose
+    # failure is what it looks into, and its status ends the job
+    if sed -n 2p "$sc" | grep -q '^# xo-ci: before xobuild'; then
+      step "probe $sc"; XO_CI_OUT=$out bash "$sc" "$@"; rc=$?; end; exit $rc
+    fi
     step "xo (scripts/xobuild)"; XO_CLI=$(np "$(go run ./scripts/xobuild)") || { keep_crashes; exit 1; }; end
     "$XO_CLI" version
     step "std of $base"
