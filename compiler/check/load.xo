@@ -1215,7 +1215,7 @@ pub fn (var c: Checker) load_std_record(e: StdExport) {
     for fr in rec.files {
       let f = c.files.len()
       let z = parser.Pos{offset: 0, line: 0, col: 0}
-      c.files.push(SrcFile{path: fr.path, module: m, ast: parser.File{span: Span{start: z, end: z}, name: fr.path.bytes()}, iface: fr.iface, is_test: fr.is_test, sig: fr.sig, unloaded: true})
+      c.files.push(SrcFile{path: fr.path, module: m, ast: parser.File{span: Span{start: z, end: z}, name: fr.path.bytes()}, sha: fr.sha, iface: fr.iface, is_test: fr.is_test, sig: fr.sig, unloaded: true})
       c.mods[m].files.push(f)
     }
     made.push(m)

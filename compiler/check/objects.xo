@@ -293,6 +293,12 @@ pub struct SrcFile {
   /// Made from a std record (load_std_record): no parse, no source,
   /// until ensure_tree reads and parses it.
   pub unloaded: Bool = false
+  /// The SHA-256 of the source a record-made file was recorded from
+  /// (StdFileRec.sha), for what names the sources without reading them
+  /// (binfo_sources: the build's "<std>" entry hashed empty sources for
+  /// unloaded files, so a build that loaded the record had another build
+  /// id than one that wrote it, 2026-10-29); "" for a parsed file.
+  pub sha: Str = ""
   /// The expansion of the derives of another file (derive.xo): its
   /// diagnostics are reported at the fields they came from, and it has
   /// no naming or style findings.
