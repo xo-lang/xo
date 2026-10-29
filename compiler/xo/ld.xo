@@ -121,7 +121,11 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
       // the steps timed: prepare (the walk, the live atoms read), resolve,
       // finish (layout, relocation, the image)
       let t1 = os.clock.now()
-      match macho.store_prepare_cached(ins, store, opts, prep_load(os, prep_file_for(os, prep_dir(os, sep_store), sep_store, store.len(), ins, opts))) {
+      let parsed = match macho.parse_link_inputs(ins) {
+        Ok(x) => x
+        Err(_) => continue
+      }
+      match macho.store_prepare_cached(parsed, store, opts, prep_load(os, prep_file_for(os, prep_dir(os, sep_store), sep_store, store.len(), parsed, opts))) {
         Ok(s0) => {
           var s = s0
           let dp = os.clock.since(t1).nanos() / 1000
@@ -1123,8 +1127,13 @@ fn pdb_seed(var seed: BytesBuilder, race: Bool, pdb: Str, res: List[macho.PERes]
 /// link.write): the same link, its time by step.
 fn link_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, opts: macho.LinkOpts, pdir: Str) -> Result[(Bytes, Bytes), Str] {
   var t = os.clock.now()
-  let pf = prep_file_for(os, pdir, ctx.sep_store, store.len(), ins, opts)
-  var s = match macho.store_prepare_cached(ins, store, opts, prep_load(os, pf)) {
+  // the program's objects parsed once, for the cache's key and the link
+  let parsed = match macho.parse_link_inputs(ins) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  let pf = prep_file_for(os, pdir, ctx.sep_store, store.len(), parsed, opts)
+  var s = match macho.store_prepare_cached(parsed, store, opts, prep_load(os, pf)) {
     Ok(x) => x
     Err(e) => return Err(e)
   }
@@ -1166,14 +1175,11 @@ fn prep_dir(os: Os, store: Str) -> Str {
 /// The prepare cache's file for this link ("" for none): named by xo's
 /// own identity, the store's path (named by its content) and length,
 /// and macho.prep_key.
-fn prep_file_for(os: Os, dir: Str, store: Str, n: Int, ins: List[macho.LinkInput], opts: macho.LinkOpts) -> Str {
+fn prep_file_for(os: Os, dir: Str, store: Str, n: Int, parsed: macho.ParsedInputs, opts: macho.LinkOpts) -> Str {
   if dir.is_empty() {
     return ""
   }
-  match macho.prep_key(ins, opts) {
-    Ok(k) => "${dir}/${crypto.sha256("${self_id(os)}\n${store}\n${n}\n".bytes() + k).to_hex()[0..40]}"
-    Err(_) => ""
-  }
+  "${dir}/${crypto.sha256("${self_id(os)}\n${store}\n${n}\n".bytes() + macho.prep_key(parsed, opts)).to_hex()[0..40]}"
 }
 
 /// The cached decisions in f, marked used (pruned with the cache), or

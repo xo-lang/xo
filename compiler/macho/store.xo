@@ -417,18 +417,32 @@ pub fn (var s: StoreLink) write() -> Result[(Bytes, Bytes), Str] { s.l.rest_writ
 /// The walk from the program's inputs and the store's live atoms read
 /// (link_store's first step).
 pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Result[StoreLink, Str] {
-  store_prepare_cached(inputs, store, opts, None)
+  match parse_link_inputs(inputs) {
+    Ok(p) => store_prepare_cached(p, store, opts, None)
+    Err(e) => Err(e)
+  }
+}
+
+/// A store link's program objects, parsed once for prep_key and
+/// store_prepare_cached (each parsed them: twice a link).
+pub struct ParsedInputs {
+  objs: List[IObj]
+}
+
+/// inputs parsed (ParsedInputs).
+pub fn parse_link_inputs(inputs: List[LinkInput]) -> Result[ParsedInputs, Str] {
+  match parse_inputs(inputs) {
+    Ok(x) => Ok(ParsedInputs{objs: x})
+    Err(e) => Err(e)
+  }
 }
 
 /// What a store link's prepare decisions depend on besides the store:
 /// the names the program's objects take from it (undefined, or defined
 /// weak), the entry, the cpu and whether DWARF is cut. The caller adds
 /// the store's and xo's identity (compiler/xo ld.xo prep_file).
-pub fn prep_key(inputs: List[LinkInput], opts: LinkOpts) -> Result[Bytes, Str] {
-  let prog = match parse_inputs(inputs) {
-    Ok(x) => x
-    Err(e) => return Err(e)
-  }
+pub fn prep_key(parsed: ParsedInputs, opts: LinkOpts) -> Bytes {
+  let prog = parsed.objs
   let x86 = !prog.is_empty() && prog[0].x86
   let dwarf = !(opts.program_dwarf && !prog.any(fn(ob) { obj_xo_dwarf(ob) })) && (opts.embed_dwarf || opts.dsym)
   var names: List[Bytes] = []
@@ -448,7 +462,7 @@ pub fn prep_key(inputs: List[LinkInput], opts: LinkOpts) -> Result[Bytes, Str] {
     b.write(nm)
     b.write_byte(0)
   }
-  Ok(b.freeze())
+  b.freeze()
 }
 
 /// store_prepare with a prepare cache: cached holds the decisions a link
@@ -457,7 +471,7 @@ pub fn prep_key(inputs: List[LinkInput], opts: LinkOpts) -> Result[Bytes, Str] {
 /// the cache's (hit). The decisions only choose which of the store's
 /// atoms, runs and symbols are kept, so a hit links the same bytes as a
 /// miss.
-pub fn store_prepare_cached(inputs: List[LinkInput], store: Bytes, opts: LinkOpts, cached: Prep?) -> Result[StoreLink, Str] {
+pub fn store_prepare_cached(parsed: ParsedInputs, store: Bytes, opts: LinkOpts, cached: Prep?) -> Result[StoreLink, Str] {
   let v = match store_view(store) {
     Ok(x) => x
     Err(e) => return Err(e)
@@ -467,10 +481,7 @@ pub fn store_prepare_cached(inputs: List[LinkInput], store: Bytes, opts: LinkOpt
   var l = Linker{opts: opts}
   // the program's objects after the store's (a build passes its parts
   // first), whole: what they name roots the walk
-  var prog = match parse_inputs(inputs) {
-    Ok(x) => x
-    Err(e) => return Err(e)
-  }
+  var prog = parsed.objs
   for i in 0..prog.len() {
     prog[i].subsections = false
   }

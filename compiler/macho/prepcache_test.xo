@@ -11,7 +11,11 @@ fn prep_prog(callee: Str) -> Bytes {
 }
 
 fn prep_link(ins: List[LinkInput], store: Bytes, opts: LinkOpts, cached: Prep?) -> (Bytes, StoreLink) {
-  var s = match store_prepare_cached(ins, store, opts, cached) {
+  let parsed = match parse_link_inputs(ins) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  var s = match store_prepare_cached(parsed, store, opts, cached) {
     Ok(x) => x
     Err(e) => fault(e)
   }
@@ -60,16 +64,16 @@ test "a foreign or short prepare cache entry is a miss" {
 test "the prepare key follows what the program takes from the store" {
   let opts = LinkOpts{name: "p", embed_dwarf: false}
   let k = fn(callee: Str) -> Bytes {
-    match prep_key([LinkInput{path: "prog.o", data: prep_prog(callee)}], opts) {
-      Ok(x) => x
+    match parse_link_inputs([LinkInput{path: "prog.o", data: prep_prog(callee)}]) {
+      Ok(p) => prep_key(p, opts)
       Err(e) => fault(e)
     }
   }
   expect(k("_used") == k("_used")) == true
   expect(k("_used") != k("_unused_fn")) == true
   // the options prepare reads are in it too
-  let kd = match prep_key([LinkInput{path: "prog.o", data: prep_prog("_used")}], LinkOpts{name: "p", embed_dwarf: true}) {
-    Ok(x) => x
+  let kd = match parse_link_inputs([LinkInput{path: "prog.o", data: prep_prog("_used")}]) {
+    Ok(p) => prep_key(p, LinkOpts{name: "p", embed_dwarf: true})
     Err(e) => fault(e)
   }
   expect(kd != k("_used")) == true
