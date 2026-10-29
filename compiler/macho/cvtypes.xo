@@ -290,12 +290,16 @@ const S_DEFRANGE_SUBFIELD_REGISTER = 0x1143
 const S_DEFRANGE_REGISTER_REL = 0x1145
 
 /// A variable of a procedure or inline site: its S_LOCAL's type, whether
-/// a parameter, its name, and its S_DEFRANGE records (kind, body).
+/// a parameter, its name, and its S_DEFRANGE records (kind, body); seg
+/// above 0: each record's range start moves by delta into section seg
+/// as it is written (locals_placed, pdb.xo def_record_moved), not copied.
 struct PdbLocal {
   name: Str
   ty: Int
   param: Bool
   defs: List[(Int, Bytes)]
+  delta: Int = 0
+  seg: Int = 0
 }
 
 /// The locals of vars: each place a variable's DWARF locations put it or
@@ -394,17 +398,6 @@ fn cv_locals_at(vars: List[debug.Var], whole: List[(Int, Int)], sects: List[PdbS
   out
 }
 
-/// A def's record (cv_locals_at) moved by delta bytes in its section, which
-/// is seg: its section offset and section rewritten.
-fn def_moved(kind: Int, b: Bytes, delta: Int, seg: Int) -> Bytes {
-  let at = if kind == S_DEFRANGE_REGISTER { 4 } else { 8 }
-  var w = new_out(b.len())
-  w.bytes(b[0..at])
-  w.u32((le_b(b, at, 4) + delta) & 0xffffffff)
-  w.u16(seg)
-  w.bytes(b[at + 6..b.len()])
-  w.done()
-}
 
 /// rs in order; a list already in order (DWARF's usually are) is
 /// returned as it is, with no sorted copy.

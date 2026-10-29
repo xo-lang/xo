@@ -593,6 +593,11 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   parent against this: pe.pdb 15.5 to 13.4 ms, link 56.2 to 53.2.
   XO_STD_STORE_CHECK's PDB check keeps every type, as it compares against
   the image's whole DWARF.
+  The PDB's local variables' S_DEFRANGE records are moved into their
+  section as they are written (pdb.xo def_record_moved) instead of each
+  being copied first (locals_placed was a fifth of pe.pdb's samples): the
+  same PDB but its GUID; quiet A/B, 10 rounds interleaved, parent against
+  this: pe.pdb 13.2 to 11.0 ms (lower in every round), link 53.7 to 52.3.
 
 ## Alternatives
 

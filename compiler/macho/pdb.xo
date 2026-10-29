@@ -253,11 +253,9 @@ pub fn pe_pdb_seeded(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProc
 fn locals_placed(ls: List[PdbLocal], var types: CvTypes, info: debug.Info, delta: Int, seg: Int) -> List[PdbLocal] {
   var out = List[PdbLocal].with_capacity(ls.len())
   for l in ls {
-    var defs = List[(Int, Bytes)].with_capacity(l.defs.len())
-    for (kind, b) in l.defs {
-      defs.push((kind, def_moved(kind, b, delta, seg)))
-    }
-    out.push(l with {ty: cv_index(types, info, l.ty), defs: defs})
+    // (the records move as write_local writes them: a copy of each was
+    // most of the PDB's time in a separately compiled HTTP server's link)
+    out.push(l with {ty: cv_index(types, info, l.ty), delta: delta, seg: seg})
   }
   out
 }
@@ -909,10 +907,34 @@ fn write_local(var w: Out, l: PdbLocal, i: Int) -> Int {
   w.zeros(rec_pad(n))
   var j = i + 1
   for (k, b) in l.defs {
-    sym_record(w, k, b)
+    if l.seg > 0 {
+      def_record_moved(w, k, b, l.delta, l.seg)
+    } else {
+      sym_record(w, k, b)
+    }
     j += 1
   }
   j
+}
+
+/// sym_record of a def's record (cv_locals_at) moved by delta bytes in
+/// its section, which is seg (its section offset and section rewritten),
+/// with no copy of b.
+fn def_record_moved(var w: Out, kind: Int, b: Bytes, delta: Int, seg: Int) {
+  let at = if kind == S_DEFRANGE_REGISTER { 4 } else { 8 }
+  let len = 2 + b.len()
+  let padded = (len + 2 + 3) / 4 * 4 - 2
+  w.u16(padded)
+  w.u16(kind)
+  for i in 0..at {
+    w.u8(Int(b[i]))
+  }
+  w.u32((le_b(b, at, 4) + delta) & 0xffffffff)
+  w.u16(seg)
+  for i in at + 6..b.len() {
+    w.u8(Int(b[i]))
+  }
+  w.zeros(padded - len)
 }
 
 /// An inline site's binary annotations, as LLVM's MCCodeView encodes
