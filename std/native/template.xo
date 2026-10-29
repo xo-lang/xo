@@ -1443,6 +1443,9 @@ fn of_json(j: json.Value, inner: Bool) -> V {
     Int(n) => V.IntV(n: n, ty: "int64")
     Num(n) => V.FloatV(f: n)
     Str(s) => V.StrV(s: s)
+    // trusted content (decision 0408): a string until the html mode's
+    // escaper reads the kind
+    Trusted(_, s) => V.StrV(s: s)
     List(items) => V.ListV(items: items.map(fn(x) { of_json(x, true) }))
     // in the data's order: a lookup takes a key's first field either
     // way, and map_order sorts only where the order shows (range, %v)

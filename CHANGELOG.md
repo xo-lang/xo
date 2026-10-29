@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **Breaking** (decision 0408): `json.Value` gains the variant
+  `Trusted(kind: Str, s: Str)`, content a template trusts in one context
+  (`template.html(s)` and its siblings make it; `parse_value` and `decode`
+  never do; `encode` writes the plain string). An exhaustive `match` on
+  json.Value needs an arm: `xo fix` adds it as a hole (XO0301), or add a
+  wildcard.
+
 - xo build: when std's store build fails (a std edit only the store's
   full check rejects), every separately compiled build prints one
   warning with the std file:line and builds the whole program; before,

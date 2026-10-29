@@ -158,6 +158,9 @@ fn value_append(out: Str, v: json.Value) -> Str {
       }
       o + "]"
     }
+    // trusted template content (decision 0408): the string, as any reader
+    // but a template sees it
+    Trusted(_, s) => jsontext.append_str(out, s)
     Object(fields) => {
       var o = out + "{"
       for (k, f) in fields.indexed() {

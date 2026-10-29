@@ -3080,3 +3080,20 @@ test "parse_value accepts and rejects as Go's encoding/json, with its texts" {
   }
   expect(bad[0..(if bad.len() < 30 { bad.len() } else { 30 })]) == []
 }
+
+test "Value.Trusted (decision 0408): encoded as the plain string, never parsed, a Str to get" {
+  let v = json.Value.Object(fields: [("a", json.Value.Trusted(kind: "html", s: "<b>&</b>")), ("b", json.Value.Str(s: "y"))])
+  expect(v.encode()) == "{\"a\":\"<b>&</b>\",\"b\":\"y\"}"
+  // the same text decoded is a plain string: the variant cannot be forged
+  match json.parse_value("{\"a\":\"<b>&</b>\",\"$html\":\"x\"}") {
+    Ok(w) => expect(w.encode()) == "{\"a\":\"<b>&</b>\",\"$html\":\"x\"}"
+    Err(e) => expect(e.display()) == ""
+  }
+  match json.parse_value("{\"a\":\"<b>\"}") {
+    Ok(w) => match w.get("a") {
+      Some(Str(s)) => expect(s) == "<b>"
+      _ => expect(false)
+    }
+    Err(e) => expect(e.display()) == ""
+  }
+}

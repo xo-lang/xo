@@ -25,6 +25,8 @@ func jsonValueAny(v Json_Value) any {
 		return v.P.(Json_Value_Num).F_n
 	case 5:
 		return v.P.(Json_Value_Str).F_s
+	case 8: // trusted template content (decision 0408): a string to text/template
+		return v.P.(Json_Value_Trusted).F_s
 	case 6:
 		items := v.P.(Json_Value_List).F_items.s
 		out := make([]any, len(items))

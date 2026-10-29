@@ -1,5 +1,17 @@
 # std/json changes
 
+## 2026-10-29: feature: the Trusted variant of Value (decision 0408)
+
+- Kind: feature (breaking for exhaustive matches on Value)
+- Commit: this commit
+- Found by: milestone 0.35 S6 (html/template)
+- Go reference: none (html/template's HTML, CSS, JS, JSStr, URL, HTMLAttr, Srcset types)
+- Test: std/native/json_test.xo (encode of a Trusted value, parse_value never makes one)
+
+`Value.Trusted(kind, s)`: content a template trusts in one context, made
+only by std/template's constructors; `encode` writes it as the plain
+string s, `get` and `parse_value` know nothing of it.
+
 ## 2026-10-26: behavior: a number out of range says so in Go's words
 
 - Kind: behavior

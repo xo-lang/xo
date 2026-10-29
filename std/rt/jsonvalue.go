@@ -102,6 +102,8 @@ func (v Json_Value) appendTo(tk *Task, b *strings.Builder) {
 		b.WriteString(Json_encode_str(tk, v.P.(Json_Value_Num).F_n))
 	case 5:
 		b.WriteString(Json_encode_str(tk, v.P.(Json_Value_Str).F_s))
+	case 8: // trusted template content (decision 0408): the plain string
+		b.WriteString(Json_encode_str(tk, v.P.(Json_Value_Trusted).F_s))
 	case 6:
 		b.WriteByte('[')
 		for i, x := range v.P.(Json_Value_List).F_items.s {

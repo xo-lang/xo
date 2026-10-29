@@ -36,6 +36,12 @@ enum Value {
   Str(s: Str)
   List(items: List[Value])
   Object(fields: List[(Str, Value)])
+  /// Content a template trusts in one context (decision 0408): kind is
+  /// "html", "css", "js", "jsstr", "url", "attr" or "srcset". Only
+  /// template.html and the other constructors make one; `parse_value` and
+  /// `decode` never do, so decoded input cannot forge it. `encode` writes
+  /// it as the plain string s.
+  Trusted(kind: Str, s: Str)
 }
 
 /// The value of v's JSON encoding (`encode`): field names are its JSON

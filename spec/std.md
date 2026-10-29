@@ -1850,7 +1850,7 @@ works without a struct.
 ### 5.1 Values of any shape (decision 0299)
 
 ```
-enum Value { Null, Bool(b: Bool), Int(n: Int), Num(n: Float), Str(s: Str), List(items: List[Value]), Object(fields: List[(Str, Value)]) }
+enum Value { Null, Bool(b: Bool), Int(n: Int), Num(n: Float), Str(s: Str), Trusted(kind: Str, s: Str), List(items: List[Value]), Object(fields: List[(Str, Value)]) }
 pub fn to_value[T: Json](v: T) -> Value      // v's encoding as a Value
 pub fn parse_value(text: Str) -> Value ! DecodeErr
 fn (v: Value) encode() -> Str
