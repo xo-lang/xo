@@ -1,6 +1,6 @@
 # 0416: Xo values implementing Go interfaces in `use go`
 
-Status: Proposed (2026-10-29, Lang 1; the owner reviews before any build)
+Status: Accepted (owner, 2026-10-29, answering the three open questions below; drafted by Lang 1)
 
 ## Context
 
@@ -123,11 +123,13 @@ case is small in count and large in use: it is how Go composes I/O.
   std/rt): covers the most common case with no binder work, but nothing
   else (Handler, sort, slog).
 
-## Open questions for the owner
+## The owner's answers (2026-10-29)
 
 1. Functions (Fns structs) as the first form, with method-set
-   implementation as later sugar, or straight to method sets?
+   implementation as later sugar, or straight to method sets? **Function structs first**; method sets later as
+   sugar.
 2. Serialize calls per implementation by default (safe, slow for
-   handlers) or follow spawn's sharing rules (decision 3, proposed)?
+   handlers) or follow spawn's sharing rules (decision 3, proposed)? **Spawn's sharing rules**, no default
+   serialization.
 3. Scope of the first version (decision 6): io, net/http, sort, fmt,
-   error; anything to add or drop?
+   error; anything to add or drop? **As drafted.**

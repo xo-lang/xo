@@ -1,6 +1,6 @@
 # 0415: `use go` generics instantiated at bind time
 
-Status: Proposed (2026-10-29, Lang 1; the owner reviews before any build)
+Status: Accepted (owner, 2026-10-29, answering the three open questions below; drafted by Lang 1)
 
 ## Context
 
@@ -125,13 +125,14 @@ constraints, monomorphized, type arguments inferred at the call or given
   `maps`): right for those two, but not for third-party containers and
   clients (lru, go-redis's generic commands) that have no Xo port.
 
-## Open questions for the owner
+## The owner's answers (2026-10-29)
 
 1. Is 4a (Xo values carried opaquely through Go generics with `any`
    constraints) acceptable, given a Go library could keep the value past
-   the call (a cache does exactly that, which is the point)?
+   the call (a cache does exactly that, which is the point)? **Yes, only where the constraint is `any`** (4a).
 2. Should `slices` and `maps` be bound at all, or should the binder point
    at the Xo prelude method instead (a note in the skipped list: "use
-   List.index")?
+   List.index")? **Do not bind them**: `slices` and `maps` stay skipped, and the
+   skipped list names the prelude's List or Map method instead.
 3. Is instantiation at build time (step 3) acceptable for `xo check`
-   speed, given check validates through the mapping table only?
+   speed, given check validates through the mapping table only? **Yes**, at build time.
