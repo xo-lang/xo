@@ -1138,6 +1138,36 @@ func Prelude_read_text_or(tk *Task, fs Fs, path string, def string) Result[strin
 	return r
 }
 
+// Prelude_create_dir_all_mode is `create_dir_all_mode(fs, dir, mode)`:
+// create_dir_all, then set_mode on each directory it made, deepest first.
+func Prelude_create_dir_all_mode(tk *Task, fs Fs, dir string, mode int64) Result[Unit, FsErr] {
+	var made []string
+	for p := path.Clean(filepath.ToSlash(dir)); p != "."; {
+		r := fs.M_exists(tk, p)
+		if !r.Ok {
+			return Err[Unit](r.E)
+		}
+		if r.V {
+			break
+		}
+		made = append(made, p)
+		up := path.Dir(p)
+		if up == p {
+			break
+		}
+		p = up
+	}
+	if r := fs.M_create_dir_all(tk, dir); !r.Ok {
+		return r
+	}
+	for _, d := range made {
+		if r := fs.M_set_mode(tk, d, mode); !r.Ok {
+			return r
+		}
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
 // Prelude_read_or is `read_or(fs, path, default)`: read_text_or for bytes.
 func Prelude_read_or(tk *Task, fs Fs, path string, def Bytes) Result[Bytes, FsErr] {
 	r := fs.M_read(tk, path)

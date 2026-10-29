@@ -13,6 +13,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `parse_request`, `parse_revocation_list` and their signature checks;
   std/crypto `marshal_private_key` (PKCS #8). Ed25519 and RSA
   certificates and requests are byte for byte Go's (corpus x509create).
+- prelude: `create_dir_all_mode(fs, dir, mode)`, create_dir_all with
+  the directories it makes given an exact mode (Go's os.MkdirAll with a
+  permission, without the umask).
 - std/cli: `float_flag` and `Parsed.float` and `float_opt`, a floating
   point flag in `Float.parse` syntax (Go's flag.Float64).
 - `use go` binds Go's `any` (decision 0412): a parameter or result of

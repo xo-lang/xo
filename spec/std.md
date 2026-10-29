@@ -662,6 +662,7 @@ fn (f: Fs) rename(from: Str, to: Str) -> () ! FsErr     uses fs.write  // atomic
 fn (f: Fs) remove(path: Str) -> () ! FsErr              uses fs.write  // file or empty dir
 fn (f: Fs) remove_all(path: Str) -> () ! FsErr          uses fs.write
 fn (f: Fs) create_dir_all(dir: Str) -> () ! FsErr       uses fs.write
+fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs  // made ones get mode
 fn (f: Fs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
 ```
 
@@ -674,6 +675,14 @@ methods of `Fs`: an `Fs` is any type with its methods (core 2.4), and a
 new interface method would stop every such type from satisfying it. They
 call `read_text` and `read`, so MemFs, FakeFs and attenuated capabilities
 answer as they do for those.
+
+`create_dir_all_mode` (std survey gap 16, Go's `os.MkdirAll(dir, perm)`)
+is `create_dir_all`, then `set_mode(d, mode)` on each directory it
+created, deepest first, so a mode without write or search permission
+(0o500) still reaches the inner ones. Unlike Go the umask does not
+apply: the mode is exact. A directory already there keeps its mode, as
+in Go, and a file in the way is create_dir_all's error. A free function
+over `exists`, `create_dir_all` and `set_mode`, so any `Fs` answers.
 
 Handles, links, globs, and locks (decision 0163; the Go backend and
 MemFs, and native builds on the real filesystem, decision 0172; a native
@@ -4577,7 +4586,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-458 declarations.
+459 declarations.
 
 ### Range
 
@@ -5318,6 +5327,7 @@ fn (c: Child) kill()
 ```
 fn fault(msg: Str) -> Never
 fn dbg[T](x: T) -> T
+fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 ```

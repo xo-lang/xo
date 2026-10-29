@@ -708,6 +708,24 @@ test "a dialed Conn and an accepted ServerConn read, write and close through Str
   l.close()
 }
 `)
+	// std.md 3.1: create_dir_all_mode gives the directories it makes the
+	// mode, deepest first, and leaves directories already there alone.
+	o.WriteString(`
+test "create_dir_all_mode gives only the directories it makes the mode" {
+  os.fs.create_dir_all("keep")?
+  os.fs.set_mode("keep", 0o755)?
+  create_dir_all_mode(os.fs, "keep/a/b", 0o700)?
+  expect(os.fs.mode("keep")?) == 0o755
+  expect(os.fs.mode("keep/a")?) == 0o700
+  expect(os.fs.mode("keep/a/b")?) == 0o700
+  create_dir_all_mode(os.fs, "keep/a", 0o750)?
+  expect(os.fs.mode("keep/a")?) == 0o700
+  create_dir_all_mode(os.fs, "top", 0o711)?
+  expect(os.fs.mode("top")?) == 0o711
+  os.fs.write("f.txt", b"x")?
+  expect(create_dir_all_mode(os.fs, "f.txt/sub", 0o700).is_err()) == true
+}
+`)
 	// std.md 3.1: read_text_or and read_or are the file, or the default
 	// when it is not there; the default is not a stand in for an empty
 	// file, and an empty default is a value like any other.

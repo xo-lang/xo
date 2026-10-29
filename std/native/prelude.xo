@@ -2699,6 +2699,27 @@ fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read {
   }
 }
 
+/// create_dir_all_mode (std.md 3.1): the missing directories, deepest
+/// first, then create_dir_all and set_mode on each, deepest first, so a
+/// parent's new mode never blocks setting a child's; through Fs's
+/// methods, so any Fs answers.
+fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs {
+  var made: List[Str] = []
+  var p = fs_clean(dir)
+  while p != "." && !fs.exists(p)? {
+    made.push(p)
+    let up = fs_dir(p)
+    if up == p {
+      break
+    }
+    p = up
+  }
+  fs.create_dir_all(dir)?
+  for d in made {
+    fs.set_mode(d, mode)?
+  }
+}
+
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read {
   match fs.read(path) {
     Ok(b) => b

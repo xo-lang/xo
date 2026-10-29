@@ -1,0 +1,37 @@
+// create_dir_all_mode on the real file system (std.md 3.1, Go's
+// os.MkdirAll with a permission, without the umask): each directory it
+// makes gets the mode, deepest first so 0o500 still applies to a child,
+// a directory already there keeps its mode, a file in the way and a read
+// only capability fail.
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-mkdir-mode-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all(name)?
+  let root = base.sub(name)
+  root.create_dir_all("keep")?
+  root.set_mode("keep", 0o755)?
+  create_dir_all_mode(root, "keep/a/b/c", 0o700)?
+  out.println("keep ${root.mode("keep")?:?} a ${root.mode("keep/a")?:?} b ${root.mode("keep/a/b")?:?} c ${root.mode("keep/a/b/c")?:?}")
+  create_dir_all_mode(root, "keep/a", 0o750)?
+  out.println("again a ${root.mode("keep/a")?:?}")
+  create_dir_all_mode(root, "shut/inner", 0o500)?
+  out.println("shut ${root.mode("shut")?:?} inner ${root.mode("shut/inner")?:?}")
+  create_dir_all_mode(root, "./wide//x/", 0o777)?
+  out.println("wide ${root.mode("wide")?:?} x ${root.mode("wide/x")?:?}")
+  root.write("file.txt", b"x")?
+  match create_dir_all_mode(root, "file.txt/sub", 0o700) {
+    Ok(_) => out.println("under a file made?")
+    Err(e) => out.println("under a file: error ${e}")
+  }
+  match create_dir_all_mode(root.read_only(), "ro/x", 0o700) {
+    Ok(_) => out.println("read only made?")
+    Err(e) => out.println("read only ${e}")
+  }
+  out.println("ro exists ${root.exists("ro")?}")
+  root.set_mode("shut/inner", 0o700)?
+  root.set_mode("shut", 0o700)?
+  base.remove_all(name)?
+  out.println("done")
+}

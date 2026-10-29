@@ -225,6 +225,7 @@ var (
 	_ func(*BytesBuilder, *Task) int64                              = (*BytesBuilder).M_len
 	_ func(*BytesBuilder, *Task) Bytes                              = (*BytesBuilder).M_freeze
 	_ func(*FsErr, *Task) string                                    = (*FsErr).M_display
+	_ func(*Task, Fs, string, int64) Result[Unit, FsErr]            = Prelude_create_dir_all_mode
 	_ func(*Task, Fs, string, string) Result[string, FsErr]         = Prelude_read_text_or
 	_ func(*Task, Fs, string, Bytes) Result[Bytes, FsErr]           = Prelude_read_or
 	_ func(*File, *Task, int64) Result[Option[Bytes], FsErr]        = (*File).M_read

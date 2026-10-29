@@ -812,6 +812,13 @@ interface Fs {
   fn try_lock(self, path: Str) -> FileLock? ! FsErr uses fs.write
 }
 
+/// Creates dir and every missing parent as create_dir_all does, then
+/// gives each directory it created the permission bits mode exactly
+/// (no umask), deepest first so a mode without write or search still
+/// applies; directories already there keep theirs, as Go's MkdirAll
+/// (std.md 3.1). A free function, not a method of Fs.
+fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs
+
 /// The text of the file at path, or default when it does not exist
 /// (FsErr.NotFound); any other error is the result (std.md 3.1). A free
 /// function, not a method of Fs, so every type that satisfies Fs still does.

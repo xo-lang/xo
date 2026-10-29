@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+keep 493 a 448 b 448 c 448
+again a 448
+shut 320 inner 320
+wide 511 x 511
+under a file: error file.txt/sub: not a directory
+read only ro/x: permission denied
+ro exists false
+done
+--- stderr

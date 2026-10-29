@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-29: feature: create_dir_all_mode
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md gap 16, a directory tree made private)
+- Go reference: os.MkdirAll with a permission (go1.26.1)
+- Test: scripts/stdcorpus prelude.go "create_dir_all_mode gives only the directories it makes the mode" (MemFs; go, arm64 and LLVM); internal/llvm/testdata/golden/fs_mkdir_mode (the real file system, native and Go)
+
+`create_dir_all_mode(fs, dir, mode)` creates dir and its missing parents
+and gives each one it created exactly mode (no umask), deepest first;
+existing directories keep their mode. A free function, so a user type
+that implements `Fs` still does. Not a hot path (a few system calls a
+directory), so no timing row.
+
 ## 2026-10-29: feature: Proc.pid and Proc.ppid
 
 - Kind: feature

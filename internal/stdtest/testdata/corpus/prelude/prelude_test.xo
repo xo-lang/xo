@@ -741,6 +741,21 @@ test "a dialed Conn and an accepted ServerConn read, write and close through Str
   l.close()
 }
 
+test "create_dir_all_mode gives only the directories it makes the mode" {
+  os.fs.create_dir_all("keep")?
+  os.fs.set_mode("keep", 0o755)?
+  create_dir_all_mode(os.fs, "keep/a/b", 0o700)?
+  expect(os.fs.mode("keep")?) == 0o755
+  expect(os.fs.mode("keep/a")?) == 0o700
+  expect(os.fs.mode("keep/a/b")?) == 0o700
+  create_dir_all_mode(os.fs, "keep/a", 0o750)?
+  expect(os.fs.mode("keep/a")?) == 0o700
+  create_dir_all_mode(os.fs, "top", 0o711)?
+  expect(os.fs.mode("top")?) == 0o711
+  os.fs.write("f.txt", b"x")?
+  expect(create_dir_all_mode(os.fs, "f.txt/sub", 0o700).is_err()) == true
+}
+
 test "read_text_or and read_or answer the default only when the file is missing" {
   os.fs.write("present.txt", b"hello")?
   expect(read_text_or(os.fs, "present.txt", "none")?) == "hello"
