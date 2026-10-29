@@ -36,3 +36,27 @@ test "a negative varint is its uint64 bit pattern, ten bytes" {
   varint(pc, -4992669425971757056)
   expect(pc.freeze().to_hex()) == "80808080c0b39edbba01"
 }
+
+test "a layout file: functions, lines and edges by weight, the outermost frame owning a location" {
+  // three locations: pc 10 is run's line 5 with an inlined callee frame
+  // first (helper), pc 20 is run's line 7, pc 30 is main's line 2
+  var t = ProfTable{locs: [10, 20, 30], names: ["helper", "run", "main"]}
+  t.cf = [[0, 1], [1], [2]]
+  t.cfile = [["a.xo", "a.xo"], ["a.xo"], ["a.xo"]]
+  t.cline = [[9, 5], [7], [2]]
+  // samples, innermost first: run called by main three times at pc 10,
+  // once at pc 20; main itself once
+  let cpu = ProfCpu{hz: 1000, period: 1, samples: [[10, 30], [10, 30], [10, 30], [20, 30], [30]], tab: t}
+  let (o, n) = layout_lines(cpu, "darwin/arm64")
+  expect(n) == 2
+  expect(o[0]) == "xo layout v1"
+  expect(o[1]) == "target darwin/arm64"
+  expect(o[2]) == "samples 5 hz 1000"
+  expect(o[3]) == "fn run 4"
+  expect(o[4]) == "fn main 1"
+  expect(o[5]) == "line run 5 3"
+  expect(o[6]) == "line main 2 1"
+  expect(o[7]) == "line run 7 1"
+  expect(o[8]) == "edge main run 4"
+  expect(o.len()) == 9
+}

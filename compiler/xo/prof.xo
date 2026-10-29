@@ -193,8 +193,11 @@ fn prof_cmd(os: Os, args: List[Str]) -> Int uses (fs, stdio, net.dial) {
   var raw_out = ""
   var cpu_out = ""
   var heap_out = ""
+  var layout_out = ""
   for a in args {
-    if a.starts_with("--cpu-out=") {
+    if a.starts_with("--layout=") {
+      layout_out = a.trim_prefix("--layout=")
+    } else if a.starts_with("--cpu-out=") {
       cpu_out = a.trim_prefix("--cpu-out=")
     } else if a.starts_with("--heap-out=") {
       heap_out = a.trim_prefix("--heap-out=")
@@ -237,6 +240,19 @@ fn prof_cmd(os: Os, args: List[Str]) -> Int uses (fs, stdio, net.dial) {
   // are replaced on a rerun; a path given is never overwritten
   // (2026-10-21: two profiles in one directory clashed on xo-cpu.pprof)
   let base = prof_base(file)
+  if !layout_out.is_empty() {
+    // decision 0403: the CPU profile reduced to a layout file
+    return match prof_layout(os, file, layout_out) {
+      Ok(n) => {
+        os.stdio.eprintln("xo prof: ${layout_out}: ${n} functions")
+        0
+      }
+      Err(e) => {
+        os.stdio.eprintln("xo prof: ${e}")
+        1
+      }
+    }
+  }
   let replace_cpu = cpu_out.is_empty()
   let replace_heap = heap_out.is_empty()
   if replace_cpu {
@@ -265,7 +281,109 @@ fn prof_base(path: Str) -> Str {
   path
 }
 
-const PROF_USAGE = "usage: xo prof FILE|URL [--raw-out=PATH] [--cpu-out=PATH] [--heap-out=PATH]"
+const PROF_USAGE = "usage: xo prof FILE|URL [--raw-out=PATH] [--cpu-out=PATH] [--heap-out=PATH] [--layout=PATH]"
+
+/// A sort key that orders weights down: 10 digits of (10^10 - 1 - w).
+fn layout_wkey(w: Int) -> Str {
+  var d = "${9999999999 - w}"
+  while d.len() < 10 {
+    d = "0" + d
+  }
+  d
+}
+
+/// A layout file's version line (decision 0403).
+const LAYOUT_VERSION = "xo layout v1"
+
+/// prof_layout: the CPU profile of the raw file at path reduced to the
+/// layout file at out (decision 0403): the version line, `target OS/ARCH`
+/// (the host's: the raw file names no target yet), then one line per
+/// function `fn NAME WEIGHT` (the samples whose innermost frame is in it,
+/// by the name the program's symbolizer gave, demangled), per sampled
+/// line `line NAME LINE WEIGHT`, and per caller to callee pair at the
+/// stack's top `edge CALLER CALLEE WEIGHT`; each group by weight, then
+/// name, so two reductions of one profile are one file. Returns the
+/// function count.
+fn prof_layout(os: Os, path: Str, out: Str) -> Int ! Str uses (fs, stdio) {
+  let b = match os.fs.read(path) {
+    Ok(x) => x
+    Err(e) => return Err("${path}: ${e}")
+  }
+  let (cpu0, _) = prof_parse(b)?
+  let cpu = match cpu0 {
+    Some(c) => c
+    None => return Err("${path}: no CPU profile in it")
+  }
+  let (o, n) = layout_lines(cpu, "${host_os(os)}/${host_arch()}")
+  match os.fs.write(out, (o.join("\n") + "\n").bytes()) {
+    Ok(_) => {}
+    Err(e) => return Err("${out}: ${e}")
+  }
+  n
+}
+
+/// The layout file's lines for a CPU profile taken on target, and its
+/// function count (prof_layout's reduction, pure).
+fn layout_lines(cpu: ProfCpu, target: Str) -> (List[Str], Int) {
+  let t = cpu.tab
+  // a pc's location: locs is sorted, so its index by search
+  var at: Map[Int, Int] = {}
+  for (i, pc) in t.locs.indexed() {
+    at[pc] = i
+  }
+  // the function a location's code belongs to: its outermost frame (the
+  // inlined callees come first)
+  let owner = fn(loc: Int) -> (Str, Int) {
+    let fs = t.cf[loc]
+    if fs.is_empty() {
+      return ("", 0)
+    }
+    let k = fs.len() - 1
+    (t.names[fs[k]], t.cline[loc][k])
+  }
+  var fw: Map[Str, Int] = {}
+  var lw: Map[Str, Int] = {}
+  var ew: Map[Str, Int] = {}
+  for st in cpu.samples {
+    if st.is_empty() {
+      continue
+    }
+    let leaf = match at.get(st[0]) {
+      Some(i) => i
+      None => continue
+    }
+    let (f, line) = owner(leaf)
+    if f.is_empty() {
+      continue
+    }
+    fw[f] = (fw.get(f) ?? 0) + 1
+    let lk = "${f} ${line}"
+    lw[lk] = (lw.get(lk) ?? 0) + 1
+    if st.len() > 1 {
+      if let Some(ci) = at.get(st[1]) {
+        let (c, _) = owner(ci)
+        if !c.is_empty() && c != f {
+          let ek = "${c} ${f}"
+          ew[ek] = (ew.get(ek) ?? 0) + 1
+        }
+      }
+    }
+  }
+  let lines = fn(m: Map[Str, Int], kind: Str) -> List[Str] {
+    var ks: List[Str] = []
+    for (k, _) in m {
+      ks.push(k)
+    }
+    // by weight down, then name: a fixed width weight before the name
+    let sorted = ks.sort_by(fn(k) { "${layout_wkey(m.get(k) ?? 0)} ${k}" })
+    sorted.map(fn(k) { "${kind} ${k} ${m.get(k) ?? 0}" })
+  }
+  var o: List[Str] = [LAYOUT_VERSION, "target ${target}", "samples ${cpu.samples.len()} hz ${cpu.hz}"]
+  o += lines(fw, "fn")
+  o += lines(lw, "line")
+  o += lines(ew, "edge")
+  (o, fw.len())
+}
 
 /// The seconds a std/debug profile URL asks for (the query's seconds=N,
 /// 0 when it names none).
