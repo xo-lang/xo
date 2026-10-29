@@ -1,5 +1,16 @@
 # std/path changes
 
+## 2026-10-29: perf: clean writes a short kept element a byte at a time
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 3 (the std-vs-Go survey's path parts row, 1.24 times Go)
+- Go reference: path/path.go Clean (lazybuf writes the result a byte at a time)
+- Test: internal/stdtest/testdata/corpus/path on the Go, arm64 and LLVM backends (unchanged)
+- Timing: bench/perf/path parts, quiet `xo bench --ab`, 15 rounds, A the parent's std, B this one: wall 0.944 (0.926 to 0.977), instructions 0.946; B against the Go twin 1.09 times its wall (A 1.14); a 8M-pass copy of parts: wall 0.948, instructions 0.928
+
+`clean` copied each kept element of an unclean path with a slice and a `write` (a range check, a count and a drop, and the builder's call each); elements of up to 24 bytes are now written with the builder's inline `write_byte`, and longer ones still with one `write`. Output is unchanged.
+
 ## 2026-10-27: perf: clean keeps up to 8 elements in locals, with no list
 
 - Kind: perf

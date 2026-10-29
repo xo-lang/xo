@@ -152,7 +152,16 @@ fn clean(p: Str) -> Str {
       b.write_byte(46)
       b.write_byte(46)
     } else {
-      b.write(path[sg.shr_logical(32)..sg & 0xFFFFFFFF])
+      var t = sg.shr_logical(32)
+      let te = sg & 0xFFFFFFFF
+      if te - t > 24 {
+        b.write(path[t..te])
+      } else {
+        while t < te {
+          b.write_byte(path[t])
+          t += 1
+        }
+      }
     }
   }
   b.freeze().to_str() ?? ""
@@ -226,7 +235,17 @@ fn clean_list(p: Str) -> Str {
       b.write_byte(46)
       b.write_byte(46)
     } else {
-      b.write(path[segs[k]..segs[k + 1]])
+      let t0 = segs[k]
+      let te = segs[k + 1]
+      var t = t0
+      if te - t > 24 {
+        b.write(path[t..te])
+      } else {
+        while t < te {
+          b.write_byte(path[t])
+          t += 1
+        }
+      }
     }
     k += 2
   }
