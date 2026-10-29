@@ -7,6 +7,18 @@
 // the Windows rules are tested on any host; the plain form uses the OS xo
 // was built for.
 
+/// The OS this xo runs on, as the driver names hosts ("darwin", "linux",
+/// "windows"): the OS it was built for. A wasm xo (the playground) says
+/// darwin, as the uname probe it replaces did when the probe failed
+/// (gotchas/wasm-target-os-is-the-host.md).
+pub fn host() -> Str {
+  match target.os {
+    Windows => "windows"
+    Linux => "linux"
+    Darwin | Wasi => "darwin"
+  }
+}
+
 /// Whether this xo runs on Windows (the OS it was built for).
 pub fn windows() -> Bool {
   match target.os {

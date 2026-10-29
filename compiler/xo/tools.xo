@@ -9,20 +9,12 @@ use github.com/xo-lang/xo/compiler/hostpath
 
 /// The host's GOOS ("darwin", "linux", or "windows"): Windows is the OS
 /// this xo was built for (decision 0197), the others from `uname -s`.
-fn host_os(os: Os) -> Str {
-  if is_windows() {
-    return "windows"
-  }
-  match os.proc.run("uname", ["-s"]) {
-    Ok(r) => {
-      if (r.stdout.to_str() ?? "").trim() == "Linux" {
-        return "linux"
-      }
-    }
-    // xo:allow XO0903 a uname probe: the host's own OS when it fails
-    Err(_) => {}
-  }
-  "darwin"
+/// The host's OS by name: the OS this xo was built for (hostpath.host).
+/// It ran `uname -s` as a subprocess, 1 to 2 ms a call, and self_id
+/// alone called it four times a build (2026-10-28: 3 to 7 ms of a 109 ms
+/// edit).
+fn host_os(_os: Os) -> Str {
+  hostpath.host()
 }
 
 /// The host's GOARCH: the architecture this xo was built for (a
