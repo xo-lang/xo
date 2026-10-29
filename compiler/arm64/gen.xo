@@ -76,7 +76,28 @@ fn (var g: G) generate() -> Program {
   if main < 0 {
     return Program{asm: "", err: "arm64 backend: no main", skipped: []}
   }
-  for fi in 0..g.m.funcs.len() {
+  // the layout's order (decision 0403) when it names every function
+  // once, else the declared one
+  var order: List[Int] = []
+  if g.m.fn_order.len() == g.m.funcs.len() {
+    var seen: Map[Int, Bool] = {}
+    var ok = true
+    for fi in g.m.fn_order {
+      if fi < 0 || fi >= g.m.funcs.len() || (seen.get(fi) ?? false) {
+        ok = false
+      }
+      seen[fi] = true
+    }
+    if ok {
+      order = g.m.fn_order
+    }
+  }
+  if order.is_empty() {
+    for fi in 0..g.m.funcs.len() {
+      order.push(fi)
+    }
+  }
+  for fi in order {
     if !g.m.is_extern(fi) {
       g.function(fi)
     }

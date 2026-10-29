@@ -413,6 +413,9 @@ pub struct Module {
   /// placement effect from a cost of the code's shape (0, the default:
   /// none).
   pub arm64_pad: Int = 0
+  /// The functions' order in the text (decision 0403: a layout file's,
+  /// hot first), indices into funcs; empty for the declared order.
+  pub fn_order: List[Int] = []
   /// Triage of threaded dispatch (decision 0397, $XO_THREAD_SWITCH):
   /// only the functions whose name contains this text are threaded, or
   /// with a leading `!` every function but those, or with `@FILE` the

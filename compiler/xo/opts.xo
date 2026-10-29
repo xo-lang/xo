@@ -21,6 +21,11 @@ struct Opts {
   asm_path: Str = ""
   /// --tzdata: "embedded" (the default, as cmd/xo's flag) or "system".
   tzdata: Str = "embedded"
+  /// --layout: a layout file (decision 0403), "" for ./xo.layout of the
+  /// main package when it exists, "off" for none.
+  layout: Str = ""
+  /// The layout file's text once read (main.xo), "" for none.
+  layout_text: Str = ""
   /// --targets (comma separated os/arch, or all) or xo1's --target.
   targets: Str = ""
   /// --backend as given ("" when not given: go, or arm64 with --no-gc and
@@ -146,7 +151,7 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace", "opt"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace", "opt"]
 }
 
 /// The boolean flags.
@@ -579,6 +584,8 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.backend = v
   } else if name == "tzdata" {
     o.tzdata = v
+  } else if name == "layout" {
+    o.layout = v
   } else if name == "stamp" {
     let parts = v.split("=")
     if parts.len() < 2 || parts[0].is_empty() {

@@ -1102,6 +1102,21 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // checker go (decision 0354 stage 2)
   if !tests {
     o.binfo_sources = binfo_sources(c, root, o.wd)
+    // the layout file (decision 0403): --layout=FILE, else the module
+    // root's xo.layout when it is there; a source of the build, so its
+    // hash is among the sources (the build id follows it)
+    if o.layout != "off" {
+      let lp = if o.layout.is_empty() { "${root}/xo.layout" } else { o.layout }
+      match os.fs.read(lp) {
+        Ok(b) => {
+          o.layout_text = b.to_str() ?? ""
+          o.binfo_sources["xo.layout"] = crypto.sha256(b).to_hex()
+        }
+        Err(e) => if !o.layout.is_empty() {
+          fail(os, "--layout: ${lp}: ${e}")
+        }
+      }
+    }
   }
   // the retry's note names the cross module effect reads, which lower's
   // link_view no longer has the effect tables to find (decision 0352)
@@ -2597,6 +2612,31 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
     t = lap(os, phases, "dce", t)
   }
   gm.passes_off = passes_off(os)
+  // decision 0403 stage 1: the functions' order from the layout file; a
+  // profile of another target is ignored with one line
+  if !o.layout_text.is_empty() {
+    match parse_layout(o.layout_text) {
+      Ok(l) => {
+        let want = "${tgoos}/${gm.goarch}"
+        if !l.target.is_empty() && l.target != want {
+          os.stdio.eprintln("layout: the layout file is ${l.target}'s, ignored for ${want}")
+        } else {
+          let names = gm.funcs.map(fn(f: ssa.Func) -> Str { f.name })
+          gm.fn_order = layout_order(names, l)
+          if (os.env.get("XO_CACHE_STATS") ?? "") == "1" {
+            var hit = 0
+            for n in names {
+              if (l.fns.get(n) ?? 0) > 0 {
+                hit += 1
+              }
+            }
+            os.stdio.eprintln("layout: ${hit} of ${l.fns.len()} sampled functions matched, ${names.len()} functions ordered")
+          }
+        }
+      }
+      Err(e) => fail(os, "layout file: ${e}")
+    }
+  }
   // decision 0388 stage 4: XO_STD_OBJ=DIR builds std's object
   gm.std_obj = !std_obj_dir(os).is_empty() && gm.std_store
   // decision 0388 stage 3: a separately compiled program's side
