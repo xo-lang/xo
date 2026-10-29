@@ -205,15 +205,20 @@ fn (var l: ELinker) gc_sections() {
 fn (l: ELinker) eh_live(o: Int, s: ESect, live: List[List[Bool]]) -> ESect {
   let d = s.data
   let recs = elf_eh_records(d)
-  var keep: List[Bool] = []
+  // each relocation's index by its offset, the last at an offset as the
+  // scan of every relocation for every record found it (a std object's
+  // .eh_frame: records times relocations)
+  var rel_at: Map[Int, Int] = {}
+  for (i, r) in s.relocs.indexed() {
+    rel_at[r.off] = i
+  }
+  var keep: List[Bool] = List.with_capacity(recs.len())
   for rec in recs {
     var k = true
     if rec + 12 <= d.len() && rd32(d, rec + 4) != 0 {
-      for r in s.relocs {
-        if r.off == rec + 8 {
-          let (t, j) = l.rel_sect(o, r)
-          k = t < 0 || live[t][j]
-        }
+      if let Some(i) = rel_at.get(rec + 8) {
+        let (t, j) = l.rel_sect(o, s.relocs[i])
+        k = t < 0 || live[t][j]
       }
     }
     keep.push(k)
