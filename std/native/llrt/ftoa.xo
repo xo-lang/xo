@@ -280,6 +280,7 @@ pub fn format(f: Float, verb: Int, prec0: Int) -> Str {
   }
   var d = Dec{}
   var prec = prec0
+  var fast = false
   let shortest_digits = prec < 0
   if !(be == 0 && frac == 0) {
     var mant = frac
@@ -292,7 +293,46 @@ pub fn format(f: Float, verb: Int, prec0: Int) -> Str {
     if shortest_digits {
       d = shortest(f)
     } else {
-      d = exact(mant, e2)
+      // Go's choice of the digit count (ftoa.go): up to 18 take the
+      // fixed path
+      var digits = prec
+      if verb == 102 {
+        let ex = e2 + 52
+        digits = if ex >= 0 { 1 + num.mul_log10_2(1 + ex) + prec } else { 1 + prec - num.mul_log10_2(0 - ex) }
+      } else if verb == 101 || verb == 69 {
+        digits += 1
+      } else {
+        if prec == 0 {
+          prec = 1
+        }
+        digits = prec
+      }
+      if digits <= 18 {
+        fast = true
+        if digits > 0 {
+          let (dm, nd0, dp) = num.fixed_digits(mant, e2, digits, prec, verb == 102)
+          var nd = nd0
+          var v = dm
+          while nd > 0 && v % 10 == 0 {
+            v = v / 10
+            nd -= 1
+          }
+          var rev: List[Int] = []
+          for _ in 0..nd {
+            rev.push(v % 10)
+            v = v / 10
+          }
+          var ds: List[Int] = []
+          var i = nd - 1
+          while i >= 0 {
+            ds.push(rev[i])
+            i -= 1
+          }
+          d = Dec{d: ds, dp: dp}
+        }
+      } else {
+        d = exact(mant, e2)
+      }
     }
   }
   if shortest_digits {
@@ -303,7 +343,7 @@ pub fn format(f: Float, verb: Int, prec0: Int) -> Str {
     } else {
       prec = d.d.len()
     }
-  } else {
+  } else if !fast {
     if verb == 101 || verb == 69 {
       d = round_to(d, prec + 1)
     } else if verb == 102 {

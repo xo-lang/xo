@@ -170,7 +170,7 @@ fn pow10_hi(e: Int) -> Int { word_at(num_tables.POW10, (e - num_tables.POW10_MIN
 fn pow10_lo(e: Int) -> Int { word_at(num_tables.POW10, (e - num_tables.POW10_MIN) * 16 + 8) }
 
 /// floor(x * log10(2)) for -1600 <= x <= 1600 (strconv.mulLog10_2).
-fn mul_log10_2(x: Int) -> Int { (x * 78913) >> 18 }
+pub fn mul_log10_2(x: Int) -> Int { (x * 78913) >> 18 }
 
 /// floor(x * log2(10)) for -500 <= x <= 500 (strconv.mulLog2_10).
 fn mul_log2_10(x: Int) -> Int { (x * 108853) >> 15 }
@@ -1662,4 +1662,98 @@ pub fn from_base64(s: Str) -> Bytes? {
     out = rt.rs_push_word(out, w, wk)
   }
   Some(out.bytes())
+}
+
+// ---------------------------------------------------------------------------
+// Fixed digits (decision 0410): strconv.fixedFtoa (Go 1.26's
+// internal/strconv/ftoafixed.go), the digits of mant * 2^e2 rounded to a
+// count of 18 or fewer, from the 128 bit power of ten of pow10Tab.
+
+/// x / 10 as UInt64s (x >> 1 is below 2^63, so the divide is signed).
+fn udiv10(x: Int) -> Int { shr(x, 1) / 5 }
+
+/// 5^p for 1 <= p <= 22.
+fn pow5_small(p: Int) -> Int {
+  var r = 1
+  for _ in 0..p {
+    r *= 5
+  }
+  r
+}
+
+/// The digits of mant * 2^e2 (0 < mant < 2^53) rounded to `digits` (1 to
+/// 18) significant digits, or for `is_f` to `prec` places past the decimal
+/// point (digits then an overestimate of the count): the digits as an
+/// Int (no trailing zeros trimmed), their count and the decimal point
+/// (the value is 0.DIGITS * 10^dp). The count is 0 when everything rounds
+/// away.
+pub fn fixed_digits(mant0: Int, e2: Int, digits0: Int, prec: Int, is_f: Bool) -> (Int, Int, Int) {
+  var digits = digits0
+  let b = clz(mant0)
+  let mant = shl(mant0, b)
+  let exp = e2 - b
+  let p = (digits - 1) - mul_log10_2(63 + exp)
+  let ph = pow10_hi(p)
+  var pl = pow10_lo(p)
+  let exp2 = 1 + mul_log2_10(p)
+  if p >= -22 && p < 0 {
+    pl = addw(pl, 1)
+  }
+  // umul192(mant, (ph, pl))
+  let mid1 = mulw(mant, pl)
+  let lo0 = mid1
+  let h1 = mant.mul_hi_unsigned(pl)
+  let hi0 = mant.mul_hi_unsigned(ph)
+  let mid2 = mulw(mant, ph)
+  let mid = addw(h1, mid2)
+  let carry = if ult(mid, h1) { 1 } else { 0 }
+  var dm = addw(hi0, carry)
+  let lo1 = mid
+  var dt = 1
+  if p >= 0 && p <= 55 {
+    dt = if (lo1 | lo0) != 0 { 1 } else { 0 }
+  } else if p >= -22 && p < 0 && mant0 % pow5_small(0 - p) == 0 {
+    dt = 0
+  }
+  let de = exp + exp2
+  let shift = 0 - de - 1
+  if (dm & (shl(1, shift) - 1)) != 0 {
+    dt = 1
+  }
+  dm = shr(dm, shift)
+  var dp = digits - p
+  var max = shl(pow10(digits), 1)
+  if !ult(dm, max) {
+    let q = udiv10(dm)
+    if dm - q * 10 != 0 {
+      dt = 1
+    }
+    dm = q
+    dp += 1
+  }
+  if is_f && digits != dp + prec {
+    while digits > dp + prec {
+      let q = udiv10(dm)
+      if dm - q * 10 != 0 {
+        dt = 1
+      }
+      dm = q
+      digits -= 1
+    }
+    if digits <= 0 {
+      digits = 1
+      dp += 1
+    }
+    max = shl(pow10(digits), 1)
+  }
+  dm = addw(dm, dm & (dt | shr(dm, 1)) & 1)
+  dm = shr(dm, 1)
+  if dm == shr(max, 1) {
+    dm = pow10(digits - 1)
+    dp += 1
+  }
+  if dm == 0 {
+    return (0, 0, dp)
+  }
+  (dm, digits, dp)
 }
