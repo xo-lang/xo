@@ -812,3 +812,9 @@ ms, the HTTP server's 60 to 27).
   darwin/amd64 on the Intel laptop: std's variants built, a default build of llvm-fib and of a
   split program each against XO_SEPCOMP=0, the outputs the same and the default's build taking
   the cache's variants (`cache std ... reused`). windows/amd64 follows (Lang 2, after its CI run).
+- A separately compiled program's DWARF names its own copy of a weak definition (a helper
+  or an instance std's store defines too): its relocations resolved to the copy the link
+  kept, std's, outside the program's unit, and `dwarfdump --verify` reported a subprogram
+  outside its unit's range (http.Router.handle[()], the HTTP server; the whole program was
+  clean). compiler/macho dsym.xo resolves a DWARF relocation to a weak definition the
+  object has itself to that copy, which stays in the program's text.

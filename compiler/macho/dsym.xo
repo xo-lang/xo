@@ -155,6 +155,18 @@ fn (var l: Linker) dwarf_write(var out: BytesBuilder) -> List[Int] {
         if r.typ != R_UNSIGNED || r.len != 3 || r.pcrel {
           continue
         }
+        // a weak definition this object has itself (a helper or an
+        // instance std's store defines too, decision 0388): its own copy,
+        // which its unit describes and which lies in its range, not the
+        // one the link kept (dwarfdump --verify: a subprogram outside its
+        // unit's range)
+        if r.ext && r.sym < l.objs[o].syms.len() {
+          let y = l.objs[o].syms[r.sym]
+          if is_ext(y) && is_defined(y) && (y.desc & 0x80) != 0 && y.sect >= 1 {
+            ch.push(BytePatch{at: r.addr, n: 8, v: l.sym_addr(o, r.sym) + rd64(s.data, r.addr)})
+            continue
+          }
+        }
         let t = l.target(o, r, rd64(s.data, r.addr))
         if t.imp >= 0 {
           continue
