@@ -73,6 +73,7 @@ var generators = map[string]func() string{
 	"strwhere":   whereCorpus,
 	"trimchars":  trimcharsCorpus,
 	"strings":    stringsCorpus,
+	"tabwriter":  tabwriterCorpus,
 }
 
 func main() {

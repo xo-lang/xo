@@ -1,0 +1,359 @@
+// std/tabwriter on the native backends and the Go backend (decision 0410):
+// Go's text/tabwriter (tabwriter.go, Copyright 2009 The Go Authors,
+// BSD-style license), ported with its tests (scripts/stdcorpus/
+// tabwriter.go runs Go's own table). The Writer's output goes to a
+// buffer that `flush` returns, where Go writes to an io.Writer; a
+// write error cannot happen.
+use std/tabwriter
+
+/// Go's cell: its size in bytes, its width in runes, and whether a tab
+/// ended it.
+struct Cell {
+  size: Int
+  width: Int
+  htab: Bool
+}
+
+struct TabWriter {
+  minwidth: Int
+  tabwidth: Int
+  padding: Int
+  padbyte: Int
+  flags: Int
+  /// the collected text excluding tabs and line breaks
+  buf: List[UInt8]
+  /// the buffer position up to which the width of the incomplete cell
+  /// has been computed
+  pos: Int
+  cell: Cell
+  /// the terminating byte of an escaped sequence (Escape, '>' or ';'), or 0
+  end_char: Int
+  lines: List[List[Cell]]
+  widths: List[Int]
+  out: BytesBuilder
+}
+
+fn writer(min_width: Int, tab_width: Int, padding: Int, pad_char: Int, flags0: Int) -> TabWriter {
+  if min_width < 0 || tab_width < 0 || padding < 0 {
+    fault("tabwriter: negative minwidth, tabwidth, or padding")
+  }
+  var flags = flags0
+  if pad_char == 9 {
+    // tabs: a right aligned column cannot be padded with them
+    flags = flags & (0 - 1 - tabwriter.ALIGN_RIGHT)
+  }
+  var w = TabWriter{minwidth: min_width, tabwidth: tab_width, padding: padding, padbyte: pad_char, flags: flags, buf: [], pos: 0, cell: Cell{size: 0, width: 0, htab: false}, end_char: 0, lines: [], widths: [], out: BytesBuilder.new()}
+  w.reset()
+  w
+}
+
+fn (var w: TabWriter) reset() {
+  w.buf = []
+  w.pos = 0
+  w.cell = Cell{size: 0, width: 0, htab: false}
+  w.end_char = 0
+  w.lines = [[]]
+  w.widths = []
+}
+
+fn (var w: TabWriter) write_padding(textw: Int, cellw0: Int, use_tabs: Bool) {
+  var cellw = cellw0
+  if w.padbyte == 9 || use_tabs {
+    if w.tabwidth == 0 {
+      // tabs have no width: no padding is possible
+      return
+    }
+    cellw = (cellw + w.tabwidth - 1) / w.tabwidth * w.tabwidth
+    let n = cellw - textw
+    for _ in 0..(n + w.tabwidth - 1) / w.tabwidth {
+      w.out.write_byte(9)
+    }
+    return
+  }
+  for _ in 0..cellw - textw {
+    w.out.write_byte(UInt8(w.padbyte))
+  }
+}
+
+/// The bytes buf[pos..pos + n] to the output.
+fn (var w: TabWriter) write_buf(pos: Int, n: Int) {
+  for j in pos..pos + n {
+    w.out.write_byte(w.buf[j])
+  }
+}
+
+fn (var w: TabWriter) write_lines(pos0: Int, line0: Int, line1: Int) -> Int {
+  var pos = pos0
+  for i in line0..line1 {
+    let line = w.lines[i]
+    var use_tabs = w.flags & tabwriter.TAB_INDENT != 0
+    for j in 0..line.len() {
+      let c = line[j]
+      if j > 0 && w.flags & tabwriter.DEBUG != 0 {
+        w.out.write_byte(124)
+      }
+      if c.size == 0 {
+        // empty cell
+        if j < w.widths.len() {
+          w.write_padding(c.width, w.widths[j], use_tabs)
+        }
+      } else {
+        // non-empty cell
+        use_tabs = false
+        if w.flags & tabwriter.ALIGN_RIGHT == 0 {
+          w.write_buf(pos, c.size)
+          pos += c.size
+          if j < w.widths.len() {
+            w.write_padding(c.width, w.widths[j], false)
+          }
+        } else {
+          if j < w.widths.len() {
+            w.write_padding(c.width, w.widths[j], false)
+          }
+          w.write_buf(pos, c.size)
+          pos += c.size
+        }
+      }
+    }
+    if i + 1 == w.lines.len() {
+      // the last buffered line: no newline, but the unterminated cell
+      w.write_buf(pos, w.cell.size)
+      pos += w.cell.size
+    } else {
+      w.out.write_byte(10)
+    }
+  }
+  pos
+}
+
+/// Formats lines line0..line1 (a block of consecutive lines with the
+/// columns before the current one fixed) and returns the buffer position
+/// after them (Go's format).
+fn (var w: TabWriter) format(pos0: Int, line0_in: Int, line1: Int) -> Int {
+  var pos = pos0
+  var line0 = line0_in
+  let column = w.widths.len()
+  var this = line0
+  while this < line1 {
+    var line = w.lines[this]
+    if column >= line.len() - 1 {
+      this += 1
+      continue
+    }
+    // cell exists in this column: this line starts a block of lines that
+    // share the column; print the lines before it
+    pos = w.write_lines(pos, line0, this)
+    line0 = this
+    // column block begin
+    var width = w.minwidth
+    var discardable = true
+    while this < line1 {
+      line = w.lines[this]
+      if column >= line.len() - 1 {
+        break
+      }
+      // cell exists in this column
+      let c = line[column]
+      let cw = c.width + w.padding
+      if cw > width {
+        width = cw
+      }
+      if c.width > 0 || c.htab {
+        discardable = false
+      }
+      this += 1
+    }
+    // column block end
+    if discardable && w.flags & tabwriter.DISCARD_EMPTY_COLUMNS != 0 {
+      width = 0
+    }
+    w.widths.push(width)
+    pos = w.format(pos, line0, this)
+    let _p = w.widths.pop()
+    line0 = this
+    // Go's for loop increments `this` after the body: the line that ended
+    // the block is looked at again by the loop's own increment, as in Go
+    this += 1
+  }
+  w.write_lines(pos, line0, line1)
+}
+
+fn (var w: TabWriter) append(data: Bytes, from: Int, to: Int) {
+  for j in from..to {
+    w.buf.push(data[j])
+  }
+  w.cell.size += to - from
+}
+
+/// The width in bytes of the rune at buf[i], or 1 for an invalid byte
+/// (utf8.DecodeRune).
+fn (w: TabWriter) rune_len(i: Int, end: Int) -> Int {
+  let b0 = Int(w.buf[i])
+  if b0 < 0x80 {
+    return 1
+  }
+  if b0 < 0xC2 || b0 > 0xF4 {
+    return 1
+  }
+  var need = 2
+  var lo = 0x80
+  var hi = 0xBF
+  if b0 >= 0xE0 {
+    need = 3
+    if b0 == 0xE0 {
+      lo = 0xA0
+    }
+    if b0 == 0xED {
+      hi = 0x9F
+    }
+  }
+  if b0 >= 0xF0 {
+    need = 4
+    if b0 == 0xF0 {
+      lo = 0x90
+    }
+    if b0 == 0xF4 {
+      hi = 0x8F
+    }
+  }
+  if i + need > end {
+    return 1
+  }
+  let b1 = Int(w.buf[i + 1])
+  if b1 < lo || b1 > hi {
+    return 1
+  }
+  for k in 2..need {
+    let bk = Int(w.buf[i + k])
+    if bk < 0x80 || bk > 0xBF {
+      return 1
+    }
+  }
+  need
+}
+
+/// Adds the runes of the text since the last update to the incomplete
+/// cell's width.
+fn (var w: TabWriter) update_width() {
+  var i = w.pos
+  let end = w.buf.len()
+  while i < end {
+    i += w.rune_len(i, end)
+    w.cell.width += 1
+  }
+  w.pos = end
+}
+
+fn (var w: TabWriter) start_escape(ch: Int) {
+  if ch == tabwriter.ESCAPE {
+    w.end_char = tabwriter.ESCAPE
+  } else if ch == 60 {
+    w.end_char = 62
+  } else if ch == 38 {
+    w.end_char = 59
+  }
+}
+
+fn (var w: TabWriter) end_escape() {
+  if w.end_char == tabwriter.ESCAPE {
+    w.update_width()
+    if w.flags & tabwriter.STRIP_ESCAPE == 0 {
+      // don't count the Escape bytes
+      w.cell.width -= 2
+    }
+  } else if w.end_char == 59 {
+    // an entity counts as one rune
+    w.cell.width += 1
+  }
+  w.pos = w.buf.len()
+  w.end_char = 0
+}
+
+/// Ends the current cell and returns the number of cells of its line.
+fn (var w: TabWriter) terminate_cell(htab: Bool) -> Int {
+  w.cell.htab = htab
+  let last = w.lines.len() - 1
+  w.lines[last].push(w.cell)
+  w.cell = Cell{size: 0, width: 0, htab: false}
+  w.lines[last].len()
+}
+
+fn (var w: TabWriter) flush_no_defers() {
+  // add the current cell if not empty
+  if w.cell.size > 0 {
+    if w.end_char != 0 {
+      // inside an escape sequence: terminate it even if it is not
+      // properly formed
+      w.end_escape()
+    }
+    let _n = w.terminate_cell(false)
+  }
+  // format the buffer's lines
+  let _p = w.format(0, 0, w.lines.len())
+  w.reset()
+}
+
+fn (var w: TabWriter) write(data: Bytes) {
+  var n = 0
+  for i in 0..data.len() {
+    let ch = Int(data[i])
+    if w.end_char == 0 {
+      // outside escape
+      if ch == 9 || ch == 11 || ch == 10 || ch == 12 {
+        // end of cell
+        w.append(data, n, i)
+        w.update_width()
+        n = i + 1
+        let ncells = w.terminate_cell(ch == 9)
+        if ch == 10 || ch == 12 {
+          // terminate line
+          w.lines.push([])
+          if ch == 12 || ncells == 1 {
+            // a '\f' always forces a flush; a line with a single cell
+            // ends the column block and flushes
+            w.flush_no_defers()
+            if ch == 12 && w.flags & tabwriter.DEBUG != 0 {
+              // indicate section break
+              w.out.write_str("---\n")
+            }
+          }
+        }
+      } else if ch == tabwriter.ESCAPE {
+        // start of escaped sequence
+        w.append(data, n, i)
+        w.update_width()
+        n = i
+        if w.flags & tabwriter.STRIP_ESCAPE != 0 {
+          n += 1
+        }
+        w.start_escape(tabwriter.ESCAPE)
+      } else if ch == 60 || ch == 38 {
+        // possibly an html tag or entity
+        if w.flags & tabwriter.FILTER_HTML != 0 {
+          w.append(data, n, i)
+          w.update_width()
+          n = i
+          w.start_escape(ch)
+        }
+      }
+    } else if ch == w.end_char {
+      // inside escape, and at its end
+      var j = i + 1
+      if ch == tabwriter.ESCAPE && w.flags & tabwriter.STRIP_ESCAPE != 0 {
+        j = i
+      }
+      w.append(data, n, j)
+      n = i + 1
+      w.end_escape()
+    }
+  }
+  // append the leftover text
+  w.append(data, n, data.len())
+}
+
+fn (var w: TabWriter) flush() -> Bytes {
+  w.flush_no_defers()
+  let res = w.out.freeze()
+  w.out = BytesBuilder.new()
+  res
+}

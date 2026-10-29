@@ -1,0 +1,37 @@
+// std/tabwriter (spec/std.md, decision 0410). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's text/tabwriter:
+// elastic tabstops, columns of text terminated by tabs aligned over runs
+// of consecutive lines. Pure: bytes in, bytes out, no I/O of its own.
+
+/// Flags (Go's FilterHTML, StripEscape, AlignRight, DiscardEmptyColumns,
+/// TabIndent, Debug), added together.
+const FILTER_HTML: Int = 1
+const STRIP_ESCAPE: Int = 2
+const ALIGN_RIGHT: Int = 4
+const DISCARD_EMPTY_COLUMNS: Int = 8
+const TAB_INDENT: Int = 16
+const DEBUG: Int = 32
+
+/// The byte that starts and ends an escaped text (Go's Escape): its
+/// bytes pass through as one piece of the cell, tabs and all.
+const ESCAPE: Int = 255
+
+/// A tab writer: text written to it is split into cells at its tabs
+/// (`\t`, or `\v`; a line ends at `\n` or `\f`), and `flush` returns the
+/// text with every column padded to the widest cell of its block of
+/// lines, as Go's tabwriter.Writer does. `write` takes bytes in any
+/// pieces; the output it has formatted so far is held until `flush`
+/// returns it (Go writes it to the io.Writer as lines complete).
+/// @move_only
+struct TabWriter {}
+
+/// Go's NewWriter(output, minwidth, tabwidth, padding, padchar, flags):
+/// `min_width` is the minimal cell width including padding, `tab_width`
+/// the width of a tab (when `pad_char` is a tab), `padding` the cell
+/// padding added to the text's width, `pad_char` the byte padded with
+/// (a space by default, 9 for tabs), and `flags` the flags added
+/// together. A negative number faults.
+fn writer(min_width: Int, tab_width: Int, padding: Int, pad_char: Int = 32, flags: Int = 0) -> TabWriter
+fn (var w: TabWriter) write(data: Bytes)
+/// The formatted output since the last flush; the writer is empty again.
+fn (var w: TabWriter) flush() -> Bytes
