@@ -3747,7 +3747,7 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   let c = os.net.dial(addr)?
   c.write(ssl_request())?
   if c.read(1)? != Some(b"S") {
-    return Err(Error.msg("server refused TLS"))
+    return Err(NetErr.Io("server refused TLS"))
   }
   tls.client(c, host)?
 }
