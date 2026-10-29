@@ -31,7 +31,10 @@ fn backend_cache_dir(os: Os, ctx: Ctx) -> Str {
   }
   let d = os.env.get("XO_BACKEND_CACHE_DIR") ?? ""
   if !d.is_empty() {
-    return d
+    // C:\x as C:/x on windows, the form the paths built from it are
+    // taken as absolute in (check.path_volume; CI 40815894916: the std
+    // variant's build directory was joined onto the working directory)
+    return if host_os(os) == "windows" { d.replace("\\", "/") } else { d }
   }
   "${ctx.cache}/xo/backend"
 }
