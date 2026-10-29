@@ -144,3 +144,42 @@ case is small in count and large in use: it is how Go composes I/O.
   the Go error a go.Error was made from, so an error that came from Go (io.EOF, a sentinel) keeps its
   identity for `errors.Is`; a replayed error, which has only its text, becomes errors.New(text).
 - Binding format 12.
+
+## As built, step 2: implementations by named function parameters (Lang 1, 2026-10-29)
+
+- Changed from decision 1 (the lead, 2026-10-29, owner told with a veto): the constructor takes one
+  function parameter per method, named after it, instead of a `Fns` struct; same substance (functions, not
+  method sets), no new codegen for a binding-declared struct with fields. Called with named arguments:
+
+  ```
+  let w = io.writer(write: fn(p: Bytes) -> Int ! go.Error {
+    sink.send(p)
+    p.len()
+  })
+  let r = io.reader(read: fn(max: Int) -> Bytes ! go.Error { next_chunk(max) })
+  let h = http.handler(serve_http: fn(w, r) { w.write_header(204) })
+  ```
+
+  A stored, reusable set of functions (the Fns value) can come later if wanted.
+- internal/gobind bindImpl: for each interface handle of the package (not generic, not another package's),
+  a Go signature with one function parameter per method (Go's method order, sorted by name) is bound by
+  bindFunc as a function `xoNew_<handle>` of the adapter, so each parameter is an ordinary callback
+  (callbackConv with step 1's error results; effects, replay and the task rules come with it). The adapter
+  type `xoImpl_<handle>` holds the Go functions and its methods call them. The constructor is named
+  after the interface (`writer`), or `implement_writer` when a function has the name; an interface with an
+  unexported or variadic method, or one whose method does not map, is skipped ("interface I cannot be
+  implemented in Xo: reason").
+- Read rule: a method whose first parameter outBuffer recognizes, with `(int, error)` results, is
+  `fn(Int, ...) -> Bytes ! go.Error`, given len(p); the adapter copies, panics (a fault) past len(p), and
+  returns io.EOF for no bytes and no error.
+- Tests: gobind TestImplementations (io, sort, net/http declarations and the io adapter), cmd/xo
+  TestUseGoImplements (io.copy between Xo implementations, an Xo go.error through io.write_string,
+  sort.sort over a Mutex[List[Int]]) and TestUseGoImplementsHandler (an Xo http.Handler serving two
+  concurrent httptest requests).
+- Decision 3 needs no new rule: closures capture by value and writing a captured `var` is XO0502 (core
+  3.3), so a callback shares state with its creator only through a Mutex or Atomic.
+- Known gap (follow-up): an interface handle does not convert to an interface it embeds or satisfies
+  (`resp.body()` is `io.ReadCloser`, `io.read_all` takes `io.Reader`: XO0401). The binder could
+  declare an upcast per such pair (`fn (r: ReadCloser) reader() -> Reader`), or the checker could accept
+  a Go handle where Go's assignability holds.
+- Binding format 13.

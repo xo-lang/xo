@@ -66,7 +66,7 @@ import (
 // 9 (2026-10-29, decision 0412): Go's any is go.Any; a handle has its Go
 // value both ways (XoGoValue, XoFromGo) for go.any and go.Any.as_handle.
 // 10 (2026-10-29, decision 0415): generic functions bind as Xo generics.
-const Version = 12
+const Version = 13
 
 // Binding is one bound Go package.
 type Binding struct {
@@ -102,6 +102,8 @@ type Stats struct {
 	Consts, ConstsMapped   int
 	Vars, VarsMapped       int
 	Foreign, ForeignMapped int
+	// Impls counts the interfaces an Xo program can implement (decision 0416).
+	Impls int
 	// Reasons counts skipped functions and methods of the package (not
 	// fields, constants, variables, or foreign methods) by reason category.
 	Reasons map[string]int

@@ -1756,6 +1756,25 @@ fn main(os: Os) ! {
   error, the Go error `e` came from when Go made it (so `errors.Is` sees a
   sentinel such as `io.EOF`), else one with `e`'s text; `go.error(msg)`
   makes one.
+- An Xo program implements a Go interface with functions (decision 0416):
+  a binding declares, for each named interface whose methods all map as
+  callbacks, a constructor named after the interface (`implement_` and
+  the name when that is taken) with one function parameter per method,
+  named after it, returning the interface's handle:
+  ```
+  let w = io.writer(write: fn(p: Bytes) -> Int ! go.Error {
+    sink.send(p)
+    p.len()
+  })
+  let h = http.handler(serve_http: fn(w, r) { w.write_header(204) })
+  ```
+  The functions are callbacks (the rules above: the calling task, or a
+  task of its own for a call from another goroutine, with spawn's rules
+  for what they capture). A method that fills a byte buffer (`Read(p
+  []byte) (int, error)`, `ReadAt`) is a function given the buffer's
+  length that returns the bytes (`fn(max: Int) -> Bytes ! go.Error`):
+  they are copied into the buffer, more than it holds is a fault, and
+  none with no error is `io.EOF`.
 - Every call into Go performs the effect `go`, which `pub` functions must
   declare. Go code can reach files and the network without a capability, so
   `uses go` marks that authority escape in signatures.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"go/constant"
 	"go/format"
+	"go/token"
 	"go/types"
 	"io/fs"
 	"math"
@@ -1373,11 +1374,143 @@ func (g *gen) run() {
 			}
 		}
 	}
-	for len(g.queue) > 0 {
-		h := g.queue[0]
-		g.queue = g.queue[1:]
-		g.bindHandle(h)
+	// an Xo implementation of each interface (decision 0416), after every
+	// handle its methods name exists; a constructor's callbacks may add
+	// handles, bound in turn
+	impl := map[*handle]bool{}
+	for {
+		for len(g.queue) > 0 {
+			h := g.queue[0]
+			g.queue = g.queue[1:]
+			g.bindHandle(h)
+		}
+		n := len(impl)
+		for _, h := range append([]*handle(nil), g.order...) {
+			if !impl[h] && !h.foreign && !h.ref && len(h.tps) == 0 && isInterfaceType(h.named) {
+				impl[h] = true
+				g.bindImpl(h)
+			}
+		}
+		if len(impl) == n && len(g.queue) == 0 {
+			break
+		}
 	}
+}
+
+// unnamedSig is the Go function type func(ps...) (rs...) with no names.
+func unnamedSig(ps, rs []types.Type) *types.Signature {
+	var pv, rv []*types.Var
+	for _, t := range ps {
+		pv = append(pv, types.NewVar(token.NoPos, nil, "", t))
+	}
+	for _, t := range rs {
+		rv = append(rv, types.NewVar(token.NoPos, nil, "", t))
+	}
+	return types.NewSignatureType(nil, nil, nil, types.NewTuple(pv...), types.NewTuple(rv...), false)
+}
+
+// bindImpl binds the constructor of an Xo implementation of interface
+// handle h (decision 0416, as built: named function parameters, one per
+// method, instead of a struct of functions): `fn writer(write: fn(Bytes)
+// -> Int ! go.Error uses fx) -> Writer`. The adapter's type xoImpl_H
+// holds the Go functions callbackConv makes of the Xo ones, and its
+// methods call them. A Read method (a []byte it fills, (int, error)
+// results; outBuffer) is `fn(Int) -> Bytes ! go.Error` given len(p): the
+// bytes are copied into p, and none with no error is io.EOF.
+func (g *gen) bindImpl(h *handle) {
+	it := h.named.Underlying().(*types.Interface)
+	if it.NumMethods() == 0 {
+		return
+	}
+	xn := xoName(snake(h.xo))
+	if g.scope[xn] {
+		xn = "implement_" + snake(h.xo)
+	}
+	display := g.display(h.named) + " implementation"
+	if g.scope[xn] {
+		g.skip(xn, display, skipf(catCollision, "name `%s` is taken", xn), false)
+		return
+	}
+	impl := "xoImpl_" + h.goName
+	var params []*types.Var
+	var fields, methods, fargs []string
+	for i := 0; i < it.NumMethods(); i++ {
+		m := it.Method(i)
+		if !m.Exported() {
+			g.skip(xn, display, skipf(catIface, "interface %s: method %s is unexported", g.display(h.named), m.Name()), false)
+			return
+		}
+		sig := m.Type().(*types.Signature)
+		if sig.Variadic() {
+			g.skip(xn, display, skipf(catFunc, "interface %s: method %s is variadic", g.display(h.named), m.Name()), false)
+			return
+		}
+		ps, rs := sig.Params(), sig.Results()
+		var gps, args []string
+		for j := 0; j < ps.Len(); j++ {
+			gps = append(gps, fmt.Sprintf("p%d %s", j, g.qual(ps.At(j).Type())))
+			args = append(args, fmt.Sprintf("p%d", j))
+		}
+		var grs []string
+		for j := 0; j < rs.Len(); j++ {
+			grs = append(grs, g.qual(rs.At(j).Type()))
+		}
+		gres := ""
+		switch len(grs) {
+		case 0:
+		case 1:
+			gres = " " + grs[0]
+		default:
+			gres = " (" + strings.Join(grs, ", ") + ")"
+		}
+		// the callback's Go type, with no names (Go rejects a mix of
+		// named and unnamed parameters)
+		var pts, rts []types.Type
+		for j := 0; j < ps.Len(); j++ {
+			pts = append(pts, ps.At(j).Type())
+		}
+		for j := 0; j < rs.Len(); j++ {
+			rts = append(rts, rs.At(j).Type())
+		}
+		ft := unnamedSig(pts, rts)
+		body := fmt.Sprintf("return x.f%d(%s)", i, strings.Join(args, ", "))
+		if len(gres) == 0 {
+			body = fmt.Sprintf("x.f%d(%s)", i, strings.Join(args, ", "))
+		}
+		readRule := ps.Len() > 0 && outBuffer(m.Name(), ps.At(0).Name(), ps.At(0).Type(), sig) && rs.Len() == 2 &&
+			types.Identical(rs.At(0).Type(), types.Typ[types.Int]) && isError(rs.At(1).Type())
+		if readRule {
+			// Read(p []byte) (int, error): the Xo function is given len(p)
+			// and returns the bytes
+			ft = unnamedSig(append([]types.Type{types.Typ[types.Int]}, pts[1:]...), []types.Type{types.NewSlice(types.Typ[types.Byte]), rts[1]})
+			rest := append([]string{"len(p0)"}, args[1:]...)
+			body = fmt.Sprintf("b, err := x.f%d(%s)\n\tif len(b) > len(p0) {\n\t\tpanic(\"%s: the Xo function returned more bytes than the buffer holds\")\n\t}\n\tn := copy(p0, b)\n\tif err == nil && n == 0 && len(p0) > 0 {\n\t\terr = %s.EOF\n\t}\n\treturn n, err",
+				i, strings.Join(rest, ", "), g.display(h.named)+"."+m.Name(), g.aliasPath("io"))
+		}
+		pn := xoName(snake(m.Name()))
+		params = append(params, types.NewVar(token.NoPos, nil, pn, ft))
+		fields = append(fields, fmt.Sprintf("f%d %s", i, g.qual(ft)))
+		fargs = append(fargs, fmt.Sprintf("f%d", i))
+		methods = append(methods, fmt.Sprintf("func (x *%s) %s(%s)%s {\n\t%s\n}\n", impl, m.Name(), strings.Join(gps, ", "), gres, body))
+	}
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(params...), types.NewTuple(types.NewVar(token.NoPos, nil, "", h.named)), false)
+	mark := g.adapt.Len()
+	if err := g.bindFunc(fnSpec{xoName: xn, display: display, sig: sig, goCall: "xoNew_" + h.goName}); err != nil {
+		g.adapt.Truncate(mark)
+		g.skip(xn, display, &skipErr{cat: err.cat, detail: "interface " + g.display(h.named) + " cannot be implemented in Xo: " + err.detail}, false)
+		return
+	}
+	g.scope[xn] = true
+	g.stats.Impls++
+	var fps []string
+	for i, p := range params {
+		fps = append(fps, fmt.Sprintf("f%d %s", i, g.qual(p.Type())))
+	}
+	fmt.Fprintf(&g.adapt, "// %s is an Xo implementation of Go %s (decision 0416).\ntype %s struct{\n\t%s\n}\n\n", impl, g.display(h.named), impl, strings.Join(fields, "\n\t"))
+	for _, m := range methods {
+		g.adapt.WriteString(m + "\n")
+	}
+	fmt.Fprintf(&g.adapt, "func xoNew_%s(%s) %s {\n\treturn &%s{%s}\n}\n\n", h.goName, strings.Join(fps, ", "), h.gt, impl, strings.Join(fargs, ", "))
 }
 
 // skipMethods records each exported method of n as skipped.

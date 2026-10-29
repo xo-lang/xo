@@ -646,3 +646,42 @@ func Two(f func() (int, string, error)) {}
 		t.Errorf("two skipped %q, want several results (skipped: %v)", why, b.Skipped)
 	}
 }
+
+// TestImplementations (decision 0416): each interface whose methods map
+// as callbacks gets a constructor taking one function per method, named
+// after it; a Read method is given len(p) and returns the bytes.
+func TestImplementations(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	io, ib, _ := bindDecl(t, "io")
+	for _, want := range []string{
+		"fn writer[fx: Effects](write: fn(Bytes) -> Int ! go.Error uses fx) -> Writer uses go, fx",
+		"fn reader[fx: Effects](read: fn(Int) -> Bytes ! go.Error uses fx) -> Reader uses go, fx",
+		"fn read_closer[fx: Effects](close: fn() -> () ! go.Error uses fx, read: fn(Int) -> Bytes ! go.Error uses fx) -> ReadCloser uses go, fx",
+	} {
+		if !strings.Contains(io, want) {
+			t.Errorf("no %q in io's declarations:\n%s", want, grep(io, "fn "))
+		}
+	}
+	ia := string(ib.Adapter)
+	for _, want := range []string{
+		"func (x *xoImpl_Go_io_Reader) Read(p0 []byte) (int, error) {",
+		"n := copy(p0, b)",
+		"if err == nil && n == 0 && len(p0) > 0 {",
+		".EOF\n",
+		"func (x *xoImpl_Go_io_Writer) Write(p0 []byte) (int, error) {",
+	} {
+		if !strings.Contains(ia, want) {
+			t.Errorf("no %q in io's adapter", want)
+		}
+	}
+	srt, _, _ := bindDecl(t, "sort")
+	if want := "fn interface_[fx: Effects](len: fn() -> Int uses fx, less: fn(Int, Int) -> Bool uses fx, swap: fn(Int, Int) uses fx) -> Interface uses go, fx"; !strings.Contains(srt, want) {
+		t.Errorf("no %q in sort's declarations:\n%s", want, grep(srt, "fn interface"))
+	}
+	h, _, _ := bindDecl(t, "net/http")
+	if !strings.Contains(h, "fn handler[fx: Effects](serve_http: fn(ResponseWriter, Request) uses fx) -> Handler uses go, fx") {
+		t.Errorf("no http.handler constructor:\n%s", grep(h, "fn handler"))
+	}
+}
