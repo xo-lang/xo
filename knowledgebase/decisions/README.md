@@ -392,3 +392,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0401-std-debug-map.md](0401-std-debug-map.md): Proposed: a separately compiled darwin link carries std's DWARF as a debug map (N_OSO to the cached part objects), its line tables embedded
 - [0400-macho-uuid-hash.md](0400-macho-uuid-hash.md): Accepted: the Mach-O LC_UUID from the code signature's page hashes, one SHA-256 pass over the image instead of two
 - [0399-bytesbuilder-put.md](0399-bytesbuilder-put.md): BytesBuilder.put_le and put_be overwrite bytes in place (Accepted)
+- [0403-profile-guided-layout.md](0403-profile-guided-layout.md): Proposed (stub): code layout from a recorded profile (hot functions together, hot and cold blocks split), reproducible and keyed, with separate compilation and the std store
