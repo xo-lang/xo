@@ -105,6 +105,18 @@ flagged (worse than 0.33.0 by more than 3%): 8
    ('conc rwmutex', 'wall_ms', 0.869, 0.897)
 
 
+## The peak RSS rows, directly (2026-10-29)
+
+sort, xo bench --ab, 20 rounds, load 2.6 to 2.8, nothing else running: the
+0.33.0 release xo's build against the 0.34.0 xo's, peak RSS 34592 KB against
+34592 KB (B/A 1.0, interval 1.0 to 1.0), wall 0.997; and the 0.34.0 xo's
+whole-program build (XO_SEPCOMP=0) against its default, 34600 against 34592
+KB (1.0). Xo's peak RSS did not move between the releases or between the
+link paths; the ratio's change (0.417 to 0.455) is Go's side of the pair
+(its sort at about 83 MB in the 0.33.0 run and 76 MB in this one, a GC
+pacing difference between runs), and the sieve and fanout rows move the
+same way. Not an Xo regression; the store-link suspicion above is withdrawn.
+
 ## The run (Xo against Go: xo 0.34.0 darwin/arm64 (2026-10-29))
 
 scripts/release-vs-go.sh on Darwin arm64, 24 GB,
