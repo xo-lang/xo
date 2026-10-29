@@ -97,13 +97,23 @@ fn main(os: Os) {
 			text = append(text, f[2])
 		}
 	}
-	want := []string{"_xo_f_hot", "_xo_f_prelude_2estr__trim__suffix", "_xo_f_prelude_2estr__split"}
-	if len(text) < 3 {
+	// the program's functions are one part, placed first as a whole with
+	// hot at its front (stage 1a's order inside it: hot, then main); the
+	// named std atoms follow it in the layout's order, before the store's
+	// other atoms
+	if len(text) < 4 {
 		t.Fatalf("too few text symbols: %v", text)
 	}
-	for i, w := range want {
-		if text[i] != w {
-			t.Errorf("text symbol %d is %s, want %s (first symbols: %v)", i, text[i], w, text[:6])
+	at := func(name string) int {
+		for i, n := range text {
+			if n == name {
+				return i
+			}
 		}
+		return -1
+	}
+	hot, trim, split := at("_xo_f_hot"), at("_xo_f_prelude_2estr__trim__suffix"), at("_xo_f_prelude_2estr__split")
+	if hot != 0 || trim < 0 || split < 0 || trim > 2 || split != trim+1 {
+		t.Errorf("want hot first, then main, then str_trim_suffix and str_split: got %v", text[:6])
 	}
 }
