@@ -190,6 +190,32 @@ pub fn decompress(src: Bytes, start: Int, n: Int) -> Bytes? {
   var ip = start
   var op = 0
   while true {
+    // the common sequence (lz4.c's fast loop): 32 bytes of source and of
+    // output to spare, so no test below can fail except the offset, and
+    // literals under 15, a match under 19 bytes (its nibble under 15) at
+    // least 8 behind: 16 bytes of literals moved (the first ll count, the
+    // rest is overwritten by the match or the next sequence, WILD), the
+    // match in 8 byte moves
+    if ip + 32 <= sn && op + 32 <= n {
+      let t = rt.mem_load(s, ip, 1)
+      if t < 240 && (t & 15) != 15 {
+        let l = t >> 4
+        let o = rt.mem_load(s, ip + 1 + l, 2)
+        if o >= 8 && o <= op + l {
+          rt.mem_store(d, op, rt.mem_load(s, ip + 1, 8), 8)
+          rt.mem_store(d, op + 8, rt.mem_load(s, ip + 9, 8), 8)
+          op += l
+          let m = (t & 15) + MIN_MATCH
+          let f = op - o
+          rt.mem_store(d, op, rt.mem_load(d, f, 8), 8)
+          rt.mem_store(d, op + 8, rt.mem_load(d, f + 8, 8), 8)
+          rt.mem_store(d, op + 16, rt.mem_load(d, f + 16, 8), 8)
+          op += m
+          ip += l + 3
+          continue
+        }
+      }
+    }
     if ip >= sn {
       return None
     }
