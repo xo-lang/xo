@@ -295,7 +295,7 @@ fn dsym_sects() -> (Sects, Int, Bool) {
   (s, slide, same)
 }
 
-/// The __DWARF sections of the Mach-O file at path, and whether its
+/// The __DWARF (or __XODW) sections of the Mach-O file at path, and whether its
 /// LC_UUID is uuid (the running image's).
 fn macho_dwarf(path: Str, uuid: Str) -> (Sects, Bool) {
   let data = read_raw(path)
@@ -324,7 +324,10 @@ fn macho_dwarf(path: Str, uuid: Str) -> (Sects, Bool) {
       for k in 0..nsects {
         let sc = lc + 72 + 80 * k
         let seg = cstr(sc + 16, 16)
-        if seg != "__DWARF" {
+        // __XODW (decision 0401): the same tables as __DWARF's, for a binary
+        // whose DWARF is left in the objects for lldb's debug map; its
+        // __xo_ sections are named like the __debug_ ones after the prefix
+        if seg != "__DWARF" && seg != "__XODW" {
           continue
         }
         let name = cstr(sc, 16)
@@ -335,6 +338,8 @@ fn macho_dwarf(path: Str, uuid: Str) -> (Sects, Bool) {
         }
         if name.starts_with("__debug_") {
           s.set(name[8..name.len()], f + off, size)
+        } else if name.starts_with("__xo_") {
+          s.set(name[5..name.len()], f + off, size)
         }
       }
     }
