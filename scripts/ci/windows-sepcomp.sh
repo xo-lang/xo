@@ -90,18 +90,23 @@ build() { # DIR OUT [ARGS...]: with $BENV
   shift 2
   (cd "$d" && env "${BENV[@]}" "$xo" build --backend=amd64 "$@" -o "$(np "$x")" .) > "$x.log" 2>&1
 }
+# one output name in three directories (the version resource and the
+# PDB record name the executable: CI 40818979768 compared default.exe
+# with explicit.exe and found the name)
+mkdir -p "$w/bd" "$w/be" "$w/bw"
 BENV=(XO_SEPCOMP_DEFAULT=1)
-build "$p" "$w/default" ; rd=$?
+build "$p" "$w/bd/prog" ; rd=$?
 BENV=("${SEP[@]}")
-build "$p" "$w/explicit"; re=$?
+build "$p" "$w/be/prog"; re=$?
 BENV=(XO_SEPCOMP=0)
-build "$p" "$w/whole"; rw=$?
-check "builds (default $rd, explicit sep $re, whole $rw)" $((rd + re + rw)) "$(tail -3 "$w/default.log" "$w/explicit.log" "$w/whole.log")"
-cmp -s "$w/default.exe" "$w/explicit.exe"; check "the default build is the separate build's bytes" $? "$(cmp "$w/default.exe" "$w/explicit.exe" 2>&1 | head -1)"
-cmp -s "$w/default.exe" "$w/whole.exe"; [ $? != 0 ]; check "and not the whole program's" $? "default.exe equals whole.exe: the default did not take the separate path"
-for v in explicit whole; do "$w/$v.exe" > "$w/$v.out" 2>&1; done
-cmp -s "$w/explicit.out" "$w/whole.out"; check "separate and whole print the same ($(head -1 "$w/whole.out"))" $? "$(cat "$w/explicit.out")"
-note "explicit.pdb $(wc -c < "$w/explicit.pdb" 2>/dev/null) bytes, whole.pdb $(wc -c < "$w/whole.pdb" 2>/dev/null)"
+build "$p" "$w/bw/prog"; rw=$?
+
+check "builds (default $rd, explicit sep $re, whole $rw)" $((rd + re + rw)) "$(tail -3 "$w/bd/prog.log" "$w/be/prog.log" "$w/bw/prog.log")"
+cmp -s "$w/bd/prog.exe" "$w/be/prog.exe"; check "the default build is the separate build's bytes" $? "$(cmp -l "$w/bd/prog.exe" "$w/be/prog.exe" 2>&1 | wc -l) bytes differ"
+cmp -s "$w/bd/prog.exe" "$w/bw/prog.exe"; [ $? != 0 ]; check "and not the whole program's" $? "the default build equals the whole program's: the default did not take the separate path"
+for v in be bw; do "$w/$v/prog.exe" > "$w/$v.out" 2>&1; done
+cmp -s "$w/be.out" "$w/bw.out"; check "separate and whole print the same ($(head -1 "$w/bw.out"))" $? "$(cat "$w/be.out")"
+note "separate prog.pdb $(wc -c < "$w/be/prog.pdb" 2>/dev/null) bytes, whole $(wc -c < "$w/bw/prog.pdb" 2>/dev/null)"
 
 cdb=""
 for c in "/c/Program Files (x86)/Windows Kits/10/Debuggers/x64/cdb.exe" "/c/Program Files/Windows Kits/10/Debuggers/x64/cdb.exe"; do
@@ -116,12 +121,12 @@ if [ -z "$cdb" ]; then
 else
   note "cdb $cdb"
   # the program's function, from the program's own PDB part
-  dbg prog "$w/explicit.exe" '.lines -e; bm explicit!*sum_to*; g; kn 6; dv /t; q'
+  dbg prog "$w/be/prog.exe" '.lines -e; bm prog!*sum_to*; g; kn 6; dv /t; q'
   grep -q "sum_to" "$o/cdb-prog.txt"; check "cdb stops in sum_to" $? "no sum_to frame (cdb-prog.txt)"
   grep -Eq "main\.xo @ [0-9]+" "$o/cdb-prog.txt"; check "cdb's kn names main.xo lines" $? "no main.xo @ LINE (cdb-prog.txt)"
   grep -Eq "[[:space:]]n = " "$o/cdb-prog.txt"; check "cdb's dv shows n" $? "dv shows no n (cdb-prog.txt)"
   # std's functions, from std.store.pdb's parts
-  dbg std "$w/explicit.exe" '.lines -e; x explicit!*split*; x explicit!*to_upper*; bm explicit!*split*; g; kn 6; dv /t; q'
+  dbg std "$w/be/prog.exe" '.lines -e; x prog!*split*; x prog!*to_upper*; bm prog!*split*; g; kn 6; dv /t; q'
   grep -Eq "std[\\/][^ ]*\.xo @ [0-9]+" "$o/cdb-std.txt"; check "cdb's kn names a std source line in a std function" $? "no std/...xo @ LINE (cdb-std.txt)"
   grep -Eq "^[[:space:]]*[A-Za-z_].* = " "$o/cdb-std.txt"; check "cdb's dv lists a std function's locals" $? "dv listed nothing (cdb-std.txt)"
 fi
