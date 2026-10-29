@@ -1557,7 +1557,9 @@ fn (var p: Parser) parse(s: Str) -> Int ! PErr {
     return Err(perr("missing closing )", s))
   }
   let root = p.stack[0]
-  if p.height(root) > 1000 {
+  // a tree's height is at most its node count: walked only past 1000
+  // nodes, as Go's checkHeight (parse.go: numRegexp < maxHeight)
+  if p.ops.len() > 1000 && p.height(root) > 1000 {
     return Err(perr("expression nests too deeply", s))
   }
   root
@@ -1616,6 +1618,12 @@ fn (var p: Parser) parse_backslash(s: Str, i: Int) -> Int ! PErr {
   }
   if (p.flags & PERL_X) != 0 && i + 1 < n {
     let (gs, g) = perl_group(sl(s, i, i + 2))
+    if gs > 0 && (p.flags & FOLD_CASE) == 0 {
+      // \d, \s, \w: their ranges are already sorted and apart, the class
+      // clean_class would make of them
+      p.class_node(g)
+      return i + 2
+    }
     if gs != 0 {
       var r: List[Int] = []
       p.append_group(r, gs, g)
@@ -1941,7 +1949,7 @@ fn (var g: Prog) rune_frag(r: List[Int], fold0: Bool) -> Frag {
   f
 }
 
-fn (var g: Prog) compile(var p: Parser, re: Int) -> Frag {
+fn (var g: Prog) compile(p: Parser, re: Int) -> Frag {
   let op = p.ops[re]
   let flags = p.nflags[re]
   if op == OP_NO_MATCH {
@@ -2055,7 +2063,10 @@ struct Regex {
 fn regexerr_display(e: regexp.RegexErr) -> Str { "invalid regexp ${e.pattern.quote()}: ${e.msg}" }
 
 fn compile(pattern: Str) -> Regex ! regexp.RegexErr {
-  var p = Parser{flags: PERL, ops: [], nflags: [], runes: [], mins: [], maxs: [], caps: [], names: [], subs: [], stack: [], num_cap: 0, whole: pattern}
+  // a node a pattern byte is the usual most: the lists made that long
+  // once (2026-10-28: their growth was a sixth of compile's time)
+  let c = pattern.len() + 4
+  var p = Parser{flags: PERL, ops: List.with_capacity(c), nflags: List.with_capacity(c), runes: List.with_capacity(c), mins: List.with_capacity(c), maxs: List.with_capacity(c), caps: List.with_capacity(c), names: List.with_capacity(c), subs: List.with_capacity(c), stack: List.with_capacity(c), num_cap: 0, whole: pattern}
   let root = match p.parse(pattern) {
     Ok(r) => r
     Err(e) => return Err(regexp.RegexErr{pattern: pattern, msg: "${e.code}: `${e.expr}`"})
@@ -2074,7 +2085,8 @@ fn compile(pattern: Str) -> Regex ! regexp.RegexErr {
     j += 1
   }
   let sroot = p.simplify(root)
-  var g = Prog{op: [], out: [], arg: [], rune: [], fold: [], start: 0, num_cap: 2, first_ok: false, first: [], ascii: [], prefix: "", has_empty: false, one: []}
+  let gc = 2 * c
+  var g = Prog{op: List.with_capacity(gc), out: List.with_capacity(gc), arg: List.with_capacity(gc), rune: List.with_capacity(gc), fold: List.with_capacity(gc), start: 0, num_cap: 2, first_ok: false, first: [], ascii: [], prefix: "", has_empty: false, one: []}
   g.inst(I_FAIL)
   let f = g.compile(p, sroot)
   let m = g.inst(I_MATCH)

@@ -548,3 +548,14 @@ SHA3-256 of 1 MiB 40 times wall 0.577 (0.574 to 0.587), instructions
 0.614. Against Go (twin.go.txt as A): big 0.948 (0.933 to 0.953), small
 1.151 (1.145 to 1.157; instructions 1.43, the sponge's per-call work),
 big was 1.66 before.
+
+## regexp compile (2026-10-28, xo-lang-5)
+
+Per std/changes/regexp.md 2026-10-28. Quiet --ab, 15 rounds, the
+parent's std as A (bench/perf/regexp): compile wall 0.726 (0.718 to
+0.732), instructions 0.714; match's instructions equal (1.0), its wall
+1.022 (1.012 to 1.033; the same instructions, so layout); find_all,
+replace_all and captures instructions 0.9999 to 1.0. Against Go: compile
+1.208 (1.2 to 1.222; was 1.68), instructions 1.065. Compile stays a
+rolling row at about 1.21 until its next step (the ASCII bitmap Go does
+not build, 7.7% of its profile).

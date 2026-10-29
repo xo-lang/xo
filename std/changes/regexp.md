@@ -1,5 +1,27 @@
 # std/regexp changes
 
+## 2026-10-28: perf: compile walks the tree's height only past 1000 nodes, makes its lists once, and takes \d, \s, \w as they are
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/regexp's compile row at 1.68 times Go's time; its CPU profile (list growth in Parser.node and Prog.inst, Parser.height on every pattern, perl classes copied and cleaned each use)
+- Go reference: regexp/syntax parse.go (checkHeight returns while numRegexp < maxHeight; perlGroup's tables)
+- Test: std/native/regexp_test.xo; internal/stdtest corpus regexp (go, arm64, LLVM); bench/perf/regexp's checksums equal Go's
+
+compile() checked the parse tree's height (Go's maxHeight 1000) by
+walking the whole tree for every pattern; a tree's height is at most its
+node count, so it walks only past 1000 nodes, as Go. The parser's nine
+lists and the program's five are made with a capacity from the pattern's
+length, where every node grew all of them from empty. Prog.compile reads
+the parser (not `var`). `\d`, `\s` and `\w` without case folding are
+their constant ranges, already sorted and apart, where each use appended
+them to a new list and sorted it. Quiet --ab, 15 rounds, the parent's
+std as A (bench/perf/regexp): compile wall 0.726 (0.718 to 0.732),
+instructions 0.714; match's instructions equal (1.0), its wall 1.022
+(1.012 to 1.033; the same instructions, so layout); find_all,
+replace_all and captures instructions 0.9999 to 1.0. Against Go: compile
+1.208 (1.2 to 1.222; was 1.68), instructions 1.065.
+
 ## 2026-10-22: perf: the Pike step adds threads straight from the run queue's group positions
 
 - Kind: perf
