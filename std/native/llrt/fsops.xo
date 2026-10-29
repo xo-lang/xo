@@ -179,6 +179,20 @@ fn close(l: Int, fd: Int) -> Int {
   linux.close(fd)
 }
 
+/// fsync of the descriptor (EINTR retried): 0, or the negative errno.
+fn fsync(l: Int, fd: Int) -> Int {
+  if l == 3 {
+    return windows.fsync(fd)
+  }
+  while true {
+    let r = if l == 2 { darwin.fsync(fd) } else { linux.fsync(fd) }
+    if r != -EINTR {
+      return r
+    }
+  }
+  0
+}
+
 /// read(2) of at most n bytes to the address a (EINTR retried).
 fn read_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
   if l == 3 {
@@ -661,6 +675,43 @@ pub fn file_write(f: rt.FsFile, data: Bytes, x: Str) -> Int {
     return fail(l, e, x)
   }
   ok()
+}
+
+/// `f.sync()`: the file's data and metadata to stable storage (Go's
+/// File.Sync). Nothing to do on wasm, whose WASI calls are not used for
+/// it yet.
+pub fn file_sync(f: rt.FsFile, x: Str) -> Int {
+  // sysio.layer() compared with a literal, which the SSA builders fold
+  // (expr.xo layer_call; not this module's layer()): a wasm build keeps
+  // only this arm (the others call the native heap)
+  if sysio.layer() == 0 {
+    return 0
+  }
+  let l = layer()
+  done(l, fsync(l, rt.mem_load(rt.obj_addr(f), F_FD, 8)), x)
+}
+
+/// Syncs the file or directory at the OS path op (a file before its
+/// rename, a directory after a rename into it, so the new name survives a
+/// crash; Go's renameio): 0, or the status. A file is opened to append
+/// (Windows flushes only a handle that can write), a directory to read.
+/// Windows cannot open a directory for this, and wasm has no call: there
+/// it does nothing.
+pub fn sync_path(op: Str, dir: Bool) -> Int {
+  if sysio.layer() == 0 {
+    return 0
+  }
+  let l = layer()
+  if l == 3 && dir {
+    return ok()
+  }
+  let fd = open(l, op, if dir { 0 } else { 2 }, 0)
+  if fd < 0 {
+    return fail(l, -fd, op)
+  }
+  let r = fsync(l, fd)
+  close(l, fd)
+  done(l, r, op)
 }
 
 /// `f.close()`: a second close does nothing; EINTR is no error.

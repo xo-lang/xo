@@ -1,0 +1,43 @@
+// write_atomic and File.sync on the real file system (std.md 3.1, Go's
+// File.Sync and the temporary file and rename Go programs write by hand):
+// a new file gets 0o644, a replaced one keeps its mode, no temporary file
+// is left, a missing directory and a read only capability fail with the
+// file left alone, and sync after close is an error.
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-atomic-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/cfg")?
+  let root = base.sub(name)
+  write_atomic(root, "cfg/app.toml", b"one")?
+  out.println("new ${root.read_text("cfg/app.toml")?} ${root.mode("cfg/app.toml")?}")
+  root.set_mode("cfg/app.toml", 0o600)?
+  write_atomic(root, "cfg/app.toml", b"two, longer")?
+  out.println("replaced ${root.read_text("cfg/app.toml")?} ${root.mode("cfg/app.toml")?}")
+  out.println("entries ${root.read_dir("cfg")?.map(fn(i) { i.name }).join(",")}")
+  match write_atomic(root, "missing/x.txt", b"x") {
+    Ok(_) => out.println("missing directory written?")
+    Err(e) => out.println("missing ${e}")
+  }
+  match write_atomic(root.read_only(), "cfg/app.toml", b"three") {
+    Ok(_) => out.println("read only written?")
+    Err(e) => out.println("read only ${e}")
+  }
+  out.println("kept ${root.read_text("cfg/app.toml")?}")
+  write_atomic(root.sub("cfg"), "top.txt", b"in a sub")?
+  out.println("sub ${root.read_text("cfg/top.txt")?}")
+  let f = root.create("synced.txt")?
+  f.write(b"data")?
+  f.sync()?
+  f.close()?
+  match f.sync() {
+    Ok(_) => out.println("sync after close ok?")
+    Err(e) => out.println("closed ${e}")
+  }
+  let r = root.open("synced.txt")?
+  r.sync()?
+  r.close()?
+  out.println("read handle synced")
+  base.remove_all(name)?
+}

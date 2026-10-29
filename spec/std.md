@@ -651,6 +651,7 @@ fn (f: Fs) read(path: Str) -> Bytes ! FsErr      uses fs.read
 fn (f: Fs) read_text(path: Str) -> Str ! FsErr   uses fs.read
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read   // default when missing
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read     // the same for bytes
+fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs            // old or new, never a part
 fn (f: Fs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read   // sorted by name
 fn (f: Fs) walk(dir: Str) -> List[FileInfo] ! FsErr     uses fs.read
     // recursive, parents before children, siblings by name; excludes `dir` itself;
@@ -685,6 +686,16 @@ apply: the mode is exact. A directory already there keeps its mode, as
 in Go, and a file in the way is create_dir_all's error. A free function
 over `exists`, `create_dir_all` and `set_mode`, so any `Fs` answers.
 
+`write_atomic(fs, path, data)` replaces the file at path so that a
+reader, or the file after a crash, holds the old contents or the new,
+never a part: it writes a temporary file `.NAME.NNNNNN` in path's
+directory, syncs it, gives it path's permission bits (0o644 for a new
+file), renames it over path, and syncs the directory where the OS allows
+it (not Windows). A failure removes the temporary file. Atomic only
+within one file system, which the temporary file beside path ensures.
+`File.sync` commits an open file's writes to stable storage (Go's
+File.Sync); a MemFs file has nothing to sync.
+
 Handles, links, globs, and locks (decision 0163; the Go backend and
 MemFs, and native builds on the real filesystem, decision 0172; a native
 test binary's MemFs has all of them, as on the Go backend, since
@@ -709,6 +720,7 @@ struct File {}                                    // handle
 fn (f: File) read(max: Int) -> Bytes? ! FsErr     uses fs.read   // None at the end
 fn (f: File) read_line() -> Str? ! FsErr          uses fs.read   // without \n or \r\n
 fn (f: File) write(data: Bytes) -> () ! FsErr     uses fs.write
+fn (f: File) sync() -> () ! FsErr                 uses fs.write   // fsync (F_FULLFSYNC on macOS)
 fn (f: File) close() -> () ! FsErr                               // closing again does nothing
 struct FileLock {}                                // handle
 fn (l: FileLock) unlock()                                        // unlocking again does nothing
@@ -4587,7 +4599,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-459 declarations.
+461 declarations.
 
 ### Range
 
@@ -5145,6 +5157,7 @@ fn try_lock(self, path: Str) -> FileLock? ! FsErr uses fs.write
 fn (f: File) read(max: Int) -> Bytes? ! FsErr uses fs.read
 fn (f: File) read_line() -> Str? ! FsErr uses fs.read
 fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
+fn (f: File) sync() -> () ! FsErr uses fs.write
 fn (f: File) close() -> () ! FsErr
 ```
 
@@ -5331,6 +5344,7 @@ fn dbg[T](x: T) -> T
 fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
+fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs
 ```
 
 <!-- END prelude index -->

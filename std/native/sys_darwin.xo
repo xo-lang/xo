@@ -18,6 +18,8 @@ fn read(fd: Int, buf: Int, n: Int) -> Int
 /// write(2) of n bytes from the address buf.
 fn write(fd: Int, buf: Int, n: Int) -> Int
 fn close(fd: Int) -> Int32
+/// fsync(2).
+fn fsync(fd: Int) -> Int32
 /// stat(2) into the struct stat at the address buf (144 bytes): the 64
 /// bit inode structure under a plain name on arm64 and x86_64 alike (on
 /// x86_64 `stat` is the old structure and the headers call

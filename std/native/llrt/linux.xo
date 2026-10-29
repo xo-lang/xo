@@ -101,6 +101,9 @@ pub fn open(path: Str, flags: Int, mode: Int) -> Int {
 /// close(2).
 pub fn close(fd: Int) -> Int { rt.sys6(nr(57, 3), fd, 0, 0, 0, 0, 0) }
 
+/// fsync(2).
+pub fn fsync(fd: Int) -> Int { rt.sys6(nr(82, 74), fd, 0, 0, 0, 0, 0) }
+
 /// The facts of a statx(2): the kind and permission bits (st_mode), the
 /// size, and the modification time in Unix nanoseconds.
 pub struct Stat {

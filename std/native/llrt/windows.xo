@@ -191,6 +191,14 @@ pub fn close(h: Int) -> Int {
   0
 }
 
+/// FlushFileBuffers (Go's File.Sync on Windows).
+pub fn fsync(h: Int) -> Int {
+  if Int(sys_windows.FlushFileBuffers(h)) == 0 {
+    return -dos_errno(Int(sys_windows.GetLastError()))
+  }
+  0
+}
+
 /// The facts of a file: whether it is a directory, its size, and its
 /// modification time in Unix nanoseconds.
 pub struct Stat {

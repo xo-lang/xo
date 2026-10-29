@@ -34,6 +34,26 @@ the target, so it is false there. Native reads it from lstat's st_mode
 the new field; a struct literal keeps working through the default. No
 hot path, so no timing row.
 
+## 2026-10-29: feature: write_atomic and File.sync
+
+- Kind: feature
+- Commit: this commit
+- Found by: gap 16 of the 2026-10-29 std survey (a config or state file
+  half written after a crash)
+- Go reference: os.File.Sync; the temporary file, sync, rename and
+  directory sync of github.com/google/renameio and natefinch/atomic
+- Test: internal/llvm/testdata/golden/fs_atomic (native and Go), corpus
+  prelude (MemFs on every backend)
+
+`write_atomic(fs, path, data)` writes a temporary file beside path,
+syncs it, copies path's permission bits (0o644 for a new file), renames
+it over path and syncs the directory (not on Windows). `File.sync`
+stayed public: fsync, F_FULLFSYNC on macOS, FlushFileBuffers on
+Windows. write_atomic's native path syncs by path (open, fsync, close),
+so it needs no File. Also fixed: the Go backend's MemFs rename dropped
+the file's mode and link target (a renamed file came back 0o644); it
+keeps them now, as native MemFs does. No hot path, so no timing row.
+
 ## 2026-10-29: feature: Proc.pid and Proc.ppid
 
 - Kind: feature

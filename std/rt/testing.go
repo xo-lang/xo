@@ -1685,7 +1685,7 @@ func (f Testing_MemFs) M_rename(tk *Task, from, to string) Result[Unit, FsErr] {
 	}
 	if !n.dir {
 		delete(fs.nodes, fs.key(src))
-		fs.put(dst, &memNode{data: n.data, mod: n.mod})
+		fs.put(dst, &memNode{data: n.data, mod: n.mod, mode: n.mode, hasMode: n.hasMode, link: n.link})
 		return Ok[Unit, FsErr](Unit{})
 	}
 	moved := map[string]*memNode{}

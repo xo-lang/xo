@@ -744,6 +744,27 @@ test "read_text_or and read_or answer the default only when the file is missing"
   expect(read_text_or(os.fs, "gone.txt", "")?) == ""
   expect(read_or(os.fs, "gone.txt", b"")?) == b""
 }
+
+test "write_atomic replaces a file whole, keeps its mode, and leaves no temporary file" {
+  os.fs.create_dir_all("cfg")?
+  write_atomic(os.fs, "cfg/app.toml", b"one")?
+  expect(os.fs.read("cfg/app.toml")?) == b"one"
+  expect(os.fs.mode("cfg/app.toml")?) == 0o644
+  os.fs.set_mode("cfg/app.toml", 0o600)?
+  write_atomic(os.fs, "cfg/app.toml", b"two")?
+  expect(os.fs.read("cfg/app.toml")?) == b"two"
+  expect(os.fs.mode("cfg/app.toml")?) == 0o600
+  expect(os.fs.read_dir("cfg")?.map(fn(i) { i.name })) == ["app.toml"]
+  match write_atomic(os.fs, "nowhere/x.txt", b"x") {
+    Ok(_) => fault("a missing directory was written")
+    Err(e) => expect("${e}".ends_with("no such file or directory")) == true
+  }
+  let f = os.fs.create("synced.txt")?
+  f.write(b"data")?
+  f.sync()?
+  f.close()?
+  expect(f.sync().is_err()) == true
+}
 `)
 	// std.md 3.1: FileInfo.is_symlink is a link itself, as Go's
 	// os.Lstat: read_dir and walk report it, stat follows the link.

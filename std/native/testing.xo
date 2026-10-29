@@ -876,6 +876,16 @@ fn memfile_write_in(var st: MemState, f: File, data: Bytes) -> () ! FsErr {
   memfs_put(st, mf.full, n with {data: n.data + data, modified: memfs_now()})
 }
 
+/// A MemFs file has nothing to sync: an open one is Ok.
+fn memfile_sync(f: File) -> () ! FsErr {
+  // memfs_load takes the state: it goes back before any answer, or the
+  // next MemFs call waits for it forever
+  let st = memfs_load()
+  let r = memfile_state(st, f, rt.mem_file_writes(f))
+  memfs_store(st)
+  r?
+}
+
 fn memfile_close(f: File) -> () ! FsErr {
   var st = memfs_load()
   if let Some(mf) = memfs_hs(st).files.get(rt.mem_file_id(f)) {

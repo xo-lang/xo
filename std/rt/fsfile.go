@@ -163,6 +163,26 @@ func (f File) M_write(tk *Task, data Bytes) Result[Unit, FsErr] {
 	return Ok[Unit, FsErr](Unit{})
 }
 
+// M_sync is Go's File.Sync; a MemFs file has nothing to sync.
+func (f File) M_sync(tk *Task) Result[Unit, FsErr] {
+	h := f.h
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case tk.Canceled():
+		return Err[Unit](FsCanceled)
+	case h.closed:
+		return Err[Unit](fileClosed(h.path))
+	}
+	if h.mem != nil {
+		return Ok[Unit, FsErr](Unit{})
+	}
+	if err := h.osf.Sync(); err != nil {
+		return Err[Unit](mapFsErr(err, h.path))
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
 // M_close closes the file; a second close does nothing.
 func (f File) M_close(*Task) Result[Unit, FsErr] {
 	h := f.h

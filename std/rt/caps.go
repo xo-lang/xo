@@ -1168,6 +1168,69 @@ func Prelude_create_dir_all_mode(tk *Task, fs Fs, dir string, mode int64) Result
 	return Ok[Unit, FsErr](Unit{})
 }
 
+// Prelude_write_atomic is `write_atomic(fs, path, data)` (std.md 3.1): a
+// temporary file beside path, written, synced, given path's permission
+// bits (0o644 for a new file) and renamed over path, then the directory
+// synced on the real file system (not on Windows, which cannot open a
+// directory for it); through Fs's methods, as the native prelude's.
+func Prelude_write_atomic(tk *Task, fs Fs, p string, data Bytes) Result[Unit, FsErr] {
+	dir := path.Dir(p)
+	t := fs.M_create_temp(tk, dir, "."+path.Base(p)+".")
+	if !t.Ok {
+		return Err[Unit](t.E)
+	}
+	tmp := t.V
+	if r := atomicFill(tk, fs, tmp, p, data); !r.Ok {
+		fs.M_remove(tk, tmp)
+		return r
+	}
+	if rf, ok := fs.(*realFs); ok && runtime.GOOS != "windows" {
+		op, e := rf.check(tk, dir, true)
+		if e != nil {
+			return Err[Unit](*e)
+		}
+		d, err := os.Open(op)
+		if err != nil {
+			return Err[Unit](mapFsErr(err, dir))
+		}
+		err = d.Sync()
+		d.Close()
+		if err != nil {
+			return Err[Unit](mapFsErr(err, dir))
+		}
+	}
+	return Ok[Unit, FsErr](Unit{})
+}
+
+func atomicFill(tk *Task, fs Fs, tmp, p string, data Bytes) Result[Unit, FsErr] {
+	mode := int64(0o644)
+	if m := fs.M_mode(tk, p); m.Ok {
+		mode = m.V
+	} else if m.E.Tag != 1 {
+		return Err[Unit](m.E)
+	}
+	c := fs.M_create(tk, tmp)
+	if !c.Ok {
+		return Err[Unit](c.E)
+	}
+	f := c.V
+	if r := f.M_write(tk, data); !r.Ok {
+		f.M_close(tk)
+		return r
+	}
+	if r := f.M_sync(tk); !r.Ok {
+		f.M_close(tk)
+		return r
+	}
+	if r := f.M_close(tk); !r.Ok {
+		return r
+	}
+	if r := fs.M_set_mode(tk, tmp, mode); !r.Ok {
+		return r
+	}
+	return fs.M_rename(tk, tmp, p)
+}
+
 // Prelude_read_or is `read_or(fs, path, default)`: read_text_or for bytes.
 func Prelude_read_or(tk *Task, fs Fs, path string, def Bytes) Result[Bytes, FsErr] {
 	r := fs.M_read(tk, path)

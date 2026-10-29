@@ -97,6 +97,17 @@ pub fn open(path: Str, flags: Int, mode: Int) -> Int {
 /// close(2): 0, or the negative errno.
 pub fn close(fd: Int) -> Int { ret(Int(sys_darwin.close(fd))) }
 
+/// Go's File.Sync on macOS (internal/poll fd_fsync_darwin.go):
+/// fcntl(F_FULLFSYNC), which flushes the drive's cache too, and fsync(2)
+/// where the file system does not support it (ENOTSUP, an SMB mount).
+pub fn fsync(fd: Int) -> Int {
+  var r = ret(Int(sys_darwin.fcntl(fd, 51, 0)))
+  if r == -45 {
+    r = ret(Int(sys_darwin.fsync(fd)))
+  }
+  r
+}
+
 /// The facts of a stat(2): the kind and permission bits (st_mode), the
 /// size, and the modification time in Unix nanoseconds.
 pub struct Stat {

@@ -32,6 +32,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - prelude: `create_dir_all_mode(fs, dir, mode)`, create_dir_all with
   the directories it makes given an exact mode (Go's os.MkdirAll with a
   permission, without the umask).
+- prelude: `write_atomic(fs, path, data)` replaces a file so a reader or
+  a crash sees the old contents or the new, never a part (temporary file,
+  sync, rename, directory sync), and `File.sync` (Go's File.Sync). The
+  Go backend's MemFs rename keeps the file's mode.
 - std/cli: `float_flag` and `Parsed.float` and `float_opt`, a floating
   point flag in `Float.parse` syntax (Go's flag.Float64).
 - `use go` binds Go's `any` (decision 0412): a parameter or result of

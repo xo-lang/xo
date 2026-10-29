@@ -2728,6 +2728,56 @@ fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read {
   }
 }
 
+/// write_atomic (std.md 3.1): data written to a temporary file beside
+/// path, synced, given path's permission bits (0o644 for a new file),
+/// and renamed over path, then the directory synced; through Fs's
+/// methods, so any Fs answers, and the temporary file removed on a
+/// failure.
+fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs {
+  let dir = fs_dir(path)
+  let tmp = fs.create_temp(dir, ".${fs_base(path)}.")?
+  match atomic_fill(fs, tmp, path, data) {
+    Ok(_) => ()
+    Err(e) => {
+      match fs.remove(tmp) {
+        _ => ()
+      }
+      return Err(e)
+    }
+  }
+  fs_sync_path(fs, dir, true)
+}
+
+fn atomic_fill(fs: Fs, tmp: Str, path: Str, data: Bytes) -> () ! FsErr uses fs {
+  let mode = match fs.mode(path) {
+    Ok(m) => m
+    Err(FsErr.NotFound(path: _)) => 0o644
+    Err(e) => return Err(e)
+  }
+  fs.write(tmp, data)?
+  fs_sync_path(fs, tmp, false)?
+  fs.set_mode(tmp, mode)?
+  fs.rename(tmp, path)
+}
+
+/// Syncs the file or directory p of the real file system (write_atomic's
+/// temporary file before the rename, its directory after); nothing for
+/// another Fs (a user's; a test's MemFs through compiler/ssa testmode.xo).
+fn fs_sync_path(f: Fs, p: Str, dir: Bool) -> () ! FsErr {
+  if let Some(_) = userfs.user(f) {
+    return
+  }
+  let op = fs_check(f, p, true)?
+  let st = fsops.sync_path(op, dir)
+  // not found: p was just written through f, so f is not the OS's (a
+  // test's MemFs, whose value has the real Fs's shape, and calls between
+  // native prelude functions are not routed to testing's memfs_*): there
+  // is nothing to sync; a file really gone fails the rename after
+  if st != 0 && st != 1 {
+    return Err(fs_err(st, p))
+  }
+}
+
 fn fs_read(f: Fs, p: Str) -> Bytes ! FsErr {
   // a user value converted to Fs (decision 0307)
   if let Some(u) = userfs.user(f) {
@@ -3045,6 +3095,19 @@ fn file_read_line(f: File) -> Str? ! FsErr {
 fn file_write(f: File, data: Bytes) -> () ! FsErr {
   file_state(f, true)?
   let st = fsops.file_write(f.h, data, f.path)
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+}
+
+fn file_sync(f: File) -> () ! FsErr {
+  if rt.fs_canceled() {
+    return Err(FsErr.Canceled)
+  }
+  if fsops.file_closed(f.h) {
+    return Err(FsErr.Io(path: f.path, msg: "file already closed"))
+  }
+  let st = fsops.file_sync(f.h, f.path)
   if st != 0 {
     return Err(fs_err(st, f.path))
   }
