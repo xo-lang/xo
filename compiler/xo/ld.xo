@@ -103,6 +103,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   // DWARF in the dSYM
   // -s: no debug information either way (a separately compiled program's
   // std store carries DWARF the program's own build left out)
+  if (os.env.get("XO_CACHE_STATS") ?? "") == "1" && !ctx.layout_order.is_empty() {
+    os.stdio.eprintln("link: layout order of ${ctx.layout_order.len()} symbols, first ${ctx.layout_order[0]}")
+  }
   let opts = macho.LinkOpts{name: base_name(out), dylibs: dylibs, rpaths: rpaths, strip: strip, order: ctx.layout_order, embed_dwarf: !split && !strip, dsym: (dsym || split) && !strip, release: release, program_dwarf: !sep_store.is_empty()}
   let _in = lap(os, ctx.phases, "link.inputs", tin)
   let ts = os.clock.now()

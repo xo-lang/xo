@@ -763,10 +763,12 @@ fn (var l: Linker) place() {
       var hot: List[(Int, Int, Int)] = []
       var rest: List[(Int, Int)] = []
       for (o, k) in mid {
+        // the atom's symbols are the section's (atomize renumbers sect
+        // to the atom's ordinal; a store's atom is one section with its
+        // symbol): the first ranked one names it
         var r = -1
-        let a = l.objs[o].sects[k].addr
         for s in l.objs[o].syms {
-          if s.sect == k + 1 && s.value == a {
+          if s.sect == k + 1 && (s.typ & N_TYPE) == N_SECT {
             if let Some(x) = rank.get(s.name) {
               r = x
               break
