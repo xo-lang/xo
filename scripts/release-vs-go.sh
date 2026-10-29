@@ -74,13 +74,28 @@ compile() {
 	mkdir -p "$cache"
 	local build
 	if [ "$side" = xo ]; then
-		build=(env XO_BACKEND_CACHE_DIR="$cache/backend" "$XO" build -o "$bin" .)
+		# the cache statistics name the path the build took (its last lines
+		# in the log): "cache std ... reused" is separate compilation against
+		# std's variants, "cache stdx record loaded" the std records
+		build=(env XO_BACKEND_CACHE_DIR="$cache/backend" XO_CACHE_STATS=1 "$XO" build -o "$bin" .)
 	else
 		build=(env GOCACHE="$cache/go" GOFLAGS=-trimpath go build -o "$bin" .)
 	fi
 	local cold second warm edit
 	settle >/dev/null
 	cold=$(cd "$d" && timed "$OUT/build-$side-$name-cold.log" "${build[@]}")
+	if [ "$side" = xo ]; then
+		# std's variants (the store and facts of separate compilation,
+		# decision 0388): a fresh xo has none and its first builds start
+		# them in the background while building the whole program, so the
+		# second, warm and edit rows of an unprepared run were whole-program
+		# builds (gotchas/sepcomp-default-check-needs-std-variants.md);
+		# built here, after the cold row, as a user's second build would
+		# have them after a few seconds
+		for conc in 0 1; do
+			(cd "$d" && env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BACKEND_CACHE=on "$XO" dev stdcache --conc=$conc >"$OUT/stdcache-$name-$conc.log" 2>&1) || echo "stdcache --conc=$conc failed for $name (see $OUT/stdcache-$name-$conc.log)" >&2
+		done
+	fi
 	second=$(cd "$d" && timed "$OUT/build-$side-$name-second.log" "${build[@]}")
 	warm=$(cd "$d" && timed "$OUT/build-$side-$name-warm.log" "${build[@]}")
 	if [ "$side" = xo ]; then
@@ -94,8 +109,17 @@ compile() {
 	(cd "$d" && "${build[@]}" >/dev/null 2>&1)
 	local size
 	size=$(stat -f %z "$bin")
+	# the path the edit build took, from its cache statistics
+	local path=-
+	if [ "$side" = xo ]; then
+		path=whole
+		if grep -q '^cache std .* reused' "$OUT/build-$side-$name-edit.log"; then
+			path=separate
+			grep -q '^cache stdx record loaded' "$OUT/build-$side-$name-edit.log" && path="separate, std records"
+		fi
+	fi
 	set -- $cold $second $warm $edit
-	echo "| $name | $side | $1 | $3 | $5 | $7 | $2 / $6 / $8 | $(python3 -c "print(f'{$size/1048576:.2f}')") |"
+	echo "| $name | $side | $1 | $3 | $5 | $7 | $2 / $6 / $8 | $(python3 -c "print(f'{$size/1048576:.2f}')") | $path |"
 }
 
 {
@@ -105,12 +129,15 @@ compile() {
 	echo "Go $(go env GOVERSION). Build times are wall milliseconds of one build; peak MB is the"
 	echo "build's largest resident set (cold / warm / edit). Warm is the third unchanged build"
 	echo "(xo's parts pack is written on the second and read from the third); second is the second."
+	echo "The edit's path is what xo's cache statistics say the edit build did: separate (against"
+	echo "std's variants, built after the cold row as a user's second build would have them),"
+	echo "with the std records, or whole (the whole program)."
 	echo "Size is the default build's binary."
 	echo
 	echo "## Compile and size"
 	echo
-	echo "| program | side | cold ms | second ms | warm ms | edit ms | peak MB (c/w/e) | size MB |"
-	echo "|---|---|---|---|---|---|---|---|"
+	echo "| program | side | cold ms | second ms | warm ms | edit ms | peak MB (c/w/e) | size MB | edit's path |"
+	echo "|---|---|---|---|---|---|---|---|---|"
 } >"$report"
 
 # the pairs: NAME XO_SRC GO_SRC
