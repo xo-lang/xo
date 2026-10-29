@@ -583,6 +583,20 @@ set as the closures, so the store keeps the edges and no bitsets (Lead's check).
   object had .debug_info, so an XO_SEPCOMP `-s` build got std's DWARF and
   a PDB; PEOpts.debug false leaves every .debug_ section out and no PDB
   is written (darwin: macho_link's embed_dwarf and dsym, xo-lang-4).
+  windows/amd64 by default (2026-10-29, owner-approved CI on xo-windows,
+  scripts/ci/windows-sepcomp.sh): sepenv.xo serves a windows/amd64 host
+  too. Getting std's variants built there took four fixes: children
+  started without env(1) (tools.xo env_command; `--backend=go` from
+  PowerShell needed it too), the self path's .exe (check.executable),
+  a backslashed XO_BACKEND_CACHE_DIR (bcache.xo), and `xo dev stdobj`'s
+  C:/ paths (check.is_rooted). Then CI 40819530873: the default build is the
+  separate build's bytes; cdb reads the per-object PDB (a program and a
+  std function, source lines, locals); stripped and plain separate
+  builds of the async preemption, fault, json_text and conc_scopes
+  goldens pass; cdb walks a stripped program's stack by its unwind
+  tables. Windows has no background variant build (stdcache.xo): the
+  default takes `xo dev stdcache`'s or a release's prebuilt variants,
+  else builds the whole program.
   PDB types by reachability (2026-10-28): a link through the store keeps
   each std part's PDB types that its live functions' variables reach
   (cvobj.xo pre_procs_store: a walk of the types' `of` and members from

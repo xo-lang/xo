@@ -6,6 +6,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Windows: xo starts its child builds without an `env` program, which a
+  Windows host has only under Git Bash: `xo dev stdcache` (std's
+  variants for separate compilation) failed in 30 ms, and `--backend=go`
+  (and `use go`) could not start the Go build from PowerShell or cmd
+  (compiler/xo tools.xo env_command: the variables set on the command).
+  Also on Windows: xo started from Git Bash finds itself without the
+  `.exe` in argv[0], an `XO_BACKEND_CACHE_DIR` given as `C:\x` is taken
+  as absolute, and `xo dev stdobj` takes `C:/x` as absolute (it prefixed
+  the working directory to any path not starting with `/`).
 - xo build on x86 Linux: a build that assembles through cc (`XO_NOLIBC=0`,
   xotool's seed smoke build, the self build) failed with GNU as ("unknown
   pseudo-op: .arch_extension"): the linux assembly carried the arm64
@@ -41,7 +50,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   through a struct field 2.403G to 2.299G instructions, a local list's
   2.298G.
 - `xo build` and `xo run` compile separately by default on darwin and
-  linux, arm64 and amd64 (decision 0388 stage 3): std's functions come from std's prebuilt
+  linux, arm64 and amd64, and windows/amd64 (decision 0388 stage 3): std's functions come from std's prebuilt
   variants in the backend cache (its store and facts), so an edit
   compiles and links only the program's own code. An llvm-fib edit
   takes 111.5 ms median against 229.0 with 0.33.0, the HTTP server's
