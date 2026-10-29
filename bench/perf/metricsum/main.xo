@@ -1,0 +1,23 @@
+// std/metrics Summary (decision 0411, beorn7/perks' CKMS port): 2,000,000
+// observations of a scrambled sequence into one summary with three
+// objectives, then one scrape. The Go twin (go/) does the same with
+// client_golang's Summary.
+use std/metrics
+
+fn main(os: Os) {
+  let r = metrics.registry()
+  let s = r.summary("lat", "Latency.", objectives: [(0.5, 0.05), (0.9, 0.01), (0.99, 0.001)])
+  var x = 1
+  for _ in 0..2000000 {
+    x = (x * 7) % 1000003
+    s.observe(Float(x))
+  }
+  let text = r.text()
+  var n = 0
+  for line in text.split("\n") {
+    if line.starts_with("lat{") {
+      n += 1
+    }
+  }
+  os.stdio.println("metricsum ${n} ${text.len() > 0}")
+}
