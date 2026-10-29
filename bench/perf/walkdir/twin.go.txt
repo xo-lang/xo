@@ -1,0 +1,62 @@
+// The Go twin of bench/perf/walkdir: the same tree, walked 200 times with
+// filepath.WalkDir, the directories named b7 skipped (fs.SkipDir), the
+// root itself not counted (walk_dir does not visit it).
+package main
+
+import (
+	"fmt"
+	"io/fs"
+	"os"
+	"path/filepath"
+)
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	base, err := os.MkdirTemp("", "go-walkdir-")
+	if err != nil {
+		panic(err)
+	}
+	for i := 0; i < 20; i++ {
+		for j := 0; j < 20; j++ {
+			d := fmt.Sprintf("%s/t/a%d/b%d", base, i, j)
+			if err := os.MkdirAll(d, 0o777); err != nil {
+				panic(err)
+			}
+			for k := 0; k < 3; k++ {
+				if err := os.WriteFile(fmt.Sprintf("%s/f%d", d, k), []byte("x"), 0o666); err != nil {
+					panic(err)
+				}
+			}
+		}
+	}
+	s := 0
+	if w == "walk" {
+		root := base + "/t"
+		for n := 0; n < 200; n++ {
+			err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
+				if err != nil {
+					return err
+				}
+				if p == root {
+					return nil
+				}
+				rel, _ := filepath.Rel(base, p)
+				s += len(rel)
+				if d.Name() == "b7" {
+					return fs.SkipDir
+				}
+				return nil
+			})
+			if err != nil {
+				panic(err)
+			}
+		}
+	}
+	if err := os.RemoveAll(base); err != nil {
+		panic(err)
+	}
+	fmt.Printf("%s %d\n", w, s)
+}

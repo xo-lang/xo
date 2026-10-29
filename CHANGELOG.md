@@ -48,6 +48,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   a crash sees the old contents or the new, never a part (temporary file,
   sync, rename, directory sync), and `File.sync` (Go's File.Sync). The
   Go backend's MemFs rename keeps the file's mode.
+- prelude: `walk_dir(fs, dir, visit)` with `WalkStep` (Continue,
+  SkipDir, Stop): Go's filepath.WalkDir over any Fs, returning the
+  visited entries.
 - std/cli: `float_flag` and `Parsed.float` and `float_opt`, a floating
   point flag in `Float.parse` syntax (Go's flag.Float64).
 - `use go` binds Go's `any` (decision 0412): a parameter or result of

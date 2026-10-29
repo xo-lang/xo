@@ -54,6 +54,20 @@ so it needs no File. Also fixed: the Go backend's MemFs rename dropped
 the file's mode and link target (a renamed file came back 0o644); it
 keeps them now, as native MemFs does. No hot path, so no timing row.
 
+## 2026-10-29: feature: walk_dir and WalkStep
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md gap 16: a tool skipping .git and node_modules)
+- Go reference: path/filepath.WalkDir, fs.SkipDir, fs.SkipAll (go1.26.1)
+- Test: scripts/stdcorpus prelude.go walk_dir test (MemFs; go, arm64 and LLVM); internal/llvm/testdata/golden/fs_walk_dir (the real file system: a symbolic link not followed, SkipDir on a directory and on a file, Stop, visit with an effect, a sub, a missing directory); bench/perf/walkdir twin (Go checksum walk 3172000 equal)
+
+`walk_dir(fs, dir, visit)` walks as `walk` does and lets visit skip a
+directory or stop; it returns the visited entries. Differences from Go:
+dir itself is not visited, and the first read error ends the walk. A
+free function, so a user type that implements `Fs` still does. Timing
+against Go's WalkDir: see bench/perf/walkdir (measured before the push).
+
 ## 2026-10-29: feature: Proc.pid and Proc.ppid
 
 - Kind: feature

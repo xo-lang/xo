@@ -1,0 +1,36 @@
+// walk_dir on the real file system (std.md 3.1, Go's filepath.WalkDir):
+// name order, a symbolic link to a directory reported and not followed,
+// SkipDir on a directory and on a file, Stop, visit with an effect, a sub
+// capability's relative paths, and a missing directory.
+
+fn paths(xs: List[FileInfo]) -> Str { xs.map(fn(fi) { fi.path }).join(" ") }
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-walk-dir-${os.rand.int(0, 1000000000)}"
+  for d in ["b", "c/deep/er", ".git/objects"] {
+    base.create_dir_all("${name}/${d}")?
+  }
+  let root = base.sub(name)
+  for p in ["x.txt", "b/y.txt", "b/z.txt", "c/deep/er/w.txt", ".git/HEAD", ".git/objects/1"] {
+    root.write(p, b"data")?
+  }
+  root.symlink("c", "link")?
+  out.println("all ${paths(walk_dir(root, ".", fn(fi) { WalkStep.Continue })?)}")
+  out.println("link ${walk_dir(root, ".", fn(fi) { WalkStep.Continue })?.filter(fn(fi) { fi.name == "link" }).map(fn(fi) { "${fi.is_dir}" }).join(",")}")
+  out.println("no git ${paths(walk_dir(root, ".", fn(fi) { if fi.name == ".git" { WalkStep.SkipDir } else { WalkStep.Continue } })?)}")
+  out.println("skip rest ${paths(walk_dir(root, ".", fn(fi) { if fi.name == "y.txt" { WalkStep.SkipDir } else { WalkStep.Continue } })?)}")
+  out.println("stop ${paths(walk_dir(root, ".", fn(fi) { if fi.name == "deep" { WalkStep.Stop } else { WalkStep.Continue } })?)}")
+  let seen = walk_dir(root, "c", fn(fi) {
+    out.println("  visit ${fi.path} dir=${fi.is_dir}")
+    WalkStep.Continue
+  })?
+  out.println("visited ${seen.len()}")
+  out.println("sub ${paths(walk_dir(root.sub("c"), "deep", fn(fi) { WalkStep.Continue })?)}")
+  match walk_dir(root, "missing", fn(fi) { WalkStep.Continue }) {
+    Ok(_) => out.println("missing walked?")
+    Err(e) => out.println("missing ${e}")
+  }
+  base.remove_all(name)?
+}

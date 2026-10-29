@@ -657,6 +657,10 @@ fn (f: Fs) walk(dir: Str) -> List[FileInfo] ! FsErr     uses fs.read
     // recursive, parents before children, siblings by name; excludes `dir` itself;
     // fails with NotFound if `dir` does not exist;
     // paths are relative to the capability root with no "./" prefix
+enum WalkStep { Continue, SkipDir, Stop }
+fn walk_dir[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses fx)
+    -> List[FileInfo] ! FsErr uses (fs.read, fx)
+    // walk's order, visit decides: SkipDir (on a file: the rest of its directory), Stop
 fn (f: Fs) write(path: Str, data: Bytes) -> () ! FsErr  uses fs.write  // create or truncate
 fn (f: Fs) create_temp(dir: Str, prefix: Str) -> Str ! FsErr uses fs.write
     // returns the new file's path, relative to the capability root
@@ -695,6 +699,18 @@ it (not Windows). A failure removes the temporary file. Atomic only
 within one file system, which the temporary file beside path ensures.
 `File.sync` commits an open file's writes to stable storage (Go's
 File.Sync); a MemFs file has nothing to sync.
+
+`walk_dir` (std survey gap 16, Go's `filepath.WalkDir`) calls `visit`
+on each entry under `dir` in `walk`'s order, without following symbolic
+links. `visit` returns `Continue`, `SkipDir` (a directory's entries are
+not visited; on a file, the rest of the file's directory is skipped, as
+Go's `SkipDir`) or `Stop` (Go's `SkipAll`). The result is every entry
+`visit` was called on, in order, since a closure cannot add to a
+captured list (core 3.7): on a huge tree, return `SkipDir` or `Stop`, or
+do the work in `visit` and drop the result. Two differences from Go:
+`dir` itself is not visited (as `walk`), and the first error (a
+directory that cannot be read) ends the walk with that error, where Go
+passes it to the function. A free function, so any `Fs` answers.
 
 Handles, links, globs, and locks (decision 0163; the Go backend and
 MemFs, and native builds on the real filesystem, decision 0172; a native
@@ -4600,7 +4616,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-461 declarations.
+462 declarations.
 
 ### Range
 
@@ -5343,6 +5359,7 @@ fn (c: Child) kill()
 fn fault(msg: Str) -> Never
 fn dbg[T](x: T) -> T
 fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs
+fn walk_dir[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses fx) -> List[FileInfo] ! FsErr uses (fs.read, fx)
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs

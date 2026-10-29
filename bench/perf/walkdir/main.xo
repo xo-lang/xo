@@ -1,0 +1,35 @@
+// walkdir: walk_dir against Go's filepath.WalkDir (twin.go.txt): a tree
+// of 20 directories of 20 directories of 3 files (1,620 entries) made
+// under the scratch directory, then walked 200 times, the directories
+// named b7 skipped (SkipDir); `none` is the setup alone. The tree is in
+// a new directory under $TMPDIR (else /tmp), removed at the end. Usage:
+// `<program> none|walk`. Prints `<workload> <checksum>`; the twin prints
+// the same.
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "none"
+  let tmp = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-walkdir-${os.rand.int(0, 1000000000)}"
+  tmp.create_dir_all(name)?
+  let fs = tmp.sub(name)
+  for i in 0..20 {
+    for j in 0..20 {
+      let d = "t/a${i}/b${j}"
+      fs.create_dir_all(d)?
+      for k in 0..3 {
+        fs.write("${d}/f${k}", b"x")?
+      }
+    }
+  }
+  var s = 0
+  if w == "walk" {
+    for _ in 0..200 {
+      let seen = walk_dir(fs, "t", fn(fi) { if fi.name == "b7" { WalkStep.SkipDir } else { WalkStep.Continue } })?
+      for fi in seen {
+        s += fi.path.len()
+      }
+    }
+  }
+  tmp.remove_all(name)?
+  os.stdio.println("${w} ${s}")
+}

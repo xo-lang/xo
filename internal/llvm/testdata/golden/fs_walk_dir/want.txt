@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+all .git .git/HEAD .git/objects .git/objects/1 b b/y.txt b/z.txt c c/deep c/deep/er c/deep/er/w.txt link x.txt
+link false
+no git .git b b/y.txt b/z.txt c c/deep c/deep/er c/deep/er/w.txt link x.txt
+skip rest .git .git/HEAD .git/objects .git/objects/1 b b/y.txt c c/deep c/deep/er c/deep/er/w.txt link x.txt
+stop .git .git/HEAD .git/objects .git/objects/1 b b/y.txt b/z.txt c c/deep
+  visit c/deep dir=true
+  visit c/deep/er dir=true
+  visit c/deep/er/w.txt dir=false
+visited 3
+sub deep/er deep/er/w.txt
+missing missing: no such file or directory
+--- stderr

@@ -1231,6 +1231,44 @@ func atomicFill(tk *Task, fs Fs, tmp, p string, data Bytes) Result[Unit, FsErr] 
 	return fs.M_rename(tk, tmp, p)
 }
 
+// Prelude_walk_dir is `walk_dir(fs, dir, visit)` (std.md 3.1, Go's
+// filepath.WalkDir): through Fs.M_read_dir, as the native prelude's; dir
+// itself is not visited and the first error ends the walk.
+func Prelude_walk_dir(tk *Task, fs Fs, dir string, visit func(*Task, FileInfo) Result[WalkStep, Never]) Result[List[FileInfo], FsErr] {
+	var out []FileInfo
+	if _, err := walkDirIn(tk, fs, dir, visit, &out); err != nil {
+		return Err[List[FileInfo]](*err)
+	}
+	return Ok[List[FileInfo], FsErr](ListOf(out...))
+}
+
+// walkDirIn walks dir, each visited entry added to out: true when visit
+// stopped the walk.
+func walkDirIn(tk *Task, fs Fs, dir string, visit func(*Task, FileInfo) Result[WalkStep, Never], out *[]FileInfo) (bool, *FsErr) {
+	r := fs.M_read_dir(tk, dir)
+	if !r.Ok {
+		return false, &r.E
+	}
+	for _, fi := range List_Slice(r.V) {
+		*out = append(*out, fi)
+		switch visit(tk, fi).V.Tag {
+		case 3: // Stop
+			return true, nil
+		case 2: // SkipDir
+			if !fi.F_is_dir {
+				return false, nil
+			}
+		default:
+			if fi.F_is_dir {
+				if stop, err := walkDirIn(tk, fs, fi.F_path, visit, out); stop || err != nil {
+					return stop, err
+				}
+			}
+		}
+	}
+	return false, nil
+}
+
 // Prelude_read_or is `read_or(fs, path, default)`: read_text_or for bytes.
 func Prelude_read_or(tk *Task, fs Fs, path string, def Bytes) Result[Bytes, FsErr] {
 	r := fs.M_read(tk, path)

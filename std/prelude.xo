@@ -823,6 +823,31 @@ interface Fs {
 /// (std.md 3.1). A free function, not a method of Fs.
 fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs
 
+/// What walk_dir's visit asks for next (Go's fs.WalkDirFunc results:
+/// nil, fs.SkipDir, fs.SkipAll).
+enum WalkStep {
+  /// Go on: into a directory, else to the next entry.
+  Continue
+  /// On a directory, skip its contents; on a file, the rest of the
+  /// files in its directory.
+  SkipDir
+  /// End the walk; walk_dir returns Ok.
+  Stop
+}
+
+/// Calls visit for each entry under dir, parents before children and
+/// siblings by name, without following symbolic links (Go's
+/// filepath.WalkDir), and lets visit skip a directory or stop the walk;
+/// the result is every entry visit was called on, in order (a closure
+/// cannot add to a captured list, core 3.7), so the list holds every
+/// visited entry: on a huge tree, return SkipDir or Stop, or do the work
+/// in visit, and drop the result (std.md 3.1). Two differences
+/// from Go: dir itself is not visited (as walk), and the first error
+/// (reading a directory) ends the walk with that error, where Go hands it
+/// to the function. A free function, not a method of Fs, so every type
+/// that satisfies Fs still does.
+fn walk_dir[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses fx) -> List[FileInfo] ! FsErr uses (fs.read, fx)
+
 /// The text of the file at path, or default when it does not exist
 /// (FsErr.NotFound); any other error is the result (std.md 3.1). A free
 /// function, not a method of Fs, so every type that satisfies Fs still does.

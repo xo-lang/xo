@@ -2688,6 +2688,38 @@ fn fs_exists(f: Fs, p: Str) -> Bool ! FsErr {
   fi.is_some()
 }
 
+/// walk_dir (std.md 3.1, Go's filepath.WalkDir): through Fs.read_dir, so
+/// any Fs answers, a directory read only when visit went into it; a
+/// symbolic link is an entry of its own (read_dir does not follow it).
+fn walk_dir[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses fx) -> List[FileInfo] ! FsErr uses (fs.read, fx) {
+  var out: List[FileInfo] = []
+  walk_dir_in(fs, dir, visit, out)?
+  out
+}
+
+/// walk_dir of dir, each visited entry added to out: true when visit
+/// stopped the walk.
+fn walk_dir_in[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses fx, var out: List[FileInfo]) -> Bool ! FsErr uses (fs.read, fx) {
+  for fi in fs.read_dir(dir)? {
+    out.push(fi)
+    match visit(fi) {
+      WalkStep.Stop => return true
+      WalkStep.SkipDir => {
+        if !fi.is_dir {
+          // Go: SkipDir on a file skips the rest of its directory
+          return false
+        }
+      }
+      WalkStep.Continue => {
+        if fi.is_dir && walk_dir_in(fs, fi.path, visit, out)? {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
 /// read_text_or and read_or (std.md 3.1): the file, or default when it
 /// does not exist; through Fs's methods, so any Fs (MemFs, a sub or
 /// attenuated one) answers as for read_text.
