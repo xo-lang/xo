@@ -763,7 +763,10 @@ fn (var p: Parser) parse_select() -> Expr {
       var arm = SelectArm{span: p.tok.span}
       let saved = p.no_arrow_fn
       p.no_arrow_fn = true
-      if p.at_ident(b"after") && !(p.peek(1).kind is Assign | FatArrow | Dot | LParen | LBrack | Question) {
+      // `after` starts a timeout arm (core: SelectArm = ... | "after" Expr),
+      // `after (d * 2)` too: only a binding, a field, an index or a `?`
+      // makes it an ordinary name here
+      if p.at_ident(b"after") && !(p.peek(1).kind is Assign | FatArrow | Dot | LBrack | Question) {
         p.next()
         arm.after = Some(p.parse_expr())
       } else if p.at(Kind.Ident) && p.peek(1).kind == Kind.Assign {

@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+value 3
+inner none
+outer none
+timed out
+--- stderr

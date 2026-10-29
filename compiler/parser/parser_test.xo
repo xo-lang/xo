@@ -254,3 +254,16 @@ test "the lazy parse skips bodies and parse_body restores them exactly" {
   expect(lazy.iface) == parse_file(b"t.xo", src, false).iface
   expect(dump_result("t.xo", force_bodies(b"t.xo", src, lazy))) == dump("t.xo", src, false)
 }
+
+test "a doubled optional type parses (`??` in a type is two `?`)" {
+  // core 3.5: Type = BaseType { "?" }; the lexer reads `??` as coalesce
+  expect(accepts("fn keep(x: Int??) -> Int?? {\n  x\n}\n")) == true
+  let r = parse("fn keep(x: Int??) -> Int? {\n  x ?? None\n}\n")
+  expect(r.file.decls.len()) == 1
+}
+
+test "after with a parenthesized duration is a select timeout" {
+  // core: SelectArm = ... | "after" Expr; `after (d * 2)` is not a call
+  let src = "fn f(c: Chan[Int], d: Duration) {\n  select {\n    v = c.recv() => {}\n    after (d * 2) => {}\n  }\n}\n"
+  expect(accepts(src)) == true
+}

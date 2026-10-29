@@ -1,0 +1,24 @@
+// Two parses the spec allows (core 3.5 and core's SelectArm): a doubled
+// optional type, `Int??` (the lexer's `??` is two `?` in a type), and a
+// select timeout whose duration is parenthesized, `after (d * 2)`.
+fn keep(x: Int??) -> Int?? { x }
+
+fn depth(x: Int??) -> Str {
+  match x {
+    Some(Some(n)) => "value ${n}"
+    Some(None) => "inner none"
+    None => "outer none"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println(depth(keep(Some(Some(3)))))
+  os.stdio.println(depth(keep(Some(None))))
+  os.stdio.println(depth(keep(None)))
+  let c = Chan[Int].new(1)
+  let d = 5ms
+  select {
+    v = c.recv() => os.stdio.println("got ${v ?? -1}")
+    after (d * 2) => os.stdio.println("timed out")
+  }
+}
