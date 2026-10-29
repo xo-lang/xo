@@ -21,6 +21,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `hkdf_expand` and `hkdf` over any `Hash` (Go's cipher.AEAD and
   crypto/hkdf; spec std.md 11). Vectors from Go's tests and Wycheproof
   in internal/stdtest/testdata/corpus/aead; bench/perf/aead against Go.
+  A separately compiled program's link places the std atoms the file
+  names first too (stage 1b, darwin), next to its own hot code.
 - Windows: the path variables (XO_STD, XO_MODCACHE, XO_BACKEND_CACHE_DIR,
   the XO_SEPCOMP_STORE and _FACTS paths, XO_STD_STORE, the sysroots,
   XO_BUILD_DIR, XO_GOBIND, XO_GOCACHE and the binding directories) given

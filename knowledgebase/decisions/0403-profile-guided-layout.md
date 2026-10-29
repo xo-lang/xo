@@ -114,3 +114,10 @@ the parts (compiler/arm64 parallel.xo fn_order_of, used by part_lists
 and gen.xo). Tests: layout_lines, parse_layout and layout_order in
 prof_test.xo; internal/arm64 TestLayoutIdentity. The first measurement
 (the alignment experiment and the pad sweeps) follows in bench/results.
+
+Stage 1b (the same day): the store link's text atoms in the layout's
+order (compiler/macho link.xo LinkOpts.order and place(); the driver
+mangles the file's names with the emitter's rule, arm64 mangle_fn, and
+hands them through Ctx.layout_order); darwin only, the ELF placer
+computes offsets as it collects chunks and is left for the linux
+measurement.
