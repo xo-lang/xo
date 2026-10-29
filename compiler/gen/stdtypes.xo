@@ -20,7 +20,7 @@ fn prelude_builtin(name: Str) -> Bool {
 /// to the generated struct: (Go type name, field lines).
 fn rt_extra_fields() -> List[(Str, List[Str])] {
   [
-    ("Http_Request", ["\tXParams Map[string, string]", "\tXValues *reqValues", "\tXRawQuery string", "\tXFields []string", "\tXTimeout Duration"]),
+    ("Http_Request", ["\tXParams Map[string, string]", "\tXValues *reqValues", "\tXRawQuery string", "\tXFields []string", "\tXTimeout Duration", "\tXIdle Duration"]),
     ("Http_Response", ["\tXStream func(*Task, Http_BodyWriter) Result[Unit, IoErr]", "\tXFields []string"]),
     ("Http_StreamPart", ["\tXFields []string"]),
   ]

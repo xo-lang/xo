@@ -23,6 +23,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 	"unsafe"
 )
@@ -302,8 +303,31 @@ func readBody(hr *http.Request) Bytes {
 
 // send is M_send over the real network.
 func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http_Response, Http_ClientErr] {
-	ctx, cancel := context.WithCancel(context.Background())
+	resp, cancel, _, e := c.do(tk, req, rawURL, false)
+	if resp == nil {
+		return Err[Http_Response](e)
+	}
 	defer cancel()
+	defer resp.Body.Close()
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return Err[Http_Response](clientErr(4, err.Error()))
+	}
+	h, fields := responseFields(tk, resp)
+	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body), XFields: fields})
+}
+
+// do sends req and reads the response's head: the response (nil on a
+// failure, then e), the cancel that ends the exchange (after the body),
+// and the head. stream (Client.open, decision 0404): the client's
+// timeout bounds the head only, not the body.
+func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) (resp *http.Response, cancelFn func(), head Http_ResponseHead, e Http_ClientErr) {
+	ctx, cancel := context.WithCancel(context.Background())
+	defer func() {
+		if resp == nil {
+			cancel()
+		}
+	}()
 	go func() {
 		select {
 		case <-tk.Done():
@@ -313,7 +337,7 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 	}()
 	hr, err := http.NewRequestWithContext(ctx, req.F_method, rawURL, bytes.NewReader([]byte(req.F_body)))
 	if err != nil {
-		return Err[Http_Response](clientErr(1, err.Error()))
+		return nil, nil, head, clientErr(1, err.Error())
 	}
 	for k, v := range Map_All(req.F_headers) {
 		if len(req.XFields) == 0 {
@@ -335,6 +359,18 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 		timeout = req.XTimeout
 	}
 	hc := &http.Client{Timeout: time.Duration(timeout), Transport: tr}
+	var headTimer *time.Timer
+	var headFired atomic.Bool
+	if stream {
+		// the head within the timeout; each read has its own limit
+		hc.Timeout = 0
+		if timeout > 0 {
+			headTimer = time.AfterFunc(time.Duration(timeout), func() {
+				headFired.Store(true)
+				cancel()
+			})
+		}
+	}
 	o, only := c.net.(*onlyNet)
 	// with_redirects (decision 0404): 0 returns the 3xx as it came;
 	// a redirect must stay within an attenuated Net (decision 0156)
@@ -362,30 +398,37 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 		return nil
 	}
 	tk.leave()
-	resp, err := hc.Do(hr)
+	r, err := hc.Do(hr)
 	tk.enter()
+	if headTimer != nil && !headTimer.Stop() && err == nil {
+		// the limit passed as the head arrived
+		r.Body.Close()
+		return nil, nil, head, clientErr(3, "")
+	}
 	if err != nil {
 		var ne net.Error
 		switch {
 		case tk.Canceled():
-			return Err[Http_Response](clientErr(5, ""))
-		case errors.As(err, &ne) && ne.Timeout():
-			return Err[Http_Response](clientErr(3, ""))
+			return nil, nil, head, clientErr(5, "")
+		case headFired.Load() || (errors.As(err, &ne) && ne.Timeout()):
+			return nil, nil, head, clientErr(3, "")
 		}
 		var ue *url.Error
 		if errors.As(err, &ue) {
 			var oe *net.OpError
 			if errors.As(ue.Err, &oe) {
-				return Err[Http_Response](clientErr(2, oe.Error()))
+				return nil, nil, head, clientErr(2, oe.Error())
 			}
 		}
-		return Err[Http_Response](clientErr(4, err.Error()))
+		return nil, nil, head, clientErr(4, err.Error())
 	}
-	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return Err[Http_Response](clientErr(4, err.Error()))
-	}
+	h, _ := responseFields(tk, r)
+	return r, cancel, Http_ResponseHead{F_status: int64(r.StatusCode), F_headers: h}, e
+}
+
+// responseFields is resp's header as Xo sees it: each name's fields
+// joined, and the names with several fields (decision 0288).
+func responseFields(tk *Task, resp *http.Response) (Map[string, string], []string) {
 	var h Map[string, string]
 	var fields []string
 	for k, vs := range resp.Header {
@@ -396,7 +439,7 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 			fields = appendFields(fields, k, vs)
 		}
 	}
-	return Ok[Http_Response, Http_ClientErr](Http_Response{F_status: int64(resp.StatusCode), F_headers: h, F_body: Bytes(body), XFields: fields})
+	return h, fields
 }
 
 // handshakeLogFilter is the ErrorLog of serve: net/http's log lines on

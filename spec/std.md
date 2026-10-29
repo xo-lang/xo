@@ -1500,6 +1500,15 @@ fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses n
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr   // 4.6
 fn (c: Client) with_redirects(max: Int) -> Client          // decision 0404
 fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
+fn (r: Request) with_idle_timeout(d: Duration) -> Request  // decision 0404
+
+fn (c: Client) open(req: Request) -> ClientStream ! ClientErr uses net.dial
+struct ResponseHead { status: Int, headers: Map[Str, Str] }
+struct ClientStream {}
+fn (s: ClientStream) head() -> ResponseHead
+fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! ClientErr uses net.dial
+fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! ClientErr uses net.dial
+fn (s: ClientStream) close()
 
 enum ClientErr {
   InvalidUrl(msg: Str)
@@ -1535,7 +1544,29 @@ of the client's `timeout` (Go's `Client.Timeout`); it is a client side
 builder, and a handler's own Request ignores it. `ClientErr.Connect`
 means the request did not reach the server (no connection or no TLS
 handshake), so any method may be retried; `Timeout` and `Protocol` may
-have reached it. `parse_url` accepts absolute RFC 3986 URLs with an
+have reached it.
+
+`c.open(req)` sends the request as `send` does (the same redirects,
+header and Net checks) and returns once the head of the response has
+arrived; the body is read from the stream as it arrives (decision 0404).
+`read(max)` returns the next bytes, at most `max`, and `None` at the end;
+a body cut short (a connection closed before its `Content-Length`, a
+chunked body without its last chunk) is `Protocol` (`unexpected EOF`),
+never an end. Errors after `open` are never `Connect`. `read_all(max_size)`
+returns the rest, `Protocol` past `max_size` bytes. A gzip body is decoded
+as it is read, on `send`'s terms. Timeouts: the head must arrive within
+the request's or the client's timeout, and then each `read` within
+`with_idle_timeout(d)` (the same timeout when unset); a stream has no
+limit over its whole body, and a `Timeout` from `read` means the head was
+received. `close` releases the connection and again does nothing; a
+stream dropped without `close` is released when its last copy goes. A
+body read to its end gives its connection back to the client's pool; any
+other HTTP/1.1 connection is closed. Until stage B2 of decision 0404 an
+HTTP/2 response's body (https with ALPN h2) is read in full before
+`open` returns, so its memory grows with the body; the bytes and errors
+are the same.
+
+`parse_url` accepts absolute RFC 3986 URLs with an
 `http` or `https` scheme and a host; anything else is a `UrlErr`. An
 `https` URL is requested over TLS (4.6).
 

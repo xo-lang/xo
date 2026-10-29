@@ -59,6 +59,9 @@ fn (r: Request) with_header(name: Str, value: Str) -> Request
 /// whole exchange with the body (Go's Client.Timeout); a client side
 /// builder (decision 0404).
 fn (r: Request) with_timeout(d: Duration) -> Request
+/// The limit for each read of an opened stream's body in place of its
+/// client's timeout; a client side builder (decision 0404).
+fn (r: Request) with_idle_timeout(d: Duration) -> Request
 /// Every field of name, in order (decision 0288).
 fn (r: Request) header_values(name: Str) -> List[Str]
 /// The request with one more field of name.
@@ -241,6 +244,27 @@ fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses n
 /// The client trusting the certificates of pem instead of the system's
 /// roots for https (std.md 4.6).
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
+/// A response's status and header, without its body (decision 0404).
+struct ResponseHead {
+  status: Int
+  headers: Map[Str, Str]
+}
+/// A response whose body is read as it arrives (decision 0404): from
+/// Client.open, read with read or read_all and released with close (or
+/// when the last copy goes): a body read to its end gives its connection
+/// back to the client's pool, any other is closed.
+struct ClientStream {}
+/// The request sent and the response's head read; its body follows on
+/// the stream (redirects followed as send follows them).
+fn (c: Client) open(req: Request) -> ClientStream ! ClientErr uses net.dial
+fn (s: ClientStream) head() -> ResponseHead
+/// The next bytes of the body, at most max, None at its end; a body cut
+/// short is Protocol (unexpected EOF), never an end.
+fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! ClientErr uses net.dial
+/// The rest of the body; Protocol past max_size bytes.
+fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! ClientErr uses net.dial
+/// Releases the stream's connection; again does nothing.
+fn (s: ClientStream) close()
 /// The client following at most max redirects (10 by default); 0 returns
 /// a 3xx response as it came, its Location as the server sent it (Go's
 /// ErrUseLastResponse; decision 0404).

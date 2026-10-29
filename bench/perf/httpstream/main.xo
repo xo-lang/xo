@@ -1,0 +1,36 @@
+// The client of bench/perf/httpstream (decision 0404 stage B): one GET of
+// a SIZE byte body from serve/ at ADDR, read as a stream (MODE=stream:
+// Client.open and read in 64 KiB pieces, the bytes counted and dropped)
+// or whole (MODE=send: Client.send). Peak RSS is the point: a stream's
+// stays flat as SIZE grows, send's grows with it. Prints the bytes read.
+use std/http
+
+fn main(os: Os) ! {
+  let addr = os.env.get("ADDR") ?? "127.0.0.1:18097"
+  let size = os.env.get("SIZE") ?? "104857600"
+  let mode = os.env.get("MODE") ?? "stream"
+  let c = http.client(os.net, 300s)
+  let url = "http://${addr}/big?n=${size}"
+  var total = 0
+  if mode == "send" {
+    match c.get(url) {
+      Ok(r) => total = r.body.len()
+      Err(e) => fault("get: ${e}")
+    }
+  } else {
+    match c.open(http.new_request("GET", url)) {
+      Ok(s) => {
+        loop: while true {
+          match s.read(65536) {
+            Ok(Some(b)) => total += b.len()
+            Ok(None) => break loop
+            Err(e) => fault("read: ${e}")
+          }
+        }
+        s.close()
+      }
+      Err(e) => fault("open: ${e}")
+    }
+  }
+  os.stdio.println("${total}")
+}

@@ -61,7 +61,7 @@ func TestOutsideBytesValidated(t *testing.T) {
 		{"std/rt/proccmd.go", "M_read_line", goRT},
 		{"std/rt/http.go", "urlOf", goRT},
 		{"std/rt/http_net.go", "serve", goRT},
-		{"std/rt/http_net.go", "send", goRT},
+		{"std/rt/http_net.go", "responseFields", goRT}, // send and do read the header through it
 		{"std/rt/archive.go", "Archive_untar", goRT},
 		{"std/rt/archive.go", "Archive_unzip", goRT},
 	}

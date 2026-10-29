@@ -1,5 +1,25 @@
 # std/http changes
 
+## 2026-10-29: feature: a response body read as it arrives (Client.open)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-29 std survey (std-coverage.md): a download, a
+  proxy or an event stream had to hold the whole body
+- Go reference: net/http Response.Body (transfer.go body, chunked.go
+  chunkedReader), Transport's gzip reader; decision 0404 stage B1
+- Test: internal/llvm/testdata/golden/http_client_stream (native and Go)
+
+`Client.open(req)` returns a `ClientStream` once the head has arrived:
+`head()`, `read(max)`, `read_all(max_size)` and `close()`. A Content-Length,
+chunked or until-close body is read in pieces natively (a body cut short is
+`Protocol`, `unexpected EOF`), gzip is decoded as it is read, and
+`Request.with_idle_timeout(d)` limits each read while the client's timeout
+bounds only the head. A body read to its end returns its connection to the
+pool; one closed or dropped early closes it. `send` is unchanged. Not yet:
+an HTTP/2 response's body is still buffered whole before `open` returns
+(stage B2), so memory grows with the body over https with h2.
+
 ## 2026-10-29: feature: the client's redirect policy and a request's own time limit
 
 - Kind: feature

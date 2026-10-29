@@ -141,6 +141,37 @@ fn main(os: Os) {
       Ok(resp) => os.stdio.println("gzip: ${resp.status} encoding=${resp.header("Content-Encoding") ?? "-"} ${resp.text() ?? "?"}")
       Err(e) => os.stdio.println("gzip: ${describe(e, addrs)}")
     }
+    // a stream over HTTP/2 (decision 0404; the body buffered until
+    // stage B2): the same bytes in pieces, gzip decoded, and closed
+    match c.open(http.new_request("GET", base + "/big")) {
+      Ok(st) => {
+        var n = 0
+        var reads = 0
+        loop: while true {
+          match st.read(30000) {
+            Ok(Some(b)) => {
+              n += b.len()
+              reads += 1
+            }
+            Ok(None) => break loop
+            Err(e) => {
+              os.stdio.println("stream big: ${describe(e, addrs)}")
+              break loop
+            }
+          }
+        }
+        st.close()
+        os.stdio.println("stream big: ${st.head().status} ${n} bytes, ${if reads > 1 { "several reads" } else { "one read" }}")
+      }
+      Err(e) => os.stdio.println("stream big: ${describe(e, addrs)}")
+    }
+    match c.open(http.new_request("GET", base + "/gzip")) {
+      Ok(st) => match st.read_all() {
+        Ok(b) => os.stdio.println("stream gzip: ${b.to_str() ?? "?"}")
+        Err(e) => os.stdio.println("stream gzip: ${describe(e, addrs)}")
+      }
+      Err(e) => os.stdio.println("stream gzip: ${describe(e, addrs)}")
+    }
     // the text depends on the verifier (macOS: the Security framework,
     // which also rejects certificates valid for 100 years)
     match system.get(base + "/hello") {

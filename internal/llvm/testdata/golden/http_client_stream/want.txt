@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+big: 200 300000
+big: 300000 bytes, several reads, starts abcdef
+chunked: 30 bytes, several reads, starts part0;
+gzip: encoding=- 50000 bytes, several reads, starts abcdef
+redirect: 200 30 bytes, several reads, starts part0;
+cut: after 5 bytes: Protocol(unexpected EOF)
+idle: after 5 bytes: Timeout
+closed early
+after: 200 part0;part1;part2;part3;part4;
+done
+--- stderr

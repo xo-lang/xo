@@ -3541,6 +3541,199 @@ fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str],
   x
 }
 
+// ---------------------------------------------------------------------------
+// A streamed response body (decision 0404 stage B1): the head as
+// read_response reads it, then the body as it arrives (cbody_next).
+
+/// How a streamed HTTP/1.1 body is read: mode 0 none, 1 a Content-Length
+/// (left: the bytes to come), 2 chunked (left: the rest of the current
+/// chunk; crlf: the CRLF ending a chunk comes next; excess: chunk_line's
+/// count of non-data), 3 up to the connection's end; done when the body
+/// ended; keep: the connection may serve another request then.
+pub struct BodyRead {
+  pub mode: Int
+  pub left: Int = 0
+  pub crlf: Bool = false
+  pub excess: Int = 0
+  pub done: Bool = false
+  pub keep: Bool = false
+}
+
+/// read_head's result: the head (an Exchange with no body, or its
+/// failure) and how its body is read.
+pub struct HeadRead {
+  pub x: Exchange
+  pub b: BodyRead
+}
+
+/// The head of the response on r, as read_response reads it (an
+/// informational one skipped), and how its body follows.
+pub fn read_head(r: rthttp.CResp, method: Str) -> HeadRead {
+  let broken = "net/http: HTTP/1.x transport connection broken: "
+  let nob = BodyRead{mode: 0, done: true}
+  var first = true
+  while true {
+    var h = parse_response(hclient.input(r, 0), false, method)
+    while h.res == NEED || h.res == TOO_LARGE {
+      if h.res == TOO_LARGE {
+        return HeadRead{x: ex_fail(CC_ERR, "net/http: server response headers exceeded 1048576 bytes; aborted"), b: nob}
+      }
+      let avail = hclient.avail(r)
+      let f = hclient.more(r)
+      if f == CC_EOF {
+        if avail == 0 {
+          return HeadRead{x: if first { ex_none(CC_ERR, "EOF") } else { ex_fail(CC_ERR, "EOF") }, b: nob}
+        }
+        h = parse_response(hclient.input(r, 0), true, method)
+        break
+      }
+      if f != CC_OK {
+        return HeadRead{x: if first && avail == 0 && f != hclient.CC_TIMEOUT && f != hclient.CC_CANCELED { ex_none(f, "") } else { ex_fail(f, "") }, b: nob}
+      }
+      h = parse_response(hclient.input(r, 0), false, method)
+    }
+    if h.res != OK {
+      return HeadRead{x: ex_fail(CC_ERR, broken + h.why), b: nob}
+    }
+    hclient.skip(r, h.used)
+    first = false
+    let code = h.status
+    if code >= 100 && code <= 199 && code != 101 {
+      continue
+    }
+    let open = !h.close && code != 101
+    let x = Exchange{s: CC_OK, why: "", status: code, headers: h.headers, body: b"", keep: open, none: false}
+    if h.chunked && h.clen != 0 {
+      return HeadRead{x: x, b: BodyRead{mode: 2, keep: open}}
+    }
+    if h.clen == 0 {
+      return HeadRead{x: x, b: BodyRead{mode: 0, done: true, keep: open && hclient.avail(r) == 0}}
+    }
+    if h.clen > 0 {
+      return HeadRead{x: x, b: BodyRead{mode: 1, left: h.clen, keep: open}}
+    }
+    return HeadRead{x: x, b: BodyRead{mode: 3, keep: false}}
+  }
+  HeadRead{x: ex_fail(CC_ERR, ""), b: nob}
+}
+
+/// One step of a streamed body: s CC_OK with the next bytes (none once
+/// b.done), or the failure s with its text (net/http's body errors:
+/// "unexpected EOF", the chunked reader's).
+pub struct BodyStep {
+  pub s: Int
+  pub why: Str
+  pub data: Bytes
+}
+
+fn bstep(s: Int, why: Str) -> BodyStep { BodyStep{s: s, why: why, data: b""} }
+
+/// The next bytes of the body b reads from r, at most max: empty data
+/// with b.done at the body's end. A body cut short is "unexpected EOF"
+/// (io.ErrUnexpectedEOF), never an end.
+pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
+  let lim = if max > 0 { max } else { 32768 }
+  while !b.done {
+    if b.mode == 1 || (b.mode == 2 && b.left > 0) {
+      let have = hclient.avail(r)
+      if have > 0 {
+        var k = if have < b.left { have } else { b.left }
+        if k > lim {
+          k = lim
+        }
+        let d = hclient.take(r, k)
+        b.left -= k
+        if b.left == 0 {
+          if b.mode == 1 {
+            b.done = true
+            b.keep = b.keep && hclient.avail(r) == 0
+          } else {
+            b.crlf = true
+          }
+        }
+        return BodyStep{s: CC_OK, why: "", data: d}
+      }
+      if hclient.eof(r) {
+        return bstep(CC_ERR, "unexpected EOF")
+      }
+    } else if b.mode == 3 {
+      let have = hclient.avail(r)
+      if have > 0 {
+        return BodyStep{s: CC_OK, why: "", data: hclient.take(r, if have < lim { have } else { lim })}
+      }
+      if hclient.eof(r) {
+        b.done = true
+        return bstep(CC_OK, "")
+      }
+    } else if b.mode == 2 && b.crlf {
+      let s = hclient.input(r, 2)
+      if s.len() >= 2 {
+        let bs = s.bytes()
+        if bs[0] != 13 || bs[1] != 10 {
+          return bstep(CC_ERR, "malformed chunked encoding")
+        }
+        hclient.skip(r, 2)
+        b.crlf = false
+        continue
+      }
+      if hclient.eof(r) {
+        return bstep(CC_ERR, "unexpected EOF")
+      }
+    } else if b.mode == 2 {
+      // a chunk's size line; the last chunk's trailer through chunked
+      let s = hclient.input(r, 2)
+      let eof = hclient.eof(r)
+      let l = chunk_line(s, s.bytes(), 0, eof, b.excess)
+      if l.res == HB_ERR {
+        return bstep(CC_ERR, l.why)
+      }
+      if l.res == HB_OK {
+        b.excess = l.excess
+        if l.size == 0 {
+          let c = chunked(s, eof)
+          if c.res == HB_OK {
+            hclient.skip(r, c.used)
+            b.done = true
+            b.keep = b.keep && hclient.avail(r) == 0
+            return bstep(CC_OK, "")
+          }
+          if c.res == HB_ERR || eof {
+            return bstep(CC_ERR, if c.why.is_empty() { "unexpected EOF" } else { c.why })
+          }
+        } else {
+          hclient.skip(r, l.next)
+          b.left = l.size
+          continue
+        }
+      } else if eof {
+        return bstep(CC_ERR, "unexpected EOF")
+      }
+    } else {
+      b.done = true
+      return bstep(CC_OK, "")
+    }
+    let f = hclient.more(r)
+    if f != CC_OK && f != CC_EOF {
+      return bstep(f, "")
+    }
+  }
+  bstep(CC_OK, "")
+}
+
+/// h1_round up to the response's head (decision 0404): the connection
+/// stays r's for the body (cbody_next), or is closed on a failure.
+fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots) -> HeadRead {
+  hclient.request(r, method, target, host, hk, hv, body)
+  if hclient.err(r) != 0 {
+    return HeadRead{x: ex_none(CC_ERR, ""), b: BodyRead{mode: 0, done: true}}
+  }
+  let hr = read_head(r, method)
+  if hr.x.s != CC_OK {
+    hclient.end_keep(r, false, https, addr, name, roots, hr.x.s, hr.x.why)
+  }
+  hr
+}
+
 /// Whether a request may be sent again after its pooled connection
 /// failed before any byte of the response (net/http's isReplayable: the
 /// body is in memory, as GetBody makes it; a safe method, or an
@@ -3562,6 +3755,18 @@ pub struct CResult {
   /// [name, value, ...]
   pub headers: List[Str]
   pub body: Bytes
+  /// a streamed response (client_do's stream, decision 0404): the
+  /// connection its body is read from (cbody_next with read), what
+  /// end_keep needs at the body's end, and whether the body is gzip the
+  /// client decodes; not open: body holds it all (an HTTP/2 response
+  /// until stage B2)
+  pub open: Bool = false
+  pub conn: rthttp.CResp? = None
+  pub read: BodyRead = BodyRead{mode: 0, done: true}
+  pub https: Bool = false
+  pub addr: Str = ""
+  pub name: Str = ""
+  pub gz: Bool = false
 }
 
 fn cfail(err: Int, msg: Str) -> CResult { CResult{err: err, msg: msg, status: 0, headers: [], body: b""} }
@@ -3599,7 +3804,7 @@ fn valid_method(m: Str) -> Bool {
 /// the attenuation lists of the client's Net (decision 0175), following
 /// redirects as net/http's Client does (redirectBehavior,
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -3717,8 +3922,16 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     var headers: List[Str] = []
     var rbody = b""
     var h1 = hclient.reading(r)
+    // stream (decision 0404): the head only; the body follows on r
+    var hb = BodyRead{mode: 0, done: true}
     if h1 {
-      var x = h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+      var x = if stream {
+        let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+        hb = hr.b
+        hr.x
+      } else {
+        h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+      }
       if x.none && hclient.reused(r) && replayable(method, hk) {
         // the pooled connection was dead (the server closed it): the
         // request goes once more on a new one, as Transport retries it
@@ -3727,6 +3940,10 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         h1 = hclient.reading(r)
         if hclient.h2(r) {
           h2_exchange(r, method, target, u.host, hk, hv, body.len())
+        } else if h1 && stream {
+          let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
+          hb = hr.b
+          x = hr.x
         } else if h1 {
           x = h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots)
         }
@@ -3746,6 +3963,33 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     let err = hclient.err(r)
     if err != 0 {
       return cfail(err, hclient.msg(r))
+    }
+    if stream && h1 {
+      let li0 = field_at(headers, "Location")
+      let hop = max_redirects > 0 && (status == 301 || status == 302 || status == 303 || status == 307 || status == 308) && li0 >= 0 && !headers[li0 + 1].is_empty()
+      if !hop {
+        // the last response: its body is read as it arrives, a gzip one
+        // decoded by the client on send's terms
+        var gz = false
+        if method != "HEAD" && !has_key(hk, "Accept-Encoding") && !has_key(hk, "Range") {
+          let ce = field_at(headers, "Content-Encoding")
+          if ce >= 0 && ascii_lower(headers[ce + 1]) == "gzip" {
+            gz = true
+            headers = without_fields(headers, "Content-Encoding", "Content-Length")
+          }
+        }
+        return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: https, addr: addr, name: name, gz: gz}
+      }
+      // a redirect: its body read and dropped, its connection pooled
+      // before the next hop
+      while !hb.done {
+        let st = cbody_next(r, hb, 65536)
+        if st.s != CC_OK {
+          hclient.end_keep(r, false, https, addr, name, roots, st.s, if st.why.is_empty() { "" } else { "\u{1}" + st.why })
+          return cfail(hclient.err(r), hclient.msg(r))
+        }
+      }
+      hclient.end_keep(r, hb.keep, https, addr, name, roots, CC_OK, "")
     }
     // a gzip body the request asked for (hclient.request and h2_exchange
     // add Accept-Encoding: gzip on the same terms) is decoded, without

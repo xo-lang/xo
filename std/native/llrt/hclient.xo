@@ -1125,6 +1125,12 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
 
 /// Closes r's connection (TLS, the poll descriptor, the socket), if it
 /// has one: an HTTP/1.1 exchange ends.
+/// Sets r's connection's deadline to timeout ns from now (0: none), for a
+/// streamed body's next read (decision 0404's idle limit).
+pub fn set_deadline(r: rthttp.CResp, timeout: Int) {
+  st(rec(r) + R_C, C_WHEN, if timeout > 0 { cl_deadline(timeout) } else { 0 })
+}
+
 pub fn cl_close(r: rthttp.CResp) { close_at(rec(r)) }
 
 fn close_at(a: Int) {

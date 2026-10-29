@@ -1,0 +1,144 @@
+// A streamed response (decision 0404 stage B1): Client.open's head, then
+// the body read as it arrives: a Content-Length body, a chunked one, a
+// gzip one decoded on send's terms, a body cut short (Protocol, never a
+// clean end), an idle limit between reads, and a stream closed early
+// with the client still working after it. Every exit 0 golden runs with
+// XO_LEAKCHECK, so a connection the stream does not release fails it.
+use std/http
+use std/compress
+
+fn describe(e: http.ClientErr) -> Str {
+  match e {
+    http.ClientErr.InvalidUrl(msg) => "InvalidUrl(${msg})"
+    http.ClientErr.Connect(_) => "Connect"
+    http.ClientErr.Timeout => "Timeout"
+    http.ClientErr.Protocol(msg) => "Protocol(${msg})"
+    http.ClientErr.Canceled => "Canceled"
+  }
+}
+
+fn pattern(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for i in 0..n {
+    b.write_byte(UInt8(97 + i % 26))
+  }
+  b.freeze()
+}
+
+fn routes(os: Os) -> http.Router uses clock {
+  var r = http.router()
+  r.handle("GET /big", fn(_req) { http.text(200, pattern(300000).to_str() ?? "") })
+  r.handle("GET /chunked", fn(_req) {
+    http.stream(200, fn(w) {
+      for i in 0..5 {
+        w.write("part${i};".bytes())?
+        w.flush()?
+      }
+    })
+  })
+  r.handle("GET /gzip", fn(_req) { http.text(200, "").with_header("Content-Encoding", "gzip") with {body: compress.gzip(pattern(50000))} })
+  r.handle("GET /pause", fn(_req) {
+    http.stream(200, fn(w) {
+      w.write("first".bytes())?
+      w.flush()?
+      os.clock.sleep(500ms)
+      w.write("second".bytes())?
+    })
+  })
+  r.handle("GET /redirect", fn(_req) { http.empty(302).with_header("Location", "/chunked") })
+  r
+}
+
+/// Reads s to its end in pieces of at most n: the byte count, the number
+/// of reads, the first 6 bytes, or the error.
+fn drain(s: http.ClientStream, n: Int) -> Str uses net.dial {
+  var total = 0
+  var reads = 0
+  var start = ""
+  loop: while true {
+    match s.read(n) {
+      Ok(Some(b)) => {
+        if start.is_empty() {
+          start = (b[0..(if b.len() < 6 { b.len() } else { 6 })]).to_str() ?? "?"
+        }
+        total += b.len()
+        reads += 1
+      }
+      Ok(None) => break loop
+      Err(e) => return "after ${total} bytes: ${describe(e)}"
+    }
+  }
+  "${total} bytes, ${if reads > 1 { "several reads" } else { "${reads} read" }}, starts ${start}"
+}
+
+fn main(os: Os) {
+  match (os.net.listen("127.0.0.1:0"), os.net.listen("127.0.0.1:0")) {
+    (Ok(l), Ok(raw)) => {
+      let srv = http.server(l, routes(os))
+      let base = "http://${srv.addr()}"
+      let c = http.client(os.net)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        // a server that promises 10 bytes and sends 5
+        s.spawn_background(fn() {
+          match raw.accept() {
+            Ok(conn) => {
+              let _ = conn.read(4096).ignore_err("the request is not checked")
+              let _ = conn.write("HTTP/1.1 200 OK\r\nContent-Length: 10\r\n\r\nhello".bytes()).ignore_err("the client may have gone")
+              conn.close()
+            }
+            Err(_) => ()
+          }
+        })
+        match c.open(http.new_request("GET", base + "/big")) {
+          Ok(st) => {
+            os.stdio.println("big: ${st.head().status} ${st.head().headers.get("Content-Length") ?? "-"}")
+            os.stdio.println("big: ${drain(st, 65536)}")
+            st.close()
+          }
+          Err(e) => os.stdio.println("big: ${describe(e)}")
+        }
+        match c.open(http.new_request("GET", base + "/chunked")) {
+          Ok(st) => os.stdio.println("chunked: ${drain(st, 7)}")
+          Err(e) => os.stdio.println("chunked: ${describe(e)}")
+        }
+        match c.open(http.new_request("GET", base + "/gzip")) {
+          Ok(st) => os.stdio.println("gzip: encoding=${st.head().headers.get("Content-Encoding") ?? "-"} ${drain(st, 4096)}")
+          Err(e) => os.stdio.println("gzip: ${describe(e)}")
+        }
+        match c.open(http.new_request("GET", base + "/redirect")) {
+          Ok(st) => os.stdio.println("redirect: ${st.head().status} ${drain(st, 100)}")
+          Err(e) => os.stdio.println("redirect: ${describe(e)}")
+        }
+        match c.open(http.new_request("GET", "http://${raw.addr()}/cut")) {
+          Ok(st) => os.stdio.println("cut: ${drain(st, 100)}")
+          Err(e) => os.stdio.println("cut: ${describe(e)}")
+        }
+        match c.open(http.new_request("GET", base + "/pause").with_idle_timeout(100ms)) {
+          Ok(st) => os.stdio.println("idle: ${drain(st, 100)}")
+          Err(e) => os.stdio.println("idle: ${describe(e)}")
+        }
+        match c.open(http.new_request("GET", base + "/big")) {
+          Ok(st) => {
+            let _ = st.read(1000).ignore_err("only the close is tested")
+            st.close()
+            st.close()
+            os.stdio.println("closed early")
+          }
+          Err(e) => os.stdio.println("early: ${describe(e)}")
+        }
+        match c.get(base + "/chunked") {
+          Ok(resp) => os.stdio.println("after: ${resp.status} ${resp.text() ?? "?"}")
+          Err(e) => os.stdio.println("after: ${describe(e)}")
+        }
+      }
+      os.stdio.println("done")
+    }
+    _ => os.stdio.println("listen failed")
+  }
+}

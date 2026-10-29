@@ -14,6 +14,8 @@ query: 200 q=2|1|3 proto ok
 form: 200 form a=1|2 b=two words
 moved: 200 hello, scheme ""
 gzip: 200 encoding=- decoded over tls
+stream big: 200 100000 bytes, several reads
+stream gzip: decoded over tls
 system roots: Protocol
 expired: Protocol(Get "https://ADDR1/hello": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time NOW is after 2001-01-01T00:00:00Z)
 future: Protocol(Get "https://ADDR2/hello": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time NOW is before 2100-01-01T00:00:00Z)

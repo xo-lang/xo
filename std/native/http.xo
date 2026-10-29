@@ -16,6 +16,7 @@ use native/llrt/hserve
 use native/rt
 use native/llrt/h2srv
 use native/llrt/http1
+use native/llrt/hclient
 use native/llrt/rand as llrand
 use native/llrt/srvtls
 use native/llrt/tlssrv
@@ -53,6 +54,9 @@ struct Request {
   /// with_timeout's limit in nanoseconds, 0 for the client's (decision
   /// 0404). Hidden from Xo code.
   timeout_ns: Int = 0
+  /// with_idle_timeout's limit in nanoseconds for each read of a stream,
+  /// 0 for the client's timeout (decision 0404). Hidden from Xo code.
+  idle_ns: Int = 0
 }
 
 struct ReqValue {
@@ -2104,10 +2108,228 @@ fn (c: Client) with_redirects(max: Int) -> Client { c with {redirects: if max < 
 /// 0404): the whole exchange, the body included, as Go's Client.Timeout.
 fn (r: Request) with_timeout(d: Duration) -> Request { r with {timeout_ns: if d.nanos() > 0 { d.nanos() } else { 0 }} }
 
+/// The request's limit for each read of an opened stream's body (decision
+/// 0404), the client's timeout when unset.
+fn (r: Request) with_idle_timeout(d: Duration) -> Request { r with {idle_ns: if d.nanos() > 0 { d.nanos() } else { 0 }} }
+
+// ---------------------------------------------------------------------------
+// A streamed response (decision 0404 stage B1)
+
+/// http.ClientStream: the head and the body's state behind a Mutex its
+/// copies share. The state holds the connection (a counted handle): when
+/// the last copy goes, its free hook closes the connection unless the body
+/// ended and it went to the pool.
+struct ClientStream {
+  hd: http.ResponseHead
+  st: Mutex[StreamState]
+}
+
+struct StreamState {
+  conn: rthttp.CResp?
+  read: http1.BodyRead
+  https: Bool
+  addr: Str
+  name: Str
+  roots: rthttp.Roots
+  /// an HTTP/2 response's whole body until stage B2, and how much of it
+  /// was returned
+  buffered: Bytes
+  off: Int
+  gz: compress.Decompressor?
+  /// the decoded bytes read returns next
+  pending: Bytes
+  done: Bool
+  idle_ns: Int
+}
+
+fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net.dial {
+  if task.is_canceled() {
+    return Err(http.ClientErr.Canceled)
+  }
+  let raw = request_url_string(req)
+  if req.url.scheme.is_empty() || req.url.host.is_empty() {
+    return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))
+  }
+  if let Some(e) = denied(c, req) {
+    return Err(e)
+  }
+  if testworld.fake(4) {
+    // FakeNet: the whole response, read as a stream
+    let resp = send_mem(req, raw)?
+    let st = StreamState{conn: None, read: http1.BodyRead{mode: 0, done: true}, https: false, addr: "", name: "", roots: c.roots, buffered: resp.body, off: 0, gz: None, pending: b"", done: false, idle_ns: 0}
+    return Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: resp.status, headers: resp.headers}, st: Mutex[StreamState].new(st)}))
+  }
+  let (names, values) = header_lists(req)
+  let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
+  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, true)
+  match r.err {
+    0 => ()
+    1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))
+    2 => return Err(http.ClientErr.Connect(msg: r.msg))
+    3 => return Err(http.ClientErr.Timeout)
+    5 => return Err(http.ClientErr.Canceled)
+    _ => return Err(http.ClientErr.Protocol(msg: r.msg))
+  }
+  let (h, _) = fields_in(r.headers)
+  let gz = if r.gz { Some(compress.decompressor(compress.Format.Gzip)) } else { None }
+  let idle = if req.idle_ns > 0 { req.idle_ns } else { c.timeout.nanos() }
+  let st = StreamState{conn: if r.open { r.conn } else { None }, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle}
+  Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: r.status, headers: h}, st: Mutex[StreamState].new(st)}))
+}
+
+fn (s: ClientStream) head() -> http.ResponseHead { s.hd }
+
+/// The next raw (undecoded) bytes of the body, None at its end.
+fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
+  match s.conn {
+    None => {
+      if s.off >= s.buffered.len() {
+        return Ok(None)
+      }
+      let end = if s.buffered.len() - s.off < max { s.buffered.len() } else { s.off + max }
+      let b = s.buffered[s.off..end]
+      s.off = end
+      Ok(Some(b))
+    }
+    Some(r) => {
+      if s.read.done {
+        return Ok(None)
+      }
+      hclient.set_deadline(r, s.idle_ns)
+      let st = http1.cbody_next(r, s.read, max)
+      if st.s != hclient.CC_OK {
+        hclient.end_keep(r, false, s.https, s.addr, s.name, s.roots, st.s, "")
+        s.conn = None
+        s.buffered = b""
+        s.read = http1.BodyRead{mode: 0, done: true}
+        if st.s == hclient.CC_TIMEOUT {
+          return Err(http.ClientErr.Timeout)
+        }
+        if st.s == hclient.CC_CANCELED {
+          return Err(http.ClientErr.Canceled)
+        }
+        return Err(http.ClientErr.Protocol(msg: if st.why.is_empty() { "unexpected EOF" } else { st.why }))
+      }
+      if s.read.done {
+        // the body's end: the connection to the pool if it may serve
+        // another request
+        hclient.end_keep(r, s.read.keep, s.https, s.addr, s.name, s.roots, hclient.CC_OK, "")
+        s.conn = None
+        s.buffered = b""
+        if st.data.is_empty() {
+          return Ok(None)
+        }
+      }
+      Ok(Some(st.data))
+    }
+  }
+}
+
+fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! http.ClientErr uses net.dial {
+  let lim = if max > 0 { max } else { 32768 }
+  let r = s.st.with(fn(var x: StreamState) -> Result[Bytes?, http.ClientErr] {
+    while true {
+      if x.pending.len() > 0 {
+        let n = if x.pending.len() < lim { x.pending.len() } else { lim }
+        let out = x.pending[0..n]
+        x.pending = x.pending[n..x.pending.len()]
+        return Ok(Some(out))
+      }
+      if x.done {
+        return Ok(None)
+      }
+      match raw_next(x, lim) {
+        Err(e) => {
+          x.done = true
+          return Err(e)
+        }
+        Ok(None) => {
+          x.done = true
+          let d = x.gz
+          x.gz = None
+          if let Some(dec0) = d {
+            var dec = dec0
+            match dec.finish() {
+              Ok(rest) => x.pending = rest
+              Err(e) => return Err(http.ClientErr.Protocol(msg: e.msg))
+            }
+            continue
+          }
+          return Ok(None)
+        }
+        Ok(Some(b)) => {
+          if x.gz is Some(_) {
+            var dec = x.gz ?? compress.decompressor(compress.Format.Gzip)
+            match dec.write(b) {
+              Ok(out) => x.pending = out
+              Err(e) => {
+                x.done = true
+                x.gz = None
+                return Err(http.ClientErr.Protocol(msg: e.msg))
+              }
+            }
+            x.gz = Some(dec)
+            continue
+          }
+          return Ok(Some(b))
+        }
+      }
+    }
+    Ok(None)
+  })
+  r
+}
+
+fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! http.ClientErr uses net.dial {
+  var out = BytesBuilder.new()
+  while let Some(b) = s.read(65536)? {
+    out.write(b)
+    if out.len() > max_size {
+      s.close()
+      return Err(http.ClientErr.Protocol(msg: "http: response body exceeds max_size (${max_size} bytes)"))
+    }
+  }
+  out.freeze()
+}
+
+fn (s: ClientStream) close() {
+  s.st.with(fn(var x: StreamState) {
+    match x.conn {
+      Some(r) => {
+        if x.read.done {
+          hclient.end_keep(r, x.read.keep, x.https, x.addr, x.name, x.roots, hclient.CC_OK, "")
+        } else {
+          hclient.end_keep(r, false, x.https, x.addr, x.name, x.roots, hclient.CC_OK, "")
+        }
+      }
+      None => ()
+    }
+    x.conn = None
+    x.buffered = b""
+    x.pending = b""
+    x.gz = None
+    x.done = true
+  })
+}
+
 fn (c: Client) get(url: Str) -> http.Response ! http.ClientErr uses net.dial { c.send(new_request("GET", url)) }
 
 fn (c: Client) post_json[T: Json](url: Str, v: T) -> http.Response ! http.ClientErr uses net.dial {
   c.send(new_request("POST", url, {"Content-Type": "application/json"}, js.encode(v)))
+}
+
+/// A request's header as the client sends it: each field's name and
+/// value, a name with several fields once for each (decision 0288).
+fn header_lists(req: Request) -> (List[Str], List[Str]) {
+  var names: List[Str] = []
+  var values: List[Str] = []
+  for (k, v) in req.headers {
+    for x in if req.fields.is_empty() { [v] } else { values_of(req.headers, req.fields, k) } {
+      names.push(k)
+      values.push(x)
+    }
+  }
+  (names, values)
 }
 
 /// The query map raw parses to: each key's first value (parse_url_loose's).
@@ -2157,6 +2379,23 @@ fn url_string(u: http.Url) -> Str {
   s
 }
 
+/// An attenuated Net's refusal of req (Net.only, decision 0175): std/rt's
+/// httpDenied.
+fn denied(c: Client, req: Request) -> http.ClientErr? {
+  if c.lists.is_empty() {
+    return None
+  }
+  let port = match req.url.port {
+    Some(p) => "${p}"
+    None => if req.url.scheme.to_lower() == "https" { "443" } else { "80" }
+  }
+  if netpolicy.admits(c.lists, req.url.host, port) {
+    return None
+  }
+  let hp = if req.url.host.contains(":") { "[${req.url.host}]:${port}" } else { "${req.url.host}:${port}" }
+  Some(http.ClientErr.Connect(msg: "denied by Net.only: ${hp}"))
+}
+
 fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dial {
   if task.is_canceled() {
     return Err(http.ClientErr.Canceled)
@@ -2165,30 +2404,14 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   if req.url.scheme.is_empty() || req.url.host.is_empty() {
     return Err(http.ClientErr.InvalidUrl(msg: "absolute URL required: ${raw}"))
   }
-  if !c.lists.is_empty() {
-    // an attenuated Net (Net.only, decision 0175): std/rt's httpDenied
-    let port = match req.url.port {
-      Some(p) => "${p}"
-      None => if req.url.scheme.to_lower() == "https" { "443" } else { "80" }
-    }
-    if !netpolicy.admits(c.lists, req.url.host, port) {
-      let hp = if req.url.host.contains(":") { "[${req.url.host}]:${port}" } else { "${req.url.host}:${port}" }
-      return Err(http.ClientErr.Connect(msg: "denied by Net.only: ${hp}"))
-    }
+  if let Some(e) = denied(c, req) {
+    return Err(e)
   }
   if testworld.fake(4) {
     // FakeNet (a test without `uses net` and `xo test --real`)
     return send_mem(req, raw)
   }
-  var names: List[Str] = []
-  var values: List[Str] = []
-  for (k, v) in req.headers {
-    // a name with several fields sends each (decision 0288)
-    for x in if req.fields.is_empty() { [v] } else { values_of(req.headers, req.fields, k) } {
-      names.push(k)
-      values.push(x)
-    }
-  }
+  let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
   let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects)
   match r.err {

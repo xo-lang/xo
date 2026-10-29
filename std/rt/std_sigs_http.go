@@ -18,6 +18,7 @@ var (
 	_ func(*Http_Request, *Task, string) Option[string]                                                                                                 = (*Http_Request).M_header
 	_ func(*Http_Request, *Task, string, string) Http_Request                                                                                           = (*Http_Request).M_with_header
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_timeout
+	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_idle_timeout
 	_ func(*Http_Request, *Task, string) List[string]                                                                                                   = (*Http_Request).M_header_values
 	_ func(*Http_Request, *Task, string, string) Http_Request                                                                                           = (*Http_Request).M_add_header
 	_ func(*Http_Request, *Task, List[Netip_Prefix], Http_ProxyHeader) Option[Netip_Addr]                                                               = (*Http_Request).M_client_ip
@@ -58,6 +59,11 @@ var (
 	_ func(*Http_Client, *Task, string) Result[Http_Response, Http_ClientErr]                                                                           = (*Http_Client).M_get
 	_ func(*Http_Client, *Task, Http_Request) Result[Http_Response, Http_ClientErr]                                                                     = (*Http_Client).M_send
 	_ func(*Http_Client, *Task, Bytes) Result[Http_Client, Http_TlsErr]                                                                                 = (*Http_Client).M_with_roots
+	_ func(*Http_Client, *Task, Http_Request) Result[Http_ClientStream, Http_ClientErr]                                                                 = (*Http_Client).M_open
+	_ func(*Http_ClientStream, *Task) Http_ResponseHead                                                                                                 = (*Http_ClientStream).M_head
+	_ func(*Http_ClientStream, *Task, int64) Result[Option[Bytes], Http_ClientErr]                                                                      = (*Http_ClientStream).M_read
+	_ func(*Http_ClientStream, *Task, int64) Result[Bytes, Http_ClientErr]                                                                              = (*Http_ClientStream).M_read_all
+	_ func(*Http_ClientStream, *Task)                                                                                                                   = (*Http_ClientStream).M_close
 	_ func(*Http_Client, *Task, int64) Http_Client                                                                                                      = (*Http_Client).M_with_redirects
 	_ func(*Http_ClientErr, *Task) string                                                                                                               = (*Http_ClientErr).M_display
 	_ func(*Task, string) Result[Http_Url, Http_UrlErr]                                                                                                 = Http_parse_url
