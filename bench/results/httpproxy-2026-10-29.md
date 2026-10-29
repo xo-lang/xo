@@ -9,7 +9,7 @@ the client's wall time (/usr/bin/time -p, 10 ms resolution) and the
 proxy's peak RSS (ps every 5 ms while the transfer runs) on the
 development Mac (arm64), measure slot,
 `bench/perf/httpproxy/measure.sh <xo> <out> arm64 go`, xo of main at
-058cf3b8e (stage E).
+a06a91ba2 (after stage E, b2dd4d317).
 
 | proxy | client wall (s) | proxy peak RSS (bytes) |
 |---|---|---|
