@@ -775,7 +775,7 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
         // other's stamps and be rewritten every build
         // xo:allow XO0903 the working directory from $PWD when getcwd fails
         let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
-        let std_abs = if o.std.starts_with("/") { o.std } else { "${wd}/${o.std}" }
+        let std_abs = if check.is_rooted(o.std) { o.std } else { "${wd}/${o.std}" }
         c.std_export_key = crypto.sha256("stdx\n${c.mod_flags}\nnative=${c.native} skip_tests=${c.skip_tests}\nstd=${std_abs}".bytes()).to_hex()
         c.std_export_in = entry_get(os, dir, "stdx", c.std_export_key) ?? b""
         c.std_now_ms = os.clock.now().unix_millis()

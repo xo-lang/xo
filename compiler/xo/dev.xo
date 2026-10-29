@@ -128,10 +128,12 @@ fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
     return 2
   }
   let wd = os.env.get("PWD") ?? "."
-  if !out.starts_with("/") {
+  // (check.is_rooted: C:/x is absolute on windows too; CI 40816535382:
+  // std's variant directory was joined onto the working directory)
+  if !check.is_rooted(out) {
     out = "${wd}/${out}"
   }
-  if !facts.is_empty() && !facts.starts_with("/") {
+  if !facts.is_empty() && !check.is_rooted(facts) {
     facts = "${wd}/${facts}"
   }
   let prog = "${out}/.stdobj-prog"
