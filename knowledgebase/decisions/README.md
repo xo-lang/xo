@@ -403,4 +403,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0411-metrics-collectors-summary.md](0411-metrics-collectors-summary.md): Accepted, implemented 2026-10-29: std/metrics gauge_func/counter_func, collectors, remove/reset of a series, Summary quantiles aged by a scrape's time (0.35 rank 10)
 - [0412-use-go-any.md](0412-use-go-any.md): Proposed (Lang 1, 2026-10-29): `use go` binds Go's `any` as `go.Any`, an opaque Go value: `go.any(x)` in, `as_int()`/`as_str()`/... out, `...any` as `List[go.Any]`, `go.out[T]()` for Scan/Unmarshal; 38% of std's and 70% of third party's `use go` skips
 - [0413-log-with.md](0413-log-with.md): Proposed: log.with(fields) -> Logger, as log/slog Logger.With (0.35 rank 14)
-- [0414-time-truncate-ticker.md](0414-time-truncate-ticker.md): Proposed: time.truncate and round, Weekday.number, time.ticker (0.35 rank 17)
+- [0414-time-truncate-ticker.md](0414-time-truncate-ticker.md): Accepted (lead, 2026-10-29): std/time truncate and round (Go's, from year 1), Weekday.number and weekday_from (ISO), a task-free Ticker (wait claims a tick by compare_and_swap)

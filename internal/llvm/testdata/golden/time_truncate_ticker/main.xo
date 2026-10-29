@@ -1,0 +1,38 @@
+// time.truncate and time.round (decision 0414, Go's Time.Truncate and
+// Round: multiples of d since January 1 of year 1, UTC), Weekday numbers,
+// and a Ticker on a test clock: ticks at multiples of the period from its
+// start, a slow caller's missed ticks dropped with the phase kept.
+use std/time
+
+fn main(os: Os) {
+  let ts = [0, 1761736455123456789, -1234567890123456789, 951782400999999999, 1700086399999999999]
+  let ds = [1, 1000, 1000000000, 60000000000, 3600000000000, 25200000000000, 86400000000000, 5400000000000, 3000000005, 7919, 604800000000000, 1125899906842624]
+  for t in ts {
+    for d in ds {
+      let at = Time.UNIX_EPOCH + Duration.from_nanos(t)
+      let dd = Duration.from_nanos(d)
+      let tr = (time.truncate(at, dd) - Time.UNIX_EPOCH).nanos()
+      let ro = (time.round(at, dd) - Time.UNIX_EPOCH).nanos()
+      os.stdio.println("${t} ${d}: ${tr} ${ro}")
+    }
+  }
+  os.stdio.println("zero and negative d: ${(time.truncate(Time.UNIX_EPOCH + 5s, 0s) - Time.UNIX_EPOCH).nanos()} ${(time.round(Time.UNIX_EPOCH + 5s, Duration.from_nanos(-1)) - Time.UNIX_EPOCH).nanos()}")
+  for n in [0, 1, 4, 7, 8] {
+    match time.weekday_from(n) {
+      Some(w) => os.stdio.println("weekday ${n}: ${w} number ${w.number()}")
+      None => os.stdio.println("weekday ${n}: none")
+    }
+  }
+  // a ticker of 50ms: ticks at its start plus multiples of the period; a
+  // caller 130ms late gets the pending tick at once, then the schedule
+  // goes on from the next multiple
+  let tk = time.ticker(os.clock, 50ms)
+  let start = os.clock.now()
+  let first = tk.wait()
+  os.clock.sleep(130ms)
+  let late = tk.wait()
+  let after = tk.wait()
+  os.stdio.println("ticks: ${(first - start).millis() <= 50} ${(late - first).millis()} ${(after - late).millis()}")
+  let d = time.date(2026, 10, 29).or_fault("date")
+  os.stdio.println("2026-10-29: ${d.weekday()} ${d.weekday().number()}")
+}

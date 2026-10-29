@@ -1,5 +1,20 @@
 # std/time changes
 
+## 2026-10-29: feature: truncate and round, ISO weekday numbers, a Ticker
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 0.35 std survey (rank 17), decision 0414
+- Go reference: time.Time.Truncate and Round (time.go, go1.26.1: the duration counted from the zero time, `div`), time.NewTicker and Ticker.Reset (sleep.go, tick.go)
+- Test: the golden time_truncate_ticker (60 instants and durations against Go's formula, durations up to 2**50 ns, negative instants, weekday numbers, a ticker on the real clock) on arm64, LLVM, and the Go backend; std/native/time_test.xo (the ticker on the FakeClock: multiples of the period, a slow caller, reset, two waiters get different ticks)
+
+`time.truncate(t, d)` and `time.round(t, d)` follow Go's Truncate and
+Round, counting from January 1 of year 1. `Weekday.number()` is ISO 8601
+(Monday 1 to Sunday 7) and `time.weekday_from(n)` its inverse. A
+`time.Ticker` from `time.ticker(clock, period)` ticks without a task:
+`wait()` sleeps to the next tick, a slow caller's missed ticks are dropped
+as Go's channel drops them, and each tick reaches one waiter.
+
 ## 2026-10-26: fix: the named layouts build on the Go backend (Layout values, RFC3339_LAYOUT, RFC1123_LAYOUT, DATE_LAYOUT, TIME_LAYOUT)
 
 - Kind: fix

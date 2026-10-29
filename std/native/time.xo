@@ -387,6 +387,118 @@ fn weekday_of(i: Int) -> time.Weekday {
 
 fn date_weekday(d: time.Date) -> time.Weekday { weekday_of(weekday_index(date_days(d))) }
 
+// ---- decision 0414: Weekday numbers, truncate and round, Ticker ----
+
+fn weekday_from(n: Int) -> time.Weekday? {
+  if n < 1 || n > 7 {
+    return None
+  }
+  Some(weekday_of(n - 1))
+}
+
+fn weekday_number(w: time.Weekday) -> Int {
+  match w {
+    time.Weekday.Monday => 1
+    time.Weekday.Tuesday => 2
+    time.Weekday.Wednesday => 3
+    time.Weekday.Thursday => 4
+    time.Weekday.Friday => 5
+    time.Weekday.Saturday => 6
+    time.Weekday.Sunday => 7
+  }
+}
+
+/// The nanoseconds from January 1 of year 1 to the Unix epoch, modulo d
+/// (Go's Truncate counts from the zero time): 62135596800 s.
+fn zero_offset_mod(d: Int) -> Int { mulmod(62135596800 % d, 1000000000 % d, d) }
+
+/// (a + b) mod d for 0 <= a, b < d, without overflow.
+fn addmod(a: Int, b: Int, d: Int) -> Int { if a >= d - b { a - (d - b) } else { a + b } }
+
+/// (a * b) mod d for 0 <= a, b < d, by doubling (no 128-bit product).
+fn mulmod(a: Int, b0: Int, d: Int) -> Int {
+  var r = 0
+  var x = a
+  var b = b0
+  while b > 0 {
+    if (b & 1) != 0 {
+      r = addmod(r, x, d)
+    }
+    x = addmod(x, x, d)
+    b = b >> 1
+  }
+  r
+}
+
+/// t's remainder modulo d since the zero time, in 0..d.
+fn rem_since_zero(t: Time, d: Int) -> Int {
+  let ns = ns_of(t)
+  var r = ns % d
+  if r < 0 {
+    r += d
+  }
+  addmod(r, zero_offset_mod(d), d)
+}
+
+fn truncate(t: Time, d: Duration) -> Time {
+  let dn = d.nanos()
+  if dn <= 0 {
+    return t
+  }
+  t - Duration.from_nanos(rem_since_zero(t, dn))
+}
+
+fn round(t: Time, d: Duration) -> Time {
+  let dn = d.nanos()
+  if dn <= 0 {
+    return t
+  }
+  let r = rem_since_zero(t, dn)
+  // Go's lessThanHalf: r + r < d, written so it cannot overflow
+  if r < dn - r {
+    return t - Duration.from_nanos(r)
+  }
+  t + Duration.from_nanos(dn - r)
+}
+
+fn ticker(clock: Clock, period: Duration) -> time.Ticker uses clock {
+  if period.nanos() <= 0 {
+    fault("time: non-positive interval for ticker")
+  }
+  time.Ticker{clock: clock, period: period, next_ns: Atomic[Int].new(ns_of(clock.now()) + period.nanos())}
+}
+
+fn ticker_wait(t: time.Ticker) -> Time uses clock {
+  let p = t.period.nanos()
+  // claim the pending tick and move the schedule past the ones a slow
+  // caller missed (phase kept) before sleeping, so two waiters never get
+  // the same tick, as each tick of Go's channel reaches one receiver
+  var next = t.next_ns.get()
+  var now = ns_of(t.clock.now())
+  while true {
+    var n = next + p
+    if n <= now {
+      n = n + ((now - n) / p + 1) * p
+    }
+    if t.next_ns.compare_and_swap(next, n) {
+      break
+    }
+    next = t.next_ns.get()
+    now = ns_of(t.clock.now())
+  }
+  if next > now {
+    t.clock.sleep(Duration.from_nanos(next - now))
+  }
+  Time.UNIX_EPOCH + Duration.from_nanos(next)
+}
+
+fn ticker_reset(t: time.Ticker, period: Duration) -> time.Ticker uses clock {
+  if period.nanos() <= 0 {
+    fault("time: non-positive interval for ticker")
+  }
+  time.Ticker{clock: t.clock, period: period, next_ns: Atomic[Int].new(ns_of(t.clock.now()) + period.nanos())}
+}
+
 fn date_add_days(d: time.Date, n: Int) -> time.Date { date_of(date_days(d) + n) }
 
 fn date_add_months(d: time.Date, n: Int) -> time.Date {

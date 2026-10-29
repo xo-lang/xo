@@ -31,6 +31,13 @@ var (
 	_ func(*Time_Date, *Task, int64) Time_Date                                                      = (*Time_Date).M_add_months
 	_ func(*Time_Date, *Task, Time_Date) int64                                                      = (*Time_Date).M_days_until
 	_ func(*Time_Date, *Task) string                                                                = (*Time_Date).M_display
+	_ func(*Time_Weekday, *Task) int64                                                              = (*Time_Weekday).M_number
+	_ func(*Task, int64) Option[Time_Weekday]                                                       = Time_weekday_from
+	_ func(*Task, Time, Duration) Time                                                              = Time_truncate
+	_ func(*Task, Time, Duration) Time                                                              = Time_round
+	_ func(*Task, Clock, Duration) Time_Ticker                                                      = Time_ticker
+	_ func(*Time_Ticker, *Task) Time                                                                = (*Time_Ticker).M_wait
+	_ func(*Time_Ticker, *Task, Duration) Time_Ticker                                               = (*Time_Ticker).M_reset
 	_ func(*Task, string) Time_Layout                                                               = Time_layout
 	_ func(*Time_Layout, *Task) string                                                              = (*Time_Layout).M_display
 	_ func(*Time_Layout, *Task, Time, Time_Zone) string                                             = (*Time_Layout).M_format

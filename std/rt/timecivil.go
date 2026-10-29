@@ -257,3 +257,65 @@ func (v Time_CivilErr) M_display(*Task) string {
 	}
 	return Debug(v)
 }
+
+// ---- decision 0414: Weekday numbers, truncate and round, Ticker ----
+
+// M_number is `w.number()`: ISO 8601, Monday 1 to Sunday 7 (the tags).
+func (w Time_Weekday) M_number(*Task) int64 { return int64(w.Tag) }
+
+// Time_weekday_from is `time.weekday_from(n)`.
+func Time_weekday_from(_ *Task, n int64) Option[Time_Weekday] {
+	if n < 1 || n > 7 {
+		return None[Time_Weekday]()
+	}
+	return Some(Time_Weekday{Tag: int(n)})
+}
+
+// goTimeOf is t as a Go time (UTC).
+func goTimeOf(t Time) time.Time { return time.Unix(0, int64(t)).UTC() }
+
+// Time_truncate is `time.truncate(t, d)`: Go's Time.Truncate.
+func Time_truncate(_ *Task, t Time, d Duration) Time {
+	return Time(goTimeOf(t).Truncate(time.Duration(d)).UnixNano())
+}
+
+// Time_round is `time.round(t, d)`: Go's Time.Round.
+func Time_round(_ *Task, t Time, d Duration) Time {
+	return Time(goTimeOf(t).Round(time.Duration(d)).UnixNano())
+}
+
+// Time_ticker is `time.ticker(clock, period)`.
+func Time_ticker(tk *Task, clock Clock, period Duration) Time_Ticker {
+	if period <= 0 {
+		FaultHere("time: non-positive interval for ticker")
+	}
+	return Time_Ticker{F_clock: clock, F_period: period, F_next_ns: Atomic_new(tk, int64(clock.M_now(tk))+int64(period))}
+}
+
+// M_wait is `t.wait()`: the next tick's time, missed ticks dropped; the
+// tick is claimed before the sleep so two waiters never share one.
+func (t Time_Ticker) M_wait(tk *Task) Time {
+	p := int64(t.F_period)
+	next := t.F_next_ns.M_get(tk)
+	now := int64(t.F_clock.M_now(tk))
+	for {
+		n := next + p
+		if n <= now {
+			n += ((now-n)/p + 1) * p
+		}
+		if t.F_next_ns.M_compare_and_swap(tk, next, n) {
+			break
+		}
+		next = t.F_next_ns.M_get(tk)
+		now = int64(t.F_clock.M_now(tk))
+	}
+	if next > now {
+		t.F_clock.M_sleep(tk, Duration(next-now))
+	}
+	return Time(next)
+}
+
+// M_reset is `t.reset(period)`.
+func (t Time_Ticker) M_reset(tk *Task, period Duration) Time_Ticker {
+	return Time_ticker(tk, t.F_clock, period)
+}

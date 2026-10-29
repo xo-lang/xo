@@ -3227,6 +3227,34 @@ Settled while implementing; examples are in the goldens
 
 ---
 
+### 13.6 Rounding, weekday numbers, Ticker (decision 0414)
+
+```
+fn (w: Weekday) number() -> Int                    // ISO 8601: Monday 1 to Sunday 7
+fn weekday_from(n: Int) -> Weekday?                // None outside 1 to 7
+fn truncate(t: Time, d: Duration) -> Time          // Go's Time.Truncate
+fn round(t: Time, d: Duration) -> Time             // Go's Time.Round, halves up
+struct Ticker { clock: Clock, period: Duration, next_ns: Atomic[Int] }
+fn ticker(clock: Clock, period: Duration) -> Ticker uses clock
+fn (t: Ticker) wait() -> Time uses clock
+fn (t: Ticker) reset(period: Duration) -> Ticker uses clock
+```
+
+- `truncate` and `round` count multiples of `d` from the zero time
+  (January 1 of year 1, UTC), as Go does, so for a `d` that divides a
+  day the result is the start of the UTC minute, hour, or day; a `d` of
+  0 or less returns `t`. They are functions of std/time, not methods of
+  the prelude's `Time`.
+- A ticker needs no task: `wait` sleeps until the next tick and returns
+  its scheduled time. Ticks are at the ticker's start plus multiples of
+  its period. A caller that falls behind gets the pending tick at once
+  and the ticks after it that it missed are dropped, the phase kept (Go's
+  channel of one). Each tick goes to one waiter: two tasks waiting on one
+  ticker (or on copies of it, which share the schedule) get different
+  ticks. `reset` returns a ticker whose first tick is one new period from
+  now. A period of 0 or less faults (`time: non-positive interval for
+  ticker`, Go's panic text). Under a `FakeClock` the ticks are virtual.
+
 ## 14. std/cli
 
 Status: implemented on every backend (decision 0160, 2026-10-11): the Go

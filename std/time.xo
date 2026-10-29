@@ -114,6 +114,35 @@ fn (d: Date) days_until(o: Date) -> Int
 /// "2026-10-09".
 fn (d: Date) display() -> Str
 
+/// The ISO 8601 number of the day: Monday 1 to Sunday 7 (decision 0414).
+fn (w: Weekday) number() -> Int
+/// The weekday of an ISO 8601 number (1 Monday to 7 Sunday), None
+/// outside 1 to 7.
+fn weekday_from(n: Int) -> Weekday?
+
+/// t rounded down to a multiple of d since the zero time (January 1 of
+/// year 1, UTC), Go's Time.Truncate: for a d that divides a day this is
+/// the start of the UTC minute, hour or day. d <= 0 returns t.
+fn truncate(t: Time, d: Duration) -> Time
+/// t rounded to the nearest multiple of d (halves up), Go's Time.Round.
+fn round(t: Time, d: Duration) -> Time
+
+/// A clock's ticks every period (Go's time.Ticker without a goroutine):
+/// `wait` sleeps until the next tick and returns its time; ticks that a
+/// slow caller missed are dropped, as Go's channel of one drops them, and
+/// the phase is kept (decision 0414). Copies share the schedule.
+struct Ticker {
+  clock: Clock
+  period: Duration
+  next_ns: Atomic[Int]
+}
+/// A ticker whose first tick is one period from now; faults for a period
+/// of 0 or less (Go's NewTicker panics).
+fn ticker(clock: Clock, period: Duration) -> Ticker uses clock
+fn (t: Ticker) wait() -> Time uses clock
+/// Restarts the schedule: the next tick one (new) period from now.
+fn (t: Ticker) reset(period: Duration) -> Ticker uses clock
+
 const RFC3339: Str = "{year}-{month}-{day}T{hour}:{minute}:{second}{frac}{offset}"
 /// HTTP dates.
 const RFC1123: Str = "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}"

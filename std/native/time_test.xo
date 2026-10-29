@@ -1257,3 +1257,43 @@ test "every format field and argument form" {
   expect(time.format(Time.from_unix(0), time.utc(), "{year}{lbrace}{rbrace}{frac}{offset}")) == "1970{}Z"
   expect(time.format(Time.from_unix(-2208988800), time.fixed("C", -(59s)), "{year} {offset}")) == "1899 +00:00"
 }
+
+test "a ticker ticks at multiples of its period" {
+  let start = os.clock.now()
+  let tk = time.ticker(os.clock, 50ms)
+  expect((tk.wait() - start).millis()) == 50
+  expect((tk.wait() - start).millis()) == 100
+  expect((os.clock.now() - start).millis()) == 100
+}
+
+test "a slow caller gets the pending tick at once, then the next multiple" {
+  let start = os.clock.now()
+  let tk = time.ticker(os.clock, 50ms)
+  expect((tk.wait() - start).millis()) == 50
+  os.clock.advance(130ms)
+  // now 180: the tick at 100 is pending, 150 is dropped
+  expect((tk.wait() - start).millis()) == 100
+  expect((os.clock.now() - start).millis()) == 180
+  expect((tk.wait() - start).millis()) == 200
+}
+
+test "reset starts a new schedule one period from now" {
+  let start = os.clock.now()
+  let tk = time.ticker(os.clock, 50ms)
+  expect((tk.wait() - start).millis()) == 50
+  os.clock.advance(5ms)
+  let r = tk.reset(30ms)
+  expect((r.wait() - start).millis()) == 85
+  expect((r.wait() - start).millis()) == 115
+}
+
+test "two tasks waiting on one ticker get different ticks" {
+  let start = os.clock.now()
+  let tk = time.ticker(os.clock, 10ms)
+  let got = scope s {
+    let a = s.spawn(fn() { (tk.wait() - start).millis() })
+    let b = s.spawn(fn() { (tk.wait() - start).millis() })
+    [a.await, b.await]
+  }
+  expect(got.sort()) == [10, 20]
+}
