@@ -3,9 +3,13 @@
 package main
 
 import (
+	"crypto/ed25519"
+	"crypto/rand"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/pem"
 	"fmt"
+	"math/big"
 	"os"
 	"time"
 )
@@ -151,6 +155,22 @@ func main() {
 				panic(err)
 			}
 			s += len(chains) + len(chains[0])
+		}
+	case "create":
+		seed := make([]byte, 32)
+		for i := range seed {
+			seed[i] = byte(i)
+		}
+		k := ed25519.NewKeyFromSeed(seed)
+		t := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "bench", Organization: []string{"Xo"}},
+			NotBefore: time.Unix(1735689600, 0), NotAfter: time.Unix(1767225600, 0), DNSNames: []string{"bench.example"},
+			KeyUsage: x509.KeyUsageDigitalSignature, ExtKeyUsage: []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth}, MaxPathLen: -1}
+		for i := 0; i < 20000; i++ {
+			der, err := x509.CreateCertificate(rand.Reader, t, t, k.Public(), k)
+			if err != nil {
+				panic(err)
+			}
+			s += len(der)
 		}
 	}
 	fmt.Println(w, s)

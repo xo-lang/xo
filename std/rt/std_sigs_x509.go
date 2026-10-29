@@ -6,13 +6,22 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*X509_Name, *Task) string                                                                        = (*X509_Name).M_display
-	_ func(*X509_Name, *Task) List[Tuple2[string, string]]                                                  = (*X509_Name).M_attributes
-	_ func(*X509_CertErr, *Task) string                                                                     = (*X509_CertErr).M_display
-	_ func(*Task, Bytes) Result[X509_Certificate, X509_CertErr]                                             = X509_parse
-	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                       = X509_parse_pem
-	_ func(*X509_Certificate, *Task, X509_VerifyOptions) Result[List[List[X509_Certificate]], X509_CertErr] = (*X509_Certificate).M_verify
-	_ func(*X509_Certificate, *Task, string) Result[Unit, X509_CertErr]                                     = (*X509_Certificate).M_verify_hostname
-	_ func(*X509_Certificate, *Task, X509_Certificate) Result[Unit, X509_CertErr]                           = (*X509_Certificate).M_check_signature_from
-	_ func(*Task, Fs) Result[List[X509_Certificate], X509_CertErr]                                          = X509_system_roots
+	_ func(*X509_Name, *Task) string                                                                                                         = (*X509_Name).M_display
+	_ func(*X509_Name, *Task) List[Tuple2[string, string]]                                                                                   = (*X509_Name).M_attributes
+	_ func(*X509_CertErr, *Task) string                                                                                                      = (*X509_CertErr).M_display
+	_ func(*Task, Bytes) Result[X509_Certificate, X509_CertErr]                                                                              = X509_parse
+	_ func(*Task, Bytes) Result[List[X509_Certificate], X509_CertErr]                                                                        = X509_parse_pem
+	_ func(*X509_Certificate, *Task, X509_VerifyOptions) Result[List[List[X509_Certificate]], X509_CertErr]                                  = (*X509_Certificate).M_verify
+	_ func(*X509_Certificate, *Task, string) Result[Unit, X509_CertErr]                                                                      = (*X509_Certificate).M_verify_hostname
+	_ func(*X509_Certificate, *Task, X509_Certificate) Result[Unit, X509_CertErr]                                                            = (*X509_Certificate).M_check_signature_from
+	_ func(*Task, Rand, X509_Template, Crypto_PublicKey, Option[X509_Certificate], Crypto_PrivateKey) Result[X509_Certificate, X509_CertErr] = X509_create_certificate
+	_ func(*Task, Rand, List[string], Time, int64) Result[Tuple2[Bytes, Bytes], X509_CertErr]                                                = X509_self_signed
+	_ func(*X509_Certificate, *Task) Bytes                                                                                                   = (*X509_Certificate).M_pem
+	_ func(*Task, Rand, X509_RequestTemplate, Crypto_PrivateKey) Result[X509_CertificateRequest, X509_CertErr]                               = X509_create_request
+	_ func(*Task, Bytes) Result[X509_CertificateRequest, X509_CertErr]                                                                       = X509_parse_request
+	_ func(*X509_CertificateRequest, *Task) Result[Unit, X509_CertErr]                                                                       = (*X509_CertificateRequest).M_check_signature
+	_ func(*X509_CertificateRequest, *Task) Bytes                                                                                            = (*X509_CertificateRequest).M_pem
+	_ func(*Task, Bytes) Result[X509_RevocationList, X509_CertErr]                                                                           = X509_parse_revocation_list
+	_ func(*X509_RevocationList, *Task, X509_Certificate) Result[Unit, X509_CertErr]                                                         = (*X509_RevocationList).M_check_signature_from
+	_ func(*Task, Fs) Result[List[X509_Certificate], X509_CertErr]                                                                           = X509_system_roots
 )

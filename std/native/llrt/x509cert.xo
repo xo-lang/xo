@@ -12,6 +12,7 @@ use native/llrt/neturl
 use native/llrt/nistec
 use native/llrt/rsa
 use native/llrt/raw
+use native/llrt/sha1
 use native/llrt/sha256
 use native/llrt/tlsname
 use native/rt
@@ -44,6 +45,7 @@ pub const KEY_P224: Int = 6
 pub const KU_DIGITAL_SIGNATURE: Int = 1
 pub const KU_KEY_ENCIPHERMENT: Int = 4
 pub const KU_CERT_SIGN: Int = 32
+pub const KU_CRL_SIGN: Int = 64
 
 pub const EKU_ANY: Str = "2.5.29.37.0"
 pub const EKU_SERVER: Str = "1.3.6.1.5.5.7.3.1"
@@ -471,6 +473,11 @@ struct Text {
 pub struct Atv {
   pub oid: Str
   pub value: Str
+  /// false for a value that is not a string (a CSR's subject, which Go
+  /// reads with encoding/asn1, may hold one): value is "" and raw its
+  /// element
+  pub text: Bool
+  pub raw: Bytes
 }
 
 /// The attributes of the Name DER der in order (Go's pkix.Name.Names, as
@@ -488,11 +495,16 @@ pub fn name_atvs(der: Bytes) -> List[Atv]? {
       if !v.ok {
         return None
       }
+      let tg = v.tag
+      if !(tg == cbyte.T61_STRING || tg == cbyte.PRINTABLE_STRING || tg == cbyte.UTF8_STRING || tg == cbyte.BMP_STRING || tg == cbyte.IA5_STRING || tg == cbyte.NUMERIC_STRING) {
+        out.push(Atv{oid: typ, value: "", text: false, raw: cbyte.bytes(v.whole)})
+        continue
+      }
       let t = asn1_string(v.tag, cbyte.bytes(v.body))
       if t.err != "" {
         return None
       }
-      out.push(Atv{oid: typ, value: t.text})
+      out.push(Atv{oid: typ, value: t.text, text: true, raw: b""})
     }
   }
   Some(out)
@@ -1585,7 +1597,31 @@ pub fn check_from(c: Cert, parent: Cert) -> Str {
 
 /// Go's checkSignature (SHA-1 not allowed) of the algorithm (oid and
 /// x509.xo's number) by parent's key: "" or Go's error text.
-fn check_err(oid: Str, alg: Int, parent: Cert, data: Bytes, sig: Bytes) -> Str {
+fn check_err(oid: Str, alg: Int, parent: Cert, data: Bytes, sig: Bytes) -> Str { check_err_sha1(oid, alg, parent, data, sig, false) }
+
+/// check_err with Go's allowSHA1 (CertificateRequest.CheckSignature and
+/// RevocationList.CheckSignatureFrom verify SHA-1 with RSA and ECDSA).
+fn check_err_sha1(oid: Str, alg: Int, parent: Cert, data: Bytes, sig: Bytes, allow_sha1: Bool) -> Str {
+  if allow_sha1 && (oid == "1.2.840.113549.1.1.5" || oid == "1.3.14.3.2.29") {
+    if parent.key_alg != KEY_RSA {
+      return "x509: signature algorithm specifies an RSA public key, but have public key of type ${key_type(parent)}"
+    }
+    let e = rsa_key_err(parent.key)
+    if e != "" {
+      return e
+    }
+    let ok = match rsa.public_key(parent.key) {
+      Some(k) => rsa.verify_pkcs1_prefix(k, b"\x30\x21\x30\x09\x06\x05\x2b\x0e\x03\x02\x1a\x05\x00\x04\x14", sha1.sum(data), sig)
+      None => false
+    }
+    return if ok { "" } else { "crypto/rsa: verification error" }
+  }
+  if allow_sha1 && oid == "1.2.840.10045.4.1" {
+    if !is_ec(parent.key_alg) {
+      return "x509: signature algorithm specifies an ECDSA public key, but have public key of type ${key_type(parent)}"
+    }
+    return if nistec.verify(ec_curve(parent.key_alg), parent.key, sha1.sum(data), sig) { "" } else { "x509: ECDSA verification failure" }
+  }
   let unsupported = "x509: cannot verify signature: algorithm unimplemented"
   // the algorithm's key type (RSA, DSA, ECDSA, Ed25519) and the insecure
   // ones' names
@@ -1636,6 +1672,11 @@ fn check_err(oid: Str, alg: Int, parent: Cert, data: Bytes, sig: Bytes) -> Str {
     return if check(alg, parent.key_alg, parent.key, data, sig) { "" } else { "x509: ECDSA verification failure" }
   }
   if check(alg, parent.key_alg, parent.key, data, sig) { "" } else { "x509: Ed25519 verification failure" }
+}
+
+/// Go's %T of a certificate's key in check_err's texts.
+fn key_type(c: Cert) -> Str {
+  if c.key_alg == KEY_RSA { "*rsa.PublicKey" } else if is_ec(c.key_alg) { "*ecdsa.PublicKey" } else if c.key_alg == KEY_ED25519 { "ed25519.PublicKey" } else { "*dsa.PublicKey" }
 }
 
 /// crypto/rsa's checks of a public key before it verifies (the size,
@@ -1732,3 +1773,425 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
   }
   None
 }
+
+// ---------------------------------------------------------------------------
+// Certificate revocation lists (Go's ParseRevocationList, Go 1.26)
+
+/// A revoked certificate of a CRL (Go's RevocationListEntry).
+pub struct CrlEntry {
+  pub raw: Bytes
+  /// The serial number's magnitude (Go's big.Int Bytes(), the sign dropped).
+  pub serial: Bytes
+  pub revoked_at: Int
+  pub reason: Int
+  pub extensions: List[Ext]
+}
+
+/// A parsed CRL (Go's RevocationList); err "" when it parsed.
+pub struct Crl {
+  pub raw: Bytes
+  pub tbs: Bytes
+  pub sig_alg: Int
+  pub sig_oid: Str
+  pub signature: Bytes
+  pub issuer: Bytes
+  pub this_update: Int
+  pub has_next: Bool
+  pub next_update: Int
+  pub entries: List[CrlEntry]
+  pub aki: Bytes
+  pub has_number: Bool
+  pub number: Bytes
+  pub extensions: List[Ext]
+  pub err: Str
+}
+
+fn crl_fail(msg: Str) -> Crl {
+  Crl{raw: b"", tbs: b"", sig_alg: SIG_UNKNOWN, sig_oid: "", signature: b"", issuer: b"", this_update: 0, has_next: false, next_update: 0, entries: [], aki: b"", has_number: false, number: b"", extensions: [], err: msg}
+}
+
+/// The magnitude of a two's complement INTEGER's contents.
+fn int_magnitude(b: Bytes) -> Bytes {
+  if b.is_empty() || Int(b[0]) < 128 {
+    return magnitude(b)
+  }
+  // negate: invert, add one
+  var out = BytesBuilder.with_capacity(b.len())
+  var inv: List[Int] = []
+  for x in b {
+    inv.push(255 - Int(x))
+  }
+  var carry = 1
+  var i = inv.len() - 1
+  while i >= 0 {
+    let v = inv[i] + carry
+    inv[i] = v & 255
+    carry = v >> 8
+    i -= 1
+  }
+  for v in inv {
+    out.write_byte(UInt8(v))
+  }
+  magnitude(out.freeze())
+}
+
+pub fn parse_crl(der: Bytes) -> Crl {
+  var input = cbyte.of(der)
+  let whole = match cbyte.read_element(input, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return crl_fail("x509: malformed crl")
+  }
+  var w = whole
+  var body = match cbyte.read(w, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return crl_fail("x509: malformed crl")
+  }
+  var rl = crl_fail("")
+  rl.raw = cbyte.bytes(whole)
+  let tbs_el = match cbyte.read_element(body, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return crl_fail("x509: malformed tbs crl")
+  }
+  rl.tbs = cbyte.bytes(tbs_el)
+  var te = tbs_el
+  var tbs = match cbyte.read(te, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return crl_fail("x509: malformed tbs crl")
+  }
+  if !cbyte.peek(tbs, cbyte.INTEGER) {
+    return crl_fail("x509: unsupported crl version")
+  }
+  let version = match cbyte.read_int64(tbs) {
+    Some(v) => v
+    None => return crl_fail("x509: malformed crl")
+  }
+  if version != 1 {
+    return crl_fail("x509: unsupported crl version: ${version}")
+  }
+  let sig_ai = match cbyte.read(tbs, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return crl_fail("x509: malformed signature algorithm identifier")
+  }
+  let outer_ai = match cbyte.read(body, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return crl_fail("x509: malformed algorithm identifier")
+  }
+  if cbyte.bytes(outer_ai) != cbyte.bytes(sig_ai) {
+    return crl_fail("x509: inner and outer signature algorithm identifiers don't match")
+  }
+  let ai = parse_ai(sig_ai)
+  if ai.err != "" {
+    return crl_fail(ai.err)
+  }
+  rl.sig_alg = sig_alg_of(ai.oid, ai.params)
+  rl.sig_oid = ai.oid
+  let sig = match cbyte.read_bits(body) {
+    Some(x) => x
+    None => return crl_fail("x509: malformed signature")
+  }
+  rl.signature = cbyte.right_align(sig)
+  let issuer = match cbyte.read_element(tbs, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return crl_fail("x509: malformed issuer")
+  }
+  rl.issuer = cbyte.bytes(issuer)
+  let iname = parse_name(issuer)
+  if iname.err != "" {
+    return crl_fail(iname.err)
+  }
+  let tu = parse_time(tbs)
+  if tu.err != "" {
+    return crl_fail(tu.err)
+  }
+  rl.this_update = tu.t
+  if cbyte.peek(tbs, cbyte.GENERALIZED_TIME) || cbyte.peek(tbs, cbyte.UTC_TIME) {
+    let nu = parse_time(tbs)
+    if nu.err != "" {
+      return crl_fail(nu.err)
+    }
+    rl.has_next = true
+    rl.next_update = nu.t
+  }
+  if cbyte.peek(tbs, cbyte.SEQUENCE) {
+    var revoked = match cbyte.read(tbs, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return crl_fail("x509: malformed crl")
+    }
+    while !cbyte.empty(revoked) {
+      let el = match cbyte.read_element(revoked, cbyte.SEQUENCE) {
+        Some(x) => x
+        None => return crl_fail("x509: malformed crl")
+      }
+      var ee = el
+      var cs = match cbyte.read(ee, cbyte.SEQUENCE) {
+        Some(x) => x
+        None => return crl_fail("x509: malformed crl")
+      }
+      let serial = match cbyte.read_int_raw(cs) {
+        Some(x) => cbyte.bytes(x)
+        None => return crl_fail("x509: malformed serial number")
+      }
+      let rt = parse_time(cs)
+      if rt.err != "" {
+        return crl_fail(rt.err)
+      }
+      var entry = CrlEntry{raw: cbyte.bytes(el), serial: int_magnitude(serial), revoked_at: rt.t, reason: 0, extensions: []}
+      let eo = match cbyte.read_optional(cs, cbyte.SEQUENCE) {
+        Some(o) => o
+        None => return crl_fail("x509: malformed extensions")
+      }
+      if eo.present {
+        var exts = eo.body
+        while !cbyte.empty(exts) {
+          let one = match cbyte.read(exts, cbyte.SEQUENCE) {
+            Some(x) => x
+            None => return crl_fail("x509: malformed extension")
+          }
+          let e = parse_extension(one)
+          if e.err != "" {
+            return crl_fail(e.err)
+          }
+          if e.oid == "2.5.29.21" {
+            var v = cbyte.of(e.value)
+            match cbyte.read_int64_tag(v, 10) {
+              Some(n) => entry.reason = n
+              None => return crl_fail("x509: malformed reasonCode extension")
+            }
+          }
+          entry.extensions.push(e)
+        }
+      }
+      rl.entries.push(entry)
+    }
+  }
+  let xo = match cbyte.read_optional(tbs, 0xa0) {
+    Some(o) => o
+    None => return crl_fail("x509: malformed extensions")
+  }
+  if xo.present {
+    var xb = xo.body
+    var exts = match cbyte.read(xb, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return crl_fail("x509: malformed extensions")
+    }
+    while !cbyte.empty(exts) {
+      let one = match cbyte.read(exts, cbyte.SEQUENCE) {
+        Some(x) => x
+        None => return crl_fail("x509: malformed extension")
+      }
+      let e = parse_extension(one)
+      if e.err != "" {
+        return crl_fail(e.err)
+      }
+      if e.oid == "2.5.29.35" {
+        if e.critical {
+          return crl_fail("x509: authority key identifier incorrectly marked critical")
+        }
+        var s = cbyte.of(e.value)
+        var akid = match cbyte.read(s, cbyte.SEQUENCE) {
+          Some(x) => x
+          None => return crl_fail("x509: invalid authority key identifier")
+        }
+        if cbyte.peek(akid, 0x80) {
+          match cbyte.read(akid, 0x80) {
+            Some(x) => rl.aki = cbyte.bytes(x)
+            None => return crl_fail("x509: invalid authority key identifier")
+          }
+        }
+      } else if e.oid == "2.5.29.20" {
+        var v = cbyte.of(e.value)
+        match cbyte.read_int_raw(v) {
+          Some(x) => {
+            rl.number = int_magnitude(cbyte.bytes(x))
+            rl.has_number = true
+          }
+          None => return crl_fail("x509: malformed crl number")
+        }
+      }
+      rl.extensions.push(e)
+    }
+  }
+  rl
+}
+
+/// Go's RevocationList.CheckSignatureFrom: parent may sign CRLs and
+/// signed rl; "" or Go's text.
+pub fn crl_check_from(rl: Crl, parent: Cert) -> Str {
+  if parent.version == 3 && !parent.has_bc || parent.has_bc && !parent.is_ca {
+    return "x509: invalid signature: parent certificate cannot sign this kind of certificate"
+  }
+  if parent.key_usage > 0 && (parent.key_usage & KU_CRL_SIGN) == 0 {
+    return "x509: invalid signature: parent certificate cannot sign this kind of certificate"
+  }
+  if !parent.has_key {
+    return "x509: cannot verify signature: algorithm unimplemented"
+  }
+  check_err_sha1(rl.sig_oid, rl.sig_alg, parent, rl.tbs, rl.signature, true)
+}
+
+// ---------------------------------------------------------------------------
+// Certificate requests (Go's ParseCertificateRequest, PKCS #10)
+
+/// A parsed CSR: the subject, key and names in cert's fields (raw, tbs,
+/// sig_alg, sig_oid, signature, subject, spki, key_alg, key, dns, ips,
+/// emails, uris, version), its extension request in extensions; err ""
+/// when it parsed.
+pub struct Csr {
+  pub cert: Cert
+  pub err: Str
+}
+
+fn csr_fail(msg: Str) -> Csr { Csr{cert: empty(), err: msg} }
+
+const MALFORMED_CSR: Str = "x509: malformed certificate request"
+
+pub fn parse_csr(der: Bytes) -> Csr {
+  var input = cbyte.of(der)
+  let whole = match cbyte.read_element(input, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  if !cbyte.empty(input) {
+    return csr_fail("x509: trailing data after X.509 certificate request")
+  }
+  var c = empty()
+  c.raw = cbyte.bytes(whole)
+  var w = whole
+  var body = match cbyte.read(w, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  let tbs_el = match cbyte.read_element(body, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  c.tbs = cbyte.bytes(tbs_el)
+  var te = tbs_el
+  var tbs = match cbyte.read(te, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  c.version = match cbyte.read_int64(tbs) {
+    Some(v) => v
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  let subject = match cbyte.read_element(tbs, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  c.subject = cbyte.bytes(subject)
+  // Go reads a request's subject with encoding/asn1: any value type, and
+  // a name that does not parse is its error
+  if name_atvs(c.subject).is_none() {
+    return csr_fail(MALFORMED_CSR)
+  }
+  let spki_el = match cbyte.read_element(tbs, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  c.spki = cbyte.bytes(spki_el)
+  var se = spki_el
+  var spki = match cbyte.read(se, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  let pk_ai_s = match cbyte.read(spki, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  let pk_ai = parse_ai(pk_ai_s)
+  if pk_ai.err != "" {
+    return csr_fail(pk_ai.err)
+  }
+  let spk = match cbyte.read_bits(spki) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  let known = pk_ai.oid == "1.2.840.113549.1.1.1" || pk_ai.oid == "1.2.840.10045.2.1" || pk_ai.oid == "1.3.101.112" || pk_ai.oid == "1.3.101.110" || pk_ai.oid == "1.2.840.10040.4.1"
+  if known {
+    let kerr = public_key(pk_ai.oid, pk_ai.params, cbyte.right_align(spk), c)
+    if kerr != "" {
+      return csr_fail(kerr)
+    }
+    c.has_key = true
+  }
+  // attributes: [0] IMPLICIT SET OF Attribute; the extension request's
+  // first value is a SEQUENCE OF Extension (parseCSRExtensions skips an
+  // attribute that does not parse)
+  let ao = match cbyte.read_optional(tbs, 0xa0) {
+    Some(o) => o
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  if !ao.present || !cbyte.empty(tbs) {
+    return csr_fail(MALFORMED_CSR)
+  }
+  var attrs = ao.body
+  var seen: List[Str] = []
+  while !cbyte.empty(attrs) {
+    var attr = match cbyte.read(attrs, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return csr_fail(MALFORMED_CSR)
+    }
+    let id = match cbyte.read_oid(attr) {
+      Some(o) => o
+      None => continue
+    }
+    var vals = match cbyte.read(attr, cbyte.SET) {
+      Some(x) => x
+      None => continue
+    }
+    if id != "1.2.840.113549.1.9.14" || cbyte.empty(vals) {
+      continue
+    }
+    var exts = match cbyte.read(vals, cbyte.SEQUENCE) {
+      Some(x) => x
+      None => return csr_fail(MALFORMED_CSR)
+    }
+    while !cbyte.empty(exts) {
+      let one = match cbyte.read(exts, cbyte.SEQUENCE) {
+        Some(x) => x
+        None => return csr_fail(MALFORMED_CSR)
+      }
+      let e = parse_extension(one)
+      if e.err != "" {
+        return csr_fail(e.err)
+      }
+      if seen.contains(e.oid) {
+        return csr_fail("x509: certificate request contains duplicate requested extensions")
+      }
+      seen.push(e.oid)
+      c.extensions.push(e)
+    }
+  }
+  for e in c.extensions {
+    if e.oid == "2.5.29.17" {
+      let err = san(cbyte.of(e.value), c)
+      if err != "" {
+        return csr_fail(err)
+      }
+    }
+  }
+  let sig_ai = match cbyte.read(body, cbyte.SEQUENCE) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  let ai = parse_ai(sig_ai)
+  if ai.err != "" {
+    return csr_fail(ai.err)
+  }
+  c.sig_alg = sig_alg_of(ai.oid, ai.params)
+  c.sig_oid = ai.oid
+  let sig = match cbyte.read_bits(body) {
+    Some(x) => x
+    None => return csr_fail(MALFORMED_CSR)
+  }
+  c.signature = cbyte.right_align(sig)
+  if !cbyte.empty(body) {
+    return csr_fail(MALFORMED_CSR)
+  }
+  Csr{cert: c, err: ""}
+}
+
+/// Go's CertificateRequest.CheckSignature: the request's own key signed
+/// it; "" or Go's text.
+pub fn csr_check(c: Cert) -> Str { check_err_sha1(c.sig_oid, c.sig_alg, c, c.tbs, c.signature, true) }

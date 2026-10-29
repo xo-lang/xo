@@ -5,16 +5,24 @@ package rt
 // std/native/x509.xo is the native backends'.
 
 import (
+	"crypto/ecdsa"
+	"crypto/elliptic"
+	cryptorand "crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"encoding/pem"
+	"errors"
 	"fmt"
+	"math/big"
+	"net"
 	"net/netip"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"time"
 )
@@ -393,4 +401,290 @@ func (t Tls_TlsConn) M_peer_certificates(tk *Task) List[X509_Certificate] {
 		out = append(out, x509CertOf(tk, c))
 	}
 	return ListFromSlice(out)
+}
+
+// x509GoName is n as Go's pkix.Name for building (RawSubject is set
+// apart, by the caller).
+func x509GoName(n X509_Name) pkix.Name {
+	strs := func(l List[string]) []string {
+		out := make([]string, len(l.s))
+		for i, s := range l.s {
+			out[i] = string(s)
+		}
+		return out
+	}
+	return pkix.Name{
+		Country: strs(n.F_country), Organization: strs(n.F_organization), OrganizationalUnit: strs(n.F_organizational_unit),
+		Locality: strs(n.F_locality), Province: strs(n.F_province), StreetAddress: strs(n.F_street_address),
+		PostalCode: strs(n.F_postal_code), SerialNumber: string(n.F_serial_number), CommonName: string(n.F_common_name),
+	}
+}
+
+func x509Template(t X509_Template) (*x509.Certificate, error) {
+	g := &x509.Certificate{
+		Subject:      x509GoName(t.F_subject),
+		RawSubject:   []byte(t.F_subject.F_raw),
+		NotBefore:    time.Unix(0, int64(t.F_not_before)),
+		NotAfter:     time.Unix(0, int64(t.F_not_after)),
+		IsCA:         t.F_is_ca,
+		SubjectKeyId: []byte(t.F_subject_key_id),
+		MaxPathLen:   -1,
+	}
+	if len(t.F_serial) > 0 {
+		g.SerialNumber = new(big.Int).SetBytes([]byte(t.F_serial))
+	}
+	for _, d := range t.F_dns_names.s {
+		g.DNSNames = append(g.DNSNames, string(d))
+	}
+	for _, e := range t.F_email_addresses.s {
+		g.EmailAddresses = append(g.EmailAddresses, string(e))
+	}
+	for _, a := range t.F_ip_addresses.s {
+		g.IPAddresses = append(g.IPAddresses, net.IP(a.goAddr().AsSlice()))
+	}
+	for _, u := range t.F_uris.s {
+		p, err := url.Parse(string(u))
+		if err != nil {
+			return nil, err
+		}
+		g.URIs = append(g.URIs, p)
+	}
+	if t.F_is_ca || t.F_max_path_len.Some {
+		g.BasicConstraintsValid = true
+	}
+	if t.F_max_path_len.Some {
+		g.MaxPathLen = int(t.F_max_path_len.V)
+		g.MaxPathLenZero = t.F_max_path_len.V == 0
+	}
+	for _, u := range t.F_key_usage.s {
+		g.KeyUsage |= x509.KeyUsage(1 << (u.Tag - 1))
+	}
+	for _, u := range t.F_ext_key_usage.s {
+		known := false
+		for k, tag := range x509Ekus {
+			if tag == u.Tag {
+				g.ExtKeyUsage = append(g.ExtKeyUsage, k)
+				known = true
+			}
+		}
+		if !known {
+			oid, err := x509ParseOID(string(u.P.(X509_ExtKeyUsage_Other).F_oid))
+			if err != nil {
+				return nil, errors.New("x509: unknown extended key usage")
+			}
+			g.UnknownExtKeyUsage = append(g.UnknownExtKeyUsage, oid)
+		}
+	}
+	for _, e := range t.F_extra_extensions.s {
+		oid, err := x509ParseOID(string(e.F_oid))
+		if err != nil {
+			return nil, fmt.Errorf("x509: invalid extension OID %q", string(e.F_oid))
+		}
+		g.ExtraExtensions = append(g.ExtraExtensions, pkix.Extension{Id: oid, Critical: e.F_critical, Value: []byte(e.F_value)})
+	}
+	return g, nil
+}
+
+func x509ParseOID(s string) (asn1.ObjectIdentifier, error) {
+	var oid asn1.ObjectIdentifier
+	for _, p := range strings.Split(s, ".") {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return nil, errors.New("bad OID")
+		}
+		oid = append(oid, n)
+	}
+	if len(oid) < 2 {
+		return nil, errors.New("bad OID")
+	}
+	return oid, nil
+}
+
+func X509_create_certificate(tk *Task, r Rand, t X509_Template, pub Crypto_PublicKey, parent Option[X509_Certificate], key Crypto_PrivateKey) Result[X509_Certificate, X509_CertErr] {
+	if _, ok := key.k.(*ecdsa.PrivateKey); ok && key.k.(*ecdsa.PrivateKey).Curve == elliptic.P224() {
+		return Err[X509_Certificate](x509Err("x509: unknown elliptic curve"))
+	}
+	tmpl, err := x509Template(t)
+	if err != nil {
+		return Err[X509_Certificate](x509Err(textOf(err.Error())))
+	}
+	par := tmpl
+	if parent.Some {
+		if par, err = x509Go(parent.V); err != nil {
+			return Err[X509_Certificate](x509Err(textOf(err.Error())))
+		}
+	}
+	// r is read as the native code reads it: the serial's 20 bytes, then
+	// an ECDSA signature's hedge (Go's signer uses crypto/rand)
+	if tmpl.SerialNumber == nil {
+		b := []byte(r.M_bytes(tk, 20))
+		b[0] &= 0x7f
+		tmpl.SerialNumber = new(big.Int).SetBytes(b)
+	}
+	if k, ok := key.k.(*ecdsa.PrivateKey); ok {
+		r.M_bytes(tk, int64((k.Curve.Params().N.BitLen()+7)/8))
+	}
+	der, err := x509.CreateCertificate(cryptorand.Reader, tmpl, par, pub.k, key.k)
+	if err != nil {
+		return Err[X509_Certificate](x509Err(textOf(err.Error())))
+	}
+	return X509_parse(tk, Bytes(der))
+}
+
+func (c *X509_Certificate) M_pem(*Task) Bytes {
+	return Bytes(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE", Bytes: []byte(c.F_raw)}))
+}
+
+func X509_self_signed(tk *Task, r Rand, hosts List[string], now Time, days int64) Result[Tuple2[Bytes, Bytes], X509_CertErr] {
+	kr := Crypto_generate_key(tk, r, Crypto_KeyAlg{Tag: 3})
+	if !kr.Ok {
+		return Err[Tuple2[Bytes, Bytes]](x509Err(kr.E.F_msg))
+	}
+	key := kr.V
+	var t X509_Template
+	t.F_subject.F_organization = ListOf[string]("Xo Development")
+	t.F_not_before = now
+	t.F_not_after = Time(int64(now) + days*86400*1e9)
+	var dns []string
+	var ips []Netip_Addr
+	for _, h := range hosts.s {
+		if a, err := netip.ParseAddr(string(h)); err == nil {
+			ips = append(ips, netipOf(a))
+		} else {
+			dns = append(dns, h)
+		}
+	}
+	t.F_dns_names = ListFromSlice(dns)
+	t.F_ip_addresses = ListFromSlice(ips)
+	t.F_key_usage = ListOf(X509_KeyUsage{Tag: 1})
+	t.F_ext_key_usage = ListOf(X509_ExtKeyUsage{Tag: 2})
+	c := X509_create_certificate(tk, r, t, key.pub, None[X509_Certificate](), key)
+	if !c.Ok {
+		return Err[Tuple2[Bytes, Bytes]](c.E)
+	}
+	kp := pem.EncodeToMemory(&pem.Block{Type: "PRIVATE KEY", Bytes: []byte(Crypto_marshal_private_key(tk, key))})
+	return Ok[Tuple2[Bytes, Bytes], X509_CertErr](Tuple2[Bytes, Bytes]{F0: c.V.M_pem(tk), F1: Bytes(kp)})
+}
+
+func x509Exts(es []pkix.Extension) List[X509_Extension] {
+	var out []X509_Extension
+	for _, e := range es {
+		out = append(out, X509_Extension{F_oid: e.Id.String(), F_critical: e.Critical, F_value: Bytes(e.Value)})
+	}
+	return ListFromSlice(out)
+}
+
+func X509_parse_revocation_list(tk *Task, der Bytes) Result[X509_RevocationList, X509_CertErr] {
+	l, err := x509.ParseRevocationList([]byte(der))
+	if err != nil {
+		return Err[X509_RevocationList](x509Err(textOf(err.Error())))
+	}
+	var revoked []X509_RevokedCertificate
+	for _, e := range l.RevokedCertificateEntries {
+		revoked = append(revoked, X509_RevokedCertificate{
+			F_serial: Bytes(e.SerialNumber.Bytes()), F_revoked_at: x509Time(e.RevocationTime),
+			F_reason: int64(e.ReasonCode), F_extensions: x509Exts(e.Extensions),
+		})
+	}
+	var next Option[Time]
+	if !l.NextUpdate.IsZero() {
+		next = Some(x509Time(l.NextUpdate))
+	}
+	number := []byte{}
+	if l.Number != nil {
+		number = l.Number.Bytes()
+	}
+	return Ok[X509_RevocationList, X509_CertErr](X509_RevocationList{
+		F_raw: Bytes(l.Raw), F_signature_algorithm: textOf(l.SignatureAlgorithm.String()),
+		F_issuer: x509NameOf(l.RawIssuer, l.Issuer), F_number: Bytes(number),
+		F_this_update: x509Time(l.ThisUpdate), F_next_update: next,
+		F_revoked: ListFromSlice(revoked), F_authority_key_id: Bytes(l.AuthorityKeyId),
+		F_extensions: x509Exts(l.Extensions),
+	})
+}
+
+func (l *X509_RevocationList) M_check_signature_from(_ *Task, issuer X509_Certificate) Result[Unit, X509_CertErr] {
+	g, err := x509.ParseRevocationList([]byte(l.F_raw))
+	if err == nil {
+		var p *x509.Certificate
+		if p, err = x509Go(issuer); err == nil {
+			err = g.CheckSignatureFrom(p)
+		}
+	}
+	if err != nil {
+		return Err[Unit](x509Err(textOf(err.Error())))
+	}
+	return Ok[Unit, X509_CertErr](Unit{})
+}
+
+func x509RequestOf(tk *Task, q *x509.CertificateRequest) X509_CertificateRequest {
+	var ips []Netip_Addr
+	for _, ip := range q.IPAddresses {
+		if a, ok := netip.AddrFromSlice(ip); ok {
+			ips = append(ips, netipOf(a))
+		}
+	}
+	var uris []string
+	for _, u := range q.URIs {
+		uris = append(uris, textOf(u.String()))
+	}
+	var pk Option[Crypto_PublicKey]
+	if r := Crypto_parse_public_key(tk, Bytes(q.RawSubjectPublicKeyInfo)); r.Ok {
+		pk = Some(r.V)
+	}
+	return X509_CertificateRequest{
+		F_raw: Bytes(q.Raw), F_version: int64(q.Version), F_signature_algorithm: textOf(q.SignatureAlgorithm.String()),
+		F_subject: x509NameOf(q.RawSubject, q.Subject), F_public_key: pk,
+		F_dns_names: x509Strs(q.DNSNames), F_ip_addresses: ListFromSlice(ips),
+		F_email_addresses: x509Strs(q.EmailAddresses), F_uris: ListFromSlice(uris),
+		F_extensions: x509Exts(q.Extensions),
+	}
+}
+
+func X509_parse_request(tk *Task, der Bytes) Result[X509_CertificateRequest, X509_CertErr] {
+	q, err := x509.ParseCertificateRequest([]byte(der))
+	if err != nil {
+		msg := err.Error()
+		if strings.HasPrefix(msg, "asn1: ") {
+			msg = "x509: malformed certificate request"
+		}
+		return Err[X509_CertificateRequest](x509Err(textOf(msg)))
+	}
+	return Ok[X509_CertificateRequest, X509_CertErr](x509RequestOf(tk, q))
+}
+
+func (q *X509_CertificateRequest) M_check_signature(*Task) Result[Unit, X509_CertErr] {
+	g, err := x509.ParseCertificateRequest([]byte(q.F_raw))
+	if err == nil {
+		err = g.CheckSignature()
+	}
+	if err != nil {
+		return Err[Unit](x509Err(textOf(err.Error())))
+	}
+	return Ok[Unit, X509_CertErr](Unit{})
+}
+
+func (q *X509_CertificateRequest) M_pem(*Task) Bytes {
+	return Bytes(pem.EncodeToMemory(&pem.Block{Type: "CERTIFICATE REQUEST", Bytes: []byte(q.F_raw)}))
+}
+
+func X509_create_request(tk *Task, r Rand, t X509_RequestTemplate, key Crypto_PrivateKey) Result[X509_CertificateRequest, X509_CertErr] {
+	if k, ok := key.k.(*ecdsa.PrivateKey); ok {
+		if k.Curve == elliptic.P224() {
+			return Err[X509_CertificateRequest](x509Err("x509: unknown elliptic curve"))
+		}
+		r.M_bytes(tk, int64((k.Curve.Params().N.BitLen()+7)/8))
+	}
+	ct, err := x509Template(X509_Template{F_subject: t.F_subject, F_dns_names: t.F_dns_names, F_ip_addresses: t.F_ip_addresses,
+		F_email_addresses: t.F_email_addresses, F_uris: t.F_uris, F_extra_extensions: t.F_extra_extensions})
+	if err != nil {
+		return Err[X509_CertificateRequest](x509Err(textOf(err.Error())))
+	}
+	tmpl := &x509.CertificateRequest{Subject: ct.Subject, RawSubject: ct.RawSubject, DNSNames: ct.DNSNames, EmailAddresses: ct.EmailAddresses,
+		IPAddresses: ct.IPAddresses, URIs: ct.URIs, ExtraExtensions: ct.ExtraExtensions}
+	der, err := x509.CreateCertificateRequest(cryptorand.Reader, tmpl, key.k)
+	if err != nil {
+		return Err[X509_CertificateRequest](x509Err(textOf(err.Error())))
+	}
+	return X509_parse_request(tk, Bytes(der))
 }

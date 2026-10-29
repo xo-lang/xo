@@ -43,6 +43,7 @@ var (
 	_ func(*Crypto_PublicKey, *Task) Crypto_KeyAlg                                          = (*Crypto_PublicKey).M_alg
 	_ func(*Task, string) Result[Crypto_PublicKey, Crypto_KeyErr]                           = Crypto_jwk_public_key
 	_ func(*Task, Bytes) Result[Crypto_PrivateKey, Crypto_KeyErr]                           = Crypto_parse_private_key
+	_ func(*Task, Crypto_PrivateKey) Bytes                                                  = Crypto_marshal_private_key
 	_ func(*Crypto_PrivateKey, *Task) Crypto_KeyAlg                                         = (*Crypto_PrivateKey).M_alg
 	_ func(*Crypto_PrivateKey, *Task) Crypto_PublicKey                                      = (*Crypto_PrivateKey).M_public_key
 	_ func(*Task, string) List[Crypto_PemBlock]                                             = Crypto_pem_decode

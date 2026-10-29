@@ -6,6 +6,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/x509: creating certificates and requests and parsing CRLs, as Go's
+  crypto/x509: `create_certificate` from a `Template` (self-signed or
+  issued by a parent), `self_signed(r, hosts, now)` for development
+  certificates (an ECDSA P-256 key, both as PEM), `create_request`,
+  `parse_request`, `parse_revocation_list` and their signature checks;
+  std/crypto `marshal_private_key` (PKCS #8). Ed25519 and RSA
+  certificates and requests are byte for byte Go's (corpus x509create).
 - std/cli: `float_flag` and `Parsed.float` and `float_opt`, a floating
   point flag in `Float.parse` syntax (Go's flag.Float64).
 - Fix (`use go`, a Windows tester's bug 18): a Go function that writes

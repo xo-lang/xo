@@ -117,6 +117,16 @@ func Crypto_parse_public_key(_ *Task, der Bytes) Result[Crypto_PublicKey, Crypto
 
 func Crypto_marshal_public_key(_ *Task, k Crypto_PublicKey) Bytes { return Bytes(k.der) }
 
+// Crypto_marshal_private_key is `crypto.marshal_private_key(k)`: Go's
+// MarshalPKCS8PrivateKey.
+func Crypto_marshal_private_key(_ *Task, k Crypto_PrivateKey) Bytes {
+	der, err := x509.MarshalPKCS8PrivateKey(k.k)
+	if err != nil {
+		panic("crypto.marshal_private_key: " + err.Error())
+	}
+	return Bytes(der)
+}
+
 // Crypto_PrivateKey is `crypto.PrivateKey`: Go's key and its public key.
 // Debug never shows key material.
 type Crypto_PrivateKey struct {

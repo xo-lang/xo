@@ -7,18 +7,19 @@ use std/crypto
 use std/netip
 
 /// A distinguished name (Go's pkix.Name): the common attributes, each
-/// list in the order the name has them, and its DER.
+/// list in the order the name has them, and its DER. A Name to build
+/// (Template.subject) leaves raw empty and sets the fields it needs.
 struct Name {
-  country: List[Str]
-  organization: List[Str]
-  organizational_unit: List[Str]
-  locality: List[Str]
-  province: List[Str]
-  street_address: List[Str]
-  postal_code: List[Str]
-  serial_number: Str
-  common_name: Str
-  raw: Bytes
+  country: List[Str] = []
+  organization: List[Str] = []
+  organizational_unit: List[Str] = []
+  locality: List[Str] = []
+  province: List[Str] = []
+  street_address: List[Str] = []
+  postal_code: List[Str] = []
+  serial_number: Str = ""
+  common_name: Str = ""
+  raw: Bytes = b""
 }
 
 /// RFC 2253 text, as Go's Name.String() (`CN=example.com,O=Example`).
@@ -129,6 +130,125 @@ fn (c: Certificate) verify(opts: VerifyOptions) -> List[List[Certificate]] ! Cer
 fn (c: Certificate) verify_hostname(host: Str) -> () ! CertErr
 /// Whether parent's key signed c (Go's CheckSignatureFrom).
 fn (c: Certificate) check_signature_from(parent: Certificate) -> () ! CertErr
+
+/// What create_certificate puts in a certificate (the fields Go's
+/// CreateCertificate reads from its template).
+struct Template {
+  /// The serial number's magnitude, big endian; empty: 20 random bytes
+  /// (159 bits), as Go makes one.
+  serial: Bytes = b""
+  /// The subject: its raw DER when set (a parsed certificate's subject),
+  /// else made from its fields in Go's order (C, ST, L, STREET,
+  /// POSTALCODE, O, OU, CN, SERIALNUMBER).
+  subject: Name
+  not_before: Time
+  not_after: Time
+  dns_names: List[Str] = []
+  ip_addresses: List[netip.Addr] = []
+  email_addresses: List[Str] = []
+  uris: List[Str] = []
+  /// A CA certificate (the basic constraints extension, made when is_ca
+  /// or max_path_len is set); max_path_len only on a CA.
+  is_ca: Bool = false
+  max_path_len: Int? = None
+  key_usage: List[KeyUsage] = []
+  ext_key_usage: List[ExtKeyUsage] = []
+  /// Empty on a CA: the first 20 bytes of the SHA-256 of its public key.
+  subject_key_id: Bytes = b""
+  /// Extensions added as given, after the ones made from the fields; one
+  /// with the OID of a made one replaces it.
+  extra_extensions: List[Extension] = []
+}
+
+/// Go's CreateCertificate: a certificate of t for public_key, issued by
+/// parent and signed with parent's private key, key; self-signed when
+/// parent is None (the issuer is t's subject and key the matching private
+/// key). The signature algorithm is Go's for the key: SHA256-RSA,
+/// ECDSA-SHA256, -SHA384 or -SHA512 by curve, or Ed25519. Err with Go's
+/// text for a name that is not IA5, a max_path_len on a non-CA, a key that
+/// is not parent's, or a P-224 key (Go cannot sign with one).
+fn create_certificate(r: Rand, t: Template, public_key: crypto.PublicKey, parent: Certificate?, key: crypto.PrivateKey) -> Certificate ! CertErr uses rand
+
+/// A certificate for development and tests, never for production: a new
+/// ECDSA P-256 key and a self-signed certificate for hosts (DNS names or
+/// IP addresses), organization "Xo Development", valid from now for days
+/// (Go's generate_cert.go). Returns the certificate's PEM and the key's
+/// PEM (PKCS #8), ready for http.tls_cert.
+fn self_signed(r: Rand, hosts: List[Str], now: Time, days: Int = 30) -> (Bytes, Bytes) ! CertErr uses rand
+
+/// The certificate as a PEM CERTIFICATE block.
+fn (c: Certificate) pem() -> Bytes
+
+/// A certificate signing request (PKCS #10, Go's CertificateRequest).
+struct CertificateRequest {
+  raw: Bytes
+  /// 0 (PKCS #10's v1).
+  version: Int
+  signature_algorithm: Str
+  subject: Name
+  public_key: crypto.PublicKey?
+  dns_names: List[Str]
+  ip_addresses: List[netip.Addr]
+  email_addresses: List[Str]
+  uris: List[Str]
+  /// The requested extensions, in order.
+  extensions: List[Extension]
+}
+
+/// What create_request puts in a request.
+struct RequestTemplate {
+  subject: Name
+  dns_names: List[Str] = []
+  ip_addresses: List[netip.Addr] = []
+  email_addresses: List[Str] = []
+  uris: List[Str] = []
+  /// Requested as given, after the SAN made from the names; one with the
+  /// SAN's OID replaces it.
+  extra_extensions: List[Extension] = []
+}
+
+/// Go's CreateCertificateRequest: t's request for key's public key, signed
+/// with key (the algorithm as create_certificate's).
+fn create_request(r: Rand, t: RequestTemplate, key: crypto.PrivateKey) -> CertificateRequest ! CertErr uses rand
+/// Go's ParseCertificateRequest of a DER request. Malformed DER is
+/// `CertErr("x509: malformed certificate request")` where Go reports
+/// encoding/asn1's text.
+fn parse_request(der: Bytes) -> CertificateRequest ! CertErr
+/// Whether the request's own key signed it (Go's CheckSignature).
+fn (q: CertificateRequest) check_signature() -> () ! CertErr
+/// The request as a PEM CERTIFICATE REQUEST block.
+fn (q: CertificateRequest) pem() -> Bytes
+
+/// A certificate a CRL revokes (Go's RevocationListEntry).
+struct RevokedCertificate {
+  /// The serial number's magnitude, big endian.
+  serial: Bytes
+  revoked_at: Time
+  /// The reasonCode extension's value (RFC 5280 5.3.1), 0 without one.
+  reason: Int
+  extensions: List[Extension]
+}
+
+/// A parsed certificate revocation list (Go's RevocationList).
+struct RevocationList {
+  raw: Bytes
+  /// As Certificate.signature_algorithm.
+  signature_algorithm: Str
+  issuer: Name
+  /// The CRL number extension's magnitude; empty without one.
+  number: Bytes
+  this_update: Time
+  next_update: Time?
+  revoked: List[RevokedCertificate]
+  authority_key_id: Bytes
+  extensions: List[Extension]
+}
+
+/// Go's ParseRevocationList of a DER CRL.
+fn parse_revocation_list(der: Bytes) -> RevocationList ! CertErr
+/// Whether issuer may sign CRLs and signed l (Go's
+/// RevocationList.CheckSignatureFrom).
+fn (l: RevocationList) check_signature_from(issuer: Certificate) -> () ! CertErr
 
 /// The roots std/tls verifies servers against on this platform when a
 /// client gives none: the system's root certificates.

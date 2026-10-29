@@ -4,6 +4,7 @@
 use std/crypto
 use std/netip
 use std/x509
+use native/llrt/asn1
 use native/llrt/tlscert
 use native/llrt/x509cert as lx
 use native/llrt/x509verify as xv
@@ -28,6 +29,9 @@ fn time_of(secs: Int) -> Time {
 fn name_of(der: Bytes) -> x509.Name {
   var n = x509.Name{country: [], organization: [], organizational_unit: [], locality: [], province: [], street_address: [], postal_code: [], serial_number: "", common_name: "", raw: der}
   for a in lx.name_atvs(der) ?? [] {
+    if !a.text {
+      continue
+    }
     match a.oid {
       "2.5.4.3" => n.common_name = a.value
       "2.5.4.5" => n.serial_number = a.value
@@ -47,7 +51,7 @@ fn name_of(der: Bytes) -> x509.Name {
 fn name_attributes(n: x509.Name) -> List[(Str, Str)] {
   var out: List[(Str, Str)] = []
   for a in lx.name_atvs(n.raw) ?? [] {
-    out.push((a.oid, a.value))
+    out.push((a.oid, if a.text { a.value } else { "#${a.raw.to_hex()}" }))
   }
   out
 }
@@ -108,6 +112,10 @@ fn marshal_hex(v: Str) -> Str {
 
 /// One attribute as RDNSequence.String writes it.
 fn atv_text(oid: Str, value: Str) -> Str {
+  // a value that is not a string: its element as it is (marked by a NUL)
+  if value.starts_with("\x00#") {
+    return "${oid}=${value[1..value.len()]}"
+  }
   let tn = match type_name(oid) {
     Some(t) => t
     None => return "${oid}=#${marshal_hex(value)}"
@@ -138,7 +146,7 @@ fn name_display(n: x509.Name) -> Str {
     if type_name(a.oid).is_some() {
       continue
     }
-    rdns.push([(a.oid, a.value)])
+    rdns.push([(a.oid, if a.text { a.value } else { "\x00#${a.raw.to_hex()}" })])
   }
   for (vs, oid) in [(n.country, "2.5.4.6"), (n.province, "2.5.4.8"), (n.locality, "2.5.4.7"), (n.street_address, "2.5.4.9"), (n.postal_code, "2.5.4.17"), (n.organization, "2.5.4.10"), (n.organizational_unit, "2.5.4.11")] {
     if !vs.is_empty() {
@@ -176,18 +184,20 @@ fn name_display(n: x509.Name) -> Str {
 // Certificates
 
 /// Go's SignatureAlgorithm.String() of the certificate's algorithm.
-fn sig_name(c: lx.Cert) -> Str {
-  if c.sig_alg == lx.SIG_RSA_SHA256 { return "SHA256-RSA" }
-  if c.sig_alg == lx.SIG_RSA_SHA384 { return "SHA384-RSA" }
-  if c.sig_alg == lx.SIG_RSA_SHA512 { return "SHA512-RSA" }
-  if c.sig_alg == lx.SIG_ECDSA_SHA256 { return "ECDSA-SHA256" }
-  if c.sig_alg == lx.SIG_ECDSA_SHA384 { return "ECDSA-SHA384" }
-  if c.sig_alg == lx.SIG_ECDSA_SHA512 { return "ECDSA-SHA512" }
-  if c.sig_alg == lx.SIG_ED25519 { return "Ed25519" }
-  if c.sig_alg == lx.SIG_PSS_SHA256 { return "SHA256-RSAPSS" }
-  if c.sig_alg == lx.SIG_PSS_SHA384 { return "SHA384-RSAPSS" }
-  if c.sig_alg == lx.SIG_PSS_SHA512 { return "SHA512-RSAPSS" }
-  match c.sig_oid {
+fn sig_name(c: lx.Cert) -> Str { sig_name_of(c.sig_alg, c.sig_oid) }
+
+fn sig_name_of(alg: Int, oid: Str) -> Str {
+  if alg == lx.SIG_RSA_SHA256 { return "SHA256-RSA" }
+  if alg == lx.SIG_RSA_SHA384 { return "SHA384-RSA" }
+  if alg == lx.SIG_RSA_SHA512 { return "SHA512-RSA" }
+  if alg == lx.SIG_ECDSA_SHA256 { return "ECDSA-SHA256" }
+  if alg == lx.SIG_ECDSA_SHA384 { return "ECDSA-SHA384" }
+  if alg == lx.SIG_ECDSA_SHA512 { return "ECDSA-SHA512" }
+  if alg == lx.SIG_ED25519 { return "Ed25519" }
+  if alg == lx.SIG_PSS_SHA256 { return "SHA256-RSAPSS" }
+  if alg == lx.SIG_PSS_SHA384 { return "SHA384-RSAPSS" }
+  if alg == lx.SIG_PSS_SHA512 { return "SHA512-RSAPSS" }
+  match oid {
     "1.2.840.113549.1.1.2" => "MD2-RSA"
     "1.2.840.113549.1.1.4" => "MD5-RSA"
     "1.2.840.113549.1.1.5" | "1.3.14.3.2.29" => "SHA1-RSA"
@@ -359,4 +369,366 @@ fn system_roots(fs: Fs) -> List[x509.Certificate] ! x509.CertErr uses fs {
     }
   }
   Ok(out)
+}
+
+// ---------------------------------------------------------------------------
+// Creating certificates (Go's CreateCertificate, buildCertExtensions)
+
+/// The DER of a Name to build: raw when set (Go's RawSubject), else
+/// ToRDNSequence's order, one RDN per attribute with every value
+/// (encoding/asn1's PrintableString or UTF8String choice).
+fn name_der(n: x509.Name) -> Bytes {
+  if !n.raw.is_empty() {
+    return n.raw
+  }
+  var rdns: List[Bytes] = []
+  for (vs, oid) in [(n.country, "2.5.4.6"), (n.province, "2.5.4.8"), (n.locality, "2.5.4.7"), (n.street_address, "2.5.4.9"), (n.postal_code, "2.5.4.17"), (n.organization, "2.5.4.10"), (n.organizational_unit, "2.5.4.11"), (if n.common_name.is_empty() { [] } else { [n.common_name] }, "2.5.4.3"), (if n.serial_number.is_empty() { [] } else { [n.serial_number] }, "2.5.4.5")] {
+    if vs.is_empty() {
+      continue
+    }
+    let o = asn1.enc_oid(oid) ?? b""
+    rdns.push(asn1.enc_set_of(vs.map(fn(v) { asn1.enc_seq([o, asn1.enc_string(v)]) })))
+  }
+  asn1.enc_seq(rdns)
+}
+
+fn ext_der(oid: Str, critical: Bool, value: Bytes) -> Bytes ! x509.CertErr {
+  let o = match asn1.enc_oid(oid) {
+    Some(x) => x
+    None => return Err(err("x509: invalid extension OID ${oid.quote()}"))
+  }
+  Ok(asn1.enc_seq(if critical { [o, asn1.enc_bool(true), asn1.enc_octets(value)] } else { [o, asn1.enc_octets(value)] }))
+}
+
+/// Go's isIA5String.
+fn ia5_check(s: Str) -> () ! x509.CertErr {
+  for x in s.bytes() {
+    if Int(x) > 127 {
+      return Err(err("x509: ${s.quote()} cannot be encoded as an IA5String"))
+    }
+  }
+  Ok(())
+}
+
+/// The algorithm Go signs with for key: (its AlgorithmIdentifier, hash).
+fn id(o: Str) -> Bytes { asn1.enc_oid(o) ?? b"" }
+
+fn signing(key: crypto.PrivateKey) -> (Bytes, crypto.Hash) ! x509.CertErr {
+  match key.alg() {
+    Rsa => Ok((asn1.enc_seq([id("1.2.840.113549.1.1.11"), asn1.enc_null()]), crypto.Hash.Sha256))
+    EcdsaP256 => Ok((asn1.enc_seq([id("1.2.840.10045.4.3.2")]), crypto.Hash.Sha256))
+    EcdsaP384 => Ok((asn1.enc_seq([id("1.2.840.10045.4.3.3")]), crypto.Hash.Sha384))
+    EcdsaP521 => Ok((asn1.enc_seq([id("1.2.840.10045.4.3.4")]), crypto.Hash.Sha512))
+    Ed25519 => Ok((asn1.enc_seq([id("1.3.101.112")]), crypto.Hash.Sha512))
+    EcdsaP224 => Err(err("x509: unknown elliptic curve"))
+  }
+}
+
+/// The key bytes inside a SubjectPublicKeyInfo (the BIT STRING's).
+fn spki_key(spki: Bytes) -> Bytes {
+  let t = asn1.whole(spki, asn1.SEQUENCE)
+  let kids = asn1.children(spki, t)
+  if kids.len() != 2 || asn1.any_bad(kids) {
+    return b""
+  }
+  asn1.bits(spki, kids[1]) ?? b""
+}
+
+fn create_certificate(r: Rand, t: x509.Template, public_key: crypto.PublicKey, parent: x509.Certificate?, key: crypto.PrivateKey) -> x509.Certificate ! x509.CertErr uses rand {
+  let serial = if t.serial.is_empty() {
+    let b = crypto.random_bytes(r, 20)
+    var s = BytesBuilder.with_capacity(20)
+    s.write_byte(UInt8(Int(b[0]) & 127))
+    s.write(b[1..20])
+    s.freeze()
+  } else {
+    t.serial
+  }
+  match t.max_path_len {
+    Some(n) => {
+      if n < -1 {
+        return Err(err("x509: invalid MaxPathLen, must be greater or equal to -1"))
+      }
+      if !t.is_ca && n != -1 {
+        return Err(err("x509: only CAs are allowed to specify MaxPathLen"))
+      }
+    }
+    None => ()
+  }
+  let (alg_id, hash) = signing(key)?
+  let spki = crypto.marshal_public_key(public_key)
+  let key_bytes = spki_key(spki)
+  let subject = name_der(t.subject)
+  let issuer = match parent {
+    Some(p) => p.subject.raw
+    None => subject
+  }
+  var aki = b""
+  match parent {
+    Some(p) => {
+      if issuer != subject && !p.subject_key_id.is_empty() {
+        aki = p.subject_key_id
+      }
+      match p.public_key {
+        Some(k) => if k != key.public_key() { return Err(err("x509: provided PrivateKey doesn't match parent's PublicKey")) }
+        None => ()
+      }
+    }
+    None => ()
+  }
+  let ski = if t.subject_key_id.is_empty() && t.is_ca { crypto.sha256(key_bytes)[0..20] } else { t.subject_key_id }
+  // buildCertExtensions: each made one unless an extra one has its OID
+  let extra = t.extra_extensions.map(fn(e) { e.oid })
+  var exts: List[Bytes] = []
+  if !t.key_usage.is_empty() && !extra.contains("2.5.29.15") {
+    var flags = 0
+    for u in t.key_usage {
+      flags = flags | (1 << ku_bit(u))
+    }
+    exts.push(ext_der("2.5.29.15", true, asn1.enc_flag_bits(flags))?)
+  }
+  if !t.ext_key_usage.is_empty() && !extra.contains("2.5.29.37") {
+    var oids: List[Bytes] = []
+    for u in t.ext_key_usage {
+      match asn1.enc_oid(eku_oid(u)) {
+        Some(o) => oids.push(o)
+        None => return Err(err("x509: unknown extended key usage"))
+      }
+    }
+    exts.push(ext_der("2.5.29.37", false, asn1.enc_seq(oids))?)
+  }
+  if (t.is_ca || t.max_path_len.is_some()) && !extra.contains("2.5.29.19") {
+    var parts: List[Bytes] = []
+    if t.is_ca {
+      parts.push(asn1.enc_bool(true))
+    }
+    match t.max_path_len {
+      Some(n) => if n >= 0 { parts.push(asn1.enc_int(n)) }
+      None => ()
+    }
+    exts.push(ext_der("2.5.29.19", true, asn1.enc_seq(parts))?)
+  }
+  if !ski.is_empty() && !extra.contains("2.5.29.14") {
+    exts.push(ext_der("2.5.29.14", false, asn1.enc_octets(ski))?)
+  }
+  if !aki.is_empty() && !extra.contains("2.5.29.35") {
+    exts.push(ext_der("2.5.29.35", false, asn1.enc_seq([asn1.enc_implicit(0, aki)]))?)
+  }
+  let has_san = !t.dns_names.is_empty() || !t.email_addresses.is_empty() || !t.ip_addresses.is_empty() || !t.uris.is_empty()
+  if has_san && !extra.contains("2.5.29.17") {
+    var names: List[Bytes] = []
+    for d in t.dns_names {
+      ia5_check(d)?
+      names.push(asn1.enc_implicit(2, d.bytes()))
+    }
+    for e in t.email_addresses {
+      ia5_check(e)?
+      names.push(asn1.enc_implicit(1, e.bytes()))
+    }
+    for a in t.ip_addresses {
+      names.push(asn1.enc_implicit(7, if a.bits == 32 { a.ip[12..16] } else { a.ip }))
+    }
+    for u in t.uris {
+      ia5_check(u)?
+      names.push(asn1.enc_implicit(6, u.bytes()))
+    }
+    exts.push(ext_der("2.5.29.17", subject == b"\x30\x00", asn1.enc_seq(names))?)
+  }
+  for e in t.extra_extensions {
+    exts.push(ext_der(e.oid, e.critical, e.value)?)
+  }
+  var tbs_parts = [asn1.enc_explicit(0, asn1.enc_int(2)), asn1.enc_uint(serial), alg_id, issuer, asn1.enc_seq([asn1.enc_time(t.not_before.unix()), asn1.enc_time(t.not_after.unix())]), subject, spki]
+  if !exts.is_empty() {
+    tbs_parts.push(asn1.enc_explicit(3, asn1.enc_seq(exts)))
+  }
+  let tbs = asn1.enc_seq(tbs_parts)
+  let sig = match crypto.sign(r, key, hash, tbs) {
+    Ok(s) => s
+    Err(e) => return Err(err(e.display()))
+  }
+  let der = asn1.enc_seq([tbs, alg_id, asn1.enc_bits(sig)])
+  let c = parse(der)?
+  // Go's signTBS checks the signature it made
+  let signer = match parent {
+    Some(p) => p.public_key
+    None => Some(key.public_key())
+  }
+  match signer {
+    Some(k) => if !crypto.verify(k, hash, tbs, sig) { return Err(err("x509: signature over certificate returned by signer is invalid")) }
+    None => ()
+  }
+  Ok(c)
+}
+
+fn ku_bit(u: x509.KeyUsage) -> Int {
+  match u {
+    DigitalSignature => 0
+    ContentCommitment => 1
+    KeyEncipherment => 2
+    DataEncipherment => 3
+    KeyAgreement => 4
+    CertSign => 5
+    CrlSign => 6
+    EncipherOnly => 7
+    DecipherOnly => 8
+  }
+}
+
+fn pem_of(kind: Str, der: Bytes) -> Bytes {
+  let headers: Map[Str, Str] = {}
+  (crypto.pem_encode(crypto.PemBlock{kind: kind, headers: headers, bytes: der}).ok() ?? "").bytes()
+}
+
+fn certificate_pem(c: x509.Certificate) -> Bytes { pem_of("CERTIFICATE", c.raw) }
+
+fn self_signed(r: Rand, hosts: List[Str], now: Time, days: Int = 30) -> (Bytes, Bytes) ! x509.CertErr uses rand {
+  let key = match crypto.generate_key(r, crypto.KeyAlg.EcdsaP256) {
+    Ok(k) => k
+    Err(e) => return Err(err(e.display()))
+  }
+  var dns: List[Str] = []
+  var ips: List[netip.Addr] = []
+  for h in hosts {
+    match netip.parse_addr(h) {
+      Ok(a) => ips.push(a)
+      Err(_) => dns.push(h)
+    }
+  }
+  let t = x509.Template{
+    subject: x509.Name{organization: ["Xo Development"]},
+    not_before: now,
+    not_after: Time.from_unix(now.unix() + days * 86400),
+    dns_names: dns,
+    ip_addresses: ips,
+    key_usage: [x509.KeyUsage.DigitalSignature],
+    ext_key_usage: [x509.ExtKeyUsage.ServerAuth],
+  }
+  let c = create_certificate(r, t, key.public_key(), None, key)?
+  Ok((certificate_pem(c), pem_of("PRIVATE KEY", crypto.marshal_private_key(key))))
+}
+
+// ---------------------------------------------------------------------------
+// Revocation lists
+
+fn ext_of(e: lx.Ext) -> x509.Extension { x509.Extension{oid: e.oid, critical: e.critical, value: e.value} }
+
+fn parse_revocation_list(der: Bytes) -> x509.RevocationList ! x509.CertErr {
+  let l = lx.parse_crl(der)
+  if l.err != "" {
+    return Err(err(l.err))
+  }
+  var revoked: List[x509.RevokedCertificate] = []
+  for e in l.entries {
+    revoked.push(x509.RevokedCertificate{serial: e.serial, revoked_at: time_of(e.revoked_at), reason: e.reason, extensions: e.extensions.map(fn(x) { ext_of(x) })})
+  }
+  Ok(x509.RevocationList{
+    raw: l.raw,
+    signature_algorithm: sig_name_of(l.sig_alg, l.sig_oid),
+    issuer: name_of(l.issuer),
+    number: l.number,
+    this_update: time_of(l.this_update),
+    next_update: if l.has_next { Some(time_of(l.next_update)) } else { None },
+    revoked: revoked,
+    authority_key_id: l.aki,
+    extensions: l.extensions.map(fn(x) { ext_of(x) }),
+  })
+}
+
+fn revocationlist_check_signature_from(l: x509.RevocationList, issuer: x509.Certificate) -> () ! x509.CertErr {
+  let p = lcert(issuer)?
+  let e = lx.crl_check_from(lx.parse_crl(l.raw), p)
+  if e != "" {
+    return Err(err(e))
+  }
+  Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Certificate requests
+
+fn request_of(c: lx.Cert) -> x509.CertificateRequest {
+  var ips: List[netip.Addr] = []
+  for b in c.ips {
+    if let Some(a) = netip.addr_from_bytes(b) {
+      ips.push(a)
+    }
+  }
+  x509.CertificateRequest{
+    raw: c.raw,
+    version: c.version,
+    signature_algorithm: sig_name(c),
+    subject: name_of(c.subject),
+    public_key: crypto.parse_public_key(c.spki).ok(),
+    dns_names: c.dns,
+    ip_addresses: ips,
+    email_addresses: c.emails,
+    uris: c.uris,
+    extensions: c.extensions.map(fn(x) { ext_of(x) }),
+  }
+}
+
+fn parse_request(der: Bytes) -> x509.CertificateRequest ! x509.CertErr {
+  let q = lx.parse_csr(der)
+  if q.err != "" {
+    return Err(err(q.err))
+  }
+  Ok(request_of(q.cert))
+}
+
+fn certificaterequest_check_signature(q: x509.CertificateRequest) -> () ! x509.CertErr {
+  let p = lx.parse_csr(q.raw)
+  if p.err != "" {
+    return Err(err(p.err))
+  }
+  let e = lx.csr_check(p.cert)
+  if e != "" {
+    return Err(err(e))
+  }
+  Ok(())
+}
+
+fn certificaterequest_pem(q: x509.CertificateRequest) -> Bytes { pem_of("CERTIFICATE REQUEST", q.raw) }
+
+/// The SAN extension's value of the names (Go's marshalSANs).
+fn sans(dns: List[Str], emails: List[Str], ips: List[netip.Addr], uris: List[Str]) -> Bytes ! x509.CertErr {
+  var names: List[Bytes] = []
+  for d in dns {
+    ia5_check(d)?
+    names.push(asn1.enc_implicit(2, d.bytes()))
+  }
+  for e in emails {
+    ia5_check(e)?
+    names.push(asn1.enc_implicit(1, e.bytes()))
+  }
+  for a in ips {
+    names.push(asn1.enc_implicit(7, if a.bits == 32 { a.ip[12..16] } else { a.ip }))
+  }
+  for u in uris {
+    ia5_check(u)?
+    names.push(asn1.enc_implicit(6, u.bytes()))
+  }
+  Ok(asn1.enc_seq(names))
+}
+
+fn create_request(r: Rand, t: x509.RequestTemplate, key: crypto.PrivateKey) -> x509.CertificateRequest ! x509.CertErr uses rand {
+  let (alg_id, hash) = signing(key)?
+  var exts: List[Bytes] = []
+  let has_san = !t.dns_names.is_empty() || !t.email_addresses.is_empty() || !t.ip_addresses.is_empty() || !t.uris.is_empty()
+  if has_san && !t.extra_extensions.any(fn(e) { e.oid == "2.5.29.17" }) {
+    exts.push(ext_der("2.5.29.17", false, sans(t.dns_names, t.email_addresses, t.ip_addresses, t.uris)?)?)
+  }
+  for e in t.extra_extensions {
+    exts.push(ext_der(e.oid, e.critical, e.value)?)
+  }
+  // the attributes: the extension request when there are extensions
+  let attrs = if exts.is_empty() { b"" } else { asn1.enc_seq([asn1.enc_oid("1.2.840.113549.1.9.14") ?? b"", asn1.enc_set_of([asn1.enc_seq(exts)])]) }
+  let tbs = asn1.enc_seq([asn1.enc_int(0), name_der(t.subject), crypto.marshal_public_key(key.public_key()), asn1.enc(0xa0, attrs)])
+  let sig = match crypto.sign(r, key, hash, tbs) {
+    Ok(s) => s
+    Err(e) => return Err(err(e.display()))
+  }
+  if !crypto.verify(key.public_key(), hash, tbs, sig) {
+    return Err(err("x509: signature over certificate returned by signer is invalid"))
+  }
+  parse_request(asn1.enc_seq([tbs, alg_id, asn1.enc_bits(sig)]))
 }

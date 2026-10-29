@@ -1,5 +1,18 @@
 # std/crypto changes
 
+
+## 2026-10-29: feature: marshal_private_key
+
+- Kind: feature
+- Commit: this commit
+- Found by: std/x509's self_signed (a generated key must be saved)
+- Go reference: crypto/x509 MarshalPKCS8PrivateKey (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/x509create (Go's PKCS #8 of Go's RSA, ECDSA and Ed25519 test keys, byte for byte, and parse_private_key reading it back)
+
+`marshal_private_key(k)` is k as PKCS #8 DER, Go's encoding: PKCS #1
+inside for RSA, an ECPrivateKey with its public key and without its
+curve (the algorithm names it) for ECDSA, the seed for Ed25519.
+
 ## 2026-10-29: feature: AEAD (AES-GCM, ChaCha20-Poly1305) and HKDF
 
 - Kind: feature

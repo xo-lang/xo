@@ -535,3 +535,468 @@ func (v *X509_VerifyOptions) XoMark() {
 	v.F_intermediates.XoMark()
 	v.F_key_usages.XoMark()
 }
+
+type X509_Template struct {
+	F_serial           Bytes
+	F_subject          X509_Name
+	F_not_before       Time
+	F_not_after        Time
+	F_dns_names        List[string]
+	F_ip_addresses     List[Netip_Addr]
+	F_email_addresses  List[string]
+	F_uris             List[string]
+	F_is_ca            bool
+	F_max_path_len     Option[int64]
+	F_key_usage        List[X509_KeyUsage]
+	F_ext_key_usage    List[X509_ExtKeyUsage]
+	F_subject_key_id   Bytes
+	F_extra_extensions List[X509_Extension]
+}
+
+func (v X509_Template) XoEq(x any) bool {
+	o, ok := x.(X509_Template)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_serial, o.F_serial) {
+		return false
+	}
+	if !Eq(v.F_subject, o.F_subject) {
+		return false
+	}
+	if !Eq(v.F_not_before, o.F_not_before) {
+		return false
+	}
+	if !Eq(v.F_not_after, o.F_not_after) {
+		return false
+	}
+	if !Eq(v.F_dns_names, o.F_dns_names) {
+		return false
+	}
+	if !Eq(v.F_ip_addresses, o.F_ip_addresses) {
+		return false
+	}
+	if !Eq(v.F_email_addresses, o.F_email_addresses) {
+		return false
+	}
+	if !Eq(v.F_uris, o.F_uris) {
+		return false
+	}
+	if !Eq(v.F_is_ca, o.F_is_ca) {
+		return false
+	}
+	if !Eq(v.F_max_path_len, o.F_max_path_len) {
+		return false
+	}
+	if !Eq(v.F_key_usage, o.F_key_usage) {
+		return false
+	}
+	if !Eq(v.F_ext_key_usage, o.F_ext_key_usage) {
+		return false
+	}
+	if !Eq(v.F_subject_key_id, o.F_subject_key_id) {
+		return false
+	}
+	if !Eq(v.F_extra_extensions, o.F_extra_extensions) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v X509_Template) XoHash() uint64 {
+	h := uint64(5450681087900036520)
+	h = MixHash(h, Hash(v.F_serial))
+	h = MixHash(h, Hash(v.F_subject))
+	h = MixHash(h, Hash(v.F_not_before))
+	h = MixHash(h, Hash(v.F_not_after))
+	h = MixHash(h, Hash(v.F_dns_names))
+	h = MixHash(h, Hash(v.F_ip_addresses))
+	h = MixHash(h, Hash(v.F_email_addresses))
+	h = MixHash(h, Hash(v.F_uris))
+	h = MixHash(h, Hash(v.F_is_ca))
+	h = MixHash(h, Hash(v.F_max_path_len))
+	h = MixHash(h, Hash(v.F_key_usage))
+	h = MixHash(h, Hash(v.F_ext_key_usage))
+	h = MixHash(h, Hash(v.F_subject_key_id))
+	h = MixHash(h, Hash(v.F_extra_extensions))
+	return h
+}
+
+func (v X509_Template) XoDebug(b *strings.Builder) {
+	b.WriteString("Template{")
+	b.WriteString("serial: ")
+	DebugTo(b, v.F_serial)
+	b.WriteString(", subject: ")
+	DebugTo(b, v.F_subject)
+	b.WriteString(", not_before: ")
+	DebugTo(b, v.F_not_before)
+	b.WriteString(", not_after: ")
+	DebugTo(b, v.F_not_after)
+	b.WriteString(", dns_names: ")
+	DebugTo(b, v.F_dns_names)
+	b.WriteString(", ip_addresses: ")
+	DebugTo(b, v.F_ip_addresses)
+	b.WriteString(", email_addresses: ")
+	DebugTo(b, v.F_email_addresses)
+	b.WriteString(", uris: ")
+	DebugTo(b, v.F_uris)
+	b.WriteString(", is_ca: ")
+	DebugTo(b, v.F_is_ca)
+	b.WriteString(", max_path_len: ")
+	DebugTo(b, v.F_max_path_len)
+	b.WriteString(", key_usage: ")
+	DebugTo(b, v.F_key_usage)
+	b.WriteString(", ext_key_usage: ")
+	DebugTo(b, v.F_ext_key_usage)
+	b.WriteString(", subject_key_id: ")
+	DebugTo(b, v.F_subject_key_id)
+	b.WriteString(", extra_extensions: ")
+	DebugTo(b, v.F_extra_extensions)
+	b.WriteString("}")
+}
+
+func (v X509_Template) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *X509_Template) XoMark() {
+	v.F_subject.XoMark()
+	v.F_dns_names.XoMark()
+	v.F_ip_addresses.XoMark()
+	v.F_email_addresses.XoMark()
+	v.F_uris.XoMark()
+	v.F_key_usage.XoMark()
+	v.F_ext_key_usage.XoMark()
+	v.F_extra_extensions.XoMark()
+}
+
+type X509_CertificateRequest struct {
+	F_raw                 Bytes
+	F_version             int64
+	F_signature_algorithm string
+	F_subject             X509_Name
+	F_public_key          Option[Crypto_PublicKey]
+	F_dns_names           List[string]
+	F_ip_addresses        List[Netip_Addr]
+	F_email_addresses     List[string]
+	F_uris                List[string]
+	F_extensions          List[X509_Extension]
+}
+
+func (v X509_CertificateRequest) XoEq(x any) bool {
+	o, ok := x.(X509_CertificateRequest)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_raw, o.F_raw) {
+		return false
+	}
+	if !Eq(v.F_version, o.F_version) {
+		return false
+	}
+	if !Eq(v.F_signature_algorithm, o.F_signature_algorithm) {
+		return false
+	}
+	if !Eq(v.F_subject, o.F_subject) {
+		return false
+	}
+	if !Eq(v.F_public_key, o.F_public_key) {
+		return false
+	}
+	if !Eq(v.F_dns_names, o.F_dns_names) {
+		return false
+	}
+	if !Eq(v.F_ip_addresses, o.F_ip_addresses) {
+		return false
+	}
+	if !Eq(v.F_email_addresses, o.F_email_addresses) {
+		return false
+	}
+	if !Eq(v.F_uris, o.F_uris) {
+		return false
+	}
+	if !Eq(v.F_extensions, o.F_extensions) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v X509_CertificateRequest) XoHash() uint64 {
+	h := uint64(7652368861687673511)
+	h = MixHash(h, Hash(v.F_raw))
+	h = MixHash(h, Hash(v.F_version))
+	h = MixHash(h, Hash(v.F_signature_algorithm))
+	h = MixHash(h, Hash(v.F_subject))
+	h = MixHash(h, Hash(v.F_public_key))
+	h = MixHash(h, Hash(v.F_dns_names))
+	h = MixHash(h, Hash(v.F_ip_addresses))
+	h = MixHash(h, Hash(v.F_email_addresses))
+	h = MixHash(h, Hash(v.F_uris))
+	h = MixHash(h, Hash(v.F_extensions))
+	return h
+}
+
+func (v X509_CertificateRequest) XoDebug(b *strings.Builder) {
+	b.WriteString("CertificateRequest{")
+	b.WriteString("raw: ")
+	DebugTo(b, v.F_raw)
+	b.WriteString(", version: ")
+	DebugTo(b, v.F_version)
+	b.WriteString(", signature_algorithm: ")
+	DebugTo(b, v.F_signature_algorithm)
+	b.WriteString(", subject: ")
+	DebugTo(b, v.F_subject)
+	b.WriteString(", public_key: ")
+	DebugTo(b, v.F_public_key)
+	b.WriteString(", dns_names: ")
+	DebugTo(b, v.F_dns_names)
+	b.WriteString(", ip_addresses: ")
+	DebugTo(b, v.F_ip_addresses)
+	b.WriteString(", email_addresses: ")
+	DebugTo(b, v.F_email_addresses)
+	b.WriteString(", uris: ")
+	DebugTo(b, v.F_uris)
+	b.WriteString(", extensions: ")
+	DebugTo(b, v.F_extensions)
+	b.WriteString("}")
+}
+
+func (v X509_CertificateRequest) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *X509_CertificateRequest) XoMark() {
+	v.F_subject.XoMark()
+	v.F_dns_names.XoMark()
+	v.F_ip_addresses.XoMark()
+	v.F_email_addresses.XoMark()
+	v.F_uris.XoMark()
+	v.F_extensions.XoMark()
+}
+
+type X509_RequestTemplate struct {
+	F_subject          X509_Name
+	F_dns_names        List[string]
+	F_ip_addresses     List[Netip_Addr]
+	F_email_addresses  List[string]
+	F_uris             List[string]
+	F_extra_extensions List[X509_Extension]
+}
+
+func (v X509_RequestTemplate) XoEq(x any) bool {
+	o, ok := x.(X509_RequestTemplate)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_subject, o.F_subject) {
+		return false
+	}
+	if !Eq(v.F_dns_names, o.F_dns_names) {
+		return false
+	}
+	if !Eq(v.F_ip_addresses, o.F_ip_addresses) {
+		return false
+	}
+	if !Eq(v.F_email_addresses, o.F_email_addresses) {
+		return false
+	}
+	if !Eq(v.F_uris, o.F_uris) {
+		return false
+	}
+	if !Eq(v.F_extra_extensions, o.F_extra_extensions) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v X509_RequestTemplate) XoHash() uint64 {
+	h := uint64(3622890156325759443)
+	h = MixHash(h, Hash(v.F_subject))
+	h = MixHash(h, Hash(v.F_dns_names))
+	h = MixHash(h, Hash(v.F_ip_addresses))
+	h = MixHash(h, Hash(v.F_email_addresses))
+	h = MixHash(h, Hash(v.F_uris))
+	h = MixHash(h, Hash(v.F_extra_extensions))
+	return h
+}
+
+func (v X509_RequestTemplate) XoDebug(b *strings.Builder) {
+	b.WriteString("RequestTemplate{")
+	b.WriteString("subject: ")
+	DebugTo(b, v.F_subject)
+	b.WriteString(", dns_names: ")
+	DebugTo(b, v.F_dns_names)
+	b.WriteString(", ip_addresses: ")
+	DebugTo(b, v.F_ip_addresses)
+	b.WriteString(", email_addresses: ")
+	DebugTo(b, v.F_email_addresses)
+	b.WriteString(", uris: ")
+	DebugTo(b, v.F_uris)
+	b.WriteString(", extra_extensions: ")
+	DebugTo(b, v.F_extra_extensions)
+	b.WriteString("}")
+}
+
+func (v X509_RequestTemplate) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *X509_RequestTemplate) XoMark() {
+	v.F_subject.XoMark()
+	v.F_dns_names.XoMark()
+	v.F_ip_addresses.XoMark()
+	v.F_email_addresses.XoMark()
+	v.F_uris.XoMark()
+	v.F_extra_extensions.XoMark()
+}
+
+type X509_RevokedCertificate struct {
+	F_serial     Bytes
+	F_revoked_at Time
+	F_reason     int64
+	F_extensions List[X509_Extension]
+}
+
+func (v X509_RevokedCertificate) XoEq(x any) bool {
+	o, ok := x.(X509_RevokedCertificate)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_serial, o.F_serial) {
+		return false
+	}
+	if !Eq(v.F_revoked_at, o.F_revoked_at) {
+		return false
+	}
+	if !Eq(v.F_reason, o.F_reason) {
+		return false
+	}
+	if !Eq(v.F_extensions, o.F_extensions) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v X509_RevokedCertificate) XoHash() uint64 {
+	h := uint64(6365330177720331483)
+	h = MixHash(h, Hash(v.F_serial))
+	h = MixHash(h, Hash(v.F_revoked_at))
+	h = MixHash(h, Hash(v.F_reason))
+	h = MixHash(h, Hash(v.F_extensions))
+	return h
+}
+
+func (v X509_RevokedCertificate) XoDebug(b *strings.Builder) {
+	b.WriteString("RevokedCertificate{")
+	b.WriteString("serial: ")
+	DebugTo(b, v.F_serial)
+	b.WriteString(", revoked_at: ")
+	DebugTo(b, v.F_revoked_at)
+	b.WriteString(", reason: ")
+	DebugTo(b, v.F_reason)
+	b.WriteString(", extensions: ")
+	DebugTo(b, v.F_extensions)
+	b.WriteString("}")
+}
+
+func (v X509_RevokedCertificate) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *X509_RevokedCertificate) XoMark() {
+	v.F_extensions.XoMark()
+}
+
+type X509_RevocationList struct {
+	F_raw                 Bytes
+	F_signature_algorithm string
+	F_issuer              X509_Name
+	F_number              Bytes
+	F_this_update         Time
+	F_next_update         Option[Time]
+	F_revoked             List[X509_RevokedCertificate]
+	F_authority_key_id    Bytes
+	F_extensions          List[X509_Extension]
+}
+
+func (v X509_RevocationList) XoEq(x any) bool {
+	o, ok := x.(X509_RevocationList)
+	if !ok {
+		return false
+	}
+	if !Eq(v.F_raw, o.F_raw) {
+		return false
+	}
+	if !Eq(v.F_signature_algorithm, o.F_signature_algorithm) {
+		return false
+	}
+	if !Eq(v.F_issuer, o.F_issuer) {
+		return false
+	}
+	if !Eq(v.F_number, o.F_number) {
+		return false
+	}
+	if !Eq(v.F_this_update, o.F_this_update) {
+		return false
+	}
+	if !Eq(v.F_next_update, o.F_next_update) {
+		return false
+	}
+	if !Eq(v.F_revoked, o.F_revoked) {
+		return false
+	}
+	if !Eq(v.F_authority_key_id, o.F_authority_key_id) {
+		return false
+	}
+	if !Eq(v.F_extensions, o.F_extensions) {
+		return false
+	}
+	_ = o
+	return true
+}
+
+func (v X509_RevocationList) XoHash() uint64 {
+	h := uint64(2622693125914191491)
+	h = MixHash(h, Hash(v.F_raw))
+	h = MixHash(h, Hash(v.F_signature_algorithm))
+	h = MixHash(h, Hash(v.F_issuer))
+	h = MixHash(h, Hash(v.F_number))
+	h = MixHash(h, Hash(v.F_this_update))
+	h = MixHash(h, Hash(v.F_next_update))
+	h = MixHash(h, Hash(v.F_revoked))
+	h = MixHash(h, Hash(v.F_authority_key_id))
+	h = MixHash(h, Hash(v.F_extensions))
+	return h
+}
+
+func (v X509_RevocationList) XoDebug(b *strings.Builder) {
+	b.WriteString("RevocationList{")
+	b.WriteString("raw: ")
+	DebugTo(b, v.F_raw)
+	b.WriteString(", signature_algorithm: ")
+	DebugTo(b, v.F_signature_algorithm)
+	b.WriteString(", issuer: ")
+	DebugTo(b, v.F_issuer)
+	b.WriteString(", number: ")
+	DebugTo(b, v.F_number)
+	b.WriteString(", this_update: ")
+	DebugTo(b, v.F_this_update)
+	b.WriteString(", next_update: ")
+	DebugTo(b, v.F_next_update)
+	b.WriteString(", revoked: ")
+	DebugTo(b, v.F_revoked)
+	b.WriteString(", authority_key_id: ")
+	DebugTo(b, v.F_authority_key_id)
+	b.WriteString(", extensions: ")
+	DebugTo(b, v.F_extensions)
+	b.WriteString("}")
+}
+
+func (v X509_RevocationList) M_debug(*Task) string { return Debug(v) }
+
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *X509_RevocationList) XoMark() {
+	v.F_issuer.XoMark()
+	v.F_revoked.XoMark()
+	v.F_extensions.XoMark()
+}

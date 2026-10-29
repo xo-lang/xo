@@ -1303,6 +1303,25 @@ fn parse_private(der: Bytes) -> PrivateKey ! Str {
   Err("x509: PKCS#8 wrapping contained private key with unknown algorithm: ${oid}")
 }
 
+/// Go's MarshalPKCS8PrivateKey: PKCS #8 around PKCS #1 (RSA), an
+/// ECPrivateKey without its curve (it is in the algorithm) and with its
+/// public key (ECDSA), or the seed (Ed25519).
+fn marshal_private_key(k: PrivateKey) -> Bytes {
+  let (alg, inner) = match k.kind {
+    Rsa => {
+      let r = k.rsa
+      let pkcs1 = asn1.enc_seq([asn1.enc_int(0), asn1.enc_uint(r.n), asn1.enc_int(r.e), asn1.enc_uint(r.d), asn1.enc_uint(r.p), asn1.enc_uint(r.q), asn1.enc_uint(r.dp), asn1.enc_uint(r.dq), asn1.enc_uint(r.qinv)])
+      (asn1.enc_seq([oid_der(OID_RSA), asn1.enc_null()]), pkcs1)
+    }
+    Ed25519 => (asn1.enc_seq([oid_der(OID_ED25519)]), asn1.enc_octets(k.d))
+    _ => {
+      let ec = asn1.enc_seq([asn1.enc_int(1), asn1.enc_octets(k.d), asn1.enc_explicit(1, asn1.enc_bits(k.public.key))])
+      (asn1.enc_seq([oid_der(OID_EC), oid_der(curve_oid(k.kind))]), ec)
+    }
+  }
+  asn1.enc_seq([asn1.enc_int(0), alg, asn1.enc_octets(inner)])
+}
+
 fn parse_private_key(der: Bytes) -> PrivateKey ! crypto.KeyErr { parse_private(der).map_err(fn(m) { key_err(m) }) }
 
 // ---------------------------------------------------------------------------

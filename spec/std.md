@@ -5618,6 +5618,48 @@ fn (c: Certificate) verify(opts: VerifyOptions) -> List[List[Certificate]] ! Cer
 fn (c: Certificate) verify_hostname(host: Str) -> () ! CertErr
 fn (c: Certificate) check_signature_from(parent: Certificate) -> () ! CertErr
 fn system_roots(fs: Fs) -> List[Certificate] ! CertErr uses fs
+fn (c: Certificate) pem() -> Bytes
+
+struct Template {
+  serial: Bytes = b"", subject: Name, not_before: Time, not_after: Time,
+  dns_names: List[Str] = [], ip_addresses: List[netip.Addr] = [],
+  email_addresses: List[Str] = [], uris: List[Str] = [],
+  is_ca: Bool = false, max_path_len: Int? = None,
+  key_usage: List[KeyUsage] = [], ext_key_usage: List[ExtKeyUsage] = [],
+  subject_key_id: Bytes = b"", extra_extensions: List[Extension] = []
+}
+fn create_certificate(r: Rand, t: Template, public_key: crypto.PublicKey,
+  parent: Certificate?, key: crypto.PrivateKey) -> Certificate ! CertErr uses rand
+fn self_signed(r: Rand, hosts: List[Str], now: Time, days: Int = 30) -> (Bytes, Bytes) ! CertErr uses rand
+
+struct CertificateRequest {
+  raw: Bytes, version: Int, signature_algorithm: Str, subject: Name,
+  public_key: crypto.PublicKey?, dns_names: List[Str], ip_addresses: List[netip.Addr],
+  email_addresses: List[Str], uris: List[Str], extensions: List[Extension]
+}
+struct RequestTemplate {
+  subject: Name, dns_names: List[Str] = [], ip_addresses: List[netip.Addr] = [],
+  email_addresses: List[Str] = [], uris: List[Str] = [], extra_extensions: List[Extension] = []
+}
+fn create_request(r: Rand, t: RequestTemplate, key: crypto.PrivateKey) -> CertificateRequest ! CertErr uses rand
+fn parse_request(der: Bytes) -> CertificateRequest ! CertErr
+fn (q: CertificateRequest) check_signature() -> () ! CertErr
+fn (q: CertificateRequest) pem() -> Bytes
+
+struct RevokedCertificate { serial: Bytes, revoked_at: Time, reason: Int, extensions: List[Extension] }
+struct RevocationList {
+  raw: Bytes, signature_algorithm: Str, issuer: Name, number: Bytes,
+  this_update: Time, next_update: Time?, revoked: List[RevokedCertificate],
+  authority_key_id: Bytes, extensions: List[Extension]
+}
+fn parse_revocation_list(der: Bytes) -> RevocationList ! CertErr
+fn (l: RevocationList) check_signature_from(issuer: Certificate) -> () ! CertErr
+```
+
+```
+// a development certificate for a local HTTPS server
+let (cert, key) = x509.self_signed(os.rand, ["localhost", "127.0.0.1"], os.clock.now())?
+let srv = http.server(listener, routes).with_tls([http.tls_cert(cert, key)?])
 ```
 
 ```
@@ -5655,13 +5697,48 @@ fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
   text (`"x509: certificate signed by unknown authority"`, `"x509:
   certificate has expired or is not yet valid: current time ... is
   after ..."`, ...). `check_signature_from` is Go's CheckSignatureFrom.
+- `create_certificate` is Go's CreateCertificate: the TBS certificate
+  of `t` for `public_key`, issued by `parent` (self-signed when None)
+  and signed with `key`, in Go's encoding, so an Ed25519 or RSA
+  certificate is byte for byte Go's. The signature algorithm is Go's
+  default for the key (SHA256-RSA; ECDSA-SHA256, -SHA384, -SHA512 by
+  curve; Ed25519; a P-224 key is `CertErr("x509: unknown elliptic
+  curve")`). Its extensions, in Go's order: key usage (critical), extended
+  key usage, basic constraints (critical; made when `is_ca` or
+  `max_path_len` is set), subject key id (on a CA, the first 20 bytes of
+  the SHA-256 of the key when `subject_key_id` is empty), authority key id
+  (the parent's subject key id), the SAN (critical when the subject is
+  empty); then `extra_extensions`, one of which replaces a made one with
+  its OID. An empty `serial` is 20 random bytes with the top bit clear. A
+  subject with `raw` set is used as it is (a parsed certificate's).
+  Errors are Go's texts: a non-ASCII DNS name, e-mail or URI, a
+  `max_path_len` on a non-CA, a key that is not the parent's.
+- `self_signed` is for development and tests only: a fresh ECDSA P-256
+  key and a self-signed certificate for `hosts` (IP addresses go to
+  `ip_addresses`, the rest to `dns_names`), organization "Xo
+  Development", digital signature and server authentication, valid from
+  `now` for `days`; it returns the certificate's PEM and the key's PKCS
+  #8 PEM. `pem()` is a certificate's (or request's) PEM block.
+- `create_request` and `parse_request` are Go's CreateCertificateRequest
+  and ParseCertificateRequest (PKCS #10): the names go into a requested
+  SAN extension; `check_signature` checks the request's own signature.
+  A request whose DER does not parse is `CertErr("x509: malformed
+  certificate request")` where Go reports encoding/asn1's text.
+- `parse_revocation_list` is Go's ParseRevocationList (RFC 5280 5):
+  each revoked serial with its time, reason code and extensions, the CRL
+  number and the authority key id; `check_signature_from(issuer)` is Go's
+  RevocationList.CheckSignatureFrom. Creating CRLs, OCSP and PKCS #12 are
+  not in std (Go keeps the latter two in x/crypto).
 - `system_roots(fs)` is the roots std/tls verifies servers against when
   given none (27): Linux's CA bundle and directories (`SSL_CERT_FILE`,
   `SSL_CERT_DIR`), Windows's ROOT store, and on macOS the system's anchor
   certificates (SecTrustCopyAnchorCertificates; TLS there asks the
   Security framework, which also applies user and admin trust settings
   that a list cannot hold). Certificates that do not parse are left out.
-- Tests: the corpus `x509` (internal/stdtest) parses every certificate of
+- Tests: the corpus `x509create` makes every template both in Xo and in
+  Go (equal bytes for Ed25519 and RSA, equal fields for ECDSA), and
+  parses Go's requests and CRLs and mutated copies against Go's fields
+  and errors. The corpus `x509` (internal/stdtest) parses every certificate of
   Go's crypto/x509 and crypto/tls testdata, a fifth of the NIST PKITS
   certificates, verify_test.go's and mutated copies, comparing every
   field and error text with Go's, and runs verify_test.go's verifyTests

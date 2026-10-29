@@ -170,6 +170,9 @@ struct PrivateKey {}
 
 /// PKCS #8, PKCS #1, or SEC 1 EC DER, as Go's parsers tell them apart.
 fn parse_private_key(der: Bytes) -> PrivateKey ! KeyErr
+/// k as PKCS #8 DER (Go's MarshalPKCS8PrivateKey), which parse_private_key
+/// reads back; pem_encode it as a "PRIVATE KEY" block to save it.
+fn marshal_private_key(k: PrivateKey) -> Bytes
 fn (k: PrivateKey) alg() -> KeyAlg
 fn (k: PrivateKey) public_key() -> PublicKey
 

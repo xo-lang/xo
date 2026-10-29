@@ -361,3 +361,166 @@ pub fn cat(parts: List[Bytes]) -> Bytes {
   }
   s.bytes()
 }
+
+// Writing certificates and keys (std/x509's create functions; Go's
+// cryptobyte.Builder and encoding/asn1 Marshal)
+
+/// A SEQUENCE of parts, in order.
+pub fn enc_seq(parts: List[Bytes]) -> Bytes { enc(SEQUENCE, cat(parts)) }
+
+/// A SET OF parts: DER orders the encodings (X.690 11.6).
+pub fn enc_set_of(parts: List[Bytes]) -> Bytes { enc(SET, cat(parts.sort())) }
+
+/// [n] EXPLICIT around inner.
+pub fn enc_explicit(n: Int, inner: Bytes) -> Bytes { enc(0xa0 | n, inner) }
+
+/// [n] IMPLICIT of a primitive body.
+pub fn enc_implicit(n: Int, body: Bytes) -> Bytes { enc(0x80 | n, body) }
+
+/// [n] IMPLICIT of a constructed body (parts).
+pub fn enc_implicit_seq(n: Int, parts: List[Bytes]) -> Bytes { enc(0xa0 | n, cat(parts)) }
+
+pub fn enc_bool(v: Bool) -> Bytes { enc(BOOLEAN, if v { b"\xff" } else { b"\x00" }) }
+
+pub fn enc_null() -> Bytes { b"\x05\x00" }
+
+/// The INTEGER n (n >= 0).
+pub fn enc_int(n: Int) -> Bytes {
+  var b: List[Int] = []
+  var m = n
+  while m > 0 {
+    b.push(m & 255)
+    m = m >> 8
+  }
+  var out = BytesBuilder.with_capacity(b.len())
+  var i = b.len() - 1
+  while i >= 0 {
+    out.write_byte(UInt8(b[i]))
+    i -= 1
+  }
+  enc_uint(out.freeze())
+}
+
+/// The OBJECT IDENTIFIER of dotted ("2.5.4.3"); None when it is not one.
+pub fn enc_oid(dotted: Str) -> Bytes? {
+  let ps = dotted.split(".")
+  if ps.len() < 2 {
+    return None
+  }
+  var arcs: List[Int] = []
+  for p in ps {
+    // decimal digits only, at most 18 (an arc fits an Int)
+    if p.is_empty() || p.len() > 18 {
+      return None
+    }
+    var v = 0
+    for x in p.bytes() {
+      if Int(x) < 48 || Int(x) > 57 {
+        return None
+      }
+      v = v * 10 + (Int(x) - 48)
+    }
+    arcs.push(v)
+  }
+  if arcs[0] > 2 || (arcs[0] < 2 && arcs[1] >= 40) {
+    return None
+  }
+  var b = BytesBuilder.with_capacity(ps.len() * 2)
+  base128(b, arcs[0] * 40 + arcs[1])
+  for a in arcs[2..arcs.len()] {
+    base128(b, a)
+  }
+  Some(enc(OID, b.freeze()))
+}
+
+fn base128(var b: BytesBuilder, v: Int) {
+  var k = 0
+  var m = v
+  while m > 0 || k == 0 {
+    k += 1
+    m = m >> 7
+  }
+  var i = k - 1
+  while i >= 0 {
+    let x = (v >> (7 * i)) & 127
+    b.write_byte(UInt8(if i > 0 { x | 128 } else { x }))
+    i -= 1
+  }
+}
+
+pub fn enc_octets(v: Bytes) -> Bytes { enc(OCTET_STRING, v) }
+
+/// A BIT STRING of whole bytes.
+pub fn enc_bits(v: Bytes) -> Bytes { enc(BIT_STRING, b"\x00" + v) }
+
+/// A BIT STRING of flags (bit 0 first, as KeyUsage), DER's trailing zero
+/// bits dropped.
+pub fn enc_flag_bits(flags: Int) -> Bytes {
+  if flags == 0 {
+    return enc(BIT_STRING, b"\x00")
+  }
+  var top = 0
+  for i in 0..16 {
+    if (flags & (1 << i)) != 0 {
+      top = i
+    }
+  }
+  let n = top / 8 + 1
+  var b = BytesBuilder.with_capacity(n + 1)
+  b.write_byte(UInt8(7 - top % 8))
+  for k in 0..n {
+    var x = 0
+    for j in 0..8 {
+      if (flags & (1 << (k * 8 + j))) != 0 {
+        x = x | (128 >> j)
+      }
+    }
+    b.write_byte(UInt8(x))
+  }
+  enc(BIT_STRING, b.freeze())
+}
+
+/// encoding/asn1's choice for a Go string (Marshal rejects * and &): PrintableString when every
+/// character is one, else UTF8String.
+pub fn enc_string(s: Str) -> Bytes {
+  // non-ASCII bytes are not printable, so bytes stand for runes
+  for x in s.bytes() {
+    let c = Int(x)
+    if !((c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || (c >= 39 && c <= 41) || (c >= 43 && c <= 47) || c == 32 || c == 58 || c == 61 || c == 63) {
+      return enc(UTF8_STRING, s.bytes())
+    }
+  }
+  enc(PRINTABLE_STRING, s.bytes())
+}
+
+pub fn enc_ia5(s: Str) -> Bytes { enc(IA5_STRING, s.bytes()) }
+
+/// The civil date of days since 1970-01-01 (proleptic Gregorian).
+fn civil(z0: Int) -> (Int, Int, Int) {
+  let z = z0 + 719468
+  let era = (if z >= 0 { z } else { z - 146096 }) / 146097
+  let doe = z - era * 146097
+  let yoe = (doe - doe / 1460 + doe / 36524 - doe / 146096) / 365
+  let doy = doe - (365 * yoe + yoe / 4 - yoe / 100)
+  let mp = (5 * doy + 2) / 153
+  let d = doy - (153 * mp + 2) / 5 + 1
+  let m = if mp < 10 { mp + 3 } else { mp - 9 }
+  let y = yoe + era * 400 + (if m <= 2 { 1 } else { 0 })
+  (y, m, d)
+}
+
+fn two(n: Int) -> Str { if n < 10 { "0${n}" } else { "${n}" } }
+
+/// RFC 5280 4.1.2.5's time of Unix seconds: UTCTime through 2049,
+/// GeneralizedTime from 2050 and before 1950.
+pub fn enc_time(secs: Int) -> Bytes {
+  let days = if secs >= 0 { secs / 86400 } else { (secs - 86399) / 86400 }
+  let rest = secs - days * 86400
+  let (y, m, d) = civil(days)
+  let hms = "${two(m)}${two(d)}${two(rest / 3600)}${two(rest / 60 % 60)}${two(rest % 60)}Z"
+  if y >= 1950 && y < 2050 {
+    return enc(UTC_TIME, "${two(y % 100)}${hms}".bytes())
+  }
+  let ys = "${y}"
+  enc(GENERALIZED_TIME, "${"0000"[0..4 - ys.len()]}${ys}${hms}".bytes())
+}
