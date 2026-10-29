@@ -117,6 +117,7 @@ fn (n: Int) to_str_width(width: Int, base: Int = 10, zero: Bool = false, plus: B
 fn (n: Int) leading_zeros() -> Int           // also trailing_zeros, ones_count: math/bits on the word
 
 fn (f: Float) floor() -> Float               // also ceil, round, trunc, abs, sqrt
+fn (f: Float) to_fixed(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str  // strconv.FormatFloat 'f'; also to_exp ('e'), to_general ('g'); prec below 0 is the shortest (decision 0410)
 fn (f: Float) is_nan() -> Bool               // also is_inf
 fn (f: Float) exp() -> Float                 // also exp2, expm1, log, log2, log10, log1p, sin, cos, tan,
                                              // asin, acos, atan, sinh, cosh, tanh, cbrt
@@ -4417,7 +4418,7 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 
 Every function and method of std/prelude.xo, by type, as declared there
 (the sections above explain them); interface methods take `self`.
-444 declarations.
+447 declarations.
 
 ### Range
 
@@ -4486,6 +4487,9 @@ fn (static: Bool) parse(s: Str) -> Bool?
 ```
 fn (static: Float) parse(s: Str) -> Float?
 fn (f: Float) floor() -> Float
+fn (f: Float) to_fixed(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str
+fn (f: Float) to_exp(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str
+fn (f: Float) to_general(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str
 fn (f: Float) ceil() -> Float
 fn (f: Float) round() -> Float
 fn (f: Float) trunc() -> Float

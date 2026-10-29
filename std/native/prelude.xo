@@ -26,6 +26,7 @@ use native/llrt/cabi_net
 use native/llrt/netconn
 use native/llrt/tasks
 use native/llrt/fault
+use native/llrt/ftoa
 use native/llrt/fsops
 use native/llrt/gomath
 use native/llrt/fspath
@@ -4593,6 +4594,45 @@ fn int_to_str_width(n: Int, width: Int, base: Int, zero: Bool, plus: Bool) -> St
     return sign + "0".repeat(width - used) + body
   }
   " ".repeat(width - used) + sign + body
+}
+
+/// text (a number's, with or without a sign) padded as Go's fmt pads a
+/// float: width columns, zeros after the sign (not for NaN or Inf), spaces
+/// on the right for a negative width, a + for a positive number with plus.
+fn pad_number(text: Str, width: Int, zero: Bool, plus: Bool) -> Str {
+  var sign = ""
+  var body = text
+  if text.starts_with("-") || text.starts_with("+") {
+    sign = text[0..1]
+    body = text[1..]
+  } else if plus {
+    sign = "+"
+  }
+  let used = sign.len() + body.len()
+  if width < 0 {
+    let w = 0 - width
+    return if used >= w { sign + body } else { sign + body + " ".repeat(w - used) }
+  }
+  if used >= width {
+    return sign + body
+  }
+  let inf = body == "Inf" || body == "NaN"
+  if zero && !inf {
+    return sign + "0".repeat(width - used) + body
+  }
+  " ".repeat(width - used) + sign + body
+}
+
+fn float_to_fixed(f: Float, prec: Int, width: Int, zero: Bool, plus: Bool) -> Str {
+  pad_number(ftoa.format(f, 102, prec), width, zero, plus)
+}
+
+fn float_to_exp(f: Float, prec: Int, width: Int, zero: Bool, plus: Bool) -> Str {
+  pad_number(ftoa.format(f, 101, prec), width, zero, plus)
+}
+
+fn float_to_general(f: Float, prec: Int, width: Int, zero: Bool, plus: Bool) -> Str {
+  pad_number(ftoa.format(f, 103, prec), width, zero, plus)
 }
 
 fn int_to_str_base(n: Int, base: Int) -> Str {

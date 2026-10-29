@@ -216,6 +216,15 @@ fn (n: Int) checked_mul(m: Int) -> Int?
 fn (n: Int) checked_div(m: Int) -> Int?
 
 fn (f: Float) floor() -> Float
+/// f as strconv.FormatFloat's 'f', 'e' and 'g' text with prec digits
+/// (`%.3f`, `%e`, `%g`; prec below 0 is the shortest digits that round
+/// trip), padded as Int.to_str_width does: `width` columns, zeros after the
+/// sign with `zero`, left justified for a negative width, `+` before a
+/// positive number with `plus`. NaN and the infinities are never zero
+/// padded (decision 0410).
+fn (f: Float) to_fixed(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str
+fn (f: Float) to_exp(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str
+fn (f: Float) to_general(prec: Int, width: Int = 0, zero: Bool = false, plus: Bool = false) -> Str
 fn (f: Float) ceil() -> Float
 fn (f: Float) round() -> Float
 fn (f: Float) trunc() -> Float

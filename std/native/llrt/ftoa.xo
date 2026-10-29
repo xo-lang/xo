@@ -1,0 +1,345 @@
+// Float text with a precision (decision 0410): strconv.FormatFloat(f, 'e',
+// 'f' or 'g', prec, 64) for prec >= 0, and the shortest digits (prec < 0)
+// laid out as Go lays them out. The digits of a finite Float are found
+// exactly, as Go's bigFtoa does (decimal.go's Assign and Shift): the
+// significand times 2^e2 as decimal digits, by multiplying by 2^k (k at
+// most 50) or by 5^20 at a time, then rounded to the digits the format
+// wants (decimal.Round: half to even, the digits exact so never "above
+// half"), and laid out by fmtE and fmtF of ftoa.go. Go's fixedFtoa (up
+// to 18 digits, 128 bit powers of ten) is a later speedup of the same
+// digits.
+
+use native/llrt/num
+use native/rt
+
+/// The decimal digits of a finite Float: d[0..nd] are the digits most
+/// significant first (no leading or trailing zero), the value is
+/// 0.d1d2... times 10^dp; nd is 0 for zero.
+struct Dec {
+  d: List[Int] = []
+  dp: Int = 0
+}
+
+/// The exact digits of mant * 2^e2 (mant below 2^53).
+fn exact(mant: Int, e2: Int) -> Dec {
+  if mant == 0 {
+    return Dec{}
+  }
+  // least significant digit first
+  var ds: List[Int] = []
+  var v = mant
+  while v > 0 {
+    ds.push(v % 10)
+    v = v / 10
+  }
+  var dp = ds.len()
+  if e2 >= 0 {
+    var k = e2
+    while k > 0 {
+      let s = if k > 50 { 50 } else { k }
+      ds = mul_small(ds, 1.wrapping_shl(s))
+      k -= s
+    }
+    dp = ds.len()
+  } else {
+    // mant * 2^-k = mant * 5^k / 10^k
+    var k = 0 - e2
+    let want = k
+    while k > 0 {
+      let s = if k > 20 { 20 } else { k }
+      ds = mul_small(ds, pow5(s))
+      k -= s
+    }
+    dp = ds.len() - want
+  }
+  // most significant first, trimmed
+  var out: List[Int] = []
+  var i = ds.len() - 1
+  while i >= 0 {
+    out.push(ds[i])
+    i -= 1
+  }
+  var nd = out.len()
+  while nd > 0 && out[nd - 1] == 0 {
+    nd -= 1
+  }
+  // leading zeros (a carry never leaves one, but the digit of a power
+  // multiple may)
+  var lead = 0
+  while lead < nd && out[lead] == 0 {
+    lead += 1
+  }
+  var res: List[Int] = []
+  for j in lead..nd {
+    res.push(out[j])
+  }
+  Dec{d: res, dp: dp - lead}
+}
+
+fn pow5(k: Int) -> Int {
+  var p = 1
+  for _ in 0..k {
+    p *= 5
+  }
+  p
+}
+
+/// ds (least significant digit first) times m (below 2^50 or 5^20), the
+/// carry written out as more digits.
+fn mul_small(ds: List[Int], m: Int) -> List[Int] {
+  var out: List[Int] = List.with_capacity(ds.len() + 20)
+  var carry = 0
+  for x in ds {
+    let n = x * m + carry
+    out.push(n % 10)
+    carry = n / 10
+  }
+  while carry > 0 {
+    out.push(carry % 10)
+    carry = carry / 10
+  }
+  out
+}
+
+/// d rounded to nd digits (decimal.Round).
+fn round_to(d: Dec, nd: Int) -> Dec {
+  if nd < 0 || nd >= d.d.len() {
+    return d
+  }
+  var up = d.d[nd] >= 5
+  if d.d[nd] == 5 && nd + 1 == d.d.len() {
+    // exactly halfway: to even
+    up = nd > 0 && d.d[nd - 1] % 2 != 0
+  }
+  var res: List[Int] = []
+  if up {
+    var i = nd - 1
+    while i >= 0 && d.d[i] == 9 {
+      i -= 1
+    }
+    if i < 0 {
+      return Dec{d: [1], dp: d.dp + 1}
+    }
+    for j in 0..i {
+      res.push(d.d[j])
+    }
+    res.push(d.d[i] + 1)
+    return Dec{d: res, dp: d.dp}
+  }
+  var n = nd
+  while n > 0 && d.d[n - 1] == 0 {
+    n -= 1
+  }
+  for j in 0..n {
+    res.push(d.d[j])
+  }
+  if n == 0 {
+    return Dec{}
+  }
+  Dec{d: res, dp: d.dp}
+}
+
+/// The shortest digits that round trip (what `${f}` prints), from the
+/// text of go_g_text: its digits and exponent.
+fn shortest(f: Float) -> Dec {
+  let t = num.go_g_text(f)
+  var digits: List[Int] = []
+  var dp = 0
+  var seen_dot = false
+  var e = 0
+  var i = 0
+  let b = t.bytes()
+  var intd = 0
+  while i < b.len() {
+    let c = b[i]
+    if c >= 48 && c <= 57 {
+      digits.push(Int(c) - 48)
+      if !seen_dot {
+        intd += 1
+      }
+    } else if c == 46 {
+      seen_dot = true
+    } else if c == 101 {
+      // e+NN or e-NN
+      var sign = 1
+      i += 1
+      if b[i] == 45 {
+        sign = -1
+      }
+      i += 1
+      var x = 0
+      while i < b.len() {
+        x = x * 10 + Int(b[i]) - 48
+        i += 1
+      }
+      e = sign * x
+      break
+    }
+    i += 1
+  }
+  dp = intd + e
+  // trim leading zeros (0.001) and trailing zeros
+  var lead = 0
+  while lead < digits.len() && digits[lead] == 0 {
+    lead += 1
+  }
+  var nd = digits.len()
+  while nd > lead && digits[nd - 1] == 0 {
+    nd -= 1
+  }
+  var res: List[Int] = []
+  for j in lead..nd {
+    res.push(digits[j])
+  }
+  if res.is_empty() {
+    return Dec{}
+  }
+  Dec{d: res, dp: dp - lead}
+}
+
+fn at(d: Dec, i: Int) -> Int { if i >= 0 && i < d.d.len() { d.d[i] } else { 0 } }
+
+/// fmtE: d.ddde+XX with prec digits after the point.
+fn fmt_e(out: Str, neg: Bool, d: Dec, prec: Int, e: Int) -> Str {
+  var s = out
+  if neg {
+    s = s + "-"
+  }
+  s = s + (if d.d.len() == 0 { "0" } else { "${d.d[0]}" })
+  if prec > 0 {
+    s = s + "."
+    var i = 1
+    let m = if d.d.len() < prec + 1 { d.d.len() } else { prec + 1 }
+    while i < m {
+      s = s + "${d.d[i]}"
+      i += 1
+    }
+    while i <= prec {
+      s = s + "0"
+      i += 1
+    }
+  }
+  s = s + (if e == 69 { "E" } else { "e" })
+  var exp = d.dp - 1
+  if d.d.len() == 0 {
+    exp = 0
+  }
+  if exp < 0 {
+    s = s + "-"
+    exp = 0 - exp
+  } else {
+    s = s + "+"
+  }
+  if exp < 10 {
+    s = s + "0${exp}"
+  } else {
+    s = s + "${exp}"
+  }
+  s
+}
+
+/// fmtF: ddd.ddd with prec digits after the point.
+fn fmt_f(out: Str, neg: Bool, d: Dec, prec: Int) -> Str {
+  var s = out
+  if neg {
+    s = s + "-"
+  }
+  if d.dp > 0 {
+    var m = if d.d.len() < d.dp { d.d.len() } else { d.dp }
+    for j in 0..m {
+      s = s + "${d.d[j]}"
+    }
+    while m < d.dp {
+      s = s + "0"
+      m += 1
+    }
+  } else {
+    s = s + "0"
+  }
+  if prec > 0 {
+    s = s + "."
+    for i in 0..prec {
+      s = s + "${at(d, d.dp + i)}"
+    }
+  }
+  s
+}
+
+/// strconv.FormatFloat(f, verb, prec, 64): verb 'e' (101), 'E' (69), 'f'
+/// (102), 'g' (103) or 'G' (71); prec below 0 for the shortest digits.
+pub fn format(f: Float, verb: Int, prec0: Int) -> Str {
+  let bits = rt.float_bits(f)
+  let neg = bits < 0
+  let be = (bits >> 52) & 0x7FF
+  let frac = bits & 0xFFFFFFFFFFFFF
+  if be == 0x7FF {
+    if frac != 0 {
+      return "NaN"
+    }
+    return if neg { "-Inf" } else { "+Inf" }
+  }
+  var d = Dec{}
+  var prec = prec0
+  let shortest_digits = prec < 0
+  if !(be == 0 && frac == 0) {
+    var mant = frac
+    var e2 = be - 1075
+    if be == 0 {
+      e2 = -1074
+    } else {
+      mant = mant | 0x10000000000000
+    }
+    if shortest_digits {
+      d = shortest(f)
+    } else {
+      d = exact(mant, e2)
+    }
+  }
+  if shortest_digits {
+    if verb == 101 || verb == 69 {
+      prec = d.d.len() - 1
+    } else if verb == 102 {
+      prec = if d.d.len() - d.dp > 0 { d.d.len() - d.dp } else { 0 }
+    } else {
+      prec = d.d.len()
+    }
+  } else {
+    if verb == 101 || verb == 69 {
+      d = round_to(d, prec + 1)
+    } else if verb == 102 {
+      d = round_to(d, d.dp + prec)
+    } else {
+      if prec == 0 {
+        prec = 1
+      }
+      d = round_to(d, prec)
+    }
+  }
+  if verb == 101 || verb == 69 {
+    return fmt_e("", neg, d, prec, verb)
+  }
+  if verb == 102 {
+    return fmt_f("", neg, d, prec)
+  }
+  // 'g' and 'G'
+  var eprec = prec
+  if eprec > d.d.len() && d.d.len() >= d.dp {
+    eprec = d.d.len()
+  }
+  if shortest_digits {
+    eprec = 6
+  }
+  let exp = d.dp - 1
+  if exp < -4 || exp >= eprec {
+    var p = prec
+    if p > d.d.len() {
+      p = d.d.len()
+    }
+    return fmt_e("", neg, d, p - 1, if verb == 71 { 69 } else { 101 })
+  }
+  var p = prec
+  if p > d.dp {
+    p = d.d.len()
+  }
+  fmt_f("", neg, d, if p - d.dp > 0 { p - d.dp } else { 0 })
+}

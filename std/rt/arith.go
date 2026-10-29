@@ -555,6 +555,45 @@ func padFill(s string, width int64, fill, what string) int {
 	return n
 }
 
+// Float_to_fixed, Float_to_exp and Float_to_general are `f.to_fixed(prec,
+// width, zero, plus)` and the others (decision 0410): strconv.FormatFloat's
+// 'f', 'e' and 'g' text, padded as Int_to_str_width pads.
+func Float_to_fixed(_ *Task, f float64, prec, width int64, zero, plus bool) string {
+	return padNumber(strconv.FormatFloat(f, 'f', int(prec), 64), width, zero, plus)
+}
+
+func Float_to_exp(_ *Task, f float64, prec, width int64, zero, plus bool) string {
+	return padNumber(strconv.FormatFloat(f, 'e', int(prec), 64), width, zero, plus)
+}
+
+func Float_to_general(_ *Task, f float64, prec, width int64, zero, plus bool) string {
+	return padNumber(strconv.FormatFloat(f, 'g', int(prec), 64), width, zero, plus)
+}
+
+func padNumber(text string, width int64, zero, plus bool) string {
+	sign, body := "", text
+	if strings.HasPrefix(text, "-") || strings.HasPrefix(text, "+") {
+		sign, body = text[:1], text[1:]
+	} else if plus {
+		sign = "+"
+	}
+	used := len(sign) + len(body)
+	if width < 0 {
+		w := int(-width)
+		if used >= w {
+			return sign + body
+		}
+		return sign + body + strings.Repeat(" ", w-used)
+	}
+	if used >= int(width) {
+		return sign + body
+	}
+	if zero && body != "Inf" && body != "NaN" {
+		return sign + strings.Repeat("0", int(width)-used) + body
+	}
+	return strings.Repeat(" ", int(width)-used) + sign + body
+}
+
 // Int_to_str_width is `n.to_str_width(width, base, zero, plus)` (decision 0410).
 func Int_to_str_width(_ *Task, n, width, base int64, zero, plus bool) string {
 	if base < 2 || base > 36 {

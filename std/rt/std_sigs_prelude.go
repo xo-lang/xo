@@ -60,6 +60,9 @@ var (
 	_ func(*Task, int64, int64) Option[int64]                       = Int_checked_mul
 	_ func(*Task, int64, int64) Option[int64]                       = Int_checked_div
 	_ func(*Task, float64) float64                                  = Float_floor
+	_ func(*Task, float64, int64, int64, bool, bool) string         = Float_to_fixed
+	_ func(*Task, float64, int64, int64, bool, bool) string         = Float_to_exp
+	_ func(*Task, float64, int64, int64, bool, bool) string         = Float_to_general
 	_ func(*Task, float64) float64                                  = Float_ceil
 	_ func(*Task, float64) float64                                  = Float_round
 	_ func(*Task, float64) float64                                  = Float_trunc

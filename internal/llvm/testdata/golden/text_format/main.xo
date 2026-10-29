@@ -1,0 +1,12 @@
+// Str.pad_left, pad_right and center, Int.to_str_width, and Float.to_fixed,
+// to_exp and to_general (decision 0410): Go's fmt widths and strconv's
+// FormatFloat (the corpora in std/native/prelude_test.xo hold the rows
+// against Go; this golden runs the methods on every backend).
+fn main(os: Os) {
+  let out = os.stdio
+  out.println("[${"ab".pad_left(5)}] [${"ab".pad_right(5, ".")}] [${"ab".center(6, "*")}] [${"日本".pad_left(4, "-")}]")
+  out.println("[${(42).to_str_width(6)}] [${(42).to_str_width(6, 10, true)}] [${(-42).to_str_width(6, 10, true)}] [${(42).to_str_width(-6)}] [${(42).to_str_width(0, 10, false, true)}] [${(255).to_str_width(4, 16, true)}]")
+  out.println("[${(3.14159).to_fixed(2)}] [${(3.14159).to_fixed(2, 8, true)}] [${(-0.5).to_fixed(0)}] [${(2.5).to_fixed(0)}] [${(1e21).to_fixed(1)}]")
+  out.println("[${(1234.5).to_exp(2)}] [${(0.000012345).to_exp(3)}] [${(0.0).to_exp(1)}]")
+  out.println("[${(0.000012345).to_general(3)}] [${(123456789.0).to_general(4)}] [${(100.0).to_general(-1)}] [${(0.1).to_fixed(20)}]")
+}
