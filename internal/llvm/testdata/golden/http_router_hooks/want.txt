@@ -1,0 +1,21 @@
+exit 0
+--- stdout
+hit: 200 allow=[-] text/plain; charset=utf-8 | item 3
+default 404: 404 allow=[-] application/json | {"error":"not found"}
+default 405: 405 allow=[GET, POST] application/json | {"error":"method not allowed"}
+default 405 id: 405 allow=[GET, PUT] application/json | {"error":"method not allowed"}
+any method: 200 allow=[-] text/plain; charset=utf-8 | any DELETE
+mounted hit: 200 allow=[-] text/plain; charset=utf-8 | sub
+mounted miss: 404 allow=[-] application/json | {"error":"not found"}
+mounted 405: 405 allow=[GET] application/json | {"error":"method not allowed"}
+hook 404: 404 allow=[-] text/html; charset=utf-8 | <!doctype html>
+<html><head><meta charset="utf-8"><title>Not Found</title></head><body><h1>Not Found</h1><p>no page at /nope &lt;here&gt;</p></body></html>
+hook 405: 405 allow=[GET, POST] text/plain; charset=utf-8 | DELETE not allowed on /items
+hook 405 id: 405 allow=[GET, PUT] text/plain; charset=utf-8 | POST not allowed on /items/7
+hook 405 own allow: 405 allow=[GET] - | mine
+mw over hit: 200 allow=[-] text/plain; charset=utf-8 | mw saw 200
+mw over 404: 200 allow=[-] text/plain; charset=utf-8 | mw saw 404
+mw over 405: 200 allow=[-] text/plain; charset=utf-8 | mw saw 405
+error_html: 503 allow=[-] text/html; charset=utf-8 | <!doctype html>
+<html><head><meta charset="utf-8"><title>Down &amp; &#34;out&#34;</title></head><body><h1>Down &amp; &#34;out&#34;</h1><p>back &lt;soon&gt;</p></body></html>
+--- stderr

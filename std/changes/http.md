@@ -1,5 +1,23 @@
 # std/http changes
 
+## 2026-10-30: feature: router not_found and method_not_allowed hooks, Allow on a 405, error_html
+
+- Kind: feature
+- Commit: this commit
+- Found by: the HTTP server gaps survey (part 3): the 404 and 405 were fixed JSON, a 405 carried no Allow
+- Go reference: net/http 1.22's ServeMux (Allow on a 405 lists the pattern methods of the path); chi's NotFound and MethodNotAllowed; html/template-free pages as Go's Error gives text
+- Test: golden http_router_hooks (both backends)
+
+`r.not_found(h)` and `r.method_not_allowed(h)` answer a miss in place
+of the `{"error":"not found"}` and `{"error":"method not allowed"}`
+JSON; a hook runs as a handler (inside the middleware, an error a
+response, a fault a 500). A 405, default or a hook's without one,
+carries `Allow` with the methods of the routes that match the path in
+registration order without repeats. A mounted router's hooks are not
+copied: its misses are the outer router's. `http.error_html(status,
+title, detail)` is an HTML page (text/html, nosniff) with the title in
+<title> and <h1> and the detail in <p>, both escaped.
+
 ## 2026-10-30: fix: an HTTP/2 request's url.scheme is https when the :scheme pseudo header is missing
 
 - Kind: fix

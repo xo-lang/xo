@@ -2,6 +2,7 @@ package rt
 
 import (
 	"bytes"
+	"html"
 	"io"
 	"net/textproto"
 	"net/url"
@@ -48,6 +49,43 @@ type middleware = func(*Task, Http_Request, func(*Task, Http_Request) Result[Htt
 type Http_Router struct {
 	routes List[*route]
 	mws    List[middleware]
+	// the not_found and method_not_allowed hooks (std.md 4.1); nil
+	// answers a miss with the default JSON
+	miss  func(*Task, Http_Request) Http_Response
+	allow func(*Task, Http_Request) Http_Response
+}
+
+// Http_Router_not_found is `r.not_found(h)` (std.md 4.1).
+func Http_Router_not_found[E any](_ *Task, r *Http_Router, h func(*Task, Http_Request) Result[Http_Response, E]) {
+	r.miss = hookOf(h)
+}
+
+// Http_Router_method_not_allowed is `r.method_not_allowed(h)` (std.md
+// 4.1): the response gets Allow when it lacks it.
+func Http_Router_method_not_allowed[E any](_ *Task, r *Http_Router, h func(*Task, Http_Request) Result[Http_Response, E]) {
+	r.allow = hookOf(h)
+}
+
+// hookOf is h with its error as a response, as a route's handler.
+func hookOf[E any](h func(*Task, Http_Request) Result[Http_Response, E]) func(*Task, Http_Request) Http_Response {
+	return func(tk *Task, req Http_Request) Http_Response {
+		res := h(tk, req)
+		if res.Ok {
+			return res.V
+		}
+		return errorResponse(tk, any(res.E), res.Tr)
+	}
+}
+
+// withAllow is resp with the Allow header when it has none (a 405's).
+func withAllow(tk *Task, resp Http_Response, allow string) Http_Response {
+	if Map_get(tk, resp.F_headers, "Allow").Some {
+		return resp
+	}
+	h := resp.F_headers
+	Map_put(tk, &h, "Allow", allow)
+	resp.F_headers = h
+	return resp
 }
 
 // XoDebug implements Debug.
@@ -320,6 +358,27 @@ func (r Http_Router) call(tk *Task, req Http_Request) Http_Response {
 	return isolateHandler(tk, func(tk *Task) Http_Response { return chain(r.mws.s, r.dispatch)(tk, req) })
 }
 
+// allowed is the methods of the routes that match the path parts, for a
+// 405's Allow (Go 1.22's ServeMux): registration order, no repeats.
+func (r Http_Router) allowed(parts []string) []string {
+	var out []string
+	for _, rt := range r.routes.s {
+		if _, _, ok := rt.matchParts(nil, parts, false); !ok || rt.method == "" {
+			continue
+		}
+		seen := false
+		for _, m := range out {
+			if m == rt.method {
+				seen = true
+			}
+		}
+		if !seen {
+			out = append(out, rt.method)
+		}
+	}
+	return out
+}
+
 // find is the route of method and the path parts, the first Int
 // segment of it that does not parse, and whether a route matched the
 // path with another method.
@@ -356,9 +415,20 @@ func (r Http_Router) dispatch(tk *Task, req Http_Request) Http_Response {
 	best, bestBad, methodMismatch := r.find(req.F_method, parts)
 	if best == nil {
 		if methodMismatch {
-			return jsonError(tk, 405, "method not allowed")
+			var resp Http_Response
+			if r.allow == nil {
+				resp = jsonError(tk, 405, "method not allowed")
+			} else {
+				h := r.allow
+				resp = isolateHandler(tk, func(tk *Task) Http_Response { return h(tk, req) })
+			}
+			return withAllow(tk, resp, strings.Join(r.allowed(parts), ", "))
 		}
-		return jsonError(tk, 404, "not found")
+		if r.miss == nil {
+			return jsonError(tk, 404, "not found")
+		}
+		h := r.miss
+		return isolateHandler(tk, func(tk *Task) Http_Response { return h(tk, req) })
 	}
 	if bestBad != "" {
 		return jsonError(tk, 400, "path segment `"+bestBad+"` must be an Int")
@@ -826,6 +896,17 @@ func Http_error_page(tk *Task, status int64, msg string) Http_Response {
 
 // Http_not_found is `http.not_found()`.
 func Http_not_found(tk *Task) Http_Response { return Http_error_page(tk, 404, "404 page not found") }
+
+// Http_error_html is `http.error_html(status, title, detail)` (std.md
+// 4.3): an HTML page, the title in <title> and <h1>, the detail in <p>.
+func Http_error_html(tk *Task, status int64, title, detail string) Http_Response {
+	h := mapCap[string, string](2)
+	Map_put(tk, &h, "Content-Type", "text/html; charset=utf-8")
+	Map_put(tk, &h, "X-Content-Type-Options", "nosniff")
+	t := html.EscapeString(title)
+	body := "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>" + t + "</title></head><body><h1>" + t + "</h1><p>" + html.EscapeString(detail) + "</p></body></html>\n"
+	return Http_Response{F_status: status, F_headers: h, F_body: Bytes(body)}
+}
 
 // Http_stream is `http.stream(status, f)`: the body is produced by f while
 // the response is sent. Dispatched in process, the body is collected.

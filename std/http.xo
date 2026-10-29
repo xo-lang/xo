@@ -24,6 +24,13 @@ fn (var r: Router) wrap[E: Error, fx: Effects](m: fn(Request, Next) -> Response 
 /// Adds every route of `sub` under `prefix`, behind the middleware of `sub`
 /// (std.md 4.1).
 fn (var r: Router) mount(prefix: Str, sub: Router)
+/// The response of a request no route matches, in place of the 404
+/// (std.md 4.1); a mounted router's hook is not copied.
+fn (var r: Router) not_found[E: Error, fx: Effects](h: fn(Request) -> Response ! E uses fx) uses fx
+/// The response of a request whose path a route matches with another
+/// method, in place of the 405 (std.md 4.1); it gets the Allow header
+/// when it lacks one.
+fn (var r: Router) method_not_allowed[E: Error, fx: Effects](h: fn(Request) -> Response ! E uses fx) uses fx
 fn (r: Router) call(req: Request) -> Response
 
 interface StatusError {
@@ -184,6 +191,9 @@ fn redirect(req: Request, url: Str, status: Int) -> Response
 fn error_page(status: Int, msg: Str) -> Response
 /// Go's NotFound: error_page(404, "404 page not found").
 fn not_found() -> Response
+/// An HTML error page: text/html (nosniff), the title in <title> and
+/// <h1>, the detail in <p>, both escaped (std.md 4.3).
+fn error_html(status: Int, title: Str, detail: Str) -> Response
 fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> Response uses fx
 
 /// The body of a request to a handle_stream route (decision 0310).

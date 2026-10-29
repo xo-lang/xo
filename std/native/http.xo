@@ -100,6 +100,10 @@ struct Router {
   mws: List[fn(Request, fn(Request) -> http.Response) -> http.Response]
   /// whether a route is a handle_stream route
   streamed: Bool = false
+  /// the not_found and method_not_allowed hooks (std.md 4.1), one entry
+  /// each when set; a miss answers with the default JSON otherwise
+  miss_h: List[fn(Request) -> http.Response] = []
+  allow_h: List[fn(Request) -> http.Response] = []
 }
 
 struct Server {
@@ -493,6 +497,43 @@ fn route_streams(r: Router, method: Str, path: Str) -> Bool {
   best >= 0 && best_bad.is_empty() && r.routes[best].stream
 }
 
+/// The response of a request no route matches, in place of the 404
+/// (std.md 4.1; chi's NotFound).
+fn (var r: Router) not_found[E: Error, fx: Effects](h: fn(Request) -> http.Response ! E uses fx) uses fx {
+  let g = fn(req: Request) -> http.Response {
+    match h(req) {
+      Ok(resp) => resp
+      Err(e) => error_response(e)
+    }
+  }
+  r.miss_h = [rt.launder1(g)]
+}
+
+/// The response of a request whose path a route matches with another
+/// method, in place of the 405 (std.md 4.1; chi's MethodNotAllowed); the
+/// response gets the Allow header when it lacks one.
+fn (var r: Router) method_not_allowed[E: Error, fx: Effects](h: fn(Request) -> http.Response ! E uses fx) uses fx {
+  let g = fn(req: Request) -> http.Response {
+    match h(req) {
+      Ok(resp) => resp
+      Err(e) => error_response(e)
+    }
+  }
+  r.allow_h = [rt.launder1(g)]
+}
+
+/// resp with the Allow header when it has none (a 405's).
+fn with_allow(resp: http.Response, allow: Str) -> http.Response {
+  match resp.headers.get("Allow") {
+    Some(_) => resp
+    None => {
+      var h = resp.headers
+      h.put("Allow", allow)
+      resp with {headers: h}
+    }
+  }
+}
+
 fn (var r: Router) wrap[E: Error, fx: Effects](m: fn(Request, fn(Request) -> http.Response) -> http.Response ! E uses fx) uses fx {
   let g = fn(req: Request, next: fn(Request) -> http.Response) -> http.Response {
     match m(req, next) {
@@ -724,6 +765,9 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   var best_lits = 0
   var best_bad = ""
   var mismatch = false
+  // the methods of the routes that match the path, for a 405's Allow
+  // (Go 1.22's ServeMux), in registration order without repeats
+  var allow: List[Str] = []
   for (i, route) in r.routes.indexed() {
     let (ok, bad) = if esc { match_parts(route, uparts) } else { match_in(route, path, sb) }
     if !ok {
@@ -731,6 +775,9 @@ fn dispatch(r: Router, req: Request) -> http.Response {
     }
     if !route.method.is_empty() && route.method != method {
       mismatch = true
+      if !allow.contains(route.method) {
+        allow.push(route.method)
+      }
       continue
     }
     let lits = literals(route)
@@ -742,9 +789,14 @@ fn dispatch(r: Router, req: Request) -> http.Response {
   }
   if best < 0 {
     if mismatch {
-      return json_error(405, "method not allowed")
+      let resp = if r.allow_h.is_empty() { json_error(405, "method not allowed") } else { let h = r.allow_h[0]; isolated(fn() -> http.Response { h(req) }) }
+      return with_allow(resp, allow.join(", "))
     }
-    return json_error(404, "not found")
+    if r.miss_h.is_empty() {
+      return json_error(404, "not found")
+    }
+    let h = r.miss_h[0]
+    return isolated(fn() -> http.Response { h(req) })
   }
   if !best_bad.is_empty() {
     return json_error(400, "path segment `${best_bad}` must be an Int")
@@ -1124,6 +1176,14 @@ fn error_page(status: Int, msg: Str) -> http.Response {
 }
 
 fn not_found() -> http.Response { error_page(404, "404 page not found") }
+
+/// An HTML error page (std.md 4.3): text/html, nosniff; the title in
+/// <title> and <h1>, the detail in <p>, both escaped.
+fn error_html(status: Int, title: Str, detail: Str) -> http.Response {
+  let t = html_escape(title)
+  let body = "<!doctype html>\n<html><head><meta charset=\"utf-8\"><title>${t}</title></head><body><h1>${t}</h1><p>${html_escape(detail)}</p></body></html>\n"
+  http.Response{status: status, headers: {"Content-Type": "text/html; charset=utf-8", "X-Content-Type-Options": "nosniff"}, body: body.bytes()}
+}
 
 fn request_header_values(r: Request, name: Str) -> List[Str] { values_of(r.headers, r.fields, name) }
 

@@ -1246,6 +1246,8 @@ fn ([var] r: Router) handle_stream[E: Error, fx: Effects](pattern: Str, h: fn(Re
     // the body read as h asks (decision 0310); req.body is empty
 fn ([var] r: Router) wrap[E: Error, fx: Effects](m: fn(Request, Next) -> Response ! E uses fx) uses fx
 fn ([var] r: Router) mount(prefix: Str, sub: Router)   // sub's routes under prefix, behind sub's middleware
+fn ([var] r: Router) not_found[E: Error, fx: Effects](h: fn(Request) -> Response ! E uses fx) uses fx            // the 404's response
+fn ([var] r: Router) method_not_allowed[E: Error, fx: Effects](h: fn(Request) -> Response ! E uses fx) uses fx   // the 405's; Allow added when missing
 fn (r: Router) call(req: Request) -> Response      // in process dispatch, for tests
 type Next = fn(Request) -> Response
 ```
@@ -1257,7 +1259,14 @@ type Next = fn(Request) -> Response
   `{name:Int}` (must parse as `Int`, else 400 before the handler runs),
   `{name...}` (rest of the path). Without a method, any method matches.
   plain strings: `"GET /users/{id:Int}"`.
-- Unmatched path: 404. Path matched with another method: 405.
+- Unmatched path: 404 (`{"error":"not found"}`), or the `not_found`
+  hook's response. Path matched with another method: 405 (`{"error":"method
+  not allowed"}`), or the `method_not_allowed` hook's response; either
+  carries `Allow` listing the methods of the routes that match the path,
+  in registration order without repeats (Go 1.22's ServeMux), unless the
+  hook's response has one. A hook runs as a handler does (inside the
+  middleware, its error a response, a fault a 500); a mounted router's
+  hooks are not copied (its misses are `r`'s).
 - Streamed request bodies (decision 0310): for a `handle_stream` route the
   server calls the handler before reading the body (Go's `r.Body`):
   `req.body` is empty and `BodyReader.read(max)` gives the next bytes (at
@@ -1371,6 +1380,7 @@ fn (r: Request) raw_query() -> Str            // Go's URL.RawQuery
 fn (r: Request) escaped_path() -> Str         // Go's URL.EscapedPath
 pub fn redirect(req: Request, url: Str, status: Int) -> Response   // Go's Redirect: Location resolved against the path, an HTML body on GET
 pub fn error_page(status: Int, msg: Str) -> Response                // Go's Error: text/plain, nosniff, msg and a newline
+pub fn error_html(status: Int, title: Str, detail: Str) -> Response   // text/html (nosniff): the title in <title> and <h1>, the detail in <p>, both escaped
 pub fn not_found() -> Response                                      // Go's NotFound   // every field of name, in order (decision 0288); found the way header is
 fn (r: Request) add_header(name: Str, value: Str) -> Request   // one more field of name
 fn (r: Request) cookie(name: Str) -> Cookie?        // the first Cookie pair of that name (Go's Request.Cookie)

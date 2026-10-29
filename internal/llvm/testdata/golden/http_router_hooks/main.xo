@@ -1,0 +1,52 @@
+// The router's misses (std.md 4.1): the default 404 and 405 with Allow
+// listing the methods of the routes that match the path (Go 1.22's
+// ServeMux), the not_found and method_not_allowed hooks in their place
+// (Allow added to a hook's 405 that lacks it, kept when it has one), a
+// hook inside the middleware, a mounted router's hook not copied, and
+// error_html's page.
+use std/http
+
+fn req(m: Str, p: Str) -> http.Request {
+  let u = http.Url{scheme: "http", host: "h", port: None, path: p, query: {}}
+  http.Request{method: m, path: p, url: u, headers: {}, body: b"", remote_ip: ""}
+}
+
+fn show(os: Os, label: Str, resp: http.Response) {
+  let allow = resp.headers.get("Allow") ?? "-"
+  let ct = resp.headers.get("Content-Type") ?? "-"
+  os.stdio.println("${label}: ${resp.status} allow=[${allow}] ${ct} | ${(resp.body.to_str() ?? "?").trim()}")
+}
+
+fn main(os: Os) {
+  var r = http.router()
+  r.handle("GET /items", fn(q: http.Request) -> http.Response { http.text(200, "list") })
+  r.handle("POST /items", fn(q: http.Request) -> http.Response { http.text(201, "made") })
+  r.handle("GET /items/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "item ${q.param("id")}") })
+  r.handle("PUT /items/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "put ${q.param("id")}") })
+  r.handle("PUT /items/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "put again") })
+  r.handle("/any", fn(q: http.Request) -> http.Response { http.text(200, "any ${q.method}") })
+  var sub = http.router()
+  sub.handle("GET /s", fn(q: http.Request) -> http.Response { http.text(200, "sub") })
+  sub.not_found(fn(q: http.Request) -> http.Response { http.text(404, "sub miss") })
+  r.mount("/m", sub)
+  show(os, "hit", r.call(req("GET", "/items/3")))
+  show(os, "default 404", r.call(req("GET", "/nope")))
+  show(os, "default 405", r.call(req("DELETE", "/items")))
+  show(os, "default 405 id", r.call(req("POST", "/items/7")))
+  show(os, "any method", r.call(req("DELETE", "/any")))
+  show(os, "mounted hit", r.call(req("GET", "/m/s")))
+  show(os, "mounted miss", r.call(req("GET", "/m/none")))
+  show(os, "mounted 405", r.call(req("POST", "/m/s")))
+  r.not_found(fn(q: http.Request) -> http.Response { http.error_html(404, "Not Found", "no page at ${q.path} <here>") })
+  r.method_not_allowed(fn(q: http.Request) -> http.Response { http.text(405, "${q.method} not allowed on ${q.path}") })
+  show(os, "hook 404", r.call(req("GET", "/nope")))
+  show(os, "hook 405", r.call(req("DELETE", "/items")))
+  show(os, "hook 405 id", r.call(req("POST", "/items/7")))
+  r.method_not_allowed(fn(q: http.Request) -> http.Response { http.Response{status: 405, headers: {"Allow": "GET"}, body: b"mine"} })
+  show(os, "hook 405 own allow", r.call(req("DELETE", "/items")))
+  r.wrap(fn(q: http.Request, next: http.Next) -> http.Response { http.text(200, "mw saw ${next(q).status}") })
+  show(os, "mw over hit", r.call(req("GET", "/items")))
+  show(os, "mw over 404", r.call(req("GET", "/nope")))
+  show(os, "mw over 405", r.call(req("DELETE", "/items")))
+  show(os, "error_html", http.error_html(503, "Down & \"out\"", "back <soon>"))
+}
