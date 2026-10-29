@@ -23,6 +23,7 @@ var (
 	_ func(*Http_Request, *Task, string) List[string]                                                                                                   = (*Http_Request).M_header_values
 	_ func(*Http_Request, *Task) string                                                                                                                 = (*Http_Request).M_host
 	_ func(*Http_Request, *Task) bool                                                                                                                   = (*Http_Request).M_tls
+	_ func(*Http_Request, *Task) Option[Http_TlsState]                                                                                                  = (*Http_Request).M_tls_state
 	_ func(*Http_Request, *Task) string                                                                                                                 = (*Http_Request).M_raw_query
 	_ func(*Http_Request, *Task) string                                                                                                                 = (*Http_Request).M_escaped_path
 	_ func(*Http_Request, *Task, string, string) Http_Request                                                                                           = (*Http_Request).M_add_header

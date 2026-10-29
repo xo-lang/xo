@@ -2,6 +2,7 @@ package rt
 
 import (
 	"bytes"
+	"crypto/x509"
 	"html"
 	"io"
 	"net/textproto"
@@ -783,6 +784,28 @@ func (r Http_Request) M_host(_ *Task) string { return r.XHost }
 
 // M_tls is `req.tls()`: whether the request came over TLS.
 func (r Http_Request) M_tls(_ *Task) bool { return r.XTLS }
+
+// tlsState is what a server connection's handshake negotiated, for
+// Request.tls_state (Go's tls.ConnectionState); nil for a plain
+// connection or a struct literal.
+type tlsState struct {
+	version, cipher, serverName string
+	resumed                     bool
+	peer                        []*x509.Certificate
+}
+
+// M_tls_state is `r.tls_state()`: Go's r.TLS.
+func (r Http_Request) M_tls_state(tk *Task) Option[Http_TlsState] {
+	s := r.XTLSState
+	if s == nil {
+		return None[Http_TlsState]()
+	}
+	var peer []X509_Certificate
+	for _, c := range s.peer {
+		peer = append(peer, x509CertOf(tk, c))
+	}
+	return Some(Http_TlsState{F_version: s.version, F_cipher_suite: s.cipher, F_server_name: s.serverName, F_resumed: s.resumed, F_peer_certificates: ListFromSlice(peer)})
+}
 
 // M_raw_query is `req.raw_query()`.
 func (r Http_Request) M_raw_query(_ *Task) string { return r.XRawQuery }

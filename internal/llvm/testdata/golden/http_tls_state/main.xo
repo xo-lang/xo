@@ -1,0 +1,63 @@
+// A request's tls_state (std.md 4.3; Go's r.TLS): what the handshake
+// negotiated over TLS (the version, the suite, the server name the
+// client asked for, whether a session resumed, the client's
+// certificates: none, the server asks for none), over HTTP/1.1 and
+// HTTP/2 (the h2 client reaches the server by ALPN); None over plain
+// HTTP and for a request built as a struct literal. An IP address
+// carries no server name.
+use std/http
+
+fn state_text(req: http.Request) -> Str {
+  match req.tls_state() {
+    Some(s) => {
+      let suite_ok = s.cipher_suite is "TLS_AES_128_GCM_SHA256" | "TLS_AES_256_GCM_SHA384" | "TLS_CHACHA20_POLY1305_SHA256"
+      "tls=${req.tls()} version=${s.version} suite_ok=${suite_ok} server_name=\"${s.server_name}\" resumed=${s.resumed} peers=${s.peer_certificates.len()}"
+    }
+    None => "tls=${req.tls()} none"
+  }
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /state", fn(req) { http.text(200, state_text(req)) })
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${(resp.body.to_str() ?? "?").trim()}")
+    Err(e) => os.stdio.println("${label}: error ${e}")
+  }
+}
+
+fn serve_in(os: Os, srv: http.Server) {
+  match srv.serve() {
+    Ok(_) => ()
+    Err(e) => os.stdio.println("serve failed: ${e}")
+  }
+}
+
+fn main(os: Os) uses net, stdio {
+  let lit = http.Request{method: "GET", path: "/state", url: http.Url{scheme: "http", host: "h", port: None, path: "/state", query: {}}, headers: {}, body: b"", remote_ip: ""}
+  os.stdio.println("literal: ${state_text(lit)}")
+  match (os.net.listen("127.0.0.1:0"), os.net.listen("127.0.0.1:0")) {
+    (Ok(l1), Ok(l2)) => {
+      let plain = http.server(l1, routes())
+      let cert = http.tls_cert(good_cert(), good_key()).or_fault("cert")
+      let tls = http.server(l2, routes()).with_tls([cert])
+      let c = http.client(os.net, timeout: 5s).with_roots(ca_pem()).or_fault("roots")
+      scope s {
+        s.spawn_background(fn() { serve_in(os, plain) })
+        s.spawn_background(fn() { serve_in(os, tls) })
+        show(os, "plain", c.send(http.new_request("GET", "http://${plain.addr()}/state", {}, b"")))
+        show(os, "tls", c.send(http.new_request("GET", "https://${tls.addr()}/state", {}, b"")))
+        show(os, "tls again", c.send(http.new_request("GET", "https://${tls.addr()}/state", {}, b"")))
+      }
+    }
+    _ => os.stdio.println("listen failed")
+  }
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

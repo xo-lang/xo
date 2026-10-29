@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+literal: tls=false none
+plain: 200 tls=false none
+tls: 200 tls=true version=TLS 1.3 suite_ok=true server_name="" resumed=false peers=0
+tls again: 200 tls=true version=TLS 1.3 suite_ok=true server_name="" resumed=false peers=0
+--- stderr

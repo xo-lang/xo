@@ -1376,6 +1376,14 @@ fn (r: Request) with_header(name: Str, value: Str) -> Request
 fn (r: Request) header_values(name: Str) -> List[Str]
 fn (r: Request) host() -> Str                 // Go's Request.Host: the Host header as sent (HTTP/2's :authority)
 fn (r: Request) tls() -> Bool                 // Go's r.TLS != nil; url.scheme is then "https"
+fn (r: Request) tls_state() -> TlsState?      // Go's r.TLS: what the handshake negotiated; None for a plain connection
+struct TlsState {                             // Go's tls.ConnectionState
+  version: Str                                // "TLS 1.2" or "TLS 1.3"
+  cipher_suite: Str                           // Go's CipherSuiteName, e.g. "TLS_AES_128_GCM_SHA256"
+  server_name: Str                            // the SNI the client sent, "" for none (an IP address)
+  resumed: Bool                               // the handshake resumed a session
+  peer_certificates: List[x509.Certificate]   // the client's certificates, leaf first: empty, the server asks for none
+}
 fn (r: Request) raw_query() -> Str            // Go's URL.RawQuery
 fn (r: Request) escaped_path() -> Str         // Go's URL.EscapedPath
 pub fn redirect(req: Request, url: Str, status: Int) -> Response   // Go's Redirect: Location resolved against the path, an HTML body on GET

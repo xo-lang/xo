@@ -59,6 +59,9 @@ struct Request {
   raw_host: Str = ""
   /// Whether the request came over TLS (std/rt's XTLS). Hidden.
   over_tls: Bool = false
+  /// What the TLS handshake negotiated, for tls_state (std/rt's
+  /// XTLSState): one entry when over_tls, none otherwise. Hidden.
+  tls_neg: List[tlssrv.Negotiated] = []
   /// with_timeout's limit in nanoseconds, 0 for the client's (decision
   /// 0404). Hidden from Xo code.
   timeout_ns: Int = 0
@@ -1004,6 +1007,22 @@ fn target_path(target: Str) -> Str {
 
 fn request_host(r: Request) -> Str { r.raw_host }
 fn request_tls(r: Request) -> Bool { r.over_tls }
+
+/// The handshake's outcome of TLS connection th, none for 0 (plain).
+fn tls_neg_of(th: Int) -> List[tlssrv.Negotiated] {
+  if th == 0 { [] } else { [tlssrv.negotiated(th)] }
+}
+
+/// Go's r.TLS: None for a plain connection or a struct literal. The
+/// server asks the client for no certificate, so peer_certificates is
+/// empty.
+fn request_tls_state(r: Request) -> http.TlsState? {
+  if r.tls_neg.is_empty() {
+    return None
+  }
+  let n = r.tls_neg[0]
+  Some(http.TlsState{version: n.version, cipher_suite: n.cipher, server_name: n.server_name, resumed: n.resumed, peer_certificates: []})
+}
 fn request_raw_query(r: Request) -> Str { r.raw_query }
 
 /// Go's URL.EscapedPath: the raw path when it unescapes to the path and
@@ -2349,10 +2368,11 @@ fn head_request(rd: http1.Reader, q: http1.Req) -> Request {
   }
   // the connection's TLS gives the scheme (Go's r.TLS; a proxy's
   // X-Forwarded-Proto reads it)
-  let tls = hconn.is_tls(rd.conn())
+  let th = hconn.tls_of(rd.conn())
+  let tls = th != 0
   let scheme = if q.scheme.is_empty() && tls { "https" } else { q.scheme }
   let url = http.Url{scheme: scheme, host: q.host, port: port, path: upath, query: query}
-  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn()), raw_query: q.rawquery, fields: q.fields, raw_path: target_path(q.target), raw_host: q.rawhost, over_tls: tls}
+  Request{method: q.method, path: q.path, url: url, headers: headers, body: rd.body(), remote_ip: hconn.remote_ip(rd.conn()), raw_query: q.rawquery, fields: q.fields, raw_path: target_path(q.target), raw_host: q.rawhost, over_tls: tls, tls_neg: tls_neg_of(th)}
 }
 
 /// The request of an HTTP/2 stream (std/rt's serve).
@@ -2385,7 +2405,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
   // empty one, 2026-10-29)
   let scheme = if q.scheme.is_empty() { "https" } else { q.scheme }
   let url = http.Url{scheme: scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  let req = Request{over_tls: true, raw_host: q.urlhost, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
+  let req = Request{over_tls: true, tls_neg: tls_neg_of(hconn.tls_of(q.conn)), raw_host: q.urlhost, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
   if !q.streamed {
     return req
   }

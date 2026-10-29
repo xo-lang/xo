@@ -24,6 +24,7 @@ use native/llrt/tls12srv
 use native/llrt/tls13srv
 use native/llrt/tlsticket
 use native/llrt/tlsname
+use native/llrt/tlsrec
 use native/llrt/twflags
 use native/llrt/twrun
 use native/llrt/x509cert as x509
@@ -626,6 +627,44 @@ pub fn bad_cipher(t: Int) -> Str {
   match load(t) {
     Some(c) => if c.s12.is_empty() { "" } else if c.s12[0].suite is 0xc02b | 0xc02f | 0xc02c | 0xc030 | 0xcca9 | 0xcca8 { "" } else { "Prohibited TLS 1.2 Cipher Suite: ${hex(c.s12[0].suite)}" }
     None => ""
+  }
+}
+
+/// What a handshake negotiated, for a request's tls_state (Go's
+/// ConnectionState): the version, the suite's name (Go's
+/// CipherSuiteName), the server name the client asked for and whether a
+/// session resumed.
+pub struct Negotiated {
+  pub version: Str
+  pub cipher: Str
+  pub server_name: Str
+  pub resumed: Bool
+}
+
+/// The negotiated state of connection t (after its handshake; empty
+/// strings for a freed connection).
+pub fn negotiated(t: Int) -> Negotiated {
+  match load(t) {
+    Some(c) => if c.s12.is_empty() {
+      Negotiated{version: "TLS 1.3", cipher: tlsrec.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed}
+    } else {
+      Negotiated{version: "TLS 1.2", cipher: suite_name12(c.s12[0].suite), server_name: c.s12[0].host, resumed: c.s12[0].resumed}
+    }
+    None => Negotiated{version: "", cipher: "", server_name: "", resumed: false}
+  }
+}
+
+/// Go's name of a TLS 1.2 suite the server offers (tls12srv's six ECDHE
+/// AEAD suites, tls.CipherSuiteName); hex for any other.
+fn suite_name12(s: Int) -> Str {
+  match s {
+    0xc02b => "TLS_ECDHE_ECDSA_WITH_AES_128_GCM_SHA256"
+    0xc02f => "TLS_ECDHE_RSA_WITH_AES_128_GCM_SHA256"
+    0xc02c => "TLS_ECDHE_ECDSA_WITH_AES_256_GCM_SHA384"
+    0xc030 => "TLS_ECDHE_RSA_WITH_AES_256_GCM_SHA384"
+    0xcca9 => "TLS_ECDHE_ECDSA_WITH_CHACHA20_POLY1305_SHA256"
+    0xcca8 => "TLS_ECDHE_RSA_WITH_CHACHA20_POLY1305_SHA256"
+    _ => "0x${hex(s)}"
   }
 }
 

@@ -113,7 +113,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		if hr.TLS != nil && u.F_scheme == "" {
 			u.F_scheme = "https"
 		}
-		req := Http_Request{XRawPath: hr.URL.EscapedPath(), XHost: urlTextOf(hr.Host), XTLS: hr.TLS != nil, F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
+		req := Http_Request{XRawPath: hr.URL.EscapedPath(), XHost: urlTextOf(hr.Host), XTLS: hr.TLS != nil, XTLSState: tlsStateOf(hr.TLS), F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
 		if stream {
 			req = withStreamBody(req, hr.Body)
 		}
@@ -296,6 +296,14 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 // readBody reads a request body (not into an arena): nothing when the
 // request declares an empty body, one exact allocation when it declares
 // its length, and the bytes become the Bytes value without a copy.
+// tlsStateOf is a request's tls_state from Go's r.TLS, nil for plain.
+func tlsStateOf(s *tls.ConnectionState) *tlsState {
+	if s == nil {
+		return nil
+	}
+	return &tlsState{version: tls.VersionName(s.Version), cipher: tls.CipherSuiteName(s.CipherSuite), serverName: s.ServerName, resumed: s.DidResume, peer: s.PeerCertificates}
+}
+
 func readBody(hr *http.Request) Bytes {
 	if hr.ContentLength == 0 || hr.Body == nil || hr.Body == http.NoBody {
 		return ""

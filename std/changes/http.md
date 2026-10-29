@@ -17,6 +17,22 @@ registration order without repeats. A mounted router's hooks are not
 copied: its misses are the outer router's. `http.error_html(status,
 title, detail)` is an HTML page (text/html, nosniff) with the title in
 <title> and <h1> and the detail in <p>, both escaped.
+## 2026-10-30: feature: Request.tls_state, what the connection's handshake negotiated
+
+- Kind: feature
+- Commit: this commit
+- Found by: the HTTP server gaps survey (part 3; Go's r.TLS had only `tls()`)
+- Go reference: net/http's Request.TLS (tls.ConnectionState: Version, CipherSuite, ServerName, DidResume, PeerCertificates)
+- Test: golden http_tls_state (HTTP/1.1 and HTTP/2 over TLS, plain, a struct literal)
+
+`req.tls_state()` is `Some(TlsState)` over TLS: the version ("TLS 1.2"
+or "TLS 1.3"), the suite's name as Go's CipherSuiteName, the server name
+the client asked for (SNI; "" for an IP address), whether the handshake
+resumed a session, and the client's certificates (std/x509; empty: the
+server asks the client for none, as Go's default ClientAuth). None over
+plain HTTP and for a request built as a struct literal. Native: the
+connection's tlssrv state is read once when the request is built
+(tlssrv.negotiated, hidden field tls_neg); Go: from hr.TLS.
 
 ## 2026-10-30: fix: an HTTP/2 request's url.scheme is https when the :scheme pseudo header is missing
 

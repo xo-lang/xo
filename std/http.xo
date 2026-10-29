@@ -11,6 +11,7 @@ use std/json
 use std/multipart
 use std/url
 use std/netip
+use std/x509
 
 struct Router {}
 type Next = fn(Request) -> Response
@@ -82,6 +83,10 @@ fn (r: Request) host() -> Str
 /// Whether the request came over TLS (Go's `r.TLS != nil`); `url.scheme`
 /// is then "https".
 fn (r: Request) tls() -> Bool
+/// Go's r.TLS (a tls.ConnectionState): what the connection's handshake
+/// negotiated; None for a plain connection or a request built as a
+/// struct literal.
+fn (r: Request) tls_state() -> TlsState?
 /// Go's URL.RawQuery: the query as sent, before any unescaping.
 fn (r: Request) raw_query() -> Str
 /// Go's URL.EscapedPath: the path as sent when it is a valid escaping of
@@ -113,6 +118,22 @@ fn (r: Request) cookies() -> List[Cookie]
 /// The request with name=value appended to its Cookie field (Go's
 /// Request.AddCookie).
 fn (r: Request) with_cookie(c: Cookie) -> Request
+
+/// What a TLS connection's handshake negotiated (std.md 4.3; Go's
+/// tls.ConnectionState).
+struct TlsState {
+  /// "TLS 1.2" or "TLS 1.3" (Go's VersionName)
+  version: Str
+  /// the cipher suite's name (Go's CipherSuiteName)
+  cipher_suite: Str
+  /// the server name the client asked for (SNI), "" for none (an IP)
+  server_name: Str
+  /// whether the handshake resumed a session (Go's DidResume)
+  resumed: Bool
+  /// the client's certificates, leaf first (Go's PeerCertificates):
+  /// empty, the server asks for none
+  peer_certificates: List[x509.Certificate]
+}
 
 /// An HTTP cookie (std.md 4.3, decision 0288; net/http's Cookie).
 struct Cookie {
