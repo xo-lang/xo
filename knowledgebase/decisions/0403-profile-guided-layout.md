@@ -121,3 +121,20 @@ mangles the file's names with the emitter's rule, arm64 mangle_fn, and
 hands them through Ctx.layout_order); darwin only, the ELF placer
 computes offsets as it collects chunks and is left for the linux
 measurement.
+
+## Stage 2 measured (2026-10-29): held
+
+bench/results/pgo-layout-stage2-2026-10-29.md. The one-binary noise
+floor (one binary run in 16 slots x 7 rounds) equals the sweeps' spread
+for interp (1.139 against 1.070 to 1.136) and collatz (1.008 against
+1.009): their placement spread is gone since threaded dispatch (0397),
+and what remains is a 50 ms run's noise; strings keeps about 4 percent.
+The hot blocks' alignment removes nothing and costs 2 to 4 percent at
+the median; the cold split flattens the spread but costs interp 14 and
+strings 13 percent, since a 500 sample profile leaves hot-path blocks
+unsampled and they count as cold. Both stay out of main (the code is in
+xo-lang-6's worktree notes); on main: stage 1 (the function order) and
+1b (the store link's order). Next, if wanted: a split that keeps a block
+hot when it lies between sampled blocks in the CFG, measured on a run
+long enough that the floor is under a percent, and the measurement rule
+(agent-tools.md "Measuring": the one-binary control beside every sweep).
