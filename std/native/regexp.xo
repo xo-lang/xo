@@ -2115,6 +2115,19 @@ fn ascii_set(var a: List[Int], b: Int, r: Int) {
   }
 }
 
+/// ascii_range: sets the bits of runes lo to hi (all below 128) in the
+/// bitmap at base b, a 32 bit word at a time (2026-10-28: a bit at a time
+/// was most of ascii_bytes, which was 7.7% of compile).
+fn ascii_range(var a: List[Int], b: Int, lo: Int, hi: Int) {
+  var l = lo
+  while l <= hi {
+    let w = l >> 5
+    let end = if hi < 32 * w + 31 { hi } else { 32 * w + 31 }
+    a[b + w] = a[b + w] | (((1 << (end - l + 1)) - 1) << (l & 31))
+    l = end + 1
+  }
+}
+
 /// ascii_bytes: the ASCII bitmap of every rune instruction.
 fn (var g: Prog) ascii_bytes() {
   let n = g.op.len()
@@ -2139,25 +2152,16 @@ fn (var g: Prog) ascii_bytes() {
         } else {
           var i = 0
           while i < rs.len() && rs[i] < 128 {
-            let lo = rs[i]
-            var c = lo
-            let hi = if rs[i + 1] < 127 { rs[i + 1] } else { 127 }
-            while c <= hi {
-              a[b + (c >> 5)] = a[b + (c >> 5)] | (1 << (c & 31))
-              c += 1
-            }
+            ascii_range(a, b, rs[i], if rs[i + 1] < 127 { rs[i + 1] } else { 127 })
             i += 2
           }
         }
       } else if op == I_RUNE1 {
         ascii_set(a, b, g.rune[pc][0])
       } else {
-        var c = 0
-        while c < 128 {
-          if op == I_ANY || c != 10 {
-            a[b + (c >> 5)] = a[b + (c >> 5)] | (1 << (c & 31))
-          }
-          c += 1
+        ascii_range(a, b, 0, 127)
+        if op == I_ANY_NOT_NL {
+          a[b] = a[b] & (0xffffffff ^ (1 << 10))
         }
       }
     }

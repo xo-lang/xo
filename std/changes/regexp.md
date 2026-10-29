@@ -1,5 +1,21 @@
 # std/regexp changes
 
+## 2026-10-29: perf: compile sets a class's ASCII bitmap a 32 bit word at a time
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/regexp compile's profile after 910c0f906 (ascii_bytes 7.7%: a bit at a time for every rune of a range, and all 128 for `.`)
+- Go reference: none (the ASCII bitmap is Xo's own matching filter; Go's compile has no such step)
+- Test: std/native/regexp_test.xo; internal/stdtest corpus regexp (go, arm64, LLVM); bench/perf/regexp's checksums equal Go's
+
+ascii_range sets the bits of a range's ASCII part a word at a time (at
+most four words), where the loop set one bit for each rune; `.` and
+`(?s).` set the four words whole, less the newline's bit for `.`. Quiet
+--ab, 15 rounds, the parent's std as A (bench/perf/regexp): compile wall
+0.945 (0.944 to 0.95), instructions 0.944; match the same instructions,
+wall 0.982. Against Go: compile 1.147 (1.138 to 1.155; 910c0f906 left it
+at 1.208, 1.68 before both), instructions 1.007.
+
 ## 2026-10-28: perf: compile walks the tree's height only past 1000 nodes, makes its lists once, and takes \d, \s, \w as they are
 
 - Kind: perf

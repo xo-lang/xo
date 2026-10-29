@@ -559,3 +559,13 @@ replace_all and captures instructions 0.9999 to 1.0. Against Go: compile
 1.208 (1.2 to 1.222; was 1.68), instructions 1.065. Compile stays a
 rolling row at about 1.21 until its next step (the ASCII bitmap Go does
 not build, 7.7% of its profile).
+
+## regexp compile, ASCII bitmap by words (2026-10-29, xo-lang-5)
+
+Per std/changes/regexp.md 2026-10-29. Quiet --ab, 15 rounds, the
+parent's std as A (bench/perf/regexp): compile wall 0.945 (0.944 to
+0.95), instructions 0.944; match the same instructions, wall 0.982.
+Against Go: compile 1.147 (1.138 to 1.155; 910c0f906 left it at 1.208,
+1.68 before both), instructions 1.007. Every regexp row is now within
+1.2 of Go: compile 1.147, match 1.096, replace_all 1.107, find_all
+0.814, captures 0.861.
