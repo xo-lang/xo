@@ -36,6 +36,7 @@ const (
 	catCollision = "name collision after snake_case"
 	catCtx       = "context.Context outside the first parameter"
 	catNamedBase = "method of a named basic type (the type maps to its basic type)"
+	catOutBuf    = "output buffer ([]byte Go writes into)"
 )
 
 // skipErr is a reason a declaration cannot be mapped.
@@ -210,6 +211,31 @@ func isContext(t types.Type) bool {
 	return ok && n.Obj().Pkg() != nil && n.Obj().Pkg().Path() == "context" && n.Obj().Name() == "Context"
 }
 
+// outBuffer reports whether parameter name of type t is a []byte the Go
+// function writes into: one of a Read... function or method (io.Reader's
+// Read(p), ReadAt, io.ReadFull, rand.Read), or one named dst (hex.Decode,
+// base64's Encode), unless the function returns a []byte (the append form,
+// whose result carries the bytes). The binding copies a Bytes in only, so
+// such a call read n bytes into a copy the program never sees (the Windows
+// tester's bug 18, 2026-10-29): it is skipped, as the C binder skips
+// mutable buffers (spec 4.5).
+func outBuffer(display, name string, t types.Type, sig *types.Signature) bool {
+	sl, ok := t.Underlying().(*types.Slice)
+	if !ok || !isByte(sl.Elem()) {
+		return false
+	}
+	for i := 0; i < sig.Results().Len(); i++ {
+		if rs, ok := sig.Results().At(i).Type().Underlying().(*types.Slice); ok && isByte(rs.Elem()) {
+			return false
+		}
+	}
+	fn := display
+	if k := strings.LastIndex(fn, "."); k >= 0 {
+		fn = fn[k+1:]
+	}
+	return strings.HasPrefix(fn, "Read") || name == "dst"
+}
+
 func isByte(t types.Type) bool {
 	b, ok := types.Unalias(t).(*types.Basic)
 	return ok && b.Kind() == types.Uint8
@@ -301,6 +327,13 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		}
 		if x.TypeArgs().Len() > 0 || x.TypeParams().Len() > 0 {
 			return conv{}, skipf(catGeneric, "generic type %s", g.display(x))
+		}
+		if !obj.Exported() {
+			// the adapter would name it (`chi.methodTyp(x)`), which only
+			// its own package may (the Windows tester's bug 19,
+			// 2026-10-29: chi's MethodNotAllowedHandler(...methodTyp)
+			// failed the whole package's go build)
+			return conv{}, skipf(catUnexport, "unexported type %s", g.display(x))
 		}
 		if bt, ok := x.Underlying().(*types.Basic); ok {
 			return basicConv(bt, g.qual(x))
@@ -708,9 +741,20 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 			args = append(args, "GoContext(tk)")
 			continue
 		}
+		if outBuffer(s.display, p.Name(), pt, sig) {
+			pn := p.Name()
+			if pn == "" {
+				pn = fmt.Sprintf("#%d", i+1)
+			}
+			return skipf(catOutBuf, "parameter %s: a []byte Go writes into, which an Xo Bytes (a value) cannot carry back", pn)
+		}
 		var c conv
 		var err *skipErr
-		if fs, ok := pt.Underlying().(*types.Signature); ok && !(sig.Variadic() && i == n-1) {
+		if nt, ok := types.Unalias(pt).(*types.Named); ok && nt.Obj().Pkg() != nil && !nt.Obj().Exported() {
+			// a named unexported callback type (bluemonday's urlRewriter):
+			// the adapter would name it
+			err = skipf(catUnexport, "unexported type %s", g.display(pt))
+		} else if fs, ok := pt.Underlying().(*types.Signature); ok && !(sig.Variadic() && i == n-1) {
 			c, err = g.callbackConv(fs, g.qual(pt), s.depth)
 			fx = true
 		} else {

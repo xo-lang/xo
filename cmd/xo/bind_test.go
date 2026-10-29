@@ -504,3 +504,79 @@ func TestGobindNewerGo(t *testing.T) {
 		t.Fatalf("helper builds %d, want 2 (XO_GOBIND_LOCAL=1 builds one for go1.26.1)", n)
 	}
 }
+
+// The h1 hashes of testdata/goproxy's synthetic example.com/top v1.0.0.
+const (
+	topSum    = "h1:mQgP8iM1qrNwUXzGFEMyuvgIhqc8aGeDqP53BfeWUOc="
+	topModSum = "h1:9sH8E+n3/TzkC5xDbX0fMVl4CSZkfi4asaW3+Kn3Fcg="
+)
+
+// TestUseGoMissingIndirectRequire (the Windows tester's bug 20,
+// 2026-10-29): a binding workspace whose go.mod lacks a transitive
+// `// indirect` requirement (bindings made one at a time left them out)
+// still builds: go build runs with -mod=mod, so the go command adds the
+// requirement from the module cache. testdata/goproxy's example.com/top
+// imports example.com/leaf (synthetic modules); the test binds top, drops
+// leaf's line from the workspace's go.mod, and builds again with
+// GOFLAGS empty (TestUseGoOfflineProxy sets -mod=mod there).
+func TestUseGoMissingIndirectRequire(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	proxy, err := filepath.Abs(filepath.Join("testdata", "goproxy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	modcache := t.TempDir()
+	t.Cleanup(func() {
+		filepath.WalkDir(modcache, func(p string, d os.DirEntry, err error) error {
+			if err == nil {
+				os.Chmod(p, 0o755)
+			}
+			return nil
+		})
+	})
+	for k, v := range map[string]string{
+		"GOPROXY": "file://" + filepath.ToSlash(proxy), "GOSUMDB": "off", "GOFLAGS": "",
+		"GOMODCACHE": modcache, "GOTOOLCHAIN": "local", "GOPRIVATE": "", "GONOSUMDB": "", "GONOPROXY": "",
+		"XO_GOBIND_DIR": "",
+	} {
+		setenv(t, k, v)
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module indirect\n\nrequire go example.com/top v1.0.0\n",
+		"xo.lock": "go example.com/top v1.0.0 " + topSum + "\n" +
+			"go example.com/top v1.0.0/go.mod " + topModSum + "\n",
+		"main.xo": "use go \"example.com/top\"\n\nfn main(os: Os) {\n  os.stdio.println(\"${top.quad(5)}\")\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != "20" {
+		t.Fatalf("first run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	gm := filepath.Join(dir, ".xo", "gobind", "_mod", "go.mod")
+	b, err := os.ReadFile(gm)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var kept []string
+	dropped := false
+	for _, l := range strings.Split(string(b), "\n") {
+		if strings.Contains(l, "example.com/leaf") {
+			dropped = true
+			continue
+		}
+		kept = append(kept, l)
+	}
+	if !dropped {
+		t.Fatalf("the workspace's go.mod has no example.com/leaf line to drop:\n%s", b)
+	}
+	if err := os.WriteFile(gm, []byte(strings.Join(kept, "\n")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"build", "--backend=go", "-o", filepath.Join(dir, "app"), dir}, &out, &errOut); code != 0 {
+		t.Fatalf("build without leaf's requirement: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+}

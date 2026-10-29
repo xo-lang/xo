@@ -60,8 +60,10 @@ import (
 // package hands out as a value (netip.Addr) compares and hashes by value.
 // 7 (2026-10-27, decision 0392): a type of another package is that
 // package's binding's, named through a `use go` line of the declaration
-// file, not a copy.
-const Version = 7
+// file, not a copy. 8 (2026-10-29, the Windows tester's bugs 18 and 19):
+// a []byte parameter Go writes into and a parameter of an unexported type
+// are skipped.
+const Version = 8
 
 // Binding is one bound Go package.
 type Binding struct {

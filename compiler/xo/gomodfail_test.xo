@@ -1,0 +1,14 @@
+// Tests of go_module_failure (gobackend.xo): a `use go` build's module
+// graph failure is not reported as a code generator bug (the Windows
+// tester's bug 20, 2026-10-29).
+
+test "a go.mod or go.sum failure is a module failure" {
+  expect(go_module_failure("go: updates to go.mod needed; to update it:\n\tgo mod tidy\n")) == true
+  expect(go_module_failure("go: github.com/a/b@v1.0.0: missing go.sum entry for go.mod file\n")) == true
+  expect(go_module_failure("main.go:3:2: no required module provides package github.com/x/y; to add it:\n")) == false
+}
+
+test "a compile error is not a module failure" {
+  expect(go_module_failure("# xoprog/rt\nrt/x.go:70:30: c.do undefined\n")) == false
+  expect(go_module_failure("")) == false
+}

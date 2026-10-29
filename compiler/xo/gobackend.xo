@@ -171,6 +171,9 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
     }
     if res.0 != 0 {
       os.stdio.eprint(res.1)
+      if go_module_failure(res.1) {
+        fail_stage(os, gst, "go build failed: the Go modules of the `use go` bindings do not resolve (go's message above); removing .xo/gobind binds every package again together")
+      }
       fail_stage(os, gst, "go build failed (a code generator bug)")
     }
     let gerr = gst.commit(os)
@@ -321,11 +324,26 @@ fn release_go_cache(l: internal.SharedLock?) {
   }
 }
 
+/// Whether go build's output is a module graph failure, not a compile
+/// error in the generated Go: go's own `go: ...` module messages.
+fn go_module_failure(out: Str) -> Bool {
+  for l in out.split("\n") {
+    if l.starts_with("go: ") && (l.contains("go.mod") || l.contains("go.sum") || l.contains("module") || l.contains("requirement")) {
+      return true
+    }
+  }
+  false
+}
+
 /// One `go build` of the tree for target tg with tags and the linker
 /// flags ld before -s -w (goBuild), through the binary cache: its exit
 /// status and output.
 fn go_build(os: Os, ctx: Ctx, gocmd: Str, tree: Str, tags: List[Str], ld: Str, out: Str, tg: Str, race: Bool) -> (Int, Str) ! ProcErr {
-  var args = ["build", "-trimpath"]
+  // -mod=mod: the go command adds a requirement the bindings' go.mod
+  // lacks (a transitive `// indirect` one the binding workspace never
+  // wrote when packages were bound one at a time: the Windows tester's
+  // bug 20, 2026-10-29), from the module cache the binding filled
+  var args = ["build", "-trimpath", "-mod=mod"]
   if !tags.is_empty() {
     args.push("-tags=" + tags.join(","))
   }

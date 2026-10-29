@@ -6,6 +6,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Fix (`use go`, a Windows tester's bug 18): a Go function that writes
+  into a `[]byte` parameter (an `io.Reader`'s `Read(p)`, a
+  `Decode(dst, src)`) is skipped, as `use c` skips mutable buffers: an
+  Xo `Bytes` is a value, so what Go wrote was lost and the program saw
+  zero bytes. Using one is `XO1102` with the reason; a function that
+  also returns a `[]byte` (`AppendEncode`) is still bound.
+- Fix (`use go`, bug 19): a function or method with a parameter of an
+  unexported Go type (chi's `MethodNotAllowedHandler(...methodTyp)`,
+  bluemonday's `urlRewriter` callback) is skipped; before, the binding
+  named the unexported type and the program's Go build failed ("a code
+  generator bug") even when the program never called it. Bindings an
+  earlier xo cached are made again (binding format 8).
+- Fix (`use go`, bug 20): a build whose bindings were made one at a
+  time no longer fails on a Go module requirement the binding workspace
+  left out (`go build` runs with `-mod=mod`); a Go module failure shows
+  go's message and says that removing `.xo/gobind` binds every package
+  again, instead of "a code generator bug".
 - **Breaking** (decision 0410): the prelude's `Proc` interface gains
   `pid()` and `ppid()`, so a user type that implements `Proc` needs the
   two methods (interfaces have no default bodies, core 2.4); a wrapper

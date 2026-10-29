@@ -1715,6 +1715,10 @@ fn main(os: Os) ! {
   (`net`'s functions take `netip.AddrPort`), which is bound with it
   even when the program does not name that package (decision 0392); a
   type of a package a program cannot import (`internal`) is skipped;
+  a parameter of an unexported Go type is skipped, and so is a `[]byte`
+  parameter Go writes into (a `Read*` function's, or one named `dst`,
+  unless a result is a `[]byte`: a Bytes is a value and cannot carry
+  Go's writes back);
   slices and maps are copied in and out; a `context.Context` parameter is
   supplied from the current task (deadline and cancellation); a panic becomes
   a fault.

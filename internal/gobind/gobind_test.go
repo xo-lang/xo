@@ -246,3 +246,112 @@ func TestImportNewerExportData(t *testing.T) {
 		}
 	}
 }
+
+// TestOutputBuffers: a []byte parameter Go writes into is skipped (the
+// Windows tester's bug 18, 2026-10-29: strings.Reader.read(p) returned n
+// but left the program's Bytes as it was): io.Reader's Read(p), and a
+// parameter named dst, unless the function returns the bytes (the append
+// form). A []byte Go only reads (Write(p)) stays bound.
+func TestOutputBuffers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	decl, b, _ := bindDecl(t, "strings")
+	if strings.Contains(decl, ") read(p: Bytes)") {
+		t.Errorf("strings.Reader.read is bound:\n%s", grep(decl, ") read("))
+	}
+	found := false
+	for name, why := range b.Skipped {
+		if strings.HasSuffix(name, "read") && strings.Contains(why, "Go writes into") {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("no skipped read with the output buffer reason: %v", b.Skipped)
+	}
+	if !strings.Contains(decl, ") write(p: Bytes)") {
+		t.Errorf("strings.Builder.write is not bound:\n%s", grep(decl, ") write("))
+	}
+	hex, _, _ := bindDecl(t, "encoding/hex")
+	if strings.Contains(hex, "fn decode(dst: Bytes") {
+		t.Errorf("hex.decode(dst, src) is bound:\n%s", grep(hex, "fn decode("))
+	}
+	if !strings.Contains(hex, "fn append_encode(dst: Bytes") {
+		t.Errorf("hex.append_encode (the append form) is not bound:\n%s", grep(hex, "append_encode"))
+	}
+}
+
+// TestUnexportedParamTypes: an exported function or method whose parameter
+// is an unexported named type of its package (a named basic type passed
+// variadically, chi's MethodNotAllowedHandler(...methodTyp); a named
+// callback type, bluemonday's urlRewriter) is skipped, not bound with an
+// adapter that names the type, which failed the whole package's go build
+// (the Windows tester's bug 19, 2026-10-29).
+func TestUnexportedParamTypes(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "unexp")
+	files := map[string]string{
+		"go.mod": "module example.com/unexp\n\ngo 1.21\n",
+		"unexp.go": `package unexp
+
+type methodTyp uint
+
+type rewriter func(string) string
+
+type Mux struct{ n int }
+
+func NewMux() *Mux { return &Mux{} }
+
+func (m *Mux) Allowed(ms ...methodTyp) int { return len(ms) }
+
+func (m *Mux) Count() int { return m.n }
+
+func Rewrite(r rewriter) string { return r("x") }
+
+func Ok(n int) int { return n }
+`,
+	}
+	for name, body := range files {
+		if err := os.MkdirAll(src, 0o755); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/unexp v0.0.0\n\nreplace example.com/unexp => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/unexp", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := string(b.Decl)
+	if !strings.Contains(decl, "fn ok(n: Int) -> Int") || !strings.Contains(decl, ") count() -> Int") {
+		t.Errorf("ok or count not bound:\n%s", decl)
+	}
+	if strings.Contains(decl, ") allowed(") || strings.Contains(decl, "fn rewrite(") {
+		t.Errorf("a function with an unexported parameter type is bound:\n%s", decl)
+	}
+	if a := string(b.Adapter); strings.Contains(a, "methodTyp") || strings.Contains(a, "rewriter") {
+		t.Errorf("the adapter names an unexported type:\n%s", grep(a, "methodTyp"))
+	}
+	for _, name := range []string{"allowed", "rewrite"} {
+		found := false
+		for k, why := range b.Skipped {
+			if strings.HasSuffix(k, name) && strings.Contains(why, "unexported type") {
+				found = true
+			}
+		}
+		if !found {
+			t.Errorf("%s not skipped as an unexported type: %v", name, b.Skipped)
+		}
+	}
+}
