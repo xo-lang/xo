@@ -54,3 +54,14 @@ After them (792040837): wall 2.627 against 2.646 ms, B/A 1.007 (0.983 to 1.024),
 | conc-pmap | 53.84 | 54.61 | 1.014 | 0.996 to 1.028 | within noise |
 
 max_rss is mostly 24 to 80 KB higher separately (conc-spawn +200 KB; conc-fanout 80 KB and conc-pmap 16 KB lower). The milestone's "no runtime regression" holds: every row within noise or better, and collatz's 5 percent is the same machine code at another placement, inside the spread its own placements give.
+
+## The HTTP server (2026-10-29)
+
+bench/perf/http/run.sh (the users CRUD API, 32 workers, 10 s measured after a 2 s warmup, loopback), CONFIGS="xo-arenas xo-base-arenas", 5 interleaved runs, measure class: xo-arenas built by main's xo (8100a37b9) with its defaults (separately compiled; the binary carries __DATA,xounsafe, checked), xo-base-arenas by the same xo with XO_SEPCOMP=0 (whole; no xounsafe), each with its own backend cache, std's variants built first (~/xo-lead/notes/lang1/httprt.sh).
+
+| build | req/s | p50 us | p99 us | p99.9 us | peak RSS MB | CPU us/req |
+|---|---|---|---|---|---|---|
+| separate (default) | 144895 | 203 | 603 | 957 | 20.1 | 26.07 |
+| whole (XO_SEPCOMP=0) | 145268 | 203 | 598 | 946 | 19.5 | 26.43 |
+
+Medians of 5 runs; separate's runs 143755 to 150341 req/s, whole's 144073 to 145902. Within noise: req/s 0.997, CPU per request 0.986; peak RSS 0.6 MB higher separately.
