@@ -104,6 +104,13 @@ build "$p" "$w/bw/prog"; rw=$?
 check "builds (default $rd, explicit sep $re, whole $rw)" $((rd + re + rw)) "$(tail -3 "$w/bd/prog.log" "$w/be/prog.log" "$w/bw/prog.log")"
 cmp -s "$w/bd/prog.exe" "$w/be/prog.exe"; check "the default build is the separate build's bytes" $? "$(cmp -l "$w/bd/prog.exe" "$w/be/prog.exe" 2>&1 | wc -l) bytes differ"
 cmp -s "$w/bd/prog.exe" "$w/bw/prog.exe"; [ $? != 0 ]; check "and not the whole program's" $? "the default build equals the whole program's: the default did not take the separate path"
+# an edit, built by default: std's records (XO_STD_EXPORT, on by default
+# for a separate build since ac45dea60) are loaded, not std parsed
+sed -i 's/"sum /"total sum /' "$p/main.xo"
+(cd "$p" && XO_CACHE_STATS=1 "$xo" build --backend=amd64 -o "$(np "$w/bd/prog")" .) > "$w/edit.log" 2>&1; re2=$?
+grep -q "cache stdx record loaded" "$w/edit.log"; check "an edit's default build loads std's record ($(grep -m1 'cache stdx' "$w/edit.log"))" $((re2 + $?)) "$(grep 'cache stdx\|error' "$w/edit.log" | head -3)"
+"$w/bd/prog.exe" > "$w/edit.out" 2>&1
+grep -q "^total sum 15" "$w/edit.out"; check "the edited program prints its new line ($(head -1 "$w/edit.out"))" $? "$(head -2 "$w/edit.out")"
 for v in be bw; do "$w/$v/prog.exe" > "$w/$v.out" 2>&1; done
 cmp -s "$w/be.out" "$w/bw.out"; check "separate and whole print the same ($(head -1 "$w/bw.out"))" $? "$(cat "$w/be.out")"
 note "separate prog.pdb $(wc -c < "$w/be/prog.pdb" 2>/dev/null) bytes, whole $(wc -c < "$w/bw/prog.pdb" 2>/dev/null)"
