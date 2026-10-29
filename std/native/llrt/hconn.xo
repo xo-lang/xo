@@ -260,7 +260,12 @@ pub fn set_idle(hc: Int, idle: Bool) {
 /// 0 at the end of the stream, -1 when the connection was closed or the
 /// task canceled, or (idle: nothing of a request came yet, so a stop
 /// closes it) the server is stopping.
-pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int {
+pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int { recv_until(h, p, cap, idle, 0) }
+
+/// recv with a deadline (monotonic ns, 0 none; std.md 4.4): -2 when it
+/// passed before a byte came. A TLS connection's reads have no deadline
+/// (the handshake and decrypt op take none).
+pub fn recv_until(h: rthttp.HConn, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
   let hc = rec(h)
   let s = ld(hc, HC_SRV)
   if s != 0 {
@@ -289,8 +294,13 @@ pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int {
         if r == -sock.EINTR {
           continue
         }
-        if would_block(r) && poll.pd_wait(pd, false, 0) == poll.READY {
-          continue
+        if would_block(r) {
+          let w = poll.pd_wait(pd, false, deadline)
+          if w == poll.READY {
+            continue
+          }
+          r = if w == poll.TIMEOUT { -2 } else { -1 }
+          break
         }
         r = -1
         break
@@ -299,7 +309,7 @@ pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int {
     }
   }
   set_idle(hc, false)
-  if r < 0 { -1 } else { r }
+  if r == -2 { -2 } else if r < 0 { -1 } else { r }
 }
 
 /// Sends the n bytes at p: false when the connection broke.

@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-10-29: feature: server timeouts and limits (server gaps, part 2)
+
+- Kind: feature
+- Commit: this commit
+- Found by: std-coverage.md rank 11 (the lead's list)
+- Go reference: net/http Server.ReadTimeout, ReadHeaderTimeout, IdleTimeout, MaxHeaderBytes, MaxBytesReader (go1.26.1)
+- Test: golden http_server_limits (a 431 over the header cap, a 413 over the body cap and through max_body, a late head closed without a reply), identical on both backends
+
+`with_read_timeout`, `with_read_header_timeout`, `with_idle_timeout`,
+`with_max_header_bytes` (431 over it) and `with_max_body` (413 before the
+handler, the connection closed) on Server, and the `max_body(n)`
+middleware (413 with Go's text). Natively the limits sit on each connection's parse record
+(http1.Limits) and the reads take a deadline (hconn.recv_until); the Go
+backend sets net/http's fields.
+
 ## 2026-10-29: feature: Request host, tls, raw_query, escaped_path; redirect, error_page, not_found (server gaps, part 1)
 
 - Kind: feature

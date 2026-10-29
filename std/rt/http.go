@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 	"unicode/utf8"
 )
 
@@ -913,6 +914,50 @@ type Http_Server struct {
 	// with_tls (std.md 4.6): HTTPS with these certificates
 	tls   []Http_TlsCert
 	tlsOn bool
+	// with_read_timeout, with_read_header_timeout, with_idle_timeout,
+	// with_max_header_bytes, with_max_body (std.md 4.4): net/http's
+	// Server fields and MaxBytesReader on each body.
+	readTimeout, readHeaderTimeout, idleTimeout time.Duration
+	maxHeaderBytes, maxBody                     int64
+}
+
+func (s Http_Server) M_with_read_timeout(_ *Task, d Duration) Http_Server {
+	s.readTimeout = time.Duration(d)
+	return s
+}
+
+func (s Http_Server) M_with_read_header_timeout(_ *Task, d Duration) Http_Server {
+	s.readHeaderTimeout = time.Duration(d)
+	return s
+}
+
+func (s Http_Server) M_with_idle_timeout(_ *Task, d Duration) Http_Server {
+	s.idleTimeout = time.Duration(d)
+	return s
+}
+
+func (s Http_Server) M_with_max_header_bytes(_ *Task, n int64) Http_Server {
+	s.maxHeaderBytes = n
+	return s
+}
+
+func (s Http_Server) M_with_max_body(_ *Task, n int64) Http_Server {
+	s.maxBody = n
+	return s
+}
+
+// Http_max_body is `http.max_body(n)`: a middleware answering 413 with
+// MaxBytesReader's text for a body over n.
+func Http_max_body(tk *Task, n int64) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
+	return func(tk *Task, req Http_Request, next func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never] {
+		if int64(len(req.F_body)) > n {
+			h := mapCap[string, string](2)
+			Map_put(tk, &h, "Content-Type", "text/plain; charset=utf-8")
+			Map_put(tk, &h, "X-Content-Type-Options", "nosniff")
+			return Ok[Http_Response, Never](Http_Response{F_status: 413, F_headers: h, F_body: Bytes("http: request body too large\n")})
+		}
+		return next(tk, req)
+	}
 }
 
 // Http_TlsCert is `http.TlsCert`: a *tls.Certificate (http_net.go; nil

@@ -53,6 +53,8 @@ const BAD: Int = 3
 const STATUS: Int = 4
 const TOO_LARGE: Int = 5
 const BAD_TE: Int = 6
+/// A body over with_max_body (413, std.md 4.4).
+const BODY_TOO_BIG: Int = 8
 
 // The byte classes (http1_tables.CLASS).
 const TCHAR: Int = 1
@@ -688,7 +690,8 @@ fn line_at(s: Str, b: Bytes, i: Int, n: Int, eof: Bool) -> (Bool, Int, Int) {
 }
 
 /// The result when more input may complete the head.
-fn need(n: Int) -> Parse { fail(if n > MAX_HEAD { TOO_LARGE } else { NEED }) }
+fn need(n: Int) -> Parse { need_cap(n, MAX_HEAD) }
+fn need_cap(n: Int, cap: Int) -> Parse { fail(if n > cap { TOO_LARGE } else { NEED }) }
 
 /// net/http's hasToken: tok anywhere in v between space, comma, or tab
 /// boundaries, ASCII case insensitive (tok lower case).
@@ -1443,7 +1446,18 @@ const X_SEXCESS = 136
 const X_SCRLF = 144
 const X_S100 = 152
 const X_SSEQ = 160
-const X_SIZE = 168
+/// The server's limits (std.md 4.4, set_limits): the head bytes cap
+/// (MAX_HEAD when 0), the body cap (max_body() when 0), the idle, head
+/// and read timeouts in ns (0 none), and the absolute deadline of the
+/// request being read (0 none; set at its first byte).
+const X_MAX_HEAD = 168
+const X_MAX_BODY = 176
+const X_IDLE_NS = 184
+const X_HEAD_NS = 192
+const X_READ_NS = 200
+const X_DEADLINE = 208
+const X_HDR_DEADLINE = 216
+const X_SIZE = 224
 
 /// The modes of a streamed body: none (read before the handler), a
 /// Content-Length body, a chunked one, read to its end, failed, closed
@@ -1630,11 +1644,35 @@ fn fill(h: rthttp.HConn, x: Int) -> Int {
     x_room(x, X_BUF, 4096)
   }
   let idle = xl(x, X_OFF) == xl(x, X_N)
-  let r = hconn.recv(h, xl(x, X_BUF) + xl(x, X_N), xl(x, X_CAP) - xl(x, X_N), idle)
+  let r = hconn.recv_until(h, xl(x, X_BUF) + xl(x, X_N), xl(x, X_CAP) - xl(x, X_N), idle, read_deadline(x, idle))
   if r > 0 {
     xs(x, X_N, xl(x, X_N) + r)
   }
   r
+}
+
+/// The deadline of a read (std.md 4.4): waiting for a request's first
+/// byte, the idle timeout (else the read timeout); after it, the sooner
+/// of the request's read deadline and its head deadline (0: none). The
+/// request's deadline starts at its first byte (X_DEADLINE, cleared by
+/// read_one when the head is complete and set again for the body).
+fn read_deadline(x: Int, idle: Bool) -> Int {
+  if idle {
+    xs(x, X_DEADLINE, 0)
+    let d = if xl(x, X_IDLE_NS) > 0 { xl(x, X_IDLE_NS) } else { xl(x, X_READ_NS) }
+    return if d > 0 { hconn.deadline(d) } else { 0 }
+  }
+  var dl = xl(x, X_DEADLINE)
+  if dl == 0 && xl(x, X_READ_NS) > 0 {
+    dl = hconn.deadline(xl(x, X_READ_NS))
+    xs(x, X_DEADLINE, dl)
+  }
+  let hn = xl(x, X_HEAD_NS)
+  if hn > 0 && xl(x, X_HDR_DEADLINE) == 0 {
+    xs(x, X_HDR_DEADLINE, hconn.deadline(hn))
+  }
+  let hd = xl(x, X_HDR_DEADLINE)
+  if hd > 0 && (dl == 0 || hd < dl) { hd } else { dl }
 }
 
 /// The unread input up to n bytes of it.
@@ -1676,6 +1714,30 @@ pub struct Reader {
   /// given its method and path; none: every body is read first.
   streams: List[fn(Str, Str) -> Bool] = []
 }
+
+/// A server's limits (std.md 4.4): 0 is the default of each.
+pub struct Limits {
+  pub read_ns: Int = 0
+  pub head_ns: Int = 0
+  pub idle_ns: Int = 0
+  pub max_head: Int = 0
+  pub max_body: Int = 0
+}
+
+/// Stores the server's limits on the connection's record.
+pub fn set_limits(h: rthttp.HConn, lim: Limits) {
+  let x = x1_of(h)
+  xs(x, X_MAX_HEAD, lim.max_head)
+  xs(x, X_MAX_BODY, lim.max_body)
+  xs(x, X_IDLE_NS, lim.idle_ns)
+  xs(x, X_HEAD_NS, lim.head_ns)
+  xs(x, X_READ_NS, lim.read_ns)
+}
+
+/// The head bytes cap of the connection: with_max_header_bytes plus
+/// net/http's 4096 bytes of bufio slop (initialReadLimitSize), MAX_HEAD
+/// when the server set none.
+fn head_cap(x: Int) -> Int { let m = xl(x, X_MAX_HEAD); if m > 0 { m + 4096 } else { MAX_HEAD } }
 
 /// The reader of the connection.
 pub fn reader(h: rthttp.HConn) -> Reader { Reader{h: h, x: x1_of(h), head: no_head()} }
@@ -1804,8 +1866,15 @@ fn (var r: Reader) read_one() -> Int {
     }
     var res = NEED
     if !peek && !skip {
-      p = parse_head(input(x, head_len(x)), eof)
-      res = p.res
+      let hl = head_len(x)
+      if hl > head_cap(x) {
+        // over with_max_header_bytes (std.md 4.4): 431, as MAX_HEAD's
+        p = fail(TOO_LARGE)
+        res = TOO_LARGE
+      } else {
+        p = parse_head(input(x, hl), eof)
+        res = p.res
+      }
     }
     if res == NEED {
       if eof {
@@ -1815,6 +1884,9 @@ fn (var r: Reader) read_one() -> Int {
       // wait for more; idle when nothing of a request came yet
       let got = fill(h, x)
       if got < 0 {
+        // -2: the read or head timeout passed while the head was read;
+        // net/http closes without a reply (a timeout is a common net
+        // read error to conn.serve)
         return 0
       }
       if got == 0 {
@@ -1838,6 +1910,9 @@ fn (var r: Reader) read_one() -> Int {
     xs(x, X_OFF, xl(x, X_OFF) + p.used)
     break
   }
+  // the head is complete: the head deadline is done, the request's stays
+  // for the body
+  xs(x, X_HDR_DEADLINE, 0)
   let q = p.head
   r.head = q
   xs(x, X_LAST_POST, if q.method == "POST" { 1 } else { 0 })
@@ -1892,7 +1967,7 @@ fn (var r: Reader) read_one() -> Int {
     if q.expect100 {
       let _c = send_str(h, "HTTP/1.1 100 Continue\r\n\r\n")
     }
-    let max = xl(x, X_MAX)
+    let max = if xl(x, X_MAX_BODY) > 0 { xl(x, X_MAX_BODY) } else { xl(x, X_MAX) }
     var short_body = false
     while true {
       let have = xl(x, X_N) - xl(x, X_OFF)
@@ -1953,6 +2028,16 @@ fn (var r: Reader) read_one() -> Int {
     // after the response
     if q.expect100 && (short_body || (xl(x, X_FLAGS) & http1w.F_BODY_BAD) != 0) {
       xs(x, X_FLAGS, xl(x, X_FLAGS) | http1w.F_EXPECT_UNREAD)
+    }
+    if xl(x, X_MAX_BODY) > 0 && (xl(x, X_FLAGS) & http1w.F_TOO_BIG) != 0 {
+      // over with_max_body (std.md 4.4): 413 with MaxBytesReader's text,
+      // the connection closed (the rest of the body is never read)
+      let d = rt.heap_large(256)
+      let n = http1w.error_answer(d, BODY_TOO_BIG, 413, "")
+      let _s = send(h, d, n)
+      rt.heap_release(d - 8)
+      hconn.shut_wr(h)
+      return 0
     }
   }
   if q.method == "OPTIONS" && q.target == "*" {

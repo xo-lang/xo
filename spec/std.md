@@ -1565,8 +1565,29 @@ pub fn server(l: Listener, r: Router) -> Server
 fn (s: Server) serve() -> () ! HttpErr uses net.listen
 fn (s: Server) addr() -> Str                       // the listener's addr()
 fn (s: Server) with_tls(certs: List[TlsCert]) -> Server   // HTTPS (4.6)
+fn (s: Server) with_read_timeout(d: Duration) -> Server          // Go's ReadTimeout: a request's head and body, from its first byte
+fn (s: Server) with_read_header_timeout(d: Duration) -> Server   // Go's ReadHeaderTimeout
+fn (s: Server) with_idle_timeout(d: Duration) -> Server          // Go's IdleTimeout: the wait for a kept alive connection's next request
+fn (s: Server) with_max_header_bytes(n: Int) -> Server           // Go's MaxHeaderBytes (plus 4096 of slack; 1 MB when 0): a longer head is 431
+fn (s: Server) with_max_body(n: Int) -> Server                   // the body read before a handler (64 MB when 0): a longer one is 413
+pub fn max_body(n: Int) -> fn(Request, Next) -> Response         // Go's MaxBytesReader as a middleware: 413 `http: request body too large`
 enum HttpErr { Io(msg: Str), Canceled }
 ```
+
+- Timeouts (Go's): a connection whose request's head or body is not
+  complete when the read or head timeout passes closes without a reply
+  (net/http's conn.serve treats a timeout as a common read error); the
+  idle timeout (the read timeout when 0) closes a kept alive connection
+  waiting for its next request. The header cap has net/http's 4096 bytes
+  of slack over `with_max_header_bytes`. On the
+  native backends a TLS connection's reads take no deadline yet (the
+  handshake and decrypt op have none); the Go backend applies them.
+- A body over `with_max_body` is `413` with MaxBytesReader's text and the
+  connection closes, before the handler runs; a body over the default cap
+  (no `with_max_body`) reaches the handler cut to the cap with the
+  connection closed after the response, as before. The Go backend
+  answers 413 from the Content-Length (a chunked body over the cap is
+  cut by MaxBytesReader).
 
 `serve` runs until its scope is cancelled, then stops accepting, waits for
 in flight requests, and returns `Ok(())`. Each request runs as an isolated

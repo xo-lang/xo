@@ -974,6 +974,7 @@ pub fn response(d: Int, ha: Int, hn: Int, status0: Int, body: Int, bn: Int, flag
 const STATUS: Int = 4
 const TOO_LARGE: Int = 5
 const BAD_TE: Int = 6
+const BODY_TOO_BIG: Int = 8
 
 /// The answer of conn.serve to a request it could not read (hw_error),
 /// at most 255 bytes, written at d (room for 256); its length.
@@ -983,6 +984,8 @@ pub fn error_answer(d: Int, kind: Int, code: Int, reason: Str) -> Int {
     "HTTP/1.1 431 Request Header Fields Too Large${hdrs}431 Request Header Fields Too Large"
   } else if kind == BAD_TE {
     "HTTP/1.1 501 Not Implemented${hdrs}Unsupported transfer encoding"
+  } else if kind == BODY_TOO_BIG {
+    "HTTP/1.1 413 Request Entity Too Large${hdrs}http: request body too large"
   } else if kind == STATUS {
     let t = "${code} ${status_text(code)}: ${reason}"
     "HTTP/1.1 ${t}${hdrs}${t}"

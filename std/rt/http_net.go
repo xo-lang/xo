@@ -51,8 +51,19 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 	sch := tk.th.sch
 	recording := sch != nil && sch.rec != nil
 	sc := &serveCtx{s: s, tk: tk, reqRoot: reqRoot, sch: sch}
-	srv := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
+	srv := &http.Server{ReadTimeout: s.readTimeout, ReadHeaderTimeout: s.readHeaderTimeout, IdleTimeout: s.idleTimeout, MaxHeaderBytes: int(s.maxHeaderBytes), Handler: http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
 		faultProbe(tk, hr)
+		if s.maxBody > 0 {
+			if hr.ContentLength > s.maxBody {
+				// over with_max_body (std.md 4.4): 413 with MaxBytesReader's text
+				w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+				w.Header().Set("Connection", "close")
+				w.WriteHeader(http.StatusRequestEntityTooLarge)
+				io.WriteString(w, "http: request body too large\n")
+				return
+			}
+			hr.Body = http.MaxBytesReader(w, hr.Body, s.maxBody)
+		}
 		var a *Arena
 		if useArena {
 			a = getArena()

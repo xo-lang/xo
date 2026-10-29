@@ -1,0 +1,63 @@
+// A server's limits (std.md 4.4): a head over with_max_header_bytes is
+// 431, a body over with_max_body is 413, a body over a route's max_body
+// middleware is 413 with Go's text, and a head that is late past
+// with_read_header_timeout closes the connection without a reply (net/http's
+// rule).
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("POST /echo", fn(req) { http.text(200, "got ${req.body.len()}") })
+  var small = http.router()
+  small.wrap(http.max_body(10))
+  small.handle("POST /tiny", fn(req) { http.text(200, "tiny ${req.body.len()}") })
+  r.mount("/small", small)
+  r
+}
+
+fn show(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) uses stdio {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${(resp.body.to_str() ?? "?").trim()}")
+    Err(_) => os.stdio.println("${label}: error")
+  }
+}
+
+fn main(os: Os) uses net, stdio {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes()).with_max_header_bytes(512).with_max_body(100).with_read_header_timeout(300ms)
+      let addr = srv.addr()
+      let base = "http://${addr}"
+      let c = http.client(os.net)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        show(os, "small body", c.send(http.new_request("POST", base + "/echo", {}, "x".repeat(50).bytes())))
+        show(os, "big body", c.send(http.new_request("POST", base + "/echo", {}, "x".repeat(200).bytes())))
+        show(os, "tiny ok", c.send(http.new_request("POST", base + "/small/tiny", {}, "x".repeat(5).bytes())))
+        show(os, "tiny over", c.send(http.new_request("POST", base + "/small/tiny", {}, "x".repeat(50).bytes())))
+        show(os, "big header", c.send(http.new_request("POST", base + "/echo", {"x-pad": "y".repeat(100000)}, "ok".bytes())))
+        // a head that never completes: closed after the header timeout
+        match os.net.dial(addr) {
+          Ok(conn) => {
+            match conn.write("GET /echo HTTP/1.1\r\nHost: x\r\n".bytes()) {
+              Ok(_) => match conn.read(4096) {
+                Ok(Some(b)) => os.stdio.println("late head: ${(b.to_str() ?? "?").split("\r\n").first() ?? ""}")
+                Ok(None) => os.stdio.println("late head: closed")
+                Err(_) => os.stdio.println("late head: read error")
+              }
+              Err(_) => os.stdio.println("late head: write error")
+            }
+          }
+          Err(_) => os.stdio.println("late head: dial error")
+        }
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

@@ -60,6 +60,12 @@ var (
 	_ func(*Http_Server, *Task) Result[Unit, Http_HttpErr]                                                                                              = (*Http_Server).M_serve
 	_ func(*Http_Server, *Task) string                                                                                                                  = (*Http_Server).M_addr
 	_ func(*Http_Server, *Task, List[Http_TlsCert]) Http_Server                                                                                         = (*Http_Server).M_with_tls
+	_ func(*Http_Server, *Task, Duration) Http_Server                                                                                                   = (*Http_Server).M_with_read_timeout
+	_ func(*Http_Server, *Task, Duration) Http_Server                                                                                                   = (*Http_Server).M_with_read_header_timeout
+	_ func(*Http_Server, *Task, Duration) Http_Server                                                                                                   = (*Http_Server).M_with_idle_timeout
+	_ func(*Http_Server, *Task, int64) Http_Server                                                                                                      = (*Http_Server).M_with_max_header_bytes
+	_ func(*Http_Server, *Task, int64) Http_Server                                                                                                      = (*Http_Server).M_with_max_body
+	_ func(*Task, int64) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never]                 = Http_max_body
 	_ func(*Task, Bytes, Bytes) Result[Http_TlsCert, Http_TlsErr]                                                                                       = Http_tls_cert
 	_ func(*Http_TlsErr, *Task) string                                                                                                                  = (*Http_TlsErr).M_display
 	_ func(*Http_HttpErr, *Task) string                                                                                                                 = (*Http_HttpErr).M_display

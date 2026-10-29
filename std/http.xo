@@ -243,6 +243,27 @@ fn (s: Server) addr() -> Str
 /// The server with HTTPS (std.md 4.6): certs[0] unless SNI names another
 /// certificate's host.
 fn (s: Server) with_tls(certs: List[TlsCert]) -> Server
+/// Go's Server.ReadTimeout: the time a request's head and body may take
+/// to arrive, from its first byte; a connection whose request is late
+/// closes without a reply, as net/http's does.
+fn (s: Server) with_read_timeout(d: Duration) -> Server
+/// Go's Server.ReadHeaderTimeout: the time the head alone may take.
+fn (s: Server) with_read_header_timeout(d: Duration) -> Server
+/// Go's Server.IdleTimeout: how long a kept alive connection waits for
+/// its next request's first byte (the read timeout when 0).
+fn (s: Server) with_idle_timeout(d: Duration) -> Server
+/// Go's Server.MaxHeaderBytes (plus net/http's 4096 bytes of slack): a
+/// longer head is `431 Request Header Fields Too Large` (1 MB when 0, as
+/// Go's DefaultMaxHeaderBytes).
+fn (s: Server) with_max_header_bytes(n: Int) -> Server
+/// The largest request body the server reads before a handler (64 MB when
+/// 0, XO_HTTP_MAX_BODY's default); a longer one is `413 Content Too
+/// Large`. A route that needs a smaller cap wraps `max_body(n)`.
+fn (s: Server) with_max_body(n: Int) -> Server
+/// A middleware that answers `413` with Go's MaxBytesReader text
+/// (`http: request body too large`) for a body over n bytes (a streamed
+/// body is capped at n as it is read).
+fn max_body(n: Int) -> fn(Request, Next) -> Response
 
 /// A certificate chain with its private key (std.md 4.6); a handle.
 struct TlsCert {}

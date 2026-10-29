@@ -114,6 +114,14 @@ struct Server {
   /// none of it.
   tls_setup: fn(rthttp.Srv, List[TlsCert]) -> ()
   h2: fn(rthttp.HConn, Int, Router) -> ()
+  /// with_read_timeout, with_read_header_timeout, with_idle_timeout (ns,
+  /// 0 none), with_max_header_bytes and with_max_body (bytes, 0 the
+  /// defaults): http1.Limits of each connection's reader.
+  read_ns: Int = 0
+  head_ns: Int = 0
+  idle_ns: Int = 0
+  max_head: Int = 0
+  max_body: Int = 0
 }
 
 struct Client {
@@ -2006,6 +2014,23 @@ fn server(l: Listener, r: Router) -> Server { Server{l: l, r: r, tls_setup: no_t
 
 fn (s: Server) addr() -> Str { s.l.addr() }
 
+fn (s: Server) with_read_timeout(d: Duration) -> Server { s with {read_ns: if d.nanos() > 0 { d.nanos() } else { 0 }} }
+fn (s: Server) with_read_header_timeout(d: Duration) -> Server { s with {head_ns: if d.nanos() > 0 { d.nanos() } else { 0 }} }
+fn (s: Server) with_idle_timeout(d: Duration) -> Server { s with {idle_ns: if d.nanos() > 0 { d.nanos() } else { 0 }} }
+fn (s: Server) with_max_header_bytes(n: Int) -> Server { s with {max_head: if n > 0 { n } else { 0 }} }
+fn (s: Server) with_max_body(n: Int) -> Server { s with {max_body: if n > 0 { n } else { 0 }} }
+
+/// Go's MaxBytesReader as a middleware: a body over n is 413 with Go's
+/// text; a streamed body's reader is capped at n.
+fn max_body(n: Int) -> fn(http.Request, http.Next) -> http.Response {
+  fn(req: http.Request, next: http.Next) -> http.Response {
+    if req.body.len() > n {
+      return http.Response{status: 413, headers: {"Content-Type": "text/plain; charset=utf-8", "X-Content-Type-Options": "nosniff"}, body: "http: request body too large\n".bytes()}
+    }
+    next(req)
+  }
+}
+
 fn (s: Server) with_tls(certs: List[TlsCert]) -> Server {
   // the table of the TLS server and HTTP/2 (srvtls.xo), made once
   srvtls.install()
@@ -2051,6 +2076,7 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   let l = s.l
   let r = s.r
   let h2 = s.h2
+  let lim = http1.Limits{read_ns: s.read_ns, head_ns: s.head_ns, idle_ns: s.idle_ns, max_head: s.max_head, max_body: s.max_body}
   var failed = ""
   scope sc {
     sc.spawn_background(fn() {
@@ -2064,7 +2090,7 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
       match l.accept() {
         Ok(c) => {
           let hc = hserve.hc_new(srv, c)
-          conns.spawn_background(fn() { serve_conn_isolated(hc, r, h2) })
+          conns.spawn_background(fn() { serve_conn_isolated(hc, r, h2, lim) })
         }
         Err(NetErr.Io(msg)) => {
           if !task.stop_requested() && !task.is_canceled() {
@@ -2101,8 +2127,8 @@ fn serve_mem(l: Listener, r: Router) {
 /// as net/http recovers per connection ("http: panic serving"): logged,
 /// the connection closed (serve_conn's defer), the server serving on. It
 /// once stopped the server (gotchas/native-server-unisolated-fault-wedges.md).
-fn serve_conn_isolated(hc: rthttp.HConn, r: Router, h2: fn(rthttp.HConn, Int, Router) -> ()) {
-  match task.isolate(fn() -> () ! () { serve_conn(hc, r, h2) }) {
+fn serve_conn_isolated(hc: rthttp.HConn, r: Router, h2: fn(rthttp.HConn, Int, Router) -> (), lim: http1.Limits) {
+  match task.isolate(fn() -> () ! () { serve_conn(hc, r, h2, lim) }) {
     // the message alone: the location is the runtime's, not the program's
     Err(task.Isolated.Faulted(info)) => log.error("http: panic serving", {"fault": info.msg})
     _ => ()
@@ -2110,7 +2136,7 @@ fn serve_conn_isolated(hc: rthttp.HConn, r: Router, h2: fn(rthttp.HConn, Int, Ro
 }
 
 /// Serves the requests of one connection until it closes.
-fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> ()) {
+fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> (), lim: http1.Limits) {
   defer hserve.hc_close(hc)
   let h2 = hserve.hc_h2(hc)
   if h2 != 0 {
@@ -2119,6 +2145,7 @@ fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Route
   }
   // a handle_stream route reads its body itself (decision 0310)
   var rd = if r.streamed { http1.reader_streaming(hc, fn(m: Str, p: Str) -> Bool { route_streams(r, m, p) }) } else { http1.reader(hc) }
+  http1.set_limits(hc, lim)
   while true {
     match rd.read() {
       Some(q) => {
