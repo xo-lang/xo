@@ -1,5 +1,61 @@
 # std/crypto changes
 
+## 2026-10-29: feature: AEAD (AES-GCM, ChaCha20-Poly1305) and HKDF
+
+- Kind: feature
+- Commit: this commit
+- Found by: milestone 0.35.0 S4 (public AEAD and HKDF from the implementations TLS already has)
+- Go reference: crypto/cipher (cipher.AEAD, NewGCM, NewGCMWithRandomNonce), golang.org/x/crypto/chacha20poly1305, crypto/hkdf (Extract, Expand, Key) (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/aead (scripts/stdcorpus aead.go: crypto/cipher's aesGCMTests and crypto/hkdf's hkdfTests, each checked against Go here; Wycheproof's AES-GCM and ChaCha20-Poly1305 vectors with a 96 bit nonce and a 128 bit tag, valid and invalid, and its HKDF-SHA-1/256/384/512 valid vectors; seeded AES-GCM rows sealed by Go; a changed byte anywhere not opening; key sizes; seal_random and open_random; hkdf over every Hash) on go, arm64 and LLVM; bench/perf/aead twin
+
+New in std/crypto: `enum Aead { AesGcm, ChaCha20Poly1305 }`,
+`aead_key(alg, key) -> AeadKey ! AeadErr`, and on an AeadKey
+`seal_random` and `open_random` (a random 12 byte nonce kept first, the
+way to seal unless a protocol counts nonces) and `seal` and `open` with
+an explicit nonce; `hkdf_extract`, `hkdf_expand` and `hkdf` over any
+Hash. A failed open is one AeadErr, `cipher: message authentication
+failed`, on every backend; a nonce that is not 12 bytes is a fault. An
+AeadKey has no Display and derives nothing, so it cannot be printed or
+encoded (Debug text `<aeadkey>`). Natively the ciphers are the TLS
+stack's (aesgcm.xo, chacha.xo); the Go backend uses Go's crypto/cipher
+and crypto/hkdf. Timing (bench/perf/aead, its Go twin as A, quiet --ab,
+15 rounds, wall): AES-GCM seal and open of 64 bytes 0.908 (0.892 to
+0.926) of Go's time, of 1 MiB 0.744 (0.732 to 0.758); ChaCha20-Poly1305
+of 64 bytes 1.008 (0.998 to 1.014, within noise), of 1 MiB 0.883 (0.872
+to 0.889); HKDF-SHA-256 of 32 bytes 0.965 (0.952 to 0.985); an AES-256
+key made 1.357 (1.335 to 1.365), the one row over 1.2: the key schedule,
+a word a step in Xo where Go expands with AESE in assembly, is the next
+step.
+
+## 2026-10-29: perf: ChaCha20-Poly1305 under 256 bytes on arm64 with 64 bit Poly1305 limbs
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/aead chacha_small (64 bytes) at 1.70 times Go's instructions; its profile (Poly1305's 26 bit limbs, tag26, 64% cumulative)
+- Go reference: golang.org/x/crypto/internal/poly1305 sum_generic.go (64 bit limbs, bits.Mul64)
+- Test: internal/stdtest/testdata/corpus/aead (Wycheproof ChaCha20-Poly1305, every length to 256 and past it); goldens chacha_blocks4, crypto_prims, tls13_rfc8448, tls12_client on arm64 and LLVM
+
+chacha.seal and open take the 64 bit limb Poly1305 path (seal64, open64,
+until now amd64's) on arm64 for messages under 256 bytes, where no NEON
+block runs: arm64's umulh does a 64 by 64 bit product in one instruction.
+Longer messages keep the 26 bit path beside the NEON key stream. Quiet
+--ab, 15 rounds, the parent's std as A: 64 byte seal and open wall 0.89
+(0.884 to 0.903), instructions 0.907; 1 MiB within noise (1.001).
+
+## 2026-10-29: perf: the AES key schedule makes its words once
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/aead gcm_key at 1.50 times Go's time; its profile (aesgcm.schedule 27% flat: its word list grown from empty, the round constants and the bitsliced loop's list made on every key)
+- Go reference: crypto/internal/fips140/aes aes_generic.go expandKeyGeneric (a fixed array)
+- Test: internal/stdtest/testdata/corpus/aead and crypto; goldens crypto_prims, cpu_prims and the TLS goldens on arm64 and LLVM
+
+aesgcm.schedule (every AES key: std/crypto's AeadKey, TLS's record keys)
+makes its word list with its final length, reads the round constants
+from a constant, and makes the bitsliced loop's list only when that loop
+runs. Quiet --ab, 15 rounds, the parent's std as A: an AES-256 key made
+wall 0.897 (0.886 to 0.907), instructions 0.879; against Go 1.357.
+
 ## 2026-10-28: perf: SHA-3 and SHAKE on arm64 with the SHA3 extension (SHA3-256 0.577 of its time, 0.948 of Go's on 1 MiB)
 
 - Kind: perf

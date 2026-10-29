@@ -7,11 +7,14 @@
 use std/base64
 use std/crypto
 use std/json
+use native/llrt/aesgcm
 use native/llrt/asn1
 use native/llrt/bigmod
+use native/llrt/chacha
 use native/llrt/ct
 use native/llrt/digest as dg
 use native/llrt/ed25519
+use native/llrt/hkdf as hk
 use native/llrt/md5
 use native/llrt/nistec
 use native/llrt/rsa
@@ -208,6 +211,147 @@ fn hmac(h: crypto.Hash, key: Bytes, msg: Bytes) -> Bytes {
   var x = hmac_hasher(h, key)
   x.write(msg)
   x.sum()
+}
+
+// ---------------------------------------------------------------------------
+// AEAD and HKDF (std.md 11): the TLS stack's AES-GCM (aesgcm.xo's Gcm, its
+// key schedule and GHASH table made once a key) and ChaCha20-Poly1305
+// (chacha.xo), and HKDF over this file's HMAC for every Hash.
+
+/// Go's cipher error text, the same for every check that fails.
+const AEAD_FAIL = "cipher: message authentication failed"
+
+fn aead_nonce_size(a: crypto.Aead) -> Int { 12 }
+fn aead_overhead(a: crypto.Aead) -> Int { 16 }
+fn aeaderr_display(e: crypto.AeadErr) -> Str { e.msg }
+
+/// The key: AES-GCM's ready Gcm, or ChaCha20-Poly1305's 32 bytes. Never
+/// displayed or encoded (no Display; the declaration has none).
+struct AeadKey {
+  which: crypto.Aead
+  gcm: aesgcm.Gcm?
+  key: Bytes
+}
+
+fn aead_key(alg: crypto.Aead, key: Bytes) -> AeadKey ! crypto.AeadErr {
+  match alg {
+    AesGcm => {
+      if !(key.len() is 16 | 24 | 32) {
+        return Err(crypto.AeadErr{msg: "crypto/aes: invalid key size ${key.len()}"})
+      }
+      Ok(AeadKey{which: alg, gcm: Some(aesgcm.new_gcm(key)), key: b""})
+    }
+    ChaCha20Poly1305 => {
+      if key.len() != 32 {
+        return Err(crypto.AeadErr{msg: "chacha20poly1305: bad key length"})
+      }
+      Ok(AeadKey{which: alg, gcm: None, key: key})
+    }
+  }
+}
+
+fn (k: AeadKey) alg() -> crypto.Aead { k.which }
+
+fn (k: AeadKey) seal(nonce: Bytes, plaintext: Bytes, aad: Bytes = b"") -> Bytes {
+  if nonce.len() != 12 {
+    fault("crypto: AEAD nonce of ${nonce.len()} bytes, want 12")
+  }
+  match k.gcm {
+    Some(g) => g.seal(nonce, plaintext, aad)
+    None => chacha.seal(k.key, nonce, plaintext, aad)
+  }
+}
+
+fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! crypto.AeadErr {
+  if nonce.len() != 12 {
+    fault("crypto: AEAD nonce of ${nonce.len()} bytes, want 12")
+  }
+  if sealed.len() < 16 {
+    return Err(crypto.AeadErr{msg: AEAD_FAIL})
+  }
+  let got = match k.gcm {
+    Some(g) => g.open(nonce, sealed, aad)
+    None => chacha.open(k.key, nonce, sealed, aad)
+  }
+  match got {
+    Some(pt) => Ok(pt)
+    None => Err(crypto.AeadErr{msg: AEAD_FAIL})
+  }
+}
+
+fn (k: AeadKey) seal_random(r: Rand, plaintext: Bytes, aad: Bytes = b"") -> Bytes uses rand {
+  let nonce = r.bytes(12)
+  var b = BytesBuilder.with_capacity(12 + plaintext.len() + 16)
+  b.write(nonce)
+  b.write(k.seal(nonce, plaintext, aad))
+  b.freeze()
+}
+
+fn (k: AeadKey) open_random(sealed: Bytes, aad: Bytes = b"") -> Bytes ! crypto.AeadErr {
+  if sealed.len() < 12 + 16 {
+    return Err(crypto.AeadErr{msg: AEAD_FAIL})
+  }
+  k.open(sealed[0..12], sealed[12..sealed.len()], aad)
+}
+
+/// The TLS stack's hash number for SHA-2 (its HKDF's fast path), else -1.
+fn sha2_of(h: crypto.Hash) -> Int {
+  match h {
+    Sha224 => sha256.HASH_SHA224
+    Sha256 => sha256.HASH_SHA256
+    Sha384 => sha256.HASH_SHA384
+    Sha512 => sha256.HASH_SHA512
+    _ => -1
+  }
+}
+
+fn hkdf_extract(h: crypto.Hash, secret: Bytes, salt: Bytes = b"") -> Bytes {
+  let s2 = sha2_of(h)
+  if s2 >= 0 {
+    // the TLS key schedule's HKDF (llrt hkdf.xo)
+    return hk.extract(s2, salt, secret)
+  }
+  if salt.len() > 0 {
+    return hmac(h, salt, secret)
+  }
+  var z = BytesBuilder.with_capacity(hash_size(h))
+  for _ in 0..hash_size(h) {
+    z.write_byte(0)
+  }
+  hmac(h, z.freeze(), secret)
+}
+
+fn hkdf_expand(h: crypto.Hash, prk: Bytes, info: Bytes, n: Int) -> Bytes {
+  let size = hash_size(h)
+  if n < 0 || n > 255 * size {
+    fault("crypto: hkdf_expand of ${n} bytes, at most ${255 * size} for this hash")
+  }
+  let s2 = sha2_of(h)
+  if s2 >= 0 {
+    return hk.expand(s2, prk, info, n)
+  }
+  // the keyed HMAC state made once, copied for each block (a Hasher is a value)
+  let keyed = hmac_hasher(h, prk)
+  var out = BytesBuilder.with_capacity(n)
+  var t = b""
+  var i = 1
+  while out.len() < n {
+    var x = keyed
+    x.write(t)
+    x.write(info)
+    var c = BytesBuilder.with_capacity(1)
+    c.write_byte(UInt8(i))
+    x.write(c.freeze())
+    t = x.sum()
+    let k = if n - out.len() < t.len() { n - out.len() } else { t.len() }
+    out.write(t[0..k])
+    i += 1
+  }
+  out.freeze()
+}
+
+fn hkdf(h: crypto.Hash, secret: Bytes, salt: Bytes, info: Bytes, n: Int) -> Bytes {
+  hkdf_expand(h, hkdf_extract(h, secret, salt), info, n)
 }
 
 // ---------------------------------------------------------------------------

@@ -678,13 +678,15 @@ fn open26(key: Bytes, nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? {
 /// 64 bit Poly1305 hashing the ciphertext as it is made (seal64), donna's
 /// elsewhere (seal26).
 pub fn seal(key: Bytes, nonce: Bytes, pt: Bytes, aad: Bytes) -> Bytes {
-  if target.arch == TargetArch.Amd64 { seal64(key, nonce, pt, aad) } else { seal26(key, nonce, pt, aad) }
+  // arm64 under 256 bytes too: no NEON block runs there, and the 64 bit
+  // limbs' umulh beat donna's 32 bit products (2026-10-29)
+  if target.arch == TargetArch.Amd64 || (target.arch == TargetArch.Arm64 && pt.len() < 256) { seal64(key, nonce, pt, aad) } else { seal26(key, nonce, pt, aad) }
 }
 
 /// The plaintext of ciphertext and tag sealed, or None when the tag does
 /// not match (cipher.AEAD's Open): open64 on amd64, open26 elsewhere.
 pub fn open(key: Bytes, nonce: Bytes, sealed: Bytes, aad: Bytes) -> Bytes? {
-  if target.arch == TargetArch.Amd64 { open64(key, nonce, sealed, aad) } else { open26(key, nonce, sealed, aad) }
+  if target.arch == TargetArch.Amd64 || (target.arch == TargetArch.Arm64 && sealed.len() < 256 + 16) { open64(key, nonce, sealed, aad) } else { open26(key, nonce, sealed, aad) }
 }
 
 /// internal.crypto_op's "chacha." ops (std/internal.xo): block (key a,

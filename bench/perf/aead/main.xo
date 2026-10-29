@@ -1,0 +1,70 @@
+// aead: std/crypto's AEAD and HKDF against Go's crypto/cipher (AES-GCM),
+// golang.org/x/crypto/chacha20poly1305 and crypto/hkdf (twin.go.txt):
+// seal then open of 64 bytes 200,000 times and of 1 MiB 40 times for each
+// cipher, an AES-256 key made 100,000 times, and HKDF-SHA-256 of 32 bytes
+// 200,000 times; `none` is the setup alone. Usage: `<program>
+// none|gcm_small|gcm_big|chacha_small|chacha_big|gcm_key|hkdf`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/crypto
+
+fn data(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  var r = 1
+  for _ in 0..n {
+    r = (r * 1103515245 + 12345) % 2147483648
+    b.write_byte(UInt8((r >> 16) & 255))
+  }
+  b.freeze()
+}
+
+fn nonce(i: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(12)
+  for k in 0..12 {
+    b.write_byte(UInt8((i >> (8 * (k % 8))) & 255))
+  }
+  b.freeze()
+}
+
+fn round(alg: crypto.Aead, msg: Bytes, times: Int) -> Int {
+  let k = crypto.aead_key(alg, data(32)).ok() ?? fault("key")
+  let aad = b"header"
+  var s = 0
+  for i in 0..times {
+    let n = nonce(i)
+    let sealed = k.seal(n, msg, aad)
+    let back = k.open(n, sealed, aad).ok() ?? fault("open")
+    s += Int(sealed[sealed.len() - 1]) + back.len()
+  }
+  s
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let small = data(64)
+  let big = data(1 << 20)
+  var s = 0
+  if w == "gcm_small" {
+    s = round(crypto.Aead.AesGcm, small, 200000)
+  } else if w == "gcm_big" {
+    s = round(crypto.Aead.AesGcm, big, 40)
+  } else if w == "chacha_small" {
+    s = round(crypto.Aead.ChaCha20Poly1305, small, 200000)
+  } else if w == "chacha_big" {
+    s = round(crypto.Aead.ChaCha20Poly1305, big, 40)
+  } else if w == "gcm_key" {
+    let key = data(32)
+    for i in 0..100000 {
+      let k = crypto.aead_key(crypto.Aead.AesGcm, key).ok() ?? fault("key")
+      s += Int(k.seal(nonce(i), b"", b"")[0])
+    }
+  } else if w == "hkdf" {
+    let secret = data(32)
+    for i in 0..200000 {
+      let out = crypto.hkdf(crypto.Hash.Sha256, secret, b"salt", nonce(i), 32)
+      s += Int(out[0])
+    }
+  } else {
+    s = small.len() + big.len()
+  }
+  os.stdio.println("${w} ${s}")
+}

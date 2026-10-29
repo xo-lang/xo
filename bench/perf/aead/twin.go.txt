@@ -1,0 +1,100 @@
+package main
+
+import (
+	"crypto/aes"
+	"crypto/cipher"
+	"crypto/hkdf"
+	"crypto/sha256"
+	"fmt"
+	"os"
+
+	"golang.org/x/crypto/chacha20poly1305"
+)
+
+func data(n int) []byte {
+	b := make([]byte, n)
+	r := 1
+	for i := range b {
+		r = (r*1103515245 + 12345) % 2147483648
+		b[i] = byte((r >> 16) & 255)
+	}
+	return b
+}
+
+func nonce(i int) []byte {
+	b := make([]byte, 12)
+	for k := range b {
+		b[k] = byte((i >> (8 * (k % 8))) & 255)
+	}
+	return b
+}
+
+func gcm(key []byte) cipher.AEAD {
+	c, err := aes.NewCipher(key)
+	if err != nil {
+		panic(err)
+	}
+	g, err := cipher.NewGCM(c)
+	if err != nil {
+		panic(err)
+	}
+	return g
+}
+
+func round(a cipher.AEAD, msg []byte, times int) int {
+	aad := []byte("header")
+	s := 0
+	for i := 0; i < times; i++ {
+		n := nonce(i)
+		sealed := a.Seal(nil, n, msg, aad)
+		back, err := a.Open(nil, n, sealed, aad)
+		if err != nil {
+			panic(err)
+		}
+		s += int(sealed[len(sealed)-1]) + len(back)
+	}
+	return s
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	small := data(64)
+	big := data(1 << 20)
+	s := 0
+	switch w {
+	case "gcm_small":
+		s = round(gcm(data(32)), small, 200000)
+	case "gcm_big":
+		s = round(gcm(data(32)), big, 40)
+	case "chacha_small", "chacha_big":
+		c, err := chacha20poly1305.New(data(32))
+		if err != nil {
+			panic(err)
+		}
+		if w == "chacha_small" {
+			s = round(c, small, 200000)
+		} else {
+			s = round(c, big, 40)
+		}
+	case "gcm_key":
+		key := data(32)
+		for i := 0; i < 100000; i++ {
+			s += int(gcm(key).Seal(nil, nonce(i), nil, nil)[0])
+		}
+	case "hkdf":
+		secret := data(32)
+		for i := 0; i < 200000; i++ {
+			out, err := hkdf.Key(sha256.New, secret, []byte("salt"), string(nonce(i)), 32)
+			if err != nil {
+				panic(err)
+			}
+			s += int(out[0])
+		}
+	default:
+		s = len(small) + len(big)
+	}
+	fmt.Printf("%s %d\n", w, s)
+}

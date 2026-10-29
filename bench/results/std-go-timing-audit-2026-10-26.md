@@ -569,3 +569,13 @@ Against Go: compile 1.147 (1.138 to 1.155; 910c0f906 left it at 1.208,
 1.68 before both), instructions 1.007. Every regexp row is now within
 1.2 of Go: compile 1.147, match 1.096, replace_all 1.107, find_all
 0.814, captures 0.861.
+
+## std/crypto AEAD and HKDF (2026-10-29, xo-lang-5)
+
+Per std/changes/crypto.md 2026-10-29: a new bench, bench/perf/aead, with
+a Go twin (crypto/cipher, golang.org/x/crypto/chacha20poly1305 v0.57.0,
+crypto/hkdf); the checksums equal Go's on all seven workloads. Quiet `xo
+bench --ab`, 15 rounds, Go as A, wall: AES-GCM 64 bytes 0.908, 1 MiB
+0.744; ChaCha20-Poly1305 64 bytes 1.008 (within noise), 1 MiB 0.883;
+HKDF-SHA-256 0.965; an AES-256 key made 1.357, a rolling row (the key
+schedule; Go expands keys with AESE in assembly).

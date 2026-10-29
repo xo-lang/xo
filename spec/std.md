@@ -2655,6 +2655,62 @@ fn (x: Hasher) written() -> Int
   instructions) and MD5 is ported from Go's crypto/md5; Go's vectors for
   each are in std/native/crypto_test.xo and llrt/md5_test.xo.
 
+**Authenticated encryption and key derivation** (milestone 0.35; Go's
+`cipher.AEAD` and `crypto/hkdf`; every backend; Go's `aesGCMTests` and
+`hkdfTests` and Wycheproof's AES-GCM, ChaCha20-Poly1305 and HKDF vectors
+in the corpus `internal/stdtest/testdata/corpus/aead`):
+
+```
+// seal a cookie, a token, or a row: a random nonce, kept with the message
+let k = crypto.aead_key(crypto.Aead.AesGcm, key)?        // key from a KDF or a secret store
+let sealed = k.seal_random(rand, b"user=42", b"session")
+let plain = k.open_random(sealed, b"session")?           // Err if anything changed
+
+enum Aead { AesGcm, ChaCha20Poly1305 }
+fn (a: Aead) nonce_size() -> Int                         // 12
+fn (a: Aead) overhead() -> Int                           // 16: the tag
+struct AeadKey {}                                        // Debug text `<aeadkey>`: never key material
+struct AeadErr { msg: Str }
+fn aead_key(alg: Aead, key: Bytes) -> AeadKey ! AeadErr  // AES: 16, 24, 32 bytes; ChaCha20-Poly1305: 32
+fn (k: AeadKey) alg() -> Aead
+fn (k: AeadKey) seal_random(r: Rand, plaintext: Bytes, aad: Bytes = b"") -> Bytes uses rand
+fn (k: AeadKey) open_random(sealed: Bytes, aad: Bytes = b"") -> Bytes ! AeadErr
+fn (k: AeadKey) seal(nonce: Bytes, plaintext: Bytes, aad: Bytes = b"") -> Bytes
+fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! AeadErr
+pub fn hkdf_extract(h: Hash, secret: Bytes, salt: Bytes = b"") -> Bytes          // h.size() bytes
+pub fn hkdf_expand(h: Hash, prk: Bytes, info: Bytes, n: Int) -> Bytes
+pub fn hkdf(h: Hash, secret: Bytes, salt: Bytes, info: Bytes, n: Int) -> Bytes  // Go's hkdf.Key
+```
+
+- **Nonces.** A nonce must never be used twice with one key: a repeated
+  AES-GCM or ChaCha20-Poly1305 nonce breaks both the confidentiality and
+  the authenticity of every message under that key. `seal_random` and
+  `open_random` take a fresh 12 byte random nonce from `r` and keep it as
+  the sealed message's first 12 bytes (Go's
+  `cipher.NewGCMWithRandomNonce`): use them unless a protocol counts its
+  nonces (TLS records, a numbered stream), which is what `seal` and
+  `open` with an explicit nonce are for. With random nonces, rotate a key
+  well before 2^32 messages.
+- `seal` returns the ciphertext followed by the 16 byte tag, as Go's
+  `Seal(nil, ...)`; `open` checks the tag before it returns anything. Every
+  failure to open (a changed byte, another nonce or `aad`, a sealed text
+  shorter than the tag) is the same `AeadErr`, `cipher: message
+  authentication failed`, on every backend. A nonce that is not 12 bytes
+  is a fault (a programmer error, as Go panics); a key of another length
+  is an `Err` from `aead_key`.
+- An `AeadKey` is made once per key (AES's key schedule and GHASH's table)
+  and is pure to use: seal and open need no capability. It has no
+  `Display` and derives nothing: it cannot be printed, logged, or encoded
+  as JSON, as `Secret[T]`.
+- Natively AES-GCM and ChaCha20-Poly1305 are the TLS stack's
+  (std/native/llrt aesgcm.xo with the CPU's AES and carry-less multiply
+  instructions, chacha.xo with NEON or SSE); the Go backend uses Go's
+  crypto/cipher for AES-GCM.
+- `hkdf_extract`, `hkdf_expand` and `hkdf` are HKDF (RFC 5869) over HMAC
+  with any `Hash`. An empty salt is `h.size()` zero bytes, as Go's.
+  `hkdf_expand` faults when `n` is negative or more than 255 times
+  `h.size()` (Go returns an error; the length is a constant in practice).
+
 **Public key signatures, keys, and PEM** (decision 0285, Accepted by
 the owner 2026-10-20; every backend; Go's results on generated keys,
 signatures, and mutations in std/native/crypto_test.xo, golden

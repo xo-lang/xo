@@ -272,15 +272,19 @@ pub fn new(key: Bytes) -> Cipher { schedule(key, true) }
 /// the CPU has no AES instructions: AES-GCM only encrypts, and with
 /// them its keys need only rk (the bitsliced schedule was about 55,000
 /// instructions of a TLS handshake on arm64; 2026-10-18).
+/// AES's round constants (FIPS 197 5.2).
+const RCON: List[Int] = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36]
+
 fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
   let nk = key.len() / 4
   let nr = nk + 6
   let nkf = 4 * (nr + 1)
-  var w: List[Int] = []
+  // made once a key with its final length (2026-10-29: a key's setup
+  // was 1.5 times Go's, std/crypto's aead_key)
+  var w: List[Int] = List.with_capacity(nkf)
   for i in 0..nk {
     w.push(le32(key, 4 * i))
   }
-  let rcon = [0x01, 0x02, 0x04, 0x08, 0x10, 0x20, 0x40, 0x80, 0x1B, 0x36]
   let hw = cpu.hw()
   // with AES instructions, SubWord is one last round with a zero key of a
   // block whose four columns are the word (ShiftRows then moves nothing):
@@ -295,7 +299,7 @@ fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
   for i in nk..nkf {
     if j == 0 {
       tmp = (shl(tmp, 24) | shr(tmp, 8)) & 0xFFFFFFFF
-      tmp = (if aes { sub_word_hw(tmp, sw, zk) } else { sub_word(tmp) }) ^ rcon[k]
+      tmp = (if aes { sub_word_hw(tmp, sw, zk) } else { sub_word(tmp) }) ^ RCON[k]
     } else if nk > 6 && j == 4 {
       tmp = if aes { sub_word_hw(tmp, sw, zk) } else { sub_word(tmp) }
     }
@@ -315,8 +319,8 @@ fn schedule(key: Bytes, bitsliced: Bool) -> Cipher {
   keep(sw)
   keep(zk)
   var sk: List[Int] = []
-  var q = [0, 0, 0, 0, 0, 0, 0, 0]
   var i = if bitsliced || (hw & cpu.HW_AES) == 0 { 0 } else { nkf }
+  var q: List[Int] = if i < nkf { [0, 0, 0, 0, 0, 0, 0, 0] } else { [] }
   while i < nkf {
     q[0] = spread(w[i]) | shl(spread(w[i + 2]), 8)
     q[4] = spread(w[i + 1]) | shl(spread(w[i + 3]), 8)

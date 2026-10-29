@@ -13,6 +13,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   has `xo.layout` or `--layout=FILE` names one; `--layout=off` ignores it.
   The file is a source of the build (its hash is in the build info); a
   layout of another target is ignored with one line.
+- std/crypto: authenticated encryption and key derivation (milestone
+  0.35): `enum Aead { AesGcm, ChaCha20Poly1305 }`, `aead_key(alg, key)`,
+  and on an `AeadKey` `seal_random` and `open_random` (a random nonce
+  kept with the message, the way to seal unless a protocol counts
+  nonces) and `seal` and `open` with an explicit nonce; `hkdf_extract`,
+  `hkdf_expand` and `hkdf` over any `Hash` (Go's cipher.AEAD and
+  crypto/hkdf; spec std.md 11). Vectors from Go's tests and Wycheproof
+  in internal/stdtest/testdata/corpus/aead; bench/perf/aead against Go.
 - Windows: the path variables (XO_STD, XO_MODCACHE, XO_BACKEND_CACHE_DIR,
   the XO_SEPCOMP_STORE and _FACTS paths, XO_STD_STORE, the sysroots,
   XO_BUILD_DIR, XO_GOBIND, XO_GOCACHE and the binding directories) given

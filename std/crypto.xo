@@ -67,6 +67,65 @@ fn (x: Hasher) sum() -> Bytes
 /// The bytes written so far.
 fn (x: Hasher) written() -> Int
 
+// ---- authenticated encryption and key derivation (0.35, Go's cipher.AEAD and crypto/hkdf) ----
+
+/// An authenticated cipher with associated data (Go's cipher.AEAD): it
+/// encrypts and authenticates a message, and authenticates `aad` alongside
+/// it without encrypting it.
+enum Aead {
+  /// AES-GCM (NIST SP 800-38D): a 16, 24 or 32 byte key (AES-128, 192, 256).
+  AesGcm
+  /// ChaCha20-Poly1305 (RFC 8439): a 32 byte key.
+  ChaCha20Poly1305
+}
+
+/// The nonce's size in bytes: 12 for both.
+fn (a: Aead) nonce_size() -> Int
+/// The bytes a sealed message is longer than its plaintext: 16 (the tag).
+fn (a: Aead) overhead() -> Int
+
+/// A key ready to seal and open messages: its key schedule is made once,
+/// so keep one for many messages. It never displays, prints, or encodes its
+/// key (no Display, no derive Json), as a `Secret[T]`.
+struct AeadKey {}
+
+/// An AEAD error: `cipher: message authentication failed` for every
+/// sealed message that does not open (whatever check failed), or a key
+/// size error from aead_key.
+struct AeadErr {
+  msg: Str
+}
+
+fn (e: AeadErr) display() -> Str
+
+/// alg's key; Err when `key` is not a length alg takes.
+fn aead_key(alg: Aead, key: Bytes) -> AeadKey ! AeadErr
+fn (k: AeadKey) alg() -> Aead
+/// plaintext sealed under a random nonce from `r`, the nonce first: the
+/// way to seal unless a protocol counts nonces (Go's
+/// cipher.NewGCMWithRandomNonce). Open it with open_random.
+fn (k: AeadKey) seal_random(r: Rand, plaintext: Bytes, aad: Bytes = b"") -> Bytes uses rand
+/// A message from seal_random, checked and decrypted.
+fn (k: AeadKey) open_random(sealed: Bytes, aad: Bytes = b"") -> Bytes ! AeadErr
+/// plaintext encrypted and authenticated with aad under `nonce` (exactly
+/// nonce_size() bytes, else a fault): the ciphertext, then the 16 byte tag.
+/// A nonce must never be used twice with one key: a repeat breaks both the
+/// confidentiality and the authenticity of every message under the key.
+fn (k: AeadKey) seal(nonce: Bytes, plaintext: Bytes, aad: Bytes = b"") -> Bytes
+/// sealed checked and decrypted; Err (and no plaintext) when it was
+/// changed, the nonce or aad differ, or it is shorter than the tag.
+fn (k: AeadKey) open(nonce: Bytes, sealed: Bytes, aad: Bytes = b"") -> Bytes ! AeadErr
+
+/// HKDF-Extract (RFC 5869, Go's hkdf.Extract): the pseudorandom key,
+/// h.size() bytes, from `secret` and `salt` (empty: h.size() zero bytes).
+fn hkdf_extract(h: Hash, secret: Bytes, salt: Bytes = b"") -> Bytes
+/// HKDF-Expand (Go's hkdf.Expand): n bytes of keying material from a
+/// pseudorandom key and `info`. Faults when n is negative or over 255
+/// times h.size().
+fn hkdf_expand(h: Hash, prk: Bytes, info: Bytes, n: Int) -> Bytes
+/// HKDF, extract then expand (Go's hkdf.Key).
+fn hkdf(h: Hash, secret: Bytes, salt: Bytes, info: Bytes, n: Int) -> Bytes
+
 // ---- public key signatures, keys, and PEM (decision 0285) ----
 
 /// A PEM block (encoding/pem): its type (`PUBLIC KEY`), headers, and
