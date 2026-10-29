@@ -1,0 +1,33 @@
+# Std-heavy goldens built separately compiled (decision 0388: the program's
+# code against std's store) and whole on linux in Docker, outputs compared
+# (scripts/docker-sepcomp-sample.sh). Chosen for what a store link must get
+# right: std generic instances the program also makes (Map, List, JSON's
+# decoders), closures and function values std calls back, tasks and
+# scopes, the network, crypto and TLS. 2026-10-28: json_text and
+# conc_scopes called address 0 separately compiled on linux/arm64.
+json_text
+json_decode_fields
+json_value
+json_stream
+conc_scopes
+conc_channels
+conc_closure_env
+conc_select
+conc_mutex
+closures
+closure_env_frame
+generics
+lists
+list_group_by
+map_branch
+maps
+crypto_hash
+crypto_prims
+tls_nistec
+csv_basic
+big_basic
+bytes_search
+http_form
+http_header_fields
+debug_routes
+metrics_text

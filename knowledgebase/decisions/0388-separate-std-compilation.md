@@ -818,3 +818,13 @@ ms, the HTTP server's 60 to 27).
   outside its unit's range (http.Router.handle[()], the HTTP server; the whole program was
   clean). compiler/macho dsym.xo resolves a DWARF relocation to a weak definition the
   object has itself to that copy, which stays in the program's text.
+- linux store links called address 0 (Lang 1, 2026-10-28; found by xo-lang-6's Docker run of
+  std-heavy goldens): elfstore.xo's walk rooted only the program's undefined symbols, so the
+  store's copy of a shared instance the program defines weak was stripped while resolution
+  picked it (the store first): json_text's `xo.map.put[Map[Str, Int]]`, conc_scopes' task
+  callback. Fixed by rooting weak definitions as store.xo does; a store link leaving an Xo
+  function weak and undefined now fails. scripts/docker-sepcomp-sample.sh (26 goldens,
+  separately compiled vs whole, compared) joins the linux checks: on main 10 of 26 called 0
+  (big_basic, conc_channels, conc_closure_env, conc_mutex, conc_scopes, conc_select,
+  debug_routes, json_text, map_branch, metrics_text), with the fix 26 of 26 the
+  same.

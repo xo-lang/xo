@@ -221,6 +221,10 @@ struct EDynRel {
 
 struct ELinker {
   opts: ElfLinkOpts
+  /// a link through std's store (elfstore.xo link_store_elf): every Xo
+  /// function a weak reference names is defined, the program's or the
+  /// store's, so one left undefined is the link's mistake, not a hook
+  from_store: Bool = false
   objs: List[EObj] = []
   globals: Map[Bytes, (Int, Int)] = {}
   comdats: Map[Bytes, Int] = {}
@@ -852,6 +856,14 @@ fn lib_rank(lib: Str) -> Int {
 
 /// The imports: every name still undefined, versioned.
 fn (var l: ELinker) collect_imports() {
+  if l.from_store {
+    for (name, weak) in l.undefined() {
+      if weak && xo_function_name(bstr(name)) {
+        l.fail("${bstr(name)} is not defined: a weak reference to an Xo function left undefined in a link through std's store would call address 0")
+        return
+      }
+    }
+  }
   if l.opts.static {
     // no libraries: weak references are 0, others are missing
     for (name, weak) in l.undefined() {
@@ -2256,4 +2268,23 @@ fn ph(var o: Out, typ: Int, flags: Int, off: Int, addr: Int, filesz: Int, memsz:
   o.u64(filesz)
   o.u64(memsz)
   o.u64(align)
+}
+
+/// Whether name is an Xo function's symbol: xo_f_ and a mangled name, or
+/// a long one's hash (xo_h and 10 letters and digits).
+fn xo_function_name(name: Str) -> Bool {
+  if name.starts_with("xo_f_") {
+    return true
+  }
+  if name.len() != 14 || !name.starts_with("xo_h") {
+    return false
+  }
+  let b = name.bytes()
+  for i in 4..b.len() {
+    let c = b[i]
+    if !((c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122)) {
+      return false
+    }
+  }
+  true
 }

@@ -177,7 +177,7 @@ pub fn link_store_elf(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts) 
   if v.rel_size != ELF_REL {
     return Err("not an ELF store")
   }
-  var l = ELinker{opts: opts}
+  var l = ELinker{opts: opts, from_store: true}
   var prog: List[EObj] = []
   for inp in inputs {
     match parse_elf_object(inp.path, inp.data) {
@@ -185,12 +185,16 @@ pub fn link_store_elf(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts) 
       Err(e) => return Err(e)
     }
   }
-  // the walk: what the program names, its entry, the sections never
-  // stripped
+  // the walk: what the program names and what it defines weak (a helper
+  // or an instance std's store defines too: the link keeps the store's,
+  // the first, so its atom must be live, as store.xo's Mach-O walk; a
+  // program's weak `xo.map.put[Map[Str, Int]]` left the store's copy
+  // stripped and every call of it went to 0, 2026-10-28), its entry, the
+  // sections never stripped
   var roots: List[Int] = []
   for ob in prog {
     for x in ob.syms {
-      if sym_bind(x) != STB_LOCAL && x.shndx == 0 {
+      if sym_bind(x) != STB_LOCAL && (x.shndx == 0 || sym_bind(x) == STB_WEAK) {
         roots.push(v.def(x.name))
       }
     }
