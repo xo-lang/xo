@@ -3,13 +3,19 @@
 The rules this taught, with measured cases, are in
 [../std-performance-guide.md](../std-performance-guide.md).
 
-Retired since: the "slicing a Str or Bytes copies" bullet below. Decision
-0330 (2026-10-22) made `s[a..b]` and `b[a..b]` views on arm64, x86 and
-LLVM (a count on the parent, no copy; wasm still copies): what a slice
-costs now is its range and UTF-8 boundary check (prelude
-llrt_str_slice_chk, 16% of path's parts profile, 2026-10-26), the count
-and the drop, so index-based loops still win in hot paths, by less. The
-other bullets stand.
+Corrected 2026-10-29: slicing no longer copies. Before decision 0330
+(2026-10-22) a `Str` or `Bytes` slice `s[a..b]` copied its bytes (Go's
+slices share), and the first ports below paid for it; since 0330 a slice is
+a view on arm64, x86 and LLVM (a count on the parent, the offset in the
+length word's high half, no copy; wasm still copies). What a slice costs now
+is its range and UTF-8 boundary check (prelude llrt_str_slice_chk, 16% of
+path's parts profile, 2026-10-26), the count and the drop, so index-based
+loops still win in hot paths, by less. Writing a slice into a builder
+(`out.write(d[a..b])`) is a count pair and one copy of the range, not two
+copies. Still costly, as the bullets below say: small temporary Lists
+allocate, there is no package-level state to cache in, a per-element Builder
+write is a call chain, Int arithmetic is checked, and a copy call per short
+run. The slicing bullet below is kept as history.
 
 Observed 2026-10-21. Several native std modules ported from Go's packages
 ran 3 to 10 times slower than Go's (bench/results/json-vs-go-2026-10-21.md,
@@ -37,7 +43,7 @@ Two kinds, both fixed std-side:
    - base64/base32: a small list allocated per quantum; Go uses a
      256-byte table and a four- or eight-symbol fast path.
 2. **A Go idiom that is free in Go costs in Xo:**
-   - (retired by decision 0330, see the top) slicing a Str or Bytes copies (Go's slices share): a port of
+   - (history: true before decision 0330, see the top) slicing a Str or Bytes copied (Go's slices share): a port of
      time's nextStdChunk that sliced the layout per field got slower
      (parse 3,768 to 6,208 M); Go compares bytes by index;
    - a piece List grown one push at a time: `Str.split("")`,
