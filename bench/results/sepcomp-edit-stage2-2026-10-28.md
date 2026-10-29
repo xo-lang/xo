@@ -67,6 +67,6 @@ the first-build cost of writing the entry measured
 | the native goldens (TestGoldenRun) with XO_STD_EXPORT=1 | ok (111 s) |
 | the native goldens with XO_STD_EXPORT=verify | ok (75 s, 0 differences) |
 | the fixed point with XO_STD_EXPORT=1 | bootstrap ok (s2 and s3 identical; xobuild 98 s) |
-| a brand-new user's first build and the edit after it, plain against XO_STD_EXPORT=1 (fresh HOME, n=5) | FIRST_BUILD |
+| a brand-new user's first build and the edit after it, plain against XO_STD_EXPORT=1 (fresh HOME each round, pairs interleaved, n=5, a measure window at load 5 to 23) | fib first build 1059, 1838, 2358, 2817, 2925 ms plain against 1311, 2001, 2829, 2680, 3003 (the rounds drift 3x; mean +8%); fib edit 232 to 481 against 258 to 449; HTTP first build 8771, 3768, 3897, 3906, 3847 against 4616, 3908, 3761, 3737, 3501; HTTP edit 702 to 815 against 644 to 822. Instructions retired (fib first build, fresh HOME, n=6, load 4): plain 19.55, 19.45, 19.54, 19.50, 19.55, 19.58 G against 19.54, 19.60, 19.53, 19.59, 19.67, 19.60 G: +0.3% (the export, the header's stamps and a 400 KB entry write); the check phase 58 to 400 ms plain against 62 to 309 with the record, no phase added. The +8% wall is the drift, not the record. |
 
 What the flip itself needs when it comes (a default change, CLAUDE.md): the touched packages' full suites and a self build (s2) with it on, in its gate; the stdx entry's first-build write measured above.
