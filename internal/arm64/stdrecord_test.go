@@ -95,6 +95,11 @@ fn main(os: Os) {
 		}
 		return bin, string(msgs)
 	}
+	// xo dev stdcache wrote a record of its own: the first program build
+	// must be the writer, so the records go first
+	if err := os.RemoveAll(filepath.Join(cache, "stdx")); err != nil {
+		t.Fatal(err)
+	}
 	writer, wmsgs := build("writer", "XO_STD_EXPORT=1")
 	if !strings.Contains(wmsgs, "cache stdx no entry") || !strings.Contains(wmsgs, "cache stdx declared") {
 		t.Fatalf("the first build did not write the record:\n%s", wmsgs)
