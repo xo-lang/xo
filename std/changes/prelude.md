@@ -1,5 +1,27 @@
 # prelude changes
 
+## 2026-10-28: fix: a timer or network wake is not left behind a busy pair of tasks
+
+- Kind: fix
+- Commit: ff74fbff0
+- Found by: the 0.33.1 release tier (internal/llvm TestGoldenTasks/fair_pairs at XO_THREADS=2)
+- Go reference: none (Go's scheduler checks the network poller and timers on every schedule round, runtime/proc.go findRunnable)
+- Test: fair_pairs golden (24 ping pong pairs on 2 workers with a 20 ms timer), direct_fair
+- Timing: fair_pairs at 2 threads, the worst wake of the 20 ms timer: 5.2 s late before, 57 to 134 ms after; 4 threads 2.6 s before, 57 ms after
+
+With 24 ping pong pairs on 1 or 2 workers the ring and the inject queue were never empty, and the scheduler's fairness step polled timers and the network only when they were, so a `Clock.sleep` or a socket read could wake seconds late. The fairness step now polls first and each worker serves the ring once a slice. See gotchas/run-next-pair-starves-timers.md.
+
+## 2026-10-28: perf: a park hands off straight to the fiber its wake queued
+
+- Kind: perf
+- Commit: f9dcc5d3b
+- Found by: Xo Lang 3 (decision 0394; ping pong between tasks was 1.244 times Go's wall)
+- Go reference: runtime/proc.go runnext (a goroutine readied by the running one runs next, on the same stack switch path)
+- Test: direct_fair golden (a pair on one worker with a 20 ms timer and a CPU task: the timer still fires and the sum is unchanged)
+- Timing: ping pong of 2M messages, quiet `xo bench --ab`: wall 0.698 (0.694 to 0.702) of XO_DIRECT=0, 0.864 of Go's (was 1.244); bench/perf/conc fanout, mutex, pmap, rwmutex and spawn within noise
+
+A task that parks and wakes the fiber it just queued switches to it with one stack switch instead of two. `XO_DIRECT=0` turns it off. The same change made `find_work` serve the ring, the inject queue and the poller once a slice before the run-next slot: a ping pong pair on one worker had starved a 20 ms timer for 2 to 10 minutes.
+
 ## 2026-10-28: feature: BytesBuilder.put_le and put_be store in place
 
 - Kind: feature

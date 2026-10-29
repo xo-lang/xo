@@ -1,5 +1,15 @@
 # std/debug changes
 
+## 2026-10-27: feature: a crashed process can be held for a debugger (XO_CRASH_SLEEP)
+
+- Kind: feature
+- Commit: 5afb1e04a
+- Found by: crash investigation (a SIGSEGV or SIGBUS process was gone before vmmap or lldb could read it)
+- Go reference: none (Go's GOTRACEBACK=crash dumps core; macOS has no core dump by default)
+- Test: TestCrashReport
+
+`XO_CRASH_SLEEP=N` holds a process that took SIGSEGV or SIGBUS for N seconds after the crash report's first phase, printing its pid, so `vmmap -v PID` and `lldb -p PID` can read the live process. Off by default.
+
 ## 2026-10-23: feature: the heap in use at a labeled point (XO_PROF_HEAP_AT)
 
 - Kind: feature
