@@ -177,7 +177,7 @@ fn mem_text(m: Mem) -> Str {
 /// stay on the text path).
 pub fn encode_op(o: Op) -> Int {
   let n = o.ops.len()
-  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" {
+  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" | "eor3" | "bcax" | "rax1" | "xar" {
     return simd_word(o.m, o.ops)
   }
   // decision 0373's case fold adds cmhs and bic on whole bytes
@@ -1292,6 +1292,37 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
   let n = o.len()
   if n < 2 {
     return -1
+  }
+  if m is "eor3" | "bcax" {
+    // the Armv8.2 SHA3 extension's three operand xors (Keccak's theta
+    // and chi, ssa a64keccak.xo): eor3 vD, vN, vM, vA is N ^ M ^ A,
+    // bcax vD, vN, vM, vA is N ^ (M & ~A), on .16b
+    let (d, ad) = v_of(o[0])
+    let (x, ax) = v_of(o[1])
+    let (y, ay) = if n == 4 { v_of(o[2]) } else { (-1, "") }
+    let (a, aa) = if n == 4 { v_of(o[3]) } else { (-1, "") }
+    if d < 0 || x < 0 || y < 0 || a < 0 || ad != "16b" || ax != "16b" || ay != "16b" || aa != "16b" {
+      return -1
+    }
+    return (if m == "eor3" { 0xce000000 } else { 0xce200000 }) | (y * 0x10000) | (a * 0x400) | (x * 32) | d
+  }
+  if m is "rax1" | "xar" {
+    // rax1 vD.2d, vN.2d, vM.2d is N ^ (M rotated left by 1); xar vD.2d,
+    // vN.2d, vM.2d, #i is (N ^ M) rotated right by i (SHA3 extension)
+    let (d, ad) = v_of(o[0])
+    let (x, ax) = v_of(o[1])
+    let (y, ay) = if n >= 3 { v_of(o[2]) } else { (-1, "") }
+    if d < 0 || x < 0 || y < 0 || ad != "2d" || ax != "2d" || ay != "2d" {
+      return -1
+    }
+    if m == "rax1" {
+      return if n != 3 { -1 } else { 0xce608c00 | (y * 0x10000) | (x * 32) | d }
+    }
+    let i = if n == 4 { imm_of(o[3]) ?? -1 } else { -1 }
+    if i < 0 || i > 63 {
+      return -1
+    }
+    return 0xce800000 | (y * 0x10000) | (i * 0x400) | (x * 32) | d
   }
   if m == "ext" {
     // ext vD.16b, vN.16b, vM.16b, #i (decision 0339)

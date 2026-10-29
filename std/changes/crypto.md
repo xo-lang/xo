@@ -1,5 +1,20 @@
 # std/crypto changes
 
+## 2026-10-28: perf: SHA-3 and SHAKE on arm64 with the SHA3 extension (SHA3-256 0.577 of its time, 0.948 of Go's on 1 MiB)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 5's field-list compiler item (a scratch SHA3-256 bench against Go's crypto/sha3: 2.2 times Go's instructions, 1.66 times its time)
+- Go reference: crypto/internal/fips140/sha3 sha3_arm64.s (keccakF1600NEON: the 25 lanes in v0 to v24, theta's parities with eor3 and rax1, rho and pi with xar, chi with bcax; used on darwin only, sha3_arm64.go)
+- Test: std/native/llrt/cpu_test.xo (keccak_f1600's kernel against its body on 200 seeded states; FIPS 202's zero-state lanes); internal/llvm golden sha3_vectors (SHA3-256 and SHA3-512 around both rates' block edges and in pieces, want.txt from Go's crypto/sha3; arm64 and LLVM); crypto_prims and tls_mlkem_off goldens; compiler/macho encode tests (eor3, bcax, rax1, xar against clang's words); test/codegen/intrinsics sha3.permute; bench/perf/sha3's checksums equal Go's
+
+sha3.xo's Keccak-f[1600] runs as one block of NEON instructions with the
+SHA3 extension where cpu.hw() has HW_SHA3 (every Apple arm64 CPU; not
+Linux, as Go): Go's register plan, the round constants read from the RCS
+table. Every sponge goes through it: SHA3-256, SHA3-512, SHAKE128 and
+SHAKE256, so ML-KEM's hashing too. amd64, wasm and Linux arm64 keep the
+scalar rounds. Quiet --ab, 15 rounds, the parent's xo and std as A (bench/perf/sha3): SHA3-256 of 1 MiB 40 times wall 0.577 (0.574 to 0.587), instructions 0.501; 200,000 short messages wall 0.64 (0.629 to 0.647), instructions 0.614. Against Go (twin.go.txt as A): big 0.948 (0.933 to 0.953), small 1.151 (1.145 to 1.157; instructions 1.43, the sponge's per-call work), big was 1.66 before.
+
 ## 2026-10-27: perf: AES-GCM on amd64 eight blocks a round with AES-NI and PCLMULQDQ, and SubWord with AES-NI (seal 3.67 to 1.09 times Go's time, open 3.49 to 1.02, key setup 1.28)
 
 - Kind: perf

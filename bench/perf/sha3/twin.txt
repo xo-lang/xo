@@ -1,0 +1,4 @@
+# twincheck: sha3: three workloads (none is the setup alone); checksums sum digest bytes.
+- - none
+- - big
+- - small

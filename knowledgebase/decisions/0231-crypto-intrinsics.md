@@ -289,3 +289,25 @@ against the body on arm64 and LLVM), flate_test (zlib's IEEE values,
 whole and split at every offset, crc32_list), compiler/macho's encoding
 table, test/codegen/intrinsics flate.crc32 (crc32x on arm64 and
 llvm/arm64, absent on amd64).
+
+## Addendum (2026-10-28): Keccak-f[1600] with the SHA3 extension
+
+cpu.keccak_f1600(st, rc) runs the 24 rounds on the 25 lanes at st with
+arm64's Armv8.2 SHA3 instructions (eor3, rax1, xar, bcax): Go's
+keccakF1600NEON (crypto/internal/fips140/sha3/sha3_arm64.s) and its
+register plan, the lanes in v0 to v24 and d8 to d15 saved around the
+rounds (compiler/ssa a64keccak.xo, for both arm64 lowerings; LLVM inline
+asm with `.arch_extension sha3`). hw() has HW_SHA3 on every Apple arm64
+CPU and not on Linux, as Go: its sha3_arm64.go measured the instructions
+slower than the scalar rounds on other arm64 cores. sha3.xo's permute
+takes the kernel when hw() has it, so SHA3-256, SHA3-512, SHAKE128,
+SHAKE256 and ML-KEM's hashing all do; amd64, wasm, Linux arm64 and an
+older xo run the scalar rounds.
+
+Consequences: no new rt declaration and no seed (an xo that does not know
+the name compiles the body, a step-by-step FIPS 202 Keccak on raw
+memory). compiler/macho encodes the four instructions (op.xo simd_word).
+Tests: cpu_test "keccak_f1600 is its body" (FIPS 202's zero-state lanes;
+the kernel against the body on 200 seeded states), the sha3_vectors
+golden (want.txt from Go's crypto/sha3), compiler/macho's encoding table
+(words from clang), test/codegen/intrinsics sha3.permute.

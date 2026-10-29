@@ -1,0 +1,34 @@
+// SHA3-256 and SHA3-512 around the rates' block edges (72 and 136
+// bytes) and in pieces, against Go's crypto/sha3 (want.txt): arm64 runs
+// the SHA3 extension's Keccak rounds where the CPU has them (cpu.xo
+// keccak_f1600, ssa a64keccak.xo), every other target the scalar rounds.
+use std/crypto
+
+fn data(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  var r = 7
+  for _ in 0..n {
+    r = (r * 1103515245 + 12345) % 2147483648
+    b.write_byte(UInt8((r >> 16) & 255))
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio {
+  let d = data(1100)
+  for n in [0, 1, 71, 72, 73, 135, 136, 137, 200, 271, 272, 273, 1000, 1100] {
+    let m = d[0..n]
+    os.stdio.println("${n} ${crypto.digest(crypto.Hash.Sha3_256, m).to_hex()} ${crypto.digest(crypto.Hash.Sha3_512, m).to_hex()}")
+  }
+  // in pieces of 1, 7, 64 and 135 bytes
+  for k in [1, 7, 64, 135] {
+    var h = crypto.hasher(crypto.Hash.Sha3_256)
+    var i = 0
+    while i < d.len() {
+      let j = if i + k < d.len() { i + k } else { d.len() }
+      h.write(d[i..j])
+      i = j
+    }
+    os.stdio.println("pieces ${k} ${h.sum().to_hex()}")
+  }
+}

@@ -3,6 +3,7 @@
 // SHA3-512, and the extendable output functions SHAKE128 and SHAKE256
 // read in pieces (Go's crypto/internal/fips140/sha3). Nothing here
 // branches on or indexes by the data.
+use native/llrt/cpu
 use native/rt
 
 /// A sponge: the 25 lanes, its rate in bytes, its domain separator
@@ -1094,6 +1095,19 @@ pub fn new_sha3_512() -> Sponge { sponge(72, 0x06) }
 pub fn new_shake128() -> Sponge { sponge(168, 0x1f) }
 pub fn new_shake256() -> Sponge { sponge(136, 0x1f) }
 
+/// Keccak-f[1600] on the 25 lanes: arm64's SHA3 extension where the CPU
+/// has it (cpu.keccak_f1600, Go's keccakF1600NEON; every Apple arm64
+/// CPU, 2026-10-28), else keccak's scalar rounds.
+fn permute(var a: List[Int]) {
+  if (cpu.hw() & cpu.HW_SHA3) != 0 && a.len() == 25 {
+    // a write first makes a this call's own
+    a[0] = a[0]
+    cpu.keccak_f1600(rt.obj_addr(a).wrapping_add(rt.layout(2)), rt.obj_addr(RCS).wrapping_add(rt.layout(2)))
+    return
+  }
+  keccak(a)
+}
+
 /// XORs byte v into byte i of the state.
 fn xor_byte(var s: Sponge, i: Int, v: Int) {
   let l = i / 8
@@ -1113,7 +1127,7 @@ pub fn write(var s: Sponge, data: Bytes) {
         s.lanes[l] = s.lanes[l] ^ rt.bytes_word(data, i + 8 * l)
       }
       i += s.rate
-      keccak(s.lanes)
+      permute(s.lanes)
       continue
     }
     if (s.pos & 7) == 0 && n - i >= 8 && s.rate - s.pos >= 8 {
@@ -1128,7 +1142,7 @@ pub fn write(var s: Sponge, data: Bytes) {
       i += 1
     }
     if s.pos == s.rate {
-      keccak(s.lanes)
+      permute(s.lanes)
       s.pos = 0
     }
   }
@@ -1139,7 +1153,7 @@ pub fn write(var s: Sponge, data: Bytes) {
 fn finish(var s: Sponge) {
   xor_byte(s, s.pos, s.dsbyte)
   xor_byte(s, s.rate - 1, 0x80)
-  keccak(s.lanes)
+  permute(s.lanes)
   s.pos = 0
   s.squeezing = true
 }
@@ -1153,7 +1167,7 @@ pub fn read(var s: Sponge, n: Int) -> Bytes {
   var k = 0
   while k < n {
     if s.pos == s.rate {
-      keccak(s.lanes)
+      permute(s.lanes)
       s.pos = 0
     }
     if (s.pos & 7) == 0 && n - k >= 8 {
@@ -1179,7 +1193,7 @@ pub fn next_block(var s: Sponge) -> List[Int] {
   if !s.squeezing {
     finish(s)
   } else if s.pos != 0 {
-    keccak(s.lanes)
+    permute(s.lanes)
   }
   s.pos = s.rate
   s.lanes

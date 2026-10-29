@@ -538,3 +538,13 @@ instructions 1.101; find_all 0.814 (0.804 to 0.838); replace_all 1.107
 (1.093 to 1.123); captures 0.861 (0.849 to 0.87). compile is the row past
 1.2x (the next std item); the backtracker's visited bits taken into a
 local made no difference to any of them (instructions 0.9998 to 1.0026).
+
+## SHA-3 with the arm64 SHA3 extension (2026-10-28, xo-lang-5)
+
+Per std/changes/crypto.md 2026-10-28 (bench/perf/sha3, a new twin).
+Quiet --ab, 15 rounds, the parent's xo and std as A (bench/perf/sha3):
+SHA3-256 of 1 MiB 40 times wall 0.577 (0.574 to 0.587), instructions
+0.501; 200,000 short messages wall 0.64 (0.629 to 0.647), instructions
+0.614. Against Go (twin.go.txt as A): big 0.948 (0.933 to 0.953), small
+1.151 (1.145 to 1.157; instructions 1.43, the sponge's per-call work),
+big was 1.66 before.

@@ -95,6 +95,15 @@ fn main(os: Os) {
 // amd64: -"crc32x"
 // llvm/arm64: "crc32x \$\{0:w\}"
 
+// Keccak-f[1600] with arm64's SHA3 extension (cpu.keccak_f1600, ssa
+// a64keccak.xo, Go's keccakF1600NEON; 2026-10-28): theta's eor3 and
+// rax1, rho and pi's xar, chi's bcax; inline asm on LLVM; amd64 keeps the
+// scalar rounds.
+// func sha3.permute
+// arm64: "eor3 v25.16b, v10.16b, v15.16b, v20.16b" "rax1 v30.2d, v25.2d, v27.2d" "xar v25.2d, v1.2d, v30.2d, #63" "bcax v20.16b, v26.16b, v22.16b, v8.16b"
+// amd64: -"eor3"
+// llvm/arm64: "eor3 v25.16b" "bcax v20.16b"
+
 // The CPU's AES rounds (hw4 and encrypt_n call hw_n).
 // func aesgcm.hw_n
 // arm64: "aese v30.16b, v31.16b\n\taesmc v30.16b, v30.16b" "aese v30.16b, v31.16b\n\tldr q31"

@@ -1769,6 +1769,18 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.clobber()
       g.set(v, [])
     }
+    "rt.keccak_f1600" => {
+      // Keccak-f[1600] with the SHA3 extension (ssa.keccak_neon_lines,
+      // Go's keccakF1600NEON): x9 and x10 its constants' cursor and the
+      // rounds left, its V registers clobbered (d8 to d15 restored by it)
+      var cl: List[Int] = [9, 10]
+      for r in ssa.keccak_neon_vregs() {
+        cl.push(FP_BASE + r)
+      }
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.keccak_neon_lines("$u0", "$u1", "x9", "x10").join("\n"), us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))], clobbers: cl})
+      g.clobber()
+      g.set(v, [])
+    }
     "rt.ticks" | "rt.ticks_hz" => {
       // a read of the generic timer: kept, never merged or moved (keep)
       let reg = if aux_str(x.aux) == "rt.ticks" { "cntvct_el0" } else { "cntfrq_el0" }

@@ -27,7 +27,7 @@ var inlineNotLeaf = map[string]string{
 	"rt.chacha_blocks4": "block kernel", "rt.chacha_stream4": "block kernel",
 	"rt.ghash4": "block kernel", "rt.ghash_blocks": "block kernel",
 	"rt.mlkem_inverse_ntt": "block kernel", "rt.mlkem_mul_acc": "block kernel", "rt.mlkem_ntt": "block kernel",
-	"rt.sha256_block": "block kernel",
+	"rt.sha256_block": "block kernel", "rt.keccak_f1600": "block kernel",
 	"rt.call_c2":      "a C call", "rt.call_c4": "a C call",
 	"rt.sys6": "a system call", "rt.sys_clone": "a system call", "rt.sys_restorer": "a system call's address",
 	"rt.sys_words": "a system call",

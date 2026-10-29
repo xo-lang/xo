@@ -37,6 +37,11 @@ pub const HW_AVX2: Int = 64
 /// CPU, and Linux's AT_HWCAP CRC32 bit. Not set on x86-64, whose SSE4.2
 /// crc32 is the Castagnoli polynomial only.
 pub const HW_CRC32: Int = 128
+/// arm64's SHA3 extension (eor3, rax1, xar, bcax; keccak_f1600's kernel,
+/// ssa a64keccak.xo, 2026-10-28): every Apple arm64 CPU. Not set on
+/// Linux, as Go's crypto/sha3 does not use it there (it measured the
+/// instructions slower than the scalar rounds on other arm64 cores).
+pub const HW_SHA3: Int = 256
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -83,7 +88,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -93,7 +98,7 @@ pub fn hw() -> Int {
 fn detect() -> Int {
   match target.arch {
     TargetArch.Arm64 => match target.os {
-      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256 | HW_CRC32
+      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256 | HW_CRC32 | HW_SHA3
       TargetOs.Linux => {
         let h = linux.auxval(AT_HWCAP)
         (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 }) | (if (h & HWCAP_CRC32) != 0 { HW_CRC32 } else { 0 })
@@ -114,6 +119,59 @@ fn detect() -> Int {
     }
     _ => 0
   }
+}
+
+/// Keccak-f[1600]'s 24 rounds on the 25 lanes at st (lane i at st + 8 i),
+/// with the round constants at rc (24 words): arm64's SHA3 extension
+/// (ssa a64keccak.xo). Call it only when hw() has HW_SHA3; the body is
+/// the reference.
+pub fn keccak_f1600(st: Int, rc: Int) { keccak_f1600_soft(st, rc) }
+
+/// keccak_f1600 a step at a time (FIPS 202 3.3): theta, rho and pi, chi,
+/// iota on lanes loaded from st and stored back.
+pub fn keccak_f1600_soft(st: Int, rc: Int) {
+  var a: List[Int] = List.with_capacity(25)
+  for i in 0..25 {
+    a.push(rt.mem_load(st, 8 * i, 8))
+  }
+  var b = List[Int].with_capacity(25)
+  for _ in 0..25 {
+    b.push(0)
+  }
+  var c = [0, 0, 0, 0, 0]
+  for r in 0..24 {
+    for x in 0..5 {
+      c[x] = a[x] ^ a[x + 5] ^ a[x + 10] ^ a[x + 15] ^ a[x + 20]
+    }
+    for x in 0..5 {
+      let d = c[(x + 4) % 5] ^ rotl64(c[(x + 1) % 5], 1)
+      for y in 0..5 {
+        a[x + 5 * y] = a[x + 5 * y] ^ d
+      }
+    }
+    // rho and pi: lane (x, y) rotated into (y, 2x + 3y)
+    for x in 0..5 {
+      for y in 0..5 {
+        b[y + 5 * ((2 * x + 3 * y) % 5)] = rotl64(a[x + 5 * y], KECCAK_RHO[x + 5 * y])
+      }
+    }
+    for y in 0..5 {
+      for x in 0..5 {
+        a[x + 5 * y] = b[x + 5 * y] ^ ((b[(x + 1) % 5 + 5 * y] ^ (0 - 1)) & b[(x + 2) % 5 + 5 * y])
+      }
+    }
+    a[0] = a[0] ^ rt.mem_load(rc, 8 * r, 8)
+  }
+  for i in 0..25 {
+    rt.mem_store(st, 8 * i, a[i], 8)
+  }
+}
+
+/// rho's rotations by lane index x + 5 y (FIPS 202 Table 2).
+const KECCAK_RHO: List[Int] = [0, 1, 62, 28, 27, 36, 44, 6, 55, 20, 3, 10, 43, 25, 39, 41, 45, 15, 21, 8, 18, 2, 61, 56, 14]
+
+fn rotl64(x: Int, n: Int) -> Int {
+  if n == 0 { x } else { x.wrapping_shl(n) | x.shr_logical(64 - n) }
 }
 
 /// The CRC-32 (IEEE, reflected; hash/crc32's IEEETable) of crc's low 32

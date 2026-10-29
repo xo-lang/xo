@@ -3,6 +3,7 @@
 // elsewhere.
 
 use native/llrt/sysio
+use native/rt
 
 test "ticks advance and ticks_ns converts a difference" {
   let hz = ticks_hz()
@@ -38,4 +39,43 @@ test "crc32x is its body (the instruction where the CPU has it)" {
   }
   // "12345678" from the IEEE initial value, then inverted: zlib's crc32
   expect(crc32x_soft(0xffffffff, 0x3837363534333231) ^ 0xffffffff) == 2598427311
+}
+
+/// The round constants for keccak_f1600 (sha3.xo RCS).
+const TEST_RCS: List[Int] = [1, 32898, -9223372036854742902, -9223372034707259392, 32907, 2147483649, -9223372034707259263, -9223372036854743031, 138, 136, 2147516425, 2147483658, 2147516555, -9223372036854775669, -9223372036854742903, -9223372036854743037, -9223372036854743038, -9223372036854775680, 32778, -9223372034707292150, -9223372034707259263, -9223372036854742912, 2147483649, -9223372034707259384]
+
+fn lanes_addr(l: List[Int]) -> Int { rt.obj_addr(l).wrapping_add(rt.layout(2)) }
+
+test "keccak_f1600 is its body (the SHA3 extension where the CPU has it)" {
+  // the zero state: FIPS 202's Keccak-f[1600] lanes 0 and 1 (XKCP's
+  // KeccakF-1600-IntermediateValues)
+  var z = List[Int].with_capacity(25)
+  for _ in 0..25 {
+    z.push(0)
+  }
+  keccak_f1600_soft(lanes_addr(z), lanes_addr(TEST_RCS))
+  expect(z[0]) == -1070291585488265753
+  expect(z[1]) == -8874962119976532086
+  // a seeded walk of states, each permuted by the body and the kernel
+  var x = 88172645463325252
+  for _ in 0..200 {
+    var a = List[Int].with_capacity(25)
+    for _ in 0..25 {
+      x = x ^ x.wrapping_shl(13)
+      x = x ^ x.shr_logical(7)
+      x = x ^ x.wrapping_shl(17)
+      a.push(x)
+    }
+    var b = List[Int].with_capacity(25)
+    for v in a {
+      b.push(v)
+    }
+    keccak_f1600_soft(lanes_addr(a), lanes_addr(TEST_RCS))
+    if (hw() & HW_SHA3) != 0 {
+      keccak_f1600(lanes_addr(b), lanes_addr(TEST_RCS))
+      for i in 0..25 {
+        expect(b[i]) == a[i]
+      }
+    }
+  }
 }

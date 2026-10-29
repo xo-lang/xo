@@ -423,6 +423,12 @@ const ENCODINGS: List[(Str, Int)] = [
   // tbl with one table register (ChaCha20's rotation by 8), from clang
   ("tbl v28.16b, {v28.16b}, v29.16b", 0x4e1d039c),
   ("tbl v3.16b, {v17.16b}, v31.16b", 0x4e1f0223),
+  // the SHA3 extension (ssa a64keccak.xo), words from clang -arch arm64
+  ("eor3 v25.16b, v10.16b, v15.16b, v20.16b", 0xce0f5159),
+  ("bcax v20.16b, v26.16b, v22.16b, v8.16b", 0xce362354),
+  ("rax1 v30.2d, v25.2d, v27.2d", 0xce7b8f3e),
+  ("xar v25.2d, v1.2d, v30.2d, #63", 0xce9efc39),
+  ("xar v1.2d, v6.2d, v30.2d, #20", 0xce9e50c1),
   ("ldur q18, [x1, #24]", 0x3cc18032),
   ("ldr d19, [x1, #40]", 0xfd401433),
   ("sha256h q16, q17, v31.4s", 0x5e1f4230),
