@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-10-29: perf: a streamed response body is read in large pieces straight into their bytes
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/results/httpproxy-2026-10-29.md (the proxy 6x Go's time)
+- Go reference: bufio.Reader.Read's fast path (a read of at least the
+  buffer's size goes straight into the caller's slice), io.Copy's 32 KiB
+  buffer; decision 0404
+- Test: http_client_stream, http_reverse_proxy goldens; xo bench --ab in
+  bench/results/httpproxy-direct-2026-10-29.md
+
+ClientStream.read reads a piece of 16 KiB or more straight from the
+connection into its own bytes when nothing is buffered (one system call, no
+copy), and the reverse proxy reads 64 KiB pieces: 1 GiB through the proxy in
+187 ms against 581 ms before, and 219 ms for Go's httputil.ReverseProxy.
+
 ## 2026-10-29: fix: tls_state no longer reads the TLS connection's state from the handler's task (a data race over HTTP/2)
 
 - Kind: fix

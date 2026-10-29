@@ -3821,11 +3821,38 @@ fn bstep(s: Int, why: Str) -> BodyStep { BodyStep{s: s, why: why, data: b""} }
 /// The next bytes of the body b reads from r, at most max: empty data
 /// with b.done at the body's end. A body cut short is "unexpected EOF"
 /// (io.ErrUnexpectedEOF), never an end.
+/// The smallest read cbody_next makes straight into a piece's own bytes
+/// (smaller reads go through the connection's buffer).
+const DIRECT_MIN = 16384
+
 pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
   let lim = if max > 0 { max } else { 32768 }
   while !b.done {
     if b.mode == 1 || (b.mode == 2 && b.left > 0) {
       let have = hclient.avail(r)
+      if have == 0 && lim >= DIRECT_MIN && !hclient.eof(r) {
+        // nothing buffered: read the piece straight into its own bytes
+        // (one system call, no copy out of the connection's buffer)
+        let k = if b.left < lim { b.left } else { lim }
+        let buf = raw.bytes_buf(k)
+        let n = hclient.read_direct(r, raw.bytes_addr(buf), k)
+        if n < 0 {
+          return bstep(0 - n, "")
+        }
+        if n == 0 {
+          return bstep(CC_ERR, "unexpected EOF")
+        }
+        b.left -= n
+        if b.left == 0 {
+          if b.mode == 1 {
+            b.done = true
+            b.keep = b.keep && hclient.avail(r) == 0
+          } else {
+            b.crlf = true
+          }
+        }
+        return BodyStep{s: CC_OK, why: "", data: raw.bytes_len(buf, n)}
+      }
       if have > 0 {
         var k = if have < b.left { have } else { b.left }
         if k > lim {
@@ -3848,6 +3875,18 @@ pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
       }
     } else if b.mode == 3 {
       let have = hclient.avail(r)
+      if have == 0 && lim >= DIRECT_MIN && !hclient.eof(r) {
+        let buf = raw.bytes_buf(lim)
+        let n = hclient.read_direct(r, raw.bytes_addr(buf), lim)
+        if n < 0 {
+          return bstep(0 - n, "")
+        }
+        if n == 0 {
+          b.done = true
+          return bstep(CC_OK, "")
+        }
+        return BodyStep{s: CC_OK, why: "", data: raw.bytes_len(buf, n)}
+      }
       if have > 0 {
         return BodyStep{s: CC_OK, why: "", data: hclient.take(r, if have < lim { have } else { lim })}
       }

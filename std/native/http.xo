@@ -3717,7 +3717,7 @@ fn tunnel(st: http.ClientStream, head: http.ResponseHead, req_up: Str) -> http.R
       })
       // the target to the client
       loop: while true {
-        match st.read(32768) {
+        match st.read(65536) {
           Ok(Some(d)) => {
             let ok = hconn.send_at(h, raw.bytes_addr(d), d.len())
             raw.alive(d)
@@ -3820,7 +3820,7 @@ fn (p: ReverseProxy) serve(req0: http.Request, body: http.BodyReader) -> http.Re
       let flush = !rh.contains("Content-Length") || (rh.get("Content-Type") ?? "").starts_with("text/event-stream")
       var resp = http.stream(head.status, fn(w: http.BodyWriter) -> () ! IoErr uses net.dial {
         loop: while true {
-          match st.read(32768) {
+          match st.read(65536) {
             Ok(Some(b)) => {
               w.write(b)?
               if flush {

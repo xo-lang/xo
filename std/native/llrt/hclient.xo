@@ -415,6 +415,61 @@ pub fn avail(r: rthttp.CResp) -> Int {
 
 pub fn eof(r: rthttp.CResp) -> Bool { rt.mem_load(rec(r) + R_C, C_EOF, 4) != 0 }
 
+/// Reads at most n bytes of the response straight into p, past r's
+/// buffer (empty: the caller checked), for a streamed body's large
+/// pieces (decision 0404): the bytes read (> 0), 0 at the end of the
+/// stream (EOF recorded), or the negated failure (CC_*).
+pub fn read_direct(r: rthttp.CResp, p: Int, n: Int) -> Int {
+  let c = rec(r) + R_C
+  if rt.mem_load(c, C_EOF, 4) != 0 {
+    return 0
+  }
+  if (rt.mem_load(c, C_FD, 4) & 4294967295) == 4294967295 {
+    rt.mem_store(c, C_EOF, 1, 4)
+    return 0
+  }
+  let tls = ld(c, C_TLS)
+  if tls != 0 {
+    if poll.canceled() {
+      return 0 - CC_CANCELED
+    }
+    let k = tlsio.read(tls, p, n)
+    if k > 0 {
+      return k
+    }
+    if k == 0 {
+      rt.mem_store(c, C_EOF, 1, 4)
+      return 0
+    }
+    return k
+  }
+  let fd = rt.mem_load(c, C_FD, 4)
+  while true {
+    if poll.canceled() {
+      return 0 - CC_CANCELED
+    }
+    let k = sock.read(fd, p, n)
+    if k > 0 {
+      return k
+    }
+    if k == 0 {
+      rt.mem_store(c, C_EOF, 1, 4)
+      return 0
+    }
+    if k == -sock.EINTR {
+      continue
+    }
+    if !would_block(k) {
+      return 0 - CC_ERR
+    }
+    let w = poll.pd_wait(ld(c, C_PD), false, ld(c, C_WHEN))
+    if w != poll.READY {
+      return 0 - wait_res(w)
+    }
+  }
+  0 - CC_ERR
+}
+
 /// Reads more of the response: CC_OK, CC_EOF (none came), or the failure.
 pub fn more(r: rthttp.CResp) -> Int {
   let c = rec(r) + R_C

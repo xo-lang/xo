@@ -220,7 +220,7 @@ func (p Http_ReverseProxy) M_serve(tk *Task, req Http_Request, body Http_BodyRea
 	resp := Http_stream(tk, head.F_status, func(tk *Task, w Http_BodyWriter) Result[Unit, IoErr] {
 		defer st.M_close(tk)
 		for {
-			b := st.M_read(tk, 32768)
+			b := st.M_read(tk, 65536)
 			if !b.Ok {
 				return Err[Unit](IoErr{Tag: 2, P: IoErr_Io{F_msg: Display(tk, b.E)}})
 			}
