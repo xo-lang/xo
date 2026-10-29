@@ -203,7 +203,7 @@ func (f *realFs) M_case_sensitive(*Task) bool {
 }
 
 func (f *realFs) info(osPath, given string, fi os.FileInfo) FileInfo {
-	return FileInfo{F_name: fi.Name(), F_path: f.relPath(osPath, given), F_is_dir: fi.IsDir(), F_size: fi.Size(), F_modified: Time(fi.ModTime().UnixNano())}
+	return FileInfo{F_name: fi.Name(), F_path: f.relPath(osPath, given), F_is_dir: fi.IsDir(), F_size: fi.Size(), F_modified: Time(fi.ModTime().UnixNano()), F_is_symlink: fi.Mode()&os.ModeSymlink != 0}
 }
 
 func (f *realFs) M_stat(tk *Task, p string) Result[Option[FileInfo], FsErr] {

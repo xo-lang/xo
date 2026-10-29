@@ -760,6 +760,10 @@ struct FileInfo {
   is_dir: Bool
   size: Int
   modified: Time
+  /// The entry is a symbolic link itself (std.md 3.1): read_dir and
+  /// walk report a link (Go's os.Lstat, DirEntry.Type), stat follows
+  /// it and reports the target, so is false there.
+  is_symlink: Bool = false
 }
 
 interface Fs {

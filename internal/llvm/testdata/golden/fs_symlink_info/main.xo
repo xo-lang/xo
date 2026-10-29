@@ -1,0 +1,31 @@
+// FileInfo.is_symlink (std.md 3.1): read_dir and walk report a symbolic
+// link itself, as Go's os.Lstat and DirEntry.Type; stat follows it and
+// reports the target, so is_symlink is false there.
+
+fn line(fi: FileInfo) -> Str { "${fi.path} dir=${fi.is_dir} link=${fi.is_symlink}" }
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-symlink-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all("${name}/d")?
+  let root = base.sub(name)
+  root.write("f.txt", b"hello")?
+  root.symlink("f.txt", "lf")?
+  root.symlink("d", "ld")?
+  root.symlink("missing", "dangling")?
+  for fi in root.read_dir(".")? {
+    out.println("read_dir ${line(fi)}")
+  }
+  for fi in root.walk(".")? {
+    out.println("walk ${line(fi)}")
+  }
+  for p in ["f.txt", "lf", "ld", "d"] {
+    match root.stat(p)? {
+      Some(fi) => out.println("stat ${p} name=${fi.name} dir=${fi.is_dir} size=${if fi.is_dir { "-" } else { "${fi.size}" }} link=${fi.is_symlink}")
+      None => out.println("stat ${p} none")
+    }
+  }
+  out.println("stat dangling ${root.stat("dangling")?.is_none()}")
+  base.remove_all(name)?
+}

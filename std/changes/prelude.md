@@ -14,6 +14,26 @@ existing directories keep their mode. A free function, so a user type
 that implements `Fs` still does. Not a hot path (a few system calls a
 directory), so no timing row.
 
+## 2026-10-29: feature: FileInfo.is_symlink
+
+- Kind: feature (breaking)
+- Commit: this commit
+- Found by: gap 16 of the 2026-10-29 std survey (a tool that walks a
+  tree must not follow or copy links as files); owner approved 2026-10-29
+- Go reference: os.Lstat, fs.DirEntry.Type() & fs.ModeSymlink
+- Test: internal/llvm/testdata/golden/fs_symlink_info (native and Go),
+  corpus prelude (MemFs on every backend)
+
+`FileInfo` has `is_symlink: Bool = false`. `read_dir` and `walk` report
+a symbolic link itself, as Go's os.ReadDir entries (Lstat): a link to a
+directory is not a directory and walk does not descend into it, as
+before; `is_symlink` now says why. `stat` follows the link and reports
+the target, so it is false there. Native reads it from lstat's st_mode
+(S_IFLNK), Windows from an unfollowed reparse point, WASI from filetype
+7. Breaking: a pattern that destructures FileInfo field by field names
+the new field; a struct literal keeps working through the default. No
+hot path, so no timing row.
+
 ## 2026-10-29: feature: Proc.pid and Proc.ppid
 
 - Kind: feature

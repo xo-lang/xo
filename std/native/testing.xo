@@ -387,7 +387,7 @@ fn memfs_link_escapes(link: Str, target: Str) -> Bool {
 }
 
 fn memfs_info(f: Fs, n: MemNode) -> FileInfo {
-  FileInfo{name: path.base(n.name), path: memfs_rel(f, n.name), is_dir: n.dir, size: if n.is_link { 0 } else { n.data.len() }, modified: n.modified}
+  FileInfo{name: path.base(n.name), path: memfs_rel(f, n.name), is_dir: n.dir, size: if n.is_link { 0 } else { n.data.len() }, modified: n.modified, is_symlink: n.is_link}
 }
 
 fn memfs_op_tag(op: testing.FsOp) -> Int {
@@ -473,7 +473,7 @@ fn memfs_stat_in(var st: MemState, f: Fs, full: Str) -> FileInfo? ! FsErr {
       }
       match memfs_get(st, t) {
         None => None
-        Some(tn) => Some(memfs_info(f, tn) with {name: path.base(n.name), path: memfs_rel(f, n.name)})
+        Some(tn) => Some(memfs_info(f, tn) with {name: path.base(n.name), path: memfs_rel(f, n.name), is_symlink: false})
       }
     }
   }

@@ -1,0 +1,18 @@
+exit 0
+--- stdout
+read_dir d dir=true link=false
+read_dir dangling dir=false link=true
+read_dir f.txt dir=false link=false
+read_dir ld dir=false link=true
+read_dir lf dir=false link=true
+walk d dir=true link=false
+walk dangling dir=false link=true
+walk f.txt dir=false link=false
+walk ld dir=false link=true
+walk lf dir=false link=true
+stat f.txt name=f.txt dir=false size=5 link=false
+stat lf name=lf dir=false size=5 link=false
+stat ld name=ld dir=true size=- link=false
+stat d name=d dir=true size=- link=false
+stat dangling true
+--- stderr

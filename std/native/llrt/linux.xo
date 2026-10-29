@@ -112,6 +112,9 @@ pub struct Stat {
 /// Whether st is a directory (S_IFDIR).
 pub fn is_dir(st: Stat) -> Bool { (st.mode & 61440) == 16384 }
 
+/// Whether st is a symbolic link (S_IFLNK).
+pub fn is_link(st: Stat) -> Bool { (st.mode & 61440) == 40960 }
+
 /// statx(2) of path (following a final symbolic link when follow): the
 /// facts and 0, or the errno.
 pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {

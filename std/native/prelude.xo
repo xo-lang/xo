@@ -2544,7 +2544,7 @@ fn fs_check(f: Fs, p: Str, write: Bool) -> Str ! FsErr {
 
 // fs_info_of is the FileInfo of the facts i of OS path op (sysio.fs_stat).
 fn fs_info_of(f: Fs, op: Str, given: Str, i: sysio.Info) -> FileInfo {
-  FileInfo{name: fs_base(op), path: fs_rel(f, op, given), is_dir: i.is_dir, size: i.size, modified: Time.UNIX_EPOCH + Duration.from_nanos(i.modified)}
+  FileInfo{name: fs_base(op), path: fs_rel(f, op, given), is_dir: i.is_dir, size: i.size, modified: Time.UNIX_EPOCH + Duration.from_nanos(i.modified), is_symlink: i.is_link}
 }
 
 fn fs_sub(f: Fs, dir: Str) -> Fs {

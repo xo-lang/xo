@@ -201,6 +201,9 @@ pub struct Stat {
   pub mode: Int
 }
 
+/// Whether st is a symbolic link (a reparse point stat did not follow).
+pub fn is_link(st: Stat) -> Bool { st.mode == S_IFLNK_ALL }
+
 /// The size of the open file h, or -1.
 pub fn file_size(h: Int) -> Int {
   let (s, e) = info(h, false)

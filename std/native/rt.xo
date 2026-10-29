@@ -536,7 +536,8 @@ fn fs_status() -> Int
 fn fs_msg() -> List[Str]
 /// Stats p (following a symbolic link when follow) for fs_info.
 fn fs_stat(p: Str, follow: Bool, x: Str) -> Int
-/// 0 is_dir (0 or 1), 1 size, 2 modified (Unix nanoseconds).
+/// 0 is_dir (0 or 1), 1 size, 2 modified (Unix nanoseconds), 3 a
+/// symbolic link itself (0 or 1).
 fn fs_info(which: Int) -> Int
 /// The entries of directory p, in no order.
 fn fs_names(p: Str, x: Str) -> List[Str]

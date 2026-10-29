@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- BREAKING: prelude `FileInfo` gains `is_symlink: Bool` (default
+  false): `read_dir` and `walk` report a symbolic link itself (Go's
+  Lstat), `stat` follows it. A pattern that destructures FileInfo field
+  by field adds the field; struct literals keep working.
 - std/x509: creating certificates and requests and parsing CRLs, as Go's
   crypto/x509: `create_certificate` from a `Template` (self-signed or
   issued by a parent), `self_signed(r, hosts, now)` for development

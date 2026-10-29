@@ -770,3 +770,16 @@ test "read_text_or and read_or answer the default only when the file is missing"
   expect(read_text_or(os.fs, "gone.txt", "")?) == ""
   expect(read_or(os.fs, "gone.txt", b"")?) == b""
 }
+
+test "is_symlink: read_dir and walk report a link, stat follows it" {
+  os.fs.create_dir_all("sl/d")?
+  os.fs.write("sl/f.txt", b"hello")?
+  os.fs.symlink("f.txt", "sl/lf")?
+  os.fs.symlink("d", "sl/ld")?
+  expect(os.fs.read_dir("sl")?.map(fn(fi) { "${fi.name}:${fi.is_dir}:${fi.is_symlink}" })) == ["d:true:false", "f.txt:false:false", "ld:false:true", "lf:false:true"]
+  expect(os.fs.walk("sl")?.filter(fn(fi) { fi.is_symlink }).map(fn(fi) { fi.name })) == ["ld", "lf"]
+  let s = os.fs.stat("sl/lf")? ?? FileInfo{name: "", path: "", is_dir: false, size: -1, modified: Time.UNIX_EPOCH}
+  expect((s.name, s.size, s.is_symlink)) == ("lf", 5, false)
+  let d = os.fs.stat("sl/ld")? ?? FileInfo{name: "", path: "", is_dir: false, size: -1, modified: Time.UNIX_EPOCH}
+  expect((d.is_dir, d.is_symlink)) == (true, false)
+}

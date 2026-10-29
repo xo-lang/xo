@@ -636,6 +636,7 @@ struct FileInfo {
   is_dir: Bool
   size: Int
   modified: Time
+  is_symlink: Bool = false  // a link itself: read_dir and walk report links, stat follows them
 }
 
 fn (f: Fs) sub(dir: Str) -> Fs                               // lazy: dir need not exist yet

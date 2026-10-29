@@ -27,6 +27,8 @@ use native/sys_darwin
 pub struct Info {
   pub st: Int
   pub is_dir: Bool = false
+  /// a symbolic link itself (only when not followed)
+  pub is_link: Bool = false
   pub size: Int = 0
   pub modified: Int = 0
 }
@@ -102,7 +104,7 @@ pub fn fs_stat(op: Str, follow: Bool, x: Str) -> Info {
     if st != 0 {
       return Info{st: st}
     }
-    return Info{st: 0, is_dir: rt.fs_info(0) == 1, size: rt.fs_info(1), modified: rt.fs_info(2)}
+    return Info{st: 0, is_dir: rt.fs_info(0) == 1, is_link: rt.fs_info(3) == 1, size: rt.fs_info(1), modified: rt.fs_info(2)}
   }
   let (i, e) = stat(l, op, follow)
   if e != 0 {
@@ -323,14 +325,14 @@ fn file_size(l: Int, fd: Int) -> Int {
 fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
   if target.os == TargetOs.Windows {
     let (s, e) = windows.stat(op, follow)
-    return (Info{st: 0, is_dir: s.is_dir, size: s.size, modified: s.mtime}, e)
+    return (Info{st: 0, is_dir: s.is_dir, is_link: windows.is_link(s), size: s.size, modified: s.mtime}, e)
   }
   if target.os == TargetOs.Darwin {
     let (s, e) = darwin.stat(op, follow)
-    return (Info{st: 0, is_dir: darwin.is_dir(s), size: s.size, modified: s.mtime}, e)
+    return (Info{st: 0, is_dir: darwin.is_dir(s), is_link: darwin.is_link(s), size: s.size, modified: s.mtime}, e)
   }
   let (s, e) = linux.stat(op, follow)
-  (Info{st: 0, is_dir: linux.is_dir(s), size: s.size, modified: s.mtime}, e)
+  (Info{st: 0, is_dir: linux.is_dir(s), is_link: linux.is_link(s), size: s.size, modified: s.mtime}, e)
 }
 
 /// The C runtime's message of errno e (strerror, first letter lowered).

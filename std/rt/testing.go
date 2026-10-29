@@ -1405,7 +1405,7 @@ func sortNodes(ns []*memNode) {
 }
 
 func (v *memView) info(n *memNode) FileInfo {
-	return FileInfo{F_name: path.Base(n.name), F_path: v.rel(n.name), F_is_dir: n.dir, F_size: int64(len(n.data)), F_modified: n.mod}
+	return FileInfo{F_name: path.Base(n.name), F_path: v.rel(n.name), F_is_dir: n.dir, F_size: int64(len(n.data)), F_modified: n.mod, F_is_symlink: n.link != ""}
 }
 
 // begin checks cancellation and access, resolves p, and locks the fs.
@@ -1491,7 +1491,7 @@ func (f Testing_MemFs) M_stat(tk *Task, p string) Result[Option[FileInfo], FsErr
 			return Ok[Option[FileInfo], FsErr](Option[FileInfo]{})
 		}
 		info := f.v.info(tn)
-		info.F_name, info.F_path = path.Base(n.name), f.v.rel(n.name)
+		info.F_name, info.F_path, info.F_is_symlink = path.Base(n.name), f.v.rel(n.name), false
 		return Ok[Option[FileInfo], FsErr](Some(info))
 	}
 	return Ok[Option[FileInfo], FsErr](Some(f.v.info(n)))
