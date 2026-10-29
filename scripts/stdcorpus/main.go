@@ -40,6 +40,7 @@ var generators = map[string]func() string{
 	"cli":        cliCorpus,
 	"compress":   compressCorpus,
 	"aead":       aeadCorpus,
+	"x509":       x509Corpus,
 	"crypto":     cryptoCorpus,
 	"csv":        csvCorpus,
 	"cut":        cutCorpus,

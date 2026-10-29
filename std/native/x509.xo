@@ -1,0 +1,362 @@
+// std/x509 (spec/std.md 41) natively: the TLS stack's certificate parser
+// and verifier (std/native/llrt x509cert.xo and x509verify.xo, Go's
+// crypto/x509 ported), their Cert converted to the public Certificate.
+use std/crypto
+use std/netip
+use std/x509
+use native/llrt/tlscert
+use native/llrt/x509cert as lx
+use native/llrt/x509verify as xv
+
+fn certerr_display(e: x509.CertErr) -> Str { e.msg }
+
+fn err(msg: Str) -> x509.CertErr { x509.CertErr{msg: msg} }
+
+/// The Time of Unix seconds, clamped to the times a Time holds (1677 to
+/// 2262): a certificate valid until 9999 is valid until the last Time.
+fn time_of(secs: Int) -> Time {
+  let s = if secs > 9223372035 { 9223372035 } else if secs < -9223372035 { -9223372035 } else { secs }
+  Time.from_unix(s)
+}
+
+// ---------------------------------------------------------------------------
+// Names (Go's pkix.Name, FillFromRDNSequence and String)
+
+/// The Name of the DER der: its attributes, the common ones in their
+/// fields (Go's FillFromRDNSequence: the last common name and serial
+/// number, every value of the others in order).
+fn name_of(der: Bytes) -> x509.Name {
+  var n = x509.Name{country: [], organization: [], organizational_unit: [], locality: [], province: [], street_address: [], postal_code: [], serial_number: "", common_name: "", raw: der}
+  for a in lx.name_atvs(der) ?? [] {
+    match a.oid {
+      "2.5.4.3" => n.common_name = a.value
+      "2.5.4.5" => n.serial_number = a.value
+      "2.5.4.6" => n.country.push(a.value)
+      "2.5.4.7" => n.locality.push(a.value)
+      "2.5.4.8" => n.province.push(a.value)
+      "2.5.4.9" => n.street_address.push(a.value)
+      "2.5.4.10" => n.organization.push(a.value)
+      "2.5.4.11" => n.organizational_unit.push(a.value)
+      "2.5.4.17" => n.postal_code.push(a.value)
+      _ => ()
+    }
+  }
+  n
+}
+
+fn name_attributes(n: x509.Name) -> List[(Str, Str)] {
+  var out: List[(Str, Str)] = []
+  for a in lx.name_atvs(n.raw) ?? [] {
+    out.push((a.oid, a.value))
+  }
+  out
+}
+
+/// pkix's attributeTypeNames.
+fn type_name(oid: Str) -> Str? {
+  match oid {
+    "2.5.4.6" => Some("C")
+    "2.5.4.10" => Some("O")
+    "2.5.4.11" => Some("OU")
+    "2.5.4.3" => Some("CN")
+    "2.5.4.5" => Some("SERIALNUMBER")
+    "2.5.4.7" => Some("L")
+    "2.5.4.8" => Some("ST")
+    "2.5.4.9" => Some("STREET")
+    "2.5.4.17" => Some("POSTALCODE")
+    _ => None
+  }
+}
+
+/// encoding/asn1's isPrintable as Marshal picks a tag (no asterisk, no
+/// ampersand): PrintableString when every rune is one, else UTF8String.
+fn printable_rune(r: Int) -> Bool {
+  (r >= 97 && r <= 122) || (r >= 65 && r <= 90) || (r >= 48 && r <= 57) || (r >= 39 && r <= 41) || (r >= 43 && r <= 47) || r == 32 || r == 58 || r == 61 || r == 63
+}
+
+/// asn1.Marshal of a Go string: its tag, length and bytes, in hex.
+fn marshal_hex(v: Str) -> Str {
+  var all = true
+  for x in v.bytes() {
+    if !printable_rune(Int(x)) {
+      all = false
+    }
+  }
+  let body = v.bytes()
+  var b = BytesBuilder.with_capacity(body.len() + 6)
+  b.write_byte(if all { 0x13 } else { 0x0c })
+  let n = body.len()
+  if n < 128 {
+    b.write_byte(UInt8(n))
+  } else {
+    var k = 0
+    var m = n
+    while m > 0 {
+      k += 1
+      m = m >> 8
+    }
+    b.write_byte(UInt8(0x80 | k))
+    var i = k - 1
+    while i >= 0 {
+      b.write_byte(UInt8((n >> (8 * i)) & 255))
+      i -= 1
+    }
+  }
+  b.write(body)
+  b.freeze().to_hex()
+}
+
+/// One attribute as RDNSequence.String writes it.
+fn atv_text(oid: Str, value: Str) -> Str {
+  let tn = match type_name(oid) {
+    Some(t) => t
+    None => return "${oid}=#${marshal_hex(value)}"
+  }
+  // the escapes are all ASCII, so bytes stand for runes
+  let vb = value.bytes()
+  var b = BytesBuilder.with_capacity(tn.len() + vb.len() + 8)
+  b.write(tn.bytes())
+  b.write_byte(61)
+  let last = vb.len() - 1
+  for (k, x) in vb.indexed() {
+    let c = Int(x)
+    let esc = c == 44 || c == 43 || c == 34 || c == 92 || c == 60 || c == 62 || c == 59 || (c == 32 && (k == 0 || k == last)) || (c == 35 && k == 0)
+    if esc {
+      b.write_byte(92)
+    }
+    b.write_byte(x)
+  }
+  b.freeze().to_str() ?? ""
+}
+
+fn name_display(n: x509.Name) -> Str {
+  // Go's Name.String: the attributes outside the parsed fields first (they
+  // print last), then ToRDNSequence's order; then RDNSequence.String,
+  // which writes the RDNs in reverse
+  var rdns: List[List[(Str, Str)]] = []
+  for a in lx.name_atvs(n.raw) ?? [] {
+    if type_name(a.oid).is_some() {
+      continue
+    }
+    rdns.push([(a.oid, a.value)])
+  }
+  for (vs, oid) in [(n.country, "2.5.4.6"), (n.province, "2.5.4.8"), (n.locality, "2.5.4.7"), (n.street_address, "2.5.4.9"), (n.postal_code, "2.5.4.17"), (n.organization, "2.5.4.10"), (n.organizational_unit, "2.5.4.11")] {
+    if !vs.is_empty() {
+      var rdn: List[(Str, Str)] = []
+      for v in vs {
+        rdn.push((oid, v))
+      }
+      rdns.push(rdn)
+    }
+  }
+  if !n.common_name.is_empty() {
+    rdns.push([("2.5.4.3", n.common_name)])
+  }
+  if !n.serial_number.is_empty() {
+    rdns.push([("2.5.4.5", n.serial_number)])
+  }
+  var b = StrBuilder.new()
+  var i = rdns.len() - 1
+  while i >= 0 {
+    if i < rdns.len() - 1 {
+      b.write(",")
+    }
+    for (j, (oid, v)) in rdns[i].indexed() {
+      if j > 0 {
+        b.write("+")
+      }
+      b.write(atv_text(oid, v))
+    }
+    i -= 1
+  }
+  b.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// Certificates
+
+/// Go's SignatureAlgorithm.String() of the certificate's algorithm.
+fn sig_name(c: lx.Cert) -> Str {
+  if c.sig_alg == lx.SIG_RSA_SHA256 { return "SHA256-RSA" }
+  if c.sig_alg == lx.SIG_RSA_SHA384 { return "SHA384-RSA" }
+  if c.sig_alg == lx.SIG_RSA_SHA512 { return "SHA512-RSA" }
+  if c.sig_alg == lx.SIG_ECDSA_SHA256 { return "ECDSA-SHA256" }
+  if c.sig_alg == lx.SIG_ECDSA_SHA384 { return "ECDSA-SHA384" }
+  if c.sig_alg == lx.SIG_ECDSA_SHA512 { return "ECDSA-SHA512" }
+  if c.sig_alg == lx.SIG_ED25519 { return "Ed25519" }
+  if c.sig_alg == lx.SIG_PSS_SHA256 { return "SHA256-RSAPSS" }
+  if c.sig_alg == lx.SIG_PSS_SHA384 { return "SHA384-RSAPSS" }
+  if c.sig_alg == lx.SIG_PSS_SHA512 { return "SHA512-RSAPSS" }
+  match c.sig_oid {
+    "1.2.840.113549.1.1.2" => "MD2-RSA"
+    "1.2.840.113549.1.1.4" => "MD5-RSA"
+    "1.2.840.113549.1.1.5" | "1.3.14.3.2.29" => "SHA1-RSA"
+    "1.2.840.10040.4.3" => "DSA-SHA1"
+    "2.16.840.1.101.3.4.3.2" => "DSA-SHA256"
+    "1.2.840.10045.4.1" => "ECDSA-SHA1"
+    _ => "0"
+  }
+}
+
+const KEY_USAGES: List[x509.KeyUsage] = [x509.KeyUsage.DigitalSignature, x509.KeyUsage.ContentCommitment, x509.KeyUsage.KeyEncipherment, x509.KeyUsage.DataEncipherment, x509.KeyUsage.KeyAgreement, x509.KeyUsage.CertSign, x509.KeyUsage.CrlSign, x509.KeyUsage.EncipherOnly, x509.KeyUsage.DecipherOnly]
+
+fn eku_of(oid: Str) -> x509.ExtKeyUsage {
+  match oid {
+    "2.5.29.37.0" => x509.ExtKeyUsage.Any
+    "1.3.6.1.5.5.7.3.1" => x509.ExtKeyUsage.ServerAuth
+    "1.3.6.1.5.5.7.3.2" => x509.ExtKeyUsage.ClientAuth
+    "1.3.6.1.5.5.7.3.3" => x509.ExtKeyUsage.CodeSigning
+    "1.3.6.1.5.5.7.3.4" => x509.ExtKeyUsage.EmailProtection
+    "1.3.6.1.5.5.7.3.8" => x509.ExtKeyUsage.TimeStamping
+    "1.3.6.1.5.5.7.3.9" => x509.ExtKeyUsage.OcspSigning
+    _ => x509.ExtKeyUsage.Other(oid: oid)
+  }
+}
+
+fn eku_oid(u: x509.ExtKeyUsage) -> Str {
+  match u {
+    Any => "2.5.29.37.0"
+    ServerAuth => "1.3.6.1.5.5.7.3.1"
+    ClientAuth => "1.3.6.1.5.5.7.3.2"
+    CodeSigning => "1.3.6.1.5.5.7.3.3"
+    EmailProtection => "1.3.6.1.5.5.7.3.4"
+    TimeStamping => "1.3.6.1.5.5.7.3.8"
+    OcspSigning => "1.3.6.1.5.5.7.3.9"
+    Other(oid) => oid
+  }
+}
+
+fn cert_of(c: lx.Cert) -> x509.Certificate {
+  var ips: List[netip.Addr] = []
+  for b in c.ips {
+    if let Some(a) = netip.addr_from_bytes(b) {
+      ips.push(a)
+    }
+  }
+  var ku: List[x509.KeyUsage] = []
+  if c.key_usage > 0 {
+    for (i, u) in KEY_USAGES.indexed() {
+      if (c.key_usage & (1 << i)) != 0 {
+        ku.push(u)
+      }
+    }
+  }
+  var eku: List[x509.ExtKeyUsage] = []
+  for o in c.ext_usage {
+    eku.push(eku_of(o))
+  }
+  var exts: List[x509.Extension] = []
+  for e in c.extensions {
+    exts.push(x509.Extension{oid: e.oid, critical: e.critical, value: e.value})
+  }
+  x509.Certificate{
+    raw: c.raw,
+    version: c.version,
+    serial: c.serial,
+    signature_algorithm: sig_name(c),
+    issuer: name_of(c.issuer),
+    subject: name_of(c.subject),
+    not_before: time_of(c.not_before),
+    not_after: time_of(c.not_after),
+    public_key: crypto.parse_public_key(c.spki).ok(),
+    dns_names: c.dns,
+    ip_addresses: ips,
+    email_addresses: c.emails,
+    uris: c.uris,
+    is_ca: c.is_ca,
+    max_path_len: if c.has_bc && c.max_path >= 0 { Some(c.max_path) } else { None },
+    key_usage: ku,
+    ext_key_usage: eku,
+    subject_key_id: c.ski,
+    authority_key_id: c.aki,
+    extensions: exts,
+  }
+}
+
+/// The llrt certificate of a public one (parsed again from its DER, which
+/// parse made it from).
+fn lcert(c: x509.Certificate) -> lx.Cert ! x509.CertErr {
+  let p = lx.parse(c.raw)
+  if p.err != "" {
+    return Err(err(p.err))
+  }
+  Ok(p.cert)
+}
+
+fn parse(der: Bytes) -> x509.Certificate ! x509.CertErr {
+  let p = lx.parse(der)
+  if p.err != "" {
+    return Err(err(p.err))
+  }
+  Ok(cert_of(p.cert))
+}
+
+fn parse_pem(pem: Bytes) -> List[x509.Certificate] ! x509.CertErr {
+  var out: List[x509.Certificate] = []
+  for der in tlscert.pem_certs(pem) {
+    out.push(parse(der)?)
+  }
+  Ok(out)
+}
+
+fn certificate_verify(c: x509.Certificate, opts: x509.VerifyOptions) -> List[List[x509.Certificate]] ! x509.CertErr {
+  let leaf = lcert(c)?
+  var inters: List[lx.Cert] = []
+  for x in opts.intermediates {
+    inters.push(lcert(x)?)
+  }
+  var roots: List[lx.Cert] = []
+  for x in opts.roots {
+    roots.push(lcert(x)?)
+  }
+  var usages: List[Str] = []
+  for u in opts.key_usages {
+    usages.push(eku_oid(u))
+  }
+  if usages.is_empty() {
+    usages.push(eku_oid(x509.ExtKeyUsage.ServerAuth))
+  }
+  let now = opts.at.unix()
+  let (r, chains) = xv.verify_all(leaf, inters, roots, opts.dns_name, now, usages)
+  if chains.is_empty() {
+    return Err(err(xv.full_text(r, leaf, opts.dns_name, now)))
+  }
+  var out: List[List[x509.Certificate]] = []
+  for ch in chains {
+    var one: List[x509.Certificate] = []
+    for x in ch {
+      one.push(cert_of(x))
+    }
+    out.push(one)
+  }
+  Ok(out)
+}
+
+fn certificate_verify_hostname(c: x509.Certificate, host: Str) -> () ! x509.CertErr {
+  let leaf = lcert(c)?
+  if xv.host_ok(leaf, host) {
+    return Ok(())
+  }
+  Err(err(xv.full_text(xv.Outcome{code: 7, chain: [], bad: leaf, hint: ""}, leaf, host, 0)))
+}
+
+fn certificate_check_signature_from(c: x509.Certificate, parent: x509.Certificate) -> () ! x509.CertErr {
+  let child = lcert(c)?
+  let p = lcert(parent)?
+  let e = lx.check_from(child, p)
+  if e != "" {
+    return Err(err(e))
+  }
+  Ok(())
+}
+
+fn system_roots(fs: Fs) -> List[x509.Certificate] ! x509.CertErr uses fs {
+  var out: List[x509.Certificate] = []
+  for der in tlscert.root_ders() {
+    let p = lx.parse(der)
+    if p.err == "" {
+      out.push(cert_of(p.cert))
+    }
+  }
+  Ok(out)
+}

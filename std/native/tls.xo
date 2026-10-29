@@ -2,6 +2,7 @@
 // std/native/llrt/tlsio.xo (the http client's) on a connection the
 // program dialed. std/rt/tls.go is the Go backend's.
 use std/tls
+use std/x509
 use native/rt
 use native/rthttp
 use native/llrt/cabi_tlsclient
@@ -129,6 +130,31 @@ fn (t: TlsConn) alpn() -> Str {
     Some(x) => tlsio.alpn_of(tlsio.handle_conn(x))
     None => ""
   }
+}
+
+fn roots_of(certs: List[x509.Certificate]) -> Roots ! tls.TlsErr {
+  if certs.is_empty() {
+    return Err(tls.TlsErr{msg: "tls: no certificates"})
+  }
+  var ders: List[Bytes] = []
+  for c in certs {
+    ders.push(c.raw)
+  }
+  Roots{r: tlsio.roots_ders(ders)}
+}
+
+fn (t: TlsConn) peer_certificates() -> List[x509.Certificate] {
+  let h = match t.h {
+    Some(x) => x
+    None => return []
+  }
+  var out: List[x509.Certificate] = []
+  for der in tlsio.peer_ders(tlsio.handle_conn(h)) {
+    if let Ok(c) = x509.parse(der) {
+      out.push(c)
+    }
+  }
+  out
 }
 
 fn (t: TlsConn) version() -> Str {

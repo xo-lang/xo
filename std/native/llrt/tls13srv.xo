@@ -23,7 +23,7 @@ use native/llrt/tls13
 use native/llrt/tlsname
 use native/llrt/tlsrec
 use native/llrt/tlsticket
-use native/llrt/x509
+use native/llrt/x509cert as x509
 use native/llrt/x509verify
 use native/rt
 

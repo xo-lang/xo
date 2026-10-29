@@ -24,7 +24,7 @@ use native/llrt/tls12
 use native/llrt/tls13
 use native/llrt/tlsticket
 use native/llrt/tlsname
-use native/llrt/x509
+use native/llrt/x509cert as x509
 
 // the server's handshake states
 pub const WAIT_CH: Int = 0

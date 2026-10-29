@@ -1,0 +1,135 @@
+// std/x509 (spec/std.md 41). Declaration file; encoding rules are listed
+// at the top of std/prelude.xo. Go's crypto/x509: parsing X.509
+// certificates (RFC 5280) and verifying chains, as std/tls does for every
+// server it connects to. Pure, except system_roots, which reads the
+// platform's roots.
+use std/crypto
+use std/netip
+
+/// A distinguished name (Go's pkix.Name): the common attributes, each
+/// list in the order the name has them, and its DER.
+struct Name {
+  country: List[Str]
+  organization: List[Str]
+  organizational_unit: List[Str]
+  locality: List[Str]
+  province: List[Str]
+  street_address: List[Str]
+  postal_code: List[Str]
+  serial_number: Str
+  common_name: Str
+  raw: Bytes
+}
+
+/// RFC 2253 text, as Go's Name.String() (`CN=example.com,O=Example`).
+fn (n: Name) display() -> Str
+/// Every attribute in the order the name has them: (OID, value).
+fn (n: Name) attributes() -> List[(Str, Str)]
+
+/// A certificate extension: its OID (dotted), whether it is critical, and
+/// its value (the DER inside the OCTET STRING).
+struct Extension {
+  oid: Str
+  critical: Bool
+  value: Bytes
+}
+
+/// The key usages a certificate allows (RFC 5280 4.2.1.3).
+enum KeyUsage {
+  DigitalSignature
+  ContentCommitment
+  KeyEncipherment
+  DataEncipherment
+  KeyAgreement
+  CertSign
+  CrlSign
+  EncipherOnly
+  DecipherOnly
+}
+
+/// The extended key usages (RFC 5280 4.2.1.12); Other keeps an OID Go has
+/// no name for.
+enum ExtKeyUsage {
+  Any
+  ServerAuth
+  ClientAuth
+  CodeSigning
+  EmailProtection
+  TimeStamping
+  OcspSigning
+  Other(oid: Str)
+}
+
+/// A parsed certificate (Go's x509.Certificate).
+struct Certificate {
+  /// The whole certificate's DER.
+  raw: Bytes
+  /// 1 to 3.
+  version: Int
+  /// The serial number's magnitude, big endian (Go's SerialNumber.Bytes()).
+  serial: Bytes
+  /// Go's SignatureAlgorithm.String(): "SHA256-RSA", "ECDSA-SHA256",
+  /// "SHA256-RSAPSS", "Ed25519", ...; "0" when unknown.
+  signature_algorithm: Str
+  issuer: Name
+  subject: Name
+  not_before: Time
+  not_after: Time
+  /// The subject's key; None for an algorithm std/crypto has no key for
+  /// (DSA, X25519, an unknown OID), whose SubjectPublicKeyInfo is in raw.
+  public_key: crypto.PublicKey?
+  dns_names: List[Str]
+  ip_addresses: List[netip.Addr]
+  email_addresses: List[Str]
+  uris: List[Str]
+  /// The basic constraints: a CA, and its path length (None: no limit).
+  is_ca: Bool
+  max_path_len: Int?
+  key_usage: List[KeyUsage]
+  ext_key_usage: List[ExtKeyUsage]
+  subject_key_id: Bytes
+  authority_key_id: Bytes
+  /// Every extension, in order.
+  extensions: List[Extension]
+}
+
+/// An x509 error, with Go's text (`x509: malformed certificate`,
+/// `x509: certificate signed by unknown authority`, ...).
+struct CertErr {
+  msg: Str
+}
+
+fn (e: CertErr) display() -> Str
+
+/// The certificate of a DER (Go's ParseCertificate).
+fn parse(der: Bytes) -> Certificate ! CertErr
+/// The certificates of a PEM text's CERTIFICATE blocks, in order; Err at the
+/// first that does not parse.
+fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
+
+/// What verify checks a chain against (Go's VerifyOptions).
+struct VerifyOptions {
+  /// The trusted roots.
+  roots: List[Certificate]
+  /// Certificates a chain may pass through.
+  intermediates: List[Certificate] = []
+  /// The host name the leaf must be valid for; "" checks none.
+  dns_name: Str = ""
+  /// When every certificate must be valid.
+  at: Time
+  /// The extended key usages the chain must allow one of (Any: no
+  /// check); empty is [ServerAuth], as Go's nil.
+  key_usages: List[ExtKeyUsage] = []
+}
+
+/// Every chain from c to one of the roots, leaf first (Go's
+/// Certificate.Verify), or Err with Go's text.
+fn (c: Certificate) verify(opts: VerifyOptions) -> List[List[Certificate]] ! CertErr
+/// Whether c is valid for host (a name or an IP address; Go's VerifyHostname).
+fn (c: Certificate) verify_hostname(host: Str) -> () ! CertErr
+/// Whether parent's key signed c (Go's CheckSignatureFrom).
+fn (c: Certificate) check_signature_from(parent: Certificate) -> () ! CertErr
+
+/// The roots std/tls verifies servers against on this platform when a
+/// client gives none: the system's root certificates.
+fn system_roots(fs: Fs) -> List[Certificate] ! CertErr uses fs

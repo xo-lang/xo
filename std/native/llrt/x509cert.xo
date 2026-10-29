@@ -135,10 +135,12 @@ pub struct Cert {
   pub inhibit_mapping: Int
   pub has_inhibit_any: Bool
   pub inhibit_any: Int
+  /// Every extension, in order (std/x509's Certificate.extensions).
+  pub extensions: List[Ext]
 }
 
 fn empty() -> Cert {
-  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: [], policies: [], policy_maps: [], has_req_explicit: false, req_explicit: 0, has_inhibit_mapping: false, inhibit_mapping: 0, has_inhibit_any: false, inhibit_any: 0}
+  Cert{raw: b"", tbs: b"", version: 0, serial: b"", sig_alg: SIG_UNKNOWN, signature: b"", issuer: b"", subject: b"", cn: "", not_before: 0, not_after: 0, key_alg: KEY_UNKNOWN, key: b"", spki: b"", dns: [], ips: [], has_san: false, has_bc: false, is_ca: false, max_path: -1, key_usage: -1, ext_usage: [], has_eku: false, ski: b"", aki: b"", permitted_dns: [], excluded_dns: [], unhandled: 0, san_other: 0, other_constraints: 0, sig_oid: "", san_raw: b"", has_key: false, org: "", has_nc: false, permitted_ips: [], excluded_ips: [], permitted_emails: [], excluded_emails: [], permitted_uris: [], excluded_uris: [], emails: [], uris: [], uri_hosts: [], policies: [], policy_maps: [], has_req_explicit: false, req_explicit: 0, has_inhibit_mapping: false, inhibit_mapping: 0, has_inhibit_any: false, inhibit_any: 0, extensions: []}
 }
 
 /// The result of parse: the certificate, or the error text (Go's).
@@ -323,6 +325,7 @@ pub fn parse(der: Bytes) -> Parsed {
           seen.push(e.oid)
           list.push(e)
         }
+        c.extensions = list
         let err = process_extensions(list, c)
         if err != "" {
           return fail(err)
@@ -461,6 +464,38 @@ fn parse_name(el: cbyte.Win) -> NameRes {
 struct Text {
   text: Str
   err: Str
+}
+
+/// One attribute of a Name: its type's OID (dotted) and its value as Go's
+/// parseASN1String reads it.
+pub struct Atv {
+  pub oid: Str
+  pub value: Str
+}
+
+/// The attributes of the Name DER der in order (Go's pkix.Name.Names, as
+/// parseName fills them), or None when it does not parse.
+pub fn name_atvs(der: Bytes) -> List[Atv]? {
+  var raw = cbyte.of(der)
+  var seq = cbyte.read(raw, cbyte.SEQUENCE)?
+  var out: List[Atv] = []
+  while !cbyte.empty(seq) {
+    var set = cbyte.read(seq, cbyte.SET)?
+    while !cbyte.empty(set) {
+      var atav = cbyte.read(set, cbyte.SEQUENCE)?
+      let typ = cbyte.read_oid(atav)?
+      let v = cbyte.read_any(atav)
+      if !v.ok {
+        return None
+      }
+      let t = asn1_string(v.tag, cbyte.bytes(v.body))
+      if t.err != "" {
+        return None
+      }
+      out.push(Atv{oid: typ, value: t.text})
+    }
+  }
+  Some(out)
 }
 
 /// Go's isPrintable.
@@ -736,11 +771,11 @@ fn public_key(o: Str, params: Bytes, data: Bytes, var c: Cert) -> Str {
 // Extensions
 
 /// An extension (pkix.Extension): its OID, criticality, value.
-struct Ext {
-  oid: Str
-  critical: Bool
-  value: Bytes
-  err: Str
+pub struct Ext {
+  pub oid: Str
+  pub critical: Bool
+  pub value: Bytes
+  pub err: Str
 }
 
 /// Go's parseExtension.

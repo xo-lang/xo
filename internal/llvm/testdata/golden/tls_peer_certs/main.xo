@@ -1,0 +1,62 @@
+// std/tls's peer_certificates and roots_of with std/x509 (std.md 27, 39):
+// the chain a local std/http server sends (golden http_tls's test
+// certificates), parsed; Roots made of parsed certificates; and std/x509's
+// verify of the chain the server sent.
+use std/http
+use std/tls
+use std/x509
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hello", fn(_req) { http.text(200, "hello") })
+  r
+}
+
+fn show(c: x509.Certificate) -> Str {
+  "${c.subject.display()} issuer=${c.issuer.display()} ca=${c.is_ca} dns=${c.dns_names.join(",")} ips=${c.ip_addresses.map(fn(a) { a.display() }).join(",")} sig=${c.signature_algorithm}"
+}
+
+fn main(os: Os) {
+  let ca = x509.parse_pem(ca_pem()).or_fault("ca")
+  match tls.roots_of([]) {
+    Ok(_) => os.stdio.println("roots_of []: ok?")
+    Err(e) => os.stdio.println("roots_of []: ${e.msg}")
+  }
+  let roots = tls.roots_of(ca).or_fault("roots_of")
+  let good = http.tls_cert(good_cert(), good_key()).or_fault("good")
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l, routes()).with_tls([good])
+  scope s {
+    s.spawn_background(fn() {
+      match srv.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    let c = os.net.dial(l.addr()).or_fault("dial")
+    let t = tls.client(c, "127.0.0.1", roots: Some(roots)).or_fault("client")
+    let peer = t.peer_certificates()
+    os.stdio.println("peer certificates: ${peer.len()}")
+    for p in peer {
+      os.stdio.println("  ${show(p)}")
+    }
+    // the server's chain verifies with std/x509 too, at a fixed time
+    let opts = x509.VerifyOptions{roots: ca, intermediates: peer[1..peer.len()], dns_name: "good.test", at: Time.from_unix(1767225600)}
+    match peer[0].verify(opts) {
+      Ok(chains) => os.stdio.println("verify: ${chains.map(fn(ch) { ch.map(fn(x) { x.subject.common_name }).join(" > ") }).join(" | ")}")
+      Err(e) => os.stdio.println("verify: ${e.display()}")
+    }
+    match peer[0].verify(x509.VerifyOptions{roots: ca, dns_name: "other.test", at: Time.from_unix(1767225600)}) {
+      Ok(_) => os.stdio.println("verify other name: ok?")
+      Err(e) => os.stdio.println("verify other name: ${e.display()}")
+    }
+    t.close()
+  }
+  os.stdio.println("done")
+}
+
+// ---------------------------------------------------------------------------
+// Test certificates (golden http_tls's; PEM)
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

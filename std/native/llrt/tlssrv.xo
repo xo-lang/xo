@@ -26,7 +26,7 @@ use native/llrt/tlsticket
 use native/llrt/tlsname
 use native/llrt/twflags
 use native/llrt/twrun
-use native/llrt/x509
+use native/llrt/x509cert as x509
 use native/llrt/x509verify
 use native/llrt/asn1
 use native/rt

@@ -1,0 +1,4 @@
+# twincheck: x509: three workloads (none is the setup alone); Go is crypto/x509.
+- - none
+- - parse
+- - verify

@@ -26,7 +26,7 @@ use native/llrt/sha256
 use native/llrt/sha3
 use native/llrt/sock
 use native/llrt/sysio
-use native/llrt/x509
+use native/llrt/x509cert as x509
 use native/llrt/x25519
 use native/llrt/tls12
 use native/llrt/tls12srv

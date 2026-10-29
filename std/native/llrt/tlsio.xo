@@ -19,7 +19,7 @@ use native/llrt/tls12
 use native/llrt/tls13
 use native/llrt/tlscert
 use native/llrt/tlsname
-use native/llrt/x509
+use native/llrt/x509cert as x509
 use native/rt
 use native/rthttp
 
@@ -180,6 +180,20 @@ pub fn roots_pem(pem: Bytes) -> rthttp.Roots {
     }
   }
   let err = if certs.is_empty() { "tls: no certificates found in PEM input" } else { "" }
+  as_roots(rt.any_of(RootsData{certs: certs, err: err, system: false}))
+}
+
+/// The roots of certificates' DERs (std/tls roots_of); the ones that do
+/// not parse are left out.
+pub fn roots_ders(ders: List[Bytes]) -> rthttp.Roots {
+  var certs: List[x509.Cert] = []
+  for d in ders {
+    let p = x509.parse(d)
+    if p.err == "" {
+      certs.push(p.cert)
+    }
+  }
+  let err = if certs.is_empty() { "tls: no certificates" } else { "" }
   as_roots(rt.any_of(RootsData{certs: certs, err: err, system: false}))
 }
 
@@ -522,6 +536,23 @@ pub fn alpn_of(h: Int) -> Str {
   match load(h) {
     Some(c) => alpn(c)
     None => ""
+  }
+}
+
+/// The server's certificates as it sent them, leaf first, each its DER
+/// (Go's ConnectionState.PeerCertificates); none before the handshake, on
+/// a resumed session, or without TLS.
+pub fn peer_ders(h: Int) -> List[Bytes] {
+  match load(h) {
+    Some(c) => {
+      let certs = if v12(c) { c.cl12[0].peer } else { c.cl.peer }
+      var out: List[Bytes] = []
+      for x in certs {
+        out.push(x.raw)
+      }
+      out
+    }
+    None => []
   }
 }
 

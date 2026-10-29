@@ -3994,6 +3994,7 @@ enum Verify { Full, ChainOnly, None }
 struct Roots {}                                    // handle: trusted certificates
 struct TlsErr { msg: Str }
 fn roots(pem: Bytes) -> Roots ! TlsErr
+fn roots_of(certs: List[x509.Certificate]) -> Roots ! TlsErr
 struct TlsConn {}                                  // handle
 fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = []) -> TlsConn ! NetErr uses net.dial
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr  uses net.dial
@@ -4001,6 +4002,7 @@ fn (t: TlsConn) write(data: Bytes) -> () ! NetErr  uses net.dial
 fn (t: TlsConn) close()
 fn (t: TlsConn) alpn() -> Str                      // the protocol the server chose, "" for none
 fn (t: TlsConn) version() -> Str                   // "TLS 1.2" or "TLS 1.3"
+fn (t: TlsConn) peer_certificates() -> List[x509.Certificate]
 ```
 
 ```
@@ -4032,7 +4034,12 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   trust settings; Linux's CA bundle and directories, `SSL_CERT_FILE` and
   `SSL_CERT_DIR`); `tls.roots(pem)` trusts exactly the certificates of
   `pem`, with http's `with_roots` parser and its error
-  (`TlsErr("tls: no certificates found in PEM input")`).
+  (`TlsErr("tls: no certificates found in PEM input")`);
+  `tls.roots_of(certs)` trusts exactly `certs`, parsed with std/x509
+  (41), `TlsErr("tls: no certificates")` when it is empty.
+- `peer_certificates()` is the server's certificate chain as it sent it,
+  leaf first, parsed (Go's `ConnectionState().PeerCertificates`); empty
+  without TLS (FakeNet).
 - Errors are `NetErr`s with Go's texts: a certificate that does not
   verify is `Io("tls: failed to verify certificate: x509: ...")`; a
   server that does not speak TLS is `Io("tls: first record does not look
@@ -5455,3 +5462,94 @@ fn (var w: TabWriter) flush() -> Bytes
   Output of lines that Go would write as they complete is held until
   `flush`.
 
+## 41. std/x509
+
+X.509 certificates (RFC 5280), Go's crypto/x509: parsing, and verifying
+chains as std/tls does for every server. Pure: `verify` takes its roots
+and its time; only `system_roots` reads the platform.
+
+```xo
+struct Name {
+  country: List[Str], organization: List[Str], organizational_unit: List[Str],
+  locality: List[Str], province: List[Str], street_address: List[Str],
+  postal_code: List[Str], serial_number: Str, common_name: Str,
+  raw: Bytes                                // the Name's DER
+}
+fn (n: Name) display() -> Str               // Go's Name.String(): "CN=a.example,O=A,C=US"
+fn (n: Name) attributes() -> List[(Str, Str)]  // every (OID, value), in order
+struct Extension { oid: Str, critical: Bool, value: Bytes }
+enum KeyUsage { DigitalSignature, ContentCommitment, KeyEncipherment, DataEncipherment,
+  KeyAgreement, CertSign, CrlSign, EncipherOnly, DecipherOnly }
+enum ExtKeyUsage { Any, ServerAuth, ClientAuth, CodeSigning, EmailProtection,
+  TimeStamping, OcspSigning, Other(oid: Str) }
+struct Certificate {
+  raw: Bytes, version: Int, serial: Bytes, signature_algorithm: Str,
+  issuer: Name, subject: Name, not_before: Time, not_after: Time,
+  public_key: crypto.PublicKey?, dns_names: List[Str], ip_addresses: List[netip.Addr],
+  email_addresses: List[Str], uris: List[Str], is_ca: Bool, max_path_len: Int?,
+  key_usage: List[KeyUsage], ext_key_usage: List[ExtKeyUsage],
+  subject_key_id: Bytes, authority_key_id: Bytes, extensions: List[Extension]
+}
+struct CertErr { msg: Str }
+fn (e: CertErr) display() -> Str
+fn parse(der: Bytes) -> Certificate ! CertErr
+fn parse_pem(pem: Bytes) -> List[Certificate] ! CertErr
+struct VerifyOptions {
+  roots: List[Certificate], intermediates: List[Certificate] = [],
+  dns_name: Str = "", at: Time, key_usages: List[ExtKeyUsage] = []   // [] is [ServerAuth]
+}
+fn (c: Certificate) verify(opts: VerifyOptions) -> List[List[Certificate]] ! CertErr
+fn (c: Certificate) verify_hostname(host: Str) -> () ! CertErr
+fn (c: Certificate) check_signature_from(parent: Certificate) -> () ! CertErr
+fn system_roots(fs: Fs) -> List[Certificate] ! CertErr uses fs
+```
+
+```
+fn check(os: Os, pem: Bytes, roots: Bytes) -> () ! Error uses clock {
+  let chain = x509.parse_pem(pem)?
+  let leaf = chain[0]
+  os.stdio.println("${leaf.subject.display()} until ${leaf.not_after}")
+  let _chains = leaf.verify(x509.VerifyOptions{roots: x509.parse_pem(roots)?,
+    intermediates: chain[1..chain.len()], dns_name: "api.example.com", at: os.clock.now()})?
+}
+```
+
+- `parse` is Go's ParseCertificate, with its checks and its error texts
+  (`CertErr("x509: malformed certificate")`, ...). `parse_pem` parses
+  each CERTIFICATE block of a PEM text in order (other blocks are
+  skipped) and fails at the first that does not parse.
+- Fields are Go's: `serial` is the serial number's magnitude, big endian;
+  `signature_algorithm` is Go's `SignatureAlgorithm.String()`
+  (`"SHA256-RSA"`, `"ECDSA-SHA256"`, `"SHA256-RSAPSS"`, `"Ed25519"`, `"0"`
+  for one Go does not know); `public_key` is None for a key std/crypto
+  has none for (DSA, X25519, an unknown algorithm); `max_path_len` is None
+  without a path length constraint; `key_usage` and `ext_key_usage` list
+  what the extensions allow, extended usages in the extension's order;
+  `extensions` is every extension in order, the value the DER inside its
+  OCTET STRING. A time outside what a `Time` holds (1677 to 2262) is
+  clamped to its nearest end. A Name's lists hold every value of their attribute,
+  `common_name` and `serial_number` the last; `attributes()` is every
+  attribute, the ones without a field included.
+- `verify` is Go's Certificate.Verify with the given roots: every chain
+  from `c` through `intermediates` to one of `roots` whose certificates
+  are valid at `at`, allow one of `key_usages` (`Any` accepts any) and
+  meet the name constraints and policies (empty `key_usages` is
+  `[ServerAuth]`, as Go's nil), leaf first; with `dns_name`
+  the leaf must be valid for it (`verify_hostname`). The error is Go's
+  text (`"x509: certificate signed by unknown authority"`, `"x509:
+  certificate has expired or is not yet valid: current time ... is
+  after ..."`, ...). `check_signature_from` is Go's CheckSignatureFrom.
+- `system_roots(fs)` is the roots std/tls verifies servers against when
+  given none (27): Linux's CA bundle and directories (`SSL_CERT_FILE`,
+  `SSL_CERT_DIR`), Windows's ROOT store, and on macOS the system's anchor
+  certificates (SecTrustCopyAnchorCertificates; TLS there asks the
+  Security framework, which also applies user and admin trust settings
+  that a list cannot hold). Certificates that do not parse are left out.
+- Tests: the corpus `x509` (internal/stdtest) parses every certificate of
+  Go's crypto/x509 and crypto/tls testdata, a fifth of the NIST PKITS
+  certificates, verify_test.go's and mutated copies, comparing every
+  field and error text with Go's, and runs verify_test.go's verifyTests
+  against Go's chains and errors, on every backend.
+- Backends: native (std/native/x509.xo over the TLS stack's parser and
+  verifier, std/native/llrt/x509cert.xo and x509verify.xo) and Go
+  (crypto/x509).

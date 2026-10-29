@@ -45,6 +45,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   warning with the std file:line and builds the whole program; before,
   the fallback was silent. internal/arm64 TestStdStoreBuilds (run under
   -short too) builds the store from scratch.
+- std/x509 (new, milestone 0.35): X.509 certificates as Go's
+  crypto/x509: `parse` and `parse_pem` give a `Certificate` with its
+  names, validity, key, SANs, basic constraints, key usages, key ids and
+  every extension; `verify` builds and checks the chains to given roots
+  at a given time (Go's Verify, with its error texts);
+  `verify_hostname`, `check_signature_from` and `system_roots(fs)` (the
+  roots TLS uses). std/tls: `TlsConn.peer_certificates()` and
+  `roots_of(certs)`. Spec std.md 41; the corpus x509 compares every
+  field, error and verifyTests row with Go's.
 - Profile-guided code layout, stage 1 (decision 0403): `xo prof FILE
   --layout=xo.layout` reduces a CPU profile to a layout file, and `xo
   build` and `xo run` order the program's functions by it (the sampled

@@ -8,10 +8,12 @@ package rt
 var (
 	_ func(*Tls_TlsErr, *Task) string                                                                    = (*Tls_TlsErr).M_display
 	_ func(*Task, Bytes) Result[Tls_Roots, Tls_TlsErr]                                                   = Tls_roots
+	_ func(*Task, List[X509_Certificate]) Result[Tls_Roots, Tls_TlsErr]                                  = Tls_roots_of
 	_ func(*Task, Conn, string, Option[Tls_Roots], Tls_Verify, List[string]) Result[Tls_TlsConn, NetErr] = Tls_client
 	_ func(*Tls_TlsConn, *Task, int64) Result[Option[Bytes], NetErr]                                     = (*Tls_TlsConn).M_read
 	_ func(*Tls_TlsConn, *Task, Bytes) Result[Unit, NetErr]                                              = (*Tls_TlsConn).M_write
 	_ func(*Tls_TlsConn, *Task)                                                                          = (*Tls_TlsConn).M_close
 	_ func(*Tls_TlsConn, *Task) string                                                                   = (*Tls_TlsConn).M_alpn
 	_ func(*Tls_TlsConn, *Task) string                                                                   = (*Tls_TlsConn).M_version
+	_ func(*Tls_TlsConn, *Task) List[X509_Certificate]                                                   = (*Tls_TlsConn).M_peer_certificates
 )

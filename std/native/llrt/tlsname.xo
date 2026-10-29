@@ -423,12 +423,19 @@ pub fn alert_text(a: Int) -> Str {
 // CertPool.AppendCertsFromPEM use it), over the n bytes at an address
 
 /// The index of the bytes of s in the memory at p from i to end, or -1.
+/// The first byte is compared before the rest: the PEM markers start
+/// with '-', which a base64 body never holds, so a body costs a load a
+/// byte (a mem_eq call a byte was 3/4 of parsing a PEM chain).
 fn find_at(p: Int, i0: Int, end: Int, s: Str) -> Int {
   let k = s.len()
+  if k == 0 {
+    return if i0 <= end { i0 } else { -1 }
+  }
   let d = raw.data(s)
+  let first = raw.byte_at(d, 0)
   var i = i0
   while i + k <= end {
-    if raw.mem_eq(p + i, d, k) {
+    if raw.byte_at(p, i) == first && raw.mem_eq(p + i, d, k) {
       return i
     }
     i += 1

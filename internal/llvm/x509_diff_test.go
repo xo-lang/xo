@@ -20,7 +20,7 @@ import (
 
 // x509DiffProgram parses each line of its input (a certificate's DER in
 // hex) with internal.crypto_op's x509.check and prints the result in hex:
-// Go's x509.ParseCertificate on the Go backend, std/native/llrt/x509.xo
+// Go's x509.ParseCertificate on the Go backend, std/native/llrt/x509cert.xo
 // on the native ones.
 const x509DiffProgram = `use std/internal
 

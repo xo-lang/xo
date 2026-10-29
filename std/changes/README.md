@@ -39,6 +39,7 @@ entries yet.
 - [template.md](template.md): std/template (spec/std.md 30)
 - [websocket.md](websocket.md): std/websocket (spec/std.md 35)
 - [debug.md](debug.md): std/debug (spec/std.md 36)
+- [x509.md](x509.md): std/x509 (spec/std.md 41)
 - [toml.md](toml.md): std/toml (spec/std.md 19)
 - [metrics.md](metrics.md): std/metrics (spec/std.md 37)
 - [tabwriter.md](tabwriter.md): std/tabwriter (spec/std.md 40)

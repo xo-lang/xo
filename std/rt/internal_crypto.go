@@ -411,7 +411,7 @@ func chainPool(b Bytes) *x509.CertPool {
 	return p
 }
 
-// describeCert is std/native/llrt/x509.xo's describe of c: its fields one
+// describeCert is std/native/llrt/x509cert.xo's describe of c: its fields one
 // a line, in the numbering of x509.xo's constants.
 func describeCert(c *x509.Certificate) string {
 	h := hex.EncodeToString

@@ -16,8 +16,8 @@ import (
 
 const aeadFail = "cipher: message authentication failed"
 
-func (a Crypto_Aead) M_nonce_size(*Task) int64 { return 12 }
-func (a Crypto_Aead) M_overhead(*Task) int64   { return 16 }
+func (a Crypto_Aead) M_nonce_size(*Task) int64  { return 12 }
+func (a Crypto_Aead) M_overhead(*Task) int64    { return 16 }
 func (e Crypto_AeadErr) M_display(*Task) string { return e.F_msg }
 
 // Crypto_AeadKey is `crypto.AeadKey`: AES-GCM's cipher.AEAD, or

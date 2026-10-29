@@ -9,7 +9,7 @@
 use native/llrt/raw
 use native/llrt/tlscert
 use native/llrt/tlsname
-use native/llrt/x509
+use native/llrt/x509cert as x509
 use native/rt
 
 // the outcomes (Go's errors: UnknownAuthorityError, CertificateInvalidError's
@@ -104,14 +104,37 @@ struct LevelErr {
 /// extended key usage OID wanted (x509.EKU_SERVER, ...; EKU_ANY accepts
 /// any).
 pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usage: Str) -> Outcome {
+  run(leaf, inters, roots, host, now, [usage], false).0
+}
+
+/// verify keeping every valid chain, as Go's Verify returns them (std/x509),
+/// for any of the wanted usages (Go's checkChainForKeyUsage over a list: a
+/// chain whose certificates all allow one of them).
+pub fn verify_all(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str]) -> (Outcome, List[List[x509.Cert]]) {
+  run(leaf, inters, roots, host, now, usages, true)
+}
+
+fn usages_ok(chain: List[x509.Cert], usages: List[Str]) -> Bool {
+  if usages.is_empty() {
+    return true
+  }
+  for u in usages {
+    if usage_ok(chain, u) {
+      return true
+    }
+  }
+  false
+}
+
+fn run(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], host: Str, now: Int, usages: List[Str], all: Bool) -> (Outcome, List[List[x509.Cert]]) {
   if leaf.unhandled > 0 {
-    return Outcome{code: UNHANDLED_CRITICAL, chain: [], bad: leaf, hint: ""}
+    return (Outcome{code: UNHANDLED_CRITICAL, chain: [], bad: leaf, hint: ""}, [])
   }
   if now < leaf.not_before || now > leaf.not_after {
-    return Outcome{code: EXPIRED, chain: [], bad: leaf, hint: ""}
+    return (Outcome{code: EXPIRED, chain: [], bad: leaf, hint: ""}, [])
   }
   if host != "" && !host_ok(leaf, host) {
-    return Outcome{code: HOSTNAME, chain: [], bad: leaf, hint: ""}
+    return (Outcome{code: HOSTNAME, chain: [], bad: leaf, hint: ""}, [])
   }
   var s = Search{chains: [], checks: 0}
   var in_roots = false
@@ -125,7 +148,7 @@ pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], 
   } else {
     let err = build(s, [leaf], dedup(inters), dedup(roots), now)
     if err.code != OK {
-      return Outcome{code: err.code, chain: [], bad: err.bad, hint: err.hint}
+      return (Outcome{code: err.code, chain: [], bad: err.bad, hint: err.hint}, [])
     }
   }
   // Go drops the chains with incompatible usages, then the ones breaking
@@ -134,12 +157,13 @@ pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], 
   var names_err = ""
   var bad_policies = 0
   var bad_usage = 0
+  var good: List[List[x509.Cert]] = []
   for ch in s.chains {
     if !policies_ok(ch) {
       bad_policies += 1
       continue
     }
-    if !usage_ok(ch, usage) {
+    if !usages_ok(ch, usages) {
       bad_usage += 1
       continue
     }
@@ -149,14 +173,20 @@ pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], 
         names_err = e
       }
     } else {
-      return Outcome{code: OK, chain: ch, bad: leaf, hint: ""}
+      if !all {
+        return (Outcome{code: OK, chain: ch, bad: leaf, hint: ""}, [ch])
+      }
+      good.push(ch)
     }
   }
+  if !good.is_empty() {
+    return (Outcome{code: OK, chain: good[0], bad: leaf, hint: ""}, good)
+  }
   if names_err != "" {
-    return Outcome{code: NAME_CONSTRAINTS, chain: [], bad: leaf, hint: names_err}
+    return (Outcome{code: NAME_CONSTRAINTS, chain: [], bad: leaf, hint: names_err}, [])
   }
   if bad_usage > 0 && bad_policies == 0 {
-    return Outcome{code: INCOMPATIBLE_USAGE, chain: [], bad: leaf, hint: ""}
+    return (Outcome{code: INCOMPATIBLE_USAGE, chain: [], bad: leaf, hint: ""}, [])
   }
   // Go's NoValidChains, with its counts
   var details: List[Str] = []
@@ -166,7 +196,7 @@ pub fn verify(leaf: x509.Cert, inters: List[x509.Cert], roots: List[x509.Cert], 
   if bad_policies > 0 {
     details.push("${bad_policies} candidate chains with invalid policies")
   }
-  Outcome{code: NO_VALID_CHAINS, chain: [], bad: leaf, hint: details.join(", ")}
+  (Outcome{code: NO_VALID_CHAINS, chain: [], bad: leaf, hint: details.join(", ")}, [])
 }
 
 /// A pool's certificates once each (CertPool.AddCert skips one it has).

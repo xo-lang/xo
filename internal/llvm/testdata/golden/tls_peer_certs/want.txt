@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+roots_of []: tls: no certificates
+peer certificates: 2
+  CN=good issuer=CN=Xo Test CA ca=false dns=localhost,good.test ips=127.0.0.1,::1 sig=ECDSA-SHA256
+  CN=Xo Test CA issuer=CN=Xo Test CA ca=true dns= ips= sig=ECDSA-SHA256
+verify: good > Xo Test CA
+verify other name: x509: certificate is valid for localhost, good.test, not other.test
+done
+--- stderr

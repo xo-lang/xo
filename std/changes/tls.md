@@ -1,5 +1,18 @@
 # std/tls changes
 
+
+## 2026-10-29: feature: peer_certificates and roots_of
+
+- Kind: feature
+- Commit: this commit
+- Found by: milestone 0.35.0 S5 (std/x509)
+- Go reference: crypto/tls ConnectionState.PeerCertificates, x509.CertPool.AddCert (go1.26.1)
+- Test: golden tls_peer_certs (a local std/http server's chain as the client sees it, roots_of trusting its CA, and std/x509's verify of the chain)
+
+`TlsConn.peer_certificates()` is the server's chain as it sent it, leaf
+first, as std/x509 Certificates; `roots_of(certs)` makes Roots of parsed
+certificates, as `roots(pem)` does of a PEM text.
+
 ## 2026-10-23: fix: a server read that ends the handshake and cuts a record no longer loses the record's head
 
 - Kind: fix

@@ -579,3 +579,15 @@ bench --ab`, 15 rounds, Go as A, wall: AES-GCM 64 bytes 0.908, 1 MiB
 0.744; ChaCha20-Poly1305 64 bytes 1.008 (within noise), 1 MiB 0.883;
 HKDF-SHA-256 0.965; an AES-256 key made 1.357, a rolling row (the key
 schedule; Go expands keys with AESE in assembly).
+
+## std/x509 parse and verify (2026-10-29, xo-lang-5)
+
+Per std/changes/x509.md 2026-10-29: a new bench, bench/perf/x509, with a
+Go twin (crypto/x509) on Go's verify_test.go chain (www.google.com, GTS CA
+1C3, GTS Root R1); the checksums equal Go's on both workloads. Quiet `xo
+bench --ab`, 15 rounds, Go as A, wall: parse_pem of the chain 20,000
+times 1.183 (1.173 to 1.191; instructions 1.046); verify of it 5,000
+times 1.002 (within noise; instructions 0.81). Parse was 1.358 before the
+PEM scan compared a marker's first byte before calling mem_eq at every
+position (tlsname find_at; XO_PROF=cpu had 75% of parse_pem in pem_next):
+0.865 wall of the parent, instructions 0.714.

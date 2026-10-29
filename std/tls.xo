@@ -3,6 +3,8 @@
 // connection the program dialed itself (the STARTTLS shape: Postgres's
 // SSLRequest, SMTP, Redis).
 
+use std/x509
+
 /// How the server's certificate is checked (std.md 27).
 enum Verify {
   Full
@@ -23,6 +25,9 @@ fn (e: TlsErr) display() -> Str
 /// Parses the CERTIFICATE blocks of a PEM text, as http's with_roots.
 fn roots(pem: Bytes) -> Roots ! TlsErr
 
+/// Roots of parsed certificates (std/x509), as roots does of a PEM text.
+fn roots_of(certs: List[x509.Certificate]) -> Roots ! TlsErr
+
 /// A TLS connection (std.md 27); a handle.
 struct TlsConn {}
 
@@ -36,3 +41,6 @@ fn (t: TlsConn) close()
 fn (t: TlsConn) alpn() -> Str
 /// "TLS 1.2" or "TLS 1.3".
 fn (t: TlsConn) version() -> Str
+/// The server's certificates as it sent them, leaf first (Go's
+/// ConnectionState.PeerCertificates); empty without TLS (FakeNet).
+fn (t: TlsConn) peer_certificates() -> List[x509.Certificate]

@@ -67,6 +67,56 @@ pub fn system_ders() -> List[Bytes] {
   }
 }
 
+/// The roots a client checks servers against, as DER (std/x509's
+/// system_roots): system_ders on Linux and Windows; on macOS, where TLS
+/// asks the Security framework to evaluate trust and reads no list, the
+/// framework's anchor certificates (SecTrustCopyAnchorCertificates: the
+/// roots it trusts by default, without user or admin trust settings).
+pub fn root_ders() -> List[Bytes] {
+  if target.os == TargetOs.Darwin {
+    return anchor_ders()
+  }
+  system_ders()
+}
+
+fn anchor_ders() -> List[Bytes] {
+  let cf_release = fw("CFRelease")
+  let copy = fw("SecTrustCopyAnchorCertificates")
+  if cf_release == 0 || copy == 0 {
+    return []
+  }
+  let out = block(8)
+  rt.mem_store(out, 0, 0, 8)
+  // an OSStatus: the low 32 bits
+  let st = rt.call_c2(copy, out, 0) & 4294967295
+  let arr = rt.mem_load(out, 0, 8)
+  release(out)
+  if st != 0 || arr == 0 {
+    return []
+  }
+  let count = rt.call_c2(fw("CFArrayGetCount"), arr, 0)
+  let at = fw("CFArrayGetValueAtIndex")
+  let copy_data = fw("SecCertificateCopyData")
+  let length = fw("CFDataGetLength")
+  let ptr = fw("CFDataGetBytePtr")
+  var ders: List[Bytes] = []
+  for i in 0..count {
+    let cert = rt.call_c2(at, arr, i)
+    let d = if cert != 0 { rt.call_c2(copy_data, cert, 0) } else { 0 }
+    if d == 0 {
+      continue
+    }
+    let n = rt.call_c2(length, d, 0)
+    let p = rt.call_c2(ptr, d, 0)
+    if n > 0 && p != 0 {
+      ders.push(raw.str_at(p, n).bytes())
+    }
+    let _r = rt.call_c2(cf_release, d, 0)
+  }
+  let _r = rt.call_c2(cf_release, arr, 0)
+  ders
+}
+
 /// The DER of each CERTIFICATE block of a PEM text.
 pub fn pem_certs(pem: Bytes) -> List[Bytes] {
   var out: List[Bytes] = []
