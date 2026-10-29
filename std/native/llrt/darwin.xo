@@ -170,6 +170,15 @@ pub fn rename(a: Str, b: Str) -> Int {
   keep(za, ret_keep(zb, r))
 }
 
+/// clonefile(2) of a to b (copy on write; 0, or the negative errno: EEXIST
+/// when b exists, ENOTSUP off APFS, EXDEV across volumes).
+pub fn clonefile(a: Str, b: Str) -> Int {
+  let za = zpath(a)
+  let zb = zpath(b)
+  let r = Int(sys_darwin.clonefile(za, zb, 0))
+  keep(za, ret_keep(zb, r))
+}
+
 /// unlink(2) of path, or rmdir(2) when dir.
 pub fn unlink(path: Str, dir: Bool) -> Int {
   let z = cpath(path)

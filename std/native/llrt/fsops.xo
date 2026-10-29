@@ -710,14 +710,44 @@ pub fn copy(a: Str, b: Str, xa: Str, xb: Str) -> Int {
       err = EISDIR
     } else {
       let perm = m & 511
+      if l == 2 && darwin.clonefile(a, b) == 0 {
+        // a copy on write clone (APFS, one volume): b is a's data at once
+        // and has a's permission bits; any failure (b exists, another
+        // volume, no APFS) takes the copy loop
+        close(l, fin)
+        return ok()
+      }
       let fout = open(l, b, 1, perm)
       to = true
       if fout < 0 {
         err = -fout
       } else {
+        var kernel = l == 1
+        var copied_any = false
         let buf = raw.bytes_buf(FS_BUF)
         let p = raw.bytes_addr(buf)
         while true {
+          if kernel {
+            // the kernel copies (copy_file_range, no copy through this
+            // process; reflinks on btrfs and xfs); a first call it does not
+            // serve (EXDEV, EINVAL, ENOSYS) takes the loop
+            let c = linux.copy_file_range(fin, fout, 1073741824)
+            if c > 0 {
+              copied_any = true
+              continue
+            }
+            if c == 0 {
+              break
+            }
+            if c == -EINTR {
+              continue
+            }
+            kernel = false
+            if copied_any {
+              err = -c
+              break
+            }
+          }
           let k = read_at(l, fin, p, FS_BUF)
           if k < 0 {
             err = -k

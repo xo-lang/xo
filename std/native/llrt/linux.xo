@@ -587,6 +587,14 @@ pub fn rename(a: Str, b: Str) -> Int {
   keep(za, keep(zb, r))
 }
 
+/// copy_file_range(2) of up to n bytes from the descriptor fin to fout at
+/// their own offsets (the kernel copies, or shares the blocks on a
+/// reflinking filesystem): the bytes copied, 0 at the end of fin, or the
+/// negative errno (EXDEV, EINVAL and ENOSYS where the call is not served).
+pub fn copy_file_range(fin: Int, fout: Int, n: Int) -> Int {
+  rt.sys6(nr(285, 326), fin, 0, fout, 0, n, 0)
+}
+
 /// unlinkat(2) of path, a directory when dir (rmdir).
 pub fn unlink(path: Str, dir: Bool) -> Int {
   let z = cpath(path)

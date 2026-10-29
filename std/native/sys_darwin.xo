@@ -56,6 +56,9 @@ fn clock_gettime_nsec_np(clock: Int) -> Int
 // symbols (gotchas/darwin-amd64-stat-inode64.md): darwin/amd64 does not
 // call these.
 
+/// clonefile(2): a copy-on-write copy of from at to (APFS, one volume), which
+/// must not exist.
+fn clonefile(from: Bytes, to: Bytes, flags: Int) -> Int32
 fn rename(from: Bytes, to: Bytes) -> Int32
 fn unlink(path: Bytes) -> Int32
 fn rmdir(path: Bytes) -> Int32

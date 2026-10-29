@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-10-28: perf: Fs.copy clones on macOS and copies in the kernel on Linux
+
+- Kind: perf
+- Commit: this commit
+- Found by: xo-lang-4 (the run cache's run_store copies each built binary on every edit build: about 2 ms of a 110 to 160 ms fib edit, more for the 7 MB HTTP server)
+- Go reference: none (Go's os.File.ReadFrom uses copy_file_range on Linux and fcopyfile/clonefile is not used on macOS; Apple's cp uses clonefile)
+- Test: fs_files and fs_ops_edges goldens (new file, over an existing file, directory, missing source; all take the loop or the clone with the same results)
+- Timing: macOS, 40 copies of a 7 MB file, quiet `xo bench --ab`, 15 rounds, A the read/write loop, B clonefile: wall 79.5 ms to 7.0 ms (ratio 0.087, 0.063 to 0.09), instructions 0.121. The Linux copy_file_range path is not timed here.
+
+`Fs.copy` on macOS tries clonefile(2) first (APFS copy on write, one volume, the destination
+must not exist) and falls back to the read and write loop on any failure (an existing
+destination, another volume, no APFS). On Linux the loop's first step is copy_file_range(2), which
+copies in the kernel and shares blocks on a reflinking filesystem; a first call it does not serve
+(EXDEV, EINVAL, ENOSYS) takes the loop. The contract is unchanged: b gets a's contents and
+permission bits, also set on an existing b.
+
 ## 2026-10-27: perf: a Str slice in a loop checks its range inline
 
 - Kind: perf
