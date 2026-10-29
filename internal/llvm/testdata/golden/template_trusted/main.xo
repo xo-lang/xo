@@ -1,0 +1,38 @@
+// std/template's html mode with trusted content (std.md 30, decision
+// 0408): each constructor's value passes through in its own context and is
+// escaped in another; a decoded {"$html": ...} is an object.
+use std/json
+use std/template
+
+fn render(os: Os, src: Str, data: json.Value) uses stdio {
+  match template.parse_html("t", src) {
+    Ok(t) => match t.render(data) {
+      Ok(s) => os.stdio.println(s)
+      Err(e) => os.stdio.println("err ${e.msg}")
+    }
+    Err(e) => os.stdio.println("err ${e.msg}")
+  }
+}
+
+fn main(os: Os) uses stdio {
+  let data = json.Value.Object(fields: [
+    ("h", template.html("<b>bold</b>")),
+    ("c", template.css("color: red")),
+    ("j", template.js("1 + 2")),
+    ("s", template.jsstr("it's")),
+    ("u", template.url("/a?b=c&d=e")),
+    ("a", template.attr("data-x")),
+    ("r", template.srcset("a.png 1x, b.png 2x")),
+    ("p", json.Value.Str(s: "<i>&'\"")),
+  ])
+  render(os, "<p>{{.h}} {{.p}}</p>", data)
+  render(os, "<p style=\"{{.c}}\" title=\"{{.h}}\">x</p>", data)
+  render(os, "<script>var a = {{.j}}; var b = '{{.s}}'; var c = {{.p}};</script>", data)
+  render(os, "<a href=\"{{.u}}\" {{.a}}=\"1\">x</a>", data)
+  render(os, "<img srcset=\"{{.r}}\" src=\"{{.p}}\">", data)
+  match json.parse_value("{\"h\":{\"$html\":\"<script>\"}}") {
+    Ok(forged) => render(os, "{{.h}}", forged)
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  os.stdio.println(json.encode_str(data))
+}

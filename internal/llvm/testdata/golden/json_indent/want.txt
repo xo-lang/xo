@@ -1,0 +1,33 @@
+exit 0
+--- stdout
+{
+  "name": "a<b",
+  "tags": [
+    "x",
+    "y"
+  ],
+  "meta": {
+    "k": []
+  }
+}
+{
+> 	"name": "a<b",
+> 	"tags": [
+> 		"x",
+> 		"y"
+> 	],
+> 	"meta": {
+> 		"k": []
+> 	}
+> }
+[
+  1,
+  {
+    "a": "b\u0041"
+  },
+  []
+]
+{"a":[1,2],"b":{}}
+err at $: invalid JSON: EOF
+{"name":"n","tags":[],"meta":{"deep":[null,1.5,"s"]}}
+--- stderr

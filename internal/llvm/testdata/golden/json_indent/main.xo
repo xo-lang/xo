@@ -1,0 +1,32 @@
+// std/json's indented output (std.md 5, S3): encode_indent and
+// encode_indent_str of a struct, indent and compact over texts, and a
+// json.Value field round trip.
+use std/json
+
+struct Item {
+  name: Str
+  tags: List[Str]
+  meta: json.Value
+} derive Json
+
+fn main(os: Os) uses stdio {
+  let v = Item{name: "a<b", tags: ["x", "y"], meta: json.Value.Object(fields: [("k", json.Value.List(items: []))])}
+  os.stdio.println(json.encode_indent_str(v))
+  os.stdio.println(json.encode_indent(v, "> ", "\t").to_str() ?? "?")
+  match json.indent("[1, {\"a\": \"b\\u0041\"}, []]", "", "  ") {
+    Ok(s) => os.stdio.println(s)
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match json.compact("{ \"a\" : [ 1 , 2 ] , \"b\" : { } }") {
+    Ok(s) => os.stdio.println(s)
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match json.indent("[1,", "", " ") {
+    Ok(s) => os.stdio.println(s)
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match json.decode_str[Item]("{\"name\":\"n\",\"tags\":[],\"meta\":{\"deep\":[null,1.5,\"s\"]}}") {
+    Ok(it) => os.stdio.println(json.encode_str(it))
+    Err(e) => os.stdio.println("err ${e}")
+  }
+}

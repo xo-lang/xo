@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+<p><b>bold</b> &lt;i&gt;&amp;&#39;&#34;</p>
+<p style="color: red" title="bold">x</p>
+<script>var a = 1 + 2; var b = 'it\u0027s'; var c = "\u003ci\u003e\u0026'\"";</script>
+<a href="/a?b=c&amp;d=e" data-x="1">x</a>
+<img srcset="a.png 1x, b.png 2x" src="%3ci%3e&amp;%27%22">
+map[$html:&lt;script&gt;]
+{"h":"<b>bold</b>","c":"color: red","j":"1 + 2","s":"it's","u":"/a?b=c&d=e","a":"data-x","r":"a.png 1x, b.png 2x","p":"<i>&'\""}
+--- stderr
