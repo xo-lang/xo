@@ -5370,3 +5370,40 @@ pub fn unescape_string(s: Str) -> Str    // html.UnescapeString: named (legacy n
 - html/template's contextual autoescaping is std/template's html mode
   (section 30, decision 0408), which uses this module for attribute
   values.
+
+## 40. std/tabwriter
+
+Go's text/tabwriter (decision 0410): elastic tabstops. Text is split into
+cells at tabs, and the columns of a block of consecutive lines are
+padded to the width of their widest cell. Pure: bytes in, bytes out.
+
+```xo
+const FILTER_HTML: Int = 1
+const STRIP_ESCAPE: Int = 2
+const ALIGN_RIGHT: Int = 4
+const DISCARD_EMPTY_COLUMNS: Int = 8
+const TAB_INDENT: Int = 16
+const DEBUG: Int = 32
+const ESCAPE: Int = 255
+fn writer(min_width: Int, tab_width: Int, padding: Int, pad_char: Int = 32, flags: Int = 0) -> TabWriter
+fn (var w: TabWriter) write(data: Bytes)
+fn (var w: TabWriter) flush() -> Bytes
+```
+
+- `writer` is Go's `NewWriter(output, minwidth, tabwidth, padding,
+  padchar, flags)` without the output (`flush` returns it): `min_width`
+  is the minimal cell width including padding, `tab_width` the width of
+  a tab, `padding` what is added to the text's width, `pad_char` the byte
+  padded with (9 pads with tabs, which are then never right aligned),
+  `flags` the flags added together. A negative number is a fault.
+- A cell ends at `\t` or `\v`; a line at `\n` or `\f`. The text of the last
+  cell of a line is not part of a column (Go's rule); a `\f` or a line of
+  one cell ends the block, so a table is a run of lines with tabs.
+- Widths count runes, not bytes; with `FILTER_HTML` an HTML tag counts
+  as zero width and an entity as one rune; text between two `ESCAPE`
+  bytes passes through as one piece (without them with `STRIP_ESCAPE`).
+- `TabWriter` is move only. `write` takes bytes in any pieces; `flush`
+  returns the formatted text since the last flush and starts again.
+  Output of lines that Go would write as they complete is held until
+  `flush`.
+

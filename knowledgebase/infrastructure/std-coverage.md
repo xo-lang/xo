@@ -60,6 +60,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/debug | 36 | `std/changes/debug.md` |
 | std/metrics | 37 | `std/changes/metrics.md` |
 | std/trace | 38 | `std/changes/trace.md` |
+| std/tabwriter | 40 | `std/changes/tabwriter.md` |
 
 ## Go packages
 
@@ -91,7 +92,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | html | none (std/xml escape) | planned | EscapeString and UnescapeString for server rendered pages; std/xml's `escape` covers text and quoted attributes today but not unescaping HTML entities. |
 | html/template | none | planned | Contextual escaping templates; after html. |
 | text/template | std/template | done | Go's text/template over json.Value data (decision 0299). Not offered: custom function maps (FuncMap), Clone and Lookup, ParseFS. |
-| text/tabwriter | none | planned | CLI tables; std/cli and std/term cover most tool output. |
+| text/tabwriter | std/tabwriter (decision 0410) | done | Elastic tabstops with Go's flags and escapes; the native backends run an Xo port of Go's code and tests, the Go backend Go's own Writer; `flush` returns the text. |
 | text/scanner | none | not planned | Go source tokenizer; Xo's own lexer is in selfhost. |
 | regexp, regexp/syntax | std/regexp | done | Go's parser, compiler, and Pike VM ported, with every Unicode class of Go's regexp natively (2026-10-21); Go's results on re2-search.txt and on each class. |
 | index/suffixarray | none | not planned | Niche; a module can provide it. |

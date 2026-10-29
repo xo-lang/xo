@@ -41,5 +41,6 @@ entries yet.
 - [debug.md](debug.md): std/debug (spec/std.md 36)
 - [toml.md](toml.md): std/toml (spec/std.md 19)
 - [metrics.md](metrics.md): std/metrics (spec/std.md 37)
+- [tabwriter.md](tabwriter.md): std/tabwriter (spec/std.md 40)
 - [trace.md](trace.md): std/trace (spec/std.md 38)
 - [html.md](html.md): std/html (escape_string, unescape_string)
