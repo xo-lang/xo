@@ -13,11 +13,11 @@
 // multiples (x25519_btab.xo), about a third of the ladder's work.
 use native/llrt/cpu
 use native/llrt/ct
-use native/llrt/ed25519
+use native/llrt/raw
 use native/llrt/x25519_btab
 use native/rt
 
-// byte offsets of the ladder's elements past ed25519.SPARE
+// byte offsets of the ladder's elements in the workspace
 const X1: Int = 0
 const X2: Int = 40
 const Z2: Int = 80
@@ -37,7 +37,7 @@ const S3: Int = 600
 const S4: Int = 640
 // the elements' words
 const EXTRA: Int = 85
-// base's elements past ed25519.SPARE (the ladder's S0 to S4 for the
+// base's elements in the workspace (the ladder's S0 to S4 for the
 // inversion): the selected entry (y + x, y - x, 2 d x y), the point
 // (X : Y : Z : T), a completed point (ref10's p1p1), and temporaries
 const PX: Int = 680
@@ -59,6 +59,17 @@ const T0: Int = 1200
 const KW: Int = 1240
 const DG: Int = 1272
 const BEXTRA: Int = 230
+// Ed25519 verification's elements past base's: the point A (X : Y : Z :
+// T), 2A, the table of A's odd multiples A to 15A in cached form (Y + X,
+// Y - X, Z, 2 d T; 160 bytes each), the constant 2 d
+const AP: Int = 1840
+const A2: Int = 2000
+const ATAB: Int = 2160
+const D2E: Int = 3440
+const VEXTRA: Int = 435
+
+/// The address of the workspace w's first word.
+fn addr(w: List[Int]) -> Int { rt.obj_addr(w).wrapping_add(rt.layout(2)) }
 
 fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 
@@ -77,9 +88,8 @@ fn cswap(f: Int, g: Int, mask: Int) {
 /// The u coordinate of [scalar]point: scalar and point are 32 bytes each
 /// (RFC 7748 5, X25519).
 pub fn scalar_mult(scalar: Bytes, point: Bytes) -> Bytes {
-  let w = ed25519.field_workspace(EXTRA)
-  let m = ed25519.base(w)
-  let e = m.wrapping_add(ed25519.SPARE)
+  let w = raw.zero_ints(EXTRA)
+  let e = addr(w)
   let x1 = e.wrapping_add(X1)
   let x2 = e.wrapping_add(X2)
   let z2 = e.wrapping_add(Z2)
@@ -203,10 +213,8 @@ fn fe64_inv(h: Int, z: Int, s0: Int, s1: Int, s2: Int, s3: Int, s4: Int) {
 /// Y). Constant time in the scalar as scalar_mult; about 120,000
 /// instructions where the ladder took 390,000 (2026-10-18).
 pub fn base(scalar: Bytes) -> Bytes {
-  let w = ed25519.field_workspace(BEXTRA)
-  let m = ed25519.base(w)
-  let e = m.wrapping_add(ed25519.SPARE)
-  let tb = rt.obj_addr(x25519_btab.BTAB).wrapping_add(rt.layout(2))
+  let w = raw.zero_ints(BEXTRA)
+  let e = addr(w)
   // clamped as scalar_mult
   let top = (1).wrapping_shl(63)
   let kw = at(e, KW)
@@ -214,6 +222,30 @@ pub fn base(scalar: Bytes) -> Bytes {
   st(kw, 8, rt.bytes_word(scalar, 8))
   st(kw, 16, rt.bytes_word(scalar, 16))
   st(kw, 24, (rt.bytes_word(scalar, 24) & ~top) | (1).wrapping_shl(62))
+  base_mult(e)
+  let u = at(e, RX)
+  let z = at(e, RY)
+  fe64_add(u, at(e, VZ), at(e, VY))
+  fe64_sub(z, at(e, VZ), at(e, VY))
+  fe64_inv(z, z, at(e, S0), at(e, S1), at(e, S2), at(e, S3), at(e, S4))
+  fe64_mul(u, u, z)
+  fe64_freeze(u, u)
+  var s = rt.rs_with_cap(32)
+  s = rt.rs_push_word(s, ld(u, 0), 8)
+  s = rt.rs_push_word(s, ld(u, 8), 8)
+  s = rt.rs_push_word(s, ld(u, 16), 8)
+  s = rt.rs_push_word(s, ld(u, 24), 8)
+  keep(w)
+  s.bytes()
+}
+
+/// The point (VX : VY : VZ : VT) = [k]B for the scalar k below 2^255 in
+/// the four words at KW (Go's ScalarBaseMult): its 64 signed radix 16
+/// digits, the odd digits' multiples added from x25519_btab.xo's rows,
+/// four doublings, then the even digits'. Constant time in k.
+fn base_mult(e: Int) {
+  let tb = rt.obj_addr(x25519_btab.BTAB).wrapping_add(rt.layout(2))
+  let kw = at(e, KW)
   // the signed radix 16 digits; secret values by wrapping arithmetic
   // only (decision 0222: a checked + or - is a branch on its operands),
   // offsets too (public, but a checked product's fault path is code
@@ -254,20 +286,6 @@ pub fn base(scalar: Bytes) -> Bytes {
     madd_digit(e, tb, i.shr_logical(1), ld(dg, i.wrapping_shl(3)))
     i = i.wrapping_add(2)
   }
-  let u = at(e, RX)
-  let z = at(e, RY)
-  fe64_add(u, at(e, VZ), at(e, VY))
-  fe64_sub(z, at(e, VZ), at(e, VY))
-  fe64_inv(z, z, at(e, S0), at(e, S1), at(e, S2), at(e, S3), at(e, S4))
-  fe64_mul(u, u, z)
-  fe64_freeze(u, u)
-  var s = rt.rs_with_cap(32)
-  s = rt.rs_push_word(s, ld(u, 0), 8)
-  s = rt.rs_push_word(s, ld(u, 8), 8)
-  s = rt.rs_push_word(s, ld(u, 16), 8)
-  s = rt.rs_push_word(s, ld(u, 24), 8)
-  keep(w)
-  s.bytes()
 }
 
 fn at(e: Int, off: Int) -> Int { e.wrapping_add(off) }
@@ -355,6 +373,13 @@ fn madd_digit(e: Int, tb: Int, row: Int, d: Int) {
 /// Doubles base's point: ref10's ge_p2_dbl, then the completed point to
 /// (X : Y : Z : T).
 fn dbl(e: Int) {
+  dbl_r(e)
+  p1p1_to_p3(e)
+}
+
+/// The completed point R = 2 (VX : VY : VZ) (ref10's ge_p2_dbl; Go's
+/// projP1xP1.Double).
+fn dbl_r(e: Int) {
   let rx = at(e, RX)
   let ry = at(e, RY)
   let rz = at(e, RZ)
@@ -370,7 +395,6 @@ fn dbl(e: Int) {
   fe64_sub(rz, rz, rx)
   fe64_sub(rx, tz, ry)
   fe64_sub(rtt, rtt, rz)
-  p1p1_to_p3(e)
 }
 
 /// base's completed point (RX : RY : RZ : RT, ref10's p1p1) to its
@@ -384,6 +408,198 @@ fn p1p1_to_p3(e: Int) {
   fe64_mul(at(e, VY), ry, rz)
   fe64_mul(at(e, VZ), rz, rtt)
   fe64_mul(at(e, VT), rx, ry)
+}
+
+// ---------------------------------------------------------------------------
+// Ed25519 (ed25519.xo's sign, public_key and verify) on the field above:
+// Go's edwards25519 ScalarBaseMult for [k]B and its
+// VarTimeDoubleScalarBaseMult for verification
+
+/// The encoding of [k]B (RFC 8032 5.1.2) for the scalar k below 2^255 as
+/// four little endian words: y with x's low bit at bit 255. Constant time
+/// in k (signing's nonce and the secret scalar).
+pub fn ed_base(k: List[Int]) -> List[Int] {
+  let w = raw.zero_ints(BEXTRA)
+  let e = addr(w)
+  let kw = at(e, KW)
+  st(kw, 0, k[0])
+  st(kw, 8, k[1])
+  st(kw, 16, k[2])
+  st(kw, 24, k[3])
+  base_mult(e)
+  let r = ed_encode(e)
+  keep(w)
+  r
+}
+
+/// The encoding of (VX : VY : VZ): y = Y / Z with x = X / Z's low bit at
+/// bit 255.
+fn ed_encode(e: Int) -> List[Int] {
+  let zi = at(e, T0)
+  let x = at(e, RX)
+  let y = at(e, RY)
+  fe64_inv(zi, at(e, VZ), at(e, S0), at(e, S1), at(e, S2), at(e, S3), at(e, S4))
+  fe64_mul(x, at(e, VX), zi)
+  fe64_mul(y, at(e, VY), zi)
+  fe64_freeze(x, x)
+  fe64_freeze(y, y)
+  [ld(y, 0), ld(y, 8), ld(y, 16), ld(y, 24) ^ (ld(x, 0) & 1).wrapping_shl(63)]
+}
+
+/// The encoding of [k](-A) + [s]B, A = (ax, ay) as canonical words, k
+/// and s below 2^255 (Go's VarTimeDoubleScalarBaseMult with ed25519's
+/// verify): the width 5 non-adjacent form of k over a table of A's odd
+/// multiples made here, the width 8 one of s over x25519_btab.BNAF, and
+/// one chain of doublings. Variable time: every input is public.
+pub fn ed_check(ax: List[Int], ay: List[Int], k: List[Int], s: List[Int]) -> List[Int] {
+  let w = raw.zero_ints(VEXTRA)
+  let e = addr(w)
+  let d2 = at(e, D2E)
+  let dt = rt.obj_addr(x25519_btab.D2).wrapping_add(rt.layout(2))
+  for i in 0..4 {
+    st(d2, 8 * i, ld(dt, 8 * i))
+  }
+  // -A = (-x, y, 1, -x y)
+  let ap = at(e, AP)
+  fe64_set(at(e, ZERO), 0)
+  for i in 0..4 {
+    st(ap, 8 * i, ax[i])
+    st(ap, 40 + 8 * i, ay[i])
+  }
+  fe64_sub(ap, at(e, ZERO), ap)
+  fe64_set(at(ap, 80), 1)
+  fe64_mul(at(ap, 120), ap, at(ap, 40))
+  // the table: -A, then 2(-A) added seven times
+  let tab = at(e, ATAB)
+  cached_from_p3(e, tab, ap)
+  rt.mem_copy(at(e, VX), ap, 160)
+  add_core(e, tab, at(tab, 40), at(tab, 120), at(tab, 80), false)
+  p1p1_to_p3(e)
+  rt.mem_copy(at(e, A2), at(e, VX), 160)
+  var i = 0
+  while i < 7 {
+    rt.mem_copy(at(e, VX), at(e, A2), 160)
+    let c = at(tab, 160 * i)
+    add_core(e, c, at(c, 40), at(c, 120), at(c, 80), false)
+    p1p1_to_p3(e)
+    cached_from_p3(e, at(tab, 160 * (i + 1)), at(e, VX))
+    i += 1
+  }
+  let kn = naf(k, 5)
+  let sn = naf(s, 8)
+  let bt = rt.obj_addr(x25519_btab.BNAF).wrapping_add(rt.layout(2))
+  var j = 255
+  while j >= 0 && kn[j] == 0 && sn[j] == 0 {
+    j -= 1
+  }
+  // (VX : VY : VZ) = the identity in projective form
+  fe64_set(at(e, VX), 0)
+  fe64_set(at(e, VY), 1)
+  fe64_set(at(e, VZ), 1)
+  while j >= 0 {
+    dbl_r(e)
+    let a = kn[j]
+    if a != 0 {
+      p1p1_to_p3(e)
+      let c = at(tab, 160 * ((if a < 0 { -a } else { a }) / 2))
+      add_core(e, c, at(c, 40), at(c, 120), at(c, 80), a < 0)
+    }
+    let b = sn[j]
+    if b != 0 {
+      p1p1_to_p3(e)
+      let c = at(bt, 96 * ((if b < 0 { -b } else { b }) / 2))
+      add_core(e, c, at(c, 32), at(c, 64), 0, b < 0)
+    }
+    r_to_p2(e)
+    j -= 1
+  }
+  let r = ed_encode(e)
+  keep(w)
+  r
+}
+
+/// c = the cached form of the point at p: Y + X, Y - X, Z, 2 d T (Go's
+/// projCached.FromP3).
+fn cached_from_p3(e: Int, c: Int, p: Int) {
+  fe64_add(c, at(p, 40), p)
+  fe64_sub(at(c, 40), at(p, 40), p)
+  rt.mem_copy(at(c, 80), at(p, 80), 32)
+  fe64_mul(at(c, 120), at(p, 120), at(e, D2E))
+}
+
+/// The completed point R = V + q, or V - q when sub (Go's projP1xP1 Add
+/// and Sub; AddAffine and SubAffine when qz is 0, q's Z being 1): q is
+/// Y + X at qp, Y - X at qm, 2 d T at qt and Z at qz.
+fn add_core(e: Int, qp: Int, qm: Int, qt: Int, qz: Int, sub: Bool) {
+  let rx = at(e, RX)
+  let ry = at(e, RY)
+  let rz = at(e, RZ)
+  let rtt = at(e, RT)
+  let tz = at(e, T0)
+  fe64_add(rx, at(e, VY), at(e, VX))
+  fe64_sub(ry, at(e, VY), at(e, VX))
+  fe64_mul(rz, rx, if sub { qm } else { qp })
+  fe64_mul(ry, ry, if sub { qp } else { qm })
+  fe64_mul(rtt, at(e, VT), qt)
+  if qz == 0 {
+    fe64_add(tz, at(e, VZ), at(e, VZ))
+  } else {
+    fe64_mul(tz, at(e, VZ), qz)
+    fe64_add(tz, tz, tz)
+  }
+  fe64_sub(rx, rz, ry)
+  fe64_add(ry, rz, ry)
+  if sub {
+    fe64_sub(rz, tz, rtt)
+    fe64_add(rtt, tz, rtt)
+  } else {
+    fe64_add(rz, tz, rtt)
+    fe64_sub(rtt, tz, rtt)
+  }
+}
+
+/// The completed point R to (VX : VY : VZ) (Go's projP2.FromP1xP1).
+fn r_to_p2(e: Int) {
+  let rz = at(e, RZ)
+  let rtt = at(e, RT)
+  fe64_mul(at(e, VX), at(e, RX), rtt)
+  fe64_mul(at(e, VY), at(e, RY), rz)
+  fe64_mul(at(e, VZ), rz, rtt)
+}
+
+/// The width w non-adjacent form of the scalar k (four words, below
+/// 2^255): 256 digits, each 0 or odd in -2^(w-1) to 2^(w-1), with at
+/// least w - 1 zeros after a nonzero one (Go's Scalar.nonAdjacentForm).
+fn naf(k: List[Int], w: Int) -> List[Int] {
+  var out = raw.zero_ints(256)
+  let ds = [k[0], k[1], k[2], k[3], 0]
+  let width = (1).wrapping_shl(w)
+  let mask = width - 1
+  var pos = 0
+  var carry = 0
+  while pos < 256 {
+    let ix = pos / 64
+    let bit = pos % 64
+    let buf = if bit < 64 - w {
+      ds[ix].shr_logical(bit)
+    } else {
+      ds[ix].shr_logical(bit) | ds[ix + 1].wrapping_shl(64 - bit)
+    }
+    let window = carry + (buf & mask)
+    if window & 1 == 0 {
+      pos += 1
+      continue
+    }
+    if window < width / 2 {
+      carry = 0
+      out[pos] = window
+    } else {
+      carry = 1
+      out[pos] = window - width
+    }
+    pos += w
+  }
+  out
 }
 
 /// The workspace is alive up to here (ed25519.xo's keep).

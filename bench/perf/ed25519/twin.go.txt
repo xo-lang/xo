@@ -1,0 +1,61 @@
+package main
+
+import (
+	"crypto/ed25519"
+	"fmt"
+	"os"
+)
+
+func seed(i int) []byte {
+	b := make([]byte, 32)
+	b[0] = byte(i % 256)
+	for j := 1; j < 32; j++ {
+		b[j] = byte(j)
+	}
+	return b
+}
+
+func msg(i int) []byte {
+	b := make([]byte, 8)
+	for j := 0; j < 8; j++ {
+		b[j] = byte(i >> (8 * j))
+	}
+	return b
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	n := 5000
+	sum := 0
+	switch w {
+	case "keygen":
+		for i := 0; i < n; i++ {
+			pk := ed25519.NewKeyFromSeed(seed(i)).Public().(ed25519.PublicKey)
+			sum += int(pk[i%32])
+		}
+	case "sign":
+		k := ed25519.NewKeyFromSeed(seed(7))
+		for i := 0; i < n; i++ {
+			sig := ed25519.Sign(k, msg(i))
+			sum += int(sig[i%64])
+		}
+	case "verify":
+		k := ed25519.NewKeyFromSeed(seed(7))
+		pk := k.Public().(ed25519.PublicKey)
+		m := msg(12345)
+		sig := ed25519.Sign(k, m)
+		for i := 0; i < n; i++ {
+			if ed25519.Verify(pk, m, sig) {
+				sum += 1 + i%3
+			}
+		}
+	default:
+		for i := 0; i < n; i++ {
+			sum += len(seed(i)) + len(msg(i))
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

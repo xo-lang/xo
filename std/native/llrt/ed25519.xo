@@ -4,12 +4,15 @@
 // private key; verification rejects a non canonical S, accepts the
 // encodings of A that Go's edwards25519 accepts (y not reduced, x = 0
 // with the sign bit), and compares the encoding of [S]B - [k]A with R
-// byte for byte. Field elements are five 51 bit limbs modulo p = 2^255 -
-// 19; points are extended twisted Edwards coordinates (X:Y:Z:T) with the
-// complete addition law (it doubles too); scalar multiplication is a
-// double and always add ladder with masked selection (ct.pick), constant
-// time in the scalar. The rules of ct.xo hold for every secret value:
-// wrapping arithmetic (rt.int_wrap: 0 add, 1 subtract, 2 multiply, 3
+// byte for byte. The group operations are Go's edwards25519's, on
+// x25519.xo's field of four 64 bit limbs: [k]B for the public key and
+// the nonce point is ScalarBaseMult (signed radix 16 digits over the
+// fixed table x25519_btab.BTAB, constant time; x25519.ed_base), and
+// verification is VarTimeDoubleScalarBaseMult (width 5 and 8
+// non-adjacent forms, one chain of doublings; x25519.ed_check). This
+// file keeps the scalar arithmetic and decoding A, whose field elements
+// are five 51 bit limbs modulo p = 2^255 - 19. The rules of ct.xo hold
+// for every secret value: wrapping arithmetic (rt.int_wrap: 0 add, 1 subtract, 2 multiply, 3
 // shift left, 4 shift right logical), no branch or index on a secret.
 // Verification's inputs are public, and it branches on them.
 //
@@ -22,6 +25,7 @@
 use native/llrt/ct
 use native/llrt/digest
 use native/llrt/raw
+use native/llrt/x25519
 use native/rt
 
 const M51: Int = 0x7FFFFFFFFFFFF
@@ -457,138 +461,6 @@ fn fe_odd(m: Int, f: Int) -> Int {
 // ---------------------------------------------------------------------------
 // Points (each argument the address of one)
 
-fn ge_identity(p: Int) {
-  fe_set(p, 0)
-  fe_set(at(p, 40), 1)
-  fe_set(at(p, 80), 1)
-  fe_set(at(p, 120), 0)
-}
-
-/// r = p + q (add-2008-hwcd-3; complete for a = -1, so it also doubles;
-/// r may be p or q).
-fn ge_add(m: Int, r: Int, p: Int, q: Int) {
-  let a = at(m, TA)
-  let b = at(m, TA + 40)
-  let c = at(m, TA + 80)
-  let d = at(m, TA + 120)
-  let e = at(m, TA + 160)
-  let f = at(m, TA + 200)
-  let g = at(m, TA + 240)
-  let h = at(m, TA + 280)
-  let t = at(m, TA + 320)
-  fe_sub(a, at(p, 40), p)
-  fe_sub(t, at(q, 40), q)
-  fe_mul(a, a, t)
-  fe_add(b, at(p, 40), p)
-  fe_add(t, at(q, 40), q)
-  fe_mul(b, b, t)
-  fe_mul(c, at(p, 120), at(q, 120))
-  fe_mul(c, c, at(m, D2))
-  fe_mul(d, at(p, 80), at(q, 80))
-  fe_add(d, d, d)
-  fe_sub(e, b, a)
-  fe_sub(f, d, c)
-  fe_add(g, d, c)
-  fe_add(h, b, a)
-  fe_mul(r, e, f)
-  fe_mul(at(r, 40), g, h)
-  fe_mul(at(r, 120), e, h)
-  fe_mul(at(r, 80), f, g)
-}
-
-/// r = 2p (dbl-2008-hwcd for a = -1, every coordinate negated, which is
-/// the same point: A = X^2, B = Y^2, C = 2Z^2, H = A + B, E = (X + Y)^2 -
-/// H, G = B - A, F = C - G; X = EF, Y = GH, T = EH, Z = FG; r may be p).
-fn ge_dbl(m: Int, r: Int, p: Int) {
-  let a = at(m, TA)
-  let b = at(m, TA + 40)
-  let c = at(m, TA + 80)
-  let e = at(m, TA + 160)
-  let f = at(m, TA + 200)
-  let g = at(m, TA + 240)
-  let h = at(m, TA + 280)
-  fe_sq(a, p)
-  fe_sq(b, at(p, 40))
-  fe_sq(c, at(p, 80))
-  fe_add(c, c, c)
-  fe_add(h, a, b)
-  fe_add(e, p, at(p, 40))
-  fe_sq(e, e)
-  fe_sub(e, e, h)
-  fe_sub(g, b, a)
-  fe_sub(f, c, g)
-  fe_mul(r, e, f)
-  fe_mul(at(r, 40), g, h)
-  fe_mul(at(r, 120), e, h)
-  fe_mul(at(r, 80), f, g)
-}
-
-/// p = q when mask is -1, unchanged when 0, without a branch on mask.
-fn ge_cmov(p: Int, q: Int, mask: Int) {
-  st(p, 0, ct.pick(mask, ld(q, 0), ld(p, 0)))
-  st(p, 8, ct.pick(mask, ld(q, 8), ld(p, 8)))
-  st(p, 16, ct.pick(mask, ld(q, 16), ld(p, 16)))
-  st(p, 24, ct.pick(mask, ld(q, 24), ld(p, 24)))
-  st(p, 32, ct.pick(mask, ld(q, 32), ld(p, 32)))
-  st(p, 40, ct.pick(mask, ld(q, 40), ld(p, 40)))
-  st(p, 48, ct.pick(mask, ld(q, 48), ld(p, 48)))
-  st(p, 56, ct.pick(mask, ld(q, 56), ld(p, 56)))
-  st(p, 64, ct.pick(mask, ld(q, 64), ld(p, 64)))
-  st(p, 72, ct.pick(mask, ld(q, 72), ld(p, 72)))
-  st(p, 80, ct.pick(mask, ld(q, 80), ld(p, 80)))
-  st(p, 88, ct.pick(mask, ld(q, 88), ld(p, 88)))
-  st(p, 96, ct.pick(mask, ld(q, 96), ld(p, 96)))
-  st(p, 104, ct.pick(mask, ld(q, 104), ld(p, 104)))
-  st(p, 112, ct.pick(mask, ld(q, 112), ld(p, 112)))
-  st(p, 120, ct.pick(mask, ld(q, 120), ld(p, 120)))
-  st(p, 128, ct.pick(mask, ld(q, 128), ld(p, 128)))
-  st(p, 136, ct.pick(mask, ld(q, 136), ld(p, 136)))
-  st(p, 144, ct.pick(mask, ld(q, 144), ld(p, 144)))
-  st(p, 152, ct.pick(mask, ld(q, 152), ld(p, 152)))
-}
-
-/// r = [k]p for the 256 bit scalar k (four little endian words), a fixed
-/// window of 4 bits from the top: four doublings, then the add of the
-/// table entry of the window's digit, which a scan of all 16 entries with
-/// masks selects (constant time in k). p is in none of ACC, SEL, TABLE.
-fn ge_mul(m: Int, r: Int, k: List[Int], p: Int) {
-  let tab = at(m, TABLE)
-  ge_identity(tab)
-  copy(at(tab, 160), p, 20)
-  for i in 2..16 {
-    ge_add(m, at(tab, 160 * i), at(tab, 160 * (i - 1)), p)
-  }
-  let acc = at(m, ACC)
-  let sel = at(m, SEL)
-  ge_identity(acc)
-  var w = 63
-  while w >= 0 {
-    ge_dbl(m, acc, acc)
-    ge_dbl(m, acc, acc)
-    ge_dbl(m, acc, acc)
-    ge_dbl(m, acc, acc)
-    let digit = k[w / 16].shr_logical(4 * (w % 16)) & 15
-    copy(sel, tab, 20)
-    for i in 1..16 {
-      ge_cmov(sel, at(tab, 160 * i), ct.mask_eq(i, digit))
-    }
-    ge_add(m, acc, acc, sel)
-    w -= 1
-  }
-  copy(r, acc, 20)
-}
-
-/// The encoding of p as four words at BW.
-fn ge_bytes(m: Int, p: Int) {
-  fe_inv(m, at(m, BZ), at(p, 80))
-  fe_mul(at(m, BX), p, at(m, BZ))
-  fe_mul(at(m, BY), at(p, 40), at(m, BZ))
-  let odd = fe_odd(m, at(m, BX))
-  fe_bytes(m, at(m, BY))
-  let o = at(m, BW)
-  st(o, 24, ld(o, 24) ^ odd.wrapping_shl(63))
-}
-
 /// p = the point encoded by the words s; false when they encode no point
 /// of the curve (public input: this branches).
 fn ge_from_words(m: Int, p: Int, s: List[Int]) -> Bool {
@@ -743,33 +615,24 @@ fn words_bytes(ws: List[Int]) -> Bytes {
 
 /// The secret scalar (clamped), the nonce prefix, and the public key (four
 /// words each) of a 32 byte seed.
-fn expand(m: Int, seed: Bytes) -> (List[Int], List[Int], List[Int]) {
+fn expand(seed: Bytes) -> (List[Int], List[Int], List[Int]) {
   let h = digest.sha512_le(seed, b"", b"")
   let top = (1).wrapping_shl(63)
   let a = [h[0] & ~7, h[1], h[2], (h[3] & ~top) | (1).wrapping_shl(62)]
-  ge_mul(m, at(m, P1), a, at(m, BASE))
-  ge_bytes(m, at(m, P1))
-  (a, [h[4], h[5], h[6], h[7]], bw(m))
+  (a, [h[4], h[5], h[6], h[7]], x25519.ed_base(a))
 }
 
 /// crypto.ed25519_public_key: seed is 32 bytes (crypto.xo checks it).
 pub fn public_key(seed: Bytes) -> Bytes {
-  let w = workspace()
-  let (_, _, pk) = expand(base(w), seed)
-  keep(w)
+  let (_, _, pk) = expand(seed)
   words_bytes(pk)
 }
 
 /// crypto.ed25519_sign: seed is 32 bytes (crypto.xo checks it).
 pub fn sign(seed: Bytes, msg: Bytes) -> Bytes {
-  let w = workspace()
-  let m = base(w)
-  let (a, prefix, pk) = expand(m, seed)
+  let (a, prefix, pk) = expand(seed)
   let r = sc_reduce(digest.sha512_le(words_bytes(prefix), msg, b""))
-  ge_mul(m, at(m, P1), r, at(m, BASE))
-  ge_bytes(m, at(m, P1))
-  var sig = bw(m)
-  keep(w)
+  var sig = x25519.ed_base(r)
   let k = sc_reduce(digest.sha512_le(words_bytes(sig), words_bytes(pk), msg))
   for x in sc_muladd(k, a, r) {
     sig.push(x)
@@ -790,24 +653,17 @@ pub fn verify(pk: Bytes, msg: Bytes, sig: Bytes) -> Bool {
   let w = workspace()
   let m = base(w)
   let p1 = at(m, P1)
-  let p2 = at(m, P2)
-  let p3 = at(m, P3)
-  let p4 = at(m, P4)
   if !ge_from_words(m, p1, words(pk, 0)) {
     keep(w)
     return false
   }
-  // p2 = -A
-  fe_neg(p2, p1, at(m, FT))
-  copy(at(p2, 40), at(p1, 40), 10)
-  fe_neg(at(p2, 120), at(p1, 120), at(m, FT))
-  let k = sc_reduce(digest.sha512_le(sig[0..32], pk, msg))
-  ge_mul(m, p3, s, at(m, BASE))
-  ge_mul(m, p4, k, p2)
-  ge_add(m, p3, p3, p4)
-  ge_bytes(m, p3)
-  let got = bw(m)
+  fe_bytes(m, p1)
+  let ax = bw(m)
+  fe_bytes(m, at(p1, 40))
+  let ay = bw(m)
   keep(w)
+  let k = sc_reduce(digest.sha512_le(sig[0..32], pk, msg))
+  let got = x25519.ed_check(ax, ay, k, s)
   let r = words(sig, 0)
   got[0] == r[0] && got[1] == r[1] && got[2] == r[2] && got[3] == r[3]
 }

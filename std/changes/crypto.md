@@ -1,5 +1,29 @@
 # std/crypto changes
 
+
+## 2026-10-29: perf: Ed25519 on Go's edwards25519 algorithms over the x25519 fe64 field (sign 0.352 and verify 0.404 of their time)
+
+- Kind: perf (port)
+- Commit: this commit
+- Found by: bench/perf/ed25519 (new) and bench/perf/x509 create at 2.676x Go, 99% of its profile Ed25519; Xo's Ed25519 ran a constant time ladder for every scalar multiplication
+- Go reference: crypto/internal/fips140/edwards25519 (ScalarBaseMult: signed radix 16 over basepointTable; VarTimeDoubleScalarBaseMult: NAF width 5 for A, width 8 over basepointNafTable), crypto/ed25519 sign and verify
+- Test: corpora crypto, x509 and x509create (Go-generated keys and signatures, byte for byte) on arm64, LLVM and Go; the TLS goldens; TestConstantTimeLLVM (x25519.base_mult and ed_base: no secret dependent branch or select); test/codegen/consttime; bench/perf/ed25519 twincheck
+
+Key generation and signing use x25519.ed_base, Go's ScalarBaseMult over
+the base table x25519 already had; verify uses x25519.ed_check, Go's
+variable time double scalar multiplication with the width 8 table that
+scripts/x25519btab.py now emits (BNAF, D2). The field is decision 0231's
+fe64 (4x64 bit limbs on adc chains), not Go's 51 bit limbs: it is this
+repository's faster field. Quiet --ab, 15 rounds, 5000 operations
+(bench/perf/ed25519), the parent's std as A: keygen wall 0.273 (0.268 to
+0.285), instructions 0.179; sign 0.352 (0.348 to 0.364), 0.221; verify
+0.404 (0.401 to 0.407), 0.258. Against Go's crypto/ed25519 as A: keygen
+0.892 (0.703 to 0.963, noisy), instructions 0.489; sign 1.812 (1.797 to
+1.82), instructions 1.089, slower, its wall well past its instruction
+ratio (next: profile sign's hashing and scalar steps); verify 0.896
+(0.888 to 0.899), instructions 0.542.
+
+
 ## 2026-10-29: feature: marshal_private_key
 
 - Kind: feature

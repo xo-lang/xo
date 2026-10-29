@@ -1,0 +1,58 @@
+// Ed25519 (std/crypto over std/native/llrt/ed25519.xo and x25519.xo)
+// against Go's crypto/ed25519 (twin.go.txt): keygen derives 5,000 public
+// keys from seeds that differ in their first byte, sign signs 5,000
+// eight byte messages with one key, verify checks one signature 5,000
+// times; `none` is the setup alone. Usage: `<program>
+// none|keygen|sign|verify`. Prints `<workload> <checksum>`; the twin
+// prints the same.
+use std/crypto
+
+fn seed(i: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_byte(UInt8(i % 256))
+  for j in 1..32 {
+    b.write_byte(UInt8(j))
+  }
+  b.freeze()
+}
+
+fn msg(i: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  for j in 0..8 {
+    b.write_byte(UInt8((i >> (8 * j)) & 255))
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let n = 5000
+  var sum = 0
+  if w == "keygen" {
+    for i in 0..n {
+      let pk = crypto.ed25519_public_key(seed(i))
+      sum += Int(pk[i % 32])
+    }
+  } else if w == "sign" {
+    let s = seed(7)
+    for i in 0..n {
+      let sig = crypto.ed25519_sign(s, msg(i))
+      sum += Int(sig[i % 64])
+    }
+  } else if w == "verify" {
+    let s = seed(7)
+    let pk = crypto.ed25519_public_key(s)
+    let m = msg(12345)
+    let sig = crypto.ed25519_sign(s, m)
+    for i in 0..n {
+      if crypto.ed25519_verify(pk, m, sig) {
+        sum += 1 + i % 3
+      }
+    }
+  } else {
+    for i in 0..n {
+      sum += seed(i).len() + msg(i).len()
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

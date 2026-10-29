@@ -169,14 +169,15 @@ var ctChecks = []ctCheck{
 	// the loops keep a barrier each (no early exit); their branches and
 	// selects are on the public lengths
 	{fn: "ct.bytes_equal", barriers: 2},
-	// Ed25519 (std/native/llrt/ed25519.xo): the ladder's conditional
-	// move and the scalar reduction's conditional subtraction (without
-	// the barriers clang -O2 turns the latter's masks into five csel on
-	// arm64: TestConstantTimeLLVM logs that control); the branches left
-	// are the loops' and the workspace's bounds checks (public indices)
-	{fn: "ed25519.ge_cmov", barriers: 1, branchFree: true, noSelect: true},
+	// Ed25519 (std/native/llrt/ed25519.xo): the scalar reduction's
+	// conditional subtraction (without the barriers clang -O2 turns its
+	// masks into five csel on arm64: TestConstantTimeLLVM logs that
+	// control); the branches left are the loops' (public counts). Its
+	// [k]B is x25519.ed_base over x25519.base_mult (2026-10-29, Go's
+	// ScalarBaseMult; it was a ladder in ed25519.xo)
 	{fn: "ed25519.sc_reduce", barriers: 1, noSelect: true},
-	{fn: "ed25519.ge_mul", noSelect: true},
+	{fn: "x25519.base_mult", noSelect: true, full: true},
+	{fn: "x25519.ed_base", noSelect: true, full: true},
 	// X25519's fixed base path (57541a18): the table row's 8 entries
 	// taken under ct.mask_eq, the sign by ct.mask_bit and ct.pick, and the
 	// scalar's signed digits by wrapping arithmetic (the branches left are
