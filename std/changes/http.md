@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-10-30: test: the http_tls golden expects url.scheme "https" over TLS (on purpose, unlike Go)
+
+- Kind: test
+- Commit: this commit
+- Found by: main red on golden http_tls after ea6f13462 (want.txt stale since 53b878858 set the scheme over TLS)
+- Go reference: net/http's server leaves URL.Scheme empty on a request it parses (NewServerRequest parses the request target alone); Xo differs on purpose
+- Test: golden http_tls (both backends, arm64 and LLVM, Go parity), TestH2Diff
+
+A request served over TLS has `url.scheme` "https" on both backends
+(spec std.md, `tls()`: "url.scheme is then https"), whether it came by
+HTTP/1.1 (53b878858) or HTTP/2 (ea6f13462); a plain request keeps "".
+This differs from Go, whose server leaves URL.Scheme empty, so a handler
+that forwards the request or builds a redirect does not have to consult
+`tls()` itself. The golden's want.txt was re-recorded; no behavior
+changed.
+
 ## 2026-10-30: feature: router not_found and method_not_allowed hooks, Allow on a 405, error_html
 
 - Kind: feature

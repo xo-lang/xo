@@ -7,17 +7,17 @@ no key: tls: failed to find any PEM data in key input
 other key: tls: private key does not match public key
 roots: tls: no certificates found in PEM input
 empty: http: with_tls needs a certificate
-hello: 200 hello, scheme ""
+hello: 200 hello, scheme "https"
 echo: 200 echo: over tls
 big: 200 (100000 bytes)
 query: 200 q=2|1|3 proto ok
 form: 200 form a=1|2 b=two words
-moved: 200 hello, scheme ""
+moved: 200 hello, scheme "https"
 gzip: 200 encoding=- decoded over tls
 stream big: 200 100000 bytes, several reads
 stream gzip: decoded over tls
 stream early: true
-after early: 200 hello, scheme ""
+after early: 200 hello, scheme "https"
 system roots: Protocol
 expired: Protocol(Get "https://ADDR1/hello": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time NOW is after 2001-01-01T00:00:00Z)
 future: Protocol(Get "https://ADDR2/hello": tls: failed to verify certificate: x509: certificate has expired or is not yet valid: current time NOW is before 2100-01-01T00:00:00Z)
