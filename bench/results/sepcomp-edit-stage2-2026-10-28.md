@@ -57,3 +57,16 @@ gate: the full compiler/check and cmd/xo suites and the dev goldens
 with it on, XO_STD_EXPORT=verify over the goldens, the fixed point, and
 the first-build cost of writing the entry measured
 (bench/results/first-build-2026-10-28.md's setup).
+
+## Readiness for a default (2026-10-28, lead's list, each run as a bulk or measure job on main be05c22f0)
+
+| check | result |
+|---|---|
+| cmd/xo full suite with XO_STD_EXPORT=1 | ok (251 s) |
+| compiler/check's tests with XO_STD_EXPORT=1 | 37 passed |
+| the native goldens (TestGoldenRun) with XO_STD_EXPORT=1 | ok (111 s) |
+| the native goldens with XO_STD_EXPORT=verify | ok (75 s, 0 differences) |
+| the fixed point with XO_STD_EXPORT=1 | bootstrap ok (s2 and s3 identical; xobuild 98 s) |
+| a brand-new user's first build and the edit after it, plain against XO_STD_EXPORT=1 (fresh HOME, n=5) | FIRST_BUILD |
+
+What the flip itself needs when it comes (a default change, CLAUDE.md): the touched packages' full suites and a self build (s2) with it on, in its gate; the stdx entry's first-build write measured above.

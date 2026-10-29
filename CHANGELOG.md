@@ -10,6 +10,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   rebuilds std's cached entries twice: the backend cache's identity
   named a std facts entry by its modification time, which the cache's
   own touch moves (gotchas/cache-key-stamped-by-touched-mtime.md).
+- Separate compilation (decision 0388) stage 2 is on by default: a
+  `xo build` or `xo run` that compiles separately checks the program
+  against std's records (XO_STD_EXPORT=1's path) without parsing std;
+  XO_STD_EXPORT=0 turns it off, verify compares. The readiness list
+  (the full cmd/xo and compiler/check suites, the native goldens on and
+  under verify, the fixed point, a new user's first build) is in
+  bench/results/sepcomp-edit-stage2-2026-10-28.md.
 - xo: the host OS is the OS xo was built for (compiler/hostpath host),
   not a `uname -s` subprocess run four times a build; the run cache's
   miss check on a fib edit drops from 3 to 17 ms to 0 (8 interleaved

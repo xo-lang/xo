@@ -828,3 +828,17 @@ ms, the HTTP server's 60 to 27).
   (big_basic, conc_channels, conc_closure_env, conc_mutex, conc_scopes, conc_select,
   debug_routes, json_text, map_branch, metrics_text), with the fix 26 of 26 the
   same.
+
+
+
+
+## Stage 2 on by default (2026-10-28, xo-lang-6; the lead's go)
+
+A build or run that compiles separately checks against std's records
+unless XO_STD_EXPORT=0; XO_STD_EXPORT=1 forces it (a whole-program
+build too), verify compares. Readiness: the full cmd/xo suite, compiler/
+check's tests, the native goldens with it on and under verify, the fixed
+point with it on, and a new user's first build against the plain one
+(bench/results/sepcomp-edit-stage2-2026-10-28.md, "Readiness for a
+default"). The default change's own gate: the full suites of the touched
+packages, cmd/xo, and a self build with the new xo (bootstrap s2).

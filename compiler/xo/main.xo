@@ -760,9 +760,13 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
         c.mod_noskip[p] = true
       }
       // std's declarations from their records (decision 0388 stage
-      // 1a-ii, opt in): one entry per xo, std and flags, its fingerprint
-      // naming the std files it was declared from
-      let sx = os.env.get("XO_STD_EXPORT") ?? ""
+      // 1a-ii): one entry per xo, std and flags, its fingerprint naming
+      // the std files it was declared from. On by default for a build or
+      // run that compiles separately (stage 2, 2026-10-28: the edit's
+      // check 33 to 18 ms on fib); XO_STD_EXPORT=0 turns it off, 1 forces
+      // it, verify compares
+      let sx0 = os.env.get("XO_STD_EXPORT") ?? ""
+      let sx = if sx0.is_empty() && !sepcomp_facts_path(os).is_empty() && (o.cmd is "build" | "run") { "1" } else { sx0 }
       if sx == "1" || sx == "verify" {
         c.std_export_on = true
         c.std_export_verify = sx == "verify"
