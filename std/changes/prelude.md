@@ -7,7 +7,7 @@
 - Found by: the std-vs-Go survey (item 12: fixed precision float text, `%.3f`, `%e`, `%g`)
 - Go reference: strconv.FormatFloat 'f', 'e' and 'g' (bigFtoa's exact decimal, decimal.Round, fmtE, fmtF, %g's exponent rule) with fmt's width, zero and plus
 - Test: std/native/prelude_test.xo, 3,800 rows against strconv.FormatFloat (finite and not, shortest and 0 to 25 digits, random bit patterns, ties and subnormals) and the text_format golden on arm64, LLVM and the Go backend
-- Timing: the row against strconv.FormatFloat follows in a later entry (exact digits are the slow path; Go's fixedFtoa is not ported)
+- Timing (2026-10-29, quiet --ab, 10 rounds, 300k iterations of to_fixed(3) and to_fixed(10)): Xo 371.6 ms against Go's strconv.FormatFloat 24.41 ms, so about 15x slower (instructions 11x). Exact digits are the slow path; Go's fixedFtoa fast path (up to 18 digits) is not ported yet and is the next entry.
 
 `f.to_fixed(prec, width, zero, plus)`, `to_exp` and `to_general` give strconv.FormatFloat's text with `prec` digits (below 0 the shortest that round trips) and Int.to_str_width's padding. The digits are found exactly (the significand times a power of two as decimal digits) and rounded half to even, as Go's bigFtoa; Go's fixedFtoa fast path for up to 18 digits is not ported.
 
