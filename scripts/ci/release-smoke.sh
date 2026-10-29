@@ -175,11 +175,15 @@ if command -v go >/dev/null; then
   fi
   # the helper built with the installed Go from the archive's lib/xo source
   # into a fresh user cache (decision 0393, bug 14; XO_GOBIND_LOCAL=1
-  # forces it where the runner's Go is the shipped helper's)
+  # forces it where the runner's Go is the shipped helper's). On Windows
+  # the cache is LOCALAPPDATA, set by that name: Git Bash imports it upper
+  # case, so `LocalAppData=` added a second variable and xo, whose lookup
+  # ignores case and takes the first match, read the runner's own (0.33.1
+  # smoke: the helper built into the runner's cache, `built ''`)
   mkdir -p "$w/usego2" "$w/lad"
   printf 'module example.com/usego2\nedition preview\n' > "$w/usego2/xo.mod"
   printf 'use go "strconv"\n\nfn main(os: Os) {\n  os.stdio.println(strconv.itoa(27))\n}\n' > "$w/usego2/main.xo"
-  got=$(XO_GOBIND_LOCAL=1 LocalAppData="$(np "$w/lad")" XDG_CACHE_HOME="$w/lad" HOME="$w/lad/home" "$xo" run --backend=go "$(np "$w/usego2")" 2>"$o/use-go-local.txt" | tr -d '\r')
+  got=$(XO_GOBIND_LOCAL=1 LOCALAPPDATA="$(np "$w/lad")" XDG_CACHE_HOME="$w/lad" HOME="$w/lad/home" "$xo" run --backend=go "$(np "$w/usego2")" 2>"$o/use-go-local.txt" | tr -d '\r')
   built=$(find "$w/lad" -path '*/xo/gobind/*' -name "xo-gobind$exe" | head -1)
   if [ "$got" = 27 ] && [ -n "$built" ]; then pass "use-go-local-helper ($(basename "$(dirname "$built")"))"; else
     fail "use-go-local-helper (out '$got', built '${built}')"; tail -8 "$o/use-go-local.txt" | sed 's/^/  /' | tee -a "$sum"
