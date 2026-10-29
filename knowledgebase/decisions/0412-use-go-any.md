@@ -1,6 +1,6 @@
 # 0412: `use go`: Go's `any` as a dynamic Go value (go.Any)
 
-Status: Proposed (draft 1, 2026-10-29, Lang 1; owner approved writing it, the decision is the owner's)
+Status: Accepted (owner, 2026-10-29, answering the three open questions below; drafted by Lang 1)
 
 ## Context
 
@@ -26,10 +26,12 @@ comes with the first build (see Measurement).
 2. **Into Go: `go.any(x)`.** An explicit conversion, `go.any(x: T) -> go.Any` for T a bindable value type: Int, Int64,
    UInt64 and the sized ints, Float, Float32, Bool, Str, Bytes, Duration, Time, any `use go` handle (its Go value),
    List/Map of those (copied to []T / map[K]V of the Go type the binder maps them from), and an Option of those (None
-   is Go's nil). Not implicit: a call site says it hands a value to Go's dynamic world, and overload-free resolution
-   stays simple. Variadic `...any` (Sprintf, Printf, Query's args, logrus Info) is `List[go.Any]`; helpers spare the
-   noise at the common sites: none in the first version (`fmt.sprintf("%d %s", [go.any(n), go.any(s)])`); a later
-   `go.args(...)` form is an open question.
+   is Go's nil). Explicit everywhere except one place (owner, 2026-10-29): a call site says it hands a value to Go's
+   dynamic world, and overload-free resolution stays simple. The exception is a variadic `...any` parameter (Sprintf,
+   Printf, Query's args, logrus Info), bound as `List[go.Any]`: each element of the list literal at the call converts
+   implicitly as `go.any(x)` would (`fmt.sprintf("%d %s", [n, s])`); an element that is a go.Any already passes as it
+   is, and one of a type outside the bindable set is the same error `go.any(x)` gives. Only a list literal written at
+   the call converts; a `List[Int]` variable passed there is a type error (convert with `.map(go.any)`).
 
 3. **Out of Go: checked conversions.** `go.Any` has methods `as_int() -> Int?`, `as_float() -> Float?`, `as_bool() ->
    Bool?`, `as_str() -> Str?`, `as_bytes() -> Bytes?`, `as_list() -> List[go.Any]?` ([]any or any slice),
@@ -64,7 +66,9 @@ comes with the first build (see Measurement).
 
 - Types at the boundary: ...; `any` (`interface{}`) is `go.Any`, an opaque Go value: `go.any(x)` makes one from a
   bindable Xo value, `as_int()`, `as_str()`, ... read one back (None on another dynamic type), `type_name()` names its
-  Go type; `...any` is `List[go.Any]`; a Go function that fills a value through `any` (`Scan(&x)`, `Unmarshal(&v)`)
+  Go type; `...any` is `List[go.Any]`, and the elements of a list literal written for it convert implicitly as
+  `go.any(x)` (`fmt.sprintf("%d %s", [n, s])`); a replayed go.Any only displays unless the function is `replay rerun`
+  (11.3); a Go function that fills a value through `any` (`Scan(&x)`, `Unmarshal(&v)`)
   takes `go.out[T]()`'s `.any()` and the program reads `.get()` after the call (decision 0412).
 - Exported names whose signatures cannot be mapped are skipped ...: generic ones, non-empty unnamed interfaces, ...
 
@@ -97,8 +101,11 @@ comes with the first build (see Measurement).
 - **Bind `any` as `Str` via %v / JSON**: lossy, one-way.
 - **Keep skipping** (today): 38% of std's and 70% of third party's skips stay.
 
-## Open questions for the owner
+## The owner's answers (2026-10-29)
 
-1. Explicit `go.any(x)` everywhere, or implicit for `...any` variadics only?
-2. Name of the output form: `go.out[T]()` / `.any()` / `.get()`, or `go.ptr[T]()`?
-3. Replay of go.Any results: display-only replay (as above) or require `replay rerun` for any-returning functions?
+1. Explicit `go.any(x)` everywhere, or implicit for `...any` variadics only? **Implicit for `...any` variadics
+   only** (decision 2), explicit everywhere else.
+2. Name of the output form: `go.out[T]()` / `.any()` / `.get()`, or `go.ptr[T]()`? **`go.out[T]()`**, with `.any()`
+   and `.get()` (decision 4).
+3. Replay of go.Any results: display-only replay or require `replay rerun` for any-returning functions? **Display-only**
+   (decision 7): `as_*` on a replayed value faults unless the function is `replay rerun`.
