@@ -6,6 +6,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- xo: an edit more than a minute after the previous one no longer
+  rebuilds std's cached entries twice: the backend cache's identity
+  named a std facts entry by its modification time, which the cache's
+  own touch moves (gotchas/cache-key-stamped-by-touched-mtime.md).
 - xo: the host OS is the OS xo was built for (compiler/hostpath host),
   not a `uname -s` subprocess run four times a build; the run cache's
   miss check on a fib edit drops from 3 to 17 ms to 0 (8 interleaved
