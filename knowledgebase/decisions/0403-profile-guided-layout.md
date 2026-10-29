@@ -53,8 +53,9 @@ and the store link places std's atoms in the store's order.
 3. Reproducible builds: `xo.layout` is a source of the build: its hash
    is in the build info's sources (binfo_sources), in the function and
    object cache keys (stage 2 only), and in nothing else; the same sources
-   and layout file give the same bytes with the cache on or off and whether
-   the program was built whole or separately (TestLayoutIdentity).
+   and layout file give the same bytes twice and with the cache on or off
+   (TestLayoutIdentity; a whole and a separate build differ by their link
+   paths, with or without a layout).
 
 4. Separate compilation and the std store: stage 1 needs no std change
    (ordering is the link's). Stage 2 applies to the program's own functions
@@ -63,9 +64,10 @@ and the store link places std's atoms in the store's order.
    with the profile, keyed by its hash, about 10 s once) is a later opt-in
    if the measurements show hot std bodies that need splitting.
 
-5. Default: `xo build` and `xo run` use `./xo.layout` of the main package
-   when it exists; `--layout=FILE` names another, `--layout=off` (or
-   `XO_LAYOUT=off`) ignores it. Nothing changes for a program without one.
+5. Default: `xo build` and `xo run` use the module root's `xo.layout`
+   when it exists (one profile per module; a module with several main
+   packages names one with the flag); `--layout=FILE` names another,
+   `--layout=off` ignores it. Nothing changes for a program without one.
    The profile names the target it was taken on (`target OS/ARCH` on its
    first line, from the .xoraw's build info): a build for another target,
    or with --race, or by the LLVM or Go backend, ignores the file with one
