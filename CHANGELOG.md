@@ -6,6 +6,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **Fix** (0.34.0): a linux/arm64 build assembled through a stock `cc` (GNU as, or clang with its default processor) failed on `crc32x` ("selected processor does not support" / "instruction requires: crc"): the assembly header declares `.arch_extension crc` beside crypto, aes and sha2.
 - BREAKING: prelude `FileInfo` gains `is_symlink: Bool` (default
   false): `read_dir` and `walk` report a symbolic link itself (Go's
   Lstat), `stat` follows it. A pattern that destructures FileInfo field

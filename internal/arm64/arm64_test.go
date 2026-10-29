@@ -412,6 +412,24 @@ func TestLinuxEmit(t *testing.T) {
 	assembleELF(t, path)
 }
 
+// TestLinuxEmitCRC emits a program that uses the CRC-32 instructions
+// (golden crc32_vectors) for linux/arm64 and assembles it as ELF for the
+// generic ARMv8.0 target, as GNU as and clang do through a stock cc: the
+// file header must enable the extensions the code runs after its CPU check
+// (`.arch_extension crc`; 0.34.0 shipped without it and a Debian arm64
+// build through cc failed on `crc32x`).
+func TestLinuxEmitCRC(t *testing.T) {
+	text := asm(t, filepath.Join("..", "llvm", "testdata", "golden", "crc32_vectors"), "linux")
+	if !strings.Contains(text, "crc32x") {
+		t.Fatal("the emitted assembly has no crc32x: the test no longer covers the CRC instructions")
+	}
+	path := filepath.Join(t.TempDir(), "crc.s")
+	if err := os.WriteFile(path, []byte(text), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assembleELF(t, path)
+}
+
 // The tests of the Go emitter's internals (TestUnsupported on a module
 // built by hand, TestInlineVerifies on internal/ssa modules, the layout
 // and share probe options of the Go build package) went with decision
