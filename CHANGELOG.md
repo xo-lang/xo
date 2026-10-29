@@ -12,6 +12,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   as `C:\x` are taken as `C:/x` when xo starts, as the path flags already
   were (compiler/xo opts.xo path_env): a backslashed one was taken as a
   relative path.
+- xo build for windows: the PDB GUID is made from the objects' content,
+  not their cache keys, so a build with the cache off, or with separate
+  compilation's facts given explicitly, has the same GUID as the default
+  build.
 - Windows: xo starts its child builds without an `env` program, which a
   Windows host has only under Git Bash: `xo dev stdcache` (std's
   variants for separate compilation) failed in 30 ms, and `--backend=go`
