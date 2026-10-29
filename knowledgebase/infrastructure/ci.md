@@ -5,7 +5,7 @@ tests, the selfhost merge tier, the fixed point, the full tier) runs on
 linux/arm64 EC2 machines as GitHub Actions jobs, so it no longer takes
 the Mac's RAM or needs a lead session awake. Nothing runs on push, pull
 request, or a schedule: every run is started by hand, by an agent, or by
-the owner. Last verified: 2026-10-14.
+the owner. Last verified: 2026-10-28 (the amd64 runner adopted).
 
 Contents: [Running CI](#running-ci), [Suites](#suites),
 [How it works](#how-it-works), [Runners](#runners),
@@ -215,6 +215,7 @@ gh workflow run ──> GitHub queues job (runs-on: self-hosted, xo-arm64)
 | GitHub runner | instance | type | labels | role |
 |---|---|---|---|---|
 | xo-ci-arm64-big | i-EXAMPLE01 | r8g.8xlarge (32 vCPU, 256 GB) | xo-arm64-big, xo-arm64 | every arm64 job (the only arm64 runner since 2026-10-27) |
+| xo-ci-amd64-big | i-EXAMPLE02 | c7i.8xlarge (32 vCPU, 64 GB, Sapphire Rapids Xeon 8488C) | xo-amd64 | `-f runner=xo-amd64` on a single job suite (the jump-pad timing, decision 0398); adopted 2026-10-28 from the warm machine, best effort |
 | xo-ci-windows | i-EXAMPLE47 | c7i.4xlarge (16 vCPU, 32 GB), Windows Server 2025 | xo-windows | `suite=windows`, or any single job suite with `-f runner=xo-windows`; best effort |
 
 One machine of each kind (owner, 2026-10-27; Last verified: 2026-10-27):
@@ -447,9 +448,9 @@ Full record: decisions/0225-on-demand-ci-runners.md. In short:
 
 1. Time the full tier on CI: `gh workflow run ci.yml -f suite=full -f
    runner=xo-arm64-big`.
-2. amd64 runners (best effort): `runners.sh adopt` the three c7i.8xlarge
-   machines with label `xo-amd64`, add the choice to `ci.yml`'s `runner`
-   input; the fixed point there uses the LLVM backend.
+2. amd64 runners (best effort): done for one machine 2026-10-28
+   (xo-ci-amd64-big, label `xo-amd64`, the `runner` choice in ci.yml);
+   the fixed point there would use the LLVM backend (not run yet).
 3. Windows known issues (best effort, recorded, not gates; Last
    verified: 2026-10-14, run 38627432745):
    - the golden `proc_cmd` failed under the runner (fixed 2026-10-14,
