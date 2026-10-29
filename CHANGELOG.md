@@ -6,6 +6,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- **Breaking** (decision 0406): the prelude's `Net` interface gains
+  `dial_timeout(addr, d)` and `lookup_host(host)`, so a user type that
+  implements `Net` (a fake or wrapper passed where a `Net` is expected)
+  needs both methods; interfaces have no default bodies (core 2.4). A
+  wrapper forwards them to its inner `Net`; a refusing fake returns
+  `Err(NetErr.Denied(addr: ...))` as its `dial` does.
 - **Breaking** (decision 0408): `json.Value` gains the variant
   `Trusted(kind: Str, s: Str)`, content a template trusts in one context
   (`template.html(s)` and its siblings make it; `parse_value` and `decode`

@@ -45,6 +45,8 @@ struct NoNet {}
 
 fn (n: NoNet) listen(addr: Str) -> Listener ! NetErr { Err(NetErr.Denied(addr: addr)) }
 fn (n: NoNet) dial(addr: Str) -> Conn ! NetErr { Err(NetErr.Denied(addr: addr)) }
+fn (n: NoNet) dial_timeout(addr: Str, d: Duration) -> Conn ! NetErr { Err(NetErr.Denied(addr: addr)) }
+fn (n: NoNet) lookup_host(host: Str) -> List[Str] ! NetErr { Err(NetErr.Denied(addr: host)) }
 fn (n: NoNet) only(hosts: List[Str]) -> Net { n }
 
 fn home_of(e: Env) -> Str uses env { e.home().ok() ?? "?" }
