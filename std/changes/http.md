@@ -17,7 +17,8 @@ default connection now opens as net/http does: MAX_FRAME_SIZE=16384 in
 the SETTINGS, and a WINDOW_UPDATE of the whole 1 GiB (the window was
 the same 1 GiB less 65535 before: now 65535 above it, as Go). Not applied
 by the native client: max_read_frame_size (its frames stay 16 KiB),
-the PING keepalive and write_byte_timeout.
+the PING keepalive and write_byte_timeout. The golden also pins max_concurrent_streams: a second stream while
+one is open gets RST_STREAM REFUSED_STREAM, as Go.
 
 ## 2026-10-30: feature: HTTP/2 client full duplex, native (decision 0433)
 

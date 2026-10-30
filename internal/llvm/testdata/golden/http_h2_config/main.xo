@@ -5,7 +5,8 @@
 // sends a PING after send_ping_timeout of silence and closes when no ack
 // arrives within ping_timeout. A client's with_h2_config shows in the
 // SETTINGS and WINDOW_UPDATE it opens a connection with (a raw server
-// reads them).
+// reads them). A server with max_concurrent_streams 1 refuses a second
+// stream while the first is open (RST_STREAM REFUSED_STREAM).
 use std/http
 
 const PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
@@ -141,6 +142,62 @@ fn client_probe(os: Os, label: Str, cfg: http.H2Config?) uses net, stdio, clock 
   l.close()
 }
 
+/// A raw client: two streams opened at once on a server with one
+/// concurrent stream allowed, whose handler waits; the server's answer
+/// to the second is an RST_STREAM.
+fn refuse_probe(os: Os) uses net, stdio, clock {
+  let release = Chan[Int].new(1)
+  var r = http.router()
+  r.handle("GET /", fn(_req) {
+    let _ = release.recv()
+    http.text(200, "ok")
+  })
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  let cfg = http.H2Config{max_concurrent_streams: 1}
+  scope s {
+    s.spawn_background(fn() { let _ = http.server(l, r).with_protocols(#{http.Protocol.UnencryptedHttp2}).with_h2_config(cfg).serve().ignore_err("test server") })
+    let c = os.net.dial(addr).or_fault("dial")
+    c.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
+    // :method GET, :scheme http, :path /, :authority x
+    let block = b"\x82\x86\x84\x41\x01x"
+    var req = PREFACE.bytes() + b"\x00\x00\x00\x04\x00\x00\x00\x00\x00"
+    req = req + b"\x00\x00\x06\x01\x05\x00\x00\x00\x01" + block
+    req = req + b"\x00\x00\x06\x01\x05\x00\x00\x00\x03" + block
+    c.write(req).or_fault("write")
+    var buf = b""
+    var seen = false
+    while !seen {
+      match c.read(4096) {
+        Ok(Some(b)) => buf = buf + b
+        Ok(None) => break
+        Err(_) => break
+      }
+      var at = 0
+      while buf.len() - at >= 9 {
+        let n = u(buf, at) * 65536 + u(buf, at + 1) * 256 + u(buf, at + 2)
+        if buf.len() - at - 9 < n {
+          break
+        }
+        let ty = u(buf, at + 3)
+        let sid = u(buf, at + 5) * 16777216 + u(buf, at + 6) * 65536 + u(buf, at + 7) * 256 + u(buf, at + 8)
+        if ty == 3 && n == 4 {
+          let code = u(buf, at + 9) * 16777216 + u(buf, at + 10) * 65536 + u(buf, at + 11) * 256 + u(buf, at + 12)
+          os.stdio.println("refuse: RST_STREAM on stream ${sid}, code ${code}")
+          seen = true
+        }
+        at = at + 9 + n
+      }
+    }
+    if !seen {
+      os.stdio.println("refuse: no RST_STREAM")
+    }
+    release.send(1)
+    c.close()
+  }
+  release.close()
+}
+
 fn main(os: Os) uses net, stdio, clock {
   var r = http.router()
   r.handle("GET /", fn(_req) { http.text(200, "ok") })
@@ -163,5 +220,6 @@ fn main(os: Os) uses net, stdio, clock {
   }
   client_probe(os, "client default", None)
   client_probe(os, "client tuned", Some(http.H2Config{max_receive_buffer_per_stream: 262144, max_receive_buffer_per_connection: 2097152, max_decoder_header_table_size: 8192}))
+  refuse_probe(os)
   os.stdio.println("done")
 }
