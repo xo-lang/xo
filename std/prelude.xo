@@ -773,6 +773,21 @@ struct FileInfo {
   is_symlink: Bool = false
 }
 
+/// The space of the file system holding a path (Fs.disk_usage, decision
+/// 0426; Go's syscall.Statfs, GetDiskFreeSpaceEx on Windows).
+struct DiskUsage {
+  /// Bytes in the file system.
+  total: Int
+  /// Bytes free, a superuser's reserve included.
+  free: Int
+  /// Bytes free to this user.
+  available: Int
+  /// Inodes (0 on Windows, which has none).
+  files: Int
+  /// Free inodes (0 on Windows).
+  files_free: Int
+}
+
 interface Fs {
   fn sub(self, dir: Str) -> Fs
   fn cwd(self) -> Fs
@@ -784,6 +799,8 @@ interface Fs {
   fn case_sensitive(self) -> Bool
   fn stat(self, path: Str) -> FileInfo? ! FsErr uses fs.read
   fn exists(self, path: Str) -> Bool ! FsErr uses fs.read
+  /// The space of the file system holding path (decision 0426).
+  fn disk_usage(self, path: Str) -> DiskUsage ! FsErr uses fs.read
   fn read(self, path: Str) -> Bytes ! FsErr uses fs.read
   fn read_text(self, path: Str) -> Str ! FsErr uses fs.read
   fn read_dir(self, dir: Str) -> List[FileInfo] ! FsErr uses fs.read

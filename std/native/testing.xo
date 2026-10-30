@@ -157,6 +157,8 @@ struct MemState {
   /// state copies one more word, not four (the memfs workload of
   /// bench/perf/testworld, 2026-10-16)
   hs: List[MemHandles] = []
+  /// set_disk_usage's answer (none yet: all zero)
+  usage: List[DiskUsage] = []
 }
 
 /// st's handles (none yet: empty ones).
@@ -489,6 +491,29 @@ fn memfs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
   let r = memfs_stat_in(st, f, full)
   memfs_store(st)
   r?
+}
+
+/// Fs.disk_usage of a test's MemFs (decision 0426): set_disk_usage's
+/// answer, all zero until then; NotFound for a missing path.
+fn memfs_disk_usage(f: Fs, p: Str) -> DiskUsage ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    return u.disk_usage(p)
+  }
+  if memfs_stat(f, p)?.is_none() {
+    return Err(FsErr.NotFound(path: p))
+  }
+  let st = memfs_load()
+  let r = st.usage.get(0) ?? DiskUsage{total: 0, free: 0, available: 0, files: 0, files_free: 0}
+  memfs_store(st)
+  r
+}
+
+/// MemFs.set_disk_usage: what disk_usage answers for every path.
+fn memfs_set_disk_usage(_f: Fs, u: DiskUsage) {
+  var st = memfs_load()
+  st.usage = [u]
+  memfs_store(st)
 }
 
 fn memfs_exists(f: Fs, p: Str) -> Bool ! FsErr {

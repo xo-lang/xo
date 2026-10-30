@@ -104,6 +104,8 @@ fn (f: StatFs) exists(path: Str) -> Bool ! FsErr uses fs.read {
   r
 }
 
+fn (f: StatFs) disk_usage(path: Str) -> DiskUsage ! FsErr uses fs.read { f.inner.disk_usage(path) }
+
 fn (f: StatFs) read(path: Str) -> Bytes ! FsErr uses fs.read {
   let r = f.inner.read(path)
   var n = 0

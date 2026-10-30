@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+dir du: disk usage is not supported on this system
+missing du/missing: disk usage is not supported on this system
+write only denied
+sub f.txt: disk usage is not supported on this system
+--- stderr

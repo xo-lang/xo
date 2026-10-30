@@ -647,6 +647,14 @@ struct FileInfo {
   is_symlink: Bool = false  // a link itself: read_dir and walk report links, stat follows them
 }
 
+struct DiskUsage {         // the file system holding a path (decision 0426)
+  total: Int               // bytes
+  free: Int                // bytes free, a superuser's reserve included
+  available: Int           // bytes free to this user
+  files: Int               // inodes (0 on Windows)
+  files_free: Int          // free inodes (0 on Windows)
+}
+
 fn (f: Fs) sub(dir: Str) -> Fs                               // lazy: dir need not exist yet
 fn (f: Fs) cwd() -> Fs                                       // sub capability at the working directory
 fn (f: Fs) cwd_path() -> Str ! FsErr                         // the working directory's absolute path, from the OS
@@ -655,6 +663,7 @@ fn (f: Fs) write_only() -> Fs                // reads fail with Denied
 fn (f: Fs) case_sensitive() -> Bool                          // of the underlying filesystem
 fn (f: Fs) stat(path: Str) -> FileInfo? ! FsErr  uses fs.read // None when missing
 fn (f: Fs) exists(path: Str) -> Bool ! FsErr     uses fs.read
+fn (f: Fs) disk_usage(path: Str) -> DiskUsage ! FsErr uses fs.read // statfs of path's file system
 fn (f: Fs) read(path: Str) -> Bytes ! FsErr      uses fs.read
 fn (f: Fs) read_text(path: Str) -> Str ! FsErr   uses fs.read
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read   // default when missing
@@ -680,6 +689,15 @@ fn (f: Fs) create_dir_all(dir: Str) -> () ! FsErr       uses fs.write
 fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs  // made ones get mode
 fn (f: Fs) set_modified(path: Str, t: Time) -> () ! FsErr uses fs.write
 ```
+
+`disk_usage(path)` (decision 0426; Go's `syscall.Statfs`, and
+`GetDiskFreeSpaceEx` on Windows) is the space of the file system that
+holds `path`, a file or a directory resolved inside the Fs like `stat`:
+`NotFound` when it is missing. Byte counts are the block counts times
+the fragment size (`f_frsize`); Windows reports no inodes (`files` and
+`files_free` are 0); WASI and embedded files (`embed.dir`) answer `Io`.
+A test's MemFs answers what `set_disk_usage` set, all zero before.
+Record and replay record it (`fs.disk_usage`).
 
 `read_text_or` and `read_or` (approved by the owner, 2026-10-21) give
 the file, or `default` when it does not exist (`FsErr.NotFound`, Go's
@@ -2476,6 +2494,7 @@ matches an operation if any of its path arguments equals the given path
 enum FsOp { Read, Write, Rename, Remove, CreateDir, ReadDir }
 fn (f: MemFs) fail_next(op: FsOp, path: Str, err: FsErr)   // next matching op fails once; `*` matches any run of characters within a segment
 fn (f: MemFs) set_case_sensitive(on: Bool)
+fn (f: MemFs) set_disk_usage(u: DiskUsage)       // what disk_usage answers (decision 0426); all zero before
 fn (f: MemFs) files() -> Map[Str, Bytes]                  // every file, by path
 ```
 
@@ -4862,7 +4881,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-472 declarations.
+473 declarations.
 
 ### Range
 
@@ -5391,6 +5410,7 @@ fn write_only(self) -> Fs
 fn case_sensitive(self) -> Bool
 fn stat(self, path: Str) -> FileInfo? ! FsErr uses fs.read
 fn exists(self, path: Str) -> Bool ! FsErr uses fs.read
+fn disk_usage(self, path: Str) -> DiskUsage ! FsErr uses fs.read
 fn read(self, path: Str) -> Bytes ! FsErr uses fs.read
 fn read_text(self, path: Str) -> Str ! FsErr uses fs.read
 fn read_dir(self, dir: Str) -> List[FileInfo] ! FsErr uses fs.read

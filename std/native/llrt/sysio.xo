@@ -426,6 +426,27 @@ fn stat(l: Int, op: Str, follow: Bool) -> (Info, Int) {
   (Info{st: 0, is_dir: linux.is_dir(s), is_link: linux.is_link(s), size: s.size, modified: s.mtime}, e)
 }
 
+/// Fs.disk_usage of OS path op (decision 0426): [total, free, available,
+/// files, files_free] and 0, or the empty list and the FsErr status with
+/// its message (7, Io, under WASI, which has no statfs).
+pub fn disk_usage(op: Str) -> (List[Int], Int, Str) {
+  let l = layer()
+  if l == 0 {
+    return ([], 7, "disk usage is not supported on this system")
+  }
+  let (v, e) = if target.os == TargetOs.Windows {
+    windows.statfs(op)
+  } else if target.os == TargetOs.Darwin {
+    darwin.statfs(op)
+  } else {
+    linux.statfs(op)
+  }
+  if e != 0 {
+    return ([], fs_status(l, e), err_msg(l, e))
+  }
+  (v, 0, "")
+}
+
 /// The C runtime's message of errno e (strerror, first letter lowered).
 pub fn err_msg(l: Int, e: Int) -> Str {
   if target.os == TargetOs.Windows {

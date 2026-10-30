@@ -93,6 +93,10 @@ fn SetFileTime(h: Int, created: Int, accessed: Int, written: Int) -> Int32
 /// GetCurrentDirectoryW into the n UTF-16 units at buf: the units
 /// written without the NUL, the size needed when it does not fit, or 0.
 fn GetCurrentDirectoryW(n: Int, buf: Int) -> UInt32
+/// GetDiskFreeSpaceExW of the directory dir (UTF-16, NUL ended): the
+/// ULARGE_INTEGERs at avail, total and free get the bytes available to
+/// the caller, the volume's size and its free bytes; nonzero on success.
+fn GetDiskFreeSpaceExW(dir: Bytes, avail: Int, total: Int, free: Int) -> Int32
 /// CreateSymbolicLinkW: a BOOLEAN (only the low byte is defined).
 fn CreateSymbolicLinkW(link: Bytes, target: Bytes, flags: Int) -> Int32
 fn DeviceIoControl(h: Int, code: Int, inbuf: Int, inlen: Int, outbuf: Int, outlen: Int, got: Int, overlapped: Int) -> Int32

@@ -27,6 +27,10 @@ fn fsync(fd: Int) -> Int32
 fn stat64(path: Bytes, buf: Int) -> Int32
 fn lstat64(path: Bytes, buf: Int) -> Int32
 fn fstat64(fd: Int, buf: Int) -> Int32
+/// statfs(2) into the 64 bit inode struct statfs at the address buf
+/// (2168 bytes; the plain `statfs` is the old structure on x86_64, as
+/// stat64 above): Fs.disk_usage (decision 0426).
+fn statfs64(path: Bytes, buf: Int) -> Int32
 /// poll(2) of the n struct pollfd at fds, waiting timeout ms
 /// (std/native/llrt/stdin.xo).
 fn poll(fds: Int, n: Int, timeout: Int) -> Int32

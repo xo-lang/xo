@@ -4,6 +4,7 @@ alpha
 beta
 error: missing.txt: no such file or directory
 true true a.txt,d/b.txt
+usage 100 30
 false
 beta
 2

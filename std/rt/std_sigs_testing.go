@@ -33,6 +33,7 @@ var (
 	_ func(*Testing_MemFs, *Task) bool                                                              = (*Testing_MemFs).M_case_sensitive
 	_ func(*Testing_MemFs, *Task, string) Result[Option[FileInfo], FsErr]                           = (*Testing_MemFs).M_stat
 	_ func(*Testing_MemFs, *Task, string) Result[bool, FsErr]                                       = (*Testing_MemFs).M_exists
+	_ func(*Testing_MemFs, *Task, string) Result[DiskUsage, FsErr]                                  = (*Testing_MemFs).M_disk_usage
 	_ func(*Testing_MemFs, *Task, string) Result[Bytes, FsErr]                                      = (*Testing_MemFs).M_read
 	_ func(*Testing_MemFs, *Task, string) Result[string, FsErr]                                     = (*Testing_MemFs).M_read_text
 	_ func(*Testing_MemFs, *Task, string) Result[List[FileInfo], FsErr]                             = (*Testing_MemFs).M_read_dir
@@ -59,6 +60,7 @@ var (
 	_ func(*Testing_MemFs, *Task, string) Result[Option[FileLock], FsErr]                           = (*Testing_MemFs).M_try_lock
 	_ func(*Testing_MemFs, *Task, Testing_FsOp, string, FsErr)                                      = (*Testing_MemFs).M_fail_next
 	_ func(*Testing_MemFs, *Task, bool)                                                             = (*Testing_MemFs).M_set_case_sensitive
+	_ func(*Testing_MemFs, *Task, DiskUsage)                                                        = (*Testing_MemFs).M_set_disk_usage
 	_ func(*Testing_MemFs, *Task) Map[string, Bytes]                                                = (*Testing_MemFs).M_files
 	_ func(*Testing_FakeEnv, *Task, string) Option[string]                                          = (*Testing_FakeEnv).M_get
 	_ func(*Testing_FakeEnv, *Task) Map[string, string]                                             = (*Testing_FakeEnv).M_vars

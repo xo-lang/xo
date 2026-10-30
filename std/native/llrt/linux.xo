@@ -128,6 +128,29 @@ pub fn stat(path: Str, follow: Bool) -> (Stat, Int) {
   r
 }
 
+/// statfs(2) of path (Fs.disk_usage, decision 0426): [total, free,
+/// available] bytes and [files, files_free] inodes, and 0, or the errno.
+/// struct statfs on arm64 and x86_64: f_bsize at 8, f_blocks 16, f_bfree
+/// 24, f_bavail 32, f_files 40, f_ffree 48, f_frsize 72; blocks count
+/// f_frsize bytes (f_bsize before Linux 2.6).
+pub fn statfs(path: Str) -> (List[Int], Int) {
+  let z = cpath(path)
+  let buf = raw.bytes_buf(128)
+  let a = raw.bytes_addr(buf)
+  rt.mem_set(a, 0, 128)
+  let r = rt.sys6(nr(43, 137), raw.bytes_addr(z), a, 0, 0, 0, 0)
+  keep(z, 0)
+  if r < 0 {
+    raw.alive(buf)
+    return ([], -r)
+  }
+  let fr = rt.mem_load(a, 72, 8)
+  let bs = if fr > 0 { fr } else { rt.mem_load(a, 8, 8) }
+  let out = [rt.mem_load(a, 16, 8) * bs, rt.mem_load(a, 24, 8) * bs, rt.mem_load(a, 32, 8) * bs, rt.mem_load(a, 40, 8), rt.mem_load(a, 48, 8)]
+  raw.alive(buf)
+  (out, 0)
+}
+
 /// statx(2) of the open descriptor fd.
 pub fn fstat(fd: Int) -> (Stat, Int) {
   let empty = b"\0"

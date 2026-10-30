@@ -40,6 +40,10 @@ fn (f: FlakyFs) exists(path: Str) -> Bool ! FsErr uses fs.read {
   f.inner.exists(path)
 }
 
+fn (f: FlakyFs) disk_usage(path: Str) -> DiskUsage ! FsErr uses fs.read {
+  f.inner.disk_usage(path)
+}
+
 fn (f: FlakyFs) read(path: Str) -> Bytes ! FsErr uses fs.read {
   f.inner.read(path)
 }

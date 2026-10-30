@@ -106,6 +106,19 @@ removes the link, never the directory it points to.
 `os.env.hostname()` on native windows/amd64 is the host's name from
 GetComputerNameExW (ComputerNamePhysicalDnsHostname, as Go's), not "".
 WASI still answers "".
+## 2026-10-30: feature: Fs.disk_usage
+
+- Kind: feature
+- Commit: this commit
+- Found by: std-coverage gap 9 (the metrics exporter's host facts), decision 0426
+- Go reference: syscall.Statfs (Linux, macOS), windows.GetDiskFreeSpaceEx
+- Test: the host_disk golden (arm64, LLVM, Go parity, natively on Windows; Io under WASI), user_fs (a user Fs), a MemFs test in cmd/xo/testdata/nogc/same
+- Timing: xo bench --ab, 200,000 `fs.disk_usage(".")` calls, A Go syscall.Statfs, B Xo native arm64, 15 rounds, macOS arm64 under load (ratios only): wall 1.087 (1.082 to 1.097), instructions 1.004 (1.003 to 1.004), max RSS 0.543; the program is in the lead's notes (hfbench), not the repo
+
+`fs.disk_usage(path)` is the space of the file system holding `path`:
+`DiskUsage{total, free, available, files, files_free}` in bytes and
+inodes (no inodes on Windows). Breaking: a type that implements the `Fs`
+interface needs a `disk_usage` method.
 ## 2026-10-30: fix: Proc.ppid on Windows
 
 - Kind: fix

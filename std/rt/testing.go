@@ -1246,6 +1246,7 @@ type memFs struct {
 	fails         []memFail
 	tempSeq       int
 	locks         map[string]*lock // FileLock, by key (decision 0163)
+	usage         DiskUsage        // set_disk_usage's (decision 0426)
 }
 
 type memView struct {
@@ -1506,6 +1507,31 @@ func (f Testing_MemFs) M_exists(tk *Task, p string) Result[bool, FsErr] {
 		return Err[bool](r.E)
 	}
 	return Ok[bool, FsErr](r.V.Some)
+}
+
+// M_disk_usage is set_disk_usage's answer, all zero until then;
+// NotFound for a missing path (decision 0426).
+func (f Testing_MemFs) M_disk_usage(tk *Task, p string) Result[DiskUsage, FsErr] {
+	if f.v.real != nil {
+		return f.v.real.M_disk_usage(tk, p)
+	}
+	r := f.M_stat(tk, p)
+	if !r.Ok {
+		return Err[DiskUsage](r.E)
+	}
+	if !r.V.Some {
+		return Err[DiskUsage](fsErr(1, p))
+	}
+	f.v.fs.mu.Lock()
+	defer f.v.fs.mu.Unlock()
+	return Ok[DiskUsage, FsErr](f.v.fs.usage)
+}
+
+// M_set_disk_usage sets what disk_usage answers for every path.
+func (f Testing_MemFs) M_set_disk_usage(_ *Task, u DiskUsage) {
+	f.v.fs.mu.Lock()
+	defer f.v.fs.mu.Unlock()
+	f.v.fs.usage = u
 }
 
 func (f Testing_MemFs) M_read(tk *Task, p string) Result[Bytes, FsErr] {

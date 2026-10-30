@@ -160,6 +160,14 @@ func (d embedDirFs) M_exists(tk *Task, p string) Result[bool, FsErr] {
 	return Ok[bool, FsErr](d.info(p, k).Some)
 }
 
+// M_disk_usage: embedded files are in the program, not on a disk.
+func (d embedDirFs) M_disk_usage(tk *Task, p string) Result[DiskUsage, FsErr] {
+	if _, e := d.readKey(p); e != nil {
+		return Err[DiskUsage](*e)
+	}
+	return Err[DiskUsage](fsIo(p, "embedded files have no disk usage"))
+}
+
 func (d embedDirFs) M_read(tk *Task, p string) Result[Bytes, FsErr] {
 	k, e := d.readKey(p)
 	if e != nil {

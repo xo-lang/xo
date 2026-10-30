@@ -174,6 +174,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   skips; in the directory itself a cold build's spills made its key
   differ from an identical warm build's, so the second build linked
   again (TestMachoBinCache).
+- BREAKING: the `Fs` interface gains `disk_usage(path) -> DiskUsage !
+  FsErr` (Go's statfs, decision 0426): a type implementing `Fs` adds it.
 - The native back end's parts own their functions' SSA bodies and drop
   them as each part is emitted; the module keeps shells with body facts
   (decision 0424). The self build's heap past emit 9452 to 8180 MB and

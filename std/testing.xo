@@ -80,6 +80,7 @@ fn (f: MemFs) write_only() -> Fs
 fn (f: MemFs) case_sensitive() -> Bool
 fn (f: MemFs) stat(path: Str) -> FileInfo? ! FsErr uses fs.read
 fn (f: MemFs) exists(path: Str) -> Bool ! FsErr uses fs.read
+fn (f: MemFs) disk_usage(path: Str) -> DiskUsage ! FsErr uses fs.read   // decision 0426: set_disk_usage's, else all zero
 fn (f: MemFs) read(path: Str) -> Bytes ! FsErr uses fs.read
 fn (f: MemFs) read_text(path: Str) -> Str ! FsErr uses fs.read
 fn (f: MemFs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read
@@ -106,6 +107,8 @@ fn (f: MemFs) lock(path: Str) -> FileLock ! FsErr uses fs.write
 fn (f: MemFs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write
 fn (f: MemFs) fail_next(op: FsOp, path: Str, err: FsErr)
 fn (f: MemFs) set_case_sensitive(on: Bool)
+/// What disk_usage answers for every path that exists (decision 0426).
+fn (f: MemFs) set_disk_usage(u: DiskUsage)
 fn (f: MemFs) files() -> Map[Str, Bytes]
 
 // FakeEnv, FakeStdio, FakeProc (std.md 8.4)

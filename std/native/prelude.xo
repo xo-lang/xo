@@ -2689,6 +2689,38 @@ fn fs_stat(f: Fs, p: Str) -> FileInfo? ! FsErr {
   Some(fs_info_of(f, op, p, i))
 }
 
+/// The native backends' layout of the prelude's DiskUsage (decision 0426): a
+/// prelude struct is opaque to the native SSA builder unless this module
+/// declares its implementation, so the seed builds it without knowing it
+/// (gotchas/new-prelude-struct-needs-native-twin.md); the fields match
+/// std/prelude.xo's.
+struct DiskUsage {
+  total: Int
+  free: Int
+  available: Int
+  files: Int
+  files_free: Int
+}
+
+/// Fs.disk_usage (decision 0426): statfs of the path inside the Fs.
+fn fs_disk_usage(f: Fs, p: Str) -> DiskUsage ! FsErr {
+  // a user value converted to Fs (decision 0307)
+  if let Some(u) = userfs.user(f) {
+    // the prelude's DiskUsage, copied into this module's twin
+    let v = u.disk_usage(p)?
+    return DiskUsage{total: v.total, free: v.free, available: v.available, files: v.files, files_free: v.files_free}
+  }
+  let op = fs_check(f, p, false)?
+  let (v, st, msg) = sysio.disk_usage(op)
+  if st != 0 {
+    if st == 7 {
+      return Err(FsErr.Io(path: p, msg: msg))
+    }
+    return Err(fs_err(st, p))
+  }
+  DiskUsage{total: v[0], free: v[1], available: v[2], files: v[3], files_free: v[4]}
+}
+
 fn fs_exists(f: Fs, p: Str) -> Bool ! FsErr {
   // a user value converted to Fs (decision 0307)
   if let Some(u) = userfs.user(f) {

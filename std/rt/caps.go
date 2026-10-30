@@ -234,6 +234,22 @@ func (f *realFs) M_exists(tk *Task, p string) Result[bool, FsErr] {
 	return Ok[bool, FsErr](r.V.Some)
 }
 
+// M_disk_usage is the space of the file system holding p (decision
+// 0426): statfs, GetDiskFreeSpaceEx on Windows.
+func (f *realFs) M_disk_usage(tk *Task, p string) Result[DiskUsage, FsErr] {
+	return fx(tk, "fs.disk_usage", false, func() []any { return []any{p} }, func() Result[DiskUsage, FsErr] {
+		op, e := f.check(tk, p, false)
+		if e != nil {
+			return Err[DiskUsage](*e)
+		}
+		u, err := statfs(op)
+		if err != nil {
+			return Err[DiskUsage](mapFsErr(err, p))
+		}
+		return Ok[DiskUsage, FsErr](u)
+	})
+}
+
 func (f *realFs) M_read(tk *Task, p string) Result[Bytes, FsErr] {
 	return fx(tk, "fs.read", false, func() []any { return []any{p} }, func() Result[Bytes, FsErr] { return f.read(tk, p) })
 }

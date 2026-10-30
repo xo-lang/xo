@@ -20,6 +20,7 @@ fn (m: MapFs) stat(path: Str) -> FileInfo? ! FsErr {
   }
 }
 fn (m: MapFs) exists(path: Str) -> Bool ! FsErr { Ok(m.files.contains(m.prefix + path)) }
+fn (m: MapFs) disk_usage(path: Str) -> DiskUsage ! FsErr { Ok(DiskUsage{total: 100, free: 40, available: 30, files: 0, files_free: 0}) }
 fn (m: MapFs) read(path: Str) -> Bytes ! FsErr { Ok(m.read_text(path)?.bytes()) }
 fn (m: MapFs) read_text(path: Str) -> Str ! FsErr {
   match m.files.get(m.prefix + path) {
@@ -75,6 +76,8 @@ fn main(os: Os) {
   os.stdio.println(show(m.sub("d"), "b.txt"))
   os.stdio.println(show(m, "missing.txt"))
   os.stdio.println("${m.exists("a.txt").ok() ?? false} ${m.write("x", b"").is_err()} ${(m.glob("*").ok() ?? []).join(",")}")
+  let du = m.disk_usage("a.txt").ok()
+  os.stdio.println("usage ${du.map(fn(u) { u.total }) ?? 0} ${du.map(fn(u) { u.available }) ?? 0}")
   // the runtime's own Fs still works next to it
   os.stdio.println("${os.fs.exists("/xo-no-such-dir/x").ok() ?? true}")
   // across a task

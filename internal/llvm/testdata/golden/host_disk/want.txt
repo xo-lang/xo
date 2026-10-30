@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+dir true true true true true
+file same volume true
+missing not found
+write only denied
+sub true true true true true
+--- stderr

@@ -122,6 +122,8 @@ fn (f: RecFs) exists(path: Str) -> Bool ! FsErr uses fs.read {
   r
 }
 
+fn (f: RecFs) disk_usage(path: Str) -> DiskUsage ! FsErr uses fs.read { f.inner.disk_usage(path) }
+
 fn (f: RecFs) read(path: Str) -> Bytes ! FsErr uses fs.read {
   let recorded = f.note_read(path, "")
   let b = f.inner.read(path)?

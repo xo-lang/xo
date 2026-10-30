@@ -1,0 +1,43 @@
+// Fs.disk_usage (decision 0426): the file system holding a path, its
+// counts consistent with each other; a file answers for its volume as its
+// directory does; a missing path is NotFound, a write only Fs is Denied,
+// a sub Fs resolves inside its root.
+fn shape(u: DiskUsage) -> Str {
+  "${u.total > 0} ${u.free <= u.total} ${u.available <= u.total} ${u.available >= 0} ${u.files_free <= u.files}"
+}
+
+fn kind(e: FsErr) -> Str {
+  match e {
+    FsErr.NotFound(path: _) => "not found"
+    FsErr.Denied(path: _) => "denied"
+    _ => "${e}"
+  }
+}
+
+fn main(os: Os) {
+  let _c = os.fs.create_dir_all("du").ignore_err("the next line reports a failure")
+  let _w = os.fs.write("du/f.txt", b"x").ignore_err("disk_usage reports a failure")
+  match os.fs.disk_usage("du") {
+    Ok(u) => {
+      os.stdio.println("dir ${shape(u)}")
+      match os.fs.disk_usage("du/f.txt") {
+        Ok(v) => os.stdio.println("file same volume ${v.total == u.total}")
+        Err(e) => os.stdio.println("file ${e}")
+      }
+    }
+    Err(e) => os.stdio.println("dir ${e}")
+  }
+  match os.fs.disk_usage("du/missing") {
+    Ok(_) => os.stdio.println("missing answered")
+    Err(e) => os.stdio.println("missing ${kind(e)}")
+  }
+  match os.fs.write_only().disk_usage("du") {
+    Ok(_) => os.stdio.println("write only answered")
+    Err(e) => os.stdio.println("write only ${kind(e)}")
+  }
+  match os.fs.sub("du").disk_usage("f.txt") {
+    Ok(u) => os.stdio.println("sub ${shape(u)}")
+    Err(e) => os.stdio.println("sub ${e}")
+  }
+  let _r = os.fs.remove_all("du").ignore_err("the run's directory is scratch")
+}

@@ -55,6 +55,15 @@ test "memfs errors and views" {
   expect(denied.read("x")) == Err(FsErr.Denied(path: "x"))
 }
 
+test "memfs disk usage is set_disk_usage's" {
+  os.fs.write("d.txt", b"x")?
+  expect(os.fs.disk_usage("d.txt")?.total) == 0
+  os.fs.set_disk_usage(DiskUsage{total: 100, free: 40, available: 30, files: 9, files_free: 2})
+  expect(os.fs.disk_usage("d.txt")?.available) == 30
+  expect(os.fs.sub("").disk_usage("d.txt")?.files) == 9
+  expect(os.fs.disk_usage("nope")) == Err(FsErr.NotFound(path: "nope"))
+}
+
 test "memfs modified time is the virtual clock" {
   os.clock.sleep(3s)
   os.fs.write("t.txt", b"")?

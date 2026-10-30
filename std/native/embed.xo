@@ -139,6 +139,12 @@ fn (d: DirFs) exists(path: Str) -> Bool ! FsErr {
   Ok(d.info(path, k) != None)
 }
 
+/// Embedded files are in the program, not on a disk (decision 0426).
+fn (d: DirFs) disk_usage(path: Str) -> DiskUsage ! FsErr {
+  let _ = d.read_key(path)?
+  Err(FsErr.Io(path: path, msg: "embedded files have no disk usage"))
+}
+
 fn (d: DirFs) read(path: Str) -> Bytes ! FsErr {
   let k = d.read_key(path)?
   if let Some(b) = d.files.get(k) {
