@@ -1,5 +1,22 @@
 # std/http changes
 
+## 2026-10-30: fix: a 431 or 413 reply survives unread request bytes on Linux, native server
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestGoldenRun/http_server_limits on the linux/arm64 host ("big header: error" where macOS got the 431)
+- Go reference: net/http's closeWriteAndWait (CloseWrite, then a wait before Close)
+- Test: internal/llvm/testdata/golden/http_server_limits (arm64, LLVM, Go parity), on the linux/arm64 host
+- Timing: none (the lingering read is on the error path only)
+
+The server answered 431 (head over with_max_header_bytes) and 413 (body
+over with_max_body), shut down its sending side and closed with the
+rest of the request still unread; on Linux that close sends a RST, which
+can discard the reply from the client's receive buffer, so a client
+still writing a 100 KB header saw a connection error. The server now
+reads and discards what the peer still sends (at most 500 ms or 1 MiB,
+until the peer closes) before it closes, as net/http does.
+
 ## 2026-10-30: feature: H2Config.max_encoder_header_table_size, native server (decision 0434)
 
 - Kind: feature

@@ -1953,7 +1953,7 @@ fn (var r: Reader) read_one() -> Int {
       let _s = send(h, d, n)
       rt.heap_release(d - 8)
       if res == TOO_LARGE {
-        hconn.shut_wr(h)
+        hconn.linger_close(h)
       }
       return 0
     }
@@ -2086,7 +2086,7 @@ fn (var r: Reader) read_one() -> Int {
       let n = http1w.error_answer(d, BODY_TOO_BIG, 413, "")
       let _s = send(h, d, n)
       rt.heap_release(d - 8)
-      hconn.shut_wr(h)
+      hconn.linger_close(h)
       return 0
     }
   }

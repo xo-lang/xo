@@ -477,6 +477,25 @@ pub fn shut_wr(h: rthttp.HConn) {
   }
 }
 
+/// Shuts down the sending side and reads what the peer still sends, for
+/// at most 500 ms or until it closes (net/http's closeWriteAndWait): a
+/// close with unread request bytes sends a RST on Linux, which can cost
+/// the client the 431 or 413 reply it has not read yet.
+pub fn linger_close(h: rthttp.HConn) {
+  shut_wr(h)
+  let buf = rt.heap_large(4096)
+  let until = deadline(500000000)
+  var total = 0
+  while total < 1048576 {
+    let n = recv_until(h, buf, 4096, false, until)
+    if n <= 0 {
+      break
+    }
+    total += n
+  }
+  rt.heap_release(buf - 8)
+}
+
 /// http1.xo's X1 record of the connection (0: none yet), and setting it.
 pub fn x1(h: rthttp.HConn) -> Int { ld(rec(h), HC_X1) }
 
