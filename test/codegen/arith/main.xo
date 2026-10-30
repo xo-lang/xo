@@ -116,7 +116,7 @@ fn or_not(a: Int, b: Int) -> Int {
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)} ${trims(n, n + 40, n + 50)} ${count_digits(n + 1000)} ${outside(n)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)} ${trims(n, n + 40, n + 50)} ${count_digits(n + 1000)} ${outside(n)} ${digit_sum("12${n}".bytes())}")
 }
 
 // `d < 0 || d > 9` of a `d = x - 48` is one unsigned compare (isel
@@ -216,4 +216,19 @@ fn count_digits(n: Int) -> Int {
 fn outside(x: Int) -> Bool {
   // arm64: "sub x[0-9]+, x[0-9]+, #9" "cmp x[0-9]+, #4" "cset x[0-9]+, hi" -"orr"
   x < 9 || x > 13
+}
+
+fn digit_sum(cs: Bytes) -> Int {
+  // a negated range's subtraction (a Bool, logic_value) is the value's
+  // (a byte: its `c - 48` is unchecked)
+  // arm64: -"#48[^%]*#48"
+  var t = 0
+  for b in cs {
+    let c = Int(b)
+    if !(c >= 48 && c <= 57) {
+      break
+    }
+    t = t * 10 + (c - 48)
+  }
+  t
 }

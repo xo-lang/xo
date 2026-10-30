@@ -1221,6 +1221,9 @@ fn (var g: G) instr1(v: Int) {
   match x.op {
     Const | Cap => {}
     Add | Sub => {
+      if g.has_val[v] {
+        return // a range test's subtraction (range_subs)
+      }
       if g.ext_add(v) {
         return // ext_test's bias, never computed
       }
@@ -2645,20 +2648,51 @@ fn (var g: G) logic_value(x: ssa.Value) -> Bool {
       return false // a branch on it: range_and, or two branches
     }
     var pv = -1
+    // a range: v - lo compared with hi - lo as UInt64s, ls for v in [lo,
+    // hi] (and), hi for v outside it (`v < lo || v > hi`; 2026-10-30:
+    // std's parse_duration end test `c < 9 || c > 13` was two csets and
+    // an orr). One emission for both: a helper of its own took the
+    // inliner's copies of def1, word and cimm (7.7 KB of xo)
+    var rv = -1
+    var lo = 0
+    var hi = 0
     if is_and {
-      let (v, lo, lok) = g.bound_of(c0, true)
-      let (v2, hi, hok) = g.bound_of(c2, false)
-      if lok && hok && v == v2 && hi >= lo {
-        pv = g.range_value(v, lo, hi, "ls")
+      let (v, l, lok) = g.bound_of(c0, true)
+      let (v2, h, hok) = g.bound_of(c2, false)
+      if lok && hok && v == v2 && h >= l {
+        rv = v
+        lo = l
+        hi = h
       }
     } else {
-      // `v < lo || v > hi`, v outside [lo, hi]: the same subtract and
-      // compare, its unsigned > (2026-10-30: std's parse_duration end
-      // test `c < 9 || c > 13` was two csets and an orr)
       let (v, a, aok) = g.bound_of(c0, false)
       let (v2, b2, bok) = g.bound_of(c2, true)
       if aok && bok && v == v2 && a < MAX_INT && b2 > MIN_INT && b2 - 1 >= a + 1 {
-        pv = g.range_value(v, a + 1, b2 - 1, "hi")
+        rv = v
+        lo = a + 1
+        hi = b2 - 1
+      }
+    }
+    if rv >= 0 {
+      let cond = if is_and { "ls" } else { "hi" }
+      let span = hi.wrapping_sub(lo)
+      let w = g.word(rv)
+      var t = w
+      if lo != 0 {
+        t = if addsub_imm(lo) { g.def1(false, "sub $d0, $u0, #${lo}", [w]) } else { g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)]) }
+        for (s, n, o, chk) in g.range_subs(rv, lo) {
+          // the overflow check the current block's bounds decide (a dominated
+          // block knows at least those)
+          if !chk || g.safe_add(rv, n, o) {
+            g.set(s, [t])
+            g.offset_facts(s, rv, n)
+          }
+        }
+      }
+      pv = if span >= 0 && addsub_imm(span) {
+        g.def1(false, "cmp $u0, #${span}\ncset $d0, ${cond}", [t])
+      } else {
+        g.def1(false, "cmp $u0, $u1\ncset $d0, ${cond}", [t, g.cimm(span)])
       }
     }
     if pv < 0 {
@@ -2685,20 +2719,38 @@ fn (var g: G) logic_value(x: ssa.Value) -> Bool {
   false
 }
 
-/// v - lo compared with hi - lo as UInt64s (lo <= hi), its cond (ls: v
-/// in [lo, hi]; hi: outside) as a Bool (logic_value).
-fn (var g: G) range_value(v: Int, lo: Int, hi: Int, cond: Str) -> Int {
-  let span = hi.wrapping_sub(lo)
-  let w = g.word(v)
-  var t = w
-  if lo != 0 {
-    t = if addsub_imm(lo) { g.def1(false, "sub $d0, $u0, #${lo}", [w]) } else { g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)]) }
+/// The unchecked 64 bit `v - lo` (or `v + -lo`) values, not yet lowered,
+/// of the blocks the current block dominates, as (value, constant, op,
+/// whether its overflow check remains): a range test that just computed
+/// v - lo gives them its register, as for `c >= 48 && c <= 57`
+/// then `c - 48` (2026-10-30: parse_duration's fraction digit was
+/// subtracted twice). Not a `var g` method: a method that changes g and
+/// may fault restores every field of G inline on its fault path (about 7
+/// KB of stores, gotchas/var-method-fault-reset.md), so the
+/// search stays apart, and its two callers, which have that path already,
+/// assign the registers.
+fn (g: G) range_subs(v: Int, lo: Int) -> List[(Int, Int, ssa.Op, Bool)] {
+  var out: List[(Int, Int, ssa.Op, Bool)] = []
+  if g.cur_sb < 0 || lo == MIN_INT {
+    return out
   }
-  if span >= 0 && addsub_imm(span) {
-    return g.def1(false, "cmp $u0, #${span}\ncset $d0, ${cond}", [t])
+  for s in 0..g.f.values.len() {
+    let x = g.f.values[s]
+    if !(x.op is ssa.Op.Sub | ssa.Op.Add) || g.has_val[s] || x.args.len() != 2 || x.args[0] != v {
+      continue
+    }
+    let (n, nc) = g.const_int(x.args[1])
+    if !nc || n != (if x.op == ssa.Op.Sub { lo } else { -lo }) || !g.word64(x.ty) {
+      continue
+    }
+    if x.block < 0 || !dominates(g.proof.idom, g.cur_sb, x.block) {
+      continue
+    }
+    out.push((s, n, x.op, !x.pos.is_empty()))
   }
-  g.def1(false, "cmp $u0, $u1\ncset $d0, ${cond}", [t, g.cimm(span)])
+  out
 }
+
 
 /// Whether value v is, within depth operations, the result of a call or
 /// a memory read (rt.int_wrap is arithmetic): a list element, a field of
@@ -2746,6 +2798,14 @@ fn (var g: G) range_test(v: Int, lo: Int, hi: Int, e_in: Int, e_out: Int) -> Boo
       t = g.def1(false, "add $d0, $u0, #${-lo}", [w])
     } else {
       t = g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)])
+    }
+    for (s, n, o, chk) in g.range_subs(v, lo) {
+      // the overflow check the current block's bounds decide (a dominated
+      // block knows at least those)
+      if !chk || g.safe_add(v, n, o) {
+        g.set(s, [t])
+        g.offset_facts(s, v, n)
+      }
     }
   }
   var inst = Inst{kind: K_CONDBR, text: "cmp $u0, #${span}", us: [t], cond: "ls"}

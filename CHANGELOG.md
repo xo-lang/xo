@@ -76,6 +76,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   of the instructions (xo bench --ab n=15; wall and cycles within noise);
   xo's native __text 70,913,656 to 70,921,048 bytes, all of it the new
   range_value helper (7,772 bytes; logic_value 376 smaller).
+- Native backends: a range test's subtraction is reused by the code it
+  guards: `c >= 48 && c <= 57` then `c - 48` (and the `||` form)
+  subtracts once, the later `c - 48` taking the range test's register,
+  its overflow check decided by the test's bounds (compiler/arm64 isel
+  range_subs); std's parse_duration subtracted a fraction digit's `0`
+  twice. The `||` form is emitted inside logic_value again, without the
+  range_value helper. bench/perf/text dur_parse 0.988 of the
+  instructions (xo bench --ab n=15; wall and cycles within noise); xo's
+  native __text 70,970,408 to 70,965,012 bytes (range_value -7,772,
+  logic_value +992, range_subs +1,316). A small `var g: G` helper with a
+  fault path cost about 7 KB (gotchas/var-method-fault-reset.md).
 - `Duration.parse` reads a fraction's digits without an overflow test a
   digit (std/native/llrt/text.xo): bench/perf/text dur_parse 0.95 of the
   wall time and 0.923 of the cycles on arm64 (xo bench --ab n=15);
