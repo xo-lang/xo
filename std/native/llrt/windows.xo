@@ -191,10 +191,17 @@ pub fn close(h: Int) -> Int {
   0
 }
 
-/// FlushFileBuffers (Go's File.Sync on Windows).
+/// FlushFileBuffers (Go's File.Sync on Windows). A handle opened
+/// without write access has nothing to flush and gets
+/// ERROR_ACCESS_DENIED; that is success, as fsync(2) on a read only
+/// descriptor is on Linux and macOS (fs_atomic syncs a read handle).
 pub fn fsync(h: Int) -> Int {
   if Int(sys_windows.FlushFileBuffers(h)) == 0 {
-    return -dos_errno(Int(sys_windows.GetLastError()))
+    let e = Int(sys_windows.GetLastError())
+    if e == ERROR_ACCESS_DENIED {
+      return 0
+    }
+    return -dos_errno(e)
   }
   0
 }

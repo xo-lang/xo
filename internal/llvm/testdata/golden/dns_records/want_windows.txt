@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+mx: lookup mx.test.: dns lookups are not supported on windows yet
+badmx: lookup badmx.test.: dns lookups are not supported on windows yet
+allbad: lookup allbad.test.: dns lookups are not supported on windows yet
+txt: lookup txt.test.: dns lookups are not supported on windows yet
+srv: lookup _sip._tcp.srv.test.: dns lookups are not supported on windows yet
+addr 192.0.2.7: lookup 7.2.0.192.in-addr.arpa.: dns lookups are not supported on windows yet
+addr 2001:db8::1: lookup 1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.: dns lookups are not supported on windows yet
+addr 198.51.100.1: lookup 1.100.51.198.in-addr.arpa.: dns lookups are not supported on windows yet
+addr nope: lookup nope: unrecognized address
+tcp: lookup big.test.: dns lookups are not supported on windows yet
+nx: lookup nx.test.: dns lookups are not supported on windows yet
+fail: lookup fail.test.: dns lookups are not supported on windows yet
+only: denied true
+done
+--- stderr

@@ -119,7 +119,13 @@ pub struct Found {
 // Files
 
 /// The bytes of the file at path, or None (at most 16 MiB are read).
+/// None on Windows, whose lookups are not supported yet: the calls below
+/// are Linux's and macOS's (lookup_addr reads /etc/hosts before it asks,
+/// and faulted there on windows/amd64).
 fn read_file(path: Str) -> Bytes? {
+  if os() == 3 {
+    return None
+  }
   let mac = os() == 2
   var fd = if mac { darwin.open(path, darwin.O_RDONLY | darwin.O_CLOEXEC, 0) } else { linux.open(path, linux.O_RDONLY | linux.O_CLOEXEC, 0) }
   while fd == -linux.EINTR {

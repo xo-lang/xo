@@ -13,6 +13,20 @@ snapshot (CreateToolhelp32Snapshot, Process32FirstW/NextW) as Go's is,
 instead of 0; 0 still when the snapshot fails. One snapshot a call, not
 a hot path, so no timing row.
 
+## 2026-10-30: fix: File.sync of a read handle on native Windows
+
+- Kind: fix
+- Commit: this commit
+- Found by: the native Windows golden run (fs_atomic: "synced.txt: permission denied")
+- Go reference: none (Go's File.Sync returns the error on Windows; Xo keeps the Linux and macOS result)
+- Test: fs_atomic on the owner's windows/amd64 box
+- Timing: none (an error path)
+
+`File.sync` on a file opened for reading succeeded on Linux and macOS
+(fsync of a read only descriptor) but failed on native Windows, where
+FlushFileBuffers needs write access and returns ERROR_ACCESS_DENIED; a
+read handle has nothing to flush, so that is success there too.
+
 ## 2026-10-29: feature: create_dir_all_mode
 
 - Kind: feature

@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+new one 438
+replaced two, longer 438
+entries app.toml
+missing missing: no such file or directory
+read only cfg: permission denied
+kept two, longer
+sub in a sub
+closed synced.txt: file already closed
+read handle synced
+--- stderr

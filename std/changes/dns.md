@@ -1,5 +1,19 @@
 # std/dns changes
 
+## 2026-10-30: fix: lookup_addr no longer faults on native Windows
+
+- Kind: fix
+- Commit: this commit
+- Found by: the native Windows golden run (dns_records exited 139 on windows/amd64)
+- Go reference: none (Windows native lookups return Io "not supported" for now, decision 0417)
+- Test: dns_records on the Windows box (want_windows.txt: every lookup "not supported", the unparsable address and Denied as elsewhere)
+- Timing: none (an error path)
+
+`lookup_addr` reads /etc/hosts before it asks, and on Windows the
+native file read made Linux system calls and faulted; it now reads no
+file there, so the lookup reports Io "dns lookups are not supported on
+windows yet" as the others do.
+
 ## 2026-10-29: feature: std/dns, Go's MX, TXT, SRV and PTR lookups
 
 - Kind: feature
