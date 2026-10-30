@@ -74,3 +74,28 @@ test "a listing and a walk carry the digests the run cache would compute" {
   expect(sums.get("dir /w/src") ?? "") == want_dir
   expect(sums.get("walk /w/src") ?? "") == want_walk
 }
+
+test "the recorder leaves out the machine's state" {
+  // /proc/meminfo changes from one read to the next: recorded, it made
+  // every Linux build miss the run cache (2026-10-30)
+  let rec = Mutex[Rec].new(Rec{})
+  let code = testing.run_main(fn(o: Os) -> () ! Error {
+    o.fs.create_dir_all("/proc")?
+    o.fs.create_dir_all("/sys/fs/cgroup")?
+    o.fs.create_dir_all("/w")?
+    o.fs.write("/proc/meminfo", b"MemTotal: 8000000 kB\n")?
+    o.fs.write("/sys/fs/cgroup/cpu.max", b"max 100000\n")?
+    o.fs.write("/w/main.xo", b"fn main() {}")?
+    let r = rec_os(o, rec, "/w", rec_machine())
+    let _m = r.fs.read_text("/proc/meminfo")?
+    let _c = r.fs.read_text("/sys/fs/cgroup/cpu.max")?
+    let _e = r.fs.exists("/sys/fs/cgroup/cpu.max")?
+    let _w = r.fs.read_text("/w/main.xo")?
+  }, os)
+  expect(code) == 0
+  let (reads, probes) = rec.with(fn(x) { (x.reads, x.probes) })
+  expect(reads.contains("/proc/meminfo")) == false
+  expect(reads.contains("/sys/fs/cgroup/cpu.max")) == false
+  expect(probes.len()) == 0
+  expect(reads.contains("/w/main.xo")) == true
+}
