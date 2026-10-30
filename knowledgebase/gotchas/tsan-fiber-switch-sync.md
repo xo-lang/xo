@@ -31,3 +31,20 @@ ways and TestTSanSameThreadRace (four tasks, one thread, a report between
 two fibers) fails with flag 0. The runtime's own race tests keep flag 0
 and the instrumented runtime (mode 1, XO_TSAN_RUNTIME=1 and
 xo_tsan_runtime linked).
+
+Observed (2026-10-30, Xo Lang 3): an edge that carries a worker thread's
+clock into a task's context (9b9cd5af3's sanhook.release(it) in
+pool.run_item with an acquire in tasks.task_free, and every variant tried
+since: acquire at task_enter, at the worker to fiber hook, a release and
+acquire of the fiber or worker record) hides the races of
+TestRaceSyncTable's unsynchronized chan, chan_buffered and select cases
+(the thread's clock holds the incidental syncs of the runtime's own
+queues), so the test fails with "no race reported without the
+synchronization" on macOS too. Reverted. A shadow reset
+(sanhook.shadow_reset over the worker record, __tsan_java_free and alloc)
+adds no edge and fixes the Linux arm64 report of the worker record's
+setup, but any such call in fiber_new hid the same cases. On Linux arm64
+TestPreemptMigrate/llvm-race stays red with two reports of a runtime
+record set up by one context and used by a task's (the worker record read
+in pool.preempt, the fiber record's state written in sched.fiber_yield,
+the malloc of each the previous write): skipped there.

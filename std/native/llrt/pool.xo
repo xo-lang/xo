@@ -1375,9 +1375,6 @@ pub fn run_item(p: Int, w: Int, it: Int) {
     }
     return
   }
-  // (ThreadSanitizer: the claim is ordered before the scope's free of the
-  // task, tasks.xo task_free)
-  sanhook.release(it)
   // claimed: the entry is counted taken when the task ends (one atomic
   // on the scope instead of two)
   run_fiber(p, w, fiber_new(rt.mem_load(p, P_FIBERS, 8), w, it))
