@@ -53,14 +53,19 @@
 // Criteria in brackets ([NOTFOUND=return]) are not honoured: glibc's
 // would stop at dns.
 use native/llrt/darwin
+use native/llrt/host
 use native/llrt/linux
 use native/llrt/obj
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/sock
+use native/llrt/sysio
 use native/llrt/tlsname
+use native/llrt/winadapters
+use native/llrt/windows
 use native/rt
 use native/sys_darwin
+use native/sys_windows
 
 // glibc's getaddrinfo error codes
 pub const EAI_NONAME: Int = -2
@@ -125,7 +130,8 @@ pub struct Found {
 /// and faulted there on windows/amd64).
 fn read_file(path: Str) -> Bytes? {
   if os() == 3 {
-    return None
+    let (b, e) = sysio.read_whole(path)
+    return if e != 0 { None } else { Some(b) }
   }
   let mac = os() == 2
   var fd = if mac { darwin.open(path, darwin.O_RDONLY | darwin.O_CLOEXEC, 0) } else { linux.open(path, linux.O_RDONLY | linux.O_CLOEXEC, 0) }
@@ -170,17 +176,19 @@ const CONF_RECHECK_NS = 5000000000
 const CONF_HEAD = 40
 
 /// The resolver configuration: /etc/resolv.conf parsed with the hostname,
-/// both from the cache, read again when the file changed.
+/// both from the cache, read again when the file changed (on Windows,
+/// windows_resolv's text, asked again every 5 seconds).
 fn config() -> Config {
+  let win = os() == 3
   word_lock(rt.static_word(W_CONF_LOCK))
   let t = now()
   var b = rt.mem_load(rt.static_word(W_CONF), 0, 8)
   if b == 0 || t - rt.mem_load(b, 0, 8) >= CONF_RECHECK_NS {
-    let (mt, sz) = file_stamp("/etc/resolv.conf")
-    if b != 0 && mt == rt.mem_load(b, 8, 8) && sz == rt.mem_load(b, 16, 8) {
+    let (mt, sz) = if win { (-2, -2) } else { file_stamp("/etc/resolv.conf") }
+    if !win && b != 0 && mt == rt.mem_load(b, 8, 8) && sz == rt.mem_load(b, 16, 8) {
       rt.mem_store(b, 0, t, 8)
     } else {
-      let text = if mt == -1 { None } else { read_file("/etc/resolv.conf") }
+      let text = if win { Some(windows_resolv()) } else if mt == -1 { None } else { read_file("/etc/resolv.conf") }
       let host = hostname()
       let tb = text ?? b""
       let nb = rt.heap_large(CONF_HEAD + host.len() + tb.len())
@@ -204,6 +212,20 @@ fn config() -> Config {
   let text = if tl < 0 { None } else { Some(rt.cast[Str, Bytes](raw.str_at(b + CONF_HEAD + hl, tl))) }
   word_unlock(rt.static_word(W_CONF_LOCK))
   parse_resolv(if let Some(x) = text { text_lines(x) } else { None }, host)
+}
+
+/// Windows' resolver configuration as resolv.conf text (Go's
+/// dnsReadConfig in dnsconfig_windows.go): a nameserver line for each DNS
+/// server of the adapters that are up (GetAdaptersAddresses, a few
+/// milliseconds, so config keeps it 5 seconds as Go does); resolv.conf's
+/// defaults for the rest (the search domain from the host's name, ndots
+/// 1, timeout 5, two attempts, 127.0.0.1 and ::1 when there is no server).
+fn windows_resolv() -> Bytes {
+  var b = BytesBuilder.new()
+  for ip in winadapters.windows_dns_servers() {
+    b.write_str("nameserver ${ntop(ip)}\n")
+  }
+  b.freeze()
 }
 
 // /etc/hosts' cache (Go's hosts.go: read again when its modification
@@ -230,11 +252,11 @@ fn word_unlock(l: Int) {
   }
 }
 
-/// The modification time and size of the file at path, or (-1, -1)
-/// (always on Windows, which reads no /etc files: read_file).
+/// The modification time and size of the file at path, or (-1, -1).
 fn file_stamp(path: Str) -> (Int, Int) {
   if os() == 3 {
-    return (-1, -1)
+    let (st, e) = windows.stat(path, true)
+    return if e != 0 { (-1, -1) } else { (st.mtime, st.size) }
   }
   if os() == 2 {
     let (st, e) = darwin.stat(path, true)
@@ -244,20 +266,27 @@ fn file_stamp(path: Str) -> (Int, Int) {
   if e != 0 { (-1, -1) } else { (st.mtime, st.size) }
 }
 
-/// The bytes of /etc/hosts from its cache, or None (no file).
-fn hosts_text() -> Bytes? {
+/// The hosts file: /etc/hosts, on Windows the system directory's
+/// drivers\etc\hosts (Go's hosts.go).
+fn hosts_path() -> Str {
   if os() == 3 {
-    return None
+    return "${windows.system_dir()}\\drivers\\etc\\hosts"
   }
+  "/etc/hosts"
+}
+
+/// The bytes of the hosts file from its cache, or None (no file).
+fn hosts_text() -> Bytes? {
+  let path = hosts_path()
   word_lock(rt.static_word(W_HOSTS_LOCK))
   let t = now()
   var b = rt.mem_load(rt.static_word(W_HOSTS), 0, 8)
   if b == 0 || t - rt.mem_load(b, 0, 8) >= CONF_RECHECK_NS {
-    let (mt, sz) = file_stamp("/etc/hosts")
+    let (mt, sz) = file_stamp(path)
     if b != 0 && mt == rt.mem_load(b, 8, 8) && sz == rt.mem_load(b, 16, 8) {
       rt.mem_store(b, 0, t, 8)
     } else {
-      let text = if mt == -1 { None } else { read_file("/etc/hosts") }
+      let text = if mt == -1 { None } else { read_file(path) }
       let tb = text ?? b""
       let nb = rt.heap_large(HOSTS_HEAD + tb.len())
       rt.mem_store(nb, 0, t, 8)
@@ -685,8 +714,11 @@ pub fn parse_resolv(lines0: List[Str]?, hostname: Str) -> Config {
   conf
 }
 
-/// The host name (uname's nodename), or "".
+/// The host name (uname's nodename; GetComputerNameExW on Windows), or "".
 fn hostname() -> Str {
+  if os() == 3 {
+    return host.hostname()
+  }
   if os() == 2 {
     let hb = raw.bytes_buf(256)
     let ha = raw.bytes_addr(hb)
@@ -829,6 +861,10 @@ pub fn parse_nsswitch(lines0: List[Str]?) -> Order {
 /// glibc reloads it), and the word is one aligned store (threads may
 /// look up at once).
 fn order_of(state: Int) -> Order {
+  // Windows has no nsswitch.conf: the hosts file, then DNS
+  if os() == 3 {
+    return Order.FilesDns
+  }
   let (st, e) = linux.stat("/etc/nsswitch.conf", true)
   // the key: 1 for no file, else from the time and size (below 2^60)
   var key = 1
@@ -1416,6 +1452,9 @@ pub fn ptr_at(m: Bytes, d: Int, n: Int) -> Str? {
 
 /// The monotonic clock in nanoseconds.
 fn now() -> Int {
+  if os() == 3 {
+    return sysio.mono_ns()
+  }
   if os() == 2 {
     return darwin.clock_ns(darwin.CLOCK_MONOTONIC)
   }
@@ -1424,7 +1463,7 @@ fn now() -> Int {
 
 /// A random query ID (getrandom; the clock when it fails).
 fn new_id() -> Int {
-  let (b, e) = if os() == 2 { darwin.random(2) } else { linux.random(2) }
+  let (b, e) = if os() == 3 { windows.random(2) } else if os() == 2 { darwin.random(2) } else { linux.random(2) }
   if e != 0 || b.len() != 2 {
     return now() & 65535
   }
@@ -1451,7 +1490,7 @@ fn wait(fds: List[Int], events: Int, deadline: Int) -> List[Int]? {
     }
     rt.mem_store(ts, 0, left / 1000000000, 8)
     rt.mem_store(ts, 8, left % 1000000000, 8)
-    let r = if os() == 2 { mac_poll(p, n, left) } else { sock.ppoll(p, n, ts) }
+    let r = if os() == 3 { win_poll(fds, events, p, left) } else if os() == 2 { mac_poll(p, n, left) } else { sock.ppoll(p, n, ts) }
     if r == -sock.EINTR {
       continue
     }
@@ -1479,16 +1518,70 @@ fn mac_poll(p: Int, n: Int, left: Int) -> Int {
   r
 }
 
+/// WSAPoll on Windows of the sockets fds for events (POLLIN 1 as
+/// POLLRDNORM | POLLRDBAND 0x300, POLLOUT 4 as POLLWRNORM 0x10) for left
+/// nanoseconds (rounded up to a millisecond): the count ready, or the
+/// negative errno; each descriptor's revents written back into the
+/// pollfds at p (8 bytes each, revents at 6) as POLLIN, POLLOUT or POLLERR.
+fn win_poll(fds: List[Int], events: Int, p: Int, left: Int) -> Int {
+  let n = fds.len()
+  let wb = raw.bytes_buf(16 * n + 16)
+  let w = raw.bytes_addr(wb)
+  let ev = (if (events & 1) != 0 { 768 } else { 0 }) | (if (events & 4) != 0 { 16 } else { 0 })
+  for i in 0..n {
+    // WSAPOLLFD: the SOCKET (8 bytes), events and revents (shorts)
+    rt.mem_store(w, 16 * i, fds[i], 8)
+    rt.mem_store(w, 16 * i + 8, ev, 2)
+    rt.mem_store(w, 16 * i + 10, 0, 2)
+  }
+  let r = Int(sys_windows.WSAPoll(w, n, (left + 999999) / 1000000))
+  if r < 0 {
+    let _k = sock.keep(wb, 0)
+    return -5
+  }
+  for i in 0..n {
+    let rv = rt.mem_load(w, 16 * i + 10, 2)
+    // POLLRDNORM | POLLRDBAND | POLLHUP: readable; POLLWRNORM: writable;
+    // POLLERR, POLLNVAL: an error the next call reports
+    var out = 0
+    if (rv & 770) != 0 {
+      out = out | 1
+    }
+    if (rv & 16) != 0 {
+      out = out | 4
+    }
+    if (rv & 5) != 0 {
+      out = out | 8
+    }
+    rt.mem_store(p, 8 * i + 6, out, 2)
+  }
+  let _k = sock.keep(wb, 0)
+  r
+}
+
 /// EAGAIN and EINPROGRESS of the target OS (Linux's 11 and 115, darwin's
-/// 35 and 36), as sock's calls return them negated.
-fn e_again() -> Int { if os() == 2 { 35 } else { sock.EAGAIN } }
-fn e_inprogress() -> Int { if os() == 2 { 36 } else { sock.EINPROGRESS } }
+/// 35 and 36, the Windows CRT's EWOULDBLOCK 140 and EINPROGRESS 112), as
+/// sock's calls return them negated.
+fn e_again() -> Int { if os() == 3 { 140 } else if os() == 2 { 35 } else { sock.EAGAIN } }
+fn e_inprogress() -> Int { if os() == 3 { 112 } else if os() == 2 { 36 } else { sock.EINPROGRESS } }
 
 /// A non-blocking, close-on-exec socket for server's family (a sockaddr
 /// of 16 bytes is IPv4): socket flags on Linux, fcntl on macOS (with
 /// SO_NOSIGPIPE, as macOS has no MSG_NOSIGNAL).
 fn open_sock(server: Bytes, ty: Int) -> Int {
   let fam = if server.len() == 16 { sock.AF_INET } else { sock.af_inet6() }
+  if os() == 3 {
+    // Winsock takes no SOCK_NONBLOCK: ioctlsocket FIONBIO after
+    let fd = sock.socket(fam, ty, 0)
+    if fd < 0 {
+      return fd
+    }
+    if sock.nonblock(fd) < 0 {
+      let _c = sock.close(fd)
+      return -1
+    }
+    return fd
+  }
   if os() != 2 {
     return sock.socket(fam, ty | sock.SOCK_NONBLOCK | sock.SOCK_CLOEXEC, 0)
   }

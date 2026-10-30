@@ -132,10 +132,24 @@ fn shown(e: NetErr) -> Str {
   }
 }
 
+/// A UDP socket on 127.0.0.1:0 and a TCP listener on its port; a port
+/// TCP cannot have (Windows reserves TCP port ranges, so bind reports
+/// permission denied) is given back and another tried.
+fn servers(os: Os) -> (udp.UdpConn, Listener) {
+  for _ in 0..20 {
+    let u = udp.listen(os.net, "127.0.0.1:0").or_fault("udp listen")
+    match os.net.listen(u.local_addr()) {
+      Ok(l) => return (u, l)
+      Err(_) => u.close()
+    }
+  }
+  let u = udp.listen(os.net, "127.0.0.1:0").or_fault("udp listen")
+  (u, os.net.listen(u.local_addr()).or_fault("tcp listen"))
+}
+
 fn main(os: Os) {
-  let srv_udp = udp.listen(os.net, "127.0.0.1:0").or_fault("udp listen")
+  let (srv_udp, lis) = servers(os)
   let addr = srv_udp.local_addr()
-  let lis = os.net.listen(addr).or_fault("tcp listen")
   scope s {
     s.spawn_background(fn() {
       while {

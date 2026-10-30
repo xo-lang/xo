@@ -1,5 +1,22 @@
 # std/dns changes
 
+## 2026-10-30: port: native Windows record lookups
+
+- Kind: port
+- Commit: this commit
+- Found by: decision 0417's stage 2 (the lead's queue, after decision 0426)
+- Go reference: net/dnsconfig_windows.go (the adapters' DNS servers from GetAdaptersAddresses, fec0::/10 skipped), net/hosts.go (the system directory's drivers\etc\hosts)
+- Test: goldens dns_records and net_lookup_dial_timeout on the Windows box (windows/amd64 native) and on arm64, LLVM and Go parity
+- Timing: bench/perf/dns on the owner's windows/amd64 box, 11 rounds, median wall: mx (2,000 lookups) Xo 0.217 s, Go net.Resolver (PreferGo) 0.189 s, 1.15x (1.22x after the server setup, none: 0.041 s and 0.045 s); asking GetAdaptersAddresses on every lookup took 11.8 s (60x), so the configuration is kept 5 seconds as Go keeps it
+
+lookup_mx, lookup_txt, lookup_srv and lookup_addr work on native
+Windows: they use Xo's own DNS client, as on Linux and macOS, with the
+DNS servers of the adapters that are up and the Windows hosts file
+(as Go's pure Go resolver, unlike Go's default there, which asks the
+system resolver: Windows' NRPT, DNS over HTTPS and cache are not
+consulted), instead of returning Io "dns lookups are not supported on windows yet"
+(decision 0427).
+
 ## 2026-10-30: perf: resolv.conf and /etc/hosts read once, rechecked every 5 seconds
 
 - Kind: perf

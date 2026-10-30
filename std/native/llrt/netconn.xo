@@ -858,10 +858,6 @@ pub fn lookup_records(lists: Str, subject: Str, name: Str, qtype: Int, server: S
     fail(c, 4, "lookup ${name}: no such host")
     return b""
   }
-  if os() == 3 {
-    fail(c, 4, "lookup ${name}: dns lookups are not supported on windows yet")
-    return b""
-  }
   let r = dns.lookup_records(name, qtype, server)
   let on = if r.server == "" { "" } else { " on ${r.server}" }
   if r.kind == dns.KIND_OK {

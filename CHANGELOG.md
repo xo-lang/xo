@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native Windows DNS record lookups (`lookup_mx`, `lookup_txt`,
+  `lookup_srv`, `lookup_addr`) work: Xo's own DNS client asks the network
+  adapters' DNS servers and reads the Windows hosts file, as Go's pure Go
+  resolver does (Go's default asks the system resolver, so Windows' NRPT
+  and DNS over HTTPS settings are not consulted; decision 0427); they
+  returned "not supported" before.
 - A native build that rebuilt nothing hits the binary cache again: the
   per-function cache's spill files (decision 0418) are written to the
   build directory's spill/ subdirectory, which the link's cache key

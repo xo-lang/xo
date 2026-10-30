@@ -53,7 +53,8 @@ truncated answer. It asks only for A and AAAA.
    in Go's pure Go resolver). The Go backend uses Go's net.Resolver, on
    every platform from the start. Native Windows, stage 1: `Err(Io("dns
    lookups are not supported on windows yet"))`, said in the spec and
-   std/changes; stage 2 binds DnsQuery_W.
+   std/changes; stage 2 binds DnsQuery_W (superseded by decision 0427:
+   stage 2 runs dns.xo's own client with the adapters' DNS servers).
 
 4. Invalid records. Go returns the valid records and an error together
    when some records are invalid (a host that is not a domain name). A
@@ -77,7 +78,9 @@ truncated answer. It asks only for A and AAAA.
   keep the order fixed; both invalid record cases (some, all) are rows.
 - dns.xo's query and answer code serves any record type; lookup_host is
   unchanged.
-- Windows native users get an error until stage 2.
+- Windows native users get an error until stage 2 (decision 0427, 2026-10-30).
+
+Stage 2 superseded by 0427 (2026-10-30).
 
 ## Alternatives
 

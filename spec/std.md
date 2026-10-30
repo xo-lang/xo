@@ -6045,6 +6045,10 @@ fn lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial
   the one `lookup_host` uses on Linux) on Linux and macOS: UDP with TCP
   when an answer is truncated. macOS's scoped resolvers (a VPN's split
   DNS in `scutil --dns`) are not consulted, as Go's own resolver does not
-  consult them. On Windows the native lookups are `Err(Io)` ("dns lookups
-  are not supported on windows yet"); the Go backend uses Go's resolver
-  on every OS.
+  consult them. On Windows the same client asks the DNS servers of the
+  network adapters that are up (GetAdaptersAddresses) and reads the system
+  directory's drivers\etc\hosts, as Go's pure Go resolver does there,
+  unlike Go's default on Windows (the system resolver): Windows' name
+  resolution policies (NRPT, a VPN's split DNS), its DNS over HTTPS
+  setting and its cache are not consulted (decision 0427).
+  The Go backend uses Go's resolver on every OS.

@@ -1,0 +1,77 @@
+// The adapter list of Windows' GetAdaptersAddresses (IPHLPAPI) and the
+// DNS servers in it, for std/native/llrt/dns.xo's lookups (Go's
+// dnsReadConfig in dnsconfig_windows.go); x64 offsets of
+// IP_ADAPTER_ADDRESSES_LH.
+
+use native/llrt/raw
+use native/rt
+use native/sys_windows
+
+/// GetAdaptersAddresses' list in a buffer, or "" and the error's text
+/// (GAA_FLAG_INCLUDE_PREFIX 16, AF_UNSPEC; 15 KB first, as Microsoft
+/// advises, larger while the call says ERROR_BUFFER_OVERFLOW, 111).
+pub fn adapters_buf() -> (Bytes, Str) {
+  var size = 15000
+  var tries = 0
+  while tries < 4 {
+    let buf = raw.bytes_buf(size)
+    let b = raw.bytes_addr(buf)
+    let sb = raw.bytes_buf(8)
+    let s = raw.bytes_addr(sb)
+    rt.mem_store(s, 0, size, 4)
+    let r = Int(sys_windows.GetAdaptersAddresses(0, 16, 0, b, s))
+    let need = rt.mem_load(s, 0, 4) & 4294967295
+    raw.alive(sb)
+    if r == 111 {
+      size = need + 1024
+      tries += 1
+      continue
+    }
+    if r != 0 {
+      return (b"", "GetAdaptersAddresses: error ${r}")
+    }
+    return (buf, "")
+  }
+  (b"", "GetAdaptersAddresses: the list kept growing")
+}
+
+/// The DNS servers of the adapters that are up, each an IPv4 (4 bytes) or
+/// IPv6 (16) address, as Go's dnsReadConfig on Windows: a fec0::/10 site
+/// local server (Windows' default when none is set) is skipped
+/// (FirstDnsServerAddress at 48, each
+/// IP_ADAPTER_DNS_SERVER_ADDRESS's Next at 8 and lpSockaddr at 16).
+pub fn windows_dns_servers() -> List[Bytes] {
+  let (buf, err) = adapters_buf()
+  var out: List[Bytes] = []
+  if !err.is_empty() {
+    return out
+  }
+  var a = raw.bytes_addr(buf)
+  while a != 0 {
+    if rt.mem_load(a, 104, 4) == 1 {
+      var d = rt.mem_load(a, 48, 8)
+      while d != 0 {
+        let sa = rt.mem_load(d, 16, 8)
+        let fam = if sa == 0 { 0 } else { rt.mem_load(sa, 0, 2) }
+        if fam == 2 {
+          out.push(bytes_at(sa + 4, 4))
+        } else if fam == 23 {
+          if !(rt.mem_load(sa, 8, 1) == 254 && (rt.mem_load(sa, 9, 1) & 192) == 192) {
+            out.push(bytes_at(sa + 8, 16))
+          }
+        }
+        d = rt.mem_load(d, 8, 8)
+      }
+    }
+    a = rt.mem_load(a, 8, 8)
+  }
+  raw.alive(buf)
+  out
+}
+
+/// A copy of the n bytes at a.
+fn bytes_at(a: Int, n: Int) -> Bytes {
+  let b = raw.bytes_buf(n)
+  rt.mem_copy(raw.bytes_addr(b), a, n)
+  b
+}

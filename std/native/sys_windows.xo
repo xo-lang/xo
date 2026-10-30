@@ -295,6 +295,13 @@ fn SetThreadContext(h: Int, cx: Int) -> Int32
 /// nonzero on success.
 fn GetThreadTimes(h: Int, created: Int, exited: Int, kernel: Int, user: Int) -> Int32
 fn GetCurrentProcessId() -> UInt32
+/// GetSystemDirectoryW into the n UTF-16 units at buf: the units written
+/// without the NUL, the size needed when it does not fit, or 0.
+fn GetSystemDirectoryW(buf: Int, n: Int) -> UInt32
+/// GetAdaptersAddresses (IPHLPAPI) of the family with flags into the
+/// bytes at buf, the ULONG at size their room and then the size needed:
+/// 0, ERROR_BUFFER_OVERFLOW (111) or another error (std/native/llrt/winadapters.xo).
+fn GetAdaptersAddresses(family: Int, flags: Int, reserved: Int, buf: Int, size: Int) -> UInt32
 /// GetComputerNameExW of the name type into the UTF-16 units at buf; the
 /// DWORD at size holds the room in units and gets the length written
 /// (without the NUL): nonzero on success.

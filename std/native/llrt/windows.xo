@@ -938,6 +938,17 @@ pub fn names(path: Str) -> (List[Str], Int) {
 /// (WideCharToMultiByte: an unpaired surrogate is U+FFFD).
 fn narrow(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, false) }
 
+/// GetSystemDirectoryW in UTF-8 ("C:\\Windows\\system32"), "" when it
+/// fails (std/native/llrt/dns.xo's hosts file).
+pub fn system_dir() -> Str {
+  let buf = raw.bytes_buf(1040)
+  let k = Int(sys_windows.GetSystemDirectoryW(raw.bytes_addr(buf), 520))
+  if k == 0 || k >= 520 {
+    return ""
+  }
+  narrow(buf, 0, k)
+}
+
 /// narrow with each \ made /.
 fn narrow_slash(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, true) }
 
