@@ -247,6 +247,13 @@ if section test; then
 				guard="rm -rf $tx"
 			else
 				"${tenv[@]}" "$tgo" test -count=1 "$gp" >/dev/null 2>&1 || true
+				# std's test variant, as a user's first `xo test` builds it in
+				# the background: XO_SEPCOMP_BG=0 (no build racing the
+				# rounds) starts none, so without these every edit round
+				# built the whole program (2026-10-30: base64's edit row
+				# read 1.267 of go test's wall)
+				"${tenv[@]}" "$XO" dev stdcache --test --conc=0 >/dev/null 2>&1 || true
+				"${tenv[@]}" "$XO" dev stdcache --test --conc=1 >/dev/null 2>&1 || true
 				"${tenv[@]}" "$XO" test --std-module=native/$m >/dev/null 2>&1 || true
 				guard="echo 'func releaseVsGoEdit'\$(date +%s)_\$\$'() int { return 1 }' >> $work/goroot/src/$gp/$gf; echo 'fn release_vs_go_edit_'\$(date +%s)_\$\$'() -> Int { 1 }' >> $work/xostd/native/$m.xo"
 			fi
