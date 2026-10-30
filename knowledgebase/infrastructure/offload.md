@@ -85,7 +85,14 @@ on 2026-10-29. Recreated by the owner on 2026-10-30 after its ext4 /work
 went emergency read only (at 60% of 453 GB, a filesystem error, not a
 full disk): now with `--init` (docker-init as PID 1 reaps orphans; the old
 `sleep infinity` PID 1 had piled up 42,652 zombies) and an 89 GB disk, so
-clean up /work after each job. The lead reinstalled the list below
+clean up /work after each job. Recreated again the same day (owner,
+2026-10-30 afternoon) with `--security-opt seccomp=unconfined` for perf;
+/work survived (a volume), the system did not, so the lead reran the setup
+(perf, tini, the second slot's lock, /work/in, the public 0.35.0 seed as
+OFF_SEED). perf runs, but the VM exposes no hardware counters (no
+armv8_pmuv3 under /sys/bus/event_source/devices; instructions and cycles
+are `<not supported>`), so instruction sweeps (bench/perf/sweep.py) run on
+the Mac (Last verified: 2026-10-30). The lead reinstalled the list below
 (openssh-server first: `apt-get install openssh-server`, `mkdir -p
 /run/sshd`, PermitRootLogin and PasswordAuthentication in
 /etc/ssh/sshd_config.d/, `/usr/sbin/sshd`, which a container restart does
