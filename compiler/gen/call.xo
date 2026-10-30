@@ -609,7 +609,12 @@ fn (var g: Gen) emit_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[St
     let pr = g.pkg_ref(o.module)
     call = "${pr}F_${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   } else if g.method_is_go_method(fo) {
-    call = "${g.go_recv(recv)}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
+    if let Some(site) = g.go_site(fo) {
+      // the adapter's body at the call (decision 0441)
+      call = g.go_site_call(site, recv, args)
+    } else {
+      call = "${g.go_recv(recv)}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
+    }
   } else {
     if o.recv_var {
       recv = "&" + recv
@@ -710,6 +715,10 @@ fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str
   let o = g.c.objs[fo]
   let prefix = g.std_free_prefix(o.module)
   if o.recv < 0 {
+    if let Some(site) = g.go_site(fo) {
+      // a bound Go function's body at the call (decision 0441)
+      return g.go_site_call(site, "", args)
+    }
     return "${r}${prefix}${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   }
   let rm = g.omod(o.recv)
@@ -717,6 +726,9 @@ fn (var g: Gen) std_call(fo: Int, sub: Map[Int, Int], recv0: Str, args: List[Str
     return "${r}${g.std_prefix(rm)}${g.oname(o.recv)}_${g.oname(fo)}${g.targs_code(o.tparams, sub)}(tk${prefix_comma(args)})"
   }
   if g.method_is_go_method(fo) {
+    if let Some(site) = g.go_site(fo) {
+      return g.go_site_call(site, recv0, args)
+    }
     return "${g.go_recv(recv0)}.${go_method(g.oname(fo))}(tk${prefix_comma(args)})"
   }
   var recv = recv0

@@ -1,5 +1,28 @@
 # std/go changes
 
+## 2026-10-30: behavior: a Go library records the Xo line as its caller
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the owner's Windows testing of zap (`"caller":"rt/xo_gobind_go_uber_org_zap.go:1687"`), 1b6771a9c's caller skip
+- Go reference: runtime.Caller; zap's AddCaller, log's Lshortfile, slog's AddSource
+- Test: internal/gobind TestSiteForms; bench/usego-workflows/zap ("caller is the Xo line", the exact line, no add_caller_skip)
+- Decision: 0441
+
+On the Go backend a bound call runs its adapter's body in a function
+literal at the call, under the Xo call's `//line` (gobind writes one
+`//xo:site` record per non generic adapter; the compiler pastes it), so
+a library that records its caller sees `main.xo:LINE`, not the adapter
+in rt. A program that added a caller skip for the adapter frame
+(`zap.add_caller_skip(1)`) now skips one frame too many and drops it.
+Bindings are version 33: older ones are rebound on the next build.
+Calls through an interface value and of generic functions still run the
+adapter in rt. Cost on the linux/arm64 host
+(bench/results/go-site-forms-2026-10-30.md): the edit loop's rebuild
+wall zap 0.991 and chi 1.004 of the base (within noise), the binary the
+same size, the program's generated Go 189 (zap) and 274 (chi) lines
+larger (about 2% of the tree).
+
 ## 2026-10-30: fix: go.out[T]() of a List or Map allocates T's Go type
 
 - Kind: fix

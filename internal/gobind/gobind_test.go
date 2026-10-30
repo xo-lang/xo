@@ -2,6 +2,7 @@ package gobind
 
 import (
 	"fmt"
+	"go/parser"
 	"go/types"
 	"os"
 	"path/filepath"
@@ -1435,5 +1436,90 @@ func TestConcurrentBinds(t *testing.T) {
 		if err != nil {
 			t.Errorf("bind m%d: %v", i, err)
 		}
+	}
+}
+
+// TestSiteForms: every non generic adapter has a call site form
+// (decision 0441): one line, valid Go once the runtime qualifier is in,
+// GoEnter and the deferred GoExit inside, package rt's names qualified,
+// locals and fields not, Go packages under their site aliases; a value
+// mode adapter is flattened (no goCall_ left in the fall through).
+func TestSiteForms(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	_, b, _ := bindDecl(t, "net/url")
+	text := string(b.Adapter)
+	if e := grep(text, "//xo:site-error"); e != "" {
+		t.Fatalf("site form errors:\n%s", e)
+	}
+	sites := map[string]string{}
+	var imps []string
+	for _, l := range strings.Split(text, "\n") {
+		if !strings.HasPrefix(l, "//xo:site ") {
+			continue
+		}
+		f := strings.Split(strings.TrimPrefix(l, "//xo:site "), "\t")
+		if len(f) != 3 {
+			t.Fatalf("site record with %d fields: %s", len(f), l)
+		}
+		// the escaped lines back, then one space per run of white space
+		lit := strings.NewReplacer("\\n", "\n", "\\t", "\t", "\\\\", "\\").Replace(f[2])
+		flat := strings.Join(strings.Fields(lit), " ")
+		sites[f[0]] = flat
+		imps = append(imps, f[1])
+		src := strings.ReplaceAll(lit, "%rt.", "rt.")
+		if _, err := parser.ParseExpr(src); err != nil {
+			t.Errorf("site %s does not parse: %v\n%s", f[0], err, src)
+		}
+		if !strings.Contains(flat, "%rt.GoEnter(tk) defer %rt.GoExit(tk, ") {
+			t.Errorf("site %s lacks the boundary: %s", f[0], flat)
+		}
+		if strings.Contains(flat, "goCall_") {
+			t.Errorf("site %s is not flattened: %s", f[0], flat)
+		}
+	}
+	if len(sites) < 20 {
+		t.Fatalf("%d site records, want the package's adapters", len(sites))
+	}
+	// url.Parse: an error result (net/url is pure: no replay hook)
+	p := sites["parse"]
+	for _, want := range []string{"func(tk *%rt.Task, a0 string) %rt.Result[%rt.Go_net_url_URL, %rt.Go_Error] {", "r0, err := xgb_net_url.Parse(a0) if err != nil { return %rt.Result[%rt.Go_net_url_URL, %rt.Go_Error]{E: %rt.GoErr(err)} }", "%rt.Result[%rt.Go_net_url_URL, %rt.Go_Error]{Ok: true, V: %rt.Go_net_url_URL{P: r0}} }"} {
+		if !strings.Contains(p, want) {
+			t.Errorf("site parse lacks %q:\n%s", want, p)
+		}
+	}
+	// a method: the receiver is the first parameter
+	if m := sites["URL.string"]; !strings.HasPrefix(m, "func(h %rt.Go_net_url_URL, tk *%rt.Task) string {") || !strings.Contains(m, "h.P.String()") {
+		t.Errorf("site URL.string: %s", m)
+	}
+	if !strings.Contains(strings.Join(imps, " "), "xgb_net_url=net/url") {
+		t.Errorf("no net/url import among the records: %v", imps)
+	}
+	// a value mode adapter (crypto/sha256's sum256, replayed by value): the
+	// replay closure and the wrapper's end both carry the inner function's
+	// statements, since the inner (goCall_X) is unexported in rt and the
+	// program's package cannot name it (go_sha256 failed to build with
+	// "undefined: rt.goCall_Go_crypto_sha256_sum256", 2026-10-30)
+	_, b, _ = bindDecl(t, "crypto/sha256")
+	text = string(b.Adapter)
+	if e := grep(text, "//xo:site-error"); e != "" {
+		t.Fatalf("site form errors:\n%s", e)
+	}
+	var sum string
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(l, "//xo:site sum256\t") {
+			f := strings.Split(strings.TrimPrefix(l, "//xo:site "), "\t")
+			sum = strings.Join(strings.Fields(strings.NewReplacer("\\n", "\n", "\\t", "\t", "\\\\", "\\").Replace(f[2])), " ")
+		}
+	}
+	if sum == "" {
+		t.Fatalf("no site record for sum256")
+	}
+	if strings.Contains(sum, "goCall_") {
+		t.Errorf("site sum256 names the inner function: %s", sum)
+	}
+	if strings.Count(sum, "%rt.GoEnter(tk) defer %rt.GoExit(tk, ") != 2 || !strings.Contains(sum, "%rt.GoFxValue(tk, ") {
+		t.Errorf("site sum256: want the inner's statements in the replay closure and at the end:\n%s", sum)
 	}
 }

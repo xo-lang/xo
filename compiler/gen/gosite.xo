@@ -1,0 +1,76 @@
+// Call site forms of Go bindings (decision 0441): a `use go` call is
+// emitted as the adapter's body applied at the call, a function literal
+// whose every line is under the Xo call's //line directive, so a Go library
+// that records its caller (zap's AddCaller, log's Lshortfile) records
+// the Xo line, not an adapter in package rt (gotcha
+// go-adapter-frame-caller-skip.md). gobind (internal/gobind gen.go
+// siteForm) writes one `//xo:site KEY\tIMPORTS\tLITERAL` record per non
+// generic adapter at the end of the binding's Go file: KEY is `fn` or
+// `Type.fn` in Xo names, IMPORTS the `alias=path` pairs the literal
+// uses, LITERAL the Go function literal with `%rt.` where the runtime
+// qualifier goes and, for a method, the receiver as its first parameter
+// h. An adapter without a record (generic, a field accessor, a call
+// through an interface value) is called as before.
+
+/// One call site form.
+struct GoSite {
+  imports: List[Str] = []
+  lit: Str = ""
+}
+
+/// The call site form of Go function or method fo, when its module is a
+/// `use go` binding with a record for it.
+fn (var g: Gen) go_site(fo: Int) -> GoSite? {
+  let o = g.c.objs[fo]
+  let m = g.omod(fo)
+  if m < 0 || g.c.mods[m].go_path.is_empty() {
+    return None
+  }
+  if !g.sites_parsed.contains(m) {
+    g.parse_go_sites(m)
+  }
+  var key = g.oname(fo)
+  if o.recv >= 0 {
+    key = g.oname(o.recv) + "." + key
+  }
+  g.sites.get("${m}|${key}")
+}
+
+/// Reads module m's site records once.
+fn (var g: Gen) parse_go_sites(m: Int) {
+  g.sites_parsed[m] = true
+  for l in g.c.mods[m].go_adapter.split("\n") {
+    if !l.starts_with("//xo:site ") {
+      continue
+    }
+    let f = l.trim_prefix("//xo:site ").split("\t")
+    if f.len() != 3 {
+      continue
+    }
+    var imps: List[Str] = []
+    if !f[1].is_empty() {
+      imps = f[1].split(" ")
+    }
+    g.sites["${m}|${f[0]}"] = GoSite{imports: imps, lit: f[2]}
+  }
+}
+
+/// The call of site s: its literal applied to the receiver (a method),
+/// the task and the arguments, with the runtime qualified and the Go
+/// packages it names imported.
+fn (var g: Gen) go_site_call(s: GoSite, recv: Str, args: List[Str]) -> Str {
+  for imp in s.imports {
+    if let Some((alias, path)) = imp.cut("=") {
+      g.pkgs[g.p].imports[path] = alias
+    }
+  }
+  var all: List[Str] = []
+  if !recv.is_empty() {
+    all.push(recv)
+  }
+  all.push("tk")
+  // the literal's lines back (gobind escaped them): each goes under the
+  // call's //line directive (fn.xo line)
+  let lit = s.lit.replace("\\\\", "\u{1}").replace("\\n", "\n").replace("\\t", "\t").replace("\u{1}", "\\")
+  "${lit.replace("%rt.", g.rt())}(${(all + args).join(", ")})"
+}

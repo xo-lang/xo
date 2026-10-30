@@ -3,8 +3,11 @@ package gobind
 import (
 	"bytes"
 	"fmt"
+	"go/ast"
 	"go/constant"
 	"go/format"
+	"go/parser"
+	"go/printer"
 	"go/token"
 	"go/types"
 	"io/fs"
@@ -122,6 +125,9 @@ type gen struct {
 	rerunKey string
 	skips    []string // "name: reason" in declaration order
 	stats    Stats
+	// sites: the call site form of each non generic adapter (decision
+	// 0441), one `//xo:site` record each, in adapter order
+	sites []string
 	// tps: the type parameters of the generic function being bound
 	// (decision 0415), nil otherwise
 	tps map[*types.TypeParam]*tparam
@@ -1628,12 +1634,221 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	}
 	a.WriteString("}\n\n")
 	g.adapt.WriteString(a.String())
+	if len(gtps) == 0 {
+		// the call site form (decision 0441): the Go backend pastes it
+		// at each call, so the Go library's caller is the Xo line
+		key := s.xoName
+		if s.recv != nil {
+			key = s.recv.xo + "." + s.xoName
+		}
+		if lit, imps, err := g.siteForm(a.String()); err != nil {
+			// the adapter stays (a call through it works); the record
+			// names the failure, which TestSiteForms catches on std
+			g.sites = append(g.sites, "//xo:site-error "+key+": "+err.Error())
+		} else {
+			g.sites = append(g.sites, "//xo:site "+key+"\t"+strings.Join(imps, " ")+"\t"+lit)
+		}
+	}
 	if s.recv != nil {
 		s.recv.decls = append(s.recv.decls, d.String())
 	} else {
 		g.funcs = append(g.funcs, d.String())
 	}
 	return nil
+}
+
+// siteForm derives the call site form of an adapter (decision 0441): a
+// function literal with the adapter's body, the receiver (when there is
+// one) as its first parameter `h`, every name of package rt qualified
+// with the placeholder `%rt.` (the Go backend writes its runtime
+// qualifier there) and every Go package the body names imported under
+// an alias unique across bindings (xgb_ and the path), its lines
+// escaped into the one line record, so the Go backend can put every
+// line under the //line directive of the Xo call. A value mode adapter
+// (a wrapper calling goCall_X) is flattened: the wrapper's replay
+// branch with the inner's statements in its closure, then the inner
+// function's statements (the inner is unexported). The Go backend
+// emits `LIT(recv, tk, args...)` where it would call the adapter:
+// GoEnter and the deferred GoExit run in the literal's own frame, which
+// the //line directive places at the Xo call, so a library that records
+// its caller (zap's AddCaller, log's Lshortfile) records the Xo line,
+// not the adapter (gotcha go-adapter-frame-caller-skip.md). imps are
+// the "alias=path" pairs the literal uses.
+func (g *gen) siteForm(adapter string) (lit string, imps []string, err error) {
+	fset := token.NewFileSet()
+	f, err := parser.ParseFile(fset, "adapter.go", "package rt\n"+adapter, 0)
+	if err != nil {
+		return "", nil, err
+	}
+	var decls []*ast.FuncDecl
+	for _, d := range f.Decls {
+		if fd, ok := d.(*ast.FuncDecl); ok {
+			decls = append(decls, fd)
+		}
+	}
+	if len(decls) == 0 || decls[0].Type.TypeParams != nil {
+		return "", nil, fmt.Errorf("not one plain function")
+	}
+	w := decls[0]
+	body := append([]ast.Stmt(nil), w.Body.List...)
+	if len(decls) == 2 {
+		// value mode: the wrapper ends with the inner call, and its replay
+		// branch's closure calls the inner too; the inner is unexported,
+		// so the program's package cannot name it: the closure gets the
+		// inner's statements (a second parse: the same nodes twice in
+		// one tree would be renamed twice below), the wrapper's end the
+		// inner's statements too. The inner's parameters are the
+		// wrapper's, so the closure captures them.
+		inner := decls[1].Name.Name
+		f2, err := parser.ParseFile(token.NewFileSet(), "adapter.go", "package rt\n"+adapter, 0)
+		if err != nil {
+			return "", nil, err
+		}
+		var innerBody []ast.Stmt
+		for _, d := range f2.Decls {
+			if fd, ok := d.(*ast.FuncDecl); ok && fd.Name.Name == inner {
+				innerBody = fd.Body.List
+			}
+		}
+		isInnerCall := func(e ast.Expr) bool {
+			c, ok := e.(*ast.CallExpr)
+			if !ok {
+				return false
+			}
+			id, ok := c.Fun.(*ast.Ident)
+			return ok && id.Name == inner
+		}
+		ast.Inspect(w.Body, func(n ast.Node) bool {
+			fl, ok := n.(*ast.FuncLit)
+			if !ok || len(fl.Body.List) == 0 {
+				return true
+			}
+			switch st := fl.Body.List[0].(type) {
+			case *ast.ReturnStmt:
+				if len(st.Results) == 1 && isInnerCall(st.Results[0]) {
+					fl.Body.List = innerBody
+				}
+			case *ast.ExprStmt:
+				if isInnerCall(st.X) {
+					fl.Body.List = append(append([]ast.Stmt(nil), innerBody...), fl.Body.List[1:]...)
+				}
+			}
+			return true
+		})
+		body = append(body[:len(body)-1], decls[1].Body.List...)
+	}
+	var params []*ast.Field
+	if w.Recv != nil {
+		params = append(params, w.Recv.List...)
+	}
+	params = append(params, w.Type.Params.List...)
+	fl := &ast.FuncLit{Type: &ast.FuncType{Params: &ast.FieldList{List: params}, Results: w.Type.Results}, Body: &ast.BlockStmt{List: body}}
+	// the names declared in the literal: parameters (of nested literals
+	// too), := and var declarations, range and type switch variables
+	locals := map[string]bool{}
+	ast.Inspect(fl, func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.FuncType:
+			for _, l := range []*ast.FieldList{x.Params, x.Results} {
+				if l == nil {
+					continue
+				}
+				for _, fd := range l.List {
+					for _, nm := range fd.Names {
+						locals[nm.Name] = true
+					}
+				}
+			}
+		case *ast.AssignStmt:
+			if x.Tok == token.DEFINE {
+				for _, l := range x.Lhs {
+					if id, ok := l.(*ast.Ident); ok {
+						locals[id.Name] = true
+					}
+				}
+			}
+		case *ast.RangeStmt:
+			if x.Tok == token.DEFINE {
+				for _, e := range []ast.Expr{x.Key, x.Value} {
+					if id, ok := e.(*ast.Ident); ok {
+						locals[id.Name] = true
+					}
+				}
+			}
+		case *ast.ValueSpec:
+			for _, nm := range x.Names {
+				locals[nm.Name] = true
+			}
+		}
+		return true
+	})
+	aliasOf := map[string]string{}
+	for path, a := range g.imports {
+		aliasOf[a] = path
+	}
+	used := map[string]bool{}
+	var walk func(n ast.Node) bool
+	walk = func(n ast.Node) bool {
+		switch x := n.(type) {
+		case *ast.SelectorExpr:
+			// the selector is a field, method or package member
+			ast.Inspect(x.X, walk)
+			return false
+		case *ast.KeyValueExpr:
+			// a composite literal's field
+			if _, ok := x.Key.(*ast.Ident); ok {
+				ast.Inspect(x.Value, walk)
+				return false
+			}
+		case *ast.Ident:
+			switch {
+			case x.Name == "_" || locals[x.Name] || types.Universe.Lookup(x.Name) != nil:
+			case aliasOf[x.Name] != "":
+				path := aliasOf[x.Name]
+				used[path] = true
+				x.Name = siteAlias(path)
+			default:
+				x.Name = "%rt." + x.Name
+			}
+		}
+		return true
+	}
+	ast.Inspect(fl, walk)
+	var b bytes.Buffer
+	if err := printer.Fprint(&b, fset, fl); err != nil {
+		return "", nil, err
+	}
+	for _, p := range sortedKeys(used) {
+		imps = append(imps, siteAlias(p)+"="+p)
+	}
+	// the literal keeps its lines (gofmt would break a one line literal
+	// into them anyway, and only the first would carry the //line
+	// directive): escaped into the one line record, the Go backend puts
+	// each line under the call's directive (compiler/gen fn.xo line)
+	lit = strings.NewReplacer("\\", "\\\\", "\n", "\\n", "\t", "\\t").Replace(b.String())
+	return lit, imps, nil
+}
+
+// siteAlias is the import alias of Go package path in a site form:
+// unique across bindings, unlike the adapter file's g0, g1. A Go
+// standard package at the top (strings, time) keeps its own name, the
+// one the Go backend imports it by itself (gen.xo import_std), so the
+// two never register the same path under two names; nothing else in a
+// generated package is a bare lowercase name (locals are v_NAME).
+func siteAlias(path string) string {
+	if !strings.ContainsAny(path, "/.") {
+		return path
+	}
+	var b strings.Builder
+	b.WriteString("xgb_")
+	for _, r := range path {
+		if r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z' || r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else {
+			b.WriteByte('_')
+		}
+	}
+	return b.String()
 }
 
 // Replay modes of a bound function (decision 0093 stage 1).
@@ -2633,6 +2848,14 @@ func (g *gen) adapterFile() ([]byte, error) {
 		b.WriteString("import (\n" + strings.Join(imps, "") + ")\n\n")
 	}
 	b.WriteString(text)
+	if len(g.sites) > 0 {
+		// the call site forms (decision 0441), read by the Go backend
+		// (compiler/gen gosite.xo), comments to Go
+		b.WriteString("// Call site forms (decision 0441): key, imports, literal.\n")
+		for _, l := range g.sites {
+			b.WriteString(l + "\n")
+		}
+	}
 	src, err := format.Source(b.Bytes())
 	if err != nil {
 		return b.Bytes(), err

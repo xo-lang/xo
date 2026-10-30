@@ -175,6 +175,10 @@ pub struct Gen {
   /// the program calls task.with_budget: 0 unknown, 1 yes, -1 no
   /// (budget.xo)
   budgets: Int = 0
+  /// the call site forms of the `use go` modules read so far, by
+  /// `<module>|<key>` (gosite.xo)
+  sites: Map[Str, GoSite] = {}
+  sites_parsed: Map[Int, Bool] = {}
 }
 
 // ---------------------------------------------------------------------------

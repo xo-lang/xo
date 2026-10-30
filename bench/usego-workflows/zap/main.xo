@@ -13,9 +13,7 @@ fn main(os: Os) -> () ! Error {
   let path = "${dir}/zap.log"
   let cfg = zap.new_production_config()
   cfg.set_output_paths([path])
-  // one more caller skip: a bound call runs through the binding's adapter
-  // frame (core 4.4), which zap would otherwise name as the caller
-  let log = cfg.build([zap.add_caller_skip(1)])?
+  let log = cfg.build([])?
   // With returns a *Logger, so its binding is optional
   let child = log.with([zap.string("req", "r1")]) ?? log
   child.info("order placed", [zap.string("sku", "X1"), zap.int("qty", 3), zap.duration("took", 15ms)])
@@ -27,6 +25,8 @@ fn main(os: Os) -> () ! Error {
   good = step(os, "child field", lines[0].contains("\"req\":\"r1\"")) && good
   good = step(os, "typed fields", lines[0].contains("\"qty\":3") && lines[0].contains("\"sku\":\"X1\"")) && good
   good = step(os, "level", lines[1].contains("\"level\":\"warn\"")) && good
-  good = step(os, "caller is the Xo line", lines[0].contains("\"caller\":\"main.xo:")) && good
+  // the bound call runs under the Xo call's line (decision 0441), so zap
+  // names the child.info line above, not an adapter
+  good = step(os, "caller is the Xo line", lines[0].contains("\"caller\":\"main.xo:19\"")) && good
   os.stdio.println(if good { "PASS zap" } else { "FAIL zap" })
 }

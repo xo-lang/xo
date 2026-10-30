@@ -1,6 +1,11 @@
 # A Go library that records its caller names Xo's binding adapter
 
-Status: Observed (2026-10-30, the owner's Windows testing of zap on the Go backend)
+Status: Superseded by decision 0441 (2026-10-30): the Go backend pastes
+the adapter's body at the call under the Xo call's `//line`, so zap logs
+`"caller":"main.xo:LINE"` with no caller skip; a call through an
+interface value or of a generic function still runs the adapter in rt.
+Kept for the history and the frame analysis. Observed 2026-10-30 (the
+owner's Windows testing of zap on the Go backend).
 
 ## Symptom
 

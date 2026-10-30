@@ -1862,13 +1862,14 @@ fn main(os: Os) ! {
   `io.read_all(resp.body().as_reader())`, `buf.as_writer()`,
   `httptest.new_server(mux.as_handler())` (decision 0416 and its
   addendum).
-- A bound call runs through one adapter frame in Xo's runtime package
-  (the argument and result conversions and the panic boundary), so a Go
-  library that records its caller with `runtime.Caller` sees the adapter,
-  not the Xo line: tell it to skip one more frame. zap:
-  `cfg.build([zap.add_caller_skip(1)])` logs `"caller":"main.xo:LINE"`
-  (the generated call site carries its `//line`, 10; without the skip it
-  logged `rt/xo_gobind_go_uber_org_zap.go:1687`, 2026-10-30).
+- A bound call runs its binding's adapter (the argument and result
+  conversions and the panic boundary) in a frame at the Xo call's line
+  (decision 0441: the Go backend pastes the adapter's body at the call
+  under the call's `//line`, 10), so a Go library that records its
+  caller with `runtime.Caller` sees the Xo line: zap's AddCaller logs
+  `"caller":"main.xo:LINE"` with no caller skip (a call through an
+  interface value, or of a generic function, still runs the adapter in
+  Xo's runtime package, `rt/xo_gobind_PKG.go`).
 - Every call into Go performs the effect `go`, which `pub` functions must
   declare. Go code can reach files and the network without a capability, so
   `uses go` marks that authority escape in signatures.

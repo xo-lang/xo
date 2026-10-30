@@ -82,7 +82,9 @@ import (
 // 31 (2026-10-30): a named Go map type gets T.of(m) and to_map().
 // 32 (2026-10-30): a []byte Go writes into is an Int length in and the
 // filled Bytes out (decision 0445), no longer skipped.
-const Version = 32
+// 33 (2026-10-30): one //xo:site record per non generic adapter, the
+// call site form of decision 0441.
+const Version = 33
 
 // Binding is one bound Go package.
 type Binding struct {

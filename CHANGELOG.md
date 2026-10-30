@@ -63,6 +63,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   gets `T.of(m)`, made from an Xo Map, and `to_map()`; before, a program
   could not make one, so a Go function taking it was unusable (the
   owner's Windows testing). Binding format 31.
+- Go backend: a `use go` call runs its adapter's body at the call, under
+  the Xo call's line (decision 0441), so a Go library that records its
+  caller (zap's AddCaller, log's Lshortfile) names `main.xo:LINE`; a
+  program that added a caller skip for the adapter frame
+  (`zap.add_caller_skip(1)`, 0.35.0's workflow) drops it. Bindings are
+  version 33 and are rebound on the next build.
 - FIX (`use go`): builds that bound Go packages at the same time into
   one binding directory (two builds of a program, an editor and a test
   run) ran `go get` together in its shared workspace, and some failed
