@@ -2,8 +2,8 @@
 // localhost and IP literals resolve as dial resolves them, an unknown
 // name is Go's `no such host`, Net.only refuses a host it does not list,
 // a dial within the limit connects, and one to an address that never
-// answers (192.0.2.1, TEST-NET-1) is Timeout where Net.dial would wait
-// 30 seconds.
+// answers (192.0.2.1, TEST-NET-1) fails: Timeout after the limit where
+// Net.dial would wait 30 seconds, or at once where the host has no route.
 use std/netip
 
 fn main(os: Os) {
@@ -40,8 +40,17 @@ fn main(os: Os) {
     }
     Err(e) => os.stdio.println("listen: ${e}")
   }
+  // the host decides how the dial fails: no route is `Io` (network is
+  // unreachable, at once), a route that drops the packets is Timeout;
+  // a Timeout must come after the limit and well before Net.dial's 30
+  // seconds (the amd64 offload host, golden runs in parallel, 2026-10-29)
+  let start = os.clock.now()
   match os.net.dial_timeout("192.0.2.1:9", 200ms) {
     Ok(_) => os.stdio.println("blackhole: connected?")
-    Err(e) => os.stdio.println("blackhole: ${e}")
+    Err(NetErr.Timeout) => {
+      let el = os.clock.since(start)
+      os.stdio.println("blackhole: failed ${el >= 200ms && el < 10s}")
+    }
+    Err(_) => os.stdio.println("blackhole: failed true")
   }
 }
