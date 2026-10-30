@@ -986,6 +986,20 @@ fn heap_text(stacks: List[List[Int]], vals: List[List[Int]], t: ProfTable, rate:
     b.write(", ${unset} not tracked for frees")
   }
   b.write("\n")
+  if lost > 0 {
+    // the sample table is full: the totals miss the lost samples, and the
+    // in use figure misses the objects they would have tracked (a self
+    // build at 512 KiB lost about a million and showed 290 MB in use
+    // against 3.9 GB, xo-lang-6 2026-10-30); a rate that keeps about
+    // 50,000 samples of the estimated allocation, a power of two
+    let kept = stacks.len().max(1)
+    let est = tot[1] / kept * (kept + lost)
+    var r = rate.max(1)
+    while est / r > 50000 {
+      r = r * 2
+    }
+    b.write("warning: ${lost} samples were lost (the table was full), so these totals undercount and in use is unreliable; rerun with XO_PROF_HEAP_RATE=${r}\n")
+  }
   for (vi, title) in [(3, "inuse_space"), (1, "alloc_space")] {
     var flat: List[Int] = []
     var cum: List[Int] = []

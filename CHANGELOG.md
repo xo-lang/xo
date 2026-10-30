@@ -18,6 +18,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   shows what verified it. `TlsCert` moved to std/tls (`http.TlsCert`
   stays). Go backend first; the native handshake follows.
 
+- `xo prof` warns when a heap profile lost samples (its table holds 65,536): the totals undercount and the in use figure is unreliable, and it names an `XO_PROF_HEAP_RATE` that keeps about 50,000 samples.
 - std/http full duplex (decision 0433): `Response.with_full_duplex()`
   and `http.pipe()` (Go's `io.Pipe`: a PipeWriter that fills a
   BodyReader), so one task can write a request body while another reads

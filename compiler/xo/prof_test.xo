@@ -89,3 +89,16 @@ test "layout_order: hot by weight, a callee after its caller, the rest in place"
   // its 30), then dump (2), main (1); the unsampled a and b last
   expect(o) == [4, 2, 3, 1, 0, 5]
 }
+
+test "heap_text warns when samples were lost and suggests a rate" {
+  let t = ProfTable{}
+  // two kept samples of 512 KiB each, 1,000,000 lost: about 500 GB
+  // estimated, so the rate doubles until about 50,000 samples remain
+  let vals = [[1, 524288, 0, 0], [1, 524288, 0, 0]]
+  let txt = heap_text([[], []], vals, t, 524288, 1000000, 0)
+  expect(txt.contains("1000000 samples lost")) == true
+  expect(txt.contains("warning: 1000000 samples were lost")) == true
+  expect(txt.contains("XO_PROF_HEAP_RATE=16777216")) == true
+  let ok = heap_text([[], []], vals, t, 524288, 0, 0)
+  expect(ok.contains("warning")) == false
+}
