@@ -412,6 +412,11 @@ fn ([var] s: Set[T]) add(x: T)
 fn ([var] s: Set[T]) remove(x: T) -> Bool
 ```
 
+A `Set` has no literal of its own: build one from a list, and an empty
+one from an empty list whose element type the context gives
+(`let seen: Set[Str] = [].to_set()`, `S{tags: [].to_set()}`); `[]`
+alone is a `List`, not a `Set`.
+
 Iterating a `var` collection while mutating it iterates the value as it was
 when the loop started.
 
@@ -4543,13 +4548,25 @@ struct BigErr { msg: Str }
 pub fn from_int(n: Int) -> BigInt
 pub fn parse(s: Str, base: Int = 10) -> BigInt ! BigErr    // Go's SetString; base 0 reads prefixes and _
 pub fn from_bytes(b: Bytes) -> BigInt                      // unsigned big-endian
-fn (x: BigInt) add(y) / sub / mul / quo / rem / quo_rem / div / mod / div_mod
+fn (x: BigInt) add(y: BigInt) -> BigInt        // also sub, mul
+fn (x: BigInt) quo(y: BigInt) -> BigInt        // also rem, div, mod
+fn (x: BigInt) quo_rem(y: BigInt) -> (BigInt, BigInt)   // (quo, rem); div_mod gives (div, mod)
 fn (x: BigInt) exp(y: BigInt, m: BigInt? = None) -> BigInt
-fn (x: BigInt) gcd(y) -> BigInt;  mod_inverse(m) -> BigInt?;  sqrt() -> BigInt
-fn (x: BigInt) neg / abs / sign / cmp / cmp_abs
-fn (x: BigInt) lsh(n) / rsh(n) / and / or / xor / and_not / not / bit(i) / bit_len / trailing_zeros
+fn (x: BigInt) gcd(y: BigInt) -> BigInt
+fn (x: BigInt) mod_inverse(m: BigInt) -> BigInt?
+fn (x: BigInt) sqrt() -> BigInt                // also neg, abs, not
+fn (x: BigInt) sign() -> Int                   // -1, 0 or 1
+fn (x: BigInt) cmp(y: BigInt) -> Int           // -1, 0 or 1 as x <, ==, > y; also cmp_abs
+fn (x: BigInt) lsh(n: Int) -> BigInt           // also rsh
+fn (x: BigInt) and(y: BigInt) -> BigInt        // also or, xor, and_not
+fn (x: BigInt) bit(i: Int) -> Int              // 0 or 1
+fn (x: BigInt) bit_len() -> Int                // also trailing_zeros
 fn (x: BigInt) probably_prime(n: Int) -> Bool
-fn (x: BigInt) text(base: Int = 10) -> Str;  bytes();  fill_bytes(len);  to_int() -> Int?;  to_float()
+fn (x: BigInt) text(base: Int = 10) -> Str
+fn (x: BigInt) bytes() -> Bytes                // |x| big-endian
+fn (x: BigInt) fill_bytes(len: Int) -> Bytes
+fn (x: BigInt) to_int() -> Int?
+fn (x: BigInt) to_float() -> Float
 ```
 
 - **The type is `BigInt`.** `Int` is predeclared (core 1.4), so Go's
@@ -4669,7 +4686,10 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
 ## Appendix A. Prelude index
 
 Every function and method of std/prelude.xo, by type, as declared there
-(the sections above explain them); interface methods take `self`.
+(the sections above explain them); interface methods take `self`. A
+`static` receiver is a function on the type (`Int.parse(s)`); one with an
+UPPER_SNAKE name and no parameters is a constant, read without a call
+(`Time.UNIX_EPOCH`).
 462 declarations.
 
 ### Range
@@ -5573,6 +5593,7 @@ fn (c: Counter) reset()                             // also Gauge, Histogram, Su
 fn (r: Registry) text(now: Time? = None) -> Str
 fn (r: Registry) handler() -> fn(http.Request) -> http.Response
 fn (r: Registry) handler_at(clock: Clock) -> fn(http.Request) -> http.Response uses clock
+fn (r: Registry) middleware(clock: Clock, label: fn(http.Request) -> Str) -> fn(http.Request, http.Next) -> http.Response uses clock
 ```
 
 - A name is a Prometheus name (letters, digits, `_` and `:`, not

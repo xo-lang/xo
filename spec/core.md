@@ -1031,8 +1031,14 @@ already known:
    becomes a `go.Any`, as `go.any(x)` would (4.4, decision 0412); a type
    with no Go value is `XO1106`.
 
-Conversions are not applied when joining branches (`if`/`match` arms must
-already agree) or to the `else` value of `requires`. Comparing `opt == v`
+An `if` or `match` whose type is already known (an annotated `let`, an
+argument, a field, a return) passes that type to each arm, so each arm
+converts on its own: `let s: Stream = if tls { tls_conn } else { conn }`
+and `let x: Int? = if c { 1 } else { None }` check. Without a known
+type, conversions are not applied when joining branches: the arms must
+already agree (`let y = if c { 1 } else { None }` is `XO0401`, branches
+have different types). Conversions are not applied to the `else` value
+of `requires`. Comparing `opt == v`
 wraps `v` in `Some`.
 
 Everything else, including all numeric conversions, is explicit.
@@ -2465,6 +2471,10 @@ select {
 ```
 
 - `ch.try_send(x) -> Bool` and `ch.try_recv() -> T?` never block.
+- A `select` receive arm `v = ch.recv() => ...` binds `v` to what `recv`
+  returns, a `T?`: a closed and drained channel's arm is ready at once
+  and runs with `None` (so `j` in the example is a `Job?`; a loop over a
+  `select` stops on `None` itself).
 - `for x in ch { ... }` receives until `ch` is closed and drained; each receive
   is a cancellation point.
 - `after` arms require the `clock` effect.

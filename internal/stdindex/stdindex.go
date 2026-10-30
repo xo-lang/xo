@@ -70,7 +70,10 @@ func Index(prelude string) string {
 	b.WriteString(Begin + "\n\n")
 	b.WriteString("## Appendix A. Prelude index\n\n")
 	b.WriteString("Every function and method of std/prelude.xo, by type, as declared there\n")
-	b.WriteString("(the sections above explain them); interface methods take `self`.\n")
+	b.WriteString("(the sections above explain them); interface methods take `self`. A\n")
+	b.WriteString("`static` receiver is a function on the type (`Int.parse(s)`); one with an\n")
+	b.WriteString("UPPER_SNAKE name and no parameters is a constant, read without a call\n")
+	b.WriteString("(`Time.UNIX_EPOCH`).\n")
 	n := len(free)
 	for _, t := range order {
 		n += len(byType[t])
