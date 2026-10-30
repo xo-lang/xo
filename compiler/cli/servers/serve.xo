@@ -209,7 +209,9 @@ pub fn forward(os: Os, args: List[Str]) -> (Int, Bool) uses (env, proc, net, fs,
 /// without arguments too; a query to a terminal without --json or --text
 /// asks for --text, as the server's output is not a terminal.
 pub fn forward_cli(os: Os, args: List[Str]) -> Int? uses (env, proc, net, fs, stdio) {
-  if args.is_empty() {
+  // the WASI build has no sockets or processes to reach a server with
+  // (decision 0405): host_target runs `uname`
+  if args.is_empty() || target.os == TargetOs.Wasi {
     return None
   }
   var fwd = args
