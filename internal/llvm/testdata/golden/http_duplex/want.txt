@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+h1: head 200
+h1: echo m0;
+h1: echo m1;
+h1: echo m2;
+h1: end
+done
+--- stderr

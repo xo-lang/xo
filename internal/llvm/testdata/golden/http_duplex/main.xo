@@ -1,0 +1,82 @@
+// Full duplex (decision 0433): a handle_stream route echoes each piece of
+// its request body as it arrives (with_full_duplex on HTTP/1.1), and a
+// client writes the next piece only after it has read the echo of the
+// last one (http.pipe with Client.open), which needs both directions at
+// once. HTTP/2 needs no with_full_duplex.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle_stream("POST /echo", fn(_req, b) {
+    http.stream(200, fn(w) {
+      while true {
+        match b.read()? {
+          Some(d) => {
+            w.write("echo ${d.to_str() ?? "?"};".bytes())?
+            w.flush()?
+          }
+          None => break
+        }
+      }
+      w.write("end".bytes())?
+    }).with_full_duplex()
+  })
+  r
+}
+
+fn pingpong(os: Os, c: http.Client, label: Str, url: Str) {
+  let (w, r) = http.pipe()
+  let acks = Chan[Int].new(1)
+  scope s {
+    s.spawn(fn() {
+      for i in 0..3 {
+        match w.write("m${i}".bytes()) {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("${label} write: ${e}")
+        }
+        let _ = acks.recv()
+      }
+      w.close()
+    })
+    match c.open(http.new_request("POST", url).with_body_reader(r)) {
+      Ok(st) => {
+        os.stdio.println("${label}: head ${st.head().status}")
+        while true {
+          match st.read() {
+            Ok(Some(d)) => {
+              os.stdio.println("${label}: ${d.to_str() ?? "?"}")
+              acks.send(1)
+            }
+            Ok(None) => break
+            Err(e) => {
+              os.stdio.println("${label}: ${e}")
+              break
+            }
+          }
+        }
+        st.close()
+      }
+      Err(e) => os.stdio.println("${label}: ${e}")
+    }
+    acks.close()
+  }
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes())
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        pingpong(os, http.client(os.net, timeout: 60s), "h1", "http://${srv.addr()}/echo")
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}
