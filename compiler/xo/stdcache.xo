@@ -36,7 +36,7 @@ fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Boo
   crypto.sha256("xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n${if tmode { "test=1\n" } else { "" }}${tree}".bytes()).to_hex()
 }
 
-/// std's .xo files under std, one "PATH SIZE MTIME" line each in path
+/// std's .xo files under std (not its tests), one "PATH SIZE MTIME" line each in path
 /// order, the part of std_cache_key every variant shares: walked once a
 /// process (Ctx.std_trees); "" when std cannot be walked.
 fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
@@ -51,7 +51,11 @@ fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
   }
   var b = StrBuilder.new()
   for f in files.sort_by(fn(f: FileInfo) -> Str { f.path }) {
-    if !f.is_dir && f.path.ends_with(".xo") {
+    // not std's tests: no variant reads them (a build skips them, decision
+    // 0348; a test variant is a program's test build, and only
+    // --std-module loads a module's tests), so editing one keeps the
+    // variants (`xo test --std-module` after a test edit)
+    if !f.is_dir && f.path.ends_with(".xo") && !f.path.ends_with("_test.xo") {
       b.write("${f.path.trim_prefix(std)} ${f.size} ${f.modified.unix_millis()}\n")
     }
   }
