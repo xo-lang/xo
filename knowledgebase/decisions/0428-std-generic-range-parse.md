@@ -1,7 +1,7 @@
 # 0428: An edit build parses only the std declarations it needs
 
-Status: Proposed (xo-lang-4, 2026-10-30; the edit-build loop item, lead
-2026-10-30: the parse cache is this claim's; held until the 0.35 seed is cut)
+Status: Accepted (owner, 2026-10-30; proposed by xo-lang-4 the same day,
+the edit-build loop item; shipped in a7130ba9d)
 
 ## Context
 
@@ -45,7 +45,7 @@ wall, check.dirs is the larger lever, and decision 0380's stage 2 result
 (cached parses, about 10 ms) agrees in size. Lang 1's earlier spike and
 stage 2 branch (refs/recover/lang1-0380-stage2) are the alternative below.
 
-## Decision (proposed)
+## Decision
 
 1. **Ranges in the record.** Each StdFileRec keeps its file's
    File.ranges (parser: each top-level item's start, its doc comment's if
