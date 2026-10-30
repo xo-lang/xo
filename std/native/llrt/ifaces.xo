@@ -1,0 +1,432 @@
+// Net.interfaces (decision 0426): the host's network interfaces with
+// their addresses, as Go's net.Interfaces and Interface.Addrs. Linux asks
+// the kernel over a NETLINK_ROUTE socket (RTM_GETLINK, RTM_GETADDR; Go's
+// interface_linux.go), macOS reads getifaddrs(3), Windows
+// GetAdaptersAddresses (Go's interface_windows.go); WASI has none.
+
+use native/llrt/raw
+use native/llrt/tlsname
+use native/llrt/winadapters
+use native/llrt/windows
+use native/rt
+use native/sys_darwin
+
+/// The interfaces sorted by index, or "" and the error's text.
+pub fn interfaces() -> (List[NetInterface], Str) {
+  match target.os {
+    TargetOs.Linux => linux_ifaces()
+    TargetOs.Darwin => darwin_ifaces()
+    TargetOs.Windows => windows_ifaces()
+    TargetOs.Wasi => ([], "network interfaces are not supported on this system")
+  }
+}
+
+/// The flags of the IFF_ bits f (IFF_UP 1, IFF_BROADCAST 2, IFF_LOOPBACK
+/// 8, IFF_POINTOPOINT 16, IFF_RUNNING 64; multicast is the bit m: 0x1000
+/// on Linux, 0x8000 on macOS).
+fn flags_of(f: Int, m: Int) -> InterfaceFlags {
+  InterfaceFlags{up: (f & 1) != 0, broadcast: (f & 2) != 0, loopback: (f & 8) != 0, point_to_point: (f & 16) != 0, multicast: (f & m) != 0, running: (f & 64) != 0}
+}
+
+/// The hardware address's text of the n bytes at a ("aa:bb:..."), "" when
+/// there are none or all are zero (Go keeps no zero address).
+fn hw_text(a: Int, n: Int) -> Str {
+  var nonzero = false
+  for i in 0..n {
+    if rt.mem_load(a, i, 1) != 0 {
+      nonzero = true
+    }
+  }
+  if !nonzero {
+    return ""
+  }
+  let digits = "0123456789abcdef".bytes()
+  var b = BytesBuilder.new()
+  for i in 0..n {
+    if i > 0 {
+      b.write_byte(UInt8(58))
+    }
+    let v = rt.mem_load(a, i, 1)
+    b.write_byte(digits[v >> 4])
+    b.write_byte(digits[v & 15])
+  }
+  b.freeze().to_str() ?? ""
+}
+
+/// The CIDR text of the IPv4 (len 4) or IPv6 (len 16) address at a with
+/// the prefix length bits (Go's IPNet.String: no zone).
+fn cidr(a: Int, len: Int, bits: Int) -> Str {
+  var ip: List[Int] = []
+  if len == 4 {
+    ip = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 255, 255]
+  }
+  for i in 0..len {
+    ip.push(rt.mem_load(a, i, 1))
+  }
+  "${tlsname.ip_string(ip)}/${bits}"
+}
+
+/// The C string at a.
+fn cstr(a: Int) -> Str {
+  if a == 0 {
+    return ""
+  }
+  var n = 0
+  while rt.mem_load(a, n, 1) != 0 {
+    n += 1
+  }
+  raw.str_at(a, n)
+}
+
+/// The interfaces sorted by index.
+fn sorted(xs: List[NetInterface]) -> List[NetInterface] {
+  xs.sort_by(fn(x) { x.index })
+}
+
+// ---------------------------------------------------------------------------
+// Linux: NETLINK_ROUTE
+
+fn nr(arm64: Int, amd64: Int) -> Int {
+  match target.arch {
+    TargetArch.Arm64 => arm64
+    TargetArch.Amd64 => amd64
+    TargetArch.Wasm32 => -1
+  }
+}
+
+const NETLINK_BUF = 65536
+
+/// A netlink message: its type and its body (after the nlmsghdr).
+struct NlMsg {
+  ty: Int
+  body: Bytes
+}
+
+/// The messages of a dump of kind (RTM_GETLINK 18, RTM_GETADDR 22) on the
+/// netlink socket fd, and "" or the error's text.
+fn dump(fd: Int, kind: Int, seq: Int) -> (List[NlMsg], Str) {
+  // nlmsghdr (len, type, flags NLM_F_REQUEST | NLM_F_DUMP, seq, pid)
+  // and an rtgenmsg of AF_UNSPEC: 17 bytes, as Go's NetlinkRIB
+  let req = raw.bytes_buf(24)
+  let q = raw.bytes_addr(req)
+  rt.mem_set(q, 0, 24)
+  rt.mem_store(q, 0, 17, 4)
+  rt.mem_store(q, 4, kind, 2)
+  rt.mem_store(q, 6, 769, 2)
+  rt.mem_store(q, 8, seq, 4)
+  // sockaddr_nl: AF_NETLINK, the kernel (pid 0)
+  let sa = raw.bytes_buf(16)
+  let s = raw.bytes_addr(sa)
+  rt.mem_set(s, 0, 16)
+  rt.mem_store(s, 0, 16, 2)
+  let w = rt.sys6(nr(206, 44), fd, q, 17, 0, s, 12)
+  raw.alive(req)
+  raw.alive(sa)
+  if w < 0 {
+    return ([], "netlink sendto: errno ${-w}")
+  }
+  var out: List[NlMsg] = []
+  let buf = raw.bytes_buf(NETLINK_BUF)
+  let b = raw.bytes_addr(buf)
+  var done = false
+  var err = ""
+  while !done {
+    let n = rt.sys6(nr(207, 45), fd, b, NETLINK_BUF, 0, 0, 0)
+    if n == -4 {
+      continue
+    }
+    if n <= 0 {
+      err = "netlink recvfrom: errno ${-n}"
+      break
+    }
+    var off = 0
+    while off + 16 <= n {
+      let len = rt.mem_load(b, off, 4) & 4294967295
+      let ty = rt.mem_load(b, off + 4, 2)
+      if len < 16 || off + len > n {
+        break
+      }
+      if ty == 3 {
+        // NLMSG_DONE
+        done = true
+        break
+      }
+      if ty == 2 {
+        // NLMSG_ERROR: the negative errno after the header
+        let e = rt.mem_load(b, off + 16, 4) & 4294967295
+        if e != 0 {
+          err = "netlink: errno ${4294967296 - e}"
+          done = true
+          break
+        }
+      } else {
+        // a copy: a slice is a view of buf, which the next recvfrom
+        // overwrites
+        out.push(NlMsg{ty: ty, body: buf[off + 16..off + len].clone()})
+      }
+      off += (len + 3) & -4
+    }
+  }
+  raw.alive(buf)
+  (out, err)
+}
+
+/// An rtattr: its type and the offset and length of its value in the
+/// message body.
+struct RtAttr {
+  ty: Int
+  off: Int
+  len: Int
+}
+
+/// The rtattrs of body from start on.
+fn attrs(body: Bytes, start: Int) -> List[RtAttr] {
+  let a = raw.bytes_addr(body)
+  let n = body.len()
+  var out: List[RtAttr] = []
+  var off = start
+  while off + 4 <= n {
+    let len = rt.mem_load(a, off, 2)
+    let ty = rt.mem_load(a, off + 2, 2) & 16383
+    if len < 4 || off + len > n {
+      break
+    }
+    out.push(RtAttr{ty: ty, off: off + 4, len: len - 4})
+    off += (len + 3) & -4
+  }
+  raw.alive(body)
+  out
+}
+
+fn close_fd(fd: Int) {
+  let _c = rt.sys6(nr(57, 3), fd, 0, 0, 0, 0, 0)
+}
+
+fn linux_ifaces() -> (List[NetInterface], Str) {
+  // socket(AF_NETLINK, SOCK_RAW | SOCK_CLOEXEC, NETLINK_ROUTE)
+  let fd = rt.sys6(nr(198, 41), 16, 3 | 524288, 0, 0, 0, 0)
+  if fd < 0 {
+    return ([], "netlink socket: errno ${-fd}")
+  }
+  let (links, e1) = dump(fd, 18, 1)
+  if !e1.is_empty() {
+    close_fd(fd)
+    return ([], e1)
+  }
+  let (addrs, e2) = dump(fd, 22, 2)
+  close_fd(fd)
+  if !e2.is_empty() {
+    return ([], e2)
+  }
+  var out: List[NetInterface] = []
+  for m in links {
+    // RTM_NEWLINK's ifinfomsg: family, pad, type (2), index (4), flags
+    // (4), change (4)
+    if m.ty != 16 || m.body.len() < 16 {
+      continue
+    }
+    let a = raw.bytes_addr(m.body)
+    let hwtype = rt.mem_load(a, 2, 2)
+    var ifi = NetInterface{index: rt.mem_load(a, 4, 4) & 4294967295, name: "", mtu: 0, hardware_addr: "", flags: flags_of(rt.mem_load(a, 8, 4) & 4294967295, 4096), addrs: []}
+    for at in attrs(m.body, 16) {
+      if at.ty == 1 {
+        // IFLA_ADDRESS: never a tunnel's IP address (Go's sysARPHardware
+        // IPv4IPv4 768, IPv6IPv6 769, IPv6IPv4 776, GREIPv4 778,
+        // GREIPv6 823)
+        let tunnel = (at.len == 4 && (hwtype == 768 || hwtype == 776 || hwtype == 778)) || (at.len == 16 && (hwtype == 769 || hwtype == 823))
+        if !tunnel {
+          ifi.hardware_addr = hw_text(a + at.off, at.len)
+        }
+      } else if at.ty == 3 {
+        ifi.name = cstr(a + at.off)
+      } else if at.ty == 4 {
+        ifi.mtu = rt.mem_load(a, at.off, 4) & 4294967295
+      }
+    }
+    raw.alive(m.body)
+    out.push(ifi)
+  }
+  for m in addrs {
+    // RTM_NEWADDR's ifaddrmsg: family, prefixlen, flags, scope, index (4)
+    if m.ty != 20 || m.body.len() < 8 {
+      continue
+    }
+    let a = raw.bytes_addr(m.body)
+    let fam = rt.mem_load(a, 0, 1)
+    let bits = rt.mem_load(a, 1, 1)
+    let index = rt.mem_load(a, 4, 4) & 4294967295
+    let want = if fam == 2 { 4 } else if fam == 10 { 16 } else { 0 }
+    // IFA_LOCAL wins over IFA_ADDRESS (the peer on point-to-point links),
+    // as Go's newAddr
+    var local = -1
+    var addr = -1
+    for at in attrs(m.body, 8) {
+      if at.ty == 2 && at.len >= want {
+        local = at.off
+      } else if at.ty == 1 && at.len >= want {
+        addr = at.off
+      }
+    }
+    let off = if local >= 0 { local } else { addr }
+    if off >= 0 && want > 0 {
+      let text = cidr(a + off, want, bits)
+      for i in 0..out.len() {
+        if out[i].index == index {
+          var x = out[i]
+          x.addrs.push(text)
+          out[i] = x
+        }
+      }
+    }
+    raw.alive(m.body)
+  }
+  (sorted(out), "")
+}
+
+// ---------------------------------------------------------------------------
+// macOS: getifaddrs(3)
+
+fn darwin_ifaces() -> (List[NetInterface], Str) {
+  let pb = raw.bytes_buf(8)
+  let pa = raw.bytes_addr(pb)
+  rt.mem_store(pa, 0, 0, 8)
+  if Int(sys_darwin.getifaddrs(pa)) != 0 {
+    raw.alive(pb)
+    return ([], "getifaddrs failed")
+  }
+  let head = rt.mem_load(pa, 0, 8)
+  raw.alive(pb)
+  var out: List[NetInterface] = []
+  var names: List[Str] = []
+  // struct ifaddrs: ifa_next 0, ifa_name 8, ifa_flags 16 (u32), ifa_addr
+  // 24, ifa_netmask 32, ifa_dstaddr 40, ifa_data 48; first every link,
+  // then the addresses, so two passes
+  var p = head
+  while p != 0 {
+    let sa = rt.mem_load(p, 24, 8)
+    if sa != 0 && rt.mem_load(sa, 1, 1) == 18 {
+      // sockaddr_dl: sdl_family 1, sdl_index 2 (u16), sdl_nlen 5,
+      // sdl_alen 6, sdl_data 8 (the name, then the address); ifa_data an
+      // if_data with ifi_mtu at 8
+      let nlen = rt.mem_load(sa, 5, 1)
+      let alen = rt.mem_load(sa, 6, 1)
+      let data = rt.mem_load(p, 48, 8)
+      let name = cstr(rt.mem_load(p, 8, 8))
+      out.push(NetInterface{index: rt.mem_load(sa, 2, 2), name: name, mtu: if data == 0 { 0 } else { rt.mem_load(data, 8, 4) & 4294967295 }, hardware_addr: hw_text(sa + 8 + nlen, alen), flags: flags_of(rt.mem_load(p, 16, 4) & 4294967295, 32768), addrs: []})
+      names.push(name)
+    }
+    p = rt.mem_load(p, 0, 8)
+  }
+  p = head
+  while p != 0 {
+    let sa = rt.mem_load(p, 24, 8)
+    let mask = rt.mem_load(p, 32, 8)
+    if sa != 0 && mask != 0 {
+      let fam = rt.mem_load(sa, 1, 1)
+      // sockaddr_in: the address at 4; sockaddr_in6 (AF_INET6 30): at 8
+      let (off, len) = if fam == 2 { (4, 4) } else if fam == 30 { (8, 16) } else { (0, 0) }
+      if len > 0 {
+        var bits = 0
+        for i in 0..len {
+          var m = rt.mem_load(mask, off + i, 1)
+          while m != 0 {
+            bits += m & 1
+            m = m >> 1
+          }
+        }
+        let ab = raw.bytes_buf(16)
+        let a = raw.bytes_addr(ab)
+        rt.mem_copy(a, sa + off, len)
+        if len == 16 && rt.mem_load(a, 0, 1) == 254 && (rt.mem_load(a, 1, 1) & 192) == 128 {
+          // a link-local address carries its scope in bytes 2 and 3
+          // (KAME); Go clears them
+          rt.mem_store(a, 2, 0, 2)
+        }
+        let text = cidr(a, len, bits)
+        raw.alive(ab)
+        let name = cstr(rt.mem_load(p, 8, 8))
+        for i in 0..names.len() {
+          if names[i] == name {
+            var x = out[i]
+            x.addrs.push(text)
+            out[i] = x
+          }
+        }
+      }
+    }
+    p = rt.mem_load(p, 0, 8)
+  }
+  sys_darwin.freeifaddrs(head)
+  (sorted(out), "")
+}
+
+// ---------------------------------------------------------------------------
+// Windows: GetAdaptersAddresses
+
+fn windows_ifaces() -> (List[NetInterface], Str) {
+  let (buf, err) = winadapters.adapters_buf()
+  if !err.is_empty() {
+    return ([], err)
+  }
+  let out = adapters(raw.bytes_addr(buf))
+  raw.alive(buf)
+  (sorted(out), "")
+}
+
+/// The interfaces of the IP_ADAPTER_ADDRESSES list at a (x64 offsets:
+/// IfIndex 4, Next 8, FirstUnicastAddress 24, FriendlyName 72,
+/// PhysicalAddress 80, PhysicalAddressLength 88, Mtu 96, IfType 100,
+/// OperStatus 104, Ipv6IfIndex 108), flags as Go's interface_windows.go.
+fn adapters(a0: Int) -> List[NetInterface] {
+  var out: List[NetInterface] = []
+  var a = a0
+  while a != 0 {
+    var index = rt.mem_load(a, 4, 4) & 4294967295
+    if index == 0 {
+      index = rt.mem_load(a, 108, 4) & 4294967295
+    }
+    let up = rt.mem_load(a, 104, 4) == 1
+    let ty = rt.mem_load(a, 100, 4) & 4294967295
+    // IF_TYPE_ETHERNET_CSMACD 6, ISO88025_TOKENRING 9, IEEE80211 71,
+    // IEEE1394 144: broadcast; PPP 23, TUNNEL 131: point-to-point;
+    // SOFTWARE_LOOPBACK 24; ATM 37: both; each multicast
+    let bc = ty == 6 || ty == 9 || ty == 71 || ty == 144 || ty == 37
+    let p2p = ty == 23 || ty == 131 || ty == 37
+    let lo = ty == 24
+    let mc = bc || p2p || lo
+    let mtu = rt.mem_load(a, 96, 4) & 4294967295
+    var ifi = NetInterface{index: index, name: wide_cstr(rt.mem_load(a, 72, 8)), mtu: if mtu == 4294967295 { -1 } else { mtu }, hardware_addr: hw_text(a + 80, rt.mem_load(a, 88, 4) & 4294967295), flags: InterfaceFlags{up: up, broadcast: bc, loopback: lo, point_to_point: p2p, multicast: mc, running: up}, addrs: []}
+    // IP_ADAPTER_UNICAST_ADDRESS: Next 8, Address.lpSockaddr 16,
+    // OnLinkPrefixLength 56 (after PrefixOrigin, SuffixOrigin, DadState
+    // and the three lifetimes)
+    var u = rt.mem_load(a, 24, 8)
+    while u != 0 {
+      let sa = rt.mem_load(u, 16, 8)
+      let bits = rt.mem_load(u, 56, 1)
+      let fam = rt.mem_load(sa, 0, 2)
+      if fam == 2 {
+        ifi.addrs.push(cidr(sa + 4, 4, bits))
+      } else if fam == 23 {
+        ifi.addrs.push(cidr(sa + 8, 16, bits))
+      }
+      u = rt.mem_load(u, 8, 8)
+    }
+    out.push(ifi)
+    a = rt.mem_load(a, 8, 8)
+  }
+  out
+}
+
+/// The NUL ended UTF-16 string at a.
+fn wide_cstr(a: Int) -> Str {
+  if a == 0 {
+    return ""
+  }
+  var n = 0
+  while rt.mem_load(a, 2 * n, 2) != 0 {
+    n += 1
+  }
+  let b = raw.bytes_buf(2 * n + 2)
+  rt.mem_copy(raw.bytes_addr(b), a, 2 * n)
+  windows.wide_str(b, 0, n)
+}

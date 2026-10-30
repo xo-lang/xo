@@ -95,11 +95,22 @@ RemoveDirectoryW when DeleteFileW fails, as Go's os.Remove does; it
 removes the link, never the directory it points to.
 
 
+## 2026-10-30: feature: Net.interfaces
+
 ## 2026-10-30: feature: Proc.usage and Proc.children_usage
 
 - Kind: feature
 - Commit: this commit
 - Found by: std-coverage gap 9 (the metrics exporter's host facts), decision 0426
+- Go reference: net.Interfaces and Interface.Addrs (interface_linux.go netlink, interface_windows.go GetAdaptersAddresses)
+- Test: the host_ifaces golden (arm64, LLVM, Go parity, the linux offload hosts, natively on Windows; Io under WASI); every interface's text the same natively and on the Go backend
+- Timing: xo bench --ab, 5,000 `os.net.interfaces()` calls summing the addresses, A Go net.Interfaces plus each interface's Addrs (sorted by index), B Xo native arm64, 15 rounds, macOS arm64 under load (ratios only): wall 0.254 (0.248 to 0.258), instructions 0.252, max RSS 0.253; the same sum on both (105,000, 26 interfaces); Go asks the system again for each interface's addresses, Xo reads them in the one dump; the program is in the lead's notes (hfbench), not the repo
+
+`os.net.interfaces()` lists the host's network interfaces sorted by
+index, each with its name, MTU, hardware address, flags and addresses as
+CIDR text. An attenuated Net answers it too. Breaking: a type that
+implements the `Net` interface needs an `interfaces` method.
+
 - Go reference: syscall.Getrusage (RUSAGE_SELF, RUSAGE_CHILDREN); Windows GetProcessTimes and K32GetProcessMemoryInfo
 - Test: the host_usage golden (arm64, LLVM, Go parity, natively on Windows; zeros under WASI), user_caps (a user Proc)
 - Timing: xo bench --ab, 200,000 `os.proc.usage()` calls, A Go syscall.Getrusage(RUSAGE_SELF), B Xo native arm64, 15 rounds, macOS arm64 under load (ratios only): wall 1.188 (1.151 to 1.203), instructions 1.002 (1.001 to 1.002), max RSS 0.599; the program is in the lead's notes (hfbench), not the repo

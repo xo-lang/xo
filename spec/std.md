@@ -866,6 +866,7 @@ fn (n: Net) listen(addr: Str) -> Listener ! NetErr uses net.listen
 fn (n: Net) dial(addr: Str) -> Conn ! NetErr       uses net.dial
 fn (n: Net) dial_timeout(addr: Str, d: Duration) -> Conn ! NetErr uses net.dial   // decision 0406
 fn (n: Net) lookup_host(host: Str) -> List[Str] ! NetErr uses net.dial            // decision 0406
+fn (n: Net) interfaces() -> List[NetInterface] ! NetErr uses net.listen           // decision 0426
 fn (n: Net) only(hosts: List[Str]) -> Net          // attenuation (below)
 fn (l: Listener) addr() -> Str                     // "host:port" actually bound
 fn (l: Listener) accept() -> ServerConn ! NetErr   uses net.listen
@@ -887,6 +888,30 @@ interface Stream {                                 // either kind of connection
   fn close(self)
 }
 ```
+
+```
+struct NetInterface {
+  index: Int                  // the system's index, 1 and up
+  name: Str                   // "lo", "eth0", "en0"; Windows: the friendly name
+  mtu: Int                    // -1 when Windows reports none
+  hardware_addr: Str          // "aa:bb:cc:dd:ee:ff"; "" when none
+  flags: InterfaceFlags
+  addrs: List[Str]            // CIDR text: "192.168.1.5/24", "fe80::1/64"
+}
+struct InterfaceFlags { up: Bool, broadcast: Bool, loopback: Bool, point_to_point: Bool, multicast: Bool, running: Bool }
+```
+
+`interfaces()` (decision 0426) is Go's `net.Interfaces` with each
+interface's `Addrs`, sorted by index: Linux asks the kernel over a
+`NETLINK_ROUTE` socket, macOS reads `getifaddrs`, Windows
+`GetAdaptersAddresses` (flags as Go's: an adapter that is up is also
+running; Ethernet and Wi-Fi broadcast; PPP and tunnels are point to
+point). An address is CIDR text without a zone (Go's `IPNet.String`);
+`std/netip` parses it. A hardware address of all zeros is "". An
+attenuated `Net` (`only`) answers it too: the list names no remote host.
+A test's FakeNet answers one loopback interface (`lo`, index 1,
+`127.0.0.1/8` and `::1/128`); WASI is `Io`. Record and replay record it
+(`net.interfaces`).
 
 A connection's reads and writes perform the effect of how it was made
 (decision 0280): a `Conn` from `dial` is `net.dial`, a `ServerConn` from
@@ -4899,7 +4924,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-475 declarations.
+476 declarations.
 
 ### Range
 
@@ -5522,6 +5547,7 @@ fn listen(self, addr: Str) -> Listener ! NetErr uses net.listen
 fn dial(self, addr: Str) -> Conn ! NetErr uses net.dial
 fn dial_timeout(self, addr: Str, d: Duration) -> Conn ! NetErr uses net.dial
 fn lookup_host(self, host: Str) -> List[Str] ! NetErr uses net.dial
+fn interfaces(self) -> List[NetInterface] ! NetErr uses net.listen
 fn only(self, hosts: List[Str]) -> Net
 ```
 

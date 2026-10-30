@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+error network interfaces are not supported on this system
+--- stderr

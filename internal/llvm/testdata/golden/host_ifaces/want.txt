@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+sorted true named true
+loopback true
+loopback up true false
+only true
+--- stderr

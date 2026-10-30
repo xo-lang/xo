@@ -30,6 +30,8 @@ use native/llrt/ftoa
 use native/llrt/fsops
 use native/llrt/gomath
 use native/llrt/host
+use native/llrt/ifaces
+use native/llrt/twflags
 use native/llrt/fspath
 use native/llrt/gen
 use native/llrt/ints
@@ -3935,6 +3937,53 @@ fn net_lookup_host(n: Net, host: Str) -> List[Str] ! NetErr uses net.dial {
     return Err(net_err_now())
   }
   Ok(addrs)
+}
+
+/// The native backends' layout of the prelude's NetInterface and InterfaceFlags (decision 0426): a
+/// prelude struct is opaque to the native SSA builder unless this module
+/// declares its implementation, so the seed builds it without knowing it
+/// (gotchas/new-prelude-struct-needs-native-twin.md); the fields match
+/// std/prelude.xo's.
+struct NetInterface {
+  index: Int
+  name: Str
+  mtu: Int
+  hardware_addr: Str
+  flags: InterfaceFlags
+  addrs: List[Str]
+}
+
+struct InterfaceFlags {
+  up: Bool
+  broadcast: Bool
+  loopback: Bool
+  point_to_point: Bool
+  multicast: Bool
+  running: Bool
+}
+
+/// Net.interfaces (decision 0426): an attenuated Net answers too (it names
+/// no remote host); a test's FakeNet has one loopback interface.
+fn net_interfaces(n: Net) -> List[NetInterface] ! NetErr uses net.listen {
+  if twflags.fake(4) {
+    return Ok([fake_loopback()])
+  }
+  let (xs, err) = ifaces.interfaces()
+  if !err.is_empty() {
+    return Err(NetErr.Io(msg: err))
+  }
+  // the prelude's NetInterface, copied into this module's twin
+  var out: List[NetInterface] = []
+  for x in xs {
+    let f = x.flags
+    out.push(NetInterface{index: x.index, name: x.name, mtu: x.mtu, hardware_addr: x.hardware_addr, flags: InterfaceFlags{up: f.up, broadcast: f.broadcast, loopback: f.loopback, point_to_point: f.point_to_point, multicast: f.multicast, running: f.running}, addrs: x.addrs})
+  }
+  Ok(out)
+}
+
+/// The loopback interface of a test's FakeNet (and the Go backend's).
+fn fake_loopback() -> NetInterface {
+  NetInterface{index: 1, name: "lo", mtu: 65536, hardware_addr: "", flags: InterfaceFlags{up: true, broadcast: false, loopback: true, point_to_point: false, multicast: true, running: true}, addrs: ["127.0.0.1/8", "::1/128"]}
 }
 
 /// Net.only (decision 0175): the entries trimmed and lowered (std/rt's

@@ -12,6 +12,7 @@ var (
 	_ func(*Testing_FakeNet, *Task, string) Result[Conn, NetErr]                                    = (*Testing_FakeNet).M_dial
 	_ func(*Testing_FakeNet, *Task, string, Duration) Result[Conn, NetErr]                          = (*Testing_FakeNet).M_dial_timeout
 	_ func(*Testing_FakeNet, *Task, string) Result[List[string], NetErr]                            = (*Testing_FakeNet).M_lookup_host
+	_ func(*Testing_FakeNet, *Task) Result[List[NetInterface], NetErr]                              = (*Testing_FakeNet).M_interfaces
 	_ func(*Testing_FakeNet, *Task, List[string]) Net                                               = (*Testing_FakeNet).M_only
 	_ func(*Testing_FakeNet, *Task, string, func(*Task, Http_Request) Result[Http_Response, Never]) = (*Testing_FakeNet).M_handle
 	_ func(*Testing_FakeNet, *Task, string, Http_ClientErr)                                         = (*Testing_FakeNet).M_fail

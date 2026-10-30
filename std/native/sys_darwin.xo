@@ -186,6 +186,10 @@ fn freeaddrinfo(ai: Int)
 fn gai_strerror(code: Int) -> Int
 /// getpid(2) (std/native/llrt/prof.xo).
 fn getpid() -> Int32
+/// getifaddrs(3): the list of struct ifaddrs into the pointer at out, 0 or
+/// -1; freeifaddrs(3) frees it (std/native/llrt/ifaces.xo).
+fn getifaddrs(out: Int) -> Int32
+fn freeifaddrs(p: Int)
 /// getrusage(2) of who (0 this process, -1 its waited children) into the
 /// struct rusage at the address buf (144 bytes; ru_maxrss in bytes).
 fn getrusage(who: Int, buf: Int) -> Int32

@@ -1,0 +1,28 @@
+// Net.interfaces (decision 0426): the host has a loopback interface that
+// is up and holds 127.0.0.1/8; the list is sorted by index with names;
+// an attenuated Net answers the same list (it names no remote host).
+fn main(os: Os) {
+  match os.net.interfaces() {
+    Ok(xs) => {
+      var sorted = true
+      var named = true
+      for i in 0..xs.len() {
+        if i > 0 && xs[i - 1].index >= xs[i].index {
+          sorted = false
+        }
+        if xs[i].name.is_empty() || xs[i].index <= 0 {
+          named = false
+        }
+      }
+      os.stdio.println("sorted ${sorted} named ${named}")
+      let lo = xs.filter(fn(x) { x.flags.loopback && x.addrs.contains("127.0.0.1/8") })
+      os.stdio.println("loopback ${lo.len() > 0}")
+      if let Some(l) = lo.get(0) {
+        os.stdio.println("loopback up ${l.flags.up} ${l.flags.broadcast}")
+      }
+      let only = os.net.only([]).interfaces().ok() ?? []
+      os.stdio.println("only ${only.len() == xs.len()}")
+    }
+    Err(e) => os.stdio.println("error ${e}")
+  }
+}

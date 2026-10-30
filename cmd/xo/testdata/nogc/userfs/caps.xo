@@ -46,6 +46,7 @@ fn (n: BlockNet) dial_timeout(addr: Str, d: Duration) -> Conn ! NetErr uses net.
 }
 fn (n: BlockNet) lookup_host(host: Str) -> List[Str] ! NetErr uses net.dial { n.inner.lookup_host(host) }
 fn (n: BlockNet) only(hosts: List[Str]) -> Net { BlockNet{inner: n.inner.only(hosts), blocked: n.blocked} }
+fn (n: BlockNet) interfaces() -> List[NetInterface] ! NetErr uses net.listen { n.inner.interfaces() }
 
 /// The greeting for the user the environment names.
 fn greeting(e: Env) -> Str uses env { "hello ${e.get("USER") ?? "nobody"}" }

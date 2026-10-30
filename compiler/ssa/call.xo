@@ -2526,6 +2526,7 @@ fn cap_impl(key: Str) -> Str {
     "Net.only" => "net_only"
     "Net.dial_timeout" => "net_dial_timeout"
     "Net.lookup_host" => "net_lookup_host"
+    "Net.interfaces" => "net_interfaces"
     "Conn.set_deadline" => "conn_set_deadline"
     "Conn.set_read_deadline" => "conn_set_read_deadline"
     "Conn.set_write_deadline" => "conn_set_write_deadline"

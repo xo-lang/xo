@@ -1018,6 +1018,9 @@ pub fn system_dir() -> Str {
   narrow(buf, 0, k)
 }
 
+/// The n UTF-16 units of b from off on in UTF-8 (std/native/llrt/ifaces.xo).
+pub fn wide_str(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, false) }
+
 /// narrow with each \ made /.
 fn narrow_slash(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, true) }
 
