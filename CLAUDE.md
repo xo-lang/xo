@@ -161,12 +161,12 @@ Update the knowledgebase in the same change as the work, not later:
     minimum (owner, 2026-10-21): -short, the one or two tests that show
     the change works, the fixed point only when the change touches what
     compiler/xo itself builds from (compiler/, or std/native and llrt
-    files it imports), and the 42-golden Docker amd64 sample only for an
-    x86 code generation change. No package suites, no identity unless a
+    files it imports), and the amd64 sample on the linux/amd64 offload
+    host only for an x86 code generation change. No package suites, no identity unless a
     push claims no output change, no extra benchmark sweeps unless the
     push claims a speedup. The lead runs the full tier every 8 hours
     (scripts/gate.sh short arm64 llvm cmd gen fp, LLVM at -O1 with Go
-    parity, plus the Docker amd64 goldens), bisects a failure over that
+    parity, plus every amd64 golden on the offload host), bisects a failure over that
     window's pushes, and the owner of the commit fixes forward.
   - per commit only the agent's gate (owner, 2026-10-21): pushq rebases
     and pushes with no -short (PUSHQ_SHORT=1 runs it) but runs the fast
@@ -235,11 +235,14 @@ Update the knowledgebase in the same change as the work, not later:
     chased by default. Exception (2026-10-20, two x86 miscompiles the
     arm64 gates could not see): a change to x86 code generation
     (compiler/arm64's x86*.xo and amd64 encoder, or anything only
-    --backend=amd64 runs) also passes the per-push sample of the Docker
-    amd64 goldens (scripts/docker-amd64-sample.txt, 42 of 201, about 15
-    minutes; owner 2026-10-20) with every optional pass on, plus a run
-    of the program it targets, before it pushes; the full 201 run in
-    the lead's 8-hourly full tier. Every merge touching what the self build
+    --backend=amd64 runs) also passes the per-push amd64 sample
+    (scripts/docker-amd64-sample.txt) with every optional pass on, plus a
+    run of the program it targets, before it pushes; the full set runs in
+    the lead's 8-hourly full tier. The sample runs natively on the
+    owner's linux/amd64 offload host (owner, 2026-10-29, replacing the
+    Docker run on the Mac: 33 s against about 15 minutes): commit, then
+    `~/xo-lead/agents/amd64-run.sh REV NAME sample` (no heavy.sh slot;
+    the host runs one job at a time; infrastructure/offload.md). Every merge touching what the self build
     compiles or runs builds xo once, with the current xo (`go run
     ./scripts/xobuild`), and runs its proving tests with that xo: no
     fixed point per push (owner, 2026-10-21). The full self rebuild
