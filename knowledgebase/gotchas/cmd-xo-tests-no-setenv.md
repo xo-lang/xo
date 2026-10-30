@@ -15,5 +15,10 @@ Fix: the xo the tests drive is a process, so give it the test's
 environment instead: `setenv(t, k, v)`, `chdir(t, dir)`, `getenv(t, k)`,
 and `command(t, name, args...)` (cmd/xo/env_test.go; `run`, `xo`,
 `execCLI` use them; subtests inherit the parent's settings by name).
-Module worlds: `modSetup(t, src)` (modtest.SetupWith). A test that
+Module worlds: `modSetup(t, src)` (modtest.SetupWith).
+A `setenv(t, k, v)` value stays for the rest of the test: it lives in
+the test's own map, so `os.Unsetenv(k)` does not clear it (Observed
+2026-10-30: TestXoTestResultCache's XO_TEST_CACHE=off step kept every
+later step from caching); set it back with `setenv(t, k, "")` or make
+that step the last. A test that
 really needs the process environment drops `t.Parallel()` and says why.

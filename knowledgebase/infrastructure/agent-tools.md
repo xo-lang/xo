@@ -903,6 +903,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   that measures time or memory sets `OFF_EXCLUSIVE=1` so it runs alone
   (ab-host.sh does), every job stops after `OFF_MAX_MIN` (default 180),
   and each agent keeps at most 2 jobs queued there (chain the rest).
+  A change's arm64 tests gate on arm64 (the Mac or that host); the
+  linux/amd64 host skips them and is an addition, not a substitute
+  (lead, 2026-10-30; gotchas/amd64-gate-skips-arm64-tests.md).
 - Pushes: `~/xo-lead/agents/pushq.sh WORKTREE [--base SHA] [-- GATE...]`.
   A push touching `std/*.xo` also runs cmd/xo's TestStdChecks with the
   worktree's bin/xo (about 2 s; owner, 2026-10-30, after an XO0804 in
