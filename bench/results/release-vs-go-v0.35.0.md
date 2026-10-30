@@ -21,9 +21,9 @@ direct A/B of interp built by the 0.34.0 and 0.35.0 archives (same source,
 to 4% on 6 to 23 ms medians. Better: collatz 0.965 to 0.898, copymut 0.675
 to 0.632, pingpong 0.897 to 0.873, pmap 1.010 to 0.988. cpu rows flagged
 (fib 0.955 to 1.000, interp 0.250 to 0.286) are 10 ms granularity.
-Compile: xo's edit builds 60 to 70 ms (coll 130, conc-spawn 100) against
-Go's 100 to 110, every edit on the std-record path; cold 890 to 1530 ms
-against Go's 1450 to 1570.
+Compile: xo's edit builds 60 to 70 ms (coll 130) against Go's 100 to 110,
+every edit on the std-record path; cold 880 to 1100 ms against Go's 1430 to
+1520.
 
 Run cache row (owner, 2026-10-29: the report's rows run with the run cache
 off): an unchanged rebuild with the run cache on (the default), the released
