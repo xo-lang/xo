@@ -45,7 +45,10 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   owner, 2026-10-30): slot 1 is `/work/offload.lock`, slot 2
   `/work/offload.lock.2`. A job that measures time or memory sets
   `OFF_EXCLUSIVE=1` and waits for both slots, so it runs alone
-  (ab-host.sh sets it). Keep at most 2 jobs queued per agent.
+  (ab-host.sh sets it). It takes both at once or neither, so a plain job
+  still uses a free slot while it waits; after 30 minutes of tries it
+  queues for the slots one by one so it cannot starve (2026-10-30: a
+  waiter held slot 1 idle while it waited for slot 2). Keep at most 2 jobs queued per agent.
 - `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
   self|self=a|edit PROG [FLAG...]|PROG [ARG...]` (`self=a`: BASE's
   compiler/xo as the self build's program, for a NEW whose compiler calls
