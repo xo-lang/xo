@@ -11,6 +11,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Xo List passed to Go is a converted copy, so the List stayed unsorted
   with no error (the owner's Windows testing). internal/gobind
   TestSortSliceSkipped; binding format 30.
+- FIX (linux): a `-s` build's ELF has an empty symbol table, as ld -s
+  leaves it: Xo's global function symbols stayed, so a stripped binary's
+  fault traceback still named its frames (darwin's said it had no
+  symbols) and `nm` listed every function.
 - `use go` of github.com/samber/lo builds: a constraint that is an alias
   declared in an internal package (lo's internal/constraints.Ordered =
   cmp.Ordered) is written in the glue as what it names, so the adapter

@@ -907,13 +907,15 @@ test "a static link: no loader, weak hooks a nop and a ret, -s drops locals" {
   expect(rd32(exe, off + 4)) == 0xd503201f
   expect(rd32(exe, off + 8)) == 0xd65f03c0
   expect(has(exe, "helper")) == true
-  // -s: the local helper is gone from .symtab, _start stays
+  // -s: .symtab is left empty, the local helper and the global _start
+  // both gone (as ld -s; the globals stayed and named a stripped
+  // traceback's frames on Linux, 2026-10-30)
   let st = match link_elf([LinkInput{path: "s.o", data: obj}], ElfLinkOpts{static: true, strip: true}) {
     Ok(b) => b
     Err(e) => fault(e)
   }
   expect(has(st, "helper")) == false
-  expect(has(st, "_start")) == true
+  expect(has(st, "_start")) == false
   // a strong undefined symbol is an error
   let bad = assemble_elf("\t.text\n\t.globl _start\n_start:\n\tbl puts\n".bytes()).or_fault("bad")
   expect(link_elf([LinkInput{path: "b.o", data: bad}], ElfLinkOpts{static: true})) == Err("puts is not defined (a static link with no C library)")

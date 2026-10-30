@@ -127,7 +127,8 @@ pub struct ElfLinkOpts {
   pub entry: Str = "_start"
   /// a static executable with no C library (decision 0243)
   pub static: Bool = false
-  /// leave the local symbols out of .symtab (`-s`, as LinkOpts.strip)
+  /// leave every symbol out of .symtab (`-s`, as LinkOpts.strip; ld -s
+  /// omits the table): a traceback then has no function names
   pub strip: Bool = false
   /// a --release link keeps the local function symbols (STT_FUNC, the
   /// names std/native/llrt's prof reads for a traceback) and drops the
@@ -2229,7 +2230,12 @@ fn (l: ELinker) symtab(shown: List[Int]) -> (Bytes, Bytes, Int) {
       if s.shndx == SHN_UNDEF || s.shndx == SHN_ABS || s.shndx >= SHN_LORESERVE && s.shndx != SHN_COMMON {
         continue
       }
-      if bind == STB_LOCAL && (l.opts.strip || (l.opts.release && typ != STT_FUNC)) {
+      // strip (`-s`) leaves .symtab empty: Xo's functions are global
+      // symbols, so a strip of the locals alone kept every function name,
+      // and a `-s` build's traceback on Linux named its frames where
+      // darwin's said it had no symbols (TestTracebackNoSymbols on the
+      // linux/arm64 host, 2026-10-30); the loader reads the dynamic tables
+      if l.opts.strip || (bind == STB_LOCAL && l.opts.release && typ != STT_FUNC) {
         continue
       }
       var out = O_BSS
