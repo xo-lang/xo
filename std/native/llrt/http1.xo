@@ -988,6 +988,10 @@ pub fn parse_head(s: Str, eof: Bool) -> Parse {
     // a value may hold obs-text (RFC 9110): valid UTF-8 or U+FFFD
     // (decision 0259)
     vals.push(scan.text_at(rawb.data(src) + v0, cn - v0))
+    // src (a joined field's cont) is released after its last use, which
+    // would be inside the arguments above: its freed block's first word
+    // was the value's first bytes on Linux (gotchas/raw-address-outlives-bytes.md)
+    raw.alive_str(src)
   }
   if i > MAX_HEAD {
     return fail(TOO_LARGE)

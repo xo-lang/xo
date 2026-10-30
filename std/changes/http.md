@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-10-30: fix: a header field folded over several lines read its first byte wrong on Linux
+
+- Kind: fix
+- Commit: this commit
+- Found by: internal/llvm TestHTTP1ParseDiff on linux/arm64 (the lead's offload host list, 2026-10-29)
+- Go reference: net/http's textproto.Reader.ReadMIMEHeader joins an obsolete line fold with one space
+- Test: http1_test.xo "an obsolete line fold joins the lines with one space"; gotchas/raw-address-outlives-bytes.md
+
+The request parser read a folded field's value through a raw address after
+the joined text was released, so on Linux the allocator's free-list word
+overwrote its first byte ("Accept:a\r\n b" gave "b b"); the text is kept
+alive until the value is copied.
+
 ## 2026-10-29: perf: a streamed response body is read in large pieces straight into their bytes
 
 - Kind: perf

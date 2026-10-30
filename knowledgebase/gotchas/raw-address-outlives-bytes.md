@@ -45,3 +45,12 @@ the address and count in a function whose parameter is the list
 (borrowed), as tlssrv.keep_list does, or call raw.alive after the
 increment.
 
+
+Observed again (2026-10-30, Xo Lang 3, std/native/llrt/http1.xo): the
+header parser's joined obsolete-fold field (`cont`, read as `src`) was
+released inside `vals.push(scan.text_at(rawb.data(src) + v0, ...))`; on
+Linux the freed block's first word (the allocator's link) overwrote the
+value's first byte ("Accept:a\r\n b" read "b b"), on macOS the freed
+block was not touched, so TestHTTP1ParseDiff failed only on Linux. Fixed
+with raw.alive_str(src) after the push; the test is "an obsolete line
+fold joins the lines with one space" in http1_test.xo.

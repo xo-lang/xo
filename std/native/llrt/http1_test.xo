@@ -78,3 +78,16 @@ test "eq_at matches a byte compare at every length" for xs: List[Int], flip: Int
   raw.alive(a)
   raw.alive(b)
 }
+
+test "an obsolete line fold joins the lines with one space (net/http's)" {
+  let p = parse_head("GET /p HTTP/1.1\r\nHost: x\r\nX_C:1\r\nAccept:a\r\n b\r\n :a,b\r\nX:B: 2 \r\nConnection: close\r\n\r\n", true)
+  var got = ""
+  var i = 0
+  while i + 1 < p.head.headers.len() {
+    if p.head.headers[i] == "Accept" {
+      got = p.head.headers[i + 1]
+    }
+    i += 2
+  }
+  expect(got) == "a b :a,b"
+}
