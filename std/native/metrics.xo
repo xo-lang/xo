@@ -171,32 +171,33 @@ fn qinsert(var s: metrics.QStream, v: Float, objs: List[(Float, Float)]) {
 }
 
 fn qflush(var s: metrics.QStream, objs: List[(Float, Float)]) {
-  let b = s.b.sort()
-  s.b = []
-  // merge
+  // both lists taken out of s, so each is the only holder and nothing
+  // copies them (gotchas/element-copy-store-back-quadratic.md)
+  var buf = s.b
+  s.b = List.with_capacity(QBUF)
+  let b = buf.sort()
+  var old = s.l
+  s.l = []
+  // perks' merge, in one pass: each sorted value goes before the first
+  // kept sample greater than it (perks shifts the tail per insert; the
+  // samples and their order are the same)
+  var l: List[metrics.QSample] = List.with_capacity(old.len() + b.len())
   var r = 0.0
   var i = 0
-  var l = s.l
   for v in b {
-    var placed = false
-    while i < l.len() {
-      let c = l[i]
-      if c.v > v {
-        let d = qf(objs, s.n, r).floor() - 1.0
-        l.insert(i, metrics.QSample{v: v, w: 1.0, d: if d > 0.0 { d } else { 0.0 }})
-        i += 1
-        placed = true
-        break
-      }
-      r += c.w
+    while i < old.len() && old[i].v <= v {
+      r += old[i].w
+      l.push(old[i])
       i += 1
     }
-    if !placed {
-      l.push(metrics.QSample{v: v, w: 1.0, d: 0.0})
-      i += 1
-    }
+    let d = if i < old.len() { qf(objs, s.n, r).floor() - 1.0 } else { 0.0 }
+    l.push(metrics.QSample{v: v, w: 1.0, d: if d > 0.0 { d } else { 0.0 }})
     s.n += 1.0
     r += 1.0
+  }
+  while i < old.len() {
+    l.push(old[i])
+    i += 1
   }
   s.l = qcompress(l, s.n, objs)
 }

@@ -1,5 +1,18 @@
 # std/metrics changes
 
+## 2026-10-29: perf: a summary's quantile stream flushes without copying its lists
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF=cpu of bench/perf/metricsum (half the samples in
+  platform_memmove; bench/results/metricsum-2026-10-29.md, 1.73x Go)
+- Go reference: beorn7/perks quantile stream.merge and compress (the same
+  samples; the merge in one pass instead of an insert per value)
+- Test: golden metrics_summary and metrics_text (arm64, LLVM); xo bench
+  --ab in bench/results/metricsum-qflush-2026-10-29.md
+
+2M observations and a scrape natively in 1148 ms against 1253 before (wall 0.916, instructions 0.909, max RSS 3.3 MB against 3.4), 1.59 times Go's 722 ms (was 1.73); LLVM 1.81 (was 1.9).
+
 ## 2026-10-29: feature: summaries, scrape-time readers, removing series
 
 - Kind: feature
