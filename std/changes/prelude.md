@@ -1,6 +1,23 @@
 # prelude changes
 
 
+## 2026-10-30: fix: a relative symbolic link to a directory on Windows
+
+- Kind: fix
+- Commit: this commit
+- Found by: the lead's native Windows golden rerun after Developer Mode (2026-10-30, fs_symlink_info: "ld: permission denied")
+- Go reference: os.Symlink on Windows (isDir resolves a relative oldname against filepath.Dir(newname))
+- Test: internal/llvm/testdata/golden/fs_symlink_info, natively on the Windows offload host
+- Timing: none (one GetFileAttributesW a link, not a hot path)
+
+`fs.symlink(target, path)` on native windows/amd64 decides between a file
+and a directory link by looking at target in the link's own directory,
+as Go does, not in the working directory: `root.symlink("d", "ld")` made
+a file link to a directory, and stat through it was "permission denied".
+Removing a link (`remove`, `remove_all`) that is a directory link uses
+RemoveDirectoryW when DeleteFileW fails, as Go's os.Remove does; it
+removes the link, never the directory it points to.
+
 ## 2026-10-30: fix: Env.hostname on Windows
 
 - Kind: fix

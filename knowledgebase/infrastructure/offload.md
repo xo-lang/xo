@@ -127,6 +127,16 @@ to `%USERPROFILE%\xo-ci\off`, then `wsl -e bash -l` on it under
   priv repository sets `core.autocrlf false` (Git for Windows' default
   CRLF checkout broke go.mod). Git Bash has no flock: locks are
   directories (`~/xo-ci/offload.lockdir.N`, stale when its shell is gone).
+- Windows privileges (owner, 2026-10-30): Developer Mode is on, so user
+  xo creates symbolic links without elevation, and xo is an
+  administrator with LocalAccountTokenFilterPolicy=1, so jobs on the box
+  run elevated and `\\localhost\C$` (an admin share) works. With them
+  fs_create_new, fs_files, fs_ops_edges, fs_walk_dir and fs_paths_os pass
+  natively (main 4e39e0456); fs_symlink_info passes once a relative
+  directory link is made a directory link (std/changes/prelude.md,
+  2026-10-30). A golden that passes there may still fail for an
+  unprivileged Windows user (no Developer Mode, no admin share).
+  Last verified: 2026-10-30.
 - Slots: `OFF_SLOTS=2` in both of this machine's host files, so two jobs
   run at once per side (WSL and Windows), four in all; the arm64
   container stays at one (owner, 2026-10-29). The one repository's fetch
