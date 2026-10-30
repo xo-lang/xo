@@ -25,7 +25,10 @@ test "page class blocks are page aligned, kept, reused and resized" {
   let p = alloc_obj(16000)
   expect(p & 16383) == 0
   let q = alloc_obj(8000)
-  expect(q & 15) == 8
+  // 8 aligned (its prefix is the 8 bytes before it); which of the 8 and 0
+  // mod 16 it is depends on how many blocks of the class came before it
+  // from the chunk (stride size + 8), so not asserted (arm64 linux, 0 mod 16)
+  expect(q & 7) == 0
   var i = 0
   while i < 2000 {
     rt.mem_store(p, i * 8, i + 7, 8)

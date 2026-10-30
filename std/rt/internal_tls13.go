@@ -327,6 +327,23 @@ func (c *t13Client) handshake(t int, msg []byte) {
 			return
 		}
 		c.reqCtx = msg[5 : 5+int(msg[4])]
+		// the extensions block, as tls13.xo certificate_request checks it
+		// (the client certificate work: the schemes and authorities are
+		// read there, here only the framing)
+		p := 5 + int(msg[4])
+		if len(msg) < p+2 || int(msg[p])<<8|int(msg[p+1]) != len(msg)-p-2 {
+			c.fail(50, "tls: error decoding message")
+			return
+		}
+		p += 2
+		for p+4 <= len(msg) {
+			n := int(msg[p+2])<<8 | int(msg[p+3])
+			if p+4+n > len(msg) {
+				c.fail(50, "tls: error decoding message")
+				return
+			}
+			p += 4 + n
+		}
 		c.certReq = true
 		c.tr = append(c.tr, msg...)
 		c.state = t13WaitCert
