@@ -25,6 +25,7 @@ use native/llrt/tls13
 use native/llrt/tlsticket
 use native/llrt/tlsname
 use native/llrt/x509cert as x509
+use native/llrt/x509verify
 
 // the server's handshake states
 pub const WAIT_CH: Int = 0
@@ -33,10 +34,22 @@ pub const WAIT_CCS: Int = 2
 pub const WAIT_FIN: Int = 3
 pub const DONE: Int = 4
 pub const FAILED: Int = 5
+/// the client authentication modes (tls13srv.xo's AUTH_*; its values)
+pub const AUTH_NONE: Int = 0
+pub const AUTH_REQUIRE_ANY: Int = 2
+pub const AUTH_VERIFY_IF_GIVEN: Int = 3
+pub const AUTH_REQUIRE_AND_VERIFY: Int = 4
+/// client authentication (mTLS): the client's Certificate, then (after its
+/// ClientKeyExchange) its CertificateVerify
+pub const WAIT_CERT: Int = 6
+pub const WAIT_CVERIFY: Int = 7
 
 // the alerts the server sends besides tls12.xo's
 const ALERT_INAPPROPRIATE_FALLBACK: Int = 86
 const ALERT_MISSING_EXTENSION: Int = 109
+const ALERT_CERTIFICATE_EXPIRED: Int = 45
+const ALERT_UNKNOWN_CA: Int = 48
+const ALERT_DECRYPT_ERROR: Int = 51
 
 /// TLS_FALLBACK_SCSV and TLS_EMPTY_RENEGOTIATION_INFO_SCSV.
 const SCSV_FALLBACK: Int = 0x5600
@@ -72,6 +85,10 @@ pub struct Conf {
   pub ticket_keys: List[tlsticket.Key]
   pub now: Int
   pub ticket_iv: Bytes
+  /// client certificates (mTLS), as tls13srv.xo's Conf
+  pub client_auth: Int = 0
+  pub client_cas: List[Bytes] = []
+  pub client_roots: List[Bytes] = []
 }
 
 /// Go's defaults for a certificate chain and its leaf's key.
@@ -111,6 +128,10 @@ pub struct Server {
   next_wk: tls12.Keys
   rk: tls12.Keys
   wk: tls12.Keys
+  /// the client's certificate chain (DER) and the verified chains
+  pub peer: List[Bytes] = []
+  pub verified: List[List[Bytes]] = []
+  peer_leaf: x509.Cert? = None
 }
 
 /// A new server for conf, waiting for a ClientHello.
@@ -345,6 +366,22 @@ fn handshake(var s: Server, t: Int, msg: Bytes) {
       return
     }
     client_hello(s, msg)
+    return
+  }
+  if s.state == WAIT_CERT {
+    if t != tls12.HS_CERTIFICATE {
+      fail(s, tls12.ALERT_UNEXPECTED_MESSAGE, tls12.unexpected(tls12.HS_CERTIFICATE, t))
+      return
+    }
+    client_cert(s, msg)
+    return
+  }
+  if s.state == WAIT_CVERIFY {
+    if t != tls12.HS_CERTIFICATE_VERIFY {
+      fail(s, tls12.ALERT_UNEXPECTED_MESSAGE, tls12.unexpected(tls12.HS_CERTIFICATE_VERIFY, t))
+      return
+    }
+    client_verify(s, msg)
     return
   }
   if s.state == WAIT_CKE {
@@ -988,8 +1025,11 @@ fn client_hello(var s: Server, msg: Bytes) {
     return
   }
   write(s, ske)
+  if cf.client_auth != AUTH_NONE {
+    write(s, cert_request(s))
+  }
   write(s, tls12.message(tls12.HS_SERVER_HELLO_DONE, b""))
-  s.state = WAIT_CKE
+  s.state = if cf.client_auth != AUTH_NONE { WAIT_CERT } else { WAIT_CKE }
 }
 
 /// The ServerHello (Go's extension order) echoing sid.
@@ -1253,6 +1293,107 @@ fn client_key_exchange(var s: Server, msg: Bytes) {
   let kb = tls12.key_block(s.suite, s.master, s.cr, s.sr)
   s.next_rk = tls12.direction(s.suite, kb, true, b"")
   s.next_wk = tls12.direction(s.suite, kb, false, s.conf.iv)
+  s.state = if s.peer_leaf == None { WAIT_CCS } else { WAIT_CVERIFY }
+}
+
+/// Go's CertificateRequest for a TLS 1.2 server: the certificate types
+/// (rsa_sign, ecdsa_sign), the signature algorithms, the CAs' names.
+fn cert_request(s: Server) -> Bytes {
+  var sa: List[Bytes] = []
+  for x in tls12.schemes() {
+    sa.push(tls12.u16(x))
+  }
+  let algs = asn1.cat(sa)
+  var names: List[Bytes] = []
+  for n in s.conf.client_cas {
+    names.push(asn1.cat([tls12.u16(n.len()), n]))
+  }
+  let cas = asn1.cat(names)
+  tls12.message(tls12.HS_CERTIFICATE_REQUEST, asn1.cat([b"\x02\x01\x40", tls12.u16(algs.len()), algs, tls12.u16(cas.len()), cas]))
+}
+
+/// The client's Certificate (Go's processCertsFromClient): a chain, or
+/// none, which the mode may allow; a chain is verified now for the modes
+/// that verify, its CertificateVerify after the ClientKeyExchange.
+fn client_cert(var s: Server, msg: Bytes) {
+  let mode = s.conf.client_auth
+  var ders: List[Bytes] = []
+  var p = 7
+  while p < msg.len() {
+    let n = tls12.u24_at(msg, p)
+    ders.push(msg[p + 3..p + 3 + n])
+    p += 3 + n
+  }
+  if ders.is_empty() {
+    if mode == AUTH_REQUIRE_ANY || mode == AUTH_REQUIRE_AND_VERIFY {
+      fail(s, tls12.ALERT_BAD_CERTIFICATE, "tls: client didn't provide a certificate")
+      return
+    }
+    s.tr = cat2(s.tr, msg)
+    s.state = WAIT_CKE
+    return
+  }
+  var certs: List[x509.Cert] = []
+  for d in ders {
+    let parsed = x509.parse(d)
+    if parsed.err != "" {
+      fail(s, tls12.ALERT_BAD_CERTIFICATE, "tls: failed to parse client certificate: ${parsed.err}")
+      return
+    }
+    certs.push(parsed.cert)
+  }
+  let leaf = certs[0]
+  if mode == AUTH_VERIFY_IF_GIVEN || mode == AUTH_REQUIRE_AND_VERIFY {
+    var roots: List[x509.Cert] = []
+    for d in s.conf.client_roots {
+      let r = x509.parse(d)
+      if r.err == "" {
+        roots.push(r.cert)
+      }
+    }
+    let r = x509verify.verify_all(leaf, certs[1..certs.len()], roots, "", s.conf.now, [x509.EKU_CLIENT])
+    if r.0.code != x509verify.OK {
+      let c = r.0.code
+      let alert = if c == x509verify.UNKNOWN_AUTHORITY { ALERT_UNKNOWN_CA } else if c == x509verify.EXPIRED { ALERT_CERTIFICATE_EXPIRED } else { tls12.ALERT_BAD_CERTIFICATE }
+      fail(s, alert, "tls: failed to verify certificate: ${x509verify.full_text_zone(r.0, leaf, "", s.conf.now, tls13.zone_of(tls13.ZONE_LAZY, s.conf.now))}")
+      return
+    }
+    var chains: List[List[Bytes]] = []
+    for ch in r.1 {
+      var one: List[Bytes] = []
+      for c in ch {
+        one.push(c.raw)
+      }
+      chains.push(one)
+    }
+    s.verified = chains
+  }
+  if leaf.key_alg != x509.KEY_RSA && !x509.is_ec(leaf.key_alg) && leaf.key_alg != x509.KEY_ED25519 {
+    fail(s, tls12.ALERT_UNSUPPORTED_CERTIFICATE, "tls: client certificate contains an unsupported public key")
+    return
+  }
+  s.peer = ders
+  s.peer_leaf = Some(leaf)
+  s.tr = cat2(s.tr, msg)
+  s.state = WAIT_CKE
+}
+
+/// The client's CertificateVerify: its signature over every handshake
+/// message so far (through the ClientKeyExchange).
+fn client_verify(var s: Server, msg: Bytes) {
+  let leaf = s.peer_leaf ?? fault("tls: client CertificateVerify without a certificate")
+  let scheme = tls12.u16_at(msg, 4)
+  let sig = msg[8..msg.len()]
+  let alg = tls12.sig_alg(scheme)
+  if !tls12.has(tls12.schemes(), scheme) || alg == x509.SIG_UNKNOWN {
+    fail(s, tls12.ALERT_ILLEGAL_PARAMETER, "tls: client certificate used with invalid signature algorithm")
+    return
+  }
+  if !x509.check(alg, leaf.key_alg, leaf.key, s.tr, sig) {
+    fail(s, ALERT_DECRYPT_ERROR, "tls: invalid signature by the client certificate: ${tls13.sig_err(alg)}")
+    return
+  }
+  s.tr = cat2(s.tr, msg)
   s.state = WAIT_CCS
 }
 

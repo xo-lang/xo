@@ -1,5 +1,23 @@
 # std/tls changes
 
+## 2026-10-30: feature: client certificates on a TLS 1.2 server (decision 0433)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the mTLS work of 2026-10-30 (the TLS 1.3 server had the five ClientAuth modes; a TLS 1.2 client then got no certificate request)
+- Go reference: crypto/tls's handshake_server.go doFullHandshake (CertificateRequest, processCertsFromClient, CertificateVerify over the handshake buffer)
+- Test: crypto/tls client at MaxVersion TLS 1.2 against the Xo server in each of the five modes (no cert, another CA, no clientAuth usage, a good chain); same rows as golden tls_mtls
+- Timing: none (a handshake step only when client auth is on)
+
+tls12srv.xo sends a CertificateRequest (rsa_sign and ecdsa_sign, the
+signature algorithms, the CAs' names) after the ServerKeyExchange, reads
+the client's Certificate (verified as the TLS 1.3 server does), and after
+the ClientKeyExchange its CertificateVerify over every handshake message
+so far. A missing certificate where one is required is Go's TLS 1.2
+"bad certificate" alert, not TLS 1.3's certificate_required. The peer
+and verified chains reach `TlsState` as for TLS 1.3. Still open: a TLS
+1.2 client presenting a certificate.
+
 ## 2026-10-30: feature: TlsConn deadlines
 
 - Kind: feature
