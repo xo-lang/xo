@@ -2339,7 +2339,7 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
     }
   }
   if let Some(cf) = s.h2cfg {
-    hserve.srv_h2cfg(srv, cf.max_concurrent_streams, cf.max_read_frame_size, cf.max_receive_buffer_per_connection, cf.max_receive_buffer_per_stream, cf.max_decoder_header_table_size, cf.send_ping_timeout.nanos(), cf.ping_timeout.nanos())
+    hserve.srv_h2cfg(srv, cf.max_concurrent_streams, cf.max_read_frame_size, cf.max_receive_buffer_per_connection, cf.max_receive_buffer_per_stream, cf.max_decoder_header_table_size, cf.send_ping_timeout.nanos(), cf.ping_timeout.nanos(), cf.write_byte_timeout.nanos())
   }
   let conns = hserve.srv_group(srv)
   let l = s.l

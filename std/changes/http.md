@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-10-30: feature: H2Config.write_byte_timeout, native server (decision 0434)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 0434 open list (the native server ignored the field)
+- Go reference: net/http's http2.Server.WriteByteTimeout
+- Test: http_h2_config still equal to want.txt; no stalled-reader probe (the kernel's socket buffers make when a write blocks depend on the host, so a golden would not be stable)
+- Timing: none (the default writes as before)
+
+With the timeout set, the HTTP/2 server writes its pending output in
+16 KiB pieces that each must finish within it, and closes the connection
+when one does not (no write progress). Unset: one write, no deadline.
+
 ## 2026-10-30: feature: Client.with_h2_config, native (decision 0434)
 
 - Kind: feature

@@ -191,7 +191,8 @@ const C_PIDLE = 656
 const C_PTO = 664
 const C_LAST = 672
 const C_PDEAD = 680
-const C_SIZE = 688 // own: this module\'s connection record, not the context
+const C_WTO = 688
+const C_SIZE = 696 // own: this module\'s connection record, not the context
 /// A stream record's words: its connection's record, its id, the
 /// references, whether it is in the table, the request's state (ST_*);
 /// the request (the fiber's, until dispatched): its parts (an Any of
@@ -794,6 +795,7 @@ pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
   sto(c, C_TABLE, if cfg != 0 { ld(cfg, 32) } else { TABLE })
   sto(c, C_PIDLE, if cfg != 0 { ld(cfg, 40) } else { 0 })
   sto(c, C_PTO, if cfg != 0 && ld(cfg, 48) > 0 { ld(cfg, 48) } else { 15000000000 })
+  sto(c, C_WTO, if cfg != 0 { ld(cfg, 56) } else { 0 })
   sto(c, C_LAST, now())
   sto(c, C_PEER_FRAME, 16384)
   sto(c, C_PEER_WIN, 65535)
@@ -943,6 +945,27 @@ pub fn respond(h: rthttp.HConn, status: Int, body: Bytes) -> Bool {
 
 /// Waits while more than BACKLOG bytes of st's body are unsent: false
 /// when the stream is gone (reset, the connection failed).
+/// Writes the connection's pending output; with write_byte_timeout set,
+/// in 16 KiB pieces that each need to finish within it (no progress for
+/// that long closes the connection, as Go's WriteByteTimeout).
+fn send_out(h: rthttp.HConn, c: Int) -> Bool {
+  let p = ld(c, C_OUT)
+  let n = ld(c, C_OUT + 8)
+  let wto = ld(c, C_WTO)
+  if wto <= 0 {
+    return hconn.send_at(h, p, n)
+  }
+  var off = 0
+  while off < n {
+    let k = if n - off > 16384 { 16384 } else { n - off }
+    if hconn.send_until(h, p + off, k, now() + wto) != 0 {
+      return false
+    }
+    off += k
+  }
+  true
+}
+
 fn wait_backlog(st: Int) -> Bool {
   let c = ld(st, S_C)
   var x = 0
@@ -1231,7 +1254,7 @@ pub fn (var h: H2Conn) next() -> H2Req? {
     sto(c, C_WB + 8, 0)
     unlk(c)
     if ld(c, C_OUT + 8) > 0 {
-      let ok = hconn.send_at(h.h, ld(c, C_OUT), ld(c, C_OUT + 8))
+      let ok = send_out(h.h, c)
       sto(c, C_OUT + 8, 0)
       if ld(c, C_OUT + 16) > 262144 {
         bfree(c, C_OUT)
