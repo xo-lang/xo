@@ -356,10 +356,12 @@ fn main(os0: Os) ! {
       return
     }
   }
-  if o.cmd is "build" | "run" {
+  if o.cmd == "build" || (o.cmd == "run" && o.out.is_empty()) {
     // the run cache for a build or run (decision 0360 stage 1,
     // on by default, XO_WHOLE_BUILD=off): an unchanged program's binary, copied to the
     // output or run, with what its build printed
+    // (not `xo run -o PATH`, as not `xo test -o`: a run's entry keeps no
+    // outputs, so a hit wrote nothing to PATH, 2026-10-30)
     let t0 = os.clock.now()
     o.run_start = t0.unix_millis()
     o.run_key = whole_key(os, ctx, o, args, backend)

@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 - `xo bench` takes a value flag's value as the next word too (`--rounds 10`, as `--rounds=10`); before, `--rounds 10` failed with "unknown flag --rounds".
+- `xo run -o PATH` writes PATH every time: when the run cache served
+  an unchanged program, the second run wrote no file there. `xo run -o`
+  now builds without the run cache, as `xo test -o` does.
 - Native Windows DNS record lookups (`lookup_mx`, `lookup_txt`,
   `lookup_srv`, `lookup_addr`) work: Xo's own DNS client asks the network
   adapters' DNS servers and reads the Windows hosts file, as Go's pure Go

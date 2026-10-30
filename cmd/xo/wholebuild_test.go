@@ -291,3 +291,41 @@ func TestWholeBuildWindowsPDB(t *testing.T) {
 	build("-s with an older PDB beside", false, "-s")
 	build("-s again", false, "-s")
 }
+
+// TestWholeBuildRunOut: `xo run -o PATH` writes PATH every time. The run
+// cache served a second run from its entry and wrote nothing there (a
+// run's entry keeps no outputs), so a program the user asked for was
+// missing; `xo run -o` now builds as `xo test -o` does, without the run
+// cache.
+func TestWholeBuildRunOut(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	tmp := t.TempDir()
+	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
+	setenv(t, "XO_BIN_CACHE", filepath.Join(tmp, "bin"))
+	setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(tmp, "backend"))
+	setenv(t, "XO_WHOLE_BUILD", "on")
+	dir := filepath.Join(tmp, "prog")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for name, text := range map[string]string{"xo.mod": "module runout\n", "main.xo": "fn main(os: Os) {\n  os.stdio.println(\"one\")\n}\n"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	chdir(t, dir)
+	out := filepath.Join(tmp, "out", "prog")
+	for i := 1; i <= 2; i++ {
+		os.Remove(out)
+		var so, se bytes.Buffer
+		if code := run(t, []string{"run", "-o", out, "."}, &so, &se); code != 0 || so.String() != "one\n" {
+			t.Fatalf("run %d: exit %d, printed %q\n%s", i, code, so.String(), se.String())
+		}
+		got, err := testtmp.Guard(exec.Command(out)).Output()
+		if err != nil || string(got) != "one\n" {
+			t.Fatalf("run %d: -o %s: %q (%v), want the program", i, out, got, err)
+		}
+	}
+}
