@@ -342,9 +342,9 @@ Update the knowledgebase in the same change as the work, not later:
   the values are in the untracked CLAUDE.local.md, and xobuild with
   neither, and no XO_SEED_URL, fetches no seed): `seeds/<version>/<goos>-<goarch>.tar.gz`,
   `seeds/<version>/manifest.txt`, `seeds/latest.txt`. Seeds are not
-  public releases. This Mac's AWS user and EC2 instances (instance
-  profile `xo-ci-seed-read`, read only on that bucket) download them
-  with the aws CLI; xobuild fetches the newest seed before falling back
+  public releases. This Mac's AWS user downloads them with the aws CLI
+  (the EC2 machines and their `xo-ci-seed-read` profile are deleted,
+  decision 0423; the offload hosts get a seed copied by the lead); xobuild fetches the newest seed before falling back
   to the go-compiler-final root and its chain. When a change lands that
   older seeds cannot build (new runtime intrinsics the compiler's own
   code uses, gotchas/seed-older-than-intrinsics.md), the minor version

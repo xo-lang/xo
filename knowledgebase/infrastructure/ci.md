@@ -3,7 +3,11 @@
 **Retired 2026-10-29 (decision 0423):** the runners and their volumes are
 deleted, the GitHub runners removed, and the infra/ci-runners stack
 destroyed. Heavy runs go to the offload hosts
-([offload.md](offload.md)). The rest of this page is history.
+([offload.md](offload.md)). Also deleted (owner, 2026-10-29): the
+security group `xo-ci-ssh`, the key pair `xo-ci`, and the role and
+instance profile `xo-ci-seed-read`; the xo-lang-ci GitHub App and its
+SSM parameters (`/xo-ci/github-app/*`) stay. The rest of this page is
+history, as are the EC2 sections of toolchain.md.
 
 Decision 0225 (owner, 2026-10-14). Heavy verification (full package
 tests, the selfhost merge tier, the fixed point, the full tier) runs on
