@@ -38,6 +38,20 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   and exits with its status; `--put LOCAL REMOTE` copies a file. It needs
   no heavy.sh slot (only ssh runs on the Mac). Exit 3: no offload.env;
   exit 4: no answer.
+- `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
+  self|PROG [ARG...]` (lead, 2026-10-30: a wall `--ab` whose claim is not
+  darwin specific runs here, so the Mac's measure windows serve only
+  darwin claims and footprints): `xo bench --ab` of two committed
+  revisions. One bundle of the commits the host lacks (since
+  `refs/offload/sent`, which tier.sh shares and which a run advances
+  only to a revision on main; `refs/offload-amd64/sent`
+  with `OFFLOAD_ENV=offload-amd64.env`), then `ab-host-remote.sh` there:
+  two detached worktrees under the priv lock, xo built at each with
+  `OFF_SEED` (the host's cache when it has the build), caches off, and
+  the self build (`self`: each side's xo builds NEW's compiler/xo with
+  its own std, `--keep-loaded`) or a program directory built by each side
+  and run with `ARG...`; 10 rounds and 2 warmups by default. The table
+  streams back; logs stay in the host's `abNAME.out`. No heavy.sh slot.
 - `scripts/lead/offload-tier.sh SHA N SEED [BUNDLE]` (run through
   offload.sh): fetches the bundle into `/work/priv`, checks SHA out into
   `/work/tierN`, builds xo (`go run ./scripts/xobuild` with `XO_SEED`, or
