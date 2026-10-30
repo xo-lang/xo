@@ -1,0 +1,105 @@
+// HTTP/2 without TLS and protocol sets (decision 0434): a plain server
+// with #{Http1, UnencryptedHttp2} answers an h2c client (prior knowledge)
+// and an HTTP/1.1 client on one port; an h2c only server closes an
+// HTTP/1.1 connection; a client with both protocols uses HTTP/1.1; over
+// TLS a set without Http2 leaves h2 out of ALPN and one without Http1
+// leaves out http/1.1; an empty set fails serve. The handler shows the
+// protocol by the client's User-Agent (Go-http-client/1.1 or /2.0).
+use std/http
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/netip
+
+fn ua(req: http.Request) -> http.Response {
+  http.text(200, "tls=${req.tls()} ua=${req.header("User-Agent") ?? "-"}")
+}
+
+fn show(os: Os, label: Str, addr: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${(resp.body.to_str() ?? "?").trim()}")
+    Err(e) => os.stdio.println("${label}: ${"${e}".replace(addr, "ADDR")}")
+  }
+}
+
+/// Whether a request failed, for a failure whose text names a local port
+/// or races a reset against EOF (an HTTP/1.1 request to an h2c only
+/// server, which closes the connection).
+fn show_failed(os: Os, label: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status}?")
+    Err(_) => os.stdio.println("${label}: failed")
+  }
+}
+
+fn serve_bg(os: Os, srv: http.Server) {
+  match srv.serve() {
+    Ok(_) => ()
+    Err(e) => os.stdio.println("serve failed: ${e}")
+  }
+}
+
+/// A CA and a server certificate for 127.0.0.1, made here.
+fn certs(os: Os) -> (Bytes, tls.TlsCert) uses rand, clock {
+  let now = os.clock.now()
+  let ca_key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let ca = x509.create_certificate(os.rand, x509.Template{subject: x509.Name{common_name: "h2c CA"}, not_before: now - 1h, not_after: now + 24h, is_ca: true, key_usage: [x509.KeyUsage.CertSign]}, ca_key.public_key(), None, ca_key).or_fault("ca")
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let t = x509.Template{subject: x509.Name{common_name: "server"}, not_before: now - 1h, not_after: now + 24h, ip_addresses: [netip.parse_addr("127.0.0.1").or_fault("ip")], key_usage: [x509.KeyUsage.DigitalSignature], ext_key_usage: [x509.ExtKeyUsage.ServerAuth]}
+  let leaf = x509.create_certificate(os.rand, t, key.public_key(), Some(ca), ca_key).or_fault("leaf")
+  let key_pem = "-----BEGIN PRIVATE KEY-----\n${base64.encode(crypto.marshal_private_key(key))}\n-----END PRIVATE KEY-----\n".bytes()
+  (ca.pem(), tls.cert(leaf.pem(), key_pem).or_fault("pair"))
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  var r = http.router()
+  r.handle("GET /ua", ua)
+  let (ca_pem, cert) = certs(os)
+  let both = #{http.Protocol.Http1, http.Protocol.UnencryptedHttp2}
+  let h2c_only = #{http.Protocol.UnencryptedHttp2}
+  let plain = http.client(os.net, timeout: 5s)
+  let h2c = http.client(os.net, timeout: 5s).with_protocols(h2c_only)
+  let mixed = http.client(os.net, timeout: 5s).with_protocols(both)
+  let secure = http.client(os.net, timeout: 5s).with_roots(ca_pem).or_fault("roots")
+  let secure_h1 = secure.with_protocols(#{http.Protocol.Http1})
+  let l1 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l3 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l4 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l5 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l6 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let a1 = l1.addr()
+  let a2 = l2.addr()
+  let a3 = l3.addr()
+  let a4 = l4.addr()
+  let a5 = l5.addr()
+  scope s {
+    s.spawn_background(fn() { serve_bg(os, http.server(l1, r).with_protocols(both)) })
+    s.spawn_background(fn() { serve_bg(os, http.server(l2, r).with_protocols(h2c_only)) })
+    s.spawn_background(fn() { serve_bg(os, http.server(l3, r)) })
+    s.spawn_background(fn() { serve_bg(os, http.server(l4, r).with_tls([cert]).with_protocols(#{http.Protocol.Http1})) })
+    s.spawn_background(fn() { serve_bg(os, http.server(l5, r).with_tls([cert]).with_protocols(#{http.Protocol.Http2})) })
+    os.stdio.println("== h1 + h2c server")
+    show(os, "h2c client", a1, h2c.get("http://${a1}/ua"))
+    show(os, "h1 client", a1, plain.get("http://${a1}/ua"))
+    show(os, "both client", a1, mixed.get("http://${a1}/ua"))
+    os.stdio.println("== h2c only server")
+    show(os, "h2c client", a2, h2c.get("http://${a2}/ua"))
+    show_failed(os, "h1 client", plain.get("http://${a2}/ua"))
+    os.stdio.println("== default server")
+    show(os, "h1 client", a3, plain.get("http://${a3}/ua"))
+    show(os, "h2c client", a3, h2c.get("http://${a3}/ua"))
+    os.stdio.println("== tls server, Http1 only")
+    show(os, "default client", a4, secure.get("https://${a4}/ua"))
+    os.stdio.println("== tls server, Http2 only")
+    show(os, "default client", a5, secure.get("https://${a5}/ua"))
+    show(os, "h1 only client", a5, secure_h1.get("https://${a5}/ua"))
+    os.stdio.println("== empty sets")
+    match http.server(l6, r).with_protocols(#{}).serve() {
+      Ok(_) => os.stdio.println("empty: served?")
+      Err(e) => os.stdio.println("empty: ${e}")
+    }
+  }
+  os.stdio.println("done")
+}

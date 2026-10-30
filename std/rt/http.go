@@ -1037,6 +1037,10 @@ type Http_Server struct {
 	// (the system's when None)
 	clientAuth  Tls_ClientAuth
 	clientRoots Option[Tls_Roots]
+	// with_protocols and with_h2_config (decision 0434): Go's
+	// Server.Protocols (None: the default set) and Server.HTTP2
+	protos Option[Set[Http_Protocol]]
+	h2     Option[Http_H2Config]
 	// with_read_timeout, with_read_header_timeout, with_idle_timeout,
 	// with_max_header_bytes, with_max_body (std.md 4.4): net/http's
 	// Server fields and MaxBytesReader on each body.
@@ -1113,6 +1117,44 @@ func (s Http_Server) M_with_tls(_ *Task, certs List[Tls_TlsCert]) Http_Server {
 
 // errNoTLSCert is serve's error for with_tls([]).
 const errNoTLSCert = "http: with_tls needs a certificate"
+
+// errNoProtocols is serve's error for with_protocols of an empty set, or
+// of a TLS server with neither Http1 nor Http2 (decision 0434).
+const errNoProtocols = "http: with_protocols needs a protocol the listener can speak"
+
+// M_with_protocols is `srv.with_protocols(p)` (decision 0434).
+func (s Http_Server) M_with_protocols(_ *Task, p Set[Http_Protocol]) Http_Server {
+	s.protos = Some(p)
+	return s
+}
+
+// M_with_h2_config is `srv.with_h2_config(c)` (decision 0434).
+func (s Http_Server) M_with_h2_config(_ *Task, c Http_H2Config) Http_Server {
+	s.h2 = Some(c)
+	return s
+}
+
+// protoSet is a protocol set's three members, the default (Http1 and
+// Http2) for None.
+type protoSet struct{ h1, h2, h2c bool }
+
+func protoSetOf(p Option[Set[Http_Protocol]]) protoSet {
+	if !p.Some {
+		return protoSet{h1: true, h2: true}
+	}
+	var r protoSet
+	for x := range Set_All(p.V) {
+		switch x.Tag {
+		case 1:
+			r.h1 = true
+		case 2:
+			r.h2 = true
+		case 3:
+			r.h2c = true
+		}
+	}
+	return r
+}
 
 // XoDebug implements Debug.
 func (Http_Server) XoDebug(b *strings.Builder) { b.WriteString("<server>") }
@@ -1221,6 +1263,9 @@ type Http_Client struct {
 	tr    any
 	roots *x509.CertPool
 	cert  Option[Tls_TlsCert]
+	// with_protocols and with_h2_config (decision 0434)
+	protos Option[Set[Http_Protocol]]
+	h2     Option[Http_H2Config]
 	// with_redirects (decision 0404): the redirects followed at most; 0
 	// returns the 3xx itself
 	redirects int64
@@ -1253,7 +1298,7 @@ func (c Http_Client) M_with_roots(_ *Task, pem Bytes) Result[Http_Client, Http_T
 		return Err[Http_Client](Http_TlsErr{F_msg: "tls: no certificates found in PEM input"})
 	}
 	c.roots = pool
-	c.tr = clientTransport(c.roots, c.cert)
+	c.tr = clientTransport(c)
 	return Ok[Http_Client, Http_TlsErr](c)
 }
 
@@ -1261,7 +1306,21 @@ func (c Http_Client) M_with_roots(_ *Task, pem Bytes) Result[Http_Client, Http_T
 // when a server asks for one.
 func (c Http_Client) M_with_cert(_ *Task, cert Tls_TlsCert) Http_Client {
 	c.cert = Some(cert)
-	c.tr = clientTransport(c.roots, c.cert)
+	c.tr = clientTransport(c)
+	return c
+}
+
+// M_with_protocols is `c.with_protocols(p)` (decision 0434).
+func (c Http_Client) M_with_protocols(_ *Task, p Set[Http_Protocol]) Http_Client {
+	c.protos = Some(p)
+	c.tr = clientTransport(c)
+	return c
+}
+
+// M_with_h2_config is `c.with_h2_config(cfg)` (decision 0434).
+func (c Http_Client) M_with_h2_config(_ *Task, cfg Http_H2Config) Http_Client {
+	c.h2 = Some(cfg)
+	c.tr = clientTransport(c)
 	return c
 }
 

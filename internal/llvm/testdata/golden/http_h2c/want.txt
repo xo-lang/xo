@@ -1,0 +1,21 @@
+exit 0
+--- stdout
+== h1 + h2c server
+h2c client: 200 tls=false ua=Go-http-client/1.1
+h1 client: 200 tls=false ua=Go-http-client/1.1
+both client: 200 tls=false ua=Go-http-client/1.1
+== h2c only server
+h2c client: 200 tls=false ua=Go-http-client/1.1
+h1 client: 200?
+== default server
+h1 client: 200 tls=false ua=Go-http-client/1.1
+h2c client: 200 tls=false ua=Go-http-client/1.1
+== tls server, Http1 only
+default client: 200 tls=true ua=Go-http-client/2.0
+== tls server, Http2 only
+default client: 200 tls=true ua=Go-http-client/2.0
+h1 only client: 200 tls=true ua=Go-http-client/2.0
+== empty sets
+empty: http: with_protocols needs a protocol the listener can speak
+done
+--- stderr

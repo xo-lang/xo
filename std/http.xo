@@ -336,6 +336,49 @@ fn (s: Server) with_max_header_bytes(n: Int) -> Server
 /// 0, XO_HTTP_MAX_BODY's default); a longer one is `413 Content Too
 /// Large`. A route that needs a smaller cap wraps `max_body(n)`.
 fn (s: Server) with_max_body(n: Int) -> Server
+/// The protocols a server or client speaks (Go's http.Protocols,
+/// decision 0434).
+enum Protocol {
+  /// HTTP/1.1
+  Http1
+  /// HTTP/2 over TLS (by ALPN)
+  Http2
+  /// HTTP/2 without TLS, with prior knowledge (h2c)
+  UnencryptedHttp2
+} derive Display
+
+/// HTTP/2 settings (Go's http.HTTP2Config, decision 0434); 0 is the
+/// default of each, and an out of range value is clamped as Go does.
+struct H2Config {
+  /// streams a peer may open at once (0: 250)
+  max_concurrent_streams: Int = 0
+  /// the largest frame read (0: 1 MiB; 16384 to 16 MiB)
+  max_read_frame_size: Int = 0
+  /// the connection's receive window (0: 1 MiB)
+  max_receive_buffer_per_connection: Int = 0
+  /// each stream's receive window (0: 1 MiB)
+  max_receive_buffer_per_stream: Int = 0
+  /// the HPACK table the peer may use for what it sends (0: 4096)
+  max_decoder_header_table_size: Int = 0
+  /// the HPACK table used for what is sent (0: 4096)
+  max_encoder_header_table_size: Int = 0
+  /// read silence before a PING is sent (0: none)
+  send_ping_timeout: Duration = 0s
+  /// the wait for a PING's ack before the connection closes (0: 15 s)
+  ping_timeout: Duration = 0s
+  /// how long a write may make no progress before the connection
+  /// closes (0: no limit)
+  write_byte_timeout: Duration = 0s
+}
+
+/// The server speaking the protocols of p (Go's Server.Protocols;
+/// decision 0434): #{Http1, Http2} by default; UnencryptedHttp2 serves
+/// h2c with prior knowledge on a plain listener. serve fails on an empty
+/// set or a TLS server with neither Http1 nor Http2.
+fn (s: Server) with_protocols(p: Set[Protocol]) -> Server
+/// The server's HTTP/2 settings (Go's Server.HTTP2; decision 0434).
+fn (s: Server) with_h2_config(c: H2Config) -> Server
+
 /// A middleware that answers `413` with Go's MaxBytesReader text
 /// (`http: request body too large`) for a body over n bytes (a streamed
 /// body is capped at n as it is read).
@@ -373,6 +416,12 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
 /// The client presenting cert when an https server asks for a
 /// certificate (Go's tls.Config.Certificates on a client; decision 0433).
 fn (c: Client) with_cert(cert: TlsCert) -> Client
+/// The client speaking the protocols of p (Go's Transport.Protocols;
+/// decision 0434): with UnencryptedHttp2 and not Http1, an http:// URL
+/// opens HTTP/2 with prior knowledge.
+fn (c: Client) with_protocols(p: Set[Protocol]) -> Client
+/// The client's HTTP/2 settings (Go's Transport.HTTP2; decision 0434).
+fn (c: Client) with_h2_config(cfg: H2Config) -> Client
 /// A reverse proxy to target, for a handle_stream route:
 /// `r.handle_stream("/api/", fn(req, body) { p.serve(req, body) })`. It forwards each request to
 /// target (decision 0404, httputil.ReverseProxy with SetURL and

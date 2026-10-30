@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+default: closed, ping seen false
+tuned: closed, ping seen false
+keepalive: closed, ping seen false
+done
+--- stderr

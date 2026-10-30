@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- HTTP/2 without TLS and HTTP/2 settings (decision 0434):
+  `with_protocols(#{Http1, Http2, UnencryptedHttp2})` on a server or
+  client (Go's `http.Protocols`, h2c with prior knowledge) and
+  `with_h2_config(H2Config{...})` (Go's `HTTP2Config`). Go backend
+  first; the native h2c server and client follow.
+
 - Mutual TLS (decision 0433): `http.Server.with_client_auth(mode,
   roots)` asks clients for a certificate in one of Go's five
   `tls.ClientAuth` modes, `http.Client.with_cert(cert)` and

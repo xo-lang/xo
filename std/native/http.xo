@@ -141,6 +141,10 @@ struct Server {
   /// CertificateRequest path is Lang 3's (srvtls.xo)
   client_auth: tls.ClientAuth = tls.ClientAuth.None
   client_roots: tls.Roots? = None
+  /// with_protocols and with_h2_config (decision 0434; None: the
+  /// defaults); the h2c sniff and h2srv's config record are Lang 3's
+  protocols: Set[http.Protocol]? = None
+  h2cfg: http.H2Config? = None
 }
 
 struct Client {
@@ -149,6 +153,10 @@ struct Client {
   roots: rthttp.Roots
   /// with_cert (decision 0433): presented when a server asks
   cert: tls.TlsCert? = None
+  /// with_protocols and with_h2_config (decision 0434; None: the
+  /// defaults); hclient's prior knowledge dial is Lang 3's
+  protocols: Set[http.Protocol]? = None
+  h2cfg: http.H2Config? = None
   /// the attenuation lists of the Net it was made from (Net.only,
   /// decision 0175): "" for none
   lists: Str = ""
@@ -2178,6 +2186,10 @@ fn (s: Server) with_client_auth(mode: tls.ClientAuth, roots: tls.Roots? = None) 
   s with {client_auth: mode, client_roots: roots}
 }
 
+fn (s: Server) with_protocols(p: Set[http.Protocol]) -> Server { s with {protocols: Some(p)} }
+
+fn (s: Server) with_h2_config(c: http.H2Config) -> Server { s with {h2cfg: Some(c)} }
+
 /// A plain server's TLS setup and HTTP/2: none (serve_h2 is never
 /// reached without TLS: hserve.hc_h2 is 0).
 fn no_tls(_srv: rthttp.Srv, _certs: List[tls.TlsCert]) {}
@@ -2207,6 +2219,13 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   }
   if s.tls_on && s.tls.is_empty() {
     return Err(http.HttpErr.Io(msg: "http: with_tls needs a certificate"))
+  }
+  if let Some(p) = s.protocols {
+    let h1 = p.contains(http.Protocol.Http1)
+    let h2 = p.contains(http.Protocol.Http2)
+    if p.is_empty() || (s.tls_on && !h1 && !h2) {
+      return Err(http.HttpErr.Io(msg: "http: with_protocols needs a protocol the listener can speak"))
+    }
   }
   let srv = hserve.srv_new()
   defer hserve.srv_close(srv)
@@ -2494,6 +2513,10 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
 /// The certificate is kept for the TLS client's CertificateRequest path
 /// (Lang 3's tlsio side, decision 0433); until then no server asks.
 fn (c: Client) with_cert(cert: tls.TlsCert) -> Client { c with {cert: Some(cert)} }
+
+fn (c: Client) with_protocols(p: Set[http.Protocol]) -> Client { c with {protocols: Some(p)} }
+
+fn (c: Client) with_h2_config(cfg: http.H2Config) -> Client { c with {h2cfg: Some(cfg)} }
 
 /// The client following at most max redirects (decision 0404): 0 returns
 /// a 3xx response as it came, its Location as the server sent it.

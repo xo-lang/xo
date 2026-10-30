@@ -1,0 +1,109 @@
+// HTTP/2 settings (decision 0434): an h2c server's with_h2_config shows
+// in the SETTINGS frame it sends a raw client (max_concurrent_streams,
+// the initial stream window, the frame size, the HPACK table), and its
+// PING keepalive closes a connection that never answers: the server
+// sends a PING after send_ping_timeout of silence and closes when no ack
+// arrives within ping_timeout.
+use std/http
+
+const PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
+
+fn u(b: Bytes, i: Int) -> Int { Int(b[i]) }
+
+/// The frames of buf that are complete: (type, flags, payload), and the
+/// bytes left over.
+fn frames(buf: Bytes) -> (List[(Int, Int, Bytes)], Bytes) {
+  var out: List[(Int, Int, Bytes)] = []
+  var at = 0
+  while buf.len() - at >= 9 {
+    let n = u(buf, at) * 65536 + u(buf, at + 1) * 256 + u(buf, at + 2)
+    if buf.len() - at - 9 < n {
+      break
+    }
+    out.push((u(buf, at + 3), u(buf, at + 4), buf[at + 9..at + 9 + n]))
+    at = at + 9 + n
+  }
+  (out, buf[at..])
+}
+
+fn setting_name(id: Int) -> Str {
+  match id {
+    1 => "HEADER_TABLE_SIZE"
+    3 => "MAX_CONCURRENT_STREAMS"
+    4 => "INITIAL_WINDOW_SIZE"
+    5 => "MAX_FRAME_SIZE"
+    6 => "MAX_HEADER_LIST_SIZE"
+    _ => "SETTING_${id}"
+  }
+}
+
+/// Opens an h2c connection to addr and prints the server's first
+/// SETTINGS frame; with keep, stays silent and reports what the server
+/// does next (a PING, then the close).
+fn probe(os: Os, label: Str, addr: Str, keep: Bool) uses net, stdio {
+  let c = os.net.dial(addr).or_fault("dial")
+  c.write(PREFACE.bytes() + b"\x00\x00\x00\x04\x00\x00\x00\x00\x00").or_fault("preface")
+  var buf = b""
+  var settings_seen = false
+  var ping_seen = false
+  while {
+    match c.read(4096) {
+      Ok(Some(b)) => buf = buf + b
+      Ok(None) => {
+        os.stdio.println("${label}: closed, ping seen ${ping_seen}")
+        break
+      }
+      Err(e) => {
+        os.stdio.println("${label}: ${e}, ping seen ${ping_seen}")
+        break
+      }
+    }
+    let (fs, rest) = frames(buf)
+    buf = rest
+    for (ty, flags, p) in fs {
+      if ty == 4 && flags & 1 == 0 && !settings_seen {
+        settings_seen = true
+        var parts: List[Str] = []
+        var i = 0
+        while i + 6 <= p.len() {
+          let id = u(p, i) * 256 + u(p, i + 1)
+          let v = u(p, i + 2) * 16777216 + u(p, i + 3) * 65536 + u(p, i + 4) * 256 + u(p, i + 5)
+          parts.push("${setting_name(id)}=${v}")
+          i = i + 6
+        }
+        parts = parts.sort()
+        os.stdio.println("${label}: settings ${parts.join(" ")}")
+      }
+      if ty == 6 && flags & 1 == 0 {
+        ping_seen = true
+      }
+    }
+    if settings_seen && !keep {
+      break
+    }
+  }
+  c.close()
+}
+
+fn main(os: Os) uses net, stdio {
+  var r = http.router()
+  r.handle("GET /", fn(_req) { http.text(200, "ok") })
+  let h2c = #{http.Protocol.Http1, http.Protocol.UnencryptedHttp2}
+  let l1 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l3 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let a1 = l1.addr()
+  let a2 = l2.addr()
+  let a3 = l3.addr()
+  let tuned = http.H2Config{max_concurrent_streams: 7, max_read_frame_size: 32768, max_receive_buffer_per_stream: 131072, max_decoder_header_table_size: 8192}
+  let keepalive = http.H2Config{send_ping_timeout: 200ms, ping_timeout: 300ms}
+  scope s {
+    s.spawn_background(fn() { let _ = http.server(l1, r).with_protocols(h2c).serve().ignore_err("test server") })
+    s.spawn_background(fn() { let _ = http.server(l2, r).with_protocols(h2c).with_h2_config(tuned).serve().ignore_err("test server") })
+    s.spawn_background(fn() { let _ = http.server(l3, r).with_protocols(h2c).with_h2_config(keepalive).serve().ignore_err("test server") })
+    probe(os, "default", a1, false)
+    probe(os, "tuned", a2, false)
+    probe(os, "keepalive", a3, true)
+  }
+  os.stdio.println("done")
+}

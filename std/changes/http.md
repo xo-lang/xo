@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-10-30: feature: protocol sets and HTTP/2 settings (with_protocols, with_h2_config, h2c)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0434 (gRPC behind a mesh sidecar speaks h2c with prior knowledge)
+- Go reference: net/http Protocols, Server.Protocols, Transport.Protocols, HTTP2Config (go1.26.1)
+- Test: golden http_h2c (an h1 + h2c server answering both clients on one port, an h2c only server, ALPN with one protocol removed, an empty set)
+
+`Server.with_protocols` and `Client.with_protocols` take a set of
+`Protocol` (`Http1`, `Http2`, `UnencryptedHttp2`), Go's
+`http.Protocols`; `UnencryptedHttp2` is HTTP/2 with prior knowledge on a
+plain connection. `with_h2_config(H2Config)` sets Go's `HTTP2Config`
+(streams, frame size, windows, HPACK tables, PING keepalive, write
+timeout). Go backend only for now: the native backends store the set
+and config until decision 0434's native step lands.
+
 ## 2026-10-30: feature: mutual TLS (with_client_auth, with_cert, verified_chains)
 
 - Kind: feature

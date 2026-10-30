@@ -1683,6 +1683,8 @@ fn (s: Server) with_read_header_timeout(d: Duration) -> Server   // Go's ReadHea
 fn (s: Server) with_idle_timeout(d: Duration) -> Server          // Go's IdleTimeout: the wait for a kept alive connection's next request
 fn (s: Server) with_max_header_bytes(n: Int) -> Server           // Go's MaxHeaderBytes (plus 4096 of slack; 1 MB when 0): a longer head is 431
 fn (s: Server) with_max_body(n: Int) -> Server                   // the body read before a handler (64 MB when 0): a longer one is 413
+fn (s: Server) with_protocols(p: Set[Protocol]) -> Server        // Go's Server.Protocols (4.6, decision 0434)
+fn (s: Server) with_h2_config(c: H2Config) -> Server             // Go's Server.HTTP2 (4.6)
 pub fn max_body(n: Int) -> fn(Request, Next) -> Response         // Go's MaxBytesReader as a middleware: 413 `http: request body too large`
 enum HttpErr { Io(msg: Str), Canceled }
 ```
@@ -1734,6 +1736,8 @@ fn (c: Client) send(req: Request) -> Response ! ClientErr uses net.dial
 fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses net.dial
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr   // 4.6
 fn (c: Client) with_redirects(max: Int) -> Client          // decision 0404
+fn (c: Client) with_protocols(p: Set[Protocol]) -> Client  // Go's Transport.Protocols (4.6, decision 0434)
+fn (c: Client) with_h2_config(cfg: H2Config) -> Client     // Go's Transport.HTTP2 (4.6)
 fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
 fn (r: Request) with_idle_timeout(d: Duration) -> Request  // decision 0404
 fn (r: Request) with_body_reader(b: BodyReader) -> Request // decision 0404
@@ -1945,6 +1949,38 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   (shutdown, the arena, `Content-Length`); a client that sends plain HTTP
   gets `400` with the body `Client sent an HTTP request to an HTTPS
   server.` and the connection closes. Failed handshakes are not logged.
+- Protocols and HTTP/2 settings (decision 0434, Go 1.24's shape):
+
+  ```
+  enum Protocol { Http1, Http2, UnencryptedHttp2 }
+  struct H2Config {                     // Go's HTTP2Config; 0: the default, out of range values clamped as Go
+    max_concurrent_streams: Int = 0     // 250
+    max_read_frame_size: Int = 0        // 1 MiB (16384 to 16 MiB)
+    max_receive_buffer_per_connection: Int = 0   // 1 MiB
+    max_receive_buffer_per_stream: Int = 0       // 1 MiB
+    max_decoder_header_table_size: Int = 0       // 4096
+    max_encoder_header_table_size: Int = 0       // 4096
+    send_ping_timeout: Duration = 0s    // read silence before a PING; none
+    ping_timeout: Duration = 0s         // the wait for its ack; 15 s
+    write_byte_timeout: Duration = 0s   // no write progress closes the connection; none
+  }
+  ```
+
+  Without `with_protocols` a server and a client speak `#{Http1,
+  Http2}`. A server with `UnencryptedHttp2` serves HTTP/2 with prior
+  knowledge (h2c: the client opens with the HTTP/2 preface) on a plain
+  listener, and HTTP/1.1 on the same port when `Http1` is in the set;
+  without `Http1` an HTTP/1.1 connection closes. A client with
+  `UnencryptedHttp2` and not `Http1` opens an `http://` URL with HTTP/2
+  prior knowledge; with both it uses HTTP/1.1 (it cannot know the server
+  speaks h2c). Over TLS, a set without `Http2` leaves `h2` out of ALPN
+  and one without `Http1` leaves out `http/1.1`. `serve` fails with
+  `Io("http: with_protocols needs a protocol the listener can speak")`
+  for an empty set, or a TLS server with neither `Http1` nor `Http2`.
+  There is no `Upgrade: h2c` (RFC 9113 deprecates it; net/http has none).
+  The native backends store the set and the config; the h2c server and
+  client and the per connection settings land with decision 0434's
+  native step.
 - Mutual TLS (decision 0433): `with_client_auth(mode, roots)` makes the
   server ask for a client certificate in `mode` (std/tls's `ClientAuth`,
   Go's `tls.Config.ClientAuth`): `None` asks for none (the default);
@@ -1964,7 +2000,7 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   (decision 0433's native step).
 - HTTP/2 (decision 0121): over TLS a server offers `h2` and `http/1.1`
   by ALPN and prefers `h2`, and the client offers both; plain `http` is
-  always HTTP/1.1 (no h2c). Nothing in the API changes, and every backend
+  HTTP/1.1 unless `with_protocols` says otherwise (below). Nothing else in the API changes, and every backend
   behaves as net/http's HTTP/2 does: a request from Go's client (or Xo's)
   carries `User-Agent: Go-http-client/2.0` and no `Connection` field,
   several `Cookie` fields arrive joined with `; `, and a response's

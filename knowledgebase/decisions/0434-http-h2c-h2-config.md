@@ -61,7 +61,11 @@ fn (c: Client) with_h2_config(c: H2Config) -> Client
 - Over TLS, `Http2` absent removes `h2` from ALPN; `Http1` absent
   removes `http/1.1`.
 - An empty set, or a TLS server with neither `Http1` nor `Http2`, is a
-  programming error reported when `serve` starts (Go panics).
+  programming error reported when `serve` starts:
+  `Io("http: with_protocols needs a protocol the listener can speak")`.
+  (Go 1.26's server does not panic: it accepts and closes every
+  connection, net/http server.go conn.serve; an error at `serve` is
+  the earlier signal. API step note, Xo lang 5, 2026-10-30.)
 - `H2Config` zero fields take today's values; out of range values are
   clamped as Go clamps them. `send_ping_timeout` sends a PING after that
   much read silence and closes the connection when no ack arrives within

@@ -39,6 +39,10 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 	if s.tlsOn && len(s.tls) == 0 {
 		return Err[Unit](Http_HttpErr{Tag: 1, P: Http_HttpErr_Io{F_msg: errNoTLSCert}})
 	}
+	ps := protoSetOf(s.protos)
+	if (!ps.h1 && !ps.h2 && !ps.h2c) || (s.tlsOn && !ps.h1 && !ps.h2) {
+		return Err[Unit](Http_HttpErr{Tag: 1, P: Http_HttpErr_Io{F_msg: errNoProtocols}})
+	}
 	// request scoped arenas (arena.go): not with middleware, which sees
 	// the request and the response
 	useArena := arenasOn && len(s.r.mws.s) == 0
@@ -257,13 +261,18 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 	// not logged (decisions 0106, 0121)
 	srv.ErrorLog = log.New(handshakeLogFilter{}, "", log.LstdFlags)
 	errc := make(chan error, 1)
+	// HTTP/2 when ALPN agrees on h2, else HTTP/1.1 (decision 0121, as
+	// the native backends' xo_h2.c); a plain listener speaks HTTP/1 only
+	// unless with_protocols has UnencryptedHttp2 (decision 0434,
+	// TestServeNoH2C)
+	srv.Protocols = new(http.Protocols)
+	srv.Protocols.SetHTTP1(ps.h1)
+	srv.Protocols.SetHTTP2(ps.h2)
+	srv.Protocols.SetUnencryptedHTTP2(ps.h2c)
+	if s.h2.Some {
+		srv.HTTP2 = h2ConfigOf(s.h2.V)
+	}
 	if s.tlsOn {
-		// HTTP/2 when ALPN agrees on h2, else HTTP/1.1 (decision 0121,
-		// as the native backends' xo_h2.c). A plain listener speaks
-		// HTTP/1 only (no h2c, TestServeNoH2C).
-		srv.Protocols = new(http.Protocols)
-		srv.Protocols.SetHTTP1(true)
-		srv.Protocols.SetHTTP2(true)
 		cfg := &tls.Config{ClientAuth: clientAuthType(s.clientAuth)}
 		for _, c := range s.tls {
 			cfg.Certificates = append(cfg.Certificates, *c.c)
@@ -542,12 +551,13 @@ func responseFields(tk *Task, resp *http.Response) (Map[string, string], []strin
 // handshake; the native server does not log it either, decision 0106)
 // and the HTTP/2 server's lines about a client's frames (protocol
 // errors, a bad preface, a missing SETTINGS frame, a GOAWAY received, a
-// stream handler's panic, which reset the stream; decision 0121).
+// stream handler's panic, which reset the stream; decision 0121) and
+// the keepalive's PING timeout closing a silent client (decision 0434).
 type handshakeLogFilter struct{}
 
 func (handshakeLogFilter) Write(p []byte) (int, error) {
 	if bytes.Contains(p, []byte("http: TLS handshake error from ")) || bytes.Contains(p, []byte(" http2: ")) ||
-		bytes.Contains(p, []byte(" timeout waiting for SETTINGS frames from ")) {
+		bytes.Contains(p, []byte(" timeout waiting for SETTINGS frames from ")) || bytes.Contains(p, []byte(" timeout waiting for PING response")) {
 		return len(p), nil
 	}
 	return os.Stderr.Write(p)
@@ -588,13 +598,38 @@ func certTransport(roots *x509.CertPool, cert *tls.Certificate) *http.Transport 
 // client_groups) and Go's GODEBUG=tlsmlkem=0.
 func noMLKEM() bool { return os.Getenv("XO_TLS_MLKEM") == "0" }
 
-// clientTransport is a client's transport of with_roots and with_cert.
-func clientTransport(roots *x509.CertPool, cert Option[Tls_TlsCert]) any {
-	var c *tls.Certificate
-	if cert.Some {
-		c = cert.V.c
+// clientTransport is a client's transport of with_roots, with_cert,
+// with_protocols and with_h2_config.
+func clientTransport(c Http_Client) any {
+	var cert *tls.Certificate
+	if c.cert.Some {
+		cert = c.cert.V.c
 	}
-	return certTransport(roots, c)
+	t := certTransport(c.roots, cert)
+	ps := protoSetOf(c.protos)
+	t.Protocols.SetHTTP1(ps.h1)
+	t.Protocols.SetHTTP2(ps.h2)
+	t.Protocols.SetUnencryptedHTTP2(ps.h2c)
+	if c.h2.Some {
+		t.HTTP2 = h2ConfigOf(c.h2.V)
+	}
+	return t
+}
+
+// h2ConfigOf is an H2Config as Go's (decision 0434): 0 fields are Go's
+// defaults, and Go clamps the rest.
+func h2ConfigOf(c Http_H2Config) *http.HTTP2Config {
+	return &http.HTTP2Config{
+		MaxConcurrentStreams:          int(c.F_max_concurrent_streams),
+		MaxReadFrameSize:              int(c.F_max_read_frame_size),
+		MaxReceiveBufferPerConnection: int(c.F_max_receive_buffer_per_connection),
+		MaxReceiveBufferPerStream:     int(c.F_max_receive_buffer_per_stream),
+		MaxDecoderHeaderTableSize:     int(c.F_max_decoder_header_table_size),
+		MaxEncoderHeaderTableSize:     int(c.F_max_encoder_header_table_size),
+		SendPingTimeout:               time.Duration(c.F_send_ping_timeout),
+		PingTimeout:                   time.Duration(c.F_ping_timeout),
+		WriteByteTimeout:              time.Duration(c.F_write_byte_timeout),
+	}
 }
 
 // faultProbe is std/native/llrt/http1.xo's fault_probe on the Go backend

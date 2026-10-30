@@ -77,6 +77,8 @@ var (
 	_ func(*Http_Server, *Task, Duration) Http_Server                                                                                                   = (*Http_Server).M_with_idle_timeout
 	_ func(*Http_Server, *Task, int64) Http_Server                                                                                                      = (*Http_Server).M_with_max_header_bytes
 	_ func(*Http_Server, *Task, int64) Http_Server                                                                                                      = (*Http_Server).M_with_max_body
+	_ func(*Http_Server, *Task, Set[Http_Protocol]) Http_Server                                                                                         = (*Http_Server).M_with_protocols
+	_ func(*Http_Server, *Task, Http_H2Config) Http_Server                                                                                              = (*Http_Server).M_with_h2_config
 	_ func(*Task, int64) func(*Task, Http_Request, func(*Task, Http_Request) Result[Http_Response, Never]) Result[Http_Response, Never]                 = Http_max_body
 	_ func(*Task, Bytes, Bytes) Result[Tls_TlsCert, Http_TlsErr]                                                                                        = Http_tls_cert
 	_ func(*Http_TlsErr, *Task) string                                                                                                                  = (*Http_TlsErr).M_display
@@ -86,6 +88,8 @@ var (
 	_ func(*Http_Client, *Task, Http_Request) Result[Http_Response, Http_ClientErr]                                                                     = (*Http_Client).M_send
 	_ func(*Http_Client, *Task, Bytes) Result[Http_Client, Http_TlsErr]                                                                                 = (*Http_Client).M_with_roots
 	_ func(*Http_Client, *Task, Tls_TlsCert) Http_Client                                                                                                = (*Http_Client).M_with_cert
+	_ func(*Http_Client, *Task, Set[Http_Protocol]) Http_Client                                                                                         = (*Http_Client).M_with_protocols
+	_ func(*Http_Client, *Task, Http_H2Config) Http_Client                                                                                              = (*Http_Client).M_with_h2_config
 	_ func(*Task, Http_Client, Http_Url) Http_ReverseProxy                                                                                              = Http_reverse_proxy
 	_ func(*Http_ReverseProxy, *Task, func(*Task, Http_Request, Http_Request) Result[Http_Request, Never]) Http_ReverseProxy                            = (*Http_ReverseProxy).M_with_rewrite
 	_ func(*Http_ReverseProxy, *Task, Http_Request, Http_BodyReader) Http_Response                                                                      = (*Http_ReverseProxy).M_serve
