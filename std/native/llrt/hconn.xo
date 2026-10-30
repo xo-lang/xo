@@ -109,6 +109,9 @@ pub const TO_H2_EMIT = 9
 pub const TO_H2_RESPOND_AT = 10
 pub const TO_H2_FINISH = 11
 pub const TO_H2 = 12
+pub const TO_SET_DEADLINE = 13
+pub const TO_TIMED_OUT = 14
+pub const TO_NEG = 15
 
 /// Whether the table is made (srvtls.xo install).
 pub fn tls_ops_made() -> Bool { rt.slot_load[Int](rt.static_word(W_TLS_OPS), 0, 1) != 0 }
@@ -283,12 +286,12 @@ pub fn recv_until(h: rthttp.HConn, p: Int, cap: Int, idle: Bool, deadline: Int) 
     // the handshake first, then decrypted bytes; both wait with the
     // deadline (std.md 4.4), so a slow client cannot hold a TLS
     // connection past the read or head timeout
-    tlssrv.set_deadline(tls, deadline)
+    let _d = rt.call_c2(tls_op(TO_SET_DEADLINE), tls, deadline)
     r = rt.call_c4(tls_op(TO_READ), tls, p, cap, 0)
-    if r < 0 && deadline != 0 && tlssrv.timed_out(tls) {
+    if r < 0 && deadline != 0 && rt.call_c2(tls_op(TO_TIMED_OUT), tls, 0) != 0 {
       r = -2
     }
-    tlssrv.set_deadline(tls, 0)
+    let _c = rt.call_c2(tls_op(TO_SET_DEADLINE), tls, 0)
   } else {
     let pd = conn_pd(hc)
     if poll.pd_begin(pd) {

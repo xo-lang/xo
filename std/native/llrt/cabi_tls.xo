@@ -14,7 +14,7 @@ use native/llrt/tlssrv
 use native/rt
 
 /// The number of entries of the table (hconn.xo TO_*).
-pub const N = 13
+pub const N = 16
 
 fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 
@@ -31,6 +31,18 @@ fn srvtls_free(t: Int) { tlssrv.free(t) }
 fn srvtls_read(t: Int, p: Int, n: Int) -> Int { tlssrv.hc_read(t, p, n) }
 
 fn srvtls_write(t: Int, p: Int, n: Int) -> Int { tlssrv.write(t, p, n) }
+
+/// The deadline of t's reads and handshake (tlssrv.set_deadline, 0 none).
+fn srvtls_set_deadline(t: Int, when: Int) -> Int {
+  tlssrv.set_deadline(t, when)
+  0
+}
+
+/// Whether t's last wait passed its deadline (tlssrv.timed_out).
+fn srvtls_timed_out(t: Int, _u: Int) -> Int { if tlssrv.timed_out(t) { 1 } else { 0 } }
+
+/// The Any record of t's tlsneg.Negotiated, 0 for none (tlssrv.neg_any).
+fn srvtls_neg(t: Int, _u: Int) -> Int { tlssrv.neg_any(t) }
 
 fn srvtls_h2_stop(c: Int) { h2srv.conn_stop(c) }
 

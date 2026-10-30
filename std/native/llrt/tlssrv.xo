@@ -24,6 +24,7 @@ use native/llrt/tls12srv
 use native/llrt/tls13srv
 use native/llrt/tlsticket
 use native/llrt/tlsname
+use native/llrt/tlsneg
 use native/llrt/tlsrec
 use native/llrt/twflags
 use native/llrt/twrun
@@ -636,17 +637,6 @@ pub fn bad_cipher(t: Int) -> Str {
   }
 }
 
-/// What a handshake negotiated, for a request's tls_state (Go's
-/// ConnectionState): the version, the suite's name (Go's
-/// CipherSuiteName), the server name the client asked for and whether a
-/// session resumed.
-pub struct Negotiated {
-  pub version: Str
-  pub cipher: Str
-  pub server_name: Str
-  pub resumed: Bool
-}
-
 /// The block's word holding the Negotiated of a finished handshake (the
 /// record of an Any, as a server's SrvTls; 0 before and after a failed
 /// one). Read by any task, so it is written once, before the first
@@ -655,26 +645,20 @@ pub struct Negotiated {
 /// internal/llvm TestGoldenTasks/http_tls, 2026-10-29).
 const NEG = 16
 
-/// The negotiated state of connection t (after its handshake; empty
-/// strings before it finished, or for a freed connection).
-pub fn negotiated(t: Int) -> Negotiated {
-  let none = Negotiated{version: "", cipher: "", server_name: "", resumed: false}
-  if t == 0 {
-    return none
-  }
-  let w = rt.mem_load(t, NEG, 8)
-  if w == 0 {
-    return none
-  }
-  rt.any_get[Negotiated](rt.obj_at[rt.Any](w)) ?? none
+/// The record of the Any holding connection t's tlsneg.Negotiated, 0
+/// before its handshake finished or for a freed connection; http.xo
+/// reads it through the TLS table (cabi_tls.xo srvtls_neg) and never
+/// names this module, so a plain server links none of it.
+pub fn neg_any(t: Int) -> Int {
+  if t == 0 { 0 } else { rt.mem_load(t, NEG, 8) }
 }
 
 /// What connection c's finished handshake negotiated.
-fn negotiated_of(c: Conn) -> Negotiated {
+fn negotiated_of(c: Conn) -> tlsneg.Negotiated {
   if c.s12.is_empty() {
-    Negotiated{version: "TLS 1.3", cipher: tlsrec.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed}
+    tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsrec.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed}
   } else {
-    Negotiated{version: "TLS 1.2", cipher: suite_name12(c.s12[0].suite), server_name: c.s12[0].host, resumed: c.s12[0].resumed}
+    tlsneg.Negotiated{version: "TLS 1.2", cipher: suite_name12(c.s12[0].suite), server_name: c.s12[0].host, resumed: c.s12[0].resumed}
   }
 }
 

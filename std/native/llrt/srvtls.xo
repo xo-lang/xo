@@ -30,5 +30,8 @@ pub fn install() {
   rt.mem_store(t, 8 * hconn.TO_H2_RESPOND_AT, rt.fn_addr("srvtls_h2_respond_at"), 8)
   rt.mem_store(t, 8 * hconn.TO_H2_FINISH, rt.fn_addr("srvtls_h2_finish"), 8)
   rt.mem_store(t, 8 * hconn.TO_H2, rt.fn_addr("srvtls_h2"), 8)
+  rt.mem_store(t, 8 * hconn.TO_SET_DEADLINE, rt.fn_addr("srvtls_set_deadline"), 8)
+  rt.mem_store(t, 8 * hconn.TO_TIMED_OUT, rt.fn_addr("srvtls_timed_out"), 8)
+  rt.mem_store(t, 8 * hconn.TO_NEG, rt.fn_addr("srvtls_neg"), 8)
   hconn.tls_ops_set(t)
 }

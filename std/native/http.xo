@@ -20,6 +20,7 @@ use native/llrt/http1w
 use native/llrt/hclient
 use native/llrt/rand as llrand
 use native/llrt/srvtls
+use native/llrt/tlsneg
 use native/llrt/tlssrv
 use native/llrt/tlsio
 use native/llrt/cabi_http
@@ -61,7 +62,7 @@ struct Request {
   over_tls: Bool = false
   /// What the TLS handshake negotiated, for tls_state (std/rt's
   /// XTLSState): one entry when over_tls, none otherwise. Hidden.
-  tls_neg: List[tlssrv.Negotiated] = []
+  tls_neg: List[tlsneg.Negotiated] = []
   /// with_timeout's limit in nanoseconds, 0 for the client's (decision
   /// 0404). Hidden from Xo code.
   timeout_ns: Int = 0
@@ -1008,9 +1009,22 @@ fn target_path(target: Str) -> Str {
 fn request_host(r: Request) -> Str { r.raw_host }
 fn request_tls(r: Request) -> Bool { r.over_tls }
 
-/// The handshake's outcome of TLS connection th, none for 0 (plain).
-fn tls_neg_of(th: Int) -> List[tlssrv.Negotiated] {
-  if th == 0 { [] } else { [tlssrv.negotiated(th)] }
+/// The handshake's outcome of TLS connection th, none for 0 (plain),
+/// read through the TLS table (decision 0244: a plain server links no
+/// tlssrv, so this names only tlsneg; a direct tlssrv.negotiated call
+/// here linked it, gotchas/tls-table-direct-call-links-tlssrv.md).
+fn tls_neg_of(th: Int) -> List[tlsneg.Negotiated] {
+  if th == 0 {
+    return []
+  }
+  let w = rt.call_c2(hconn.tls_op(hconn.TO_NEG), th, 0)
+  if w == 0 {
+    return []
+  }
+  match rt.any_get[tlsneg.Negotiated](rt.obj_at[rt.Any](w)) {
+    Some(n) => [n]
+    None => []
+  }
 }
 
 /// Go's r.TLS: None for a plain connection or a struct literal. The

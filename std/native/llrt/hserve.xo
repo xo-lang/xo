@@ -251,14 +251,21 @@ pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
 /// which the handshake fails and the connection closes without a reply;
 /// the handshake runs before the connection's limits are stored, so a
 /// silent client held a TLS connection's task for ever (2026-10-30).
+/// The deadline of TLS connection tls's handshake and reads, through
+/// the TLS table (decision 0244: a direct tlssrv call here linked the
+/// TLS server into a plain one, gotchas/tls-table-direct-call-links-tlssrv.md).
+fn tls_deadline(tls: Int, when: Int) {
+  let _d = rt.call_c2(hconn.tls_op(hconn.TO_SET_DEADLINE), tls, when)
+}
+
 pub fn hc_h2(h: rthttp.HConn, when: Int) -> Int {
   let hc = hconn.rec(h)
   let tls = ld(hc, hconn.HC_TLS)
   if tls == 0 || ld(hc, hconn.HC_CONN) == 0 {
     return 0
   }
-  tlssrv.set_deadline(tls, when)
-  defer tlssrv.set_deadline(tls, 0)
+  tls_deadline(tls, when)
+  defer tls_deadline(tls, 0)
   let s = ld(hc, hconn.HC_SRV)
   if s != 0 {
     // the mark first, then stopping (hconn.stopping_at)

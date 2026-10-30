@@ -1,0 +1,14 @@
+// What a TLS handshake negotiated, as a request's tls_state reads it
+// (std/native/http.xo, Go's ConnectionState). A leaf module: tlssrv.xo
+// fills one, and http.xo names only this type when it reads it through
+// the TLS table (hconn.xo TO_NEG), so a plain server links no tlssrv
+// (decision 0244, internal/llvm TestTLSLinkedOnlyWithTLS).
+
+/// The version, the suite's name (Go's CipherSuiteName), the server name
+/// the client asked for and whether a session resumed.
+pub struct Negotiated {
+  pub version: Str
+  pub cipher: Str
+  pub server_name: Str
+  pub resumed: Bool
+}
