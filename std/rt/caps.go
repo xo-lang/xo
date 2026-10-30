@@ -1269,6 +1269,12 @@ func walkDirIn(tk *Task, fs Fs, dir string, visit func(*Task, FileInfo) Result[W
 	return false, nil
 }
 
+// Prelude_read_mapped is `read_mapped(fs, path)` (decision 0402): the Go
+// backend never maps, so it is fs.read.
+func Prelude_read_mapped(tk *Task, fs Fs, path string) Result[Bytes, FsErr] {
+	return fs.M_read(tk, path)
+}
+
 // Prelude_read_or is `read_or(fs, path, default)`: read_text_or for bytes.
 func Prelude_read_or(tk *Task, fs Fs, path string, def Bytes) Result[Bytes, FsErr] {
 	r := fs.M_read(tk, path)

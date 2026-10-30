@@ -51,7 +51,9 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
   let sep_store = if tgoos == "darwin" && store_path.is_empty() { ctx.sep_store } else { "" }
   let tr = os.clock.now()
   if !sep_store.is_empty() {
-    match os.fs.read(sep_store) {
+    // mapped, not copied (decision 0402): the link touches only the live
+    // atoms' pages; the store is only ever replaced by rename (stdcache.xo)
+    match read_mapped(ctx.real_fs ?? os.fs, sep_store) {
       Ok(b) => store = b
       Err(e) => return "XO_SEPCOMP_STORE=${sep_store}: ${fs_reason(e)}"
     }
@@ -451,7 +453,8 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
         continue
       }
       if store.is_empty() {
-        match os.fs.read(lazy) {
+        // mapped, as macho_link's (decision 0402)
+        match read_mapped(ctx.real_fs ?? os.fs, lazy) {
           Ok(b) => store = b
           Err(e) => return "XO_SEPCOMP_STORE=${lazy}: ${fs_reason(e)}"
         }
@@ -1599,7 +1602,8 @@ fn elf_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store0: Bytes, l
   }
   var store = store0
   if store.is_empty() {
-    match os.fs.read(lazy) {
+    // mapped, as macho_link's (decision 0402)
+    match read_mapped(ctx.real_fs ?? os.fs, lazy) {
       Ok(b) => store = b
       Err(e) => return Err("XO_SEPCOMP_STORE=${lazy}: ${fs_reason(e)}")
     }

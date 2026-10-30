@@ -2760,6 +2760,22 @@ fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read {
   }
 }
 
+/// read_mapped (std.md 3.1, decision 0402): the file mapped read only on
+/// linux and darwin (sysio.fs_read_mapped), read where it cannot be; a
+/// user value converted to Fs, and every Fs in the test world (a MemFs, a
+/// recording), reads through Fs's methods, so it never maps.
+fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read {
+  if userfs.user(fs) is Some(_) || testworld.on() {
+    return fs.read(path)
+  }
+  let op = fs_check(fs, path, false)?
+  let l = sysio.fs_read_mapped(op)
+  if l.len() == 0 {
+    return Err(fs_err(sysio.status(), path))
+  }
+  l[0]
+}
+
 /// write_atomic (std.md 3.1): data written to a temporary file beside
 /// path, synced, given path's permission bits (0o644 for a new file),
 /// and renamed over path, then the directory synced; through Fs's

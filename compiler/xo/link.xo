@@ -45,6 +45,11 @@ struct Ctx {
   rec: Mutex[Rec]? = None
   // XO_CACHE_STATS=1: the build's cache file operations (cachestats.xo)
   cstats: Mutex[CStats]? = None
+  // the process's Fs before the recorder and the cache statistics wrap
+  // it: the link maps std's store through it (decision 0402: a wrapped Fs
+  // is a user value, which read_mapped reads); the store is under the
+  // cache, which neither records
+  real_fs: Fs? = None
   // the C tool ids this process asked for (tool_id_memo): the run cache's
   // key and the backend's keys ask the same `cc --version` in one build
   tools: Mutex[Map[Str, Str]]? = None

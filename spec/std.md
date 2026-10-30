@@ -656,6 +656,7 @@ fn (f: Fs) read(path: Str) -> Bytes ! FsErr      uses fs.read
 fn (f: Fs) read_text(path: Str) -> Str ! FsErr   uses fs.read
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read   // default when missing
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read     // the same for bytes
+fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read                  // read, maybe sharing the file's pages
 fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs            // old or new, never a part
 fn (f: Fs) read_dir(dir: Str) -> List[FileInfo] ! FsErr uses fs.read   // sorted by name
 fn (f: Fs) walk(dir: Str) -> List[FileInfo] ! FsErr     uses fs.read
@@ -686,6 +687,19 @@ methods of `Fs`: an `Fs` is any type with its methods (core 2.4), and a
 new interface method would stop every such type from satisfying it. They
 call `read_text` and `read`, so MemFs, FakeFs and attenuated capabilities
 answer as they do for those.
+
+`read_mapped` (decision 0402) returns the file's bytes like `read`, with
+the same errors. On the native darwin and linux backends it may share
+the file's pages instead of copying them (mmap, read only and private):
+only the pages the program touches are read. The program must not
+truncate the file or change it in place while the `Bytes` (or a slice
+of it) is alive: a truncation makes a later read of the cut pages fault,
+and a change in place shows through. Replacing the file by rename is
+safe (the mapping keeps the old file). Where mapping is not possible
+(wasm, the Go backend, Windows, an empty file or one of 4 GiB or more, a
+pipe or device, mmap failing, a user value converted to `Fs`, any `Fs`
+in a test) it is `read`. Use `read` for a file other processes may
+change in place. A free function, as `read_or`.
 
 `create_dir_all_mode` (std survey gap 16, Go's `os.MkdirAll(dir, perm)`)
 is `create_dir_all`, then `set_mode(d, mode)` on each directory it
@@ -4690,7 +4704,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-462 declarations.
+463 declarations.
 
 ### Range
 
@@ -5436,6 +5450,7 @@ fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs
 fn walk_dir[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses fx) -> List[FileInfo] ! FsErr uses (fs.read, fx)
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
+fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
 fn write_atomic(fs: Fs, path: Str, data: Bytes) -> () ! FsErr uses fs
 ```
 

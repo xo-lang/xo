@@ -1,10 +1,10 @@
 # 0402: Fs.read_mapped, a file mapped read-only as an immutable Bytes
 
-Status: Accepted (2026-10-29; Lang 1; reviewed by Xo Lang 3 for the Fs surface, the writers and the allocator's free path; the Lead chose to land rt.str_at first). Progress: rt.str_at lowered on arm64 and LLVM (this change, unused by std); read_mapped and the link's use after the 0.35 seed.
+Status: Accepted (2026-10-29; Lang 1; reviewed by Xo Lang 3 for the Fs surface, the writers and the allocator's free path; the Lead chose to land rt.str_at first). Progress: rt.str_at lowered on arm64 and LLVM (7baee065b); read_mapped and the link's use landed 2026-10-30 (see Implementation; an xo built from main after 7baee065b builds it, and the 0.35 seed is cut from it).
 
 ## Context
 
-A separately compiled build links against std's store, a 29 to 31 MB file in the backend cache (decision 0388). The darwin link reads all of it on every edit build (`os.fs.read`), and the link's own laps show the read costs 5 ms of fib's 23 ms link (`link.read_store`, ~/xo-lead/notes/lang1/link-plan-post034.md), while `store_prepare` then uses only the live atoms' bytes, a small fraction of the file. The read also puts the whole 29 MB in the build's heap (peak RSS).
+A separately compiled build links against std's store, a 29 to 31 MB file in the backend cache (decision 0388). The darwin link reads all of it on every edit build (`os.fs.read`), and the link's own laps show the read costs 5 ms of fib's 23 ms link (`link.read_store`), while `store_prepare` then uses only the live atoms' bytes, a small fraction of the file. The read also puts the whole 29 MB in the build's heap (peak RSS).
 
 std has no way to map a file: `Fs` reads into a fresh `Bytes`. The runtime calls mmap internally (std/native/llrt libcsys.xo, linux.xo, sys_darwin.xo) for its own needs: heap chunks, stacks, and XO_HEAP_GUARD's guarded blocks.
 
@@ -43,3 +43,15 @@ std has no way to map a file: `Fs` reads into a fresh `Bytes`. The runtime calls
 - **A new runtime intrinsic for a mapped Bytes:** cleaner in the compiler, but the 0.34.0 seed could not build a compiler that uses it; the std-code design avoids that.
 
 Free-path review (Xo Lang 3, 2026-10-29): heapos.release is the single hook (alloc.free and free_mt -> rt.heap_big_release -> heapos.release, no other route); test the sentinel in b (Int.MIN: no big block's prefix, below -128 so the sampled-block test skips it) and MAPPED_MAGIC in m first in release(), before membudget and keep(); heapprof.freed on an unrecorded block is already a normal case (confirm by a heap-profile run); bump ALLOCS (when COUNT != 0) at creation so XO_LEAKCHECK stays balanced, nothing for membudget; unmap R when the file's MAP_FIXED fails before falling back to read; a size change between fstat and mmap is the truncation contract. Gate: allocator microbench quiet --ab, alloc unit tests, alloc_threads and rt_probe goldens, TestGoldenRun, the fixed point, the Docker amd64 sample.
+
+## Implementation (2026-10-30)
+
+Where the code differs from the decision above:
+
+- **A free function, not a method:** `read_mapped(fs: Fs, path: Str)`, as `read_text_or` and `read_or`: a new method of `Fs` would stop every type with Fs's methods (core 2.4, decision 0307's user values converted to Fs) from satisfying it. A user value converted to Fs and every Fs in the test world (`testworld.on()`: MemFs, FakeFs, a recording) take `fs.read(path)`, so they never map; the Go backend's Prelude_read_mapped is `fs.M_read`.
+- **The mapping is made in llrt sysio.xo** (map_file, beside fs_read), not heapos.xo: heapos imports pool, which imports sysio. heapos.xo release keeps the same two sentinel words (MAPPED_PREFIX, Int.MIN, in the prefix; MAPPED_MAGIC, "XoMapped", where a big block keeps its size) and tests both first.
+- **The lead is 64 KiB** (MAP_LEAD), not one page: a multiple of every page size the targets use (4, 16 and 64 KiB), so the MAP_FIXED address is aligned without asking the OS for its page size. The region is mapped anonymous read write first (the object's words live in its first 64 KiB), then the file over it at R + MAP_LEAD.
+- **Counts:** obj.count_outside adds one allocation to the calling thread's heap (XO_LEAKCHECK balanced by the free); nothing for the memory budget, as the ADR says.
+- **Not mapped:** sanitizer, --race and user-mode heaps (sanhook), wasm, Windows, an empty file or one of 4 GiB or more; each is `read`.
+- **First users:** the darwin and ELF links' XO_SEPCOMP_STORE read (compiler/xo ld.xo, through link.xo Ctx.real_fs: xo build wraps os.fs in user Fs values, gotcha read-mapped-wrapped-fs.md); XO_STD_STORE's read (a store packed in place) and the PE link keep `read`.
+

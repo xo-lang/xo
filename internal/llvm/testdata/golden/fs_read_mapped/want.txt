@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+same true 48890
+append 48895 true 48890
+upper true true
+slice line
+grown line! line
+renamed replaced 48890 line 0
+many 2290
+empty 0
+missing missing.txt: no such file or directory
+write only empty.txt: permission denied
+--- stderr

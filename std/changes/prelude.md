@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-10-30: perf: read_mapped, a file mapped read only
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 1 (the link's link.read_store lap, decision 0402)
+- Go reference: none in Go's standard library (golang.org/x/exp/mmap's ReaderAt, syscall.Mmap)
+- Test: the fs_read_mapped golden (read_mapped's bytes equal read's; appends, transforms and slices of a mapped file copy; a rename over the mapped file; many mapped files dropped; an empty and a missing file) on arm64, LLVM, the Go backend and wasm
+- Timing: xo bench --ab of a fib edit build (darwin/arm64, separate compilation, 20 rounds, none loaded), xo before against after: link.read_store 2.535 to 0.06 ms (0.024, better), the link 7.29 to 4.455 ms (0.611, better), max RSS 0.969 (better), the edit's wall 70.15 to 72.34 ms (1.031, 0.942 to 1.084: within noise)
+
+`read_mapped(fs, path)` is `fs.read(path)`, except that on the native
+linux and darwin backends the file is mapped read only and private
+instead of copied: the result is a view of the mapping, so every write
+of it copies, and its last drop unmaps it. The program must not
+truncate the file or change it in place while the Bytes lives (rename
+over it is safe). xo's link maps std's store with it.
+
 
 ## 2026-10-30: fix: a relative symbolic link to a directory on Windows
 

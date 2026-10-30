@@ -228,6 +228,7 @@ var (
 	_ func(*Task, Fs, string, int64) Result[Unit, FsErr]            = Prelude_create_dir_all_mode
 	_ func(*Task, Fs, string, string) Result[string, FsErr]         = Prelude_read_text_or
 	_ func(*Task, Fs, string, Bytes) Result[Bytes, FsErr]           = Prelude_read_or
+	_ func(*Task, Fs, string) Result[Bytes, FsErr]                  = Prelude_read_mapped
 	_ func(*Task, Fs, string, Bytes) Result[Unit, FsErr]            = Prelude_write_atomic
 	_ func(*File, *Task, int64) Result[Option[Bytes], FsErr]        = (*File).M_read
 	_ func(*File, *Task) Result[Option[string], FsErr]              = (*File).M_read_line

@@ -1,0 +1,50 @@
+// read_mapped (decision 0402): the file's bytes as read gives them; on
+// native linux and darwin a read only mapping, so every write of the
+// result (an append, a transform, a slice grown) copies, a rename over
+// the file leaves the mapped bytes alone, and many mapped files dropped
+// unmap without a leak. An empty file and a missing one answer as read.
+
+fn main(os: Os) ! {
+  let out = os.stdio
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-fs-read-mapped-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all(name)?
+  let root = base.sub(name)
+  var text = ""
+  for i in 0..5000 {
+    text = text + "line ${i}\n"
+  }
+  root.write("big.txt", text.bytes())?
+  let m = read_mapped(root, "big.txt")?
+  let r = root.read("big.txt")?
+  out.println("same ${m == r} ${m.len()}")
+  let s = m.to_str() ?? ""
+  let t = s + "tail\n"
+  out.println("append ${t.len()} ${t.ends_with("tail\n")} ${s.len()}")
+  out.println("upper ${s.to_upper().starts_with("LINE 0")} ${s.starts_with("line 0")}")
+  let part = m[0..4]
+  out.println("slice ${part.to_str() ?? "?"}")
+  let grown = (part.to_str() ?? "") + "!"
+  out.println("grown ${grown} ${(m[0..4].to_str() ?? "")}")
+  root.write("next.txt", b"replaced")?
+  root.rename("next.txt", "big.txt")?
+  out.println("renamed ${root.read_text("big.txt")?} ${m.len()} ${(m[0..6].to_str() ?? "")}")
+  var total = 0
+  for i in 0..300 {
+    root.write("f${i % 3}.txt", "file ${i}".bytes())?
+    let b = read_mapped(root, "f${i % 3}.txt")?
+    total += b.len()
+  }
+  out.println("many ${total}")
+  root.write("empty.txt", b"")?
+  out.println("empty ${read_mapped(root, "empty.txt")?.len()}")
+  match read_mapped(root, "missing.txt") {
+    Ok(_) => out.println("missing read?")
+    Err(e) => out.println("missing ${e}")
+  }
+  match read_mapped(root.write_only(), "empty.txt") {
+    Ok(_) => out.println("write only read?")
+    Err(e) => out.println("write only ${e}")
+  }
+  base.remove_all(name)?
+}

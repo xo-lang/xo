@@ -16,6 +16,7 @@ use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/obj
 use native/llrt/raw
+use native/llrt/sanhook
 use native/llrt/twflags
 use native/llrt/windows
 use native/rt
@@ -76,6 +77,96 @@ pub fn fs_read(op: Str) -> List[Bytes] {
   }
   set_err(0, "", "")
   [b]
+}
+
+// heapos.xo release's mapped files (decision 0402): its MAPPED_PREFIX and
+// MAPPED_MAGIC, kept in step (heapos imports pool, which imports this
+// module, so the mapping is made here)
+const MAPPED_PREFIX: Int = -9223372036854775807 - 1
+const MAPPED_MAGIC = 6372397078646121828
+
+/// The bytes before the file: room for the object's words, and a multiple
+/// of every page size (4, 16 and 64 KiB).
+const MAP_LEAD = 65536
+
+/// The file fd of size bytes (1 to 4 GiB less one) mapped read only as a
+/// string object whose bytes start 8 past its header: the object, or 0
+/// when it cannot be mapped (another OS, a sanitizer's or --race heap, a
+/// file mmap refuses: read it instead).
+fn map_file(fd: Int, size: Int) -> Int {
+  if sanhook.sanitized() || sanhook.user_mode() || sanhook.gorace() {
+    return 0
+  }
+  let n = MAP_LEAD + (size + MAP_LEAD - 1) / MAP_LEAD * MAP_LEAD
+  let at = match target.os {
+    // PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON(YMOUS)
+    TargetOs.Linux => linux.mmap(0, n, 3, 34, -1, 0)
+    TargetOs.Darwin => sys_darwin.mmap(0, n, 3, 4098, -1, 0)
+    _ => -1
+  }
+  // 0, or -1 (darwin) and -errno (linux) for a failure
+  if at <= 0 && at > -4096 {
+    return 0
+  }
+  let want = at + MAP_LEAD
+  var f = 0
+  match target.os {
+    TargetOs.Linux => {
+      // PROT_READ, MAP_PRIVATE | MAP_FIXED
+      f = linux.mmap(want, size, 1, 18, fd, 0)
+    }
+    TargetOs.Darwin => {
+      f = sys_darwin.mmap(want, size, 1, 18, fd, 0)
+    }
+    _ => {}
+  }
+  if f != want {
+    unmap(at, n)
+    return 0
+  }
+  let o = want - 24
+  // the count, then the capacity: the bytes past the header
+  rt.mem_store(o, 0, 1, 8)
+  rt.mem_store(o, 8, size + 8, 8)
+  let b = o - 8
+  rt.mem_store(b, 0, MAPPED_PREFIX, 8)
+  rt.mem_store(b - 8, 0, MAPPED_MAGIC, 8)
+  rt.mem_store(b - 16, 0, at, 8)
+  rt.mem_store(b - 24, 0, n, 8)
+  o
+}
+
+fn unmap(at: Int, n: Int) {
+  if target.os == TargetOs.Darwin {
+    let _d = sys_darwin.munmap(at, n)
+  } else {
+    let _l = linux.munmap(at, n)
+  }
+}
+
+/// fs_read mapping the file read only (decision 0402, Fs.read_mapped): a
+/// view at offset 8 of map_file's object, so nothing writes it in
+/// place; as fs_read where it cannot map (wasm, Windows, a test's MemFs,
+/// an empty file or one of 4 GiB or more, a pipe, mmap failing).
+pub fn fs_read_mapped(op: Str) -> List[Bytes] {
+  let l = layer()
+  if (l == 1 || l == 2) && !twflags.fake(1) {
+    var fd = open_read(l, op)
+    while fd == -linux.EINTR {
+      fd = open_read(l, op)
+    }
+    if fd >= 0 {
+      let size = file_size(l, fd)
+      let o = if size > 0 && size < 4294967296 { map_file(fd, size) } else { 0 }
+      let _c = close(l, fd)
+      if o != 0 {
+        obj.count_outside()
+        set_err(0, "", "")
+        return [rt.str_at(o, size | 34359738368).bytes()]
+      }
+    }
+  }
+  fs_read(op)
 }
 
 /// os.WriteFile(op, data, 0644): the status, an error naming the Xo path

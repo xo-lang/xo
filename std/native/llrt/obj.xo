@@ -153,6 +153,10 @@ pub fn alloc_obj(n: Int) -> Int { halloc(heap_word(), n) }
 /// Frees the runtime object p (xo_free).
 pub fn free_obj(p: Int) { hfree(heap_word(), p) }
 
+/// Counts an object made outside the heap (heapos map_file) as an
+/// allocation of the calling thread's heap.
+pub fn count_outside() { alloc.count_outside(heap()) }
+
 /// The runtime object p of old bytes as one of n bytes (xo_resize).
 pub fn resize_obj(p: Int, old: Int, n: Int) -> Int { hresize(heap_word(), p, old, n) }
 

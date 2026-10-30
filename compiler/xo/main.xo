@@ -395,6 +395,7 @@ fn main(os0: Os) ! {
   // what a build stored in the run cache prints goes through a tee, for
   // the entry (decision 0360)
   var bos = os
+  ctx.real_fs = Some(os.fs)
   if !o.run_key.is_empty() {
     let tee = new_tee(os.stdio)
     ctx.tee = Some(tee)

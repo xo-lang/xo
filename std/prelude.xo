@@ -854,6 +854,15 @@ fn walk_dir[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses 
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 /// The bytes of the file at path, or default when it does not exist.
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
+/// The bytes of the file at path, as fs.read(path) gives them, with the
+/// same errors (decision 0402). On the native linux and darwin backends
+/// it may share the file's pages instead of copying them: the program
+/// must not truncate the file or change it in place while the Bytes (or
+/// a slice of it) is alive; replacing it by rename is safe. Where mapping
+/// is not possible it is read. Use read for a file other processes may
+/// change in place. A free function, not a method of Fs, so every type
+/// that satisfies Fs still does.
+fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read
 /// Replaces the file at path with data so that a reader, or the file after
 /// a crash, holds the old contents or the new, never a part: written to a
 /// temporary file in path's directory, synced, given path's permission

@@ -149,6 +149,14 @@ fn cunlock(h: Int, cen: Int, c: Int) {
   }
 }
 
+/// Counts an allocation made outside the heap (a mapped file, heapos
+/// map_file), so XO_LEAKCHECK's allocations match the free that drops it.
+pub fn count_outside(h: Int) {
+  if rt.mem_load(h, COUNT, 8) != 0 {
+    rt.mem_store(h, ALLOCS, rt.mem_load(h, ALLOCS, 8).wrapping_add(1), 8)
+  }
+}
+
 /// A block of n bytes from heap h (xo_rt.c alloc_in): the head of its
 /// class's free list, else carved from the chunk, or a big block above
 /// the classes. Counts the allocation, its bytes, and an allocation in a

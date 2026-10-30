@@ -308,10 +308,32 @@ pub fn large_resize(b: Int, n: Int) -> Int {
   p
 }
 
+// Mapped files (decision 0402, Fs.read_mapped; sysio.xo map_file, which
+// keeps these two words in step): a region of MAP_LEAD
+// bytes plus the file's size rounded up to MAP_LEAD, mapped anonymous,
+// then the file mapped read only over it at R + MAP_LEAD (MAP_FIXED). A
+// Str object's header ends 8 bytes below the file (the value is a view at
+// offset 8, so no writer touches it in place); below the header the words
+// a big block has, with sentinels: the prefix MAPPED_PREFIX (negative, so
+// alloc.free hands it to rt.heap_big_release, and below -128, so that
+// never takes it for a sampled block), then MAPPED_MAGIC where a big
+// block keeps its size, then the region's address and size.
+
+/// The prefix of a mapped file's object.
+const MAPPED_PREFIX: Int = -9223372036854775807 - 1
+
+/// The word below it ("XoMapped").
+const MAPPED_MAGIC = 6372397078646121828
+
 /// Gives back the large block whose prefix is at b: to the cache, or to
-/// the system when the cache is full.
+/// the system when the cache is full; a mapped file's object (map_file)
+/// to the system, never the cache.
 pub fn release(b: Int) {
   let m = b.wrapping_sub(8)
+  if rt.mem_load(b, 0, 8) == MAPPED_PREFIX && rt.mem_load(m, 0, 8) == MAPPED_MAGIC {
+    unmap_os(rt.mem_load(m - 8, 0, 8), rt.mem_load(m - 16, 0, 8))
+    return
+  }
   if sanhook.gorace() {
     sanhook.race_free(m)
     return
