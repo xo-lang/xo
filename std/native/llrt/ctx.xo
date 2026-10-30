@@ -219,7 +219,11 @@ pub fn root() -> Int {
   rt.mem_set(n, 0, N_BYTES)
   rt.mem_store(c, C_NODE, n, 8)
   rt.tlocal_set(0, c)
-  let _r = rt.slot_add[Int](rt.mem_load(pool(), P_DLK, 8), DLK_ROOTS, 1, 4)
+  // no services record (the wasm backend's programs, WASI xo: no worker
+  // pool and no deadlock counts) means nothing to count
+  if svc() != 0 {
+    let _r = rt.slot_add[Int](rt.mem_load(pool(), P_DLK, 8), DLK_ROOTS, 1, 4)
+  }
   add_root(c)
   c
 }
