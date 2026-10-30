@@ -667,6 +667,63 @@ type Number interface{ ~int | ~float64 }
 	}
 }
 
+// TestInternalAliasConstraint: a constraint that is an alias declared in
+// an internal package (samber/lo's internal/constraints.Ordered =
+// cmp.Ordered) binds as Ord, and the adapter names cmp.Ordered, never the
+// internal package a program cannot import (go build failed: "use of
+// internal package ... not allowed").
+func TestInternalAliasConstraint(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "lo")
+	if err := os.MkdirAll(filepath.Join(src, "internal", "constraints"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod":                          "module example.com/lo\n\ngo 1.22\n",
+		"internal/constraints/ordered.go": "package constraints\n\nimport \"cmp\"\n\ntype Ordered = cmp.Ordered\n",
+		"lo.go": `package lo
+
+import "example.com/lo/internal/constraints"
+
+func Max[T constraints.Ordered](a, b T) T {
+	if a > b {
+		return a
+	}
+	return b
+}
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/lo v0.0.0\n\nreplace example.com/lo => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/lo", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl, adapter := string(b.Decl), string(b.Adapter)
+	if !strings.Contains(decl, "fn max[T: Ord](") {
+		t.Errorf("max is not bound with T: Ord (skipped: %v):\n%s", b.Skipped, decl)
+	}
+	if strings.Contains(adapter, "internal/constraints") {
+		t.Errorf("the adapter imports the internal package:\n%s", grep(adapter, "internal"))
+	}
+	if !strings.Contains(adapter, `"cmp"`) {
+		t.Errorf("the adapter does not import cmp:\n%s", grep(adapter, "Ordered"))
+	}
+}
+
 // TestCallbackErrors (decision 0416 step 1): a callback parameter with a
 // final error result is an Xo function `-> T ! go.Error`, its Err given
 // to Go as the error (rt GoErrorOf).

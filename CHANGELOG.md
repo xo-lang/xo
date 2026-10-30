@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `use go` of github.com/samber/lo builds: a constraint that is an alias
+  declared in an internal package (lo's internal/constraints.Ordered =
+  cmp.Ordered) is written in the glue as what it names, so the adapter
+  imports cmp, not the internal package Go refuses (darwin feedback b20;
+  internal/gobind TestInternalAliasConstraint, golden go_lo); binding
+  format 29.
 - `go.out[T]()` of a List or Map allocates T's Go type (`*[]int64`,
   `*map[string]int64`, nested collections too), not `*[]any` or
   `*map[any]any`, so `json.unmarshal` into it and `get()` work

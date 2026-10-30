@@ -75,7 +75,9 @@ import (
 // other packages' interfaces its package's signatures name.
 // 27 (2026-10-30): a Go constraint interface (a type set) is not bound
 // as a type (zap's ObjectMarshalerPtr[T] broke zap's whole binding).
-const Version = 28
+// 29 (2026-10-30): an alias declared in an internal package is written
+// as what it names (samber/lo's constraints.Ordered = cmp.Ordered).
+const Version = 29
 
 // Binding is one bound Go package.
 type Binding struct {

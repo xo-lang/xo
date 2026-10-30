@@ -1,0 +1,5 @@
+# xo.lock: content hashes of the module versions this module builds with,
+# and the effects each module may reach (decision 0156).
+# Written by the xo toolchain (xo get, xo mod tidy, xo mod accept-effects); do not edit (core 4.3).
+go github.com/samber/lo v1.53.0 h1:t975lj2py4kJPQ6haz1QMgtId2gtmfktACxIXArw3HM=
+go github.com/samber/lo v1.53.0/go.mod h1:4+MXEGsJzbKGaUEQFKBq2xtfuznW9oz/WrgyzMzRoM0=

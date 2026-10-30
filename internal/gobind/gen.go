@@ -249,6 +249,12 @@ func (g *gen) aliasPath(path string) string {
 }
 
 func (g *gen) qual(t types.Type) string {
+	// an alias declared in a package a program cannot import (samber/lo's
+	// internal/constraints.Ordered = cmp.Ordered) is written as what it
+	// names, so the adapter imports cmp, not the internal package
+	if a, ok := t.(*types.Alias); ok && a.Obj().Pkg() != nil && !importable(a.Obj().Pkg().Path()) {
+		t = types.Unalias(t)
+	}
 	return types.TypeString(t, func(p *types.Package) string { return g.alias(p) })
 }
 
