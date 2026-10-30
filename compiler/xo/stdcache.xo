@@ -372,3 +372,56 @@ fn debug_map_parts(os: Os, dir: Str) {
     Err(_) => {}
   }
 }
+
+/// The std modules a --std-module run of m builds from source (item 2 of
+/// the test speed queue): m and every native std module that imports it,
+/// directly or not (their store code may hold m's old bodies inlined and
+/// its old layouts), as check's module paths ("native/NAME"). Read from
+/// the `use` lines of std/native's sources.
+fn std_source_set(os: Os, std: Str, m: Str) -> Set[Str] {
+  let root = std.trim_suffix("/")
+  let top = m.trim_prefix("std/").trim_prefix("native/")
+  // each native module's imports, by its name
+  var imps: Map[Str, List[Str]] = {}
+  for e in os.fs.read_dir("${root}/native").ok() ?? [] {
+    var files: List[Str] = []
+    var name = ""
+    if e.is_dir {
+      name = e.name
+      for f in os.fs.read_dir("${root}/native/${e.name}").ok() ?? [] {
+        if !f.is_dir && f.name.ends_with(".xo") && !f.name.ends_with("_test.xo") {
+          files.push("${root}/native/${e.name}/${f.name}")
+        }
+      }
+    } else if e.name.ends_with(".xo") && !e.name.ends_with("_test.xo") {
+      name = e.name.trim_suffix(".xo")
+      files.push("${root}/native/${e.name}")
+    }
+    for f in files {
+      for l in (os.fs.read_text(f).ok() ?? "").split("\n") {
+        if let Some(rest) = l.cut_prefix("use std/") {
+          let dep = rest.trim().trim_prefix("native/").split(" ")[0]
+          var cur = imps.get(name) ?? []
+          cur.push(dep)
+          imps[name] = cur
+        }
+      }
+    }
+  }
+  var set: Set[Str] = #{top}
+  var grew = true
+  while grew {
+    grew = false
+    for (n, deps) in imps.entries() {
+      if !set.contains(n) && deps.any(fn(d) { set.contains(d) }) {
+        set.add(n)
+        grew = true
+      }
+    }
+  }
+  var out: Set[Str] = #{}
+  for n in set.to_list() {
+    out.add("native/${n}")
+  }
+  out
+}

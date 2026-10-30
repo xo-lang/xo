@@ -779,7 +779,7 @@ fn (var b: Builder) run_job(j: Job) {
   // exports is an extern; its body is std's object's
   if !b.c.sepcomp_facts.is_empty() {
     if let Body(fo, fi, sub) = j {
-      if sub.is_empty() && b.c.mods[b.obj_mod(fo)].std_tree {
+      if sub.is_empty() && b.c.mods[b.obj_mod(fo)].std_tree && !b.c.sep_source.contains(b.c.mods[b.obj_mod(fo)].path) {
         if !b.sep_read {
           b.sep_read = true
           // std's variant for this builder's concurrency (a program that

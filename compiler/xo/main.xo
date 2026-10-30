@@ -877,6 +877,11 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
     // decision 0428: a std declaration parsed alone where the check needs it
     c.decl_parse = c.trees_lazy && (os.env.get("XO_STD_DECL_PARSE") ?? "") != "off"
     let (f0, f1) = sepcomp_fact_files(os, sp)
+    if !c.std_test.is_empty() {
+      // --std-module: the module under test and the std modules that
+      // import it from source, the rest of std from the store
+      c.sep_source = std_source_set(os, o.std, c.std_test)
+    }
     match os.fs.read(f0) {
       Ok(d) => {
         c.sepcomp_facts = d

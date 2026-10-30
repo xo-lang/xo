@@ -40,6 +40,11 @@ pub struct Checker {
   /// builder turns it on (XO_SEPCOMP_FACTS a directory: conc1.stdf);
   /// empty when one file serves both
   pub sepcomp_facts_conc: Bytes = b""
+  /// the std modules built from source although the facts name their
+  /// functions: a --std-module run's module and every std module that
+  /// imports it (the store's copies hold its old code; decision 0436
+  /// addendum, item 2 of the test speed queue)
+  pub sep_source: Set[Str] = #{}
   pub std_export_key: Str = ""
   pub std_export_in: Bytes = b""
   /// stage 2 piece 2: the fingerprint of std_export_in's header when its
