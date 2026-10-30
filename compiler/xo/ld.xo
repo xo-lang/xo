@@ -349,13 +349,26 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
       Err(_) => {}
     }
   }
-  // a separately compiled program through std's store (as macho_link)
+  // a separately compiled program through std's store (as macho_link),
+  // read only when the link needs its bytes: a link from std's half
+  // (decision 0420) needs only its length, for the prepare key (the
+  // store's read was about 3 ms of an HTTP edit's 18 ms link, 2026-10-30)
+  var lazy = ""
+  var store_n = 0
   if store_path.is_empty() && !ctx.sep_store.is_empty() {
     let sp = ctx.sep_store
-    match os.fs.read(sp) {
-      Ok(b) => store = b
+    match os.fs.stat(sp) {
+      Ok(Some(i)) => {
+        lazy = sp
+        store_n = i.size
+      }
+      Ok(None) => return "XO_SEPCOMP_STORE=${sp}: not found"
       Err(e) => return "XO_SEPCOMP_STORE=${sp}: ${fs_reason(e)}"
     }
+  }
+  let through = !store.is_empty() || !lazy.is_empty()
+  if lazy.is_empty() {
+    store_n = store.len()
   }
   let store_check = !store_path.is_empty() && !store.is_empty() && (os.env.get("XO_STD_STORE_CHECK") ?? "") == "1"
   var ins: List[macho.LinkInput] = []
@@ -392,11 +405,11 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
   // 0420), unless XO_STD_HALF=off
   let eopts = macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link, release: release, split_prog: !ctx.sep_store.is_empty() && (os.env.get("XO_STD_HALF") ?? "") != "off"}
   let ts = os.clock.now()
-  let linked = if store.is_empty() { macho.link_elf_split(parts + ins, eopts) } else { elf_store_laps(os, ctx, ins, store, eopts) }
+  let linked = if !through { macho.link_elf_split(parts + ins, eopts) } else { elf_store_laps(os, ctx, ins, store, lazy, store_n, eopts) }
   if !store_path.is_empty() && !store.is_empty() {
     os.stdio.eprintln("store link ${os.clock.since(ts).nanos() / 1000} us (${store.len()} store bytes)")
   }
-  if !store.is_empty() {
+  if through {
     // XO_STD_STORE_REPEAT=N: N more links, timed (a measurement), each
     // checked against the first
     let rep = Int.parse(os.env.get("XO_STD_STORE_REPEAT") ?? "0") ?? 0
@@ -410,7 +423,7 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
         Ok(x) => x
         Err(e) => return e
       }
-      let pf = elf_prep_file(os, ctx.sep_store, store.len(), prog, eopts)
+      let pf = elf_prep_file(os, ctx.sep_store, store_n, prog, eopts)
       if let Some(h) = elf_half_load(os, elf_half_file_for(pf, eopts)) {
         // the link from std's half, as elf_store_laps makes it
         var s = macho.elf_store_prepare_half(prog, h, eopts)
@@ -436,6 +449,12 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
         }
         os.stdio.eprintln("store link ${dp + dr + df} us (prepare ${dp}, resolve ${dr}, finish ${df}) half ${same}, std relocations kept ${h.kept} dropped ${h.dropped}")
         continue
+      }
+      if store.is_empty() {
+        match os.fs.read(lazy) {
+          Ok(b) => store = b
+          Err(e) => return "XO_SEPCOMP_STORE=${lazy}: ${fs_reason(e)}"
+        }
       }
       match macho.elf_store_prepare(prog, store, eopts, prep_load(os, pf)) {
         Ok(s0) => {
@@ -1307,14 +1326,16 @@ fn link_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, o
 
 /// An ELF store link with its steps timed (link.store_prepare,
 /// link.resolve, link.layout, link.write: --phase-times).
-fn elf_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, opts: macho.ElfLinkOpts) -> Result[(Bytes, Bytes), Str] {
+/// lazy: the store's path when store is not read yet (n its length),
+/// read only if the link is not from std's half.
+fn elf_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store0: Bytes, lazy: Str, n: Int, opts: macho.ElfLinkOpts) -> Result[(Bytes, Bytes), Str] {
   var t = os.clock.now()
   // the program's objects parsed once, for the cache's key and the link
   let prog = match macho.parse_elf_inputs(ins) {
     Ok(x) => x
     Err(e) => return Err(e)
   }
-  let pf = elf_prep_file(os, ctx.sep_store, store.len(), prog, opts)
+  let pf = elf_prep_file(os, ctx.sep_store, n, prog, opts)
   let hf = elf_half_file_for(pf, opts)
   if let Some(h) = elf_half_load(os, hf) {
     match link_from_elf_half(os, ctx, prog, h, opts, t) {
@@ -1323,6 +1344,14 @@ fn elf_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, op
       // replaces it
       None => {}
     }
+  }
+  var store = store0
+  if store.is_empty() {
+    match os.fs.read(lazy) {
+      Ok(b) => store = b
+      Err(e) => return Err("XO_SEPCOMP_STORE=${lazy}: ${fs_reason(e)}")
+    }
+    t = lap(os, ctx.phases, "link.read_store", t)
   }
   var s = match macho.elf_store_prepare(prog, store, opts, prep_load(os, pf)) {
     Ok(x) => x
