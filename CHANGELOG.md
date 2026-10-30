@@ -5,6 +5,11 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- LLVM builds of a program that imports std/html (or template) are
+  faster: a constant's initializer over 2000 SSA instructions is built
+  `optnone`, so clang uses its fast register allocator on it (std/html's
+  ENTITY table: clang -O1 on template_basic 41.8 to 5.2 s;
+  gotchas/llvm-big-const-init-regalloc.md).
 - HTTP/2 without TLS and HTTP/2 settings (decision 0434):
   `with_protocols(#{Http1, Http2, UnencryptedHttp2})` on a server or
   client (Go's `http.Protocols`, h2c with prior knowledge) and

@@ -617,6 +617,13 @@ fn (var g: Gen) lower_func(fi: Int) {
     // (testworld rand 1.08 on LLVM)
     attrs = "#11"
   }
+  if big_const_init(g.f) {
+    // a large constant's initializer, run once (html.ENTITY's 2,231
+    // entries: about 40 thousand IR lines, 40 of the 46 s clang spent on
+    // a template program at -O1 in its greedy register allocator,
+    // 2026-10-30): optnone, whose fast register allocator is linear
+    attrs = "#20"
+  }
   if g.calls_rt("rt.frame_addr") {
     // its own frame (decision 0233): never inlined, the frame pointer kept
     g.frame_attrs()
@@ -635,6 +642,7 @@ fn (var g: Gen) lower_func(fi: Int) {
       "#9" => "#15"
       "#10" => "#16"
       "#11" => "#17"
+      "#20" => "#21"
       _ => attrs
     }
   }
@@ -1548,3 +1556,20 @@ fn (var g: Gen) ret(v: Int) {
 pub fn race_unchecked(file: Str) -> Bool {
   (file.contains("/native/llrt/") || file.starts_with("native/llrt/")) && !file.ends_with("llrt/atomic.xo")
 }
+
+/// Whether f is a constant's initializer (ssa show.xo: xo.const[M.N], or
+/// its body xo.const_body[M.N]) of more than BIG_CONST_INSTRS
+/// instructions: built once, so optnone costs nothing at run time and
+/// spares clang's optimizer and register allocator its straight line.
+fn big_const_init(f: ssa.Func) -> Bool {
+  if !(f.name.starts_with("xo.const[") || f.name.starts_with("xo.const_body[")) {
+    return false
+  }
+  var n = 0
+  for b in f.blocks {
+    n += b.instrs.len()
+  }
+  n > BIG_CONST_INSTRS
+}
+
+const BIG_CONST_INSTRS = 2000
