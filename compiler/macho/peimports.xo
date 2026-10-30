@@ -42,6 +42,8 @@ pub fn pe_imports() -> Map[Str, Str] {
     "GetConsoleMode": "KERNEL32.dll",
     "GetConsoleScreenBufferInfo": "KERNEL32.dll",
     "GetCurrentDirectoryW": "KERNEL32.dll",
+    "GetDiskFreeSpaceExW": "KERNEL32.dll",
+    "GetProcessTimes": "KERNEL32.dll",
     "GetCurrentProcess": "KERNEL32.dll",
     "GetCurrentProcessId": "KERNEL32.dll",
     "Process32FirstW": "KERNEL32.dll",
