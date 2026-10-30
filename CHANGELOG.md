@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- On the Go backend, a stop now waits for WebSocket handlers (and proxied
+  upgrades) as it waits for requests, as the native backends did:
+  `serve` returned while a handler that had upgraded its connection
+  still ran, since net/http's Shutdown does not track a hijacked
+  connection (decision 0429).
+
 - FIX (type checking): a function could perform effects it did not
   declare through a struct's effect parameter (a named pure function
   passed first fixed the call's effect variable, and a `Box[clock]`

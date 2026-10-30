@@ -1,5 +1,23 @@
 # std/websocket changes
 
+## 2026-10-30: fix: a stop waits for an upgraded connection on the Go backend
+
+- Kind: fix
+- Commit: this commit
+- Found by: the backend gap survey of 2026-10-30 (bench/survey-2026-10-30/chathub: std 4.4 did not say whether an upgraded connection is in flight), then reading both backends
+- Go reference: net/http Server.Shutdown (does not track hijacked connections); gorilla/websocket's examples close with 1001 on shutdown
+- Test: internal/llvm/testdata/golden/websocket_stop (arm64, LLVM, Go parity): it printed `handler done: false` on the Go backend before the fix
+
+A connection handed over by a 101 (`upgrade`, a proxied upgrade) is a
+request in flight until its function returns (decision 0429). The native
+backends already waited for it on a stop (hserve's srv_wait waits for
+every connection that is not idle). The Go backend's `serve` stopped with
+net/http's Shutdown, which forgets a hijacked connection, so `serve`
+returned while the handler still ran. std/rt now counts the hand-over
+functions and waits for them after Shutdown, within the same grace
+period, then cancels them as the native backends do. Timing: no hot path
+changed (one WaitGroup Add and Done per upgrade); none measured.
+
 ## 2026-10-27: perf: masking runs a word at a time
 
 - Kind: perf

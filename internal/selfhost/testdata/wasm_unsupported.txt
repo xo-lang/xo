@@ -60,6 +60,7 @@ unix_kill # the wasm backend does not support processes (`proc.spawn`): WASI pre
 use_c_add # use c without the binding of addc.h in internal/llvm/testdata/golden/use_c_add/.xo/cbind (a Go build
 user_caps # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
 websocket # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+websocket_stop # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 websocket_tls # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 
 # The native heap's big blocks (rt.heap_big in alloc.alloc) have no wasm lowering:

@@ -1,0 +1,71 @@
+// Decision 0429: a connection handed over by a 101 is in flight at a
+// stop. The handler waits for task.stopping(), takes 100ms more, says
+// bye and closes with 1001; serve returns only after it did, on every
+// backend (the Go backend's net/http Shutdown does not track a hijacked
+// connection, so std/rt waits for it).
+use std/http
+use std/task
+use std/websocket
+
+fn routes(clock: Clock, done: Mutex[Bool]) -> http.Router {
+  var r = http.router()
+  r.handle("GET /hold", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      c.write_text("ready").ignore_err("test")
+      let _ = task.stopping().recv()
+      clock.sleep(100ms)
+      c.write_text("bye").ignore_err("test")
+      c.close(code: 1001, reason: "server stopping").ignore_err("test")
+      done.with(fn(var d) { d = true })
+    })
+  })
+  r
+}
+
+fn show(m: websocket.Message) -> Str {
+  match m.kind {
+    websocket.Kind.Text => "text ${m.data.to_str() ?? "?"}"
+    websocket.Kind.Binary => "binary ${m.data.to_hex()}"
+  }
+}
+
+fn client(os: Os, addr: Str) -> () ! websocket.WsErr {
+  let c = websocket.dial(os.net, "ws://${addr}/hold")?
+  os.stdio.println("client: ${show(c.read()?)}")
+  os.proc.request_stop()
+  os.stdio.println("client: ${show(c.read()?)}")
+  match c.read() {
+    Ok(m) => os.stdio.println("client: ${show(m)}")
+    Err(e) => os.stdio.println("client: ${e}")
+  }
+}
+
+fn main(os: Os) {
+  os.proc.set_grace(10s)
+  let done = Mutex[Bool].new(false)
+  let r = routes(os.clock, done)
+  let result = Chan[Str].new(cap: 1)
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, r)
+      let addr = srv.addr()
+      scope s {
+        s.spawn(fn() {
+          let how = match srv.serve() {
+            Ok(_) => "ok"
+            Err(e) => "failed: ${e}"
+          }
+          let handler_done = done.with_read(fn(d) { d })
+          result.send("serve returned ${how}, handler done: ${handler_done}")
+        })
+        match client(os, addr) {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("client failed: ${e}")
+        }
+        os.stdio.println(result.recv() ?? "no result")
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

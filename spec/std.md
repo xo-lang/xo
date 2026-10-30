@@ -1671,7 +1671,11 @@ enum HttpErr { Io(msg: Str), Canceled }
   cut by MaxBytesReader).
 
 `serve` runs until its scope is cancelled, then stops accepting, waits for
-in flight requests, and returns `Ok(())`. Each request runs as an isolated
+in flight requests, and returns `Ok(())`. A connection handed over by a
+101 (std/websocket's `upgrade`, a proxied upgrade) is in flight until its
+function returns (decision 0429): on a stop `serve` waits for it within
+the grace period (core 7.5), so a long lived handler watches
+`task.stopping()` and closes, a WebSocket with 1001. Each request runs as an isolated
 task with its own span and request id. Its memory may come from a request
 scoped arena (core 5.5, decision 0066), which no program can observe. A
 response with a body (not 1xx, 204, or 304) that is not a stream is sent
@@ -5495,7 +5499,10 @@ pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str
 - An accepted upgrade is a 101 response that hands the connection over
   (std.md 4.3): the server writes gorilla's 101 (with
   `Sec-WebSocket-Accept` and the subprotocol), runs `f` with the
-  connection, and closes it when `f` returns. HTTP/1.1 only.
+  connection, and closes it when `f` returns. HTTP/1.1 only. Until `f`
+  returns the connection is a request in flight: a stop waits for it
+  (std 4.4, decision 0429), so `f` watches `task.stopping()` and closes
+  with 1001 (going away).
   `Router.call` returns the 101 without running `f`.
 - Frames as gorilla reads them: a client's frames must be masked and a
   server's not; reserved bits, unknown opcodes, a control frame over 125

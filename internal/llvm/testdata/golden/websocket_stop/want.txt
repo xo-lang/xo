@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+client: text ready
+client: text bye
+client: websocket: close 1001 (going away): server stopping
+serve returned ok, handler done: true
+done
+--- stderr

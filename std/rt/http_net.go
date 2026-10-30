@@ -23,6 +23,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 	"unsafe"
@@ -51,6 +52,10 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 	sch := tk.th.sch
 	recording := sch != nil && sch.rec != nil
 	sc := &serveCtx{s: s, tk: tk, reqRoot: reqRoot, sch: sch}
+	// the hand-over functions of 101 responses still running (decision
+	// 0429): net/http's Shutdown does not track a hijacked connection, so
+	// a stop waits for them here, as the native backends' srv_wait does
+	var handed sync.WaitGroup
 	srv := &http.Server{ReadTimeout: s.readTimeout, ReadHeaderTimeout: s.readHeaderTimeout, IdleTimeout: s.idleTimeout, MaxHeaderBytes: int(s.maxHeaderBytes), Handler: http.HandlerFunc(func(w http.ResponseWriter, hr *http.Request) {
 		faultProbe(tk, hr)
 		if s.maxBody > 0 {
@@ -170,8 +175,11 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		}
 		if resp.F_status == 101 && resp.XStream != nil {
 			// a connection hand-off (decision 0313): the stream's function
-			// hijacks the connection and writes everything itself
+			// hijacks the connection and writes everything itself; it is
+			// in flight until it returns (decision 0429)
+			handed.Add(1)
 			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{rw: w}})
+			handed.Done()
 			if a != nil {
 				reqTask.arena = nil
 				a.release()
@@ -277,7 +285,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 			case <-ctx.Done():
 			}
 		}()
-		if srv.Shutdown(ctx) != nil {
+		if srv.Shutdown(ctx) != nil || !waitHanded(ctx, &handed) {
 			srv.Close()
 			ended(true)
 		} else {
@@ -288,8 +296,25 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
 		srv.Shutdown(ctx)
+		waitHanded(ctx, &handed)
 		ended(false)
 		return Ok[Unit, Http_HttpErr](Unit{})
+	}
+}
+
+// waitHanded waits for the hand-over functions still running (decision
+// 0429) until ctx ends; false when ctx ended first.
+func waitHanded(ctx context.Context, wg *sync.WaitGroup) bool {
+	done := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(done)
+	}()
+	select {
+	case <-done:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }
 
