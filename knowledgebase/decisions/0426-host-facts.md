@@ -18,11 +18,19 @@ Stages, one push each: Windows hostname, disk_usage, usage, interfaces. Then cpu
 
 ## Consequences
 
-To be filled as the stages land.
+- Breaking for user types implementing `Fs`, `Proc` or `Net` (as `Net.dial_timeout` and `Env.hostname` were): each adds the new methods. The pushes wait for the owner's OK of the CHANGELOG's BREAKING lines.
+- Four prelude structs (`DiskUsage`, `ProcUsage`, `NetInterface`, `InterfaceFlags`), each declared again in std/native/prelude.xo: the native SSA builder treats a prelude struct as opaque unless the native prelude declares its implementation, and the seed knows no other way (gotchas/new-prelude-struct-needs-native-twin.md).
+- Windows keeps no children's usage, so the native runtime adds each waited child's times and peak working set in rt.static_word 95 to 97 (windows.reap); the Go backend adds the times only (os/exec has closed the handle by then), so its children's `max_rss` is 0 on Windows.
+- Linux's interface list comes from netlink with no libc, as Go's; macOS from getifaddrs; Windows from IPHLPAPI's GetAdaptersAddresses through std/native/llrt/winadapters.xo, which decision 0427's DNS configuration added first.
+- The Windows imports the stages call from code xo's own build reaches (GetDiskFreeSpaceExW, GetProcessTimes) landed in compiler/macho/peimports.xo first (cd4162774, before the 0.3x seed of 2026-10-30): a builder whose import table lacks them cannot link the next xo on windows/amd64 (gotchas/seed-older-than-intrinsics.md). GetProcessTimes takes five arguments, more than rt.call_c4 passes, so a run-time lookup (crash.xo's k32_proc) was not an option.
+- A test's MemFs answers `set_disk_usage`'s value; FakeNet one loopback interface; FakeProc the real process's usage (FakeProc is the Proc natively).
 
 ## Alternatives
 
-To be filled.
+- Module functions in a std module (`host.disk_usage(fs, path)`) instead of capability methods: not breaking, but the capability would be an argument the function only forwards, and attenuation (`Fs.sub`, `Net.only`) is per capability. Rejected for consistency with `Env.hostname` and `Proc.pid`.
+- Addresses as a prelude `IpPrefix` type: the prelude does not use std/netip and no other prelude API does; `netip.Prefix.parse` reads the text (lead, 2026-10-30).
+- `Net.only` denying `interfaces()` unless its list names it: the list names no remote host, so there is nothing for the attenuation to refuse (lead, 2026-10-30).
+- `FakeNet.set_interfaces`: not built; the fixed loopback covers the tests seen so far.
 
 ## Follow-ups
 
