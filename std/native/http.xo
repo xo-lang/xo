@@ -353,6 +353,18 @@ fn stream_finish(req: Request) {
   }
 }
 
+/// Whether req's streamed body was read to its end.
+fn stream_body_done(req: Request) -> Bool {
+  for rv in req.values {
+    if rv.name == STREAM_BODY {
+      if let Some(b) = rt.any_get[BodyReader](rv.v) {
+        return b.st.with_read(fn(s) { s.end })
+      }
+    }
+  }
+  true
+}
+
 fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr {
   if max < 1 {
     fault("BodyReader.read: max must be at least 1, got ${max}")
@@ -2391,7 +2403,10 @@ fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
       }
     }
   }
-  if !req.values.is_empty() {
+  // a full duplex stream (decision 0433, with_full_duplex) sends its head
+  // at once and leaves the request body to the stream's function
+  let duplex = resp.duplex && resp.stream != 0 && !req.values.is_empty()
+  if !req.values.is_empty() && !duplex {
     // what the handler of a streamed body left: discarded or closing
     // (net/http's writeHeader)
     stream_finish(req)
@@ -2413,13 +2428,26 @@ fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   if resp.stream != 0 {
     // a streamed body goes out as f makes it (std/rt's serve)
     let s = hserve.sink_conn(hc, resp.status)
+    if duplex {
+      // the head now: the client may wait for it before it sends more
+      let _ = hserve.sink_flush(s)
+    }
     let fs = hserve.stream_get(resp.stream, true)
     if !fs.is_empty() {
       if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
         f(BodyWriter{s: s}).ignore_err("a stream that fails ends its body there, as net/http")
       }
     }
-    return (hserve.sink_end(s), None)
+    let keep = hserve.sink_end(s)
+    if duplex {
+      // the head went out before the body was settled: a body the function
+      // left unread closes the connection (net/http's EnableFullDuplex
+      // handlers read it all)
+      let done = stream_body_done(req)
+      stream_finish(req)
+      return (keep && done, None)
+    }
+    return (keep, None)
   }
   (true, Some(resp))
 }
