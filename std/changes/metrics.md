@@ -1,5 +1,18 @@
 # std/metrics changes
 
+## 2026-10-29: perf: a summary's quantile stream compresses in one pass
+
+- Kind: perf
+- Commit: this commit
+- Found by: the metricsum profile after the flush fix (compress's removal
+  per fold)
+- Go reference: beorn7/perks quantile stream.compress (the same samples, the
+  kept ones written once instead of a removal per fold)
+- Test: golden metrics_summary and metrics_text (arm64, LLVM); xo bench
+  --ab in bench/results/metricsum-compress-2026-10-29.md
+
+2M observations and a scrape natively in 1032 ms against 1147 before (wall 0.9, instructions 0.904, max RSS 3.1 MB against 3.3), 1.43 times Go's 722 ms (was 1.59); LLVM 1.70 (was 1.81).
+
 ## 2026-10-29: perf: a summary's quantile stream flushes without copying its lists
 
 - Kind: perf

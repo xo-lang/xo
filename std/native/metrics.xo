@@ -202,29 +202,36 @@ fn qflush(var s: metrics.QStream, objs: List[(Float, Float)]) {
   s.l = qcompress(l, s.n, objs)
 }
 
-fn qcompress(var l: List[metrics.QSample], n: Float, objs: List[(Float, Float)]) -> List[metrics.QSample] {
+fn qcompress(l: List[metrics.QSample], n: Float, objs: List[(Float, Float)]) -> List[metrics.QSample] {
   if l.len() < 2 {
     return l
   }
-  var xi = l.len() - 1
-  var x = l[xi]
+  // perks' compress walks from the end, folding a sample into the kept
+  // one after it while the invariant allows; its slice removal per fold
+  // is a copy of the tail, so the kept samples are written once here,
+  // from the end of a list of the same length, and the unused front cut
+  var out: List[metrics.QSample] = List.with_capacity(l.len())
+  for _ in 0..l.len() {
+    out.push(metrics.QSample{v: 0.0, w: 0.0, d: 0.0})
+  }
+  var at = l.len() - 1
+  var x = l[l.len() - 1]
   var r = n - 1.0 - x.w
   var i = l.len() - 2
   while i >= 0 {
     let c = l[i]
     if c.w + x.w + x.d <= qf(objs, n, r) {
       x = x with {w: x.w + c.w}
-      l[xi] = x
-      let _r = l.remove_at(i)
-      xi -= 1
     } else {
+      out[at] = x
+      at -= 1
       x = c
-      xi = i
     }
     r -= c.w
     i -= 1
   }
-  l
+  out[at] = x
+  out[at..out.len()]
 }
 
 /// The q quantile of s (NaN when it holds nothing): perks' Query.
