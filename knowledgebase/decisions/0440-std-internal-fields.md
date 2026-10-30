@@ -1,6 +1,7 @@
 # 0440: `@internal` std struct fields, and a constant's fix drops the call
 
-Status: Accepted (lead for the owner, 2026-10-30: darwin testing bugs b19
+Status: Accepted (owner, 2026-10-30, BREAKING for user code naming Uuid's
+fields; from darwin testing bugs b19
 and b22, ~/xo-lead/notes/lead/darwin-feedback-2026-10-30.md). Built by
 Xo Lang 2 the same day.
 
