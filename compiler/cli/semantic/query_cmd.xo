@@ -52,6 +52,12 @@ fn run_query(os: Os, args: List[Str]) -> Int {
     os.stdio.eprint("xo query ${kind}: want ${want} argument(s)\n\n${query_usage()}")
     return 2
   }
+  if kind != "type" && mod_root(os.fs, wd_of(os), dir).is_empty() && !(os.fs.read_dir(abs_path(wd_of(os), dir)).ok() ?? []).any(fn(e) { !e.is_dir && e.name.ends_with(".xo") }) {
+    // no module and no Xo files: an empty answer would read as "none"
+    // (decision 0437)
+    os.stdio.eprintln("xo query: ${if dir_set { dir } else { "the current directory" }} is not inside a module (no xo.mod above it, no .xo files); pass --dir=DIR")
+    return 2
+  }
   var dirs = [dir]
   var file = ""
   var line = 0
