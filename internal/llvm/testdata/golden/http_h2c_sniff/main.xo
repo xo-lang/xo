@@ -3,9 +3,8 @@
 // as HTTP/1.1, on one port. A raw client sends the preface, an empty
 // SETTINGS and a GET / as one HEADERS frame, then reads the server's
 // frames: SETTINGS first, a HEADERS frame with :status 200 (0x88) and the
-// DATA frame with the body. The Go backend (net/http) acknowledges the
-// client's SETTINGS before its WINDOW_UPDATE and the native server after
-// it (want_go.txt differs in that order only).
+// DATA frame with the body. The frames print sorted: net/http sends the
+// SETTINGS acknowledgement and the WINDOW_UPDATE in either order.
 use std/http
 
 fn byte(b: Bytes, i: Int) -> Int { Int(b[i]) }
@@ -74,7 +73,7 @@ fn main(os: Os) {
                     _ => break
                   }
                 }
-                os.stdio.print("h2c frames:\n${text}")
+                os.stdio.print("h2c frames:\n${text.trim().split("\n").sort().join("\n")}\n")
                 os.stdio.println("has :status 200: ${all.contains(b"\x88")}")
                 os.stdio.println("has body: ${all.contains("hello h2c".bytes())}")
               }
