@@ -68,7 +68,9 @@ import (
 // 10 (2026-10-29, decision 0415): generic functions bind as Xo generics.
 // 23 (2026-10-30, decision 0422): a variadic of an unnamed function
 // type (Go's functional options) is a List of callbacks.
-const Version = 23
+// 24 (2026-10-30, coverage item 4): a callback or Go function value with
+// several results returns them as a tuple.
+const Version = 24
 
 // Binding is one bound Go package.
 type Binding struct {

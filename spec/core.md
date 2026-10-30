@@ -1766,7 +1766,9 @@ fn main(os: Os) ! {
   ! go.Error` with no other result; decision 0416): its `Err(e)` is Go's
   error, the Go error `e` came from when Go made it (so `errors.Is` sees a
   sentinel such as `io.EOF`), else one with `e`'s text; `go.error(msg)`
-  makes one.
+  makes one. A callback with several results (`func() (int, string)`,
+  `func(string) (int, bool, error)`) returns them as a tuple, `-> (Int,
+  Str)`, its error still the `! go.Error`.
 - A variadic of an unnamed Go function type, Go's functional options
   (`optFns ...func(*s3.Options)`), is a List of Xo functions, each a
   callback by the rules above, which Go calls in order (decision 0422):
@@ -1784,8 +1786,8 @@ fn main(os: Os) ! {
   function type, such as a functional option or `http.HandlerFunc`,
   stays a handle that goes back to Go; in a result it is
   parenthesized, `-> (fn(Int) -> Int uses go) uses go`). Calling a nil Go
-  function faults. It cannot be passed back to Go, and one taking a
-  function or returning several results is not bound.
+  function faults; several results are a tuple. It cannot be passed back
+  to Go, and one taking a function is not bound.
 - Go's `error` anywhere but a function's final result (a parameter, a
   field, a result before the last) is `go.Error?`, `nil` being `None`
   (`errors.is(err: go.Error?, target: go.Error?) -> Bool`); an `error`

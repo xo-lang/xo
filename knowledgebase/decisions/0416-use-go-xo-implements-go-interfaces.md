@@ -248,8 +248,7 @@ case is small in count and large in use: it is how Go composes I/O.
   fault) and converts arguments and results as an adapter does. It has
   no toGo; a parameter of function type stays a callback. Skipped: a
   variadic or generic function value, one with a parameter that cannot
-  go to Go (a function), several results (coverage item 4 is the
-  callback direction).
+  go to Go (a function); several results came in format 24 (below).
 - Only an unnamed function type is a function value. A named one stays
   a by value handle: it goes back to Go, which a function value cannot
   (functional options such as zstd's `EOption`, returned by
@@ -264,3 +263,15 @@ case is small in count and large in use: it is how Go composes I/O.
   types in return position").
 - Binding format 22. Tests: gobind TestFuncValues, TestFuncSetters (the
   getters), cmd/xo TestUseGoFuncValues (synthetic example.com/fnval).
+
+## As built: several results as a tuple (Lang 1, 2026-10-29)
+
+- A callback (callbackConv) or a Go function value (funcValueConv) with
+  2 to 6 results, not counting a final error, maps them to an Xo tuple
+  `(A, B)` (rt TupleN, fields F0..): the callback's Go function returns
+  `r.V.F0, r.V.F1` (zero values and GoErrorOf(r.E) on Err), the function
+  value's call builds the tuple from r0, r1. A result that cannot go to
+  Go (an iterator) still skips a callback. More than 6 is skipped as a
+  bound function's results are.
+- Binding format 24. Tests: gobind TestCallbackErrors (two), TestFuncSetters
+  (pick), TestFuncValues (pair), cmd/xo TestUseGoTupleResults (synthetic example.com/multi).

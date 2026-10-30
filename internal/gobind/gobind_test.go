@@ -695,13 +695,19 @@ func Two(f func() (int, string, error)) {}
 			t.Errorf("no %q in the declarations:\n%s", want, decl)
 		}
 	}
-	for _, want := range []string{"return GoErrorOf(r.E)", "return z, GoErrorOf(r.E)"} {
+	for _, want := range []string{"return GoErrorOf(r.E)", "return z0, GoErrorOf(r.E)"} {
 		if !strings.Contains(adapter, want) {
 			t.Errorf("no %q in the adapter:\n%s", want, adapter)
 		}
 	}
-	if why := b.Skipped["two"]; !strings.Contains(why, "several results") {
-		t.Errorf("two skipped %q, want several results (skipped: %v)", why, b.Skipped)
+	// several results are a tuple
+	if want := "fn two[fx: Effects](f: fn() -> (Int, Str) ! go.Error uses fx) uses go, fx"; !strings.Contains(decl, want) {
+		t.Errorf("no %q in the declarations:\n%s", want, decl)
+	}
+	for _, want := range []string{"return z0, z1, GoErrorOf(r.E)", "return int(r.V.F0), r.V.F1, nil"} {
+		if !strings.Contains(adapter, want) {
+			t.Errorf("no %q in the adapter:\n%s", want, adapter)
+		}
 	}
 }
 
@@ -770,6 +776,8 @@ func (s *Server) Run() error {
 		"fn (recv: Server) name() -> Str uses go",
 		"fn (recv: Server) on_error() -> (fn(Str) uses go) uses go",
 		"fn logf() -> (fn(Str) -> Int uses go) uses go",
+		"fn (recv: Server) set_pick[fx: Effects](v: fn(Int) -> (Int, Str) uses fx) uses go, fx",
+		"fn (recv: Server) pick() -> (fn(Int) -> (Int, Str) uses go) uses go",
 	} {
 		if !strings.Contains(decl, want) {
 			t.Errorf("no %q in the declarations:\n%s", want, decl)
@@ -781,9 +789,7 @@ func (s *Server) Run() error {
 		}
 	}
 	for name, why := range map[string]string{
-		"Server.pick": "several results",
-		"set_pick":    "several results",
-		"set_hidden":  "unexported type",
+		"set_hidden": "unexported type",
 	} {
 		if !strings.Contains(b.Skipped[name], why) {
 			t.Errorf("%s skipped %q, want %q (skipped: %v)", name, b.Skipped[name], why, b.Skipped)
@@ -843,6 +849,7 @@ func Pair() func() (int, string) { return nil }
 		"fn parser() -> (fn(Str) -> Int ! go.Error uses go) uses go",
 		"fn pick() -> Op uses go",
 		"fn closer() -> (fn() -> () ! go.Error uses go) ! go.Error uses go",
+		"fn pair() -> (fn() -> (Int, Str) uses go) uses go",
 		"Replay: a Go handle crosses",
 	} {
 		if !strings.Contains(decl, want) {
@@ -854,7 +861,6 @@ func Pair() func() (int, string) { return nil }
 	}
 	for name, why := range map[string]string{
 		"nested": "function type",
-		"pair":   "several results",
 	} {
 		if !strings.Contains(b.Skipped[name], why) {
 			t.Errorf("%s skipped %q, want %q (skipped: %v)", name, b.Skipped[name], why, b.Skipped)

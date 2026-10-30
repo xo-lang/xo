@@ -44,6 +44,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `use go`: a Go function value given to Xo (a result such as
   `fnval.adder(2)`, a function field or variable read back) is an Xo
   function `uses go` that calls Go. Binding format 22.
+- `use go`: a callback or Go function value with several results returns
+  them as an Xo tuple (`fn() -> (Int, Str) ! go.Error`). Binding format 24.
 - std/crypto: `ed25519_sign` also takes Go's 64 byte private key (the
   seed, then its public key) and signs without deriving the public key:
   0.55 of the seed form's time, 0.65 of Go's.

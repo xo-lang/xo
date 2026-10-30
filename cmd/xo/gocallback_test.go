@@ -281,3 +281,45 @@ fn main(os: Os) {
 		t.Errorf("output\n%s\nwant\n%s", got, want)
 	}
 }
+
+// The h1 hashes of testdata/goproxy's synthetic example.com/multi v1.0.0.
+const (
+	multiSum    = "h1:QD+QaUuY117afPb270zZ8f4ipR7dkbaPrK1SSAldZBk="
+	multiModSum = "h1:FXUkd7NACyeJjmfCJo6a5BqtKGKjgvdqCiKLuICfVhM="
+)
+
+// TestUseGoTupleResults: a callback with several results returns a tuple
+// (and an Err for a final error), and a Go function value with several
+// results gives one.
+func TestUseGoTupleResults(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	useGoProxy(t)
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module mt\n\nrequire go example.com/multi v1.0.0\n",
+		"xo.lock": "go example.com/multi v1.0.0 " + multiSum + "\n" +
+			"go example.com/multi v1.0.0/go.mod " + multiModSum + "\n",
+		"main.xo": `use go "example.com/multi"
+use std/go
+
+fn main(os: Os) {
+  os.stdio.println(multi.collect(fn(i: Int) -> (Str, Bool) { ("n${i}", i < 3) }))
+  os.stdio.println(multi.try(fn() -> (Int, Str) ! go.Error { (7, "seven") }))
+  os.stdio.println(multi.try(fn() -> (Int, Str) ! go.Error { Err(go.error("no")) }))
+  let cut = multi.splitter("=")
+  let (k, v, ok) = cut("a=b")
+  os.stdio.println("${k} ${v} ${ok}")
+}
+`,
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	want := "n0,n1,n2\n7 seven\nerror: no\na b true"
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("output\n%s\nwant\n%s", got, want)
+	}
+}

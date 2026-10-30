@@ -948,8 +948,8 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 	if hasErr {
 		nres--
 	}
-	if nres > 1 {
-		return conv{}, skipf(catFunc, "callback %s has several results", g.display(s))
+	if nres > 6 {
+		return conv{}, skipf(catFunc, "callback %s has %d results", g.display(s), nres)
 	}
 	var xps, rps, gps []string
 	var pcs []conv
@@ -963,13 +963,40 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 		gps = append(gps, fmt.Sprintf("b%d %s", i, pc.gt))
 		pcs = append(pcs, pc)
 	}
-	var rc *conv
-	if nres == 1 {
-		c, err := g.mapType(s.Results().At(0).Type(), depth)
+	// several results are a tuple: the Xo function returns (A, B)
+	var rcs []conv
+	for i := 0; i < nres; i++ {
+		c, err := g.mapType(s.Results().At(i).Type(), depth)
+		if err == nil && c.toGo == nil {
+			err = skipf(catFunc, "result %s cannot be passed to Go", c.xo)
+		}
 		if err != nil {
 			return conv{}, skipf(catFunc, "callback %s: %s", g.display(s), err.detail)
 		}
-		rc = &c
+		rcs = append(rcs, c)
+	}
+	var rc *conv
+	if nres > 0 {
+		rc = &rcs[0]
+	}
+	if nres > 1 {
+		var xs, rs, gs []string
+		for _, c := range rcs {
+			xs, rs, gs = append(xs, c.xo), append(rs, c.rt), append(gs, c.gt)
+		}
+		tup := conv{xo: "(" + strings.Join(xs, ", ") + ")", rt: fmt.Sprintf("Tuple%d[%s]", nres, strings.Join(rs, ", ")), gt: strings.Join(gs, ", ")}
+		rc = &tup
+	}
+	// gvals is the Go return list of the Xo value v (r.V)
+	gvals := func(v string) string {
+		if nres == 1 {
+			return rcs[0].toGo(v)
+		}
+		var vs []string
+		for i, c := range rcs {
+			vs = append(vs, c.toGo(fmt.Sprintf("%s.F%d", v, i)))
+		}
+		return strings.Join(vs, ", ")
 	}
 	xo := "fn(" + strings.Join(xps, ", ") + ")"
 	rres := "Unit"
@@ -978,6 +1005,9 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 		xo += " -> " + rc.xo
 		rres = rc.rt
 		gres = " " + rc.gt
+		if nres > 1 {
+			gres = " (" + rc.gt + ")"
+		}
 	}
 	rerr := "Never"
 	if hasErr {
@@ -1023,9 +1053,16 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 		case hasErr && rc != nil:
 			// an Xo error is Go's error: the Go error it came from, or
 			// one with its message (rt GoErrorOf)
-			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "r := " + call + "; if !r.Ok { var z " + rc.gt + "; return z, GoErrorOf(r.E) }; return " + rc.toGo("r.V") + ", nil }"
+			var zs, zn []string
+			for i, c := range rcs {
+				zs = append(zs, fmt.Sprintf("var z%d %s; ", i, c.gt))
+				zn = append(zn, fmt.Sprintf("z%d", i))
+			}
+			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "r := " + call + "; if !r.Ok { " + strings.Join(zs, "") + "return " + strings.Join(zn, ", ") + ", GoErrorOf(r.E) }; return " + gvals("r.V") + ", nil }"
 		case hasErr:
 			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "r := " + call + "; if !r.Ok { return GoErrorOf(r.E) }; return nil }"
+		case nres > 1:
+			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "r := " + call + ".V; return " + gvals("r") + " }"
 		case rc != nil:
 			fn = "func(" + strings.Join(gps, ", ") + ")" + gres + " { " + begin + "return " + rc.toGo(call+".V") + " }"
 		}
@@ -1065,8 +1102,8 @@ func (g *gen) funcValueConv(s *types.Signature, gt string, depth int) (conv, *sk
 	if hasErr {
 		nres--
 	}
-	if nres > 1 {
-		return conv{}, skipf(catFunc, "function value %s has several results", g.display(s))
+	if nres > 6 {
+		return conv{}, skipf(catFunc, "function value %s has %d results", g.display(s), nres)
 	}
 	hpkgs := []string{g.pkg.Path()}
 	var xps, rps, args []string
@@ -1083,9 +1120,9 @@ func (g *gen) funcValueConv(s *types.Signature, gt string, depth int) (conv, *sk
 		args = append(args, pc.toGo(fmt.Sprintf("a%d", i)))
 		hpkgs = append(hpkgs, pc.hpkgs...)
 	}
-	var rc *conv
-	if nres == 1 {
-		c, err := g.mapType(s.Results().At(0).Type(), depth)
+	var rcs []conv
+	for i := 0; i < nres; i++ {
+		c, err := g.mapType(s.Results().At(i).Type(), depth)
 		if err != nil {
 			return conv{}, skipf(catFunc, "function value %s: %s", g.display(s), err.detail)
 		}
@@ -1095,9 +1132,29 @@ func (g *gen) funcValueConv(s *types.Signature, gt string, depth int) (conv, *sk
 				return "Option[" + crt + "]{Some: " + e + " != nil, V: " + crt + "{P: " + e + "}}"
 			}}
 		}
-		rc = &c
+		rcs = append(rcs, c)
 		hpkgs = append(hpkgs, c.hpkgs...)
 	}
+	var rc *conv
+	if nres > 0 {
+		rc = &rcs[0]
+	}
+	if nres > 1 {
+		// several results are a tuple
+		var xs, rs, fs []string
+		for i, c := range rcs {
+			xs, rs = append(xs, c.xo), append(rs, c.rt)
+			fs = append(fs, fmt.Sprintf("F%d: %s", i, c.toXo(fmt.Sprintf("r%d", i))))
+		}
+		trt := fmt.Sprintf("Tuple%d[%s]", nres, strings.Join(rs, ", "))
+		tv := trt + "{" + strings.Join(fs, ", ") + "}"
+		rc = &conv{xo: "(" + strings.Join(xs, ", ") + ")", rt: trt, toXo: func(string) string { return tv }}
+	}
+	var lhs []string
+	for i := 0; i < nres; i++ {
+		lhs = append(lhs, fmt.Sprintf("r%d", i))
+	}
+	rlist := strings.Join(lhs, ", ")
 	xo := "fn(" + strings.Join(xps, ", ") + ")"
 	rres, rerr := "Unit", "Never"
 	if rc != nil {
@@ -1126,9 +1183,9 @@ func (g *gen) funcValueConv(s *types.Signature, gt string, depth int) (conv, *sk
 		var body string
 		switch {
 		case rc != nil && hasErr:
-			body = "r0, err := " + call + "; if err != nil { return " + res + "{E: GoErr(err)} }; return " + res + "{Ok: true, V: " + rc.toXo("r0") + "}"
+			body = rlist + ", err := " + call + "; if err != nil { return " + res + "{E: GoErr(err)} }; return " + res + "{Ok: true, V: " + rc.toXo("r0") + "}"
 		case rc != nil:
-			body = "r0 := " + call + "; return " + res + "{Ok: true, V: " + rc.toXo("r0") + "}"
+			body = rlist + " := " + call + "; return " + res + "{Ok: true, V: " + rc.toXo("r0") + "}"
 		case hasErr:
 			body = "if err := " + call + "; err != nil { return " + res + "{E: GoErr(err)} }; return " + res + "{Ok: true}"
 		default:
