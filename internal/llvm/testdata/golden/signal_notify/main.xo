@@ -3,7 +3,9 @@
 // $PPID`): each arrives on the channel, and Interrupt does not start the
 // shutdown while subscribed; request_stop then does, as Go's graceful
 // pattern; stop_notify closes the channel. A signal that comes while
-// main waits on nothing else is not a deadlock.
+// main waits on nothing else is not a deadlock. On Windows no process
+// can send Hangup or User1, so only the subscription's end is checked
+// (want_windows.txt).
 use std/task
 
 fn name_of(s: Signal) -> Str {
@@ -21,6 +23,19 @@ fn send(os: Os, sig: Str) {
 
 fn main(os: Os) {
   let sigs = os.proc.notify([Signal.Hangup, Signal.User1, Signal.Interrupt])
+  let windows = match target.os {
+    Windows => true
+    _ => false
+  }
+  if windows {
+    // no process can send Hangup, User1 or User2 to a Windows process
+    // (Git Bash's `kill -HUP` cannot), so recv would wait forever there
+    // (the owner's Windows box, 2026-10-29; Go's signal tests skip it
+    // too); the subscription, request_stop and stop_notify still hold
+    os.stdio.println("windows: no sender for Hangup, User1 or User2")
+    after_signals(os, sigs)
+    return
+  }
   for (name, want) in [("HUP", "Hangup"), ("USR1", "User1"), ("INT", "Interrupt")] {
     send(os, name)
     match sigs.recv() {
@@ -37,6 +52,10 @@ fn main(os: Os) {
     None => os.stdio.println("late: closed?")
   }
   os.proc.stop_notify(late)
+  after_signals(os, sigs)
+}
+
+fn after_signals(os: Os, sigs: Chan[Signal]) {
   os.stdio.println("stop requested after Interrupt: ${task.stop_requested()}")
   os.proc.request_stop()
   os.stdio.println("stop requested after request_stop: ${task.stop_requested()}")

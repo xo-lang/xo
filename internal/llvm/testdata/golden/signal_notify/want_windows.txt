@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+windows: no sender for Hangup, User1 or User2
+stop requested after Interrupt: false
+stop requested after request_stop: true
+closed: true
+--- stderr
