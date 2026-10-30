@@ -75,6 +75,17 @@ func (s bodyReaderSrc) Read(p []byte) (int, error) {
 	return n, err
 }
 
+// Close closes the BodyReader's source when it has one to close (a pipe's
+// reader, a server request's body): net/http closes a request's body when
+// it is done with the request. It takes no lock: a Read waiting in the
+// source holds s.r.mu.
+func (s bodyReaderSrc) Close() error {
+	if c, ok := s.r.src.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
 // M_open is `c.open(req)`: the head, the body left on the stream.
 func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream, Http_ClientErr] {
 	if tk.Canceled() {

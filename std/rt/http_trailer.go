@@ -147,6 +147,14 @@ type trailerSrc struct {
 	done bool
 }
 
+// Close closes the body under the trailers (bodyReaderSrc.Close).
+func (s *trailerSrc) Close() error {
+	if c, ok := s.src.(io.Closer); ok {
+		return c.Close()
+	}
+	return nil
+}
+
 func (s *trailerSrc) Read(p []byte) (int, error) {
 	n, err := s.src.Read(p)
 	if err == io.EOF && !s.done {

@@ -1844,7 +1844,11 @@ stream). A read takes at most `max` bytes of a written piece. Until the
 reader's first read the pipe holds what is written and each write
 returns at once, so a task may write a request's first pieces and then
 open it (decision 0444); from the first read on, each write waits until
-the reader has taken it, as Go's io.Pipe does. The native backend's HTTP/1.1
+the reader has taken it, as Go's io.Pipe does.
+A client that is done with the request (its response ended or failed,
+or the stream was closed) closes the pipe's reading end, as net/http
+closes a request body: a write waiting then, and any after, fails with
+`Io("io: read/write on closed pipe")`. The native backend's HTTP/1.1
 server and client do it (the client sends the body from a task and the
 connection is not reused afterwards); the native HTTP/2 client's
 duplex pipe follows (until then its pump waits for a piped piece

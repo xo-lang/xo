@@ -413,6 +413,14 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 			cancel()
 		case <-ctx.Done():
 		}
+		// done with the request (canceled, timed out, or its exchange
+		// ended): a streamed body's source closes, as a pipe's reader, so
+		// net/http's writer waiting in its Read ends (a canceled transport
+		// waits for that writer in mapRoundTripError, and a pipe nobody
+		// closes hung the program, 2026-10-30)
+		if cl, ok := req.XSrc.(io.Closer); ok {
+			cl.Close()
+		}
 	}()
 	var body io.Reader = bytes.NewReader([]byte(req.F_body))
 	if req.XSrc != nil {

@@ -37,6 +37,9 @@ fn routes() -> http.Router {
     }
     http.stream(200, fn(w) { w.write("counted ${n}".bytes())? }).with_full_duplex()
   })
+  // answers without reading the body: the server drains it first (up to
+  // 256 KiB, as net/http does), so a body that never ends gets no answer
+  r.handle_stream("POST /early", fn(_req, _b) { http.text(200, "early") })
   r
 }
 
@@ -110,6 +113,20 @@ fn main(os: Os) {
             Err(e) => os.stdio.println("prewrite: ${e}")
           }
           Err(e) => os.stdio.println("prewrite: ${e}")
+        }
+        // a body whose writer never closes it, to a server that waits for
+        // its end: the client times out and closes the pipe's reader, so
+        // the next write fails as Go's ErrClosedPipe (it hung on every
+        // backend, the Go backend's transport waiting on its body copy)
+        let (w5, r5) = http.pipe()
+        let _ = w5.write(b"never closed").ignore_err("held until the client reads")
+        match http.client(os.net, timeout: 1s).open(http.new_request("POST", "${base}/early").with_body_reader(r5)) {
+          Ok(st) => os.stdio.println("unclosed: opened ${st.head().status}")
+          Err(e) => os.stdio.println("unclosed: ${e}")
+        }
+        match w5.write(b"late") {
+          Ok(_) => os.stdio.println("unclosed write: ok")
+          Err(e) => os.stdio.println("unclosed write: ${e}")
         }
         // a local reader: at most max bytes, then the error as given
         let (w3, r3) = http.pipe()

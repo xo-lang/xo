@@ -1,5 +1,25 @@
 # std/http changes
 
+## 2026-10-30: fix: a client done with a request closes its piped body, every backend (decisions 0433, 0444)
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo lang 5, while gating decision 0444 (a pipe writer that never closes, to a server that drains the body before it answers)
+- Go reference: net/http's Transport closes Request.Body when it is done with the request; io.PipeReader.Close makes the writer's Write return io.ErrClosedPipe
+- Test: internal/llvm/testdata/golden/http_pipe ("unclosed": open times out after 1 s, the next write fails "io: read/write on closed pipe"; arm64, LLVM, Go parity)
+- Timing: none
+
+A request whose body is an `http.pipe()` reader, where the writer never
+closes it, hung when the client gave up (a timeout, an error): the Go
+backend's transport waited for its body copy, which read the pipe
+through a body it could not close, and the native client's exit waited
+for its sending task, blocked on the pipe. The client now closes the
+pipe's reading end when it is done with the request (an error, the
+response's end, `ClientStream.close`, after `send`), so a waiting write
+and every later one fail with `io: read/write on closed pipe`. The server
+side is unchanged and matches net/http: after a handler leaves a body
+unread it drains up to 256 KiB, waiting for a body that never ends.
+
 ## 2026-10-30: fix: a pipe write before the first read is held, every backend (decision 0444)
 
 - Kind: fix

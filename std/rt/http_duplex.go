@@ -67,6 +67,18 @@ func (r heldReader) Read(p []byte) (int, error) {
 	return r.r.Read(p)
 }
 
+// Close is the client's: done with the request (its response ended or
+// failed), the transport closes the body, so a write after it, and one
+// waiting for the reader, fails with io.ErrClosedPipe and the transport's
+// writer stops reading (it waited in mapRoundTripError for a body
+// nobody would end, 2026-10-30).
+func (r heldReader) Close() error {
+	r.h.mu.Lock()
+	r.h.closed = true
+	r.h.mu.Unlock()
+	return r.r.Close()
+}
+
 // XoDebug implements Debug.
 func (Http_PipeWriter) XoDebug(b *strings.Builder) { b.WriteString("<pipe writer>") }
 

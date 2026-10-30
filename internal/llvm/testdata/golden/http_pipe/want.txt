@@ -6,6 +6,8 @@ duplex: 200 counted 6
 cut: delivered whole false
 prewrite: true true
 prewrite: 200 read 11 bytes in some pieces
+unclosed: request timed out
+unclosed write: io: read/write on closed pipe
 local: 0123
 local: 4567
 local: 89

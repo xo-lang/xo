@@ -5,6 +5,11 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (std/http): a client done with a request (a timeout, an error,
+  the response's end) closes its `http.pipe()` body, so a writer waiting
+  on it fails with "io: read/write on closed pipe" instead of hanging
+  the program (the Go backend's transport, and the native client at
+  exit, waited for a pipe nobody would close).
 - FIX (std/http, decision 0444): `PipeWriter.write` before the
   pipe's reader has read is held and returns at once, so writing a
   request body's first pieces and then calling `Client.open` in the same
