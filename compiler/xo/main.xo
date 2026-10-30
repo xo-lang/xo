@@ -1063,6 +1063,12 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // amd64: Xo's own x86_64 backend (decision 0254), linux/amd64 only
   let march = if backend == "amd64" { "amd64" } else { "arm64" }
   let host = if backend == "llvm" { "${goos}/${host_arch()}" } else { "${goos}/${march}" }
+  // the machine's own target, whose cc links what links with one: the
+  // amd64 backend's host above is linux/amd64 on a linux/arm64 machine too,
+  // where a `use c` program for linux/amd64 went to the arm64 cc
+  // (TestCrossUseCFailsLoudly on the linux/arm64 host, 2026-10-30)
+  // (Apple's cc builds either darwin arch: darwin counts as one)
+  let cc_host = if goos == "darwin" { "darwin/${march}" } else { "${goos}/${host_arch()}" }
   let targets = parse_targets(os, o.targets, host)
   o.many_targets = o.many_targets || targets.len() > 1
   // the LLVM backend: the host, or one other target clang cross
@@ -1782,7 +1788,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     }
     let macho_as = if mac_x86 { o.assembler != "cc" } else { o.assembler == "macho" || (no_cc && o.assembler.is_empty()) }
     let win = march == "amd64" && tgoos == "windows"
-    let asm_only = !win && tg != host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86
+    let asm_only = !win && tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86
     // a build that stops at the assembly leaves it as its product, in the
     // build directory itself, where the message names it
     let s = if asm_only { "${sdir}/prog-${tgoos}.s" } else { "${dir}/prog-${tgoos}.s" }
@@ -1939,11 +1945,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       bins.push((tg, wbin))
       continue
     }
-    if tg != host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86 {
+    if tg != cc_host && !(no_cc && (tgoos == "linux" || tgoos == "darwin")) && !mac_x86 {
       // another target that links with cc (a `use c` source, --ld=cc):
       // the host's cc does not link it, and the build stopped at its
       // assembly with exit 0 and no binary (Intel field report b04)
-      let why = "${tg} links with a C compiler (a `use c` source, --ld=cc, or a ${tgoos} program from ${host}), and xo does not cross link with one: build it on ${tg} (its assembly: ${s})"
+      let why = "${tg} links with a C compiler (a `use c` source, --ld=cc, or a ${tgoos} program from ${cc_host}), and xo does not cross link with one: build it on ${tg} (its assembly: ${s})"
       if o.skip_unsupported {
         return Native{skipped: why}
       }

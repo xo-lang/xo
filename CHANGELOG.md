@@ -9,6 +9,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 - `tls.TlsConn` has the same deadlines (decision 0430). A deadline set on
   the `Conn` before `tls.client` also limits the handshake.
+- A linux/amd64 program that links with a C compiler (a `use c` source)
+  built from a linux/arm64 machine fails with xo's message ("links with a
+  C compiler ... build it on linux/amd64") and a --json report, as from any
+  other machine; it handed the program's assembly to the arm64 C compiler,
+  which printed assembler errors.
 - `Conn` and `ServerConn` have Go's deadlines (decision 0430):
   `set_deadline`, `set_read_deadline` and `set_write_deadline(clock,
   t)`. A read or write past the deadline fails with `Timeout`, and the
