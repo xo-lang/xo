@@ -248,7 +248,7 @@ create`. The order:
 6. the owner runs `release-publish.sh`;
 7. the Xo against Go comparison on the released darwin/arm64 binary
    (owner, 2026-10-22, every release): unpack the archive, then
-   `HEAVY_CLASS=bulk heavy.sh vsgo scripts/release-vs-go.sh
+   `HEAVY_CLASS=measure heavy.sh vsgo scripts/release-vs-go.sh
    UNPACKED/bin/xo OUT` in the private checkout, and commit
    OUT/report.md as `bench/results/release-vs-go-vX.Y.Z.md`. It builds
    bench/perf's Go-twin programs (llvm, collections, conc) with xo and

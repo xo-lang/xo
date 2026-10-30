@@ -15,7 +15,9 @@
 #   - run: `xo bench --ab GO XO -- WORKLOAD` (decision 0340): wall, CPU,
 #     peak RSS, ratio XO/GO with its interval and verdict.
 # ROUNDS (default 10) sets the --ab rounds; WORKLOADS limits the run
-# workloads (names as below). Run it through heavy.sh (HEAVY_CLASS=bulk).
+# workloads (names as below). Run it through heavy.sh as HEAVY_CLASS=measure:
+# xo bench --ab refuses to run under a bulk or gate job (lead, 2026-10-30:
+# a bulk run for 0.35.0 reported every run row as failed).
 # MAX_LOAD (default 6): each build and run waits, up to WAIT_MIN minutes
 # (default 30), for a 1-minute load average under MAX_LOAD, and the report
 # gives the load each run started at (lead, 2026-10-23: the 0.26.0 report
