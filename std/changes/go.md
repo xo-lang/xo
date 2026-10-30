@@ -29,6 +29,20 @@ overflow, a division by zero) render through Error and String as the
 fault's message and location, so a Go recover outside Xo's runtime that
 prints the value shows "index 10 out of range for List of length 3 at
 main.xo:23:24". The fault's own report (AsFault) is unchanged.
+## 2026-10-30: docs: a Go library that records its caller sees the binding's adapter
+
+- Kind: docs
+- Commit: this commit
+- Found by: the owner's Windows testing (zap's caller pointed into generated Go)
+- Go reference: runtime.Caller; zap.AddCallerSkip
+- Test: bench/usego-workflows/zap (the caller is main.xo:LINE with the skip)
+
+Every bound call runs through one adapter frame in std/rt (the
+conversions and the panic boundary), so a library that walks the stack
+to its caller names the adapter unless told to skip one more frame:
+`cfg.build([zap.add_caller_skip(1)])`. The generated call site carries
+its `//line`; nothing in the generator was missing. Spec core.md 4.4;
+gotcha go-adapter-frame-caller-skip.md.
 
 ## 2026-10-29: feature: go.Recv, receiving from Go channels
 

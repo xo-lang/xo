@@ -29,6 +29,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   main.xo:20:13") instead of the raw value (`&{7 3 105 main.xo:20:13}`):
   the checked operations' panic values render through Error and String
   (std/rt); golden go_http_fault (an httptest server whose handler faults).
+- `use go` docs (core 4.4): a Go library that records its caller (zap's
+  AddCaller) sees the binding's adapter frame; skip one more
+  (`zap.add_caller_skip(1)` logs `main.xo:LINE`); the zap workflow checks it.
 
 - Native backends: a branch on a register just set to a constant of
   two to four instructions (movz or movn, then movk) goes straight to
