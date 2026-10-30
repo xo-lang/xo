@@ -37,7 +37,10 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   host as user `xo` under `flock /work/offload.lock` (one job at a time)
   and exits with its status; `--put LOCAL REMOTE` copies a file. It needs
   no heavy.sh slot (only ssh runs on the Mac). Exit 3: no offload.env;
-  exit 4: no answer.
+  exit 4: no answer. On the arm64 host a job is stopped after
+  `OFF_MAX_MIN` minutes holding the lock (default 180, exit 124, with a
+  message; tier.sh's job 300), so a hung run cannot hold the one slot
+  while the queue grows (lead, 2026-10-30: 9 jobs queued behind one run).
 - `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
   self|self=a|edit PROG [FLAG...]|PROG [ARG...]` (`self=a`: BASE's
   compiler/xo as the self build's program, for a NEW whose compiler calls
