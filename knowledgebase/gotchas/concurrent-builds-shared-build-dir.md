@@ -47,3 +47,21 @@ builds of one program differed byte for byte and
 gets `--oso-prepend-path=DIR/` (Apple's dsymutil has no `--oso-prefix`;
 the wrong flag failed silently and a plain `--debug-info=on` build
 lost its line tables). `TestBuildCCLinkOSOPaths` checks both, for the native and the LLVM link (the LLVM one names `lto.o`).
+
+## Follow-up (2026-10-30): the Go backend's tree
+
+Observed. `xo build --backend=go` of one program, eight at once for
+twenty rounds, failed 150 of 160: `<build dir>/rt: directory not empty`,
+`main.go: no such file or directory`, `lstat .../xo_main.go` before
+`gofmt failed on the generated Go (a code generator bug)`, and go
+build's `size of xo_adapt.go changed during reading`. build_go
+(compiler/xo gobackend.xo) removes `m/`, `rt/` and the `.go` files of
+the shared tree and writes them again in place, then runs gofmt and go
+build there, so one build deleted what another was formatting or
+compiling. A private tree per build, as the native fix does, would
+also give go build a new directory each time, which its build cache
+keys on. Fix: each build holds `Fs.lock("<tree>/.xo-tree.lock")` (a
+flock or LockFileEx lock, released by the kernel if xo dies) from the
+rewrite until its go builds end; builds of one program run one after
+another through that window. Test: cmd/xo TestParallelGoBuilds (eight
+builds, three rounds).
