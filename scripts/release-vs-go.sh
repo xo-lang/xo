@@ -14,6 +14,13 @@
 #   - binary size (default build; Go's default keeps its symbols too);
 #   - run: `xo bench --ab GO XO -- WORKLOAD` (decision 0340): wall, CPU,
 #     peak RSS, ratio XO/GO with its interval and verdict.
+# Test pairs (2026-10-30, the lead's approval after 0.35.0): `xo test
+# --std-module=native/M` against `go test PKG` (the Go tests M was ported
+# from) for base64 and json, under `xo bench --ab` (A = Go, B = Xo): cold
+# (every cache emptied before each round, Go with -count=1) and edit (one
+# function appended to the module under test before each round, in copies
+# of GOROOT and xo's std).
+# SECTIONS (default "compile run test") limits the report's sections.
 # ROUNDS (default 10) sets the --ab rounds; WORKLOADS limits the run
 # workloads (names as below). Run it through heavy.sh as HEAVY_CLASS=measure:
 # xo bench --ab refuses to run under a bulk or gate job (lead, 2026-10-30:
@@ -26,6 +33,8 @@ set -euo pipefail
 XO=${1:?usage: release-vs-go.sh XO OUT}
 OUT=${2:?usage: release-vs-go.sh XO OUT}
 ROUNDS=${ROUNDS:-10}
+SECTIONS=${SECTIONS:-compile run test}
+section() { [[ " $SECTIONS " == *" $1 "* ]]; }
 MAX_LOAD=${MAX_LOAD:-6}
 WAIT_MIN=${WAIT_MIN:-30}
 root=$(cd "$(dirname "$0")/.." && pwd)
@@ -169,6 +178,7 @@ compile() {
 } >"$report"
 
 # the pairs: NAME XO_SRC GO_SRC
+if section compile; then
 compile go llvm "$perf/llvm/go" main.go >>"$report"
 compile go coll "$perf/go" main.go >>"$report"
 compile go conc "$perf/conc/go" main.go >>"$report"
@@ -179,6 +189,7 @@ compile xo coll "$perf/xo" main.xo >>"$report"
 for w in spawn fanout pingpong mutex rwmutex pmap; do
 	compile xo "conc-$w" "$perf/conc/xo/$w" main.xo >>"$report"
 done
+fi
 
 {
 	echo
@@ -189,7 +200,7 @@ done
 	echo
 } >>"$report"
 
-want() { [ -z "${WORKLOADS:-}" ] || [[ " $WORKLOADS " == *" $1 "* ]]; }
+want() { section run && { [ -z "${WORKLOADS:-}" ] || [[ " $WORKLOADS " == *" $1 "* ]]; }; }
 ab() { # NAME GOBIN XOBIN ARG
 	want "$4" || return 0
 	local l
@@ -210,5 +221,46 @@ done
 for w in spawn fanout pingpong mutex rwmutex pmap; do
 	ab conc "$work/conc.go" "$work/conc-$w.xo" "$w"
 done
+
+# the test pairs: xo test --std-module=native/M against go test PKG, in
+# copies of GOROOT and of the release's std, which the edit rows change
+if section test; then
+	xstd=$(cd "$(dirname "$XO")/.." && pwd)/lib/xo/std
+	[ -d "$xstd" ] || xstd=$(cd "$(dirname "$XO")/.." && pwd)/std
+	cp -R "$xstd" "$work/xostd"
+	cp -R "$(go env GOROOT)" "$work/goroot"
+	tgo=$work/goroot/bin/go
+	tx=$work/test-cache
+	{
+		echo "## Test (xo bench --ab, A = go test, B = xo test --std-module, $ROUNDS rounds)"
+		echo
+		echo "Cold empties every cache before each round (Go with -count=1); edit appends one"
+		echo "function to the module under test before each round (Go -count=1). Copies of GOROOT"
+		echo "and the release's std."
+		echo
+	} >>"$report"
+	for p in base64:encoding/base64:base64.go json:encoding/json:encode.go; do
+		m=${p%%:*}; r=${p#*:}; gp=${r%%:*}; gf=${r#*:}
+		tenv=(env GOROOT="$work/goroot" GOCACHE="$tx/go" GOTOOLCHAIN=local GOFLAGS= XO_STD="$work/xostd" XO_BIN_CACHE="$tx/bin" XO_BACKEND_CACHE_DIR="$tx/backend" XO_SEPCOMP_BG=0)
+		for row in cold edit; do
+			if [ $row = cold ]; then
+				guard="rm -rf $tx"
+			else
+				"${tenv[@]}" "$tgo" test -count=1 "$gp" >/dev/null 2>&1 || true
+				"${tenv[@]}" "$XO" test --std-module=native/$m >/dev/null 2>&1 || true
+				guard="echo 'func releaseVsGoEdit'\$(date +%s)_\$\$'() int { return 1 }' >> $work/goroot/src/$gp/$gf; echo 'fn release_vs_go_edit_'\$(date +%s)_\$\$'() -> Int { 1 }' >> $work/xostd/native/$m.xo"
+			fi
+			l=$(settle)
+			{
+				echo "### $m ($gp) $row (load $l at start)"
+				echo
+				echo '```'
+				"${tenv[@]}" "$XO" bench --ab --no-guard --keep-loaded --rounds="$ROUNDS" --warmup=1 --metrics=wall_ms,cpu_ms,max_rss_kb --args-a="test -count=1 $gp" --args-b="test --std-module=native/$m" --guard="$guard" "$tgo" "$XO" 2>&1 | grep -v '^round ' | sed "s#$work/##g" || echo "(failed)"
+				echo '```'
+				echo
+			} >>"$report"
+		done
+	done
+fi
 rm -rf "${work:?}"
 echo "release-vs-go: $report"

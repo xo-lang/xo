@@ -262,8 +262,12 @@ create`. The order:
    pre-cut reports' edit rows were whole-program builds), and the table's
    last column says which path the edit build took (separate, with the
    std records, or whole), from `XO_CACHE_STATS=1`'s lines in the log
-   (wall, CPU, peak RSS; Go is A, Xo is B). Last verified: 2026-10-22
-   (smoke run, 3 workloads).
+   (wall, CPU, peak RSS; Go is A, Xo is B). A test section (2026-10-30)
+   compares `xo test --std-module=native/M` with `go test PKG` for base64
+   and json, cold (every cache emptied) and after a one function edit to
+   the module under test, in copies of GOROOT and the release's std;
+   SECTIONS="compile run test" (the default) picks sections. Last
+   verified: 2026-10-30 (test section smoke run, SECTIONS=test ROUNDS=2).
 8. the website's comparison pages (owner, 2026-10-23): refresh the
    tables of `content/docs/xo-and-go.md` from step 7's
    `release-vs-go-vX.Y.Z.md` (and any newer `*-vs-go-*` results),
