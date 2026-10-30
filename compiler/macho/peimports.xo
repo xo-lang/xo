@@ -34,6 +34,7 @@ pub fn pe_imports() -> Map[Str, Str] {
     "FindClose": "KERNEL32.dll",
     "FindFirstFileExW": "KERNEL32.dll",
     "FindNextFileW": "KERNEL32.dll",
+    "FlushFileBuffers": "KERNEL32.dll",
     "FormatMessageW": "KERNEL32.dll",
     "FreeEnvironmentStringsW": "KERNEL32.dll",
     "GetActiveProcessorCount": "KERNEL32.dll",
@@ -131,7 +132,9 @@ pub fn pe_imports() -> Map[Str, Str] {
     "ioctlsocket": "WS2_32.dll",
     "listen": "WS2_32.dll",
     "recv": "WS2_32.dll",
+    "recvfrom": "WS2_32.dll",
     "send": "WS2_32.dll",
+    "sendto": "WS2_32.dll",
     "setsockopt": "WS2_32.dll",
     "shutdown": "WS2_32.dll",
   }
