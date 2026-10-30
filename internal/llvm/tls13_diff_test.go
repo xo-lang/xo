@@ -349,6 +349,7 @@ func tls13MutatePlain(rng *rand.Rand, tr tls13Trace, mutate func([]byte) []byte)
 // its state, its error text. XO_TLS13_DIFF_N cases (default 3000) from
 // XO_TLS13_DIFF_SEED (default 7).
 func TestTLS13ReplayDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program with three backends")
 	}

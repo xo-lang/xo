@@ -72,6 +72,7 @@ func sha256Compress(st *[8]uint32, p []byte) {
 // take the instructions when the CPU has them), one shot and split,
 // against crypto/sha256 on lengths around every block boundary.
 func TestSHA256HWDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program on each native backend")
 	}

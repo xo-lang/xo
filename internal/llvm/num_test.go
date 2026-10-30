@@ -308,6 +308,7 @@ func numCorpus(n int) (in, want string) {
 // with the number text in Xo (std/native/llrt/num.xo), and requires Go's
 // answers (decision 0193 step 3; decision 0198 deleted the C path).
 func TestNumDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds two native programs")
 	}

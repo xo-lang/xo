@@ -47,6 +47,7 @@ fn main(os: Os) {
 // (and a changed hash refused), and PSS signatures Go verifies; on each
 // native backend.
 func TestRSADiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("generates RSA keys and builds a program on each native backend")
 	}

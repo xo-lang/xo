@@ -15,6 +15,7 @@ import (
 // with with_tls does. The code is reachable only through the table
 // Server.with_tls installs (srvtls.xo).
 func TestTLSLinkedOnlyWithTLS(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds two programs per native backend")
 	}

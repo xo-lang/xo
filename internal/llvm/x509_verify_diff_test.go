@@ -238,6 +238,7 @@ func x509Chains(n int, seed int64) []string {
 // backend), and diffs the outcome and its text. XO_X509_VERIFY_N chains
 // (default 2000) from XO_X509_VERIFY_SEED (default 7).
 func TestX509VerifyDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program with three backends")
 	}

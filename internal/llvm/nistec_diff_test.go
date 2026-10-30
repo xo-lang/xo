@@ -48,6 +48,7 @@ fn main(os: Os) {
 // P-256's mul4p and sqr4p also run directly on field elements at the
 // field's edges against math/big (nistec.xo's fieldmul op).
 func TestNistecDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program on each native backend")
 	}
@@ -201,6 +202,7 @@ func TestNistecDiff(t *testing.T) {
 // p - 1, p, p + 1, 2^255 - 1, the top bit set, low order points, which
 // give all zeros), on each native backend.
 func TestX25519Diff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program on each native backend")
 	}

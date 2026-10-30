@@ -149,6 +149,7 @@ func scanCorpus(n int) string {
 // the C path), and requires the Go backend's lines; the LLVM build
 // of the Xo path also frees every allocation (decision 0201).
 func TestScanDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds five programs")
 	}

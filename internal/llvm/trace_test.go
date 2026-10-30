@@ -21,6 +21,7 @@ import (
 // JSON that parses and a summary with every reason, and nothing is
 // written without XO_TRACE.
 func TestTrace(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds and runs a program per native backend")
 	}

@@ -18,6 +18,7 @@ import (
 // Go's crypto/mlkem TestAccumulated has the same digest) on the native
 // backends: the golden crypto_mlkem runs 100.
 func TestMLKEMAccumulated(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("10,000 key generations and encapsulations on two backends")
 	}

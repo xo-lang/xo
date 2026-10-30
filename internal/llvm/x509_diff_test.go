@@ -469,6 +469,7 @@ func x509Mutate(rng *rand.Rand, seed []byte) []byte {
 // refuses, with Go's error). XO_X509_DIFF_N cases (default 5000) from
 // XO_X509_DIFF_SEED (default 7).
 func TestX509ParseDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program with three backends")
 	}

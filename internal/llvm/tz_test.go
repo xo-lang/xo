@@ -174,6 +174,7 @@ func tzZip(t *testing.T) string {
 // zoneinfo.zip (time.LoadLocation reads a zip there); the local zone is
 // TZ's.
 func TestTZDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds five programs")
 	}

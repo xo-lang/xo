@@ -313,6 +313,7 @@ var tlsSrvErrText = regexp.MustCompile(`((local|remote) error: )?(tls|x509|crypt
 // tls12 keeps one server's traces; XO_TLSSRV_DIFF_DUMP names a file the
 // differing cases are appended to.
 func TestTLSServerReplayDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program with three backends")
 	}

@@ -42,6 +42,7 @@ fn main(os: Os) ! {
 // children's environments in their order (dedupEnv, PWD, set and added
 // variables) and their arguments.
 func TestProcSpecDiff(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program with three backends")
 	}
