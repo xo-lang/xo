@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- On Linux an unchanged `xo build`, `xo run` or `xo test` hits the run
+  cache again: the build's record of what it read listed /proc/meminfo
+  (read for the build's memory budget), whose contents change on every
+  read, so since 0.28.0 every Linux build missed and built again.
 - `List.filter_map(f)` keeps f's Some values in order; std.md 2 says
   `Str.bytes()` makes no copy.
 
