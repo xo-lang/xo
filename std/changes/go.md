@@ -1,5 +1,21 @@
 # std/go changes
 
+## 2026-10-30: fix: go.out[T]() of a List or Map allocates T's Go type
+
+- Kind: fix
+- Commit: this commit
+- Found by: the owner's darwin testing of 0.35.0 (b21) and Windows testing (bug 22)
+- Go reference: encoding/json Unmarshal into *[]int64 and *map[string]int64; decision 0412 point 4
+- Test: internal/gen golden go_out_collections
+
+`go.out[List[Int]]()` was a Go `*[]any` and `go.out[Map[Str, Int]]()` a
+`*map[any]any`, because the Go type came from an empty Xo value, so
+`json.unmarshal` into them failed or `get()` faulted ("Go wrote a
+[]interface {}"). The Go type now comes from T (`*[]int64`,
+`*map[string]int64`, `*map[string][]string` for nested collections), and
+`get()` converts the Go value back element by element; a Go map's keys
+enter the Map in sorted order.
+
 ## 2026-10-30: fix: a fault Go recovers reads as Xo's fault text
 
 - Kind: fix

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"hash/maphash"
 	"reflect"
+	"sort"
 	"strings"
 	"time"
 )
@@ -328,12 +329,128 @@ type Go_Out[T any] struct{ P any }
 // Go_out is `go.out[T]()`: a new Go pointer to the zero value of T's Go
 // type.
 func Go_out[T any](_ *Task) Go_Out[T] {
-	var zero T
-	t := reflect.TypeOf(goValueOf(any(zero)))
-	if _, isAny := any(zero).(Go_Any); isAny || t == nil {
+	t := goTypeFor[T]()
+	if t == nil {
 		return Go_Out[T]{P: new(any)}
 	}
 	return Go_Out[T]{P: reflect.New(t).Interface()}
+}
+
+// goTypeFor is the Go type of T's values (decision 0412 4) from T itself,
+// not from a value: a List[Int] is []int64 even while it is empty, a
+// Map[Str, Int] map[string]int64. nil means any (go.Any, or a type whose
+// Go type depends on its value).
+func goTypeFor[T any]() reflect.Type {
+	var zero T
+	switch x := any(zero).(type) {
+	case Go_Any:
+		return nil
+	case interface{ xoGoType() reflect.Type }:
+		return x.xoGoType()
+	}
+	return reflect.TypeOf(goValueOf(any(zero)))
+}
+
+// xoGoType is []E for the Go type E of T (any when T has none of its own).
+func (List[T]) xoGoType() reflect.Type {
+	e := goTypeFor[T]()
+	if e == nil {
+		e = reflect.TypeFor[any]()
+	}
+	return reflect.SliceOf(e)
+}
+
+// xoGoType is map[K]V for the Go types of K and V.
+func (Map[K, V]) xoGoType() reflect.Type {
+	k, v := goTypeFor[K](), goTypeFor[V]()
+	if k == nil || !k.Comparable() {
+		k = reflect.TypeFor[any]()
+	}
+	if v == nil {
+		v = reflect.TypeFor[any]()
+	}
+	return reflect.MapOf(k, v)
+}
+
+// fromGo is the Xo value of type T a Go value stands for: the inverse of
+// goValueOf, element by element for a List or Map.
+func fromGo[T any](v any) (T, bool) {
+	var zero T
+	switch z := any(zero).(type) {
+	case Go_Any:
+		return any(Go_Any{V: v}).(T), true
+	case Bytes:
+		b, ok := v.([]byte)
+		return any(Bytes(b)).(T), ok || v == nil
+	case Duration:
+		d, ok := v.(time.Duration)
+		return any(Duration(d)).(T), ok
+	case Time:
+		t, ok := v.(time.Time)
+		return any(Time(t.UnixNano())).(T), ok
+	case interface{ xoFromGoValue(any) (any, bool) }:
+		h, ok := z.xoFromGoValue(v)
+		if !ok {
+			return zero, false
+		}
+		return h.(T), true
+	case GoFromer:
+		h, ok := z.XoFromGo(v)
+		if !ok {
+			return zero, false
+		}
+		return h.(T), true
+	}
+	t, ok := v.(T)
+	return t, ok
+}
+
+// xoFromGoValue is the List of a Go slice's elements, each as T.
+func (List[T]) xoFromGoValue(v any) (any, bool) {
+	rv := reflect.ValueOf(v)
+	if v == nil {
+		return ListOf[T](), true
+	}
+	if rv.Kind() != reflect.Slice && rv.Kind() != reflect.Array {
+		return nil, false
+	}
+	out := make([]T, rv.Len())
+	for i := range out {
+		x, ok := fromGo[T](rv.Index(i).Interface())
+		if !ok {
+			return nil, false
+		}
+		out[i] = x
+	}
+	return ListOf(out...), true
+}
+
+// xoFromGoValue is the Map of a Go map's entries, keys in Go's sorted
+// order (fmt's), so the Map's insertion order does not depend on Go's
+// randomized iteration.
+func (Map[K, V]) xoFromGoValue(v any) (any, bool) {
+	m := MapOf[K, V]()
+	if v == nil {
+		return m, true
+	}
+	rv := reflect.ValueOf(v)
+	if rv.Kind() != reflect.Map {
+		return nil, false
+	}
+	keys := rv.MapKeys()
+	sort.Slice(keys, func(i, j int) bool { return fmt.Sprint(keys[i].Interface()) < fmt.Sprint(keys[j].Interface()) })
+	for _, kv := range keys {
+		k, ok := fromGo[K](kv.Interface())
+		if !ok {
+			return nil, false
+		}
+		x, ok := fromGo[V](rv.MapIndex(kv).Interface())
+		if !ok {
+			return nil, false
+		}
+		Map_put(nil, &m, k, x)
+	}
+	return m, true
 }
 
 // M_any is the pointer as the go.Any a Go function fills.
@@ -342,28 +459,7 @@ func (o Go_Out[T]) M_any(*Task) Go_Any { return Go_Any{V: o.P} }
 // M_get reads the value Go wrote, as T.
 func (o Go_Out[T]) M_get(tk *Task) T {
 	v := reflect.ValueOf(o.P).Elem().Interface()
-	var zero T
-	switch any(zero).(type) {
-	case Go_Any:
-		return any(Go_Any{V: v}).(T)
-	case Bytes:
-		b, _ := v.([]byte)
-		return any(Bytes(b)).(T)
-	case Duration:
-		d, _ := v.(time.Duration)
-		return any(Duration(d)).(T)
-	case Time:
-		t, _ := v.(time.Time)
-		return any(Time(t.UnixNano())).(T)
-	}
-	if f, ok := any(zero).(GoFromer); ok {
-		h, ok := f.XoFromGo(v)
-		if !ok {
-			FaultHere("go.Out.get: Go wrote a %T", v)
-		}
-		return h.(T)
-	}
-	t, ok := v.(T)
+	t, ok := fromGo[T](v)
 	if !ok {
 		FaultHere("go.Out.get: Go wrote a %T", v)
 	}

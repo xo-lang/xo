@@ -5,6 +5,11 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `go.out[T]()` of a List or Map allocates T's Go type (`*[]int64`,
+  `*map[string]int64`, nested collections too), not `*[]any` or
+  `*map[any]any`, so `json.unmarshal` into it and `get()` work
+  (darwin feedback b21, Windows bug 22; golden go_out_collections);
+  std/changes/go.md.
 - `${x:?}` uses a type's own `debug()` (spec core 1.6), as `x.debug()`
   does, on the native and Go backends, also inside a List, an Option, a
   Map, a field of a derived type, log fields and error frames: a user

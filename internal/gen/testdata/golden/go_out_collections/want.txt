@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+*[]int64 [1, 2]
+*map[string]int64 {"a": 1, "b": 2}
+*map[string][]string {"w": [], "x": ["p", "q"]}
+*[]float64 []
+--- stderr

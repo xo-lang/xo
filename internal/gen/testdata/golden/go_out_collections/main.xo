@@ -1,0 +1,28 @@
+// go.out[T]() of a List or Map (decision 0412 point 4): the Go pointer's
+// type comes from T, not from an empty Xo value, so json.Unmarshal fills
+// a *[]int64 or *map[string]int64 and get() reads it back as T, nested
+// collections too.
+use go "encoding/json"
+use go "fmt"
+use std/go
+
+fn main(os: Os) ! {
+  let l = go.out[List[Int]]()
+  let lt = fmt.sprintf("%T", [l.any()])
+  json.unmarshal(b"[1,2]", l.any())?
+  os.stdio.println("${lt} ${l.get():?}")
+
+  let m = go.out[Map[Str, Int]]()
+  let mt = fmt.sprintf("%T", [m.any()])
+  json.unmarshal(b"{\"b\":2,\"a\":1}", m.any())?
+  os.stdio.println("${mt} ${m.get():?}")
+
+  let n = go.out[Map[Str, List[Str]]]()
+  let nt = fmt.sprintf("%T", [n.any()])
+  json.unmarshal(b"{\"x\":[\"p\",\"q\"],\"w\":[]}", n.any())?
+  os.stdio.println("${nt} ${n.get():?}")
+
+  let e = go.out[List[Float]]()
+  json.unmarshal(b"null", e.any())?
+  os.stdio.println("${fmt.sprintf("%T", [e.any()])} ${e.get():?}")
+}
