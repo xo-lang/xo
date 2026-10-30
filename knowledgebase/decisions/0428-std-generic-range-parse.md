@@ -47,23 +47,37 @@ stage 2 branch (refs/recover/lang1-0380-stage2) are the alternative below.
 
 ## Decision (proposed)
 
-1. **Ranges in the record.** std's export record keeps, for each file, the
-   byte range of each top-level declaration (start of its doc comment or
-   attribute, end of its last token), in declaration order (ENTRY_VERSION
-   bumped: an old entry is a clean miss).
-2. **A declaration parse.** parser.parse_decl(name, src, range) lexes only
-   the range (lexer.lex_from, as parse_body does for a lazy body) and parses
-   one top-level declaration, spans in file offsets, lazily (bodies
-   skipped) as the file's parse would have.
-3. **Per-declaration trees.** A record file's tree starts as its declaration
-   list with every entry pending; ensure_decl(f, i) parses entry i once.
-   need_tree(o) parses o's declaration and its receiver type's, not their
-   modules; dump.xo's generic loop parses each generic declaration, not its
-   module. ensure_tree(m) stays for the readers that walk a whole file
-   (the 13 that iterate ast.decls: embed, cli, comparable, timelayout,
-   testmode, build.xo's 2442, decl.xo's, stmt.xo's), each audited: one that
-   only runs for program modules stays as it is; one that can reach a
-   record file calls ensure_tree first.
+1. **Ranges in the record.** Each StdFileRec keeps its file's
+   File.ranges (parser: each top-level item's start, its doc comment's if
+   earlier, the offset after its last token, and how many declarations it
+   made), none when the file had diagnostics; EXPORT_VERSION v4, so an
+   older entry is a clean miss. A build's parse_file_ast drops a test's
+   range with the test (skip_tests), so a range's indexes stay those of
+   ast.decls and of the records' decl_idx.
+2. **A declaration parse.** parser.parse_decl(name, src, range, sig, lazy)
+   lexes only the range (lexer.lex_from) and parses its declarations,
+   spans in file offsets, in the mode ensure_tree's parse would use
+   (parse_lazy_path); None when they do not parse alone as counted.
+3. **One gate, no pending entries.** A record file keeps today's
+   invariant: unloaded, with ast.decls empty, until ensure_tree parses it
+   whole. ensure_decl(f, i) parses the range holding declaration i into
+   Checker.decl_parsed (file to index to tree) and leaves the file
+   unloaded; top_decl(f, i) reads the tree or decl_parsed. need_tree and
+   dump.xo's generic loop call ensure_decl for the object and its
+   receiver; install_std leaves every object of an unloaded file pending; the
+   generic ones are joined right after through need_tree, which marks a
+   joined body for the lazy check (check_module walks no declaration of
+   an unloaded file). A std struct literal joins the type's native twin
+   too, since the SSA builder lowers the twin with its own defaults
+   (http.Response names every field; native Response adds `stream`). The checker's readers that
+   index a declaration (info.xo const_ref_compile_time, stmt.xo
+   const_type, decl.xo's type tree, realtime.xo const_int, timelayout.xo
+   const_str_lazy, and the SSA builder's invariant_of and const_value) go
+   through top_decl; the readers that iterate
+   ast.decls see an unloaded file's empty list, as before, so they need
+   no change. ensure_decl does not enter Checker.parsed, so the next
+   build's prefetch list leaves such files out. Audit:
+   about 90 references of File.decls (xo refs), the indexed ones listed above.
 4. **Off switch and proof.** XO_STD_DECL_PARSE=off parses whole modules as
    today. A parser test parses every declaration of every std file both ways
    and compares the trees (as the lazy parse's test does); the goldens on
@@ -73,12 +87,19 @@ stage 2 branch (refs/recover/lang1-0380-stage2) are the alternative below.
 ## Consequences
 
 - An HTTP edit parses about 38 KB of std's native sources instead of
-  335 KB; the bound on the saving is about 9 ms of CPU of the 14 (to be
-  measured, xo bench --ab, 150 rounds, the HTTP edit build).
+  335 KB; the bound on the saving is about 9 ms of CPU of the 14. The
+  check phase of an HTTP edit build on linux/arm64 went from about 27.5 to
+  22.5 ms (3 parses instead of 16). xo bench --ab on the linux/arm64
+  offload host, 150 rounds, the HTTP edit build from warm std caches,
+  with A the parent's xo: wall 107.5 to 98.6 ms, 0.917 (0.847 to 0.976,
+  better), and a repeat gave 108.0 to 99.4 ms, 0.92 (0.851 to 0.996,
+  better). Both ran with a host load median of 7.6 and 0 loaded rounds.
 - The record grows by two integers per declaration.
-- A reader that walks a record file's declarations without ensure_tree
-  would see pending entries: the audit in step 3, and a fault on a pending
-  entry instead of a silent skip.
+- A record file's ast.decls stays empty until ensure_tree, as before, so
+  a reader that iterates it is unchanged; a reader added later that indexes
+  a record file's declaration directly faults past the empty list, so it
+  goes through top_decl (the indexed readers above fault with the file's
+  path when a declaration is out of reach).
 
 ## Alternatives
 

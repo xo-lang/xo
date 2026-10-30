@@ -483,8 +483,8 @@ fn (var c: Checker) const_type(co: Int) -> Int {
   }
   c.need_tree(co)
   let f = c.objs[co].decl_file
-  let cd = match c.files[f].ast.decls[c.objs[co].decl_idx] {
-    ConstDecl(d: x) => x
+  let cd = match c.top_decl(f, c.objs[co].decl_idx) {
+    Some(ConstDecl(d: x)) => x
     _ => fault("a constant's declaration")
   }
   if c.objs[co].checking {

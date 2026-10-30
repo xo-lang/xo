@@ -112,7 +112,7 @@ test "damaged bytes are no parse" {
   expect(decode_parse(b"").is_some()) == false
 }
 
-test "every file of XO_AST_CODEC_FILES round-trips (run with --real)" uses env, fs.read {
+test "every file of XO_AST_CODEC_FILES round-trips, and parses alone by range (run with --real)" uses env, fs.read {
   // newline separated paths; skipped without it
   let list = os.env.get("XO_AST_CODEC_FILES") ?? ""
   if list.is_empty() {
@@ -129,7 +129,106 @@ test "every file of XO_AST_CODEC_FILES round-trips (run with --real)" uses env, 
       if !e.is_empty() && bad.len() < 20 {
         bad.push(e)
       }
+      // and each declaration range alone (a file with diagnostics has none)
+      let d = decls_alone(p, src, lazy)
+      if !d.is_empty() && !d.contains("no ranges recorded") && bad.len() < 20 {
+        bad.push(d)
+      }
     }
   }
   expect(bad) == []
+}
+
+/// The full parse of src against parse_decl over each of its ranges
+/// (decision 0428): each range parses alone to the same declarations,
+/// compared through encode_parse (every node and span), or "" when they
+/// all match.
+fn decls_alone(path: Str, src: Bytes, lazy: Bool) -> Str {
+  let r = if lazy { parse_file_lazy(path.bytes(), src, false) } else { parse_file(path.bytes(), src, false) }
+  let f = r.file
+  if f.ranges.is_empty() {
+    return "${path}: no ranges recorded (${r.diags.len()} diagnostics, hard ${r.hard}${if r.diags.is_empty() { "" } else { ": " + r.diags[0].code + " line ${r.diags[0].span.start.line}" }})"
+  }
+  var k = 0
+  for (i, dr) in f.ranges.indexed() {
+    var part: List[Decl] = []
+    for j in k..k + dr.n {
+      part.push(f.decls[j])
+    }
+    k += dr.n
+    let got = parse_decl(path.bytes(), src, dr, false, lazy) ?? return "${path}: range ${i} (line ${dr.start.line}) did not parse alone"
+    let want = ParseResult{file: File{span: f.span, name: f.name, imports: [], decls: part}, diags: []}
+    let have = ParseResult{file: File{span: f.span, name: f.name, imports: [], decls: got}, diags: []}
+    if encode_parse(have) != encode_parse(want) {
+      return "${path}: range ${i} (line ${dr.start.line}) parses alone to another tree"
+    }
+  }
+  if k != f.decls.len() {
+    return "${path}: the ranges cover ${k} of ${f.decls.len()} declarations"
+  }
+  ""
+}
+
+/// A file with no diagnostics (SAMPLE has a hard error, so its parse
+/// records no ranges): docs, generics, methods, an enum, an interface,
+/// constants, a test.
+const DECLS = """/// Lists.
+use std/json as j
+
+/// A point.
+pub struct Point {
+  /// x
+  pub x: Int = 3
+  y: List[Map[Str, Float?]]
+} derive Eq
+
+pub enum Shape[T] {
+  Dot
+  Line(from: Point, to: Point)
+  Wrap(v: T)
+}
+
+pub interface Area {
+  fn area(self) -> Float
+}
+
+type Meters = Float
+
+pub const NAMES: List[Str] = ["a", "b"]
+const BIG = 0x1fff + 1_000 * -3
+
+/// Moves p.
+fn (var p: Point) move(dx: Int, dy: Int = 2) -> Int {
+  p.x += dx
+  for i in 0..10 {
+    if i % 2 == 0 { continue }
+  }
+  match dy {
+    0 => 1
+    n if n > 3 => n
+    _ => 2
+  }
+}
+
+pub fn first[T](xs: List[T]) -> T? {
+  xs.get(0)
+}
+
+fn uses_closure(xs: List[Int]) -> List[Int] {
+  xs.map(fn(x: Int) -> Int { x * 2 })
+}
+
+test "a test" {
+  expect(1) == 1
+}
+"""
+
+test "each declaration range parses alone to the full parse's declarations" {
+  expect(decls_alone("d.xo", DECLS.bytes(), true)) == ""
+  expect(decls_alone("d.xo", DECLS.bytes(), false)) == ""
+}
+
+test "a file with diagnostics records no ranges" {
+  let r = parse_file(b"bad.xo", b"fn f( {\n", false)
+  expect(r.file.ranges.len()) == 0
 }

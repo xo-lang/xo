@@ -523,8 +523,10 @@ fn (c: Checker) const_ref(f: Int, id: Ident, depth: Int) -> Int? {
     return None
   }
   if x.kind == ObjKind.Const && x.decl_file >= 0 {
-    if let ConstDecl(d: cd) = c.files[x.decl_file].ast.decls[x.decl_idx] {
-      return c.const_int(x.decl_file, cd.value, depth + 1)
+    match c.top_decl(x.decl_file, x.decl_idx) {
+      Some(ConstDecl(d: cd)) => return c.const_int(x.decl_file, cd.value, depth + 1)
+      Some(_) => {}
+      None => fault("internal: constant ${text(x.name)}'s tree is not parsed (${c.files[x.decl_file].path})")
     }
   }
   None

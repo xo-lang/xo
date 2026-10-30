@@ -2328,8 +2328,10 @@ fn (var b: Builder) invariant_of(obj: Int) -> List[Expr] {
   if f < 0 || i < 0 {
     return []
   }
-  match b.c.files[f].ast.decls[i] {
-    StructDecl(d) => {
+  // through top_decl: a std record file's declaration may be parsed alone
+  // (decision 0428), its file's list empty
+  match b.c.top_decl(f, i) {
+    Some(StructDecl(d)) => {
       if let Some(e) = d.inv {
         return [e]
       }

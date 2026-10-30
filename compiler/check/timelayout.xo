@@ -107,7 +107,7 @@ fn (var c: Checker) const_str_ref_lazy(f: Int, id: Ident, depth: Int) -> Str? {
   // a std constant's tree (time.RFC3339 as a layout) when its record
   // left the file unparsed (trees_lazy)
   c.need_tree(o)
-  if let ConstDecl(d: cd) = c.files[c.objs[o].decl_file].ast.decls[c.objs[o].decl_idx] {
+  if let Some(ConstDecl(d: cd)) = c.top_decl(c.objs[o].decl_file, c.objs[o].decl_idx) {
     return c.const_str_lazy(c.objs[o].decl_file, cd.value, depth + 1)
   }
   None

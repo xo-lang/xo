@@ -31,21 +31,36 @@ fn (var c: Checker) run() -> () ! Str {
   // bodies the check never visits, so those trees must be there before
   // it runs), the rest on demand (need_tree: a constant's initializer,
   // a default's presence, a lazy body)
+  // the generic objects whose declarations were parsed alone (decision
+  // 0428): installed pending, then joined by need_tree, which marks a
+  // joined body for the lazy check (check_module walks no declaration of
+  // an unloaded file)
+  var gen_objs: List[Int] = []
   if c.trees_lazy && c.std_record != None && !c.std_export_verify {
     if let Some(e) = c.std_record {
       // the rebuild's test: nothing parsed now, every tree pending
       let objs = if c.trees_test_pend { [] } else { e.objs }
-      for x in objs {
+      for (xi, x) in objs.indexed() {
         if x.decl_file >= 0 {
-          var generic = !x.tparams.is_empty()
-          if !generic && x.recv >= 0 {
-            let ri = x.recv - e.block.obj_lo
-            generic = ri >= 0 && ri < e.objs.len() && !e.objs[ri].tparams.is_empty()
-          }
-          if generic {
+          let generic = !x.tparams.is_empty()
+          let ri = x.recv - e.block.obj_lo
+          let rgen = x.recv >= 0 && ri >= 0 && ri < e.objs.len() && !e.objs[ri].tparams.is_empty()
+          if generic || rgen {
             if let Some(f) = e.file_index(x.decl_file) {
               if let Some(fi) = c.file_by_path(f) {
-                c.ensure_tree(c.files[fi].module)
+                // the declaration alone (decision 0428), and its generic
+                // receiver's; ensure_decl parses the module when it cannot
+                c.ensure_decl(fi, x.decl_idx)
+                if c.decl_parse {
+                  gen_objs.push(xi)
+                }
+                if rgen {
+                  if let Some(rp) = e.file_index(e.objs[ri].decl_file) {
+                    if let Some(rfi) = c.file_by_path(rp) {
+                      c.ensure_decl(rfi, e.objs[ri].decl_idx)
+                    }
+                  }
+                }
               }
             }
           }
@@ -72,6 +87,11 @@ fn (var c: Checker) run() -> () ! Str {
             c.std_export_used = c.install_std(r)
             if !c.std_export_used && c.std_export_why.is_empty() {
               c.std_export_why = "the records did not install"
+            }
+            if c.std_export_used {
+              for xi in gen_objs {
+                c.need_tree(at.obj_lo + xi)
+              }
             }
           }
           None => c.std_export_why = "the records did not relocate"

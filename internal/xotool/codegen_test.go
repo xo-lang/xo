@@ -85,6 +85,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_CHAIN_KEYS":           {"none", ""}, // the cleanup cache (decision 0382); every build writes the same binary
 	"XO_CHK_CACHE":            {"none", ""},
 	"XO_STD_EXPORT":           {"none", ""},
+	"XO_STD_DECL_PARSE":       {"none", ""},                                    // decision 0428: std declarations parsed alone or by module; the same trees
 	"XO_STD_TREES_TEST":       {"none", ""},                                    // stage 2's rebuild test: every std tree pending, the front end built again (same output)                                    // std's declarations from records (decision 0388); the same tables
 	"XO_STD_FACTS_DUMP":       {"none", ""},                                    // writes std's facts to a file (decision 0388); the build is the same
 	"XO_STD_FACTS_VERIFY":     {"none", ""},                                    // compares a std facts file with the build's own (decision 0388); the build is the same

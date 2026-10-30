@@ -695,6 +695,10 @@ fn check_program(os: Os, o: Opts, native: Bool) -> check.Checker {
 /// Their diagnostics are returned, never printed or kept in c.diags; with
 /// an overlay the user's own are not printed again (the first check did).
 fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (check.Checker, List[check.Diag]) {
+  // the check's own steps under --phase-times (check.setup: the options,
+  // std's entry and record; check.prefetch; check.dirs: the checker's
+  // run; check.parse_list), so an edit's check can be split by wall time
+  var tc = os.clock.now()
   var c = check.new_checker(os.fs, o.std)
   c.overlay = ov
   c.parse_cache = o.parse_cache
@@ -861,6 +865,8 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
     // the LSP and test read declarations in full
     c.trees_lazy = o.cmd is "build" | "run"
     c.trees_test_pend = c.trees_lazy && (os.env.get("XO_STD_TREES_TEST") ?? "") == "1"
+    // decision 0428: a std declaration parsed alone where the check needs it
+    c.decl_parse = c.trees_lazy && (os.env.get("XO_STD_DECL_PARSE") ?? "") != "off"
     let (f0, f1) = sepcomp_fact_files(os, sp)
     match os.fs.read(f0) {
       Ok(d) => {
@@ -877,8 +883,10 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       }
     }
   }
+  tc = lap(os, o.phases, "check.setup", tc)
   if !pdir.is_empty() {
     parse_prefetch(os, c, pdir)
+    tc = lap(os, o.phases, "check.prefetch", tc)
   }
   var offline = os.env.get("XO_OFFLINE") ?? ""
   if o.offline == "1" {
@@ -903,8 +911,10 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
     Ok(_) => {}
     Err(e) => fail(os, "check: ${e}")
   }
+  tc = lap(os, o.phases, "check.dirs", tc)
   if !pdir.is_empty() {
     parse_list_store(os, c, pdir)
+    let _tp = lap(os, o.phases, "check.parse_list", tc)
   }
   if o.phases {
     cache_note(os, true, "parse", c.parse_hits, c.parse_hits + c.parse_misses.len())

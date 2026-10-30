@@ -42,6 +42,20 @@ pub struct File {
   pub name: Bytes
   pub imports: List[UseDecl] = []
   pub decls: List[Decl] = []
+  /// Each top level item's source range and the declarations it gave,
+  /// in order (decision 0428: parse_decl parses one again); empty after
+  /// a parse error.
+  pub ranges: List[DeclRange] = []
+}
+
+/// One top level item of a file: its source from its doc comment (or
+/// its first token) to the end of its last line, and how many entries of
+/// File.decls it gave (a recovered Rust `impl` gives several, a `use`
+/// none and is not listed).
+pub struct DeclRange {
+  pub start: Pos
+  pub end: Int
+  pub n: Int
 }
 
 /// `use path [as name]`, `use go "<path>"`, or `use c "<header>" ...`.

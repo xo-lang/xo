@@ -106,6 +106,8 @@ struct Parser {
   first_decl: Pos = Pos{offset: 0, line: 1, col: 1}
   /// Further methods recovered from a Rust `impl` block.
   pending_decls: List[FnDecl] = []
+  /// The top level items' ranges (File.ranges).
+  ranges: List[DeclRange] = []
 }
 
 /// Parses one file. With sig, function declarations may omit their body.
@@ -138,6 +140,43 @@ pub fn parse_body(name: Bytes, src: Bytes, lb: LazyBody) -> (Block, List[Diag]) 
   p.tok = p.toks[0]
   let b = p.parse_block()
   (b, sort_diags(p.diags))
+}
+
+/// The declarations of the top level item r of the file name with
+/// source src (a range of its parse's File.ranges), parsed from that
+/// range alone as the file's parse gave them, spans included (decision
+/// 0428), lazily (bodies skipped) when lazy; None when they are not r.n
+/// declarations or the range does not parse cleanly (the caller parses
+/// the file).
+pub fn parse_decl(name: Bytes, src: Bytes, r: DeclRange, sig: Bool, lazy: Bool) -> List[Decl]? {
+  if r.start.offset < 0 || r.end > src.len() || r.start.offset >= r.end {
+    return None
+  }
+  let lx = lexer.lex_from(src, r.start, r.end)
+  if !lx.diags.is_empty() || lx.tokens.is_empty() {
+    return None
+  }
+  var p = Parser{file: name, src: src, toks: lx.tokens, tok: lx.tokens[0], sig: sig, lazy: lazy}
+  p.collect_docs(lx.comments)
+  p.lex_habits()
+  p.tok = p.toks[0]
+  p.skip_newlines()
+  let doc = p.doc_for(p.tok.span.start.line)
+  let decl_start = p.tok.span.start
+  let pub_tok = p.tok
+  let is_pub = p.got(Kind.Pub)
+  var imports: List[UseDecl] = []
+  var out: List[Decl] = []
+  if let Some(d) = p.parse_top_decl(imports, doc, is_pub, pub_tok, decl_start, true) {
+    out.push(d)
+  }
+  for pd in p.pending_decls {
+    out.push(Decl.FnDecl(pd))
+  }
+  if !p.diags.is_empty() || p.hard || p.bad || out.len() != r.n || !imports.is_empty() {
+    return None
+  }
+  Some(out)
 }
 
 /// r (a lazy parse of src, parse_file_lazy) with every skipped body
@@ -633,6 +672,7 @@ fn (var p: Parser) parse_file(name: Bytes) -> File {
     p.bad = false
     let doc = p.doc_for(p.tok.span.start.line)
     let decl_start = p.tok.span.start
+    let n0 = decls.len()
     let pub_tok = p.tok
     let is_pub = p.got(Kind.Pub)
     if let Some(d) = p.parse_top_decl(imports, doc, is_pub, pub_tok, decl_start, seen_decl) {
@@ -649,6 +689,13 @@ fn (var p: Parser) parse_file(name: Bytes) -> File {
       decls.push(Decl.FnDecl(pd))
     }
     p.pending_decls = []
+    if decls.len() > n0 {
+      let rs = match doc {
+        Some(dc) => if dc.span.start.offset < decl_start.offset { dc.span.start } else { decl_start }
+        None => decl_start
+      }
+      p.ranges.push(DeclRange{start: rs, end: p.tok.span.start.offset, n: decls.len() - n0})
+    }
     if p.bad {
       p.sync_top()
       continue
@@ -662,7 +709,8 @@ fn (var p: Parser) parse_file(name: Bytes) -> File {
       p.sync_top()
     }
   }
-  File{span: Span{start: start, end: p.tok.span.end}, name: name, imports: imports, decls: decls}
+  let ranges = if p.diags.is_empty() && !p.hard { p.ranges } else { [] }
+  File{span: Span{start: start, end: p.tok.span.end}, name: name, imports: imports, decls: decls, ranges: ranges}
 }
 
 /// One top level item after an optional `pub`: None for a `use` (pushed

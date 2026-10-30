@@ -73,9 +73,12 @@ pub struct StdFileRec {
   pub sig: Bool = false
   pub is_test: Bool = false
   pub imports: List[(Str, Str, Str)] = []
+  /// the byte range of each top-level declaration (decision 0428), so a
+  /// declaration parses alone; none when the file had diagnostics
+  pub ranges: List[parser.DeclRange] = []
 }
 
-const EXPORT_VERSION = "xo std export v3 (module records in the closure)"
+const EXPORT_VERSION = "xo std export v4 (declaration ranges in the file records)"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {
@@ -109,7 +112,7 @@ pub fn (c: Checker) std_export() -> StdExport {
     var rec = StdModRec{path: md.path, name: md.name, dir: md.dir, is_prelude: md.is_prelude, native: md.native, implements: md.implements}
     for f in md.files {
       let sf = c.files[f]
-      var fr = StdFileRec{path: sf.path, iface: sf.iface, sha: crypto.sha256(sf.src).to_hex(), sig: sf.sig, is_test: sf.is_test}
+      var fr = StdFileRec{path: sf.path, iface: sf.iface, sha: crypto.sha256(sf.src).to_hex(), sig: sf.sig, is_test: sf.is_test, ranges: sf.ast.ranges}
       var locals: List[Str] = []
       for (k, _) in sf.imports.entries() {
         locals.push(text(k))
@@ -710,6 +713,14 @@ pub fn encode_std_export(e: StdExport) -> Bytes {
         w.str(raw)
         w.str(mp)
       }
+      w.uv(fr.ranges.len())
+      for dr in fr.ranges {
+        w.uv(dr.start.offset)
+        w.uv(dr.start.line)
+        w.uv(dr.start.col)
+        w.uv(dr.end)
+        w.uv(dr.n)
+      }
     }
   }
   w.b.freeze()
@@ -843,6 +854,18 @@ pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
         let raw = r.str()
         let mp = r.str()
         fr.imports.push((k, raw, mp))
+      }
+      let nr = r.uv()
+      for _ in 0..nr {
+        if !r.ok {
+          return None
+        }
+        let so = r.uv()
+        let sl = r.uv()
+        let sc = r.uv()
+        let end = r.uv()
+        let n = r.uv()
+        fr.ranges.push(parser.DeclRange{start: parser.Pos{offset: so, line: sl, col: sc}, end: end, n: n})
       }
       rec.files.push(fr)
     }
@@ -1136,13 +1159,22 @@ pub fn (c: Checker) std_fingerprint(std_mods: List[Int]) -> Str {
   crypto.sha256(h.freeze()).to_hex()
 }
 
-/// The top level declaration i of file f, if the file has one there.
-fn (c: Checker) top_decl(f: Int, i: Int) -> Option[parser.Decl] {
-  if f < 0 || f >= c.files.len() || i < 0 || i >= c.files[f].ast.decls.len() {
+/// The top level declaration i of file f, if the file has one there:
+/// from its tree, or, for a record file still unloaded, the declaration
+/// ensure_decl parsed alone (decision 0428).
+pub fn (c: Checker) top_decl(f: Int, i: Int) -> Option[parser.Decl] {
+  if f < 0 || f >= c.files.len() || i < 0 {
+    return None
+  }
+  if c.files[f].unloaded {
+    return c.decl_parsed.get(f)?.get(i)
+  }
+  if i >= c.files[f].ast.decls.len() {
     return None
   }
   Some(c.files[f].ast.decls[i])
 }
+
 
 /// x with its trees (counted in t) joined from the parses of c's files:
 /// a function's declaration (an interface method's from its interface,
@@ -1359,7 +1391,7 @@ pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
   // the file's tree first (a constant's initializer is read from the
   // tree itself, with no joined part to count)
   if f >= 0 && f < c.files.len() && c.files[f].unloaded {
-    c.ensure_tree(c.files[f].module)
+    c.ensure_decl(f, c.objs[o].decl_idx)
   }
   let (t, recv) = match c.tree_pending.get(o) {
     Some(p) => p
@@ -1370,7 +1402,7 @@ pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
   if recv >= 0 && recv < c.objs.len() {
     let rf = c.objs[recv].decl_file
     if rf >= 0 && rf < c.files.len() {
-      c.ensure_tree(c.files[rf].module)
+      c.ensure_decl(rf, c.objs[recv].decl_idx)
     }
     owner = Some(c.objs[recv])
   }
@@ -1385,6 +1417,22 @@ pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
     c.lazy_fns[o] = true
     c.check_fn_defaults(o)
   }
+}
+
+/// The type of std's native module that implements std type o (the
+/// member of the same name, as ssa impl_type finds it), or -1.
+fn (c: Checker) native_twin(o: Int) -> Int {
+  let om = c.objs[o].module
+  if om < 0 || !c.mods[om].is_std {
+    return -1
+  }
+  for m in c.order {
+    if c.mods[m].native && c.mods[m].implements == c.mods[om].path {
+      let t = c.mods[m].members.get(c.objs[o].name) ?? -1
+      return if t >= 0 && c.objs[t].kind == ObjKind.Type { t } else { -1 }
+    }
+  }
+  -1
 }
 
 /// Every std tree joined (the SSA builder's fallback, build_program_fe):

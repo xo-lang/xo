@@ -64,6 +64,12 @@ pub struct Checker {
   /// why the records were not used, for XO_CACHE_STATS ("" when used)
   pub std_export_why: Str = ""
   pub tree_pending: Map[Int, (List[Int], Int)] = {}
+  /// decision 0428: a record file's declarations parsed one range at a
+  /// time (ensure_decl) while the file stays unloaded, its ast.decls
+  /// empty; the driver sets it with trees_lazy unless XO_STD_DECL_PARSE=off
+  pub decl_parse: Bool = false
+  /// the declarations ensure_decl parsed: file to (index to tree)
+  pub decl_parsed: Map[Int, Map[Int, parser.Decl]] = {}
   pub std_export_out: Bytes = b""
   pub std_export_used: Bool = false
   /// XO_STD_EXPORT=verify: std declared as usual and its records, when
@@ -1200,10 +1206,76 @@ fn (var c: Checker) parse_file_ast(path: Str, src: Bytes, sig: Bool) -> (parser.
       }
     }
     if cut {
+      // the ranges of the declarations kept (a test's range holds only
+      // the test), so a range's indexes stay those of ast.decls
+      var rs: List[parser.DeclRange] = []
+      var k = 0
+      for dr in ast.ranges {
+        var has_test = false
+        for j in k..k + dr.n {
+          if let TestDecl(..) = r.file.decls[j] {
+            has_test = true
+          }
+        }
+        if !has_test {
+          rs.push(dr)
+        } else if dr.n != 1 {
+          rs = []
+          break
+        }
+        k += dr.n
+      }
       ast.decls = ds
+      ast.ranges = if rs.is_empty() || k != r.file.decls.len() { [] } else { rs }
     }
   }
   (r, ast)
+}
+
+/// Declaration i of record file f parsed alone (decision 0428): the
+/// record's range holding it, through parser.parse_decl as ensure_tree's
+/// parse would have, kept in decl_parsed while the file stays unloaded.
+/// The whole module (ensure_tree) when decl_parse is off, the file has no
+/// ranges, or the range does not parse alone.
+pub fn (var c: Checker) ensure_decl(f: Int, i: Int) uses fs.read {
+  if f < 0 || f >= c.files.len() || !c.files[f].unloaded || i < 0 {
+    return
+  }
+  if let Some(m) = c.decl_parsed.get(f) {
+    if m.contains(i) {
+      return
+    }
+  }
+  let rs = c.files[f].ast.ranges
+  if !c.decl_parse || rs.is_empty() {
+    c.ensure_tree(c.files[f].module)
+    return
+  }
+  var k = 0
+  for dr in rs {
+    if i < k + dr.n {
+      if c.files[f].src.is_empty() {
+        match c.fs.read(c.source_path(c.files[f].path)) {
+          Ok(b) => c.files[f].src = b
+          Err(_) => return
+        }
+      }
+      let lazy = !c.files[f].sig && c.parse_lazy_path(c.files[f].path)
+      match parser.parse_decl(c.files[f].path.bytes(), c.files[f].src, dr, c.files[f].sig, lazy) {
+        Some(ds) => {
+          var m = c.decl_parsed.get(f) ?? {}
+          for (j, d) in ds.indexed() {
+            m[k + j] = d
+          }
+          c.decl_parsed[f] = m
+        }
+        None => c.ensure_tree(c.files[f].module)
+      }
+      return
+    }
+    k += dr.n
+  }
+  c.ensure_tree(c.files[f].module)
 }
 
 /// std's modules from the records' closure (decision 0388 stage 2 piece
@@ -1232,7 +1304,7 @@ pub fn (var c: Checker) load_std_record(e: StdExport) {
     for fr in rec.files {
       let f = c.files.len()
       let z = parser.Pos{offset: 0, line: 0, col: 0}
-      c.files.push(SrcFile{path: fr.path, module: m, ast: parser.File{span: Span{start: z, end: z}, name: fr.path.bytes()}, sha: fr.sha, iface: fr.iface, is_test: fr.is_test, sig: fr.sig, unloaded: true})
+      c.files.push(SrcFile{path: fr.path, module: m, ast: parser.File{span: Span{start: z, end: z}, name: fr.path.bytes(), ranges: fr.ranges}, sha: fr.sha, iface: fr.iface, is_test: fr.is_test, sig: fr.sig, unloaded: true})
       c.mods[m].files.push(f)
     }
     made.push(m)

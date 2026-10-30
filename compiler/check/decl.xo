@@ -166,7 +166,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
   env.elided = true
   // a std type's tree, when its record left the file unparsed
   c.need_tree(t)
-  let d = c.files[f].ast.decls[c.objs[t].decl_idx]
+  let d = c.top_decl(f, c.objs[t].decl_idx) ?? fault("internal: type ${text(c.objs[t].name)}'s tree is not parsed (${c.files[f].path})")
   match d {
     StructDecl(d: sd) => {
       c.resolve_constraints(sd.type_params, c.objs[t].tparams, env)

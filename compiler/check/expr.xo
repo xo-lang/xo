@@ -1870,6 +1870,13 @@ fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldI
       break
     }
   }
+  // a std type's native twin, which the SSA builder lowers in its place
+  // (ssa impl_named) with the twin's own defaults (http.Response names
+  // every field, native Response adds stream and fields): its trees too
+  let tw = c.native_twin(obj)
+  if tw >= 0 {
+    c.need_tree(tw)
+  }
   for fo in c.objs[obj].fields {
     if !seen.contains(fo.name) && fo.default.is_empty() {
       missing.push(text(fo.name))

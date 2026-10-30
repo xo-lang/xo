@@ -651,9 +651,9 @@ fn (var b: Builder) print_trace(tr: Int) {
 fn (var b: Builder) const_value(c: Int, t: Int) -> Int {
   let f = b.c.objs[c].decl_file
   let di = b.c.objs[c].decl_idx
-  let value = match b.c.files[f].ast.decls[di] {
-    ConstDecl(d) => d.value
-    _ => fault("not a constant")
+  let value = match b.c.top_decl(f, di) {
+    Some(ConstDecl(d)) => d.value
+    _ => fault("not a constant, or its tree not parsed (${b.c.files[f].path})")
   }
   if t == b.int_t() {
     // a constant Int expression is one constant, not its operations at

@@ -35,6 +35,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   functions and a closure's annotated parameter are checked the same
   way. Every program that did not leak an effect still checks.
 
+- An edit build of a native program parses only the std declarations it
+  needs (decision 0428): std's record keeps each file's declaration
+  ranges, and the check parses one declaration where it needs its tree
+  (a generic the SSA builder instantiates, a constant, a default, a
+  type's fields) instead of the declaration's whole module. An HTTP
+  server edit build on linux/arm64 checks in about 22.5 ms instead of
+  27.5 (3 parses instead of 16); xo bench --ab, 150 rounds, the HTTP
+  edit build from warm std caches: wall 107.5 to 98.6 ms, 0.917 (0.847
+  to 0.976, better), and 0.92 (0.851 to 0.996) on a repeat.
+  XO_STD_DECL_PARSE=off parses whole modules as before.
 - `xo bench` takes a value flag's value as the next word too (`--rounds 10`, as `--rounds=10`); before, `--rounds 10` failed with "unknown flag --rounds".
 - `xo run -o PATH` writes PATH every time: when the run cache served
   an unchanged program, the second run wrote no file there. `xo run -o`

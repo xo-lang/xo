@@ -150,8 +150,9 @@ fn (c: Checker) const_ref_compile_time(f: Int, id: parser.Ident, depth: Int) -> 
     return true
   }
   let df = c.objs[o].decl_file
-  match c.files[df].ast.decls[c.objs[o].decl_idx] {
-    ConstDecl(d) => c.compile_time_in(df, d.value, depth + 1)
-    _ => true
+  match c.top_decl(df, c.objs[o].decl_idx) {
+    Some(ConstDecl(d)) => c.compile_time_in(df, d.value, depth + 1)
+    Some(_) => true
+    None => fault("internal: constant ${text(c.objs[o].name)}'s tree is not parsed (${c.files[df].path})")
   }
 }
