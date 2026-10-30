@@ -80,3 +80,6 @@ http_router_hooks # the wasm backend does not support the call `rt.heap_big` (st
 http_router_paths # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 metrics_text # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 trace_ring # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
+conn_deadline_move # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_duplex # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+host_usage # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
