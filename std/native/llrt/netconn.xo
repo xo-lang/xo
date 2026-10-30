@@ -513,7 +513,7 @@ pub fn set_deadline(cn: Int, which: Int, set: Bool, d: Int) {
   }
   let pd = ld(cn, C_PD)
   if pd != 0 {
-    poll.pd_ready(pd, which)
+    poll.pd_kick(pd, which)
   }
 }
 

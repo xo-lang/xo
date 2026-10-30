@@ -187,6 +187,29 @@ fn signal(p: Int) {
   pool.park_signal(ctx.pool(), p)
 }
 
+/// Wakes the descriptor pd's waiters of mode (1 read, 2 write, 3 both)
+/// without readiness, keeping nothing for a later wait: a waiter looks
+/// again (a changed deadline, decision 0430) and waits on if nothing
+/// came.
+pub fn pd_kick(pd: Int, mode: Int) {
+  lk(addw(pd, D_MU))
+  if (mode & 1) != 0 {
+    let w = rt.mem_load(pd, D_RWAIT, 8)
+    if w != 0 {
+      signal(w)
+      rt.mem_store(pd, D_RWAIT, 0, 8)
+    }
+  }
+  if (mode & 2) != 0 {
+    let w = rt.mem_load(pd, D_WWAIT, 8)
+    if w != 0 {
+      signal(w)
+      rt.mem_store(pd, D_WWAIT, 0, 8)
+    }
+  }
+  unlk(addw(pd, D_MU))
+}
+
 /// Hands readiness mode (1 read, 2 write, 3 both) to the descriptor pd's
 /// waiters, or keeps it for the next wait (xo_rt.c pd_ready).
 pub fn pd_ready(pd: Int, mode: Int) {
