@@ -55,7 +55,11 @@ variant's background build starts.
 - A one-test program's edit on darwin/arm64 (one run each, same cache):
   ssa 187 to 25-32 ms, wall 0.99 to 0.20-0.38 s, peak RSS 971 to
   758-794 MB; both its tests pass, one of them through MemFs into std's
-  Fs code from the store. LINUX_AB.
+  Fs code from the store. On linux/arm64 (the offload host, run alone,
+  `xo bench --ab` n=20 of a one-test program's test edit, A whole
+  program, B the variant): wall 0.499 (264 to 132 ms, 95% interval 0.447
+  to 0.558), cpu 0.397, peak RSS 0.769 (489 to 376 MB); a store of
+  11.3 MB per concurrency setting there, built in 2.0 s at 1.5 GB peak.
 - A test binary linked with the variant is not byte identical to one
   built whole (the store's layout), but its tests behave the same.
 
