@@ -15,7 +15,9 @@
 // printed (`xo wasm seed: ...`) on a trap, with XO_LEAKCHECK, and with
 // XO_WASM_SEED_LOG. XO_WASM_V8_FLAGS adds V8 flags, XO_WASM_NO_V8_FLAGS=1
 // leaves out the three below, XO_WASM_NO_WORKER=1 runs the module on the
-// main thread, and XO_WASM_STACK_MB sizes the worker's stack.
+// main thread, XO_WASM_STACK_MB sizes the worker's stack, and
+// XO_WASM_MEM_LIMIT_MB=N prints the wasm stack where the memory passes
+// 512 MB, 1 GB, ... and stops the module past N MB.
 import { readFileSync, writeFileSync } from 'node:fs';
 import { createHash } from 'node:crypto';
 import { Worker, isMainThread, workerData, parentPort } from 'node:worker_threads';
@@ -111,10 +113,26 @@ function runModule(file, args) {
   // every WASI call counted, with the errors (nonzero results) it returned
   const calls = {};
   const imports = {};
+  const memLimit = Number(process.env.XO_WASM_MEM_LIMIT_MB || 0);
+  let memNext = 512;
   for (const [name, fn] of Object.entries(wasi.wasiImport)) {
     const f = own[name] || fn;
     imports[name] = (...a) => {
       if (trace) snap(name);
+      if (memLimit) {
+        // XO_WASM_MEM_LIMIT_MB=N: the memory's size is checked at every WASI
+        // call; past each power of two from 512 MB the call and the wasm
+        // stack are printed, and past N the module stops (exit 97)
+        const mb = inst.exports.memory.buffer.byteLength / 1048576;
+        if (mb >= memNext) {
+          memNext = mb * 2;
+          process.stderr.write(`wasm memory ${Math.round(mb)} MB at ${name}\n${String(new Error().stack).split('\n').slice(1, 30).join('\n')}\n`);
+        }
+        if (mb > memLimit) {
+          process.stderr.write(`wasm memory ${Math.round(mb)} MB over XO_WASM_MEM_LIMIT_MB=${memLimit}\n`);
+          process.exit(97);
+        }
+      }
       const r = f(...a);
       const c = calls[name] || (calls[name] = { n: 0, errs: {} });
       c.n++;
