@@ -22,6 +22,10 @@ pub struct Tables {
   /// check of whether its function's frame is set up yet
   pub text: Bytes = b""
   pub text_addr: Int = 0
+  /// a store link's program code (__TEXT,_ptext, decision 0409) and its
+  /// address, the same check's for the program's functions
+  pub ptext: Bytes = b""
+  pub ptext_addr: Int = 0
   /// every section of instructions, [start, end): __text and the LLVM
   /// backend's __xo_text (decision 0318 stage 4 puts the program's
   /// functions there), for naming a frame by its symbol
@@ -162,6 +166,9 @@ pub fn tables(data: Bytes) -> Tables {
           } else if name == "__text" && seg == "__TEXT" {
             t.text = data[off..off + size]
             t.text_addr = addr
+          } else if name == "_ptext" && seg == "__TEXT" {
+            t.ptext = data[off..off + size]
+            t.ptext_addr = addr
           }
         }
       }
@@ -656,12 +663,18 @@ fn step[T: Target](tab: Tables, pc: Int, regs: Map[Int, Int], t: T, first: Bool)
 /// x30, [sp, ...]` (pre-indexed or not): the frame record's store, which
 /// the backends' prologues begin with (unknown code counts as set up).
 fn frame_set_up(tab: Tables, start: Int, pc: Int) -> Bool {
-  if tab.text.is_empty() || start < tab.text_addr || pc > tab.text_addr + tab.text.len() {
+  var text = tab.text
+  var ta = tab.text_addr
+  if !tab.ptext.is_empty() && start >= tab.ptext_addr && start < tab.ptext_addr + tab.ptext.len() {
+    text = tab.ptext
+    ta = tab.ptext_addr
+  }
+  if text.is_empty() || start < ta || pc > ta + text.len() {
     return true
   }
   var a = start
   while a < pc {
-    let w = rd32(tab.text, a - tab.text_addr)
+    let w = rd32(text, a - ta)
     let m = w & 0xffc07fff
     if m == 0xa9807bfd || m == 0xa9007bfd {
       return true

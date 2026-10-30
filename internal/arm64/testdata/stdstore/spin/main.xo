@@ -1,0 +1,13 @@
+// A program function that runs long enough for a CPU profile's samples
+// (TestStdHalfTools: XO_PROF names it in a separately compiled build).
+fn spin(n: Int) -> Int {
+  var x = 0
+  for i in 0..n {
+    x = (x * 31 + i) % 1000003
+  }
+  x
+}
+
+fn main(os: Os) {
+  os.stdio.println("${spin(200000000)}")
+}

@@ -414,6 +414,15 @@ pub fn (var s: StoreLink) layout() -> Str { s.l.rest_layout() }
 pub fn (var s: StoreLink) synthesize() -> Str { s.l.rest_synthesize() }
 pub fn (var s: StoreLink) write() -> Result[(Bytes, Bytes), Str] { s.l.rest_write() }
 
+/// finish after layout (a link from std's half checks its layout first).
+pub fn (var s: StoreLink) finish_after_layout() -> Result[(Bytes, Bytes), Str] {
+  let e = s.l.rest_synthesize()
+  if !e.is_empty() {
+    return Err(e)
+  }
+  s.l.rest_write()
+}
+
 /// The walk from the program's inputs and the store's live atoms read
 /// (link_store's first step).
 pub fn store_prepare(inputs: List[LinkInput], store: Bytes, opts: LinkOpts) -> Result[StoreLink, Str] {
@@ -618,6 +627,11 @@ pub fn store_prepare_cached(parsed: ParsedInputs, store: Bytes, opts: LinkOpts, 
     l.objs[i].sects = sects
     newks.push(newk)
     nameds.push(named)
+  }
+  // the program's own sections (decision 0409): arm64 only, the half's
+  // replay is arm64's relocations
+  if opts.split_prog && !l.x86 {
+    l.prog_from = l.objs.len()
   }
   l.objs = l.objs + prog
   let kind = fn(typ: Int) -> SymKind {

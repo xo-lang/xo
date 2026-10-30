@@ -9,6 +9,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/crypto: `ed25519_sign` also takes Go's 64 byte private key (the
   seed, then its public key) and signs without deriving the public key:
   0.55 of the seed form's time, 0.65 of Go's.
+- macOS arm64 edit builds link faster: a separately compiled build keeps std's laid-out half in the back-end cache and links only the program against it (decision 0409). The HTTP server's edit link went from 23.7 to 9.9 ms, fib's from 9.4 to 3.3 ms. The program's code is now in its own section (`__TEXT,_ptext`) after std's; lldb, dsymutil, codesign, Xo tracebacks and profiles read it as before. `XO_STD_HALF=off` turns it off; a `--layout` build keeps one `__text`.
 - **Fix** (0.34.0): a linux/arm64 build assembled through a stock `cc` (GNU as, or clang with its default processor) failed on `crc32x` ("selected processor does not support" / "instruction requires: crc"): the assembly header declares `.arch_extension crc` beside crypto, aes and sha2.
 - std/crypto: Ed25519 signing reduces its scalars with Go's Montgomery
   products instead of bit by bit: sign 0.66 and verify 0.89 of their

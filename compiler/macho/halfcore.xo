@@ -1,0 +1,20 @@
+// The format-neutral core of a std half (decision 0409), shared by
+// Mach-O, ELF and PE.
+
+/// A section's bytes for a half: the link's output bytes of the section
+/// (out, from off, size bytes), with the input's original bytes (orig)
+/// put back at each place (offset in the section, width) whose
+/// relocation the next link redoes, since relocate reads the instruction
+/// or the addend there. A relocation that also rewrites the opcode before
+/// its field (ELF x86 GOTTPOFF) passes a place that starts there.
+pub fn half_restore(out: Bytes, off: Int, size: Int, orig: Bytes, places: List[(Int, Int)]) -> Bytes {
+  var b = BytesBuilder.with_capacity(size)
+  b.write(out[off..off + size])
+  for (at, w) in places {
+    // put_le takes at most 8 bytes; a wider place goes a byte at a time
+    for i in 0..w {
+      b.put_le(at + i, Int(orig[at + i]), 1)
+    }
+  }
+  b.freeze()
+}

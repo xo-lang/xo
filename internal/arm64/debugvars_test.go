@@ -494,10 +494,15 @@ func TestUnwind(t *testing.T) {
 		for _, c := range []struct {
 			name string
 			args []string
+			// a separately compiled edit build with the program's own
+			// sections (decision 0409, _ptext): its DWARF is a debug
+			// map, so dsymutil makes the dSYM the unwinder reads
+			half bool
 		}{
-			{"macho", []string{"--backend=arm64", "--ld=macho"}},
-			{"cc", []string{"--backend=arm64", "--ld=cc"}},
-			{"llvm", []string{"--backend=llvm"}},
+			{"macho", []string{"--backend=arm64", "--ld=macho"}, false},
+			{"cc", []string{"--backend=arm64", "--ld=cc"}, false},
+			{"llvm", []string{"--backend=llvm"}, false},
+			{"sephalf", []string{"--backend=arm64", "--ld=macho"}, true},
 		} {
 			t.Run(p.name+"/"+c.name, func(t *testing.T) {
 				bin := filepath.Join(out, p.name+"-"+c.name)
@@ -505,8 +510,19 @@ func TestUnwind(t *testing.T) {
 				cmd := testtmp.Guard(exec.Command(xo, args...))
 				cmd.Dir = src
 				cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "PWD="+src, "XO_BIN_CACHE=off")
+				if c.half {
+					cmd.Env = append(cmd.Env, sepHalfEnv(t, xo, root, out)...)
+				}
 				if b, err := cmd.CombinedOutput(); err != nil {
 					t.Fatalf("xo %v: %v\n%s", args, err, b)
+				}
+				if c.half {
+					if l, _ := testtmp.Guard(exec.Command("otool", "-l", bin)).Output(); !strings.Contains(string(l), "sectname _ptext") {
+						t.Fatalf("no _ptext section in the edit build")
+					}
+					if b, err := testtmp.Guard(exec.Command("dsymutil", bin, "-o", bin+".dSYM")).CombinedOutput(); err != nil {
+						t.Fatalf("dsymutil: %v\n%s", err, b)
+					}
 				}
 				snap := bin + ".snap"
 				lb, err := lldb(t, true, "-b", "-o", "command script import "+snapPy, "-o", "breakpoint set -f main.xo -l "+strings.TrimPrefix(p.stop, "main.xo:"), "-o", "run", "-o", "snap "+snap, "-o", "bt", bin)

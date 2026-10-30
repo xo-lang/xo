@@ -1,0 +1,83 @@
+// std's half (stdhalf.xo, decision 0409): a link from the half is the
+// full link of the edited program, the encoding reads back, and a program
+// that gains a section kind moves std's fixed sections, which the half
+// sees.
+
+fn half_prog(imm: Int, cstr: Bool) -> Bytes {
+  let extra = if cstr { "\t.section __TEXT,__cstring,cstring_literals\nL_s:\n\t.asciz \"hi\"\n" } else { "" }
+  asm_or_fault("\t.text\n\t.globl _main\n\t.p2align 2\n_main:\n\tbl _used\n\tmov x0, #${imm}\n\tret\n${extra}")
+}
+
+/// The full link of prog (its bytes and the link, for a half).
+fn half_full(prog: Bytes, store: Bytes, opts: LinkOpts) -> (Bytes, StoreLink) {
+  prep_link([LinkInput{path: "prog.o", data: prog}], store, opts, None)
+}
+
+/// The link of prog from half h: its bytes, or "" for "the half
+/// cannot serve it" (a refusal or std's fixed sections moved).
+fn half_hit(prog: Bytes, h: StdHalf, opts: LinkOpts) -> Bytes {
+  let parsed = match parse_link_inputs([LinkInput{path: "prog.o", data: prog}]) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  var s = store_prepare_half(parsed, h, opts)
+  if !s.resolve_half(h).is_empty() {
+    return b""
+  }
+  let el = s.layout()
+  if !el.is_empty() {
+    fault(el)
+  }
+  if !s.half_pins_ok(h) {
+    return b""
+  }
+  match s.finish_after_layout() {
+    Ok((b, _)) => b
+    Err(e) => fault(e)
+  }
+}
+
+fn half_store() -> Bytes {
+  match store_encode([LinkInput{path: "part.o", data: prep_part()}]) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+}
+
+test "a link from std's half is the full link of the edited program" {
+  let store = half_store()
+  let opts = LinkOpts{name: "p", embed_dwarf: false, split_prog: true}
+  let (_, s1) = half_full(half_prog(1, false), store, opts)
+  let h = match s1.capture_half() {
+    Some(x) => x
+    None => fault("no half: ${s1.half_refused()}")
+  }
+  let (want, _) = half_full(half_prog(2, false), store, opts)
+  expect(half_hit(half_prog(2, false), h, opts) == want) == true
+  // through the encoding, as the cache keeps it
+  let back = match half_decode(half_encode(h)) {
+    Some(x) => x
+    None => fault("the encoding does not read back")
+  }
+  expect(half_hit(half_prog(2, false), back, opts) == want) == true
+}
+
+test "a program that gains a section kind cannot use the half" {
+  let store = half_store()
+  let opts = LinkOpts{name: "p", embed_dwarf: false, split_prog: true}
+  let (_, s1) = half_full(half_prog(1, false), store, opts)
+  let h = match s1.capture_half() {
+    Some(x) => x
+    None => fault("no half")
+  }
+  // _pcstring: one more section command, a larger header, std's __text
+  // later
+  expect(half_hit(half_prog(1, true), h, opts).is_empty()) == true
+}
+
+test "a foreign half is none, and a link without its own sections has none" {
+  expect(half_decode("xohalf0\n0123456789abcdef".bytes()).is_none()) == true
+  let store = half_store()
+  let (_, s) = half_full(half_prog(1, false), store, LinkOpts{name: "p", embed_dwarf: false})
+  expect(s.capture_half().is_none()) == true
+}

@@ -94,6 +94,12 @@ pub struct LinkOpts {
   /// with std_parts: the program's own objects' kept copies (input path,
   /// cached path), which the debug map names too
   pub prog_osos: List[(Str, Str)] = []
+  /// An arm64 store link (decision 0409): the program's sections go to output
+  /// sections of their own (_ptext, _pconst ...), after std's in their
+  /// segment, with __stubs, __got, __unwind_info, __eh_frame and the
+  /// zerofill sections after them, so std's sections keep their
+  /// addresses whatever the program's size
+  pub split_prog: Bool = false
 }
 
 /// An input file: its path (for messages) and contents.
@@ -223,6 +229,9 @@ struct Linker {
   isl_done: Set[Int] = #{}
   /// while the DWARF is written: an address in a stripped atom is 0
   dw_dead_zero: Bool = false
+  /// the first of the program's objects when opts.split_prog (a store
+  /// link's: std's come first), -1 otherwise
+  prog_from: Int = -1
   err: Str = ""
 }
 
@@ -645,7 +654,7 @@ fn (l: Linker) is_text_sect(out: Int) -> Bool {
     return false
   }
   let s = l.osects[out]
-  s.seg == "__TEXT" && s.name == "__text"
+  s.seg == "__TEXT" && (s.name == "__text" || s.name == "_ptext")
 }
 
 /// The output address of an object address in a section of the object
@@ -704,6 +713,38 @@ fn sect_rank(seg: Str, name: Str) -> Int {
   }
 }
 
+/// The program's own output section for one of std's (opts.split_prog,
+/// decision 0409): "__x" becomes "_px" (a section name has 16 bytes:
+/// __gcc_except_tab has no room for a suffix); __eh_frame stays shared
+/// (rebuilt each link, after the program's sections).
+fn prog_name(seg: Str, name: Str) -> Str {
+  if (seg == "__TEXT" && name == "__eh_frame") || !name.starts_with("__") {
+    return name
+  }
+  "_p${name[2..]}"
+}
+
+/// An output section's place in its segment with opts.split_prog: std's
+/// sections in sect_rank's order, then the program's (_p), then
+/// __stubs and __got (they grow with the program's imports), then
+/// __unwind_info and __eh_frame (rebuilt each link), then the zerofill
+/// sections, std's then the program's.
+fn split_rank(s: OSect) -> Int {
+  let prog = s.name.starts_with("_p")
+  let base = if prog { "__${s.name[2..]}" } else { s.name }
+  let r = sect_rank(s.seg, base)
+  let zero = (s.flags & 0xff) == S_ZEROFILL || (s.flags & 0xff) == S_THREAD_LOCAL_ZEROFILL
+  var band = 0
+  if zero {
+    band = 4000
+  } else if s.seg == "__TEXT" && (base == "__unwind_info" || base == "__eh_frame") {
+    band = 3000
+  } else if (s.seg == "__TEXT" && base == "__stubs") || (s.seg == "__DATA_CONST" && base == "__got") {
+    band = 2000
+  }
+  band + (if prog { 1000 } else { 0 }) + r
+}
+
 fn seg_rank(seg: Str) -> Int {
   match seg {
     "__TEXT" => 0
@@ -732,10 +773,11 @@ fn (var l: Linker) place() {
     }
     for k in 0..l.objs[o].sects.len() {
       let s = l.objs[o].sects[k]
-      let (seg, name) = out_name(s.seg, s.name, s.flags)
+      let (seg, name0) = out_name(s.seg, s.name, s.flags)
       if seg.is_empty() || s.dead {
         continue
       }
+      let name = if l.prog_from >= 0 && o >= l.prog_from && l.objs[o].path != "<section bounds>" { prog_name(seg, name0) } else { name0 }
       let oi = l.osect(seg, name, s.flags & 0xffffff00 | (s.flags & 0xff))
       if s.align > l.osects[oi].align {
         l.osects[oi].align = s.align
@@ -863,7 +905,8 @@ fn (var l: Linker) scan() {
     order.push(i)
   }
   let os = l.osects
-  order = order.sort_by(fn(i: Int) -> Int { seg_rank(os[i].seg) * 1000 + sect_rank(os[i].seg, os[i].name) })
+  let split = l.prog_from >= 0
+  order = order.sort_by(fn(i: Int) -> Int { seg_rank(os[i].seg) * 100000 + if split { split_rank(os[i]) } else { sect_rank(os[i].seg, os[i].name) } })
   // renumber: the input sections and the synthetic indexes follow
   var newix: List[Int] = []
   for _ in order {

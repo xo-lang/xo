@@ -1,0 +1,415 @@
+// std's half of a store link (decision 0409): what a link with the same
+// std (the same prepare decisions) can take from the last one instead of
+// relocating std again. Stage 1 keeps it in memory (XO_STD_STORE_REPEAT's
+// rounds); the program's sections are their own (opts.split_prog), so
+// std's sections in __TEXT keep their addresses whatever the program.
+
+/// std's objects after a full store link (the strip's FDEs and compact
+/// unwind entries already cut): each __TEXT section of std's that keeps
+/// its address holds the link's output bytes, and only the relocations
+/// whose value can change (to a section that moves, an import, the
+/// program, the GOT; an absolute pointer) with their original contents
+/// at their places, so relocate redoes exactly those; every other
+/// section as the link had it. With the store's global definitions and
+/// each object's dead section.
+pub struct StdHalf {
+  objs: List[IObj]
+  n: Int
+  stubs: List[Int]
+  globals: Map[Bytes, (Int, Int)]
+  /// std's fixed sections and their addresses: a link whose layout puts
+  /// any elsewhere (a larger header: the program gained a section kind)
+  /// cannot use the half
+  pins: List[(Str, Str, Int)] = []
+  /// relocations kept and dropped in the pinned sections (a report)
+  pub kept: Int = 0
+  pub dropped: Int = 0
+}
+
+/// Whether output section out keeps its address in every link with this
+/// half: std's own __TEXT sections (the program's, __stubs,
+/// __unwind_info and __eh_frame come after them). A reference to no
+/// section (a dead atom's 0) is fixed too.
+fn (l: Linker) half_pinned(out: Int) -> Bool {
+  if out < 0 {
+    return true
+  }
+  let s = l.osects[out]
+  s.seg == "__TEXT" && !s.name.starts_with("_p") && out != l.s_stubs && out != l.s_unwind && out != l.s_eh
+}
+
+/// Whether relocation r of std's section x (object o) can change from
+/// one link with the half to the next.
+fn (l: Linker) half_moves(o: Int, x: ISect, r: IReloc) -> Bool {
+  if r.typ == R_GOT_LOAD_PAGE21 || r.typ == R_GOT_LOAD_PAGEOFF12 || r.typ == R_POINTER_TO_GOT || r.typ == R_TLVP_LOAD_PAGE21 || r.typ == R_TLVP_LOAD_PAGEOFF12 {
+    return true
+  }
+  // an absolute pointer is a chained fixup: its value and its link to
+  // the next one of its page
+  if r.typ == R_UNSIGNED && r.len == 3 {
+    return true
+  }
+  if r.ext {
+    let (d, _i) = l.def_of(o, r.sym)
+    if d < 0 || d >= l.prog_from {
+      return true
+    }
+  }
+  let (d, j) = l.reloc_sect(o, x, r)
+  if d < 0 {
+    return false
+  }
+  if j < 0 {
+    // a section split into atoms, the atom not known here
+    return true
+  }
+  !l.half_pinned(l.objs[d].sects[j].out)
+}
+
+/// Why this link (after finish) can have no half, "" when it can:
+/// x86_64, the program's own thread locals (they would move the
+/// template std's descriptors count from), branch islands, a layout
+/// order, a link without the program's own sections, or a failed one.
+pub fn (s: StoreLink) half_refused() -> Str {
+  let l = s.l
+  if l.x86 {
+    return "x86_64"
+  }
+  if l.prog_from != s.n {
+    return "the program's sections are not their own (XO_STD_HALF)"
+  }
+  if !l.isl_sects.is_empty() {
+    return "branch islands"
+  }
+  if !l.opts.order.is_empty() {
+    return "a layout order"
+  }
+  if !l.err.is_empty() {
+    return "the link failed"
+  }
+  for o in s.n..l.objs.len() {
+    for x in l.objs[o].sects {
+      let t = x.flags & 0xff
+      if t == S_THREAD_LOCAL_REGULAR || t == S_THREAD_LOCAL_ZEROFILL || t == S_THREAD_LOCAL_VARIABLES {
+        return "the program's thread locals"
+      }
+    }
+  }
+  ""
+}
+
+/// The half of this link (after finish), None where half_refused says
+/// why not.
+pub fn (s: StoreLink) capture_half() -> StdHalf? {
+  let l = s.l
+  if !s.half_refused().is_empty() {
+    return None
+  }
+  var objs: List[IObj] = List.with_capacity(s.n)
+  var kept = 0
+  var dropped = 0
+  for o in 0..s.n {
+    var ob = l.objs[o]
+    for k in 0..ob.sects.len() {
+      let x = ob.sects[k]
+      let zero = (x.flags & 0xff) == S_ZEROFILL || (x.flags & 0xff) == S_THREAD_LOCAL_ZEROFILL
+      if x.out < 0 || x.dead || zero || !l.half_pinned(x.out) || x.size == 0 {
+        continue
+      }
+      // the relocations to redo: a pair (SUBTRACTOR, UNSIGNED) together,
+      // an ADDEND with the relocation it applies to
+      var keep: List[IReloc] = []
+      var q = 0
+      let rs = x.relocs
+      while q < rs.len() {
+        let r = rs[q]
+        if (r.typ == R_ADDEND || r.typ == R_SUBTRACTOR) && q + 1 < rs.len() {
+          let r2 = rs[q + 1]
+          if (r.typ == R_SUBTRACTOR && l.half_moves(o, x, r)) || l.half_moves(o, x, r2) {
+            keep.push(r)
+            keep.push(r2)
+          } else {
+            dropped += 2
+          }
+          q += 2
+          continue
+        }
+        if l.half_moves(o, x, r) {
+          keep.push(r)
+        } else {
+          dropped += 1
+        }
+        q += 1
+      }
+      kept += keep.len()
+      // the original contents where a relocation is redone: relocate
+      // reads the instruction (or the addend) there
+      var places: List[(Int, Int)] = []
+      for r in keep {
+        if r.typ == R_ADDEND || r.typ == R_SUBTRACTOR {
+          continue
+        }
+        if r.len == 3 {
+          places.push((r.addr, 8))
+        } else if r.len == 2 {
+          places.push((r.addr, 4))
+        }
+      }
+      ob.sects[k].data = half_restore(l.osects[x.out].bytes, x.off, x.size, x.data, places)
+      ob.sects[k].relocs = keep
+    }
+    objs.push(ob)
+  }
+  var globals: Map[Bytes, (Int, Int)] = {}
+  for (name, d) in l.globals {
+    if d.0 < s.n {
+      globals[name] = d
+    }
+  }
+  var pins: List[(Str, Str, Int)] = []
+  for (i, x) in l.osects.indexed() {
+    if l.half_pinned(i) {
+      pins.push((x.seg, x.name, x.addr))
+    }
+  }
+  Some(StdHalf{objs: objs, n: s.n, stubs: s.stubs, globals: globals, pins: pins, kept: kept, dropped: dropped})
+}
+
+/// After layout: whether std's fixed sections are where the half had
+/// them (else the link from the half is not the full link's).
+pub fn (s: StoreLink) half_pins_ok(h: StdHalf) -> Bool {
+  var got: List[(Str, Str, Int)] = []
+  for (i, x) in s.l.osects.indexed() {
+    if s.l.half_pinned(i) {
+      got.push((x.seg, x.name, x.addr))
+    }
+  }
+  got == h.pins
+}
+
+/// A store link of the program's objects with std's half (the prepare
+/// step of a link whose prepare decisions are the half's): std's objects
+/// are the half's, the program's follow.
+pub fn store_prepare_half(parsed: ParsedInputs, h: StdHalf, opts: LinkOpts) -> StoreLink {
+  var l = Linker{opts: opts}
+  var prog = parsed.objs
+  for i in 0..prog.len() {
+    prog[i].subsections = false
+  }
+  if opts.program_dwarf && !prog.any(fn(ob) { obj_xo_dwarf(ob) }) {
+    l.opts.embed_dwarf = false
+    l.opts.dsym = false
+  }
+  l.prog_from = h.n
+  l.objs = h.objs + prog
+  StoreLink{l: l, n: h.n, stubs: h.stubs}
+}
+
+/// resolve for a link from std's half: std's global definitions are the
+/// half's, the program's added; "" or why the half cannot serve (a
+/// program definition std's relocations would then take, a common
+/// symbol: the full link decides those).
+pub fn (var s: StoreLink) resolve_half(h: StdHalf) -> Str {
+  s.l.globals = h.globals
+  for o in s.n..s.l.objs.len() {
+    for y in s.l.objs[o].syms {
+      if !is_ext(y) {
+        continue
+      }
+      if is_defined(y) && (y.desc & 0x80) == 0 {
+        match h.globals.get(y.name) {
+          // std's weak definition gives way to the program's
+          Some(_) => return "half: the program defines ${bstr(y.name)}, which std defines too"
+          None => {}
+        }
+      } else if !is_defined(y) && y.value != 0 {
+        return "half: a common symbol ${bstr(y.name)}"
+      }
+    }
+    s.l.add_globals(o)
+  }
+  if !s.l.err.is_empty() {
+    return s.l.err
+  }
+  s.l.section_bounds()
+  for o in s.n..s.l.objs.len() {
+    for k in 0..s.l.objs[o].sects.len() {
+      let x = s.l.objs[o].sects[k]
+      if x.seg == "__LD" && x.name == "__compact_unwind" {
+        s.l.objs[o].sects[k] = s.l.uncoalesced_unwind(o, x)
+      }
+    }
+  }
+  s.l.stripped = true
+  s.l.collect_imports()
+  s.l.err
+}
+
+const HALF_MAGIC = "xohalf1\n"
+
+fn sw_bytes(var b: BytesBuilder, x: Bytes) {
+  sw32(b, x.len())
+  b.write(x)
+}
+
+/// -1 (none) written as 0xffffffff
+fn sw32n(var b: BytesBuilder, v: Int) {
+  sw32(b, v & 0xffffffff)
+}
+
+fn (var r: SR) u32n() -> Int {
+  let v = r.u32()
+  if v == 0xffffffff { -1 } else { v }
+}
+
+/// The half as bytes (decision 0409 stage 2: <backend cache>/stdhalf).
+pub fn half_encode(h: StdHalf) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_str(HALF_MAGIC)
+  sw32(b, h.n)
+  sw32(b, h.kept)
+  sw32(b, h.dropped)
+  sw32(b, h.stubs.len())
+  for x in h.stubs {
+    sw32n(b, x)
+  }
+  sw32(b, h.globals.len())
+  for (name, d) in h.globals {
+    sw_bytes(b, name)
+    sw32(b, d.0)
+    sw32(b, d.1)
+  }
+  sw32(b, h.pins.len())
+  for (sg, nm, a) in h.pins {
+    sw_bytes(b, sg.bytes())
+    sw_bytes(b, nm.bytes())
+    sw64(b, a)
+  }
+  sw32(b, h.objs.len())
+  for ob in h.objs {
+    sw_bytes(b, ob.path.bytes())
+    sw32(b, (if ob.live { 1 } else { 0 }) | (if ob.subsections { 2 } else { 0 }))
+    sw32(b, ob.sects.len())
+    for x in ob.sects {
+      sw_bytes(b, x.seg.bytes())
+      sw_bytes(b, x.name.bytes())
+      sw64(b, x.addr)
+      sw64(b, x.size)
+      sw32(b, x.align)
+      sw32(b, x.flags)
+      sw32(b, if x.dead { 1 } else { 0 })
+      sw_bytes(b, x.data)
+      sw32(b, x.relocs.len())
+      for r in x.relocs {
+        sw_reloc(b, r)
+      }
+    }
+    sw32(b, ob.syms.len())
+    for y in ob.syms {
+      sw_bytes(b, y.name)
+      sw32(b, y.typ)
+      sw32(b, y.sect)
+      sw32(b, y.desc)
+      sw64(b, y.value)
+    }
+    sw32(b, ob.split.len())
+    for (key, atoms) in ob.split {
+      sw32(b, key)
+      sw32(b, atoms.len())
+      for (a, o) in atoms {
+        sw64(b, a)
+        sw32(b, o)
+      }
+    }
+  }
+  b.freeze()
+}
+
+/// The half in b, None when b is not one: section bytes and names are
+/// views of b.
+pub fn half_decode(b: Bytes) -> StdHalf? {
+  let m = HALF_MAGIC.bytes()
+  if b.len() < m.len() + 16 || b[0..m.len()] != m {
+    return None
+  }
+  var r = SR{b: b, at: m.len()}
+  let n = r.u32()
+  let kept = r.u32()
+  let dropped = r.u32()
+  let ns = r.u32()
+  var stubs: List[Int] = List.with_capacity(ns)
+  for _ in 0..ns {
+    stubs.push(r.u32n())
+  }
+  let ng = r.u32()
+  var globals: Map[Bytes, (Int, Int)] = {}
+  for _ in 0..ng {
+    let name = r.bytes()
+    let o = r.u32()
+    let i = r.u32()
+    globals[name] = (o, i)
+  }
+  let np = r.u32()
+  var pins: List[(Str, Str, Int)] = List.with_capacity(np)
+  for _ in 0..np {
+    let sg = bstr(r.bytes())
+    let nm = bstr(r.bytes())
+    pins.push((sg, nm, r.u64()))
+  }
+  let no = r.u32()
+  var objs: List[IObj] = List.with_capacity(no)
+  for _ in 0..no {
+    let path = bstr(r.bytes())
+    let f = r.u32()
+    let nsec = r.u32()
+    var sects: List[ISect] = List.with_capacity(nsec)
+    for _ in 0..nsec {
+      let seg = bstr(r.bytes())
+      let name = bstr(r.bytes())
+      let addr = r.u64()
+      let size = r.u64()
+      let align = r.u32()
+      let flags = r.u32()
+      let dead = r.u32() != 0
+      let data = r.bytes()
+      let nr = r.u32()
+      var relocs: List[IReloc] = List.with_capacity(nr)
+      for k in 0..nr {
+        relocs.push(rd_reloc(b, r.at + 12 * k))
+      }
+      r.at += 12 * nr
+      sects.push(ISect{seg: seg, name: name, addr: addr, size: size, align: align, flags: flags, data: data, relocs: relocs, dead: dead})
+    }
+    let nsym = r.u32()
+    var syms: List[ISym] = List.with_capacity(nsym)
+    for _ in 0..nsym {
+      let name = r.bytes()
+      let typ = r.u32()
+      let sect = r.u32()
+      let desc = r.u32()
+      let value = r.u64()
+      syms.push(ISym{name: name, typ: typ, sect: sect, desc: desc, value: value})
+    }
+    var split: Map[Int, List[(Int, Int)]] = {}
+    let nsp = r.u32()
+    for _ in 0..nsp {
+      let key = r.u32()
+      let na = r.u32()
+      var atoms: List[(Int, Int)] = List.with_capacity(na)
+      for _ in 0..na {
+        let a = r.u64()
+        let o = r.u32()
+        atoms.push((a, o))
+      }
+      split[key] = atoms
+    }
+    objs.push(IObj{path: path, sects: sects, syms: syms, live: (f & 1) != 0, subsections: (f & 2) != 0, split: split})
+    if r.at > b.len() {
+      return None
+    }
+  }
+  if r.at != b.len() {
+    return None
+  }
+  Some(StdHalf{objs: objs, n: n, stubs: stubs, globals: globals, pins: pins, kept: kept, dropped: dropped})
+}
