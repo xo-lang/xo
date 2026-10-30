@@ -111,8 +111,9 @@ keeps `http.TlsCert` and `http.tls_cert` as aliases, so no program
 changes.
 
 ```
+// std/tls, beside Go's tls.ClientAuthType:
 enum ClientAuth { None, Request, RequireAny, VerifyIfGiven, RequireAndVerify }   // Go's five, Go's meaning
-fn (s: Server) with_client_auth(mode: ClientAuth, roots: tls.Roots? = None) -> Server
+fn (s: Server) with_client_auth(mode: tls.ClientAuth, roots: tls.Roots? = None) -> Server
     // roots: the CAs that verify client certificates (Go's ClientCAs); None: the system's
 fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a server asks
 // std/tls: client(..., cert: TlsCert? = None), a new trailing parameter with a default

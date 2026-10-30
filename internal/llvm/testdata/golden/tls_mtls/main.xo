@@ -1,0 +1,132 @@
+// Mutual TLS (decision 0433): a server's with_client_auth in each of
+// Go's five modes against a client with no certificate, one from another
+// CA, one without the clientAuth extended key usage, and a good one
+// (http.Client.with_cert); the request's tls_state has the client's
+// certificates and the chains that verified them. tls.client's cert
+// presents one on a connection the program dialed. The certificates are
+// made here (std/x509).
+use std/http
+use std/tls
+use std/x509
+use std/crypto
+use std/base64
+use std/netip
+
+struct Issued {
+  cert: x509.Certificate
+  key: crypto.PrivateKey
+}
+
+/// A PEM block of der on one line (PEM readers ignore line lengths).
+fn pem_block(kind: Str, der: Bytes) -> Bytes {
+  "-----BEGIN ${kind}-----\n${base64.encode(der)}\n-----END ${kind}-----\n".bytes()
+}
+
+fn issue(os: Os, name: Str, parent: Issued?, ca: Bool, eku: List[x509.ExtKeyUsage], now: Time) -> Issued uses rand {
+  let key = crypto.generate_key(os.rand, crypto.KeyAlg.EcdsaP256).or_fault("key")
+  let usage = if ca { [x509.KeyUsage.CertSign, x509.KeyUsage.DigitalSignature] } else { [x509.KeyUsage.DigitalSignature] }
+  let ips = if ca { [] } else { [netip.parse_addr("127.0.0.1").or_fault("ip")] }
+  let t = x509.Template{subject: x509.Name{common_name: name}, not_before: now - 1h, not_after: now + 24h, ip_addresses: ips, is_ca: ca, key_usage: usage, ext_key_usage: eku}
+  let (pc, pk) = match parent {
+    Some(p) => (Some(p.cert), p.key)
+    None => (None, key)
+  }
+  Issued{cert: x509.create_certificate(os.rand, t, key.public_key(), pc, pk).or_fault("cert ${name}"), key: key}
+}
+
+fn tls_pair(i: Issued, chain: List[x509.Certificate]) -> tls.TlsCert {
+  var pem = i.cert.pem()
+  for c in chain {
+    pem = pem + c.pem()
+  }
+  tls.cert(pem, pem_block("PRIVATE KEY", crypto.marshal_private_key(i.key))).or_fault("pair")
+}
+
+fn who(req: http.Request) -> http.Response {
+  match req.tls_state() {
+    Some(s) => {
+      let leaf = if s.peer_certificates.is_empty() { "-" } else { s.peer_certificates[0].subject.common_name }
+      var chains: List[Str] = []
+      for ch in s.verified_chains {
+        var names: List[Str] = []
+        for c in ch {
+          names.push(c.subject.common_name)
+        }
+        chains.push(names.join(">"))
+      }
+      http.text(200, "peers=${s.peer_certificates.len()} leaf=${leaf} chains=[${chains.join(", ")}]")
+    }
+    None => http.text(200, "plain")
+  }
+}
+
+fn show(os: Os, label: Str, addr: Str, r: Result[http.Response, http.ClientErr]) {
+  match r {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${(resp.body.to_str() ?? "?").trim()}")
+    Err(e) => os.stdio.println("${label}: ${"${e}".replace(addr, "ADDR")}")
+  }
+}
+
+fn main(os: Os) uses net, stdio, rand, clock {
+  let now = os.clock.now()
+  let ca = issue(os, "Xo Test CA", None, true, [], now)
+  let other_ca = issue(os, "Other CA", None, true, [], now)
+  let server = issue(os, "server", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now)
+  let good = issue(os, "good client", Some(ca), false, [x509.ExtKeyUsage.ClientAuth], now)
+  let other = issue(os, "other client", Some(other_ca), false, [x509.ExtKeyUsage.ClientAuth], now)
+  let no_eku = issue(os, "server only", Some(ca), false, [x509.ExtKeyUsage.ServerAuth], now)
+  let roots = tls.roots_of([ca.cert]).or_fault("roots")
+  let srv_cert = tls_pair(server, [])
+  let clients = [
+    ("no cert", http.client(os.net, timeout: 5s).with_roots(ca.cert.pem()).or_fault("c")),
+    ("other CA", http.client(os.net, timeout: 5s).with_roots(ca.cert.pem()).or_fault("c").with_cert(tls_pair(other, [other_ca.cert]))),
+    ("no clientAuth", http.client(os.net, timeout: 5s).with_roots(ca.cert.pem()).or_fault("c").with_cert(tls_pair(no_eku, []))),
+    ("good", http.client(os.net, timeout: 5s).with_roots(ca.cert.pem()).or_fault("c").with_cert(tls_pair(good, []))),
+  ]
+  let modes = [tls.ClientAuth.None, tls.ClientAuth.Request, tls.ClientAuth.RequireAny, tls.ClientAuth.VerifyIfGiven, tls.ClientAuth.RequireAndVerify]
+  var r = http.router()
+  r.handle("GET /who", who)
+  scope s {
+    for mode in modes {
+      let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+      let addr = l.addr()
+      let srv = http.server(l, r).with_client_auth(mode, roots: Some(roots)).with_tls([srv_cert])
+      s.spawn_background(fn() {
+        match srv.serve() {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("serve failed: ${e}")
+        }
+      })
+      os.stdio.println("== ${mode}")
+      for (label, c) in clients {
+        show(os, label, addr, c.get("https://${addr}/who"))
+      }
+      if mode == tls.ClientAuth.RequireAndVerify {
+        // tls.client presenting the good certificate on a dialed connection
+        let conn = os.net.dial(addr).or_fault("dial")
+        match tls.client(conn, "127.0.0.1", roots: Some(roots), alpn: ["http/1.1"], cert: Some(tls_pair(good, []))) {
+          Ok(t) => {
+            t.write("GET /who HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n".bytes()).or_fault("write")
+            var got = b""
+            while {
+              match t.read(4096) {
+                Ok(Some(b)) => got = got + b
+                Ok(None) => break
+                Err(e) => {
+                  os.stdio.println("tls.client read: ${e}")
+                  break
+                }
+              }
+            }
+            let text = got.to_str() ?? "?"
+            let lines = text.split("\r\n")
+            os.stdio.println("tls.client: ${lines[0]} ${lines[lines.len() - 1]}")
+            t.close()
+          }
+          Err(e) => os.stdio.println("tls.client: ${e}")
+        }
+      }
+    }
+  }
+  os.stdio.println("done")
+}

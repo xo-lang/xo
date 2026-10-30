@@ -11,6 +11,7 @@ use std/time
 use std/url
 use std/log
 use std/task
+use std/tls
 use native/llrt/hconn
 use native/llrt/hserve
 use native/rt
@@ -21,7 +22,6 @@ use native/llrt/hclient
 use native/llrt/rand as llrand
 use native/llrt/srvtls
 use native/llrt/tlsneg
-use native/llrt/tlssrv
 use native/llrt/tlsio
 use native/llrt/cabi_http
 use native/llrt/cabi_net
@@ -31,6 +31,7 @@ use native/llrt/twrun
 use native/rthttp
 use native/llrt/raw
 use native/multipart as nmp
+use native/tls as ntls
 
 // ---------------------------------------------------------------------------
 // Types: the implementations of the std types of the same names
@@ -119,13 +120,13 @@ struct Server {
   l: Listener
   r: Router
   /// with_tls (std.md 4.6): HTTPS with these certificates
-  tls: List[TlsCert] = []
+  tls: List[tls.TlsCert] = []
   tls_on: Bool = false
   /// What serve does with TLS and HTTP/2 (decision 0244): no_tls and
   /// no_h2 (server), or setup_tls and serve_h2 (with_tls). Only with_tls
   /// names the TLS server's and HTTP/2's code, so a plain server links
   /// none of it.
-  tls_setup: fn(rthttp.Srv, List[TlsCert]) -> ()
+  tls_setup: fn(rthttp.Srv, List[tls.TlsCert]) -> ()
   h2: fn(rthttp.HConn, Int, Router) -> ()
   /// with_read_timeout, with_read_header_timeout, with_idle_timeout (ns,
   /// 0 none), with_max_header_bytes and with_max_body (bytes, 0 the
@@ -135,23 +136,25 @@ struct Server {
   idle_ns: Int = 0
   max_head: Int = 0
   max_body: Int = 0
+  /// with_client_auth (decision 0433): the mode and the CAs that verify
+  /// a client's certificate (the system's when None); the TLS server's
+  /// CertificateRequest path is Lang 3's (srvtls.xo)
+  client_auth: tls.ClientAuth = tls.ClientAuth.None
+  client_roots: tls.Roots? = None
 }
 
 struct Client {
   timeout: Duration
   /// the roots https verifies against (std.md 4.6)
   roots: rthttp.Roots
+  /// with_cert (decision 0433): presented when a server asks
+  cert: tls.TlsCert? = None
   /// the attenuation lists of the Net it was made from (Net.only,
   /// decision 0175): "" for none
   lists: Str = ""
   /// the redirects followed at most (with_redirects, decision 0404); 0
   /// returns the 3xx itself
   redirects: Int = 10
-}
-
-/// http.TlsCert (std.md 4.6).
-struct TlsCert {
-  c: tlssrv.Cert
 }
 
 /// http.Response with the number of its streamed body's function (0:
@@ -1052,7 +1055,7 @@ fn request_tls_state(r: Request) -> http.TlsState? {
     return None
   }
   let n = r.tls_neg[0]
-  Some(http.TlsState{version: n.version, cipher_suite: n.cipher, server_name: n.server_name, resumed: n.resumed, peer_certificates: []})
+  Some(http.TlsState{version: n.version, cipher_suite: n.cipher, server_name: n.server_name, resumed: n.resumed, peer_certificates: [], verified_chains: []})
 }
 fn request_raw_query(r: Request) -> Str { r.raw_query }
 
@@ -2165,31 +2168,34 @@ fn max_body(n: Int) -> fn(http.Request, http.Next) -> http.Response {
   }
 }
 
-fn (s: Server) with_tls(certs: List[TlsCert]) -> Server {
+fn (s: Server) with_tls(certs: List[tls.TlsCert]) -> Server {
   // the table of the TLS server and HTTP/2 (srvtls.xo), made once
   srvtls.install()
-  Server{l: s.l, r: s.r, tls: certs, tls_on: true, tls_setup: setup_tls, h2: serve_h2}
+  s with {tls: certs, tls_on: true, tls_setup: setup_tls, h2: serve_h2}
+}
+
+fn (s: Server) with_client_auth(mode: tls.ClientAuth, roots: tls.Roots? = None) -> Server {
+  s with {client_auth: mode, client_roots: roots}
 }
 
 /// A plain server's TLS setup and HTTP/2: none (serve_h2 is never
 /// reached without TLS: hserve.hc_h2 is 0).
-fn no_tls(_srv: rthttp.Srv, _certs: List[TlsCert]) {}
+fn no_tls(_srv: rthttp.Srv, _certs: List[tls.TlsCert]) {}
 
 fn no_h2(_hc: rthttp.HConn, _h2: Int, _r: Router) {}
 
 /// The certificates of a server with TLS (with_tls).
-fn setup_tls(srv: rthttp.Srv, certs: List[TlsCert]) {
+fn setup_tls(srv: rthttp.Srv, certs: List[tls.TlsCert]) {
   for c in certs {
-    hserve.srv_tls(srv, c.c)
+    hserve.srv_tls(srv, ntls.cert_data(c))
   }
 }
 
-fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! http.TlsErr {
-  let (c, e) = tlssrv.cert(cert_pem, key_pem)
-  if !e.is_empty() {
-    return Err(http.TlsErr{msg: e})
+fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> tls.TlsCert ! http.TlsErr {
+  match tls.cert(cert_pem, key_pem) {
+    Ok(c) => c
+    Err(e) => Err(http.TlsErr{msg: e.msg})
   }
-  TlsCert{c: c}
 }
 
 fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
@@ -2482,8 +2488,12 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
   if !e.is_empty() {
     return Err(http.TlsErr{msg: e})
   }
-  Client{timeout: c.timeout, roots: r, lists: c.lists, redirects: c.redirects}
+  c with {roots: r}
 }
+
+/// The certificate is kept for the TLS client's CertificateRequest path
+/// (Lang 3's tlsio side, decision 0433); until then no server asks.
+fn (c: Client) with_cert(cert: tls.TlsCert) -> Client { c with {cert: Some(cert)} }
 
 /// The client following at most max redirects (decision 0404): 0 returns
 /// a 3xx response as it came, its Location as the server sent it.

@@ -135,6 +135,7 @@ type Http_TlsState struct {
 	F_server_name       string
 	F_resumed           bool
 	F_peer_certificates List[X509_Certificate]
+	F_verified_chains   List[List[X509_Certificate]]
 }
 
 func (v Http_TlsState) XoEq(x any) bool {
@@ -157,6 +158,9 @@ func (v Http_TlsState) XoEq(x any) bool {
 	if !Eq(v.F_peer_certificates, o.F_peer_certificates) {
 		return false
 	}
+	if !Eq(v.F_verified_chains, o.F_verified_chains) {
+		return false
+	}
 	_ = o
 	return true
 }
@@ -168,6 +172,7 @@ func (v Http_TlsState) XoHash() uint64 {
 	h = MixHash(h, Hash(v.F_server_name))
 	h = MixHash(h, Hash(v.F_resumed))
 	h = MixHash(h, Hash(v.F_peer_certificates))
+	h = MixHash(h, Hash(v.F_verified_chains))
 	return h
 }
 
@@ -183,6 +188,8 @@ func (v Http_TlsState) XoDebug(b *strings.Builder) {
 	DebugTo(b, v.F_resumed)
 	b.WriteString(", peer_certificates: ")
 	DebugTo(b, v.F_peer_certificates)
+	b.WriteString(", verified_chains: ")
+	DebugTo(b, v.F_verified_chains)
 	b.WriteString("}")
 }
 
@@ -191,6 +198,7 @@ func (v Http_TlsState) M_debug(*Task) string { return Debug(v) }
 // XoMark marks the lists held by the fields (see rt.List).
 func (v *Http_TlsState) XoMark() {
 	v.F_peer_certificates.XoMark()
+	v.F_verified_chains.XoMark()
 }
 
 type Http_Cookie struct {

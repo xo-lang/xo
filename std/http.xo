@@ -12,6 +12,7 @@ use std/multipart
 use std/url
 use std/netip
 use std/x509
+use std/tls
 
 struct Router {}
 type Next = fn(Request) -> Response
@@ -137,8 +138,12 @@ struct TlsState {
   /// whether the handshake resumed a session (Go's DidResume)
   resumed: Bool
   /// the client's certificates, leaf first (Go's PeerCertificates):
-  /// empty, the server asks for none
+  /// empty unless with_client_auth asked for one
   peer_certificates: List[x509.Certificate]
+  /// the chains that verified the client's certificate, each leaf first
+  /// and ending in a root (Go's VerifiedChains; decision 0433): empty
+  /// unless with_client_auth's mode verified one
+  verified_chains: List[List[x509.Certificate]]
 }
 
 /// An HTTP cookie (std.md 4.3, decision 0288; net/http's Cookie).
@@ -308,6 +313,11 @@ fn (s: Server) addr() -> Str
 /// The server with HTTPS (std.md 4.6): certs[0] unless SNI names another
 /// certificate's host.
 fn (s: Server) with_tls(certs: List[TlsCert]) -> Server
+/// The server asks a TLS client for its certificate (Go's
+/// tls.Config.ClientAuth and ClientCAs; decision 0433): roots verify it,
+/// the system's when None. A request's tls_state has the client's
+/// certificates and verified chains.
+fn (s: Server) with_client_auth(mode: tls.ClientAuth, roots: tls.Roots? = None) -> Server
 /// Go's Server.ReadTimeout: the time a request's head and body may take
 /// to arrive, from its first byte; a connection whose request is late
 /// closes without a reply, as net/http's does; over TLS the handshake's
@@ -331,8 +341,9 @@ fn (s: Server) with_max_body(n: Int) -> Server
 /// body is capped at n as it is read).
 fn max_body(n: Int) -> fn(Request, Next) -> Response
 
-/// A certificate chain with its private key (std.md 4.6); a handle.
-struct TlsCert {}
+/// A certificate chain with its private key (std.md 4.6): std/tls's
+/// (decision 0433).
+type TlsCert = tls.TlsCert
 /// Parses a PEM certificate chain and its PEM private key (std.md 4.6).
 fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! TlsErr
 
@@ -359,6 +370,9 @@ fn (c: Client) post_json[T: Json](url: Str, v: T) -> Response ! ClientErr uses n
 /// The client trusting the certificates of pem instead of the system's
 /// roots for https (std.md 4.6).
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
+/// The client presenting cert when an https server asks for a
+/// certificate (Go's tls.Config.Certificates on a client; decision 0433).
+fn (c: Client) with_cert(cert: TlsCert) -> Client
 /// A reverse proxy to target, for a handle_stream route:
 /// `r.handle_stream("/api/", fn(req, body) { p.serve(req, body) })`. It forwards each request to
 /// target (decision 0404, httputil.ReverseProxy with SetURL and

@@ -792,6 +792,7 @@ type tlsState struct {
 	version, cipher, serverName string
 	resumed                     bool
 	peer                        []*x509.Certificate
+	chains                      [][]*x509.Certificate
 }
 
 // M_tls_state is `r.tls_state()`: Go's r.TLS.
@@ -804,7 +805,15 @@ func (r Http_Request) M_tls_state(tk *Task) Option[Http_TlsState] {
 	for _, c := range s.peer {
 		peer = append(peer, x509CertOf(tk, c))
 	}
-	return Some(Http_TlsState{F_version: s.version, F_cipher_suite: s.cipher, F_server_name: s.serverName, F_resumed: s.resumed, F_peer_certificates: ListFromSlice(peer)})
+	var chains []List[X509_Certificate]
+	for _, ch := range s.chains {
+		var l []X509_Certificate
+		for _, c := range ch {
+			l = append(l, x509CertOf(tk, c))
+		}
+		chains = append(chains, ListFromSlice(l))
+	}
+	return Some(Http_TlsState{F_version: s.version, F_cipher_suite: s.cipher, F_server_name: s.serverName, F_resumed: s.resumed, F_peer_certificates: ListFromSlice(peer), F_verified_chains: ListFromSlice(chains)})
 }
 
 // M_raw_query is `req.raw_query()`.
@@ -1022,8 +1031,12 @@ type Http_Server struct {
 	l Listener
 	r Http_Router
 	// with_tls (std.md 4.6): HTTPS with these certificates
-	tls   []Http_TlsCert
+	tls   []Tls_TlsCert
 	tlsOn bool
+	// with_client_auth (decision 0433): Go's ClientAuth and ClientCAs
+	// (the system's when None)
+	clientAuth  Tls_ClientAuth
+	clientRoots Option[Tls_Roots]
 	// with_read_timeout, with_read_header_timeout, with_idle_timeout,
 	// with_max_header_bytes, with_max_body (std.md 4.4): net/http's
 	// Server fields and MaxBytesReader on each body.
@@ -1070,26 +1083,26 @@ func Http_max_body(tk *Task, n int64) func(*Task, Http_Request, func(*Task, Http
 	}
 }
 
-// Http_TlsCert is `http.TlsCert`: a *tls.Certificate (http_net.go; nil
-// in a program built without net/http).
-type Http_TlsCert struct {
-	c any
+// Http_tls_cert is `http.tls_cert(cert_pem, key_pem)`: tls.cert with
+// http's error type (http.TlsCert is tls.TlsCert, decision 0433).
+func Http_tls_cert(tk *Task, certPEM, keyPEM Bytes) Result[Tls_TlsCert, Http_TlsErr] {
+	r := Tls_cert(tk, certPEM, keyPEM)
+	if !r.Ok {
+		return Err[Tls_TlsCert](Http_TlsErr{F_msg: r.E.F_msg})
+	}
+	return Ok[Tls_TlsCert, Http_TlsErr](r.V)
 }
 
-// XoDebug implements Debug.
-func (Http_TlsCert) XoDebug(b *strings.Builder) { b.WriteString("<tls cert>") }
-
-// Http_tls_cert is `http.tls_cert(cert_pem, key_pem)`: tls.X509KeyPair.
-func Http_tls_cert(_ *Task, certPEM, keyPEM Bytes) Result[Http_TlsCert, Http_TlsErr] {
-	c, err := tlsKeyPair([]byte(certPEM), []byte(keyPEM))
-	if err != nil {
-		return Err[Http_TlsCert](Http_TlsErr{F_msg: err.Error()})
-	}
-	return Ok[Http_TlsCert, Http_TlsErr](Http_TlsCert{c: c})
+// M_with_client_auth is `srv.with_client_auth(mode, roots)` (decision
+// 0433): tls.Config.ClientAuth and ClientCAs.
+func (s Http_Server) M_with_client_auth(_ *Task, mode Tls_ClientAuth, roots Option[Tls_Roots]) Http_Server {
+	s.clientAuth = mode
+	s.clientRoots = roots
+	return s
 }
 
 // M_with_tls is `srv.with_tls(certs)`: serve speaks HTTPS.
-func (s Http_Server) M_with_tls(_ *Task, certs List[Http_TlsCert]) Http_Server {
+func (s Http_Server) M_with_tls(_ *Task, certs List[Tls_TlsCert]) Http_Server {
 	s.tls = nil
 	for c := range List_All(certs) {
 		s.tls = append(s.tls, c)
@@ -1202,9 +1215,12 @@ func (sc *serveCtx) startRecorded(a *Arena, req Http_Request) (*Task, int64) {
 type Http_Client struct {
 	net     Net
 	timeout Duration
-	// with_roots (std.md 4.6): the transport trusting those roots
+	// with_roots (std.md 4.6) and with_cert (decision 0433): the
+	// transport trusting those roots and presenting that certificate
 	// (*http.Transport, http_net.go), nil for the shared one
-	tr any
+	tr    any
+	roots *x509.CertPool
+	cert  Option[Tls_TlsCert]
 	// with_redirects (decision 0404): the redirects followed at most; 0
 	// returns the 3xx itself
 	redirects int64
@@ -1232,12 +1248,21 @@ func (r Http_Request) M_with_timeout(_ *Task, d Duration) Http_Request {
 // M_with_roots is `c.with_roots(pem)`: https trusts the certificates of
 // pem instead of the system's roots.
 func (c Http_Client) M_with_roots(_ *Task, pem Bytes) Result[Http_Client, Http_TlsErr] {
-	tr, err := rootsTransport([]byte(pem))
-	if err != nil {
-		return Err[Http_Client](Http_TlsErr{F_msg: err.Error()})
+	pool := x509.NewCertPool()
+	if !pool.AppendCertsFromPEM([]byte(pem)) {
+		return Err[Http_Client](Http_TlsErr{F_msg: "tls: no certificates found in PEM input"})
 	}
-	c.tr = tr
+	c.roots = pool
+	c.tr = clientTransport(c.roots, c.cert)
 	return Ok[Http_Client, Http_TlsErr](c)
+}
+
+// M_with_cert is `c.with_cert(cert)` (decision 0433): https presents cert
+// when a server asks for one.
+func (c Http_Client) M_with_cert(_ *Task, cert Tls_TlsCert) Http_Client {
+	c.cert = Some(cert)
+	c.tr = clientTransport(c.roots, c.cert)
+	return c
 }
 
 // XoDebug implements Debug.

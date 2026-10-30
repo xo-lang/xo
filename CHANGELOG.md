@@ -5,6 +5,13 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Mutual TLS (decision 0433): `http.Server.with_client_auth(mode,
+  roots)` asks clients for a certificate in one of Go's five
+  `tls.ClientAuth` modes, `http.Client.with_cert(cert)` and
+  `tls.client(..., cert:)` present one, and `TlsState.verified_chains`
+  shows what verified it. `TlsCert` moved to std/tls (`http.TlsCert`
+  stays). Go backend first; the native handshake follows.
+
 - std/http full duplex (decision 0433): `Response.with_full_duplex()`
   and `http.pipe()` (Go's `io.Pipe`: a PipeWriter that fills a
   BodyReader), so one task can write a request body while another reads

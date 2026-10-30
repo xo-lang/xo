@@ -264,9 +264,12 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		srv.Protocols = new(http.Protocols)
 		srv.Protocols.SetHTTP1(true)
 		srv.Protocols.SetHTTP2(true)
-		cfg := &tls.Config{}
+		cfg := &tls.Config{ClientAuth: clientAuthType(s.clientAuth)}
 		for _, c := range s.tls {
-			cfg.Certificates = append(cfg.Certificates, *c.c.(*tls.Certificate))
+			cfg.Certificates = append(cfg.Certificates, *c.c)
+		}
+		if s.clientRoots.Some {
+			cfg.ClientCAs = s.clientRoots.V.pool
 		}
 		srv.TLSConfig = cfg
 		go func() { errc <- srv.ServeTLS(s.l.l, "", "") }()
@@ -333,7 +336,7 @@ func tlsStateOf(s *tls.ConnectionState) *tlsState {
 	if s == nil {
 		return nil
 	}
-	return &tlsState{version: tls.VersionName(s.Version), cipher: tls.CipherSuiteName(s.CipherSuite), serverName: s.ServerName, resumed: s.DidResume, peer: s.PeerCertificates}
+	return &tlsState{version: tls.VersionName(s.Version), cipher: tls.CipherSuiteName(s.CipherSuite), serverName: s.ServerName, resumed: s.DidResume, peer: s.PeerCertificates, chains: s.VerifiedChains}
 }
 
 func readBody(hr *http.Request) Bytes {
@@ -558,12 +561,21 @@ func (handshakeLogFilter) Write(p []byte) (int, error) {
 var sharedTransport = newTransport(nil)
 
 func newTransport(roots *x509.CertPool) *http.Transport {
+	return certTransport(roots, nil)
+}
+
+// certTransport is newTransport presenting cert (with_cert) when a server
+// asks for one.
+func certTransport(roots *x509.CertPool, cert *tls.Certificate) *http.Transport {
 	t := http.DefaultTransport.(*http.Transport).Clone()
 	t.Protocols = new(http.Protocols)
 	t.Protocols.SetHTTP1(true)
 	t.Protocols.SetHTTP2(true)
-	if roots != nil || noMLKEM() {
+	if roots != nil || cert != nil || noMLKEM() {
 		t.TLSClientConfig = &tls.Config{RootCAs: roots}
+	}
+	if cert != nil {
+		t.TLSClientConfig.Certificates = []tls.Certificate{*cert}
 	}
 	if noMLKEM() {
 		t.TLSClientConfig.CurvePreferences = []tls.CurveID{tls.X25519, tls.CurveP256, tls.CurveP384, tls.CurveP521}
@@ -576,23 +588,13 @@ func newTransport(roots *x509.CertPool) *http.Transport {
 // client_groups) and Go's GODEBUG=tlsmlkem=0.
 func noMLKEM() bool { return os.Getenv("XO_TLS_MLKEM") == "0" }
 
-// tlsKeyPair is http.tls_cert: a *tls.Certificate.
-func tlsKeyPair(certPEM, keyPEM []byte) (any, error) {
-	c, err := tls.X509KeyPair(certPEM, keyPEM)
-	if err != nil {
-		return nil, err
+// clientTransport is a client's transport of with_roots and with_cert.
+func clientTransport(roots *x509.CertPool, cert Option[Tls_TlsCert]) any {
+	var c *tls.Certificate
+	if cert.Some {
+		c = cert.V.c
 	}
-	return &c, nil
-}
-
-// rootsTransport is Client.with_roots: a transport trusting the
-// certificates of pem only.
-func rootsTransport(pem []byte) (any, error) {
-	pool := x509.NewCertPool()
-	if !pool.AppendCertsFromPEM(pem) {
-		return nil, errors.New("tls: no certificates found in PEM input")
-	}
-	return newTransport(pool), nil
+	return certTransport(roots, c)
 }
 
 // faultProbe is std/native/llrt/http1.xo's fault_probe on the Go backend

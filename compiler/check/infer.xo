@@ -582,6 +582,8 @@ fn (c: Checker) is_handle(o: Int) -> Bool {
     "std/task" => n is "Group" | "Semaphore" | "Once"
     "std/http" => n is "Router" | "Server" | "Client" | "BodyWriter" | "TlsCert"
     "std/sql" => n is "Db" | "Tx"
+    // http.TlsCert moved here (decision 0433)
+    "std/tls" => n == "TlsCert"
     "std/internal" => n == "SharedLock"
     "std/testing" => n is "FakeNet" | "FakeClock" | "MemFs" | "FakeEnv" | "FakeStdio" | "FakeProc"
     _ => false

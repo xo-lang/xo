@@ -1,0 +1,30 @@
+exit 0
+--- stdout
+== None
+no cert: 200 peers=0 leaf=- chains=[]
+other CA: 200 peers=0 leaf=- chains=[]
+no clientAuth: 200 peers=0 leaf=- chains=[]
+good: 200 peers=0 leaf=- chains=[]
+== Request
+no cert: 200 peers=0 leaf=- chains=[]
+other CA: 200 peers=0 leaf=- chains=[]
+no clientAuth: 200 peers=0 leaf=- chains=[]
+good: 200 peers=0 leaf=- chains=[]
+== RequireAny
+no cert: 200 peers=0 leaf=- chains=[]
+other CA: 200 peers=0 leaf=- chains=[]
+no clientAuth: 200 peers=0 leaf=- chains=[]
+good: 200 peers=0 leaf=- chains=[]
+== VerifyIfGiven
+no cert: 200 peers=0 leaf=- chains=[]
+other CA: 200 peers=0 leaf=- chains=[]
+no clientAuth: 200 peers=0 leaf=- chains=[]
+good: 200 peers=0 leaf=- chains=[]
+== RequireAndVerify
+no cert: 200 peers=0 leaf=- chains=[]
+other CA: 200 peers=0 leaf=- chains=[]
+no clientAuth: 200 peers=0 leaf=- chains=[]
+good: 200 peers=0 leaf=- chains=[]
+tls.client: HTTP/1.1 200 OK peers=0 leaf=- chains=[]
+done
+--- stderr

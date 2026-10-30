@@ -62,9 +62,28 @@ func Tls_roots(_ *Task, pem Bytes) Result[Tls_Roots, Tls_TlsErr] {
 // passes its bytes through.
 type fakeConn interface{ xoFakeNet() }
 
-// Tls_client is `tls.client(c, host, roots, verify, alpn)`: the handshake
-// on c (at most 10 seconds), which std/tls owns from then on.
-func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string]) Result[Tls_TlsConn, NetErr] {
+// Tls_TlsCert is a std/tls TlsCert, std/http's TlsCert too (decision
+// 0433): a certificate chain with its private key.
+type Tls_TlsCert struct{ c *tls.Certificate }
+
+// XoDebug implements Debug.
+func (Tls_TlsCert) XoDebug(b *strings.Builder) { b.WriteString("<tls cert>") }
+
+// Tls_cert is `tls.cert(cert_pem, key_pem)`: tls.X509KeyPair.
+func Tls_cert(_ *Task, certPEM, keyPEM Bytes) Result[Tls_TlsCert, Tls_TlsErr] {
+	c, err := tls.X509KeyPair([]byte(certPEM), []byte(keyPEM))
+	if err != nil {
+		return Err[Tls_TlsCert](Tls_TlsErr{F_msg: err.Error()})
+	}
+	return Ok[Tls_TlsCert, Tls_TlsErr](Tls_TlsCert{c: &c})
+}
+
+// clientAuthType is a std/tls ClientAuth as Go's (the same order).
+func clientAuthType(m Tls_ClientAuth) tls.ClientAuthType { return tls.ClientAuthType(m.Tag - 1) }
+
+// Tls_client is `tls.client(c, host, roots, verify, alpn, cert)`: the
+// handshake on c (at most 10 seconds), which std/tls owns from then on.
+func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify Tls_Verify, alpn List[string], cert Option[Tls_TlsCert]) Result[Tls_TlsConn, NetErr] {
 	if tk.Canceled() {
 		return Err[Tls_TlsConn](netErr(5, ""))
 	}
@@ -84,6 +103,9 @@ func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify T
 	cfg := &tls.Config{ServerName: name, NextProtos: alpn.s}
 	if roots.Some {
 		cfg.RootCAs = roots.V.pool
+	}
+	if cert.Some {
+		cfg.Certificates = []tls.Certificate{*cert.V.c}
 	}
 	switch verify.Tag {
 	case 2:

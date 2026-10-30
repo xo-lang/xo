@@ -2,7 +2,10 @@
 
 package rt
 
-import "io"
+import (
+	"crypto/x509"
+	"io"
+)
 
 // The real server and client of std/http (http_net.go) in a program that
 // does not load std/http: such a program has no Http_Server or
@@ -22,6 +25,4 @@ func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.Read
 	panic(noHTTP)
 }
 
-func tlsKeyPair(certPEM, keyPEM []byte) (any, error) { panic(noHTTP) }
-
-func rootsTransport(pem []byte) (any, error) { panic(noHTTP) }
+func clientTransport(roots *x509.CertPool, cert Option[Tls_TlsCert]) any { panic(noHTTP) }

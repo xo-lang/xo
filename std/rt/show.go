@@ -118,7 +118,7 @@ var handleTypes = map[string]bool{
 	"Chan": true, "Mutex": true, "Atomic": true, "Scope": true, "Task": true, "Listener": true,
 	"Conn": true, "File": true, "FileLock": true, "Child": true, "Task_Group": true,
 	"Task_Semaphore": true, "Task_Once": true, "Http_Router": true, "Http_Server": true,
-	"Http_Client": true, "Http_BodyWriter": true, "Http_TlsCert": true, "Sql_Db": true,
+	"Http_Client": true, "Http_BodyWriter": true, "Tls_TlsCert": true, "Sql_Db": true,
 	"Sql_Tx": true, "Testing_FakeNet": true, "Testing_FakeClock": true, "Testing_MemFs": true,
 	"Testing_FakeEnv": true, "Testing_FakeStdio": true, "Testing_FakeProc": true,
 }

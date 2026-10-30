@@ -1464,7 +1464,8 @@ struct TlsState {                             // Go's tls.ConnectionState
   cipher_suite: Str                           // Go's CipherSuiteName, e.g. "TLS_AES_128_GCM_SHA256"
   server_name: Str                            // the SNI the client sent, "" for none (an IP address)
   resumed: Bool                               // the handshake resumed a session
-  peer_certificates: List[x509.Certificate]   // the client's certificates, leaf first: empty, the server asks for none
+  peer_certificates: List[x509.Certificate]   // the client's certificates, leaf first: empty unless with_client_auth asked (4.6)
+  verified_chains: List[List[x509.Certificate]] // the chains that verified them (decision 0433)
 }
 fn (r: Request) raw_query() -> Str            // Go's URL.RawQuery
 fn (r: Request) escaped_path() -> Str         // Go's URL.EscapedPath
@@ -1915,11 +1916,13 @@ header`, `unexpected EOF`). A request that sets `Accept-Encoding` or
 ### 4.6 TLS (HTTPS)
 
 ```
-struct TlsCert {}                                  // handle: a certificate chain with its private key
+type TlsCert = tls.TlsCert                         // handle: a certificate chain with its private key (27)
 pub fn tls_cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! TlsErr
 struct TlsErr { msg: Str }
 fn (s: Server) with_tls(certs: List[TlsCert]) -> Server
+fn (s: Server) with_client_auth(mode: tls.ClientAuth, roots: tls.Roots? = None) -> Server
 fn (c: Client) with_roots(pem: Bytes) -> Client ! TlsErr
+fn (c: Client) with_cert(cert: TlsCert) -> Client
 ```
 
 ```
@@ -1942,7 +1945,23 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   (shutdown, the arena, `Content-Length`); a client that sends plain HTTP
   gets `400` with the body `Client sent an HTTP request to an HTTPS
   server.` and the connection closes. Failed handshakes are not logged.
-  Client certificates are not requested.
+- Mutual TLS (decision 0433): `with_client_auth(mode, roots)` makes the
+  server ask for a client certificate in `mode` (std/tls's `ClientAuth`,
+  Go's `tls.Config.ClientAuth`): `None` asks for none (the default);
+  `Request` asks and checks nothing; `RequireAny` requires one and checks
+  nothing; `VerifyIfGiven` checks one if given; `RequireAndVerify`
+  requires one and checks it. A check verifies the client's chain against
+  `roots` (Go's `ClientCAs`; the system's when `None`) with the
+  `clientAuth` extended key usage and no host name. A client that fails
+  the mode gets Go's alert (`remote error: tls: certificate required`,
+  `remote error: tls: bad certificate`, ...) and the server logs nothing.
+  A request's `tls_state()` has the client's certificates in
+  `peer_certificates` and the chains that verified them in
+  `verified_chains` (each leaf first, ending in a root; empty when the
+  mode checked none). `with_cert(cert)` makes a client present `cert`
+  when a server asks for one; without it, it presents none. The native
+  backends' handshake does not send or answer a certificate request yet
+  (decision 0433's native step).
 - HTTP/2 (decision 0121): over TLS a server offers `h2` and `http/1.1`
   by ALPN and prefers `h2`, and the client offers both; plain `http` is
   always HTTP/1.1 (no h2c). Nothing in the API changes, and every backend
@@ -4297,8 +4316,11 @@ struct Roots {}                                    // handle: trusted certificat
 struct TlsErr { msg: Str }
 fn roots(pem: Bytes) -> Roots ! TlsErr
 fn roots_of(certs: List[x509.Certificate]) -> Roots ! TlsErr
+struct TlsCert {}                                  // handle: a certificate chain with its private key
+fn cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! TlsErr
+enum ClientAuth { None, Request, RequireAny, VerifyIfGiven, RequireAndVerify }
 struct TlsConn {}                                  // handle
-fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = []) -> TlsConn ! NetErr uses net.dial
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None) -> TlsConn ! NetErr uses net.dial
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr  uses net.dial
 fn (t: TlsConn) write(data: Bytes) -> () ! NetErr  uses net.dial
 fn (t: TlsConn) close()
@@ -4353,6 +4375,12 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   (`Canceled`, core 7.2).
 - `alpn` lists the protocols offered (none by default); `alpn()` is the
   one the server chose.
+- `cert(cert_pem, key_pem)` is http's `tls_cert` (4.6) with std/tls's
+  error; `http.TlsCert` is this type (decision 0433). `client`'s `cert`
+  is presented when the server asks for a certificate (mutual TLS);
+  `ClientAuth` is the server's side, for `http.Server.with_client_auth`
+  (4.6), in Go's order and meaning.
+
 - Deadlines (decision 0430) are the connection's, as in Go's tls.Conn,
   with std 3.2's rules. A read that times out mid-record keeps what
   arrived, so the connection reads on after a new deadline. A deadline

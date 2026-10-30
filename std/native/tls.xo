@@ -9,6 +9,7 @@ use native/llrt/cabi_tlsclient
 use native/llrt/netconn
 use native/llrt/raw
 use native/llrt/tlsio
+use native/llrt/tlssrv
 use native/llrt/twflags
 
 struct Roots {
@@ -17,6 +18,12 @@ struct Roots {
 
 /// The connection (counted: the TLS state uses its descriptor), its TLS
 /// state (none on FakeNet: the bytes pass through), and whether close ran.
+/// tls.TlsCert, http.TlsCert too (decision 0433): the chain's DER
+/// certificates and the private key (std/native/http.xo's with_tls reads it through cert_data).
+struct TlsCert {
+  c: tlssrv.Cert
+}
+
 struct TlsConn {
   c: Conn
   h: rthttp.TlsH?
@@ -37,7 +44,22 @@ fn roots(pem: Bytes) -> Roots ! tls.TlsErr {
   Roots{r: r}
 }
 
-fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = []) -> TlsConn ! NetErr uses net.dial {
+/// The chain and key of a tls.TlsCert, for std/native/http.xo's with_tls
+/// (std-internal: http sees the std type, decision 0433).
+pub fn cert_data(t: tls.TlsCert) -> tlssrv.Cert { rt.cast[tls.TlsCert, TlsCert](t).c }
+
+fn cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! tls.TlsErr {
+  let (c, e) = tlssrv.cert(cert_pem, key_pem)
+  if !e.is_empty() {
+    return Err(tls.TlsErr{msg: e})
+  }
+  TlsCert{c: c}
+}
+
+/// cert is passed to the client's CertificateRequest path when it lands
+/// (Lang 3's tls13/tls12 hooks, decision 0433); until then the client
+/// answers a request with no certificate.
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None) -> TlsConn ! NetErr uses net.dial {
   let cn = rt.obj_addr(c)
   if netconn.conn_upgraded(cn) {
     return Err(NetErr.Io(msg: "use of a connection upgraded to TLS"))

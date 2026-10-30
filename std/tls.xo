@@ -28,12 +28,36 @@ fn roots(pem: Bytes) -> Roots ! TlsErr
 /// Roots of parsed certificates (std/x509), as roots does of a PEM text.
 fn roots_of(certs: List[x509.Certificate]) -> Roots ! TlsErr
 
+/// A certificate chain with its private key (std.md 27); a handle.
+/// std/http's TlsCert is this type (decision 0433).
+struct TlsCert {}
+
+/// Parses a PEM certificate chain and its PEM private key (Go's
+/// tls.X509KeyPair), as http.tls_cert.
+fn cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! TlsErr
+
+/// What a TLS server asks of a client's certificate (Go's
+/// tls.ClientAuthType, in Go's order and meaning; decision 0433).
+enum ClientAuth {
+  /// asks for none (Go's NoClientCert)
+  None
+  /// asks for one, checks none (RequestClientCert)
+  Request
+  /// requires one, checks none (RequireAnyClientCert)
+  RequireAny
+  /// checks one if given (VerifyClientCertIfGiven)
+  VerifyIfGiven
+  /// requires one and checks it (RequireAndVerifyClientCert)
+  RequireAndVerify
+} derive Display
+
 /// A TLS connection (std.md 27); a handle.
 struct TlsConn {}
 
 /// Runs a TLS client handshake on c, which belongs to the result from
-/// then on (std.md 27).
-fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = []) -> TlsConn ! NetErr uses net.dial
+/// then on (std.md 27). cert is the certificate presented when the
+/// server asks for one (decision 0433).
+fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None) -> TlsConn ! NetErr uses net.dial
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial
 fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial
 fn (t: TlsConn) close()

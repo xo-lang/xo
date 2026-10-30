@@ -19,6 +19,22 @@ backend sets net.Conn's deadlines under tls.Conn and keeps them across
 its own cancellation.
 
 
+## 2026-10-30: feature: TlsCert, cert, ClientAuth, and client's cert (mutual TLS)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0433 (gRPC over TLS and service meshes need mTLS)
+- Go reference: crypto/tls Certificate, X509KeyPair, ClientAuthType, Config.Certificates on a client (go1.26.1)
+- Test: golden tls_mtls (tls.client presenting a certificate to a server that requires and verifies one)
+
+`TlsCert` moved here from std/http, which keeps `http.TlsCert` as an
+alias and `http.tls_cert`; `tls.cert(cert_pem, key_pem)` makes one with
+std/tls's error. `client` takes a trailing `cert: TlsCert? = None`,
+presented when the server asks for a certificate. `ClientAuth` is Go's
+five server modes, for `http.Server.with_client_auth`. Go backend only
+for now: the native client answers a certificate request with none
+until the handshake side of decision 0433 lands.
+
 ## 2026-10-29: feature: peer_certificates and roots_of
 
 - Kind: feature

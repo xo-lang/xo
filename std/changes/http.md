@@ -1,5 +1,23 @@
 # std/http changes
 
+## 2026-10-30: feature: mutual TLS (with_client_auth, with_cert, verified_chains)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0433 (gRPC over TLS and service meshes need mTLS)
+- Go reference: crypto/tls Config.ClientAuth, ClientCAs, Certificates; ConnectionState.VerifiedChains (go1.26.1)
+- Test: golden tls_mtls (each of the five modes against no certificate, another CA's, one without the clientAuth usage, and a good one)
+
+`Server.with_client_auth(mode, roots)` asks a TLS client for its
+certificate in one of Go's five modes and verifies it against `roots`
+(the system's when None); `Client.with_cert(cert)` presents one when a
+server asks; `TlsState.verified_chains` has the chains that verified the
+client's certificate. Go backend only for now: the native server does
+not ask yet (want_go.txt holds the Go output until decision 0433's
+native handshake lands). Also on the native backends, `with_tls` keeps
+the server's earlier settings (read timeouts, header and body limits)
+instead of resetting them.
+
 ## 2026-10-30: feature: full duplex and pipe (with_full_duplex, pipe, PipeWriter)
 
 - Kind: feature
