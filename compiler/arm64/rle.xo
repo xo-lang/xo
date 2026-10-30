@@ -21,12 +21,17 @@ fn mir_may_write(inst: Inst) -> Bool {
   if inst.kind == K_PMOVE {
     return false
   }
-  if inst.kind != K_PLAIN || inst.x86 {
+  // a branch's compare reads registers only (2026-10-30: a block's own
+  // `cmp; b.eq` at its end forgot every load before its successors, so
+  // no edge carried one)
+  let br = inst.kind == K_CONDBR || inst.kind == K_JUMP
+  if (inst.kind != K_PLAIN && !br) || inst.x86 {
     return true
   }
   for l in inst.text.split("\n") {
     let sp = l.find(" ") ?? l.len()
-    if !pure_op(l[0..sp]) {
+    let op = l[0..sp]
+    if !pure_op(op) && !(br && (op.is_empty() || op == "b" || op.starts_with("b.") || op is "cbz" | "cbnz" | "tbz" | "tbnz")) {
       return true
     }
   }
@@ -68,34 +73,44 @@ fn load_key(inst: Inst) -> Str {
 /// one predecessor reaches it by a jump, a branch, or a switch (not a
 /// landing pad's edge) starts with what that block's end held: the same
 /// element read again past a check's fault branch (2026-10-20: portable
-/// divmod loaded xs[i] three times an iteration on amd64).
+/// divmod loaded xs[i] three times an iteration on amd64). A join, all
+/// of whose predecessors come first, starts with what they all end
+/// holding in the same value.
 fn (var g: G) reuse_loads() {
   let blocks = g.all_blocks()
   let preds = g.mpreds_all(blocks)
-  // a depth first preorder from the entry: a block's one predecessor
-  // comes before it
+  // a reverse postorder from the entry: every predecessor of a block
+  // but a loop's back edge comes before it (a join's all done, a
+  // preorder visited one before its other predecessors)
   var order: List[Int] = []
   var seen: List[Bool] = []
   for _ in 0..g.blocks.len() {
     seen.push(false)
   }
   if !blocks.is_empty() {
-    var stack = [blocks[0]]
+    var post: List[Int] = []
+    // (block, index of its next successor)
+    var stack = [(blocks[0], 0)]
+    seen[blocks[0]] = true
     while !stack.is_empty() {
-      let b = stack.pop() ?? 0
-      if seen[b] {
-        continue
-      }
-      seen[b] = true
-      order.push(b)
+      let top = stack.len() - 1
+      let (b, k) = stack[top]
       let ss = g.msuccs(b)
-      var i = ss.len() - 1
-      while i >= 0 {
-        if !seen[ss[i]] {
-          stack.push(ss[i])
+      if k < ss.len() {
+        stack[top] = (b, k + 1)
+        if !seen[ss[k]] {
+          seen[ss[k]] = true
+          stack.push((ss[k], 0))
         }
-        i -= 1
+      } else {
+        post.push(b)
+        let _p = stack.pop()
       }
+    }
+    var i = post.len() - 1
+    while i >= 0 {
+      order.push(post[i])
+      i -= 1
     }
   }
   for b in 0..g.blocks.len() {
@@ -104,6 +119,10 @@ fn (var g: G) reuse_loads() {
     }
   }
   var end_avail: Map[Int, Map[Str, Int]] = {}
+  var done: List[Bool] = []
+  for _ in 0..g.blocks.len() {
+    done.push(false)
+  }
   var end_dep: Map[Int, Map[Int, List[Str]]] = {}
   for b in order {
     var ins = g.take_insts(b)
@@ -113,11 +132,44 @@ fn (var g: G) reuse_loads() {
     var dep: Map[Int, List[Str]] = {}
     if preds[b].len() == 1 {
       let p = preds[b][0]
-      let pi = g.blocks[p].insts
-      let pt = if pi.is_empty() { Inst{kind: K_PLAIN} } else { pi[pi.len() - 1] }
-      if p != b && (pt.kind == K_CONDBR || pt.kind == K_SWITCH || (pt.kind == K_JUMP && pt.targets.len() == 1)) {
+      if p != b && g.rle_edge(p) {
         avail = end_avail.get(p) ?? {}
         dep = end_dep.get(p) ?? {}
+      }
+    } else if preds[b].len() > 1 {
+      // a join: what every predecessor, each done before b (no back
+      // edge), ends holding in the same value (2026-10-30:
+      // parse_duration's sign byte read again after `c == 45 || c == 43`
+      // joined)
+      var all = true
+      for p in preds[b] {
+        all = all && p != b && done[p] && g.rle_edge(p)
+      }
+      if all {
+        let p0 = preds[b][0]
+        for (key, v) in end_avail.get(p0) ?? {} {
+          var same = true
+          for p in preds[b] {
+            same = same && ((end_avail.get(p) ?? {}).get(key) ?? -1) == v
+          }
+          if same {
+            avail[key] = v
+          }
+        }
+        // a value's keys: those kept that a predecessor had it hold
+        for p in preds[b] {
+          for (r, ks) in end_dep.get(p) ?? {} {
+            var l = dep.get(r) ?? []
+            for kk in ks {
+              if avail.contains(kk) && !l.contains(kk) {
+                l.push(kk)
+              }
+            }
+            if !l.is_empty() {
+              dep[r] = l
+            }
+          }
+        }
       }
     }
     for k in 0..ins.len() {
@@ -155,9 +207,18 @@ fn (var g: G) reuse_loads() {
       }
     }
     g.blocks[b].insts = ins
+    done[b] = true
     if !avail.is_empty() {
       end_avail[b] = avail
       end_dep[b] = dep
     }
   }
+}
+
+/// Whether block p ends in a jump, a branch, or a switch (not a landing
+/// pad's edge), so its successors start with what it ends holding.
+fn (g: G) rle_edge(p: Int) -> Bool {
+  let pi = g.blocks[p].insts
+  let pt = if pi.is_empty() { Inst{kind: K_PLAIN} } else { pi[pi.len() - 1] }
+  pt.kind == K_CONDBR || pt.kind == K_SWITCH || (pt.kind == K_JUMP && pt.targets.len() == 1)
 }

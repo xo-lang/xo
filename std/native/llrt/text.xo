@@ -314,10 +314,7 @@ pub fn parse_duration(s: Str) -> Int? {
     n = strings.space_start(b, i, bl)
   }
   var neg = false
-  // the sign's byte read once, as Go's ParseDuration does (`c := s[0]`);
-  // the native backend reuses a load only into a block of one
-  // predecessor (reuse_loads), so the third read, after the `||` joins,
-  // was a third ldrb (2026-10-30)
+  // the sign's byte read once, as Go's ParseDuration does (`c := s[0]`)
   if i < n {
     let c = raw.byte_at(pa, i)
     if c == 45 || c == 43 {

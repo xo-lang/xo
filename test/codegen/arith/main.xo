@@ -116,7 +116,7 @@ fn or_not(a: Int, b: Int) -> Int {
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)} ${trims(n, n + 40, n + 50)} ${count_digits(n + 1000)} ${outside(n)} ${digit_sum("12${n}".bytes())}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)} ${trims(n, n + 40, n + 50)} ${count_digits(n + 1000)} ${outside(n)} ${digit_sum("12${n}".bytes())} ${sign_of("+-".bytes(), n % 2)}")
 }
 
 // `d < 0 || d > 9` of a `d = x - 48` is one unsigned compare (isel
@@ -231,4 +231,19 @@ fn digit_sum(cs: Bytes) -> Int {
     t = t * 10 + (c - 48)
   }
   t
+}
+
+fn sign_of(b: Bytes, i: Int) -> Int {
+  // the byte is loaded once: the third read follows the `||`'s join
+  // arm64: "ldrb" -"ldrb[^%]*ldrb"
+  if i < 0 || i >= b.len() {
+    return 0
+  }
+  if b[i] == 45 || b[i] == 43 {
+    if b[i] == 45 {
+      return -1
+    }
+    return 1
+  }
+  0
 }

@@ -5,6 +5,17 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native backends: a load is reused across a branch and at a join
+  (compiler/arm64 reuse_loads). A block's own compare and branch at its
+  end no longer forgets the loads before it, so a successor reached by a
+  jump or a branch starts with them (no edge carried any before), and a
+  block whose predecessors all come first (reverse postorder) keeps what
+  they all end holding in the same register: `if b[i] == 45 || b[i] ==
+  43 { if b[i] == 45 ...` loads the byte once (codegen pattern sign_of).
+  bench/perf/text dur_parse 1.000 of the instructions (its sign read is
+  already once in source; std's parse_duration has 15 ldrb, was 17, on
+  cold paths); xo's native __text 71,425,028 to 71,425,196 bytes (stage
+  2). arm64 goldens; LLVM duration goldens with Go parity; amd64 sample.
 - FIX (Go backend): builds of one program at the same time (two
   terminals, an editor and a test run, make -j) share its build tree,
   which each build rewrote under the others: most failed with "rt:
