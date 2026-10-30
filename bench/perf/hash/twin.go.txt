@@ -1,0 +1,60 @@
+package main
+
+import (
+	"fmt"
+	"hash/crc32"
+	"hash/fnv"
+	"os"
+)
+
+func buffer(n int) []byte {
+	b := make([]byte, n)
+	x := 12345
+	for i := range b {
+		x = (x*1103515245 + 12345) % 2147483648
+		b[i] = byte((x >> 16) & 255)
+	}
+	return b
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	big := buffer(65536)
+	keys := buffer(4096)
+	sum := 0
+	switch w {
+	case "crc32", "crc32c":
+		t := crc32.IEEETable
+		if w == "crc32c" {
+			t = crc32.MakeTable(crc32.Castagnoli)
+		}
+		for i := 0; i < 2000; i++ {
+			sum = sum ^ int(crc32.Checksum(big, t)) ^ i
+		}
+	case "fnv32a", "fnv64a", "fnv128a":
+		for i := 0; i < 2000000; i++ {
+			at := i % 4000
+			k := keys[at : at+8+i%33]
+			switch w {
+			case "fnv32a":
+				h := fnv.New32a()
+				h.Write(k)
+				sum = sum ^ int(h.Sum32())
+			case "fnv64a":
+				h := fnv.New64a()
+				h.Write(k)
+				sum = sum ^ int(int64(h.Sum64()))
+			default:
+				h := fnv.New128a()
+				h.Write(k)
+				sum = sum ^ int(h.Sum(nil)[i%16])
+			}
+		}
+	default:
+		sum = len(big) + len(keys)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

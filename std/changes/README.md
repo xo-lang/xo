@@ -45,6 +45,8 @@ entries yet.
 - [toml.md](toml.md): std/toml (spec/std.md 19)
 - [metrics.md](metrics.md): std/metrics (spec/std.md 37)
 - [tabwriter.md](tabwriter.md): std/tabwriter (spec/std.md 40)
+- [fnv.md](fnv.md): std/fnv (spec/std.md 45)
+- [crc32.md](crc32.md): std/crc32 (spec/std.md 44)
 - [backoff.md](backoff.md): std/backoff (spec/std.md 43)
 - [rate.md](rate.md): std/rate (spec/std.md 42)
 - [trace.md](trace.md): std/trace (spec/std.md 38)

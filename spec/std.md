@@ -5945,3 +5945,52 @@ fn always[E]() -> fn(E) -> Bool
   `retryable` is required: `backoff.always()` retries every error, the
   same as cenkalti's default (its Permanent errors are `retryable`
   answering false).
+
+## 44. std/crc32
+
+Status: implemented on every backend (2026-10-29): Go's hash/crc32, run
+by the Go backend itself (`std/rt/crc32.go`) and ported natively
+(`std/native/crc32.xo`: IEEE on std/native/llrt/flate.xo's slicing-by-8
+with arm64's crc32x instruction, Castagnoli on slicing-by-8 in
+software); Go's values on its crc32_test.go inputs (corpus `crc32`). Pure.
+
+```xo
+enum Poly { Ieee, Castagnoli }
+pub fn checksum(data: Bytes, poly: Poly = Poly.Ieee) -> Int             // ChecksumIEEE, Checksum(data, MakeTable(Castagnoli))
+pub fn update(crc: Int, data: Bytes, poly: Poly = Poly.Ieee) -> Int     // Update
+```
+
+- A checksum is 0 to 2^32 - 1. `update(checksum(a), b) == checksum(a +
+  b)` and `update(0, d) == checksum(d)`, so a stream is checked a piece
+  at a time.
+- IEEE is the polynomial of gzip, zip, PNG and Ethernet; Castagnoli
+  (CRC-32C) that of iSCSI, SCTP, ext4, Btrfs and many storage formats.
+  Go's Koopman table is not offered.
+
+## 45. std/fnv
+
+Status: implemented on every backend (2026-10-29): Go's hash/fnv, run by
+the Go backend itself (`std/rt/fnv.go`) and ported natively
+(`std/native/fnv.xo`); Go's values on its fnv_test.go inputs (corpus
+`fnv`). Pure.
+
+```xo
+pub fn sum32(data: Bytes) -> Int          // New32: FNV-1, 0 to 2^32 - 1
+pub fn sum32a(data: Bytes) -> Int         // New32a: FNV-1a
+pub fn sum64(data: Bytes) -> Int          // New64: the Int's bits are Go's uint64
+pub fn sum64a(data: Bytes) -> Int         // New64a
+pub fn sum128(data: Bytes) -> Bytes       // New128: 16 bytes, big endian
+pub fn sum128a(data: Bytes) -> Bytes      // New128a
+pub fn update32(sum: Int, data: Bytes) -> Int
+pub fn update32a(sum: Int, data: Bytes) -> Int
+pub fn update64(sum: Int, data: Bytes) -> Int
+pub fn update64a(sum: Int, data: Bytes) -> Int
+pub fn update128(sum: Bytes, data: Bytes) -> Bytes    // faults unless sum is 16 bytes
+pub fn update128a(sum: Bytes, data: Bytes) -> Bytes
+```
+
+- `updateN(sumN(a), b) == sumN(a + b)`: hashing a piece at a time, as
+  Go's Write on one hash.
+- FNV is fast and not cryptographic: for hash tables, sharding and
+  checksums of trusted data, not where an attacker chooses the input
+  (use std/crypto's digest there).

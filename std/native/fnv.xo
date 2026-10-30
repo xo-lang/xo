@@ -1,0 +1,115 @@
+// std/fnv on the native backends: Go's hash/fnv (fnv.go of go1.26.1),
+// FNV-1 (multiply, then xor the byte) and FNV-1a (xor, then multiply),
+// with Go's offset bases and primes. The 64 bit sums are an Int's bits
+// (wrapping arithmetic is Go's uint64); the 128 bit sum is two words,
+// multiplied as Go's sum128 Write does.
+use native/rt
+
+const OFFSET32: Int = 2166136261
+const PRIME32: Int = 16777619
+// 14695981039346656037, Go's offset64, as an Int's bits
+const OFFSET64: Int = -3750763034362895579
+const PRIME64: Int = 1099511628211
+// Go's offset128 (high word, low word): 0x6c62272e07bb0142_62b821756295c58d
+const OFFSET128_HI: Int = 0x6c62272e07bb0142
+const OFFSET128_LO: Int = 0x62b821756295c58d
+// Go's prime128 is 2^88 + 0x13b: the low word 0x13b and 2^88 as a shift
+// of 24 into the high word
+const PRIME128_LOWER: Int = 0x13b
+const PRIME128_SHIFT: Int = 24
+
+fn sum32(data: Bytes) -> Int { update32(OFFSET32, data) }
+fn sum32a(data: Bytes) -> Int { update32a(OFFSET32, data) }
+fn sum64(data: Bytes) -> Int { update64(OFFSET64, data) }
+fn sum64a(data: Bytes) -> Int { update64a(OFFSET64, data) }
+fn sum128(data: Bytes) -> Bytes { bytes128(step128(OFFSET128_HI, OFFSET128_LO, data, false)) }
+fn sum128a(data: Bytes) -> Bytes { bytes128(step128(OFFSET128_HI, OFFSET128_LO, data, true)) }
+
+fn update32(sum: Int, data: Bytes) -> Int {
+  var h = sum & 0xffffffff
+  for i in 0..data.len() {
+    h = (h.wrapping_mul(PRIME32) & 0xffffffff) ^ Int(data[i])
+  }
+  h
+}
+
+fn update32a(sum: Int, data: Bytes) -> Int {
+  var h = sum & 0xffffffff
+  for i in 0..data.len() {
+    h = (h ^ Int(data[i])).wrapping_mul(PRIME32) & 0xffffffff
+  }
+  h
+}
+
+fn update64(sum: Int, data: Bytes) -> Int {
+  var h = sum
+  for i in 0..data.len() {
+    h = h.wrapping_mul(PRIME64) ^ Int(data[i])
+  }
+  h
+}
+
+fn update64a(sum: Int, data: Bytes) -> Int {
+  var h = sum
+  for i in 0..data.len() {
+    h = (h ^ Int(data[i])).wrapping_mul(PRIME64)
+  }
+  h
+}
+
+fn update128(sum: Bytes, data: Bytes, at: rt.Loc) -> Bytes {
+  check16(sum, "update128", at)
+  bytes128(step128(word_be(sum, 0), word_be(sum, 8), data, false))
+}
+fn update128a(sum: Bytes, data: Bytes, at: rt.Loc) -> Bytes {
+  check16(sum, "update128a", at)
+  bytes128(step128(word_be(sum, 0), word_be(sum, 8), data, true))
+}
+
+/// Go's sum128 and sum128a Write: s1 the low word, s0 the high; the
+/// product by 2^88 + 0x13b modulo 2^128.
+fn step128(hi0: Int, lo0: Int, data: Bytes, a: Bool) -> (Int, Int) {
+  var s0 = hi0
+  var s1 = lo0
+  for i in 0..data.len() {
+    let c = Int(data[i])
+    if a {
+      s1 = s1 ^ c
+    }
+    let lo = PRIME128_LOWER.wrapping_mul(s1)
+    let hi = PRIME128_LOWER.mul_hi_unsigned(s1).wrapping_add(s1.wrapping_shl(PRIME128_SHIFT)).wrapping_add(PRIME128_LOWER.wrapping_mul(s0))
+    s0 = hi
+    s1 = lo
+    if !a {
+      s1 = s1 ^ c
+    }
+  }
+  (s0, s1)
+}
+
+fn check16(sum: Bytes, name: Str, at: rt.Loc) {
+  if sum.len() != 16 {
+    rt.fault_at("fnv.${name}: the sum is ${sum.len()} bytes, want 16", at)
+  }
+}
+
+fn word_be(b: Bytes, from: Int) -> Int {
+  var w = 0
+  for i in 0..8 {
+    w = w.wrapping_shl(8) | Int(b[from + i])
+  }
+  w
+}
+
+fn bytes128(s: (Int, Int)) -> Bytes {
+  let (hi, lo) = s
+  var b = BytesBuilder.new()
+  for w in [hi, lo] {
+    var k = 56
+    while k >= 0 {
+      b.write_byte(UInt8(w.shr_logical(k) & 255))
+      k -= 8
+    }
+  }
+  b.freeze()
+}

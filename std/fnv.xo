@@ -1,0 +1,30 @@
+// std/fnv (spec/std.md 45). Declaration file; encoding rules are listed
+// at the top of std/prelude.xo. Go's hash/fnv: the Fowler-Noll-Vo hashes
+// FNV-1 and FNV-1a, 32, 64 and 128 bits. Fast and not cryptographic: for
+// hash tables, sharding and checksums, not for anything an attacker
+// chooses the input of. Pure.
+
+/// FNV-1 of data, 0 to 2^32 - 1 (Go's New32().Sum32()).
+fn sum32(data: Bytes) -> Int
+/// FNV-1a of data, 0 to 2^32 - 1 (Go's New32a).
+fn sum32a(data: Bytes) -> Int
+/// FNV-1 of data, 64 bits: the Int's bits are Go's uint64, so a sum past
+/// 2^63 is negative (Go's New64).
+fn sum64(data: Bytes) -> Int
+/// FNV-1a of data, 64 bits as sum64 (Go's New64a).
+fn sum64a(data: Bytes) -> Int
+/// FNV-1 of data, the 16 byte big endian sum (Go's New128().Sum(nil)).
+fn sum128(data: Bytes) -> Bytes
+/// FNV-1a of data, 16 bytes as sum128 (Go's New128a).
+fn sum128a(data: Bytes) -> Bytes
+
+/// The sum of what sum was the hash of, followed by data, for hashing a
+/// piece at a time (Go's Write on the same hash):
+/// `update32(sum32(a), b) == sum32(a + b)`.
+fn update32(sum: Int, data: Bytes) -> Int
+fn update32a(sum: Int, data: Bytes) -> Int
+fn update64(sum: Int, data: Bytes) -> Int
+fn update64a(sum: Int, data: Bytes) -> Int
+/// update128 and update128a: sum is 16 bytes (faults otherwise).
+fn update128(sum: Bytes, data: Bytes) -> Bytes
+fn update128a(sum: Bytes, data: Bytes) -> Bytes

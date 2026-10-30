@@ -1,0 +1,72 @@
+// std/crc32 against Go's hash/crc32 (go1.26.1): crc32_test.go's golden
+// inputs and a few more, each value computed by Go's ChecksumIEEE and
+// Checksum(MakeTable(Castagnoli)); update split at every point; the
+// Castagnoli table against the bit loop.
+use std/crc32
+
+/// (input, IEEE, Castagnoli), from Go.
+fn cases() -> List[(Bytes, Int, Int)] {
+  [
+    (b"", 0x00000000, 0x00000000),
+    (b"a", 0xe8b7be43, 0xc1d04330),
+    (b"ab", 0x9e83486d, 0xe2a22936),
+    (b"abc", 0x352441c2, 0x364b3fb7),
+    (b"abcd", 0xed82cd11, 0x92c80a31),
+    (b"abcdefgh", 0xaeef2a50, 0x0a9421b7),
+    (b"abcdefghi", 0x8da988af, 0x2ddc99fc),
+    (b"Discard medicine more than two years old.", 0x6b9cdfe7, 0xb2cc01fe),
+    (b"He who has a shady past knows that nice guys finish last.", 0xc90ef73f, 0x0e28207f),
+    (b"How can you write a big system without C++?  -Paul Glick", 0x8e0bb443, 0xdcded527),
+    ("01234567".repeat(1024).bytes(), 0x1010dab0, 0x8a11661f),
+    ("a".repeat(1089).bytes(), 0x772d04d7, 0x5a6f5c45),
+    (b"\x00\xff\x80\x7f h\xc3\xa9llo w\xc3\xb6rld", 0xa6856c25, 0x7e76c9aa),
+  ]
+}
+
+test "checksum: Go's IEEE and Castagnoli values" {
+  for (data, ieee, cast) in cases() {
+    expect(crc32.checksum(data)) == ieee
+    expect(crc32.checksum(data, crc32.Poly.Ieee)) == ieee
+    expect(crc32.checksum(data, crc32.Poly.Castagnoli)) == cast
+  }
+}
+
+test "update: any split gives the checksum of the whole" {
+  for (data, ieee, cast) in cases() {
+    let n = data.len()
+    let step = if n > 64 { 37 } else { 1 }
+    var k = 0
+    while k <= n {
+      expect(crc32.update(crc32.checksum(data[0..k]), data[k..n])) == ieee
+      expect(crc32.update(crc32.checksum(data[0..k], crc32.Poly.Castagnoli), data[k..n], crc32.Poly.Castagnoli)) == cast
+      k += step
+    }
+    expect(crc32.update(0, data)) == ieee
+  }
+}
+
+/// The CRC a bit at a time (Go's simpleUpdate over simpleMakeTable).
+fn bitwise(poly: Int, data: Bytes) -> Int {
+  var c = 0xffffffff
+  for i in 0..data.len() {
+    c = c ^ Int(data[i])
+    for _ in 0..8 {
+      c = if (c & 1) == 1 { (c >> 1) ^ poly } else { c >> 1 }
+    }
+  }
+  c ^ 0xffffffff
+}
+
+test "checksum matches the bit loop for every length up to 300" {
+  var b = BytesBuilder.new()
+  var x = 12345
+  for _ in 0..300 {
+    x = (x * 1103515245 + 12345) % 2147483648
+    b.write_byte(UInt8((x >> 16) & 255))
+  }
+  let data = b.freeze()
+  for n in 0..301 {
+    expect(crc32.checksum(data[0..n], crc32.Poly.Castagnoli)) == bitwise(0x82f63b78, data[0..n])
+    expect(crc32.checksum(data[0..n])) == bitwise(0xedb88320, data[0..n])
+  }
+}

@@ -124,8 +124,9 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | math/rand, math/rand/v2 | prelude Rand capability | done | Secure in programs, seeded in tests. |
 | math/cmplx | none | not planned | No backend use. |
 | hash | std/crypto Hasher | partial | A streaming hasher for the cryptographic hashes (decision 0279); no interface user types implement. |
-| hash/crc32 | inside std/archive | partial | Used by gzip and zip; no public API. |
-| hash/fnv, hash/adler32, hash/crc64, hash/maphash | none | planned | fnv and crc32 public functions are cheap ports; maphash is internal to Map. |
+| hash/crc32 | std/crc32 | done | IEEE and Castagnoli, `checksum` and `update` (spec/std.md 44); Castagnoli in software (Go uses CRC32C instructions). |
+| hash/fnv | std/fnv | done | 32, 64 and 128 bit FNV-1 and FNV-1a, `sum*` and `update*` (spec/std.md 45). |
+| hash/adler32, hash/crc64, hash/maphash | none | planned | maphash is internal to Map. |
 
 ### Cryptography
 

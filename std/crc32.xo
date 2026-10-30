@@ -1,0 +1,19 @@
+// std/crc32 (spec/std.md 44). Declaration file; encoding rules are
+// listed at the top of std/prelude.xo. Go's hash/crc32: the 32 bit
+// cyclic redundancy check of gzip, zip and PNG (IEEE) and of iSCSI, ext4
+// and many storage formats (Castagnoli). Pure.
+
+/// The polynomial: Go's IEEE (0xedb88320) and Castagnoli (0x82f63b78)
+/// tables, both reversed as Go's are.
+enum Poly {
+  Ieee
+  Castagnoli
+}
+
+/// The CRC-32 of data, 0 to 2^32 - 1 (Go's ChecksumIEEE, and Checksum
+/// with MakeTable(Castagnoli)).
+fn checksum(data: Bytes, poly: Poly = Poly.Ieee) -> Int
+/// The CRC-32 of what crc was the checksum of, followed by data (Go's
+/// Update): `update(checksum(a), b) == checksum(a + b)`, and
+/// `update(0, d) == checksum(d)`.
+fn update(crc: Int, data: Bytes, poly: Poly = Poly.Ieee) -> Int

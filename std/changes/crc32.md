@@ -1,0 +1,16 @@
+# std/crc32 changes
+
+## 2026-10-29: port: std/crc32, Go's hash/crc32
+
+- Kind: port
+- Commit: this commit
+- Found by: the lead's queue (2026-10-29): a public CRC-32 for file formats and storage checksums; gzip and zip had it inside std/native/llrt/flate.xo only
+- Go reference: hash/crc32 (crc32.go, crc32_generic.go: ChecksumIEEE, Checksum, Update, MakeTable(Castagnoli), slicing8Table) of go1.26.1
+- Test: internal/stdtest/testdata/corpus/crc32 (crc32_test.go's golden inputs and more, values from Go's package; update split at every point; both tables against the bit loop for lengths 0 to 300) on arm64, LLVM and the Go backend; bench/perf/hash twincheck
+- Timing: bench/perf/hash, quiet --ab 15 rounds against Go's hash/crc32 (darwin/arm64): crc32 (2,000 checksums of 64 KiB) wall 0.969x Go (0.955 to 0.976); crc32c wall 4.761x Go (4.722 to 4.781), software slicing-by-8 against Go's CRC32C instructions
+
+`crc32.checksum(data, poly)` and `crc32.update(crc, data, poly)` with
+`Poly.Ieee` (the default) and `Poly.Castagnoli`. IEEE runs on flate.xo's
+slicing-by-8, with arm64's crc32x where the CPU has it; Castagnoli on
+slicing-by-8 over its own generated table, in software (Go uses the CPU's
+CRC32C instructions on arm64 and amd64: next, a crc32cx intrinsic).

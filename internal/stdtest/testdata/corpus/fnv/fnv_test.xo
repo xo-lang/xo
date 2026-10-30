@@ -1,0 +1,53 @@
+// std/fnv against Go's hash/fnv (go1.26.1): fnv_test.go's golden inputs
+// and a few more, each value computed by Go's New32, New32a, New64,
+// New64a, New128 and New128a; update split at every point.
+use std/fnv
+
+/// (input, sum32, sum32a, sum64, sum64a, sum128 hex, sum128a hex), from Go.
+fn cases() -> List[(Bytes, Int, Int, Int, Int, Str, Str)] {
+  [
+    (b"", 0x811c9dc5, 0x811c9dc5, -3750763034362895579, -3750763034362895579, "6c62272e07bb014262b821756295c58d", "6c62272e07bb014262b821756295c58d"),
+    (b"a", 0x050c5d7e, 0xe40c292c, -5808590958014384194, -5808556873153909620, "d228cb69101a8caf78912b704e4a141e", "d228cb696f1a8caf78912b704e4a8964"),
+    (b"ab", 0x70772d38, 0x4d2505ca, 590647783936702392, 620445648566982762, "0880945aeeab1be95aa073305526c088", "08809544bbab1be95aa0733055b69a62"),
+    (b"abc", 0x439c2f4b, 0x1a47e90b, -2820157060406071861, -1792535898324117685, "a68bb2a4348b5822836dbc78c6aee73b", "a68d622cec8b5822836dbc7977af7f3b"),
+    (b"abcd", 0xb9de7375, 0xce3479bd, 3375784916657917845, -281581062704388899, "66ab7ef3e2757277b806e89c793685fd", "696f7cc66e757277b806e97644f1b9e5"),
+    (b"abcdefgh", 0xe2a37115, 0x76daaa8d, 1529170443754216693, 2727646559950394989, "d8c0f3da9c65995a44e896ad39e8e32d", "75264aaeec659b4d88fa9dbe8770b0d5"),
+    (b"abcdefghi", 0xdc4b0466, 0xfe3b04ec, 1042449465199178790, -346195371264595764, "62a5f6e19e03b212ca316726418f8836", "e4a555ed9d0618678c601970a7a97754"),
+    (b"Discard medicine more than two years old.", 0x74f67392, 0x888cf140, -3643406680589137390, 272866386598514208, "afc3b3d596919b1273e9e27d2c9e2a72", "83e5b3bb28c182aacb1bf8c70013c018"),
+    (b"He who has a shady past knows that nice guys finish last.", 0xd370d2ab, 0xeb0bc6ff, 1993856906526137099, -419314667700670689, "aedfc74f9a98c7b0d23fe410cf37d313", "27ec86044f9fb47f258f7d9848121f47"),
+    (b"How can you write a big system without C++?  -Paul Glick", 0x6de1f8c8, 0x84271426, 3112543851906569896, -7454597685721196058, "515a006ec75b3db152c46226687d22f0", "78702aef6a7b076b1b182c5b13fe70a6"),
+    ("01234567".repeat(1024).bytes(), 0x64135dc5, 0xccbffdc5, -5536866629038316763, -5540157833062022363, "95f287c284dca2d3955d617d0771858d", "0738c0d65e246285f6e1e22b15f5258d"),
+    ("a".repeat(1089).bytes(), 0xb7f16cbe, 0xb56c7fec, 8910909363058133502, 4374333748925619532, "d90eabb9231fd4dca73829f4e541f35e", "0c096efdbfc6b66ae295b1ca1533a524"),
+    (b"\x00\xff\x80\x7f h\xc3\xa9llo w\xc3\xb6rld", 0xd0587836, 0x4c36e310, 3700920267726474742, -9032714518226099920, "6fcebf9f1c4b1501a0114dd33ae42036", "edc093eb2b06be7da7292fbf3fd66068"),
+  ]
+}
+
+test "sums: Go's values" {
+  for (data, s32, s32a, s64, s64a, s128, s128a) in cases() {
+    expect(fnv.sum32(data)) == s32
+    expect(fnv.sum32a(data)) == s32a
+    expect(fnv.sum64(data)) == s64
+    expect(fnv.sum64a(data)) == s64a
+    expect(fnv.sum128(data).to_hex()) == s128
+    expect(fnv.sum128a(data).to_hex()) == s128a
+  }
+}
+
+test "update: any split gives the sum of the whole" {
+  for (data, s32, s32a, s64, s64a, s128, s128a) in cases() {
+    let n = data.len()
+    let step = if n > 64 { 41 } else { 1 }
+    var k = 0
+    while k <= n {
+      let a = data[0..k]
+      let b = data[k..n]
+      expect(fnv.update32(fnv.sum32(a), b)) == s32
+      expect(fnv.update32a(fnv.sum32a(a), b)) == s32a
+      expect(fnv.update64(fnv.sum64(a), b)) == s64
+      expect(fnv.update64a(fnv.sum64a(a), b)) == s64a
+      expect(fnv.update128(fnv.sum128(a), b).to_hex()) == s128
+      expect(fnv.update128a(fnv.sum128a(a), b).to_hex()) == s128a
+      k += step
+    }
+  }
+}

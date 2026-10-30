@@ -1,0 +1,7 @@
+# twincheck: hash: six workloads (none is the setup alone); Go is hash/crc32 and hash/fnv.
+- - none
+- - crc32
+- - crc32c
+- - fnv32a
+- - fnv64a
+- - fnv128a

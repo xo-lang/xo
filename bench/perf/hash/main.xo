@@ -1,0 +1,46 @@
+// hash: std/crc32 and std/fnv against Go's hash/crc32 and hash/fnv
+// (twin.go.txt). crc32 and crc32c checksum a 64 KiB buffer 2,000 times
+// (IEEE and Castagnoli); fnv32a, fnv64a and fnv128a hash 2,000,000 keys
+// of 8 to 40 bytes, the size of a map or shard key; `none` is the setup
+// alone. Usage: `<program> none|crc32|crc32c|fnv32a|fnv64a|fnv128a`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/crc32
+use std/fnv
+
+fn buffer(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  var x = 12345
+  for _ in 0..n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    b.write_byte(UInt8((x >> 16) & 255))
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let big = buffer(65536)
+  let keys = buffer(4096)
+  var sum = 0
+  if w == "crc32" || w == "crc32c" {
+    let p = if w == "crc32" { crc32.Poly.Ieee } else { crc32.Poly.Castagnoli }
+    for i in 0..2000 {
+      sum = sum ^ crc32.checksum(big, p) ^ i
+    }
+  } else if w == "fnv32a" || w == "fnv64a" || w == "fnv128a" {
+    for i in 0..2000000 {
+      let at = i % 4000
+      let k = keys[at..at + 8 + i % 33]
+      if w == "fnv32a" {
+        sum = sum ^ fnv.sum32a(k)
+      } else if w == "fnv64a" {
+        sum = sum ^ fnv.sum64a(k)
+      } else {
+        sum = sum ^ Int(fnv.sum128a(k)[i % 16])
+      }
+    }
+  } else {
+    sum = big.len() + keys.len()
+  }
+  os.stdio.println("${w} ${sum}")
+}
