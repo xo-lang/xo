@@ -1,6 +1,6 @@
 # 0426: host facts: disk usage, resource usage, network interfaces
 
-Status: Proposed (lead request, 2026-10-30: std-coverage gap 9, the metrics exporter's blocker; Xo lang 5). The design was agreed with the lead on 2026-10-30; the three new interface methods are BREAKING for user types implementing Fs, Proc and Net and wait for the owner's OK before they land.
+Status: Accepted (owner, 2026-10-30, through the lead: the BREAKING stages land in one breaking batch in 0.36, with Xo Lang 4's Proc.cpus and Proc.memory as a further 0426 stage; code waits for the seed cut). Was: Proposed (lead request, 2026-10-30: std-coverage gap 9, the metrics exporter's blocker; Xo lang 5). The design was agreed with the lead on 2026-10-30; the three new interface methods are BREAKING for user types implementing Fs, Proc and Net and wait for the owner's OK before they land.
 
 ## Context
 

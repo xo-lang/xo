@@ -1,6 +1,6 @@
 # 0432: An effect variable is the union of its arguments' effects
 
-Status: Proposed (Xo lang 5, 2026-10-30, for the owner's review; the
+Status: Accepted (owner, 2026-10-30, through the lead; ships in 0.36 after the seed cut, on top of the effect soundness fix, gotchas/effect-unify-unchecked.md). Was: Proposed (Xo lang 5, 2026-10-30, for the owner's review; the
 lead assigned it; Xo Lang 1 reviewed it, and the variance and order
 sections answer that review). No checker change
 until it is accepted; the change is built on a branch so it is ready.
