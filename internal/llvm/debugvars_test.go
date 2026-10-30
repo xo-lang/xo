@@ -137,7 +137,11 @@ func TestDebugInfoSameOutputLLVM(t *testing.T) {
 				if err != nil {
 					t.Fatalf("missing want.txt: %v", err)
 				}
-				if runs[0].String() != string(want) {
+				// a stripped Linux build says it cannot name the frames
+				// (prof.xo, 2026-10-25); the build with symbols prints the
+				// frames, which want.txt leaves out
+				got := strings.Replace(runs[0].String(), "traceback: (no function symbols: built with -s, or stripped)\n", "", 1)
+				if got != string(want) {
 					t.Errorf("the output differs without debug information (-s) from want.txt, which the build with it (TestGolden) prints\n--- -s\n%s\n--- want.txt\n%s", runs[0], want)
 				}
 				return

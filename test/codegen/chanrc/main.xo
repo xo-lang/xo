@@ -1,0 +1,17 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a channel handle
+// outlives the runtime call that gets its address (a Chan[Int] op is a
+// call of the runtime on the handle's address, rt.obj_addr; compiler/ssa
+// rc.xo borrows the handle to the last call that gets the address).
+// The release was placed before the call, so the sender task's end freed
+// the channel under a receiver still inside it (TSan, Linux, 2026-10-29).
+fn take(ch: Chan[Int]) -> Int {
+  // llvm: "(?s)llrt_chan_recv_w.*xo\.drop\.Chan" -"xo\.drop\.Chan\[Int\]\(ptr %v[0-9]+\)[^\n]*\n  %v[0-9]+ = invoke [^\n]*llrt_chan_recv_w"
+  scope s {
+    s.spawn(fn() { ch.send(1) })
+    ch.recv() ?? 0
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${take(Chan[Int].new())}")
+}

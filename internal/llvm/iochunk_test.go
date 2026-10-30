@@ -32,7 +32,7 @@ func TestRuntimeIOChunk(t *testing.T) {
 			if be == xotool.BackendArm64 && runtime.GOARCH != "arm64" {
 				t.Skip("the arm64 backend runs on arm64 hosts")
 			}
-			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
+			res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be, Env: libcEnv()})
 			if err != nil {
 				t.Fatalf("build: %v", err)
 			}

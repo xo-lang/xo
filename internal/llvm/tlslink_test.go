@@ -35,7 +35,8 @@ func TestTLSLinkedOnlyWithTLS(t *testing.T) {
 				t.Fatalf("nm: %v", err)
 			}
 			for _, mod := range []string{"tlssrv", "tls13srv", "tls12srv", "h2srv"} {
-				has := strings.Contains(string(out), "_xo_f_"+mod+"_2e")
+				// (Mach-O names carry a leading underscore, ELF names do not)
+				has := strings.Contains(string(out), "xo_f_"+mod+"_2e")
 				if has != c.want {
 					t.Errorf("%s: symbols of %s: %v, want %v", c.dir, mod, has, c.want)
 				}

@@ -509,7 +509,7 @@ func TestNoBareLibcExportsInLibcBuild(t *testing.T) {
 	}
 	for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
 		t.Run(be, func(t *testing.T) {
-			_, b := buildRun(t, dir, xotool.Options{Backend: be})
+			_, b := buildRun(t, dir, xotool.Options{Backend: be, Env: libcEnv()})
 			out, err := exec.Command(nm, "-g", b.Binaries[xotool.Host()]).Output()
 			if err != nil {
 				t.Fatalf("nm: %v", err)

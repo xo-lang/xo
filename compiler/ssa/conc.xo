@@ -843,6 +843,7 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
     "Chan.send" => {
       if b.word_chan(et) {
         b.llrt_call("chan_send_w", [b.chan_word(h), b.word_in(b.io_arg(fo, es, 0, et), et), b.loc(span)])
+        b.chan_hold(h, fo, ci)
         b.check("")
         return b.unit()
       }
@@ -853,13 +854,16 @@ fn (var b: Builder) conc_call(x: Expr, ci: check.CallInfo) -> Int {
     }
     "Chan.try_send" => {
       if b.word_chan(et) {
-        return b.llrt_call("chan_try_send_w", [b.chan_word(h), b.word_in(b.io_arg(fo, es, 0, et), et)])
+        let r = b.llrt_call("chan_try_send_w", [b.chan_word(h), b.word_in(b.io_arg(fo, es, 0, et), et)])
+        b.chan_hold(h, fo, ci)
+        return r
       }
       return b.rt("chan_try_send", bt, [h, b.one(b.io_arg(fo, es, 0, et))])
     }
     "Chan.recv" | "Chan.try_recv" => {
       if b.word_chan(et) {
         let r = b.llrt_call("chan_${fname}_w", [b.chan_word(h)])
+        b.chan_hold(h, fo, ci)
         if fname == "recv" {
           b.check("")
         }
@@ -1831,6 +1835,25 @@ fn (var b: Builder) word_option(r: Int, nt: Int, et: Int) -> Int {
   b.seal(join)
   b.s.cur = join
   res
+}
+
+/// Uses channel handle h after a word operation on its address: the
+/// handle is released right after its last use, which was taking the
+/// address (chan_word), so the sender task's end could free the channel
+/// under a receiver still in recv_w (TSan on Linux, 2026-10-29,
+/// gotchas/obj-addr-handle-released-early.md).
+fn (var b: Builder) chan_hold(h: Int, fo: Int, ci: check.CallInfo) {
+  let tps = b.type_params(fo)
+  let impl = b.prelude_impl("llrt_chan_hold")
+  if impl < 0 || tps.len() != 1 {
+    return
+  }
+  let t = b.apply(ci.subst.get(tps[0]) ?? -1)
+  if t < 0 {
+    return
+  }
+  let f = b.declare(impl, [t])
+  let _u = b.call(b.m.funcs[f].name, b.unit_t(), "", [h])
 }
 
 /// The address word of channel handle h, for the word operations (the

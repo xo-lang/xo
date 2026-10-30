@@ -4369,6 +4369,16 @@ fn llrt_chan_try_send_w(c: Int, v: Int) -> Bool { chan.try_send_w(c, v) }
 
 fn llrt_chan_try_recv_w(c: Int) -> (Int, Bool) { chan.try_recv_w(c) }
 
+/// Uses the channel c after a word operation on its address (chan_word):
+/// a handle is released right after its last use, which was the address
+/// taken for the call, so the sender task's end could free the channel
+/// under a receiver still inside recv_w (gotchas/obj-addr-handle-released-early.md).
+fn llrt_chan_hold[T](c: Chan[T]) {
+  if rt.obj_addr(c) == 0 {
+    return
+  }
+}
+
 fn llrt_select_send_w(s: Int, c: Int, v: Int) { selects.send_w(s, c, v) }
 
 fn llrt_select_take_w(s: Int, i: Int) -> (Int, Bool) { selects.take_w(s, i) }

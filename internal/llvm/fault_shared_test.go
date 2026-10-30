@@ -51,7 +51,7 @@ func buildFaultShared(t *testing.T, tmp string) map[string]string {
 	dir := filepath.Join("testdata", "rt", "fault_shared")
 	bins := map[string]string{}
 	for _, be := range []string{xotool.BackendArm64, xotool.BackendLLVM} {
-		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be})
+		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be, Env: libcEnv()})
 		if err != nil || res.Failed {
 			t.Fatalf("build %s: %v %v", be, err, res)
 		}
@@ -129,4 +129,14 @@ func TestRuntimeFaultResume(t *testing.T) {
 			t.Errorf("%s: unexpected output:\n%s", name, text)
 		}
 	}
+}
+
+// libcEnv keeps the C library in a Linux build (since decision 0243 a
+// Linux program links none by default): the programs that call libc's
+// qsort and read through its memory (fault_shared, iochunk) need it.
+func libcEnv() []string {
+	if runtime.GOOS == "linux" && os.Getenv("XO_NOLIBC") == "" {
+		return []string{"XO_NOLIBC=0"}
+	}
+	return nil
 }

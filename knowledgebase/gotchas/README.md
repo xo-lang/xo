@@ -949,3 +949,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [run-cache-windows-pdb.md](run-cache-windows-pdb.md): a run cache hit wrote a windows .exe without its PDB; such builds store no entry now.
 - [golden-writes-beside-itself.md](golden-writes-beside-itself.md): a golden's scratch files written beside main.xo were committed; goldens write under $TMPDIR.
 - [linux-arm64-race-stacks-name-asm.md](linux-arm64-race-stacks-name-asm.md): Observed 2026-10-29: Linux arm64 --race reports name prog.s lines, not main.xo lines; TestRaceStacksArm64 skips there
+- [obj-addr-handle-released-early.md](obj-addr-handle-released-early.md): Observed 2026-10-29: a handle's release was placed before the runtime call that used its rt.obj_addr (Chan[Int] ops), so a sender's end freed the channel under the receiver; only Linux TSan saw it
