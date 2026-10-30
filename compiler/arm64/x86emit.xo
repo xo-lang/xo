@@ -123,8 +123,13 @@ fn (var g: G) x86_emit() {
   let (dv_stubs, stub_sp, dv_copies_at, dv_copies_made, vranges) = (g.dv_stubs, g.stub_sp, g.dv_copies_at, g.dv_copies_made, g.vranges)
   g.borrow_words = false
   g.borrow_short = false
+  g.stub_words = false
+  g.stub_short = false
   g.x86_emit_once()
-  if g.borrow_short {
+  // and frame words for a fault stub's saves (a stub that moved rsp
+  // below the frame unwound wrong: gotchas/windows-amd64-fault-stub-rsp.md)
+  if g.borrow_short || g.stub_short {
+    let (bw, sw) = (g.borrow_short, g.stub_short)
     g.text = g.text[0..text]
     g.stubs = stubs
     g.nstub = nstub
@@ -143,8 +148,10 @@ fn (var g: G) x86_emit() {
     g.dv_copies_at = dv_copies_at
     g.dv_copies_made = dv_copies_made
     g.vranges = vranges
-    g.borrow_words = true
+    g.borrow_words = bw
     g.borrow_short = false
+    g.stub_words = sw
+    g.stub_short = false
     g.x86_emit_once()
   }
 }
@@ -179,8 +186,17 @@ fn (var g: G) x86_emit_once() {
     borrows = X86_BORROWS
   }
   fr.mem_off = fr.spill_base + 8 * (g.slots + borrows)
+  // the fault stubs' saves on windows/amd64 (x86_emit's second emission):
+  // X86_STUB_SAVES words above the by reference memory, so no other
+  // slot moves
+  g.stub_at = -1
+  var stub_words = 0
+  if g.os == "windows" && g.stub_words {
+    g.stub_at = fr.mem_off + g.mem_bytes
+    stub_words = 8 * X86_STUB_SAVES
+  }
   let pushed = 8 * g.saved.len()
-  fr.size = align16(fr.mem_off + g.mem_bytes + pushed)
+  fr.size = align16(fr.mem_off + g.mem_bytes + stub_words + pushed)
   fr.save_base = fr.size - pushed
   if fr.leaf {
     fr.size = 0
@@ -1173,12 +1189,23 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     // the caller saved registers holding variables at the fault, stored
     // below rsp before the moves (emit.xo; decision 0268's addendum): not
     // where the fault can land in this function, not in a far frame, not
-    // on Windows: the Win64 unwind data describes the prologue's rsp only,
-    // so a stub that moved rsp unwound to a wrong return address and the
-    // fault passed task.isolate (fault_audit, 2026-10-30)
-    let saves = if g.base == 0 && g.pos >= 0 && inst.pad < 0 && g.os != "windows" { g.stub_saves(g.pos / 4) } else { [] }
+    // in a Windows leaf (which jumps). On Windows they go to the frame's
+    // words for them (stub_at), as the Win64 unwind data describes the
+    // prologue's rsp only: a stub that moved rsp unwound to a wrong
+    // return address and the fault passed task.isolate (fault_audit,
+    // 2026-10-30)
+    let saves = if g.base == 0 && g.pos >= 0 && inst.pad < 0 && !win_leaf && pass_on(g.m, "x86_stub_saves") { g.stub_saves(g.pos / 4) } else { [] }
     var saved: List[(Int, Int)] = []
-    if !saves.is_empty() {
+    if !saves.is_empty() && g.os == "windows" {
+      if g.stub_at < 0 {
+        g.stub_short = true
+      } else {
+        for (i, r) in saves.indexed() {
+          sb.push("\tmovq ${x86_reg(r, 8)}, ${g.stub_at + 8 * i}(%rsp)\n")
+          saved.push((r, g.stub_at + 8 * i))
+        }
+      }
+    } else if !saves.is_empty() {
       let bytes = 16 * ((saves.len() + 1) / 2)
       sb.push("\tsubq $${bytes}, %rsp\n")
       for (i, r) in saves.indexed() {
@@ -1244,6 +1271,9 @@ fn (var g: G) x86_scratch_b(var b: List[Str], fp: Bool, n: Int, taken: List[Int]
 
 /// The words for borrowed registers on windows/amd64 (x86_emit).
 const X86_BORROWS = 3
+
+/// The most caller saved registers a fault stub stores (stub_saves).
+const X86_STUB_SAVES = 8
 
 /// The rsp offset where the k-th borrowed register is saved: the red
 /// zone (-8 (k + 1), System V keeps 128 bytes below rsp from signal

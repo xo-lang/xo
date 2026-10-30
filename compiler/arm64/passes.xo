@@ -79,6 +79,10 @@ pub fn passes() -> List[Str] {
     "x86_carry_fuse",
     // System V leaf frames in the red zone below rsp (x86emit.xo Frame.rz)
     "x86_red_zone",
+    // a fault stub's saves of the caller saved registers holding
+    // variables (x86emit.xo stub_saves, decision 0268's addendum): below
+    // rsp on System V, in frame words on Windows (stub_at)
+    "x86_stub_saves",
   ]
 }
 

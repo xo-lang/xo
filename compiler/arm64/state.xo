@@ -263,6 +263,13 @@ struct G {
   /// whether the frame has them
   borrow_short: Bool = false
   borrow_words: Bool = false
+  /// windows/amd64: the rsp offset of the frame's words a fault stub
+  /// stores the caller saved registers in (-1 none), and whether this
+  /// emission had a stub to store with no words for it (x86_emit emits
+  /// the function again with them) and whether the frame has them
+  stub_at: Int = -1
+  stub_short: Bool = false
+  stub_words: Bool = false
   /// parameters passed by reference per function (byref.xo), computed
   /// when asked; an empty list is none
   by_ref: Map[Int, List[Bool]] = {}

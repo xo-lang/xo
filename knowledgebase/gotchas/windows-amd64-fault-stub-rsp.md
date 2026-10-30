@@ -16,9 +16,16 @@ unwind data describes only the prologue's rsp, so RtlVirtualUnwind from
 the stub's call read the return address N bytes off, found no function
 there, and win_raise and win_walk stopped (unwind.xo).
 
-Fix: no stub saves on Windows (x86emit.xo, `g.os != "windows"`), as a
-Windows leaf's jumping stub already had none. TestWindowsAmd64Identity's
-foldStubs drops the Linux saves before comparing. Any other rsp change
+Fix (5afd8f98c): no stub saves on Windows, as a Windows leaf's jumping
+stub already had none; the faulting frame's caller saved variables
+printed `<unavailable>` there. Then (2026-10-30): a Windows function
+whose stubs save is emitted again (x86_emit, as for borrowed registers)
+with X86_STUB_SAVES frame words above its by reference memory (stub_at),
+and its stubs store there with rsp unchanged, so the prologue's unwind
+data stays right and the debug info (DWARF, the PDB's locals) places
+those variables again (XO_TRACEBACK=locals is still off on Windows, in
+llrt fault.xo init_traceback). TestWindowsAmd64Identity turns the saves
+off on both platforms (XO_PASSES=-x86_stub_saves). Any other rsp change
 outside the prologue on Windows needs unwind data of its own (or must
 not hold across a call): check the Windows goldens on the offload host
 (`OFFLOAD_ENV=offload-win.env amd64-run.sh`), not Wine, for unwinding.

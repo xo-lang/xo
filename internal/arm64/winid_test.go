@@ -34,7 +34,9 @@ var winIdentityAllowed = map[string]bool{"byref_struct/merged": true, "cli_parse
 // calls System V on both. Shrink wrapping is off for Linux too (Windows
 // has it off: one prologue per function), and the red zone frames
 // (x86_red_zone, 0136b3ce8: a System V leaf keeps its frame below rsp,
-// which Windows has not), and inlining off for both (the runtime inlined
+// which Windows has not), the fault stubs' register saves off for both
+// (x86_stub_saves: below rsp on System V, in frame words on Windows),
+// and inlining off for both (the runtime inlined
 // differs by OS). Normalized: directives (.seh against
 // .cfi), labels, the export calls' targets (Windows calls the function,
 // Linux the export's alias of it), the C runtime's functions Windows
@@ -59,8 +61,8 @@ func TestWindowsAmd64Identity(t *testing.T) {
 		t.Run(name, func(t *testing.T) {
 			t.Parallel()
 			dir := filepath.Join("..", "llvm", "testdata", "golden", name)
-			lin := winAsm(t, dir, "linux/amd64", "-shrink_split,-inline,-x86_red_zone")
-			win := winAsm(t, dir, "windows/amd64", "-inline")
+			lin := winAsm(t, dir, "linux/amd64", "-shrink_split,-inline,-x86_red_zone,-x86_stub_saves")
+			win := winAsm(t, dir, "windows/amd64", "-inline,-x86_stub_saves")
 			alias := exportAliases(lin)
 			a := ownFuncsNorm(lin, alias)
 			b := ownFuncsNorm(win, alias)
