@@ -662,7 +662,12 @@ pub fn free_mt(h: Int, p: Int) {
       clock(h, cen, c)
       var w = rt.slot_load(cen, c, RELAXED)
       while w != 0 && k < SCAVENGE_KEEP {
-        w = rt.mem_load(pword(w, PT_CLINK), 0, 8)
+        // the magazine's link by the layout in force: a page block's is
+        // in its chunk's table, a prefixed one's (page blocks off: a
+        // sanitizer or --race build) is its second word; the table read
+        // of a prefixed block's 4 MiB base crashed TestRuntimeAlloc
+        // (gotchas/page-table-link-with-pages-off.md, 2026-10-30)
+        w = cnext(pg, w)
         k = k.wrapping_add(1)
       }
       cunlock(h, cen, c)

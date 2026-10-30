@@ -10,6 +10,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   BodyReader), so one task can write a request body while another reads
   the response.
 
+- FIX (native heap, --race): a program with threads built with `--race`
+  could die in ThreadSanitizer's own code once a thread had freed a
+  magazine's worth of 32 KiB or larger blocks (free_mt's count of the
+  central magazines read a page table link, decision 0425's layout for
+  page blocks, which a sanitizer build keeps off; gotchas/
+  page-table-link-with-pages-off.md). internal/llvm TestRuntimeAlloc
+  caught it at the first main check.
+
 - `WsConn` has deadlines (`set_deadline`, `set_read_deadline`,
   `set_write_deadline`), `on_ping`, `on_pong` and `pong` (decision 0430,
   gorilla's); a write error sticks, as in gorilla.

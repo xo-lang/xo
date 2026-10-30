@@ -186,9 +186,17 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   native-vs-LLVM instruction sweep before its quiet --ab, so the window's
   rows are the sweep's movers rather than the author's choice.
 
-- Runtime changes (2026-10-23): a change to std/native/llrt pool, tasks,
-  mutex, sched (the scheduler and its shared words) runs internal/llvm's
-  ThreadSanitizer tests in its gate, `go test -short -count=1 -run
+- Runtime changes (2026-10-23; the allocator added 2026-10-30): a change
+  to std/native/llrt pool, tasks, mutex, sched (the scheduler and its
+  shared words) or to the allocator, scheduler or sync code (alloc,
+  heapos, cabi, heapprof, obj) runs internal/llvm's ThreadSanitizer tests
+  in its gate, `go test ./internal/llvm -run 'TestRuntime|TestRace'
+  -count=1` (decision 0425's page table link read with page blocks off
+  reached main and crashed TestRuntimeAlloc under --race at the first
+  main check, gotchas/page-table-link-with-pages-off.md; the llvm step of
+  gate.sh is not skipped for std/native/llrt files, but the bare minimum
+  gate names only what the agent names), or the older form `go test
+  -short -count=1 -run
   'TestRuntimeThreads|TestRuntimeEventLoop|TestRuntimeAlloc|TestRuntimeRealtime'
   ./internal/llvm`, more than once (a race hit 3 runs in 4): the runtime is
   instrumented in a --race build, so a plain store to a word every worker
