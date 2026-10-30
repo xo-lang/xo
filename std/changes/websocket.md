@@ -1,5 +1,24 @@
 # std/websocket changes
 
+## 2026-10-30: feature: deadlines, on_ping, on_pong, pong
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-30 std survey (bench/survey-2026-10-30, gap 5,
+  deadlines), decision 0430
+- Go reference: gorilla/websocket v1.5 Conn.SetReadDeadline,
+  SetWriteDeadline, SetPingHandler, SetPongHandler, and its writeFatal
+- Test: internal/llvm/testdata/golden/websocket_deadline (native and Go
+  backends)
+
+`WsConn` has `set_deadline`, `set_read_deadline` and
+`set_write_deadline(clock, t)`: a read or write past the deadline fails
+with `Net(Timeout)`, and the error sticks for that direction. `on_ping`
+and `on_pong` run a function for each ping or pong that `read` reads
+(`on_ping` in place of the automatic pong, sent with the new `pong`), so a
+keepalive can move the read deadline. A write error now sticks too, as in
+gorilla: a frame may have gone out in part.
+
 ## 2026-10-30: fix: a stop waits for an upgraded connection on the Go backend
 
 - Kind: fix

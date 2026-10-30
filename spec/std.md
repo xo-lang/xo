@@ -5554,12 +5554,18 @@ enum WsErr {
 }
 fn (e: WsErr) display() -> Str      // gorilla's texts: `websocket: close 1001 (going away): bye`
 struct WsConn {}
-fn (c: WsConn) read() -> Message ! WsErr       // a whole message; pings answered, pongs skipped
+fn (c: WsConn) read() -> Message ! WsErr       // a whole message; pings answered (or on_ping), pongs to on_pong
 fn (c: WsConn) write(m: Message) -> () ! WsErr // one frame
 fn (c: WsConn) write_text(s: Str) -> () ! WsErr
 fn (c: WsConn) ping(data: Bytes = b"") -> () ! WsErr
 fn (c: WsConn) close(code: Int = 1000, reason: Str = "") -> () ! WsErr   // the close frame, then the connection
 fn (c: WsConn) subprotocol() -> Str
+fn (c: WsConn) set_deadline(clock: Clock, t: Time?) uses clock         // decision 0430: gorilla's SetReadDeadline and SetWriteDeadline
+fn (c: WsConn) set_read_deadline(clock: Clock, t: Time?) uses clock
+fn (c: WsConn) set_write_deadline(clock: Clock, t: Time?) uses clock
+fn (c: WsConn) on_ping[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx   // gorilla's SetPingHandler: replaces the automatic pong
+fn (c: WsConn) on_pong[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx   // gorilla's SetPongHandler
+fn (c: WsConn) pong(data: Bytes = b"") -> () ! WsErr
 pub fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocols: List[Str] = [], origins: List[Str] = [], max_message: Int = 1048576) -> http.Response uses fx
 pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = [], max_message: Int = 1048576, roots: Bytes = b"") -> WsConn ! WsErr uses net.dial
 ```
@@ -5619,8 +5625,39 @@ pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str
   the protocols, and `headers`, and fails with `Handshake(status,
   "websocket: bad handshake")` unless the answer is a 101 with the
   upgrade tokens and the right `Sec-WebSocket-Accept`.
+- Deadlines (decision 0430) are gorilla's. A read or write past its
+  deadline fails with `Net(Timeout)`, and so does one whose deadline has
+  already passed, at once. The error sticks for that direction: after a
+  timeout a frame may be read or sent in part, so later reads (or
+  writes) fail the same way, as gorilla's. `None` clears a deadline. A
+  client's deadlines are its connection's (`Conn` or `TlsConn`); a
+  server's apply from the next wait of the handed over connection, so
+  one set while a read or write is waiting does not move that wait (Go
+  moves it).
+- `on_ping` and `on_pong` run `f` with each ping's or pong's data inside
+  `read`, which holds its lock: `f` must not call `read`. `on_ping`
+  replaces the automatic pong (send one with `pong`). A later call
+  replaces `f`. Both are dropped when a read fails for good or the
+  connection closes, so a hook that captures its `WsConn` does not keep
+  it alive. A keepalive moves the read deadline in `on_pong` while
+  another task pings:
+
+  ```xo
+  c.set_read_deadline(clock, Some(clock.now() + 60s))
+  c.on_pong(fn(_data) { c.set_read_deadline(clock, Some(clock.now() + 60s)) })
+  scope s {
+    s.spawn_background(fn() {
+      while c.ping() is Ok(_) {
+        clock.sleep(30s)
+      }
+    })
+    while let Ok(m) = c.read() {
+      // handle m
+    }
+  }
+  ```
 - Not provided: permessage-deflate, a message written in pieces, ping
-  timers (use `ping` and a clock), WebSockets over HTTP/2.
+  timers (use `ping` and a clock, as above), WebSockets over HTTP/2.
 
 
 ## 36. std/debug

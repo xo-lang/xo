@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+server read: i/o timeout
+server write: ok
+server late write: i/o timeout
+client read: after the timeout
+client read: i/o timeout
+client read again: i/o timeout
+client write: i/o timeout
+server flood: i/o timeout after more than one message: true
+server write again: i/o timeout
+keepalive read: late hello
+keepalive read after the pings: i/o timeout
+pongs at least 5: true
+server pings: 10
+done
+--- stderr

@@ -17,6 +17,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strconv"
 	"strings"
 	"sync"
@@ -42,6 +43,13 @@ type wsConn struct {
 
 	wmu       sync.Mutex
 	closeSent bool
+	// writeErr is the error that stopped writing: it sticks, as
+	// gorilla's (a frame may have gone out in part; decision 0430)
+	writeErr *Websocket_WsErr
+
+	// on_ping's and on_pong's functions (decision 0430), nil for none
+	hmu          sync.Mutex
+	pingH, pongH func(*Task, Bytes) Result[Unit, Never]
 }
 
 const (
@@ -68,6 +76,10 @@ func wsTooBig(limit int64) Websocket_WsErr {
 }
 
 func wsNetErr(err error) Websocket_WsErr {
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		// past a deadline (decision 0430): Timeout
+		return Websocket_WsErr{Tag: 4, P: Websocket_WsErr_Net{F_err: netErr(3, "")}}
+	}
 	return Websocket_WsErr{Tag: 4, P: Websocket_WsErr_Net{F_err: netErr(4, err.Error())}}
 }
 
@@ -136,6 +148,9 @@ func wsCloseMessage(code int64, text string) []byte {
 func (c *wsConn) writeFrame(op int, data []byte) *Websocket_WsErr {
 	c.wmu.Lock()
 	defer c.wmu.Unlock()
+	if c.writeErr != nil {
+		return c.writeErr
+	}
 	if c.closeSent {
 		e := wsProtocolErr("close sent")
 		return &e
@@ -171,6 +186,7 @@ func (c *wsConn) writeFrame(op int, data []byte) *Websocket_WsErr {
 	}
 	if _, err := c.conn.Write(hdr); err != nil {
 		e := wsNetErr(err)
+		c.writeErr = &e
 		return &e
 	}
 	return nil
@@ -227,7 +243,7 @@ func (c *wsConn) readN(n int64) ([]byte, *Websocket_WsErr) {
 
 // readMessage reads frames up to a whole message (NextReader and its
 // messageReader), handling control frames between them.
-func (c *wsConn) readMessage() (Websocket_Message, *Websocket_WsErr) {
+func (c *wsConn) readMessage(tk *Task) (Websocket_Message, *Websocket_WsErr) {
 	kind := 0
 	var data []byte
 	checked := 0
@@ -357,8 +373,21 @@ func (c *wsConn) readMessage() (Websocket_Message, *Websocket_WsErr) {
 		}
 		switch op {
 		case wsPong:
+			c.hmu.Lock()
+			h := c.pongH
+			c.hmu.Unlock()
+			if h != nil {
+				h(tk, Bytes(payload))
+			}
 			continue
 		case wsPing:
+			c.hmu.Lock()
+			h := c.pingH
+			c.hmu.Unlock()
+			if h != nil {
+				h(tk, Bytes(payload))
+				continue
+			}
 			if e := c.writeControl(wsPong, payload); e != nil && !c.isCloseSent(e) {
 				return Websocket_Message{}, e
 			}
@@ -435,7 +464,7 @@ func (w Websocket_WsConn) M_read(tk *Task) Result[Websocket_Message, Websocket_W
 	if c.readErr != nil {
 		return Err[Websocket_Message](*c.readErr)
 	}
-	m, err := c.readMessage()
+	m, err := c.readMessage(tk)
 	if err != nil {
 		c.readErr = err
 		return Err[Websocket_Message](*err)
@@ -496,6 +525,44 @@ func (w Websocket_WsConn) M_close(tk *Task, code int64, reason string) Result[Un
 
 // M_subprotocol is `c.subprotocol()`.
 func (w Websocket_WsConn) M_subprotocol(*Task) string { return w.c.proto }
+
+// M_on_ping is `c.on_ping(f)` (decision 0430): gorilla's SetPingHandler.
+func (w Websocket_WsConn) M_on_ping(tk *Task, f func(*Task, Bytes) Result[Unit, Never]) {
+	w.c.hmu.Lock()
+	w.c.pingH = f
+	w.c.hmu.Unlock()
+}
+
+// M_on_pong is `c.on_pong(f)` (decision 0430): gorilla's SetPongHandler.
+func (w Websocket_WsConn) M_on_pong(tk *Task, f func(*Task, Bytes) Result[Unit, Never]) {
+	w.c.hmu.Lock()
+	w.c.pongH = f
+	w.c.hmu.Unlock()
+}
+
+// M_pong is `c.pong(data)`: a pong control frame.
+func (w Websocket_WsConn) M_pong(tk *Task, data Bytes) Result[Unit, Websocket_WsErr] {
+	if e := w.c.writeControl(wsPong, []byte(data)); e != nil {
+		return Err[Unit](*e)
+	}
+	return Ok[Unit, Websocket_WsErr](Unit{})
+}
+
+// M_set_deadline is `c.set_deadline(clock, t)` (decision 0430):
+// gorilla's SetReadDeadline and SetWriteDeadline, the connection's.
+func (w Websocket_WsConn) M_set_deadline(tk *Task, clock Clock, t Option[Time]) {
+	Conn{c: w.c.conn}.setDeadline(tk, clock, t, true, true)
+}
+
+// M_set_read_deadline is gorilla's SetReadDeadline (decision 0430).
+func (w Websocket_WsConn) M_set_read_deadline(tk *Task, clock Clock, t Option[Time]) {
+	Conn{c: w.c.conn}.setDeadline(tk, clock, t, true, false)
+}
+
+// M_set_write_deadline is gorilla's SetWriteDeadline (decision 0430).
+func (w Websocket_WsConn) M_set_write_deadline(tk *Task, clock Clock, t Option[Time]) {
+	Conn{c: w.c.conn}.setDeadline(tk, clock, t, false, true)
+}
 
 // wsTokens reports whether a field of name in vs lists token (gorilla's
 // tokenListContainsValue: comma separated, case insensitive).

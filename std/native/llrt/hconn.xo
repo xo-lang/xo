@@ -355,6 +355,57 @@ pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
   ok
 }
 
+/// send_at with a deadline (monotonic ns, 0 none; decision 0430, a
+/// WebSocket's write deadline after the hand-over): 0 when every byte
+/// went, -2 when the deadline passed first, -1 when the connection broke
+/// or the task was canceled. On TLS the record flush waits with it
+/// (tlssrv.set_deadline, as recv_until).
+pub fn send_until(h: rthttp.HConn, p: Int, n: Int, deadline: Int) -> Int {
+  if poll.canceled() {
+    return -1
+  }
+  let hc = rec(h)
+  let tls = ld(hc, HC_TLS)
+  if tls != 0 {
+    tlssrv.set_deadline(tls, deadline)
+    var r = if rt.call_c4(tls_op(TO_WRITE), tls, p, n, 0) == 0 { 0 } else { -1 }
+    if r < 0 && deadline != 0 && tlssrv.timed_out(tls) {
+      r = -2
+    }
+    tlssrv.set_deadline(tls, 0)
+    return r
+  }
+  let pd = conn_pd(hc)
+  if !poll.pd_begin(pd) {
+    return -1
+  }
+  let fd = pd_fd(pd)
+  var off = 0
+  var r = 0
+  while off < n {
+    let w = sock.send(fd, p + off, n - off, NOSIGNAL)
+    if w >= 0 {
+      off += w
+      continue
+    }
+    if w == -sock.EINTR {
+      continue
+    }
+    if would_block(w) {
+      let k = poll.pd_wait(pd, true, deadline)
+      if k == poll.READY {
+        continue
+      }
+      r = if k == poll.TIMEOUT { -2 } else { -1 }
+      break
+    }
+    r = -1
+    break
+  }
+  poll.pd_end(pd)
+  r
+}
+
 /// Whether h's server is stopping (no other request on the connection).
 /// Whether connection h speaks TLS (Request.tls, std.md 4.3).
 pub fn is_tls(h: rthttp.HConn) -> Bool { ld(rec(h), HC_TLS) != 0 }

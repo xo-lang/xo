@@ -15,6 +15,7 @@ use native/http as nhttp
 use native/rthttp
 use native/llrt/raw
 use native/llrt/hconn
+use native/llrt/poll
 use native/llrt/http1
 use native/llrt/rand as llrand
 
@@ -28,11 +29,11 @@ const OP_PING = 9
 const OP_PONG = 10
 
 /// What a read from the wire got: data, the end of the stream, or an
-/// error's text.
+/// error (Timeout past a deadline, decision 0430).
 struct Chunk {
   data: Bytes
   end: Bool
-  err: Str
+  ne: NetErr?
 }
 
 /// The connection under a WsConn, as functions: the server's (the HTTP
@@ -40,7 +41,7 @@ struct Chunk {
 /// net.dial counts there).
 struct Wire {
   recv: fn(Int) -> Chunk
-  send: fn(Bytes) -> Str
+  send: fn(Bytes) -> NetErr?
   close: fn(Int) -> ()
 }
 
@@ -54,15 +55,32 @@ struct ReadState {
 
 struct WriteState {
   close_sent: Bool
+  /// the error that stopped writing (it sticks, as gorilla's writeErr:
+  /// a frame may have gone out in part, decision 0430)
+  err: List[websocket.WsErr]
+}
+
+/// on_ping's and on_pong's functions (decision 0430): none or one each.
+struct Hooks {
+  ping: List[fn(Bytes) -> ()]
+  pong: List[fn(Bytes) -> ()]
 }
 
 struct WsConn {
   wire: Wire
+  /// a client's connection, whose deadlines are a WsConn's (decision
+  /// 0430); None on the server, whose wire reads rdl
+  link: Link?
+  /// the server's read and write deadlines: the timers' ns
+  /// (poll.deadline), 0 for none; the wire's next wait takes them
+  rdl: Atomic[Int]
+  wdl: Atomic[Int]
   server: Bool
   max: Int
   proto: Str
   rd: Mutex[ReadState]
   wr: Mutex[WriteState]
+  hooks: Mutex[Hooks]
 }
 
 fn protocol_err(msg: Str) -> websocket.WsErr { websocket.WsErr.Protocol(msg: msg) }
@@ -155,6 +173,9 @@ fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
   // the outcome as the closure's value: an Err from with's closure would
   // undo close_sent (spec 5.4)
   let outcome = c.wr.with(fn(var w: WriteState) -> Result[(), websocket.WsErr] {
+    if !w.err.is_empty() {
+      return Err(w.err[0])
+    }
     if w.close_sent {
       return Err(protocol_err("close sent"))
     }
@@ -187,9 +208,10 @@ fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
     if op == OP_CLOSE {
       w.close_sent = true
     }
-    let err = c.wire.send(frame)
-    if !err.is_empty() {
-      return Err(net_err(err))
+    if let Some(e) = c.wire.send(frame) {
+      let we = websocket.WsErr.Net(err: e)
+      w.err = [we]
+      return Err(we)
     }
     Ok(())
   })
@@ -220,8 +242,8 @@ fn (c: WsConn) protocol_error(code: Int, msg: Str) -> websocket.WsErr {
 fn (c: WsConn) read_n(var st: ReadState, n: Int) -> Bytes ! websocket.WsErr {
   while st.buf.len() - st.pos < n {
     let ch = c.wire.recv(65536)
-    if !ch.err.is_empty() {
-      return Err(net_err(ch.err))
+    if let Some(e) = ch.ne {
+      return Err(websocket.WsErr.Net(err: e))
     }
     if ch.end {
       return Err(websocket.WsErr.Closed(code: 1006, reason: "unexpected EOF"))
@@ -392,9 +414,19 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
       }
     }
     if op == OP_PONG {
+      for f in c.hooks.with(fn(var h: Hooks) -> List[fn(Bytes) -> ()] { h.pong }) {
+        f(payload)
+      }
       continue
     }
     if op == OP_PING {
+      let hs = c.hooks.with(fn(var h: Hooks) -> List[fn(Bytes) -> ()] { h.ping })
+      if !hs.is_empty() {
+        for f in hs {
+          f(payload)
+        }
+        continue
+      }
       match c.write_control(OP_PONG, payload) {
         Ok(_) => ()
         Err(websocket.WsErr.Protocol("close sent")) => ()
@@ -460,6 +492,9 @@ fn (c: WsConn) read() -> websocket.Message ! websocket.WsErr {
       Ok(m) => Ok(m)
       Err(e) => {
         st.err = [e]
+        // no read runs a hook again: drop them, so a hook that
+        // captured c does not keep it alive (a cycle, decision 0430)
+        c.drop_hooks()
         Err(e)
       }
     }
@@ -486,12 +521,61 @@ fn (c: WsConn) close(code: Int = 1000, reason: Str = "") -> () ! websocket.WsErr
     }
   }
   c.wire.close(0)
+  c.drop_hooks()
   if !res.is_empty() {
     return Err(res[0])
   }
 }
 
+/// Drops on_ping's and on_pong's functions: a hook usually captures its
+/// WsConn, which holds it, so the pair would never be freed.
+fn (c: WsConn) drop_hooks() {
+  c.hooks.with(fn(var h: Hooks) {
+    h.ping = []
+    h.pong = []
+  })
+}
+
 fn (c: WsConn) subprotocol() -> Str { c.proto }
+
+/// Decision 0430, gorilla's SetReadDeadline and SetWriteDeadline: a client's
+/// are its connection's; a server's apply from the wire's next wait (one
+/// set while a read or write waits does not move that wait, unlike Go). A read or write past its deadline fails with
+/// Net(Timeout), and the WsConn stays failed (gorilla: its state is
+/// corrupt after a timeout).
+fn (c: WsConn) on_ping[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx {
+  let g = rt.launder1(f)
+  c.hooks.with(fn(var h: Hooks) { h.ping = [g] })
+}
+
+fn (c: WsConn) on_pong[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx {
+  let g = rt.launder1(f)
+  c.hooks.with(fn(var h: Hooks) { h.pong = [g] })
+}
+
+fn (c: WsConn) pong(data: Bytes = b"") -> () ! websocket.WsErr { c.write_control(OP_PONG, data) }
+
+fn (c: WsConn) set_deadline(clock: Clock, at: Time?) uses clock { c.deadline_on(3, clock, at) }
+fn (c: WsConn) set_read_deadline(clock: Clock, at: Time?) uses clock { c.deadline_on(1, clock, at) }
+fn (c: WsConn) set_write_deadline(clock: Clock, at: Time?) uses clock { c.deadline_on(2, clock, at) }
+
+fn (c: WsConn) deadline_on(which: Int, clock: Clock, at: Time?) uses clock {
+  match c.link {
+    Some(l) => l.set_deadline(which, clock, at)
+    None => {
+      let v = match at {
+        Some(t) => poll.deadline((t - clock.now()).nanos())
+        None => 0
+      }
+      if which != 2 {
+        c.rdl.set(v)
+      }
+      if which != 1 {
+        c.wdl.set(v)
+      }
+    }
+  }
+}
 
 /// Whether a field of vs lists token (gorilla's tokenListContainsValue).
 fn has_token(vs: List[Str], token: Str) -> Bool {
@@ -632,27 +716,44 @@ fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocol
       return
     }
     raw.alive_str(head)
+    let rdl = Atomic[Int].new(0)
+    let wdl = Atomic[Int].new(0)
     let wire = Wire{
       recv: fn(max: Int) -> Chunk {
+        // a deadline that has passed fails at once, as Go's
+        let dl = rdl.get()
+        if dl != 0 && dl <= poll.now() {
+          return Chunk{data: b"", end: false, ne: Some(NetErr.Timeout)}
+        }
         let b = raw.bytes_buf(max)
         // not idle: a stop leaves a handed-over connection to its handler
         // (decision 0429), as the Go backend leaves a hijacked one
-        let r = hconn.recv(h, raw.bytes_addr(b), max, false)
-        if r < 0 {
-          return Chunk{data: b"", end: false, err: "connection closed"}
+        let r = hconn.recv_until(h, raw.bytes_addr(b), max, false, dl)
+        if r == -2 {
+          return Chunk{data: b"", end: false, ne: Some(NetErr.Timeout)}
         }
-        Chunk{data: raw.bytes_len(b, r), end: r == 0, err: ""}
+        if r < 0 {
+          return Chunk{data: b"", end: false, ne: Some(NetErr.Io(msg: "connection closed"))}
+        }
+        Chunk{data: raw.bytes_len(b, r), end: r == 0, ne: None}
       },
-      send: fn(d: Bytes) -> Str {
-        let ok = hconn.send_at(h, raw.bytes_addr(d), d.len())
+      send: fn(d: Bytes) -> NetErr? {
+        let dl = wdl.get()
+        if dl != 0 && dl <= poll.now() {
+          return Some(NetErr.Timeout)
+        }
+        let r = hconn.send_until(h, raw.bytes_addr(d), d.len(), dl)
         raw.alive(d)
-        if ok { "" } else { "write: connection closed" }
+        if r == 0 { None } else if r == -2 { Some(NetErr.Timeout) } else { Some(NetErr.Io(msg: "write: connection closed")) }
       },
       close: fn(_x: Int) { hconn.shut_wr(h) },
     }
     // what the server read past the request's head is the first input
     let rest = http1.take_rest(h)
-    g(WsConn{wire: wire, server: true, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: rest, pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false})})
+    let wc = WsConn{wire: wire, link: None, rdl: rdl, wdl: wdl, server: true, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: rest, pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
+    g(wc)
+    // the connection is closed now: no hook runs again
+    wc.drop_hooks()
   }
   // the hand-off (std/native/http.xo respond; std-internal, decision 0319)
   nhttp.handoff_response(hand)
@@ -675,6 +776,23 @@ fn (l: Link) write(data: Bytes) -> () ! NetErr uses net.dial {
   match l {
     Plain(c) => c.write(data)
     Tls(t) => t.write(data)
+  }
+}
+
+/// The deadlines of a client's WsConn are its connection's (decision
+/// 0430): which is 1 read, 2 write, 3 both.
+fn (l: Link) set_deadline(which: Int, clock: Clock, at: Time?) uses clock {
+  match l {
+    Plain(c) => match which {
+      1 => c.set_read_deadline(clock, at)
+      2 => c.set_write_deadline(clock, at)
+      _ => c.set_deadline(clock, at)
+    }
+    Tls(t) => match which {
+      1 => t.set_read_deadline(clock, at)
+      2 => t.set_write_deadline(clock, at)
+      _ => t.set_deadline(clock, at)
+    }
   }
 }
 
@@ -802,18 +920,18 @@ fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str] = 
   let wire = Wire{
     recv: rt.launder1(fn(max: Int) -> Chunk {
       match link.read(max) {
-        Ok(Some(b)) => Chunk{data: b, end: false, err: ""}
-        Ok(None) => Chunk{data: b"", end: true, err: ""}
-        Err(e) => Chunk{data: b"", end: false, err: "${e}"}
+        Ok(Some(b)) => Chunk{data: b, end: false, ne: None}
+        Ok(None) => Chunk{data: b"", end: true, ne: None}
+        Err(e) => Chunk{data: b"", end: false, ne: Some(e)}
       }
     }),
-    send: rt.launder1(fn(d: Bytes) -> Str {
+    send: rt.launder1(fn(d: Bytes) -> NetErr? {
       match link.write(d) {
-        Ok(_) => ""
-        Err(e) => "${e}"
+        Ok(_) => None
+        Err(e) => Some(e)
       }
     }),
     close: fn(_x: Int) { link.close() },
   }
-  WsConn{wire: wire, server: false, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: all[head_end + 4..], pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false})}
+  WsConn{wire: wire, link: Some(link), rdl: Atomic[Int].new(0), wdl: Atomic[Int].new(0), server: false, max: max_message, proto: proto, rd: Mutex[ReadState].new(ReadState{buf: all[head_end + 4..], pos: 0, err: []}), wr: Mutex[WriteState].new(WriteState{close_sent: false, err: []}), hooks: Mutex[Hooks].new(Hooks{ping: [], pong: []})}
 }

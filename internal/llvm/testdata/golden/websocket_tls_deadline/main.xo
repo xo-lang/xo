@@ -1,0 +1,96 @@
+// WsConn deadlines over TLS (decision 0430): a peer that does not read
+// fills the buffers until the write deadline passes, on the server (the
+// handed over TLS connection) and on a wss:// client (its TlsConn); the
+// error sticks; a read past its deadline fails the same way. Test
+// certificate as websocket_tls's. The Go backend and the native one must
+// agree.
+use std/http
+use std/websocket
+
+fn flood(c: websocket.WsConn) -> Str {
+  let chunk = Bytes.zeroed(65536)
+  var sent = 0
+  while {
+    match c.write(websocket.Message{kind: websocket.Kind.Binary, data: chunk}) {
+      Ok(_) => sent += 1
+      Err(e) => return "${e} after more than one message: ${sent > 1}"
+    }
+  }
+  "unreachable"
+}
+
+fn main(os: Os) {
+  let clock = os.clock
+  let release: Chan[()] = Chan[()].new(cap: 1)
+  let saw: Chan[Str] = Chan[Str].new(cap: 4)
+  var r = http.router()
+  r.handle("GET /flood", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      c.set_write_deadline(clock, Some(clock.now() + 200ms))
+      saw.send("server flood: ${flood(c)}")
+      match c.write_text("again") {
+        Ok(_) => saw.send("server write again: ok")
+        Err(e) => saw.send("server write again: ${e}")
+      }
+      let _ = release.recv()
+    })
+  })
+  r.handle("GET /sink", fn(req) {
+    // reads nothing until released
+    websocket.upgrade(req, fn(_c) { let _ = release.recv() })
+  })
+  let cert = match http.tls_cert(good_cert(), good_key()) {
+    Ok(c) => c
+    Err(e) => {
+      os.stdio.println("cert: ${e}")
+      return
+    }
+  }
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, r).with_tls([cert])
+      let port = srv.addr().split(":")[1]
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        match websocket.dial(os.net, "wss://localhost:${port}/flood", roots: ca_pem()) {
+          Ok(c) => {
+            os.stdio.println(saw.recv() ?? "?")
+            os.stdio.println(saw.recv() ?? "?")
+            release.send(())
+            c.close().ignore_err("test")
+          }
+          Err(e) => os.stdio.println("dial failed: ${e}")
+        }
+        match websocket.dial(os.net, "wss://localhost:${port}/sink", roots: ca_pem()) {
+          Ok(c) => {
+            c.set_read_deadline(clock, Some(clock.now() + 50ms))
+            match c.read() {
+              Ok(_) => os.stdio.println("client read: a message")
+              Err(e) => os.stdio.println("client read: ${e}")
+            }
+            c.set_write_deadline(clock, Some(clock.now() + 200ms))
+            os.stdio.println("client flood: ${flood(c)}")
+            c.set_write_deadline(clock, None)
+            match c.write_text("again") {
+              Ok(_) => os.stdio.println("client write again: ok")
+              Err(e) => os.stdio.println("client write again: ${e}")
+            }
+            release.send(())
+          }
+          Err(e) => os.stdio.println("dial failed: ${e}")
+        }
+      }
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+  os.stdio.println("done")
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

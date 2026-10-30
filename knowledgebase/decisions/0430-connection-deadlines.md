@@ -50,9 +50,15 @@ Two layers of the one model:
 3. **WebSocket control frame handlers** (gorilla's SetPongHandler and SetPingHandler):
 
    ```
-   fn (c: WsConn) on_pong(f: fn(Bytes) -> ())    // runs inside read() for each pong; default: nothing
-   fn (c: WsConn) on_ping(f: fn(Bytes) -> ())    // replaces the default answer (a pong with the same data)
+   fn (c: WsConn) on_pong[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx   // runs inside read() for each pong; default: nothing
+   fn (c: WsConn) on_ping[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx   // replaces the default answer (a pong with the same data)
+   fn (c: WsConn) pong(data: Bytes = b"") -> () ! WsErr                       // the answer an on_ping sends
    ```
+
+   (Amended at implementation, stage C: the hooks take an effect variable,
+   since the keepalive below calls set_read_deadline, which uses clock;
+   registering counts as performing them, as Router.handle. `pong` was
+   added so an on_ping can still answer.)
 
    ```
    c.set_read_deadline(clock, Some(clock.now() + 60s))
@@ -102,6 +108,34 @@ Implementation points (Xo Lang 3, 2026-10-30):
      the user's is `Timeout` to the handler.
    - The user's words live on the connection, and the server clears them
      when a request ends (net/http resets them per request).
+
+Implementation notes (stage C, xo-lang-5, 2026-10-30):
+
+- task.deadline: natively a context word C_TASK_DL (the timers' ns, 0
+  none). with_timeout's scope saves it (S_OLD_DL), lowers it to
+  min(old, now + d), and restores it at its close in every mode; spawn
+  copies the spawner's into T_DEADLINE and run_claimed into the new
+  task's context, so a task keeps the deadline in force where it was
+  spawned, also after that body returned. T_SIZE 256 to 264 and S_SIZE
+  464 to 472 cross one size class each: spawn-heavy --ab on linux/arm64
+  decides, else the deadline shares T_RESULT until the task runs. Wasm:
+  rt3.xo's $tdl global, saved per task. Go backend: Task.dl {clock, at}.
+- WsConn: a client's deadlines are its Conn's or TlsConn's (live, as
+  Go's). A server's read and write deadlines are words the hand-over
+  wire passes to hconn.recv_until and hconn.send_until (written by
+  xo-lang-5, reviewed by Xo Lang 3) at each wait, so one set while a
+  wait is parked applies from the next wait. Waking the parked wait
+  (pd_wake) is left until a program needs it: on_pong runs inside
+  read(), so a keepalive's new deadline applies at the next wait
+  anyway. A timeout, and any write error, sticks for that direction, as
+  gorilla's: a frame may have been read or sent in part.
+- TlsConn: a write that fails (a timeout included) fails every later
+  write, as Go's tls.Conn (halfConn.setErrorLocked); reads stay
+  temporary. Point 3's "usable after a new deadline" holds for reads
+  only.
+- on_ping and on_pong hooks usually capture their WsConn, which holds
+  them: they are dropped when a read fails for good, at close, and when
+  upgrade's f returns, or the pair would never be freed.
 
 ## Options for the owner
 

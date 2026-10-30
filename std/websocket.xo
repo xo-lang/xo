@@ -52,6 +52,22 @@ fn (c: WsConn) ping(data: Bytes = b"") -> () ! WsErr
 fn (c: WsConn) close(code: Int = 1000, reason: Str = "") -> () ! WsErr
 /// The subprotocol the server chose ("" for none).
 fn (c: WsConn) subprotocol() -> Str
+/// Deadlines (decision 0430), gorilla's SetReadDeadline and
+/// SetWriteDeadline: a read or write past its deadline fails with
+/// Net(Timeout), and the connection stays failed. None clears it.
+fn (c: WsConn) set_deadline(clock: Clock, t: Time?) uses clock
+fn (c: WsConn) set_read_deadline(clock: Clock, t: Time?) uses clock
+fn (c: WsConn) set_write_deadline(clock: Clock, t: Time?) uses clock
+/// gorilla's SetPingHandler (decision 0430): f runs for each ping that
+/// read() reads, in place of the automatic pong (send one with `pong`).
+/// A later call replaces f. f runs inside read(), so it must not call
+/// read().
+fn (c: WsConn) on_ping[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx
+/// gorilla's SetPongHandler (decision 0430): f runs for each pong that
+/// read() reads (a keepalive moves the read deadline here).
+fn (c: WsConn) on_pong[fx: Effects](f: fn(Bytes) -> () uses fx) uses fx
+/// A pong control frame, as gorilla's WriteControl(PongMessage).
+fn (c: WsConn) pong(data: Bytes = b"") -> () ! WsErr
 
 /// The response that upgrades req to a WebSocket and runs f with it (the
 /// connection closes when f returns), as gorilla's Upgrader: GET,

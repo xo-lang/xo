@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `WsConn` has deadlines (`set_deadline`, `set_read_deadline`,
+  `set_write_deadline`), `on_ping`, `on_pong` and `pong` (decision 0430,
+  gorilla's); a write error sticks, as in gorilla.
+
 - `UInt64.from_bits(x)` and `u.to_bits()` reinterpret 64 bits between Int
   and UInt64.
 

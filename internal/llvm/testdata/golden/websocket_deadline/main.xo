@@ -1,0 +1,164 @@
+// WsConn deadlines (decision 0430), as gorilla's SetReadDeadline and
+// SetWriteDeadline: a server read past its deadline fails with
+// Net(Timeout) and the WsConn can still write; a client read past its
+// deadline fails the same way and the error sticks; a write past a
+// deadline that has already passed fails at once, on both sides. A
+// keepalive: the client's on_pong moves its read deadline, so a message
+// that comes after several deadline windows still arrives, and the
+// server's on_ping counts the pings and answers each with pong. The Go
+// backend and the native one must agree.
+use std/http
+use std/websocket
+
+fn main(os: Os) {
+  let clock = os.clock
+  let release: Chan[()] = Chan[()].new(cap: 1)
+  let saw: Chan[Str] = Chan[Str].new(cap: 4)
+  var r = http.router()
+  r.handle("GET /quiet", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      c.set_read_deadline(clock, Some(clock.now() + 50ms))
+      match c.read() {
+        Ok(_) => saw.send("server read: a message")
+        Err(e) => saw.send("server read: ${e}")
+      }
+      c.set_read_deadline(clock, None)
+      match c.write_text("after the timeout") {
+        Ok(_) => saw.send("server write: ok")
+        Err(e) => saw.send("server write: ${e}")
+      }
+      c.set_write_deadline(clock, Some(clock.now() - 1s))
+      match c.write_text("late") {
+        Ok(_) => saw.send("server late write: ok")
+        Err(e) => saw.send("server late write: ${e}")
+      }
+      // the connection stays open until the client is done
+      let _ = release.recv()
+    })
+  })
+  // a peer that does not read: writes fill the socket buffers until the
+  // write deadline passes; the error sticks
+  r.handle("GET /flood", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      c.set_write_deadline(clock, Some(clock.now() + 200ms))
+      let chunk = Bytes.zeroed(65536)
+      var sent = 0
+      while {
+        match c.write(websocket.Message{kind: websocket.Kind.Binary, data: chunk}) {
+          Ok(_) => sent += 1
+          Err(e) => {
+            saw.send("server flood: ${e} after more than one message: ${sent > 1}")
+            break
+          }
+        }
+      }
+      c.set_write_deadline(clock, None)
+      match c.write_text("again") {
+        Ok(_) => saw.send("server write again: ok")
+        Err(e) => saw.send("server write again: ${e}")
+      }
+      let _ = release.recv()
+    })
+  })
+  r.handle("GET /keep", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      let pings = Atomic[Int].new(0)
+      c.on_ping(fn(data) {
+        pings.add(1)
+        c.pong(data).ignore_err("test")
+      })
+      scope ks {
+        ks.spawn(fn() {
+          clock.sleep(250ms)
+          c.write_text("late hello").ignore_err("test")
+        })
+        while c.read() is Ok(_) {}
+      }
+      saw.send("server pings: ${pings.get()}")
+    })
+  })
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, r)
+      let addr = srv.addr()
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        match websocket.dial(os.net, "ws://${addr}/quiet") {
+          Ok(c) => {
+            os.stdio.println(saw.recv() ?? "?")
+            os.stdio.println(saw.recv() ?? "?")
+            os.stdio.println(saw.recv() ?? "?")
+            c.set_read_deadline(clock, Some(clock.now() + 5s))
+            match c.read() {
+              Ok(m) => os.stdio.println("client read: ${m.data.to_str() ?? "?"}")
+              Err(e) => os.stdio.println("client read: ${e}")
+            }
+            c.set_read_deadline(clock, Some(clock.now() + 50ms))
+            match c.read() {
+              Ok(_) => os.stdio.println("client read: a message")
+              Err(e) => os.stdio.println("client read: ${e}")
+            }
+            c.set_read_deadline(clock, None)
+            match c.read() {
+              Ok(_) => os.stdio.println("client read again: a message")
+              Err(e) => os.stdio.println("client read again: ${e}")
+            }
+            c.set_write_deadline(clock, Some(clock.now() - 1s))
+            match c.write_text("late") {
+              Ok(_) => os.stdio.println("client write: ok")
+              Err(e) => os.stdio.println("client write: ${e}")
+            }
+            release.send(())
+          }
+          Err(e) => os.stdio.println("dial failed: ${e}")
+        }
+        match websocket.dial(os.net, "ws://${addr}/flood") {
+          Ok(c) => {
+            os.stdio.println(saw.recv() ?? "?")
+            os.stdio.println(saw.recv() ?? "?")
+            release.send(())
+            c.close().ignore_err("test")
+          }
+          Err(e) => os.stdio.println("dial failed: ${e}")
+        }
+        match websocket.dial(os.net, "ws://${addr}/keep") {
+          Ok(c) => {
+            let pongs = Atomic[Int].new(0)
+            c.on_pong(fn(_data) {
+              pongs.add(1)
+              c.set_read_deadline(clock, Some(clock.now() + 150ms))
+            })
+            c.set_read_deadline(clock, Some(clock.now() + 150ms))
+            scope ps {
+              ps.spawn(fn() {
+                for _ in 0..10 {
+                  clock.sleep(40ms)
+                  c.ping("k".bytes()).ignore_err("test")
+                }
+              })
+              match c.read() {
+                Ok(m) => os.stdio.println("keepalive read: ${m.data.to_str() ?? "?"}")
+                Err(e) => os.stdio.println("keepalive read: ${e}")
+              }
+              match c.read() {
+                Ok(_) => os.stdio.println("keepalive read: a message")
+                Err(e) => os.stdio.println("keepalive read after the pings: ${e}")
+              }
+            }
+            os.stdio.println("pongs at least 5: ${pongs.get() >= 5}")
+            c.close().ignore_err("test")
+            os.stdio.println(saw.recv() ?? "?")
+          }
+          Err(e) => os.stdio.println("dial failed: ${e}")
+        }
+      }
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+  os.stdio.println("done")
+}
