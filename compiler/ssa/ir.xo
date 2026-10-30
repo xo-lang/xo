@@ -343,6 +343,16 @@ pub struct Func {
   pub reader: Bool = false
 }
 
+/// The function without its body: its name, signature facts and flags,
+/// what the emitter reads of a function other than the one it generates
+/// (rccache.xo lazy_shell has the same shape before a body is decoded).
+/// A split generation's parts own their functions' bodies and drop them
+/// as each part is emitted (arm64/parallel.xo generate_cached); the
+/// module keeps the shells.
+pub fn (f: Func) shell() -> Func {
+  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader}
+}
+
 /// A lowered program (ssa.Module).
 pub struct Module {
   /// write_func also prints each function's source variables and their

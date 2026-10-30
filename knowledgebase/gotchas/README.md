@@ -959,3 +959,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [heap-profile-sample-cap.md](heap-profile-sample-cap.md): Observed 2026-10-29: the heap sampler keeps 65536 samples, so a self build at the default rate profiles only the front end; XO_PROF_HEAP_RATE=16777216 and read the "samples lost" line.
 - [bench-ab-parallel-build-loaded.md](bench-ab-parallel-build-loaded.md): Observed 2026-10-29: `xo bench --ab` of a parallel build (a self build) discards every round as loaded; pass --keep-loaded.
 - [heapos-nfree-off-main-thread.md](heapos-nfree-off-main-thread.md): Observed 2026-10-29: heapos.nfree from a worker thread segfaults; read per-class free counts on the main thread only.
+- [module-shells-need-facts.md](module-shells-need-facts.md): a function replaced by a shell in the module needs its body facts recorded, else param_types and the other facts readers silently return nothing (decision 0424).

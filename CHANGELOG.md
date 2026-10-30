@@ -5,6 +5,11 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- The native back end's parts own their functions' SSA bodies and drop
+  them as each part is emitted; the module keeps shells with body facts
+  (decision 0424). The self build's heap past emit 9452 to 8180 MB and
+  its peak 10764 to 9837 MB (footprint 7667 to 7287 MB); the output is
+  the same.
 - The back-end cache's pack segments hold one LZ4 block per entry and
   are written and read one entry at a time (decision 0418): a build's
   new entries leave the heap as each part finishes instead of at the

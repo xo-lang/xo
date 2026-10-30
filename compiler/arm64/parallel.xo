@@ -307,15 +307,26 @@ fn part_names(m: ssa.Module, parts: List[List[Int]]) -> List[Str] {
 /// tasks: the assembly generate gives for a module of one part, else
 /// the parts' assembly in order, then the entry, the exports, and the
 /// program wide code once.
-pub fn generate_parallel(m: ssa.Module, os: Str, jobs: Int) -> Program uses fs.write {
+pub fn generate_parallel(m0: ssa.Module, os: Str, jobs: Int) -> Program uses fs.write {
+  var m = m0
   generate_cached(m, os, jobs, FnCache{})
+}
+
+/// The bodies a part's cell holds, leaving it empty: the taker owns them.
+fn take_bodies(c: Mutex[Map[Int, ssa.Func]]) -> Map[Int, ssa.Func] {
+  c.with(fn(var b: Map[Int, ssa.Func]) -> Map[Int, ssa.Func] {
+    let out = b
+    b = {}
+    out
+  })
 }
 
 /// generate_parallel with the per-function cache fc (fcache.xo): a
 /// function whose key fc holds an entry for is placed from it instead of
 /// generated (with fc.verify, generated and compared with it).
-pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Program uses fs.write {
-  var m = m0
+pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Program uses fs.write {
+  // m is `var` so the caller's module is the one whose functions' bodies
+  // the parts take (below): a copy would keep every body to the end
   var plist = part_lists(m)
   let np = plist.len()
   // a separately compiled program (decision 0388) takes the parts' path
@@ -367,11 +378,36 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
       plist[p] = plist[p].filter(fn(fi: Int) -> Bool { m.funcs[fi].file.is_empty() || ssa.std_func(m.funcs[fi].name, m.funcs[fi].file) || m.funcs[fi].name.contains("[") })
     }
   }
+  // each part owns its functions' bodies, taken from the module here
+  // (which keeps their shells, ssa.Func.shell: the other parts read a
+  // function's name, signature and flags, never its body) and dropped
+  // when the part is done, so the SSA of the parts emitted is not held
+  // to the end of the generation (2.3 to 3.5 GB live through emit on
+  // xo's self build, 2026-10-29); a Mutex hands a part's bodies to the
+  // one worker that takes it. The generator made above shares the
+  // module as it was: it takes the shells too, so no copy keeps the
+  // bodies.
+  var cells: List[Mutex[Map[Int, ssa.Func]]] = []
+  for p in 0..np {
+    var bs: Map[Int, ssa.Func] = {}
+    for fi in plist[p] {
+      // the module's readers of a function's facts (param_types,
+      // block_names, fault_facts, ...) fall back to its body: a shell
+      // needs its facts recorded first (as a lazy function's are)
+      if !m.facts.contains(fi) {
+        m.facts[fi] = ssa.body_facts(m.funcs[fi], m.types)
+      }
+      bs[fi] = m.funcs[fi]
+      m.funcs[fi] = m.funcs[fi].shell()
+    }
+    cells.push(Mutex[Map[Int, ssa.Func]].new(bs))
+  }
+  g.m = m
   var parts: List[Part] = []
   let w = jobs.min(np)
   if w <= 1 {
     for p in 0..np {
-      parts.push(gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p))
+      parts.push(gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p])))
     }
   } else {
     // each task takes the next part until none is left, the largest
@@ -399,7 +435,7 @@ pub fn generate_cached(m0: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Progr
               break
             }
             let p = order[k].0
-            mine.push((p, gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p)))
+            mine.push((p, gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p]))))
           }
           mine
         }))
@@ -517,8 +553,9 @@ fn part_key(fc: FnCache, p: Int) -> Str {
 /// namespace ns and its functions numbered from 0, as a file of its own.
 /// With pkey (partcache.xo), the part is read from its entry when the
 /// cache holds one (not with verify), else generated and encoded for it.
-fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: Str, fc: FnCache, pkey: Str, pi: Int) -> Part {
+fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: Str, fc: FnCache, pkey: Str, pi: Int, bodies: Map[Int, ssa.Func]) -> Part {
   var g = new_gen(m, os)
+  g.bodies = bodies
   let pentry = if pkey.is_empty() { None } else { fc.part_entries.get(pkey) }
   if !fc.verify {
     if let Some(e) = pentry {

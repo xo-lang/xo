@@ -276,6 +276,10 @@ struct G {
   // ---- the function being generated (fstate)
   fi: Int = -1
   f: ssa.Func = ssa.Func{name: ""}
+  /// The bodies of the part's functions when the module holds their
+  /// shells (parallel.xo generate_cached: each part owns its bodies and
+  /// drops them when it is done); begin_func reads a body here first.
+  bodies: Map[Int, ssa.Func] = {}
   /// the SSA and MIR of functions, by name, for the driver to write
   /// (dump_ir: a failing function, or $XO_DUMP_FN's)
   dumps: List[(Str, Str)] = []
@@ -482,7 +486,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.tl_v = -1
   g.tl_blk = -1
   g.fi = fi
-  g.f = g.m.funcs[fi]
+  g.f = g.bodies.get(fi) ?? g.m.funcs[fi]
   g.ub = {}
   g.compute_ub()
   let nv = g.f.values.len()
