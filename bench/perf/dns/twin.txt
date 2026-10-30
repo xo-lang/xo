@@ -1,0 +1,3 @@
+# twincheck: dns: two workloads (none is the server's setup alone); Go is net.Resolver with PreferGo dialing the program's own UDP server.
+- - none
+- - mx

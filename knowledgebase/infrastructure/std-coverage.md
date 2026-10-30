@@ -157,7 +157,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
-| net | prelude Net (TCP, Unix sockets), DNS in std/native/llrt/dns.xo | partial | listen, dial, attenuation. Missing: UDP (ListenPacket), a name lookup API (LookupHost, SRV, TXT, MX), a dial timeout, JoinHostPort and SplitHostPort, network interfaces, IP and CIDR types outside std/netip, deadlines on a Conn. |
+| net | prelude Net (TCP, Unix sockets, lookup_host, dial_timeout), std/udp, std/dns (MX, TXT, SRV, PTR), DNS client in std/native/llrt/dns.xo | partial | listen, dial, attenuation, UDP, record lookups. Missing: LookupCNAME and LookupNS, JoinHostPort and SplitHostPort, network interfaces, IP and CIDR types outside std/netip, deadlines on a Conn; native DNS record lookups on Windows. |
 | net/netip | std/netip | done | Addr, Prefix, ParseAddr, ParsePrefix, Contains, Masked, the Is predicates (decision 0287). Missing: AddrPort, Prefix.Overlaps, Next and Prev. |
 | net/url | std/url, std/http parse_url and Url | partial | Escaping (QueryEscape, PathEscape and their inverses) and Values (ParseQuery, Encode) are done (decision 0279). Request.form and query_all are in std/http. Missing: relative references, userinfo, a full URL type outside std/http. |
 | net/http (server) | std/http | partial | Router, middleware, mount, JSON, streaming responses, TLS, HTTP/2, gzip_responses (decision 0305), Request.form and query_all (decision 0279), repeated header fields and cookies (decision 0288), multipart forms (decision 0282), streamed request bodies (`handle_stream`, BodyReader, decision 0310), `serve_content` (ServeContent: Range, conditional requests), client_ip behind proxies (2026-10-29). Missing: FileServer over an Fs directory, MaxBytesReader per route, read and idle timeouts per server. |
@@ -271,7 +271,7 @@ many services hit the gap, blockers (no workaround) first:
 | 3 | json.Value as a Json field or argument (RawMessage, `any`); indented output | scheduler, CLI | blocker | encoding/json RawMessage, MarshalIndent | S |
 | 4 | Closed 2026-10-29 (std/crypto aead_key, hkdf). Public AEAD (AES-GCM, ChaCha20-Poly1305) and HKDF, for encrypted cookies and data at rest (both exist inside TLS) | web app | blocker | crypto/cipher, crypto/aes, crypto/hkdf, x/crypto/chacha20poly1305 | S |
 | 5 | Closed 2026-10-29 (std/html, template.parse_html, decision 0408). HTML escaping and contextual auto escaping templates, a trusted HTML type, template functions | web app | blocker (XSS by default) | html, html/template, template.FuncMap | L |
-| 6 | UDP sockets and a DNS lookup API (host, SRV), a dial timeout | exporter | blocker | net.ListenPacket, net.LookupSRV, net.DialTimeout | M |
+| 6 | Closed 2026-10-29 (std/udp, Net.lookup_host, Net.dial_timeout, decision 0406; std/dns lookup_mx, lookup_txt, lookup_srv, lookup_addr, decision 0417). UDP sockets and a DNS lookup API (host, SRV), a dial timeout | exporter | blocker | net.ListenPacket, net.LookupSRV, net.DialTimeout | M |
 | 7 | X.509 certificate parsing and a TLS connection's peer certificates | exporter | blocker | crypto/x509 ParseCertificate, tls.ConnectionState | M (the parser exists inside TLS) |
 | 8 | Cron schedules | scheduler | blocker | robfig/cron (outside Go's std) | M |
 | 9 | Host facts: Hostname, Getpid, rusage, statfs, network interfaces | exporter, scheduler | blocker (statfs), awkward | os, syscall.Statfs, net.Interfaces | S each |

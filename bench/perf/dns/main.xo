@@ -1,0 +1,88 @@
+// dns: std/dns against Go's net.Resolver (twin.go.txt), both asking a
+// DNS server in the program on 127.0.0.1 (a UDP task answering three MX
+// records for mx.test.). mx makes 2,000 lookup_mx calls, one UDP round
+// trip each, and parses and orders the answers; `none` is the server's
+// setup alone. Usage: `<program> none|mx`. Prints `<workload> <sum>`;
+// the twin prints the same.
+use std/dns
+use std/udp
+
+fn put16(var b: BytesBuilder, v: Int) {
+  b.write_byte(UInt8((v >> 8) & 255))
+  b.write_byte(UInt8(v & 255))
+}
+
+fn mx(pref: Int, host: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  put16(b, 0xc00c)
+  put16(b, 15)
+  put16(b, 1)
+  put16(b, 0)
+  put16(b, 60)
+  var d = BytesBuilder.new()
+  put16(d, pref)
+  for l in host.trim_suffix(".").split(".") {
+    d.write_byte(UInt8(l.len()))
+    d.write_str(l)
+  }
+  d.write_byte(UInt8(0))
+  let data = d.freeze()
+  put16(b, data.len())
+  b.write(data)
+  b.freeze()
+}
+
+/// The answer to query q: its ID and question, then three MX records.
+fn respond(q: Bytes, answers: List[Bytes]) -> Bytes? {
+  var i = 12
+  while i < q.len() && q[i] != 0 {
+    i += 1 + Int(q[i])
+  }
+  if q.len() < 17 || i + 5 > q.len() {
+    return None
+  }
+  var b = BytesBuilder.new()
+  b.write(q[0..2])
+  b.write_byte(UInt8(0x81))
+  b.write_byte(UInt8(0x80))
+  put16(b, 1)
+  put16(b, answers.len())
+  put16(b, 0)
+  put16(b, 0)
+  b.write(q[12..i + 5])
+  for a in answers {
+    b.write(a)
+  }
+  Some(b.freeze())
+}
+
+fn main(os: Os) uses stdio, env, net {
+  let w = os.env.args().get(0) ?? "none"
+  let srv = udp.listen(os.net, "127.0.0.1:0").or_fault("listen")
+  let addr = srv.local_addr()
+  let answers = [mx(30, "c.mail.test."), mx(10, "a.mail.test."), mx(20, "b.mail.test.")]
+  var sum = 0
+  scope s {
+    s.spawn_background(fn() {
+      while {
+        match srv.read_from() {
+          Ok((q, from)) => {
+            if let Some(r) = respond(q, answers) {
+              srv.write_to(r, from).ignore_err("the client may be gone")
+            }
+          }
+          Err(_) => return
+        }
+      }
+    })
+    if w == "mx" {
+      let r = dns.Resolver{server: addr}
+      for _ in 0..2000 {
+        let xs = r.lookup_mx(os.net, "mx.test.").or_fault("lookup_mx")
+        sum += xs[0].pref + xs.len() + xs[2].host.len()
+      }
+    }
+    srv.close()
+  }
+  os.stdio.println("${w} ${sum}")
+}

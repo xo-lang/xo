@@ -1,0 +1,49 @@
+// std/dns (spec/std.md 46, decision 0417). Declaration file; encoding
+// rules are listed at the top of std/prelude.xo. Go's DNS record
+// lookups (net.LookupMX, LookupTXT, LookupSRV, LookupAddr) over a Net:
+// `uses net.dial`, as Net.lookup_host, and an attenuated Net refuses a
+// name it does not admit (`Denied`).
+
+/// A mail exchanger (Go's net.MX): its host, rooted ("mx1.example.com."),
+/// and its preference (lower first).
+struct Mx {
+  host: Str
+  pref: Int
+}
+
+/// A service location (Go's net.SRV): the target host (rooted), its port,
+/// priority (lower first) and weight (a share within one priority).
+struct Srv {
+  target: Str
+  port: Int
+  priority: Int
+  weight: Int
+}
+
+/// Where lookups go: `server` "" asks the system's servers (resolv.conf
+/// on Linux and macOS), else only that server, "host:port" with a numeric
+/// host ("127.0.0.1:5353"), as Go's Resolver with its own Dial.
+struct Resolver {
+  server: Str = ""
+}
+
+/// The MX records of name, by preference (equal ones shuffled, as Go's).
+/// Records whose host is not a domain name are left out; Err when every
+/// record is (Go returns both).
+fn lookup_mx(n: Net, name: Str) -> List[Mx] ! NetErr uses net.dial
+/// The TXT records of name, each record's strings joined (Go's
+/// LookupTXT); a record that is not UTF-8 is left out, Err when all are.
+fn lookup_txt(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial
+/// The SRV records of `_service._proto.name` (name alone when service and
+/// proto are both ""), by priority, shuffled by weight within one (RFC
+/// 2782, Go's). Records with a target that is not a domain name are left
+/// out; Err when every record is.
+fn lookup_srv(n: Net, service: Str, proto: Str, name: Str) -> List[Srv] ! NetErr uses net.dial
+/// The names of the address ip (PTR records of its in-addr.arpa or
+/// ip6.arpa name), rooted; /etc/hosts first, as Go's LookupAddr.
+fn lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial
+
+fn (r: Resolver) lookup_mx(n: Net, name: Str) -> List[Mx] ! NetErr uses net.dial
+fn (r: Resolver) lookup_txt(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial
+fn (r: Resolver) lookup_srv(n: Net, service: Str, proto: Str, name: Str) -> List[Srv] ! NetErr uses net.dial
+fn (r: Resolver) lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial

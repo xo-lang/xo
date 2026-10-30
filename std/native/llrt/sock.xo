@@ -443,9 +443,15 @@ pub fn set_int(fd: Int, level: Int, opt: Int, v: Int) -> Int {
 pub fn sockaddr(ip: Bytes, port: Int, zone: Int) -> Bytes {
   let n = if ip.len() == 4 { 16 } else { 28 }
   var b = BytesBuilder.with_capacity(n)
-  let fam = if ip.len() == 4 { AF_INET } else { AF_INET6 }
-  b.write_byte(UInt8(fam & 255))
-  b.write_byte(UInt8(fam >> 8))
+  let fam = if ip.len() == 4 { AF_INET } else { af_inet6() }
+  if darwin() {
+    // sin_len, then a one byte family
+    b.write_byte(UInt8(n))
+    b.write_byte(UInt8(fam))
+  } else {
+    b.write_byte(UInt8(fam & 255))
+    b.write_byte(UInt8(fam >> 8))
+  }
   b.write_byte(UInt8((port >> 8) & 255))
   b.write_byte(UInt8(port & 255))
   if ip.len() == 4 {
@@ -468,10 +474,14 @@ pub fn sockaddr(ip: Bytes, port: Int, zone: Int) -> Bytes {
 /// The address bytes of a sockaddr (4 for AF_INET, 16 for AF_INET6), or
 /// empty for another family.
 pub fn sockaddr_ip(sa: Bytes) -> Bytes {
-  if sa.len() >= 8 && Int(sa[0]) + 256 * Int(sa[1]) == AF_INET {
+  if sa.len() < 2 {
+    return b""
+  }
+  let fam = if darwin() { Int(sa[1]) } else { Int(sa[0]) + 256 * Int(sa[1]) }
+  if sa.len() >= 8 && fam == AF_INET {
     return sa[4..8]
   }
-  if sa.len() >= 24 && Int(sa[0]) + 256 * Int(sa[1]) == AF_INET6 {
+  if sa.len() >= 24 && fam == af_inet6() {
     return sa[8..24]
   }
   b""

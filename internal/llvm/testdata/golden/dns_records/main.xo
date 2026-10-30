@@ -1,0 +1,235 @@
+// std/dns (decision 0417) against a DNS server in this program: a UDP
+// server task on 127.0.0.1:0 and a TCP one on the same port answer from a
+// table, and dns.Resolver{server} sends every query there. MX sorted by
+// preference, TXT strings joined, SRV by priority, PTR for IPv4 and IPv6,
+// an MX with an invalid host left out (Ok) and one with only invalid hosts
+// (Err), a truncated UDP answer retried over TCP, NXDOMAIN, SERVFAIL, an
+// address that does not parse, and Net.only's Denied. Errors are printed
+// without their " on SERVER" part (Go names resolv.conf's server there).
+use std/dns
+use std/udp
+
+fn put16(var b: BytesBuilder, v: Int) {
+  b.write_byte(UInt8((v >> 8) & 255))
+  b.write_byte(UInt8(v & 255))
+}
+
+fn wire(name: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  for l in name.trim_suffix(".").split(".") {
+    b.write_byte(UInt8(l.len()))
+    b.write_str(l)
+  }
+  b.write_byte(UInt8(0))
+  b.freeze()
+}
+
+/// An answer record for the question's name (a pointer to offset 12).
+fn rr(ty: Int, data: Bytes) -> Bytes {
+  var b = BytesBuilder.new()
+  put16(b, 0xc00c)
+  put16(b, ty)
+  put16(b, 1)
+  put16(b, 0)
+  put16(b, 60)
+  put16(b, data.len())
+  b.write(data)
+  b.freeze()
+}
+
+fn mx(pref: Int, host: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  put16(b, pref)
+  b.write(wire(host))
+  rr(15, b.freeze())
+}
+
+fn txt(parts: List[Str]) -> Bytes {
+  var b = BytesBuilder.new()
+  for p in parts {
+    b.write_byte(UInt8(p.len()))
+    b.write_str(p)
+  }
+  rr(16, b.freeze())
+}
+
+fn srv(priority: Int, weight: Int, port: Int, target: Str) -> Bytes {
+  var b = BytesBuilder.new()
+  put16(b, priority)
+  put16(b, weight)
+  put16(b, port)
+  b.write(wire(target))
+  rr(33, b.freeze())
+}
+
+fn ptr(host: Str) -> Bytes { rr(12, wire(host)) }
+
+/// The rcode and answers for a question; tcp is whether it came over TCP
+/// (rcode -1: truncated, retry over TCP).
+fn table(name: Str, ty: Int, tcp: Bool) -> (Int, List[Bytes]) {
+  match (name, ty) {
+    ("mx.test.", 15) => (0, [mx(20, "b.mail.test."), mx(10, "a.mail.test.")])
+    ("badmx.test.", 15) => (0, [mx(5, "ok.test."), mx(7, "-bad.test.")])
+    ("allbad.test.", 15) => (0, [mx(1, "-bad.test.")])
+    ("txt.test.", 16) => (0, [txt(["hello ", "world"]), txt(["v=spf1 -all"])])
+    ("_sip._tcp.srv.test.", 33) => (0, [srv(20, 5, 5061, "b.sip.test."), srv(10, 0, 5060, "a.sip.test.")])
+    ("7.2.0.192.in-addr.arpa.", 12) => (0, [ptr("host.example.")])
+    ("1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.8.b.d.0.1.0.0.2.ip6.arpa.", 12) => (0, [ptr("six.example.")])
+    ("big.test.", 16) => if tcp { (0, [txt(["one"]), txt(["two"]), txt(["three"])]) } else { (-1, []) }
+    ("fail.test.", _) => (2, [])
+    _ => (3, [])
+  }
+}
+
+/// The response to query q, or None when q is not a query.
+fn respond(q: Bytes, tcp: Bool) -> Bytes? {
+  if q.len() < 17 {
+    return None
+  }
+  var i = 12
+  var name = BytesBuilder.new()
+  while i < q.len() && q[i] != 0 {
+    let l = Int(q[i])
+    if i + 1 + l > q.len() {
+      return None
+    }
+    name.write(q[i + 1..i + 1 + l])
+    name.write_byte(46)
+    i += 1 + l
+  }
+  if i + 5 > q.len() {
+    return None
+  }
+  let qname = (name.freeze().to_str() ?? "").to_lower()
+  let qtype = Int(q[i + 1]) * 256 + Int(q[i + 2])
+  let (rcode, answers) = table(qname, qtype, tcp)
+  var b = BytesBuilder.new()
+  b.write(q[0..2])
+  // QR, RD, RA; AA with NXDOMAIN; TC when truncated
+  let hi = if rcode == -1 { 0x83 } else if rcode == 3 { 0x85 } else { 0x81 }
+  b.write_byte(UInt8(hi))
+  b.write_byte(UInt8(0x80 + if rcode > 0 { rcode } else { 0 }))
+  put16(b, 1)
+  put16(b, answers.len())
+  put16(b, 0)
+  put16(b, 0)
+  b.write(q[12..i + 5])
+  for a in answers {
+    b.write(a)
+  }
+  Some(b.freeze())
+}
+
+/// e's text without " on SERVER" (the server Go names is resolv.conf's).
+fn shown(e: NetErr) -> Str {
+  let t = "${e}"
+  match t.find(" on ") {
+    Some(i) => match t[i..t.len()].find(": ") {
+      Some(j) => t[0..i] + t[i + j..t.len()]
+      None => t
+    }
+    None => t
+  }
+}
+
+fn main(os: Os) {
+  let srv_udp = udp.listen(os.net, "127.0.0.1:0").or_fault("udp listen")
+  let addr = srv_udp.local_addr()
+  let lis = os.net.listen(addr).or_fault("tcp listen")
+  scope s {
+    s.spawn_background(fn() {
+      while {
+        match srv_udp.read_from() {
+          Ok((q, from)) => {
+            if let Some(r) = respond(q, false) {
+              srv_udp.write_to(r, from).ignore_err("the client may be gone")
+            }
+          }
+          Err(_) => return
+        }
+      }
+    })
+    s.spawn_background(fn() {
+      while {
+        match lis.accept() {
+          Ok(c) => {
+            var got = b""
+            while {
+              if got.len() >= 2 && got.len() >= 2 + Int(got[0]) * 256 + Int(got[1]) {
+                let q = got[2..2 + Int(got[0]) * 256 + Int(got[1])]
+                if let Some(r) = respond(q, true) {
+                  var b = BytesBuilder.new()
+                  put16(b, r.len())
+                  b.write(r)
+                  c.write(b.freeze()).ignore_err("the client may be gone")
+                }
+                got = got[2 + Int(got[0]) * 256 + Int(got[1])..got.len()]
+                continue
+              }
+              match c.read(4096) {
+                Ok(Some(d)) => got = got + d
+                _ => break
+              }
+            }
+            c.close()
+          }
+          Err(_) => return
+        }
+      }
+    })
+    let r = dns.Resolver{server: addr}
+    match r.lookup_mx(os.net, "mx.test.") {
+      Ok(xs) => {
+        for x in xs { os.stdio.println("mx: ${x.pref} ${x.host}") }
+      }
+      Err(e) => os.stdio.println("mx: ${shown(e)}")
+    }
+    match r.lookup_mx(os.net, "badmx.test.") {
+      Ok(xs) => {
+        for x in xs { os.stdio.println("badmx: ${x.pref} ${x.host}") }
+      }
+      Err(e) => os.stdio.println("badmx: ${shown(e)}")
+    }
+    match r.lookup_mx(os.net, "allbad.test.") {
+      Ok(xs) => os.stdio.println("allbad: ok ${xs.len()}")
+      Err(e) => os.stdio.println("allbad: ${shown(e)}")
+    }
+    match r.lookup_txt(os.net, "txt.test.") {
+      Ok(xs) => {
+        for x in xs { os.stdio.println("txt: \"${x}\"") }
+      }
+      Err(e) => os.stdio.println("txt: ${shown(e)}")
+    }
+    match r.lookup_srv(os.net, "sip", "tcp", "srv.test.") {
+      Ok(xs) => {
+        for x in xs { os.stdio.println("srv: ${x.priority} ${x.weight} ${x.port} ${x.target}") }
+      }
+      Err(e) => os.stdio.println("srv: ${shown(e)}")
+    }
+    for ip in ["192.0.2.7", "2001:db8::1", "198.51.100.1", "nope"] {
+      match r.lookup_addr(os.net, ip) {
+        Ok(xs) => os.stdio.println("addr ${ip}: ${xs.join(", ")}")
+        Err(e) => os.stdio.println("addr ${ip}: ${shown(e)}")
+      }
+    }
+    match r.lookup_txt(os.net, "big.test.") {
+      Ok(xs) => os.stdio.println("tcp: ${xs.join(", ")}")
+      Err(e) => os.stdio.println("tcp: ${shown(e)}")
+    }
+    match r.lookup_mx(os.net, "nx.test.") {
+      Ok(xs) => os.stdio.println("nx: ok ${xs.len()}")
+      Err(e) => os.stdio.println("nx: ${shown(e)}")
+    }
+    match r.lookup_txt(os.net, "fail.test.") {
+      Ok(xs) => os.stdio.println("fail: ok ${xs.len()}")
+      Err(e) => os.stdio.println("fail: ${shown(e)}")
+    }
+    match r.lookup_mx(os.net.only(["example.com"]), "mx.test.") {
+      Ok(_) => os.stdio.println("only: looked up?")
+      Err(e) => os.stdio.println("only: denied ${e is NetErr.Denied(_)}")
+    }
+    srv_udp.close()
+    lis.close()
+  }
+  os.stdio.println("done")
+}

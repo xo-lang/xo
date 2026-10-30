@@ -1,0 +1,214 @@
+// std/dns on the native backends (decision 0417): llrt/netconn.xo's
+// lookup_records asks the servers (llrt/dns.xo's client, the one
+// lookup_host uses on Linux) and this file unpacks, checks and orders the
+// records as Go's LookupMX, LookupTXT, LookupSRV and LookupAddr do.
+use std/dns
+use native/rt
+use native/llrt/netconn
+use native/llrt/dns as ldns
+
+/// The NetErr of the calling context's failed lookup (netconn's tags).
+fn err_now() -> NetErr {
+  match netconn.status() {
+    1 => NetErr.InvalidAddr(msg: netconn.last_msg())
+    2 => NetErr.Refused
+    3 => NetErr.Timeout
+    5 => NetErr.Canceled
+    6 => NetErr.Denied(addr: netconn.last_msg())
+    _ => NetErr.Io(msg: netconn.last_msg())
+  }
+}
+
+/// The answer records of type qtype for name (subject is what an
+/// attenuated Net must admit), as (response, data offset, data length).
+fn records(n: Net, r: dns.Resolver, subject: Str, name: Str, qtype: Int) -> (Bytes, List[(Int, Int)]) ! NetErr {
+  let m = netconn.lookup_records(rt.net_lists(n), subject, name, qtype, r.server)
+  if netconn.status() != 0 {
+    return Err(err_now())
+  }
+  match ldns.answers(m, qtype) {
+    Some(xs) => Ok((m, xs))
+    None => Err(NetErr.Io(msg: "lookup ${name}: cannot unmarshal DNS message"))
+  }
+}
+
+/// Go's errMalformedDNSRecordsDetail, the error when every record was
+/// dropped as invalid.
+fn malformed(name: Str) -> NetErr {
+  NetErr.Io(msg: "lookup ${name}: DNS response contained records which contain invalid names")
+}
+
+/// A random Int in 0..n (Go's randIntn), n > 0.
+fn rand_below(n: Int) -> Int { ldns.random32() % n }
+
+fn resolver_lookup_mx(r: dns.Resolver, n: Net, name: Str) -> List[dns.Mx] ! NetErr uses net.dial {
+  let (m, xs) = records(n, r, name, name, ldns.TYPE_MX)?
+  var out: List[dns.Mx] = []
+  var bad = 0
+  for (d, l) in xs {
+    match ldns.mx_at(m, d, l) {
+      Some((pref, host)) if ldns.is_domain_name(host) => out.push(dns.Mx{host: host, pref: pref})
+      Some(_) => bad += 1
+      None => return Err(NetErr.Io(msg: "lookup ${name}: cannot unmarshal DNS message"))
+    }
+  }
+  if out.is_empty() && bad > 0 {
+    return Err(malformed(name))
+  }
+  // byPref.sort: shuffle, then order by preference
+  for i in 0..out.len() {
+    let j = rand_below(i + 1)
+    let t = out[i]
+    out[i] = out[j]
+    out[j] = t
+  }
+  Ok(out.sort_by(fn(x: dns.Mx) -> Int { x.pref }))
+}
+
+fn resolver_lookup_txt(r: dns.Resolver, n: Net, name: Str) -> List[Str] ! NetErr uses net.dial {
+  let (m, xs) = records(n, r, name, name, ldns.TYPE_TXT)?
+  var out: List[Str] = []
+  for (d, l) in xs {
+    match ldns.txt_at(m, d, l) {
+      Some(t) => out.push(t)
+      None => {}
+    }
+  }
+  if out.is_empty() && !xs.is_empty() {
+    return Err(NetErr.Io(msg: "lookup ${name}: DNS response contained records which are not UTF-8"))
+  }
+  Ok(out)
+}
+
+fn resolver_lookup_srv(r: dns.Resolver, n: Net, service: Str, proto: Str, name: Str) -> List[dns.Srv] ! NetErr uses net.dial {
+  let target = if service == "" && proto == "" { name } else { "_${service}._${proto}.${name}" }
+  let (m, xs) = records(n, r, name, target, ldns.TYPE_SRV)?
+  var got: List[dns.Srv] = []
+  var bad = 0
+  for (d, l) in xs {
+    match ldns.srv_at(m, d, l) {
+      Some((pri, w, port, host)) if ldns.is_domain_name(host) => got.push(dns.Srv{target: host, port: port, priority: pri, weight: w})
+      Some(_) => bad += 1
+      None => return Err(NetErr.Io(msg: "lookup ${target}: cannot unmarshal DNS message"))
+    }
+  }
+  if got.is_empty() && bad > 0 {
+    return Err(malformed(target))
+  }
+  // byPriorityWeight.sort: by priority and weight, then each priority's
+  // run shuffled by weight
+  var out = got.sort_by(fn(x: dns.Srv) -> Int { x.priority * 65536 + x.weight })
+  var i = 0
+  for j in 1..out.len() + 1 {
+    if j == out.len() || out[i].priority != out[j].priority {
+      shuffle_by_weight(out, i, j)
+      i = j
+    }
+  }
+  Ok(out)
+}
+
+/// shuffleByWeight on xs[lo..hi] (RFC 2782's weighted order).
+fn shuffle_by_weight(var xs: List[dns.Srv], lo0: Int, hi: Int) {
+  var sum = 0
+  for k in lo0..hi {
+    sum += xs[k].weight
+  }
+  var lo = lo0
+  while sum > 0 && hi - lo > 1 {
+    var s = 0
+    let pick = rand_below(sum)
+    for k in lo..hi {
+      s += xs[k].weight
+      if s > pick {
+        if k > lo {
+          let t = xs[lo]
+          xs[lo] = xs[k]
+          xs[k] = t
+        }
+        break
+      }
+    }
+    sum -= xs[lo].weight
+    lo += 1
+  }
+}
+
+/// The 4 bytes of an IPv4 address (also one mapped into IPv6), else ip.
+fn unmap(ip: Bytes) -> Bytes {
+  if ip.len() == 16 {
+    for k in 0..10 {
+      if ip[k] != 0 {
+        return ip
+      }
+    }
+    if ip[10] == 255 && ip[11] == 255 {
+      return ip[12..16]
+    }
+  }
+  ip
+}
+
+/// The PTR name of ip (Go's reverseaddr): "4.3.2.1.in-addr.arpa." for
+/// IPv4, the nibbles in reverse then "ip6.arpa." for IPv6.
+fn reverse_name(ip: Bytes) -> Str {
+  var b = BytesBuilder.with_capacity(73)
+  if ip.len() == 4 {
+    var k = 3
+    while k >= 0 {
+      b.write_str("${Int(ip[k])}.")
+      k -= 1
+    }
+    b.write_str("in-addr.arpa.")
+  } else {
+    let hex = "0123456789abcdef".bytes()
+    var k = 15
+    while k >= 0 {
+      let v = Int(ip[k])
+      b.write_byte(hex[v & 15])
+      b.write_byte(46)
+      b.write_byte(hex[v >> 4])
+      b.write_byte(46)
+      k -= 1
+    }
+    b.write_str("ip6.arpa.")
+  }
+  b.freeze().to_str() ?? ""
+}
+
+fn resolver_lookup_addr(r: dns.Resolver, n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial {
+  let a = match ldns.parse_addr(ip) {
+    Some(a) => a
+    None => return Err(NetErr.Io(msg: "lookup ${ip}: unrecognized address"))
+  }
+  let key = unmap(a.ip)
+  let names = ldns.hosts_names(key)
+  if !names.is_empty() {
+    return Ok(names)
+  }
+  let arpa = reverse_name(key)
+  let (m, xs) = records(n, r, ip, arpa, ldns.TYPE_PTR)?
+  var out: List[Str] = []
+  var bad = 0
+  for (d, l) in xs {
+    match ldns.ptr_at(m, d, l) {
+      Some(h) if ldns.is_domain_name(h) => out.push(h)
+      Some(_) => bad += 1
+      None => return Err(NetErr.Io(msg: "lookup ${ip}: cannot unmarshal DNS message"))
+    }
+  }
+  if out.is_empty() && bad > 0 {
+    return Err(malformed(ip))
+  }
+  Ok(out)
+}
+
+fn lookup_mx(n: Net, name: Str) -> List[dns.Mx] ! NetErr uses net.dial { resolver_lookup_mx(dns.Resolver{}, n, name) }
+
+fn lookup_txt(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial { resolver_lookup_txt(dns.Resolver{}, n, name) }
+
+fn lookup_srv(n: Net, service: Str, proto: Str, name: Str) -> List[dns.Srv] ! NetErr uses net.dial {
+  resolver_lookup_srv(dns.Resolver{}, n, service, proto, name)
+}
+
+fn lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial { resolver_lookup_addr(dns.Resolver{}, n, ip) }

@@ -842,6 +842,42 @@ pub fn lookup_host(lists: Str, host: Str) -> List[Str] {
   addrs
 }
 
+/// A DNS record lookup of std/dns (decision 0417): the response with the
+/// records of type qtype for name (dns.lookup_records), or empty with the
+/// error recorded: `Denied` for a name the lists do not admit, `Io` with
+/// Go's DNSError text ("lookup NAME on SERVER: no such host", "...:
+/// server misbehaving"). server is "" for the system's servers or
+/// "host:port". FakeNet has no DNS: every lookup is "no such host".
+pub fn lookup_records(lists: Str, subject: Str, name: Str, qtype: Int, server: Str) -> Bytes {
+  let c = ctx.cur()
+  if !netpolicy.admits(lists, subject.trim_suffix("."), "0") {
+    fail(c, 6, subject)
+    return b""
+  }
+  if twflags.fake(TW_REAL_NET) {
+    fail(c, 4, "lookup ${name}: no such host")
+    return b""
+  }
+  if os() == 3 {
+    fail(c, 4, "lookup ${name}: dns lookups are not supported on windows yet")
+    return b""
+  }
+  let r = dns.lookup_records(name, qtype, server)
+  let on = if r.server == "" { "" } else { " on ${r.server}" }
+  if r.kind == dns.KIND_OK {
+    ok(c)
+    return r.msg
+  }
+  if r.kind == dns.KIND_NOTFOUND {
+    fail(c, 4, "lookup ${name}${on}: no such host")
+  } else if r.kind == dns.KIND_TEMP {
+    fail(c, 4, "lookup ${name}${on}: server misbehaving")
+  } else {
+    fail(c, 4, "lookup ${name}${on}: cannot unmarshal DNS message")
+  }
+  b""
+}
+
 /// The address of fmt_addr's "ip:port" or "[ip]:port".
 fn ip_of(a: Str) -> Str {
   let b = a.bytes()

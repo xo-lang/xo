@@ -1,0 +1,89 @@
+package main
+
+import (
+	"context"
+	"fmt"
+	"net"
+	"os"
+	"strings"
+)
+
+func put16(b []byte, v int) []byte { return append(b, byte(v>>8), byte(v)) }
+
+func mx(pref int, host string) []byte {
+	b := put16(nil, 0xc00c)
+	b = put16(b, 15)
+	b = put16(b, 1)
+	b = put16(b, 0)
+	b = put16(b, 60)
+	d := put16(nil, pref)
+	for _, l := range strings.Split(strings.TrimSuffix(host, "."), ".") {
+		d = append(d, byte(len(l)))
+		d = append(d, l...)
+	}
+	d = append(d, 0)
+	b = put16(b, len(d))
+	return append(b, d...)
+}
+
+func respond(q []byte, answers [][]byte) []byte {
+	i := 12
+	for i < len(q) && q[i] != 0 {
+		i += 1 + int(q[i])
+	}
+	if len(q) < 17 || i+5 > len(q) {
+		return nil
+	}
+	b := append([]byte{}, q[0:2]...)
+	b = append(b, 0x81, 0x80)
+	b = put16(b, 1)
+	b = put16(b, len(answers))
+	b = put16(b, 0)
+	b = put16(b, 0)
+	b = append(b, q[12:i+5]...)
+	for _, a := range answers {
+		b = append(b, a...)
+	}
+	return b
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	pc, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	addr := pc.LocalAddr().String()
+	answers := [][]byte{mx(30, "c.mail.test."), mx(10, "a.mail.test."), mx(20, "b.mail.test.")}
+	go func() {
+		buf := make([]byte, 65535)
+		for {
+			n, from, err := pc.ReadFrom(buf)
+			if err != nil {
+				return
+			}
+			if r := respond(buf[:n], answers); r != nil {
+				pc.WriteTo(r, from)
+			}
+		}
+	}()
+	sum := 0
+	if w == "mx" {
+		r := &net.Resolver{PreferGo: true, Dial: func(ctx context.Context, network, _ string) (net.Conn, error) {
+			var d net.Dialer
+			return d.DialContext(ctx, network, addr)
+		}}
+		for i := 0; i < 2000; i++ {
+			xs, err := r.LookupMX(context.Background(), "mx.test.")
+			if err != nil {
+				panic(err)
+			}
+			sum += int(xs[0].Pref) + len(xs) + len(xs[2].Host)
+		}
+	}
+	pc.Close()
+	fmt.Printf("%s %d\n", w, sum)
+}

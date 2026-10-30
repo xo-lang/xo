@@ -23,6 +23,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   boundary (decision 0419): options structs with optional fields
   (`opts.set_limit(Some(10))`, `opts.name() ?? "none"`) bind; a parameter
   Go writes through stays skipped. Binding format 21.
+- std/dns: MX, TXT, SRV and reverse (PTR) lookups over a Net, Go's
+  LookupMX, LookupTXT, LookupSRV and LookupAddr, with `Resolver{server}`
+  to ask one server (decision 0417). Native on Linux and macOS; Windows
+  native lookups return `Io` for now.
 - std/crypto: `ed25519_sign` also takes Go's 64 byte private key (the
   seed, then its public key) and signs without deriving the public key:
   0.55 of the seed form's time, 0.65 of Go's.

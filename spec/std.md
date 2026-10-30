@@ -5994,3 +5994,52 @@ pub fn update128a(sum: Bytes, data: Bytes) -> Bytes
 - FNV is fast and not cryptographic: for hash tables, sharding and
   checksums of trusted data, not where an attacker chooses the input
   (use std/crypto's digest there).
+## 46. std/dns
+
+DNS record lookups (decision 0417), Go's `net.LookupMX`, `LookupTXT`,
+`LookupSRV` and `LookupAddr`. Free functions over a Net, `uses
+net.dial` as `Net.lookup_host`: an attenuated Net (`only`) refuses a
+name it does not admit with `Denied` (for `lookup_srv` the name checked
+is `name`, for `lookup_addr` the address).
+
+```xo
+struct Mx { host: Str, pref: Int }
+struct Srv { target: Str, port: Int, priority: Int, weight: Int }
+struct Resolver { server: Str = "" }   // "": the system's servers
+fn lookup_mx(n: Net, name: Str) -> List[Mx] ! NetErr uses net.dial
+fn lookup_txt(n: Net, name: Str) -> List[Str] ! NetErr uses net.dial
+fn lookup_srv(n: Net, service: Str, proto: Str, name: Str) -> List[Srv] ! NetErr uses net.dial
+fn lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial
+// and the same four as methods of Resolver
+```
+
+- The free functions are `Resolver{}`'s. A Resolver with `server`
+  ("127.0.0.1:5353", a numeric host and a port) sends every query to that
+  server only, as Go's `Resolver{PreferGo: true, Dial: ...}`; otherwise
+  the servers, search list and options of /etc/resolv.conf apply, read on
+  every lookup.
+- Names come back rooted ("mx1.example.com."), with their case as the
+  server sent it. `lookup_mx` orders by preference, equal preferences
+  shuffled; `lookup_srv` asks for `_service._proto.name` (`name` alone
+  when service and proto are both ""), orders by priority and shuffles
+  each priority's records by weight (RFC 2782); `lookup_txt` joins each
+  record's character strings; `lookup_addr` asks for the PTR records of
+  the address's in-addr.arpa or ip6.arpa name, after /etc/hosts (its
+  names lowercased and rooted).
+- A record whose name is not a domain name (Go's isDomainName), or a TXT
+  record that is not UTF-8, is left out: the call is `Ok` with the
+  valid records when there is at least one, and `Err(Io)` ("DNS response
+  contained records which contain invalid names") when every record was
+  left out. Go returns the valid records together with that error.
+- Errors are `Io` with Go's DNSError text: "lookup NAME on SERVER: no
+  such host" (NXDOMAIN, or no record of the type), "... server
+  misbehaving" (SERVFAIL, or no server answered), "lookup IP:
+  unrecognized address" for an address that does not parse. A FakeNet
+  (without `xo test --real`) has no DNS: every lookup is "no such host".
+- The native backends use Xo's own DNS client (std/native/llrt/dns.xo,
+  the one `lookup_host` uses on Linux) on Linux and macOS: UDP with TCP
+  when an answer is truncated. macOS's scoped resolvers (a VPN's split
+  DNS in `scutil --dns`) are not consulted, as Go's own resolver does not
+  consult them. On Windows the native lookups are `Err(Io)` ("dns lookups
+  are not supported on windows yet"); the Go backend uses Go's resolver
+  on every OS.
