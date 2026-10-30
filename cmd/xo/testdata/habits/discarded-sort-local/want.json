@@ -1,0 +1,54 @@
+[
+  {
+    "code": "XO0209",
+    "severity": "error",
+    "message": "the `List[Int]` that `lates.sort(...)` returns is discarded, and the call does nothing else",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 3,
+      "end_line": 3,
+      "end_col": 15
+    },
+    "notes": [
+      {
+        "message": "assign it back: `lates = lates.sort()`"
+      },
+      {
+        "message": "values are not changed in place: a method that returns a new value leaves its receiver as it was (core 2.6); write `let _ = ...` to discard on purpose"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "assign the result back to `lates`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 3,
+              "end_line": 3,
+              "end_col": 3
+            },
+            "replace": "lates = "
+          }
+        ]
+      },
+      {
+        "title": "discard the result on purpose",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 3,
+              "col": 3,
+              "end_line": 3,
+              "end_col": 3
+            },
+            "replace": "let _ = "
+          }
+        ]
+      }
+    ]
+  }
+]

@@ -11,8 +11,9 @@
 //   xo1 keys [--std=DIR] [--cc=CC]       the cache keys, to compare
 //
 // The flags are `xo build|run|test`'s with Go's flag rules (opts.xo):
-// --backend=arm64|llvm|go|wasm (the default is go as in cmd/xo; arm64
-// with --no-gc and for asm),
+// --backend=native|arm64|amd64|llvm|go|wasm (the default is native,
+// decisions 0248 and 0270, which `native` names, decision 0438; arm64
+// for asm),
 // --targets, -o, --json, --release, --error-args, --no-mono,
 // --no-arenas, --no-gc, --holes, --race, --tzdata, --seed, --explore,
 // --record, --run, --cases, -v, --real, --offline, --workspace; and
@@ -231,7 +232,7 @@ fn main(os0: Os) ! {
     let go_only = o.hybrid || (o.cmd == "run" && !o.record.is_empty())
     if o.cmd == "asm" {
       backend = "arm64"
-    } else if go_only {
+    } else if go_only && !o.backend_native {
       backend = "go"
     } else if o.race {
       backend = race_backend(os, ctx, o)
@@ -297,7 +298,7 @@ fn main(os0: Os) ! {
     return
   }
   if !(backend is "arm64" | "amd64" | "llvm") && !(backend == "wasm" && o.cmd == "build") {
-    fail(os, "--backend=${backend}: want arm64, amd64, llvm, or go for build, run, and test, or wasm for build")
+    fail(os, "--backend=${backend}: want native, arm64, amd64, llvm, or go for build, run, and test, or wasm for build")
   }
   if !(o.assembler is "" | "cc" | "macho") {
     fail(os, "--as=${o.assembler}: want cc or macho")

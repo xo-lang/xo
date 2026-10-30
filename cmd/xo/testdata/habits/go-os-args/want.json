@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`Os` has no field or method `args`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 17,
+      "end_line": 2,
+      "end_col": 21
+    },
+    "notes": [
+      {
+        "message": "did you mean `os.env.args()`? it leaves out the program name, so Go's `os.Args[1]` is `os.env.args()[0]`; `os.env.program()` is the name (spec/std.md 3)"
+      }
+    ],
+    "fixes": []
+  }
+]

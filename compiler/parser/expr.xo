@@ -426,7 +426,8 @@ fn (var p: Parser) parse_primary() -> Expr {
     }
     _ => {}
   }
-  p.error_expected("an expression")
+  let d = p.error_expected("an expression")
+  p.keyword_name_note(d, t)
   Expr.BadExpr(Span{start: sp.start, end: sp.start})
 }
 

@@ -1,0 +1,10 @@
+fn parse(s: Str) -> Int ! Str {
+  if s.is_empty() {
+    return Err("empty")
+  }
+  1
+}
+
+fn get(s: Str) -> Int {
+  parse(s).unwrap_or(0) + 1
+}

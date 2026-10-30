@@ -1115,6 +1115,7 @@ fn (var c: Checker) expr_stmt(x: Expr) {
   let sp = parser.expr_span(x)
   var what = "this call"
   var fixes: List[DFix] = []
+  var back = ""
   var operands: List[Int] = []
   if let CallExpr(fun: fun, args: args, ..) = call {
     let n = callee_name(fun)
@@ -1144,12 +1145,13 @@ fn (var c: Checker) expr_stmt(x: Expr) {
         let v = c.lookup_local(id.name)
         if v >= 0 && c.objs[v].mutable && c.objs[v].vctx == c.ctx && c.objs[v].ty >= 0 && c.show(c.objs[v].ty) == c.show(t) {
           fixes.push(DFix{title: "assign the result back to `${text(id.name)}`", edits: [c.insert_edit(sp.start, "${text(id.name)} = ")]})
+          back = "${text(id.name)} = ${c.src_of(sp)}"
         }
       }
     }
   }
   fixes.push(DFix{title: "discard the result on purpose", edits: [c.insert_edit(sp.start, "let _ = ")]})
-  c.discards.push(Discard{eff: sink, file: c.path, span: sp, t: t, what: what, fixes: fixes, operands: operands})
+  c.discards.push(Discard{eff: sink, file: c.path, span: sp, t: t, what: what, fixes: fixes, back: back, operands: operands})
 }
 
 /// Whether a value of type t can reach state a call may change without
@@ -1232,6 +1234,9 @@ fn (var c: Checker) report_discards() {
     let di = c.report(d.file, "XO0209", d.span, "the `${c.show(d.t)}` that ${d.what} returns is discarded, and the call does nothing else")
     if di < 0 {
       continue
+    }
+    if !d.back.is_empty() {
+      c.note(di, "assign it back: `${d.back}`")
     }
     c.note(di, "values are not changed in place: a method that returns a new value leaves its receiver as it was (core 2.6); write `let _ = ...` to discard on purpose")
     for f in d.fixes {

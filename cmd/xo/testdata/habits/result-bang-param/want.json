@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0160",
+    "severity": "error",
+    "message": "expected `,` or `)` in parameter list, found `!`",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 17,
+      "end_line": 1,
+      "end_col": 18
+    },
+    "notes": [
+      {
+        "message": "`T ! E` is only a function's result; a parameter of a Result type writes `Result[Int, Str]` (core 2.6, 3.2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `Result[Int, Str]`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 13,
+              "end_line": 1,
+              "end_col": 22
+            },
+            "replace": "Result[Int, Str]"
+          }
+        ]
+      }
+    ]
+  }
+]

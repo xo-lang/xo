@@ -1,0 +1,38 @@
+[
+  {
+    "code": "XO0165",
+    "severity": "error",
+    "message": "expected a pattern, found keyword `test`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 7,
+      "end_line": 2,
+      "end_col": 11
+    },
+    "notes": [
+      {
+        "message": "`test` is a keyword, so it cannot name a variable, parameter, or field; rename it, for example `is_test` (core 1.4)"
+      }
+    ],
+    "fixes": []
+  },
+  {
+    "code": "XO0160",
+    "severity": "error",
+    "message": "expected an expression, found keyword `test`",
+    "span": {
+      "file": "main.xo",
+      "line": 3,
+      "col": 23,
+      "end_line": 3,
+      "end_col": 27
+    },
+    "notes": [
+      {
+        "message": "`test` is a keyword, so it cannot name a variable, parameter, or field; rename it, for example `is_test` (core 1.4)"
+      }
+    ],
+    "fixes": []
+  }
+]

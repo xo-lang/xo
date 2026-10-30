@@ -807,6 +807,64 @@ fn (var c: Checker) resolve_type(t: Type, var env: TypeEnv) -> Int {
   }
 }
 
+/// `List[fn(T) uses go, fx]`: in type arguments the comma ends the
+/// function type, so its second effect reads as one more type argument
+/// (`List takes 1 type argument(s), found 2`). When a type has more
+/// arguments than parameters and a function type with one unparenthesized
+/// effect is followed by a lowercase name, the name is a second effect:
+/// XO0170 with the parenthesized fix, and the arguments as if written
+/// (decision 0438; the parser does this for parameters, where a
+/// declaration's arity is not needed).
+fn (var c: Checker) fn_type_effect_args(args: List[Type], ntp: Int) -> List[Type] {
+  if args.len() <= ntp {
+    return args
+  }
+  var out: List[Type] = []
+  var i = 0
+  while i < args.len() {
+    var a = args[i]
+    if let FnType(ft) = a {
+      if ft.effects.len() == 1 && !ft.uses_parens {
+        var ft2 = ft
+        var j = i + 1
+        while j < args.len() && args.len() - (j - i - 1) > ntp {
+          match args[j] {
+            NamedType(span: nsp, path: path, args: nargs) => {
+              if nargs.is_empty() && path.len() <= 2 && !is_upper_camel(path[path.len() - 1].name) {
+                let sub = if path.len() == 2 { Some(path[1]) } else { None }
+                ft2.effects.push(parser.Effect{span: nsp, name: path[0], sub: sub})
+                j += 1
+                continue
+              }
+            }
+            _ => {}
+          }
+          break
+        }
+        if ft2.effects.len() > 1 {
+          var names: List[Str] = []
+          for e in ft2.effects {
+            names.push(if let Some(sb) = e.sub { "${text(e.name.name)}.${text(sb.name)}" } else { text(e.name.name) })
+          }
+          let first = ft.effects[0].span
+          let lastsp = ft2.effects[ft2.effects.len() - 1].span
+          let d = c.error("XO0170", Span{start: first.start, end: lastsp.end}, "several effects in a function type must be parenthesized: `uses (${names.join(", ")})`")
+          c.note(d, "inside type arguments the comma separates the arguments, so `uses ${names.join(", ")}` ends the function type at the first comma (core 6.2)")
+          c.fix(d, "parenthesize the effect list", [c.replace_edit(Span{start: first.start, end: lastsp.end}, "(${c.src_of(Span{start: first.start, end: lastsp.end})})")])
+          ft2.uses_parens = true
+          a = Type.FnType(ft2)
+          out.push(a)
+          i = j
+          continue
+        }
+      }
+    }
+    out.push(a)
+    i += 1
+  }
+  out
+}
+
 fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List[Type], var env: TypeEnv) -> Int {
   let last = path[path.len() - 1]
   var obj = -1
@@ -913,7 +971,8 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
   if !c.objs[obj].resolving {
     c.resolve_type_obj(obj)
   }
-  var targs = c.resolve_args_for(obj, args, env)
+  let fargs = c.fn_type_effect_args(args, c.objs[obj].tparams.len())
+  var targs = c.resolve_args_for(obj, fargs, env)
   // Remember where an effect argument was left out, for the XO0701 note
   // on it (decision 0087).
   for a in targs {
@@ -922,7 +981,7 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
         if it.param >= 0 && c.objs[it.param].elided && c.objs[it.param].elided_file.is_empty() {
           c.objs[it.param].elided_file = if env.file >= 0 { c.files[env.file].path } else { c.path }
           c.objs[it.param].elided_at = span
-          c.objs[it.param].elided_text = type_text(Type.NamedType(span: span, path: path, args: args))
+          c.objs[it.param].elided_text = type_text(Type.NamedType(span: span, path: path, args: fargs))
         }
       }
     }

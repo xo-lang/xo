@@ -1,0 +1,10 @@
+fn parse(s: Str) -> Int ! Str {
+  if s.is_empty() {
+    return Err("empty")
+  }
+  1
+}
+
+fn next(s: Str) -> Int ! Str {
+  parse(s) + 1
+}

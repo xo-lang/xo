@@ -1,4 +1,4 @@
-usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|amd64|wasm] [--no-gc]
+usage: xo build [--targets=all|os/arch,...] [--backend=native|go|llvm|arm64|amd64|wasm] [--no-gc]
                 [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
                 [--release] [--debug-contracts=on|off] [--dbg=on|off]
                 [--error-args=on|off] [--debug-info=on|off|split]

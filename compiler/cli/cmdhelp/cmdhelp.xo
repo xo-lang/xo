@@ -207,7 +207,7 @@ with a missing file: run it again.
 
 fn build_text() -> Str {
   """
-usage: xo build [--targets=all|os/arch,...] [--backend=go|llvm|arm64|amd64|wasm] [--no-gc]
+usage: xo build [--targets=all|os/arch,...] [--backend=native|go|llvm|arm64|amd64|wasm] [--no-gc]
                 [--no-mono] [--no-arenas] [--tzdata=embedded|system] [--ci]
                 [--release] [--debug-contracts=on|off] [--dbg=on|off]
                 [--error-args=on|off] [--debug-info=on|off|split]
@@ -267,7 +267,7 @@ backend only, and elsewhere warns that it has no effect.
 
 fn run_text() -> Str {
   """
-usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=go|llvm|arm64|amd64]
+usage: xo run [--seed=N] [--record=trace.xotrace] [--holes] [--backend=native|go|llvm|arm64|amd64]
               [--no-gc] [--no-mono] [--no-arenas] [--tzdata=embedded|system]
               [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--race]
               [--stamp NAME=VALUE]... [--watch [--grace=D]] [dir] [-- args...]
@@ -302,7 +302,7 @@ last.json in the watch's cache directory, <user cache>/xo/watch/HASH
 fn test_text() -> Str {
   """
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
-               [--timeout=D] [--json] [-v] [--backend=go|llvm|arm64|amd64] [--no-gc]
+               [--timeout=D] [--json] [-v] [--backend=native|go|llvm|arm64|amd64] [--no-gc]
                [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--watch] [--fail-empty] <dirs...>
 
 Run test blocks, property tests, and contract fuzzing on the

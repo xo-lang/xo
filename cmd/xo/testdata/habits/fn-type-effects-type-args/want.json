@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0170",
+    "severity": "error",
+    "message": "several effects in a function type must be parenthesized: `uses (net, fx)`",
+    "span": {
+      "file": "main.xo",
+      "line": 1,
+      "col": 47,
+      "end_line": 1,
+      "end_col": 54
+    },
+    "notes": [
+      {
+        "message": "inside type arguments the comma separates the arguments, so `uses net, fx` ends the function type at the first comma (core 6.2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "parenthesize the effect list",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 1,
+              "col": 47,
+              "end_line": 1,
+              "end_col": 54
+            },
+            "replace": "(net, fx)"
+          }
+        ]
+      }
+    ]
+  }
+]

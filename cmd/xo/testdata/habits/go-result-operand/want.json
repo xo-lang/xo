@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0406",
+    "severity": "error",
+    "message": "operator `+` is not defined for `Result[Int, Str]` and `Int`",
+    "span": {
+      "file": "main.xo",
+      "line": 9,
+      "col": 3,
+      "end_line": 9,
+      "end_col": 15
+    },
+    "notes": [
+      {
+        "message": "the left side is a Result; add `?` to propagate its error, or `.or_fault(\"why\")` to say why it cannot fail (core 2.6)"
+      }
+    ],
+    "fixes": []
+  }
+]

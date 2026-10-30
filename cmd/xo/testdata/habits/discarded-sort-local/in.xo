@@ -1,0 +1,5 @@
+fn median(xs: List[Int]) -> Int {
+  var lates = xs
+  lates.sort()
+  lates[lates.len() / 2]
+}

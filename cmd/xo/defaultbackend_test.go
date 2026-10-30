@@ -11,8 +11,9 @@ import (
 
 // TestDefaultBackendAmd64 builds a program for linux/amd64 and
 // windows/amd64 with no --backend (decision 0270: the native backend of
-// the targets' architecture) and with --backend=amd64, to the same output
-// path: the binaries must be the same. The build read the --backend flag
+// the targets' architecture), with --backend=amd64 and with
+// --backend=native (decision 0438), to the same output path: the
+// binaries must be the same. The build read the --backend flag
 // rather than the backend it chose for the lowering flags (soft_cpu, the
 // Windows link without a C runtime), so a default amd64 build differed
 // (gotchas/default-backend-read-from-flag.md). cpu_prims uses cpu.xo's
@@ -47,6 +48,10 @@ func TestDefaultBackendAmd64(t *testing.T) {
 		amd := build("--backend=amd64")
 		if !bytes.Equal(def, amd) {
 			t.Errorf("%s: the default backend's binary (%d bytes) differs from --backend=amd64's (%d bytes)", tg, len(def), len(amd))
+		}
+		// --backend=native names the default (decision 0438)
+		if nat := build("--backend=native"); !bytes.Equal(def, nat) {
+			t.Errorf("%s: --backend=native's binary (%d bytes) differs from the default's (%d bytes)", tg, len(nat), len(def))
 		}
 	}
 }

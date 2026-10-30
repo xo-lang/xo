@@ -1,0 +1,20 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`Result[Int, Str]` has no field or method `unwrap`",
+    "span": {
+      "file": "main.xo",
+      "line": 9,
+      "col": 12,
+      "end_line": 9,
+      "end_col": 18
+    },
+    "notes": [
+      {
+        "message": "`.unwrap()` panics on an error in Rust; Xo propagates it with `?`, says why it cannot fail with `.or_fault(\"why\")`, or handles it with `??`, `if let`, or `match` (core 2.6, spec/std.md 2)"
+      }
+    ],
+    "fixes": []
+  }
+]

@@ -235,6 +235,26 @@ fn is_keyword(k: Kind) -> Bool {
   k is As | Break | Const | Continue | Defer | Else | Ensures | Enum | Fn | For | If | In | Interface | Invariant | Let | Match | Pub | Requires | Return | Scope | Select | Struct | Test | Type | Use | Uses | Var | While
 }
 
+/// A keyword that names things in other languages' code (`test`, `type`,
+/// `match`) used as a name, at an expression or a pattern (decision 0438):
+/// a note with a rename to suggest. Statement keywords (`if`, `return`)
+/// get none: there the keyword is meant.
+fn (var p: Parser) keyword_name_note(d: Int, t: Token) {
+  let kw = kind_text(t.kind)
+  let rename = match t.kind {
+    Test => "is_test"
+    Type => "kind"
+    In => "input"
+    As => "alias"
+    Match => "matched"
+    Use => "usage"
+    Select => "selected"
+    Const | Defer | Ensures | Enum | Interface | Invariant | Requires | Scope | Struct | Uses => "${kw}_name"
+    _ => return
+  }
+  p.add_note(d, "`${kw}` is a keyword, so it cannot name a variable, parameter, or field; rename it, for example `${rename}` (core 1.4)")
+}
+
 /// The Go parser's description of a token in messages (describe).
 fn describe_go(t: Token) -> Str {
   match t.kind {

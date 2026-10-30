@@ -5,6 +5,15 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Diagnostics name the Xo form for more Go and Rust habits (decision
+  0438): a Result's `.unwrap()` (use `?` or `.or_fault`) and
+  `.unwrap_or(x)` (`r ?? _ => x`, fixed), a Result operand of `+` and
+  the other operators, `os.args` (`os.env.args()`, without the program
+  name), a keyword such as `test` used as a name, `fn(T) uses a, b`
+  inside type arguments (now `XO0170` with the parenthesizing fix, not a
+  type argument count error), `T ! E` as a parameter's type
+  (`Result[T, E]`, fixed), and `xs.sort()` as a statement (assign it
+  back). `--backend=native` names the default native backend.
 - **Breaking** (decision 0440): a std/uuid `Uuid`'s `hi` and `lo` are
   private to std, as spec std 24 says: `uuid.Uuid{...}`, `u.hi` and a
   pattern or `with` naming them are `XO0605` in user code (they checked

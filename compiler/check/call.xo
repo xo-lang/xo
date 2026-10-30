@@ -685,6 +685,9 @@ fn (var c: Checker) habit_field(bt: Int, span: Span, x: Expr, sel: Ident, place:
     c.fix(d, "write `.display()`", [c.replace_edit(sel.span, "display()")])
     return (c.bad_ty, true)
   }
+  if c.is_prelude(bt, "Os") && (text(sel.name) is "args" | "argv" | "Args") {
+    return (c.os_args_habit(span, x, sel), true)
+  }
   let xo = match text(sel.name) {
     "length" | "count" | "size" => "len"
     "isEmpty" => "is_empty"
@@ -721,6 +724,19 @@ fn (var c: Checker) internal_note(d: Int, o: Int) {
   }
   let way = c.objs[o].internal_hint
   c.note(d, "the fields of `${c.qual_name(o)}` are private to std (decision 0440)${if way.is_empty() { "" } else { "; ${way}" }}")
+}
+
+/// `os.args` (Go's os.Args, Python's sys.argv) and `os.args()`: XO0601
+/// naming `os.env.args()`, which leaves out the program name (decision
+/// 0438). No fix: `os.args[1]` becomes `os.env.args()[0]`, so a rewrite
+/// of the name alone changes an index's meaning. The value checks as
+/// `x.env.args()`.
+fn (var c: Checker) os_args_habit(span: Span, x: Expr, sel: Ident) -> Int {
+  let d = c.error("XO0601", sel.span, "`Os` has no field or method `${text(sel.name)}`")
+  c.habit_note(d, "did you mean `os.env.args()`? it leaves out the program name, so Go's `os.Args[1]` is `os.env.args()[0]`; `os.env.program()` is the name (spec/std.md 3)")
+  let env = Expr.SelectorExpr(span: span, x: x, sel: Ident{span: sel.span, name: b"env"})
+  let call = Expr.CallExpr(span: span, fun: Expr.SelectorExpr(span: span, x: env, sel: Ident{span: sel.span, name: b"args"}), args: [])
+  c.infer(call, -1)
 }
 
 /// XO0601 for a missing field or method (call.go noMember).

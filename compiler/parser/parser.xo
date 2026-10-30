@@ -1170,6 +1170,9 @@ fn (var p: Parser) parse_param(closure: Bool, allow_self: Bool) -> Param {
   var prm = Param{span: p.tok.span, is_var: is_var, name: name}
   if p.got(Kind.Colon) {
     prm.typ = Some(p.parse_type())
+    if p.at(Kind.Bang) {
+      prm.typ = Some(p.param_result_type(prm.typ ?? Type.BadType(name.span)))
+    }
   } else if !closure {
     p.error_expected("`:` and a type after parameter `${txt(name.name)}`")
   }
@@ -1178,6 +1181,25 @@ fn (var p: Parser) parse_param(closure: Bool, allow_self: Bool) -> Param {
   }
   prm.span = p.span_from(start)
   prm
+}
+
+/// `r: T ! E` in a parameter (decision 0438): `!` is the result position's
+/// error type only, so a parameter writes `Result[T, E]`. XO0160 (a soft
+/// error) with that fix; the parameter reads as the Result.
+fn (var p: Parser) param_result_type(t: Type) -> Type {
+  let tsp = type_span(t)
+  let bang = p.tok.span
+  let es = p.parse_err_spec()
+  let et = es.typ ?? Type.BadType(es.span)
+  let esp = type_span(et)
+  let ttext = txt(p.src_text(tsp.start, tsp.end))
+  let etext = txt(p.src_text(esp.start, esp.end))
+  let d = p.soft(UNEXPECTED_TOKEN, bang, "expected `,` or `)` in parameter list, found `!`")
+  p.add_note(d, "`T ! E` is only a function's result; a parameter of a Result type writes `Result[${ttext}, ${etext}]` (core 2.6, 3.2)")
+  if es.typ.is_some() {
+    p.add_fix(d, "write `Result[${ttext}, ${etext}]`", [replace_span(span_to(tsp, esp), "Result[${ttext}, ${etext}]")])
+  }
+  Type.NamedType(span: span_to(tsp, es.span), path: [Ident{span: bang, name: b"Result"}], args: [t, et])
 }
 
 fn (var p: Parser) parse_err_spec() -> ErrSpec {

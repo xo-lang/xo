@@ -2022,6 +2022,9 @@ struct Discard {
   t: Int
   what: Str
   fixes: List[DFix] = []
+  /// `names = names.sort()` for a method of a `var` binding, the note
+  /// that says to assign it back (decision 0438), or ""
+  back: Str = ""
   /// the types of the receiver, the arguments, and a called function
   /// value: a call that reaches state through one (reaches_state) is
   /// not reported

@@ -3016,7 +3016,13 @@ does (decision 0131).
     and gains the habit in a note and the fix: `XO0601` for names from
     other languages (`nil`, `null`, `this`, `len(x)`, `append`, `print`,
     `String`, `Vec`, `int`, `.unwrap()`, `.length`, camelCase methods,
-    Python's `t = 0` declaring by assignment), `XO0169` (commas between
+    Python's `t = 0` declaring by assignment, Go's `os.Args` as
+    `os.args`, and a Result's `.unwrap()` and `.unwrap_or(x)`, which
+    name `?`, `.or_fault`, and `r ?? _ => x`; decision 0438), `XO0406`
+    (a Result operand of an operator: add `?` or `.or_fault`),
+    `XO0165` and `XO0160` (a keyword such as `test` used as a name: a
+    rename to suggest; `T ! E` as a parameter's type: `Result[T, E]`),
+    `XO0209` (a method of a `var` binding: `xs = xs.sort()`), `XO0169` (commas between
     match arms), `XO0173` (`use` after declarations), `XO0701` (an effect
     argument left out of a parameter type, which stays an abstract effect
     variable), `XO0408` (TypeScript's `const x = f()`), `XO0110` (Kotlin's
@@ -3158,7 +3164,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0167` | error | parser | top level declaration (fn, struct, const, ...) inside a block |
 | `XO0168` | error | parser | statement (let, expression, ...) at top level |
 | `XO0169` | error | parser | match or select arms separated by `,` instead of newlines |
-| `XO0170` | error | parser | several effects in a function type must be parenthesized (core 15) |
+| `XO0170` | error | parser, checker | several effects in a function type must be parenthesized (core 15); the checker reports it inside type arguments, where only the arity tells a second effect from a type argument (decision 0438) |
 | `XO0171` | error | parser | `..` used more than once or not last in pattern fields |
 | `XO0172` | error | parser | function declaration without a body |
 | `XO0173` | error | parser | `use` after the first declaration (core 15: File) |

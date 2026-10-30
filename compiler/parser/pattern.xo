@@ -112,7 +112,8 @@ fn (var p: Parser) parse_pat_alt() -> Pattern {
     }
     _ => {}
   }
-  p.fail(INVALID_PATTERN, t.span, "expected a pattern, found ${describe(t)}")
+  let d = p.fail(INVALID_PATTERN, t.span, "expected a pattern, found ${describe(t)}")
+  p.keyword_name_note(d, t)
   Pattern.BadPat(Span{start: t.span.start, end: t.span.start})
 }
 

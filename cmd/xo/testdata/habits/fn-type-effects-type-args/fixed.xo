@@ -1,0 +1,3 @@
+fn run_all[fx: Effects](fs: List[fn(Int) uses (net, fx)]) -> Int {
+  fs.len()
+}

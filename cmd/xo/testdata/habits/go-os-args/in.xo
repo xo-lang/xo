@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let args = os.args
+  os.stdio.println("${args.len()}")
+}

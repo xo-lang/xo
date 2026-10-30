@@ -1,0 +1,3 @@
+fn value(r: Int ! Str) -> Int {
+  r ?? _ => 0
+}

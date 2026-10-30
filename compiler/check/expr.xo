@@ -1538,6 +1538,12 @@ fn (var c: Checker) op_fail(op: parser.Kind, xt: Int, yt: Int, sp: Span) -> Int 
   if d >= 0 && (c.is_prelude(xt, "Duration") || c.is_prelude(yt, "Duration") || c.is_prelude(xt, "Time")) {
     c.note(d, "Duration and Time support d1 + d2, d1 - d2, d * n, n * d, d / n, d1 / d2, t + d, t - d, t1 - t2, and comparisons (core 2.1)")
   }
+  // a fallible call used as its value (decision 0438): Go and Rust
+  // habits leave out the `?`
+  if d >= 0 && (c.is_result(xt) || c.is_result(yt)) {
+    let side = if c.is_result(xt) { "left" } else { "right" }
+    c.note(d, "the ${side} side is a Result; add `?` to propagate its error, or `.or_fault(\"why\")` to say why it cannot fail (core 2.6)")
+  }
   c.bad_ty
 }
 

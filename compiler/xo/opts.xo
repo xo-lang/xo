@@ -36,6 +36,9 @@ struct Opts {
   backend: Str = ""
   /// build_native: o.backend was empty and is the default it chose.
   backend_auto: Bool = false
+  /// --backend=native: the default native backend, named (decision 0438);
+  /// o.backend stays "" so every default path applies
+  backend_native: Bool = false
   go_tree: Str = ""
   /// --as and --ld (decision 0182): cc, or macho (compiler/macho; --ld=macho
   /// implies --as=macho); "" when not given: main.xo default_ld picks
@@ -166,7 +169,7 @@ fn bool_flags() -> List[Str] {
 /// build, run, and test print `xo`'s usage (compiler/cli/cmdhelp), which
 /// leaves out xo1's own flags.
 fn usage_line() -> Str {
-  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=arm64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
+  "usage: xo1 build|run|test|asm|keys [flags] [dir ...] (run: [dir] [--] [args]); flags: --std=DIR --wd=DIR --cc=CC --tzdata=embedded|system --targets=OS/ARCH,... --backend=native|arm64|amd64|llvm|go|wasm --go-tree=DIR --as=cc|macho --ld=cc|macho -o OUT --asm=PATH --json --ci --release --error-args=false --profile-support --stamp NAME=VALUE --no-mono --no-arenas --no-preempt --no-gc --holes --race --profile=cpu|heap|cpu,heap --seed=N --explore=N --record=FILE --run=SUB --cases=N --timeout=D --real --std-module=MODULE -v --phase-times"
 }
 
 /// usage prints why and the usage of the command cmd on standard error
@@ -608,7 +611,10 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
   } else if name == "targets" || name == "target" {
     o.targets = v
   } else if name == "backend" {
-    o.backend = v
+    // `native` names the default: arm64 or amd64 by the targets'
+    // architecture, else the host's (decision 0438)
+    o.backend_native = v == "native"
+    o.backend = if v == "native" { "" } else { v }
   } else if name == "tzdata" {
     o.tzdata = v
   } else if name == "layout" {

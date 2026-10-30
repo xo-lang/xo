@@ -1060,6 +1060,8 @@ fn (e: EnvErr) display() -> Str
 interface Env {
   fn get(self, name: Str) -> Str? uses env
   fn vars(self) -> Map[Str, Str] uses env
+  /// The program's arguments without the program name (Go's
+  /// os.Args[1:]); `program()` is the name.
   fn args(self) -> List[Str] uses env
   fn program(self) -> Str uses env
   fn home(self) -> Str ! EnvErr uses env

@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "`Result[Int, Str]` has no field or method `unwrap_or`",
+    "span": {
+      "file": "main.xo",
+      "line": 9,
+      "col": 12,
+      "end_line": 9,
+      "end_col": 21
+    },
+    "notes": [
+      {
+        "message": "`.unwrap_or(x)` is a default for an error in Rust, Kotlin, Java, Scala, and C++; Xo writes `r ?? _ =\u003e x`, which says the error is dropped on purpose (core 2.6)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `?? _ =\u003e ...`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 9,
+              "col": 3,
+              "end_line": 9,
+              "end_col": 24
+            },
+            "replace": "(parse(s) ?? _ =\u003e 0)"
+          }
+        ]
+      }
+    ]
+  }
+]
