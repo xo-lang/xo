@@ -49,6 +49,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   dur_parse 0.991 of the instructions (xo bench --ab n=15; wall and
   cycles within noise), against LLVM 1.016 to 1.006; xo's native __text 70,687,520 to
   70,681,816 bytes.
+- `xo test` links std's separately compiled test variant (decision
+  0436, Proposed; `xo dev stdcache --test`), as `xo build` links std's
+  store: a one-test program's edit on darwin/arm64 0.99 to 0.20-0.38 s,
+  peak RSS 971 to 758-794 MB. The variant costs a 6.25 MB store per
+  concurrency setting and a 2 s background build on the first `xo test`;
+  `--std-module` stays whole.
 - LLVM builds of a program that imports std/html (or template) are
   faster: a constant's initializer over 2000 SSA instructions is built
   `optnone`, so clang uses its fast register allocator on it (std/html's

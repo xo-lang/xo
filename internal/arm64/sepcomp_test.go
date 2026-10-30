@@ -399,3 +399,61 @@ func TestSepcompDebugInfo(t *testing.T) {
 		t.Errorf("-s left a __DWARF or __XODW segment in %s", stripped)
 	}
 }
+
+// TestSepcompTestVariant (decision 0436): `xo test` links std's test
+// variant (std built in test mode: Fs calls on the test world's MemFs)
+// when it is in the cache, and its tests, including one whose std
+// calls go through MemFs, pass as the whole program's do.
+func TestSepcompTestVariant(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds std's test variants")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-septest-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	prog := filepath.Join(work, "prog")
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	src := "fn main(os: Os) {\n}\n\ntest \"fs\" {\n  os.fs.create_dir_all(\"d/e\").or_fault(\"mk\")\n  os.fs.write(\"d/e/x.txt\", b\"hi\").or_fault(\"w\")\n  os.fs.copy(\"d/e/x.txt\", \"d/y.txt\").or_fault(\"cp\")\n  expect(os.fs.read(\"d/y.txt\").or_fault(\"r\")) == b\"hi\"\n  expect(os.fs.glob(\"d/*.txt\").or_fault(\"g\").len()) == 1\n  os.fs.remove_all(\"d\").or_fault(\"rm\")\n  expect(os.fs.exists(\"d\").or_fault(\"ex\")) == false\n}\n"
+	if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"), "XO_SEPCOMP_BG=0")
+	for _, c := range []string{"0", "1"} {
+		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--test", "--conc="+c))
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo dev stdcache --test --conc=%s: %v\n%s", c, err, out)
+		}
+	}
+	test := func(extra ...string) string {
+		t.Helper()
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "."))
+		cmd.Dir = prog
+		cmd.Env = append(append([]string{}, env...), extra...)
+		log, err := cmd.CombinedOutput()
+		if err != nil {
+			t.Fatalf("xo test (%s): %v\n%s", strings.Join(extra, " "), err, log)
+		}
+		return string(log)
+	}
+	whole := test("XO_SEPCOMP=0")
+	if !strings.Contains(whole, "1 passed, 0 failed") {
+		t.Fatalf("whole program:\n%s", whole)
+	}
+	os.RemoveAll(filepath.Join(work, "bin", "run"))
+	sep := test()
+	if !strings.Contains(sep, "test=1 reused") || !strings.Contains(sep, "1 passed, 0 failed") {
+		t.Fatalf("with std's test variant:\n%s", sep)
+	}
+}
