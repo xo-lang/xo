@@ -1,6 +1,6 @@
 # A fault exit builds a zero copy of every large result, in every function
 
-Status: Observed (2026-10-30)
+Status: Observed and fixed (2026-10-30)
 
 ## Symptom
 
@@ -28,13 +28,30 @@ read as the cost of the change. Cold code never shows in callgrind,
 XO_PROF or `xo bench --ab`, which measure executed paths. It was found
 only when one helper's size was broken down by opcode.
 
-## Fix or workaround
+## Fix
 
-Until the compiler builds the zero once per type: keep code that may
-fault, in a new helper, out of `var g` methods (a plain method returning
-what it found, as isel's range_subs), and let a caller that already has
-the path apply the result. Before accepting a helper's size, disassemble
-it (`objdump -d --disassemble-symbols=SYM`) and look at what follows
+A struct result of eight or more fields now gets its zero from one
+generated function per type, zero_val.T, which the fault exit calls
+(compiler/ssa build.xo fault_zero). zero_val.T is made while a body is
+built (finish_fn), never by add_landings: the cleanup cache (decision
+0382) stands in for a function whose landings grew nothing, so a function
+made in that pass could be missing from a later build that reads a cached
+caller. xo's own native `__text` went from 71,005,440 to 62,590,056 bytes
+(xo built from the same source by main's xo and by the fixed one).
+
+Do not lower the threshold (FAULT_ZERO_FIELDS) below 8 yet. At 2 the
+runtime's fault report types (dump, dwline, prof) share a zero too, and
+internal/llvm TestGoldenSplit/fault_task_exit/none (split 3) fails on
+linux/arm64, 3 of 3 runs (passes on macOS and as one module): the program
+prints "faulter: deferred" and then exits 70 at the task instead of
+unwinding to its scope. The cause is unknown as of 2026-10-30; 2 saved
+another 137,408 bytes.
+
+## How to avoid the next one
+
+Before accepting a helper's size, disassemble it (`objdump -d
+--disassemble-symbols=SYM`) and look at what follows
 `bl _xo_x_fault_continue` and at the frame size. A codegen change's
 effect on xo needs a stage 2 build (xo built by the new xo); the
-checkout's bin/xo was built by the older one.
+checkout's bin/xo was built by the older one, so a compiler change never
+shows in its own binary.

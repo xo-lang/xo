@@ -93,6 +93,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   decrement, acquire on the last reference); a plain build is unchanged.
   Golden conc_mutex_snapshot (8 tasks taking snapshots while the others
   put, push, remove and trim, arm64, LLVM and Go parity).
+- Native and LLVM backends: a function's fault exit gets a struct
+  result's zero (eight fields or more; a `var` parameter's out is one) from
+  one generated function per type, zero_val.T, instead of building it
+  field by field in every function (compiler/ssa finish_fn, fault_zero).
+  xo's own native __text 71,005,440 to 62,590,056 bytes (-11.9%; xo
+  built from the same source by main's xo and by this one): every `var
+  g: G` method of the arm64 generator with a fault path built a zero G of
+  about 1,200 instructions on it (gotchas/var-method-fault-reset.md).
+  Hot paths unchanged: bench/perf/json small, parse, enc_small and maps
+  cycles within noise (xo bench --ab n=15). Fixed point; arm64 goldens;
+  LLVM goldens with Go parity on linux/arm64 (the failures there are
+  main's); amd64 sample.
 - Diagnostics name the Xo form for more Go and Rust habits (decision
   0438): a Result's `.unwrap()` (use `?` or `.or_fault`) and
   `.unwrap_or(x)` (`r ?? _ => x`, fixed), a Result operand of `+` and

@@ -2724,11 +2724,7 @@ fn (var g: G) logic_value(x: ssa.Value) -> Bool {
 /// whether its overflow check remains): a range test that just computed
 /// v - lo gives them its register, as for `c >= 48 && c <= 57`
 /// then `c - 48` (2026-10-30: parse_duration's fraction digit was
-/// subtracted twice). Not a `var g` method: a method that changes g and
-/// may fault restores every field of G inline on its fault path (about 7
-/// KB of stores, gotchas/var-method-fault-reset.md), so the
-/// search stays apart, and its two callers, which have that path already,
-/// assign the registers.
+/// subtracted twice). Its two callers assign the registers.
 fn (g: G) range_subs(v: Int, lo: Int) -> List[(Int, Int, ssa.Op, Bool)] {
   var out: List[(Int, Int, ssa.Op, Bool)] = []
   if g.cur_sb < 0 || lo == MIN_INT {

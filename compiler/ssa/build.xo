@@ -123,6 +123,8 @@ enum Gen {
   Concat(t: Int)
   FrameArgs(names: List[Str], cts: List[Int], cap_ts: List[Int], elided: Bool)
   Zero(t: Int)
+  /// zero_val.T: a large struct's zero value (fault_zero).
+  ZeroVal(t: Int)
   /// xo.testfs[memfs]: the real Fs of a `--real` test (realFsWrapper).
   TestFs(memfs: Int, real: Int)
 }
@@ -3354,6 +3356,9 @@ fn (b: Builder) unwind_key(exits: List[Int]) -> Str {
 /// and zero results (finishFn).
 fn (var b: Builder) finish_fn() {
   b.seal_conts()
+  for t in b.s.f.results {
+    b.zero_val_of(t)
+  }
   if b.s.unwind_b < 0 {
     return
   }
@@ -3367,7 +3372,7 @@ fn (var b: Builder) finish_fn() {
   }
   var rs: List[Int] = []
   for t in b.s.f.results {
-    rs.push(b.zero(t, []))
+    rs.push(b.fault_zero(t))
   }
   if b.s.pack_orig >= 0 {
     // a packed closure hands back the value it was given
@@ -3494,6 +3499,50 @@ fn (var b: Builder) zero_func(t: Int) -> Str {
   b.build_gen(GenJob{fi: fi, file: b.s.file, gen: Gen.Zero(t: t)})
   name
 }
+
+/// A zero t for a fault exit's result (finish_fn): a struct of
+/// FAULT_ZERO_FIELDS fields or more is one call of zero_val.T, shared by
+/// every function, not built field by field in each (2026-10-30: a `var
+/// g: G` method's out, a zero arm64 G, was about 1,200 instructions on
+/// every such method's fault path, in 1,974 functions of xo).
+fn (var b: Builder) fault_zero(t: Int) -> Int {
+  let name = b.zero_val_name(t)
+  if name.is_empty() || b.fidx(name) < 0 {
+    return b.zero(t, [])
+  }
+  b.add(Op.Call, t, Aux.S(s: name), [])
+}
+
+/// zero_val.T for a large struct t, "" for another type.
+fn (var b: Builder) zero_val_name(t: Int) -> Str {
+  if b.tkind(t) != Kind.Struct || b.m.types[t].fields.len() < FAULT_ZERO_FIELDS {
+    return ""
+  }
+  "zero_val.${b.m.types[t].name}"
+}
+
+/// Makes zero_val.T for a large struct result t while a body is built
+/// (finish_fn of every function), not when add_landings makes an unwind
+/// exit: the cleanup cache stands in for a function whose landings grew
+/// nothing (decision 0382), so a function it adds then could be missing
+/// from a later build that reads a cached caller.
+fn (var b: Builder) zero_val_of(t: Int) {
+  let name = b.zero_val_name(t)
+  if name.is_empty() || b.fidx(name) >= 0 {
+    return
+  }
+  let fi = b.m.new_func(name, [], [t])
+  b.build_gen(GenJob{fi: fi, file: b.s.file, gen: Gen.ZeroVal(t: t)})
+}
+
+/// The fields from which fault_zero calls a shared zero value. 2 made
+/// the smallest xo (stage 2 __text 62,590,056 bytes at 8, 62,478,776 at
+/// 4, 62,452,648 at 2; 2026-10-30), but at 2 the runtime's fault report
+/// types (dump, dwline, prof: 2 to 7 fields) get it too, and an LLVM build
+/// split into modules on linux/arm64 then exited at a task's fault
+/// instead of unwinding to its scope (golden fault_task_exit), so 8 until
+/// that is understood.
+const FAULT_ZERO_FIELDS = 8
 
 /// Raises a fault with message msg at pos (landing.go fault).
 fn (var b: Builder) fault(msg: Int, pos: Str) {
@@ -3623,6 +3672,10 @@ fn (var b: Builder) build_gen(g: GenJob) {
     FrameArgs(names, cts, cap_ts, elided) => b.frame_args_body(names, cts, cap_ts, elided)
     Zero(t) => {
       let z = b.zero(b.m.types[t].ret, [])
+      b.add(Op.Return, -1, Aux.None, [z])
+    }
+    ZeroVal(t) => {
+      let z = b.zero(t, [])
       b.add(Op.Return, -1, Aux.None, [z])
     }
     TestFs(memfs, real) => {
