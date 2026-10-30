@@ -19,6 +19,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   a setter taking an Xo function (`s.set_on_error(fn(msg: Str) { ... })`),
   converted as a callback parameter is, so hooks such as an error handler
   or a check function can be set from Xo. Binding format 17.
+- `use go`: a Go pointer to a basic type binds as `T?`, a copy at the
+  boundary (decision 0419): options structs with optional fields
+  (`opts.set_limit(Some(10))`, `opts.name() ?? "none"`) bind; a parameter
+  Go writes through stays skipped. Binding format 21.
 - std/crypto: `ed25519_sign` also takes Go's 64 byte private key (the
   seed, then its public key) and signs without deriving the public key:
   0.55 of the seed form's time, 0.65 of Go's.

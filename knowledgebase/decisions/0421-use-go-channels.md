@@ -1,6 +1,6 @@
 # 0421: Go channels in `use go` are receive-only `go.Recv[T]` handles
 
-Status: Proposed (Lang 1, 2026-10-29; the lead agreed with the form; the owner accepts or rejects it, since it adds std/go surface)
+Status: Accepted (owner, 2026-10-29; proposed by Lang 1, the lead agreed with the form; not built yet)
 
 ## Context
 
@@ -16,7 +16,7 @@ call is a plain Go call on it: GoEnter/GoExit (std/rt gointerop.go) count the th
 and, under the deterministic scheduler (`xo run --record`, decision 0073), lend its turn only when
 callbacks are live (s.cbLive, lendLocked); otherwise the call keeps the turn until it returns.
 
-## Decision (proposed)
+## Decision
 
 1. A Go `<-chan T` or `chan T` given to Xo (a result, a field or variable read) whose element maps
    is a handle `go.Recv[T]` (std/go, a generic struct over an rt value like `go.Any`) with:

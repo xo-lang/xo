@@ -1775,6 +1775,13 @@ fn main(os: Os) ! {
   a Go error variable is a function returning it as a `go.Error`
   (`io.eof()`). A go.Error that came from Go goes back as the same Go
   error (decision 0416).
+- A Go pointer to a basic type (`*bool`, `*string`, `*int`, `*float64`)
+  is `T?` (decision 0419): `nil` is `None`, otherwise the value it points
+  to. It is a copy, not an alias: Xo reads the value when it crosses the
+  boundary and passes `Some(v)` to Go as a pointer to a fresh copy of
+  `v`, so a write Go makes through the pointer later is not seen (read
+  the field again). A parameter Go writes through (sync/atomic, a `*Var`
+  function such as `flag.int_var`, an output parameter) is not bound.
 - An Xo program implements a Go interface with functions (decision 0416):
   a binding declares, for each named interface whose methods all map as
   callbacks, a constructor named after the interface (`implement_` and

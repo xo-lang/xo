@@ -477,6 +477,9 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 				}
 			}
 		}
+		if bt, ok := types.Unalias(x.Elem()).(*types.Basic); ok && bt.Kind() != types.UnsafePointer {
+			return g.basicPtrConv(x, bt)
+		}
 		return conv{}, skipf(catPointer, "pointer type %s", g.display(x))
 	case *types.Slice:
 		if isByte(x.Elem()) {
@@ -538,6 +541,49 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		return conv{xo: tp.name, rt: tp.name, gt: tp.name, id: true, toXo: identity, toGo: identity}, nil
 	}
 	return conv{}, skipf(catIface, "Go type %s", g.display(t))
+}
+
+// basicPtrConv maps a pointer to a basic type (*bool, *string, *int) to
+// `T?` (decision 0419): nil is None, else the value read at the
+// boundary; from Xo, Some(v) is a pointer to a fresh copy of v. A copy,
+// not an alias: what Go writes through the pointer later is not seen.
+func (g *gen) basicPtrConv(x *types.Pointer, bt *types.Basic) (conv, *skipErr) {
+	gt := g.qual(x.Elem())
+	ec, err := basicConv(bt, gt)
+	if err != nil {
+		return conv{}, err
+	}
+	rt := "Option[" + ec.rt + "]"
+	return conv{xo: ec.xo + "?", rt: rt, gt: "*" + gt,
+		toXo: func(e string) string {
+			return fmt.Sprintf("func(p *%s) %s {\n\tif p == nil {\n\t\treturn %s{}\n\t}\n\treturn %s{Some: true, V: %s}\n}(%s)", gt, rt, rt, rt, ec.toXo("*p"), e)
+		},
+		toGo: func(e string) string {
+			return fmt.Sprintf("func(o %s) *%s {\n\tif !o.Some {\n\t\treturn nil\n\t}\n\tv := %s\n\treturn &v\n}(%s)", rt, gt, ec.toGo("o.V"), e)
+		}}, nil
+}
+
+// writesThrough reports whether parameter p (a pointer to a basic type)
+// of the function display is one Go writes through or keeps, so the copy
+// `T?` would lose the write (decision 0419): sync/atomic, a *Var function
+// (flag.BoolVar stores the pointer), and parameters named as outputs.
+func writesThrough(display, name string, t types.Type, pkg string) bool {
+	pt, ok := types.Unalias(t).(*types.Pointer)
+	if !ok {
+		return false
+	}
+	if _, ok := types.Unalias(pt.Elem()).(*types.Basic); !ok {
+		return false
+	}
+	fn := display
+	if k := strings.LastIndex(fn, "."); k >= 0 {
+		fn = fn[k+1:]
+	}
+	switch name {
+	case "dst", "out", "ptr", "addr", "p", "result", "dest":
+		return true
+	}
+	return pkg == "sync/atomic" || strings.HasSuffix(fn, "Var") || strings.HasPrefix(fn, "Scan")
 }
 
 // instConv maps an instance of a generic type (decision 0415), *T when
@@ -1009,6 +1055,13 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		if i == 0 && isContext(pt) {
 			args = append(args, "GoContext(tk)")
 			continue
+		}
+		if writesThrough(s.display, p.Name(), pt, g.pkg.Path()) {
+			pn := p.Name()
+			if pn == "" {
+				pn = fmt.Sprintf("#%d", i+1)
+			}
+			return skipf(catPointer, "parameter %s: Go writes through %s, which Xo passes as a copy (decision 0419)", pn, g.display(pt))
 		}
 		if outBuffer(s.display, p.Name(), pt, sig) {
 			pn := p.Name()

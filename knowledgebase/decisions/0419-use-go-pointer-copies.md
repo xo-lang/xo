@@ -1,6 +1,6 @@
 # 0419: Go pointers to basic types in `use go` are copies (`T?`)
 
-Status: Proposed (Lang 1, 2026-10-29; the lead asked for an ADR for the copy rule)
+Status: Accepted (owner, 2026-10-29; proposed by Lang 1 at the lead's request)
 
 ## Context
 
@@ -10,7 +10,7 @@ fields of options structs (excelize's `CalcPropsOptions.CalcCompleted *bool`, go
 `Document.Payload *string`, `JSONArrIndexArgs.Stop *int`), where Go uses a pointer to mean "optional".
 Xo has no pointers; its optional is `T?`.
 
-## Decision (proposed)
+## Decision
 
 1. A pointer to a basic type (`*T`, T a bool, string, integer or float type) in a field, parameter or
    result maps to `T?`: Go's nil is None, a non nil pointer is Some of the value it points to, read at
@@ -35,3 +35,23 @@ Xo has no pointers; its optional is `T?`.
 - **A `go.Ref[T]` handle** (a Go `*T` with get/set): keeps aliasing, but every optional field becomes a
   handle the program must allocate; reserved for later if a write-through API matters.
 - **Keep skipping**: the options structs stay unusable from Xo.
+
+## As built (Lang 1, 2026-10-29)
+
+- gobind mapType: a pointer whose element is a basic type other than
+  unsafe.Pointer maps through basicPtrConv to `Option[T]`; toXo checks
+  nil and copies `*p`, toGo allocates a fresh copy and passes its
+  pointer. Binding format 21.
+- The writes-through check is the name heuristic only (no body
+  analysis), and it applies only to pointers to basic types (a pointer
+  to a struct is a handle and aliases anyway): a parameter is skipped
+  when its package is sync/atomic, its function's name ends in `Var` or
+  starts with `Scan`, or its name is one of dst, out, ptr, addr, p,
+  result, dest. The skip line says "Go writes through ..., which Xo
+  passes as a copy (decision 0419)", and the survey lists every such
+  skip so a false one (a read-only `p *int`) is visible.
+- Survey (87 packages, 2026-10-29): of 70 writes-through skips with v,
+  val and value also in the name list, 53 were real (39 sync/atomic, 14
+  flag `*Var`) and 17 false (zap's `Boolp(key string, val *bool)` and
+  its kin read `*val` at once), so v, val and value were dropped.
+- Tests: gobind TestBasicPointers, cmd/xo TestUseGoBasicPointers.

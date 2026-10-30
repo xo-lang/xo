@@ -912,3 +912,70 @@ func LevelString() string { return "" }
 		}
 	}
 }
+
+// TestBasicPointers (decision 0419): a pointer to a basic type is `T?`,
+// a copy at the boundary; a parameter Go writes through stays skipped.
+func TestBasicPointers(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "opt")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/opt\n\ngo 1.21\n",
+		"opt.go": `package opt
+
+type Options struct {
+	Name  *string
+	Limit *int
+	On    *bool
+}
+
+func Describe(o *Options) string { return "" }
+
+func Or(x *int, d int) int {
+	if x == nil {
+		return d
+	}
+	return *x
+}
+
+func Ptr(n int) *int { return &n }
+
+func IntVar(p *int, n int) { *p = n }
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/opt v0.0.0\n\nreplace example.com/opt => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/opt", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl := string(b.Decl)
+	for _, want := range []string{
+		"fn (recv: Options) name() -> Str? uses go",
+		"fn (recv: Options) set_limit(v: Int?) uses go",
+		"fn or(x: Int?, d: Int) -> Int uses go",
+		"fn ptr(n: Int) -> Int? uses go",
+	} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("no %q in the declarations:\n%s", want, decl)
+		}
+	}
+	if why := b.Skipped["int_var"]; !strings.Contains(why, "writes through") {
+		t.Errorf("int_var skipped %q, want writes through (skipped: %v)", why, b.Skipped)
+	}
+}
