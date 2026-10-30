@@ -947,3 +947,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [native-prelude-helper-not-memfs-routed.md](native-prelude-helper-not-memfs-routed.md): Observed 2026-10-29: a native prelude function called from native prelude code skips testmode's MemFs routing (write_atomic synced an OS path for a MemFs file), and a memfs_load without memfs_store hangs the next MemFs call
 - [gobind-export-data-partial-scope.md](gobind-export-data-partial-scope.md): an import's scope from export data holds only what the bound package names; import the dependency through the same importer
 - [run-cache-windows-pdb.md](run-cache-windows-pdb.md): a run cache hit wrote a windows .exe without its PDB; such builds store no entry now.
+- [golden-writes-beside-itself.md](golden-writes-beside-itself.md): a golden's scratch files written beside main.xo were committed; goldens write under $TMPDIR.

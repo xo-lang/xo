@@ -5,7 +5,9 @@
 // list, and child processes waited for or dropped. Run with XO_LEAKCHECK=1 as every golden is, a record the free hook
 // does not free fails it. Each round locks its own file: a lock dropped
 // held is released when its record is freed natively, but only when the
-// collector runs on the Go backend.
+// collector runs on the Go backend. Its files live in a fresh directory
+// under $TMPDIR, never beside the golden (a backend failing midway left
+// h.txt and w.txt in testdata, and a commit took them).
 
 fn round(fs: Fs, i: Int) -> Int ! FsErr uses fs {
   fs.write("h.txt", "line ${i}\nnext\n".bytes())?
@@ -50,9 +52,13 @@ fn children(p: Proc) -> Int ! ProcErr uses proc {
 }
 
 fn main(os: Os) ! {
+  let base = os.fs.sub(os.env.get("TMPDIR") ?? "/tmp")
+  let name = "xo-handle-drop-leak-${os.rand.int(0, 1000000000)}"
+  base.create_dir_all(name)?
+  let fs = base.sub(name)
   var total = 0
   for i in 0..200 {
-    total += round(os.fs, i)? + shared_handles(i)
+    total += round(fs, i)? + shared_handles(i)
   }
   var procs = 0
   for _ in 0..5 {
@@ -60,18 +66,13 @@ fn main(os: Os) ! {
   }
   let n = scope s {
     let t = s.spawn(fn() -> Int ! FsErr {
-      let f = os.fs.open("h.txt")?
-      let l = os.fs.try_lock("t.lock")?
+      let f = fs.open("h.txt")?
+      let l = fs.try_lock("t.lock")?
       Ok((f.read_line()? ?? "").len() + (if l.is_some() { 1 } else { 0 }))
     })
     t.await?
   }
-  let again = os.fs.try_lock("h1.lock")?
+  let again = fs.try_lock("h1.lock")?
   os.stdio.println("total ${total} task ${n} relock ${again.is_some()} procs ${procs}")
-  for p in ["h.txt", "w.txt", "t.lock"] {
-    os.fs.remove(p)?
-  }
-  for i in 0..200 {
-    os.fs.remove("h${i}.lock")?
-  }
+  base.remove_all(name)?
 }
