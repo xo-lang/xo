@@ -997,6 +997,28 @@ type bodyWriter struct {
 	// fd asks the server for full duplex and sends the head (decision
 	// 0433; with_full_duplex), nil when collected
 	fd func()
+	// h1: an HTTP/1.1 server's response. net/http frames a body that ends
+	// with the handler within its buffer with a Content-Length, from the
+	// headers it had at WriteHeader, and so drops a trailer set later;
+	// the native server sends a response with a trailer and a body
+	// chunked. So set_trailer flushes the head once a body byte is
+	// written (wrote; or after the next write: flushNext), and a response
+	// with no body keeps Content-Length: 0 and no trailers (2026-10-30)
+	h1, wrote, flushed, flushNext bool
+}
+
+// trailerFlush flushes an HTTP/1.1 response's head chunked when a
+// trailer is set (h1); w.mu is held.
+func (w *bodyWriter) trailerFlush() {
+	if !w.h1 || w.flushed || w.fl == nil {
+		return
+	}
+	if !w.wrote {
+		w.flushNext = true
+		return
+	}
+	w.fl.Flush()
+	w.flushed = true
 }
 
 // M_write is `w.write(data)`.
@@ -1009,6 +1031,12 @@ func (w Http_BodyWriter) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
 	if _, err := w.w.w.Write([]byte(data)); err != nil {
 		return Err[Unit](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
 	}
+	if len(data) > 0 {
+		w.w.wrote = true
+		if w.w.flushNext {
+			w.w.trailerFlush()
+		}
+	}
 	return Ok[Unit, IoErr](Unit{})
 }
 
@@ -1018,6 +1046,9 @@ func (w Http_BodyWriter) M_flush(tk *Task) Result[Unit, IoErr] {
 		return Err[Unit](IoErr{Tag: 3})
 	}
 	if w.w.fl != nil {
+		w.w.mu.Lock()
+		w.w.flushed = true
+		w.w.mu.Unlock()
 		w.w.fl.Flush()
 	}
 	return Ok[Unit, IoErr](Unit{})

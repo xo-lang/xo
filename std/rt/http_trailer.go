@@ -72,6 +72,7 @@ func (w Http_BodyWriter) M_set_trailer(_ *Task, name, value string) {
 	defer w.w.mu.Unlock()
 	if w.w.tr != nil {
 		w.w.tr(k, value)
+		w.w.trailerFlush()
 	}
 }
 

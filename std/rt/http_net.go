@@ -206,7 +206,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 				rc.EnableFullDuplex()
 				rc.Flush()
 			}
-			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: out, fl: fl, tr: tr, fd: fd}})
+			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: out, fl: fl, tr: tr, fd: fd, h1: hr.ProtoMajor == 1}})
 			if tee != nil {
 				resp.XStream = nil
 				resp.F_body = Bytes(tee.String())

@@ -1858,7 +1858,8 @@ for other names are dropped. Over HTTP/1.1 they follow the last chunk
 (a body with a Content-Length carries none, and a streamed response
 that writes no body is sent with `Content-Length: 0`, so it carries
 only the trailers it declared with `with_trailer_names`, as net/http
-does);
+does, while one that writes a body and sets a trailer is sent chunked
+on every backend, so its trailers follow declared or not);
 over HTTP/2 they are a HEADERS frame ending the stream, after the
 response's HEADERS and DATA (with no body, two HEADERS frames; never
 merged into the first). Names a trailer may not carry are dropped when

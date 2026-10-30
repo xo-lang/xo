@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (Go backend, std/http): an HTTP/1.1 streamed response with a
+  short body lost a trailer set without `with_trailer_names` (net/http
+  sent it with a Content-Length); setting a trailer now sends it
+  chunked, as the native backends do, and the trailer arrives.
 - Native backends: a load is reused across a branch and at a join
   (compiler/arm64 reuse_loads). A block's own compare and branch at its
   end no longer forgets the loads before it, so a successor reached by a

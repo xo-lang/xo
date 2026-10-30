@@ -1,5 +1,28 @@
 # std/http changes
 
+## 2026-10-30: fix: an undeclared trailer after a short streamed body, Go backend (decision 0433)
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo lang 5's header and trailer probe across backends (agent survey 2026-10-30, item 3)
+- Go reference: net/http's chunkWriter.writeHeader (a handler done within the buffer gets a Content-Length from the headers seen at WriteHeader)
+- Test: internal/llvm/testdata/golden/http_trailers ("h1 short": `write("hi")` then `set_trailer("Grpc-Status", "0")`; the Go backend's output equal to the native one's)
+- Timing: one flush when an HTTP/1.1 streamed response sets a trailer
+
+On HTTP/1.1 the Go backend's server wrote a streamed response's status
+before running its function, so net/http fixed the framing from the
+headers it had then: a body short enough to end with the handler went
+out with a Content-Length, and a trailer set without
+`with_trailer_names` was dropped. The native server sends such a
+response with a body and a trailer chunked and delivered the trailer.
+The Go backend now flushes the head when a trailer is set after a body
+byte (or after the next write, for one set first), so it goes out
+chunked too and its trailers follow the last chunk; a streamed
+response without trailers keeps its Content-Length, and one with no
+body keeps Content-Length: 0 and drops undeclared trailers, as before.
+Header and trailer names were already canonical on every backend, in
+both directions and over a raw peer's lowercase names.
+
 ## 2026-10-30: feature: Client H2Config PING keepalive, native (decision 0434)
 
 - Kind: feature
