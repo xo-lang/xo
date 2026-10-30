@@ -1,0 +1,99 @@
+// std/deque on the native backends (spec/std.md 47; the Go backend has
+// std/rt/deque.go): a ring buffer of slots. A slot is None when free,
+// so a popped element is released at once.
+
+struct Deque[T] {
+  /// the ring: its length is the capacity
+  ring: List[T?]
+  /// the front's slot
+  head: Int
+  n: Int
+}
+
+fn new[T](cap: Int = 0) -> Deque[T] {
+  var ring: List[T?] = []
+  for _ in 0..cap {
+    ring.push(None)
+  }
+  Deque[T]{ring: ring, head: 0, n: 0}
+}
+
+/// The ring in order from the front, twice as large (at least 8 slots).
+fn (var d: Deque[T]) grow() {
+  let c = d.ring.len()
+  var nr: List[T?] = []
+  for i in 0..d.n {
+    nr.push(d.ring[(d.head + i) % c])
+  }
+  let size = if c < 4 { 8 } else { c * 2 }
+  while nr.len() < size {
+    nr.push(None)
+  }
+  d.ring = nr
+  d.head = 0
+}
+
+fn (var d: Deque[T]) push_back(x: T) {
+  if d.n == d.ring.len() {
+    d.grow()
+  }
+  d.ring[(d.head + d.n) % d.ring.len()] = Some(x)
+  d.n += 1
+}
+
+fn (var d: Deque[T]) push_front(x: T) {
+  if d.n == d.ring.len() {
+    d.grow()
+  }
+  let c = d.ring.len()
+  d.head = (d.head + c - 1) % c
+  d.ring[d.head] = Some(x)
+  d.n += 1
+}
+
+fn (var d: Deque[T]) pop_front() -> T? {
+  if d.n == 0 {
+    return None
+  }
+  let x = d.ring[d.head]
+  d.ring[d.head] = None
+  d.head = (d.head + 1) % d.ring.len()
+  d.n -= 1
+  x
+}
+
+fn (var d: Deque[T]) pop_back() -> T? {
+  if d.n == 0 {
+    return None
+  }
+  let i = (d.head + d.n - 1) % d.ring.len()
+  let x = d.ring[i]
+  d.ring[i] = None
+  d.n -= 1
+  x
+}
+
+fn (d: Deque[T]) front() -> T? { d.get(0) }
+
+fn (d: Deque[T]) back() -> T? { d.get(d.n - 1) }
+
+fn (d: Deque[T]) get(i: Int) -> T? {
+  if i < 0 || i >= d.n {
+    return None
+  }
+  d.ring[(d.head + i) % d.ring.len()]
+}
+
+fn (d: Deque[T]) len() -> Int { d.n }
+
+fn (d: Deque[T]) is_empty() -> Bool { d.n == 0 }
+
+fn (d: Deque[T]) to_list() -> List[T] {
+  var out: List[T] = []
+  for i in 0..d.n {
+    if let Some(x) = d.ring[(d.head + i) % d.ring.len()] {
+      out.push(x)
+    }
+  }
+  out
+}

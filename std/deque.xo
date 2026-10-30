@@ -1,0 +1,26 @@
+// std/deque (spec/std.md 47). Declaration file; encoding rules are listed
+// at the top of std/prelude.xo. A double ended queue on a ring buffer:
+// O(1) at both ends (amortized: it doubles when full), as a slice ring or
+// Go's container/list used as a queue. Its own module, not the prelude:
+// a prelude type name cannot be redeclared (core 1.4), so a program's own
+// Deque keeps compiling.
+
+/// A double ended queue. A value, as List: a copy shares the elements
+/// until one of them is written, which then copies the ring once (O(n)).
+struct Deque[T] {}
+
+fn new[T](cap: Int = 0) -> Deque[T]
+fn (var d: Deque[T]) push_back(x: T)
+fn (var d: Deque[T]) push_front(x: T)
+/// The first element, removed; None when empty.
+fn (var d: Deque[T]) pop_front() -> T?
+/// The last element, removed; None when empty.
+fn (var d: Deque[T]) pop_back() -> T?
+fn (d: Deque[T]) front() -> T?
+fn (d: Deque[T]) back() -> T?
+/// Element i from the front; None out of range.
+fn (d: Deque[T]) get(i: Int) -> T?
+fn (d: Deque[T]) len() -> Int
+fn (d: Deque[T]) is_empty() -> Bool
+/// The elements front to back (iterate with `for x in d.to_list()`).
+fn (d: Deque[T]) to_list() -> List[T]

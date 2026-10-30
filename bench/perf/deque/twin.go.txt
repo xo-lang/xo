@@ -1,0 +1,59 @@
+package main
+
+import (
+	"container/list"
+	"fmt"
+	"os"
+)
+
+func next(x int) int { return (x*1103515245 + 12345) % 2147483648 }
+
+func popFront(d *list.List, none int) int {
+	e := d.Front()
+	if e == nil {
+		return none
+	}
+	return d.Remove(e).(int)
+}
+
+func popBack(d *list.List, none int) int {
+	e := d.Back()
+	if e == nil {
+		return none
+	}
+	return d.Remove(e).(int)
+}
+
+func main() {
+	w := "queue"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	d := list.New()
+	sum := 0
+	r := 12345
+	if w == "queue" {
+		for i := 0; i < 20000000; i++ {
+			d.PushBack(i)
+			if d.Len() > 1000 {
+				sum += popFront(d, 0)
+			}
+		}
+	} else if w == "both" {
+		for i := 0; i < 20000000; i++ {
+			r = next(r)
+			switch (r >> 8) % 4 {
+			case 0:
+				d.PushBack(i)
+			case 1:
+				d.PushFront(i)
+			case 2:
+				sum += popFront(d, 1)
+			default:
+				sum += popBack(d, 2)
+			}
+		}
+	}
+	sum += d.Len()
+	fmt.Println(w, sum)
+}

@@ -6120,3 +6120,34 @@ fn lookup_addr(n: Net, ip: Str) -> List[Str] ! NetErr uses net.dial
   resolution policies (NRPT, a VPN's split DNS), its DNS over HTTPS
   setting and its cache are not consulted (decision 0427).
   The Go backend uses Go's resolver on every OS.
+
+## 47. std/deque
+
+A double ended queue on a ring buffer, as a Go slice ring or
+`container/list` used as a queue. A std module rather than the prelude:
+prelude type names cannot be redeclared (core 1.4), so a program's own
+`Deque` keeps compiling. Pure.
+
+```xo
+struct Deque[T] {}
+pub fn new[T](cap: Int = 0) -> Deque[T]
+fn (var d: Deque[T]) push_back(x: T)
+fn (var d: Deque[T]) push_front(x: T)
+fn (var d: Deque[T]) pop_front() -> T?          // None when empty
+fn (var d: Deque[T]) pop_back() -> T?
+fn (d: Deque[T]) front() -> T?
+fn (d: Deque[T]) back() -> T?
+fn (d: Deque[T]) get(i: Int) -> T?              // from the front; None out of range
+fn (d: Deque[T]) len() -> Int
+fn (d: Deque[T]) is_empty() -> Bool
+fn (d: Deque[T]) to_list() -> List[T]           // front to back
+```
+
+- Both ends are O(1), amortized: a full ring doubles (at least 8
+  slots), copying its elements once. A popped element is released at
+  once.
+- A `Deque` is a value, as `List`: a copy shares the ring until one of
+  them is written, and that write copies the ring once (O(n)). Pass it
+  by `var` or keep it in one place to avoid the copy.
+- There is no `for x in d` (core 3.5 iterates the built in collections
+  only): `for x in d.to_list()`.

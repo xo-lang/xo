@@ -5,6 +5,8 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- std/deque: a double ended queue with O(1) pushes and pops at both ends.
+
 - `backoff.retry_notify` calls a function with each error and the next
   delay before it sleeps (cenkalti's RetryNotify).
 

@@ -1,0 +1,36 @@
+// deque: std/deque as a FIFO work queue (queue: push_back, pop_front,
+// at most 1,000 queued) and at both ends (both: pushes and pops at both
+// ends from a pseudo random sequence), 2,000,000 operations, against
+// Go's container/list (twin.go.txt). Usage: `<program> queue|both|none`
+// (none: the setup alone). Prints `<workload> <checksum>`; the twin
+// prints the same.
+use std/deque
+
+fn next(x: Int) -> Int { (x * 1103515245 + 12345) % 2147483648 }
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "queue"
+  var d: deque.Deque[Int] = deque.new()
+  var sum = 0
+  var r = 12345
+  if w == "queue" {
+    for i in 0..20000000 {
+      d.push_back(i)
+      if d.len() > 1000 {
+        sum += d.pop_front() ?? 0
+      }
+    }
+  } else if w == "both" {
+    for i in 0..20000000 {
+      r = next(r)
+      match (r >> 8) % 4 {
+        0 => d.push_back(i)
+        1 => d.push_front(i)
+        2 => { sum += d.pop_front() ?? 1 }
+        _ => { sum += d.pop_back() ?? 2 }
+      }
+    }
+  }
+  sum += d.len()
+  os.stdio.println("${w} ${sum}")
+}
