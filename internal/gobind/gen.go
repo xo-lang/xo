@@ -1340,6 +1340,7 @@ func (g *gen) run() {
 			g.skipMethods(n, err.cat, err.detail)
 		}
 	}
+	var basics []*types.Named
 	for _, name := range names {
 		switch o := scope.Lookup(name).(type) {
 		case *types.Func:
@@ -1378,10 +1379,14 @@ func (g *gen) run() {
 				continue
 			}
 			if _, basic := n.Underlying().(*types.Basic); basic {
-				// methods of named basic types are not bound
-				g.skipMethods(n, catNamedBase, "method of "+g.display(n))
+				// bound after every package function, which keeps its
+				// name on a clash
+				basics = append(basics, n)
 			}
 		}
+	}
+	for _, n := range basics {
+		g.bindBasicMethods(n)
 	}
 	// an Xo implementation of each interface (decision 0416), after every
 	// handle its methods name exists; a constructor's callbacks may add
@@ -1596,6 +1601,50 @@ func (g *gen) bindImpl(h *handle) {
 }
 
 // skipMethods records each exported method of n as skipped.
+// bindBasicMethods binds each value receiver method of a named basic type,
+// which Xo sees as its basic type (time.Month is Int), as a package
+// function `<type>_<method>` taking the value first (decision 0416):
+// time.month_string(m: Int) -> Str calls time.Month(m).String() through
+// the method expression. A pointer receiver method (it changes the value)
+// and a name a package function already has are skipped.
+func (g *gen) bindBasicMethods(n *types.Named) {
+	ms := types.NewMethodSet(types.NewPointer(n))
+	for i := 0; i < ms.Len(); i++ {
+		f := ms.At(i).Obj().(*types.Func)
+		if !f.Exported() {
+			continue
+		}
+		g.stats.Methods++
+		name := xoName(snake(n.Obj().Name()) + "_" + snake(f.Name()))
+		display := "(" + g.display(n) + ")." + f.Name()
+		sig := f.Type().(*types.Signature)
+		if _, ptr := sig.Recv().Type().(*types.Pointer); ptr {
+			g.skip(name, display, skipf(catNamedBase, "pointer receiver method of %s, which Xo passes as a value", g.display(n)), true)
+			continue
+		}
+		if g.scope[name] {
+			g.skip(name, display, skipf(catCollision, "name `%s` is taken", name), true)
+			continue
+		}
+		rn := sig.Recv().Name()
+		if rn == "" || rn == "_" {
+			rn = "v"
+		}
+		ps := []*types.Var{types.NewParam(token.NoPos, nil, rn, n)}
+		for j := 0; j < sig.Params().Len(); j++ {
+			ps = append(ps, sig.Params().At(j))
+		}
+		fsig := types.NewSignatureType(nil, nil, nil, types.NewTuple(ps...), sig.Results(), sig.Variadic())
+		goCall := g.alias(g.pkg) + "." + n.Obj().Name() + "." + f.Name()
+		if err := g.bindFunc(fnSpec{xoName: name, display: display, sig: fsig, goCall: goCall}); err != nil {
+			g.skip(name, display, err, true)
+			continue
+		}
+		g.scope[name] = true
+		g.stats.MethodsMapped++
+	}
+}
+
 func (g *gen) skipMethods(n *types.Named, cat, detail string) {
 	ms := types.NewMethodSet(types.NewPointer(n))
 	for i := 0; i < ms.Len(); i++ {

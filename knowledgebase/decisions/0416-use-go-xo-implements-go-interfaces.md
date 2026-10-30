@@ -213,3 +213,26 @@ case is small in count and large in use: it is how Go composes I/O.
 - Binding format 17. Tests: gobind TestFuncSetters, cmd/xo
   TestUseGoFuncSetters (synthetic example.com/hook in
   testdata/goproxy).
+
+## Amendment: methods of named basic types (Lang 1, 2026-10-29; lead approved, owner FYI with a veto)
+
+- A named basic type (`time.Month`, `fs.FileMode`, `slog.Level`) maps to its
+  basic type, so its methods had no Xo receiver and were skipped (survey 3:
+  46 std, 30 third party). Following this decision's function first rule,
+  each value receiver method is a package function taking the value first.
+- Naming: `<type>_<method>`, each part in snake case (`Month.String` is
+  `month_string`, `FileMode.IsDir` is `file_mode_is_dir`); the receiver's
+  Go name, else `v`, names the first parameter.
+- A name clash: package functions, variables and constants are bound first
+  and keep their names; a method whose name is taken is skipped with
+  "name `x` is taken" (a counted skip, so the survey shows it).
+- A pointer receiver method (`(*Level).Set`, `UnmarshalText`) changes the
+  value and Xo passes a copy, so it stays skipped (the copy rule of 0419).
+- The adapter calls the method expression (`time.Month.String(time.Month(m))`).
+- Not chosen now: an Xo newtype per named basic type (`Month` a distinct
+  type with methods). It is truer to Go and gives `m.string()`, but every
+  function that takes or returns the type would change from `Int` to the
+  newtype, which breaks existing programs' bindings and needs conversions
+  at each use; revisit if the owner wants method syntax there.
+- Binding format 20. Tests: gobind TestNamedBasicMethods, cmd/xo
+  TestUseGoNamedBasicMethods.

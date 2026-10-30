@@ -1744,6 +1744,13 @@ fn main(os: Os) ! {
   is that handle's instance; a `context.Context` parameter is
   supplied from the current task (deadline and cancellation); a panic becomes
   a fault.
+- A named Go type over a basic type (`time.Month`, `fs.FileMode`) is that
+  basic type in Xo, and each method it has with a value receiver is a
+  package function named `<type>_<method>` in snake case that takes the
+  value first (decision 0416): `time.month_string(m: Int) -> Str`,
+  `fs.file_mode_is_dir(m: UInt32) -> Bool`. A pointer receiver method is
+  not bound (Xo passes a copy), and neither is one whose name a package
+  function already has.
 - An Xo function passed to Go as a callback that Go calls during the Go call,
   on the calling task's goroutine, runs as the calling task. A call from
   another goroutine (`sync.WaitGroup.go_`, a timer) runs as a task of its own,

@@ -8,6 +8,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 - std/crc32: Castagnoli runs on arm64's CRC32CX (0.21 of its time, Go's speed);
   std/fnv's 32 bit sums 0.79 of their time.
+- `use go`: methods of a named basic type bind as package functions
+  taking the value first (`time.month_string(3)` is "March",
+  `fs.file_mode_is_dir(m)`), decision 0416. Binding format 20.
 - std/crc32 and std/fnv: Go's hash/crc32 (IEEE and Castagnoli,
   `checksum` and `update`) and hash/fnv (the 32, 64 and 128 bit FNV-1
   and FNV-1a sums, and `update` to continue one).

@@ -839,3 +839,76 @@ func TestErrorValues(t *testing.T) {
 		t.Errorf("no %q in io's declarations:\n%s", want, grep(io, "eof"))
 	}
 }
+
+// TestNamedBasicMethods (decision 0416): a value receiver method of a
+// named basic type is a package function `<type>_<method>` taking the
+// value first; a pointer receiver method and a taken name are skipped.
+func TestNamedBasicMethods(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "lvl")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/lvl\n\ngo 1.21\n",
+		"lvl.go": `package lvl
+
+type Level int8
+
+func (l Level) String() string { return "" }
+
+func (l Level) Enabled(x Level) bool { return x >= l }
+
+func (l Level) Join(sep string, more ...Level) string { return "" }
+
+func (l *Level) Set(s string) error { return nil }
+
+type Mode uint32
+
+func (Mode) IsDir() bool { return false }
+
+func LevelString() string { return "" }
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/lvl v0.0.0\n\nreplace example.com/lvl => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/lvl", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl, adapter := string(b.Decl), string(b.Adapter)
+	for _, want := range []string{
+		"fn level_enabled(l: Int8, x: Int8) -> Bool uses go",
+		"fn level_join(l: Int8, sep: Str, more: List[Int8]) -> Str uses go",
+		"fn mode_is_dir(v: UInt32) -> Bool uses go",
+		"fn level_string() -> Str uses go",
+	} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("no %q in the declarations:\n%s", want, decl)
+		}
+	}
+	if !strings.Contains(adapter, ".Level.Enabled(") {
+		t.Errorf("level_enabled does not call the method expression:\n%s", adapter)
+	}
+	for name, why := range map[string]string{
+		"level_set":    "pointer receiver",
+		"level_string": "is taken",
+	} {
+		if !strings.Contains(b.Skipped[name], why) {
+			t.Errorf("%s skipped %q, want %q (skipped: %v)", name, b.Skipped[name], why, b.Skipped)
+		}
+	}
+}

@@ -159,3 +159,30 @@ fn main(os: Os) {
 		t.Errorf("output\n%s\nwant\n%s", got, want)
 	}
 }
+
+// TestUseGoNamedBasicMethods (decision 0416): a value receiver method of
+// a named basic type is a package function taking the value first.
+func TestUseGoNamedBasicMethods(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	setenv(t, "XO_GOBIND_DIR", "")
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module nb\n",
+		"main.xo": `use go "time"
+
+fn main(os: Os) {
+  os.stdio.println(time.month_string(3))
+  os.stdio.println(time.weekday_string(0))
+}
+`,
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	if got, want := strings.TrimSpace(out.String()), "March\nSunday"; got != want {
+		t.Errorf("output\n%s\nwant\n%s", got, want)
+	}
+}
