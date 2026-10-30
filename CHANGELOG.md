@@ -5,6 +5,11 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- std/http full duplex (decision 0433): `Response.with_full_duplex()`
+  and `http.pipe()` (Go's `io.Pipe`: a PipeWriter that fills a
+  BodyReader), so one task can write a request body while another reads
+  the response.
+
 - `WsConn` has deadlines (`set_deadline`, `set_read_deadline`,
   `set_write_deadline`), `on_ping`, `on_pong` and `pong` (decision 0430,
   gorilla's); a write error sticks, as in gorilla.

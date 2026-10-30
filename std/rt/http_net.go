@@ -197,7 +197,12 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 				out = io.MultiWriter(w, tee)
 			}
 			tr := func(k, v string) { wh.Set(http.TrailerPrefix+k, v) }
-			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: out, fl: fl, tr: tr}})
+			fd := func() {
+				rc := http.NewResponseController(w)
+				rc.EnableFullDuplex()
+				rc.Flush()
+			}
+			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: out, fl: fl, tr: tr, fd: fd}})
 			if tee != nil {
 				resp.XStream = nil
 				resp.F_body = Bytes(tee.String())

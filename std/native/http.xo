@@ -163,6 +163,10 @@ struct Response {
   stream: Int = 0
   /// as Request.fields (decision 0288)
   fields: List[Str] = []
+  /// with_full_duplex (decision 0433): the server sends the head at once
+  /// and keeps the request body readable while the stream writes (Xo
+  /// Lang 3's http1w part reads it). Hidden.
+  duplex: Bool = false
 }
 
 /// The 101 response that hands its connection to f (respond runs it):
@@ -2530,6 +2534,98 @@ fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Req
     }
   }
   r with {trailer_fn: [f], trailer_names: ks}
+}
+
+/// with_full_duplex (decision 0433): the response marked; HTTP/2 streams
+/// are full duplex already.
+fn response_with_full_duplex(r: http.Response) -> http.Response {
+  let n = rt.cast[http.Response, Response](r)
+  rt.cast[Response, http.Response](n with {duplex: true})
+}
+
+/// The writing end of http.pipe (decision 0433): the pieces go through a
+/// channel of one, so a write waits for the reader as io.Pipe's does.
+struct PipeWriter {
+  ch: Chan[Bytes]
+  st: Mutex[PipeState]
+}
+
+struct PipeState {
+  closed: Bool
+  /// close_with_error's message, "" for a plain close
+  err: Str
+  /// the rest of a piece longer than a read asked for
+  pend: Bytes
+}
+
+/// http.pipe (decision 0433): a BodyReader whose pieces a PipeWriter
+/// sends, at most the read's max at a time.
+fn pipe() -> (PipeWriter, BodyReader) {
+  let ch = Chan[Bytes].new(1)
+  let st = Mutex[PipeState].new(PipeState{closed: false, err: "", pend: b""})
+  let next = fn(max: Int) -> http1.BodyPart {
+    var d = st.with(fn(var s: PipeState) -> Bytes {
+      let p = s.pend
+      s.pend = b""
+      p
+    })
+    if d.is_empty() {
+      match ch.recv() {
+        Some(x) => d = x
+        None => {
+          let e = st.with_read(fn(s) { s.err })
+          return http1.BodyPart{data: "", end: e.is_empty(), err: e}
+        }
+      }
+    }
+    if d.len() > max {
+      let rest = d[max..d.len()]
+      st.with(fn(var s: PipeState) { s.pend = rest })
+      d = d[0..max]
+    }
+    let t = raw.str_at(raw.bytes_addr(d), d.len())
+    raw.alive(d)
+    http1.BodyPart{data: t, end: false, err: ""}
+  }
+  (PipeWriter{ch: ch, st: st}, conn_body(next, []))
+}
+
+fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr {
+  if task.is_canceled() {
+    return Err(IoErr.Canceled)
+  }
+  if w.st.with_read(fn(s) { s.closed }) {
+    return Err(IoErr.Io(msg: "io: read/write on closed pipe"))
+  }
+  if !data.is_empty() {
+    w.ch.send(data)
+  }
+  Ok(())
+}
+
+fn (w: PipeWriter) close() {
+  let first = w.st.with(fn(var s: PipeState) -> Bool {
+    let f = !s.closed
+    s.closed = true
+    f
+  })
+  if first {
+    w.ch.close()
+  }
+}
+
+fn (w: PipeWriter) close_with_error(e: IoErr) {
+  let first = w.st.with(fn(var s: PipeState) -> Bool {
+    let f = !s.closed
+    if f {
+      s.closed = true
+      s.err = "${e}"
+    }
+    f
+  })
+  if first {
+    w.ch.close()
+  }
 }
 
 fn (r: Request) with_body_reader(b: http.BodyReader) -> Request {

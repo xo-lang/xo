@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-10-30: feature: full duplex and pipe (with_full_duplex, pipe, PipeWriter)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0433 (gRPC bidirectional streams)
+- Go reference: net/http ResponseController.EnableFullDuplex, io.Pipe and PipeWriter.CloseWithError (go1.26.1)
+- Test: golden http_pipe (a piped request body read in pieces by the server, a body cut with an error, a local reader's max and error), the same output on the Go and native backends
+
+`Response.with_full_duplex()` lets a streamed handler read the request
+body while it writes over HTTP/1.1 (HTTP/2 streams always may), as
+`EnableFullDuplex`. `http.pipe()` returns a PipeWriter and the
+BodyReader it fills (Go's io.Pipe): each write waits for the reader,
+`close` ends the body, `close_with_error(e)` makes the reader's next
+read `Err(e)`, and a write after close is `Io("io: read/write on closed
+pipe")`. With `Request.with_body_reader` and `Client.open` one task
+writes a request while another reads the response. The native HTTP/1.1
+full duplex wire part is Xo Lang 3's (until then `with_full_duplex`
+only marks the response); `pipe` works on every backend.
+
 ## 2026-10-30: feature: trailers (decision 0433)
 
 - Kind: feature

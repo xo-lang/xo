@@ -55,6 +55,11 @@ var (
 	_ func(*Http_BodyWriter, *Task) Result[Unit, IoErr]                                                                                                 = (*Http_BodyWriter).M_flush
 	_ func(*Http_BodyWriter, *Task, string, string)                                                                                                     = (*Http_BodyWriter).M_set_trailer
 	_ func(*Http_Response, *Task, List[string]) Http_Response                                                                                           = (*Http_Response).M_with_trailer_names
+	_ func(*Http_Response, *Task) Http_Response                                                                                                         = (*Http_Response).M_with_full_duplex
+	_ func(*Task) Tuple2[Http_PipeWriter, Http_BodyReader]                                                                                              = Http_pipe
+	_ func(*Http_PipeWriter, *Task, Bytes) Result[Unit, IoErr]                                                                                          = (*Http_PipeWriter).M_write
+	_ func(*Http_PipeWriter, *Task)                                                                                                                     = (*Http_PipeWriter).M_close
+	_ func(*Http_PipeWriter, *Task, IoErr)                                                                                                              = (*Http_PipeWriter).M_close_with_error
 	_ func(*Http_Response, *Task, string, string) Http_Response                                                                                         = (*Http_Response).M_with_header
 	_ func(*Http_Response, *Task, string) Option[string]                                                                                                = (*Http_Response).M_header
 	_ func(*Http_Response, *Task, string) List[string]                                                                                                  = (*Http_Response).M_header_values

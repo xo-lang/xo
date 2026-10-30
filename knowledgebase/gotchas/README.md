@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [alarm-xo-run-orphans-program.md](alarm-xo-run-orphans-program.md): Observed 2026-10-30: perl's alarm on `xo run` ends xo, not the program it started, which keeps running with PPID 1 (and kept a heavy.sh gate slot); time the built binary itself, or `timeout -k` on Linux.
 - [hex-literal-past-int-max.md](hex-literal-past-int-max.md): Observed 2026-10-29: a Go uint64 constant past 2^63 fails XO0421; write it negative.
 - [ab-scripts-shared-output-dir.md](ab-scripts-shared-output-dir.md): Observed 2026-10-28: two A/B scripts sharing one scratch directory (caches, std variants, binaries) deleted each other's state mid-run; a private directory per run
 - [store-format-magic.md](store-format-magic.md): Observed 2026-10-28: a std store an older xo wrote faulted in store_view (out of range) because a layout change kept the magic; change STORE_MAGIC with every layout change

@@ -1523,6 +1523,12 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
 fn (w: BodyWriter) set_trailer(name: Str, value: Str)   // a trailer after the body (decision 0433)
 fn (r: Response) with_trailer_names(names: List[Str]) -> Response   // the `Trailer` header (HTTP/1.1)
+fn (r: Response) with_full_duplex() -> Response   // the stream may read the request body while it writes (decision 0433)
+pub fn pipe() -> (PipeWriter, BodyReader)          // a body one task writes while the client sends it (Go's io.Pipe)
+struct PipeWriter {}
+fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr   // waits for the reader; Io("io: read/write on closed pipe") after close
+fn (w: PipeWriter) close()                            // the reader's next read is None
+fn (w: PipeWriter) close_with_error(e: IoErr)         // the reader's next read is Err(e)
     // a response with status 101 made by std/websocket's upgrade hands its
     // connection over: the server writes nothing itself (decision 0313)
 fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr   // a handle_stream body's next bytes, None at its end
@@ -1758,6 +1764,22 @@ pub fn parse_url(s: Str) -> Url ! UrlErr
 struct Url { scheme: Str, host: Str, port: Int?, path: Str, query: Map[Str, Str] }
 struct UrlErr { msg: Str }
 ```
+
+Full duplex (decision 0433): inside a `handle_stream` route's
+`http.stream` function the request's BodyReader stays readable, so a
+handler reads request pieces while it writes response pieces. Over
+HTTP/2 a stream always allows it; over HTTP/1.1 only a response made
+`with_full_duplex()` does (Go's `ResponseController.EnableFullDuplex`,
+since many HTTP/1 clients read nothing until they finish writing): its
+head goes out at once, and a request that asked for `100-continue` gets
+it before the first read. `http.pipe()` gives a BodyReader that a
+PipeWriter fills as a task writes; with `Request.with_body_reader` and
+`Client.open`, which returns at the response's head, one task writes a
+request while another reads the response (a gRPC style bidirectional
+stream). A read takes at most `max` bytes of a written piece; each write
+waits until the reader has taken it. The native backend's HTTP/1.1
+full duplex follows decision 0433's split (until then
+`with_full_duplex` only marks the response).
 
 Trailers (decision 0433) are fields sent after a body, as net/http sends
 them: a streamed response's `set_trailer` (Go's `TrailerPrefix`; declared

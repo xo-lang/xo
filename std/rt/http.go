@@ -985,6 +985,9 @@ type bodyWriter struct {
 	// tr sets a trailer (decision 0433; set_trailer): the response
 	// writer's TrailerPrefix field on a server, nil when collected
 	tr func(k, v string)
+	// fd asks the server for full duplex and sends the head (decision
+	// 0433; with_full_duplex), nil when collected
+	fd func()
 }
 
 // M_write is `w.write(data)`.

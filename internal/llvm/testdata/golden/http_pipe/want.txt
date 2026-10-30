@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+late write: io: read/write on closed pipe
+piped: 200 read 4000 bytes in some pieces
+duplex: 200 counted 6
+cut: delivered whole false
+local: 0123
+local: 4567
+local: 89
+local: error producer failed
+done
+--- stderr

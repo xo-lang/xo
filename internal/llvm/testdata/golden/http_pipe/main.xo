@@ -1,0 +1,115 @@
+// http.pipe (decision 0433): a request body written by one task while
+// the client sends it (Go's io.Pipe): pieces arrive in order and the
+// body ends at close; a write after close fails; close_with_error cuts
+// the request (the server's read fails) and a local reader gets the
+// error as given; reads take at most max bytes of a longer piece.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle_stream("POST /sum", fn(_req, b) {
+    var n = 0
+    var pieces = 0
+    while true {
+      match b.read() {
+        Ok(Some(d)) => {
+          n += d.len()
+          pieces += 1
+        }
+        Ok(None) => break
+        Err(_) => return http.text(200, "body cut after ${n} bytes")
+      }
+    }
+    http.text(200, "read ${n} bytes in ${if pieces > 0 { "some" } else { "no" }} pieces")
+  })
+  // a full duplex response (with_full_duplex): its head goes out at once;
+  // this one reads the whole body first, so it answers the same with or
+  // without full duplex
+  r.handle_stream("POST /count", fn(_req, b) {
+    var n = 0
+    while true {
+      match b.read() {
+        Ok(Some(d)) => n += d.len()
+        Ok(None) => break
+        Err(_) => break
+      }
+    }
+    http.stream(200, fn(w) { w.write("counted ${n}".bytes())? }).with_full_duplex()
+  })
+  r
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes())
+      let base = "http://${srv.addr()}"
+      let c = http.client(os.net, timeout: 60s)
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        // a body written piece by piece, then closed
+        let (w, r) = http.pipe()
+        s.spawn(fn() {
+          for i in 0..5 {
+            match w.write("piece ${i} ".repeat(100).bytes()) {
+              Ok(_) => ()
+              Err(e) => os.stdio.println("write failed: ${e}")
+            }
+          }
+          w.close()
+          match w.write(b"late") {
+            Ok(_) => os.stdio.println("late write: ok")
+            Err(e) => os.stdio.println("late write: ${e}")
+          }
+        })
+        match c.send(http.new_request("POST", "${base}/sum").with_body_reader(r)) {
+          Ok(resp) => os.stdio.println("piped: ${resp.status} ${resp.text() ?? "?"}")
+          Err(e) => os.stdio.println("piped: ${e}")
+        }
+        // a full duplex response to a piped body
+        let (wd, rd) = http.pipe()
+        s.spawn(fn() {
+          let _ = wd.write(b"abcdef").ignore_err("the reader may stop first")
+          wd.close()
+        })
+        match c.send(http.new_request("POST", "${base}/count").with_body_reader(rd)) {
+          Ok(resp) => os.stdio.println("duplex: ${resp.status} ${resp.text() ?? "?"}")
+          Err(e) => os.stdio.println("duplex: ${e}")
+        }
+        // a body cut with an error: the request fails or the server sees the cut
+        let (w2, r2) = http.pipe()
+        s.spawn(fn() {
+          let _ = w2.write(b"first part").ignore_err("the reader may stop first")
+          w2.close_with_error(IoErr.Io(msg: "producer failed"))
+        })
+        // the transport fails the request, or the server answers that its
+        // read failed, whichever comes first: never a whole body
+        let whole = match c.send(http.new_request("POST", "${base}/sum").with_body_reader(r2)) {
+          Ok(resp) => (resp.text() ?? "").starts_with("read ")
+          Err(_) => false
+        }
+        os.stdio.println("cut: delivered whole ${whole}")
+        // a local reader: at most max bytes, then the error as given
+        let (w3, r3) = http.pipe()
+        s.spawn(fn() {
+          let _ = w3.write(b"0123456789").ignore_err("the reader may stop first")
+          w3.close_with_error(IoErr.Io(msg: "producer failed"))
+        })
+        for _ in 0..4 {
+          match r3.read(4) {
+            Ok(Some(d)) => os.stdio.println("local: ${d.to_str() ?? "?"}")
+            Ok(None) => os.stdio.println("local: end")
+            Err(e) => os.stdio.println("local: error ${e}")
+          }
+        }
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

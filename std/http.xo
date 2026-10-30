@@ -270,6 +270,23 @@ fn (w: BodyWriter) set_trailer(name: Str, value: Str)
 /// The response declaring trailer names in its `Trailer` header (HTTP/1.1;
 /// decision 0433); set_trailer sends a name whether declared or not.
 fn (r: Response) with_trailer_names(names: List[Str]) -> Response
+/// The streamed response whose function may read the request's body
+/// while it writes (Go's ResponseController.EnableFullDuplex, decision
+/// 0433): its head goes out at once, a `100 Continue` before the first
+/// read when asked. HTTP/1.1 only needs it; an HTTP/2 stream always is.
+fn (r: Response) with_full_duplex() -> Response
+/// A body written by one task while another sends it (Go's io.Pipe,
+/// decision 0433): the reader goes to Request.with_body_reader, each
+/// write waits until the request has taken its bytes.
+fn pipe() -> (PipeWriter, BodyReader)
+/// The writing end of http.pipe.
+struct PipeWriter {}
+/// Io("io: read/write on closed pipe") once either end is closed.
+fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr
+/// The reader's next read is None (the body's end).
+fn (w: PipeWriter) close()
+/// The reader's next read is Err(e) (Go's CloseWithError).
+fn (w: PipeWriter) close_with_error(e: IoErr)
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?
 /// Every field of name, in order (decision 0288).

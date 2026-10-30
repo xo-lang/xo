@@ -73,7 +73,9 @@ func (b Http_BodyReader) M_read(tk *Task, max int64) Result[Option[Bytes], IoErr
 	}
 	buf := make([]byte, min(max, readMax))
 	for {
+		tk.leave()
 		n, err := r.src.Read(buf)
+		tk.enter()
 		if err == io.EOF {
 			r.eof = true
 		}
@@ -82,6 +84,10 @@ func (b Http_BodyReader) M_read(tk *Task, max int64) Result[Option[Bytes], IoErr
 		}
 		if err == io.EOF {
 			return Ok[Option[Bytes], IoErr](None[Bytes]())
+		}
+		if pe, ok := err.(pipeErr); ok {
+			// http.pipe's close_with_error: the IoErr as given
+			return Err[Option[Bytes]](pe.e)
 		}
 		if err != nil {
 			return Err[Option[Bytes]](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
@@ -100,7 +106,12 @@ func (b Http_BodyReader) M_read_all(tk *Task) Result[Bytes, IoErr] {
 	if r.eof {
 		return Ok[Bytes, IoErr]("")
 	}
+	tk.leave()
 	data, err := io.ReadAll(r.src)
+	tk.enter()
+	if pe, ok := err.(pipeErr); ok {
+		return Err[Bytes](pe.e)
+	}
 	if err != nil {
 		return Err[Bytes](IoErr{Tag: 2, P: IoErr_Io{F_msg: err.Error()}})
 	}
