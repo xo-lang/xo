@@ -2799,7 +2799,7 @@ fn pipe() -> (PipeWriter, BodyReader) {
     raw.alive(d)
     http1.BodyPart{data: t, end: false, err: ""}
   }
-  (PipeWriter{ch: ch, st: st}, conn_body(next, []))
+  (PipeWriter{ch: ch, st: st}, conn_body(next, [], []))
 }
 
 fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr {
