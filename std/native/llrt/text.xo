@@ -378,29 +378,33 @@ pub fn parse_duration(s: Str) -> Int? {
     if i < n && raw.byte_at(pa, i) == 46 {
       i += 1
       let pf = i
-      var overflow = false
+      // the digits up to an overflow accumulate, the rest are only
+      // skipped: two loops, so neither tests an overflow flag a digit
+      // (2026-10-30: the flag was a test and a branch every fraction digit)
       while i < n {
         let d = raw.byte_at(pa, i)
         if !(d >= 48 && d <= 57) {
           break
         }
-        let c = d - 48
-        if !overflow {
-          if nf < -922337203685477580 {
-            overflow = true
-          } else {
-            // the same single test as the integer part, but the wrapped
-            // value is not kept: Go's leadingFraction stops accumulating
-            // at the overflow and keeps the digits it had ("1.<19 digits
-            // ending past 2^63>s" scales by what it read, not by 10^19)
-            let t = nf.wrapping_mul(10).wrapping_sub(c)
-            if t > 0 {
-              overflow = true
-            } else {
-              nf = t
-              scale *= 10.0
-            }
-          }
+        if nf < -922337203685477580 {
+          break
+        }
+        // the same single test as the integer part, but the wrapped
+        // value is not kept: Go's leadingFraction stops accumulating at
+        // the overflow and keeps the digits it had ("1.<19 digits ending
+        // past 2^63>s" scales by what it read, not by 10^19)
+        let t = nf.wrapping_mul(10).wrapping_sub(d - 48)
+        if t > 0 {
+          break
+        }
+        nf = t
+        scale *= 10.0
+        i += 1
+      }
+      while i < n {
+        let d = raw.byte_at(pa, i)
+        if !(d >= 48 && d <= 57) {
+          break
         }
         i += 1
       }

@@ -30,6 +30,20 @@ package loads instead of at the first read, which is the same thing since
 the parse is pure. There was no declaration at all, so every read of one
 of the four was a Go compile error.
 
+## 2026-10-30: perf: a duration's fraction digits are read by two loops, not one that tests an overflow flag each digit (Duration.parse, a decoded JSON Duration)
+
+- Kind: perf
+- Commit: this commit
+- Found by: a CPU profile of bench/perf/text dur_parse, native against LLVM (40 runs merged): the fraction loop tested its overflow flag every digit
+- Go reference: time/format.go leadingFraction (go1.26.1), unchanged semantics: the digits after an overflow are read and not accumulated
+- Test: duration_parse_edges, parse_edge_scalars, text_table, load_ranges, std_error_display and codex_gaps on arm64; the first four on LLVM with Go parity; stdfuzz -area=time,strconv seeds 1, 7 and 11 at 1500 cases, no divergence
+
+The digits up to an overflow accumulate in one loop, which stops at the
+overflow, and a second loop skips the rest. bench/perf/text dur_parse on
+arm64 (xo bench --ab n=15): wall 0.95 (0.911 to 0.99), cycles 0.923,
+instructions 0.997; against LLVM, instructions 0.986 and cycles 1.081
+(1.184 before tw61 to tw64), the checksum unchanged.
+
 ## 2026-10-26: perf: the arithmetic of a duration's text that its own tests guard is not checked a second time (Duration.parse, a decoded JSON Duration)
 
 - Kind: perf

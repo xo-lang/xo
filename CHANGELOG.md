@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `Duration.parse` reads a fraction's digits without an overflow test a
+  digit (std/native/llrt/text.xo): bench/perf/text dur_parse 0.95 of the
+  wall time and 0.923 of the cycles on arm64 (xo bench --ab n=15);
+  std/changes/time.md.
 - Native backends: a negation whose operand cannot be the smallest Int
   is not checked (compiler/arm64 isel Neg, the bounds a checked add
   already used): text.parse_duration's unit limit and result negations.
