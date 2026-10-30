@@ -309,6 +309,10 @@ pub struct StoreLink {
   /// whether they came from the cache
   pub prep: Prep = Prep{}
   pub hit: Bool = false
+  /// the first name the program defines (not weak) that std's store
+  /// defines too, "" for none: such a link has no half (stdhalf.xo; the
+  /// prepare key does not name the program's definitions)
+  shadows: Str = ""
 }
 
 /// The symbols resolved and the dead functions' compact unwind entries
@@ -508,6 +512,7 @@ pub fn store_prepare_cached(parsed: ParsedInputs, store: Bytes, opts: LinkOpts, 
   // the walk: the program's undefined symbols the store defines, the
   // entry, and the store's sections nothing may strip
   var roots: List[Int] = []
+  var shadows = ""
   for ob in prog {
     if !ob.live {
       continue
@@ -518,6 +523,8 @@ pub fn store_prepare_cached(parsed: ParsedInputs, store: Bytes, opts: LinkOpts, 
       // so its atom must be live)
       if is_ext(s) && (!is_defined(s) || (s.desc & 0x80) != 0) {
         roots.push(v.def(s.name))
+      } else if opts.split_prog && shadows.is_empty() && is_ext(s) && v.def(s.name) >= 0 {
+        shadows = bstr(s.name)
       }
     }
   }
@@ -685,5 +692,5 @@ pub fn store_prepare_cached(parsed: ParsedInputs, store: Bytes, opts: LinkOpts, 
       l.objs[i].split[key] = a2
     }
   }
-  Ok(StoreLink{l: l, n: n, stubs: stubs, prep: Prep{live: live, dw_dropped: dw_dropped, keeps: keeps, symnews: symnews}, hit: hit})
+  Ok(StoreLink{l: l, n: n, stubs: stubs, prep: Prep{live: live, dw_dropped: dw_dropped, keeps: keeps, symnews: symnews}, hit: hit, shadows: shadows})
 }

@@ -157,6 +157,10 @@ on fib, HTTP and the goldens, plus a test that edits a program between two links
   output section ordered before one of std's);
 - any record the re-patch pass cannot encode (an ADDEND pair across sections, x86 SUBTRACTOR
   across sections), counted at half-building time: the half is not written then.
+- a link whose program defines (not weak) a name std's store defines writes no half
+  (2026-10-30, StoreLink.shadows): the half keeps only std's globals and the prepare key
+  names only what the program takes from the store, so a next program with the same key
+  that does not define the name would find no definition of it.
 
 ## Consequences
 

@@ -69,7 +69,10 @@ fn (l: Linker) half_moves(o: Int, x: ISect, r: IReloc) -> Bool {
 /// Why this link (after finish) can have no half, "" when it can:
 /// x86_64, the program's own thread locals (they would move the
 /// template std's descriptors count from), branch islands, a layout
-/// order, a link without the program's own sections, or a failed one.
+/// order, a link without the program's own sections, a program
+/// definition of a name std defines (the half's globals keep only std's,
+/// so a next program with the same prepare key that does not define it
+/// would find none), or a failed one.
 pub fn (s: StoreLink) half_refused() -> Str {
   let l = s.l
   if l.x86 {
@@ -83,6 +86,9 @@ pub fn (s: StoreLink) half_refused() -> Str {
   }
   if !l.opts.order.is_empty() {
     return "a layout order"
+  }
+  if !s.shadows.is_empty() {
+    return "the program defines ${s.shadows}, which std defines too"
   }
   if !l.err.is_empty() {
     return "the link failed"
