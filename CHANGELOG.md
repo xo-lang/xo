@@ -78,6 +78,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the response's end or failure: the descriptor closes and the rest goes
   with the exchange's last reference (ThreadSanitizer, tier 302 on
   linux/arm64: http_reverse_proxy, tls_mtls).
+- `use c` sources are compiled with debug information (decision 0446):
+  a crash report or traceback names a C frame with its file and line,
+  and a C function the link inlined into its Xo caller (Linux LLVM
+  builds) as `name (file.c:LINE) [inlined]` instead of leaving it out.
+  The C sources are compiled to objects before the link (bitcode under
+  LTO, so the inlining is unchanged), reused while their bytes and
+  flags are the same.
 - Native heap (darwin): the size classes' limit at start is 16 KiB
   (was 256 KiB): a freed block above it goes back to the system at
   once, while a freed class block stays on its free list. The self

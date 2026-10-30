@@ -30,3 +30,9 @@ as TestCrashReport's crashc.c is. Showing inlined C frames would need
 the C sources compiled with `-g` (then the chain shows `name [inlined]`),
 a separate item. A crash in inlined C code on Linux is reported at the
 Xo caller's line.
+
+Update (decision 0446, 2026-10-30): the C sources are now compiled to
+objects with `-g` before the link (cffi.xo c_objects), so the report
+shows an inlined C function as `name (file.c:LINE) [inlined]` above the
+Xo caller, and an out of line one with its file and line; noinline is
+needed only by a test of the frame walker itself.

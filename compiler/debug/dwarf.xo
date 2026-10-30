@@ -747,6 +747,19 @@ fn rnglist(s: Sections, u: Unit, off: Int) -> List[(Int, Int)] {
 // ---- entries
 
 /// A variable's attributes as read, before its location is resolved.
+/// What the entries of every unit share: the names of entries other
+/// entries refer to (abstract origins) as each entry's index in recs (a
+/// map of the records themselves spent a quarter of read's time putting
+/// them), and the inlined calls (function, call, abstract origin) to
+/// name once every unit is read: an origin may be in another unit (a
+/// DW_FORM_ref_addr reference: LLVM's LTO inlines a C unit's function
+/// into an Xo function, decision 0446, and the C unit may come later).
+struct Names {
+  names: Map[Int, Int] = {}
+  recs: List[VarRec] = []
+  calls: List[(Int, Int, Int)] = []
+}
+
 struct VarRec {
   name: Str = ""
   ty: Int = -1
@@ -762,6 +775,7 @@ struct VarRec {
 /// Reads every unit of s.
 pub fn read(s: Sections) -> Info {
   var out = Info{}
+  var nm = Names{}
   var p = 0
   let end = s.info.len()
   while p + 11 <= end {
@@ -773,13 +787,26 @@ pub fn read(s: Sections) -> Info {
     if next > end {
       break
     }
-    read_unit(s, p, next, out)
+    read_unit(s, p, next, out, nm)
     p = next
+  }
+  for (fi, ii, origin) in nm.calls {
+    // the callee's name: its origin's, or the origin's origin's
+    var name = ""
+    var o = origin
+    var guard = 0
+    while o >= 0 && guard < 4 && name.is_empty() {
+      let rec = rec_at(nm.names, nm.recs, o)
+      name = rec.name
+      o = rec.origin
+      guard += 1
+    }
+    out.funcs[fi].inlined[ii].name = if name.is_empty() { "?" } else { name }
   }
   out
 }
 
-fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
+fn read_unit(s: Sections, p: Int, next: Int, var out: Info, var nm: Names) {
   var u = Unit{start: p, ver: rd16(s.info, p + 4)}
   var r = Rd{b: s.info, p: p + 6, end: next}
   var aoff = 0
@@ -808,13 +835,6 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
   var pending: List[(Int, Int, Bool, VarRec)] = []
   // the unit's line table (DW_AT_stmt_list), for its calls' files
   var stmt = -1
-  // names of entries other entries refer to (abstract origins): each
-  // entry's index in recs (a map of the records themselves spent a
-  // quarter of read's time putting them)
-  var names: Map[Int, Int] = {}
-  var recs: List[VarRec] = []
-  // the inlined calls (function, call, abstract origin) to name
-  var calls: List[(Int, Int, Int)] = []
   while r.p < next {
     let die = r.p
     let code = r.uleb()
@@ -906,13 +926,13 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
       0x11 => u.low = low
       0x2e => {
         if !v.name.is_empty() || v.origin >= 0 {
-          names[die] = recs.len()
-          recs.push(v)
+          nm.names[die] = nm.recs.len()
+          nm.recs.push(v)
         }
         if high > low {
           var name = v.name
           if name.is_empty() {
-            name = rec_at(names, recs, v.origin).name
+            name = rec_at(nm.names, nm.recs, v.origin).name
           }
           out.funcs.push(Func{name: name, lo: low, hi: high, vars: []})
           here_fn = out.funcs.len() - 1
@@ -936,11 +956,11 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
         // list (and each call's variables below) every time
         out.funcs[here_fn].inlined.push(Inlined{name: "", ranges: ranges, depth: outer + 1, call_line: v.call_line, vars: [], call_file: v.call_file, unit_line: stmt})
         here_inl = out.funcs[here_fn].inlined.len() - 1
-        calls.push((here_fn, here_inl, v.origin))
+        nm.calls.push((here_fn, here_inl, v.origin))
       }
       0x05 | 0x34 => {
-        names[die] = recs.len()
-        recs.push(v)
+        nm.names[die] = nm.recs.len()
+        nm.recs.push(v)
         if v.has_loc || here_fn >= 0 {
           pending.push((here_fn, here_inl, ab.tag == 0x05, v))
         }
@@ -981,25 +1001,12 @@ fn read_unit(s: Sections, p: Int, next: Int, var out: Info) {
       st_at.push(here_st)
     }
   }
-  for (fi, ii, origin) in calls {
-    // the callee's name: its origin's, or the origin's origin's
-    var name = ""
-    var o = origin
-    var guard = 0
-    while o >= 0 && guard < 4 && name.is_empty() {
-      let rec = rec_at(names, recs, o)
-      name = rec.name
-      o = rec.origin
-      guard += 1
-    }
-    out.funcs[fi].inlined[ii].name = if name.is_empty() { "?" } else { name }
-  }
   for (fi, ii, param, rec) in pending {
     var v = rec
     // a concrete entry of an abstract one: the name, type, and line from it
     if v.origin >= 0 {
-      if let Some(i) = names.get(v.origin) {
-        let o = recs[i]
+      if let Some(i) = nm.names.get(v.origin) {
+        let o = nm.recs[i]
         if v.name.is_empty() {
           v.name = o.name
         }

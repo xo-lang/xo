@@ -7,6 +7,7 @@
 // from the binding's key (`c:<header>|<link files>|<libraries>|<effects>`
 // for a header next to the module).
 
+use std/crypto
 use github.com/xo-lang/xo/compiler/check
 use github.com/xo-lang/xo/compiler/hostpath
 
@@ -88,4 +89,51 @@ fn c_inputs(os: Os, c: check.Checker, dir: Str) -> CInputs {
     out.flags.push("-l${l}")
   }
   out
+}
+
+/// The C sources among srcs (the adapters and link files of `use c`,
+/// .c) compiled to objects with debug information before the link
+/// (decision 0446), the other inputs passed through in their order: a C
+/// function that LTO inlines into its Xo caller then has its compile
+/// unit in the binary's DWARF, so a crash report or traceback shows it
+/// as an inlined frame (gotchas/linux-lto-inlines-c-frames.md). cflags
+/// are the compile's own (the target's; -flto when the link runs LTO,
+/// so the object is bitcode and takes part in it). An object is named by
+/// its source bytes and flags under dir/cffi and reused while they are
+/// the same. The second result is the first failure's output, "" when
+/// every compile succeeded.
+fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str) -> (List[Str], Str) {
+  var out: List[Str] = []
+  for s in srcs {
+    if !s.ends_with(".c") {
+      out.push(s)
+      continue
+    }
+    let data = match os.fs.read(s) {
+      Ok(d) => d
+      Err(e) => return ([], "${s}: ${e}\n")
+    }
+    let cdir = "${dir}/cffi"
+    match os.fs.create_dir_all(cdir) {
+      Ok(_) => {}
+      Err(e) => return ([], "${e}\n")
+    }
+    let args = cflags + ["-g", "-O2", "-c", s]
+    let key = crypto.sha256("c_objects v1\n${args.join("\x00")}\n".bytes() + data).to_hex()
+    let obj = "${cdir}/${base_name(s).trim_suffix(".c")}-${key[0..16]}.o"
+    // xo:allow XO0903 an object that is not there is compiled
+    if !(os.fs.exists(obj).ok() ?? false) {
+      let tmp = "${obj}.tmp"
+      let (o, err) = combined(os, cc, args + ["-o", tmp])
+      if !err.is_empty() {
+        return ([], "${o}${cc} -c ${s}: ${err}\n")
+      }
+      match os.fs.rename(tmp, obj) {
+        Ok(_) => {}
+        Err(e) => return ([], "${e}\n")
+      }
+    }
+    out.push(obj)
+  }
+  (out, "")
 }

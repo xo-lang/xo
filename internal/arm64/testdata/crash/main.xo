@@ -14,6 +14,7 @@ fn poke(kind: Str, n: Int) -> Int {
   match kind {
     "trap" => crashc.crashc_trap(n) + 1
     "overflow" => crashc.crashc_deep(n) + 1
+    "inl" => crashc.crashc_write_inl(16) + 1
     _ => crashc.crashc_write(16) + 1
   }
 }

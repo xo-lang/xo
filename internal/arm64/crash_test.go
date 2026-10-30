@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"syscall"
 	"testing"
@@ -67,9 +68,15 @@ func testCrashReport(t *testing.T, be string) {
 			t.Errorf("segv: the report lacks %q:\n%s", want, got)
 		}
 	}
-	// the C function (LLVM names it with its module's prefix), then poke
-	// at its call (the arm's line), the recursion, main
-	frames := regexp.MustCompile(`(?m)^  \S*crashc_write\n  poke \(main\.xo:17\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n  main \(main\.xo:32\)$`)
+	// the C function (LLVM names it with its module's prefix; its file
+	// and line from the C unit's debug information, decision 0446), then
+	// poke at its call (the arm's line), the recursion, main
+	// (an LLVM build keeps the adapter's xo_c_ thunk as a frame of its
+	// own, with its line, between the C function and poke; Linux's LTO
+	// inlines it into poke and the frame says [inlined])
+	const loc = `( \([^)]*\))?`
+	const thunk = `(  xo_c_\S+` + loc + `( \[inlined\])?\n)?`
+	frames := regexp.MustCompile(`(?m)^  \S*crashc_write` + loc + `\n` + thunk + `  poke \(main\.xo:18\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n  main \(main\.xo:33\)$`)
 	if !frames.MatchString(got) {
 		t.Errorf("segv: the traceback lacks the frames:\n%s", got)
 	}
@@ -86,9 +93,23 @@ func testCrashReport(t *testing.T, be string) {
 	// xo dev symbolize (stage 3): the same traceback from the report's
 	// frames and the binary alone
 	symbolize(t, bin, got)
+	// a C function the link may inline into poke (crashc_write_inl has no
+	// noinline): with the C unit's debug information (decision 0446) the
+	// report shows it either as its own frame with its file and line, or
+	// as an inlined frame of poke; a Linux LLVM link's full LTO inlines
+	// it (gotchas/linux-lto-inlines-c-frames.md), so there the inlined
+	// form is required
+	_, got, sig = run("XO_CRASH_KIND=inl")
+	inl := regexp.MustCompile(`(?m)^  \S*crashc_write_inl \(crashc\.c:\d+\)( \[inlined\])?\n` + thunk + `  poke \(main\.xo:17\)\n  poke \(main\.xo:10\)$`)
+	if sig != syscall.SIGSEGV || !inl.MatchString(got) {
+		t.Errorf("inl: signal %v, the traceback lacks the C frame with its line:\n%s", sig, got)
+	}
+	if runtime.GOOS == "linux" && be == "llvm" && !strings.Contains(got, "[inlined]") {
+		t.Errorf("inl: the Linux LLVM link inlines crashc_write_inl, want it as an inlined frame:\n%s", got)
+	}
 	// the trap instruction: brk on arm64 (SIGTRAP)
 	_, got, sig = run("XO_CRASH_KIND=trap")
-	if sig != syscall.SIGTRAP || !strings.HasPrefix(got, "fatal error: SIGTRAP: trace trap (code ") || strings.Contains(got, "crash report faulted") || !regexp.MustCompile(`crashc_trap\n  poke \(main\.xo:15\)\n`).MatchString(got) {
+	if sig != syscall.SIGTRAP || !strings.HasPrefix(got, "fatal error: SIGTRAP: trace trap (code ") || strings.Contains(got, "crash report faulted") || !regexp.MustCompile(`crashc_trap`+loc+`\n`+thunk+`  poke \(main\.xo:15\)\n`).MatchString(got) {
 		t.Errorf("trap: signal %v\n%s", sig, got)
 	}
 	// a stack overflow in C: reported on the alternate signal stack
@@ -98,7 +119,7 @@ func testCrashReport(t *testing.T, be string) {
 	}
 	// a fault in a task (a worker's fiber): its own frames
 	_, got, sig = run("XO_CRASH_KIND=task")
-	if sig != syscall.SIGSEGV || !strings.HasPrefix(got, "fatal error: SIGSEGV") || !regexp.MustCompile(`crashc_write\n  poke \(main\.xo:17\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n`).MatchString(got) {
+	if sig != syscall.SIGSEGV || !strings.HasPrefix(got, "fatal error: SIGSEGV") || !regexp.MustCompile(`crashc_write`+loc+`\n`+thunk+`  poke \(main\.xo:18\)\n  poke \(main\.xo:10\)\n  poke \(main\.xo:10\)\n`).MatchString(got) {
 		t.Errorf("task: signal %v\n%s", sig, got)
 	}
 	// XO_CRASH_SLEEP=1: the process names its pid and holds a second after
