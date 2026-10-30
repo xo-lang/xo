@@ -401,12 +401,20 @@ fn rec_os(os: Os, rec: Mutex[Rec], wd: Str, skip: List[Str]) -> Os {
   Os{net: os.net, fs: RecFs{inner: os.fs, rec: rec, wd: wd, skip: skip}, clock: os.clock, rand: os.rand, env: RecEnv{inner: os.env, rec: rec}, proc: os.proc, stdio: os.stdio, tasks: os.tasks}
 }
 
-/// The paths a recorder leaves out: xo's caches and build directories,
+/// The machine's state, never a build's input: /proc/meminfo, which
+/// mem_gb reads for the build's memory budget on Linux, changes from one
+/// read to the next, so every entry that recorded it missed (the run cache
+/// never hit on Linux, 0.35.0; TestNoGCRunCache, TestWholeBuildCache on the
+/// linux/arm64 host, 2026-10-30)
+fn rec_machine() -> List[Str] { ["/proc/", "/sys/"] }
+
+/// The paths a recorder leaves out: the machine's state (rec_machine),
+/// xo's caches and build directories,
 /// each ending in "/". Not the temporary directory: a program may live
 /// there (the tests' do), and the build's own temporary files are left
 /// out as paths it wrote.
 fn rec_skip(os: Os, ctx: Ctx) -> List[Str] {
-  var s: List[Str] = []
+  var s = rec_machine()
   for d in ["${ctx.cache}/xo", os.env.get("XO_BACKEND_CACHE_DIR") ?? "", os.env.get("XO_BIN_CACHE") ?? "", os.env.get("XO_BUILD_DIR") ?? "", ctx.run_cache] {
     if !d.is_empty() {
       s.push("${d.trim_suffix("/")}/")
