@@ -13,7 +13,9 @@ vendor packages) to the Xo module that covers it, with a status:
 "Prelude" means the builtin types and capabilities every module sees
 (spec/std.md sections 1 to 3). Spec sections are spec/std.md's.
 
-Last verified: 2026-10-29 (main c21a17a84; spec/std.md, `xo doc` of the
+Last verified: 2026-10-29 (main c21a17a84, and main edb47f207 for the
+html, html/template, crypto/aes, crypto/hkdf, x/crypto rows and survey
+gaps 4, 5, 15 and 16; spec/std.md, `xo doc` of the
 prelude types, `xo symbols --module=std/... --pub` of every module, the
 partial and planned rows rechecked; done rows from 2026-10-20 stand).
 
@@ -60,7 +62,11 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | std/debug | 36 | `std/changes/debug.md` |
 | std/metrics | 37 | `std/changes/metrics.md` |
 | std/trace | 38 | `std/changes/trace.md` |
+| std/html | 39 | `std/changes/html.md` |
 | std/tabwriter | 40 | `std/changes/tabwriter.md` |
+| std/x509 | 41 | `std/changes/x509.md` |
+| std/rate | 42 | `std/changes/rate.md` |
+| std/backoff | 43 | `std/changes/backoff.md` |
 
 ## Go packages
 
@@ -89,9 +95,9 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | mime | std/mime | partial | ParseMediaType, FormatMediaType, TypeByExtension and ExtensionsByType (Go's builtin table only, no system files), and net/http's DetectContentType (decision 0282). Missing: encoded words (WordEncoder, WordDecoder, RFC 2047). |
 | mime/multipart | std/multipart | partial | Reader (NextPart, ReadForm), Writer, Request.multipart_form, in memory (decision 0282). Missing: streaming parts, multipart/mixed responses. |
 | mime/quotedprintable | inside std/native/multipart and mail | partial | The decoder (multipart parts) and the encoder (mail.compose, decision 0290). Missing: a public module. |
-| html | none (std/xml escape) | planned | EscapeString and UnescapeString for server rendered pages; std/xml's `escape` covers text and quoted attributes today but not unescaping HTML entities. |
-| html/template | none | planned | Contextual escaping templates; after html. |
-| text/template | std/template | done | Go's text/template over json.Value data (decision 0299). Not offered: custom function maps (FuncMap), Clone and Lookup, ParseFS. |
+| html | std/html | done | escape_string and unescape_string, Go's html on its escape_test.go cases, the entity table generated from Go's entity.go (decision 0408, 2026-10-29). |
+| html/template | std/template | partial | `template.parse_html`: Go's contextual autoescaping, trusted content as `json.Value.Trusted` (`template.html`, `attr`; Go's template.HTML, HTMLAttr), template functions (decision 0408, 2026-10-29). Missing what text/template's row lists. |
+| text/template | std/template | done | Go's text/template over json.Value data (decision 0299). Template functions (`funcs: Map[Str, TemplateFn]`, Go's FuncMap; decision 0408). Not offered: Clone and Lookup, ParseFS. |
 | text/tabwriter | std/tabwriter (decision 0410) | done | Elastic tabstops with Go's flags and escapes; the native backends run an Xo port of Go's code and tests, the Go backend Go's own Writer; `flush` returns the text. |
 | text/scanner | none | not planned | Go source tokenizer; Xo's own lexer is in selfhost. |
 | regexp, regexp/syntax | std/regexp | done | Go's parser, compiler, and Pike VM ported, with every Unicode class of Go's regexp natively (2026-10-21); Go's results on re2-search.txt and on each class. |
@@ -134,8 +140,8 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | crypto/rand | prelude Rand, crypto.random_bytes, token | done | |
 | crypto/pbkdf2 | std/crypto hash_password | done | PBKDF2-HMAC-SHA256 in a PHC like string. |
 | crypto/ed25519 | std/crypto | done | Decision 0189. |
-| crypto/hkdf | inside std/native/llrt/hkdf.xo | partial | TLS only; no public API. |
-| crypto/aes, crypto/cipher | inside std/native/llrt (AES-GCM, ChaCha20-Poly1305) | partial | TLS only. Missing: a public AEAD seal and open for encrypted cookies and data at rest. |
+| crypto/hkdf | std/crypto | done | `hkdf_extract`, `hkdf_expand`, `hkdf` over every Hash (Go's Extract, Expand, Key), on TLS's llrt code (2026-10-29, `std/changes/crypto.md`). |
+| crypto/aes, crypto/cipher | std/crypto | partial | AEAD: `aead_key(Aead.AesGcm or ChaCha20Poly1305, key)`, `seal`/`open` with a nonce and additional data, `seal_random`/`open_random` (Go's NewGCMWithRandomNonce) (2026-10-29). Missing: the raw block cipher and the unauthenticated modes (CBC, CTR, CFB, OFB). |
 | crypto/ecdh | inside std/native/llrt (X25519, nistec) | partial | TLS only. |
 | crypto/ecdsa, crypto/rsa, crypto/elliptic | std/crypto | partial | Sign and verify (PKCS #1 v1.5, PSS, ECDSA DER and raw), ECDSA and Ed25519 key generation (decision 0285). Missing: RSA key generation, OAEP encryption, ECDH as an API. |
 | crypto/mlkem | inside std/native/llrt/mlkem.xo | partial | TLS key exchange only. |
@@ -231,7 +237,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | SQLite | modernc.org/sqlite, mattn/go-sqlite3 | none | planned | Through `use c` or a port; after Postgres. |
 | Redis client | redis/go-redis | none | planned | RESP over Net. |
 | Argon2, BLAKE2b | golang.org/x/crypto | std/crypto | done | Decision 0059. |
-| ChaCha20-Poly1305, HKDF, SHA-3 | golang.org/x/crypto | inside std/native/llrt | partial | TLS only, no API. |
+| ChaCha20-Poly1305, HKDF, SHA-3 | golang.org/x/crypto | std/crypto | done | ChaCha20-Poly1305 through `aead_key`, HKDF (`hkdf`), SHA3-256 and SHA3-512 as `Hash` (2026-10-29). |
 | bcrypt | golang.org/x/crypto/bcrypt | none | planned | To verify hashes migrated from other systems. |
 | WebSocket | golang.org/x/net/websocket, gorilla, coder/websocket | std/websocket | partial | gorilla's behavior, ws:// both sides and wss:// in dial (decision 0313). Missing: permessage-deflate, a message written in pieces, the Autobahn run (stage 3). |
 | HTTP/2 | golang.org/x/net/http2 | std/http | done | Decision 0121. |
@@ -262,8 +268,8 @@ many services hit the gap, blockers (no workaround) first:
 | 1 | HTTP client: streamed response and request bodies, a redirect policy, a timeout per request, whether a failed request reached the server; then a reverse proxy | gateway (and every proxy or large download) | blocker | net/http Response.Body, Request.Body, CheckRedirect, httputil.ReverseProxy | M |
 | 2 | Signals other than SIGINT and SIGTERM (SIGHUP reload) | gateway, exporter | blocker | os/signal Notify | S |
 | 3 | json.Value as a Json field or argument (RawMessage, `any`); indented output | scheduler, CLI | blocker | encoding/json RawMessage, MarshalIndent | S |
-| 4 | Public AEAD (AES-GCM, ChaCha20-Poly1305) and HKDF, for encrypted cookies and data at rest (both exist inside TLS) | web app | blocker | crypto/cipher, crypto/aes, crypto/hkdf, x/crypto/chacha20poly1305 | S |
-| 5 | HTML escaping and contextual auto escaping templates, a trusted HTML type, template functions | web app | blocker (XSS by default) | html, html/template, template.FuncMap | L |
+| 4 | Closed 2026-10-29 (std/crypto aead_key, hkdf). Public AEAD (AES-GCM, ChaCha20-Poly1305) and HKDF, for encrypted cookies and data at rest (both exist inside TLS) | web app | blocker | crypto/cipher, crypto/aes, crypto/hkdf, x/crypto/chacha20poly1305 | S |
+| 5 | Closed 2026-10-29 (std/html, template.parse_html, decision 0408). HTML escaping and contextual auto escaping templates, a trusted HTML type, template functions | web app | blocker (XSS by default) | html, html/template, template.FuncMap | L |
 | 6 | UDP sockets and a DNS lookup API (host, SRV), a dial timeout | exporter | blocker | net.ListenPacket, net.LookupSRV, net.DialTimeout | M |
 | 7 | X.509 certificate parsing and a TLS connection's peer certificates | exporter | blocker | crypto/x509 ParseCertificate, tls.ConnectionState | M (the parser exists inside TLS) |
 | 8 | Cron schedules | scheduler | blocker | robfig/cron (outside Go's std) | M |
@@ -273,8 +279,8 @@ many services hit the gap, blockers (no workaround) first:
 | 12 | Text formatting: width, padding, zero padding, fixed precision floats; an aligned table writer | CLI | awkward | fmt verbs, strconv.FormatFloat, text/tabwriter | S |
 | 13 | A priority queue with Remove and Fix | scheduler | awkward | container/heap | S |
 | 14 | A logger that carries fields (Logger.With) | scheduler | awkward | log/slog | S |
-| 15 | Rate limiting (token bucket), backoff, migrations | gateway, web app, scheduler | awkward | x/time/rate, cenkalti/backoff, golang-migrate (all outside Go's std) | S each |
-| 16 | Fs walk with SkipDir and early stop, the symlink bit in FileInfo, a mode on create_dir_all and atomic writes; a TOML encoder; a float flag | CLI | awkward | filepath.WalkDir, os.WriteFile, BurntSushi/toml | S each |
+| 15 | Rate limiting and backoff closed 2026-10-29 (std/rate, std/backoff); migrations open. Rate limiting (token bucket), backoff, migrations | gateway, web app, scheduler | awkward | x/time/rate, cenkalti/backoff, golang-migrate (all outside Go's std) | S each |
+| 16 | Closed 2026-10-29 (walk_dir, FileInfo.is_symlink, create_dir_all_mode, write_atomic, toml.encode, cli float_flag). Fs walk with SkipDir and early stop, the symlink bit in FileInfo, a mode on create_dir_all and atomic writes; a TOML encoder; a float flag | CLI | awkward | filepath.WalkDir, os.WriteFile, BurntSushi/toml | S each |
 | 17 | Time.truncate, a Weekday number, a ticker | scheduler | minor | time | S |
 
 Language obstacles the services met (not std, for the language owners):
