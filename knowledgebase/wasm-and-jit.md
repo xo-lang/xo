@@ -133,3 +133,22 @@ Go and Rust.
 - If interactive use or hot reload becomes a goal: a narrow,
   development-only JIT on the existing arm64 and amd64 encoders, with its
   own ADR.
+
+## Direction (owner, 2026-10-30 evening)
+
+The owner's aim: Xo should be great and fit uses that are or could be
+popular, rather than serve one named audience for `xo.wasm`. So:
+
+1. 0.36.0: ship `xo.wasm` (decision 0405's release checks).
+2. Right after: split the 12.4 MB function (it helps every runtime: a
+   browser playground on V8 and sandboxed agents on wasmtime alike) and add
+   the wazero Go test.
+3. Xo programs as wasm, where wasm is popular for backends: edge and
+   serverless functions (Cloudflare Workers, Fastly Compute, Fermyon Spin),
+   plugins in other systems (Envoy proxy-wasm, databases, Extism) and
+   browser apps. Xo compiles programs to `wasip1/wasm` today; those
+   platforms are moving to WASI preview 2 and the component model
+   (`wasip2`: `wasi:http` handlers, sockets, typed interfaces). A research
+   ADR comes first: what `wasip2` and `wasi:http` take for Xo programs,
+   which platforms they open, and a `wasi:http` hello-world handler as the
+   first measured step; nothing is built before the owner decides.
