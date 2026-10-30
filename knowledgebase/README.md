@@ -17,5 +17,7 @@ line per entry.
 
 [positioning.md](positioning.md): why Xo, its measured advantages over and alongside Go, honest costs, and precedents for languages on Go and self-hosting.
 
+[wasm-and-jit.md](wasm-and-jit.md): WebAssembly runtimes (V8, wasmtime, wazero), AOT and JIT, and why Xo targets WASI with no runtime of its own and no general JIT (the owner's Q&A, 2026-10-30).
+
 The language itself is specified in [../spec/core.md](../spec/core.md). The
 spec says *what* Xo is; decisions say *why*.
