@@ -1,8 +1,18 @@
 # 0269: Enum values (valued enums, all(), named constants for open sets)
 
-Status: Proposed (Xo Lang 3, 2026-10-18, for the owner's review; the
-direction is the owner's, given through the lead the same day). Spec
-changes wait for acceptance.
+Status: Accepted, staged (owner, 2026-10-30). Proposed by Xo Lang 3 on
+2026-10-18 (the direction is the owner's, given through the lead the same
+day).
+
+- Now: parts 1 (valued enums), 2 (`E.all()`) and 4 (`use c` enums), and
+  part 3's language half (constant patterns and the constant-style binding
+  error). These change no existing program.
+- Later, a separate step: std/http's move from `status: Int` to
+  `http.Status`. It breaks every handler that passes a status, so before it
+  lands `xo fix` is run over bench/paper and the samples to count what it
+  rewrites, and a blind-from-spec check confirms agents write `http.OK`.
+- The three new codes this record names (XO0421 to XO0423) are renumbered
+  when it is built: XO0421 is already taken.
 
 ## Context
 
