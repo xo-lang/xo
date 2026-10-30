@@ -71,7 +71,7 @@ deadline is put back).
 - Found by: the gRPC readiness survey of 2026-10-30, gap 10
 - Go reference: net/http's Protocols (UnencryptedHTTP2), HTTP2Config (MaxConcurrentStreams, MaxReadFrameSize, MaxReceiveBufferPerConnection/Stream, MaxDecoderHeaderTableSize, SendPingTimeout, PingTimeout)
 - Test: internal/llvm/testdata/golden/http_h2c, http_h2c_sniff, http_h2_config (native output equal to the Go backend's)
-- Timing: none on the request path (a 24 byte preface peek on a plain connection that allows h2c)
+- Timing: none on the request path (a 24 byte preface peek on a plain connection that allows h2c); `xo bench --ab` on the linux/arm64 host (OFF_EXCLUSIVE, 10 rounds, bench/perf/h2loop: 3000 h2 TLS requests over 200 connections, base c51c9f4f1 and the per-connection settings 15febcd33): wall 226.7 to 227.6 ms (1.004, interval 0.993 to 1.015), CPU 225.0 to 230.0 ms (1.022), max RSS 44.5 to 45.7 MB (1.027), all within noise
 
 A plain server with `UnencryptedHttp2` in `with_protocols` sniffs the
 HTTP/2 preface and serves h2c next to HTTP/1.1 (h2c only: other
