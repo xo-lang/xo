@@ -169,7 +169,8 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a serv
   a good one) on TLS 1.2 and 1.3, the verified chains, and a resumed
   mTLS connection.
 - Go differential: grpc-go's interop client and server against an Xo
-  server and client, in Docker on the offload hosts (not the Mac).
+  server and client on an offload host (not the Mac; natively, the
+  linux/arm64 host has no Docker inside): see Go differential below.
 
 ## Consequences
 
@@ -198,6 +199,51 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a serv
 - mTLS, TLS 1.3 native (0aa379fa2): all five ClientAuth modes match Go.
   TLS 1.2 client auth, server and client, native too (checked against
   crypto/tls at MaxVersion TLS 1.2). `with_cert` also works with the system roots (a copy of the roots record).
+
+## Go differential (Xo lang 5, 2026-10-30)
+
+grpc-go v1.67.1's interop server and client (`interop/server`,
+`interop/client`, `--use_tls=false`) against an Xo gRPC TestService
+server and client (hand encoded protobuf over std/http: h2c with prior
+knowledge, `handle_stream`, `set_trailer`, `with_full_duplex`,
+`Client.open` with an `http.pipe` body), run natively on the linux/arm64
+offload host (it is a container with no Docker inside), on the Go and
+arm64 backends, at 216651179:
+
+- grpc-go's client against the Xo server: 11 of 11 cases on each backend
+  (empty_unary, large_unary, client_streaming, server_streaming,
+  ping_pong, empty_stream, custom_metadata, status_code_and_message,
+  special_status_message, unimplemented_method, unimplemented_service).
+- The Xo client against grpc-go's server: 9 of 9 on each backend
+  (empty_unary, large_unary, server_streaming, client_streaming,
+  empty_stream, status_code_and_message, unimplemented_method,
+  custom_metadata, ping_pong).
+
+What the differential found:
+
+- grpc-go answers an error before any message with a trailers-only
+  response: `grpc-status` arrives in the response head (one HEADERS frame
+  with END_STREAM), not in `ClientStream.trailers()`. A gRPC client on
+  std/http reads the status from the trailers, else from the head.
+- A grpc-go 1.67.1 server bug: a request whose HEADERS frame carries
+  END_STREAM (an empty body, half closed at once, as net/http and Xo's
+  h2 client send `content-length: 0`) leaves a streaming handler's `Recv`
+  blocked forever. `internal/transport/http2_server.go:527`
+  (operateHeaders) marks the stream `streamReadDone` but queues no
+  `io.EOF`, which only `handleData` queues for a DATA frame with
+  END_STREAM (`:825`). `FullDuplexCall` with no messages (interop
+  `empty_stream`) then never answers and the client times out. grpc-go's
+  own client always ends a stream with an empty DATA frame, so the Xo
+  client does the same: an empty stream's body is an `http.pipe` closed
+  before `Client.open`, which sends HEADERS without END_STREAM and then
+  an empty DATA frame with it. Not reported upstream (the owner's call).
+- Header and trailer names differ in case by backend: the Go backend's
+  net/http canonicalizes (`Grpc-Status`), h2 is lowercase, so the client
+  looks names up case insensitively.
+
+The scripts and the Xo program are outside the repository
+(the lead's notes); the golden `http_duplex` h2c row and `http_trailers`
+cover the same paths on every backend.
 
 ## Alternatives
 
