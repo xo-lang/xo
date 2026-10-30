@@ -1,6 +1,6 @@
 # 0436: std's separately compiled variant for test builds
 
-Status: Proposed (xo-lang-4, 2026-10-30; the lead approved building it, the owner accepts with the measurements below)
+Status: Accepted (owner, 2026-10-30; was Proposed (xo-lang-4, 2026-10-30; the lead approved building it, the owner accepts with the measurements below))
 
 Amends [0388](0388-separate-std-compilation.md): std's variants gain a test dimension.
 

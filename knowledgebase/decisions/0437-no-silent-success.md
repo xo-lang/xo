@@ -1,6 +1,6 @@
 # 0437: no silent success in the tools
 
-Status: Proposed (xo-lang-4, 2026-10-30; the owner's queue item 1 from the agent survey of 2026-10-30, ~/xo-lead/notes/lead/survey-2026-10-30/SUMMARY.md)
+Status: Accepted (owner, 2026-10-30; was Proposed (xo-lang-4, 2026-10-30; the owner's queue item 1 from the agent survey of 2026-10-30, ~/xo-lead/notes/lead/survey-2026-10-30/SUMMARY.md))
 
 ## Context
 
