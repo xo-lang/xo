@@ -17,13 +17,14 @@ use std/crypto
 /// the facts' codec changes (with STORE_MAGIC, gotchas/store-format-magic.md).
 const STD_CACHE_VERSION = 1
 
-/// The key of std's entries for target and conc: the code generation
+/// The key of std's entries for target, conc and test (decision 0436:
+/// std built in test mode for `xo test`): the code generation
 /// identity of this xo (cache_id's, without a separately compiled
 /// build's facts, which these are), the target, the variant, and every
 /// std source's path, size and modification time (a body edit in a
 /// development std changes the object, unlike std_tree_sum's interface
 /// hash); "" when xo's identity or std cannot be read.
-fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Bool) -> Str {
+fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Bool, test: Bool) -> Str {
   let id = if XO_CODEGEN_KEY.len() == 64 { "codegen ${XO_CODEGEN_KEY}" } else { self_id(os) }
   if id.is_empty() {
     return ""
@@ -32,7 +33,7 @@ fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Boo
   if tree.is_empty() {
     return ""
   }
-  crypto.sha256("xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n${tree}".bytes()).to_hex()
+  crypto.sha256("xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n${if test { "test=1\n" } else { "" }}${tree}".bytes()).to_hex()
 }
 
 /// std's .xo files under std, one "PATH SIZE MTIME" line each in path
@@ -65,12 +66,12 @@ fn std_tree_lines(os: Os, ctx: Ctx, std: Str) -> Str {
 /// into the cache when missing; None when the cache is off or the build
 /// failed (the caller builds the whole program). phases: one line on
 /// standard error saying which.
-fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: Bool) -> (Str, Str)? {
+fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, test: Bool, phases: Bool) -> (Str, Str)? {
   // a release's own (lib/xo/stdstore beside its std, which never
   // changes): this xo's, by its identity
-  if let Some(p) = std_released(os, ctx.std, tgoos, tgoarch, conc) {
+  if let Some(p) = std_released(os, ctx.std, tgoos, tgoarch, conc, test) {
     if phases {
-      os.stdio.eprintln("cache std released conc=${conc}")
+      os.stdio.eprintln("cache std released conc=${conc}${tv(test)}")
     }
     return Some(p)
   }
@@ -89,7 +90,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     }
     return None
   }
-  let key = std_cache_key(os, ctx, ctx.std, tgoos, tgoarch, conc)
+  let key = std_cache_key(os, ctx, ctx.std, tgoos, tgoarch, conc, test)
   if key.is_empty() {
     return None
   }
@@ -107,7 +108,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     // names with a time of 0, so marking them used keeps lldb reading them
     std_parts_used(os, "${store}.parts")
     if phases {
-      os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} reused")
+      os.stdio.eprintln("cache std ${key[0..12]} conc=${conc}${tv(test)} reused")
     }
     return Some((store, facts))
   }
@@ -122,7 +123,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
       Ok(Some(l)) => held = Some(l)
       _ => return None
     }
-    os.fs.write("${dir}/std/${STD_BG_INFO}", "${tgoos}/${tgoarch} conc=${conc} since ${os.clock.now().format_rfc3339()}\n".bytes()).ignore_err("only what xo dev stdcache shows")
+    os.fs.write("${dir}/std/${STD_BG_INFO}", "${tgoos}/${tgoarch} conc=${conc}${tv(test)} since ${os.clock.now().format_rfc3339()}\n".bytes()).ignore_err("only what xo dev stdcache shows")
   }
   // built in a directory of its own under the cache, then each file
   // renamed into place (a reader sees a whole file or none)
@@ -130,7 +131,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
   let t0 = os.clock.now()
   let xo = check.executable(os.env, os.fs)
   let env = ["XO_STD=${ctx.std}", "XO_BACKEND_CACHE_DIR=${tmp}/cache", "XO_SEPCOMP=", "XO_SEPCOMP_FACTS=", "XO_SEPCOMP_STORE=", "XO_SEPCOMP_FACTS_CONC=", "XO_SEPCOMP_STORE_CONC=", "XO_SEPCOMP_DEFAULT=", "XO_STD_OBJ=", "XO_STD_ROOTS=", "XO_STD_STORE=", "XO_STD_BG_CHILD=", "XO_SEPCOMP_BG=0"] + STD_CODE_ENV.map(fn(n) { "${n}=" })
-  let run = match env_command(os, env + [xo, "dev", "stdobj", "--target=${tgoos}/${tgoarch}", "--conc=${if conc { "1" } else { "0" }}", "--facts=${tmp}/std.stdf", "${tmp}/obj"]).output() {
+  let run = match env_command(os, env + [xo, "dev", "stdobj", "--target=${tgoos}/${tgoarch}", "--conc=${if conc { "1" } else { "0" }}"] + (if test { ["--test"] } else { [] }) + ["--facts=${tmp}/std.stdf", "${tmp}/obj"]).output() {
     Ok(r) => (r.code == 0, if r.code == 0 { "" } else { "xo dev stdobj exit ${r.code}: ${stdobj_said(r.stderr.to_str() ?? "")}" })
     Err(e) => (false, "starting ${xo}: ${e}")
   }
@@ -180,7 +181,7 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: B
     l.unlock()
   }
   if phases {
-    os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} ${if done { "built" } else { "failed (${why}): the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
+    os.stdio.eprintln("cache std ${key[0..12]} conc=${conc}${tv(test)} ${if done { "built" } else { "failed (${why}): the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
   }
   if done { Some((store, facts)) } else { None }
 }
@@ -197,6 +198,12 @@ fn stdobj_said(stderr: Str) -> Str {
   lines.last() ?? ""
 }
 
+/// " test=1" for std's test variant (decision 0436) in the lines
+/// --phase-times and xo dev stdcache print, else "".
+fn tv(test: Bool) -> Str {
+  if test { " test=1" } else { "" }
+}
+
 /// The lock a background build of std's variants holds, and what it is
 /// building, in the cache's std directory.
 const STD_BG_LOCK = ".bg.lock"
@@ -209,10 +216,10 @@ const STD_BG_INFO = ".bg-info"
 /// slower than without separate compilation (decision 0388, the default).
 /// XO_SEPCOMP_BG=0 starts none; one runs at a time; phases: a line on
 /// standard error saying which.
-fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phases: Bool) -> (Str, Str)? {
-  if let Some(p) = std_released(os, ctx.std, tgoos, tgoarch, conc) {
+fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, test: Bool, phases: Bool) -> (Str, Str)? {
+  if let Some(p) = std_released(os, ctx.std, tgoos, tgoarch, conc, test) {
     if phases {
-      os.stdio.eprintln("cache std released conc=${conc}")
+      os.stdio.eprintln("cache std released conc=${conc}${tv(test)}")
     }
     return Some(p)
   }
@@ -220,7 +227,7 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phas
   if dir.is_empty() || on_wasi() {
     return None
   }
-  let key = std_cache_key(os, ctx, ctx.std, tgoos, tgoarch, conc)
+  let key = std_cache_key(os, ctx, ctx.std, tgoos, tgoarch, conc, test)
   if key.is_empty() {
     return None
   }
@@ -235,7 +242,7 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phas
     }
     std_parts_used(os, "${store}.parts")
     if phases {
-      os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} reused")
+      os.stdio.eprintln("cache std ${key[0..12]} conc=${conc}${tv(test)} reused")
     }
     return Some((store, facts))
   }
@@ -272,8 +279,8 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, phas
   let xo = check.executable(os.env, os.fs)
   // its own std, cache and target (the child holds the lock while it
   // builds; two that start at once build one, the other finds it held)
-  let script = "XO_STD_BG_CHILD=1 XO_STD=\"$1\" XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT= nice -n 10 \"$0\" dev stdcache --conc=$2 --target=$3 </dev/null >/dev/null 2>&1 &"
-  os.proc.cmd("/bin/sh", ["-c", script, xo, ctx.std, if conc { "1" } else { "0" }, "${tgoos}/${tgoarch}"]).run().ignore_err("a build that does not start starts on a later build")
+  let script = "XO_STD_BG_CHILD=1 XO_STD=\"$1\" XO_PROF= XO_PROF_OUT= XO_TRACE= XO_TRACE_OUT= nice -n 10 \"$0\" dev stdcache --conc=$2 --target=$3 $4 </dev/null >/dev/null 2>&1 &"
+  os.proc.cmd("/bin/sh", ["-c", script, xo, ctx.std, if conc { "1" } else { "0" }, "${tgoos}/${tgoarch}", if test { "--test" } else { "" }]).run().ignore_err("a build that does not start starts on a later build")
   say("building in the background, the whole program is built")
   None
 }
@@ -303,13 +310,13 @@ fn std_cache_dir(os: Os) -> Str {
 
 /// The release's store and facts for the target and variant: in
 /// lib/xo/stdstore beside std (std at <prefix>/lib/xo/std, the release
-/// layout), <os>-<arch>-conc<N>.store and .stdf, used when the .id file
+/// layout), <os>-<arch>-conc<N>[-test].store and .stdf, used when the .id file
 /// beside them names this xo's code generation identity; None otherwise.
-fn std_released(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool) -> (Str, Str)? {
+fn std_released(os: Os, std: Str, tgoos: Str, tgoarch: Str, conc: Bool, test: Bool) -> (Str, Str)? {
   if XO_CODEGEN_KEY.len() != 64 || !std.trim_suffix("/").ends_with("/lib/xo/std") {
     return None
   }
-  let base = "${dir_name(std.trim_suffix("/"))}/stdstore/${tgoos}-${tgoarch}-conc${if conc { 1 } else { 0 }}"
+  let base = "${dir_name(std.trim_suffix("/"))}/stdstore/${tgoos}-${tgoarch}-conc${if conc { 1 } else { 0 }}${if test { "-test" } else { "" }}"
   // xo:allow XO0903 no release store: the cache's is used
   let id = (os.fs.read("${base}.id").ok() ?? b"").to_str() ?? ""
   if id.trim() != XO_CODEGEN_KEY {

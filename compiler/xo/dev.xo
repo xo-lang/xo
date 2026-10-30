@@ -48,11 +48,12 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
   }
 }
 
-/// stdcache_cmd is `xo dev stdcache [--conc=0|1] [--target=OS/ARCH] [--peek]`:
+/// stdcache_cmd is `xo dev stdcache [--conc=0|1] [--test] [--target=OS/ARCH] [--peek]`:
 /// std's store and facts for the variant from the back-end cache
 /// (stdcache.xo std_variant, built on a miss), their paths on two lines;
 /// exit 1 when there are none (decision 0388). The release prebuilds the
-/// host's with it. --peek: std_variant_peek's answer instead (a miss
+/// host's with it. --test: the variant `xo test` links (decision 0436,
+/// std built in test mode). --peek: std_variant_peek's answer instead (a miss
 /// starts the build in the background and exits 1).
 fn stdcache_cmd(os: Os, args: List[Str]) -> Int {
   let host = host_os(os)
@@ -60,9 +61,12 @@ fn stdcache_cmd(os: Os, args: List[Str]) -> Int {
   var goos = host
   var goarch = host_arch()
   var peek = false
+  var test = false
   for a in args {
     if a == "--peek" {
       peek = true
+    } else if a == "--test" {
+      test = true
     } else if a == "--conc=1" {
       conc = true
     } else if a == "--conc=0" {
@@ -72,7 +76,7 @@ fn stdcache_cmd(os: Os, args: List[Str]) -> Int {
       goos = t[0]
       goarch = t[1]
     } else {
-      os.stdio.eprintln("usage: xo dev stdcache [--conc=0|1] [--target=OS/ARCH] [--peek]")
+      os.stdio.eprintln("usage: xo dev stdcache [--conc=0|1] [--test] [--target=OS/ARCH] [--peek]")
       return 2
     }
   }
@@ -83,7 +87,7 @@ fn stdcache_cmd(os: Os, args: List[Str]) -> Int {
       os.stdio.eprintln("xo dev stdcache: a background build is running (${bg})")
     }
   }
-  let got = if peek { std_variant_peek(os, ctx, goos, goarch, conc, true) } else { std_variant(os, ctx, goos, goarch, conc, true) }
+  let got = if peek { std_variant_peek(os, ctx, goos, goarch, conc, test, true) } else { std_variant(os, ctx, goos, goarch, conc, test, true) }
   match got {
     Some((store, facts)) => {
       os.stdio.println(store)
@@ -94,17 +98,21 @@ fn stdcache_cmd(os: Os, args: List[Str]) -> Int {
   }
 }
 
-/// stdobj_cmd is `xo dev stdobj [--conc=0|1] [--facts=FILE] [--target=OS/ARCH]
+/// stdobj_cmd is `xo dev stdobj [--conc=0|1] [--test] [--facts=FILE] [--target=OS/ARCH]
 /// OUT`: std's
 /// object for one variant (decision 0388): the part objects and their
 /// store (std.store) in OUT, built from an empty program (XO_STD_OBJ,
 /// XO_STD_CONC, no dead function removal, no hollowing), and with
 /// --facts its facts (an XO_STD_ROOTS build's XO_STD_FACTS_DUMP, in a
 /// cold cache of its own: a warm one's undecoded bodies carry fewer known
-/// results). conc defaults to 0. The empty program and the cache go when
-/// it is done.
+/// results). conc defaults to 0. --test builds the variant `xo test`
+/// links (decision 0436): the program has one test and both builds are
+/// `xo test` builds, so std compiles in test mode (its Fs and Os calls
+/// routed to the test world) with the test world's roots. The empty
+/// program and the cache go when it is done.
 fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
   var conc = "0"
+  var test = false
   var facts = ""
   // a target other than the host's (`--target=os/arch`, passed on)
   var target = ""
@@ -112,6 +120,8 @@ fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
   for a in args {
     if a.starts_with("--conc=") {
       conc = a.trim_prefix("--conc=")
+    } else if a == "--test" {
+      test = true
     } else if a.starts_with("--facts=") {
       facts = a.trim_prefix("--facts=")
     } else if a.starts_with("--target=") {
@@ -124,7 +134,7 @@ fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
     }
   }
   if out.is_empty() || !(conc is "0" | "1") {
-    os.stdio.eprintln("usage: xo dev stdobj [--conc=0|1] [--facts=FILE] [--target=OS/ARCH] OUT")
+    os.stdio.eprintln("usage: xo dev stdobj [--conc=0|1] [--test] [--facts=FILE] [--target=OS/ARCH] OUT")
     return 2
   }
   let wd = os.env.get("PWD") ?? "."
@@ -138,12 +148,15 @@ fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
   }
   let prog = "${out}/.stdobj-prog"
   write_or_fail(os, prog, "${prog}/xo.mod", "module stdobj\nedition preview\n".bytes())
-  write_or_fail(os, prog, "${prog}/main.xo", "fn main(os: Os) {\n}\n".bytes())
+  write_or_fail(os, prog, "${prog}/main.xo", "fn main(os: Os) {\n}\n${if test { "\ntest \"std test variant\" {\n  expect(1) == 1\n}\n" } else { "" }}".bytes())
   let xo = check.executable(os.env, os.fs)
-  let base = ["PWD=${prog}", "XO_STD_CONC=${conc}", "XO_DCE=off"]
+  // a test build's run cache (in the bin cache) could serve the build
+  // and write no objects: off for the test variant
+  let base = ["PWD=${prog}", "XO_STD_CONC=${conc}", "XO_DCE=off"] + (if test { ["XO_BIN_CACHE=off"] } else { [] })
   let tg: List[Str] = if target.is_empty() { [] } else { [target] }
-  let obj_args = base + ["XO_STD_OBJ=${out}", "XO_PASSES=-hollow", xo, "build"] + tg + ["-o", "${prog}/x", prog]
-  let facts_args = base + ["XO_STD_ROOTS=1", "XO_STD_FACTS_DUMP=${facts}", "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=${prog}/cache", "XO_BUILD_DIR=${prog}/build", xo, "build"] + tg + ["-o", "${prog}/xf", prog]
+  let cmd = if test { "test" } else { "build" }
+  let obj_args = base + ["XO_STD_OBJ=${out}", "XO_PASSES=-hollow", xo, cmd] + tg + ["-o", "${prog}/x", prog]
+  let facts_args = base + ["XO_STD_ROOTS=1", "XO_STD_FACTS_DUMP=${facts}", "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR=${prog}/cache", "XO_BUILD_DIR=${prog}/build", xo, cmd] + tg + ["-o", "${prog}/xf", prog]
   // the object and the facts at once: two builds of std whole, each
   // most of the time (about 8 s each on the Mac, 2026-10-28)
   let results = scope s {

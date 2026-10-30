@@ -432,6 +432,12 @@ fn main(os0: Os) ! {
   if let Some(h) = verify_hit {
     verify_entry(os, h, nb.bin, kept_output(ctx))
   }
+  if o.cmd == "test" && (!std_obj_dir(os).is_empty() || (os.env.get("XO_STD_ROOTS") ?? "") == "1") {
+    // std's test variant (decision 0436, xo dev stdobj --test): the
+    // build is the product (std's objects or facts), its binary not a
+    // program to run
+    os.proc.exit(0)
+  }
   if o.cmd == "test" {
     var to = o.topts
     to.profile_dir = o.wd

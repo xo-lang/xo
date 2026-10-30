@@ -76,17 +76,21 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
   // darwin and linux, arm64 and amd64, and windows/amd64 (std's Mach-O,
   // ELF and COFF stores, decision 0388)
   let served = ((host is "darwin" | "linux") && (arch is "arm64" | "amd64")) || (host == "windows" && arch == "amd64")
-  if !(o.cmd is "build" | "run") || backend != arch || !served || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {
+  // `xo test` links std's test variant (decision 0436: std built in test
+  // mode, its Fs and Os calls routed to the test world, with the test
+  // world's roots)
+  let test = o.cmd == "test"
+  if !(o.cmd is "build" | "run" | "test") || backend != arch || !served || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {
     return os
   }
   if !(o.targets.is_empty() || o.targets == "${host}/${arch}") {
     return os
   }
-  let v0 = match std_variant_peek(os, ctx, host, arch, false, o.phases) {
+  let v0 = match std_variant_peek(os, ctx, host, arch, false, test, o.phases) {
     Some(v) => v
     None => return os
   }
-  let v1 = match std_variant_peek(os, ctx, host, arch, true, o.phases) {
+  let v1 = match std_variant_peek(os, ctx, host, arch, true, test, o.phases) {
     Some(v) => v
     None => return os
   }
