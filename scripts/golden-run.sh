@@ -40,7 +40,10 @@ code=$?
   printf 'exit %s\n--- stdout\n' "$code"
   cat "$tmp/out"
 } >"$tmp/got"
-sed '/^--- stderr$/,$d' "$dir/want.txt" >"$tmp/want"
+want=$dir/want.txt
+# on Windows (Git Bash), a golden whose output differs there has want_windows.txt
+case $(uname -s) in MINGW* | MSYS* | CYGWIN*) [ -f "$dir/want_windows.txt" ] && want=$dir/want_windows.txt ;; esac
+sed '/^--- stderr$/,$d' "$want" >"$tmp/want"
 if cmp -s "$tmp/got" "$tmp/want"; then
   echo "ok $name"
   rm -rf "$tmp"

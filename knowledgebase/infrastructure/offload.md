@@ -97,5 +97,24 @@ to `%USERPROFILE%\xo-ci\off`, then `wsl -e bash -l` on it under
   33 s, against about 15 minutes in Docker on the Mac; `all` (433, less
   the `use_c_*` goldens, which need clang) in 183 s, which found
   http_wire and http_stream red on every backend.
-- The Windows side has the 0.34.0 windows-amd64 seed in
-  `C:\Users\xo\xo-ci\seed\xo`; native Windows runs are not scripted yet.
+- Windows itself (`~/xo-lead/offload-win.env`, `OFF_KIND=win`): Git Bash
+  from PortableGit 2.56.0 in `%USERPROFILE%\tools\git` runs the job, Go
+  1.26.0 in `tools\go`, the 0.34.0 windows-amd64 seed in
+  `C:\Users\xo\xo-ci\seed\xo`. `OFFLOAD_ENV=offload-win.env
+  scripts/lead/amd64-run.sh REV NAME [sample|all|GOLDEN...]` builds xo
+  natively on Windows (229 s cold, 14 s cached) and runs the goldens
+  there (windows/amd64; `want_windows.txt` where a golden has one,
+  scripts/golden-run.sh); commits sent are `refs/offload-win/sent`. The
+  priv repository sets `core.autocrlf false` (Git for Windows' default
+  CRLF checkout broke go.mod). Git Bash has no flock: locks are
+  directories (`~/xo-ci/offload.lockdir.N`, stale when its shell is gone).
+- Slots: `OFF_SLOTS=2` in both of this machine's host files, so two jobs
+  run at once per side (WSL and Windows), four in all; the arm64
+  container stays at one (owner, 2026-10-29). The one repository's fetch
+  and worktree change take turns (`~/xo-ci/priv.lockdir`).
+- Goldens run `XO_GOLDEN_JOBS` at once (scripts/linux-goldens.sh; the
+  offload job uses half the host's CPUs): all 433 on WSL in 20 s instead
+  of 183. Under parallel load the host answers a dial to 192.0.2.1 with
+  "Network is unreachable" instead of a timeout, so
+  net_lookup_dial_timeout fails there until its output stops naming the
+  error (Lang 2, 2026-10-30).
