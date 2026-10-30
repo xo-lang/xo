@@ -2706,6 +2706,9 @@ struct StreamState {
   pending: Bytes
   done: Bool
   idle_ns: Int
+  /// the scope of a full duplex request body's sender (decision 0433),
+  /// closed with the stream
+  dsrv: rthttp.Srv? = None
   /// the response's trailers (decision 0433), set when its body ends
   trailers: Map[Str, Str] = {}
 }
@@ -2729,7 +2732,25 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   }
   let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
-  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, true, req.src)
+  // a streamed request body is sent from a task, so the response head
+  // may come before the body ends (full duplex, decision 0433)
+  var dsrv: rthttp.Srv? = None
+  var duplex: List[fn(fn() -> ())] = []
+  if !req.src.is_empty() {
+    let ds = hserve.srv_new()
+    let g = hserve.srv_group(ds)
+    dsrv = Some(ds)
+    duplex = [fn(f: fn() -> ()) { g.spawn_background(f) }]
+  }
+  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, true, req.src, duplex)
+  match r.err {
+    0 => ()
+    _ => {
+      if let Some(ds) = dsrv {
+        hserve.srv_close(ds)
+      }
+    }
+  }
   match r.err {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))
@@ -2741,7 +2762,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   let (h, _) = fields_in(r.headers)
   let gz = if r.gz { Some(compress.decompressor(compress.Format.Gzip)) } else { None }
   let idle = if req.idle_ns > 0 { req.idle_ns } else { c.timeout.nanos() }
-  let st = StreamState{conn: if r.open { r.conn } else { None }, h2: r.h2, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle}
+  let st = StreamState{conn: if r.open { r.conn } else { None }, h2: r.h2, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle, dsrv: dsrv}
   Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: r.status, headers: h}, st: Mutex[StreamState].new(st)}))
 }
 
@@ -2943,6 +2964,10 @@ fn (s: ClientStream) close() {
       None => ()
     }
     x.conn = None
+    if let Some(ds) = x.dsrv {
+      x.dsrv = None
+      hserve.srv_close(ds)
+    }
     x.buffered = b""
     x.pending = b""
     x.gz = None
