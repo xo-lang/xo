@@ -197,7 +197,7 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a serv
   reads the socket with a 10 ms deadline while the queue is empty).
 - mTLS, TLS 1.3 native (0aa379fa2): all five ClientAuth modes match Go.
   TLS 1.2 client auth, server and client, native too (checked against
-  crypto/tls at MaxVersion TLS 1.2). Open: `with_cert` with system roots.
+  crypto/tls at MaxVersion TLS 1.2). `with_cert` also works with the system roots (a copy of the roots record).
 
 ## Alternatives
 

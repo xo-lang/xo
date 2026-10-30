@@ -213,14 +213,11 @@ pub fn roots_ders(ders: List[Bytes]) -> rthttp.Roots {
 
 /// roots r with a client certificate (Client.with_cert): a new Roots, so
 /// the pool of connections keeps the clients with and without one apart.
-/// The system's roots stay as they are (a client that presents a
-/// certificate names its CA with with_roots).
+/// The system's roots too: the copy shares their cell, which only the
+/// process's one record frees (roots_free).
 pub fn roots_with_cert(r: rthttp.Roots, certs: List[Bytes], key: Bytes) -> rthttp.Roots {
   match roots_data(rt.obj_addr(r)) {
     Some(d) => {
-      if d.system {
-        return r
-      }
       as_roots(rt.any_of(d with {ccerts: certs, ckey: key}))
     }
     None => r

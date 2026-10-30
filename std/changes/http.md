@@ -68,9 +68,9 @@ client's certificate. The native TLS 1.3 server asks and verifies as Go
 does (CertificateRequest with the CAs' names, the client's Certificate
 and CertificateVerify, the clientAuth usage, Go's alerts); a native
 client presents its certificate only when a named CA issued it
-(Client.with_cert needs with_roots, not the system's roots, to keep the
-pool apart). TLS 1.2 clients and servers do not do client certificates
-natively yet. Also on the native backends, `with_tls` keeps
+(Client.with_cert keeps the pool apart with a copy of the roots, the
+system's too; TLS 1.2 clients and servers do client certificates since
+the std/tls entry of 2026-10-30). Also on the native backends, `with_tls` keeps
 the server's earlier settings (read timeouts, header and body limits)
 instead of resetting them.
 
