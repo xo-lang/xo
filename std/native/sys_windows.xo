@@ -295,6 +295,10 @@ fn SetThreadContext(h: Int, cx: Int) -> Int32
 /// nonzero on success.
 fn GetThreadTimes(h: Int, created: Int, exited: Int, kernel: Int, user: Int) -> Int32
 fn GetCurrentProcessId() -> UInt32
+/// GetComputerNameExW of the name type into the UTF-16 units at buf; the
+/// DWORD at size holds the room in units and gets the length written
+/// (without the NUL): nonzero on success.
+fn GetComputerNameExW(kind: Int, buf: Int, size: Int) -> Int32
 /// Process32FirstW and Process32NextW: the snapshot's first or next
 /// PROCESSENTRY32W into the one at e (its dwSize set first), nonzero
 /// while there is one.

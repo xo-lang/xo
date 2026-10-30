@@ -1,5 +1,18 @@
 # prelude changes
 
+
+## 2026-10-30: fix: Env.hostname on Windows
+
+- Kind: fix
+- Commit: this commit
+- Found by: ADR 0426 (host facts, std-coverage gap 9)
+- Go reference: os.Hostname on Windows (GetComputerNameExW with ComputerNamePhysicalDnsHostname)
+- Test: the env_hostname golden's "named true" on arm64, LLVM, the Go backend and natively on the Windows offload host; "named false" under WASI
+- Timing: none (one system call, not a hot path)
+
+`os.env.hostname()` on native windows/amd64 is the host's name from
+GetComputerNameExW (ComputerNamePhysicalDnsHostname, as Go's), not "".
+WASI still answers "".
 ## 2026-10-30: fix: Proc.ppid on Windows
 
 - Kind: fix

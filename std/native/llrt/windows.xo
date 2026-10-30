@@ -783,6 +783,22 @@ pub fn getcwd() -> Str {
   narrow(buf, 0, k)
 }
 
+/// GetComputerNameExW(ComputerNamePhysicalDnsHostname) in UTF-8, as
+/// Go's os.Hostname; "" when it fails (Env.hostname, decision 0426).
+pub fn hostname() -> Str {
+  let buf = raw.bytes_buf(512)
+  let sz = raw.bytes_buf(8)
+  let sa = raw.bytes_addr(sz)
+  rt.mem_store(sa, 0, 256, 4)
+  let ok = Int(sys_windows.GetComputerNameExW(5, raw.bytes_addr(buf), sa)) != 0
+  let k = rt.mem_load(sa, 0, 4) & 4294967295
+  raw.alive(sz)
+  if !ok || k <= 0 || k >= 256 {
+    return ""
+  }
+  narrow(buf, 0, k)
+}
+
 /// CreateSymbolicLinkW of path to target (unprivileged where developer
 /// mode allows it; a directory link when target names a directory,
 /// relative to the working directory as the C path checks it; / made \):

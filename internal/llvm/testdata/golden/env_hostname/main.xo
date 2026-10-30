@@ -23,4 +23,6 @@ fn main(os: Os) {
   os.stdio.println(describe(os.env))
   os.stdio.println(describe(os.env.only([])))
   os.stdio.println(MyEnv{}.hostname())
+  // every host but WASI has a name (Windows too, decision 0426)
+  os.stdio.println("named ${os.env.hostname().len() > 0}")
 }

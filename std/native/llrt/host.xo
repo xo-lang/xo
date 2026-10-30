@@ -1,8 +1,9 @@
 // Host facts (decision 0410): the host name. uname's nodename on Linux,
-// gethostname(3) on macOS; "" on Windows and under WASI, where the
-// system call is not wired yet (Env.hostname documents it).
+// gethostname(3) on macOS, GetComputerNameExW on Windows (decision
+// 0426); "" under WASI, which has no such call.
 
 use native/llrt/raw
+use native/llrt/windows
 use native/rt
 use native/sys_darwin
 
@@ -45,6 +46,7 @@ pub fn hostname() -> Str {
       raw.alive(buf)
       s
     }
-    TargetOs.Windows | TargetOs.Wasi => ""
+    TargetOs.Windows => windows.hostname()
+    TargetOs.Wasi => ""
   }
 }

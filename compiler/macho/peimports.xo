@@ -45,6 +45,7 @@ pub fn pe_imports() -> Map[Str, Str] {
     "GetCurrentProcess": "KERNEL32.dll",
     "GetCurrentProcessId": "KERNEL32.dll",
     "Process32FirstW": "KERNEL32.dll",
+    "GetComputerNameExW": "KERNEL32.dll",
     "Process32NextW": "KERNEL32.dll",
     "GetCurrentThreadId": "KERNEL32.dll",
     "GetDynamicTimeZoneInformation": "KERNEL32.dll",
