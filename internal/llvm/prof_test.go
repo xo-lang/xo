@@ -746,3 +746,36 @@ func TestProfCountsCPU(t *testing.T) {
 	}
 	t.Logf("%d samples for %v of CPU", n, cpu)
 }
+
+// TestProfDroppedLine: a run whose samples overflow the profile's 32,768
+// says so on its exit line ("N more dropped"), so a short profile is
+// never silently a prefix of the run (lead, 2026-10-30: about 3 s of CPU
+// fills it at 10 kHz).
+func TestProfDroppedLine(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+		t.Skip("the arm64 backend's CPU profile (darwin, linux)")
+	}
+	res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "spin")}, xotool.Options{Backend: xotool.BackendArm64})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	bin := res.Binaries[xotool.Host()]
+	dir := t.TempDir()
+	cmd := testtmp.Guard(exec.Command(bin, "4", "1000000000"))
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=10000", "XO_PROF_OUT="+filepath.Join(dir, "prof.xoraw"))
+	got, err := runCombined(cmd, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, got)
+	}
+	cpu := cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()
+	if cpu.Seconds()*10000 < 40000 {
+		t.Skipf("%v of CPU at 10 kHz does not overflow the profile", cpu)
+	}
+	if !regexp.MustCompile(`xo profile: 32768 samples \(\d+ more dropped: the profile holds 32768;`).MatchString(got) {
+		t.Fatalf("%v of CPU at 10 kHz: no dropped count on the exit line:\n%s", cpu, got)
+	}
+}

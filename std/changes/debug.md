@@ -1,5 +1,18 @@
 # std/debug changes
 
+## 2026-10-30: fix: a CPU profile that filled its buffer says so on its exit line
+
+- Kind: fix
+- Commit: (this commit)
+- Found by: Xo Lang 1 (since f79ea3f9d, about 3 s of CPU at 10 kHz fills the profile's 32,768 samples)
+- Go reference: none (Go's profile buffer drops and counts as "lost" too, in the profile only)
+- Test: internal/llvm TestProfDroppedLine
+
+`xo profile: 32768 samples (N more dropped: the profile holds 32768;
+lower XO_PROF_HZ for a run this long) in FILE`: a run whose samples
+overflow the profile used to print only the count it kept, so a profile
+of the first seconds of a run read as the whole run.
+
 ## 2026-10-30: fix: XO_PROF's sample count matches CPU time on macOS and Linux
 
 - Kind: fix

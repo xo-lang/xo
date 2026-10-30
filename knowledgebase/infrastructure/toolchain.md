@@ -1077,8 +1077,8 @@ and for diffing two builds function by function, not for a first look.
   CPU time on macOS and Linux (gotchas/xo-prof-macos-undercounts-samples.md).
   The CPU profile holds at most 32,768 samples (llrt prof.xo CAP): at
   1,000 Hz about 33 s of CPU summed over every thread, at 10,000 Hz about
-  3 s; later samples are dropped and counted, and `xo prof`'s summary
-  says "N lost", but the exit line does not yet (Last verified:
+  3 s; later samples are dropped and counted: the exit line says
+  "N more dropped" and `xo prof`'s summary "N lost" (Last verified:
   2026-10-30). For a long or many-threaded run lower `XO_PROF_HZ`. `xo prof FILE|URL
   [--raw-out=PATH] [--cpu-out=PATH] [--heap-out=PATH]` writes FILE's name with
   `.cpu.pprof` (and `.heap.pprof`) for its `.xoraw`, `.pb.gz` or `.gz`

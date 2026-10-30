@@ -693,6 +693,9 @@ pub fn finish() {
   if rc == 0 && rh == 0 {
     return
   }
+  // the CPU samples the full buffer dropped, read before build_raw
+  let dropped = if rc != 0 { ld(rc, R_LOST) } else { 0 }
+  let cap = if rc != 0 { ld(rc, R_CAP) } else { 0 }
   let raw = build_raw(rc, rh)
   let nh = raw.nh
   let nc = raw.nc
@@ -706,6 +709,10 @@ pub fn finish() {
     var what = ""
     if rc != 0 {
       what = "${nc} samples"
+      if dropped > 0 {
+        // a full profile is a prefix of the run, never silently short
+        what = "${what} (${dropped} more dropped: the profile holds ${cap}; lower XO_PROF_HZ for a run this long)"
+      }
     }
     if rh != 0 {
       what = if what.is_empty() { "${nh} heap samples" } else { "${what} and ${nh} heap samples" }
