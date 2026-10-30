@@ -570,7 +570,7 @@ func faultInfo(f *FaultErr) Task_Fault {
 func Task_with_timeout[T, E any](tk *Task, clock Clock, d Duration, f func(*Task) Result[T, E]) Result[T, Task_Timed[E]] {
 	tk.CheckCancel()
 	s := NewScope(tk)
-	h := Spawn(tk, s, f, false, true)
+	h := spawnUnder(tk, clock, d, func() *Handle[T, E] { return Spawn(tk, s, f, false, true) })
 	timedOut := awaitDeadline(tk, s, h.done, clock, d, nil)
 	if timedOut {
 		s.shutdown()
@@ -588,6 +588,34 @@ func Task_with_timeout[T, E any](tk *Task, clock Clock, d Duration, f func(*Task
 		return Ok[T, Task_Timed[E]](h.res.V)
 	}
 	return ErrTr[T](Task_Timed[E]{Tag: 2, P: Task_Timed_Failed[E]{F0: h.res.E}}, h.res.Tr)
+}
+
+// spawnUnder runs spawn, which starts a task from tk, with tk's deadline
+// lowered to d from now on clock while it does, so the task works under
+// it (task.deadline, decision 0430).
+func spawnUnder[H any](tk *Task, clock Clock, d Duration, spawn func() H) H {
+	old := tk.dl
+	at := Time(int64(clock.M_now(tk)) + int64(d))
+	if old == nil || int64(at) < int64(dlOn(tk, old, clock)) {
+		tk.dl = &taskDeadline{clock: clock, at: at}
+	}
+	h := spawn()
+	tk.dl = old
+	return h
+}
+
+// dlOn is the deadline dl as an instant on clock.
+func dlOn(tk *Task, dl *taskDeadline, clock Clock) Time {
+	return Time(int64(clock.M_now(tk)) + int64(dl.at) - int64(dl.clock.M_now(tk)))
+}
+
+// Task_deadline is `task.deadline(clock)` (decision 0430): the nearest
+// with_timeout deadline the task works under, on clock.
+func Task_deadline(tk *Task, clock Clock) Option[Time] {
+	if tk.dl == nil {
+		return Option[Time]{}
+	}
+	return Option[Time]{Some: true, V: dlOn(tk, tk.dl, clock)}
 }
 
 // awaitDeadline waits in tk until done fires or d passes on clock. It
@@ -719,7 +747,7 @@ func Task_map_concurrent_until[T, R, E any](tk *Task, clock Clock, d Duration, i
 	res := make([]Result[R, E], n)
 	fin := make([]bool, n)
 	s := NewScope(tk)
-	h := Spawn(tk, s, func(t *Task) Result[Unit, Never] {
+	h := spawnUnder(tk, clock, d, func() *Handle[Unit, Never] { return Spawn(tk, s, func(t *Task) Result[Unit, Never] {
 		mapConcurrent(t, items, limit, func(t *Task, i int, x T) {
 			r := f(t, x)
 			mu.Lock()
@@ -729,7 +757,7 @@ func Task_map_concurrent_until[T, R, E any](tk *Task, clock Clock, d Duration, i
 			mu.Unlock()
 		})
 		return Ok[Unit, Never](Unit{})
-	}, false, true)
+	}, false, true) })
 	awaitDeadline(tk, s, h.done, clock, d, func() {
 		mu.Lock()
 		expired = true

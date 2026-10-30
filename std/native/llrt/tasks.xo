@@ -69,10 +69,13 @@ pub const T_LOC_N = 240
 /// A --race build's ThreadSanitizer context of the task (decision 0273,
 /// sanhook.xo task_new), made at its spawn, 0 once its run ended
 const T_TSAN = 248
-const T_SIZE = 256
+/// the spawner's C_TASK_DL (decision 0430), which the task's context
+/// takes when it runs
+const T_DEADLINE = 256
+const T_SIZE = 264
 const T_DONE = 2
 
-/// xo_scope (464 bytes): the body's node, the lock of the list and the
+/// xo_scope (472 bytes): the body's node, the lock of the list and the
 /// failure fields, the first failed task and the first faulted task
 /// (references).
 const S_BODY = 16
@@ -90,7 +93,10 @@ const S_FAULT = 424
 const S_PRUNE_AT = 440
 const S_CLOSING = 448
 const S_BUD = 456
-const S_SIZE = 464
+/// the context's C_TASK_DL before this scope's deadline lowered it
+/// (decision 0430), restored at its close
+const S_OLD_DL = 464
+const S_SIZE = 472
 
 /// An object's header (xo_hdr): its count and its free function.
 const H_RC = 0
@@ -610,6 +616,7 @@ fn spawn(s: Int, fl: Int, env: Int, run: Int, drop: Int, flags: Int, site: Int, 
   // the spawning context's budget (decision 0175)
   let bud = ld(cur, ctx.C_BUD)
   st(t, T_BUD, bud)
+  st(t, T_DEADLINE, ld(cur, ctx.C_TASK_DL))
   budget.retain(bud)
   tsan(RT_TSAN_RELEASE, t)
   // its own ThreadSanitizer context (a --race build): made here, so what
@@ -683,7 +690,19 @@ pub fn scope_detached(link: Int) -> Int {
 /// body is canceled d ns from now, and scope_timed_out tells it.
 pub fn scope_deadline(s: Int, d: Int) {
   st(s, S_DEADLINE, poll.timer_fn(d, poll.FN_SCOPE, s))
+  // what task.deadline reads in the body (decision 0430)
+  let c = ctx.cur()
+  let old = ld(c, ctx.C_TASK_DL)
+  st(s, S_OLD_DL, old)
+  let at = poll.deadline(d)
+  if old == 0 || at < old {
+    st(c, ctx.C_TASK_DL, at)
+  }
 }
+
+/// The nearest task.with_timeout deadline in force in the current task
+/// (decision 0430): the timers' ns, 0 for none.
+pub fn cur_deadline() -> Int { ld(ctx.cur(), ctx.C_TASK_DL) }
 
 /// After scope s closed while its body unwound: whether the unwinding
 /// came from its deadline (and not from a cancellation of the code
@@ -710,6 +729,7 @@ pub fn scope_close(s: Int, mode: Int) -> Int {
   if ld(s, S_DEADLINE) != 0 {
     poll.timer_end(ld(s, S_DEADLINE))
     st(s, S_DEADLINE, 0)
+    st(c, ctx.C_TASK_DL, ld(s, S_OLD_DL))
   }
   pool.lock_k(s + S_MU, pool.ST_LOCK_TASK)
   // no pruning from here: the helpers below walk the list unlocked
@@ -922,6 +942,7 @@ pub fn run_claimed(t: Int, units: Int) {
   let b = ld(t, T_BUD)
   st(c, ctx.C_BUD, b)
   st(t, T_BUD, 0)
+  st(c, ctx.C_TASK_DL, ld(t, T_DEADLINE))
   if b != 0 {
     st(c, ctx.C_BUD_Q, budget.QUANTUM)
     st(c, ctx.C_BUD_LEFT, budget.QUANTUM)

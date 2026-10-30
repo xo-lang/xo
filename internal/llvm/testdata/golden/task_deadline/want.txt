@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+outside: none
+10s: 10s
+10s then 2s: 2s
+10s then 1h: 10s
+10s again: 10s
+after: none
+task 1: 3s
+task 2: 6s
+task 3: 9s
+task 4: 12s
+task 5: 15s
+task 6: 18s
+task 7: 21s
+task 8: 24s
+body done: none
+outlived: 5s
+done
+--- stderr

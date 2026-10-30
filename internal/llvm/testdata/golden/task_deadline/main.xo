@@ -1,0 +1,68 @@
+// task.deadline (decision 0430): None outside with_timeout, the nearest
+// deadline in nested ones, kept across parking and resuming (on any
+// worker), by spawned tasks, and by a task that outlives the body it was
+// spawned in.
+use std/task
+
+fn left(clock: Clock) -> Str {
+  match task.deadline(clock) {
+    Some(at) => "${(at - clock.now()).ceil_seconds()}s"
+    None => "none"
+  }
+}
+
+fn main(os: Os) {
+  let clock = os.clock
+  os.stdio.println("outside: ${left(clock)}")
+  task.with_timeout(clock, 10s, fn() {
+    os.stdio.println("10s: ${left(clock)}")
+    task.with_timeout(clock, 2s, fn() { os.stdio.println("10s then 2s: ${left(clock)}") }).ignore_err("test")
+    task.with_timeout(clock, 1h, fn() { os.stdio.println("10s then 1h: ${left(clock)}") }).ignore_err("test")
+    os.stdio.println("10s again: ${left(clock)}")
+  }).ignore_err("test")
+  os.stdio.println("after: ${left(clock)}")
+
+  // tasks with different deadlines park and resume, each keeping its own
+  let out = Chan[Str].new(cap: 16)
+  scope s {
+    for i in 1..9 {
+      s.spawn(fn() {
+        task.with_timeout(clock, 1s * (i * 3), fn() {
+          let gate = Chan[()].new(cap: 1)
+          scope inner {
+            inner.spawn(fn() {
+              clock.sleep(5ms)
+              gate.send(())
+            })
+            let _ = gate.recv()
+          }
+          clock.sleep(5ms)
+          out.send("task ${i}: ${left(clock)}")
+        }).ignore_err("test")
+      })
+    }
+  }
+  var lines: List[Str] = []
+  while {
+    match out.try_recv() {
+      Some(l) => lines.push(l)
+      None => break
+    }
+  }
+  for l in lines.sort() {
+    os.stdio.println(l)
+  }
+
+  // a task spawned into an outer scope inside with_timeout keeps the
+  // deadline after the body returned
+  scope outer {
+    task.with_timeout(clock, 5s, fn() {
+      outer.spawn(fn() {
+        clock.sleep(20ms)
+        os.stdio.println("outlived: ${left(clock)}")
+      })
+    }).ignore_err("test")
+    os.stdio.println("body done: ${left(clock)}")
+  }
+  os.stdio.println("done")
+}

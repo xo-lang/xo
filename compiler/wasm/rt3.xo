@@ -53,7 +53,7 @@ fn rt3_blocking(name: Str) -> Bool {
 
 /// The runtime functions of rt3.xo called with the operands' leaves.
 fn rt3_direct(name: Str) -> Bool {
-  name is "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_unlock" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end"
+  name is "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_unlock" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "task_deadline_left" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end"
 }
 
 /// The WASI imports of the task runtime: the clocks and waiting for one.
@@ -83,6 +83,9 @@ fn rt3_globals() -> Str {
     (global $actcap (mut i32) (i32.const 0))
     (global $pgroup (mut i32) (i32.const 0))
     (global $dscopes (mut i32) (i32.const 0))
+    ;; task.deadline (decision 0430): the running task's nearest
+    ;; with_timeout deadline ($mono ns, 0 none); a task's word 200
+    (global $tdl (mut i64) (i64.const 0))
     (global $quantum (mut i32) (i32.const 64))
     (global $bud (mut i32) (i32.const 0))
     (global $budq (mut i64) (i64.const 0))
@@ -462,6 +465,9 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       i32.load offset=176
       global.set $bud
       local.get $t
+      i64.load offset=200
+      global.set $tdl
+      local.get $t
       i64.load offset=184
       global.set $budq
       local.get $t
@@ -521,6 +527,9 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       local.get $t
       global.get $prop
       i32.store offset=172
+      local.get $t
+      global.get $tdl
+      i64.store offset=200
       global.get $bud
       if
         i32.const 0
@@ -1030,7 +1039,8 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       local.get $n)
 
     (func $scope_open (result i32) (local $s i32)
-      i32.const 72
+      ;; word 72: $tdl before the scope's deadline lowered it (0430)
+      i32.const 80
       i32.const ${scope_free}
       call $obj_new
       local.tee $s
@@ -1167,17 +1177,45 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
         end
       end)
 
-    (func $scope_deadline (param $s i32) (param $d i64)
+    (func $scope_deadline (param $s i32) (param $d i64) (local $at i64)
       local.get $s
       call $mono
       local.get $d
       i64.add
+      local.tee $at
       i64.store offset=48
+      ;; task.deadline: min($tdl, at), the old one kept for the close
+      local.get $s
+      global.get $tdl
+      i64.store offset=72
+      global.get $tdl
+      i64.eqz
+      local.get $at
+      global.get $tdl
+      i64.lt_s
+      i32.or
+      if
+        local.get $at
+        global.set $tdl
+      end
       local.get $s
       global.get $dscopes
       i32.store offset=60
       local.get $s
       global.set $dscopes)
+
+    ;; rt.task_deadline_left (decision 0430): the ns left until $tdl, the
+    ;; least i64 for none
+    (func $task_deadline_left (result i64)
+      global.get $tdl
+      i64.eqz
+      if
+        i64.const 0x8000000000000000
+        return
+      end
+      global.get $tdl
+      call $mono
+      i64.sub)
 
     (func $scope_timed_out (param $s i32) (result i32)
       local.get $s
@@ -1210,6 +1248,9 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
           local.get $s
           i64.const 0
           i64.store offset=48
+          local.get $s
+          i64.load offset=72
+          global.set $tdl
         end
         local.get $mode
         i64.eqz
@@ -1376,6 +1417,10 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       local.get $drop
       i32.wrap_i64
       i32.store offset=164
+      ;; the spawning task's deadline (decision 0430)
+      local.get $t
+      global.get $tdl
+      i64.store offset=200
       ;; the spawning context's budget (decision 0175)
       global.get $bud
       call $bud_retain

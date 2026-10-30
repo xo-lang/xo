@@ -569,6 +569,13 @@ fn clock_sleep_or_cancel(d: Int) -> Int {
 /// A select's `after d` arm.
 fn select_after(s: Int, d: Int) { selects.after(s, d) }
 
+/// rt.task_deadline_left (decision 0430): tasks.xo's C_TASK_DL as the ns
+/// left, the least Int for none.
+fn task_deadline_left() -> Int {
+  let at = tasks.cur_deadline()
+  if at == 0 { -9223372036854775807 - 1 } else { at - poll.now() }
+}
+
 /// `task.is_canceled()`.
 fn is_canceled() -> Int { if tasks.is_canceled() { 1 } else { 0 } }
 

@@ -48,6 +48,10 @@ fn is_canceled() -> Bool
 fn stop_requested() -> Bool
 /// A channel closed when a stop is requested (core 7.5).
 fn stopping() -> Chan[()]
+/// The nearest with_timeout deadline the current task works under, as an
+/// instant on clock, or None (decision 0430). A task keeps the deadline
+/// in force where it was spawned.
+fn deadline(clock: Clock) -> Time? uses clock
 
 fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx) -> List[Result[R, E]] uses fx
 /// Like map_concurrent, but items not finished after d are cancelled and

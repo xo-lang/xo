@@ -32,6 +32,7 @@ pub fn rt_export(name: Str) -> Str {
     "rt.clock_sleep_or_cancel" => "xo_x_clock_sleep_or_cancel"
     "rt.select_after" => "xo_x_select_after"
     "rt.is_canceled" => "xo_x_is_canceled"
+    "rt.task_deadline_left" => "xo_x_task_deadline_left"
     // the runtime's records (cabi.xo over libcmem.xo)
     "rt.heap_large" => "xo_x_heap_large"
     "rt.heap_large_resize" => "xo_x_heap_large_resize"

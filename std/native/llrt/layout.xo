@@ -9,7 +9,7 @@
 // Records here: the context (ctx.xo, decision 0229), the deadlock counts
 // (pool.xo, ctx.xo), the pool and worker records (pool.xo), the cancellation node (pool.xo), the wait list and its entry (tasks.xo), the park record (pool.xo), the poll descriptor (poll.xo).
 
-/// The context record (ctx.xo; xo_ctx in the C runtime it came from,336 bytes, 16 aligned; the owner of each field in decision 0229):
+/// The context record (ctx.xo; xo_ctx in the C runtime it came from; 384 bytes, 16 aligned; the owner of each field in decision 0229):
 /// the innermost cancellation node (a scope body or the task's node).
 pub const C_NODE = 0
 /// unwinding: the context unwinds (cancellation or a fault; a C int).
@@ -82,7 +82,11 @@ pub const C_RACE_DEPTH = 360
 /// only for a context that took few (decision 0118's 2026-10-22
 /// addendum: a lock bound loop paid a switch per write)
 pub const C_LOCKS = 368
-pub const C_SIZE = 376
+/// the nearest task.with_timeout deadline in force (decision 0430): the
+/// timers' ns (poll.now), 0 for none; a scope with a deadline lowers it
+/// and its close restores it, and a task starts with its spawner's
+pub const C_TASK_DL = 376
+pub const C_SIZE = 384
 
 /// The deadlock counts record (the pool record's P_DLK word; pool.xo, ctx.xo
 /// init makes it and never frees it; xo_rt.c's static `dlk` before): word

@@ -27,6 +27,15 @@ type Task struct {
 	// bud is the resource budget the task works under (budget.go,
 	// decision 0173), nil when none.
 	bud *budget
+	// dl is the nearest task.with_timeout deadline the task works under
+	// (decision 0430), nil when none; a spawned task keeps its spawner's
+	dl *taskDeadline
+}
+
+// taskDeadline is a with_timeout deadline: the instant at on clock.
+type taskDeadline struct {
+	clock Clock
+	at    Time
 }
 
 // cnode is a node of the cancellation tree. Canceling a node cancels every
@@ -188,7 +197,7 @@ var InitTask = NewRootTask()
 // child returns a task for a new node below parent, on a new thread. It
 // has no arena: a spawned task runs on its own goroutine (see Arena).
 func (tk *Task) child(parent *cnode, kind string) *Task {
-	c := &Task{w: tk.w, stop: tk.stop, th: tk.th.newChild(kind)}
+	c := &Task{w: tk.w, stop: tk.stop, th: tk.th.newChild(kind), dl: tk.dl}
 	c.node = newNodeOf(parent, tk.w, nodeTask, c)
 	if tk.bud != nil {
 		// a task started under a budget works under it too (decision

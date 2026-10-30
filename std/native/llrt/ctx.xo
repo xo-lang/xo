@@ -59,6 +59,7 @@ pub const C_TRACE = layout.C_TRACE
 pub const C_PARK_FP = layout.C_PARK_FP
 pub const C_RACE_DEPTH = layout.C_RACE_DEPTH
 pub const C_LOCKS = layout.C_LOCKS
+pub const C_TASK_DL = layout.C_TASK_DL
 pub const C_SIZE = layout.C_SIZE
 
 /// rt.static_word: the address of the services record (SV_*), made by

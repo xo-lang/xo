@@ -345,6 +345,10 @@ fn unwind_resume(regs: Int)
 /// Clock.now of the C runtime (the SSA builders' lowering before
 /// std/native/llrt/sysio.xo): Unix nanoseconds, or the virtual clock.
 fn clock_now() -> Int
+/// task.deadline (decision 0430): the ns left until the nearest
+/// task.with_timeout deadline the current task works under (negative
+/// once it passed), or the least Int for none.
+fn task_deadline_left() -> Int
 /// Records the outcome of a file operation as fs_status and fs_msg
 /// report it: st 0 for success, else FsErr's tag plus one, the path, and
 /// the message.

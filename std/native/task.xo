@@ -1,5 +1,5 @@
 // std/task for the native backends (decision 0074): Semaphore, Once,
-// map_concurrent, and map_concurrent_until in Xo over channels, mutexes,
+// map_concurrent, map_concurrent_until, and deadline in Xo over channels, mutexes,
 // and scopes. The rest of std/task (isolate, with_timeout, with_budget,
 // is_canceled, stop_requested, stopping, Group) is lowered by internal/ssa
 // (build_conc.go, build_budget.go). Semantics and fault texts are std/rt's (sync.go,
@@ -132,4 +132,14 @@ fn map_concurrent_until[T, R, E, fx: Effects](clock: Clock, d: Duration, items: 
 
 /// task.budget (decision 0175): the ceilings task.with_budget takes,
 /// lowered by internal/ssa (build_budget.go).
+/// task.deadline (decision 0430): the ns left (rt.task_deadline_left:
+/// natively tasks.xo's C_TASK_DL, on wasm rt3.xo's $tdl) from clock's now.
+fn deadline(clock: Clock) -> Time? uses clock {
+  let left = rt.task_deadline_left()
+  if left == -9223372036854775807 - 1 {
+    return None
+  }
+  Some(clock.now() + 1ns * left)
+}
+
 fn budget(cpu: Duration = 0s, alloc: Int = 0, steps: Int = 0) -> task.Budget { task.Budget{cpu: cpu, alloc: alloc, steps: steps} }

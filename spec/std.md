@@ -2255,6 +2255,10 @@ pub fn with_budget[T, E, fx: Effects](clock: Clock, b: Budget, f: fn() -> T ! E 
 pub fn is_canceled() -> Bool
 pub fn stop_requested() -> Bool          // the first shutdown signal arrived (core 7.5)
 pub fn stopping() -> Chan[()]            // closed when a stop is requested
+pub fn deadline(clock: Clock) -> Time? uses clock   // decision 0430: Go's ctx.Deadline()
+    // the nearest with_timeout deadline the current task works under, on clock;
+    // None outside every with_timeout. A spawned task keeps the deadline in force
+    // where it was spawned, also after that with_timeout's body returned
 
 pub fn map_concurrent[T, R, E, fx: Effects](items: List[T], limit: Int, f: fn(T) -> R ! E uses fx)
     -> List[Result[R, E]] uses fx

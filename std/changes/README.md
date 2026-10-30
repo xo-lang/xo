@@ -11,6 +11,7 @@ Files are added as modules change; a module without a file has no
 entries yet.
 - [path.md](path.md): std/path (spec/std.md 9)
 - [deque.md](deque.md): std/deque (spec/std.md 47)
+- [task.md](task.md): std/task (spec/std.md 7)
 - [go.md](go.md): std/go (spec/std.md 12)
 - [udp.md](udp.md): std/udp (spec/std.md 3.2a)
 - [log.md](log.md): std/log (spec/std.md 6)

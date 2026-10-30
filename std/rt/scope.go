@@ -189,7 +189,7 @@ func NewScope(tk *Task) *Scope {
 	s := &Scope{parent: tk, idle: newEvent()}
 	// the body runs on the opening task's goroutine (thread), so it may
 	// share its arena (see Arena)
-	s.body = &Task{w: tk.w, held: tk.held, shield: tk.shield, arena: tk.arena, stop: tk.stop, th: tk.th, bud: tk.bud}
+	s.body = &Task{w: tk.w, held: tk.held, shield: tk.shield, arena: tk.arena, stop: tk.stop, th: tk.th, bud: tk.bud, dl: tk.dl}
 	bn := &cnode{parent: tk.node, done: make(chan struct{}), w: tk.w, seq: nodeSeq.Add(1), kind: nodeBody, tk: s.body}
 	runtime.Callers(2, bn.site[:2])
 	s.bodyNode = bn.link()

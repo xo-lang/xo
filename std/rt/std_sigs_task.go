@@ -10,5 +10,6 @@ var (
 	_ func(*Task) bool                                = Task_is_canceled
 	_ func(*Task) bool                                = Task_stop_requested
 	_ func(*Task) *Chan[Unit]                         = Task_stopping
+	_ func(*Task, Clock) Option[Time]                 = Task_deadline
 	_ func(*Task, int64) Task_Semaphore               = Task_semaphore
 )
