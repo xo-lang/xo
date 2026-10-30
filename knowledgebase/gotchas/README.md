@@ -951,3 +951,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [linux-arm64-race-stacks-name-asm.md](linux-arm64-race-stacks-name-asm.md): Observed 2026-10-29: Linux arm64 --race reports name prog.s lines, not main.xo lines; TestRaceStacksArm64 skips there
 - [obj-addr-handle-released-early.md](obj-addr-handle-released-early.md): Observed 2026-10-29: a handle's release was placed before the runtime call that used its rt.obj_addr (Chan[Int] ops), so a sender's end freed the channel under the receiver; only Linux TSan saw it
 - [use-go-nested-module-pin.md](use-go-nested-module-pin.md): a `use go` of a package in a nested Go module (aws-sdk-go-v2's service/s3) took the enclosing module's pin; each nested module needs its own
+- [gen-signal-child-outlives-test.md](gen-signal-child-outlives-test.md): Observed 2026-10-29: internal/gen's signal child survived a reaped test run; it now runs under testtmp.Lifeline

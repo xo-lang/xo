@@ -166,6 +166,9 @@ func startSignalChild(t *testing.T, env ...string) *signalChild {
 		t.Fatalf("build: %v", err)
 	}
 	cmd := testtmp.Guard(exec.Command(bin))
+	// the child ends with the test process (a killed run, a memory reaper's
+	// stop, left it behind sleeping, 2026-10-29)
+	testtmp.Lifeline(t, cmd, 5*time.Minute)
 	cmd.Env = append(os.Environ(), env...)
 	if slices.Contains(env, "STDIN=pipe") {
 		// standard input stays open, so read_line blocks

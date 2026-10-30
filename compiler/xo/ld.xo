@@ -1110,6 +1110,12 @@ fn fail_stage(os: Os, s: Stage, msg: Str) -> Never {
 /// core 7.5) it removes every stage this process announced and exits
 /// 130, so an interrupted build leaves no temporary behind.
 fn watch_stages(os: Os, ch: Chan[Str], done: Chan[()]) {
+  // the WASI build has no signals, and its task.stopping() is the handle 0
+  // (compiler/wasm call.xo): a recv on it read a channel at address 0
+  // (decision 0405)
+  if target.os == TargetOs.Wasi {
+    return
+  }
   let _w = os.tasks.spawn_background(fn() {
     let _ = task.stopping().recv()
     if done.try_recv().is_some() {
