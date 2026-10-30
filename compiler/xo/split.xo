@@ -116,11 +116,18 @@ fn split_config(os: Os) -> SplitConfig {
   c
 }
 
-/// runtime.NumCPU, from sysctl or nproc (1 when neither answers).
+/// runtime.NumCPU: on Linux /sys/devices/system/cpu/online, else sysctl
+/// or nproc (1 when none answers).
 fn ncpu(os: Os) -> Int {
   // the WASI build starts no process (decision 0405): one worker
   if target.os == TargetOs.Wasi {
     return 1
+  }
+  if target.os == TargetOs.Linux {
+    let on = online_cpus(os)
+    if !on.is_empty() {
+      return on.len()
+    }
   }
   let (out, err) = combined(os, "sysctl", ["-n", "hw.ncpu"])
   if err.is_empty() {
@@ -138,12 +145,36 @@ fn ncpu(os: Os) -> Int {
 }
 
 /// The physical cores (decision 0220: parallel jobs by cores, not
-/// hardware threads): sysctl hw.physicalcpu, else the distinct (core,
-/// socket) pairs of lscpu, else ncpu.
+/// hardware threads): on Linux the distinct (core, package) pairs of the
+/// online CPUs' sysfs topology, else sysctl hw.physicalcpu, else the
+/// distinct (core, socket) pairs of lscpu, else ncpu. emit_jobs asks on
+/// every call: on Linux it spawned sysctl (which fails there) and lscpu
+/// each time, several times a build (2026-10-30).
 fn ncores(os: Os) -> Int {
   // the WASI build starts no process (decision 0405): one worker
   if target.os == TargetOs.Wasi {
     return 1
+  }
+  // probed once a process (host_counts)
+  if let Some(n) = Int.parse(os.env.get("XO_HOST_CORES") ?? "") {
+    if n > 0 {
+      return n
+    }
+  }
+  if target.os == TargetOs.Linux {
+    let n = sysfs_cores(os)
+    if n > 0 {
+      return n
+    }
+  }
+  if target.os == TargetOs.Windows {
+    // the logical processors Windows sets for every process (sysctl,
+    // lscpu and nproc are not there: ncores was 1, one emit job)
+    if let Some(n) = Int.parse(os.env.get("NUMBER_OF_PROCESSORS") ?? "") {
+      if n > 0 {
+        return n
+      }
+    }
   }
   let (out, err) = combined(os, "sysctl", ["-n", "hw.physicalcpu"])
   if err.is_empty() {
@@ -169,17 +200,24 @@ fn ncores(os: Os) -> Int {
   ncpu(os)
 }
 
-/// The machine's memory in GB (hw.memsize, else /proc/meminfo's
-/// MemTotal), 16 when neither answers.
+/// The machine's memory in GB: the runtime's count (debug.mem_total, no
+/// process), else hw.memsize or /proc/meminfo's MemTotal, 16 when none
+/// answers.
 fn mem_gb(os: Os) -> Int {
   // the WASI build starts no process (decision 0405): one worker
   if target.os == TargetOs.Wasi {
     return 16
   }
-  let (out, err) = combined(os, "sysctl", ["-n", "hw.memsize"])
-  if err.is_empty() {
-    if let Some(n) = Int.parse(out.trim()) {
-      return n / 1000000000
+  let mt = debug.mem_total()
+  if mt > 0 {
+    return mt / 1000000000
+  }
+  if target.os == TargetOs.Darwin {
+    let (out, err) = combined(os, "sysctl", ["-n", "hw.memsize"])
+    if err.is_empty() {
+      if let Some(n) = Int.parse(out.trim()) {
+        return n / 1000000000
+      }
     }
   }
   match os.fs.read_text("/proc/meminfo") {
@@ -883,4 +921,58 @@ fn split_build(os: Os, ctx: Ctx, clang: Str, lls: List[Str], others: List[Str], 
   }
   let lf = ["-O2"] + lto_flags(c.lto) + ["-Wno-override-module"]
   cc_build(os, ctx, clang, lf + flags, objs + others, bin)
+}
+
+/// The online CPUs' numbers (/sys/devices/system/cpu/online: "0-63" or
+/// "0,2-5"), [] when it cannot be read.
+fn online_cpus(os: Os) -> List[Int] {
+  // xo:allow XO0903 a CPU count probe: the caller falls back to sysctl and nproc
+  let t = os.fs.read_text("/sys/devices/system/cpu/online").ok() ?? return []
+  var out: List[Int] = []
+  for part in t.trim().split(",") {
+    let ab = part.split("-")
+    let a = Int.parse(ab[0].trim()) ?? return []
+    let b = if ab.len() > 1 { Int.parse(ab[1].trim()) ?? return [] } else { a }
+    for i in a..b + 1 {
+      out.push(i)
+    }
+  }
+  out
+}
+
+/// The distinct (core_id, physical_package_id) pairs of the online
+/// CPUs' sysfs topology, as lscpu -p=Core,Socket counts them; 0 when a
+/// file cannot be read.
+fn sysfs_cores(os: Os) -> Int {
+  var seen: Set[Str] = #{}
+  for i in online_cpus(os) {
+    let d = "/sys/devices/system/cpu/cpu${i}/topology"
+    // xo:allow XO0903 a core count probe: the caller falls back to lscpu
+    let core = os.fs.read_text("${d}/core_id").ok() ?? return 0
+    // xo:allow XO0903 a core count probe: the caller falls back to lscpu
+    let pkg = os.fs.read_text("${d}/physical_package_id").ok() ?? return 0
+    seen.add("${core.trim()},${pkg.trim()}")
+  }
+  seen.len()
+}
+
+/// os with XO_HOST_CORES set to the host's physical cores (ncores),
+/// probed once, unless it is set already: the jobs of a build are sized
+/// by them many times (emit_jobs), and each probe was a process on
+/// macOS and Linux.
+fn host_counts(os: Os) -> Os {
+  if os.env.get("XO_HOST_CORES") != None || target.os == TargetOs.Wasi {
+    return os
+  }
+  // the command (front's: after --std= and --wd=): only those that
+  // compile; a lookup (def, refs, doc) or version starts no probe
+  let args = os.env.args()
+  var i = 0
+  while i < args.len() && (args[i].starts_with("--std=") || args[i].starts_with("--wd=")) {
+    i += 1
+  }
+  if i >= args.len() || !(args[i] is "build" | "run" | "test" | "check" | "asm" | "keys" | "vet" | "dev" | "bench") {
+    return os
+  }
+  with_env(os, {"XO_HOST_CORES": "${ncores(os)}"})
 }

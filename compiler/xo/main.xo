@@ -71,7 +71,10 @@ use github.com/xo-lang/xo/compiler/hostpath
 fn main(os0: Os) ! {
   // the path variables given as C:\x on Windows, as the path flags are
   // (opts.xo path_env)
-  let os = path_env(os0)
+  // and the host's physical cores probed once for the commands that size
+  // their jobs by them (split.xo host_counts: emit_jobs asked on every
+  // call, 18 processes in an HTTP edit build on Linux, 2026-10-30)
+  let os = host_counts(path_env(os0))
   match target.os {
     Wasi => wasi_gate(os, os.env.args())
     Linux | Darwin | Windows => {}

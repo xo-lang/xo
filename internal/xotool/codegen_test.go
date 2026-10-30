@@ -78,6 +78,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_GOCACHE":              {"link", ""},
 	"XO_GOTIMERS":             {"link", ""},
 	"XO_EMIT_JOBS":            {"none", ""}, // the parts never depend on the task count
+	"XO_HOST_CORES":           {"none", ""}, // the cores probed once a process (split.xo host_counts): job counts only, as XO_EMIT_JOBS
 	"XO_BACKEND_CACHE":        {"none", ""},
 	"XO_BACKEND_CACHE_DIR":    {"none", ""},
 	"XO_BIN_CACHE":            {"none", ""},
