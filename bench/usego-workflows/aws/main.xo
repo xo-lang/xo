@@ -1,0 +1,60 @@
+use go "github.com/aws/aws-sdk-go-v2/aws"
+use go "github.com/aws/aws-sdk-go-v2/credentials"
+use go "github.com/aws/aws-sdk-go-v2/service/s3"
+use go "bytes"
+use go "io"
+use std/http
+
+// Workflow: the AWS SDK's core path against a local S3 stub (no AWS
+// account): static credentials, an S3 client with a base endpoint and
+// path style set through functional options (decision 0422), a PutObject
+// and a GetObject signed with SigV4. The stub (an Xo std/http server)
+// checks each request carries an AWS4-HMAC-SHA256 Authorization header
+// and stores the object.
+fn main(os: Os) -> () ! Error {
+  let store: Mutex[Map[Str, Bytes]] = Mutex.new({})
+  let ln = os.net.listen("127.0.0.1:0")?
+  let base = "http://${ln.addr()}"
+  var r = http.router()
+  r.handle("/{rest...}", fn(req: http.Request) -> http.Response {
+    let auth = req.header("Authorization") ?? ""
+    if !auth.starts_with("AWS4-HMAC-SHA256") {
+      return http.text(403, "unsigned")
+    }
+    if req.method == "PUT" {
+      store.with(fn(var m) { m[req.path] = req.body })
+      return http.text(200, "")
+    }
+    match store.with_read(fn(m) { m.get(req.path) }) {
+      Some(b) => http.Response{status: 200, headers: {}, body: b}
+      None => http.text(404, "NoSuchKey")
+    }
+  })
+  scope s {
+    s.spawn_background(fn() {
+      let _ = http.server(ln, r).serve().ignore_err("the stub stops with the scope")
+    })
+    let cfg = aws.Config.new()
+    cfg.set_region("us-east-1")
+    cfg.set_credentials(credentials.new_static_credentials_provider("AKID", "SECRET", "").as_credentials_provider())
+    let client = s3.new_from_config(cfg, [fn(o: s3.Options) {
+      o.set_base_endpoint(Some(base))
+      o.set_use_path_style(true)
+    }])
+    let put = s3.PutObjectInput.new()
+    put.set_bucket(Some("b"))
+    put.set_key(Some("k.txt"))
+    put.set_body(bytes.new_reader(b"hello s3").as_reader())
+    let _ = client.put_object(put, [])?
+    os.stdio.println("ok aws: put_object signed")
+    let get = s3.GetObjectInput.new()
+    get.set_bucket(Some("b"))
+    get.set_key(Some("k.txt"))
+    let got = client.get_object(get, [])?
+    let body = io.read_all(got.body().as_reader())?
+    let ok = body == b"hello s3"
+    os.stdio.println("${if ok { "ok" } else { "FAIL" }} aws: get_object round trip")
+    os.stdio.println(if ok { "PASS aws" } else { "FAIL aws" })
+    s.cancel()
+  }
+}

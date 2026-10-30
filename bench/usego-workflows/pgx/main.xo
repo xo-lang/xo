@@ -1,0 +1,34 @@
+use go "github.com/jackc/pgx/v5"
+
+// Workflow: Postgres with pgx: connect, create a table, insert with
+// arguments, query one row and scan it, iterate rows. Needs PGX_URL (the
+// runner starts postgres in Docker); without it the workflow is skipped.
+// Exec, Query and Scan take `...any` (decision 0412's go.any and go.out).
+fn main(os: Os) -> () ! Error {
+  let url = match os.env.get("PGX_URL") {
+    Some(u) => u
+    None => {
+      os.stdio.println("SKIP pgx: PGX_URL not set")
+      return Ok(())
+    }
+  }
+  let conn = pgx.connect(url)?
+  let _ = conn.exec("create temporary table t (id int, name text)", [])?
+  let _ = conn.exec("insert into t values ($1, $2), ($3, $4)", [go.any(1), go.any("ada"), go.any(2), go.any("bob")])?
+  let name = go.out[Str]()
+  conn.query_row("select name from t where id = $1", [go.any(2)]).scan([name.any()])?
+  let ok1 = name.get() == "bob"
+  os.stdio.println("${if ok1 { "ok" } else { "FAIL" }} pgx: query_row scan (${name.get()})")
+  let rows = conn.query("select id from t order by id", [])?
+  var ids: List[Int] = []
+  while rows.next() {
+    let id = go.out[Int]()
+    rows.scan([id.any()])?
+    ids.push(id.get())
+  }
+  rows.close()
+  let ok2 = ids == [1, 2]
+  os.stdio.println("${if ok2 { "ok" } else { "FAIL" }} pgx: rows (${ids})")
+  let _ = conn.close().ignore_err("the test is done with the connection")
+  os.stdio.println(if ok1 && ok2 { "PASS pgx" } else { "FAIL pgx" })
+}

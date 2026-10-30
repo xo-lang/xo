@@ -1,0 +1,40 @@
+use go "github.com/go-chi/chi/v5"
+use go "net/http"
+use go "net/http/httptest"
+use go "io"
+
+// Workflow: HTTP routing with chi. A router with URL parameters, a
+// mounted sub router and a 404, served by httptest and
+// requested through net/http's client. (Evaluation bug 19: chi's binding
+// named an unexported type, so the program did not build.)
+fn get(os: Os, base: Str, path: Str) -> (Int, Str) ! Error {
+  let resp = http.get(base + path)?
+  let body = io.read_all(resp.body().as_reader())?
+  let _ = resp.body().close().ignore_err("the body was read to its end")
+  (resp.status_code(), body.to_str() ?? "")
+}
+
+fn main(os: Os) -> () ! Error {
+  let r = chi.new_router()
+  r.get("/users/{id}", fn(w, req) {
+    let _ = w.write("user ${chi.url_param(req, "id")}".bytes()).ignore_err("the test reads the reply")
+  })
+  let api = chi.new_router()
+  api.get("/ping", fn(w, _req) { let _ = w.write(b"pong").ignore_err("the test reads the reply") })
+  // a Mux is net/http's Handler through its upcast (decision 0416 addendum)
+  r.mount("/api", api.as_handler())
+  let srv = httptest.new_server(r.as_handler())
+  let base = srv.url()
+  var good = true
+  let (c1, b1) = get(os, base, "/users/42")?
+  good = c1 == 200 && b1 == "user 42" && good
+  os.stdio.println("${if c1 == 200 && b1 == "user 42" { "ok" } else { "FAIL" }} chi: url param (${c1} ${b1})")
+  let (c2, b2) = get(os, base, "/api/ping")?
+  good = c2 == 200 && b2 == "pong" && good
+  os.stdio.println("${if c2 == 200 && b2 == "pong" { "ok" } else { "FAIL" }} chi: mounted router (${c2} ${b2})")
+  let (c3, _) = get(os, base, "/nope")?
+  good = c3 == 404 && good
+  os.stdio.println("${if c3 == 404 { "ok" } else { "FAIL" }} chi: not found (${c3})")
+  srv.close()
+  os.stdio.println(if good { "PASS chi" } else { "FAIL chi" })
+}

@@ -1,0 +1,18 @@
+use go "github.com/BurntSushi/toml"
+
+// Workflow: decode a TOML config with BurntSushi/toml and check its keys
+// (MetaData). Decode fills an `any` (decision 0412's go.out).
+const DOC: Str = "title = \"svc\"\n[server]\nport = 9000\nhosts = [\"a\", \"b\"]\n"
+
+fn main(os: Os) -> () ! Error {
+  let out = go.out[go.Any]()
+  let md = toml.decode(DOC, out.any())?
+  let m = out.get().as_map() ?? {}
+  let server = m.get("server").and_then(fn(v) { v.as_map() }) ?? {}
+  let port = server.get("port").and_then(fn(v) { v.as_int() }) ?? 0
+  let ok1 = m.get("title").and_then(fn(v) { v.as_str() }) == Some("svc") && port == 9000
+  os.stdio.println("${if ok1 { "ok" } else { "FAIL" }} toml: decode (port ${port})")
+  let ok2 = md.is_defined(["server", "port"]) && md.keys().len() == 4
+  os.stdio.println("${if ok2 { "ok" } else { "FAIL" }} toml: metadata keys")
+  os.stdio.println(if ok1 && ok2 { "PASS toml" } else { "FAIL toml" })
+}

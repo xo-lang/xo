@@ -1,0 +1,29 @@
+use go "go.uber.org/zap"
+
+// Workflow: structured logging with zap. A production logger writing JSON
+// to a file, a child logger with fields, typed fields, sync; then the file
+// is read back and its records checked.
+fn step(os: Os, name: Str, ok: Bool) -> Bool {
+  os.stdio.println("${if ok { "ok" } else { "FAIL" }} zap: ${name}")
+  ok
+}
+
+fn main(os: Os) -> () ! Error {
+  let dir = os.env.get("OUT_DIR") ?? "."
+  let path = "${dir}/zap.log"
+  let cfg = zap.new_production_config()
+  cfg.set_output_paths([path])
+  let log = cfg.build([])?
+  // With returns a *Logger, so its binding is optional
+  let child = log.with([zap.string("req", "r1")]) ?? log
+  child.info("order placed", [zap.string("sku", "X1"), zap.int("qty", 3), zap.duration("took", 15ms)])
+  child.warn("slow", [zap.bool("retry", true)])
+  log.sync()?
+  let text = os.fs.read_text(path)?
+  let lines = text.trim().split("\n")
+  var good = step(os, "two records", lines.len() == 2)
+  good = step(os, "child field", lines[0].contains("\"req\":\"r1\"")) && good
+  good = step(os, "typed fields", lines[0].contains("\"qty\":3") && lines[0].contains("\"sku\":\"X1\"")) && good
+  good = step(os, "level", lines[1].contains("\"level\":\"warn\"")) && good
+  os.stdio.println(if good { "PASS zap" } else { "FAIL zap" })
+}

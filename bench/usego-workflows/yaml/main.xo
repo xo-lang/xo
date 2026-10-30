@@ -1,0 +1,21 @@
+use go "gopkg.in/yaml.v3"
+
+// Workflow: decode a YAML config and encode it back with yaml.v3.
+// Unmarshal fills an `any` (decision 0412: go.out[go.Any]() in, .get()
+// out, as_map and as_int to read it); Marshal takes one (go.any).
+const DOC: Str = "name: api\nport: 8080\ntags: [a, b]\n"
+
+fn main(os: Os) -> () ! Error {
+  let out = go.out[go.Any]()
+  yaml.unmarshal(DOC.bytes(), out.any())?
+  let m = out.get().as_map() ?? {}
+  let port = m.get("port").and_then(fn(v) { v.as_int() }) ?? 0
+  let tags = m.get("tags").and_then(fn(v) { v.as_list() }) ?? []
+  let ok1 = m.len() == 3 && port == 8080 && tags.len() == 2
+  os.stdio.println("${if ok1 { "ok" } else { "FAIL" }} yaml: decode (${m.len()} keys, port ${port}, ${tags.len()} tags)")
+  let back = yaml.marshal(out.get())?
+  let text = Str.from_utf8(back) ?? ""
+  let ok2 = text.contains("port: 8080") && text.contains("name: api")
+  os.stdio.println("${if ok2 { "ok" } else { "FAIL" }} yaml: encode")
+  os.stdio.println(if ok1 && ok2 { "PASS yaml" } else { "FAIL yaml" })
+}

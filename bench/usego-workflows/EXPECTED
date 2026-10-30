@@ -1,0 +1,6 @@
+# Workflows expected to fail until the named work lands; the runner prints
+# XFAIL for them (the tier stays green) and XPASS when one starts passing,
+# so the line can be removed. Format: NAME reason
+yaml decision 0412 (go.Any, go.out for Unmarshal) is not implemented yet (Accepted 2026-10-29)
+toml decision 0412 (go.Any, go.out for Decode) is not implemented yet (Accepted 2026-10-29)
+pgx decision 0412 (...any arguments and Scan destinations) is not implemented yet (Accepted 2026-10-29)

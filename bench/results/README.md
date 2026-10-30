@@ -225,3 +225,4 @@
 - [usego-coverage-2026-10-29f.md](usego-coverage-2026-10-29f.md): `use go` Go function values as Xo functions: std 87.4% to 87.6%, third party 97.6% to 97.8%; named function types stay handles (functional options)
 - [usego-coverage-2026-10-29g.md](usego-coverage-2026-10-29g.md): `use go` several results as an Xo tuple: std 90.4% to 90.5%, third party 98.1% to 98.4%; 61 skips resolved, none added.
 - [usego-coverage-2026-10-29h.md](usego-coverage-2026-10-29h.md): `use go` channels as go.Recv[T] (decision 0421): std 1902 to 1903 of 2102, third party 98.4% to 98.5%; 14 skips resolved, 2 setter skips added.
+- [usego-workflows-2026-10-30.md](usego-workflows-2026-10-30.md): the Go workflows suite (chi, zap, aws S3, pgx, toml, yaml end to end on the Go backend): chi, zap and aws pass; pgx, toml and yaml wait on decision 0412

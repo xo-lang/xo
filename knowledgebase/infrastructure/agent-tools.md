@@ -547,6 +547,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   ~/xo-lead/agents/heavy.sh NAME scripts/docker-newest-go.sh bin/xo arm64
   WORK; ~/xo-lead/agents/docker-up.sh stop` (it needs the network for the
   version and the image). Last verified: 2026-10-27.
+- `scripts/usego-workflows.sh XO OUTDIR` (Lang 2, 2026-10-30): the Go
+  workflows suite, bench/usego-workflows (chi, zap, aws S3, pgx, toml,
+  yaml written in Xo against the real modules, built with --backend=go
+  and run); PASS, FAIL, or XFAIL/XPASS for a workflow
+  bench/usego-workflows/EXPECTED lists with the work that fixes it; exit
+  1 on an unexpected failure. It needs the network (the Go proxy) and
+  leaves each workflow's binding, build and run logs under OUTDIR. Run it
+  as `HEAVY_CLASS=bulk ~/xo-lead/agents/heavy.sh NAME
+  scripts/usego-workflows.sh bin/xo OUT` after a `use go` change; results
+  in bench/results/usego-workflows-*.md. Last verified: 2026-10-30.
 - `scripts/arm64-identity.sh`, `scripts/docker-goldens.sh`,
   `scripts/intel-goldens.sh XO HOST REMOTE_DIR WORK` (the Intel laptop;
   owner rules in the lead's notes: one new directory, nothing deleted),
