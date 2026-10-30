@@ -1,0 +1,24 @@
+// trace: std/trace's ring under load. record makes N ring.record calls
+// on a ring of CAP spans (default 1000) and reads the newest 10 back;
+// `none` makes the spans and reads an empty ring. Usage:
+// `<program> none|record [N] [CAP]`. Prints `<workload> <spans read>`.
+// std/trace has no Go counterpart, so there is no twin.
+use std/trace
+
+fn main(os: Os) {
+  let a = os.env.args()
+  let w = if a.is_empty() { "record" } else { a[0] }
+  let n = if a.len() > 1 { Int.parse(a[1]) ?? 200000 } else { 200000 }
+  let cap = if a.len() > 2 { Int.parse(a[2]) ?? 1000 } else { 1000 }
+  let ring = trace.ring(cap)
+  let t0 = Time.from_unix_millis(1700000000000)
+  let d = Duration.from_nanos(250000)
+  for i in 0..n {
+    let id = "r${i % 97}"
+    if w == "record" {
+      ring.record(id, "work", t0, d)
+    }
+  }
+  let got = ring.spans(Duration.from_nanos(0), 10)
+  os.stdio.println("${w} ${got.len()}")
+}
