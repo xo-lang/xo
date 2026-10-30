@@ -33,6 +33,19 @@ limit=""
 if command -v timeout >/dev/null 2>&1; then
   limit="timeout ${XO_GOLDEN_TIMEOUT:-600}"
 fi
+want=$dir/want.txt
+case $(uname -s) in
+MINGW* | MSYS* | CYGWIN*)
+  # Git Bash: a golden whose output differs on Windows has want_windows.txt;
+  # MSYS turns /etc/x arguments and environment values into C:/... paths
+  # (cli_parse, env_dirs) unless told not to; its sed drops the carriage
+  # returns of CRLF lines (mail_messages, multipart_basic) without -b
+  [ -f "$dir/want_windows.txt" ] && want=$dir/want_windows.txt
+  export MSYS2_ARG_CONV_EXCL='*' MSYS2_ENV_CONV_EXCL='*'
+  sedb=-b
+  ;;
+*) sedb= ;;
+esac
 # shellcheck disable=SC2086
 (cd "$tmp/run/$name" && env $envs $limit "$bin" $args <"$stdin" >"$tmp/out" 2>"$tmp/err")
 code=$?
@@ -40,10 +53,7 @@ code=$?
   printf 'exit %s\n--- stdout\n' "$code"
   cat "$tmp/out"
 } >"$tmp/got"
-want=$dir/want.txt
-# on Windows (Git Bash), a golden whose output differs there has want_windows.txt
-case $(uname -s) in MINGW* | MSYS* | CYGWIN*) [ -f "$dir/want_windows.txt" ] && want=$dir/want_windows.txt ;; esac
-sed '/^--- stderr$/,$d' "$want" >"$tmp/want"
+sed $sedb '/^--- stderr$/,$d' "$want" >"$tmp/want"
 if cmp -s "$tmp/got" "$tmp/want"; then
   echo "ok $name"
   rm -rf "$tmp"
