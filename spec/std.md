@@ -5501,8 +5501,27 @@ pub fn dial(net: Net, url: Str, headers: Map[Str, Str] = {}, protocols: List[Str
   `Sec-WebSocket-Accept` and the subprotocol), runs `f` with the
   connection, and closes it when `f` returns. HTTP/1.1 only. Until `f`
   returns the connection is a request in flight: a stop waits for it
-  (std 4.4, decision 0429), so `f` watches `task.stopping()` and closes
-  with 1001 (going away).
+  (std 4.4, decision 0429) and does not close it as idle, so `f` watches
+  `task.stopping()` and closes with 1001 (going away). A handler that
+  waits in `read()` does that from a background task; its read then ends
+  when the peer answers the close:
+
+  ```
+  websocket.upgrade(req, fn(c) {
+    scope s {
+      s.spawn_background(fn() {
+        let _ = task.stopping().recv()
+        c.close(code: 1001, reason: "server stopping").ignore_err("stopping")
+      })
+      while true {
+        match c.read() {
+          Ok(m) => handle(m)
+          Err(_) => break
+        }
+      }
+    }
+  })
+  ```
   `Router.call` returns the 101 without running `f`.
 - Frames as gorilla reads them: a client's frames must be masked and a
   server's not; reserved bits, unknown opcodes, a control frame over 125

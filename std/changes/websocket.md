@@ -15,7 +15,11 @@ every connection that is not idle). The Go backend's `serve` stopped with
 net/http's Shutdown, which forgets a hijacked connection, so `serve`
 returned while the handler still ran. std/rt now counts the hand-over
 functions and waits for them after Shutdown, within the same grace
-period, then cancels them as the native backends do. Timing: no hot path
+period, then cancels them as the native backends do. Natively a
+handed-over connection's reads (the WebSocket's and a proxied
+upgrade's) no longer mark it idle, so a stop no longer closes one
+blocked in `read()`: the handler decides, as on the Go backend (the
+spec shows a background task that closes with 1001 at a stop). Timing: no hot path
 changed (one WaitGroup Add and Done per upgrade); none measured.
 
 ## 2026-10-27: perf: masking runs a word at a time

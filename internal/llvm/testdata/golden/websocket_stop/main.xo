@@ -1,13 +1,16 @@
 // Decision 0429: a connection handed over by a 101 is in flight at a
-// stop. The handler waits for task.stopping(), takes 100ms more, says
-// bye and closes with 1001; serve returns only after it did, on every
-// backend (the Go backend's net/http Shutdown does not track a hijacked
-// connection, so std/rt waits for it).
+// stop. One handler waits for task.stopping(), takes 100ms more, says
+// bye and closes with 1001. The other is blocked in read(): a background
+// task closes it with 1001 at the stop, and the read ends when the client
+// answers (a stop does not close a handed-over connection as idle).
+// serve returns only after both did, on every backend (the Go backend's
+// net/http Shutdown does not track a hijacked connection, so std/rt
+// waits for it).
 use std/http
 use std/task
 use std/websocket
 
-fn routes(clock: Clock, done: Mutex[Bool]) -> http.Router {
+fn routes(clock: Clock, done: Mutex[Bool], done2: Mutex[Bool]) -> http.Router {
   var r = http.router()
   r.handle("GET /hold", fn(req) {
     websocket.upgrade(req, fn(c) {
@@ -17,6 +20,23 @@ fn routes(clock: Clock, done: Mutex[Bool]) -> http.Router {
       c.write_text("bye").ignore_err("test")
       c.close(code: 1001, reason: "server stopping").ignore_err("test")
       done.with(fn(var d) { d = true })
+    })
+  })
+  r.handle("GET /reader", fn(req) {
+    websocket.upgrade(req, fn(c) {
+      c.write_text("reading").ignore_err("test")
+      scope s {
+        s.spawn_background(fn() {
+          let _ = task.stopping().recv()
+          c.close(code: 1001, reason: "reader stopping").ignore_err("test")
+        })
+        while true {
+          if c.read() is Err(_) {
+            break
+          }
+        }
+      }
+      done2.with(fn(var d) { d = true })
     })
   })
   r
@@ -32,7 +52,13 @@ fn show(m: websocket.Message) -> Str {
 fn client(os: Os, addr: Str) -> () ! websocket.WsErr {
   let c = websocket.dial(os.net, "ws://${addr}/hold")?
   os.stdio.println("client: ${show(c.read()?)}")
+  let c2 = websocket.dial(os.net, "ws://${addr}/reader")?
+  os.stdio.println("reader client: ${show(c2.read()?)}")
   os.proc.request_stop()
+  match c2.read() {
+    Ok(m) => os.stdio.println("reader client: ${show(m)}")
+    Err(e) => os.stdio.println("reader client: ${e}")
+  }
   os.stdio.println("client: ${show(c.read()?)}")
   match c.read() {
     Ok(m) => os.stdio.println("client: ${show(m)}")
@@ -43,7 +69,8 @@ fn client(os: Os, addr: Str) -> () ! websocket.WsErr {
 fn main(os: Os) {
   os.proc.set_grace(10s)
   let done = Mutex[Bool].new(false)
-  let r = routes(os.clock, done)
+  let done2 = Mutex[Bool].new(false)
+  let r = routes(os.clock, done, done2)
   let result = Chan[Str].new(cap: 1)
   match os.net.listen("127.0.0.1:0") {
     Ok(l) => {
@@ -56,7 +83,8 @@ fn main(os: Os) {
             Err(e) => "failed: ${e}"
           }
           let handler_done = done.with_read(fn(d) { d })
-          result.send("serve returned ${how}, handler done: ${handler_done}")
+          let reader_done = done2.with_read(fn(d) { d })
+          result.send("serve returned ${how}, handler done: ${handler_done}, reader done: ${reader_done}")
         })
         match client(os, addr) {
           Ok(_) => ()

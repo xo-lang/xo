@@ -3718,7 +3718,8 @@ fn tunnel(st: http.ClientStream, head: http.ResponseHead, req_up: Str) -> http.R
       s.spawn(fn() {
         let b = raw.bytes_buf(32768)
         while true {
-          let n = hconn.recv(h, raw.bytes_addr(b), 32768, true)
+          // not idle: a stop waits for the pass-through (decision 0429)
+          let n = hconn.recv(h, raw.bytes_addr(b), 32768, false)
           if n <= 0 {
             break
           }

@@ -635,7 +635,9 @@ fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocol
     let wire = Wire{
       recv: fn(max: Int) -> Chunk {
         let b = raw.bytes_buf(max)
-        let r = hconn.recv(h, raw.bytes_addr(b), max, true)
+        // not idle: a stop leaves a handed-over connection to its handler
+        // (decision 0429), as the Go backend leaves a hijacked one
+        let r = hconn.recv(h, raw.bytes_addr(b), max, false)
         if r < 0 {
           return Chunk{data: b"", end: false, err: "connection closed"}
         }

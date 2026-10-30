@@ -1,8 +1,10 @@
 exit 0
 --- stdout
 client: text ready
+reader client: text reading
+reader client: websocket: close 1001 (going away): reader stopping
 client: text bye
 client: websocket: close 1001 (going away): server stopping
-serve returned ok, handler done: true
+serve returned ok, handler done: true, reader done: true
 done
 --- stderr
