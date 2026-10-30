@@ -170,6 +170,63 @@ pub fn store_encode_elf(inputs: List[LinkInput]) -> Result[Bytes, Str] {
 /// link_elf_split of the program's inputs and the store's objects,
 /// reading only the sections the program reaches.
 pub fn link_store_elf(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts) -> Result[(Bytes, Bytes), Str] {
+  var s = match elf_store_prepare(inputs, store, opts, None) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  s.l.link_rest()
+}
+
+/// An ELF store link in steps, for a caller that times them (compiler/xo
+/// ld.xo's link laps): prepare (the walk, the live atoms read), then
+/// resolve, layout and write.
+pub struct ElfStoreLink {
+  l: ELinker
+  /// the store's objects (the first n of l.objs)
+  n: Int
+  /// the prepare cache (prepcache.xo): the decisions made (the live
+  /// atoms, the objects whose DWARF is dropped; ELF keeps every store
+  /// symbol), and whether they came from the cache
+  pub prep: Prep = Prep{}
+  pub hit: Bool = false
+}
+
+/// What an ELF store link's prepare decisions depend on besides the
+/// store: the names the program's objects take from it (undefined, or
+/// defined weak), the entry and the machine. The caller adds the store's
+/// and xo's identity (compiler/xo ld.xo elf_prep_file).
+pub fn elf_prep_key(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes, Str] {
+  var names: List[Bytes] = []
+  var machine = 0
+  for inp in inputs {
+    match parse_elf_object(inp.path, inp.data) {
+      Ok(ob) => {
+        machine = ob.machine
+        for x in ob.syms {
+          if sym_bind(x) != STB_LOCAL && (x.shndx == 0 || sym_bind(x) == STB_WEAK) {
+            names.push(x.name)
+          }
+        }
+      }
+      Err(e) => return Err(e)
+    }
+  }
+  var b = BytesBuilder.new()
+  b.write_str("elf\n${opts.entry}\n${machine}\n")
+  for nm in names.sort_by(fn(x: Bytes) -> Bytes { x }) {
+    b.write(nm)
+    b.write_byte(0)
+  }
+  Ok(b.freeze())
+}
+
+pub fn (var s: ElfStoreLink) resolve() -> Str { s.l.rest_resolve() }
+pub fn (var s: ElfStoreLink) layout() -> Str { s.l.rest_layout() }
+pub fn (var s: ElfStoreLink) write() -> Result[(Bytes, Bytes), Str] { s.l.rest_write() }
+
+/// link_store_elf's first step: the walk from the program's inputs and
+/// the store's live atoms read, the dead functions' FDEs dropped.
+pub fn elf_store_prepare(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts, cached: Prep?) -> Result[ElfStoreLink, Str] {
   let v = match store_view(store) {
     Ok(x) => x
     Err(e) => return Err(e)
@@ -200,8 +257,16 @@ pub fn link_store_elf(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts) 
     }
   }
   roots.push(v.def(opts.entry.bytes()))
-  let live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { elf_whole(nm, Int.parse(sg) ?? 0, flags) })
-  let dropped = v.dw_dropped(live)
+  // a cache hit: the decisions of the last link with the same key (the
+  // same names taken from the same store), checked against the store's
+  // sizes
+  let hit = match cached {
+    Some(p) => p.live.len() == v.total && p.dw_dropped.len() == v.n
+    None => false
+  }
+  let given = if hit { cached ?? Prep{} } else { Prep{} }
+  let live = if hit { given.live } else { v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { elf_whole(nm, Int.parse(sg) ?? 0, flags) }) }
+  let dropped = if hit { given.dw_dropped } else { v.dw_dropped(live) }
   let store = v.b
   for i in 0..v.n {
     // the machine the program's objects name (the store has none)
@@ -271,5 +336,5 @@ pub fn link_store_elf(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts) 
       }
     }
   }
-  l.link_rest()
+  Ok(ElfStoreLink{l: l, n: n, prep: Prep{live: live, dw_dropped: dropped}, hit: hit})
 }

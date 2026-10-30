@@ -308,6 +308,20 @@ pub fn link_elf_split(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[(Byt
 /// The link from the objects read: the symbols, the strip, the layout,
 /// the relocations, the file (and a split link's debug file).
 fn (var l: ELinker) link_rest() -> Result[(Bytes, Bytes), Str] {
+  let e1 = l.rest_resolve()
+  if !e1.is_empty() {
+    return Err(e1)
+  }
+  let e2 = l.rest_layout()
+  if !e2.is_empty() {
+    return Err(e2)
+  }
+  l.rest_write()
+}
+
+/// link_rest's first step: the symbols, the strip, the imports; the
+/// error, "" for none.
+fn (var l: ELinker) rest_resolve() -> Str {
   l.resolve()
   if l.err.is_empty() {
     l.synthesize_start()
@@ -318,6 +332,12 @@ fn (var l: ELinker) link_rest() -> Result[(Bytes, Bytes), Str] {
     l.gc_sections()
     l.collect_imports()
   }
+  l.err
+}
+
+/// link_rest's second step: the sections placed and laid out, the
+/// linker's own symbols, the relocations applied; the error, "" for none.
+fn (var l: ELinker) rest_layout() -> Str {
   if l.err.is_empty() {
     l.place()
   }
@@ -325,7 +345,7 @@ fn (var l: ELinker) link_rest() -> Result[(Bytes, Bytes), Str] {
     l.scan()
   }
   if !l.err.is_empty() {
-    return Err(l.err)
+    return l.err
   }
   l.layout()
   // the linker's own symbols, now that the layout has placed them
@@ -351,9 +371,11 @@ fn (var l: ELinker) link_rest() -> Result[(Bytes, Bytes), Str] {
     None => {}
   }
   l.relocate()
-  if !l.err.is_empty() {
-    return Err(l.err)
-  }
+  l.err
+}
+
+/// link_rest's last step: the file (and a split link's debug file).
+fn (var l: ELinker) rest_write() -> Result[(Bytes, Bytes), Str] {
   let out = l.write()
   if !l.err.is_empty() {
     return Err(l.err)
@@ -644,7 +666,10 @@ fn (var l: ELinker) synthesize_start() {
     src.write_str("\tadrp x0, main\n\tadd x0, x0, :lo12:main\n\tmov x3, #0\n\tmov x4, #0\n")
     src.write_str("\tbl __libc_start_main\n\tbrk #1\n")
   }
-  for (name, _) in l.undefined() {
+  // the undefined names, once: nothing below changes them before the
+  // start object joins the link (each walk is every live object's symbols)
+  let und = l.undefined()
+  for (name, _) in und {
     let n = bstr(name)
     if n.starts_with("__aarch64_") && !l.amd64 {
       // with the LSE dispatch when the program defines xo_lse (an
@@ -670,13 +695,13 @@ fn (var l: ELinker) synthesize_start() {
         Ok(o0) => {
           var o = o0
           var dynamic = false
-          for (n, _) in l.undefined() {
+          for (n, _) in und {
             dynamic = dynamic || n == "_DYNAMIC".bytes()
           }
           // __start_NAME and __stop_NAME (decision 0388: the gathered
           // unsafe range index, `xounsafe`): absolute, set once the
           // layout places the sections named NAME (link_elf)
-          for (n, _) in l.undefined() {
+          for (n, _) in und {
             let ns = bstr(n)
             if ns.starts_with("__start_") || ns.starts_with("__stop_") {
               let sect = if ns.starts_with("__start_") { ns.trim_prefix("__start_") } else { ns.trim_prefix("__stop_") }
@@ -856,8 +881,10 @@ fn lib_rank(lib: Str) -> Int {
 
 /// The imports: every name still undefined, versioned.
 fn (var l: ELinker) collect_imports() {
+  // the undefined names, once (the imports below do not change them)
+  let und = l.undefined()
   if l.from_store {
-    for (name, weak) in l.undefined() {
+    for (name, weak) in und {
       if weak && xo_function_name(bstr(name)) {
         l.fail("${bstr(name)} is not defined: a weak reference to an Xo function left undefined in a link through std's store would call address 0")
         return
@@ -866,7 +893,7 @@ fn (var l: ELinker) collect_imports() {
   }
   if l.opts.static {
     // no libraries: weak references are 0, others are missing
-    for (name, weak) in l.undefined() {
+    for (name, weak) in und {
       if !weak {
         l.fail("${bstr(name)} is not defined (a static link with no C library)${rt_hint(bstr(name))}")
         return
@@ -880,7 +907,7 @@ fn (var l: ELinker) collect_imports() {
   let base = if l.amd64 { "GLIBC_2.2.5" } else { "GLIBC_2.17" }
   var gcc = false
   var dl = false
-  for (name, weak) in l.undefined() {
+  for (name, weak) in und {
     if !weak && xo_runtime_name(bstr(name)) {
       l.fail("${bstr(name)} is not defined${rt_hint(bstr(name))}")
       return

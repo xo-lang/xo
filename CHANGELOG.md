@@ -6,6 +6,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- Linux edit builds link faster: a separately compiled ELF link no longer walks std's objects a second time and computes its undefined names once per step (decision 0420). Dropping the second walk took the HTTP server's edit link from 48.6 to 38.3 ms on linux arm64; the binary can keep a few more std bytes (xo: 0.004%).
 - std/crc32: Castagnoli runs on arm64's CRC32CX (0.21 of its time, Go's speed);
   std/fnv's 32 bit sums 0.79 of their time.
 - `use go`: methods of a named basic type bind as package functions

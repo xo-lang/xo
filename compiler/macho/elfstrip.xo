@@ -120,7 +120,10 @@ fn (var l: ELinker) gc_sections() {
   var any = false
   var atoms: List[Bool] = []
   for o in 0..l.objs.len() {
-    let a = l.objs[o].live && l.atoms_obj(o)
+    // std's store's objects are whole here: the prepare walk chose their
+    // live atoms and cut their DWARF (elfstore.xo), as the darwin link
+    // does, so this walk only roots at them and keeps their sections
+    let a = l.objs[o].live && !l.objs[o].stored && l.atoms_obj(o)
     atoms.push(a)
     any = any || a
   }
