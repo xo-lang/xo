@@ -1,5 +1,26 @@
 # std/http changes
 
+## 2026-10-30: feature: trailers (decision 0433)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the gRPC readiness survey of 2026-10-30, gap 1 (grpc-status and grpc-message are trailers)
+- Go reference: net/http's TrailerPrefix, Header "Trailer", Request.Trailer, Response.Trailer; httpguts badTrailer; h2 writeChunk (trailers with no body: the response HEADERS, then the trailing HEADERS)
+- Test: internal/llvm/testdata/golden/http_trailers (HTTP/1.1 and HTTP/2; want_go.txt holds the Go backend's trailers until the native wire lands, Xo Lang 3)
+- Timing: none (no hot path changes; a trailer is a header write after the body)
+
+`BodyWriter.set_trailer`, `Response.with_trailer_names`,
+`BodyReader.trailers`, `ClientStream.trailers` and
+`Request.with_trailers(names, f)` send and read fields after a body, as
+net/http does: names canonical and sorted, Go's forbidden names dropped,
+a request's trailers declared in its head (Go's HTTP/2 server keeps only
+declared ones), and an HTTP/1.1 streamed response with no body carrying
+only the trailers it declared. The Go
+backend maps them to net/http; the native backend has the API and its
+hooks (llrt/http1.xo's BAD_TRAILER, MAX_TRAILER_BYTES,
+MAX_TRAILER_COUNT, trailer_key), with the wire left to Xo Lang 3's
+part of decision 0433, so its trailers are empty until then.
+
 ## 2026-10-30: fix: a header field folded over several lines read its first byte wrong on Linux
 
 - Kind: fix

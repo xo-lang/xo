@@ -121,6 +121,7 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 		req := Http_Request{XRawPath: hr.URL.EscapedPath(), XHost: urlTextOf(hr.Host), XTLS: hr.TLS != nil, XTLSState: tlsStateOf(hr.TLS), F_method: hr.Method, F_path: urlTextOf(hr.URL.Path), F_url: u, F_headers: h, F_body: body, F_remote_ip: ip, XRawQuery: hr.URL.RawQuery, XFields: fields}
 		if stream {
 			req = withStreamBody(req, hr.Body)
+			streamTrailer(req, func() map[string][]string { return hr.Trailer })
 		}
 		// the recorder keeps what it is given past the request: never
 		// arena memory (recCopy)
@@ -195,7 +196,8 @@ func (s Http_Server) serve(tk *Task) Result[Unit, Http_HttpErr] {
 				tee = &bytes.Buffer{}
 				out = io.MultiWriter(w, tee)
 			}
-			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: out, fl: fl}})
+			tr := func(k, v string) { wh.Set(http.TrailerPrefix+k, v) }
+			resp.XStream(reqTask, Http_BodyWriter{w: &bodyWriter{w: out, fl: fl, tr: tr}})
 			if tee != nil {
 				resp.XStream = nil
 				resp.F_body = Bytes(tee.String())
@@ -368,12 +370,13 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 // to read (nil on a failure, then e), the cancel that ends it, the head.
 // http_nonet.go has its stub, so a program without std/http links no
 // net/http.
-func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.ReadCloser, func(), Http_ResponseHead, Http_ClientErr) {
+func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.ReadCloser, func(), Http_ResponseHead, func() map[string][]string, Http_ClientErr) {
 	resp, cancel, head, e := c.do(tk, req, rawURL, true)
 	if resp == nil {
-		return nil, nil, head, e
+		return nil, nil, head, nil, e
 	}
-	return resp.Body, cancel, head, e
+	// net/http fills (or makes) resp.Trailer when the body ends
+	return resp.Body, cancel, head, func() map[string][]string { return resp.Trailer }, e
 }
 
 // do sends req and reads the response's head: the response (nil on a
@@ -403,6 +406,17 @@ func (c Http_Client) do(tk *Task, req Http_Request, rawURL string, stream bool) 
 	hr, err := http.NewRequestWithContext(ctx, req.F_method, rawURL, body)
 	if err != nil {
 		return nil, nil, head, clientErr(1, err.Error())
+	}
+	if ts, ok := req.XSrc.(*trailerSrc); ok {
+		// with_trailers (decision 0433): net/http writes hr.Trailer
+		// after the body, which the source fills at its end
+		// with_trailers (decision 0433): the names declared in the head
+		// (Go's client sends the keys of hr.Trailer as the Trailer header)
+		hr.Trailer = http.Header{}
+		for _, k := range ts.names {
+			hr.Trailer[k] = nil
+		}
+		ts.hdr, ts.tk = hr.Trailer, tk
 	}
 	if req.XSrc != nil {
 		hr.ContentLength = -1

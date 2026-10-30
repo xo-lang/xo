@@ -1,0 +1,121 @@
+// Trailers (decision 0433) over HTTP/1.1 and HTTP/2: a streamed
+// response's trailers, declared or not (set_trailer, with_trailer_names),
+// read with ClientStream.trailers once the body ends; forbidden names
+// dropped; trailers after no body (two HEADERS frames on HTTP/2, as
+// net/http sends them; on HTTP/1.1 only declared ones, the response
+// going out with Content-Length: 0); a request's declared trailers
+// (Request.with_trailers) read by a handle_stream route with
+// BodyReader.trailers, undeclared names dropped. The Go backend
+// (net/http) and the native one must agree.
+use std/http
+
+fn show(m: Map[Str, Str]) -> Str {
+  var parts: List[Str] = []
+  for (k, v) in m {
+    parts.push("${k}=${v}")
+  }
+  "{" + parts.join(", ") + "}"
+}
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /body", fn(_req) {
+    http.stream(200, fn(w) {
+      w.write("hello ".bytes())?
+      w.write("world".bytes())?
+      w.set_trailer("x-checksum", "abc123")
+      w.set_trailer("Grpc-Status", "0")
+      w.set_trailer("Content-Length", "5")
+      w.set_trailer("host", "evil")
+    }).with_trailer_names(["X-Checksum", "Content-Type"])
+  })
+  r.handle("GET /nobody", fn(_req) {
+    http.stream(200, fn(w) {
+      w.set_trailer("Grpc-Status", "13")
+      w.set_trailer("Grpc-Message", "internal")
+    })
+  })
+  r.handle("GET /nobody_named", fn(_req) {
+    http.stream(200, fn(w) {
+      w.set_trailer("Grpc-Status", "13")
+    }).with_trailer_names(["Grpc-Status"])
+  })
+  r.handle("GET /plain", fn(_req) { http.text(200, "no trailers") })
+  r.handle_stream("POST /up", fn(_req, b) {
+    let before = show(b.trailers())
+    let data = b.read_all()?
+    http.text(200, "read ${data.len()} bytes, trailers before ${before}, after ${show(b.trailers())}")
+  })
+  r
+}
+
+fn get(os: Os, c: http.Client, label: Str, url: Str) {
+  match c.open(http.new_request("GET", url)) {
+    Ok(s) => {
+      let early = show(s.trailers())
+      match s.read_all() {
+        Ok(b) => os.stdio.println("${label}: ${s.head().status} body ${b.to_str() ?? "?"} early ${early} trailers ${show(s.trailers())}")
+        Err(e) => os.stdio.println("${label}: ${e}")
+      }
+    }
+    Err(e) => os.stdio.println("${label}: ${e}")
+  }
+}
+
+fn up(os: Os, c: http.Client, label: Str, url: Str) {
+  let req = http.new_request("POST", url, {}, "payload".bytes()).with_trailers(["x-sum", "X-Late", "Host"], fn() { {"X-Sum": "42", "transfer-encoding": "x", "x-late": "yes", "X-Undeclared": "no"} })
+  match c.send(req) {
+    Ok(resp) => os.stdio.println("${label}: ${resp.status} ${resp.text() ?? "?"}")
+    Err(e) => os.stdio.println("${label}: ${e}")
+  }
+}
+
+fn run(os: Os, c: http.Client, proto: Str, base: Str) {
+  get(os, c, "${proto} body", "${base}/body")
+  get(os, c, "${proto} nobody", "${base}/nobody")
+  get(os, c, "${proto} nobody named", "${base}/nobody_named")
+  get(os, c, "${proto} plain", "${base}/plain")
+  up(os, c, "${proto} up", "${base}/up")
+}
+
+fn main(os: Os) {
+  let cert = match http.tls_cert(good_cert(), good_key()) {
+    Ok(c) => c
+    Err(e) => {
+      os.stdio.println("cert: ${e}")
+      return
+    }
+  }
+  let tc = match http.client(os.net, timeout: 60s).with_roots(ca_pem()) {
+    Ok(c) => c
+    Err(e) => {
+      os.stdio.println("roots: ${e}")
+      return
+    }
+  }
+  match (os.net.listen("127.0.0.1:0"), os.net.listen("127.0.0.1:0")) {
+    (Ok(l1), Ok(l2)) => {
+      let plain = http.server(l1, routes())
+      let tls = http.server(l2, routes()).with_tls([cert])
+      let port = tls.addr().split(":")[1]
+      scope s {
+        for srv in [plain, tls] {
+          s.spawn_background(fn() {
+            match srv.serve() {
+              Ok(_) => ()
+              Err(e) => os.stdio.println("serve failed: ${e}")
+            }
+          })
+        }
+        run(os, http.client(os.net, timeout: 60s), "h1", "http://${plain.addr()}")
+        run(os, tc, "h2", "https://localhost:${port}")
+      }
+      os.stdio.println("done")
+    }
+    _ => os.stdio.println("listen failed")
+  }
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

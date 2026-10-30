@@ -1518,11 +1518,14 @@ pub fn serve_content(req: Request, name: Str, modtime: Time?, content: Bytes, he
     // 416, Content-Type from headers, name's extension, or the content
 fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
+fn (w: BodyWriter) set_trailer(name: Str, value: Str)   // a trailer after the body (decision 0433)
+fn (r: Response) with_trailer_names(names: List[Str]) -> Response   // the `Trailer` header (HTTP/1.1)
     // a response with status 101 made by std/websocket's upgrade hands its
     // connection over: the server writes nothing itself (decision 0313)
 fn (b: BodyReader) read(max: Int = 32768) -> Bytes? ! IoErr   // a handle_stream body's next bytes, None at its end
 fn (b: BodyReader) read_all() -> Bytes ! IoErr                // the rest of it
 fn (b: BodyReader) multipart(req: Request) -> PartReader ! multipart.MultipartErr   // the body's multipart/form-data parts as they arrive (decision 0310)
+fn (b: BodyReader) trailers() -> Map[Str, Str]   // the request's trailers, empty until read returned None (decision 0433)
 fn (p: PartReader) next() -> StreamPart? ! multipart.MultipartErr   // the next part (the open one's unread rest dropped), None after the last
 fn (p: PartReader) read(max: Int = 32768) -> Bytes? ! multipart.MultipartErr   // the open part's next bytes, None at its end
 fn (p: StreamPart) header_values(name: Str) -> List[Str]   // every value of a part's header, in order
@@ -1724,6 +1727,7 @@ fn (c: Client) with_redirects(max: Int) -> Client          // decision 0404
 fn (r: Request) with_timeout(d: Duration) -> Request       // decision 0404
 fn (r: Request) with_idle_timeout(d: Duration) -> Request  // decision 0404
 fn (r: Request) with_body_reader(b: BodyReader) -> Request // decision 0404
+fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Request   // names declared up front, f's values sent after the body (decision 0433)
 
 pub fn reverse_proxy(client: Client, target: Url) -> ReverseProxy   // decision 0404
 struct ReverseProxy {}
@@ -1737,6 +1741,7 @@ fn (s: ClientStream) head() -> ResponseHead
 fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! ClientErr uses net.dial
 fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! ClientErr uses net.dial
 fn (s: ClientStream) close()
+fn (s: ClientStream) trailers() -> Map[Str, Str]   // the response's trailers, empty until read returned None (decision 0433)
 
 enum ClientErr {
   InvalidUrl(msg: Str)
@@ -1750,6 +1755,29 @@ pub fn parse_url(s: Str) -> Url ! UrlErr
 struct Url { scheme: Str, host: Str, port: Int?, path: Str, query: Map[Str, Str] }
 struct UrlErr { msg: Str }
 ```
+
+Trailers (decision 0433) are fields sent after a body, as net/http sends
+them: a streamed response's `set_trailer` (Go's `TrailerPrefix`; declared
+in advance or not), a request's `with_trailers`, read by
+`ClientStream.trailers` and `BodyReader.trailers` once the body has
+ended, each name canonical and the names in sorted order. A request's
+trailer names are declared in its head (`with_trailers(names, f)`; an
+HTTP/2 server keeps only declared names, as Go's does), and f's values
+for other names are dropped. Over HTTP/1.1 they follow the last chunk
+(a body with a Content-Length carries none, and a streamed response
+that writes no body is sent with `Content-Length: 0`, so it carries
+only the trailers it declared with `with_trailer_names`, as net/http
+does);
+over HTTP/2 they are a HEADERS frame ending the stream, after the
+response's HEADERS and DATA (with no body, two HEADERS frames; never
+merged into the first). Names a trailer may not carry are dropped when
+set and when received: Go's list, Authorization, Cache-Control,
+Connection, Content-Encoding, Content-Length, Content-Range,
+Content-Type, Expect, Host, Keep-Alive, Max-Forwards, Pragma,
+Proxy-Authenticate, Proxy-Authorization, Proxy-Connection, Range, Realm,
+Te, Trailer, Transfer-Encoding and Www-Authenticate. The native backend
+sends and receives none yet (its wire support follows decision 0433's
+split); there `trailers()` is empty.
 
 `display` of these errors prints plain text (decision 0358): `HttpErr` the
 message of an `Io` or `canceled`; `ClientErr` `invalid URL: MSG`, MSG for a

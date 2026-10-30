@@ -5,6 +5,8 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- std/http trailers (decision 0433): `BodyWriter.set_trailer`, `Response.with_trailer_names`, `BodyReader.trailers`, `ClientStream.trailers` and `Request.with_trailers(names, f)`, as net/http's TrailerPrefix and Request/Response.Trailer; the Go backend sends and reads them, the native backend has the API and its trailers stay empty until its wire part (Xo Lang 3) lands.
+
 - `tls.TlsConn` has the same deadlines (decision 0430). A deadline set on
   the `Conn` before `tls.client` also limits the handshake.
 - `Conn` and `ServerConn` have Go's deadlines (decision 0430):

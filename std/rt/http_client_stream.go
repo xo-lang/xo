@@ -31,6 +31,9 @@ type clientStream struct {
 	idle   time.Duration
 	cancel func()
 	timer  *time.Timer
+	// trailer: the response's trailers once body has ended (net/http's
+	// Response.Trailer, decision 0433)
+	trailer func() map[string][]string
 }
 
 // XoDebug implements Debug.
@@ -94,7 +97,7 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 		return Ok[Http_ClientStream, Http_ClientErr](Http_ClientStream{Xhead: Http_ResponseHead{F_status: resp.F_status, F_headers: resp.F_headers}, Xs: s})
 	}
 	return fx(tk, "http.open", true, func() []any { return []any{req.F_method, rawURL} }, func() Result[Http_ClientStream, Http_ClientErr] {
-		body, cancel, head, e := c.openNet(tk, req, rawURL)
+		body, cancel, head, trailer, e := c.openNet(tk, req, rawURL)
 		if body == nil {
 			return Err[Http_ClientStream](e)
 		}
@@ -102,7 +105,7 @@ func (c Http_Client) M_open(tk *Task, req Http_Request) Result[Http_ClientStream
 		if req.XIdle > 0 {
 			idle = time.Duration(req.XIdle)
 		}
-		s := &clientStream{body: body, idle: idle, cancel: cancel}
+		s := &clientStream{body: body, idle: idle, cancel: cancel, trailer: trailer}
 		// a dropped stream closes its body (the native counted handle's
 		// free hook)
 		runtime.SetFinalizer(s, func(x *clientStream) { x.release() })

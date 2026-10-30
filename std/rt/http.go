@@ -982,6 +982,9 @@ type bodyWriter struct {
 	// rw: the connection's writer, set for a 101 response's hand-off
 	// (decision 0313: std/websocket hijacks it)
 	rw any // net/http.ResponseWriter
+	// tr sets a trailer (decision 0433; set_trailer): the response
+	// writer's TrailerPrefix field on a server, nil when collected
+	tr func(k, v string)
 }
 
 // M_write is `w.write(data)`.

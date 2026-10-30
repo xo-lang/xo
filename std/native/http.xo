@@ -73,6 +73,11 @@ struct Request {
   /// 0404 stage C), its pieces as the server's BodyPart (data the raw
   /// bytes, never shown as text). Hidden from Xo code.
   src: List[fn(Int) -> http1.BodyPart] = []
+  /// with_trailers' f (decision 0433), asked once the body is sent; one
+  /// entry or none. Hidden from Xo code.
+  trailer_fn: List[fn() -> Map[Str, Str]] = []
+  /// with_trailers' names, canonical, declared in the head. Hidden.
+  trailer_names: List[Str] = []
 }
 
 struct ReqValue {
@@ -187,6 +192,9 @@ struct BodyState {
   pos: Int
   err: Str
   end: Bool
+  /// the request's trailers (decision 0433), set by the connection's
+  /// reader when the body ends
+  trailers: Map[Str, Str] = {}
 }
 
 /// A request's body read from its connection by next, finish run after
@@ -366,6 +374,11 @@ struct StreamPart {
   filename: Str?
   headers: Map[Str, Str]
   fields: List[Str] = []
+}
+
+/// The request's trailers (decision 0433): empty until read returned None.
+fn (b: BodyReader) trailers() -> Map[Str, Str] {
+  b.st.with_read(fn(s) { if s.end { s.trailers } else { {} } })
 }
 
 /// Go's Request.MultipartReader: the checks of multipart_form, then a
@@ -1805,6 +1818,20 @@ fn response_with_header(r: http.Response, name: Str, value: Str) -> http.Respons
   rt.cast[Response, http.Response](n with {headers: h, fields: without_field(n.fields, k)})
 }
 
+/// The `Trailer` header naming names (decision 0433), forbidden ones
+/// left out.
+fn response_with_trailer_names(r: http.Response, names: List[Str]) -> http.Response {
+  var ks: List[Str] = []
+  for n in names {
+    if let Some(k) = http1.trailer_key(n) {
+      if !ks.contains(k) {
+        ks.push(k)
+      }
+    }
+  }
+  if ks.is_empty() { r } else { response_with_header(r, "Trailer", ks.join(", ")) }
+}
+
 fn response_header_values(r: http.Response, name: Str) -> List[Str] {
   let n = rt.cast[http.Response, Response](r)
   values_of(n.headers, n.fields, name)
@@ -1953,6 +1980,16 @@ fn collect(r0: http.Response) -> http.Response {
     }
   }
   rt.cast[Response, http.Response](r with {body: body, stream: 0})
+}
+
+/// A trailer after the body (decision 0433): the name canonical, Go's
+/// forbidden names dropped. The sink sends it (Xo Lang 3's
+/// rthttp.sink_set_trailer, with HTTP/1.1's chunked trailer section and
+/// HTTP/2's trailing HEADERS); until then it is dropped.
+fn (w: BodyWriter) set_trailer(name: Str, value: Str) {
+  if let Some(k) = http1.trailer_key(name) {
+    let _ = (w, k, value)
+  }
 }
 
 fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr {
@@ -2480,6 +2517,21 @@ fn src_whole(req: Request) -> Request ! http.ClientErr {
 /// C): chunked unless the request's header gives Content-Length; never
 /// sent twice (a 307 or 308 returns the 3xx, no retry on a dead pooled
 /// connection).
+/// The request with trailers after its body (decision 0433): hclient
+/// asks trailer_fn once the body is sent (Xo Lang 3's wire part; until
+/// it lands the request goes without).
+fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Request {
+  var ks: List[Str] = []
+  for n in names {
+    if let Some(k) = http1.trailer_key(n) {
+      if !ks.contains(k) {
+        ks.push(k)
+      }
+    }
+  }
+  r with {trailer_fn: [f], trailer_names: ks}
+}
+
 fn (r: Request) with_body_reader(b: http.BodyReader) -> Request {
   let f = fn(max: Int) -> http1.BodyPart {
     match b.read(max) {
@@ -2525,6 +2577,8 @@ struct StreamState {
   pending: Bytes
   done: Bool
   idle_ns: Int
+  /// the response's trailers (decision 0433), set when its body ends
+  trailers: Map[Str, Str] = {}
 }
 
 fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net.dial {
@@ -2730,6 +2784,11 @@ fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! http.Client
     }
   }
   out.freeze()
+}
+
+/// The response's trailers (decision 0433): empty until read returned None.
+fn (s: ClientStream) trailers() -> Map[Str, Str] {
+  s.st.with(fn(var x: StreamState) { if x.done { x.trailers } else { {} } })
 }
 
 fn (s: ClientStream) close() {

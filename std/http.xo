@@ -74,6 +74,12 @@ fn (r: Request) with_idle_timeout(d: Duration) -> Request
 /// route's body, decision 0404): chunked unless the header gives
 /// Content-Length, never sent twice (a 307 or 308 returns the 3xx).
 fn (r: Request) with_body_reader(b: BodyReader) -> Request
+/// The request with trailers (Go's Request.Trailer, decision 0433): names
+/// are declared in its head (an HTTP/2 server keeps only declared ones),
+/// f is asked once its body has been sent and its values for those names
+/// go after it; other names, and names Go forbids in a trailer, are
+/// dropped. An HTTP/1.1 body is then chunked.
+fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Request
 /// Every field of name, in order (decision 0288).
 fn (r: Request) header_values(name: Str) -> List[Str]
 /// Go's Request.Host: the Host header as sent (host, or host:port;
@@ -227,6 +233,9 @@ fn (b: BodyReader) read_all() -> Bytes ! IoErr
 /// (decision 0310 phase 3; Go's Request.MultipartReader): MultipartErr
 /// as Request.multipart_form's for another Content-Type or no boundary.
 fn (b: BodyReader) multipart(req: Request) -> PartReader ! multipart.MultipartErr
+/// The request's trailers (Go's Request.Trailer, decision 0433), names
+/// canonical; empty until read has returned None.
+fn (b: BodyReader) trailers() -> Map[Str, Str]
 
 /// A multipart body read part by part (Go's multipart.Reader).
 struct PartReader {}
@@ -253,6 +262,14 @@ fn (p: StreamPart) header_values(name: Str) -> List[Str]
 struct BodyWriter {}
 fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr
 fn (w: BodyWriter) flush() -> () ! IoErr
+/// A trailer sent after the body (Go's TrailerPrefix, decision 0433),
+/// the name made canonical; a name Go forbids in a trailer (Content-Length,
+/// Host, Trailer, ...) is dropped. Not sent on a response with a
+/// Content-Length.
+fn (w: BodyWriter) set_trailer(name: Str, value: Str)
+/// The response declaring trailer names in its `Trailer` header (HTTP/1.1;
+/// decision 0433); set_trailer sends a name whether declared or not.
+fn (r: Response) with_trailer_names(names: List[Str]) -> Response
 fn (r: Response) with_header(name: Str, value: Str) -> Response
 fn (r: Response) header(name: Str) -> Str?
 /// Every field of name, in order (decision 0288).
@@ -363,6 +380,9 @@ fn (s: ClientStream) read(max: Int = 32768) -> Bytes? ! ClientErr uses net.dial
 fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! ClientErr uses net.dial
 /// Releases the stream's connection; again does nothing.
 fn (s: ClientStream) close()
+/// The response's trailers (Go's Response.Trailer, decision 0433), names
+/// canonical; empty until read has returned None.
+fn (s: ClientStream) trailers() -> Map[Str, Str]
 /// The client following at most max redirects (10 by default); 0 returns
 /// a 3xx response as it came, its Location as the server sent it (Go's
 /// ErrUseLastResponse; decision 0404).

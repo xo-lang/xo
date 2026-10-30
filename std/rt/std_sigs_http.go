@@ -20,6 +20,7 @@ var (
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_timeout
 	_ func(*Http_Request, *Task, Duration) Http_Request                                                                                                 = (*Http_Request).M_with_idle_timeout
 	_ func(*Http_Request, *Task, Http_BodyReader) Http_Request                                                                                          = (*Http_Request).M_with_body_reader
+	_ func(*Http_Request, *Task, List[string], func(*Task) Result[Map[string, string], Never]) Http_Request                                             = (*Http_Request).M_with_trailers
 	_ func(*Http_Request, *Task, string) List[string]                                                                                                   = (*Http_Request).M_header_values
 	_ func(*Http_Request, *Task) string                                                                                                                 = (*Http_Request).M_host
 	_ func(*Http_Request, *Task) bool                                                                                                                   = (*Http_Request).M_tls
@@ -46,11 +47,14 @@ var (
 	_ func(*Http_BodyReader, *Task, int64) Result[Option[Bytes], IoErr]                                                                                 = (*Http_BodyReader).M_read
 	_ func(*Http_BodyReader, *Task) Result[Bytes, IoErr]                                                                                                = (*Http_BodyReader).M_read_all
 	_ func(*Http_BodyReader, *Task, Http_Request) Result[Http_PartReader, Multipart_MultipartErr]                                                       = (*Http_BodyReader).M_multipart
+	_ func(*Http_BodyReader, *Task) Map[string, string]                                                                                                 = (*Http_BodyReader).M_trailers
 	_ func(*Http_PartReader, *Task) Result[Option[Http_StreamPart], Multipart_MultipartErr]                                                             = (*Http_PartReader).M_next
 	_ func(*Http_PartReader, *Task, int64) Result[Option[Bytes], Multipart_MultipartErr]                                                                = (*Http_PartReader).M_read
 	_ func(*Http_StreamPart, *Task, string) List[string]                                                                                                = (*Http_StreamPart).M_header_values
 	_ func(*Http_BodyWriter, *Task, Bytes) Result[Unit, IoErr]                                                                                          = (*Http_BodyWriter).M_write
 	_ func(*Http_BodyWriter, *Task) Result[Unit, IoErr]                                                                                                 = (*Http_BodyWriter).M_flush
+	_ func(*Http_BodyWriter, *Task, string, string)                                                                                                     = (*Http_BodyWriter).M_set_trailer
+	_ func(*Http_Response, *Task, List[string]) Http_Response                                                                                           = (*Http_Response).M_with_trailer_names
 	_ func(*Http_Response, *Task, string, string) Http_Response                                                                                         = (*Http_Response).M_with_header
 	_ func(*Http_Response, *Task, string) Option[string]                                                                                                = (*Http_Response).M_header
 	_ func(*Http_Response, *Task, string) List[string]                                                                                                  = (*Http_Response).M_header_values
@@ -83,6 +87,7 @@ var (
 	_ func(*Http_ClientStream, *Task, int64) Result[Option[Bytes], Http_ClientErr]                                                                      = (*Http_ClientStream).M_read
 	_ func(*Http_ClientStream, *Task, int64) Result[Bytes, Http_ClientErr]                                                                              = (*Http_ClientStream).M_read_all
 	_ func(*Http_ClientStream, *Task)                                                                                                                   = (*Http_ClientStream).M_close
+	_ func(*Http_ClientStream, *Task) Map[string, string]                                                                                               = (*Http_ClientStream).M_trailers
 	_ func(*Http_Client, *Task, int64) Http_Client                                                                                                      = (*Http_Client).M_with_redirects
 	_ func(*Http_ClientErr, *Task) string                                                                                                               = (*Http_ClientErr).M_display
 	_ func(*Task, string) Result[Http_Url, Http_UrlErr]                                                                                                 = Http_parse_url

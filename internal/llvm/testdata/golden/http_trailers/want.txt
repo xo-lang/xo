@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+h1 body: 200 body hello world early {} trailers {}
+h1 nobody: 200 body  early {} trailers {}
+h1 nobody named: 200 body  early {} trailers {}
+h1 plain: 200 body no trailers early {} trailers {}
+h1 up: 200 read 7 bytes, trailers before {}, after {}
+h2 body: 200 body hello world early {} trailers {}
+h2 nobody: 200 body  early {} trailers {}
+h2 nobody named: 200 body  early {} trailers {}
+h2 plain: 200 body no trailers early {} trailers {}
+h2 up: 200 read 7 bytes, trailers before {}, after {}
+done
+--- stderr

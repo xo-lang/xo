@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+h1 body: 200 body hello world early {} trailers {Grpc-Status=0, X-Checksum=abc123}
+h1 nobody: 200 body  early {} trailers {}
+h1 nobody named: 200 body  early {} trailers {Grpc-Status=13}
+h1 plain: 200 body no trailers early {} trailers {}
+h1 up: 200 read 7 bytes, trailers before {}, after {X-Late=yes, X-Sum=42}
+h2 body: 200 body hello world early {} trailers {Grpc-Status=0, X-Checksum=abc123}
+h2 nobody: 200 body  early {} trailers {Grpc-Message=internal, Grpc-Status=13}
+h2 nobody named: 200 body  early {} trailers {Grpc-Status=13}
+h2 plain: 200 body no trailers early {} trailers {}
+h2 up: 200 read 7 bytes, trailers before {}, after {X-Late=yes, X-Sum=42}
+done
+--- stderr

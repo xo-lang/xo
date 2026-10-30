@@ -18,7 +18,7 @@ func (c Http_Client) send(tk *Task, req Http_Request, rawURL string) Result[Http
 	panic(noHTTP)
 }
 
-func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.ReadCloser, func(), Http_ResponseHead, Http_ClientErr) {
+func (c Http_Client) openNet(tk *Task, req Http_Request, rawURL string) (io.ReadCloser, func(), Http_ResponseHead, func() map[string][]string, Http_ClientErr) {
 	panic(noHTTP)
 }
 

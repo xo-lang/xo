@@ -17,6 +17,9 @@ type bodyReader struct {
 	mu  sync.Mutex
 	src io.Reader
 	eof bool
+	// trailer: the request's trailers once src has ended (net/http's
+	// Request.Trailer, decision 0433), nil when there are none
+	trailer func() map[string][]string
 }
 
 // streamBody names the request value that carries the server's unread
@@ -28,6 +31,16 @@ const streamBody = "\x00body"
 func withStreamBody(req Http_Request, src io.Reader) Http_Request {
 	req.XValues = &reqValues{name: streamBody, v: &bodyReader{src: src}, next: req.XValues}
 	return req
+}
+
+// streamTrailer gives req's streamed body (withStreamBody) its trailers.
+func streamTrailer(req Http_Request, f func() map[string][]string) {
+	for n := req.XValues; n != nil; n = n.next {
+		if n.name == streamBody && n.t == nil {
+			n.v.(*bodyReader).trailer = f
+			return
+		}
+	}
 }
 
 // bodyReaderOf is the reader of req's body: the server's stream, else

@@ -381,6 +381,20 @@ pub fn query_escape(s: Str) -> Str {
 /// strconv.Quote (neturl.xo's go_quote).
 pub fn go_quote(s: Str) -> Str { neturl.go_quote(s) }
 
+/// Go's badTrailer (golang.org/x/net/http/httpguts): the fields a
+/// trailer may not carry (decision 0433); dropped when set and received.
+pub const BAD_TRAILER = #{"Authorization", "Cache-Control", "Connection", "Content-Encoding", "Content-Length", "Content-Range", "Content-Type", "Expect", "Host", "Keep-Alive", "Max-Forwards", "Pragma", "Proxy-Authenticate", "Proxy-Authorization", "Proxy-Connection", "Range", "Realm", "Te", "Trailer", "Transfer-Encoding", "Www-Authenticate"}
+/// The most bytes and fields of a received trailer section (decision
+/// 0433), shared by the HTTP/1.1 and HTTP/2 readers.
+pub const MAX_TRAILER_BYTES = 8192
+pub const MAX_TRAILER_COUNT = 64
+
+/// name made canonical, None for a name a trailer may not carry.
+pub fn trailer_key(name: Str) -> Str? {
+  let k = canonical_key(name)
+  if k == "" || BAD_TRAILER.contains(k) { None } else { Some(k) }
+}
+
 /// textproto.CanonicalMIMEHeaderKey: unchanged when a byte is not a token
 /// byte.
 pub fn canonical_key(s: Str) -> Str {

@@ -75,7 +75,7 @@ func (f gzipFlusher) Flush() {
 func gzipStream(inner func(*Task, Http_BodyWriter) Result[Unit, IoErr], level int) func(*Task, Http_BodyWriter) Result[Unit, IoErr] {
 	return func(tk *Task, w Http_BodyWriter) Result[Unit, IoErr] {
 		gz, _ := gzip.NewWriterLevel(gzipWriterTo{tk: tk, w: w}, level)
-		r := inner(tk, Http_BodyWriter{w: &bodyWriter{w: gz, fl: gzipFlusher{tk: tk, gz: gz, out: w}}})
+		r := inner(tk, Http_BodyWriter{w: &bodyWriter{w: gz, fl: gzipFlusher{tk: tk, gz: gz, out: w}, tr: w.w.tr}})
 		if err := gz.Close(); err != nil {
 			if ie, ok := err.(ioErrValue); ok {
 				return Err[Unit](ie.e)
