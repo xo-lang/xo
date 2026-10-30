@@ -1115,3 +1115,83 @@ func IntVar(p *int, n int) { *p = n }
 		t.Errorf("int_var skipped %q, want writes through (skipped: %v)", why, b.Skipped)
 	}
 }
+
+// TestChannels (decision 0421): a Go channel given to Xo is a go.Recv[T];
+// a send only channel, a channel parameter and time's timer channels are
+// skipped, and a channel field has no setter.
+func TestChannels(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "chans")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/chans\n\ngo 1.21\n",
+		"chans.go": `package chans
+
+type Watcher struct {
+	Names  chan string
+	Errors chan error
+}
+
+func NewWatcher() *Watcher { return &Watcher{} }
+
+func Ticks(n int) <-chan int { return nil }
+
+func Sink(c chan<- int) {}
+
+func Feed(c <-chan int) {}
+
+func Lists() <-chan []string { return nil }
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/chans v0.0.0\n\nreplace example.com/chans => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/chans", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl, adapter := string(b.Decl), string(b.Adapter)
+	for _, want := range []string{
+		"fn ticks(n: Int) -> go.Recv[Int] uses go",
+		"fn lists() -> go.Recv[List[Str]] uses go",
+		"fn (recv: Watcher) names() -> go.Recv[Str] uses go",
+		"fn (recv: Watcher) errors() -> go.Recv[go.Error?] uses go",
+	} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("no %q in the declarations:\n%s", want, decl)
+		}
+	}
+	if !strings.Contains(adapter, `GoRecvOf((<-chan int)(r0), "int", true,`) {
+		t.Errorf("ticks does not wrap its channel:\n%s", adapter)
+	}
+	for name, why := range map[string]string{
+		"sink":              "send only",
+		"feed":              "does not pass them",
+		"Watcher.set_names": "cannot go back to Go",
+	} {
+		if !strings.Contains(b.Skipped[name], why) {
+			t.Errorf("%s skipped %q, want %q (skipped: %v)", name, b.Skipped[name], why, b.Skipped)
+		}
+	}
+	tb, err := Bind("time", Options{Dir: dir})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(tb.Skipped["after"], "use Xo's clock") {
+		t.Errorf("time.after skipped %q, want Xo's clock", tb.Skipped["after"])
+	}
+}

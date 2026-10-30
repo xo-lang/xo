@@ -302,6 +302,31 @@ func goEnter(th *thread) {
 	}
 }
 
+// goEnterLend is goEnter for a Go call that waits on something an Xo task
+// may have to provide (a receive on a Go channel, decision 0421): under
+// the deterministic scheduler th gives its turn away even with no
+// callback alive, and its return joins as a lent thread's does.
+func goEnterLend(th *thread) {
+	s := th.sch
+	if s == nil {
+		goEnter(th)
+		return
+	}
+	s.mu.Lock()
+	th.inGo.Add(1)
+	if s.armed.Load() {
+		s.goDirty = true
+	}
+	if s.cur == th {
+		s.lendLocked(th)
+		s.pickLocked()
+	}
+	s.mu.Unlock()
+	if th.cbN.Load() > 0 && th.mon != nil {
+		th.mon.goMoved()
+	}
+}
+
 // goExit records that th's Go call returned.
 func goExit(th *thread) { goLeave(th, true) }
 

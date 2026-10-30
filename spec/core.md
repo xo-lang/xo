@@ -1802,6 +1802,17 @@ fn main(os: Os) ! {
   `v`, so a write Go makes through the pointer later is not seen (read
   the field again). A parameter Go writes through (sync/atomic, a `*Var`
   function such as `flag.int_var`, an output parameter) is not bound.
+- A Go channel Go gives Xo (`<-chan T` or `chan T` as a result, a field or
+  a variable) is `go.Recv[T]` (decision 0421): `recv()` waits for the next
+  value (None once the channel is closed and empty), `try_recv()` does not
+  wait, `each(f)` receives until it is closed. Xo does not send on, close
+  or pass back a Go channel (a send only channel or a channel parameter is
+  not bound), and a nil one is closed. A waiting `recv` is a cancellation
+  point: the task's cancellation or a `task.with_timeout` deadline ends it.
+  Under the deterministic scheduler it gives the task's turn away while it
+  waits; `--record` keeps each received value that holds no handle. Go
+  timer channels (`time.after`, `time.tick`, `Timer.C`) are not bound: Xo's
+  clock is a capability they would bypass.
 - An Xo program implements a Go interface with functions (decision 0416):
   a binding declares, for each named interface whose methods all map as
   callbacks, a constructor named after the interface (`implement_` and

@@ -85,3 +85,20 @@ fn (o: Out[T]) any() -> Any
 
 /// The value Go wrote; a fault when Go wrote another type.
 fn (o: Out[T]) get() -> T
+
+/// A Go channel Xo receives from (decision 0421): a `<-chan T` or
+/// `chan T` a Go function, field or variable gives Xo. Sending and
+/// closing are Go's; a nil Go channel is a closed one.
+struct Recv[T] {}
+
+/// The next value; None once the channel is closed and empty. Waits in
+/// Go: a cancellation point (the task's cancellation or
+/// `task.with_timeout` ends the wait).
+fn (r: Recv[T]) recv() -> T? uses go
+
+/// The next value if one is ready: None when none is, Some(None) once
+/// the channel is closed.
+fn (r: Recv[T]) try_recv() -> T?? uses go
+
+/// Calls f with each value until the channel is closed.
+fn (r: Recv[T]) each[fx: Effects](f: fn(T) uses fx) uses go, fx

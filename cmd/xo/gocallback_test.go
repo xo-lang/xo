@@ -323,3 +323,59 @@ fn main(os: Os) {
 		t.Errorf("output\n%s\nwant\n%s", got, want)
 	}
 }
+
+// The h1 hashes of testdata/goproxy's synthetic example.com/chans v1.0.0.
+const (
+	chansSum    = "h1:zdNle/+//KP0OCAHgc9axj8fPRZ3qRl14H/q5YNOVAc="
+	chansModSum = "h1:Gyye4XdqqxBpe/SOkc+avxfyAlq4jh3RNJoJ9o6/iZs="
+)
+
+// TestUseGoChannels (decision 0421): a Go channel is a go.Recv[T]: each
+// receives until Go closes it, recv is None once closed, try_recv does not
+// wait, and task.with_timeout ends a receive that never gets a value.
+func TestUseGoChannels(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	useGoProxy(t)
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module ch\n\nrequire go example.com/chans v1.0.0\n",
+		"xo.lock": "go example.com/chans v1.0.0 " + chansSum + "\n" +
+			"go example.com/chans v1.0.0/go.mod " + chansModSum + "\n",
+		"main.xo": `use go "example.com/chans"
+use std/task
+
+fn main(os: Os) {
+  let t = chans.ticks(3)
+  t.each(fn(i: Int) { os.stdio.println("tick ${i}") })
+  os.stdio.println("after ${t.recv() ?? -1}")
+  let w = chans.new_watcher()
+  let names = w.names()
+  os.stdio.println("empty ${names.try_recv().is_none()}")
+  w.emit("a")
+  w.emit("")
+  os.stdio.println("name ${names.recv() ?? "-"}")
+  match w.errors().recv() {
+    Some(Some(e)) => os.stdio.println("error ${e.message()}")
+    _ => os.stdio.println("no error")
+  }
+  w.close()
+  os.stdio.println("closed ${names.try_recv() == Some(None)}")
+  let never = chans.never()
+  match task.with_timeout(os.clock, 20ms, fn() { never.recv() }) {
+    Ok(_) => os.stdio.println("received")
+    Err(task.Timed.TimedOut) => os.stdio.println("timed out")
+  }
+}
+`,
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	want := "tick 0\ntick 1\ntick 2\nafter -1\nempty true\nname a\nerror empty name\nclosed true\ntimed out"
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("output\n%s\nwant\n%s", got, want)
+	}
+}

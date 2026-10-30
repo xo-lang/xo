@@ -3109,6 +3109,10 @@ struct Out[T] {}                     // a Go *T a Go function fills through any
 fn out[T]() -> Out[T]                // a new pointer to T's Go zero value
 fn (o: Out[T]) any() -> Any          // the pointer, passed where Go takes any
 fn (o: Out[T]) get() -> T            // the value Go wrote; a fault on another type
+struct Recv[T] {}                    // a Go channel Xo receives from (decision 0421)
+fn (r: Recv[T]) recv() -> T? uses go         // waits; None once closed and empty; cancelable
+fn (r: Recv[T]) try_recv() -> T?? uses go    // None when no value is ready, Some(None) once closed
+fn (r: Recv[T]) each[fx: Effects](f: fn(T) uses fx) uses go, fx  // f with each value until closed
 ```
 
 `fmt.sprintf("%d %s", [n, s])`: the elements of a list literal written for
@@ -3118,7 +3122,8 @@ go.Any a Go call returned is rebuilt from its recorded display text: it
 displays, and its other methods fault unless the function is `replay
 rerun` (core 11.3).
 
-Calling these performs no Go call (no `go` effect). The native backends do
+Calling these performs no Go call (no `go` effect), except Recv's
+methods, which receive from the Go channel. The native backends do
 not build `use go` code at all (`XO1201`, impossible).
 
 ---

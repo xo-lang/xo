@@ -1,5 +1,20 @@
 # std/go changes
 
+## 2026-10-29: feature: go.Recv, receiving from Go channels
+
+- Kind: feature
+- Commit: this commit
+- Found by: the use go coverage survey (26 third-party channel skips:
+  fsnotify's Events and Errors, go-redis's PubSub.Channel)
+- Go reference: Go's channel receive and select; decision 0421
+- Test: cmd/xo TestUseGoChannels; internal/gobind TestChannels
+
+A Go channel a Go function, field or variable gives Xo is a
+`go.Recv[T]`: `recv()` waits for the next value (None once closed),
+`try_recv()` does not wait, and `each(f)` receives until it is closed. A
+waiting receive is a cancellation point. Xo does not send on, close or pass
+back a Go channel; time's timer channels are not bound.
+
 ## 2026-10-29: feature: go.error, and callbacks that return a Go error
 
 - Kind: feature

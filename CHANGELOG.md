@@ -29,6 +29,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `service/s3`, its own module inside the root's path) no longer takes the
   enclosing module's `require go` pin: it binds at its own version, `xo
   check` asks for its pin (XO1319), and `xo mod tidy` adds it.
+- `use go`: a Go channel given to Xo is a `go.Recv[T]` (decision 0421):
+  `recv()`, `try_recv()` and `each(f)` receive what Go sends (fsnotify's
+  events, go-redis's pub/sub messages); a waiting receive is a
+  cancellation point. Binding format 25.
 - Linux edit builds link faster: a separately compiled ELF link no longer walks std's objects a second time and computes its undefined names once per step (decision 0420). Dropping the second walk took the HTTP server's edit link from 48.6 to 38.3 ms on linux arm64; the binary can keep a few more std bytes (xo: 0.004%).
 - std/crc32: Castagnoli runs on arm64's CRC32CX (0.21 of its time, Go's speed);
   std/fnv's 32 bit sums 0.79 of their time.

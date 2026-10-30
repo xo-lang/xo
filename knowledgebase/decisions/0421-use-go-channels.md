@@ -68,3 +68,22 @@ callbacks are live (s.cbLive, lendLocked); otherwise the call keeps the turn unt
   extra protocol. Rejected for now.
 - **Keep skipping**: fsnotify and pub/sub clients stay unusable from Xo.
 - **Bind time's channels**: rejected (point 4); Xo's clock and `task.with_timeout` cover the uses.
+
+## As built (Lang 1, 2026-10-29)
+
+- std/go.xo `struct Recv[T]` with `recv`, `try_recv`, `each` (`uses go`);
+  std/rt gorecv.go Go_Recv[T] made by GoRecvOf(ch, name, rec, conv): a
+  nil channel is closed; a waiting receive selects on the channel and the
+  task node's done channel (none inside a shielded defer) and unwinds on
+  cancellation; it waits inside goEnterLend, which gives the turn away
+  under the deterministic scheduler even with no callback alive, and
+  leaves through goExit (the lent thread's admission). `recv` and
+  `try_recv` go through GoFxValue when the element holds no handle (rec).
+- gobind chanConv: `<-chan T` and `chan T` map to `go.Recv[T]` with no
+  toGo; a send only channel, any channel of package time, a channel
+  parameter and a channel field's setter are skipped with the reason.
+  listConv, map conversions and callback results now check for a missing
+  toGo instead of emitting a call through a nil function.
+- Binding format 25. Tests: gobind TestChannels, cmd/xo TestUseGoChannels
+  (synthetic example.com/chans: each, recv after close, try_recv,
+  go.Error? elements, task.with_timeout ending a receive).

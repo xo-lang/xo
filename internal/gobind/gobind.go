@@ -70,7 +70,8 @@ import (
 // type (Go's functional options) is a List of callbacks.
 // 24 (2026-10-30, coverage item 4): a callback or Go function value with
 // several results returns them as a tuple.
-const Version = 24
+// 25 (2026-10-30, decision 0421): a Go channel given to Xo is go.Recv[T].
+const Version = 25
 
 // Binding is one bound Go package.
 type Binding struct {

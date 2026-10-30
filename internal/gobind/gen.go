@@ -511,6 +511,9 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		if err != nil {
 			return conv{}, err
 		}
+		if kc.toGo == nil || vc.toGo == nil {
+			return conv{}, skipf(catChan, "map %s of a value Xo cannot pass to Go", g.display(x))
+		}
 		return conv{xo: "Map[" + kc.xo + ", " + vc.xo + "]", rt: "Map[" + kc.rt + ", " + vc.rt + "]", gt: "map[" + kc.gt + "]" + vc.gt, hpkgs: append(append([]string(nil), kc.hpkgs...), vc.hpkgs...),
 			toXo: func(e string) string {
 				return fmt.Sprintf("GoMapOf(%s, func(k %s) %s { return %s }, func(v %s) %s { return %s })", e, kc.gt, kc.rt, kc.toXo("k"), vc.gt, vc.rt, vc.toXo("v"))
@@ -528,7 +531,7 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 	case *types.Struct:
 		return conv{}, skipf(catIface, "unnamed struct")
 	case *types.Chan:
-		return conv{}, skipf(catChan, "channel type %s", g.display(x))
+		return g.chanConv(x, depth)
 	case *types.TypeParam:
 		tp := g.tps[x]
 		if tp == nil {
@@ -677,6 +680,10 @@ func listConv(ec conv) conv {
 	}
 	c.toXo = func(e string) string {
 		return fmt.Sprintf("GoListOf(%s, func(x %s) %s { return %s })", e, ec.gt, ec.rt, ec.toXo("x"))
+	}
+	if ec.toGo == nil {
+		// a List of go.Recv or iterators is Xo's only
+		return c
 	}
 	c.toGo = func(e string) string {
 		return fmt.Sprintf("GoSliceOf(%s, func(x %s) %s { return %s })", e, ec.rt, ec.gt, ec.toGo("x"))
@@ -934,6 +941,34 @@ func variadicFunc(sig *types.Signature, i int, pt types.Type) (types.Type, *type
 	}
 	fs, ok := types.Unalias(sl.Elem()).(*types.Signature)
 	return sl.Elem(), fs, ok
+}
+
+// chanConv maps a Go channel Go gives Xo to `go.Recv[T]` (decision 0421):
+// Xo receives, Go sends and closes, so it cannot go back to Go (toGo is
+// nil). A send only channel, and time's timer channels (Xo's clock is a
+// capability that a Go timer bypasses), are skipped.
+func (g *gen) chanConv(x *types.Chan, depth int) (conv, *skipErr) {
+	if x.Dir() == types.SendOnly {
+		return conv{}, skipf(catChan, "send only channel %s (Xo receives only, decision 0421)", g.display(x))
+	}
+	if g.pkg.Path() == "time" {
+		return conv{}, skipf(catChan, "channel %s of a Go timer: use Xo's clock (decision 0421)", g.display(x))
+	}
+	ec, err := g.mapType(x.Elem(), depth)
+	if err != nil {
+		return conv{}, skipf(catChan, "channel %s: %s", g.display(x), err.detail)
+	}
+	if ec.toXo == nil {
+		return conv{}, skipf(catChan, "channel %s: its element has no Xo value", g.display(x))
+	}
+	rt := "Go_Recv[" + ec.rt + "]"
+	name := g.display(x.Elem())
+	// the received values are recorded unless they hold a handle
+	rec := len(ec.hpkgs) == 0
+	return conv{xo: "go.Recv[" + ec.xo + "]", rt: rt, gt: g.qual(x), hpkgs: append([]string{g.pkg.Path()}, ec.hpkgs...),
+		toXo: func(e string) string {
+			return fmt.Sprintf("GoRecvOf((<-chan %s)(%s), %q, %t, func(x %s) %s { return %s })", ec.gt, e, name, rec, ec.gt, ec.rt, ec.toXo("x"))
+		}}, nil
 }
 
 // callbackConv maps a func parameter to an Xo function type with an effect
@@ -1282,6 +1317,9 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 			return skipf(err.cat, "parameter %s: %s", pn, err.detail)
 		}
 		if c.toGo == nil {
+			if _, ch := pt.Underlying().(*types.Chan); ch {
+				return skipf(catChan, "parameter %s: channel %s (Xo receives from Go's channels, it does not pass them, decision 0421)", p.Name(), g.display(pt))
+			}
 			return skipf(catGeneric, "parameter %s: iterator %s cannot be passed to Go", p.Name(), g.display(pt))
 		}
 		pname := g.paramName(p.Name(), i, used)
@@ -2030,6 +2068,11 @@ func (g *gen) bindHandle(h *handle) {
 		h.decls = append(h.decls, fmt.Sprintf("/// Go: field %s %s\nfn (recv: %s) %s() -> %s uses go", fv.Name(), g.display(fv.Type()), h.xoT, xn, rc.xo))
 		fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task) %s {\n\tdefer GoBoundary(%q)\n\tv := h.P.%s\n\treturn %s\n}\n\n", h.rtT, xn, rc.rt, display, fv.Name(), rc.toXo("v"))
 		sn := "set_" + snake(fv.Name())
+		if c.toGo == nil {
+			// a go.Recv (or an iterator) Xo only reads
+			g.skip(h.xo+"."+sn, display, skipf(catChan, "field setter: %s cannot go back to Go", c.xo), false)
+			continue
+		}
 		h.names[sn] = true
 		h.decls = append(h.decls, fmt.Sprintf("/// Go: assigns field %s\nfn (recv: %s) %s(v: %s) uses go", fv.Name(), h.xoT, sn, c.xo))
 		fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task, a0 %s) {\n\tdefer GoBoundary(%q)\n\th.P.%s = %s\n}\n\n", h.rtT, sn, c.rt, display, fv.Name(), c.toGo("a0"))
