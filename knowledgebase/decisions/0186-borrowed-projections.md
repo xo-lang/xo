@@ -117,6 +117,18 @@ guarantees, and every list update still gets a list held once.
   iteration where `for x in xs` borrowed it. A pattern that keeps the
   pair (`for p in xs.indexed()`) still builds it. xo's `__text` 32.65 to
   32.24 MB (-1.25%); golden loop_pairs.
+- Addendum (2026-10-30): rule 3 asks about the owner's leaf, not its
+  root: a use of a leaf that holds it or that it holds counts, a sibling
+  field's does not. And a path that reaches the root's own block always
+  ends there, also when the consume is in that block (the root is made
+  again before any use on the way back). Mutex.with's packed path pops
+  the value out as a `(List[T], T?)` pair, hands the payload of field 1
+  to the closure and pushes onto field 0 after it; the push, and the
+  payload's own read reached around the loop, made the payload a
+  borrowed projection, so the caller kept a reference and the closure's
+  first push copied the list: 200,000 pushes 31.4G instructions, now
+  120M (internal/arm64 TestMutexWithPushLinear, golden conc_mutex_move,
+  gotchas/mutex-with-borrowed-payload.md).
 
 ## Alternatives
 

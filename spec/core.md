@@ -1983,9 +1983,13 @@ never depend on it, but the time does:
   per pass. Change `xs[i]` in place instead (`xs[i].push(v)`, decision
   0169). `xo vet` notes it for collection elements (`XO0536`); the Map
   form has `Map.update` (`XO0532`).
-- A `Mutex.with` body changes the value while the mutex still holds it
-  (an error or fault hands it back, decision 0085), so the body's first
-  write to each collection in it copies that collection.
+- A `Mutex.with` body with a `var` parameter gets the value moved out
+  of the mutex, but an error or fault hands the value it was given back
+  (decision 0085), so the body keeps that value alive while a later
+  point can still fail or fault: a write followed by such a point (a
+  call that can fault, an index, `?`) copies the collection it writes,
+  once per `with`. A write after the body's last such point changes the
+  value in place (`m.with(fn(var l) { l.push(x) })` does not copy).
 
 ### 5.2 Mutation
 

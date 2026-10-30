@@ -52,6 +52,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   before exiting (a small program's link 29 ms to 5 ms on a native
   windows/amd64 host); `xo build` is unchanged, and the files are the
   same bytes either way.
+- A push (or any change) inside `Mutex.with(fn(var l) { ... })` no
+  longer copies the protected list: the value moves into the closure on
+  the native backends and LLVM. 200,000 pushes, one per `with`, took
+  31.4G instructions and now take 120M; an error or fault in the
+  closure still leaves the value unchanged.
 - Native Windows DNS record lookups (`lookup_mx`, `lookup_txt`,
   `lookup_srv`, `lookup_addr`) work: Xo's own DNS client asks the network
   adapters' DNS servers and reads the Windows hosts file, as Go's pure Go

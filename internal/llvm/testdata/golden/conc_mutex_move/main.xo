@@ -1,0 +1,26 @@
+// Mutex.with moves its value into a closure with a `var` parameter
+// (core 5.4), so a push in it does not copy the list (internal/arm64
+// TestMutexWithPushLinear): a fault after a change still hands back the
+// old value, and a value read out earlier stays as it was.
+use std/task
+
+fn bad(xs: List[Int], i: Int) -> Int {
+  xs[i]
+}
+
+fn main(os: Os) {
+  let m = Mutex[List[Int]].new([1, 2])
+  let snap = m.with(fn(l) { l })
+  let r = task.isolate(fn() {
+    m.with(fn(var l) {
+      l.push(3)
+      let _ = bad(l, 10)
+      l.push(4)
+    })
+  })
+  os.stdio.println("fault ${r.is_err()} kept ${m.with(fn(l) { l.len() })} snap ${snap.len()}")
+  for i in 0..1000 {
+    m.with(fn(var l) { l.push(i) })
+  }
+  os.stdio.println("grown ${m.with(fn(l) { l.len() })} snap ${snap.len()} last ${m.with(fn(l) { l.last() ?? 0 })}")
+}

@@ -20,6 +20,9 @@ struct Borrows {
   /// and an insertion per site (bench/results/xo1-speed-2026-10-13.md)
   users: List[List[BSite]] = []
   all: List[List[BSite]] = []
+  /// the path of the leaf each site of all uses (the path of the value
+  /// an edge passes): used_after asks about one leaf of its root
+  all_p: List[List[Str]] = []
   cons: List[List[BSite]] = []
   in_term: List[Bool] = []
   cand: List[Bool] = []
@@ -41,6 +44,7 @@ fn (var r: Rc) borrow_projections(f: Func) {
     st.done.push(false)
     st.users.push([])
     st.all.push([])
+    st.all_p.push([])
     st.cons.push([])
     st.in_term.push(false)
   }
@@ -63,12 +67,14 @@ fn (var r: Rc) borrow_projections(f: Func) {
           let root = r.base(f, a).root
           add_site(st.cons, root, BSite{b: bl, i: i})
           add_site(st.all, root, BSite{b: bl, i: i})
+          st.all_p[root].push(r.base(f, a).path)
           st.in_term[root] = true
         }
       }
       if is_terminator(x.op) {
         for u in r.leaf_uses(f, v) {
           add_site(st.all, u.l.root, BSite{b: bl, i: i})
+          st.all_p[u.l.root].push(u.l.path)
           st.in_term[u.l.root] = true
         }
         continue
@@ -76,6 +82,7 @@ fn (var r: Rc) borrow_projections(f: Func) {
       for u in r.leaf_uses(f, v) {
         add_site(st.users, u.l.root, BSite{b: bl, i: i})
         add_site(st.all, u.l.root, BSite{b: bl, i: i})
+        st.all_p[u.l.root].push(u.l.path)
       }
     }
   }
@@ -144,18 +151,26 @@ fn (var r: Rc) decide_borrow(f: Func, var st: Borrows, v: Int) {
   // the owner dying first left it unique, while borrowing would keep the
   // owner alive and the value shared at the consume
   for s in st.cons[v] {
-    if !used_after(f, st, owner.root, s) {
+    if !used_after(f, st, owner, s) {
       return
     }
   }
   r.bproj[v] = owner
 }
 
-/// Whether root is used after instruction s on some path, by its own uses
-/// (borrowProjections' usedAfter).
-fn used_after(f: Func, st: Borrows, root: Int, s: BSite) -> Bool {
+/// Whether leaf o is used after instruction s on some path, by its root's
+/// uses of o or of a leaf that holds it or that it holds
+/// (borrowProjections' usedAfter). Another field's use does not count:
+/// Mutex.with's packed path takes the list out of list.pop's tuple
+/// (field 1) and pushes onto its field 0 after the call, and counting
+/// that use borrowed the list, so the call's first push copied it.
+fn used_after(f: Func, st: Borrows, o: Leaf, s: BSite) -> Bool {
+  let root = o.root
   var used: Map[Int, Bool] = {}
-  for u in st.all[root] {
+  for (k, u) in st.all[root].indexed() {
+    if !paths_overlap(st.all_p[root][k], o.path) {
+      continue
+    }
     if u.b == s.b && u.i > s.i {
       return true
     }
@@ -166,13 +181,15 @@ fn used_after(f: Func, st: Borrows, root: Int, s: BSite) -> Bool {
   // a path that reaches root's own block makes it anew there: a use past
   // it (around a loop) is of the next value, not this one (2026-10-18:
   // an Option matched in a loop stayed a borrowed projection, and its
-  // payload was shared at the move and dropped with it)
+  // payload was shared at the move and dropped with it); s's own block
+  // too when it is root's: root is made before s there, so a use before
+  // s on the way back is the next value's (Mutex.with's loop of pushes)
   let home = f.values[root].block
   while !work.is_empty() {
     let b = work.pop() ?? 0
     for e in f.values[f.term(b)].succs {
       let to = f.edges[e].to
-      if seen.contains(to) || (to == home && home != s.b) {
+      if seen.contains(to) || to == home {
         continue
       }
       if used.contains(to) {
@@ -183,4 +200,9 @@ fn used_after(f: Func, st: Borrows, root: Int, s: BSite) -> Bool {
     }
   }
   false
+}
+
+/// Whether leaf paths a and b name the same leaf, or one holds the other.
+fn paths_overlap(a: Str, b: Str) -> Bool {
+  a == b || a.starts_with("${b}.") || b.starts_with("${a}.")
 }
