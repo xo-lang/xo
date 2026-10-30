@@ -1,6 +1,6 @@
 # 0409: an edit's store link reuses std's laid-out half
 
-Status: Accepted (lead, 2026-10-29, within milestone 0.35 item 2, which the owner approved; option (a) below)
+Status: Accepted (lead, 2026-10-29, within milestone 0.35 item 2, which the owner approved; option (a) below). Stage 2 landed in 1cc23a65e (2026-10-29), default on for darwin/arm64 store links.
 
 ## Context
 
