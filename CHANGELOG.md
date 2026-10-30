@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native backends: a 1, 2 or 4 byte memory load has the range its zero
+  extension gives (compiler/arm64 ranges.xo), so arithmetic on a byte
+  read through std's raw.byte_at needs no overflow check (every backend
+  zero-extends these loads; a packed list's signed elements are other
+  loads and keep their sign). text.parse_duration: overflow branches 5
+  to 3; golden load_ranges.
 - LLVM builds of a program that imports std/html (or template) are
   faster: a constant's initializer over 2000 SSA instructions is built
   `optnone`, so clang uses its fast register allocator on it (std/html's

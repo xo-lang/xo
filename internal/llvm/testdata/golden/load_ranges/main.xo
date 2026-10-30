@@ -1,0 +1,59 @@
+// The value ranges of loads (compiler/arm64 ranges.xo, 2026-10-30): a
+// 1, 2 or 4 byte rt.mem_load zero-extends, so its range is 0 to 2^(8w)-1
+// and arithmetic on it needs no overflow check; a packed list's signed
+// elements are sign-extending loads and keep their sign. Each line folds
+// wrongly if a load gets the wrong range: a negative element read as
+// unsigned makes `x < 0` false and `x - 100` positive.
+fn i8s() -> List[Int8] { [Int8(-128), Int8(-1), Int8(0), Int8(127)] }
+
+fn i16s() -> List[Int16] { [Int16(-32768), Int16(-2), Int16(32767)] }
+
+fn i32s() -> List[Int32] { [Int32(-2147483648), Int32(-3), Int32(2147483647)] }
+
+fn u8s() -> List[UInt8] { [UInt8(0), UInt8(200), UInt8(255)] }
+
+fn u16s() -> List[UInt16] { [UInt16(0), UInt16(65535)] }
+
+fn u32s() -> List[UInt32] { [UInt32(0), UInt32(4294967295)] }
+
+fn signs(xs: List[Int]) -> Str {
+  var out = ""
+  for x in xs {
+    out = out + "${x < 0}:${x - 100}:${x * 2} "
+  }
+  out
+}
+
+fn main(os: Os) {
+  var a: List[Int] = []
+  for x in i8s() { a.push(Int(x)) }
+  os.stdio.println("i8 ${signs(a)}")
+  a = []
+  for x in i16s() { a.push(Int(x)) }
+  os.stdio.println("i16 ${signs(a)}")
+  a = []
+  for x in i32s() { a.push(Int(x)) }
+  os.stdio.println("i32 ${signs(a)}")
+  a = []
+  for x in u8s() { a.push(Int(x)) }
+  os.stdio.println("u8 ${signs(a)}")
+  a = []
+  for x in u16s() { a.push(Int(x)) }
+  os.stdio.println("u16 ${signs(a)}")
+  a = []
+  for x in u32s() { a.push(Int(x)) }
+  os.stdio.println("u32 ${signs(a)}")
+  // std's byte parsers read through raw.byte_at (a 1 byte rt.mem_load)
+  for t in ["1.5s", "0.000000001s", "1.9999999999999999999h", "-2.25m", "9223372036854775807ns", "9223372036854775808ns", "1.x", "x1s"] {
+    match Duration.parse(t) {
+      Ok(d) => os.stdio.println("dur ${t} ${d.nanos()}")
+      Err(_) => os.stdio.println("dur ${t} error")
+    }
+  }
+  for t in ["255", "-9223372036854775808", "9223372036854775808", "12a"] {
+    match Int.parse(t) {
+      Some(n) => os.stdio.println("int ${t} ${n}")
+      None => os.stdio.println("int ${t} none")
+    }
+  }
+}

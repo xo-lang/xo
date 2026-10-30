@@ -442,6 +442,18 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
         // bytes in memory (decision 0184): an address space of 2^48
         "Str.len" => (Interval{lo: 0, hi: MAX_STR_LEN}, true)
         "bytes.index" => (Interval{lo: 0, hi: 255}, true)
+        // a 1, 2 or 4 byte load zero-extends (ldrb, ldrh, ldr w; calls.xo):
+        // raw.byte_at's digit tests and sums were checked for overflow a
+        // byte at a time (2026-10-30: text.parse_duration's fraction
+        // digits, a `subs` and a `b.vs` each)
+        "rt.mem_load" => {
+          let (w, wc) = g.const_int(x.args[2])
+          if wc && (w == 1 || w == 2 || w == 4) {
+            (Interval{lo: 0, hi: (1 << (8 * w)) - 1}, true)
+          } else {
+            (full_interval(), true)
+          }
+        }
         _ => g.call_bound(x)
       }
     }
