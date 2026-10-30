@@ -159,6 +159,17 @@ fn rt_text(var g: Gen) -> Str {
       i32.shl
       i32.add
       local.set $need
+      ;; a class of 2^32 (1 << 32 is 1) or an end past 4 GiB wraps: out of memory
+      local.get $need
+      local.get $p
+      i32.lt_u
+      local.get $c
+      i32.const 31
+      i32.gt_u
+      i32.or
+      if
+        call $oom
+      end
       block $ok
         loop $grow
           local.get $need
@@ -204,6 +215,12 @@ fn rt_text(var g: Gen) -> Str {
       local.get $n
       i32.add
       local.set $need
+      local.get $need
+      local.get $p
+      i32.lt_u
+      if
+        call $oom
+      end
       block $ok
         loop $grow
           local.get $need
