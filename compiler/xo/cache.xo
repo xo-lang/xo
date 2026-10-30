@@ -187,6 +187,11 @@ fn bin_cache_dir(os: Os, ctx: Ctx, tests: Bool) -> Str {
   }
 }
 
+/// The build directory's subdirectory of the per-function cache's spill
+/// files (decision 0418), read back by the store at the build's end and
+/// not an input of any binary: the binary cache keys skip it.
+const SPILL_DIR = "spill"
+
 /// binKey.tree: every regular file under dir, path relative to dir and
 /// contents, sorted by path, skipping the top level directories skip
 /// names (a name ending in * is a prefix). false when a file cannot be
@@ -257,7 +262,7 @@ fn native_bin_key(os: Os, ctx: Ctx, dir: Str, cc: Str, flags: List[Str], srcs: L
     root = (os.fs.read_text(memo).ok() ?? "").trim()
   }
   k.str("sysroot ${root} ${os.env.get("XO_SYSROOT") ?? ""}")
-  if !key_tree(os, k, dir, ["bin"], {}) {
+  if !key_tree(os, k, dir, ["bin", SPILL_DIR], {}) {
     return ""
   }
   k.sum()
@@ -299,7 +304,7 @@ fn macho_bin_key(os: Os, ctx: Ctx, dir: Str, tgoos: Str, flags: List[Str], srcs:
       }
     }
   }
-  if !key_tree(os, k, dir, ["bin"], known) {
+  if !key_tree(os, k, dir, ["bin", SPILL_DIR], known) {
     return ""
   }
   k.sum()
@@ -324,7 +329,7 @@ fn go_bin_key(os: Os, ctx: Ctx, gocmd: Str, dir: Str, args: List[Str], t: Str, r
     }
     k.str(tool_id_memo(os, ctx, "cc", ["--version"]))
   }
-  if !key_tree(os, k, dir, ["bin", "llvm*", "arm64*"], {}) {
+  if !key_tree(os, k, dir, ["bin", SPILL_DIR, "llvm*", "arm64*"], {}) {
     return ""
   }
   k.sum()

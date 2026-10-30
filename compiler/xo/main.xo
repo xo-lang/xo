@@ -1588,9 +1588,18 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     var fc = fc0
     if !fdir.is_empty() && !fc.verify {
       // decision 0418: each part's new entries go to a file in the
-      // build's directory as the part finishes, read back by the store
-      fc.spill_dir = dir
-      fc.fs = Some(os.fs)
+      // build's spill directory as the part finishes, read back by the
+      // store; a directory of its own, which the binary cache keys skip
+      // (key_tree): in dir itself a cold build's spills changed the
+      // link's key from the warm build's, which makes none, so the
+      // second build missed the binary cache (TestMachoBinCache,
+      // 2026-10-30); emptied first so an earlier build's do not pile up
+      let sd = "${dir}/${SPILL_DIR}"
+      os.fs.remove_all(sd).ignore_err("none from an earlier build")
+      if os.fs.create_dir_all(sd).is_ok() {
+        fc.spill_dir = sd
+        fc.fs = Some(os.fs)
+      }
     }
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)

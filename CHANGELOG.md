@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- A native build that rebuilt nothing hits the binary cache again: the
+  per-function cache's spill files (decision 0418) are written to the
+  build directory's spill/ subdirectory, which the link's cache key
+  skips; in the directory itself a cold build's spills made its key
+  differ from an identical warm build's, so the second build linked
+  again (TestMachoBinCache).
 - The native back end's parts own their functions' SSA bodies and drop
   them as each part is emitted; the module keeps shells with body facts
   (decision 0424). The self build's heap past emit 9452 to 8180 MB and
