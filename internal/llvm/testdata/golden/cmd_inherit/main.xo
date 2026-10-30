@@ -4,9 +4,18 @@
 // piped would write into a pipe this program never reads, and the line
 // would be missing. The shell is named by its absolute path because the
 // command's PATH is this environment's, which a test run may not set.
+// Windows has no /bin/sh: cmd.exe from SystemRoot writes the line, and its
+// echo ends it with CRLF, which want_windows.txt keeps.
 fn main(os: Os) {
   os.stdio.println("before")
-  let r = os.proc.cmd("/bin/sh", ["-c", "printf 'inherited\\n'"]).inherit().run()
+  let c = match target.os {
+    Windows => {
+      let root = os.env.get("SystemRoot") ?? "C:\\Windows"
+      os.proc.cmd("${root}\\System32\\cmd.exe", ["/c", "echo inherited"])
+    }
+    _ => os.proc.cmd("/bin/sh", ["-c", "printf 'inherited\\n'"])
+  }
+  let r = c.inherit().run()
   match r {
     Ok(code) => os.stdio.println("code ${code}")
     Err(e) => os.stdio.println("err ${e}")
