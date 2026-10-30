@@ -136,8 +136,16 @@ fn (var c: Checker) check_module(m: Int) {
                 c.eager_fns[fo] = true
               }
               if fd.lazy.is_some() {
-                // body_words: the body parsed, in the file's tree too
-                c.force_body(fo)
+                // body_words: the body parsed, in the file's tree too; a
+                // program body that does not parse (bench/paper's blind
+                // solutions) reports its syntax errors, as a full parse
+                // would, and stays empty instead of stopping the lookup
+                if !c.parse_body_words(fo) {
+                  c.files[f].ast.decls[i] = parser.Decl.FnDecl(d: c.objs[fo].fn_decl[0])
+                  c.lazy_fns[fo] = true
+                  c.check_fn_defaults(fo)
+                  continue
+                }
                 c.files[f].ast.decls[i] = parser.Decl.FnDecl(d: c.objs[fo].fn_decl[0])
               }
               c.check_fn_decl(c.objs[fo].fn_decl[0], fo)
@@ -295,6 +303,30 @@ pub fn (var c: Checker) force_body(fo: Int) uses fs.read {
     nf.lazy = None
     c.objs[fo].fn_decl = [nf]
   }
+}
+
+/// force_body for a body_words lookup (xo refs): a body with syntax
+/// errors adds them to the diagnostics and becomes an empty block, and
+/// the result is false; true when the body parsed.
+fn (var c: Checker) parse_body_words(fo: Int) -> Bool {
+  let fd = c.objs[fo].fn_decl[0]
+  let lb = match fd.lazy {
+    Some(x) => x
+    None => return true
+  }
+  let f = c.objs[fo].decl_file
+  let (b, ds) = parser.parse_body(c.files[f].path.bytes(), c.files[f].src, lb)
+  var nf = fd
+  nf.lazy = None
+  if ds.is_empty() {
+    nf.body = Some(b)
+    c.objs[fo].fn_decl = [nf]
+    return true
+  }
+  c.diags = c.diags + parse_diags(c.files[f].path, ds)
+  nf.body = Some(parser.Block{span: fd.span})
+  c.objs[fo].fn_decl = [nf]
+  false
 }
 
 /// Checks the body of fo when it waits for check_lazy (decision 0247),

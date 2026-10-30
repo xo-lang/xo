@@ -159,6 +159,32 @@ pub fn preloads_wide(os: Os, std_dir: Str, name: Str) -> List[Str] uses fs.read 
   out
 }
 
+/// The runtime modules (native/llrt/X) whose file spells the last
+/// segment of one of names: xo refs over std itself loads them, since no
+/// module checked there may import them (pg.xo, imported by native/sql).
+pub fn runtime_spelling(os: Os, std_dir: Str, names: List[Str]) -> List[Str] uses fs.read {
+  var words: List[Str] = []
+  for n in names {
+    let segs = n.split("/")
+    let ds = segs[segs.len() - 1].split(".")
+    words.push(ds[ds.len() - 1])
+  }
+  var out: List[Str] = []
+  if let Ok(es) = os.fs.read_dir("${std_dir}/native/llrt") {
+    for fi in es {
+      if fi.is_dir || !fi.name.ends_with(".xo") || fi.name.ends_with("_test.xo") || fi.name.ends_with("_c.xo") {
+        continue
+      }
+      // xo:allow XO0903 a file it cannot read is left out, as a missing one
+      let text = os.fs.read("${std_dir}/native/llrt/${fi.name}").ok() ?? b""
+      if words.any(fn(w) { check.spells_ident(text, w) }) {
+        out.push("native/llrt/${fi.name.trim_suffix(".xo")}")
+      }
+    }
+  }
+  out
+}
+
 /// What to add to "no declaration named NAME" (decision 0289): that
 /// min, max, and clamp are built into every ordered type, and the std
 /// functions of that name; "" for neither.

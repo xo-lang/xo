@@ -1489,6 +1489,28 @@ func TestAgentRefsSpellFilter(t *testing.T) {
 	}
 }
 
+// TestAgentRefsBrokenBody: a function body that spells the name looked
+// for but does not parse (bench/paper's blind solutions) stops neither
+// xo refs nor its other modules' answers; before, the lazy parse of the
+// body faulted ("a lazily parsed body ... does not parse").
+func TestAgentRefsBrokenBody(t *testing.T) {
+	t.Parallel()
+	root := writeFiles(t, map[string]string{
+		"app/xo.mod":  "module example.com/app\n",
+		"app/main.xo": "fn helper(n: Int) -> Int { n + 1 }\n\nfn main(os: Os) {\n  os.stdio.println(\"${helper(2)}\")\n}\n",
+		"bad/xo.mod":  "module example.com/bad\n",
+		"bad/main.xo": "fn broken() -> Int {\n  let x = helper(1\n  x +\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${broken()}\")\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	code := runEnv(t, nil, []string{"refs", "--dir=" + root, "--json", "helper"}, &out, &errOut)
+	if strings.Contains(out.String()+errOut.String(), "does not parse") {
+		t.Fatalf("refs helper: the broken body stopped the lookup (exit %d): %s%s", code, out.String(), errOut.String())
+	}
+	if !strings.Contains(out.String(), "app/main.xo") {
+		t.Errorf("refs helper (exit %d): no reference in app/main.xo: %s%s", code, out.String(), errOut.String())
+	}
+}
+
 // TestAgentLookupsEager: def, doc and symbols by name, and xo query's
 // def, api, imports, deps and callers, parse and check no function body
 // (callers only those that spell the name; 2026-10-26), and answer

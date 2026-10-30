@@ -804,12 +804,42 @@ fn (var c: Checker) find_module_dirs(dir: Str, top: Bool, var out: List[Str]) {
     // imports that name them (native/llrt/pool); as one directory module
     // their names collide (pool.park_wait, poll.park_wait)
     if c.runtime_files && !c.std_dir.is_empty() && c.abs(sub) == c.abs(join(join(c.std_dir, "native"), "llrt")) {
+      // xo refs over a tree holding std (--dir=std, the xo root): a
+      // runtime file no checked module imports (pg.xo, which only
+      // native/sql imports) is checked with its body when its text
+      // spells a name looked for, as a walk of the runtime directory
+      // itself checks it (2026-10-30: refs of Mutex.with missed pg.xo)
+      if !c.body_words.is_empty() && !c.decls_only {
+        c.preload_runtime_spelling(sub)
+      }
       continue
     }
     if !c.exclude_dirs.is_empty() && c.exclude_dirs.contains(c.abs(sub)) {
       continue
     }
     c.find_module_dirs(sub, false, out)
+  }
+}
+
+/// The runtime files of dir (std/native/llrt) whose text spells one of
+/// body_words, preloaded and checked with their bodies.
+fn (var c: Checker) preload_runtime_spelling(dir: Str) uses fs.read {
+  for e in c.list_dir(dir) {
+    if e.is_dir || !e.name.ends_with(".xo") || e.name.ends_with("_test.xo") || e.name.ends_with("_c.xo") {
+      continue
+    }
+    // xo:allow XO0903 a file it cannot read is left out, as a missing one
+    let text = c.fs.read(join(dir, e.name)).ok() ?? b""
+    if !c.body_words.any(fn(w) { spells_ident(text, w) }) {
+      continue
+    }
+    let p = "native/llrt/${e.name.trim_suffix(".xo")}"
+    if !c.preload.contains(p) {
+      c.preload.push(p)
+    }
+    if !c.check_bodies_of.contains(p) {
+      c.check_bodies_of.push(p)
+    }
   }
 }
 

@@ -70,6 +70,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `record` or request: it grows to twice its cap and drops its older
   half at once: 200,000 records on a ring of 1,000 take 0.156 of their
   time (4.4 s to 0.69 s on linux/arm64).
+- `xo refs` no longer stops at a function body with a syntax error in a
+  module it checks (bench/paper's solutions written from an old spec):
+  the body's errors are reported and the lookup goes on. Over std
+  (`--dir=std`, or a root holding it) it also finds references in the
+  runtime files no checked module imports (std/native/llrt/pg.xo).
 - `xo bench` takes a value flag's value as the next word too (`--rounds 10`, as `--rounds=10`); before, `--rounds 10` failed with "unknown flag --rounds".
 - `xo run -o PATH` writes PATH every time: when the run cache served
   an unchanged program, the second run wrote no file there. `xo run -o`
