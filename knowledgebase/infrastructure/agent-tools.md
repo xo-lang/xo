@@ -888,6 +888,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `ab-host.sh` for `--ab` (offload.md). A slot run older than 30 minutes no
   longer holds every other run for a waiting measurement.
 - Pushes: `~/xo-lead/agents/pushq.sh WORKTREE [--base SHA] [-- GATE...]`.
+  A push touching `std/*.xo` also runs cmd/xo's TestStdChecks with the
+  worktree's bin/xo (about 2 s; owner, 2026-10-30, after an XO0804 in
+  std/native/http.xo reached main), so build bin/xo before pushing a std
+  change; without it pushq notes the check did not run.
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision
