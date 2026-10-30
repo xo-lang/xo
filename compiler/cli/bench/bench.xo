@@ -74,6 +74,12 @@ fn flag_val(a: Str, name: Str) -> Str? {
   None
 }
 
+/// Whether --name takes a value: given as `--name=V` or as `--name V`
+/// (`--rounds 20` was "unknown flag --rounds" before 2026-10-30).
+fn value_flag(name: Str) -> Bool {
+  name is "rounds" | "warmup" | "env-a" | "env-b" | "args-a" | "args-b" | "max-load" | "load-wait" | "guard" | "ops" | "metrics" | "timeout" | "alpha" | "seed"
+}
+
 fn words(s: Str) -> List[Str] {
   var out: List[Str] = []
   for w in s.split(" ") {
@@ -89,8 +95,16 @@ fn parse_opts(args: List[Str]) -> Opts ! Str {
   var ab = false
   var i = 0
   while i < args.len() {
-    let a = args[i]
+    var a = args[i]
     i += 1
+    if a.starts_with("--") && !a.contains("=") && value_flag(a[2..]) {
+      // `--rounds 20`: the next word is the value
+      if i >= args.len() {
+        return Err("${a} needs a value")
+      }
+      a = "${a}=${args[i]}"
+      i += 1
+    }
     if a == "--" {
       while i < args.len() {
         o.common.push(args[i])

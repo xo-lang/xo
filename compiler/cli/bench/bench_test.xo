@@ -51,6 +51,17 @@ test "options" {
   }
 }
 
+test "a value flag takes its value as the next word" {
+  match parse_opts(["--ab", "--rounds", "7", "--env-a", "K=V", "--args-b", "-x 1", "p", "q"]) {
+    Ok(o) => {
+      expect(o.rounds == 7 && o.env_a == ["K=V"] && o.args_b == ["-x", "1"] && o.progs == ["p", "q"])
+    }
+    Err(e) => expect(e == "")
+  }
+  expect(parse_opts(["--ab", "a", "b", "--rounds"]).is_err())
+  expect(parse_opts(["--ab", "--rounds", "x", "a", "b"]).is_err())
+}
+
 test "fmt and jnum guard NaN and infinity" {
   let zero = 0.0
   let nan = zero / zero
