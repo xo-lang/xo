@@ -55,14 +55,59 @@ fn var_tys(info: debug.Info) -> List[Int] {
 
 /// cv_types with the variables' types given in order (var_tys): the
 /// structures by offset, then tys, then the structures' members.
-fn cv_types_of(info: debug.Info, tys: List[Int]) -> CvTypes {
+fn cv_types_of(info: debug.Info, tys: List[Int]) -> CvTypes { cv_types_split(info, tys, -1, 0) }
+
+/// cv_types_of in two runs when split_off >= 0: the types at offsets
+/// below split_off and tys[0..split_tys] (std's, the store's objects come
+/// first), then the rest; so std's records and indices are the same
+/// whatever the program brings (a PDB's std part is reused, decision 0409).
+fn cv_types_split(info: debug.Info, tys: List[Int], split_off: Int, split_tys: Int) -> CvTypes {
   var t = CvTypes{}
-  var structs: List[(Str, Int)] = []
   var offs: List[Int] = []
   for (off, _) in info.types {
     offs.push(off)
   }
-  for off in offs.sort() {
+  let sorted = offs.sort()
+  if split_off < 0 {
+    cv_types_run(t, info, sorted, tys)
+    return t
+  }
+  t = cv_types_std(info, tys, split_off, split_tys)
+  cv_types_rest(t, info, tys, split_off, split_tys)
+  t
+}
+
+/// cv_types_split's first run alone: std's types (a PdbStd keeps them).
+fn cv_types_std(info: debug.Info, tys: List[Int], split_off: Int, split_tys: Int) -> CvTypes {
+  var t = CvTypes{}
+  var lo: List[Int] = []
+  for (off, _) in info.types {
+    if off < split_off {
+      lo.push(off)
+    }
+  }
+  let k = if split_tys < tys.len() { split_tys } else { tys.len() }
+  cv_types_run(t, info, lo.sort(), tys[0..k])
+  t
+}
+
+/// cv_types_split's second run, after std's in t: the program's types.
+fn cv_types_rest(var t: CvTypes, info: debug.Info, tys: List[Int], split_off: Int, split_tys: Int) {
+  var hi: List[Int] = []
+  for (off, _) in info.types {
+    if off >= split_off {
+      hi.push(off)
+    }
+  }
+  let k = if split_tys < tys.len() { split_tys } else { tys.len() }
+  cv_types_run(t, info, hi.sort(), tys[k..tys.len()])
+}
+
+/// The structures at offs (ascending) as forward references, then tys'
+/// types, then those structures' members and full definitions, into t.
+fn cv_types_run(var t: CvTypes, info: debug.Info, offs: List[Int], tys: List[Int]) {
+  var structs: List[(Str, Int)] = []
+  for off in offs {
     let ty = info.types.get(off) ?? debug.Type{tag: 0, name: "", size: 0, enc: 0, of: -1, members: []}
     if ty.tag == 0x13 && !ty.name.is_empty() && !t.fwd.contains(ty.name) {
       var w = new_out(16 + ty.name.len())
@@ -108,7 +153,6 @@ fn cv_types_of(info: debug.Info, tys: List[Int]) -> CvTypes {
     w.bytes(cstr_bytes(name))
     let _f = add_type(t, LF_STRUCTURE, w.done(), hash_v1(name))
   }
-  t
 }
 
 /// The CodeView index of the DWARF type at off (converted once).

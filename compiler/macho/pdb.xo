@@ -122,10 +122,13 @@ pub fn pe_pdb(img: Bytes) -> Result[(Bytes, Bytes), Str] { pe_pdb_facts(img, Non
 /// its own object), only the locals, the types and the file are made here.
 pub fn pe_pdb_facts(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs?) -> Result[(Bytes, Bytes), Str] { pe_pdb_seeded(img, facts, pre, b"") }
 
-/// pe_pdb_facts with the GUID and time stamp from seed (what made the
-/// image: its objects' cache keys and the link's options, ld.xo pdb_seed)
-/// instead of the image's own hash; an empty seed hashes the image.
-pub fn pe_pdb_seeded(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs?, seed: Bytes) -> Result[(Bytes, Bytes), Str] {
+/// The image img with its PDB's GUID and time stamp in its debug
+/// directory's CodeView record and header, and the hash they come from:
+/// the seed's, else the image's (its GUID and time stamp still zero).
+/// Nothing in it depends on the PDB, so the image can be written before
+/// the PDB is made (ld.xo PdbLater: `xo run` and `xo test` make it while
+/// the program runs).
+pub fn pe_pdb_stamped(img: Bytes, seed: Bytes) -> Result[(Bytes, Bytes), Str] {
   if img.len() < 64 || img[0] != 77 || img[1] != 90 {
     return Err("not a PE image")
   }
@@ -133,13 +136,7 @@ pub fn pe_pdb_seeded(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProc
   let coff = pe + 4
   let opt = coff + 20
   let nsec = le_b(img, coff + 2, 2)
-  let base = le_b(img, opt + 24, 8)
   let sec = opt + le_b(img, coff + 16, 2)
-  var sects: List[PdbSect] = []
-  for i in 0..nsec {
-    let h = sec + 40 * i
-    sects.push(PdbSect{rva: le_b(img, h + 12, 4), vsize: le_b(img, h + 8, 4), chars: le_b(img, h + 36, 4), header: img[h..h + 40]})
-  }
   // the debug directory (data directory 6, at 112 + 8 * 6 of PE32+'s
   // optional header): its file offset from its RVA
   let drva = le_b(img, opt + 112 + 48, 4)
@@ -151,22 +148,107 @@ pub fn pe_pdb_seeded(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProc
     return Err("the image's debug directory has no CodeView record")
   }
   let rsds = le_b(img, dfile + 24, 4)
-  // the GUID: the seed's hash, else the image's (its GUID and time stamp
-  // are still zero)
   let h = if seed.is_empty() { crypto.sha256(img) } else { crypto.sha256(seed) }
-  let guid = h[0..16]
-  let stamp = le_b(h, 16, 4)
   var b = BytesBuilder.with_capacity(img.len())
   b.write(img[0..dfile + 4])
   b.write(h[16..20])
   b.write(img[dfile + 8..rsds + 4])
-  b.write(guid)
+  b.write(h[0..16])
   b.write(img[rsds + 20..img.len()])
-  let out = b.freeze()
+  Ok((b.freeze(), h))
+}
+
+/// pe_pdb_facts with the GUID and time stamp from seed (what made the
+/// image: its objects' cache keys and the link's options, ld.xo pdb_seed)
+/// instead of the image's own hash; an empty seed hashes the image.
+pub fn pe_pdb_seeded(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProcs?, seed: Bytes) -> Result[(Bytes, Bytes), Str] {
+  let (out, h) = match pe_pdb_stamped(img, seed) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  let (sects, base) = pe_pdb_sects(img)
+  let guid = h[0..16]
+  let stamp = le_b(h, 16, 4)
   if let Some(pp) = pre {
-    var types = cv_types_of(pp.info, pp.tys)
-    var procs: List[PdbProc] = []
-    for p0 in pp.procs {
+    if pp.std_lazy {
+      return Err("the PDB: std's functions were not read (a lazy std part without the writer's)")
+    }
+    let (pdb, _) = pdb_of_pre(img, guid, stamp, sects, base, pp, None)
+    return Ok((out, pdb))
+  }
+  pe_pdb_dwarf(img, facts, out, guid, stamp, sects, base)
+}
+
+/// pe_pdb_seeded from pre's functions, with std's part of the PDB from
+/// std (the PdbStd an earlier link from std's same half made) when given;
+/// also std's part as this PDB made it (None: no std part, or std given).
+pub fn pe_pdb_std(img: Bytes, pp: PreProcs, seed: Bytes, std: PdbStd?) -> Result[(Bytes, Bytes, PdbStd?), Str] {
+  if pp.std_lazy && std is None {
+    return Err("the PDB: std's functions were not read (a lazy std part without the writer's)")
+  }
+  let (out, h) = match pe_pdb_stamped(img, seed) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  let (sects, base) = pe_pdb_sects(img)
+  let (pdb, made) = pdb_of_pre(img, h[0..16], le_b(h, 16, 4), sects, base, pp, std)
+  Ok((out, pdb, made))
+}
+
+/// The image's sections for the PDB, and its image base.
+fn pe_pdb_sects(img: Bytes) -> (List[PdbSect], Int) {
+  let pe = le_b(img, 60, 4)
+  let coff = pe + 4
+  let opt = coff + 20
+  let nsec = le_b(img, coff + 2, 2)
+  let base = le_b(img, opt + 24, 8)
+  let sec = opt + le_b(img, coff + 16, 2)
+  var sects: List[PdbSect] = []
+  for i in 0..nsec {
+    let h = sec + 40 * i
+    sects.push(PdbSect{rva: le_b(img, h + 12, 4), vsize: le_b(img, h + 8, 4), chars: le_b(img, h + 36, 4), header: img[h..h + 40]})
+  }
+  (sects, base)
+}
+
+/// The PDB from pp's functions (pe_pdb_seeded's pre path; pe_pdb_std).
+fn pdb_of_pre(img: Bytes, guid: Bytes, stamp: Int, sects: List[PdbSect], base: Int, pp: PreProcs, std: PdbStd?) -> (Bytes, PdbStd?) {
+  // std's types from std, else made (and kept for the PdbStd made)
+  var std_types = CvTypes{}
+  var types = CvTypes{}
+  match std {
+    Some(s) => {
+      types = s.types
+      cv_types_rest(types, pp.info, pp.tys, pp.std_off, pp.std_tys)
+    }
+    None => if pp.std_off >= 0 {
+      std_types = cv_types_std(pp.info, pp.tys, pp.std_off, pp.std_tys)
+      types = std_types
+      cv_types_rest(types, pp.info, pp.tys, pp.std_off, pp.std_tys)
+    } else {
+      types = cv_types_split(pp.info, pp.tys, -1, 0)
+    }
+  }
+  var procs: List[PdbProc] = []
+  // std's placed functions from std, or counted as they are placed
+  var from = 0
+  var pstd = 0
+  match std {
+    Some(s) => {
+      // only their names are read (sym_records, gsi): the rest is in s
+      procs = List.with_capacity(s.names.len() + pp.procs.len())
+      for n in s.names {
+        procs.push(PdbProc{name: n, seg: 0, off: 0, size: 0})
+      }
+      // (a lazy pp has only the program's)
+      from = if pp.std_lazy { 0 } else { pp.std_procs }
+      pstd = s.names.len()
+    }
+    None => {}
+  }
+  for i in from..pp.procs.len() {
+    let p0 = pp.procs[i]
+    {
       let (seg, off) = seg_off(sects, p0.lo - base)
       if seg > 0 {
         let delta = off - p0.sect_off
@@ -177,17 +259,28 @@ pub fn pe_pdb_seeded(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProc
           sites[i] = st
         }
         procs.push(p0 with {seg: seg, off: off, sites: sites, locals: locals_placed(p0.locals, types, pp.info, delta, seg)})
+        if std is None && i < pp.std_procs {
+          pstd += 1
+        }
       }
     }
-    var pubs: List[PdbProc] = []
-    for (a, n) in debug.tables(img).syms {
-      let (seg, off) = seg_off(sects, a - base)
-      if seg > 0 {
-        pubs.push(PdbProc{name: n, seg: seg, off: off, size: 0})
-      }
-    }
-    return Ok((out, pdb_file(guid, stamp, sects, procs, pubs, pp.files, types)))
   }
+  var pubs: List[PdbProc] = []
+  for (a, n) in debug.tables(img).syms {
+    let (seg, off) = seg_off(sects, a - base)
+    if seg > 0 {
+      pubs.push(PdbProc{name: n, seg: seg, off: off, size: 0})
+    }
+  }
+  let (pdb, made) = pdb_file(guid, stamp, sects, procs, pubs, pp.files, types, pstd, std)
+  (pdb, match made {
+    Some(m) => Some(m with {types: std_types})
+    None => None
+  })
+}
+
+/// pe_pdb_seeded from the image's DWARF (facts, or read from img).
+fn pe_pdb_dwarf(img: Bytes, facts: (debug.Info, debug.Lines)?, out: Bytes, guid: Bytes, stamp: Int, sects: List[PdbSect], base: Int) -> Result[(Bytes, Bytes), Str] {
   // the functions: DWARF's, by name as the traceback shows them
   let (info, lns) = match facts {
     Some(f) => f
@@ -245,7 +338,8 @@ pub fn pe_pdb_seeded(img: Bytes, facts: (debug.Info, debug.Lines)?, pre: PreProc
       pubs.push(PdbProc{name: n, seg: seg, off: off, size: 0})
     }
   }
-  Ok((out, pdb_file(guid, stamp, sects, procs, pubs, lns.files, types)))
+  let (pdb, _) = pdb_file(guid, stamp, sects, procs, pubs, lns.files, types, 0, None)
+  Ok((out, pdb))
 }
 
 /// ls (made from an object, pre_procs) with their CodeView types and
@@ -458,16 +552,35 @@ fn seg_off(sects: List[PdbSect], rva: Int) -> (Int, Int) {
   (0, 0)
 }
 
-/// The PDB's bytes: its streams in the MSF container.
-fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc], pubs: List[PdbProc], dfiles: List[Str], types: CvTypes) -> Bytes {
-  var streams: List[Bytes] = []
-  for _ in 0..PS_COUNT {
-    streams.push(b"")
+/// What std's functions make of a PDB, the same in every link from std's
+/// half (decision 0409 on PE: they keep their places): the first pstd
+/// placed functions' names (all the global symbols need of them), the
+/// files and inlined functions they name first (in first use order),
+/// their module records (from the stream's offset 16) with each one's
+/// offset, and their line blocks.
+pub struct PdbStd {
+  names: List[Str]
+  /// std's CodeView types (cv_types_std)
+  types: CvTypes
+  files: List[Str]
+  fidx: List[(Int, Int)]
+  inlinees: List[(Str, Int, Int)]
+  recs: Bytes
+  at: List[Int]
+  lines: Bytes
+}
+
+fn std_names(procs: List[PdbProc]) -> List[Str] {
+  var out = List[Str].with_capacity(procs.len())
+  for p in procs {
+    out.push(p.name)
   }
-  // the files the line rows name, in first use order, and each one's
-  // index among them
-  var files: List[Str] = []
-  var fidx: Map[Int, Int] = {}
+  out
+}
+
+/// The files procs' rows and sites name that files (fidx: a DWARF file's
+/// index among them) does not have yet, added in first use order.
+fn pdb_files_add(procs: List[PdbProc], dfiles: List[Str], var files: List[Str], var fidx: Map[Int, Int]) {
   for p in procs {
     for (_, f, _, _) in p.rows {
       if !fidx.contains(f) {
@@ -484,11 +597,12 @@ fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc],
       }
     }
   }
-  // each inlined function's LF_FUNC_ID (its type index) and its first
-  // site's first entry: the file and line its sites' annotations start
-  // from (DEBUG_S_INLINEELINES)
-  var fid: Map[Str, Int] = {}
-  var inlinees: List[(Str, Int, Int)] = []
+}
+
+/// The inlined functions procs' sites call that fid (each one's
+/// LF_FUNC_ID) does not have yet, added in first use order with their
+/// first site's first entry.
+fn pdb_inlinees_add(procs: List[PdbProc], var fid: Map[Str, Int], var inlinees: List[(Str, Int, Int)]) {
   for p in procs {
     for st in p.sites {
       if !fid.contains(st.name) {
@@ -498,9 +612,65 @@ fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc],
       }
     }
   }
+}
+
+/// The PDB's bytes: its streams in the MSF container. The first pstd of
+/// procs are std's: their part is std's when given, else made and
+/// returned (None when pstd is 0 or std was given).
+fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc], pubs: List[PdbProc], dfiles: List[Str], types: CvTypes, pstd: Int, std: PdbStd?) -> (Bytes, PdbStd?) {
+  var streams: List[Bytes] = []
+  for _ in 0..PS_COUNT {
+    streams.push(b"")
+  }
+  // the files the line rows name, in first use order, and each one's
+  // index among them; each inlined function's LF_FUNC_ID (its type index)
+  // and its first site's first entry: the file and line its sites'
+  // annotations start from (DEBUG_S_INLINEELINES); std's first
+  var files: List[Str] = []
+  var fidx: Map[Int, Int] = {}
+  var fid: Map[Str, Int] = {}
+  var inlinees: List[(Str, Int, Int)] = []
+  match std {
+    Some(s) => {
+      files = s.files
+      for (f, i) in s.fidx {
+        fidx[f] = i
+      }
+      inlinees = s.inlinees
+      for (i, (n, _, _)) in inlinees.indexed() {
+        fid[n] = 0x1000 + i
+      }
+    }
+    None => {
+      pdb_files_add(procs[0..pstd], dfiles, files, fidx)
+      pdb_inlinees_add(procs[0..pstd], fid, inlinees)
+    }
+  }
+  let std_files = files
+  var std_fidx: List[(Int, Int)] = []
+  if std is None && pstd > 0 {
+    for (f, i) in fidx {
+      std_fidx.push((f, i))
+    }
+  }
+  let std_inlinees = inlinees
+  let prog = procs[pstd..procs.len()]
+  pdb_files_add(prog, dfiles, files, fidx)
+  pdb_inlinees_add(prog, fid, inlinees)
   let (names, name_at) = names_table(files)
-  let c13 = c13_lines(procs, fidx, name_at, inlinees)
-  let (modsyms, proc_at) = module_stream(procs, c13, fid, inlinees, fidx)
+  // std's line blocks and module records, then the program's after them
+  let (slines, srecs, sat) = match std {
+    Some(s) => (s.lines, s.recs, s.at)
+    None => {
+      let (r, a) = proc_records(procs[0..pstd], 16, fid, inlinees, fidx)
+      (proc_lines(procs[0..pstd], fidx), r, a)
+    }
+  }
+  let c13 = c13_lines(slines + proc_lines(prog, fidx), fidx, name_at, inlinees)
+  let (precs, pat) = proc_records(prog, 16 + srecs.len(), fid, inlinees, fidx)
+  let modsyms = module_stream(srecs + precs, c13)
+  let proc_at = sat + pat
+  let made = if std is None && pstd > 0 { Some(PdbStd{names: std_names(procs[0..pstd]), types: CvTypes{}, files: std_files, fidx: std_fidx, inlinees: std_inlinees, recs: srecs, at: sat, lines: slines}) } else { None }
   let (recs, pub_at, ref_at) = sym_records(procs, proc_at, pubs)
   streams[PS_INFO] = info_stream(guid, stamp)
   let (tpi, tpihash) = type_stream(types.recs, types.hashes, PS_TPIHASH)
@@ -524,7 +694,7 @@ fn pdb_file(guid: Bytes, stamp: Int, sects: List[PdbSect], procs: List[PdbProc],
   }
   streams[PS_GLOBALS] = gsi(pnames, ref_at)
   streams[PS_DBI] = dbi_stream(sects, modsyms.len() - c13.len(), c13.len(), files)
-  msf(streams)
+  (msf(streams), made)
 }
 
 // ---------------------------------------------------------------------------
@@ -616,7 +786,7 @@ fn names_table(strs: List[Str]) -> (Bytes, List[Int]) {
 /// function with rows (its offset, segment and size, then a block per
 /// run of rows in one file: the file's checksum entry, the rows' offsets
 /// and lines with the statement bit).
-fn c13_lines(procs: List[PdbProc], fidx: Map[Int, Int], name_at: List[Int], inlinees: List[(Str, Int, Int)]) -> Bytes {
+fn c13_lines(lines: Bytes, fidx: Map[Int, Int], name_at: List[Int], inlinees: List[(Str, Int, Int)]) -> Bytes {
   var w = new_out(1024)
   var ck = new_out(8 * name_at.len())
   for off in name_at {
@@ -638,6 +808,14 @@ fn c13_lines(procs: List[PdbProc], fidx: Map[Int, Int], name_at: List[Int], inli
     }
     subsection(w, DEBUG_S_INLINEELINES, il.done())
   }
+  w.bytes(lines)
+  w.done()
+}
+
+/// The DEBUG_S_LINES subsections of procs (c13_lines'), each a multiple
+/// of 4 bytes: a run of procedures' depends only on them and fidx.
+fn proc_lines(procs: List[PdbProc], fidx: Map[Int, Int]) -> Bytes {
+  var w = new_out(1024)
   for p in procs {
     if p.rows.is_empty() {
       continue
@@ -715,7 +893,27 @@ fn cstr_bytes(s: Str) -> Bytes {
 /// line information c13; the global references' size (0). Also each
 /// S_GPROC32's offset. A procedure's and a site's parent and end are the
 /// offsets of the enclosing record and of their closing one.
-fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees: List[(Str, Int, Int)], fidx: Map[Int, Int]) -> (Bytes, List[Int]) {
+fn module_stream(recs: Bytes, c13: Bytes) -> Bytes {
+  // the signature and S_OBJNAME (12 bytes), then the procedures' records
+  // (proc_records from offset 16)
+  var w = new_out(16 + recs.len() + c13.len() + 4)
+  w.u32(4)
+  rec_head(w, S_OBJNAME, 7)
+  w.u32(0)
+  w.bytes(cstr_bytes("xo"))
+  w.zeros(rec_pad(7))
+  w.bytes(recs)
+  w.bytes(c13)
+  w.u32(0)
+  w.done()
+}
+
+/// The records of procs (module_stream's), the first at offset base of
+/// the module stream: each procedure's and site's parent and end are
+/// offsets in that stream. Also each S_GPROC32's offset. A run of
+/// procedures' records depends only on them and base, so std's are the
+/// same in every link from its half.
+fn proc_records(procs: List[PdbProc], base: Int, fid: Map[Str, Int], inlinees: List[(Str, Int, Int)], fidx: Map[Int, Int]) -> (Bytes, List[Int]) {
   // Two passes over the same walk (2026-10-27: a body per record joined
   // at the end, and the procedures' and sites' copied again to put their
   // parent and end in front, were a fifth of the PDB's time). The first
@@ -723,7 +921,7 @@ fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees:
   // closing record, so the second writes every record once, in place.
   // the records' count first, so the lists never grow (growth takes the
   // runtime's slow path while the link's other threads live)
-  var nrec = 1
+  var nrec = 0
   var nsites = 0
   for p in procs {
     nrec += 2
@@ -741,9 +939,6 @@ fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees:
   var sizes = List[Int].with_capacity(nrec)
   var parents = List[Int].with_capacity(nrec)
   var ends = List[Int].with_capacity(nrec)
-  sizes.push(7)
-  parents.push(-1)
-  ends.push(-1)
   // each site's annotations, made once
   var anns = List[Bytes].with_capacity(nsites)
   var proc_rec = List[Int].with_capacity(procs.len())
@@ -793,20 +988,15 @@ fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees:
     parents.push(-1)
     ends.push(-1)
   }
-  // the records' offsets (after the signature)
+  // the records' offsets (from base)
   var offs = List[Int].with_capacity(sizes.len())
-  var o = 4
+  var o = base
   for n in sizes {
     offs.push(o)
     o += (4 + n + 3) / 4 * 4
   }
-  var w = new_out(o + c13.len() + 8)
-  w.u32(4)
-  rec_head(w, S_OBJNAME, 7)
-  w.u32(0)
-  w.bytes(cstr_bytes("xo"))
-  w.zeros(rec_pad(7))
-  var i = 1
+  var w = new_out(o - base)
+  var i = 0
   var ai = 0
   for p in procs {
     rec_head(w, S_GPROC32, sizes[i])
@@ -855,8 +1045,6 @@ fn module_stream(procs: List[PdbProc], c13: Bytes, fid: Map[Str, Int], inlinees:
     rec_head(w, S_END, 0)
     i += 1
   }
-  w.bytes(c13)
-  w.u32(0)
   var at: List[Int] = []
   for r in proc_rec {
     at.push(offs[r])

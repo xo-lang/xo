@@ -205,6 +205,9 @@ fn main(os0: Os) ! {
     ctx.build_done = Some(done)
     watch_stages(os, stages, done)
   }
+  if o.cmd is "run" | "test" {
+    ctx.pdb_later = Some(Mutex[List[PdbLater]].new([]))
+  }
   if o.cmd == "keys" {
     keys(os, ctx, o.cc)?
     return
@@ -430,7 +433,9 @@ fn main(os0: Os) ! {
     to.profile_dir = o.wd
     to.std = o.std
     to.target = test_target(o)
+    let pdbs = start_pdbs(os, ctx)
     let code = run_tests(os, nb.bin, nb.tests, to)
+    wait_pdbs(os, "xo test", pdbs)
     prof_tests(os, to)
     if !o.trace.is_empty() {
       // a raw trace per test process (decision 0240)
@@ -443,7 +448,36 @@ fn main(os0: Os) ! {
       os.stdio.eprintln("xo run: --record needs the Go backend")
       os.proc.exit(2)
     }
-    os.proc.exit(run_built(os, o, nb.bin))
+    let pdbs = start_pdbs(os, ctx)
+    let code = run_built(os, o, nb.bin)
+    wait_pdbs(os, "xo run", pdbs)
+    os.proc.exit(code)
+  }
+}
+
+/// Makes the PDBs the link left for later (ld.xo finish_pdbs) beside the
+/// program's run: the channel that gets why one failed ("" when none
+/// did), None when there are none.
+fn start_pdbs(os: Os, ctx: Ctx) -> Chan[Str]? {
+  let m = ctx.pdb_later?
+  if m.with_read(fn(l) { l.is_empty() }) {
+    return None
+  }
+  let ch = Chan[Str].new(cap: 1)
+  let _p = os.tasks.spawn_background(fn() {
+    let _ = ch.try_send(finish_pdbs(os, Some(m)))
+  })
+  Some(ch)
+}
+
+/// Waits for start_pdbs' PDBs, so none is left half made when xo exits,
+/// and reports a failure (the program's run stands).
+fn wait_pdbs(os: Os, what: Str, ch: Chan[Str]?) {
+  if let Some(c) = ch {
+    let why = c.recv() ?? ""
+    if !why.is_empty() {
+      os.stdio.eprintln("${what}: the PDB: ${why}")
+    }
   }
 }
 
@@ -1862,7 +1896,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
         let wst = stage(os, ctx, wbin)
         tl = lap(os, phases, "link.stage", tl)
-        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, o.stamps, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys, !o.strip && debug_info_eff(o, release) != "off")
+        let why = pe_link(os, wsrcs + zsrcs, wst.bin, wbin, o.stamps, o.race, phases, trimpath_eff(o), backend_cache_dir(os, ctx), wkeys, !o.strip && debug_info_eff(o, release) != "off", if wst.copy { None } else { ctx.pdb_later })
         tl = lap(os, phases, "link.pe_link", tl)
         if !why.is_empty() {
           fail_stage(os, wst, why)

@@ -414,3 +414,60 @@ test "a program's new import leaves std's sections where they were" {
   }
   expect(lb.rva[PO_PRDATA] > lb.rva[PO_DATA]) == true
 }
+
+// Decision 0409 on windows/amd64, step 2: which of std's relocations a
+// link from the half redoes.
+test "the PE half pins std's .text, .rdata and .data only when split" {
+  expect(pe_half_pinned(-1, PO_TEXT)) == false
+  for k in [PO_TEXT, PO_RDATA, PO_DATA, -1] {
+    expect(pe_half_pinned(3, k)) == true
+  }
+  for k in [PO_PTEXT, PO_PRDATA, PO_PWDATA, PO_PDATA, PO_TLS, PO_RELOC] {
+    expect(pe_half_pinned(3, k)) == false
+  }
+}
+
+test "the PE half redoes relocations to imports, the program, moving sections and every ADDR64" {
+  let std = PETarget{obj: 1, sect: 0}
+  let prog = PETarget{obj: 3, sect: 0}
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_REL32, std, PO_TEXT)) == false
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_REL32 + 4, std, PO_RDATA)) == false
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_ADDR32NB, std, PO_TEXT)) == false
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_REL32, prog, PO_PTEXT)) == true
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_REL32, std, PO_PDATA)) == true
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_REL32, PETarget{imp: "ExitProcess"}, -1)) == true
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_REL32, PETarget{imp: "ExitProcess", iat: true}, -1)) == true
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_ADDR64, std, PO_RDATA)) == true
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_REL32, PETarget{tls_index: true}, -1)) == false
+  expect(pe_half_moves(3, IMAGE_REL_AMD64_SECREL, std, PO_TLS)) == false
+}
+
+// Step 3: a link from the half (through its cache bytes) is the full
+// link's, for the program the half was made with and for an edit of it
+// that calls std more, adds data and an import.
+test "a PE link from std's half is the full link of an edited program" {
+  let small = store_obj("prog.obj", "\t.text\n\t.globl prog_main\nprog_main:\n\tcallq used\n\tretq\n")
+  let big = store_obj("prog.obj", "\t.text\n\t.globl prog_main\nprog_main:\n\tcallq used\n\tcallq used\n\tcallq ExitProcess\n\tnop\n\tretq\n\t.data\nd:\n\t.quad 7\n")
+  let imps: Map[Str, Str] = {"ExitProcess": "KERNEL32.dll"}
+  let (img, lay) = split_link(small, imps)
+  let h0 = match capture_pe_half(img, lay, 1) {
+    Some(x) => x
+    None => fault("no half")
+  }
+  let h = match pe_half_decode(pe_half_encode(h0 with {id: "id7"})) {
+    Some(x) => x
+    None => fault("the half does not decode")
+  }
+  expect(h.kept + h.dropped > 0) == true
+  expect(h.id) == "id7"
+  for prog in [small, big] {
+    let (want, _) = split_link(prog, imps)
+    match link_pe_layout(pe_half_objs(h) + [prog], PEOpts{entry: "start", imports: imps, prog_from: 1}) {
+      Ok((got, gl)) => {
+        expect(pe_half_pins_ok(h, gl)) == true
+        expect(got == want) == true
+      }
+      Err(e) => fault(e)
+    }
+  }
+}

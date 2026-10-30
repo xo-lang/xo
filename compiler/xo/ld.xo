@@ -697,7 +697,11 @@ fn tz_object_coff(os: Os, dir: Str, sel: tzsel.TZSel) -> Str ! FsErr {
 /// cdir and keys: the back-end cache and the first objects' keys for their
 /// PDB parts (the PDB from each object's cached part, pdb_parts, unless
 /// XO_PDB_OBJ=0).
-fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool) -> Str {
+fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?) -> Str { pe_link_half(os, paths, bin, out, stamps, race, phases, trim, cdir, keys0, debug, later, true) }
+
+/// pe_link, through std's half when use_half and one is cached (decision
+/// 0409 on PE); a link the half cannot serve is made again without it.
+fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)], race: Bool, phases: Bool, trim: Bool, cdir: Str, keys0: List[Str], debug: Bool, later: Mutex[List[PdbLater]]?, use_half: Bool) -> Str {
   var t = os.clock.now()
   var keys = keys0
   // decision 0388 stage 4's store for windows/amd64: XO_STD_STORE=PATH on
@@ -719,9 +723,12 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   // the std cache): every input is the program's, kept whole, std read
   // from PATH and its PDB parts from PATH.pdb
   let sep_store = if store_path.is_empty() { os.env.get("XO_SEPCOMP_STORE") ?? "" } else { "" }
+  // (read when the link needs it: a link from std's half does not)
+  var sep_size = 0
   if !sep_store.is_empty() {
-    match os.fs.read(sep_store) {
-      Ok(b) => store = b
+    match os.fs.stat(sep_store) {
+      Ok(Some(fi)) => sep_size = fi.size
+      Ok(None) => return "XO_SEPCOMP_STORE=${sep_store}: not found"
       Err(e) => return "XO_SEPCOMP_STORE=${sep_store}: ${fs_reason(e)}"
     }
   }
@@ -764,10 +771,18 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   var check_objs: List[macho.CObj] = []
   // a link through the store: its objects' PDB maps and parts
   var smaps: List[macho.StoreMap] = []
-  var store_parts: List[macho.ObjPdb?] = []
+  // (its PDB parts file, read when the PDB is made: after the program
+  // starts for xo run and xo test)
+  var store_pdb = ""
   // the program's first object after std's store's (decision 0409 on PE:
   // its own sections after std's), -1 without a store link
   var prog_from = -1
+  // std's half's cache file ("": none) and the half the link is from
+  var hf = ""
+  var half: macho.PeHalf? = None
+  // the id of the half this link's std objects are (used or just
+  // captured), "" for none: the PDB's std part is cached for it
+  var half_id = ""
   if !store_path.is_empty() && store.is_empty() {
     match macho.coff_store_encode(parts) {
       Ok(b) => match os.fs.write(store_path, b) {
@@ -781,46 +796,68 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
       Ok(_) => {}
       Err(e) => return "XO_STD_STORE=${store_path}.pdb: ${fs_reason(e)}"
     }
-  } else if !store.is_empty() {
+  } else if !store.is_empty() || !sep_store.is_empty() {
     // the prepare cache (as darwin's store link: the live atoms, the
     // units whose DWARF goes and the symbol renumbering, keyed by what the
     // program takes from the store)
-    let pf = coff_prep_file(os, prep_dir(os, sep_store), sep_store, store.len(), rest, "xo_win_start", true)
-    let cached = prep_load(os, pf)
+    let pf = coff_prep_file(os, prep_dir(os, sep_store), sep_store, if sep_store.is_empty() { store.len() } else { sep_size }, rest, "xo_win_start", true)
     t = lap(os, phases, "pe.prep_key", t)
-    match macho.coff_store_objs_cached(store, rest, "xo_win_start", true, cached) {
-      Ok((so, prep, hit)) => {
-        if !hit {
-          prep_put(os, pf, prep)
-        }
-        t = lap(os, phases, "pe.store ${if hit { "prepare cache hit" } else { "prepared" }}", t)
-        if store_check {
-          check_objs = objs
-        }
-        objs = so.objs + rest
-        smaps = so.maps
-        // (not with XO_STD_STORE_CHECK, whose parts' link has other
-        // objects before the program's)
-        if (os.env.get("XO_STD_HALF") ?? "") != "off" && !store_check {
-          prog_from = so.objs.len()
-        }
-        store_parts = macho.coff_store_pdb_read(os.fs.read("${store_file}.pdb").ok() ?? "".bytes())
-        if sep_store.is_empty() {
-          // (the parts' PDB part keys name objects no longer linked)
-          keys = []
-        } else {
-          // the program's objects keep theirs, after the store's
-          var k2: List[Str] = List.with_capacity(so.objs.len() + keys.len())
-          for _ in so.objs {
-            k2.push("")
+    // std's half (decision 0409 on PE): std's objects as the last full
+    // link with this key left them, the store not read
+    // (not with XO_STD_STORE_CHECK, whose parts' link has other objects
+    // before the program's)
+    let split = (os.env.get("XO_STD_HALF") ?? "") != "off" && !store_check
+    hf = if split && !sep_store.is_empty() { pe_half_file_for(pf, debug, race) } else { "" }
+    if use_half {
+      half = pe_half_load(os, hf)
+    }
+    let so = match half {
+      Some(h) => {
+        t = lap(os, phases, "pe.store std's half", t)
+        macho.CoffStore{objs: macho.pe_half_objs(h), maps: h.maps}
+      }
+      None => {
+        if store.is_empty() {
+          match os.fs.read(sep_store) {
+            Ok(b) => store = b
+            Err(e) => return "XO_SEPCOMP_STORE=${sep_store}: ${fs_reason(e)}"
           }
-          keys = k2 + keys
-          // std's store is part of what made the image (its path is its
-          // std cache key)
-          seed.write_str("store ${sep_store}\n")
+          t = lap(os, phases, "pe.read_store ${store.len()} bytes", t)
+        }
+        match macho.coff_store_objs_cached(store, rest, "xo_win_start", true, prep_load(os, pf)) {
+          Ok((so, prep, hit)) => {
+            if !hit {
+              prep_put(os, pf, prep)
+            }
+            t = lap(os, phases, "pe.store ${if hit { "prepare cache hit" } else { "prepared" }}", t)
+            so
+          }
+          Err(e) => return "XO_STD_STORE=${store_file}: ${e}"
         }
       }
-      Err(e) => return "XO_STD_STORE=${store_file}: ${e}"
+    }
+    if store_check {
+      check_objs = objs
+    }
+    objs = so.objs + rest
+    smaps = so.maps
+    if split {
+      prog_from = so.objs.len()
+    }
+    store_pdb = "${store_file}.pdb"
+    if sep_store.is_empty() {
+      // (the parts' PDB part keys name objects no longer linked)
+      keys = []
+    } else {
+      // the program's objects keep theirs, after the store's
+      var k2: List[Str] = List.with_capacity(so.objs.len() + keys.len())
+      for _ in so.objs {
+        k2.push("")
+      }
+      keys = k2 + keys
+      // std's store is part of what made the image (its path is its
+      // std cache key)
+      seed.write_str("store ${sep_store}\n")
     }
   }
   // a program with DWARF gets a PDB next to it (decision 0344), which its
@@ -861,8 +898,79 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   match macho.link_pe_layout(objs, peo) {
     Ok((img0, layout)) => {
       t = lap(os, phases, "pe.link_pe ${img0.len()} bytes", t)
+      match half {
+        Some(h) => if !macho.pe_half_pins_ok(h, layout) {
+          // std's sections moved (the program grew the headers): the full
+          // link, whose half replaces this one
+          return pe_link_half(os, paths, bin, out, stamps, race, phases, trim, cdir, keys0, debug, later, false)
+        } else {
+          half_id = h.id
+        }
+        None => if !hf.is_empty() {
+          match macho.capture_pe_half(img0, layout, prog_from) {
+            Some(h) => {
+              half_id = os.rand.bytes(12).to_hex()
+              let b = macho.pe_half_encode(h with {maps: smaps, id: half_id})
+              cache_put(os, hf, b)
+              prune_backend_cache(os, "stdhalf", dir_name(dir_name(hf)), b.len())
+            }
+            None => {}
+          }
+          t = lap(os, phases, "pe.half_save", t)
+        }
+      }
+      // XO_STD_STORE_REPEAT=N: N more layouts, timed and checked against
+      // the first (a measurement: XO_PROF of link_pe_layout's parts)
+      let rep = Int.parse(os.env.get("XO_STD_STORE_REPEAT") ?? "0") ?? 0
+      if rep > 0 {
+        let tr = os.clock.now()
+        var same = true
+        for _ in 0..rep {
+          match macho.link_pe_layout(objs, peo) {
+            Ok((b, _)) => same = same && b == img0
+            Err(e) => return e
+          }
+        }
+        os.stdio.eprintln("pe link x${rep}: ${os.clock.since(tr).nanos() / 1000 / rep} us each, ${if same { "equal" } else { "DIFFERENT" }}")
+        // std's half (decision 0409 on PE): the link from it, the same bytes?
+        match macho.capture_pe_half(img0, layout, prog_from) {
+          Some(h0) => {
+            // through the cache's bytes, as a hit reads it
+            let enc = macho.pe_half_encode(h0 with {maps: smaps})
+            let h = match macho.pe_half_decode(enc) {
+              Some(x) => x
+              None => return "pe half: the encoded half does not decode"
+            }
+            os.stdio.eprintln("pe half: ${enc.len()} bytes encoded, maps ${h.maps.len()} of ${smaps.len()}")
+            let hobjs = macho.pe_half_objs(h) + objs[prog_from..objs.len()]
+            let th = os.clock.now()
+            match macho.link_pe_layout(hobjs, peo) {
+              Ok((b, _)) => os.stdio.eprintln("pe half: ${os.clock.since(th).nanos() / 1000} us, ${if b == img0 { "half equal" } else { "half DIFFERENT (${b.len()} and ${img0.len()} bytes)" }}, ${h.kept} relocations kept, ${h.dropped} dropped")
+              Err(e) => os.stdio.eprintln("pe half: ${e}")
+            }
+          }
+          None => os.stdio.eprintln("pe half: none (not split, or program thread locals)")
+        }
+      }
       var img = img0
-      if dwarf {
+      // xo run and xo test: the image stamped with its PDB's GUID now and
+      // the PDB made while the program runs (finish_pdbs; an HTTP server
+      // edit's link spent 28 of its 58 ms on the PDB, 2026-10-30)
+      let defer_pdb = dwarf && later.is_some() && (os.env.get("XO_PDB_OBJ") ?? "") != "0" && !store_check && (os.env.get("XO_PDB_OBJ_CHECK") ?? "").is_empty()
+      if defer_pdb {
+        let sd = if keys.is_empty() { b"" } else { pdb_seed(seed, race, pdb_named, res) }
+        match macho.pe_pdb_stamped(img0, sd) {
+          Ok((i2, _)) => {
+            img = i2
+            let job = PdbLater{img: i2, img0: img0, layout: layout, store_pdb: store_pdb, smaps: smaps, cdir: cdir, keys: keys, pre_file: pdb_pre_file(hf, half_id), half_id: half_id, seed: sd, path: "${out.trim_suffix(".exe")}.pdb"}
+            if let Some(m) = later {
+              m.with(fn(var l) { l.push(job) })
+            }
+            t = lap(os, phases, "pe.pdb_stamp (the PDB after the program starts)", t)
+          }
+          Err(e) => return "${bin}: the PDB: ${e}"
+        }
+      } else if dwarf {
         // each object's part from the back-end cache (the same bytes as the
         // image path, XO_PDB_OBJ=0; an HTTP server edit's 64 ms to 31)
         let per_obj = (os.env.get("XO_PDB_OBJ") ?? "") != "0"
@@ -872,11 +980,9 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
         let pdb_r = if per_obj {
           // through the store: its objects' parts from std.store.pdb, the
           // other objects' made
-          let nst = if store_parts.len() == smaps.len() { smaps.len() } else { 0 }
-          let parts = if nst > 0 { store_parts + pdb_parts(os, layout.objs[nst..layout.objs.len()], cdir, if keys.len() > nst { keys[nst..keys.len()] } else { [] }) } else { pdb_parts(os, layout.objs, cdir, keys) }
-          let pre = macho.pre_procs_store(parts, layout.objs, layout, if nst > 0 { smaps } else { [] }, true)
+          let (pre, nst, parts, wstd) = pdb_pre(os, layout, store_pdb, smaps, cdir, keys, pdb_pre_file(hf, half_id), half_id)
           t = lap(os, phases, "pe.pdb_parts", t)
-          let r = macho.pe_pdb_seeded(img0, None, Some(pre), sd)
+          let r = pdb_make(os, img0, pre, sd, pdb_pre_file(hf, half_id), half_id, wstd)
           if store_check && nst > 0 {
             // the store's parts' PDB against the image's DWARF's, in a link
             // that keeps the DWARF whole (the parts are made from whole
@@ -1190,6 +1296,152 @@ fn watch_stages(os: Os, ch: Chan[Str], done: Chan[()]) {
   })
 }
 
+/// A windows/amd64 PDB pe_link leaves for after the link (xo run and
+/// xo test make it while the program runs, finish_pdbs): the image as
+/// written (stamped with the PDB's GUID, macho.pe_pdb_stamped) and
+/// before, and what its PDB is made from.
+struct PdbLater {
+  img: Bytes
+  img0: Bytes
+  layout: macho.PELayout
+  store_pdb: Str
+  smaps: List[macho.StoreMap]
+  cdir: Str
+  keys: List[Str]
+  /// the PDB's cached std part and its half's id (pdb_pre)
+  pre_file: Str
+  half_id: Str
+  seed: Bytes
+  /// beside the program's final path
+  path: Str
+}
+
+/// The PDB's functions from each object's part (pdb_parts; through the
+/// store: its objects' from std.store.pdb), how many objects the
+/// store's parts cover (0: none), and the parts.
+fn pdb_pre(os: Os, layout: macho.PELayout, store_pdb: Str, smaps: List[macho.StoreMap], cdir: Str, keys: List[Str], pre_file: Str, half_id: Str) -> (macho.PreProcs, Int, List[macho.ObjPdb?], macho.PdbStd?) {
+  let prog = fn(n: Int) -> List[macho.ObjPdb?] { pdb_parts(os, layout.objs[n..layout.objs.len()], cdir, if keys.len() > n { keys[n..keys.len()] } else { [] }) }
+  // std's part as the half's link left it: std's parts not read; with the
+  // writer's std part too, std's functions are not even decoded (the
+  // writer has them placed)
+  if !store_pdb.is_empty() && !smaps.is_empty() {
+    let wstd = pdb_std_load(os, pdb_std_file(pre_file), half_id)
+    if let Some(std) = pdb_pre_load(os, pre_file, half_id, wstd.is_some()) {
+      var parts: List[macho.ObjPdb?] = List.with_capacity(layout.objs.len())
+      for _ in 0..smaps.len() {
+        parts.push(None)
+      }
+      parts = parts + prog(smaps.len())
+      return (macho.pre_procs_from(parts, layout.objs, layout, smaps, true, Some(std), smaps.len(), parts.len()), smaps.len(), parts, wstd)
+    }
+  }
+  let store_parts = if store_pdb.is_empty() { [] } else { macho.coff_store_pdb_read(os.fs.read(store_pdb).ok() ?? "".bytes()) }
+  let nst = if store_parts.len() == smaps.len() { smaps.len() } else { 0 }
+  let parts = if nst > 0 { store_parts + prog(nst) } else { pdb_parts(os, layout.objs, cdir, keys) }
+  if nst > 0 {
+    // std's types first (cv_types_split) in every link through the store,
+    // so the PDB is the same with and without a cached std part
+    let std = macho.pre_procs_std(macho.pre_procs_from(parts, layout.objs, layout, smaps, true, None, 0, nst))
+    if !pre_file.is_empty() {
+      let b = PDB_PRE_MAGIC.bytes() + "${half_id}\n".bytes() + macho.enc_pre_procs(std)
+      cache_put(os, pre_file, b)
+      prune_backend_cache(os, "stdhalf", dir_name(dir_name(pre_file)), b.len())
+    }
+    return (macho.pre_procs_from(parts, layout.objs, layout, smaps, true, Some(std), nst, parts.len()), nst, parts, None)
+  }
+  (macho.pre_procs_store(parts, layout.objs, layout, if nst > 0 { smaps } else { [] }, true), nst, parts, None)
+}
+
+const PDB_PRE_MAGIC = "xopdbpre1\n"
+
+/// The PDB of pre (pe_pdb_seeded), with std's part of it (macho.PdbStd)
+/// from <pre_file>w when it was made for the half of id, else made and
+/// kept there: std's placed functions, their module records and line
+/// blocks are the same in every link from that half.
+fn pdb_make(os: Os, img: Bytes, pre: macho.PreProcs, seed: Bytes, pre_file: Str, id: Str, std: macho.PdbStd?) -> Result[(Bytes, Bytes), Str] {
+  let wf = if id.is_empty() || pre.std_procs == 0 { "" } else { pdb_std_file(pre_file) }
+  let head = PDB_STD_MAGIC.bytes() + "${id}\n".bytes()
+  match macho.pe_pdb_std(img, pre, seed, std) {
+    Ok((i2, pdb, made)) => {
+      if let Some(m) = made {
+        if !wf.is_empty() {
+          let b = head + macho.enc_pdb_std(m)
+          cache_put(os, wf, b)
+          prune_backend_cache(os, "stdhalf", dir_name(dir_name(wf)), b.len())
+        }
+      }
+      Ok((i2, pdb))
+    }
+    Err(e) => Err(e)
+  }
+}
+
+const PDB_STD_MAGIC = "xopdbstd1\n"
+
+/// The file of the PDB writer's std part beside the PDB's std part f.
+fn pdb_std_file(f: Str) -> Str { if f.is_empty() { "" } else { "${f}w" } }
+
+/// The PDB writer's std part in f when it was made for the half of id.
+fn pdb_std_load(os: Os, f: Str, id: Str) -> macho.PdbStd? {
+  if f.is_empty() || id.is_empty() {
+    return None
+  }
+  let b = cache_get(os, f) ?? return None
+  let head = PDB_STD_MAGIC.bytes() + "${id}\n".bytes()
+  if b.len() < head.len() || b[0..head.len()] != head {
+    return None
+  }
+  macho.dec_pdb_std(b[head.len()..b.len()])
+}
+
+/// The file of the PDB's std part for std's half in hf of id ("" for none).
+fn pdb_pre_file(hf: Str, id: Str) -> Str { if hf.is_empty() || id.is_empty() { "" } else { "${hf}.pdb" } }
+
+/// The PDB's std part in f when it was made for the half of id, or None.
+fn pdb_pre_load(os: Os, f: Str, id: Str, lazy: Bool) -> macho.PreProcs? {
+  if f.is_empty() || id.is_empty() {
+    return None
+  }
+  let b = cache_get(os, f) ?? return None
+  let head = PDB_PRE_MAGIC.bytes() + "${id}\n".bytes()
+  if b.len() < head.len() || b[0..head.len()] != head {
+    return None
+  }
+  if lazy { macho.dec_pre_procs_lazy(b[head.len()..b.len()]) } else { macho.dec_pre_procs(b[head.len()..b.len()]) }
+}
+
+/// Makes and writes the PDBs pe_link left for after the link
+/// (PdbLater), each written whole or not at all (write_atomic); "" or
+/// why one failed. xo run and xo test call it after starting the program
+/// and wait for it before they exit.
+fn finish_pdbs(os: Os, later: Mutex[List[PdbLater]]?) -> Str {
+  let jobs = match later {
+    Some(m) => m.with(fn(var l) {
+      let x = l
+      l = []
+      x
+    })
+    None => []
+  }
+  var why = ""
+  for j in jobs {
+    let (pre, _, _, wstd) = pdb_pre(os, j.layout, j.store_pdb, j.smaps, j.cdir, j.keys, j.pre_file, j.half_id)
+    match pdb_make(os, j.img0, pre, j.seed, j.pre_file, j.half_id, wstd) {
+      Ok((i2, p)) => {
+        if i2 != j.img {
+          why = "${j.path}: the program's debug directory does not name this PDB"
+          continue
+        }
+        if let Err(e) = write_atomic(os.fs, j.path, p) {
+          why = "${j.path}: ${e}"
+        }
+      }
+      Err(e) => why = "${j.path}: ${e}"
+    }
+  }
+  why
+}
+
 /// Each object's PDB part (macho obj_pdb): from the back-end cache under
 /// "pdb" by its key, else made and stored; an object with no key (the
 /// zone data's, a build with no cache) is made each time.
@@ -1411,6 +1663,28 @@ fn link_from_elf_half(os: Os, ctx: Ctx, prog: macho.ElfProg, h: macho.ElfHalf, o
   let r = s.write()
   let _t = lap(os, ctx.phases, "link.write", t)
   Some(r)
+}
+
+/// std's half for a PE store link with the prepare cache's file pf (as
+/// half_file_for's), "" for none: the link's options that change std's
+/// objects or their places (DWARF kept, a --race build's fixed base).
+fn pe_half_file_for(pf: Str, debug: Bool, race: Bool) -> Str {
+  if pf.is_empty() {
+    return ""
+  }
+  let k = "pe\n${base_name(pf)}\n${debug}\n${race}\n"
+  "${dir_name(dir_name(pf))}/stdhalf/${crypto.sha256(k.bytes()).to_hex()[0..40]}"
+}
+
+/// The PE half in f, marked used (pruned with the cache), or None.
+fn pe_half_load(os: Os, f: Str) -> macho.PeHalf? {
+  if f.is_empty() {
+    return None
+  }
+  match cache_get(os, f) {
+    Some(b) => macho.pe_half_decode(b)
+    None => None
+  }
 }
 
 /// std's half for an ELF store link with the prepare cache's file pf (as

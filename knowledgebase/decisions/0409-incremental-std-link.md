@@ -206,3 +206,63 @@ whatever the program adds, an import included; .pdata, .tls, .rsrc and
 .reloc follow and are rebuilt every link. The half itself (kept relocations:
 REL32 to the program, a thunk, the IAT or an unpinned section, and every
 ADDR64 for the base relocations) is the next step.
+
+Step 2 (2026-10-30, compiler/macho pehalf.xo): after a full split link,
+capture_pe_half keeps std's objects as the link had them (the store's,
+already cut to the live sections and DWARF), the pinned sections' bytes
+taken from the image with each kept relocation's original bytes put back
+(COFF relocations are REL style: the addend is in the bytes), and only
+the kept relocations (pe_half_moves); the store's maps go with it for the
+PDB. It is cached beside the prepare cache in stdhalf/ (pe_half_encode;
+key: the COFF prepare file, whether DWARF is kept, --race). A later link
+with the same prepare key reads the half instead of std's store (the
+store is not read; its size, from a stat, is in the key) and links std's
+objects and the program's; the pins (std's .text, .rdata, .data and the
+program's .xotext addresses) are checked after the layout, and a
+mismatch links in full, whose half replaces it. No half: program thread
+locals, a program .xounsafe$ record, XO_STD_HALF=off, XO_STD_STORE_CHECK.
+HTTP server: 3,138 relocations kept, 42,102 dropped, the half 9.65 MB;
+an edit's cross link (Mac) 57.0 ms full to 36.0 from the half, the
+same exe and PDB; `xo bench --ab` of the warm HTTP cross build on the
+linux/arm64 offload host (half off against on, n=30): wall 0.929, RSS
+0.869.
+
+Step 3 (2026-10-30, compiler/xo ld.xo pdb_pre, compiler/macho cvobj.xo
+pre_procs_from): the PDB's std part. With the half, std's functions keep
+their places, so pre_procs_store's state after std's store parts (the
+functions, files and types std brings) is the same edit to edit. It is
+cached beside the half (<half>.pdb: xopdbpre1, the half's id, an ObjPdb
+encoding, enc_pre_procs), and a link from the half resumes from it over
+the program's parts only, reading neither std.store.pdb nor std's parts.
+Each half gets a random id when captured (PeHalf.id, xopehalf2); a part
+whose id is not the half's is made again. HTTP edit (Mac cross link):
+pe.pdb_parts 13 to 4.6 ms, pe_link 42.5 to 34.9 ms; the exe and PDB
+byte for byte the full link's, also with a stale part beside a new half.
+
+Step 4 (2026-10-30, compiler/macho pdb.xo pe_pdb_std, PdbStd): the PDB
+writer's std part. CodeView types are made in two runs (cv_types_split:
+std's structures, variables' types and definitions, then the
+program's), so std's type indices do not depend on the program; llvm-
+pdbutil reads the HTTP server's PDB with the same records as before
+(dump --all, the type records' multiset), only their indices moved. The
+module stream's procedure records (proc_records, from an offset) and
+c13's line blocks (proc_lines) are made per run of functions, so std's
+placed functions, the files and inlined functions they name first, their
+records and line blocks are kept beside the half (<half>.pdbw, the half's
+id, enc_pdb_std) and a link from the half makes only the program's. HTTP
+edit (Mac cross link): pe.pdb 14.5 to 8.1 ms, pe_link 34.9 to 26.6 ms
+(57.0 before step 2); the exe and PDB the full link's, also with stale
+parts beside a new half. Then std's CodeView type run (cv_types_std:
+its records, their hashes, the DWARF offsets' indices and the forward
+references) goes in the PdbStd too, and the PDB's std part is read
+without std's functions when the PdbStd has them placed
+(dec_pre_procs_lazy), and the PdbStd keeps only std's functions' names (all the global symbols need once their records are kept): HTTP edit pe.pdb_parts 1.4 ms, pe.pdb 2.3, pe_link 18.4. `xo bench
+--ab` of the warm HTTP windows/amd64 cross build on the linux/arm64
+offload host (n=30, before the type run's cache): std's half off against
+on 0.814 (125.1 to 101.9 ms, RSS 0.837); the xo with only step 2 against
+this one 0.883 (115.9 to 102.3 ms). With every step and the string
+table built with one map entry per name (strtab_build_at; the link's
+largest cost in the linux profile after the names-only PdbStd), std's
+half off against on is 0.766 (127.4 to 97.5 ms, RSS 0.815, 2026-10-30);
+the string table change alone is within noise of the build (0.985,
+0.973 to 1.001).

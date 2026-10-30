@@ -686,17 +686,13 @@ fn (a: Asm) coff_bytes(s: Sect) -> Bytes {
 /// with a NUL, ordered and tail merged as LLVM's WinCOFF string table
 /// builder), and each name's offset.
 fn coff_strtab(names: List[Bytes]) -> (Bytes, Map[Bytes, Int]) {
-  let (tab, offs) = strtab_build(names)
   // strtab_build's table starts with a NUL byte; COFF's with its 4 byte
   // size, which the offsets count
+  let (tab, offs) = strtab_build_at(names, 3)
   var o = new_out(tab.len() + 3)
   o.u32(tab.len() - 1 + 4)
   o.bytes(tab[1..tab.len()])
-  var m: Map[Bytes, Int] = {}
-  for (k, v) in offs {
-    m[k] = v - 1 + 4
-  }
-  (o.done(), m)
+  (o.done(), offs)
 }
 
 /// COFF has no weak definition (decision 0388: std's helpers and generic

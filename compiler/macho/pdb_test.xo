@@ -153,3 +153,51 @@ test "a place's ranges merged, written with gaps, cut at 0xffff bytes" {
   // a range past 0xffff bytes: cut, the rest a record of its own
   expect(cv_spans(sects, b, [(b + 0x1000, b + 0x11000)])) == [(0, 1, 0xffff, []), (0xffff, 1, 1, [])]
 }
+
+test "a PDB std part's bytes read back as the same functions, files and types" {
+  let ty = debug.Type{tag: 0x13, name: "S", size: 16, enc: 0, of: 0, members: [debug.Member{name: "a", ty: 40, offset: 8}]}
+  let loc = PdbLocal{name: "x", ty: 40, param: true, defs: [(0x1141, b"\x01\x02")]}
+  let site = PdbSite{name: "inl", parent: -1, ranges: [(0x1010, 0x1020)], entries: [(0x1010, 1, 7)], locals: [loc]}
+  let p = PdbProc{name: "main.f", seg: 0, off: 0, size: 48, rows: [(0, 0, 3, true), (16, 1, 7, false)], lo: 0x1000, sites: [site], locals: [loc], sect_off: 32}
+  var types: Map[Int, debug.Type] = {}
+  types[40] = ty
+  let pp = PreProcs{info: debug.Info{types: types}, tys: [40, 40], files: ["a.xo", "b.xo"], procs: [p]}
+  let b = enc_pre_procs(pp)
+  let back = match dec_pre_procs(b) {
+    Some(x) => x
+    None => fault("the std part does not decode")
+  }
+  expect(enc_pre_procs(back) == b) == true
+  expect(back.files) == ["a.xo", "b.xo"]
+  expect(back.tys) == [40, 40]
+  expect(back.procs.len()) == 1
+  expect(back.procs[0].size) == 48
+  expect(back.procs[0].lo) == 0x1000
+  expect(back.procs[0].sect_off) == 32
+  expect(back.procs[0].sites[0].entries) == [(0x1010, 1, 7)]
+  expect(back.info.types.get(40) is Some(_)) == true
+  expect(dec_pre_procs(b[0..b.len() - 1]) is None) == true
+}
+
+test "a PDB writer's std part reads back" {
+  var types = CvTypes{}
+  let _i = add_type(types, 0x1503, b"\x01\x00\x00\x00", -1)
+  types.of[40] = 0x1000
+  types.fwd["S"] = 0x1000
+  let std = PdbStd{names: ["std.f", "std.g"], types: types, files: ["a.xo"], fidx: [(0, 0)], inlinees: [("inl", 0, 7)], recs: b"\x01\x02\x03\x04", at: [16, 64], lines: b"\x05\x06\x07\x08"}
+  let b = enc_pdb_std(std)
+  let back = match dec_pdb_std(b) {
+    Some(x) => x
+    None => fault("the writer's std part does not decode")
+  }
+  expect(enc_pdb_std(back) == b) == true
+  expect(back.names) == ["std.f", "std.g"]
+  expect(back.inlinees) == [("inl", 0, 7)]
+  expect(back.types.recs.len()) == 1
+  expect(back.types.hashes) == types.hashes
+  expect(back.types.of.get(40)) == Some(0x1000)
+  expect(back.types.fwd.get("S")) == Some(0x1000)
+  expect(back.at) == [16, 64]
+  expect(back.recs == b"\x01\x02\x03\x04") == true
+  expect(dec_pdb_std(b[0..b.len() - 2]) is None) == true
+}

@@ -15,6 +15,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   view of the build (the temporary build path, or "."), two identical
   builds from different directories linked different bytes, and a deleted
   working directory failed the std cache (gotchas/stdobj-cwd-in-std-bytes.md).
+- windows/amd64: a link from std's half (decision 0409) caches the PDB's std part beside the half, named for the half's id: an edit's PDB reads neither std.store.pdb nor std's parts (HTTP edit, Mac cross link: the PDB parts 13 to 4.6 ms, the link 42.5 to 34.9 ms), with the same PDB bytes as a full link. The PDB writer's std part (std's functions' records and line blocks) is cached the same way, std's CodeView types now coming first in a link through the store: with std's CodeView types: an HTTP server edit's PDB 14.5 to 2.3 ms, its link 34.9 to 18.4 ms (57.0 before std's half; Mac cross link).
+- A separately compiled Windows build links std from a cached half: std's
+  sections as the last full link laid them out, with only the
+  relocations an edit can change, so an edit's link no longer reads std's
+  38 MB store (an HTTP server's edit link 57 ms to 36 ms in a cross
+  build); the output is the same bytes as a full link.
+- `xo run` and `xo test` on Windows start the program before its PDB is
+  written: the .exe names the PDB by a GUID that does not depend on the
+  PDB, so the PDB is made while the program runs and xo waits for it
+  before exiting (a small program's link 29 ms to 5 ms on a native
+  windows/amd64 host); `xo build` is unchanged, and the files are the
+  same bytes either way.
 - Native Windows DNS record lookups (`lookup_mx`, `lookup_txt`,
   `lookup_srv`, `lookup_addr`) work: Xo's own DNS client asks the network
   adapters' DNS servers and reads the Windows hosts file, as Go's pure Go

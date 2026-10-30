@@ -494,6 +494,29 @@ pub struct PreProcs {
   tys: List[Int]
   files: List[Str]
   procs: List[PdbProc]
+  /// std's part's types (pre_procs_std): those at offsets below std_off
+  /// and tys[0..std_tys] make their CodeView records first; -1: one run
+  std_off: Int = -1
+  std_tys: Int = 0
+  /// how many of procs are std's (pre_procs_std), whose PDB records a
+  /// link from std's half reuses (PdbStd)
+  pub std_procs: Int = 0
+  /// std's functions left out of procs (dec_pre_procs_lazy): only a
+  /// PdbStd, which has them placed, makes the PDB from this
+  std_lazy: Bool = false
+}
+
+/// pp (pre_procs_from over std's store parts) marked as std's part: the
+/// PDB made from it, or from a result resumed from it, lists std's types
+/// first (cv_types_split).
+pub fn pre_procs_std(pp: PreProcs) -> PreProcs {
+  var top = 0
+  for (off, _) in pp.info.types {
+    if off + 1 > top {
+      top = off + 1
+    }
+  }
+  pp with {std_off: top, std_tys: pp.tys.len(), std_procs: pp.procs.len()}
 }
 
 pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> PreProcs { pre_procs_store(parts, objs, layout, [], true) }
@@ -501,13 +524,36 @@ pub fn pre_procs(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout) -> Pr
 /// pre_procs with the first smaps.len() objects std's store's (their parts
 /// against their split sections, StoreMap), whose stripped functions are
 /// left out.
-pub fn pre_procs_store(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout, smaps: List[StoreMap], trim_types: Bool) -> PreProcs {
+pub fn pre_procs_store(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout, smaps: List[StoreMap], trim_types: Bool) -> PreProcs { pre_procs_from(parts, objs, layout, smaps, trim_types, None, 0, parts.len()) }
+
+/// pre_procs_store over parts[lo..hi] only, continuing from, the result
+/// over parts[0..lo] (None when lo is 0): a link from std's half resumes
+/// from std's parts' result (enc_pre_procs), which its pins keep the same.
+pub fn pre_procs_from(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout, smaps: List[StoreMap], trim_types: Bool, from: PreProcs?, lo: Int, hi: Int) -> PreProcs {
   var info = debug.Info{}
   var tys: List[Int] = []
   var files: List[Str] = []
   var file_at: Map[Str, Int] = {}
   var procs: List[PdbProc] = []
-  for (oi, po) in parts.indexed() {
+  var std_off = -1
+  var std_tys = 0
+  var std_procs = 0
+  var std_lazy = false
+  if let Some(f) = from {
+    info = f.info
+    tys = f.tys
+    files = f.files
+    procs = f.procs
+    std_off = f.std_off
+    std_tys = f.std_tys
+    std_procs = f.std_procs
+    std_lazy = f.std_lazy
+    for (i, x) in files.indexed() {
+      file_at[x] = i
+    }
+  }
+  for oi in lo..hi {
+    let po = parts[oi]
     let part = match po {
       Some(x) => x
       None => continue
@@ -620,7 +666,146 @@ pub fn pre_procs_store(parts: List[ObjPdb?], objs: List[CObj], layout: PELayout,
       procs.push(PdbProc{name: fnp.name, seg: 0, off: 0, size: fnp.hi - fnp.lo, rows: rows, lo: m.addr(fnp.lo), sites: sites, locals: locals_ty(fnp.locals, m), sect_off: fnp.sect_off})
     }
   }
-  PreProcs{info: info, tys: tys, files: files, procs: procs}
+  PreProcs{info: info, tys: tys, files: files, procs: procs, std_off: std_off, std_tys: std_tys, std_procs: std_procs, std_lazy: std_lazy}
+}
+
+/// pp as cache bytes (dec_pre_procs reads them back): an ObjPdb's
+/// encoding, its procs as functions from lo to lo + size.
+pub fn enc_pre_procs(pp: PreProcs) -> Bytes {
+  var fns = List[ObjFn].with_capacity(pp.procs.len())
+  for p in pp.procs {
+    fns.push(ObjFn{name: p.name, lo: p.lo, hi: p.lo + p.size, rows: p.rows, sites: p.sites, locals: p.locals, sect_off: p.sect_off})
+  }
+  enc_obj_pdb(ObjPdb{types: pp.info.types, tys: pp.tys, files: pp.files, fns: fns})
+}
+
+/// dec_pre_procs without std's functions (only counted, std_lazy), for a
+/// PDB whose writer's std part (PdbStd) has them placed.
+pub fn dec_pre_procs_lazy(b: Bytes) -> PreProcs? {
+  let o = dec_obj_pdb_lazy(b, true) ?? return None
+  Some(pre_procs_std(PreProcs{info: debug.Info{types: o.types}, tys: o.tys, files: o.files, procs: []}) with {std_procs: o.fn_index.len(), std_lazy: true})
+}
+
+/// enc_pre_procs' bytes read back; None when they are damaged.
+pub fn dec_pre_procs(b: Bytes) -> PreProcs? {
+  let o = dec_obj_pdb(b) ?? return None
+  var procs = List[PdbProc].with_capacity(o.fns.len())
+  for f in o.fns {
+    procs.push(PdbProc{name: f.name, seg: 0, off: 0, size: f.hi - f.lo, rows: f.rows, lo: f.lo, sites: f.sites, locals: f.locals, sect_off: f.sect_off})
+  }
+  Some(pre_procs_std(PreProcs{info: debug.Info{types: o.types}, tys: o.tys, files: o.files, procs: procs}))
+}
+
+const PDBSTD_MAGIC = "xo pdbstd 2\n"
+
+/// std as cache bytes (dec_pdb_std reads them back).
+pub fn enc_pdb_std(std: PdbStd) -> Bytes {
+  var w = new_out(64 * 1024)
+  w.bytes(PDBSTD_MAGIC.bytes())
+  w.pint(std.names.len())
+  for n in std.names {
+    w.pstr(n)
+  }
+  w.pint(std.types.recs.len())
+  for (i, r) in std.types.recs.indexed() {
+    w.pint(r.len())
+    w.bytes(r)
+    w.pint(std.types.hashes[i])
+  }
+  w.pint(std.types.of.len())
+  for (k, v) in std.types.of {
+    w.pint(k)
+    w.pint(v)
+  }
+  w.pint(std.types.fwd.len())
+  for (k, v) in std.types.fwd {
+    w.pstr(k)
+    w.pint(v)
+  }
+  w.pint(std.files.len())
+  for f in std.files {
+    w.pstr(f)
+  }
+  w.pint(std.fidx.len())
+  for (f, i) in std.fidx {
+    w.pint(f)
+    w.pint(i)
+  }
+  w.pint(std.inlinees.len())
+  for (n, f, l) in std.inlinees {
+    w.pstr(n)
+    w.pint(f)
+    w.pint(l)
+  }
+  w.pint(std.recs.len())
+  w.bytes(std.recs)
+  w.pint(std.at.len())
+  for a in std.at {
+    w.pint(a)
+  }
+  w.pint(std.lines.len())
+  w.bytes(std.lines)
+  w.done()
+}
+
+/// enc_pdb_std's bytes read back; None when they are damaged.
+pub fn dec_pdb_std(b: Bytes) -> PdbStd? {
+  let m = PDBSTD_MAGIC.bytes()
+  if b.len() < m.len() || b[0..m.len()] != m {
+    return None
+  }
+  var r = PRd{b: b, at: m.len()}
+  let nn = r.count()
+  var names = List[Str].with_capacity(nn)
+  for _ in 0..nn {
+    names.push(r.str())
+  }
+  let nr = r.count()
+  var trecs = List[Bytes].with_capacity(nr)
+  var hashes = List[Int].with_capacity(nr)
+  for _ in 0..nr {
+    trecs.push(r.raw())
+    hashes.push(r.int())
+  }
+  var of: Map[Int, Int] = {}
+  for _ in 0..r.count() {
+    let k = r.int()
+    of[k] = r.int()
+  }
+  var fwd: Map[Str, Int] = {}
+  for _ in 0..r.count() {
+    let k = r.str()
+    fwd[k] = r.int()
+  }
+  let nf = r.count()
+  var files = List[Str].with_capacity(nf)
+  for _ in 0..nf {
+    files.push(r.str())
+  }
+  let nx = r.count()
+  var fidx = List[(Int, Int)].with_capacity(nx)
+  for _ in 0..nx {
+    let f = r.int()
+    fidx.push((f, r.int()))
+  }
+  let ni = r.count()
+  var inl = List[(Str, Int, Int)].with_capacity(ni)
+  for _ in 0..ni {
+    let n = r.str()
+    let f = r.int()
+    inl.push((n, f, r.int()))
+  }
+  let recs = r.raw()
+  let na = r.count()
+  var at = List[Int].with_capacity(na)
+  for _ in 0..na {
+    at.push(r.int())
+  }
+  let lines = r.raw()
+  if r.bad || r.at != b.len() {
+    return None
+  }
+  Some(PdbStd{names: names, types: CvTypes{recs: trecs, hashes: hashes, of: of, fwd: fwd}, files: files, fidx: fidx, inlinees: inl, recs: recs, at: at, lines: lines})
 }
 
 /// ls with their types' offsets the image's.

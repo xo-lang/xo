@@ -1,0 +1,295 @@
+// std's half of a PE store link (decision 0409, the Windows port): with
+// PEOpts.prog_from the program's contributions, the import thunks and the
+// linker's tables are in .xotext, .xordata and .xodata after std's, so
+// std's .text, .rdata and .data keep their addresses and bytes from one
+// link to the next except where a relocation reaches outside them. These
+// say which output sections are fixed and which of std's relocations a
+// link from the half must redo.
+
+/// Whether output section k keeps its address in every link with the
+/// half: std's own .text, .rdata and .data (the program's sections, .pdata,
+/// .tls, .rsrc, .reloc and the debug sections come after them). A
+/// reference to no section (a stripped atom's -1) is fixed too.
+fn pe_half_pinned(prog_from: Int, k: Int) -> Bool {
+  if prog_from < 0 {
+    return false
+  }
+  k < 0 || k == PO_TEXT || k == PO_RDATA || k == PO_DATA
+}
+
+/// Whether a relocation of type typ in one of std's sections, to target
+/// t (in output section tout when it is an object's section), can change
+/// from one link with the half to the next: a reference to an import
+/// (its thunk in .xotext, its IAT slot in .xordata), to the program, or
+/// to a section that is not pinned. An ADDR64 is always redone, since
+/// the image's base relocations are rebuilt each link from the
+/// relocations it applies. _tls_index (the end of std's .data) and an
+/// absolute symbol are fixed.
+fn pe_half_moves(prog_from: Int, typ: Int, t: PETarget, tout: Int) -> Bool {
+  if typ == IMAGE_REL_AMD64_ADDR64 {
+    return true
+  }
+  if t.tls_index || t.abs {
+    return false
+  }
+  if !t.imp.is_empty() || t.obj >= prog_from {
+    return true
+  }
+  if typ == IMAGE_REL_AMD64_SECREL {
+    // an offset in its output section: std's TLS template comes first in
+    // .tls (the program's own thread locals refuse the half) and the
+    // debug sections are not pinned, so only the section's own place
+    // matters, which the half keeps
+    return false
+  }
+  !pe_half_pinned(prog_from, tout)
+}
+
+/// std's half of a PE link: its objects (0..n, as linked: an atoms mode
+/// object split) whose sections in pinned output sections hold the
+/// image's bytes there, with each kept relocation's original bytes put
+/// back (pelink reads the addend from the input), and only the kept
+/// relocations; every other section as the link had it. pins: each
+/// pinned section's address and the program's first section's, which a
+/// link from the half must reproduce.
+pub struct PeHalf {
+  objs: List[CObj]
+  n: Int
+  pins: List[(Int, Int)]
+  pub kept: Int = 0
+  pub dropped: Int = 0
+  /// the store's maps of std's objects (coff_store_objs' CoffStore.maps),
+  /// which the PDB's functions are placed by (pre_procs_store)
+  pub maps: List[StoreMap] = []
+  /// a name for this half, made when it is captured: the PDB's cached
+  /// std part (pdb_pre) is for the half of the same id only
+  pub id: Str = ""
+}
+
+/// The file offset of the image section at address rva (its section
+/// table entry), -1 when none starts there.
+fn pe_sect_foff(img: Bytes, rva: Int) -> Int {
+  let pe = get_le(img, 0x3c, 4)
+  let nsect = get_le(img, pe + 6, 2)
+  let tab = pe + 24 + get_le(img, pe + 20, 2)
+  for i in 0..nsect {
+    let e = tab + 40 * i
+    if get_le(img, e + 12, 4) == rva {
+      return get_le(img, e + 20, 4)
+    }
+  }
+  -1
+}
+
+/// The pins of a layout: (k, rva) for each pinned output section and the
+/// program's code section.
+fn pe_half_pins(lay: PELayout) -> List[(Int, Int)] {
+  var pins: List[(Int, Int)] = []
+  for k in [PO_TEXT, PO_RDATA, PO_DATA, PO_PTEXT] {
+    pins.push((k, lay.rva[k]))
+  }
+  pins
+}
+
+/// The half of a split link (image img, layout lay, std's objects
+/// 0..prog_from), None for an unsplit one or one whose program has
+/// thread locals (they would move std's TLS template offsets) or an
+/// unsafe range record.
+pub fn capture_pe_half(img: Bytes, lay: PELayout, prog_from: Int) -> PeHalf? {
+  if prog_from < 0 || prog_from > lay.objs.len() {
+    return None
+  }
+  for oi in prog_from..lay.objs.len() {
+    for p in lay.places[oi] {
+      if p.out == PO_TLS {
+        return None
+      }
+    }
+    // an unsafe range record (.xounsafe$m) is placed in std's section
+    // after every object (pelink's grouped sections): only std's store
+    // builds make them (arm64 apreempt.xo), so a program's would move std
+    for s in lay.objs[oi].sects {
+      if s.name.starts_with(".xounsafe$") {
+        return None
+      }
+    }
+  }
+  var foff: Map[Int, Int] = {}
+  for k in [PO_TEXT, PO_RDATA, PO_DATA] {
+    // (an empty output section is not in the image: no section of std's
+    // is placed in it)
+    if lay.rva[k] == 0 {
+      continue
+    }
+    let f = pe_sect_foff(img, lay.rva[k])
+    if f < 0 {
+      return None
+    }
+    foff[k] = f
+  }
+  var objs: List[CObj] = List.with_capacity(prog_from)
+  var kept = 0
+  var dropped = 0
+  for oi in 0..prog_from {
+    var ob = lay.objs[oi]
+    for (si, s) in ob.sects.indexed() {
+      let p = lay.places[oi][si]
+      if p.out < 0 || !pe_half_pinned(prog_from, p.out) || s.data.is_empty() {
+        continue
+      }
+      var keep: List[CReloc] = []
+      var places: List[(Int, Int)] = []
+      for r in s.relocs {
+        let t = lay.targets[oi][r.sym]
+        let tout = if t.obj >= 0 && t.sect >= 0 { lay.places[t.obj][t.sect].out } else { -1 }
+        if pe_half_moves(prog_from, r.typ, t, tout) {
+          keep.push(r)
+          places.push((r.addr, coff_rel_width(r.typ)))
+        } else {
+          dropped += 1
+        }
+      }
+      kept += keep.len()
+      let f = match foff.get(p.out) {
+        Some(x) => x
+        None => return None
+      }
+      ob.sects[si].data = half_restore(img, f + p.off, s.data.len(), s.data, places)
+      ob.sects[si].relocs = keep
+    }
+    objs.push(ob)
+  }
+  Some(PeHalf{objs: objs, n: prog_from, pins: pe_half_pins(lay), kept: kept, dropped: dropped})
+}
+
+/// std's objects of half h, for a link: std's then the program's.
+pub fn pe_half_objs(h: PeHalf) -> List[CObj] { h.objs }
+
+const PE_HALF_MAGIC = "xopehalf2\n"
+
+fn sw_csects(var b: BytesBuilder, ss: List[CSect]) {
+  sw32(b, ss.len())
+  for x in ss {
+    sw_bytes(b, x.name.bytes())
+    sw32(b, x.chars)
+    sw64(b, x.size)
+    sw_bytes(b, x.data)
+    sw32(b, x.relocs.len())
+    for r in x.relocs {
+      sw32(b, r.addr)
+      sw32(b, r.sym)
+      sw32(b, r.typ)
+    }
+  }
+}
+
+fn (var r: SR) csects() -> List[CSect] {
+  let n = r.u32()
+  var ss: List[CSect] = List.with_capacity(n)
+  for _ in 0..n {
+    let name = r.bytes().to_str() ?? ""
+    let chars = r.u32()
+    let size = r.u64()
+    let data = r.bytes()
+    let nr = r.u32()
+    var rs: List[CReloc] = List.with_capacity(nr)
+    for _ in 0..nr {
+      let addr = r.u32()
+      let sym = r.u32()
+      rs.push(CReloc{addr: addr, sym: sym, typ: r.u32()})
+    }
+    ss.push(CSect{name: name, chars: chars, data: data, size: size, relocs: rs})
+  }
+  ss
+}
+
+/// The half as bytes (<backend cache>/stdhalf, as darwin's and ELF's).
+pub fn pe_half_encode(h: PeHalf) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_str(PE_HALF_MAGIC)
+  sw32(b, h.n)
+  sw32(b, h.kept)
+  sw32(b, h.dropped)
+  sw32(b, h.pins.len())
+  for (k, a) in h.pins {
+    sw32(b, k)
+    sw64(b, a)
+  }
+  sw32(b, h.objs.len())
+  for ob in h.objs {
+    sw_bytes(b, ob.path.bytes())
+    sw_csects(b, ob.sects)
+    sw32(b, ob.syms.len())
+    for y in ob.syms {
+      sw_bytes(b, y.name.bytes())
+      sw64(b, y.value)
+      sw32n(b, y.sect)
+      sw32(b, y.class | (if y.aux { 0x10000 } else { 0 }))
+      sw32n(b, y.weak_default)
+    }
+  }
+  sw32(b, h.maps.len())
+  for m in h.maps {
+    sw_csects(b, m.secs)
+    sw32(b, m.newk.len())
+    for k in m.newk {
+      sw32n(b, k)
+    }
+  }
+  sw_bytes(b, h.id.bytes())
+  b.freeze()
+}
+
+/// The half in b, None when b is not one (section bytes are views of b).
+pub fn pe_half_decode(b: Bytes) -> PeHalf? {
+  let m = PE_HALF_MAGIC.bytes()
+  if b.len() < m.len() + 16 || b[0..m.len()] != m {
+    return None
+  }
+  var r = SR{b: b, at: m.len()}
+  let n = r.u32()
+  let kept = r.u32()
+  let dropped = r.u32()
+  let np = r.u32()
+  var pins: List[(Int, Int)] = []
+  for _ in 0..np {
+    let k = r.u32()
+    pins.push((k, r.u64()))
+  }
+  let no = r.u32()
+  var objs: List[CObj] = List.with_capacity(no)
+  for _ in 0..no {
+    let path = r.bytes().to_str() ?? ""
+    let sects = r.csects()
+    let ny = r.u32()
+    var syms: List[CSym] = List.with_capacity(ny)
+    for _ in 0..ny {
+      let name = r.bytes().to_str() ?? ""
+      let value = r.u64()
+      let sect = r.u32n()
+      let cl = r.u32()
+      syms.push(CSym{name: name, value: value, sect: sect, class: cl & 0xffff, aux: (cl & 0x10000) != 0, weak_default: r.u32n()})
+    }
+    objs.push(CObj{path: path, sects: sects, syms: syms})
+  }
+  let nm = r.u32()
+  var maps: List[StoreMap] = List.with_capacity(nm)
+  for _ in 0..nm {
+    let secs = r.csects()
+    let nk = r.u32()
+    var newk: List[Int] = List.with_capacity(nk)
+    for _ in 0..nk {
+      newk.push(r.u32n())
+    }
+    maps.push(StoreMap{secs: secs, newk: newk})
+  }
+  let id = r.bytes().to_str() ?? ""
+  if r.at != b.len() {
+    return None
+  }
+  Some(PeHalf{objs: objs, n: n, pins: pins, kept: kept, dropped: dropped, maps: maps, id: id})
+}
+
+/// Whether a link from half h put std's sections where the half's link
+/// did (its pins): else the half's bytes are wrong for it.
+pub fn pe_half_pins_ok(h: PeHalf, lay: PELayout) -> Bool { pe_half_pins(lay) == h.pins }

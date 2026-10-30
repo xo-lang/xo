@@ -621,25 +621,35 @@ fn (var a: Asm) elf_cie(var o: Out, eh: Int, f: Frame) {
 /// The names of a string table as LLVM's StringTableBuilder lays them out:
 /// sorted by their reversed bytes, last first, a name that ends the
 /// previous one sharing its bytes; the table and each name's offset.
-fn strtab_build(names: List[Bytes]) -> (Bytes, Map[Bytes, Int]) {
-  var seen: Map[Bytes, Int] = {}
-  var keyed: List[(Str, Bytes)] = []
+fn strtab_build(names: List[Bytes]) -> (Bytes, Map[Bytes, Int]) { strtab_build_at(names, 0) }
+
+/// strtab_build with each offset delta more (COFF's table counts its 4
+/// byte size). A name met twice sorts next to itself (the same reversed
+/// bytes): skipped when it was written, written again with the same
+/// offset when it ends the one before; about one map write per name (the dedup map
+/// and the copy for COFF's offsets were most of a PE link's string table
+/// time, 2026-10-30).
+fn strtab_build_at(names: List[Bytes], delta: Int) -> (Bytes, Map[Bytes, Int]) {
+  var keyed: List[(Str, Bytes)] = List.with_capacity(names.len())
   for n in names {
-    if !n.is_empty() && !seen.contains(n) {
-      seen.put(n, 0)
+    if !n.is_empty() {
       keyed.push((reversed(n), n))
     }
   }
   let sorted = keyed.sort_by(fn(p: (Str, Bytes)) -> Str { p.0 }).reverse()
+  var seen: Map[Bytes, Int] = {}
   var tab = new_out(16 * sorted.len())
   tab.u8(0)
   var prev = ""
   for (rk, n) in sorted {
-    if !prev.is_empty() && prev.starts_with(rk) {
-      seen.put(n, tab.n - rk.len() - 1)
+    if rk == prev {
       continue
     }
-    seen.put(n, tab.n)
+    if !prev.is_empty() && prev.starts_with(rk) {
+      seen.put(n, tab.n - rk.len() - 1 + delta)
+      continue
+    }
+    seen.put(n, tab.n + delta)
     tab.bytes(n)
     tab.u8(0)
     prev = rk

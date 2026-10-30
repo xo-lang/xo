@@ -186,6 +186,8 @@ pub struct PELayout {
   pub rva: List[Int]
   pub dnames: List[Str]
   pub base: Int
+  /// each object's symbols' targets (pehalf.xo capture_pe_half)
+  targets: List[List[PETarget]] = []
 }
 
 /// link_pe and the layout it made.
@@ -661,7 +663,7 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
     return Err("the entry ${o.entry} is not defined")
   }
   let img = pe_write(bufs, pats, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds)
-  Ok((img, PELayout{objs: split, places: places, rva: rva, dnames: dnames, base: PE_BASE}))
+  Ok((img, PELayout{objs: split, places: places, rva: rva, dnames: dnames, base: PE_BASE, targets: targets}))
 }
 
 /// The image: the DOS header, the PE headers and section table, the
