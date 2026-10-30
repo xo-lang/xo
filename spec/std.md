@@ -4300,8 +4300,10 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   with std 3.2's rules. A read that times out mid-record keeps what
   arrived, so the connection reads on after a new deadline. A deadline
   set on the Conn before `client` also limits the handshake (Go's
-  Handshake), within its own 10 seconds. A write that times out may
-  have sent part of a record.
+  Handshake), within its own 10 seconds. A write that fails (a timeout
+  included, or a deadline already passed) may have sent part of a
+  record, so every later write fails the same way, as Go's tls.Conn
+  ("the TLS state is corrupt").
 - Tests: on FakeNet `client` does no TLS: the TlsConn reads and writes the
   connection's plain bytes, `alpn()` is "" and `version()` is "TLS
   1.3", so a driver's tests can run an in-process fake server. Real TLS

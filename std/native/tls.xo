@@ -116,6 +116,8 @@ fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial {
     None => return passthrough_write(t.c, data)
   }
   if netconn.deadline_passed(rt.obj_addr(t.c), true) {
+    // as Go's: the failed write breaks the TLS stream for good
+    tlsio.fail_writes(h, tlsio.CC_TIMEOUT)
     return Err(NetErr.Timeout)
   }
   let s = tlsio.write(h, raw.bytes_addr(data), data.len())

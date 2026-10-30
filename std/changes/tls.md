@@ -6,15 +6,17 @@
 - Commit: this commit
 - Found by: the backend gap survey of 2026-10-30, gap 5; decision 0430
 - Go reference: crypto/tls Conn.SetDeadline, SetReadDeadline, SetWriteDeadline, and Handshake under the conn's deadline
-- Test: internal/llvm/testdata/golden/tls_deadline (arm64, LLVM, Go parity): a read past its deadline, then the request goes through; a passed write deadline; a handshake against a silent server limited by the Conn's deadline
+- Test: internal/llvm/testdata/golden/tls_deadline (arm64, LLVM, Go parity): a read past its deadline, then the request goes through; a passed write deadline, and the next write failing too; a handshake against a silent server limited by the Conn's deadline
 - Timing: none of its own: the waits are the connection's (prelude.md's conn deadline row); tlsio reads two words per wait
 
 `set_deadline`, `set_read_deadline` and `set_write_deadline` on a
 TlsConn set its connection's deadlines. Natively tlsio's waits read the
 connection's deadline words at each wait, so one set during a wait
 applies, and the bytes of a partly read record stay in the TLS state
-across a timeout. The Go backend sets net.Conn's deadlines under
-tls.Conn and keeps them across its own cancellation.
+across a timeout. A failed write, a timeout included, fails every later
+write, as Go's tls.Conn: part of a record may have gone out. The Go
+backend sets net.Conn's deadlines under tls.Conn and keeps them across
+its own cancellation.
 
 
 ## 2026-10-29: feature: peer_certificates and roots_of

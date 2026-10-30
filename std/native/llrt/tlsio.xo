@@ -54,6 +54,10 @@ struct Conn {
   // also honor, 0 for none (the http client's)
   cn: Int
   status: Int
+  // why writing stopped for good (CC_*), 0 while it works: after a
+  // failed write a record may have gone out in part, so every later
+  // write fails the same way (Go's halfConn setErrorLocked; decision 0430)
+  wfail: Int
   first: Bytes
   eof: Bool
   pending: Bytes
@@ -327,7 +331,7 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   cf.groups = tls13.client_groups()
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
-  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, cn: 0, status: 0, first: b"", eof: false, pending: b""}
+  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, cn: 0, status: 0, wfail: 0, first: b"", eof: false, pending: b""}
   while !done(c) && !broken(c) {
     if !flush(c) || !fill(c) {
       break
@@ -510,10 +514,27 @@ pub fn write(h: Int, p: Int, n: Int) -> Int {
   if !done(c) {
     return CC_ERR
   }
+  if c.wfail != 0 {
+    return c.wfail
+  }
   put(c, raw.str_at(p, n).bytes())
   let ok = flush(c)
+  let st = if ok { CC_OK } else if c.status == 0 { CC_ERR } else { c.status }
+  if !ok {
+    c.wfail = st
+  }
   save(h, c)
-  if ok { CC_OK } else if c.status == 0 { CC_ERR } else { c.status }
+  st
+}
+
+/// Marks h's writing stopped for good with status st (a write past its
+/// deadline, decision 0430): Go's tls.Conn fails every later write too.
+pub fn fail_writes(h: Int, st: Int) {
+  if let Some(x) = load(h) {
+    var c = x
+    c.wfail = st
+    save(h, c)
+  }
 }
 
 /// The text of a fatal alert the server sent after the handshake, "" for

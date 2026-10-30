@@ -1,7 +1,7 @@
 // Decision 0430: a TlsConn's deadlines are its connection's, as Go's
 // tls.Conn. A read past its deadline is Timeout and the connection stays
 // usable (the request then goes through); a deadline already passed
-// fails a write at once; a deadline set on the Conn before tls.client
+// fails a write at once, and later writes too (Go's tls.Conn); a deadline set on the Conn before tls.client
 // limits the handshake (a server that never answers). Every backend must
 // agree. The certificates are golden tls_client's.
 use std/http
@@ -52,6 +52,13 @@ fn main(os: Os) {
         match t.write("x".bytes()) {
           Ok(_) => os.stdio.println("3 write ok")
           Err(e) => os.stdio.println("3 write ${e}")
+        }
+        // the write error sticks, as Go's tls.Conn: a new deadline does
+        // not make writes work again
+        t.set_write_deadline(clock, None)
+        match t.write("y".bytes()) {
+          Ok(_) => os.stdio.println("3b write ok")
+          Err(e) => os.stdio.println("3b write ${e}")
         }
         t.close()
       }
