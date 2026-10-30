@@ -3,8 +3,9 @@
 // as HTTP/1.1, on one port. A raw client sends the preface, an empty
 // SETTINGS and a GET / as one HEADERS frame, then reads the server's
 // frames: SETTINGS first, a HEADERS frame with :status 200 (0x88) and the
-// DATA frame with the body. Native only until the Go backend maps
-// with_protocols(UnencryptedHttp2).
+// DATA frame with the body. The Go backend (net/http) acknowledges the
+// client's SETTINGS before its WINDOW_UPDATE and the native server after
+// it (want_go.txt differs in that order only).
 use std/http
 
 fn byte(b: Bytes, i: Int) -> Int { Int(b[i]) }
