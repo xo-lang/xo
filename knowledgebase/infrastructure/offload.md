@@ -39,7 +39,9 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   no heavy.sh slot (only ssh runs on the Mac). Exit 3: no offload.env;
   exit 4: no answer.
 - `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
-  self|edit PROG [FLAG...]|PROG [ARG...]` (lead, 2026-10-30: a wall `--ab` whose claim is not
+  self|self=a|edit PROG [FLAG...]|PROG [ARG...]` (`self=a`: BASE's
+  compiler/xo as the self build's program, for a NEW whose compiler calls
+  a std function BASE's std lacks; 2026-10-30) (lead, 2026-10-30: a wall `--ab` whose claim is not
   darwin specific runs here, so the Mac's measure windows serve only
   darwin claims and footprints): `xo bench --ab` of two committed
   revisions. One bundle of the commits the host lacks (since
