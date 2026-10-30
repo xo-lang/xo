@@ -713,6 +713,9 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   // a link through the store: its objects' PDB maps and parts
   var smaps: List[macho.StoreMap] = []
   var store_parts: List[macho.ObjPdb?] = []
+  // the program's first object after std's store's (decision 0409 on PE:
+  // its own sections after std's), -1 without a store link
+  var prog_from = -1
   if !store_path.is_empty() && store.is_empty() {
     match macho.coff_store_encode(parts) {
       Ok(b) => match os.fs.write(store_path, b) {
@@ -744,6 +747,11 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
         }
         objs = so.objs + rest
         smaps = so.maps
+        // (not with XO_STD_STORE_CHECK, whose parts' link has other
+        // objects before the program's)
+        if (os.env.get("XO_STD_HALF") ?? "") != "off" && !store_check {
+          prog_from = so.objs.len()
+        }
         store_parts = macho.coff_store_pdb_read(os.fs.read("${store_file}.pdb").ok() ?? "".bytes())
         if sep_store.is_empty() {
           // (the parts' PDB part keys name objects no longer linked)
@@ -787,7 +795,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
   // linkers do: dbghelp finds a PDB moved since by its base name, which
   // an older one takes after the last backslash only
   let res = pe_resources(bin, stamps)
-  let peo = macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: res, fixed_base: race, pdb: pdb_named.replace("/", "\\"), debug: debug}
+  let peo = macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: res, fixed_base: race, pdb: pdb_named.replace("/", "\\"), debug: debug, prog_from: prog_from}
   if store_check {
     // the store's link against the parts' (strip by atom): the same image
     match (macho.link_pe(objs, peo), macho.link_pe(check_objs, peo)) {

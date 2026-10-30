@@ -192,3 +192,17 @@ on fib, HTTP and the goldens, plus a test that edits a program between two links
 - Run the link in a resident process (xo watch) with std's half in memory: the same reuse
   without a file, but only for watch users; the cache serves every build. The two compose
   later.
+
+## Windows (PE) port note (2026-10-30, Lang 2)
+
+PE has no segments, so the program's contributions go to output sections of
+their own after std's: .xotext (code, then the import thunks), .xordata
+(read only data, then the linker's tables: IAT, import directory, lookup
+tables, names, TLS and debug directories) and .xodata (data), placed by
+PEOpts.prog_from (compiler/macho/pelink.xo; ld.xo sets it to the store's
+object count unless XO_STD_HALF=off or XO_STD_STORE_CHECK). std's .text,
+.rdata and .data then hold std alone and keep their addresses and sizes
+whatever the program adds, an import included; .pdata, .tls, .rsrc and
+.reloc follow and are rebuilt every link. The half itself (kept relocations:
+REL32 to the program, a thunk, the IAT or an unpinned section, and every
+ADDR64 for the base relocations) is the next step.

@@ -357,3 +357,60 @@ test "the COFF prepare key follows what the program takes from the store" {
   expect(k("used") != k("other")) == true
   expect(coff_prep_key([prep_prog_obj("used")], "start", false) != k("used")) == true
 }
+
+// Decision 0409 on windows/amd64, step 1: with PEOpts.prog_from the
+// program's code goes in .xotext after std's sections, so std's code
+// keeps its address and bytes whatever the program grows; the import
+// thunks follow the program's code.
+fn split_link(prog: CObj, imports: Map[Str, Str] = {}) -> (Bytes, PELayout) {
+  let store = match coff_store_encode([prep_lib()]) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  let so = match coff_store_objs(store, [prog], "start", true) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  match link_pe_layout(so.objs + [prog], PEOpts{entry: "start", imports: imports, prog_from: so.objs.len()}) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+}
+
+test "the program's own sections leave std's where they were" {
+  let small = store_obj("prog.obj", "\t.text\n\t.globl prog_main\nprog_main:\n\tcallq used\n\tretq\n")
+  let big = store_obj("prog.obj", "\t.text\n\t.globl prog_main\nprog_main:\n\tcallq used\n\tcallq used\n\tcallq used\n\tnop\n\tnop\n\tretq\n\t.data\nd:\n\t.quad 7\n")
+  let (a, la) = split_link(small)
+  let (b, lb) = split_link(big)
+  expect(la.rva[PO_TEXT]) == lb.rva[PO_TEXT]
+  expect(la.rva[PO_PTEXT] > la.rva[PO_TEXT]) == true
+  // std's objects' sections at the same places, the program's in .xotext
+  let n = la.objs.len() - 1
+  for oi in 0..n {
+    for (si, p) in la.places[oi].indexed() {
+      expect(p.out == lb.places[oi][si].out && p.off == lb.places[oi][si].off) == true
+      expect(p.out != PO_PTEXT) == true
+    }
+  }
+  var prog_text = false
+  for p in la.places[n] {
+    prog_text = prog_text || p.out == PO_PTEXT
+  }
+  expect(prog_text) == true
+  // the section table names it
+  expect(a.find(".xotext".bytes()) != None) == true
+  expect(b.len() >= a.len()) == true
+}
+
+test "a program's new import leaves std's sections where they were" {
+  let plain = store_obj("prog.obj", "\t.text\n\t.globl prog_main\nprog_main:\n\tcallq used\n\tretq\n")
+  let imp = store_obj("prog.obj", "\t.text\n\t.globl prog_main\nprog_main:\n\tcallq used\n\tcallq ExitProcess\n\tretq\n")
+  let (_, la) = split_link(plain)
+  let (_, lb) = split_link(imp, {"ExitProcess": "KERNEL32.dll"})
+  // the IAT and the import directory are in .xordata, so std's .rdata
+  // and .data keep their addresses and sizes
+  for k in [PO_TEXT, PO_RDATA, PO_DATA] {
+    expect(la.rva[k]) == lb.rva[k]
+  }
+  expect(lb.rva[PO_PRDATA] > lb.rva[PO_DATA]) == true
+}
