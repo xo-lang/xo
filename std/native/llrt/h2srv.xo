@@ -250,7 +250,13 @@ const S_RST_LATE = 336
 const S_RES = 344
 const S_STREAM = 352
 const S_BOFF = 360
-const S_SIZE = 368
+/// The request trailers a trailing HEADERS frame brought (decision 0433): a
+/// block of "name\nvalue\n" pairs, names canonical (http1.trailer_key).
+const S_TRL = 368
+/// The response trailers (decision 0433), a block of "name\nvalue\n" pairs sent
+/// as a trailing HEADERS frame after the body.
+const S_OTRL = 392
+const S_SIZE = 416
 
 // slot atomics' orders (rt.xo)
 const ACQUIRE = 1
@@ -415,6 +421,8 @@ fn wake(c: Int) {
 fn stream_free(st: Int) {
   req_free(st)
   bfree(st, S_BODY)
+  bfree(st, S_TRL)
+  bfree(st, S_OTRL)
   bfree(st, S_RH)
   bfree(st, S_OUT)
   rt.heap_release(st - 8)
@@ -983,11 +991,15 @@ pub fn emit(h: rthttp.HConn, status: Int, started: Bool, p: Int, n: Int) -> Int 
 
 /// Ends a streamed body whose head went out with the n bytes at p:
 /// whether the stream was alive.
-pub fn finish(h: rthttp.HConn, p: Int, n: Int) -> Bool {
+pub fn finish(h: rthttp.HConn, p: Int, n: Int, trl: Int) -> Bool {
   let st = hconn.h2s(h)
   let c = ld(st, S_C)
   lk(c)
   let ok = !on(st, S_DEAD)
+  if trl != 0 && ld(trl, 0) > 0 {
+    // the response's trailers (hserve.xo sink_set_trailer's block: its length, then the pairs)
+    put(st, S_OTRL, trl + 8, ld(trl, 0))
+  }
   queue_locked(c, st, 0, 0, 0, false, p, n, true)
   unlk(c)
   ok
@@ -1018,6 +1030,8 @@ pub struct H2Req {
   pub body: Bytes
   /// every field when a name repeats (decision 0288), else []
   pub fields: List[Str] = []
+  /// the Trailer field's value (declared trailers)
+  pub trailer: Str = ""
   /// the body is read as it arrives (body_next; decision 0310)
   pub streamed: Bool = false
 }
@@ -1071,6 +1085,7 @@ struct ReqParts {
   query: List[Str]
   rawquery: Str
   fields: List[Str] = []
+  trailer: Str = ""
 }
 
 /// Keeps the parts in a (an Any of ReqParts) in stream record st's
@@ -1118,7 +1133,7 @@ fn (h: H2Conn) request_of(st: Int) -> H2Req {
     bfree(st, S_BODY)
   }
   http1.fault_probe(p.path, "frame")
-  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields, streamed: streamed}
+  H2Req{conn: hconn.stream(h.h, st), method: p.method, path: p.path, scheme: p.scheme, urlhost: p.urlhost, host: p.host, headers: p.headers, query: p.query, rawquery: p.rawquery, body: body, fields: p.fields, trailer: p.trailer, streamed: streamed}
 }
 
 /// The next bytes of the streamed body of stream connection h (at most
@@ -1154,8 +1169,10 @@ pub fn body_next(h: rthttp.HConn, max: Int) -> http1.BodyPart {
       return http1.BodyPart{data: out, end: false, err: ""}
     }
     if ld(st, S_STATE) == ST_HCR {
+      let tr = if ld(st, S_TRL + 8) > 0 { bstr(st, S_TRL).split("\n") } else { [] }
       unlk(c)
-      return http1.BodyPart{data: "", end: true, err: ""}
+      // (the pairs end in an empty piece)
+      return http1.BodyPart{data: "", end: true, err: "", trailers: if tr.is_empty() { [] } else { tr[0..tr.len() - 1] }}
     }
     if on(st, S_RST) || on(st, S_DEAD) || on(c, C_FAILED) || on(c, C_DEAD) || poll.canceled() {
       unlk(c)
@@ -1649,6 +1666,19 @@ fn (var h: H2Conn) on_headers(sid: Int, flags: Int, prio: Bool, dep: Int) {
       stream_err(c, sid, E_PROTOCOL)
       return
     }
+    var nbytes = 0
+    var cnt = 0
+    for i in 0..names.len() {
+      if let Some(k) = http1.trailer_key(names[i]) {
+        nbytes += k.len() + values[i].len()
+        cnt += 1
+        if cnt > http1.MAX_TRAILER_COUNT || nbytes > http1.MAX_TRAILER_BYTES {
+          break
+        }
+        let line = k + "\n" + values[i] + "\n"
+        put(st, S_TRL, raw.data(line), line.len())
+      }
+    }
     sto(st, S_STATE, ST_HCR)
     complete(c, st)
     return
@@ -1756,7 +1786,11 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
   var hdr: List[Str] = []
   var clen = ""
   var has_clen = false
+  var trailer = ""
   for i in 0..hk.len() {
+    if hk[i] == "Trailer" {
+      trailer = hv[i]
+    }
     if (drop_expect && hk[i] == "Expect") || hk[i] == "Trailer" {
       continue
     }
@@ -1806,7 +1840,7 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
       query.push(t[i])
       i += 1
     }
-    req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query, rawquery: t[5], fields: fields}))
+    req_keep(st, rt.any_of(ReqParts{method: method, path: t[4], scheme: t[2], urlhost: t[3], host: host, headers: hdr, query: query, rawquery: t[5], fields: fields, trailer: trailer}))
     if !end_stream && !h.streams.is_empty() && h.streams[0](method, t[4]) {
       sto(st, S_STREAM, 1)
     }
@@ -2053,6 +2087,38 @@ fn (var h: H2Conn) frame_rest(ty: Int, flags: Int, sid: Int, len: Int, p: Int, d
 // ---------------------------------------------------------------------------
 // Sending (the fiber, the lock held)
 
+/// Whether stream st has response trailers to send after its body.
+fn has_trailers(st: Int) -> Bool { ld(st, S_OTRL + 8) > 0 && !on(st, S_NOBODY) }
+
+/// The encoder's job for the trailers in lines ("name\nvalue\n" pairs): the
+/// number of fields, then each as h2w.head writes one (lengths, the name
+/// in lower case, the value), the fields sorted by name as net/http sends
+/// trailers; a name that repeats joins its values with ", ".
+fn trailer_job(lines: Str) -> Str {
+  let parts = lines.split("\n")
+  var names: List[Str] = []
+  var m: Map[Str, Str] = {}
+  var i = 0
+  while i + 1 < parts.len() {
+    let k = parts[i].to_lower()
+    match m.get(k) {
+      Some(old) => m[k] = old + ", " + parts[i + 1]
+      None => {
+        m[k] = parts[i + 1]
+        names.push(k)
+      }
+    }
+    i += 2
+  }
+  names = names.sort()
+  var job = word("", names.len())
+  for k in names {
+    let v = m.get(k) ?? ""
+    job = rt.rs_append(word(word(job, k.len()), v.len()), k + v)
+  }
+  job
+}
+
 /// Whether st's reset waits for the output a handler queued before its
 /// fault.
 fn late(st: Int) -> Bool {
@@ -2104,7 +2170,7 @@ fn (var h: H2Conn) schedule() {
     }
     if on(st, S_RH_READY) && !on(st, S_RH_SENT) {
       let blk = h.encode(bstr(st, S_RH))
-      let es = on(st, S_END) && ld(st, S_OFF) == ld(st, S_OUT + 8)
+      let es = on(st, S_END) && ld(st, S_OFF) == ld(st, S_OUT + 8) && !has_trailers(st)
       put_block(c, ld(st, S_ID), raw.data(blk), blk.len(), es)
       raw.alive_str(blk)
       sto(st, S_RH_SENT, 1)
@@ -2125,7 +2191,14 @@ fn (var h: H2Conn) schedule() {
       let pend = ld(st, S_OUT + 8) - ld(st, S_OFF)
       if pend == 0 {
         if on(st, S_END) {
-          fh(c, 0, T_DATA, F_END_STREAM, ld(st, S_ID))
+          if has_trailers(st) {
+            // the trailers: a trailing HEADERS frame ends the stream
+            let tb = h.encode(trailer_job(bstr(st, S_OTRL)))
+            put_block(c, ld(st, S_ID), raw.data(tb), tb.len(), true)
+            raw.alive_str(tb)
+          } else {
+            fh(c, 0, T_DATA, F_END_STREAM, ld(st, S_ID))
+          }
           sto(st, S_END_SENT, 1)
         }
         break
@@ -2147,7 +2220,7 @@ fn (var h: H2Conn) schedule() {
         more = budget <= 0
         break // the peer's windows are closed, or the turn is over
       }
-      let es = on(st, S_END) && k == pend
+      let es = on(st, S_END) && k == pend && !has_trailers(st)
       fh(c, k, T_DATA, if es { F_END_STREAM } else { 0 }, ld(st, S_ID))
       put(c, C_WB, ld(st, S_OUT) + ld(st, S_OFF), k)
       inc(st, S_OFF, k)

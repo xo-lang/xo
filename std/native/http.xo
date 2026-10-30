@@ -212,12 +212,27 @@ struct BodyState {
   /// the request's trailers (decision 0433), set by the connection's
   /// reader when the body ends
   trailers: Map[Str, Str] = {}
+  /// the trailer names the request's head declared (Trailer, canonical):
+  /// the only ones kept, as net/http's server keeps
+  declared: List[Str] = []
+}
+
+/// The canonical trailer names declared by a request's Trailer field
+/// value (names a trailer may not carry dropped).
+fn declared_trailers(trailer: Str) -> List[Str] {
+  var out: List[Str] = []
+  for part in trailer.split(",") {
+    if let Some(k) = http1.trailer_key(part.trim()) {
+      out.push(k)
+    }
+  }
+  out
 }
 
 /// A request's body read from its connection by next, finish run after
 /// its handler.
-fn conn_body(next: fn(Int) -> http1.BodyPart, finish: List[fn() -> ()]) -> BodyReader {
-  BodyReader{st: Mutex[BodyState].new(BodyState{next: [next], finish: finish, data: b"", pos: 0, err: "", end: false})}
+fn conn_body(next: fn(Int) -> http1.BodyPart, finish: List[fn() -> ()], declared: List[Str]) -> BodyReader {
+  BodyReader{st: Mutex[BodyState].new(BodyState{next: [next], finish: finish, data: b"", pos: 0, err: "", end: false, declared: declared})}
 }
 
 /// The request value that carries a server's unread body to its
@@ -407,7 +422,7 @@ struct StreamPart {
 
 /// The request's trailers (decision 0433): empty until read returned None.
 fn (b: BodyReader) trailers() -> Map[Str, Str] {
-  b.st.with_read(fn(s) { if s.end { s.trailers } else { {} } })
+  b.st.with_read(fn(s) { if s.end { sorted_map(s.trailers) } else { {} } })
 }
 
 /// Go's Request.MultipartReader: the checks of multipart_form, then a
@@ -507,6 +522,17 @@ fn body_read(var s: BodyState, max: Int) -> Bytes? ! IoErr {
   }
   if p.end {
     s.end = true
+    var i = 0
+    while i + 1 < p.trailers.len() {
+      let k = p.trailers[i]
+      if s.declared.contains(k) {
+        s.trailers[k] = match s.trailers.get(k) {
+          Some(old) => old + ", " + p.trailers[i + 1]
+          None => p.trailers[i + 1]
+        }
+      }
+      i += 2
+    }
     return None
   }
   Some(p.data.bytes())
@@ -2028,7 +2054,7 @@ fn collect(r0: http.Response) -> http.Response {
 /// HTTP/2's trailing HEADERS); until then it is dropped.
 fn (w: BodyWriter) set_trailer(name: Str, value: Str) {
   if let Some(k) = http1.trailer_key(name) {
-    let _ = (w, k, value)
+    hserve.sink_set_trailer(w.s, k, value)
   }
 }
 
@@ -2408,7 +2434,7 @@ fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Route
         var req = head_request(rd, q)
         let sq = rd.streamed()
         if sq != 0 {
-          let b = conn_body(fn(max: Int) -> http1.BodyPart { http1.body_next(hc, sq, max) }, [fn() { http1.body_finish(hc, sq) }])
+          let b = conn_body(fn(max: Int) -> http1.BodyPart { http1.body_next(hc, sq, max) }, [fn() { http1.body_finish(hc, sq) }], declared_trailers(q.trailer))
           req = req with {values: [ReqValue{name: STREAM_BODY, v: rt.any_of(b)}]}
         }
         let (open, resp) = respond(hc, req, r)
@@ -2502,7 +2528,7 @@ fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   }
   if resp.stream != 0 {
     // a streamed body goes out as f makes it (std/rt's serve)
-    let s = hserve.sink_conn(hc, resp.status)
+    let s = hserve.sink_conn(hc, resp.status, resp.headers.get("Trailer") != None)
     if duplex {
       // the head now: the client may wait for it before it sends more
       let _ = hserve.sink_flush(s)
@@ -2596,7 +2622,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
   // the body as DATA frames bring it (decision 0310 phase 2); an unread
   // rest resets the stream when the handler ends (h2srv handler_done)
   let st = q.conn
-  let b = conn_body(fn(max: Int) -> http1.BodyPart { h2srv.body_next(st, max) }, [])
+  let b = conn_body(fn(max: Int) -> http1.BodyPart { h2srv.body_next(st, max) }, [], declared_trailers(q.trailer))
   req with {values: [ReqValue{name: STREAM_BODY, v: rt.any_of(b)}]}
 }
 
@@ -2866,6 +2892,43 @@ struct StreamState {
   trailers: Map[Str, Str] = {}
 }
 
+/// What client_do gets of a request: its body and source, and its
+/// trailers (decision 0433). A request with trailers goes chunked, so a
+/// body in memory is sent as a source; names are the declared ones.
+struct TrailerArgs {
+  body: Bytes
+  src: List[fn(Int) -> http1.BodyPart]
+  names: Str
+  fns: List[fn() -> List[Str]]
+}
+
+fn trailer_args(req: Request) -> TrailerArgs {
+  if req.trailer_fn.is_empty() {
+    return TrailerArgs{body: req.body, src: req.src, names: "", fns: []}
+  }
+  let f = req.trailer_fn[0]
+  let flat = fn() -> List[Str] {
+    var out: List[Str] = []
+    for (k, v) in f() {
+      out.push(k)
+      out.push(v)
+    }
+    out
+  }
+  var src = req.src
+  var body = req.body
+  if src.is_empty() {
+    let data = req.body
+    src = [fn(_max: Int) -> http1.BodyPart {
+      let t = raw.str_at(raw.bytes_addr(data), data.len())
+      raw.alive(data)
+      http1.BodyPart{data: t, end: true, err: ""}
+    }]
+    body = b""
+  }
+  TrailerArgs{body: body, src: src, names: req.trailer_names.join(", "), fns: [flat]}
+}
+
 fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net.dial {
   if task.is_canceled() {
     return Err(http.ClientErr.Canceled)
@@ -2895,7 +2958,8 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     dsrv = Some(ds)
     duplex = [fn(f: fn() -> ()) { g.spawn_background(f) }]
   }
-  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, true, req.src, duplex, h2c: client_h2c(c), alpn: client_alpn(c))
+  let ta = trailer_args(req)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, ta.src, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns)
   match r.err {
     0 => ()
     _ => {
@@ -2943,6 +3007,7 @@ fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
     // the end, or a failure: the connection back to the pool
     s.h2 = None
     s.conn = None
+    s.read = http1.BodyRead{mode: 0, done: true, trailers: x.trailers}
     http1.h2_done(r, x)
     let e = hclient.err(r)
     if e == 0 {
@@ -3091,7 +3156,37 @@ fn (s: ClientStream) read_all(max_size: Int = 1073741824) -> Bytes ! http.Client
 
 /// The response's trailers (decision 0433): empty until read returned None.
 fn (s: ClientStream) trailers() -> Map[Str, Str] {
-  s.st.with(fn(var x: StreamState) { if x.done { x.trailers } else { {} } })
+  s.st.with(fn(var x: StreamState) {
+    if !x.done {
+      return {}
+    }
+    var out: Map[Str, Str] = x.trailers
+    var i = 0
+    while i + 1 < x.read.trailers.len() {
+      let k = x.read.trailers[i]
+      out[k] = match out.get(k) {
+        Some(old) => old + ", " + x.read.trailers[i + 1]
+        None => x.read.trailers[i + 1]
+      }
+      i += 2
+    }
+    sorted_map(out)
+  })
+}
+
+/// m with its names in sorted order (the order trailers are listed in,
+/// decision 0433).
+fn sorted_map(m: Map[Str, Str]) -> Map[Str, Str] {
+  var ks: List[Str] = []
+  for (k, _) in m {
+    ks.push(k)
+  }
+  ks = ks.sort()
+  var out: Map[Str, Str] = {}
+  for k in ks {
+    out[k] = m.get(k) ?? ""
+  }
+  out
 }
 
 fn (s: ClientStream) close() {
@@ -3229,7 +3324,8 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   }
   let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
-  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, false, req.src, h2c: client_h2c(c), alpn: client_alpn(c))
+  let ta = trailer_args(req)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns)
   match r.err {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))

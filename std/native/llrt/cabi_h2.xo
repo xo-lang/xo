@@ -27,7 +27,7 @@ fn srvtls_h2_emit(hc: Int, status2: Int, p: Int, n: Int) -> Int { h2srv.emit(hco
 
 fn srvtls_h2_respond_at(hc: Int, status: Int, p: Int, n: Int) { h2srv.respond_at(hconn.handle(hc), status, p, n) }
 
-fn srvtls_h2_finish(hc: Int, p: Int, n: Int) -> Int { if h2srv.finish(hconn.handle(hc), p, n) { 1 } else { 0 } }
+fn srvtls_h2_finish(hc: Int, p: Int, n: Int, trl: Int) -> Int { if h2srv.finish(hconn.handle(hc), p, n, trl) { 1 } else { 0 } }
 
 /// Stores HTTP/2 record c in server connection hc (HC_H2), stopping it
 /// when the server is already stopping (under the server's lock, as the

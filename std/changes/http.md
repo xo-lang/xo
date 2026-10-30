@@ -83,7 +83,7 @@ pipe pump is still to come; `pipe` works on every backend.
 - Commit: this commit
 - Found by: the gRPC readiness survey of 2026-10-30, gap 1 (grpc-status and grpc-message are trailers)
 - Go reference: net/http's TrailerPrefix, Header "Trailer", Request.Trailer, Response.Trailer; httpguts badTrailer; h2 writeChunk (trailers with no body: the response HEADERS, then the trailing HEADERS)
-- Test: internal/llvm/testdata/golden/http_trailers (HTTP/1.1 and HTTP/2; want_go.txt holds the Go backend's trailers until the native wire lands, Xo Lang 3)
+- Test: internal/llvm/testdata/golden/http_trailers (HTTP/1.1 and HTTP/2, native output equal to the Go backend's: want.txt equals want_go.txt)
 - Timing: none (no hot path changes; a trailer is a header write after the body)
 
 `BodyWriter.set_trailer`, `Response.with_trailer_names`,
@@ -93,10 +93,15 @@ net/http does: names canonical and sorted, Go's forbidden names dropped,
 a request's trailers declared in its head (Go's HTTP/2 server keeps only
 declared ones), and an HTTP/1.1 streamed response with no body carrying
 only the trailers it declared. The Go
-backend maps them to net/http; the native backend has the API and its
-hooks (llrt/http1.xo's BAD_TRAILER, MAX_TRAILER_BYTES,
-MAX_TRAILER_COUNT, trailer_key), with the wire left to Xo Lang 3's
-part of decision 0433, so its trailers are empty until then.
+backend maps them to net/http. The native wire (Xo Lang 3): the server
+starts a chunked response whenever trailers are declared or set (HTTP/2:
+a trailing HEADERS frame with END_STREAM), the client keeps a chunked
+trailer section and an h2 trailing HEADERS, and a request's trailers go
+out as the chunked trailer section or an h2 trailing HEADERS (a streamed
+h2 body sends no content-length: 0). A server keeps a request's trailers
+only when its Trailer field declared them; the parsed head carries that
+field (Req.trailer, H2Req.trailer) since Go removes it from the header.
+Names sort with `x = x.sort()` (List.sort returns a new list).
 
 ## 2026-10-30: fix: a header field folded over several lines read its first byte wrong on Linux
 

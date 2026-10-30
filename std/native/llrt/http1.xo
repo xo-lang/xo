@@ -395,6 +395,26 @@ pub fn trailer_key(name: Str) -> Str? {
   if k == "" || BAD_TRAILER.contains(k) { None } else { Some(k) }
 }
 
+/// The fields of a parsed trailer section's header (name, value pairs) a
+/// trailer may carry, within the caps of a received section.
+fn trailer_fields(h: List[Str]) -> List[Str] {
+  var out: List[Str] = []
+  var bytes = 0
+  var i = 0
+  while i + 1 < h.len() && out.len() < 2 * MAX_TRAILER_COUNT {
+    if let Some(k) = trailer_key(h[i]) {
+      bytes += k.len() + h[i + 1].len()
+      if bytes > MAX_TRAILER_BYTES {
+        break
+      }
+      out.push(k)
+      out.push(h[i + 1])
+    }
+    i += 2
+  }
+  out
+}
+
 /// textproto.CanonicalMIMEHeaderKey: unchanged when a byte is not a token
 /// byte.
 pub fn canonical_key(s: Str) -> Str {
@@ -639,6 +659,8 @@ pub struct Head {
   /// [name, value, ...] of every field when a name repeats (decision
   /// 0288: Request.header_values), else []
   fields: List[Str] = []
+  /// the Trailer field's value of a chunked request
+  trailer: Str = ""
 }
 
 fn no_head() -> Head {
@@ -1126,6 +1148,7 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   var pragma = -1
   var have_cc = false
   var repeated = false
+  var trailer = ""
   k = 0
   while k < nraw {
     let key = keys[k]
@@ -1135,6 +1158,9 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
       continue
     }
     if chunked && (kk == K_CL || kk == K_TRAILER) {
+      if kk == K_TRAILER {
+        trailer = if trailer.is_empty() { vals[k - 1] } else { trailer + ", " + vals[k - 1] }
+      }
       continue
     }
     // e: the pair index of the name, -1 when new
@@ -1255,7 +1281,7 @@ fn head_of(method: Str, target: Str, major: Int, minor: Int, url: neturl.Url, qu
   } else if have_ev && !ev.is_empty() {
     expect_other = true
   }
-  let head = Head{method: method, target: target, major: major, minor: minor, headers: headers, host: rhost, url: url, query: query, clen: clen, chunked: chunked, close: close, wants10ka: wants10ka, wantsclose: wantsclose, expect100: expect100, expect_other: expect_other, h2up: h2up, fields: fields}
+  let head = Head{method: method, target: target, major: major, minor: minor, headers: headers, host: rhost, url: url, query: query, clen: clen, chunked: chunked, close: close, wants10ka: wants10ka, wantsclose: wantsclose, expect100: expect100, expect_other: expect_other, h2up: h2up, fields: fields, trailer: trailer}
   Parse{res: OK, used: used, head: head, status: 0, reason: ""}
 }
 
@@ -1275,6 +1301,10 @@ pub struct Chunked {
   body: Str
   /// HB_ERR's text: net/http's chunkedReader or readTrailer error
   why: Str = ""
+  /// The trailer section's fields that a trailer may carry (trailer_key),
+  /// [name, value, ...] in canonical names, at most MAX_TRAILER_COUNT
+  /// fields and MAX_TRAILER_BYTES bytes (decision 0433).
+  trailers: List[Str] = []
 }
 
 /// A chunk's size line decoded (HB_OK: its size, the offset after it,
@@ -1403,7 +1433,7 @@ pub fn chunked(s: Str, eof: Bool) -> Chunked {
         let (_, _, tw) = mime_header(s, b, i, end)
         return Chunked{res: HB_ERR, used: 0, body: out, why: if tw.is_empty() { "malformed trailer" } else { tw }}
       }
-      return Chunked{res: HB_OK, used: i + t.used - 16, body: out}
+      return Chunked{res: HB_OK, used: i + t.used - 16, body: out, trailers: trailer_fields(t.head.headers)}
     }
     if size < 0 || size > n - i || (n - i) - size < 2 {
       // copy what is there: an error later still delivers it
@@ -1787,6 +1817,8 @@ pub struct Req {
   pub rawquery: Str
   /// Head.fields (decision 0288)
   pub fields: List[Str] = []
+  /// The Trailer field's value of a chunked request (declared trailers).
+  pub trailer: Str = ""
   /// The request target as sent (Request.escaped_path).
   pub target: Str = ""
   /// The Host header as sent (Request.host).
@@ -2082,6 +2114,9 @@ pub struct BodyPart {
   pub data: Str
   pub end: Bool
   pub err: Str
+  /// At the end of a chunked body: its trailer fields, [name, value, ...]
+  /// (Chunked.trailers).
+  pub trailers: List[Str] = []
 }
 
 fn part_err(x: Int, why: Str) -> BodyPart {
@@ -2166,7 +2201,7 @@ pub fn body_next(h: rthttp.HConn, seq: Int, max: Int) -> BodyPart {
           if c.res == HB_OK {
             xs(x, X_OFF, xl(x, X_OFF) + c.used)
             xs(x, X_SMODE, S_END)
-            return BodyPart{data: "", end: true, err: ""}
+            return BodyPart{data: "", end: true, err: "", trailers: c.trailers}
           }
         }
       }
@@ -2345,14 +2380,15 @@ fn hex(n: Int) -> Str {
 }
 
 /// Ends a stream on HTTP/1.1 connection h whose head went out (state its
-/// sink's bits, the n bytes at p still buffered): whether the
+/// sink's bits, the n bytes at p still buffered, trailers the "Name: value\r\n"
+/// lines to send after the last chunk): whether the
 /// connection stays open for another request.
-pub fn stream_end(h: rthttp.HConn, status: Int, state: Int, p: Int, n: Int) -> Bool {
+pub fn stream_end(h: rthttp.HConn, status: Int, state: Int, p: Int, n: Int, trailers: Str) -> Bool {
   var s = state
   if n > 0 {
     s = emit(h, status, s, p, n)
   }
-  if (s & SK_CHUNKING) != 0 && (s & SK_FAILED) == 0 && !send_str(h, "0\r\n\r\n") {
+  if (s & SK_CHUNKING) != 0 && (s & SK_FAILED) == 0 && !send_str(h, "0\r\n" + trailers + "\r\n") {
     s = s | SK_FAILED
   }
   xs(x1_of(h), X_SERVED, 1)
@@ -2416,7 +2452,7 @@ fn req_of(h: Head) -> Req {
       port = v
     }
   }
-  Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query, rawquery: h.url.rawquery, fields: h.fields, target: h.target, rawhost: h.host}
+  Req{method: h.method, path: h.url.path, scheme: h.url.scheme, host: host, port: port, headers: h.headers, query: h.query, rawquery: h.url.rawquery, fields: h.fields, target: h.target, rawhost: h.host, trailer: h.trailer}
 }
 
 // ---------------------------------------------------------------------------
@@ -2601,7 +2637,7 @@ fn (var st: H2State) block(method: Str, target: Str, host: Str, names: List[Str]
       blk = st.enc.field(blk, ascii_lower(k), v)
     }
   }
-  if bn > 0 || method == "POST" || method == "PUT" || method == "PATCH" {
+  if bn >= 0 && (bn > 0 || method == "POST" || method == "PUT" || method == "PATCH") {
     blk = st.enc.field(blk, "content-length", "${bn}")
   }
   let (_, has_ae) = h2_field(names, values, "Accept-Encoding")
@@ -2696,6 +2732,8 @@ fn inflow_add(avail: Int, unsent: Int, n: Int) -> (Int, Int, Int) {
 /// keeps it between reads (decision 0404 stage B2).
 pub struct H2X {
   st: H2State
+  /// The response's trailer fields, [name, value, ...] (decision 0433).
+  pub trailers: List[Str] = []
   method: Str
   body: Str
   off: Int
@@ -2730,6 +2768,11 @@ pub struct H2X {
   /// whether it ended
   src: List[fn(Int) -> BodyPart] = []
   src_end: Bool = false
+  /// request trailers (decision 0433): the declared names and f, which
+  /// gives [name, value, ...] once the body is sent; tsent when they went
+  tnames: Str = ""
+  tfn: List[fn() -> List[Str]] = []
+  tsent: Bool = false
 }
 
 /// Whether the request body has bytes left to send (x.body past x.off,
@@ -2921,7 +2964,28 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
     return (true, "") // another stream's (an old one's trailers): only the table counts
   }
   if x.headers {
-    // trailers: dropped (std/rt does not read them)
+    // trailers (decision 0433): the fields a trailer may carry, kept
+    // for ClientStream.trailers
+    var off = 0
+    var bytes = 0
+    for l in f.lens {
+      let nn = l & 0xFFFFFFFF
+      let vn = l >> 32
+      if off + nn + vn > f.data.len() || x.trailers.len() >= 2 * MAX_TRAILER_COUNT {
+        break
+      }
+      let name = scan.text_at(rawb.data(f.data) + off, nn)
+      let value = scan.text_at(rawb.data(f.data) + off + nn, vn)
+      off += nn + vn
+      bytes += nn + vn
+      if bytes > MAX_TRAILER_BYTES {
+        break
+      }
+      if let Some(k) = trailer_key(name) {
+        x.trailers.push(k)
+        x.trailers.push(value)
+      }
+    }
     if end {
       x.ended = true
     }
@@ -2996,20 +3060,20 @@ fn (var x: H2X) block_done(r: rthttp.CResp) -> (Bool, Str) {
 /// Transport.RoundTrip on one stream), then hands the connection and its
 /// state back to the pool (hclient.h2_end). hclient.retry tells whether
 /// the request goes again on a new connection.
-fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart] = []) {
-  var x = h2_begin(r, method, target, host, names, values, bn, src)
+fn h2_exchange(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) {
+  var x = h2_begin(r, method, target, host, names, values, bn, src, tnames, tfn)
   h2_pump(r, x, H2_TO_END)
   h2_done(r, x)
 }
 
 /// An HTTP/2 exchange on r: whole (h2_exchange), or for a stream up to
 /// the response's head, kept open (Some) unless it failed or ended there.
-fn h2_run(r: rthttp.CResp, stream: Bool, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart] = []) -> H2X? {
+fn h2_run(r: rthttp.CResp, stream: Bool, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> H2X? {
   if !stream {
-    h2_exchange(r, method, target, host, names, values, bn, src)
+    h2_exchange(r, method, target, host, names, values, bn, src, tnames, tfn)
     return None
   }
-  var x = h2_begin(r, method, target, host, names, values, bn, src)
+  var x = h2_begin(r, method, target, host, names, values, bn, src, tnames, tfn)
   h2_pump(r, x, H2_TO_HEAD)
   if x.res != CC_OK || x.ended {
     h2_done(r, x)
@@ -3026,7 +3090,14 @@ pub const H2_TO_DATA: Int = 2
 
 /// h2_exchange's start: the connection's state taken from the pool and
 /// the request's header frames sent.
-pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], bn: Int, src: List[fn(Int) -> BodyPart] = []) -> H2X {
+pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names0: List[Str], values0: List[Str], bn: Int, src: List[fn(Int) -> BodyPart] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> H2X {
+  // declared trailers: a Trailer field in the head (net/http's)
+  var names = names0
+  var values = values0
+  if !tnames.is_empty() && !src.is_empty() {
+    names.push("Trailer")
+    values.push(tnames)
+  }
   var st = h2_state()
   let kept = hclient.h2_take(r)
   if let Some(a) = kept.get(0) {
@@ -3039,6 +3110,8 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: Lis
   x.st.enc.set_sizes(x.st.sizes)
   x.st.sizes = ""
   x.src = src
+  x.tnames = tnames
+  x.tfn = tfn
   let why = h2_check(names, values)
   if !why.is_empty() {
     x.why = why
@@ -3051,7 +3124,8 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: Lis
     x.st.next_id += 2
     x.swin = x.st.peer_win
     x.sin_avail = 4194304
-    let blk = x.st.block(method, target, host, names, values, x.body.len())
+    // a streamed body's length is not known (no content-length)
+    let blk = x.st.block(method, target, host, names, values, if x.src.is_empty() { x.body.len() } else { -1 })
     // HEADERS and CONTINUATION frames of at most the server's frame size
     var off = 0
     var first = true
@@ -3071,6 +3145,26 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names: Lis
     let _ok = x.flush(r)
   }
   x
+}
+
+/// The request's trailers as a final HEADERS frame with END_STREAM (RFC 9113
+/// 8.1): the declared names only, lower case, sorted, as net/http's
+/// transport sends them; an empty set ends the stream with an empty DATA.
+fn h2_trailers(var x: H2X) {
+  x.tsent = true
+  let text = trailer_text(x.tnames, x.tfn)
+  var blk = ""
+  for line in text.split("\r\n") {
+    let c = line.find(": ") ?? -1
+    if c > 0 {
+      blk = x.st.enc.field(blk, ascii_lower(rawb.str_slice(line, 0, c)), rawb.str_slice(line, c + 2, line.len()))
+    }
+  }
+  if blk.is_empty() {
+    x.out = push_frame(x.out, 0, H2T_DATA, H2F_END_STREAM, x.id)
+    return
+  }
+  x.out = push_frame(x.out, blk.len(), H2T_HEADERS, H2F_END_STREAM | H2F_END_HEADERS, x.id) + blk
 }
 
 /// Runs the exchange x on r until stop (H2_TO_*), a failure, or its end.
@@ -3100,13 +3194,20 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
         x.src_end = p.end
         if x.body.is_empty() {
           if x.src_end {
-            x.out = push_frame(x.out, 0, H2T_DATA, H2F_END_STREAM, x.id)
+            if x.tfn.is_empty() {
+              x.out = push_frame(x.out, 0, H2T_DATA, H2F_END_STREAM, x.id)
+            } else {
+              h2_trailers(x)
+            }
           }
           continue
         }
       }
       let bn2 = x.body.len()
       if x.off >= bn2 {
+        if x.src_end && !x.tfn.is_empty() && !x.tsent {
+          h2_trailers(x)
+        }
         break
       }
       var k = bn2 - x.off
@@ -3122,7 +3223,7 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
       if k <= 0 {
         break
       }
-      x.out = push_frame(x.out, k, H2T_DATA, if x.off + k == bn2 && (x.src.is_empty() || x.src_end) { H2F_END_STREAM } else { 0 }, x.id) + rawb.str_slice(x.body, x.off, x.off + k)
+      x.out = push_frame(x.out, k, H2T_DATA, if x.off + k == bn2 && (x.src.is_empty() || x.src_end) && x.tfn.is_empty() { H2F_END_STREAM } else { 0 }, x.id) + rawb.str_slice(x.body, x.off, x.off + k)
       x.off += k
       x.swin -= k
       x.st.win -= k
@@ -3733,12 +3834,12 @@ fn read_response(r: rthttp.CResp, method: Str) -> Exchange {
 /// the request's header does not count, as Transport looks only at
 /// Request.Close), else closed. A request
 /// that could not be written is an exchange with no response byte.
-fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart] = []) -> Exchange {
-  hclient.request(r, method, target, host, hk, hv, body, !src.is_empty())
+fn h1_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> Exchange {
+  hclient.request(r, method, target, host, hk, hv, body, !src.is_empty(), tnames)
   if hclient.err(r) != 0 {
     return ex_none(CC_ERR, "")
   }
-  let sx = send_src(r, src, hk)
+  let sx = send_src(r, src, hk, tnames, tfn)
   if sx.s != CC_OK {
     hclient.end_keep(r, false, https, addr, name, roots, sx.s, sx.why)
     return sx
@@ -3764,6 +3865,9 @@ pub struct BodyRead {
   pub excess: Int = 0
   pub done: Bool = false
   pub keep: Bool = false
+  /// The trailer fields of a chunked body that ended, [name, value, ...]
+  /// (Chunked.trailers).
+  pub trailers: List[Str] = []
 }
 
 /// read_head's result: the head (an Exchange with no body, or its
@@ -3945,6 +4049,7 @@ pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
           if c.res == HB_OK {
             hclient.skip(r, c.used)
             b.done = true
+            b.trailers = c.trailers
             b.keep = b.keep && hclient.avail(r) == 0
             return bstep(CC_OK, "")
           }
@@ -3973,8 +4078,8 @@ pub fn cbody_next(r: rthttp.CResp, var b: BodyRead, max: Int) -> BodyStep {
 
 /// h1_round up to the response's head (decision 0404): the connection
 /// stays r's for the body (cbody_next), or is closed on a failure.
-fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = []) -> HeadRead {
-  hclient.request(r, method, target, host, hk, hv, body, !src.is_empty())
+fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[Str], hv: List[Str], body: Bytes, https: Bool, addr: Str, name: Str, roots: rthttp.Roots, src: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> HeadRead {
+  hclient.request(r, method, target, host, hk, hv, body, !src.is_empty(), tnames)
   if hclient.err(r) != 0 {
     return HeadRead{x: ex_none(CC_ERR, ""), b: BodyRead{mode: 0, done: true}}
   }
@@ -3985,7 +4090,7 @@ fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[
     // fails
     let spawn = duplex[0]
     spawn(fn() {
-      let sx = send_src(r, src, hk)
+      let sx = send_src(r, src, hk, tnames, tfn)
       if sx.s != CC_OK {
         hclient.shut_wr(r)
       }
@@ -3997,7 +4102,7 @@ fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[
     }
     return hd
   }
-  let sx = send_src(r, src, hk)
+  let sx = send_src(r, src, hk, tnames, tfn)
   if sx.s != CC_OK {
     hclient.end_keep(r, false, https, addr, name, roots, sx.s, sx.why)
     return HeadRead{x: sx, b: BodyRead{mode: 0, done: true}}
@@ -4009,10 +4114,45 @@ fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[
   hr
 }
 
+/// The trailer lines of a request ("Name: value\r\n", sorted by name) that
+/// f gives for the declared names ("" for none): net/http sends the keys
+/// of Request.Trailer, and Xo only those the request declared
+/// (with_trailers).
+fn trailer_text(tnames: Str, tfn: List[fn() -> List[Str]]) -> Str {
+  if tfn.is_empty() || tnames.is_empty() {
+    return ""
+  }
+  let declared = tnames.split(", ")
+  let kv = tfn[0]()
+  var names: List[Str] = []
+  var m: Map[Str, Str] = {}
+  var i = 0
+  while i + 1 < kv.len() {
+    if let Some(k) = trailer_key(kv[i]) {
+      if declared.contains(k) && !kv[i + 1].contains("\n") && !kv[i + 1].contains("\r") {
+        match m.get(k) {
+          Some(old) => m[k] = old + ", " + kv[i + 1]
+          None => {
+            m[k] = kv[i + 1]
+            names.push(k)
+          }
+        }
+      }
+    }
+    i += 2
+  }
+  names = names.sort()
+  var out = ""
+  for k in names {
+    out += k + ": " + (m.get(k) ?? "") + "\r\n"
+  }
+  out
+}
+
 /// Sends a streamed request body (decision 0404 stage C) after its head:
 /// chunked unless the request gave its Content-Length. A source's error
 /// fails the request with its text (Go's Client: the body's Read error).
-fn send_src(r: rthttp.CResp, src: List[fn(Int) -> BodyPart], hk: List[Str]) -> Exchange {
+fn send_src(r: rthttp.CResp, src: List[fn(Int) -> BodyPart], hk: List[Str], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> Exchange {
   let f = match src.get(0) {
     Some(g) => g
     None => return Exchange{s: CC_OK, why: "", status: 0, headers: [], body: b"", keep: false, none: false}
@@ -4023,7 +4163,7 @@ fn send_src(r: rthttp.CResp, src: List[fn(Int) -> BodyPart], hk: List[Str]) -> E
     if !p.err.is_empty() {
       return ex_fail(CC_ERR, p.err)
     }
-    let s = hclient.send_chunk(r, p.data.bytes(), chunked, p.end)
+    let s = hclient.send_chunk(r, p.data.bytes(), chunked, p.end, if p.end && chunked { trailer_text(tnames, tfn) } else { "" })
     if s != CC_OK {
       return ex_fail(s, "")
     }
@@ -4106,7 +4246,7 @@ fn valid_method(m: Str) -> Bool {
 /// the attenuation lists of the client's Net (decision 0175), following
 /// redirects as net/http's Client does (redirectBehavior,
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = []) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -4216,7 +4356,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     // after the head
     var h2x: H2X? = None
     if hclient.h2(r) {
-      h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src)
+      h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src, tnames, tfn)
       if hclient.retry(r) && !src.is_empty() {
         // a streamed body cannot be sent again (Go's error without
         // Request.GetBody)
@@ -4227,7 +4367,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         // it goes on a new one, as Transport retries it
         r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn)
         if hclient.h2(r) {
-          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src)
+          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src, tnames, tfn)
         }
       }
     }
@@ -4239,11 +4379,11 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     var hb = BodyRead{mode: 0, done: true}
     if h1 {
       var x = if stream {
-        let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, duplex)
+        let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
         hb = hr.b
         hr.x
       } else {
-        h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src)
+        h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn)
       }
       if x.none && hclient.reused(r) && replayable(method, hk) && src.is_empty() {
         // the pooled connection was dead (the server closed it): the
@@ -4252,13 +4392,13 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn)
         h1 = hclient.reading(r)
         if hclient.h2(r) {
-          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src)
+          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src, tnames, tfn)
         } else if h1 && stream {
-          let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, duplex)
+          let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
           hb = hr.b
           x = hr.x
         } else if h1 {
-          x = h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src)
+          x = h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn)
         }
       }
       if h1 && hclient.err(r) == 0 {

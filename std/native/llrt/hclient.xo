@@ -279,7 +279,7 @@ pub fn shut_wr(r: rthttp.CResp) {
 /// Sends the next piece of a streamed request body (decision 0404 stage
 /// C): framed as a chunk when the request is chunked, the last chunk when
 /// last; CC_OK or the write's failure (the caller ends the exchange).
-pub fn send_chunk(r: rthttp.CResp, data: Bytes, chunked: Bool, last: Bool) -> Int {
+pub fn send_chunk(r: rthttp.CResp, data: Bytes, chunked: Bool, last: Bool, trailers: Str = "") -> Int {
   let a = rec(r)
   var out = BytesBuilder.with_capacity(data.len() + 16)
   if chunked && data.len() > 0 {
@@ -290,7 +290,9 @@ pub fn send_chunk(r: rthttp.CResp, data: Bytes, chunked: Bool, last: Bool) -> In
     out.write(data)
   }
   if chunked && last {
-    out.write("0\r\n\r\n".bytes())
+    out.write("0\r\n".bytes())
+    out.write(trailers.bytes())
+    out.write("\r\n".bytes())
   }
   let b = out.freeze()
   if b.is_empty() {
@@ -310,7 +312,7 @@ pub fn reading(r: rthttp.CResp) -> Bool { rt.mem_load(rec(r), R_READING, 4) != 0
 /// five), Accept-Encoding gzip unless the header asks for an encoding or
 /// a Range or the method is HEAD, then the body. A failure ends the
 /// exchange: the connection closes and r has the error.
-pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, chunked: Bool = false) {
+pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List[Str], values: List[Str], body: Bytes, chunked: Bool = false, tnames: Str = "") {
   let a = rec(r)
   let hn = if names.len() < values.len() { names.len() } else { values.len() }
   var head = method + " " + target + " HTTP/1.1\r\nHost: " + host + "\r\n"
@@ -352,6 +354,10 @@ pub fn request(r: rthttp.CResp, method: Str, target: Str, host: Str, names: List
     // a streamed body (decision 0404 stage C): its length when the
     // request gave it, else chunked; the bytes follow (send_chunk)
     head = head + (if cl.is_empty() { "Transfer-Encoding: chunked\r\n" } else { "Content-Length: ${cl}\r\n" })
+    if !tnames.is_empty() {
+      // the trailers' names, declared as net/http's transferWriter does
+      head = head + "Trailer: " + tnames + "\r\n"
+    }
   } else if bn > 0 || method == "POST" || method == "PUT" || method == "PATCH" {
     head = head + "Content-Length: ${bn}\r\n"
   }

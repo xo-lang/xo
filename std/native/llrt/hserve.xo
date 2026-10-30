@@ -57,7 +57,14 @@ const SK_STATUS = 56
 const SK_STARTED = 64
 const SK_FAILED = 72
 const SK_STATE = 80
-const SK_SIZE = 88
+/// The trailers set after the body (decision 0433): a block of
+/// "name\nvalue\n" pairs: a block of its length (a word), then the bytes, 0
+/// for none (h2srv.xo trailer_fields reads the same block).
+const SK_TRL = 88
+/// whether the response head declared a Trailer (a trailer after no body
+/// still needs the chunked end then)
+const SK_DECL = 96
+const SK_SIZE = 104
 
 /// The table of streamed responses (in the services record, ctx.xo
 /// SV_STREAMS): a lock word, the array of functions (malloc'd; an Any's
@@ -408,8 +415,9 @@ pub fn sink_buf() -> rthttp.Sink { sink_take_handle(sink_new()) }
 
 /// A sink that sends the response of status on h (its header set with
 /// http1.header_set).
-pub fn sink_conn(h: rthttp.HConn, status: Int) -> rthttp.Sink {
+pub fn sink_conn(h: rthttp.HConn, status: Int, declared: Bool = false) -> rthttp.Sink {
   let k = sink_new()
+  st(k, SK_DECL, if declared { 1 } else { 0 })
   let hc = hconn.rec(h)
   rc.inc(hc)
   st(k, SK_CONN, 1)
@@ -517,7 +525,15 @@ pub fn sink_end(s: rthttp.Sink) -> Bool {
   let h = hconn.handle(hc)
   let h2 = ld(hc, hconn.HC_H2S) != 0
   let p = ld(k, SK_BUF)
-  let n = ld(k, SK_N)
+  var n = ld(k, SK_N)
+  let trl = trailer_lines(k)
+  if ld(k, SK_STARTED) == 0 && ld(k, SK_TRL) != 0 && ld(k, SK_FAILED) == 0 && (h2 || n > 0 || ld(k, SK_DECL) != 0) {
+    // trailers need a chunked body (net/http sets no Content-Length when
+    // a trailer is declared): start the stream with what is buffered
+    emit(k, p, n)
+    st(k, SK_N, 0)
+    n = 0
+  }
   if ld(k, SK_STARTED) == 0 {
     if h2 {
       let _r = rt.call_c4(hconn.tls_op(hconn.TO_H2_RESPOND_AT), hc, ld(k, SK_STATUS), p, n)
@@ -528,11 +544,66 @@ pub fn sink_end(s: rthttp.Sink) -> Bool {
   st(k, SK_N, 0)
   if h2 {
     // the rest with the end of the stream (h2srv.xo finish)
-    let _ok = rt.call_c4(hconn.tls_op(hconn.TO_H2_FINISH), hc, p, n, 0)
+    let _ok = rt.call_c4(hconn.tls_op(hconn.TO_H2_FINISH), hc, p, n, ld(k, SK_TRL))
     return false
   }
   // HTTP/1.1 (http1.xo stream_end): the rest, the last chunk
-  http1.stream_end(h, ld(k, SK_STATUS), ld(k, SK_STATE), p, n)
+  http1.stream_end(h, ld(k, SK_STATUS), ld(k, SK_STATE), p, n, trl)
+}
+
+/// Adds trailer name: value to stream sink s (decision 0433), sent after
+/// the body when the response is chunked (HTTP/1.1) or on HTTP/2; name
+/// is canonical (http1.trailer_key) and value has no line break.
+pub fn sink_set_trailer(s: rthttp.Sink, name: Str, value: Str) {
+  let k = rt.obj_addr(s)
+  if value.contains("\n") || value.contains("\r") {
+    return
+  }
+  let line = name + "\n" + value + "\n"
+  let blk = ld(k, SK_TRL)
+  let old = if blk == 0 { 0 } else { ld(blk, 0) }
+  if old + line.len() > http1.MAX_TRAILER_BYTES {
+    return
+  }
+  let nb = rt.heap_large(8 + old + line.len())
+  if old > 0 {
+    rt.mem_copy(nb + 8, blk + 8, old)
+  }
+  if blk != 0 {
+    rt.heap_release(blk)
+  }
+  rt.mem_copy(nb + 8 + old, raw.data(line), line.len())
+  st(nb, 0, old + line.len())
+  st(k, SK_TRL, nb)
+}
+
+/// The trailers of sink k as "Name: value\r\n" lines sorted by name (net/http
+/// sorts them), "" for none.
+fn trailer_lines(k: Int) -> Str {
+  if ld(k, SK_TRL) == 0 {
+    return ""
+  }
+  let parts = raw.str_at(ld(k, SK_TRL) + 8, ld(ld(k, SK_TRL), 0)).split("\n")
+  var names: List[Str] = []
+  var m: Map[Str, Str] = {}
+  var i = 0
+  while i + 1 < parts.len() {
+    let n = parts[i]
+    match m.get(n) {
+      Some(old) => m[n] = old + ", " + parts[i + 1]
+      None => {
+        m[n] = parts[i + 1]
+        names.push(n)
+      }
+    }
+    i += 2
+  }
+  names = names.sort()
+  var out = ""
+  for n in names {
+    out += n + ": " + (m.get(n) ?? "") + "\r\n"
+  }
+  out
 }
 
 /// The body a buffer sink collected.
@@ -546,6 +617,9 @@ pub fn sink_free(k: Int) {
   let b = ld(k, SK_BUF)
   if b != 0 {
     rt.heap_release(b)
+  }
+  if ld(k, SK_TRL) != 0 {
+    rt.heap_release(ld(k, SK_TRL))
   }
   let hc = ld(k, SK_HC)
   if hc != 0 {
