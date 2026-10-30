@@ -20,6 +20,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/backoff: exponential backoff with jitter and `retry`, cenkalti/
   backoff v4's ExponentialBackOff and Retry, over the Clock and Rand it
   is given; `retryable` decides which errors are retried.
+- `use go`: a handle converts to an interface its Go type satisfies with
+  `as_<interface>()` (`resp.body().as_reader()`, `buf.as_writer()`,
+  `url.as_stringer()`; decision 0416), since Xo does not convert handles
+  implicitly; gobind adapter errors quote the Go line. Binding format 14.
 - `use go`: Xo functions implement Go interfaces (decision 0416): a
   binding declares a constructor per interface, one function parameter
   per method (`io.writer(write: fn(p: Bytes) -> Int ! go.Error { ... })`,

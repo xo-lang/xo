@@ -125,6 +125,9 @@ type gen struct {
 	// tps: the type parameters of the generic function being bound
 	// (decision 0415), nil otherwise
 	tps map[*types.TypeParam]*tparam
+	// imp imports a dependency's whole API (bindUpcasts): an import's
+	// scope holds only what this package's export data names
+	imp types.Importer
 }
 
 // tparam is a type parameter of a bound generic function (decision 0415):
@@ -1393,6 +1396,79 @@ func (g *gen) run() {
 		}
 		if len(impl) == n && len(g.queue) == 0 {
 			break
+		}
+	}
+	g.bindUpcasts()
+}
+
+// upcastTargets are the interfaces of other packages bindUpcasts offers.
+var upcastTargets = map[string][]string{
+	"io":  {"Reader", "Writer", "Closer", "ReadCloser", "WriteCloser", "ReadWriter", "ReaderAt", "WriterTo", "ReaderFrom", "StringWriter", "ByteReader"},
+	"fmt": {"Stringer"},
+}
+
+// bindUpcasts declares, for each handle of the package whose Go type is
+// assignable to another of its interfaces, a method that gives the
+// value as that interface: `fn (x: ReadCloser) as_reader() -> Reader`
+// (decision 0416 follow-up: Go's assignability does not cross the handle
+// boundary, so `io.read_all(body)` with an io.ReadCloser body did not
+// check).
+func (g *gen) bindUpcasts() {
+	var ifaces []*handle
+	for _, h := range g.order {
+		if !h.foreign && !h.ref && len(h.tps) == 0 && isInterfaceType(h.named) {
+			ifaces = append(ifaces, h)
+		}
+	}
+	// the interfaces Go composes I/O with, from io and fmt when the
+	// package depends on them (bytes.Buffer as an io.Writer)
+	for _, path := range sortedKeys(upcastTargets) {
+		if g.imp == nil || path == g.pkg.Path() {
+			continue
+		}
+		// the same *types.Package, completed: the importer shares its
+		// packages, so the interfaces stay identical to the ones the
+		// package's signatures name; a package that is not a
+		// dependency has no export data and offers nothing
+		full, err := g.imp.Import(path)
+		if err != nil {
+			continue
+		}
+		for _, name := range upcastTargets[path] {
+			tn, ok := full.Scope().Lookup(name).(*types.TypeName)
+			if !ok {
+				continue
+			}
+			n, ok := tn.Type().(*types.Named)
+			if !ok {
+				continue
+			}
+			if i, err := g.handleFor(n, 0); err == nil {
+				ifaces = append(ifaces, i)
+			}
+		}
+	}
+	for _, h := range append([]*handle(nil), g.order...) {
+		if h.foreign || h.ref || len(h.tps) > 0 {
+			continue
+		}
+		var from types.Type = h.named
+		field := "V"
+		if h.byPtr {
+			from, field = types.NewPointer(h.named), "P"
+		}
+		for _, i := range ifaces {
+			if i == h || !types.AssignableTo(from, i.named) {
+				continue
+			}
+			xn := "as_" + snake(i.named.Obj().Name())
+			if h.names[xn] {
+				g.skip(h.xo+"."+xn, g.display(from)+" as "+g.display(i.named), skipf(catCollision, "method name `%s` is taken", xn), false)
+				continue
+			}
+			h.names[xn] = true
+			h.decls = append(h.decls, fmt.Sprintf("/// Go: the value as a %s\nfn (x: %s) %s() -> %s uses go", g.display(i.named), h.xoT, xn, i.xo))
+			fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task) %s {\n\treturn %s{V: h.%s}\n}\n\n", h.rtT, xn, i.goName, i.goName, field)
 		}
 	}
 }

@@ -1775,6 +1775,14 @@ fn main(os: Os) ! {
   length that returns the bytes (`fn(max: Int) -> Bytes ! go.Error`):
   they are copied into the buffer, more than it holds is a fault, and
   none with no error is `io.EOF`.
+- Xo does not convert one handle to another. A handle whose Go type Go
+  would assign to another interface of its package, or to one of io's
+  I/O interfaces (`Reader`, `Writer`, `Closer`, `ReadCloser`,
+  `WriteCloser`, `ReadWriter`, `ReaderAt`, `WriterTo`, `ReaderFrom`,
+  `StringWriter`, `ByteReader`) or `fmt.Stringer` when its package depends
+  on io or fmt, has a method that gives it as that interface:
+  `io.read_all(resp.body().as_reader())`, `buf.as_writer()` (decision
+  0416).
 - Every call into Go performs the effect `go`, which `pub` functions must
   declare. Go code can reach files and the network without a capability, so
   `uses go` marks that authority escape in signatures.

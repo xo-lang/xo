@@ -685,3 +685,46 @@ func TestImplementations(t *testing.T) {
 		t.Errorf("no http.handler constructor:\n%s", grep(h, "fn handler"))
 	}
 }
+
+// TestUpcasts: a handle whose Go type is assignable to another interface
+// of its package gives it as that interface (`as_reader()`), since Go's
+// assignability does not cross the handle boundary.
+func TestUpcasts(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	io, ib, _ := bindDecl(t, "io")
+	for _, want := range []string{
+		"fn (x: ReadCloser) as_reader() -> Reader uses go",
+		"fn (x: ReadCloser) as_closer() -> Closer uses go",
+		"fn (x: ReadWriteCloser) as_read_closer() -> ReadCloser uses go",
+	} {
+		if !strings.Contains(io, want) {
+			t.Errorf("no %q in io's declarations:\n%s", want, grep(io, "as_"))
+		}
+	}
+	if !strings.Contains(string(ib.Adapter), "func (h Go_io_ReadCloser) M_as_reader(tk *Task) Go_io_Reader {\n\treturn Go_io_Reader{V: h.V}\n}") {
+		t.Errorf("no as_reader adapter in io's adapter")
+	}
+	if strings.Contains(io, "fn (x: Reader) as_read_closer()") {
+		t.Errorf("a Reader converts to a ReadCloser:\n%s", grep(io, "as_read_closer"))
+	}
+	bs, _, _ := bindDecl(t, "bytes")
+	for _, want := range []string{
+		"fn (x: Buffer) as_writer() -> io.Writer uses go",
+		"fn (x: Buffer) as_reader() -> io.Reader uses go",
+		"fn (x: Buffer) as_writer_to() -> io.WriterTo uses go",
+		"fn (x: Reader) as_byte_reader() -> io.ByteReader uses go",
+	} {
+		if !strings.Contains(bs, want) {
+			t.Errorf("no %q in bytes' declarations:\n%s", want, grep(bs, "as_"))
+		}
+	}
+	if strings.Contains(bs, "fmt.Stringer") {
+		t.Errorf("bytes, which does not import fmt, offers fmt.Stringer:\n%s", grep(bs, "Stringer"))
+	}
+	us, _, _ := bindDecl(t, "net/url")
+	if want := "fn (x: URL) as_stringer() -> fmt.Stringer uses go"; !strings.Contains(us, want) {
+		t.Errorf("no %q in net/url's declarations:\n%s", want, grep(us, "as_"))
+	}
+}

@@ -80,7 +80,9 @@ fn main(os: Os) {
 
 // TestUseGoImplementsHandler (decision 0416): an Xo http.Handler serves
 // two concurrent requests through httptest; each call runs as a task of
-// its own (Go calls ServeHTTP from its server's goroutines).
+// its own (Go calls ServeHTTP from its server's goroutines). The client
+// reads each body with io.read_all(resp.body().as_reader()) (an
+// io.ReadCloser given as an io.Reader).
 func TestUseGoImplementsHandler(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -89,12 +91,16 @@ func TestUseGoImplementsHandler(t *testing.T) {
 	setenv(t, "XO_GOBIND_DIR", "")
 	dir := writeFiles(t, map[string]string{
 		"xo.mod": "module handler\n",
-		"main.xo": `use go "net/http"
+		"main.xo": `use go "io"
+use go "net/http"
 use go "net/http/httptest"
 
 fn get(url: Str) -> Str {
   match http.get(url) {
-    Ok(resp) => "${resp.status_code()}"
+    Ok(resp) => {
+      let body = io.read_all(resp.body().as_reader()).ok() ?? "".bytes()
+      "${resp.status_code()} ${body.to_str() ?? "?"}"
+    }
     Err(e) => "error ${e.message()}"
   }
 }
@@ -102,6 +108,7 @@ fn get(url: Str) -> Str {
 fn main(os: Os) {
   let h = http.handler(serve_http: fn(w, r) {
     w.write_header(if r.request_uri() == "/a" { 201 } else { 202 })
+    let _ = w.write("hello ${r.request_uri()}".bytes()).ignore_err("a client that went away")
   })
   let srv = httptest.new_server(h)
   let base = srv.url()
@@ -120,7 +127,7 @@ fn main(os: Os) {
 	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
 		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
 	}
-	want := "201\n202"
+	want := "201 hello /a\n202 hello /b"
 	if got := strings.TrimSpace(out.String()); got != want {
 		t.Errorf("output\n%s\nwant\n%s", got, want)
 	}

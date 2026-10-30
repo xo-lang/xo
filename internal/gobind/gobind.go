@@ -66,7 +66,7 @@ import (
 // 9 (2026-10-29, decision 0412): Go's any is go.Any; a handle has its Go
 // value both ways (XoGoValue, XoFromGo) for go.any and go.Any.as_handle.
 // 10 (2026-10-29, decision 0415): generic functions bind as Xo generics.
-const Version = 13
+const Version = 14
 
 // Binding is one bound Go package.
 type Binding struct {
@@ -487,6 +487,7 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 		b.Module, b.ModVersion = self.Module.Path, self.Module.Version
 	}
 	g := newGen(b, pkg)
+	g.imp = imp
 	g.rerunKey = rerunKey(opts.Rerun)
 	for _, n := range opts.Rerun {
 		if n == "*" {
@@ -498,7 +499,7 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 	b.Decl = g.declFile()
 	b.Adapter, err = g.adapterFile()
 	if err != nil {
-		return nil, fmt.Errorf("gobind: adapter for %s: %v", goPath, err)
+		return nil, fmt.Errorf("gobind: adapter for %s: %v%s", goPath, err, adapterLine(b.Adapter, err))
 	}
 	b.DeclPath = declPath(opts.Dir, goPath, opts.Rerun)
 	if err := os.MkdirAll(filepath.Dir(b.DeclPath), 0o755); err != nil {
@@ -601,4 +602,18 @@ func exportDataMsg(detail string) string {
 	return fmt.Sprintf("xo-gobind was built with %s and cannot read the export data of %s (%s); "+
 		"build xo-gobind with the installed Go (go build -o xo-gobind ./cmd/xo-gobind in this xo's source at its version) and set XO_GOBIND to it",
 		runtime.Version(), local, firstLine(detail))
+}
+
+// adapterLine is the adapter's source line a format error names, quoted
+// for the error message ("" when the error names none).
+func adapterLine(src []byte, err error) string {
+	var line int
+	if _, e := fmt.Sscanf(err.Error(), "%d:", &line); e != nil || line < 1 {
+		return ""
+	}
+	lines := strings.Split(string(src), "\n")
+	if line > len(lines) {
+		return ""
+	}
+	return "\n\t" + strings.TrimSpace(lines[line-1])
 }

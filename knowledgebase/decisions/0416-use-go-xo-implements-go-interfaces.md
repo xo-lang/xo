@@ -178,8 +178,12 @@ case is small in count and large in use: it is how Go composes I/O.
   concurrent httptest requests).
 - Decision 3 needs no new rule: closures capture by value and writing a captured `var` is XO0502 (core
   3.3), so a callback shares state with its creator only through a Mutex or Atomic.
-- Known gap (follow-up): an interface handle does not convert to an interface it embeds or satisfies
-  (`resp.body()` is `io.ReadCloser`, `io.read_all` takes `io.Reader`: XO0401). The binder could
-  declare an upcast per such pair (`fn (r: ReadCloser) reader() -> Reader`), or the checker could accept
-  a Go handle where Go's assignability holds.
+- Upcasts (the lead, 2026-10-29: binder only, no checker change): an interface handle did not convert to an
+  interface it embeds or satisfies (`resp.body()` is `io.ReadCloser`, `io.read_all` takes `io.Reader`:
+  XO0401). internal/gobind bindUpcasts declares `fn (x: H) as_<iface>() -> I uses go` for each handle H whose
+  Go type (`*T` for a struct) is assignable to interface I, I being an interface of H's package or one of
+  upcastTargets (io's I/O interfaces, fmt.Stringer) when the package depends on io or fmt; a name already
+  taken is skipped. The targets are looked up in the dependency imported whole through the binder's own
+  importer, since an import's scope from export data holds only what the bound package names
+  (gotchas/gobind-export-data-partial-scope.md). Binding format 14.
 - Binding format 13.
