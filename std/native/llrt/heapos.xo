@@ -166,7 +166,7 @@ pub fn set_label(p: Int, n: Int) {
 }
 
 /// The machine's physical memory in bytes, 0 when unknown (decision 0349:
-/// xo's default budget is half of it; Windows reads none yet).
+/// xo's default budget is half of it).
 pub fn phys_mem() -> Int {
   match target.os {
     TargetOs.Darwin => {
@@ -186,7 +186,16 @@ pub fn phys_mem() -> Int {
       unmap(b, GRAIN)
       n
     }
-    TargetOs.Windows | TargetOs.Wasi => 0
+    TargetOs.Windows => {
+      // MEMORYSTATUSEX: dwLength at 0, ullTotalPhys at 8
+      let b = map(GRAIN)
+      rt.mem_store(b, 0, 64, 4)
+      let ok = Int(sys_windows.GlobalMemoryStatusEx(b)) != 0
+      let n = if ok { rt.mem_load(b, 8, 8) } else { 0 }
+      unmap(b, GRAIN)
+      n
+    }
+    TargetOs.Wasi => 0
   }
 }
 

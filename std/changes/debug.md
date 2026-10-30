@@ -1,5 +1,15 @@
 # std/debug changes
 
+## 2026-10-30: fix: mem_total reads physical memory on Windows
+
+- Kind: fix
+- Commit: (this commit)
+- Found by: xo-lang-4's per OS host probe measurements (xo sized its emit jobs from a 16 GB guess on a 32 CPU Windows box)
+- Go reference: none (Go's runtime does not expose physical memory)
+- Test: a windows/amd64 box run printing `debug.mem_total()`, and the Windows sample
+
+`debug.mem_total()` was 0 on native windows/amd64; it now returns the machine's physical memory from GlobalMemoryStatusEx's ullTotalPhys. So xo on Windows gets decision 0349's default memory budget (three quarters of physical memory, at least 16 GiB) when XO_MAX_MEM is unset, as on macOS and Linux, and sizes its LLVM and emit jobs from the real memory.
+
 ## 2026-10-27: feature: a crashed process can be held for a debugger (XO_CRASH_SLEEP)
 
 - Kind: feature

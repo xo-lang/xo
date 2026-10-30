@@ -81,7 +81,7 @@ fn main(os0: Os) ! {
   // the bytes the heap hands out; a self build of xo peaks at 9.9 GB cold
   // and 11.2 GB warm, the LLVM build at 7.8 GB. XO_MAX_MEM sets another
   // (read by the runtime at start), 0 or off none; no default where the
-  // physical memory is not read (Windows)
+  // physical memory is not read (WASI)
   if os.env.get("XO_MAX_MEM") == None {
     let total = debug.mem_total()
     if total > 0 {

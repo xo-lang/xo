@@ -64,6 +64,9 @@ fn BCryptGenRandom(alg: Int, buf: Int, n: Int, flags: Int) -> Int32
 /// VirtualAlloc: the address, or 0.
 fn VirtualAlloc(addr: Int, size: Int, kind: Int, protect: Int) -> Int
 fn VirtualFree(addr: Int, size: Int, kind: Int) -> Int32
+/// GlobalMemoryStatusEx: fills the 64 byte MEMORYSTATUSEX at p, whose
+/// dwLength the caller sets to 64; nonzero on success.
+fn GlobalMemoryStatusEx(p: Int) -> Int32
 /// WaitOnAddress: sleeps while the size bytes at addr equal those at
 /// cmp (ms INFINITE: 0xFFFFFFFF).
 fn WaitOnAddress(addr: Int, cmp: Int, size: Int, ms: Int) -> Int32
