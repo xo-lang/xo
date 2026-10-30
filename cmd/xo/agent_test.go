@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"bytes"
 	"encoding/json"
+	"flag"
 	"fmt"
 	"io"
 	"net"
@@ -14,6 +15,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/xo-lang/xo/internal/testtmp"
 	"github.com/xo-lang/xo/internal/xotool"
 )
 
@@ -22,6 +24,9 @@ import (
 // test turns forwarding back on for its own temporary socket. Identical
 // builds reuse one binary, within and across runs (XO_BIN_CACHE).
 func TestMain(m *testing.M) {
+	flag.Parse()
+	// a -run that names no test fails (decision 0437)
+	testtmp.RequireRunMatch(m)
 	os.Setenv(serveDisableEnv, "1")
 	if _, ok := os.LookupEnv("XO_BIN_CACHE"); !ok {
 		if c, err := os.UserCacheDir(); err == nil {

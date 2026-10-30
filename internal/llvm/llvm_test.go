@@ -28,6 +28,8 @@ func TestMain(m *testing.M) {
 		exitingServer()
 	}
 	flag.Parse()
+	// a -run that names no test fails (decision 0437)
+	testtmp.RequireRunMatch(m)
 	// a run that would die at go test's 10 minute timeout says so at once,
 	// with the command that runs it instead (golden_timeout_test.go)
 	exitOnGoldenTimeout()

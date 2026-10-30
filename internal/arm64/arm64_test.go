@@ -27,6 +27,8 @@ var update = flag.Bool("update", false, "rewrite the golden assembly files")
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	// a -run that names no test fails (decision 0437)
+	testtmp.RequireRunMatch(m)
 	// identical builds reuse one binary, within and across runs
 	xotool.EnableTestBinCache()
 	dir, err := testtmp.Dir("xo-arm64-test-")

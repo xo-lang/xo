@@ -22,6 +22,8 @@ var updateGolden = flag.Bool("golden-update", false, "rewrite want.txt of the go
 
 func TestMain(m *testing.M) {
 	flag.Parse()
+	// a -run that names no test fails (decision 0437)
+	testtmp.RequireRunMatch(m)
 	// identical builds reuse one binary, within and across runs
 	xotool.EnableTestBinCache()
 	// a -race program sleeps 1 s at exit by default (the race runtime's
