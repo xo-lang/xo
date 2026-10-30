@@ -1,5 +1,21 @@
 # std/metrics changes
 
+## 2026-10-30: perf: a summary observation writes no collection under its Mutex
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 1's SSA reading of the qp repro (a Mutex.with body's
+  first write to each collection copies it while the mutex still holds
+  the value for a fault, spec core 5.1; observe pushed into every age
+  bucket's buffer, so each observation copied up to 500 floats per bucket)
+- Go reference: client_golang summary's hotBuf (observations buffered,
+  then moved into the streams in a batch)
+- Test: goldens metrics_summary and metrics_text (arm64, LLVM; Go parity
+  for metrics_summary), the metrics corpus on arm64, LLVM and Go;
+  xo bench --ab on linux/arm64 in bench/results/metricsum-hot-2026-10-30.md
+
+2M observations and a scrape natively in 655 ms against 1,559 before on the linux/arm64 offload host (wall 0.42, max RSS unchanged at 6.9 MB), 0.766 times Go's 858 ms (was 1.825).
+
 ## 2026-10-29: perf: a summary's quantile stream compresses in one pass
 
 - Kind: perf

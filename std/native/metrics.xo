@@ -92,9 +92,13 @@ fn summary_observe(s: metrics.Summary, v: Float, values: List[Str] = []) {
     let objs = s.f.objectives
     if !objs.is_empty() {
       x.q[0].with(fn(var st: metrics.QState) {
-        for i in 0..st.streams.len() {
-          qinsert(st.streams[i], v, objs)
+        var i = st.hot_n.get()
+        if i == QBUF {
+          qdrain(st, objs)
+          i = 0
         }
+        st.hot[i].set(v.to_bits())
+        st.hot_n.set(i + 1)
       })
     }
     let _c = x.count.add(1)
@@ -148,7 +152,31 @@ fn qstate_new(k: Int) -> metrics.QState {
   for _ in 0..k {
     ss.push(qstream_new())
   }
-  metrics.QState{streams: ss, head: 0, exp_ms: 0}
+  var hot: List[Atomic[Int]] = List.with_capacity(QBUF)
+  for _ in 0..QBUF {
+    hot.push(Atomic[Int].new(0))
+  }
+  metrics.QState{streams: ss, head: 0, exp_ms: 0, hot: hot, hot_n: Atomic[Int].new(0)}
+}
+
+/// Moves st's hot buffer into every stream, in the order observed (each
+/// stream gets the qinsert calls an observation used to make at once);
+/// the count is cleared last, so a fault leaves the buffer to drain again.
+fn qdrain(var st: metrics.QState, objs: List[(Float, Float)]) {
+  let n = st.hot_n.get()
+  if n == 0 {
+    return
+  }
+  var vs: List[Float] = List.with_capacity(n)
+  for j in 0..n {
+    vs.push(Float.from_bits(st.hot[j].get()))
+  }
+  for i in 0..st.streams.len() {
+    for v in vs {
+      qinsert(st.streams[i], v, objs)
+    }
+  }
+  st.hot_n.set(0)
 }
 
 /// NewTargeted's invariant: the allowed rank error at rank r.
@@ -441,6 +469,7 @@ fn expose(f: metrics.Family, now_ms: Int) -> List[Str] {
       let objs = f.objectives
       if !objs.is_empty() {
         let qs = s.q[0].with(fn(var st: metrics.QState) -> List[Float] {
+          qdrain(st, objs)
           if now_ms > 0 {
             qrotate(st, now_ms, f.max_age_ms)
           }

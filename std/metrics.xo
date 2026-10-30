@@ -39,6 +39,11 @@ struct QState {
   streams: List[QStream]
   head: Int
   exp_ms: Int
+  /// observations not yet in the streams, as Float bits (client_golang's
+  /// hot buffer), and how many: Atomics, so an observation writes no
+  /// collection under the Mutex (a with body's first write to one copies it)
+  hot: List[Atomic[Int]]
+  hot_n: Atomic[Int]
 }
 
 /// A value read at scrape time from a collector: its label values and
