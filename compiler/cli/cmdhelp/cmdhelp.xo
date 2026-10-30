@@ -742,7 +742,8 @@ per_sec or throughput are higher is better).
 
 Runs wait while the quiet window file (XO_QUIET_FILE, default
 ~/xo-lead/quiet) holds a future time. The processes run under
-/usr/bin/time. Exit 0 whatever the verdict, 1 on a failed run, 2 on usage.
+/usr/bin/time; on Windows, which has none, they run alone and only wall_ms
+is measured. Exit 0 whatever the verdict, 1 on a failed run, 2 on usage.
 """
 }
 

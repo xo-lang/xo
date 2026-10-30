@@ -16,6 +16,8 @@ test "ipc is higher is better, cycles lower" {
 
 test "counters are n/a on Linux" {
   expect(counters_na("linux").contains("n/a")) == true
+  expect(counters_na("windows").contains("Windows")) == true
+  expect(usage_na().contains("not measured on Windows")) == true
 }
 
 test "rusage reads GNU time -v" {

@@ -381,16 +381,22 @@ fn rusage(goos: Str, err: Str) -> Map[Str, Float] {
   out
 }
 
-/// timed_cmd wraps prog in the platform's time(1).
+/// timed_cmd wraps prog in the platform's time(1). Windows has none (Git
+/// Bash ships no /usr/bin/time), so prog runs alone there and a round
+/// reports wall_ms only.
 fn timed_cmd(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]) -> Cmd {
   var argv: List[Str] = []
   var tool = "/usr/bin/time"
-  if h.goos == "darwin" {
+  if h.goos == "windows" {
+    tool = prog
+  } else if h.goos == "darwin" {
     argv.push("-l")
   } else {
     argv.push("-v")
   }
-  argv.push(prog)
+  if h.goos != "windows" {
+    argv.push(prog)
+  }
   for a in args {
     argv.push(a)
   }
@@ -639,7 +645,16 @@ fn vals_json(m: Map[Str, Float]) -> Str {
 
 /// The line saying the counter rows are missing, and why: GNU time
 /// (Linux) reports neither instructions nor cycles.
+/// The note a Windows run prints under its table: no round measured the
+/// child's CPU or memory, so those rows are absent, not zero.
+fn usage_na() -> Str {
+  "cpu_ms, max_rss_kb: not measured on Windows (no time(1) there; wall_ms only until decision 0426's Proc.children_usage)"
+}
+
 fn counters_na(goos: Str) -> Str {
+  if goos == "windows" {
+    return "instructions, cycles, ipc: n/a (not measured on Windows)"
+  }
   if goos == "darwin" {
     return "instructions, cycles, ipc: n/a (time -l printed no cycles elapsed line)"
   }
@@ -758,6 +773,9 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
     } else {
       os.stdio.print(table(rows))
       os.stdio.println(load_note(o, rounds))
+      if h.goos == "windows" {
+        os.stdio.println(usage_na())
+      }
       if !rows.any(fn(r: Row) { r.name == "cycles" }) && (o.metrics.is_empty() || o.metrics.any(fn(k) { k is "cycles" | "cycles_per_op" | "ipc" | "instructions" })) {
         os.stdio.println(counters_na(h.goos))
       }
