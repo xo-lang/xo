@@ -32,6 +32,17 @@ Stages, one push each: Windows hostname, disk_usage, usage, interfaces. Then cpu
 - `Net.only` denying `interfaces()` unless its list names it: the list names no remote host, so there is nothing for the attenuation to refuse (lead, 2026-10-30).
 - `FakeNet.set_interfaces`: not built; the fixed loopback covers the tests seen so far.
 
+## Shipped
+
+Xo lang 5's stages, one push each, as decided (2026-10-30):
+
+- Env.hostname on Windows: ef403c1dd (golden env_hostname "named true" on every host but WASI).
+- Fs.disk_usage: cbfad94d9.
+- Proc.usage and Proc.children_usage: 0b2929599 (golden host_usage; --ab against Go's syscall.Getrusage, wall 1.188, std/changes/prelude.md).
+- Net.interfaces: 72d46e4df (golden host_ifaces on arm64, LLVM, Go parity, the linux offload hosts and native Windows; --ab against Go's net.Interfaces plus Interface.Addrs, wall 0.254: Xo reads every address in one netlink dump, Go one per interface).
+
+Each updated the user_caps golden and the CHANGELOG's Breaking lines; pushq's prelude check also caught cmd/xo/testdata/nogc/userfs's BlockNet, a user Net, which forwards interfaces to its inner Net. Proc.cpus and Proc.memory remain xo-lang-4's stage.
+
 ## Follow-ups
 
 - A child's own usage on ProcOutput and Child.wait (Go's ProcessState.SysUsage, UserTime, SystemTime): not now (lead, 2026-10-30).
