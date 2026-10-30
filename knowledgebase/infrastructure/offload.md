@@ -65,3 +65,33 @@ on 2026-10-29:
 - Ten internal/llvm tests fail only on Linux arm64 (the list in the lead's
   notes, `offload/linux-arm64-llvm-fails-2026-10-29.md`), assigned to
   Xo Lang 3.
+
+## The linux/amd64 host
+
+The owner's second machine (2026-10-29): a 16-core x86-64 box running
+Windows with OpenSSH (password login, user `xo`, no administrator) and a
+WSL2 Ubuntu 24.04 distribution for that user (28 CPUs, 62 GB from its
+`.wslconfig`). Its values live in `~/xo-lead/offload-amd64.env` (mode
+600) with `OFF_KIND=wsl` and `OFF_SEED` the WSL path of the 0.34.0
+linux-amd64 seed (`~/xo-ci/seed/xo/bin/xo`); WSL has clang 18, lld,
+llvm, build-essential, expect and Go 1.26.0 in `~/go-sdk` (on PATH from
+`~/.profile`). Windows' own shell is cmd.exe, so offload.sh sends a job
+there as a file: scp (`-O`, the legacy protocol, which both hosts take)
+to `%USERPROFILE%\xo-ci\off`, then `wsl -e bash -l` on it under
+`flock ~/xo-ci/offload.lock`.
+
+- `scripts/lead/amd64-run.sh REV NAME [GOLDEN|all|sample ...]` sends REV
+  as a bundle (the commits since `refs/offload-amd64/sent`) and runs
+  `scripts/lead/offload-amd64.sh` there: xo built natively at REV with the
+  seed, then `scripts/linux-goldens.sh` with `--backend=amd64` and no C
+  toolchain (as scripts/docker-goldens.sh). The default `sample` is
+  scripts/docker-amd64-sample.txt. Logs stay in `~/xo-ci/runNAME.out` in
+  WSL. Unlike the Docker run on the Mac, nothing is emulated (no Rosetta)
+  and xo is the native backend's, not a Go backend cross build.
+- First runs (2026-10-29, main aa9c8794d): xo built natively in 222 s
+  (1 s when the host's cache has it); the 48 goldens of the sample in
+  33 s, against about 15 minutes in Docker on the Mac; `all` (433, less
+  the `use_c_*` goldens, which need clang) in 183 s, which found
+  http_wire and http_stream red on every backend.
+- The Windows side has the 0.34.0 windows-amd64 seed in
+  `C:\Users\xo\xo-ci\seed\xo`; native Windows runs are not scripted yet.
