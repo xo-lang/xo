@@ -26,3 +26,11 @@ The survey found CLI and scheduler programs writing their own padding and fixed 
 
 - A `${x:>8.3}` mini language in interpolation: a language change with an ADR of its own; the methods cover the survey's cases and can be sugar for it later.
 - `fmt.Sprintf`: format strings fail at run time; rejected in the language's design (typed interpolation).
+
+## Addendum (2026-10-30): Proc.ppid on Windows
+
+Proc.ppid on windows/amd64 answers the parent's ID from a process snapshot
+(CreateToolhelp32Snapshot and Process32FirstW/NextW, Go's syscall.Getppid),
+not 0, so it matches the Go backend's os.Getppid; 0 remains the answer when
+the snapshot fails (Lang 2; the lead's native Windows golden run found
+proc_pid's "ppid positive false").

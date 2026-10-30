@@ -1101,7 +1101,7 @@ fn (p: Proc) notify(signals: List[Signal]) -> Chan[Signal]    // decision 0407
 fn (p: Proc) stop_notify(c: Chan[Signal])
 fn (p: Proc) request_stop()
 fn (p: Proc) pid() -> Int                    // this process's ID (0 under WASI); decision 0410
-fn (p: Proc) ppid() -> Int                   // the parent's ID (0 on Windows and under WASI)
+fn (p: Proc) ppid() -> Int                   // the parent's ID (0 under WASI)
 enum Signal { Hangup, Interrupt, Quit, Terminate, User1, User2, WindowChange }
 ```
 

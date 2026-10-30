@@ -272,7 +272,8 @@ fn CertCloseStore(store: Int, flags: Int) -> Int32
 // suspended for its context, and a high resolution waitable timer.
 
 /// CreateToolhelp32Snapshot: a snapshot handle, or INVALID_HANDLE_VALUE
-/// (-1); TH32CS_SNAPTHREAD (4) lists every thread of the system.
+/// (-1); TH32CS_SNAPTHREAD (4) lists every thread of the system,
+/// TH32CS_SNAPPROCESS (2) every process (std/native/procid.xo ppid).
 fn CreateToolhelp32Snapshot(flags: Int, pid: Int) -> Int
 /// Thread32First and Thread32Next into the THREADENTRY32 at e (28 bytes,
 /// its dwSize set): nonzero while there is one.
@@ -294,6 +295,11 @@ fn SetThreadContext(h: Int, cx: Int) -> Int32
 /// nonzero on success.
 fn GetThreadTimes(h: Int, created: Int, exited: Int, kernel: Int, user: Int) -> Int32
 fn GetCurrentProcessId() -> UInt32
+/// Process32FirstW and Process32NextW: the snapshot's first or next
+/// PROCESSENTRY32W into the one at e (its dwSize set first), nonzero
+/// while there is one.
+fn Process32FirstW(snap: Int, e: Int) -> Int32
+fn Process32NextW(snap: Int, e: Int) -> Int32
 fn GetCurrentThreadId() -> UInt32
 /// CreateWaitableTimerExW: a timer handle, or 0
 /// (CREATE_WAITABLE_TIMER_HIGH_RESOLUTION 2 in flags, Windows 10 1803).

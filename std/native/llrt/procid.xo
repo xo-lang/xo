@@ -1,7 +1,10 @@
-// Process IDs (decision 0410): Proc.pid and Proc.ppid. Windows answers its
-// own ID and 0 for the parent, WASI 0 for both (no process model).
+// Process IDs (decision 0410): Proc.pid and Proc.ppid. Windows finds the
+// parent in a process snapshot, as Go's os.Getppid does; WASI answers 0
+// for both (no process model).
 
 use native/llrt/linux
+use native/llrt/raw
+use native/rt
 use native/sys_darwin
 use native/sys_windows
 
@@ -20,6 +23,44 @@ pub fn ppid() -> Int {
   match target.os {
     TargetOs.Darwin => Int(sys_darwin.getppid())
     TargetOs.Linux => linux.getppid()
-    TargetOs.Windows | TargetOs.Wasi => 0
+    TargetOs.Windows => windows_ppid()
+    TargetOs.Wasi => 0
+  }
+}
+
+/// The parent's ID on Windows: this process's PROCESSENTRY32W's
+/// th32ParentProcessID in a snapshot of every process (Go's
+/// syscall.Getppid), 0 when there is no snapshot or no entry.
+fn windows_ppid() -> Int {
+  let snap = sys_windows.CreateToolhelp32Snapshot(2, 0)
+  if snap == -1 || snap == 0 {
+    return 0
+  }
+  let me = Int(sys_windows.GetCurrentProcessId())
+  // PROCESSENTRY32W on x64: dwSize at 0, th32ProcessID at 8,
+  // th32ParentProcessID at 32, szExeFile's 260 UTF-16 units from 44;
+  // 568 bytes
+  let buf = raw.bytes_buf(568)
+  let e = raw.bytes_addr(buf)
+  rt.mem_set(e, 0, 568)
+  rt.mem_store(e, 0, 568, 4)
+  var parent = 0
+  var ok = Int(sys_windows.Process32FirstW(snap, e)) != 0
+  while ok {
+    if (rt.mem_load(e, 8, 4) & 4294967295) == me {
+      parent = rt.mem_load(e, 32, 4) & 4294967295
+      break
+    }
+    ok = Int(sys_windows.Process32NextW(snap, e)) != 0
+  }
+  sys_windows.CloseHandle(snap)
+  keep_bytes(buf)
+  parent
+}
+
+/// A use of b after its last raw access.
+fn keep_bytes(b: Bytes) {
+  if b.len() < 0 {
+    return
   }
 }

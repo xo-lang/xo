@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-10-30: fix: Proc.ppid on Windows
+
+- Kind: fix
+- Commit: this commit
+- Found by: the lead's native Windows golden run (2026-10-30, proc_pid: "ppid positive false")
+- Go reference: os.Getppid, syscall.Getppid on Windows (go1.26.1: a CreateToolhelp32Snapshot walk)
+- Test: internal/llvm/testdata/golden/proc_pid, natively on the Windows offload host
+
+`os.proc.ppid()` on windows/amd64 is the parent's ID, found in a process
+snapshot (CreateToolhelp32Snapshot, Process32FirstW/NextW) as Go's is,
+instead of 0; 0 still when the snapshot fails. One snapshot a call, not
+a hot path, so no timing row.
+
 ## 2026-10-29: feature: create_dir_all_mode
 
 - Kind: feature
