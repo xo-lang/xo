@@ -2942,10 +2942,14 @@ struct PolledBody {
 fn poll_source(f: fn(Int) -> http1.BodyPart, spawn: fn(fn() -> ())) -> fn(Int) -> http1.BodyPart {
   let q = Mutex[PolledBody].new(PolledBody{})
   fn(max: Int) -> http1.BodyPart {
-    let first = q.with(fn(var s: PolledBody) -> Bool {
+    // one with: whether this call starts the feeder, and the next piece
+    let (first, piece) = q.with(fn(var s: PolledBody) -> (Bool, http1.BodyPart) {
       let was = s.started
       s.started = true
-      !was
+      if s.items.is_empty() {
+        return (!was, http1.BodyPart{data: "", end: false, err: "", wait: true})
+      }
+      (!was, s.items.remove_at(0))
     })
     if first {
       spawn(fn() {
@@ -2958,12 +2962,7 @@ fn poll_source(f: fn(Int) -> http1.BodyPart, spawn: fn(fn() -> ())) -> fn(Int) -
         }
       })
     }
-    q.with(fn(var s: PolledBody) -> http1.BodyPart {
-      if s.items.is_empty() {
-        return http1.BodyPart{data: "", end: false, err: "", wait: true}
-      }
-      s.items.remove_at(0)
-    })
+    piece
   }
 }
 
