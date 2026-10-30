@@ -495,3 +495,20 @@ backend) copies the runtime beside its new output too. Evidence: a
 darwin/amd64 LLVM race build of race_sync ran on the Intel laptop, no
 race reported in the synchronized case and the planted race reported;
 TestRaceBinaryOutlivesToolchain runs on arm64 and llvm.
+
+## Addendum (2026-10-30): the runtime's reference count paths are annotated by hand
+
+The runtime stays uninstrumented, so the happens-before edges of its
+ownership transfers are given by hand through sanhook (the same edges
+an instrumented atomic gets): obj.xo rl_copy's successful `rc.claim`
+(the reader proving a shared count is the last reference before reusing
+the value in place) is followed by `sanhook.acquire`; a shared count
+decrement in the generated drop helpers (compiler/arm64 rc.xo dec_text)
+goes through `obj.dec_shared_race` in a race build (`sanhook.release`,
+the atomic decrement, `sanhook.acquire` when it was the last reference)
+and keeps the inline `ldaddal` otherwise. Without them TestTSanSharedMaps
+reported a `with_read` snapshot racing a `with` put once Mutex.with moved
+its payload instead of retaining its leaves (a81de74f2); the semantics
+were sound (gotchas/race-rc-paths-annotated-by-hand.md). Any new runtime
+path that hands a value between threads through a count or flag adds
+its own pair.

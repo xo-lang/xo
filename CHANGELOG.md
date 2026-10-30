@@ -15,6 +15,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   with XO1101 "go: updating go.mod: existing contents have changed
   since last read". A bind now holds a lock on the workspace (a kernel
   lock, released if the process dies).
+- FIX (--race, decision 0273): a `with_read` snapshot of a shared Map or
+  List read by one task while another task's `with` changed the value
+  was reported as a data race (TestTSanSharedMaps since a81de74f2, when
+  Mutex.with began moving its payload instead of retaining its leaves);
+  the program was sound. The runtime's reference count paths now carry
+  their happens-before edges by hand: obj.xo's `rc.claim` in rl_copy is
+  followed by an acquire, and a race build's generated drop helpers
+  decrement a shared count through `obj.dec_shared_race` (release,
+  decrement, acquire on the last reference); a plain build is unchanged.
+  Golden conc_mutex_snapshot (8 tasks taking snapshots while the others
+  put, push, remove and trim, arm64, LLVM and Go parity).
 - Diagnostics name the Xo form for more Go and Rust habits (decision
   0438): a Result's `.unwrap()` (use `?` or `.or_fault`) and
   `.unwrap_or(x)` (`r ?? _ => x`, fixed), a Result operand of `+` and

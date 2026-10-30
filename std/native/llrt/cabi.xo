@@ -345,6 +345,8 @@ fn obj_rl_copy_n(l: Int, esize: Int, dup: Int, drop: Int) -> Int { obj.rl_copy_n
 
 fn obj_rc_defer_n(o: Int, drop: Int) { obj.rc_defer_n(o, drop) }
 
+fn obj_dec_shared_race(p: Int) -> Int { obj.dec_shared_race(p) }
+
 /// A string, box, or closure environment object's block and its free at
 /// zero, and a handle's free at zero, for generated code (xo_rc_alloc,
 /// xo_rc_free, xo_h_free stay for code of earlier compilers).

@@ -1,0 +1,93 @@
+// Snapshots of a Mutex's value taken with with_read (a Map and a List
+// returned out of the closure) by eight tasks while every task puts,
+// pushes and removes under with: each snapshot's contents, summed when it
+// is taken and again after the task's own change and after the others
+// ran, stay fixed (value semantics, core 5.4). Tier 30, 2026-10-30:
+// TestTSanSharedMaps reported a put writing a block a snapshot read in
+// another thread; the hardware path, which ThreadSanitizer cannot judge,
+// is checked here on arm64 and LLVM without --race (golden
+// conc_mutex_snapshot). Prints the Map's final size and the bad count.
+use std/task
+
+struct State {
+  recs: Map[Int, Str]
+  xs: List[Int]
+}
+
+fn sum_map(m: Map[Int, Str]) -> Int {
+  var s = 0
+  for (k, v) in m {
+    s += k + v.len()
+  }
+  s
+}
+
+fn sum_list(xs: List[Int]) -> Int {
+  var s = 0
+  for x in xs {
+    s += x
+  }
+  s
+}
+
+/// A change under the lock in a function of its own: the snapshot's
+/// checks are not a decision this change acts on (XO0804).
+fn change(m: Mutex[State], k: Int, old: Int) {
+  m.with(fn(var st) {
+    st.recs.put(k, "v${k}")
+    st.xs.push(k)
+    if old >= 0 {
+      let _r = st.recs.remove(old)
+      if st.xs.len() > 400 {
+        st.xs = st.xs[200..st.xs.len()]
+      }
+    }
+  })
+}
+
+fn worker(m: Mutex[State], w: Int, rounds: Int) -> Int {
+  var bad = 0
+  for i in 0..rounds {
+    let k = w * 1000000 + i
+    let snap = m.with_read(fn(st) { st.recs })
+    let xsnap = m.with_read(fn(st) { st.xs })
+    let s0 = sum_map(snap)
+    let n0 = snap.len()
+    let x0 = sum_list(xsnap)
+    let l0 = xsnap.len()
+    change(m, k, if i >= 50 { w * 1000000 + i - 50 } else { -1 })
+    if snap.contains(k) || snap.len() != n0 || sum_map(snap) != s0 {
+      bad += 1
+    }
+    if xsnap.len() != l0 || sum_list(xsnap) != x0 {
+      bad += 1
+    }
+    // the other tasks changed the value meanwhile (their locks
+    // interleave with this task's); the snapshot still reads the same
+    if sum_map(snap) != s0 || sum_list(xsnap) != x0 {
+      bad += 1
+    }
+  }
+  bad
+}
+
+fn main(os: Os) {
+  let m = Mutex[State].new(State{recs: {}, xs: []})
+  let rounds = Int.parse(os.env.get("ROUNDS") ?? "") ?? 2000
+  var ws: List[Int] = []
+  for w in 0..8 {
+    ws.push(w)
+  }
+  let bads = task.map_concurrent(ws, 8, fn(w) { worker(m, w, rounds) })
+  var bad = 0
+  for b in bads {
+    match b {
+      Ok(v) => bad += v
+      Err(_) => bad += 1000000
+    }
+  }
+  // each task keeps its last 50 keys; the list's length depends on the
+  // interleaving of the trims, so it is not printed
+  let n = m.with_read(fn(st) { st.recs.len() })
+  os.stdio.println("recs ${n} bad ${bad}")
+}

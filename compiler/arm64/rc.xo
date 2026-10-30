@@ -58,7 +58,33 @@ fn (g: G) dec_text(obj: Str, t: Str, st: Str, lbl: Str, free: Str, done: Str) ->
   let end = if done.is_empty() { "ret" } else { "b ${done}" }
   let n = "x${st[1..st.len()]}"
   "\tldr ${t}, [${obj}]\n\tsubs ${n}, ${t}, #1\n\tb.le ${lbl}_slow\n\tstr ${n}, [${obj}]\n\t${end}\n" +
-    "${lbl}_slow:\n\tb.eq ${free}\n\ttbz ${t}, #62, ${lbl}_kept\n\t${g.atomic_dec(obj, t, st)}\n\tb.eq ${free}\n${lbl}_kept:\n\t${end}\n"
+    "${lbl}_slow:\n\tb.eq ${free}\n\ttbz ${t}, #62, ${lbl}_kept\n\t${g.shared_dec(obj, t, st)}\n\tb.eq ${free}\n${lbl}_kept:\n\t${end}\n"
+}
+
+/// The shared count's decrement of a drop helper: atomic_dec, or in a
+/// --race build a call of the runtime's xo_x_obj_dec_shared_race, which
+/// tells ThreadSanitizer the release before the decrement and the
+/// acquire of the last reference (race.xo instruments instructions, not
+/// a helper's text, and the runtime's atomics are not instrumented:
+/// TestTSanSharedMaps, 2026-10-30, saw no order between a thread's reads
+/// of a list through its snapshot, released, and another thread's write
+/// into it in place once the count said unique). The helper has no
+/// frame: every caller saved register goes to the stack around the call
+/// (x18 is reserved), obj in x0; the flags end eq when the reference was
+/// the last, as atomic_dec leaves them (t and st are not written).
+fn (g: G) shared_dec(obj: Str, t: Str, st: Str) -> Str {
+  if !g.m.race {
+    return g.atomic_dec(obj, t, st)
+  }
+  let save = "stp x0, x30, [sp, #-160]!\n\tstp x1, x2, [sp, #16]\n\tstp x3, x4, [sp, #32]\n\tstp x5, x6, [sp, #48]\n\tstp x7, x8, [sp, #64]\n\tstp x9, x10, [sp, #80]\n\tstp x11, x12, [sp, #96]\n\tstp x13, x14, [sp, #112]\n\tstp x15, x16, [sp, #128]\n\tstr x17, [sp, #144]"
+  let restore = "ldr x17, [sp, #144]\n\tldp x15, x16, [sp, #128]\n\tldp x13, x14, [sp, #112]\n\tldp x11, x12, [sp, #96]\n\tldp x9, x10, [sp, #80]\n\tldp x7, x8, [sp, #64]\n\tldp x5, x6, [sp, #48]\n\tldp x3, x4, [sp, #32]\n\tldp x1, x2, [sp, #16]\n\tldp x0, x30, [sp], #160"
+  var mv = ""
+  if obj != "x0" {
+    mv = "mov x0, ${obj}\n\t"
+  }
+  // eq when it was the last reference: the loads after the compare
+  // leave the flags
+  "${save}\n\t${mv}bl ${g.sym("xo_x_obj_dec_shared_race")}\n\tcmp x0, #1\n\t${restore}"
 }
 
 /// The code that marks the object at register obj shared (markText).

@@ -28,6 +28,7 @@ use native/llrt/inlstr
 use native/llrt/libcstr
 use native/llrt/rc
 use native/llrt/rtstats
+use native/llrt/sanhook
 use native/rt
 
 /// The immortal count of a literal (never written).
@@ -769,6 +770,12 @@ fn each(l: Int, esize: Int, f: Int) {
 /// (freed with drop when the other references went meanwhile).
 pub fn rl_copy(hw: Int, l: Int, esize: Int, dup: Int, drop: Int) -> Int {
   if rc.claim(l) != 0 {
+    // a shared count proved unique: the other holders' releases happened
+    // before (claim's acquire load); told to ThreadSanitizer, which does
+    // not see the runtime's atomics (TestTSanSharedMaps, 2026-10-30: a
+    // put wrote a list in place after another thread's snapshot of it
+    // was released, and the detector saw no order between the two)
+    sanhook.acquire(l)
     return l
   }
   if count(l) == IMMORTAL && rt.mem_load(l, 8, 8) == 0 {
@@ -790,6 +797,20 @@ pub fn rl_copy(hw: Int, l: Int, esize: Int, dup: Int, drop: Int) -> Int {
     rl_free(hw, l, esize, drop)
   }
   c
+}
+
+/// A drop helper's release of a shared count in a --race build
+/// (xo_x_obj_dec_shared_race; compiler/arm64 rc.xo dec_text): the
+/// release that orders this thread's accesses before the decrement, told
+/// to ThreadSanitizer, then rc.dec_shared, and the acquire when it was
+/// the last reference. 1 when the caller frees the object.
+pub fn dec_shared_race(p: Int) -> Int {
+  sanhook.release(p)
+  let last = rc.dec_shared(p)
+  if last != 0 {
+    sanhook.acquire(p)
+  }
+  last
 }
 
 /// Marks the elements of a list that was just marked shared (xo_rl_share;
@@ -1004,6 +1025,7 @@ fn reserve_slow(a: Int, an: Int, need: Int) -> Int {
   let len = an & LEN_MASK
   let off = an.shr_logical(32)
   if off == 0 && rc.claim(a) != 0 {
+    sanhook.acquire(a) // as rl_copy
     let cap = rt.mem_load(a, 8, 8)
     if cap >= need {
       return a
