@@ -98,3 +98,34 @@ names).
 - A license scanner (scancode, licensee) in CI: it finds license texts,
   not a port whose comment says only "musl's algorithm", and CI is
   started by hand (decision 0225).
+
+## As built (Xo lang 5, 2026-10-30)
+
+- THIRD_PARTY_NOTICES headings carry keys only (the owner's wording
+  unchanged): `[go]` (Go and x/crypto, the blanket item; bin/xo-gobind is
+  in it), `[binary]` (compiler-rt), `[uuid]`, `[pgx]`, `[musl]`,
+  `[tzdata]`.
+- Markers: std/native/llrt/libcmath.xo (`Origin: musl`, fmod),
+  std/native/uuid.xo (`uuid`), std/native/llrt/pgwire.xo and pg.xo
+  (`pgx`), std/tzdata/README.md (`tzdata`; a marker line may start with
+  `//`, `#`, `--`, `*`, `<!--`, or nothing).
+- internal/repotest TestThirdPartyOrigins (-short, about 1 s): the three
+  checks of Decision 3 over tracked files; the project scan reads only
+  comments (after `//`, or `#` in .py and .sh) of shipped source files
+  (compiler/, std/, cmd/; .xo .go .c .h .s .py .sh; not tests or
+  testdata), skips `//go:build` lines (freebsd and openbsd build tags),
+  and counts zlib only as the project (`zlib's`, madler), since Go's
+  compress/zlib and the zlib format are named throughout std/compress.
+  An allowlist line that matches nothing fails too, so the list stays
+  current. A negative control (the musl marker removed, an unmarked
+  glibc mention added) fails with three errors.
+- internal/repotest/testdata/origins-allow.txt: 44 reviewed references
+  (glibc's ABI, layouts, loader and resolver behavior, BoringSSL's value
+  barrier, zlib's CRC-32 and Adler-32 named as the same function), and
+  11 lines under "Owner's call pending": glibc 2.34's strerror and
+  gai_strerror texts (libcstr.xo, linux.xo, dns.xo, netconn.xo) and the
+  symbol version tables generated from glibc 2.31 (compiler/macho
+  glibc.xo, glibc_amd64.xo). Each moves to a notices item or to the
+  references when the owner decides.
+- Not built yet: Decision 4 (scripts/release.sh checking each `[binary]`
+  item's license file in the staged tree).

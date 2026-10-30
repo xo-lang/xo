@@ -1,0 +1,69 @@
+# Reviewed mentions of outside projects in shipped files that are not an
+# `Origin:` marked copy (decision 0302, internal/repotest
+# TestThirdPartyOrigins): path<TAB>the comment as the file has it.
+# Add a line only after checking that nothing was copied.
+
+# References: the comment names an outside project's behavior, ABI,
+# layout, or a name, to explain Xo's own code; no code or text copied.
+compiler/arm64/calls.xo	/// GOT, as one in a shared library (libSystem, glibc) has no fixed
+compiler/llvm/call.xo	// decision 0222: a value barrier, as BoringSSL's value_barrier_w: an
+compiler/macho/elflink.xo	// ET_EXEC for glibc, as `cc` links them on Linux, with no C toolchain:
+compiler/macho/elflink.xo	//   - synthesized: `_start` (glibc's crt1 entry, calling
+compiler/macho/elflink.xo	//   - undefined symbols become imports, versioned as glibc 2.31 defines
+compiler/macho/elflink.xo	//     them (glibc.xo), from libm.so.6, libpthread.so.0, libgcc_s.so.1,
+compiler/macho/elflink.xo	// glibc's crt1 on x86-64: rdx the loader's fini, the stack holds
+compiler/macho/elflink.xo	// glibc's crt1: x0 the loader's fini, the stack holds argc and argv
+compiler/macho/elflink.xo	/// glibc 2.31's libc_nonshared.a, which cc links and libc.so.6 does not
+compiler/macho/elflink.xo	/// the structure version first (0 on arm64), so a binary binds on glibc
+compiler/macho/elflink.xo	/// later (gotchas/glibc-nonshared-stat.md). None for other names. On
+compiler/macho/elflink.xo	/// The symbol versions of glibc.xo: name to (library, version).
+compiler/macho/elflink.xo	// dlsym and dladdr (ThreadSanitizer's runtime): libdl.so.2 on glibc
+compiler/macho/elfsplit.xo	/// CRC-32 (IEEE, reflected, as zlib's crc32): .gnu_debuglink's check of
+compiler/macho/main.xo	//       (glibc imported)
+compiler/xo/clang.xo	/// when sysroot (XO_LINUXSYSROOT) names a glibc sysroot (2026-10-15, to
+compiler/xo/clang.xo	// a glibc sysroot (Debian's libc6-dev, linux-libc-dev, libgcc-10-dev
+compiler/xo/ld.xo	// linux/arm64 (stage 3) into an ELF executable that imports glibc.
+compiler/xo/ld.xo	/// into out, dynamically linked against glibc, or static with no C
+compiler/xo/main.xo	// --target=linux/arm64 an ELF executable for glibc, from any host; a
+compiler/xo/main.xo	/// `use c`) keeps cc and glibc (a cross build of one fails: xo does not
+std/native/compress.xo	/// gzip's CRC-32 and size, zlib's Adler-32
+std/native/llrt/cabi_libc.xo	// the C names; glibc's layouts: a mutex is the first word of its
+std/native/llrt/dns.xo	//     go over TCP too, as glibc's do). A response with another ID, question, or one that does
+std/native/llrt/dns.xo	//     as glibc sorts them.
+std/native/llrt/dns.xo	// Differences from glibc's getaddrinfo (as Go documents its own):
+std/native/llrt/dns.xo	// end the search list (glibc's does). A failure reports glibc's codes,
+std/native/llrt/dns.xo	// chosen as glibc's res_search chooses: the outcome of the name as
+std/native/llrt/dns.xo	// Criteria in brackets ([NOTFOUND=return]) are not honoured: glibc's
+std/native/llrt/dns.xo	/// glibc's inet_ntop text of the 4 or 16 bytes of ip (RFC 5952 for
+std/native/llrt/dns.xo	/// glibc reloads it), and the word is one aligned store (threads may
+std/native/llrt/dns.xo	// TCP too (glibc's res_send keeps the stream)
+std/native/llrt/dns.xo	// the failure to report (glibc's res_search): that of the name as
+std/native/llrt/dns.xo	// the last source, files, did not find it (glibc's h_errno is
+std/native/llrt/flate.xo	// the trailer: gzip's CRC-32 and size, zlib's Adler-32
+std/native/llrt/libcio.xo	/// getdents64's buffer (glibc's struct dirent on 64 bit Linux is the
+std/native/llrt/netpolicy.xo	/// one; glibc's truncates it to 16 bits and binds another port
+std/native/llrt/netpolicy.xo	/// (gotchas/glibc-getaddrinfo-port-truncation.md).
+std/native/llrt/sanhook.xo	/// size bytes, through the C library (Linux; glibc's and musl's
+std/native/llrt/unwind.xo	// programs linked with glibc and on macOS (stage 3) and with no C
+std/native/llrt/unwind.xo	// arm64 and x86_64 (stage 2, 2026-10-15: glibc linux/amd64 and
+std/native/llrt/unwind.xo	/// _dl_find_object (glibc 2.35, past the 2.31 builds support) nor
+std/native/sys_c.xo	/// thread_start): glibc's pthread_create sets up the thread's state
+std/native/sys_c.xo	/// errno's address (glibc's and musl's name; weak: the arm64 emitter
+
+# Owner's call pending (decision 0302, Consequences: "glibc's texts ...
+# need a call: an item each, or an allowlist line saying why none is
+# needed"): glibc 2.34's strerror texts and its gai_strerror texts,
+# copied as data, and the symbol version tables generated from glibc
+# 2.31 (compiler/macho glibc.xo). Listed so -short passes until the
+# owner decides; they move to a notices item or to the references.
+compiler/macho/glibc.xo	// stage 3): the default version of every symbol of glibc 2.31's
+compiler/macho/glibc.xo	// scripts/elf-glibc-versions.py; do not edit.
+compiler/macho/glibc_amd64.xo	// stage 3): the default version of every symbol of glibc 2.31's
+compiler/macho/glibc_amd64.xo	// scripts/elf-glibc-versions.py --amd64; do not edit.
+std/native/llrt/dns.xo	// glibc's getaddrinfo error codes
+std/native/llrt/dns.xo	/// The EAI code (glibc's, above) for a Winsock error of Windows'
+std/native/llrt/dns.xo	/// glibc's gai_strerror text of code.
+std/native/llrt/libcstr.xo	// strerror: glibc 2.34's texts (linux.xo strerror), as zero terminated C
+std/native/llrt/linux.xo	/// glibc's strerror text of errno e (glibc 2.34; the C runtime's
+std/native/llrt/netconn.xo	/// code for the Winsock error (dns.wsa_eai), so the texts are glibc's.
+std/native/llrt/netconn.xo	/// The text of resolve's error code (glibc's gai_strerror texts;

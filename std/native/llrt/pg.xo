@@ -1,3 +1,4 @@
+// Origin: pgx github.com/jackc/pgx/v5 v5.11.0 (pgconn)
 // std/sql's Postgres driver (decision 0278, spec/std.md 10.8 and 10.9):
 // a sql.Driver over the protocol of pgwire.xo, dialing through the Net
 // it is given. Connection flow, authentication, the simple and extended

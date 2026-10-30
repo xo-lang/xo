@@ -1,3 +1,4 @@
+// Origin: pgx github.com/jackc/pgx/v5 v5.11.0 (pgproto3, pgconn auth_scram.go, config.go)
 // The PostgreSQL frontend/backend protocol version 3 for std/sql's
 // Postgres driver (decision 0278): messages as pure Bytes functions, the
 // SCRAM-SHA-256 client (RFC 5802, RFC 7677), MD5 passwords, and libpq

@@ -81,6 +81,7 @@ fn norm(u: Int, e0: Int) -> (Int, Int) {
   (shl(u, 1 - e), e)
 }
 
+// Origin: musl src/math/fmod.c (fmod)
 /// x - n*y for the integer n of x / y rounded toward zero, exactly (C's
 /// fmod; a port of musl's src/math/fmod.c, THIRD_PARTY_NOTICES 5): the
 /// sign of x; NaN when y is 0 or x is infinite or either is NaN; x when

@@ -4,7 +4,7 @@ Xo includes code copied or ported from, or binaries built from, the
 following projects. Their licenses apply to those parts, alongside
 LICENSE and std/LICENSE.
 
-1. The Go programming language and golang.org/x/crypto
+1. The Go programming language and golang.org/x/crypto [go]
 
    Copied (vendored):
      std/rt/xcrypto_argon2.go, std/rt/xcrypto_blake2b.go
@@ -56,7 +56,7 @@ LICENSE and std/LICENSE.
    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-2. LLVM compiler-rt: ThreadSanitizer's runtime
+2. LLVM compiler-rt: ThreadSanitizer's runtime [binary]
 
    Shipped as a binary, not in this repository: the release archives and
    seeds hold lib/xo/race/<os>-<arch>/ (libclang_rt.tsan_osx_dynamic.dylib
@@ -70,7 +70,7 @@ LICENSE and std/LICENSE.
    the runtime (compiler-rt's LICENSE.TXT) and
    https://llvm.org/LICENSE.txt.
 
-3. github.com/google/uuid
+3. github.com/google/uuid [uuid]
 
    Followed (the files say which code): std/native/uuid.xo and
    std/rt/uuid.go (Parse, the version 4 and 7 layouts) of v1.6.0
@@ -106,7 +106,7 @@ LICENSE and std/LICENSE.
    (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
    OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 
-4. pgx (github.com/jackc/pgx/v5)
+4. pgx (github.com/jackc/pgx/v5) [pgx]
 
    Ported to Xo (decision 0278; the files say which pgx code they follow):
      std/native/llrt/pgwire.xo (pgproto3 messages, pgconn auth_scram.go,
@@ -140,7 +140,7 @@ LICENSE and std/LICENSE.
    OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION
    WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-5. musl libc
+5. musl libc [musl]
 
    Ported to Xo: fmod in std/native/llrt/libcmath.xo follows musl's
    src/math/fmod.c (the C library replacement of a program linked with
@@ -169,7 +169,7 @@ LICENSE and std/LICENSE.
    TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE
    SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-6. The IANA Time Zone Database
+6. The IANA Time Zone Database [tzdata]
 
    Shipped as data: std/tzdata/zoneinfo.zip, built from tzdata (the
    version and checksums are in std/tzdata/VERSION).

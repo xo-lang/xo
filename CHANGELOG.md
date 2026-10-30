@@ -5,6 +5,13 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Repository (decision 0302): code copied or ported from outside the
+  repository carries an `// Origin: KEY ...` line, each
+  THIRD_PARTY_NOTICES item its `[key]`, and the -short
+  TestThirdPartyOrigins fails on an origin with no notice, a notice with
+  no origin, or a shipped comment naming musl, glibc, BoringSSL, zlib
+  and the other listed projects with neither a marker nor a reviewed
+  line in internal/repotest/testdata/origins-allow.txt.
 - FIX (std/http, native): a streamed client request (`Client.open` with
   a BodyReader body) no longer frees its connection's TLS state and
   record while the task sending the body may still write on them, at

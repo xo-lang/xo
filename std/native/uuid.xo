@@ -1,3 +1,4 @@
+// Origin: uuid github.com/google/uuid v1.6.0 (Parse, NewRandom, NewV7)
 // std/uuid on the native backends (decision 0282): RFC 9562 version 4 and
 // 7 UUIDs and parsing, following github.com/google/uuid v1.6.0 (BSD-3;
 // THIRD_PARTY_NOTICES): Parse's accepted forms and error texts, NewRandom
