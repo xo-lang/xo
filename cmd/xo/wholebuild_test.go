@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
 	"testing"
@@ -326,6 +327,66 @@ func TestWholeBuildRunOut(t *testing.T) {
 		got, err := testtmp.Guard(exec.Command(out)).Output()
 		if err != nil || string(got) != "one\n" {
 			t.Fatalf("run %d: -o %s: %q (%v), want the program", i, out, got, err)
+		}
+	}
+}
+
+// TestWholeBuildDebugEnv (decision 0437): a build that sets a variable
+// asking for what only compiling writes (XO_DUMP_FN's dump) is not served
+// by the run cache, so repeating it writes the dump again; the run cache
+// served the second build and it wrote nothing (Lang 1, 2026-10-30).
+func TestWholeBuildDebugEnv(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds a program")
+	}
+	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+		t.Skip("XO_DUMP_FN dumps the native arm64 backend's functions")
+	}
+	tmp := t.TempDir()
+	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
+	setenv(t, "XO_BIN_CACHE", filepath.Join(tmp, "bin"))
+	setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(tmp, "backend"))
+	setenv(t, "XO_WHOLE_BUILD", "on")
+	dumps := filepath.Join(tmp, "dumps")
+	if err := os.MkdirAll(dumps, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dir := filepath.Join(tmp, "prog")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module dumpenv\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn twice(n: Int) -> Int {\n  n * 2\n}\n\nfn main(os: Os) {\n  os.stdio.println(\"${twice(21)}\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	build := func(what string) string {
+		t.Helper()
+		var so, se bytes.Buffer
+		if code := run(t, []string{"build", "--phase-times", "-o", filepath.Join(dir, "prog"), "."}, &so, &se); code != 0 {
+			t.Fatalf("%s: exit %d\n%s%s", what, code, so.String(), se.String())
+		}
+		return se.String()
+	}
+	build("plain build")
+	setenv(t, "XO_DUMP_FN", "main")
+	setenv(t, "XO_DUMP_DIR", dumps)
+	for _, what := range []string{"first dump build", "repeated dump build"} {
+		log := build(what)
+		if strings.Contains(log, "phase run_cache ") {
+			t.Fatalf("%s: served by the run cache\n%s", what, log)
+		}
+		ents, err := os.ReadDir(dumps)
+		if err != nil || len(ents) == 0 {
+			t.Fatalf("%s: no dump in XO_DUMP_DIR (%v)\n%s", what, err, log)
+		}
+		if err := os.RemoveAll(dumps); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.MkdirAll(dumps, 0o755); err != nil {
+			t.Fatal(err)
 		}
 	}
 }

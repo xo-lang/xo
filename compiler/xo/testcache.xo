@@ -79,6 +79,12 @@ fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
   if ctx.bin_cache.is_empty() {
     return ""
   }
+  // a build asked for what only compiling writes (a dump, a report, a
+  // profile of xo): a hit would skip it and look like a pass (decision
+  // 0437; XO_DUMP_FN wrote no dump on a hit, Lang 1 2026-10-30)
+  if BUILD_DEBUG_ENV.any(fn(n) { !(os.env.get(n) ?? "").is_empty() }) {
+    return ""
+  }
   let id = self_id(os)
   if id.is_empty() {
     return ""
@@ -594,3 +600,7 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
   }
   prune_bins(os, ctx)
 }
+
+/// The variables that ask a build for output only compiling writes: the
+/// run cache is off while one is set (run_key).
+const BUILD_DEBUG_ENV = ["XO_DUMP_FN", "XO_INLINE_REPORT", "XO_CACHE_STATS", "XO_FE_STATS", "XO_PARSE_STATS", "XO_PROF", "XO_PROF_SELF"]
