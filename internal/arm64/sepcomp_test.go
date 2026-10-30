@@ -553,4 +553,21 @@ func TestSepcompStdModuleEdits(t *testing.T) {
 	if err == nil || !strings.Contains(log, "sepcomp probe") {
 		t.Fatalf("after a source edit the probe (41, want 42) must fail by name:\n%s", log)
 	}
+	// the rest of std from the variant, base64 and its importers from
+	// source
+	if !strings.Contains(log, "module(s) from source") {
+		t.Fatalf("after a source edit, want the variant reused with base64 from source:\n%s", log)
+	}
+	src := filepath.Join(std, "native", "base64.xo")
+	b, err := os.ReadFile(src)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(src, []byte(strings.Replace(string(b), "{ 41 }", "{ 42 }", 1)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	log, err = run()
+	if err != nil || !strings.Contains(log, "module(s) from source") || passed(log) != n+2 {
+		t.Fatalf("after fixing the probe, want the variant reused and %d passed: %v\n%s", n+2, err, log)
+	}
 }
