@@ -20,7 +20,9 @@ fn main(os: Os) {
   let after = os.proc.usage()
   os.stdio.println("spun ${k != 1}")
   os.stdio.println("cpu grew ${after.user + after.system > before.user + before.system}")
-  os.stdio.println("rss ${after.max_rss > 1000000} ${after.max_rss < 1000000000000}")
+  // a small static native program can peak under 1 MB (linux/amd64
+  // under golden-run.sh); 100 KB still tells bytes from Linux's KiB
+  os.stdio.println("rss ${after.max_rss > 100000} ${after.max_rss < 1000000000000}")
   os.stdio.println("only ${os.proc.only([]).usage().max_rss > 0}")
   let c0 = os.proc.children_usage()
   match os.proc.run(os.env.program(), ["spin"]) {
