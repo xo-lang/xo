@@ -204,6 +204,17 @@ fn (var b: Builder) debug_body(ct: Int, t: Int) {
     b.retv(b.show_text("append_rune_quote", acc, v))
     return
   }
+  // its own Debug text (core 1.6: `${x:?}` is x.debug()), a user type's
+  // or a std type's (uuid's `Uuid("...")`), here too inside a List, an
+  // Option, a field or a frame; not a prelude type's, whose text this is
+  let own = b.named_obj(ct)
+  if own >= 0 && !b.is_prelude_mod(b.obj_mod(own)) {
+    let dm = b.method_of(ct, "debug")
+    if dm >= 0 {
+      b.retv(b.call("str.concat", st, "", [acc, b.call_method(dm, ct, v)]))
+      return
+    }
+  }
   match b.tkind(t) {
     Str => {
       b.retv(b.llrt("append_quote", st, [acc, v]))
