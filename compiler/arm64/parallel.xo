@@ -451,6 +451,10 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
               break
             }
             let p = order[k].0
+            // the memory budget's label, and XO_PROF_HEAP_AT=start N's
+            // trigger: the heap when the N+1th part starts (emit's peak
+            // is the first wave of large parts, 2026-10-30)
+            debug.mem_label("emit start ${k}")
             if mem_limit > 0 {
               while debug.mem_mapped() > mem_limit && running.get() > 0 {
                 let _f = finished.recv()
