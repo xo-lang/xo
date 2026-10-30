@@ -591,8 +591,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 - Where an `--ab` runs (owner, 2026-10-30): a claim that is not darwin
   specific runs on the linux/arm64 offload host with
-  `~/xo-lead/agents/ab-host.sh BASE NEW NAME [--rounds=N] -- self|PROG`
-  (offload.md); it needs no heavy.sh slot and no Mac measure window.
+  `~/xo-lead/agents/ab-host.sh BASE NEW NAME [--rounds=N] -- self|edit
+  PROG|PROG` (offload.md; `edit PROG` is the warm rebuild of a program,
+  the claim of a front end, cache or linker change); it needs no heavy.sh
+  slot and no Mac measure window.
   The Mac's measure windows are only for darwin only claims (Mach-O,
   the macOS scheduler or syscalls) and Mac memory footprints.
 - A placement claim (a sweep over XO_ARM64_PAD, an alignment, a layout)

@@ -39,7 +39,7 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   no heavy.sh slot (only ssh runs on the Mac). Exit 3: no offload.env;
   exit 4: no answer.
 - `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
-  self|PROG [ARG...]` (lead, 2026-10-30: a wall `--ab` whose claim is not
+  self|edit PROG|PROG [ARG...]` (lead, 2026-10-30: a wall `--ab` whose claim is not
   darwin specific runs here, so the Mac's measure windows serve only
   darwin claims and footprints): `xo bench --ab` of two committed
   revisions. One bundle of the commits the host lacks (since
@@ -49,8 +49,13 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   two detached worktrees under the priv lock, xo built at each with
   `OFF_SEED` (the host's cache when it has the build), caches off, and
   the self build (`self`: each side's xo builds NEW's compiler/xo with
-  its own std, `--keep-loaded`) or a program directory built by each side
-  and run with `ARG...`; 10 rounds and 2 warmups by default. The table
+  its own std, `--keep-loaded`), the warm rebuild of a program (`edit
+  PROG`: the front end and std half from warm caches in a private HOME
+  and cache directory, bin cache off so every round links, each side
+  filling the std cache and building twice first, one copy of the
+  program for both sides since its path lands in the debug strings; 5
+  warmups by default) or a program directory built by each side and run
+  with `ARG...`; 10 rounds and 2 warmups by default. The table
   streams back; logs stay in the host's `abNAME.out`. No heavy.sh slot.
 - `scripts/lead/offload-tier.sh SHA N SEED [BUNDLE]` (run through
   offload.sh): fetches the bundle into `/work/priv`, checks SHA out into
