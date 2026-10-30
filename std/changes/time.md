@@ -1,5 +1,20 @@
 # std/time changes
 
+## 2026-10-30: perf: a duration's sign byte is read once (Duration.parse)
+
+- Kind: perf
+- Commit: this commit
+- Found by: native parse_duration's code against LLVM's (bench/perf/text dur_parse): the sign's byte was loaded three times
+- Go reference: time/format.go ParseDuration (go1.26.1), which reads `c := s[0]` once; unchanged semantics
+- Test: duration_parse_edges, parse_edge_scalars and load_ranges on arm64 and LLVM with Go parity; std time tests
+
+The native backend reuses a load only into a block of one predecessor,
+so the third read, after `c == 45 || c == 43` joined, was a third ldrb;
+the source now reads the byte into a local as Go does. With the compiler
+change in the same commit (`c < 9 || c > 13` as one compare),
+bench/perf/text dur_parse on arm64 (xo bench --ab n=15): instructions
+0.993, wall and cycles within noise.
+
 ## 2026-10-30: perf: a duration's fraction digits are read by two loops, not one that tests an overflow flag each digit (Duration.parse, a decoded JSON Duration)
 
 - Kind: perf

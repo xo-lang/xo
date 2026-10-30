@@ -2649,17 +2649,16 @@ fn (var g: G) logic_value(x: ssa.Value) -> Bool {
       let (v, lo, lok) = g.bound_of(c0, true)
       let (v2, hi, hok) = g.bound_of(c2, false)
       if lok && hok && v == v2 && hi >= lo {
-        let span = hi.wrapping_sub(lo)
-        let w = g.word(v)
-        var t = w
-        if lo != 0 {
-          t = if addsub_imm(lo) { g.def1(false, "sub $d0, $u0, #${lo}", [w]) } else { g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)]) }
-        }
-        pv = if span >= 0 && addsub_imm(span) {
-          g.def1(false, "cmp $u0, #${span}\ncset $d0, ls", [t])
-        } else {
-          g.def1(false, "cmp $u0, $u1\ncset $d0, ls", [t, g.cimm(span)])
-        }
+        pv = g.range_value(v, lo, hi, "ls")
+      }
+    } else {
+      // `v < lo || v > hi`, v outside [lo, hi]: the same subtract and
+      // compare, its unsigned > (2026-10-30: std's parse_duration end
+      // test `c < 9 || c > 13` was two csets and an orr)
+      let (v, a, aok) = g.bound_of(c0, false)
+      let (v2, b2, bok) = g.bound_of(c2, true)
+      if aok && bok && v == v2 && a < MAX_INT && b2 > MIN_INT && b2 - 1 >= a + 1 {
+        pv = g.range_value(v, a + 1, b2 - 1, "hi")
       }
     }
     if pv < 0 {
@@ -2684,6 +2683,21 @@ fn (var g: G) logic_value(x: ssa.Value) -> Bool {
     return true
   }
   false
+}
+
+/// v - lo compared with hi - lo as UInt64s (lo <= hi), its cond (ls: v
+/// in [lo, hi]; hi: outside) as a Bool (logic_value).
+fn (var g: G) range_value(v: Int, lo: Int, hi: Int, cond: Str) -> Int {
+  let span = hi.wrapping_sub(lo)
+  let w = g.word(v)
+  var t = w
+  if lo != 0 {
+    t = if addsub_imm(lo) { g.def1(false, "sub $d0, $u0, #${lo}", [w]) } else { g.def1(false, "sub $d0, $u0, $u1", [w, g.cimm(lo)]) }
+  }
+  if span >= 0 && addsub_imm(span) {
+    return g.def1(false, "cmp $u0, #${span}\ncset $d0, ${cond}", [t])
+  }
+  g.def1(false, "cmp $u0, $u1\ncset $d0, ${cond}", [t, g.cimm(span)])
 }
 
 /// Whether value v is, within depth operations, the result of a call or

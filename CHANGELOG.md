@@ -27,6 +27,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the instructions (xo bench --ab n=15; wall and cycles within noise);
   xo's native __text 70,913,656 to 70,915,488 bytes (the threaded jumps
   carry copies of their moves).
+- Native backends: `v < lo || v > hi` as a Bool is one subtraction and
+  an unsigned compare (compiler/arm64 isel logic_value, range_value), as
+  `v >= lo && v <= hi` already was: std's parse_duration end test
+  `c < 9 || c > 13` was two csets and an orr. Duration.parse reads its
+  sign's byte once (std/changes/time.md). bench/perf/text dur_parse 0.993
+  of the instructions (xo bench --ab n=15; wall and cycles within noise);
+  xo's native __text 70,913,656 to 70,921,048 bytes, all of it the new
+  range_value helper (7,772 bytes; logic_value 376 smaller).
 - `Duration.parse` reads a fraction's digits without an overflow test a
   digit (std/native/llrt/text.xo): bench/perf/text dur_parse 0.95 of the
   wall time and 0.923 of the cycles on arm64 (xo bench --ab n=15);

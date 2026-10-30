@@ -314,9 +314,16 @@ pub fn parse_duration(s: Str) -> Int? {
     n = strings.space_start(b, i, bl)
   }
   var neg = false
-  if i < n && (raw.byte_at(pa, i) == 45 || raw.byte_at(pa, i) == 43) {
-    neg = raw.byte_at(pa, i) == 45
-    i += 1
+  // the sign's byte read once, as Go's ParseDuration does (`c := s[0]`);
+  // the native backend reuses a load only into a block of one
+  // predecessor (reuse_loads), so the third read, after the `||` joins,
+  // was a third ldrb (2026-10-30)
+  if i < n {
+    let c = raw.byte_at(pa, i)
+    if c == 45 || c == 43 {
+      neg = c == 45
+      i += 1
+    }
   }
   if n.wrapping_sub(i) == 1 && raw.byte_at(pa, i) == 48 {
     return Some(0)
