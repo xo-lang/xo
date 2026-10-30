@@ -5,6 +5,11 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `--phase-times` after a run cache miss says why: `cache run miss:` and
+  the first recorded input that no longer holds (a changed file,
+  listing, tree, probe or variable; no entry; the binary gone), then the
+  run key's parts as `cache run key HASH12 TEXT`, so two builds that
+  should share an entry can be compared.
 - Repository (decision 0302): code copied or ported from outside the
   repository carries an `// Origin: KEY ...` line, each
   THIRD_PARTY_NOTICES item its `[key]`, and the -short

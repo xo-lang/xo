@@ -76,18 +76,29 @@ fn run_flag_takes_value(name: Str) -> Bool {
 /// The key of a test run, "" when the cache is off or xo's identity is
 /// unknown.
 fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
+  match run_key_of(os, ctx, o, args, backend) {
+    Some(k) => {
+      var kk = k
+      kk.sum()
+    }
+    None => ""
+  }
+}
+
+/// run_key's hashed text, None when the build has no run key.
+fn run_key_of(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Key? {
   if ctx.bin_cache.is_empty() {
-    return ""
+    return None
   }
   // a build asked for what only compiling writes (a dump, a report, a
   // profile of xo): a hit would skip it and look like a pass (decision
   // 0437; XO_DUMP_FN wrote no dump on a hit, Lang 1 2026-10-30)
   if BUILD_DEBUG_ENV.any(fn(n) { !(os.env.get(n) ?? "").is_empty() }) {
-    return ""
+    return None
   }
   let id = self_id(os)
   if id.is_empty() {
-    return ""
+    return None
   }
   var k = new_key("testrun v1")
   k.str(id)
@@ -144,7 +155,7 @@ fn run_key(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) -> Str {
     // xo:allow XO0903 a memo: a failed read only changes the key, a cache miss
     k.str((os.fs.read_text(memo).ok() ?? "").trim())
   }
-  k.sum()
+  Some(k)
 }
 
 fn run_entry(ctx: Ctx, key: Str) -> Str {
@@ -604,3 +615,48 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
 /// The variables that ask a build for output only compiling writes: the
 /// run cache is off while one is set (run_key).
 const BUILD_DEBUG_ENV = ["XO_DUMP_FN", "XO_INLINE_REPORT", "XO_CACHE_STATS", "XO_FE_STATS", "XO_PARSE_STATS", "XO_PROF", "XO_PROF_SELF"]
+
+/// Why the run cache has no hit for key (--phase-times, decision 0437:
+/// a miss says so): the first entry line that no longer holds, checked
+/// one by one; "" when the entry would hit.
+fn run_miss_why(os: Os, ctx: Ctx, key: Str) -> Str {
+  if key.is_empty() {
+    return "no run key (the cache is off for this build)"
+  }
+  let entry = run_entry(ctx, key)
+  let text = match os.fs.read_text("${entry}.m") {
+    Ok(t) => t
+    Err(_) => return "no entry for key ${key[0..12]}"
+  }
+  if !(os.fs.exists("${entry}.bin").ok() ?? false) {
+    return "the entry's binary is gone"
+  }
+  for l in text.split("\n") {
+    let f = l.split(" ")
+    if f.len() != 3 {
+      continue
+    }
+    let p = unhex_field(f[2])
+    match f[0] {
+      "file" => if sha_of(os, p) != f[1] { return "file changed: ${p}" }
+      "dir" => if listing_of(os, p) != f[1] { return "directory listing changed: ${p}" }
+      "walk" => if walk_of(os, p) != f[1] { return "tree changed: ${p}" }
+      "probe" => if probe_again(os, p) != unhex_field(f[1]) { return "probe changed: ${p} (was ${unhex_field(f[1])}, now ${probe_again(os, p)})" }
+      "env" => if env_again(os, p) != unhex_field(f[1]) { return "environment changed: ${p}" }
+      _ => {}
+    }
+  }
+  ""
+}
+
+/// The parts of the run key, each as a short hash and its start, for
+/// comparing two builds' keys after a miss (--phase-times).
+fn run_key_parts(k: Key) -> List[Str] {
+  var out: List[Str] = []
+  for l in (k.b.freeze().to_str() ?? "").split("\n") {
+    if !l.is_empty() {
+      out.push("${crypto.sha256(l.bytes()).to_hex()[0..12]} ${if l.len() > 70 { l[0..70] + "..." } else { l }}")
+    }
+  }
+  out
+}

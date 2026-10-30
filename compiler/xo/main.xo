@@ -346,6 +346,7 @@ fn main(os0: Os) ! {
         os.proc.exit(code)
       }
       lap(os, o.phases, "run_cache_miss", t0)
+      say_run_miss(os, ctx, o, args, backend)
     }
   }
   if o.cmd == "build" && o.backend.is_empty() && !o.race {
@@ -395,6 +396,7 @@ fn main(os0: Os) ! {
         }
       }
       lap(os, o.phases, "run_cache_miss", t0)
+      say_run_miss(os, wc, o, args, backend)
     }
   }
   // what a build stored in the run cache prints goes through a tee, for
@@ -3062,5 +3064,20 @@ fn sepcomp_fact_files(os: Os, p: Str) -> (Str, Str) {
   match os.fs.stat(p) {
     Ok(Some(i)) => if i.is_dir { ("${p}/conc0.stdf", "${p}/conc1.stdf") } else { (p, "") }
     _ => (p, "")
+  }
+}
+
+/// --phase-times after a run cache miss: why, and the key's parts, so two
+/// builds that should share an entry can be compared ("cache " lines,
+/// which the run cache's tee does not keep).
+fn say_run_miss(os: Os, ctx: Ctx, o: Opts, args: List[Str], backend: Str) {
+  if !o.phases {
+    return
+  }
+  os.stdio.eprintln("cache run miss: ${run_miss_why(os, ctx, o.run_key)}")
+  if let Some(k) = run_key_of(os, ctx, o, args, backend) {
+    for p in run_key_parts(k) {
+      os.stdio.eprintln("cache run key ${p}")
+    }
   }
 }

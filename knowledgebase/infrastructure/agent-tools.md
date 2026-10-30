@@ -248,6 +248,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   above, no .xo files) exits 2 naming --dir; in internal/arm64,
   internal/llvm, internal/gen and cmd/xo a `go test -run` that names no
   test exits 1 (testtmp.RequireRunMatch; gotchas/go-run-matches-nothing.md).
+- Why the run cache missed (2026-10-30): with `--phase-times`, a build
+  or test that misses the run cache prints `cache run miss: <why>`: no
+  entry for the key, the entry's binary gone, or the first recorded
+  input that no longer holds (`file changed: PATH`, `directory listing
+  changed`, `tree changed`, `probe changed` with the old and new value,
+  `environment changed: NAME`), then `cache run key HASH12 TEXT` for
+  each part of the run key. A miss on every build: compare two builds'
+  key parts (a part that differs) and their miss reasons (an input
+  recorded that changes by itself) before forming a hypothesis
+  (a Linux miss on every build was a /proc/meminfo read, 6f19adde3).
 - internal/llvm timeout (2026-10-24): the package's goldens need 46+ minutes
   (each builds and links with clang), and go test's default timeout is 10
   minutes, so a bare `go test ./internal/llvm` FAILs at 600s naming no test,
