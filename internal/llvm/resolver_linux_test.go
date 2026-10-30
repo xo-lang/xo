@@ -20,8 +20,9 @@ import (
 )
 
 // The resolver of decision 0206 stage 3 (std/native/llrt/dns.xo) against
-// glibc's getaddrinfo: testdata/resolver built twice (the Xo path, and
-// XO_LLRT_C=net, the C library's), each run in a user, network, and
+// glibc's getaddrinfo: testdata/resolver built with Xo, and testdata/
+// resolver/ref.c (the same program on the C library; XO_LLRT_C=net, which
+// built main.xo on glibc, went with the C runtime), each run in a user, network, and
 // mount namespace (unshare) whose /etc/resolv.conf, /etc/hosts, and
 // /etc/nsswitch.conf are this test's, with a DNS server of this test
 // (TestResolverDNSServer, started in the namespace and stopped by its
@@ -79,7 +80,14 @@ func TestResolverDiff(t *testing.T) {
 	}
 	dir := filepath.Join("testdata", "resolver")
 	xoBin := resolverBuild(t, dir, "")
-	cBin := resolverBuild(t, dir, "net")
+	cc, err := exec.LookPath("cc")
+	if err != nil {
+		t.Skip("no cc for the glibc reference")
+	}
+	cBin := filepath.Join(t.TempDir(), "ref")
+	if out, err := exec.Command(cc, "-O1", "-o", cBin, filepath.Join(dir, "ref.c"), "-lpthread").CombinedOutput(); err != nil {
+		t.Fatalf("building the glibc reference: %v\n%s", err, out)
+	}
 	for _, cf := range resolverConfigs {
 		t.Run(cf.name, func(t *testing.T) {
 			d := t.TempDir()
