@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+0 -> 0 -> 0 round trip: true
+1 -> 1 -> 1 round trip: true
+-1 -> 18446744073709551615 -> -1 round trip: true
+9223372036854775807 -> 9223372036854775807 -> 9223372036854775807 round trip: true
+-9223372036854775808 -> 9223372036854775808 -> -9223372036854775808 round trip: true
+42 -> 42 -> 42 round trip: true
+-42 -> 18446744073709551574 -> -42 round trip: true
+max: -1
+2^63: -9223372036854775808
+sum wraps: true
+--- stderr

@@ -97,6 +97,8 @@ Int(x: Float) -> Int                 // truncates toward zero; faults on NaN or 
 Float(x: Int) -> Float
 Int32(x: Int) -> Int32               // faults out of range; same for every sized type
 Int32.try(x: Int) -> Int32?
+UInt64.from_bits(b: Int) -> UInt64       // the same 64 bits (Go's uint64(x)): -1 is 2^64 - 1
+fn (u: UInt64) to_bits() -> Int          // the same 64 bits back (Go's int64(u)): 2^63 and up are negative
 Int(r: Rune) -> Int                  // the code point; every integer type (core 2.1)
 Rune(n: Int) -> Rune                 // faults unless n is a Unicode scalar value
 Rune.try(n: Int) -> Rune?
@@ -4774,7 +4776,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-470 declarations.
+472 declarations.
 
 ### Range
 
@@ -4925,6 +4927,8 @@ fn (static: UInt32) try(x: Int) -> UInt32?
 
 ```
 fn (static: UInt64) try(x: Int) -> UInt64?
+fn (static: UInt64) from_bits(b: Int) -> UInt64
+fn (u: UInt64) to_bits() -> Int
 ```
 
 ### Rune

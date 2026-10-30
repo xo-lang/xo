@@ -1864,6 +1864,14 @@ fn (var b: Builder) std_call(x: Expr, ci: check.CallInfo) -> Int {
       }
     }
     "Int8" | "Int16" | "Int32" | "Int64" | "UInt8" | "UInt16" | "UInt32" | "UInt64" | "Rune" => {
+      // UInt64's bits as an Int and back: the word unchanged (an iconv
+      // between two 64 bit integers moves no bits)
+      if rname == "UInt64" && is_static && fname == "from_bits" && args.len() == 1 {
+        return b.add(Op.IntConv, nt, Aux.None, [b.value_as(args[0].value, it)])
+      }
+      if rname == "UInt64" && !is_static && fname == "to_bits" && ci.recv.len() == 1 {
+        return b.add(Op.IntConv, it, Aux.None, [b.recv_value(ci)])
+      }
       if is_static && fname == "try" && args.len() == 1 && b.tkind(nt) == Kind.Enum {
         let v = b.value_as(args[0].value, it)
         let some = b.m.variant_index(nt, "Some")

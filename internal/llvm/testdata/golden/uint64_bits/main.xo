@@ -1,0 +1,14 @@
+// UInt64.from_bits and to_bits: Int's 64 bits as a UInt64 and back,
+// unchanged, as Go's uint64(x) and int64(u); round trips at the edges.
+fn main(os: Os) {
+  let xs = [0, 1, -1, 9223372036854775807, -9223372036854775807 - 1, 42, -42]
+  for x in xs {
+    let u = UInt64.from_bits(x)
+    os.stdio.println("${x} -> ${u} -> ${u.to_bits()} round trip: ${u.to_bits() == x}")
+  }
+  let big: UInt64 = 18446744073709551615
+  os.stdio.println("max: ${big.to_bits()}")
+  let half: UInt64 = 9223372036854775808
+  os.stdio.println("2^63: ${half.to_bits()}")
+  os.stdio.println("sum wraps: ${UInt64.from_bits(-1) == big}")
+}

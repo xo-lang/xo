@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `UInt64.from_bits(x)` and `u.to_bits()` reinterpret 64 bits between Int
+  and UInt64.
+
 - On Linux an unchanged `xo build`, `xo run` or `xo test` hits the run
   cache again: the build's record of what it read listed /proc/meminfo
   (read for the build's memory budget), whose contents change on every

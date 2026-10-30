@@ -176,6 +176,10 @@ fn (static: UInt8) try(x: Int) -> UInt8?
 fn (static: UInt16) try(x: Int) -> UInt16?
 fn (static: UInt32) try(x: Int) -> UInt32?
 fn (static: UInt64) try(x: Int) -> UInt64?
+/// Int's 64 bits as a UInt64 (Go's uint64(x)): -1 is 18446744073709551615.
+fn (static: UInt64) from_bits(b: Int) -> UInt64
+/// u's 64 bits as an Int (Go's int64(u)): 2^63 and up are negative.
+fn (u: UInt64) to_bits() -> Int
 /// The character with code point x, or None when x is not a Unicode
 /// scalar value (a surrogate, negative, or above U+10FFFF).
 fn (static: Rune) try(x: Int) -> Rune?

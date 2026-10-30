@@ -1,10 +1,22 @@
 # prelude changes
 
+## 2026-10-30: feature: UInt64.from_bits and to_bits
+
 ## 2026-10-30: feature: List.filter_map
 
 - Kind: feature
 - Commit: this commit
 - Found by: Xo Lang 1's triage of the 2026-10-30 language obstacles note
+  (a protocol's unsigned 64 bit field held in an Int)
+- Go reference: uint64(x) and int64(u), math.Float64bits style names
+- Test: internal/llvm/testdata/golden/uint64_bits (arm64, LLVM, Go
+  parity)
+- Timing: none: no instruction on any backend (an iconv between two 64
+  bit integers)
+
+`UInt64.from_bits(x)` and `u.to_bits()` move an Int's 64 bits into a
+UInt64 and back unchanged, where `UInt64(x)` faults on a negative Int.
+
 - Go reference: none in Go's std (Rust's Iterator::filter_map); the Go
   backend's List_filter_map is the map and filter loop in one
 - Test: internal/llvm/testdata/golden/list_filter_map (arm64, LLVM, Go

@@ -432,6 +432,12 @@ func UInt16_try(_ *Task, x int64) Option[uint16] { return TryConv[uint16](x) }
 // UInt32_try is `UInt32.try(x)`.
 func UInt32_try(_ *Task, x int64) Option[uint32] { return TryConv[uint32](x) }
 
+// UInt64_from_bits is `UInt64.from_bits(b)`: the same 64 bits.
+func UInt64_from_bits(_ *Task, b int64) uint64 { return uint64(b) }
+
+// UInt64_to_bits is `u.to_bits()`: the same 64 bits.
+func UInt64_to_bits(_ *Task, u uint64) int64 { return int64(u) }
+
 // UInt64_try is `UInt64.try(x)`.
 func UInt64_try(_ *Task, x int64) Option[uint64] { return TryConv[uint64](x) }
 
