@@ -580,3 +580,60 @@ func TestUseGoMissingIndirectRequire(t *testing.T) {
 		t.Fatalf("build without leaf's requirement: exit %d\n%s%s", code, out.String(), errOut.String())
 	}
 }
+
+// TestUseGoNestedModulePin: a pin of an enclosing Go module does not pin
+// a package in a nested module of its own. testdata/goproxy's synthetic
+// example.com/nest/sub v1.2.0 is a module inside example.com/nest's path
+// (as aws-sdk-go-v2's service/s3 is, the Go workflows suite, 2026-10-29).
+// With only `require go example.com/nest v1.0.0`, binding sub fetched
+// example.com/nest/sub@v1.0.0, which does not exist; now sub binds at its
+// own version, check asks for its pin (XO1319), tidy adds it, and the
+// program runs.
+func TestUseGoNestedModulePin(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	proxy, err := filepath.Abs(filepath.Join("testdata", "goproxy"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	modcache := t.TempDir()
+	t.Cleanup(func() {
+		filepath.WalkDir(modcache, func(p string, d os.DirEntry, err error) error {
+			if err == nil {
+				os.Chmod(p, 0o755)
+			}
+			return nil
+		})
+	})
+	for k, v := range map[string]string{
+		"GOPROXY": "file://" + filepath.ToSlash(proxy), "GOSUMDB": "off", "GOFLAGS": "-mod=mod",
+		"GOMODCACHE": modcache, "GOTOOLCHAIN": "local", "GOPRIVATE": "", "GONOSUMDB": "", "GONOPROXY": "",
+		"XO_GOBIND_DIR": "",
+	} {
+		setenv(t, k, v)
+	}
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":  "module nested\nedition preview\nrequire go example.com/nest v1.0.0\n",
+		"main.xo": "use go \"example.com/nest/sub\"\n\nfn main(os: Os) {\n  os.stdio.println(\"${sub.two()}\")\n}\n",
+	})
+	var out, errOut bytes.Buffer
+	code := run(t, []string{"check", dir}, &out, &errOut)
+	if code != 1 || !strings.Contains(errOut.String(), "XO1319") || !strings.Contains(errOut.String(), "example.com/nest/sub v1.2.0") {
+		t.Fatalf("check: exit %d, want XO1319 for example.com/nest/sub v1.2.0\n%s%s", code, out.String(), errOut.String())
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"mod", "tidy", "--dir=" + dir}, &out, &errOut); code != 0 {
+		t.Fatalf("tidy: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "xo.mod")); !strings.Contains(string(data), "require go example.com/nest/sub v1.2.0") {
+		t.Fatalf("tidy did not pin the nested module:\n%s", data)
+	}
+	out.Reset()
+	errOut.Reset()
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 || strings.TrimSpace(out.String()) != "2" {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+}

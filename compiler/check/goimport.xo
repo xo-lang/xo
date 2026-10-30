@@ -45,7 +45,7 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
       root = c.abs(c.go_bind_root(r.dir))
     }
     let xomod = join(root, "xo.mod")
-    let pin = go_pin_for(c.go_pins(xomod), gopath)
+    let (pin_mod, pin) = go_pin_for(c.go_pins(xomod), gopath)
     let rerun = c.go_rerun(xomod, gopath)
     var cache = join(root, ".xo/gobind")
     if !c.gobind_dir.is_empty() {
@@ -70,12 +70,15 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
       return
     }
     let hdr = go_binding_header(data)
-    if hdr.version != GOBIND_VERSION || hdr.name.is_empty() || hdr.rerun != go_rerun_key(rerun) || (!pin.is_empty() && !hdr.standard && pin != hdr.mod_version) {
+    if hdr.version != GOBIND_VERSION || hdr.name.is_empty() || hdr.rerun != go_rerun_key(rerun) || (!pin.is_empty() && !hdr.standard && pin_mod == hdr.mod_path && pin != hdr.mod_version) {
       // stale: the Go checker binds it again
       c.go_miss(f, u.span, gopath, root, cache, fpath)
       return
     }
-    if !hdr.standard && pin.is_empty() && !hdr.mod_path.is_empty() && !from_binding {
+    // a pin of an enclosing module (aws-sdk-go-v2 for its service/s3,
+    // a Go module of its own) is not the package's pin
+    let pinned = !pin.is_empty() && pin_mod == hdr.mod_path
+    if !hdr.standard && !pinned && !hdr.mod_path.is_empty() && !from_binding {
       // decision 0356: a third-party Go module needs its pin, or builds
       // follow its latest version
       c.go_unpinned(f, u.span, xomod, hdr.mod_path, hdr.mod_version)
@@ -93,7 +96,7 @@ fn (var c: Checker) load_go_import(m: Int, f: Int, u: parser.UseDecl) {
       c.mods[dep].go_require = go_mod_requires(wsmod)
       c.mods[dep].go_line = go_mod_go_line(wsmod)
       c.mods[dep].go_sum = c.fs.read_text(join(ws, "go.sum")).ok() ?? ""
-      if !pin.is_empty() && !hdr.mod_path.is_empty() {
+      if pinned {
         c.check_go_lock(f, u.span, root, hdr.mod_path, hdr.mod_version, c.mods[dep].go_sum)
       }
     }
@@ -301,9 +304,11 @@ fn (c: Checker) go_pins(xomod: Str) -> Map[Str, Str] {
   pins
 }
 
-/// gobind PinFor: the pinned version of the module that provides gopath
-/// (the longest module path prefix), or "".
-fn go_pin_for(pins: Map[Str, Str], gopath: Str) -> Str {
+/// gobind PinFor: the pinned module that provides gopath (the longest
+/// module path prefix) and its version, or ("", ""). The pin may be of an
+/// enclosing module: Go's service/s3 under aws-sdk-go-v2 is a module of
+/// its own, which the binding's header names.
+fn go_pin_for(pins: Map[Str, Str], gopath: Str) -> (Str, Str) {
   var best = ""
   var v = ""
   for (m, ver) in pins.entries() {
@@ -312,7 +317,7 @@ fn go_pin_for(pins: Map[Str, Str], gopath: Str) -> Str {
       v = ver
     }
   }
-  v
+  (best, v)
 }
 
 /// gobind ReadRerun for one package: the names of the `replay rerun go

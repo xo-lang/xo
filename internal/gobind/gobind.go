@@ -117,6 +117,11 @@ type Options struct {
 	// (`require go <module> <version>` in xo.mod); empty uses the version
 	// already in the binding workspace, or the latest.
 	Version string
+	// Module is the pinned module Version belongs to (PinFor). It may
+	// enclose the package's own module (aws-sdk-go-v2 for service/s3,
+	// a module of its own): then Version pins only Module, and the
+	// package resolves at a version Go picks beside it.
+	Module string
 	// Rerun names the functions an xo.mod `replay rerun go <path>
 	// [names]` line marks pure (`name` or `Type.method`; "*" for all):
 	// they run again in a replay and are not recorded (decision 0093).
@@ -224,16 +229,16 @@ func ReadPins(xoMod string) map[string]string {
 	return pins
 }
 
-// PinFor returns the pinned version of the module that provides goPath
-// (longest module path prefix), or "".
-func PinFor(pins map[string]string, goPath string) string {
+// PinFor returns the pinned module that provides goPath (longest module
+// path prefix) and its version, or "", "".
+func PinFor(pins map[string]string, goPath string) (string, string) {
 	best, v := "", ""
 	for m, ver := range pins {
 		if (goPath == m || strings.HasPrefix(goPath, m+"/")) && len(m) > len(best) {
 			best, v = m, ver
 		}
 	}
-	return v
+	return best, v
 }
 
 // Load returns the cached binding of goPath, or nil when there is none or
@@ -286,7 +291,7 @@ func Load(goPath string, opts Options) (*Binding, error) {
 	if version != Version || b.Name == "" || rerun != rerunKey(opts.Rerun) {
 		return nil, nil
 	}
-	if opts.Version != "" && !b.Standard && opts.Version != b.ModVersion {
+	if opts.Version != "" && !b.Standard && (opts.Module == "" || opts.Module == b.Module) && opts.Version != b.ModVersion {
 		return nil, nil
 	}
 	if !b.Standard {
@@ -425,15 +430,26 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 	}
 	wd := workDir(opts.Dir)
 	if thirdParty(goPath) {
-		target := goPath
-		if opts.Version != "" {
-			target += "@" + opts.Version
-		} else if _, err := runGo(wd, "list", "-json=ImportPath", goPath); err == nil {
-			target = ""
+		var gets []string
+		switch {
+		case opts.Version != "" && opts.Module != "" && opts.Module != goPath:
+			// the pin's module first: goPath may be in a nested module
+			// of its own, which `go get goPath@Version` would ask for at
+			// the enclosing module's version
+			gets = append(gets, opts.Module+"@"+opts.Version)
+		case opts.Version != "":
+			gets = append(gets, goPath+"@"+opts.Version)
 		}
-		if target != "" {
+		for _, target := range gets {
 			if _, err := runGo(wd, "get", target); err != nil {
 				return nil, &Error{GoPath: goPath, Msg: firstLine(err.Error())}
+			}
+		}
+		if len(gets) == 0 || opts.Module != "" && opts.Module != goPath {
+			if _, err := runGo(wd, "list", "-json=ImportPath", goPath); err != nil {
+				if _, err := runGo(wd, "get", goPath); err != nil {
+					return nil, &Error{GoPath: goPath, Msg: firstLine(err.Error())}
+				}
 			}
 		}
 	}

@@ -41,7 +41,8 @@ func RunCLI(paths []string, dir string, asJSON bool, stdout, stderr io.Writer) i
 	status := 0
 	var results []CLIResult
 	for _, p := range paths {
-		b, err := Bind(p, Options{Dir: cache, Version: PinFor(pins, p), Rerun: reruns[p]})
+		mod, ver := PinFor(pins, p)
+		b, err := Bind(p, Options{Dir: cache, Version: ver, Module: mod, Rerun: reruns[p]})
 		if err != nil {
 			status = 1
 			results = append(results, CLIResult{Path: p, Error: err.Error()})

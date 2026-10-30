@@ -46,14 +46,14 @@ func TestPins(t *testing.T) {
 	p := filepath.Join(dir, "xo.mod")
 	os.WriteFile(p, []byte("module ex\n\nrequire go github.com/google/uuid v1.6.0\nrequire go example.com/a v0.1.0\n"), 0o644)
 	pins := ReadPins(p)
-	if v := PinFor(pins, "github.com/google/uuid"); v != "v1.6.0" {
-		t.Errorf("pin = %q", v)
+	if m, v := PinFor(pins, "github.com/google/uuid"); m != "github.com/google/uuid" || v != "v1.6.0" {
+		t.Errorf("pin = %q %q", m, v)
 	}
-	if v := PinFor(pins, "example.com/a/sub"); v != "v0.1.0" {
-		t.Errorf("sub package pin = %q", v)
+	if m, v := PinFor(pins, "example.com/a/sub"); m != "example.com/a" || v != "v0.1.0" {
+		t.Errorf("sub package pin = %q %q", m, v)
 	}
-	if v := PinFor(pins, "example.com/ab"); v != "" {
-		t.Errorf("prefix without a slash matched: %q", v)
+	if m, v := PinFor(pins, "example.com/ab"); m != "" || v != "" {
+		t.Errorf("prefix without a slash matched: %q %q", m, v)
 	}
 }
 
@@ -353,6 +353,64 @@ func Ok(n int) int { return n }
 		if !found {
 			t.Errorf("%s not skipped as an unexported type: %v", name, b.Skipped)
 		}
+	}
+}
+
+// TestNestedModulePin: a pin of an enclosing module (`require go
+// example.com/root v0.0.0`) does not pin a package in a nested module of
+// its own (example.com/root/sub at v0.1.0, as aws-sdk-go-v2's service/s3
+// is): Bind fetched `example.com/root/sub@v0.0.0`, which does not exist
+// (the Go workflows suite, 2026-10-29), and Load called its binding stale
+// because the root's version is not the sub module's.
+func TestNestedModulePin(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	t.Setenv("GOPROXY", "off")
+	dir := t.TempDir()
+	srcs := t.TempDir()
+	mods := map[string]map[string]string{
+		"root": {
+			"go.mod":  "module example.com/root\n\ngo 1.21\n",
+			"root.go": "package root\n\nfunc One() int { return 1 }\n",
+		},
+		"sub": {
+			"go.mod": "module example.com/root/sub\n\ngo 1.21\n\nrequire example.com/root v0.0.0\n",
+			"sub.go": "package sub\n\nimport \"example.com/root\"\n\nfunc Two() int { return root.One() + 1 }\n",
+		},
+	}
+	for m, files := range mods {
+		for name, body := range files {
+			if err := os.MkdirAll(filepath.Join(srcs, m), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(srcs, m, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire (\n\texample.com/root v0.0.0\n\texample.com/root/sub v0.1.0\n)\n\n" +
+		"replace example.com/root v0.0.0 => " + filepath.Join(srcs, "root") + "\n" +
+		"replace example.com/root/sub v0.1.0 => " + filepath.Join(srcs, "sub") + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	opts := Options{Dir: dir, Version: "v0.0.0", Module: "example.com/root"}
+	b, err := Bind("example.com/root/sub", opts)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if b.Module != "example.com/root/sub" || b.ModVersion != "v0.1.0" {
+		t.Errorf("binding module = %s %s, want example.com/root/sub v0.1.0", b.Module, b.ModVersion)
+	}
+	if !strings.Contains(string(b.Decl), "fn two() -> Int") {
+		t.Errorf("two not bound:\n%s", b.Decl)
+	}
+	if l, err := Load("example.com/root/sub", opts); l == nil || err != nil {
+		t.Errorf("the binding is stale under its enclosing module's pin (err %v)", err)
 	}
 }
 

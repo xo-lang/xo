@@ -299,8 +299,8 @@ test "Go bindings, vouches, and effect locks read as internal/gobind and interna
   expect(h.skipped.contains("odd")) == true
   expect(h.skipped.contains("late")) == false
   expect(go_rerun_key(["b", "a", "Type.m"])) == "Type.m a b"
-  expect(go_pin_for({"example.com/a": "v1.0.0", "example.com/a/b": "v2.0.0"}, "example.com/a/b/c")) == "v2.0.0"
-  expect(go_pin_for({"example.com/a": "v1.0.0"}, "example.com/ab")) == ""
+  expect(go_pin_for({"example.com/a": "v1.0.0", "example.com/a/b": "v2.0.0"}, "example.com/a/b/c")) == ("example.com/a/b", "v2.0.0")
+  expect(go_pin_for({"example.com/a": "v1.0.0"}, "example.com/ab")) == ("", "")
   expect(go_pure_package("net/url")) == true
   expect(go_pure_package("os/exec")) == false
   expect(go_unquote("\"zlib.h\"") ?? "") == "zlib.h"

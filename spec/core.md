@@ -1702,7 +1702,11 @@ fn main(os: Os) ! {
   module resolution picked, and `xo mod tidy` adds missing pins and
   records their go.sum hashes in xo.lock from the binding (a pin whose
   hashes no binding has fetched and xo.lock lacks is `XO1320`: run
-  `xo check` once first). Go's
+  `xo check` once first). The pin is of the package's own module: a
+  package in a nested Go module (aws-sdk-go-v2's `service/s3`, a module
+  inside `github.com/aws/aws-sdk-go-v2`'s path) needs its own line, and
+  a pin of the enclosing module pins only that module, which the nested
+  one resolves beside. Go's
   standard library packages need no line; the Go toolchain's version
   decides them.
 - Names are converted to Xo naming: functions and methods to `snake_case`
