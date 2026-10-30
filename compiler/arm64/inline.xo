@@ -83,6 +83,13 @@ struct InlineCost {
   /// with its inlined callees calls nothing but inline intrinsics
   consts: Int = 0
   leaf: Bool = true
+  /// it ends in a tail call of a callee that stays a call (bad, pads or
+  /// few): a branch on arm64 (shrink.xo mark_tails), so the function is
+  /// a leaf of its own (no frame, its constants immediates), but its
+  /// body inlined at a site that is not a tail makes a real call there
+  /// (2026-10-30: alloc.free_push's cold free_aligned tail cost 78 in
+  /// this count against 34, so it stayed a call in obj.rl_free_n_slow)
+  tail_cold: Bool = false
   /// not inlinable for another reason than its size (main, a slow path,
   /// landing pads, rt.frame_addr, a cycle)
   hard: Bool = false
@@ -102,7 +109,9 @@ struct InlineCost {
 }
 
 /// The rt intrinsics the arm64 emitter makes instructions, not calls: a
-/// function calling only these (and inlined leaves) is a leaf. The
+/// function calling only these (and inlined leaves, and a tail call of
+/// a callee that stays a call: a branch, InlineCost.tail_cold) is a
+/// leaf. The
 /// immortal placeholders rt.rl_empty and rt.h_zero are an address each
 /// (a constant constructor such as x509.empty, its lists all [], is a
 /// leaf: 2026-10-17). With the
@@ -271,9 +280,14 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
     }
     if k.bad || k.pads || k.few {
       // a callee with pads is a call here unless its site passes a
-      // closure (find_call), so it counts as one
+      // closure (find_call), so it counts as one; as a tail call it is a
+      // branch and the caller keeps its frame-less leaf form (tail_cold)
       c.instrs += 1
-      c.leaf = false
+      if ki < s.tails.len() && s.tails[ki] {
+        c.tail_cold = true
+      } else {
+        c.leaf = false
+      }
     } else if ki < s.tails.len() && s.tails[ki] && k.instrs > INLINE_TAIL_MAX && s.instrs > INLINE_TAIL_MAX {
       // a tail call stays one (INLINE_TAIL_MAX): a branch, the caller a
       // leaf as before
@@ -282,7 +296,11 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
       c.instrs += k.instrs
       c.consts += k.consts
       c.blocks += k.blocks + 1
-      c.leaf = c.leaf && k.leaf
+      // an inlined body's cold tail call is a call of this function
+      // unless the site is a tail of its own (then it stays a branch)
+      let site_tail = ki < s.tails.len() && s.tails[ki]
+      c.leaf = c.leaf && k.leaf && (!k.tail_cold || site_tail)
+      c.tail_cold = c.tail_cold || (k.tail_cold && site_tail)
     }
   }
   if !c.leaf {

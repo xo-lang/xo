@@ -16,7 +16,7 @@ use std/crypto
 use github.com/xo-lang/xo/compiler/ssa
 
 /// The version of the keys and entries.
-const INLINE_CACHE_VERSION = "xo inline cache v10"
+const INLINE_CACHE_VERSION = "xo inline cache v11"
 
 /// What inline_cached did: the entries to store (key, entry), the
 /// functions read from entries, the functions whose computed result
