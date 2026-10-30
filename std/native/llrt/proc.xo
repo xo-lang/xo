@@ -841,6 +841,10 @@ pub fn run(cmd: Str, args: List[Str]) -> List[Str] {
     return ["3", ""]
   }
   let l = sysio.layer()
+  if l == 0 {
+    // wasm (WASI xo): no processes
+    return ["2", "no processes in this build"]
+  }
   var argv = [cmd]
   for a in args {
     argv.push(a)
