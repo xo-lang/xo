@@ -948,3 +948,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [gobind-export-data-partial-scope.md](gobind-export-data-partial-scope.md): an import's scope from export data holds only what the bound package names; import the dependency through the same importer
 - [run-cache-windows-pdb.md](run-cache-windows-pdb.md): a run cache hit wrote a windows .exe without its PDB; such builds store no entry now.
 - [golden-writes-beside-itself.md](golden-writes-beside-itself.md): a golden's scratch files written beside main.xo were committed; goldens write under $TMPDIR.
+- [linux-arm64-race-stacks-name-asm.md](linux-arm64-race-stacks-name-asm.md): Observed 2026-10-29: Linux arm64 --race reports name prog.s lines, not main.xo lines; TestRaceStacksArm64 skips there

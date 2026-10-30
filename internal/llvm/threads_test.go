@@ -493,6 +493,9 @@ func TestTSanSameThreadRaceArm64(t *testing.T) {
 // stack holds no frame the 200 isolated faults left (each would repeat
 // main's line of the isolate call).
 func TestRaceStacksArm64(t *testing.T) {
+	if runtime.GOOS == "linux" {
+		t.Skip("the Linux race build links the arm64 backend's assembly with clang: ThreadSanitizer names prog.s lines, not main.xo lines (xo build links darwin with .loc line info; knowledgebase/gotchas/linux-arm64-race-stacks-name-asm.md)")
+	}
 	cmd := testtmp.Guard(exec.Command(raceBuild(t, "race_stacks", xotool.BackendArm64)))
 	cmd.Env = append(os.Environ(), "TSAN_OPTIONS=halt_on_error=0")
 	var stdout, stderr bytes.Buffer
