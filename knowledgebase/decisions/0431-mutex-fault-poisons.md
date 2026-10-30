@@ -73,6 +73,51 @@ std has seven files that call `with(fn(var`. None of them reads a value
 back after a fault on purpose. Each one's `with` would be re-read for the
 poisoned case if this is accepted.
 
+## Data: which `with` bodies still copy (2026-10-30)
+
+Counted for the owner's decision, with xo at main b55d33aec plus 02271995b.
+The call sites come from `xo refs Mutex.with`. Each body was classified from
+`xo dev dump ssa --stage=rc`: does it write the protected value, and does a
+fault point follow that write on some path (the rule's cost)?
+
+Left out: 12 sites in `_test.xo` files and 110 in bench/planted-xo* (the
+planted-bug variants, which the checker rejects on purpose).
+
+| where | sites | write the value | a write, then a fault point |
+|---|---|---|---|
+| std | 41 | 36 | 2 |
+| compiler | 23 | 17 | 0 |
+| bench (no planted variants) | 53 | 44 | 7 |
+| goldens and testdata | 67 | 47 | 6, all rollback or fault tests |
+| total | 184 | 144 | 15 |
+
+The 9 outside the tests, each measured or read:
+
+- **Map.update inside a with** (6 bench sites: chathub main.xo 139, 157,
+  224, 242, 254, per connection or message; bench/xo v0.4 rate limiter
+  limiter.xo 96, per request). The static rule flags these: the update takes
+  the entry out, then calls a closure that can fault. They do not pay,
+  though. A repro made 20,000 `with` + `update` calls: 0.00 s with 1,000
+  keys and 0.27 s with 100,000 keys, building the map included. A copy per
+  call would be 2 billion entry copies.
+- **std/native/trace.xo 37** (trace.push, per request through
+  ring_middleware; the ring holds 1,000 spans by default). It pushes, then
+  `l = l[l.len() - cap..]`. That pattern copies the ring with or without
+  rollback. At cap 100,000, 20,000 calls took 1.97 s with no Mutex and
+  2.60 s inside `with`, so rollback adds about 30%. A ring with a write
+  index removes both (a std item).
+- **std/native/metrics.xo 471** (expose, a summary's quantiles): the
+  streams are copied once per scrape and series. A cold path; the size is
+  bounded.
+- **bench/xo v0.4 job-queue queue.xo 177** (dead_jobs): the jobs map is
+  copied once per call. An admin path.
+
+So after 02271995b, no hot path in std, compiler/ or bench pays the
+rollback copy, beyond trace.push's 30% over its own copy. The expensive
+shape is qp's: a write, then a fault point, on an unbounded collection, per
+item. Today's code has no instance of it. std/metrics had one until
+e3a99876b. The decision is about user code with that shape.
+
 ## Decision (proposed)
 
 1. A fault that unwinds out of a `Mutex.with` body poisons the mutex.
