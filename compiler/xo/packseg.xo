@@ -1,0 +1,196 @@
+// Pack segments, version 2 (decision 0418): one LZ4 block per entry,
+// written one entry at a time and read one entry at a time.
+//
+// A segment file (p-<hex> in a pack directory) is the entries' bodies in
+// order, then the index, then a 12 byte footer: "XOP2" and the index's
+// offset as 8 little-endian bytes. The index is PACK_VERSION, a line,
+// the count, then each entry's key, raw length, stored length and codec
+// (0 the bytes as they are, 1 an LZ4 block of them) with the lengths as
+// unsigned varints. The bodies go first so a writer streams them to the
+// file as it compresses (the lengths are known only after), holding at
+// most SEG_FLUSH bytes; a reader keeps the file as read (compressed) and
+// decompresses only the entries it wants. Version 1 kept one LZ4 block of
+// every entry's bytes: writing held the whole body and its compressed
+// copy, reading decompressed the whole segment to serve any entry (the
+// self build's warm fn_store added 0.9 GB of peak, 2026-10-29).
+// PACK_VERSION is part of every pack directory's name (pack_dir,
+// shared_pack_dir), so an older xo never lists a v2 segment and this xo
+// never lists a v1 one: the bump is a clean miss.
+
+use std/internal
+
+/// An entry of a segment, as its index lists it.
+struct PackEnt {
+  key: Str = ""
+  /// The body's offset and stored length in the file.
+  off: Int = 0
+  stored: Int = 0
+  /// Its bytes once decoded.
+  raw: Int = 0
+  /// 0 stored as it is, 1 an LZ4 block.
+  codec: Int = 0
+}
+
+const SEG_FOOTER = 12
+/// A writer's bodies go to the file every SEG_FLUSH bytes.
+const SEG_FLUSH = 4 * 1048576
+
+/// The entries of a segment read as b, [] when b is not a whole segment
+/// of this version (a damaged or foreign file holds no entry).
+fn pack_entries(b: Bytes) -> List[PackEnt] {
+  let n = b.len()
+  if n < SEG_FOOTER || b[n - SEG_FOOTER..n - 8] != b"XOP2" {
+    return []
+  }
+  var ix = 0
+  for i in 0..8 {
+    ix = ix | (Int(b[n - 8 + i]) << (8 * i))
+  }
+  let head = "${PACK_VERSION}\n".bytes()
+  if ix < 0 || ix + head.len() > n - SEG_FOOTER || b[ix..ix + head.len()] != head {
+    return []
+  }
+  var pos = ix + head.len()
+  let (count, p1) = get_uv(b, pos)
+  pos = p1
+  // an entry takes at least 3 index bytes: a damaged count allocates nothing
+  if count < 0 || count > (n - SEG_FOOTER - pos) / 3 {
+    return []
+  }
+  // the index ends where the footer starts; the bodies end where the
+  // index starts
+  let end = n - SEG_FOOTER
+  var out: List[PackEnt] = List.with_capacity(count)
+  var off = 0
+  for _ in 0..count {
+    let (kl, p2) = get_uv(b, pos)
+    if kl < 0 || p2 + kl > end {
+      return []
+    }
+    let key = b[p2..p2 + kl].to_str() ?? ""
+    let (raw, p3) = get_uv(b, p2 + kl)
+    let (stored, p4) = get_uv(b, p3)
+    if raw < 0 || stored < 0 || p4 >= end {
+      return []
+    }
+    let codec = Int(b[p4])
+    pos = p4 + 1
+    if codec > 1 || off + stored > ix {
+      return []
+    }
+    out.push(PackEnt{key: key, off: off, stored: stored, raw: raw, codec: codec})
+    off += stored
+  }
+  if off != ix || pos != end {
+    return []
+  }
+  out
+}
+
+/// The bytes of entry e of the segment read as b; None when its block is
+/// damaged.
+fn pack_entry(b: Bytes, e: PackEnt) -> Bytes? {
+  if e.off < 0 || e.off + e.stored > b.len() {
+    return None
+  }
+  let body = b[e.off..e.off + e.stored]
+  if e.codec == 0 {
+    return if body.len() == e.raw { Some(body) } else { None }
+  }
+  internal.lz4_decompress(body, 0, e.raw)
+}
+
+/// A segment being written: its bodies stream to a temporary file in
+/// the pack directory, the index follows at the end.
+struct SegWriter {
+  f: File
+  tmp: Str = ""
+  buf: BytesBuilder = BytesBuilder.new()
+  /// The bytes written to the file so far (the bodies).
+  off: Int = 0
+  ents: List[PackEnt] = []
+  /// A write failed: the segment is dropped at the end.
+  failed: Bool = false
+}
+
+/// Opens a segment of pack dir p (a temporary name; seg_end renames it);
+/// None when the directory cannot be written.
+fn seg_begin(os: Os, p: Pack) -> Option[SegWriter] {
+  match os.fs.create_dir_all(p.dir) {
+    Ok(_) => {}
+    Err(_) => return None
+  }
+  let tmp = "${p.dir}/p-${os.rand.bytes(8).to_hex()}.tmp-${os.rand.bytes(4).to_hex()}"
+  match os.fs.create_new(tmp) {
+    Ok(f) => Some(SegWriter{f: f, tmp: tmp})
+    Err(_) => None
+  }
+}
+
+/// Adds the entry key with bytes data: LZ4 when that is smaller (and the
+/// entry is at least 32 bytes), else as it is.
+fn (var w: SegWriter) add(os: Os, key: Str, data: Bytes) {
+  let c = if compress_on(os) && data.len() >= 32 { internal.lz4_compress(data) } else { b"" }
+  let lz = !c.is_empty() && c.len() < data.len()
+  let body = if lz { c } else { data }
+  w.ents.push(PackEnt{key: key, off: w.off + w.buf.len(), stored: body.len(), raw: data.len(), codec: if lz { 1 } else { 0 }})
+  w.buf.write(body)
+  if w.buf.len() >= SEG_FLUSH {
+    w.flush()
+  }
+}
+
+fn (var w: SegWriter) flush() {
+  if w.buf.len() == 0 {
+    return
+  }
+  let b = w.buf.freeze()
+  w.buf = BytesBuilder.new()
+  if w.f.write(b).is_err() {
+    w.failed = true
+  }
+  w.off += b.len()
+}
+
+/// Writes the index and footer, closes the file and renames it to its
+/// segment name; the stored bytes (for the prune), 0 when it failed (the
+/// temporary file is removed; the loose files serve).
+fn (var w: SegWriter) end(os: Os) -> Int {
+  w.flush()
+  var ix = BytesBuilder.new()
+  ix.write_str("${PACK_VERSION}\n")
+  put_uv(ix, w.ents.len())
+  for e in w.ents {
+    put_uv(ix, e.key.len())
+    ix.write_str(e.key)
+    put_uv(ix, e.raw)
+    put_uv(ix, e.stored)
+    ix.write_byte(UInt8(e.codec))
+  }
+  ix.write_str("XOP2")
+  var o = w.off
+  for _ in 0..8 {
+    ix.write_byte(UInt8(o & 255))
+    o = o >> 8
+  }
+  let tail = ix.freeze()
+  if w.f.write(tail).is_err() {
+    w.failed = true
+  }
+  w.off += tail.len()
+  let closed = w.f.close().is_ok()
+  let name = w.tmp.split(".tmp-")[0]
+  if w.failed || !closed || os.fs.rename(w.tmp, name).is_err() {
+    os.fs.remove(w.tmp).ignore_err("a segment whose write failed")
+    return 0
+  }
+  if !(os.env.get("XO_CACHE_STATS") ?? "").is_empty() {
+    // XO_CACHE_STATS counts and (keys) hashes what fs.write stores
+    // (cachestats.xo StatFs); a segment streamed through a handle is
+    // written once more that way, only when the statistics are on
+    if let Ok(d) = os.fs.read(name) {
+      os.fs.write(name, d).ignore_err("the statistics' copy")
+    }
+  }
+  w.off
+}

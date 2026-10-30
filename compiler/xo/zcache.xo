@@ -78,7 +78,7 @@ fn entry_put(os: Os, dir: Str, kind: Str, key: Str, data: Bytes) -> Int {
 
 /// Whether name is a pack segment's file: s-ID, or z-ID compressed
 /// (not a temporary file of either).
-fn is_segment(name: Str) -> Bool { (name.starts_with("s-") || name.starts_with("z-")) && !name.contains(".") }
+fn is_segment(name: Str) -> Bool { (name.starts_with("p-") || name.starts_with("s-") || name.starts_with("z-")) && !name.contains(".") }
 
 /// The bytes of the segment file name read as b: decompressed for a z-
 /// name; None when it is damaged.

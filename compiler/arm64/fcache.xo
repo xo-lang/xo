@@ -35,6 +35,20 @@ pub struct FnCache {
   /// entries the cache holds for them
   pub part_keys: List[Str] = []
   pub part_entries: Map[Str, Bytes] = {}
+  /// decision 0418: a directory for each part's new entries, which
+  /// gen_part writes there as the part finishes (keeping their ranges in
+  /// Part.spill) with this file system; "" keeps them in memory (verify,
+  /// or no cache)
+  pub spill_dir: Str = ""
+  pub fs: Option[Fs] = None
+}
+
+/// A part's new cache entries written to one file (decision 0418): the
+/// functions' as (key, offset, length), and the part's own.
+pub struct Spill {
+  pub path: Str = ""
+  pub fns: List[(Str, Int, Int)] = []
+  pub part: Option[(Str, Int, Int)] = None
 }
 
 /// A function's canonical text and what placing it needs.

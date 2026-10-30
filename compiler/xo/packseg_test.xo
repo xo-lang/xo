@@ -1,0 +1,44 @@
+// Tests of the v2 pack segments (decision 0418): one block per entry.
+
+test "a v2 segment reads back entry by entry, damaged files hold none" {
+  let code = testing.run_main(fn(o: Os) -> () ! Error {
+    let p = Pack{root: "/c", dir: "/c/pack/fn"}
+    var w = seg_begin(o, p) ?? { expect(false) == true; return }
+    var big = BytesBuilder.new()
+    for i in 0..20000 {
+      big.write_str("line ${i % 7} of the entry\n")
+    }
+    let items = [("a", b"short"), ("b", big.freeze()), ("c", b""), ("d", o.rand.bytes(5000))]
+    for (k, b) in items {
+      w.add(o, k, b)
+    }
+    expect(w.end(o) > 0) == true
+    var names: List[Str] = []
+    for fi in o.fs.read_dir(p.dir)? {
+      names.push(fi.name)
+    }
+    expect(names.len()) == 1
+    expect(is_segment(names[0])) == true
+    let rb = o.fs.read("${p.dir}/${names[0]}")?
+    let es = pack_entries(rb)
+    expect(es.len()) == 4
+    for (i, (k, b)) in items.indexed() {
+      expect(es[i].key) == k
+      expect(es[i].raw) == b.len()
+      expect(pack_entry(rb, es[i])) == Some(b)
+    }
+    // the repetitive entry compressed, the random one stored as it is
+    expect(es[1].codec) == 1
+    expect(es[1].stored < es[1].raw) == true
+    expect(es[3].codec) == 0
+    // damaged: a byte short, a byte of the index changed, a v1 header
+    expect(pack_entries(rb[0..rb.len() - 1]).len()) == 0
+    var bad = BytesBuilder.new()
+    bad.write(rb[0..rb.len() - 20])
+    bad.write_byte(UInt8(255))
+    bad.write(rb[rb.len() - 19..])
+    expect(pack_entries(bad.freeze()).len()) == 0
+    expect(pack_entries("xo pack v1\n".bytes()).len()) == 0
+  }, os)
+  expect(code) == 0
+}

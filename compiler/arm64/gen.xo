@@ -61,6 +61,8 @@ pub struct Program {
   pub part_stores: List[(Str, Bytes)] = []
   pub parts_reused: Int = 0
   pub part_mismatches: List[Int] = []
+  /// the parts' entries written to files instead (decision 0418)
+  pub spills: List[Spill] = []
 }
 
 /// The program's whole assembly: asm, or its parts joined.

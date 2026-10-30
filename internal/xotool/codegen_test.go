@@ -213,6 +213,7 @@ var codegenFS = map[string]string{
 	"llvm/gen.xo":               "program input",
 	"wasm/gen.xo":               "program input",
 	"arm64/race.xo":             "program input",
+	"arm64/parallel.xo":         "the per-part spill of new cache entries into the build's work directory (decision 0418, spill_part): written, read back only by the store",
 	"ssa/fecache.xo":            "the front end cache itself",
 	"ssa/rccache.xo":            "the rc cache itself",
 	"cli/core/format/format.xo": "the formatter's own files",

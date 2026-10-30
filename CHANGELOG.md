@@ -5,6 +5,15 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- The back-end cache's pack segments hold one LZ4 block per entry and
+  are written and read one entry at a time (decision 0418): a build's
+  new entries leave the heap as each part finishes instead of at the
+  store, and a read decodes only the entries it wants. The pack
+  directory's name carries the format, so older xos never read the new
+  segments; the first build after the upgrade stores its entries again.
+  Self build with the cache on: the cold build's footprint 10428 to
+  8371 MB (its cache-off build 7924 to 8350), the second build's
+  5809 to 4807 MB and its CPU 21.4 to 9.7 s.
 - std/crc32 on x86-64: IEEE (and gzip's and zip's CRC-32) folds 64 bytes
   a step with PCLMULQDQ (on 256 bit registers with VPCLMULQDQ), 0.12 of
   its time, Go's speed (was 8.08x); Castagnoli past 504 bytes runs three crc32q

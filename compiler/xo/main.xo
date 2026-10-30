@@ -1584,7 +1584,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     // keys); windows since 2026-10-27: an entry carries the thunks and
     // weak symbols its functions call through (fcache.xo put_w64; they
     // were missing on a hit, an undefined xo_w64_WaitOnAddress)
-    let (fc, fdir, fpk) = if passes_changed(os) || gm.race { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release, pre) }
+    let (fc0, fdir, fpk) = if passes_changed(os) || gm.race { (arm64.FnCache{}, "", Pack{}) } else { fn_cache_load(os, ctx, gm, tgoos, jobs, release, pre) }
+    var fc = fc0
+    if !fdir.is_empty() && !fc.verify {
+      // decision 0418: each part's new entries go to a file in the
+      // build's directory as the part finishes, read back by the store
+      fc.spill_dir = dir
+      fc.fs = Some(os.fs)
+    }
     if !fdir.is_empty() {
       t = lap(os, phases, "fn_keys", t)
     }
@@ -1594,7 +1601,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       // a build the run cache keys (a test's, or a build's or run's under
       // on by default): the unchanged builds after it are served
       // whole, so its first is the only one that can pack the parts
-      fn_cache_store(os, fdir, fpk, fc, p.stores, p.part_stores, !o.run_key.is_empty())
+      fn_cache_store(os, fdir, fpk, fc, fn_src(p), part_src(p), !o.run_key.is_empty())
       cache_note(os, phases, "functions", p.reused, fc.keys.len())
       if !fc.part_keys.is_empty() {
         cache_note(os, phases, "parts", p.parts_reused, fc.part_keys.len())

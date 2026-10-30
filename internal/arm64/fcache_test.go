@@ -198,7 +198,7 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 			// 0220 addendum stage D 2d; the first two only count, 2026-10-21);
 			// without the loose entries the next build must still reuse
 			// functions, from the packs
-			segs, _ := filepath.Glob(filepath.Join(work, "cache", "packs", "*", "*", "*", "[sz]-*"))
+			segs, _ := filepath.Glob(filepath.Join(work, "cache", "packs", "*", "*", "*", "[psz]-*"))
 			if len(segs) < 4 {
 				t.Fatalf("after the third builds: %d pack segments, want at least rc and fn for each target", len(segs))
 			}
@@ -2980,7 +2980,7 @@ func TestSharedPackBounded(t *testing.T) {
 		kinds, _ := filepath.Glob(filepath.Join(cache, "packs", "shared", "*", "*"))
 		n, which := 0, ""
 		for _, k := range kinds {
-			segs, _ := filepath.Glob(filepath.Join(k, "[sz]-*"))
+			segs, _ := filepath.Glob(filepath.Join(k, "[psz]-*"))
 			c := 0
 			for _, s := range segs {
 				if !strings.Contains(filepath.Base(s), ".") {

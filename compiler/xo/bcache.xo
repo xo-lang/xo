@@ -203,16 +203,16 @@ fn fn_cache_load(os: Os, ctx: Ctx, m: ssa.Module, tgoos: Str, jobs: Int, release
 /// the target's first build (a build the run cache keys: its unchanged
 /// rebuilds never reach the back end, so its first edit regenerated every
 /// part, 2026-10-21; the HTTP server's 35 parts, 2026-10-27).
-fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(Str, Bytes)], part_stores: List[(Str, Bytes)], first_parts: Bool) {
+fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, src: StoreSrc, psrc: StoreSrc, first_parts: Bool) {
   if dir.is_empty() {
     return
   }
-  pack_store(os, pk, fc.entries, stores)
+  pack_store(os, pk, fc.entries, src)
   // parts only in the target's pack: a part is one program's (its split,
   // its namespace), and its text is large (xo: 34 parts, 328 MB), so
   // no loose copy for other programs to share
   if let Some(pp) = pk.parts {
-    if pp.fresh && first_parts && !part_stores.is_empty() && (fc.part_keys.len() < PART_PACK_FIRST || parts_bytes(part_stores) < PART_PACK_FIRST_BYTES) {
+    if pp.fresh && first_parts && psrc.count() > 0 && (fc.part_keys.len() < PART_PACK_FIRST || psrc.bytes() < PART_PACK_FIRST_BYTES) {
       // a small test module's parts on the target's first build: they
       // have no loose copies to come back from. A large module's wait
       // for the second build: xo's (650 MB) written by every gate's
@@ -220,16 +220,105 @@ fn fn_cache_store(os: Os, dir: Str, pk: Pack, fc: arm64.FnCache, stores: List[(S
       // keeps none of them either), 27 GB an hour of the prune's churn
       // (2026-10-22)
       os.fs.create_dir_all(pp.dir).ignore_err("no pack: the parts are made again")
-      pack_write(os, pp, part_stores)
+      pack_write_src(os, pp, [], psrc, {}, 0)
     } else {
-      pack_store(os, pp, fc.part_entries, part_stores)
+      pack_store(os, pp, fc.part_entries, psrc)
     }
   }
-  if stores.is_empty() {
+  if src.count() == 0 {
     return
   }
-  let n = store_entries(os, dir, "fn", pk, stores)
+  let n = store_entries(os, dir, "fn", pk, src)
   prune_backend_cache(os, "fn", dir, n)
+}
+
+/// A build's new entries to store (decision 0418): the ones in memory
+/// (verify, a failed spill) and the ones each part wrote to a file with
+/// their (key, offset, length), read back one part at a time
+/// (spill_items), so no store holds every entry at once.
+struct StoreSrc {
+  mem: List[(Str, Bytes)] = []
+  spills: List[(Str, List[(Str, Int, Int)])] = []
+}
+
+fn (s: StoreSrc) count() -> Int {
+  var n = s.mem.len()
+  for (_, r) in s.spills {
+    n += r.len()
+  }
+  n
+}
+
+/// The entries' bytes in all, before the pack's compression.
+fn (s: StoreSrc) bytes() -> Int {
+  var n = 0
+  for (_, b) in s.mem {
+    n += b.len()
+  }
+  for (_, r) in s.spills {
+    for (_, _, len) in r {
+      n += len
+    }
+  }
+  n
+}
+
+fn (s: StoreSrc) keys() -> Map[Str, Bool] {
+  var ks: Map[Str, Bool] = {}
+  for (k, _) in s.mem {
+    ks[k] = true
+  }
+  for (_, r) in s.spills {
+    for (k, _, _) in r {
+      ks[k] = true
+    }
+  }
+  ks
+}
+
+/// Entries in memory as a source.
+fn src_of_map(m: Map[Str, Bytes]) -> StoreSrc {
+  var s = StoreSrc{}
+  for (k, b) in m {
+    s.mem.push((k, b))
+  }
+  s
+}
+
+/// The functions' entries a generation made (Program.stores and spills).
+fn fn_src(p: arm64.Program) -> StoreSrc {
+  var s = StoreSrc{mem: p.stores}
+  for sp in p.spills {
+    if !sp.fns.is_empty() {
+      s.spills.push((sp.path, sp.fns))
+    }
+  }
+  s
+}
+
+/// The parts' entries a generation made.
+fn part_src(p: arm64.Program) -> StoreSrc {
+  var s = StoreSrc{mem: p.part_stores}
+  for sp in p.spills {
+    if let Some(r) = sp.part {
+      s.spills.push((sp.path, [r]))
+    }
+  }
+  s
+}
+
+/// The entries of one spilled part: its file read once; [] when it
+/// cannot be read (those entries are not stored).
+fn spill_items(os: Os, path: Str, ranges: List[(Str, Int, Int)]) -> List[(Str, Bytes)] {
+  // xo:allow XO0903 a spill the build's directory lost is not stored
+  let b = os.fs.read(path).ok() ?? return []
+  var out: List[(Str, Bytes)] = List.with_capacity(ranges.len())
+  for (k, off, len) in ranges {
+    if off >= 0 && len >= 0 && off + len <= b.len() {
+      out.push((k, b[off..off + len]))
+    }
+  }
+  out
 }
 
 /// insert_rc through the per-function cache (stage C, compiler/ssa
@@ -341,7 +430,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     }
   }
   t = lap(os, phases, "insert_rc.apply", t)
-  pack_store(os, pk, entries, out.stores)
+  pack_store(os, pk, entries, StoreSrc{mem: out.stores})
   if lazy {
     // the summaries of the functions decoded or computed here, on tasks
     // (a cold build of xo: every function, 1.7 s on one)
@@ -352,8 +441,8 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
       }
     }
     let new_sums = sums_of(b.m, plan.keys, todo, jobs)
-    let sn = store_entries(os, dir, "sum", spk, new_sums)
-    pack_store(os, spk, sums, new_sums)
+    let sn = store_entries(os, dir, "sum", spk, StoreSrc{mem: new_sums})
+    pack_store(os, spk, sums, StoreSrc{mem: new_sums})
     if sn > 0 {
       prune_backend_cache(os, "sum", dir, sn)
     }
@@ -362,7 +451,7 @@ fn rc_cached(os: Os, var b: ssa.Builder, release: Bool, jobs: Int, phases: Bool,
     }
     t = lap(os, phases, "insert_rc.sums", t)
   }
-  let n = store_entries(os, dir, "rc", pk, out.stores)
+  let n = store_entries(os, dir, "rc", pk, StoreSrc{mem: out.stores})
   if !out.stores.is_empty() {
     prune_backend_cache(os, "rc", dir, n)
   }
@@ -623,8 +712,8 @@ fn landings_cleanup_cached(os: Os, var b: ssa.Builder, release: Bool, settings: 
   // landings grew the module, or that an entry cannot hold, is keyed by
   // its body
   b.m.body_ids = ssa.body_ids_of(b.m, ents, tk, jobs)
-  pack_store(os, pk, entries, stores)
-  let n = store_entries(os, dir, "cln", pk, stores)
+  pack_store(os, pk, entries, StoreSrc{mem: stores})
+  let n = store_entries(os, dir, "cln", pk, StoreSrc{mem: stores})
   if !stores.is_empty() {
     prune_backend_cache(os, "cln", dir, n)
   }
@@ -736,8 +825,8 @@ fn fe_cached_build(os: Os, c: check.Checker, root: Str, tests: Bool, release: Bo
   if fin != hint {
     cache_put(os, "${dir}/fe-hint/last", fin.bytes())
   }
-  let n = store_entries(os, dir, "fe", pk, b.fe.stores)
-  pack_store(os, pk, entries, b.fe.stores)
+  let n = store_entries(os, dir, "fe", pk, StoreSrc{mem: b.fe.stores})
+  pack_store(os, pk, entries, StoreSrc{mem: b.fe.stores})
   if n > 0 {
     prune_backend_cache(os, "fe", dir, n)
   }
@@ -858,8 +947,8 @@ fn inline_through_cache(os: Os, var mi: ssa.Module, rc_keys: List[Str], jobs: In
   let (entries, pk) = cache_get_packed(os, dir, "inl", mi.goarch, keys, jobs)
   t = lap(os, phases, "inline.read", t)
   let out = arm64.inline_cached(mi, ik, entries, backend_cache_mode(os) == "verify", brk, jobs, lazy)
-  pack_store(os, pk, entries, out.stores)
-  let n = store_entries(os, dir, "inl", pk, out.stores)
+  pack_store(os, pk, entries, StoreSrc{mem: out.stores})
+  let n = store_entries(os, dir, "inl", pk, StoreSrc{mem: out.stores})
   if !out.stores.is_empty() {
     prune_backend_cache(os, "inl", dir, n)
   }
@@ -1286,10 +1375,13 @@ fn prune_backend_child(os: Os, dir: Str) -> Int {
 // entries as about 30,000 files cost 1.7 s of CPU (open, read, the used
 // mark's stat), so each build target (the working directory, the
 // command line without its flags and output path, and the target) also keeps its rc, inl, and fn entries
-// in a few segment files per kind, <cache>/packs/<xx>/<slot>/<kind>/s-<hex>,
-// each read with one open. A segment is PACK_VERSION, a line, the count,
-// each entry's key and length (unsigned varints), then the entries' bytes
-// in that order. The loose files stay the shared store: a key the pack
+// in a few segment files per kind, <cache>/packs/<xx>/<slot>/<kind>/p-<hex>,
+// each read with one open. A segment (packseg.xo, decision 0418) is the
+// entries' bodies, each as it is or as an LZ4 block, then its index
+// (PACK_VERSION, a line, the count, each entry's key, raw and stored
+// lengths and codec) and a footer naming the index's offset; a writer
+// streams the bodies as it compresses and a reader decodes only the
+// entries it wants (a v1 segment was one LZ4 block of everything). The loose files stay the shared store: a key the pack
 // lacks is read from its file, and stores go there too, so other
 // programs and targets keep their hits. A build appends one segment of
 // the entries it used that its pack lacked; past PACK_SEGS segments, or
@@ -1308,7 +1400,7 @@ fn prune_backend_child(os: Os, dir: Str) -> Int {
 // loose files.
 // The prune treats each segment as one entry, marked used when read.
 
-const PACK_VERSION = "xo pack v1"
+const PACK_VERSION = "xo pack v2"
 
 /// A test build of a module of fewer parts writes its parts pack on its
 /// build target's first build: the compiler has 116 (650 MB); the
@@ -1431,15 +1523,17 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
         match os.fs.read(path) {
           Ok(rb) => {
             prune.mark_used_within(os.fs, os.clock, path, BACKEND_TOUCH)
-            // a damaged compressed segment holds no entry; the next
-            // compaction replaces it
-            let b = segment_bytes(fi.name, rb) ?? b""
+            // a damaged segment holds no entry; the next compaction
+            // replaces it (decision 0418: one block per entry, only the
+            // wanted ones decoded)
             p.segs.push(fi.name)
-            for (k, lo, hi) in pack_index(b) {
+            for e in pack_entries(rb) {
               p.held += 1
-              if want.contains(k) && !entries.contains(k) {
-                entries[k] = b[lo..hi]
-                p.from_pack[k] = true
+              if want.contains(e.key) && !entries.contains(e.key) {
+                if let Some(d) = pack_entry(rb, e) {
+                  entries[e.key] = d
+                  p.from_pack[e.key] = true
+                }
               }
             }
           }
@@ -1521,7 +1615,7 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
   }
   let loose = cache_get_all(os, dir, kind, rest, jobs)
   if sh_on && loose.len() >= SHARED_MIN {
-    shared_store(os, dir, sdir, shared, loose, sh_segs, sh_held)
+    shared_store(os, dir, sdir, shared, src_of_map(loose), sh_segs, sh_held)
   }
   // XO_FE_STATS=1: how many entries came from loose files (one open
   // each) against the directory's pack (decision 0351)
@@ -1558,28 +1652,29 @@ fn cache_get_packed(os: Os, dir: Str, kind: Str, target: Str, keys: List[Str], j
 /// before. Every reader looks in the shared pack before the loose files
 /// (cache_get_packed). The bytes written loose, for the caller's prune
 /// (pack_write counts a segment itself).
-fn store_entries(os: Os, dir: Str, kind: Str, p: Pack, stores: List[(Str, Bytes)]) -> Int {
+fn store_entries(os: Os, dir: Str, kind: Str, p: Pack, src: StoreSrc) -> Int {
   // on by default (owner, 2026-10-24; XO_COLD_PACK=off writes loose files):
   // it was opt in from the evening of 2026-10-23 because main's builds took
   // about 10 minutes each on the Windows CI runner's 31 GB cache and the Mac
   // did not reproduce it (decision 0351 addenda)
-  if !p.shared_dir.is_empty() && stores.len() >= COLD_PACK_MIN && (os.env.get("XO_COLD_PACK") ?? "") != "off" {
+  if !p.shared_dir.is_empty() && src.count() >= COLD_PACK_MIN && (os.env.get("XO_COLD_PACK") ?? "") != "off" {
     // shared_store's rule: a new segment, or past PACK_SEGS segments (or
     // a pack holding more than twice what this build used) one segment
     // of what it used and made, replacing the old. Appending alone grew
     // the pack by a segment per new xo (each CI run's: 12.6 MB a
     // generation of a windows --race build, 114 MB in 11 segments after
     // eight, every build reading them all; 2026-10-23)
-    var made: Map[Str, Bytes] = {}
-    for (k, e) in stores {
-      made[k] = e
-    }
-    shared_store(os, dir, p.shared_dir, p.shared_used, made, p.shared_segs, p.shared_held)
+    shared_store(os, dir, p.shared_dir, p.shared_used, src, p.shared_segs, p.shared_held)
     return 0
   }
   var n = 0
-  for (k, e) in stores {
+  for (k, e) in src.mem {
     n += entry_put(os, dir, kind, k, e)
+  }
+  for (path, ranges) in src.spills {
+    for (k, e) in spill_items(os, path, ranges) {
+      n += entry_put(os, dir, kind, k, e)
+    }
   }
   n
 }
@@ -1617,12 +1712,13 @@ fn shared_read(os: Os, sdir: Str, need: Map[Str, Bool]) -> (Map[Str, Bytes], Lis
     // xo:allow XO0903 a segment it cannot read (another build compacted it) is a miss
     if let Ok(rb) = os.fs.read(path) {
       prune.mark_used_within(os.fs, os.clock, path, BACKEND_TOUCH)
-      let b = segment_bytes(fi.name, rb) ?? b""
       segs.push(fi.name)
-      for (k, lo, hi) in pack_index(b) {
+      for e in pack_entries(rb) {
         held += 1
-        if need.contains(k) && !got.contains(k) {
-          got[k] = b[lo..hi]
+        if need.contains(e.key) && !got.contains(e.key) {
+          if let Some(d) = pack_entry(rb, e) {
+            got[e.key] = d
+          }
         }
       }
     }
@@ -1634,16 +1730,14 @@ fn shared_read(os: Os, sdir: Str, need: Map[Str, Bool]) -> (Map[Str, Bytes], Lis
 /// segment, or, past PACK_SEGS segments or when the pack holds more than
 /// twice what this build used of it, one segment of what it used (the
 /// entries read from it and the loose ones) replacing the old.
-fn shared_store(os: Os, root: Str, sdir: Str, used: Map[Str, Bytes], loose: Map[Str, Bytes], segs: List[Str], held: Int) {
+fn shared_store(os: Os, root: Str, sdir: Str, used: Map[Str, Bytes], loose: StoreSrc, segs: List[Str], held: Int) {
   os.fs.create_dir_all(sdir).ignore_err("no shared pack: the loose files serve")
   let p = Pack{root: root, dir: sdir}
-  var items: List[(Str, Bytes)] = []
-  for (k, b) in loose {
-    items.push((k, b))
-  }
-  if segs.len() >= PACK_SEGS || held > 2 * (used.len() + loose.len()) + 64 {
+  if segs.len() >= PACK_SEGS || held > 2 * (used.len() + loose.count()) + 64 {
+    let lk = loose.keys()
+    var items: List[(Str, Bytes)] = []
     for (k, b) in used {
-      if !loose.contains(k) {
+      if !lk.contains(k) {
         items.push((k, b))
       }
     }
@@ -1653,52 +1747,15 @@ fn shared_store(os: Os, root: Str, sdir: Str, used: Map[Str, Bytes], loose: Map[
         old += fi.size
       }
     }
-    pack_write_counted(os, p, items, old)
+    pack_write_src(os, p, items, loose, {}, old)
     for s in segs {
       os.fs.remove("${sdir}/${s}").ignore_err("another build compacted it")
     }
   } else {
-    pack_write(os, p, items)
+    pack_write_src(os, p, [], loose, {}, 0)
   }
 }
 
-/// The keys of a segment with their bytes' range in b, [] when b is not
-/// a whole segment of this version.
-fn pack_index(b: Bytes) -> List[(Str, Int, Int)] {
-  let head = "${PACK_VERSION}\n".bytes()
-  if b.len() < head.len() || b[0..head.len()] != head {
-    return []
-  }
-  var pos = head.len()
-  let (n, p1) = get_uv(b, pos)
-  pos = p1
-  if n < 0 {
-    return []
-  }
-  var ks: List[(Str, Int)] = []
-  for _ in 0..n {
-    let (kl, p2) = get_uv(b, pos)
-    if kl < 0 || p2 + kl > b.len() {
-      return []
-    }
-    let k = b[p2..p2 + kl].to_str() ?? ""
-    let (len, p3) = get_uv(b, p2 + kl)
-    if len < 0 {
-      return []
-    }
-    ks.push((k, len))
-    pos = p3
-  }
-  var out: List[(Str, Int, Int)] = List.with_capacity(ks.len())
-  for (k, len) in ks {
-    if pos + len > b.len() {
-      return []
-    }
-    out.push((k, pos, pos + len))
-    pos += len
-  }
-  out
-}
 
 /// The unsigned varint at b[pos], and the position after it; -1 when b
 /// ends inside it or it is too long.
@@ -1730,7 +1787,7 @@ fn put_uv(var w: BytesBuilder, v0: Int) {
 /// Updates the build target's pack p after a build used entries (its
 /// hits, from the pack or the loose files) and stores (its new entries):
 /// see the section comment.
-fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Bytes)]) {
+fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], src: StoreSrc) {
   if p.dir.is_empty() {
     return
   }
@@ -1767,16 +1824,17 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
       extra.push((k, b))
     }
   }
-  for (k, b) in stores {
+  // the new entries: those not among the hits, each once (pack_write_src
+  // skips the seen and the repeats)
+  var nnew = 0
+  for (k, _) in src.keys() {
     if !seen.contains(k) {
-      seen[k] = true
-      used.push((k, b))
-      extra.push((k, b))
+      nnew += 1
     }
   }
   // no entry from the pack: its segments hold another tree's entries
   // (a rebase), so they are replaced, not kept beside the new one
-  if p.compact || p.segs.len() >= PACK_SEGS || p.held > 2 * used.len() + 64 || (p.held > 0 && p.from_pack.is_empty()) {
+  if p.compact || p.segs.len() >= PACK_SEGS || p.held > 2 * (used.len() + nnew) + 64 || (p.held > 0 && p.from_pack.is_empty()) {
     // a compaction replaces the segments it read: only what it adds
     // counts as stored for the prune's burst (a warm build of xo
     // rewrote about 1 GB of packs and set off a prune of the whole
@@ -1787,12 +1845,12 @@ fn pack_store(os: Os, p: Pack, entries: Map[Str, Bytes], stores: List[(Str, Byte
         old += fi.size
       }
     }
-    pack_write_counted(os, p, used, old)
+    pack_write_src(os, p, used, src, seen, old)
     for s in p.segs {
       os.fs.remove("${p.dir}/${s}").ignore_err("another build compacted it")
     }
-  } else if !extra.is_empty() {
-    pack_write(os, p, extra)
+  } else if !extra.is_empty() || nnew > 0 {
+    pack_write_src(os, p, extra, src, seen, 0)
   }
 }
 
@@ -1813,40 +1871,42 @@ fn note_store(os: Os, kind: Str, dir: Str, n: Int) {
 }
 
 /// Writes items as a new segment of p.
-/// The bytes of a build's part entries, before the pack's compression.
-fn parts_bytes(items: List[(Str, Bytes)]) -> Int {
-  var n = 0
-  for (_, b) in items {
-    n += b.len()
-  }
-  n
-}
 
-fn pack_write(os: Os, p: Pack, items: List[(Str, Bytes)]) { pack_write_counted(os, p, items, 0) }
+fn pack_write(os: Os, p: Pack, items: List[(Str, Bytes)]) { pack_write_src(os, p, items, StoreSrc{}, {}, 0) }
 
 /// pack_write, counting for the prune only the bytes past replaced (the
 /// segments a compaction removes).
-fn pack_write_counted(os: Os, p: Pack, items: List[(Str, Bytes)], replaced: Int) {
-  var n = 0
-  for (_, b) in items {
-    n += b.len()
-  }
-  var w = BytesBuilder.with_capacity(n + 80 * items.len() + 32)
-  w.write_str("${PACK_VERSION}\n")
-  put_uv(w, items.len())
+fn pack_write_counted(os: Os, p: Pack, items: List[(Str, Bytes)], replaced: Int) { pack_write_src(os, p, items, StoreSrc{}, {}, replaced) }
+
+/// Writes one segment of p: items, then the entries of src whose keys are
+/// not in skip (nor repeated), one entry at a time (decision 0418: a
+/// spilled part's entries are read as the writer reaches them); counts for
+/// the prune only the bytes past replaced (the segments a compaction
+/// removes).
+fn pack_write_src(os: Os, p: Pack, items: List[(Str, Bytes)], src: StoreSrc, skip: Map[Str, Bool], replaced: Int) {
+  var w = seg_begin(os, p) ?? return
   for (k, b) in items {
-    put_uv(w, k.len())
-    w.write_str(k)
-    put_uv(w, b.len())
+    w.add(os, k, b)
   }
-  for (_, b) in items {
-    w.write(b)
+  var seen = skip
+  for (k, b) in src.mem {
+    if !seen.contains(k) {
+      seen[k] = true
+      w.add(os, k, b)
+    }
   }
-  // compressed (decision 0365): a z- segment
-  let z = compress_on(os)
-  let data = if z { zpack(w.freeze()) } else { w.freeze() }
-  cache_put(os, "${p.dir}/${if z { "z-" } else { "s-" }}${os.rand.bytes(8).to_hex()}", data)
-  prune_backend_cache(os, "pack/${base_name(p.dir)}", p.root, (data.len() - replaced).max(0))
+  for (path, ranges) in src.spills {
+    for (k, b) in spill_items(os, path, ranges) {
+      if !seen.contains(k) {
+        seen[k] = true
+        w.add(os, k, b)
+      }
+    }
+  }
+  let n = w.end(os)
+  if n > 0 {
+    prune_backend_cache(os, "pack/${base_name(p.dir)}", p.root, (n - replaced).max(0))
+  }
 }
 
 /// The file of the build target's parse list (parse_prefetch).
