@@ -116,7 +116,7 @@ fn or_not(a: Int, b: Int) -> Int {
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)}")
 }
 
 // `d < 0 || d > 9` of a `d = x - 48` is one unsigned compare (isel
@@ -165,4 +165,18 @@ fn page_cmn(x: Int) -> Bool {
   // arm64: "cmn x[0-9]+, #65536" -"mov x[0-9]+, #-65536"
   // amd64: "cmpq \$-65536, %r" -"movq \$-65536"
   x == -0x10000
+}
+
+// A negation whose operand cannot be MIN_INT is not checked (isel Neg,
+// bounds; 2026-10-30: text.parse_duration's `-unit_limit(unit)`), and
+// one that can stays checked.
+fn neg_join(x: Int) -> Int {
+  // arm64: -"negs"
+  let k = if x > 3 { 1000 } else { 60 }
+  -k
+}
+
+fn neg_any(x: Int) -> Int {
+  // arm64: "negs"
+  -x
 }

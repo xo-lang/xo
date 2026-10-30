@@ -1335,7 +1335,11 @@ fn (var g: G) instr1(v: Int) {
         g.set(v, [g.def1(true, "fneg $d0, $u0", [a])])
         return
       }
-      if x.pos.is_empty() {
+      // nor one whose operand cannot be MIN_INT, as bounds proves a
+      // checked add (2026-10-30: text.parse_duration's
+      // `-unit_limit(unit)`, a join of positive constants, was a negs and
+      // a b.vs)
+      if x.pos.is_empty() || (g.kind(x.ty) == ssa.Kind.Int && g.bounds(x.args[0]).0 > MIN_INT) {
         g.set(v, [g.def1(false, "neg $d0, $u0", [a])])
         return
       }
