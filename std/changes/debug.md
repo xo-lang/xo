@@ -1,5 +1,26 @@
 # std/debug changes
 
+## 2026-10-30: fix: XO_PROF's sample count matches CPU time on macOS and Linux
+
+- Kind: fix
+- Commit: (this commit)
+- Found by: Xo Lang 2 (a metricsum profile with 26% of its samples; gotchas/xo-prof-macos-undercounts-samples.md)
+- Go reference: runtime/pprof (Go 1.18's per-thread timers on Linux; Go on macOS keeps setitimer and undercounts too)
+- Test: internal/llvm TestProfCountsCPU (4 spinning tasks at 1 kHz: samples within 0.9 to 1.1 of CPU seconds times the rate)
+
+macOS drops most ITIMER_PROF ticks (a C control got 0.16 of its samples
+at 1 kHz), so a CPU profile's counts were not time. On macOS a sampler
+thread now reads every thread's CPU time each period and samples a
+thread once per whole period it used, reading its registers with
+thread_suspend and thread_get_state: 4 tasks at 1 kHz 0.970 of the
+expected samples (was 0.14), one task 0.987 (was 0.29). On Linux each
+SIGPROF sample counts the thread's CPU time since its previous sample
+(CLOCK_THREAD_CPUTIME_ID), so a tick the process-wide timer merged is
+not lost: on the linux/arm64 offload host, 4 tasks at 1 kHz 0.999 of
+the expected samples (was 0.683), one task 0.998 (was 0.997). At
+10 kHz a run of a few seconds fills the profile's 32,768 sample buffer
+(one task 0.913 of 3.6 s of CPU before it filled).
+
 ## 2026-10-30: fix: mem_total reads physical memory on Windows
 
 - Kind: fix

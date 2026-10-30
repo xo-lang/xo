@@ -707,3 +707,42 @@ func TestProfSyscallCaller(t *testing.T) {
 		t.Fatalf("reader's cumulative share %.1f%%, want at least 80 (its system calls' samples have it as their caller):\n%s", c, txt)
 	}
 }
+
+// TestProfCountsCPU: a CPU profile's samples add up to the CPU time the
+// program used (testdata/prof/spin, four tasks spinning on the workers),
+// within 10% at 1,000 Hz. On macOS ITIMER_PROF's SIGPROF arrived for
+// 16% to 25% of the ticks (gotchas/xo-prof-macos-undercounts-samples.md),
+// so macOS samples from a thread of the profiler's own that counts each
+// thread's CPU time (prof.xo mac_sampler).
+func TestProfCountsCPU(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	if runtime.GOARCH != "arm64" || (runtime.GOOS != "darwin" && runtime.GOOS != "linux") {
+		t.Skip("the arm64 backend's CPU profile (darwin, linux)")
+	}
+	res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "spin")}, xotool.Options{Backend: xotool.BackendArm64})
+	if err != nil || res.Failed {
+		t.Fatalf("build: %v %v", err, res)
+	}
+	bin := res.Binaries[xotool.Host()]
+	dir := t.TempDir()
+	cmd := testtmp.Guard(exec.Command(bin, "4", "400000000"))
+	cmd.Dir = dir
+	cmd.Env = append(os.Environ(), "XO_PROF=cpu", "XO_PROF_HZ=1000", "XO_PROF_OUT="+filepath.Join(dir, "prof.xoraw"))
+	got, err := runCombined(cmd, 2*time.Minute)
+	if err != nil {
+		t.Fatalf("run: %v\n%s", err, got)
+	}
+	m := regexp.MustCompile(`xo profile: (\d+) samples`).FindStringSubmatch(got)
+	if m == nil {
+		t.Fatalf("no sample count:\n%s", got)
+	}
+	n, _ := strconv.Atoi(m[1])
+	cpu := cmd.ProcessState.UserTime() + cmd.ProcessState.SystemTime()
+	want := cpu.Seconds() * 1000
+	if r := float64(n) / want; r < 0.9 || r > 1.1 {
+		t.Fatalf("%d samples for %v of CPU at 1,000 Hz (%.0f): ratio %.3f, want 0.9 to 1.1", n, cpu, want, r)
+	}
+	t.Logf("%d samples for %v of CPU", n, cpu)
+}

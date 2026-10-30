@@ -1,0 +1,27 @@
+// A known CPU load for XO_PROF: W tasks each spin for about S seconds of
+// arithmetic; the run's user+sys time is the CPU the profile must count.
+
+fn spin(seed: Int, n: Int) -> Int {
+  var x = seed
+  for i in 0..n {
+    x = x.wrapping_mul(6364136223846793005).wrapping_add(i)
+  }
+  x
+}
+
+fn main(os: Os) {
+  let a = os.env.args()
+  let w = if a.is_empty() { 4 } else { Int.parse(a[0]) ?? 4 }
+  let n = if a.len() > 1 { Int.parse(a[1]) ?? 1000000000 } else { 1000000000 }
+  var sum = 0
+  scope s {
+    var ts: List[Task[Int, Never]] = []
+    for k in 0..w {
+      ts.push(s.spawn(fn() -> Int { spin(k, n) }))
+    }
+    for t in ts {
+      sum = sum.wrapping_add(t.await)
+    }
+  }
+  os.stdio.println("sum ${sum % 1000}")
+}

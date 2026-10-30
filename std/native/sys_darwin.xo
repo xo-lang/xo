@@ -192,6 +192,30 @@ fn gethostname(buf: Int, n: Int) -> Int32
 /// old (or 0): 0, or -1 with errno set (std/native/llrt/prof.xo).
 fn setitimer(which: Int, new: Int, old: Int) -> Int32
 
+// The Mach calls of the CPU profile's sampler thread
+// (std/native/llrt/prof.xo, mac_sampler): ports are 32 bit names in an
+// Int; a result is a kern_return_t, 0 on success.
+
+/// task_self_trap: this task's port (mach_task_self()'s value).
+fn task_self_trap() -> Int32
+/// mach_thread_self: the calling thread's port (a new reference).
+fn mach_thread_self() -> Int32
+/// task_threads: the task's threads, an array of ports the kernel maps
+/// (its address at the word at list, its count at the 32 bit word at n).
+fn task_threads(task: Int, list: Int, n: Int) -> Int32
+/// thread_info of the flavor into the words at info (in: their count at
+/// the 32 bit word at n).
+fn thread_info(t: Int, flavor: Int, info: Int, n: Int) -> Int32
+fn thread_suspend(t: Int) -> Int32
+fn thread_resume(t: Int) -> Int32
+/// thread_get_state of the flavor into the words at state (in: their
+/// count at the 32 bit word at n).
+fn thread_get_state(t: Int, flavor: Int, state: Int, n: Int) -> Int32
+/// Drops a reference to the port name.
+fn mach_port_deallocate(task: Int, name: Int) -> Int32
+/// Unmaps n bytes at addr from the task (task_threads' array).
+fn vm_deallocate(task: Int, addr: Int, n: Int) -> Int32
+
 /// sigaltstack(2) with the stack_t at ss (ss_sp, ss_size, ss_flags) and
 /// old (or 0): 0, or -1 with errno set (std/native/llrt/crash.xo).
 fn sigaltstack(ss: Int, old: Int) -> Int32

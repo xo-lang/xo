@@ -1,6 +1,9 @@
-// The native sampling profiler (decision 0238): XO_PROF=cpu arms
-// ITIMER_PROF (XO_PROF_HZ times a second of CPU time, 100 by default);
-// each SIGPROF records the interrupted thread's frames (unwind.xo
+// The native sampling profiler (decision 0238): XO_PROF=cpu samples
+// XO_PROF_HZ times a second of CPU time (100 by default). On Linux it
+// arms ITIMER_PROF; on macOS, whose SIGPROF arrives far less often than
+// the rate, a sampler thread suspends and walks each thread that used a
+// period of CPU (mac_sampler). Each SIGPROF records the interrupted
+// thread's frames (unwind.xo
 // prof_walk: the fault unwinder's tables, in a record of the profiler's
 // own per thread) into a ring of fixed slots claimed with one atomic add:
 // no allocation, no lock, no C library call in the handler; a sample the
@@ -87,7 +90,17 @@ const R_WTHREAD = 104
 const R_LIVE = 128
 /// Signal handlers inside a sample now (profile_stop waits for 0).
 const R_INFLIGHT = 136
-const R_SIZE = 144
+/// macOS: the sampler's record (DB_*), and the run its thread samples
+/// for (each start or profile_begin takes the next: a sampler of an
+/// earlier run that wakes later returns).
+const R_MAC = 144
+const R_RUN = 152
+/// Linux: each thread's CPU time at its last sample and the time it used
+/// past whole periods (WT bytes per pool record), so a sample counts the
+/// periods its thread used since the last one (weight).
+const R_WTS = 160
+const R_SIZE = 168
+const WT = 32
 
 /// The deepest stack a sample keeps, and a slot's bytes: the frame count,
 /// then the pcs.
@@ -196,6 +209,7 @@ pub fn start() {
     stdio.eprint("xo profile: the program's unwind tables were not found", true)
     return
   }
+  next_run(r)
   st(r, R_ON, 1)
   if win {
     // the pool's first record is the sampler's (no thread of the
@@ -204,8 +218,42 @@ pub fn start() {
     return
   }
   rt.slot_store[Int](rt.static_word(W_PROF), 0, r, 2)
+  arm(r, hz)
+}
+
+/// A new run of the record r, before its switch goes on: a macOS sampler
+/// of an earlier run that wakes after it sees another run and returns.
+fn next_run(r: Int) {
+  rt.slot_store[Int](r, R_RUN / 8, ld(r, R_RUN) + 1, 4)
+}
+
+/// Starts sampling for the record r at hz: macOS's sampler thread, else
+/// SIGPROF's handler and ITIMER_PROF.
+fn arm(r: Int, hz: Int) {
+  if darwin() {
+    mac_start(r, hz)
+    return
+  }
+  match target.os {
+    TargetOs.Linux => {
+      // the vDSO's clock found now: weight's clock_gettime runs in the
+      // handler, which must not look it up
+      let _v = linux.vdso_clock()
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => {}
+  }
   handler(rt.fn_addr("on_prof"))
   timer(1000000 / hz)
+}
+
+/// Stops what arm started: the timer and the handler; macOS's sampler
+/// sees the switch off at its next tick and returns.
+fn disarm() {
+  if darwin() {
+    return
+  }
+  timer(0)
+  handler(1)
 }
 
 /// A new profiler record at rate hz: the record, the sample ring and the
@@ -215,7 +263,8 @@ fn make_record(hz: Int) -> Int {
   let r = map(R_SIZE)
   let ring = map(CAP * SLOT)
   let pool = map(POOL_N * unwind.PROF_RECORD)
-  if r == 0 || ring == 0 || pool == 0 {
+  let wts = map(POOL_N * WT)
+  if r == 0 || ring == 0 || pool == 0 || wts == 0 {
     return -1
   }
   for i in 0..POOL_N {
@@ -227,6 +276,7 @@ fn make_record(hz: Int) -> Int {
   st(r, R_RING, ring)
   st(r, R_CAP, CAP)
   st(r, R_POOL, pool)
+  st(r, R_WTS, wts)
   st(r, R_POOL_N, POOL_N)
   st(r, R_TLO, lo)
   st(r, R_THI, hi)
@@ -274,6 +324,7 @@ pub fn profile_begin(hz: Int) -> Int {
       st(ring + k * SLOT, 0, 0)
     }
     st(r, R_NEXT, 0)
+    rt.mem_set(ld(r, R_WTS), 0, POOL_N * WT)
     st(r, R_LOST, 0)
     st(r, R_NOREC, 0)
     st(r, R_DUR, 0)
@@ -281,10 +332,10 @@ pub fn profile_begin(hz: Int) -> Int {
     st(r, R_T0, sysio.mono_ns())
   }
   st(r, R_LIVE, 1)
+  next_run(r)
   rt.slot_store[Int](r, R_ON / 8, 1, 2)
   rt.slot_store[Int](rt.static_word(W_PROF), 0, r, 2)
-  handler(rt.fn_addr("on_prof"))
-  timer(1000000 / hz)
+  arm(r, hz)
   0
 }
 
@@ -297,8 +348,7 @@ pub fn profile_stop() -> Bool {
   if r == 0 || rt.slot_swap[Int](r, R_ON / 8, 0, 4) == 0 {
     return false
   }
-  timer(0)
-  handler(1)
+  disarm()
   st(r, R_DUR, sysio.mono_ns() - ld(r, R_T0))
   true
 }
@@ -553,15 +603,79 @@ fn sample(r: Int, uc: Int) {
     s = ld(r, R_POOL) + i * unwind.PROF_RECORD
     rt.tlocal_set(TL_PROF, s)
   }
-  let k = rt.slot_add[Int](r, R_NEXT / 8, 1, ACQ_REL)
-  if k >= ld(r, R_CAP) {
-    let _l = rt.slot_add[Int](r, R_LOST / 8, 1, RELAXED)
+  let k = weight(r, s)
+  if k == 0 {
     return
   }
-  let p = ld(r, R_RING) + k * SLOT
-  let n = unwind.prof_walk(s, uc, p + 8, DEPTH, ld(r, R_TLO), ld(r, R_THI))
-  // the count last: a slot read with 0 is skipped
+  let k0 = claim(r, k)
+  if k0 < 0 {
+    return
+  }
+  let p = ld(r, R_RING) + k0 * SLOT
+  fill(r, k0, k, unwind.prof_walk(s, uc, p + 8, DEPTH, ld(r, R_TLO), ld(r, R_THI)))
+}
+
+/// The periods of CPU the thread with profiler record s used since its
+/// last sample (Linux; 1 elsewhere), the rest carried to its next one:
+/// ITIMER_PROF's signal reaches a busy thread less often than its rate
+/// when several threads run (0.69 at 1 kHz with four on linux/arm64;
+/// about 1,000 a second at most, gotchas/xo-prof-macos-undercounts-
+/// samples.md), so each sample stands for the time its thread used. A
+/// thread's first sample counts one period.
+fn weight(r: Int, s: Int) -> Int {
+  match target.os {
+    TargetOs.Linux => {}
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => return 1
+  }
+  let e = ld(r, R_WTS) + (s - ld(r, R_POOL)) / unwind.PROF_RECORD * WT
+  // CLOCK_THREAD_CPUTIME_ID
+  if linux.clock_gettime(3, e + 16) != 0 {
+    return 1
+  }
+  let now = ld(e, 16) * 1000000000 + ld(e, 24)
+  let last = ld(e, 0)
+  st(e, 0, now)
+  if last == 0 {
+    return 1
+  }
+  let per = 1000000000 / ld(r, R_HZ)
+  let acc = ld(e, 8) + now - last
+  var k = acc / per
+  st(e, 8, acc - k * per)
+  if k > MAX_K {
+    k = MAX_K
+  }
+  k
+}
+
+/// Claims k slots of the ring: the first one's index, or -1 when the
+/// ring is full (the k counted lost).
+fn claim(r: Int, k: Int) -> Int {
+  let k0 = rt.slot_add[Int](r, R_NEXT / 8, k, ACQ_REL)
+  if k0 >= ld(r, R_CAP) {
+    let _l = rt.slot_add[Int](r, R_LOST / 8, k, RELAXED)
+    return -1
+  }
+  k0
+}
+
+/// Completes k claimed slots from k0 whose first holds a walk of n
+/// frames: the stack copied into the others (those past the ring's end
+/// counted lost), each count last, since a slot read with 0 is skipped.
+fn fill(r: Int, k0: Int, k: Int, n: Int) {
+  let cap = ld(r, R_CAP)
+  let p = ld(r, R_RING) + k0 * SLOT
+  var j = 1
+  while j < k && k0 + j < cap {
+    let q = p + j * SLOT
+    rt.mem_copy(q + 8, p + 8, 8 * n)
+    rt.slot_store[Int](q, 0, n, 2)
+    j += 1
+  }
   rt.slot_store[Int](p, 0, n, 2)
+  if k0 + k > cap {
+    let _l = rt.slot_add[Int](r, R_LOST / 8, k0 + k - cap, RELAXED)
+  }
 }
 
 /// Stops the profilers and writes their raw profile (entry.xo at main's
@@ -654,8 +768,7 @@ fn stop_cpu() -> Int {
     // a live profile (std/debug serves it): running at exit, it ends
     // there with no file; stopped already, its profile was served
     if rt.slot_swap[Int](r, R_ON / 8, 0, 4) != 0 {
-      timer(0)
-      handler(1)
+      disarm()
     }
     return 0
   }
@@ -665,9 +778,15 @@ fn stop_cpu() -> Int {
     let _w = sys_windows.WaitForSingleObject(th, 4294967295)
     let _c = sys_windows.CloseHandle(th)
     win_close(ld(r, R_WIN))
+  } else if ld(r, R_MAC) != 0 {
+    // the sampler is between ticks or finishing one: the switch off, it
+    // takes no sample after its count of samples in flight reads 0
+    let _o = rt.slot_swap[Int](r, R_ON / 8, 0, 4)
+    while rt.slot_load[Int](r, R_INFLIGHT / 8, 4) != 0 {
+      let _u = sys_darwin.usleep(50)
+    }
   } else {
-    timer(0)
-    handler(1)
+    disarm()
   }
   st(r, R_DUR, sysio.mono_ns() - ld(r, R_T0))
   r
@@ -1540,6 +1659,217 @@ fn table_of(samples: List[List[Int]], lo: Int, hi: Int) -> Table {
     fr.push(func_of(syms, pc - 1, names))
   }
   resolve(lines, locs, fr, names)
+}
+
+// ---------------------------------------------------------------------------
+// macOS: the sampler thread. ITIMER_PROF's SIGPROF reaches a process on
+// macOS far less often than its rate (a C program with an empty handler
+// got 16% of its ticks at 1 kHz, 5% at 10 kHz;
+// gotchas/xo-prof-macos-undercounts-samples.md), so a thread of the
+// profiler's own wakes every 1/hz s, reads each other thread's CPU time
+// (thread_info), and walks a thread that used at least one period of
+// CPU since its last sample, suspended (thread_suspend, its registers by
+// thread_get_state): one sample for each whole period it used, the rest
+// carried to its next tick, so the samples add up to the program's CPU
+// time at any rate.
+
+/// The sampler's record (byte offsets; mapped): the task's port, the
+/// sampler's own thread port, the period in microseconds, the unwind
+/// record it walks with, task_threads' array and count, a count word for
+/// thread_info and thread_get_state, THREAD_BASIC_INFO (40 bytes), a
+/// ucontext whose uc_mcontext points 16 bytes before the thread state
+/// (prof_walk reads a signal's ucontext; the thread state is the same
+/// words), the thread state (272 bytes), the run this thread samples
+/// for, the tick count, and the table of threads seen: DT_N entries of
+/// (port, last CPU microseconds, carried microseconds, last tick seen).
+const DB_TASK = 0
+const DB_ME = 8
+const DB_TICK = 16
+const DB_UNW = 24
+const DB_LIST = 32
+const DB_CNT = 40
+const DB_ICNT = 44
+const DB_INFO = 48
+const DB_UC = 96
+const DB_STATE = 160
+const DB_RUN = 440
+const DB_GEN = 448
+const DB_TAB = 512
+const DT_N = 256
+const DB_SIZE = 8704
+/// thread_info's THREAD_BASIC_INFO and its count of 32 bit words.
+const THREAD_BASIC_INFO = 3
+const BASIC_INFO_COUNT = 10
+/// The most samples one tick gives a thread (a sampler that slept long).
+const MAX_K = 1000
+
+/// Starts the sampler thread for the record r at hz (its ring and text
+/// set up; it walks with the pool's first unwind record, which no
+/// thread of the program claims: no handler runs on macOS). The first
+/// start maps the sampler's record; a later run reuses it.
+fn mac_start(r: Int, hz: Int) {
+  var d = ld(r, R_MAC)
+  if d == 0 {
+    d = map(DB_SIZE)
+    if d == 0 {
+      stdio.eprint("xo profile: no memory for the profile", true)
+      return
+    }
+    st(d, DB_TASK, Int(sys_darwin.task_self_trap()) & 4294967295)
+    st(d, DB_UNW, ld(r, R_POOL))
+    st(r, R_MAC, d)
+  }
+  rt.mem_set(d + DB_TAB, 0, DB_SIZE - DB_TAB)
+  st(d, DB_TICK, 1000000 / hz)
+  st(d, DB_RUN, ld(r, R_RUN))
+  // pthread_attr_t (64 bytes) and the pthread_t
+  let a = rt.heap_large(80)
+  var ok = Int(sys_darwin.pthread_attr_init(a)) == 0
+  if ok {
+    // PTHREAD_CREATE_DETACHED
+    let _d = sys_darwin.pthread_attr_setdetachstate(a, 2)
+    ok = Int(sys_darwin.pthread_create(a + 64, a, rt.fn_addr("prof_sampler"), r)) == 0
+    let _x = sys_darwin.pthread_attr_destroy(a)
+  }
+  rt.heap_release(a - 8)
+  if !ok {
+    stdio.eprint("xo profile: the sampler thread did not start", true)
+  }
+}
+
+/// The sampler thread (cabi.xo prof_sampler): Windows' or macOS's.
+pub fn sampler(r: Int) -> Int {
+  if darwin() {
+    return mac_sampler(r)
+  }
+  win_sampler(r)
+}
+
+/// macOS's sampler thread: a tick every 1/hz s while its run is the
+/// profile's and the switch is on. Each tick counts itself in flight
+/// before it reads the switch, as a signal handler does, so a stop that
+/// waits for the count to read 0 sees no sample after. It never
+/// allocates and takes no lock: a thread it suspends may hold either.
+fn mac_sampler(r: Int) -> Int {
+  let d = ld(r, R_MAC)
+  let run = ld(d, DB_RUN)
+  let me = Int(sys_darwin.mach_thread_self()) & 4294967295
+  let sw = rt.static_word(W_PROF)
+  var gen = 0
+  while true {
+    let _u = sys_darwin.usleep(ld(d, DB_TICK))
+    let _in = rt.slot_add[Int](r, R_INFLIGHT / 8, 1, 4)
+    let on = rt.slot_load[Int](sw, 0, 4) == r && rt.slot_load[Int](r, R_ON / 8, 4) != 0 && rt.slot_load[Int](r, R_RUN / 8, 4) == run
+    if on {
+      gen += 1
+      mac_tick(r, d, me, gen)
+    }
+    let _out = rt.slot_add[Int](r, R_INFLIGHT / 8, -1, 4)
+    if !on {
+      break
+    }
+  }
+  let _p = sys_darwin.mach_port_deallocate(ld(d, DB_TASK), me)
+  0
+}
+
+/// One tick: every thread of the task but the sampler.
+fn mac_tick(r: Int, d: Int, me: Int, gen: Int) {
+  let task = ld(d, DB_TASK)
+  st(d, DB_LIST, 0)
+  rt.mem_store(d, DB_CNT, 0, 4)
+  if Int(sys_darwin.task_threads(task, d + DB_LIST, d + DB_CNT)) != 0 {
+    return
+  }
+  let list = ld(d, DB_LIST)
+  let n = rt.mem_load(d, DB_CNT, 4)
+  for i in 0..n {
+    let t = rt.mem_load(list, 4 * i, 4)
+    if t != me {
+      mac_sample(r, d, t, gen)
+    }
+    let _p = sys_darwin.mach_port_deallocate(task, t)
+  }
+  if list != 0 {
+    let _v = sys_darwin.vm_deallocate(task, list, 4 * n)
+  }
+}
+
+/// The table entry of thread port t, taken on first sight (its last CPU
+/// time -1) from a free entry or one no tick has seen for two ticks (its
+/// thread ended); 0 when the table is full.
+fn mac_entry(d: Int, t: Int, gen: Int) -> Int {
+  var free = 0
+  for i in 0..DT_N {
+    let e = d + DB_TAB + 32 * i
+    let id = ld(e, 0)
+    if id == t && ld(e, 24) != 0 {
+      return e
+    }
+    if free == 0 && (ld(e, 24) == 0 || ld(e, 24) < gen - 1) {
+      free = e
+    }
+  }
+  if free != 0 {
+    st(free, 0, t)
+    st(free, 8, -1)
+    st(free, 16, 0)
+    st(free, 24, gen)
+  }
+  free
+}
+
+/// Samples thread t for each whole period of CPU it used since its last
+/// tick: one walk while it is suspended, the stack written that many
+/// times.
+fn mac_sample(r: Int, d: Int, t: Int, gen: Int) {
+  rt.mem_store(d, DB_ICNT, BASIC_INFO_COUNT, 4)
+  if Int(sys_darwin.thread_info(t, THREAD_BASIC_INFO, d + DB_INFO, d + DB_ICNT)) != 0 {
+    return
+  }
+  // user_time and system_time: (seconds, microseconds), 32 bits each
+  let i = d + DB_INFO
+  let cpu = (rt.mem_load(i, 0, 4) + rt.mem_load(i, 8, 4)) * 1000000 + rt.mem_load(i, 4, 4) + rt.mem_load(i, 12, 4)
+  let e = mac_entry(d, t, gen)
+  if e == 0 {
+    let _l = rt.slot_add[Int](r, R_NOREC / 8, 1, RELAXED)
+    return
+  }
+  let last = ld(e, 8)
+  st(e, 8, cpu)
+  st(e, 24, gen)
+  if last == -1 {
+    return
+  }
+  // a smaller time: the port's thread ended and the name went to a new one
+  let acc = ld(e, 16) + (if cpu >= last { cpu - last } else { cpu })
+  let tick = ld(d, DB_TICK)
+  var k = acc / tick
+  st(e, 16, acc - k * tick)
+  if k == 0 {
+    return
+  }
+  if k > MAX_K {
+    k = MAX_K
+  }
+  if Int(sys_darwin.thread_suspend(t)) != 0 {
+    return
+  }
+  let x64 = match target.arch {
+    TargetArch.Amd64 => true
+    TargetArch.Arm64 | TargetArch.Wasm32 => false
+  }
+  // ARM_THREAD_STATE64 (6) of 68 words, x86_THREAD_STATE64 (4) of 42
+  rt.mem_store(d, DB_ICNT, if x64 { 42 } else { 68 }, 4)
+  if Int(sys_darwin.thread_get_state(t, if x64 { 4 } else { 6 }, d + DB_STATE, d + DB_ICNT)) == 0 {
+    st(d, DB_UC + 48, d + DB_STATE - 16)
+    let k0 = claim(r, k)
+    if k0 >= 0 {
+      let p = ld(r, R_RING) + k0 * SLOT
+      fill(r, k0, k, unwind.prof_walk(ld(d, DB_UNW), d + DB_UC, p + 8, DEPTH, ld(r, R_TLO), ld(r, R_THI)))
+    }
+  }
+  let _r = sys_darwin.thread_resume(t)
 }
 
 // ---------------------------------------------------------------------------

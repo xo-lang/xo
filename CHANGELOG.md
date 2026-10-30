@@ -95,6 +95,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   heapprof.xo), so a free block of those classes keeps no resident page for its prefix and links
   and heapos.xo scavenge gives back every page of it (classes 69 and up, as before); 0383's cut stops at the 8 KiB class (CUT_MAX_CLASS 67). Sanitizer and --race builds keep
   the prefixed layout (heapos.pages_on). Self build, cache off: peak memory footprint 7688 to 6855 MB; --ab wall 1.020 (0.999 to 1.030), CPU 1.024.
+- **Fix**: `XO_PROF=cpu` profiles count time on macOS and Linux: macOS
+  dropped most profiling signals (a 4-task program at 1 kHz got 0.14 of
+  the samples its CPU time implies; now 0.970), so a profile's counts
+  were only good for shares. A sampler thread now samples each thread
+  once per period of CPU it used; on Linux each sample counts the
+  thread's CPU time since its last one, so ticks the process-wide timer
+  merged are not lost (4 tasks at 1 kHz on linux/arm64: 0.683 to 0.999).
 - Native Windows DNS record lookups (`lookup_mx`, `lookup_txt`,
   `lookup_srv`, `lookup_addr`) work: Xo's own DNS client asks the network
   adapters' DNS servers and reads the Windows hosts file, as Go's pure Go

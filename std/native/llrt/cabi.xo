@@ -643,11 +643,12 @@ fn on_wpark(cx: Int) {
   pool.async_wpark(cx)
 }
 
-/// The CPU profile's sampler thread on Windows (prof.xo win_start, a
-/// CreateThread entry taking the profile's record).
+/// The CPU profile's sampler thread on Windows and macOS (prof.xo
+/// win_start, a CreateThread entry, and mac_start, a pthread_create one,
+/// taking the profile's record).
 fn prof_sampler(r: Int) -> Int {
   if prof.supported() {
-    return prof.win_sampler(r)
+    return prof.sampler(r)
   }
   0
 }
