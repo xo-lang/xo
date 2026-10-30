@@ -8,6 +8,8 @@ prewrite: true true
 prewrite: 200 read 11 bytes in some pieces
 unclosed: request timed out
 unclosed write: io: read/write on closed pipe
+cap: writer waits before open: true
+cap: 200 read 262144 bytes in some pieces
 local: 0123
 local: 4567
 local: 89

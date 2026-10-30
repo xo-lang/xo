@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- std/http (decision 0444, accepted): `http.pipe()` holds at most 64 KiB
+  written before its reader's first read; a write past that waits for
+  the reader, so a writer task running ahead of a late `Client.open` no
+  longer grows memory without bound.
 
 - FIX (native builds): the cleanup cache key (decision 0382) of a
   build that lets the front end go (decision 0352) read the default

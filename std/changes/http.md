@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-30: behavior: http.pipe() holds at most 64 KiB before its reader's first read, every backend (decision 0444)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: the owner, accepting decision 0444
+- Go reference: io.Pipe holds nothing (every Write waits for a Read); the cap bounds Xo's pre-read window
+- Test: internal/llvm/testdata/golden/http_pipe ("cap": 8 writes of 32 KiB from a task wait before open, then all 256 KiB arrive; arm64, LLVM, Go parity)
+- Timing: none
+
+Writes before a pipe's reader starts are held up to 64 KiB; a write that
+would pass that waits for the reader, as every write does once the
+reader has started. A writer task running ahead of a late `open` no
+longer grows memory without bound.
+
 ## 2026-10-30: fix: a full duplex client request no longer frees its connection under the body's sender, native (decision 0433)
 
 - Kind: fix

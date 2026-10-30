@@ -128,6 +128,31 @@ fn main(os: Os) {
           Ok(_) => os.stdio.println("unclosed write: ok")
           Err(e) => os.stdio.println("unclosed write: ${e}")
         }
+        // past 64 KiB held before the first read a write waits for the
+        // reader (decision 0444): 8 writes of 32 KiB from a task stop
+        // before open, then all 256 KiB arrive
+        let (w6, r6) = http.pipe()
+        let wrote = Mutex[Int].new(0)
+        s.spawn(fn() {
+          let piece = "x".repeat(32768).bytes()
+          for _ in 0..8 {
+            if w6.write(piece).is_err() {
+              break
+            }
+            wrote.with(fn(var n: Int) { n += 1 })
+          }
+          w6.close()
+        })
+        os.clock.sleep(300ms)
+        let early = wrote.with_read(fn(n) { n })
+        os.stdio.println("cap: writer waits before open: ${early >= 2 && early < 8}")
+        match c.open(http.new_request("POST", "${base}/sum").with_body_reader(r6)) {
+          Ok(st) => match st.read_all() {
+            Ok(body) => os.stdio.println("cap: ${st.head().status} ${body.to_str() ?? "?"}")
+            Err(e) => os.stdio.println("cap: ${e}")
+          }
+          Err(e) => os.stdio.println("cap: ${e}")
+        }
         // a local reader: at most max bytes, then the error as given
         let (w3, r3) = http.pipe()
         s.spawn(fn() {

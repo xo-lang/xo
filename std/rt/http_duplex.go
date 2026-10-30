@@ -41,7 +41,13 @@ type pipeHold struct {
 	started bool
 	closed  bool
 	held    [][]byte
+	n       int // the held bytes, at most pipeHoldMax
 }
+
+// pipeHoldMax is the bytes a pipe holds before its reader's first read
+// (decision 0444): past them a write waits for the reader, as io.Pipe's
+// writes do (std/native http.xo PIPE_HOLD_MAX).
+const pipeHoldMax = 65536
 
 // heldReader is the pipe's reading end: the held pieces first, then
 // io.Pipe's.
@@ -108,10 +114,11 @@ func (w Http_PipeWriter) M_write(tk *Task, data Bytes) Result[Unit, IoErr] {
 		return Ok[Unit, IoErr](Unit{})
 	}
 	w.h.mu.Lock()
-	if !w.h.started {
+	if !w.h.started && (w.h.closed || w.h.n+len(data) <= pipeHoldMax) {
 		closed := w.h.closed
 		if !closed {
 			w.h.held = append(w.h.held, []byte(data))
+			w.h.n += len(data)
 		}
 		w.h.mu.Unlock()
 		if closed {

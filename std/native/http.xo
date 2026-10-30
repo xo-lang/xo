@@ -2775,11 +2775,19 @@ struct PipeState {
   pend: Bytes
   /// the reader has read: a write sends on the channel from then on
   started: Bool
-  /// pieces written before the first read, in order (decision 0444)
+  /// pieces written before the first read, in order (decision 0444),
+  /// and their bytes, at most PIPE_HOLD_MAX
   held: List[Bytes]
+  held_n: Int = 0
   /// the reader end closed (the client is done with the request)
   rclosed: Bool = false
 }
+
+/// The bytes a pipe holds before its reader's first read (decision
+/// 0444): past them a write waits for the reader, as every write does
+/// once it has read (64 KiB: a first message, not a whole body, so a
+/// writer that never opens the request cannot grow memory without end).
+const PIPE_HOLD_MAX = 65536
 
 /// http.pipe (decision 0433): a BodyReader whose pieces a PipeWriter
 /// sends, at most the read's max at a time.
@@ -2861,12 +2869,13 @@ fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr {
   }
   // before the reader's first read the piece is held and the write
   // returns, so writing and then opening in one task does not wait
-  // forever (decision 0444)
+  // forever, up to PIPE_HOLD_MAX bytes (decision 0444)
   let held = w.st.with(fn(var s: PipeState) -> Bool {
-    if s.started {
+    if s.started || s.held_n + data.len() > PIPE_HOLD_MAX {
       false
     } else {
       s.held.push(data)
+      s.held_n += data.len()
       true
     }
   })

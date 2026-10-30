@@ -1586,7 +1586,7 @@ fn (r: Response) with_trailer_names(names: List[Str]) -> Response   // the `Trai
 fn (r: Response) with_full_duplex() -> Response   // the stream may read the request body while it writes (decision 0433)
 pub fn pipe() -> (PipeWriter, BodyReader)          // a body one task writes while the client sends it (Go's io.Pipe)
 struct PipeWriter {}
-fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr   // held before the reader's first read, then waits for the reader; Io("io: read/write on closed pipe") after close
+fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr   // held before the reader's first read (up to 64 KiB), then waits for the reader; Io("io: read/write on closed pipe") after close
 fn (w: PipeWriter) close()                            // the reader's next read is None
 fn (w: PipeWriter) close_with_error(e: IoErr)         // the reader's next read is Err(e)
     // a response with status 101 made by std/websocket's upgrade hands its
@@ -1841,10 +1841,11 @@ PipeWriter fills as a task writes; with `Request.with_body_reader` and
 `Client.open`, which returns at the response's head, one task writes a
 request while another reads the response (a gRPC style bidirectional
 stream). A read takes at most `max` bytes of a written piece. Until the
-reader's first read the pipe holds what is written and each write
-returns at once, so a task may write a request's first pieces and then
-open it (decision 0444); from the first read on, each write waits until
-the reader has taken it, as Go's io.Pipe does.
+reader's first read the pipe holds what is written, up to 64 KiB, and
+each write returns at once, so a task may write a request's first
+pieces and then open it (decision 0444); a write past 64 KiB held, and
+from the first read on each write, waits until the reader has taken
+it, as Go's io.Pipe does.
 A client that is done with the request (its response ended or failed,
 or the stream was closed) closes the pipe's reading end, as net/http
 closes a request body: a write waiting then, and any after, fails with

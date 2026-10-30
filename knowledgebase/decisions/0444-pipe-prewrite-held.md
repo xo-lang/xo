@@ -20,14 +20,21 @@ backends disagreed and none was safe.
 
 ## Decision
 Until the BodyReader's first read, the pipe holds what is written and
-write returns at once; from the first read on, each write waits for the
-reader as before. close and close_with_error after held pieces end the
+write returns at once, up to 64 KiB held (owner's follow-up on
+acceptance, 2026-10-30); a write that would pass the cap, and from the
+first read on every write, waits for the reader as before. close and close_with_error after held pieces end the
 body after them. Same on every backend (the Go backend wraps io.Pipe
 with a pre-read queue).
 
 ## Consequences
-- write-then-open in one task works; a writer task that runs ahead of a
-  late open holds its pieces in memory until the reader starts.
+- write-then-open in one task works for a first message of up to 64 KiB;
+  a writer task that runs ahead of a late open holds at most 64 KiB in
+  memory, then waits (golden http_pipe "cap": 8 writes of 32 KiB from a
+  task stop before open, then all 256 KiB arrive). A larger first
+  message written before open in the same task waits forever, as with
+  Go's io.Pipe. 64 KiB is Go's net/http-sized buffer scale (the default
+  HTTP/2 flow control window is 64 KiB less one byte), enough for a
+  first gRPC or JSON message.
 - Back-pressure is unchanged once the body is being sent.
 - Not Go's io.Pipe for the pre-read window; spec std http's pipe line and
   duplex paragraph say so. Test: internal/llvm golden http_pipe
@@ -39,5 +46,8 @@ with a pre-read queue).
 ## Alternatives
 - Fail the write when no reader is attached: a writer task started
   before open (a legitimate order) would fail by timing.
-- A bounded pre-read buffer (1 MiB): a large first write still hangs.
+- An unbounded pre-read buffer (the first version): a writer task that
+  runs ahead of a late open grows memory without end.
+- A larger cap (1 MiB): more memory per pipe for little gain; a first
+  message past the cap hangs either way.
 - A runtime "write with no reader" fault after a delay: timing based.
