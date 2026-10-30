@@ -74,7 +74,14 @@ variant's background build starts.
 - `--std-module` after a code edit of the module (darwin/arm64, warm,
   near variant against the whole program): base64 0.25 against 0.40 s,
   peak RSS 324 against 570 MB; url 0.29 against 0.54 s, 314 against
-  582 MB; json 0.21 against 0.45 s, 350 against 614 MB. Every std
+  582 MB; json 0.21 against 0.45 s, 350 against 614 MB. On linux/arm64
+  (the offload host, run alone, `xo bench --ab` n=20 of a source edit,
+  A whole program, B the near variant; the module file restored between
+  modules): base64 wall 0.58, cpu 0.513, peak RSS 0.617 (13 modules from
+  source); url wall 0.512 (557 to 285 ms, 95% interval 0.492 to 0.529),
+  cpu 0.444, peak RSS 0.587 (654 to 384 MB; 9 from source); json wall
+  0.406 (463 to 188 ms, 0.378 to 0.434), cpu 0.383, peak RSS 0.6 (692
+  to 415 MB; 18 from source). Every std
   module with tests passes from the near variant after a touch of its
   source, and a layout edit (two fields prepended to url's Values)
   passes 66 of 66. std's store defines no weak external, so no

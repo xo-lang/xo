@@ -117,7 +117,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   an edit of M takes a variant that differs only in those modules: an
   edit's run on darwin/arm64 0.40 to 0.25 s for base64, 0.54 to 0.29 s
   for url, 0.45 to 0.21 s for json, peak RSS about 570-614 to 314-350
-  MB. Editing a std module's `_test.xo` no longer changes std's
+  MB; on linux/arm64 (`xo bench --ab`) wall 0.58 for base64, 0.512 for
+  url and 0.406 for json, peak RSS 0.59 to 0.62. Editing a std module's `_test.xo` no longer changes std's
   variants.
 - `xo test` links std's separately compiled test variant (decision
   0436, Proposed; `xo dev stdcache --test`), as `xo build` links std's
