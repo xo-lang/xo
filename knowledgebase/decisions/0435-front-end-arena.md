@@ -1,7 +1,7 @@
 # 0435: Arena mode for the front end's trees: no-op frees, dead runs swept at the strip
 
 Status: Accepted (owner, 2026-10-30; design by xo-lang-6, 2026-10-30, after items 2 and 3 of
-the memory plan, decisions 0418 and 0425)
+the memory plan, decisions 0418 and 0425); implemented and measured 2026-10-30 (xo-lang-6, branch xl91, 1e3e9f4bb, kept as refs/recover/xl91-arena, not merged): a negative result, the expected footprint win is not there, see Consequences (measured) and Next paths.
 
 ## Context
 
@@ -71,7 +71,7 @@ runs given back by a sweep at the strip. No pointer ever moves.
 8. Diagnostics: XO_HEAPSTATS prints "arena: N chunks, M bytes live, K bytes returned" after each
    sweep.
 
-## Consequences
+## Consequences (as designed)
 
 - The self build's footprint drops by the parser's trees minus the survivors' pages (names, types
   and strings kept by the link view: a few hundred MB), given back at the strip before emit's
@@ -91,6 +91,57 @@ runs given back by a sweep at the strip. No pointer ever moves.
   alloc, json and the self build on the host, the footprint A/B of the self build, and the
   XO_HEAPSTATS arena line.
 - Builds on decision 0425's aligned chunks; lands after it.
+
+## Consequences (measured, 2026-10-30)
+
+- No footprint win on the self build. linux/amd64 (28 CPUs, cache off, the arena on against
+  off, both twice): max RSS 7685 MB against 7907 and 7742 MB; `xo bench --ab` on the amd64
+  host (BASE's compiler/xo built by both xos, 5 rounds, busy machine): wall 0.984 (0.876 to
+  1.143, within noise), CPU 1.05 (within noise), max RSS 0.97 (7611 to 7380 MB, better);
+  the same on the linux/arm64 host (12 CPUs, quiet, 0 of 5 rounds loaded): wall 1.001 (0.984
+  to 1.01), CPU 0.983 (0.98 to 1.01), max RSS 0.993 (7913 to 7854 MB), all within noise.
+  darwin (the Mac, cache off): max RSS 7845 MB with the arena against 7461 MB without, 384 MB
+  WORSE (MADV_FREE_REUSABLE pages stay resident until reused or under pressure), wall 64.9
+  against 66.6 s. The fixed point (s2 == s3) held and the arena changed no output.
+- Why the premise failed: the parser's trees are 2.1 GB at the end of check and the sweep
+  found only 3 MB of them alive after the strip (496 chunks, 3112 MB given back), so the
+  mechanism works; but with the lists, the trees' freed blocks are reused by the passes and
+  emit, whose heap grows past them (emit's heap 8.7 GB mapped), so their scattered pages never
+  cost at the peak. The peak is emit's live set either way; giving the trees' pages to the OS
+  only makes the later phases map fresh chunks.
+- A cost the premise hid: the budget's mapped figure (decision 0349, debug.mem_mapped) is 1.7
+  GB worse with the arena (peak 12228 MB against 10496): the 496 arena chunks stay mapped
+  with 3 MB of survivors scattered through them, as the scavenger's madvised pages do.
+- Two traps found, kept as gotchas for the next allocator change: a chunk filled to its last
+  byte makes `cur & -CHUNK` the next region's base (chunk-base-from-exact-fill.md), and a
+  compiler call of internal.rt_probe pulls sys_c.qsort into the static Linux link
+  (rt-probe-pulls-qsort-into-static-link.md: the compiler got internal.arena_mode). A task's
+  captures die when the task ends, not at their last use (core 7.1): a sweep inside the
+  release task saw every tree alive.
+- Where the peak is (XO_PROF=heap at one sample per 16 MiB, XO_PROF_HEAP_AT, linux/amd64,
+  the self build with lists): at the end of inline.verify (emit's start) 3.86 GB in use:
+  ssa.renumber (passes.xo:1256) 1.85 GB, ssa.Func.add_param (ir.xo:867) 835 MB,
+  arm64.inline_call (inline.xo:1082) 406 MB flat and 1.38 GB cumulative, then the passes'
+  lists (merge_straight, fold_tuple_fields, cse, 100 MB each); at the end of emit 728 MB in
+  use (712 MB in arm64.drop_weak_in, calls.xo:3793) while the heap holds 8.7 GB mapped: emit
+  adds about 3.8 GB of transient allocations over the SSA (mapped peak 10.7 GB against 6.9 GB
+  before it) and frees them, and the SSA is dropped at hollow. So the self build's peak RSS
+  is the SSA's 3.9 GB plus emit's transient.
+
+## Next paths (ranked by the peak, 2026-10-30)
+
+1. ssa.renumber's 1.85 GB (passes.xo:1256): what it keeps (the renumbered value lists; does
+   the old Func survive beside the new one until the pass ends?). Experiment: XO_PROF=heap
+   with XO_PROF_HEAP_AT=passes on a build of bench/perf/json, then the self build; drop the
+   old lists in place.
+2. emit's transient 3.8 GB: stream the emit (encode a function and free its buffers before
+   the next, keeping only the object bytes), bounding the transient by the emit jobs' count
+   times the largest function. Experiment: XO_EMIT_JOBS=1 against 8 under `--phase-times`
+   (the mapped peak at emit) to see how much of the transient is parallel slack.
+3. ssa.Func.add_param's 835 MB (ir.xo:867): the block parameter lists' capacity slack
+   (every List growth keeps up to 2x); pack after the passes.
+4. The arena's second shape (free lists inside arena mode) would halve its chunk count but
+   not change the verdict: the trees are not at the peak.
 
 ## Alternatives
 
