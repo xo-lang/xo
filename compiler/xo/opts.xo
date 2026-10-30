@@ -550,10 +550,34 @@ fn parse_args(os: Os, args: List[Str]) -> Opts {
     if !rest.is_empty() {
       usage(os, o.cmd, "--std-module tests one std module: no directories")
     }
+    // a bare or misspelt name resolved, or exit 2 (decision 0437: a name
+    // that matches no tested module ran nothing and passed)
+    o.std_module = match resolve_std_module(os, o.std, o.std_module) {
+      Ok(m) => m
+      Err(e) => {
+        os.stdio.eprintln("xo test: ${e}")
+        os.proc.exit(2)
+        ""
+      }
+    }
+    // a run that tests nothing fails (decision 0437)
+    o.topts.fail_empty = true
     // the std directory stands for the module's (a program's root); the
     // checker loads the module itself (check.Checker.std_test)
     o.dirs = [o.std]
     return o
+  }
+  if o.cmd == "test" {
+    // a path inside std tests nothing as a program (std's modules are
+    // not packages): name the flag that tests it (decision 0437)
+    let root = abs_of(o.wd, o.std).trim_suffix("/") + "/"
+    for a in rest {
+      let p = abs_of(o.wd, if cmdhelp.is_pattern(a) { cmdhelp.pattern_dir(a) } else { a }).trim_suffix("/")
+      if (p + "/").starts_with(root) {
+        let rel = p[root.len()..].trim_suffix(".xo").trim_suffix("_test")
+        usage(os, o.cmd, "${a} is in std: test a std module with `xo test --std-module=${if rel.is_empty() { "native/NAME" } else { rel }}`")
+      }
+    }
   }
   o.dirs = []
   for a in (if rest.is_empty() { ["."] } else { rest }) {
@@ -783,4 +807,80 @@ pub fn debug_info_eff(o: Opts, release: Bool) -> Str {
     return o.debug_info
   }
   if release { "off" } else { "on" }
+}
+
+/// The std module `xo test --std-module=M` tests (decision 0437): M as
+/// given when it names one (native/NAME, std/NAME, a file NAME.xo or a
+/// directory under std), a bare NAME as the one of native/NAME and
+/// std/NAME that has tests (base64 is native/base64: std/base64 is the Go
+/// backend's and has none); an error naming the nearest tested modules
+/// otherwise.
+fn resolve_std_module(os: Os, std: Str, m: Str) -> Result[Str, Str] {
+  let root = std.trim_suffix("/")
+  let tested = std_tested_modules(os, root)
+  if m.starts_with("native/") || m.starts_with("std/") {
+    let rel = if m.starts_with("std/") { m["std/".len()..] } else { m }
+    if std_module_exists(os, "${root}/${rel}") {
+      return Ok(m)
+    }
+    return Err("no std module ${m}${did_you_mean(m, tested)}")
+  }
+  var found: List[Str] = []
+  for c in ["native/${m}", m] {
+    if tested.contains(c) {
+      found.push(if c == m { "std/${m}" } else { c })
+    }
+  }
+  if found.len() == 1 {
+    return Ok(found[0])
+  }
+  if found.len() > 1 {
+    return Err("--std-module=${m} is ambiguous: ${found.join(" or ")}")
+  }
+  if std_module_exists(os, "${root}/${m}") || std_module_exists(os, "${root}/native/${m}") {
+    return Err("the std module ${m} has no tests${did_you_mean(m, tested)}")
+  }
+  Err("no std module ${m}${did_you_mean(m, tested)}")
+}
+
+/// Whether p (a path under std without .xo) is a module: P.xo or a
+/// directory.
+fn std_module_exists(os: Os, p: Str) -> Bool {
+  (os.fs.exists("${p}.xo").ok() ?? false) || os.fs.read_dir(p).is_ok()
+}
+
+/// The std modules with tests, as --std-module names them (native/NAME,
+/// NAME for one directly under std): a NAME_test.xo beside NAME.xo, or a
+/// directory holding a _test.xo file.
+fn std_tested_modules(os: Os, root: Str) -> List[Str] {
+  var out: List[Str] = []
+  for (dir, pre) in [(root, ""), ("${root}/native", "native/")] {
+    for e in os.fs.read_dir(dir).ok() ?? [] {
+      if !e.is_dir && e.name.ends_with("_test.xo") {
+        out.push("${pre}${e.name.trim_suffix("_test.xo")}")
+      } else if e.is_dir && (os.fs.read_dir("${dir}/${e.name}").ok() ?? []).any(fn(f) { !f.is_dir && f.name.ends_with("_test.xo") }) {
+        out.push("${pre}${e.name}")
+      }
+    }
+  }
+  out.sort()
+}
+
+/// "; did you mean native/base64?" for the tested modules nearest m,
+/// with or without its native/ prefix; "" for none.
+fn did_you_mean(m: Str, tested: List[Str]) -> Str {
+  let bare = m.trim_prefix("native/").trim_prefix("std/")
+  var names: List[Str] = []
+  for t in tested {
+    names.push(t.trim_prefix("native/"))
+  }
+  let near = check.nearest(bare, names)
+  if near.is_empty() {
+    return ""
+  }
+  var full: List[Str] = []
+  for n in near {
+    full.push(if tested.contains("native/${n}") { "native/${n}" } else { n })
+  }
+  "; did you mean ${full.join(", ")}?"
 }
