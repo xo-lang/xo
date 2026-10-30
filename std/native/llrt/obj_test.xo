@@ -1,6 +1,8 @@
 // Tests of obj.xo (decision 0262): `xo test --std-module=native/llrt/obj`,
 // run by internal/stdtest.
 
+use native/rt
+
 test "Str == of 1 to 20 bytes: a difference at each place, and equal copies" {
   let s = "abcdefghijklmnopqrst"
   for n in 1..21 {
@@ -13,4 +15,78 @@ test "Str == of 1 to 20 bytes: a difference at each place, and equal copies" {
       expect(a == b) == false
     }
   }
+}
+
+/// alloc_obj's blocks of the page classes (decision 0425): a 16 KiB class
+/// block is page aligned (no prefix), keeps its words, is reused after
+/// its free, stays in place when resized within its class and moves with
+/// its words when it outgrows it; the classes below keep their prefix.
+test "page class blocks are page aligned, kept, reused and resized" {
+  let p = alloc_obj(16000)
+  expect(p & 16383) == 0
+  let q = alloc_obj(8000)
+  expect(q & 15) == 8
+  var i = 0
+  while i < 2000 {
+    rt.mem_store(p, i * 8, i + 7, 8)
+    i += 1
+  }
+  // a second block of the class is the next page block, not p
+  let p2 = alloc_obj(16376)
+  expect(p2 & 16383) == 0
+  expect(p2 == p) == false
+  // in place within the class
+  let r = resize_obj(p, 16000, 16376)
+  expect(r) == p
+  // a move to the 32 KiB class keeps the words
+  let s = resize_obj(r, 16376, 20000)
+  expect(s & 16383) == 0
+  expect(s == p) == false
+  var bad = 0
+  i = 0
+  while i < 2000 {
+    if rt.mem_load(s, i * 8, 8) != i + 7 {
+      bad += 1
+    }
+    i += 1
+  }
+  expect(bad) == 0
+  // p is on its free list: the next 16 KiB block is p again
+  let t = alloc_obj(12000)
+  expect(t) == p
+  // a prefixed block that grows into a page class moves to a page block
+  let u = resize_obj(q, 8000, 9000)
+  expect(u & 16383) == 0
+  free_obj(u)
+  free_obj(t)
+  free_obj(s)
+  free_obj(p2)
+}
+
+test "many page class blocks across chunks are distinct and freed" {
+  // 600 blocks of 32 KiB: more than one 4 MiB page chunk (127 blocks each)
+  var bs: List[Int] = []
+  for k in 0..600 {
+    let b = alloc_obj(30000)
+    expect(b & 16383) == 0
+    rt.mem_store(b, 0, k, 8)
+    rt.mem_store(b, 29992, k, 8)
+    bs.push(b)
+  }
+  var bad = 0
+  for k in 0..600 {
+    if rt.mem_load(bs[k], 0, 8) != k || rt.mem_load(bs[k], 29992, 8) != k {
+      bad += 1
+    }
+  }
+  expect(bad) == 0
+  // every block's page table word is its class (69) with no sample bit
+  // read back through free and a new allocation: the freed blocks come
+  // back in reverse order
+  for k in 0..600 {
+    free_obj(bs[k])
+  }
+  let again = alloc_obj(30000)
+  expect(again) == bs[599]
+  free_obj(again)
 }

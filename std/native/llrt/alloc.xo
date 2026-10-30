@@ -114,11 +114,52 @@ const BIG_FIRST = 2040
 /// The first class (32 KiB) whose blocks on the central lists give their
 /// inner pages back to the system (heapos.xo scavenge, decision 0383).
 const SCAVENGE_FROM = 69
+/// (The 16 KiB class, 68, is a page block class too (decision 0425), so
+/// its free blocks could be scavenged whole; scavenging them cost 0.8% of
+/// the self build's wall for 0.8 GB of its footprint, 6816 to 6025 MB,
+/// 2026-10-30, and the owner's 7 GB goal holds without it.)
 
 /// Magazines a class keeps on the central list with their pages in place.
 const SCAVENGE_KEEP = 4
 /// The bytes of blocks in a magazine (at least 8 blocks).
 const MAG_BYTES = 65536
+/// Page blocks (decision 0425): a block of class PAGE_CLASS (16 KiB) or
+/// larger is page aligned, carved from a page chunk (heapos.xo pchunk: 4
+/// MiB, aligned to its size) with no prefix: its class and its two list
+/// links are words of the chunk's table in its first page (PT_CLASS,
+/// PT_LINK, PT_CLINK: one word per 16 KiB page of the chunk, indexed by
+/// the block's first page), so every page of a free block is given back
+/// by heapos.xo scavenge (a prefixed 16 KiB block held one resident page
+/// for its 8 byte prefix and its links: 1.7 GB of the self build's
+/// footprint, 2026-10-29). A page block's address is a multiple of PAGE
+/// and its chunk's first word is PAGE_MAGIC; a big block's address is 16
+/// past a page; a prefixed block's is 8 aligned (its stride is size + 8),
+/// so one in 2048 of them is page aligned too, and is_page tells it from
+/// a page block by its chunk's first word, which holds the first block's
+/// class: every chunk is CHUNK aligned (heapos.xo map_aligned) so that
+/// word is found from any block (2026-10-30: the address alone crashed
+/// the self build). The heap record's PCUR and PEND are its page chunk's
+/// bump words, and its
+/// PAGES word is nonzero when page blocks are on (heapos.xo pages_on: off
+/// in a sanitizer or --race build, whose big blocks come from the C
+/// library's malloc and so can be page aligned themselves).
+const PAGE = 16384
+const PCHUNK = 4194304
+const PAGE_CLASS = 68
+const PT_CLASS = 0
+const PT_LINK = 2048
+const PT_CLINK = 4096
+/// The first word of a page chunk (its table's unused slot 0); never a
+/// block's prefix (a class, minus a class, or a big block's size).
+const PAGE_MAGIC = 5784094464206446155
+/// A sampled page block's class word carries this bit (heapprof.xo).
+const PSAMPLED = 128
+const PCUR = 10952
+const PEND = 10960
+const PAGES = 10968
+/// rt.heap_grow(p, PFREED): the heap profile forgets page block p (cabi.xo
+/// heap_grow; a prefixed block's sampled free goes through heap_big_release).
+const PFREED = 288230376151711744
 
 /// The slot atomics' relaxed order.
 const RELAXED = 0
@@ -126,6 +167,54 @@ const ACQUIRE = 1
 const RELEASE = 2
 
 /// Takes the lock of class c's central list (the table page cen of heap h).
+/// Whether the page aligned p is a page block of heap h: page blocks on and
+/// its chunk a page chunk (a prefixed block is page aligned one time in
+/// 2048; its chunk's first word is a class). The callers test the
+/// alignment inline first, so a prefixed block's free makes no call.
+fn is_page(h: Int, p: Int) -> Bool {
+  rt.mem_load(h, PAGES, 8) != 0 && rt.mem_load(p & (0).wrapping_sub(PCHUNK), 0, 8) == PAGE_MAGIC
+}
+
+/// is_page for the heap profile (heapprof.xo sample), which has the
+/// address alone; only with page blocks on (heapos.pages_on).
+pub fn page_block(p: Int) -> Bool { (p & 16383) == 0 && rt.mem_load(pbase(p), 0, 8) == PAGE_MAGIC }
+
+
+fn pbase(p: Int) -> Int { p & (0).wrapping_sub(PCHUNK) }
+
+/// The table word of page block p: its class (PT_CLASS), its free list
+/// link (PT_LINK) or its magazine link (PT_CLINK).
+fn pword(p: Int, t: Int) -> Int {
+  pbase(p).wrapping_add(t).wrapping_add(p.wrapping_sub(pbase(p)).shr_logical(14).wrapping_shl(3))
+}
+
+/// The class of page block p, forgetting it in the heap profile when it
+/// was sampled.
+fn page_class(p: Int) -> Int {
+  let w = pword(p, PT_CLASS)
+  let c = rt.mem_load(w, 0, 8)
+  if c & PSAMPLED != 0 {
+    rt.mem_store(w, 0, c & 127, 8)
+    let _f = rt.heap_grow(p, PFREED)
+  }
+  c & 127
+}
+
+/// Marks page block p as sampled (heapprof.xo sample).
+pub fn page_sample(p: Int) {
+  let w = pword(p, PT_CLASS)
+  rt.mem_store(w, 0, rt.mem_load(w, 0, 8) | PSAMPLED, 8)
+}
+
+/// Whether blocks of n bytes are page blocks (at most the heap's mid_max).
+pub fn page_size(n: Int) -> Bool { n > (2048).wrapping_shl(PAGE_CLASS - 66) - 8 }
+
+/// A magazine's link to the next magazine (its first block's second word,
+/// or the table's PT_CLINK word for page blocks; heapos.xo nfree).
+pub fn cnext(pg: Bool, m: Int) -> Int {
+  if pg { rt.mem_load(pword(m, PT_CLINK), 0, 8) } else { rt.mem_load(m, 8, 8) }
+}
+
 fn clock(h: Int, cen: Int, c: Int) {
   let l = cen.wrapping_add(CLOCK).wrapping_add(c.wrapping_shl(6))
   if !rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
@@ -205,13 +294,30 @@ pub fn alloc(h: Int, n: Int) -> Int {
     }
   }
   if r != 0 {
-    let next = rt.mem_load(r, 0, 8)
+    var next = rt.mem_load(r, 0, 8)
+    if c >= PAGE_CLASS && rt.mem_load(h, PAGES, 8) != 0 {
+      // a page block's link is in its chunk's table (pword written out)
+      let base = r & (0).wrapping_sub(PCHUNK)
+      next = rt.mem_load(base.wrapping_add(PT_LINK).wrapping_add(r.wrapping_sub(base).shr_logical(14).wrapping_shl(3)), 0, 8)
+    }
     rt.mem_store(fl, FREE_LISTS, next, 8)
     rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_sub(1), 8)
     // the next pop reads the new head's link: start loading it now, so a
     // list freed long ago (cold) costs overlapped misses rather than one
     // stall per allocation (bench/results/xo1-speed-2026-10-13.md)
     rt.prefetch(next)
+  } else if c >= PAGE_CLASS && rt.mem_load(h, PAGES, 8) != 0 {
+    // a page block from the heap's page chunk (size + 8 is a power of two
+    // of whole pages); the table word of its first page is its class
+    let need = size.wrapping_add(8)
+    let cur = rt.mem_load(h, PCUR, 8)
+    if rt.mem_load(h, PEND, 8).wrapping_sub(cur) < need {
+      return rt.heap_grow(h, n)
+    }
+    rt.mem_store(h, PCUR, cur.wrapping_add(need), 8)
+    let base = cur & (0).wrapping_sub(PCHUNK)
+    rt.mem_store(base.wrapping_add(cur.wrapping_sub(base).shr_logical(14).wrapping_shl(3)), 0, c, 8)
+    r = cur
   } else {
     let need = size.wrapping_add(8)
     let cur = rt.mem_load(h, BUMP_CUR, 8)
@@ -256,7 +362,7 @@ fn refill_alloc(h: Int, n: Int, c: Int, size: Int) -> Int {
     clock(h, cen, c)
     m = rt.slot_load(cen, c, RELAXED)
     if m != 0 {
-      rt.slot_store(cen, c, rt.mem_load(m, 8, 8), RELAXED)
+      rt.slot_store(cen, c, if c >= PAGE_CLASS && rt.mem_load(h, PAGES, 8) != 0 { rt.mem_load(pword(m, PT_CLINK), 0, 8) } else { rt.mem_load(m, 8, 8) }, RELAXED)
     }
     cunlock(h, cen, c)
   }
@@ -343,6 +449,32 @@ pub fn free(h: Int, p: Int) {
   if rt.mem_load(h, COUNT, 8) != 0 {
     rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
   }
+  if (p & 16383) == 0 {
+    // a page block, or a prefixed block that is page aligned (one in
+    // 2048): out of line, a tail call, so this function stays a leaf
+    return free_aligned(h, p)
+  }
+  let b = p.wrapping_sub(8)
+  let c = rt.mem_load(b, 0, 8)
+  if c < 0 {
+    rt.heap_big_release(b)
+    return
+  }
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+  rt.mem_store(fl, FREE_LISTS, p, 8)
+}
+
+/// free of a page aligned block: a page block (decision 0425: its class
+/// and link in its chunk's table), else free's prefixed path.
+fn free_aligned(h: Int, p: Int) {
+  if is_page(h, p) {
+    let c = page_class(p)
+    let fl = h.wrapping_add(c.wrapping_shl(3))
+    rt.mem_store(pword(p, PT_LINK), 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+    rt.mem_store(fl, FREE_LISTS, p, 8)
+    return
+  }
   let b = p.wrapping_sub(8)
   let c = rt.mem_load(b, 0, 8)
   if c < 0 {
@@ -365,7 +497,7 @@ pub fn recount(h: Int) {
     var p = rt.mem_load(fl, FREE_LISTS, 8)
     while p != 0 {
       n = n.wrapping_add(1)
-      p = rt.mem_load(p, 0, 8)
+      p = if c >= PAGE_CLASS && rt.mem_load(h, PAGES, 8) != 0 { rt.mem_load(pword(p, PT_LINK), 0, 8) } else { rt.mem_load(p, 0, 8) }
     }
     rt.mem_store(fl, NFREE, n, 8)
     c = c.wrapping_add(1)
@@ -410,7 +542,7 @@ pub fn refill(h: Int, n: Int) {
     clock(h, cen, c)
     m = rt.slot_load(cen, c, RELAXED)
     if m != 0 {
-      rt.slot_store(cen, c, rt.mem_load(m, 8, 8), RELAXED)
+      rt.slot_store(cen, c, if c >= PAGE_CLASS && rt.mem_load(h, PAGES, 8) != 0 { rt.mem_load(pword(m, PT_CLINK), 0, 8) } else { rt.mem_load(m, 8, 8) }, RELAXED)
     }
     cunlock(h, cen, c)
     if m == 0 {
@@ -448,22 +580,30 @@ fn mag_count(size: Int) -> Int {
 /// call site: block p of a class onto its class's list on heap h when
 /// the list stays under a magazine's worth, counted; true when done.
 /// Else false, having done nothing, and the caller calls free_mt (a big
-/// block, a list that fills a magazine). 2026-10-21: free_mt, at 58
+/// block, a page aligned one, a list that fills a magazine). 2026-10-21: free_mt, at 58
 /// instructions with its calls, was a call on every free in a program
 /// with threads.
 pub fn free_push(h: Int, p: Int) -> Bool {
-  let c = rt.mem_load(p.wrapping_sub(8), 0, 8)
-  if c < 0 {
+  // a page aligned block (a page block, decision 0425, or the one
+  // prefixed block in 2048 that is) and a big block (a negative header;
+  // only a block with a prefix has its header read) take free_mt, which
+  // tells them apart: a call out of this function to a page block path
+  // put it over the inliner's limits (42 instructions, 13 blocks of 40
+  // and 12) and left it a call in obj.rl_free_n_slow, 14 instructions a
+  // free in the alloc bench's tasks (2026-10-30)
+  if (p & 16383) == 0 || rt.mem_load(p.wrapping_sub(8), 0, 8) < 0 {
     return false
   }
+  let c = rt.mem_load(p.wrapping_sub(8), 0, 8)
   let fl = h.wrapping_add(c.wrapping_shl(3))
   let nf = rt.mem_load(fl, NFREE, 8).wrapping_add(1)
   if nf >= rt.mem_load(fl, MAG_CAP, 8) {
     return false
   }
-  if rt.mem_load(h, COUNT, 8) != 0 {
-    rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
-  }
+  // counted when counting: COUNT is 0 or 1 (heapos.xo), added without a
+  // branch, which keeps this function within the inliner's 12 blocks
+  // (every `if` is three blocks; a fourth put it at 13)
+  rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(rt.mem_load(h, COUNT, 8)), 8)
   rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
   rt.mem_store(fl, FREE_LISTS, p, 8)
   rt.mem_store(fl, NFREE, nf, 8)
@@ -478,14 +618,26 @@ pub fn free_mt(h: Int, p: Int) {
   if rt.mem_load(h, COUNT, 8) != 0 {
     rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
   }
-  let b = p.wrapping_sub(8)
-  let c = rt.mem_load(b, 0, 8)
-  if c < 0 {
-    rt.heap_big_release(b)
-    return
+  var c = 0
+  var pg = false
+  if (p & 16383) == 0 && is_page(h, p) {
+    // a page block (decision 0425): its class and links in its chunk's table
+    pg = true
+    c = page_class(p)
+  } else {
+    let b = p.wrapping_sub(8)
+    c = rt.mem_load(b, 0, 8)
+    if c < 0 {
+      rt.heap_big_release(b)
+      return
+    }
   }
   let fl = h.wrapping_add(c.wrapping_shl(3))
-  rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+  if pg {
+    rt.mem_store(pword(p, PT_LINK), 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+  } else {
+    rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+  }
   rt.mem_store(fl, FREE_LISTS, p, 8)
   let nf = rt.mem_load(fl, NFREE, 8).wrapping_add(1)
   rt.mem_store(fl, NFREE, nf, 8)
@@ -510,7 +662,7 @@ pub fn free_mt(h: Int, p: Int) {
       clock(h, cen, c)
       var w = rt.slot_load(cen, c, RELAXED)
       while w != 0 && k < SCAVENGE_KEEP {
-        w = rt.mem_load(w, 8, 8)
+        w = rt.mem_load(pword(w, PT_CLINK), 0, 8)
         k = k.wrapping_add(1)
       }
       cunlock(h, cen, c)
@@ -519,7 +671,11 @@ pub fn free_mt(h: Int, p: Int) {
       }
     }
     clock(h, cen, c)
-    rt.mem_store(old, 8, rt.slot_load(cen, c, RELAXED), 8)
+    if pg {
+      rt.mem_store(pword(old, PT_CLINK), 0, rt.slot_load(cen, c, RELAXED), 8)
+    } else {
+      rt.mem_store(old, 8, rt.slot_load(cen, c, RELAXED), 8)
+    }
     rt.slot_store(cen, c, old, RELAXED)
     cunlock(h, cen, c)
   }
@@ -539,9 +695,15 @@ pub fn free_mt(h: Int, p: Int) {
 /// block from or to a big one, or a chunk to replace). A block it returns
 /// sets LAST.
 pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
+  if (p & 16383) == 0 {
+    // a page block, or a prefixed block that is page aligned: out of
+    // line, a tail call, so this function stays a leaf and inlines into
+    // obj.hresize as before (decision 0425)
+    return resize_aligned(h, p, old, n, mt)
+  }
+  let mid = rt.mem_load(h, MID_MAX, 8)
   let b = p.wrapping_sub(8)
   let hdr = rt.mem_load(b, 0, 8)
-  let mid = rt.mem_load(h, MID_MAX, 8)
   // a big block (minus its size, at least the classes' limit); a size
   // class's sampled block (minus its class, heapprof.xo) moves
   if hdr < -128 && n > mid {
@@ -575,6 +737,10 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
     return p
   }
   if mt != 0 {
+    return 0
+  }
+  if c >= PAGE_CLASS && rt.mem_load(h, PAGES, 8) != 0 {
+    // into a page class: the caller moves it (a page block must be page aligned)
     return 0
   }
   // alloc's pop or carve
@@ -620,4 +786,28 @@ pub fn resize(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
     return rt.heap_grow(h, n.wrapping_add(SAMPLE))
   }
   q
+}
+
+/// resize of a page aligned block (resize's tail call): a page block (no
+/// prefix) is kept when its class serves n, else moved by the caller. A
+/// prefixed block that is page aligned (one in 2048) is moved by the
+/// caller too, so resize's prefixed path has one site and inlines.
+fn resize_aligned(h: Int, p: Int, old: Int, n: Int, mt: Int) -> Int {
+  if !is_page(h, p) {
+    return 0
+  }
+  if n > rt.mem_load(h, MID_MAX, 8) {
+    return 0
+  }
+  var pc = 65
+  var psize = BIG_FIRST
+  while psize < n {
+    psize = psize.wrapping_shl(1).wrapping_add(8)
+    pc = pc.wrapping_add(1)
+  }
+  if pc == (rt.mem_load(pword(p, PT_CLASS), 0, 8) & 127) {
+    rt.mem_store(h, LAST, psize, 8)
+    return p
+  }
+  0
 }

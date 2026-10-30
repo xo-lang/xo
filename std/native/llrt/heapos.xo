@@ -23,6 +23,7 @@
 //
 // Nothing here allocates Xo values or faults: out of memory ends the
 // process as the C's xo_oom did (status 70).
+use native/llrt/alloc
 use native/llrt/linux
 use native/llrt/membudget
 use native/llrt/pool
@@ -424,10 +425,115 @@ fn clock_give() {
 /// Gives heap record h a new chunk to carve blocks from (its bump words
 /// at 24 and 32, alloc.xo BUMP_CUR and BUMP_END).
 pub fn chunk(h: Int) {
-  let c = map(CHUNK)
+  // aligned to its size, so a page aligned prefixed block's chunk word is
+  // found from the block (alloc.xo is_page; decision 0425)
+  let c = map_aligned(CHUNK)
   let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
   rt.mem_store(h, 24, c, 8)
   rt.mem_store(h, 32, c.wrapping_add(CHUNK), 8)
+}
+
+/// The page blocks' table (alloc.xo PT_CLASS, PT_LINK, PT_CLINK) and the
+/// heap record's page bump words (alloc.xo PCUR, PEND).
+const PAGE = 16384
+const PT_CLASS = 0
+const PT_LINK = 2048
+const PT_CLINK = 4096
+const PAGE_CLASS = 68
+const H_PCUR = 10952
+const H_PEND = 10960
+const H_PAGES = 10968
+/// A page chunk's first word (alloc.xo PAGE_MAGIC).
+const PAGE_MAGIC = 5784094464206446155
+
+/// Whether the heap uses page blocks: not in a sanitizer or --race build,
+/// whose big blocks come from the C library's malloc (large_room, map_os)
+/// and so may be page aligned themselves, which a page block's address
+/// test (alloc.xo is_page) could not tell from a page block; and not with
+/// every block big (user_mode, gorace: H_MID_MAX 0).
+pub fn pages_on() -> Bool { !sanhook.sanitized() && !sanhook.gorace() && !sanhook.user_mode() }
+
+/// Gives heap record h a new page chunk (decision 0425): CHUNK bytes
+/// aligned to CHUNK, its first page the table of its blocks' classes and
+/// links, the pages after it carved as page blocks (alloc.xo alloc);
+/// counted with the chunks.
+pub fn pchunk(h: Int) {
+  let c = map_aligned(CHUNK)
+  rt.mem_store(c, 0, PAGE_MAGIC, 8)
+  let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
+  rt.mem_store(h, H_PCUR, c.wrapping_add(PAGE), 8)
+  rt.mem_store(h, H_PEND, c.wrapping_add(CHUNK), 8)
+}
+
+/// A mapping of size bytes (a power of two) aligned to size: twice the
+/// size mapped and the slack before and after the aligned part given
+/// back (Linux, Darwin); Windows reserves twice the size and commits the
+/// aligned part; a sanitizer build (the C library's mapping) keeps the
+/// slack.
+fn map_aligned(size: Int) -> Int {
+  let mask = (0).wrapping_sub(size)
+  var m = 0
+  match target.os {
+    TargetOs.Linux => {
+      if sanhook.sanitized() {
+        m = libc_map(size.wrapping_shl(1))
+      } else {
+        m = linux.mmap(0, size.wrapping_shl(1), 3, 34, -1, 0)
+        if m < 0 && m > -4096 {
+          m = 0
+        }
+      }
+    }
+    TargetOs.Darwin => {
+      if sanhook.sanitized() {
+        m = libc_map(size.wrapping_shl(1))
+      } else {
+        m = sys_darwin.mmap(0, size.wrapping_shl(1), 3, 4098, -1, 0)
+        if m == -1 {
+          m = 0
+        }
+      }
+    }
+    TargetOs.Windows => {
+      if sanhook.gorace() {
+        m = sanhook.race_arena(size.wrapping_shl(1), true)
+      } else {
+        // MEM_RESERVE twice the size, then MEM_COMMIT the aligned part
+        let r = sys_windows.VirtualAlloc(0, size.wrapping_shl(1), 8192, 4)
+        if r != 0 {
+          let a = r.wrapping_add(size).wrapping_sub(1) & mask
+          m = sys_windows.VirtualAlloc(a, size, 4096, 4)
+          if m != 0 {
+            mapped(size)
+            return m
+          }
+        }
+        m = 0
+      }
+    }
+    TargetOs.Wasi => {}
+  }
+  if m == 0 {
+    oom()
+  }
+  let a = m.wrapping_add(size).wrapping_sub(1) & mask
+  if !sanhook.sanitized() && !sanhook.gorace() {
+    if a > m {
+      unmap_os(m, a.wrapping_sub(m))
+    }
+    let end = m.wrapping_add(size.wrapping_shl(1))
+    if end > a.wrapping_add(size) {
+      unmap_os(a.wrapping_add(size), end.wrapping_sub(a.wrapping_add(size)))
+    }
+  }
+  mapped(size)
+  a
+}
+
+/// The table word of page block p (alloc.xo pword).
+fn pword(p: Int, t: Int) -> Int {
+  let base = p & (0).wrapping_sub(CHUNK)
+  base.wrapping_add(t).wrapping_add(p.wrapping_sub(base).shr_logical(14).wrapping_shl(3))
 }
 
 /// The chunks mapped so far.
@@ -442,7 +548,7 @@ const H_NFREE = 664
 /// classes below 32 KiB the resident ones (a class of 32 KiB or more is
 /// given back by scavenge, so cutting it saves no footprint); and the
 /// bytes of magazines a growth cuts at most.
-const CUT_MAX_CLASS = 68
+const CUT_MAX_CLASS = 67
 const CUT_BYTES = 1048576
 
 /// The word of the central table that turns the cut off (XO_CUT=0): the
@@ -692,8 +798,9 @@ const W_HSIZE = 29
 /// heapprof.xo H_PSTATE, alloc.xo PSAMPLE), the size classes' limit
 /// (XO_HEAP_MID_MAX lowers it), and the central lists' words (a list
 /// per size class, 1 to 72); then each class's magazine size (alloc.xo
-/// MAG_CAP, written by mag_caps).
-const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73
+/// MAG_CAP, written by mag_caps); then the page chunk's bump words and the
+/// page blocks flag (alloc.xo PCUR, PEND, PAGES; decision 0425).
+const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73 + 24
 /// The first word of the per class magazine sizes (alloc.xo MAG_CAP).
 const H_MAG_CAP = 10368
 /// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).
@@ -711,6 +818,7 @@ pub fn main_record() -> Int {
   // free lists, chunks and magazines unused), from the C library's
   // malloc (large_room)
   rt.mem_store(h, H_MID_MAX, if sanhook.user_mode() || sanhook.gorace() { 0 } else { MID_MAX }, 8)
+  rt.mem_store(h, H_PAGES, if pages_on() { 1 } else { 0 }, 8)
   rt.mem_store(h, H_COUNT, 1, 8)
   rt.mem_store(h, H_SAMPLE_AT, NEVER, 8)
   rt.mem_store(h, H_CENTRAL, map(8192), 8)
@@ -792,6 +900,7 @@ pub fn thread_heap() -> Int {
   hlock_take()
   let first = rt.mem_load(w, 0, 8)
   rt.mem_store(h, H_MID_MAX, rt.mem_load(first, H_MID_MAX, 8), 8)
+  rt.mem_store(h, H_PAGES, rt.mem_load(first, H_PAGES, 8), 8)
   rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
   rt.mem_store(h, H_COUNT, rt.mem_load(first, H_COUNT, 8), 8)
   let prof = rt.mem_load(first, H_PROF, 8)
@@ -851,8 +960,8 @@ pub fn nfree(c: Int) -> Int {
   var h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
   while h != 0 {
     let fl = h.wrapping_add(c.wrapping_shl(3))
-    n = n.wrapping_add(list_len(rt.mem_load(fl, H_FREE_LISTS, 8)))
-    n = n.wrapping_add(list_len(rt.mem_load(fl, H_MAG, 8)))
+    n = n.wrapping_add(list_len_c(c, rt.mem_load(fl, H_FREE_LISTS, 8)))
+    n = n.wrapping_add(list_len_c(c, rt.mem_load(fl, H_MAG, 8)))
     h = rt.mem_load(h, H_NEXT, 8)
   }
   // the central list's magazines, linked by their first block's second word
@@ -862,8 +971,8 @@ pub fn nfree(c: Int) -> Int {
     if cen != 0 {
       var m = rt.slot_load(cen, c, RELAXED)
       while m != 0 {
-        n = n.wrapping_add(list_len(m))
-        m = rt.mem_load(m, 8, 8)
+        n = n.wrapping_add(list_len_c(c, m))
+        m = alloc.cnext(c >= PAGE_CLASS && pages_on(), m)
       }
     }
   }
@@ -878,6 +987,21 @@ fn list_len(p: Int) -> Int {
   while q != 0 {
     n = n.wrapping_add(1)
     q = rt.mem_load(q, 0, 8)
+  }
+  n
+}
+
+/// list_len for a list of class c: a page block's link is in its chunk's
+/// table (alloc.xo lnext).
+fn list_len_c(c: Int, p: Int) -> Int {
+  if c < PAGE_CLASS || !pages_on() {
+    return list_len(p)
+  }
+  var n = 0
+  var q = p
+  while q != 0 {
+    n = n.wrapping_add(1)
+    q = rt.mem_load(pword(q, PT_LINK), 0, 8)
   }
   n
 }
@@ -916,8 +1040,16 @@ pub fn scavenge(m: Int, c: Int) {
   let size = (2048).wrapping_shl(c.wrapping_sub(65)) - 8
   var r = m
   while r != 0 {
-    let lo = (r + 16 + SCAV_PAGE - 1).shr_logical(14).wrapping_shl(14)
-    let hi = (r + size).shr_logical(14).wrapping_shl(14)
+    // a page block (class PAGE_CLASS and up, decision 0425) holds no link
+    // and no prefix: every page of it goes back, and its successor is in
+    // its chunk's table
+    var lo = (r + 16 + SCAV_PAGE - 1).shr_logical(14).wrapping_shl(14)
+    var hi = (r + size).shr_logical(14).wrapping_shl(14)
+    let pg = c >= PAGE_CLASS && pages_on()
+    if pg {
+      lo = r
+      hi = r + size + 8
+    }
     if hi > lo {
       match target.os {
         TargetOs.Linux => {
@@ -929,6 +1061,6 @@ pub fn scavenge(m: Int, c: Int) {
         TargetOs.Windows | TargetOs.Wasi => {}
       }
     }
-    r = rt.mem_load(r, 0, 8)
+    r = if pg { rt.mem_load(pword(r, PT_LINK), 0, 8) } else { rt.mem_load(r, 0, 8) }
   }
 }

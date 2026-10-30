@@ -1194,8 +1194,13 @@ fn float_text(x: Float) -> Str {
 /// splitting a UTF-8 sequence: a call, so llrt_str_slice_chk (every
 /// `s[lo..hi]` on a Str) inlines (2026-10-27: it was a call at each slice,
 /// 19% of path's parts row).
+/// alloc.free_aligned and resize_aligned (decision 0425) are the page
+/// aligned block's free and resize (a page block, or one prefixed block
+/// in 2048): tail calls, so free and resize stay leaves with no frame
+/// and resize inlines into obj.hresize as before (2026-10-30: inlined,
+/// their frames cost the alloc bench's mixed 6% of its instructions).
 pub fn cold_fn(name: Str) -> Bool {
-  name is "rt.const_once" | "raw.str_cut_copy" | "prelude.slice_fail" | "prelude.str_slice_bad" | "pool.lock_slow" | "alloc.refill_alloc" | "alloc.mag_count" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" | "jsontext.key_eq_slow" | "jsontext.keys_match_slow" | "jsontext.keys_eq_slow" ||
+  name is "rt.const_once" | "raw.str_cut_copy" | "prelude.slice_fail" | "prelude.str_slice_bad" | "pool.lock_slow" | "alloc.refill_alloc" | "alloc.mag_count" | "alloc.free_aligned" | "alloc.resize_aligned" | "pool.futex_wake" | "budget.tick_slow" | "mutex.held_add_slow" | "obj.reserve_slow" | "obj.push_slow" | "obj.rl_free_n_slow" | "stdio.out_slow" | "jsontext.key_eq_slow" | "jsontext.keys_match_slow" | "jsontext.keys_eq_slow" ||
     name.starts_with("xo.map.rebuild[") || name.starts_with("xo.mlog.findx[") || name.starts_with("xo.mlog.newdir[") ||
     name.starts_with("xo.maph.putbody[") ||
     name.starts_with("xo.maph.slowput[") || name.starts_with("xo.maph.slowrem[") || name.starts_with("xo.maph.loglookup[") || name.starts_with("xo.maph.putrest[") || name.starts_with("xo.maph.remrest[") || name.starts_with("xo.maph.logget[") || name.starts_with("xo.maph.logkvl[")

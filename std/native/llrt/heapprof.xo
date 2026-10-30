@@ -22,6 +22,8 @@
 // profile off the heap pays nothing more (no counting, or a compare while
 // another counter counts). Inside an allocation nothing here allocates
 // or takes a lock: Int words, the slot atomics, and the unwind walk.
+use native/llrt/alloc
+use native/llrt/heapos
 use native/llrt/linux
 use native/llrt/unwind
 use native/rt
@@ -245,9 +247,14 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
     // a block of a size class gets minus its class in its header, so its
     // free takes the big block's way to cabi.xo heap_big_release, which
     // forgets it (a big block's header is minus its size already)
-    let c = ld(a, -8)
-    if c > 0 {
-      st(a, -8, (0).wrapping_sub(c))
+    if heapos.pages_on() && alloc.page_block(a) {
+      // a page block (decision 0425) has no header: its table word
+      alloc.page_sample(a)
+    } else {
+      let c = ld(a, -8)
+      if c > 0 {
+        st(a, -8, (0).wrapping_sub(c))
+      }
     }
   }
   // the count last: a slot read with 0 is skipped

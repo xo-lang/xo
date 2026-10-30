@@ -286,8 +286,21 @@ fn heap_grow(h: Int, n: Int) -> Int {
     heapos.clock_wake(h, n - LOCK_WAKE)
     return 0
   }
+  if n >= PFREED && n < LOCK_WAKE {
+    // a sampled page block h freed (alloc.xo page_class): the profile
+    // forgets it (as heap_big_release does for a prefixed block)
+    if prof.supported() {
+      heapprof.freed(h)
+    }
+    return 0
+  }
   if prof.supported() && n >= SAMPLE {
     return heapprof.sampled(h, rt.mem_load(h, PSAMPLE, 8), n - SAMPLE)
+  }
+  // a page block's class (decision 0425): a new page chunk
+  if alloc.page_size(n) && heapos.pages_on() {
+    heapos.pchunk(h)
+    return alloc.alloc(h, n)
   }
   // decision 0383 (a): a cut of the central magazines of a larger class
   // before a new chunk
@@ -305,6 +318,8 @@ const SCAVENGE = 2305843009213693952
 /// alloc.xo's LOCK_SLOW and LOCK_WAKE.
 const LOCK_SLOW = 1152921504606846976
 const LOCK_WAKE = 576460752303423488
+/// rt.heap_grow(p, PFREED): page block p, sampled, is freed (alloc.xo).
+const PFREED = 288230376151711744
 const PSAMPLE = 10360
 
 fn heap_lock() { heapos.lock() }

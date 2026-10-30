@@ -57,6 +57,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the native backends and LLVM. 200,000 pushes, one per `with`, took
   31.4G instructions and now take 120M; an error or fault in the
   closure still leaves the value unchanged.
+- Native heap: blocks of 16 KiB and larger (size classes 68 to 72) are page aligned and carved
+  from 4 MiB aligned page chunks whose first page is a table of their classes and list links
+  (decision 0425; std/native/llrt alloc.xo, heapos.xo pchunk and map_aligned, cabi.xo,
+  heapprof.xo), so a free block of those classes keeps no resident page for its prefix and links
+  and heapos.xo scavenge gives back every page of it (classes 69 and up, as before); 0383's cut stops at the 8 KiB class (CUT_MAX_CLASS 67). Sanitizer and --race builds keep
+  the prefixed layout (heapos.pages_on). Self build, cache off: peak memory footprint 7688 to 6855 MB; --ab wall 1.020 (0.999 to 1.030), CPU 1.024.
 - Native Windows DNS record lookups (`lookup_mx`, `lookup_txt`,
   `lookup_srv`, `lookup_addr`) work: Xo's own DNS client asks the network
   adapters' DNS servers and reads the Windows hosts file, as Go's pure Go

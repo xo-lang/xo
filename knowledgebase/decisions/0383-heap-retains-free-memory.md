@@ -314,3 +314,12 @@ returns to the OS, as Go's does, with the cost of refaulting it on reuse.
   compiler change per pass, not a heap change; kept as the next item after step 0 shows which classes
   the churn is in.
 - Lowering MAG_BYTES so fewer blocks sit in magazines: leaves the memory in lists of the wrong class.
+
+## Follow-up (decision 0425, 2026-10-30)
+
+Page blocks moved the 16 KiB and larger classes' headers and links into a per-chunk table, so (c)
+scavenges every page of a free block of those classes, not only the inner ones (the 32 KiB class
+gave back one page in two, now two). The 16 KiB class could be scavenged too (alloc.xo
+SCAVENGE_FROM 68: 0.8 GB less footprint on the self build for 0.8% of its wall) but stays at 69 by
+the lead's rule, and (a)'s cut stops at the 8 KiB class (heapos.xo CUT_MAX_CLASS 67, was 68): a 16
+KiB magazine is no longer carved into 8 KiB blocks, since its blocks carry no prefix to carve into.
