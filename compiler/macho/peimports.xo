@@ -71,6 +71,7 @@ pub fn pe_imports() -> Map[Str, Str] {
     "GetSystemTimePreciseAsFileTime": "KERNEL32.dll",
     "GetThreadContext": "KERNEL32.dll",
     "GetThreadTimes": "KERNEL32.dll",
+    "GlobalMemoryStatusEx": "KERNEL32.dll",
     "InitializeProcThreadAttributeList": "KERNEL32.dll",
     "IsDebuggerPresent": "KERNEL32.dll",
     "K32GetProcessMemoryInfo": "KERNEL32.dll",
