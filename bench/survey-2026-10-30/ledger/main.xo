@@ -1,0 +1,607 @@
+// ledger: a double entry money ledger API on Postgres.
+//
+// Accounts hold one currency; a transfer writes balanced entries in one
+// SERIALIZABLE transaction, retried on SQLSTATE 40001 and 40P01. Money is
+// exact: Int minor units per ISO 4217 exponent, rates and conversions as
+// decimals on big.BigInt with explicit rounding modes. Writes take an
+// Idempotency-Key, accounts carry a version for optimistic locking, every
+// change is audited, and events go out as HMAC signed webhooks through an
+// outbox.
+//
+// Written from spec/core.md and spec/std.md only, for the backend gap
+// survey of 2026-10-30. GAP, LANG and SPEC comments mark what is missing.
+
+use std/http
+use std/json
+use std/log
+use std/sql
+use std/big
+use std/crypto
+use std/base64
+use std/backoff
+use std/uuid
+use std/task
+
+// ---------- exact decimals ----------
+
+// GAP: no decimal type: exact amounts need a hand written fixed point type on big.BigInt with its own parsing, formatting and rounding modes (Go: github.com/shopspring/decimal, github.com/cockroachdb/apd) [awkward]
+struct Decimal {
+  coef: big.BigInt
+  scale: Int
+}
+
+enum Rounding { Down, Up, Floor, Ceiling, HalfUp, HalfDown, HalfEven }
+
+enum LedgerErr {
+  BadRequest(msg: Str)
+  NotFound(what: Str)
+  Conflict(msg: Str)
+  Unprocessable(msg: Str)
+  Unauthorized
+  Db(from sql.SqlErr)
+}
+
+fn (e: LedgerErr) status() -> Int {
+  match e {
+    BadRequest(_) => 400
+    Unauthorized => 401
+    NotFound(_) => 404
+    Conflict(_) => 409
+    Unprocessable(_) => 422
+    Db(_) => 503
+  }
+}
+
+fn (e: LedgerErr) display() -> Str {
+  match e {
+    BadRequest(msg) => msg
+    NotFound(what) => "${what} not found"
+    Conflict(msg) => msg
+    Unprocessable(msg) => msg
+    Unauthorized => "missing or invalid API key"
+    Db(inner) => "database unavailable: ${inner}"
+  }
+}
+
+fn pow10(n: Int) -> big.BigInt { big.from_int(10).exp(big.from_int(n)) }
+
+fn dec_parse(s: Str) -> Decimal ! LedgerErr {
+  let t = s.trim()
+  let (neg, body) = match t.cut_prefix("-") {
+    Some(rest) => (true, rest)
+    None => (false, t)
+  }
+  let (whole, frac) = body.cut(".") ?? (body, "")
+  if whole.is_empty() || frac.len() > 18 || !(whole + frac).bytes().indexed().all(fn(p) { p.1 >= '0' && p.1 <= '9' }) {
+    return Err(LedgerErr.BadRequest(msg: "invalid decimal ${s:?}"))
+  }
+  let digits = big.parse(whole + frac).map_err(fn(e) { LedgerErr.BadRequest(msg: "invalid decimal ${s:?}: ${e}") })?
+  Decimal{coef: if neg { digits.neg() } else { digits }, scale: frac.len()}
+}
+
+fn (d: Decimal) mul(o: Decimal) -> Decimal { Decimal{coef: d.coef.mul(o.coef), scale: d.scale + o.scale} }
+
+fn (d: Decimal) display() -> Str {
+  let neg = d.coef.sign() < 0
+  let digits = d.coef.abs().text().pad_left(d.scale + 1, fill: "0")
+  let cut = digits.len() - d.scale
+  let text = if d.scale == 0 { digits } else { "${digits[..cut]}.${digits[cut..]}" }
+  if neg { "-" + text } else { text }
+}
+
+// round_to returns d with exactly `scale` fraction digits
+fn (d: Decimal) round_to(scale: Int, mode: Rounding) -> Decimal {
+  if scale >= d.scale {
+    return Decimal{coef: d.coef.mul(pow10(scale - d.scale)), scale: scale}
+  }
+  let div = pow10(d.scale - scale)
+  // SPEC: std 33 writes BigInt's methods as `add(y) / sub / ... / quo_rem` without result types; quo_rem's (BigInt, BigInt) result is a guess
+  let (q, r) = d.coef.quo_rem(div)
+  if r.sign() == 0 { return Decimal{coef: q, scale: scale} }
+  let neg = d.coef.sign() < 0
+  let half = r.abs().mul(big.from_int(2)).cmp(div)
+  let odd = q.abs().rem(big.from_int(2)).sign() != 0
+  let away = match mode {
+    Down => false
+    Up => true
+    Floor => neg
+    Ceiling => !neg
+    HalfUp => half >= 0
+    HalfDown => half > 0
+    HalfEven => half > 0 || (half == 0 && odd)
+  }
+  let one = big.from_int(if neg { -1 } else { 1 })
+  Decimal{coef: if away { q.add(one) } else { q }, scale: scale}
+}
+
+fn rounding_of(s: Str) -> Rounding ! LedgerErr {
+  match s {
+    "down" => Rounding.Down
+    "up" => Rounding.Up
+    "floor" => Rounding.Floor
+    "ceiling" => Rounding.Ceiling
+    "half_up" => Rounding.HalfUp
+    "half_down" => Rounding.HalfDown
+    "half_even" | "" => Rounding.HalfEven
+    _ => Err(LedgerErr.BadRequest(msg: "unknown rounding ${s:?}"))
+  }
+}
+
+// ---------- money ----------
+
+// ISO 4217 minor unit exponents
+const MINOR_UNITS: Map[Str, Int] = {"USD": 2, "EUR": 2, "GBP": 2, "JPY": 0, "KRW": 0, "KWD": 3, "BHD": 3, "CLF": 4}
+
+fn exponent(cur: Str) -> Int ! LedgerErr {
+  MINOR_UNITS.get(cur).or_err(LedgerErr.Unprocessable(msg: "unsupported currency ${cur:?}"))
+}
+
+// parse_amount reads "12.34" in `cur` as minor units; extra digits need a rounding mode
+fn parse_amount(s: Str, cur: Str, mode: Rounding?) -> Int ! LedgerErr {
+  let e = exponent(cur)?
+  let d = dec_parse(s)?
+  if d.scale > e && mode.is_none() {
+    return Err(LedgerErr.Unprocessable(msg: "${cur} has ${e} decimal places; send a rounding mode"))
+  }
+  let rounded = d.round_to(e, mode ?? Rounding.HalfEven)
+  rounded.coef.to_int().or_err(LedgerErr.Unprocessable(msg: "amount ${s} out of range"))
+}
+
+fn format_amount(minor: Int, cur: Str) -> Str {
+  Decimal{coef: big.from_int(minor), scale: MINOR_UNITS.get(cur) ?? 2}.display()
+}
+
+// convert minor units of one currency to another at an exact rate
+fn convert(minor: Int, from: Str, to: Str, rate: Decimal, mode: Rounding) -> Int ! LedgerErr {
+  let amount = Decimal{coef: big.from_int(minor), scale: exponent(from)?}
+  let out = amount.mul(rate).round_to(exponent(to)?, mode)
+  out.coef.to_int().or_err(LedgerErr.Unprocessable(msg: "converted amount out of range"))
+}
+
+// allocate splits total by weights without losing a minor unit (largest remainder)
+fn allocate(total: Int, weights: List[Int]) -> List[Int] ! LedgerErr {
+  let sum = weights.fold(0, fn(a, w) { a + w })
+  if total < 0 || sum <= 0 || weights.any(fn(w) { w < 0 }) {
+    return Err(LedgerErr.BadRequest(msg: "weights must be non negative with a positive sum"))
+  }
+  var shares: List[Int] = []
+  var rems: List[(Int, Int)] = []
+  var given = 0
+  for (i, w) in weights.indexed() {
+    // LANG: no 128 bit integer: total * weight can overflow Int, so the product goes through checked_mul (Go has the same limit; shopspring/decimal avoids it) [minor]
+    let p = total.checked_mul(w) ?? return Err(LedgerErr.Unprocessable(msg: "amount too large to split"))
+    shares.push(p / sum)
+    rems.push((p % sum, i))
+    given += p / sum
+  }
+  var left = total - given
+  for (_, i) in rems.sort_by(fn(t) { -t.0 }) {
+    if left == 0 { break }
+    shares[i] = shares[i] + 1
+    left -= 1
+  }
+  shares
+}
+
+// ---------- API types ----------
+
+struct Account {
+  id: Str
+  name: Str
+  currency: Str
+  kind: Str
+  balance as "balance_minor": Int
+  version: Int
+  created_at: Time
+} derive Json, SqlRow
+
+// GAP: a struct cannot choose its own JSON form (Go's json.Marshaler/Unmarshaler), so Decimal and Money cannot encode as "12.34"; every DTO carries amounts as Str and converts by hand [awkward]
+struct AccountView {
+  id: Str
+  name: Str
+  currency: Str
+  kind: Str
+  balance: Str
+  version: Int
+} derive Json
+
+struct NewAccount {
+  name: Str
+  currency: Str
+  kind: Str = "asset"
+} derive Json
+
+struct Leg {
+  account: Str
+  weight: Int = 1
+} derive Json
+
+struct NewTransfer {
+  from: Str
+  to: List[Leg]
+  amount: Str
+  currency: Str
+  rounding: Str = ""
+  description: Str = ""
+} derive Json
+
+struct EntryView {
+  id: Int
+  transfer_id: Str
+  amount: Str
+  currency: Str
+  created_at: Time
+} derive Json
+
+struct Page {
+  entries: List[EntryView]
+  next_cursor: Str?
+} derive Json
+
+struct Rename {
+  name: Str
+} derive Json
+
+fn view(a: Account) -> AccountView {
+  AccountView{id: a.id, name: a.name, currency: a.currency, kind: a.kind, balance: format_amount(a.balance, a.currency), version: a.version}
+}
+
+// ---------- transactions ----------
+
+fn retryable(e: LedgerErr) -> Bool {
+  // serialization_failure and deadlock_detected
+  e is Db(sql.SqlErr.Server(code: "40001", ..)) || e is Db(sql.SqlErr.Server(code: "40P01", ..))
+}
+
+fn serializable[T, fx: Effects](db: sql.Db, clock: Clock, rand: Rand, f: fn(sql.Tx) -> T ! LedgerErr uses fx) -> T ! LedgerErr
+  uses (net.dial, clock, rand, fx)
+{
+  let policy = backoff.Backoff{initial: 10ms, max_interval: 500ms, max_elapsed: 5s, max_tries: 8}
+  backoff.retry(policy, clock, rand, fn() -> T ! LedgerErr {
+    let tx = db.begin()?
+    defer { tx.rollback().ignore_err("nothing to undo after a commit") }
+    // GAP: begin takes no options, so the isolation level is a statement of its own (Go: db.BeginTx(ctx, &sql.TxOptions{Isolation: sql.LevelSerializable}), pgx.TxOptions) [minor]
+    tx.exec("SET TRANSACTION ISOLATION LEVEL SERIALIZABLE")?
+    let v = f(tx)?
+    tx.commit()?
+    v
+  }, retryable)
+}
+
+fn audit(tx: sql.Tx, actor: Str, action: Str, subject: Str, detail: Map[Str, Str]) -> () ! LedgerErr uses net.dial {
+  tx.exec("INSERT INTO audit_log (actor, action, subject, detail, at) VALUES ($1, $2, $3, $4, now())",
+    [sql.str(actor), sql.str(action), sql.str(subject), sql.json(detail)])?
+  Ok(())
+}
+
+fn emit(tx: sql.Tx, kind: Str, payload: json.Value) -> () ! LedgerErr uses net.dial {
+  tx.exec("INSERT INTO outbox (event_type, payload, attempts, next_attempt_at) VALUES ($1, $2, 0, now())",
+    [sql.str(kind), sql.SqlValue.JsonText(s: payload.encode())])?
+  Ok(())
+}
+
+fn load_account(tx: sql.Tx, id: Str, lock: Bool) -> Account ! LedgerErr uses net.dial {
+  let q = if lock { "SELECT * FROM accounts WHERE id = $1 FOR UPDATE" } else { "SELECT * FROM accounts WHERE id = $1" }
+  match tx.query_one_as[Account](q, [sql.str(id)]) {
+    Ok(a) => a
+    Err(sql.SqlErr.NoRows) => Err(LedgerErr.NotFound(what: "account ${id}"))
+    Err(e) => Err(LedgerErr.Db(e))
+  }
+}
+
+// optimistic locking: the update applies only at the version that was read
+fn post(tx: sql.Tx, a: Account, delta: Int, transfer_id: Str) -> () ! LedgerErr uses net.dial {
+  let next = a.balance.checked_add(delta) ?? return Err(LedgerErr.Unprocessable(msg: "balance overflow"))
+  if a.kind == "asset" && next < 0 {
+    return Err(LedgerErr.Unprocessable(msg: "insufficient funds in ${a.id}"))
+  }
+  let res = tx.exec("UPDATE accounts SET balance_minor = $1, version = version + 1 WHERE id = $2 AND version = $3",
+    [sql.int(next), sql.str(a.id), sql.int(a.version)])?
+  if res.rows_affected != 1 {
+    return Err(LedgerErr.Conflict(msg: "account ${a.id} changed concurrently"))
+  }
+  tx.exec("INSERT INTO entries (transfer_id, account_id, amount_minor, currency, created_at) VALUES ($1, $2, $3, $4, now())",
+    [sql.str(transfer_id), sql.str(a.id), sql.int(delta), sql.str(a.currency)])?
+  Ok(())
+}
+
+fn rate(tx: sql.Tx, base: Str, quote: Str) -> Decimal ! LedgerErr uses net.dial {
+  if base == quote { return Decimal{coef: big.from_int(1), scale: 0} }
+  // numeric arrives as its text (std 10.9), which keeps every digit
+  let row = tx.query_one("SELECT rate::text AS rate FROM fx_rates WHERE base = $1 AND quote = $2 ORDER BY as_of DESC LIMIT 1",
+    [sql.str(base), sql.str(quote)]) ?? e => return match e {
+      sql.SqlErr.NoRows => Err(LedgerErr.Unprocessable(msg: "no rate for ${base}/${quote}"))
+      _ => Err(LedgerErr.Db(e))
+    }
+  dec_parse(row.str("rate")?)
+}
+
+// ---------- idempotency ----------
+
+struct Stored {
+  status: Int
+  body: Str
+}
+
+// replay returns the stored response for a key, or None when the key is new
+fn replay(tx: sql.Tx, key: Str, hash: Str) -> Stored? ! LedgerErr uses net.dial {
+  let rows = tx.query("SELECT request_hash, response_status, response_body FROM idempotency_keys WHERE key = $1", [sql.str(key)])?
+  let row = rows.first() ?? return Ok(None)
+  if row.str("request_hash")? != hash {
+    return Err(LedgerErr.Unprocessable(msg: "Idempotency-Key reused with a different request"))
+  }
+  Some(Stored{status: row.int("response_status")?, body: row.str("response_body")?})
+}
+
+fn remember(tx: sql.Tx, key: Str, hash: Str, s: Stored) -> () ! LedgerErr uses net.dial {
+  tx.exec("INSERT INTO idempotency_keys (key, request_hash, response_status, response_body, created_at) VALUES ($1, $2, $3, $4, now())",
+    [sql.str(key), sql.str(hash), sql.int(s.status), sql.str(s.body)])?
+  Ok(())
+}
+
+fn request_hash(req: http.Request) -> Str {
+  crypto.sha256("${req.method} ${req.path}\n".bytes() + req.body).to_hex()
+}
+
+fn stored_response(s: Stored, replayed: Bool) -> http.Response {
+  http.Response{status: s.status, headers: {"Content-Type": "application/json"}, body: s.body.bytes()}
+    .with_header("Idempotent-Replayed", if replayed { "true" } else { "false" })
+}
+
+// ---------- handlers ----------
+
+struct Deps {
+  db: sql.Db
+  clock: Clock
+  rand: Rand
+}
+
+fn actor_key() -> http.Key[Str] { http.key("actor") }
+
+fn actor(req: http.Request) -> Str { req.value(actor_key()) ?? "unknown" }
+
+fn create_account(d: Deps, req: http.Request) -> http.Response ! LedgerErr {
+  let body = req.json[NewAccount]().map_err(fn(e) { LedgerErr.BadRequest(msg: "${e}") })?
+  let _e = exponent(body.currency)?
+  let id = uuid.v7(d.rand, d.clock).display()
+  let acct = serializable(d.db, d.clock, d.rand, fn(tx) {
+    let a = tx.query_one_as[Account]("INSERT INTO accounts (id, name, currency, kind, balance_minor, version, created_at) VALUES ($1, $2, $3, $4, 0, 1, now()) RETURNING *",
+      [sql.str(id), sql.str(body.name), sql.str(body.currency), sql.str(body.kind)])?
+    audit(tx, actor(req), "account.create", id, {"currency": body.currency})?
+    a
+  })?
+  http.json(201, view(acct)).with_header("ETag", "\"${acct.version}\"")
+}
+
+fn get_balance(d: Deps, req: http.Request) -> http.Response ! LedgerErr {
+  let id = req.param("id")
+  let as_of = match req.query("as_of") {
+    Some(t) => Time.parse_rfc3339(t).or_err(LedgerErr.BadRequest(msg: "as_of must be RFC 3339"))?
+    None => d.clock.now()
+  }
+  let a = d.db.query_one_as[Account]("SELECT * FROM accounts WHERE id = $1", [sql.str(id)]) ?? e => return match e {
+    sql.SqlErr.NoRows => Err(LedgerErr.NotFound(what: "account ${id}"))
+    _ => Err(LedgerErr.Db(e))
+  }
+  // SUM(bigint) is numeric, which the driver reads as text; the cast keeps it an Int column
+  let row = d.db.query_one("SELECT COALESCE(SUM(amount_minor), 0)::bigint AS total FROM entries WHERE account_id = $1 AND created_at <= $2",
+    [sql.str(id), sql.time(as_of)])?
+  let total = row.int("total")?
+  http.json(200, {"account": a.id, "currency": a.currency, "as_of": as_of.format_rfc3339(), "balance": format_amount(total, a.currency)})
+}
+
+// keyset pagination over entries; the cursor is the last id, opaque to clients
+fn list_entries(d: Deps, req: http.Request) -> http.Response ! LedgerErr {
+  let id = req.param("id")
+  let limit = Int.parse(req.query("limit") ?? "50") ?? 50
+  let after = match req.query("cursor") {
+    Some(c) => {
+      let raw = base64.decode(c, enc: base64.Base64.RawUrl).map_err(fn(_e) { LedgerErr.BadRequest(msg: "bad cursor") })?
+      Int.parse(raw.to_str() ?? "").or_err(LedgerErr.BadRequest(msg: "bad cursor"))?
+    }
+    None => 0
+  }
+  let rows = d.db.query("SELECT id, transfer_id, amount_minor, currency, created_at FROM entries WHERE account_id = $1 AND id > $2 ORDER BY id LIMIT $3",
+    [sql.str(id), sql.int(after), sql.int(limit.clamp(1, 500) + 1)])?
+  var out: List[EntryView] = []
+  for row in rows {
+    out.push(EntryView{
+      id: row.int("id")?,
+      transfer_id: row.str("transfer_id")?,
+      amount: format_amount(row.int("amount_minor")?, row.str("currency")?),
+      currency: row.str("currency")?,
+      created_at: row.time("created_at")?,
+    })
+  }
+  var next: Str? = None
+  if out.len() > limit.clamp(1, 500) {
+    let _extra = out.pop()
+    next = out.last().map(fn(e) { base64.encode("${e.id}".bytes(), enc: base64.Base64.RawUrl) })
+  }
+  http.json(200, Page{entries: out, next_cursor: next})
+}
+
+fn rename_account(d: Deps, req: http.Request) -> http.Response ! LedgerErr {
+  let id = req.param("id")
+  let want = Int.parse((req.header("If-Match") ?? "").trim_chars("\"W/")).or_err(LedgerErr.BadRequest(msg: "If-Match with the account version is required"))?
+  let body = req.json[Rename]().map_err(fn(e) { LedgerErr.BadRequest(msg: "${e}") })?
+  let a = serializable(d.db, d.clock, d.rand, fn(tx) {
+    let rows = tx.query_as[Account]("UPDATE accounts SET name = $1, version = version + 1 WHERE id = $2 AND version = $3 RETURNING *",
+      [sql.str(body.name), sql.str(id), sql.int(want)])?
+    let a = rows.first() ?? return Err(LedgerErr.Conflict(msg: "account ${id} is not at version ${want}"))
+    audit(tx, actor(req), "account.rename", id, {"name": body.name})?
+    a
+  })?
+  http.json(200, view(a)).with_header("ETag", "\"${a.version}\"")
+}
+
+// POST /v1/transfers: one debit, one or more credits split by weight, with conversion
+fn create_transfer(d: Deps, req: http.Request) -> http.Response ! LedgerErr {
+  let key = req.header("Idempotency-Key").or_err(LedgerErr.BadRequest(msg: "Idempotency-Key header is required"))?
+  if key.len() > 255 { return Err(LedgerErr.BadRequest(msg: "Idempotency-Key is too long")) }
+  let hash = request_hash(req)
+  let body = req.json[NewTransfer]().map_err(fn(e) { LedgerErr.BadRequest(msg: "${e}") })?
+  if body.to.is_empty() { return Err(LedgerErr.BadRequest(msg: "a transfer needs at least one credit leg")) }
+  let mode = if body.rounding.is_empty() { None } else { Some(rounding_of(body.rounding)?) }
+  let total = parse_amount(body.amount, body.currency, mode)?
+  if total <= 0 { return Err(LedgerErr.BadRequest(msg: "amount must be positive")) }
+  let shares = allocate(total, body.to.map(fn(l) { l.weight }))?
+  let transfer_id = uuid.v7(d.rand, d.clock).display()
+  let result = serializable(d.db, d.clock, d.rand, fn(tx) -> (Stored, Bool) ! LedgerErr {
+    if let Some(prior) = replay(tx, key, hash)? { return (prior, true) }
+    tx.exec("INSERT INTO transfers (id, idempotency_key, description, created_at) VALUES ($1, $2, $3, now())",
+      [sql.str(transfer_id), sql.str(key), sql.str(body.description)])?
+    // lock accounts in id order so concurrent transfers cannot deadlock
+    let ids = ([body.from] + body.to.map(fn(l) { l.account })).to_set().to_list().sort()
+    var accounts: Map[Str, Account] = {}
+    for id in ids { accounts.put(id, load_account(tx, id, lock: true)?) }
+    let src = accounts.get_or_fault(body.from, "loaded above")
+    if src.currency != body.currency {
+      return Err(LedgerErr.Unprocessable(msg: "source account is in ${src.currency}, not ${body.currency}"))
+    }
+    post(tx, src, -total, transfer_id)?
+    var credits: List[json.Value] = []
+    for (i, leg) in body.to.indexed() {
+      // re-read: the source may also be a credit leg, and post bumped its version
+      let dst = load_account(tx, leg.account, lock: false)?
+      let fx = rate(tx, body.currency, dst.currency)?
+      let amount = convert(shares[i], body.currency, dst.currency, fx, mode ?? Rounding.HalfEven)?
+      post(tx, dst, amount, transfer_id)?
+      credits.push(json.to_value({"account": dst.id, "amount": format_amount(amount, dst.currency), "currency": dst.currency, "rate": fx.display()}))
+    }
+    // double entry check per currency: debits equal credits when nothing was converted
+    let sums = tx.query("SELECT currency, SUM(amount_minor)::bigint AS total FROM entries WHERE transfer_id = $1 GROUP BY currency", [sql.str(transfer_id)])?
+    if sums.len() == 1 && sums[0].int("total")? != 0 {
+      fault("transfer ${transfer_id} is unbalanced")
+    }
+    let payload = json.Value.Object(fields: [
+      ("id", json.Value.Str(s: transfer_id)),
+      ("from", json.Value.Str(s: body.from)),
+      ("amount", json.Value.Str(s: format_amount(total, body.currency))),
+      ("currency", json.Value.Str(s: body.currency)),
+      ("credits", json.Value.List(items: credits)),
+    ])
+    emit(tx, "transfer.created", payload)?
+    audit(tx, actor(req), "transfer.create", transfer_id, {"amount": body.amount, "currency": body.currency})?
+    let stored = Stored{status: 201, body: payload.encode()}
+    remember(tx, key, hash, stored)?
+    (stored, false)
+  })?
+  stored_response(result.0, result.1)
+}
+
+// ---------- webhooks ----------
+
+struct Hook {
+  id: Int
+  url: Str
+  secret: Str
+} derive SqlRow
+
+// Stripe style signature: t=<unix>,v1=hex(HMAC-SHA256(secret, "<unix>.<body>"))
+fn signature(secret: Str, at: Int, body: Bytes) -> Str {
+  let mac = crypto.hmac(crypto.Hash.Sha256, secret.bytes(), "${at}.".bytes() + body)
+  "t=${at},v1=${mac.to_hex()}"
+}
+
+// deliver_due sends due outbox events to every webhook; failures back off
+fn deliver_due(d: Deps, client: http.Client) -> Int ! LedgerErr uses (net.dial, clock, rand, log) {
+  let hooks = d.db.query_as[Hook]("SELECT id, url, secret FROM webhooks WHERE active", [])?
+  let policy = backoff.Backoff{initial: 5s, max_interval: 1h}
+  serializable(d.db, d.clock, d.rand, fn(tx) {
+    // SKIP LOCKED lets several workers share the outbox
+    let due = tx.query("SELECT id, event_type, payload::text AS payload, attempts FROM outbox WHERE delivered_at IS NULL AND next_attempt_at <= now() ORDER BY id LIMIT 20 FOR UPDATE SKIP LOCKED")?
+    for ev in due {
+      let id = ev.int("id")?
+      let body = ev.str("payload")?.bytes()
+      let at = d.clock.now().unix()
+      var ok = true
+      for h in hooks {
+        // GAP: no way to give each delivery an outbound request id or trace header from the current span (std 6 log: "span and request id are not attached yet") (Go: otelhttp transport) [minor]
+        let req = http.new_request("POST", h.url, headers: {
+          "Content-Type": "application/json",
+          "X-Ledger-Event": ev.str("event_type")?,
+          "X-Ledger-Delivery": "${id}",
+          "X-Ledger-Signature": signature(h.secret, at, body),
+        }, body: body).with_timeout(10s)
+        match client.send(req) {
+          Ok(resp) if resp.status >= 200 && resp.status < 300 => ()
+          Ok(resp) => {
+            ok = false
+            log.warn("webhook rejected", {"hook": h.id, "event": id, "status": resp.status})
+          }
+          Err(e) => {
+            ok = false
+            log.warn("webhook failed", {"hook": h.id, "event": id, "error": "${e}"})
+          }
+        }
+      }
+      if ok {
+        tx.exec("UPDATE outbox SET delivered_at = now() WHERE id = $1", [sql.int(id)])?
+      } else {
+        let attempts = ev.int("attempts")? + 1
+        let wait = policy.delay(attempts, d.rand)
+        tx.exec("UPDATE outbox SET attempts = $1, next_attempt_at = now() + make_interval(secs => $2) WHERE id = $3",
+          [sql.int(attempts), sql.float(wait.seconds()), sql.int(id)])?
+      }
+    }
+    due.len()
+  })
+}
+
+fn webhook_worker(d: Deps, client: http.Client) {
+  while !task.stop_requested() {
+    match deliver_due(d, client) {
+      Ok(n) if n > 0 => log.info("webhooks delivered", {"events": n})
+      Ok(_) => ()
+      Err(e) => log.error("webhook pass failed", {"error": "${e}"})
+    }
+    d.clock.sleep(2s)
+  }
+}
+
+// ---------- wiring ----------
+
+fn authenticate(keys: Map[Str, Str], req: http.Request, next: http.Next) -> http.Response ! LedgerErr {
+  let given = (req.header("Authorization") ?? "").cut_prefix("Bearer ") ?? return Err(LedgerErr.Unauthorized)
+  // keys maps sha256(key) to the actor name, so the lookup never compares the secret itself
+  let digest = crypto.sha256(given.bytes()).to_hex()
+  let who = keys.get(digest) ?? return Err(LedgerErr.Unauthorized)
+  Ok(next(req.with_value(actor_key(), who)))
+}
+
+fn routes(d: Deps, keys: Map[Str, Str]) -> http.Router {
+  var api = http.router()
+  api.wrap(fn(req, next) { authenticate(keys, req, next) })
+  api.handle("POST /accounts", fn(req) { create_account(d, req) })
+  api.handle("GET /accounts/{id}/balance", fn(req) { get_balance(d, req) })
+  api.handle("GET /accounts/{id}/entries", fn(req) { list_entries(d, req) })
+  api.handle("PATCH /accounts/{id}", fn(req) { rename_account(d, req) })
+  api.handle("POST /transfers", fn(req) { create_transfer(d, req) })
+  var r = http.router()
+  r.handle("GET /healthz", fn(_req) -> http.Response ! LedgerErr {
+    d.db.ping()?
+    http.text(200, "ok")
+  })
+  r.mount("/v1", api)
+  r
+}
+
+fn main(os: Os) ! {
+  log.configure(os.stdio, format: log.Format.Json)
+  let dsn = os.env.get("DATABASE_URL") ?? return Err(EnvErr.Missing(name: "DATABASE_URL"))
+  let db = sql.open(os.net, "postgres", dsn, max_open: 20, max_idle: 5)?
+  var keys: Map[Str, Str] = {}
+  for pair in (os.env.get("LEDGER_API_KEYS") ?? "").split(",") {
+    let (who, key) = pair.cut(":") ?? continue
+    keys.put(crypto.sha256(key.bytes()).to_hex(), who)
+  }
+  let d = Deps{db: db, clock: os.clock, rand: os.rand}
+  let hooks = http.client(os.net, timeout: 15s)
+  os.tasks.spawn_background(fn() { webhook_worker(d, hooks) })
+  let srv = http.server(os.net.listen(os.env.get("ADDR") ?? ":8080")?, routes(d, keys))
+    .with_read_header_timeout(5s)
+    .with_max_body(1048576)
+  log.info("ledger listening", {"addr": srv.addr()})
+  srv.serve()?
+}

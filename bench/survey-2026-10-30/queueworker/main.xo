@@ -1,0 +1,713 @@
+// queueworker: a reliable Redis queue worker that speaks RESP2/RESP3
+// over TCP itself, written from spec/core.md and spec/std.md alone for
+// the 2026-10-30 backend gap survey. BLMOVE into a processing list,
+// leases in a sorted set (visibility timeout), a reaper that re-queues
+// expired leases, retries with backoff through a delayed set, a dead
+// letter list, a fixed number of workers, a connection pool with
+// reconnect, graceful drain on SIGTERM, and an HTTP health and metrics
+// endpoint.
+//
+// Markers: GAP (std or language lacks something a Go service uses),
+// LANG (syntax or semantics got in the way), SPEC (spec unclear).
+//
+// GAP: no Redis client in std (Go: none in std either; go-redis is the
+// usual dependency), so RESP is written here over Net. [minor]
+use std/http
+use std/json
+use std/log
+use std/task
+use std/metrics
+use std/backoff
+use std/tls
+use std/uuid
+
+const MAX_LINE = 65536
+const MAX_BULK = 16777216
+const VISIBILITY = 30s
+const REAP_EVERY = 5s
+const BLOCK_SECS = "1"
+
+// ---------------------------------------------------------------- RESP
+
+enum Resp {
+  Simple(s: Str)
+  Error(msg: Str)
+  Int(n: Int)
+  Bulk(b: Bytes)
+  Null
+  Array(items: List[Resp])
+  Map(pairs: List[(Resp, Resp)])
+  Bool(b: Bool)
+  Double(f: Float)
+  Push(items: List[Resp])
+}
+
+enum RedisErr {
+  Net(from NetErr)
+  Protocol(msg: Str)
+  Server(msg: Str)
+  Closed
+  Exhausted
+}
+
+fn (e: RedisErr) display() -> Str {
+  match e {
+    Net(n) => "redis: ${n}"
+    Protocol(msg) => "redis: protocol error: ${msg}"
+    Server(msg) => "redis: ${msg}"
+    Closed => "redis: connection closed"
+    Exhausted => "redis: pool exhausted"
+  }
+}
+
+// Whether the connection can be reused after this error.
+fn (e: RedisErr) conn_ok() -> Bool {
+  e is Server(_)
+}
+
+fn encode_cmd(args: List[Str]) -> Bytes {
+  var b = BytesBuilder.with_capacity(64)
+  b.write_str("*${args.len()}\r\n")
+  for a in args {
+    b.write_str("$${a.len()}\r\n")
+    b.write_str(a)
+    b.write_str("\r\n")
+  }
+  b.freeze()
+}
+
+// A connection with its read buffer.
+// GAP: no buffered reader over a Stream (read_line, read_exact); every
+// line protocol writes its own buffer. (Go: bufio.Reader) [awkward]
+struct RespConn {
+  s: Stream
+  buf: Bytes = b""
+  id: Int
+}
+
+// GAP: no read or write deadline on a Conn or TlsConn. A hung server
+// holds a non-blocking command forever; the workaround is
+// task.with_timeout around the call, which cancels the read mid reply,
+// so the connection must then be thrown away. (Go: net.Conn.SetDeadline) [awkward]
+fn (var rc: RespConn) fill() -> () ! RedisErr {
+  let more = rc.s.read(65536)? ?? return Err(RedisErr.Closed)
+  // LANG: the unread rest is copied into a new Bytes on every fill;
+  // there is no growable byte buffer with a read cursor that can be
+  // consumed from the front. (Go: bufio.Reader's ring) [awkward]
+  rc.buf = rc.buf + more
+}
+
+fn (var rc: RespConn) read_line() -> Str ! RedisErr {
+  while {
+    if let i = rc.buf.find(b"\r\n") {
+      let line = rc.buf[..i].to_str() ?? return Err(RedisErr.Protocol("line is not UTF-8"))
+      rc.buf = rc.buf[i + 2..]
+      return line
+    }
+    if rc.buf.len() > MAX_LINE {
+      return Err(RedisErr.Protocol("line too long"))
+    }
+    rc.fill()?
+  }
+}
+
+fn (var rc: RespConn) read_exact(n: Int) -> Bytes ! RedisErr {
+  while rc.buf.len() < n + 2 {
+    rc.fill()?
+  }
+  let data = rc.buf[..n].clone()
+  if rc.buf[n..n + 2] != b"\r\n" {
+    return Err(RedisErr.Protocol("bulk string without CRLF"))
+  }
+  rc.buf = rc.buf[n + 2..]
+  data
+}
+
+fn parse_len(s: Str) -> Int ! RedisErr {
+  let n = Int.parse(s).or_err(RedisErr.Protocol("bad length ${s.quote()}"))?
+  if n > MAX_BULK {
+    return Err(RedisErr.Protocol("length ${n} over limit"))
+  }
+  n
+}
+
+fn (var rc: RespConn) read_items(n: Int) -> List[Resp] ! RedisErr {
+  var items = List[Resp].with_capacity(n)
+  for _ in 0..n {
+    items.push(rc.read_value()?)
+  }
+  items
+}
+
+fn (var rc: RespConn) read_value() -> Resp ! RedisErr {
+  let line = rc.read_line()?
+  if line.is_empty() {
+    return Err(RedisErr.Protocol("empty line"))
+  }
+  let rest = line[1..]
+  // LANG: a Str cannot be indexed by position (core 3.6), so the type
+  // byte is matched as a one character prefix slice. [minor]
+  match line[..1] {
+    "+" => Resp.Simple(rest)
+    "-" | "!" => Resp.Error(rest)
+    ":" => Resp.Int(Int.parse(rest).or_err(RedisErr.Protocol("bad integer"))?)
+    "$" | "=" => {
+      let n = parse_len(rest)?
+      if n < 0 { Resp.Null } else { Resp.Bulk(rc.read_exact(n)?) }
+    }
+    "*" | "~" | ">" => {
+      let n = parse_len(rest)?
+      if n < 0 {
+        return Resp.Null
+      }
+      let items = rc.read_items(n)?
+      if line[..1] == ">" { Resp.Push(items) } else { Resp.Array(items) }
+    }
+    "%" => {
+      let n = parse_len(rest)?
+      let flat = rc.read_items(n * 2)?
+      var pairs = List[(Resp, Resp)].with_capacity(n)
+      for i in 0..n {
+        pairs.push((flat[2 * i], flat[2 * i + 1]))
+      }
+      Resp.Map(pairs)
+    }
+    "_" => Resp.Null
+    "#" => Resp.Bool(rest == "t")
+    "," => Resp.Double(Float.parse(rest).or_err(RedisErr.Protocol("bad double"))?)
+    "(" => Resp.Simple(rest)
+    _ => Err(RedisErr.Protocol("unknown type ${line[..1].quote()}"))
+  }
+}
+
+fn (var rc: RespConn) call(args: List[Str]) -> Resp ! RedisErr {
+  rc.s.write(encode_cmd(args))?
+  match rc.read_value()? {
+    Resp.Error(msg) => Err(RedisErr.Server(msg))
+    v => v
+  }
+}
+
+// MULTI ... EXEC in one round trip; returns EXEC's reply.
+fn (var rc: RespConn) transaction(cmds: List[List[Str]]) -> Resp ! RedisErr {
+  var b = BytesBuilder.new()
+  b.write(encode_cmd(["MULTI"]))
+  for c in cmds {
+    b.write(encode_cmd(c))
+  }
+  b.write(encode_cmd(["EXEC"]))
+  rc.s.write(b.freeze())?
+  for _ in 0..cmds.len() + 1 {
+    if let Resp.Error(msg) = rc.read_value()? {
+      return Err(RedisErr.Server(msg))
+    }
+  }
+  match rc.read_value()? {
+    Resp.Error(msg) => Err(RedisErr.Server(msg))
+    v => v
+  }
+}
+
+fn bulk_str(v: Resp) -> Str? {
+  match v {
+    Resp.Bulk(b) => b.to_str()
+    Resp.Simple(s) => Some(s)
+    _ => None
+  }
+}
+
+// ---------------------------------------------------------------- pool
+
+struct RedisCfg {
+  addr: Str
+  host: Str
+  password: Secret[Str]?
+  use_tls: Bool
+}
+
+struct Pool {
+  idle: Chan[RespConn]
+  open: Atomic[Int]
+  next_id: Atomic[Int]
+  max: Int
+  cfg: RedisCfg
+  net: Net
+  clock: Clock
+  rand: Rand
+  dials: metrics.Counter
+}
+
+fn (p: Pool) dial_once() -> RespConn ! RedisErr {
+  let conn = p.net.dial_timeout(p.cfg.addr, 5s)?
+  // A plain and a TLS connection are different handle types; both fit
+  // the prelude's Stream interface, so the pool stores that.
+  // SPEC: core 2.10 says conversions are not applied when joining
+  // branches (`if` arms must already agree), yet xo check accepts these
+  // arms (TlsConn and Conn) under the `Stream` annotation.
+  let s: Stream = if p.cfg.use_tls { tls.client(conn, p.cfg.host)? } else { conn }
+  var rc = RespConn{s: s, id: p.next_id.add(1)}
+  // RESP3 when the server has it, else RESP2 with AUTH.
+  var hello = ["HELLO", "3"]
+  if let pw = p.cfg.password {
+    hello = hello + ["AUTH", "default", pw.reveal()]
+  }
+  match rc.call(hello) {
+    Ok(_) => ()
+    Err(RedisErr.Server(msg)) if msg.starts_with("ERR unknown command") => {
+      if let pw = p.cfg.password {
+        let _ok = rc.call(["AUTH", pw.reveal()])?
+      }
+    }
+    Err(e) => return Err(e)
+  }
+  p.dials.inc()
+  rc
+}
+
+// Dial with exponential backoff; cancellation ends the retries.
+fn (p: Pool) dial() -> RespConn ! RedisErr {
+  let b = backoff.Backoff{initial: 100ms, max_interval: 5s, max_elapsed: 30s}
+  // LANG: retryable must be pure (fn(E) -> Bool), so the failure is
+  // logged inside op; there is no notify hook. (Go: cenkalti
+  // backoff.RetryNotify) [minor]
+  backoff.retry(b, p.clock, p.rand, fn() {
+    let r = p.dial_once()
+    if let e = r.err() {
+      log.warn("redis dial failed", {"err": e.display()})
+    }
+    r
+  }, fn(e: RedisErr) { !(e is Server(_)) })
+}
+
+fn (p: Pool) get() -> RespConn ! RedisErr {
+  if let c = p.idle.try_recv() {
+    return c
+  }
+  if p.open.add(1) <= p.max {
+    match p.dial() {
+      Ok(c) => return c
+      Err(e) => {
+        p.open.add(-1)
+        return Err(e)
+      }
+    }
+  }
+  p.open.add(-1)
+  select {
+    c = p.idle.recv() => c.or_err(RedisErr.Closed)
+    after 5s => Err(RedisErr.Exhausted)
+  }
+}
+
+fn (p: Pool) put(c: RespConn) {
+  if !p.idle.try_send(c) {
+    p.discard_handle()
+  }
+}
+
+fn (p: Pool) discard(c: RespConn) {
+  c.s.close()
+  p.open.add(-1)
+}
+
+fn (p: Pool) discard_handle() {
+  p.open.add(-1)
+}
+
+// Runs f on a pooled connection; a broken connection is dropped, not
+// returned, so a half read reply never reaches the next user. A
+// cancelled read is a broken connection too (its reply is still owed).
+// (A first draft wrote `uses fx` and got XO0701 for the pool's own
+// net, clock, rand and log; leaving the clause out lets inference add
+// them to fx, as core 6.2 says for non pub functions.)
+fn (p: Pool) with_conn[T, fx: Effects](f: fn(var RespConn) -> T ! RedisErr uses fx) -> T ! RedisErr {
+  var c = p.get()?
+  match f(c) {
+    Ok(v) => {
+      p.put(c)
+      Ok(v)
+    }
+    Err(e) => {
+      if e.conn_ok() { p.put(c) } else { p.discard(c) }
+      Err(e)
+    }
+  }
+}
+
+fn (p: Pool) cmd(args: List[Str]) -> Resp ! RedisErr {
+  p.with_conn(fn(var c) { c.call(args) })
+}
+
+// ---------------------------------------------------------------- jobs
+
+struct Job {
+  id: Str
+  kind as "type": Str
+  payload: json.Value
+  attempts: Int = 0
+  max_attempts: Int = 5
+  enqueued_at: Time
+  last_error as "last_error,omitempty": Str? = None
+} derive Json
+
+enum JobErr {
+  Retryable(msg: Str)
+  Permanent(msg: Str)
+}
+
+fn (e: JobErr) display() -> Str {
+  match e {
+    Retryable(m) => m
+    Permanent(m) => "permanent: ${m}"
+  }
+}
+
+type Handler = fn(Job) -> () ! JobErr uses (net, clock)
+
+struct Keys {
+  ready: Str
+  processing: Str
+  leases: Str
+  delayed: Str
+  dead: Str
+  jobs: Str
+}
+
+fn keys(q: Str) -> Keys {
+  Keys{ready: "${q}:ready", processing: "${q}:processing", leases: "${q}:leases", delayed: "${q}:delayed", dead: "${q}:dead", jobs: "${q}:jobs"}
+}
+
+// Atomic move of one id out of a sorted set into a list, only when this
+// caller removed it (so a reaper and a finishing worker never both act).
+const MOVE_LUA = r"""
+if redis.call('ZREM', KEYS[1], ARGV[1]) == 1 then
+  redis.call('LREM', KEYS[2], 1, ARGV[1])
+  redis.call('RPUSH', KEYS[3], ARGV[1])
+  return 1
+end
+return 0
+"""
+
+struct WorkerMetrics {
+  processed: metrics.Counter
+  seconds: metrics.Histogram
+  in_flight: metrics.Gauge
+  requeued: metrics.Counter
+}
+
+struct Ctx {
+  pool: Pool
+  k: Keys
+  clock: Clock
+  rand: Rand
+  handlers: Map[Str, Handler]
+  job_timeout: Duration
+  retry: backoff.Backoff
+  m: WorkerMetrics
+}
+
+fn now_ms(c: Clock) -> Str {
+  "${c.now().unix_millis()}"
+}
+
+fn worker(ctx: Ctx, n: Int) {
+  log.info("worker started", {"worker": n})
+  // Drain: the stop request ends the loop between jobs; a job in hand
+  // finishes (the grace period bounds it).
+  while !task.stop_requested() {
+    let got = ctx.pool.cmd(["BLMOVE", ctx.k.ready, ctx.k.processing, "RIGHT", "LEFT", BLOCK_SECS])
+    match got {
+      Ok(Resp.Null) => continue
+      Ok(v) => {
+        let id = bulk_str(v) ?? continue
+        process(ctx, id)
+      }
+      Err(e) => {
+        log.error("dequeue failed", {"worker": n, "err": e.display()})
+        if ctx.clock.sleep_or_cancel(1s) is Err(_) {
+          break
+        }
+      }
+    }
+  }
+  log.info("worker drained", {"worker": n})
+}
+
+fn process(ctx: Ctx, id: Str) {
+  let lease_until = "${ctx.clock.now().unix_millis() + VISIBILITY.millis()}"
+  let loaded = ctx.pool.with_conn(fn(var c) {
+    let _added = c.call(["ZADD", ctx.k.leases, lease_until, id])?
+    c.call(["HGET", ctx.k.jobs, id])
+  })
+  let text = match loaded {
+    Ok(v) => bulk_str(v) ?? {
+      log.warn("job body missing, dropping", {"id": id})
+      finish(ctx, id, [["LREM", ctx.k.processing, "1", id], ["ZREM", ctx.k.leases, id]])
+      return
+    }
+    Err(e) => {
+      // the lease (if any) expires and the reaper re-queues it
+      log.error("load failed", {"id": id, "err": e.display()})
+      return
+    }
+  }
+  var job = json.decode_str[Job](text) ?? e => {
+    log.error("bad job JSON, dead lettering", {"id": id, "err": "${e}"})
+    finish(ctx, id, [["LREM", ctx.k.processing, "1", id], ["ZREM", ctx.k.leases, id], ["LPUSH", ctx.k.dead, id]])
+    return
+  }
+  let handler = ctx.handlers.get(job.kind) ?? {
+    log.error("no handler", {"id": id, "type": job.kind})
+    finish(ctx, id, [["LREM", ctx.k.processing, "1", id], ["ZREM", ctx.k.leases, id], ["LPUSH", ctx.k.dead, id]])
+    return
+  }
+
+  ctx.m.in_flight.add(1.0)
+  defer ctx.m.in_flight.add(-1.0)
+  let started = ctx.clock.now()
+  // The handler runs under a deadline while a background task extends
+  // the lease, so a long job is not re-queued under it.
+  let outcome = scope s {
+    s.spawn_background(fn() { extend_lease(ctx, id) })
+    task.with_timeout(ctx.clock, ctx.job_timeout, fn() { handler(job) })
+  }
+  ctx.m.seconds.observe(ctx.clock.since(started).seconds(), [job.kind])
+
+  match outcome {
+    Ok(()) => {
+      ctx.m.processed.inc([job.kind, "ok"])
+      finish(ctx, id, [["LREM", ctx.k.processing, "1", id], ["ZREM", ctx.k.leases, id], ["HDEL", ctx.k.jobs, id]])
+    }
+    Err(err) => {
+      let (msg, permanent) = match err {
+        task.Timed.TimedOut => ("timed out after ${ctx.job_timeout}", false)
+        task.Timed.Failed(JobErr.Retryable(m)) => (m, false)
+        task.Timed.Failed(JobErr.Permanent(m)) => (m, true)
+      }
+      job.attempts += 1
+      job.last_error = Some(msg)
+      let body = json.encode_str(job)
+      let base = [["HSET", ctx.k.jobs, id, body], ["LREM", ctx.k.processing, "1", id], ["ZREM", ctx.k.leases, id]]
+      if permanent || job.attempts >= job.max_attempts {
+        ctx.m.processed.inc([job.kind, "dead"])
+        log.warn("job dead lettered", {"id": id, "attempts": job.attempts, "err": msg})
+        finish(ctx, id, base + [["LPUSH", ctx.k.dead, id]])
+      } else {
+        let delay = ctx.retry.delay(job.attempts - 1, ctx.rand)
+        let due = "${ctx.clock.now().unix_millis() + delay.millis()}"
+        ctx.m.processed.inc([job.kind, "retry"])
+        log.info("job retry scheduled", {"id": id, "attempt": job.attempts, "in": delay, "err": msg})
+        finish(ctx, id, base + [["ZADD", ctx.k.delayed, due, id]])
+      }
+    }
+  }
+}
+
+fn finish(ctx: Ctx, id: Str, cmds: List[List[Str]]) {
+  let done = ctx.pool.with_conn(fn(var c) { c.transaction(cmds) })
+  if done is Err(_) {
+    // left in processing with its lease: the reaper re-queues it, so the
+    // job may run again (at least once delivery)
+    log.error("finish failed; job will be retried by the reaper", {"id": id})
+  }
+}
+
+fn extend_lease(ctx: Ctx, id: Str) {
+  while {
+    ctx.clock.sleep(VISIBILITY / 3)
+    let until = "${ctx.clock.now().unix_millis() + VISIBILITY.millis()}"
+    let ok = ctx.pool.cmd(["ZADD", ctx.k.leases, "XX", until, id])
+    if ok is Err(_) {
+      log.warn("lease extension failed", {"id": id})
+    }
+  }
+}
+
+// Re-queues jobs whose lease expired (a crashed or stuck worker), and
+// promotes delayed retries that are due. One loop, both sorted sets.
+fn reaper(ctx: Ctx) {
+  while !task.stop_requested() {
+    if ctx.clock.sleep_or_cancel(REAP_EVERY) is Err(_) {
+      return
+    }
+    let now = now_ms(ctx.clock)
+    let moved = ctx.pool.with_conn(fn(var c) -> Int ! RedisErr {
+      var n = 0
+      let expired = c.call(["ZRANGEBYSCORE", ctx.k.leases, "-inf", now, "LIMIT", "0", "100"])?
+      n += move_all(c, expired, ctx.k.leases, ctx.k.processing, ctx.k.ready)?
+      let due = c.call(["ZRANGEBYSCORE", ctx.k.delayed, "-inf", now, "LIMIT", "0", "100"])?
+      n += move_all(c, due, ctx.k.delayed, ctx.k.processing, ctx.k.ready)?
+      n
+    })
+    match moved {
+      Ok(0) => ()
+      Ok(n) => {
+        ctx.m.requeued.add(Float(n))
+        log.info("requeued", {"count": n})
+      }
+      Err(e) => log.error("reaper failed", {"err": e.display()})
+    }
+  }
+}
+
+fn move_all(var c: RespConn, ids: Resp, from_set: Str, processing: Str, ready: Str) -> Int ! RedisErr {
+  let items = match ids {
+    Resp.Array(xs) => xs
+    _ => []
+  }
+  var n = 0
+  for v in items {
+    let id = bulk_str(v) ?? continue
+    if c.call(["EVAL", MOVE_LUA, "3", from_set, processing, ready, id])? == Resp.Int(1) {
+      n += 1
+    }
+  }
+  Ok(n)
+}
+
+// ---------------------------------------------------------------- handlers
+
+fn webhook(client: http.Client) -> Handler {
+  fn(job: Job) -> () ! JobErr {
+    let url = match job.payload.get("url") {
+      Some(json.Value.Str(u)) => u
+      _ => return Err(JobErr.Permanent("payload.url missing"))
+    }
+    let body = job.payload.get("body") ?? json.Value.Null
+    let resp = client.post_json(url, body).map_err(fn(e) { JobErr.Retryable("${e}") })?
+    match resp.status {
+      200..=299 => Ok(())
+      408 | 429 | 500..=599 => Err(JobErr.Retryable("status ${resp.status}"))
+      s => Err(JobErr.Permanent("status ${s}"))
+    }
+  }
+}
+
+fn sleeper(clock: Clock) -> Handler {
+  fn(job: Job) -> () ! JobErr {
+    let ms = match job.payload.get("ms") {
+      Some(json.Value.Int(n)) => n
+      _ => 100
+    }
+    clock.sleep(Duration.from_millis(ms))
+    Ok(())
+  }
+}
+
+// ---------------------------------------------------------------- http
+
+struct EnqueueReq {
+  kind as "type": Str
+  payload: json.Value
+  max_attempts: Int = 5
+} derive Json
+
+struct Depths {
+  ready: Int
+  processing: Int
+  delayed: Int
+  dead: Int
+} derive Json
+
+fn int_of(v: Resp) -> Int {
+  match v {
+    Resp.Int(n) => n
+    _ => 0
+  }
+}
+
+fn routes(ctx: Ctx, reg: metrics.Registry) -> http.Router {
+  var r = http.router()
+  r.handle("GET /healthz", fn(_req) {
+    match ctx.pool.cmd(["PING"]) {
+      Ok(_) => http.text(200, "ok")
+      Err(e) => http.text(503, e.display())
+    }
+  })
+  r.handle("GET /readyz", fn(_req) {
+    if task.stop_requested() { http.text(503, "draining") } else { http.text(200, "ready") }
+  })
+  r.handle("GET /metrics", reg.handler())
+  r.handle("GET /queues", fn(_req) -> http.Response ! RedisErr {
+    let d = ctx.pool.with_conn(fn(var c) {
+      Depths{
+        ready: int_of(c.call(["LLEN", ctx.k.ready])?),
+        processing: int_of(c.call(["LLEN", ctx.k.processing])?),
+        delayed: int_of(c.call(["ZCARD", ctx.k.delayed])?),
+        dead: int_of(c.call(["LLEN", ctx.k.dead])?),
+      }
+    })?
+    http.json(200, d)
+  })
+  r.handle("POST /enqueue", fn(req) -> http.Response ! Error {
+    let body = req.json[EnqueueReq]()?
+    let job = Job{id: uuid.v7(ctx.rand, ctx.clock).display(), kind: body.kind, payload: body.payload, max_attempts: body.max_attempts, enqueued_at: ctx.clock.now()}
+    let _ = ctx.pool.with_conn(fn(var c) {
+      c.transaction([["HSET", ctx.k.jobs, job.id, json.encode_str(job)], ["LPUSH", ctx.k.ready, job.id]])
+    })?
+    http.json(202, {"id": job.id})
+  })
+  r
+}
+
+// ---------------------------------------------------------------- main
+
+fn main(os: Os) ! {
+  log.configure(os.stdio, format: log.Format.Json)
+  let env = os.env
+  let addr = env.get("REDIS_ADDR") ?? "127.0.0.1:6379"
+  let concurrency = Int.parse(env.get("CONCURRENCY") ?? "8") ?? 8
+  let cfg = RedisCfg{
+    addr: addr,
+    host: (addr.cut(":") ?? (addr, "")).0,
+    password: env.get("REDIS_PASSWORD").map(fn(p) { Secret[Str].new(p) }),
+    use_tls: env.get("REDIS_TLS") == Some("1"),
+  }
+  os.proc.set_grace(60s)
+
+  let reg = metrics.registry()
+  let pool = Pool{
+    idle: Chan[RespConn].new(cap: concurrency + 4),
+    open: Atomic[Int].new(0),
+    next_id: Atomic[Int].new(0),
+    max: concurrency + 4,
+    cfg: cfg,
+    net: os.net,
+    clock: os.clock,
+    rand: os.rand,
+    dials: reg.counter("redis_dials_total", "Redis connections opened."),
+  }
+  reg.gauge_func("redis_pool_open", "Open Redis connections.", fn() { Float(pool.open.get()) })
+  let client = http.client(os.net, timeout: 20s)
+  let ctx = Ctx{
+    pool: pool,
+    k: keys(env.get("QUEUE") ?? "jobs"),
+    clock: os.clock,
+    rand: os.rand,
+    handlers: {"webhook": webhook(client), "sleep": sleeper(os.clock)},
+    job_timeout: Duration.parse(env.get("JOB_TIMEOUT") ?? "60s")?,
+    retry: backoff.Backoff{initial: 1s, multiplier: 2.0, max_interval: 10m},
+    m: WorkerMetrics{
+      processed: reg.counter("jobs_processed_total", "Jobs finished, by type and outcome.", labels: ["type", "outcome"]),
+      seconds: reg.histogram("job_seconds", "Handler time.", labels: ["type"]),
+      in_flight: reg.gauge("jobs_in_flight", "Jobs being handled."),
+      requeued: reg.counter("jobs_requeued_total", "Expired leases and due retries moved to ready."),
+    },
+  }
+
+  let l = os.net.listen(env.get("HTTP_ADDR") ?? ":9090")?
+  let srv = http.server(l, routes(ctx, reg)).with_read_header_timeout(5s)
+  log.info("starting", {"redis": addr, "workers": concurrency, "http": l.addr()})
+
+  // LANG: Ctx is a struct of handles; with no reference type, each spawn
+  // copies it and counts up its 58 heap fields (xo vet XO0534). (Go: a
+  // *Ctx shared by pointer) [minor]
+  scope s {
+    for i in 0..concurrency {
+      s.spawn(fn() { worker(ctx, i) })
+    }
+    s.spawn_background(fn() { reaper(ctx) })
+    s.spawn(fn() { srv.serve() })
+  }
+  log.info("drained", {})
+}

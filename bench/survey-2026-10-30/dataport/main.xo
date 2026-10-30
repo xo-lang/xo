@@ -1,0 +1,537 @@
+// dataport: a batch job that imports customer and order rows from CSV,
+// TSV or XLSX files (optionally gzipped) into Postgres and exports query
+// results back to CSV or XLSX. Written for the 2026-10-30 backend gap
+// survey from spec/core.md and spec/std.md alone; every `GAP:` comment
+// marks what the code needed and the docs do not offer.
+//
+//   dataport import --file orders.csv.gz --table orders --batch 1000
+//   dataport export --query orders_since --since 2026-01-01 --out orders.xlsx
+use std/archive
+use std/cli
+use std/compress
+use std/csv
+use std/log
+use std/sql
+use std/time
+use std/xml
+
+const MAX_PARAMS: Int = 65535
+
+enum PortErr {
+  Usage(msg: Str)
+  Format(file: Str, line: Int, msg: Str)
+  Db(err: sql.SqlErr)
+  Files(err: FsErr)
+}
+
+fn (e: PortErr) display() -> Str {
+  match e {
+    PortErr.Usage(m) => "usage: ${m}"
+    PortErr.Format(file: f, line: l, msg: m) => "${f}:${l}: ${m}"
+    PortErr.Db(err) => "database: ${err}"
+    PortErr.Files(err) => "file: ${err}"
+  }
+}
+
+fn db_err(e: sql.SqlErr) -> PortErr { PortErr.Db(e) }
+fn fs_err(e: FsErr) -> PortErr { PortErr.Files(e) }
+
+/// A column of the target table: how a cell's text becomes a value.
+enum Kind { Text, Integer, Money, Date, Email, Flag }
+
+struct Column {
+  name: Str
+  kind: Kind
+  required: Bool
+}
+
+struct Rejected {
+  line: Int
+  column: Str
+  value: Str
+  reason: Str
+}
+
+struct Stats {
+  read: Int = 0
+  inserted: Int = 0
+  rejected: Int = 0
+  duplicates: Int = 0
+}
+
+fn orders_schema() -> List[Column] {
+  [
+    Column{name: "order_id", kind: Kind.Text, required: true},
+    Column{name: "customer_email", kind: Kind.Email, required: true},
+    Column{name: "placed_on", kind: Kind.Date, required: true},
+    Column{name: "quantity", kind: Kind.Integer, required: true},
+    // GAP: no exact decimal type, so money is parsed by hand into cents
+    // (Go: shopspring/decimal, math/big.Rat) [awkward]
+    Column{name: "amount_cents", kind: Kind.Money, required: true},
+    Column{name: "gift", kind: Kind.Flag, required: false},
+    Column{name: "note", kind: Kind.Text, required: false},
+  ]
+}
+
+// ---------------------------------------------------------------------------
+// Reading the input
+
+/// The text of a file: gunzipped when it ends in .gz, a UTF-8 BOM removed.
+fn read_input(fs: Fs, path: Str) -> Str ! PortErr uses fs.read {
+  // GAP: no streaming CSV reader over a File (csv.parse takes the whole
+  // text), so a 5 GB export is read into memory; File.read_line cannot
+  // be used because a quoted field may hold newlines
+  // (Go: encoding/csv NewReader(io.Reader).Read) [blocker for large files]
+  var data = fs.read(path).map_err(fs_err)?
+  if path.ends_with(".gz") {
+    data = compress.gunzip(data, max_size: 1 << 34) ?? e => return Err(PortErr.Format(file: path, line: 0, msg: "${e}"))
+  }
+  if data.starts_with(b"\xef\xbb\xbf") {
+    data = data[3..data.len()]
+  }
+  if data.starts_with(b"\xff\xfe") || data.starts_with(b"\xfe\xff") {
+    // GAP: no UTF-16 or Windows-1252 decoding; Excel's "Unicode Text"
+    // export is UTF-16LE and its plain CSV is cp1252 on Windows
+    // (Go: golang.org/x/text/encoding/unicode, charmap) [blocker]
+    return Err(PortErr.Format(file: path, line: 0, msg: "UTF-16 input is not supported"))
+  }
+  match data.to_str() {
+    Some(s) => Ok(s)
+    // GAP: no lossy Bytes to Str (invalid bytes as U+FFFD): Fs.read_text
+    // decodes so, but bytes from gunzip have only to_str, which rejects
+    // the whole file (Go: strings.ToValidUTF8) [minor]
+    None => Err(PortErr.Format(file: path, line: 0, msg: "the file is not valid UTF-8"))
+  }
+}
+
+/// The rows of a CSV or TSV text, the header first.
+fn read_delimited(path: Str, text: Str) -> List[List[Str]] ! PortErr {
+  let sep: Rune = if path.contains(".tsv") { '\t' } else { sniff_sep(text) }
+  csv.parse(text, sep: sep, fields: 0) ?? e => Err(PortErr.Format(file: path, line: e.line, msg: e.msg))
+}
+
+/// The separator of the first line: the most common of , ; \t |.
+fn sniff_sep(text: Str) -> Rune {
+  let first = (text.cut("\n") ?? (text, "")).0
+  var best: Rune = ','
+  var count = 0
+  for r in [',', ';', '\t', '|'] {
+    let n = first.count("${r}")
+    if n > count {
+      best = r
+      count = n
+    }
+  }
+  best
+}
+
+/// The rows of the first sheet of an XLSX workbook, the header first.
+fn read_xlsx(fs: Fs, path: Str) -> List[List[Str]] ! PortErr uses fs.read {
+  // GAP: archive.unzip reads every entry into memory at once; no reader
+  // that opens one entry of a zip on disk (Go: archive/zip OpenReader,
+  // File.Open) [awkward]
+  let data = fs.read(path).map_err(fs_err)?
+  let entries = archive.unzip(data) ?? e => return Err(PortErr.Format(file: path, line: 0, msg: "${e}"))
+  var shared: List[Str] = []
+  var sheet: Str? = None
+  for e in entries {
+    if e.path == "xl/sharedStrings.xml" {
+      shared = shared_strings(path, e.data)?
+    } else if e.path == "xl/worksheets/sheet1.xml" {
+      sheet = e.data.to_str()
+    }
+  }
+  let text = sheet ?? return Err(PortErr.Format(file: path, line: 0, msg: "no first sheet"))
+  // GAP: xml.parse builds the whole tree; no streaming token reader for a
+  // sheet of a million rows (Go: encoding/xml Decoder.Token over a
+  // Reader) [awkward]
+  let root = xml.parse(text) ?? e => return Err(PortErr.Format(file: path, line: e.line, msg: e.msg))
+  let data_el = root.child("sheetData") ?? return Ok([])
+  var rows: List[List[Str]] = []
+  for row in data_el.children_named("row") {
+    var cells: List[Str] = []
+    for c in row.children_named("c") {
+      let col = column_index(c.attr("r") ?? "A1")
+      while cells.len() < col {
+        cells.push("")
+      }
+      let v = (c.child("v") ?? xml.Element{name: xml.Name{space: "", local: "v"}, attrs: [], children: []}).text()
+      let cell = match c.attr("t") ?? "" {
+        "s" => shared.get(Int.parse(v) ?? -1) ?? ""
+        "inlineStr" => (c.child("is") ?? return Err(PortErr.Format(file: path, line: 0, msg: "inline string without is"))).text()
+        _ => v
+      }
+      cells.push(cell)
+    }
+    rows.push(cells)
+  }
+  Ok(rows)
+}
+
+fn shared_strings(path: Str, data: Bytes) -> List[Str] ! PortErr {
+  let text = data.to_str() ?? return Err(PortErr.Format(file: path, line: 0, msg: "sharedStrings.xml is not UTF-8"))
+  let root = xml.parse(text) ?? e => return Err(PortErr.Format(file: path, line: e.line, msg: e.msg))
+  var out: List[Str] = []
+  for si in root.children_named("si") {
+    // rich text runs: <si><r><t>a</t></r><r><t>b</t></r></si>
+    var s = StrBuilder.new()
+    match si.child("t") {
+      Some(t) => s.write(t.text())
+      None => {
+        for r in si.children_named("r") {
+          if let Some(t) = r.child("t") {
+            s.write(t.text())
+          }
+        }
+      }
+    }
+    out.push(s.freeze())
+  }
+  Ok(out)
+}
+
+/// The zero based column of a cell reference ("C7" is 2).
+fn column_index(r: Str) -> Int {
+  var n = 0
+  for c in r.bytes() {
+    if c < 65 || c > 90 {
+      break
+    }
+    n = n * 26 + (Int(c) - 64)
+  }
+  n - 1
+}
+
+// ---------------------------------------------------------------------------
+// Validating
+
+/// A cell's value, or the reason it was rejected.
+fn convert(col: Column, raw: Str) -> sql.SqlValue ! Str {
+  let s = raw.trim()
+  if s.is_empty() {
+    if col.required {
+      return Err("required")
+    }
+    return Ok(sql.null())
+  }
+  match col.kind {
+    Kind.Text => {
+      // GAP: no Unicode normalization (NFC) before comparing or storing
+      // names typed on different systems (Go: x/text/unicode/norm) [awkward]
+      Ok(sql.str(s))
+    }
+    Kind.Integer => {
+      // "1,234" from spreadsheets: grouping separators dropped
+      let n = Int.parse(s.replace(",", "")) ?? return Err("not an integer")
+      Ok(sql.int(n))
+    }
+    Kind.Money => Ok(sql.int(cents(s)?))
+    Kind.Date => Ok(sql.time(parse_date(s)?))
+    Kind.Email => {
+      // GAP: std/mail parses addresses but there is no IDNA (punycode)
+      // for an internationalized domain (Go: x/net/idna) [minor]
+      if !s.contains("@") || s.contains(" ") {
+        return Err("not an email address")
+      }
+      Ok(sql.str(s.to_lower()))
+    }
+    Kind.Flag => {
+      let b = match s.to_lower() {
+        "yes" | "y" | "x" => true
+        "no" | "n" => false
+        other => Bool.parse(other) ?? return Err("not a yes or no")
+      }
+      Ok(sql.bool(b))
+    }
+  }
+}
+
+/// "1,234.5" or "1.234,50" or "$12" as cents; at most two decimals.
+fn cents(s0: Str) -> Int ! Str {
+  var s = s0.trim_start_chars("$€£ ")
+  let negative = s.starts_with("-") || (s.starts_with("(") && s.ends_with(")"))
+  s = s.trim_chars("-() ")
+  // a comma after the last dot is a decimal comma (European spreadsheets)
+  let last_dot = s.rfind(".") ?? -1
+  let last_comma = s.rfind(",") ?? -1
+  if last_comma > last_dot {
+    s = s.replace(".", "").replace(",", ".")
+  } else {
+    s = s.replace(",", "")
+  }
+  let (whole, frac) = s.cut(".") ?? (s, "")
+  if frac.len() > 2 {
+    return Err("more than two decimals")
+  }
+  let w = Int.parse(whole) ?? return Err("not an amount")
+  let f = Int.parse(frac.pad_right(2, fill: "0")) ?? return Err("not an amount")
+  let c = (w.checked_mul(100) ?? return Err("amount too large")).checked_add(f) ?? return Err("amount too large")
+  Ok(if negative { -c } else { c })
+}
+
+/// A date in one of the layouts spreadsheets write, or an Excel serial.
+fn parse_date(s: Str) -> Time ! Str {
+  // an Excel serial day number (1900 date system, with its leap year bug)
+  if let Some(serial) = Float.parse(s) {
+    if serial > 59.0 && serial < 2958466.0 {
+      let days = Int(serial.floor()) - 25569
+      return Ok(Time.from_unix(days * 86400))
+    }
+  }
+  for layout in [time.DATE_LAYOUT, time.layout("{month}/{day}/{year}"), time.layout("{day}.{month}.{year}"), time.layout("{month:1}/{day:1}/{year}")] {
+    if let Ok(t) = layout.parse(s, time.utc()) {
+      return Ok(t)
+    }
+  }
+  // GAP: no two digit years ("3/4/26") and no locale month names, which
+  // spreadsheets in other languages write (Go: time.Parse "06";
+  // x/text has no dates either, so this is a library gap everywhere)
+  // [minor]
+  Err("not a date")
+}
+
+// ---------------------------------------------------------------------------
+// Loading
+
+/// Inserts rows in batches; each batch is one transaction. Returns the
+/// rejected cells.
+fn load(db: sql.Db, table: Str, schema: List[Column], rows: List[List[Str]], batch: Int, var stats: Stats, logger: log.Logger)
+    -> List[Rejected] ! PortErr uses (net.dial, log) {
+  let header = rows.get(0) ?? return Ok([])
+  var at: Map[Str, Int] = {}
+  for i in 0..header.len() {
+    at[header[i].trim().to_lower()] = i
+  }
+  for col in schema {
+    if col.required && !at.contains(col.name) {
+      return Err(PortErr.Format(file: table, line: 1, msg: "missing column ${col.name}"))
+    }
+  }
+  var rejected: List[Rejected] = []
+  // SPEC: std.md 2.4 shows no way to write an empty Set (no Set.new, no
+  // literal); built from an empty List
+  let none: List[Str] = []
+  var seen = none.to_set()
+  var pending: List[List[sql.SqlValue]] = []
+  // GAP: no COPY FROM STDIN, so rows go in as multi row INSERTs bound
+  // by the 65535 parameter limit (Go: pgx Conn.CopyFrom) [awkward: 10x
+  // slower for millions of rows]
+  let per_batch = batch.min(MAX_PARAMS / schema.len())
+  for i in 1..rows.len() {
+    stats.read += 1
+    let cells = rows[i]
+    var values: List[sql.SqlValue] = []
+    var ok = true
+    for col in schema {
+      let raw = match at.get(col.name) {
+        Some(k) => cells.get(k) ?? ""
+        None => ""
+      }
+      match convert(col, raw) {
+        Ok(v) => values.push(v)
+        Err(reason) => {
+          rejected.push(Rejected{line: i + 1, column: col.name, value: raw, reason: reason})
+          ok = false
+        }
+      }
+    }
+    if !ok {
+      stats.rejected += 1
+      continue
+    }
+    let key = cells.get(at.get("order_id") ?? 0) ?? ""
+    if seen.contains(key) {
+      stats.duplicates += 1
+      continue
+    }
+    seen.add(key)
+    pending.push(values)
+    if pending.len() >= per_batch {
+      stats.inserted += flush(db, table, schema, pending)?
+      pending = []
+      logger.info("batch loaded", {"read": stats.read, "inserted": stats.inserted})
+    }
+  }
+  if !pending.is_empty() {
+    stats.inserted += flush(db, table, schema, pending)?
+  }
+  Ok(rejected)
+}
+
+/// One multi row upsert in a transaction: the rows inserted or updated.
+fn flush(db: sql.Db, table: Str, schema: List[Column], rows: List[List[sql.SqlValue]]) -> Int ! PortErr uses net.dial {
+  let names = schema.map(fn(c) { c.name }).join(", ")
+  let updates = schema.filter(fn(c) { c.name != "order_id" }).map(fn(c) { "${c.name} = EXCLUDED.${c.name}" }).join(", ")
+  var q = StrBuilder.new()
+  // GAP: no identifier quoting helper for a table name taken from a flag
+  // (Go: pgx.Identifier.Sanitize) [minor]
+  q.write("INSERT INTO ${table} (${names}) VALUES ")
+  var args: List[sql.SqlValue] = []
+  for r in 0..rows.len() {
+    if r > 0 {
+      q.write(", ")
+    }
+    q.write("(")
+    for c in 0..schema.len() {
+      if c > 0 {
+        q.write(", ")
+      }
+      args.push(rows[r][c])
+      q.write("$${args.len()}")
+    }
+    q.write(")")
+  }
+  q.write(" ON CONFLICT (order_id) DO UPDATE SET ${updates}")
+  let tx = db.begin().map_err(db_err)?
+  let res = tx.exec(q.freeze(), args) ?? e => {
+    tx.rollback().ignore_err("the insert failed already")
+    return Err(PortErr.Db(e))
+  }
+  tx.commit().map_err(db_err)?
+  Ok(res.rows_affected)
+}
+
+// ---------------------------------------------------------------------------
+// Exporting
+
+/// The rows of a named export query, the header first, a page at a time.
+fn export_rows(db: sql.Db, since: Time) -> List[List[Str]] ! PortErr uses net.dial {
+  // GAP: results are read whole into List[Row]; no row cursor to stream a
+  // large table out, so the export pages by key (Go: database/sql Rows.Next,
+  // pgx Rows) [awkward]
+  var out: List[List[Str]] = [["order_id", "customer_email", "placed_on", "quantity", "amount", "gift"]]
+  var after = ""
+  while true {
+    let page = db.query("SELECT order_id, customer_email, placed_on, quantity, amount_cents, gift FROM orders WHERE placed_on >= $1 AND order_id > $2 ORDER BY order_id LIMIT 5000",
+      [sql.time(since), sql.str(after)]).map_err(db_err)?
+    if page.is_empty() {
+      break
+    }
+    for r in page {
+      let c = r.int("amount_cents").map_err(db_err)?
+      out.push([
+        r.str("order_id").map_err(db_err)?,
+        r.str("customer_email").map_err(db_err)?,
+        time.format(r.time("placed_on").map_err(db_err)?, time.utc(), time.DATE),
+        "${r.int("quantity").map_err(db_err)?}",
+        "${c / 100}.${(c.abs() % 100).to_str_width(2, zero: true)}",
+        if r.bool_opt("gift").map_err(db_err)? ?? false { "yes" } else { "no" },
+      ])
+      after = r.str("order_id").map_err(db_err)?
+    }
+  }
+  Ok(out)
+}
+
+/// An XLSX workbook of one sheet holding rows (cells as inline strings).
+fn write_xlsx(rows: List[List[Str]]) -> Bytes ! PortErr {
+  var sheet = StrBuilder.new()
+  sheet.write("<?xml version=\"1.0\" encoding=\"UTF-8\" standalone=\"yes\"?>\n")
+  sheet.write("<worksheet xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\"><sheetData>")
+  for i in 0..rows.len() {
+    sheet.write("<row r=\"${i + 1}\">")
+    for j in 0..rows[i].len() {
+      sheet.write("<c r=\"${column_name(j)}${i + 1}\" t=\"inlineStr\"><is><t>")
+      xml.escape_to(sheet, rows[i][j])
+      sheet.write("</t></is></c>")
+    }
+    sheet.write("</row>")
+  }
+  sheet.write("</sheetData></worksheet>")
+  let ct = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Types xmlns=\"http://schemas.openxmlformats.org/package/2006/content-types\"><Default Extension=\"rels\" ContentType=\"application/vnd.openxmlformats-package.relationships+xml\"/><Default Extension=\"xml\" ContentType=\"application/xml\"/><Override PartName=\"/xl/workbook.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.sheet.main+xml\"/><Override PartName=\"/xl/worksheets/sheet1.xml\" ContentType=\"application/vnd.openxmlformats-officedocument.spreadsheetml.worksheet+xml\"/></Types>"
+  let rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/officeDocument\" Target=\"xl/workbook.xml\"/></Relationships>"
+  let wb = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><workbook xmlns=\"http://schemas.openxmlformats.org/spreadsheetml/2006/main\" xmlns:r=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships\"><sheets><sheet name=\"export\" sheetId=\"1\" r:id=\"rId1\"/></sheets></workbook>"
+  let wb_rels = "<?xml version=\"1.0\" encoding=\"UTF-8\"?><Relationships xmlns=\"http://schemas.openxmlformats.org/package/2006/relationships\"><Relationship Id=\"rId1\" Type=\"http://schemas.openxmlformats.org/officeDocument/2006/relationships/worksheet\" Target=\"worksheets/sheet1.xml\"/></Relationships>"
+  // GAP: no streaming zip writer (entries are built whole, the archive in
+  // memory) (Go: archive/zip NewWriter(io.Writer).Create) [awkward]
+  archive.zip([
+    archive.file("[Content_Types].xml", ct.bytes()),
+    archive.file("_rels/.rels", rels.bytes()),
+    archive.file("xl/workbook.xml", wb.bytes()),
+    archive.file("xl/_rels/workbook.xml.rels", wb_rels.bytes()),
+    archive.file("xl/worksheets/sheet1.xml", sheet.freeze().bytes()),
+  ]) ?? e => Err(PortErr.Format(file: "xlsx", line: 0, msg: "${e}"))
+}
+
+/// The spreadsheet column name of a zero based index (27 is "AB").
+fn column_name(i: Int) -> Str {
+  var n = i + 1
+  var out = ""
+  while n > 0 {
+    let r = (n - 1) % 26
+    out = "${Rune(65 + r)}${out}"
+    n = (n - 1) / 26
+  }
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The command
+
+fn app() -> cli.Command {
+  cli.command("dataport", "Imports spreadsheets into Postgres and exports them back.",
+    flags: [
+      cli.str_flag("dsn", "the Postgres connection string", env: "DATABASE_URL", required: true),
+    ],
+    commands: [
+      cli.command("import", "Loads a CSV, TSV or XLSX file into a table.",
+        flags: [
+          cli.str_flag("file", "the input file", required: true, value: "path"),
+          cli.str_flag("table", "the target table", default: "orders"),
+          cli.int_flag("batch", "rows per transaction", default: 1000),
+          cli.str_flag("rejects", "where rejected rows go", default: "rejects.csv", value: "path"),
+        ]),
+      cli.command("export", "Writes a query's rows to CSV or XLSX.",
+        flags: [
+          cli.str_flag("since", "the first day (YYYY-MM-DD)", required: true),
+          cli.str_flag("out", "the output file (.csv or .xlsx)", required: true, value: "path"),
+        ]),
+    ])
+}
+
+fn run(os: Os, p: cli.Parsed, logger: log.Logger) -> () ! PortErr uses (fs, net.dial, clock, log) {
+  let db = sql.open(os.net, "postgres", p.str("dsn"), max_open: 4).map_err(db_err)?
+  let fs = os.fs.cwd()
+  match p.command() {
+    "import" => {
+      let path = p.str("file")
+      let started = os.clock.now()
+      let rows = if path.ends_with(".xlsx") { read_xlsx(fs, path)? } else { read_delimited(path, read_input(fs, path)?)? }
+      var stats = Stats{}
+      let rejected = load(db, p.str("table"), orders_schema(), rows, p.int("batch"), stats, logger)?
+      var report: List[List[Str]] = [["line", "column", "value", "reason"]]
+      for r in rejected {
+        report.push(["${r.line}", r.column, r.value, r.reason])
+      }
+      fs.write(p.str("rejects"), csv.format(report).bytes()).map_err(fs_err)?
+      // GAP: Duration has no rounded display for a report ("12.3s") beyond
+      // its default text (Go: Duration.Round, Truncate) [minor]
+      logger.info("import done", {"read": stats.read, "inserted": stats.inserted, "rejected": stats.rejected,
+        "duplicates": stats.duplicates, "took": "${os.clock.now() - started}"})
+    }
+    "export" => {
+      let since = time.parse(p.str("since"), time.DATE, time.utc()) ?? e => return Err(PortErr.Usage("${e}"))
+      let rows = export_rows(db, since)?
+      let out = p.str("out")
+      let data = if out.ends_with(".xlsx") { write_xlsx(rows)? } else { csv.format(rows, crlf: true).bytes() }
+      write_atomic(fs, out, data).map_err(fs_err)?
+      logger.info("export done", {"rows": rows.len() - 1, "bytes": data.len()})
+    }
+    _ => return Err(PortErr.Usage(cli.help(app())))
+  }
+  db.close().map_err(db_err)?
+  Ok(())
+}
+
+fn main(os: Os) {
+  let p = cli.parse_or_exit(app(), os.env, os.stdio, os.proc)
+  log.configure(os.stdio)
+  let logger = log.with({"job": "dataport"})
+  match run(os, p, logger) {
+    Ok(_) => {}
+    Err(e) => {
+      logger.error("dataport failed", {"err": "${e}"})
+      os.proc.exit(1)
+    }
+  }
+}

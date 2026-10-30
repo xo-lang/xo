@@ -1,0 +1,600 @@
+// chathub: a WebSocket chat and notification hub, written from
+// spec/core.md and spec/std.md alone for the 2026-10-30 backend gap
+// survey. Rooms, presence, heartbeats, bounded per-connection send
+// queues, direct messages, capped room history, JSON envelopes, bearer
+// token auth on upgrade, graceful shutdown and Prometheus metrics.
+//
+// Markers: GAP (std or language lacks something a Go service uses),
+// LANG (syntax or semantics got in the way), SPEC (spec unclear).
+use std/http
+use std/websocket
+use std/json
+use std/log
+use std/task
+use std/metrics
+use std/crypto
+use std/rate
+
+const SEND_QUEUE = 64
+const HISTORY_CAP = 100
+const PING_EVERY = 20s
+const IDLE_TIMEOUT = 60s
+const MAX_MESSAGE = 65536
+const MAX_ROOMS_PER_CONN = 32
+
+// ---------------------------------------------------------------- wire
+
+// Client to server. Go services usually decode `{"type": "say", ...}`
+// into a struct with a type field and then switch on it.
+// GAP: derive Json encodes an enum externally tagged ({"Say": {...}});
+// there is no internally tagged form (`{"type": "say", ...}`), so the
+// envelope is one struct with every field optional and a Str kind.
+// (Go: a custom UnmarshalJSON or a two-pass decode with json.RawMessage) [awkward]
+struct Inbound {
+  kind as "type": Str
+  room: Str = ""
+  to: Str = ""
+  text: Str = ""
+  id: Str = ""
+} derive Json
+
+struct ChatMsg {
+  seq: Int
+  room: Str
+  from: Str
+  text: Str
+  at: Time
+} derive Json
+
+// Server to client.
+struct Outbound {
+  kind as "type": Str
+  room as "room,omitempty": Str = ""
+  from as "from,omitempty": Str = ""
+  text as "text,omitempty": Str = ""
+  id as "id,omitempty": Str = ""
+  seq as "seq,omitempty": Int = 0
+  users as "users,omitempty": List[Str] = []
+  history as "history,omitempty": List[ChatMsg] = []
+  at as "at,omitempty": Time? = None
+} derive Json
+
+// ---------------------------------------------------------------- state
+
+struct Client {
+  id: Int
+  user: Str
+  remote: Str
+  conn: websocket.WsConn
+  queue: Chan[Str]
+  last_seen_ms: Atomic[Int]
+  evicted: Atomic[Bool]
+  close_code: Atomic[Int]
+  limiter: rate.Limiter
+}
+
+struct Room {
+  name: Str
+  members: Set[Int] = #{}
+  history: List[ChatMsg] = []
+  next_seq: Int = 1
+}
+
+struct HubState {
+  clients: Map[Int, Client] = {}
+  by_user: Map[Str, Set[Int]] = {}
+  rooms: Map[Str, Room] = {}
+  joined: Map[Int, Set[Str]] = {}
+}
+
+struct HubMetrics {
+  connections: metrics.Gauge
+  messages: metrics.Counter
+  dropped: metrics.Counter
+  evicted: metrics.Counter
+  fanout: metrics.Histogram
+}
+
+struct Hub {
+  state: Mutex[HubState]
+  next_id: Atomic[Int]
+  closing: Atomic[Bool]
+  clock: Clock
+  m: HubMetrics
+}
+
+fn new_hub(clock: Clock, reg: metrics.Registry) -> Hub {
+  let m = HubMetrics{
+    connections: reg.gauge("chat_connections", "Open WebSocket connections."),
+    messages: reg.counter("chat_messages_total", "Messages accepted, by kind.", labels: ["kind"]),
+    dropped: reg.counter("chat_dropped_total", "Frames dropped for a full send queue."),
+    evicted: reg.counter("chat_evicted_total", "Connections closed by the hub, by reason.", labels: ["reason"]),
+    fanout: reg.histogram("chat_fanout_size", "Recipients per broadcast.", buckets: [1.0, 10.0, 100.0, 1000.0, 10000.0]),
+  }
+  let hub = Hub{state: Mutex[HubState].new(HubState{}), next_id: Atomic[Int].new(0), closing: Atomic[Bool].new(false), clock: clock, m: m}
+  reg.gauge_func("chat_rooms", "Rooms with at least one member.", fn() { Float(hub.state.with_read(fn(st) { st.rooms.len() })) })
+  hub
+}
+
+fn encode(o: Outbound) -> Str {
+  json.encode_str(o)
+}
+
+// ---------------------------------------------------------------- hub ops
+
+fn (h: Hub) register(conn: websocket.WsConn, user: Str, remote: Str) -> Client {
+  let id = h.next_id.add(1)
+  let now_ms = h.clock.now().unix_millis()
+  let c = Client{
+    id: id,
+    user: user,
+    remote: remote,
+    conn: conn,
+    queue: Chan[Str].new(cap: SEND_QUEUE),
+    last_seen_ms: Atomic[Int].new(now_ms),
+    evicted: Atomic[Bool].new(false),
+    close_code: Atomic[Int].new(1000),
+    limiter: rate.new(10.0, 20, h.clock),
+  }
+  let first = h.state.with(fn(var st) {
+    st.clients.put(id, c)
+    st.joined.put(id, #{})
+    let n = st.by_user.update(user, #{}, fn(var ids) {
+      ids.add(id)
+      ids.len()
+    })
+    n == 1
+  })
+  h.m.connections.add(1.0)
+  if first {
+    h.broadcast_all(Outbound{kind: "presence", from: user, text: "online"})
+  }
+  c
+}
+
+fn (h: Hub) unregister(c: Client) {
+  // Remove the client and collect what to announce in one critical section.
+  let (rooms, last) = h.state.with(fn(var st) {
+    st.clients.remove(c.id)
+    let rs = st.joined.remove(c.id) ?? #{}
+    for name in rs {
+      st.rooms.update(name, Room{name: name}, fn(var r) { r.members.remove(c.id) })
+      if st.rooms.get(name).map(fn(r) { r.members.is_empty() && r.history.is_empty() }) ?? false {
+        st.rooms.remove(name)
+      }
+    }
+    let left = st.by_user.update(c.user, #{}, fn(var ids) {
+      ids.remove(c.id)
+      ids.len()
+    })
+    if left == 0 {
+      st.by_user.remove(c.user)
+    }
+    (rs, left == 0)
+  })
+  h.m.connections.add(-1.0)
+  for name in rooms {
+    h.broadcast_room(name, Outbound{kind: "left", room: name, from: c.user}, c.id)
+  }
+  if last {
+    h.broadcast_all(Outbound{kind: "presence", from: c.user, text: "offline"})
+  }
+}
+
+// Closes a connection from the hub's side: the writer drains what is
+// queued, sends the close frame with the code, and the reader then ends.
+fn (h: Hub) evict(c: Client, code: Int, reason: Str) {
+  if !c.evicted.compare_and_swap(false, true) {
+    return
+  }
+  c.close_code.set(code)
+  h.m.evicted.inc([reason])
+  log.info("evict", {"conn": c.id, "user": c.user, "reason": reason})
+  c.queue.close()
+}
+
+// Non-blocking fan-out: a full queue is a slow consumer, evicted rather
+// than allowed to stall the room.
+fn (h: Hub) deliver(targets: List[Client], frame: Str) {
+  h.m.fanout.observe(Float(targets.len()))
+  for c in targets {
+    if !c.queue.try_send(frame) {
+      h.m.dropped.inc()
+      h.evict(c, 1013, "slow consumer")
+    }
+  }
+}
+
+fn (h: Hub) broadcast_all(o: Outbound) {
+  let targets = h.state.with_read(fn(st) { st.clients.values() })
+  h.deliver(targets, encode(o))
+}
+
+fn (h: Hub) broadcast_room(room: Str, o: Outbound, except: Int) {
+  let targets = h.state.with_read(fn(st) {
+    let members = st.rooms.get(room).map(fn(r) { r.members }) ?? #{}
+    members.to_list().filter(fn(id) { id != except }).map(fn(id) { st.clients.get(id) }).filter(fn(c) { c.is_some() }).map(fn(c) { c.or_fault("filtered") })
+  })
+  // LANG: no filter_map / flat_map over Options on List, so the lookup
+  // above is map, filter is_some, map or_fault. (Go: a plain loop) [minor]
+  h.deliver(targets, encode(o))
+}
+
+fn (h: Hub) join(c: Client, room: Str) -> Outbound ! ChatErr {
+  let outcome = h.state.with(fn(var st) -> Result[List[ChatMsg], ChatErr] {
+    let mine = st.joined.get(c.id) ?? #{}
+    if mine.len() >= MAX_ROOMS_PER_CONN && !mine.contains(room) {
+      return Err(ChatErr.TooManyRooms)
+    }
+    st.joined.update(c.id, #{}, fn(var rs) { rs.add(room) })
+    let hist = st.rooms.update(room, Room{name: room}, fn(var r) {
+      r.members.add(c.id)
+      r.history
+    })
+    Ok(hist)
+  })
+  let history = outcome?
+  h.broadcast_room(room, Outbound{kind: "joined", room: room, from: c.user}, c.id)
+  Outbound{kind: "joined", room: room, from: c.user, history: history}
+}
+
+fn (h: Hub) leave(c: Client, room: Str) {
+  let was = h.state.with(fn(var st) {
+    let removed = st.joined.update(c.id, #{}, fn(var rs) { rs.remove(room) })
+    st.rooms.update(room, Room{name: room}, fn(var r) { r.members.remove(c.id) })
+    removed
+  })
+  if was {
+    h.broadcast_room(room, Outbound{kind: "left", room: room, from: c.user}, -1)
+  }
+}
+
+fn (h: Hub) say(c: Client, room: Str, text: Str) -> () ! ChatErr {
+  let now = h.clock.now()
+  let outcome = h.state.with(fn(var st) -> Result[ChatMsg, ChatErr] {
+    let mine = st.joined.get(c.id) ?? #{}
+    if !mine.contains(room) {
+      return Err(ChatErr.NotInRoom(room))
+    }
+    let msg = st.rooms.update(room, Room{name: room}, fn(var r) {
+      let m = ChatMsg{seq: r.next_seq, room: room, from: c.user, text: text, at: now}
+      r.next_seq += 1
+      r.history.push(m)
+      if r.history.len() > HISTORY_CAP {
+        // LANG: no ring buffer / deque; dropping the oldest is a slice
+        // copy of the list each time it overflows. (Go: container/ring or a slice window) [minor]
+        r.history = r.history[r.history.len() - HISTORY_CAP..]
+      }
+      m
+    })
+    Ok(msg)
+  })
+  let msg = outcome?
+  h.m.messages.inc(["say"])
+  h.broadcast_room(room, Outbound{kind: "message", room: room, from: c.user, text: text, seq: msg.seq, at: now}, -1)
+  Ok(())
+}
+
+fn (h: Hub) direct(c: Client, to: Str, text: Str) -> () ! ChatErr {
+  let targets = h.state.with_read(fn(st) {
+    let ids = st.by_user.get(to) ?? #{}
+    let mine = st.by_user.get(c.user) ?? #{}
+    // the sender's other sessions get a copy, as chat apps do
+    ids.union(mine).to_list().filter(fn(id) { id != c.id }).map(fn(id) { st.clients.get(id) }).filter(fn(x) { x.is_some() }).map(fn(x) { x.or_fault("filtered") })
+  })
+  if targets.all(fn(t) { t.user != to }) {
+    return Err(ChatErr.UserOffline(to))
+  }
+  h.m.messages.inc(["dm"])
+  h.deliver(targets, encode(Outbound{kind: "dm", from: c.user, text: text, at: h.clock.now()}))
+  Ok(())
+}
+
+fn (h: Hub) who(room: Str) -> List[Str] {
+  h.state.with_read(fn(st) {
+    if room == "" {
+      return st.by_user.keys().sort()
+    }
+    let members = st.rooms.get(room).map(fn(r) { r.members }) ?? #{}
+    var users: Set[Str] = #{}
+    for id in members {
+      if let c = st.clients.get(id) {
+        users.add(c.user)
+      }
+    }
+    users.to_list().sort()
+  })
+}
+
+// Phase 1 of shutdown: tell every client, then close with 1001.
+fn (h: Hub) shutdown() {
+  h.closing.set(true)
+  let all = h.state.with_read(fn(st) { st.clients.values() })
+  log.info("shutdown: closing connections", {"count": all.len()})
+  for c in all {
+    let _sent = c.queue.try_send(encode(Outbound{kind: "shutdown", text: "server restarting"}))
+    h.evict(c, 1001, "shutdown")
+  }
+}
+
+// ---------------------------------------------------------------- errors
+
+enum ChatErr {
+  BadRequest(msg: Str)
+  NotInRoom(room: Str)
+  UserOffline(user: Str)
+  TooManyRooms
+  RateLimited
+}
+
+fn (e: ChatErr) display() -> Str {
+  match e {
+    BadRequest(msg) => "bad request: ${msg}"
+    NotInRoom(room) => "not in room ${room}"
+    UserOffline(user) => "${user} is offline"
+    TooManyRooms => "too many rooms"
+    RateLimited => "rate limited"
+  }
+}
+
+enum ApiErr {
+  Unauthorized
+  Unavailable
+  TooMany
+}
+
+fn (e: ApiErr) status() -> Int {
+  match e {
+    Unauthorized => 401
+    Unavailable => 503
+    TooMany => 429
+  }
+}
+
+fn (e: ApiErr) display() -> Str {
+  match e {
+    Unauthorized => "unauthorized"
+    Unavailable => "shutting down"
+    TooMany => "too many connection attempts"
+  }
+}
+
+// ---------------------------------------------------------------- session
+
+fn valid_room(name: Str) -> Bool {
+  name.len() >= 1 && name.len() <= 64 &&
+    name.runes().all(fn(r) { r.is_letter() || r.is_digit() || r == '-' || r == '_' })
+}
+
+fn session(hub: Hub, conn: websocket.WsConn, user: Str, remote: Str) {
+  let c = hub.register(conn, user, remote)
+  defer hub.unregister(c)
+  log.info("connected", {"conn": c.id, "user": user, "remote": remote})
+  scope s {
+    s.spawn_background(fn() { writer(c) })
+    s.spawn_background(fn() { heartbeat(hub, c) })
+    reader(hub, c)
+  }
+  log.info("disconnected", {"conn": c.id, "user": user})
+}
+
+// The only task that writes data frames. Ends when the queue is closed
+// (eviction or shutdown) or a write fails.
+fn writer(c: Client) {
+  for frame in c.queue {
+    // GAP: no write deadline on a WsConn; a peer that stops reading
+    // blocks this write until the TCP buffers fill and the kernel gives
+    // up. The bounded queue in front of it protects the hub, not this
+    // task. (Go: Conn.SetWriteDeadline) [awkward]
+    if c.conn.write_text(frame) is Err(_) {
+      break
+    }
+  }
+  let _closed = c.conn.close(code: c.close_code.get(), reason: "").ignore_err("peer may be gone already")
+}
+
+// Liveness. GAP: WsConn.read answers pings and skips pongs, and there is
+// no pong handler and no read deadline, so the server cannot tell that
+// a peer answered its ping. Liveness falls back to "any frame from the
+// client within IDLE_TIMEOUT", so clients must send an app level ping.
+// (Go: gorilla Conn.SetPongHandler plus SetReadDeadline) [awkward]
+fn heartbeat(hub: Hub, c: Client) {
+  let stop = task.stopping()
+  while {
+    select {
+      _closed = stop.recv() => {
+        // SPEC: core 7.3 does not say the type of a select arm's bound
+        // name; xo check says `()?` here (recv's T?), so a closed
+        // channel's arm fires with None, but the spec never states it.
+        hub.shutdown()
+        return
+      }
+      after PING_EVERY => {
+        let idle = hub.clock.now().unix_millis() - c.last_seen_ms.get()
+        if idle > IDLE_TIMEOUT.millis() {
+          hub.evict(c, 1001, "idle timeout")
+          return
+        }
+        if c.conn.ping() is Err(_) {
+          hub.evict(c, 1006, "ping failed")
+          return
+        }
+      }
+    }
+  }
+}
+
+fn reader(hub: Hub, c: Client) {
+  while {
+    let m = match c.conn.read() {
+      Ok(m) => m
+      Err(websocket.WsErr.Closed(code, _)) => {
+        log.debug("peer closed", {"conn": c.id, "code": code})
+        return
+      }
+      Err(websocket.WsErr.TooBig(limit)) => {
+        hub.m.evicted.inc(["too big"])
+        log.warn("message too big", {"conn": c.id, "limit": limit})
+        return
+      }
+      Err(e) => {
+        log.debug("read failed", {"conn": c.id, "err": "${e}"})
+        return
+      }
+    }
+    c.last_seen_ms.set(hub.clock.now().unix_millis())
+    if m.kind == websocket.Kind.Binary {
+      reply(hub, c, Outbound{kind: "error", text: "binary frames are not supported"})
+      continue
+    }
+    if !c.limiter.allow() {
+      reply(hub, c, Outbound{kind: "error", text: ChatErr.RateLimited.display()})
+      continue
+    }
+    let msg = json.decode[Inbound](m.data) ?? e => {
+      reply(hub, c, Outbound{kind: "error", text: "bad envelope: ${e}"})
+      continue
+    }
+    match handle(hub, c, msg) {
+      Ok(Some(out)) => reply(hub, c, out with {id: msg.id})
+      Ok(None) => ()
+      Err(e) => reply(hub, c, Outbound{kind: "error", id: msg.id, text: e.display()})
+    }
+  }
+}
+
+fn handle(hub: Hub, c: Client, msg: Inbound) -> Outbound? ! ChatErr {
+  match msg.kind {
+    "ping" => Some(Outbound{kind: "pong"})
+    "join" => {
+      if !valid_room(msg.room) {
+        return Err(ChatErr.BadRequest("room name"))
+      }
+      Some(hub.join(c, msg.room)?)
+    }
+    "leave" => {
+      hub.leave(c, msg.room)
+      Some(Outbound{kind: "left", room: msg.room, from: c.user})
+    }
+    "say" => {
+      if msg.text.is_empty() || msg.text.len() > 4096 {
+        return Err(ChatErr.BadRequest("text length"))
+      }
+      hub.say(c, msg.room, msg.text)?
+      None
+    }
+    "dm" => {
+      hub.direct(c, msg.to, msg.text)?
+      Some(Outbound{kind: "sent", text: "delivered"})
+    }
+    "who" => Some(Outbound{kind: "who", room: msg.room, users: hub.who(msg.room)})
+    other => Err(ChatErr.BadRequest("unknown type ${other}"))
+  }
+}
+
+fn reply(hub: Hub, c: Client, o: Outbound) {
+  hub.deliver([c], encode(o))
+}
+
+// ---------------------------------------------------------------- auth
+
+// Tokens are `user.expiry.hexhmac`, signed with CHAT_SECRET.
+// GAP: no JWT (Go: no std package either; golang-jwt is third party),
+// so this is a minimal HMAC token. [minor]
+fn verify_token(secret: Secret[Bytes], token: Str, now: Time) -> Str? {
+  let parts = token.split(".")
+  if parts.len() != 3 {
+    return None
+  }
+  let user = parts[0]
+  let exp = Int.parse(parts[1])?
+  let want = crypto.hmac_sha256(secret.reveal(), "${user}.${exp}".bytes()).to_hex()
+  if !crypto.equal(want.bytes(), parts[2].bytes()) || now.unix() > exp || user.is_empty() {
+    return None
+  }
+  Some(user.clone())
+}
+
+// Browsers cannot set headers on a WebSocket, so the token may also come
+// as `?access_token=`.
+fn bearer(req: http.Request) -> Str? {
+  if let h = req.header("Authorization") {
+    return h.cut_prefix("Bearer ")
+  }
+  req.query("access_token")
+}
+
+// ---------------------------------------------------------------- http
+
+struct RoomInfo {
+  name: Str
+  members: Int
+  messages: Int
+} derive Json
+
+fn routes(os: Os, hub: Hub, reg: metrics.Registry, secret: Secret[Bytes], origins: List[Str]) -> http.Router {
+  let upgrades = rate.new(50.0, 100, os.clock)
+  var r = http.router()
+  r.wrap(reg.middleware(os.clock, fn(req) { req.path }))
+  r.handle("GET /ws", fn(req) -> http.Response ! ApiErr {
+    if hub.closing.get() {
+      return Err(ApiErr.Unavailable)
+    }
+    if !upgrades.allow() {
+      return Err(ApiErr.TooMany)
+    }
+    let token = bearer(req) ?? return Err(ApiErr.Unauthorized)
+    let user = verify_token(secret, token, os.clock.now()) ?? return Err(ApiErr.Unauthorized)
+    let remote = req.remote_ip
+    websocket.upgrade(req, fn(conn) { session(hub, conn, user, remote) }, origins: origins, max_message: MAX_MESSAGE)
+  })
+  r.handle("GET /healthz", fn(_req) {
+    if hub.closing.get() {
+      http.text(503, "draining")
+    } else {
+      http.text(200, "ok")
+    }
+  })
+  r.handle("GET /metrics", reg.handler())
+  r.handle("GET /rooms", fn(_req) {
+    let rooms = hub.state.with_read(fn(st) {
+      st.rooms.values().map(fn(rm) { RoomInfo{name: rm.name, members: rm.members.len(), messages: rm.history.len()} })
+    })
+    http.json(200, rooms)
+  })
+  r
+}
+
+// ---------------------------------------------------------------- main
+
+fn main(os: Os) ! {
+  log.configure(os.stdio, format: log.Format.Json)
+  let addr = os.env.get("CHAT_ADDR") ?? ":8080"
+  let secret_text = os.env.get("CHAT_SECRET").or_err(EnvErr.Missing("CHAT_SECRET"))?
+  let secret = Secret[Bytes].new(secret_text.bytes())
+  let origins = (os.env.get("CHAT_ORIGINS") ?? "").split(",").filter(fn(o) { !o.trim().is_empty() })
+  os.proc.set_grace(15s)
+
+  let reg = metrics.registry()
+  let hub = new_hub(os.clock, reg)
+  let router = routes(os, hub, reg, secret, origins)
+  let l = os.net.listen(addr)?
+  log.info("listening", {"addr": l.addr()})
+  let srv = http.server(l, router)
+    .with_read_header_timeout(5s)
+    .with_idle_timeout(120s)
+    .with_max_header_bytes(16384)
+
+  // SPEC: 4.4 says serve "finish[es] in flight requests" on a stop; it
+  // does not say whether a handler that upgraded to a WebSocket counts
+  // as in flight, so the hub closes every connection itself (heartbeat
+  // tasks watch task.stopping()).
+  scope s {
+    s.spawn_background(fn() {
+      let _ = task.stopping().recv()
+      hub.shutdown()
+    })
+    srv.serve()?
+  }
+  log.info("stopped", {})
+}

@@ -252,6 +252,64 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | S3 and AWS SigV4 | aws-sdk-go-v2 | none | not planned | A third party module; std provides HMAC and SHA-256. |
 | gRPC, protobuf | google.golang.org/grpc | none | not planned | Large; a module, after HTTP/2 trailers are exposed. |
 
+## Survey of backend gaps (2026-10-30)
+
+Five more services, of kinds the two earlier surveys did not cover,
+written from spec/core.md and spec/std.md alone (std's sources unread)
+and type checked with `xo check` to 0 errors, each missing piece marked
+`// GAP:` where the code needed it (bench/survey-2026-10-30): a
+WebSocket chat and notification hub with presence (chathub, 600 lines),
+a reliable queue worker speaking the Redis wire protocol (queueworker,
+713), a gRPC service and client over HTTP/2 with hand written protobuf
+(grpcsvc, 686), a double entry money ledger on Postgres (ledger, 607),
+and a CSV, TSV and XLSX import and export batch job (dataport, 537).
+Channels, `select`, `task.stopping`, `with_timeout`, std/metrics, rate,
+backoff, uuid, HMAC, `json.Value`, websocket upgrade, BigInt, xml and
+archive covered most of what they needed. Ranked blockers first, then by
+how many services hit the gap:
+
+| Rank | Gap | Services | Blocking | Go reference | Size |
+|---|---|---|---|---|---|
+| 1 | HTTP/2 trailers: a handler cannot send trailers after the body, the client cannot read them; and no full duplex stream (a `handle_stream` body cannot be read while `http.stream` writes) | grpcsvc (every gRPC server and client) | blocker | net/http ResponseWriter.Trailer, TrailerPrefix, Response.Trailer, ResponseController.EnableFullDuplex | M to L |
+| 2 | Mutual TLS: a server cannot request and verify client certificates, a client cannot present one | grpcsvc (service meshes, internal APIs) | blocker | crypto/tls Config ClientAuth, ClientCAs, Certificates | M |
+| 3 | A streaming CSV reader over a File (csv.parse takes the whole text; read_line breaks quoted newlines) | dataport | blocker for large files | encoding/csv NewReader(io.Reader).Read | S to M |
+| 4 | Text encodings: UTF-16 (Excel's Unicode Text) and Windows-1252 decoding and encoding | dataport | blocker | x/text/encoding/unicode, charmap | S to M |
+| 5 | Deadlines on Conn, TlsConn and WsConn (read and write), a WebSocket pong handler; and reading the current task's deadline to pass on (grpc-timeout) | queueworker, chathub, grpcsvc | awkward (with_timeout cancels, and the connection is then lost) | net.Conn SetDeadline, gorilla SetWriteDeadline, SetPongHandler, context.Deadline | M |
+| 6 | An exact decimal type (parse, format, rounding modes, allocation) | ledger, dataport | awkward (hand written on BigInt or cents) | shopspring/decimal, cockroachdb/apd (outside Go's std) | M |
+| 7 | A type's own JSON form (Money as "12.34") and internally tagged enums (`{"type": "say", ...}`) | ledger, chathub | awkward | encoding/json Marshaler, Unmarshaler | M |
+| 8 | A buffered reader over a Conn or Stream (read_line, read_exact, peek) | queueworker (every line protocol) | awkward | bufio.Reader | S |
+| 9 | Large data paths: a row cursor for queries (results are read whole), COPY FROM, a zip reader and writer by entry, a streaming XML token reader | dataport | awkward | database/sql Rows, pgx CopyFrom, archive/zip, encoding/xml Decoder | M each |
+| 10 | HTTP/2 without TLS (h2c, prior knowledge) and server HTTP/2 settings (max streams, keepalive ping, GOAWAY by age) | grpcsvc | awkward | x/net/http2 AllowHTTP, http.Protocols, http2.Server | M |
+| 11 | Protobuf runtime and a gRPC library (`derive Proto` is reserved for after 1.0) | grpcsvc | awkward (hand written) | google.golang.org/protobuf, grpc (outside Go's std) | L |
+| 12 | Unicode normalization (NFC) and IDNA | dataport | awkward | x/text/unicode/norm, x/net/idna | M |
+| 13 | Minor: `Db.begin` isolation options; Duration round and truncate; lossy Bytes to Str (read_text is lossy, gunzipped bytes are not); identifier quoting for SQL; two digit years; trace ids on outbound requests; Redis and JWT clients (outside Go's std too) | ledger, dataport, chathub, queueworker | minor | sql.TxOptions, Duration.Round, strings.ToValidUTF8, pgx.Identifier, otelhttp | S each |
+
+Language obstacles the services met (for the language owners): enum
+variants cannot carry explicit numbers (gRPC codes became Int
+constants); no bit preserving Int to UInt64 conversion (`UInt64(x)`
+faults on a negative int64 wire value); no cursor to consume a `Bytes`
+from the front (each fill copies the unread rest); a `Str` cannot be
+indexed by byte; a struct of handles is copied into every spawn
+(XO0534, 44 and 58 heap fields) with no way to share it; no
+`List.filter_map` and no deque; `backoff.retry` has no notify hook (Go's
+RetryNotify) and its `retryable` must be pure; no 128 bit integer.
+
+Found wrong or missing in the spec: std 2.4 shows no way to write an
+empty `Set` (no `Set.new`, no literal; `[].to_set()` works); std 33
+lists BigInt's methods without result types (`quo_rem`, `cmp`, `sign`);
+core 2.10 says branches are not converted when joined, yet `if tls {
+tls_conn } else { conn }` checks as a `Stream` (queueworker:244); core
+7.3 does not give a select arm's bound type (`T?`, None when the channel
+closed); std 4.4 does not say whether an upgraded WebSocket counts as an
+in flight request at a stop; std 37's `reg.middleware(clock, label)` is
+only in the prose; std 2.6 lists `Time.UNIX_EPOCH` as a value and
+Appendix A as a function.
+
+Proposed (blockers that unblock a class of service first): 5 (deadlines,
+three services), 1 and 2 (gRPC and mTLS, one design), 3 and 8 (streaming
+CSV over a buffered reader), 4, 7, then 6 (decimal, likely outside std
+as in Go).
+
 ## Survey of backend gaps (2026-10-29)
 
 Five services written from spec/std.md and spec/core.md alone, without

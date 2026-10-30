@@ -1,0 +1,686 @@
+// grpcsvc: an inventory gRPC service over HTTP/2 with TLS (ALPN h2).
+//
+// RPCs:
+//   inventory.v1.Inventory/GetItem          unary
+//   inventory.v1.Inventory/ListItems        server streaming
+//   grpc.health.v1.Health/Check             unary
+//   grpc.health.v1.Health/Watch             server streaming
+//   grpc.reflection.v1.ServerReflection/ServerReflectionInfo  bidi streaming
+// GetItem enriches the item with a price from pricing.v1.Pricing/Quote,
+// another gRPC service, through a hand written gRPC client.
+//
+// Written from spec/core.md and spec/std.md only, for the backend gap
+// survey of 2026-10-30. GAP, LANG and SPEC comments mark what is missing.
+
+use std/http
+use std/log
+use std/task
+use std/crypto
+use std/binary
+use std/compress
+use std/base64
+
+// GAP: no protobuf runtime, no protoc plugin, no descriptors; every message below is hand encoded (Go: google.golang.org/protobuf, protoc-gen-go, protoc-gen-go-grpc; core 2.9 reserves `derive Proto` for after 1.0) [awkward]
+// GAP: no gRPC library (server, client, interceptors, status, metadata); all of it is hand written on std/http (Go: google.golang.org/grpc) [awkward]
+
+const WT_VARINT = 0
+const WT_I64 = 1
+const WT_LEN = 2
+const WT_I32 = 5
+const MAX_MSG = 4194304
+const HEX: Bytes = b"0123456789ABCDEF"
+
+// ---------- status codes ----------
+
+// LANG: no way to give an enum's variants explicit wire numbers, so the codes are Int constants (Go: type Code uint32 with iota constants)
+const OK = 0
+const CANCELED = 1
+const UNKNOWN = 2
+const INVALID_ARGUMENT = 3
+const DEADLINE_EXCEEDED = 4
+const NOT_FOUND = 5
+const ALREADY_EXISTS = 6
+const PERMISSION_DENIED = 7
+const RESOURCE_EXHAUSTED = 8
+const FAILED_PRECONDITION = 9
+const ABORTED = 10
+const OUT_OF_RANGE = 11
+const UNIMPLEMENTED = 12
+const INTERNAL = 13
+const UNAVAILABLE = 14
+const DATA_LOSS = 15
+const UNAUTHENTICATED = 16
+
+struct Status {
+  code: Int
+  msg: Str
+}
+
+fn (s: Status) display() -> Str { "rpc error: code = ${s.code} desc = ${s.msg}" }
+
+fn status(code: Int, msg: Str) -> Status { Status{code: code, msg: msg} }
+
+enum ProtoErr {
+  Truncated(at: Int)
+  Overflow(at: Int)
+  BadWireType(field: Int, wire: Int)
+  BadUtf8(field: Int)
+}
+
+fn (e: ProtoErr) display() -> Str {
+  match e {
+    Truncated(at) => "proto: truncated at byte ${at}"
+    Overflow(at) => "proto: varint overflows 64 bits at byte ${at}"
+    BadWireType(field, wire) => "proto: field ${field} has wire type ${wire}"
+    BadUtf8(field) => "proto: field ${field} is not valid UTF-8"
+  }
+}
+
+// ---------- protobuf wire format ----------
+
+fn put_uvarint(var b: BytesBuilder, v: Int) {
+  var x = v
+  // LANG: no bit preserving conversion between Int and UInt64 (UInt64(x) faults on a negative int64 field), so unsigned varint code stays on Int with lt_unsigned and shr_logical (Go: uint64(x)) [minor]
+  while !x.lt_unsigned(0x80) bound 10 {
+    b.write_byte(UInt8((x & 0x7f) | 0x80))
+    x = x.shr_logical(7)
+  }
+  b.write_byte(UInt8(x))
+}
+
+fn zigzag(n: Int) -> Int { n.wrapping_shl(1) ^ (n >> 63) }
+
+fn unzigzag(n: Int) -> Int { n.shr_logical(1) ^ -(n & 1) }
+
+fn put_tag(var b: BytesBuilder, field: Int, wire: Int) { put_uvarint(b, field.wrapping_shl(3) | wire) }
+
+fn put_int(var b: BytesBuilder, field: Int, v: Int) {
+  if v == 0 { return }
+  put_tag(b, field, WT_VARINT)
+  put_uvarint(b, v)
+}
+
+fn put_sint(var b: BytesBuilder, field: Int, v: Int) {
+  if v == 0 { return }
+  put_tag(b, field, WT_VARINT)
+  put_uvarint(b, zigzag(v))
+}
+
+fn put_bool(var b: BytesBuilder, field: Int, v: Bool) {
+  if v { put_int(b, field, 1) }
+}
+
+fn put_double(var b: BytesBuilder, field: Int, v: Float) {
+  if v == 0.0 { return }
+  put_tag(b, field, WT_I64)
+  b.write(binary.u64_le(v.to_bits()))
+}
+
+fn put_bytes(var b: BytesBuilder, field: Int, v: Bytes) {
+  if v.is_empty() { return }
+  put_tag(b, field, WT_LEN)
+  put_uvarint(b, v.len())
+  b.write(v)
+}
+
+fn put_str(var b: BytesBuilder, field: Int, v: Str) { put_bytes(b, field, v.bytes()) }
+
+fn put_packed(var b: BytesBuilder, field: Int, xs: List[Int]) {
+  if xs.is_empty() { return }
+  var inner = BytesBuilder.new()
+  for x in xs { put_uvarint(inner, x) }
+  put_bytes(b, field, inner.freeze())
+}
+
+struct Reader {
+  buf: Bytes
+  pos: Int = 0
+}
+
+fn (r: Reader) done() -> Bool { r.pos >= r.buf.len() }
+
+fn (var r: Reader) uvarint() -> Int ! ProtoErr {
+  var x = 0
+  var shift = 0
+  while shift < 64 bound 10 {
+    if r.pos >= r.buf.len() { return Err(ProtoErr.Truncated(at: r.pos)) }
+    let c = Int(r.buf[r.pos])
+    r.pos += 1
+    if shift == 63 && c > 1 { return Err(ProtoErr.Overflow(at: r.pos)) }
+    x = x | (c & 0x7f).wrapping_shl(shift)
+    if c < 0x80 { return x }
+    shift += 7
+  }
+  Err(ProtoErr.Overflow(at: r.pos))
+}
+
+fn (var r: Reader) advance(n: Int) -> () ! ProtoErr {
+  if n < 0 || n > r.buf.len() - r.pos { return Err(ProtoErr.Truncated(at: r.pos)) }
+  r.pos += n
+  Ok(())
+}
+
+fn (var r: Reader) fixed64() -> Int ! ProtoErr {
+  let at = r.pos
+  r.advance(8)?
+  binary.get_u64_le(r.buf, at)
+}
+
+fn (var r: Reader) len_delim() -> Bytes ! ProtoErr {
+  let n = r.uvarint()?
+  let at = r.pos
+  r.advance(n)?
+  r.buf[at..at + n]
+}
+
+fn (var r: Reader) string(field: Int) -> Str ! ProtoErr {
+  let b = r.len_delim()?
+  b.to_str().or_err(ProtoErr.BadUtf8(field: field))
+}
+
+fn (var r: Reader) tag() -> (Int, Int) ! ProtoErr {
+  let t = r.uvarint()?
+  (t.shr_logical(3), t & 7)
+}
+
+// unknown fields are skipped, as proto3 requires
+fn (var r: Reader) skip(field: Int, wire: Int) -> () ! ProtoErr {
+  match wire {
+    0 => { let _v = r.uvarint()? }
+    1 => r.advance(8)?
+    2 => { let _b = r.len_delim()? }
+    5 => r.advance(4)?
+    _ => return Err(ProtoErr.BadWireType(field: field, wire: wire))
+  }
+  Ok(())
+}
+
+// repeated int64 accepts packed and unpacked encodings
+fn (var r: Reader) packed(field: Int, wire: Int) -> List[Int] ! ProtoErr {
+  if wire == WT_VARINT { return [r.uvarint()?] }
+  if wire != WT_LEN { return Err(ProtoErr.BadWireType(field: field, wire: wire)) }
+  var inner = Reader{buf: r.len_delim()?}
+  var out: List[Int] = []
+  while !inner.done() { out.push(inner.uvarint()?) }
+  out
+}
+
+// ---------- messages ----------
+
+// message Item { int64 id = 1; string sku = 2; string name = 3; sint64 quantity = 4;
+//                double price = 5; repeated int64 tag_ids = 6; bool active = 7; int64 updated_unix = 8; }
+struct Item {
+  id: Int = 0
+  sku: Str = ""
+  name: Str = ""
+  quantity: Int = 0
+  price: Float = 0.0
+  tag_ids: List[Int] = []
+  active: Bool = false
+  updated_unix: Int = 0
+}
+
+fn encode_item(it: Item) -> Bytes {
+  var b = BytesBuilder.new()
+  put_int(b, 1, it.id)
+  put_str(b, 2, it.sku)
+  put_str(b, 3, it.name)
+  put_sint(b, 4, it.quantity)
+  put_double(b, 5, it.price)
+  put_packed(b, 6, it.tag_ids)
+  put_bool(b, 7, it.active)
+  put_int(b, 8, it.updated_unix)
+  b.freeze()
+}
+
+fn decode_item(data: Bytes) -> Item ! ProtoErr {
+  var r = Reader{buf: data}
+  var it = Item{}
+  while !r.done() {
+    let (f, wt) = r.tag()?
+    match (f, wt) {
+      (1, 0) => it.id = r.uvarint()?
+      (2, 2) => it.sku = r.string(2)?
+      (3, 2) => it.name = r.string(3)?
+      (4, 0) => it.quantity = unzigzag(r.uvarint()?)
+      (5, 1) => it.price = Float.from_bits(r.fixed64()?)
+      (6, _) => it.tag_ids = it.tag_ids + r.packed(6, wt)?
+      (7, 0) => it.active = r.uvarint()? != 0
+      (8, 0) => it.updated_unix = r.uvarint()?
+      _ => r.skip(f, wt)?
+    }
+  }
+  it
+}
+
+// message GetItemRequest { int64 id = 1; }  message ListItemsRequest { string prefix = 1; int32 limit = 2; }
+// message HealthCheckRequest { string service = 1; }  message PriceRequest { string sku = 1; }
+// message PriceReply { int64 price_micros = 1; string currency = 2; }
+struct ListReq {
+  prefix: Str = ""
+  limit: Int = 0
+}
+
+fn decode_id(data: Bytes) -> Int ! ProtoErr {
+  var r = Reader{buf: data}
+  var id = 0
+  while !r.done() {
+    let (f, wt) = r.tag()?
+    if f == 1 && wt == WT_VARINT { id = r.uvarint()? } else { r.skip(f, wt)? }
+  }
+  id
+}
+
+// one string field 1: HealthCheckRequest, PriceRequest
+fn decode_name(data: Bytes) -> Str ! ProtoErr {
+  var r = Reader{buf: data}
+  var s = ""
+  while !r.done() {
+    let (f, wt) = r.tag()?
+    if f == 1 && wt == WT_LEN { s = r.string(1)? } else { r.skip(f, wt)? }
+  }
+  s
+}
+
+fn decode_list_req(data: Bytes) -> ListReq ! ProtoErr {
+  var r = Reader{buf: data}
+  var q = ListReq{}
+  while !r.done() {
+    let (f, wt) = r.tag()?
+    match (f, wt) {
+      (1, 2) => q.prefix = r.string(1)?
+      (2, 0) => q.limit = r.uvarint()?
+      _ => r.skip(f, wt)?
+    }
+  }
+  q
+}
+
+fn encode_one_int(field: Int, v: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  put_int(b, field, v)
+  b.freeze()
+}
+
+// ---------- gRPC framing, metadata, deadlines ----------
+
+fn frame(msg: Bytes) -> Bytes {
+  var b = BytesBuilder.with_capacity(msg.len() + 5)
+  b.write_byte(0)
+  b.write(binary.u32_be(msg.len()))
+  b.write(msg)
+  b.freeze()
+}
+
+fn unframe(body: Bytes, encoding: Str) -> List[Bytes] ! Status {
+  var out: List[Bytes] = []
+  var pos = 0
+  while pos < body.len() {
+    if body.len() - pos < 5 { return Err(status(INTERNAL, "grpc: truncated message prefix")) }
+    let flag = body[pos]
+    let n = binary.get_u32_be(body, pos + 1)
+    if n > MAX_MSG { return Err(status(RESOURCE_EXHAUSTED, "grpc: received message larger than max (${n} vs. ${MAX_MSG})")) }
+    if body.len() - pos - 5 < n { return Err(status(INTERNAL, "grpc: truncated message")) }
+    let raw = body[pos + 5..pos + 5 + n]
+    let msg = match flag {
+      0 => raw
+      1 if encoding == "gzip" => compress.gunzip(raw, max_size: MAX_MSG).map_err(fn(e) { status(INTERNAL, "grpc: decompress: ${e}") })?
+      1 => return Err(status(UNIMPLEMENTED, "grpc: compressed message with grpc-encoding ${encoding:?}"))
+      _ => return Err(status(INTERNAL, "grpc: bad compressed flag ${flag}"))
+    }
+    out.push(msg)
+    pos += 5 + n
+  }
+  out
+}
+
+fn single(msgs: List[Bytes]) -> Bytes ! Status {
+  match msgs {
+    [m] => m
+    [] => Err(status(INTERNAL, "grpc: no request message"))
+    _ => Err(status(UNIMPLEMENTED, "grpc: more than one request message for a unary method"))
+  }
+}
+
+// grpc-message is percent encoded: every byte outside printable ASCII, and '%'
+fn percent_encode(s: Str) -> Str {
+  var b = BytesBuilder.new()
+  for c in s.bytes() {
+    if c >= 0x20 && c <= 0x7e && c != '%' {
+      b.write_byte(c)
+    } else {
+      b.write_byte('%')
+      b.write_byte(HEX[Int(c) >> 4])
+      b.write_byte(HEX[Int(c) & 15])
+    }
+  }
+  b.freeze().to_str() ?? ""
+}
+
+// grpc-timeout: up to 8 digits and a unit (H M S m u n)
+fn parse_timeout(v: Str) -> Duration? {
+  if v.len() < 2 || v.len() > 9 { return None }
+  let n = Int.parse(v[..v.len() - 1])?
+  match v[v.len() - 1..] {
+    "H" => Some(1h * n)
+    "M" => Some(1m * n)
+    "S" => Some(1s * n)
+    "m" => Some(1ms * n)
+    "u" => Some(1us * n)
+    "n" => Some(Duration.from_nanos(n))
+    _ => None
+  }
+}
+
+// custom metadata: every header that is not reserved; "-bin" values are base64
+fn metadata(req: http.Request) -> Map[Str, Bytes] {
+  var md: Map[Str, Bytes] = {}
+  for (k, v) in req.headers {
+    let key = k.to_lower()
+    if key.starts_with("grpc-") || key == "content-type" || key == "te" || key == "user-agent" { continue }
+    if key.ends_with("-bin") {
+      let raw = base64.decode(v, enc: base64.Base64.Std).ok() ?? base64.decode(v, enc: base64.Base64.RawStd).ok() ?? continue
+      md.put(key, raw)
+    } else {
+      md.put(key, v.bytes())
+    }
+  }
+  md
+}
+
+// ---------- responses ----------
+
+fn grpc_error(s: Status) -> http.Response {
+  // A Trailers-Only response carries the status in the header block, which std/http can send.
+  http.empty(200)
+    .with_header("Content-Type", "application/grpc+proto")
+    .with_header("Grpc-Status", "${s.code}")
+    .with_header("Grpc-Message", percent_encode(s.msg))
+}
+
+fn grpc_ok(msg: Bytes) -> http.Response {
+  // GAP: no HTTP/2 response trailers: Response has headers and a body only, so grpc-status and grpc-message cannot follow the DATA frames; real gRPC clients fail with "server closed the stream without sending trailers" (Go: http.ResponseWriter's Trailer map and http.TrailerPrefix) [blocker]
+  http.Response{status: 200, headers: {"Content-Type": "application/grpc+proto", "Grpc-Status": "0"}, body: frame(msg)}
+}
+
+fn principal_key() -> http.Key[Str] { http.key("grpc.principal") }
+
+// unary runs one RPC: content type check, framing, the deadline, status mapping
+fn unary[fx: Effects](clock: Clock, req: http.Request, f: fn(Bytes, Map[Str, Bytes]) -> Bytes ! Status uses fx) -> http.Response
+  uses (clock, fx)
+{
+  let ct = req.header("Content-Type") ?? ""
+  if !ct.starts_with("application/grpc") {
+    return http.text(415, "invalid gRPC request content-type ${ct:?}")
+  }
+  let encoding = req.header("Grpc-Encoding") ?? "identity"
+  let msgs = unframe(req.body, encoding) ?? s => return grpc_error(s)
+  let msg = single(msgs) ?? s => return grpc_error(s)
+  let md = metadata(req)
+  let result: Result[Bytes, Status] = match req.header("Grpc-Timeout").and_then(parse_timeout) {
+    Some(d) => match task.with_timeout(clock, d, fn() { f(msg, md) }) {
+      Ok(out) => Ok(out)
+      Err(task.Timed.TimedOut) => Err(status(DEADLINE_EXCEEDED, "context deadline exceeded"))
+      Err(task.Timed.Failed(s)) => Err(s)
+    }
+    None => f(msg, md)
+  }
+  match result {
+    Ok(out) => grpc_ok(out)
+    Err(s) => grpc_error(s)
+  }
+}
+
+// ---------- inventory store and handlers ----------
+
+struct Store {
+  items: Mutex[Map[Int, Item]]
+}
+
+fn (s: Store) get(id: Int) -> Item ! Status {
+  if id <= 0 { return Err(status(INVALID_ARGUMENT, "id must be positive")) }
+  s.items.with_read(fn(m) { m.get(id) }).or_err(status(NOT_FOUND, "item ${id} not found"))
+}
+
+fn (s: Store) list(q: ListReq) -> List[Item] {
+  let limit = if q.limit <= 0 || q.limit > 1000 { 1000 } else { q.limit }
+  let all = s.items.with_read(fn(m) { m.values() })
+  var out: List[Item] = []
+  for it in all.sort_by(fn(it) { it.sku }) {
+    if out.len() >= limit { break }
+    if it.sku.starts_with(q.prefix) { out.push(it) }
+  }
+  out
+}
+
+fn get_item(store: Store, pricing: PricingClient, deadline: Duration, msg: Bytes, md: Map[Str, Bytes]) -> Bytes ! Status
+  uses net.dial
+{
+  let id = decode_id(msg).map_err(fn(e) { status(INVALID_ARGUMENT, "${e}") })?
+  var it = store.get(id)?
+  // GAP: no way to read the deadline task.with_timeout set for this task (Go: ctx.Deadline()), so the remaining budget cannot be propagated as grpc-timeout; the caller passes a fixed budget [awkward]
+  // forward the tenant metadata to the pricing service
+  let tenant = md.get("x-tenant-id").and_then(fn(b) { b.to_str() }) ?? "default"
+  let quote = pricing.quote(it.sku, deadline, {"X-Tenant-Id": tenant})?
+  it.price = Float(quote.0) / 1000000.0
+  encode_item(it)
+}
+
+fn list_items(clock: Clock, store: Store, req: http.Request) -> http.Response {
+  let msgs = unframe(req.body, req.header("Grpc-Encoding") ?? "identity") ?? s => return grpc_error(s)
+  let raw = single(msgs) ?? s => return grpc_error(s)
+  let q = decode_list_req(raw) ?? e => return grpc_error(status(INVALID_ARGUMENT, "${e}"))
+  let items = store.list(q)
+  let started = clock.now()
+  http.stream(200, fn(w) {
+    for it in items {
+      // GAP: a stream's function cannot end the RPC with a status: no trailers, so an error mid stream (or DEADLINE_EXCEEDED) cannot reach the client as grpc-status (Go: grpc.ServerStream.SetTrailer, http.TrailerPrefix) [blocker]
+      if task.is_canceled() { return Ok(()) }
+      w.write(frame(encode_item(it)))?
+      w.flush()?
+    }
+    log.debug("list stream done", {"items": items.len(), "ms": (clock.now() - started).millis()})
+    Ok(())
+  }).with_header("Content-Type", "application/grpc+proto")
+}
+
+// ---------- health (grpc.health.v1) ----------
+
+const SERVING = 1
+const NOT_SERVING = 2
+
+fn health_check(msg: Bytes) -> Bytes ! Status {
+  let service = decode_name(msg).map_err(fn(e) { status(INVALID_ARGUMENT, "${e}") })?
+  match service {
+    "" | "inventory.v1.Inventory" => encode_one_int(1, if task.stop_requested() { NOT_SERVING } else { SERVING })
+    _ => Err(status(NOT_FOUND, "unknown service ${service}"))
+  }
+}
+
+fn health_watch(req: http.Request) -> http.Response {
+  let msgs = unframe(req.body, "identity") ?? s => return grpc_error(s)
+  let _service = single(msgs) ?? s => return grpc_error(s)
+  http.stream(200, fn(w) {
+    w.write(frame(encode_one_int(1, SERVING)))?
+    w.flush()?
+    let _stop = task.stopping().recv()
+    w.write(frame(encode_one_int(1, NOT_SERVING)))?
+    w.flush()
+  }).with_header("Content-Type", "application/grpc+proto")
+}
+
+// ---------- reflection (grpc.reflection.v1) ----------
+
+// ServerReflectionRequest { string host = 1; string file_by_filename = 3; string file_containing_symbol = 4; string list_services = 7; }
+// ServerReflectionResponse { string valid_host = 1; ServerReflectionRequest original_request = 2;
+//   ListServiceResponse list_services_response = 6; ErrorResponse error_response = 7; }
+fn reflection(req: http.Request, body: http.BodyReader) -> http.Response {
+  // GAP: no bidirectional streaming: a handle_stream body cannot be read from inside http.stream's function ("a streamed response's function cannot read it", std 4.1), so each reflection request must arrive before any reply; grpcurl keeps its send side open and waits forever (Go: grpc bidi streams over net/http2 full duplex, http.ResponseController.EnableFullDuplex) [blocker]
+  let all = body.read_all() ?? e => return grpc_error(status(INTERNAL, "${e}"))
+  let msgs = unframe(all, req.header("Grpc-Encoding") ?? "identity") ?? s => return grpc_error(s)
+  var out = BytesBuilder.new()
+  for m in msgs {
+    var reply = BytesBuilder.new()
+    put_bytes(reply, 2, m)
+    let asked = reflection_kind(m) ?? 0
+    if asked == 7 {
+      var list = BytesBuilder.new()
+      for name in ["inventory.v1.Inventory", "grpc.health.v1.Health", "grpc.reflection.v1.ServerReflection"] {
+        var svc = BytesBuilder.new()
+        put_str(svc, 1, name)
+        put_bytes(list, 1, svc.freeze())
+      }
+      put_bytes(reply, 6, list.freeze())
+    } else {
+      // GAP: no FileDescriptorProto for the service: without protoc or descriptor support the file_containing_symbol answer would be hand encoded descriptor bytes (Go: protoreflect, protodesc) [awkward]
+      var err = BytesBuilder.new()
+      put_int(err, 1, NOT_FOUND)
+      put_str(err, 2, "descriptors are not available")
+      put_bytes(reply, 7, err.freeze())
+    }
+    out.write(frame(reply.freeze()))
+  }
+  http.Response{status: 200, headers: {"Content-Type": "application/grpc+proto", "Grpc-Status": "0"}, body: out.freeze()}
+}
+
+fn reflection_kind(m: Bytes) -> Int? {
+  var r = Reader{buf: m}
+  while !r.done() {
+    let (f, wt) = r.tag().ok()?
+    if f >= 3 && f <= 7 { return Some(f) }
+    r.skip(f, wt).ok()?
+  }
+  None
+}
+
+// ---------- gRPC client for pricing.v1.Pricing ----------
+
+struct PricingClient {
+  http: http.Client
+  base: Str
+  token: Secret[Str]
+}
+
+fn client_status(e: http.ClientErr) -> Status {
+  match e {
+    http.ClientErr.Timeout => status(DEADLINE_EXCEEDED, "pricing: ${e}")
+    http.ClientErr.Canceled => status(CANCELED, "pricing: ${e}")
+    http.ClientErr.Connect(_) => status(UNAVAILABLE, "pricing: ${e}")
+    http.ClientErr.Protocol(_) => status(UNAVAILABLE, "pricing: ${e}")
+    http.ClientErr.InvalidUrl(_) => status(INTERNAL, "pricing: ${e}")
+  }
+}
+
+// returns (price in micros, currency)
+fn (c: PricingClient) quote(sku: Str, deadline: Duration, md: Map[Str, Str]) -> (Int, Str) ! Status uses net.dial {
+  var body = BytesBuilder.new()
+  put_str(body, 1, sku)
+  var headers: Map[Str, Str] = {
+    "Content-Type": "application/grpc+proto",
+    "Te": "trailers",
+    "Grpc-Timeout": "${deadline.millis()}m",
+    "Authorization": "Bearer ${c.token.reveal()}",
+  }
+  for (k, v) in md { headers.put(k, v) }
+  // GAP: the client cannot be told to use HTTP/2 without TLS (h2c with prior knowledge), the usual transport between services in a cluster (Go: golang.org/x/net/http2 Transport{AllowHTTP: true}, http.Protocols.SetUnencryptedHTTP2) [awkward]
+  let req = http.new_request("POST", "${c.base}/pricing.v1.Pricing/Quote", headers: headers, body: frame(body.freeze()))
+    .with_timeout(deadline)
+  let resp = c.http.send(req).map_err(client_status)?
+  if resp.status != 200 {
+    return Err(status(UNAVAILABLE, "pricing: unexpected HTTP status ${resp.status}"))
+  }
+  // GAP: the client cannot read HTTP/2 trailers, so grpc-status of a normal response is lost; only a Trailers-Only reply (status in the headers) is seen (Go: http.Response.Trailer) [blocker]
+  let code = Int.parse(resp.header("Grpc-Status") ?? "0") ?? 2
+  if code != 0 {
+    return Err(status(code, "pricing: ${resp.header("Grpc-Message") ?? ""}"))
+  }
+  let msgs = unframe(resp.body, resp.header("Grpc-Encoding") ?? "identity")?
+  let m = single(msgs)?
+  var r = Reader{buf: m}
+  var micros = 0
+  var currency = "USD"
+  while !r.done() {
+    let (f, wt) = r.tag().map_err(fn(e) { status(INTERNAL, "${e}") })?
+    match (f, wt) {
+      (1, 0) => micros = r.uvarint().map_err(fn(e) { status(INTERNAL, "${e}") })?
+      (2, 2) => currency = r.string(2).map_err(fn(e) { status(INTERNAL, "${e}") })?
+      _ => r.skip(f, wt).map_err(fn(e) { status(INTERNAL, "${e}") })?
+    }
+  }
+  (micros, currency)
+}
+
+// ---------- interceptors ----------
+
+fn log_interceptor(clock: Clock, req: http.Request, next: http.Next) -> http.Response {
+  let start = clock.now()
+  let resp = next(req)
+  let code = resp.header("Grpc-Status") ?? "?"
+  log.info("rpc", {
+    "method": req.path,
+    "peer": req.remote_ip,
+    "code": code,
+    "ms": (clock.now() - start).millis(),
+    "proto": if req.tls() { "h2" } else { "http/1.1" },
+  })
+  resp
+}
+
+fn auth_interceptor(token: Secret[Str], req: http.Request, next: http.Next) -> http.Response {
+  if req.path.starts_with("/grpc.health.v1.Health/") || req.path.starts_with("/grpc.reflection.") {
+    return next(req)
+  }
+  let got = req.header("Authorization") ?? ""
+  let want = "Bearer ${token.reveal()}"
+  if !crypto.equal(crypto.sha256(got.bytes()), crypto.sha256(want.bytes())) {
+    return grpc_error(status(UNAUTHENTICATED, "missing or invalid bearer token"))
+  }
+  next(req.with_value(principal_key(), "service:inventory-client"))
+}
+
+// ---------- wiring ----------
+
+fn routes(store: Store, clock: Clock, pricing: PricingClient, token: Secret[Str]) -> http.Router {
+  var r = http.router()
+  r.wrap(fn(req, next) { log_interceptor(clock, req, next) })
+  r.wrap(fn(req, next) { auth_interceptor(token, req, next) })
+  r.handle("POST /inventory.v1.Inventory/GetItem", fn(req) {
+    let budget = req.header("Grpc-Timeout").and_then(parse_timeout) ?? 5s
+    unary(clock, req, fn(msg, md) { get_item(store, pricing, budget, msg, md) })
+  })
+  r.handle("POST /inventory.v1.Inventory/ListItems", fn(req) { list_items(clock, store, req) })
+  r.handle("POST /grpc.health.v1.Health/Check", fn(req) { unary(clock, req, fn(msg, _md) { health_check(msg) }) })
+  r.handle("POST /grpc.health.v1.Health/Watch", fn(req) { health_watch(req) })
+  r.handle_stream("POST /grpc.reflection.v1.ServerReflection/ServerReflectionInfo", fn(req, body) { reflection(req, body) })
+  r.not_found(fn(req) { grpc_error(status(UNIMPLEMENTED, "unknown method ${req.path}")) })
+  r.method_not_allowed(fn(_req) { grpc_error(status(UNIMPLEMENTED, "gRPC requires POST")) })
+  r
+}
+
+fn seed_items() -> Map[Int, Item] {
+  {
+    1: Item{id: 1, sku: "BOLT-M4", name: "M4 bolt", quantity: 1200, tag_ids: [3, 7], active: true},
+    2: Item{id: 2, sku: "NUT-M4", name: "M4 nut", quantity: -4, tag_ids: [3], active: true},
+    3: Item{id: 3, sku: "WASHER-M4", name: "M4 washer", quantity: 0},
+  }
+}
+
+fn main(os: Os) ! {
+  log.configure(os.stdio, format: log.Format.Json)
+  let addr = os.env.get("GRPC_ADDR") ?? ":8443"
+  let token = Secret.new(os.env.get("GRPC_TOKEN") ?? return Err(EnvErr.Missing(name: "GRPC_TOKEN")))
+  let pricing_host = os.env.get("PRICING_HOST") ?? "pricing.internal"
+  let cert = http.tls_cert(os.fs.read("/etc/grpcsvc/tls.crt")?, os.fs.read("/etc/grpcsvc/tls.key")?)?
+  // GAP: the server cannot request or verify client certificates (mTLS), the usual authentication between gRPC services (Go: tls.Config{ClientAuth: tls.RequireAndVerifyClientCert, ClientCAs}) [blocker]
+  // GAP: the client cannot present a client certificate either (Go: tls.Config.Certificates on the Transport) [blocker]
+  let client = http.client(os.net.only([pricing_host]), timeout: 10s).with_roots(os.fs.read("/etc/grpcsvc/ca.crt")?)?
+  let pricing = PricingClient{http: client, base: "https://${pricing_host}:443", token: token}
+  let store = Store{items: Mutex.new(seed_items())}
+  // GAP: HTTP/2 server settings are fixed (250 streams, 1 MiB windows) and there is no keepalive PING policy or GOAWAY on max connection age (Go: http2.Server{MaxConcurrentStreams}, grpc keepalive.ServerParameters) [minor]
+  let srv = http.server(os.net.listen(addr)?, routes(store, os.clock, pricing, token))
+    .with_tls([cert])
+    .with_idle_timeout(5m)
+    .with_read_header_timeout(10s)
+  log.info("grpc listening", {"addr": srv.addr(), "alpn": "h2"})
+  srv.serve()?
+}
