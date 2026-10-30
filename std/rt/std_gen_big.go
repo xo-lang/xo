@@ -38,10 +38,7 @@ func (v Big_BigInt) XoCmp(x any) int {
 }
 
 func (v Big_BigInt) XoDebug(b *strings.Builder) {
-	b.WriteString("BigInt{")
-	b.WriteString("key: ")
-	DebugTo(b, v.F_key)
-	b.WriteString("}")
+	b.WriteString(v.M_debug(nil))
 }
 
 // XoMark marks the lists held by the fields (see rt.List).

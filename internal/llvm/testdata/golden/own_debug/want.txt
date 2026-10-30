@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+Uuid("00000000-0000-0000-0000-000000000000")
+Uuid("00000000-0000-0000-0000-000000000000")
+[Uuid("00000000-0000-0000-0000-000000000000")]
+P<1> P<1>
+[P<1>, P<2>]
+Some(P<1>)
+shade:dark/3 [shade:light]
+Holder{p: P<1>, ps: [P<5>], maybe: None, shade: shade:light}
+{"a": P<7>}
+--- stderr

@@ -10,7 +10,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Map, a field of a derived type, log fields and error frames: a user
   type printed its derived form (`P{x: 1}`) since 0.33.0, and std's
   `uuid.Uuid` its internal words (`Uuid{hi: ..., lo: ...}`) instead of
-  `Uuid("...")` since 0.34.0 (owner report b18). Golden own_debug.
+  `Uuid("...")` since 0.34.0 (owner report b18); on the Go backend
+  `big.BigInt` inside a List printed `BigInt{key: ...}`. Golden own_debug.
 - Native backends: a branch on a register just set to a constant of
   two to four instructions (movz or movn, then movk) goes straight to
   its outcome, as one of a single mov already did (compiler/arm64

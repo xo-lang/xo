@@ -362,10 +362,18 @@ fn (var g: Gen) gen_enum(t: Int, sp: Span) {
     }
     g.pl("\t}\n\treturn 0\n}\n")
   }
-  // Debug
+  // Debug: its own debug() when declared (core 1.6), as a struct's
   g.pl("func (v ${self}) XoDebug(b *strings.Builder) {")
-  g.pl("\tswitch v.Tag {")
+  let own_debug = g.method_named(t, "debug") >= 0
+  if own_debug {
+    g.pl("\tb.WriteString(v.M_debug(nil))")
+  } else {
+    g.pl("\tswitch v.Tag {")
+  }
   for (vi, v) in o.variants.indexed() {
+    if own_debug {
+      break
+    }
     g.pl("\tcase ${v.index + 1}:")
     let vname = check.text(v.name)
     if v.fields.is_empty() {
@@ -386,7 +394,7 @@ fn (var g: Gen) gen_enum(t: Int, sp: Span) {
     }
     g.pl("\t\tb.WriteString(\")\")")
   }
-  g.pl("\t}\n}\n")
+  g.pl(if own_debug { "}\n" } else { "\t}\n}\n" })
   g.gen_iface_methods(t, self)
   if g.derives(t, "Json") && !rt_hand_written(g.local_type_name(t) + ".json") {
     g.gen_json_enum(t)

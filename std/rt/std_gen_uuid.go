@@ -46,12 +46,7 @@ func (v Uuid_Uuid) XoCmp(x any) int {
 }
 
 func (v Uuid_Uuid) XoDebug(b *strings.Builder) {
-	b.WriteString("Uuid{")
-	b.WriteString("hi: ")
-	DebugTo(b, v.F_hi)
-	b.WriteString(", lo: ")
-	DebugTo(b, v.F_lo)
-	b.WriteString("}")
+	b.WriteString(v.M_debug(nil))
 }
 
 type Uuid_UuidErr struct {

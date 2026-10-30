@@ -1,0 +1,48 @@
+// b18 (owner, 2026-10-30): `${x:?}` is x.debug() (core 1.6) when the type
+// declares its own debug(), here too inside a List, an Option, a field of
+// a derived type and a Map; uuid's Debug text is `Uuid("...")` (std 24).
+use std/uuid
+
+struct P {
+  x: Int
+}
+
+fn (p: P) debug() -> Str {
+  "P<${p.x}>"
+}
+
+enum Shade {
+  Light
+  Dark(level: Int)
+}
+
+fn (s: Shade) debug() -> Str {
+  match s {
+    Light => "shade:light"
+    Dark(level) => "shade:dark/${level}"
+  }
+}
+
+struct Holder {
+  p: P
+  ps: List[P]
+  maybe: P?
+  shade: Shade
+}
+
+fn main(os: Os) {
+  let u = uuid.nil()
+  os.stdio.println(u.debug())
+  os.stdio.println("${u:?}")
+  os.stdio.println("${[u]:?}")
+  let p = P{x: 1}
+  os.stdio.println("${p.debug()} ${p:?}")
+  os.stdio.println("${[p, P{x: 2}]:?}")
+  let some: P? = Some(p)
+  os.stdio.println("${some:?}")
+  os.stdio.println("${Shade.Dark(level: 3):?} ${[Shade.Light]:?}")
+  let h = Holder{p: p, ps: [P{x: 5}], maybe: None, shade: Shade.Light}
+  os.stdio.println("${h:?}")
+  let m: Map[Str, P] = {"a": P{x: 7}}
+  os.stdio.println("${m:?}")
+}
