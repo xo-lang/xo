@@ -14,6 +14,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `set_write_deadline`), `on_ping`, `on_pong` and `pong` (decision 0430,
   gorilla's); a write error sticks, as in gorilla.
 
+- `xo test` parses std's function bodies only where the check needs
+  them, as `xo build` does (decision 0351): a one-test program's test
+  build after an edit takes 0.728 of the wall time and 0.485 of the
+  memory (773 to 375 MB on linux/amd64). XO_LAZY_PARSE=off parses every
+  body.
 - `UInt64.from_bits(x)` and `u.to_bits()` reinterpret 64 bits between Int
   and UInt64.
 

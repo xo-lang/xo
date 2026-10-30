@@ -86,7 +86,16 @@ Proposed, in stages, each with its own `xo bench --ab`:
    since 2026-10-23 (owner), after the touched packages' full suites
    passed with it on (compiler/parser and compiler/check xo tests,
    cmd/xo, internal/arm64 TestGoldenRun); XO_LAZY_PARSE=off is the
-   escape hatch.
+   escape hatch. Addendum 2026-10-30 (xo-lang-4): `xo test` parses
+   lazily too. Its exclusion had no stated reason, and parse_lazy_path
+   already kept the std module under test (--std-module) whole. A
+   one-test program's test build after an edit allocated 905 MB, 629 MB
+   of it in parse_file (bench/results/test-vs-go-2026-10-30.md).
+   `xo bench --ab` of that edit on the linux/amd64 host, A
+   XO_LAZY_PARSE=off, 20 rounds: wall 579 to 422 ms, 0.728 (0.703 to
+   0.748, better), CPU 0.587, max RSS 773 to 375 MB, 0.485. darwin: RSS
+   830 to 380 MB, check 80 to 59 ms. The six ported std modules' tests
+   pass with it.
 
 3. **A whole-build key** (Go's action IDs): the hash of the checked
    modules' keys, the flags and the target maps to the linked binary;
