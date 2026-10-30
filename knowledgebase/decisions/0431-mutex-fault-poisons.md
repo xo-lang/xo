@@ -1,8 +1,11 @@
 # 0431: A fault inside Mutex.with poisons the mutex
 
-Status: Proposed (Xo Lang 1, 2026-10-30, for the owner's review; asked
-for by the lead after Xo Lang 2's metricsum profile). No code until it
-is accepted.
+Status: Rejected (owner, 2026-10-30). Rollback stays: a fault inside
+Mutex.with leaves the protected value unchanged (core 5.4), and the
+mutex is not poisoned. The Data section below showed no hot path in
+std, compiler/ or bench paying the rollback copy after 02271995b.
+(Proposed by Xo Lang 1, 2026-10-30, asked for by the lead after Xo Lang
+2's metricsum profile.)
 
 ## Context
 
