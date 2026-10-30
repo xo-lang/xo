@@ -20,3 +20,9 @@ the warm build's did not, and an identical second build missed.
 the start of each build. A new file the build writes into its directory
 that is not a link input goes in a skipped subdirectory too, or the
 binary cache stops hitting.
+
+Since 2026-10-30 scripts/gate.sh runs internal/arm64's cache tests (`-run
+'Cache|BinCache'`, TestMachoBinCache among them) after the named steps
+whenever the branch changes compiler/xo's bcache.xo, parallel.xo,
+packseg.xo or cache.xo (XO_GATE_CACHE=0 skips that): 1dcb9065c's gate ran
+none of them.

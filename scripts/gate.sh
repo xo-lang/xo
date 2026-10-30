@@ -60,7 +60,11 @@
 #            when the branch changes compiler/arm64 or compiler/ssa;
 #            XO_GATE_CROSS=0 skips that; and internal/arm64
 #            TestSwitch65535Arms when it changes compiler/arm64/jumptab.xo
-#            (the match lowering; XO_GATE_SCALE=0 skips that)
+#            (the match lowering; XO_GATE_SCALE=0 skips that); and
+#            internal/arm64's cache tests (-run 'Cache|BinCache',
+#            TestMachoBinCache among them) when it changes compiler/xo's
+#            bcache.xo, parallel.xo, packseg.xo or cache.xo
+#            (XO_GATE_CACHE=0 skips that; lead, 2026-10-30)
 #   warm    the backend caches across xo builds (decision 0275): the
 #            parent commit's xo is built, then TestFrontCacheAcrossPrograms
 #            fills a cache with it and builds every program again with
@@ -179,6 +183,17 @@ cross_ran=0
 scale_change() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/arm64/jumptab\.xo$'
+}
+# cache_change: the branch changes the build driver's cache files
+# (compiler/xo bcache.xo, parallel.xo, packseg.xo, cache.xo), so
+# internal/arm64's cache tests (Cache|BinCache: the backend and front
+# caches, the binary cache, TestMachoBinCache) run after the steps named
+# (lead, 2026-10-30: 50f08a853's spill files in the build directory were
+# hashed into the binary cache key, its gate ran none of these, and main
+# was red 01:04 to 02:30). XO_GATE_CACHE=0 skips it.
+cache_change() {
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/xo/(bcache|parallel|packseg|cache)\.xo$'
 }
 # llvm_goldens: the golden programs the llvm step runs (owner,
 # 2026-10-22: the whole package cost 46 to 56 minutes a gate), "all" or
@@ -354,6 +369,9 @@ if [ "$cross_ran" = 0 ] && [ "${XO_GATE_CROSS:-1}" != 0 ] && native_change; then
 fi
 if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
   full scale ./internal/arm64 -run '^TestSwitch65535Arms$'
+fi
+if [ "${XO_GATE_CACHE:-1}" != 0 ] && cache_change; then
+  full caches ./internal/arm64 -run 'Cache|BinCache'
 fi
 echo GATE-DONE
 exit $failed
