@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `backoff.retry_notify` calls a function with each error and the next
+  delay before it sleeps (cenkalti's RetryNotify).
+
 - An effect variable shared by several callback parameters is the union
   of their arguments' effects (decision 0432): `both(pure_fn, clock_reader)`
   for `fn both[fx: Effects](a: fn() uses fx, b: fn() uses fx)` compiles

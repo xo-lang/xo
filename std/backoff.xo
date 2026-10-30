@@ -30,5 +30,11 @@ fn (b: Backoff) delay(attempt: Int, rand: Rand) -> Duration uses rand
 /// tries (a cancellation point: a cancelled task unwinds there).
 fn retry[T, E, fx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool) -> T ! E uses (clock, rand, fx)
 
+/// retry, calling notify(e, d) with each error before sleeping d
+/// (cenkalti/backoff v4's RetryNotify): to log or count the retries.
+/// retryable and notify may have effects of their own (each its own
+/// effect variable: op's need not include a log's).
+fn retry_notify[T, E, fx: Effects, rx: Effects, nx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool uses rx, notify: fn(E, Duration) -> () uses nx) -> T ! E uses (clock, rand, fx, rx, nx)
+
 /// A retryable that retries every error.
 fn always[E]() -> fn(E) -> Bool

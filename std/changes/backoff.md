@@ -1,5 +1,20 @@
 # std/backoff changes
 
+## 2026-10-30: feature: retry_notify
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Lang 1's triage of the 2026-10-30 language obstacles note
+  (grpcsvc wanted to log each retry)
+- Go reference: cenkalti/backoff v4 RetryNotify
+- Test: internal/stdtest/testdata/corpus/backoff (TestRetryNotify, and
+  no notify for an answered error), every backend
+- Timing: none of its own: retry's loop plus one call per retry
+
+`backoff.retry_notify(b, clock, rand, op, retryable, notify)` calls
+`notify(e, d)` before each sleep, so a program can log or count retries;
+its `retryable` may have effects.
+
 ## 2026-10-29: change: the Go backend compiles the native port
 
 - Kind: change

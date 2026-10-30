@@ -5998,6 +5998,7 @@ struct Backoff {
 }
 fn (b: Backoff) delay(attempt: Int, rand: Rand) -> Duration uses rand
 fn retry[T, E, fx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool) -> T ! E uses (clock, rand, fx)
+fn retry_notify[T, E, fx: Effects, rx: Effects, nx: Effects](b: Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool uses rx, notify: fn(E, Duration) -> () uses nx) -> T ! E uses (clock, rand, fx, rx, nx)
 fn always[E]() -> fn(E) -> Bool
 ```
 
@@ -6012,6 +6013,11 @@ fn always[E]() -> fn(E) -> Bool
   `retryable` is required: `backoff.always()` retries every error, the
   same as cenkalti's default (its Permanent errors are `retryable`
   answering false).
+- `retry_notify` is `retry` with cenkalti's RetryNotify: before each
+  sleep it calls `notify(e, d)` with the error and the delay, to log or
+  count retries; an error it answers is not notified. `retryable` and
+  `notify` may have effects of their own (a log, a metric): each
+  callback has its own effect variable.
 
 ## 44. std/crc32
 

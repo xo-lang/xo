@@ -60,6 +60,30 @@ fn retry[T, E, fx: Effects](b: backoff.Backoff, clock: Clock, rand: Rand, op: fn
   }
 }
 
+/// retry with cenkalti's RetryNotify: notify(e, d) before each sleep d,
+/// and a retryable that may have effects.
+fn retry_notify[T, E, fx: Effects, rx: Effects, nx: Effects](b: backoff.Backoff, clock: Clock, rand: Rand, op: fn() -> T ! E uses fx, retryable: fn(E) -> Bool uses rx, notify: fn(E, Duration) -> () uses nx) -> T ! E uses (clock, rand, fx, rx, nx) {
+  let start = clock.now()
+  var tries = 0
+  while {
+    tries += 1
+    match op() {
+      Ok(v) => return Ok(v)
+      Err(e) => {
+        if !retryable(e) || (b.max_tries > 0 && tries >= b.max_tries) {
+          return Err(e)
+        }
+        let d = backoff_delay(b, tries - 1, rand)
+        if b.max_elapsed > 0s && clock.since(start) + d > b.max_elapsed {
+          return Err(e)
+        }
+        notify(e, d)
+        clock.sleep(d)
+      }
+    }
+  }
+}
+
 fn always[E]() -> fn(E) -> Bool {
   fn(_e: E) { true }
 }

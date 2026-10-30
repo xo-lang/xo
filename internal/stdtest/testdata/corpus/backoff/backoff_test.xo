@@ -111,3 +111,30 @@ test "retry stops before a sleep that would pass max_elapsed (TestMaxElapsedTime
   expect(os.clock.sleeps()) == [1s, 2s, 4s]
   expect(calls.with_read(fn(c: Int) { c })) == 4
 }
+
+test "retry_notify tells each error and the delay before its sleep (TestRetryNotify)" {
+  let calls = Mutex[Int].new(0)
+  let seen = Mutex[List[Duration]].new([])
+  let asked = Mutex[Int].new(0)
+  let r = backoff.retry_notify(backoff.Backoff{randomization: 0.0}, os.clock, seq([]), fn() -> Int ! Fail {
+    let n = calls.with(fn(var c: Int) { c += 1; c })
+    if n < 4 { Err(Fail.Again) } else { Ok(n) }
+  }, fn(e: Fail) {
+    // a retryable with an effect: it reads the clock
+    let _now = os.clock.now()
+    asked.with(fn(var a: Int) { a += 1 })
+    e == Fail.Again
+  }, fn(_e: Fail, d: Duration) { seen.with(fn(var l: List[Duration]) { l.push(d) }) })
+  expect(r) == Ok(4)
+  expect(seen.with_read(fn(l: List[Duration]) { l })) == [500ms, 750ms, 1125ms]
+  expect(os.clock.sleeps()) == [500ms, 750ms, 1125ms]
+  expect(asked.with_read(fn(a: Int) { a })) == 3
+}
+
+test "retry_notify does not notify an error it answers" {
+  let seen = Mutex[Int].new(0)
+  let r = backoff.retry_notify(backoff.Backoff{}, os.clock, seq([]), fn() -> Int ! Fail { Err(Fail.Fatal) }, fn(e: Fail) { e == Fail.Again }, fn(_e: Fail, _d: Duration) { seen.with(fn(var n: Int) { n += 1 }) })
+  expect(r) == Err(Fail.Fatal)
+  expect(seen.with_read(fn(n: Int) { n })) == 0
+  expect(os.clock.sleeps()) == []
+}
