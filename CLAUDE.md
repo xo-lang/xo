@@ -223,6 +223,9 @@ Update the knowledgebase in the same change as the work, not later:
   - merges before testing (owner, 2026-10-21): heavy.sh serves pushq
     first, then gates, then HEAVY_CLASS=bulk runs (measurements,
     profiles, full suites, deferred checks; set it on every such run).
+    A bulk run on the Mac also sets HEAVY_DARWIN=1, since only runs that
+    need darwin stay on the Mac; heavy.sh refuses other bulk runs (exit
+    64) and they go to an offload host (owner, 2026-10-30).
     When the lead declares merge-first (the file ~/xo-lead/merge-first
     exists: a long heavy queue), a gate is only -short's own tests, the
     one or two proving tests and the fixed point when required; every

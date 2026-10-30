@@ -880,6 +880,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   profiles, suites). While `~/xo-lead/merge-first` exists, gates are the
   bare minimum and other checks go to `~/xo-lead/notes/deferred.md`
   with their commands (CLAUDE.md "merges before testing").
+- Bulk runs need the Mac (owner, 2026-10-30): `HEAVY_CLASS=bulk` is
+  refused (exit 64) unless `HEAVY_DARWIN=1` says the run needs darwin
+  (darwin tests, a darwin measurement or footprint, a release step); a
+  long run that does not goes to an offload host: `offload.sh SCRIPT`
+  (linux/arm64), `OFFLOAD_ENV=offload-amd64.env offload.sh` (linux/amd64),
+  `ab-host.sh` for `--ab` (offload.md). A slot run older than 30 minutes no
+  longer holds every other run for a waiting measurement.
 - Pushes: `~/xo-lead/agents/pushq.sh WORKTREE [--base SHA] [-- GATE...]`.
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.
