@@ -379,3 +379,48 @@ fn main(os: Os) {
 		t.Errorf("output\n%s\nwant\n%s", got, want)
 	}
 }
+
+// The h1 hashes of testdata/goproxy's synthetic example.com/upmux v1.0.0.
+const (
+	upmuxSum    = "h1:5BCpofddoTMo2AZOEpoIp6RKmkntUG26UHLT20Qlo8o="
+	upmuxModSum = "h1:1kcbNa4bo7Tf7Lp5LThJx1SqJ0ya7jTuja8aaR19LT4="
+)
+
+// TestUseGoForeignUpcast (decision 0416 addendum): a handle whose Go type
+// implements another package's interface that the package's signatures
+// name has an as_ method for it, so a router's *Mux goes where Go takes
+// net/http's Handler (chi.Mux to Mount and httptest.NewServer, the Go
+// workflows suite, 2026-10-29).
+func TestUseGoForeignUpcast(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	useGoProxy(t)
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module up\n\nrequire go example.com/upmux v1.0.0\n",
+		"xo.lock": "go example.com/upmux v1.0.0 " + upmuxSum + "\n" +
+			"go example.com/upmux v1.0.0/go.mod " + upmuxModSum + "\n",
+		"main.xo": `use go "example.com/upmux"
+use go "net/http/httptest"
+
+fn main(os: Os) {
+  let m = upmux.new()
+  m.text("/a", "alpha")
+  os.stdio.println(upmux.get(m.as_handler(), "/a"))
+  os.stdio.println(upmux.get(m.as_handler(), "/b").trim())
+  let srv = httptest.new_server(m.as_handler())
+  os.stdio.println("served ${srv.url().starts_with("http://")}")
+  srv.close()
+}
+`,
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	want := "OK: alpha\nNot Found: 404 page not found\nserved true"
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("output\n%s\nwant\n%s", got, want)
+	}
+}

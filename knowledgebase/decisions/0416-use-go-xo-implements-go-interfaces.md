@@ -275,3 +275,29 @@ case is small in count and large in use: it is how Go composes I/O.
   bound function's results are.
 - Binding format 24. Tests: gobind TestCallbackErrors (two), TestFuncSetters
   (pick), TestFuncValues (pair), cmd/xo TestUseGoTupleResults (synthetic example.com/multi).
+
+## Addendum (2026-10-30): upcasts to other packages' interfaces
+
+Status: Accepted (lead, 2026-10-29: "a 0416 addendum, lead-approved, owner
+FYI with veto"; Lang 2).
+
+The upcasts (`as_X`, bindUpcasts) covered a package's own interfaces and a
+fixed list from io and fmt. The Go workflows suite (2026-10-29) found that
+chi's `*Mux` could not be passed where Go takes net/http's `Handler`
+(`Mux.Mount`, `httptest.NewServer`): Go's assignability does not cross the
+handle boundary, and `Handler` is neither chi's nor io's.
+
+Decision: a handle also has `as_X` for each interface of another package
+that its package's own bound signatures name (a foreign interface handle
+the binding refers to), when Go would assign the handle's type to it:
+chi's `Mux` gets `as_handler() -> http.Handler` because `Mux.Handle`
+takes one. Only named interfaces, non generic, in a fixed order (by Xo
+name); a name clash is a counted skip as before.
+
+Not chosen: every interface of every imported package (many methods no
+program uses, and an import's interfaces change the binding without its
+signatures changing); a by-name list per package like upcastTargets (it
+would never cover third-party interfaces).
+
+Tests: cmd/xo TestUseGoForeignUpcast (synthetic example.com/upmux: a Mux
+given to its own Get(http.Handler) and to httptest.NewServer).

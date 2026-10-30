@@ -71,7 +71,9 @@ import (
 // 24 (2026-10-30, coverage item 4): a callback or Go function value with
 // several results returns them as a tuple.
 // 25 (2026-10-30, decision 0421): a Go channel given to Xo is go.Recv[T].
-const Version = 25
+// 26 (2026-10-30, decision 0416 addendum): a handle has as_X for the
+// other packages' interfaces its package's signatures name.
+const Version = 26
 
 // Binding is one bound Go package.
 type Binding struct {

@@ -25,6 +25,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `optFns ...func(*s3.Options)`) bind as a List of Xo functions, so AWS
   SDK v2's `s3.new_from_config` and every s3 client operation bind
   (decision 0422). Binding format 23.
+- `use go`: a Go type that implements another package's interface its
+  package's signatures name gets an `as_` method for it, so chi's router
+  goes where Go takes net/http's Handler
+  (`httptest.new_server(r.as_handler())`, decision 0416 addendum).
+  Binding format 26.
 - `use go`: a package in a nested Go module (aws-sdk-go-v2's
   `service/s3`, its own module inside the root's path) no longer takes the
   enclosing module's `require go` pin: it binds at its own version, `xo

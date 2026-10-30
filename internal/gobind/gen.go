@@ -1742,6 +1742,21 @@ func (g *gen) bindUpcasts() {
 			}
 		}
 	}
+	// the other packages' interfaces the package's own signatures name
+	// (decision 0416 addendum): chi's Mux.Handle takes net/http's Handler,
+	// so a Mux is offered as one for Mount and httptest.NewServer
+	seen := map[*handle]bool{}
+	for _, i := range ifaces {
+		seen[i] = true
+	}
+	var named []*handle
+	for _, h := range g.handles {
+		if h.ref && !seen[h] && len(h.tps) == 0 && isInterfaceType(h.named) {
+			named = append(named, h)
+		}
+	}
+	sort.Slice(named, func(a, b int) bool { return named[a].xo < named[b].xo })
+	ifaces = append(ifaces, named...)
 	for _, h := range append([]*handle(nil), g.order...) {
 		if h.foreign || h.ref || len(h.tps) > 0 {
 			continue

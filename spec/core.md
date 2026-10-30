@@ -1837,9 +1837,12 @@ fn main(os: Os) ! {
   I/O interfaces (`Reader`, `Writer`, `Closer`, `ReadCloser`,
   `WriteCloser`, `ReadWriter`, `ReaderAt`, `WriterTo`, `ReaderFrom`,
   `StringWriter`, `ByteReader`) or `fmt.Stringer` when its package depends
-  on io or fmt, has a method that gives it as that interface:
-  `io.read_all(resp.body().as_reader())`, `buf.as_writer()` (decision
-  0416).
+  on io or fmt, or to another package's interface that its package's
+  signatures name (chi's `Mux.Handle` takes net/http's `Handler`), has a
+  method that gives it as that interface:
+  `io.read_all(resp.body().as_reader())`, `buf.as_writer()`,
+  `httptest.new_server(mux.as_handler())` (decision 0416 and its
+  addendum).
 - Every call into Go performs the effect `go`, which `pub` functions must
   declare. Go code can reach files and the network without a capability, so
   `uses go` marks that authority escape in signatures.
