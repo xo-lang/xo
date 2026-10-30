@@ -1125,7 +1125,10 @@ fn (var g: G) thread_const_once(kd: Map[Int, Int]) -> Bool {
     let np = g.blocks[p].insts.len()
     // blocks that only move registers and jump are followed to the test;
     // their moves are copied into p (opt.go threadConst, decision 0184)
-    let (j, chain) = g.move_chain(p, g.blocks[p].insts[np - 1].targets[0])
+    // a negated Bool's block first is followed too (neg_chain): the
+    // constant p gives it is flipped below, and p gets a copy of its eor
+    let (j, chain, path0) = g.neg_chain(p, g.blocks[p].insts[np - 1].targets[0])
+    var path = path0
     if g.blocks[j].insts.len() != 1 || g.blocks[j].insts[0].kind != K_CONDBR {
       continue
     }
@@ -1135,7 +1138,6 @@ fn (var g: G) thread_const_once(kd: Map[Int, Int]) -> Bool {
     // hoist_consts' natural loop of it reaches outside
     // (tlsname.ip_string read a register no path wrote, 2026-10-18).
     // The loops are found again after such a jump moves.
-    var path = g.chain_blocks(p, g.blocks[p].insts[np - 1].targets[0])
     path.push(j)
     var entry = false
     var two = false
@@ -1191,8 +1193,18 @@ fn (var g: G) thread_const_once(kd: Map[Int, Int]) -> Bool {
     var val = 0
     var ok = false
     var found = false
+    var flip = false
     var c = chain.len() - 1
     while c >= 0 && !found {
+      if chain[c].kind != K_PMOVE {
+        // neg_head's eor
+        if chain[c].defs[0] == r {
+          r = chain[c].us[0]
+          flip = !flip
+        }
+        c -= 1
+        continue
+      }
       for (i, d) in chain[c].defs.indexed() {
         if d != r {
           continue
@@ -1223,6 +1235,9 @@ fn (var g: G) thread_const_once(kd: Map[Int, Int]) -> Bool {
     if !ok {
       continue
     }
+    if flip {
+      val = val ^ 1
+    }
     var taken = false
     match br.cond {
       "cbnz" => taken = val != 0
@@ -1249,6 +1264,76 @@ fn (var g: G) thread_const_once(kd: Map[Int, Int]) -> Bool {
     }
   }
   moved
+}
+
+/// move_chain(p, t0) and the blocks it passes; when that stops short of
+/// a test and t0 is a neg_head, the chain through t0 instead, its eor
+/// and moves first (2026-10-30: text.parse_duration's `bl == 0 ||
+/// !plain_end(c) || ...` passed the inlined plain_end's && result,
+/// negated, to the ||'s join, so the &&'s constant false edge and its
+/// compares still went through the join's test)
+fn (g: G) neg_chain(p: Int, t0: Int) -> (Int, List[Inst], List[Int]) {
+  let (j, chain) = g.move_chain(p, t0)
+  if (g.blocks[j].insts.len() == 1 && g.blocks[j].insts[0].kind == K_CONDBR) || t0 == p || !g.neg_head(t0) {
+    return (j, chain, g.chain_blocks(p, t0))
+  }
+  let ni = g.blocks[t0].insts.len()
+  let t1 = g.blocks[t0].insts[ni - 1].targets[0]
+  let (j1, rest) = g.move_chain(p, t1)
+  var c1: List[Inst] = []
+  for ii in 0..ni - 1 {
+    c1.push(g.blocks[t0].insts[ii])
+  }
+  for mv in rest {
+    c1.push(mv)
+  }
+  (j1, c1, [t0] + g.chain_blocks(p, t1))
+}
+
+/// through_moves over a neg_chain: the register, whether it traced, and
+/// whether a neg_head's eor negated it on the way.
+fn through_neg(chain: List[Inst], r0: Int) -> (Int, Bool, Bool) {
+  var r = r0
+  var flip = false
+  var c = chain.len() - 1
+  while c >= 0 {
+    let inst = chain[c]
+    if inst.kind != K_PMOVE {
+      if inst.defs[0] == r {
+        r = inst.us[0]
+        flip = !flip
+      }
+      c -= 1
+      continue
+    }
+    for (i, d) in inst.defs.indexed() {
+      if d != r {
+        continue
+      }
+      let sr = inst.srcs[i]
+      if sr.kind != S_REG || sr.v == 0 {
+        return (0, false, false)
+      }
+      r = sr.v
+      break
+    }
+    c -= 1
+  }
+  (r, true, flip)
+}
+
+/// Whether block b is `eor d, s, #1` (a Bool's negation), at most one
+/// parallel move, and a jump (thread_const follows it).
+fn (g: G) neg_head(b: Int) -> Bool {
+  let ins = g.blocks[b].insts
+  let n = ins.len()
+  if g.x86 || n < 2 || n > 3 || ins[0].text != "eor $d0, $u0, #1" || ins[0].kind != K_PLAIN || ins[0].defs.len() != 1 || ins[0].us.len() != 1 {
+    return false
+  }
+  if n == 3 && ins[1].kind != K_PMOVE {
+    return false
+  }
+  ins[n - 1].kind == K_JUMP && ins[n - 1].targets.len() == 1
 }
 
 /// The blocks move_chain(p, j0) passes through before its test.
@@ -1485,11 +1570,12 @@ fn (var g: G) thread_cset() {
     if g.term_kind(p) != K_JUMP || np < 3 || g.blocks[p].insts[np - 1].targets.len() > 1 {
       continue
     }
-    let (j, chain) = g.move_chain(p, g.blocks[p].insts[np - 1].targets[0])
+    let (j, chain, _) = g.neg_chain(p, g.blocks[p].insts[np - 1].targets[0])
     if g.blocks[j].insts.len() != 1 || g.blocks[j].insts[0].kind != K_CONDBR || g.blocks[j].insts[0].cond != "cbnz" || j == p {
       continue
     }
-    let (r, traced) = through_moves(chain, g.blocks[j].insts[0].us[0])
+    // through a neg_head's eor the branch takes the inverse condition
+    let (r, traced, flip) = through_neg(chain, g.blocks[j].insts[0].us[0])
     if !traced {
       continue
     }
@@ -1514,10 +1600,11 @@ fn (var g: G) thread_cset() {
     if i < 0 {
       continue
     }
-    let cond = def.text[i + 11..def.text.len()]
-    if inv_cond(cond).is_empty() {
+    let cond0 = def.text[i + 11..def.text.len()]
+    if inv_cond(cond0).is_empty() {
       continue
     }
+    let cond = if flip { inv_cond(cond0) } else { cond0 }
     var ins = g.take_insts(p)
     ins[np - 1] = Inst{kind: K_CONDBR, text: def.text[0..i], us: def.us, cond: cond, targets: g.blocks[j].insts[0].targets}
     if !chain.is_empty() {
@@ -1528,6 +1615,133 @@ fn (var g: G) thread_cset() {
       ins = drop_move(ins, np - 2, r)
     }
     g.put_insts(p, ins)
+  }
+  if !g.x86 {
+    g.fold_not_tests()
+  }
+}
+
+/// A Bool's negation only a test reads, `eor d, s, #1`, becomes a copy
+/// and the test swaps its targets: in the test's block, or in its one
+/// predecessor, which moves d to the tested register and jumps to it
+/// (2026-10-30: text.parse_duration's `!plain_end(c)` of a computed
+/// `c < 9 || c > 13` was the orr, an eor and a cbnz, where the orr and a
+/// cbz do). The copy is one register's own mov after allocation, which
+/// emit drops.
+fn (var g: G) fold_not_tests() {
+  let blocks = g.all_blocks()
+  if blocks.is_empty() {
+    return
+  }
+  // the blocks the entry reaches: one thread_const jumped past is still
+  // listed (and a predecessor) until a later pass drops it
+  var seen: List[Bool] = []
+  for _ in 0..g.blocks.len() {
+    seen.push(false)
+  }
+  var work = [blocks[0]]
+  seen[blocks[0]] = true
+  while !work.is_empty() {
+    let b = work.pop() ?? 0
+    for t in g.msuccs(b) {
+      if !seen[t] {
+        seen[t] = true
+        work.push(t)
+      }
+    }
+  }
+  var live: List[Int] = []
+  for b in blocks {
+    if seen[b] {
+      live.push(b)
+    }
+  }
+  let preds = g.mpreds_all(live)
+  // reads in the blocks still listed but unreached do not count
+  var nuses: Map[Int, Int] = {}
+  for b in live {
+    for inst in g.blocks[b].insts {
+      for u in inst.us {
+        nuses[u] = (nuses.get(u) ?? 0) + 1
+      }
+    }
+  }
+  for j in live {
+    let nj = g.blocks[j].insts.len()
+    if nj == 0 {
+      continue
+    }
+    let br = g.blocks[j].insts[nj - 1]
+    if br.kind != K_CONDBR || br.us.len() != 1 || br.targets.len() != 2 || !(br.cond == "cbnz" || ((br.cond == "tbnz" || br.cond == "tbz") && br.bit == 0)) {
+      continue
+    }
+    var r = br.us[0]
+    if (nuses.get(r) ?? 0) != 1 {
+      continue
+    }
+    // the block holding the eor and the eor's index there
+    var p = j
+    var k = nj - 2
+    if nj == 1 {
+      // back through single predecessors that jump here, past blocks
+      // that only move registers, to the first with an instruction
+      // before its moves
+      var q = j
+      var found = false
+      var bad = false
+      var steps = 0
+      while steps < 8 && !found && !bad {
+        if preds[q].len() != 1 || preds[q][0] == q || preds[q][0] == j {
+          bad = true
+          break
+        }
+        let pq = preds[q][0]
+        let np = g.blocks[pq].insts.len()
+        if g.term_kind(pq) != K_JUMP || np < 1 || g.blocks[pq].insts[np - 1].targets.len() != 1 {
+          bad = true
+          break
+        }
+        var kq = np - 2
+        if kq >= 0 && g.blocks[pq].insts[kq].kind == K_PMOVE {
+          let mv = g.blocks[pq].insts[kq]
+          for (i, d) in mv.defs.indexed() {
+            if d == r {
+              if mv.srcs[i].kind != S_REG || mv.srcs[i].v == 0 || (nuses.get(mv.srcs[i].v) ?? 0) != 1 {
+                bad = true
+              } else {
+                r = mv.srcs[i].v
+              }
+            }
+          }
+          kq -= 1
+        }
+        if kq >= 0 {
+          p = pq
+          k = kq
+          found = true
+        }
+        q = pq
+        steps += 1
+      }
+      if !found || bad {
+        continue
+      }
+    }
+    if k < 0 {
+      continue
+    }
+    let x = g.blocks[p].insts[k]
+    if x.kind != K_PLAIN || x.text != "eor $d0, $u0, #1" || x.defs.len() != 1 || x.defs[0] != r || x.us.len() != 1 || x.has_fault || x.keep {
+      continue
+    }
+    var ins = g.take_insts(p)
+    ins[k].text = "mov $d0, $u0"
+    g.put_insts(p, ins)
+    var jins = g.take_insts(j)
+    let t0 = jins[nj - 1].targets[0]
+    jins[nj - 1].targets[0] = jins[nj - 1].targets[1]
+    jins[nj - 1].targets[1] = t0
+    g.put_insts(j, jins)
   }
 }
 

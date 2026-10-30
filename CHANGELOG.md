@@ -42,6 +42,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   caches too (a cached function is not generated); `xo query` outside a module
   exits 2 naming --dir; a `go test -run` that names no test fails in the
   packages with goldens.
+- Native arm64: a test of a negated Bool is one test with its targets
+  swapped, not an `eor` and a test (compiler/arm64 opt.xo neg_chain,
+  fold_not_tests; isel's branch on a negated join parameter): a constant
+  edge through the negation jumps straight to its outcome. bench/perf/text
+  dur_parse 0.991 of the instructions (xo bench --ab n=15; wall and
+  cycles within noise), against LLVM 1.016 to 1.006; xo's native __text 70,687,520 to
+  70,681,816 bytes.
 - LLVM builds of a program that imports std/html (or template) are
   faster: a constant's initializer over 2000 SSA instructions is built
   `optnone`, so clang uses its fast register allocator on it (std/html's

@@ -92,3 +92,17 @@ HTTP server's native text grew 4.6% for 1.5 to 2.2% fewer instructions
 a request; with 150 it grows 1.0% for 0.7 to 1.9% on plain, plain-newconn
 and tls (bench/results/inline-one-site-pads-2026-10-20.md). Found with
 XO_INLINE_REPORT (each function's cost, sites, and how it is taken).
+
+## Addendum: raising the one-site limits loses on text parsing (Xo Lang 1, 2026-10-30)
+
+Tried and rejected; do not retry without a new reason. Raising the one
+site limits to INLINE_FEW_BUDGET 1000 and INLINE_ONE_SITE_BLOCKS 320, so
+text.parse_duration (615 instructions, 248 blocks, one site) is inlined
+into bench/perf/text's loop as LLVM does, made dur_parse 1.029 of the
+instructions (xo bench --ab n=15, 1.028 to 1.029, worse) with wall and
+cycles within noise (1.004). text.append_time (696 instructions, one
+site) is padded because its rt.rs_push_words calls can fault (inlsum.xo
+marks any value with a landing pad), so inlining it would need
+INLINE_ONE_PADDED_INSTRS near 700, the same shape; time_fmt native was
+already 0.812 of LLVM's wall. The dur_parse cycle gap to LLVM (1.18) is
+not the call: it stayed with the body inlined.

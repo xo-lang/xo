@@ -116,7 +116,7 @@ fn or_not(a: Int, b: Int) -> Int {
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)} ${trims(n, n + 40, n + 50)} ${count_digits(n + 1000)}")
 }
 
 // `d < 0 || d > 9` of a `d = x - 48` is one unsigned compare (isel
@@ -179,4 +179,36 @@ fn neg_join(x: Int) -> Int {
 fn neg_any(x: Int) -> Int {
   // arm64: "negs"
   -x
+}
+
+// A test of a negated Bool is a test with its targets swapped, not an
+// `eor #1` and a test (compiler/arm64 opt.xo neg_chain and
+// fold_not_tests, 2026-10-30): plain's && joined and negated under an
+// ||, where the constant edges jump to the outcome and the computed one
+// tests the joined value (text.parse_duration's `!plain_end(c)`), and a
+// negated range test in a loop. With XO_PASSES=-thread_const,-thread_cset
+// the patterns fail.
+fn plain(c: Int) -> Bool { c < 0x80 && c != 32 && (c < 9 || c > 13) }
+
+fn trims(n: Int, a: Int, b: Int) -> Int {
+  // arm64: -"eor x[0-9]+, x[0-9]+, #1"
+  if n == 0 || !plain(a) || !plain(b) {
+    return 1
+  }
+  2
+}
+
+fn digit(c: Int) -> Bool { c >= 48 && c <= 57 }
+
+fn count_digits(n: Int) -> Int {
+  // arm64: -"eor x[0-9]+, x[0-9]+, #1"
+  var k = 0
+  var x = n
+  while x > 0 {
+    if x == 7 || !digit(x % 64) {
+      k += 1
+    }
+    x = x / 3
+  }
+  k
 }

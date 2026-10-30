@@ -46,6 +46,11 @@ fn (var g: G) function(fi: Int) {
   if g.on("live_dce") {
     g.live_dce()
   }
+  // again once dce dropped the dead copies of a negation thread_const
+  // left in the blocks it threaded (they read it a second time)
+  if g.on("thread_cset") && !g.x86 {
+    g.fold_not_tests()
+  }
   if g.on("select_compares") {
     g.select_compares()
   }
@@ -633,8 +638,11 @@ fn (var g: G) isel() {
       continue
     }
     let c = nv.args[0]
-    // only a compare (not rt.landing, whose branch keeps its order)
-    if !(g.f.values[c].op is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge) {
+    // only a compare or a join's parameter (not rt.landing, whose
+    // branch keeps its order; 2026-10-30: text.parse_duration's digit
+    // test `!num_start(c)`, an inlined && joined, was a cset, an eor and
+    // a test, where the compare and a branch do)
+    if !(g.f.values[c].op is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge | ssa.Op.Param) {
       continue
     }
     g.f.values[t].args[0] = c
