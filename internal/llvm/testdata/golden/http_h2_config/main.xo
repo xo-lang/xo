@@ -3,7 +3,9 @@
 // the initial stream window, the frame size, the HPACK table), and its
 // PING keepalive closes a connection that never answers: the server
 // sends a PING after send_ping_timeout of silence and closes when no ack
-// arrives within ping_timeout.
+// arrives within ping_timeout. A client's with_h2_config shows in the
+// SETTINGS and WINDOW_UPDATE it opens a connection with (a raw server
+// reads them).
 use std/http
 
 const PREFACE = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n"
@@ -87,6 +89,58 @@ fn probe(os: Os, label: Str, addr: Str, keep: Bool) uses net, stdio, clock {
   c.close()
 }
 
+/// A raw h2c server: a client with cfg (None: the defaults) connects
+/// with prior knowledge; the server prints the SETTINGS and the
+/// connection WINDOW_UPDATE it sends first.
+fn client_probe(os: Os, label: Str, cfg: http.H2Config?) uses net, stdio, clock {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  var c = http.client(os.net, timeout: 2s).with_protocols(#{http.Protocol.UnencryptedHttp2})
+  if let Some(f) = cfg {
+    c = c.with_h2_config(f)
+  }
+  scope s {
+    s.spawn_background(fn() { let _ = c.get("http://${addr}/").ignore_err("probe client") })
+    let sc = l.accept().or_fault("accept")
+    sc.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
+    var buf = b""
+    var parts: List[Str] = []
+    var winup = 0
+    var got = false
+    while !got {
+      match sc.read(4096) {
+        Ok(Some(b)) => buf = buf + b
+        Ok(None) => break
+        Err(_) => break
+      }
+      if buf.len() >= 24 {
+        let (fs, _rest) = frames(buf[24..])
+        for (ty, _flags, p) in fs {
+          if ty == 4 && parts.is_empty() {
+            var i = 0
+            while i + 6 <= p.len() {
+              let id = u(p, i) * 256 + u(p, i + 1)
+              let v = u(p, i + 2) * 16777216 + u(p, i + 3) * 65536 + u(p, i + 4) * 256 + u(p, i + 5)
+              parts.push("${setting_name(id)}=${v}")
+              i = i + 6
+            }
+          }
+          if ty == 8 && winup == 0 {
+            winup = u(p, 0) * 16777216 + u(p, 1) * 65536 + u(p, 2) * 256 + u(p, 3)
+          }
+        }
+        if !parts.is_empty() && winup > 0 {
+          got = true
+        }
+      }
+    }
+    parts = parts.sort()
+    os.stdio.println("${label}: settings ${parts.join(" ")} window_update ${winup}")
+    sc.close()
+  }
+  l.close()
+}
+
 fn main(os: Os) uses net, stdio, clock {
   var r = http.router()
   r.handle("GET /", fn(_req) { http.text(200, "ok") })
@@ -107,5 +161,7 @@ fn main(os: Os) uses net, stdio, clock {
     probe(os, "tuned", a2, false)
     probe(os, "keepalive", a3, true)
   }
+  client_probe(os, "client default", None)
+  client_probe(os, "client tuned", Some(http.H2Config{max_receive_buffer_per_stream: 262144, max_receive_buffer_per_connection: 2097152, max_decoder_header_table_size: 8192}))
   os.stdio.println("done")
 }

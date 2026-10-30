@@ -2531,8 +2531,9 @@ struct H2State {
 
 /// A new connection's state (h2cc_new's settings: the server's defaults,
 /// our 1 GiB connection window).
-fn h2_state() -> H2State {
-  H2State{dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder(), sizes: "", peer_frame: 16384, peer_win: 65535, win: 65535, in_avail: 1073741824, in_unsent: 0, next_id: 1}
+fn h2_state(table: Int = 4096, cwin: Int = 1073741824) -> H2State {
+  // the connection window is the default 65535 and the WINDOW_UPDATE's cwin
+  H2State{dec: hpack.decoder(table), enc: hpack.encoder(), sizes: "", peer_frame: 16384, peer_win: 65535, win: 65535, in_avail: cwin + 65535, in_unsent: 0, next_id: 1}
 }
 
 /// The largest response header block (and string) the client decodes:
@@ -3102,7 +3103,7 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names0: Li
     names.push("Trailer")
     values.push(tnames)
   }
-  var st = h2_state()
+  var st = h2_state(hclient.h2_dtable(r, hpack.TABLE), hclient.h2_cwin(r, 1073741824))
   let kept = hclient.h2_take(r)
   if let Some(a) = kept.get(0) {
     if let Some(s) = rt.any_get[H2State](a) {
@@ -3127,7 +3128,7 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names0: Li
     x.id = x.st.next_id
     x.st.next_id += 2
     x.swin = x.st.peer_win
-    x.sin_avail = 4194304
+    x.sin_avail = hclient.h2_swin(r, 4194304)
     // a streamed body's length is not known (no content-length)
     let blk = x.st.block(method, target, host, names, values, if x.src.is_empty() { x.body.len() } else { -1 })
     // HEADERS and CONTINUATION frames of at most the server's frame size
@@ -4275,7 +4276,7 @@ fn valid_method(m: Str) -> Bool {
 /// the attenuation lists of the client's Net (decision 0175), following
 /// redirects as net/http's Client does (redirectBehavior,
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = []) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = [], tnames: Str = "", tfn: List[fn() -> List[Str]] = [], h2cfg: List[Int] = []) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -4380,7 +4381,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       target = target + "?" + u.rawquery
     }
     let prefix = url_op(method) + " " + q
-    var r = hclient.cl_start(https, addr, name, body, when, roots, prefix, true, h2c, alpn)
+    var r = hclient.cl_start(https, addr, name, body, when, roots, prefix, true, h2c, alpn, h2cfg)
     // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
     // after the head
     var h2x: H2X? = None
@@ -4394,7 +4395,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       if hclient.retry(r) {
         // the server did not take the request on the pooled connection:
         // it goes on a new one, as Transport retries it
-        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn)
+        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
         if hclient.h2(r) {
           h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src, tnames, tfn)
         }
@@ -4418,7 +4419,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         // the pooled connection was dead (the server closed it): the
         // request goes once more on a new one, as Transport retries it
         // (decision 0303)
-        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn)
+        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
         h1 = hclient.reading(r)
         if hclient.h2(r) {
           h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src, tnames, tfn)

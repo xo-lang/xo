@@ -2673,6 +2673,16 @@ fn client_alpn(c: Client) -> List[Str] {
   }
 }
 
+/// The client's H2Config as [stream window, connection window, max frame
+/// size (not applied: the client reads 16 KiB frames), decoder table], 0
+/// for the default (hclient.cfg_at).
+fn client_h2cfg(c: Client) -> List[Int] {
+  match c.h2cfg {
+    Some(f) => [f.max_receive_buffer_per_stream, f.max_receive_buffer_per_connection, 0, f.max_decoder_header_table_size]
+    None => []
+  }
+}
+
 /// Whether a plain http URL is spoken as HTTP/2 with prior knowledge
 /// (Go: UnencryptedHTTP2 without HTTP1 in Transport.Protocols).
 fn client_h2c(c: Client) -> Bool {
@@ -2997,7 +3007,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   }
   let ta = trailer_args(req)
   let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0])] }
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c))
   match r.err {
     0 => ()
     _ => {
@@ -3363,7 +3373,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
   let ta = trailer_args(req)
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns)
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c))
   match r.err {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))

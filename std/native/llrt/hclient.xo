@@ -578,7 +578,12 @@ const P_OUT_N = 144
 /// 1 for an HTTP/1.1 connection (decision 0303: pooled between requests,
 /// no HTTP/2 state), 0 for HTTP/2
 const P_H1 = 152
-const P_SIZE = 160 // own: an HTTP/2 connection record's size, not the pool record's
+/// H2Config (0: the default): our initial stream window, the connection
+/// window, the decoder table size
+const P_CFG_SW = 160
+const P_CFG_CW = 168
+const P_CFG_DT = 176
+const P_SIZE = 184 // own: an HTTP/2 connection record's size, not the pool record's
 
 /// An exchange on a connection (r's h2, an obj.xo object): the
 /// connection, whether it came from the pool (a failure before an answer
@@ -656,7 +661,7 @@ fn conn_free(pc: Int) {
 /// A connection taking over net.Conn cn and its ccon at c (TLS up, ALPN
 /// h2), for key (the kn bytes at kp) and roots (xo_h2.c h2cc_new): its
 /// first bytes are net/http's preface and SETTINGS.
-pub fn conn_new(cn: Int, c: Int, roots: Int, kp: Int, kn: Int) -> Int {
+pub fn conn_new(cn: Int, c: Int, roots: Int, kp: Int, kn: Int, cfg: List[Int] = []) -> Int {
   let pc = obj.alloc_obj(P_SIZE)
   rt.mem_set(pc, 0, P_SIZE)
   st(pc, P_CN, cn)
@@ -667,16 +672,71 @@ pub fn conn_new(cn: Int, c: Int, roots: Int, kp: Int, kn: Int) -> Int {
   rt.mem_copy(key, kp, kn)
   rt.mem_store(key, kn, 0, 1)
   st(pc, P_KEY, key)
-  let o = rt.heap_large(64) - 8
+  let o = rt.heap_large(96) - 8
+  // H2Config (decision 0434): cfg is [stream window, connection window,
+  // max frame size, decoder table], 0 for the default (cfg_key)
+  let sw = cfg_at(cfg, 0, 4194304)
+  let cw = cfg_at(cfg, 1, 1073741824)
+  let mf = 16384
+  let dt = cfg_at(cfg, 3, 0)
+  st(pc, P_CFG_SW, cfg_at(cfg, 0, 0))
+  st(pc, P_CFG_CW, cfg_at(cfg, 1, 0))
+  st(pc, P_CFG_DT, dt)
   var at = http1w.put(o, 0, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
-  at += h2w.frame_head(o + at, 18, 4, 0, 0)
+  at += h2w.frame_head(o + at, 24 + (if dt > 0 { 6 } else { 0 }), 4, 0, 0)
+  if dt > 0 {
+    at += h2w.setting(o + at, 1, dt)
+  }
   at += h2w.setting(o + at, 2, 0)
-  at += h2w.setting(o + at, 4, 4194304)
+  at += h2w.setting(o + at, 4, sw)
+  at += h2w.setting(o + at, 5, mf)
   at += h2w.setting(o + at, 6, 10485760)
-  at += h2w.winup(o + at, 0, 1073741824 - 65535)
+  // net/http's WINDOW_UPDATE: the whole window on top of the default
+  at += h2w.winup(o + at, 0, cw)
   st(pc, P_OUT, o)
   st(pc, P_OUT_N, at)
   pc
+}
+
+/// cfg's i-th entry, def when it is absent or 0.
+pub fn cfg_at(cfg: List[Int], i: Int, def: Int) -> Int {
+  if i < cfg.len() && cfg[i] > 0 { cfg[i] } else { def }
+}
+
+/// The pool key's suffix of an H2Config (a client with another config does
+/// not share a connection): empty for the defaults.
+fn cfg_key(cfg: List[Int]) -> Str {
+  var any = false
+  for v in cfg {
+    if v > 0 {
+      any = true
+    }
+  }
+  if !any {
+    return ""
+  }
+  var out = "|cfg"
+  for v in cfg {
+    out = "${out}:${v}"
+  }
+  out
+}
+
+/// The H2Config of the exchange r's connection: its initial stream window,
+/// connection window, and decoder table size (def when unset).
+pub fn h2_swin(r: rthttp.CResp, def: Int) -> Int {
+  let v = ld(ld(ld(rec(r), R_H2), X_PC), P_CFG_SW)
+  if v > 0 { v } else { def }
+}
+
+pub fn h2_cwin(r: rthttp.CResp, def: Int) -> Int {
+  let v = ld(ld(ld(rec(r), R_H2), X_PC), P_CFG_CW)
+  if v > 0 { v } else { def }
+}
+
+pub fn h2_dtable(r: rthttp.CResp, def: Int) -> Int {
+  let v = ld(ld(ld(rec(r), R_H2), X_PC), P_CFG_DT)
+  if v > 0 { v } else { def }
 }
 
 /// Whether connection pc is for roots and the kn bytes of key at kp.
@@ -1144,19 +1204,19 @@ pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
 /// Xo reads the response, and end closes. A failure sets r's error. The
 /// method, target, Host and header are the writers' (request,
 /// h2_exchange).
-pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool, h2c: Bool = false, alpn: List[Str] = []) -> rthttp.CResp {
+pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool, h2c: Bool = false, alpn: List[Str] = [], cfg: List[Int] = []) -> rthttp.CResp {
   let r = tasks.new_handle(R_SIZE, rt.fn_addr("cresp_free"))
   st(r, R_PREFIX, cstr_dup(prefix))
-  start(r, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn)
+  start(r, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn, cfg)
   let h = rt.obj_at[rthttp.CResp](r)
   tasks.h_release(r)
   h
 }
 
-fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str]) {
+fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str], cfg: List[Int]) {
   // an idle HTTP/2 connection to the same address, server name, and
   // roots
-  let key = pool_key(https, addr, tls_host)
+  let key = pool_key(https, addr, tls_host) + cfg_key(cfg)
   if (https || h2c) && pool && (alpn.is_empty() || alpn.contains("h2")) {
     let pc = pool_take(roots, raw.data(key), key.len())
     if pc != 0 {
@@ -1222,7 +1282,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     st(c, C_TLS, t)
     if tlsio.alpn_h2(t) {
       // the connection takes over the net.Conn and the ccon
-      let pc = conn_new(cna, c, roots, raw.data(key), key.len())
+      let pc = conn_new(cna, c, roots, raw.data(key), key.len(), cfg)
       raw.alive_str(key)
       rt.mem_set(c, 0, 72)
       exchange_start(r, pc, 0, raw.bytes_addr(body), body.len(), dl)
@@ -1232,7 +1292,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
   if h2c && !https {
     // HTTP/2 with prior knowledge (decision 0434): the preface and
     // SETTINGS go first, on the plain connection
-    let pc = conn_new(cna, c, roots, raw.data(key), key.len())
+    let pc = conn_new(cna, c, roots, raw.data(key), key.len(), cfg)
     raw.alive_str(key)
     rt.mem_set(c, 0, 72)
     exchange_start(r, pc, 0, raw.bytes_addr(body), body.len(), dl)

@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-10-30: feature: Client.with_h2_config, native (decision 0434)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 0434 open list (the client stored its H2Config and ignored it)
+- Go reference: net/http's Transport.HTTP2 (HTTP2Config): MaxReceiveBufferPerStream, MaxReceiveBufferPerConnection, MaxDecoderHeaderTableSize; the SETTINGS and WINDOW_UPDATE net/http's HTTP/2 transport opens a connection with
+- Test: internal/llvm/testdata/golden/http_h2_config (a raw server reads a client's first frames; native output equal to the Go backend's)
+- Timing: none (settings written once per connection)
+
+The native client sends its H2Config in the connection's SETTINGS
+(INITIAL_WINDOW_SIZE, HEADER_TABLE_SIZE when not 4096) and connection
+WINDOW_UPDATE, sizes its HPACK decoder and flow windows by it, and keeps
+clients with different configs on different pooled connections. The
+default connection now opens as net/http does: MAX_FRAME_SIZE=16384 in
+the SETTINGS, and a WINDOW_UPDATE of the whole 1 GiB (the window was
+the same 1 GiB less 65535 before: now 65535 above it, as Go). Not applied
+by the native client: max_read_frame_size (its frames stay 16 KiB),
+the PING keepalive and write_byte_timeout.
+
 ## 2026-10-30: feature: HTTP/2 client full duplex, native (decision 0433)
 
 - Kind: feature
