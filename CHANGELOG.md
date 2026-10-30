@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (`use go`): builds that bound Go packages at the same time into
+  one binding directory (two builds of a program, an editor and a test
+  run) ran `go get` together in its shared workspace, and some failed
+  with XO1101 "go: updating go.mod: existing contents have changed
+  since last read". A bind now holds a lock on the workspace (a kernel
+  lock, released if the process dies).
 - Diagnostics name the Xo form for more Go and Rust habits (decision
   0438): a Result's `.unwrap()` (use `?` or `.or_fault`) and
   `.unwrap_or(x)` (`r ?? _ => x`, fixed), a Result operand of `+` and

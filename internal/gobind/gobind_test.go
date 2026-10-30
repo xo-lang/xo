@@ -1,6 +1,7 @@
 package gobind
 
 import (
+	"fmt"
 	"go/types"
 	"os"
 	"path/filepath"
@@ -8,6 +9,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/gotool"
@@ -1293,5 +1295,58 @@ func Lists() <-chan []string { return nil }
 	}
 	if !strings.Contains(tb.Skipped["after"], "use Xo's clock") {
 		t.Errorf("time.after skipped %q, want Xo's clock", tb.Skipped["after"])
+	}
+}
+
+// TestConcurrentBinds binds eight local modules at once into one binding
+// directory: each bind's `go get` rewrites the shared workspace go.mod,
+// so without the workspace lock some failed with "go: updating go.mod:
+// existing contents have changed since last read" (2026-10-30, a golden's
+// backend variants binding at once).
+func TestConcurrentBinds(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go get")
+	}
+	t.Setenv("GOPROXY", "off")
+	dir := t.TempDir()
+	srcs := t.TempDir()
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	const n = 8
+	gm := workspaceMod(gotool.GoLine()) + "\n"
+	for i := 0; i < n; i++ {
+		m := fmt.Sprintf("m%d", i)
+		files := map[string]string{
+			"go.mod":  "module example.com/" + m + "\n\ngo 1.21\n",
+			m + ".go": fmt.Sprintf("package %s\n\nfunc N() int { return %d }\n", m, i),
+		}
+		for name, body := range files {
+			if err := os.MkdirAll(filepath.Join(srcs, m), 0o755); err != nil {
+				t.Fatal(err)
+			}
+			if err := os.WriteFile(filepath.Join(srcs, m, name), []byte(body), 0o644); err != nil {
+				t.Fatal(err)
+			}
+		}
+		gm += "replace example.com/" + m + " v0.0.0 => " + filepath.Join(srcs, m) + "\n"
+	}
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	var wg sync.WaitGroup
+	errs := make([]error, n)
+	for i := 0; i < n; i++ {
+		wg.Add(1)
+		go func(i int) {
+			defer wg.Done()
+			_, errs[i] = Bind(fmt.Sprintf("example.com/m%d", i), Options{Dir: dir, Version: "v0.0.0"})
+		}(i)
+	}
+	wg.Wait()
+	for i, err := range errs {
+		if err != nil {
+			t.Errorf("bind m%d: %v", i, err)
+		}
 	}
 }

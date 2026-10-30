@@ -441,6 +441,23 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 	if goPath == "" || strings.HasPrefix(goPath, ".") || strings.HasPrefix(goPath, "/") {
 		return nil, &Error{GoPath: goPath, Msg: "not a Go import path"}
 	}
+	// concurrent binds into one directory (two builds, a test's backend
+	// variants) share the workspace: go get rewrote its go.mod under
+	// another ("go: updating go.mod: existing contents have changed since
+	// last read", 2026-10-30), so one bind at a time holds it
+	if err := os.MkdirAll(workDir(opts.Dir), 0o755); err != nil {
+		return nil, err
+	}
+	unlock, err := lockFile(filepath.Join(workDir(opts.Dir), ".xo-bind.lock"))
+	if err != nil {
+		return nil, err
+	}
+	defer unlock()
+	return bind(goPath, opts)
+}
+
+// bind is Bind with the workspace lock held.
+func bind(goPath string, opts Options) (*Binding, error) {
 	if err := ensureWorkspace(opts.Dir); err != nil {
 		return nil, err
 	}
@@ -549,7 +566,7 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 	// the bindings this one refers to (decision 0392), bound now so one
 	// check finds them all: Go's imports are acyclic, so this ends
 	for _, dep := range sortedKeys(g.deps) {
-		if _, err := LoadOrBind(dep, Options{Dir: opts.Dir}); err != nil {
+		if _, err := loadOrBind(dep, Options{Dir: opts.Dir}); err != nil {
 			return nil, &Error{GoPath: goPath, Msg: fmt.Sprintf("binding %s, which its types come from: %v", dep, err)}
 		}
 	}
@@ -566,6 +583,14 @@ func LoadOrBind(goPath string, opts Options) (*Binding, error) {
 		return b, err
 	}
 	return Bind(goPath, opts)
+}
+
+// loadOrBind is LoadOrBind under the workspace lock Bind holds.
+func loadOrBind(goPath string, opts Options) (*Binding, error) {
+	if b, err := Load(goPath, opts); b != nil || err != nil {
+		return b, err
+	}
+	return bind(goPath, opts)
 }
 
 func firstLine(s string) string {
