@@ -50,8 +50,9 @@ BodyReader it fills (Go's io.Pipe): each write waits for the reader,
 read `Err(e)`, and a write after close is `Io("io: read/write on closed
 pipe")`. With `Request.with_body_reader` and `Client.open` one task
 writes a request while another reads the response. The native HTTP/1.1
-full duplex wire part is Xo Lang 3's (until then `with_full_duplex`
-only marks the response); `pipe` works on every backend.
+full duplex wire part (server respond, client open with a body sender
+task; golden http_duplex) is in; the native HTTP/2 client's non-blocking
+pipe pump is still to come; `pipe` works on every backend.
 
 ## 2026-10-30: feature: trailers (decision 0433)
 

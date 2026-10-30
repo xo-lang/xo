@@ -1801,8 +1801,10 @@ PipeWriter fills as a task writes; with `Request.with_body_reader` and
 request while another reads the response (a gRPC style bidirectional
 stream). A read takes at most `max` bytes of a written piece; each write
 waits until the reader has taken it. The native backend's HTTP/1.1
-full duplex follows decision 0433's split (until then
-`with_full_duplex` only marks the response).
+server and client do it (the client sends the body from a task and the
+connection is not reused afterwards); the native HTTP/2 client's
+duplex pipe follows (until then its pump waits for a piped piece
+before it reads the response).
 
 Trailers (decision 0433) are fields sent after a body, as net/http sends
 them: a streamed response's `set_trailer` (Go's `TrailerPrefix`; declared
