@@ -437,6 +437,7 @@ pub struct Enc {
   t: Table
   min_size: Int
   update: Bool
+  cap: Int
 }
 
 /// The table size of the encoders and decoders, the server's and the
@@ -445,11 +446,23 @@ pub const TABLE: Int = 4096
 
 const NO_MIN: Int = 4294967295
 
-pub fn encoder() -> Enc { Enc{t: new_table(TABLE), min_size: NO_MIN, update: false} }
+pub fn encoder() -> Enc { Enc{t: new_table(TABLE), min_size: NO_MIN, update: false, cap: TABLE} }
 
-/// Applies the peer's SETTINGS_HEADER_TABLE_SIZE (at most TABLE).
+/// An encoder whose table stays within cap (0 or over TABLE: TABLE), as
+/// Go's MaxEncoderHeaderTableSize: a smaller one tells the peer at the
+/// first block.
+pub fn encoder_cap(cap0: Int) -> Enc {
+  var e = encoder()
+  if cap0 > 0 && cap0 < TABLE {
+    e.cap = cap0
+    e.set_max(cap0)
+  }
+  e
+}
+
+/// Applies the peer's SETTINGS_HEADER_TABLE_SIZE (at most the encoder's cap).
 pub fn (var e: Enc) set_max(v0: Int) {
-  let v = if v0 > TABLE { TABLE } else { v0 }
+  let v = if v0 > e.cap { e.cap } else { v0 }
   if v < e.min_size {
     e.min_size = v
   }

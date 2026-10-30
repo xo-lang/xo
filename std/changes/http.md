@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-30: feature: H2Config.max_encoder_header_table_size, native server (decision 0434)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 0434 open list (the native server ignored the field)
+- Go reference: net/http's http2.Server.MaxEncoderHeaderTableSize
+- Test: http_h2_config still equal to want.txt (no probe: the cap only shows as a dynamic table size update in a response's first header block)
+- Timing: none
+
+The HPACK encoder of a connection keeps its dynamic table within the
+setting (0 or over 4096: 4096) and the peer's SETTINGS_HEADER_TABLE_SIZE,
+whichever is smaller; a cap below 4096 is announced with a table size
+update in the first block, as Go.
+
 ## 2026-10-30: feature: H2Config.write_byte_timeout, native server (decision 0434)
 
 - Kind: feature

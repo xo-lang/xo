@@ -212,11 +212,11 @@ pub fn srv_alpn(s: rthttp.Srv, alpn: List[Str]) { tlssrv.srv_alpn(srec(s), hconn
 /// configFromServer does): max concurrent streams, max read frame size,
 /// the connection's and each stream's receive window, the HPACK table
 /// the peer may use.
-pub fn srv_h2cfg(s: rthttp.Srv, streams: Int, frame: Int, conn_win: Int, stream_win: Int, table: Int, ping_idle: Int = 0, ping_wait: Int = 0, write_to: Int = 0) {
+pub fn srv_h2cfg(s: rthttp.Srv, streams: Int, frame: Int, conn_win: Int, stream_win: Int, table: Int, ping_idle: Int = 0, ping_wait: Int = 0, write_to: Int = 0, enc_table: Int = 0) {
   let a = srec(s)
   var blk = ld(a, hconn.SR_H2CFG)
   if blk == 0 {
-    blk = rt.heap_large(64)
+    blk = rt.heap_large(72)
     st(a, hconn.SR_H2CFG, blk)
   }
   st(blk, 0, if streams > 0 { streams } else { 250 })
@@ -227,6 +227,7 @@ pub fn srv_h2cfg(s: rthttp.Srv, streams: Int, frame: Int, conn_win: Int, stream_
   st(blk, 40, if ping_idle > 0 { ping_idle } else { 0 })
   st(blk, 48, if ping_wait > 0 { ping_wait } else { 0 })
   st(blk, 56, if write_to > 0 { write_to } else { 0 })
+  st(blk, 64, if enc_table > 0 { enc_table } else { 0 })
 }
 
 /// Frees server record a (its last reference went; cabi_http.xo

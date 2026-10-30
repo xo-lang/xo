@@ -192,7 +192,8 @@ const C_PTO = 664
 const C_LAST = 672
 const C_PDEAD = 680
 const C_WTO = 688
-const C_SIZE = 696 // own: this module\'s connection record, not the context
+const C_ETAB = 696
+const C_SIZE = 704 // own: this module\'s connection record, not the context
 /// A stream record's words: its connection's record, its id, the
 /// references, whether it is in the table, the request's state (ST_*);
 /// the request (the fiber's, until dispatched): its parts (an Any of
@@ -796,6 +797,7 @@ pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
   sto(c, C_PIDLE, if cfg != 0 { ld(cfg, 40) } else { 0 })
   sto(c, C_PTO, if cfg != 0 && ld(cfg, 48) > 0 { ld(cfg, 48) } else { 15000000000 })
   sto(c, C_WTO, if cfg != 0 { ld(cfg, 56) } else { 0 })
+  sto(c, C_ETAB, if cfg != 0 { ld(cfg, 64) } else { 0 })
   sto(c, C_LAST, now())
   sto(c, C_PEER_FRAME, 16384)
   sto(c, C_PEER_WIN, 65535)
@@ -1083,13 +1085,13 @@ pub struct H2Conn {
 /// The fiber's state of connection h (hserve.hc_h2 chose HTTP/2; c its
 /// record).
 pub fn conn(h: rthttp.HConn, c: Int) -> H2Conn {
-  H2Conn{h: h, c: c, dec: hpack.decoder(ld(c, C_TABLE)), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: ""}
+  H2Conn{h: h, c: c, dec: hpack.decoder(ld(c, C_TABLE)), enc: hpack.encoder_cap(ld(c, C_ETAB)), sizes: "", names: [], values: [], tgt: [], msg: ""}
 }
 
 /// conn with the routes whose bodies stream (http1.reader_streaming's):
 /// such a request goes to its handler at its HEADERS (decision 0310).
 pub fn conn_streaming(h: rthttp.HConn, c: Int, streams: fn(Str, Str) -> Bool) -> H2Conn {
-  H2Conn{h: h, c: c, dec: hpack.decoder(ld(c, C_TABLE)), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: "", streams: [streams]}
+  H2Conn{h: h, c: c, dec: hpack.decoder(ld(c, C_TABLE)), enc: hpack.encoder_cap(ld(c, C_ETAB)), sizes: "", names: [], values: [], tgt: [], msg: "", streams: [streams]}
 }
 
 fn word(s: Str, v: Int) -> Str { rt.rs_push_word(s, v, 4) }
