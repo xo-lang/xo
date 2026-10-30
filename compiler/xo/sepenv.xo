@@ -81,7 +81,7 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
   // world's roots); not --std-module, whose module under test is
   // compiled with its tests' private access, so not taken from the store
   let tmode = o.cmd == "test"
-  if !(o.cmd is "build" | "run" | "test") || !o.std_module.is_empty() || backend != arch || !served || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {
+  if !(o.cmd is "build" | "run" | "test") || backend != arch || !served || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {
     return os
   }
   if !(o.targets.is_empty() || o.targets == "${host}/${arch}") {
