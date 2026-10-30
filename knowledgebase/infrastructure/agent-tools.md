@@ -899,6 +899,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   (linux/arm64), `OFFLOAD_ENV=offload-amd64.env offload.sh` (linux/amd64),
   `ab-host.sh` for `--ab` (offload.md). A slot run older than 30 minutes no
   longer holds every other run for a waiting measurement.
+  The linux/arm64 host runs 2 jobs at once (owner, 2026-10-30): a job
+  that measures time or memory sets `OFF_EXCLUSIVE=1` so it runs alone
+  (ab-host.sh does), every job stops after `OFF_MAX_MIN` (default 180),
+  and each agent keeps at most 2 jobs queued there (chain the rest).
 - Pushes: `~/xo-lead/agents/pushq.sh WORKTREE [--base SHA] [-- GATE...]`.
   A push touching `std/*.xo` also runs cmd/xo's TestStdChecks with the
   worktree's bin/xo (about 2 s; owner, 2026-10-30, after an XO0804 in

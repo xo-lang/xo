@@ -41,6 +41,11 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   `OFF_MAX_MIN` minutes holding the lock (default 180, exit 124, with a
   message; tier.sh's job 300), so a hung run cannot hold the one slot
   while the queue grows (lead, 2026-10-30: 9 jobs queued behind one run).
+  The arm64 container runs 2 jobs at once (OFF_SLOTS=2 in offload.env;
+  owner, 2026-10-30): slot 1 is `/work/offload.lock`, slot 2
+  `/work/offload.lock.2`. A job that measures time or memory sets
+  `OFF_EXCLUSIVE=1` and waits for both slots, so it runs alone
+  (ab-host.sh sets it). Keep at most 2 jobs queued per agent.
 - `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
   self|self=a|edit PROG [FLAG...]|PROG [ARG...]` (`self=a`: BASE's
   compiler/xo as the self build's program, for a NEW whose compiler calls
