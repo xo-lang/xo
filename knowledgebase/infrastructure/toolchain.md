@@ -1790,7 +1790,10 @@ std modules' own tests (decision 0262): a std module's tests, with its
 private functions, go in a `_test.xo` file beside its source
 (std/native/llrt/scan_test.xo for scan.xo) and run with `xo test
 --std-module=MODULE [--backend=llvm|arm64]`, MODULE as `use` names it
-below std (`json`, `native/http`, `native/llrt/scan`). Like `--std=DIR`
+below std (`json`, `native/http`, `native/llrt/scan`); a bare name is
+the tested one of native/NAME and NAME, a name with no tests exits 2
+with the nearest tested modules, and the flag implies `--fail-empty`
+(decision 0437). Like `--std=DIR`
 it is a developer flag of xo1, not in `xo test -h`. internal/stdtest
 runs every such module: -short on the host's native backend, the
 default on LLVM and arm64, XO_STDTEST_BACKENDS to name them. The

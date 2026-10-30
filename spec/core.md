@@ -2805,6 +2805,9 @@ test "retries after 503" {
   their seed and input.
 - Real capabilities require `test "name" uses net { ... }` and
   `xo test --real`; `os` then holds real capabilities for the listed effects.
+  Without `--real` such a test is skipped, and the summary line names every
+  skip's reason (`ok: 1 passed, 0 failed, 1 skipped (1 uses net: run with
+  --real)`; decision 0437).
 - Each test, and each case and shrinking step of a property test, may run
   for `xo test --timeout=D` of real time (default 60s; 0 for no limit).
   One that does not finish fails with `the test did not finish within D of

@@ -13,6 +13,16 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   instructions (xo bench --ab n=15; wall and cycles within noise),
   parse_int 0.999; xo's native __text 70,877,952 to 70,866,280 bytes;
   golden load_ranges.
+- No silent success in the tools (decision 0437, Proposed): `xo test`'s
+  summary names its skips without -v (`1 skipped (1 uses fs: run with
+  --real)`); `xo test --std-module=base64` runs native/base64 (it ran the
+  Go backend's std/base64, which has no tests, and passed), an unknown or
+  untested module exits 2 with a did-you-mean, and the flag implies
+  `--fail-empty`; `xo test` on a path in std names the flag; XO_DUMP_FN,
+  XO_INLINE_REPORT and the stats and profile variables turn the run cache
+  off for that build (a hit wrote no dump); `xo query` outside a module
+  exits 2 naming --dir; a `go test -run` that names no test fails in the
+  packages with goldens.
 - LLVM builds of a program that imports std/html (or template) are
   faster: a constant's initializer over 2000 SSA instructions is built
   `optnone`, so clang uses its fast register allocator on it (std/html's

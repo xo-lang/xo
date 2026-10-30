@@ -28,8 +28,8 @@ A tool command that did nothing reports it, or fails:
 
 1. `xo test`'s summary line names its skips without -v: the `uses` tests
    in one entry with their effects, then each other reason
-   (`ok: 9 passed, 0 failed, 8 skipped (8 uses clock, env, fs: run with
-   --real)`), on the native harness (compiler/xo test.xo skip_summary)
+   (`ok: 1 passed, 0 failed, 8 skipped (8 uses clock, env, fs, fs.read,
+   net, proc, stdio: run with --real)`), on the native harness (compiler/xo test.xo skip_summary)
    and the Go backend's (std/rt testing.go skipSummary) alike.
 2. `--std-module=NAME`: a bare name is the one of native/NAME and
    std/NAME that has tests; a name with no module, or a module with no
