@@ -17,6 +17,10 @@ use native/rt
 /// call stores again).
 pub fn install() {
   let t = srvh2c.table()
+  if !srvh2c.begin_fill(t, hconn.TO_ONCE_TLS) {
+    srvh2c.fill(t)
+    return
+  }
   rt.mem_store(t, 8 * hconn.TO_SRV_FREE, rt.fn_addr("srvtls_srv_free"), 8)
   rt.mem_store(t, 8 * hconn.TO_CONN, rt.fn_addr("srvtls_conn"), 8)
   rt.mem_store(t, 8 * hconn.TO_CLOSE_NOTIFY, rt.fn_addr("srvtls_close_notify"), 8)
@@ -29,4 +33,5 @@ pub fn install() {
   rt.mem_store(t, 8 * hconn.TO_NB_READ, rt.fn_addr("srvtls_nb_read"), 8)
   rt.mem_store(t, 8 * hconn.TO_NEG, rt.fn_addr("srvtls_neg"), 8)
   srvh2c.fill(t)
+  srvh2c.end_fill(t, hconn.TO_ONCE_TLS)
 }

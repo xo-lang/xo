@@ -23,8 +23,29 @@ pub fn table() -> Int {
   w
 }
 
+/// Whether the caller fills the entries guarded by word k of table t: the
+/// first caller gets true and calls end_fill when done; the others wait
+/// for it and get false (tasks racing to install write the same words, a
+/// data race, and must not use a half filled table).
+pub fn begin_fill(t: Int, k: Int) -> Bool {
+  if rt.slot_cas[Int](t, k, 0, 1, 3) {
+    return true
+  }
+  while rt.slot_load[Int](t, k, 1) != 2 {
+    rt.spin_hint()
+  }
+  false
+}
+
+pub fn end_fill(t: Int, k: Int) {
+  rt.slot_store[Int](t, k, 2, 2)
+}
+
 /// Stores the HTTP/2 entries in table t.
 pub fn fill(t: Int) {
+  if !begin_fill(t, hconn.TO_ONCE_H2) {
+    return
+  }
   rt.mem_store(t, 8 * hconn.TO_H2_STOP, rt.fn_addr("srvtls_h2_stop"), 8)
   rt.mem_store(t, 8 * hconn.TO_H2_FREE, rt.fn_addr("srvtls_h2_free"), 8)
   rt.mem_store(t, 8 * hconn.TO_H2_STREAM_RELEASE, rt.fn_addr("srvtls_h2_stream_release"), 8)
@@ -32,6 +53,7 @@ pub fn fill(t: Int) {
   rt.mem_store(t, 8 * hconn.TO_H2_RESPOND_AT, rt.fn_addr("srvtls_h2_respond_at"), 8)
   rt.mem_store(t, 8 * hconn.TO_H2_FINISH, rt.fn_addr("srvtls_h2_finish"), 8)
   rt.mem_store(t, 8 * hconn.TO_H2C, rt.fn_addr("srvh2c"), 8)
+  end_fill(t, hconn.TO_ONCE_H2)
 }
 
 /// Installs the HTTP/2 entries (an h2c server).

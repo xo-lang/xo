@@ -121,9 +121,13 @@ pub const TO_TIMED_OUT = 14
 pub const TO_NEG = 15
 pub const TO_H2C = 16
 pub const TO_NB_READ = 17
+/// the fill guards of the two installers (srvh2c.xo begin_fill): 0 not
+/// started, 1 being filled, 2 filled
+pub const TO_ONCE_H2 = 18
+pub const TO_ONCE_TLS = 19
 
 /// The number of entries of the table.
-pub const TO_COUNT = 18
+pub const TO_COUNT = 20
 
 /// The table, made on first use by an installer (srvtls.xo install,
 /// srvh2c.xo install_h2c), each storing its own entries; 0 for none.
