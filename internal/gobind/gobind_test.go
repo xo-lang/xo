@@ -595,6 +595,16 @@ func (s *Set[K]) Union(o *Set[K]) *Set[K] {
 type Strs[S ~[]string] struct{ v S }
 
 func (s *Strs[S]) Len() int { return len(s.v) }
+
+// zap's ObjectMarshalerPtr: a constraint interface, not a type
+type LenPtr[T any] interface {
+	*T
+	Len() int
+}
+
+func Lens[T any, P LenPtr[T]](vs []T) int { return len(vs) }
+
+type Number interface{ ~int | ~float64 }
 `,
 	}
 	for name, body := range files {
@@ -644,6 +654,16 @@ func (s *Strs[S]) Len() int { return len(s.v) }
 	}
 	if why := b.Skipped["Strs.len"]; !strings.Contains(why, "has no Xo form") {
 		t.Errorf("Strs.len skipped %q, want a constraint with no Xo form (skipped: %v)", why, b.Skipped)
+	}
+	// a constraint interface is never named as a type (Go rejects it
+	// outside a constraint, which failed zap's whole binding)
+	for _, name := range []string{"LenPtr", "Number"} {
+		if strings.Contains(adapter, "gen."+name) || strings.Contains(decl, "struct "+name) {
+			t.Errorf("constraint interface %s is bound:\n%s", name, grep(adapter, "gen."+name))
+		}
+	}
+	if _, ok := b.Skipped["lens"]; !ok {
+		t.Errorf("lens is not skipped (skipped: %v)", b.Skipped)
 	}
 }
 

@@ -797,6 +797,9 @@ func homeHandleName(n *types.Named) (string, bool) {
 // own package's binding: each type parameter's constraint is any,
 // comparable or an Ordered (typeParams without core types).
 func genericBindable(n *types.Named) bool {
+	if it, ok := n.Underlying().(*types.Interface); ok && !it.IsMethodSet() {
+		return false
+	}
 	for i := 0; i < n.TypeParams().Len(); i++ {
 		c := n.TypeParams().At(i).Constraint()
 		it, _ := c.Underlying().(*types.Interface)
@@ -816,6 +819,11 @@ func (g *gen) handleFor(n *types.Named, depth int) (*handle, *skipErr) {
 	foreign := obj.Pkg() != g.pkg
 	if !obj.Exported() {
 		return nil, skipf(catUnexport, "unexported type %s", g.display(n))
+	}
+	// a constraint interface (a type set: zap's ObjectMarshalerPtr[T] is
+	// interface{ *T; ObjectMarshaler }) is not a type Go code can name
+	if it, ok := n.Underlying().(*types.Interface); ok && !it.IsMethodSet() {
+		return nil, skipf(catGeneric, "constraint interface %s is not a type", g.display(n))
 	}
 	if foreign {
 		// one Xo type per Go type (decision 0392): the type is bound in

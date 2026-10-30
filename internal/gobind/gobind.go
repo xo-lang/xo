@@ -73,7 +73,9 @@ import (
 // 25 (2026-10-30, decision 0421): a Go channel given to Xo is go.Recv[T].
 // 26 (2026-10-30, decision 0416 addendum): a handle has as_X for the
 // other packages' interfaces its package's signatures name.
-const Version = 26
+// 27 (2026-10-30): a Go constraint interface (a type set) is not bound
+// as a type (zap's ObjectMarshalerPtr[T] broke zap's whole binding).
+const Version = 27
 
 // Binding is one bound Go package.
 type Binding struct {

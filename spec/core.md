@@ -1745,7 +1745,9 @@ fn main(os: Os) ! {
   (`lru.Cache[K, V]` is `Cache[K: Eq, V]`, its methods bound with `K`
   and `V`) when its constraints map, and an instance over type
   parameters or types Go and Xo share (`Str`, `Bool`, a type parameter)
-  is that handle's instance; a `context.Context` parameter is
+  is that handle's instance; a constraint interface (one with a type
+  term, such as `interface{ ~int | ~float64 }`) is not a type and is not
+  bound; a `context.Context` parameter is
   supplied from the current task (deadline and cancellation); a panic becomes
   a fault.
 - A named Go type over a basic type (`time.Month`, `fs.FileMode`) is that

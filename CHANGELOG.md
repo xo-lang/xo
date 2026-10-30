@@ -60,6 +60,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   boundary (decision 0419): options structs with optional fields
   (`opts.set_limit(Some(10))`, `opts.name() ?? "none"`) bind; a parameter
   Go writes through stays skipped. Binding format 21.
+- `use go`: go.uber.org/zap binds again: the binding named its generic
+  constraint interface `ObjectMarshalerPtr[T]` (`interface{ *T;
+  ObjectMarshaler }`) as a type, which Go rejects, so the whole package's
+  build failed. A constraint interface, and a function constrained by one
+  (zap's `object_values`, `objects`), is skipped now. Binding format 27.
 - std/dns: MX, TXT, SRV and reverse (PTR) lookups over a Net, Go's
   LookupMX, LookupTXT, LookupSRV and LookupAddr, with `Resolver{server}`
   to ask one server (decision 0417). Native on Linux and macOS; Windows
