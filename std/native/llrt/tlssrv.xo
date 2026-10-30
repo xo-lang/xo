@@ -261,6 +261,8 @@ struct SrvTls {
   client_auth: Int = 0
   client_cas: List[Bytes] = []
   client_roots: List[Bytes] = []
+  /// the ALPN protocols offered (none: h2 and http/1.1)
+  alpn: List[Str] = []
 }
 
 /// The server configuration's record: a block whose word holds the
@@ -306,6 +308,17 @@ pub fn srv_client_auth(a: Int, sr_tls: Int, mode: Int, roots: List[x509.Cert]) {
   }
   st.client_cas = cas
   st.client_roots = ders
+  put(h, rt.any_of(st))
+}
+
+/// Sets the ALPN protocols of the server of record a (Server.protocols).
+pub fn srv_alpn(a: Int, sr_tls: Int, alpn: List[Str]) {
+  let h = rt.mem_load(a, sr_tls, 8)
+  if h == 0 {
+    return
+  }
+  var st = srv_of(h)
+  st.alpn = alpn
   put(h, rt.any_of(st))
 }
 
@@ -463,7 +476,7 @@ pub fn conn(h: Int, pd: Int) -> Int {
   var cf = tls13srv.conf(cs[0].certs, cs[0].key)
   cf.ticket_keys = keys
   cf.now = now
-  cf.alpn = ["h2", "http/1.1"]
+  cf.alpn = if st.alpn.is_empty() { ["h2", "http/1.1"] } else { st.alpn }
   cf.client_auth = st.client_auth
   cf.client_cas = st.client_cas
   cf.client_roots = st.client_roots
@@ -647,6 +660,23 @@ pub fn close_notify(t: Int) {
     }
     save(t, c)
   }
+}
+
+/// Whether the server offers no http/1.1 (Server.protocols without Http1)
+/// and ALPN did not choose h2: Go closes such a connection. It closes t's
+/// connection, which later reads find failed.
+pub fn refuse_h1(t: Int) -> Bool {
+  let c = match load(t) {
+    Some(x) => x
+    None => return false
+  }
+  let offered = c.s.conf.alpn
+  if offered.is_empty() || offered.contains("http/1.1") || alpn(c) == "h2" {
+    return false
+  }
+  close_notify(t)
+  rt.mem_store(t, 8, 2, 8)
+  true
 }
 
 /// Whether ALPN chose HTTP/2.

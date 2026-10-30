@@ -40,8 +40,10 @@ fn setting_name(id: Int) -> Str {
 /// Opens an h2c connection to addr and prints the server's first
 /// SETTINGS frame; with keep, stays silent and reports what the server
 /// does next (a PING, then the close).
-fn probe(os: Os, label: Str, addr: Str, keep: Bool) uses net, stdio {
+fn probe(os: Os, label: Str, addr: Str, keep: Bool) uses net, stdio, clock {
   let c = os.net.dial(addr).or_fault("dial")
+  // a missing native feature fails here in seconds, not by holding the run
+  c.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
   c.write(PREFACE.bytes() + b"\x00\x00\x00\x04\x00\x00\x00\x00\x00").or_fault("preface")
   var buf = b""
   var settings_seen = false
@@ -85,7 +87,7 @@ fn probe(os: Os, label: Str, addr: Str, keep: Bool) uses net, stdio {
   c.close()
 }
 
-fn main(os: Os) uses net, stdio {
+fn main(os: Os) uses net, stdio, clock {
   var r = http.router()
   r.handle("GET /", fn(_req) { http.text(200, "ok") })
   let h2c = #{http.Protocol.Http1, http.Protocol.UnencryptedHttp2}

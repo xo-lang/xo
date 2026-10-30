@@ -197,6 +197,30 @@ pub fn srv_tls(s: rthttp.Srv, c: tlssrv.Cert) { tlssrv.srv_add(s, srec(s), hconn
 /// the roots that verify them (http.Server.with_client_auth).
 pub fn srv_client_auth(s: rthttp.Srv, mode: Int, roots: List[x509.Cert]) { tlssrv.srv_client_auth(srec(s), hconn.SR_TLS, mode, roots) }
 
+/// Sets the ALPN protocols server s's TLS offers (with_protocols).
+pub fn srv_alpn(s: rthttp.Srv, alpn: List[Str]) { tlssrv.srv_alpn(srec(s), hconn.SR_TLS, alpn) }
+
+/// Sets server s's HTTP/2 settings block (http.Server.with_h2_config; 0
+/// is each one's default, an out of range one is clamped as Go's
+/// configFromServer does): max concurrent streams, max read frame size,
+/// the connection's and each stream's receive window, the HPACK table
+/// the peer may use.
+pub fn srv_h2cfg(s: rthttp.Srv, streams: Int, frame: Int, conn_win: Int, stream_win: Int, table: Int, ping_idle: Int = 0, ping_wait: Int = 0) {
+  let a = srec(s)
+  var blk = ld(a, hconn.SR_H2CFG)
+  if blk == 0 {
+    blk = rt.heap_large(56)
+    st(a, hconn.SR_H2CFG, blk)
+  }
+  st(blk, 0, if streams > 0 { streams } else { 250 })
+  st(blk, 8, if frame >= 16384 && frame <= 16777215 { frame } else { 1048576 })
+  st(blk, 16, if conn_win >= 65535 { conn_win } else { 1048576 })
+  st(blk, 24, if stream_win >= 1 { stream_win } else { 1048576 })
+  st(blk, 32, if table > 0 { table } else { 4096 })
+  st(blk, 40, if ping_idle > 0 { ping_idle } else { 0 })
+  st(blk, 48, if ping_wait > 0 { ping_wait } else { 0 })
+}
+
 /// Frees server record a (its last reference went; cabi_http.xo
 /// srv_free).
 pub fn srv_free(a: Int) {
@@ -205,6 +229,10 @@ pub fn srv_free(a: Int) {
     // never closed (serve did not get to its end): its tasks hold the
     // server, so none is left
     tasks.h_release(sc)
+  }
+  let cfg = ld(a, hconn.SR_H2CFG)
+  if cfg != 0 {
+    rt.heap_release(cfg)
   }
   let tls = ld(a, hconn.SR_TLS)
   if tls != 0 {
@@ -283,6 +311,35 @@ pub fn hc_h2(h: rthttp.HConn, when: Int) -> Int {
   rt.call_c2(hconn.tls_op(hconn.TO_H2), hc, tls)
 }
 
+/// Marks server s as taking HTTP/2 with prior knowledge on plain
+/// connections (h2c, decision 0434; http.Server.with_protocols).
+pub fn srv_h2c(s: rthttp.Srv, only: Bool = false) {
+  rt.mem_store(srec(s), hconn.SR_H2C, if only { 2 } else { 1 }, 8)
+}
+
+/// The HTTP/2 record of plain connection h when its client opens with the
+/// HTTP/2 preface and its server takes h2c (srv_h2c), else 0: the bytes
+/// read stay for HTTP/1.1. The sniff waits under when (the read header
+/// timeout, monotonic ns, 0 none).
+pub fn hc_h2c(h: rthttp.HConn, when: Int) -> Int {
+  let hc = hconn.rec(h)
+  let s = ld(hc, hconn.HC_SRV)
+  if s == 0 || ld(s, hconn.SR_H2C) == 0 || ld(hc, hconn.HC_TLS) != 0 || ld(hc, hconn.HC_CONN) == 0 {
+    return 0
+  }
+  if hconn.stopping_at(s) {
+    return 0
+  }
+  if hconn.sniff_h2c(h, when) != 1 {
+    if ld(s, hconn.SR_H2C) == 2 {
+      // a server without HTTP/1.1 closes such a connection
+      poll.pd_close(hconn.conn_pd(hc))
+    }
+    return 0
+  }
+  rt.call_c2(hconn.tls_op(hconn.TO_H2C), hc, 0)
+}
+
 /// Closes the connection and ends its registration.
 pub fn hc_close(h: rthttp.HConn) {
   let hc = hconn.rec(h)
@@ -298,6 +355,10 @@ pub fn hc_close(h: rthttp.HConn) {
 /// hc_free).
 pub fn hc_free(hc: Int) {
   let x1 = ld(hc, hconn.HC_X1)
+  let pk = ld(hc, hconn.HC_PEEK)
+  if pk != 0 {
+    obj.free_obj(pk)
+  }
   let owner = ld(hc, hconn.HC_OWNER)
   if owner != 0 {
     // an HTTP/2 stream's connection

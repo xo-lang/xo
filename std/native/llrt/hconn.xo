@@ -21,7 +21,6 @@ use native/llrt/rc
 use native/llrt/sock
 use native/llrt/sysio
 use native/llrt/tasks
-use native/llrt/tlssrv
 use native/llrt/twflags
 use native/llrt/twrun
 use native/rt
@@ -44,7 +43,12 @@ pub const SR_STOPPING = 48
 pub const SR_IDLE = 56
 pub const SR_SCOPE = 72
 pub const SR_CLOSED = 80
-pub const SR_SIZE = 88
+/// Whether plain connections may start HTTP/2 with prior knowledge
+/// (h2c, decision 0434: srv_h2c).
+pub const SR_H2C = 88
+/// the HTTP/2 settings block (hserve.srv_h2cfg): 5 words, 0 none
+pub const SR_H2CFG = 96
+pub const SR_SIZE = 104
 
 /// A connection's record (byte offsets): the header; its server (a
 /// reference; 0 for a stream's connection); the net.Conn (a reference);
@@ -67,7 +71,10 @@ pub const HC_H2S = 88
 pub const HC_OWNER = 96
 pub const HC_IPN = 104
 pub const HC_IP = 112
-pub const HC_SIZE = 160
+/// Input read ahead by sniff_h2c and not yet taken (a block: its length, then
+/// up to 24 bytes), 0 for none.
+pub const HC_PEEK = 160
+pub const HC_SIZE = 168
 
 /// The longest address text kept (INET6_ADDRSTRLEN less its zero byte).
 const IP_MAX = 45
@@ -112,12 +119,21 @@ pub const TO_H2 = 12
 pub const TO_SET_DEADLINE = 13
 pub const TO_TIMED_OUT = 14
 pub const TO_NEG = 15
+pub const TO_H2C = 16
+pub const TO_NB_READ = 17
 
-/// Whether the table is made (srvtls.xo install).
-pub fn tls_ops_made() -> Bool { rt.slot_load[Int](rt.static_word(W_TLS_OPS), 0, 1) != 0 }
+/// The number of entries of the table.
+pub const TO_COUNT = 18
 
-/// Publishes the table t (srvtls.xo install).
-pub fn tls_ops_set(t: Int) { rt.slot_store[Int](rt.static_word(W_TLS_OPS), 0, t, 2) }
+/// The table, made on first use by an installer (srvtls.xo install,
+/// srvh2c.xo install_h2c), each storing its own entries; 0 for none.
+pub fn tls_ops_table() -> Int { rt.slot_load[Int](rt.static_word(W_TLS_OPS), 0, 1) }
+
+/// Publishes the table t (srvtls.xo install) unless another thread did
+/// first: the table in use, whose entries the caller then stores.
+pub fn tls_ops_set(t: Int) -> Int {
+  if rt.slot_cas[Int](rt.static_word(W_TLS_OPS), 0, 0, t, 3) { t } else { rt.mem_load(rt.static_word(W_TLS_OPS), 0, 8) }
+}
 
 /// The address of the table's entry k (TO_*).
 pub fn tls_op(k: Int) -> Int { rt.mem_load(rt.mem_load(rt.static_word(W_TLS_OPS), 0, 8), 8 * k, 8) }
@@ -270,6 +286,33 @@ pub fn recv(h: rthttp.HConn, p: Int, cap: Int, idle: Bool) -> Int { recv_until(h
 /// handshake's waits included).
 pub fn recv_until(h: rthttp.HConn, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
   let hc = rec(h)
+  if ld(hc, HC_PEEK) != 0 {
+    let k = take_peek(hc, p, cap)
+    if k > 0 {
+      return k
+    }
+  }
+  return recv_raw(hc, p, cap, idle, deadline)
+}
+
+/// The input sniff_h2c read ahead, up to cap bytes of it, at p.
+fn take_peek(hc: Int, p: Int, cap: Int) -> Int {
+  let pk = ld(hc, HC_PEEK)
+  let n = ld(pk, 0)
+  let k = if cap < n { cap } else { n }
+  rt.mem_copy(p, pk + 8, k)
+  if k == n {
+    st(hc, HC_PEEK, 0)
+    obj.free_obj(pk)
+  } else {
+    rt.mem_move(pk + 8, pk + 8 + k, n - k)
+    st(pk, 0, n - k)
+  }
+  k
+}
+
+/// Reads from the connection itself (recv_until after the read ahead).
+fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
   let s = ld(hc, HC_SRV)
   if s != 0 {
     // the mark first, then stopping (stopping_at)
@@ -359,7 +402,7 @@ pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
 /// WebSocket's write deadline after the hand-over): 0 when every byte
 /// went, -2 when the deadline passed first, -1 when the connection broke
 /// or the task was canceled. On TLS the record flush waits with it
-/// (tlssrv.set_deadline, as recv_until).
+/// (TO_SET_DEADLINE, as recv_until).
 pub fn send_until(h: rthttp.HConn, p: Int, n: Int, deadline: Int) -> Int {
   if poll.canceled() {
     return -1
@@ -367,12 +410,12 @@ pub fn send_until(h: rthttp.HConn, p: Int, n: Int, deadline: Int) -> Int {
   let hc = rec(h)
   let tls = ld(hc, HC_TLS)
   if tls != 0 {
-    tlssrv.set_deadline(tls, deadline)
+    let _d = rt.call_c2(tls_op(TO_SET_DEADLINE), tls, deadline)
     var r = if rt.call_c4(tls_op(TO_WRITE), tls, p, n, 0) == 0 { 0 } else { -1 }
-    if r < 0 && deadline != 0 && tlssrv.timed_out(tls) {
+    if r < 0 && deadline != 0 && rt.call_c2(tls_op(TO_TIMED_OUT), tls, 0) != 0 {
       r = -2
     }
-    tlssrv.set_deadline(tls, 0)
+    let _c = rt.call_c2(tls_op(TO_SET_DEADLINE), tls, 0)
     return r
   }
   let pd = conn_pd(hc)
@@ -448,7 +491,66 @@ pub fn remote_ip(h: rthttp.HConn) -> Str {
 /// Reads what the TLS connection has into the cap bytes at p, without
 /// waiting (h2srv.xo's fiber waits itself): the count, 0 at the end of
 /// the stream, -1 on an error, -2 when nothing is there.
-pub fn h2_read(h: rthttp.HConn, p: Int, cap: Int) -> Int { tlssrv.nb_read(ld(rec(h), HC_TLS), p, cap) }
+pub fn h2_read(h: rthttp.HConn, p: Int, cap: Int) -> Int {
+  let hc = rec(h)
+  if ld(hc, HC_PEEK) != 0 {
+    let k = take_peek(hc, p, cap)
+    if k > 0 {
+      return k
+    }
+  }
+  let tls = ld(hc, HC_TLS)
+  if tls != 0 {
+    return rt.call_c4(tls_op(TO_NB_READ), tls, p, cap, 0)
+  }
+  // plain (h2c): -2 when nothing is there
+  let pd = conn_pd(hc)
+  var r = -1
+  if poll.pd_begin(pd) {
+    while true {
+      r = sock.read(pd_fd(pd), p, cap)
+      if r == -sock.EINTR {
+        continue
+      }
+      break
+    }
+    poll.pd_end(pd)
+  }
+  if r >= 0 { r } else if would_block(r) { -2 } else { -1 }
+}
+
+/// Reads the first bytes of plain connection h while they are a prefix
+/// of the HTTP/2 client preface (h2c, decision 0434): 1 when all 24
+/// came, 0 when a byte differs (HTTP/1.1: the bytes stay for the next
+/// read), -1 when the connection closed, -2 when the deadline passed.
+/// The bytes are kept for recv_until and h2_read, which hand them on.
+pub fn sniff_h2c(h: rthttp.HConn, deadline: Int) -> Int {
+  let hc = rec(h)
+  let pre = "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".bytes()
+  var pk = ld(hc, HC_PEEK)
+  if pk == 0 {
+    pk = obj.alloc_obj(8 + 24)
+    st(pk, 0, 0)
+    st(hc, HC_PEEK, pk)
+  }
+  while true {
+    let n = ld(pk, 0)
+    for i in 0..n {
+      if rt.mem_load(pk, 8 + i, 1) != Int(pre[i]) {
+        return 0
+      }
+    }
+    if n == 24 {
+      return 1
+    }
+    let r = recv_raw(hc, pk + 8 + n, 24 - n, n == 0, deadline)
+    if r <= 0 {
+      return if r == -2 { -2 } else { -1 }
+    }
+    st(pk, 0, n + r)
+  }
+  0
+}
 
 /// The connection's poll descriptor.
 pub fn pd(h: rthttp.HConn) -> Int { conn_pd(rec(h)) }
@@ -469,3 +571,7 @@ pub fn stream(h: rthttp.HConn, sr: Int) -> rthttp.HConn {
 
 /// The stream record of a stream's connection (0: not a stream).
 pub fn h2s(h: rthttp.HConn) -> Int { ld(rec(h), HC_H2S) }
+
+/// The HTTP/2 settings block of connection hc's server (SR_H2CFG), 0 for
+/// the defaults.
+pub fn h2cfg_at(hc: Int) -> Int { rt.mem_load(rt.mem_load(hc, HC_SRV, 8), SR_H2CFG, 8) }

@@ -1,0 +1,38 @@
+// The HTTP/2 server's table entries without TLS (decision 0434, h2c):
+// http.Server.with_protocols with UnencryptedHttp2 calls install_h2c, which
+// makes the table of hconn.xo's TO_* (srvtls.xo shares it) and stores the
+// addresses of cabi_h2.xo's exports. This module imports cabi_h2 and not
+// cabi_tls, so a program that serves h2c and never calls with_tls links
+// no TLS server.
+use native/llrt/cabi_h2
+use native/llrt/hconn
+use native/rt
+
+/// The table, made if no installer did (two racing publish one).
+pub fn table() -> Int {
+  let t = hconn.tls_ops_table()
+  if t != 0 {
+    return t
+  }
+  let n = rt.heap_large(8 * hconn.TO_COUNT)
+  rt.mem_set(n, 0, 8 * hconn.TO_COUNT)
+  let w = hconn.tls_ops_set(n)
+  if w != n {
+    rt.heap_release(n)
+  }
+  w
+}
+
+/// Stores the HTTP/2 entries in table t.
+pub fn fill(t: Int) {
+  rt.mem_store(t, 8 * hconn.TO_H2_STOP, rt.fn_addr("srvtls_h2_stop"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_FREE, rt.fn_addr("srvtls_h2_free"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_STREAM_RELEASE, rt.fn_addr("srvtls_h2_stream_release"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_EMIT, rt.fn_addr("srvtls_h2_emit"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_RESPOND_AT, rt.fn_addr("srvtls_h2_respond_at"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2_FINISH, rt.fn_addr("srvtls_h2_finish"), 8)
+  rt.mem_store(t, 8 * hconn.TO_H2C, rt.fn_addr("srvh2c"), 8)
+}
+
+/// Installs the HTTP/2 entries (an h2c server).
+pub fn install_h2c() { fill(table()) }

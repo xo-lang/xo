@@ -7,18 +7,11 @@
 // (bench/results/binary-size-native-2026-10-16.md). Every top level
 // function here is an export, xo_x_<name>; the arguments and results are
 // Ints (rt.call_c2 and call_c4).
+use native/llrt/cabi_h2
 use native/llrt/h2srv
 use native/llrt/hconn
 use native/llrt/poll
 use native/llrt/tlssrv
-use native/rt
-
-/// The number of entries of the table (hconn.xo TO_*).
-pub const N = 16
-
-fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
-
-fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
 
 fn srvtls_srv_free(t: Int) { tlssrv.srv_free(t) }
 
@@ -41,22 +34,11 @@ fn srvtls_set_deadline(t: Int, when: Int) -> Int {
 /// Whether t's last wait passed its deadline (tlssrv.timed_out).
 fn srvtls_timed_out(t: Int, _u: Int) -> Int { if tlssrv.timed_out(t) { 1 } else { 0 } }
 
+/// Reads without waiting (tlssrv.nb_read: h2srv.xo's fiber waits itself).
+fn srvtls_nb_read(t: Int, p: Int, n: Int) -> Int { tlssrv.nb_read(t, p, n) }
+
 /// The Any record of t's tlsneg.Negotiated, 0 for none (tlssrv.neg_any).
 fn srvtls_neg(t: Int, _u: Int) -> Int { tlssrv.neg_any(t) }
-
-fn srvtls_h2_stop(c: Int) { h2srv.conn_stop(c) }
-
-fn srvtls_h2_free(c: Int) { h2srv.conn_free(c) }
-
-fn srvtls_h2_stream_release(s: Int) { h2srv.stream_release(s) }
-
-/// h2srv.emit, the status and whether the response started packed into
-/// one argument (status * 2 + started: call_c4 takes four).
-fn srvtls_h2_emit(hc: Int, status2: Int, p: Int, n: Int) -> Int { h2srv.emit(hconn.handle(hc), status2 / 2, (status2 & 1) != 0, p, n) }
-
-fn srvtls_h2_respond_at(hc: Int, status: Int, p: Int, n: Int) { h2srv.respond_at(hconn.handle(hc), status, p, n) }
-
-fn srvtls_h2_finish(hc: Int, p: Int, n: Int) -> Int { if h2srv.finish(hconn.handle(hc), p, n) { 1 } else { 0 } }
 
 /// Finishes the TLS handshake of server connection hc (its TLS
 /// connection t): when ALPN chose HTTP/2, the connection's HTTP/2 record
@@ -64,32 +46,18 @@ fn srvtls_h2_finish(hc: Int, p: Int, n: Int) -> Int { if h2srv.finish(hconn.hand
 /// handshake failed (which http1.xo's reads find). Was hserve.xo hc_h2's
 /// second half; hserve.xo marked the connection idle first.
 fn srvtls_h2(hc: Int, t: Int) -> Int {
-  let s = ld(hc, hconn.HC_SRV)
   let ok = !poll.canceled() && tlssrv.handshake(t)
   hconn.set_idle(hc, false)
-  if !ok || !tlssrv.alpn_h2(t) {
+  if !ok {
+    return 0
+  }
+  if !tlssrv.alpn_h2(t) {
+    let _refused = tlssrv.refuse_h1(t)
     return 0
   }
   // rejectConn: HTTP/2 needs TLS 1.2 with an AEAD suite at least
   let why = tlssrv.bad_cipher(t)
-  // Windows resets a connection closed with unread input (the client's
-  // preface, gotchas/windows-shutdown-resets-unread-input.md), and the
-  // reset can overtake the GOAWAY: linger as after a connection error,
-  // dropping input, until the client closes or a second passes
-  let linger = match target.os {
-    TargetOs.Windows => true
-    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
-  }
-  let c = h2srv.conn_new(why, linger)
-  if s != 0 {
-    hconn.lock(s)
-    st(hc, hconn.HC_H2, c)
-    if hconn.stopping_at(s) {
-      h2srv.conn_stop(c)
-    }
-    hconn.unlock(s)
-  } else {
-    st(hc, hconn.HC_H2, c)
-  }
+  let c = h2srv.conn_open(why, hconn.h2cfg_at(hc))
+  cabi_h2.h2_attach(hc, c)
   c
 }

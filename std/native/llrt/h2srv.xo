@@ -178,7 +178,20 @@ const C_BUF_OFF = 448
 const C_MAXBODY = 456
 const C_FR = 464
 const C_MSG = 488
-const C_SIZE = 616 // own: this module\'s connection record, not the context
+/// the connection's settings (conn_new: the server's block or the defaults)
+const C_MAXSTR = 616
+const C_MAXFR = 624
+const C_WINCONN = 632
+const C_WINSTR = 640
+const C_TABLE = 648
+/// keepalive (H2Config send_ping_timeout, ping_timeout): the read silence
+/// before a PING, the wait for its ack, the last read, an unacked PING's
+/// deadline (0 none)
+const C_PIDLE = 656
+const C_PTO = 664
+const C_LAST = 672
+const C_PDEAD = 680
+const C_SIZE = 688 // own: this module\'s connection record, not the context
 /// A stream record's words: its connection's record, its id, the
 /// references, whether it is in the table, the request's state (ST_*);
 /// the request (the fiber's, until dispatched): its parts (an Any of
@@ -625,11 +638,11 @@ fn respond_internal(c: Int, st: Int, status: Int, names: List[Str], values: List
 /// ENHANCE_YOUR_CALM.
 fn dispatch(c: Int, st: Int) {
   let waiting = ld(c, C_DQN) - ld(c, C_DQOFF)
-  var free_slots = MAX_STREAMS - ld(c, C_NHANDLERS)
+  var free_slots = ld(c, C_MAXSTR) - ld(c, C_NHANDLERS)
   if free_slots < 0 {
     free_slots = 0
   }
-  if waiting - free_slots > 4 * MAX_STREAMS {
+  if waiting - free_slots > 4 * ld(c, C_MAXSTR) {
     conn_err(c, E_CALM)
     return
   }
@@ -683,7 +696,7 @@ fn enqueue_pending(c: Int) {
 /// Pops the next request whose stream is alive (the queue's reference
 /// becomes its stream connection's), or 0.
 fn take_locked(c: Int) -> Int {
-  while ld(c, C_DQOFF) < ld(c, C_DQN) && ld(c, C_NHANDLERS) < MAX_STREAMS {
+  while ld(c, C_DQOFF) < ld(c, C_DQN) && ld(c, C_NHANDLERS) < ld(c, C_MAXSTR) {
     let st = ld(ld(c, C_DQ), 8 * ld(c, C_DQOFF))
     inc(c, C_DQOFF, 1)
     if ld(c, C_DQOFF) == ld(c, C_DQN) {
@@ -741,29 +754,53 @@ fn after_end(c: Int, st: Int) {
 // ---------------------------------------------------------------------------
 // The connection's records (cabi_http.xo's exports call these)
 
+/// conn_new for a connection of the server: Windows resets a connection
+/// closed with unread input (the client's preface,
+/// gotchas/windows-shutdown-resets-unread-input.md), and the reset can
+/// overtake the GOAWAY: linger as after a connection error, dropping
+/// input, until the client closes or a second passes.
+pub fn conn_open(why: Str, cfg: Int = 0) -> Int {
+  let linger = match target.os {
+    TargetOs.Windows => true
+    TargetOs.Darwin | TargetOs.Linux | TargetOs.Wasi => false
+  }
+  conn_new(why, linger, cfg)
+}
+
 /// A new connection record (hserve.hc_h2, after the handshake chose h2):
 /// the server's preface queued. why (not ""): the cipher suite is too
 /// weak for HTTP/2 (rejectConn), a GOAWAY INADEQUATE_SECURITY then
 /// close, or with linger (Windows, which resets a connection closed with
 /// unread input, gotchas/windows-shutdown-resets-unread-input.md) drop
 /// the input for a second as after a connection error.
-pub fn conn_new(why: Str, linger: Bool) -> Int {
+pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
   let c = rt.heap_large(C_SIZE)
   rt.mem_set(c, 0, C_SIZE)
+  // the settings: the server's block (hserve.srv_h2cfg: max streams,
+  // max frame, connection window, stream window, decoder table) or Go's
+  // defaults
+  sto(c, C_MAXSTR, if cfg != 0 { ld(cfg, 0) } else { MAX_STREAMS })
+  sto(c, C_MAXFR, if cfg != 0 { ld(cfg, 8) } else { MAX_FRAME })
+  sto(c, C_WINCONN, if cfg != 0 { ld(cfg, 16) } else { WINDOW })
+  sto(c, C_WINSTR, if cfg != 0 { ld(cfg, 24) } else { WINDOW })
+  sto(c, C_TABLE, if cfg != 0 { ld(cfg, 32) } else { TABLE })
+  sto(c, C_PIDLE, if cfg != 0 { ld(cfg, 40) } else { 0 })
+  sto(c, C_PTO, if cfg != 0 && ld(cfg, 48) > 0 { ld(cfg, 48) } else { 15000000000 })
+  sto(c, C_LAST, now())
   sto(c, C_PEER_FRAME, 16384)
   sto(c, C_PEER_WIN, 65535)
   sto(c, C_WIN, 65535)
-  sto(c, C_IN, WINDOW)
+  sto(c, C_IN, ld(c, C_WINCONN))
   sto(c, C_MAXBODY, http1.max_body())
   // the server's preface: SETTINGS, then the connection window to 1 MiB
   fh(c, 30, T_SETTINGS, 0, 0)
-  put_setting(c, S_MAX_FRAME, MAX_FRAME)
-  put_setting(c, S_MAX_STREAMS, MAX_STREAMS)
+  put_setting(c, S_MAX_FRAME, ld(c, C_MAXFR))
+  put_setting(c, S_MAX_STREAMS, ld(c, C_MAXSTR))
   put_setting(c, S_MAX_HLIST, MAX_HLIST)
-  put_setting(c, S_HEADER_TABLE, TABLE)
-  put_setting(c, S_INITIAL_WINDOW, WINDOW)
+  put_setting(c, S_HEADER_TABLE, ld(c, C_TABLE))
+  put_setting(c, S_INITIAL_WINDOW, ld(c, C_WINSTR))
   sto(c, C_UNACKED, 1)
-  put_winup(c, 0, WINDOW - 65535)
+  put_winup(c, 0, ld(c, C_WINCONN) - 65535)
   // the client preface within 10 s (prefaceTimeout)
   sto(c, C_DEADLINE, now() + 10000000000)
   if !why.is_empty() {
@@ -1009,13 +1046,13 @@ pub struct H2Conn {
 /// The fiber's state of connection h (hserve.hc_h2 chose HTTP/2; c its
 /// record).
 pub fn conn(h: rthttp.HConn, c: Int) -> H2Conn {
-  H2Conn{h: h, c: c, dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: ""}
+  H2Conn{h: h, c: c, dec: hpack.decoder(ld(c, C_TABLE)), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: ""}
 }
 
 /// conn with the routes whose bodies stream (http1.reader_streaming's):
 /// such a request goes to its handler at its HEADERS (decision 0310).
 pub fn conn_streaming(h: rthttp.HConn, c: Int, streams: fn(Str, Str) -> Bool) -> H2Conn {
-  H2Conn{h: h, c: c, dec: hpack.decoder(hpack.TABLE), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: "", streams: [streams]}
+  H2Conn{h: h, c: c, dec: hpack.decoder(ld(c, C_TABLE)), enc: hpack.encoder(), sizes: "", names: [], values: [], tgt: [], msg: "", streams: [streams]}
 }
 
 fn word(s: Str, v: Int) -> Str { rt.rs_push_word(s, v, 4) }
@@ -1202,7 +1239,7 @@ pub fn (var h: H2Conn) next() -> H2Req? {
     if pending {
       continue // more to send first
     }
-    if !h.wait(x) {
+    if !h.wait(x) && !h.keepalive() {
       break
     }
   }
@@ -1235,6 +1272,7 @@ fn (h: H2Conn) read() -> Int {
   }
   let r = hconn.h2_read(h.h, tail(c, C_BUF), ld(c, C_BUF + 16) - ld(c, C_BUF + 8))
   if r > 0 {
+    sto(c, C_LAST, now())
     grew(c, C_BUF, r)
   }
   r
@@ -1254,12 +1292,18 @@ fn (h: H2Conn) wait(x: Int) -> Bool {
     return true
   }
   sto(c, C_WAITER, park)
-  let when = ld(c, C_DEADLINE)
+  var until = ld(c, C_DEADLINE)
+  if ld(c, C_PIDLE) > 0 && on(c, C_GOT_SETTINGS) {
+    let pw = if ld(c, C_PDEAD) != 0 { ld(c, C_PDEAD) } else { ld(c, C_LAST) + ld(c, C_PIDLE) }
+    if until == 0 || pw < until {
+      until = pw
+    }
+  }
   unlk(c)
   if tracerec.built() {
     rt.mem_store(x, ctx.C_WHY, tracerec.WHY_HTTP, 8)
   }
-  var ok = poll.pd_wait_or_signal(hconn.pd(h.h), x, when)
+  var ok = poll.pd_wait_or_signal(hconn.pd(h.h), x, until)
   lk(c)
   if ld(c, C_WAITER) == park {
     sto(c, C_WAITER, 0)
@@ -1269,6 +1313,33 @@ fn (h: H2Conn) wait(x: Int) -> Bool {
   if poll.canceled() {
     ok = false
   }
+  ok
+}
+
+/// After a wait that ended: whether the connection goes on because a
+/// keepalive deadline passed (a PING is sent after send_ping_timeout of
+/// read silence; no ack within ping_timeout closes it, as net/http's
+/// readIdleTimer).
+fn (h: H2Conn) keepalive() -> Bool {
+  let c = h.c
+  if poll.canceled() || ld(c, C_PIDLE) <= 0 || !on(c, C_GOT_SETTINGS) {
+    return false
+  }
+  lk(c)
+  let t = now()
+  var ok = false
+  let dl = ld(c, C_DEADLINE)
+  if dl != 0 && t >= dl {
+    ok = false
+  } else if ld(c, C_PDEAD) != 0 {
+    ok = t < ld(c, C_PDEAD)
+  } else if t >= ld(c, C_LAST) + ld(c, C_PIDLE) {
+    fh(c, 8, T_PING, 0, 0)
+    put(c, C_WB, c, 8)
+    sto(c, C_PDEAD, t + ld(c, C_PTO))
+    ok = true
+  }
+  unlk(c)
   ok
 }
 
@@ -1319,7 +1390,7 @@ fn (var h: H2Conn) input() -> Int {
       off = n
       break
     }
-    if len > MAX_FRAME {
+    if len > ld(c, C_MAXFR) {
       conn_err(c, E_FRAME_SIZE)
       off = n
       break
@@ -1587,7 +1658,7 @@ fn (var h: H2Conn) on_headers(sid: Int, flags: Int, prio: Bool, dep: Int) {
     return
   }
   sto(c, C_MAX_ID, sid)
-  if ld(c, C_NOPEN) + 1 > MAX_STREAMS {
+  if ld(c, C_NOPEN) + 1 > ld(c, C_MAXSTR) {
     stream_err(c, sid, if on(c, C_UNACKED) { E_REFUSED } else { E_PROTOCOL })
     return
   }
@@ -1599,7 +1670,7 @@ fn (var h: H2Conn) on_headers(sid: Int, flags: Int, prio: Bool, dep: Int) {
   sto(st, S_IN_TABLE, 1)
   sto(st, S_STATE, if end_stream { ST_HCR } else { ST_OPEN })
   sto(st, S_WIN, ld(c, C_PEER_WIN))
-  sto(st, S_IN, WINDOW)
+  sto(st, S_IN, ld(c, C_WINSTR))
   sto(st, S_DECLEN, -1)
   room(c, C_TAB, 8)
   sto(tail(c, C_TAB), 0, st)
@@ -1926,6 +1997,8 @@ fn (var h: H2Conn) frame_rest(ty: Int, flags: Int, sid: Int, len: Int, p: Int, d
     if (flags & F_ACK) == 0 {
       fh(c, 8, T_PING, F_ACK, 0)
       put(c, C_WB, p, 8)
+    } else {
+      sto(c, C_PDEAD, 0)
     }
   } else if ty == T_WINUP {
     let n = get32(p) & 0x7fffffff

@@ -1,0 +1,101 @@
+// h2c (decision 0434): a plain server with UnencryptedHttp2 answers a connection that
+// opens with the HTTP/2 preface as HTTP/2 (prior knowledge) and any other
+// as HTTP/1.1, on one port. A raw client sends the preface, an empty
+// SETTINGS and a GET / as one HEADERS frame, then reads the server's
+// frames: SETTINGS first, a HEADERS frame with :status 200 (0x88) and the
+// DATA frame with the body. Native only until the Go backend maps
+// with_protocols(UnencryptedHttp2).
+use std/http
+
+fn byte(b: Bytes, i: Int) -> Int { Int(b[i]) }
+
+/// The frames of buf (type, flags, stream, payload length) as text,
+/// stopping at the first DATA frame that ends its stream.
+fn frames(buf: Bytes) -> (Str, Bool) {
+  var out = ""
+  var i = 0
+  while i + 9 <= buf.len() {
+    let n = byte(buf, i) * 65536 + byte(buf, i + 1) * 256 + byte(buf, i + 2)
+    if i + 9 + n > buf.len() {
+      break
+    }
+    let t = byte(buf, i + 3)
+    let fl = byte(buf, i + 4)
+    out += "type ${t} flags ${fl} len ${n}\n"
+    if t == 0 && (fl & 1) != 0 {
+      return (out, true)
+    }
+    i += 9 + n
+  }
+  (out, false)
+}
+
+fn main(os: Os) {
+  var r = http.router()
+  r.handle("GET /", fn(_req) { http.text(200, "hello h2c") })
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, r).with_protocols(#{http.Protocol.Http1, http.Protocol.UnencryptedHttp2})
+      let addr = srv.addr()
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        // HTTP/1.1 on the same port
+        let c = http.client(os.net, timeout: 20s)
+        match c.send(http.new_request("GET", "http://${addr}/", {}, b"")) {
+          Ok(resp) => os.stdio.println("h1: ${resp.status} ${resp.text() ?? "?"}")
+          Err(e) => os.stdio.println("h1: ${e}")
+        }
+        // HTTP/2 with prior knowledge
+        match os.net.dial(addr) {
+          Ok(conn) => {
+            var out = BytesBuilder.new()
+            out.write("PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n".bytes())
+            out.write(b"\x00\x00\x00\x04\x00\x00\x00\x00\x00")
+            out.write(b"\x00\x00\x06\x01\x05\x00\x00\x00\x01\x82\x86\x84\x41\x01\x78")
+            match conn.write(out.freeze()) {
+              Ok(_) => {
+                var all = b""
+                var text = ""
+                var done = false
+                while !done {
+                  match conn.read(4096) {
+                    Ok(Some(d)) => {
+                      all = all + d
+                      let (t, end) = frames(all)
+                      text = t
+                      done = end
+                    }
+                    _ => break
+                  }
+                }
+                os.stdio.print("h2c frames:\n${text}")
+                os.stdio.println("has :status 200: ${all.contains(b"\x88")}")
+                os.stdio.println("has body: ${all.contains("hello h2c".bytes())}")
+              }
+              Err(e) => os.stdio.println("h2c write: ${e}")
+            }
+          }
+          Err(e) => os.stdio.println("h2c dial: ${e}")
+        }
+        // a connection that sends something else after PRI is HTTP/1.1's
+        match os.net.dial(addr) {
+          Ok(conn) => match conn.write("PRX / HTTP/1.1\r\nHost: x\r\n\r\n".bytes()) {
+            Ok(_) => match conn.read(4096) {
+              Ok(Some(d)) => os.stdio.println("bad method: ${d.len() > 0}")
+              _ => os.stdio.println("bad method: closed")
+            }
+            Err(e) => os.stdio.println("bad method write: ${e}")
+          }
+          Err(e) => os.stdio.println("bad method dial: ${e}")
+        }
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}

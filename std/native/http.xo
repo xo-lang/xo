@@ -21,6 +21,7 @@ use native/llrt/http1
 use native/llrt/http1w
 use native/llrt/hclient
 use native/llrt/rand as llrand
+use native/llrt/srvh2c
 use native/llrt/srvtls
 use native/llrt/tlsneg
 use native/llrt/tlsio
@@ -2214,6 +2215,25 @@ fn (s: Server) with_protocols(p: Set[http.Protocol]) -> Server { s with {protoco
 
 fn (s: Server) with_h2_config(c: http.H2Config) -> Server { s with {h2cfg: Some(c)} }
 
+/// The server with HTTP/2 prior knowledge on plain connections (h2c,
+/// decision 0434, Protocol.UnencryptedHttp2 in with_protocols):
+/// a connection whose client opens with the HTTP/2 preface is served as
+/// HTTP/2, any other as HTTP/1.1. The API (with_protocols) is Lang 5's;
+/// this is its native half.
+fn h2c_server(s: Server) -> Server {
+  // the HTTP/2 entries of the table (srvh2c.xo), made once
+  srvh2c.install_h2c()
+  var h1_too = true
+  if let Some(p) = s.protocols {
+    h1_too = p.contains(http.Protocol.Http1)
+  }
+  let prev = s.tls_setup
+  s with {tls_setup: fn(srv: rthttp.Srv, certs: List[tls.TlsCert]) {
+    prev(srv, certs)
+    hserve.srv_h2c(srv, !h1_too)
+  }, h2: serve_h2}
+}
+
 /// A plain server's TLS setup and HTTP/2: none (serve_h2 is never
 /// reached without TLS: hserve.hc_h2 is 0).
 fn no_tls(_srv: rthttp.Srv, _certs: List[tls.TlsCert]) {}
@@ -2264,8 +2284,15 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   }
   let srv = hserve.srv_new()
   defer hserve.srv_close(srv)
-  let setup = s.tls_setup
-  setup(srv, s.tls)
+  // HTTP/2 prior knowledge on plain connections (decision 0434)
+  var s2 = s
+  if let Some(p) = s.protocols {
+    if p.contains(http.Protocol.UnencryptedHttp2) && !s.tls_on {
+      s2 = h2c_server(s)
+    }
+  }
+  let setup = s2.tls_setup
+  setup(srv, s2.tls)
   if s.client_auth != tls.ClientAuth.None {
     let roots = match s.client_roots {
       Some(r) => tlsio.roots_certs(ntls.roots_data(r))
@@ -2273,10 +2300,25 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
     }
     hserve.srv_client_auth(srv, client_auth_mode(s.client_auth), roots)
   }
+  if s.tls_on {
+    if let Some(p) = s.protocols {
+      var alpn: List[Str] = []
+      if p.contains(http.Protocol.Http2) {
+        alpn.push("h2")
+      }
+      if p.contains(http.Protocol.Http1) {
+        alpn.push("http/1.1")
+      }
+      hserve.srv_alpn(srv, alpn)
+    }
+  }
+  if let Some(cf) = s.h2cfg {
+    hserve.srv_h2cfg(srv, cf.max_concurrent_streams, cf.max_read_frame_size, cf.max_receive_buffer_per_connection, cf.max_receive_buffer_per_stream, cf.max_decoder_header_table_size, cf.send_ping_timeout.nanos(), cf.ping_timeout.nanos())
+  }
   let conns = hserve.srv_group(srv)
   let l = s.l
   let r = s.r
-  let h2 = s.h2
+  let h2 = s2.h2
   let lim = http1.Limits{read_ns: s.read_ns, head_ns: s.head_ns, idle_ns: s.idle_ns, max_head: s.max_head, max_body: s.max_body}
   var failed = ""
   scope sc {
@@ -2349,7 +2391,10 @@ fn handshake_deadline(lim: http1.Limits) -> Int {
 /// Serves the requests of one connection until it closes.
 fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> (), lim: http1.Limits) {
   defer hserve.hc_close(hc)
-  let h2 = hserve.hc_h2(hc, handshake_deadline(lim))
+  var h2 = hserve.hc_h2(hc, handshake_deadline(lim))
+  if h2 == 0 {
+    h2 = hserve.hc_h2c(hc, handshake_deadline(lim))
+  }
   if h2 != 0 {
     serve_h2(hc, h2, r)
     return
@@ -2541,9 +2586,10 @@ fn stream_request(q: h2srv.H2Req) -> Request {
   // is https when the :scheme pseudo header did not say (Go's server
   // fills URL.Scheme from it; TestH2Diff on windows/amd64 printed an
   // empty one, 2026-10-29)
-  let scheme = if q.scheme.is_empty() { "https" } else { q.scheme }
+  let th = hconn.tls_of(q.conn)
+  let scheme = if q.scheme.is_empty() { if th != 0 { "https" } else { "http" } } else { q.scheme }
   let url = http.Url{scheme: scheme, host: http1.host_name(q.host), port: port, path: upath, query: query}
-  let req = Request{over_tls: true, tls_neg: tls_neg_of(hconn.tls_of(q.conn)), raw_host: q.urlhost, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
+  let req = Request{over_tls: th != 0, tls_neg: tls_neg_of(th), raw_host: q.urlhost, method: q.method, path: q.path, url: url, headers: headers, body: q.body, remote_ip: hconn.remote_ip(q.conn), raw_query: q.rawquery, fields: q.fields}
   if !q.streamed {
     return req
   }
@@ -2582,6 +2628,33 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client {
 }
 
 fn (c: Client) with_protocols(p: Set[http.Protocol]) -> Client { c with {protocols: Some(p)} }
+
+/// The ALPN protocols a client offers over TLS: none (the default, h2 then
+/// http/1.1) unless its protocol set names HTTP/1.1 or HTTP/2.
+fn client_alpn(c: Client) -> List[Str] {
+  match c.protocols {
+    Some(p) => {
+      var out: List[Str] = []
+      if p.contains(http.Protocol.Http2) {
+        out.push("h2")
+      }
+      if p.contains(http.Protocol.Http1) {
+        out.push("http/1.1")
+      }
+      out
+    }
+    None => []
+  }
+}
+
+/// Whether a plain http URL is spoken as HTTP/2 with prior knowledge
+/// (Go: UnencryptedHTTP2 without HTTP1 in Transport.Protocols).
+fn client_h2c(c: Client) -> Bool {
+  match c.protocols {
+    Some(p) => p.contains(http.Protocol.UnencryptedHttp2) && !p.contains(http.Protocol.Http1)
+    None => false
+  }
+}
 
 fn (c: Client) with_h2_config(cfg: http.H2Config) -> Client { c with {h2cfg: Some(cfg)} }
 
@@ -2822,7 +2895,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     dsrv = Some(ds)
     duplex = [fn(f: fn() -> ()) { g.spawn_background(f) }]
   }
-  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, true, req.src, duplex)
+  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, true, req.src, duplex, h2c: client_h2c(c), alpn: client_alpn(c))
   match r.err {
     0 => ()
     _ => {
@@ -3156,7 +3229,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   }
   let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
-  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, false, req.src)
+  let r = http1.client_do(req.method, raw, names, values, req.body, timeout, c.roots, c.lists, c.redirects, false, req.src, h2c: client_h2c(c), alpn: client_alpn(c))
   match r.err {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))

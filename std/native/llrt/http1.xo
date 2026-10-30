@@ -2617,6 +2617,7 @@ fn (var st: H2State) block(method: Str, target: Str, host: Str, names: List[Str]
 
 /// cl_h2_read's result for a frame over our 16 KiB SETTINGS_MAX_FRAME_SIZE.
 const CC_TOO_LARGE: Int = 104
+const CC_TOO_LARGE_H1: Int = 105
 
 // The frame types and flags the client reads and writes (RFC 9113 6).
 const H2T_DATA: Int = 0
@@ -3147,6 +3148,9 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
         } else {
           x.fail(x.headers, "unexpected EOF")
         }
+      } else if c == CC_TOO_LARGE_H1 {
+        x.broken = true
+        x.fail(x.headers, "http2: failed reading the frame payload: http2: frame too large, note that the frame header looked like an HTTP/1.1 header")
       } else if c == CC_TOO_LARGE {
         x.broken = true
         x.fail(x.headers, "http2: frame too large")
@@ -4102,7 +4106,7 @@ fn valid_method(m: Str) -> Bool {
 /// the attenuation lists of the client's Net (decision 0175), following
 /// redirects as net/http's Client does (redirectBehavior,
 /// defaultCheckRedirect, the headers a redirect drops, refererForURL).
-pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = []) -> CResult {
+pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: Bytes, timeout: Int, roots: rthttp.Roots, lists: Str, max_redirects: Int = 10, stream: Bool = false, src0: List[fn(Int) -> BodyPart] = [], duplex: List[fn(fn() -> ())] = [], h2c: Bool = false, alpn: List[Str] = []) -> CResult {
   if !valid_method(m) {
     return cfail(1, "net/http: invalid method " + go_quote(m))
   }
@@ -4207,7 +4211,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       target = target + "?" + u.rawquery
     }
     let prefix = url_op(method) + " " + q
-    var r = hclient.cl_start(https, addr, name, body, when, roots, prefix, true)
+    var r = hclient.cl_start(https, addr, name, body, when, roots, prefix, true, h2c, alpn)
     // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
     // after the head
     var h2x: H2X? = None
@@ -4221,7 +4225,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
       if hclient.retry(r) {
         // the server did not take the request on the pooled connection:
         // it goes on a new one, as Transport retries it
-        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false)
+        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn)
         if hclient.h2(r) {
           h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src)
         }
@@ -4245,7 +4249,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
         // the pooled connection was dead (the server closed it): the
         // request goes once more on a new one, as Transport retries it
         // (decision 0303)
-        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false)
+        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn)
         h1 = hclient.reading(r)
         if hclient.h2(r) {
           h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src)

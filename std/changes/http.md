@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-10-30: feature: h2c and HTTP/2 settings, native (decision 0434)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the gRPC readiness survey of 2026-10-30, gap 10
+- Go reference: net/http's Protocols (UnencryptedHTTP2), HTTP2Config (MaxConcurrentStreams, MaxReadFrameSize, MaxReceiveBufferPerConnection/Stream, MaxDecoderHeaderTableSize, SendPingTimeout, PingTimeout)
+- Test: internal/llvm/testdata/golden/http_h2c, http_h2c_sniff, http_h2_config (native output equal to the Go backend's)
+- Timing: none on the request path (a 24 byte preface peek on a plain connection that allows h2c)
+
+A plain server with `UnencryptedHttp2` in `with_protocols` sniffs the
+HTTP/2 preface and serves h2c next to HTTP/1.1 (h2c only: other
+connections close); a client with it speaks prior knowledge, and its
+idle pooled connections are kept apart from HTTP/1.1 ones. ALPN follows
+the protocol sets on both sides (an h2 only TLS server closes a
+connection that did not negotiate h2). `with_h2_config` sets each
+server connection's settings, and `send_ping_timeout` / `ping_timeout`
+send a PING after that much read silence and close when no ack follows.
+Requests on h2c report `tls() == false` and scheme `http`.
+
 ## 2026-10-30: feature: protocol sets and HTTP/2 settings (with_protocols, with_h2_config, h2c)
 
 - Kind: feature

@@ -600,6 +600,7 @@ const PL_N = 16
 
 /// A frame longer than 16 KiB (FRAME_SIZE_ERROR; http1.xo CC_TOO_LARGE).
 const CC_TOO_LARGE = 104
+const CC_TOO_LARGE_H1 = 105
 
 /// http1.xo's flags of cl_h2_end.
 const XF_BROKEN = 1
@@ -904,7 +905,10 @@ pub fn exchange_start(r: Int, pc: Int, pooled: Int, body: Int, bn: Int, when: In
   st(x, X_BN, bn)
   st(r, R_H2, x)
   st(pc + P_C, C_WHEN, when)
-  tlsio.set_when(ld(pc + P_C, C_TLS), when)
+  let tls = ld(pc + P_C, C_TLS)
+  if tls != 0 {
+    tlsio.set_when(tls, when)
+  }
 }
 
 /// Frees exchange x (0: none); one Xo did not end drops its connection.
@@ -974,7 +978,9 @@ pub fn h2_read(r: rthttp.CResp) -> Str {
       let p = ld(c, C_BUF) + ld(c, C_OFF)
       let len = (rt.mem_load(p, 0, 1) << 16) | (rt.mem_load(p, 1, 1) << 8) | rt.mem_load(p, 2, 1)
       if len > 16384 {
-        st(x, X_RRES, CC_TOO_LARGE)
+        // an HTTP/1.1 response read as frames (h2 to an HTTP/1.1 server)
+        let h1 = raw.str_at(p, 9) == "HTTP/1.1 "
+        st(x, X_RRES, if h1 { CC_TOO_LARGE_H1 } else { CC_TOO_LARGE })
         return ""
       }
       if have >= 9 + len {
@@ -1132,20 +1138,20 @@ pub fn cl_deadline(timeout: Int) -> Int { hconn.deadline(timeout) }
 /// Xo reads the response, and end closes. A failure sets r's error. The
 /// method, target, Host and header are the writers' (request,
 /// h2_exchange).
-pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool) -> rthttp.CResp {
+pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: rthttp.Roots, prefix: Str, pool: Bool, h2c: Bool = false, alpn: List[Str] = []) -> rthttp.CResp {
   let r = tasks.new_handle(R_SIZE, rt.fn_addr("cresp_free"))
   st(r, R_PREFIX, cstr_dup(prefix))
-  start(r, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool)
+  start(r, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn)
   let h = rt.obj_at[rthttp.CResp](r)
   tasks.h_release(r)
   h
 }
 
-fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool) {
+fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str]) {
   // an idle HTTP/2 connection to the same address, server name, and
   // roots
   let key = pool_key(https, addr, tls_host)
-  if https && pool {
+  if (https || h2c) && pool && (alpn.is_empty() || alpn.contains("h2")) {
     let pc = pool_take(roots, raw.data(key), key.len())
     if pc != 0 {
       exchange_start(r, pc, 1, raw.bytes_addr(body), body.len(), dl)
@@ -1153,7 +1159,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
     }
   }
   // an idle HTTP/1.1 connection (decision 0303)
-  if pool && h1_take(r, roots, raw.data(key), key.len(), dl) {
+  if pool && !h2c && h1_take(r, roots, raw.data(key), key.len(), dl) {
     return
   }
   let d = if dl != 0 { dl - sysio.mono_ns() } else { 0 }
@@ -1187,7 +1193,7 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
   if https {
     // the TLS handshake (tlsio.xo): its failures are
     // Protocol errors with crypto/tls's texts, or Timeout and Canceled
-    let started = tlsio.client(pd, tls_host, roots, dl)
+    let started = if alpn.is_empty() { tlsio.client(pd, tls_host, roots, dl) } else { tlsio.client_with(pd, tls_host, roots, dl, alpn, tlsio.VERIFY_FULL) }
     let ts = started.status
     let tmsg = started.msg
     let kind = started.kind
@@ -1216,6 +1222,15 @@ fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, ro
       exchange_start(r, pc, 0, raw.bytes_addr(body), body.len(), dl)
       return
     }
+  }
+  if h2c && !https {
+    // HTTP/2 with prior knowledge (decision 0434): the preface and
+    // SETTINGS go first, on the plain connection
+    let pc = conn_new(cna, c, roots, raw.data(key), key.len())
+    raw.alive_str(key)
+    rt.mem_set(c, 0, 72)
+    exchange_start(r, pc, 0, raw.bytes_addr(body), body.len(), dl)
+    return
   }
   // Xo sends the request and reads the response (request)
   st(r, R_CN, cna)
