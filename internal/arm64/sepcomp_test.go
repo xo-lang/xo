@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -463,5 +464,93 @@ func TestSepcompTestVariant(t *testing.T) {
 	sep := test()
 	if !strings.Contains(sep, "test=1 reused") || !strings.Contains(sep, "1 passed, 0 failed") {
 		t.Fatalf("with std's test variant:\n%s", sep)
+	}
+}
+
+// TestSepcompStdModuleEdits (item 2 of the test speed queue): `xo test
+// --std-module` links std's test variant, which is keyed without std's
+// _test.xo files, so a module's edited tests still take the variant and
+// are compiled fresh (one more test passes), and an edit to the module's
+// own source never runs the store's stale code (the probe sees the new
+// body).
+func TestSepcompStdModuleEdits(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds std's test variants")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-sepstdmod-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	root, err := xotool.Root()
+	if err != nil {
+		t.Fatal(err)
+	}
+	// a copy of std to edit
+	std := filepath.Join(work, "std")
+	if out, err := exec.Command("cp", "-R", filepath.Join(root, "std"), std).CombinedOutput(); err != nil {
+		t.Fatalf("copy std: %v\n%s", err, out)
+	}
+	wd := filepath.Join(work, "wd")
+	if err := os.MkdirAll(wd, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "XO_STD="+std, "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+filepath.Join(work, "cache"), "XO_BIN_CACHE="+filepath.Join(work, "bin"), "XO_SEPCOMP_BG=0")
+	for _, c := range []string{"0", "1"} {
+		cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--test", "--conc="+c))
+		cmd.Env = env
+		if out, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("xo dev stdcache --test --conc=%s: %v\n%s", c, err, out)
+		}
+	}
+	run := func() (string, error) {
+		t.Helper()
+		cmd := testtmp.Guard(exec.Command(xo, "test", "--backend=arm64", "--phase-times", "--std-module=native/base64"))
+		cmd.Dir = wd
+		cmd.Env = env
+		out, err := cmd.CombinedOutput()
+		return string(out), err
+	}
+	passed := func(log string) int {
+		m := regexp.MustCompile(`(\d+) passed`).FindStringSubmatch(log)
+		if m == nil {
+			t.Fatalf("no summary:\n%s", log)
+		}
+		n, _ := strconv.Atoi(m[1])
+		return n
+	}
+	appendTo := func(p, s string) {
+		f, err := os.OpenFile(p, os.O_APPEND|os.O_WRONLY, 0)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer f.Close()
+		if _, err := f.WriteString(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	log, err := run()
+	if err != nil || !strings.Contains(log, "test=1 reused") {
+		t.Fatalf("unchanged std: %v\n%s", err, log)
+	}
+	n := passed(log)
+	tests := filepath.Join(std, "native", "base64_test.xo")
+	appendTo(tests, "\ntest \"sepcomp edit\" {\n  expect(encode(b\"x\")) == \"eA==\"\n}\n")
+	log, err = run()
+	if err != nil || !strings.Contains(log, "test=1 reused") || passed(log) != n+1 {
+		t.Fatalf("after a test edit, want the variant reused and %d passed: %v\n%s", n+1, err, log)
+	}
+	appendTo(filepath.Join(std, "native", "base64.xo"), "\nfn sepcomp_probe() -> Int { 41 }\n")
+	appendTo(tests, "\ntest \"sepcomp probe\" {\n  expect(sepcomp_probe()) == 42\n}\n")
+	log, err = run()
+	if err == nil || !strings.Contains(log, "sepcomp probe") {
+		t.Fatalf("after a source edit the probe (41, want 42) must fail by name:\n%s", log)
 	}
 }
