@@ -130,6 +130,11 @@ struct Server {
   /// none of it.
   tls_setup: fn(rthttp.Srv, List[tls.TlsCert]) -> ()
   h2: fn(rthttp.HConn, Int, Router) -> ()
+  /// What with_client_auth, with_protocols and with_tls' ALPN add to the
+  /// server record after tls_setup, each with whether TLS is on: only
+  /// the builder names the TLS server's and HTTP/2's code (a call in
+  /// serve links it into a plain server, gotchas/tls-table-direct-call-links-tlssrv.md).
+  post: List[fn(rthttp.Srv, Bool) -> ()] = []
   /// with_read_timeout, with_read_header_timeout, with_idle_timeout (ns,
   /// 0 none), with_max_header_bytes and with_max_body (bytes, 0 the
   /// defaults): http1.Limits of each connection's reader.
@@ -2234,31 +2239,49 @@ fn (s: Server) with_tls(certs: List[tls.TlsCert]) -> Server {
 }
 
 fn (s: Server) with_client_auth(mode: tls.ClientAuth, roots: tls.Roots? = None) -> Server {
-  s with {client_auth: mode, client_roots: roots}
+  var post = s.post
+  post.push(fn(srv: rthttp.Srv, _tls_on: Bool) {
+    if mode != tls.ClientAuth.None {
+      let rs = match roots {
+        Some(r) => tlsio.roots_certs(ntls.roots_data(r))
+        None => []
+      }
+      hserve.srv_client_auth(srv, client_auth_mode(mode), rs)
+    }
+  })
+  s with {client_auth: mode, client_roots: roots, post: post}
 }
 
-fn (s: Server) with_protocols(p: Set[http.Protocol]) -> Server { s with {protocols: Some(p)} }
+fn (s: Server) with_protocols(p: Set[http.Protocol]) -> Server {
+  var post = s.post
+  var h2 = s.h2
+  if p.contains(http.Protocol.UnencryptedHttp2) {
+    // the HTTP/2 entries of the table (srvh2c.xo), made once
+    srvh2c.install_h2c()
+    h2 = serve_h2
+    let h1_too = p.contains(http.Protocol.Http1)
+    post.push(fn(srv: rthttp.Srv, tls_on: Bool) {
+      if !tls_on {
+        hserve.srv_h2c(srv, !h1_too)
+      }
+    })
+  }
+  post.push(fn(srv: rthttp.Srv, tls_on: Bool) {
+    if tls_on {
+      var alpn: List[Str] = []
+      if p.contains(http.Protocol.Http2) {
+        alpn.push("h2")
+      }
+      if p.contains(http.Protocol.Http1) {
+        alpn.push("http/1.1")
+      }
+      hserve.srv_alpn(srv, alpn)
+    }
+  })
+  s with {protocols: Some(p), h2: h2, post: post}
+}
 
 fn (s: Server) with_h2_config(c: http.H2Config) -> Server { s with {h2cfg: Some(c)} }
-
-/// The server with HTTP/2 prior knowledge on plain connections (h2c,
-/// decision 0434, Protocol.UnencryptedHttp2 in with_protocols):
-/// a connection whose client opens with the HTTP/2 preface is served as
-/// HTTP/2, any other as HTTP/1.1. The API (with_protocols) is Lang 5's;
-/// this is its native half.
-fn h2c_server(s: Server) -> Server {
-  // the HTTP/2 entries of the table (srvh2c.xo), made once
-  srvh2c.install_h2c()
-  var h1_too = true
-  if let Some(p) = s.protocols {
-    h1_too = p.contains(http.Protocol.Http1)
-  }
-  let prev = s.tls_setup
-  s with {tls_setup: fn(srv: rthttp.Srv, certs: List[tls.TlsCert]) {
-    prev(srv, certs)
-    hserve.srv_h2c(srv, !h1_too)
-  }, h2: serve_h2}
-}
 
 /// A plain server's TLS setup and HTTP/2: none (serve_h2 is never
 /// reached without TLS: hserve.hc_h2 is 0).
@@ -2310,33 +2333,10 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   }
   let srv = hserve.srv_new()
   defer hserve.srv_close(srv)
-  // HTTP/2 prior knowledge on plain connections (decision 0434)
-  var s2 = s
-  if let Some(p) = s.protocols {
-    if p.contains(http.Protocol.UnencryptedHttp2) && !s.tls_on {
-      s2 = h2c_server(s)
-    }
-  }
-  let setup = s2.tls_setup
-  setup(srv, s2.tls)
-  if s.client_auth != tls.ClientAuth.None {
-    let roots = match s.client_roots {
-      Some(r) => tlsio.roots_certs(ntls.roots_data(r))
-      None => []
-    }
-    hserve.srv_client_auth(srv, client_auth_mode(s.client_auth), roots)
-  }
-  if s.tls_on {
-    if let Some(p) = s.protocols {
-      var alpn: List[Str] = []
-      if p.contains(http.Protocol.Http2) {
-        alpn.push("h2")
-      }
-      if p.contains(http.Protocol.Http1) {
-        alpn.push("http/1.1")
-      }
-      hserve.srv_alpn(srv, alpn)
-    }
+  let setup = s.tls_setup
+  setup(srv, s.tls)
+  for f in s.post {
+    f(srv, s.tls_on)
   }
   if let Some(cf) = s.h2cfg {
     hserve.srv_h2cfg(srv, cf.max_concurrent_streams, cf.max_read_frame_size, cf.max_receive_buffer_per_connection, cf.max_receive_buffer_per_stream, cf.max_decoder_header_table_size, cf.send_ping_timeout.nanos(), cf.ping_timeout.nanos(), cf.write_byte_timeout.nanos(), cf.max_encoder_header_table_size)
@@ -2344,7 +2344,7 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   let conns = hserve.srv_group(srv)
   let l = s.l
   let r = s.r
-  let h2 = s2.h2
+  let h2 = s.h2
   let lim = http1.Limits{read_ns: s.read_ns, head_ns: s.head_ns, idle_ns: s.idle_ns, max_head: s.max_head, max_body: s.max_body}
   var failed = ""
   scope sc {

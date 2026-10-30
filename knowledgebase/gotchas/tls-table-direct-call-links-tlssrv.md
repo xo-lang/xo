@@ -34,3 +34,17 @@ not an Int travels as the record of an Any (tlssrv.neg_any), and the type
 it holds lives in a leaf module (llrt/tlsneg.xo) so the reader names no
 tlssrv. Run TestTLSLinkedOnlyWithTLS (about a minute: two builds) in the
 gate of any change to the three files that mentions tlssrv.
+
+## Second occurrence (2026-10-30, main aca9a79a1)
+
+TestTLSLinkedOnlyWithTLS/plain failed for tlssrv and h2srv again: serve()
+itself called hserve.srv_client_auth and srv_alpn (which call tlssrv)
+and h2c_server (which names serve_h2 and h2srv), each under an `if` that
+a plain server never takes, from the h2c, mTLS and ALPN work (decision
+0433, 0434). serve() is reached by every server, so those calls link
+what they name. Fix: the builders (with_client_auth, with_protocols)
+push closures onto Server.post, which serve runs after tls_setup with
+whether TLS is on; only a program calling the builder links the code.
+Rule: serve() and the other functions a plain server reaches name no
+tlssrv or h2srv function, directly or through a helper; put it in a
+builder's closure.
