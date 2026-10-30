@@ -36,3 +36,15 @@ that prints neither has measured a whole-program build.
 A proof that a default path ran must assert the line that says it ran,
 not the absence of a failure. The off switch's check ("0 stdx lines")
 passes trivially when the on side printed none either.
+
+## Also observed: `xo test` and XO_SEPCOMP_BG=0 (2026-10-30, xo-lang-4)
+
+scripts/release-vs-go.sh's test pairs set `XO_SEPCOMP_BG=0` so no
+background build races the measured rounds; that starts no variant
+build at all (`std variant: miss, the whole program is built
+(XO_SEPCOMP_BG=0)` under `--phase-times`), so every `xo test
+--std-module` edit round built the whole program: base64's edit read
+0.40 s and 538 MB (1.267 of go test's wall) against 0.27 s and 320 MB
+from std's test variant. Build the test variants first, `xo dev
+stdcache --test --conc=0` and `--conc=1` (4f6caee06), and require
+`cache std <key> conc=... test=1 reused` in a check.
