@@ -40,7 +40,10 @@ func TestMachoBinCache(t *testing.T) {
 			Backend: xotool.BackendArm64,
 			Out:     out,
 			Flags:   []string{"--ld=macho"},
-			Env:     []string{"XO_BIN_CACHE=" + binCache, "XO_BUILD_DIR=" + filepath.Join(root, "build-"+name)},
+			// XO_PRUNE_DETACH=off: the prune runs in the build, not in a
+			// detached child that may write its stamp files after entries
+			// counted them (a loaded main check, 2026-10-30: 3 to 4)
+			Env: []string{"XO_BIN_CACHE=" + binCache, "XO_BUILD_DIR=" + filepath.Join(root, "build-"+name), "XO_PRUNE_DETACH=off"},
 		})
 		if err != nil {
 			t.Fatalf("%s: %v", name, err)
@@ -55,8 +58,11 @@ func TestMachoBinCache(t *testing.T) {
 		n := 0
 		filepath.Walk(cache, func(p string, fi os.FileInfo, err error) error {
 			// the run cache (the test cache and, since decision 0360 stage 3, the
-			// whole-build entries: run/<xx>/KEY.bin and .m) is not the binary cache
-			if err == nil && !fi.IsDir() && !strings.Contains(filepath.ToSlash(p), "/run/") {
+			// whole-build entries: run/<xx>/KEY.bin and .m) is not the binary
+			// cache, nor are the prune's own files (prune-stamp, prune-stored,
+			// prune-lock, ...; compiler/prune clean.xo's rule)
+			base := filepath.Base(p)
+			if err == nil && !fi.IsDir() && !strings.Contains(filepath.ToSlash(p), "/run/") && !strings.HasPrefix(base, "prune-") && !strings.HasSuffix(base, ".lock") {
 				n++
 			}
 			return nil
