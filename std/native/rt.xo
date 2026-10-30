@@ -284,6 +284,7 @@ fn prefetch(a: Int)
 ///   62 std/native/llrt/sock.xo: whether WSAStartup ran (Windows)
 ///   63 std/native/llrt/libcmem.xo: the C library's state record: its malloc lock, libcstr.xo's strerror table, the free lists (the runtime's records, rt.heap_large, on every build; the C library's malloc on XO_NOLIBC builds)
 ///   90 std/native/llrt/heapprof.xo: the heap profile's record (decision 0238), 0 when off (word 66 until 2026-10-25, when fault.xo took it)
+///   91-94 std/native/llrt/dns.xo: the resolver configuration's cache, its lock and block (resolv.conf's text and the hostname), and /etc/hosts' cache, its lock and block (each rechecked every 5 seconds)
 ///   67 std/native/llrt/tracerec.xo: the execution trace's record (decision 0240), 0 when off (trace.xo and ctx.xo use tracerec's accessors)
 ///   68 std/native/llrt/hconn.xo: the TLS and HTTP/2 server's table (decision 0244, srvtls.xo install), 0 before Server.with_tls
 ///   69-74 std/native/llrt/http1w.xo: the Date header cache: its sequence, its second, its 29 bytes (put_date)

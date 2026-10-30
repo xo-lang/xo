@@ -26,6 +26,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/crc32 on arm64: Castagnoli past 504 bytes runs three crc32cx chains
   at once, 0.48 of its time (about twice Go's speed).
 
+- Native DNS lookups keep /etc/resolv.conf and /etc/hosts in a process
+  cache, rechecked every 5 seconds as Go's resolver does: an MX lookup
+  runs 0.637 of its former instructions, 1.004x Go's.
 - `use go`: Go's functional options (a variadic of an unnamed function type,
   `optFns ...func(*s3.Options)`) bind as a List of Xo functions, so AWS
   SDK v2's `s3.new_from_config` and every s3 client operation bind

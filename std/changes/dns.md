@@ -1,5 +1,20 @@
 # std/dns changes
 
+## 2026-10-30: perf: resolv.conf and /etc/hosts read once, rechecked every 5 seconds
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/dns mx at 1.599x Go's instructions; XO_PROF showed open, read and sysctl (the hostname) on every lookup
+- Go reference: net/dnsclient_unix.go resolverConfig (tryUpdate: stat at most every 5 seconds, reread on a changed mtime or size), net/hosts.go (the same for /etc/hosts)
+- Test: goldens dns_records and net_lookup_dial_timeout (arm64, LLVM, Go parity); TestStaticWords (words 91 to 94)
+- Timing: xo bench --ab bench/perf/dns mx, 15 rounds: against the parent, instructions 0.637 (0.634 to 0.644), wall 0.729 (0.645 to 0.865); against Go net.Resolver (PreferGo), instructions 1.004 (0.959 to 1.022, was 1.599), wall 1.12 (0.977 to 1.251, within noise); mx reads no /etc/hosts, so this is the resolv.conf half
+
+Native lookups (lookup_mx, lookup_txt, lookup_srv, lookup_addr and the
+address lookups behind net.dial) keep /etc/resolv.conf's text and the
+hostname in a process cache, and /etc/hosts in another, and stat each
+file at most every 5 seconds, reading it again only when its
+modification time or size changed, as Go's resolver does. Each lookup
+still parses the cached text.
 ## 2026-10-30: fix: lookup_addr no longer faults on native Windows
 
 - Kind: fix

@@ -55,6 +55,7 @@
 use native/llrt/darwin
 use native/llrt/linux
 use native/llrt/obj
+use native/llrt/pool
 use native/llrt/raw
 use native/llrt/sock
 use native/llrt/tlsname
@@ -154,6 +155,129 @@ fn read_file(path: Str) -> Bytes? {
   Some(out.freeze())
 }
 
+// The resolver configuration's cache (Go's resolverConfig in
+// dnsclient_unix.go: /etc/resolv.conf read again only when its
+// modification time or size changed, looked at no more than every 5
+// seconds), in rt.static_word: its lock, then the address of its block, 0
+// before the first lookup: the monotonic time of the last look, the file's
+// mtime and size (-1 and -1 when it could not be read), the hostname's
+// length, the text's length, then the hostname's and the text's bytes.
+// A lookup copies them out under the lock, so a refresh frees the old
+// block.
+const W_CONF_LOCK = 91
+const W_CONF = 92
+const CONF_RECHECK_NS = 5000000000
+const CONF_HEAD = 40
+
+/// The resolver configuration: /etc/resolv.conf parsed with the hostname,
+/// both from the cache, read again when the file changed.
+fn config() -> Config {
+  word_lock(rt.static_word(W_CONF_LOCK))
+  let t = now()
+  var b = rt.mem_load(rt.static_word(W_CONF), 0, 8)
+  if b == 0 || t - rt.mem_load(b, 0, 8) >= CONF_RECHECK_NS {
+    let (mt, sz) = file_stamp("/etc/resolv.conf")
+    if b != 0 && mt == rt.mem_load(b, 8, 8) && sz == rt.mem_load(b, 16, 8) {
+      rt.mem_store(b, 0, t, 8)
+    } else {
+      let text = if mt == -1 { None } else { read_file("/etc/resolv.conf") }
+      let host = hostname()
+      let tb = text ?? b""
+      let nb = rt.heap_large(CONF_HEAD + host.len() + tb.len())
+      rt.mem_store(nb, 0, t, 8)
+      rt.mem_store(nb, 8, if text.is_none() { -1 } else { mt }, 8)
+      rt.mem_store(nb, 16, if text.is_none() { -1 } else { sz }, 8)
+      rt.mem_store(nb, 24, host.len(), 8)
+      rt.mem_store(nb, 32, if text.is_none() { -1 } else { tb.len() }, 8)
+      rt.mem_copy(nb + CONF_HEAD, raw.data(host), host.len())
+      rt.mem_copy(nb + CONF_HEAD + host.len(), raw.bytes_addr(tb), tb.len())
+      if b != 0 {
+        rt.heap_release(b - 8)
+      }
+      rt.mem_store(rt.static_word(W_CONF), 0, nb, 8)
+      b = nb
+    }
+  }
+  let hl = rt.mem_load(b, 24, 8)
+  let tl = rt.mem_load(b, 32, 8)
+  let host = raw.str_at(b + CONF_HEAD, hl)
+  let text = if tl < 0 { None } else { Some(rt.cast[Str, Bytes](raw.str_at(b + CONF_HEAD + hl, tl))) }
+  word_unlock(rt.static_word(W_CONF_LOCK))
+  parse_resolv(if let Some(x) = text { text_lines(x) } else { None }, host)
+}
+
+// /etc/hosts' cache (Go's hosts.go: read again when its modification
+// time or size changed, looked at no more than every 5 seconds), in
+// rt.static_word: its lock, then the address of its block, 0 before the
+// first read: the monotonic time of the last look, the file's mtime and
+// size, the text's length (-1 when it could not be read), then the text.
+const W_HOSTS_LOCK = 93
+const W_HOSTS = 94
+const HOSTS_HEAD = 32
+
+/// Takes the lock at the static word address l (a constant word: rt.static_word needs one).
+fn word_lock(l: Int) {
+  if !rt.slot_cas(l, 0, 0, 1, 1) {
+    pool.lock_slow(l)
+  }
+  pool.held(1)
+}
+
+fn word_unlock(l: Int) {
+  pool.held(-1)
+  if rt.slot_swap(l, 0, 0, 2) == 2 {
+    pool.futex_wake(l)
+  }
+}
+
+/// The modification time and size of the file at path, or (-1, -1)
+/// (always on Windows, which reads no /etc files: read_file).
+fn file_stamp(path: Str) -> (Int, Int) {
+  if os() == 3 {
+    return (-1, -1)
+  }
+  if os() == 2 {
+    let (st, e) = darwin.stat(path, true)
+    return if e != 0 { (-1, -1) } else { (st.mtime, st.size) }
+  }
+  let (st, e) = linux.stat(path, true)
+  if e != 0 { (-1, -1) } else { (st.mtime, st.size) }
+}
+
+/// The bytes of /etc/hosts from its cache, or None (no file).
+fn hosts_text() -> Bytes? {
+  if os() == 3 {
+    return None
+  }
+  word_lock(rt.static_word(W_HOSTS_LOCK))
+  let t = now()
+  var b = rt.mem_load(rt.static_word(W_HOSTS), 0, 8)
+  if b == 0 || t - rt.mem_load(b, 0, 8) >= CONF_RECHECK_NS {
+    let (mt, sz) = file_stamp("/etc/hosts")
+    if b != 0 && mt == rt.mem_load(b, 8, 8) && sz == rt.mem_load(b, 16, 8) {
+      rt.mem_store(b, 0, t, 8)
+    } else {
+      let text = if mt == -1 { None } else { read_file("/etc/hosts") }
+      let tb = text ?? b""
+      let nb = rt.heap_large(HOSTS_HEAD + tb.len())
+      rt.mem_store(nb, 0, t, 8)
+      rt.mem_store(nb, 8, if text.is_none() { -1 } else { mt }, 8)
+      rt.mem_store(nb, 16, if text.is_none() { -1 } else { sz }, 8)
+      rt.mem_store(nb, 24, if text.is_none() { -1 } else { tb.len() }, 8)
+      rt.mem_copy(nb + HOSTS_HEAD, raw.bytes_addr(tb), tb.len())
+      if b != 0 {
+        rt.heap_release(b - 8)
+      }
+      rt.mem_store(rt.static_word(W_HOSTS), 0, nb, 8)
+      b = nb
+    }
+  }
+  let tl = rt.mem_load(b, 24, 8)
+  let text = if tl < 0 { None } else { Some(rt.cast[Str, Bytes](raw.str_at(b + HOSTS_HEAD, tl))) }
+  word_unlock(rt.static_word(W_HOSTS_LOCK))
+  text
+}
+
 /// The target OS as netconn.xo's os() numbers it: 1 Linux, 2 macOS,
 /// 3 Windows (a constant of the build).
 fn os() -> Int {
@@ -166,8 +290,10 @@ fn os() -> Int {
 
 /// The lines of the file at path (bytes that are not ASCII become "?";
 /// names and addresses are ASCII), or None.
-fn file_lines(path: Str) -> List[Str]? {
-  let b = read_file(path)?
+fn file_lines(path: Str) -> List[Str]? { text_lines(read_file(path)?) }
+
+/// The lines of b, as file_lines gives them.
+fn text_lines(b: Bytes) -> List[Str]? {
   if let Some(t) = b.to_str() {
     return Some(t.split("\n"))
   }
@@ -1673,7 +1799,7 @@ pub fn lookup(host: Str, family: Int, passive: Bool, state: Int) -> Found {
   let order = order_of(state)
   var hosts = b""
   if order is Order.FilesDns | Order.DnsFiles | Order.Files {
-    hosts = read_file("/etc/hosts") ?? b""
+    hosts = hosts_text() ?? b""
   }
   let key = lower(host.trim_suffix(".")).bytes()
   if order is Order.FilesDns | Order.Files {
@@ -1688,7 +1814,7 @@ pub fn lookup(host: Str, family: Int, passive: Bool, state: Int) -> Found {
   if !is_domain_name(host) {
     return Found{err: EAI_NONAME}
   }
-  let conf = parse_resolv(file_lines("/etc/resolv.conf"), hostname())
+  let conf = config()
   var qtypes: List[Int] = []
   if family != sock.AF_INET6 {
     qtypes.push(TYPE_A)
@@ -2003,7 +2129,7 @@ pub struct Records {
 /// for resolv.conf's servers, else "host:port" (a numeric address), the
 /// only server asked.
 pub fn lookup_records(name: Str, qtype: Int, server: Str) -> Records {
-  var conf = parse_resolv(file_lines("/etc/resolv.conf"), hostname())
+  var conf = config()
   if server != "" {
     let colon = server.rfind(":") ?? -1
     let host = if colon < 0 { server } else { server[0..colon].trim_prefix("[").trim_suffix("]") }
@@ -2045,7 +2171,7 @@ pub fn random32() -> Int { new_id() * 65536 + new_id() }
 /// order (Go's lookupStaticAddr for LookupAddr).
 pub fn hosts_names(ip: Bytes) -> List[Str] {
   var out: List[Str] = []
-  let lines = file_lines("/etc/hosts") ?? []
+  let lines = if let Some(h) = hosts_text() { text_lines(h) ?? [] } else { [] }
   for line in lines {
     let f = fields(cut_at(line, "#"))
     if f.len() < 2 {
