@@ -236,3 +236,48 @@ fn main(os: Os) {
 		t.Errorf("output\n%s\nwant\n%s", got, want)
 	}
 }
+
+// The h1 hashes of testdata/goproxy's synthetic example.com/fnopt v1.0.0.
+const (
+	fnoptSum    = "h1:tj/86s4Ib7OvcAqOdroFKxtBPzplJK8IDFblK0QA2jg="
+	fnoptModSum = "h1:W/aLve4CnifMYE1pTDhsXEu9oQwx6flf0JgtvfbihNg="
+)
+
+// TestUseGoFuncOptions (decision 0422): a variadic of a function type,
+// Go's functional options (optFns ...func(*Options), as AWS SDK v2's
+// clients take), is a List of Xo functions that Go calls in order, also
+// with an error result; a variadic of a named function type (Count's
+// ...Option) stays a List of handles (Go's option helpers return them).
+func TestUseGoFuncOptions(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	useGoProxy(t)
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module fo\n\nrequire go example.com/fnopt v1.0.0\n",
+		"xo.lock": "go example.com/fnopt v1.0.0 " + fnoptSum + "\n" +
+			"go example.com/fnopt v1.0.0/go.mod " + fnoptModSum + "\n",
+		"main.xo": `use go "example.com/fnopt"
+use std/go
+
+fn main(os: Os) {
+  os.stdio.println(fnopt.describe("db", []))
+  os.stdio.println(fnopt.describe("db", [fn(o: fnopt.Options) { o.set_retries(3) }, fn(o: fnopt.Options) { o.set_name(o.name() + "-eu") }]))
+  os.stdio.println("${fnopt.count([])}")
+  match fnopt.check([fn(o: fnopt.Options) -> () ! go.Error { Ok(()) }, fn(o: fnopt.Options) -> () ! go.Error { Err(go.error("bad ${o.retries()}")) }]) {
+    Ok(_) => os.stdio.println("ok")
+    Err(e) => os.stdio.println(e.message())
+  }
+}
+`,
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	want := "db retries=1\ndb-eu retries=3\n0\noption: bad 0"
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("output\n%s\nwant\n%s", got, want)
+	}
+}

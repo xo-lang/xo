@@ -12,6 +12,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/crc32 on arm64: Castagnoli past 504 bytes runs three crc32cx chains
   at once, 0.48 of its time (about twice Go's speed).
 
+- `use go`: Go's functional options (a variadic of an unnamed function type,
+  `optFns ...func(*s3.Options)`) bind as a List of Xo functions, so AWS
+  SDK v2's `s3.new_from_config` and every s3 client operation bind
+  (decision 0422). Binding format 23.
 - `use go`: a package in a nested Go module (aws-sdk-go-v2's
   `service/s3`, its own module inside the root's path) no longer takes the
   enclosing module's `require go` pin: it binds at its own version, `xo

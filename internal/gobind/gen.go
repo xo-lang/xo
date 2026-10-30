@@ -920,6 +920,22 @@ func anyConv() conv {
 		toGo: func(e string) string { return e + ".V" }}
 }
 
+// variadicFunc reports whether parameter i of sig is a variadic of an
+// unnamed function type, with the element type and its signature. A
+// named one (zstd's ...EOption) stays a List of handles, which Go's
+// option helpers return and Xo passes back (decision 0422).
+func variadicFunc(sig *types.Signature, i int, pt types.Type) (types.Type, *types.Signature, bool) {
+	if !sig.Variadic() || i != sig.Params().Len()-1 {
+		return nil, nil, false
+	}
+	sl, ok := pt.(*types.Slice)
+	if !ok {
+		return nil, nil, false
+	}
+	fs, ok := types.Unalias(sl.Elem()).(*types.Signature)
+	return sl.Elem(), fs, ok
+}
+
 // callbackConv maps a func parameter to an Xo function type with an effect
 // parameter `fx`.
 func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *skipErr) {
@@ -1184,6 +1200,19 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 			err = skipf(catUnexport, "unexported type %s", g.display(pt))
 		} else if fs, ok := pt.Underlying().(*types.Signature); ok && !(sig.Variadic() && i == n-1) {
 			c, err = g.callbackConv(fs, g.qual(pt), s.depth)
+			fx = true
+		} else if et, fs, ok := variadicFunc(sig, i, pt); ok {
+			// Go's functional options, optFns ...func(*s3.Options):
+			// a List of callbacks, each its own (decision 0422)
+			var ec conv
+			if ec, err = g.callbackConv(fs, g.qual(et), s.depth); err == nil {
+				// an option sets the options through Go setters, so the
+				// element allows go itself: a list's elements share one
+				// effect variable, and a first element that performs
+				// nothing would make it pure for the rest
+				ec.xo = strings.TrimSuffix(ec.xo, " uses fx") + " uses (go, fx)"
+				c = listConv(ec)
+			}
 			fx = true
 		} else {
 			c, err = g.mapType(pt, s.depth)

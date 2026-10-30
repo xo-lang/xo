@@ -1767,6 +1767,12 @@ fn main(os: Os) ! {
   error, the Go error `e` came from when Go made it (so `errors.Is` sees a
   sentinel such as `io.EOF`), else one with `e`'s text; `go.error(msg)`
   makes one.
+- A variadic of an unnamed Go function type, Go's functional options
+  (`optFns ...func(*s3.Options)`), is a List of Xo functions, each a
+  callback by the rules above, which Go calls in order (decision 0422):
+  `s3.new_from_config(cfg, [fn(o: s3.Options) { o.set_use_path_style(true) }])`,
+  or `[]` for none. A variadic of a named function type (`...EOption`)
+  stays a List of handles, which Go's option helpers return.
 - A struct field or package variable of a Go function type has a setter
   that takes an Xo function, a callback by the rules above
   (`s.set_on_error(fn(msg: Str) { log.send(msg) })`, `hook.set_logf(f)`);

@@ -66,7 +66,9 @@ import (
 // 9 (2026-10-29, decision 0412): Go's any is go.Any; a handle has its Go
 // value both ways (XoGoValue, XoFromGo) for go.any and go.Any.as_handle.
 // 10 (2026-10-29, decision 0415): generic functions bind as Xo generics.
-const Version = 22
+// 23 (2026-10-30, decision 0422): a variadic of an unnamed function
+// type (Go's functional options) is a List of callbacks.
+const Version = 23
 
 // Binding is one bound Go package.
 type Binding struct {
