@@ -80,7 +80,9 @@ import (
 // 30 (2026-10-30): sort.Slice, SliceStable, Ints, Strings and Float64s
 // are skipped (they sort a copy of an Xo List).
 // 31 (2026-10-30): a named Go map type gets T.of(m) and to_map().
-const Version = 31
+// 32 (2026-10-30): a []byte Go writes into is an Int length in and the
+// filled Bytes out (decision 0445), no longer skipped.
+const Version = 32
 
 // Binding is one bound Go package.
 type Binding struct {

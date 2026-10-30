@@ -258,28 +258,40 @@ func TestOutputBuffers(t *testing.T) {
 	if testing.Short() {
 		t.Skip("runs go list")
 	}
-	decl, b, _ := bindDecl(t, "strings")
-	if strings.Contains(decl, ") read(p: Bytes)") {
-		t.Errorf("strings.Reader.read is bound:\n%s", grep(decl, ") read("))
+	// decision 0445: the buffer's length in, the bytes Go wrote out
+	decl, sb, _ := bindDecl(t, "strings")
+	ad := string(sb.Adapter)
+	if !strings.Contains(decl, ") read(max: Int) -> Bytes ! go.Error") {
+		t.Errorf("strings.Reader.read is not bound as a length in and Bytes out:\n%s", grep(decl, ") read("))
 	}
-	found := false
-	for name, why := range b.Skipped {
-		if strings.HasSuffix(name, "read") && strings.Contains(why, "Go writes into") {
-			found = true
-		}
+	if !strings.Contains(decl, ") read_at(max: Int, off: Int) -> Bytes ! go.Error") {
+		t.Errorf("strings.Reader.read_at:\n%s", grep(decl, ") read_at("))
 	}
-	if !found {
-		t.Errorf("no skipped read with the output buffer reason: %v", b.Skipped)
+	if !strings.Contains(ad, "outBuf := make([]byte, ") || !strings.Contains(ad, "Bytes(outBuf[:r0])") {
+		t.Errorf("the adapter does not make the buffer and return what Go wrote:\n%s", grep(ad, "outBuf"))
 	}
 	if !strings.Contains(decl, ") write(p: Bytes)") {
 		t.Errorf("strings.Builder.write is not bound:\n%s", grep(decl, ") write("))
 	}
 	hex, _, _ := bindDecl(t, "encoding/hex")
-	if strings.Contains(hex, "fn decode(dst: Bytes") {
-		t.Errorf("hex.decode(dst, src) is bound:\n%s", grep(hex, "fn decode("))
+	if !strings.Contains(hex, "fn decode(max: Int, src: Bytes) -> Bytes ! go.Error") {
+		t.Errorf("hex.decode(dst, src):\n%s", grep(hex, "fn decode("))
 	}
 	if !strings.Contains(hex, "fn append_encode(dst: Bytes") {
 		t.Errorf("hex.append_encode (the append form) is not bound:\n%s", grep(hex, "append_encode"))
+	}
+	// no n result: Go fills the whole buffer
+	b64, _, _ := bindDecl(t, "encoding/base64")
+	if !strings.Contains(b64, ") encode(max: Int, src: Bytes) -> Bytes uses go") {
+		t.Errorf("base64 Encoding.encode:\n%s", grep(b64, ") encode("))
+	}
+	// two buffers stay skipped
+	nd, nb, _ := bindDecl(t, "net")
+	if strings.Contains(nd, ") read_msg_udp(") {
+		t.Errorf("UDPConn.read_msg_udp (b and oob) is bound:\n%s", grep(nd, "read_msg_udp("))
+	}
+	if why := nb.Skipped["UDPConn.read_msg_udp"]; !strings.Contains(why, "a second []byte") {
+		t.Errorf("UDPConn.read_msg_udp skipped %q, want the two buffers reason", why)
 	}
 }
 

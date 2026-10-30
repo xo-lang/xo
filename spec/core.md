@@ -1729,10 +1729,15 @@ fn main(os: Os) ! {
   (`net`'s functions take `netip.AddrPort`), which is bound with it
   even when the program does not name that package (decision 0392); a
   type of a package a program cannot import (`internal`) is skipped;
-  a parameter of an unexported Go type is skipped, and so is a `[]byte`
+  a parameter of an unexported Go type is skipped; a `[]byte`
   parameter Go writes into (a `Read*` function's, or one named `dst`,
-  unless a result is a `[]byte`: a Bytes is a value and cannot carry
-  Go's writes back);
+  unless a result is a `[]byte`) is an `Int`, the buffer's length,
+  named `max`, and the bytes Go wrote come back in place of the leading
+  `n int` result, or as the whole buffer when there are no results
+  (decision 0445): `r.read(4096) -> Bytes ! go.Error`,
+  `hex.decode(max, src) -> Bytes ! go.Error`; data that comes with
+  `io.EOF` is returned, and the next call gives the EOF; a function with
+  two such buffers (`ReadMsgUDP`) or other results is skipped;
   slices and maps are copied in and out; Go's `any` (`interface{}`, or a
   named empty interface) is `go.Any`, an opaque Go value (decision 0412,
   std.md 12): `go.any(x)` makes one from a value with a Go form, the

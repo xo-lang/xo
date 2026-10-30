@@ -5,6 +5,14 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `use go` (decision 0445, binding format 32): a `[]byte` parameter Go
+  writes into (io.Reader's `Read`, `ReadAt`, `io.ReadFull`,
+  `crypto/rand.Read`, hex's and base64's `Encode` and `Decode`) is no
+  longer skipped: it is an `Int`, the buffer's length, and the bytes Go
+  wrote come back in place of the `n` result (`conn.read(4096) -> Bytes
+  ! go.Error`); bytes that come with `io.EOF` are returned and the next
+  call gives the EOF. The tester's 87 package survey: std 90.3% to 92.5%
+  of functions and methods bound, third party 98.6% to 98.7%.
 - FIX (std/http): a client done with a request (a timeout, an error,
   the response's end) closes its `http.pipe()` body, so a writer waiting
   on it fails with "io: read/write on closed pipe" instead of hanging

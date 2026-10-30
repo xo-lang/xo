@@ -343,6 +343,42 @@ func outBuffer(display, name string, t types.Type, sig *types.Signature) bool {
 	return strings.HasPrefix(fn, "Read") || name == "dst"
 }
 
+// outBufParam returns the index of fn's output buffer parameter
+// (outBuffer), or -1, and a skip when it cannot be bound as a length in
+// and the filled Bytes out (decision 0445): two output buffers
+// (ReadMsgUDP's b and oob), or results other than a leading n int or
+// none.
+func (g *gen) outBufParam(s fnSpec, sig *types.Signature) (int, *skipErr) {
+	ob := -1
+	for i := 0; i < sig.Params().Len(); i++ {
+		p := sig.Params().At(i)
+		if !outBuffer(s.display, p.Name(), p.Type(), sig) {
+			continue
+		}
+		pn := p.Name()
+		if pn == "" {
+			pn = fmt.Sprintf("#%d", i+1)
+		}
+		if ob >= 0 {
+			return -1, skipf(catOutBuf, "parameter %s: a second []byte Go writes into (decision 0445 binds one)", pn)
+		}
+		ob = i
+	}
+	if ob < 0 {
+		return -1, nil
+	}
+	res := sig.Results()
+	nv := res.Len()
+	if nv > 0 && isError(res.At(nv-1).Type()) {
+		nv--
+	}
+	if nv > 0 && !types.Identical(res.At(0).Type(), types.Typ[types.Int]) {
+		p := sig.Params().At(ob)
+		return -1, skipf(catOutBuf, "parameter %s: a []byte Go writes into, with no n int result to say how much (decision 0445)", p.Name())
+	}
+	return ob, nil
+}
+
 // sortsInPlace reports whether a function sorts the Go value its first
 // parameter holds (sort.Slice, sort.SliceStable, sort.Ints, Strings,
 // Float64s): from Xo that value is a converted copy of a List, so the
@@ -1299,6 +1335,8 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	var hpkgs []string // packages of the handles in parameters and results
 	fx := false
 	n := sig.Params().Len()
+	ob, obErr := g.outBufParam(s, sig)
+	obLen, obWhole := "", false
 	for i := 0; i < n; i++ {
 		p := sig.Params().At(i)
 		pt := p.Type()
@@ -1316,12 +1354,21 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		if sortsInPlace(g.pkg.Path(), s.display) {
 			return skipf(catOutBuf, "it sorts its argument in place, and an Xo List given as a go.Any is a copy: use List.sort, sort_by or sort_in_place")
 		}
-		if outBuffer(s.display, p.Name(), pt, sig) {
-			pn := p.Name()
-			if pn == "" {
-				pn = fmt.Sprintf("#%d", i+1)
-			}
-			return skipf(catOutBuf, "parameter %s: a []byte Go writes into, which an Xo Bytes (a value) cannot carry back", pn)
+		if obErr != nil {
+			return obErr
+		}
+		if i == ob {
+			// decision 0445: the buffer's length in, the adapter makes
+			// the buffer
+			c, _ := g.mapType(types.Typ[types.Int], s.depth)
+			pname := g.paramName("max", i, used)
+			xps = append(xps, pname+": "+c.xo)
+			an := fmt.Sprintf("a%d", i)
+			argNames = append(argNames, an)
+			gps = append(gps, an+" "+c.rt)
+			args = append(args, "outBuf")
+			obLen = c.toGo(an)
+			continue
 		}
 		var c conv
 		var err *skipErr
@@ -1389,8 +1436,19 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		if err != nil {
 			return skipf(err.cat, "result %d: %s", i+1, err.detail)
 		}
+		if i == 0 && ob >= 0 {
+			// n: the bytes Go wrote, outBuf[:n]
+			bc, _ := g.mapResult(types.NewSlice(types.Typ[types.Byte]), s.depth)
+			c = conv{xo: bc.xo, rt: bc.rt, hpkgs: bc.hpkgs, toXo: func(e string) string { return bc.toXo("outBuf[:" + e + "]") }}
+		}
 		rcs = append(rcs, c)
 		hpkgs = append(hpkgs, c.hpkgs...)
+	}
+	if ob >= 0 && nv == 0 {
+		// no n (base64's Encode): Go filled the whole buffer
+		bc, _ := g.mapResult(types.NewSlice(types.Typ[types.Byte]), s.depth)
+		rcs, nv = []conv{{xo: bc.xo, rt: bc.rt, toXo: func(string) string { return bc.toXo("outBuf") }}}, 1
+		obWhole = true
 	}
 	mode := g.replayMode(s, fx, hpkgs)
 	if len(tpOrder) > 0 && mode == replayValue {
@@ -1526,19 +1584,37 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 		// explicit, so a type parameter only a result names is known
 		call = s.goCall + "[" + strings.Join(targs, ", ") + "](" + strings.Join(args, ", ") + ")"
 	}
+	if ob >= 0 {
+		fmt.Fprintf(&a, "\tif %s < 0 {\n\t\tFaultHere(\"Go interop: %s: negative buffer length %%d\", %s)\n\t}\n\toutBuf := make([]byte, %s)\n", obLen, s.display, obLen, obLen)
+	}
 	var lhs []string
 	for i := 0; i < nv; i++ {
+		if obWhole {
+			lhs = append(lhs, "_")
+			break
+		}
 		lhs = append(lhs, fmt.Sprintf("r%d", i))
 	}
 	if hasErr {
 		lhs = append(lhs, "err")
 	}
-	if len(lhs) > 0 {
+	switch {
+	case obWhole && !hasErr:
+		fmt.Fprintf(&a, "\t%s\n", call)
+	case len(lhs) > 0:
+		if obWhole {
+			lhs = lhs[1:]
+		}
 		fmt.Fprintf(&a, "\t%s := %s\n", strings.Join(lhs, ", "), call)
-	} else {
+	default:
 		fmt.Fprintf(&a, "\t%s\n", call)
 	}
-	if hasErr {
+	switch {
+	case hasErr && ob >= 0 && !obWhole:
+		// io.Reader: bytes with io.EOF are returned, and the next call
+		// gives the EOF again (decision 0445)
+		fmt.Fprintf(&a, "\tif err != nil && !(err == %s.EOF && r0 > 0) {\n\t\treturn Result[%s, Go_Error]{E: GoErr(err)}\n\t}\n", g.aliasPath("io"), rtRes)
+	case hasErr:
 		fmt.Fprintf(&a, "\tif err != nil {\n\t\treturn Result[%s, Go_Error]{E: GoErr(err)}\n\t}\n", rtRes)
 	}
 	for _, c := range checks {

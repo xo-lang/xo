@@ -227,5 +227,6 @@
 - [usego-coverage-2026-10-29f.md](usego-coverage-2026-10-29f.md): `use go` Go function values as Xo functions: std 87.4% to 87.6%, third party 97.6% to 97.8%; named function types stay handles (functional options)
 - [usego-coverage-2026-10-29g.md](usego-coverage-2026-10-29g.md): `use go` several results as an Xo tuple: std 90.4% to 90.5%, third party 98.1% to 98.4%; 61 skips resolved, none added.
 - [usego-coverage-2026-10-29h.md](usego-coverage-2026-10-29h.md): `use go` channels as go.Recv[T] (decision 0421): std 1902 to 1903 of 2102, third party 98.4% to 98.5%; 14 skips resolved, 2 setter skips added.
+- [usego-coverage-2026-10-30.md](usego-coverage-2026-10-30.md): `use go` output buffers as a length in and the filled Bytes out (decision 0445): std 90.3% to 92.5% (1898 to 1944 of 2102), third party 98.6% to 98.7%.
 - [usego-workflows-2026-10-30.md](usego-workflows-2026-10-30.md): the Go workflows suite (chi, zap, aws S3, pgx, toml, yaml end to end on the Go backend): chi, zap and aws pass; pgx, toml and yaml wait on decision 0412
 - [test-vs-go-2026-10-30.md](test-vs-go-2026-10-30.md): `xo test` against `go test` on six std ports (cold, second, edit, rerun): cold xo 0.34 to 0.62 of Go's wall at 3.4 to 5.3x the RSS; `xo test` parses std in full (898 MB against `xo build`'s 280 MB on one program), the top test speed item.

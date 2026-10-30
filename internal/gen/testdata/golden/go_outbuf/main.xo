@@ -1,0 +1,35 @@
+use go "strings"
+use go "bytes"
+use go "io"
+use go "encoding/hex"
+use go "encoding/base64"
+
+// A []byte Go writes into (decision 0445): the call takes the buffer's
+// length and returns the bytes Go wrote. io.EOF that comes with data
+// returns the data; the next call gives the EOF.
+fn main(os: Os) -> () ! Error {
+  let r = strings.new_reader("hello world")
+  os.stdio.println("read 5: ${r.read(5)?.to_str() ?? "<bytes>"}")
+  os.stdio.println("read 100: ${r.read(100)?.to_str() ?? "<bytes>"}")
+  match r.read(4) {
+    Ok(b) => os.stdio.println("unexpected ${b.len()} bytes")
+    Err(e) => os.stdio.println("read at end: ${e}")
+  }
+  let br = bytes.new_reader("abcdef".bytes())
+  os.stdio.println("read_at 2 at 3: ${br.read_at(2, 3)?.to_str() ?? "<bytes>"}")
+  os.stdio.println("read_at 9 at 4: ${br.read_at(9, 4)?.to_str() ?? "<bytes>"}")
+  let full = io.read_full(strings.new_reader("0123456789").as_reader(), 4)?
+  os.stdio.println("read_full 4: ${full.to_str() ?? "<bytes>"}")
+  match io.read_full(strings.new_reader("ab").as_reader(), 4) {
+    Ok(b) => os.stdio.println("read_full short: ${b.to_str() ?? "<bytes>"}")
+    Err(e) => os.stdio.println("read_full short: ${e}")
+  }
+  let src = hex.decode(3, "01abff".bytes())?
+  os.stdio.println("hex encode: ${hex.encode(hex.encoded_len(src.len()), src).to_str() ?? "<bytes>"}")
+  let dec = hex.decode(2, "01ab".bytes())?
+  os.stdio.println("hex decode: ${dec.len()} bytes, ${dec[0]} ${dec[1]}")
+  let enc = base64.std_encoding().or_fault("std_encoding")
+  let msg = "xo".bytes()
+  os.stdio.println("base64 encode: ${enc.encode(enc.encoded_len(msg.len()), msg).to_str() ?? "<bytes>"}")
+  os.stdio.println("base64 decode: ${enc.decode(enc.decoded_len(4), "eG8=".bytes())?.to_str() ?? "<bytes>"}")
+}

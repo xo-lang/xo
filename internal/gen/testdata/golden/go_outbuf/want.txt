@@ -1,0 +1,14 @@
+exit 0
+--- stdout
+read 5: hello
+read 100:  world
+read at end: EOF
+read_at 2 at 3: de
+read_at 9 at 4: ef
+read_full 4: 0123
+read_full short: unexpected EOF
+hex encode: 01abff
+hex decode: 2 bytes, 1 171
+base64 encode: eG8=
+base64 decode: xo
+--- stderr
