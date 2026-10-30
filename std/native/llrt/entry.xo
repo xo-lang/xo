@@ -249,7 +249,7 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   let mid = process.env_real_at("XO_HEAP_MID_MAX")
   if mid != 0 {
     let m = atoll(mid)
-    if m >= 1024 && m < MID_MAX {
+    if m >= 1024 && m <= MID_MAX {
       heapos.set_mid_max(m)
     }
   }

@@ -5,6 +5,13 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native heap (darwin): the size classes' limit at start is 16 KiB
+  (was 256 KiB): a freed block above it goes back to the system at
+  once, while a freed class block stays on its free list. The self
+  build's peak resident set fell 21% (9453 to 7473 MB) at the same wall;
+  on linux the limit stays 256 KiB (16 KiB there cost 11.5% wall for no
+  memory change). `XO_HEAP_MID_MAX=<bytes>` (1024 up to 256 KiB) still
+  sets it.
 - `use go` (decision 0445, binding format 32): a `[]byte` parameter Go
   writes into (io.Reader's `Read`, `ReadAt`, `io.ReadFull`,
   `crypto/rand.Read`, hex's and base64's `Encode` and `Decode`) is no

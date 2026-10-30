@@ -806,6 +806,22 @@ const H_MAG_CAP = 10368
 /// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).
 const MAG_BYTES = 65536
 const MID_MAX = 262136
+/// The size classes' limit at start: blocks above it are mapped from the
+/// system and returned to it by munmap when freed, while a freed class
+/// block stays on its free list. 16 KiB on darwin (2026-10-30, the self
+/// build: the 32 KiB to 256 KiB page block classes held 4.4 GB on their
+/// free lists at exit; peak RSS 9453 to 7473 MB at the same wall; at
+/// 8 KiB the wall grew 15%), MID_MAX elsewhere (linux/arm64, the same
+/// build: wall 1.115 worse and no RSS change at 16 KiB: Linux gives the
+/// freed class blocks' pages back by itself). XO_HEAP_MID_MAX sets it,
+/// up to MID_MAX.
+const MID_DARWIN = 16384
+fn mid_default() -> Int {
+  match target.os {
+    TargetOs.Darwin => MID_DARWIN
+    _ => MID_MAX
+  }
+}
 const NCLASS1 = 73
 
 /// Makes the main heap record and the central lists (C main, before
@@ -817,7 +833,7 @@ pub fn main_record() -> Int {
   // a --race build (decision 0273 mode 2): every block a big one (alloc.xo's classes,
   // free lists, chunks and magazines unused), from the C library's
   // malloc (large_room)
-  rt.mem_store(h, H_MID_MAX, if sanhook.user_mode() || sanhook.gorace() { 0 } else { MID_MAX }, 8)
+  rt.mem_store(h, H_MID_MAX, if sanhook.user_mode() || sanhook.gorace() { 0 } else { mid_default() }, 8)
   rt.mem_store(h, H_PAGES, if pages_on() { 1 } else { 0 }, 8)
   rt.mem_store(h, H_COUNT, 1, 8)
   rt.mem_store(h, H_SAMPLE_AT, NEVER, 8)
@@ -879,8 +895,8 @@ pub fn counting_on(h: Int) {
   hlock_give()
 }
 
-/// Lowers the size classes' limit to m (XO_HEAP_MID_MAX, at start: the
-/// main record, which the others copy).
+/// Sets the size classes' limit to m (XO_HEAP_MID_MAX, at start: the
+/// main record, which the others copy; mid_default() otherwise).
 pub fn set_mid_max(m: Int) { rt.mem_store(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_MID_MAX, m, 8) }
 
 /// Makes record h the calling thread's (the main thread, when a second
