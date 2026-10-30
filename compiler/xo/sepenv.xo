@@ -87,6 +87,16 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
   if !(o.targets.is_empty() || o.targets == "${host}/${arch}") {
     return os
   }
+  // --std-module after an edit of its module: a variant that differs only
+  // in the modules this run builds from source
+  if !o.std_module.is_empty() {
+    let src = std_source_set(os, ctx.std, o.std_module)
+    if let Some(n0) = std_variant_near(os, ctx, host, arch, false, src, o.phases) {
+      if let Some(n1) = std_variant_near(os, ctx, host, arch, true, src, o.phases) {
+        return with_env(os, {"XO_SEPCOMP": "1", "XO_SEPCOMP_FACTS": n0.1, "XO_SEPCOMP_FACTS_CONC": n1.1, "XO_SEPCOMP_STORE": n0.0, "XO_SEPCOMP_STORE_CONC": n1.0})
+      }
+    }
+  }
   let v0 = match std_variant_peek(os, ctx, host, arch, false, tmode, o.phases) {
     Some(v) => v
     None => return os

@@ -33,7 +33,12 @@ fn std_cache_key(os: Os, ctx: Ctx, std: Str, tgoos: Str, tgoarch: Str, conc: Boo
   if tree.is_empty() {
     return ""
   }
-  crypto.sha256("xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n${if tmode { "test=1\n" } else { "" }}${tree}".bytes()).to_hex()
+  crypto.sha256("${std_key_head(id, tgoos, tgoarch, conc, tmode)}${tree}".bytes()).to_hex()
+}
+
+/// The part of std_cache_key before std's tree lines.
+fn std_key_head(id: Str, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bool) -> Str {
+  "xo std v${STD_CACHE_VERSION}\n${id}\n${tgoos}/${tgoarch}\nconc=${conc}\n${if tmode { "test=1\n" } else { "" }}"
 }
 
 /// std's .xo files under std (not its tests), one "PATH SIZE MTIME" line each in path
@@ -179,6 +184,12 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bo
     os.fs.write("${store}.failed", "${why}\n".bytes()).ignore_err("only the warning")
   } else {
     os.fs.remove("${store}.failed").ignore_err("none was there")
+    if tmode {
+      // what the key hashed, for a --std-module run after a source edit
+      // (std_variant_near)
+      let id = if XO_CODEGEN_KEY.len() == 64 { "codegen ${XO_CODEGEN_KEY}" } else { self_id(os) }
+      os.fs.write("${dir}/std/${key}.tree", "${std_key_head(id, tgoos, tgoarch, conc, tmode)}${std_tree_lines(os, ctx, ctx.std)}".bytes()).ignore_err("only a --std-module run after an edit misses")
+    }
   }
   if let Some(l) = held {
     os.fs.remove("${dir}/std/${STD_BG_INFO}").ignore_err("only what xo dev stdcache shows")
@@ -424,4 +435,72 @@ fn std_source_set(os: Os, std: Str, m: Str) -> Set[Str] {
     out.add("native/${n}")
   }
   out
+}
+
+/// A test variant for a --std-module run whose module (or an importer of
+/// it) was edited since the variant was built (item 2 of the test speed
+/// queue): one whose .tree file equals this std's tree once the files of
+/// src's modules (std_source_set's, built from source by this run) are
+/// left out on both sides. The rest of std is the same, and none of it
+/// imports a module of src, so its store code is the code this std
+/// compiles to. None when there is none.
+fn std_variant_near(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, src: Set[Str], phases: Bool) -> (Str, Str)? {
+  let dir = std_cache_dir(os)
+  if dir.is_empty() || on_wasi() || src.is_empty() {
+    return None
+  }
+  let id = if XO_CODEGEN_KEY.len() == 64 { "codegen ${XO_CODEGEN_KEY}" } else { self_id(os) }
+  if id.is_empty() {
+    return None
+  }
+  let tree = std_tree_lines(os, ctx, ctx.std)
+  if tree.is_empty() {
+    return None
+  }
+  let want = std_key_head(id, tgoos, tgoarch, conc, true) + tree_without(tree, src)
+  for e in os.fs.read_dir("${dir}/std").ok() ?? [] {
+    if e.is_dir || !e.name.ends_with(".tree") {
+      continue
+    }
+    let key = e.name.trim_suffix(".tree")
+    let got = match os.fs.read_text("${dir}/std/${e.name}") {
+      Ok(t) => t
+      Err(_) => continue
+    }
+    let nl = got.find("test=1\n") ?? -1
+    if nl < 0 || got[0..nl + 7] + tree_without(got[nl + 7..], src) != want {
+      continue
+    }
+    let store = "${dir}/std/${key}.store"
+    let facts = "${dir}/std/${key}.stdf"
+    if (os.fs.exists(store).ok() ?? false) && (os.fs.exists(facts).ok() ?? false) {
+      prune.mark_used_within(os.fs, os.clock, store, BACKEND_TOUCH)
+      prune.mark_used_within(os.fs, os.clock, facts, BACKEND_TOUCH)
+      std_parts_used(os, "${store}.parts")
+      if phases {
+        os.stdio.eprintln("cache std ${key[0..12]} conc=${conc} test=1 reused, ${src.len()} module(s) from source")
+      }
+      return Some((store, facts))
+    }
+  }
+  None
+}
+
+/// std's tree lines without the files of src's modules ("native/NAME":
+/// the lines of native/NAME.xo and native/NAME/...).
+fn tree_without(tree: Str, src: Set[Str]) -> Str {
+  var b = StrBuilder.new()
+  for l in tree.split("\n") {
+    if l.is_empty() {
+      continue
+    }
+    let p = l.split(" ")[0].trim_prefix("/")
+    let i = p.find("/") ?? -1
+    let j = if i < 0 { -1 } else { p[i + 1..].find("/") ?? -1 }
+    let top = if j < 0 { p.trim_suffix(".xo") } else { p[0..i + 1 + j] }
+    if !src.contains(top) {
+      b.write("${l}\n")
+    }
+  }
+  b.freeze()
 }
