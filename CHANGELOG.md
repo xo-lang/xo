@@ -46,6 +46,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `recv()`, `try_recv()` and `each(f)` receive what Go sends (fsnotify's
   events, go-redis's pub/sub messages); a waiting receive is a
   cancellation point. Binding format 25.
+- Linux edit builds link faster again: a separately compiled ELF link reuses std's half of the last link, std's code, read only data and DWARF already relocated (decision 0420; XO_STD_HALF=off turns it off). The HTTP server's edit link went from 39.1 to 13.8 ms on linux arm64 (against the previous xo) and from 60.1 to 39.3 ms on linux amd64 (against the same layout without the half); the program's code now sits in its own segment after std's.
+- darwin edit builds: a program that defines a name std defines weak no longer leaves a std half that a later program could link against without that definition (decision 0409).
 - Linux edit builds link faster: a separately compiled ELF link no longer walks std's objects a second time and computes its undefined names once per step (decision 0420). Dropping the second walk took the HTTP server's edit link from 48.6 to 38.3 ms on linux arm64; the binary can keep a few more std bytes (xo: 0.004%).
 - std/crc32: Castagnoli runs on arm64's CRC32CX (0.21 of its time, Go's speed);
   std/fnv's 32 bit sums 0.79 of their time.

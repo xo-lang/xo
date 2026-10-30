@@ -154,7 +154,11 @@ fn (var l: ELinker) gc_sections() {
       let keep = !atoms[o] || s.typ == SHT_NOTE || s.typ == 14 || s.typ == 15 || s.typ == 16 || s.name.starts_with(".init_array") || s.name.starts_with(".fini_array") || s.name == ".preinit_array"
       if keep && !live[o][k] {
         live[o][k] = true
-        work.push((o, k))
+        // a root that names nothing (no relocations, no FDE) reaches
+        // nothing: most of std's sections in a link from its half
+        if !s.relocs.is_empty() || follows.contains((o, k)) {
+          work.push((o, k))
+        }
       }
     }
   }

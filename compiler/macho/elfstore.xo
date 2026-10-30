@@ -170,7 +170,11 @@ pub fn store_encode_elf(inputs: List[LinkInput]) -> Result[Bytes, Str] {
 /// link_elf_split of the program's inputs and the store's objects,
 /// reading only the sections the program reaches.
 pub fn link_store_elf(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts) -> Result[(Bytes, Bytes), Str] {
-  var s = match elf_store_prepare(inputs, store, opts, None) {
+  let prog = match parse_elf_inputs(inputs) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  var s = match elf_store_prepare(prog, store, opts, None) {
     Ok(x) => x
     Err(e) => return Err(e)
   }
@@ -189,26 +193,26 @@ pub struct ElfStoreLink {
   /// symbol), and whether they came from the cache
   pub prep: Prep = Prep{}
   pub hit: Bool = false
+  /// a link from std's half (elfhalf.xo elf_store_prepare_half)
+  pub half: Bool = false
+  /// the first name the program defines (not weak) that std's store
+  /// defines too, "" for none: such a link has no half (elfhalf.xo)
+  shadows: Str = ""
 }
 
 /// What an ELF store link's prepare decisions depend on besides the
 /// store: the names the program's objects take from it (undefined, or
 /// defined weak), the entry and the machine. The caller adds the store's
 /// and xo's identity (compiler/xo ld.xo elf_prep_file).
-pub fn elf_prep_key(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes, Str] {
+pub fn elf_prep_key(prog: ElfProg, opts: ElfLinkOpts) -> Bytes {
   var names: List[Bytes] = []
   var machine = 0
-  for inp in inputs {
-    match parse_elf_object(inp.path, inp.data) {
-      Ok(ob) => {
-        machine = ob.machine
-        for x in ob.syms {
-          if sym_bind(x) != STB_LOCAL && (x.shndx == 0 || sym_bind(x) == STB_WEAK) {
-            names.push(x.name)
-          }
-        }
+  for ob in prog.objs {
+    machine = ob.machine
+    for x in ob.syms {
+      if sym_bind(x) != STB_LOCAL && (x.shndx == 0 || sym_bind(x) == STB_WEAK) {
+        names.push(x.name)
       }
-      Err(e) => return Err(e)
     }
   }
   var b = BytesBuilder.new()
@@ -217,7 +221,25 @@ pub fn elf_prep_key(inputs: List[LinkInput], opts: ElfLinkOpts) -> Result[Bytes,
     b.write(nm)
     b.write_byte(0)
   }
-  Ok(b.freeze())
+  b.freeze()
+}
+
+/// The program's objects of an ELF store link, parsed once for the
+/// prepare cache's key and the link (elf_prep_key, elf_store_prepare,
+/// elf_store_prepare_half).
+pub struct ElfProg {
+  objs: List[EObj]
+}
+
+pub fn parse_elf_inputs(inputs: List[LinkInput]) -> Result[ElfProg, Str] {
+  var objs: List[EObj] = List.with_capacity(inputs.len())
+  for inp in inputs {
+    match parse_elf_object(inp.path, inp.data) {
+      Ok(o) => objs.push(o)
+      Err(e) => return Err(e)
+    }
+  }
+  Ok(ElfProg{objs: objs})
 }
 
 pub fn (var s: ElfStoreLink) resolve() -> Str { s.l.rest_resolve() }
@@ -226,7 +248,7 @@ pub fn (var s: ElfStoreLink) write() -> Result[(Bytes, Bytes), Str] { s.l.rest_w
 
 /// link_store_elf's first step: the walk from the program's inputs and
 /// the store's live atoms read, the dead functions' FDEs dropped.
-pub fn elf_store_prepare(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpts, cached: Prep?) -> Result[ElfStoreLink, Str] {
+pub fn elf_store_prepare(parsed: ElfProg, store: Bytes, opts: ElfLinkOpts, cached: Prep?) -> Result[ElfStoreLink, Str] {
   let v = match store_view(store) {
     Ok(x) => x
     Err(e) => return Err(e)
@@ -235,13 +257,7 @@ pub fn elf_store_prepare(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpt
     return Err("not an ELF store")
   }
   var l = ELinker{opts: opts, from_store: true}
-  var prog: List[EObj] = []
-  for inp in inputs {
-    match parse_elf_object(inp.path, inp.data) {
-      Ok(o) => prog.push(o)
-      Err(e) => return Err(e)
-    }
-  }
+  let prog = parsed.objs
   // the walk: what the program names and what it defines weak (a helper
   // or an instance std's store defines too: the link keeps the store's,
   // the first, so its atom must be live, as store.xo's Mach-O walk; a
@@ -249,10 +265,13 @@ pub fn elf_store_prepare(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpt
   // stripped and every call of it went to 0, 2026-10-28), its entry, the
   // sections never stripped
   var roots: List[Int] = []
+  var shadows = ""
   for ob in prog {
     for x in ob.syms {
       if sym_bind(x) != STB_LOCAL && (x.shndx == 0 || sym_bind(x) == STB_WEAK) {
         roots.push(v.def(x.name))
+      } else if opts.split_prog && shadows.is_empty() && sym_bind(x) == STB_GLOBAL && v.def(x.name) >= 0 {
+        shadows = bstr(x.name)
       }
     }
   }
@@ -308,6 +327,10 @@ pub fn elf_store_prepare(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpt
     l.objs.push(ob)
   }
   let n = v.n
+  if opts.split_prog {
+    // the program's code and read only data after std's (decision 0420)
+    l.prog_from = l.objs.len()
+  }
   l.objs = l.objs + prog
   // x86-64's relocations and GOT forms (link_elf_split's check, which
   // reads the first object: here a stored one)
@@ -336,5 +359,5 @@ pub fn elf_store_prepare(inputs: List[LinkInput], store: Bytes, opts: ElfLinkOpt
       }
     }
   }
-  Ok(ElfStoreLink{l: l, n: n, prep: Prep{live: live, dw_dropped: dropped}, hit: hit})
+  Ok(ElfStoreLink{l: l, n: n, prep: Prep{live: live, dw_dropped: dropped}, hit: hit, shadows: shadows})
 }

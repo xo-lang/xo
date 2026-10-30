@@ -1,0 +1,393 @@
+// std's half of an ELF store link (decision 0420, E4; decision 0409's
+// design on ELF): with the program's code and read only data in their
+// own sections (ElfLinkOpts.split_prog), std's .rodata and .text keep
+// their addresses whatever the program, so the next link with the same
+// prepare decisions takes std's objects from the last one with only the
+// relocations whose value can change.
+
+/// std's objects after a full split store link (the prepare walk's live
+/// atoms read, dead sections marked, the dead FDEs cut): each of std's
+/// sections in .rodata and .text holds the link's output bytes and only
+/// the relocations whose value can change (to a section that moves, an
+/// import, the program, the GOT, a thread local), so relocate redoes
+/// exactly those; std's DWARF the same way (its chunks come first in
+/// each joined debug section); every other section as the link had it. With std's
+/// global definitions and COMDAT groups.
+pub struct ElfHalf {
+  objs: List[EObj]
+  n: Int
+  globals: Map[Bytes, (Int, Int)]
+  comdats: Map[Bytes, Int]
+  /// the names std's objects leave undefined, before the strip and after
+  /// (ELinker.undefined's, std's definitions left out)
+  und: List[(Bytes, Bool)] = []
+  und_gc: List[(Bytes, Bool)] = []
+  /// std's fixed sections' addresses and the header's size: .rodata's,
+  /// .text's, phnum. A link whose layout differs (the program gained a
+  /// segment) cannot use the half
+  pins: List[Int] = []
+  /// relocations kept and dropped in the pinned sections (a report)
+  pub kept: Int = 0
+  pub dropped: Int = 0
+}
+
+/// Whether section k of object o keeps its address in every link with
+/// this half: std's .rodata and .text (the program's come after them in
+/// their own), except a section a __start_/__stop_ pair bounds (placed
+/// after the program's of other names). A dead section (no address, 0)
+/// is fixed too.
+fn (l: ELinker) half_pinned(o: Int, k: Int) -> Bool {
+  let x = l.objs[o].sects[k]
+  if x.out < 0 {
+    return true
+  }
+  o < l.prog_from && (x.out == O_RODATA || x.out == O_TEXT) && !l.bounds.contains(x.name)
+}
+
+/// Whether relocation r of std's object o can change from one link with
+/// the half to the next: GOT forms and thread locals always (the TLS
+/// segment and the GOT come after the program's code).
+fn (l: ELinker) half_moves(o: Int, r: ERel) -> Bool {
+  let t = r.typ
+  if l.amd64 {
+    if t == R_X86_64_GOTPCREL || t == R_X86_64_GOTPCRELX || t == R_X86_64_REX_GOTPCRELX || t == R_X86_64_GOTTPOFF || t == R_X86_64_TPOFF32 {
+      return true
+    }
+  } else if t == R_AARCH64_NONE {
+    return false
+  }
+  if !l.amd64 && (t == R_AARCH64_ADR_GOT_PAGE || t == R_AARCH64_LD64_GOT_LO12_NC || t == R_AARCH64_TLSIE_ADR_GOTTPREL_PAGE21 || t == R_AARCH64_TLSIE_LD64_GOTTPREL_LO12_NC || t == R_AARCH64_TLSLE_ADD_TPREL_HI12 || t == R_AARCH64_TLSLE_ADD_TPREL_LO12_NC || t == R_AARCH64_TLSDESC_ADR_PAGE21 || t == R_AARCH64_TLSDESC_LD64_LO12 || t == R_AARCH64_TLSDESC_ADD_LO12 || t == R_AARCH64_TLSDESC_CALL) {
+    return true
+  }
+  let (d, i) = l.def_of(o, r.sym)
+  if d < 0 || d >= l.prog_from {
+    return true
+  }
+  let s = l.objs[d].syms[i]
+  if s.shndx == SHN_COMMON {
+    return true
+  }
+  if s.shndx == SHN_UNDEF || s.shndx >= SHN_LORESERVE {
+    // an absolute value, or 0
+    return false
+  }
+  !l.half_pinned(d, s.shndx)
+}
+
+/// Why this link (after write) can have no half, "" when it can: the
+/// program's sections not their own,
+/// a program definition that took a name std defines (std's relocations
+/// to it would then be dropped as std's), or a failed link.
+pub fn (s: ElfStoreLink) half_refused() -> Str {
+  let l = s.l
+  if l.prog_from != s.n {
+    return "the program's sections are not their own (XO_STD_HALF)"
+  }
+  if !s.shadows.is_empty() {
+    return "the program defines ${s.shadows}, which std defines too"
+  }
+  if !l.err.is_empty() {
+    return "the link failed"
+  }
+  ""
+}
+
+/// The half of this link (after write), None where half_refused says why
+/// not.
+pub fn (s: ElfStoreLink) capture_half() -> ElfHalf? {
+  let l = s.l
+  if !s.half_refused().is_empty() {
+    return None
+  }
+  var objs: List[EObj] = List.with_capacity(s.n)
+  var kept = 0
+  var dropped = 0
+  for o in 0..s.n {
+    var ob = l.objs[o]
+    for k in 0..ob.sects.len() {
+      let x = ob.sects[k]
+      ob.sects[k].out = -1
+      ob.sects[k].off = 0
+      if let Some(at) = l.dbg_at.get((o, k)) {
+        // std's DWARF (decision 0420, E3): its chunk comes first in each
+        // joined section, so its offsets are the same in every link with
+        // the half; the link's bytes, with only the relocations that can
+        // change (each one writes its whole field)
+        var keep: List[ERel] = []
+        for r in x.relocs {
+          if l.half_moves(o, r) {
+            keep.push(r)
+          } else {
+            dropped += 1
+          }
+        }
+        kept += keep.len()
+        ob.sects[k].data = (l.dbg_out.get(x.name) ?? b"")[at..at + x.data.len()]
+        ob.sects[k].relocs = keep
+        continue
+      }
+      if x.out < 0 || x.dead || x.typ == SHT_NOBITS || x.size == 0 || !l.half_pinned(o, k) {
+        continue
+      }
+      var keep: List[ERel] = []
+      for r in x.relocs {
+        if l.half_moves(o, r) {
+          keep.push(r)
+        } else {
+          dropped += 1
+        }
+      }
+      kept += keep.len()
+      // the output bytes: every arm64 relocation writes its whole field
+      // and keeps the instruction's other bits, so a patched word reads
+      // as the input's; x86-64's read the opcode before the field too
+      // (reloc_x86: a branch's e8 or e9, which a weak call's nop
+      // replaces, and GOTTPOFF's REX, opcode and ModRM, which the
+      // relaxation rewrites), so those bytes and the field are the
+      // input's again
+      var places: List[(Int, Int)] = []
+      if l.amd64 {
+        for r in keep {
+          if r.typ == R_X86_64_GOTTPOFF && r.off >= 3 {
+            places.push((r.off - 3, 7))
+          } else if (r.typ == R_X86_64_PC32 || r.typ == R_X86_64_PLT32) && r.off >= 1 {
+            places.push((r.off - 1, 5))
+          }
+        }
+      }
+      ob.sects[k].data = if places.is_empty() { l.osects[x.out].bytes[x.off..x.off + x.size] } else { half_restore(l.osects[x.out].bytes, x.off, x.size, x.data, places) }
+      ob.sects[k].relocs = keep
+    }
+    objs.push(ob)
+  }
+  var globals: Map[Bytes, (Int, Int)] = {}
+  for (name, d) in l.globals {
+    if d.0 < s.n {
+      globals[name] = d
+    }
+  }
+  var comdats: Map[Bytes, Int] = {}
+  for (sig, o) in l.comdats {
+    if o < s.n {
+      comdats[sig] = o
+    }
+  }
+  // std's undefined names, from the link's objects (every relocation
+  // still there) with only std's definitions
+  var t = l
+  t.globals = globals
+  var seen: Map[Bytes, Int] = {}
+  var und: List[(Bytes, Bool)] = []
+  t.undefined_in(0, s.n, false, seen, und)
+  var seen_gc: Map[Bytes, Int] = {}
+  var und_gc: List[(Bytes, Bool)] = []
+  t.undefined_in(0, s.n, true, seen_gc, und_gc)
+  Some(ElfHalf{objs: objs, n: s.n, globals: globals, comdats: comdats, und: und, und_gc: und_gc, pins: l.half_pins(), kept: kept, dropped: dropped})
+}
+
+fn (l: ELinker) half_pins() -> List[Int] {
+  [l.osects[O_RODATA].addr, l.osects[O_TEXT].addr, l.phnum]
+}
+
+/// After layout: whether std's fixed sections are where the half had
+/// them (else the link from the half is not the full link's).
+pub fn (s: ElfStoreLink) half_pins_ok(h: ElfHalf) -> Bool {
+  s.l.half_pins() == h.pins
+}
+
+/// A store link of the program's objects with std's half (the prepare
+/// step of a link whose prepare decisions are the half's): std's objects
+/// are the half's, the program's follow.
+pub fn elf_store_prepare_half(prog: ElfProg, h: ElfHalf, opts: ElfLinkOpts) -> ElfStoreLink {
+  var l = ELinker{opts: opts, from_store: true}
+  l.objs = h.objs + prog.objs
+  l.prog_from = h.n
+  l.half_n = h.n
+  l.half_und = h.und
+  l.half_und_gc = h.und_gc
+  l.amd64 = !prog.objs.is_empty() && prog.objs[0].machine == 62
+  ElfStoreLink{l: l, n: h.n, half: true}
+}
+
+/// resolve for a link from std's half: std's global definitions and
+/// COMDAT groups are the half's, the program's added, then the start, the
+/// strip and the imports as rest_resolve; "" or why the half cannot serve
+/// (a program definition std's relocations would then take, a common
+/// symbol: the full link decides those), with err set for a failed link.
+pub fn (var s: ElfStoreLink) resolve_half(h: ElfHalf) -> Str {
+  s.l.globals = h.globals
+  s.l.comdats = h.comdats
+  for o in s.n..s.l.objs.len() {
+    for y in s.l.objs[o].syms {
+      let bind = sym_bind(y)
+      if bind == STB_LOCAL {
+        continue
+      }
+      if y.shndx == SHN_COMMON {
+        return "half: a common symbol ${bstr(y.name)}"
+      }
+      // std's definition stays before a weak one of the program's
+      if y.shndx != SHN_UNDEF && bind == STB_GLOBAL && h.globals.contains(y.name) {
+        return "half: the program defines ${bstr(y.name)}, which std defines too"
+      }
+    }
+    s.l.add_globals(o)
+  }
+  if s.l.err.is_empty() {
+    s.l.synthesize_start()
+  }
+  if s.l.err.is_empty() {
+    s.l.gc_sections()
+    s.l.collect_imports()
+  }
+  ""
+}
+
+const ELF_HALF_MAGIC = "xoehalf2\n"
+
+/// The half as bytes (<backend cache>/stdhalf, as decision 0409's).
+pub fn elf_half_encode(h: ElfHalf) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_str(ELF_HALF_MAGIC)
+  sw32(b, h.n)
+  sw32(b, h.kept)
+  sw32(b, h.dropped)
+  sw32(b, h.globals.len())
+  for (name, d) in h.globals {
+    sw_bytes(b, name)
+    sw32(b, d.0)
+    sw32(b, d.1)
+  }
+  sw32(b, h.comdats.len())
+  for (sig, o) in h.comdats {
+    sw_bytes(b, sig)
+    sw32(b, o)
+  }
+  for xs in [h.und, h.und_gc] {
+    sw32(b, xs.len())
+    for (name, weak) in xs {
+      sw_bytes(b, name)
+      sw32(b, if weak { 1 } else { 0 })
+    }
+  }
+  sw32(b, h.pins.len())
+  for a in h.pins {
+    sw64(b, a)
+  }
+  sw32(b, h.objs.len())
+  for ob in h.objs {
+    sw_bytes(b, ob.path.bytes())
+    sw32(b, ob.machine)
+    sw32(b, (if ob.live { 1 } else { 0 }) | (if ob.stored { 2 } else { 0 }))
+    sw32(b, ob.sects.len())
+    for x in ob.sects {
+      sw_bytes(b, x.name.bytes())
+      sw32(b, x.typ)
+      sw64(b, x.flags)
+      sw64(b, x.align)
+      sw32(b, x.info)
+      sw64(b, x.size)
+      sw32(b, (if x.dead { 1 } else { 0 }) | (if x.store_dead { 2 } else { 0 }))
+      sw_bytes(b, x.data)
+      sw32(b, x.relocs.len())
+      for r in x.relocs {
+        sw_erel(b, r)
+      }
+    }
+    sw32(b, ob.syms.len())
+    for y in ob.syms {
+      sw_bytes(b, y.name)
+      sw32(b, y.info | (y.other << 8))
+      sw32(b, y.shndx)
+      sw64(b, y.value)
+      sw64(b, y.size)
+    }
+  }
+  b.freeze()
+}
+
+/// The half in b, None when b is not one: section bytes and names are
+/// views of b.
+pub fn elf_half_decode(b: Bytes) -> ElfHalf? {
+  let m = ELF_HALF_MAGIC.bytes()
+  if b.len() < m.len() + 16 || b[0..m.len()] != m {
+    return None
+  }
+  var r = SR{b: b, at: m.len()}
+  let n = r.u32()
+  let kept = r.u32()
+  let dropped = r.u32()
+  let ng = r.u32()
+  var globals: Map[Bytes, (Int, Int)] = {}
+  for _ in 0..ng {
+    let name = r.bytes()
+    let o = r.u32()
+    let i = r.u32()
+    globals[name] = (o, i)
+  }
+  let nc = r.u32()
+  var comdats: Map[Bytes, Int] = {}
+  for _ in 0..nc {
+    let sig = r.bytes()
+    comdats[sig] = r.u32()
+  }
+  var unds: List[List[(Bytes, Bool)]] = []
+  for _ in 0..2 {
+    let nu = r.u32()
+    var xs: List[(Bytes, Bool)] = List.with_capacity(nu)
+    for _ in 0..nu {
+      let name = r.bytes()
+      xs.push((name, r.u32() != 0))
+    }
+    unds.push(xs)
+  }
+  let np = r.u32()
+  var pins: List[Int] = List.with_capacity(np)
+  for _ in 0..np {
+    pins.push(r.u64())
+  }
+  let no = r.u32()
+  var objs: List[EObj] = List.with_capacity(no)
+  for _ in 0..no {
+    let path = bstr(r.bytes())
+    let machine = r.u32()
+    let f = r.u32()
+    let nsec = r.u32()
+    var sects: List[ESect] = List.with_capacity(nsec)
+    for _ in 0..nsec {
+      let name = bstr(r.bytes())
+      let typ = r.u32()
+      let flags = r.u64()
+      let align = r.u64()
+      let info = r.u32()
+      let size = r.u64()
+      let df = r.u32()
+      let data = r.bytes()
+      let nr = r.u32()
+      var relocs: List[ERel] = List.with_capacity(nr)
+      for k in 0..nr {
+        relocs.push(rd_erel(b, r.at + ELF_REL * k))
+      }
+      r.at += ELF_REL * nr
+      sects.push(ESect{name: name, typ: typ, flags: flags, align: align, info: info, data: data, size: size, relocs: relocs, dead: (df & 1) != 0, store_dead: (df & 2) != 0})
+    }
+    let nsym = r.u32()
+    var syms: List[ESym] = List.with_capacity(nsym)
+    for _ in 0..nsym {
+      let name = r.bytes()
+      let io = r.u32()
+      let shndx = r.u32()
+      let value = r.u64()
+      let size = r.u64()
+      syms.push(ESym{name: name, info: io & 255, other: (io >> 8) & 255, shndx: shndx, value: value, size: size})
+    }
+    objs.push(EObj{path: path, machine: machine, sects: sects, syms: syms, live: (f & 1) != 0, stored: (f & 2) != 0})
+    if r.at > b.len() {
+      return None
+    }
+  }
+  if r.at != b.len() {
+    return None
+  }
+  Some(ElfHalf{objs: objs, n: n, globals: globals, comdats: comdats, und: unds[0], und_gc: unds[1], pins: pins, kept: kept, dropped: dropped})
+}

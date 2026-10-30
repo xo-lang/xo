@@ -16,35 +16,46 @@ fn (var l: ELinker) debug_sections() -> List[(Str, Bytes)] {
   // .debug_str, .debug_str_offsets, .debug_addr, ...), the line,
   // abbreviation, and info sections first (their indexes below)
   var names = [".debug_line", ".debug_abbrev", ".debug_info"]
+  var index: Map[Str, Int] = {}
+  for (k, nm) in names.indexed() {
+    index[nm] = k
+  }
+  // each name's chunks (object, section) in link order, in one pass over
+  // the sections (a pass per name was 12% of an HTTP edit link from
+  // std's half, 2026-10-30)
+  var chunks: List[List[(Int, Int)]] = [[], [], []]
   for o in 0..l.objs.len() {
     if !l.objs[o].live {
       continue
     }
-    for s in l.objs[o].sects {
-      if s.name.starts_with(".debug_") && !s.dead && !names.contains(s.name) {
-        names.push(s.name)
+    for (sk, s) in l.objs[o].sects.indexed() {
+      if !s.name.starts_with(".debug_") || s.dead {
+        continue
       }
+      let k = match index.get(s.name) {
+        Some(x) => x
+        None => {
+          index[s.name] = names.len()
+          names.push(s.name)
+          chunks.push([])
+          names.len() - 1
+        }
+      }
+      chunks[k].push((o, sk))
     }
   }
   // per section: per object, the chunk's offset (the first of its
   // sections of that name)
   var at: List[Map[Int, Int]] = []
   var sizes: List[Int] = []
-  for nm in names {
+  for k in 0..names.len() {
     var offs: Map[Int, Int] = {}
     var n = 0
-    for o in 0..l.objs.len() {
-      if !l.objs[o].live {
-        continue
+    for (o, sk) in chunks[k] {
+      if !offs.contains(o) {
+        offs[o] = n
       }
-      for s in l.objs[o].sects {
-        if s.name == nm && !s.dead {
-          if !offs.contains(o) {
-            offs[o] = n
-          }
-          n += s.data.len()
-        }
-      }
+      n += l.objs[o].sects[sk].data.len()
     }
     at.push(offs)
     sizes.push(n)
@@ -60,46 +71,43 @@ fn (var l: ELinker) debug_sections() -> List[(Str, Bytes)] {
   var info = "".bytes()
   for (k, nm) in names.indexed() {
     var buf = BytesBuilder.with_capacity(sizes[k])
-    for o in 0..l.objs.len() {
-      if !l.objs[o].live {
-        continue
+    for (o, sk) in chunks[k] {
+      let s = l.objs[o].sects[sk]
+      if o < l.prog_from {
+        // where std's chunk is, for std's half (elfhalf.xo)
+        l.dbg_at[(o, sk)] = buf.len()
       }
-      for s in l.objs[o].sects {
-        if s.name != nm || s.dead {
+      var ps: List[BytePatch] = List.with_capacity(s.relocs.len())
+      for r in s.relocs {
+        let sym = l.objs[o].syms[r.sym]
+        var v = r.addend
+        var debug_sym = false
+        if sym.shndx > 0 && sym.shndx < l.objs[o].sects.len() {
+          if let Some(j) = index.get(l.objs[o].sects[sym.shndx].name) {
+            v += (at[j].get(o) ?? 0) + sym.value
+            debug_sym = true
+          }
+        }
+        if !debug_sym {
+          let (d, i) = l.def_of(o, r.sym)
+          if d >= 0 {
+            v += l.sym_addr(d, i)
+          }
+        }
+        // an x86_64 object's too (2026-10-20: its addresses were left 0,
+        // and no pc found a line or a variable)
+        let width = if r.typ == R_AARCH64_ABS64 || r.typ == R_X86_64_64 { 8 } else if r.typ == R_AARCH64_ABS32 || r.typ == R_X86_64_32 { 4 } else { 0 }
+        if width == 0 || r.off + width > s.data.len() {
           continue
         }
-        var ps: List[BytePatch] = List.with_capacity(s.relocs.len())
-        for r in s.relocs {
-          let sym = l.objs[o].syms[r.sym]
-          var v = r.addend
-          var debug_sym = false
-          if sym.shndx > 0 && sym.shndx < l.objs[o].sects.len() {
-            let ts = l.objs[o].sects[sym.shndx].name
-            for (j, dn) in names.indexed() {
-              if ts == dn {
-                v += (at[j].get(o) ?? 0) + sym.value
-                debug_sym = true
-              }
-            }
-          }
-          if !debug_sym {
-            let (d, i) = l.def_of(o, r.sym)
-            if d >= 0 {
-              v += l.sym_addr(d, i)
-            }
-          }
-          // an x86_64 object's too (2026-10-20: its addresses were left 0,
-          // and no pc found a line or a variable)
-          let width = if r.typ == R_AARCH64_ABS64 || r.typ == R_X86_64_64 { 8 } else if r.typ == R_AARCH64_ABS32 || r.typ == R_X86_64_32 { 4 } else { 0 }
-          if width == 0 || r.off + width > s.data.len() {
-            continue
-          }
-          ps.push(BytePatch{at: r.off, n: width, v: v})
-        }
-        write_patched(buf, s.data, ps)
+        ps.push(BytePatch{at: r.off, n: width, v: v})
       }
+      write_patched(buf, s.data, ps)
     }
     let d = buf.freeze()
+    if l.prog_from >= 0 {
+      l.dbg_out[nm] = d
+    }
     if k == 2 {
       info = d
     }

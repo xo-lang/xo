@@ -113,7 +113,13 @@ const O_GOT = 19
 const O_DYNAMIC = 20
 const O_DATA = 21
 const O_BSS = 22
-const O_COUNT = 23
+/// The program's own read only data and code in a split link (decision
+/// 0420's std half, ElfLinkOpts.split_prog), after std's in segments of
+/// their own, so std's .rodata and .text keep their addresses as the
+/// program changes
+const O_PRODATA = 23
+const O_PTEXT = 24
+const O_COUNT = 25
 
 /// What the ELF linker writes: the dynamic loader and the entry symbol.
 pub struct ElfLinkOpts {
@@ -133,6 +139,11 @@ pub struct ElfLinkOpts {
   /// and symbols go there (link_elf_split's second result), and both
   /// files carry the same GNU build id. "" keeps them in the executable.
   pub debug_link: Str = ""
+  /// a separately compiled link through std's store puts the program's
+  /// read only data and code in output sections of their own
+  /// (.rodata.xoprog, .text.xoprog) after std's, five load segments in
+  /// place of three (decision 0420; out_order)
+  pub split_prog: Bool = false
 }
 
 /// An input section, by its header index.
@@ -251,10 +262,23 @@ struct ELinker {
   debug_file: Bytes = zeros(0)
   /// gc_sections ran (undefined then counts only kept references)
   gc_done: Bool = false
+  /// the first object of the program in a split link (std's store
+  /// objects come first), -1 for none
+  prog_from: Int = -1
   /// the sections the objects name the bounds of (__start_NAME,
   /// __stop_NAME, as GNU ld defines them), each placed together at the
   /// end of its output section: name -> (output section, start, end)
   bounds: Map[Str, (Int, Int, Int)] = {}
+  /// a link from std's half (elfhalf.xo): its objects before half_n, and
+  /// the names they leave undefined before and after the strip, which
+  /// undefined takes in place of walking their symbols; -1 for none
+  half_n: Int = -1
+  /// a split link's joined debug sections by name and where each of
+  /// std's chunks starts in its own (elfdebug.xo), for std's half
+  dbg_out: Map[Str, Bytes] = {}
+  dbg_at: Map[(Int, Int), Int] = {}
+  half_und: List[(Bytes, Bool)] = []
+  half_und_gc: List[(Bytes, Bool)] = []
 }
 
 /// link_elf: the linux/arm64 executable of the inputs (objects and
@@ -609,7 +633,26 @@ fn (var l: ELinker) resolve() {
 fn (l: ELinker) undefined() -> List[(Bytes, Bool)] {
   var seen: Map[Bytes, Int] = {}
   var out: List[(Bytes, Bool)] = []
-  for o in 0..l.objs.len() {
+  var from = 0
+  if l.half_n >= 0 {
+    // a link from std's half: std's objects' names are the half's (as
+    // the full link found them, std's own definitions left out)
+    for (name, weak) in if l.gc_done { l.half_und_gc } else { l.half_und } {
+      if !l.globals.contains(name) && !seen.contains(name) {
+        seen.put(name, 0)
+        out.push((name, weak))
+      }
+    }
+    from = l.half_n
+  }
+  l.undefined_in(from, l.objs.len(), l.gc_done, seen, out)
+  out
+}
+
+/// undefined's names of objects lo to hi (after the strip when gc), the
+/// names in seen left out, added to seen and out.
+fn (l: ELinker) undefined_in(lo: Int, hi: Int, gc: Bool, var seen: Map[Bytes, Int], var out: List[(Bytes, Bool)]) {
+  for o in lo..hi {
     if !l.objs[o].live {
       continue
     }
@@ -618,7 +661,7 @@ fn (l: ELinker) undefined() -> List[(Bytes, Bool)] {
     var named: Set[Int] = #{}
     // (before it, a stored object's too: the outline atomics synthesized
     // in order of first use come out in the parts' link's order)
-    let stripped = l.gc_done && (l.atoms_obj(o) || l.objs[o].stored)
+    let stripped = gc && (l.atoms_obj(o) || l.objs[o].stored)
     if stripped {
       for x in l.objs[o].sects {
         if !x.dead {
@@ -639,7 +682,6 @@ fn (l: ELinker) undefined() -> List[(Bytes, Bool)] {
       out.push((s.name, sym_bind(s) == STB_WEAK))
     }
   }
-  out
 }
 
 /// `_start` and the outline atomics helpers the objects call, assembled
@@ -1003,6 +1045,38 @@ fn classify(s: ESect) -> Int {
   O_RODATA
 }
 
+/// The output section of object o's section that classify put in out:
+/// a split link's program code and read only data in their own.
+fn (l: ELinker) prog_out(o: Int, out: Int) -> Int {
+  if l.prog_from < 0 || o < l.prog_from {
+    return out
+  }
+  if out == O_TEXT {
+    return O_PTEXT
+  }
+  if out == O_RODATA {
+    return O_PRODATA
+  }
+  out
+}
+
+/// The output sections in file and address order, and the ones that
+/// start a load segment. A split link (decision 0420): std's read only
+/// data, std's code, then the program's read only data with the dynamic
+/// tables and the unwind tables, the program's code with the stubs, then
+/// the data as before; each part its own segment, so what the program
+/// changes comes after std's .rodata and .text.
+fn (l: ELinker) out_order() -> (List[Int], List[Int]) {
+  if l.prog_from < 0 {
+    var all: List[Int] = []
+    for i in 0..O_PRODATA {
+      all.push(i)
+    }
+    return (all, [O_INTERP, O_TEXT, O_TDATA])
+  }
+  ([O_RODATA, O_TEXT, O_PRODATA, O_INTERP, O_HASH, O_DYNSYM, O_DYNSTR, O_VERSYM, O_VERNEED, O_RELADYN, O_EXCEPT, O_EHHDR, O_EH, O_PTEXT, O_PLT, O_TDATA, O_TBSS, O_PREINIT, O_INITA, O_FINIA, O_RELRO, O_GOT, O_DYNAMIC, O_DATA, O_BSS], [O_RODATA, O_TEXT, O_PRODATA, O_PTEXT, O_TDATA])
+}
+
 /// An init or fini array section's priority: N of `.init_array.N`, and
 /// past every N for the plain one (they run after the prioritized ones).
 fn array_prio(name: Str) -> Int {
@@ -1015,7 +1089,7 @@ fn array_prio(name: Str) -> Int {
 }
 
 fn (var l: ELinker) place() {
-  let names = [".interp", ".hash", ".dynsym", ".dynstr", ".gnu.version", ".gnu.version_r", ".rela.dyn", ".rodata", ".gcc_except_table", ".eh_frame_hdr", ".eh_frame", ".text", ".plt", ".tdata", ".tbss", ".preinit_array", ".init_array", ".fini_array", ".data.rel.ro", ".got", ".dynamic", ".data", ".bss"]
+  let names = [".interp", ".hash", ".dynsym", ".dynstr", ".gnu.version", ".gnu.version_r", ".rela.dyn", ".rodata", ".gcc_except_table", ".eh_frame_hdr", ".eh_frame", ".text", ".plt", ".tdata", ".tbss", ".preinit_array", ".init_array", ".fini_array", ".data.rel.ro", ".got", ".dynamic", ".data", ".bss", ".rodata.xoprog", ".text.xoprog"]
   for (i, n) in names.indexed() {
     var typ = SHT_PROGBITS
     if i == O_HASH {
@@ -1042,8 +1116,10 @@ fn (var l: ELinker) place() {
       typ = 15
     }
     var flags = SHF_ALLOC
-    if i == O_TEXT || i == O_PLT {
+    if i == O_TEXT || i == O_PLT || i == O_PTEXT {
       flags = SHF_ALLOC + SHF_EXECINSTR
+    } else if i == O_PRODATA {
+      flags = SHF_ALLOC
     } else if i == O_TDATA || i == O_TBSS {
       flags = SHF_ALLOC + SHF_WRITE + SHF_TLS
     } else if i >= O_PREINIT {
@@ -1059,7 +1135,7 @@ fn (var l: ELinker) place() {
     }
     for k in 0..l.objs[o].sects.len() {
       let s = l.objs[o].sects[k]
-      let out = classify(s)
+      let out = l.prog_out(o, classify(s))
       if out < 0 {
         continue
       }
@@ -1375,17 +1451,19 @@ fn (var l: ELinker) layout() {
   let has_eh = l.osects[O_EHHDR].size > 0
   // PT_PHDR, PT_INTERP, three PT_LOAD, PT_DYNAMIC, PT_GNU_STACK (no
   // PT_INTERP or PT_DYNAMIC when static)
-  l.phnum = (if l.opts.static { 5 } else { 7 }) + (if has_tls { 1 } else { 0 }) + (if has_eh { 1 } else { 0 })
+  let (order, starts) = l.out_order()
+  // a split link's two more load segments (out_order)
+  l.phnum = (if l.opts.static { 5 } else { 7 }) + (if has_tls { 1 } else { 0 }) + (if has_eh { 1 } else { 0 }) + starts.len() - 3
   // segment 0: headers and read only data; 1: code; 2: data
   var off = 64 + 56 * l.phnum
   var vbase = ELF_BASE
-  for i in 0..O_COUNT {
-    if i == O_TEXT || i == O_TDATA {
+  for (pos, i) in order.indexed() {
+    if pos > 0 && starts.contains(i) {
       // a new segment: the next page past the last one, congruent with
       // the file offset
       off = align_up(off, 16)
       var vend = 0
-      for k in 0..i {
+      for k in order[0..pos] {
         if l.osects[k].size > 0 && l.osects[k].typ != SHT_NOBITS {
           vend = vend.max(l.osects[k].addr + l.osects[k].size)
         }
@@ -1792,11 +1870,16 @@ fn (var l: ELinker) write() -> Bytes {
     body.push("".bytes())
   }
   // the program's sections
-  for i in [O_RODATA, O_EXCEPT, O_EH, O_TEXT, O_TDATA, O_PREINIT, O_INITA, O_FINIA, O_RELRO, O_DATA] {
+  for i in [O_RODATA, O_EXCEPT, O_EH, O_TEXT, O_TDATA, O_PREINIT, O_INITA, O_FINIA, O_RELRO, O_DATA, O_PRODATA, O_PTEXT] {
     body[i] = l.contents(i, ps)
     if !l.err.is_empty() {
       return "".bytes()
     }
+  }
+  if l.prog_from >= 0 {
+    // std's fixed sections, for its half (elfhalf.xo capture_half)
+    l.osects[O_RODATA].bytes = body[O_RODATA]
+    l.osects[O_TEXT].bytes = body[O_TEXT]
   }
   if l.osects[O_EH].size > 0 {
     body[O_EHHDR] = l.eh_frame_hdr(body[O_EH])
@@ -2035,7 +2118,9 @@ fn (var l: ELinker) write() -> Bytes {
   o.u16(shnum)
   o.u16(shnum - 1)
   l.phdrs(o)
-  for i in 0..O_COUNT {
+  // in file order (out_order)
+  let (order, _) = l.out_order()
+  for i in order {
     let s = l.osects[i]
     if s.size == 0 || s.typ == SHT_NOBITS {
       continue
@@ -2231,20 +2316,35 @@ fn array_tags(s: List[EOSect]) -> List[(Int, Int)] {
 /// The program headers.
 fn (l: ELinker) phdrs(var o: Out) {
   let s = l.osects
-  // the extent of each load segment: [first, last] output sections
-  let segs = [(O_INTERP, O_EH, PF_R), (O_TEXT, O_PLT, PF_R + PF_X), (O_TDATA, O_BSS, PF_R + PF_W)]
+  // each load segment's output sections (out_order), its flags by its
+  // first: code is executable, the data writable
+  let (order, starts) = l.out_order()
+  var segs: List[(List[Int], Int)] = []
+  var cur: List[Int] = []
+  var cflags = PF_R
+  for (pos, i) in order.indexed() {
+    if pos > 0 && starts.contains(i) {
+      segs.push((cur, cflags))
+      cur = []
+    }
+    if pos == 0 || starts.contains(i) {
+      cflags = if i == O_TEXT || i == O_PTEXT { PF_R + PF_X } else if i == O_TDATA { PF_R + PF_W } else { PF_R }
+    }
+    cur.push(i)
+  }
+  segs.push((cur, cflags))
   let hdr = 64 + 56 * l.phnum
   // PT_PHDR
   ph(o, PT_PHDR, PF_R, 64, ELF_BASE + 64, 56 * l.phnum, 56 * l.phnum, 8)
   if !l.opts.static {
     ph(o, PT_INTERP, PF_R, s[O_INTERP].off, s[O_INTERP].addr, s[O_INTERP].size, s[O_INTERP].size, 1)
   }
-  for (k, (first, last, flags)) in segs.indexed() {
+  for (k, (members, flags)) in segs.indexed() {
     var off = -1
     var addr = 0
     var fend = 0
     var vend = 0
-    for i in first..last + 1 {
+    for i in members {
       let x = s[i]
       if x.size == 0 || i == O_TBSS {
         continue

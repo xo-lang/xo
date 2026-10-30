@@ -1,0 +1,88 @@
+// std's half of an ELF store link (elfhalf.xo, decision 0420): a link
+// from the half is the full link of the edited program, the encoding
+// reads back, and a program that defines a name std defines leaves no
+// half.
+
+const EHALF_PART = "\t.subsections_via_symbols\n\t.text\n\t.globl used\n\t.p2align 2\n\t.type used, %function\nused:\n\tadrp x1, msg\n\tadd x1, x1, :lo12:msg\n\tbl inner\n\tbl hook\n\tret\n\t.globl unused_fn\n\t.p2align 2\n\t.type unused_fn, %function\nunused_fn:\n\tmov x0, #7\n\tret\n\t.globl inner\n\t.p2align 2\n\t.type inner, %function\ninner:\n\tadrp x0, tab\n\tadd x0, x0, :lo12:tab\n\tret\n\t.weak hook\n\t.p2align 2\n\t.type hook, %function\nhook:\n\tret\n\t.section .rodata\n\t.globl msg\nmsg:\n\t.asciz \"std\"\n\t.data\n\t.globl tab\ntab:\n\t.quad inner\n"
+
+fn ehalf_prog(imm: Int, hook: Bool) -> Bytes {
+  let own = if hook { "\t.globl hook\n\t.p2align 2\n\t.type hook, %function\nhook:\n\tmov x0, #9\n\tret\n" } else { "" }
+  assemble_elf("\t.text\n\t.globl main\n\t.p2align 2\n\t.type main, %function\nmain:\n\tbl used\n\tmov x0, #${imm}\n\tret\n${own}\t.section .rodata\npmsg:\n\t.asciz \"prog\"\n".bytes()).or_fault("assemble")
+}
+
+fn ehalf_store() -> Bytes {
+  store_encode_elf([LinkInput{path: "part.o", data: assemble_elf(EHALF_PART.bytes()).or_fault("assemble")}]).or_fault("store")
+}
+
+fn ehalf_opts() -> ElfLinkOpts { ElfLinkOpts{static: true, entry: "main", split_prog: true} }
+
+/// The full link of prog through the store (its bytes and the link, for
+/// a half).
+fn ehalf_full(prog: Bytes, store: Bytes) -> (Bytes, ElfStoreLink) {
+  var s = elf_store_prepare(parse_elf_inputs([LinkInput{path: "prog.o", data: prog}]).or_fault("parse"), store, ehalf_opts(), None).or_fault("prepare")
+  let er = s.resolve()
+  if !er.is_empty() {
+    fault(er)
+  }
+  let el = s.layout()
+  if !el.is_empty() {
+    fault(el)
+  }
+  match s.write() {
+    Ok((b, _)) => (b, s)
+    Err(e) => fault(e)
+  }
+}
+
+/// The link of prog from half h, or "" for "the half cannot serve it".
+fn ehalf_hit(prog: Bytes, h: ElfHalf) -> Bytes {
+  var s = elf_store_prepare_half(parse_elf_inputs([LinkInput{path: "prog.o", data: prog}]).or_fault("parse"), h, ehalf_opts())
+  if !s.resolve_half(h).is_empty() {
+    return b""
+  }
+  let el = s.layout()
+  if !el.is_empty() {
+    fault(el)
+  }
+  if !s.half_pins_ok(h) {
+    return b""
+  }
+  match s.write() {
+    Ok((b, _)) => b
+    Err(e) => fault(e)
+  }
+}
+
+test "an ELF link from std's half is the full link of the edited program" {
+  let store = ehalf_store()
+  let (_, s1) = ehalf_full(ehalf_prog(1, false), store)
+  let h = match s1.capture_half() {
+    Some(x) => x
+    None => fault("no half: ${s1.half_refused()}")
+  }
+  // used's adrp and add of msg and its call of inner stay in place
+  expect(h.dropped > 0) == true
+  let (want, _) = ehalf_full(ehalf_prog(2, false), store)
+  expect(ehalf_hit(ehalf_prog(2, false), h) == want) == true
+  let back = match elf_half_decode(elf_half_encode(h)) {
+    Some(x) => x
+    None => fault("the encoding does not read back")
+  }
+  expect(ehalf_hit(ehalf_prog(2, false), back) == want) == true
+  expect(elf_half_decode("xoehalf0\n0123456789abcdef".bytes()).is_none()) == true
+}
+
+test "an ELF program that defines a name std defines leaves no half and takes none" {
+  let store = ehalf_store()
+  // its hook replaces std's weak one: a half without std's hook would
+  // leave the next program's call of it undefined
+  let (_, s1) = ehalf_full(ehalf_prog(1, true), store)
+  expect(s1.capture_half().is_none()) == true
+  expect(s1.half_refused()) == "the program defines hook, which std defines too"
+  let (_, s2) = ehalf_full(ehalf_prog(1, false), store)
+  let h = match s2.capture_half() {
+    Some(x) => x
+    None => fault("no half: ${s2.half_refused()}")
+  }
+  expect(ehalf_hit(ehalf_prog(1, true), h).is_empty()) == true
+}

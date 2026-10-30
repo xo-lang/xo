@@ -1,4 +1,4 @@
-# 0420: the ELF edit link (prepare cache, one walk, std's half next)
+# 0420: the ELF edit link (prepare cache, one walk, std's half)
 
 Status: Accepted (lead, 2026-10-29: option 1 of the second walk; owner approved the ELF port the same day)
 
@@ -33,6 +33,13 @@ The prepare cache (E2) alone gave nothing measurable.
    - In decision 0388's XO_STD_STORE flow (XO_STD_ROOTS=1, XO_DCE=off), XO_STD_STORE_CHECK=1 still finds the store link byte for byte the parts link, on fib, HTTP and xo, with and without this change. So the two are not promised equal in general (edit builds differ), but that check keeps passing.
 4. Next: std's half on ELF (E4), after this measures. ELF specifics: std's .rodata and .text first, with option B's four PT_LOADs in edit builds; RELA needs almost no restore; GOTTPOFF and weak-call rewrites restore their opcode bytes. Then debug info for the edit binary (E3), std's relocated DWARF in the half.
 
+5. E4 and E3 as built (2026-10-30): std's half on ELF, decision 0409's design.
+   - Layout (ElfLinkOpts.split_prog): std's .rodata, std's .text, then the program's read only data (.rodata.xoprog) with the dynamic and unwind tables, the program's code (.text.xoprog) with the PLT, then the data: five PT_LOADs in place of three (elflink.xo out_order).
+   - Capture (elfhalf.xo capture_half, after a full split link): each of std's sections in .rodata and .text (not one a __start_/__stop_ pair bounds) holds the link's output bytes and keeps only the relocations whose value can change: GOT and thread local forms, imports, the program and the start object, commons, targets outside std's .rodata and .text. std's DWARF the same way (E3): its chunks come first in each joined .debug_* section, so their offsets are fixed. arm64 relocations write whole fields and keep the instruction's other bits, so no original bytes are put back; x86-64's read the opcode before the field (a branch's e8 or e9, GOTTPOFF's REX, opcode and ModRM), which halfcore.xo half_restore puts back. Also kept: std's globals, COMDAT groups and undefined names (before and after the strip).
+   - Key and cache: <backend cache>/stdhalf/sha256("elf", the ELF prepare file's name, interp, entry, static, strip, release, debug_link), kind stdhalf, pruned with the cache.
+   - A hit (elf_store_prepare_half, resolve_half): std's objects are views of the file, the program is parsed once, the half's globals, groups and undefined names stand for std's, then the start, the strip and the imports as usual; the pin check (std's .rodata and .text addresses, phnum) after layout.
+   - It falls back to the full link (whose half replaces the entry) when the program defines (not weak) a name std defines or has a common symbol, or the pins differ. A full link whose program defines a name std defines writes no half (ElfStoreLink.shadows; darwin's StoreLink.shadows, the same day).
+
 ## Consequences
 
 - The ELF edit link loses the second walk's cost. Native linux arm64 host, interleaved n=30, A is the link with undefined() once, B adds this walk change:
@@ -41,6 +48,12 @@ The prepare cache (E2) alone gave nothing measurable.
   Off, miss and hit are byte-identical in both. The prepare cache (E2) alone measured within Docker's noise.
 - Linux edit binaries can keep a few std sections that the second walk would have dropped: 0.004% on xo, under the lead's bound of about 1%.
 - toolchain.md says that a linux edit build's store link is not promised byte-equal to the parts link.
+- std's half (item 5), native linux arm64 host, interleaved n=30, HTTP edit link medians:
+  - the half (A: the split layout with no half, B: the half): 36.75 to 22.57 ms (0.614; prepare 14.82 to 6.82, resolve 7.50 to 4.63, finish 14.46 to 10.91);
+  - parse once, std's undefined names and DWARF from the half (A: the half before them): 22.54 to 16.48 ms (0.731; prepare 7.05 to 5.32, resolve 4.79 to 2.14, finish 10.80 to 9.00).
+  - linux/amd64 (the owner's WSL2 host, n=30; A: the split layout with no half, since x86-64 had none before this; B: all of item 5): 60.10 to 39.27 ms (0.653; prepare 22.82 to 17.80, resolve 9.97 to 4.23, finish 26.34 to 17.23), with the same checks passing.
+  - the whole of item 5 with the half on by default, against the parent's xo (linux arm64, n=30): 39.07 to 13.84 ms (0.354; prepare 15.80 to 5.32, resolve 7.96 to 1.96, finish 15.39 to 6.53).
+  The half drops 189,989 of std's relocations and keeps 2,606 (arm64). Off, miss and hit are byte-identical for the 26 programs of the separate compilation sample, fib and HTTP; each runs as its build without the split; an edit linked from the half equals the same edit linked in full; tracebacks and XO_PROF read the split binaries. A half file per prepare key is about 32 MB (HTTP) and 26 MB (fib), std's DWARF most of it.
 
 ## Alternatives
 

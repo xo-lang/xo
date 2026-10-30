@@ -388,7 +388,9 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
     }
   }
   let debug_link = if split { "${base_name(out)}.debug" } else { "" }
-  let eopts = macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link, release: release}
+  // the program's own sections after std's, and std's half (decision
+  // 0420), unless XO_STD_HALF=off
+  let eopts = macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link, release: release, split_prog: !ctx.sep_store.is_empty() && (os.env.get("XO_STD_HALF") ?? "") != "off"}
   let ts = os.clock.now()
   let linked = if store.is_empty() { macho.link_elf_split(parts + ins, eopts) } else { elf_store_laps(os, ctx, ins, store, eopts) }
   if !store_path.is_empty() && !store.is_empty() {
@@ -404,7 +406,38 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
     }
     for _ in 0..rep {
       let t1 = os.clock.now()
-      match macho.elf_store_prepare(ins, store, eopts, prep_load(os, elf_prep_file(os, ctx.sep_store, store.len(), ins, eopts))) {
+      let prog = match macho.parse_elf_inputs(ins) {
+        Ok(x) => x
+        Err(e) => return e
+      }
+      let pf = elf_prep_file(os, ctx.sep_store, store.len(), prog, eopts)
+      if let Some(h) = elf_half_load(os, elf_half_file_for(pf, eopts)) {
+        // the link from std's half, as elf_store_laps makes it
+        var s = macho.elf_store_prepare_half(prog, h, eopts)
+        let dp = os.clock.since(t1).nanos() / 1000
+        let t2 = os.clock.now()
+        let why = s.resolve_half(h)
+        let dr = os.clock.since(t2).nanos() / 1000
+        if !why.is_empty() {
+          os.stdio.eprintln(why)
+          continue
+        }
+        let t3 = os.clock.now()
+        let _l = s.layout()
+        if !s.half_pins_ok(h) {
+          os.stdio.eprintln("half: std's fixed sections moved")
+          continue
+        }
+        let got = s.write()
+        let df = os.clock.since(t3).nanos() / 1000
+        let same = match got {
+          Ok((b, _)) => if b == first { "equal" } else { "DIFFERS" }
+          Err(e) => "failed: ${e}"
+        }
+        os.stdio.eprintln("store link ${dp + dr + df} us (prepare ${dp}, resolve ${dr}, finish ${df}) half ${same}, std relocations kept ${h.kept} dropped ${h.dropped}")
+        continue
+      }
+      match macho.elf_store_prepare(prog, store, eopts, prep_load(os, pf)) {
         Ok(s0) => {
           var s = s0
           let dp = os.clock.since(t1).nanos() / 1000
@@ -1276,8 +1309,22 @@ fn link_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, o
 /// link.resolve, link.layout, link.write: --phase-times).
 fn elf_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, opts: macho.ElfLinkOpts) -> Result[(Bytes, Bytes), Str] {
   var t = os.clock.now()
-  let pf = elf_prep_file(os, ctx.sep_store, store.len(), ins, opts)
-  var s = match macho.elf_store_prepare(ins, store, opts, prep_load(os, pf)) {
+  // the program's objects parsed once, for the cache's key and the link
+  let prog = match macho.parse_elf_inputs(ins) {
+    Ok(x) => x
+    Err(e) => return Err(e)
+  }
+  let pf = elf_prep_file(os, ctx.sep_store, store.len(), prog, opts)
+  let hf = elf_half_file_for(pf, opts)
+  if let Some(h) = elf_half_load(os, hf) {
+    match link_from_elf_half(os, ctx, prog, h, opts, t) {
+      Some(r) => return r
+      // the half cannot serve this link: the full link below, whose half
+      // replaces it
+      None => {}
+    }
+  }
+  var s = match macho.elf_store_prepare(prog, store, opts, prep_load(os, pf)) {
     Ok(x) => x
     Err(e) => return Err(e)
   }
@@ -1298,21 +1345,74 @@ fn elf_store_laps(os: Os, ctx: Ctx, ins: List[macho.LinkInput], store: Bytes, op
   }
   t = lap(os, ctx.phases, "link.layout", t)
   let r = s.write()
-  let _t = lap(os, ctx.phases, "link.write", t)
+  t = lap(os, ctx.phases, "link.write", t)
+  if r.is_ok() && !hf.is_empty() {
+    match s.capture_half() {
+      Some(h) => {
+        let b = macho.elf_half_encode(h)
+        cache_put(os, hf, b)
+        prune_backend_cache(os, "stdhalf", dir_name(dir_name(hf)), b.len())
+      }
+      None => {}
+    }
+    let _h = lap(os, ctx.phases, "link.half_save", t)
+  }
   r
+}
+
+/// An ELF store link from std's half h (decision 0420, E4): None when the
+/// half cannot give the full link's bytes (link_from_half's reasons), the
+/// caller then links in full.
+fn link_from_elf_half(os: Os, ctx: Ctx, prog: macho.ElfProg, h: macho.ElfHalf, opts: macho.ElfLinkOpts, t0: Time) -> Result[(Bytes, Bytes), Str]? {
+  var t = t0
+  var s = macho.elf_store_prepare_half(prog, h, opts)
+  t = lap(os, ctx.phases, "link.store_prepare", t)
+  if !s.resolve_half(h).is_empty() {
+    return None
+  }
+  t = lap(os, ctx.phases, "link.resolve", t)
+  let el = s.layout()
+  if !el.is_empty() {
+    return Some(Err(el))
+  }
+  if !s.half_pins_ok(h) {
+    return None
+  }
+  t = lap(os, ctx.phases, "link.layout", t)
+  let r = s.write()
+  let _t = lap(os, ctx.phases, "link.write", t)
+  Some(r)
+}
+
+/// std's half for an ELF store link with the prepare cache's file pf (as
+/// half_file_for's), "" for none.
+fn elf_half_file_for(pf: Str, opts: macho.ElfLinkOpts) -> Str {
+  if pf.is_empty() || !opts.split_prog {
+    return ""
+  }
+  let k = "elf\n${base_name(pf)}\n${opts.interp}\n${opts.entry}\n${opts.static}\n${opts.strip}\n${opts.release}\n${opts.debug_link}\n"
+  "${dir_name(dir_name(pf))}/stdhalf/${crypto.sha256(k.bytes()).to_hex()[0..40]}"
+}
+
+/// The ELF half in f, marked used (pruned with the cache), or None.
+fn elf_half_load(os: Os, f: Str) -> macho.ElfHalf? {
+  if f.is_empty() {
+    return None
+  }
+  match cache_get(os, f) {
+    Some(b) => macho.elf_half_decode(b)
+    None => None
+  }
 }
 
 /// The ELF prepare cache's file for a store link through store (as
 /// prep_file_for's, with macho.elf_prep_key), "" for none.
-fn elf_prep_file(os: Os, store: Str, n: Int, ins: List[macho.LinkInput], opts: macho.ElfLinkOpts) -> Str {
+fn elf_prep_file(os: Os, store: Str, n: Int, prog: macho.ElfProg, opts: macho.ElfLinkOpts) -> Str {
   let dir = prep_dir(os, store)
   if dir.is_empty() {
     return ""
   }
-  match macho.elf_prep_key(ins, opts) {
-    Ok(k) => "${dir}/${crypto.sha256("${self_id(os)}\n${store}\n${n}\n".bytes() + k).to_hex()[0..40]}"
-    Err(_) => ""
-  }
+  "${dir}/${crypto.sha256("${self_id(os)}\n${store}\n${n}\n".bytes() + macho.elf_prep_key(prog, opts)).to_hex()[0..40]}"
 }
 
 /// A store link from std's half h (decision 0409): None when the half
