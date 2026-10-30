@@ -9,8 +9,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   extension gives (compiler/arm64 ranges.xo), so arithmetic on a byte
   read through std's raw.byte_at needs no overflow check (every backend
   zero-extends these loads; a packed list's signed elements are other
-  loads and keep their sign). text.parse_duration: overflow branches 5
-  to 3; golden load_ranges.
+  loads and keep their sign). bench/perf/text dur_parse 0.979 of the
+  instructions (xo bench --ab n=15; wall and cycles within noise),
+  parse_int 0.999; xo's native __text 70,877,952 to 70,866,280 bytes;
+  golden load_ranges.
 - LLVM builds of a program that imports std/html (or template) are
   faster: a constant's initializer over 2000 SSA instructions is built
   `optnone`, so clang uses its fast register allocator on it (std/html's
