@@ -33,6 +33,18 @@ parsed whole: 334,881 bytes, of which the generic declarations are 38,387
 (11%; native/prelude.xo 70 of them, 28 KB of 138 KB; native/http.xo 16, 4 KB
 of 120 KB).
 
+The check's wall, split with check.* sub-laps (--phase-times; three edits
+on the arm64 host, 2026-10-30): check.setup 5.5 to 5.8 ms (the options,
+std's entry read and decoded, load_std_record), check.prefetch 6.1 to 6.4
+(parse_prefetch: the 16 files parsed on tasks, about 14 ms of CPU, so its
+wall is the longest files' parse), check.dirs 14.1 to 14.9 (the checker's
+run: install_std about 5 and relocate_export about 3 of its CPU), of 26.4
+to 26.8. The parse is on the path (the check waits for the prefetch), but
+it is a quarter of the check's wall: this decision's bound is about 6 ms of
+wall, check.dirs is the larger lever, and decision 0380's stage 2 result
+(cached parses, about 10 ms) agrees in size. Lang 1's earlier spike and
+stage 2 branch (refs/recover/lang1-0380-stage2) are the alternative below.
+
 ## Decision (proposed)
 
 1. **Ranges in the record.** std's export record keeps, for each file, the
