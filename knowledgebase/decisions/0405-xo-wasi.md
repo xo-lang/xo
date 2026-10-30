@@ -42,3 +42,20 @@ The module then fails to load: a function may have at most 1000 parameters and 1
 - A WASI preview2 / threads build: wasmtime-only, sockets and threads not in the Node runtime the playground uses; not needed for the scope above.
 - Making unavailable features no-ops: a build that silently skips a linker or test run is wrong; refusing with a stable code is honest.
 - Splitting compiler/xo into a WASI-only front: duplicates the driver; the generator policy and the gate keep one source.
+
+## Runtimes (owner, 2026-10-30 evening)
+
+- `xo.wasm` targets WASI preview1, not an engine: any WASI runtime is
+  supported. Xo does not build its own runtime (a native runtime per
+  platform would be a second native binary; native xo already is one).
+- Tested: wasmtime first (the reference WASI implementation; `wasmtime
+  compile` once, then fast starts), Node through run.mjs second (most
+  machines have it). run.mjs's `--liftoff-only` default is a Node/V8 only
+  guard for this module's size.
+- The lasting fix is the module, not an engine flag: split the 12.4 MB
+  function (and shrink the module) so every runtime, a browser's V8
+  included, takes it unflagged.
+- After 0.36.0: a Go test that runs `xo.wasm` under wazero (a pure Go
+  runtime, imported as a library) for version, check and one build, so
+  the main checks cover WASI with no Node or wasmtime installed; wazero is
+  listed as supported if it handles the module well.
