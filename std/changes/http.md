@@ -1,5 +1,22 @@
 # std/http changes
 
+## 2026-10-30: feature: HTTP/2 client full duplex, native (decision 0433)
+
+- Kind: feature
+- Commit: this commit
+- Found by: xo-lang-5's gRPC interop program (ping_pong deadlocked: "every task is blocked")
+- Go reference: net/http's HTTP/2 transport writes the request body from its own goroutine while the response is read
+- Test: internal/llvm/testdata/golden/http_duplex (an h2c row next to the h1 one); the gRPC interop client against the Xo server, 9 of 9 cases
+- Timing: none on a request without a piped body
+
+`Client.open` with a piped body (`http.pipe`) over HTTP/2 returns at the
+response head while the body is still written. The h2 pump pulled the
+body source with a blocking read, which waited for a message that the
+program writes only after a response arrives. A feeder task now pulls
+the source into a queue, and the pump polls the queue and reads the
+socket with a 10 ms deadline while it is empty (the request's own
+deadline is put back).
+
 ## 2026-10-30: feature: h2c and HTTP/2 settings, native (decision 0434)
 
 - Kind: feature

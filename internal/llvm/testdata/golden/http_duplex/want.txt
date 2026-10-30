@@ -5,5 +5,10 @@ h1: echo m0;
 h1: echo m1;
 h1: echo m2;
 h1: end
+h2c: head 200
+h2c: echo m0;
+h2c: echo m1;
+h2c: echo m2;
+h2c: end
 done
 --- stderr

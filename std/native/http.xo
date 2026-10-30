@@ -2929,6 +2929,44 @@ fn trailer_args(req: Request) -> TrailerArgs {
   TrailerArgs{body: body, src: src, names: req.trailer_names.join(", "), fns: [flat]}
 }
 
+/// The pieces a duplex request body's feeder task pulled and the
+/// consumer has not taken (poll_source).
+struct PolledBody {
+  items: List[http1.BodyPart] = []
+  started: Bool = false
+}
+
+/// A source over f that never blocks, for HTTP/2's pump: the first call
+/// spawns (spawn) a task pulling f into a queue, each call takes the next
+/// queued piece or answers wait. The blocking f stays src[0] for HTTP/1.1.
+fn poll_source(f: fn(Int) -> http1.BodyPart, spawn: fn(fn() -> ())) -> fn(Int) -> http1.BodyPart {
+  let q = Mutex[PolledBody].new(PolledBody{})
+  fn(max: Int) -> http1.BodyPart {
+    let first = q.with(fn(var s: PolledBody) -> Bool {
+      let was = s.started
+      s.started = true
+      !was
+    })
+    if first {
+      spawn(fn() {
+        while true {
+          let p = f(32768)
+          q.with(fn(var s: PolledBody) { s.items.push(p) })
+          if p.end || !p.err.is_empty() {
+            break
+          }
+        }
+      })
+    }
+    q.with(fn(var s: PolledBody) -> http1.BodyPart {
+      if s.items.is_empty() {
+        return http1.BodyPart{data: "", end: false, err: "", wait: true}
+      }
+      s.items.remove_at(0)
+    })
+  }
+}
+
 fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net.dial {
   if task.is_canceled() {
     return Err(http.ClientErr.Canceled)
@@ -2959,7 +2997,8 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     duplex = [fn(f: fn() -> ()) { g.spawn_background(f) }]
   }
   let ta = trailer_args(req)
-  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, ta.src, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns)
+  let dsrc = if duplex.is_empty() || ta.src.is_empty() { ta.src } else { [ta.src[0], poll_source(ta.src[0], duplex[0])] }
+  let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, true, dsrc, duplex, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns)
   match r.err {
     0 => ()
     _ => {

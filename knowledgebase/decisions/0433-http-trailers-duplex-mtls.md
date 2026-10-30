@@ -192,8 +192,9 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a serv
   request's trailers only when declared; the parsed head carries the
   Trailer field (`Req.trailer`, `H2Req.trailer`) because Go removes it
   from the header.
-- Full duplex, h1 server and client (9486e60a7, golden `http_duplex`);
-  the h2 client duplex pump is still open (needs a non-blocking pipe poll).
+- Full duplex, h1 server and client (9486e60a7, golden `http_duplex`),
+  and the h2 client: a feeder task fills a queue the pump polls (the pump
+  reads the socket with a 10 ms deadline while the queue is empty).
 - mTLS, TLS 1.3 native (0aa379fa2): all five ClientAuth modes match Go.
   Open: TLS 1.2 client auth, and `with_cert` with system roots.
 

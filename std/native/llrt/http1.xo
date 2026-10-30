@@ -2117,6 +2117,8 @@ pub struct BodyPart {
   /// At the end of a chunked body: its trailer fields, [name, value, ...]
   /// (Chunked.trailers).
   pub trailers: List[Str] = []
+  /// no piece is ready yet (a duplex request body polled by h2_pump)
+  pub wait: Bool = false
 }
 
 fn part_err(x: Int, why: Str) -> BodyPart {
@@ -2768,6 +2770,8 @@ pub struct H2X {
   /// whether it ended
   src: List[fn(Int) -> BodyPart] = []
   src_end: Bool = false
+  /// the source had no piece yet (a duplex body, h2_pump polls it)
+  src_wait: Bool = false
   /// request trailers (decision 0433): the declared names and f, which
   /// gives [name, value, ...] once the body is sent; tsent when they went
   tnames: Str = ""
@@ -3179,8 +3183,14 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
     // the body, as the windows allow
     while !x.ended {
       if x.off >= x.body.len() && !x.src.is_empty() && !x.src_end {
-        // the source's next piece (decision 0404 stage C)
-        let p = x.src[0](32768)
+        // the source's next piece (decision 0404 stage C); a duplex body
+        // has a polling source after the blocking one
+        let p = x.src[x.src.len() - 1](32768)
+        if p.wait {
+          x.src_wait = true
+          break
+        }
+        x.src_wait = false
         if !p.err.is_empty() {
           // the stream is reset; the connection stays usable
           x.out = push_be32(push_frame(x.out, 4, H2T_RST, 0, x.id), 8)
@@ -3235,11 +3245,30 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
       if !x.flush(r) {
         break
       }
-      if x.pending() && x.swin > 0 && x.st.win > 0 {
+      if x.pending() && x.swin > 0 && x.st.win > 0 && !x.src_wait {
         continue
       }
     }
+    // a duplex body with no piece ready: read with a short deadline, then
+    // poll the source again (the request deadline is put back)
+    var tick = false
+    var orig = 0
+    if x.src_wait {
+      orig = hclient.get_deadline(r)
+      let t = hclient.cl_deadline(10000000)
+      if orig == 0 || t < orig {
+        hclient.put_deadline(r, t)
+        tick = true
+      }
+    }
     let f = hclient.h2_read(r)
+    if tick {
+      hclient.put_deadline(r, orig)
+    }
+    if f.is_empty() && tick && hclient.h2_rres(r) == hclient.CC_TIMEOUT && (orig == 0 || hclient.cl_deadline(0) < orig) {
+      x.src_wait = false
+      continue
+    }
     if f.is_empty() {
       let c = hclient.h2_rres(r)
       if c == CC_EOF {
