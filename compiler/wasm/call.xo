@@ -588,7 +588,39 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
   // a wide result (wide_result): the callee stores its results but those
   // left in homes at the block passed after the arguments
   let blk = if g.wide_result(ci) { g.sret_block(ci) } else { -1 }
-  let id = if g.susp.len() > ci && g.susp[ci] { g.resume_point() } else { -1 }
+  let sus = g.susp.len() > ci && g.susp[ci]
+  // the temporary copies of a call that can suspend are made before its
+  // resume point: a resumed call passes the same blocks, and reads the
+  // callee's results from them (made after it, a resumed call passed
+  // fresh copies of the arguments' old values and read those back)
+  var pre: Map[Int, Int] = {}
+  if sus {
+    var vh0: List[Int] = []
+    for (i, _) in x.args.indexed() {
+      if let Some(h) = g.pass.get(v * 4096 + i) {
+        vh0.push(h)
+      }
+    }
+    var ns0 = 0
+    for (i, a) in x.args.indexed() {
+      if !g.homes[ci].contains(i) {
+        continue
+      }
+      if g.pass.get(v * 4096 + i) != None {
+        continue
+      }
+      if g.rhomes[ci].contains(i) {
+        let (mp, _) = g.mem_of(a)
+        let mh = if g.held[a] >= 0 { g.held[a] } else { g.mfield[a] }
+        if mp >= 0 && !vh0.contains(mh) {
+          continue
+        }
+      }
+      pre[i] = g.temp_make(a, ns0)
+      ns0 += 1
+    }
+  }
+  let id = if sus { g.resume_point() } else { -1 }
   // per `var` result: the temporary block holding it (-1: none)
   var tmp: List[Int] = []
   for _ in 0..cf.results.len() {
@@ -625,12 +657,18 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
         }
         continue
       }
-      let t = g.temp_copy(a, ns)
+      let t = if let Some(pt) = pre.get(i) { pt } else { g.temp_copy(a, ns) }
+      if pre.contains(i) {
+        g.get(t)
+      }
       ns += 1
       frees.push(t)
       continue
     }
-    let t = g.temp_copy(a, ns)
+    let t = if let Some(pt) = pre.get(i) { pt } else { g.temp_copy(a, ns) }
+    if pre.contains(i) {
+      g.get(t)
+    }
     ns += 1
     for (j, pi) in cf.var_params.indexed() {
       if pi == i {
@@ -709,6 +747,14 @@ fn (var g: Gen) home_call(v: Int, ci: Int) {
 /// The k-th temporary of a call takes the k-th of the function's shared
 /// locals for them. A value in memory is copied with memory.copy.
 fn (var g: Gen) temp_copy(a: Int, k: Int) -> Int {
+  let t = g.temp_make(a, k)
+  g.get(t)
+  t
+}
+
+/// temp_copy without pushing the address: the copy is made where this is
+/// emitted, so a call that can suspend makes it before its resume point.
+fn (var g: Gen) temp_make(a: Int, k: Int) -> Int {
   while g.tslots.len() <= k {
     g.tslots.push(g.tmp("i32"))
   }
@@ -730,7 +776,6 @@ fn (var g: Gen) temp_copy(a: Int, k: Int) -> Int {
   } else {
     g.mem_store(t, 0, g.loc(a), ls)
   }
-  g.get(t)
   t
 }
 

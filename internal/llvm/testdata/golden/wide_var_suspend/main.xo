@@ -1,0 +1,160 @@
+struct M {
+  funcs: List[Int] = []
+  n: Int = 0
+  a0: Int = 0
+  l0: List[Int] = [0]
+  s0: Str = "s0"
+  a1: Int = 1
+  l1: List[Int] = [1]
+  s1: Str = "s1"
+  a2: Int = 2
+  l2: List[Int] = [2]
+  s2: Str = "s2"
+  a3: Int = 3
+  l3: List[Int] = [3]
+  s3: Str = "s3"
+  a4: Int = 4
+  l4: List[Int] = [4]
+  s4: Str = "s4"
+  a5: Int = 5
+  l5: List[Int] = [5]
+  s5: Str = "s5"
+  a6: Int = 6
+  l6: List[Int] = [6]
+  s6: Str = "s6"
+  a7: Int = 7
+  l7: List[Int] = [7]
+  s7: Str = "s7"
+  a8: Int = 8
+  l8: List[Int] = [8]
+  s8: Str = "s8"
+  a9: Int = 9
+  l9: List[Int] = [9]
+  s9: Str = "s9"
+  a10: Int = 10
+  l10: List[Int] = [10]
+  s10: Str = "s10"
+  a11: Int = 11
+  l11: List[Int] = [11]
+  s11: Str = "s11"
+  a12: Int = 12
+  l12: List[Int] = [12]
+  s12: Str = "s12"
+  a13: Int = 13
+  l13: List[Int] = [13]
+  s13: Str = "s13"
+  a14: Int = 14
+  l14: List[Int] = [14]
+  s14: Str = "s14"
+  a15: Int = 15
+  l15: List[Int] = [15]
+  s15: Str = "s15"
+  a16: Int = 16
+  l16: List[Int] = [16]
+  s16: Str = "s16"
+  a17: Int = 17
+  l17: List[Int] = [17]
+  s17: Str = "s17"
+  a18: Int = 18
+  l18: List[Int] = [18]
+  s18: Str = "s18"
+  a19: Int = 19
+  l19: List[Int] = [19]
+  s19: Str = "s19"
+  a20: Int = 20
+  l20: List[Int] = [20]
+  s20: Str = "s20"
+  a21: Int = 21
+  l21: List[Int] = [21]
+  s21: Str = "s21"
+  a22: Int = 22
+  l22: List[Int] = [22]
+  s22: Str = "s22"
+  a23: Int = 23
+  l23: List[Int] = [23]
+  s23: Str = "s23"
+  a24: Int = 24
+  l24: List[Int] = [24]
+  s24: Str = "s24"
+  a25: Int = 25
+  l25: List[Int] = [25]
+  s25: Str = "s25"
+  a26: Int = 26
+  l26: List[Int] = [26]
+  s26: Str = "s26"
+  a27: Int = 27
+  l27: List[Int] = [27]
+  s27: Str = "s27"
+  a28: Int = 28
+  l28: List[Int] = [28]
+  s28: Str = "s28"
+  a29: Int = 29
+  l29: List[Int] = [29]
+  s29: Str = "s29"
+  a30: Int = 30
+  l30: List[Int] = [30]
+  s30: Str = "s30"
+  a31: Int = 31
+  l31: List[Int] = [31]
+  s31: Str = "s31"
+  a32: Int = 32
+  l32: List[Int] = [32]
+  s32: Str = "s32"
+  a33: Int = 33
+  l33: List[Int] = [33]
+  s33: Str = "s33"
+  a34: Int = 34
+  l34: List[Int] = [34]
+  s34: Str = "s34"
+  a35: Int = 35
+  l35: List[Int] = [35]
+  s35: Str = "s35"
+  a36: Int = 36
+  l36: List[Int] = [36]
+  s36: Str = "s36"
+  a37: Int = 37
+  l37: List[Int] = [37]
+  s37: Str = "s37"
+  a38: Int = 38
+  l38: List[Int] = [38]
+  s38: Str = "s38"
+  a39: Int = 39
+  l39: List[Int] = [39]
+  s39: Str = "s39"
+}
+
+// a wide `var` parameter (passed by home) whose callee suspends: the
+// caller must read back the callee's updates, not a copy made again when
+// the call resumes
+fn work(var m: M, k: Int) -> Int {
+  let r = scope s {
+    let a = s.spawn(fn() -> Int { k + 1 })
+    let b = s.spawn(fn() -> Int { k + 2 })
+    a.await + b.await
+  }
+  m.funcs.push(r)
+  m.n += r
+  m.l3.push(r)
+  r
+}
+
+fn run(k: Int) -> Int {
+  var m = M{}
+  for i in 0..10 { m.funcs.push(i) }
+  let keep = m
+  let r = work(m, k)
+  if m.funcs.len() != 11 || m.n != r || keep.funcs.len() != 10 || m.l3.len() != 2 {
+    return -1
+  }
+  r
+}
+
+fn main(os: Os) {
+  var bad = 0
+  var t = 0
+  for k in 0..500 {
+    let r = run(k)
+    if r < 0 { bad += 1 } else { t += r }
+  }
+  os.stdio.println("bad=${bad} t=${t}")
+}

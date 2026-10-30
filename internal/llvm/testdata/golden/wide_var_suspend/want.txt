@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+bad=0 t=251000
+--- stderr

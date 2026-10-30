@@ -29,6 +29,12 @@ The module then fails to load: a function may have at most 1000 parameters and 1
 - Release checks: scripts/release-verify.sh runs scripts/wasi-smoke.sh against the unpacked archive under Node (and wasmtime when present): version, check, build hello for darwin/arm64 and linux/arm64, run the darwin result natively on a darwin host, run and test refused with XO1513. A WASI archive that cannot load fails the release, not the other archives.
 - Not signed or notarized (not an executable of the platform); sha256 beside it like the others.
 
+### Self-build status (2026-10-30)
+
+- The wasm build of xo built a different program than native xo and then double freed (wasm `home_call` copied a wide `var` argument after the resume label; gotchas/wasm-home-temp-copy-after-resume.md). Fixed: the wasm xo now compiles hello for linux/amd64 (byte identical to native xo's output) and darwin/arm64 (runs), under Node with `XO_WASM_V8_FLAGS=--liftoff-only` (TurboFan tier-up of the 80 MB module otherwise grows RSS past 8 GB).
+- `ld.xo write_exe` tolerates WASI's "no file modes" error from `set_mode` (the host decides the modes).
+- Still open: scripts/wasi-smoke.sh to pass end to end, the `XO_RELEASE_WASI=1 scripts/release.sh` dry run, and scripts/release-verify.sh.
+
 ## Alternatives
 
 - A WASI preview2 / threads build: wasmtime-only, sockets and threads not in the Node runtime the playground uses; not needed for the scope above.

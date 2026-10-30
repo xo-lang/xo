@@ -1123,6 +1123,13 @@ fn write_exe(os: Os, out: Str, b: Bytes) -> Str {
   var r = os.fs.write(tmp, b)
   if r.is_ok() {
     r = os.fs.set_mode(tmp, 0o755)
+    // a WASI host decides the modes (the xo that runs as a wasm module
+    // cannot set one): the file is written without
+    if let Err(Io(_, msg)) = r {
+      if msg.starts_with("operation not supported (WASI") {
+        r = Ok(())
+      }
+    }
   }
   if r.is_ok() {
     r = os.fs.rename(tmp, out)
