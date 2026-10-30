@@ -887,7 +887,10 @@ fn pe_link_half(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str,
   // linkers do: dbghelp finds a PDB moved since by its base name, which
   // an older one takes after the last backslash only
   let res = pe_resources(bin, stamps)
-  let peo = macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: res, fixed_base: race, pdb: pdb_named.replace("/", "\\"), debug: debug, prog_from: prog_from}
+  let peo = macho.PEOpts{entry: "xo_win_start", imports: macho.pe_imports(), resources: res, fixed_base: race, pdb: pdb_named.replace("/", "\\"), debug: debug, prog_from: prog_from, std_syms: match half {
+    Some(h) => h.syms
+    None => None
+  }}
   if store_check {
     // the store's link against the parts' (strip by atom): the same image
     match (macho.link_pe(objs, peo), macho.link_pe(check_objs, peo)) {

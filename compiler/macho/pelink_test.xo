@@ -460,9 +460,14 @@ test "a PE link from std's half is the full link of an edited program" {
   }
   expect(h.kept + h.dropped > 0) == true
   expect(h.id) == "id7"
+  // std's run of the symbol table, copied by the link from the half
+  match h.syms {
+    Some(y) => expect(y.n > 0 && y.ents.len() == 18 * y.n) == true
+    None => fault("the half has no symbol table run")
+  }
   for prog in [small, big] {
     let (want, _) = split_link(prog, imps)
-    match link_pe_layout(pe_half_objs(h) + [prog], PEOpts{entry: "start", imports: imps, prog_from: 1}) {
+    match link_pe_layout(pe_half_objs(h) + [prog], PEOpts{entry: "start", imports: imps, prog_from: 1, std_syms: h.syms}) {
       Ok((got, gl)) => {
         expect(pe_half_pins_ok(h, gl)) == true
         expect(got == want) == true

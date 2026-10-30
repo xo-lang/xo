@@ -64,6 +64,9 @@ pub struct PeHalf {
   /// a name for this half, made when it is captured: the PDB's cached
   /// std part (pdb_pre) is for the half of the same id only
   pub id: Str = ""
+  /// std's run of the COFF symbol table from the captured link
+  /// (PELayout.std_syms), for the next link's PEOpts.std_syms
+  pub syms: PeSyms? = None
 }
 
 /// The file offset of the image section at address rva (its section
@@ -159,13 +162,13 @@ pub fn capture_pe_half(img: Bytes, lay: PELayout, prog_from: Int) -> PeHalf? {
     }
     objs.push(ob)
   }
-  Some(PeHalf{objs: objs, n: prog_from, pins: pe_half_pins(lay), kept: kept, dropped: dropped})
+  Some(PeHalf{objs: objs, n: prog_from, pins: pe_half_pins(lay), kept: kept, dropped: dropped, syms: lay.std_syms})
 }
 
 /// std's objects of half h, for a link: std's then the program's.
 pub fn pe_half_objs(h: PeHalf) -> List[CObj] { h.objs }
 
-const PE_HALF_MAGIC = "xopehalf2\n"
+const PE_HALF_MAGIC = "xopehalf3\n"
 
 fn sw_csects(var b: BytesBuilder, ss: List[CSect]) {
   sw32(b, ss.len())
@@ -237,6 +240,24 @@ pub fn pe_half_encode(h: PeHalf) -> Bytes {
     }
   }
   sw_bytes(b, h.id.bytes())
+  match h.syms {
+    Some(y) => {
+      sw32(b, 1)
+      sw32(b, y.present.len())
+      for k in y.present {
+        sw32(b, k)
+      }
+      sw32(b, y.n)
+      sw_bytes(b, y.ents)
+      sw_bytes(b, y.strs)
+      sw32(b, y.extra.len())
+      for (oi, si) in y.extra {
+        sw32(b, oi)
+        sw32(b, si)
+      }
+    }
+    None => sw32(b, 0)
+  }
   b.freeze()
 }
 
@@ -284,10 +305,28 @@ pub fn pe_half_decode(b: Bytes) -> PeHalf? {
     maps.push(StoreMap{secs: secs, newk: newk})
   }
   let id = r.bytes().to_str() ?? ""
+  var syms: PeSyms? = None
+  if r.u32() == 1 {
+    let np2 = r.u32()
+    var present: List[Int] = List.with_capacity(np2)
+    for _ in 0..np2 {
+      present.push(r.u32())
+    }
+    let ns = r.u32()
+    let ents = r.bytes()
+    let strs = r.bytes()
+    let ne = r.u32()
+    var extra: List[(Int, Int)] = List.with_capacity(ne)
+    for _ in 0..ne {
+      let oi = r.u32()
+      extra.push((oi, r.u32()))
+    }
+    syms = Some(PeSyms{present: present, ents: ents, n: ns, strs: strs, extra: extra})
+  }
   if r.at != b.len() {
     return None
   }
-  Some(PeHalf{objs: objs, n: n, pins: pins, kept: kept, dropped: dropped, maps: maps, id: id})
+  Some(PeHalf{objs: objs, n: n, pins: pins, kept: kept, dropped: dropped, maps: maps, id: id, syms: syms})
 }
 
 /// Whether a link from half h put std's sections where the half's link

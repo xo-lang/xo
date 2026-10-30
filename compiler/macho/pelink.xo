@@ -66,6 +66,24 @@ pub struct PEOpts {
   /// after std's, and the import thunks after its code; -1: one .text,
   /// .rdata and .data (decision 0409 on PE)
   pub prog_from: Int = -1
+  /// std's run of the COFF symbol table from the link std's half was
+  /// captured from (PELayout.std_syms); None: made from std's objects
+  pub std_syms: PeSyms? = None
+}
+
+/// std's run of a split link's COFF symbol table (decision 0409 on PE):
+/// std's symbols in its pinned sections come first, their long names first
+/// in the string table, so a link from std's half copies both. present is
+/// the output sections in the image (the symbols' section numbers), ents
+/// the n symbols' 18 byte entries, strs their names' table from offset 4,
+/// and extra std's other symbols (object, symbol), placed with the
+/// program's.
+pub struct PeSyms {
+  pub present: List[Int]
+  pub ents: Bytes
+  pub n: Int
+  pub strs: Bytes
+  pub extra: List[(Int, Int)]
 }
 
 /// An input section's place: its output section and offset there.
@@ -188,6 +206,8 @@ pub struct PELayout {
   pub base: Int
   /// each object's symbols' targets (pehalf.xo capture_pe_half)
   targets: List[List[PETarget]] = []
+  /// a split link's std run of the symbol table (PeSyms)
+  pub std_syms: PeSyms? = None
 }
 
 /// link_pe and the layout it made.
@@ -662,13 +682,13 @@ pub fn link_pe_layout(objs0: List[CObj], o: PEOpts) -> Result[(Bytes, PELayout),
   if entry < 0 {
     return Err("the entry ${o.entry} is not defined")
   }
-  let img = pe_write(bufs, pats, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds)
-  Ok((img, PELayout{objs: split, places: places, rva: rva, dnames: dnames, base: PE_BASE, targets: targets}))
+  let (img, ssyms) = pe_write(bufs, pats, rva, hdr, entry, o, has_tls, tls_dir, idir, dlls.len(), iat_start, iat_size, objs, places, bss, dnames, dbg, rsds)
+  Ok((img, PELayout{objs: split, places: places, rva: rva, dnames: dnames, base: PE_BASE, targets: targets, std_syms: ssyms}))
 }
 
 /// The image: the DOS header, the PE headers and section table, the
 /// sections, then the COFF symbol table and string table.
-fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int, dnames: List[Str], dbg: Int, rsds: Int) -> Bytes {
+fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[Int], hdr: Int, entry: Int, o: PEOpts, has_tls: Bool, tls_dir: Int, idir: Int, ndll: Int, iat_start: Int, iat_size: Int, objs: List[CObj], places: List[List[PEPlace]], bss: Int, dnames: List[Str], dbg: Int, rsds: Int) -> (Bytes, PeSyms?) {
   // the section holding the linker's tables (pe_link's lt)
   let lt = if o.prog_from >= 0 { PO_PRDATA } else { PO_RDATA }
   var pats = pats0
@@ -706,10 +726,33 @@ fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[In
   }
   // the symbol table: each object's external and static symbols that are
   // in the image (not sections, not removed), with the output section's
-  // number and the offset in it
+  // number and the offset in it; a split link's std symbols in its pinned
+  // sections first (PeSyms), from the half's link when it has them
+  var num_of: List[Int] = List.with_capacity(bufs.len())
+  for _ in 0..bufs.len() {
+    num_of.push(0)
+  }
+  for (pi, k) in present.indexed() {
+    num_of[k] = pi + 1
+  }
+  let cached = match o.std_syms {
+    Some(c) => if o.prog_from >= 0 && c.present == present { Some(c) } else { None }
+    None => None
+  }
+  var ssyms: List[(Str, Int, Int, Int)] = []
   var syms: List[(Str, Int, Int, Int)] = []
-  for (oi, ob) in objs.indexed() {
-    for s in ob.syms {
+  var extra: List[(Int, Int)] = []
+  var from = 0
+  if let Some(c) = cached {
+    from = o.prog_from
+    for (oi, si) in c.extra {
+      let s = objs[oi].syms[si]
+      let p = places[oi][s.sect - 1]
+      syms.push((s.name, p.off + s.value, num_of[p.out], s.class))
+    }
+  }
+  for oi in from..objs.len() {
+    for (si, s) in objs[oi].syms.indexed() {
       if s.aux || s.sect <= 0 || !(s.class == IMAGE_SYM_CLASS_EXTERNAL || s.class == IMAGE_SYM_CLASS_STATIC) {
         continue
       }
@@ -717,13 +760,33 @@ fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[In
       if p.out < 0 || p.out >= PO_DEBUG || s.name.starts_with(".") || s.name.is_empty() {
         continue
       }
-      var num = 0
-      for (pi, k) in present.indexed() {
-        if k == p.out {
-          num = pi + 1
+      let e = (s.name, p.off + s.value, num_of[p.out], s.class)
+      if o.prog_from >= 0 && oi < o.prog_from {
+        if pe_half_pinned(o.prog_from, p.out) {
+          ssyms.push(e)
+          continue
+        }
+        extra.push((oi, si))
+      }
+      syms.push(e)
+    }
+  }
+  // std's run: its entries and names' table (the program's follows it)
+  let (sents, sstrs) = match cached {
+    Some(c) => (c.ents, c.strs)
+    None => {
+      var slong: List[Bytes] = []
+      for (n, _, _, _) in ssyms {
+        if n.len() > 8 {
+          slong.push(n.bytes())
         }
       }
-      syms.push((s.name, p.off + s.value, num, s.class))
+      let (t, soff) = strtab_build_at(slong, 3)
+      var e = new_out(18 * ssyms.len())
+      for (n, v, num, class) in ssyms {
+        coff_sym_ent(e, n, soff, v, num, class)
+      }
+      (e.done(), t[1..t.len()])
     }
   }
   var long: List[Bytes] = []
@@ -737,8 +800,22 @@ fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[In
       long.push(d.bytes())
     }
   }
-  let (strs, stroff) = coff_strtab(long)
-  var w = new_out(symtab + 18 * syms.len() + strs.len())
+  let (ptab, stroff) = strtab_build_at(long, 3 + sstrs.len())
+  var so = new_out(4 + sstrs.len() + ptab.len() - 1)
+  so.u32(4 + sstrs.len() + ptab.len() - 1)
+  so.bytes(sstrs)
+  so.bytes(ptab[1..ptab.len()])
+  let strs = so.done()
+  let nstd = match cached {
+    Some(c) => c.n
+    None => ssyms.len()
+  }
+  let sextra = match cached {
+    Some(c) => c.extra
+    None => extra
+  }
+  let run: PeSyms? = if o.prog_from >= 0 { Some(PeSyms{present: present, ents: sents, n: nstd, strs: sstrs, extra: sextra}) } else { None }
+  var w = new_out(symtab + 18 * (nstd + syms.len()) + strs.len())
   // the DOS header: MZ, e_lfanew at 0x3c
   w.u16(0x5a4d)
   w.zeros(58)
@@ -748,7 +825,7 @@ fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[In
   w.u16(present.len())
   w.u32(0)
   w.u32(symtab)
-  w.u32(syms.len())
+  w.u32(nstd + syms.len())
   w.u16(240)
   w.u16(0x22)
   // the optional header (PE32+)
@@ -839,21 +916,28 @@ fn pe_write(bufs: List[BytesBuilder], pats0: List[List[BytePatch]], rva: List[In
     w.n += d.len()
     w.zeros(pe_up(d.len(), PE_FILE_ALIGN) - d.len())
   }
+  w.bytes(sents)
   for (n, v, num, class) in syms {
-    if n.len() > 8 {
-      w.u32(0)
-      w.u32(stroff.get(n.bytes()) ?? 0)
-    } else {
-      w.name(n, 8)
-    }
-    w.u32(v)
-    w.u16(num)
-    w.u16(0)
-    w.u8(class)
-    w.u8(0)
+    coff_sym_ent(w, n, stroff, v, num, class)
   }
   w.bytes(strs)
-  w.done()
+  (w.done(), run)
+}
+
+/// A COFF symbol table entry: the name (a long one by its string table
+/// offset), value, section number and storage class.
+fn coff_sym_ent(var w: Out, n: Str, stroff: Map[Bytes, Int], v: Int, num: Int, class: Int) {
+  if n.len() > 8 {
+    w.u32(0)
+    w.u32(stroff.get(n.bytes()) ?? 0)
+  } else {
+    w.name(n, 8)
+  }
+  w.u32(v)
+  w.u16(num)
+  w.u16(0)
+  w.u8(class)
+  w.u8(0)
 }
 
 /// The names an object's `.xoweak` section lists (its weak definitions).

@@ -266,3 +266,17 @@ largest cost in the linux profile after the names-only PdbStd), std's
 half off against on is 0.766 (127.4 to 97.5 ms, RSS 0.815, 2026-10-30);
 the string table change alone is within noise of the build (0.985,
 0.973 to 1.001).
+Step 5 (2026-10-30): the COFF symbol table's std run. A split link writes
+std's symbols in its pinned sections (.text, .rdata, .data) first and
+their long names first in the string table (merged within std only; the
+program's names follow, merged among themselves), so std's run is the
+same bytes in every link from one half. The half keeps it (PeSyms: the
+image's sections, the 18 byte entries, the names' table, and std's
+symbols in other sections, which go with the program's; half format
+xopehalf3), and a link from it copies the run instead of walking std's
+symbols and building their table. The exe's symbol and string table
+order changed once (half and full links agree; nothing reads the order).
+`ab-host.sh` edit (the warm HTTP windows/amd64 cross build on the
+linux/arm64 host, n=30) against step 4: 0.956 (98.7 to 94.4 ms, 0.943
+to 0.979); on the Windows box a small program's hit pe.link_pe 4.9 to
+3.0 ms.
