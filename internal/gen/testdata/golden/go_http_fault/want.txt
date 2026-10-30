@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+ok: 200 2
+faulting request: no reply
+logged: index 10 out of range for List of length 3 at main.xo:23:24
+--- stderr

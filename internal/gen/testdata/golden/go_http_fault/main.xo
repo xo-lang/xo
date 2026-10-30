@@ -1,0 +1,46 @@
+use go "net/http"
+use go "net/http/httptest"
+use go "io"
+use go "log"
+use go "bytes"
+
+// An Xo handler that faults inside Go's net/http: the server's per
+// connection recover logs the recovered value, which must read as Xo's
+// fault text (it logged the raw value, `&{7 3 105 main.xo:20:13}`, since
+// the checked operations' panic values had no Error; 2026-10-30). The
+// log goes to a buffer; the line is printed without the client address.
+fn main(os: Os) -> () ! Error {
+  let buf = bytes.new_buffer(b"")
+  log.set_output(buf.as_writer())
+  log.set_flags(0)
+  let mux = http.new_serve_mux()
+  mux.handle_func("/", fn(w, req) {
+    let xs: List[Int] = [1, 2, 3]
+    // the index is the path's length (a runtime value): "/" indexes 1,
+    // "/long/path" is out of range
+    let path = if let Some(u) = req.url() { u.path() } else { "/" }
+    let n = path.len()
+    let _ = w.write("${xs[n]}".bytes()).ignore_err("the test reads the reply")
+  })
+  let srv = httptest.new_server(mux.as_handler())
+  let resp = http.get(srv.url() + "/")?
+  let body = io.read_all(resp.body().as_reader())?
+  let _ = resp.body().close().ignore_err("the body was read")
+  os.stdio.println("ok: ${resp.status_code()} ${body.to_str() ?? ""}")
+  // the handler faults; the server drops the connection and logs it
+  match http.get(srv.url() + "/long/path") {
+    Ok(r) => os.stdio.println("unexpected reply ${r.status_code()}")
+    Err(_) => os.stdio.println("faulting request: no reply")
+  }
+  srv.close()
+  // the first logged panic (Go's client retries a GET whose connection
+  // dropped before a reply, so the handler may fault twice)
+  let logged = buf.string()
+  let first = logged.split("\n").find(fn(l) { l.starts_with("http: panic serving ") }) ?? "none"
+  // "http: panic serving 127.0.0.1:PORT: <value>": the value after the address
+  let rest = if first.starts_with("http: panic serving ") { first["http: panic serving ".len()..first.len()] } else { first }
+  match rest.find(": ") {
+    Some(i) => os.stdio.println("logged: ${rest[i + 2..rest.len()]}")
+    None => os.stdio.println("logged: ${rest}")
+  }
+}

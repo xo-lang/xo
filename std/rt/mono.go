@@ -45,6 +45,20 @@ type arithFault struct {
 // run in a deferred function while the panic is in flight, so the stack
 // below runtime.gopanic is still the stack of the operation.
 func (x *arithFault) fault() *FaultErr {
+	return &FaultErr{Msg: x.message(), Loc: x.at, Stack: panicStack()}
+}
+
+// Error and String render the fault as Xo's text (the message and the
+// location, as FaultErr.Error without the frames), so a recover outside
+// Xo's runtime that prints the value shows the fault: net/http's per
+// connection recover logged `&{7 3 105 main.xo:20:13}` with %v (the
+// owner's Windows testing, 2026-10-30).
+func (x *arithFault) Error() string { return x.message() + " at " + x.at }
+
+func (x *arithFault) String() string { return x.Error() }
+
+// message is the fault's text without the location.
+func (x *arithFault) message() string {
 	var msg string
 	switch {
 	case x.op == 'i':
@@ -60,7 +74,7 @@ func (x *arithFault) fault() *FaultErr {
 	default:
 		msg = fmt.Sprintf("integer overflow: %s %c %s does not fit Int", istr(x.a), x.op, istr(x.b))
 	}
-	return &FaultErr{Msg: msg, Loc: x.at, Stack: panicStack()}
+	return msg
 }
 
 // AddI is checked `a + b` on Int: the sum overflowed when its sign differs

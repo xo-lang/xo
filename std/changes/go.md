@@ -1,5 +1,19 @@
 # std/go changes
 
+## 2026-10-30: fix: a fault Go recovers reads as Xo's fault text
+
+- Kind: fix
+- Commit: this commit
+- Found by: the owner's Windows testing (w21: net/http logged `&{7 3 105 main.xo:20:13}`)
+- Go reference: net/http's conn.serve recover (logs the value with %v)
+- Test: std/rt TestFaultValueText; internal/gen golden go_http_fault
+
+The checked operations' panic values (an index out of range, an
+overflow, a division by zero) render through Error and String as the
+fault's message and location, so a Go recover outside Xo's runtime that
+prints the value shows "index 10 out of range for List of length 3 at
+main.xo:23:24". The fault's own report (AsFault) is unchanged.
+
 ## 2026-10-29: feature: go.Recv, receiving from Go channels
 
 - Kind: feature

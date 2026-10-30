@@ -45,6 +45,16 @@ func (x *sizedFault) str(v int64) string {
 // arithFault.fault it runs in a deferred function while the panic is in
 // flight.
 func (x *sizedFault) fault() *FaultErr {
+	return &FaultErr{Msg: x.message(), Loc: x.at, Stack: panicStack()}
+}
+
+// Error and String: as arithFault's (a recover outside Xo's runtime
+// prints the value).
+func (x *sizedFault) Error() string { return x.message() + " at " + x.at }
+
+func (x *sizedFault) String() string { return x.Error() }
+
+func (x *sizedFault) message() string {
 	var msg string
 	name := sizedNames[x.ty]
 	switch {
@@ -57,7 +67,7 @@ func (x *sizedFault) fault() *FaultErr {
 	default:
 		msg = fmt.Sprintf("integer overflow: %s %c %s does not fit %s", x.str(x.a), x.op, x.str(x.b), name)
 	}
-	return &FaultErr{Msg: msg, Loc: x.at, Stack: panicStack()}
+	return msg
 }
 
 // int8: checked + - * / % and << >> on Int8.
