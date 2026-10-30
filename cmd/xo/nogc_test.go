@@ -71,11 +71,16 @@ func TestNoGCTests(t *testing.T) {
 		t.Run(filepath.Base(dir), func(t *testing.T) {
 			t.Parallel()
 			goCode, goOut := xoTest(t, "-v", dir)
+			// the native backends in parallel after the Go backend's report
+			// (compiler/check's three builds in turn took 108 s, 2026-10-30)
 			for _, be := range backends {
-				code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)
-				if code != goCode || out != goOut {
-					t.Errorf("%s on %s differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", dir, be, goCode, code, goOut, be, out)
-				}
+				t.Run(be, func(t *testing.T) {
+					t.Parallel()
+					code, out := xoTest(t, "--no-gc", "--backend="+be, "-v", dir)
+					if code != goCode || out != goOut {
+						t.Errorf("%s on %s differs from the Go backend (exit %d, %d)\n--- go\n%s--- %s\n%s", dir, be, goCode, code, goOut, be, out)
+					}
+				})
 			}
 		})
 	}
@@ -156,92 +161,98 @@ func TestNoGCTestLeaks(t *testing.T) {
 	for _, dir := range []string{filepath.Join("testdata", "nogc", "same"), filepath.Join("testdata", "nogc", "prop"), filepath.Join("testdata", "nogc", "userfs"), filepath.Join("..", "..", "examples", "notes-service")} {
 		n := testBlocks(t, dir)
 		for _, be := range backends {
-			res, err := xotool.Build([]string{dir}, xotool.Options{Mode: xotool.ModeTest, NoGC: true, Backend: be, Out: filepath.Join(t.TempDir(), "tests")})
-			if err != nil || res.Failed {
-				t.Fatalf("%s on %s: %v %s", dir, be, err, res.Output)
-			}
-			bin := res.Binaries[xotool.Host()]
-			// the test binary numbers the test blocks of its root modules
-			// from 0 (contract fuzz tests are not in a native binary);
-			// the tests run in the module's directory
-			tdir, _ := filepath.Abs(dir)
-			passed := make([]bool, n)
+			// each module and backend builds and checks in parallel (built
+			// one after another, the builds were most of the test's 231 s
+			// in the full tier, 2026-10-30)
 			t.Run(fmt.Sprintf("%s/%s", filepath.Base(dir), be), func(t *testing.T) {
-				for index := 0; index < n; index++ {
-					// one process per test: they run in parallel
-					t.Run(strconv.Itoa(index), func(t *testing.T) {
-						t.Parallel()
-						cmd := command(t, bin)
-						cmd.Dir = tdir
-						cmd.Env = append(cmd.Env, "XO_TEST="+strconv.Itoa(index), "XO_LEAKCHECK=1")
-						var errb bytes.Buffer
-						cmd.Stdout, cmd.Stderr = io.Discard, &errb
-						if cmd.Run() != nil {
-							return // a failing test exits without the check
-						}
-						passed[index] = true
-						m := leakLine.FindStringSubmatch(errb.String())
-						if m == nil {
-							t.Errorf("%s test %d on %s: no leak check line:\n%s", dir, index, be, errb.String())
-							return
-						}
-						if m[1] != "0" {
-							t.Errorf("%s test %d on %s: %s allocations live at exit (of %s)", dir, index, be, m[1], m[2])
-						}
-					})
+				t.Parallel()
+				res, err := xotool.Build([]string{dir}, xotool.Options{Mode: xotool.ModeTest, NoGC: true, Backend: be, Out: filepath.Join(t.TempDir(), "tests")})
+				if err != nil || res.Failed {
+					t.Fatalf("%s on %s: %v %s", dir, be, err, res.Output)
+				}
+				bin := res.Binaries[xotool.Host()]
+				// the test binary numbers the test blocks of its root modules
+				// from 0 (contract fuzz tests are not in a native binary);
+				// the tests run in the module's directory
+				tdir, _ := filepath.Abs(dir)
+				passed := make([]bool, n)
+				t.Run("leak", func(t *testing.T) {
+					for index := 0; index < n; index++ {
+						// one process per test: they run in parallel
+						t.Run(strconv.Itoa(index), func(t *testing.T) {
+							t.Parallel()
+							cmd := command(t, bin)
+							cmd.Dir = tdir
+							cmd.Env = append(cmd.Env, "XO_TEST="+strconv.Itoa(index), "XO_LEAKCHECK=1")
+							var errb bytes.Buffer
+							cmd.Stdout, cmd.Stderr = io.Discard, &errb
+							if cmd.Run() != nil {
+								return // a failing test exits without the check
+							}
+							passed[index] = true
+							m := leakLine.FindStringSubmatch(errb.String())
+							if m == nil {
+								t.Errorf("%s test %d on %s: no leak check line:\n%s", dir, index, be, errb.String())
+								return
+							}
+							if m[1] != "0" {
+								t.Errorf("%s test %d on %s: %s allocations live at exit (of %s)", dir, index, be, m[1], m[2])
+							}
+						})
+					}
+				})
+				// the passing tests in one process (XO_TEST_BATCH, decision
+				// 0235): every run ends, the world reset between them frees
+				// what each kept, and nothing is live at exit
+				var runs []string
+				for index, ok := range passed {
+					if ok {
+						runs = append(runs, strconv.Itoa(index)+"/1")
+					}
+				}
+				if len(runs) == 0 {
+					return
+				}
+				cmd := command(t, bin)
+				cmd.Dir = tdir
+				cmd.Env = append(cmd.Env, "XO_TEST=0", "XO_TEST_BATCH="+strings.Join(runs, ","), "XO_LEAKCHECK=1")
+				var outb, errb bytes.Buffer
+				cmd.Stdout, cmd.Stderr = &outb, &errb
+				if err := cmd.Run(); err != nil {
+					t.Errorf("%s batch on %s: %v\n%s%s", dir, be, err, outb.String(), errb.String())
+					return
+				}
+				if got := strings.Count(outb.String(), "XO-TEST-END\n"); got != len(runs) {
+					t.Errorf("%s batch on %s: %d of %d runs ended\n%s", dir, be, got, len(runs), outb.String())
+				}
+				if m := leakLine.FindStringSubmatch(errb.String()); m == nil || m[1] != "0" {
+					t.Errorf("%s batch on %s: leak check: %q", dir, be, errb.String())
+				}
+				if filepath.Base(dir) != "prop" {
+					return
+				}
+				// a serving binary (XO_TEST_SERVE, shrinking over a pipe):
+				// with an empty best every replay is not smaller, so each
+				// run skips its body after its inputs are made, and those
+				// inputs are freed
+				cmd = command(t, bin)
+				cmd.Dir = tdir
+				cmd.Env = append(cmd.Env, "XO_TEST=0", "XO_TEST_SERVE=1", "XO_LEAKCHECK=1")
+				cmd.Stdin = strings.NewReader("0/1/r=1,1/b=\n0/1/r=2,2/b=\n0/1/r=3,3/b=\n")
+				outb.Reset()
+				errb.Reset()
+				cmd.Stdout, cmd.Stderr = &outb, &errb
+				if err := cmd.Run(); err != nil {
+					t.Errorf("%s serve on %s: %v\n%s%s", dir, be, err, outb.String(), errb.String())
+					return
+				}
+				if got, skips := strings.Count(outb.String(), "XO-TEST-END\n"), strings.Count(outb.String(), "XO-PROP-NOT-SMALLER\n"); got != 3 || skips != 3 {
+					t.Errorf("%s serve on %s: %d runs ended, %d not smaller, want 3 and 3\n%s", dir, be, got, skips, outb.String())
+				}
+				if m := leakLine.FindStringSubmatch(errb.String()); m == nil || m[1] != "0" {
+					t.Errorf("%s serve on %s: leak check: %q", dir, be, errb.String())
 				}
 			})
-			// the passing tests in one process (XO_TEST_BATCH, decision
-			// 0235): every run ends, the world reset between them frees
-			// what each kept, and nothing is live at exit
-			var runs []string
-			for index, ok := range passed {
-				if ok {
-					runs = append(runs, strconv.Itoa(index)+"/1")
-				}
-			}
-			if len(runs) == 0 {
-				continue
-			}
-			cmd := command(t, bin)
-			cmd.Dir = tdir
-			cmd.Env = append(cmd.Env, "XO_TEST=0", "XO_TEST_BATCH="+strings.Join(runs, ","), "XO_LEAKCHECK=1")
-			var outb, errb bytes.Buffer
-			cmd.Stdout, cmd.Stderr = &outb, &errb
-			if err := cmd.Run(); err != nil {
-				t.Errorf("%s batch on %s: %v\n%s%s", dir, be, err, outb.String(), errb.String())
-				continue
-			}
-			if got := strings.Count(outb.String(), "XO-TEST-END\n"); got != len(runs) {
-				t.Errorf("%s batch on %s: %d of %d runs ended\n%s", dir, be, got, len(runs), outb.String())
-			}
-			if m := leakLine.FindStringSubmatch(errb.String()); m == nil || m[1] != "0" {
-				t.Errorf("%s batch on %s: leak check: %q", dir, be, errb.String())
-			}
-			if filepath.Base(dir) != "prop" {
-				continue
-			}
-			// a serving binary (XO_TEST_SERVE, shrinking over a pipe):
-			// with an empty best every replay is not smaller, so each
-			// run skips its body after its inputs are made, and those
-			// inputs are freed
-			cmd = command(t, bin)
-			cmd.Dir = tdir
-			cmd.Env = append(cmd.Env, "XO_TEST=0", "XO_TEST_SERVE=1", "XO_LEAKCHECK=1")
-			cmd.Stdin = strings.NewReader("0/1/r=1,1/b=\n0/1/r=2,2/b=\n0/1/r=3,3/b=\n")
-			outb.Reset()
-			errb.Reset()
-			cmd.Stdout, cmd.Stderr = &outb, &errb
-			if err := cmd.Run(); err != nil {
-				t.Errorf("%s serve on %s: %v\n%s%s", dir, be, err, outb.String(), errb.String())
-				continue
-			}
-			if got, skips := strings.Count(outb.String(), "XO-TEST-END\n"), strings.Count(outb.String(), "XO-PROP-NOT-SMALLER\n"); got != 3 || skips != 3 {
-				t.Errorf("%s serve on %s: %d runs ended, %d not smaller, want 3 and 3\n%s", dir, be, got, skips, outb.String())
-			}
-			if m := leakLine.FindStringSubmatch(errb.String()); m == nil || m[1] != "0" {
-				t.Errorf("%s serve on %s: leak check: %q", dir, be, errb.String())
-			}
 		}
 	}
 }
@@ -374,6 +385,7 @@ func TestNoGCNotesServer(t *testing.T) {
 // compiler/xo testcache.xo) reuses an unchanged program's binary and test
 // list, and an edit, a new file, or a changed xo.mod misses it.
 func TestNoGCRunCache(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds test binaries")
 	}

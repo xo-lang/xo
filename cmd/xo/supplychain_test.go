@@ -42,19 +42,31 @@ func TestSupplyChainAttacks(t *testing.T) {
 	})
 	// the run time rows again on the native backends (decision 0175):
 	// reported apart, they are the same scenarios
+	// (in parallel, each in its own world: in turn they were most of the
+	// test's 147 s in the full tier, 2026-10-30)
 	var natives []scResult
 	if !testing.Short() {
-		for _, be := range nativeBackends(t) {
-			for _, a := range scAttacks {
-				if a.native == nil {
-					continue
-				}
-				stage, detail := a.native(t, []string{"--no-gc", "--backend=" + be})
-				natives = append(natives, scResult{Attack: a.name + " (" + be + ", --no-gc)", Class: a.class, Stage: stage, Detail: detail, Want: a.want})
-				if stage != a.want {
-					t.Errorf("%s on %s: blocked at %q, expected %q (%s)", a.name, be, stage, a.want, detail)
+		var rows []*scResult
+		t.Run("native", func(t *testing.T) {
+			for _, be := range nativeBackends(t) {
+				for _, a := range scAttacks {
+					if a.native == nil {
+						continue
+					}
+					r := &scResult{Attack: a.name + " (" + be + ", --no-gc)", Class: a.class, Want: a.want}
+					rows = append(rows, r)
+					t.Run(a.name+"/"+be, func(t *testing.T) {
+						t.Parallel()
+						r.Stage, r.Detail = a.native(t, []string{"--no-gc", "--backend=" + be})
+						if r.Stage != a.want {
+							t.Errorf("%s on %s: blocked at %q, expected %q (%s)", a.name, be, r.Stage, a.want, r.Detail)
+						}
+					})
 				}
 			}
+		})
+		for _, r := range rows {
+			natives = append(natives, *r)
 		}
 	}
 	if os.Getenv("XO_SC_REPORT") != "" {

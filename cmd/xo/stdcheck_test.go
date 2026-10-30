@@ -80,6 +80,7 @@ func nativeCheck(t *testing.T, dir string) []stdDiag {
 // every runtime file with a body: in a copy of std with a function that
 // does not check appended to each, each one is reported.
 func TestStdChecks(t *testing.T) {
+	t.Parallel()
 	root, err := xotool.Root()
 	if err != nil {
 		t.Fatal(err)

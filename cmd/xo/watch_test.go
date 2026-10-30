@@ -41,6 +41,7 @@ func alive(pid int) bool { return pid > 0 && syscall.Kill(pid, 0) == nil }
 // restarts it after one that does (SIGTERM, the new pid), keeps it after
 // a failed build, and stops it when xo gets a stop request.
 func TestRunWatch(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds the program four times")
 	}
@@ -185,6 +186,7 @@ func (c testCycle) statuses() map[string]string {
 // tests an edit reaches: the one test that names a changed function, a
 // failing one after a broken edit, and a new test file's tests.
 func TestTestWatch(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds the tests four times")
 	}

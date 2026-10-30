@@ -13,6 +13,7 @@ import (
 // a gate's `xo test --std-module=time`, a module with no tests, printed
 // "ok: 0 passed" and read as a pass).
 func TestXoTestNoTests(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) uses (stdio) {\n  os.stdio.println(\"hi\")\n}\n"), 0o644); err != nil {
 		t.Fatal(err)

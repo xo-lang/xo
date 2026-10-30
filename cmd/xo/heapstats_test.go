@@ -31,6 +31,7 @@ var heapStatsLine = regexp.MustCompile(`on free lists (\d+) MB`)
 // that mode leaves alone: 0 MB here, and 17592186044415 MB when pops
 // outnumbered the counted frees).
 func TestHeapStatsFreeLists(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds and runs a native program")
 	}

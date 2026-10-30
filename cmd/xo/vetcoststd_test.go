@@ -27,6 +27,7 @@ var vetCostStdCodes = map[string]bool{"XO0913": true, "XO0914": true}
 // stale entries. It lives here, not in internal/repotest beside
 // TestRawAddrKeepsBuffer, because it needs the xo binary.
 func TestVetCostStd(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds every bench/perf program")
 	}

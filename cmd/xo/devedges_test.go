@@ -14,6 +14,7 @@ import (
 // methods that implement it, which the checker's reference resolution
 // alone does not name.
 func TestDevEdges(t *testing.T) {
+	t.Parallel()
 	dir := filepath.Join(repoRoot, "internal", "llvm", "testdata", "golden", "strwhere")
 	plain := devEdges(t, dir)
 	if len(plain) < 100 {

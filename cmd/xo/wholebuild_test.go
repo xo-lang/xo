@@ -48,6 +48,7 @@ test "one" {
 // once leave a whole binary. `xo test` of a program with a warning hits
 // and prints the warning (such a build was never stored before).
 func TestWholeBuildCache(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -235,6 +236,7 @@ func TestWholeBuildCache(t *testing.T) {
 // 2026-10-29 a hit wrote only the .exe). A PDB the build did not write (an
 // older one left beside a build that writes none, -s) stores no entry.
 func TestWholeBuildWindowsPDB(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

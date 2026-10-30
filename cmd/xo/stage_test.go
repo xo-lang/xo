@@ -216,6 +216,7 @@ func TestBuildWorkDirsPrivate(t *testing.T) {
 // tables are still in the program after the directory is gone (dsymutil
 // finds the objects by --oso-prepend-path).
 func TestBuildCCLinkOSOPaths(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("darwin/arm64: the Mach-O debug map")
 	}
@@ -390,6 +391,7 @@ func TestReleaseTracebackDebugInfo(t *testing.T) {
 // std directories are relative to the working directory (--trimpath, on by
 // default; decision 0354's addendum, Go's -trimpath).
 func TestBuildCarriesNoBuildPaths(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

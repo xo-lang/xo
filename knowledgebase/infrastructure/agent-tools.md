@@ -160,6 +160,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- Idle test steps (2026-10-30): `python3 scripts/serial-hold.py
+  $logs/STEP.json` lists a gate step's serial top-level tests and how many
+  tests ran at once per 100 s; go test runs serial tests alone before the
+  parallel ones resume (gotchas/go-serial-tests-hold-parallel.md), so a
+  slow step's first check is this, then t.Parallel on each test without
+  process-wide state.
+
 - New intrinsics (2026-10-25): an rt intrinsic that lands before its
   first std caller (a seed has to know it first, gotchas/seed-older-than-intrinsics.md)
   still lands with a test that builds a caller on every backend that

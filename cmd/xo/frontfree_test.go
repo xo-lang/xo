@@ -16,6 +16,7 @@ import (
 // checker data through the passes. --phase-times prints the phase
 // front_end_freed where the front end goes; XO_KEEP_FRONT=1 keeps it.
 func TestFrontEndFreedByDefault(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

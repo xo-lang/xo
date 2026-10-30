@@ -22,6 +22,7 @@ fn main(os: Os) {
 // (rc shows the borrow inference), and after the inliner (the call of sq is
 // replaced by its body).
 func TestDumpFn(t *testing.T) {
+	t.Parallel()
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/df\n"), 0o644); err != nil {
 		t.Fatal(err)
