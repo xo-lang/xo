@@ -870,7 +870,10 @@ pub fn lookup_host(lists: Str, host: Str) -> List[Str] {
   let n = resolve(host, "0", 0, false, out, NADDR)
   if n < 0 {
     mfree(out)
-    let noname = n == dns.EAI_NONAME || (os() == 2 && n == -8) || (os() == 3 && n == -11001)
+    // EAI_NODATA too, as Go's resolvers: a name with no address (a
+    // Docker resolver answers .invalid names so, the linux/arm64 offload
+    // host, 2026-10-30) is `no such host`, not its gai text
+    let noname = n == dns.EAI_NONAME || n == dns.EAI_NODATA || (os() == 2 && n == -8) || (os() == 3 && n == -11001)
     fail(c, 4, if noname { "lookup ${host}: no such host" } else { "lookup ${host}: ${gai_text(n)}" })
     return []
   }

@@ -2396,3 +2396,17 @@ upper go from 1.755 and 1.696 of LLVM's instructions to 0.644 of main's
 because its expansion stopped being SWAR words clang no longer widened.
 The two mixed rows cost 0.5 to 0.6 percent of instructions with every wall
 within noise, which the lead accepted on purpose (decision 0373).
+
+## 2026-10-30: fix: Net.lookup_host reports a name with no address as `no such host`
+
+- Kind: fix
+- Commit: this commit
+- Found by: the net_lookup_dial_timeout golden on the linux/arm64 offload host (tiers 28 and 29)
+- Go reference: net/cgo_unix.go (EAI_NONAME and EAI_NODATA are both errNoSuchHost), the pure Go resolver's errNoSuchHost for a name with no records
+- Test: internal/llvm/testdata/golden/net_lookup_dial_timeout on the linux/arm64 host
+
+A lookup the resolver answered with EAI_NODATA (the name exists, or its DNS
+server says so, with no address: a Docker resolver answers `.invalid` names
+this way) gave `lookup NAME: No address associated with hostname`, the
+resolver's own text, where Go says `lookup NAME: no such host`. Both codes
+are `no such host` now, as in Go.
