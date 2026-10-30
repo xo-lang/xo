@@ -277,6 +277,10 @@ pub fn encode_op(o: Op) -> Int {
     "ccmp" | "ccmn" => return ccmp_word(o.m, o.ops)
     "rev" | "rbit" | "clz" => return unary_word(o.m, o.ops)
     "crc32x" => return crc32x_word(o.ops)
+    "crc32cx" => {
+      let w = crc32x_word(o.ops)
+      return if w < 0 { w } else { w | 0x1000 }
+    }
     "stadd" | "ldaddal" | "ldadd" | "ldaddl" | "ldadda" | "staddl" | "swp" | "swpa" | "swpl" | "swpal" => return atomic_word(o.m, o.ops)
     "cas" | "casa" | "casl" | "casal" => return cas_word(o.m, o.ops)
     "ldxr" | "ldaxr" | "stxr" | "stlxr" | "ldar" | "stlr" => return excl_word(o.m, o.ops)

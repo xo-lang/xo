@@ -1625,6 +1625,11 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         g.set(v, [g.def1(false, "crc32x $wd0, $wu0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
       }
     }
+    "rt.crc32cx" => {
+      if !g.has_val[v] {
+        g.set(v, [g.def1(false, "crc32cx $wd0, $wu0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+      }
+    }
     "rt.u64_borrow" => {
       if !g.has_val[v] {
         g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(x.args[0]), g.word(x.args[1])])])

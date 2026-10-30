@@ -182,14 +182,27 @@ pub fn crc32x(crc: Int, w: Int) -> Int { crc32x_soft(crc, w) }
 
 /// crc32x a bit at a time, with no branch on the data: each step shifts
 /// one bit out and adds the polynomial under a mask of that bit.
-pub fn crc32x_soft(crc: Int, w: Int) -> Int {
+pub fn crc32x_soft(crc: Int, w: Int) -> Int { crc_word_soft(crc, w, 0xEDB88320) }
+
+/// crc32x for the Castagnoli polynomial (hash/crc32's Castagnoli table,
+/// std/crc32 Poly.Castagnoli): arm64's crc32cx, under the same HW_CRC32
+/// bit (the CRC32 extension has both). Call it only when hw() has
+/// HW_CRC32; the body is the reference.
+pub fn crc32cx(crc: Int, w: Int) -> Int { crc32cx_soft(crc, w) }
+
+/// crc32cx a bit at a time.
+pub fn crc32cx_soft(crc: Int, w: Int) -> Int { crc_word_soft(crc, w, 0x82F63B78) }
+
+/// The reflected CRC-32 with polynomial poly of crc's low 32 bits over
+/// the eight bytes of w, the lowest first, a bit a step.
+fn crc_word_soft(crc: Int, w: Int, poly: Int) -> Int {
   var c = (crc ^ w) & 0xffffffff
   for _ in 0..32 {
-    c = c.shr_logical(1) ^ (0xEDB88320 & (0 - (c & 1)))
+    c = c.shr_logical(1) ^ (poly & (0 - (c & 1)))
   }
   c = c ^ (w.shr_logical(32) & 0xffffffff)
   for _ in 0..32 {
-    c = c.shr_logical(1) ^ (0xEDB88320 & (0 - (c & 1)))
+    c = c.shr_logical(1) ^ (poly & (0 - (c & 1)))
   }
   c
 }

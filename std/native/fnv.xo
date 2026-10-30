@@ -26,19 +26,21 @@ fn sum128(data: Bytes) -> Bytes { bytes128(step128(OFFSET128_HI, OFFSET128_LO, d
 fn sum128a(data: Bytes) -> Bytes { bytes128(step128(OFFSET128_HI, OFFSET128_LO, data, true)) }
 
 fn update32(sum: Int, data: Bytes) -> Int {
-  var h = sum & 0xffffffff
+  // the low 32 bits of a product depend only on the low 32 bits of its
+  // factors: one mask at the end, none on the multiply chain
+  var h = sum
   for i in 0..data.len() {
-    h = (h.wrapping_mul(PRIME32) & 0xffffffff) ^ Int(data[i])
+    h = h.wrapping_mul(PRIME32) ^ Int(data[i])
   }
-  h
+  h & 0xffffffff
 }
 
 fn update32a(sum: Int, data: Bytes) -> Int {
-  var h = sum & 0xffffffff
+  var h = sum
   for i in 0..data.len() {
-    h = (h ^ Int(data[i])).wrapping_mul(PRIME32) & 0xffffffff
+    h = (h ^ Int(data[i])).wrapping_mul(PRIME32)
   }
-  h
+  h & 0xffffffff
 }
 
 fn update64(sum: Int, data: Bytes) -> Int {

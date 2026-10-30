@@ -6,6 +6,7 @@
 // AESE/AESMC and PMULL (inline asm on LLVM); SHA-256's compression is
 // SHA256H, SHA256H2, SHA256SU0, and SHA256SU1.
 use std/compress
+use std/crc32
 use std/internal
 
 fn main(os: Os) {
@@ -27,7 +28,9 @@ fn main(os: Os) {
   internal.list_swap_both(xs, ys, ys)
   // gzip's CRC-32 of its input (flate.crc32)
   let z = compress.gzip(k)
-  os.stdio.println("${z.len()} ${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()} ${h.to_hex()} ${s3.to_hex()} ${f.len() + u.len()}")
+  // std/crc32's Castagnoli (crc32.castagnoli)
+  let cz = crc32.checksum(k, crc32.Poly.Castagnoli)
+  os.stdio.println("${z.len() + cz} ${p.to_hex()} ${g.to_hex()} ${c.to_hex()} ${cc.to_hex()} ${h.to_hex()} ${s3.to_hex()} ${f.len() + u.len()}")
 }
 
 // ASCII case folding on mixed case text is one 16 byte lane: the range
@@ -94,6 +97,13 @@ fn main(os: Os) {
 // arm64: "crc32x w[0-9]+, w[0-9]+, x[0-9]+"
 // amd64: -"crc32x"
 // llvm/arm64: "crc32x \$\{0:w\}"
+
+// std/crc32's Castagnoli a word a step with arm64's crc32cx (decision
+// 0231 addendum, 2026-10-29; Go's castagnoliUpdate on arm64).
+// func crc32.castagnoli
+// arm64: "crc32cx w[0-9]+, w[0-9]+, x[0-9]+"
+// amd64: -"crc32cx"
+// llvm/arm64: "crc32cx \$\{0:w\}"
 
 // Keccak-f[1600] with arm64's SHA3 extension (cpu.keccak_f1600, ssa
 // a64keccak.xo, Go's keccakF1600NEON; 2026-10-28): theta's eor3 and

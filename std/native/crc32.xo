@@ -2,9 +2,10 @@
 // crc32_generic.go of go1.26.1). IEEE is std/native/llrt/flate.xo's
 // slicing-by-8 update, which gzip and zip use, with arm64's crc32x
 // instruction where the CPU has it (decision 0231 addendum); Castagnoli
-// is the same slicing-by-8 over its own table (Go's slicing8Table of
-// MakeTable(Castagnoli)), in software for now.
+// is arm64's crc32cx where the CPU has it, else the same slicing-by-8
+// over its own table (Go's slicing8Table of MakeTable(Castagnoli)).
 use std/crc32
+use native/llrt/cpu
 use native/llrt/flate
 use native/rt
 
@@ -24,6 +25,13 @@ fn castagnoli(crc0: Int, b: Bytes) -> Int {
   var c = crc0 ^ 0xffffffff
   var i = 0
   let n = b.len()
+  // arm64's crc32cx, a word a step (Go's castagnoliUpdate on arm64)
+  if (cpu.hw() & cpu.HW_CRC32) != 0 {
+    while i + 8 <= n {
+      c = cpu.crc32cx(c, rt.bytes_word(b, i))
+      i += 8
+    }
+  }
   while i + 8 <= n {
     let w = rt.bytes_word(b, i)
     c = c ^ (w & 0xffffffff)

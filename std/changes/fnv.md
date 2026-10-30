@@ -1,5 +1,18 @@
 # std/fnv changes
 
+## 2026-10-29: perf: the 32 bit sums mask once
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/hash fnv32a at 1.289x Go's wall
+- Go reference: hash/fnv fnv.go (sum32 and sum32a in uint32)
+- Test: internal/stdtest/testdata/corpus/fnv on arm64, LLVM and Go
+- Timing: bench/perf/hash fnv32a, quiet --ab 15 rounds: wall 0.792 (0.786 to 0.811) of the parent's, 1.037 (0.996 to 1.054) of Go's
+
+`sum32`, `sum32a`, `update32` and `update32a` keep the 64 bit product and
+take its low 32 bits once at the end (they depend only on the low bits),
+not after every byte on the multiply chain.
+
 ## 2026-10-29: port: std/fnv, Go's hash/fnv
 
 - Kind: port

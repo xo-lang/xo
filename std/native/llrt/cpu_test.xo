@@ -41,6 +41,24 @@ test "crc32x is its body (the instruction where the CPU has it)" {
   expect(crc32x_soft(0xffffffff, 0x3837363534333231) ^ 0xffffffff) == 2598427311
 }
 
+test "crc32cx is its body (the instruction where the CPU has it)" {
+  var x = 88172645463325252
+  for _ in 0..2000 {
+    x = x ^ x.wrapping_shl(13)
+    x = x ^ x.shr_logical(7)
+    x = x ^ x.wrapping_shl(17)
+    let crc = x.shr_logical(29)
+    let w = x.wrapping_mul(2685821657736338717)
+    let want = crc32cx_soft(crc & 0xffffffff, w)
+    if (hw() & HW_CRC32) != 0 {
+      expect(crc32cx(crc & 0xffffffff, w)) == want
+    }
+    expect(want & 0xffffffff) == want
+  }
+  // "12345678" from the initial value, then inverted: CRC-32C (iSCSI)
+  expect(crc32cx_soft(0xffffffff, 0x3837363534333231) ^ 0xffffffff) == 1619493018
+}
+
 /// The round constants for keccak_f1600 (sha3.xo RCS).
 const TEST_RCS: List[Int] = [1, 32898, -9223372036854742902, -9223372034707259392, 32907, 2147483649, -9223372034707259263, -9223372036854743031, 138, 136, 2147516425, 2147483658, 2147516555, -9223372036854775669, -9223372036854742903, -9223372036854743037, -9223372036854743038, -9223372036854775680, 32778, -9223372034707292150, -9223372034707259263, -9223372036854742912, 2147483649, -9223372034707259384]
 

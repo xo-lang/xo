@@ -290,6 +290,24 @@ whole and split at every offset, crc32_list), compiler/macho's encoding
 table, test/codegen/intrinsics flate.crc32 (crc32x on arm64 and
 llvm/arm64, absent on amd64).
 
+## Addendum (2026-10-29): CRC-32C a word at a time (crc32cx)
+
+std/crc32's Castagnoli polynomial (Poly.Castagnoli, iSCSI, ext4) ran
+slicing-by-8 in software at 4.76x Go's wall (bench/perf/hash crc32c),
+where Go's hash/crc32 uses arm64's CRC32CX. cpu.xo gains
+`crc32cx(crc, w)` beside crc32x, with the same contract and a bit a step
+body (crc32cx_soft; both bodies are crc_word_soft with the polynomial),
+under the same HW_CRC32 bit (the Armv8 CRC32 extension has both). It is
+lowered exactly as crc32x: ssa call.xo on arm64 only, `crc32cx wD, wN,
+xM` in compiler/arm64 calls.xo (compiler/macho op.xo: crc32x_word with
+the C bit, 0x1000), LLVM inline asm with `.arch_extension crc`, an
+instruction to the native inliner. std/native/crc32.xo's castagnoli
+takes the word path when hw() has HW_CRC32. No seed: an older xo runs
+the body. x86-64's SSE4.2 crc32 is this polynomial, so an amd64
+lowering (Go's castagnoliSSE42) is a later step. Tests: cpu_test
+"crc32cx is its body", the crc32 corpus, compiler/macho's encoding
+table, test/codegen/intrinsics crc32.castagnoli.
+
 ## Addendum (2026-10-28): Keccak-f[1600] with the SHA3 extension
 
 cpu.keccak_f1600(st, rc) runs the 24 rounds on the 25 lanes at st with

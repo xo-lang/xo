@@ -1,5 +1,18 @@
 # std/crc32 changes
 
+## 2026-10-29: perf: Castagnoli with arm64's crc32cx
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/hash crc32c at 4.761x Go's wall
+- Go reference: hash/crc32 crc32_arm64.go castagnoliUpdate (CRC32CX a word a step)
+- Test: std/native/llrt/cpu_test.xo "crc32cx is its body" (arm64 and LLVM), the crc32 corpus on arm64, LLVM and Go, compiler/macho's encoding table, test/codegen/intrinsics crc32.castagnoli
+- Timing: bench/perf/hash crc32c, quiet --ab 15 rounds: wall 0.206 (0.203 to 0.208) of the parent's, 0.992 (0.989 to 1.007) of Go's
+
+`Poly.Castagnoli` runs a word a step on arm64's CRC32CX where the CPU
+has the CRC32 extension (decision 0231 addendum, 2026-10-29); x86-64 and
+older CPUs keep slicing-by-8.
+
 ## 2026-10-29: port: std/crc32, Go's hash/crc32
 
 - Kind: port
