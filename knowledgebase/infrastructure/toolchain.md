@@ -1071,7 +1071,15 @@ and for diffing two builds function by function, not for a first look.
   unwinder's tables. At exit (main's end or os.proc.exit) it writes a
   raw file at `XO_PROF_OUT` (default `xo-prof.xoraw` in the working
   directory; `%p` is the process id; decision 0245) and one line on
-  stderr naming it (`XO_PROF_QUIET=1` drops the line). `xo prof FILE|URL
+  stderr naming it (`XO_PROF_QUIET=1` drops the line). A profile never
+  overwrites a file: remove the previous one before a rerun, or the run
+  writes nothing ("could not write"). Since f79ea3f9d the samples count
+  CPU time on macOS and Linux (gotchas/xo-prof-macos-undercounts-samples.md).
+  The CPU profile holds at most 32,768 samples (llrt prof.xo CAP): at
+  1,000 Hz about 33 s of CPU summed over every thread, at 10,000 Hz about
+  3 s; later samples are dropped and counted, and `xo prof`'s summary
+  says "N lost", but the exit line does not yet (Last verified:
+  2026-10-30). For a long or many-threaded run lower `XO_PROF_HZ`. `xo prof FILE|URL
   [--raw-out=PATH] [--cpu-out=PATH] [--heap-out=PATH]` writes FILE's name with
   `.cpu.pprof` (and `.heap.pprof`) for its `.xoraw`, `.pb.gz` or `.gz`
   (`cold.pb.gz` gives `cold.cpu.pprof`; 2026-10-21, it was `xo-cpu.pprof`
