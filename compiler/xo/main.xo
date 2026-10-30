@@ -2307,19 +2307,29 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
       }
     }
   }
-  // a windows build's PDB beside its .exe is not in the entry, and a hit
-  // writes only the binary (no PDB, or an older build's that names
-  // another GUID): such a build stores none
-  var pdb_beside = false
+  // a windows build's PDB beside its .exe goes in the entry as a side
+  // file, which a hit writes with the binary; a PDB this build did not
+  // write (an older build's, under -s) stores no entry, since a hit
+  // cannot know it
+  var sides: List[Str] = []
+  var stale_side = false
   for (_, p) in bins {
-    pdb_beside = pdb_beside || (p.ends_with(".exe") && (os.fs.exists("${p.trim_suffix(".exe")}.pdb").ok() ?? false))
+    if p.ends_with(".exe") {
+      if let Ok(Some(fi)) = os.fs.stat("${p.trim_suffix(".exe")}.pdb") {
+        if fi.modified.unix_millis() >= o.run_start {
+          sides.push(".pdb")
+        } else {
+          stale_side = true
+        }
+      }
+    }
   }
-  if !o.run_key.is_empty() && !ctx.run_cache.is_empty() && bins.len() == 1 && !pdb_beside {
+  if !o.run_key.is_empty() && !ctx.run_cache.is_empty() && bins.len() == 1 && !stale_side {
     // a build's or run's entry (decision 0360 stage 1): a build's output
     // paths, so a hit writes them
     var wc = ctx
     wc.bin_cache = ctx.run_cache
-    run_store(os, wc, o.run_key, c, o.std, o.wd, host_bin, [], RunOut{output: kept_output(ctx), outs: if o.cmd == "build" { bins } else { [] }}, o.run_start)
+    run_store(os, wc, o.run_key, c, o.std, o.wd, host_bin, [], RunOut{output: kept_output(ctx), outs: if o.cmd == "build" { bins } else { [] }, sides: if o.cmd == "build" { sides } else { [] }}, o.run_start)
   }
   Native{bin: host_bin, bins: bins, pc: c.parse_cache}
 }

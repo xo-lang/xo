@@ -229,9 +229,10 @@ func TestWholeBuildCache(t *testing.T) {
 }
 
 // TestWholeBuildWindowsPDB: a windows/amd64 build writes a PDB beside its
-// .exe, which the run cache's entry does not hold, so such a build stores
-// no entry: an unchanged build links again and writes the PDB (a hit wrote
-// only the .exe, leaving no PDB or an older build's).
+// .exe, which the run cache's entry keeps as a side file: an unchanged
+// build is a hit that writes the same PDB back with the .exe (before
+// 2026-10-29 a hit wrote only the .exe). A PDB the build did not write (an
+// older one left beside a build that writes none, -s) stores no entry.
 func TestWholeBuildWindowsPDB(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs")
@@ -252,23 +253,41 @@ func TestWholeBuildWindowsPDB(t *testing.T) {
 		t.Fatal(err)
 	}
 	chdir(t, dir)
+	exe := filepath.Join(dir, "prog.exe")
 	pdb := filepath.Join(dir, "prog.pdb")
-	build := func(what string) {
+	read := func(p string) []byte {
+		t.Helper()
+		b, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return b
+	}
+	build := func(what string, wantHit bool, flags ...string) {
 		t.Helper()
 		var so, se bytes.Buffer
-		if code := run(t, []string{"build", "--phase-times", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(dir, "prog"), "."}, &so, &se); code != 0 {
+		args := append([]string{"build", "--phase-times", "--backend=amd64", "--targets=windows/amd64"}, flags...)
+		if code := run(t, append(args, "-o", filepath.Join(dir, "prog"), "."), &so, &se); code != 0 {
 			t.Fatalf("%s: exit %d\n%s%s", what, code, so.String(), se.String())
 		}
-		if strings.Contains(se.String(), "phase run_cache ") {
-			t.Fatalf("%s: served by the run cache, which holds no PDB\n%s", what, se.String())
-		}
-		if _, err := os.Stat(pdb); err != nil {
-			t.Fatalf("%s: no PDB beside the .exe: %v", what, err)
+		if hit := strings.Contains(se.String(), "phase run_cache "); hit != wantHit {
+			t.Fatalf("%s: run cache hit %v, want %v\n%s", what, hit, wantHit, se.String())
 		}
 	}
-	build("first build")
+	build("first build", false)
+	wantExe, wantPDB := read(exe), read(pdb)
 	if err := os.Remove(pdb); err != nil {
 		t.Fatal(err)
 	}
-	build("unchanged")
+	if err := os.Remove(exe); err != nil {
+		t.Fatal(err)
+	}
+	build("unchanged", true)
+	if !bytes.Equal(read(exe), wantExe) || !bytes.Equal(read(pdb), wantPDB) {
+		t.Fatal("unchanged: the hit's .exe or PDB differs from the build's")
+	}
+	// -s writes no PDB, so the one left beside is not this build's: no
+	// entry, and the next such build links again
+	build("-s with an older PDB beside", false, "-s")
+	build("-s again", false, "-s")
 }

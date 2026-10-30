@@ -17,8 +17,10 @@ output (wholebuild.xo whole_build_hit). The PE link also writes `NAME.pdb` besid
 
 ## Fix
 
-compiler/xo main.xo: a build whose output `.exe` has a `.pdb` beside it stores no run cache
-entry, so it links again (cmd/xo TestWholeBuildWindowsPDB). A link measurement or identity
-check sets `XO_WHOLE_BUILD=off` anyway, since the run cache is keyed outside
-XO_BACKEND_CACHE_DIR (XO_BIN_CACHE). Next: store the PDB in the entry (RunOut gains side
-files) so an unchanged windows build hits again.
+compiler/xo main.xo first stored no entry for such a build (bd4e544c8). Since then the
+entry keeps the PDB as a side file (testcache.xo: a `side SUFFIX` line and the entry's
+`.side<i>` copy; wholebuild.xo whole_build_hit writes it before the .exe), so an unchanged
+windows build hits and gets the same PDB back; a PDB beside the .exe that the build did not
+write (an older one, under -s) still stores no entry (cmd/xo TestWholeBuildWindowsPDB). A
+link measurement or identity check sets `XO_WHOLE_BUILD=off` anyway, since the run cache is
+keyed outside XO_BACKEND_CACHE_DIR (XO_BIN_CACHE).

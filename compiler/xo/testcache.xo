@@ -36,12 +36,23 @@ struct RunHit {
   output: Str = ""
   /// the outputs a `xo build` wrote: (target, path)
   outs: List[(Str, Str)] = []
+  /// the files a build wrote beside its output (a windows .exe's PDB):
+  /// (suffix after the output's stem, the entry's copy)
+  sides: List[(Str, Str)] = []
 }
 
 /// What a build stores beside its binary (run_store).
 struct RunOut {
   output: Str = ""
   outs: List[(Str, Str)] = []
+  /// suffixes of files the build wrote beside its one output's stem
+  /// (".pdb" beside NAME.exe), kept as the entry's .side<i> files
+  sides: List[Str] = []
+}
+
+/// An output's stem: its path without a .exe.
+fn out_stem(p: Str) -> Str {
+  p.trim_suffix(".exe")
 }
 
 /// Whether `xo build` and `xo run` use the run cache (decision 0360: on
@@ -265,6 +276,7 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
   var tests: List[TestInfo] = []
   var output = ""
   var outs: List[(Str, Str)] = []
+  var sides: List[(Str, Str)] = []
   var head = false
   // the first files (run_store writes the program's own first) are
   // hashed in order, so an edit misses at its first file; the rest
@@ -302,6 +314,13 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
       output = unhex_field(f[1])
     } else if f[0] == "out" && f.len() == 3 {
       outs.push((unhex_field(f[1]), unhex_field(f[2])))
+    } else if f[0] == "side" && f.len() == 2 {
+      // a side file pruned away is a miss: the build writes it again
+      let sp = "${entry}.side${sides.len()}"
+      if !(os.fs.exists(sp).ok() ?? false) {
+        return None
+      }
+      sides.push((unhex_field(f[1]), sp))
     } else if f[0] == "test" && f.len() == 10 {
       let eff = unhex_field(f[7])
       tests.push(TestInfo{index: Int.parse(f[2]) ?? -1, name: unhex_field(f[1]), module: unhex_field(f[3]), dir: unhex_field(f[4]), loc: unhex_field(f[5]), seed: Int.parse(f[6]) ?? 0, effects: if eff.is_empty() { [] } else { eff.split(",") }, prop: f[8] == "1", skip: unhex_field(f[9])})
@@ -314,6 +333,9 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
   }
   prune.mark_used_within(os.fs, os.clock, "${entry}.m", BIN_TOUCH)
   prune.mark_used_within(os.fs, os.clock, bin, BIN_TOUCH)
+  for (_, sp) in sides {
+    prune.mark_used_within(os.fs, os.clock, sp, BIN_TOUCH)
+  }
   // the run uses a copy outside the cache, so a prune cannot remove the
   // binary between its test processes, however long they run
   // (the .exe a Windows program needs to run: field report W3)
@@ -325,7 +347,7 @@ fn run_fetch(os: Os, ctx: Ctx, key: Str) -> RunHit? {
       return None
     }
   }
-  Some(RunHit{bin: run, tests: tests, output: output, outs: outs})
+  Some(RunHit{bin: run, tests: tests, output: output, outs: outs, sides: sides})
 }
 
 /// The files and directories a test build of c read (run_fetch's
@@ -508,6 +530,9 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
   for (tg, p) in ro.outs {
     b.write("out ${hex_field(tg)} ${hex_field(p)}\n")
   }
+  for suf in ro.sides {
+    b.write("side ${hex_field(suf)}\n")
+  }
   for t in tests {
     b.write("test ${hex_field(t.name)} ${t.index} ${hex_field(t.module)} ${hex_field(t.dir)} ${hex_field(t.loc)} ${t.seed} ${hex_field(t.effects.join(","))} ${if t.prop { "1" } else { "0" }} ${hex_field(t.skip)}\n")
   }
@@ -531,6 +556,30 @@ fn run_store(os: Os, ctx: Ctx, key: Str, c: check.Checker, std: Str, wd: Str, bi
     Err(_) => {
       os.fs.remove(tb).ignore_err("another process stored it")
       return
+    }
+  }
+  // each side file before the manifest names it
+  if !ro.sides.is_empty() {
+    if ro.outs.len() != 1 {
+      return
+    }
+    let stem = out_stem(ro.outs[0].1)
+    for (i, suf) in ro.sides.indexed() {
+      let ts = "${entry}.side${i}.tmp-${tag}"
+      match os.fs.copy("${stem}${suf}", ts) {
+        Ok(_) => {}
+        Err(_) => {
+          os.fs.remove(ts).ignore_err("a failed store")
+          return
+        }
+      }
+      match os.fs.rename(ts, "${entry}.side${i}") {
+        Ok(_) => {}
+        Err(_) => {
+          os.fs.remove(ts).ignore_err("another process stored it")
+          return
+        }
+      }
     }
   }
   let tm = "${entry}.m.tmp-${tag}"

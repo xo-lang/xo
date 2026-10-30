@@ -129,6 +129,26 @@ fn whole_build_hit(os: Os, hit: RunHit) -> Bool {
     return false
   }
   for (_, p) in hit.outs {
+    // the side files first (a windows .exe's PDB), so the binary is
+    // never newer than what it names
+    for (suf, sp) in hit.sides {
+      let dst = "${out_stem(p)}${suf}"
+      let st = "${dst}.tmp-${os.rand.bytes(6).to_hex()}"
+      match os.fs.copy(sp, st) {
+        Ok(_) => {}
+        Err(_) => {
+          os.fs.remove(st).ignore_err("a failed copy")
+          return false
+        }
+      }
+      match os.fs.rename(st, dst) {
+        Ok(_) => {}
+        Err(_) => {
+          os.fs.remove(st).ignore_err("a failed rename")
+          return false
+        }
+      }
+    }
     let tmp = "${p}.tmp-${os.rand.bytes(6).to_hex()}"
     match os.fs.copy(hit.bin, tmp) {
       Ok(_) => {}
