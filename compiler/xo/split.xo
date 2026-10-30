@@ -118,6 +118,10 @@ fn split_config(os: Os) -> SplitConfig {
 
 /// runtime.NumCPU, from sysctl or nproc (1 when neither answers).
 fn ncpu(os: Os) -> Int {
+  // the WASI build starts no process (decision 0405): one worker
+  if target.os == TargetOs.Wasi {
+    return 1
+  }
   let (out, err) = combined(os, "sysctl", ["-n", "hw.ncpu"])
   if err.is_empty() {
     if let Some(n) = Int.parse(out.trim()) {
@@ -137,6 +141,10 @@ fn ncpu(os: Os) -> Int {
 /// hardware threads): sysctl hw.physicalcpu, else the distinct (core,
 /// socket) pairs of lscpu, else ncpu.
 fn ncores(os: Os) -> Int {
+  // the WASI build starts no process (decision 0405): one worker
+  if target.os == TargetOs.Wasi {
+    return 1
+  }
   let (out, err) = combined(os, "sysctl", ["-n", "hw.physicalcpu"])
   if err.is_empty() {
     if let Some(n) = Int.parse(out.trim()) {
@@ -164,6 +172,10 @@ fn ncores(os: Os) -> Int {
 /// The machine's memory in GB (hw.memsize, else /proc/meminfo's
 /// MemTotal), 16 when neither answers.
 fn mem_gb(os: Os) -> Int {
+  // the WASI build starts no process (decision 0405): one worker
+  if target.os == TargetOs.Wasi {
+    return 16
+  }
   let (out, err) = combined(os, "sysctl", ["-n", "hw.memsize"])
   if err.is_empty() {
     if let Some(n) = Int.parse(out.trim()) {
