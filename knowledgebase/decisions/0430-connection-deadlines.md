@@ -1,6 +1,6 @@
 # 0430: connection deadlines, WebSocket control frame handlers, the task's deadline
 
-Status: Proposed (Xo lang 5, 2026-10-30). The lead agreed the API shape the same day. It stays Proposed until Xo Lang 3, which owns the HTTP and TLS internals, agrees on the design. Code after the seed cut from main on 2026-10-30.
+Status: Accepted (Xo lang 5, 2026-10-30; the lead agreed the API shape, and Xo Lang 3, which owns the HTTP and TLS internals, agreed the design the same day with the three implementation points under Consequences). Code after the seed cut from main on 2026-10-30.
 
 ## Context
 
@@ -76,6 +76,32 @@ Native: each connection's poll descriptor gets a read and a write deadline word,
 - Timing row: a read loop with a deadline set, against Go's SetReadDeadline.
 - std/changes entries for net, tls, websocket and task.
 - Survey gaps 1 and 2 (HTTP/2 trailers and full duplex, mTLS) follow, as one design with Xo Lang 3.
+
+Implementation points (Xo Lang 3, 2026-10-30):
+
+1. **TLS keeps its own limit apart.** tlssrv has one `when`, which hconn
+   sets before each read and zeroes after. The user's deadlines are new
+   words in the TLS record, `user_rd` and `user_wr`, and a record read
+   waits until `min(when, user_rd)`. TLS writes do not wait on any
+   deadline today, so a write deadline needs a new wait. The client side
+   (cabi_tlsclient) gets the same words.
+2. **The clock.** For the real clock, a deadline becomes monotonic at set
+   time (`mono_now + (t - clock.now())`) and pd_wait takes it. Under a
+   FakeClock or a test world it fires through the fake timer, never
+   pd_wait, or virtual time would never wake the read.
+3. **A timeout leaves the connection whole.**
+   - Handshakes honor the deadline (Go's tls.Conn does), through the
+     existing handshake waits (CC_TIMEOUT), as `Timeout`. A failed
+     handshake stays failed, as in Go.
+   - A read timeout is temporary, as Go's is. tlssrv keeps the bytes of
+     a partly read record across the timeout, so the connection is
+     usable after a new deadline even mid-record.
+   - http1's own limits (read_ns, head_ns, idle_ns) stay separate. hconn
+     waits until the earlier of its limit and the user's, and keeps the
+     outcomes apart: its own limit is the existing path (408, close), and
+     the user's is `Timeout` to the handler.
+   - The user's words live on the connection, and the server clears them
+     when a request ends (net/http resets them per request).
 
 ## Options for the owner
 
