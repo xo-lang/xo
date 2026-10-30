@@ -1,6 +1,6 @@
 # 0441: Go backend: a bound call runs its adapter at the call site, under the caller's //line
 
-Status: Proposed (xo-lang-6, 2026-10-30; the lead's item after the zap caller survey)
+Status: Accepted (owner, 2026-10-30). Proposed (xo-lang-6, 2026-10-30; the lead's item after the zap caller survey)
 
 ## Context
 
