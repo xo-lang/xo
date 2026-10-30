@@ -38,7 +38,7 @@ fn (w: BodyWriter) set_trailer(name: Str, value: Str)        // sent after the b
 fn (r: Response) with_trailer_names(names: List[Str]) -> Response   // declared up front (HTTP/1.1 `Trailer` header)
 fn (b: BodyReader) trailers() -> Map[Str, Str]               // a request's, once read returned None
 fn (s: ClientStream) trailers() -> Map[Str, Str]             // a response's, once read returned None
-fn (r: Request) with_trailers(f: fn() -> Map[Str, Str]) -> Request   // asked when a streamed request body ends
+fn (r: Request) with_trailers(names: List[Str], f: fn() -> Map[Str, Str]) -> Request   // names declared up front, f asked when the body ends
 ```
 
 - Both declared and undeclared trailers are written, as Go (declared
@@ -56,7 +56,18 @@ fn (r: Request) with_trailers(f: fn() -> Map[Str, Str]) -> Request   // asked wh
   Realm, Te, Trailer, Transfer-Encoding, Www-Authenticate. On receive
   the same names are dropped.
 - HTTP/1.1: trailer fields follow the `0\r\n` chunk; a response that is
-  not chunked (a Content-Length) drops its trailers, as Go.
+  not chunked (a Content-Length) drops its trailers, as Go. A streamed
+  response that writes no body goes out with `Content-Length: 0` (Go's
+  chunkWriter, the handler done with nothing written), so it carries
+  only the trailers declared with `with_trailer_names` before its head.
+- Request trailers are declared: `with_trailers(names, f)` sends names in
+  the `Trailer` header (Go's client sends the keys of Request.Trailer),
+  and only f's values for those names follow the body. Go's HTTP/2
+  server keeps a request trailer only when the head declared it
+  (processTrailerHeaders reads st.trailer, made from the `Trailer`
+  header), so an undeclared one would arrive on HTTP/1.1 and vanish on
+  HTTP/2. (Amended 2026-10-30 from the Go backend's first run, before
+  the API landed: the first signature took no names.)
 - HTTP/2: the decision is made when the stream function returns. With
   trailers, the last DATA has no END_STREAM and a final HEADERS frame
   carries END_STREAM; without, the last DATA carries it. Trailer names
