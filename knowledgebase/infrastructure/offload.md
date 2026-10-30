@@ -76,12 +76,16 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   gets none by default), for a cross link's claim; 5 warmups
   by default) or a program directory built by each side and run
   with `ARG...`; 10 rounds and 2 warmups by default. The table
-  streams back; logs stay in the host's `abNAME.out`. No heavy.sh slot.
+  streams back; the host keeps only the logs in `abNAME.out` (the two
+  worktrees, the built xo and binaries, and the edit loop's caches go
+  when the run ends, however it ends: 1.1 GB per run filled the disk,
+  2026-10-30). No heavy.sh slot.
 - `scripts/lead/offload-tier.sh SHA N SEED [BUNDLE]` (run through
   offload.sh): fetches the bundle into `/work/priv`, checks SHA out into
   `/work/tierN`, builds xo (`go run ./scripts/xobuild` with `XO_SEED`, or
   the host's cached xo of an ancestor commit; never the seed chain), then
-  the steps above; logs in `/work/tierN.*.txt`.
+  the steps above; logs in `/work/tierN.*.txt` (the checkout itself
+  goes when the run ends).
 
 ## The host's setup
 
