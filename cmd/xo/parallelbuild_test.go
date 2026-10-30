@@ -27,7 +27,7 @@ func TestParallelGoBuilds(t *testing.T) {
 	app := filepath.Join(dir, "app")
 	modtest.WriteFiles(t, app, map[string]string{
 		"xo.mod":  "module example.com/par\nedition preview\n",
-		"main.xo": "fn main() uses stdio {\n  os.stdio.println(\"hi\")\n}\n",
+		"main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
 	})
 	const jobs = 8
 	for round := 0; round < 3; round++ {
