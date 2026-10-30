@@ -21,6 +21,7 @@ use native/llrt/rand
 use native/llrt/sha1
 use native/llrt/sha256
 use native/llrt/tls13
+use native/llrt/tlssign
 use native/llrt/tlscert
 use native/llrt/tlsname
 use native/llrt/x509cert as x509
@@ -746,6 +747,10 @@ pub struct Conf {
   pub zone_off: Int = 0
   /// std/tls Verify.ChainOnly (decision 0281, tls13.xo's)
   pub chain_only: Bool = false
+  /// the client certificate chain (DER, the leaf first) and its private key
+  /// as tlssign.sign takes it; presented when the server asks for one
+  pub certs: List[Bytes] = []
+  pub cert_key: Bytes = b""
 }
 
 /// Go's defaults for host: the AEAD suites, X25519 then P-256 and P-384.
@@ -780,6 +785,9 @@ pub struct Client {
   ticket: Bool
   certs: List[Bytes]
   cert_req: Bool
+  /// the CertificateRequest's authorities and signature algorithms
+  req_cas: List[Bytes] = []
+  req_schemes: List[Int] = []
   pms: Bytes
   ckx: Bytes
   master: Bytes
@@ -1116,6 +1124,22 @@ fn handshake(var c: Client, t: Int, msg: Bytes) {
 fn after_key_exchange(var c: Client, t: Int, msg: Bytes, req_ok: Bool) {
   if t == HS_CERTIFICATE_REQUEST && req_ok {
     c.cert_req = true
+    // the types, the signature algorithms, the authorities
+    let nt = Int(msg[4])
+    var q = 5 + nt
+    let na = u16_at(msg, q)
+    q += 2
+    let ae = q + na
+    while q + 2 <= ae {
+      c.req_schemes.push(u16_at(msg, q))
+      q += 2
+    }
+    q = ae + 2
+    while q + 2 <= msg.len() {
+      let n = u16_at(msg, q)
+      c.req_cas.push(msg[q + 2..q + 2 + n])
+      q += 2 + n
+    }
     c.state = WAIT_SHD_REQ
     return
   }
@@ -1508,11 +1532,61 @@ fn server_key_exchange(var c: Client, msg: Bytes) {
 /// After ServerHelloDone: an empty Certificate when one was asked for,
 /// ClientKeyExchange, the master secret and keys, ChangeCipherSpec, and
 /// Finished (each handshake message its own record, as Go).
+/// The signature scheme the client certificate answers a
+/// CertificateRequest with, 0 when it has none to present (tls13.xo's
+/// client_scheme for TLS 1.2: a chain issued by a named CA, a scheme the
+/// server lists that the key signs).
+fn client_scheme(c: Client) -> Int {
+  if c.conf.certs.is_empty() {
+    return 0
+  }
+  var chain: List[x509.Cert] = []
+  for d in c.conf.certs {
+    let r = x509.parse(d)
+    if r.err != "" {
+      return 0
+    }
+    chain.push(r.cert)
+  }
+  if !c.req_cas.is_empty() {
+    var ok = false
+    for x in chain {
+      for ca in c.req_cas {
+        if ct.bytes_equal(x.issuer, ca) {
+          ok = true
+        }
+      }
+    }
+    if !ok {
+      return 0
+    }
+  }
+  for sc in tlssign.schemes_for(chain[0].key_alg, c.conf.cert_key) {
+    if c.req_schemes.is_empty() || has(c.req_schemes, sc) {
+      return sc
+    }
+  }
+  0
+}
+
 fn client_flight(var c: Client) {
+  var scheme = 0
   if c.cert_req {
-    let cm = message(HS_CERTIFICATE, u24(0))
-    c.tr = cat2(c.tr, cm)
-    c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, cm, 0x0303))
+    scheme = client_scheme(c)
+    if scheme == 0 {
+      let cm = message(HS_CERTIFICATE, u24(0))
+      c.tr = cat2(c.tr, cm)
+      c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, cm, 0x0303))
+    } else {
+      var entries: List[Bytes] = []
+      for d in c.conf.certs {
+        entries.push(asn1.cat([u24(d.len()), d]))
+      }
+      let body = asn1.cat(entries)
+      let cm = message(HS_CERTIFICATE, asn1.cat([u24(body.len()), body]))
+      c.tr = cat2(c.tr, cm)
+      c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, cm, 0x0303))
+    }
   }
   if c.ckx.is_empty() {
     fail(c, ALERT_INTERNAL_ERROR, "tls: missing ServerKeyExchange message")
@@ -1523,6 +1597,15 @@ fn client_flight(var c: Client) {
   let hash = suite_hash(c.suite)
   c.master = master_secret(hash, c.pms, c.ems, c.tr, c.random, c.server_random)
   c.pms = b""
+  if scheme != 0 {
+    // CertificateVerify: the signature over every handshake message so
+    // far, through the ClientKeyExchange
+    let leaf = x509.parse(c.conf.certs[0]).cert
+    let sig = tlssign.sign(scheme, leaf.key_alg, c.conf.cert_key, c.tr, b"")
+    let cv = message(HS_CERTIFICATE_VERIFY, asn1.cat([u16(scheme), u16(sig.len()), sig]))
+    c.tr = cat2(c.tr, cv)
+    c.out = cat2(c.out, seal(c.wk, CT_HANDSHAKE, cv, 0x0303))
+  }
   let kb = key_block(c.suite, c.master, c.random, c.server_random)
   c.out = cat2(c.out, seal(c.wk, CT_CCS, b"\x01", 0x0303))
   c.wk = direction(c.suite, kb, true, c.conf.iv)

@@ -1,6 +1,6 @@
 # std/tls changes
 
-## 2026-10-30: feature: client certificates on a TLS 1.2 server (decision 0433)
+## 2026-10-30: feature: client certificates on a TLS 1.2 server and client (decision 0433)
 
 - Kind: feature
 - Commit: this commit
@@ -15,8 +15,11 @@ the client's Certificate (verified as the TLS 1.3 server does), and after
 the ClientKeyExchange its CertificateVerify over every handshake message
 so far. A missing certificate where one is required is Go's TLS 1.2
 "bad certificate" alert, not TLS 1.3's certificate_required. The peer
-and verified chains reach `TlsState` as for TLS 1.3. Still open: a TLS
-1.2 client presenting a certificate.
+and verified chains reach `TlsState` as for TLS 1.3. The TLS 1.2 client
+also presents its certificate (tls12.xo: the chain when one is issued by a
+named CA and its key signs a scheme the server lists, then a
+CertificateVerify over the handshake through the ClientKeyExchange); checked
+against crypto/tls's server at MaxVersion TLS 1.2 with RequireAndVerifyClientCert.
 
 ## 2026-10-30: feature: TlsConn deadlines
 

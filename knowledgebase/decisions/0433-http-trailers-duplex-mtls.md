@@ -196,7 +196,8 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a serv
   and the h2 client: a feeder task fills a queue the pump polls (the pump
   reads the socket with a 10 ms deadline while the queue is empty).
 - mTLS, TLS 1.3 native (0aa379fa2): all five ClientAuth modes match Go.
-  Open: TLS 1.2 client auth, and `with_cert` with system roots.
+  TLS 1.2 client auth, server and client, native too (checked against
+  crypto/tls at MaxVersion TLS 1.2). Open: `with_cert` with system roots.
 
 ## Alternatives
 
