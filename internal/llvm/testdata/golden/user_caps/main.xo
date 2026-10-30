@@ -46,6 +46,8 @@ fn (p: EchoProc) stop_notify(c: Chan[Signal]) { c.close() }
 fn (p: EchoProc) request_stop() {}
 fn (p: EchoProc) pid() -> Int { 7 }
 fn (p: EchoProc) ppid() -> Int { 1 }
+fn (p: EchoProc) usage() -> ProcUsage { ProcUsage{user: 2s, system: 1s, max_rss: 4096} }
+fn (p: EchoProc) children_usage() -> ProcUsage { ProcUsage{user: 0s, system: 0s, max_rss: 0} }
 
 struct NoNet {}
 
@@ -81,6 +83,7 @@ fn main(os: Os) {
   os.stdio.println(show_run(p, "fail"))
   let _ = p.cmd("x")
   os.stdio.println("kill: ${p.kill(7).is_err()}")
+  os.stdio.println("usage: ${p.usage().max_rss} ${p.usage().user} ${p.children_usage().max_rss}")
   let n: Net = NoNet{}
   os.stdio.println(try_dial(n))
   os.stdio.println("only: ${try_dial(n.only(["x"]))}")

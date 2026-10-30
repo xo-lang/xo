@@ -4,6 +4,7 @@
 
 use native/llrt/linux
 use native/llrt/raw
+use native/llrt/windows
 use native/rt
 use native/sys_darwin
 use native/sys_windows
@@ -15,6 +16,40 @@ pub fn pid() -> Int {
     TargetOs.Linux => linux.getpid()
     TargetOs.Windows => Int(sys_windows.GetCurrentProcessId())
     TargetOs.Wasi => 0
+  }
+}
+
+/// Proc.usage and Proc.children_usage (decision 0426): user and system
+/// CPU time in nanoseconds and the peak resident set in bytes, of this
+/// process or of its waited children (getrusage's RUSAGE_SELF and
+/// RUSAGE_CHILDREN; on Windows GetProcessTimes and the peak working set,
+/// the children's totals kept by windows.reap); zeros under WASI.
+pub fn usage(children: Bool) -> List[Int] {
+  match target.os {
+    TargetOs.Darwin | TargetOs.Linux => {
+      let b = raw.bytes_buf(144)
+      let a = raw.bytes_addr(b)
+      rt.mem_set(a, 0, 144)
+      let who = if children { -1 } else { 0 }
+      let r = if target.os == TargetOs.Darwin { Int(sys_darwin.getrusage(who, a)) } else { linux.getrusage(who, a) }
+      // struct rusage: ru_utime and ru_stime timevals (seconds and
+      // microseconds) at 0 and 16, ru_maxrss at 32 (KiB on Linux, bytes
+      // on macOS)
+      var out = [0, 0, 0]
+      if r == 0 {
+        out[0] = rt.mem_load(a, 0, 8) * 1000000000 + rt.mem_load(a, 8, 8) * 1000
+        out[1] = rt.mem_load(a, 16, 8) * 1000000000 + rt.mem_load(a, 24, 8) * 1000
+        let rss = rt.mem_load(a, 32, 8)
+        out[2] = if target.os == TargetOs.Darwin { rss } else { rss * 1024 }
+      }
+      keep_bytes(b)
+      out
+    }
+    TargetOs.Windows => {
+      let u = if children { windows.children_usage() } else { windows.proc_usage(Int(sys_windows.GetCurrentProcess())) }
+      [u[0] * 100, u[1] * 100, u[2]]
+    }
+    TargetOs.Wasi => [0, 0, 0]
   }
 }
 

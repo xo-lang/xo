@@ -1,0 +1,33 @@
+// Proc.usage and Proc.children_usage (decision 0426): CPU time grows
+// with work, the peak resident set is a positive byte count, and a waited
+// child's CPU time shows in the children's usage; an attenuated Proc
+// answers as the real one.
+fn spin(n: Int) -> Int {
+  var x = 88172645
+  for i in 0..n {
+    x = (x * 31 + i) % 1000000007
+  }
+  x
+}
+
+fn main(os: Os) {
+  if os.env.args().get(0) == Some("spin") {
+    os.stdio.println("${spin(300000000) != 1}")
+    return
+  }
+  let before = os.proc.usage()
+  let k = spin(300000000)
+  let after = os.proc.usage()
+  os.stdio.println("spun ${k != 1}")
+  os.stdio.println("cpu grew ${after.user + after.system > before.user + before.system}")
+  os.stdio.println("rss ${after.max_rss > 1000000} ${after.max_rss < 1000000000000}")
+  os.stdio.println("only ${os.proc.only([]).usage().max_rss > 0}")
+  let c0 = os.proc.children_usage()
+  match os.proc.run(os.env.program(), ["spin"]) {
+    Ok(out) => os.stdio.println("child ${out.code} ${out.stdout.to_str() ?? ""}".trim_end())
+    Err(e) => os.stdio.println("child ${e}")
+  }
+  let c1 = os.proc.children_usage()
+  os.stdio.println("children grew ${c1.user + c1.system > c0.user + c0.system}")
+  os.stdio.println("children rss ${c1.max_rss > 0}")
+}

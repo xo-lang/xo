@@ -108,5 +108,7 @@ var (
 	_ func(*Testing_FakeProc, *Task)                                                                = (*Testing_FakeProc).M_request_stop
 	_ func(*Testing_FakeProc, *Task) int64                                                          = (*Testing_FakeProc).M_pid
 	_ func(*Testing_FakeProc, *Task) int64                                                          = (*Testing_FakeProc).M_ppid
+	_ func(*Testing_FakeProc, *Task) ProcUsage                                                      = (*Testing_FakeProc).M_usage
+	_ func(*Testing_FakeProc, *Task) ProcUsage                                                      = (*Testing_FakeProc).M_children_usage
 	_ func(*Testing_FakeProc, *Task) List[string]                                                   = (*Testing_FakeProc).M_killed
 )

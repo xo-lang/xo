@@ -1164,6 +1164,10 @@ fn (p: Proc) stop_notify(c: Chan[Signal])
 fn (p: Proc) request_stop()
 fn (p: Proc) pid() -> Int                    // this process's ID (0 under WASI); decision 0410
 fn (p: Proc) ppid() -> Int                   // the parent's ID (0 under WASI)
+fn (p: Proc) usage() -> ProcUsage            // this process's CPU time and peak memory; decision 0426
+fn (p: Proc) children_usage() -> ProcUsage   // the waited children's
+
+struct ProcUsage { user: Duration, system: Duration, max_rss: Int }
 enum Signal { Hangup, Interrupt, Quit, Terminate, User1, User2, WindowChange }
 ```
 
@@ -1200,6 +1204,18 @@ On Windows Ctrl-C and Ctrl-Break are `Interrupt`, and the console's close,
 a logoff and a system shutdown are `Terminate` (Go's mapping); the other
 kinds are accepted and never arrive. A test's FakeProc gives a channel
 that receives nothing.
+
+`usage()` (decision 0426; Go's `syscall.Getrusage(RUSAGE_SELF)`) is
+this process's CPU time in user mode and in the kernel and its peak
+resident set in bytes on every system (Linux reports KiB, converted);
+`children_usage()` is the same for the children the program has waited
+for (`run`, `pipeline`, `Child.wait`; `RUSAGE_CHILDREN`), the largest
+child's peak as `max_rss`. On Windows `usage` reads `GetProcessTimes` and
+the peak working set, and the runtime adds each waited child's times
+and peak to the children's totals, which Windows does not keep (the Go
+backend's totals have the times only: `max_rss` 0). WASI answers zeros.
+An attenuated `Proc` answers as the real one: it is the process's own
+state, as `pid`. A test's FakeProc answers with the real process's.
 
 `kill` (decision 0190) sends the named signal to the process `pid`: one
 of `HUP`, `INT`, `QUIT`, `KILL`, `TERM`, `USR1`, `USR2`, `CONT`, `STOP`
@@ -4883,7 +4899,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-473 declarations.
+475 declarations.
 
 ### Range
 
@@ -5593,6 +5609,8 @@ fn exit(self, code: Int) -> Never uses proc
 fn set_grace(self, d: Duration) uses proc
 fn pid(self) -> Int uses proc
 fn ppid(self) -> Int uses proc
+fn usage(self) -> ProcUsage uses proc
+fn children_usage(self) -> ProcUsage uses proc
 fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
 fn only(self, cmds: List[Str]) -> Proc
 fn cmd(self, name: Str, args: List[Str] = []) -> Cmd

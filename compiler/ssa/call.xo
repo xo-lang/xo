@@ -2540,6 +2540,8 @@ fn cap_impl(key: Str) -> Str {
     "Proc.request_stop" => "proc_request_stop"
     "Proc.pid" => "proc_pid"
     "Proc.ppid" => "proc_ppid"
+    "Proc.usage" => "proc_usage"
+    "Proc.children_usage" => "proc_children_usage"
     _ => ""
   }
 }

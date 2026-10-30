@@ -174,6 +174,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   skips; in the directory itself a cold build's spills made its key
   differ from an identical warm build's, so the second build linked
   again (TestMachoBinCache).
+- BREAKING: the `Proc` interface gains `usage()` and `children_usage()`
+  (`ProcUsage`: CPU time and peak memory, Go's getrusage, decision 0426):
+  a type implementing `Proc` adds both.
+
 - BREAKING: the `Fs` interface gains `disk_usage(path) -> DiskUsage !
   FsErr` (Go's statfs, decision 0426): a type implementing `Fs` adds it.
 - The native back end's parts own their functions' SSA bodies and drop

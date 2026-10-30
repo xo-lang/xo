@@ -3808,6 +3808,31 @@ fn proc_stop_notify(p: Proc, c: Chan[Signal]) uses proc {
 /// Proc.pid (decision 0410).
 fn proc_pid(p: Proc) -> Int uses proc { procid.pid() }
 
+/// The native backends' layout of the prelude's ProcUsage (decision 0426): a
+/// prelude struct is opaque to the native SSA builder unless this module
+/// declares its implementation, so the seed builds it without knowing it
+/// (gotchas/new-prelude-struct-needs-native-twin.md); the fields match
+/// std/prelude.xo's.
+struct ProcUsage {
+  user: Duration
+  system: Duration
+  max_rss: Int
+}
+
+/// Proc.usage (decision 0426).
+fn proc_usage(p: Proc) -> ProcUsage uses proc {
+  proc_usage_of(procid.usage(false))
+}
+
+/// Proc.children_usage (decision 0426).
+fn proc_children_usage(p: Proc) -> ProcUsage uses proc {
+  proc_usage_of(procid.usage(true))
+}
+
+fn proc_usage_of(v: List[Int]) -> ProcUsage {
+  ProcUsage{user: Duration.from_nanos(v[0]), system: Duration.from_nanos(v[1]), max_rss: v[2]}
+}
+
 /// Proc.ppid (decision 0410).
 fn proc_ppid(p: Proc) -> Int uses proc { procid.ppid() }
 

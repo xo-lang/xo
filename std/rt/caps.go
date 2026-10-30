@@ -1210,6 +1210,7 @@ func (realProc) run(tk *Task, cmd string, args List[string]) Result[ProcOutput, 
 	c.Stdout, c.Stderr = &out, &errb
 	tk.leave()
 	err := c.Run()
+	noteChild(c.ProcessState)
 	tk.enter()
 	code := int64(0)
 	if err != nil {

@@ -727,6 +727,11 @@ pub fn kill(pid: Int, sig: Int) -> Int { rt.sys6(nr(129, 62), pid, sig, 0, 0, 0,
 /// getpid(2) (std/native/llrt/crash.xo).
 pub fn getpid() -> Int { rt.sys6(nr(172, 39), 0, 0, 0, 0, 0, 0) }
 
+/// getrusage(2) of who (0 this process, -1 its waited children) into the
+/// struct rusage at buf (144 bytes; std/native/llrt/procid.xo): 0, or the
+/// negative errno.
+pub fn getrusage(who: Int, buf: Int) -> Int { rt.sys6(nr(165, 98), who, buf, 0, 0, 0, 0) }
+
 /// getppid(2) (std/native/llrt/procid.xo).
 pub fn getppid() -> Int { rt.sys6(nr(173, 110), 0, 0, 0, 0, 0, 0) }
 

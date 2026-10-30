@@ -168,6 +168,8 @@ fn (p: FakeProc) stop_notify(c: Chan[Signal]) uses proc
 fn (p: FakeProc) request_stop() uses proc
 fn (p: FakeProc) pid() -> Int uses proc   // decision 0410: 1
 fn (p: FakeProc) ppid() -> Int uses proc   // 0
+fn (p: FakeProc) usage() -> ProcUsage uses proc   // decision 0426: the real process's
+fn (p: FakeProc) children_usage() -> ProcUsage uses proc
 /// The signals kill recorded, as "NAME PID", oldest first.
 fn (p: FakeProc) killed() -> List[Str]
 

@@ -164,3 +164,19 @@ func (p *onlyProc) M_ppid(tk *Task) int64 { return p.inner.M_ppid(tk) }
 
 func (f Testing_FakeProc) M_pid(tk *Task) int64  { return 1 }
 func (f Testing_FakeProc) M_ppid(tk *Task) int64 { return 0 }
+
+// M_usage is `os.proc.usage()` (decision 0426): getrusage, on Windows
+// GetProcessTimes and the peak working set.
+func (realProc) M_usage(tk *Task) ProcUsage { return selfUsage() }
+
+// M_children_usage is the waited children's (getrusage's
+// RUSAGE_CHILDREN; on Windows the totals noteChild kept).
+func (realProc) M_children_usage(tk *Task) ProcUsage { return childrenUsage() }
+
+func (p *onlyProc) M_usage(tk *Task) ProcUsage          { return p.inner.M_usage(tk) }
+func (p *onlyProc) M_children_usage(tk *Task) ProcUsage { return p.inner.M_children_usage(tk) }
+
+// A FakeProc answers with the real process's usage, as the native test
+// world's (FakeProc is the Proc there).
+func (f Testing_FakeProc) M_usage(tk *Task) ProcUsage          { return selfUsage() }
+func (f Testing_FakeProc) M_children_usage(tk *Task) ProcUsage { return childrenUsage() }

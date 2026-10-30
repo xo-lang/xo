@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+spun true
+cpu grew true
+rss true true
+only true
+child 0 true
+children grew true
+children rss true
+--- stderr

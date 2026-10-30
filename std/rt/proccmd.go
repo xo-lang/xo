@@ -247,6 +247,7 @@ func (realProc) output(tk *Task, c *procCmd) Result[ProcOutput, ProcErr] {
 	}
 	tk.leave()
 	err := x.Run()
+	noteChild(x.ProcessState)
 	tk.enter()
 	code := int64(0)
 	if err != nil {
@@ -272,6 +273,7 @@ func (realProc) runTerm(tk *Task, c *procCmd) Result[int64, ProcErr] {
 	}
 	tk.leave()
 	err := x.Run()
+	noteChild(x.ProcessState)
 	tk.enter()
 	if err != nil {
 		n, ok := exitCode(err)
@@ -528,6 +530,7 @@ func (c Child) M_wait(tk *Task) Result[int64, ProcErr] {
 	}
 	tk.leave()
 	err := ch.x.Wait()
+	noteChild(ch.x.ProcessState)
 	tk.enter()
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
@@ -607,6 +610,7 @@ func (realProc) pipeline(tk *Task, cs []*procCmd) Result[ProcOutput, ProcErr] {
 	waits := make([]error, started)
 	for i := 0; i < started; i++ {
 		waits[i] = xs[i].Wait()
+		noteChild(xs[i].ProcessState)
 	}
 	tk.enter()
 	if startFail != nil {

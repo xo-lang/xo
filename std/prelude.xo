@@ -1101,6 +1101,17 @@ enum ProcErr {
 /// of an Io, `canceled`, `denied by Proc.only: CMD`.
 fn (e: ProcErr) display() -> Str
 
+/// CPU time and peak memory of a process (Proc.usage, decision 0426;
+/// Go's syscall.Getrusage).
+struct ProcUsage {
+  /// CPU time in user mode.
+  user: Duration
+  /// CPU time in the kernel.
+  system: Duration
+  /// The peak resident set (Windows: the peak working set) in bytes.
+  max_rss: Int
+}
+
 interface Proc {
   fn exit(self, code: Int) -> Never uses proc
   /// Time between a stop request and the cancellation of main's root scope
@@ -1110,6 +1121,10 @@ interface Proc {
   fn pid(self) -> Int uses proc
   /// The parent process's ID (0 on Windows and under WASI).
   fn ppid(self) -> Int uses proc
+  /// This process's CPU time and peak memory (decision 0426).
+  fn usage(self) -> ProcUsage uses proc
+  /// The waited children's CPU time and their largest peak memory.
+  fn children_usage(self) -> ProcUsage uses proc
   fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
   /// A Proc that runs only the listed commands (std.md 3.7, decision
   /// 0156).

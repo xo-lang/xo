@@ -1217,8 +1217,54 @@ pub fn reap(h: Int, block: Bool) -> (Bool, Int) {
   rt.mem_store(a, 0, 0, 8)
   let _g = sys_windows.GetExitCodeProcess(h, a)
   let code = keep(b, rt.mem_load(a, 0, 4))
+  add_child_usage(h)
   let _c = sys_windows.CloseHandle(h)
   (true, code)
+}
+
+// The usage of waited children (Proc.children_usage, decision 0426), which
+// Windows does not keep (Unix's RUSAGE_CHILDREN): reap adds each child's
+// user and kernel time (100 ns units) and keeps the largest peak working
+// set, in rt.static_word 95 to 97.
+const W_CHILD_USER = 95
+const W_CHILD_SYS = 96
+const W_CHILD_RSS = 97
+
+/// The user time, kernel time (100 ns units) and peak working set (bytes)
+/// of the process h; [0, 0, 0] when the system cannot say.
+pub fn proc_usage(h: Int) -> List[Int] {
+  let b = raw.bytes_buf(112)
+  let a = raw.bytes_addr(b)
+  rt.mem_set(a, 0, 112)
+  var out = [0, 0, 0]
+  if Int(sys_windows.GetProcessTimes(h, a, a + 8, a + 16, a + 24)) != 0 {
+    out[0] = rt.mem_load(a, 24, 8)
+    out[1] = rt.mem_load(a, 16, 8)
+  }
+  // PROCESS_MEMORY_COUNTERS: cb at 0, PeakWorkingSetSize at 8; 72 bytes
+  if Int(sys_windows.K32GetProcessMemoryInfo(h, a + 32, 72)) != 0 {
+    out[2] = rt.mem_load(a, 40, 8)
+  }
+  keep(b, 0)
+  out
+}
+
+/// Adds the exited child h's usage to the children's totals.
+fn add_child_usage(h: Int) {
+  let u = proc_usage(h)
+  let _u = rt.slot_add(rt.static_word(W_CHILD_USER), 0, u[0], 3)
+  let _s = rt.slot_add(rt.static_word(W_CHILD_SYS), 0, u[1], 3)
+  let w = rt.static_word(W_CHILD_RSS)
+  var old = rt.slot_load(w, 0, 3)
+  while u[2] > old && !rt.slot_cas(w, 0, old, u[2], 3) {
+    old = rt.slot_load(w, 0, 3)
+  }
+}
+
+/// The waited children's user time, kernel time (100 ns units) and
+/// largest peak working set (bytes).
+pub fn children_usage() -> List[Int] {
+  [rt.slot_load(rt.static_word(W_CHILD_USER), 0, 3), rt.slot_load(rt.static_word(W_CHILD_SYS), 0, 3), rt.slot_load(rt.static_word(W_CHILD_RSS), 0, 3)]
 }
 
 /// Ends the started process h (Child.kill, cancellation) with status 137.

@@ -5,6 +5,7 @@ only: - 2 1
 ran ls a b
 error fail: executable file not found
 kill: true
+usage: 4096 2s 0
 error denied by Net.only: example.com:80
 only: error denied by Net.only: example.com:80
 real env: unset

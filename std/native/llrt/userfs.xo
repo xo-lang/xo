@@ -82,6 +82,8 @@ pub interface UserProc {
   fn set_grace(self, d: Duration) uses proc
   fn pid(self) -> Int uses proc
   fn ppid(self) -> Int uses proc
+  fn usage(self) -> ProcUsage uses proc
+  fn children_usage(self) -> ProcUsage uses proc
   fn run(self, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr uses proc
   /// A Proc that runs only the listed commands (std.md 3.7, decision
   /// 0156).

@@ -94,6 +94,20 @@ Removing a link (`remove`, `remove_all`) that is a directory link uses
 RemoveDirectoryW when DeleteFileW fails, as Go's os.Remove does; it
 removes the link, never the directory it points to.
 
+
+## 2026-10-30: feature: Proc.usage and Proc.children_usage
+
+- Kind: feature
+- Commit: this commit
+- Found by: std-coverage gap 9 (the metrics exporter's host facts), decision 0426
+- Go reference: syscall.Getrusage (RUSAGE_SELF, RUSAGE_CHILDREN); Windows GetProcessTimes and K32GetProcessMemoryInfo
+- Test: the host_usage golden (arm64, LLVM, Go parity, natively on Windows; zeros under WASI), user_caps (a user Proc)
+- Timing: xo bench --ab, 200,000 `os.proc.usage()` calls, A Go syscall.Getrusage(RUSAGE_SELF), B Xo native arm64, 15 rounds, macOS arm64 under load (ratios only): wall 1.188 (1.151 to 1.203), instructions 1.002 (1.001 to 1.002), max RSS 0.599; the program is in the lead's notes (hfbench), not the repo
+
+`os.proc.usage()` is this process's user and system CPU time and peak
+resident set in bytes, `children_usage()` the same for its waited
+children. Breaking: a type that implements the `Proc` interface needs
+both methods.
 ## 2026-10-30: fix: Env.hostname on Windows
 
 - Kind: fix

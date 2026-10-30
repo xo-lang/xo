@@ -186,6 +186,9 @@ fn freeaddrinfo(ai: Int)
 fn gai_strerror(code: Int) -> Int
 /// getpid(2) (std/native/llrt/prof.xo).
 fn getpid() -> Int32
+/// getrusage(2) of who (0 this process, -1 its waited children) into the
+/// struct rusage at the address buf (144 bytes; ru_maxrss in bytes).
+fn getrusage(who: Int, buf: Int) -> Int32
 /// getppid(2) (std/native/llrt/procid.xo).
 fn getppid() -> Int32
 

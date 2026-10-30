@@ -309,6 +309,14 @@ fn GetSystemDirectoryW(buf: Int, n: Int) -> UInt32
 /// bytes at buf, the ULONG at size their room and then the size needed:
 /// 0, ERROR_BUFFER_OVERFLOW (111) or another error (std/native/llrt/winadapters.xo).
 fn GetAdaptersAddresses(family: Int, flags: Int, reserved: Int, buf: Int, size: Int) -> UInt32
+/// GetCurrentProcess: the pseudo handle -1 of this process.
+fn GetCurrentProcess() -> Int
+/// GetProcessTimes: the four FILETIMEs (creation, exit, kernel, user) of
+/// the process h, the last two in 100 ns units: nonzero on success.
+fn GetProcessTimes(h: Int, created: Int, exited: Int, kernel: Int, user: Int) -> Int32
+/// K32GetProcessMemoryInfo: the PROCESS_MEMORY_COUNTERS of the process h
+/// into the n bytes at buf (PeakWorkingSetSize at 8): nonzero on success.
+fn K32GetProcessMemoryInfo(h: Int, buf: Int, n: Int) -> Int32
 /// GetComputerNameExW of the name type into the UTF-16 units at buf; the
 /// DWORD at size holds the room in units and gets the length written
 /// (without the NUL): nonzero on success.
