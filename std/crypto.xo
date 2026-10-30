@@ -24,9 +24,11 @@ fn verify_password(password: Str, hash: Str) -> Bool
 /// Ed25519 (RFC 8032, decision 0189): the 32 byte public key of the
 /// private key `seed` (32 bytes; faults otherwise).
 fn ed25519_public_key(seed: Bytes) -> Bytes
-/// The 64 byte Ed25519 signature of msg by the private key `seed` (32
-/// bytes; faults otherwise). Deterministic: the same seed and message
-/// give the same signature.
+/// The 64 byte Ed25519 signature of msg by the private key `seed`: the
+/// 32 byte seed, or Go's 64 byte private key (the seed, then its public
+/// key, which signing then uses as stored and need not compute); faults
+/// on any other length. Deterministic: the same seed and message give the
+/// same signature.
 fn ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes
 /// Whether sig is a valid Ed25519 signature of msg by public_key; false
 /// for a key that is not 32 bytes or a signature that is not 64.

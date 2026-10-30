@@ -1,5 +1,6 @@
 // Ed25519 in std/crypto on every backend (decision 0189): the RFC 8032
-// section 7.1 vectors 1 to 3, signing deterministically, verification of
+// section 7.1 vectors 1 to 3, signing deterministically (also from Go's
+// 64 byte private key, the seed then the public key), verification of
 // changed messages, keys, and signatures, and wrong lengths.
 use std/crypto
 
@@ -15,7 +16,7 @@ fn main(os: Os) uses stdio {
     let sig = crypto.ed25519_sign(seed, msg)
     os.stdio.println("test ${i + 1} public ${key.to_hex()}")
     os.stdio.println("test ${i + 1} signature ${sig.to_hex()}")
-    os.stdio.println("test ${i + 1} verify ${crypto.ed25519_verify(key, msg, sig)} again ${crypto.ed25519_sign(seed, msg) == sig}")
+    os.stdio.println("test ${i + 1} verify ${crypto.ed25519_verify(key, msg, sig)} again ${crypto.ed25519_sign(seed, msg) == sig} key64 ${crypto.ed25519_sign(seed + key, msg) == sig}")
   }
   let seed = crypto.sha256(b"xo checksum log")
   let key = crypto.ed25519_public_key(seed)

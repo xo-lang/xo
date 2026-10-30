@@ -1,6 +1,22 @@
 # std/crypto changes
 
 
+## 2026-10-29: feature: ed25519_sign takes Go's 64 byte private key (0.65 of Go's signing time)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the Ed25519 timing rows: signing from the 32 byte seed computed the public key again, a second base multiplication Go's Sign (given its 64 byte private key) does not do; owner approved the API 2026-10-29 (decision 0189 amendment)
+- Go reference: crypto/ed25519 Sign (PrivateKey is the seed then the public key; the public key half is used as stored)
+- Test: corpus crypto signs every RFC 8032 and Go-generated vector from seed + public key too; golden native_ed25519 (key64) on arm64, LLVM and the Go backend; bench/perf/ed25519 signkey twincheck
+- Timing: bench/perf/ed25519, quiet --ab, 15 rounds, Xo / Go wall: signkey 0.65 (0.647 to 0.653), instructions 0.471; sign from the seed 1.183, so signkey is 0.55 of the seed form's time
+
+`crypto.ed25519_sign(key, msg)` takes the 32 byte seed as before, or
+Go's 64 byte private key. Any other length faults with
+`crypto.ed25519_sign: the key is N bytes, want 32 or 64`. As in Go, a
+stored public key that does not belong to the seed is not detected and
+gives a signature that does not verify.
+
+
 ## 2026-10-29: perf: Ed25519's scalars on Go's fiat-crypto Montgomery products (sign 0.656, verify 0.892 of their time)
 
 - Kind: perf (port)

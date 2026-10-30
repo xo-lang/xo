@@ -67,8 +67,8 @@ fn ed25519_public_key(seed: Bytes, at: rt.Loc) -> Bytes {
 }
 
 fn ed25519_sign(seed: Bytes, msg: Bytes, at: rt.Loc) -> Bytes {
-  if seed.len() != 32 {
-    rt.fault_at("crypto.ed25519_sign: the seed is ${seed.len()} bytes, want 32", at)
+  if seed.len() != 32 && seed.len() != 64 {
+    rt.fault_at("crypto.ed25519_sign: the key is ${seed.len()} bytes, want 32 or 64", at)
   }
   ed25519.sign(seed, msg)
 }

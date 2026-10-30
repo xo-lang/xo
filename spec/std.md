@@ -2823,7 +2823,7 @@ pub fn hash_password_argon2id(r: Rand, password: Str, memory_kib: Int = 19456,
 pub fn hash_password(r: Rand, password: Str, iterations: Int = 600000) -> Str uses rand
 pub fn verify_password(password: Str, hash: Str) -> Bool
 pub fn ed25519_public_key(seed: Bytes) -> Bytes                   // 32 bytes; faults unless seed is 32 bytes
-pub fn ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes             // 64 bytes; faults unless seed is 32 bytes
+pub fn ed25519_sign(seed: Bytes, msg: Bytes) -> Bytes             // 64 bytes; faults unless seed is 32 or 64 bytes
 pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
 ```
 
@@ -2871,7 +2871,11 @@ pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
   successful login when the stored hash starts with `pbkdf2-sha256$`.
 - Ed25519 (RFC 8032, decision 0189; added 2026-10-12): the private key is
   a 32 byte seed; make one with `random_bytes(r, 32)`, keep it secret, and
-  publish `ed25519_public_key(seed)`. `ed25519_sign` is deterministic (the
+  publish `ed25519_public_key(seed)`. `ed25519_sign` also takes Go's 64
+  byte private key, the seed followed by its public key (added
+  2026-10-29); it signs with that public key as stored, as Go's
+  `ed25519.Sign` does, and skips computing it, so a signer that keeps
+  `seed + public_key` signs faster. `ed25519_sign` is deterministic (the
   same seed and message give the same 64 byte signature, so signing needs
   no `Rand`). `ed25519_verify` is `false`, never a fault, for a key that is
   not 32 bytes, a signature that is not 64, an encoding that is no point

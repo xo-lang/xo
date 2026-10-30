@@ -1,5 +1,6 @@
-# twincheck: ed25519: four workloads (none is the setup alone); Go is crypto/ed25519.
+# twincheck: ed25519: five workloads (none is the setup alone); Go is crypto/ed25519.
 - - none
 - - keygen
 - - sign
+- - signkey
 - - verify

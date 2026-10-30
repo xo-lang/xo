@@ -81,3 +81,13 @@ pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
   functions later.
 - **Ed25519ph or contexts (Ed25519ctx)**: Go's `VerifyWithOptions`
   supports them; nothing in Xo uses them.
+
+## Amendment (owner, 2026-10-29)
+
+`ed25519_sign` also accepts Go's 64 byte private key (the seed, then its
+public key). It signs with the stored public key, as Go's `ed25519.Sign`
+does, and skips the base multiplication that derives it from the seed,
+about half of a signature's work. The 32 byte seed form is unchanged; any
+other length faults with `crypto.ed25519_sign: the key is N bytes, want
+32 or 64`. Like Go, a stored public key that does not belong to the seed
+is not detected; it yields a signature that does not verify.

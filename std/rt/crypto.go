@@ -193,8 +193,11 @@ func Crypto_ed25519_public_key(_ *Task, seed Bytes) Bytes {
 
 // Crypto_ed25519_sign is `crypto.ed25519_sign(seed, msg)`.
 func Crypto_ed25519_sign(_ *Task, seed, msg Bytes) Bytes {
+	if len(seed) == ed25519.PrivateKeySize {
+		return Bytes(ed25519.Sign(ed25519.PrivateKey(seed), []byte(msg)))
+	}
 	if len(seed) != ed25519.SeedSize {
-		FaultHere("crypto.ed25519_sign: the seed is %d bytes, want 32", len(seed))
+		FaultHere("crypto.ed25519_sign: the key is %d bytes, want 32 or 64", len(seed))
 	}
 	return Bytes(ed25519.Sign(ed25519.NewKeyFromSeed([]byte(seed)), []byte(msg)))
 }

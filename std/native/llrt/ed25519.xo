@@ -641,24 +641,27 @@ fn words_bytes(ws: List[Int]) -> Bytes {
   s.bytes()
 }
 
-/// The secret scalar (clamped), the nonce prefix, and the public key (four
-/// words each) of a 32 byte seed.
-fn expand(seed: Bytes) -> (List[Int], List[Int], List[Int]) {
+/// The secret scalar (clamped) and the nonce prefix (four words each) of
+/// a 32 byte seed.
+fn expand(seed: Bytes) -> (List[Int], List[Int]) {
   let h = digest.sha512_le(seed, b"", b"")
   let top = (1).wrapping_shl(63)
-  let a = [h[0] & ~7, h[1], h[2], (h[3] & ~top) | (1).wrapping_shl(62)]
-  (a, [h[4], h[5], h[6], h[7]], x25519.ed_base(a))
+  ([h[0] & ~7, h[1], h[2], (h[3] & ~top) | (1).wrapping_shl(62)], [h[4], h[5], h[6], h[7]])
 }
 
 /// crypto.ed25519_public_key: seed is 32 bytes (crypto.xo checks it).
 pub fn public_key(seed: Bytes) -> Bytes {
-  let (_, _, pk) = expand(seed)
-  words_bytes(pk)
+  let (a, _) = expand(seed)
+  words_bytes(x25519.ed_base(a))
 }
 
-/// crypto.ed25519_sign: seed is 32 bytes (crypto.xo checks it).
-pub fn sign(seed: Bytes, msg: Bytes) -> Bytes {
-  let (a, prefix, pk) = expand(seed)
+/// crypto.ed25519_sign: key is the 32 byte seed, or Go's 64 byte private
+/// key (the seed, then its public key, used as stored, as Go's Sign
+/// does, which saves a base multiplication); crypto.xo checks the length.
+pub fn sign(key: Bytes, msg: Bytes) -> Bytes {
+  let stored = key.len() == 64
+  let (a, prefix) = expand(if stored { key[0..32] } else { key })
+  let pk = if stored { words(key, 32) } else { x25519.ed_base(a) }
   let r = sc_reduce(digest.sha512_le(words_bytes(prefix), msg, b""))
   var sig = x25519.ed_base(r)
   let k = sc_reduce(digest.sha512_le(words_bytes(sig), words_bytes(pk), msg))

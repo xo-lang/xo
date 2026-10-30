@@ -821,13 +821,18 @@ test "crypto.equal is Go's ConstantTimeCompare" {
   expect(show3(bad)) == []
 }
 
-test "ed25519 public keys and signatures are the reference vectors, and verify" {
+test "ed25519 public keys and signatures are the reference vectors, and verify, from the seed or Go's 64 byte private key" {
   var bad: List[(Str, Str, Str)] = []
   var n = 0
   for (seed, msg, want_pub, want_sig) in ED25519_SIGN_CASES {
     let pk_hex = crypto.ed25519_public_key(seed).to_hex()
     let sig = crypto.ed25519_sign(seed, msg).to_hex()
     let sig2 = crypto.ed25519_sign(seed, msg).to_hex()
+    // Go's private key: the seed, then the public key
+    let sig64 = crypto.ed25519_sign(seed + (Bytes.from_hex(want_pub) ?? b""), msg).to_hex()
+    if sig64 != want_sig {
+      bad.push(("signature ${n} from the 64 byte key", sig64, want_sig))
+    }
     if pk_hex != want_pub {
       bad.push(("public key ${n}", pk_hex, want_pub))
     }

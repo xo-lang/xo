@@ -36,7 +36,7 @@ func main() {
 			pk := ed25519.NewKeyFromSeed(seed(i)).Public().(ed25519.PublicKey)
 			sum += int(pk[i%32])
 		}
-	case "sign":
+	case "sign", "signkey":
 		k := ed25519.NewKeyFromSeed(seed(7))
 		for i := 0; i < n; i++ {
 			sig := ed25519.Sign(k, msg(i))

@@ -1,9 +1,10 @@
 // Ed25519 (std/crypto over std/native/llrt/ed25519.xo and x25519.xo)
 // against Go's crypto/ed25519 (twin.go.txt): keygen derives 5,000 public
 // keys from seeds that differ in their first byte, sign signs 5,000
-// eight byte messages with one key, verify checks one signature 5,000
-// times; `none` is the setup alone. Usage: `<program>
-// none|keygen|sign|verify`. Prints `<workload> <checksum>`; the twin
+// eight byte messages with one key, signkey the same from Go's 64 byte
+// private key (the seed, then the public key), verify checks one
+// signature 5,000 times; `none` is the setup alone. Usage: `<program>
+// none|keygen|sign|signkey|verify`. Prints `<workload> <checksum>`; the twin
 // prints the same.
 use std/crypto
 
@@ -37,6 +38,13 @@ fn main(os: Os) uses stdio, env {
     let s = seed(7)
     for i in 0..n {
       let sig = crypto.ed25519_sign(s, msg(i))
+      sum += Int(sig[i % 64])
+    }
+  } else if w == "signkey" {
+    let s = seed(7)
+    let k = s + crypto.ed25519_public_key(s)
+    for i in 0..n {
+      let sig = crypto.ed25519_sign(k, msg(i))
       sum += Int(sig[i % 64])
     }
   } else if w == "verify" {

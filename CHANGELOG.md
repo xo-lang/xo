@@ -6,6 +6,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- std/crypto: `ed25519_sign` also takes Go's 64 byte private key (the
+  seed, then its public key) and signs without deriving the public key:
+  0.55 of the seed form's time, 0.65 of Go's.
 - **Fix** (0.34.0): a linux/arm64 build assembled through a stock `cc` (GNU as, or clang with its default processor) failed on `crc32x` ("selected processor does not support" / "instruction requires: crc"): the assembly header declares `.arch_extension crc` beside crypto, aes and sha2.
 - std/crypto: Ed25519 signing reduces its scalars with Go's Montgomery
   products instead of bit by bit: sign 0.66 and verify 0.89 of their
