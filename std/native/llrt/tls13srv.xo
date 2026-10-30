@@ -12,16 +12,14 @@
 // mode's ChangeCipherSpec, KeyUpdate. Error texts are Go's.
 use native/llrt/asn1
 use native/llrt/ct
-use native/llrt/ed25519
 use native/llrt/hkdf
 use native/llrt/mlkem
-use native/llrt/nistec
 use native/llrt/rand
-use native/llrt/rsa
 use native/llrt/sha256
 use native/llrt/tls13
 use native/llrt/tlsname
 use native/llrt/tlsrec
+use native/llrt/tlssign
 use native/llrt/tlsticket
 use native/llrt/x509cert as x509
 use native/llrt/x509verify
@@ -37,6 +35,18 @@ pub const FAILED: Int = 4
 /// Conf.handoff: nothing was sent; the TLS 1.2 server (tls12srv.xo)
 /// takes over with Server.hello and Server.rest.
 pub const HANDOFF: Int = 5
+/// Client authentication (mTLS): after the server's Finished, the
+/// client's Certificate, then its CertificateVerify, then its Finished.
+pub const WAIT_CCERT: Int = 6
+pub const WAIT_CVERIFY: Int = 7
+
+/// Conf.client_auth, the order of tls.ClientAuth (Go's ClientAuthType
+/// without its own numbering)
+pub const AUTH_NONE: Int = 0
+pub const AUTH_REQUEST: Int = 1
+pub const AUTH_REQUIRE_ANY: Int = 2
+pub const AUTH_VERIFY_IF_GIVEN: Int = 3
+pub const AUTH_REQUIRE_AND_VERIFY: Int = 4
 
 // the handshake message types
 const HS_CLIENT_HELLO: Int = 1
@@ -61,6 +71,7 @@ const EXT_SUPPORTED_VERSIONS: Int = 43
 const EXT_COOKIE: Int = 44
 const EXT_PSK_MODES: Int = 45
 const EXT_SIGNATURE_ALGORITHMS_CERT: Int = 50
+const EXT_CERTIFICATE_AUTHORITIES: Int = 47
 const EXT_KEY_SHARE: Int = 51
 const EXT_QUIC: Int = 57
 const EXT_RENEGOTIATION_INFO: Int = 0xff01
@@ -71,12 +82,17 @@ const ALERT_UNEXPECTED_MESSAGE: Int = 10
 const ALERT_BAD_RECORD_MAC: Int = 20
 const ALERT_RECORD_OVERFLOW: Int = 22
 const ALERT_HANDSHAKE_FAILURE: Int = 40
+const ALERT_BAD_CERTIFICATE: Int = 42
+const ALERT_UNSUPPORTED_CERTIFICATE: Int = 43
+const ALERT_CERTIFICATE_EXPIRED: Int = 45
 const ALERT_ILLEGAL_PARAMETER: Int = 47
+const ALERT_UNKNOWN_CA: Int = 48
 const ALERT_DECODE_ERROR: Int = 50
 const ALERT_DECRYPT_ERROR: Int = 51
 const ALERT_PROTOCOL_VERSION: Int = 70
 const ALERT_INTERNAL_ERROR: Int = 80
 const ALERT_MISSING_EXTENSION: Int = 109
+const ALERT_CERTIFICATE_REQUIRED: Int = 116
 const ALERT_UNSUPPORTED_EXTENSION: Int = 110
 const ALERT_NO_APPLICATION_PROTOCOL: Int = 120
 
@@ -123,6 +139,13 @@ pub struct Conf {
   pub rfc: Bool
   pub ee: Bytes?
   pub ticket: Bytes
+  /// client certificates (mTLS): the mode (AUTH_*), the CAs' subject
+  /// names (DER, sent as certificate_authorities) and the root
+  /// certificates (DER) that verify a client's chain (VerifyIfGiven and
+  /// RequireAndVerify); the time in Unix seconds is now
+  pub client_auth: Int = 0
+  pub client_cas: List[Bytes] = []
+  pub client_roots: List[Bytes] = []
 }
 
 /// Another certificate chain (DER, the leaf first) and its key.
@@ -184,6 +207,14 @@ pub struct Server {
   tickets: Bool
   rk: tlsrec.Keys
   wk: tlsrec.Keys
+  /// the handshake's hash while a client's certificate is awaited
+  hsh: Int = 0
+  cauth: Bool = false
+  /// the client's certificates (DER, the leaf first), none when it sent none
+  pub peer: List[Bytes] = []
+  /// the verified chains (each DER, the leaf first) when the mode verifies
+  pub verified: List[List[Bytes]] = []
+  peer_leaf: x509.Cert? = None
 }
 
 /// A new server for conf, waiting for a ClientHello.
@@ -360,12 +391,16 @@ fn handshake(var s: Server, t: Int, msg: Bytes) {
     client_hello(s, msg)
   } else if s.state == WAIT_CH2 && t == HS_CLIENT_HELLO {
     client_hello2(s, msg)
+  } else if s.state == WAIT_CCERT && t == HS_CERTIFICATE {
+    client_cert(s, msg)
+  } else if s.state == WAIT_CVERIFY && t == HS_CERTIFICATE_VERIFY {
+    client_verify(s, msg)
   } else if s.state == WAIT_FIN && t == HS_FINISHED {
     finished(s, msg)
   } else if s.state == DONE && t == HS_KEY_UPDATE {
     key_update(s, msg)
   } else {
-    let want = if s.state == WAIT_FIN { "*tls.finishedMsg" } else if s.state == DONE { "*tls.keyUpdateMsg" } else { "*tls.clientHelloMsg" }
+    let want = if s.state == WAIT_CCERT { "*tls.certificateMsgTLS13" } else if s.state == WAIT_CVERIFY { "*tls.certificateVerifyMsg" } else if s.state == WAIT_FIN { "*tls.finishedMsg" } else if s.state == DONE { "*tls.keyUpdateMsg" } else { "*tls.clientHelloMsg" }
     fail(s, ALERT_UNEXPECTED_MESSAGE, "tls: received unexpected handshake message of type ${go_type(t)} when waiting for ${want}")
   }
 }
@@ -857,7 +892,7 @@ fn respond(var s: Server, h: Hello) {
     return
   }
   let key_alg = leaf.cert.key_alg
-  let mine = schemes_for(key_alg, leaf.cert.key)
+  let mine = tlssign.schemes_for(key_alg, leaf.cert.key)
   if mine.is_empty() {
     fail(s, ALERT_HANDSHAKE_FAILURE, "tls: unsupported certificate: private key is not supported")
     return
@@ -918,6 +953,14 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
   let ee = tls13.message(HS_ENCRYPTED_EXTENSIONS, tls13.vec16(ee_exts))
   s.tr = tls13.cat2(s.tr, ee)
   var flight = ee
+  // client authentication (not on a resumed session, as Go): the
+  // CertificateRequest follows the EncryptedExtensions
+  let auth = s.conf.client_auth != AUTH_NONE && chosen < 0
+  if auth {
+    let cr = cert_request(s)
+    s.tr = tls13.cat2(s.tr, cr)
+    flight = tls13.cat2(flight, cr)
+  }
   if chosen < 0 {
     let cc = cert_flight(s, hash)
     if s.state == FAILED {
@@ -937,12 +980,141 @@ fn finish_hello(var s: Server, h: Hello, share: Bytes, shared: Bytes, psk: Bytes
   s.client_fin = tls13.finished_mac(hash, s.c_hs, th2)
   // Go's sendSessionTickets: the resumption secret over the transcript
   // with the client's Finished it expects, then one ticket
-  if s.tickets {
+  if s.tickets && !auth {
     let cf = tls13.message(HS_FINISHED, s.client_fin)
     let res = hkdf.expand_label(hash, master, "res master", tr_hash_with(s, hash, cf), l)
     let psk2 = hkdf.expand_label(hash, res, "resumption", b"", l)
     s.out = tls13.cat2(s.out, tlsrec.seal(s.wk, tlsrec.CT_HANDSHAKE, ticket_msg(s, psk2), 0x0303))
   }
+  if auth {
+    s.hsh = hash
+    s.cauth = true
+    s.state = WAIT_CCERT
+  } else {
+    s.state = WAIT_FIN
+  }
+}
+
+/// The CertificateRequest (RFC 8446 4.3.2): an empty context, the
+/// signature algorithms the server verifies, and the names of the CAs
+/// whose certificates it accepts.
+fn cert_request(s: Server) -> Bytes {
+  var sa: List[Bytes] = []
+  for x in tls13.schemes() {
+    sa.push(tls13.u16(x))
+  }
+  var exts = tls13.ext(EXT_SIGNATURE_ALGORITHMS, tls13.vec16(asn1.cat(sa)))
+  if !s.conf.client_cas.is_empty() {
+    var names: List[Bytes] = []
+    for n in s.conf.client_cas {
+      names.push(tls13.vec16(n))
+    }
+    exts = tls13.cat2(exts, tls13.ext(EXT_CERTIFICATE_AUTHORITIES, tls13.vec16(asn1.cat(names))))
+  }
+  tls13.message(HS_CERTIFICATE_REQUEST, asn1.cat([b"\x00", tls13.vec16(exts)]))
+}
+
+/// The client's Certificate message (RFC 8446 4.4.2): a chain, or none,
+/// which the mode may allow; a chain is verified now for the modes that
+/// verify (Go's processCertsFromClient), its CertificateVerify next.
+fn client_cert(var s: Server, msg: Bytes) {
+  let mode = s.conf.client_auth
+  var ders: List[Bytes] = []
+  var ok = msg.len() >= 8 && msg[4] == 0 && tls13.u24_at(msg, 5) == msg.len() - 8
+  var p = 8
+  while ok && p < msg.len() {
+    if msg.len() < p + 3 {
+      ok = false
+      break
+    }
+    let n = tls13.u24_at(msg, p)
+    if msg.len() < p + 3 + n + 2 {
+      ok = false
+      break
+    }
+    ders.push(msg[p + 3..p + 3 + n])
+    let en = tls13.u16_at(msg, p + 3 + n)
+    p += 3 + n + 2 + en
+  }
+  if !ok || p != msg.len() {
+    fail(s, ALERT_DECODE_ERROR, "tls: error decoding message")
+    return
+  }
+  if ders.is_empty() {
+    if mode == AUTH_REQUIRE_ANY || mode == AUTH_REQUIRE_AND_VERIFY {
+      fail(s, ALERT_CERTIFICATE_REQUIRED, "tls: client didn't provide a certificate")
+      return
+    }
+    s.tr = tls13.cat2(s.tr, msg)
+    s.state = WAIT_FIN
+    return
+  }
+  var certs: List[x509.Cert] = []
+  for d in ders {
+    let parsed = x509.parse(d)
+    if parsed.err != "" {
+      fail(s, ALERT_BAD_CERTIFICATE, "tls: failed to parse client certificate: ${parsed.err}")
+      return
+    }
+    certs.push(parsed.cert)
+  }
+  let leaf = certs[0]
+  if leaf.key_alg != x509.KEY_RSA && !x509.is_ec(leaf.key_alg) && leaf.key_alg != x509.KEY_ED25519 {
+    fail(s, ALERT_UNSUPPORTED_CERTIFICATE, "tls: client certificate contains an unsupported public key")
+    return
+  }
+  if mode == AUTH_VERIFY_IF_GIVEN || mode == AUTH_REQUIRE_AND_VERIFY {
+    var roots: List[x509.Cert] = []
+    for d in s.conf.client_roots {
+      let r = x509.parse(d)
+      if r.err == "" {
+        roots.push(r.cert)
+      }
+    }
+    let r = x509verify.verify_all(leaf, certs[1..certs.len()], roots, "", s.conf.now, [x509.EKU_CLIENT])
+    if r.0.code != x509verify.OK {
+      let c = r.0.code
+      let alert = if c == x509verify.UNKNOWN_AUTHORITY { ALERT_UNKNOWN_CA } else if c == x509verify.EXPIRED { ALERT_CERTIFICATE_EXPIRED } else { ALERT_BAD_CERTIFICATE }
+      fail(s, alert, "tls: failed to verify certificate: ${x509verify.full_text_zone(r.0, leaf, "", s.conf.now, tls13.zone_of(tls13.ZONE_LAZY, s.conf.now))}")
+      return
+    }
+    var chains: List[List[Bytes]] = []
+    for ch in r.1 {
+      var one: List[Bytes] = []
+      for c in ch {
+        one.push(c.raw)
+      }
+      chains.push(one)
+    }
+    s.verified = chains
+  }
+  s.peer = ders
+  s.peer_leaf = Some(leaf)
+  s.tr = tls13.cat2(s.tr, msg)
+  s.state = WAIT_CVERIFY
+}
+
+/// The client's CertificateVerify: its signature over the transcript up
+/// to its Certificate (RFC 8446 4.4.3).
+fn client_verify(var s: Server, msg: Bytes) {
+  if msg.len() < 8 || tls13.u16_at(msg, 6) != msg.len() - 8 {
+    fail(s, ALERT_DECODE_ERROR, "tls: error decoding message")
+    return
+  }
+  let scheme = tls13.u16_at(msg, 4)
+  let sig = msg[8..msg.len()]
+  let leaf = s.peer_leaf ?? fault("tls: client CertificateVerify without a certificate")
+  let alg = tls13.sig_alg(scheme, leaf.key_alg)
+  if !has(tls13.schemes(), scheme) || alg == x509.SIG_UNKNOWN {
+    fail(s, ALERT_ILLEGAL_PARAMETER, "tls: client certificate used with invalid signature algorithm")
+    return
+  }
+  let content = asn1.cat([tls13.pad64(), "TLS 1.3, client CertificateVerify".bytes(), b"\x00", tr_hash(s, s.hsh)])
+  if !x509.check(alg, leaf.key_alg, leaf.key, content, sig) {
+    fail(s, ALERT_DECRYPT_ERROR, "tls: invalid signature by the client certificate: ${tls13.sig_err(alg)}")
+    return
+  }
+  s.tr = tls13.cat2(s.tr, msg)
   s.state = WAIT_FIN
 }
 
@@ -961,7 +1133,7 @@ fn cert_flight(var s: Server, hash: Int) -> Bytes {
   s.tr = tls13.cat2(s.tr, cm)
   // CertificateVerify
   let content = asn1.cat([tls13.pad64(), "TLS 1.3, server CertificateVerify".bytes(), b"\x00", tr_hash(s, hash)])
-  let sig = sign(s.scheme, key_alg, s.conf.key, content, s.conf.salt)
+  let sig = tlssign.sign(s.scheme, key_alg, s.conf.key, content, s.conf.salt)
   if sig.is_empty() {
     fail(s, ALERT_INTERNAL_ERROR, "tls: failed to sign handshake: the private key does not match the certificate")
     return b""
@@ -1073,6 +1245,11 @@ fn tr_hash_with(var s: Server, hash: Int, msg: Bytes) -> Bytes {
 /// Go's readClientFinished: the client's Finished, then its application
 /// keys for reading.
 fn finished(var s: Server, msg: Bytes) {
+  if s.cauth {
+    // client authentication: the Finished covers the client's
+    // Certificate and CertificateVerify too
+    s.client_fin = tls13.finished_mac(s.hsh, s.c_hs, tr_hash(s, s.hsh))
+  }
   if !ct.bytes_equal(msg[4..msg.len()], s.client_fin) {
     fail(s, ALERT_DECRYPT_ERROR, "tls: invalid client finished hash")
     return
@@ -1174,65 +1351,6 @@ fn negotiate_alpn(server: List[Str], client: List[Str]) -> Result[Str, Str] {
     qs.push(quote(cp))
   }
   Err("tls: client requested unsupported application protocols ([${qs.join(" ")}])")
-}
-
-/// The TLS 1.3 signature schemes of a certificate's key (Go's
-/// signatureSchemesForPublicKey less PKCS #1 v1.5): ECDSA tied to its
-/// curve, RSA-PSS for each hash the modulus is large enough for.
-fn schemes_for(key_alg: Int, key: Bytes) -> List[Int] {
-  if key_alg == x509.KEY_P256 {
-    return [0x0403]
-  }
-  if key_alg == x509.KEY_P384 {
-    return [0x0503]
-  }
-  if key_alg == x509.KEY_P521 {
-    return [0x0603]
-  }
-  if key_alg == x509.KEY_ED25519 {
-    return [0x0807]
-  }
-  if key_alg != x509.KEY_RSA {
-    return []
-  }
-  let n = match rsa.public_key(key) {
-    Some(k) => rsa.size(k.n)
-    None => 0
-  }
-  var out: List[Int] = []
-  for (scheme, h) in [(0x0804, 32), (0x0805, 48), (0x0806, 64)] {
-    if n >= 2 * h + 2 {
-      out.push(scheme)
-    }
-  }
-  out
-}
-
-/// The signature of content by the private key for the scheme (salt: a
-/// fixed RSA-PSS salt, the tests' hook); empty when the key does not
-/// parse or does not fit.
-fn sign(scheme: Int, key_alg: Int, key: Bytes, content: Bytes, salt: Bytes) -> Bytes {
-  if scheme == 0x0807 {
-    if key.len() != 32 {
-      return b""
-    }
-    return ed25519.sign(key, content)
-  }
-  if scheme == 0x0403 || scheme == 0x0503 || scheme == 0x0603 {
-    let curve = if scheme == 0x0603 { nistec.P521 } else if scheme == 0x0503 { nistec.P384 } else { nistec.P256 }
-    let hash = if scheme == 0x0603 { sha256.HASH_SHA512 } else if scheme == 0x0503 { sha256.HASH_SHA384 } else { sha256.HASH_SHA256 }
-    return nistec.sign(curve, key, sha256.sum(hash, content))
-  }
-  let hash = if scheme == 0x0806 { sha256.HASH_SHA512 } else if scheme == 0x0805 { sha256.HASH_SHA384 } else { sha256.HASH_SHA256 }
-  let k = match rsa.private_key(key) {
-    Some(k) => k
-    None => return b""
-  }
-  let hashed = sha256.sum(hash, content)
-  if salt.is_empty() {
-    return rsa.sign_pss(k, hash, hashed)
-  }
-  rsa.sign_pss_salt(k, hash, hashed, salt)
 }
 
 fn has(xs: List[Int], x: Int) -> Bool {

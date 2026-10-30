@@ -256,6 +256,11 @@ fn ec_key(der: Bytes, curve0: Str) -> (Int, Bytes, Str) {
 struct SrvTls {
   certs: List[Cert]
   keys: List[tlsticket.Key]
+  /// client certificates (tls13srv.AUTH_*), the CAs' subject names and
+  /// root certificates (DER) that verify them
+  client_auth: Int = 0
+  client_cas: List[Bytes] = []
+  client_roots: List[Bytes] = []
 }
 
 /// The server configuration's record: a block whose word holds the
@@ -279,6 +284,28 @@ pub fn srv_add(s: rthttp.Srv, a: Int, sr_tls: Int, c: Cert) {
   }
   var st = srv_of(h)
   st.certs.push(c)
+  put(h, rt.any_of(st))
+}
+
+/// Sets the client certificate mode of the server of record a (tls13srv's
+/// AUTH_*) and the certificates (DER) that verify and name its CAs.
+pub fn srv_client_auth(a: Int, sr_tls: Int, mode: Int, roots: List[x509.Cert]) {
+  var h = rt.mem_load(a, sr_tls, 8)
+  if h == 0 {
+    h = rt.heap_large(8)
+    rt.mem_store(h, 0, 0, 8)
+    rt.mem_store(a, sr_tls, h, 8)
+  }
+  var st = srv_of(h)
+  st.client_auth = mode
+  var cas: List[Bytes] = []
+  var ders: List[Bytes] = []
+  for c in roots {
+    cas.push(c.subject)
+    ders.push(c.raw)
+  }
+  st.client_cas = cas
+  st.client_roots = ders
   put(h, rt.any_of(st))
 }
 
@@ -437,6 +464,9 @@ pub fn conn(h: Int, pd: Int) -> Int {
   cf.ticket_keys = keys
   cf.now = now
   cf.alpn = ["h2", "http/1.1"]
+  cf.client_auth = st.client_auth
+  cf.client_cas = st.client_cas
+  cf.client_roots = st.client_roots
   for c in cs[1..cs.len()] {
     cf.alts.push(tls13srv.Alt{certs: c.certs, key: c.key})
   }
@@ -656,7 +686,7 @@ pub fn neg_any(t: Int) -> Int {
 /// What connection c's finished handshake negotiated.
 fn negotiated_of(c: Conn) -> tlsneg.Negotiated {
   if c.s12.is_empty() {
-    tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsrec.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed}
+    tlsneg.Negotiated{version: "TLS 1.3", cipher: tlsrec.suite_name(c.s.suite), server_name: c.s.sni, resumed: c.s.resumed, peer: c.s.peer, verified: c.s.verified}
   } else {
     tlsneg.Negotiated{version: "TLS 1.2", cipher: suite_name12(c.s12[0].suite), server_name: c.s12[0].host, resumed: c.s12[0].resumed}
   }

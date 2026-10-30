@@ -11,4 +11,8 @@ pub struct Negotiated {
   pub cipher: Str
   pub server_name: Str
   pub resumed: Bool
+  /// a client's certificates (DER, the leaf first) and the chains that
+  /// verified them (mTLS)
+  pub peer: List[Bytes] = []
+  pub verified: List[List[Bytes]] = []
 }

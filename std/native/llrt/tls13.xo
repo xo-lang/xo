@@ -22,6 +22,7 @@ use native/llrt/sha256
 use native/llrt/tlscert
 use native/llrt/tlsname
 use native/llrt/tlsrec
+use native/llrt/tlssign
 use native/llrt/tzrules
 use native/llrt/x509cert as x509
 use native/llrt/x25519
@@ -134,6 +135,12 @@ pub struct Conf {
   /// std/tls Verify.ChainOnly (decision 0281): the chain is verified but
   /// not the host name (libpq's verify-ca)
   pub chain_only: Bool = false
+  /// the client certificate (mTLS): the chain (DER, the leaf first) and
+  /// its private key as tlssign.sign takes it; presented when the server
+  /// asks and one of its certificate_authorities issued the chain (any
+  /// when it names none)
+  pub certs: List[Bytes] = []
+  pub cert_key: Bytes = b""
   pub hello: Bytes
   pub random: Bytes
   pub sid: Bytes
@@ -191,6 +198,10 @@ pub struct Client {
   ccs_sent: Bool
   cert_req: Bool
   req_ctx: Bytes
+  /// the CertificateRequest's certificate_authorities (DER names) and
+  /// signature_algorithms
+  req_cas: List[Bytes] = []
+  req_schemes: List[Int] = []
   hs_secret: Bytes
   c_hs: Bytes
   s_hs: Bytes
@@ -748,6 +759,39 @@ fn certificate_request(var c: Client, msg: Bytes) {
     return
   }
   c.req_ctx = msg[5..5 + Int(msg[4])]
+  var p = 5 + Int(msg[4])
+  if msg.len() < p + 2 || u16_at(msg, p) != msg.len() - p - 2 {
+    fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
+    return
+  }
+  p += 2
+  while p + 4 <= msg.len() {
+    let t = u16_at(msg, p)
+    let n = u16_at(msg, p + 2)
+    if p + 4 + n > msg.len() {
+      fail(c, ALERT_DECODE_ERROR, "tls: error decoding message")
+      return
+    }
+    let d = msg[p + 4..p + 4 + n]
+    p += 4 + n
+    if t == 13 && d.len() >= 2 {
+      var q = 2
+      while q + 2 <= d.len() {
+        c.req_schemes.push(u16_at(d, q))
+        q += 2
+      }
+    } else if t == 47 && d.len() >= 2 {
+      var q = 2
+      while q + 2 <= d.len() {
+        let m = u16_at(d, q)
+        if q + 2 + m > d.len() {
+          break
+        }
+        c.req_cas.push(d[q + 2..q + 2 + m])
+        q += 2 + m
+      }
+    }
+  }
   c.cert_req = true
   c.tr = cat2(c.tr, msg)
   c.state = WAIT_CERT
@@ -906,7 +950,7 @@ pub fn sig_alg(scheme: Int, key: Int) -> Int {
 }
 
 /// Go's verification error texts.
-fn sig_err(alg: Int) -> Str {
+pub fn sig_err(alg: Int) -> Str {
   if alg == x509.SIG_ED25519 {
     "Ed25519 verification failure"
   } else if alg == x509.SIG_ECDSA_SHA256 || alg == x509.SIG_ECDSA_SHA384 || alg == x509.SIG_ECDSA_SHA512 {
@@ -950,6 +994,43 @@ pub fn finished_mac(hash: Int, base: Bytes, th: Bytes) -> Bytes {
   hmac.mac(hash, key, th)
 }
 
+/// The signature scheme the client certificate answers a
+/// CertificateRequest with, 0 when it has none to present: no
+/// certificate, none of its chain issued by a named CA, or no scheme the
+/// server verifies that its key signs (Go's SupportsCertificate).
+fn client_scheme(c: Client) -> Int {
+  if c.conf.certs.is_empty() {
+    return 0
+  }
+  var chain: List[x509.Cert] = []
+  for d in c.conf.certs {
+    let r = x509.parse(d)
+    if r.err != "" {
+      return 0
+    }
+    chain.push(r.cert)
+  }
+  if !c.req_cas.is_empty() {
+    var ok = false
+    for x in chain {
+      for ca in c.req_cas {
+        if ct.bytes_equal(x.issuer, ca) {
+          ok = true
+        }
+      }
+    }
+    if !ok {
+      return 0
+    }
+  }
+  for sc in tlssign.schemes_for(chain[0].key_alg, c.conf.cert_key) {
+    if c.req_schemes.is_empty() || has(c.req_schemes, sc) {
+      return sc
+    }
+  }
+  0
+}
+
 fn finished(var c: Client, msg: Bytes) {
   let hash = tlsrec.suite_hash(c.suite)
   let want = verify_data(hash, c.s_hs, c.tr)
@@ -970,9 +1051,26 @@ fn finished(var c: Client, msg: Bytes) {
   // then Finished
   var flight = b""
   if c.cert_req {
-    let cm = message(HS_CERTIFICATE, asn1.cat([vec8(c.req_ctx), b"\x00\x00\x00"]))
-    c.tr = cat2(c.tr, cm)
-    flight = cm
+    let scheme = client_scheme(c)
+    if scheme == 0 {
+      let cm = message(HS_CERTIFICATE, asn1.cat([vec8(c.req_ctx), b"\x00\x00\x00"]))
+      c.tr = cat2(c.tr, cm)
+      flight = cm
+    } else {
+      var entries: List[Bytes] = []
+      for d in c.conf.certs {
+        entries.push(asn1.cat([u24(d.len()), d, b"\x00\x00"]))
+      }
+      let body = asn1.cat(entries)
+      let cm = message(HS_CERTIFICATE, asn1.cat([vec8(c.req_ctx), u24(body.len()), body]))
+      c.tr = cat2(c.tr, cm)
+      let leaf = x509.parse(c.conf.certs[0]).cert
+      let content = asn1.cat([pad64(), "TLS 1.3, client CertificateVerify".bytes(), b"\x00", sha256.sum(hash, c.tr)])
+      let sig = tlssign.sign(scheme, leaf.key_alg, c.conf.cert_key, content, b"")
+      let cv = message(HS_CERTIFICATE_VERIFY, asn1.cat([u16(scheme), vec16(sig)]))
+      c.tr = cat2(c.tr, cv)
+      flight = cat2(cm, cv)
+    }
   }
   let fin = message(HS_FINISHED, verify_data(hash, c.c_hs, c.tr))
   c.tr = cat2(c.tr, fin)

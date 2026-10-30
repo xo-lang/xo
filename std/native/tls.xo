@@ -48,6 +48,9 @@ fn roots(pem: Bytes) -> Roots ! tls.TlsErr {
 /// (std-internal: http sees the std type, decision 0433).
 pub fn cert_data(t: tls.TlsCert) -> tlssrv.Cert { rt.cast[tls.TlsCert, TlsCert](t).c }
 
+/// The roots record of r (std/native/http.xo cannot read another module's fields).
+pub fn roots_data(r: tls.Roots) -> rthttp.Roots { rt.cast[tls.Roots, Roots](r).r }
+
 fn cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! tls.TlsErr {
   let (c, e) = tlssrv.cert(cert_pem, key_pem)
   if !e.is_empty() {
@@ -82,7 +85,14 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Ver
   let rd = netconn.user_deadline(cn, false)
   let wd = netconn.user_deadline(cn, true)
   let dl = if rd == 0 { wd } else if wd != 0 && wd < rd { wd } else { rd }
-  let started = tlsio.client_with(netconn.conn_pd(cn), host, rt.obj_addr(r), dl, alpn, v)
+  var ccerts: List[Bytes] = []
+  var ckey = b""
+  if let Some(tc) = cert {
+    let cd = tc.c
+    ccerts = cd.certs
+    ckey = cd.key
+  }
+  let started = tlsio.client_with(netconn.conn_pd(cn), host, rt.obj_addr(r), dl, alpn, v, ccerts, ckey)
   if started.status == tlsio.CC_TIMEOUT {
     return Err(NetErr.Timeout)
   }

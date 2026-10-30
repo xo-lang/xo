@@ -31,9 +31,10 @@ its own cancellation.
 alias and `http.tls_cert`; `tls.cert(cert_pem, key_pem)` makes one with
 std/tls's error. `client` takes a trailing `cert: TlsCert? = None`,
 presented when the server asks for a certificate. `ClientAuth` is Go's
-five server modes, for `http.Server.with_client_auth`. Go backend only
-for now: the native client answers a certificate request with none
-until the handshake side of decision 0433 lands.
+five server modes, for `http.Server.with_client_auth`. The native TLS 1.3
+client presents its certificate when the server's CertificateRequest
+names a CA that issued it (Go's SupportsCertificate), else sends none;
+TLS 1.2 still sends none.
 
 ## 2026-10-29: feature: peer_certificates and roots_of
 

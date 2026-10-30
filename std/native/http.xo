@@ -12,6 +12,7 @@ use std/url
 use std/log
 use std/task
 use std/tls
+use std/x509
 use native/llrt/hconn
 use native/llrt/hserve
 use native/rt
@@ -1070,12 +1071,23 @@ fn tls_neg_of(th: Int) -> List[tlsneg.Negotiated] {
 /// Go's r.TLS: None for a plain connection or a struct literal. The
 /// server asks the client for no certificate, so peer_certificates is
 /// empty.
+/// The x509 certificates of DER blobs (those that parse).
+fn certs_of(ders: List[Bytes]) -> List[x509.Certificate] {
+  var out: List[x509.Certificate] = []
+  for d in ders {
+    if let Ok(c) = x509.parse(d) {
+      out.push(c)
+    }
+  }
+  out
+}
+
 fn request_tls_state(r: Request) -> http.TlsState? {
   if r.tls_neg.is_empty() {
     return None
   }
   let n = r.tls_neg[0]
-  Some(http.TlsState{version: n.version, cipher_suite: n.cipher, server_name: n.server_name, resumed: n.resumed, peer_certificates: [], verified_chains: []})
+  Some(http.TlsState{version: n.version, cipher_suite: n.cipher, server_name: n.server_name, resumed: n.resumed, peer_certificates: certs_of(n.peer), verified_chains: n.verified.map(fn(c) { certs_of(c) })})
 }
 fn request_raw_query(r: Request) -> Str { r.raw_query }
 
@@ -2209,6 +2221,17 @@ fn no_tls(_srv: rthttp.Srv, _certs: List[tls.TlsCert]) {}
 fn no_h2(_hc: rthttp.HConn, _h2: Int, _r: Router) {}
 
 /// The certificates of a server with TLS (with_tls).
+/// tls13srv's AUTH_* number of a tls.ClientAuth.
+fn client_auth_mode(m: tls.ClientAuth) -> Int {
+  match m {
+    tls.ClientAuth.None => 0
+    tls.ClientAuth.Request => 1
+    tls.ClientAuth.RequireAny => 2
+    tls.ClientAuth.VerifyIfGiven => 3
+    tls.ClientAuth.RequireAndVerify => 4
+  }
+}
+
 fn setup_tls(srv: rthttp.Srv, certs: List[tls.TlsCert]) {
   for c in certs {
     hserve.srv_tls(srv, ntls.cert_data(c))
@@ -2243,6 +2266,13 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   defer hserve.srv_close(srv)
   let setup = s.tls_setup
   setup(srv, s.tls)
+  if s.client_auth != tls.ClientAuth.None {
+    let roots = match s.client_roots {
+      Some(r) => tlsio.roots_certs(ntls.roots_data(r))
+      None => []
+    }
+    hserve.srv_client_auth(srv, client_auth_mode(s.client_auth), roots)
+  }
   let conns = hserve.srv_group(srv)
   let l = s.l
   let r = s.r
@@ -2535,12 +2565,21 @@ fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
   if !e.is_empty() {
     return Err(http.TlsErr{msg: e})
   }
-  c with {roots: r}
+  match c.cert {
+    Some(t) => {
+      let cd = ntls.cert_data(t)
+      c with {roots: tlsio.roots_with_cert(r, cd.certs, cd.key)}
+    }
+    None => c with {roots: r}
+  }
 }
 
 /// The certificate is kept for the TLS client's CertificateRequest path
 /// (Lang 3's tlsio side, decision 0433); until then no server asks.
-fn (c: Client) with_cert(cert: tls.TlsCert) -> Client { c with {cert: Some(cert)} }
+fn (c: Client) with_cert(cert: tls.TlsCert) -> Client {
+  let cd = ntls.cert_data(cert)
+  c with {cert: Some(cert), roots: tlsio.roots_with_cert(c.roots, cd.certs, cd.key)}
+}
 
 fn (c: Client) with_protocols(p: Set[http.Protocol]) -> Client { c with {protocols: Some(p)} }
 

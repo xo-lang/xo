@@ -1,0 +1,69 @@
+// Signatures of TLS 1.3 handshake messages with a certificate's private key
+// (RSA-PSS, ECDSA, Ed25519): the server's CertificateVerify
+// (tls13srv.xo) and a client certificate's (tls13.xo, mTLS).
+
+use native/llrt/ed25519
+use native/llrt/nistec
+use native/llrt/rsa
+use native/llrt/sha256
+use native/llrt/x509cert as x509
+
+/// The TLS 1.3 signature schemes of a certificate's key (Go's
+/// signatureSchemesForPublicKey less PKCS #1 v1.5): ECDSA tied to its
+/// curve, RSA-PSS for each hash the modulus is large enough for.
+pub fn schemes_for(key_alg: Int, key: Bytes) -> List[Int] {
+  if key_alg == x509.KEY_P256 {
+    return [0x0403]
+  }
+  if key_alg == x509.KEY_P384 {
+    return [0x0503]
+  }
+  if key_alg == x509.KEY_P521 {
+    return [0x0603]
+  }
+  if key_alg == x509.KEY_ED25519 {
+    return [0x0807]
+  }
+  if key_alg != x509.KEY_RSA {
+    return []
+  }
+  let n = match rsa.public_key(key) {
+    Some(k) => rsa.size(k.n)
+    None => 0
+  }
+  var out: List[Int] = []
+  for (scheme, h) in [(0x0804, 32), (0x0805, 48), (0x0806, 64)] {
+    if n >= 2 * h + 2 {
+      out.push(scheme)
+    }
+  }
+  out
+}
+
+/// The signature of content by the private key for the scheme (salt: a
+/// fixed RSA-PSS salt, the tests' hook); empty when the key does not
+/// parse or does not fit.
+pub fn sign(scheme: Int, key_alg: Int, key: Bytes, content: Bytes, salt: Bytes) -> Bytes {
+  if scheme == 0x0807 {
+    if key.len() != 32 {
+      return b""
+    }
+    return ed25519.sign(key, content)
+  }
+  if scheme == 0x0403 || scheme == 0x0503 || scheme == 0x0603 {
+    let curve = if scheme == 0x0603 { nistec.P521 } else if scheme == 0x0503 { nistec.P384 } else { nistec.P256 }
+    let hash = if scheme == 0x0603 { sha256.HASH_SHA512 } else if scheme == 0x0503 { sha256.HASH_SHA384 } else { sha256.HASH_SHA256 }
+    return nistec.sign(curve, key, sha256.sum(hash, content))
+  }
+  let hash = if scheme == 0x0806 { sha256.HASH_SHA512 } else if scheme == 0x0805 { sha256.HASH_SHA384 } else { sha256.HASH_SHA256 }
+  let k = match rsa.private_key(key) {
+    Some(k) => k
+    None => return b""
+  }
+  let hashed = sha256.sum(hash, content)
+  if salt.is_empty() {
+    return rsa.sign_pss(k, hash, hashed)
+  }
+  rsa.sign_pss_salt(k, hash, hashed, salt)
+}
+

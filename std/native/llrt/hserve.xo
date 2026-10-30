@@ -39,6 +39,7 @@ use native/llrt/stop
 use native/llrt/tasks
 use native/llrt/tlssrv
 use native/llrt/tracerec
+use native/llrt/x509cert as x509
 use native/rt
 use native/rthttp
 
@@ -191,6 +192,10 @@ pub fn srv_close(s: rthttp.Srv) {
 /// Adds certificate c to server s (http.Server.with_tls); the first
 /// turns TLS on.
 pub fn srv_tls(s: rthttp.Srv, c: tlssrv.Cert) { tlssrv.srv_add(s, srec(s), hconn.SR_TLS, c) }
+
+/// Sets server s's client certificate mode (tls13srv's AUTH_* number) and
+/// the roots that verify them (http.Server.with_client_auth).
+pub fn srv_client_auth(s: rthttp.Srv, mode: Int, roots: List[x509.Cert]) { tlssrv.srv_client_auth(srec(s), hconn.SR_TLS, mode, roots) }
 
 /// Frees server record a (its last reference went; cabi_http.xo
 /// srv_free).

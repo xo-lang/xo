@@ -2057,8 +2057,9 @@ fn serve_https(os: Os, r: http.Router) -> () ! Error uses (fs.read, net.listen) 
   `verified_chains` (each leaf first, ending in a root; empty when the
   mode checked none). `with_cert(cert)` makes a client present `cert`
   when a server asks for one; without it, it presents none. The native
-  backends' handshake does not send or answer a certificate request yet
-  (decision 0433's native step).
+  backends do this over TLS 1.3 (a client presents a certificate only
+  when one of the request's certificate authorities issued it, as Go's
+  does); over TLS 1.2 the native backends send and ask for none yet.
 - HTTP/2 (decision 0121): over TLS a server offers `h2` and `http/1.1`
   by ALPN and prefers `h2`, and the client offers both; plain `http` is
   HTTP/1.1 unless `with_protocols` says otherwise (below). Nothing else in the API changes, and every backend

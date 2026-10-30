@@ -163,6 +163,10 @@ struct RootsData {
   /// The system's: a word holding the parsed certificates (a kept rt.Any
   /// of a List[x509.Cert], 0 until the first handshake, system_certs)
   cell: Int = 0
+  /// the client certificate presented when a server asks (mTLS): the
+  /// chain (DER) and key; a Roots with one is its own pool key
+  ccerts: List[Bytes] = []
+  ckey: Bytes = b""
 }
 
 fn as_roots(a: rt.Any) -> rthttp.Roots { rt.obj_at[rthttp.Roots](rt.obj_addr(a)) }
@@ -203,6 +207,31 @@ pub fn roots_ders(ders: List[Bytes]) -> rthttp.Roots {
   }
   let err = if certs.is_empty() { "tls: no certificates" } else { "" }
   as_roots(rt.any_of(RootsData{certs: certs, err: err, system: false}))
+}
+
+/// roots r with a client certificate (Client.with_cert): a new Roots, so
+/// the pool of connections keeps the clients with and without one apart.
+/// The system's roots stay as they are (a client that presents a
+/// certificate names its CA with with_roots).
+pub fn roots_with_cert(r: rthttp.Roots, certs: List[Bytes], key: Bytes) -> rthttp.Roots {
+  match roots_data(rt.obj_addr(r)) {
+    Some(d) => {
+      if d.system {
+        return r
+      }
+      as_roots(rt.any_of(d with {ccerts: certs, ckey: key}))
+    }
+    None => r
+  }
+}
+
+/// The certificates of roots r (none for the system's: a server's client
+/// roots then verify nothing).
+pub fn roots_certs(r: rthttp.Roots) -> List[x509.Cert] {
+  match roots_data(rt.obj_addr(r)) {
+    Some(d) => d.certs
+    None => []
+  }
 }
 
 fn roots_data(r: Int) -> RootsData? { rt.any_get[RootsData](rt.obj_at[rt.Any](r)) }
@@ -299,7 +328,7 @@ pub const VERIFY_NONE = 2
 
 /// client with the ALPN protocols offered (none: no extension) and the
 /// verification (VERIFY_*); std/tls's client (decision 0281).
-pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int) -> Start {
+pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], verify: Int, ccerts: List[Bytes] = [], ckey: Bytes = b"") -> Start {
   let data = match roots_data(roots) {
     Some(d) => d
     None => RootsData{certs: [], err: "", system: false}
@@ -326,6 +355,8 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   cf.alpn = protos
   cf.insecure = verify == VERIFY_NONE
   cf.chain_only = verify == VERIFY_CHAIN
+  cf.certs = if ccerts.is_empty() { data.ccerts } else { ccerts }
+  cf.cert_key = if ccerts.is_empty() { data.ckey } else { ckey }
   cf.legacy_suites = tls12.default_suites()
   // XO_TLS_MLKEM=0: no X25519MLKEM768 (Go's GODEBUG=tlsmlkem=0)
   cf.groups = tls13.client_groups()

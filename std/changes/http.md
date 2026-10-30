@@ -28,9 +28,13 @@ and config until decision 0434's native step lands.
 certificate in one of Go's five modes and verifies it against `roots`
 (the system's when None); `Client.with_cert(cert)` presents one when a
 server asks; `TlsState.verified_chains` has the chains that verified the
-client's certificate. Go backend only for now: the native server does
-not ask yet (want_go.txt holds the Go output until decision 0433's
-native handshake lands). Also on the native backends, `with_tls` keeps
+client's certificate. The native TLS 1.3 server asks and verifies as Go
+does (CertificateRequest with the CAs' names, the client's Certificate
+and CertificateVerify, the clientAuth usage, Go's alerts); a native
+client presents its certificate only when a named CA issued it
+(Client.with_cert needs with_roots, not the system's roots, to keep the
+pool apart). TLS 1.2 clients and servers do not do client certificates
+natively yet. Also on the native backends, `with_tls` keeps
 the server's earlier settings (read timeouts, header and body limits)
 instead of resetting them.
 
