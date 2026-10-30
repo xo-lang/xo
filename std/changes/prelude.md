@@ -43,6 +43,22 @@ truncate the file or change it in place while the Bytes lives (rename
 over it is safe). xo's link maps std's store with it.
 
 
+## 2026-10-30: perf: a connection deadline set before each read no longer wakes the poller
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0430 stage A's timing row (Xo 1.13x Go with a read deadline set before each read)
+- Go reference: runtime netpoll's per-descriptor timers (modtimer wakes the netpoller only for an earlier when)
+- Test: internal/llvm/testdata/golden/conn_deadline_move (arm64, LLVM, Go parity): a deadline moved earlier while a read waits, one moved later that then passes while the poller sleeps on the earlier one, one cleared; conn_deadline and tls_deadline unchanged
+- Timing: xo bench --ab on the linux/arm64 offload host, 15 rounds, 100,000 one byte echo round trips over loopback with a read deadline set before each read: 3fd710781 against this commit wall 0.873 (0.863 to 0.876), cpu 0.857, Go against this commit wall 0.956 (0.955 to 0.961), so Xo is now faster than Go here (it was 1.13x); without deadlines Go against this commit 0.970 (0.966 to 0.977)
+
+Each connection keeps one read and one write timer in the runtime's
+heap, rearmed in place, instead of a timer made and removed per wait.
+Moving a timer later no longer wakes the poller: it already waits no
+later than the old deadline and looks again when that passes. A wait
+with a deadline wakes workers as often as one without (XO_RTSTATS wake
+1,608 against 23,375 before, darwin, 100,000 round trips).
+
 ## 2026-10-30: feature: connection deadlines (Conn, ServerConn)
 
 - Kind: feature

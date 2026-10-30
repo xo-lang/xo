@@ -1,0 +1,65 @@
+// A connection's read deadline lives in one timer per descriptor that
+// moves with the deadline (std/native/llrt poll.xo pd_timer): a deadline
+// moved earlier while a read waits must still wake it at the earlier
+// time, and one moved later before every read, then left to pass while
+// the poller sleeps on it, must still end the read that waits past it.
+fn show_read(c: Conn) -> Str {
+  match c.read(64) {
+    Ok(Some(b)) => "data ${b.to_str() ?? "?"}"
+    Ok(None) => "end"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let clock = os.clock
+  let l = os.net.listen("127.0.0.1:0") ?? e => {
+    os.stdio.println("listen: ${e}")
+    return
+  }
+  let addr = l.addr()
+  let peer = Chan[ServerConn].new(cap: 1)
+  scope s {
+    s.spawn(fn() {
+      match l.accept() {
+        Ok(sc) => peer.send(sc)
+        Err(e) => os.stdio.println("accept: ${e}")
+      }
+    })
+    let c = os.net.dial(addr) ?? e => {
+      os.stdio.println("dial: ${e}")
+      return
+    }
+    let sc = match peer.recv() {
+      Some(x) => x
+      None => return
+    }
+    // moved later before each of 200 reads that get data
+    var got = 0
+    for i in 0..200 {
+      c.set_read_deadline(clock, Some(clock.now() + 2s + Duration.from_millis(i)))
+      sc.write("x".bytes()) ?? _ => ()
+      if show_read(c) == "data x" {
+        got += 1
+      }
+    }
+    os.stdio.println("reads ${got}")
+    // the last deadline, moved later once more, passes while nothing comes
+    let t0 = clock.now()
+    c.set_read_deadline(clock, Some(clock.now() + 100ms))
+    os.stdio.println("passed ${show_read(c)} in time ${clock.now() - t0 < 2s}")
+    // a far deadline, moved earlier while the read waits
+    c.set_read_deadline(clock, Some(clock.now() + 30s))
+    s.spawn(fn() {
+      clock.sleep(50ms)
+      c.set_read_deadline(clock, Some(clock.now() + 50ms))
+    })
+    let t1 = clock.now()
+    os.stdio.println("earlier ${show_read(c)} in time ${clock.now() - t1 < 10s}")
+    c.set_read_deadline(clock, None)
+    sc.write("ok".bytes()) ?? _ => ()
+    os.stdio.println("cleared ${show_read(c)}")
+    c.close()
+    sc.close()
+  }
+}

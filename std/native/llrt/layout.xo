@@ -304,16 +304,19 @@ pub const PK_SIZE = 32
 /// A poll descriptor (xo_pd, poll.xo; hconn.xo reads its fd): a lock word,
 /// the socket (-1 once closed), whether close was called, the operations
 /// running, readiness that came while nobody waited (read, write), the
-/// parks waiting (read, write), and the link of the dead list.
+/// parks waiting (read, write), the link of the dead list, and the
+/// read and write deadline timers (poll.xo pd_timers: one block of two
+/// timer records, made by the first wait with a deadline, 0 before).
 pub const D_MU = 0
 pub const D_RREADY = 20
 pub const D_WREADY = 24
 pub const D_RWAIT = 32
 pub const D_WWAIT = 40
 pub const D_NEXT = 48
+pub const D_TIMERS = 56
 
 /// the record's bytes off Windows (without the AFD words of D_SIZE_WIN)
-pub const D_SIZE = 56
+pub const D_SIZE = 64
 
 pub const D_FD = 8
 pub const D_CLOSED = 12
@@ -325,11 +328,11 @@ pub const D_OPS = 16
 /// socket's base handle, the events of the poll in flight (0 none), whether
 /// to poll again once it ends, and whether its completion frees the record
 /// (pd_free ran).
-pub const DW_IOSB = 56
-pub const DW_INFO = 72
-pub const DW_BASE = 104
-pub const DW_ARMED = 112
-pub const DW_REARM = 116
-pub const DW_DYING = 120
+pub const DW_IOSB = 64
+pub const DW_INFO = 80
+pub const DW_BASE = 112
+pub const DW_ARMED = 120
+pub const DW_REARM = 124
+pub const DW_DYING = 128
 /// the record's bytes on Windows (xo_pd with its AFD words, DW_IOSB to DW_DYING)
-pub const DW_SIZE = 128
+pub const DW_SIZE = 136

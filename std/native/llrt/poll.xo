@@ -142,6 +142,7 @@ const D_WREADY = layout.D_WREADY
 const D_RWAIT = layout.D_RWAIT
 const D_WWAIT = layout.D_WWAIT
 const D_NEXT = layout.D_NEXT
+const D_TIMERS = layout.D_TIMERS
 
 /// A timer's park, C function, and fired flag (xo_rt.c struct xo_timer).
 const T_PARK = 16
@@ -636,12 +637,8 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
       poke()
     }
     if deadline != 0 && t == 0 {
-      t = rt.heap_large(T_SIZE)
-      rt.mem_set(t, 0, T_SIZE)
-      rt.mem_store(t, T_WHEN, deadline, 8)
-      rt.mem_store(t, T_IDX, -1, 8)
-      rt.mem_store(t, T_PARK, park, 8)
-      timer_add(t)
+      t = pd_timer(pd, write)
+      timer_arm(t, deadline, park)
     }
     if !(t != 0 && fired(t)) {
       wait(c)
@@ -668,10 +665,98 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
     }
   }
   if t != 0 {
-    timer_del(t)
-    rt.heap_release(t - 8)
+    timer_disarm(t)
   }
   res
+}
+
+/// The deadline timer of pd's reads (or writes): made with its pair the
+/// first time a wait has a deadline, and kept until pd is freed
+/// (pd_timers_free), so a wait with the same deadline as the last does
+/// not touch the heap, and one with a new deadline moves it (Go's
+/// netpoll resets one timer per descriptor; a timer made, added, deleted
+/// and freed per wait cost a deadline per read 1.13x Go, decision 0430).
+/// Only one task waits on each side of pd at a time.
+fn pd_timer(pd: Int, write: Bool) -> Int {
+  lk(addw(pd, D_MU))
+  var b = rt.mem_load(pd, D_TIMERS, 8)
+  if b == 0 {
+    b = rt.heap_large(T_SIZE * 2)
+    rt.mem_set(b, 0, T_SIZE * 2)
+    for i in 0..2 {
+      let t = addw(b, T_SIZE * i)
+      rt.mem_store(t, T_IDX, -1, 8)
+      rt.mem_store(t, T_FN, FN_PD, 8)
+    }
+    rt.mem_store(pd, D_TIMERS, b, 8)
+  }
+  unlk(addw(pd, D_MU))
+  if write { addw(b, T_SIZE) } else { b }
+}
+
+/// Points pd's timer t at the park p until deadline (timers' ns): it
+/// stays where it is when it already waits for that deadline, moves when
+/// the deadline changed, and is not added again when it fired for this
+/// deadline (a passed deadline stays passed: fired(t) is the timeout).
+fn timer_arm(t: Int, deadline: Int, p: Int) {
+  let v = virt()
+  if !v {
+    ev_start()
+  }
+  let mu = ev_mu()
+  lk(mu)
+  rt.mem_store(t, T_PARK, p, 8)
+  var first = 0
+  let same = rt.mem_load(t, T_WHEN, 8) == deadline
+  if rt.mem_load(t, T_IDX, 8) >= 0 {
+    if !same {
+      let later = deadline > rt.mem_load(t, T_WHEN, 8)
+      timer_remove(t)
+      rt.mem_store(t, T_WHEN, deadline, 8)
+      first = timer_push(t)
+      if later {
+        // the poller waits for no later than the old deadline, then
+        // looks again: moving a timer later never needs it woken (a
+        // deadline set before every read woke the poller, and it a
+        // worker, per read: 22,000 more wakes in 100,000 round trips)
+        first = 0
+      }
+    }
+  } else if !(same && fired(t)) {
+    rt.slot_store(t, T_FIRED_W, 0, RELAXED)
+    rt.mem_store(t, T_WHEN, deadline, 8)
+    first = timer_push(t)
+  }
+  unlk(mu)
+  if first != 0 && !v {
+    poke()
+  }
+}
+
+/// Ends a wait on pd's timer t: it signals nobody when it fires, and
+/// stays in the heap for the next wait.
+fn timer_disarm(t: Int) {
+  let mu = ev_mu()
+  lk(mu)
+  rt.mem_store(t, T_PARK, 0, 8)
+  unlk(mu)
+}
+
+/// Frees pd's deadline timers, out of the heap (the event loop's lock
+/// held: the poller's free of the dead list).
+fn pd_timers_free(pd: Int) {
+  let b = rt.mem_load(pd, D_TIMERS, 8)
+  if b == 0 {
+    return
+  }
+  for i in 0..2 {
+    let t = addw(b, T_SIZE * i)
+    if rt.mem_load(t, T_IDX, 8) >= 0 {
+      timer_remove(t)
+    }
+  }
+  rt.mem_store(pd, D_TIMERS, 0, 8)
+  rt.heap_release(subw(b, 8))
 }
 
 /// Whether the current task is canceled (and not shielded).
@@ -703,6 +788,9 @@ pub const FN_SIGNAL = 1
 /// node at 16, timed_out, a C int, at 416).
 pub const FN_SELECT = 2
 pub const FN_SCOPE = 3
+/// A descriptor's deadline timer (pd_timer) with no wait to signal: it
+/// only records that it fired.
+const FN_PD = 4
 const T_ARG = 32
 const SEL_FIRED = 32
 const SEL_CHOSEN = 40
@@ -723,6 +811,9 @@ pub fn fire(t: Int, mu: Int) {
     return
   }
   let f = rt.mem_load(t, T_FN, 8)
+  if f == FN_PD {
+    return
+  }
   if f == FN_SIGNAL {
     unlk(mu)
     stop.signal()
@@ -1312,6 +1403,7 @@ fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
   var pd = rt.mem_load(dead, 0, 8)
   while pd != 0 {
     let next = rt.mem_load(pd, D_NEXT, 8)
+    pd_timers_free(pd)
     if win {
       dead_win(pd)
     } else {
@@ -1681,6 +1773,7 @@ pub fn poll_main_win(iocp: Int, mu: Int, dead: Int, sigs: Int) {
     var pd = rt.mem_load(dead, 0, 8)
     while pd != 0 {
       let next = rt.mem_load(pd, D_NEXT, 8)
+      pd_timers_free(pd)
       lk(addw(pd, D_MU))
       let armed = rt.mem_load(pd, D_ARMED, 4) != 0
       if armed {
@@ -1922,6 +2015,7 @@ fn poll_main_wsa(e: Int) {
     var pd = rt.mem_load(dead, 0, 8)
     while pd != 0 {
       let next = rt.mem_load(pd, D_NEXT, 8)
+      pd_timers_free(pd)
       unregister(e, pd)
       rt.heap_release(subw(pd, 8))
       pd = next

@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+reads 200
+passed err i/o timeout in time true
+earlier err i/o timeout in time true
+cleared data ok
+--- stderr
