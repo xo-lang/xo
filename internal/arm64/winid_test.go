@@ -171,7 +171,8 @@ func ownFuncsNorm(text string, alias map[string]string) map[string]string {
 // frame for the variables a fault report shows (x86emit.xo stub_saves,
 // 3eae41c99: `subq $N, %rsp` and stores of registers to it) has no
 // Windows twin (a Windows leaf's stub jumps with no frame, win_leaf), so
-// it is dropped too.
+// it is dropped too, and so is a framed function's stub's (Windows makes
+// none).
 func foldStubs(b []string) []string {
 	var r []string
 	for i := 0; i < len(b); {
@@ -192,6 +193,24 @@ func foldStubs(b []string) []string {
 				}
 				r = append(r, "jmp "+b[j][6:])
 				i = j + 2
+				continue
+			}
+		}
+		// a framed function's stub: Linux saves the variables' registers
+		// below rsp first (stub_saves), Windows does not (its unwind data
+		// knows only the prologue's rsp, so a moved rsp lost the fault
+		// past task.isolate: fault_audit, 2026-10-30)
+		if strings.HasPrefix(b[i], "subq $") && strings.HasSuffix(b[i], ", %rsp") && i+1 < len(b) && strings.HasPrefix(b[i+1], "movq %") && strings.HasSuffix(b[i+1], "(%rsp)") {
+			j := i + 1
+			for j < len(b) && strings.HasPrefix(b[j], "movq %") && strings.HasSuffix(b[j], "(%rsp)") {
+				j++
+			}
+			k := j
+			for k < len(b) && k < j+16 && !strings.HasPrefix(b[k], "callq ") && !strings.HasPrefix(b[k], "subq ") {
+				k++
+			}
+			if k+1 < len(b) && strings.HasPrefix(b[k], "callq ") && b[k+1] == "ud2" {
+				i = j
 				continue
 			}
 		}

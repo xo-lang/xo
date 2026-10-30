@@ -1173,8 +1173,10 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     // the caller saved registers holding variables at the fault, stored
     // below rsp before the moves (emit.xo; decision 0268's addendum): not
     // where the fault can land in this function, not in a far frame, not
-    // in a Windows leaf (which jumps)
-    let saves = if g.base == 0 && g.pos >= 0 && inst.pad < 0 && !win_leaf { g.stub_saves(g.pos / 4) } else { [] }
+    // on Windows: the Win64 unwind data describes the prologue's rsp only,
+    // so a stub that moved rsp unwound to a wrong return address and the
+    // fault passed task.isolate (fault_audit, 2026-10-30)
+    let saves = if g.base == 0 && g.pos >= 0 && inst.pad < 0 && g.os != "windows" { g.stub_saves(g.pos / 4) } else { [] }
     var saved: List[(Int, Int)] = []
     if !saves.is_empty() {
       let bytes = 16 * ((saves.len() + 1) / 2)
