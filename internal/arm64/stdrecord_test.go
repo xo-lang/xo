@@ -21,6 +21,7 @@ import (
 // 2026-10-29). One output name for the three builds: the code signature
 // identifier is the file's name.
 func TestStdRecordIdentity(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

@@ -18,6 +18,7 @@ import (
 // tables, down to main: by default since 2026-10-22 (owner) and with
 // XO_TRACEBACK=1; with XO_TRACEBACK=0 the report is the one line.
 func TestTraceback(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -84,6 +85,7 @@ func testTraceback(t *testing.T, be string) {
 // copies, LLVM's) are in the traceback too, from the DWARF inlined_subroutine entries (decision
 // 0239), marked [inlined], innermost first, each at its own line.
 func TestTracebackInlined(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -116,6 +118,7 @@ func TestTracebackInlined(t *testing.T) {
 // `slug (slug.xo:0)`: the check and its failure path were lowered before
 // any statement set a line, compiler/ssa contract.xo).
 func TestTracebackContract(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

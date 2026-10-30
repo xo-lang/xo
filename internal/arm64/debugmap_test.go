@@ -20,6 +20,7 @@ import (
 // lldb stops in a std function by name with its source line and
 // variables, and dsymutil's dSYM from it holds std's subprograms.
 func TestStdDebugMap(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}

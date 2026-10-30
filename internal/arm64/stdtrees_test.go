@@ -18,6 +18,7 @@ import (
 // (phase std_trees_rebuild), and the program's output is the same as the
 // build that parsed std's generic files before install.
 func TestStdTreesRebuild(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

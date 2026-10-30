@@ -72,6 +72,7 @@ var benchDir = filepath.Join("..", "..", "bench", "perf", "llvm", "xo")
 // with testdata/*.s (-update rewrites them). On a host with clang the
 // whole Linux text is also assembled as ELF.
 func TestGoldenAsm(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"fib", "sieve"} {
 		for _, goos := range []string{"darwin", "linux"} {
 			// the four asm runs in parallel (lead, 2026-10-26: TestGoldenAsm
@@ -302,6 +303,7 @@ func goldenDirs(t *testing.T) []string {
 // status, stdout, and fault messages as the Go and LLVM backends, and no
 // allocation live at exit.
 func TestGoldenRun(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -332,6 +334,7 @@ func TestGoldenRun(t *testing.T) {
 // (recorded in testdata/runwant by the Go xo of the go-compiler-final
 // tag, decision 0215) and no allocation live at exit.
 func TestRun(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -407,6 +410,7 @@ func TestBench(t *testing.T) {
 
 // TestLinuxEmit emits fib for linux/arm64 and assembles it as ELF.
 func TestLinuxEmit(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "fib.s")
 	if err := os.WriteFile(path, []byte(asm(t, filepath.Join(benchDir, "fib"), "linux")), 0o644); err != nil {
 		t.Fatal(err)
@@ -421,6 +425,7 @@ func TestLinuxEmit(t *testing.T) {
 // (`.arch_extension crc`; 0.34.0 shipped without it and a Debian arm64
 // build through cc failed on `crc32x`).
 func TestLinuxEmitCRC(t *testing.T) {
+	t.Parallel()
 	text := asm(t, filepath.Join("..", "llvm", "testdata", "golden", "crc32_vectors"), "linux")
 	if !strings.Contains(text, "crc32x") {
 		t.Fatal("the emitted assembly has no crc32x: the test no longer covers the CRC instructions")
@@ -451,6 +456,7 @@ func TestLinuxEmitCRC(t *testing.T) {
 // 32 byte block copy (`ldp q30, q31`) where there were 24 in the longest
 // region before; the loop ran 36% faster (20M iterations, 0.48 s to 0.30 s).
 func TestByRefFieldHome(t *testing.T) {
+	t.Parallel()
 	const maxCopies, maxOps = 0, 225
 	got := ownFuncs(asm(t, filepath.Join("..", "llvm", "testdata", "golden", "byref_field_home"), "darwin"))
 	main := got
@@ -509,6 +515,7 @@ func TestByRefFieldHome(t *testing.T) {
 // and a read before any write shows as the poison (2026-10-18: a frame
 // home that one loop entry left unwritten read old return addresses).
 func TestGoldenRunPoison(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -546,6 +553,7 @@ func TestGoldenRunPoison(t *testing.T) {
 // removes, nested forks, the base written after its branches, Str keys
 // and Sets.
 func TestMapBranch(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -580,6 +588,7 @@ func TestMapBranch(t *testing.T) {
 // the fourth spilled use, or a second spilled result, shared a scratch
 // register with no error).
 func TestGoldenRunSpill(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

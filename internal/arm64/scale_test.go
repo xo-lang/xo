@@ -14,6 +14,7 @@ import (
 // and the assembly failed ("adr out of range", 2026-10-23); a long
 // function now keeps its tables after their br (JT_INLINE_WORDS).
 func TestSwitch65535Arms(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a match of 65535 arms (about 100 s)")
 	}

@@ -21,6 +21,7 @@ import (
 // round 2, on 0.26.0; darwin/amd64 printed the same on the Intel laptop,
 // 2026-10-23.)
 func TestTracebackLocalsTypes(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds and runs a program")
 	}

@@ -45,6 +45,7 @@ var winIdentityAllowed = map[string]bool{"byref_struct/merged": true, "cli_parse
 // label numbers. The subset by default; XO_TEST_WIN_IDENTITY=all every
 // golden.
 func TestWindowsAmd64Identity(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("emits every golden twice")
 	}

@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -19,6 +20,7 @@ import (
 // target is ignored with one line and gives the no-layout bytes but for
 // the build id.
 func TestLayoutIdentity(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -58,7 +60,10 @@ fn main(os: Os) {
 	if err := os.WriteFile(filepath.Join(prog, "xo.mod"), []byte("module prog\n"), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	layout := "xo layout v1\ntarget darwin/arm64\nsamples 10 hz 100\nfn hot 9\nfn warm 1\nline hot 4 9\nedge main hot 9\n"
+	// the host's target: a darwin/arm64 file was ignored on the linux/arm64
+	// host (2026-10-30)
+	host := runtime.GOOS + "/arm64"
+	layout := "xo layout v1\ntarget " + host + "\nsamples 10 hz 100\nfn hot 9\nfn warm 1\nline hot 4 9\nedge main hot 9\n"
 	if err := os.WriteFile(filepath.Join(work, "xo.layout"), []byte(layout), 0o644); err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +104,7 @@ fn main(os: Os) {
 		t.Errorf("the build with the layout is the same as without it (hot should move first)")
 	}
 	other := filepath.Join(work, "other.layout")
-	if err := os.WriteFile(other, []byte(strings.Replace(layout, "target darwin/arm64", "target linux/amd64", 1)), 0o644); err != nil {
+	if err := os.WriteFile(other, []byte(strings.Replace(layout, "target "+host, "target linux/amd64", 1)), 0o644); err != nil {
 		t.Fatal(err)
 	}
 	_, omsgs := build("other", []string{"--layout=" + other})

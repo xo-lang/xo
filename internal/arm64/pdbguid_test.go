@@ -20,6 +20,7 @@ import (
 // whose facts component differs between the two (Windows run
 // 40820335875 after 2d939fabd, 2026-10-29). The PE link runs on the Mac.
 func TestPDBGUIDFromContent(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

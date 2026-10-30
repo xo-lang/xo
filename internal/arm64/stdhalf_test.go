@@ -50,6 +50,7 @@ func sepHalfEnv(t *testing.T, xo, root, out string) []string {
 // function. TestUnwind's sephalf case covers compiler/debug's unwinder
 // and xo dev debug on it.
 func TestStdHalfTools(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}
@@ -143,6 +144,7 @@ func TestStdHalfTools(t *testing.T) {
 // binary is the one a build with no half makes, byte for byte, and runs;
 // so is an edit that adds a Float constant, whichever way it links.
 func TestStdHalfCache(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}

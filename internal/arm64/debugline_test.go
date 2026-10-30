@@ -24,6 +24,7 @@ import (
 // lldb's `b main.xo:9` resolving there is checked by hand
 // (knowledgebase/infrastructure/toolchain.md).
 func TestDebugLineDarwin(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}
@@ -189,6 +190,7 @@ func dwarfFile(bin string) string {
 // tables alone). A second build from the binary cache must give the same
 // (the cache keeps a bundle's DWARF beside the entry).
 func TestDebugLineDarwinCC(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}
@@ -298,6 +300,7 @@ func TestDebugLineDarwinCC(t *testing.T) {
 // and lldb stopped at `b scale` shows scale as an inlined frame above
 // main at line 12.
 func TestDebugLineInlined(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}

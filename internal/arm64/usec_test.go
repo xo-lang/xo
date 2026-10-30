@@ -16,6 +16,7 @@ import (
 // Intel field report on 0.26.0: undefined ___tsan_* and
 // ___sanitizer_*_switch_fiber).
 func TestUseCDarwinAmd64Links(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" {
 		t.Skip("a darwin host's cc links darwin/amd64")
 	}

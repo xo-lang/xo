@@ -21,6 +21,7 @@ import (
 // same UUID, a fault's traceback still names lines (the runtime reads
 // the dSYM), and lldb resolves a function through it.
 func TestDebugInfoSplitDarwin(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 host")
 	}
@@ -85,6 +86,7 @@ func machoUUID(t *testing.T, f *macho.File) []byte {
 // traceback, llvm-symbolizer and addr2line named main.xo lines through
 // it.)
 func TestDebugInfoSplitLinux(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program")
 	}

@@ -19,6 +19,7 @@ import (
 // type std also has (a weak definition each side, the store's kept). The
 // executables run under Wine in the gate, not here.
 func TestSepcompLinksWindows(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

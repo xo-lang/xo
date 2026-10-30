@@ -27,6 +27,7 @@ import (
 // in the loop prints k, total, and d with the values of the first
 // iteration.
 func TestDebugVars(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}
@@ -152,6 +153,7 @@ func programFunc(sym string) bool {
 // addendum), so the DWARF readers are in the build with it only, and a
 // runtime function that calls them differs by the branch.
 func TestDebugInfoSameCode(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}
@@ -276,6 +278,7 @@ func TestDebugInfoSameCode(t *testing.T) {
 // breakpoint at main.xo:11 resolves to lldb's address, and the line
 // tables give that address's line back.
 func TestDwarfReader(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}
@@ -439,6 +442,7 @@ func lastLines(b []byte, n int) string {
 // xo dev unwind finds in it (inlined calls as frames, each with its
 // function and line, or symbol and offset) are lldb's own, in order.
 func TestUnwind(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}
@@ -646,6 +650,7 @@ func TestUnwind(t *testing.T) {
 // through its object, and an enum as its tag's name and the union of its
 // variants.
 func TestDebugTypes(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}
@@ -755,6 +760,7 @@ func TestDebugTypes(t *testing.T) {
 // A change that grows it past the bound should compact it again, not
 // raise the bound without a measurement.
 func TestDebugLoclistsBudget(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || !native() {
 		t.Skip("darwin/arm64 only")
 	}
@@ -816,6 +822,7 @@ func TestDebugLoclistsBudget(t *testing.T) {
 // (gotchas/arm64-compact-unwind-leaf-fault-frames.md); none existed on
 // 2026-10-17, so the fix waits for one to test it on.
 func TestNoLeafWithPads(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("generates every golden's assembly")
 	}

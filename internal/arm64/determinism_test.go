@@ -17,6 +17,7 @@ import (
 // the lead, 2026-10-23, after the front end cache's replay of a thunk
 // depended on which body made it first).
 func TestAsmIgnoresOwnAllocation(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("emits several programs twice")
 	}

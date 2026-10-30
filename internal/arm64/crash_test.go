@@ -22,6 +22,7 @@ import (
 // program, so its status is the signal's as before. XO_CRASH_REPORT=0
 // leaves the old behavior: no report, the same signal.
 func TestCrashReport(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

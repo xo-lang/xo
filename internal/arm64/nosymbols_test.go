@@ -12,6 +12,7 @@ import (
 // printing the image's header symbol for every frame, and no longer runs
 // past main (2026-10-25).
 func TestTracebackNoSymbols(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

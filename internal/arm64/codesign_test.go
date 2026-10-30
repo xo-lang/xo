@@ -21,6 +21,7 @@ import (
 // is not last or whose __LINKEDIT does not end the file
 // (knowledgebase/infrastructure/code-signing.md).
 func TestCodesignAcceptsLinkerOutput(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

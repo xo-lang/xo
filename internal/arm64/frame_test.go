@@ -13,6 +13,7 @@ import (
 // (gotchas/arm64-large-frame.md). TestRun runs the program, on the main
 // stack and on a fiber.
 func TestBigFrameProbes(t *testing.T) {
+	t.Parallel()
 	asm := linuxAsm(t, "big_frame")
 	start := strings.Index(asm, "// func big\n")
 	if start < 0 {
@@ -35,6 +36,7 @@ func TestBigFrameProbes(t *testing.T) {
 // with two str past the 504 byte reach of stp (the assembler rejected
 // `stp x29, x30, [sp, #688]` before). TestRun runs the program.
 func TestWideHelperRecords(t *testing.T) {
+	t.Parallel()
 	asm := linuxAsm(t, "wide_values")
 	if !strings.Contains(asm, "\tstr x29, [sp, #") || !strings.Contains(asm, "\tldr x30, [sp, #") {
 		t.Fatal("no helper stores its frame record past 504 bytes")
@@ -47,6 +49,7 @@ func TestWideHelperRecords(t *testing.T) {
 // the assembler rejected the self hosted SSA builder (decision 0150).
 // TestRun runs the program.
 func TestFarOutSlot(t *testing.T) {
+	t.Parallel()
 	asm := linuxAsm(t, "far_out_slot")
 	for _, m := range regexp.MustCompile(`\tadd x\d+, sp, #(\d+)\n`).FindAllStringSubmatch(asm, -1) {
 		if len(m[1]) > 4 || m[1] > "4095" && len(m[1]) == 4 {
@@ -72,6 +75,7 @@ func linuxAsm(t *testing.T, name string) string {
 // are addressed through x28, which holds nothing else there (decision
 // 0146). TestRun runs the program, on the main stack and on a fiber.
 func TestFarFrame(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("lowers a function of 4500 statements (about 10 s)")
 	}

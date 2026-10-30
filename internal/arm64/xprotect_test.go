@@ -23,6 +23,7 @@ var xprotectGoldens = []string{"http_stream", "net_only", "http_conn_fault"}
 // pattern of XProtect's MACOS.SOMA.AUENB rule (`add x11, x11, #0x880;
 // adrp x12; add x12`).
 func TestEmptyListAtPageStart(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program")
 	}
@@ -69,6 +70,7 @@ func TestEmptyListAtPageStart(t *testing.T) {
 // container of scripts/docker-linux.sh (its image carries yara) when
 // Docker runs; XO_XPROTECT_DOCKER=off turns the container off.
 func TestXProtectRules(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

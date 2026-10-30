@@ -20,6 +20,7 @@ import (
 // -short and the fixed point build arm64 only, so nothing else ran the
 // pass before a Docker run).
 func TestAmd64PassesFinish(t *testing.T) {
+	t.Parallel()
 	cli, err := xotool.Command()
 	if err != nil {
 		t.Fatal(err)

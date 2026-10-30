@@ -17,6 +17,7 @@ import (
 // XO_INLINE_STRICT=1 (which internal/xotool sets for every test) it fails
 // (gotchas/arm64-inline-verify-fallback.md: the fallback was silent).
 func TestInlineFallbackLoud(t *testing.T) {
+	t.Parallel()
 	cli, err := xotool.Command()
 	if err != nil {
 		t.Skip(err)
@@ -90,6 +91,7 @@ func runXo(cli []string, dir string, args ...string) (string, error) {
 // build with XO1510 before code generation, on arm64 and amd64; unbroken
 // it builds, and XO_ASSUME_CHECK=off skips the check.
 func TestAssumptionCheck(t *testing.T) {
+	t.Parallel()
 	cli, err := xotool.Command()
 	if err != nil {
 		t.Skip(err)

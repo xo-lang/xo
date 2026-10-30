@@ -5,6 +5,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -23,6 +24,7 @@ import (
 // std (debug.router: specialize_args once cloned the extern, a body with
 // no instructions, 2026-10-28).
 func TestSepcompLinks(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -198,6 +200,7 @@ fn main(os: Os) {
 // says so), runs as the whole program (XO_SEPCOMP=0) does, and
 // XO_SEPCOMP=0 is never answered from the separately compiled entries.
 func TestSepcompDefault(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -278,6 +281,7 @@ func TestSepcompDefault(t *testing.T) {
 // net goldens, `_xo_f_zero_2efn_28Int_...` in sql_driver), and the
 // program prints its golden's output.
 func TestSepcompSharedMade(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -326,8 +330,12 @@ func TestSepcompSharedMade(t *testing.T) {
 // "."), and -s or --debug-info=off leaves none, embedded or in a dSYM
 // (std's store carries DWARF the program's own build left out).
 func TestSepcompDebugInfo(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
+	}
+	if runtime.GOOS != "darwin" {
+		t.Skip("dsymutil, dwarfdump and otool read a darwin binary's debug map (the linux/arm64 host, 2026-10-30)")
 	}
 	if testing.Short() {
 		t.Skip("builds std's variants and programs")

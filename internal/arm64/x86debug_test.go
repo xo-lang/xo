@@ -22,6 +22,7 @@ import (
 // backend's TestDebugInfoSameCode compares otool's text; this compares
 // the assembly's instruction lines of a linux/amd64 cross build).
 func TestAmd64DebugInfoSameCode(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("cross builds goldens twice")
 	}
@@ -105,6 +106,7 @@ func TestAmd64DebugInfoSameCode(t *testing.T) {
 // "index -1 out of range" at arm64/regalloc.xo for bench/perf/portable,
 // sql_conv, sql_wire_names, xml_basic on linux, windows and darwin).
 func TestAmd64CrossBuilds(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("cross builds four programs for three targets")
 	}

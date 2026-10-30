@@ -2014,26 +2014,49 @@ fn parse_list_store(os: Os, var c: check.Checker, dir: Str) {
 /// parser.iface_text_lex (std_tree_sum's) gives iface_text's text; a
 /// line per difference, exit 1 when any. Files that do not parse are
 /// skipped (a build of them fails first).
-fn iface_check_cmd(os: Os, dir: Str) -> Int {
-  let all = match os.fs.walk(dir) {
-    Ok(fs) => fs
-    Err(e) => {
-      os.stdio.eprintln("iface-check: ${e}")
-      return 2
+fn iface_check_cmd(os: Os, paths: List[Str]) -> Int {
+  // every .xo file under a directory named, and every file named (a
+  // shard of TestIfaceLexMatchesParse)
+  var all: List[Str] = []
+  for p in paths {
+    let dir = match os.fs.stat(p) {
+      Ok(Some(fi)) => fi.is_dir
+      Ok(None) => {
+        os.stdio.eprintln("iface-check: ${p}: no such file")
+        return 2
+      }
+      Err(e) => {
+        os.stdio.eprintln("iface-check: ${e}")
+        return 2
+      }
+    }
+    if !dir {
+      all.push(p)
+      continue
+    }
+    match os.fs.walk(p) {
+      Ok(fs) => {
+        for fi in fs {
+          if !fi.is_dir && fi.path.ends_with(".xo") {
+            all.push(fi.path)
+          }
+        }
+      }
+      Err(e) => {
+        os.stdio.eprintln("iface-check: ${e}")
+        return 2
+      }
     }
   }
   var files = 0
   var cases = 0
   var bad = 0
-  for fi in all {
-    if fi.is_dir || !fi.path.ends_with(".xo") {
-      continue
-    }
-    let src = match os.fs.read(fi.path) {
+  for path in all {
+    let src = match os.fs.read(path) {
       Ok(b) => b
       Err(_) => continue
     }
-    if parser.parse_file(fi.path.bytes(), src, true).hard {
+    if parser.parse_file(path.bytes(), src, true).hard {
       continue
     }
     files += 1
@@ -2073,13 +2096,13 @@ fn iface_check_cmd(os: Os, dir: Str) -> Int {
       }
     }
     for (what, v) in variants {
-      if parser.parse_file(fi.path.bytes(), v, true).hard {
+      if parser.parse_file(path.bytes(), v, true).hard {
         continue
       }
       cases += 1
-      if parser.iface_text(fi.path.bytes(), v) != parser.iface_text_lex(v) {
+      if parser.iface_text(path.bytes(), v) != parser.iface_text_lex(v) {
         bad += 1
-        os.stdio.println("DIFF ${fi.path}: ${what}")
+        os.stdio.println("DIFF ${path}: ${what}")
       }
     }
   }

@@ -51,6 +51,7 @@ alone defgh!
 // TestStrViewPast2GiB runs bigStrSrc (about 2.2 GB of memory at its
 // peak).
 func TestStrViewPast2GiB(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -91,6 +92,7 @@ const bigJoinSrc = `fn main(os: Os) {
 // TestStrJoinPast4GiB runs bigJoinSrc (about 2.2 GB of memory: the
 // check comes before the join's allocation).
 func TestStrJoinPast4GiB(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

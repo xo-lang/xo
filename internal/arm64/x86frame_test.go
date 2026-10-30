@@ -13,6 +13,7 @@ import (
 // UNWIND_INFO holds ("a prologue of 365 bytes", a 24k line function,
 // 2026-10-22). The run of the program is the Docker amd64 goldens'.
 func TestX86FrameProbeLoop(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("lowers a function of 4500 statements")
 	}

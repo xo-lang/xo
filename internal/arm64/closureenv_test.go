@@ -18,6 +18,7 @@ import (
 // environment each (21,073 allocations, 2026-10-23); the golden's
 // escaping closures keep theirs on the heap.
 func TestClosureEnvInFrame(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program")
 	}

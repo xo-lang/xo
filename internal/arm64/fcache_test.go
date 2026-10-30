@@ -8,9 +8,11 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -28,6 +30,7 @@ import (
 // so a libc build's entries gave a no-libc build `.weak` lines; and
 // c_sym_addr's direct or GOT address depends on nolibc, now in the key).
 func TestBackendCacheModuleFacts(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -85,6 +88,7 @@ func TestBackendCacheModuleFacts(t *testing.T) {
 // darwin/amd64 and windows/amd64 (the amd64 backend's caches, 2026-10-26). XO_BACKEND_CACHE=on is
 // set, since a gate may export off (scripts/gate.sh).
 func TestBackendCacheEditIdentity(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -221,6 +225,7 @@ func TestBackendCacheEditIdentity(t *testing.T) {
 // the third build on, when both functions are left undecoded and read
 // their bounds from their body facts (2026-10-25).
 func TestBackendCacheCalleeSummary(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -311,6 +316,7 @@ func TestBackendCacheCalleeSummary(t *testing.T) {
 // holds no state of the builder, decision 0271: before, every later body
 // missed).
 func TestFrontCacheInterfaceEdits(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -442,6 +448,7 @@ func TestFrontCacheInterfaceEdits(t *testing.T) {
 // as cold, warning included, and after an edit of the module (checked
 // again) the new ones.
 func TestModuleCheckDiagnostics(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -564,6 +571,7 @@ fn main(os: Os) {
 // second, where the name is fa's other function: the binary is the same
 // file as a build with XO_BACKEND_CACHE=off, and verify is clean.
 func TestFrontCacheAbsentHelper(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -674,7 +682,7 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 		}
 		return nil
 	})
-	buildWith := func(bin string, i int, dir string, env ...string) ([]byte, error) {
+	buildWith := func(bin string, pass string, i int, dir string, env ...string) ([]byte, error) {
 		if m, ok := strings.CutPrefix(dir, "std:"); ok {
 			// a std module's tests, on that xo's own std (bin/../std): they
 			// must pass (no binary to compare)
@@ -687,7 +695,8 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 			}
 			return nil, nil
 		}
-		out := filepath.Join(work, "out", strconv.Itoa(i), "prog")
+		// an output path per pass (the orders run at once) and program
+		out := filepath.Join(work, "out", pass, strconv.Itoa(i), "prog")
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(bin, "build", "--backend=arm64", "-o", out, "."))
 		cmd.Dir = dir
@@ -697,7 +706,6 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 		}
 		return os.ReadFile(out)
 	}
-	build := func(i int, dir string, env ...string) ([]byte, error) { return buildWith(xo, i, dir, env...) }
 	// the first pass: 8 builds at once
 	next := make(chan int)
 	var wg sync.WaitGroup
@@ -708,7 +716,7 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			for i := range next {
-				if _, err := buildWith(warm, i, dirs[i], "XO_BACKEND_CACHE=on"); err != nil {
+				if _, err := buildWith(warm, "first", i, dirs[i], "XO_BACKEND_CACHE=on"); err != nil {
 					mu.Lock()
 					first = append(first, fmt.Sprintf("%s: %v", filepath.Base(dirs[i]), err))
 					mu.Unlock()
@@ -736,22 +744,32 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 	for i := 0; i < n; i += 2 {
 		orders[1] = append(orders[1], i)
 	}
+	// the three orders at once on the shared cache (lead, 2026-10-30: one
+	// after the other they were the full tier's arm64 step's longest
+	// test, 560 s): each order is still one program after another, and
+	// each program now also after the other orders' entries, which the
+	// property covers (an entry is the same whichever build recorded it)
 	for k, order := range orders {
-		for _, i := range order {
-			d := dirs[i]
-			on, err := build(i, d, "XO_BACKEND_CACHE=on")
-			if err != nil {
-				t.Errorf("order %d, %s through the cache: %v", k, filepath.Base(d), err)
-				continue
+		k, order := k, order
+		t.Run("order"+strconv.Itoa(k), func(t *testing.T) {
+			t.Parallel()
+			pass := "order" + strconv.Itoa(k)
+			for _, i := range order {
+				d := dirs[i]
+				on, err := buildWith(xo, pass, i, d, "XO_BACKEND_CACHE=on")
+				if err != nil {
+					t.Errorf("order %d, %s through the cache: %v", k, filepath.Base(d), err)
+					continue
+				}
+				off, err := buildWith(xo, pass, i, d, "XO_BACKEND_CACHE=off")
+				if err != nil {
+					t.Fatalf("%s: %v", filepath.Base(d), err)
+				}
+				if !bytes.Equal(on, off) {
+					t.Errorf("order %d, %s: the build through the shared cache differs from the build with XO_BACKEND_CACHE=off", k, filepath.Base(d))
+				}
 			}
-			off, err := build(i, d, "XO_BACKEND_CACHE=off")
-			if err != nil {
-				t.Fatalf("%s: %v", filepath.Base(d), err)
-			}
-			if !bytes.Equal(on, off) {
-				t.Errorf("order %d, %s: the build through the shared cache differs from the build with XO_BACKEND_CACHE=off", k, filepath.Base(d))
-			}
-		}
+		})
 	}
 }
 
@@ -765,6 +783,7 @@ func TestFrontCacheAcrossPrograms(t *testing.T) {
 // and the task scan sets need_conc before any body): the masking broke
 // bodies recorded in other builders (step 2's prebuild).
 func TestFrontCacheOneWayFlags(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -820,6 +839,7 @@ func TestFrontCacheOneWayFlags(t *testing.T) {
 // it by the source text alone and replayed the first value; a seed's
 // `xo version` once named another build's commit). Native and LLVM.
 func TestFrontCacheStamps(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -869,6 +889,7 @@ func TestFrontCacheStamps(t *testing.T) {
 // naming it, and the binary is the cache-off build's
 // (gotchas/fe-cache-entry-does-not-replay.md).
 func TestFrontCacheEntryDoesNotReplay(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -965,8 +986,7 @@ func TestModuleCheckAuto(t *testing.T) {
 			dirs = append(dirs, d)
 		}
 	}
-	out := filepath.Join(work, "prog")
-	build := func(dir, cache string, env ...string) ([]byte, string) {
+	build := func(t *testing.T, out, dir, cache string, env ...string) ([]byte, string) {
 		t.Helper()
 		os.Remove(out)
 		cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=arm64", "--phase-times", "-o", out, "."))
@@ -983,35 +1003,44 @@ func TestModuleCheckAuto(t *testing.T) {
 		return b, string(log)
 	}
 	skipped := regexp.MustCompile(`cache chk ([1-9]\d*)/\d+ modules`)
-	nskip := 0
-	for i, d := range dirs {
-		cache := filepath.Join(work, "cache", strconv.Itoa(i))
-		off, _ := build(d, cache, "XO_BACKEND_CACHE=off")
-		auto := []string{"XO_BACKEND_CACHE=on", "XO_CHK_CACHE=auto"}
-		build(d, cache, auto...)
-		warm, log := build(d, cache, auto...)
-		if strings.Contains(log, "module check cache skipped") {
-			t.Errorf("%s: the warm build fell back:\n%s", filepath.Base(d), log)
+	var nskip atomic.Int64
+	// a parallel subtest per program, each with its own cache and output
+	// (lead, 2026-10-30: one after the other, 229 s in the full tier)
+	t.Run("programs", func(t *testing.T) {
+		for i, d := range dirs {
+			i, d := i, d
+			t.Run(filepath.Base(d), func(t *testing.T) {
+				t.Parallel()
+				cache := filepath.Join(work, "cache", strconv.Itoa(i))
+				out := filepath.Join(work, "out", strconv.Itoa(i), "prog")
+				off, _ := build(t, out, d, cache, "XO_BACKEND_CACHE=off")
+				auto := []string{"XO_BACKEND_CACHE=on", "XO_CHK_CACHE=auto"}
+				build(t, out, d, cache, auto...)
+				warm, log := build(t, out, d, cache, auto...)
+				if strings.Contains(log, "module check cache skipped") {
+					t.Errorf("%s: the warm build fell back:\n%s", filepath.Base(d), log)
+				}
+				if !bytes.Equal(warm, off) {
+					t.Errorf("%s: the warm build with XO_CHK_CACHE=auto differs from the cache-off build", filepath.Base(d))
+				}
+				if skipped.MatchString(log) {
+					nskip.Add(1)
+					// the front end cache's entries gone, the module entries kept:
+					// the skipped modules' bodies are built from source. A golden's
+					// one module has no body the front end cache replays (its root
+					// bodies are on its entry's eager list, checked before the
+					// whole-program passes), so it need not fall back;
+					// TestModuleCheckAutoGeneric has a module that must
+					removeFeEntries(cache)
+					fb, _ := build(t, out, d, cache, auto...)
+					if !bytes.Equal(fb, off) {
+						t.Errorf("%s: the build after the fallback differs from the cache-off build", filepath.Base(d))
+					}
+				}
+			})
 		}
-		if !bytes.Equal(warm, off) {
-			t.Errorf("%s: the warm build with XO_CHK_CACHE=auto differs from the cache-off build", filepath.Base(d))
-		}
-		if skipped.MatchString(log) {
-			nskip++
-			// the front end cache's entries gone, the module entries kept:
-			// the skipped modules' bodies are built from source. A golden's
-			// one module has no body the front end cache replays (its root
-			// bodies are on its entry's eager list, checked before the
-			// whole-program passes), so it need not fall back;
-			// TestModuleCheckAutoGeneric has a module that must
-			removeFeEntries(cache)
-			fb, _ := build(d, cache, auto...)
-			if !bytes.Equal(fb, off) {
-				t.Errorf("%s: the build after the fallback differs from the cache-off build", filepath.Base(d))
-			}
-		}
-	}
-	if nskip == 0 {
+	})
+	if nskip.Load() == 0 {
 		t.Error("XO_CHK_CACHE=auto skipped no module of any program")
 	}
 }
@@ -1023,6 +1052,7 @@ func TestModuleCheckAuto(t *testing.T) {
 // too, and compares. Programs: nested and capturing closures, and
 // conc_mutex_rollback's `m.with(fn(var l) ...)` (closure_with).
 func TestFrontCacheClosures(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -1111,6 +1141,7 @@ fn main(os: Os) uses stdio {
 // are cached, the constants numbered at a commit as the build there
 // numbers them (decision 0271's consts relocation).
 func TestFrontCacheConsts(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -1246,6 +1277,7 @@ fn main(os: Os) uses stdio {
 // numbered and the thunks found or made at a commit as the build there
 // does (decision 0271's sites and thunks relocations).
 func TestFrontCacheSitesThunks(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -1357,6 +1389,7 @@ fn main(os: Os) uses stdio {
 // warm build and a build after an edit of another module skip it with
 // no fallback and are the cache-off builds' binaries.
 func TestModuleCheckAutoGeneric(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -1562,6 +1595,7 @@ func TestPruneBudget(t *testing.T) {
 // name_at holds, so their names resolved to other objects and the warm
 // build failed with XO1201 (2026-10-21, the tz_table golden).
 func TestModuleCheckAutoZones(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -1640,6 +1674,7 @@ fn main(os: Os) {
 // (2026-10-21). The front end cache keys a program module's body by
 // whether its module is the root.
 func TestFrontCacheRootThenLibrary(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -1710,6 +1745,7 @@ func TestFrontCacheRootThenLibrary(t *testing.T) {
 // consuming its list (owned to borrowed), which changes mid's flag
 // through it, and then consumes it again.
 func TestBorrowIncremental(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -1783,6 +1819,7 @@ func TestBorrowIncremental(t *testing.T) {
 // before 2026-10-21 it hashed the full sources, and a comment added to
 // json.xo missed every std body of every program.
 func TestFrontCacheStdCommentEdit(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -1921,6 +1958,7 @@ func TestStdSumMemoPerTree(t *testing.T) {
 // (2026-10-21: a test build parsed std serially, 0.14 s of a warm 0.5 s
 // build of json's tests).
 func TestParseListForTests(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -1984,6 +2022,7 @@ func TestParseListForTests(t *testing.T) {
 // does not, so the host build alone missed debug rows moved into the
 // columns, front cache v12, 2026-10-21).
 func TestFrontCacheMovedBodies(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2157,6 +2196,7 @@ func TestPruneDetached(t *testing.T) {
 // not, and `xo test --std-module=native/path` after a one-line test edit
 // hit 0 of 1,148 bodies.
 func TestFrontCacheStdTestEdit(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2246,16 +2286,34 @@ func TestIfaceLexMatchesParse(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// each tree in shards of files, parallel subtests (lead, 2026-10-30:
+	// std and compiler whole were 204 and 194 s in the full tier); every
+	// 8th file by position, so each shard mixes big and small files
+	const shards = 8
 	for _, d := range []string{"std", "compiler"} {
-		t.Run(d, func(t *testing.T) {
-			t.Parallel()
-			out, err := testtmp.Guard(exec.Command(xo, "dev", "iface-check", filepath.Join(root, d))).CombinedOutput()
-			if err != nil {
-				t.Errorf("iface-check %s: %v\n%s", d, err, out)
-				return
+		var files []string
+		filepath.WalkDir(filepath.Join(root, d), func(p string, e fs.DirEntry, err error) error {
+			if err == nil && !e.IsDir() && strings.HasSuffix(p, ".xo") {
+				files = append(files, p)
 			}
-			t.Logf("%s: %s", d, strings.TrimSpace(string(out)))
+			return nil
 		})
+		for s := 0; s < shards; s++ {
+			var part []string
+			for i := s; i < len(files); i += shards {
+				part = append(part, files[i])
+			}
+			d, s, part := d, s, part
+			t.Run(d+"/"+strconv.Itoa(s), func(t *testing.T) {
+				t.Parallel()
+				out, err := testtmp.Guard(exec.Command(xo, append([]string{"dev", "iface-check"}, part...)...)).CombinedOutput()
+				if err != nil {
+					t.Errorf("iface-check %s shard %d: %v\n%s", d, s, err, out)
+					return
+				}
+				t.Logf("%s shard %d: %s", d, s, strings.TrimSpace(string(out)))
+			})
+		}
 	}
 }
 
@@ -2264,6 +2322,7 @@ func TestIfaceLexMatchesParse(t *testing.T) {
 // at any cap; an older xo pruning a cache a newer one manages took it to
 // 3.55 GB under a 16 GiB cap on 2026-10-21.
 func TestPruneVersionGuard(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2330,6 +2389,7 @@ func TestPruneVersionGuard(t *testing.T) {
 // build directory unused for 10 minutes (a failed or killed build's, a
 // cross build's), and keeps a recent one; XO_KEEP_ASM=1 keeps them all.
 func TestBuildSweepsStaleAsm(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2368,8 +2428,14 @@ func TestBuildSweepsStaleAsm(t *testing.T) {
 		t.Fatalf("build directories %v, want one <hash>/arm64", subs)
 	}
 	sub := subs[0]
-	stale := filepath.Join(sub, "prog-linux.7.s")
-	fresh := filepath.Join(sub, "prog-linux.8.s")
+	// another target's files: the build rewrites its own (prog-linux.7.s on
+	// the linux/arm64 host, 2026-10-30)
+	other := "linux"
+	if runtime.GOOS == "linux" {
+		other = "darwin"
+	}
+	stale := filepath.Join(sub, "prog-"+other+".7.s")
+	fresh := filepath.Join(sub, "prog-"+other+".8.s")
 	for _, p := range []string{stale, fresh} {
 		if err := os.WriteFile(p, []byte("x"), 0o644); err != nil {
 			t.Fatal(err)
@@ -2395,6 +2461,7 @@ func TestBuildSweepsStaleAsm(t *testing.T) {
 // (decision 0236 addendum): a second run with nothing changed skips the
 // check and the build, and an edit to M's test file builds again.
 func TestStdModuleRunCache(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2453,6 +2520,7 @@ func TestStdModuleRunCache(t *testing.T) {
 // regenerates only the edited part (2026-10-21: it reused 0 of 185
 // parses, check 0.8 to 1.2 s; with the list 185 of 185, 0.33 to 0.47 s).
 func TestParseListAfterRunCache(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2532,6 +2600,7 @@ func TestParseListAfterRunCache(t *testing.T) {
 // `UNIX store KIND BYTES id ID` to the cache's store-log: a cold build
 // logs its fn entries under one id, a warm one stores no fn entry.
 func TestCacheStoreLog(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -2620,6 +2689,7 @@ func TestCacheStoreLog(t *testing.T) {
 // records the directories relative to the working directory, which holds no
 // path to name (decision 0354's addendum).
 func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2709,6 +2779,7 @@ func TestBackendCacheObjectsAcrossDirs(t *testing.T) {
 // loose files again (decision 0351: hello's 4,146 failed opens on every
 // warm build), and the binary does not change.
 func TestFrontCacheNegKeys(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2775,6 +2846,7 @@ func TestFrontCacheNegKeys(t *testing.T) {
 // before 2026-10-23 such a closure marked its whole module incomplete,
 // and bench/perf/http/xo's one module never skipped (cache chk 0/1).
 func TestModuleCheckAutoClosureGen(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2860,6 +2932,7 @@ fn main(os: Os) {
 // own) reads its std and runtime entries from there instead of loose
 // files; its binary equals a cache-off build.
 func TestSharedPack(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -2936,6 +3009,7 @@ func TestSharedPack(t *testing.T) {
 // 114 MB after eight such builds, every build reading them all). The last
 // build's binary is the cache-off build's.
 func TestSharedPackBounded(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -3012,6 +3086,7 @@ func TestSharedPackBounded(t *testing.T) {
 // pack, and a build in a new directory (no pack of its own) skips those
 // keys' loose reads: no missing fe lookups, the same binary.
 func TestSharedPackNegKeys(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -3136,6 +3211,7 @@ func TestFrontCacheClosureMadeMapHelper(t *testing.T) {
 // emit 67 ms against 24 ms with them; compiler/xo bcache.xo
 // fn_cache_store).
 func TestFirstEditAfterColdParts(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -3221,6 +3297,7 @@ func TestFirstEditAfterColdParts(t *testing.T) {
 // their parameters' types, which an undecoded cached function has no
 // blocks for (w64_exports faulted on index 0, 2026-10-27).
 func TestWindowsWarmEditEntryShims(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -3292,6 +3369,7 @@ func TestWindowsWarmEditEntryShims(t *testing.T) {
 // information's slots name it, so its binary differs) each give the file a cold build in fresh caches writes: a key that
 // missed a change would serve the earlier binary.
 func TestLinkKeyFollowsObjects(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -3381,6 +3459,7 @@ func TestLinkKeyFollowsObjects(t *testing.T) {
 // "N functions, M differ"). The HTTP server's 1299 functions matched on
 // 2026-10-27; this program has inlining and a split build's parts.
 func TestWindowsPDBObjCheck(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
@@ -3470,6 +3549,7 @@ func TestWindowsPDBObjCheck(t *testing.T) {
 // through the object's (compiler/macho and compiler/debug are codegen
 // inputs, xotool.CodegenRoots).
 func TestWindowsPDBPartKeys(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}

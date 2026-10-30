@@ -34,6 +34,7 @@ func runFault(t *testing.T, bin string) string {
 // LSDA names: before 2026-10-25 the assembler-local labels were symbols,
 // 67 of hello's 856 and 559 of CRUD's 2,971.
 func TestReleaseSymbols(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

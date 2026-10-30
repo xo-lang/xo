@@ -18,6 +18,7 @@ import (
 // first. Both shapes are silent miscompiles; the adc chains of decision
 // 0231's addendum could make them (a chain's template had up to ten uses).
 func TestNoSharedScratchReload(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("lowers two large programs")
 	}
@@ -65,6 +66,7 @@ func scratchShapes(lines []string) []string {
 // into x15), and not a spill store followed by a store of the same value
 // through a pointer (reload_reuse dropped its reload).
 func TestScratchShapes(t *testing.T) {
+	t.Parallel()
 	bad := []string{"// func f", "\tadds x16, x1, x2", "\tcset x16, cs", "\tstr x16, [sp, #8]", "\tstr x16, [sp, #16]"}
 	if len(scratchShapes(bad)) != 1 {
 		t.Errorf("two spill stores from x16 not found")

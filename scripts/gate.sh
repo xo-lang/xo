@@ -80,7 +80,10 @@
 # file per step. A step's failure is reported and the next step runs;
 # the exit status is 1 when any failed.
 set -u
-wt=$(cd "${1:?usage: gate.sh WORKTREE STEP...}" && pwd)
+# a step name in WORKTREE's place (`gate.sh arm64`, 2026-10-30) ran the
+# steps in the caller's directory and reported their failures as the
+# gate's: refused
+wt=$(cd "${1:?usage: gate.sh WORKTREE STEP...}" 2>/dev/null && pwd) || { echo "gate.sh: $1 is not a directory (usage: gate.sh WORKTREE STEP...)"; exit 2; }
 shift
 logs=${XO_GATE_LOGS:-${TMPDIR:-/tmp}/xo-gate-$(basename "$wt")}
 mkdir -p "$logs"

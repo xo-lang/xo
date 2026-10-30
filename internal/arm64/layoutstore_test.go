@@ -4,6 +4,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -16,11 +17,14 @@ import (
 // order: the program's hot function, then the std functions named, before
 // the store's other atoms (nm -n, darwin).
 func TestLayoutStoreOrder(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
-	if !native() || os.Getenv("XO_HOST_OS") == "linux" {
-		t.Skip("a darwin store link")
+	if !native() || runtime.GOOS != "darwin" {
+		// XO_HOST_OS, which nothing set, let it run on the linux/arm64 host
+		// (2026-10-30)
+		t.Skip("a darwin store link (nm reads Mach-O)")
 	}
 	if _, err := exec.LookPath("nm"); err != nil {
 		t.Skip("no nm")

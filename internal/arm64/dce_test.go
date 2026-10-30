@@ -18,6 +18,7 @@ import (
 // functions no root reaches; hello world had 1,015 functions and kept
 // 441 on darwin (2026-10-18). XO_DCE=off keeps them all.
 func TestDeadFunctionsDropped(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program twice")
 	}
@@ -82,6 +83,7 @@ fn main(os: Os) {
 // export and an unreached drop helper one `brk #0x484f` each, and the
 // program runs as it does with XO_PASSES=-hollow.
 func TestHollowUnreached(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program twice")
 	}
@@ -178,6 +180,7 @@ func TestHollowUnreached(t *testing.T) {
 // names no pass; the binary itself does not run on the development Mac (no
 // Rosetta), and the test says so.
 func TestHollowUnreachedAmd64(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("cross builds a program twice and disassembles it")
 	}
@@ -302,6 +305,7 @@ func otoolOneInstr(t *testing.T, bin string) map[string]string {
 // the same program is built with -hollow in it: the second binary must
 // carry no ud2 body where the plain one has.
 func TestHollowPassesChangedCaches(t *testing.T) {
+	t.Parallel()
 	if testing.Short() {
 		t.Skip("builds a program twice and disassembles it")
 	}

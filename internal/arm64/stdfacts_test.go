@@ -21,6 +21,7 @@ import (
 // faulted on its first request (2026-10-27), which nothing but this
 // comparison sees before the program runs.
 func TestStdFactsVerify(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

@@ -17,6 +17,7 @@ import (
 // byte offset, gotchas/svc-roots-slot-index.md) faults at its first
 // access, and an rt.slot_* past a List's length faults with its index.
 func TestHeapGuard(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -59,6 +60,7 @@ func TestHeapGuard(t *testing.T) {
 // tier (XO_SELFHOST_TIER=full), else those that use the runtime's
 // records most (tasks, channels, contexts, servers).
 func TestGoldenRunHeapGuard(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

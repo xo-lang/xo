@@ -18,6 +18,7 @@ import (
 // (2026-10-29: std/native/http.xo's moved value hid every separately
 // compiled build for hours behind a silent whole-program fallback).
 func TestStdStoreBuilds(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}

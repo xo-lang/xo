@@ -17,6 +17,7 @@ import (
 // (no entry is added), and both are byte for byte the binary a fresh
 // link makes with the cache off.
 func TestMachoBinCache(t *testing.T) {
+	t.Parallel()
 	if runtime.GOOS != "darwin" || runtime.GOARCH != "arm64" {
 		t.Skip("compiler/macho links for the host on darwin/arm64")
 	}

@@ -32,6 +32,7 @@ var chainGoldens = []string{
 // first version took another build's constant numbers, and TLS goldens
 // read the wrong constants, while XO_BACKEND_CACHE=verify passed.
 func TestChainKeysSharedCache(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
@@ -92,6 +93,7 @@ func TestChainKeysSharedCache(t *testing.T) {
 // rebuild, one pass, took the first pass's ids, so every key chained
 // from them missed (functions 1 of 723 reused, 2026-10-27).
 func TestChainKeysRebuildReuses(t *testing.T) {
+	t.Parallel()
 	if !native() {
 		t.Skip("the host is not arm64")
 	}
