@@ -1,0 +1,31 @@
+// An interface method whose result carries an effect argument: a method
+// returning Box[clock] does not implement one returning Box[rand] (core
+// 6.2), or a caller through the interface calls a clock reader as rand.
+
+struct Box[fx: Effects] {
+  f: fn() -> Int uses fx
+}
+
+interface Maker {
+  fn make(self) -> Box[rand]
+}
+
+struct ClockMaker {
+  b: Box[clock]
+}
+
+fn (m: ClockMaker) make() -> Box[clock] {
+  m.b
+}
+
+fn use_maker(m: Maker) -> Int uses rand {
+  (m.make().f)()
+}
+
+pub fn leak(c: ClockMaker) -> Int uses rand {
+  use_maker(c) // ERROR XO0701 "fixes these effects as"
+}
+
+fn main(os: Os) {
+  os.stdio.println("ok")
+}

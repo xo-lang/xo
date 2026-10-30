@@ -448,6 +448,14 @@ fn (var c: Checker) structural(t: Int, iface: Int, sp: Span) -> Bool {
     if !c.identical(mr, ir) {
       return false
     }
+    // identical ignores effect sets: a result's effect arguments are exact
+    // (core 6.2), checked at the conversion
+    let n = c.eff_eqs.len()
+    if c.unify_tracked(mr, ir) {
+      c.same_effects(n, ir, sp)
+    } else {
+      c.drop_eff_eqs(n)
+    }
     if c.objs[m].err >= 0 {
       let me = c.subst(c.objs[m].err, ms2)
       if c.objs[im].err < 0 {
