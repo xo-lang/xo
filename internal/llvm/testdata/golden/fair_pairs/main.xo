@@ -46,7 +46,7 @@ fn main(os: Os) {
         let late = os.clock.since(t0).millis() - 20
         lates.push(late)
       }
-      lates.sort()
+      lates = lates.sort()
       out.send(lates[2])
     })
   }
