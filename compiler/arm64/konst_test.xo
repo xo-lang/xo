@@ -1,0 +1,22 @@
+// konst_value (opt.xo): the value of each mov_imm form.
+
+fn konst_inst(text: Str) -> Inst {
+  Inst{kind: K_PLAIN, text: text, defs: [1], konst: true}
+}
+
+test "konst_value reads back every mov_imm form" {
+  let ns = [0, 1, -1, 65535, -65536, 65536, 1000000, 1000000000, 60000000000, 3600000000000, 0xffffffff, 0xfffffffe, -4294967296, 0x123456789abcdef0, -0x123456789abcdef0, 0x7fffffffffffffff, -0x7fffffffffffffff - 1, -0x1000000000000, -2, 0x0000ffff0000ffff]
+  for n in ns {
+    let (v, ok) = konst_value(konst_inst(mov_imm(n)))
+    expect(ok) == true
+    expect(v) == n
+  }
+}
+
+test "konst_value refuses a text mov_imm does not give and a non constant" {
+  expect(konst_value(konst_inst("movz $d0, #1, lsl #0\nmovk $d0, #0, lsl #16")).1) == false
+  expect(konst_value(konst_inst("movz $d0, #1, lsl #16\nadd $d0, $d0, #1")).1) == false
+  var i = konst_inst(mov_imm(1000000000))
+  i.konst = false
+  expect(konst_value(i).1) == false
+}

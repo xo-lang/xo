@@ -1356,18 +1356,52 @@ fn (g: G) const_before(p: Int, end: Int, r: Int, kd: Map[Int, Int]) -> (Int, Boo
   (0, false)
 }
 
-/// The value of a constant's mov_imm instruction (its one instruction
-/// forms; a w register's zero extends).
+/// The value of a constant's mov_imm instruction (a w register's zero
+/// extends), its movz or movn and movk forms too: a unit's 10^9 was a
+/// branch on a register just set to it (2026-10-30, parse_duration's
+/// unit_of after tail_dup, four `movz; movk; cbnz` a parse).
 fn konst_value(inst: Inst) -> (Int, Bool) {
-  if inst.kind == K_PLAIN && inst.konst && inst.defs.len() == 1 && (inst.text.starts_with("mov $d0, #") || inst.text.starts_with("mov $wd0, #")) {
+  if inst.kind != K_PLAIN || !inst.konst || inst.defs.len() != 1 {
+    return (0, false)
+  }
+  if inst.text.starts_with("mov $d0, #") || inst.text.starts_with("mov $wd0, #") {
     let rest = inst.text.trim_prefix("mov $d0, #").trim_prefix("mov $wd0, #")
     if let Some(n) = Int.parse(rest) {
       if "${n}" == rest {
         return (n, true)
       }
     }
+    return (0, false)
   }
-  (0, false)
+  if !inst.text.starts_with("movz $d0, #") && !inst.text.starts_with("movn $d0, #") {
+    return (0, false)
+  }
+  var v = 0
+  for l in inst.text.split("\n") {
+    // `OP $d0, #C, lsl #S`
+    let parts = l.split(", ")
+    if parts.len() != 3 || !parts[1].starts_with("#") || !parts[2].starts_with("lsl #") {
+      return (0, false)
+    }
+    let c = Int.parse(parts[1].trim_prefix("#")) ?? -1
+    let s = Int.parse(parts[2].trim_prefix("lsl #")) ?? -1
+    if c < 0 || c > 0xffff || s < 0 || s > 48 || s % 16 != 0 {
+      return (0, false)
+    }
+    // the top chunk's shift drops bits (wrapping_shl, not <<)
+    let cs = c.wrapping_shl(s)
+    match parts[0] {
+      "movz $d0" => v = cs
+      "movn $d0" => v = ~cs
+      "movk $d0" => v = (v & ~(0xffff.wrapping_shl(s))) | cs
+      _ => return (0, false)
+    }
+  }
+  // only the text mov_imm gives that value
+  if mov_imm(v) != inst.text {
+    return (0, false)
+  }
+  (v, true)
 }
 
 /// The registers defined once in the function, by a constant's mov_imm

@@ -5,6 +5,14 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native backends: a branch on a register just set to a constant of
+  two to four instructions (movz or movn, then movk) goes straight to
+  its outcome, as one of a single mov already did (compiler/arm64
+  konst_value): text.parse_duration's unit_of tested 10^6, 10^9, 6*10^10
+  and 3.6*10^12 after setting them. bench/perf/text dur_parse 0.984 of
+  the instructions (xo bench --ab n=15; wall and cycles within noise);
+  xo's native __text 70,913,656 to 70,915,488 bytes (the threaded jumps
+  carry copies of their moves).
 - `Duration.parse` reads a fraction's digits without an overflow test a
   digit (std/native/llrt/text.xo): bench/perf/text dur_parse 0.95 of the
   wall time and 0.923 of the cycles on arm64 (xo bench --ab n=15);
