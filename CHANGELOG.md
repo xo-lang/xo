@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (std/http, decision 0444): `PipeWriter.write` before the
+  pipe's reader has read is held and returns at once, so writing a
+  request body's first pieces and then calling `Client.open` in the same
+  task works; it waited forever on the Go backend (from the second
+  write natively). After the first read each write still waits for the
+  reader.
 - FIX (Go backend, std/http): an HTTP/1.1 streamed response with a
   short body lost a trailer set without `with_trailer_names` (net/http
   sent it with a Content-Length); setting a trailer now sends it

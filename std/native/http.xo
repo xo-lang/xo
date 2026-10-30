@@ -2753,7 +2753,8 @@ fn response_with_full_duplex(r: http.Response) -> http.Response {
 }
 
 /// The writing end of http.pipe (decision 0433): the pieces go through a
-/// channel of one, so a write waits for the reader as io.Pipe's does.
+/// channel of one, so a write waits for the reader as io.Pipe's does;
+/// before the reader's first read they are held (decision 0444).
 struct PipeWriter {
   ch: Chan[Bytes]
   st: Mutex[PipeState]
@@ -2765,17 +2766,27 @@ struct PipeState {
   err: Str
   /// the rest of a piece longer than a read asked for
   pend: Bytes
+  /// the reader has read: a write sends on the channel from then on
+  started: Bool
+  /// pieces written before the first read, in order (decision 0444)
+  held: List[Bytes]
 }
 
 /// http.pipe (decision 0433): a BodyReader whose pieces a PipeWriter
 /// sends, at most the read's max at a time.
 fn pipe() -> (PipeWriter, BodyReader) {
   let ch = Chan[Bytes].new(1)
-  let st = Mutex[PipeState].new(PipeState{closed: false, err: "", pend: b""})
+  let st = Mutex[PipeState].new(PipeState{closed: false, err: "", pend: b"", started: false, held: []})
   let next = fn(max: Int) -> http1.BodyPart {
     // the pending rest is cut inside one st.with, so no decision made
     // on a value read in an earlier st.with acts in a later one (XO0804)
     let pending = st.with(fn(var s: PipeState) -> Bytes? {
+      // the first read starts the pipe: later writes wait on the
+      // channel, and the held pieces come first (decision 0444)
+      s.started = true
+      if s.pend.is_empty() && !s.held.is_empty() {
+        s.pend = s.held.remove_at(0)
+      }
       let p = s.pend
       if p.is_empty() {
         None
@@ -2819,7 +2830,21 @@ fn (w: PipeWriter) write(data: Bytes) -> () ! IoErr {
   if w.st.with_read(fn(s) { s.closed }) {
     return Err(IoErr.Io(msg: "io: read/write on closed pipe"))
   }
-  if !data.is_empty() {
+  if data.is_empty() {
+    return Ok(())
+  }
+  // before the reader's first read the piece is held and the write
+  // returns, so writing and then opening in one task does not wait
+  // forever (decision 0444)
+  let held = w.st.with(fn(var s: PipeState) -> Bool {
+    if s.started {
+      false
+    } else {
+      s.held.push(data)
+      true
+    }
+  })
+  if !held {
     w.ch.send(data)
   }
   Ok(())

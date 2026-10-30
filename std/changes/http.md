@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-30: fix: a pipe write before the first read is held, every backend (decision 0444)
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo lang 5's gRPC client (agent survey 2026-10-30, item 3: write the first message, then Client.open, hung)
+- Go reference: io.Pipe (each Write waits for a Read); Xo departs from it before the first read
+- Test: internal/llvm/testdata/golden/http_pipe ("prewrite": two writes and a close in the task that then opens the request; arm64, LLVM and the Go backend)
+- Timing: none (the held pieces are the bytes the writer gave)
+
+`PipeWriter.write` before the BodyReader's first read now holds the
+piece and returns; the reader takes the held pieces first, then waits
+on the writer as before. The Go backend waited forever on the first
+such write and the native backends on the second.
+
 ## 2026-10-30: fix: an undeclared trailer after a short streamed body, Go backend (decision 0433)
 
 - Kind: fix

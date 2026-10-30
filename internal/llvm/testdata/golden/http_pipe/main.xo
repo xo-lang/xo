@@ -2,7 +2,8 @@
 // the client sends it (Go's io.Pipe): pieces arrive in order and the
 // body ends at close; a write after close fails; close_with_error cuts
 // the request (the server's read fails) and a local reader gets the
-// error as given; reads take at most max bytes of a longer piece.
+// error as given; reads take at most max bytes of a longer piece;
+// pieces written before the first read are held (decision 0444).
 use std/http
 
 fn routes() -> http.Router {
@@ -94,6 +95,22 @@ fn main(os: Os) {
           Err(_) => false
         }
         os.stdio.println("cut: delivered whole ${whole}")
+        // written and closed before the request is opened, in the one
+        // task that opens it (decision 0444): the pieces are held until
+        // the client reads them (this waited forever on the Go backend,
+        // and natively from the second write)
+        let (w4, r4) = http.pipe()
+        let first = w4.write(b"held ")
+        let second = w4.write(b"pieces")
+        w4.close()
+        os.stdio.println("prewrite: ${first.is_ok()} ${second.is_ok()}")
+        match c.open(http.new_request("POST", "${base}/sum").with_body_reader(r4)) {
+          Ok(st) => match st.read_all() {
+            Ok(body) => os.stdio.println("prewrite: ${st.head().status} ${body.to_str() ?? "?"}")
+            Err(e) => os.stdio.println("prewrite: ${e}")
+          }
+          Err(e) => os.stdio.println("prewrite: ${e}")
+        }
         // a local reader: at most max bytes, then the error as given
         let (w3, r3) = http.pipe()
         s.spawn(fn() {
