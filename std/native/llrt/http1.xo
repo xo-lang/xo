@@ -2773,6 +2773,11 @@ pub struct H2X {
   src_end: Bool = false
   /// the source had no piece yet (a duplex body, h2_pump polls it)
   src_wait: Bool = false
+  /// the PING keepalive (decision 0434; H2Config send_ping_timeout and
+  /// ping_timeout in ns, 0 none / 15 s): a PING went out and nothing came
+  ping_idle: Int = 0
+  ping_wait: Int = 0
+  ping_sent: Bool = false
   /// request trailers (decision 0433): the declared names and f, which
   /// gives [name, value, ...] once the body is sent; tsent when they went
   tnames: Str = ""
@@ -3111,7 +3116,7 @@ pub fn h2_begin(r: rthttp.CResp, method: Str, target: Str, host: Str, names0: Li
     }
   }
   let (cv, has_c) = h2_field(names, values, "Connection")
-  var x = H2X{st: st, method: method, body: hclient.h2_body(r), off: 0, close: has_c && cv == "close", out: "", res: CC_OK, why: "", broken: false, goaway: false, goaway_last: 0, goaway_code: 0, goaway_debug: "", id: 0, swin: 0, sin_avail: 0, sin_unsent: 0, headers: false, ended: false, seen: false, refused: false, hb: "", hb_on: false, hb_flags: 0, hb_sid: 0, dec: false, status: 0}
+  var x = H2X{st: st, method: method, body: hclient.h2_body(r), off: 0, close: has_c && cv == "close", out: "", res: CC_OK, why: "", broken: false, goaway: false, goaway_last: 0, goaway_code: 0, goaway_debug: "", ping_idle: hclient.h2_ping_idle(r), ping_wait: hclient.h2_ping_wait(r), id: 0, swin: 0, sin_avail: 0, sin_unsent: 0, headers: false, ended: false, seen: false, refused: false, hb: "", hb_on: false, hb_flags: 0, hb_sid: 0, dec: false, status: 0}
   x.st.enc.set_sizes(x.st.sizes)
   x.st.sizes = ""
   x.src = src
@@ -3262,9 +3267,35 @@ pub fn h2_pump(r: rthttp.CResp, var x: H2X, stop: Int) {
         tick = true
       }
     }
+    // the keepalive: a read idle for send_ping_timeout sends a PING, and
+    // one more silent ping_timeout fails the request
+    var kd = 0
+    var kick = false
+    if x.ping_idle > 0 && !tick {
+      orig = hclient.get_deadline(r)
+      kd = hclient.cl_deadline(if x.ping_sent { x.ping_wait } else { x.ping_idle })
+      if orig == 0 || kd < orig {
+        hclient.put_deadline(r, kd)
+        kick = true
+      }
+    }
     let f = hclient.h2_read(r)
-    if tick {
+    if tick || kick {
       hclient.put_deadline(r, orig)
+    }
+    if kick && f.is_empty() && hclient.h2_rres(r) == hclient.CC_TIMEOUT && (orig == 0 || hclient.cl_deadline(0) < orig) {
+      if x.ping_sent {
+        x.broken = true
+        x.fail(x.headers, "http2: client connection lost")
+        break
+      }
+      x.out = push_frame(x.out, 8, H2T_PING, 0, 0) + "keepaliv"
+      x.ping_sent = true
+      let _ok = x.flush(r)
+      continue
+    }
+    if !f.is_empty() {
+      x.ping_sent = false
     }
     if f.is_empty() && tick && hclient.h2_rres(r) == hclient.CC_TIMEOUT && (orig == 0 || hclient.cl_deadline(0) < orig) {
       x.src_wait = false

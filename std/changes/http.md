@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-10-30: feature: Client H2Config PING keepalive, native (decision 0434)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 0434 open list (the client ignored send_ping_timeout and ping_timeout)
+- Go reference: net/http's Transport.HTTP2.SendPingTimeout and PingTimeout ("http2: client connection lost")
+- Test: internal/llvm/testdata/golden/http_h2_config ("client ping": a raw server never answers; it sees the client's PING and the request fails; native output equal to the Go backend's)
+- Timing: none unless set (the read keeps its deadline)
+
+While a request waits for the server's next frame, a read idle for
+send_ping_timeout sends a PING, and a further silence of ping_timeout (0:
+15 s) fails the request with "http2: client connection lost" and drops
+the connection. Go pings from a reader of the connection even with no
+request; the native client has no such task, so an idle pooled
+connection is not probed.
+
 ## 2026-10-30: feature: Client H2Config.max_read_frame_size, native (decision 0434)
 
 - Kind: feature

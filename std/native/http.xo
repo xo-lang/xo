@@ -2678,7 +2678,7 @@ fn client_alpn(c: Client) -> List[Str] {
 /// for the default (hclient.cfg_at).
 fn client_h2cfg(c: Client) -> List[Int] {
   match c.h2cfg {
-    Some(f) => [f.max_receive_buffer_per_stream, f.max_receive_buffer_per_connection, f.max_read_frame_size, f.max_decoder_header_table_size]
+    Some(f) => [f.max_receive_buffer_per_stream, f.max_receive_buffer_per_connection, f.max_read_frame_size, f.max_decoder_header_table_size, f.send_ping_timeout.nanos(), f.ping_timeout.nanos()]
     None => []
   }
 }

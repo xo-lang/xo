@@ -124,10 +124,10 @@ fn (c: Client) with_h2_config(c: H2Config) -> Client
   `ping_timeout`), `write_byte_timeout` (the pending output goes out in
   16 KiB pieces that each need to finish within it; 9b0f4000a) and
   `max_encoder_header_table_size` (74318eb00).
-- The client applies stream and connection windows and the decoder
-  table, with one pooled connection per config. Not applied: the
-  client's `max_read_frame_size` (its frames stay 16 KiB) and its PING
-  keepalive.
+- The client applies stream and connection windows, the decoder table,
+  `max_read_frame_size` and the PING keepalive (while a request waits
+  for a frame; an idle pooled connection is not probed), with one pooled
+  connection per config.
 - The `--ab` the Consequences ask for (linux/arm64 host, exclusive, 10
   rounds, an in-process h2 TLS loop, base against the per-connection
   settings): wall 1.004, interval 0.993 to 1.015, within noise

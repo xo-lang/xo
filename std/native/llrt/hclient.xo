@@ -584,7 +584,9 @@ const P_CFG_SW = 160
 const P_CFG_CW = 168
 const P_CFG_DT = 176
 const P_CFG_MF = 184
-const P_SIZE = 192 // own: an HTTP/2 connection record's size, not the pool record's
+const P_CFG_PI = 192
+const P_CFG_PT = 200
+const P_SIZE = 208 // own: an HTTP/2 connection record's size, not the pool record's
 
 /// An exchange on a connection (r's h2, an obj.xo object): the
 /// connection, whether it came from the pool (a failure before an answer
@@ -684,6 +686,8 @@ pub fn conn_new(cn: Int, c: Int, roots: Int, kp: Int, kn: Int, cfg: List[Int] = 
   st(pc, P_CFG_CW, cfg_at(cfg, 1, 0))
   st(pc, P_CFG_DT, dt)
   st(pc, P_CFG_MF, mf)
+  st(pc, P_CFG_PI, cfg_at(cfg, 4, 0))
+  st(pc, P_CFG_PT, cfg_at(cfg, 5, 15000000000))
   var at = http1w.put(o, 0, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
   at += h2w.frame_head(o + at, 24 + (if dt > 0 { 6 } else { 0 }), 4, 0, 0)
   if dt > 0 {
@@ -735,6 +739,12 @@ pub fn h2_cwin(r: rthttp.CResp, def: Int) -> Int {
   let v = ld(ld(ld(rec(r), R_H2), X_PC), P_CFG_CW)
   if v > 0 { v } else { def }
 }
+
+/// The keepalive's idle time before a PING and its wait for any frame
+/// (ns; 0 none for the idle time).
+pub fn h2_ping_idle(r: rthttp.CResp) -> Int { ld(ld(ld(rec(r), R_H2), X_PC), P_CFG_PI) }
+
+pub fn h2_ping_wait(r: rthttp.CResp) -> Int { ld(ld(ld(rec(r), R_H2), X_PC), P_CFG_PT) }
 
 pub fn h2_dtable(r: rthttp.CResp, def: Int) -> Int {
   let v = ld(ld(ld(rec(r), R_H2), X_PC), P_CFG_DT)

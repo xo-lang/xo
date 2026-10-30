@@ -142,6 +142,48 @@ fn client_probe(os: Os, label: Str, cfg: http.H2Config?) uses net, stdio, clock 
   l.close()
 }
 
+/// A client with send_ping_timeout and ping_timeout (decision 0434) whose
+/// request a raw h2c server never answers: the server sees the client's
+/// PING, and the request fails with Go's "client connection lost".
+fn client_ping_probe(os: Os) uses net, stdio, clock {
+  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let addr = l.addr()
+  let cfg = http.H2Config{send_ping_timeout: 200ms, ping_timeout: 300ms}
+  let c = http.client(os.net, timeout: 8s).with_protocols(#{http.Protocol.UnencryptedHttp2}).with_h2_config(cfg)
+  let res = Chan[Str].new(1)
+  scope s {
+    s.spawn_background(fn() {
+      match c.get("http://${addr}/") {
+        Ok(_) => res.send("answered")
+        Err(e) => res.send(if "${e}".contains("http2: client connection lost") { "client connection lost" } else { "other: ${e}" })
+      }
+    })
+    let sc = l.accept().or_fault("accept")
+    sc.set_read_deadline(os.clock, Some(os.clock.now() + 5s))
+    var buf = b""
+    var ping = false
+    while !ping {
+      match sc.read(4096) {
+        Ok(Some(b)) => buf = buf + b
+        Ok(None) => break
+        Err(_) => break
+      }
+      if buf.len() >= 24 {
+        let (fs, _rest) = frames(buf[24..])
+        for (ty, flags, _p) in fs {
+          if ty == 6 && flags & 1 == 0 {
+            ping = true
+          }
+        }
+      }
+    }
+    os.stdio.println("client ping: seen ${ping}")
+    os.stdio.println("client ping: request ${res.recv().or_fault("recv")}")
+    sc.close()
+  }
+  l.close()
+}
+
 /// A raw client: two streams opened at once on a server with one
 /// concurrent stream allowed, whose handler waits; the server's answer
 /// to the second is an RST_STREAM.
@@ -220,6 +262,7 @@ fn main(os: Os) uses net, stdio, clock {
   }
   client_probe(os, "client default", None)
   client_probe(os, "client tuned", Some(http.H2Config{max_receive_buffer_per_stream: 262144, max_receive_buffer_per_connection: 2097152, max_read_frame_size: 65536, max_decoder_header_table_size: 8192}))
+  client_ping_probe(os)
   refuse_probe(os)
   os.stdio.println("done")
 }
