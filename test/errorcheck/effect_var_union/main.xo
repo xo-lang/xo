@@ -1,0 +1,22 @@
+// Decision 0432: an effect variable shared by two callbacks is the union
+// of their effects, so the caller is charged both.
+
+fn both[fx: Effects](a: fn() -> Int uses fx, b: fn() -> Int uses fx) -> Int uses fx {
+  a() + b()
+}
+
+fn pure_one() -> Int {
+  1
+}
+
+pub fn only_clock(os: Os) -> Int uses clock { // ERROR XO0701 "performs `stdio`"
+  both(pure_one, fn() -> Int {
+    os.stdio.println("tick")
+    let _now = os.clock.now()
+    2
+  })
+}
+
+fn main(os: Os) {
+  os.stdio.println("${only_clock(os)}")
+}

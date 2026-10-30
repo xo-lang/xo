@@ -1,0 +1,40 @@
+// Decision 0432: an effect variable shared by several callbacks is the
+// union of their effects, whatever the order of the arguments; before
+// it, the first argument fixed the set and a later one with more
+// effects was XO0701.
+
+fn both[fx: Effects](a: fn() -> Int uses fx, b: fn() -> Int uses fx) -> Int uses fx {
+  a() + b()
+}
+
+fn three[fx: Effects](a: fn() -> Int uses fx, b: fn() -> Int uses fx, c: fn() -> Int uses fx) -> Int uses fx {
+  a() + b() + c()
+}
+
+fn pure_one() -> Int {
+  1
+}
+
+fn main(os: Os) {
+  // a pure named function first, a literal printing second
+  let a = both(pure_one, fn() -> Int {
+    os.stdio.println("  literal ran")
+    2
+  })
+  os.stdio.println("pure first: ${a}")
+  // the literal first
+  let b = both(fn() -> Int {
+    os.stdio.println("  literal ran")
+    2
+  }, pure_one)
+  os.stdio.println("literal first: ${b}")
+  // three arguments, the widest in the middle, a clock reader last
+  let c = three(pure_one, fn() -> Int {
+    os.stdio.println("  middle ran")
+    3
+  }, fn() -> Int {
+    let _now = os.clock.now()
+    4
+  })
+  os.stdio.println("three: ${c}")
+}

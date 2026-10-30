@@ -38,10 +38,18 @@ pub fn q(b: Box[clock]) -> Int { // ERROR XO0701 "`q` is pub with no `uses` clau
   p(b)
 }
 
-// a function argument after another is checked against the first's
-// effects, as before (decision 0432 is the owner's)
+// a function argument after another widens the variable (decision
+// 0432): both's fx is clock, which two declares
 fn two(os: Os) -> Int uses clock {
-  both(one, fn() -> Int uses clock { // ERROR XO0701 "is pure, but performs `clock`"
+  both(one, fn() -> Int uses clock {
+    let _now = os.clock.now()
+    2
+  })
+}
+
+// and the caller must declare the union
+pub fn two_pure(os: Os) -> Int { // ERROR XO0701 "`two_pure` is pub with no `uses` clause, so it is pure, but performs `clock`"
+  both(one, fn() -> Int uses clock {
     let _now = os.clock.now()
     2
   })

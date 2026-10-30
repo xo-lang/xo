@@ -2235,7 +2235,10 @@ pub fn sync(src: Fs, out: Stdio) -> () ! SyncErr uses fs.read, stdio { ... }
     uses (clock, fx) { ... }
   ```
   An effect variable is instantiated at each call from the argument's effects,
-  and may be empty.
+  and may be empty. When one effect variable is the effects of several
+  function parameters, it is the union of the effects of those arguments
+  (decision 0432). Elsewhere (an effect argument of a type, `Cache[K, V, fx]`)
+  the variable is bound exactly, and a conflict is an error.
 - **Structs may take effect parameters** (`struct Cache[K, V, fx: Effects]`),
   and effect sets may be written as type arguments (`Cache[Int, Item, net.dial]`).
 - **Effect arguments may be omitted.** Writing `Cache[Int, Item]` leaves the

@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+  literal ran
+pure first: 3
+  literal ran
+literal first: 3
+  middle ran
+three: 8
+--- stderr

@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- An effect variable shared by several callback parameters is the union
+  of their arguments' effects (decision 0432): `both(pure_fn, clock_reader)`
+  for `fn both[fx: Effects](a: fn() uses fx, b: fn() uses fx)` compiles
+  whatever the argument order, and charges the caller the clock; before,
+  the first argument fixed the set and the second was XO0701.
+
 - On the Go backend, a stop now waits for WebSocket handlers (and proxied
   upgrades) as it waits for requests, as the native backends did:
   `serve` returned while a handler that had upgraded its connection
