@@ -187,3 +187,14 @@ case is small in count and large in use: it is how Go composes I/O.
   importer, since an import's scope from export data holds only what the bound package names
   (gotchas/gobind-export-data-partial-scope.md). Binding format 14.
 - Binding format 13.
+
+## As built, step 4: Go's error as a value (Lang 1, 2026-10-29)
+
+- Go's `error` outside a function's final result (a parameter, a field, a result before the last) maps to
+  `go.Error?` both ways (rt GoErrOpt, GoErrorOfOpt; nil is None), which opens errors.Is and As, error
+  parameters and fields; an `error` that is the only result keeps `! go.Error` (errors.new, join, unwrap:
+  nil is Ok). A package variable of type error is `fn name() -> go.Error` (rt GoErr of it; a nil one
+  faults), where sentinel errors were not bound. Measured: "error outside the final result" was 202 of the
+  508 third-party skips and 16 of std's 280 after step 2 (survey of 2026-10-29, ~/xo-lead/notes/lang1/
+  survey); the after numbers are in bench/results/usego-coverage-2026-10-29b.md.
+- Binding format 15. Tests: gobind TestErrorValues, cmd/xo TestUseGoErrorValues.

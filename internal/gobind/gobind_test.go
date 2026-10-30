@@ -728,3 +728,29 @@ func TestUpcasts(t *testing.T) {
 		t.Errorf("no %q in net/url's declarations:\n%s", want, grep(us, "as_"))
 	}
 }
+
+// TestErrorValues (decision 0416): Go's error outside the final result is
+// `go.Error?` (nil is None), and a sentinel error variable is a go.Error;
+// an error that is the only result stays `! go.Error` (nil is Ok).
+func TestErrorValues(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	es, eb, _ := bindDecl(t, "errors")
+	for _, want := range []string{
+		"fn is(err: go.Error?, target: go.Error?) -> Bool uses go",
+		"fn unwrap(err: go.Error?) ! go.Error uses go",
+		"fn join(errs: List[go.Error?]) ! go.Error uses go",
+	} {
+		if !strings.Contains(es, want) {
+			t.Errorf("no %q in errors' declarations:\n%s", want, grep(es, "fn "))
+		}
+	}
+	if !strings.Contains(string(eb.Adapter), "GoErrorOfOpt(a0)") {
+		t.Errorf("errors' adapter does not convert the error parameter")
+	}
+	io, _, _ := bindDecl(t, "io")
+	if want := "fn eof() -> go.Error uses go"; !strings.Contains(io, want) {
+		t.Errorf("no %q in io's declarations:\n%s", want, grep(io, "eof"))
+	}
+}

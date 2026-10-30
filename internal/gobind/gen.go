@@ -402,7 +402,13 @@ func (g *gen) mapType(t types.Type, depth int) (conv, *skipErr) {
 		obj := x.Obj()
 		if obj.Pkg() == nil {
 			if obj.Name() == "error" {
-				return conv{}, skipf(catError, "error outside the final result")
+				// an error that is not the final result (a parameter,
+				// a field, a variable such as io.EOF) is `go.Error?`,
+				// nil being None (decision 0416): the Go error itself
+				// goes back to Go, so errors.Is sees a sentinel
+				return conv{xo: "go.Error?", rt: "Option[Go_Error]", gt: "error",
+					toXo: func(e string) string { return "GoErrOpt(" + e + ")" },
+					toGo: func(e string) string { return "GoErrorOfOpt(" + e + ")" }}, nil
 			}
 			return conv{}, skipf(catIface, "Go type %s", obj.Name())
 		}
@@ -1836,7 +1842,12 @@ func (g *gen) bindVar(o *types.Var) {
 		return
 	}
 	if isError(o.Type()) {
-		g.skip(name, display, skipf(catError, "error variable (sentinel errors are not bound)"), false)
+		// a sentinel (io.EOF) is a go.Error, the Go error itself, so
+		// errors.is(e, io.eof()) holds (decision 0416); a nil one faults
+		g.scope[name] = true
+		g.stats.VarsMapped++
+		g.vars = append(g.vars, fmt.Sprintf("/// Go: reads variable %s error, the sentinel\nfn %s() -> go.Error uses go", display, name))
+		fmt.Fprintf(&g.adapt, "func %s%s(tk *Task) Go_Error {\n\treturn GoErr(%s.%s)\n}\n\n", g.b.Prefix, name, g.alias(g.pkg), o.Name())
 		return
 	}
 	c, err := g.mapType(o.Type(), 0)

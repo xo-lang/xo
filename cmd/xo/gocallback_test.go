@@ -67,3 +67,44 @@ fn main(os: Os) {
 		t.Errorf("output\n%s\nwant\n%s", got, want)
 	}
 }
+
+// TestUseGoErrorValues (decision 0416): a go.Error goes to Go as the Go
+// error it came from, so errors.is matches io's sentinel; go.error's
+// error is not it; errors.join of two is one error with both texts.
+func TestUseGoErrorValues(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	setenv(t, "XO_GOBIND_DIR", "")
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module errs\n",
+		"main.xo": `use go "errors"
+use go "io"
+use go "strings"
+use std/go
+
+fn main(os: Os) {
+  let r = strings.new_reader("")
+  match io.read_all(r.as_reader()) {
+    Ok(b) => os.stdio.println("read ${b.len()}")
+    Err(e) => os.stdio.println("error ${e.message()}")
+  }
+  let eof = io.eof()
+  os.stdio.println("${errors.is(Some(eof), Some(io.eof()))} ${errors.is(Some(go.error("EOF")), Some(io.eof()))}")
+  match errors.join([Some(go.error("a")), None, Some(go.error("b"))]) {
+    Ok(_) => os.stdio.println("none")
+    Err(e) => os.stdio.println(e.message().replace("\n", "+"))
+  }
+}
+`,
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	want := "read 0\ntrue false\na+b"
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("output\n%s\nwant\n%s", got, want)
+	}
+}

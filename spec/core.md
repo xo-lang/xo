@@ -1756,6 +1756,13 @@ fn main(os: Os) ! {
   error, the Go error `e` came from when Go made it (so `errors.Is` sees a
   sentinel such as `io.EOF`), else one with `e`'s text; `go.error(msg)`
   makes one.
+- Go's `error` anywhere but a function's final result (a parameter, a
+  field, a result before the last) is `go.Error?`, `nil` being `None`
+  (`errors.is(err: go.Error?, target: go.Error?) -> Bool`); an `error`
+  that is a function's only result stays `! go.Error` (`nil` is `Ok`);
+  a Go error variable is a function returning it as a `go.Error`
+  (`io.eof()`). A go.Error that came from Go goes back as the same Go
+  error (decision 0416).
 - An Xo program implements a Go interface with functions (decision 0416):
   a binding declares, for each named interface whose methods all map as
   callbacks, a constructor named after the interface (`implement_` and

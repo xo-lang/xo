@@ -21,6 +21,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/backoff: exponential backoff with jitter and `retry`, cenkalti/
   backoff v4's ExponentialBackOff and Retry, over the Clock and Rand it
   is given; `retryable` decides which errors are retried.
+- `use go`: Go's `error` outside a final result binds as `go.Error?`
+  (`errors.is`, `errors.as_`, error parameters and fields), and sentinel
+  error variables as functions (`io.eof()`), so
+  `errors.is(Some(e), Some(io.eof()))` matches a Go error (decision
+  0416). Binding format 15.
 - `use go`: a handle converts to an interface its Go type satisfies with
   `as_<interface>()` (`resp.body().as_reader()`, `buf.as_writer()`,
   `url.as_stringer()`; decision 0416), since Xo does not convert handles

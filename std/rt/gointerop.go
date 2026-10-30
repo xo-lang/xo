@@ -38,6 +38,23 @@ func GoErrorOf(e Go_Error) error {
 	return errors.New(e.msg)
 }
 
+// GoErrOpt is a Go error that is not a final result as `go.Error?`:
+// None for nil (decision 0416).
+func GoErrOpt(err error) Option[Go_Error] {
+	if err == nil {
+		return Option[Go_Error]{}
+	}
+	return Option[Go_Error]{Some: true, V: GoErr(err)}
+}
+
+// GoErrorOfOpt is the Go error of a `go.Error?`: nil for None.
+func GoErrorOfOpt(o Option[Go_Error]) error {
+	if !o.Some {
+		return nil
+	}
+	return GoErrorOf(o.V)
+}
+
 // M_display is the Go error's text.
 func (e Go_Error) M_display(*Task) string { return e.msg }
 
