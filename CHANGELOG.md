@@ -62,6 +62,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   edit build from warm std caches: wall 107.5 to 98.6 ms, 0.917 (0.847
   to 0.976, better), and 0.92 (0.851 to 0.996) on a repeat.
   XO_STD_DECL_PARSE=off parses whole modules as before.
+- std/trace: a ring that is full no longer copies its spans on every
+  `record` or request: it grows to twice its cap and drops its older
+  half at once: 200,000 records on a ring of 1,000 take 0.156 of their
+  time (4.4 s to 0.69 s on linux/arm64).
 - `xo bench` takes a value flag's value as the next word too (`--rounds 10`, as `--rounds=10`); before, `--rounds 10` failed with "unknown flag --rounds".
 - `xo run -o PATH` writes PATH every time: when the run cache served
   an unchanged program, the second run wrote no file there. `xo run -o`

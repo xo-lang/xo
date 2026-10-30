@@ -32,13 +32,18 @@ fn ring_record(r: trace.Ring, id: Str, name: Str, start: Time, d: Duration) {
   push(r, trace.Span{id: id, name: name, start_ms: start.unix_millis(), micros: d.nanos() / 1000, status: 0})
 }
 
+// The list grows to twice the cap before it drops its oldest half, so a
+// push copies cap spans once per cap pushes instead of on every push past
+// the cap; ring_spans reads only the newest cap. The trim comes before the
+// push: a write followed by a fault point inside a with keeps the old list
+// alive for the rollback, so the push would copy the list.
 fn push(r: trace.Ring, s: trace.Span) {
   let cap = r.cap
   r.buf.with(fn(var l: List[trace.Span]) {
-    l.push(s)
-    if l.len() > cap {
-      l = l[l.len() - cap..]
+    if l.len() >= 2 * cap {
+      l = l[l.len() - cap + 1..]
     }
+    l.push(s)
   })
 }
 
@@ -59,7 +64,8 @@ fn ring_spans(r: trace.Ring, min: Duration, n: Int) -> List[trace.Span] {
   let all = r.buf.with_read(fn(l: List[trace.Span]) -> List[trace.Span] { l })
   var out: List[trace.Span] = []
   var i = all.len()
-  while i > 0 {
+  let first = if all.len() > r.cap { all.len() - r.cap } else { 0 }
+  while i > first {
     i -= 1
     let s = all[i]
     if s.micros * 1000 >= min.nanos() {
