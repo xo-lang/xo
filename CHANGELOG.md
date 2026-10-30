@@ -157,6 +157,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   of the instructions (xo bench --ab n=15; wall and cycles within noise);
   xo's native __text 70,913,656 to 70,921,048 bytes, all of it the new
   range_value helper (7,772 bytes; logic_value 376 smaller).
+- `xo test` replays a passed run (decision 0439): a native
+  test binary that links no Go or C binding stores its passed run's
+  report, and the next run of the same binary and flags prints it with
+  ` (cached)` instead of running, as `go test` does; `--count=1` or
+  XO_TEST_CACHE=off runs the tests, and `--real`, `--std-module`,
+  `--profile`, `--trace` and `--only` runs are never stored.
 - Native backends: a range test's subtraction is reused by the code it
   guards: `c >= 48 && c <= 57` then `c - 48` (and the `||` form)
   subtracts once, the later `c - 48` taking the range test's register,

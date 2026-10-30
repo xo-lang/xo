@@ -1,6 +1,7 @@
 usage: xo test [--seed=N] [--explore=N] [--run=text] [--race] [--real] [--cases=N]
                [--timeout=D] [--json] [-v] [--backend=native|go|llvm|arm64|amd64] [--no-gc]
-               [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--watch] [--fail-empty] <dirs...>
+               [--profile=cpu|heap|cpu,heap] [--trace=FILE] [--watch] [--fail-empty]
+               [--count=1] <dirs...>
 
 Run test blocks, property tests, and contract fuzzing on the
 deterministic scheduler. --run selects the tests whose name contains
@@ -22,6 +23,12 @@ changed); typing a and Enter runs them all. With --json each cycle is
 a JSON line, the last also in last.json under <user cache>/xo/watch
 (decision 0267). A run of no tests says so on standard error ("xo
 test: no tests in ..."); with --fail-empty it also fails (exit 1).
+A passed native run whose binary links no Go or C binding is stored,
+and a later run of the same binary and flags prints its report again
+with " (cached)" on the summary line instead of running (decision
+0439); --count=1 or XO_TEST_CACHE=off runs the tests, and runs with
+--real, --profile, --trace or --only, and std's own module tests,
+are never stored.
 
 A directory means that directory alone; DIR/... covers the directories
 below it too, up to 6,000 .xo files or 60,000 entries (decision 0345).

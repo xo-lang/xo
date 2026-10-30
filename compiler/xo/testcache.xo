@@ -65,12 +65,12 @@ fn whole_build_on(os: Os) -> Bool {
 /// The flags of `xo test` that only change how the tests run, not the
 /// binary: left out of the key.
 fn run_only_flag(name: Str) -> Bool {
-  name is "run" | "seed" | "cases" | "timeout" | "v" | "json" | "phase-times"
+  name is "run" | "seed" | "cases" | "count" | "timeout" | "v" | "json" | "phase-times"
 }
 
 /// The flags among run_only_flag's that take a value.
 fn run_flag_takes_value(name: Str) -> Bool {
-  name is "run" | "seed" | "cases" | "timeout"
+  name is "run" | "seed" | "cases" | "count" | "timeout"
 }
 
 /// The key of a test run, "" when the cache is off or xo's identity is

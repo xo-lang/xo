@@ -121,6 +121,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_ASSUME_CHECK":         {"none", ""}, // decision 0342's check, off for its --ab
 	"XO_ASSUME_BREAK":         {"none", ""}, // its test's damage
 	"XO_TEST_BATCH":           {"none", ""},
+	"XO_TEST_CACHE":           {"none", ""}, // off: xo test runs the tests instead of replaying a stored passed run (decision 0439)
 	"XO_TEST_JOBS":            {"none", ""},
 	"XO_TEST_ONLY":            {"none", ""},
 	"XO_TRACEBACK":            {"none", ""},

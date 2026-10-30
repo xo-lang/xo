@@ -1,0 +1,128 @@
+// The test result cache (decision 0439): a run in which no test failed
+// stores what it printed and its exit status beside the run cache entry
+// of its test binary, and a later run with the same binary, seed and run
+// flags prints it again instead of running the tests, as Go's test cache
+// replays a passed package. Never a run that could see the machine: one
+// with --real, a binary that links a `use go` or C binding (the build
+// writes no pure marker), a --std-module run, or one that failed.
+
+use github.com/xo-lang/xo/compiler/check
+
+/// What a run printed, in order: (true for standard error, the text).
+type Printed = List[(Bool, Str)]
+
+/// The result key of a run: the test binary's run key, the inputs its
+/// run cache entry recorded (the run key leaves the sources out: an edit
+/// keeps it) and the flags it leaves out (run_only_flag), "" when this
+/// run is not cacheable. since > 0 (a build that just stored the entry)
+/// takes the entry only when it was written since then, so a store that
+/// did not happen never pairs this binary with older inputs.
+fn result_key(os: Os, ctx: Ctx, run_key: Str, o: TestOpts, std_module: Str, since: Int) -> Str {
+  if run_key.is_empty() || o.real || !std_module.is_empty() || o.count == 1 || (os.env.get("XO_TEST_CACHE") ?? "") == "off" || !o.profile.is_empty() || !o.trace.is_empty() || !o.only.is_empty() {
+    return ""
+  }
+  let m = "${run_entry(ctx, run_key)}.m"
+  if since > 0 {
+    match os.fs.stat(m) {
+      Ok(Some(fi)) => if fi.modified.unix_millis() < since { return "" }
+      _ => return ""
+    }
+  }
+  let inputs = match os.fs.read(m) {
+    Ok(b) => b
+    Err(_) => return ""
+  }
+  var k = new_key("testresult v2")
+  k.str(run_key)
+  k.data(inputs)
+  k.str("run=${o.run} seed=${o.seed} explore=${o.explore} cases=${o.cases} timeout=${o.timeout.millis()} v=${o.verbose} json=${o.json} fail_empty=${o.fail_empty}")
+  k.sum()
+}
+
+/// The file of a run key's pure marker, beside its run cache entry:
+/// written by a build whose program links no `use go` or C binding, so
+/// its tests see only the fakes.
+fn pure_marker(ctx: Ctx, run_key: Str) -> Str { "${run_entry(ctx, run_key)}.pure" }
+
+/// The file of a result key's stored report.
+fn result_file(ctx: Ctx, rkey: Str) -> Str { "${run_entry(ctx, rkey)}.result" }
+
+/// Whether the checked program links no binding (decision 0439): no
+/// module bound from Go or C.
+fn program_pure(c: check.Checker) -> Bool {
+  !c.mods.any(fn(m) { !m.go_path.is_empty() || !m.c_header.is_empty() })
+}
+
+/// A report as stored: "XO-RESULT v1 CODE\n" then each print as its
+/// stream ('o' or 'e'), its byte length, a newline and its text.
+fn encode_report(p: Printed, code: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  b.write_str("XO-RESULT v1 ${code}\n")
+  for (err, t) in p {
+    b.write_str("${if err { "e" } else { "o" }}${t.len()}\n")
+    b.write_str(t)
+  }
+  b.freeze()
+}
+
+fn decode_report(data: Bytes) -> (Printed, Int)? {
+  let s = match data.to_str() {
+    Some(t) => t
+    None => return None
+  }
+  let nl = s.find("\n") ?? -1
+  if nl < 0 || !s.starts_with("XO-RESULT v1 ") {
+    return None
+  }
+  let code = Int.parse(s["XO-RESULT v1 ".len()..nl]) ?? -1
+  if code != 0 {
+    return None
+  }
+  var p: Printed = []
+  var i = nl + 1
+  while i < s.len() {
+    let e = s[i..].find("\n") ?? -1
+    if e < 1 {
+      return None
+    }
+    let n = Int.parse(s[i + 1..i + e]) ?? -1
+    let at = i + e + 1
+    if n < 0 || at + n > s.len() {
+      return None
+    }
+    p.push((s[i..i + 1] == "e", s[at..at + n]))
+    i = at + n
+  }
+  Some((p, code))
+}
+
+/// run_tests through the result cache (decision 0439): a stored report of
+/// rkey printed again with " (cached)" on its summary line, else the
+/// tests run and, when every one passed and the binary is pure, their
+/// report stored.
+fn run_tests_cached(os: Os, ctx: Ctx, run_key: Str, rkey: Str, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
+  if rkey.is_empty() || ctx.bin_cache.is_empty() {
+    return run_tests(os, bin, tests, o)
+  }
+  if let Some((p, code)) = os.fs.read(result_file(ctx, rkey)).ok().and_then(fn(b) { decode_report(b) }) {
+    for (err, t) in p {
+      let line = if !o.json && !err && (t.starts_with("ok: ") || t.starts_with("FAIL: ")) { t.trim_end() + " (cached)\n" } else { t }
+      if err { os.stdio.eprint(line) } else { os.stdio.print(line) }
+    }
+    return code
+  }
+  let pure = os.fs.exists(pure_marker(ctx, run_key)).ok() ?? false
+  // wholebuild.xo's Tee: xo's own phase and cache lines are not kept
+  let tee = new_tee(os.stdio)
+  let code = run_tests(tee_os(os, tee), bin, tests, o)
+  // a run in which no `uses` test ran (--real is never stored) and
+  // nothing failed
+  if code == 0 && pure {
+    let p = tee.rec.with(fn(var r) { r })
+    // its own prefix directory, which no run entry may have made
+    let f = result_file(ctx, rkey)
+    os.fs.create_dir_all(f[0..f.len() - rkey.len() - ".result".len() - 1]).ignore_err("the write reports it")
+    os.fs.write(f, encode_report(p, code)).ignore_err("an unstored report runs again next time")
+  }
+  code
+}

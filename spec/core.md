@@ -2825,6 +2825,11 @@ test "retries after 503" {
   Without `--real` such a test is skipped, and the summary line names every
   skip's reason (`ok: 1 passed, 0 failed, 1 skipped (1 uses net: run with
   --real)`; decision 0437).
+- A test run sees only the fakes unless `--real` is given, so its result
+  depends only on the test binary and the run's flags: a passed native
+  run of a binary that links no `use go` or C binding may be replayed
+  from the cache with ` (cached)` on its summary line, and `--count=1`
+  or XO_TEST_CACHE=off runs the tests (decision 0439).
 - Each test, and each case and shrinking step of a property test, may run
   for `xo test --timeout=D` of real time (default 60s; 0 for no limit).
   One that does not finish fails with `the test did not finish within D of

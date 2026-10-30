@@ -1,6 +1,6 @@
 # 0439: replay an unchanged test run's results
 
-Status: Proposed (xo-lang-4, 2026-10-30; queued by the lead after 0436 and the --std-module item; the owner accepts it with its measurements)
+Status: Accepted (owner, 2026-10-30)
 
 ## Context
 
@@ -50,14 +50,46 @@ Never stored (each run runs):
   BUILD_DEBUG_ENV) or `--watch`.
 
 Bypass: `--count=1` (Go's spelling, so agents' habits work) or
-XO_TEST_CACHE=off. The replayed report is byte for byte the stored one,
+XO_TEST_CACHE=off. The replayed report is the stored one with
+` (cached)` after the `ok:` or `FAIL:` summary line (not with `--json`),
 so tools that parse the summary still see "N passed, M failed".
+
+As built (compiler/xo/testresults.xo, 2026-10-30): the report is
+recorded through wholebuild.xo's Tee (the run cache's), which keeps
+neither `--phase-times` lines nor the cache and front end statistics,
+and stored as `<entry of the result key>.result`; the result key is the
+binary's run key, the run cache entry's recorded inputs (its `.m`: every
+file, listing, probe and variable the build read, with their hashes;
+after a fresh build, only an entry that build wrote) and the run-only
+flags, and is empty (nothing stored or
+replayed) with `--real`, `--std-module`, `--count=1`, XO_TEST_CACHE=off,
+`--profile`, `--trace` or `--only`. A build whose program links no `use
+go` or C binding writes `<run entry>.pure`, and only a binary with that
+marker has its runs stored. Test: cmd/xo TestXoTestResultCache (an
+unchanged run replays; --count=1, XO_TEST_CACHE=off, another seed, a
+failing run and a `--real` run whose input file changed run); TestXoTestResultCacheEdits: an edit to the test body, a function it
+calls, an embedded file or a std function (a copy of std) runs again).
 
 ## Consequences
 
-- An unchanged rerun costs the cache lookup and printing: expected under
-  20 ms against about 130 ms for url (to be measured with `xo bench --ab`
-  before the owner accepts this).
+- Found by the linux/arm64 gate (2026-10-30, before the push): the first
+  result key was the run key plus the flags, and the run key leaves the
+  sources out (an edit keeps it; the entry's `.m` decides a hit), so a
+  rebuild after an edit replayed the earlier "ok" (cmd/xo
+  TestNoGCRunCache/arm64: an edit that should fail printed `ok ...
+  (cached)`). The key now hashes the entry's `.m`, and a rebuild whose
+  program links a binding removes the earlier build's `.pure` marker.
+  A test cache must never replay a result across an edit; the edit
+  tests above guard it.
+
+- An unchanged rerun costs the run cache's lookup and the printing. On
+  linux/arm64 (the offload host, run alone, `xo bench --ab` n=20 of `xo
+  test` on an unchanged 40-test package, A XO_TEST_CACHE=off, B the
+  result cache, the key hashing the entry's `.m`): wall 0.121 (70 to
+  8.4 ms, 95% interval 0.115 to 0.124), cpu 0 (570 ms of test processes
+  to none), peak RSS 1.111 (66 to 73 MB: xo itself, which now reads the
+  entry's `.m` for the key; the tests' own processes no longer start).
+  The first key, without the `.m`, measured 0.118 and 1.074.
 - A test that is nondeterministic despite the fakes (a data race on the
   real scheduler, a dependence on memory addresses) passes once and is
   then replayed; Go has the same exposure. `--count=1` and `--explore`

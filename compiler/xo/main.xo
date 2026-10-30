@@ -339,7 +339,8 @@ fn main(os0: Os) ! {
         replay_output(os, hit.output)
         var hto = o.topts
         hto.target = test_target(o)
-        let code = run_tests(os, hit.bin, hit.tests, hto)
+        // a passed run of this binary, seed and flags replayed (decision 0439)
+        let code = run_tests_cached(os, ctx, o.run_key, result_key(os, ctx, o.run_key, hto, o.std_module, 0), hit.bin, hit.tests, hto)
         prof_tests(os, o.topts)
         os.fs.remove(hit.bin).ignore_err("a prune removes it later")
         os.proc.exit(code)
@@ -445,7 +446,7 @@ fn main(os0: Os) ! {
     to.std = o.std
     to.target = test_target(o)
     let pdbs = start_pdbs(os, ctx)
-    let code = run_tests(os, nb.bin, nb.tests, to)
+    let code = run_tests_cached(os, ctx, o.run_key, result_key(os, ctx, o.run_key, to, o.std_module, o.run_start), nb.bin, nb.tests, to)
     wait_pdbs(os, "xo test", pdbs)
     prof_tests(os, to)
     if !o.trace.is_empty() {
@@ -2388,6 +2389,14 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
       // with the warnings the build printed, which a hit prints again
       // (decision 0360; a build with a warning was not stored before)
       run_store(os, ctx, o.run_key, c, o.std, o.wd, host_bin, ts, RunOut{output: kept_output(ctx)}, o.run_start)
+      if program_pure(c) {
+        // its tests see only the fakes: their passed runs may be
+        // replayed (decision 0439)
+        os.fs.write(pure_marker(ctx, o.run_key), "".bytes()).ignore_err("an unmarked binary's runs are not replayed")
+      } else {
+        // an edit that added a binding: the earlier build's mark goes
+        os.fs.remove(pure_marker(ctx, o.run_key)).ignore_err("absent when no earlier build was pure")
+      }
     }
     return Native{bin: host_bin, tests: ts, pc: c.parse_cache}
   }

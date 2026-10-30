@@ -212,6 +212,9 @@ struct TestOpts {
   /// saying so (2026-10-24: a gate's `--std-module=time`, which has no
   /// tests, printed "ok: 0 passed" and read as a pass)
   fail_empty: Bool = false
+  /// --count=N (decision 0439): 1 runs the tests even when the result
+  /// cache holds a report of this run, as `go test -count=1`
+  count: Int = 0
 }
 
 /// Whether the run takes test t: --run's text and the --watch selection.

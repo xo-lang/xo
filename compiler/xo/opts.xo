@@ -157,7 +157,7 @@ struct Opts {
 
 /// The flags that take a value (every other known flag is a boolean).
 fn value_flags() -> List[Str] {
-  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "seed", "explore", "record", "run", "cases", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace", "opt"]
+  ["o", "trace", "targets", "target", "backend", "tzdata", "layout", "stamp", "seed", "explore", "record", "run", "cases", "count", "timeout", "std", "wd", "cc", "asm", "go-tree", "workspace", "as", "ld", "profile", "std-module", "grace", "opt"]
 }
 
 /// The boolean flags.
@@ -645,6 +645,8 @@ fn set_value(os: Os, var o: Opts, name: Str, v: Str) {
     o.topts.explore = o.explore
   } else if name == "cases" {
     o.topts.cases = int_flag(os, o.cmd, name, v)
+  } else if name == "count" {
+    o.topts.count = int_flag(os, o.cmd, name, v)
   } else if name == "timeout" {
     o.topts.timeout = match Duration.parse(v) {
       Ok(d) => d
