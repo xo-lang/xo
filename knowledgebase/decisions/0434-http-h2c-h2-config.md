@@ -1,9 +1,9 @@
 # 0434: HTTP/2 without TLS (h2c prior knowledge) and HTTP/2 settings
 
-Status: Proposed (Xo lang 5, 2026-10-30; Xo Lang 3 reviewed it the same
+Status: Accepted (owner, 2026-10-30, through the lead). Was: Proposed (Xo lang 5, 2026-10-30; Xo Lang 3 reviewed it the same
 day, and the sniff, config, keepalive and linking notes are theirs; for
 the owner's review). Closes gap 10 of the gRPC readiness survey, after 0433
-(trailers, full duplex, mutual TLS). No code until accepted.
+(trailers, full duplex, mutual TLS).
 
 ## Context
 

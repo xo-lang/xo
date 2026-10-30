@@ -1,9 +1,9 @@
 # 0433: HTTP trailers, full duplex streams, and mutual TLS
 
-Status: Proposed (Xo lang 5 with Xo Lang 3, 2026-10-30; for the owner's
+Status: Accepted (owner, 2026-10-30, through the lead). Was: Proposed (Xo lang 5 with Xo Lang 3, 2026-10-30; for the owner's
 review). Closes gaps 1 and 2 of the gRPC readiness survey. Gap 10
 (h2c with prior knowledge, the PRI preface sniff, h2 settings) is a
-separate ADR. No code until accepted.
+separate ADR.
 
 ## Context
 
