@@ -2664,24 +2664,37 @@ fn pipe() -> (PipeWriter, BodyReader) {
   let ch = Chan[Bytes].new(1)
   let st = Mutex[PipeState].new(PipeState{closed: false, err: "", pend: b""})
   let next = fn(max: Int) -> http1.BodyPart {
-    var d = st.with(fn(var s: PipeState) -> Bytes {
+    // the pending rest is cut inside one st.with, so no decision made
+    // on a value read in an earlier st.with acts in a later one (XO0804)
+    let pending = st.with(fn(var s: PipeState) -> Bytes? {
       let p = s.pend
-      s.pend = b""
-      p
+      if p.is_empty() {
+        None
+      } else if p.len() > max {
+        s.pend = p[max..p.len()]
+        Some(p[0..max])
+      } else {
+        s.pend = b""
+        Some(p)
+      }
     })
-    if d.is_empty() {
-      match ch.recv() {
-        Some(x) => d = x
+    var d = b""
+    match pending {
+      Some(p) => d = p
+      None => match ch.recv() {
+        Some(x) => {
+          d = x
+          if x.len() > max {
+            let rest = x[max..x.len()]
+            st.with(fn(var s: PipeState) { s.pend = rest })
+            d = x[0..max]
+          }
+        }
         None => {
           let e = st.with_read(fn(s) { s.err })
           return http1.BodyPart{data: "", end: e.is_empty(), err: e}
         }
       }
-    }
-    if d.len() > max {
-      let rest = d[max..d.len()]
-      st.with(fn(var s: PipeState) { s.pend = rest })
-      d = d[0..max]
     }
     let t = raw.str_at(raw.bytes_addr(d), d.len())
     raw.alive(d)
