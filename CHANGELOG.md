@@ -5,6 +5,13 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (Go backend): builds of one program at the same time (two
+  terminals, an editor and a test run, make -j) share its build tree,
+  which each build rewrote under the others: most failed with "rt:
+  directory not empty", "main.go: no such file or directory" or "gofmt
+  failed on the generated Go". Each build now holds a lock on the tree
+  from the rewrite until go build ends (a kernel lock, released if the
+  build dies).
 - `use go`: a named Go map type (`jwt.MapClaims`, a `map[string]any`)
   gets `T.of(m)`, made from an Xo Map, and `to_map()`; before, a program
   could not make one, so a Go function taking it was unusable (the

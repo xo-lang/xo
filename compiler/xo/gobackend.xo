@@ -83,6 +83,12 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
   } else {
     tree = abs_of(wd, tree)
   }
+  // concurrent builds of one program share the tree: each holds its
+  // lock from the rewrite until go build is done (150 of 160 parallel
+  // builds failed without it, 2026-10-30). A kernel lock (flock,
+  // LockFileEx), so a builder that dies releases it; unlocked on error
+  os.fs.create_dir_all(tree)?
+  let tree_lock = os.fs.lock("${tree}/.xo-tree.lock").ok()
   // writeTree: generated packages left from an earlier build go first
   os.fs.remove_all("${tree}/m")?
   os.fs.remove_all("${tree}/rt")?
@@ -181,6 +187,9 @@ fn build_go(os: Os, ctx: Ctx, o: Opts) ! {
       fail(os, gerr)
     }
     bins.push((tg, bin))
+  }
+  if let Some(l) = tree_lock {
+    l.unlock()
   }
   // the outputs are in place: a stop from here on is the program's
   if let Some(d) = ctx.build_done {
