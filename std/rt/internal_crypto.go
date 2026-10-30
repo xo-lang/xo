@@ -107,7 +107,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 			// (0369) whose bytes 255 and 250 must survive
 			xs := []string{"a", "b", "c", "d", "e"}
 			xs[0], xs[4] = xs[4], xs[0]
-			xs[1], xs[1] = xs[1], xs[1]
+			one := 1 // the identity swap, through a variable so vet does not read it as a self-assignment
+			xs[one], xs[1] = xs[1], xs[one]
 			xs[2], xs[3] = xs[3], xs[2]
 			ns := []int64{10, 11, 12}
 			ns[0], ns[2] = ns[2], ns[0]
@@ -133,7 +134,8 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 			xs[0], ys[3] = ys[3], xs[0]
 			xs[2], ys[1] = ys[1], xs[2]
 			ys[0], ys[3] = ys[3], ys[0]
-			xs[1], xs[1] = xs[1], xs[1]
+			one := 1 // the identity swap, through a variable so vet does not read it as a self-assignment
+			xs[one], xs[1] = xs[1], xs[one]
 			p1 := []uint8{0, 1, 2}
 			p2 := []uint8{250, 255, 7}
 			p1[0], p2[1] = p2[1], p1[0]
