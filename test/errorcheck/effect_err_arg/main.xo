@@ -1,0 +1,19 @@
+// An error type with an effect argument propagated with ? keeps its
+// effects exact (core 6.2).
+
+struct Retry[fx: Effects] {
+  again: fn() -> Int uses fx
+}
+
+fn fails(r: Retry[clock]) -> Int ! Retry[clock] {
+  Err(r)
+}
+
+fn passes_on(r: Retry[clock]) -> Int ! Retry[rand] {
+  let n = fails(r)? // ERROR XO0701 "fixes these effects as"
+  Ok(n)
+}
+
+fn main(os: Os) {
+  os.stdio.println("ok")
+}

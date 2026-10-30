@@ -147,12 +147,25 @@ fn (var c: Checker) assignable(src0: Int, dst0: Int, sp: Span) -> Bool {
   if c.is_bad(src) || c.is_bad(dst) || c.is_never(src) {
     return true
   }
+  // unify records bound effect sets that must match (eff_eqs); those
+  // past n are this check's, so an outer join or ? keeps its own
+  let n = c.eff_eqs.len()
   if c.tys[src].kind == TyKind.Func && c.tys[dst].kind == TyKind.Func {
-    return c.func_assignable(src, dst, sp)
+    c.eff_track += 1
+    let ok = c.func_assignable(src, dst, sp)
+    c.eff_track -= 1
+    if ok {
+      c.same_effects(n, dst, sp)
+    } else {
+      c.drop_eff_eqs(n)
+    }
+    return ok
   }
-  if c.try_unify(src, dst) {
+  if c.unify_tracked(src, dst) {
+    c.same_effects(n, dst, sp)
     return true
   }
+  c.drop_eff_eqs(n)
   if c.tys[dst].kind == TyKind.Var {
     return false
   }
@@ -183,9 +196,25 @@ fn (var c: Checker) func_assignable(sf: Int, df: Int, sp: Span) -> Bool {
   }
   let m = c.mark()
   for i in 0..s.args.len() {
-    if !c.unify(s.args[i], d.args[i]) {
+    // parameter types are equal as before, except the effects of a
+    // parameter that is itself a function, which are contravariant (core
+    // 6.2): what the expected type hands it may perform only what the
+    // value accepts
+    let track = c.eff_track
+    c.eff_track = 0
+    c.no_tail += 1
+    let ok = c.unify(s.args[i], d.args[i])
+    c.no_tail -= 1
+    c.eff_track = track
+    if !ok {
       c.undo(m)
       return false
+    }
+    let sa = c.resolve(s.args[i])
+    let da = c.resolve(d.args[i])
+    if c.tys[sa].kind == TyKind.Func && c.tys[da].kind == TyKind.Func && c.tys[da].eff >= 0 && !c.esets[c.tys[da].eff].is_empty() && sp.start.line > 0 {
+      let sup = if c.tys[sa].eff >= 0 { c.tys[sa].eff } else { c.new_eset([]) }
+      c.obligations.push(EffOb{kind: ObKind.FuncType, sub: c.tys[da].eff, sup: sup, file: c.path, span: sp, ty: sa})
     }
   }
   if !c.unify(s.result, d.result) && !c.is_never(s.result) {
@@ -208,7 +237,23 @@ fn (var c: Checker) func_assignable(sf: Int, df: Int, sp: Span) -> Bool {
     return false
   }
   let v = c.open_evar(d.eff)
-  if v >= 0 {
+  if v >= 0 && c.evar_is(v, EV_CALL) {
+    // a call's own effect variable: the argument's effects are a lower
+    // bound, with an open tail an exact use (Box[fx]) binds; a later
+    // function argument is checked against the set as it is (the tail
+    // closes empty), as before decision 0432
+    let t = c.evars.len()
+    c.evars.push(-1)
+    c.mark_evar(t, EV_TAIL)
+    var items: List[EffItem] = []
+    if s.eff >= 0 {
+      for it in c.esets[s.eff] {
+        items.push(it)
+      }
+    }
+    items.push(EffItem{evar: t})
+    c.bind_eff(v, c.new_eset(items))
+  } else if v >= 0 && !c.evar_is(v, EV_TAIL) {
     if s.eff >= 0 {
       c.bind_eff(v, s.eff)
     } else {

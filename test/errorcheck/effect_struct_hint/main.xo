@@ -1,0 +1,14 @@
+// A struct literal checked against an annotated type: its fields must
+// fit the annotation's effect argument (core 6.2).
+
+struct Box[fx: Effects] {
+  f: fn() -> Int uses fx
+}
+
+fn main(os: Os) {
+  let b: Box[rand] = Box{f: fn() -> Int { // ERROR XO0701 "performs `clock`"
+    let _now = os.clock.now()
+    1
+  }}
+  os.stdio.println("${(b.f)()}")
+}

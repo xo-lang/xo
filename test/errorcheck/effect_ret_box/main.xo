@@ -1,0 +1,13 @@
+// A returned value's effect argument is exact (core 6.2).
+
+struct Box[fx: Effects] {
+  f: fn() -> Int uses fx
+}
+
+fn rand_box(b: Box[clock]) -> Box[rand] ! Str uses rand {
+  Ok(b) // ERROR XO0701 "fixes these effects as"
+}
+
+fn main(os: Os) {
+  os.stdio.println("ok")
+}

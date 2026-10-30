@@ -5,6 +5,14 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (type checking): a function could perform effects it did not
+  declare through a struct's effect parameter (a named pure function
+  passed first fixed the call's effect variable, and a `Box[clock]`
+  argument then passed unchecked); such programs now fail XO0701. A
+  function parameter of function type, `if`/`match` branches that are
+  functions and a closure's annotated parameter are checked the same
+  way. Every program that did not leak an effect still checks.
+
 - `xo bench` takes a value flag's value as the next word too (`--rounds 10`, as `--rounds=10`); before, `--rounds 10` failed with "unknown flag --rounds".
 - `xo run -o PATH` writes PATH every time: when the run cache served
   an unchanged program, the second run wrote no file there. `xo run -o`

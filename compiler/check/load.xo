@@ -358,6 +358,23 @@ pub struct Checker {
   inferred_fns: List[Int] = []
   inferred: Map[Int, Flat] = {}
   obligations: List[EffOb] = []
+  /// Bound effect sets unify met that must be equal (an effect argument
+  /// of a type, a function type inside one): assignable turns them into
+  /// obligations both ways at its span (core 6.2).
+  eff_eqs: List[(Int, Int)] = []
+  /// Effect variables a call instantiated for its own effect parameters
+  /// (call_effarg), and the tails a function argument leaves open on
+  /// them: a function argument's effects are a lower bound until an
+  /// exact use (a type's effect argument) binds the tail.
+  /// Indexed by effect variable (ids are never reused): EV_CALL, EV_TAIL,
+  /// or 0 (also past the end).
+  evar_kind: List[Int] = []
+  /// Above zero while a checking site's unify runs (eff_pair).
+  eff_track: Int = 0
+  /// Above zero while func_assignable unifies parameter types: a tail is
+  /// not bound there (a parameter's effects are checked one way, by an
+  /// obligation, and must not widen the call's variable).
+  no_tail: Int = 0
   /// Functions declared `uses realtime` (realtime.xo).
   pub realtime_fns: List[Int] = []
   /// Calls of function values, by key (realtime.xo).

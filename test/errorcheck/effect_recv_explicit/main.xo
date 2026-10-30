@@ -1,0 +1,18 @@
+// A method on Box[fx] called on a Box[clock] receiver: the method's fx is
+// the receiver's, so the call performs clock (core 6.2).
+
+struct Box[fx: Effects] {
+  f: fn() -> Int uses fx
+}
+
+fn (b: Box[fx]) call() -> Int uses fx {
+  (b.f)()
+}
+
+pub fn q(b: Box[clock]) -> Int { // ERROR XO0701 "`q` is pub with no `uses` clause, so it is pure, but performs `clock`"
+  b.call()
+}
+
+fn main(os: Os) {
+  os.stdio.println("ok")
+}

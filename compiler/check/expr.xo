@@ -781,6 +781,14 @@ fn (var c: Checker) propagate(et0: Int, sp: Span, code: Str, how: Str) {
     c.unify(ctx.err, et)
     return
   }
+  // the same error type: its effect arguments are exact (core 6.2);
+  // err_converts' identical ignores effect sets
+  let n0 = c.eff_eqs.len()
+  if c.unify_tracked(et, ctx.err) {
+    c.same_effects(n0, ctx.err, sp)
+    return
+  }
+  c.drop_eff_eqs(n0)
   if c.err_converts(et, ctx.err) {
     return
   }
@@ -836,9 +844,12 @@ fn (var c: Checker) join(ts: List[Int], spans: List[Span]) -> Int {
       base = t
       continue
     }
-    if c.try_unify(t, base) {
+    let n = c.eff_eqs.len()
+    if c.unify_tracked(t, base) {
+      c.same_effects(n, base, spans[i])
       continue
     }
+    c.drop_eff_eqs(n)
     let d = c.error("XO0401", spans[i], "branches have different types: `${c.show(base)}` and `${c.show(t)}`")
     if d >= 0 && (c.option_elem(base) >= 0 || c.option_elem(t) >= 0) {
       c.note(d, "wrap the plain value in `Some(...)`, or give the expression an expected type")
@@ -1930,6 +1941,8 @@ fn (var c: Checker) fn_lit(x: parser.FnLit, hint: Int) -> Int {
     if let Some(t) = p.typ {
       pt = c.resolve_type(t, env)
       if ft >= 0 {
+        // a hint only: the closure's type is checked against the expected
+        // one by assignable, contravariantly in its parameters (core 6.2)
         c.unify(c.tys[ft].args[i], pt)
       }
     } else if ft >= 0 {

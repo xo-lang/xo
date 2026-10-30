@@ -1,0 +1,56 @@
+// A type's effect argument is exact (core 6.2). A named pure function
+// passed first used to fix fx as pure, so Box[clock] passed unchecked and
+// q performed the clock with no `uses` (accepted before 2026-10-30). A
+// function argument's effects are now a lower bound that Box[clock]
+// completes: run's fx is clock, p performs it, and q must declare it.
+
+struct Box[fx: Effects] {
+  f: fn() -> Int uses fx
+}
+
+fn one() -> Int {
+  1
+}
+
+fn run[fx: Effects](a: fn() -> Int uses fx, b: Box[fx]) -> Int uses fx {
+  a() + (b.f)()
+}
+
+fn run2[fx: Effects](b: Box[fx], a: fn() -> Int uses fx) -> Int uses fx {
+  a() + (b.f)()
+}
+
+fn both[fx: Effects](a: fn() -> Int uses fx, b: fn() -> Int uses fx) -> Int uses fx {
+  a() + b()
+}
+
+// inferred: performs clock
+fn p(b: Box[clock]) -> Int {
+  run(one, b)
+}
+
+// declared: accepted, in either order
+fn p_declared(b: Box[clock]) -> Int uses clock {
+  run(one, b) + run2(b, one)
+}
+
+pub fn q(b: Box[clock]) -> Int { // ERROR XO0701 "`q` is pub with no `uses` clause, so it is pure, but performs `clock`"
+  p(b)
+}
+
+// a function argument after another is checked against the first's
+// effects, as before (decision 0432 is the owner's)
+fn two(os: Os) -> Int uses clock {
+  both(one, fn() -> Int uses clock { // ERROR XO0701 "is pure, but performs `clock`"
+    let _now = os.clock.now()
+    2
+  })
+}
+
+fn main(os: Os) {
+  let b = Box[clock]{f: fn() -> Int uses clock {
+    let _now = os.clock.now()
+    2
+  }}
+  os.stdio.println("${p(b) + p_declared(b) + two(os)}")
+}

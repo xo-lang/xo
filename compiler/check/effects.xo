@@ -66,6 +66,9 @@ enum ObKind {
   Iface
   /// A contract clause or invariant, which must be pure.
   Pure
+  /// An effect set fixed by a type (an effect argument, a function type
+  /// inside a type), which must match exactly (core 6.2).
+  Same
   /// A const initializer, which must be pure (decision 0332, XO0415).
   Const
 }
@@ -160,6 +163,51 @@ fn (var c: Checker) fresh_effarg() -> Int {
   c.new_ty(Ty{kind: TyKind.EffArg, eff: s})
 }
 
+/// evar_kind values: a call's own effect variable, and a tail.
+const EV_CALL = 1
+const EV_TAIL = 2
+
+/// Whether effect variable v is of kind k (evar_kind).
+fn (c: Checker) evar_is(v: Int, k: Int) -> Bool {
+  v >= 0 && v < c.evar_kind.len() && c.evar_kind[v] == k
+}
+
+/// Marks effect variable v as of kind k.
+fn (var c: Checker) mark_evar(v: Int, k: Int) {
+  while c.evar_kind.len() <= v {
+    c.evar_kind.push(0)
+  }
+  c.evar_kind[v] = k
+}
+
+/// An effect argument for a call's own effect parameter (EV_CALL).
+fn (var c: Checker) call_effarg() -> Int {
+  let s = c.fresh_eset()
+  c.mark_evar(c.esets[s][0].evar, EV_CALL)
+  c.new_ty(Ty{kind: TyKind.EffArg, eff: s})
+}
+
+/// Closes a call's open variables in set s to the empty set: those at
+/// its top, and the tails reached through bound call variables.
+fn (var c: Checker) close_eff(s: Int, top: Bool) {
+  if s < 0 {
+    return
+  }
+  for it in c.esets[s] {
+    if it.evar < 0 {
+      continue
+    }
+    let r = c.evars[it.evar]
+    if r >= 0 {
+      if c.evar_is(it.evar, EV_CALL) {
+        c.close_eff(r, false)
+      }
+    } else if top || c.evar_is(it.evar, EV_TAIL) {
+      c.bind_eff(it.evar, c.new_eset([]))
+    }
+  }
+}
+
 fn (var c: Checker) effarg(s: Int) -> Int {
   c.new_ty(Ty{kind: TyKind.EffArg, eff: s})
 }
@@ -190,16 +238,72 @@ fn (var c: Checker) bind_eff(v: Int, s: Int) {
   c.trail.push(-(v + 1))
 }
 
-/// Binds an open effect variable of either set to the other.
+/// Binds an open effect variable of either set to the other; two sets
+/// with none open must be equal, which assignable checks (eff_eqs).
 fn (var c: Checker) unify_eff(a: Int, b: Int) {
   let va = c.open_evar(a)
+  if c.no_tail > 0 && (c.evar_is(va, EV_TAIL) || c.evar_is(c.open_evar(b), EV_TAIL)) {
+    return
+  }
   if va >= 0 && b >= 0 && c.open_evar(b) != va {
     c.bind_eff(va, b)
+    if c.evar_is(va, EV_TAIL) {
+      // a lower bound meets an exact set: the bound must be within it
+      c.eff_pair(a, b)
+    }
     return
   }
   let vb = c.open_evar(b)
   if vb >= 0 && a >= 0 && c.open_evar(a) != vb {
     c.bind_eff(vb, a)
+    if c.evar_is(vb, EV_TAIL) {
+      c.eff_pair(a, b)
+    }
+    return
+  }
+  if va < 0 && vb < 0 && a != b && (a >= 0 || b >= 0) {
+    let ea = if a >= 0 { a } else { c.new_eset([]) }
+    let eb = if b >= 0 { b } else { c.new_eset([]) }
+    c.eff_pair(ea, eb)
+  }
+}
+
+/// The equal effect sets unify met since eff_eqs had n entries become
+/// obligations both ways at sp (core 6.2: a type's effect argument is
+/// not widened or narrowed), for the expected type dst.
+fn (var c: Checker) same_effects(n: Int, dst: Int, sp: Span) {
+  var i = n
+  while i < c.eff_eqs.len() {
+    let (a, b) = c.eff_eqs[i]
+    if sp.start.line > 0 {
+      c.obligations.push(EffOb{kind: ObKind.Same, sub: a, sup: b, file: c.path, span: sp, ty: dst})
+      c.obligations.push(EffOb{kind: ObKind.Same, sub: b, sup: a, file: c.path, span: sp, ty: dst})
+    }
+    i += 1
+  }
+  c.drop_eff_eqs(n)
+}
+
+/// Records sets a and b as equal while a checking site tracks them
+/// (eff_track: assignable, join, ?); a hint's unify records nothing.
+fn (var c: Checker) eff_pair(a: Int, b: Int) {
+  if c.eff_track > 0 {
+    c.eff_eqs.push((a, b))
+  }
+}
+
+/// try_unify, recording the equal effect sets it meets (eff_eqs).
+fn (var c: Checker) unify_tracked(a: Int, b: Int) -> Bool {
+  c.eff_track += 1
+  let ok = c.try_unify(a, b)
+  c.eff_track -= 1
+  ok
+}
+
+/// Forgets the equal effect sets past the first n.
+fn (var c: Checker) drop_eff_eqs(n: Int) {
+  while c.eff_eqs.len() > n {
+    c.eff_eqs.pop()
   }
 }
 
@@ -429,7 +533,8 @@ fn (var c: Checker) solve_effects() {
     if missing.is_empty() {
       continue
     }
-    let key = "${ob.file}:${ob.span.start.offset}:${ob.span.end.offset}|${missing.join(" ")}"
+    // an exact set is checked both ways; one report per place
+    let key = if ob.kind == ObKind.Same { "${ob.file}:${ob.span.start.offset}:${ob.span.end.offset}|same" } else { "${ob.file}:${ob.span.start.offset}:${ob.span.end.offset}|${missing.join(" ")}" }
     if seen.contains(key) {
       continue
     }
@@ -558,6 +663,7 @@ fn (c: Checker) ob_what(ob: EffOb, s: Str) -> Str {
       }
       "${head} allows only `${s}`, but `${c.display_name(ob.fo)}`"
     }
+    Same => if s.is_empty() { "the expected type `${c.show(ob.ty)}` fixes these effects as pure" } else { "the expected type `${c.show(ob.ty)}` fixes these effects as `${s}`" }
     Pure | Const => ""
   }
 }

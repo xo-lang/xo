@@ -1,0 +1,17 @@
+// Branches of an if that are function values join to one type; the
+// joined type must allow every branch's effects (core 6.2), or calling
+// g would read the clock while pure_pick declares nothing.
+
+fn pure_pick(os: Os, c: Bool) -> Int {
+  let g = if c { fn() -> Int { 1 } } else { // ERROR XO0701 "performs `clock`"
+    fn() -> Int {
+      let _now = os.clock.now()
+      2
+    }
+  }
+  g()
+}
+
+fn main(os: Os) {
+  os.stdio.println("${pure_pick(os, false)}")
+}

@@ -324,7 +324,7 @@ fn (var c: Checker) fresh_subst(fo: Int, pre: Subst, targs0: List[Int], has_targ
       continue
     }
     if c.objs[p].effect {
-      sm[p] = c.fresh_effarg()
+      sm[p] = c.call_effarg()
       continue
     }
     if has_targs && !c.objs[p].implicit {
@@ -569,7 +569,7 @@ fn (var c: Checker) static_subst(obj: Int, targs: List[Int], has_targs: Bool, fo
       sm[p] = targs[i]
       continue
     }
-    sm[p] = c.fresh_effarg()
+    sm[p] = c.call_effarg()
   }
   sm
 }
@@ -1261,11 +1261,7 @@ fn (var c: Checker) call_func(fo: Int, pre: Subst, targs: List[Int], has_targs: 
     if a < 0 || c.tys[a].kind != TyKind.EffArg || c.tys[a].eff < 0 {
       continue
     }
-    for it in c.esets[c.tys[a].eff] {
-      if it.evar >= 0 && c.evars[it.evar] < 0 {
-        c.bind_eff(it.evar, c.new_eset([]))
-      }
-    }
+    c.close_eff(c.tys[a].eff, true)
   }
   // effects
   c.check_ceiling(fo, span)

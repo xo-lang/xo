@@ -1,0 +1,18 @@
+// A closure's annotated parameter type is contravariant (core 6.2): a
+// closure that takes only pure callbacks cannot be given clock readers.
+
+fn apply(fs: List[fn() -> Int uses clock], g: fn(fn() -> Int uses clock) -> Int) -> Int uses clock {
+  var n = 0
+  for f in fs {
+    n += g(f)
+  }
+  n
+}
+
+fn main(os: Os) {
+  let fs: List[fn() -> Int uses clock] = [fn() -> Int uses clock {
+    let _now = os.clock.now()
+    1
+  }]
+  os.stdio.println("${apply(fs, fn(f: fn() -> Int) -> Int { f() })}") // ERROR XO0701 "is pure, but performs `clock`"
+}
