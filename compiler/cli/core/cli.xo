@@ -15,7 +15,7 @@ use github.com/xo-lang/xo/compiler/hostpath
 
 /// The toolchain version (cmd/xo version.go; TestSelfhostVersion keeps
 /// them equal).
-pub const VERSION = "0.34.0"
+pub const VERSION = "0.35.0"
 
 /// What every command needs from the environment.
 pub struct Ctx {
