@@ -5,9 +5,11 @@
 
 cmd_inherit # the wasm backend does not support processes (`proc.exec`): WASI preview1 has none
 conn_iface # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+fs_atomic # operation not supported (WASI has no file modes or locks): write_atomic's mode
 fs_cwd_path # no working directory under WASI
 fs_dir_errors # operation not supported (WASI has no file modes or locks)
 fs_files # operation not supported (WASI has no file modes or locks)
+fs_mkdir_mode # operation not supported (WASI has no file modes or locks): create_dir_all_mode
 fs_ops_edges # WASI has no times before 1970
 handle_drop_leak # the wasm backend does not support processes (`proc.spawn`): WASI preview1 has none
 http_client # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
@@ -32,6 +34,7 @@ http_stream # the wasm backend does not support the network (`rt.net_listen`): W
 http_stream_body # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_stream_body_h2 # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_tls # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_tls_state # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_tls_keys # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_wire # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 lock_drop_relock # operation not supported (WASI has no file modes or locks)
@@ -61,6 +64,7 @@ websocket_tls # the wasm backend does not support the network (`rt.net_listen`):
 # The native heap's big blocks (rt.heap_big in alloc.alloc) have no wasm lowering:
 debug_routes # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 http_handler_fault # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
+http_router_hooks # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc; until rt.heap_big on wasm
 http_router_paths # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 metrics_text # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 trace_ring # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
