@@ -1591,6 +1591,8 @@ const AMD64_ENCODINGS: List[(Str, Str)] = [
   ("lzcntq %rcx, %rbx", "f3480fbdd9"),
   ("lzcntq 8(%rax), %r10", "f34c0fbd5008"),
   ("popcntq %rcx, %rbx", "f3480fb8d9"),
+  ("crc32q %rcx, %rax", "f2480f38f1c1"),
+  ("crc32q %r9, %r10", "f24d0f38f1d1"),
   ("popcntq 8(%rax), %r10", "f34c0fb85008"),
   ("cmovoq %rcx, %rbx", "480f40d9"),
   ("cmovnoq %rcx, %rbx", "480f41d9"),

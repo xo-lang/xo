@@ -240,9 +240,9 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // the decision 0231 addendum's CRC-32 (IEEE): arm64 only; x86-64's
     // crc32 is Castagnoli, so amd64 and wasm run the body
     "crc32x" => if b.goarch == "arm64" { "crc32x" } else { "" }
-    // its Castagnoli twin (std/crc32): arm64 only for now; x86-64's
-    // SSE4.2 crc32 is this polynomial (a later amd64 lowering)
-    "crc32cx" => if b.goarch == "arm64" { "crc32cx" } else { "" }
+    // its Castagnoli twin (std/crc32): arm64's crc32cx and x86-64's
+    // SSE4.2 crc32q, which is this polynomial; wasm runs the body
+    "crc32cx" => if b.goarch == "arm64" || b.goarch == "amd64" { "crc32cx" } else { "" }
     // the SHA3 extension's Keccak rounds (ssa a64keccak.xo): arm64 only,
     // amd64 and wasm run the body (sha3.xo calls it only with HW_SHA3)
     "keccak_f1600" => if b.goarch == "arm64" { "keccak_f1600" } else { "" }

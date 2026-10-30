@@ -303,8 +303,12 @@ xM` in compiler/arm64 calls.xo (compiler/macho op.xo: crc32x_word with
 the C bit, 0x1000), LLVM inline asm with `.arch_extension crc`, an
 instruction to the native inliner. std/native/crc32.xo's castagnoli
 takes the word path when hw() has HW_CRC32. No seed: an older xo runs
-the body. x86-64's SSE4.2 crc32 is this polynomial, so an amd64
-lowering (Go's castagnoliSSE42) is a later step. Tests: cpu_test
+the body. x86-64's SSE4.2 crc32 is this polynomial: on amd64 hw() sets
+HW_CRC32C (CPUID.1 ECX bit 20) and crc32cx is `crc32q` (Go's
+castagnoliSSE42 single chain, without its three-way interleave for long
+buffers), through the scratch %r11 in the native emitter (encoded F2
+REX.W 0F 38 F1 in compiler/macho enc_amd64.xo) and inline asm on LLVM;
+std/crc32 takes the word path under either bit. Tests: cpu_test
 "crc32cx is its body", the crc32 corpus, compiler/macho's encoding
 table, test/codegen/intrinsics crc32.castagnoli.
 

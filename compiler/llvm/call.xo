@@ -798,7 +798,11 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       g.set(v, "call i64 asm \".arch_extension crc\\0Acrc32x \${0:w}, \${1:w}, $2\", \"=r,r,r\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
     }
     "rt.crc32cx" => {
-      g.set(v, "call i64 asm \".arch_extension crc\\0Acrc32cx \${0:w}, \${1:w}, $2\", \"=r,r,r\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+      if g.arch() == "amd64" {
+        g.set(v, "call i64 asm \"crc32q $2, $0\", \"=r,0,r\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+      } else {
+        g.set(v, "call i64 asm \".arch_extension crc\\0Acrc32cx \${0:w}, \${1:w}, $2\", \"=r,r,r\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
+      }
     }
     "rt.chacha_blocks4" => g.chacha4(g.raw_ptr(x.args[0]), g.raw_ptr(x.args[1]), g.raw_ptr(x.args[2]))
     "rt.ghash4" => {

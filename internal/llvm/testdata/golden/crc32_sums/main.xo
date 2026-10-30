@@ -1,0 +1,49 @@
+// std/crc32 on every backend: IEEE and Castagnoli sums of buffers 0 to
+// 64 bytes long and of 64 KiB, against a bit loop, and update split in
+// two. On arm64 and on x86-64 with SSE4.2 the word loop runs the CRC
+// instructions (cpu.crc32x, crc32cx; decision 0231 addendum), whose
+// results must equal the table and bit loop ones.
+use std/crc32
+
+fn bitwise(poly: Int, data: Bytes) -> Int {
+  var c = 0xffffffff
+  for b in data {
+    c = c ^ Int(b)
+    for _ in 0..8 {
+      c = c.shr_logical(1) ^ (poly & (0 - (c & 1)))
+    }
+  }
+  c ^ 0xffffffff
+}
+
+fn buffer(n: Int) -> Bytes {
+  var b = BytesBuilder.new()
+  var x = 12345
+  for _ in 0..n {
+    x = (x * 1103515245 + 12345) % 2147483648
+    b.write_byte(UInt8((x >> 16) & 255))
+  }
+  b.freeze()
+}
+
+fn main(os: Os) {
+  let big = buffer(65536)
+  var bad = 0
+  for n in 0..65 {
+    let d = big[0..n]
+    if crc32.checksum(d) != bitwise(0xedb88320, d) {
+      bad += 1
+    }
+    if crc32.checksum(d, crc32.Poly.Castagnoli) != bitwise(0x82f63b78, d) {
+      bad += 1
+    }
+    let k = n / 3
+    if crc32.update(crc32.checksum(d[0..k], crc32.Poly.Castagnoli), d[k..n], crc32.Poly.Castagnoli) != crc32.checksum(d, crc32.Poly.Castagnoli) {
+      bad += 1
+    }
+  }
+  os.stdio.println("short mismatches: ${bad}")
+  os.stdio.println("ieee 64k: ${crc32.checksum(big)}")
+  os.stdio.println("castagnoli 64k: ${crc32.checksum(big, crc32.Poly.Castagnoli)}")
+  os.stdio.println("castagnoli 123456789: ${crc32.checksum("123456789".bytes(), crc32.Poly.Castagnoli)}")
+}

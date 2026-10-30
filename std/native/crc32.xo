@@ -25,8 +25,9 @@ fn castagnoli(crc0: Int, b: Bytes) -> Int {
   var c = crc0 ^ 0xffffffff
   var i = 0
   let n = b.len()
-  // arm64's crc32cx, a word a step (Go's castagnoliUpdate on arm64)
-  if (cpu.hw() & cpu.HW_CRC32) != 0 {
+  // arm64's crc32cx or x86-64's crc32q, a word a step (Go's
+  // castagnoliUpdate on arm64, castagnoliSSE42 on amd64)
+  if (cpu.hw() & (cpu.HW_CRC32 | cpu.HW_CRC32C)) != 0 {
     while i + 8 <= n {
       c = cpu.crc32cx(c, rt.bytes_word(b, i))
       i += 8

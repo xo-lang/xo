@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+short mismatches: 0
+ieee 64k: 179779785
+castagnoli 64k: 1202013064
+castagnoli 123456789: 3808858755
+--- stderr

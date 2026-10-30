@@ -42,6 +42,10 @@ pub const HW_CRC32: Int = 128
 /// Linux, as Go's crypto/sha3 does not use it there (it measured the
 /// instructions slower than the scalar rounds on other arm64 cores).
 pub const HW_SHA3: Int = 256
+/// x86-64's SSE4.2 crc32 (CPUID.1 ECX bit 20), the Castagnoli polynomial
+/// only: crc32cx's crc32q (decision 0231 addendum, 2026-10-29). arm64's
+/// CRC32 extension is HW_CRC32, which has both polynomials.
+pub const HW_CRC32C: Int = 512
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -88,7 +92,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -115,7 +119,7 @@ fn detect() -> Int {
       let sse_bits = (1 << 9) | (1 << 19)
       let avx_bits = (1 << 27) | (1 << 28)
       let avx2 = (c & avx_bits) == avx_bits && (xgetbv0() & 6) == 6 && (b.shr_logical(5) & 1) != 0
-      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 }) | (if (c & sse_bits) == sse_bits { HW_SSSE3 } else { 0 }) | (if avx2 { HW_AVX2 } else { 0 })
+      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 }) | (if (c & sse_bits) == sse_bits { HW_SSSE3 } else { 0 }) | (if avx2 { HW_AVX2 } else { 0 }) | (if (c.shr_logical(20) & 1) != 0 { HW_CRC32C } else { 0 })
     }
     _ => 0
   }
@@ -185,9 +189,9 @@ pub fn crc32x(crc: Int, w: Int) -> Int { crc32x_soft(crc, w) }
 pub fn crc32x_soft(crc: Int, w: Int) -> Int { crc_word_soft(crc, w, 0xEDB88320) }
 
 /// crc32x for the Castagnoli polynomial (hash/crc32's Castagnoli table,
-/// std/crc32 Poly.Castagnoli): arm64's crc32cx, under the same HW_CRC32
-/// bit (the CRC32 extension has both). Call it only when hw() has
-/// HW_CRC32; the body is the reference.
+/// std/crc32 Poly.Castagnoli): arm64's crc32cx under HW_CRC32 (the CRC32
+/// extension has both), x86-64's SSE4.2 crc32q under HW_CRC32C. Call it
+/// only when hw() has one of them; the body is the reference.
 pub fn crc32cx(crc: Int, w: Int) -> Int { crc32cx_soft(crc, w) }
 
 /// crc32cx a bit at a time.

@@ -1,5 +1,18 @@
 # std/crc32 changes
 
+## 2026-10-29: perf: Castagnoli with x86-64's SSE4.2 crc32q
+
+- Kind: perf
+- Commit: this commit
+- Found by: the crc32cx follow-up (amd64 ran slicing-by-8)
+- Go reference: hash/crc32 crc32_amd64.go castagnoliSSE42
+- Test: compiler/macho enc_amd64_test (crc32q encodings), test/codegen/intrinsics crc32.castagnoli on amd64, the crc32 corpus and cpu_test under Docker linux/amd64
+- Timing: on the owner's linux/amd64 host, bench/perf/hash --ab against Go's hash/crc32, 15 rounds: crc32c wall 1.743x Go (1.718 to 1.78), one crc32q stream against Go's three interleaved (castagnoliSSE42Triple), next; crc32 (IEEE) 8.084x Go (7.996 to 8.29), slicing-by-8 against Go's PCLMULQDQ folding, unchanged here
+
+`Poly.Castagnoli` runs a word a step on `crc32q` where the CPU has SSE4.2
+(hw()'s new HW_CRC32C); one chain, not Go's three-way interleave for
+buffers past a few KiB.
+
 ## 2026-10-29: perf: Castagnoli with arm64's crc32cx
 
 - Kind: perf

@@ -1132,6 +1132,21 @@ fn (var e: XB) sized(base: Str, size: Int, ops: List[XOp]) -> Bool {
     }
     _ => {}
   }
+  if base == "crc32" {
+    // crc32q r/m64, r64 (SSE4.2): F2 REX.W 0F 38 F1 /r
+    if n != 2 || ops[1].kind != XO_REG || size != 8 {
+      e.fail("crc32 takes crc32q with a register destination")
+      return true
+    }
+    e.seg(ops[0])
+    e.byte(0xf2)
+    e.rex(true, ops[1].reg, ops[0], false)
+    e.byte(0x0f)
+    e.byte(0x38)
+    e.byte(0xf1)
+    e.modrm(ops[1].reg, ops[0])
+    return true
+  }
   if base is "bsf" | "bsr" | "tzcnt" | "lzcnt" | "popcnt" {
     if n != 2 || ops[1].kind != XO_REG {
       e.fail("${base} needs a register destination")

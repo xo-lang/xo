@@ -1627,7 +1627,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     }
     "rt.crc32cx" => {
       if !g.has_val[v] {
-        g.set(v, [g.def1(false, "crc32cx $wd0, $wu0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+        if g.x86 {
+          // SSE4.2 crc32q (cpu.hw()'s HW_CRC32C) in the scratch %r11, whose
+          // 64 bit form is the 32 bit CRC zero extended; the definition
+          // written last, so it may share a register with a use
+          g.set(v, [g.x86_def1("movq $u0, %r11\ncrc32q $u1, %r11\nmovq %r11, $d0", [g.word(x.args[0]), g.word(x.args[1])])])
+        } else {
+          g.set(v, [g.def1(false, "crc32cx $wd0, $wu0, $u1", [g.word(x.args[0]), g.word(x.args[1])])])
+        }
       }
     }
     "rt.u64_borrow" => {
