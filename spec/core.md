@@ -1770,8 +1770,16 @@ fn main(os: Os) ! {
 - A struct field or package variable of a Go function type has a setter
   that takes an Xo function, a callback by the rules above
   (`s.set_on_error(fn(msg: Str) { log.send(msg) })`, `hook.set_logf(f)`);
-  Go may call it later, from any goroutine. It is not read back: a Go
-  function value has no Xo form, so the field's getter is not bound.
+  Go may call it later, from any goroutine.
+- A Go function value Go gives Xo (a result, a field or variable read) is
+  an Xo function `uses go` that calls it, its arguments and results
+  converted as a bound function's are and a final `error` its `! go.Error`
+  (`fnval.adder(2)` is `fn(Int) -> Int uses go`; a value of a named
+  function type, such as a functional option or `http.HandlerFunc`,
+  stays a handle that goes back to Go; in a result it is
+  parenthesized, `-> (fn(Int) -> Int uses go) uses go`). Calling a nil Go
+  function faults. It cannot be passed back to Go, and one taking a
+  function or returning several results is not bound.
 - Go's `error` anywhere but a function's final result (a parameter, a
   field, a result before the last) is `go.Error?`, `nil` being `None`
   (`errors.is(err: go.Error?, target: go.Error?) -> Bool`); an `error`

@@ -186,3 +186,53 @@ fn main(os: Os) {
 		t.Errorf("output\n%s\nwant\n%s", got, want)
 	}
 }
+
+// The h1 hashes of testdata/goproxy's synthetic example.com/fnval v1.0.0.
+const (
+	fnvalSum    = "h1:pTdTGDMvFFf6JILcAIFspPDJxXuxfsi4zLjcYJdW6/A="
+	fnvalModSum = "h1:JpeO3fNjkKTIgJTYs3UzUyXLdaoaxOXBXD1uoToZOp4="
+)
+
+// TestUseGoFuncValues: a Go function value given to Xo is an Xo function
+// that calls it: a result (an error result is `! go.Error`), and a
+// function field read back after Xo set it, which calls the Xo function
+// through Go.
+func TestUseGoFuncValues(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	useGoProxy(t)
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module fv\n\nrequire go example.com/fnval v1.0.0\n",
+		"xo.lock": "go example.com/fnval v1.0.0 " + fnvalSum + "\n" +
+			"go example.com/fnval v1.0.0/go.mod " + fnvalModSum + "\n",
+		"main.xo": `use go "example.com/fnval"
+
+fn main(os: Os) {
+  let add = fnval.adder(2)
+  os.stdio.println("${add(3)}")
+  let parse = fnval.parser()
+  for s in ["42", "x"] {
+    match parse(s) {
+      Ok(n) => os.stdio.println("parsed ${n}")
+      Err(e) => os.stdio.println("error ${e.message()}")
+    }
+  }
+  let h = fnval.Hooks.new()
+  h.set_on_event(fn(name: Str) -> Str { "xo saw ${name}" })
+  os.stdio.println(h.fire("a"))
+  let f = h.on_event()
+  os.stdio.println(f("b"))
+}
+`,
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	want := "5\nparsed 42\nerror not a number: x\nxo saw a\nxo saw b"
+	if got := strings.TrimSpace(out.String()); got != want {
+		t.Errorf("output\n%s\nwant\n%s", got, want)
+	}
+}

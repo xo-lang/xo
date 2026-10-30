@@ -1017,6 +1017,112 @@ func (g *gen) callbackConv(s *types.Signature, gt string, depth int) (conv, *ski
 	}}, nil
 }
 
+// mapResult maps a value Go gives Xo (a result, a field or a variable
+// read): mapType, and a Go function value that mapType skips is an Xo
+// function that calls it (funcValueConv).
+func (g *gen) mapResult(t types.Type, depth int) (conv, *skipErr) {
+	fs, ok := t.Underlying().(*types.Signature)
+	if !ok {
+		return g.mapType(t, depth)
+	}
+	// a named function type stays mapType's handle: it goes back to Go
+	// (a functional option, zstd.EOption, passed to NewWriter) and keeps
+	// its methods (http.HandlerFunc); an instance (iter.Seq[T]) is a List
+	if _, named := types.Unalias(t).(*types.Named); named {
+		return g.mapType(t, depth)
+	}
+	return g.funcValueConv(fs, g.qual(t), depth)
+}
+
+// funcValueConv maps a Go function value given to Xo to an Xo function
+// `fn(..) -> R ! go.Error uses go` whose call calls it, converting the
+// arguments to Go and the results to Xo as a bound function's adapter
+// does. A nil Go function faults when called (Go's nil call panic). It
+// cannot go back to Go (toGo is nil); a Go function parameter is a
+// callback (callbackConv).
+func (g *gen) funcValueConv(s *types.Signature, gt string, depth int) (conv, *skipErr) {
+	if s.Variadic() || s.TypeParams().Len() > 0 {
+		return conv{}, skipf(catFunc, "function value %s", g.display(s))
+	}
+	nres := s.Results().Len()
+	hasErr := nres > 0 && isError(s.Results().At(nres-1).Type())
+	if hasErr {
+		nres--
+	}
+	if nres > 1 {
+		return conv{}, skipf(catFunc, "function value %s has several results", g.display(s))
+	}
+	hpkgs := []string{g.pkg.Path()}
+	var xps, rps, args []string
+	for i := 0; i < s.Params().Len(); i++ {
+		pc, err := g.mapType(s.Params().At(i).Type(), depth)
+		if err != nil {
+			return conv{}, skipf(catFunc, "function value %s: %s", g.display(s), err.detail)
+		}
+		if pc.toGo == nil {
+			return conv{}, skipf(catFunc, "function value %s: parameter %s cannot be passed to Go", g.display(s), pc.xo)
+		}
+		xps = append(xps, pc.xo)
+		rps = append(rps, fmt.Sprintf("a%d %s", i, pc.rt))
+		args = append(args, pc.toGo(fmt.Sprintf("a%d", i)))
+		hpkgs = append(hpkgs, pc.hpkgs...)
+	}
+	var rc *conv
+	if nres == 1 {
+		c, err := g.mapType(s.Results().At(0).Type(), depth)
+		if err != nil {
+			return conv{}, skipf(catFunc, "function value %s: %s", g.display(s), err.detail)
+		}
+		if c.nilable {
+			crt := c.rt
+			c = conv{xo: c.xo + "?", rt: "Option[" + crt + "]", hpkgs: c.hpkgs, toXo: func(e string) string {
+				return "Option[" + crt + "]{Some: " + e + " != nil, V: " + crt + "{P: " + e + "}}"
+			}}
+		}
+		rc = &c
+		hpkgs = append(hpkgs, c.hpkgs...)
+	}
+	xo := "fn(" + strings.Join(xps, ", ") + ")"
+	rres, rerr := "Unit", "Never"
+	if rc != nil {
+		xo += " -> " + rc.xo
+		rres = rc.rt
+	}
+	if hasErr {
+		if rc == nil {
+			xo += " -> ()"
+		}
+		xo += " ! go.Error"
+		rerr = "Go_Error"
+	}
+	// parenthesized: in a result a trailing `uses` would be the
+	// function's own (spec, "Function types in return position")
+	xo = "(" + xo + " uses go)"
+	res := "Result[" + rres + ", " + rerr + "]"
+	var rtps []string
+	for _, p := range rps {
+		rtps = append(rtps, p[strings.IndexByte(p, ' ')+1:])
+	}
+	rt := "func(" + strings.Join(append([]string{"*Task"}, rtps...), ", ") + ") " + res
+	display := g.display(s)
+	return conv{xo: xo, rt: rt, gt: gt, hpkgs: hpkgs, toXo: func(e string) string {
+		call := "f(" + strings.Join(args, ", ") + ")"
+		var body string
+		switch {
+		case rc != nil && hasErr:
+			body = "r0, err := " + call + "; if err != nil { return " + res + "{E: GoErr(err)} }; return " + res + "{Ok: true, V: " + rc.toXo("r0") + "}"
+		case rc != nil:
+			body = "r0 := " + call + "; return " + res + "{Ok: true, V: " + rc.toXo("r0") + "}"
+		case hasErr:
+			body = "if err := " + call + "; err != nil { return " + res + "{E: GoErr(err)} }; return " + res + "{Ok: true}"
+		default:
+			body = call + "; return " + res + "{Ok: true}"
+		}
+		fn := "func(" + strings.Join(append([]string{"tk *Task"}, rps...), ", ") + ") " + res + " { GoEnter(tk); defer GoExit(tk, " + strconv.Quote(display) + "); " + body + " }"
+		return "func(f " + gt + ") " + rt + " { return " + fn + " }(" + e + ")"
+	}}, nil
+}
+
 // bindFunc writes the declaration and adapter of one function or method.
 func (g *gen) bindFunc(s fnSpec) *skipErr {
 	sig := s.sig
@@ -1116,7 +1222,7 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 	}
 	var rcs []conv
 	for i := 0; i < nv; i++ {
-		c, err := g.mapType(res.At(i).Type(), s.depth)
+		c, err := g.mapResult(res.At(i).Type(), s.depth)
 		if err != nil {
 			return skipf(err.cat, "result %d: %s", i+1, err.detail)
 		}
@@ -1803,9 +1909,20 @@ func (g *gen) bindHandle(h *handle) {
 		qname := h.xo + "." + xn
 		display := g.display(h.named) + "." + fv.Name()
 		if fs, ok := fv.Type().Underlying().(*types.Signature); ok {
-			// a function field: a setter taking an Xo callback (the getter
-			// would return a Go function, which has no Xo form)
+			// a function field: a setter taking an Xo callback and a
+			// getter giving Go's function as an Xo function
 			g.bindFuncSetter(h, fv, fs, depth)
+			c, err := g.mapResult(fv.Type(), depth)
+			if err == nil && h.names[xn] {
+				err = skipf(catCollision, "field accessor `%s` collides with a method", xn)
+			}
+			if err != nil {
+				g.skip(qname, display, &skipErr{cat: err.cat, detail: "field: " + err.detail}, false)
+				continue
+			}
+			h.names[xn] = true
+			h.decls = append(h.decls, fmt.Sprintf("/// Go: field %s %s\nfn (recv: %s) %s() -> %s uses go", fv.Name(), g.display(fv.Type()), h.xoT, xn, c.xo))
+			fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task) %s {\n\tdefer GoBoundary(%q)\n\tv := h.P.%s\n\treturn %s\n}\n\n", h.rtT, xn, c.rt, display, fv.Name(), c.toXo("v"))
 			continue
 		}
 		c, err := g.mapType(fv.Type(), depth)
@@ -1842,7 +1959,7 @@ func (g *gen) bindHandle(h *handle) {
 // variable of function type through bindFunc, as a call of a Go function
 // literal that assigns its argument, so the callback is converted the way
 // a callback parameter is. h is nil for a variable.
-func (g *gen) bindFuncSetter(h *handle, v *types.Var, fs *types.Signature, depth int) {
+func (g *gen) bindFuncSetter(h *handle, v *types.Var, fs *types.Signature, depth int) bool {
 	sn := "set_" + snake(v.Name())
 	display := g.pkg.Name() + "." + v.Name()
 	target := g.alias(g.pkg) + "." + v.Name()
@@ -1858,24 +1975,19 @@ func (g *gen) bindFuncSetter(h *handle, v *types.Var, fs *types.Signature, depth
 	}
 	if taken {
 		g.skip(sn, display, skipf(catCollision, "%s setter `%s` collides with a method", kind, sn), false)
-		return
+		return false
 	}
 	if nt, ok := types.Unalias(v.Type()).(*types.Named); ok && nt.Obj().Pkg() != nil && !nt.Obj().Exported() {
 		g.skip(sn, display, skipf(catUnexport, "%s: unexported type %s", kind, g.display(v.Type())), false)
-		return
+		return false
 	}
 	p := types.NewParam(token.NoPos, nil, "v", v.Type())
 	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(p), nil, false)
 	goCall := "(func(v " + g.qual(v.Type()) + ") { " + target + " = v })"
-	gn := xoName(snake(v.Name()))
-	if h != nil {
-		gn = h.xo + "." + gn
-	}
 	if err := g.bindFunc(fnSpec{xoName: sn, display: display + " =", sig: sig, recv: h, goCall: goCall, depth: depth}); err != nil {
 		g.skip(sn, display, &skipErr{cat: err.cat, detail: kind + ": " + err.detail}, false)
-		return
+		return false
 	}
-	g.skip(gn, display, skipf(catFunc, "%s getter: a Go function value has no Xo form (%s binds)", kind, sn), false)
 	if h != nil {
 		h.names[sn] = true
 		g.stats.FieldsMapped++
@@ -1883,6 +1995,7 @@ func (g *gen) bindFuncSetter(h *handle, v *types.Var, fs *types.Signature, depth
 		g.scope[sn] = true
 		g.stats.VarsMapped++
 	}
+	return true
 }
 
 func (g *gen) bindConst(o *types.Const) {
@@ -2005,11 +2118,11 @@ func (g *gen) bindVar(o *types.Var) {
 		fmt.Fprintf(&g.adapt, "func %s%s(tk *Task) Go_Error {\n\treturn GoErr(%s.%s)\n}\n\n", g.b.Prefix, name, g.alias(g.pkg), o.Name())
 		return
 	}
+	set := false
 	if fs, ok := o.Type().Underlying().(*types.Signature); ok {
-		g.bindFuncSetter(nil, o, fs, 0)
-		return
+		set = g.bindFuncSetter(nil, o, fs, 0)
 	}
-	c, err := g.mapType(o.Type(), 0)
+	c, err := g.mapResult(o.Type(), 0)
 	if err != nil {
 		g.skip(name, display, &skipErr{cat: err.cat, detail: "variable: " + err.detail}, false)
 		return
@@ -2021,7 +2134,9 @@ func (g *gen) bindVar(o *types.Var) {
 		}}
 	}
 	g.scope[name] = true
-	g.stats.VarsMapped++
+	if !set {
+		g.stats.VarsMapped++
+	}
 	g.vars = append(g.vars, fmt.Sprintf("/// Go: reads variable %s %s\nfn %s() -> %s uses go", display, g.display(o.Type()), name, c.xo))
 	fmt.Fprintf(&g.adapt, "func %s%s(tk *Task) %s {\n\tv := %s.%s\n\treturn %s\n}\n\n", g.b.Prefix, name, c.rt, g.alias(g.pkg), o.Name(), c.toXo("v"))
 }

@@ -202,8 +202,8 @@ case is small in count and large in use: it is how Go composes I/O.
 ## As built: function-typed fields and variables (Lang 1, 2026-10-29)
 
 - A struct field or package variable whose type is a Go function type
-  binds `set_<name>(v: fn(..) uses fx)` and no getter (a Go function
-  value has no Xo form; the skip list names the getter). gobind
+  binds `set_<name>(v: fn(..) uses fx)` (format 17 bound no getter; the
+  next item below adds it). gobind
   bindFuncSetter binds it through bindFunc as a call of a Go function
   literal that assigns its argument, so the callback conversion, the
   error result rule of step 1, the effect variable and the replay mode
@@ -236,3 +236,31 @@ case is small in count and large in use: it is how Go composes I/O.
   at each use; revisit if the owner wants method syntax there.
 - Binding format 20. Tests: gobind TestNamedBasicMethods, cmd/xo
   TestUseGoNamedBasicMethods.
+
+## As built: Go function values in Xo (Lang 1, 2026-10-29)
+
+- A Go function value Go gives Xo (a result, a field getter, a variable
+  read) is an Xo function `(fn(..) -> R ! go.Error uses go)`: gobind
+  mapResult tries mapType and, for a function type it skips, uses
+  funcValueConv, whose toXo wraps the Go function in a Go closure of the
+  Xo function representation (`func(*Task, ..) Result[R, E]`) that enters
+  Go (GoEnter, GoExit: a Go panic, a nil function's included, is a
+  fault) and converts arguments and results as an adapter does. It has
+  no toGo; a parameter of function type stays a callback. Skipped: a
+  variadic or generic function value, one with a parameter that cannot
+  go to Go (a function), several results (coverage item 4 is the
+  callback direction).
+- Only an unnamed function type is a function value. A named one stays
+  a by value handle: it goes back to Go, which a function value cannot
+  (functional options such as zstd's `EOption`, returned by
+  `with_concurrent_blocks` and passed to `new_writer`), and keeps its
+  methods and upcasts (http.HandlerFunc). A first build that made method
+  less named types function values lost 14 third-party functions in the
+  survey, all functional options.
+- A function returning one is replayed as a handle call (it re executes):
+  the conv carries the package in hpkgs.
+- The type is parenthesized because a trailing `uses` after a result
+  function type would be the returned function's (spec 15, "Function
+  types in return position").
+- Binding format 22. Tests: gobind TestFuncValues, TestFuncSetters (the
+  getters), cmd/xo TestUseGoFuncValues (synthetic example.com/fnval).

@@ -31,6 +31,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   LookupMX, LookupTXT, LookupSRV and LookupAddr, with `Resolver{server}`
   to ask one server (decision 0417). Native on Linux and macOS; Windows
   native lookups return `Io` for now.
+- `use go`: a Go function value given to Xo (a result such as
+  `fnval.adder(2)`, a function field or variable read back) is an Xo
+  function `uses go` that calls Go. Binding format 22.
 - std/crypto: `ed25519_sign` also takes Go's 64 byte private key (the
   seed, then its public key) and signs without deriving the public key:
   0.55 of the seed form's time, 0.65 of Go's.

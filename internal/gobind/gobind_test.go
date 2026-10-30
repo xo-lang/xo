@@ -89,7 +89,7 @@ func TestMapping(t *testing.T) {
 	}
 	// a cached binding loads; another binder version or pin does not
 	l, err := Load("os/exec", Options{Dir: dir})
-	if err != nil || l == nil || l.Name != "exec" || !l.Standard || len(l.Skipped) == 0 {
+	if err != nil || l == nil || l.Name != "exec" || !l.Standard {
 		t.Fatalf("Load = %+v, %v", l, err)
 	}
 	// the skipped names read the same as Bind made them (XO1102's text)
@@ -768,6 +768,8 @@ func (s *Server) Run() error {
 		"fn (recv: Server) set_check[fx: Effects](v: fn(Str) -> () ! go.Error uses fx) uses go, fx",
 		"fn set_logf[fx: Effects](v: fn(Str) -> Int uses fx) uses go, fx",
 		"fn (recv: Server) name() -> Str uses go",
+		"fn (recv: Server) on_error() -> (fn(Str) uses go) uses go",
+		"fn logf() -> (fn(Str) -> Int uses go) uses go",
 	} {
 		if !strings.Contains(decl, want) {
 			t.Errorf("no %q in the declarations:\n%s", want, decl)
@@ -779,10 +781,80 @@ func (s *Server) Run() error {
 		}
 	}
 	for name, why := range map[string]string{
-		"Server.on_error": "getter",
-		"logf":            "getter",
-		"set_pick":        "several results",
-		"set_hidden":      "unexported type",
+		"Server.pick": "several results",
+		"set_pick":    "several results",
+		"set_hidden":  "unexported type",
+	} {
+		if !strings.Contains(b.Skipped[name], why) {
+			t.Errorf("%s skipped %q, want %q (skipped: %v)", name, b.Skipped[name], why, b.Skipped)
+		}
+	}
+}
+
+// TestFuncValues: a Go function value given to Xo (a result, a field)
+// is an Xo function `uses go` that calls it.
+func TestFuncValues(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "fnval")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/fnval\n\ngo 1.21\n",
+		"fnval.go": `package fnval
+
+type Op func(a, b int) int
+
+func Adder(n int) func(int) int { return func(x int) int { return x + n } }
+
+func Parser() func(string) (int, error) { return nil }
+
+func Pick() Op { return nil }
+
+func Closer() (func() error, error) { return nil, nil }
+
+func Nested() func(func(int) int) int { return nil }
+
+func Pair() func() (int, string) { return nil }
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/fnval v0.0.0\n\nreplace example.com/fnval => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/fnval", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl, adapter := string(b.Decl), string(b.Adapter)
+	for _, want := range []string{
+		"fn adder(n: Int) -> (fn(Int) -> Int uses go) uses go",
+		"fn parser() -> (fn(Str) -> Int ! go.Error uses go) uses go",
+		"fn pick() -> Op uses go",
+		"fn closer() -> (fn() -> () ! go.Error uses go) ! go.Error uses go",
+		"Replay: a Go handle crosses",
+	} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("no %q in the declarations:\n%s", want, decl)
+		}
+	}
+	if !strings.Contains(adapter, "defer GoExit(tk, \"func(int) int\")") {
+		t.Errorf("the function value's call does not enter Go:\n%s", adapter)
+	}
+	for name, why := range map[string]string{
+		"nested": "function type",
+		"pair":   "several results",
 	} {
 		if !strings.Contains(b.Skipped[name], why) {
 			t.Errorf("%s skipped %q, want %q (skipped: %v)", name, b.Skipped[name], why, b.Skipped)

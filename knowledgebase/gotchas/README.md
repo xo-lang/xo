@@ -952,3 +952,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [obj-addr-handle-released-early.md](obj-addr-handle-released-early.md): Observed 2026-10-29: a handle's release was placed before the runtime call that used its rt.obj_addr (Chan[Int] ops), so a sender's end freed the channel under the receiver; only Linux TSan saw it
 - [use-go-nested-module-pin.md](use-go-nested-module-pin.md): a `use go` of a package in a nested Go module (aws-sdk-go-v2's service/s3) took the enclosing module's pin; each nested module needs its own
 - [gen-signal-child-outlives-test.md](gen-signal-child-outlives-test.md): Observed 2026-10-29: internal/gen's signal child survived a reaped test run; it now runs under testtmp.Lifeline
+- [gobind-named-func-types-round-trip.md](gobind-named-func-types-round-trip.md): mapping named Go function types to Xo functions broke functional options (they must go back to Go); only unnamed ones are function values

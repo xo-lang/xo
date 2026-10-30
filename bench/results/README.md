@@ -222,3 +222,4 @@
 - [usego-coverage-2026-10-29c.md](usego-coverage-2026-10-29c.md): `use go` function-typed fields and variables get setters taking Xo callbacks: fields std 421 to 446 of 461, third party 1955 to 1985 of 2139
 - [usego-coverage-2026-10-29e.md](usego-coverage-2026-10-29e.md): `use go` methods of named basic types as `<type>_<method>` functions: std 87.4% to 89.5%, third party 97.6% to 97.8%
 - [usego-coverage-2026-10-29d.md](usego-coverage-2026-10-29d.md): `use go` pointers to basic types as `T?` (decision 0419): std 87.4% to 88.1%, third party 97.6% to 97.7%, third-party fields 1955 to 2050 of 2139; the 53 writes-through skips listed
+- [usego-coverage-2026-10-29f.md](usego-coverage-2026-10-29f.md): `use go` Go function values as Xo functions: std 87.4% to 87.6%, third party 97.6% to 97.8%; named function types stay handles (functional options)
