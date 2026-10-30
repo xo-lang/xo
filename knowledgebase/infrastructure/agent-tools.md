@@ -722,7 +722,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   trees (a dirty tree's xo, XO_DIRTY set, runs on cold caches and measured
   5 times slower), and print each xo's `xo version -m` and each build's exit
   status (`set -o pipefail`; a failed xobuild behind `| tail` left the old
-  xo in place). Start a measurement with `HEAVY_CLASS=measure
+  xo in place). A `HEAVY_CLASS=gate` run logs `queued (gate)` at once and
+  a `gate waits:` line (memory, gate count, load, quiet window) whenever
+  the reason changes, so a waiting gate is not a failed launch; check
+  `~/xo-lead/agents/NAME-cmd.log` before starting it again (2026-10-30).
+  Start a measurement with `HEAVY_CLASS=measure
   ~/xo-lead/agents/heavy.sh NAME CMD...` (2026-10-26): it waits its turn
   (one measurement at a time), waits out the lead's full tier or main
   check without a window, opens its own quiet window, lets the running
