@@ -150,7 +150,8 @@ fn unmap(at: Int, n: Int) {
 /// an empty file or one of 4 GiB or more, a pipe, mmap failing).
 pub fn fs_read_mapped(op: Str) -> List[Bytes] {
   let l = layer()
-  if (l == 1 || l == 2) && !twflags.fake(1) {
+  // (not on WASI: the wasm backend lowers no rt.str_at over mapped memory)
+  if target.os != TargetOs.Wasi && (l == 1 || l == 2) && !twflags.fake(1) {
     var fd = open_read(l, op)
     while fd == -linux.EINTR {
       fd = open_read(l, op)
