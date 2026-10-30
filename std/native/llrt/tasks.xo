@@ -929,6 +929,9 @@ pub fn run_claimed(t: Int, units: Int) {
   var c = ld(tb, 8 * TLS_CTX_SPARE)
   if c != 0 {
     st(tb, 8 * TLS_CTX_SPARE, 0)
+    // what the earlier run's task did to the context (and its wakers'
+    // park lock operations it took) happens before this run reuses it
+    tsan(RT_TSAN_ACQUIRE, c)
   } else {
     c = rt.heap_large(ctx.C_SIZE)
   }
@@ -980,6 +983,7 @@ pub fn run_claimed(t: Int, units: Int) {
   // that thread's spare; a spare is never freed (one per thread, like a
   // root context), so the leak check does not see it
   if ld(te, 8 * TLS_CTX_SPARE) == 0 {
+    tsan(RT_TSAN_RELEASE, c)
     st(te, 8 * TLS_CTX_SPARE, c)
   } else {
     rt.heap_release(c - 8)
