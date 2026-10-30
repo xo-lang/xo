@@ -303,7 +303,9 @@ tls_conn } else { conn }` checks as a `Stream` (queueworker:244); core
 closed); std 4.4 does not say whether an upgraded WebSocket counts as an
 in flight request at a stop; std 37's `reg.middleware(clock, label)` is
 only in the prose; std 2.6 lists `Time.UNIX_EPOCH` as a value and
-Appendix A as a function.
+Appendix A as a function. Fixed 2026-10-30: six in the spec (e5fe92b08);
+the WebSocket at a stop was a backend difference (the Go backend did not
+wait), decided in 0429 (code after the seed).
 
 Proposed (blockers that unblock a class of service first): 5 (deadlines,
 three services), 1 and 2 (gRPC and mTLS, one design), 3 and 8 (streaming
