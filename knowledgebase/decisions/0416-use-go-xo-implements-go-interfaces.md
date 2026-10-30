@@ -301,3 +301,51 @@ would never cover third-party interfaces).
 
 Tests: cmd/xo TestUseGoForeignUpcast (synthetic example.com/upmux: a Mux
 given to its own Get(http.Handler) and to httptest.NewServer).
+
+### Widening (2026-10-30): the interfaces of imported packages
+
+Status: Accepted (lead, 2026-10-30: "go ahead with the widening (format
+28), lead-approved, owner FYI with veto"; Lang 2). It revises the "Not
+chosen" line above for imported packages.
+
+The Go workflows suite's aws workflow still failed after the addendum:
+`aws.Config.set_credentials` takes `aws.CredentialsProvider`, and
+`credentials.StaticCredentialsProvider` implements it, but the credentials
+package's own signatures never name that interface, so no
+`as_credentials_provider` was bound.
+
+Decision: a handle also has `as_X` for each exported, non generic interface
+with methods (not a constraint) of a package its package imports directly,
+named by its signatures or not, when Go would assign the handle's type to
+it. An imported package's interface is bound only when one of the
+package's handles implements it, so an import adds no foreign handle a
+program could not use; internal packages (`.../internal/...`) offer
+nothing (no binding can import them). The imports are go list's (its
+`Imports`): a package read from export data lists only those its API
+refers to (gotchas/export-data-imports-api-only.md). They are walked by path and each
+scope's names in order, so the binding stays deterministic. Binding format
+28.
+
+Cost, measured 2026-10-30 on the Go workflows suite (generated binding
+lines under .xo/gobind, the `as_` methods among them, and the built Go
+backend program; A is main's xo, B the widening):
+
+| workflow | lines A | lines B | growth | as_ A | as_ B | program A | program B |
+|---|---|---|---|---|---|---|---|
+| aws | 160125 | 161887 | 1.1% | 359 | 437 | did not check | 10326274 |
+| chi | 65878 | 65959 | 0.1% | 250 | 261 | 8113298 | 8113298 |
+| zap | 68502 | 68577 | 0.1% | 248 | 258 | 6129394 | 6129394 |
+| pgx | 95218 | 101189 | 6.3% | 527 | 698 | (0412 pending) | (0412 pending) |
+
+Programs do not grow: Go's linker drops the methods a program never calls.
+The aws workflow passes with B (it did not check with A).
+
+Not chosen: interfaces only of imported packages that some other bound
+function takes (it needs every binding's signatures at once, and a program
+can still pass a value to a field, as aws.Config.Credentials, that no
+function names).
+
+Tests: cmd/xo TestUseGoImportedInterfaceUpcast (synthetic
+example.com/upwide: impl.Hello implements iface.Greeter, which impl imports
+and never names; `iface.say(impl.new("xo").as_greeter())`); the Go
+workflows suite's aws workflow.

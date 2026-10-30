@@ -38,6 +38,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   goes where Go takes net/http's Handler
   (`httptest.new_server(r.as_handler())`, decision 0416 addendum).
   Binding format 26.
+- `use go`: the `as_` upcasts also cover the exported interfaces of the
+  packages a package imports, named by its signatures or not, so AWS SDK
+  v2's `credentials.new_static_credentials_provider(...)` goes to
+  `aws.Config.set_credentials` as `as_credentials_provider()` (decision
+  0416 addendum, widened). Binding format 28.
 - `use go`: a package in a nested Go module (aws-sdk-go-v2's
   `service/s3`, its own module inside the root's path) no longer takes the
   enclosing module's `require go` pin: it binds at its own version, `xo

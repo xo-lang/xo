@@ -128,6 +128,8 @@ type gen struct {
 	// imp imports a dependency's whole API (bindUpcasts): an import's
 	// scope holds only what this package's export data names
 	imp types.Importer
+	// directImports are the package's imports as go list reports them
+	directImports []string
 }
 
 // tparam is a type parameter of a bound generic function (decision 0415):
@@ -1765,6 +1767,43 @@ func (g *gen) bindUpcasts() {
 	}
 	sort.Slice(named, func(a, b int) bool { return named[a].xo < named[b].xo })
 	ifaces = append(ifaces, named...)
+	// the exported interfaces of the packages it imports that one of its
+	// handles implements, named by its signatures or not (decision 0416
+	// addendum, widened 2026-10-30): credentials.StaticCredentialsProvider
+	// is offered as aws.CredentialsProvider for aws.Config's Credentials
+	// field, though the credentials package never names that interface
+	if g.imp != nil {
+		paths := append([]string(nil), g.directImports...)
+		sort.Strings(paths)
+		for _, path := range paths {
+			if _, ok := upcastTargets[path]; ok || internalPath(path) {
+				continue
+			}
+			full, err := g.imp.Import(path)
+			if err != nil {
+				continue
+			}
+			sc := full.Scope()
+			for _, name := range sc.Names() {
+				tn, ok := sc.Lookup(name).(*types.TypeName)
+				if !ok || !tn.Exported() || tn.IsAlias() {
+					continue
+				}
+				n, ok := tn.Type().(*types.Named)
+				if !ok || n.TypeParams().Len() > 0 {
+					continue
+				}
+				it, ok := n.Underlying().(*types.Interface)
+				if !ok || it.NumMethods() == 0 || !it.IsMethodSet() || !g.implementedHere(n) {
+					continue
+				}
+				if i, err := g.handleFor(n, 0); err == nil && !seen[i] {
+					seen[i] = true
+					ifaces = append(ifaces, i)
+				}
+			}
+		}
+	}
 	for _, h := range append([]*handle(nil), g.order...) {
 		if h.foreign || h.ref || len(h.tps) > 0 {
 			continue
@@ -1788,6 +1827,31 @@ func (g *gen) bindUpcasts() {
 			fmt.Fprintf(&g.adapt, "func (h %s) M_%s(tk *Task) %s {\n\treturn %s{V: h.%s}\n}\n\n", h.rtT, xn, i.goName, i.goName, field)
 		}
 	}
+}
+
+// implementedHere reports whether one of the package's own handles is
+// assignable to the interface n (bindUpcasts binds no foreign interface
+// that nothing here could be given as).
+func (g *gen) implementedHere(n *types.Named) bool {
+	for _, h := range g.order {
+		if h.foreign || h.ref || len(h.tps) > 0 {
+			continue
+		}
+		var from types.Type = h.named
+		if h.byPtr {
+			from = types.NewPointer(h.named)
+		}
+		if types.AssignableTo(from, n) {
+			return true
+		}
+	}
+	return false
+}
+
+// internalPath reports whether a Go import path is an internal package
+// (one only its parent tree may import).
+func internalPath(path string) bool {
+	return path == "internal" || strings.HasPrefix(path, "internal/") || strings.HasSuffix(path, "/internal") || strings.Contains(path, "/internal/")
 }
 
 // unnamedSig is the Go function type func(ps...) (rs...) with no names.

@@ -384,6 +384,9 @@ fn main(os: Os) {
 const (
 	upmuxSum    = "h1:5BCpofddoTMo2AZOEpoIp6RKmkntUG26UHLT20Qlo8o="
 	upmuxModSum = "h1:1kcbNa4bo7Tf7Lp5LThJx1SqJ0ya7jTuja8aaR19LT4="
+	// example.com/upwide v1.0.0 (iface.Greeter, impl.Hello)
+	upwideSum    = "h1:gRTOzdNqXSPOFdXKO+DWTceskzPbWM+9LbYt36Oj+q4="
+	upwideModSum = "h1:emMZ5KJxdfo/vLB8dcPdAvk5melLUSjM1OeD5Z/tDCk="
 )
 
 // TestUseGoForeignUpcast (decision 0416 addendum): a handle whose Go type
@@ -422,5 +425,37 @@ fn main(os: Os) {
 	want := "OK: alpha\nNot Found: 404 page not found\nserved true"
 	if got := strings.TrimSpace(out.String()); got != want {
 		t.Errorf("output\n%s\nwant\n%s", got, want)
+	}
+}
+
+// TestUseGoImportedInterfaceUpcast (decision 0416 addendum, widened
+// 2026-10-30): a handle gets as_ for an exported interface of a package
+// its package imports even when no signature names it (aws
+// credentials.StaticCredentialsProvider as aws.CredentialsProvider, the
+// Go workflows suite).
+func TestUseGoImportedInterfaceUpcast(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("runs go list and go build")
+	}
+	useGoProxy(t)
+	dir := writeFiles(t, map[string]string{
+		"xo.mod": "module up\n\nrequire go example.com/upwide v1.0.0\n",
+		"xo.lock": "go example.com/upwide v1.0.0 " + upwideSum + "\n" +
+			"go example.com/upwide v1.0.0/go.mod " + upwideModSum + "\n",
+		"main.xo": `use go "example.com/upwide/iface"
+use go "example.com/upwide/impl"
+
+fn main(os: Os) {
+  os.stdio.println(iface.say(impl.new("xo").as_greeter()))
+}
+`,
+	})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"run", "--backend=go", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("run: exit %d\n%s%s", code, out.String(), errOut.String())
+	}
+	if got := strings.TrimSpace(out.String()); got != "hello xo!" {
+		t.Errorf("output %q, want %q", got, "hello xo!")
 	}
 }

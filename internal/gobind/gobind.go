@@ -75,7 +75,7 @@ import (
 // other packages' interfaces its package's signatures name.
 // 27 (2026-10-30): a Go constraint interface (a type set) is not bound
 // as a type (zap's ObjectMarshalerPtr[T] broke zap's whole binding).
-const Version = 27
+const Version = 28
 
 // Binding is one bound Go package.
 type Binding struct {
@@ -345,7 +345,10 @@ type listed struct {
 	Name       string
 	Export     string
 	Standard   bool
-	Module     *struct {
+	// Imports are the package's direct imports (bindUpcasts), all of
+	// them: its export data lists only those its API refers to
+	Imports []string
+	Module  *struct {
 		Path    string
 		Version string
 	}
@@ -462,7 +465,7 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 			}
 		}
 	}
-	data, err := runGo(wd, "list", "-e", "-export", "-deps", "-json=ImportPath,Name,Export,Standard,Module,Error", goPath)
+	data, err := runGo(wd, "list", "-e", "-export", "-deps", "-json=ImportPath,Name,Export,Standard,Module,Error,Imports", goPath)
 	if err != nil {
 		return nil, &Error{GoPath: goPath, Msg: firstLine(err.Error())}
 	}
@@ -513,6 +516,7 @@ func Bind(goPath string, opts Options) (*Binding, error) {
 	}
 	g := newGen(b, pkg)
 	g.imp = imp
+	g.directImports = self.Imports
 	g.rerunKey = rerunKey(opts.Rerun)
 	for _, n := range opts.Rerun {
 		if n == "*" {

@@ -1840,8 +1840,10 @@ fn main(os: Os) ! {
   `WriteCloser`, `ReadWriter`, `ReaderAt`, `WriterTo`, `ReaderFrom`,
   `StringWriter`, `ByteReader`) or `fmt.Stringer` when its package depends
   on io or fmt, or to another package's interface that its package's
-  signatures name (chi's `Mux.Handle` takes net/http's `Handler`), has a
-  method that gives it as that interface:
+  signatures name (chi's `Mux.Handle` takes net/http's `Handler`) or that
+  a package it imports exports (aws credentials' providers as
+  `aws.CredentialsProvider`), has a method that gives it as that
+  interface:
   `io.read_all(resp.body().as_reader())`, `buf.as_writer()`,
   `httptest.new_server(mux.as_handler())` (decision 0416 and its
   addendum).
