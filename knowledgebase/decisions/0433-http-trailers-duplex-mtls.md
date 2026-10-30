@@ -60,7 +60,10 @@ fn (r: Request) with_trailers(f: fn() -> Map[Str, Str]) -> Request   // asked wh
   carries END_STREAM; without, the last DATA carries it. Trailers with
   no body written is trailers-only: the response HEADERS with
   END_STREAM, the trailer fields merged into it (gRPC's immediate
-  error), as grpc-go expects.
+  error), as grpc-go expects. So h2srv holds the response HEADERS until
+  the handler returns or writes its first DATA; `BodyWriter.flush()`
+  still sends the head at once, for a handler that writes nothing for a
+  long time (a long poll).
 
 ### 2. Full duplex
 
@@ -122,8 +125,9 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a serv
   ticket that carries no chain (one issued before mTLS was on) and runs
   a full handshake.
 - Decision 0244 (std links TLS only when used): the server reads peer
-  data through srvtls.xo's function table (a TO_PEER entry beside Lang
-  3's new TO_NEGOTIATED), never by calling tlssrv directly, and the
+  data through srvtls.xo's function table (a TO_PEER entry following the
+  pattern of TO_NEGOTIATED, which Xo Lang 3 adds with the TLS link fix
+  after the WASI work), never by calling tlssrv directly, and the
   connection keeps it in a new HC_ peer word next to HC_TLS.
 
 ### Split of the work
