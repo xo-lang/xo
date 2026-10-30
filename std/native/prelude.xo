@@ -1303,6 +1303,16 @@ fn list_filter[T, E, fx: Effects](xs: List[T], f: fn(T) -> Bool ! E uses fx) -> 
   out
 }
 
+fn list_filter_map[T, U, E, fx: Effects](xs: List[T], f: fn(T) -> U? ! E uses fx) -> List[U] ! E uses fx {
+  var out: List[U] = []
+  for x in xs {
+    if let Some(y) = f(x)? {
+      out.push(y)
+    }
+  }
+  out
+}
+
 fn list_fold[T, A, E, fx: Effects](xs: List[T], init: A, f: fn(A, T) -> A ! E uses fx) -> A ! E uses fx {
   var acc = init
   for x in xs {

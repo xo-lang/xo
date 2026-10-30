@@ -532,6 +532,9 @@ fn (xs: List[T]) index_of(x: T) -> Int?
 fn (xs: List[T]) indexed() -> List[(Int, T)]
 fn (xs: List[T]) map[U, E, fx: Effects](f: fn(T) -> U ! E uses fx) -> List[U] ! E uses fx
 fn (xs: List[T]) filter[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> List[T] ! E uses fx
+/// f of every element, keeping the Some values in order (Rust's
+/// filter_map): a map and a filter in one pass.
+fn (xs: List[T]) filter_map[U, E, fx: Effects](f: fn(T) -> U? ! E uses fx) -> List[U] ! E uses fx
 fn (xs: List[T]) fold[A, E, fx: Effects](init: A, f: fn(A, T) -> A ! E uses fx) -> A ! E uses fx
 fn (xs: List[T]) find[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> T? ! E uses fx
 fn (xs: List[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx

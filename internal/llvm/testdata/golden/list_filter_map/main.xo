@@ -1,0 +1,33 @@
+// List.filter_map: f's Some values in order; an error from f stops it;
+// heap elements (Str) survive the pass.
+fn half(n: Int) -> Int? {
+  if n % 2 == 0 { Some(n / 2) } else { None }
+}
+
+fn checked(s: Str) -> Int? ! Str {
+  if s == "bad" {
+    return Err("bad input")
+  }
+  Ok(Int.parse(s))
+}
+
+fn show(xs: List[Int]) -> Str {
+  "[" + xs.map(fn(n) { "${n}" }).join(" ") + "]"
+}
+
+fn main(os: Os) {
+  os.stdio.println("${show([1, 2, 3, 4, 5, 6].filter_map(half))}")
+  let empty: List[Int] = []
+  os.stdio.println("${show(empty.filter_map(half))}")
+  let words = ["alpha", "", "beta", "", "gamma"]
+  let upper = words.filter_map(fn(w) { if w.is_empty() { None } else { Some(w.to_upper()) } })
+  os.stdio.println("[${upper.join(" ")}] ${words.len()}")
+  match ["1", "x", "3"].filter_map(checked) {
+    Ok(ns) => os.stdio.println("parsed ${show(ns)}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match ["1", "bad", "3"].filter_map(checked) {
+    Ok(ns) => os.stdio.println("parsed ${show(ns)}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+}

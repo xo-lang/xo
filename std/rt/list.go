@@ -552,6 +552,21 @@ func List_map[T, U, E any](tk *Task, l List[T], f func(*Task, T) Result[U, E]) R
 	return Ok[List[U], E](ListOf(out...))
 }
 
+// List_filter_map is `xs.filter_map(f)`: f's Some values in order.
+func List_filter_map[T, U, E any](tk *Task, l List[T], f func(*Task, T) Result[Option[U], E]) Result[List[U], E] {
+	var out []U
+	for _, x := range l.s {
+		r := f(tk, x)
+		if !r.Ok {
+			return ErrTr[List[U]](r.E, r.Tr)
+		}
+		if r.V.Some {
+			out = append(out, r.V.V)
+		}
+	}
+	return Ok[List[U], E](ListOf(out...))
+}
+
 // List_filter is `xs.filter(f)`.
 func List_filter[T, E any](tk *Task, l List[T], f func(*Task, T) Result[bool, E]) Result[List[T], E] {
 	var out []T

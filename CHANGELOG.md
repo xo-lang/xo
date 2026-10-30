@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `List.filter_map(f)` keeps f's Some values in order; std.md 2 says
+  `Str.bytes()` makes no copy.
+
 - `task.deadline(clock)` gives the nearest `with_timeout` deadline the
   current task works under, or None (decision 0430, Go's
   `ctx.Deadline()`); a spawned task keeps the one in force where it was

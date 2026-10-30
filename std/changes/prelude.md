@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-30: feature: List.filter_map
+
+- Kind: feature
+- Commit: this commit
+- Found by: Xo Lang 1's triage of the 2026-10-30 language obstacles note
+- Go reference: none in Go's std (Rust's Iterator::filter_map); the Go
+  backend's List_filter_map is the map and filter loop in one
+- Test: internal/llvm/testdata/golden/list_filter_map (arm64, LLVM, Go
+  parity)
+- Timing: none of its own: list_map's loop with one Option test
+
+`xs.filter_map(f)` keeps f's Some values in order, a map and a filter in
+one pass; an error from f stops it, as map's.
+
 ## 2026-10-30: perf: read_mapped, a file mapped read only
 
 - Kind: perf

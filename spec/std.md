@@ -217,7 +217,7 @@ fn (s: Str) repeat(n: Int) -> Str            // strings.Repeat; empty for 0, a f
 fn (s: Str) pad_left(width: Int, fill: Str = " ") -> Str   // to width runes (a minimum, as Go's %*s); also pad_right, center (decision 0410)
 fn (s: Str) clone() -> Str                   // an explicit copy in a buffer of its own (a slice or split piece shares its source on native targets)
 fn (s: Str) runes() -> List[Rune]
-fn (s: Str) bytes() -> Bytes
+fn (s: Str) bytes() -> Bytes                 // no copy: s's own bytes (a short inline Str is boxed once), so s.bytes()[i] is byte i in O(1)
 
 fn (b: Bytes) len() -> Int                   // b[i] is the byte at i, a UInt8
 fn (b: Bytes) is_empty() -> Bool             // `for x in b` yields each byte (core 3.5)
@@ -327,6 +327,7 @@ fn (xs: List[T]) index_of(x: T) -> Int?      // T: Eq
 fn (xs: List[T]) indexed() -> List[(Int, T)]
 fn (xs: List[T]) map[U](f: fn(T) -> U) -> List[U]
 fn (xs: List[T]) filter(f: fn(T) -> Bool) -> List[T]
+fn (xs: List[T]) filter_map[U](f: fn(T) -> U?) -> List[U]   // f's Some values, in order
 fn (xs: List[T]) fold[A](init: A, f: fn(A, T) -> A) -> A
 fn (xs: List[T]) find(f: fn(T) -> Bool) -> T?
 fn (xs: List[T]) any(f: fn(T) -> Bool) -> Bool   // also all
@@ -4773,7 +4774,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-469 declarations.
+470 declarations.
 
 ### Range
 
@@ -5074,6 +5075,7 @@ fn (xs: List[T]) index_of(x: T) -> Int?
 fn (xs: List[T]) indexed() -> List[(Int, T)]
 fn (xs: List[T]) map[U, E, fx: Effects](f: fn(T) -> U ! E uses fx) -> List[U] ! E uses fx
 fn (xs: List[T]) filter[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> List[T] ! E uses fx
+fn (xs: List[T]) filter_map[U, E, fx: Effects](f: fn(T) -> U? ! E uses fx) -> List[U] ! E uses fx
 fn (xs: List[T]) fold[A, E, fx: Effects](init: A, f: fn(A, T) -> A ! E uses fx) -> A ! E uses fx
 fn (xs: List[T]) find[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> T? ! E uses fx
 fn (xs: List[T]) any[E, fx: Effects](f: fn(T) -> Bool ! E uses fx) -> Bool ! E uses fx
