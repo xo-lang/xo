@@ -77,7 +77,9 @@ import (
 // as a type (zap's ObjectMarshalerPtr[T] broke zap's whole binding).
 // 29 (2026-10-30): an alias declared in an internal package is written
 // as what it names (samber/lo's constraints.Ordered = cmp.Ordered).
-const Version = 29
+// 30 (2026-10-30): sort.Slice, SliceStable, Ints, Strings and Float64s
+// are skipped (they sort a copy of an Xo List).
+const Version = 30
 
 // Binding is one bound Go package.
 type Binding struct {

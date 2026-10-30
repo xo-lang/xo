@@ -281,6 +281,29 @@ func TestOutputBuffers(t *testing.T) {
 	}
 }
 
+// TestSortSliceSkipped: sort.Slice, SliceStable, Ints, Strings and
+// Float64s sort the Go value of their first parameter in place; from Xo
+// it is a converted copy of a List, so the call sorted nothing (the Windows tester, 2026-10-30: xs
+// stayed [1, 3, 2]). They are skipped with a reason naming List.sort,
+// while sort.SearchInts, which only reads, stays bound.
+func TestSortSliceSkipped(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	decl, b, _ := bindDecl(t, "sort")
+	for _, name := range []string{"slice", "slice_stable", "ints", "strings", "float64s"} {
+		if strings.Contains(decl, "fn "+name+"(") {
+			t.Errorf("sort.%s is bound:\n%s", name, grep(decl, "fn "+name+"("))
+		}
+		if why := b.Skipped[name]; !strings.Contains(why, "List.sort") {
+			t.Errorf("sort.%s skipped %q, want a reason naming List.sort (skipped: %v)", name, why, b.Skipped)
+		}
+	}
+	if !strings.Contains(decl, "fn search_ints(") {
+		t.Errorf("sort.search_ints (reads only) is not bound:\n%s", grep(decl, "search_ints"))
+	}
+}
+
 // TestUnexportedParamTypes: an exported function or method whose parameter
 // is an unexported named type of its package (a named basic type passed
 // variadically, chi's MethodNotAllowedHandler(...methodTyp); a named

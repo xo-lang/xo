@@ -343,6 +343,26 @@ func outBuffer(display, name string, t types.Type, sig *types.Signature) bool {
 	return strings.HasPrefix(fn, "Read") || name == "dst"
 }
 
+// sortsInPlace reports whether a function sorts the Go value its first
+// parameter holds (sort.Slice, sort.SliceStable, sort.Ints, Strings,
+// Float64s): from Xo that value is a converted copy of a List, so the
+// call sorted nothing the program sees and xs stayed [1, 3, 2] (the
+// Windows tester, 2026-10-30).
+func sortsInPlace(pkg, display string) bool {
+	if pkg != "sort" {
+		return false
+	}
+	fn := display
+	if k := strings.LastIndex(fn, "."); k >= 0 {
+		fn = fn[k+1:]
+	}
+	switch fn {
+	case "Slice", "SliceStable", "Ints", "Strings", "Float64s":
+		return true
+	}
+	return false
+}
+
 func isByte(t types.Type) bool {
 	b, ok := types.Unalias(t).(*types.Basic)
 	return ok && b.Kind() == types.Uint8
@@ -1292,6 +1312,9 @@ func (g *gen) bindFunc(s fnSpec) *skipErr {
 				pn = fmt.Sprintf("#%d", i+1)
 			}
 			return skipf(catPointer, "parameter %s: Go writes through %s, which Xo passes as a copy (decision 0419)", pn, g.display(pt))
+		}
+		if sortsInPlace(g.pkg.Path(), s.display) {
+			return skipf(catOutBuf, "it sorts its argument in place, and an Xo List given as a go.Any is a copy: use List.sort, sort_by or sort_in_place")
 		}
 		if outBuffer(s.display, p.Name(), pt, sig) {
 			pn := p.Name()

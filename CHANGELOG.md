@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `use go "sort"`: `sort.slice`, `slice_stable`, `ints`, `strings` and
+  `float64s` are skipped (a call is XO1102 naming List.sort, sort_by and
+  sort_in_place): they sort their argument's Go value in place, and an
+  Xo List passed to Go is a converted copy, so the List stayed unsorted
+  with no error (the owner's Windows testing). internal/gobind
+  TestSortSliceSkipped; binding format 30.
 - `use go` of github.com/samber/lo builds: a constraint that is an alias
   declared in an internal package (lo's internal/constraints.Ordered =
   cmp.Ordered) is written in the glue as what it names, so the adapter
