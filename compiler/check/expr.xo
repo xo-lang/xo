@@ -756,9 +756,14 @@ fn (var c: Checker) propagate(et0: Int, sp: Span, code: Str, how: Str) {
         c.bind(ctx.err_var, et)
         return
       }
-      if !c.err_converts(et, ref) {
+      let n1 = c.eff_eqs.len()
+      c.eff_track += 1
+      let conv = c.err_converts(et, ref)
+      c.eff_track -= 1
+      if !conv {
         c.error(code, sp, "${how} propagates `${c.show(et)}`, which does not convert to `${c.show(ref)}`, the error type of this closure")
       }
+      c.same_effects(n1, ref, sp)
       return
     }
     if code == "XO0801" {
@@ -789,9 +794,14 @@ fn (var c: Checker) propagate(et0: Int, sp: Span, code: Str, how: Str) {
     return
   }
   c.drop_eff_eqs(n0)
-  if c.err_converts(et, ctx.err) {
+  c.eff_track += 1
+  let conv = c.err_converts(et, ctx.err)
+  c.eff_track -= 1
+  if conv {
+    c.same_effects(n0, ctx.err, sp)
     return
   }
+  c.drop_eff_eqs(n0)
   let d = c.error(code, sp, "${how} propagates `${c.show(et)}`, which does not convert to `${c.show(ctx.err)}`, the error type of `${ctx.name}`")
   if d < 0 {
     return

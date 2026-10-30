@@ -274,16 +274,43 @@ fn (var c: Checker) err_converts(from0: Int, to0: Int) -> Bool {
   if c.is_bad(from) || c.is_bad(to) || c.is_never(from) {
     return true
   }
+  // the same type, or a from variant's: identical ignores effect sets,
+  // so the types are unified too; a caller that tracks (eff_track: ?,
+  // assignable) checks the sets that unify records (core 6.2)
   if c.identical(from, to) {
+    c.try_unify(from, to)
     return true
   }
   if c.is_prelude(to, "Error") {
     return c.implements_name(from, "Display", no_span())
   }
-  c.from_variant(to, from) >= 0
+  let ft = c.from_field(to, from)
+  if ft >= 0 {
+    c.try_unify(ft, from)
+    return true
+  }
+  false
 }
 
 /// The index of the `from` variant of enum `to` that wraps `from`, or -1.
+/// The field type of the `from` variant of enum to that from converts to
+/// (from_variant), or -1.
+fn (var c: Checker) from_field(to: Int, from: Int) -> Int {
+  let r = c.resolve(to)
+  let vi = c.from_variant(to, from)
+  if vi < 0 {
+    return -1
+  }
+  let o = c.tys[r].obj
+  let s = c.args_subst(c.objs[o].tparams, c.tys[r].args)
+  for v in c.objs[o].variants {
+    if v.index == vi {
+      return c.subst(v.fields[0].ty, s)
+    }
+  }
+  -1
+}
+
 pub fn (var c: Checker) from_variant(to: Int, from: Int) -> Int {
   let r = c.resolve(to)
   if c.tys[r].kind != TyKind.Named {

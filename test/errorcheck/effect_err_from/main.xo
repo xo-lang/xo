@@ -1,0 +1,35 @@
+// `?` into an enum's `from` variant keeps the effect argument exact (core
+// 6.2): a Retry[clock] is not a Retry[rand], or a caller matching the
+// variant would call `again` as a rand reader.
+
+struct Retry[fx: Effects] {
+  again: fn() -> Int uses fx
+}
+
+fn (r: Retry[fx]) display() -> Str {
+  "retry"
+}
+
+enum Failure {
+  Again(from Retry[rand])
+}
+
+fn fails(r: Retry[clock]) -> Int ! Retry[clock] {
+  Err(r)
+}
+
+fn passes_on(r: Retry[clock]) -> Int ! Failure {
+  let n = fails(r)? // ERROR XO0701 "fixes these effects as"
+  Ok(n)
+}
+
+pub fn again(r: Retry[clock]) -> Int uses rand {
+  match passes_on(r) {
+    Ok(n) => n
+    Err(Again(x)) => (x.again)()
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("ok")
+}
