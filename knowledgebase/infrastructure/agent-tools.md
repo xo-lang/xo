@@ -228,7 +228,19 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   and the goldens. A run of no tests says "xo test: no tests in ..." on
   standard error and still exits 0; gate scripts pass `--fail-empty` so
   it fails (2026-10-24: a gate's `--std-module=time` printed "ok: 0
-  passed" and read as a pass).
+  passed" and read as a pass). Since decision 0437 `--std-module` implies
+  `--fail-empty`, takes a bare name for the tested module (`base64` is
+  `native/base64`), and exits 2 with the nearest tested modules for a
+  name that has no tests or no module; `xo test PATH` on a path in std
+  exits 2 naming the `--std-module` to use.
+- No silent success (decision 0437): `xo test`'s summary names its skips
+  without -v (`ok: 1 passed, 0 failed, 1 skipped (1 uses fs: run with
+  --real)`); XO_DUMP_FN, XO_INLINE_REPORT, XO_CACHE_STATS, XO_FE_STATS,
+  XO_PARSE_STATS, XO_PROF and XO_PROF_SELF turn the run cache off for that
+  build (a hit wrote no dump); `xo query` outside a module (no xo.mod
+  above, no .xo files) exits 2 naming --dir; in internal/arm64,
+  internal/llvm, internal/gen and cmd/xo a `go test -run` that names no
+  test exits 1 (testtmp.RequireRunMatch; gotchas/go-run-matches-nothing.md).
 - internal/llvm timeout (2026-10-24): the package's goldens need 46+ minutes
   (each builds and links with clang), and go test's default timeout is 10
   minutes, so a bare `go test ./internal/llvm` FAILs at 600s naming no test,
