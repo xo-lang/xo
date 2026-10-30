@@ -34,6 +34,10 @@
 //     whose satisfaction rules are builtin (std.md 1).
 // 10a. A doc comment line `@move_only` on a std struct makes its values move
 //     only like the builders (core 5.3; std/compress's Compressor).
+// 10b. std writes no `pub`: its declarations and fields are public. A doc
+//     comment line `@internal` on a std struct keeps its fields to std's
+//     modules: user code naming one (a field access, a struct literal or
+//     pattern, `with`) is XO0605 (decision 0440; std/uuid's Uuid).
 // 10. The prelude imports std/task for `task.Group` (the type of `os.tasks`
 //     and of `s.group()`, core 7.1). The import is not visible to user code:
 //     a module still needs `use std/task` to name `task.Group`.

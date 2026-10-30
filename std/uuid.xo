@@ -8,6 +8,7 @@
 
 /// A UUID: its 16 bytes as two words. `u.display()` (or `"${u}"`) is its
 /// canonical text, `u.bytes()` its bytes, `u < v` the order of its bytes.
+/// @internal: use `u.bytes()` and `uuid.from_bytes(b)`, `u.display()` and `uuid.parse(s)`, or `u < v`
 struct Uuid {
   /// the first and last 8 bytes, the first byte highest, with the top
   /// bit flipped so that the derived order of the signed words is the

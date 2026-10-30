@@ -159,6 +159,12 @@ pub struct Obj {
   /// A std struct whose doc comment says `@move_only`: its values move
   /// like the builders' (core 5.3).
   pub move_only: Bool = false
+  /// a std struct documented `@internal` (decision 0440): its fields are
+  /// visible only to std's modules, XO0605 elsewhere
+  pub std_internal: Bool = false
+  /// the text after `@internal:` on that doc line, the public way the
+  /// XO0605 note names
+  pub internal_hint: Str = ""
   /// Declared `uses realtime` (core 6.5), and where.
   pub realtime: Bool = false
   pub realtime_span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}

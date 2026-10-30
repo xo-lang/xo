@@ -1,0 +1,39 @@
+[
+  {
+    "code": "XO0601",
+    "severity": "error",
+    "message": "module `flag` has no member `continue_on_error`",
+    "span": {
+      "file": "main.xo",
+      "line": 4,
+      "col": 40,
+      "end_line": 4,
+      "end_col": 57
+    },
+    "notes": [
+      {
+        "message": "did you mean `CONTINUE_ON_ERROR`?"
+      },
+      {
+        "message": "`CONTINUE_ON_ERROR` is a constant, not a function: write it without `()`"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "replace with `CONTINUE_ON_ERROR`, a constant (no call)",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 4,
+              "col": 40,
+              "end_line": 4,
+              "end_col": 59
+            },
+            "replace": "CONTINUE_ON_ERROR"
+          }
+        ]
+      }
+    ]
+  }
+]

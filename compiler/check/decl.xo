@@ -96,6 +96,12 @@ fn (var c: Checker) declare(m: Int) {
           // a std handle documented `@move_only` is moved like the builders
           // (core 5.3; std/compress's Compressor, decision 0305)
           c.objs[o].move_only = c.mods[m].is_std && doc_has(sd.doc, "@move_only")
+          // std writes no `pub`: its fields are public unless the struct
+          // is documented `@internal` (decision 0440; std/uuid's Uuid)
+          c.objs[o].std_internal = c.mods[m].is_std && doc_has(sd.doc, "@internal")
+          if c.objs[o].std_internal {
+            c.objs[o].internal_hint = doc_after(sd.doc, "@internal:")
+          }
         }
         EnumDecl(d: ed) => o = c.declare_type(ed.name, ed.type_params, ed.is_pub, "enum", f, i)
         InterfaceDecl(d: id) => o = c.declare_type(id.name, id.type_params, id.is_pub, "interface", f, i)
@@ -236,7 +242,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
             xml_wire = fw.wire
           }
         }
-        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || c.mods[c.objs[t].module].is_std, default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
+        fields.push(FieldInfo{name: fl.name.name, ty: ft, is_pub: fl.is_pub || (c.mods[c.objs[t].module].is_std && !c.objs[t].std_internal), default: dflt, line: fl.name.span.start.line, col: fl.name.span.start.col, wire: wire, omit_empty: omit, json_wire: json_wire, sql_wire: sql_wire, xml_wire: xml_wire})
       }
       c.objs[t].derives = c.derives_of(sd.derive)
       c.objs[t].fields = c.wire_keys(sd, fields, c.objs[t].derives)
@@ -1095,6 +1101,18 @@ fn (var c: Checker) effect_arg(a: Type, var env: TypeEnv, var items: List[EffIte
 }
 
 /// Whether a doc comment holds the marker word.
+/// The rest of the doc line after word, trimmed, or "".
+fn doc_after(doc: parser.Doc?, word: Str) -> Str {
+  if let Some(d) = doc {
+    for l in text(d.text).lines() {
+      if let Some(i) = l.find(word) {
+        return text(l.bytes()[i + word.len()..]).trim()
+      }
+    }
+  }
+  ""
+}
+
 fn doc_has(doc: parser.Doc?, word: Str) -> Bool {
   if let Some(d) = doc {
     return (text(d.text)).contains(word)

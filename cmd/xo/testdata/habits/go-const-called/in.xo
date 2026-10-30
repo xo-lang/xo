@@ -1,0 +1,6 @@
+use go "flag"
+
+fn main(os: Os) {
+  let fs = flag.new_flag_set("t", flag.continue_on_error())
+  os.stdio.println(fs.name())
+}

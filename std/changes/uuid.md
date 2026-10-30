@@ -1,5 +1,18 @@
 # std/uuid changes
 
+## 2026-10-30: behavior: a Uuid's words are private (breaking)
+
+- Kind: behavior
+- Commit: this commit
+- Found by: darwin testing b19 (owner, 2026-10-30): `uuid.Uuid{hi: 1, lo: 2}` and `u.hi` checked clean in user code
+- Go reference: google/uuid's UUID, a [16]byte whose bytes a caller reads by index (no named fields)
+- Test: test/errorcheck/std_internal_fields (a field access, a struct literal, a pattern and `with` are XO0605; UuidErr's msg stays public)
+
+Uuid is documented `@internal` (decision 0440), so user code that names
+`hi` or `lo` is XO0605, as spec std 24 already said ("fields not visible
+outside std"); std's modules still read them. Use `u.bytes()`,
+`u.display()`, `uuid.from_bytes(b)` and `<` instead.
+
 ## 2026-10-28: perf: bytes() made and read in one function stays in the frame
 
 - Kind: perf

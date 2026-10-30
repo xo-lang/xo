@@ -1,0 +1,17 @@
+// Decision 0440: the fields of a std struct documented `@internal` (std/uuid's
+// Uuid, spec std 24) are XO0605 outside std, in a field access, a struct
+// literal, a pattern, and `with`; the other std fields stay public (std
+// writes no `pub`), such as UuidErr's msg.
+use std/uuid
+
+fn main(os: Os) {
+  let u = uuid.Uuid{hi: 1, lo: 2} // ERROR XO0605 "field `hi` of `Uuid` is not `pub`" XO0605 "uuid.from_bytes"
+  let v = uuid.parse("6ba7b810-9dad-11d1-80b4-00c04fd430c8") ?? _ => u
+  let w = v with {lo: 3} // ERROR XO0605 "field `lo` of `Uuid` is not `pub`"
+  let uuid.Uuid{hi: h, ..} = w // ERROR XO0605 "field `hi` of `Uuid` is not `pub`"
+  let msg = match uuid.parse("") {
+    Ok(_) => ""
+    Err(e) => e.msg
+  }
+  os.stdio.println("${u.hi} ${h} ${msg}") // ERROR XO0605 "field `hi` of `Uuid` is not `pub`"
+}

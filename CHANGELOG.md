@@ -5,6 +5,14 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- **Breaking** (decision 0440): a std/uuid `Uuid`'s `hi` and `lo` are
+  private to std, as spec std 24 says: `uuid.Uuid{...}`, `u.hi` and a
+  pattern or `with` naming them are `XO0605` in user code (they checked
+  clean in 0.34.0 and 0.35.0). A std struct documented `@internal` keeps
+  its fields to std; other std fields stay public.
+- `xo fix` turns `flag.continue_on_error()` into `flag.CONTINUE_ON_ERROR`:
+  XO0601's fix to a constant drops the call's `()` (decision 0440; it
+  left XO0407 before).
 - `use go "sort"`: `sort.slice`, `slice_stable`, `ints`, `strings` and
   `float64s` are skipped (a call is XO1102 naming List.sort, sort_by and
   sort_in_place): they sort their argument's Go value in place, and an

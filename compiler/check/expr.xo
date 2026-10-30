@@ -1856,8 +1856,8 @@ fn (var c: Checker) struct_lit(span: Span, typ: Expr, fields: List[parser.FieldI
       c.error("XO0403", f.name.span, "field `${text(fo.name)}` is given twice")
     }
     seen.push(fo.name)
-    if !fo.is_pub && c.objs[obj].module != c.cur_mod {
-      c.error("XO0605", f.name.span, "field `${text(fo.name)}` of `${text(c.objs[obj].name)}` is not `pub`")
+    if c.field_hidden(obj, fo.is_pub) {
+      c.internal_note(c.error("XO0605", f.name.span, "field `${text(fo.name)}` of `${text(c.objs[obj].name)}` is not `pub`"), obj)
     }
     c.check_ty(f.value, c.subst(fo.ty, s))
   }
@@ -1925,8 +1925,8 @@ fn (var c: Checker) with_expr(span: Span, x: Expr, fields: List[parser.FieldInit
     }
     let fo = c.objs[obj].fields[fi]
     c.record_text(f.name, c.field_text(obj, fo))
-    if !fo.is_pub && c.objs[obj].module != c.cur_mod {
-      c.error("XO0605", f.name.span, "field `${text(fo.name)}` of `${text(c.objs[obj].name)}` is not `pub`")
+    if c.field_hidden(obj, fo.is_pub) {
+      c.internal_note(c.error("XO0605", f.name.span, "field `${text(fo.name)}` of `${text(c.objs[obj].name)}` is not `pub`"), obj)
     }
     c.check_ty(f.value, c.subst(fo.ty, s))
   }
