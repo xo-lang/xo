@@ -15,7 +15,8 @@ An upgraded connection is a request in flight until its function returns, on eve
 
 - On a stop, `serve` waits for each hand-over function to return, within the stop's grace period, as it waits for any request. Once the grace period ends, the remaining functions' tasks are canceled: their WebSocket reads and writes fail with `WsErr.Net(Canceled)`.
 - A long lived handler watches `task.stopping()` and closes its connections with 1001 (going away), as gorilla's examples close on shutdown.
-- Go backend: std/rt counts each hijacked hand-over function in a WaitGroup and waits on it after `Shutdown` returns, with the same grace period rule. Native code stays as it is.
+- Go backend: std/rt counts each hijacked hand-over function in a WaitGroup and waits on it after `Shutdown` returns, with the same grace period rule.
+- Native (amended 2026-10-30, lead): a handed-over connection's reads (the WebSocket's and a proxied upgrade's) do not mark it idle. Before, a stop closed a WebSocket blocked in `read()` as an idle connection, while the Go backend never closes a hijacked one. Now the handler decides on both. One blocked in `read()` closes from a background task that waits on `task.stopping()`, and its read ends when the peer answers the close (spec std 35 shows the pattern).
 
 ## Consequences
 
