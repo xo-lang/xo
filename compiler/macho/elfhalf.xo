@@ -319,12 +319,17 @@ pub fn elf_half_decode(b: Bytes) -> ElfHalf? {
   let dropped = r.u32()
   let ng = r.u32()
   var globals: Map[Bytes, (Int, Int)] = {}
+  // the large tables read at a local offset, a field at a time with rd32
+  // and rd64 (an SR call per field was most of the decode, 2026-10-30)
+  var at = r.at
   for _ in 0..ng {
-    let name = r.bytes()
-    let o = r.u32()
-    let i = r.u32()
-    globals[name] = (o, i)
+    let nl = rd32(b, at)
+    let name = b[at + 4..at + 4 + nl]
+    at += 4 + nl
+    globals[name] = (rd32(b, at), rd32(b, at + 4))
+    at += 8
   }
+  r.at = at
   let nc = r.u32()
   var comdats: Map[Bytes, Int] = {}
   for _ in 0..nc {
@@ -353,34 +358,53 @@ pub fn elf_half_decode(b: Bytes) -> ElfHalf? {
     let machine = r.u32()
     let f = r.u32()
     let nsec = r.u32()
+    var at = r.at
     var sects: List[ESect] = List.with_capacity(nsec)
     for _ in 0..nsec {
-      let name = bstr(r.bytes())
-      let typ = r.u32()
-      let flags = r.u64()
-      let align = r.u64()
-      let info = r.u32()
-      let size = r.u64()
-      let df = r.u32()
-      let data = r.bytes()
-      let nr = r.u32()
+      if at + 4 > b.len() {
+        return None
+      }
+      let nl = rd32(b, at)
+      let name = bstr(b[at + 4..at + 4 + nl])
+      at += 4 + nl
+      // typ, flags, align, info, size, dead flags, then the data
+      let typ = rd32(b, at)
+      let flags = rd64(b, at + 4)
+      let align = rd64(b, at + 12)
+      let info = rd32(b, at + 20)
+      let size = rd64(b, at + 24)
+      let df = rd32(b, at + 32)
+      let dl = rd32(b, at + 36)
+      at += 40
+      let data = b[at..at + dl]
+      at += dl
+      let nr = rd32(b, at)
+      at += 4
       var relocs: List[ERel] = List.with_capacity(nr)
       for k in 0..nr {
-        relocs.push(rd_erel(b, r.at + ELF_REL * k))
+        relocs.push(rd_erel(b, at + ELF_REL * k))
       }
-      r.at += ELF_REL * nr
+      at += ELF_REL * nr
       sects.push(ESect{name: name, typ: typ, flags: flags, align: align, info: info, data: data, size: size, relocs: relocs, dead: (df & 1) != 0, store_dead: (df & 2) != 0})
     }
-    let nsym = r.u32()
+    if at + 4 > b.len() {
+      return None
+    }
+    let nsym = rd32(b, at)
+    at += 4
     var syms: List[ESym] = List.with_capacity(nsym)
     for _ in 0..nsym {
-      let name = r.bytes()
-      let io = r.u32()
-      let shndx = r.u32()
-      let value = r.u64()
-      let size = r.u64()
-      syms.push(ESym{name: name, info: io & 255, other: (io >> 8) & 255, shndx: shndx, value: value, size: size})
+      if at + 4 > b.len() {
+        return None
+      }
+      let nl = rd32(b, at)
+      let name = b[at + 4..at + 4 + nl]
+      at += 4 + nl
+      let io = rd32(b, at)
+      syms.push(ESym{name: name, info: io & 255, other: (io >> 8) & 255, shndx: rd32(b, at + 4), value: rd64(b, at + 8), size: rd64(b, at + 16)})
+      at += 24
     }
+    r.at = at
     objs.push(EObj{path: path, machine: machine, sects: sects, syms: syms, live: (f & 1) != 0, stored: (f & 2) != 0})
     if r.at > b.len() {
       return None
