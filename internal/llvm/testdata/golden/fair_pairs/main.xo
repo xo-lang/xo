@@ -1,6 +1,9 @@
 // fair_pairs (decision 0394): with default threads, 24 ping pong pairs
 // (more than the workers) keep every worker's run-next slot full, and a task
-// that sleeps 20 ms still wakes in time: the worst wake is under 300 ms late.
+// that sleeps 20 ms still wakes in time: the median of five wakes is under
+// 300 ms late (the median, not the worst: a loaded machine delays one wake
+// of a backend that is not starving, as the Go backend's once in -short;
+// starvation delays all five).
 // 0.33.0 woke it 350 to 380 ms late with 1.5M rounds a pair, and 2.3 to 2.8
 // s late with 7.5M (find_work never reached the inject queue or the poller);
 // the rounds here make the pairs run for seconds on a parent without the
@@ -36,16 +39,15 @@ fn main(os: Os) {
       })
     }
     s.spawn(fn() {
-      var worst = 0
+      var lates: List[Int] = []
       for _ in 0..5 {
         let t0 = os.clock.now()
         os.clock.sleep(20ms)
         let late = os.clock.since(t0).millis() - 20
-        if late > worst {
-          worst = late
-        }
+        lates.push(late)
       }
-      out.send(worst)
+      lates.sort()
+      out.send(lates[2])
     })
   }
   var total = 0
@@ -54,5 +56,5 @@ fn main(os: Os) {
   }
   let worst = out.recv() ?? -1
   os.stdio.println("pairs: ${total}")
-  os.stdio.println("worst wake under 300 ms late: ${worst < 300}")
+  os.stdio.println("median wake under 300 ms late: ${worst < 300}")
 }
