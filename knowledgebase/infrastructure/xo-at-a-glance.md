@@ -89,8 +89,10 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
 
 ## Std (spec/std.md)
 
-http (server, router, client with keep-alive, HTTP/2, streaming bodies,
-multipart, ServeContent, gzip), tls, websocket, json (derive, Value,
+http (server, router, client with keep-alive, HTTP/2 and h2c with
+`with_protocols`/`with_h2_config` (0434), trailers and full duplex
+streams (0433), mutual TLS (`with_client_auth`, `Client.with_cert`),
+streaming bodies, multipart, ServeContent, gzip), tls, websocket, json (derive, Value,
 streaming decoder), xml (tokens, tree, derive), sql (Postgres driver),
 csv, toml, regexp, time, url, netip, udp, mime, mail, smtp, multipart,
 template, embed, compress, big, base64/base32, binary, uuid, path,
