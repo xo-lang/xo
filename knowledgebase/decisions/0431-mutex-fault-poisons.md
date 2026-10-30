@@ -44,6 +44,12 @@ linux/arm64) has the same shape: summary_observe calls
 qinsert(st.streams[i], v, objs), a call that can fault. Its profile puts
 26% in rl_copy, `dupp QStream` and `share List[QSample]` (Xo Lang 2,
 2026-10-30).
+Update (2026-10-30): std/metrics no longer pays it. e3a99876b gives
+QState a hot buffer of Atomic slots, so observe's `with` body writes no
+collection, and metricsum went from 1,559 to 655 ms on linux/arm64
+(0.766x Go). The rule's cost still falls on user code with the qp shape,
+which is what this decision is about; the metricsum estimate below is
+kept as the measure of the shape, not of std today.
 
 The copy is not an RC bug. Commit 02271995b fixed the one that was:
 Mutex.with's payload was a borrowed projection. Since that fix a write
