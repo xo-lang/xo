@@ -20,7 +20,7 @@ test "a build target's words leave out flags and the values of flags" {
 test "cache_id names a facts cache entry by its key, not its time" {
   // the backend cache's mark_used sets an entry's time a minute after
   // its last touch; the id must not move with it (2026-10-28)
-  let key = "4840877e21201a5fa195d75c7fdfcdab7beff62b8175e8440b503e613319c069"
+  let key = "4840877e21201a5fa195d75c7fdfcdab7beff62b8175e8440b503e613319c069" // gitleaks:allow (a cache key hash, not a secret)
   let a = facts_id_line(check.FileStamp{path: "/c/std/${key}.stdf", size: 1874259, mtime: 1793241376000})
   let b = facts_id_line(check.FileStamp{path: "/c/std/${key}.stdf", size: 1874259, mtime: 1793241568000, sha: "abc"})
   expect(a) == b
