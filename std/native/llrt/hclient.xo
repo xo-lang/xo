@@ -948,6 +948,21 @@ pub fn end_keep(r: rthttp.CResp, keep: Bool, https: Bool, addr: Str, tls_host: S
   end(r, s, why)
 }
 
+/// Ends a full duplex exchange (decision 0433) while its sender task may
+/// still write on r's connection: the descriptor closes, which wakes a
+/// sender waiting to write (its write fails), and a failure s becomes
+/// r's error. The TLS state and the connection's record are freed with
+/// r's last reference (cresp_free), so after the sender, which holds r,
+/// is gone: end freed them under a sender's write (TSan, tier 302 on
+/// linux/arm64, 2026-10-30: http_reverse_proxy and tls_mtls).
+pub fn end_shared(r: rthttp.CResp, s: Int, why: Str) {
+  let a = rec(r)
+  if ld(a, R_CN) != 0 {
+    poll.pd_close(ld(a + R_C, C_PD))
+  }
+  finish(a, s, why, "")
+}
+
 /// Whether r's connection came from the pool (a failure before the
 /// response is replayed on a new connection for a replayable request).
 pub fn reused(r: rthttp.CResp) -> Bool { ld4(rec(r), R_REUSED) != 0 }

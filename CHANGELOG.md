@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (std/http, native): a streamed client request (`Client.open` with
+  a BodyReader body) no longer frees its connection's TLS state and
+  record while the task sending the body may still write on them, at
+  the response's end or failure: the descriptor closes and the rest goes
+  with the exchange's last reference (ThreadSanitizer, tier 302 on
+  linux/arm64: http_reverse_proxy, tls_mtls).
 - Native heap (darwin): the size classes' limit at start is 16 KiB
   (was 256 KiB): a freed block above it goes back to the system at
   once, while a freed class block stays on its free list. The self

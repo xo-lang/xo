@@ -4159,7 +4159,8 @@ fn h1_head_round(r: rthttp.CResp, method: Str, target: Str, host: Str, hk: List[
     var hd = read_head(r, method)
     hd.b.keep = false
     if hd.x.s != CC_OK {
-      hclient.end_keep(r, false, https, addr, name, roots, hd.x.s, hd.x.why)
+      // the sender may still be writing: its connection is freed with r
+      hclient.end_shared(r, hd.x.s, hd.x.why)
     }
     return hd
   }

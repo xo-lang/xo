@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-10-30: fix: a full duplex client request no longer frees its connection under the body's sender, native (decision 0433)
+
+- Kind: fix
+- Commit: this commit
+- Found by: the lead's tier 302 on the linux/arm64 offload host (ThreadSanitizer: "data race in x.hclient.end_keep", the previous read in x.hclient.send; http_reverse_proxy, tls_mtls)
+- Go reference: net/http's persistConn closes the connection, and a writeLoop still writing gets an error; the connection's memory lives on with its last user (Go's collector)
+- Test: TestGoldenTasks (ThreadSanitizer) http_reverse_proxy, tls_mtls, http_pipe, http_duplex; goldens on arm64 and LLVM
+- Timing: none
+
+A request streamed from a task (`Client.open` with a BodyReader body)
+ended its connection when the response ended or failed, freeing its TLS
+state and clearing the connection's record while the sending task could
+still be writing on them. Now that end only closes the descriptor (the
+sender's write fails) and records the failure; the rest is freed with the
+exchange's last reference, after the sender is gone.
+
 ## 2026-10-30: fix: a client done with a request closes its piped body, every backend (decisions 0433, 0444)
 
 - Kind: fix

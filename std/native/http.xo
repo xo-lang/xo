@@ -3154,7 +3154,7 @@ fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
       hclient.set_deadline(r, s.idle_ns)
       let st = http1.cbody_next(r, s.read, max)
       if st.s != hclient.CC_OK {
-        hclient.end_keep(r, false, s.https, s.addr, s.name, s.roots, st.s, "")
+        end_conn(s, r, false, st.s)
         s.conn = None
         s.buffered = b""
         s.read = http1.BodyRead{mode: 0, done: true}
@@ -3169,7 +3169,7 @@ fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
       if s.read.done {
         // the body's end: the connection to the pool if it may serve
         // another request
-        hclient.end_keep(r, s.read.keep, s.https, s.addr, s.name, s.roots, hclient.CC_OK, "")
+        end_conn(s, r, s.read.keep, hclient.CC_OK)
         s.conn = None
         s.buffered = b""
         if st.data.is_empty() {
@@ -3209,6 +3209,18 @@ fn gz_step(var s: StreamState, b: Bytes, last: Bool) -> Result[(), http.ClientEr
         Err(e) => Err(http.ClientErr.Protocol(msg: e.msg))
       }
     }
+  }
+}
+
+/// Ends the stream's HTTP/1.1 exchange on r with s (hclient.CC_*): the
+/// connection to the pool when keep, else closed; with a full duplex
+/// sender (dsrv) only its descriptor closes, since the sender may still
+/// be writing on it, and the rest is freed with r (hclient.end_shared).
+fn end_conn(x: StreamState, r: rthttp.CResp, keep: Bool, s: Int) {
+  if x.dsrv.is_some() {
+    hclient.end_shared(r, s, "")
+  } else {
+    hclient.end_keep(r, keep, x.https, x.addr, x.name, x.roots, s, "")
   }
 }
 
@@ -3340,11 +3352,7 @@ fn (s: ClientStream) close() {
     }
     match x.conn {
       Some(r) => {
-        if x.read.done {
-          hclient.end_keep(r, x.read.keep, x.https, x.addr, x.name, x.roots, hclient.CC_OK, "")
-        } else {
-          hclient.end_keep(r, false, x.https, x.addr, x.name, x.roots, hclient.CC_OK, "")
-        }
+        end_conn(x, r, x.read.done && x.read.keep, hclient.CC_OK)
       }
       None => ()
     }
