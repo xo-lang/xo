@@ -17,6 +17,24 @@ truncate the file or change it in place while the Bytes lives (rename
 over it is safe). xo's link maps std's store with it.
 
 
+## 2026-10-30: feature: connection deadlines (Conn, ServerConn)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the backend gap survey of 2026-10-30, gap 5 (queueworker, chathub, grpcsvc), decision 0430
+- Go reference: net.Conn SetDeadline, SetReadDeadline, SetWriteDeadline (os.ErrDeadlineExceeded)
+- Test: internal/llvm/testdata/golden/conn_deadline (arm64, LLVM, Go parity): a read past its deadline, the deadline staying passed until it moves, a deadline already passed with data waiting, one set while a read waits, a write deadline against a peer that does not read, the ServerConn side
+- Timing: TIMING
+
+`set_deadline(clock, t)`, `set_read_deadline` and `set_write_deadline`
+give a connection Go's deadlines: a read or write past `t` fails with
+`Timeout` and the connection stays usable once the deadline moves.
+Natively each connection record keeps a read and a write deadline on
+the runtime's timers, which the existing poll waits take; setting one
+wakes a waiting read or write. The Go backend calls net.Conn's setters
+and keeps the user's deadline for its own cancellation, which used the
+same setters.
+
 ## 2026-10-30: fix: a relative symbolic link to a directory on Windows
 
 - Kind: fix

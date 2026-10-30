@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+1 err i/o timeout
+1b err i/o timeout
+2 data hello
+3 data again
+4 err i/o timeout
+5 data waiting
+6 err i/o timeout
+7 write stopped: i/o timeout
+8 server read: i/o timeout
+done
+--- stderr

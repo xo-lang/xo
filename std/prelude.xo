@@ -920,6 +920,14 @@ fn (c: Conn) read(max: Int) -> Bytes? ! NetErr uses net.dial
 fn (c: Conn) write(data: Bytes) -> () ! NetErr uses net.dial
 /// Closes the connection; waiting reads and writes fail with `Io`.
 fn (c: Conn) close()
+/// Go's SetDeadline (decision 0430): reads and writes past t fail with
+/// `Timeout` and the connection stays usable; a later t (or None, no
+/// deadline) lets them run again. t is on clock.
+fn (c: Conn) set_deadline(clock: Clock, t: Time?) uses clock
+/// set_deadline for reads only (Go's SetReadDeadline).
+fn (c: Conn) set_read_deadline(clock: Clock, t: Time?) uses clock
+/// set_deadline for writes only (Go's SetWriteDeadline).
+fn (c: Conn) set_write_deadline(clock: Clock, t: Time?) uses clock
 /// A connection taken by `Listener.accept`: its reads and writes are
 /// `net.listen` (decision 0280).
 struct ServerConn {}
@@ -929,6 +937,14 @@ fn (c: ServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen
 fn (c: ServerConn) write(data: Bytes) -> () ! NetErr uses net.listen
 /// Closes the connection; waiting reads and writes fail with `Io`.
 fn (c: ServerConn) close()
+/// Go's SetDeadline (decision 0430): reads and writes past t fail with
+/// `Timeout` and the connection stays usable; a later t (or None, no
+/// deadline) lets them run again. t is on clock.
+fn (c: ServerConn) set_deadline(clock: Clock, t: Time?) uses clock
+/// set_deadline for reads only (Go's SetReadDeadline).
+fn (c: ServerConn) set_read_deadline(clock: Clock, t: Time?) uses clock
+/// set_deadline for writes only (Go's SetWriteDeadline).
+fn (c: ServerConn) set_write_deadline(clock: Clock, t: Time?) uses clock
 
 /// Either kind of connection, for code that reads and writes both
 /// (decision 0280).

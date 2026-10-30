@@ -3844,6 +3844,22 @@ fn net_dial_timeout(n: Net, addr: Str, d: Duration) -> Conn ! NetErr uses net.di
   Ok(c)
 }
 
+/// Conn.set_deadline and ServerConn's (decision 0430): t on clock, made
+/// a wait from now on the runtime's timers.
+fn conn_set_deadline(c: Conn, clock: Clock, t: Time?) uses clock { conn_deadline(rt.obj_addr(c), 3, clock, t) }
+fn conn_set_read_deadline(c: Conn, clock: Clock, t: Time?) uses clock { conn_deadline(rt.obj_addr(c), 1, clock, t) }
+fn conn_set_write_deadline(c: Conn, clock: Clock, t: Time?) uses clock { conn_deadline(rt.obj_addr(c), 2, clock, t) }
+fn server_conn_set_deadline(c: ServerConn, clock: Clock, t: Time?) uses clock { conn_deadline(rt.obj_addr(c), 3, clock, t) }
+fn server_conn_set_read_deadline(c: ServerConn, clock: Clock, t: Time?) uses clock { conn_deadline(rt.obj_addr(c), 1, clock, t) }
+fn server_conn_set_write_deadline(c: ServerConn, clock: Clock, t: Time?) uses clock { conn_deadline(rt.obj_addr(c), 2, clock, t) }
+
+fn conn_deadline(cn: Int, which: Int, clock: Clock, t: Time?) uses clock {
+  match t {
+    Some(at) => netconn.set_deadline(cn, which, true, (at - clock.now()).nanos())
+    None => netconn.set_deadline(cn, which, false, 0)
+  }
+}
+
 /// Net.lookup_host (decision 0406): the addresses dial would try for
 /// host, as text.
 fn net_lookup_host(n: Net, host: Str) -> List[Str] ! NetErr uses net.dial {

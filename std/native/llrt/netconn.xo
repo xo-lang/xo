@@ -50,7 +50,11 @@ const L_SIZE = 48
 const C_PD = 16
 const C_UP = 24
 const C_MEM = 32
-const C_SIZE = 40 // own: this module\'s connection record, not the context
+// the user's read and write deadlines (decision 0430): the timers' time
+// (poll.now), 0 for none
+const C_RDL = 40
+const C_WDL = 48
+const C_SIZE = 56 // own: this module\'s connection record, not the context
 /// The error of a read or write on a connection std/tls took over.
 const UPGRADED_TEXT = "use of a connection upgraded to TLS"
 
@@ -468,6 +472,8 @@ fn conn_new(c: Int, fd: Int, pd0: Int) -> Int {
   st(cn, C_PD, pd)
   st(cn, C_UP, 0)
   st(cn, C_MEM, 0)
+  st(cn, C_RDL, 0)
+  st(cn, C_WDL, 0)
   ok(c)
   cn
 }
@@ -479,8 +485,36 @@ fn conn_new_mem(c: Int, me: Int) -> Int {
   st(cn, C_PD, 0)
   st(cn, C_UP, 0)
   st(cn, C_MEM, me)
+  st(cn, C_RDL, 0)
+  st(cn, C_WDL, 0)
   ok(c)
   cn
+}
+
+/// Whether deadline word w of connection cn (C_RDL or C_WDL) has passed
+/// (decision 0430): an operation then fails with Timeout at once, as Go's
+/// does, data waiting or not.
+fn passed(cn: Int, w: Int) -> Bool {
+  let dl = ld(cn, w)
+  dl != 0 && poll.now() >= dl
+}
+
+/// `c.set_deadline` and its read and write forms (decision 0430): d ns
+/// from now on the timers' clock (d <= 0: already passed), none when set
+/// is false; which is 1 (read), 2 (write) or 3 (both). A waiting read or
+/// write wakes and waits again until the new deadline.
+pub fn set_deadline(cn: Int, which: Int, set: Bool, d: Int) {
+  let dl = if !set { 0 } else if d <= 0 { poll.now() | 1 } else { poll.deadline(d) }
+  if (which & 1) != 0 {
+    st(cn, C_RDL, dl)
+  }
+  if (which & 2) != 0 {
+    st(cn, C_WDL, dl)
+  }
+  let pd = ld(cn, C_PD)
+  if pd != 0 {
+    poll.pd_ready(pd, which)
+  }
 }
 
 /// The poll descriptor of connection handle cn (std/tls).
@@ -1076,6 +1110,10 @@ pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
     return list_of(raw.str_at(0, 0), np)
   }
   let max = if max0 > 1048576 { 1048576 } else { max0 }
+  if passed(cn, C_RDL) {
+    fail(c, 3, "")
+    return 0
+  }
   if ld(cn, C_UP) != 0 {
     fail(c, 4, UPGRADED_TEXT)
     return 0
@@ -1121,13 +1159,15 @@ pub fn conn_read(cn: Int, max0: Int, np: Int) -> Int {
       continue
     }
     if would_block(r) {
-      let w = poll.pd_wait_ctx(pd, false, c, 0)
+      let w = poll.pd_wait_ctx(pd, false, c, ld(cn, C_RDL))
       if w == poll.READY {
         continue
       }
       poll.pd_end(pd)
       if w == poll.CANCELED {
         fail(c, 5, "")
+      } else if w == poll.TIMEOUT {
+        fail(c, 3, "")
       } else {
         fail(c, 4, "read tcp: ${CLOSED_TEXT}")
       }
@@ -1150,6 +1190,10 @@ pub fn conn_write(cn: Int, p: Int, n: Int) {
   let c = ctx.cur()
   if poll.canceled() {
     fail(c, 5, "")
+    return
+  }
+  if passed(cn, C_WDL) {
+    fail(c, 3, "")
     return
   }
   if ld(cn, C_UP) != 0 {
@@ -1188,13 +1232,15 @@ pub fn conn_write(cn: Int, p: Int, n: Int) {
       continue
     }
     if would_block(w) {
-      let r = poll.pd_wait_ctx(pd, true, c, 0)
+      let r = poll.pd_wait_ctx(pd, true, c, ld(cn, C_WDL))
       if r == poll.READY {
         continue
       }
       poll.pd_end(pd)
       if r == poll.CANCELED {
         fail(c, 5, "")
+      } else if r == poll.TIMEOUT {
+        fail(c, 3, "")
       } else {
         fail(c, 4, "write tcp: ${CLOSED_TEXT}")
       }

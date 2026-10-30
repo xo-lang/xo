@@ -17,6 +17,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 )
@@ -507,6 +508,12 @@ const netClosedText = "use of closed network connection"
 // tk ends it: the socket's deadline is set to the past, and op's error
 // then reports Canceled (true).
 func interruptible(tk *Task, setDeadline func(time.Time) error, op func() error) (canceled bool, err error) {
+	return interruptibleTo(tk, setDeadline, time.Time{}, op)
+}
+
+// interruptibleTo is interruptible on a connection whose user deadline
+// (decision 0430) is restore: a cancellation sets the past, then restore.
+func interruptibleTo(tk *Task, setDeadline func(time.Time) error, restore time.Time, op func() error) (canceled bool, err error) {
 	done := make(chan struct{})
 	stopped := make(chan bool, 1)
 	go func() {
@@ -521,7 +528,7 @@ func interruptible(tk *Task, setDeadline func(time.Time) error, op func() error)
 	err = op()
 	close(done)
 	if <-stopped {
-		setDeadline(time.Time{})
+		setDeadline(restore)
 		return err != nil, err
 	}
 	return false, err
@@ -598,11 +605,16 @@ func (c Conn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 			return Err[Option[Bytes]](netErr(4, upgradedText))
 		}
 		if m, ok := c.c.(*memEnd); ok {
+			// FakeNet: a deadline already passed fails at once; a waiting
+			// read is not woken by one (decision 0430)
+			if dl := userDeadline(c.c, false); !dl.IsZero() && !time.Now().Before(dl) {
+				return Err[Option[Bytes]](netErr(3, ""))
+			}
 			return m.read(tk, max)
 		}
 		buf := make([]byte, min(max, 1<<20))
 		var n int
-		canceled, err := interruptible(tk, c.c.SetReadDeadline, func() error {
+		canceled, err := interruptibleTo(tk, c.c.SetReadDeadline, userDeadline(c.c, false), func() error {
 			var e error
 			n, e = c.c.Read(buf)
 			return e
@@ -615,6 +627,9 @@ func (c Conn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 		}
 		if err == nil || errors.Is(err, io.EOF) {
 			return Ok[Option[Bytes], NetErr](Option[Bytes]{})
+		}
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return Err[Option[Bytes]](netErr(3, ""))
 		}
 		return Err[Option[Bytes]](netIoErr(err))
 	})
@@ -633,14 +648,20 @@ func (c Conn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
 			return Err[Unit](netErr(4, upgradedText))
 		}
 		if m, ok := c.c.(*memEnd); ok {
+			if dl := userDeadline(c.c, true); !dl.IsZero() && !time.Now().Before(dl) {
+				return Err[Unit](netErr(3, ""))
+			}
 			return m.write(tk, data)
 		}
-		canceled, err := interruptible(tk, c.c.SetWriteDeadline, func() error {
+		canceled, err := interruptibleTo(tk, c.c.SetWriteDeadline, userDeadline(c.c, true), func() error {
 			_, e := c.c.Write([]byte(data))
 			return e
 		})
 		if canceled {
 			return Err[Unit](netErr(5, ""))
+		}
+		if errors.Is(err, os.ErrDeadlineExceeded) {
+			return Err[Unit](netErr(3, ""))
 		}
 		if err != nil {
 			return Err[Unit](netIoErr(err))
@@ -652,8 +673,74 @@ func (c Conn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
 // M_close is `c.close()`.
 func (c Conn) M_close(*Task) {
 	if c.c != nil {
+		connDeadlines.Delete(c.c)
 		c.c.Close()
 	}
+}
+
+// connDeadlines holds each connection's user deadlines (decision 0430),
+// so a cancellation (interruptibleTo) restores them, not none.
+var connDeadlines sync.Map // net.Conn -> *connDL
+
+type connDL struct{ rd, wr atomic.Int64 } // UnixNano, 0 for none
+
+// userDeadline is c's user read (or write) deadline, the zero Time for none.
+func userDeadline(c net.Conn, write bool) time.Time {
+	v, ok := connDeadlines.Load(c)
+	if !ok {
+		return time.Time{}
+	}
+	d := v.(*connDL)
+	n := d.rd.Load()
+	if write {
+		n = d.wr.Load()
+	}
+	if n == 0 {
+		return time.Time{}
+	}
+	return time.Unix(0, n)
+}
+
+// setDeadline is the deadline setters' body: t on clock, made a time on
+// the real clock from now (a past t fails the next operation at once).
+func (c Conn) setDeadline(tk *Task, clock Clock, t Option[Time], read, write bool) {
+	if c.c == nil {
+		return
+	}
+	var at time.Time
+	if t.Some {
+		at = time.Now().Add(time.Duration(int64(t.V) - int64(clock.M_now(tk))))
+	}
+	v, _ := connDeadlines.LoadOrStore(c.c, &connDL{})
+	d := v.(*connDL)
+	n := int64(0)
+	if !at.IsZero() {
+		n = at.UnixNano()
+	}
+	if read {
+		d.rd.Store(n)
+		c.c.SetReadDeadline(at)
+	}
+	if write {
+		d.wr.Store(n)
+		c.c.SetWriteDeadline(at)
+	}
+}
+
+// M_set_deadline is `c.set_deadline(clock, t)` (decision 0430): Go's
+// SetDeadline.
+func (c Conn) M_set_deadline(tk *Task, clock Clock, t Option[Time]) {
+	c.setDeadline(tk, clock, t, true, true)
+}
+
+// M_set_read_deadline is Go's SetReadDeadline (decision 0430).
+func (c Conn) M_set_read_deadline(tk *Task, clock Clock, t Option[Time]) {
+	c.setDeadline(tk, clock, t, true, false)
+}
+
+// M_set_write_deadline is Go's SetWriteDeadline (decision 0430).
+func (c Conn) M_set_write_deadline(tk *Task, clock Clock, t Option[Time]) {
+	c.setDeadline(tk, clock, t, false, true)
 }
 
 // XoDebug implements Debug.

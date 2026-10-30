@@ -1,0 +1,90 @@
+// Decision 0430: Go's connection deadlines. A read past its deadline is
+// Timeout and the connection stays usable once the deadline moves; a
+// deadline set while a read waits wakes it; a deadline already passed
+// fails at once, data waiting or not; None clears it; a write deadline
+// stops a writer whose peer does not read; the accepted side
+// (ServerConn) has the same methods. Every backend must agree.
+fn show_read(c: Conn) -> Str {
+  match c.read(64) {
+    Ok(Some(b)) => "data ${b.to_str() ?? "?"}"
+    Ok(None) => "end"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let clock = os.clock
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let addr = l.addr()
+      let peer = Chan[ServerConn].new(cap: 1)
+      scope s {
+        s.spawn(fn() {
+          match l.accept() {
+            Ok(sc) => peer.send(sc)
+            Err(e) => os.stdio.println("accept: ${e}")
+          }
+        })
+        let c = os.net.dial(addr) ?? e => {
+          os.stdio.println("dial: ${e}")
+          return
+        }
+        let sc = match peer.recv() {
+          Some(x) => x
+          None => return
+        }
+        // a read past its deadline, then the same connection reads again
+        c.set_read_deadline(clock, Some(clock.now() + 50ms))
+        os.stdio.println("1 ${show_read(c)}")
+        // the deadline stays passed until it moves: a later one lets it read
+        os.stdio.println("1b ${show_read(c)}")
+        c.set_read_deadline(clock, Some(clock.now() + 5s))
+        sc.write("hello".bytes()) ?? _ => ()
+        os.stdio.println("2 ${show_read(c)}")
+        c.set_read_deadline(clock, None)
+        sc.write("again".bytes()) ?? _ => ()
+        os.stdio.println("3 ${show_read(c)}")
+        // a deadline already passed fails at once, data waiting or not
+        sc.write("waiting".bytes()) ?? _ => ()
+        clock.sleep(20ms)
+        c.set_deadline(clock, Some(clock.now() - 1s))
+        os.stdio.println("4 ${show_read(c)}")
+        c.set_deadline(clock, None)
+        os.stdio.println("5 ${show_read(c)}")
+        // a deadline set while a read waits wakes it
+        s.spawn(fn() {
+          clock.sleep(50ms)
+          c.set_read_deadline(clock, Some(clock.now()))
+        })
+        os.stdio.println("6 ${show_read(c)}")
+        c.set_read_deadline(clock, None)
+        // the accepted side, and a write deadline against a peer that does
+        // not read
+        sc.set_write_deadline(clock, Some(clock.now() + 200ms))
+        let chunk = Bytes.zeroed(65536)
+        var n = 0
+        var how = "never"
+        while n < 4096 {
+          match sc.write(chunk) {
+            Ok(_) => n += 1
+            Err(e) => {
+              how = "${e}"
+              break
+            }
+          }
+        }
+        os.stdio.println("7 write stopped: ${how}")
+        sc.set_read_deadline(clock, Some(clock.now() + 30ms))
+        match sc.read(8) {
+          Ok(_) => os.stdio.println("8 server read: data")
+          Err(e) => os.stdio.println("8 server read: ${e}")
+        }
+        c.close()
+        sc.close()
+      }
+      l.close()
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen: ${e}")
+  }
+}

@@ -4,6 +4,7 @@
 # cannot hide in the unsupported count. Reason after the name, for reading only.
 
 cmd_inherit # the wasm backend does not support processes (`proc.exec`): WASI preview1 has none
+conn_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 conn_iface # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 dns_records # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 fs_atomic # operation not supported (WASI has no file modes or locks): write_atomic's mode

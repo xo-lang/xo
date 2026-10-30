@@ -243,9 +243,15 @@ var (
 	_ func(*Conn, *Task, int64) Result[Option[Bytes], NetErr]       = (*Conn).M_read
 	_ func(*Conn, *Task, Bytes) Result[Unit, NetErr]                = (*Conn).M_write
 	_ func(*Conn, *Task)                                            = (*Conn).M_close
+	_ func(*Conn, *Task, Clock, Option[Time])                       = (*Conn).M_set_deadline
+	_ func(*Conn, *Task, Clock, Option[Time])                       = (*Conn).M_set_read_deadline
+	_ func(*Conn, *Task, Clock, Option[Time])                       = (*Conn).M_set_write_deadline
 	_ func(*ServerConn, *Task, int64) Result[Option[Bytes], NetErr] = (*ServerConn).M_read
 	_ func(*ServerConn, *Task, Bytes) Result[Unit, NetErr]          = (*ServerConn).M_write
 	_ func(*ServerConn, *Task)                                      = (*ServerConn).M_close
+	_ func(*ServerConn, *Task, Clock, Option[Time])                 = (*ServerConn).M_set_deadline
+	_ func(*ServerConn, *Task, Clock, Option[Time])                 = (*ServerConn).M_set_read_deadline
+	_ func(*ServerConn, *Task, Clock, Option[Time])                 = (*ServerConn).M_set_write_deadline
 	_ func(*ClockErr, *Task) string                                 = (*ClockErr).M_display
 	_ func(*EnvErr, *Task) string                                   = (*EnvErr).M_display
 	_ func(*IoErr, *Task) string                                    = (*IoErr).M_display

@@ -855,6 +855,10 @@ fn (c: Conn) close()
 fn (c: ServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen   // the same, on an accepted connection
 fn (c: ServerConn) write(data: Bytes) -> () ! NetErr uses net.listen
 fn (c: ServerConn) close()
+fn (c: Conn) set_deadline(clock: Clock, t: Time?) uses clock         // decision 0430: Go's SetDeadline
+fn (c: Conn) set_read_deadline(clock: Clock, t: Time?) uses clock    // Go's SetReadDeadline
+fn (c: Conn) set_write_deadline(clock: Clock, t: Time?) uses clock   // Go's SetWriteDeadline
+// ServerConn has the same three
 
 interface Stream {                                 // either kind of connection
   fn read(self, max: Int) -> Bytes? ! NetErr uses net
@@ -880,6 +884,24 @@ fail with `Io`. A refused `dial` is `Refused`. `dial` gives up after 30
 seconds with `Io` (`dial tcp ADDR: i/o timeout`); `dial_timeout(addr, d)`
 gives up after `d`, over the lookup and the connect, with `Timeout`
 (decision 0406).
+
+Deadlines (decision 0430) are Go's net.Conn deadlines.
+- `set_deadline(clock, t)` sets both directions; `set_read_deadline` and
+  `set_write_deadline` set one.
+- A read or write that would wait past `t` fails with `Timeout`
+  (`i/o timeout`), and so does every later one until the deadline moves.
+  One whose deadline has already passed fails at once, even with data
+  waiting.
+- The connection stays open: a later `t`, or `None` (no deadline), lets
+  operations run again. A deadline set while a read or write waits
+  applies to that wait.
+- `t` is on `clock`, and the wait is measured from now.
+- A write that times out may have written part of its data.
+- Deadlines never cancel: cancellation stays `Canceled` (core 7.2), and
+  a `task.with_timeout` around the call still cancels it.
+- On FakeNet's in-memory connections, a deadline already passed fails at
+  once, but a waiting read or write is not woken by one.
+- They are on the concrete types, not on `Stream` (decision 0430).
 
 Names (decision 0406): `lookup_host(host)` returns host's addresses as
 text, in the order `dial` tries them, from the resolver `dial` uses (the
@@ -5296,6 +5318,9 @@ fn (l: Listener) close()
 fn (c: Conn) read(max: Int) -> Bytes? ! NetErr uses net.dial
 fn (c: Conn) write(data: Bytes) -> () ! NetErr uses net.dial
 fn (c: Conn) close()
+fn (c: Conn) set_deadline(clock: Clock, t: Time?) uses clock
+fn (c: Conn) set_read_deadline(clock: Clock, t: Time?) uses clock
+fn (c: Conn) set_write_deadline(clock: Clock, t: Time?) uses clock
 ```
 
 ### ServerConn
@@ -5304,6 +5329,9 @@ fn (c: Conn) close()
 fn (c: ServerConn) read(max: Int) -> Bytes? ! NetErr uses net.listen
 fn (c: ServerConn) write(data: Bytes) -> () ! NetErr uses net.listen
 fn (c: ServerConn) close()
+fn (c: ServerConn) set_deadline(clock: Clock, t: Time?) uses clock
+fn (c: ServerConn) set_read_deadline(clock: Clock, t: Time?) uses clock
+fn (c: ServerConn) set_write_deadline(clock: Clock, t: Time?) uses clock
 ```
 
 ### Stream
