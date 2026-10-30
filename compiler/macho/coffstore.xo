@@ -184,27 +184,55 @@ pub struct CoffStore {
 }
 
 pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str, dwtrim: Bool) -> Result[CoffStore, Str] {
+  match coff_store_objs_cached(store, prog, entry, dwtrim, None) {
+    Ok((cs, _, _)) => Ok(cs)
+    Err(e) => Err(e)
+  }
+}
+
+/// The names a program takes from the store (undefined, or a weak
+/// definition the store defines too), the entry and whether DWARF is cut:
+/// what coff_store_objs' decisions depend on besides the store itself, so
+/// the key of a PE prepare cache (macho.prep_key's COFF counterpart).
+pub fn coff_prep_key(prog: List[CObj], entry: Str, dwtrim: Bool) -> Bytes {
+  var names: List[Str] = []
+  for ob in prog {
+    let weak = coff_weak_names(ob)
+    for s in ob.syms {
+      if !s.aux && s.class == IMAGE_SYM_CLASS_EXTERNAL && (s.sect == 0 || (s.sect > 0 && weak.contains(s.name))) {
+        names.push(s.name)
+      }
+    }
+  }
+  var b = BytesBuilder.new()
+  b.write_str("coffprep1 dwtrim=${dwtrim} entry=${entry}\n")
+  for nm in names.sort() {
+    b.write_str(nm)
+    b.write_byte(0)
+  }
+  b.freeze()
+}
+
+/// coff_store_objs with a prepare cache: cached holds the decisions (live
+/// atoms, the units whose DWARF goes, each object's symbol renumbering) a
+/// link with the same coff_prep_key and store made, None to decide afresh.
+/// Returns the objects, the decisions, and whether they were the cache's;
+/// a cached Prep of the wrong shape counts as a miss. The decisions only
+/// choose what is kept, so a hit gives the same objects as a miss.
+pub fn coff_store_objs_cached(store: Bytes, prog: List[CObj], entry: Str, dwtrim: Bool, cached: Prep?) -> Result[(CoffStore, Prep, Bool), Str] {
   let v = match store_view(store) {
     Ok(x) => x
     Err(e) => return Err(e)
   }
-  var roots: List[Int] = []
-  for ob in prog {
-    // and the program's weak definitions std defines too (separate
-    // compilation's helpers and instances): the link keeps the store's,
-    // which must then be live
-    let weak = coff_weak_names(ob)
-    for s in ob.syms {
-      if !s.aux && s.class == IMAGE_SYM_CLASS_EXTERNAL && (s.sect == 0 || (s.sect > 0 && weak.contains(s.name))) {
-        roots.push(v.def(s.name.bytes()))
-      }
-    }
+  let hit = match cached {
+    Some(p) => p.live.len() == v.total && p.dw_dropped.len() == (if dwtrim { v.n } else { 0 }) && p.symnews.len() == v.n
+    None => false
   }
-  roots.push(v.def(entry.bytes()))
-  let live = v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { coff_never_strip(nm, flags) })
+  let prep0 = cached ?? Prep{}
+  let live = if hit { prep0.live } else { coff_store_live(v, prog, entry) }
   // the units that describe only dead functions (their DWARF goes);
   // !dwtrim: every unit's DWARF whole (XO_STD_STORE_CHECK's PDB check)
-  let dropped = if dwtrim { v.dw_dropped(live) } else { [] }
+  let dropped = if hit { prep0.dw_dropped } else if dwtrim { v.dw_dropped(live) } else { [] }
   var dlive = live
   if !dwtrim {
     for i in 0..dlive.len() {
@@ -218,6 +246,7 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str, dwtrim: Bool)
   var newks: List[List[Int]] = []
   var stubs: List[Int] = []
   var nameds: List[List[Bool]] = []
+  var symnews: List[List[Int]] = []
   for i in 0..v.n {
     let ns = v.nsects[i]
     var newk: List[Int] = List.with_capacity(ns)
@@ -295,7 +324,8 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str, dwtrim: Bool)
   for i in 0..v.n {
     let newk = newks[i]
     let stub = stubs[i]
-    let symnew = v.keep_syms(i, newk, nameds[i], elsewhere, kind, fn(typ: Int) -> Bool { (typ & 0xff) == IMAGE_SYM_CLASS_EXTERNAL })
+    let symnew = if hit { prep0.symnews[i] } else { v.keep_syms(i, newk, nameds[i], elsewhere, kind, fn(typ: Int) -> Bool { (typ & 0xff) == IMAGE_SYM_CLASS_EXTERNAL }) }
+    symnews.push(symnew)
     var syms: List[CSym] = []
     for j in 0..v.nsyms[i] {
       if symnew[j] < 0 {
@@ -315,7 +345,28 @@ pub fn coff_store_objs(store: Bytes, prog: List[CObj], entry: Str, dwtrim: Bool)
     }
     out.push(CObj{path: v.paths[i], sects: sects, syms: syms})
   }
-  Ok(CoffStore{objs: out, maps: maps})
+  Ok((CoffStore{objs: out, maps: maps}, Prep{live: live, dw_dropped: dropped, symnews: symnews}, hit))
+}
+
+/// The store's live atoms for prog: the roots are the names the program
+/// takes from the store (and the store's copies of the program's weak
+/// definitions, separate compilation's helpers and instances, which the
+/// link keeps) and the entry.
+fn coff_store_live(v: StoreView, prog: List[CObj], entry: Str) -> List[Bool] {
+  var roots: List[Int] = []
+  for ob in prog {
+    // and the program's weak definitions std defines too (separate
+    // compilation's helpers and instances): the link keeps the store's,
+    // which must then be live
+    let weak = coff_weak_names(ob)
+    for s in ob.syms {
+      if !s.aux && s.class == IMAGE_SYM_CLASS_EXTERNAL && (s.sect == 0 || (s.sect > 0 && weak.contains(s.name))) {
+        roots.push(v.def(s.name.bytes()))
+      }
+    }
+  }
+  roots.push(v.def(entry.bytes()))
+  v.walk(roots, fn(sg: Str, nm: Str, flags: Int) -> Bool { coff_never_strip(nm, flags) })
 }
 
 const STORE_PDB_MAGIC = "xo coff store pdb 1\n"

@@ -946,3 +946,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [tls-handshake-before-limits.md](tls-handshake-before-limits.md): the server runs the TLS handshake before its limits reach the connection, so a read deadline alone leaves a silent client blocking the task for ever (2026-10-30).
 - [native-prelude-helper-not-memfs-routed.md](native-prelude-helper-not-memfs-routed.md): Observed 2026-10-29: a native prelude function called from native prelude code skips testmode's MemFs routing (write_atomic synced an OS path for a MemFs file), and a memfs_load without memfs_store hangs the next MemFs call
 - [gobind-export-data-partial-scope.md](gobind-export-data-partial-scope.md): an import's scope from export data holds only what the bound package names; import the dependency through the same importer
+- [run-cache-windows-pdb.md](run-cache-windows-pdb.md): a run cache hit wrote a windows .exe without its PDB; such builds store no entry now.

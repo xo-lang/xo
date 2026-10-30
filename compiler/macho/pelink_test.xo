@@ -306,3 +306,54 @@ test "a link through the COFF store is the strip's link of the same objects" {
     Err(e) => fault(e)
   }
 }
+
+// The prepare cache on windows/amd64 (coffstore.xo
+// coff_store_objs_cached): a link from cached decisions is the link that
+// made them, a cache entry of the wrong shape is a miss, and the key
+// follows what the program takes from the store.
+fn prep_lib() -> CObj {
+  store_obj("lib.obj", "\t.subsections_via_symbols\n\t.text\n\t.globl start\nstart:\n\tcallq prog_main\n\tretq\n\t.globl used\nused:\n\tleaq .Lx(%rip), %rax\n\tretq\n.Lx:\n\tnop\n\t.globl other\nother:\n\tretq\n\t.globl unused_fn\nunused_fn:\n\tcallq nowhere\n\tretq\n")
+}
+
+fn prep_prog_obj(callee: Str) -> CObj {
+  store_obj("prog.obj", "\t.text\n\t.globl prog_main\nprog_main:\n\tcallq ${callee}\n\tretq\n")
+}
+
+fn coff_prep_link(store: Bytes, prog: CObj, cached: Prep?) -> (Bytes, Prep, Bool) {
+  let (so, p, hit) = match coff_store_objs_cached(store, [prog], "start", true, cached) {
+    Ok(x) => x
+    Err(e) => fault(e)
+  }
+  match link_pe(so.objs + [prog], PEOpts{entry: "start", imports: {}}) {
+    Ok(b) => (b, p, hit)
+    Err(e) => fault(e)
+  }
+}
+
+test "a COFF store link from cached decisions is the link that made them" {
+  let store = match coff_store_encode([prep_lib()]) {
+    Ok(b) => b
+    Err(e) => fault(e)
+  }
+  let prog = prep_prog_obj("used")
+  let (first, p1, hit1) = coff_prep_link(store, prog, None)
+  expect(hit1) == false
+  let back = match prep_decode(prep_encode(p1)) {
+    Some(p) => p
+    None => fault("the encoding does not read back")
+  }
+  let (second, _, hit2) = coff_prep_link(store, prog, Some(back))
+  expect(hit2) == true
+  expect(second == first) == true
+  // a decision list of the wrong length is a miss, not a wrong link
+  let (third, _, hit3) = coff_prep_link(store, prog, Some(Prep{live: [true]}))
+  expect(hit3) == false
+  expect(third == first) == true
+}
+
+test "the COFF prepare key follows what the program takes from the store" {
+  let k = fn(callee: Str) -> Bytes { coff_prep_key([prep_prog_obj(callee)], "start", true) }
+  expect(k("used") == k("used")) == true
+  expect(k("used") != k("other")) == true
+  expect(coff_prep_key([prep_prog_obj("used")], "start", false) != k("used")) == true
+}

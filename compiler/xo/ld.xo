@@ -600,6 +600,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
     }
   }
   let store_file = if sep_store.is_empty() { store_path } else { sep_store }
+  t = lap(os, phases, "pe.read_store ${store.len()} bytes", t)
   var objs: List[macho.CObj] = []
   var parts: List[macho.CObj] = []
   var rest: List[macho.CObj] = []
@@ -633,6 +634,7 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
       Err(e) => return e
     }
   }
+  t = lap(os, phases, "pe.inputs ${rest.len()} objects", t)
   var check_objs: List[macho.CObj] = []
   // a link through the store: its objects' PDB maps and parts
   var smaps: List[macho.StoreMap] = []
@@ -651,8 +653,18 @@ fn pe_link(os: Os, paths: List[Str], bin: Str, out: Str, stamps: List[(Str, Str)
       Err(e) => return "XO_STD_STORE=${store_path}.pdb: ${fs_reason(e)}"
     }
   } else if !store.is_empty() {
-    match macho.coff_store_objs(store, rest, "xo_win_start", true) {
-      Ok(so) => {
+    // the prepare cache (as darwin's store link: the live atoms, the
+    // units whose DWARF goes and the symbol renumbering, keyed by what the
+    // program takes from the store)
+    let pf = coff_prep_file(os, prep_dir(os, sep_store), sep_store, store.len(), rest, "xo_win_start", true)
+    let cached = prep_load(os, pf)
+    t = lap(os, phases, "pe.prep_key", t)
+    match macho.coff_store_objs_cached(store, rest, "xo_win_start", true, cached) {
+      Ok((so, prep, hit)) => {
+        if !hit {
+          prep_put(os, pf, prep)
+        }
+        t = lap(os, phases, "pe.store ${if hit { "prepare cache hit" } else { "prepared" }}", t)
         if store_check {
           check_objs = objs
         }
@@ -1196,10 +1208,28 @@ fn prep_load(os: Os, f: Str) -> macho.Prep? {
 
 /// A miss's decisions written to f for the next link (tmp and rename).
 fn prep_save(os: Os, f: Str, s: macho.StoreLink) {
-  if f.is_empty() || s.hit {
+  if s.hit {
     return
   }
-  let b = macho.prep_encode(s.prep)
+  prep_put(os, f, s.prep)
+}
+
+/// The PE link's prepare cache file ("" for none): as prep_file_for, keyed
+/// by macho.coff_prep_key.
+fn coff_prep_file(os: Os, dir: Str, store: Str, n: Int, prog: List[macho.CObj], entry: Str, dwtrim: Bool) -> Str {
+  if dir.is_empty() {
+    return ""
+  }
+  "${dir}/${crypto.sha256("${self_id(os)}\n${store}\n${n}\n".bytes() + macho.coff_prep_key(prog, entry, dwtrim)).to_hex()[0..40]}"
+}
+
+/// Decisions p written to f (tmp and rename) and counted in the back-end
+/// cache's store accounting.
+fn prep_put(os: Os, f: Str, p: macho.Prep) {
+  if f.is_empty() {
+    return
+  }
+  let b = macho.prep_encode(p)
   cache_put(os, f, b)
   // the back-end cache's store accounting (store-log, the prune's burst)
   prune_backend_cache(os, "prep", dir_name(dir_name(f)), b.len())

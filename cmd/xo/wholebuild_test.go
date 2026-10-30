@@ -227,3 +227,48 @@ func TestWholeBuildCache(t *testing.T) {
 		}
 	}
 }
+
+// TestWholeBuildWindowsPDB: a windows/amd64 build writes a PDB beside its
+// .exe, which the run cache's entry does not hold, so such a build stores
+// no entry: an unchanged build links again and writes the PDB (a hit wrote
+// only the .exe, leaving no PDB or an older build's).
+func TestWholeBuildWindowsPDB(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	tmp := t.TempDir()
+	setenv(t, "XO_BUILD_DIR", filepath.Join(tmp, "build"))
+	setenv(t, "XO_BIN_CACHE", filepath.Join(tmp, "bin"))
+	setenv(t, "XO_BACKEND_CACHE_DIR", filepath.Join(tmp, "backend"))
+	setenv(t, "XO_WHOLE_BUILD", "on")
+	dir := filepath.Join(tmp, "prog")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module winpdb\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte("fn main(os: Os) {\n  os.stdio.println(\"pdb\")\n}\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	pdb := filepath.Join(dir, "prog.pdb")
+	build := func(what string) {
+		t.Helper()
+		var so, se bytes.Buffer
+		if code := run(t, []string{"build", "--phase-times", "--backend=amd64", "--targets=windows/amd64", "-o", filepath.Join(dir, "prog"), "."}, &so, &se); code != 0 {
+			t.Fatalf("%s: exit %d\n%s%s", what, code, so.String(), se.String())
+		}
+		if strings.Contains(se.String(), "phase run_cache ") {
+			t.Fatalf("%s: served by the run cache, which holds no PDB\n%s", what, se.String())
+		}
+		if _, err := os.Stat(pdb); err != nil {
+			t.Fatalf("%s: no PDB beside the .exe: %v", what, err)
+		}
+	}
+	build("first build")
+	if err := os.Remove(pdb); err != nil {
+		t.Fatal(err)
+	}
+	build("unchanged")
+}

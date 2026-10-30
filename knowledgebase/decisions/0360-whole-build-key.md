@@ -260,6 +260,9 @@ times and pruning, and the verify run catches a change to that.
 
 ## Consequences
 
+- A windows build with a PDB beside its .exe stores no entry (2026-10-29,
+  gotchas/run-cache-windows-pdb.md): an entry holds one binary, and a hit
+  wrote the .exe without its PDB. Next: the entry holds side files.
 - An unchanged warm build is expected to fall from 0.57 s to about
   30 ms for the CRUD server (about 10 ms on the stat path), and from
   0.28 s to less for hello:
