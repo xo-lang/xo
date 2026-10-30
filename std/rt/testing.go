@@ -8,6 +8,7 @@ import (
 	"net"
 	"os"
 	"path"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -106,6 +107,10 @@ func runTests(args []string, tables [][]TestCase) int {
 		return 2
 	}
 	pass, fail, skip := 0, 0, 0
+	// the skips by reason, named in the summary line without -v (decision
+	// 0437), as the native harness does (compiler/xo test.xo skip_reason)
+	skippedWhy := map[string]int{}
+	skippedUses, skippedFx := 0, map[string]bool{}
 	for _, table := range tables {
 		for _, tc := range table {
 			if *run != "" && !strings.Contains(tc.Name, *run) {
@@ -161,6 +166,18 @@ func runTests(args []string, tables [][]TestCase) int {
 				fail++
 			default:
 				skip++
+				if tc.Skip == "" && tc.Fn != nil && len(tc.Uses) > 0 && !*real {
+					skippedUses++
+					for _, e := range tc.Uses {
+						skippedFx[e] = true
+					}
+					break
+				}
+				why := strings.SplitN(tc.Skip, "\n", 2)[0]
+				if why == "" {
+					why = "no test function"
+				}
+				skippedWhy[why]++
 			}
 			if *asJSON {
 				rec := map[string]any{"name": tc.Name, "module": tc.Module, "loc": tc.Loc, "status": out.status, "message": out.msg, "seed": s}
@@ -191,7 +208,7 @@ func runTests(args []string, tables [][]TestCase) int {
 		if fail > 0 {
 			status = "FAIL"
 		}
-		fmt.Fprintf(os.Stdout, "%s: %d passed, %d failed, %d skipped\n", status, pass, fail, skip)
+		fmt.Fprintf(os.Stdout, "%s: %d passed, %d failed, %d skipped%s\n", status, pass, fail, skip, skipSummary(skippedWhy, skippedUses, skippedFx))
 	}
 	if fail > 0 {
 		return 1
@@ -1885,4 +1902,32 @@ func shellQuote(s string) string {
 // scheduler, whose seeds differ).
 func exploreMsg(first, s int64, name, msg string) string {
 	return fmt.Sprintf("explored seeds %d to %d: seed %d fails; reproduce with `xo test --backend=go --seed=%d --run=%s`, or pin it with `test %q seed %d`\n%s", first, s, s, s, shellQuote(name), name, s, msg)
+}
+
+// skipSummary is the summary line's skip reasons (decision 0437), " (2
+// uses env, fs: run with --real; 1 REASON)": the `uses` tests in one
+// entry with their effects, then each other reason, in order; "" for
+// none. As compiler/xo test.xo skip_summary.
+func skipSummary(why map[string]int, uses int, fx map[string]bool) string {
+	var parts []string
+	if uses > 0 {
+		es := make([]string, 0, len(fx))
+		for e := range fx {
+			es = append(es, e)
+		}
+		sort.Strings(es)
+		parts = append(parts, fmt.Sprintf("%d uses %s: run with --real", uses, strings.Join(es, ", ")))
+	}
+	rs := make([]string, 0, len(why))
+	for r := range why {
+		rs = append(rs, r)
+	}
+	sort.Strings(rs)
+	for _, r := range rs {
+		parts = append(parts, fmt.Sprintf("%d %s", why[r], r))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	return " (" + strings.Join(parts, "; ") + ")"
 }

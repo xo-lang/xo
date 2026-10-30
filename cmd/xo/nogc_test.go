@@ -84,8 +84,16 @@ func TestNoGCTests(t *testing.T) {
 		// without it
 		t.Parallel()
 		dir := filepath.Join("testdata", "nogc", "real")
-		for _, args := range [][]string{{"-v", "--real", dir}, {"-v", dir}} {
+		for _, args := range [][]string{{"-v", "--real", dir}, {"-v", dir}, {dir}} {
 			goCode, goOut := xoTest(t, args...)
+			// the skips named in the summary line, -v or not (decision
+			// 0437: a skip must not read as a pass)
+			if !strings.Contains(strings.Join(args, " "), "--real") {
+				want := "ok: 1 passed, 0 failed, 8 skipped (8 uses clock, env, fs, fs.read, net, proc, stdio: run with --real)\n"
+				if !strings.Contains(goOut, want) {
+					t.Errorf("%v: no %q in\n%s", args, want, goOut)
+				}
+			}
 			for _, be := range backends {
 				code, out := xoTest(t, append([]string{"--no-gc", "--backend=" + be}, args...)...)
 				if code != goCode || out != goOut {

@@ -253,6 +253,12 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
   // the contract fuzz tests skipped natively, by module: one line each
   // (decision 0248), so the default backend loses no check quietly
   var unfuzzed: Map[Str, Int] = {}
+  // the skips by reason, named in the summary line without -v (decision
+  // 0437: a skipped test must not read as a pass)
+  var skipped_why: Map[Str, Int] = {}
+  // the `uses` skips, one entry: how many, and their effects
+  var skipped_uses = 0
+  var skipped_fx: Set[Str] = #{}
   // the shrunk failures of generated contract fuzz tests, as the Go
   // runtime's regression records (rt.RegressRecord, one JSON line each)
   var regress: List[Str] = []
@@ -333,6 +339,15 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
       if t.skip.starts_with(FUZZ_SKIP) {
         unfuzzed[t.module] = (unfuzzed.get(t.module) ?? 0) + 1
       }
+      if t.skip.is_empty() && !t.effects.is_empty() && !o.real {
+        skipped_uses += 1
+        for e in t.effects {
+          skipped_fx.add(e)
+        }
+      } else {
+        let why = if t.skip.starts_with(FUZZ_SKIP) { FUZZ_SKIP } else { t.skip.split("\n")[0] }
+        skipped_why[why] = (skipped_why.get(why) ?? 0) + 1
+      }
     }
     if o.json {
       // the fields in encoding/json's order of a map: sorted keys
@@ -381,7 +396,7 @@ fn run_tests(os: Os, bin: Str, tests: List[TestInfo], o: TestOpts) -> Int {
       os.stdio.println("${m}: contract fuzzing needs --backend=go: ${n} ${if n == 1 { "contract" } else { "contracts" }} not fuzzed")
     }
     let status = if failed > 0 { "FAIL" } else { "ok" }
-    os.stdio.println("${status}: ${pass} passed, ${failed} failed, ${skip} skipped")
+    os.stdio.println("${status}: ${pass} passed, ${failed} failed, ${skip} skipped${skip_summary(skipped_why, skipped_uses, skipped_fx)}")
   }
   if pass + failed + skip == 0 {
     // said on standard error, JSON or not: a run that tested nothing
@@ -1220,4 +1235,19 @@ fn drop_generated_frames(msg: Str) -> Str {
     kept.push(ln)
   }
   kept.join("\n")
+}
+
+/// The summary line's skip reasons (decision 0437: a skip must not read
+/// as a pass), " (2 uses env, fs: run with --real; 1 REASON)": the `uses`
+/// tests in one entry with their effects, then each other reason, in
+/// order; "" for no skips.
+fn skip_summary(why: Map[Str, Int], uses: Int, fx: Set[Str]) -> Str {
+  var parts: List[Str] = []
+  if uses > 0 {
+    parts.push("${uses} uses ${fx.to_list().sort().join(", ")}: run with --real")
+  }
+  for r in why.keys().sort() {
+    parts.push("${why.get(r) ?? 0} ${r}")
+  }
+  if parts.is_empty() { "" } else { " (${parts.join("; ")})" }
 }
