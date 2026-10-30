@@ -47,23 +47,30 @@ fn (r: Request) with_trailers(f: fn() -> Map[Str, Str]) -> Request   // asked wh
 - Limits: trailers count against the header size limit
   (`max_header_bytes`) and a field count cap; over it the stream fails
   with the same error as an oversized header.
-- Forbidden names are rejected at `set_trailer` (an `Err` would make
-  every call fallible, so it is dropped and logged once, as Go drops
-  them): Content-Length, Transfer-Encoding, Host, Trailer, Content-Type,
-  Content-Encoding, Content-Range, Cache-Control, Expect, TE,
-  Authorization, Set-Cookie, the hop by hop fields (RFC 9110 6.5.1, Go's
-  badTrailer list). On receive the same names are dropped.
+- Forbidden names are dropped at `set_trailer` (an `Err` would make
+  every call fallible; Go logs "ignoring invalid trailer" and drops
+  them): Go's httpguts badTrailer list, Authorization, Cache-Control,
+  Connection, Content-Encoding, Content-Length, Content-Range,
+  Content-Type, Expect, Host, Keep-Alive, Max-Forwards, Pragma,
+  Proxy-Authenticate, Proxy-Authorization, Proxy-Connection, Range,
+  Realm, Te, Trailer, Transfer-Encoding, Www-Authenticate. On receive
+  the same names are dropped.
 - HTTP/1.1: trailer fields follow the `0\r\n` chunk; a response that is
   not chunked (a Content-Length) drops its trailers, as Go.
 - HTTP/2: the decision is made when the stream function returns. With
   trailers, the last DATA has no END_STREAM and a final HEADERS frame
-  carries END_STREAM; without, the last DATA carries it. Trailers with
-  no body written is trailers-only: the response HEADERS with
-  END_STREAM, the trailer fields merged into it (gRPC's immediate
-  error), as grpc-go expects. So h2srv holds the response HEADERS until
-  the handler returns or writes its first DATA; `BodyWriter.flush()`
-  still sends the head at once, for a handler that writes nothing for a
-  long time (a long poll).
+  carries END_STREAM; without, the last DATA carries it. Trailer names
+  go out sorted, as Go sends them. Trailers with no body written are
+  the response HEADERS without END_STREAM, then the trailing HEADERS
+  with END_STREAM and no DATA between (Go's net/http writeChunk, read
+  2026-10-30 in go1.26.1's h2_bundle.go); the trailer fields are never
+  merged into the response HEADERS, so the Go backend and native agree
+  and a client reads them through `trailers()` on both. grpc-go's client
+  accepts this form for an immediate error as well as a merged
+  trailers-only frame. (Amended 2026-10-30, before any code: the first
+  text merged them, which net/http never does, and would have broken
+  Go parity. A received merged trailers-only response, from grpc-go's
+  server, keeps its fields in the head, as Go's client does.)
 
 ### 2. Full duplex
 
@@ -142,7 +149,7 @@ fn (c: Client) with_cert(cert: tls.TlsCert) -> Client   // presented when a serv
 ### Tests
 
 - Goldens on every backend with Go parity: a gRPC style echo (bidi
-  messages, then a `grpc-status` trailer), trailers-only on h2, HTTP/1.1
+  messages, then a `grpc-status` trailer), trailers with no body on h2 (two HEADERS frames), HTTP/1.1
   chunked trailers both ways, forbidden trailer names dropped, a
   duplex HTTP/1.1 stream with `with_full_duplex`, `http.pipe` with
   close_with_error, mTLS in each ClientAuth mode (no certificate, a
