@@ -80,10 +80,11 @@ oldifs=$IFS
 IFS=:
 for d in $PATH; do
   [ -n "$d" ] || continue
-  if [ -e "$d/go" ] || [ -e "$d/gofmt" ]; then
+  if [ -e "$d/go" ] || [ -e "$d/gofmt" ] || [ -e "$d/go.exe" ]; then
     for f in "$d"/*; do
       b=$(basename "$f")
-      case "$b" in go|gofmt|go[0-9]*) continue ;; esac
+      # go.exe and gofmt.exe too: Git Bash on Windows (it links as a copy)
+      case "$b" in go|gofmt|go.exe|gofmt.exe|go[0-9]*) continue ;; esac
       [ -x "$f" ] && [ ! -e "$out/shim/$b" ] && ln -s "$f" "$out/shim/$b"
     done
     d=$out/shim
