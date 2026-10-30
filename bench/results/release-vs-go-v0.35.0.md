@@ -25,6 +25,15 @@ Compile: xo's edit builds 60 to 70 ms (coll 130, conc-spawn 100) against
 Go's 100 to 110, every edit on the std-record path; cold 890 to 1530 ms
 against Go's 1450 to 1570.
 
+Run cache row (owner, 2026-10-29: the report's rows run with the run cache
+off): an unchanged rebuild with the run cache on (the default), the released
+xo, five rebuilds after two warm-up builds, `/usr/bin/time -l` of
+`xo build -o OUT .` (10 ms resolution): llvm-fib 10 ms and 15 MB on all five,
+coll 10 ms and 7 MB on all five. `go build -o OUT .` in the same harness: llvm
+120 to 130 ms and 25 to 26 MB, coll 120 ms and 25 to 26 MB (the compile table's
+Go second-build 40 ms comes from the script's own timing, a different
+harness).
+
 Direct interp A/B (A = built by 0.34.0, B = built by 0.35.0):
 
 ```
