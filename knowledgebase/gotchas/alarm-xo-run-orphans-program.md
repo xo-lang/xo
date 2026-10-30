@@ -28,3 +28,29 @@ from perl's `alarm`.
   Go only golden on native) outside a timeout that reaches the program.
 - A leftover found afterwards is stopped by its PID only by the session
   that started it (CLAUDE.md safety rules), or reported to the lead.
+
+## Follow-up (2026-10-30): a Go backend binary ignores the alarm
+
+Status: Observed (2026-10-30)
+
+### Symptom
+
+`perl -e 'alarm 15; exec @ARGV' ./prog` ended a native (arm64, LLVM)
+Xo program after 15 s but not one built with `--backend=go`: a hung Go
+backend probe ran until heavy.sh's 1200 s stall reaper stopped the
+whole gate.
+
+### Cause
+
+The alarm survives exec and delivers SIGALRM, whose default action
+ends a process. The Go runtime installs its own handler for SIGALRM
+(os/signal semantics: delivered to a channel nobody reads), so the
+signal is caught and ignored.
+
+### Fix
+
+Bound a run with a watchdog that kills the PID it started:
+`prog & pid=$!`, poll `kill -0 $pid` for the limit, then
+`kill -9 $pid` (the PID captured at launch, never a name or pattern).
+macOS has no timeout(1). Example:
+~/xo-lead/notes/xo-lang-5/scripts/pipe-probe2.sh.

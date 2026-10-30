@@ -13,6 +13,10 @@
 piece and returns; the reader takes the held pieces first, then waits
 on the writer as before. The Go backend waited forever on the first
 such write and the native backends on the second.
+Also native: a `Client.open` stream with a piped body, read to its end
+without `close()`, kept its sending group live until exit (one
+allocation under XO_LEAKCHECK); it now closes when the body ends or
+fails, as Go's transport is done with the request then.
 
 ## 2026-10-30: fix: an undeclared trailer after a short streamed body, Go backend (decision 0433)
 
