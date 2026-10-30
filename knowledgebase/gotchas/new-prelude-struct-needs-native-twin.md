@@ -41,3 +41,14 @@ prelude's declaration, which maps to the twin.
 To see a smoke build's error: build a hello world with the seed in
 `~/Library/Caches/xo/checkout/<key>/xo build --backend=arm64
 --std=WORKTREE/std -o smoke DIR` (through heavy.sh).
+
+## A value from another module needs a copy into the twin
+
+Observed 2026-10-30 (decision 0426, the same stages): with the twin in
+place, `fs_disk_usage` in std/native/prelude.xo returned the DiskUsage a
+user Fs (std/native/llrt/userfs.xo) built, and the build failed with
+XO0401 (`native.prelude.DiskUsage` against `Result[DiskUsage]`): a value
+of the prelude struct made in another module has the prelude's type, not
+the twin's. Build a twin value field by field from it (`DiskUsage{total:
+u.total, ...}`), as `fs_disk_usage` and `net_interfaces` (the llrt
+ifaces.xo list) do.
