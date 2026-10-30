@@ -1,6 +1,6 @@
 # 0225: On demand CI on self-hosted EC2 runners
 
-Status: Accepted (owner, 2026-10-14), implemented for linux/arm64:
+Status: Superseded by 0423 (owner, 2026-10-29: runners deleted). Was: Accepted (owner, 2026-10-14), implemented for linux/arm64:
 runners xo-ci-arm64 (r8g.4xlarge) and xo-ci-arm64-big, -big2, -big3
 (r8g.8xlarge), adopted from the warm machines. Verified 2026-10-14:
 `short` 51 s, the autostart from a stopped machine 75 s, `fixed-point`

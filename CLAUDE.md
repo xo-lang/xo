@@ -40,10 +40,10 @@ implementation the language started with was deleted (decision 0215).
 - `spec/std.md`: prelude methods and standard library surface.
 - `knowledgebase/infrastructure/`: toolchain, repo layout, build and test
   commands, CI, namespaces (GitHub org, Homebrew, etc.).
-- [`knowledgebase/infrastructure/ci.md`](knowledgebase/infrastructure/ci.md):
-  on demand CI (decision 0225): how to run it, the suites, the
-  self-hosted EC2 runners (`infra/ci-runners`), the AWS and GitHub App
-  inventory, operations, measurements, and cost.
+- [`knowledgebase/infrastructure/offload.md`](knowledgebase/infrastructure/offload.md):
+  the owner's arm64 and amd64 offload hosts, where heavy runs go
+  (decision 0423 retired the EC2 CI of
+  [ci.md](knowledgebase/infrastructure/ci.md), kept as history).
 - `knowledgebase/decisions/`: design decisions as numbered ADRs
   (`NNNN-short-title.md`).
 - `knowledgebase/gotchas/`: traps and surprises, with how to avoid them.
@@ -275,8 +275,18 @@ Update the knowledgebase in the same change as the work, not later:
     LLVM is the reference backend); only seed-final.sh (seeds and
     releases) sets XO_TEST_LLVM_OPT=O2.
     Long pass/fail runs go
-    to on demand CI, not the Mac's single heavy slot.
-  - CI (decision 0225, owner 2026-10-14): GitHub Actions on self-hosted
+    to the offload hosts, not the Mac's single heavy slot.
+  - CI retired (decision 0423, owner 2026-10-29): the EC2 runners and
+    the GitHub runners are deleted, so `gh workflow run ci.yml` has no
+    runner. Heavy runs go to the owner's offload hosts
+    (knowledgebase/infrastructure/offload.md): linux/arm64 through
+    `~/xo-lead/agents/offload.sh`, linux/amd64 through
+    `~/xo-lead/agents/amd64-run.sh`, Windows on the amd64 host (to be
+    scripted). They exist to take load off the Mac (owner, 2026-10-29):
+    any test, build or measurement may run there without asking, one
+    job at a time per host (a lock queues the rest). The old CI, for
+    history:
+  - CI (decision 0225, owner 2026-10-14, superseded): GitHub Actions on self-hosted
     linux/arm64 EC2 runners (infra/ci-runners), started only by hand,
     never on push: push the branch, then `gh workflow run ci.yml -f
     ref=BRANCH -f suite=auto` (short, the touched packages' full tests,
@@ -298,9 +308,8 @@ Update the knowledgebase in the same change as the work, not later:
     Full reference: [ci.md](knowledgebase/infrastructure/ci.md).
   - internal/selfhost has tiers (`XO_SELFHOST_TIER`): `short` (-short),
     `merge` (the default, about 4 min on the Mac), `full` (every backend,
-    58 min cold on r8g.8xlarge, `-timeout 120m`, on demand: `gh workflow
-    run ci.yml -f suite=full -f runner=xo-arm64-big`,
-    knowledgebase/infrastructure/ci.md); `XO_SELFHOST_JOBS` sizes its
+    58 min cold on r8g.8xlarge, `-timeout 120m`, on demand on an
+    offload host through the lead); `XO_SELFHOST_JOBS` sizes its
     worker pool (default min(GOMAXPROCS, 4)); full runs before tagging and
     for a change under compiler/ or the compiler's SSA or native backends
     that the merge tier does not exercise.

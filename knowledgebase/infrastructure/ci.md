@@ -1,5 +1,10 @@
 # CI: on demand GitHub Actions on self-hosted EC2 runners
 
+**Retired 2026-10-29 (decision 0423):** the runners and their volumes are
+deleted, the GitHub runners removed, and the infra/ci-runners stack
+destroyed. Heavy runs go to the offload hosts
+([offload.md](offload.md)). The rest of this page is history.
+
 Decision 0225 (owner, 2026-10-14). Heavy verification (full package
 tests, the selfhost merge tier, the fixed point, the full tier) runs on
 linux/arm64 EC2 machines as GitHub Actions jobs, so it no longer takes

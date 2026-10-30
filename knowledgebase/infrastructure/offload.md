@@ -9,6 +9,10 @@ names no address or password (decision 0249): they live in
 
 Last verified: 2026-10-29
 
+Any test, build or measurement may run on either host without asking
+(owner, 2026-10-29: they exist to take load off the Mac); each runs one
+job at a time. They replace the EC2 CI (decision 0423).
+
 ## What runs there
 
 `scripts/lead/tier.sh` sends the tier's commit as a git bundle (the

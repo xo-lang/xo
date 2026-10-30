@@ -1,5 +1,10 @@
 # infra/ci-runners: self-hosted GitHub Actions runners on EC2
 
+**Retired 2026-10-29 (decision 0423):** the machines are terminated,
+runners.json is empty, the GitHub runners are removed, and the stack is
+destroyed (`terraform destroy` here). `terraform apply` with runners.json
+entries would rebuild it.
+
 The on demand CI of decision 0225: the warm EC2 machines run GitHub
 Actions jobs for `josephspurrier/xo`, start when a job is queued, and
 stop themselves when idle. The full reference (running CI, how it
