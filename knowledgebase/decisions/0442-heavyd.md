@@ -1,8 +1,9 @@
 # 0442: heavyd, one daemon for the Mac's heavy slots, gates, measurements and quiet windows
 
-Status: Proposed (Xo Lang 2, 2026-10-30; the owner approved building it
-in Go first, to be converted to Xo later; the lead installs and switches
-over with the owner's OK).
+Status: Accepted (owner, 2026-10-30: the design; the switch from shadow
+mode and the per-class time limits wait for the shadow log review and the
+owner's OK). Proposed by Xo Lang 2; the owner approved building it in Go
+first, to be converted to Xo later.
 
 ## Context
 

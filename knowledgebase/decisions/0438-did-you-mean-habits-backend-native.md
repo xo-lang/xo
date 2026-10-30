@@ -1,7 +1,7 @@
 # 0438: did-you-mean notes for agents' Go and Rust habits, and `--backend=native`
 
-Status: Proposed (Xo Lang 2, 2026-10-30; the lead's queue item from the
-agent survey's item 2). Built the same day; the owner decides.
+Status: Accepted (owner, 2026-10-30). Proposed by Xo Lang 2 the same day
+(the lead's queue item from the agent survey's item 2).
 
 ## Context
 

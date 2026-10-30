@@ -1,6 +1,8 @@
 # 0444. http.pipe: writes before the first read are held
 
-Status: Proposed (Xo lang 5, 2026-10-30)
+Status: Accepted (owner, 2026-10-30, with a follow-up: cap the bytes held
+before the first read, past which a write waits as it does after it).
+Proposed by Xo lang 5
 
 ## Context
 http.pipe() (decision 0433) is Go's io.Pipe: each PipeWriter.write waits
