@@ -61,6 +61,10 @@ implementation the language started with was deleted (decision 0215).
   wrong function (the spin default and the h2 "allocator slow path").
   A codegen only change reports callgrind's instruction count and
   confirms it with one `--ab` run. See agent-tools.md "Measuring".
+  Where (owner, 2026-10-30): an `--ab` claim that is not darwin
+  specific runs on the linux/arm64 offload host
+  (`~/xo-lead/agents/ab-host.sh BASE NEW NAME -- self|PROG`); Mac
+  measure windows are only for darwin only claims and Mac footprints.
 
 Read `knowledgebase/README.md` and the relevant folder index before starting
 work in an area. Check `decisions/` before proposing a change to something

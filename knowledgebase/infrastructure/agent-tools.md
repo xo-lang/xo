@@ -589,6 +589,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- Where an `--ab` runs (owner, 2026-10-30): a claim that is not darwin
+  specific runs on the linux/arm64 offload host with
+  `~/xo-lead/agents/ab-host.sh BASE NEW NAME [--rounds=N] -- self|PROG`
+  (offload.md); it needs no heavy.sh slot and no Mac measure window.
+  The Mac's measure windows are only for darwin only claims (Mach-O,
+  the macOS scheduler or syscalls) and Mac memory footprints.
 - A placement claim (a sweep over XO_ARM64_PAD, an alignment, a layout)
   carries the one-binary control beside it: the same statistic with one
   binary in every slot (16 slots x the rounds); only a spread above that
