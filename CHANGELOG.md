@@ -112,6 +112,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   dur_parse 0.991 of the instructions (xo bench --ab n=15; wall and
   cycles within noise), against LLVM 1.016 to 1.006; xo's native __text 70,687,520 to
   70,681,816 bytes.
+- `xo test --std-module=M` links std's test variant (decision 0436),
+  building M and the std modules that import it from source, and after
+  an edit of M takes a variant that differs only in those modules: an
+  edit's run on darwin/arm64 0.40 to 0.25 s for base64, 0.54 to 0.29 s
+  for url, 0.45 to 0.21 s for json, peak RSS about 570-614 to 314-350
+  MB. Editing a std module's `_test.xo` no longer changes std's
+  variants.
 - `xo test` links std's separately compiled test variant (decision
   0436, Proposed; `xo dev stdcache --test`), as `xo build` links std's
   store: a one-test program's edit on darwin/arm64 0.99 to 0.20-0.38 s,

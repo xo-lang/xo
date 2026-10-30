@@ -78,8 +78,8 @@ fn sepcomp_default(os: Os, ctx: Ctx, o: Opts, backend: Str) -> Os {
   let served = ((host is "darwin" | "linux") && (arch is "arm64" | "amd64")) || (host == "windows" && arch == "amd64")
   // `xo test` links std's test variant (decision 0436: std built in test
   // mode, its Fs and Os calls routed to the test world, with the test
-  // world's roots); not --std-module, whose module under test is
-  // compiled with its tests' private access, so not taken from the store
+  // world's roots); --std-module too, with its module and their
+  // importers built from source (main.xo, check.sep_source)
   let tmode = o.cmd == "test"
   if !(o.cmd is "build" | "run" | "test") || backend != arch || !served || o.release || o.race || o.linker == "cc" || o.assembler == "cc" || passes_changed(os) || std_code_changed(os, o) {
     return os

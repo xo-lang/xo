@@ -36,10 +36,21 @@ skip the build, and the test binary is not run). std_cache_key adds
 sepcomp_default admits `xo test` under the same conditions as build
 (native backend for the host, no --release, --race, cc linker or
 assembler, no changed pass or std code), and picks the pair for the
-program's concurrency, as build does. Not `--std-module`: the module
-under test is compiled with its tests' private access, so it is not
-taken from the store (item 2 of the test speed queue builds only that
-module from source).
+program's concurrency, as build does.
+
+`--std-module=M` (item 2 of the test speed queue, 2026-10-30) takes the
+variant too, with M and every std module that imports it, directly or
+not (std_source_set, from std/native's `use` lines), built from source
+(check.Checker.sep_source: ssa's run_job never makes their functions
+extern): their store code may hold M's old bodies inlined and its old
+layouts. An importer the program never loads is dead in the link. The
+variant's key leaves out std's `_test.xo` files, so a test edit keeps
+it. A source edit of M changes the key; a built test variant keeps
+what its key hashed in `<key>.tree`, and std_variant_near takes one
+whose tree lines equal the current ones once the source set's files
+are left out on both sides (the rest of std is the same files, and none
+of it imports M). An edit outside that set (std/url's interface module,
+another module) misses as before.
 
 A miss behaves exactly as build's: the whole program is built and the
 variant's background build starts.
@@ -60,6 +71,14 @@ variant's background build starts.
   program, B the variant): wall 0.499 (264 to 132 ms, 95% interval 0.447
   to 0.558), cpu 0.397, peak RSS 0.769 (489 to 376 MB); a store of
   11.3 MB per concurrency setting there, built in 2.0 s at 1.5 GB peak.
+- `--std-module` after a code edit of the module (darwin/arm64, warm,
+  near variant against the whole program): base64 0.25 against 0.40 s,
+  peak RSS 324 against 570 MB; url 0.29 against 0.54 s, 314 against
+  582 MB; json 0.21 against 0.45 s, 350 against 614 MB. Every std
+  module with tests passes from the near variant after a touch of its
+  source, and a layout edit (two fields prepended to url's Values)
+  passes 66 of 66. std's store defines no weak external, so no
+  instance from the store can stand in for the program's.
 - A test binary linked with the variant is not byte identical to one
   built whole (the store's layout), but its tests behave the same.
 
