@@ -137,12 +137,9 @@ fn trace(c: Int) {
   // the block: the frame count, the words a frame, then the frames (a
   // return address, and its registers for XO_TRACEBACK=locals)
   let f = rt.mem_load(rt.static_word(TB), 0, 8)
-  // (windows/amd64's walk keeps no registers, unwind.xo trace_frames:
-  // its frames alone, where asking for them gave an empty traceback)
-  let regs = (f & 1) == 1 && match target.os {
-    TargetOs.Windows => false
-    TargetOs.Linux | TargetOs.Darwin | TargetOs.Wasi => true
-  }
+  // (windows/amd64's from the RtlVirtualUnwind walk's CONTEXT, unwind.xo
+  // win_walk_regs)
+  let regs = (f & 1) == 1
   let rw = if regs { TB_REGS } else { 0 }
   let b = rt.heap_large(TB_HDR + 8 * (1 + rw) * TB_DEPTH)
   let n = unwind.trace_frames(b + TB_HDR, TB_DEPTH, rw)
@@ -315,12 +312,6 @@ pub fn init_traceback(print: Int) {
   var w = print
   if !e.is_empty() && e[0] == "0" {
     w = 1
-  } else if !e.is_empty() && e[0] == "locals" && target.os == TargetOs.Windows {
-    // no DWARF for a frame's variables on windows (decision 0268): one
-    // note, not a traceback silently without them (Windows field report
-    // W9 on 0.26.0)
-    let n = "xo: XO_TRACEBACK=locals: a frame's variables are not available on windows (decision 0268); tracebacks show functions and lines\n"
-    stdio.write_all(2, raw.data(n), n.len())
   } else if !e.is_empty() && e[0] == "locals" {
     w = print + 1
   }

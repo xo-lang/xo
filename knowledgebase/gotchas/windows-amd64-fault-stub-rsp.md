@@ -23,8 +23,8 @@ whose stubs save is emitted again (x86_emit, as for borrowed registers)
 with X86_STUB_SAVES frame words above its by reference memory (stub_at),
 and its stubs store there with rsp unchanged, so the prologue's unwind
 data stays right and the debug info (DWARF, the PDB's locals) places
-those variables again (XO_TRACEBACK=locals is still off on Windows, in
-llrt fault.xo init_traceback). TestWindowsAmd64Identity turns the saves
+those variables again, and XO_TRACEBACK=locals prints them (on Windows
+since 2026-10-30: unwind.xo win_walk_regs, gotcha windows-locals-probe.md). TestWindowsAmd64Identity turns the saves
 off on both platforms (XO_PASSES=-x86_stub_saves). Any other rsp change
 outside the prologue on Windows needs unwind data of its own (or must
 not hold across a call): check the Windows goldens on the offload host

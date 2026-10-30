@@ -1593,7 +1593,15 @@ pub fn vars_load() -> Vars {
       bias = b
       ok = c
     }
-    TargetOs.Windows | TargetOs.Wasi => {}
+    TargetOs.Windows => {
+      // the exe's own .debug_ sections, as load_pe's lines (its PDB is
+      // the debuggers')
+      let (a, b, c) = pe_sects()
+      s = a
+      bias = b
+      ok = c
+    }
+    TargetOs.Wasi => {}
   }
   if !ok || s.info_n == 0 || s.abbrev_n == 0 {
     return Vars{why: "no DWARF (a release or stripped build)"}
@@ -1896,7 +1904,9 @@ pub struct Regs {
 
 /// The registers every frame has, of the 96 the unwinder keeps: the
 /// callee saved ones, the frame pointer, and sp (x19 to x29, sp, and d8
-/// to d15 at 72 to 79 on arm64; rbx, rbp, rsp, r12 to r15 on x86_64).
+/// to d15 at 72 to 79 on arm64; rbx, rbp, rsp, r12 to r15 on x86_64,
+/// Windows too: Xo's own calls are System V's there, so rsi and rdi are
+/// not saved).
 pub fn callee_saved() -> List[Bool] {
   var h: List[Bool] = []
   for i in 0..96 {
@@ -2229,10 +2239,13 @@ fn read_words(a: Int, n: Int) -> List[W] {
 
 /// Whether the n bytes at a can be read: written to a pipe, which the
 /// kernel refuses with EFAULT for a bad address instead of faulting
-/// (then read back out of the pipe).
+/// (then read back out of the pipe); on Windows, VirtualQuery's regions.
 fn probe(a: Int, n: Int) -> Bool {
   if a <= 4096 || a < 0 {
     return false
+  }
+  if target.os == TargetOs.Windows {
+    return win_readable(a, n)
   }
   let fds = rt.heap_large(16)
   var ok = false
@@ -2269,6 +2282,29 @@ fn probe(a: Int, n: Int) -> Bool {
     TargetOs.Windows | TargetOs.Wasi => {}
   }
   rt.heap_release(fds - 8)
+  ok
+}
+
+/// Whether the n bytes at a lie in committed, readable regions
+/// (VirtualQuery's MEMORY_BASIC_INFORMATION: base 0, size 24, state 32,
+/// protect 36): MEM_COMMIT, a readable protection (PAGE_READONLY,
+/// READWRITE, WRITECOPY and their EXECUTE_ forms), not PAGE_GUARD.
+fn win_readable(a: Int, n: Int) -> Bool {
+  let mbi = rt.heap_large(48)
+  var at = a
+  var ok = true
+  while ok && at < a + n {
+    if sys_windows.VirtualQuery(at, mbi, 48) == 0 {
+      ok = false
+    } else {
+      let state = rt.mem_load(mbi, 32, 4)
+      let prot = rt.mem_load(mbi, 36, 4)
+      // MEM_COMMIT 0x1000; readable 0xEE; PAGE_GUARD 0x100
+      ok = state == 4096 && (prot & 238) != 0 && (prot & 256) == 0
+      at = rt.mem_load(mbi, 0, 8) + rt.mem_load(mbi, 24, 8)
+    }
+  }
+  rt.heap_release(mbi - 8)
   ok
 }
 

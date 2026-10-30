@@ -295,10 +295,10 @@ pub fn trace_frames(out: Int, max: Int, rw: Int) -> Int {
         if s == 0 || (rt.mem_load(s, W_PDATA_N, 8) == 0 && !win_image(s)) {
           return 0
         }
-        if rw > 0 {
-          return 0
-        }
         sys_windows.RtlCaptureContext(s + W_CX)
+        if rw > 0 {
+          return win_walk_regs(s, out, max, rw)
+        }
         return win_walk(s, out, max, false)
       }
       TargetArch.Arm64 | TargetArch.Wasm32 => return 0
@@ -2209,6 +2209,69 @@ pub fn win_walk(s: Int, out: Int, max: Int, first0: Bool) -> Int {
       }
     }
     first = false
+  }
+  n
+}
+
+/// The CONTEXT offsets of the x86_64 DWARF registers 0 to 15 (rax, rdx,
+/// rcx, rbx, rsi, rdi, rbp, rsp, r8 to r15).
+fn wx_dwarf(r: Int) -> Int {
+  match r {
+    0 => 120
+    1 => 136
+    2 => 128
+    3 => 144
+    4 => 168
+    5 => 176
+    6 => 160
+    7 => 152
+    _ => 184 + 8 * (r - 8)
+  }
+}
+
+/// win_walk keeping each frame's registers (trace_frames' record: the
+/// return address, then rw words by DWARF register number, those past 15
+/// zero), taken from the CONTEXT before the frame is unwound: the
+/// nonvolatile ones (rbx, rbp, rdi, rsi, r12 to r15) and rsp are the
+/// frame's, as RtlVirtualUnwind restored them; the others are left over
+/// from frames below it (decision 0268's locals on Windows). From a
+/// captured context (its pc a return address), so the first frame too
+/// takes its .pdata entry at pc - 1.
+fn win_walk_regs(s: Int, out: Int, max: Int, rw: Int) -> Int {
+  let cx = s + W_CX
+  let lo = rt.mem_load(s, W_PLO, 8)
+  let hi = rt.mem_load(s, W_PHI, 8)
+  var n = 0
+  while n < max {
+    let pc = rt.mem_load(cx, WX_PC, 8)
+    let sp = rt.mem_load(cx, WX_SP, 8)
+    if pc == 0 || sp == 0 || !after_call(pc, lo, hi) {
+      break
+    }
+    let rec = out + 8 * (1 + rw) * n
+    rt.mem_store(rec, 0, pc, 8)
+    rt.mem_set(rec + 8, 0, 8 * rw)
+    var r = 0
+    while r < 16 && r < rw {
+      rt.mem_store(rec + 8, 8 * r, rt.mem_load(cx, wx_dwarf(r), 8), 8)
+      r += 1
+    }
+    n += 1
+    let f = if pc >= lo && pc < hi { pdata_find(s, pc - 1) } else { 0 }
+    if f == 0 {
+      if pc < lo || pc >= hi {
+        break
+      }
+      rt.mem_store(cx, WX_PC, rt.mem_load(sp, 0, 8), 8)
+      rt.mem_store(cx, WX_SP, sp + 8, 8)
+    } else {
+      // UNW_FLAG_NHANDLER
+      let _h = sys_windows.RtlVirtualUnwind(0, rt.mem_load(s, W_PBASE, 8), pc, f, cx, s + W_DATA, s + W_EST, 0)
+      let nsp = rt.mem_load(cx, WX_SP, 8)
+      if nsp <= sp || nsp - sp > PROF_SPAN {
+        break
+      }
+    }
   }
   n
 }

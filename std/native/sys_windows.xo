@@ -320,6 +320,9 @@ fn CreateWaitableTimerExW(security: Int, name: Int, flags: Int, access: Int) -> 
 fn SetWaitableTimer(h: Int, due: Int, period: Int, f: Int, arg: Int, resume: Int) -> Int32
 /// GetModuleHandleW(0): the program's image base.
 fn GetModuleHandleW(name: Int) -> Int
+/// VirtualQuery: the region holding addr into the MEMORY_BASIC_INFORMATION
+/// (48 bytes) at info; the bytes written, 0 on failure.
+fn VirtualQuery(addr: Int, info: Int, len: Int) -> Int
 /// GetModuleFileNameW of the module m (0: the program) into the n UTF-16
 /// units at the address buf: the units written (without the NUL).
 fn GetModuleFileNameW(m: Int, buf: Int, n: Int) -> UInt32

@@ -158,3 +158,19 @@ called from main), on both backends:
   object out (gotchas/llvm-aggregate-dbg-value.md), so there a literal Str
   stays `<unavailable>`.
 - Test: internal/llvm TestFaultLocalsFrames (arm64 and LLVM).
+
+## Windows (2026-10-30)
+
+XO_TRACEBACK=locals works on native windows/amd64 too (it printed a note
+and no variables since the W9 field report, 2026-10-23): unwind.xo
+trace_frames takes each frame's registers from the RtlVirtualUnwind
+walk's CONTEXT (win_walk_regs: rax to r15 by DWARF number, before the
+frame is unwound, so the nonvolatile ones and rsp are the frame's);
+dwline.xo vars_load reads the exe's own .debug_ sections (pe_sects, as
+the line tables already did); probe asks VirtualQuery whether memory can
+be read. The callee saved set stays System V's (Xo's own calls are
+System V's on Windows). The fault stubs' caller saved registers are in
+frame words there (x86emit.xo stub_at), so the faulting frame's
+variables print as on Linux. Checked on the owner's windows/amd64 box
+against linux/amd64: the same variables and values.
+
