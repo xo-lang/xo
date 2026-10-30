@@ -52,9 +52,10 @@ fn run_query(os: Os, args: List[Str]) -> Int {
     os.stdio.eprint("xo query ${kind}: want ${want} argument(s)\n\n${query_usage()}")
     return 2
   }
-  if kind != "type" && mod_root(os.fs, wd_of(os), dir).is_empty() && !(os.fs.read_dir(abs_path(wd_of(os), dir)).ok() ?? []).any(fn(e) { !e.is_dir && e.name.ends_with(".xo") }) {
-    // no module and no Xo files: an empty answer would read as "none"
-    // (decision 0437)
+  if kind != "type" && !(rest.first() ?? "").starts_with("std/") && mod_root(os.fs, wd_of(os), dir).is_empty() && !xo_below(os.fs, abs_path(wd_of(os), dir), 2) {
+    // no module above, none below and no Xo files: an empty answer would
+    // read as "none" (decision 0437); a std module needs no module, and a
+    // directory of modules is a root
     os.stdio.eprintln("xo query: ${if dir_set { dir } else { "the current directory" }} is not inside a module (no xo.mod above it, no .xo files); pass --dir=DIR")
     return 2
   }
@@ -179,4 +180,18 @@ fn query_hash(os: Os, dir: Str, name: Str, as_json: Bool) -> Int {
     os.stdio.print("${d.hash}  ${d.kind} ${d.id} (${d.file}:${d.line})\n  own ${d.own}\n")
   }
   0
+}
+
+/// Whether d, or a directory at most depth levels below it, holds a .xo
+/// file or an xo.mod (a root of modules, as `xo def --dir=ROOT` takes).
+fn xo_below(fs: Fs, d: Str, depth: Int) -> Bool {
+  for e in fs.read_dir(d).ok() ?? [] {
+    if !e.is_dir && (e.name.ends_with(".xo") || e.name == "xo.mod") {
+      return true
+    }
+    if e.is_dir && depth > 0 && !e.name.starts_with(".") && xo_below(fs, "${d}/${e.name}", depth - 1) {
+      return true
+    }
+  }
+  false
 }
