@@ -147,8 +147,8 @@ fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
   // the object and the facts at once: two builds of std whole, each
   // most of the time (about 8 s each on the Mac, 2026-10-28)
   let results = scope s {
-    let a = s.spawn(fn() -> (Int, Str) { stdobj_run(os, obj_args) })
-    let b = s.spawn(fn() -> (Int, Str) { if facts.is_empty() { (0, "") } else { stdobj_run(os, facts_args) } })
+    let a = s.spawn(fn() -> (Int, Str) { stdobj_run(os, prog, obj_args) })
+    let b = s.spawn(fn() -> (Int, Str) { if facts.is_empty() { (0, "") } else { stdobj_run(os, prog, facts_args) } })
     [a.await, b.await]
   }
   var code = 0
@@ -162,10 +162,15 @@ fn stdobj_cmd(os: Os, args: List[Str]) -> Int {
   code
 }
 
-/// One build of `xo dev stdobj` (env and its command): its exit code
-/// and standard error.
-fn stdobj_run(os: Os, args: List[Str]) -> (Int, Str) {
-  match env_command(os, args).output() {
+/// One build of `xo dev stdobj` (env and its command) in the program's
+/// directory dir: its exit code and standard error. The directory, not
+/// the caller's: the build's compilation directory (its .debug_str
+/// comp_dir slots, in every object of std's store) came from the
+/// working directory, so std's bytes depended on where the build that
+/// started `xo dev stdcache` ran, and a deleted working directory failed
+/// the build ("no `main` function"; gotchas/stdobj-cwd-in-std-bytes.md).
+fn stdobj_run(os: Os, dir: Str, args: List[Str]) -> (Int, Str) {
+  match env_command(os, args).dir(dir).output() {
     Ok(r) => (r.code, r.stderr.to_str() ?? "")
     Err(e) => (1, "xo dev stdobj: ${e}\n")
   }

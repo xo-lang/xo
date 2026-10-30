@@ -9,6 +9,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `xo run -o PATH` writes PATH every time: when the run cache served
   an unchanged program, the second run wrote no file there. `xo run -o`
   now builds without the run cache, as `xo test -o` does.
+- std's separately compiled objects no longer depend on the directory a
+  build ran in: `xo dev stdobj` built std in the caller's working
+  directory, so its .debug_str comp_dir slots named that directory's
+  view of the build (the temporary build path, or "."), two identical
+  builds from different directories linked different bytes, and a deleted
+  working directory failed the std cache (gotchas/stdobj-cwd-in-std-bytes.md).
 - Native Windows DNS record lookups (`lookup_mx`, `lookup_txt`,
   `lookup_srv`, `lookup_addr`) work: Xo's own DNS client asks the network
   adapters' DNS servers and reads the Windows hosts file, as Go's pure Go
