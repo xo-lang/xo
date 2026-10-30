@@ -1331,9 +1331,9 @@ pub fn udp_read(cn: Int, max0: Int) -> UdpIn {
     rt.mem_set(sa, 0, SA)
     rt.mem_store(lenp, 0, SA, 4)
     let r = sock.recv_from(pd_fd(pd), a, max, sa, lenp)
-    if r >= 0 || (sock.windows() && r == -10040) {
-      // WSAEMSGSIZE: Windows reports a truncated datagram as an error
-      // after filling the buffer
+    if r >= 0 || (sock.windows() && r == -115) {
+      // WSAEMSGSIZE (EMSGSIZE once sock.wret maps it): Windows reports a
+      // truncated datagram as an error after filling the buffer
       let k = if r >= 0 { r } else { max }
       poll.pd_end(pd)
       let from = fmt_addr(sa)

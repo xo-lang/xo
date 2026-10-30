@@ -141,6 +141,7 @@ fn wsa_errno(e: Int) -> Int {
     10065 => 110         // WSAEHOSTUNREACH: EHOSTUNREACH
     10057 => 126         // WSAENOTCONN: ENOTCONN
     10047 => 102         // WSAEAFNOSUPPORT: EAFNOSUPPORT
+    10040 => 115         // WSAEMSGSIZE: EMSGSIZE (a cut datagram)
     _ => 5               // EIO
   }
 }

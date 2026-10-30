@@ -960,3 +960,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [bench-ab-parallel-build-loaded.md](bench-ab-parallel-build-loaded.md): Observed 2026-10-29: `xo bench --ab` of a parallel build (a self build) discards every round as loaded; pass --keep-loaded.
 - [heapos-nfree-off-main-thread.md](heapos-nfree-off-main-thread.md): Observed 2026-10-29: heapos.nfree from a worker thread segfaults; read per-class free counts on the main thread only.
 - [module-shells-need-facts.md](module-shells-need-facts.md): a function replaced by a shell in the module needs its body facts recorded, else param_types and the other facts readers silently return nothing (decision 0424).
+- [winsock-codes-mapped-before-check.md](winsock-codes-mapped-before-check.md): Observed 2026-10-30: sock.xo maps Winsock errors through wsa_errno (unknown ones become EIO), so compare against the mapped errno, never the raw WSAE code.
