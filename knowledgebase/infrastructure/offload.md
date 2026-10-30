@@ -7,7 +7,7 @@ names no address or password (decision 0249): they live in
 `~/xo-lead/offload.env` (mode 600) as `OFF_HOST`, `OFF_PORT`, `OFF_USER`,
 `OFF_PW` and `OFF_SEED`.
 
-Last verified: 2026-10-29
+Last verified: 2026-10-30
 
 Any test, build or measurement may run on either host without asking
 (owner, 2026-10-29: they exist to take load off the Mac); each runs one
@@ -71,7 +71,15 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
 
 A plain `golang:1.26.1-trixie` container (Go 1.26.1, Debian trixie, 12
 CPUs, 39 GB) with ssh on a mapped port and password login, set up by hand
-on 2026-10-29:
+on 2026-10-29. Recreated by the owner on 2026-10-30 after its ext4 /work
+went emergency read only (at 60% of 453 GB, a filesystem error, not a
+full disk): now with `--init` (docker-init as PID 1 reaps orphans; the old
+`sleep infinity` PID 1 had piled up 42,652 zombies) and an 89 GB disk, so
+clean up /work after each job. The lead reinstalled the list below
+(openssh-server first: `apt-get install openssh-server`, `mkdir -p
+/run/sshd`, PermitRootLogin and PasswordAuthentication in
+/etc/ssh/sshd_config.d/, `/usr/sbin/sshd`, which a container restart does
+not restart; the Mac's known_hosts entry changes with the host key):
 
 - upstream LLVM 23.1.3 in `/opt/llvm` (the CI runners' version and
   SHA-256), `clang.cfg` with `-fuse-ld=lld` and `-mcpu=native`;
