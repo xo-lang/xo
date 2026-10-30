@@ -1,6 +1,6 @@
 # 0365: A content store behind the back-end cache's per-id keys
 
-Status: Proposed (Xo Lang 3, 2026-10-24; for the owner's Sunday review,
+Status: Deferred (owner, 2026-10-30; the LZ4 compression part stays accepted and built): the content store waits for a measurement of what it saves with compression on. Previously proposed (Xo Lang 3, 2026-10-24; for the owner's Sunday review,
 nothing built). Deferred by the owner on 2026-10-24 ("measure a day of
 churn after today's cache fixes first"); that day is measured below
 (2026-10-26).

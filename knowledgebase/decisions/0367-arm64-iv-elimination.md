@@ -1,6 +1,6 @@
 # 0367: arm64 loops drop the index beside a pointer induction variable, with post-indexed loads (extends 0054)
 
-Status: Proposed, stopped at measurement step 1 (owner approved building
+Status: Rejected (owner, 2026-10-30: step 1 found no wall gain on M-series). Previously proposed, stopped at measurement step 1 (owner approved building
 it, 2026-10-24 ~16:50, after step 1; step 1 found no wall gain on the
 M-series: see "Step 1 result"). Nothing built.
 

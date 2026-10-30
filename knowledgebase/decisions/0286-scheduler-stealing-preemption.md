@@ -1,6 +1,6 @@
 # 0286: Scheduler: work stealing, back-edge preemption, and the root's inline task
 
-Status: Proposed (owner decision 2026-10-20, through the lead; Xo Lang 2).
+Status: Accepted (owner, 2026-10-30; steps 0, 1 and 3 built, step 2 stealing kept as a measurement only, async preemption in 0318). Previously proposed (owner decision 2026-10-20, through the lead; Xo Lang 2).
 Step 0 (the root's hand off) implemented 2026-10-20; step 1 (main on a
 fiber) implemented 2026-10-20, accepted by the owner with its ping pong
 cost; stealing and preemption next, as measured.

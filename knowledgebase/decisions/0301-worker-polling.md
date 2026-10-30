@@ -1,6 +1,6 @@
 # 0301: Idle workers poll the network themselves
 
-Status: Proposed (Xo Lang 2, 2026-10-21; for the owner's decision, no
+Status: Proposed, measure first (owner, 2026-10-30: a prototype measurement before any decision). Previously proposed (Xo Lang 2, 2026-10-21; for the owner's decision, no
 implementation before it)
 
 ## Context

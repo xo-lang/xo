@@ -1,6 +1,6 @@
 # 0377: The awake worker count follows the load
 
-Status: Proposed (Xo Lang 3, 2026-10-25, for the owner: it changes the default scheduler behavior).
+Status: Accepted in part (owner, 2026-10-30): XO_CAP=N as an opt-in setting; the adaptive default rejected (no variant was clean). Previously proposed (Xo Lang 3, 2026-10-25, for the owner: it changes the default scheduler behavior).
 2026-10-27: no adaptive variant is clean (see "Variants screened"); the default stays off and `XO_CAP=N` is the opt-in for
 server deployments.
 Nothing is built. Measured evidence below; the design and the measurement plan are the proposal.

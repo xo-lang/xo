@@ -1,6 +1,6 @@
 # 0273: --race on the native backends with a prebuilt TSan runtime
 
-Status: Proposed (owner decision 2026-10-19, through the lead; Xo Lang 2).
+Status: Accepted (owner, 2026-10-30; parts 1 to 3 built on every target). Previously proposed (owner decision 2026-10-19, through the lead; Xo Lang 2).
 Part 1 (what --race checks, the two modes) accepted by the lead
 2026-10-20 and implemented on the LLVM backend; part 2 on the arm64
 backend (2026-10-20); part 3's link by Xo's Mach-O linker (2026-10-20);

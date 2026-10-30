@@ -1,6 +1,6 @@
 # 0396: Thread local reads on darwin/arm64 run dyld's fast path inline
 
-Status: Proposed (Xo Lang 3, 2026-10-28). Implementation measured; the numbers and gates follow with the code.
+Status: Accepted (owner, 2026-10-30; built, on by default). Previously proposed (Xo Lang 3, 2026-10-28). Implementation measured; the numbers and gates follow with the code.
 
 ## Context
 

@@ -1,6 +1,6 @@
 # 0410: std's small batch S8: text width and precision, a tab writer, a priority queue, host facts
 
-Status: Proposed (lead request, 2026-10-29: items 12, 13 and 9 of the std-vs-Go survey, knowledgebase/infrastructure/std-coverage.md; Xo Lang 3). Stage by stage; each stage has its own std/changes entry, spec/std.md section and a timing row against Go where it has a hot path.
+Status: Accepted (owner, 2026-10-30; all four stages built). Previously proposed (lead request, 2026-10-29: items 12, 13 and 9 of the std-vs-Go survey, knowledgebase/infrastructure/std-coverage.md; Xo Lang 3). Stage by stage; each stage has its own std/changes entry, spec/std.md section and a timing row against Go where it has a hot path.
 
 ## Context
 

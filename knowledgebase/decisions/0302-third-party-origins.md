@@ -1,6 +1,6 @@
 # 0302: Third-party origins marked in the source and checked against THIRD_PARTY_NOTICES
 
-Status: Proposed (Xo Publish, 2026-10-21; for the owner's decision, no
+Status: Accepted (owner, 2026-10-30; the notices wording stays with the owner). Previously proposed (Xo Publish, 2026-10-21; for the owner's decision, no
 implementation before it). THIRD_PARTY_NOTICES is legal text: this
 decision only proposes how the tree keeps it complete; the notices'
 wording stays with the owner.

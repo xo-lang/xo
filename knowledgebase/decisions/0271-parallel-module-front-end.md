@@ -1,6 +1,6 @@
 # 0271: Whole-program compilation with a parallel module front end
 
-Status: Proposed (xo-fa, 2026-10-19; owner-approved direction, lead
+Status: Accepted in part (owner, 2026-10-30): steps 1a and 1b (relocatable front-cache entries) as built; the rest superseded by 0388. Previously proposed (xo-fa, 2026-10-19; owner-approved direction, lead
 2026-10-19). Supersedes stage 3 of decision 0220 (per-module code
 generation with a link-time merge); stages 1 and 2 of 0220 stand.
 

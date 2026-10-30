@@ -1,6 +1,6 @@
 # 0443: `xo dev size --by-cause`, native code size split by what made it
 
-Status: Proposed (Xo Lang 2, 2026-10-30; the lead's queue item, moved
+Status: Accepted (owner, 2026-10-30). Previously proposed (Xo Lang 2, 2026-10-30; the lead's queue item, moved
 from Xo Lang 1, whose plan is ~/xo-lead/notes/lang1/plan-size-by-cause.md).
 
 ## Context

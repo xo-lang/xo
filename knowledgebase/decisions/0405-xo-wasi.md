@@ -1,6 +1,6 @@
 # 0405: xo built for wasip1/wasm: check, fmt, vet and build for every native target
 
-Status: Proposed (owner request via the lead, 2026-10-29: ship a full `xo` built for wasip1/wasm with each release, target 0.35; Xo Lang 3). Notes with the measurements: ~/xo-lead/notes/lang3/wasi-xo.md.
+Status: Deferred for release (owner, 2026-10-30): the WASI build stays behind XO_RELEASE_WASI=1 and is not shipped yet. Previously proposed (owner request via the lead, 2026-10-29: ship a full `xo` built for wasip1/wasm with each release, target 0.35; Xo Lang 3). Notes with the measurements: ~/xo-lead/notes/lang3/wasi-xo.md.
 
 ## Context
 

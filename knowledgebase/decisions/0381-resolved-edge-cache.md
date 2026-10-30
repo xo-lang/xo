@@ -1,6 +1,6 @@
 # 0381: A program's resolved edge list is split, and the std graph is cached once instead of checked with every program
 
-Status: Proposed (Xo DeepSeek 2, 2026-10-26, for the lead; nothing built).
+Status: Accepted (owner, 2026-10-30; not built yet). Previously proposed (Xo DeepSeek 2, 2026-10-26, for the lead; nothing built).
 
 ## Context
 

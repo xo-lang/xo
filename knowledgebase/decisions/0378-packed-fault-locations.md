@@ -1,6 +1,6 @@
 # 0378: A checked operation's position as one record address
 
-Status: Proposed, deferred (written by DS-2, 2026-10-26; the lead
+Status: Deferred (owner, 2026-10-30: about 8 bytes a site move to data with no instruction saved). Previously proposed, deferred (written by DS-2, 2026-10-26; the lead
 deferred it the same day: the file name half already landed in 0228's
 addendum, and what remains moves about 8 bytes a site from `__text` to
 read-only data with no instruction change, so other work goes first)

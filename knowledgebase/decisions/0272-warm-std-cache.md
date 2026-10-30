@@ -1,6 +1,6 @@
 # 0272: A warm standard library cache with seeds and releases
 
-Status: Proposed (owner, 2026-10-19, through the lead; Xo Lang 3). Step 1
+Status: Accepted in part (owner, 2026-10-30): step 1 (the inline key without indices) as built; steps 2 and 3 superseded by 0388. Previously proposed (owner, 2026-10-19, through the lead; Xo Lang 3). Step 1
 implemented (19e374ec).
 
 ## Context

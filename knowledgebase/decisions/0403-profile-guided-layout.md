@@ -1,6 +1,6 @@
 # 0403: Profile-guided code layout
 
-Status: Proposed (draft 2026-10-29, xo-lang-6; the owner's 0.35 item 9).
+Status: Accepted in part (owner, 2026-10-30): stage 1 (--layout) as opt-in; the hot/cold block split deferred until a program shows a gain. Previously proposed (draft 2026-10-29, xo-lang-6; the owner's 0.35 item 9).
 Extends 0075 (no alignment by default, the pad knob), 0238 (the sampling
 profiler), 0388 (separate compilation, the std store), 0398 (x86 jump
 padding).

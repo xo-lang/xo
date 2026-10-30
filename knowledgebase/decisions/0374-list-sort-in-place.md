@@ -1,6 +1,6 @@
 # 0374: List.sort_in_place, a stable sort that mutates the receiver
 
-Status: Proposed, steps 1, 2, 3a and 3b built (DS-1, 2026-10-25: rt.list_swap
+Status: Accepted (owner, 2026-10-30; built). Previously proposed, steps 1, 2, 3a and 3b built (DS-1, 2026-10-25: rt.list_swap
 in four lowerings with a caller on every backend and the golden
 native_list_swap, then `List.sort_in_place` and `sort_in_place_by` in
 std/prelude.xo, the native merge with half a list of scratch, the Go

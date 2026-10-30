@@ -1,6 +1,6 @@
 # 0274: the native backends emit machine code, not assembly text
 
-Status: Proposed (owner approval 2026-10-20, through the lead; Xo Lang 2).
+Status: Accepted in part (owner, 2026-10-30): the built steps stay; only the amd64 assembler speedup is funded, stage 4 is not. Previously proposed (owner approval 2026-10-20, through the lead; Xo Lang 2).
 Measured 2026-10-20; the plan reviewed by Xo lang 4 (2026-10-20: one Op
 type for both architectures, explicit fault, fixed register and memory
 operands, debug rows in the identity gate, `xo asm` unchanged) and by Xo Lang
