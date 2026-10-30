@@ -804,6 +804,23 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         g.set(v, "call i64 asm \".arch_extension crc\\0Acrc32cx \${0:w}, \${1:w}, $2\", \"=r,r,r\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])})")
       }
     }
+    "rt.crc32_fold" | "rt.crc32_fold_ymm" => {
+      // amd64 only (ssa cpu_call): ssa.crc32_fold_x86_lines as inline
+      // asm (its immediates' `$` doubled), its registers clobbered
+      var t: List[Str] = []
+      for l in ssa.crc32_fold_x86_lines_of(aux_str(x.aux), "@1@", "@2@", "@3@", "@0@") {
+        t.push(l.replace("$", "$$").replace("@0@", "$0").replace("@1@", "$1").replace("@2@", "$2").replace("@3@", "$3"))
+      }
+      var clob = "=r,r,r,r,~{r11}"
+      for r in ssa.crc32_fold_x86_gprs() {
+        clob = clob + ",~{${r}}"
+      }
+      for r in ssa.crc32_fold_x86_xmms() {
+        clob = clob + ",~{xmm${r}}"
+      }
+      clob = clob + ",~{memory},~{dirflag},~{fpsr},~{flags}"
+      g.set(v, "call i64 asm sideeffect \"${t.join("\\0A")}\", \"${clob}\"(i64 ${g.op(x.args[0])}, i64 ${g.op(x.args[1])}, i64 ${g.op(x.args[2])})")
+    }
     "rt.chacha_blocks4" => g.chacha4(g.raw_ptr(x.args[0]), g.raw_ptr(x.args[1]), g.raw_ptr(x.args[2]))
     "rt.ghash4" => {
       // arm64 only (ssa cpu_call, decision 0339): ssa.ghash4_neon_lines
@@ -1167,6 +1184,14 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       if g.arch() == "amd64" {
         let r = g.def("call { i32, i32, i32, i32 } asm \"cpuid\", \"={ax},={bx},={cx},={dx},0,2\"(i32 7, i32 0)")
         g.set(v, "zext i32 ${g.def("extractvalue { i32, i32, i32, i32 } ${r}, 1")} to i64")
+      } else {
+        g.set(v, "add i64 0, 0")
+      }
+    }
+    "rt.cpuid7_ecx" => {
+      if g.arch() == "amd64" {
+        let r = g.def("call { i32, i32, i32, i32 } asm \"cpuid\", \"={ax},={bx},={cx},={dx},0,2\"(i32 7, i32 0)")
+        g.set(v, "zext i32 ${g.def("extractvalue { i32, i32, i32, i32 } ${r}, 2")} to i64")
       } else {
         g.set(v, "add i64 0, 0")
       }

@@ -326,6 +326,17 @@ pub fn crc32(t: List[Int], crc0: Int, b: Bytes) -> Int {
       i += 8
     }
   }
+  // x86-64's PCLMULQDQ, 64 bytes a step (Go's ieeeCLMUL, for 64 bytes
+  // and more, the length rounded down to 16)
+  if i == 0 && n >= 64 && target.arch == TargetArch.Amd64 && (cpu.hw() & cpu.HW_CLMUL) != 0 {
+    i = n & -16
+    // with VPCLMULQDQ on ymm registers, four lanes in two instructions
+    if n >= 128 && (cpu.hw() & cpu.HW_VPCLMUL) != 0 {
+      c = cpu.crc32_fold_ymm(c, raw.bytes_addr(b), i)
+    } else {
+      c = cpu.crc32_fold(c, raw.bytes_addr(b), i)
+    }
+  }
   while i + 8 <= n {
     let w = rt.bytes_word(b, i)
     c = c ^ (w & 0xffffffff)

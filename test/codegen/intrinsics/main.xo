@@ -92,14 +92,21 @@ fn main(os: Os) {
 
 // The CRC-32 of gzip and zip a word a step with arm64's crc32x (decision
 // 0231 addendum, 2026-10-28): the IEEE polynomial, inline asm on LLVM;
-// amd64's crc32 is Castagnoli only, so the slicing loop stays there.
+// amd64's crc32 is Castagnoli only, so amd64 folds 64 bytes a step with
+// PCLMULQDQ instead (cpu.crc32_fold, ssa x86crc32.xo, Go's ieeeCLMUL),
+// on ymm registers with VPCLMULQDQ (crc32_fold_ymm).
 // func flate.crc32
 // arm64: "crc32x w[0-9]+, w[0-9]+, x[0-9]+"
-// amd64: -"crc32x"
+// amd64: -"crc32x" "pclmulqdq \$17, %xmm0, %xmm5" "pextrd \$1, %xmm1, %eax" "vpclmulqdq \$17, %ymm0, %ymm1, %ymm5"
 // llvm/arm64: "crc32x \$\{0:w\}"
 
 // std/crc32's Castagnoli a word a step with arm64's crc32cx (decision
-// 0231 addendum, 2026-10-29; Go's castagnoliUpdate on arm64).
+// 0231 addendum, 2026-10-29; Go's castagnoliUpdate on arm64), three
+// streams at once past 504 bytes (crc32.triple, Go's
+// castagnoliSSE42Triple).
+// func crc32.triple
+// arm64: "crc32cx w[0-9]+, w[0-9]+, x[0-9]+"
+// amd64: "crc32q %r[a-z0-9]+, %r[a-z0-9]+"
 // func crc32.castagnoli
 // arm64: "crc32cx w[0-9]+, w[0-9]+, x[0-9]+"
 // amd64: "crc32q %r[a-z0-9]+, %r[a-z0-9]+"

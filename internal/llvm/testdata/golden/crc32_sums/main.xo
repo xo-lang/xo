@@ -1,6 +1,6 @@
 // std/crc32 on every backend: IEEE and Castagnoli sums of buffers 0 to
 // 64 bytes long and of 64 KiB, against a bit loop, and update split in
-// two. On arm64 and on x86-64 with SSE4.2 the word loop runs the CRC
+// two, and lengths around the three-stream blocks. On arm64 and on x86-64 with SSE4.2 the word loop runs the CRC
 // instructions (cpu.crc32x, crc32cx; decision 0231 addendum), whose
 // results must equal the table and bit loop ones.
 use std/crc32
@@ -43,6 +43,22 @@ fn main(os: Os) {
     }
   }
   os.stdio.println("short mismatches: ${bad}")
+  // past 64 bytes (IEEE's PCLMULQDQ folding on x86-64) and around the
+  // three-stream blocks: 3 * 168 and 3 * 1344 bytes, and a
+  // start off a word boundary
+  var long_bad = 0
+  for n in [64, 65, 79, 80, 127, 128, 143, 503, 504, 505, 511, 1007, 4031, 4032, 4033, 4536, 8071, 12345] {
+    for off in [0, 3] {
+      let d = big[off..off + n]
+      if crc32.checksum(d, crc32.Poly.Castagnoli) != bitwise(0x82f63b78, d) {
+        long_bad += 1
+      }
+      if crc32.checksum(d) != bitwise(0xedb88320, d) {
+        long_bad += 1
+      }
+    }
+  }
+  os.stdio.println("long mismatches: ${long_bad}")
   os.stdio.println("ieee 64k: ${crc32.checksum(big)}")
   os.stdio.println("castagnoli 64k: ${crc32.checksum(big, crc32.Poly.Castagnoli)}")
   os.stdio.println("castagnoli 123456789: ${crc32.checksum("123456789".bytes(), crc32.Poly.Castagnoli)}")

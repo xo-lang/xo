@@ -1,0 +1,159 @@
+// IEEE CRC-32 on x86-64 64 bytes a step with PCLMULQDQ: cpu.crc32_fold
+// (std/native/llrt/cpu.xo, whose portable body, flate's slicing-by-8, is
+// the oracle), the instruction sequence both native x86-64 lowerings use
+// (compiler/arm64 calls.xo, compiler/llvm call.xo). It is Go's ieeeCLMUL
+// SSE path (hash/crc32 crc32_amd64.s, BSD-style license, Copyright The
+// Go Authors; Intel's "Fast CRC Computation for Generic Polynomials
+// Using PCLMULQDQ"): four 16 byte lanes folded by r2r1 each 64 bytes,
+// folded into one by r4r3, then 16 bytes a step, then reduced to 32 bits
+// by r5 and Barrett's rupoly. The state is the inverted CRC (Go's ^crc),
+// n a multiple of 16 and at least 64.
+//
+// Registers: r8 the data, r9 the bytes left, rax the result's 32 bits
+// before $d0; xmm0 the fold constants, xmm1 to xmm4 the lanes, xmm5 a
+// product, xmm10 to xmm13 the next 64 bytes.
+
+/// The general registers crc32_fold_x86_lines writes besides r11.
+pub fn crc32_fold_x86_gprs() -> List[Str] { ["rax", "r8", "r9"] }
+
+/// The xmm registers crc32_fold_x86_lines writes.
+pub fn crc32_fold_x86_xmms() -> List[Int] { [0, 1, 2, 3, 4, 5, 10, 11, 12, 13] }
+
+/// The lines of a crc32_fold call: name is "rt.crc32_fold" or
+/// "rt.crc32_fold_ymm".
+pub fn crc32_fold_x86_lines_of(name: Str, crc: Str, p: Str, n: Str, d: Str) -> List[Str] {
+  if name.ends_with("_ymm") { crc32_fold_ymm_x86_lines(crc, p, n, d) } else { crc32_fold_x86_lines(crc, p, n, d) }
+}
+
+/// xmm `x` = hi:lo, through r11.
+fn x86_crc_const(x: Int, lo: Int, hi: Int) -> List[Str] {
+  ["movabsq $${lo}, %r11", "movq %r11, %xmm${x}", "movabsq $${hi}, %r11", "pinsrq $1, %r11, %xmm${x}"]
+}
+
+/// One fold of xmm `a` by xmm0's two constants, then xor xmm `b` in.
+fn x86_crc_fold(a: Int, b: Int, prod: Int) -> List[Str] {
+  [
+    "movdqa %xmm${a}, %xmm${prod}",
+    "pclmulqdq $0, %xmm0, %xmm${a}",
+    "pclmulqdq $17, %xmm0, %xmm${prod}",
+    "pxor %xmm${prod}, %xmm${a}",
+    "pxor %xmm${b}, %xmm${a}",
+  ]
+}
+
+/// $d0 = the IEEE state after n bytes at p from state crc (crc, p, n
+/// the operand texts).
+pub fn crc32_fold_x86_lines(crc: Str, p: Str, n: Str, d: Str) -> List[Str] {
+  var t = [
+    "movq ${p}, %r8",
+    "movq ${n}, %r9",
+    "movq ${crc}, %xmm0",
+    "movdqu (%r8), %xmm1",
+    "movdqu 16(%r8), %xmm2",
+    "movdqu 32(%r8), %xmm3",
+    "movdqu 48(%r8), %xmm4",
+    "pxor %xmm0, %xmm1",
+    "addq $64, %r8",
+    "subq $64, %r9",
+    "cmpq $64, %r9",
+    "jb 2f",
+  ]
+  // r2r1: x^(4*128+32) and x^(4*128-32) mod P, bit reflected
+  t = t + x86_crc_const(0, 0x154442bd4, 0x1c6e41596)
+  t = t + [
+    "1:",
+    "movdqu (%r8), %xmm10",
+    "movdqu 16(%r8), %xmm11",
+    "movdqu 32(%r8), %xmm12",
+    "movdqu 48(%r8), %xmm13",
+  ]
+  t = t + x86_crc_fold(1, 10, 5) + x86_crc_fold(2, 11, 5) + x86_crc_fold(3, 12, 5) + x86_crc_fold(4, 13, 5)
+  t = t + ["addq $64, %r8", "subq $64, %r9", "cmpq $64, %r9", "jae 1b", "2:"]
+  t + crc32_fold_x86_tail(d)
+}
+
+/// crc32_fold_x86_lines with VPCLMULQDQ on ymm1 (lanes 1 and 2) and ymm2
+/// (lanes 3 and 4), 64 bytes a step in four instructions where the SSE
+/// loop takes eight, then the same tail on xmm1 to xmm4 (cpu.HW_VPCLMUL;
+/// Go's AVX-512 path at half its width, which needs no EVEX encoding).
+pub fn crc32_fold_ymm_x86_lines(crc: Str, p: Str, n: Str, d: Str) -> List[Str] {
+  var t = [
+    "movq ${p}, %r8",
+    "movq ${n}, %r9",
+    "movq ${crc}, %xmm0",
+    "movdqu (%r8), %xmm1",
+    "movdqu 16(%r8), %xmm2",
+    "movdqu 32(%r8), %xmm3",
+    "movdqu 48(%r8), %xmm4",
+    "pxor %xmm0, %xmm1",
+    "addq $64, %r8",
+    "subq $64, %r9",
+    "cmpq $64, %r9",
+    "jb 2f",
+    "vinserti128 $1, %xmm2, %ymm1, %ymm1",
+    "vinserti128 $1, %xmm4, %ymm3, %ymm2",
+  ]
+  t = t + x86_crc_const(0, 0x154442bd4, 0x1c6e41596)
+  t = t + [
+    "vinserti128 $1, %xmm0, %ymm0, %ymm0",
+    "1:",
+    "vmovdqu (%r8), %ymm10",
+    "vmovdqu 32(%r8), %ymm11",
+    "vpclmulqdq $17, %ymm0, %ymm1, %ymm5",
+    "vpclmulqdq $0, %ymm0, %ymm1, %ymm1",
+    "vpclmulqdq $17, %ymm0, %ymm2, %ymm12",
+    "vpclmulqdq $0, %ymm0, %ymm2, %ymm2",
+    "vpxor %ymm5, %ymm1, %ymm1",
+    "vpxor %ymm12, %ymm2, %ymm2",
+    "vpxor %ymm10, %ymm1, %ymm1",
+    "vpxor %ymm11, %ymm2, %ymm2",
+    "addq $64, %r8",
+    "subq $64, %r9",
+    "cmpq $64, %r9",
+    "jae 1b",
+    // the lanes back into xmm1 to xmm4 (xmm3 before ymm2's high half)
+    "vextracti128 $1, %ymm2, %xmm4",
+    "movdqa %xmm2, %xmm3",
+    "vextracti128 $1, %ymm1, %xmm2",
+    "vzeroupper",
+    "2:",
+  ]
+  t + crc32_fold_x86_tail(d)
+}
+
+/// The fold of xmm1 to xmm4 into one, the last 16 byte steps, and the
+/// reduction to 32 bits into d.
+fn crc32_fold_x86_tail(d: Str) -> List[Str] {
+  // r4r3: one lane into the next
+  var t = x86_crc_const(0, 0x1751997d0, 0x0ccaa009e)
+  t = t + x86_crc_fold(1, 2, 5) + x86_crc_fold(1, 3, 5) + x86_crc_fold(1, 4, 5)
+  t = t + ["cmpq $16, %r9", "jb 4f", "3:", "movdqu (%r8), %xmm10"]
+  t = t + x86_crc_fold(1, 10, 5)
+  t = t + ["addq $16, %r8", "subq $16, %r9", "cmpq $16, %r9", "jae 3b", "4:"]
+  // 128 bits to 64, to 32 (r5), then Barrett's reduction (rupoly)
+  t = t + [
+    "pcmpeqb %xmm3, %xmm3",
+    "pclmulqdq $1, %xmm1, %xmm0",
+    "psrldq $8, %xmm1",
+    "pxor %xmm0, %xmm1",
+    "movdqa %xmm1, %xmm2",
+    "movabsq $${0x163cd6124}, %r11",
+    "movq %r11, %xmm0",
+    "psrlq $32, %xmm3",
+    "psrldq $4, %xmm2",
+    "pand %xmm3, %xmm1",
+    "pclmulqdq $0, %xmm0, %xmm1",
+    "pxor %xmm2, %xmm1",
+  ]
+  t = t + x86_crc_const(0, 0x1db710641, 0x1f7011641)
+  t + [
+    "movdqa %xmm1, %xmm2",
+    "pand %xmm3, %xmm1",
+    "pclmulqdq $16, %xmm0, %xmm1",
+    "pand %xmm3, %xmm1",
+    "pclmulqdq $0, %xmm0, %xmm1",
+    "pxor %xmm2, %xmm1",
+    "pextrd $1, %xmm1, %eax",
+    "movq %rax, ${d}",
+  ]
+}

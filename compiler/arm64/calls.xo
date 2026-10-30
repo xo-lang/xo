@@ -1637,6 +1637,25 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         }
       }
     }
+    "rt.crc32_fold" | "rt.crc32_fold_ymm" => {
+      // amd64 only (ssa cpu_call): PCLMULQDQ folding (ssa x86crc32.xo),
+      // rax, r8, r9 and its xmm registers clobbered, r11 the emitter's
+      // scratch; the definition written last, so it may share a register
+      // with a use
+      if !g.has_val[v] {
+        var cl = [XR_AX, 8, 9]
+        for r in ssa.crc32_fold_x86_xmms() {
+          cl.push(FP_BASE + r)
+        }
+        var us: List[Int] = []
+        for a in x.args {
+          us.push(g.real(g.word(a)))
+        }
+        let d = g.new_vreg(false)
+        let _i = g.add(Inst{kind: K_PLAIN, text: ssa.crc32_fold_x86_lines_of(aux_str(x.aux), "$u0", "$u1", "$u2", "$d0").join("\n"), defs: [d], us: us, x86: true, clobbers: cl})
+        g.set(v, [d])
+      }
+    }
     "rt.u64_borrow" => {
       if !g.has_val[v] {
         g.set(v, [g.def1(false, "cmp $u0, $u1\ncset $d0, cc", [g.word(x.args[0]), g.word(x.args[1])])])
@@ -2014,6 +2033,14 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
     "rt.cpuid7_ebx" => {
       if g.x86 {
         g.set(v, [g.x86_atomic_def("movq %rbx, %r11\nmovl $7, %eax\nxorl %ecx, %ecx\ncpuid\nmovl %ebx, $wd0\nmovq %r11, %rbx", [], [XR_AX, XR_CX, XR_DX])])
+      } else {
+        g.set(v, [g.def1(false, "mov $d0, #0", [])])
+      }
+    }
+    // CPUID leaf 7's ECX (bit 10 VPCLMULQDQ): rbx kept in r11
+    "rt.cpuid7_ecx" => {
+      if g.x86 {
+        g.set(v, [g.x86_atomic_def("movq %rbx, %r11\nmovl $7, %eax\nxorl %ecx, %ecx\ncpuid\nmovl %ecx, $wd0\nmovq %r11, %rbx", [], [XR_AX, XR_CX, XR_DX])])
       } else {
         g.set(v, [g.def1(false, "mov $d0, #0", [])])
       }

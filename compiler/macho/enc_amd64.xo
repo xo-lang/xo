@@ -869,7 +869,7 @@ fn (var e: XB) inst(mn: Str, ops: List[XOp]) {
     e.byte(0xb9)
     return e.modrm(ops[2].reg, ops[0])
   }
-  if mn is "vpaddd" | "vpxor" | "vpor" | "vpshufb" | "vpslld" | "vpsrld" | "vpshufd" | "vperm2i128" | "vinserti128" | "vextracti128" | "vbroadcasti128" | "vmovdqu" | "vzeroupper" {
+  if mn is "vpaddd" | "vpxor" | "vpor" | "vpshufb" | "vpslld" | "vpsrld" | "vpshufd" | "vperm2i128" | "vinserti128" | "vextracti128" | "vbroadcasti128" | "vmovdqu" | "vzeroupper" | "vpclmulqdq" {
     return e.avx2(mn, ops)
   }
   if mn is "mulxq" | "mulxl" {
@@ -1464,6 +1464,15 @@ fn (var e: XB) avx2(mn: Str, ops: List[XOp]) {
       return e.fail("${mn} takes an immediate, ymm, ymm")
     }
     e.vex(1, 1, true, false, if mn == "vpslld" { 6 } else { 2 }, ops[2].reg, ops[1], 0x72)
+    return e.immn(ops[0], 1)
+  }
+  if mn == "vpclmulqdq" {
+    // VEX.256.66.0F3A.WIG 44 /r ib (VPCLMULQDQ): an immediate, ymm/m256,
+    // vvvv, the destination
+    if n != 4 || ops[0].kind != XO_IMM || ops[2].kind != XO_REG || ops[3].kind != XO_REG {
+      return e.fail("vpclmulqdq takes an immediate, ymm/m256, ymm, ymm")
+    }
+    e.vex(3, 1, true, false, ops[3].reg, ops[2].reg, ops[1], 0x44)
     return e.immn(ops[0], 1)
   }
   if mn == "vpshufd" {

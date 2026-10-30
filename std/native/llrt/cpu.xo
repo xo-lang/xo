@@ -46,6 +46,9 @@ pub const HW_SHA3: Int = 256
 /// only: crc32cx's crc32q (decision 0231 addendum, 2026-10-29). arm64's
 /// CRC32 extension is HW_CRC32, which has both polynomials.
 pub const HW_CRC32C: Int = 512
+/// x86-64's VPCLMULQDQ on 256 bit registers (CPUID.7.0 ECX bit 10, with
+/// AVX2): crc32_fold_ymm.
+pub const HW_VPCLMUL: Int = 1024
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -71,6 +74,10 @@ fn cpuid1_ecx() -> Int { 0 }
 /// off x86-64 and in the body (decision 0254, owner 2026-10-17).
 fn cpuid7_ebx() -> Int { 0 }
 
+/// The ECX word of x86-64's CPUID leaf 7, subleaf 0 (bit 10 VPCLMULQDQ);
+/// 0 off x86-64 and in the body.
+fn cpuid7_ecx() -> Int { 0 }
+
 /// The low word of x86-64's XCR0 (XGETBV with ECX 0: bit 1 SSE state, bit
 /// 2 AVX state saved by the OS); 0 off x86-64 and in the body (decision
 /// 0385 stage 3).
@@ -92,7 +99,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C | HW_VPCLMUL)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -119,7 +126,7 @@ fn detect() -> Int {
       let sse_bits = (1 << 9) | (1 << 19)
       let avx_bits = (1 << 27) | (1 << 28)
       let avx2 = (c & avx_bits) == avx_bits && (xgetbv0() & 6) == 6 && (b.shr_logical(5) & 1) != 0
-      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 }) | (if (c & sse_bits) == sse_bits { HW_SSSE3 } else { 0 }) | (if avx2 { HW_AVX2 } else { 0 }) | (if (c.shr_logical(20) & 1) != 0 { HW_CRC32C } else { 0 })
+      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 }) | (if (c & sse_bits) == sse_bits { HW_SSSE3 } else { 0 }) | (if avx2 { HW_AVX2 } else { 0 }) | (if (c.shr_logical(20) & 1) != 0 { HW_CRC32C } else { 0 }) | (if avx2 && (cpuid7_ecx().shr_logical(10) & 1) != 0 { HW_VPCLMUL } else { 0 })
     }
     _ => 0
   }
@@ -196,6 +203,27 @@ pub fn crc32cx(crc: Int, w: Int) -> Int { crc32cx_soft(crc, w) }
 
 /// crc32cx a bit at a time.
 pub fn crc32cx_soft(crc: Int, w: Int) -> Int { crc_word_soft(crc, w, 0x82F63B78) }
+
+/// crc32x over the n bytes at address p, n a multiple of 16 and at
+/// least 64: x86-64's PCLMULQDQ folding, 64 bytes a step (Go's
+/// ieeeCLMUL; compiler/ssa x86crc32.xo), under HW_CLMUL on amd64 only.
+/// The body is the reference.
+pub fn crc32_fold(crc: Int, p: Int, n: Int) -> Int { crc32_fold_soft(crc, p, n) }
+
+/// crc32_fold with VPCLMULQDQ on two 256 bit registers (four lanes, 64
+/// bytes a step), under HW_VPCLMUL on amd64 only; the same contract.
+pub fn crc32_fold_ymm(crc: Int, p: Int, n: Int) -> Int { crc32_fold_soft(crc, p, n) }
+
+/// crc32_fold a word at a time.
+pub fn crc32_fold_soft(crc: Int, p: Int, n: Int) -> Int {
+  var c = crc
+  var i = 0
+  while i < n {
+    c = crc32x_soft(c, rt.mem_load(p, i, 8))
+    i += 8
+  }
+  c
+}
 
 /// The reflected CRC-32 with polynomial poly of crc's low 32 bits over
 /// the eight bytes of w, the lowest first, a bit a step.

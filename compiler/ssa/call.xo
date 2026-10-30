@@ -243,6 +243,8 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // its Castagnoli twin (std/crc32): arm64's crc32cx and x86-64's
     // SSE4.2 crc32q, which is this polynomial; wasm runs the body
     "crc32cx" => if b.goarch == "arm64" || b.goarch == "amd64" { "crc32cx" } else { "" }
+    // IEEE 64 bytes a step with PCLMULQDQ (ssa x86crc32.xo): amd64 only
+    "crc32_fold" | "crc32_fold_ymm" => if b.goarch == "amd64" { b.obj_name(fo) } else { "" }
     // the SHA3 extension's Keccak rounds (ssa a64keccak.xo): arm64 only,
     // amd64 and wasm run the body (sha3.xo calls it only with HW_SHA3)
     "keccak_f1600" => if b.goarch == "arm64" { "keccak_f1600" } else { "" }
@@ -251,6 +253,7 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     "mlkem_ntt" | "mlkem_inverse_ntt" | "mlkem_mul_acc" => if b.goarch == "amd64" || b.goarch == "arm64" { b.obj_name(fo) } else { "" }
     "cpuid1_ecx" => "cpuid1_ecx"
     "cpuid7_ebx" => "cpuid7_ebx"
+    "cpuid7_ecx" => "cpuid7_ecx"
     // decision 0385 stage 3: XCR0 for the FMA check, and vfmadd231sd
     "xgetbv0" => "xgetbv0"
     "fma_hw" => if b.goarch == "amd64" { "fma_hw" } else { "" }

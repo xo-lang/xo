@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- std/crc32 on x86-64: IEEE (and gzip's and zip's CRC-32) folds 64 bytes
+  a step with PCLMULQDQ (on 256 bit registers with VPCLMULQDQ), 0.12 of
+  its time, Go's speed (was 8.08x); Castagnoli past 504 bytes runs three crc32q
+  streams at once, 0.85x Go's time (was 1.74x).
+- std/crc32 on arm64: Castagnoli past 504 bytes runs three crc32cx chains
+  at once, 0.48 of its time (about twice Go's speed).
 
 - `use go`: a package in a nested Go module (aws-sdk-go-v2's
   `service/s3`, its own module inside the root's path) no longer takes the

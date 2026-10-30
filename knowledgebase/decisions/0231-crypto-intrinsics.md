@@ -312,6 +312,25 @@ std/crc32 takes the word path under either bit. Tests: cpu_test
 "crc32cx is its body", the crc32 corpus, compiler/macho's encoding
 table, test/codegen/intrinsics crc32.castagnoli.
 
+Later the same day: long buffers run Go's three-way interleave too
+(std/native/crc32.xo triple: three K byte blocks, K 1,344 then 168, each
+its own crc32cx chain, joined by Go's castagnoliSSE42TableK1 and K2 shift
+tables as constants; plain Xo over crc32cx, so arm64 gets it as well),
+and IEEE on amd64 gains `crc32_fold(crc, p, n)`: n bytes at address p, n
+a multiple of 16 and at least 64, folded 64 bytes a step with PCLMULQDQ
+(Go's ieeeCLMUL SSE path; the instruction lines in compiler/ssa
+x86crc32.xo, shared by the native x86 emitter as one K_PLAIN template
+with its registers clobbered and by LLVM as inline asm), under HW_CLMUL
+on amd64 only (arm64's HW_CLMUL is PMULL, and arm64 has crc32x); the body
+is crc32x_soft a word a step. ssa call.xo lowers it on amd64 only.
+flate.crc32 takes it for 64 bytes and more, so gzip, zip and std/crc32's
+IEEE all do. Go's AVX-512 path (1 KiB and more) needs EVEX encodings the
+assembler lacks, so `crc32_fold_ymm` runs it at half its width instead:
+the four lanes on ymm1 and ymm2, VPCLMULQDQ's VEX.256 form (encoded in
+compiler/macho enc_amd64.xo), under the new HW_VPCLMUL (CPUID.7 ECX bit
+10, read by a new cpuid7_ecx probe, with AVX2), from 128 bytes; then the
+SSE tail. On a Zen 5 host it matches Go's AVX-512 speed (0.976x).
+
 ## Addendum (2026-10-28): Keccak-f[1600] with the SHA3 extension
 
 cpu.keccak_f1600(st, rc) runs the 24 rounds on the 25 lanes at st with

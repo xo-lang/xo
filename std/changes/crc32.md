@@ -1,5 +1,35 @@
 # std/crc32 changes
 
+## 2026-10-29: perf: IEEE with x86-64's PCLMULQDQ and VPCLMULQDQ
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/hash crc32 at 8.084x Go's wall on linux/amd64
+- Go reference: hash/crc32 crc32_amd64.s ieeeCLMUL (the SSE path; its AVX-512 path at 256 bits), crc32_amd64.go archUpdateIEEE
+- Test: golden crc32_sums (IEEE at 64 to 12,345 bytes, word aligned and not, against a bit loop) on the owner's amd64 host, arm64, LLVM, Go parity and wasm; compiler/macho enc_amd64_test (pextrd, pcmpeqb, pand, pclmulqdq, and the ymm vpclmulqdq, vinserti128, vextracti128, vmovdqu forms); test/codegen/intrinsics flate.crc32 on amd64
+- Timing: on the owner's linux/amd64 host (Ryzen 9 9955HX), bench/perf/hash crc32 --ab against Go's hash/crc32, 15 rounds: wall 0.976x Go (0.921 to 1.011, within noise), was 8.084x; the SSE fold alone 1.352x (1.277 to 1.403), where Go takes its AVX-512 path on this CPU
+
+`Poly.Ieee` (and gzip's and zip's CRC-32, flate.crc32) folds 64 bytes a
+step with PCLMULQDQ on x86-64 where the CPU has it (hw()'s HW_CLMUL), for
+inputs of 64 bytes and more, then the last 15 or fewer bytes a word and a
+byte at a time as before. From 128 bytes, a CPU with VPCLMULQDQ and AVX2
+(hw()'s new HW_VPCLMUL, CPUID.7 ECX bit 10) folds the four lanes on two
+256 bit registers.
+
+## 2026-10-29: perf: Castagnoli in three interleaved streams
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/hash crc32c at 1.743x Go's wall on linux/amd64 after crc32q
+- Go reference: hash/crc32 crc32_amd64.go archUpdateCastagnoli, castagnoliSSE42Triple, castagnoliShift (K1 168, K2 1344)
+- Test: golden crc32_sums (lengths around 3 * 168 and 3 * 1344, word aligned and not, against a bit loop) on arm64, LLVM, Go parity, wasm and the owner's amd64 host
+- Timing: on the owner's linux/amd64 host, bench/perf/hash crc32c --ab against Go's hash/crc32, 15 rounds: wall 0.846x Go (0.83 to 0.893), was 1.743x with one crc32q chain; darwin/arm64 quiet --ab against the parent (one crc32cx chain), 15 rounds: crc32c wall 0.479 (0.472 to 0.492), instructions 0.535 (was 0.992x Go)
+
+Past 504 bytes, `Poly.Castagnoli` runs three blocks of K bytes at once
+(K 1,344, then 168), each its own crc32q or crc32cx chain, so the
+instruction's latency overlaps, and joins them with Go's shift tables
+(the state carried over K zero bytes, 4 x 256 entries each).
+
 ## 2026-10-29: perf: Castagnoli with x86-64's SSE4.2 crc32q
 
 - Kind: perf
