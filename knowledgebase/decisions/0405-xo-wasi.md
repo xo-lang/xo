@@ -35,7 +35,8 @@ The module then fails to load: a function may have at most 1000 parameters and 1
 - `ld.xo write_exe` tolerates WASI's "no file modes" error from `set_mode` (the host decides the modes).
 - scripts/wasi-smoke.sh passes end to end (2026-10-30, the wasm xo built from 6111e188d, Node with `XO_WASM_V8_FLAGS=--liftoff-only XO_WASM_STACK_MB=64`, 71 s: version, check, a darwin/arm64 and a linux/arm64 build, the darwin binary runs, `run` and `test` refused). The Mac has no `timeout`: a script that wraps the smoke in it fails with exit 127.
 - The `XO_RELEASE_WASI=1 scripts/release.sh` dry run (with `XO_RELEASE_UNSIGNED=1 XO_RELEASE_PRIVATE=1 XO_RELEASE_DRY_RUN=1`) lists the wasip1-wasm layout, the `xo build --targets=wasip1/wasm compiler/xo` step and its tarball.
-- Still open: scripts/release-verify.sh on a published wasip1 archive; defaulting run.mjs to `--liftoff-only` for modules this large.
+- run.mjs defaults to `--liftoff-only` for modules over 8 MB (2026-10-30; `XO_WASM_V8_FLAGS` with a liftoff flag overrides it).
+- Still open: scripts/release-verify.sh on a private wasip1 archive.
 
 ## Alternatives
 

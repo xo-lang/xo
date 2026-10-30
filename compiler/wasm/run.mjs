@@ -14,7 +14,7 @@
 // WASI calls made and the errors they returned, and the memory size are
 // printed (`xo wasm seed: ...`) on a trap, with XO_LEAKCHECK, and with
 // XO_WASM_SEED_LOG. XO_WASM_V8_FLAGS adds V8 flags, XO_WASM_NO_V8_FLAGS=1
-// leaves out the three below, XO_WASM_NO_WORKER=1 runs the module on the
+// leaves out the three below and the --liftoff-only of modules over 8 MB, XO_WASM_NO_WORKER=1 runs the module on the
 // main thread, XO_WASM_STACK_MB sizes the worker's stack, and
 // XO_WASM_MEM_LIMIT_MB=N prints the wasm stack where the memory passes
 // 512 MB, 1 GB, ... and stops the module past N MB.
@@ -47,9 +47,19 @@ for (const f of (process.env.XO_WASM_V8_FLAGS || '').split(/\s+/)) {
   if (f) v8.setFlagsFromString(f);
 }
 
+// modules over this size run with --liftoff-only
+const LIFTOFF_ONLY_BYTES = 8 << 20;
+
 // runModule runs the module in file with args and returns its exit status.
 function runModule(file, args) {
   const bytes = readFileSync(file);
+  // A large module (the wasm xo, tens of MB) is compiled by Liftoff and then
+  // again by TurboFan at tier up, 7.7 GB against 1.1 GB and 8.8 s against
+  // 1.8 s (gotchas/wasm-turbofan-tier-up-memory.md): Liftoff only, unless
+  // XO_WASM_V8_FLAGS names a liftoff flag (decision 0405).
+  if (bytes.length > LIFTOFF_ONLY_BYTES && !process.env.XO_WASM_NO_V8_FLAGS && !/liftoff/.test(process.env.XO_WASM_V8_FLAGS || '')) {
+    v8.setFlagsFromString('--liftoff-only');
+  }
   const mod = new WebAssembly.Module(bytes);
   for (const imp of WebAssembly.Module.imports(mod)) {
     if (imp.module !== 'wasi_snapshot_preview1') {
