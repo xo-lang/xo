@@ -54,6 +54,7 @@ sys_c # the platform call `getpid` of c on another OS
 term_stdio # the wasm backend does not support the call `rt.call_c2`
 tls_client # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_coalesced_finish # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+tls_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_peer_certs # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 tz_table # std/time's zones need the zone data that `xo build --backend=wasm` embeds
 udp_echo # the wasm backend does not support the network (`rt.conn_close`): WASI preview1 has no sockets

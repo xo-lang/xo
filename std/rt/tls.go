@@ -10,6 +10,7 @@ import (
 	"errors"
 	"io"
 	"net"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -97,10 +98,18 @@ func Tls_client(tk *Task, c Conn, host string, roots Option[Tls_Roots], verify T
 		cfg.InsecureSkipVerify = true
 	}
 	t := tls.Client(c.c, cfg)
-	// http.DefaultTransport's TLSHandshakeTimeout
-	c.c.SetDeadline(time.Now().Add(10 * time.Second))
+	// http.DefaultTransport's TLSHandshakeTimeout, or the connection's own
+	// deadlines when earlier (decision 0430: Go's Handshake honors them)
+	limit := time.Now().Add(10 * time.Second)
+	for _, w := range []bool{false, true} {
+		if d := userDeadline(c.c, w); !d.IsZero() && d.Before(limit) {
+			limit = d
+		}
+	}
+	c.c.SetDeadline(limit)
 	canceled, err := interruptible(tk, c.c.SetDeadline, t.Handshake)
-	c.c.SetDeadline(time.Time{})
+	c.c.SetReadDeadline(userDeadline(c.c, false))
+	c.c.SetWriteDeadline(userDeadline(c.c, true))
 	if canceled {
 		return Err[Tls_TlsConn](netErr(5, ""))
 	}
@@ -156,7 +165,7 @@ func (t Tls_TlsConn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 	}
 	buf := make([]byte, min(max, 1<<20))
 	var n int
-	canceled, err := interruptible(tk, t.c.SetReadDeadline, func() error {
+	canceled, err := interruptibleTo(tk, t.c.SetReadDeadline, userDeadline(t.c, false), func() error {
 		var e error
 		n, e = t.t.Read(buf)
 		return e
@@ -169,6 +178,9 @@ func (t Tls_TlsConn) M_read(tk *Task, max int64) Result[Option[Bytes], NetErr] {
 	}
 	if err == nil || errors.Is(err, io.EOF) {
 		return Ok[Option[Bytes], NetErr](Option[Bytes]{})
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return Err[Option[Bytes]](netErr(3, ""))
 	}
 	return Err[Option[Bytes]](netIoErr(err))
 }
@@ -184,12 +196,15 @@ func (t Tls_TlsConn) M_write(tk *Task, data Bytes) Result[Unit, NetErr] {
 	if t.closed.Load() {
 		return Err[Unit](netErr(4, netClosedText))
 	}
-	canceled, err := interruptible(tk, t.c.SetWriteDeadline, func() error {
+	canceled, err := interruptibleTo(tk, t.c.SetWriteDeadline, userDeadline(t.c, true), func() error {
 		_, e := t.t.Write([]byte(data))
 		return e
 	})
 	if canceled {
 		return Err[Unit](netErr(5, ""))
+	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		return Err[Unit](netErr(3, ""))
 	}
 	if err != nil {
 		return Err[Unit](netIoErr(err))
@@ -203,6 +218,22 @@ func passthrough[R any](op func() R, c net.Conn) R {
 	upgradedConns.Delete(c)
 	defer upgradedConns.Store(c, struct{}{})
 	return op()
+}
+
+// M_set_deadline is Go's tls.Conn SetDeadline (decision 0430): the
+// connection's.
+func (t Tls_TlsConn) M_set_deadline(tk *Task, clock Clock, at Option[Time]) {
+	Conn{c: t.c}.setDeadline(tk, clock, at, true, true)
+}
+
+// M_set_read_deadline is Go's tls.Conn SetReadDeadline (decision 0430).
+func (t Tls_TlsConn) M_set_read_deadline(tk *Task, clock Clock, at Option[Time]) {
+	Conn{c: t.c}.setDeadline(tk, clock, at, true, false)
+}
+
+// M_set_write_deadline is Go's tls.Conn SetWriteDeadline (decision 0430).
+func (t Tls_TlsConn) M_set_write_deadline(tk *Task, clock Clock, at Option[Time]) {
+	Conn{c: t.c}.setDeadline(tk, clock, at, false, true)
 }
 
 // M_close is `t.close()`: close_notify, then the connection closes.

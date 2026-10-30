@@ -4245,6 +4245,9 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr  uses net.dial
 fn (t: TlsConn) write(data: Bytes) -> () ! NetErr  uses net.dial
 fn (t: TlsConn) close()
+fn (t: TlsConn) set_deadline(clock: Clock, at: Time?) uses clock         // decision 0430: Go's tls.Conn SetDeadline
+fn (t: TlsConn) set_read_deadline(clock: Clock, at: Time?) uses clock
+fn (t: TlsConn) set_write_deadline(clock: Clock, at: Time?) uses clock
 fn (t: TlsConn) alpn() -> Str                      // the protocol the server chose, "" for none
 fn (t: TlsConn) version() -> Str                   // "TLS 1.2" or "TLS 1.3"
 fn (t: TlsConn) peer_certificates() -> List[x509.Certificate]
@@ -4293,6 +4296,12 @@ fn pg_tls(os: Os, addr: Str, host: Str) -> tls.TlsConn ! Error uses net.dial {
   (`Canceled`, core 7.2).
 - `alpn` lists the protocols offered (none by default); `alpn()` is the
   one the server chose.
+- Deadlines (decision 0430) are the connection's, as in Go's tls.Conn,
+  with std 3.2's rules. A read that times out mid-record keeps what
+  arrived, so the connection reads on after a new deadline. A deadline
+  set on the Conn before `client` also limits the handshake (Go's
+  Handshake), within its own 10 seconds. A write that times out may
+  have sent part of a record.
 - Tests: on FakeNet `client` does no TLS: the TlsConn reads and writes the
   connection's plain bytes, `alpn()` is "" and `version()` is "TLS
   1.3", so a driver's tests can run an in-process fake server. Real TLS

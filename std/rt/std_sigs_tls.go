@@ -13,6 +13,9 @@ var (
 	_ func(*Tls_TlsConn, *Task, int64) Result[Option[Bytes], NetErr]                                     = (*Tls_TlsConn).M_read
 	_ func(*Tls_TlsConn, *Task, Bytes) Result[Unit, NetErr]                                              = (*Tls_TlsConn).M_write
 	_ func(*Tls_TlsConn, *Task)                                                                          = (*Tls_TlsConn).M_close
+	_ func(*Tls_TlsConn, *Task, Clock, Option[Time])                                                     = (*Tls_TlsConn).M_set_deadline
+	_ func(*Tls_TlsConn, *Task, Clock, Option[Time])                                                     = (*Tls_TlsConn).M_set_read_deadline
+	_ func(*Tls_TlsConn, *Task, Clock, Option[Time])                                                     = (*Tls_TlsConn).M_set_write_deadline
 	_ func(*Tls_TlsConn, *Task) string                                                                   = (*Tls_TlsConn).M_alpn
 	_ func(*Tls_TlsConn, *Task) string                                                                   = (*Tls_TlsConn).M_version
 	_ func(*Tls_TlsConn, *Task) List[X509_Certificate]                                                   = (*Tls_TlsConn).M_peer_certificates

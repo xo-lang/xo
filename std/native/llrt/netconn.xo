@@ -499,6 +499,18 @@ fn passed(cn: Int, w: Int) -> Bool {
   dl != 0 && poll.now() >= dl
 }
 
+/// passed for another module (TLS on cn): the read or write deadline.
+pub fn deadline_passed(cn: Int, write: Bool) -> Bool { passed(cn, if write { C_WDL } else { C_RDL }) }
+
+/// The user's read (or write) deadline of connection cn (decision 0430),
+/// 0 for none or no connection: TLS on cn waits until it too.
+pub fn user_deadline(cn: Int, write: Bool) -> Int {
+  if cn == 0 {
+    return 0
+  }
+  ld(cn, if write { C_WDL } else { C_RDL })
+}
+
 /// `c.set_deadline` and its read and write forms (decision 0430): d ns
 /// from now on the timers' clock (d <= 0: already passed), none when set
 /// is false; which is 1 (read), 2 (write) or 3 (both). A waiting read or

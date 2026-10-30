@@ -37,6 +37,13 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: Verify = Verify.Full
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial
 fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial
 fn (t: TlsConn) close()
+/// The connection's deadlines (decision 0430), Go's tls.Conn SetDeadline:
+/// a read or write past t fails with Timeout and the connection stays
+/// usable, mid-record included; they apply to the handshake too when set
+/// on the Conn before `client`.
+fn (t: TlsConn) set_deadline(clock: Clock, at: Time?) uses clock
+fn (t: TlsConn) set_read_deadline(clock: Clock, at: Time?) uses clock
+fn (t: TlsConn) set_write_deadline(clock: Clock, at: Time?) uses clock
 /// The protocol the server chose by ALPN, "" for none.
 fn (t: TlsConn) alpn() -> Str
 /// "TLS 1.2" or "TLS 1.3".

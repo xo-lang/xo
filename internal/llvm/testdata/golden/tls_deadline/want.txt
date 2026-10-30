@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+1 err i/o timeout
+2 data HTTP/1.1 200 OK
+3 write i/o timeout
+4 handshake i/o timeout
+done
+--- stderr

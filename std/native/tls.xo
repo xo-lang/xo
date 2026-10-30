@@ -56,7 +56,11 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Ver
     ChainOnly => tlsio.VERIFY_CHAIN
     None => tlsio.VERIFY_NONE
   }
-  let started = tlsio.client_with(netconn.conn_pd(cn), host, rt.obj_addr(r), 0, alpn, v)
+  // the connection's deadlines apply to the handshake (Go's Handshake)
+  let rd = netconn.user_deadline(cn, false)
+  let wd = netconn.user_deadline(cn, true)
+  let dl = if rd == 0 { wd } else if wd != 0 && wd < rd { wd } else { rd }
+  let started = tlsio.client_with(netconn.conn_pd(cn), host, rt.obj_addr(r), dl, alpn, v)
   if started.status == tlsio.CC_TIMEOUT {
     return Err(NetErr.Timeout)
   }
@@ -69,6 +73,7 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Ver
     let msg = if started.msg == "http: server gave HTTP response to HTTPS client" { "tls: first record does not look like a TLS handshake" } else { started.msg }
     return Err(NetErr.Io(msg: msg))
   }
+  tlsio.set_conn(started.conn, cn)
   TlsConn{c: c, h: Some(tlsio.handle_new(started.conn))}
 }
 
@@ -84,6 +89,9 @@ fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial {
   }
   if max <= 0 {
     return Some(b"")
+  }
+  if netconn.deadline_passed(rt.obj_addr(t.c), false) {
+    return Err(NetErr.Timeout)
   }
   let n = if max > 1048576 { 1048576 } else { max }
   let buf = raw.bytes_buf(n)
@@ -107,6 +115,9 @@ fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial {
     }
     None => return passthrough_write(t.c, data)
   }
+  if netconn.deadline_passed(rt.obj_addr(t.c), true) {
+    return Err(NetErr.Timeout)
+  }
   let s = tlsio.write(h, raw.bytes_addr(data), data.len())
   raw.alive(data)
   if s != tlsio.CC_OK {
@@ -124,6 +135,12 @@ fn (t: TlsConn) close() {
   }
   netconn.conn_close(rt.obj_addr(t.c))
 }
+
+// Deadlines (decision 0430): the connection's, which the TLS waits read
+// at each wait.
+fn (t: TlsConn) set_deadline(clock: Clock, at: Time?) uses clock { t.c.set_deadline(clock, at) }
+fn (t: TlsConn) set_read_deadline(clock: Clock, at: Time?) uses clock { t.c.set_read_deadline(clock, at) }
+fn (t: TlsConn) set_write_deadline(clock: Clock, at: Time?) uses clock { t.c.set_write_deadline(clock, at) }
 
 fn (t: TlsConn) alpn() -> Str {
   match t.h {

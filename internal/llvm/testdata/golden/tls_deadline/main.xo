@@ -1,0 +1,73 @@
+// Decision 0430: a TlsConn's deadlines are its connection's, as Go's
+// tls.Conn. A read past its deadline is Timeout and the connection stays
+// usable (the request then goes through); a deadline already passed
+// fails a write at once; a deadline set on the Conn before tls.client
+// limits the handshake (a server that never answers). Every backend must
+// agree. The certificates are golden tls_client's.
+use std/http
+use std/tls
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hello", fn(_req) { http.text(200, "hello over tls") })
+  r
+}
+
+fn show(r: Result[Bytes?, NetErr]) -> Str {
+  match r {
+    Ok(Some(b)) => "data ${(b.to_str() ?? "?").split("\r\n")[0]}"
+    Ok(None) => "end"
+    Err(e) => "err ${e}"
+  }
+}
+
+fn main(os: Os) {
+  let clock = os.clock
+  let ca = tls.roots(ca_pem()).or_fault("roots")
+  let good = http.tls_cert(good_cert(), good_key()).or_fault("good")
+  let l1 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let l2 = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let srv = http.server(l1, routes()).with_tls([good])
+  scope s {
+    s.spawn_background(fn() { srv.serve().ignore_err("test") })
+    // a listener that accepts and never speaks: the handshake waits
+    s.spawn_background(fn() {
+      match l2.accept() {
+        Ok(sc) => {
+          clock.sleep(2s)
+          sc.close()
+        }
+        Err(_) => ()
+      }
+    })
+    let c = os.net.dial(l1.addr()).or_fault("dial")
+    match tls.client(c, "localhost", roots: Some(ca)) {
+      Ok(t) => {
+        t.set_read_deadline(clock, Some(clock.now() + 50ms))
+        os.stdio.println("1 ${show(t.read(64))}")
+        t.set_read_deadline(clock, None)
+        t.write("GET /hello HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n".bytes()) ?? e => os.stdio.println("write: ${e}")
+        os.stdio.println("2 ${show(t.read(4096))}")
+        t.set_write_deadline(clock, Some(clock.now() - 1s))
+        match t.write("x".bytes()) {
+          Ok(_) => os.stdio.println("3 write ok")
+          Err(e) => os.stdio.println("3 write ${e}")
+        }
+        t.close()
+      }
+      Err(e) => os.stdio.println("client: ${e}")
+    }
+    let c2 = os.net.dial(l2.addr()).or_fault("dial")
+    c2.set_deadline(clock, Some(clock.now() + 100ms))
+    match tls.client(c2, "localhost", roots: Some(ca)) {
+      Ok(_) => os.stdio.println("4 handshake ok?")
+      Err(e) => os.stdio.println("4 handshake ${e}")
+    }
+    c2.close()
+  }
+  os.stdio.println("done")
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

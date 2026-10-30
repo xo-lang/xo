@@ -9,6 +9,7 @@
 // are UNTESTED.
 use native/llrt/atexit
 use native/llrt/hconn
+use native/llrt/netconn
 use native/llrt/poll
 use native/llrt/raw
 use native/llrt/rc
@@ -49,6 +50,9 @@ struct Conn {
   cl12: List[tls12.Client]
   pd: Int
   when: Int
+  // the connection record whose user deadlines (decision 0430) the waits
+  // also honor, 0 for none (the http client's)
+  cn: Int
   status: Int
   first: Bytes
   eof: Bool
@@ -323,7 +327,7 @@ pub fn client_with(pd: Int, host: Str, roots: Int, dl: Int, protos: List[Str], v
   cf.groups = tls13.client_groups()
   let hs = hconn.deadline(HANDSHAKE_NS)
   let limit = if dl != 0 && dl < hs { dl } else { hs }
-  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, status: 0, first: b"", eof: false, pending: b""}
+  var c = Conn{cl: tls13.client(cf), cl12: [], pd: pd, when: limit, cn: 0, status: 0, first: b"", eof: false, pending: b""}
   while !done(c) && !broken(c) {
     if !flush(c) || !fill(c) {
       break
@@ -407,7 +411,7 @@ fn send_all(var c: Conn, b: Bytes) -> Bool {
       c.status = CC_ERR
       return false
     }
-    let r = poll.pd_wait(c.pd, true, c.when)
+    let r = poll.pd_wait(c.pd, true, nz_min(c.when, netconn.user_deadline(c.cn, true)))
     if r != poll.READY {
       c.status = wait_res(r)
       return false
@@ -447,7 +451,7 @@ fn fill(var c: Conn) -> Bool {
       c.status = CC_ERR
       return false
     }
-    let w = poll.pd_wait(c.pd, false, c.when)
+    let w = poll.pd_wait(c.pd, false, nz_min(c.when, netconn.user_deadline(c.cn, false)))
     if w != poll.READY {
       c.status = wait_res(w)
       return false
@@ -518,6 +522,27 @@ pub fn alert(h: Int) -> Str {
   match load(h) {
     Some(c) => if err(c).starts_with("remote error: ") { err(c) } else { "" }
     None => ""
+  }
+}
+
+/// The earlier of two deadlines, 0 meaning none.
+fn nz_min(a: Int, b: Int) -> Int {
+  if a == 0 {
+    return b
+  }
+  if b != 0 && b < a { b } else { a }
+}
+
+/// Makes h's waits honor connection cn's user deadlines (decision 0430)
+/// from now on, with no limit of its own, and forgets a timeout (Go's is
+/// temporary).
+pub fn set_conn(h: Int, cn: Int) {
+  if let Some(x) = load(h) {
+    var c = x
+    c.cn = cn
+    c.when = 0
+    c.status = 0
+    save(h, c)
   }
 }
 

@@ -5,6 +5,8 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `tls.TlsConn` has the same deadlines (decision 0430). A deadline set on
+  the `Conn` before `tls.client` also limits the handshake.
 - `Conn` and `ServerConn` have Go's deadlines (decision 0430):
   `set_deadline`, `set_read_deadline` and `set_write_deadline(clock,
   t)`. A read or write past the deadline fails with `Timeout`, and the
