@@ -2134,6 +2134,9 @@ func (g *gen) bindHandle(h *handle) {
 		h.names[xn] = true
 		count(true)
 	}
+	if mt, ok := h.named.Underlying().(*types.Map); ok && !h.byPtr && len(h.tps) == 0 {
+		g.bindNamedMap(h, mt, depth)
+	}
 	if !h.byPtr || !isStruct {
 		return
 	}
@@ -2197,6 +2200,33 @@ func (g *gen) bindHandle(h *handle) {
 		h.names["new"] = true
 		h.decls = append(h.decls, fmt.Sprintf("/// Go: new(%s), the zero value\nfn (static: %s) new() -> %s uses go", g.display(h.named), h.xo, h.xo))
 		fmt.Fprintf(&g.adapt, "func %s_new(tk *Task) %s {\n\treturn %s{P: new(%s)}\n}\n\n", h.goName, h.goName, h.goName, h.gt)
+	}
+}
+
+// bindNamedMap binds a named map type's conversions (jwt.MapClaims, a
+// map[string]any): `of(m)` makes one from an Xo Map and `to_map()` reads
+// it back, so a program can build a value Go only takes as the named type
+// (the owner's Windows testing, 2026-10-30: jwt.new_with_claims needed a
+// MapClaims nothing could make).
+func (g *gen) bindNamedMap(h *handle, mt *types.Map, depth int) {
+	display := g.display(h.named)
+	c, err := g.mapType(mt, depth)
+	if err == nil && c.toGo == nil {
+		err = skipf(catChan, "map %s of a value Xo cannot pass to Go", g.display(mt))
+	}
+	if err != nil {
+		g.skip(h.xo+".of", display, &skipErr{cat: err.cat, detail: "named map conversion: " + err.detail}, false)
+		return
+	}
+	if !h.names["of"] {
+		h.names["of"] = true
+		h.decls = append(h.decls, fmt.Sprintf("/// Go: %s(m), the map as the named type\nfn (static: %s) of(m: %s) -> %s uses go", display, h.xo, c.xo, h.xo))
+		fmt.Fprintf(&g.adapt, "func %s_of(tk *Task, a0 %s) %s {\n\tdefer GoBoundary(%q)\n\treturn %s{V: %s(%s)}\n}\n\n", h.goName, c.rt, h.goName, display, h.goName, h.gt, c.toGo("a0"))
+	}
+	if !h.names["to_map"] {
+		h.names["to_map"] = true
+		h.decls = append(h.decls, fmt.Sprintf("/// Go: the %s's entries\nfn (recv: %s) to_map() -> %s uses go", display, h.xoT, c.xo))
+		fmt.Fprintf(&g.adapt, "func (h %s) M_to_map(tk *Task) %s {\n\tdefer GoBoundary(%q)\n\treturn %s\n}\n\n", h.rtT, c.rt, display, c.toXo(c.gt+"(h.V)"))
 	}
 }
 

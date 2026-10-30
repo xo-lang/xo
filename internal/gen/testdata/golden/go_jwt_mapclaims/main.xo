@@ -1,0 +1,15 @@
+// A named Go map type from Xo (the owner's Windows testing, 2026-10-30):
+// jwt.MapClaims (map[string]any) made with MapClaims.of from an Xo Map,
+// read back with to_map, signed with HS256 and parsed back.
+use go "github.com/golang-jwt/jwt/v5"
+use std/go
+
+fn main(os: Os) ! {
+  let claims = jwt.MapClaims.of({"sub": go.any("alice"), "admin": go.any(true)})
+  os.stdio.println("keys ${claims.to_map().keys().sort().join(",")}")
+  let tok = jwt.new_with_claims(jwt.get_signing_method("HS256"), claims.as_claims(), [])
+  let signed = tok.signed_string(go.any("k3y".bytes()))?
+  os.stdio.println("signed ${signed.split(".").len()} parts")
+  let back = jwt.parse(signed, fn(_t) { Ok(go.any("k3y".bytes())) }, [])?
+  os.stdio.println("subject ${back.claims().get_subject()?}")
+}

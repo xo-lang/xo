@@ -1,0 +1,5 @@
+# xo.lock: content hashes of the module versions this module builds with,
+# and the effects each module may reach (decision 0156).
+# Written by the xo toolchain (xo get, xo mod tidy, xo mod accept-effects); do not edit (core 4.3).
+go github.com/golang-jwt/jwt/v5 v5.2.2 h1:Rl4B7itRWVtYIHFrSNd7vhTiz9UpLdi6gZhZ3wEeDy8=
+go github.com/golang-jwt/jwt/v5 v5.2.2/go.mod h1:pqrtFR0X4osieyHYxtmOUWsAWrfe1Q5UVIyoH402zdk=

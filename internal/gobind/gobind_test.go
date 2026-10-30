@@ -306,6 +306,81 @@ func TestSortSliceSkipped(t *testing.T) {
 	}
 }
 
+// TestNamedMapType: a named Go map type (jwt.MapClaims, a map[string]any)
+// is a handle with `of(m)`, made from an Xo Map, and `to_map()`; before,
+// nothing could make one, so a function taking it was unusable (the
+// owner's Windows testing, 2026-10-30).
+func TestNamedMapType(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "nm")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/nm\n\ngo 1.22\n",
+		"nm.go": `package nm
+
+import "sort"
+
+type Claims map[string]any
+
+type Counts map[string]int
+
+func Keys(c Claims) []string {
+	var ks []string
+	for k := range c {
+		ks = append(ks, k)
+	}
+	sort.Strings(ks)
+	return ks
+}
+
+func (c Counts) Total() int {
+	n := 0
+	for _, v := range c {
+		n += v
+	}
+	return n
+}
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/nm v0.0.0\n\nreplace example.com/nm => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/nm", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl, adapter := string(b.Decl), string(b.Adapter)
+	for _, want := range []string{
+		"fn (static: Claims) of(m: Map[Str, go.Any]) -> Claims uses go",
+		"fn (recv: Claims) to_map() -> Map[Str, go.Any] uses go",
+		"fn (static: Counts) of(m: Map[Str, Int]) -> Counts uses go",
+		"fn (recv: Counts) to_map() -> Map[Str, Int] uses go",
+		"fn (recv: Counts) total() -> Int uses go",
+		"fn keys(c: Claims) -> List[Str] uses go",
+	} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("no %q in the declarations (skipped: %v):\n%s", want, b.Skipped, decl)
+		}
+	}
+	if !strings.Contains(adapter, "_of(tk *Task, a0 Map[string, Go_Any])") {
+		t.Errorf("no Claims of adapter:\n%s", grep(adapter, "_of("))
+	}
+}
+
 // TestUnexportedParamTypes: an exported function or method whose parameter
 // is an unexported named type of its package (a named basic type passed
 // variadically, chi's MethodNotAllowedHandler(...methodTyp); a named

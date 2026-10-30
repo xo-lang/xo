@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+keys admin,sub
+signed 3 parts
+subject alice
+--- stderr

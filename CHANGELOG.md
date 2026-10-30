@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `use go`: a named Go map type (`jwt.MapClaims`, a `map[string]any`)
+  gets `T.of(m)`, made from an Xo Map, and `to_map()`; before, a program
+  could not make one, so a Go function taking it was unusable (the
+  owner's Windows testing). Binding format 31.
 - FIX (`use go`): builds that bound Go packages at the same time into
   one binding directory (two builds of a program, an editor and a test
   run) ran `go get` together in its shared workspace, and some failed
