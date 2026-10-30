@@ -1,7 +1,8 @@
 # 0434: HTTP/2 without TLS (h2c prior knowledge) and HTTP/2 settings
 
-Status: Proposed (Xo lang 5, 2026-10-30; for Xo Lang 3's review, then
-the owner's). Closes gap 10 of the gRPC readiness survey, after 0433
+Status: Proposed (Xo lang 5, 2026-10-30; Xo Lang 3 reviewed it the same
+day, and the sniff, config, keepalive and linking notes are theirs; for
+the owner's review). Closes gap 10 of the gRPC readiness survey, after 0433
 (trailers, full duplex, mutual TLS). No code until accepted.
 
 ## Context
@@ -47,8 +48,13 @@ fn (c: Client) with_h2_config(c: H2Config) -> Client
 - Server with `UnencryptedHttp2`: on a plain connection the server
   reads the first bytes; the 24 byte preface hands the connection to
   the HTTP/2 server, anything else to HTTP/1.1 (if `Http1` is in the
-  set; otherwise the connection closes, as Go). The read is under the
-  read header timeout.
+  set; otherwise the connection closes, as Go). The sniff runs only
+  when `UnencryptedHttp2` is in the set, so the default HTTP/1.1 path
+  pays nothing; it reads at most 24 bytes, keeps reading only while the
+  bytes so far are a prefix of the preface, and otherwise hands them,
+  unconsumed, to the HTTP/1.1 parser, under the read header timeout (a
+  client that sends only `PRI` times out like a slow request line and
+  delays no other connection).
 - Client with `UnencryptedHttp2` and without `Http1`: an `http://` URL
   opens HTTP/2 with prior knowledge (Go's rule); with both, HTTP/1.1 is
   used, as Go, since the client cannot know the server speaks h2c.
@@ -59,17 +65,27 @@ fn (c: Client) with_h2_config(c: H2Config) -> Client
 - `H2Config` zero fields take today's values; out of range values are
   clamped as Go clamps them. `send_ping_timeout` sends a PING after that
   much read silence and closes the connection when no ack arrives within
-  `ping_timeout` (gRPC keepalive's role). grpc-go's MaxConnectionAge is
+  `ping_timeout` (gRPC keepalive's role); the keepalive uses the
+  connection's existing park and deadline path, not a timer task per
+  connection.
+- The config is copied into the connection record once, at connection
+  setup; the hot paths read the record, never the Server, and no frame
+  does a lookup. grpc-go's MaxConnectionAge is
   not part of net/http and stays out.
 - No `Upgrade: h2c` support (RFC 9113, Go).
 - Decision 0244: h2c needs the HTTP/2 server without TLS, so h2srv is
   linked when a program uses `with_protocols` with `UnencryptedHttp2`
-  or TLS, and the TLS code stays unlinked for an h2c only program.
+  or TLS, and the TLS code stays unlinked for an h2c only program. This
+  is a file move: the h2 exports (the `srvtls_h2_*` functions and their
+  TO_H2* table entries) leave cabi_tls.xo, which imports tlssrv, for a
+  module that imports h2srv only, installed by its own small installer
+  (`install_h2c()`) beside the TLS one.
 
 ### Split of the work
 
 - Xo Lang 3: the preface sniff in the connection accept path, h2srv's
   limits read from a config record instead of constants, the PING timer,
+  the h2 exports moved out of cabi_tls.xo,
   the client's prior knowledge dial, ALPN lists from the set.
 - Xo lang 5: the API, spec/std.md (4.4's "no h2c" sentence changes), the
   Go backend mapping (`http.Protocols`, `http.HTTP2Config`), goldens with
@@ -93,7 +109,8 @@ fn (c: Client) with_h2_config(c: H2Config) -> Client
 - A Server and a Client carry a protocol set and a config record; the
   defaults keep every program's behavior.
 - h2srv's constants become per connection values, a load per use on a
-  hot path; Xo Lang 3 measures it with `--ab` on the h2 benchmark.
+  record read; Xo Lang 3 measures it with `--ab` on the linux/arm64
+  host (ab-host.sh) with an h2 echo and a many streams program.
 
 ## Alternatives
 
