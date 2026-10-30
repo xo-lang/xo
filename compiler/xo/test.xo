@@ -1241,10 +1241,10 @@ fn drop_generated_frames(msg: Str) -> Str {
 /// as a pass), " (2 uses env, fs: run with --real; 1 REASON)": the `uses`
 /// tests in one entry with their effects, then each other reason, in
 /// order; "" for no skips.
-fn skip_summary(why: Map[Str, Int], uses: Int, fx: Set[Str]) -> Str {
+fn skip_summary(why: Map[Str, Int], n_uses: Int, fx: Set[Str]) -> Str {
   var parts: List[Str] = []
-  if uses > 0 {
-    parts.push("${uses} uses ${fx.to_list().sort().join(", ")}: run with --real")
+  if n_uses > 0 {
+    parts.push("${n_uses} uses ${fx.to_list().sort().join(", ")}: run with --real")
   }
   for r in why.keys().sort() {
     parts.push("${why.get(r) ?? 0} ${r}")
