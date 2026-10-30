@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native backends: a negation whose operand cannot be the smallest Int
+  is not checked (compiler/arm64 isel Neg, the bounds a checked add
+  already used): text.parse_duration's unit limit and result negations.
+  bench/perf/text dur_parse 0.995 of the instructions (xo bench --ab
+  n=15; wall and cycles within noise); xo's native __text 70,866,992 to
+  70,861,672 bytes.
 - Native backends: a 1, 2 or 4 byte memory load has the range its zero
   extension gives (compiler/arm64 ranges.xo), so arithmetic on a byte
   read through std's raw.byte_at needs no overflow check (every backend
