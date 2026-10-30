@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-30: feature: Client H2Config.max_read_frame_size, native (decision 0434)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 0434 open list (the native client always sent MAX_FRAME_SIZE=16384)
+- Go reference: net/http's Transport.HTTP2.MaxReadFrameSize (the SETTINGS_MAX_FRAME_SIZE the transport sends and the frame size it accepts)
+- Test: internal/llvm/testdata/golden/http_h2_config ("client tuned" now reads MAX_FRAME_SIZE=65536; native output equal to the Go backend's)
+- Timing: none (one setting per connection)
+
+The native client sends the configured size (16384 to 16777215, 0 the
+default 16384) in its SETTINGS and accepts frames up to it; a larger
+one is FRAME_SIZE_ERROR as before. A different size is a different
+pooled connection.
+
 ## 2026-10-30: fix: a 431 or 413 reply survives unread request bytes on Linux, native server
 
 - Kind: fix

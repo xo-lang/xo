@@ -583,7 +583,8 @@ const P_H1 = 152
 const P_CFG_SW = 160
 const P_CFG_CW = 168
 const P_CFG_DT = 176
-const P_SIZE = 184 // own: an HTTP/2 connection record's size, not the pool record's
+const P_CFG_MF = 184
+const P_SIZE = 192 // own: an HTTP/2 connection record's size, not the pool record's
 
 /// An exchange on a connection (r's h2, an obj.xo object): the
 /// connection, whether it came from the pool (a failure before an answer
@@ -677,11 +678,12 @@ pub fn conn_new(cn: Int, c: Int, roots: Int, kp: Int, kn: Int, cfg: List[Int] = 
   // max frame size, decoder table], 0 for the default (cfg_key)
   let sw = cfg_at(cfg, 0, 4194304)
   let cw = cfg_at(cfg, 1, 1073741824)
-  let mf = 16384
+  let mf = cfg_at(cfg, 2, 16384).clamp(16384, 16777215)
   let dt = cfg_at(cfg, 3, 0)
   st(pc, P_CFG_SW, cfg_at(cfg, 0, 0))
   st(pc, P_CFG_CW, cfg_at(cfg, 1, 0))
   st(pc, P_CFG_DT, dt)
+  st(pc, P_CFG_MF, mf)
   var at = http1w.put(o, 0, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n")
   at += h2w.frame_head(o + at, 24 + (if dt > 0 { 6 } else { 0 }), 4, 0, 0)
   if dt > 0 {
@@ -1043,7 +1045,7 @@ pub fn h2_read(r: rthttp.CResp) -> Str {
     if have >= 9 {
       let p = ld(c, C_BUF) + ld(c, C_OFF)
       let len = (rt.mem_load(p, 0, 1) << 16) | (rt.mem_load(p, 1, 1) << 8) | rt.mem_load(p, 2, 1)
-      if len > 16384 {
+      if len > ld(ld(x, X_PC), P_CFG_MF) {
         // an HTTP/1.1 response read as frames (h2 to an HTTP/1.1 server)
         let h1 = raw.str_at(p, 9) == "HTTP/1.1 "
         st(x, X_RRES, if h1 { CC_TOO_LARGE_H1 } else { CC_TOO_LARGE })
