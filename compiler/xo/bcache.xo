@@ -18,8 +18,13 @@ use github.com/xo-lang/xo/compiler/ssa
 use std/crypto
 use std/internal
 
-/// $XO_BACKEND_CACHE: "off", "verify", or "on" (the default).
+/// $XO_BACKEND_CACHE: "off", "verify", or "on" (the default). "off"
+/// while XO_DUMP_FN is set (decision 0437): a function or object from
+/// the cache is not generated, so it writes no dump.
 fn backend_cache_mode(os: Os) -> Str {
+  if !(os.env.get("XO_DUMP_FN") ?? "").is_empty() {
+    return "off"
+  }
   let v = os.env.get("XO_BACKEND_CACHE") ?? ""
   if v == "off" || v == "verify" { v } else { "on" }
 }

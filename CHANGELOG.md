@@ -30,7 +30,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   untested module exits 2 with a did-you-mean, and the flag implies
   `--fail-empty`; `xo test` on a path in std names the flag; XO_DUMP_FN,
   XO_INLINE_REPORT and the stats and profile variables turn the run cache
-  off for that build (a hit wrote no dump); `xo query` outside a module
+  off for that build (a hit wrote no dump), and XO_DUMP_FN the backend
+  caches too (a cached function is not generated); `xo query` outside a module
   exits 2 naming --dir; a `go test -run` that names no test fails in the
   packages with goldens.
 - LLVM builds of a program that imports std/html (or template) are
