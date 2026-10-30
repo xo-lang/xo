@@ -1756,6 +1756,11 @@ fn main(os: Os) ! {
   error, the Go error `e` came from when Go made it (so `errors.Is` sees a
   sentinel such as `io.EOF`), else one with `e`'s text; `go.error(msg)`
   makes one.
+- A struct field or package variable of a Go function type has a setter
+  that takes an Xo function, a callback by the rules above
+  (`s.set_on_error(fn(msg: Str) { log.send(msg) })`, `hook.set_logf(f)`);
+  Go may call it later, from any goroutine. It is not read back: a Go
+  function value has no Xo form, so the field's getter is not bound.
 - Go's `error` anywhere but a function's final result (a parameter, a
   field, a result before the last) is `go.Error?`, `nil` being `None`
   (`errors.is(err: go.Error?, target: go.Error?) -> Bool`); an `error`

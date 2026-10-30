@@ -198,3 +198,18 @@ case is small in count and large in use: it is how Go composes I/O.
   508 third-party skips and 16 of std's 280 after step 2 (survey of 2026-10-29, ~/xo-lead/notes/lang1/
   survey); the after numbers are in bench/results/usego-coverage-2026-10-29b.md.
 - Binding format 15. Tests: gobind TestErrorValues, cmd/xo TestUseGoErrorValues.
+
+## As built: function-typed fields and variables (Lang 1, 2026-10-29)
+
+- A struct field or package variable whose type is a Go function type
+  binds `set_<name>(v: fn(..) uses fx)` and no getter (a Go function
+  value has no Xo form; the skip list names the getter). gobind
+  bindFuncSetter binds it through bindFunc as a call of a Go function
+  literal that assigns its argument, so the callback conversion, the
+  error result rule of step 1, the effect variable and the replay mode
+  (callback) are the ones a callback parameter gets. An unexported named
+  function type, or a callback that does not map (several results), is
+  skipped as before.
+- Binding format 17. Tests: gobind TestFuncSetters, cmd/xo
+  TestUseGoFuncSetters (synthetic example.com/hook in
+  testdata/goproxy).

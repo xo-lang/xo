@@ -11,6 +11,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/crc32 and std/fnv: Go's hash/crc32 (IEEE and Castagnoli,
   `checksum` and `update`) and hash/fnv (the 32, 64 and 128 bit FNV-1
   and FNV-1a sums, and `update` to continue one).
+- `use go`: a struct field or package variable of a Go function type binds
+  a setter taking an Xo function (`s.set_on_error(fn(msg: Str) { ... })`),
+  converted as a callback parameter is, so hooks such as an error handler
+  or a check function can be set from Xo. Binding format 17.
 - std/crypto: `ed25519_sign` also takes Go's 64 byte private key (the
   seed, then its public key) and signs without deriving the public key:
   0.55 of the seed form's time, 0.65 of Go's.

@@ -1700,6 +1700,12 @@ func (g *gen) bindHandle(h *handle) {
 		xn := xoName(snake(fv.Name()))
 		qname := h.xo + "." + xn
 		display := g.display(h.named) + "." + fv.Name()
+		if fs, ok := fv.Type().Underlying().(*types.Signature); ok {
+			// a function field: a setter taking an Xo callback (the getter
+			// would return a Go function, which has no Xo form)
+			g.bindFuncSetter(h, fv, fs, depth)
+			continue
+		}
 		c, err := g.mapType(fv.Type(), depth)
 		if err == nil && (h.names[xn] || h.names["set_"+snake(fv.Name())]) {
 			err = skipf(catCollision, "field accessor `%s` collides with a method", xn)
@@ -1727,6 +1733,53 @@ func (g *gen) bindHandle(h *handle) {
 		h.names["new"] = true
 		h.decls = append(h.decls, fmt.Sprintf("/// Go: new(%s), the zero value\nfn (static: %s) new() -> %s uses go", g.display(h.named), h.xo, h.xo))
 		fmt.Fprintf(&g.adapt, "func %s_new(tk *Task) %s {\n\treturn %s{P: new(%s)}\n}\n\n", h.goName, h.goName, h.goName, h.gt)
+	}
+}
+
+// bindFuncSetter binds `set_f(v: fn(..) uses fx)` for a field or package
+// variable of function type through bindFunc, as a call of a Go function
+// literal that assigns its argument, so the callback is converted the way
+// a callback parameter is. h is nil for a variable.
+func (g *gen) bindFuncSetter(h *handle, v *types.Var, fs *types.Signature, depth int) {
+	sn := "set_" + snake(v.Name())
+	display := g.pkg.Name() + "." + v.Name()
+	target := g.alias(g.pkg) + "." + v.Name()
+	taken := g.scope[sn]
+	if h != nil {
+		display = g.display(h.named) + "." + v.Name()
+		target = "h.P." + v.Name()
+		taken = h.names[sn]
+	}
+	kind := "variable"
+	if h != nil {
+		kind = "field"
+	}
+	if taken {
+		g.skip(sn, display, skipf(catCollision, "%s setter `%s` collides with a method", kind, sn), false)
+		return
+	}
+	if nt, ok := types.Unalias(v.Type()).(*types.Named); ok && nt.Obj().Pkg() != nil && !nt.Obj().Exported() {
+		g.skip(sn, display, skipf(catUnexport, "%s: unexported type %s", kind, g.display(v.Type())), false)
+		return
+	}
+	p := types.NewParam(token.NoPos, nil, "v", v.Type())
+	sig := types.NewSignatureType(nil, nil, nil, types.NewTuple(p), nil, false)
+	goCall := "(func(v " + g.qual(v.Type()) + ") { " + target + " = v })"
+	gn := xoName(snake(v.Name()))
+	if h != nil {
+		gn = h.xo + "." + gn
+	}
+	if err := g.bindFunc(fnSpec{xoName: sn, display: display + " =", sig: sig, recv: h, goCall: goCall, depth: depth}); err != nil {
+		g.skip(sn, display, &skipErr{cat: err.cat, detail: kind + ": " + err.detail}, false)
+		return
+	}
+	g.skip(gn, display, skipf(catFunc, "%s getter: a Go function value has no Xo form (%s binds)", kind, sn), false)
+	if h != nil {
+		h.names[sn] = true
+		g.stats.FieldsMapped++
+	} else {
+		g.scope[sn] = true
+		g.stats.VarsMapped++
 	}
 }
 
@@ -1848,6 +1901,10 @@ func (g *gen) bindVar(o *types.Var) {
 		g.stats.VarsMapped++
 		g.vars = append(g.vars, fmt.Sprintf("/// Go: reads variable %s error, the sentinel\nfn %s() -> go.Error uses go", display, name))
 		fmt.Fprintf(&g.adapt, "func %s%s(tk *Task) Go_Error {\n\treturn GoErr(%s.%s)\n}\n\n", g.b.Prefix, name, g.alias(g.pkg), o.Name())
+		return
+	}
+	if fs, ok := o.Type().Underlying().(*types.Signature); ok {
+		g.bindFuncSetter(nil, o, fs, 0)
 		return
 	}
 	c, err := g.mapType(o.Type(), 0)

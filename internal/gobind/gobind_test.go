@@ -647,6 +647,91 @@ func Two(f func() (int, string, error)) {}
 	}
 }
 
+// TestFuncSetters: a field or package variable of function type gets a
+// setter taking an Xo callback, converted as a callback parameter is.
+func TestFuncSetters(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs go list")
+	}
+	dir := t.TempDir()
+	src := filepath.Join(t.TempDir(), "hook")
+	if err := os.MkdirAll(src, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	files := map[string]string{
+		"go.mod": "module example.com/hook\n\ngo 1.21\n",
+		"hook.go": `package hook
+
+type Check func(name string) error
+
+type Server struct {
+	Name    string
+	OnError func(msg string)
+	Check   Check
+	Pick    func(n int) (int, string)
+}
+
+var Logf func(format string) int
+
+var Hidden check
+
+type check func() bool
+
+func (s *Server) Run() error {
+	if s.Check != nil {
+		if err := s.Check(s.Name); err != nil {
+			s.OnError(err.Error())
+			return err
+		}
+	}
+	return nil
+}
+`,
+	}
+	for name, body := range files {
+		if err := os.WriteFile(filepath.Join(src, name), []byte(body), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := os.MkdirAll(workDir(dir), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	gm := workspaceMod(gotool.GoLine()) + "\nrequire example.com/hook v0.0.0\n\nreplace example.com/hook => " + src + "\n"
+	if err := os.WriteFile(filepath.Join(workDir(dir), "go.mod"), []byte(gm), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	b, err := Bind("example.com/hook", Options{Dir: dir, Version: "v0.0.0"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	decl, adapter := string(b.Decl), string(b.Adapter)
+	for _, want := range []string{
+		"fn (recv: Server) set_on_error[fx: Effects](v: fn(Str) uses fx) uses go, fx",
+		"fn (recv: Server) set_check[fx: Effects](v: fn(Str) -> () ! go.Error uses fx) uses go, fx",
+		"fn set_logf[fx: Effects](v: fn(Str) -> Int uses fx) uses go, fx",
+		"fn (recv: Server) name() -> Str uses go",
+	} {
+		if !strings.Contains(decl, want) {
+			t.Errorf("no %q in the declarations:\n%s", want, decl)
+		}
+	}
+	for _, want := range []string{"h.P.OnError = v", "h.P.Check = v", ".Logf = v"} {
+		if !strings.Contains(adapter, want) {
+			t.Errorf("no %q in the adapter:\n%s", want, adapter)
+		}
+	}
+	for name, why := range map[string]string{
+		"Server.on_error": "getter",
+		"logf":            "getter",
+		"set_pick":        "several results",
+		"set_hidden":      "unexported type",
+	} {
+		if !strings.Contains(b.Skipped[name], why) {
+			t.Errorf("%s skipped %q, want %q (skipped: %v)", name, b.Skipped[name], why, b.Skipped)
+		}
+	}
+}
+
 // TestImplementations (decision 0416): each interface whose methods map
 // as callbacks gets a constructor taking one function per method, named
 // after it; a Read method is given len(p) and returns the bytes.

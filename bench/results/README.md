@@ -218,3 +218,4 @@
 - [pgo-layout-stage2b-2026-10-29.md](pgo-layout-stage2b-2026-10-29.md): decision 0403 stage 2b measured: the dominator cold split on 370 to 740 ms runs against the one-binary floor at two placements; moves almost no block, within noise, held.
 - [usego-coverage-2026-10-29.md](usego-coverage-2026-10-29.md): `use go` coverage of the tester's 87 packages before and after go.Any (decision 0412): std 78.8% to 86.3%, third party 76.9% to 93.2%
 - [usego-coverage-2026-10-29b.md](usego-coverage-2026-10-29b.md): `use go` coverage after decisions 0415 and 0416 (generics, callbacks returning errors, implementations, `go.Error?`): std 86.3% to 87.4%, third party 93.2% to 97.6%
+- [usego-coverage-2026-10-29c.md](usego-coverage-2026-10-29c.md): `use go` function-typed fields and variables get setters taking Xo callbacks: fields std 421 to 446 of 461, third party 1955 to 1985 of 2139
