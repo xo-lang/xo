@@ -825,6 +825,8 @@ fn env_release(env: Int) {
 }
 
 pub fn task_free(t: Int) {
+  // after the claim of whichever thread ran or dequeued it (pool.xo run_item)
+  tsan(RT_TSAN_ACQUIRE, t)
   // a task that never ran (canceled before it started) still has its
   // ThreadSanitizer context
   sanhook.task_gone(ld(t, T_TSAN))
