@@ -11,4 +11,4 @@ PORT=18080 "$srv" &
 pid=$!
 trap 'kill $pid 2>/dev/null || true' EXIT
 sleep 2
-"$cli" -addr 127.0.0.1:18080 -n 40000 -pid $pid -settle 10s -maxmaps 20000 -again
+"$cli" -addr 127.0.0.1:18080 -n 40000 -pid $pid -settle 10s -maxmaps 20000 -again -srcs 3

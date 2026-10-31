@@ -132,6 +132,7 @@ func main() {
 	pid := flag.Int("pid", 0, "server process id")
 	settle := flag.Duration("settle", 5*time.Second, "wait after the last response before measuring")
 	maxmaps := flag.Int("maxmaps", 0, "fail when the server has more than this many mappings (lines of /proc/PID/maps); 0 checks nothing")
+	srcs := flag.Int("srcs", 1, "h1: spread the connections over this many loopback source addresses (127.0.0.1, 127.0.0.2, ...): one source address reaches only about 28,000 ephemeral ports to one server address")
 	again := flag.Bool("again", false, "h1: after the idle wait, send a second request on every held connection and fail if any fails")
 	flag.Parse()
 	if *gen != "" {
@@ -147,6 +148,7 @@ func main() {
 	for i := 0; i < *n; i++ {
 		wg.Add(1)
 		sem <- struct{}{}
+		i := i
 		go func() {
 			defer wg.Done()
 			defer func() { <-sem }()
@@ -165,7 +167,11 @@ func main() {
 				}
 			} else {
 				var c net.Conn
-				c, err = net.Dial("tcp", *addr)
+				d := net.Dialer{}
+				if *srcs > 1 {
+					d.LocalAddr = &net.TCPAddr{IP: net.IPv4(127, 0, 0, byte(1+i%*srcs))}
+				}
+				c, err = d.Dial("tcp", *addr)
 				if err == nil {
 					_, err = c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
 					if err == nil {
