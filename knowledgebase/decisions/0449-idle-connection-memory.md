@@ -141,6 +141,22 @@ hserve.xo, which imports both and calls `tasks.spawn` with the stored
 closure words; `spawn` already runs on a thread that is not a worker
 (`poolsetup.root_worker`), as the poller is.
 
+As built (first cut, 2026-10-31, branch park1): the poller does not spawn.
+`pd_ready` and `pd_close` hand a fired continuation record to its
+server's ready list (`hserve.cont_fire`, reached through an address
+stored in the event record, since a program without a server has no
+`pd_cont_fire` export); one resumer task per server (`hserve.resume_next`,
+spawned beside the accept loop in `Server.serve`) takes the list and
+starts each resume function in the connection scope. The park point is
+`serve_h1`'s top of loop: no buffered request bytes, no server idle
+timeout (`with_idle_timeout` connections keep their stack; a pd deadline
+timer that resumes the continuation is stage 1d), a plain TCP connection
+(`hconn.park_ready`: a `MSG_PEEK` finds the socket empty), the server not
+stopping. TLS (1b) needs a "plaintext pending" operation on the TLS
+engine before a raw peek can say a connection is empty; HTTP/2 (1c)
+needs the stream-free state. The reader is rebuilt on resume
+(`http1.reader(hc)`): its state lives in the connection's X record.
+
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked
 connection pays one task start per request (a stack from the cache, no
