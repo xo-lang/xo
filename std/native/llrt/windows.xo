@@ -1209,20 +1209,23 @@ pub fn pipe_write(h: Int, a: Int, n: Int) -> Int {
   if put == 0 { -EAGAIN } else { put }
 }
 
-/// Whether process h exited (waiting for it when block): true and its
-/// exit code, the handle closed; else false.
-pub fn reap(h: Int, block: Bool) -> (Bool, Int) {
+/// Whether process h exited (waiting for it when block): true, its exit
+/// code, the handle closed, and the child's own usage (decision 0426's addendum): user and
+/// kernel CPU time in nanoseconds and its peak working set in bytes, read
+/// from the handle before it is closed.
+pub fn reap_usage(h: Int, block: Bool) -> (Bool, Int, List[Int]) {
   if Int(sys_windows.WaitForSingleObject(h, if block { INFINITE } else { 0 })) != 0 {
-    return (false, 0)
+    return (false, 0, [0, 0, 0])
   }
   let b = raw.bytes_buf(8)
   let a = raw.bytes_addr(b)
   rt.mem_store(a, 0, 0, 8)
   let _g = sys_windows.GetExitCodeProcess(h, a)
   let code = keep(b, rt.mem_load(a, 0, 4))
-  add_child_usage(h)
+  let u = add_child_usage(h)
   let _c = sys_windows.CloseHandle(h)
-  (true, code)
+  // FILETIME counts 100 ns units
+  (true, code, [u[0] * 100, u[1] * 100, u[2]])
 }
 
 // The usage of waited children (Proc.children_usage, decision 0426), which
@@ -1252,8 +1255,9 @@ pub fn proc_usage(h: Int) -> List[Int] {
   out
 }
 
-/// Adds the exited child h's usage to the children's totals.
-fn add_child_usage(h: Int) {
+/// Adds the exited child h's usage to the children's totals, and gives
+/// it (proc_usage's units).
+fn add_child_usage(h: Int) -> List[Int] {
   let u = proc_usage(h)
   let _u = rt.slot_add(rt.static_word(W_CHILD_USER), 0, u[0], 3)
   let _s = rt.slot_add(rt.static_word(W_CHILD_SYS), 0, u[1], 3)
@@ -1262,6 +1266,7 @@ fn add_child_usage(h: Int) {
   while u[2] > old && !rt.slot_cas(w, 0, old, u[2], 3) {
     old = rt.slot_load(w, 0, 3)
   }
+  u
 }
 
 /// The waited children's user time, kernel time (100 ns units) and

@@ -1,5 +1,28 @@
 # prelude changes
 
+## 2026-10-30: feature: a child's own usage, ProcOutput.usage and Child.wait_usage
+
+- Kind: feature
+- Commit: this commit
+- Found by: xo bench on Windows (children_usage keeps the largest child's
+  peak, so an --ab round could not read its own); owner's call 2026-10-30
+  (decision 0426's addendum)
+- Go reference: os.ProcessState.UserTime, SystemTime and SysUsage
+  (syscall.Rusage's Utime, Stime, Maxrss)
+- Test: golden proc_child_usage (arm64, LLVM, Go parity, linux/arm64 host,
+  native Windows; wasm unsupported, as host_usage)
+- Timing: 200 runs of /usr/bin/true each reading its usage (Xo `run` and
+  `.usage`, Go os/exec and ProcessState.SysUsage), linux/arm64 offload
+  host, --ab 20 rounds, Xo / Go: wall 1.10 (48.25 to 53.14 ms, within
+  noise), cpu_ms 1.41 (44.11 to 62.21, too coarse), max_rss_kb 1.0
+
+`run`, `pipeline` and `Cmd.output` give the child's own CPU time and
+peak resident set as `ProcOutput.usage`, and `Child.wait_usage()` gives
+a spawned child's with its status. The native runtime reads wait4's
+rusage (Linux and darwin) or the child's handle (Windows) as it waits;
+the Go backend reads the ProcessState (no peak on Windows). A
+`ProcOutput` literal without `usage` still compiles (zeros).
+
 ## 2026-10-30: behavior: resolver error texts in Xo's words, Go's where Go has them
 
 - Kind: behavior

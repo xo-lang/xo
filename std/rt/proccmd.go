@@ -247,7 +247,7 @@ func (realProc) output(tk *Task, c *procCmd) Result[ProcOutput, ProcErr] {
 	}
 	tk.leave()
 	err := x.Run()
-	noteChild(x.ProcessState)
+	usage := noteChild(x.ProcessState)
 	tk.enter()
 	code := int64(0)
 	if err != nil {
@@ -257,7 +257,7 @@ func (realProc) output(tk *Task, c *procCmd) Result[ProcOutput, ProcErr] {
 		}
 		code = n
 	}
-	return Ok[ProcOutput, ProcErr](ProcOutput{F_code: code, F_stdout: Bytes(out.String()), F_stderr: Bytes(errb.String())})
+	return Ok[ProcOutput, ProcErr](ProcOutput{F_code: code, F_stdout: Bytes(out.String()), F_stderr: Bytes(errb.String()), F_usage: usage})
 }
 
 func (realProc) runTerm(tk *Task, c *procCmd) Result[int64, ProcErr] {
@@ -273,7 +273,7 @@ func (realProc) runTerm(tk *Task, c *procCmd) Result[int64, ProcErr] {
 	}
 	tk.leave()
 	err := x.Run()
-	noteChild(x.ProcessState)
+	_ = noteChild(x.ProcessState)
 	tk.enter()
 	if err != nil {
 		n, ok := exitCode(err)
@@ -298,6 +298,7 @@ type child struct {
 	done   bool
 	code   int64
 	err    error
+	usage  ProcUsage
 	fake   *fakeChild
 }
 
@@ -530,15 +531,31 @@ func (c Child) M_wait(tk *Task) Result[int64, ProcErr] {
 	}
 	tk.leave()
 	err := ch.x.Wait()
-	noteChild(ch.x.ProcessState)
+	u := noteChild(ch.x.ProcessState)
 	tk.enter()
 	ch.mu.Lock()
 	defer ch.mu.Unlock()
 	if !ch.done {
-		ch.done, ch.err = true, err
+		ch.done, ch.err, ch.usage = true, err, u
 		ch.cancel()
 	}
 	return ch.result(tk)
+}
+
+// M_wait_usage is Child.wait_usage (decision 0426's addendum): wait and
+// the child's own usage (zeros for a fake child).
+func (c Child) M_wait_usage(tk *Task) Result[Tuple2[int64, ProcUsage], ProcErr] {
+	r := c.M_wait(tk)
+	if !r.Ok {
+		return Result[Tuple2[int64, ProcUsage], ProcErr]{E: r.E, Tr: r.Tr}
+	}
+	var u ProcUsage
+	if c.c.fake == nil {
+		c.c.mu.Lock()
+		u = c.c.usage
+		c.c.mu.Unlock()
+	}
+	return Ok[Tuple2[int64, ProcUsage], ProcErr](Tuple2[int64, ProcUsage]{F0: r.V, F1: u})
 }
 
 func (ch *child) result(tk *Task) Result[int64, ProcErr] {
@@ -608,9 +625,14 @@ func (realProc) pipeline(tk *Task, cs []*procCmd) Result[ProcOutput, ProcErr] {
 	}
 	tk.leave()
 	waits := make([]error, started)
+	// the commands' usage: their times added, the largest peak
+	var usage ProcUsage
 	for i := 0; i < started; i++ {
 		waits[i] = xs[i].Wait()
-		noteChild(xs[i].ProcessState)
+		u := noteChild(xs[i].ProcessState)
+		usage.F_user += u.F_user
+		usage.F_system += u.F_system
+		usage.F_max_rss = max(usage.F_max_rss, u.F_max_rss)
 	}
 	tk.enter()
 	if startFail != nil {
@@ -636,5 +658,5 @@ func (realProc) pipeline(tk *Task, cs []*procCmd) Result[ProcOutput, ProcErr] {
 	for i := range errs {
 		eb.Write(errs[i].Bytes())
 	}
-	return Ok[ProcOutput, ProcErr](ProcOutput{F_code: code, F_stdout: Bytes(out.String()), F_stderr: Bytes(eb.String())})
+	return Ok[ProcOutput, ProcErr](ProcOutput{F_code: code, F_stdout: Bytes(out.String()), F_stderr: Bytes(eb.String()), F_usage: usage})
 }

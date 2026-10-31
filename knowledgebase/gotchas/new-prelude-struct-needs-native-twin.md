@@ -52,3 +52,15 @@ of the prelude struct made in another module has the prelude's type, not
 the twin's. Build a twin value field by field from it (`DiskUsage{total:
 u.total, ...}`), as `fs_disk_usage` and `net_interfaces` (the llrt
 ifaces.xo list) do.
+
+## A listed struct that gains a twin's field needs its own twin
+
+Observed 2026-10-30 (decision 0426's addendum): ProcOutput, in build.xo's
+short list and with no twin, gained `usage: ProcUsage`. The native
+prelude's `ProcOutput{..., usage: child_usage(r, 4)}` then failed with
+XO0401 (`expected ProcUsage, found native.prelude.ProcUsage`): the
+prelude's declaration names the prelude's ProcUsage, while child_usage
+built the twin. A twin of ProcOutput with the same fields in the same
+order (its usage of the ProcUsage twin) makes the literals there take
+the twin, as the return types do. The xobuild showed only the seed's
+failure; its lines carried the XO0401 among XO1201 notes.

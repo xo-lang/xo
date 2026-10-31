@@ -345,56 +345,36 @@ fn num_before(l: Str, suffix: Str) -> Float? {
   None
 }
 
-/// The rusage figures `/usr/bin/time` printed on stderr: cpu_ms,
-/// max_rss_kb, and (macOS) instructions and cycles.
+/// The counters macOS `time -l` printed on stderr: instructions and
+/// cycles (its cpu and peak lines are ProcOutput.usage's figures).
 fn rusage(goos: Str, err: Str) -> Map[Str, Float] {
   var out: Map[Str, Float] = {}
+  if goos != "darwin" {
+    return out
+  }
   for l in err.split("\n") {
     let t = l.trim()
-    if goos == "darwin" {
-      // "0.40 real         0.31 user         0.02 sys"
-      if t.ends_with(" sys") && t.contains(" real") {
-        let w = words(t)
-        if w.len() >= 6 {
-          out["cpu_ms"] = ((Float.parse(w[2]) ?? 0.0) + (Float.parse(w[4]) ?? 0.0)) * 1000.0
-        }
-      }
-      if let Some(v) = num_before(t, " maximum resident set size") {
-        out["max_rss_kb"] = v / 1024.0
-      }
-      if let Some(v) = num_before(t, " instructions retired") {
-        out["instructions"] = v
-      }
-      if let Some(v) = num_before(t, " cycles elapsed") {
-        out["cycles"] = v
-      }
-    } else {
-      if t.starts_with("User time (seconds):") || t.starts_with("System time (seconds):") {
-        let v = Float.parse(t.split(":")[1].trim()) ?? 0.0
-        out["cpu_ms"] = (out.get("cpu_ms") ?? 0.0) + v * 1000.0
-      }
-      if t.starts_with("Maximum resident set size (kbytes):") {
-        out["max_rss_kb"] = Float.parse(t.split(":")[1].trim()) ?? 0.0
-      }
+    if let Some(v) = num_before(t, " instructions retired") {
+      out["instructions"] = v
+    }
+    if let Some(v) = num_before(t, " cycles elapsed") {
+      out["cycles"] = v
     }
   }
   out
 }
 
-/// timed_cmd wraps prog in the platform's time(1). Windows has none (Git
-/// Bash ships no /usr/bin/time), so prog runs alone there; run_once
-/// reads its cpu_ms from Proc.children_usage (decision 0426).
+/// timed_cmd is prog's command. Its cpu_ms and max_rss_kb are the
+/// child's own usage (ProcOutput.usage, decision 0426's addendum) on
+/// every OS; on macOS it runs under `time -l` for the instructions and
+/// cycles only that prints, and the usage is then time's, whose wait4
+/// counts the child it waited for.
 fn timed_cmd(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]) -> Cmd {
   var argv: List[Str] = []
-  var tool = "/usr/bin/time"
-  if h.goos == "windows" {
-    tool = prog
-  } else if h.goos == "darwin" {
+  var tool = prog
+  if h.goos == "darwin" {
+    tool = "/usr/bin/time"
     argv.push("-l")
-  } else {
-    argv.push("-v")
-  }
-  if h.goos != "windows" {
     argv.push(prog)
   }
   for a in args {
@@ -410,14 +390,9 @@ fn timed_cmd(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str
 
 fn run_once(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]) -> Sample uses (clock, env, proc) {
   let c = timed_cmd(os, h, o, prog, args, env)
-  // Windows: the child's CPU time is what the waited children's grew by
-  // across this run (bench runs one child at a time); their peak memory
-  // is the largest child's so far, not this one's, so it is not read
-  let u0 = if h.goos == "windows" { os.proc.children_usage() } else { ProcUsage{user: Duration.from_nanos(0), system: Duration.from_nanos(0), max_rss: 0} }
   let t0 = os.clock.now()
   let r = task.with_timeout(os.clock, o.timeout, fn() { c.output() })
   let wall = Float(os.clock.since(t0).nanos()) / 1000000.0
-  let u1 = if h.goos == "windows" { os.proc.children_usage() } else { u0 }
   match r {
     Ok(out) => {
       let err = out.stderr.to_str() ?? ""
@@ -425,14 +400,16 @@ fn run_once(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]
         return Sample{vals: {}, ok: false, why: "exit ${out.code}"}
       }
       var m = reported(out.stdout.to_str() ?? "")
+      // macOS time -l's counters (its cpu and peak lines are the usage's)
       let ru = rusage(h.goos, err)
-      for k in ru.keys() {
-        m[k] = ru.get(k) ?? 0.0
+      for k in ["instructions", "cycles"] {
+        if let Some(v) = ru.get(k) {
+          m[k] = v
+        }
       }
       m["wall_ms"] = wall
-      if h.goos == "windows" {
-        m["cpu_ms"] = Float(u1.user.nanos() + u1.system.nanos() - u0.user.nanos() - u0.system.nanos()) / 1000000.0
-      }
+      m["cpu_ms"] = Float(out.usage.user.nanos() + out.usage.system.nanos()) / 1000000.0
+      m["max_rss_kb"] = Float(out.usage.max_rss) / 1024.0
       var ops = o.ops
       if ops == 0.0 {
         for k in ["ops", "requests", "all_requests"] {
@@ -651,15 +628,8 @@ fn vals_json(m: Map[Str, Float]) -> Str {
   out.freeze()
 }
 
-/// The note a Windows run prints under its table: no round measured the
-/// child's peak memory, so that row is absent, not zero.
-fn usage_na() -> Str {
-  "max_rss_kb: not measured on Windows (Proc.children_usage keeps the largest waited child's peak working set, not each child's)"
-}
-
-/// The line saying the counter rows are missing, and why: GNU time
-/// (Linux) reports neither instructions nor cycles.
-
+/// The line saying the counter rows are missing, and why: only macOS
+/// `time -l` reports instructions and cycles.
 fn counters_na(goos: Str) -> Str {
   if goos == "windows" {
     return "instructions, cycles, ipc: n/a (not measured on Windows)"
@@ -667,7 +637,7 @@ fn counters_na(goos: Str) -> Str {
   if goos == "darwin" {
     return "instructions, cycles, ipc: n/a (time -l printed no cycles elapsed line)"
   }
-  "instructions, cycles, ipc: n/a (GNU time reports neither instructions nor cycles; only macOS time -l does)"
+  "instructions, cycles, ipc: n/a (only macOS time -l reports them)"
 }
 
 /// run is `xo bench ARGS` and returns the exit status.
@@ -782,9 +752,6 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
     } else {
       os.stdio.print(table(rows))
       os.stdio.println(load_note(o, rounds))
-      if h.goos == "windows" {
-        os.stdio.println(usage_na())
-      }
       if !rows.any(fn(r: Row) { r.name == "cycles" }) && (o.metrics.is_empty() || o.metrics.any(fn(k) { k is "cycles" | "cycles_per_op" | "ipc" | "instructions" })) {
         os.stdio.println(counters_na(h.goos))
       }

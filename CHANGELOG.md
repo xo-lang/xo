@@ -59,6 +59,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   max_rss_kb is still not measured there (children_usage keeps the
   largest waited child's peak, not each child's), and the note under
   the table says so.
+- std: a child's own usage (decision 0426's addendum): `ProcOutput.usage`
+  (`run`, `pipeline`, `Cmd.output`) and `Child.wait_usage()` give each
+  child's CPU time and peak resident set, where `children_usage` keeps
+  only the largest peak. `ProcOutput` literals without the field still
+  compile.
+- Tools: `xo bench` reads each run's own CPU time and peak memory
+  from `ProcOutput.usage` on every OS, so Windows now has max_rss_kb
+  too; `/usr/bin/time -l` stays only on macOS, for instructions and
+  cycles, and GNU time is no longer used on Linux.
 - Tools: `xo dev size --by-cause` reports struct and tuple copies as their
   own cause, `copy` (decision 0443): a struct, tuple or variant value of
   more than a word built, taken apart or updated, and block arguments of

@@ -1120,6 +1120,10 @@ struct ProcOutput {
   code: Int
   stdout: Bytes
   stderr: Bytes
+  /// The child's own CPU time and peak memory (decision 0426's
+  /// addendum; a pipeline's: the commands' times added, the largest
+  /// peak); zeros from a fake Proc and under WASI.
+  usage: ProcUsage = ProcUsage{user: 0s, system: 0s, max_rss: 0}
 }
 
 enum ProcErr {
@@ -1228,4 +1232,7 @@ fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc
 fn (c: Child) read_line() -> Str? ! ProcErr uses proc
 /// Closes the child's input, waits for it, and returns its status.
 fn (c: Child) wait() -> Int ! ProcErr uses proc
+/// wait, with the child's own CPU time and peak memory (decision 0426's
+/// addendum; Go's ProcessState.UserTime, SystemTime and SysUsage).
+fn (c: Child) wait_usage() -> (Int, ProcUsage) ! ProcErr uses proc
 fn (c: Child) kill()

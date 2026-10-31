@@ -526,6 +526,9 @@ pub fn pipe_at(a: Int) -> Int { ret(Int(sys_darwin.pipe(a))) }
 /// (options 0) or WNOHANG (1): the pid, 0, or the negative errno.
 pub fn waitpid_at(pid: Int, st: Int, options: Int) -> Int { ret(Int(sys_darwin.waitpid(pid, st, options))) }
 
+/// waitpid_at with the child's struct rusage written at ru.
+pub fn wait4_ru(pid: Int, st: Int, options: Int, ru: Int) -> Int { ret(Int(sys_darwin.wait4(pid, st, options, ru))) }
+
 pub fn err_msg(e: Int) -> Str {
   let s = strerror(e)
   let b = s.bytes()

@@ -1171,7 +1171,7 @@ Terminals (decision 0162), on every backend:
 ### 3.7 Proc (`uses proc`)
 
 ```
-struct ProcOutput { code: Int, stdout: Bytes, stderr: Bytes }
+struct ProcOutput { code: Int, stdout: Bytes, stderr: Bytes, usage: ProcUsage = ProcUsage{user: 0s, system: 0s, max_rss: 0} }
 enum ProcErr { NotFound(cmd: Str), Io(msg: Str), Canceled, Denied(cmd: Str) }
 
 `display` prints `CMD: executable file not found`, MSG for `Io`, `canceled`,
@@ -1242,6 +1242,18 @@ backend's totals have the times only: `max_rss` 0). WASI answers zeros.
 An attenuated `Proc` answers as the real one: it is the process's own
 state, as `pid`. A test's FakeProc answers with the real process's.
 
+A child's own usage (decision 0426's addendum; Go's
+`ProcessState.UserTime`, `SystemTime` and `SysUsage`) is
+`ProcOutput.usage` of `run`, `pipeline` and `Cmd.output`, and
+`Child.wait_usage()`'s: its CPU time in user mode and in the kernel and
+its peak resident set in bytes, read as it is waited for (`wait4`'s
+rusage; on Windows `GetProcessTimes` and the peak working set of its
+handle). A pipeline's adds its commands' times and keeps the largest
+peak. Unlike `children_usage`, whose `max_rss` is the largest of every
+child waited for, each child's is its own. A ProcOutput built as a
+literal, a FakeProc's output, and WASI have zeros; the Go backend's
+`max_rss` is 0 on Windows (os/exec closes the handle first).
+
 `kill` (decision 0190) sends the named signal to the process `pid`: one
 of `HUP`, `INT`, `QUIT`, `KILL`, `TERM`, `USR1`, `USR2`, `CONT`, `STOP`
 (the names of `kill -l` without `SIG`; another name is
@@ -1301,6 +1313,7 @@ fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc        // its output;
 fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc    // its error stream
 fn (c: Child) read_line() -> Str? ! ProcErr uses proc             // a line of its output
 fn (c: Child) wait() -> Int ! ProcErr uses proc                   // closes its input; the status
+fn (c: Child) wait_usage() -> (Int, ProcUsage) ! ProcErr uses proc // wait, and the child's own usage
 fn (c: Child) kill()
 ```
 
@@ -4935,7 +4948,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-476 declarations.
+477 declarations.
 
 ### Range
 
@@ -5682,6 +5695,7 @@ fn (c: Child) read(max: Int) -> Bytes? ! ProcErr uses proc
 fn (c: Child) read_err(max: Int) -> Bytes? ! ProcErr uses proc
 fn (c: Child) read_line() -> Str? ! ProcErr uses proc
 fn (c: Child) wait() -> Int ! ProcErr uses proc
+fn (c: Child) wait_usage() -> (Int, ProcUsage) ! ProcErr uses proc
 fn (c: Child) kill()
 ```
 

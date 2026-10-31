@@ -1210,7 +1210,7 @@ func (realProc) run(tk *Task, cmd string, args List[string]) Result[ProcOutput, 
 	c.Stdout, c.Stderr = &out, &errb
 	tk.leave()
 	err := c.Run()
-	noteChild(c.ProcessState)
+	usage := noteChild(c.ProcessState)
 	tk.enter()
 	code := int64(0)
 	if err != nil {
@@ -1226,7 +1226,7 @@ func (realProc) run(tk *Task, cmd string, args List[string]) Result[ProcOutput, 
 			return Err[ProcOutput](ProcErr{Tag: 2, P: ProcErr_Io{F_msg: err.Error()}})
 		}
 	}
-	return Ok[ProcOutput, ProcErr](ProcOutput{F_code: code, F_stdout: Bytes(out.String()), F_stderr: Bytes(errb.String())})
+	return Ok[ProcOutput, ProcErr](ProcOutput{F_code: code, F_stdout: Bytes(out.String()), F_stderr: Bytes(errb.String()), F_usage: usage})
 }
 
 func (realProc) XoDebug(b *strings.Builder) { b.WriteString("<proc>") }

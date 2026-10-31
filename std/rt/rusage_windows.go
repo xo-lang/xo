@@ -49,17 +49,21 @@ func childrenUsage() ProcUsage {
 	return childTotals.u
 }
 
-// noteChild adds a waited child's times (nil: it never started).
-func noteChild(ps *os.ProcessState) {
+// noteChild adds a waited child's times (nil: it never started) and
+// returns them as the child's own usage (decision 0426's addendum); its
+// peak working set is 0 here, gone with the handle os/exec closed.
+func noteChild(ps *os.ProcessState) ProcUsage {
 	if ps == nil {
-		return
+		return ProcUsage{}
 	}
 	ru, ok := ps.SysUsage().(*syscall.Rusage)
 	if !ok || ru == nil {
-		return
+		return ProcUsage{}
 	}
+	u := ProcUsage{F_user: Duration(filetimeNs(ru.UserTime)), F_system: Duration(filetimeNs(ru.KernelTime))}
 	childTotals.Lock()
-	childTotals.u.F_user += Duration(filetimeNs(ru.UserTime))
-	childTotals.u.F_system += Duration(filetimeNs(ru.KernelTime))
+	childTotals.u.F_user += u.F_user
+	childTotals.u.F_system += u.F_system
 	childTotals.Unlock()
+	return u
 }

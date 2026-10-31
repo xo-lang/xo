@@ -748,9 +748,10 @@ per_sec or throughput are higher is better).
   --json             one JSON object: parameters, rounds, loads, metrics
 
 Runs wait while the quiet window file (XO_QUIET_FILE, default
-~/xo-lead/quiet) holds a future time. The processes run under
-/usr/bin/time; on Windows, which has none, they run alone, cpu_ms comes
-from Proc.children_usage and max_rss_kb is not measured. Exit 0 whatever the verdict, 1 on a failed run, 2 on usage.
+~/xo-lead/quiet) holds a future time. cpu_ms and max_rss_kb are each
+run's own (ProcOutput.usage); on macOS the processes run under
+/usr/bin/time -l for instructions and cycles. Exit 0 whatever the
+verdict, 1 on a failed run, 2 on usage.
 """
 }
 

@@ -758,21 +758,28 @@ fn exit_code(ws: Int) -> Int {
 }
 
 /// Waits for pid, killing it when the task is canceled (or was, killed
-/// already): its exit status, and whether the task was canceled
-/// (xo_proc.c pr_wait).
-fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool) {
+/// already): its exit status, whether the task was canceled (xo_proc.c
+/// pr_wait), and the child's own usage (decision 0426's addendum): user
+/// and system CPU time in nanoseconds and its peak resident set in bytes,
+/// from wait4's struct rusage ([0, 0, 0] when the wait failed).
+fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool, List[Int]) {
   if l == 3 {
     return wait_windows(pid, canceled0)
   }
   var canceled = canceled0
   let st = rt.heap_large(8)
   rt.mem_store(st, 0, 0, 8)
+  // struct rusage: ru_utime and ru_stime (struct timeval, 16 bytes each
+  // on 64 bit Linux and darwin), ru_maxrss at 32 (KiB on Linux, bytes on
+  // darwin); 144 bytes
+  let ru = rt.heap_large(144)
+  rt.mem_set(ru, 0, 144)
   var step = 1000000
   var code = 0
   while true {
     // once canceled (the command killed), a blocking wait
     let opt = if canceled { 0 } else { 1 }
-    let r = if l == 2 { darwin.waitpid_at(pid, st, opt) } else { linux.wait4_at(pid, st, opt) }
+    let r = if l == 2 { darwin.wait4_ru(pid, st, opt, ru) } else { linux.wait4_ru(pid, st, opt, ru) }
     if r == pid {
       code = exit_code(rt.mem_load(st, 0, 4))
       break
@@ -797,23 +804,29 @@ fn wait_exit(l: Int, pid: Int, canceled0: Bool) -> (Int, Bool) {
       step *= 2
     }
   }
+  // read once after the loop (ru stays zero when the wait failed): a
+  // list set inside the loop and left unset on its other exits made the
+  // linux/arm64 build fail (gotchas/arm64-vreg-unset-loop-exit.md)
+  let rss = rt.mem_load(ru, 32, 8)
+  let usage = [rt.mem_load(ru, 0, 8) * 1000000000 + rt.mem_load(ru, 8, 8) * 1000, rt.mem_load(ru, 16, 8) * 1000000000 + rt.mem_load(ru, 24, 8) * 1000, if l == 2 { rss } else { rss * 1024 }]
   rt.heap_release(st - 8)
-  (code, canceled)
+  rt.heap_release(ru - 8)
+  (code, canceled, usage)
 }
 
 /// wait_exit on Windows (xo_proc.c pr_wait): the process handle reaped
 /// (and closed) with its exit code.
-fn wait_windows(h: Int, canceled0: Bool) -> (Int, Bool) {
+fn wait_windows(h: Int, canceled0: Bool) -> (Int, Bool, List[Int]) {
   var canceled = canceled0
   var step = 1000000
   while true {
-    let (done, code) = windows.reap(h, canceled)
+    let (done, code, usage) = windows.reap_usage(h, canceled)
     if done {
-      return (code, canceled)
+      return (code, canceled, usage)
     }
     if canceled {
       // a blocking wait that failed: the handle is not a process
-      return (-1, canceled)
+      return (-1, canceled, [0, 0, 0])
     }
     if poll.canceled() {
       canceled = true
@@ -829,7 +842,7 @@ fn wait_windows(h: Int, canceled0: Bool) -> (Int, Bool) {
       step *= 2
     }
   }
-  (-1, canceled)
+  (-1, canceled, [0, 0, 0])
 }
 
 /// Proc.run (xo_proc.c xo_proc_run): cmd with args, its standard input
@@ -872,11 +885,12 @@ pub fn run(cmd: Str, args: List[Str]) -> List[Str] {
   if c1 {
     kill9(l, pid)
   }
-  let (code, c2) = wait_exit(l, pid, c1)
+  let (code, c2, u) = wait_exit(l, pid, c1)
   if c2 {
     return ["3", ""]
   }
-  ["0", "${code}", outs[0], outs[1]]
+  // the child's own usage after its output (ProcOutput.usage)
+  ["0", "${code}", outs[0], outs[1], "${u[0]}", "${u[1]}", "${u[2]}"]
 }
 
 /// Cmd.output (mode 0: one command, its output collected), Cmd.run (1:
@@ -992,15 +1006,18 @@ pub fn exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[S
     canceled = c
   }
   var code = 0
+  // the commands' usage: their CPU times added, the largest peak
+  var usage = [0, 0, 0]
   for p in pids {
     if canceled {
       kill9(l, p)
     }
-    let (c, cc) = wait_exit(l, p, canceled)
+    let (c, cc, u) = wait_exit(l, p, canceled)
     canceled = cc
     if c != 0 {
       code = c
     }
+    usage = [usage[0] + u[0], usage[1] + u[1], if u[2] > usage[2] { u[2] } else { usage[2] }]
   }
   if st != "0" {
     return [st, msg]
@@ -1022,7 +1039,7 @@ pub fn exec(spec: List[Str], input: Bytes, has_input: Bool, mode: Int) -> List[S
       out = outs[k]
     }
   }
-  ["0", "${code}", out, errs.join("")]
+  ["0", "${code}", out, errs.join(""), "${usage[0]}", "${usage[1]}", "${usage[2]}"]
 }
 
 // ---------------------------------------------------------------------------
@@ -1069,8 +1086,13 @@ const CH_FEED = 208
 const CH_FEED_P = 216
 const CH_FEED_N = 224
 const CH_FEED_AT = 232
+/// the reaped child's own usage (decision 0426's addendum): user and
+/// system CPU nanoseconds, peak resident set in bytes
+const CH_USER = 240
+const CH_SYS = 248
+const CH_RSS = 256
 /// The record's size (xo_proc.c CHILD_X_SIZE).
-pub const CH_SIZE = 240
+pub const CH_SIZE = 264
 
 fn ld(ch: Int, k: Int) -> Int { rt.mem_load(ch, k, 8) }
 
@@ -1580,14 +1602,17 @@ pub fn child_wait(h: rt.ProcChild) -> List[Str] {
         break
       }
     }
-    let (code, canceled) = wait_exit(l, ld(ch, CH_PID), false)
+    let (code, canceled, u) = wait_exit(l, ld(ch, CH_PID), false)
     st(ch, CH_REAPED, 1)
     st(ch, CH_CODE, code)
+    st(ch, CH_USER, u[0])
+    st(ch, CH_SYS, u[1])
+    st(ch, CH_RSS, u[2])
     if canceled {
       return ["3", ""]
     }
   }
-  ["0", "${ld(ch, CH_CODE)}"]
+  ["0", "${ld(ch, CH_CODE)}", "${ld(ch, CH_USER)}", "${ld(ch, CH_SYS)}", "${ld(ch, CH_RSS)}"]
 }
 
 /// c.kill().

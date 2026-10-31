@@ -26,5 +26,20 @@ func rusage(who int) ProcUsage {
 	return ProcUsage{F_user: Duration(ru.Utime.Nano()), F_system: Duration(ru.Stime.Nano()), F_max_rss: rss}
 }
 
-// noteChild: the kernel keeps the waited children's usage on Unix.
-func noteChild(*os.ProcessState) {}
+// noteChild is a waited child's own usage (decision 0426's addendum:
+// ProcOutput.usage, Child.wait_usage), from its wait4 rusage; the kernel
+// keeps the children's totals on Unix. Zeros when it never started.
+func noteChild(ps *os.ProcessState) ProcUsage {
+	if ps == nil {
+		return ProcUsage{}
+	}
+	ru, ok := ps.SysUsage().(*syscall.Rusage)
+	if !ok || ru == nil {
+		return ProcUsage{}
+	}
+	rss := int64(ru.Maxrss)
+	if runtime.GOOS != "darwin" {
+		rss *= 1024
+	}
+	return ProcUsage{F_user: Duration(ru.Utime.Nano()), F_system: Duration(ru.Stime.Nano()), F_max_rss: rss}
+}

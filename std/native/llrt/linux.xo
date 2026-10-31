@@ -721,6 +721,9 @@ pub fn wait4(pid: Int, options: Int) -> Int { rt.sys6(nr(260, 61), pid, 0, optio
 /// (options 0) or WNOHANG (1): the pid, 0, or the negative errno.
 pub fn wait4_at(pid: Int, st: Int, options: Int) -> Int { rt.sys6(nr(260, 61), pid, st, options, 0, 0, 0) }
 
+/// wait4_at with the child's struct rusage written at ru.
+pub fn wait4_ru(pid: Int, st: Int, options: Int, ru: Int) -> Int { rt.sys6(nr(260, 61), pid, st, options, ru, 0, 0) }
+
 /// execve(2): returns only on failure, the negative errno.
 pub fn execve(file: Int, argv: Int, envp: Int) -> Int { rt.sys6(nr(221, 59), file, argv, envp, 0, 0, 0) }
 

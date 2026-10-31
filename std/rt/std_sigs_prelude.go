@@ -274,5 +274,6 @@ var (
 	_ func(*Child, *Task, int64) Result[Option[Bytes], ProcErr]     = (*Child).M_read_err
 	_ func(*Child, *Task) Result[Option[string], ProcErr]           = (*Child).M_read_line
 	_ func(*Child, *Task) Result[int64, ProcErr]                    = (*Child).M_wait
+	_ func(*Child, *Task) Result[Tuple2[int64, ProcUsage], ProcErr] = (*Child).M_wait_usage
 	_ func(*Child, *Task)                                           = (*Child).M_kill
 )

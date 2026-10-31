@@ -85,6 +85,9 @@ fn access(path: Int, mode: Int) -> Int32
 fn pipe(fds: Int) -> Int32
 /// waitpid(2) with the status as a C int at the address st.
 fn waitpid(pid: Int, st: Int, options: Int) -> Int32
+/// wait4(2): waitpid with the child's struct rusage at ru (decision
+/// 0426's addendum: a child's own usage).
+fn wait4(pid: Int, st: Int, options: Int, ru: Int) -> Int32
 // posix_spawn(2) and its file actions and attributes (std/native/llrt/
 // proc.xo): posix_spawn_file_actions_t and posix_spawnattr_t are one
 // pointer each, a sigset_t 4 bytes; each returns 0 or an errno.

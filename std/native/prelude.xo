@@ -3735,7 +3735,15 @@ fn proc_run(p: Proc, cmd: Str, args: List[Str]) -> ProcOutput ! ProcErr {
   if st == "3" {
     return Err(ProcErr.Canceled)
   }
-  ProcOutput{code: text.parse_int(detail) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes()}
+  ProcOutput{code: text.parse_int(detail) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes(), usage: child_usage(r, 4)}
+}
+
+/// The child's usage at r[i..i+3] (proc.xo: user and system CPU
+/// nanoseconds, peak resident set in bytes); zeros when r has none (a
+/// fake's outcome).
+fn child_usage(r: List[Str], i: Int) -> ProcUsage {
+  let n = fn(k: Int) -> Int { text.parse_int(r.get(i + k) ?? "0") ?? 0 }
+  ProcUsage{user: Duration.from_nanos(n(0)), system: Duration.from_nanos(n(1)), max_rss: n(2)}
 }
 
 // ---------------------------------------------------------------------------
@@ -3819,6 +3827,18 @@ struct ProcUsage {
   user: Duration
   system: Duration
   max_rss: Int
+}
+
+/// The native layout of the prelude's ProcOutput, for its usage field
+/// (decision 0426's addendum): a ProcOutput literal here then takes the
+/// ProcUsage twin above, which the prelude's declaration would not
+/// (XO0401, gotchas/new-prelude-struct-needs-native-twin.md); the
+/// fields and their order match std/prelude.xo's.
+struct ProcOutput {
+  code: Int
+  stdout: Bytes
+  stderr: Bytes
+  usage: ProcUsage = ProcUsage{user: 0s, system: 0s, max_rss: 0}
 }
 
 /// Proc.usage (decision 0426).
@@ -4162,7 +4182,7 @@ fn proc_outcome(r: List[Str]) -> ProcOutput ! ProcErr {
   if st != "0" {
     return Err(proc_err(st, d))
   }
-  ProcOutput{code: text.parse_int(d) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes()}
+  ProcOutput{code: text.parse_int(d) ?? 0, stdout: (r.get(2) ?? "").bytes(), stderr: (r.get(3) ?? "").bytes(), usage: child_usage(r, 4)}
 }
 
 /// proc.xo exec of the specs, or in the test world the outputs
@@ -4291,6 +4311,15 @@ fn child_wait(c: Child) -> Int ! ProcErr uses proc {
     return Err(proc_err(st, r.get(1) ?? ""))
   }
   text.parse_int(r.get(1) ?? "0") ?? 0
+}
+
+fn child_wait_usage(c: Child) -> (Int, ProcUsage) ! ProcErr uses proc {
+  let r = proc.child_wait(c.h)
+  let st = r.get(0) ?? "2"
+  if st != "0" {
+    return Err(proc_err(st, r.get(1) ?? ""))
+  }
+  (text.parse_int(r.get(1) ?? "0") ?? 0, child_usage(r, 2))
 }
 
 fn child_kill(c: Child) { proc.child_kill(c.h) }

@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+codes 0 0
+big cpu true
+big rss true
+small rss true true
+own peak true
+children keep the largest true
+spawned 0 true true
+default 0 true
+--- stderr

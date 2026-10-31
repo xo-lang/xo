@@ -422,7 +422,9 @@ fn (var b: Builder) test_cap_call(x: Expr, ci: check.CallInfo, key: Str) -> Int?
       let cmd = b.tc_arg(es, 0, st)
       let out = b.expr(es[1] ?? fault("on_run"))
       let ot = b.vty(out)
-      if b.tkind(ot) != Kind.Struct || b.m.types[ot].fields.len() != 3 {
+      // code, stdout and stderr; a fake's usage (decision 0426's
+      // addendum) is not kept, and its runs read zeros
+      if b.tkind(ot) != Kind.Struct || b.m.types[ot].fields.len() < 3 {
         b.unsupported("this `on_run`")
         return Some(b.undef(nt))
       }

@@ -1,0 +1,70 @@
+// A child's own usage (decision 0426's addendum): ProcOutput.usage and
+// Child.wait_usage give each child its own CPU time and peak resident
+// set, so a small child run after a large one reads its own, smaller
+// peak (children_usage keeps the largest); a fake Proc's outputs have
+// zero usage.
+fn spin(n: Int) -> Int {
+  var x = 88172645
+  for i in 0..n {
+    x = (x * 31 + i) % 1000000007
+  }
+  x
+}
+
+/// Holds about mb megabytes live, touched, and returns their sum.
+fn hold(mb: Int) -> Int {
+  var xs: List[Bytes] = []
+  for _ in 0..mb {
+    xs.push(b"\x07".repeat(1048576))
+  }
+  var s = 0
+  for b in xs {
+    s += Int(b[1000])
+  }
+  s
+}
+
+/// This program run with arg; on a failure the error, and an output of
+/// code -1.
+fn run(os: Os, arg: Str) -> ProcOutput {
+  match os.proc.run(os.env.program(), [arg]) {
+    Ok(out) => out
+    Err(e) => {
+      os.stdio.println("run ${arg}: ${e}")
+      ProcOutput{code: -1, stdout: b"", stderr: b""}
+    }
+  }
+}
+
+fn main(os: Os) {
+  match os.env.args().get(0) {
+    Some("big") => {
+      os.stdio.println("${hold(256) > 0} ${spin(100000000) != 1}")
+      return
+    }
+    Some("small") => {
+      os.stdio.println("small")
+      return
+    }
+    _ => {}
+  }
+  let big = run(os, "big")
+  let small = run(os, "small")
+  os.stdio.println("codes ${big.code} ${small.code}")
+  os.stdio.println("big cpu ${big.usage.user + big.usage.system > 10ms}")
+  // 256 MB held: the big child's peak is over 200 MB, the small one's
+  // under 100 MB, and a byte count either way (not Linux's KiB)
+  os.stdio.println("big rss ${big.usage.max_rss > 200000000}")
+  os.stdio.println("small rss ${small.usage.max_rss > 100000} ${small.usage.max_rss < 100000000}")
+  os.stdio.println("own peak ${small.usage.max_rss < big.usage.max_rss}")
+  os.stdio.println("children keep the largest ${os.proc.children_usage().max_rss >= big.usage.max_rss}")
+  match os.proc.cmd(os.env.program(), ["small"]).spawn() {
+    Ok(c) => match c.wait_usage() {
+      Ok((code, u)) => os.stdio.println("spawned ${code} ${u.max_rss > 100000} ${u.max_rss < 100000000}")
+      Err(e) => os.stdio.println("wait ${e}")
+    }
+    Err(e) => os.stdio.println("spawn ${e}")
+  }
+  let lit = ProcOutput{code: 0, stdout: b"", stderr: b""}
+  os.stdio.println("default ${lit.usage.max_rss} ${lit.usage.user + lit.usage.system == 0s}")
+}

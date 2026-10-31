@@ -1269,12 +1269,20 @@ fn (var b: Builder) cat(acc: Int, v: Int) -> Int {
   b.call("str.concat", b.str_t(), "", [acc, v])
 }
 
-fn (var b: Builder) struct_lit(e: Expr) -> Int {
+fn (var b: Builder) struct_lit(e: Expr) -> Int { b.struct_lit_as(e, -1) }
+
+/// A struct literal; want, when it is a struct, is its type when the
+/// checker recorded none (a std declaration file's default, which is not
+/// checked as a body: ProcOutput's `usage: ProcUsage = ProcUsage{...}`).
+fn (var b: Builder) struct_lit_as(e: Expr, want: Int) -> Int {
   let fields = match e {
     StructLit(fields: fields, ..) => fields
     _ => fault("struct literal")
   }
-  let t = b.nat_of(e)
+  var t = b.nat_of(e)
+  if want >= 0 && b.tkind(t) != Kind.Struct && b.tkind(want) == Kind.Struct {
+    t = want
+  }
   if b.is_os(t) {
     return b.os_lit(fields, t, e)
   }
@@ -1428,7 +1436,13 @@ fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int, sub: Map[Int, Int]) -
   let saved_sub = b.s.sub
   b.s.file = f
   b.s.sub = sub
-  let v = b.value_as(e, t)
+  // a struct literal with no recorded type (a std declaration file's
+  // default, as for the empty list above): a value of t
+  let lit = match e {
+    StructLit(..) => b.tkind(t) == Kind.Struct
+    _ => false
+  }
+  let v = if lit { b.struct_lit_as(e, t) } else { b.value_as(e, t) }
   b.s.file = saved
   b.s.sub = saved_sub
   v

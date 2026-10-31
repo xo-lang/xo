@@ -2555,7 +2555,7 @@ fn (var b: Builder) native_waits(fo: Int) -> Bool {
   if r < 0 || b.c.objs[fo].is_static || m < 0 || !b.is_prelude_mod(m) {
     return false
   }
-  "${b.obj_name(r)}.${b.obj_name(fo)}" is "Cmd.output" | "Cmd.run" | "Cmd.spawn" | "Child.write" | "Child.read" | "Child.read_err" | "Child.read_line" | "Child.wait"
+  "${b.obj_name(r)}.${b.obj_name(fo)}" is "Cmd.output" | "Cmd.run" | "Cmd.spawn" | "Child.write" | "Child.read" | "Child.read_err" | "Child.read_line" | "Child.wait" | "Child.wait_usage"
 }
 
 /// A call of native/llrt/userfs's user(f) (decision 0307): the user

@@ -1,10 +1,11 @@
 use std/testing
 
-test "rusage reads macOS time -l" {
+test "rusage reads macOS time -l's counters" {
   let err = "        0.40 real         0.31 user         0.02 sys\n             8306688  maximum resident set size\n  25632703  instructions retired\n             4621817  cycles elapsed\n             1130736  peak memory footprint\n"
   let m = rusage("darwin", err)
-  expect(m.get("cpu_ms") == Some(330.0))
-  expect(m.get("max_rss_kb") == Some(8112.0))
+  // cpu_ms and max_rss_kb come from ProcOutput.usage (decision 0426's addendum)
+  expect(m.get("cpu_ms") == None)
+  expect(m.get("max_rss_kb") == None)
   expect(m.get("instructions") == Some(25632703.0))
   expect(m.get("cycles") == Some(4621817.0))
 }
@@ -17,18 +18,10 @@ test "ipc is higher is better, cycles lower" {
 test "counters are n/a on Linux" {
   expect(counters_na("linux").contains("n/a")) == true
   expect(counters_na("windows").contains("Windows")) == true
-  expect(usage_na().contains("not measured on Windows")) == true
-  // cpu_ms is measured there (Proc.children_usage deltas); only the peak is not
-  expect(usage_na().contains("cpu_ms")) == false
 }
 
-test "rusage reads GNU time -v" {
-  let err = "\tCommand being timed: \"x\"\n\tUser time (seconds): 0.25\n\tSystem time (seconds): 0.05\n\tMaximum resident set size (kbytes): 9000\n"
-  let m = rusage("linux", err)
-  expect(m.get("cpu_ms") == Some(300.0))
-  expect(m.get("max_rss_kb") == Some(9000.0))
-  expect(m.get("instructions") == None)
-  expect(m.get("cycles") == None)
+test "rusage reads nothing off macOS" {
+  expect(rusage("linux", "\tUser time (seconds): 0.25\n").is_empty()) == true
 }
 
 test "reported takes the numbers of the last JSON line" {
