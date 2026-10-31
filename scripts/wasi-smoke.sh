@@ -2,7 +2,8 @@
 # wasi-smoke.sh XO_WASM STD_DIR [WORKDIR]: smoke test of xo built for
 # wasip1/wasm (decision 0405). Runs the module with RUNNER (default:
 # node --no-warnings compiler/wasm/run.mjs; for wasmtime set
-# RUNNER="wasmtime run --dir=/ --dir=. --env XO_STD --"), then checks:
+# RUNNER="wasmtime run -W max-wasm-stack=268435456 --allow-precompiled --dir=. --dir=/ --env XO_STD --env HOME=$HOME --env TMPDIR=/tmp --"
+# on a `wasmtime compile` .cwasm; the working directory must be the first preopen (fd 3), the root the second (fd 4), and the wasm stack 256 MB), then checks:
 #   1. `xo version` prints "xo VERSION wasip1/wasm"
 #   2. `xo check` accepts a hello program
 #   3. `xo build` makes hello for darwin/arm64 and linux/arm64 (Xo's own
