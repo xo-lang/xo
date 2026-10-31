@@ -3,9 +3,9 @@
 Status: Accepted (owner, 2026-10-31: "Can we run all the tests through
 heavy? Then have multiple lanes? And can the merge queue and other
 features go in there too?", then "Yes with the heavy stages" to the
-staged plan below). Stages 1 to 3 landed 2026-10-31: lanes in heavyd
+staged plan below). Stages 1 to 4 landed 2026-10-31: lanes in heavyd
 (041e4f0a9), offload.sh in the host lanes (e07848322), pushq in the merge
-lane.
+lane (8e7a90ea6), routing (lane specs and host files).
 
 ## Context
 
@@ -65,6 +65,16 @@ Stages, each pushed and running live before the next:
    exclusive) and heavyd picks the first free lane that has it, so a
    bulk run that does not need darwin goes to whichever Linux host frees
    first.
+   As built: a lease asks for a spec, `NAME` (that lane), `NAME*` (every
+   lane whose name starts with NAME, the first to free a slot takes it)
+   or `env:FILE` (the lane of that host file); heavyd-lanes.conf's fourth
+   column names each host lane's file, which the run gets as
+   HEAVY_LANE_ENV and offload.sh uses. offload.sh asks for `arm64*` or
+   `amd64*` unless the caller names a host file (OFFLOAD_ENV, then
+   `env:FILE`): callers that `--put` files first (ab-host.sh, tier.sh,
+   amd64-run.sh) name it, so the put and the run reach the same host. A
+   second arm64 host: its env file in ~/xo-lead and one line,
+   `arm64-2 2 2 offload-2.env`.
 5. Docker and Windows lanes, then the per-script queues are deleted.
 
 ## Consequences
