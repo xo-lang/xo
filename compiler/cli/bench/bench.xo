@@ -382,8 +382,8 @@ fn rusage(goos: Str, err: Str) -> Map[Str, Float] {
 }
 
 /// timed_cmd wraps prog in the platform's time(1). Windows has none (Git
-/// Bash ships no /usr/bin/time), so prog runs alone there and a round
-/// reports wall_ms only.
+/// Bash ships no /usr/bin/time), so prog runs alone there; run_once
+/// reads its cpu_ms from Proc.children_usage (decision 0426).
 fn timed_cmd(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]) -> Cmd {
   var argv: List[Str] = []
   var tool = "/usr/bin/time"
@@ -410,9 +410,14 @@ fn timed_cmd(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str
 
 fn run_once(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]) -> Sample uses (clock, env, proc) {
   let c = timed_cmd(os, h, o, prog, args, env)
+  // Windows: the child's CPU time is what the waited children's grew by
+  // across this run (bench runs one child at a time); their peak memory
+  // is the largest child's so far, not this one's, so it is not read
+  let u0 = if h.goos == "windows" { os.proc.children_usage() } else { ProcUsage{user: Duration.from_nanos(0), system: Duration.from_nanos(0), max_rss: 0} }
   let t0 = os.clock.now()
   let r = task.with_timeout(os.clock, o.timeout, fn() { c.output() })
   let wall = Float(os.clock.since(t0).nanos()) / 1000000.0
+  let u1 = if h.goos == "windows" { os.proc.children_usage() } else { u0 }
   match r {
     Ok(out) => {
       let err = out.stderr.to_str() ?? ""
@@ -425,6 +430,9 @@ fn run_once(os: Os, h: Host, o: Opts, prog: Str, args: List[Str], env: List[Str]
         m[k] = ru.get(k) ?? 0.0
       }
       m["wall_ms"] = wall
+      if h.goos == "windows" {
+        m["cpu_ms"] = Float(u1.user.nanos() + u1.system.nanos() - u0.user.nanos() - u0.system.nanos()) / 1000000.0
+      }
       var ops = o.ops
       if ops == 0.0 {
         for k in ["ops", "requests", "all_requests"] {
@@ -643,13 +651,14 @@ fn vals_json(m: Map[Str, Float]) -> Str {
   out.freeze()
 }
 
+/// The note a Windows run prints under its table: no round measured the
+/// child's peak memory, so that row is absent, not zero.
+fn usage_na() -> Str {
+  "max_rss_kb: not measured on Windows (Proc.children_usage keeps the largest waited child's peak working set, not each child's)"
+}
+
 /// The line saying the counter rows are missing, and why: GNU time
 /// (Linux) reports neither instructions nor cycles.
-/// The note a Windows run prints under its table: no round measured the
-/// child's CPU or memory, so those rows are absent, not zero.
-fn usage_na() -> Str {
-  "cpu_ms, max_rss_kb: not measured on Windows (no time(1) there; wall_ms only until decision 0426's Proc.children_usage)"
-}
 
 fn counters_na(goos: Str) -> Str {
   if goos == "windows" {

@@ -18,6 +18,8 @@ test "counters are n/a on Linux" {
   expect(counters_na("linux").contains("n/a")) == true
   expect(counters_na("windows").contains("Windows")) == true
   expect(usage_na().contains("not measured on Windows")) == true
+  // cpu_ms is measured there (Proc.children_usage deltas); only the peak is not
+  expect(usage_na().contains("cpu_ms")) == false
 }
 
 test "rusage reads GNU time -v" {

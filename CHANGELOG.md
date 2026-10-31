@@ -32,6 +32,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   checker could fault in check_key_types, depending on whether std's
   records were cached (gotchas/need-tree-defaults-current-file.md). An
   empty `{}` or `#{}` default with no recorded type now lowers natively.
+- Tools: `xo bench` on Windows measures each round's cpu_ms, from
+  what `Proc.children_usage` (decision 0426) grew by across the round;
+  max_rss_kb is still not measured there (children_usage keeps the
+  largest waited child's peak, not each child's), and the note under
+  the table says so.
 - Tools: `xo dev size --by-cause` reports struct and tuple copies as their
   own cause, `copy` (decision 0443): a struct, tuple or variant value of
   more than a word built, taken apart or updated, and block arguments of
