@@ -65,6 +65,65 @@ func smaps(pid int) string {
 	return ""
 }
 
+// maps counts the process's mappings and sums the Rss of the anonymous
+// ones by size class (the mapping sizes tell fiber and goroutine stacks
+// from heap arenas).
+func maps(pid int) string {
+	b, err := os.ReadFile(fmt.Sprintf("/proc/%d/smaps", pid))
+	if err != nil {
+		return ""
+	}
+	type cls struct {
+		n   int
+		rss int64
+	}
+	names := []string{"<=64K", "<=256K", "<=1M", "<=16M", ">16M"}
+	cs := make([]cls, len(names))
+	var size, rss int64
+	var anon, have bool
+	flush := func() {
+		if !have || !anon {
+			return
+		}
+		i := 4
+		switch {
+		case size <= 64:
+			i = 0
+		case size <= 256:
+			i = 1
+		case size <= 1024:
+			i = 2
+		case size <= 16384:
+			i = 3
+		}
+		cs[i].n++
+		cs[i].rss += rss
+	}
+	total := 0
+	for _, l := range strings.Split(string(b), "\n") {
+		f := strings.Fields(l)
+		if len(f) >= 5 && strings.Contains(f[0], "-") && !strings.HasSuffix(f[0], ":") {
+			flush()
+			total++
+			size, rss, have = 0, 0, true
+			anon = len(f) < 6
+			continue
+		}
+		if len(f) >= 2 && f[0] == "Size:" {
+			fmt.Sscan(f[1], &size)
+		}
+		if len(f) >= 2 && f[0] == "Rss:" {
+			fmt.Sscan(f[1], &rss)
+		}
+	}
+	flush()
+	out := fmt.Sprintf("mappings=%d anon:", total)
+	for i, c := range cs {
+		out += fmt.Sprintf(" %s n=%d rss=%dK", names[i], c.n, c.rss)
+	}
+	return out
+}
+
 func main() {
 	gen := flag.String("gencert", "", "write a self-signed cert and key to this directory and exit")
 	addr := flag.String("addr", "127.0.0.1:8080", "server address")
@@ -77,7 +136,7 @@ func main() {
 		gencert(*gen)
 		return
 	}
-	fmt.Printf("before: %s\n", status(*pid))
+	fmt.Printf("before: %s\n        %s\n", status(*pid), maps(*pid))
 	var wg sync.WaitGroup
 	sem := make(chan struct{}, 64)
 	var mu sync.Mutex
@@ -142,6 +201,6 @@ func main() {
 	wg.Wait()
 	time.Sleep(*settle)
 	fmt.Printf("mode=%s n=%d ok=%d failed=%d\n", *mode, *n, ok, failed)
-	fmt.Printf("idle:   %s  %s\n", status(*pid), smaps(*pid))
+	fmt.Printf("idle:   %s  %s\n        %s\n", status(*pid), smaps(*pid), maps(*pid))
 	_ = conns
 }
