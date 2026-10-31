@@ -36,6 +36,7 @@ type result struct {
 	P999us    float64 `json:"p999_us"`
 	MaxUs     float64 `json:"max_us"`
 	SecCV     float64 `json:"sec_cv"` // stddev/mean of the per-second request counts
+	Rate      float64 `json:"rate"`   // the open loop's target, 0 closed loop
 	CPUusReq  float64 `json:"cpu_us_per_req"`
 	BodyBytes int     `json:"body_bytes"`
 }
@@ -60,6 +61,7 @@ func main() {
 	dur := flag.Duration("d", 10*time.Second, "measured duration")
 	warm := flag.Duration("warmup", 2*time.Second, "warmup before measuring")
 	pid := flag.Int("pid", 0, "server pid for CPU per request")
+	rate := flag.Float64("rate", 0, "open loop: requests a second in all, each connection sending on its own fixed schedule, latency counted from the scheduled send (no coordinated omission); 0 sends back to back")
 	flag.Parse()
 	debug.SetGCPercent(-1)
 
@@ -76,6 +78,12 @@ func main() {
 	// start is written before measuring is set and read after it is seen
 	var start time.Time
 	var wg sync.WaitGroup
+	// open loop: connection w sends at base + w*iv/conc + k*iv
+	iv := time.Duration(0)
+	if *rate > 0 {
+		iv = time.Duration(float64(*conc) / *rate * 1e9)
+	}
+	base := time.Now().Add(100 * time.Millisecond)
 	for w := 0; w < *conc; w++ {
 		lat[w] = make([]int32, 0, capPer)
 		c, err := net.Dial("tcp", *addr)
@@ -89,8 +97,16 @@ func main() {
 			defer c.Close()
 			r := bufio.NewReaderSize(c, 64<<10)
 			body := make([]byte, 1<<20)
+			next := base.Add(iv * time.Duration(w) / time.Duration(*conc))
 			for !stop.Load() {
 				t0 := time.Now()
+				if iv > 0 {
+					if d := time.Until(next); d > 0 {
+						time.Sleep(d)
+					}
+					t0 = next
+					next = next.Add(iv)
+				}
 				if _, err := c.Write(req); err != nil {
 					errs.Add(1)
 					return
@@ -171,7 +187,7 @@ func main() {
 		cv = math.Sqrt(math.Max(sq/float64(full)-m*m, 0)) / m
 	}
 	res := result{Requests: int64(len(all)), Errors: errs.Load(), RPS: float64(len(all)) / elapsed.Seconds(),
-		P50us: q(0.50), P99us: q(0.99), P999us: q(0.999), SecCV: cv, BodyBytes: int(bodyLen.Load())}
+		P50us: q(0.50), P99us: q(0.99), P999us: q(0.999), SecCV: cv, Rate: *rate, BodyBytes: int(bodyLen.Load())}
 	if len(all) > 0 {
 		res.MaxUs = float64(all[len(all)-1])
 	}
