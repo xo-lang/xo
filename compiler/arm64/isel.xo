@@ -21,6 +21,7 @@ fn (var g: G) function(fi: Int) {
     return
   }
   g.fn_strs = {}
+  g.sb_loop = {}
   g.dbound_made = false
   g.dbound_vals = {}
   g.begin_func(fi)

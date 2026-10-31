@@ -51,6 +51,8 @@ pub fn passes() -> List[Str] {
     // one block, are one capacity check and one length update
     "push_runs",
     "inplace_elems",
+    // rc.xo inc_thunk: a retain outside loops calls one out of line copy
+    "rc_thunk",
     // per function: MIR
     "mir_dce",
     "thread_const",

@@ -398,6 +398,8 @@ struct G {
   /// the registers holding a string literal's object address (decision 0370:
   /// never an inline Str, so no tag test)
   lit_objs: Map[Int, Bool] = {}
+  /// whether each SSA block of the function is in a loop (rc_thunk_here)
+  sb_loop: Map[Int, Bool] = {}
   ksyms: Map[Int, Str] = {}
   /// the registers holding a symbol's address (sym_addr) and the
   /// floating point registers holding a constant's bits (fimm), for a

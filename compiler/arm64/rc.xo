@@ -98,6 +98,44 @@ fn (var g: G) helper_label(hint: Str) -> Str {
   g.local("xo_${g.ns}${hint}${g.nhelp}")
 }
 
+/// The symbol of the retain thunk (inc at a call site, rc_thunk): the
+/// object in x16, the count's fast path and the shared count's atomic
+/// increment out of line, x16 and x17 its only scratch (a call site keeps
+/// every other register), so a retain is a mov and a bl, 8 bytes, where
+/// inline it was about 32 (the hot ldr, tbnz, add, str and its own cold
+/// block). Measured 2026-10-31: inline retains were 10.3 MB of xo's
+/// 51.2 MB of code. str: a Str's thunk, which returns at once for an
+/// inline Str (no object, decision 0370).
+fn (var g: G) inc_thunk(str: Bool) -> Str {
+  let key = if str { "incs thunk" } else { "inc thunk" }
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  if g.defers(key, Want{op: 10, kind: if str { "s" } else { "" }}) {
+    return g.helped.get(key) ?? ""
+  }
+  let sym = g.helper_label("incth")
+  g.helped[key] = sym
+  var b = "${g.cmt()} ${key}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"
+  if str {
+    b = b + "\ttbnz x16, #0, ${sym}_inl\n"
+  }
+  if g.os == "darwin" {
+    b = b + g.inc_text("x16", "x17", "", sym, true)
+  } else {
+    // the exclusive pair needs a status register: x15 saved around it
+    // (the shared path only)
+    let atomic = "str x15, [sp, #-16]!\n${sym}_retry:\n\tldxr x17, [x16]\n\tsub x17, x17, #1\n\tstxr w15, x17, [x16]\n\tcbnz w15, ${sym}_retry\n\tldr x15, [sp], #16"
+    b = b + "\tldr x17, [x16]\n\ttbnz x17, #63, ${sym}_sh\n\tadd x17, x17, #1\n\tstr x17, [x16]\n\tret\n" +
+      "${sym}_sh:\n\ttbz x17, #62, ${sym}_ret\n\t${atomic}\n${sym}_ret:\n\tret\n"
+  }
+  if str {
+    b = b + "${sym}_inl:\n\tret\n"
+  }
+  g.helpers.push(b + "\n")
+  sym
+}
+
 /// The symbol of the dup, drop, or share helper of t.
 fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
   let key = "${kind} ${g.tname(t)}"

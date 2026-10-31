@@ -20,7 +20,28 @@ fn ok_sum(xs: List[Str]) -> Int {
   s
 }
 
+// A retain outside loops calls the one out of line copy (rc.xo
+// inc_thunk, pass rc_thunk): the object in x16 and a bl, no inline count
+// test.
+fn twice(xs: List[Int]) -> (List[Int], List[Int]) {
+  // arm64: "mov x16, x[0-9]+\n\tbl [L_]*xo_" -"tbn?z x[0-9]+, #63"
+  (xs, xs)
+}
+
+// In a loop the retain stays inline (its fast path tests bit 63 of the
+// count).
+fn copies(xs: List[Int], n: Int) -> List[List[Int]] {
+  // arm64: "tbn?z x[0-9]+, #63" -"mov x16, x[0-9]+\n\tbl"
+  var out: List[List[Int]] = []
+  for _ in 0..n {
+    out.push(xs)
+  }
+  out
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
   os.stdio.println("${ok_sum(["${n}s", "x"])}")
+  let (a, b) = twice([n, 2])
+  os.stdio.println("${a.len() + b.len()} ${copies(a, n).len()}")
 }

@@ -25,6 +25,21 @@ fn (g: G) push_loops() -> Bool {
   g.cur_sb >= 0 && in_loop(g.f, g.cur_sb)
 }
 
+/// Whether a retain here calls inc_thunk (pass rc_thunk): outside loops
+/// (a loop's retains keep the inline fast path), on arm64 but Windows,
+/// not under --race (its instrumentation reads the inline sequence).
+fn (var g: G) rc_thunk_here() -> Bool {
+  if g.x86 || g.os == "windows" || g.m.race || !g.on("rc_thunk") || g.cur_sb < 0 {
+    return false
+  }
+  if let Some(l) = g.sb_loop.get(g.cur_sb) {
+    return !l
+  }
+  let l = in_loop(g.f, g.cur_sb)
+  g.sb_loop[g.cur_sb] = l
+  !l
+}
+
 fn (var g: G) push_fast(v: Int, word: Bool) {
   let x = g.f.values[v]
   let ws = g.words(x.args[0])
@@ -143,6 +158,13 @@ fn (var g: G) inc_str(p0: Int) {
     g.inc(p0)
     return
   }
+  if g.rc_thunk_here() {
+    // the Str thunk tests the inline bit itself
+    let th = g.inc_thunk(true)
+    let _c = g.add(Inst{kind: K_PLAIN, text: "mov x16, $u0\nbl ${th}", us: [g.real(p0)], clobbers: [16, 17, 30], fl: IF_FRAME | IF_KEEP})
+    g.clobber()
+    return
+  }
   let p = g.real(p0)
   let before = g.m_()
   let body = g.new_block(false)
@@ -158,6 +180,13 @@ fn (var g: G) inc_str(p0: Int) {
 
 fn (var g: G) inc(p0: Int) {
   let p = g.real(p0)
+  if g.rc_thunk_here() {
+    // inc_thunk: x16 the object; the frame holds the link register
+    let th = g.inc_thunk(false)
+    let _c = g.add(Inst{kind: K_PLAIN, text: "mov x16, $u0\nbl ${th}", us: [p], clobbers: [16, 17, 30], fl: IF_FRAME | IF_KEEP})
+    g.clobber()
+    return
+  }
   let c = g.def1(false, "ldr $d0, [$u0]", [p])
   let before = g.m_()
   let shared = g.new_block(true)

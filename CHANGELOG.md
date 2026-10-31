@@ -5,6 +5,17 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native backend (arm64), retain thunk: a retain of a List, Box, Handle
+  or Str outside loops was about 32 bytes inline (the count's fast
+  path and its own cold block for a shared count) and is now `mov x16`
+  and a `bl` to one out of line copy per module or split program
+  (compiler/arm64 rc.xo inc_thunk, pass rc_thunk), which touches only
+  x16, x17 and the link register, so no value spills around it; a loop's
+  retains stay inline. Inline retains were 10.3 MB of xo's 51.2 MB of
+  code (darwin/arm64, 2026-10-31). xo's stage 2 __text 45,189,708 to 38,054,960 bytes (-15.8%), on top
+  of the shared landing pad tails.
+  Speed (linux/arm64 --ab): self wall 0.843 (0.821 to 0.844) better, cpu 0.783, max RSS 0.843; bench/perf/fault owned wall 0.958 (0.922 to 1.002) within noise; bench/perf/fault defer wall 0.999 (0.992 to 1.007) within noise; bench/perf/alloc mixed wall 0.996 (0.996 to 0.997) better; bench/perf/alloc strings wall 1.013 (0.983 to 1.033) within noise; bench/perf/cookie setcookie wall 1.002 (0.975 to 1.019) within noise. bench/results/rc-thunk-2026-10-31.md;
+  gotchas/arm64-plain-template-line-tab.md.
 - FIX (LLVM backend): a fault in main could skip main's defers in a split
   build at -O2 (`XO_LLVM_SPLIT`): clang turned the last call of main's
   fault boundary frame (entry.main_on_fiber) into a tail call, so main ran

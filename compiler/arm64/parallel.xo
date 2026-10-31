@@ -199,6 +199,9 @@ fn (var g: G) gen_want(w: Want) {
     8 => {
       let _s = g.zero_image_of(w.kind)
     }
+    10 => {
+      let _s = g.inc_thunk(w.kind == "s")
+    }
     _ => {
       let _s = g.box_drop(w.t)
     }
