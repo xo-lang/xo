@@ -202,6 +202,17 @@ TLS, stage 1b) passes: 654 mappings, RssAnon 2.0 GB, 50 KB a connection
 (the TLS engine's buffers per connection: the heap cut, part 3, is the
 next lever; h2 parking, 1c, is not built).
 
+No-slowdown gate, first measurement (linux/arm64 host, 2026-10-31, bench/perf/http
+run.sh, CRUD server, 32 workers, 5 runs, base f25d1f513 against 39166f720):
+every request parked, and the server lost speed: 187,494 to 167,661 req/s
+(-10.6%), p50 137 to 160 us, CPU 11.73 to 13.71 us per request, peak RSS
+68 to 97 MB. A closed loop client answers within about 150 us, so the
+connection parked (peek, record, poller, resume task) for nothing. Change:
+park_ready waits PARK_GRACE_NS (2 ms) on the connection's own fiber first
+(pd_wait with a deadline); a connection whose next request comes within the
+grace never parks, and one that stays quiet parks as before. Re-measured
+below.
+
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked
 connection pays one task start per request (a stack from the cache, no
