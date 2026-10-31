@@ -81,7 +81,10 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   (`~/xo-lead/heavyd-lanes.conf`, `NAME SLOTS CAP`; 2 per agent on
   arm64), still exit 5. The host's own queue stays as a safety net and
   for jobs sent while no daemon answers (offload.sh then queues there as
-  before); OFF_NO_LANE=1 skips the lane. A job that names no host file
+  before); OFF_NO_LANE=1 skips the lane. The arm64 host runs 3 jobs at
+  once since 2026-10-31 (owner: OFF_SLOTS=3 in offload.env, `arm64 3 2
+  offload.env` in heavyd-lanes.conf; an exclusive run still takes the
+  whole host). A job that names no host file
   is routed to the first free lane of its kind (`arm64*`, `amd64*`), so
   adding a host is its env file plus one heavyd-lanes.conf line
   (`arm64-2 2 2 offload-2.env`); a job that names one (OFFLOAD_ENV, as
