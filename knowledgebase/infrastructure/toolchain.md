@@ -249,6 +249,11 @@ create`. The order:
    host;
 5. the owner runs `publish.sh push`;
 6. the owner runs `release-publish.sh`;
+6a. the lead runs `~/xo-lead/agents/seed-hosts.sh X.Y.Z`: every offload
+   host side (the linux/arm64 container, WSL, Windows) gets the public
+   release as its seed and its OFF_SEED moves to it (owner, 2026-10-30:
+   the Windows box's 0.34.0 seed could not build main); it prints each
+   side's new OFF_SEED or why one failed;
 7. the Xo against Go comparison on the released darwin/arm64 binary
    (owner, 2026-10-22, every release): unpack the archive, then
    `HEAVY_CLASS=measure heavy.sh vsgo scripts/release-vs-go.sh
