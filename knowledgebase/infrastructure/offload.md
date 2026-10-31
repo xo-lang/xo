@@ -58,7 +58,8 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   jobs waited 33 to 92 minutes while slots went out of order and a
   waiting timing job held one idle). One exception, backfill (owner,
   2026-10-30): while the head ticket is an exclusive job and a long job
-  (OFF_MAX_MIN over 180, the full tier's 300) holds a slot, the oldest
+  (OFF_MAX_MIN over 180, the full tier's 300, or at 180 and already 20
+  minutes in, since 2026-10-31) holds a slot, the oldest
   plain job takes the free slot, since the exclusive one cannot start
   before the long job ends (tier 31 held a slot about two hours while
   twelve jobs waited behind an exclusive --ab). At most 2 arm64 jobs
