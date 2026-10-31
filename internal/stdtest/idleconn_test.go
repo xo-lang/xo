@@ -24,7 +24,13 @@ import (
 //
 // Linux only (it reads /proc), and heavy (it needs 80,000 descriptors and
 // about a minute): it runs when XO_TEST_IDLE40K=1, on the offload host.
-func TestIdleConnections40k(t *testing.T) {
+func TestIdleConnections40k(t *testing.T) { idle40k(t, false) }
+
+// TestIdleConnections40kTLS is the same over HTTP/1.1 on TLS (decision
+// 0449 stage 1b): the idle TLS connections park too.
+func TestIdleConnections40kTLS(t *testing.T) { idle40k(t, true) }
+
+func idle40k(t *testing.T, useTLS bool) {
 	if runtime.GOOS != "linux" {
 		t.Skip("reads /proc/PID/maps")
 	}
@@ -60,6 +66,16 @@ func TestIdleConnections40k(t *testing.T) {
 	const port = "18040"
 	s := exec.Command(srv)
 	s.Env = append(os.Environ(), "PORT="+port)
+	args := []string{}
+	if useTLS {
+		if out, err := exec.Command(cli, "-gencert", dir).CombinedOutput(); err != nil {
+			t.Fatalf("gencert: %v\n%s", err, out)
+		}
+		cert, _ := os.ReadFile(filepath.Join(dir, "cert.pem"))
+		key, _ := os.ReadFile(filepath.Join(dir, "key.pem"))
+		s.Env = append(s.Env, "TLS_CERT="+string(cert), "TLS_KEY="+string(key))
+		args = append(args, "-tls")
+	}
 	if err := s.Start(); err != nil {
 		t.Fatal(err)
 	}
@@ -69,8 +85,9 @@ func TestIdleConnections40k(t *testing.T) {
 	}()
 	time.Sleep(2 * time.Second)
 
-	c := exec.Command(cli, "-addr", "127.0.0.1:"+port, "-n", "40000",
+	args = append(args, "-addr", "127.0.0.1:"+port, "-n", "40000",
 		"-pid", fmt.Sprint(s.Process.Pid), "-settle", "10s", "-maxmaps", "20000", "-again", "-srcs", "3")
+	c := exec.Command(cli, args...)
 	out, err := c.CombinedOutput()
 	t.Logf("%s", lastLines(string(out), 8))
 	if err != nil {
