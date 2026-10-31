@@ -42,6 +42,8 @@ const CC_ERR: Int = 4
 
 /// MSG_NOSIGNAL of Linux's send (sock.send ignores it elsewhere).
 const NOSIGNAL = 16384
+/// a read of at most this many bytes is copied out of the read buffer
+const SMALL_READ = 4096
 
 // ---------------------------------------------------------------------------
 // Certificates (http.tls_cert)
@@ -976,7 +978,13 @@ fn fill(var c: Conn, nb: Bool) -> Bool {
   while true {
     let r = sock.read(fd, raw.bytes_addr(buf), 16384)
     if r > 0 {
-      let got = raw.bytes_len(buf, r)
+      // a small read is copied to its own size: got is a view of the 16 KiB
+      // read buffer, and the ClientHello's sni, alpn and parsed fields (and
+      // an application record's bytes) are views of got, so an idle TLS
+      // connection kept a whole buffer for a few dozen bytes (decision 0449
+      // stage 1b: 50 KB an idle TLS connection against 6 KB plain)
+      let view = raw.bytes_len(buf, r)
+      let got = if r <= SMALL_READ { rt.rs_append_bytes(rt.rs_with_cap(r), view, 0, r, 0).bytes() } else { view }
       if c.first.len() < 5 {
         let k = if 5 - c.first.len() < r { 5 - c.first.len() } else { r }
         c.first = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(5), c.first, 0, c.first.len(), 0), got, 0, k, 0).bytes()
