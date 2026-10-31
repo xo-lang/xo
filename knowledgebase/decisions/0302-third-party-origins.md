@@ -141,5 +141,10 @@ names).
   references when the owner decides. After the owner's calls in Consequences
   (2026-10-30), 5 remain (the gai_strerror texts in dns.xo and
   netconn.xo).
-- Not built yet: Decision 4 (scripts/release.sh checking each `[binary]`
-  item's license file in the staged tree).
+- Decision 4 (2026-10-30): scripts/release-licenses.sh STAGE, run by
+  release.sh's layout on each staged tree, reads THIRD_PARTY_NOTICES's
+  `[binary]` items; each must name a `lib/xo/...LICENSE` path, and when
+  that path's directory is staged (the binary shipped for this target)
+  the file must be there, or the release stops. TestReleaseLicenses
+  (internal/repotest, -short) covers a complete tree, a missing license
+  file, and an item that names no path.

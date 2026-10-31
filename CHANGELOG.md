@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Release (decision 0302 point 4): scripts/release.sh checks each staged
+  tree with scripts/release-licenses.sh, so an archive cannot ship a
+  `[binary]` item's binary without the license file its notice names.
 - std/http (decision 0444, accepted): `http.pipe()` holds at most 64 KiB
   written before its reader's first read; a write past that waits for
   the reader, so a writer task running ahead of a late `Client.open` no

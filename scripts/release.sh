@@ -233,7 +233,7 @@ layout() {
 	local target=$1 stage
 	stage=$(stage_of "$target")
 	if [ "$dry" = 1 ]; then
-		echo "+ layout $stage: lib/xo/std (git ls-files std), bin/xo-gobind (go build ./cmd/xo-gobind for $target), lib/xo/{go.mod,cmd/xo-gobind,internal/gobind,internal/gotool} (its source, decision 0393), README.md, CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES, lib/xo/race/${target%/*}-${target#*/} when built" >&2
+		echo "+ layout $stage: lib/xo/std (git ls-files std), bin/xo-gobind (go build ./cmd/xo-gobind for $target), lib/xo/{go.mod,cmd/xo-gobind,internal/gobind,internal/gotool} (its source, decision 0393), README.md, CHANGELOG.md, LICENSE, THIRD_PARTY_NOTICES, lib/xo/race/${target%/*}-${target#*/} when built, then scripts/release-licenses.sh (decision 0302)" >&2
 		return
 	fi
 	mkdir -p "$stage/bin" "$stage/lib/xo"
@@ -266,6 +266,9 @@ layout() {
 		cp -R "lib/xo/race/$plat" "$stage/lib/xo/race/"
 		cp lib/xo/race/LICENSE.TXT "$stage/lib/xo/race/"
 	fi
+	# every [binary] item's license file beside what was staged (decision
+	# 0302, point 4)
+	scripts/release-licenses.sh "$stage" || exit 1
 }
 
 targets="darwin/arm64 darwin/amd64 linux/arm64 linux/amd64"

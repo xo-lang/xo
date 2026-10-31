@@ -170,7 +170,10 @@ above), `bin/xo-gobind` (Go, `use go`), `lib/xo/std` and
 zone database, copied from `go env GOROOT`, so std/time needs no Go;
 decision 0157 next step 1, 2026-10-12), README.md, CHANGELOG.md,
 LICENSE and THIRD_PARTY_NOTICES (the last two since 2026-10-22: 0.25.2's
-archives shipped without them); and
+archives shipped without them; since 2026-10-30 each staged tree passes
+`scripts/release-licenses.sh STAGE`, decision 0302 point 4: every
+THIRD_PARTY_NOTICES item marked `[binary]` names a `lib/xo/...LICENSE`
+file, and the file is staged wherever its directory is); and
 `dist/SHA256SUMS` (no runtime packs since decision 0234, 2026-10-16). It
 needs Go, the host's clang, and a clean tree
 (`XO_RELEASE_ALLOW_DIRTY=1` to try it); 992 s and 9.3 GB peak RSS (release run 7) on
