@@ -96,7 +96,7 @@ fn (var g: G) stub_saves(k: Int) -> List[Int] {
           continue
         }
         for rg in g.vranges[rr] {
-          if (rg.s + 3) / 4 <= k && k < rg.e / 4 + 1 {
+          if (rng_s(rg) + 3) / 4 <= k && k < rng_e(rg) / 4 + 1 {
             out.push(reg)
             break
           }
@@ -387,7 +387,7 @@ fn (var g: G) dv_plan() -> DvPlan {
   var fn_end = -1
   for rs in g.vranges {
     for rg in rs {
-      fn_end = fn_end.max(rg.e / 4 + 1)
+      fn_end = fn_end.max(rng_e(rg) / 4 + 1)
     }
   }
   for d in g.f.dbinds {
@@ -469,8 +469,8 @@ fn (var g: G) dv_plan() -> DvPlan {
           continue
         }
         for rg in g.vranges[rr] {
-          let lo = (rg.s + 3) / 4
-          let hi = rg.e / 4 + 1
+          let lo = (rng_s(rg) + 3) / 4
+          let hi = rng_e(rg) / 4 + 1
           if hi <= lo {
             continue
           }

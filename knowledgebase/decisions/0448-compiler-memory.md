@@ -552,6 +552,17 @@ is). Output byte-identical (236 compiles, 0 differing); the Mac's emit
 peak 5544, 5423 -> 5041, 4980 MB over the Int32 sets; linux/arm64 `xo
 bench --ab` (ten rounds): wall 0.974 (0.965 to 0.986), CPU 0.973 (0.970 to 0.982) and max RSS 0.931 (0.931 to 0.937), all better (three rounds, 118dfe1ce against the change).
 
+The live ranges next. With the Int32 sets, the computed live-out sets
+and decision 0452's growth curve, emit's peak on the Mac was 4.7 to 4.9
+GB, and the heap at 32 parts had the register allocator's ranges
+(`List[List[Rng]]`, regalloc.xo push_rng) on top: 949 MB of 3.06 GB in
+use, then Func.add 316 MB, add_param 267 MB, solve_live 136 MB. A
+range is now one Int, start << 32 | end (positions are below 2^31), read
+through rng_s and rng_e; a packed list sorts by start, then end, which
+merges as before. Output byte-identical (237 compiles, 0 differing); the
+Mac's emit peak 4934, 4915 -> 4498, 4479 MB, peak footprint 4.67, 4.64
+-> 4.35, 4.33 GB; linux/arm64 `xo bench --ab` (three rounds): wall 0.991 (0.990 to 0.992) and CPU 0.991 (0.985 to 0.992) better (a three round verdict on an effect under 3%), max RSS 0.887 (0.878 to 0.895) better (0579e8426 against the change).
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

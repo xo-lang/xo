@@ -782,7 +782,7 @@ fn (g: G) x86_scratch(fp: Bool, n: Int, taken: List[Int], own: Bool) -> Int {
     return if fp { XF_SCRATCH } else { XR_SCRATCH }
   }
   if g.pos >= 0 && !g.occ_regs.is_empty() {
-    let span = [Rng{s: g.pos, e: g.pos + 3}]
+    let span = [rng(g.pos, g.pos + 3)]
     let pool = if fp { g.fp_caller_t() } else { g.gp_caller_t() }
     for r in pool {
       if (r >= FP_BASE) != fp || taken.contains(r) || r >= g.occ_regs.len() {

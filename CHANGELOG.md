@@ -21,6 +21,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bench --ab`, ten rounds): wall 0.963 (0.959 to 0.968), CPU 0.986 and
   max RSS 0.935 (0.914 to 0.943), all better; the Mac's emit peak about
   -11%. bench/perf/alloc takes a repeat count (`alloc grow 300`).
+- Memory (decision 0448 stage 3): the register allocator keeps a live
+  range as one packed Int (start << 32 | end) instead of a two word
+  struct; the ranges were the largest holder at emit's peak (949 MB of
+  3.06 GB in use at 32 parts, after the Int32 live sets and decision
+  0452). Output is byte-identical (scripts/identity, 237 compiles, 0
+  differing). Self build on the Mac: emit peak 4934, 4915 MB to 4498,
+  4479 MB. linux/arm64 --ab: wall 0.991 (0.990 to 0.992) and CPU 0.991 (0.985 to 0.992) better (a three round verdict on an effect under 3%), max RSS 0.887 (0.878 to 0.895) better (0579e8426 against the change).
 - Native backend (arm64), shared landing pad tails: the landing pad of
   each call releases every heap value live at it, so the pads of a
   function's calls release mostly the same values. compiler/ssa orders

@@ -1199,7 +1199,7 @@ fn (g: G) scratch_reg(fp: Bool, n: Int, taken: List[Int]) -> Int {
     return if fp { fp_scratch(n) } else { gp_scratch(n) }
   }
   if g.pos >= 0 && !g.occ_regs.is_empty() {
-    let span = [Rng{s: g.pos, e: g.pos + 3}]
+    let span = [rng(g.pos, g.pos + 3)]
     let pool = if fp { fp_caller() } else { gp_caller() }
     for r in pool {
       if (r >= FP_BASE) != fp || taken.contains(r) || r >= g.occ_regs.len() {

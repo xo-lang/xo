@@ -65,13 +65,18 @@ fn (g: G) param_locs(srcs: List[Src]) -> List[Loc] {
   if g.x86 { g.x86_call_locs(srcs, -1) } else { g.abi_locs(srcs) }
 }
 
-/// A closed range of positions. Instruction i reads its uses at 4i, the
-/// registers a call clobbers die at 4i+1, and it writes its definitions
-/// at 4i+2 (at 4i when early).
-struct Rng {
-  s: Int
-  e: Int
-}
+/// A closed range of positions, packed in one Int: its start in the high
+/// 32 bits, its end in the low (rng, rng_s, rng_e). Instruction i reads
+/// its uses at 4i, the registers a call clobbers die at 4i+1, and it
+/// writes its definitions at 4i+2 (at 4i when early). Positions are
+/// below 2^31. One word, not a struct's two: the ranges were the largest
+/// holder at emit's peak (decision 0448 stage 3), and a packed list sorts
+/// by start, then end.
+fn rng(s: Int, e: Int) -> Int { (s << 32) | e }
+
+fn rng_s(r: Int) -> Int { r >> 32 }
+
+fn rng_e(r: Int) -> Int { r & 0xffffffff }
 
 // Bit sets of 62 bits per word (the sign bit is never used).
 const BW = 62
@@ -369,7 +374,7 @@ fn (var g: G) regalloc() {
   g.loop_depth()
 
   // live ranges
-  var ranges: List[List[Rng]] = []
+  var ranges: List[List[Int]] = []
   var weight: List[Float] = []
   var end: List[Int] = []
   for _ in 0..n {
@@ -439,10 +444,10 @@ fn (var g: G) regalloc() {
         let dp = if inst.has(IF_EARLY) { at } else { at + 2 }
         weight[d] = weight[d] + wt
         if bits_has(live, d) {
-          push_rng(ranges, d, Rng{s: dp, e: end[d]})
+          push_rng(ranges, d, rng(dp, end[d]))
           live[d / BW] = live[d / BW] & ~bit_mask(d)
         } else {
-          push_rng(ranges, d, Rng{s: dp, e: dp})
+          push_rng(ranges, d, rng(dp, dp))
         }
       }
       for u in inst.us {
@@ -459,7 +464,7 @@ fn (var g: G) regalloc() {
     }
     for v32 in live_in[k] {
       let v = Int(v32)
-      push_rng(ranges, v, Rng{s: bstart, e: end[v]})
+      push_rng(ranges, v, rng(bstart, end[v]))
       live[v / BW] = live[v / BW] & ~bit_mask(v)
     }
   }
@@ -651,7 +656,7 @@ fn (var g: G) regalloc() {
   for v in order {
     var l = 0
     for r in ranges[v] {
-      l += r.e - r.s + 1
+      l += rng_e(r) - rng_s(r) + 1
     }
     // x86's fewer registers: a long range of a hot value (a function's
     // list and its length, used throughout a loop) by the square root of
@@ -675,36 +680,36 @@ fn (var g: G) regalloc() {
   }
   var used_callee: List[Bool] = []
   while true {
-    var occ: List[List[Rng]] = []
+    var occ: List[List[Int]] = []
     for _ in 0..64 {
       occ.push([])
     }
     if g.base != 0 {
       // the base register of the frame's far slots (emit.xo far_slots)
-      occ[g.base] = [Rng{s: 0, e: 4 * g.ninst + 3}]
+      occ[g.base] = [rng(0, 4 * g.ninst + 3)]
     }
     // a template's own registers: no value used, defined, or live there
     // (its middle only: no value live across it)
     for (at, rs, mid) in clobs {
       for r in rs {
-        push_rng(occ, r, if mid { Rng{s: at + 1, e: at + 1} } else { Rng{s: at, e: at + 2} })
+        push_rng(occ, r, if mid { rng(at + 1, at + 1) } else { rng(at, at + 2) })
       }
     }
     // a call clobbers every caller saved register (the full sets: the
     // spill test's shorter lists too)
     for c in calls {
       for r in g.gp_caller_t() {
-        push_rng(occ, r, Rng{s: c, e: c})
+        push_rng(occ, r, rng(c, c))
       }
       for r in g.fp_caller_t() {
-        push_rng(occ, r, Rng{s: c, e: c})
+        push_rng(occ, r, rng(c, c))
       }
     }
     // a cold call still clobbers the floating point and vector registers
     // (its saves are 8 byte words, and a vector value is 16 bytes)
     for (c, _, _) in cold_calls {
       for r in g.fp_caller_t() {
-        push_rng(occ, r, Rng{s: c, e: c})
+        push_rng(occ, r, rng(c, c))
       }
     }
     for r in 0..64 {
@@ -723,16 +728,16 @@ fn (var g: G) regalloc() {
     var ncallee = 0
     g.slots = 0
     // the ranges each spill slot holds
-    var slot_occ: List[List[Rng]] = []
+    var slot_occ: List[List[Int]] = []
     // the ranges each stack word holds (wcode: its slot code): a call's
     // words from the point its callee may write them
     var wcode: List[Int] = []
-    var wocc: List[List[Rng]] = []
+    var wocc: List[List[Int]] = []
     for (j, ps) in wclob.indexed() {
       wcode.push(SLOT_OUT + j)
-      var rs: List[Rng] = []
+      var rs: List[Int] = []
       for c in ps {
-        rs.push(Rng{s: c, e: c})
+        rs.push(rng(c, c))
       }
       wocc.push(merge_ranges(rs))
     }
@@ -866,7 +871,7 @@ fn (var g: G) regalloc() {
       var sv: List[(Int, Int)] = []
       for v in order {
         let r = g.loc[v].reg
-        if r < 0 || r >= FP_BASE || g.is_callee_t(r) || !overlaps_sorted(ranges[v], [Rng{s: c, e: c}]) {
+        if r < 0 || r >= FP_BASE || g.is_callee_t(r) || !overlaps_sorted(ranges[v], [rng(c, c)]) {
           continue
         }
         var have = false
@@ -939,18 +944,18 @@ fn find_leader(var leader: List[Int], v0: Int) -> Int {
 }
 
 /// Sorts and joins touching or overlapping ranges (mergeRanges).
-fn merge_ranges(rs: List[Rng]) -> List[Rng] {
+fn merge_ranges(rs: List[Int]) -> List[Int] {
   if rs.len() < 2 {
     return rs
   }
-  let sorted = rs.sort_by(fn(r) { r.s })
-  var out: List[Rng] = [sorted[0]]
+  let sorted = rs.sort_by(fn(r) { rng_s(r) })
+  var out: List[Int] = [sorted[0]]
   for i in 1..sorted.len() {
     let r = sorted[i]
     let last = out.len() - 1
-    if r.s <= out[last].e + 1 {
-      if r.e > out[last].e {
-        out[last].e = r.e
+    if rng_s(r) <= rng_e(out[last]) + 1 {
+      if rng_e(r) > rng_e(out[last]) {
+        out[last] = rng(rng_s(out[last]), rng_e(r))
       }
       continue
     }
@@ -965,14 +970,14 @@ fn merge_ranges(rs: List[Rng]) -> List[Rng] {
 /// stay apart: merge_sorted joined them and rebuilt the whole list per
 /// assignment, quadratic in the ranges a register or slot holds
 /// (bench/results/xo1-speed-2026-10-13.md).
-fn insert_ranges(var lists: List[List[Rng]], i: Int, rs: List[Rng]) {
+fn insert_ranges(var lists: List[List[Int]], i: Int, rs: List[Int]) {
   for q in rs {
     // the first range starting after q
     var lo = 0
     var hi = lists[i].len()
     while lo < hi {
       let mid = (lo + hi) / 2
-      if lists[i][mid].s <= q.s {
+      if rng_s(lists[i][mid]) <= rng_s(q) {
         lo = mid + 1
       } else {
         hi = mid
@@ -985,7 +990,7 @@ fn insert_ranges(var lists: List[List[Rng]], i: Int, rs: List[Rng]) {
 /// Whether a range of rs overlaps one of occ, whose ranges are disjoint
 /// and sorted by start (so by end as well): a binary search per range of
 /// rs instead of overlaps' walk over all of occ.
-fn overlaps_sorted(occ: List[Rng], rs: List[Rng]) -> Bool {
+fn overlaps_sorted(occ: List[Int], rs: List[Int]) -> Bool {
   let n = occ.len()
   for q in rs {
     // the first range of occ ending at or after q's start
@@ -993,13 +998,13 @@ fn overlaps_sorted(occ: List[Rng], rs: List[Rng]) -> Bool {
     var hi = n
     while lo < hi {
       let mid = (lo + hi) / 2
-      if occ[mid].e < q.s {
+      if rng_e(occ[mid]) < rng_s(q) {
         lo = mid + 1
       } else {
         hi = mid
       }
     }
-    if lo < n && occ[lo].s <= q.e {
+    if lo < n && rng_s(occ[lo]) <= rng_e(q) {
       return true
     }
   }
@@ -1007,7 +1012,7 @@ fn overlaps_sorted(occ: List[Rng], rs: List[Rng]) -> Bool {
 }
 
 /// Merges two sorted, merged range lists (mergeSorted).
-fn merge_sorted(a: List[Rng], b: List[Rng]) -> List[Rng] {
+fn merge_sorted(a: List[Int], b: List[Int]) -> List[Int] {
   if b.is_empty() {
     return a
   }
@@ -1016,14 +1021,14 @@ fn merge_sorted(a: List[Rng], b: List[Rng]) -> List[Rng] {
   }
   // the merge of the two lists by start, a's element first on a tie
   // (the Go emitter merges from the back, taking b's on a tie)
-  var out: List[Rng] = []
+  var out: List[Int] = []
   var i = 0
   var j = 0
   let na = a.len()
   let nb = b.len()
   while i < na || j < nb {
-    var r = Rng{s: 0, e: 0}
-    if j >= nb || (i < na && a[i].s <= b[j].s) {
+    var r = 0
+    if j >= nb || (i < na && rng_s(a[i]) <= rng_s(b[j])) {
       r = a[i]
       i += 1
     } else {
@@ -1031,9 +1036,9 @@ fn merge_sorted(a: List[Rng], b: List[Rng]) -> List[Rng] {
       j += 1
     }
     let last = out.len() - 1
-    if last >= 0 && r.s <= out[last].e + 1 {
-      if r.e > out[last].e {
-        out[last].e = r.e
+    if last >= 0 && rng_s(r) <= rng_e(out[last]) + 1 {
+      if rng_e(r) > rng_e(out[last]) {
+        out[last] = rng(rng_s(out[last]), rng_e(r))
       }
       continue
     }
@@ -1043,13 +1048,13 @@ fn merge_sorted(a: List[Rng], b: List[Rng]) -> List[Rng] {
 }
 
 /// Whether two sorted, merged range lists share a position.
-fn overlaps(a: List[Rng], b: List[Rng]) -> Bool {
+fn overlaps(a: List[Int], b: List[Int]) -> Bool {
   var i = 0
   var j = 0
   while i < a.len() && j < b.len() {
-    if a[i].e < b[j].s {
+    if rng_e(a[i]) < rng_s(b[j]) {
       i += 1
-    } else if b[j].e < a[i].s {
+    } else if rng_e(b[j]) < rng_s(a[i]) {
       j += 1
     } else {
       return true
@@ -1159,7 +1164,7 @@ fn (g: G) call_locs(srcs: List[Src], vfix: Int) -> List[Loc] {
 /// Pushes r onto lists[i] in place (moved out and back: a push onto a
 /// list inside a list element copies it on the native backends,
 /// gotchas/xo-native-nested-element-update.md).
-fn push_rng(var lists: List[List[Rng]], i: Int, r: Rng) {
+fn push_rng(var lists: List[List[Int]], i: Int, r: Int) {
   lists[i].push(r)
 }
 

@@ -382,12 +382,12 @@ struct G {
   /// emitter finds registers free at an instruction for the reloads and
   /// results of a template with more spilled operands than scratch
   /// registers (emit_plain).
-  occ_regs: List[List[Rng]] = []
+  occ_regs: List[List[Int]] = []
   pos: Int = -1
   slots: Int = 0
   /// Each virtual register's live ranges before coalescing, kept with
   /// debug information on for the variables' locations (dwvars.xo).
-  vranges: List[List[Rng]] = []
+  vranges: List[List[Int]] = []
   /// With debug information on, the virtual registers that hold an Int
   /// constant (imm) or a symbol's address (sym_addr), for the variables'
   /// locations of words no register keeps (dwvars.xo)
