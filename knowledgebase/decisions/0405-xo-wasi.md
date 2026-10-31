@@ -37,7 +37,8 @@ The module then fails to load: a function may have at most 1000 parameters and 1
 - The `XO_RELEASE_WASI=1 scripts/release.sh` dry run (with `XO_RELEASE_UNSIGNED=1 XO_RELEASE_PRIVATE=1 XO_RELEASE_DRY_RUN=1`) lists the wasip1-wasm layout, the `xo build --targets=wasip1/wasm compiler/xo` step and its tarball.
 - run.mjs defaults to `--liftoff-only` for modules over 8 MB (2026-10-30; `XO_WASM_V8_FLAGS` with a liftoff flag overrides it).
 - wasmtime 50.0.1 on the linux/arm64 host (2026-10-30): `wasmtime compile` of the 77 MB xo.wasm takes 104 s and 15 GB of memory and makes a 154 MB .cwasm; `xo version` from the .cwasm starts in 0.02 to 0.03 s (164 MB); scripts/wasi-smoke.sh passes against it in 20 s (Node on the Mac: 64 s). Needed: `-W max-wasm-stack=268435456` (the default stack traps `call stack exhausted`), the preopens in the order `--dir=. --dir=/` (the module expects fd 3 the working directory, fd 4 the root), and HOME and TMPDIR set (else the build cache path is `/xo/build`, permission denied).
-- Still open: scripts/release-verify.sh on a private wasip1 archive.
+- scripts/release-verify.sh passes on a private wasip1-wasm archive assembled with release.sh's layout (2026-10-30, unsigned, never published): the six layout checks and wasi-smoke, 0 failed. `XO_RELEASE_WASI=1 XO_RELEASE_DRY_RUN=1 scripts/release.sh` lists the steps (it needs Docker or `XO_RELEASE_RACE=reuse` for the native race runtimes).
+- Still open: a full `XO_RELEASE_WASI=1` release.sh run (all targets) in the release window.
 
 ## Alternatives
 
