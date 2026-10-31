@@ -86,7 +86,22 @@ static int dial_to(const char *host, const char *port, const char *addr, char *m
 	hints.ai_socktype = SOCK_STREAM;
 	int g = getaddrinfo(*host ? host : "localhost", port, &hints, &res);
 	if (g != 0) {
-		snprintf(msg, n, "Io dial tcp %s: %s", addr, gai_strerror(g));
+		// the resolver's own wording (Go's, which dns.xo reports): glibc's
+		// gai_strerror says "Name or service not known" and "No address
+		// associated with hostname" where Xo says "no such host", and
+		// "Temporary failure in name resolution" where Xo says "server
+		// misbehaving"
+		const char *why = gai_strerror(g);
+		if (g == EAI_NONAME
+#ifdef EAI_NODATA
+		    || g == EAI_NODATA
+#endif
+		) {
+			why = "no such host";
+		} else if (g == EAI_AGAIN) {
+			why = "server misbehaving";
+		}
+		snprintf(msg, n, "Io dial tcp %s: %s", addr, why);
 		return -1;
 	}
 	int e = 0;
