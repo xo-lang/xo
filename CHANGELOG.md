@@ -117,6 +117,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   in http.ReverseProxy.serve, after 82a509844); 2d51a8403 hid it for
   structs of eight fields or more. Test compiler/ssa immret_test.xo; the
   std store at 110086203 builds with the parent of 2d51a8403 plus the fix.
+- Valued enums (decision 0269): `enum Level: Str { Low = "low", High = "high" }`
+  or `enum Code: Int { Ok = 200, Missing = 404 }` give each variant a
+  value, with `value()`, `E.from(v) -> E?` and `E.all()`. `Json` encodes
+  and decodes the value, and decoding refuses a value no variant has.
+  A variant without `=` is the previous value plus one (Int, starting at
+  0) or its own name (Str). Duplicates are XO0428, a value type other
+  than `Int` or `Str` is XO0429.
 - `--phase-times` after a run cache miss says why: `cache run miss:` and
   the first recorded input that no longer holds (a changed file,
   listing, tree, probe or variable; no entry; the binary gone), then the
