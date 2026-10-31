@@ -320,6 +320,30 @@ fn (var b: Binder) decl_file(os: Os, fns: List[CFunc]) -> Str uses proc {
       sb.write("}\n")
     }
   }
+  if !b.enums.is_empty() {
+    sb.write("\n// Enums (valued, decision 0269)\n")
+    for e in b.enums {
+      let names = variant_names(e.items)
+      // the first enumerator of a value is the variant; a later one with
+      // the same value is a constant alias of it
+      var seen_v: Map[Int, Str] = {}
+      let tn = upper_camel(e.name)
+      var vs: List[Str] = []
+      var aliases: List[Str] = []
+      for (i, it) in e.items.indexed() {
+        if let Some(first) = seen_v.get(it.1) {
+          aliases.push("const ${it.0}: ${tn} = ${tn}.${first}")
+        } else {
+          seen_v[it.1] = names[i]
+          vs.push("  ${names[i]} = ${it.1}")
+        }
+      }
+      sb.write("\n/// C: enum ${e.name}\nenum ${tn}: Int {\n${vs.join("\n")}\n}\n")
+      for a in aliases {
+        sb.write("${a}\n")
+      }
+    }
+  }
   if !fns.is_empty() {
     sb.write("\n// Functions\n")
   }

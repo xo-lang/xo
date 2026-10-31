@@ -111,7 +111,7 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     b.impossible("`${b.c.mods[fm].name}.${b.c.display_name(fo)}` of the Go package `${b.c.mods[fm].go_path}` (`use go`)")
     return b.undef(b.nat_of(x))
   }
-  if fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() {
+  if fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() && !b.c.objs[fo].file.ends_with("#derive") {
     return b.c_call(x, ci)
   }
   if let Some(v) = b.fs_user_call(x, fo) {

@@ -1214,7 +1214,9 @@ fn (var c: Checker) parse_into(m: Int, path: Str, src: Bytes, sig: Bool) {
   let f = c.files.len()
   c.files.push(SrcFile{path: path, module: m, ast: ast, iface: r.iface, is_test: path.ends_with("_test.xo"), sig: sig, src: src})
   c.mods[m].files.push(f)
-  if !c.mods[m].is_std && !sig {
+  // a C binding's declaration file is a signature file, and its valued
+  // enums get their methods like any module's (decision 0269 part 4)
+  if (!c.mods[m].is_std && !sig) || !c.mods[m].c_decl.is_empty() {
     c.add_derived_file(m, path, f, r)
   }
 }

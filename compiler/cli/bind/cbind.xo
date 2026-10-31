@@ -94,6 +94,12 @@ struct Record {
   fields: List[(Str, Str)] = []
 }
 
+/// A C enum defined in the header: its tag and (enumerator, value).
+struct CEnum {
+  name: Str
+  items: List[(Str, Int)] = []
+}
+
 struct Binder {
   opts: Options
   bnd: Binding = Binding{}
@@ -106,6 +112,8 @@ struct Binder {
   /// (copied)
   handles: Map[Str, Str] = {}
   structs: Map[Str, Str] = {}
+  /// the enums the header defines, in source order (decision 0269 part 4)
+  enums: List[CEnum] = []
   /// Xo names in use
   used: Set[Str] = #{}
 }
@@ -264,6 +272,30 @@ fn (var b: Binder) bind(os: Os) -> () ! Str uses (fs, proc, env) {
         }
       }
       b.records[name] = r
+    }
+  }
+  for d in b.decls {
+    let n = d.n
+    if jstr(n, "kind") != "EnumDecl" || !b.in_header(d.file) || jstr(n, "name").is_empty() {
+      continue
+    }
+    var e = CEnum{name: jstr(n, "name")}
+    var next = 0
+    for k in jlist(n, "inner") {
+      if !is_obj(k) || jstr(k, "kind") != "EnumConstantDecl" {
+        continue
+      }
+      var v = next
+      for x in jlist(k, "inner") {
+        if is_obj(x) && jstr(x, "kind") == "ConstantExpr" {
+          v = Int.parse(jstr(x, "value")) ?? v
+        }
+      }
+      e.items.push((jstr(k, "name"), v))
+      next = v + 1
+    }
+    if !e.items.is_empty() {
+      b.enums.push(e)
     }
   }
   var fns: List[CFunc] = []
@@ -528,4 +560,37 @@ fn ext_of(p: Str) -> Str {
     i -= 1
   }
   ""
+}
+
+/// The variant names of an enum's enumerators: the prefix every
+/// enumerator shares (up to a `_`) is dropped, the rest is UpperCamel
+/// (MODE_READ, MODE_WRITE to Read, Write).
+fn variant_names(items: List[(Str, Int)]) -> List[Str] {
+  var prefix = ""
+  if items.len() > 1 {
+    let first = items[0].0
+    var cut = 0
+    for i in 0..first.len() {
+      if first.bytes()[i] == '_' {
+        var all = true
+        for it in items {
+          if !it.0.starts_with(first[0..i + 1]) {
+            all = false
+          }
+        }
+        if all {
+          cut = i + 1
+        }
+      }
+    }
+    prefix = first[0..cut]
+  }
+  var out: List[Str] = []
+  for it in items {
+    let rest = it.0.trim_prefix(prefix)
+    let base = if rest.is_empty() { it.0 } else { rest }
+    // MODE_READ is spelled in capitals: Read, not READ
+    out.push(upper_camel(if base == base.to_upper() { base.to_lower() } else { base }))
+  }
+  out
 }
