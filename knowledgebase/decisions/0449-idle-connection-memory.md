@@ -89,6 +89,57 @@ stage 1 is to run it and record the result here). A second assertion (RssAnon pe
 connection at 5,000 connections at most 60 KB) fails today at 91 KB and
 guards part 3.
 
+## Stage 1 design: park_read in the h1 keep-alive wait (Xo Lang 3, 2026-10-31)
+
+Where the stack is held: `serve_conn` (std/native/http.xo) is one task per
+connection; after a response it loops to `rd.read()`, which waits in
+`poll.pd_wait` on the connection's descriptor with the whole fiber stack
+live. Everything the loop needs between two requests is in heap values
+(`hc`, the reader `rd` with its buffered bytes, `r`, `lim`); nothing is
+only on the stack at that point.
+
+The cut:
+
+1. `poll.pd_park(pd, resume)`: the descriptor's wait record gets a third
+   state beside D_RWAIT (a parked task) and READY: D_CONT, a heap closure
+   `resume: fn()` (an `rt.Any` held with a reference). If the descriptor
+   is already readable it returns false and the caller reads on. If not,
+   it stores the continuation, arms the idle timer (below) and returns
+   true.
+2. `serve_conn`'s loop, when `rd` has no buffered bytes after a response:
+   `if hserve.hc_park(hc, fn() { serve_conn_resume(hc, r, serve_h2, lim, rd) }) { parked = true; return }`.
+   The `defer hserve.hc_close(hc)` becomes `defer { if !parked { hc_close(hc) } }`.
+   `serve_conn_resume` is the `while true` loop; `serve_conn` calls it
+   after its setup. The task ends and its stack goes back to the cache.
+3. The poller (`pd_ready`) finding D_CONT with no D_RWAIT waiter spawns a
+   task running `resume` in the server's scope (`hserve.srv_group`), so
+   `srv_wait` still waits for it; a parked connection counts as live in
+   the server's list (`SR_CONNS`) but not as a task.
+4. Stop and close: `srv_stop` closes every parked connection (net/http's
+   Shutdown closes idle connections), by walking the connection list and
+   taking each parked continuation (compare-and-swap D_CONT to 0, so a
+   concurrent readiness resume and the stop do not both run it); `pd`
+   close takes the same path, and the resumed task finds the closed
+   descriptor on its first read and ends the connection.
+5. The idle timeout (`lim.read_ns` / net/http's IdleTimeout) is the pd's
+   deadline timer (`pd_timer`): its expiry takes D_CONT the same way and
+   resumes the closure, whose read then reports the timeout.
+6. TLS (stage 1b): the same, with the wait placed where the TLS record
+   read blocks (`tlssrv` record read), because the TLS state is in the
+   connection record already. HTTP/2 (stage 1c): the read loop parks the
+   same way when no stream task is running and no frame is buffered; a
+   connection with streams in flight keeps its reader.
+
+Risks to measure first: the 32 connection CRUD server (bench/perf/http)
+parks rarely, so `xo bench --ab` must show no slowdown there; a parked
+connection pays one task start per request (a stack from the cache, no
+mapping). Cancellation: a task canceled while a connection is parked has
+nothing to cancel; the stop path above covers shutdown.
+
+Proof: `TestIdleConnections40k` (internal/stdtest/idleconn_test.go,
+`XO_TEST_IDLE40K=1`, linux): 40,000 idle h1 connections, each answers a
+second request, fewer than 20,000 mappings in the server.
+
 ## Consequences
 
 - Fiber stacks stop being the per-connection cost; a server with many
