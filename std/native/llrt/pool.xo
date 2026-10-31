@@ -1383,6 +1383,12 @@ pub fn run_item(p: Int, w: Int, it: Int) {
   }
   // claimed: the entry is counted taken when the task ends (one atomic
   // on the scope instead of two)
+  // the claim above was this worker's write to the task, and a fiber
+  // switch orders nothing under --race: task_free takes it before the
+  // free (a mark of its own, not t: run_claimed's acquire of t would give
+  // the task's run everything this worker context has seen and hide
+  // user races)
+  sanhook.release(it + 4)
   run_fiber(p, w, fiber_new(rt.mem_load(p, P_FIBERS, 8), w, it))
 }
 

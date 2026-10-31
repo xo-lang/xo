@@ -853,6 +853,7 @@ pub fn task_free(t: Int) {
   mfree(ld(t, T_FAULT_MSG))
   mfree(ld(t, T_FAULT_LOC))
   mfree(ld(t, T_FAULT_DETAIL))
+  sanhook.acquire(t + 4)
   obj.free_obj(t)
 }
 

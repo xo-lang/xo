@@ -33,3 +33,23 @@ How to avoid: an edge added to quiet a race report in the runtime must not
 join two tasks of the user's program; run `TestRaceSyncTable` (its
 unsynchronized cases must still report) with the change, besides the
 golden that showed the report.
+
+## Addendum (2026-10-31): the Linux TestRaceSyncTable red was a missing edge
+
+Under --race a fiber switch orders nothing (sanhook.switch_flag 1), so the
+worker thread's TSan context and the task's fiber share no clock. run_item
+claims a task (a CAS on its T_STATE) in the worker's context, then the task
+runs in its own fiber; the task's end (T_GONE release add) carries only the
+fiber's clock, so the joiner that frees the task record after acquiring it
+never saw the claim: TSan reported "free vs previous atomic write in
+run_item" (chan, chan_buffered, select, scope cases; Linux only). Fix: a
+sanhook.release(it + 4) after the claim (a mark of its own) and a
+sanhook.acquire(t + 4) in task_free before the free. The first form,
+release(it) taken by run_claimed's acquire(t), fixed Linux but gave the
+task's run the worker context's whole clock and hid the table's racy cases
+(chan, chan_buffered, select reported nothing without the synchronization,
+Mac gate 2026-10-31): the edge must go to the freer, not the task.
+Not the fix (tried, negative): an acquire of T_GONE before the free, a TSan
+release/acquire around each run_fiber segment, keeping a spare context.
+Lesson: a write in the worker's context that a fiber later frees needs an
+explicit edge to the fiber that runs next.
