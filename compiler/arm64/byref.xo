@@ -630,8 +630,20 @@ fn (var g: G) word_text(load: Bool, off: Int) -> Str {
   g.str_texts[i]
 }
 
-/// Stores ws as words w0, w0+1, ... of the memory at base.
+/// Stores ws as words w0, w0+1, ... of the memory at base: a copy of a
+/// read only image (zero_image_of) when there are many and each is a
+/// constant.
 fn (var g: G) store_words_at(base: Int, w0: Int, ws: List[Int]) {
+  if ws.len() >= ZERO_IMAGE_MIN && !g.x86 && g.os != "windows" {
+    let body = g.const_words_text(ws)
+    if !body.is_empty() {
+      let dst = g.addr_at(base, 8 * w0)
+      let src = g.sym_addr(g.zero_image_of(body))
+      let _r = g.rt("memcpy", regs([dst, src, g.imm(8 * ws.len())]), [])
+      g.clobber()
+      return
+    }
+  }
   for (k, w) in ws.indexed() {
     let (b, off) = g.mem_at(base, 8 * (w0 + k))
     let text = g.word_text(false, off)

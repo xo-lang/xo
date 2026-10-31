@@ -396,6 +396,11 @@ struct G {
   /// never an inline Str, so no tag test)
   lit_objs: Map[Int, Bool] = {}
   ksyms: Map[Int, Str] = {}
+  /// the registers holding a symbol's address (sym_addr) and the
+  /// floating point registers holding a constant's bits (fimm), for a
+  /// store of constant words from a read only image (zero_image_of)
+  kaddrs: Map[Int, Str] = {}
+  kfbits: Map[Int, Int] = {}
   /// FAR_BASE when the frame is past MAX_FRAME, or 0
   base: Int = 0
   saved: List[Int] = []
@@ -502,6 +507,8 @@ fn (var g: G) begin_func(fi: Int) {
   g.kvals = {}
   g.lit_objs = {}
   g.ksyms = {}
+  g.kaddrs = {}
+  g.kfbits = {}
   g.dl_n = 0
   g.du_n = 0
   g.tl_v = -1

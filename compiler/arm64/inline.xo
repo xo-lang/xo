@@ -644,7 +644,15 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
   // struct joined there took its own frame copy: byref_var's main grew
   // past the frame limit with Huge's, 2026-10-30)
   for _ in 0..ZERO_JOIN_MAX {
-    let z = find_zero_join(f, st.by_name)
+    var z = find_zero_join(f, st.by_name)
+    if z < 0 && m.goarch == "arm64" && pass_on(m, "zero_images") {
+      // a fault exit's zero of a `var` parameter written back: its
+      // constant words then copy one read only image (zimage.xo) where
+      // the call's result was stored word by word from the call's area
+      // (ssa.Builder's about 1,000 words at each exit; arm64 only:
+      // amd64 has no image copy yet and would store each word)
+      z = find_zero_ret(f, st.by_name)
+    }
     if z < 0 {
       break
     }
@@ -960,6 +968,34 @@ fn find_zero_join(f: ssa.Func, by_name: Map[Str, Int]) -> Int {
       }
       for e in f.values[t].succs {
         if f.edges[e].args.contains(v) {
+          return v
+        }
+      }
+    }
+  }
+  -1
+}
+
+/// A call of a zero_val function whose result a return writes back to a
+/// `var` parameter (a result past the function's own: ssa Func
+/// var_params), or -1.
+fn find_zero_ret(f: ssa.Func, by_name: Map[Str, Int]) -> Int {
+  let first = f.results.len() - f.var_params.len()
+  if f.var_params.is_empty() || first < 0 {
+    return -1
+  }
+  for (bl, b) in f.blocks.indexed() {
+    let t = f.term(bl)
+    if t < 0 || f.values[t].op != ssa.Op.Return {
+      continue
+    }
+    for v in b.instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || x.pad >= 0 || !aux_str(x.aux).starts_with("zero_val.") || !by_name.contains(aux_str(x.aux)) {
+        continue
+      }
+      for (k, a) in f.values[t].args.indexed() {
+        if a == v && k >= first {
           return v
         }
       }

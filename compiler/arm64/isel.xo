@@ -70,6 +70,13 @@ fn (var g: G) function(fi: Int) {
   if g.on("copy_prop") {
     g.copy_prop()
   }
+  // after copy_prop: an inlined zero's words reach its stores as the
+  // constants' registers only once the copies through the inlined
+  // call's join are gone
+  if g.on("zero_images") && !g.x86 && g.os != "windows" && g.zero_image_runs() && g.on("mir_dce") {
+    // the constants only the copied stores read
+    g.dce()
+  }
   if g.on("reuse_loads") {
     g.reuse_loads()
   }
@@ -391,10 +398,14 @@ fn (var g: G) cimm(n: Int) -> Int {
 /// Puts the double with bits b in a floating point register.
 fn (var g: G) fimm(bits: Int) -> Int {
   if bits == 0 {
-    return g.konst(g.def1(true, "fmov $d0, xzr", []))
+    let z = g.konst(g.def1(true, "fmov $d0, xzr", []))
+    g.kfbits[z] = 0
+    return z
   }
   let t = g.imm(bits)
-  g.konst(g.def1(true, "fmov $d0, $u0", [t]))
+  let r = g.konst(g.def1(true, "fmov $d0, $u0", [t]))
+  g.kfbits[r] = bits
+  r
 }
 
 /// Puts the address of a symbol in a register.
@@ -407,6 +418,7 @@ fn (var g: G) sym_addr(sym: Str) -> Int {
   if g.m.debug_info {
     g.ksyms[r] = sym
   }
+  g.kaddrs[r] = sym
   r
 }
 

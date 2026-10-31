@@ -1,0 +1,188 @@
+// Read only images of constant words: a store of many constant words
+// (a struct's zero into a `var` receiver at a fault exit: ssa.Builder's
+// zero is about 1,000 words, 8.4 KB of stores at each exit) copies one
+// image with memcpy instead (byref.xo store_words_at). The image is a
+// helper (Want op 8, keyed by its contents), so a module, or a split
+// program's parts, hold one copy of each.
+
+/// The fewest words store_words_at copies from an image.
+const ZERO_IMAGE_MIN = 32
+
+/// The data directives of the words ws when every one is a constant
+/// (xzr, an imm, a symbol's address, a floating point constant), "" when
+/// one is not.
+fn (g: G) const_words_text(ws: List[Int]) -> Str {
+  let es = g.empty_str_label()
+  var b = StrBuilder.new()
+  for w in ws {
+    if w == 0 {
+      b.write("\t.quad 0\n")
+    } else if let Some(n) = g.kvals.get(w) {
+      b.write("\t.quad ${n}\n")
+    } else if let Some(s) = g.kaddrs.get(w) {
+      // a global symbol only: a local label (a string literal's object,
+      // a canonical text's token) belongs to the function's own text,
+      // and the image is shared by the module's functions and parts
+      if !es.is_empty() && s == es {
+        // the empty Str's object: the image's own copy (zero_image_of)
+        b.write("\t.quad ${ZSTR}\n")
+        continue
+      }
+      if s.contains("\x01") || s.starts_with("L") || s.starts_with(".L") {
+        return ""
+      }
+      b.write("\t.quad ${s}\n")
+    } else if let Some(n) = g.kfbits.get(w) {
+      b.write("\t.quad ${n}\n")
+    } else {
+      return ""
+    }
+  }
+  b.freeze()
+}
+
+/// The token in an image's words of the address of its own empty Str
+/// object (a struct's zero has `""` fields: ssa.Builder's 52), which
+/// zero_image_of writes after the words, so an image names no string
+/// literal of a function's text.
+const ZSTR = "\x01Z\x01"
+
+/// The label of the function's `""` literal object (str_obj, or its
+/// canonical token), "" when the function has none.
+fn (g: G) empty_str_label() -> Str {
+  let e = "".bytes()
+  if g.canon {
+    if let Some(i) = g.cstr_at.get(e) {
+      return "\x01S${i}\x01"
+    }
+    return ""
+  }
+  g.strs.get(e) ?? ""
+}
+
+/// The symbol of the read only image whose data directives are body.
+fn (var g: G) zero_image_of(body: Str) -> Str {
+  let key = "zimg ${base62(fnv(body), 10)} ${body.len()}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  if g.defers(key, Want{op: 8, kind: body}) {
+    return g.helped.get(key) ?? ""
+  }
+  let sym = g.helper_label("zimg")
+  g.helped[key] = sym
+  // the label the module's code names last, directly above the words:
+  // hollow.xo takes each label of a data section as an object of its
+  // own, so the words under an unnamed label were dropped (a split
+  // build names the global of alias, a whole one sym)
+  let labels = if g.split { "${sym}:\n${g.alias(key)}" } else { "${g.alias(key)}${sym}:\n" }
+  var words = body
+  var tail = ""
+  if body.contains(ZSTR) {
+    // {IMMORTAL, length 0}: a literal's object (gen.xo data)
+    let zl = "${sym}_s"
+    words = body.replace(ZSTR, zl)
+    tail = "${zl}:\n\t.quad ${IMMORTAL}\n\t.quad 0\n"
+  }
+  g.helpers.push("${g.cmt()} ${key}\n${g.section("rodata")}\t.p2align 3\n${labels}${words}${tail}${g.section("text")}")
+  sym
+}
+
+/// Runs of ZERO_IMAGE_MIN or more stores of constant words at
+/// consecutive offsets of one base, in each block (isel stores a struct
+/// built of constants field by field: an inlined zero_val.T written back
+/// to a `var` receiver), become one memcpy of a read only image; whether
+/// any did.
+fn (var g: G) zero_image_runs() -> Bool {
+  var any = false
+  let pad = g.cur_pad
+  g.cur_pad = -1
+  for b in 0..g.blocks.len() {
+    let ins = g.blocks[b].insts
+    var out: List[Inst] = []
+    var hit = false
+    var i = 0
+    while i < ins.len() {
+      let (base, off) = g.const_store(ins[i])
+      if base < 0 {
+        out.push(ins[i])
+        i += 1
+        continue
+      }
+      var j = i + 1
+      while j < ins.len() {
+        let (b2, o2) = g.const_store(ins[j])
+        if b2 != base || o2 != off + 8 * (j - i) {
+          break
+        }
+        j += 1
+      }
+      var body = ""
+      if j - i >= ZERO_IMAGE_MIN {
+        var ws: List[Int] = []
+        for k in i..j {
+          ws.push(ins[k].us[0])
+        }
+        body = g.const_words_text(ws)
+      }
+      if body.is_empty() {
+        for k in i..j {
+          out.push(ins[k])
+        }
+        i = j
+        continue
+      }
+      // the copy's instructions, made at the end of an emptied block
+      g.cur = b
+      g.cur_line = ins[i].line
+      g.cur_inl = ins[i].inl
+      g.cur_cause = ins[i].cause
+      g.blocks[b].insts = []
+      let dst = g.addr_at(base, off)
+      let src = g.sym_addr(g.zero_image_of(body))
+      let _r = g.rt("memcpy", regs([dst, src, g.imm(8 * (j - i))]), [])
+      for x in g.blocks[b].insts {
+        out.push(x)
+      }
+      hit = true
+      any = true
+      i = j
+    }
+    if hit {
+      g.blocks[b].insts = out
+    } else {
+      g.blocks[b].insts = ins
+    }
+  }
+  g.cur_pad = pad
+  g.cur_line = 0
+  g.cur_inl = -1
+  g.cur_cause = 0
+  any
+}
+
+/// The base register and byte offset of a store of a constant word
+/// (`str $u0, [$u1, #off]` of xzr or a register const_words_text reads),
+/// or (-1, 0).
+fn (g: G) const_store(x: Inst) -> (Int, Int) {
+  if x.kind != K_PLAIN || x.us.len() != 2 || !x.defs.is_empty() || x.has_fault || x.poll || !x.clobbers.is_empty() {
+    return (-1, 0)
+  }
+  var off = 0
+  if x.text != "str $u0, [$u1]" {
+    let pre = "str $u0, [$u1, #"
+    if !x.text.starts_with(pre) || !x.text.ends_with("]") {
+      return (-1, 0)
+    }
+    if let Some(n) = Int.parse(x.text[pre.len()..x.text.len() - 1]) {
+      off = n
+    } else {
+      return (-1, 0)
+    }
+  }
+  let w = x.us[0]
+  if w != 0 && !g.kvals.contains(w) && !g.kaddrs.contains(w) && !g.kfbits.contains(w) {
+    return (-1, 0)
+  }
+  (x.us[1], off)
+}

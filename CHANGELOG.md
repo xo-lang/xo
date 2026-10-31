@@ -38,7 +38,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   chain_mem). ssa.Builder.net_err_func had 24 pads of about 712 releases
   and 1,900 field reads each. xo's code by cause: 63.34 to 55.33 MB
   (landing reads 6.07 to 0.45 MB, landing releases 12.43 to 10.14 MB);
-  stage 2 __text 64,321,440 to 56,330,136 bytes (-12.4%).
+  stage 2 __text 64,321,440 to 56,330,136 bytes (-12.4%;
+  bench/results/landing-pads-2026-10-31.md).
+- Native backend (arm64), static zero images: a fault exit that resets a
+  `var` receiver to its zero value stored it word by word (about 1,000
+  words, 8 KB of code, for ssa.Builder). A zero_val call written back to
+  a var parameter is inlined (compiler/ssa inline.xo find_zero_ret), and
+  the MIR pass `zero_images` (after copy_prop; XO_PASSES can turn it off)
+  turns a run of 32 or more constant word stores to consecutive offsets
+  of one base into one memcpy from a read-only image, keyed by its
+  contents and shared across split parts (compiler/arm64 zimage.xo).
+  Stage 2 __text 56,430,920 to 50,821,296 bytes (-9.9%); speed within
+  noise (bench/results/landing-pads-2026-10-31.md).
 - Tools: `xo dev size`'s usage shows `--diff [--top=N] A B` with flags
   before the files, the order it accepts (a flag after the files is read
   as a third file); it showed `--diff A B [--top=N]`.
