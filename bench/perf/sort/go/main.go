@@ -1,5 +1,7 @@
 // Go twin of bench/perf/sort/xo: slices.Sort (pdqsort) of one million
-// pseudo random Ints and of 200 000 Strs. Usage: sortgo ints|strs|floats.
+// pseudo random Ints and of 200 000 Strs, and slices.SortStableFunc of
+// 200 000 two-int records by one field (by). Usage: sortgo
+// ints|strs|floats|by.
 // Prints "<workload> <checksum>".
 package main
 
@@ -56,6 +58,26 @@ func floats() int {
 	return h
 }
 
+type rec struct{ s, e int }
+
+func by() int {
+	xs := make([]rec, 0, 200000)
+	seed := 5
+	for i := 0; i < 200000; i++ {
+		seed = (seed*1103515245 + 12345) % 2147483648
+		xs = append(xs, rec{seed % 100000, i})
+	}
+	h := 0
+	for k := 0; k < 5; k++ {
+		s := slices.Clone(xs)
+		slices.SortStableFunc(s, func(a, b rec) int { return a.s - b.s })
+		for i := 0; i < len(s); i += 997 {
+			h = (h*31 + s[i].s + s[i].e) % 1000000007
+		}
+	}
+	return h
+}
+
 func main() {
 	w := "ints"
 	if len(os.Args) > 1 {
@@ -68,6 +90,8 @@ func main() {
 		fmt.Println("strs", strs())
 	case "floats":
 		fmt.Println("floats", floats())
+	case "by":
+		fmt.Println("by", by())
 	default:
 		fmt.Fprintln(os.Stderr, "unknown workload", w)
 		os.Exit(2)

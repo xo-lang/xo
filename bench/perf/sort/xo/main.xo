@@ -1,6 +1,8 @@
 // List.sort on one million pseudo random Ints, 200 000 Strs and one
-// million Floats, against Go's slices.Sort (bench/perf/sort/go).
-// Usage: sortperf ints|strs|floats. Prints "<workload> <checksum>".
+// million Floats, against Go's slices.Sort (bench/perf/sort/go), and
+// List.sort_by of 200 000 two-Int records by one field, against
+// slices.SortStableFunc (`by`, 2026-10-30, ADR 0448 stage 4).
+// Usage: sortperf ints|strs|floats|by. Prints "<workload> <checksum>".
 fn ints() -> Int {
   var xs: List[Int] = List.with_capacity(1000000)
   var seed = 42
@@ -53,12 +55,37 @@ fn floats() -> Int {
   h
 }
 
+struct Rec {
+  s: Int
+  e: Int
+}
+
+fn by() -> Int {
+  var xs: List[Rec] = List.with_capacity(200000)
+  var seed = 5
+  for i in 0..200000 {
+    seed = (seed * 1103515245 + 12345) % 2147483648
+    xs.push(Rec{s: seed % 100000, e: i})
+  }
+  var h = 0
+  for _ in 0..5 {
+    let s = xs.sort_by(fn(r) { r.s })
+    var i = 0
+    while i < s.len() {
+      h = (h * 31 + s[i].s + s[i].e) % 1000000007
+      i += 997
+    }
+  }
+  h
+}
+
 fn main(os: Os) {
   let w = os.env.args().get(0) ?? "ints"
   match w {
     "ints" => os.stdio.println("ints ${ints()}")
     "strs" => os.stdio.println("strs ${strs()}")
     "floats" => os.stdio.println("floats ${floats()}")
+    "by" => os.stdio.println("by ${by()}")
     _ => os.stdio.println("unknown workload ${w}")
   }
 }
