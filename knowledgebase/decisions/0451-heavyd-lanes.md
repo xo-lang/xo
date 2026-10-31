@@ -3,7 +3,9 @@
 Status: Accepted (owner, 2026-10-31: "Can we run all the tests through
 heavy? Then have multiple lanes? And can the merge queue and other
 features go in there too?", then "Yes with the heavy stages" to the
-staged plan below). Stage 1 landed (lanes in heavyd, unused by callers).
+staged plan below). Stages 1 to 3 landed 2026-10-31: lanes in heavyd
+(041e4f0a9), offload.sh in the host lanes (e07848322), pushq in the merge
+lane.
 
 ## Context
 

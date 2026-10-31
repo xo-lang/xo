@@ -970,6 +970,9 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   also changes, pushq type-checks those directories of the rebased tree
   (`go run ./scripts/xocheck DIRS`, about 2 s; lead, 2026-10-31: a field
   removal rebased over a new use of it broke main's build).
+  Pushes wait in heavyd's `merge` lane (decision 0451, 2026-10-31), so
+  `~/xo-lead/agents/heavy.sh --status` shows the push queue; with no
+  daemon pushq queues on its own lock as before.
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision
