@@ -2,12 +2,41 @@ package main
 
 import (
 	"bytes"
+	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 	"testing"
+	"time"
 )
+
+// peakRSS polls /proc/PID/status for VmHWM, the peak of the process's
+// own address space, until stop is closed; the result is in bytes (0:
+// unreadable). Linux's ru_maxrss of a child counts the memory of the
+// process it was forked from until the exec (the test binary's, tens
+// to hundreds of MB), so it cannot show a 32 MB bound there.
+func peakRSS(pid int, stop <-chan struct{}) int64 {
+	var peak int64
+	for {
+		if b, err := os.ReadFile("/proc/" + strconv.Itoa(pid) + "/status"); err == nil {
+			for _, ln := range strings.Split(string(b), "\n") {
+				if v, ok := strings.CutPrefix(ln, "VmHWM:"); ok {
+					if kb, err := strconv.ParseInt(strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(v), "kB")), 10, 64); err == nil && kb*1024 > peak {
+						peak = kb * 1024
+					}
+				}
+			}
+		}
+		select {
+		case <-stop:
+			return peak
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
 
 // TestTracebackIsolatedNoLeak: a native program that catches 100,000
 // faults with task.isolate under XO_TRACEBACK=1 keeps its memory flat.
@@ -51,16 +80,34 @@ fn main(os: Os) {
 	var out bytes.Buffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
-	if err := cmd.Run(); err != nil || !strings.Contains(out.String(), "100000 faults") {
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("start: %v", err)
+	}
+	var peak int64
+	stop := make(chan struct{})
+	var wg sync.WaitGroup
+	if runtime.GOOS == "linux" {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			peak = peakRSS(cmd.Process.Pid, stop)
+		}()
+	}
+	err := cmd.Wait()
+	close(stop)
+	wg.Wait()
+	if err != nil || !strings.Contains(out.String(), "100000 faults") {
 		t.Fatalf("run: %v\n%s", err, out.String())
 	}
-	ru, ok := cmd.ProcessState.SysUsage().(*syscall.Rusage)
-	if !ok {
-		t.Skip("no rusage")
-	}
-	rss := int64(ru.Maxrss)
-	if runtime.GOOS != "darwin" {
-		rss *= 1024 // Linux reports KiB, macOS bytes
+	rss := peak
+	if runtime.GOOS != "linux" {
+		ru, ok := cmd.ProcessState.SysUsage().(*syscall.Rusage)
+		if !ok {
+			t.Skip("no rusage")
+		}
+		rss = int64(ru.Maxrss) // macOS reports bytes
+	} else if rss == 0 {
+		t.Skip("no /proc VmHWM")
 	}
 	// a leak of a trace block a fault is about 100 MB here
 	if rss > 32<<20 {
