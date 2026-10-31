@@ -67,6 +67,28 @@ fn show(os: Os, label: Str, addr: Str, r: Result[http.Response, http.ClientErr])
   }
 }
 
+/// GET url, again when the request's write lost the race with the server's
+/// refusal (the server sends its alert and closes; a client that is still
+/// writing gets "broken pipe" or "connection reset" instead of the alert,
+/// a flake of the Go backend's net/http, tier 31 of 2026-10-31).
+fn get_refused_once(c: http.Client, url: Str) -> Result[http.Response, http.ClientErr] {
+  var r = c.get(url)
+  for _ in 0..5 {
+    match r {
+      Err(e) => {
+        let t = "${e}"
+        if t.contains("write: broken pipe") || t.contains("connection reset by peer") {
+          r = c.get(url)
+          continue
+        }
+        break
+      }
+      Ok(_) => break
+    }
+  }
+  r
+}
+
 fn main(os: Os) uses net, stdio, rand, clock {
   let now = os.clock.now()
   let ca = issue(os, "Xo Test CA", None, true, [], now)
@@ -99,7 +121,7 @@ fn main(os: Os) uses net, stdio, rand, clock {
       })
       os.stdio.println("== ${mode}")
       for (label, c) in clients {
-        show(os, label, addr, c.get("https://${addr}/who"))
+        show(os, label, addr, get_refused_once(c, "https://${addr}/who"))
       }
       if mode == tls.ClientAuth.RequireAndVerify {
         // tls.client presenting the good certificate on a dialed connection
