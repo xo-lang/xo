@@ -192,6 +192,10 @@ to `%USERPROFILE%\xo-ci\off`, then `wsl -e bash -l` on it under
   2026-10-30). A golden that passes there may still fail for an
   unprivileged Windows user (no Developer Mode, no admin share).
   Last verified: 2026-10-30.
+- The lead's full tier (tier.sh) runs the windows/amd64 sample here on
+  every tier since 2026-10-30 (owner: no routine run covered native
+  Windows), logging to `~/xo-lead/agents/lead-tierN-win-cmd.log`; a
+  failure fails the tier.
 - Slots: `OFF_SLOTS=2` in both of this machine's host files, so two jobs
   run at once per side (WSL and Windows), four in all; the arm64
   container stays at one (owner, 2026-10-29). The one repository's fetch
