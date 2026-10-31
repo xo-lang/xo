@@ -1,7 +1,7 @@
 # 0449: idle connections cost no stack and no mapping
 
-Status: Proposed (Xo Lang 3, 2026-10-31; for the owner's decision, no
-implementation before it). Triggered by Go 1.28's idea of parking idle
+Status: Accepted (owner, 2026-10-31, as written: parking, no shared stack
+mappings, the h2 heap cut; Xo Lang 3, 2026-10-31). Triggered by Go 1.28's idea of parking idle
 HTTP/2 connections; related to 0069 (fibers), 0301 (workers poll) and
 0395.
 
