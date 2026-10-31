@@ -7,6 +7,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 ## Unreleased
 - FIX (XO_PROF=heap): a heap snapshot's own reading of the executable's debug information is no longer sampled as the program's allocation (about 50 MB of a warm build's exit profile).
 - Faster builds (arm64, amd64 native): a field read only read by field reads of it loads only the words they read. A landing pad in a `var b: Builder` method loaded b.m (592 words) whole to release one field of it, about 740 pads a function, and 98 percent of what isel made in ssa.Builder's largest functions was loads mir_dce then dropped. Self build on the Mac: emit's peak 8.1/7.4 to 6.8/6.7 GB, max RSS 7.6/7.1 to 6.6 GB, emit 26 to 29.5 s to 21 to 22 s; on linux/arm64 max RSS -10%, CPU -7% (decision 0448 stage 3; gotchas/arm64-isel-dead-field-loads.md).
+- `use c`: a C `enum` the header defines is bound as a valued enum
+  (decision 0269 part 4): `enum enumc_mode { ENUMC_UP, ENUMC_DOWN }` gives
+  `EnumcMode.Up` and `.Down` with `value()`, `from(v)` and `all()`; the
+  shared prefix is dropped and an enumerator that repeats a value is a
+  `const` alias. Parameters and results of the enum type stay `Int32`.
 - Constant patterns (decision 0269): a `const` in a pattern, bare
   (`OK => ...`) or qualified (`codes.OK => ...`), matches by equality
   instead of binding. A name spelled like a constant that is neither a

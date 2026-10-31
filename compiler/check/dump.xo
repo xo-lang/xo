@@ -213,7 +213,8 @@ fn (var c: Checker) run() -> () ! Str {
     // are its tests and are checked like a program's (2026-10-25: they
     // were built unchecked, so every prelude name in a `std/NAME` module's
     // test was XO1201, a list literal "support is planned")
-    if !c.mods[m].is_std || bodies.contains(m) || c.mods[m].root {
+    // a `use c` binding module also: its enums' generated methods have bodies
+    if !c.mods[m].is_std || bodies.contains(m) || c.mods[m].root || !c.mods[m].c_prefix.is_empty() {
       c.check_module(m)
     } else if !c.native {
       // the Go backend lowers a std declaration's default values itself

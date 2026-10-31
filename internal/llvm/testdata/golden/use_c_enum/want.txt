@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+1 6 true true 3 42
+--- stderr

@@ -1963,6 +1963,13 @@ fn main(os: Os) {
   Xo declaration file and a C adapter that the native build compiles and
   links with the program. Function names become snake_case
   (`zlibVersion` is `zlib_version`); struct tags become UpperCamel types.
+  A C `enum` the header defines is also bound as a valued enum
+  `enum EnumcMode: Int { Up = 0, Down = 1 }` (UpperCamel tag; the prefix
+  every enumerator shares, up to a `_`, is dropped and the rest is
+  UpperCamel) with `value()`, `E.from(v)` and `E.all()` (2.3). An
+  enumerator with a value an earlier one has is a `const` alias of that
+  variant. A parameter or result of the enum type is still `Int32`
+  (decision 0269 part 4 stage 1).
 - Types at the boundary (decision 0093), all copied, none pointing into Xo
   memory after the call returns: `int` is `Int32`, `unsigned` `UInt32`,
   `long` and `long long` `Int`, their unsigned forms `UInt64`, `short`,

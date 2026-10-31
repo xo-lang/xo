@@ -111,13 +111,13 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
     b.impossible("`${b.c.mods[fm].name}.${b.c.display_name(fo)}` of the Go package `${b.c.mods[fm].go_path}` (`use go`)")
     return b.undef(b.nat_of(x))
   }
-  if fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() && !b.c.objs[fo].file.ends_with("#derive") {
+  if fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() && !b.derived_in_c(fm, fo) {
     return b.c_call(x, ci)
   }
   if let Some(v) = b.fs_user_call(x, fo) {
     return v
   }
-  if b.is_std_mod(fm) {
+  if b.is_std_mod(fm) && !b.derived_in_c(fm, fo) {
     let path = b.c.mods[fm].path
     if path.starts_with("native/") {
       return b.intrinsic(x, ci)
@@ -2705,4 +2705,11 @@ fn (var b: Builder) user_cap_call(x: Expr, ci: check.CallInfo) -> Int? {
     return Some(b.undef(nt))
   }
   Some(res)
+}
+
+/// Whether fo is a function generated into a `use c` binding module (the
+/// methods of a bound enum, derive.xo valued_enum_methods): it has a body
+/// of its own, so it is an ordinary call, not a C extern or a std function.
+fn (var b: Builder) derived_in_c(fm: Int, fo: Int) -> Bool {
+  fm >= 0 && !b.c.mods[fm].c_prefix.is_empty() && b.c.objs[fo].file.ends_with("#derive")
 }

@@ -1,0 +1,7 @@
+use c "enumc.h" link "enumc.c"
+
+fn main(os: Os) {
+  let m = enumc.EnumcMode.Down
+  let l = enumc.ENUMC_LEVEL_MAX
+  os.stdio.println("${m.value()} ${l.value()} ${enumc.EnumcLevel.from(5) == Some(enumc.EnumcLevel.Mid)} ${enumc.EnumcLevel.from(2) == None} ${enumc.EnumcLevel.all().len()} ${enumc.enumc_twice(Int32(21))}")
+}
