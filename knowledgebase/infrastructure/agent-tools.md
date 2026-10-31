@@ -666,10 +666,11 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   Rounds (owner, 2026-10-31: "Do 3 rounds"): ab-host.sh runs 3 rounds
   after 1 warmup (3 for `edit`), and xo bench gives a verdict from 3
   rounds (decision 0340's addendum). A 3-round verdict needs all three
-  rounds to agree, which a change with no effect does one time in four,
-  so confirm with `--rounds=10` a verdict on an effect under about 3% and
-  every "no slower" claim; a large effect needs no more. More than 5
-  rounds run with `xo bench --early` (2026-10-31, owner's OK): from round 5
+  rounds to agree, which a change with no effect does one time in four.
+  Every --ab runs 3 rounds, small effects and "no slower" claims too
+  (owner, 2026-10-31: "I thought all tests were dropped to 3?"; no
+  10-round confirmations); report a 3-round verdict on an effect under
+  about 3% as such. A run given more than 5 rounds by hand runs with `xo bench --early` (2026-10-31, owner's OK): from round 5
   the run stops once wall, CPU and max RSS (or `--metrics`) are each
   decided better, worse, or the same within 1% at two looks in a row,
   each look at alpha over the number of looks; the output says "stopped

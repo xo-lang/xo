@@ -171,3 +171,12 @@ early keeps the false verdict rate within alpha. The output and the JSON
 than 5 rounds when NEW's xo bench has it. A 3-round run never stops early.
 First run (darwin, /bin/sleep 0.05 against 0.10, --rounds=12): stopped
 after 6 rounds, wall 1.807 worse, max RSS the same, CPU too coarse.
+
+## Addendum 2026-10-31: 3 rounds for every claim
+
+Owner, 2026-10-31 ("I thought all tests were dropped to 3?"): the
+10-round confirmation for effects under about 3% and "no slower" claims,
+added with the three rounds addendum, is withdrawn; every --ab runs 3
+rounds. A no-effect change still shows three agreeing rounds about one
+time in four, so a 3-round verdict on a small effect is reported as such.
+--early stays for a run given more than 5 rounds by hand.
