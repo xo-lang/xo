@@ -158,3 +158,15 @@ is spread over every caller's copy of the loop:
   core is meant to port directly.
 - **launchd's resource limits.** They limit one process, not a queue
   with priorities, windows and pools.
+
+## Addendum 2026-10-31: a gate's exit ends its stagger
+
+The shadow review before the switch (2026-10-31) found five of its six
+remaining holds were gates that had already exited while their
+HEAVY_GATE_STAGGER still held the next gate. The stagger spaces gate
+starts so two builds do not peak at once; a gate that has ended peaks no
+more. heavyd's finish of the gate that started last now clears the
+stagger and removes the gatestart lock it holds, and the shadow models the
+same (a gate it would have started, no longer waiting or running, ends
+its stagger). Approved by the owner with the switch; tests
+TestFinishEndsGateStagger and TestShadowGateExitEndsStagger.
