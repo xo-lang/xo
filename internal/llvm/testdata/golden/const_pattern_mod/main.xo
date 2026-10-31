@@ -1,0 +1,21 @@
+use github.com/xo-lang/xo/internal/llvm/testdata/golden/const_pattern_mod/codes
+
+fn describe(s: Int) -> Str {
+  match s {
+    codes.OK => "ok"
+    codes.NOT_FOUND => "missing"
+    500 | 503 => "server error"
+    _ => "other"
+  }
+}
+
+fn kind(s: Str) -> Int {
+  match s {
+    codes.SERVER => 1
+    _ => 0
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${describe(200)} ${describe(404)} ${describe(503)} ${describe(7)} ${kind("server")} ${kind("x")}")
+}

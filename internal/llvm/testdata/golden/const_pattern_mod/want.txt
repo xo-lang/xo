@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+ok missing server error other 1 0
+--- stderr

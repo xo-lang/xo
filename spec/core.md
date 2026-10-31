@@ -1297,8 +1297,9 @@ match code {
 
 Patterns nest: `Some(Ok(v))`, `Err(LoadErr.NotFound(id))`.
 
-A bare name in a pattern that is a `const` of the current module matches by
-equality with the constant's value instead of binding (decision 0269):
+A name in a pattern that is a `const` of the current module, or `mod.NAME`
+for a `pub const` of an imported module, matches by equality with the
+constant's value instead of binding (decision 0269):
 `match status { OK => "done", NOT_FOUND => "missing", _ => "other" }`. A
 variant of the matched enum, or of the prelude, with that name wins over a
 constant. A name spelled like a constant (upper case, digits and
