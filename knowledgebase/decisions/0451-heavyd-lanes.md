@@ -49,6 +49,9 @@ daemon only says when), as heavy.sh's client already does.
   slot once a `-long` lease (its own limit 180 minutes or more) has held
   its slot 20 minutes; CAP is per agent (the Claude session above the
   client), counting waiting and held leases.
+- `-p` (OFF_PRIORITY=1 for offload.sh) waits ahead of the leases without
+  it (owner, 2026-10-31: a fix's linux confirmation waited an hour behind
+  two 10-round --ab runs); it never stops a running lease.
 - A daemon restart keeps places: a waiting client queues again with its
   ticket (its arrival time), a running one is adopted with its slots.
 - `heavy.sh --status` lists every lane, its holders and its waiters with

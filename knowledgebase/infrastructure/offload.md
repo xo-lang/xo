@@ -84,7 +84,10 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   before); OFF_NO_LANE=1 skips the lane. The arm64 host runs 3 jobs at
   once since 2026-10-31 (owner: OFF_SLOTS=3 in offload.env, `arm64 3 2
   offload.env` in heavyd-lanes.conf; an exclusive run still takes the
-  whole host). A job that names no host file
+  whole host). OFF_PRIORITY=1 puts a job ahead of every waiting job
+  without it, exclusive ones included (it never stops a running one):
+  for a run that confirms a fix to main or unblocks another agent, not
+  for measurements (owner, 2026-10-31). A job that names no host file
   is routed to the first free lane of its kind (`arm64*`, `amd64*`), so
   adding a host is its env file plus one heavyd-lanes.conf line
   (`arm64-2 2 2 offload-2.env`); a job that names one (OFFLOAD_ENV, as
