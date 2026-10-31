@@ -213,7 +213,7 @@ pub fn report_diff(a: Rows, z: Rows, top: Int) -> Str {
 }
 
 fn size_usage() -> Str {
-  "usage: xo dev size --by-cause [--top=N] [--save=FILE] [--flags='...'] PROG\n       xo dev size --by-cause --rows=FILE [--top=N]\n       xo dev size --by-cause --diff A B [--top=N]"
+  "usage: xo dev size --by-cause [--top=N] [--save=FILE] [--flags='...'] PROG\n       xo dev size --by-cause --rows=FILE [--top=N]\n       xo dev size --by-cause --diff [--top=N] A B\n       (flags go before the files)"
 }
 
 /// size_cmd is `xo dev size --by-cause`: builds PROG (a directory or a

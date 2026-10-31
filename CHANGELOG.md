@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Tools: `xo dev size`'s usage shows `--diff [--top=N] A B` with flags
+  before the files, the order it accepts (a flag after the files is read
+  as a third file); it showed `--diff A B [--top=N]`.
 - FIX (darwin builds): a program built in a directory whose path has a
   comma links again on the LLVM backend: the build directory's linker
   options (-oso_prefix, -object_path_lto, the race runtime's rpath) go

@@ -643,7 +643,8 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   `--flags=--target=linux/amd64`; not windows) and splits its code bytes into body,
   frame, fault_exit, landing, fault_stub, preempt, rc, copy, inline_rt and
   data, with the top functions and modules of each; `--save=FILE` keeps
-  the rows, `--diff A B` compares two saved runs. Use it for any push
+  the rows, `--diff [--top=N] A B` compares two saved runs (flags go
+  before the files: one after them is read as a file). Use it for any push
   that claims a size change (name the cause that moved, not only the
   total) and at each release. xo itself takes about 50 s
   (`xo dev size --by-cause ./compiler/xo`); size it with a stage 2 xo,
