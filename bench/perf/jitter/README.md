@@ -1,0 +1,27 @@
+# Jitter bench (owner, 2026-10-30)
+
+Whether Xo's reference counting (no collector, so no GC pauses) gives a
+steadier far tail than Go under the same load. Twin servers, each with two
+handlers:
+
+- `GET /hello`: a 6 byte text.
+- `GET /alloc`: a page of 200 items (about 1,000 fields, 400 strings, 200
+  lists) built and encoded as JSON per request, 14,683 bytes, so every
+  request allocates and frees a few hundred objects.
+
+`xo/` is the Xo server (std/http, `derive Json`), `go/` the Go one
+(net/http, encoding/json, Content-Length set so neither side chunks).
+`loadgen/` is a raw HTTP/1.1 client: `-c` keep-alive connections send
+`GET -path` back to back, each measured latency goes into a preallocated
+per-connection array, and the client's own GC is off, so its allocations
+add nothing to the tail it measures. It prints one JSON line: requests,
+req/s, p50, p99, p99.9 and max latency (microseconds), the coefficient of
+variation of the per-second request counts (`sec_cv`), and with `-pid` the
+server's CPU per request (Linux /proc).
+
+    loadgen -addr 127.0.0.1:18080 -path /alloc -c 32 -d 10s -warmup 2s -pid PID
+
+The runs on the linux/arm64 offload host (the server on CPUs 0-5, the
+load generator on 6-11, 20 interleaved rounds, each run's load average
+and CPU steal ticks logged) are in
+[bench/results/jitter-2026-10-30.md](../../results/jitter-2026-10-30.md).

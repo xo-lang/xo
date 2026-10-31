@@ -1,0 +1,36 @@
+// The jitter bench's Xo server (bench/perf/jitter): GET /hello answers a
+// short text; GET /alloc builds a page of 200 items (about 1,000 fields,
+// 400 strings and 200 lists) and encodes it as JSON, so every request
+// allocates and frees a few hundred objects. go/main.go is its twin.
+use std/http
+
+struct Item {
+  id: Int
+  name: Str
+  tags: List[Str]
+  score: Float
+  active: Bool
+} derive Json
+
+struct Page {
+  total: Int
+  items: List[Item]
+} derive Json
+
+const ITEMS = 200
+
+fn page(n: Int) -> Page {
+  var items: List[Item] = []
+  for i in 0..n {
+    items.push(Item{id: i, name: "item-${i}", tags: ["t${i % 7}", "g${i % 5}"], score: Float(i) * 0.5, active: i % 2 == 0})
+  }
+  Page{total: n, items: items}
+}
+
+fn main(os: Os) ! {
+  let port = os.env.get("PORT") ?? "18080"
+  var r = http.router()
+  r.handle("GET /hello", fn(_req) { http.text(200, "hello\n") })
+  r.handle("GET /alloc", fn(_req) { http.json(200, page(ITEMS)) })
+  http.server(os.net.listen("127.0.0.1:${port}")?, r).serve()?
+}
