@@ -202,6 +202,20 @@ TLS, stage 1b) passes: 654 mappings, RssAnon 2.0 GB, 50 KB a connection
 (the TLS engine's buffers per connection: the heap cut, part 3, is the
 next lever; h2 parking, 1c, is not built).
 
+Stage 1c as built (2026-10-31, branch h2park): `H2Conn.next()` asks
+`H2Conn.idle()` before it waits: settings received, no open stream and an
+empty stream table, no frame buffered, nothing queued or to send, no
+ping interval, deadline or pending ping, not stopping. If so it calls the
+`parker` that serve_h2 installed, which is hserve.hc_park with h2 = true
+(park_ready then accepts an h2 connection; the TLS idle_empty check
+applies). On true `next()` returns none with `parked` set and skips
+shutdown; serve_h2 returns true, so serve_conn does not close.
+serve_h2_resume runs the same loop (h2_loop) on the copy of the H2Conn
+the parker received, under task.isolate, and closes unless it parks again.
+Connections with a ping interval or deadline do not park (a timer would
+need the resumer's deadline, not built). Proof: TestIdleConnections40kH2
+(client -mode h2, one transport per connection, a second GET on each).
+
 No-slowdown gate, first measurement (linux/arm64 host, 2026-10-31, bench/perf/http
 run.sh, CRUD server, 32 workers, 5 runs, base f25d1f513 against 39166f720):
 every request parked, and the server lost speed: 187,494 to 167,661 req/s
