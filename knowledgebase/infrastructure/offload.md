@@ -72,6 +72,16 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   ~/xo-lead/locks/offq; since 2026-10-31 amd64 jobs no longer use up
   the cap). A job whose ssh connection drops (its Mac side stopped) ends
   on the host too, within about 15 s, and its ticket goes with it.
+  Since 2026-10-31 (decision 0451 stage 2) the queue, the exclusive and
+  backfill rules and the cap live in heavyd's lanes: offload.sh waits in
+  the lane for its host (`arm64` for the ssh host, `amd64` for the WSL
+  one, or OFF_LANE in the host file) with `heavyd lease`, then runs the
+  job as before; `~/xo-lead/agents/heavy.sh --status` lists every lane,
+  who holds it and why each job waits. The cap is the lane's
+  (`~/xo-lead/heavyd-lanes.conf`, `NAME SLOTS CAP`; 2 per agent on
+  arm64), still exit 5. The host's own queue stays as a safety net and
+  for jobs sent while no daemon answers (offload.sh then queues there as
+  before); OFF_NO_LANE=1 skips the lane. Last verified: 2026-10-31.
 - `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
   self|self=a|edit PROG [FLAG...]|PROG [ARG...]` (`self=a`: BASE's
   compiler/xo as the self build's program, for a NEW whose compiler calls
