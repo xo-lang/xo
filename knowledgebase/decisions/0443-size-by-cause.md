@@ -93,8 +93,7 @@ assembler knows every instruction's bytes.
 arm64 (2026-10-30, Xo Lang 2): the emitter's cause labels (compiler/arm64
 emit.xo cause_mark; isel.xo value_cause), compiler/macho causes.xo
 (assemble_causes), XO_SIZE_CAUSES in compiler/xo asmparts.xo, and
-`xo dev size` (compiler/cli/dev size.xo). Not yet: the copy cause (no
-emitter site tags inlined copies yet; they count as body).
+`xo dev size` (compiler/cli/dev size.xo).
 
 First numbers, with a stage 1 xo (the checkout's bin/xo, built by the
 older compiler): xo's rows cover 71,615,504 of its 71,616,076 `__text`
@@ -119,6 +118,16 @@ programs; the assembler now lets a cause label sit inside a pair
 byte changes: scripts/identity of main's xo against the amd64 step,
 darwin/amd64 117 of 117 programs identical (the Mac), linux/amd64 116 of
 116 (offload host; one golden fails to build with both xos).
+
+copy (2026-10-30, Xo Lang 2): isel.xo value_cause tags a struct, tuple
+or variant value of more than a word built, taken apart or updated
+(Struct, Tuple, Variant, Field, SetField, Payload), and edge_moves'
+stores of a block argument of more than a word into its memory
+(edge_store_words). Labels only: darwin/arm64 identity against the
+amd64 step's xo 59 of 59 identical. xo (darwin/arm64): copy 2,710,140
+bytes (4.2%), all from body (19.37 MB to 16.66 MB); the most in
+check_program_ov 45,620, arm64.G.emit 43,272, modules.ModCtx.load
+42,092; by module check 537,308 and arm64 527,872.
 
 ## Alternatives
 

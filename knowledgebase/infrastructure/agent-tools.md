@@ -641,7 +641,7 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 - Code size by cause (decision 0443): `xo dev size --by-cause PROG`
   builds PROG native (arm64, or amd64 with
   `--flags=--target=linux/amd64`; not windows) and splits its code bytes into body,
-  frame, fault_exit, landing, fault_stub, preempt, rc, inline_rt and
+  frame, fault_exit, landing, fault_stub, preempt, rc, copy, inline_rt and
   data, with the top functions and modules of each; `--save=FILE` keeps
   the rows, `--diff A B` compares two saved runs. Use it for any push
   that claims a size change (name the cause that moved, not only the

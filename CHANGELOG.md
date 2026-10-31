@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Tools: `xo dev size --by-cause` reports struct and tuple copies as their
+  own cause, `copy` (decision 0443): a struct, tuple or variant value of
+  more than a word built, taken apart or updated, and block arguments of
+  more than a word stored into memory; 2.7 MB (4.2%) of xo's code, until
+  now counted as body. `--diff` with a flag after the files says that
+  flags go first.
 - Std (decision 0302, owner 2026-10-30): a failed name resolution on the
   native backends reports Xo's own texts, Go's where Go has them (`no
   such host`, `server misbehaving`, the errno's text for EAI_SYSTEM)

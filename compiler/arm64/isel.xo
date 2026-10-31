@@ -899,7 +899,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       let a = g.f.edges[e].args[i]
       if let Some(es) = g.held.edge.get(e) {
         if es[m] != g.key_of(a) {
-          g.store_words_at(g.held.mems[m].ptr, 0, g.words(a))
+          g.edge_store_words(g.held.mems[m].ptr, g.words(a))
         }
       }
       continue
@@ -914,7 +914,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       let a = g.f.edges[e].args[i]
       if let Some(es) = g.held.edge.get(e) {
         if es[hm] != g.key_of(a) {
-          g.store_words_at(g.held.mems[hm].ptr, 0, g.words(a))
+          g.edge_store_words(g.held.mems[hm].ptr, g.words(a))
         }
       }
     }
@@ -1200,7 +1200,7 @@ fn (var g: G) instr(v: Int) {
 /// The size cause of the instructions lowered from value v (decision
 /// 0443): its block's (fault exit, landing), else retain, release and
 /// drop as rc, else an instruction inlined from std/llrt.
-fn (g: G) value_cause(v: Int) -> Int {
+fn (var g: G) value_cause(v: Int) -> Int {
   if g.blk_cause != C_BODY {
     return g.blk_cause
   }
@@ -1213,7 +1213,23 @@ fn (g: G) value_cause(v: Int) -> Int {
   if x.inl >= 0 && x.inl < g.f.inl_sites.len() && g.f.inl_sites[x.inl].file.contains("llrt/") && !g.f.file.contains("llrt/") {
     return C_INLINE_RT
   }
+  // a struct, tuple or variant value of more than a word built, taken
+  // apart or updated
+  if x.op is ssa.Op.Struct | ssa.Op.Tuple | ssa.Op.Variant | ssa.Op.Field | ssa.Op.SetField | ssa.Op.Payload && x.ty >= 0 && g.nwords(x.ty) > 1 {
+    return C_COPY
+  }
   C_BODY
+}
+
+/// store_words_at for an edge's argument (edge_moves): a copy when it
+/// is more than a word (decision 0443).
+fn (var g: G) edge_store_words(base: Int, ws: List[Int]) {
+  let c = g.cur_cause
+  if c == C_BODY && ws.len() > 1 {
+    g.cur_cause = C_COPY
+  }
+  g.store_words_at(base, 0, ws)
+  g.cur_cause = c
 }
 
 /// Whether a logical operation takes a rotated operand (rot_operand): not

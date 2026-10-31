@@ -238,6 +238,11 @@ fn size_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, 
   let top = fl.get_int("top")
   if fl.get_bool("diff") {
     if fl.args.len() != 2 {
+      // flags end at the first file (Go's flag package): `--diff A B
+      // --top=8` leaves --top=8 a third file
+      if fl.args.any(fn(a: Str) -> Bool { a.starts_with("-") }) {
+        os.stdio.eprintln("xo dev size: flags go before the files: xo dev size --by-cause --diff [--top=N] A B")
+      }
       os.stdio.eprintln(size_usage())
       return 2
     }
