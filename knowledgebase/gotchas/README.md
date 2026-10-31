@@ -1035,3 +1035,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [heapstats-walk-is-exit-only.md](heapstats-walk-is-exit-only.md): Observed 2026-10-31: calling XO_HEAPSTATS' free list walk (heapos.nfree) mid run crashed the self build (unlocked walk of other threads' lists); mid run, read only the counters
 - [removed-field-meets-new-use.md](removed-field-meets-new-use.md): a push removing a field met a new use on main after pushq's ungated overlap push; xocheck the rebased tree before pushing a removal (Observed)
 - [exact-ssa-tables-before-inline.md](exact-ssa-tables-before-inline.md): exact-size SSA tables saved heap before inlining and cost more from emit on; compare per-phase heap through the link (Observed)
+- [offload-job-scripts-share-work-dir.md](offload-job-scripts-share-work-dir.md): two concurrent host jobs on one /work path delete each other's tree (observed)
