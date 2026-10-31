@@ -355,6 +355,10 @@ pub fn park_ready(h: rthttp.HConn) -> Bool {
   if !poll.pd_begin(pd) {
     return false
   }
+  // the readiness the last read left (edge triggered: it stays set until
+  // a wait takes it) would make pd_park refuse; an edge after this call
+  // keeps the flag, and the peek sees what came before
+  poll.pd_clear_read(pd)
   let b = obj.alloc_obj(8)
   // MSG_PEEK: the byte stays for the read
   let r = sock.recv(pd_fd(pd), b, 1, 2)
