@@ -133,6 +133,7 @@ func main() {
 	settle := flag.Duration("settle", 5*time.Second, "wait after the last response before measuring")
 	maxmaps := flag.Int("maxmaps", 0, "fail when the server has more than this many mappings (lines of /proc/PID/maps); 0 checks nothing")
 	srcs := flag.Int("srcs", 1, "h1: spread the connections over this many loopback source addresses (127.0.0.1, 127.0.0.2, ...): one source address reaches only about 28,000 ephemeral ports to one server address")
+	useTLS := flag.Bool("tls", false, "h1: speak HTTP/1.1 over TLS (ALPN http/1.1; the server needs TLS_CERT and TLS_KEY)")
 	again := flag.Bool("again", false, "h1: after the idle wait, send a second request on every held connection and fail if any fails")
 	flag.Parse()
 	if *gen != "" {
@@ -172,6 +173,14 @@ func main() {
 					d.LocalAddr = &net.TCPAddr{IP: net.IPv4(127, 0, 0, byte(1+i%*srcs))}
 				}
 				c, err = d.Dial("tcp", *addr)
+				if err == nil && *useTLS {
+					tc := tls.Client(c, &tls.Config{InsecureSkipVerify: true, NextProtos: []string{"http/1.1"}})
+					if err = tc.Handshake(); err == nil {
+						c = tc
+					} else {
+						c.Close()
+					}
+				}
 				if err == nil {
 					_, err = c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
 					if err == nil {

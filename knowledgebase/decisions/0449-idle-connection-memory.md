@@ -171,6 +171,21 @@ connection's heap record, not the stack). HTTP/2 (1c) is then the same
 question asked of the h2 connection: no stream task running, no frame
 buffered, the write side flushed.
 
+Stage 1c (h2) survey, 2026-10-31: the h2 read loop is `serve_h2` in
+std/native/http.xo, a `scope` whose body calls `hp.next()` (h2srv's frame
+reader, one fiber per connection) and spawns `serve_stream` per request.
+The scope cannot be left while streams run, so h2 parks only when the
+connection has no open stream: `next()` would call park_ready's h2 twin
+(no stream in the table, no frame buffered in the connection's read
+buffer, write queue empty, no pending PING), end the scope and the task,
+and the resumer restarts `serve_h2` on bytes. The connection's state
+(C_* words, HPACK tables, the stream table) lives in the h2 record on the
+heap, so it survives the stack; what changes is `serve_h2` becoming
+re-enterable on an existing record (`h2srv.conn` today creates the reader
+state, so it needs a resume entry). The ping timers (send_ping_timeout)
+need a poller timer on the continuation record instead of the fiber's
+sleep.
+
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked
 connection pays one task start per request (a stack from the cache, no
