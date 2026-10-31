@@ -213,8 +213,10 @@ CPU 11.68 to 13.36 us per request (the timer per request). Second change,
 as built: a connection is "quick" when the gap before its last request
 (from the end of the previous response, HC_TEND, kept across a park) was
 under 2 ms (QUICK_GAP_NS); a quick connection does not park and waits on
-its own fiber with no extra timer; a quiet one parks as before. Re-measured
-below.
+its own fiber with no extra timer; a quiet one parks as before.
+Measured with it (same host, 5 runs): 189,308 (base) to 188,129 req/s
+(-0.6%, within noise), p50 136 to 138 us, CPU 11.68 to 11.76 us per request,
+peak RSS 72.2 to 65.4 MB: the no-slowdown gate passes.
 
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked
