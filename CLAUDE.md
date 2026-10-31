@@ -166,7 +166,10 @@ Update the knowledgebase in the same change as the work, not later:
     the change works, the fixed point only when the change touches what
     compiler/xo itself builds from (compiler/, or std/native and llrt
     files it imports), and the amd64 sample on the linux/amd64 offload
-    host only for an x86 code generation change. No package suites, no identity unless a
+    host only for an x86 code generation change or a change to the C
+    compiler or linker flags xo passes (owner, 2026-10-31: a clang only
+    flag broke every gcc build on Linux, b87f61855; the amd64 host's cc is
+    gcc). No package suites, no identity unless a
     push claims no output change, no extra benchmark sweeps unless the
     push claims a speedup. The lead runs the full tier every 8 hours
     (scripts/gate.sh short arm64 llvm cmd gen fp, LLVM at -O1 with Go

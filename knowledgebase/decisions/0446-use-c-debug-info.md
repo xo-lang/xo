@@ -1,6 +1,9 @@
 # 0446: `use c` sources are compiled with debug information
 
-Status: Proposed (xo-lang-6, 2026-10-30)
+Status: Accepted (owner, 2026-10-31; xo-lang-6, 2026-10-30). Shipped in
+766c0e3db, with build paths kept out under --trimpath and path linker
+options through -Xlinker (7408d0c15) and gcc's -ffile-prefix-map
+instead of clang's -fdebug-compilation-dir (b87f61855)
 
 ## Context
 
