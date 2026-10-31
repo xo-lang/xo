@@ -227,7 +227,11 @@ the record bytes handed to the engine are views of `got`, so one or two
 and connection structs, the record keys and the hash state are about 1 to
 2 KB; the handshake transcript and flight are cleared at the end of the
 handshake. First change: a read of at most 4,096 bytes is copied to its own
-size (SMALL_READ), so no view pins the buffer. Measured below.
+size (SMALL_READ), so no view pins the buffer. Measured (2026-10-31,
+linux/arm64 host, TestIdleConnections40kTLS): RssAnon 2,029,152 kB to
+752,584 kB for 40,000 idle TLS connections (about 18.8 KB each), 362
+server mappings. Next candidates: pool the 16 KiB read buffer, and the
+HTTP side's buffers.
 
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked

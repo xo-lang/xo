@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-10-31: perf: a small TLS read no longer pins its 16 KiB buffer (decision 0449)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the TLS memory survey of decision 0449 (50 KB an idle TLS connection against 6 KB plain)
+- Go reference: crypto/tls reads into a pooled buffer and copies out records
+- Test: internal/stdtest TestIdleConnections40kTLS (XO_TEST_IDLE40K=1, linux)
+- Timing: linux/arm64, 40,000 idle TLS connections, server RssAnon 2,029,152 kB to 752,584 kB (about 18.8 KB each), 362 mappings
+
+A TLS read of at most 4,096 bytes is copied to a block of its own size, so
+the ClientHello's views (sni, alpn, record bytes) no longer keep the 16 KiB
+read buffer alive for the life of the connection.
+
 ## 2026-10-31: perf: idle keep-alive connections park, on plain and TLS HTTP/1.1 (decision 0449 stage 1)
 
 - Kind: perf

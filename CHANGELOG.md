@@ -27,6 +27,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   constant nor a variant is XO0430, so a misspelled constant cannot bind
   a name that matches everything.
 - PERF (std/http): idle keep-alive connections park (decision 0449 stage 1): a plain or TLS HTTP/1.1 connection waiting for its next request holds no fiber stack and no mappings, so a server holds 40,000 idle connections in under 700 mappings (327 plain, 626 TLS; it stopped near 32,000 before); a busy connection (last gap under 2 ms) keeps its fiber and the CRUD server benchmark is unchanged (-0.6%, within noise). HTTP/2 does not park yet.
+- PERF (std/http): a TLS read of at most 4,096 bytes is copied out of its 16 KiB buffer, so 40,000 idle TLS connections take 752,584 kB of server RssAnon instead of 2,029,152 kB (decision 0449).
 - FIX (XO_PROF=heap): a big block that grows by resizing (a list or text grown to megabytes) counts in the heap profile's in use at its grown size; it counted at its first size, or not at all, so the self build's profile read 2.2 GB in use of about 7 GB.
 - Tools: when `XO_DUMP_FN=NAME` matches no function, the note lists up
   to five functions whose qualified names end with NAME (a method of
