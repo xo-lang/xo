@@ -194,6 +194,14 @@ read readiness is set, and under epoll (edge triggered) the last read
 leaves it set; the Mac's kqueue path had parked. park_ready now clears it
 (poll.pd_clear_read) before its MSG_PEEK, the order a read uses.
 
+Second 40k run (linux/arm64 host, 2026-10-31, commit 23b2eb3c4 with the
+readiness clear): TestIdleConnections40k passes: 40,000 h1 connections,
+all answer a second request, 293 mappings (35,785 stack mappings before),
+RssAnon 255 MB (6.4 KB a connection). TestIdleConnections40kTLS (h1 over
+TLS, stage 1b) passes: 654 mappings, RssAnon 2.0 GB, 50 KB a connection
+(the TLS engine's buffers per connection: the heap cut, part 3, is the
+next lever; h2 parking, 1c, is not built).
+
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked
 connection pays one task start per request (a stack from the cache, no
