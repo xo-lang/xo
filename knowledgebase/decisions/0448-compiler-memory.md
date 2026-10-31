@@ -1,6 +1,6 @@
 # 0448: Compiler memory: what holds it and the staged plan to cut it
 
-Status: Proposed (xo-lang-4, 2026-10-30; the owner's priority of 2026-10-30
+Status: Accepted (owner, 2026-10-30). Proposed (xo-lang-4, 2026-10-30; the owner's priority of 2026-10-30
 evening: compiler memory, a Mac bottleneck). Stage owners (lead): stage 2
 xo-lang-4; stages 1 and 3 xo-lang-6, after 0381.
 
