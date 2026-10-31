@@ -2239,7 +2239,7 @@ fn (var b: Builder) declare0(fo: Int, targs: List[Int]) -> Int {
   }
   var params: List[Int] = []
   var var_idx: List[Int] = []
-  if b.c.objs[fo].recv >= 0 {
+  if b.c.objs[fo].recv >= 0 && !b.c.objs[fo].is_static {
     params.push(b.typ(b.c.subst(b.c.objs[fo].recv_ty, sub)))
     if b.c.objs[fo].recv_var {
       var_idx.push(0)
@@ -2348,7 +2348,7 @@ fn (var b: Builder) invariant_of(obj: Int) -> List[Expr] {
 /// for none).
 fn (var b: Builder) param_bindings(fo: Int) -> List[Int] {
   var vars: List[Int] = []
-  if b.c.objs[fo].recv >= 0 {
+  if b.c.objs[fo].recv >= 0 && !b.c.objs[fo].is_static {
     vars.push(b.c.recv_var.get(fo) ?? -1)
   }
   for v in b.c.param_vars.get(fo) ?? [] {

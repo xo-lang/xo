@@ -545,7 +545,7 @@ fn (var c: Checker) attach_method(fo: Int, fd: parser.FnDecl, var env: TypeEnv) 
   renv.implicit_list = []
   let rt = c.resolve_type(recv.typ, renv)
   c.objs[fo].recv_var = recv.is_var
-  c.objs[fo].is_static = recv.name.name == b"static" && c.mods[c.cur_mod].is_std
+  c.objs[fo].is_static = recv.name.name == b"static" && (c.mods[c.cur_mod].is_std || c.files[c.cur_file].generated)
   let r = c.resolve(rt)
   if c.tys[r].kind != TyKind.Named {
     if !c.is_bad(rt) {

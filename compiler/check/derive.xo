@@ -452,6 +452,63 @@ fn (var c: Checker) xml_decoder(sd: parser.StructDecl, shapes: List[XmlShape?], 
   e
 }
 
+/// The methods of a valued enum (decision 0269), as source: one constant
+/// a variant (the declared expression, or the previous plus one, or the
+/// variant's name for a `Str`), `value()`, `E.from(v)`, and `E.all()`.
+/// A faulty enum is left to the checker's own errors (XO0428, XO0429).
+fn (var c: Checker) valued_enum_methods(file: Int, ed: parser.EnumDecl, em0: Emit) -> Emit {
+  var em = em0
+  let vt = match ed.value_type {
+    Some(x) => text(x.name)
+    None => return em
+  }
+  if (vt != "Int" && vt != "Str") || !ed.type_params.is_empty() || ed.variants.is_empty() {
+    return em
+  }
+  for v in ed.variants {
+    if v.fields != None {
+      return em
+    }
+  }
+  let n = text(ed.name.name)
+  let pub_ = if ed.is_pub { "pub " } else { "" }
+  let sp = ed.name.span
+  let src = c.files[file].src
+  for (i, v) in ed.variants.indexed() {
+    var body = ""
+    if let Some(x) = v.value {
+      let xs = parser.expr_span(x)
+      body = text(src[xs.start.offset..xs.end.offset])
+    } else if vt == "Str" {
+      body = "\"${text(v.name.name)}\""
+    } else if i == 0 {
+      body = "0"
+    } else {
+      body = "${n}__V${i - 1} + 1"
+    }
+    em.ln("const ${n}__V${i}: ${vt} = ${body}", v.name.span)
+  }
+  em.ln("${pub_}fn (e: ${n}) value() -> ${vt} {", sp)
+  em.ln("  match e {", sp)
+  for (i, v) in ed.variants.indexed() {
+    em.ln("    ${text(v.name.name)} => ${n}__V${i}", v.name.span)
+  }
+  em.ln("  }", sp)
+  em.ln("}", sp)
+  em.ln("${pub_}fn (static: ${n}) from(v: ${vt}) -> ${n}? {", sp)
+  for (i, v) in ed.variants.indexed() {
+    em.ln("  if v == ${n}__V${i} { return Some(${n}.${text(v.name.name)}) }", v.name.span)
+  }
+  em.ln("  None", sp)
+  em.ln("}", sp)
+  var all: List[Str] = []
+  for v in ed.variants {
+    all.push("${n}.${text(v.name.name)}")
+  }
+  em.ln("${pub_}fn (static: ${n}) all() -> List[${n}] { [${all.join(", ")}] }", sp)
+  em
+}
+
 /// The expansion of every `derive Xml` struct of f as one source text,
 /// with the span each line is reported at; "" when there is none.
 fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span]) {
@@ -522,15 +579,26 @@ fn (var c: Checker) expand_derives(file: Int, f: parser.File) -> (Str, List[Span
     em = c.xml_encoder(sd, shapes, tags, em)
     em = c.xml_decoder(sd, shapes, tags, em)
   }
+  let any_xml = any
+  for d in f.decls {
+    if let EnumDecl(ed) = d {
+      if ed.value_type != None {
+        em = c.valued_enum_methods(file, ed, em)
+        any = true
+      }
+    }
+  }
   if !any {
     return ("", [])
   }
   var head: List[Str] = []
   var seen: Map[Str, Bool] = {}
-  head.push("use std/xml")
-  head.push("use std/xmlcodec")
-  seen["std/xml"] = true
-  seen["std/xmlcodec"] = true
+  if any_xml {
+    head.push("use std/xml")
+    head.push("use std/xmlcodec")
+    seen["std/xml"] = true
+    seen["std/xmlcodec"] = true
+  }
   for u in f.imports {
     let p = text(u.path)
     if u.go || u.c || seen.contains(p) {
