@@ -64,7 +64,10 @@
 #            internal/arm64's cache tests (-run 'Cache|BinCache',
 #            TestMachoBinCache among them) when it changes compiler/xo's
 #            bcache.xo, parallel.xo, packseg.xo or cache.xo
-#            (XO_GATE_CACHE=0 skips that; lead, 2026-10-30)
+#            (XO_GATE_CACHE=0 skips that; lead, 2026-10-30); and
+#            internal/llvm's TestRaceSyncTable and TestRaceSyncTableArm64
+#            on darwin when it changes llrt's task, scheduler or race
+#            runtime (XO_GATE_RACE=0 skips that; lead, 2026-10-31)
 #   warm    the backend caches across xo builds (decision 0275): the
 #            parent commit's xo is built, then TestFrontCacheAcrossPrograms
 #            fills a cache with it and builds every program again with
@@ -186,6 +189,17 @@ cross_ran=0
 scale_change() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
   { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^compiler/arm64/jumptab\.xo$'
+}
+# race_change: the branch changes llrt's task, scheduler or TSan runtime
+# (tasks.xo, sched.xo, racesym.xo, cabi_race*.xo), so on darwin, where the
+# race tables run, internal/llvm's TestRaceSyncTable(Arm64) runs after the
+# steps named (lead, 2026-10-31: 7b526e8ac's TSan edge hid the table's
+# mutex race; it was verified on linux/arm64 only, where the tables skip,
+# and main stayed red two hours). XO_GATE_RACE=0 skips it.
+race_change() {
+  [ "$(uname -s)" = Darwin ] || return 1
+  base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
+  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^std/native/llrt/(tasks|sched|racesym|cabi_race[a-z]*)\.xo$'
 }
 # cache_change: the branch changes the build driver's cache files
 # (compiler/xo bcache.xo, parallel.xo, packseg.xo, cache.xo), so
@@ -375,6 +389,9 @@ if [ "${XO_GATE_SCALE:-1}" != 0 ] && scale_change; then
 fi
 if [ "${XO_GATE_CACHE:-1}" != 0 ] && cache_change; then
   full caches ./internal/arm64 -run 'Cache|BinCache'
+fi
+if [ "${XO_GATE_RACE:-1}" != 0 ] && race_change; then
+  full race ./internal/llvm -run '^TestRaceSyncTable(Arm64)?$'
 fi
 echo GATE-DONE
 exit $failed
