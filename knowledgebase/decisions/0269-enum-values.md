@@ -11,8 +11,6 @@ day).
   `http.Status`. It breaks every handler that passes a status, so before it
   lands `xo fix` is run over bench/paper and the samples to count what it
   rewrites, and a blind-from-spec check confirms agents write `http.OK`.
-- The three new codes this record names (XO0428 to XO0430) are renumbered
-  when it is built: XO0428 is already taken.
 
 Note (2026-10-30): the codes this record first named, XO0421 to XO0423, were taken by
 XO0421 (integer literal range), XO0422 (wire name option) and XO0423 (XML format) before it was
