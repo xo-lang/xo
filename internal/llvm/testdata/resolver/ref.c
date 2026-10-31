@@ -92,11 +92,9 @@ static int dial_to(const char *host, const char *port, const char *addr, char *m
 		// "Temporary failure in name resolution" where Xo says "server
 		// misbehaving"
 		const char *why = gai_strerror(g);
-		if (g == EAI_NONAME
-#ifdef EAI_NODATA
-		    || g == EAI_NODATA
-#endif
-		) {
+		// -5 is glibc's EAI_NODATA, which netdb.h hides under the feature
+		// macros this file is built with
+		if (g == EAI_NONAME || g == -5) {
 			why = "no such host";
 		} else if (g == EAI_AGAIN) {
 			why = "server misbehaving";
