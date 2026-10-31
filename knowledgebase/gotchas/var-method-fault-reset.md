@@ -47,6 +47,15 @@ prints "faulter: deferred" and then exits 70 at the task instead of
 unwinding to its scope. The cause is unknown as of 2026-10-30; 2 saved
 another 137,408 bytes.
 
+A shared zero is a call, and inlining can turn the callee's `return` of
+it into a join argument in the caller; there a large struct call result
+takes its own frame copy (byref_var's main, 105,104 bytes). The arm64
+inliner inlines a zero_val call that feeds a join (inline.xo
+find_zero_join), and a struct over 3,072 words (24 KB, the reach of the
+arm64 outgoing area) keeps the inline zero (build.xo
+FAULT_ZERO_MAX_WORDS), since the call result is a second copy in the
+frame even at the function's own exit (Huge.bump, 69,504 bytes).
+
 ## How to avoid the next one
 
 Before accepting a helper's size, disassemble it (`objdump -d

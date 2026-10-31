@@ -3518,6 +3518,10 @@ fn (var b: Builder) zero_val_name(t: Int) -> Str {
   if b.tkind(t) != Kind.Struct || b.m.types[t].fields.len() < FAULT_ZERO_FIELDS {
     return ""
   }
+  var nw: Map[Int, Int] = {}
+  if type_words(b.m, nw, t, 0) > FAULT_ZERO_MAX_WORDS {
+    return ""
+  }
   "zero_val.${b.m.types[t].name}"
 }
 
@@ -3543,6 +3547,15 @@ fn (var b: Builder) zero_val_of(t: Int) {
 /// instead of unwinding to its scope (golden fault_task_exit), so 8 until
 /// that is understood.
 const FAULT_ZERO_FIELDS = 8
+
+/// The largest struct (in words) fault_zero calls zero_val.T for. A
+/// larger one keeps its inline zero, written straight into its result:
+/// the call's result goes in the caller's outgoing area, which the arm64
+/// backend keeps within sp's reach (MAX_FRAME, 28,672 bytes), and a
+/// 34 KB struct's method (golden byref_var's Huge.bump) passed it. 1,024
+/// words cost 3.9 MB of stage 2 __text (2026-10-30): xo's own large
+/// structs are between 8 and 24 KB.
+const FAULT_ZERO_MAX_WORDS = 3072
 
 /// Raises a fault with message msg at pos (landing.go fault).
 fn (var b: Builder) fault(msg: Int, pos: Str) {

@@ -14,6 +14,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   under --trimpath and are named by their file name, so a binary carries
   no build path and two builds are identical again on both native
   backends.
+- Native backend: the inliner inlines a shared zero result (zero_val.T,
+  from 2d51a8403) where an inlined callee's unwind exit passes it to the
+  caller's join: the call's result of a large struct took its own frame
+  copy there, and internal/arm64 TestRun/byref_var's main passed the frame
+  limit (105,104 bytes) with Huge's. A struct of more than 3,072 words
+  keeps its inline zero (FAULT_ZERO_MAX_WORDS): even returned from its
+  own exit, the call result and the copy into the result were two frame
+  copies (Huge.bump, 69,504 bytes).
 - Compiler: a std function's parameter defaults are checked under its own
   file when the std records path joins its tree late; they were recorded
   under the caller's file, so `http.new_request("GET", url)` (the

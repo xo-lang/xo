@@ -638,6 +638,21 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
     ch = true
     here = true
   }
+  // a shared zero result (ssa build.xo fault_zero) that an inlined
+  // callee's unwind exit now passes to the caller's join: its constant
+  // body again, as before the shared call (a call's result of a large
+  // struct joined there took its own frame copy: byref_var's main grew
+  // past the frame limit with Huge's, 2026-10-30)
+  for _ in 0..ZERO_JOIN_MAX {
+    let z = find_zero_join(f, st.by_name)
+    if z < 0 {
+      break
+    }
+    let zi = st.by_name.get(aux_str(f.values[z].aux)) ?? -1
+    inline_call(f, z, m.funcs[zi])
+    ch = true
+    here = true
+  }
   if here {
     // one block per straight run again (ssa.merge_straight)
     let _j = ssa.merge_straight(f, m, block_calls(f))
@@ -920,6 +935,33 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], tailbig: Map[Str
       }
       if m.funcs[ci].results.len() == 1 {
         return v
+      }
+    }
+  }
+  -1
+}
+
+/// The most zero_val calls inline_one inlines at joins in one function.
+const ZERO_JOIN_MAX = 64
+
+/// A call of a zero_val function (ssa build.xo zero_val_of) whose result
+/// its block passes on along an edge, or -1: a fault exit's zero result
+/// that inlining made a join's argument instead of a return.
+fn find_zero_join(f: ssa.Func, by_name: Map[Str, Int]) -> Int {
+  for (bl, b) in f.blocks.indexed() {
+    let t = f.term(bl)
+    if t < 0 {
+      continue
+    }
+    for v in b.instrs {
+      let x = f.values[v]
+      if x.op != ssa.Op.Call || x.pad >= 0 || !aux_str(x.aux).starts_with("zero_val.") || !by_name.contains(aux_str(x.aux)) {
+        continue
+      }
+      for e in f.values[t].succs {
+        if f.edges[e].args.contains(v) {
+          return v
+        }
       }
     }
   }
