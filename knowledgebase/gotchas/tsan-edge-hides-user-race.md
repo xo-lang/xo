@@ -17,6 +17,18 @@ Fix: no happens-before edge between runs. Under `--race` (ctx.SV_TSAN)
 `run_claimed` keeps no spare context and frees it through the allocator;
 1f5d91391's park lock take and drop orders the wakers before the free.
 
+How it reached main: the check for 6fda98c55 and 1f5d91391 ran on
+linux/arm64 and counted `WARNING: ThreadSanitizer` lines in the logs of
+conc_reader_yield (x80) and TestRaceSyncTable (x10). That count cannot
+see this failure: the test fails on the absence of a report, which leaves
+no warning line to count. The 1f5d91391 gate log (h2kgate-cmd.log) shows
+the fixed point only; TestRaceSyncTable was not run on the Mac.
+
+Rule: a TSan annotation (tsan release/acquire, sanhook) or an llrt
+tasks.xo or sched change runs `TestRaceSyncTable` and
+`TestRaceSyncTableArm64` on the Mac in its gate, and the verdict is the
+tests' pass or fail, not a count of reports.
+
 How to avoid: an edge added to quiet a race report in the runtime must not
 join two tasks of the user's program; run `TestRaceSyncTable` (its
 unsynchronized cases must still report) with the change, besides the
