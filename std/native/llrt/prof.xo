@@ -433,7 +433,12 @@ pub fn heap_snapshot() -> Bytes {
   if rh == 0 {
     return b""
   }
-  build_raw(0, rh).data
+  // the snapshot's own allocations are not the program's: a later
+  // profile of the run would count them (heapprof.pause)
+  heapprof.pause(rh, true)
+  let data = build_raw(0, rh).data
+  heapprof.pause(rh, false)
+  data
 }
 
 /// Starts the heap sampler while the program runs (rate 0: the default);

@@ -39,7 +39,7 @@ const W_HPROF = 90
 // a thread past the pool (atomic), the address set's table and mask, the
 // rate, the samples whose address the full set could not keep (atomic),
 // the pool of unwind records, its size and next free record (atomic),
-// the start time.
+// the start time, and whether sampling is paused (pause).
 const R_SLOTS = 0
 const R_CAP = 8
 const R_NEXT = 16
@@ -52,6 +52,7 @@ const R_POOL = 64
 const R_POOL_N = 72
 const R_POOL_NEXT = 80
 const R_T0 = 88
+const R_PAUSE = 96
 const R_SIZE = 128
 
 /// The deepest stack a sample keeps; a slot: the frame count (0 until the
@@ -146,6 +147,15 @@ pub fn record() -> Int { rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE) }
 /// progress on another thread may still finish its slot; one not yet
 /// started finds the profile off).
 pub fn stop() -> Int { rt.slot_swap(rt.static_word(W_HPROF), 0, 0, ACQ_REL) }
+
+/// Pauses (on) or resumes the sampling of record r: while paused, every
+/// thread still draws its next sample point but records nothing, so the
+/// profiler's own work (a heap snapshot's symbolization, which reads the
+/// executable's DWARF: about 50 MB of a warm build's exit profile,
+/// 2026-10-30) is not counted as the program's allocation.
+pub fn pause(r: Int, on: Bool) {
+  rt.slot_store(r, R_PAUSE / 8, if on { 1 } else { 0 }, RELEASE)
+}
 
 /// The sample the heap asks for (cabi.xo heap_grow): block a of n bytes
 /// on record h reached the record's SAMPLE_AT. a.
@@ -244,7 +254,7 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
     first = rate > 1
   }
   st(h, H_SAMPLE_AT, ld(h, H_ABYTES).wrapping_add(next_gap(t, rate)))
-  if first {
+  if first || rt.slot_load(r, R_PAUSE / 8, ACQUIRE) != 0 {
     return
   }
   let k = rt.slot_add(r, R_NEXT / 8, 1, ACQ_REL)
