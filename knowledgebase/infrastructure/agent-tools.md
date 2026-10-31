@@ -960,6 +960,10 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   worktree's bin/xo (about 2 s; owner, 2026-10-30, after an XO0804 in
   std/native/http.xo reached main), so build bin/xo before pushing a std
   change; without it pushq notes the check did not run.
+  When the rebase brings commits into a compiler/ directory the push
+  also changes, pushq type-checks those directories of the rebased tree
+  (`go run ./scripts/xocheck DIRS`, about 2 s; lead, 2026-10-31: a field
+  removal rebased over a new use of it broke main's build).
 - Status: `~/xo-lead/agents/board.sh set|claim|show`, instead of status
   messages.
 - Numbers: `~/xo-lead/agents/adr-claim.sh SLUG WHO` for a decision
