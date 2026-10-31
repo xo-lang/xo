@@ -615,4 +615,20 @@ test "link_view keeps the build's settings, which the cleanup cache's key reads 
   expect(v.inline_str) == true
   expect(v.det) == true
   expect(v.race) == true
+
+test "a valued enum reports a duplicate value (XO0428) and an invalid one (XO0429), decision 0269" {
+  let out = check_files(os, "v", [("v/main.xo", """
+    enum Dup: Int { A = 1, B = 1 }
+    enum Bad: Float { A = 1.5 }
+    enum Ok: Str { A, B = "bee" }
+
+    fn main() {
+      let _ = Ok.A.value()
+      let _ = Ok.from("bee")
+      let _ = Ok.all()
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.filter(fn(l) { l.contains("\"XO0428\"") }).len()) == 1
+  expect(ls.filter(fn(l) { l.contains("\"XO0429\"") }).len()) == 1
 }
