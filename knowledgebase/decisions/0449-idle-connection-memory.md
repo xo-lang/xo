@@ -160,6 +160,17 @@ engine before a raw peek can say a connection is empty; HTTP/2 (1c)
 needs the stream-free state. The reader is rebuilt on resume
 (`http1.reader(hc)`): its state lives in the connection's X record.
 
+Stage 1b (TLS) plan: `park_ready` for a TLS connection needs the engine
+to say it holds nothing: no decrypted application bytes waiting (tls12srv
+`pending`/`rin`, the TLS 1.3 server's application buffer) and no partial
+record read ahead. That is a new TLS op (`TO_IDLE_EMPTY`, beside
+TO_NB_READ in hconn.xo) answered per protocol; with it, the raw socket's
+`MSG_PEEK` finding nothing means no encrypted byte is pending either, and
+the park/resume path is the h1 one (the TLS record state is in the
+connection's heap record, not the stack). HTTP/2 (1c) is then the same
+question asked of the h2 connection: no stream task running, no frame
+buffered, the write side flushed.
+
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked
 connection pays one task start per request (a stack from the cache, no
