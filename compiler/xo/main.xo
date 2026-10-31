@@ -3058,7 +3058,9 @@ fn sepcomp_undefined(os: Os, und: List[(Str, Str)], objs: List[Str], conc: Bool)
   var defs: Set[Str] = #{}
   let store = sepcomp_store(os, conc)
   if !store.is_empty() {
-    match os.fs.read(store) {
+    // mapped, not copied, as the link reads it (decision 0402): the copy
+    // was a warm build's peak, 35 MB over the phase before (decision 0448)
+    match read_mapped(os.fs, store) {
       Ok(b) => {
         match macho.store_defs(b) {
           Ok(ss) => {
