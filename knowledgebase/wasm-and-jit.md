@@ -152,3 +152,5 @@ popular, rather than serve one named audience for `xo.wasm`. So:
    ADR comes first: what `wasip2` and `wasi:http` take for Xo programs,
    which platforms they open, and a `wasi:http` hello-world handler as the
    first measured step; nothing is built before the owner decides.
+   Written as [decision 0447](decisions/0447-wasip2-component-model.md)
+   (Proposed, 2026-10-30).
