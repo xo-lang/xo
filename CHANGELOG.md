@@ -18,6 +18,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   2 __text 51,269,220 to 45,150,244 (-11.9%) on top of static zero images. The IR dump (XO_DUMP_FN)
   lists the merge's groups. New golden fault_pad_tails.
   bench/results/landing-pads-2026-10-31.md.
+- Memory (decision 0448 stage 3): the native register allocator keeps
+  each block's live register sets as `List[Int32]` (packed 4 bytes,
+  decision 0369) instead of `List[Int]`; the largest function's sets
+  were the self build's emit peak (1.01 GB of the heap in use there).
+  Output is byte-identical (scripts/identity, 236 compiles, 0 differing).
+  Self build on the Mac: emit peak 6040, 6018 MB to 5422, 5499 MB.
+  linux/arm64 --ab: wall 0.982 (0.971 to 0.989), CPU 0.991 (0.988 to 0.995) and max RSS 0.918 (0.906 to 0.925), all better.
 - Memory (decision 0448 stage 3): the native emitter drops each
   function's body as soon as its text is placed, not at its part's end;
   an idle worker returns its free memory (heap_grow TRIM);

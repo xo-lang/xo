@@ -270,7 +270,8 @@ fn (var g: G) shrink_split() {
   for b in order {
     let bit = if region[b] { 2 } else { 1 }
     // live through a side unnamed is on it too
-    for v in lv.ins[idx[b]] {
+    for v32 in lv.ins[idx[b]] {
+      let v = Int(v32)
       side[v] = side[v] | bit
     }
     for inst in g.blocks[b].insts {
@@ -328,7 +329,8 @@ fn (var g: G) shrink_split() {
     var defs: List[Int] = []
     var srcs: List[Src] = []
     var us: List[Int] = []
-    for v in lv.ins[idx[e.to]] {
+    for v32 in lv.ins[idx[e.to]] {
+      let v = Int(v32)
       if v != 0 && m[v] != v {
         // into the region: the inside name from the outside one; out:
         // the reverse

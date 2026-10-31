@@ -87,9 +87,12 @@ fn new_bits(n: Int) -> List[Int] {
 
 /// The registers live into (ins) and out of (outs) each block, each a
 /// list in increasing order.
+/// Virtual registers are below 2^31, so the sets hold them as Int32
+/// (packed 4 bytes, decision 0369): the largest function's sets were
+/// 1.01 GB of the self build's emit peak (decision 0448 stage 3).
 struct Live {
-  ins: List[List[Int]]
-  outs: List[List[Int]]
+  ins: List[List[Int32]]
+  outs: List[List[Int32]]
 }
 
 /// Lists of block numbers by register: the blocks of register v are
@@ -147,8 +150,8 @@ fn by_reg_fill(l: List[Int], k: Int, var fill: List[Int], var items: List[Int]) 
 fn solve_live(succs: List[List[Int]], gens: List[List[Int]], kills: List[List[Int]], n: Int) -> Live {
   let nb = succs.len()
   var preds: List[List[Int]] = List.with_capacity(nb)
-  var ins: List[List[Int]] = List.with_capacity(nb)
-  var outs: List[List[Int]] = List.with_capacity(nb)
+  var ins: List[List[Int32]] = List.with_capacity(nb)
+  var outs: List[List[Int32]] = List.with_capacity(nb)
   // the register (plus one) each block was last marked for
   var in_m: List[Int] = List.with_capacity(nb)
   var out_m: List[Int] = List.with_capacity(nb)
@@ -182,7 +185,7 @@ fn solve_live(succs: List[List[Int]], gens: List[List[Int]], kills: List[List[In
     for j in g0..g1 {
       let k = gb.items[j]
       in_m[k] = st
-      ins[k].push(v)
+      ins[k].push(Int32(v))
       stack.push(k)
     }
     while !stack.is_empty() {
@@ -192,12 +195,12 @@ fn solve_live(succs: List[List[Int]], gens: List[List[Int]], kills: List[List[In
           continue
         }
         out_m[p] = st
-        outs[p].push(v)
+        outs[p].push(Int32(v))
         if kill_m[p] == st || in_m[p] == st {
           continue
         }
         in_m[p] = st
-        ins[p].push(v)
+        ins[p].push(Int32(v))
         stack.push(p)
       }
     }
@@ -306,7 +309,8 @@ fn (var g: G) regalloc() {
       let pk = idx[g.pad_of(inst.pad)]
       if pk >= 0 && !pad_done[pk] {
         pad_done[pk] = true
-        for v in live_in[pk] {
+        for v32 in live_in[pk] {
+          let v = Int(v32)
           no_caller[v / BW] = no_caller[v / BW] | bit_mask(v)
         }
       }
@@ -355,7 +359,8 @@ fn (var g: G) regalloc() {
     let b = g.order[k]
     let bend = g.blocks[b].end
     let bstart = g.blocks[b].start
-    for v in live_out[k] {
+    for v32 in live_out[k] {
+      let v = Int(v32)
       live[v / BW] = live[v / BW] | bit_mask(v)
       end[v] = bend
     }
@@ -404,7 +409,8 @@ fn (var g: G) regalloc() {
       }
       j -= 1
     }
-    for v in live_in[k] {
+    for v32 in live_in[k] {
+      let v = Int(v32)
       push_rng(ranges, v, Rng{s: bstart, e: end[v]})
       live[v / BW] = live[v / BW] & ~bit_mask(v)
     }

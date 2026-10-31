@@ -516,6 +516,35 @@ tables at their size, before inlining) saved 70 to 240 MB through
 insert_rc but cost 200 to 300 MB from emit on
 (gotchas/exact-ssa-tables-before-inline.md).
 
+### Stage 3: where emit's peak is, and the live sets (xo-lang-2, 2026-10-31)
+
+Probes labelled the heap after N parts (XO_PROF=heap, XO_PROF_HEAP_AT,
+reading the membudget counter and the chunks, no free list walk:
+gotchas/heapstats-walk-is-exit-only.md). The counter rises to its peak
+between parts 32 and 40, and every midpoint snapshot before missed it:
+
+| parts done | chunks (MB) | counter (MB) | peak so far (MB) |
+|---|---|---|---|
+| 1 | 2492 | 4024 | 4250 |
+| 8 | 3052 | 4817 | |
+| 24 | 3124 | 4727 | 5371 |
+| 32 | 3184 | 5749 | 5804 |
+| 40 | 3160 | 5213 | 6143 |
+| 48 | 3160 | 5091 | |
+| 64 | 3124 | 4848 | |
+| 96 | 3156 | 4928 | |
+
+At 32 parts the top holder is regalloc's solve_live, 1.01 GB: the live
+in and out sets (`List[List[Int]]`, one list per block) of the largest
+functions in flight; then isel's G.add 468 MB, add_param 442 MB,
+Func.add 332 MB, the part text 286 MB. The small classes' free lists at
+the first part hold 752 MB of 2.57 GB of chunks, so allocator retention
+is not the peak (decision 0450 stays a stub). The sets now hold
+`Int32` (virtual registers are below 2^31): output byte-identical
+(scripts/identity, 236 compiles, 0 differing); the Mac's emit peak
+6040, 6018 -> 5422, 5499 MB (two builds each); linux/arm64 `xo bench
+--ab` (the self build, ten rounds): wall 0.982 (0.971 to 0.989), CPU 0.991 (0.988 to 0.995) and max RSS 0.918 (0.906 to 0.925), all better.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

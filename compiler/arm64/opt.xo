@@ -2629,7 +2629,8 @@ fn (var g: G) live_dce() {
   let lv = solve_live(succs, gens, kills, n)
   var pad_live = new_bits(n)
   for j in pads {
-    for v in lv.ins[j] {
+    for v32 in lv.ins[j] {
+      let v = Int(v32)
       pad_live[v / BW] = pad_live[v / BW] | bit_mask(v)
     }
   }
@@ -2639,7 +2640,8 @@ fn (var g: G) live_dce() {
   var touched: List[Int] = []
   for k in 0..order.len() {
     let b = order[k]
-    for v in lv.outs[k] {
+    for v32 in lv.outs[k] {
+      let v = Int(v32)
       live[v / BW] = live[v / BW] | bit_mask(v)
       touched.push(v)
     }

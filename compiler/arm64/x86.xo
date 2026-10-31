@@ -1452,7 +1452,7 @@ fn (var g: G) x86_retarget() {
       ii += 1
       g.x86_dead = []
       for u in inst.us {
-        if u != 0 && (last.get(u) ?? -1) == ii && !lout[b].contains(u) && !g.x86_dead.contains(u) {
+        if u != 0 && (last.get(u) ?? -1) == ii && !lout[b].contains(Int32(u)) && !g.x86_dead.contains(u) {
           g.x86_dead.push(u)
         }
       }
@@ -1885,7 +1885,7 @@ fn x86_commutes(op: Str) -> Bool {
 
 /// The registers live out of each block (by block index), the arm64
 /// MIR's (regalloc.xo's liveness, before the translation).
-fn (var g: G) x86_live_out() -> List[List[Int]] {
+fn (var g: G) x86_live_out() -> List[List[Int32]] {
   g.x86_live().outs
 }
 
@@ -1925,8 +1925,8 @@ fn (var g: G) x86_live() -> Live {
     succs.push(ss)
   }
   let lv = solve_live(succs, gens, kills, n)
-  var ins: List[List[Int]] = []
-  var out: List[List[Int]] = []
+  var ins: List[List[Int32]] = []
+  var out: List[List[Int32]] = []
   for _ in 0..g.blocks.len() {
     ins.push([])
     out.push([])
@@ -2113,12 +2113,14 @@ fn (var g: G) x86_merge_blocks() {
           break
         }
         var out: Map[Int, Bool] = {}
-        for r in lv.outs[t] {
+        for r32 in lv.outs[t] {
+          let r = Int(r32)
           out[r] = true
         }
         var covered = true
         for p in pads {
-          for r in lv.ins[p] {
+          for r32 in lv.ins[p] {
+            let r = Int(r32)
             covered = covered && out.contains(r)
           }
         }
