@@ -1,5 +1,20 @@
 # std/debug changes
 
+## 2026-10-31: fix: the heap profile counts a grown big block at its size
+
+- Kind: fix
+- Commit: (this commit)
+- Found by: Xo Lang 2 (ADR 0448 stage 3: the self build's in use read 2.2 GB while the heap held about 7 GB mapped and RSS agreed with the heap)
+- Go reference: runtime/pprof (Go samples each allocation; a slice's growth is a new allocation there, so it is sampled as one)
+- Test: internal/llvm TestProfHeapGrown
+
+XO_PROF=heap kept a big block's first size when it was resized, moved
+or in place, and never counted the bytes it grew by: a list or text
+grown to megabytes showed its first 16 KiB, or nothing when that first
+size was not sampled. A resized block that was sampled now has its new
+size and address; the growth of one that was not counts as allocated
+bytes, so it is sampled as an allocation of that size is.
+
 ## 2026-10-30: fix: a CPU profile that filled its buffer says so on its exit line
 
 - Kind: fix

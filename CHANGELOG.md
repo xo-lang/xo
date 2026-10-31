@@ -5,6 +5,7 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (XO_PROF=heap): a big block that grows by resizing (a list or text grown to megabytes) counts in the heap profile's in use at its grown size; it counted at its first size, or not at all, so the self build's profile read 2.2 GB in use of about 7 GB.
 - Tools: when `XO_DUMP_FN=NAME` matches no function, the note lists up
   to five functions whose qualified names end with NAME (a method of
   another module is named with its module: `ssa.Builder.rc_prepare`, not

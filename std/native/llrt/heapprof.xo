@@ -185,18 +185,33 @@ pub fn freed(a: Int) {
 
 /// Big block a moved to b (cabi.xo heap_big_resize): a sampled a's slot
 /// follows it.
-pub fn moved(a: Int, b: Int) {
+pub fn resized(h: Int, a: Int, b: Int, n: Int, old: Int) {
   let r = rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE)
   if r == 0 {
     return
   }
   let k = forget(r, a)
-  if k < 0 {
+  if k >= 0 {
+    // a sampled block: its new address and size (decision 0448 stage 3:
+    // a block grown in place kept its first size, and a moved one too,
+    // so a list or text grown to megabytes counted as its first 16 KiB
+    // and the self build's in use read 2.2 GB of 7 GB)
+    let p = ld(r, R_SLOTS).wrapping_add(k.wrapping_mul(SLOT))
+    st(p, S_ADDR, b)
+    st(p, S_SIZE, n)
+    st(p, S_FREED, if remember(r, b, k) { 0 } else { 2 })
     return
   }
-  let p = ld(r, R_SLOTS).wrapping_add(k.wrapping_mul(SLOT))
-  st(p, S_ADDR, b)
-  st(p, S_FREED, if remember(r, b, k) { 0 } else { 2 })
+  // not sampled: the bytes it grew by count as allocated, so growth is
+  // sampled as allocation is (the record's ABYTES moves only while the
+  // profile runs here)
+  if h == 0 || n <= old {
+    return
+  }
+  st(h, H_ABYTES, ld(h, H_ABYTES).wrapping_add(n.wrapping_sub(old)))
+  if ld(h, H_ABYTES) >= ld(h, H_SAMPLE_AT) {
+    sample(r, h, b, n)
+  }
 }
 
 /// Records block a of n bytes on heap record h (its thread's) and draws

@@ -323,6 +323,59 @@ func TestProfHeap(t *testing.T) {
 	}
 }
 
+// TestProfHeapGrown: a big block grown by resizing (a list pushed to 32
+// MB) counts in the heap profile's in use at its grown size (decision
+// 0448 stage 3: heapprof kept a resized block's first size, so the self
+// build's in use read 2.2 GB of the 7 GB it held).
+func TestProfHeapGrown(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program per native backend")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("the heap profile needs the unwind tables' walk (darwin, linux)")
+	}
+	backends := []string{xotool.BackendLLVM}
+	if runtime.GOARCH == "arm64" {
+		backends = append(backends, xotool.BackendArm64)
+	}
+	for _, be := range backends {
+		t.Run(be, func(t *testing.T) {
+			if be == xotool.BackendLLVM {
+				if _, err := xotool.Clang(); err != nil {
+					t.Skip("clang not found")
+				}
+			}
+			res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "heapgrow")}, xotool.Options{Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res)
+			}
+			bin := res.Binaries[xotool.Host()]
+			// the default rate and rate 1: the 32 MB list is in use either way
+			for _, rate := range []string{"", "1"} {
+				dir := t.TempDir()
+				cmd := testtmp.Guard(exec.Command(bin))
+				cmd.Dir = dir
+				cmd.Env = append(os.Environ(), "XO_PROF=heap")
+				if rate != "" {
+					cmd.Env = append(cmd.Env, "XO_PROF_HEAP_RATE="+rate)
+				}
+				got, err := runCombined(cmd, 2*time.Minute)
+				if err != nil || !strings.Contains(got, "grown 4000000") {
+					t.Fatalf("run rate %q: %v\n%s", rate, err, got)
+				}
+				xoProf(t, dir, filepath.Join(dir, "xo-prof.xoraw"))
+				txt, err := os.ReadFile(filepath.Join(dir, "xo-prof.heap.txt"))
+				if err != nil {
+					t.Fatal(err)
+				}
+				if inuse, _ := heapTotal(string(txt), "in use: "); inuse < 24000000 || inuse > 80000000 {
+					t.Fatalf("rate %q: in use %d bytes, want about 32 MB (the grown list):\n%s", rate, inuse, txt)
+				}
+			}
+		})
+	}
+}
+
 // TestProfGating: decision 0238's gating. A --release build leaves the
 // profiler out (prof.start's symbol is not in the binary) and says so
 // when XO_PROF asks; --profile-support keeps it; a profile is written

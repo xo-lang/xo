@@ -221,9 +221,11 @@ fn heap_big(n: Int) -> Int {
 }
 
 fn heap_big_resize(b: Int, n: Int) -> Int {
+  // its size before (a big block's prefix is minus its size)
+  let old = 0 - rt.mem_load(b, 0, 8)
   let a = heapos.large_resize(b, n)
-  if prof.supported() && a != b + 8 && heapprof.record() != 0 {
-    heapprof.moved(b + 8, a)
+  if prof.supported() && heapprof.record() != 0 {
+    heapprof.resized(obj.heap(), b + 8, a, n, old)
   }
   a
 }

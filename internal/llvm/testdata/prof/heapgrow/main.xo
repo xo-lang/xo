@@ -1,0 +1,28 @@
+// The grown block's test program (internal/llvm prof_test.go
+// TestProfHeapGrown): a task grows one list of Ints by push to 4,000,000
+// elements (32 MB, a big block resized in place or moved as it grows)
+// and holds it while main exits the process, so the heap profile's in
+// use must count it at its grown size, not the size it was sampled at.
+fn grow(n: Int) -> List[Int] {
+  var xs: List[Int] = []
+  for i in 0..n {
+    xs.push(i)
+  }
+  xs
+}
+
+fn main(os: Os) {
+  let ready = Chan[Int].new()
+  let hold = Chan[Int].new()
+  scope s {
+    s.spawn(fn() {
+      let g = grow(4000000)
+      ready.send(g.len())
+      let _x = hold.recv()
+      os.stdio.println("${g[3999999]}")
+    })
+    let n = ready.recv() ?? 0
+    os.stdio.println("grown ${n}")
+    os.proc.exit(0)
+  }
+}
