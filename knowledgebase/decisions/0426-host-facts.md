@@ -45,4 +45,68 @@ Each updated the user_caps golden and the CHANGELOG's Breaking lines; pushq's pr
 
 ## Follow-ups
 
-- A child's own usage on ProcOutput and Child.wait (Go's ProcessState.SysUsage, UserTime, SystemTime): not now (lead, 2026-10-30).
+- A child's own usage on ProcOutput and Child.wait (Go's ProcessState.SysUsage, UserTime, SystemTime): accepted by the owner on 2026-10-30, see the addendum below.
+
+## Addendum (2026-10-30): a child's own usage
+
+Status: Accepted (owner, 2026-10-30), proposed by xo-lang-4 the same
+day; it matches Go's ProcessState.UserTime, SystemTime and SysUsage.
+Proof required: an `xo bench --ab` of a small and a large program on
+darwin, linux/arm64 and native Windows, each side showing its own peak.
+
+### Context
+
+`Proc.children_usage()` sums the waited children's CPU time, but its
+`max_rss` is the largest peak of every child waited so far
+(RUSAGE_CHILDREN's ru_maxrss; on Windows the reap keeps the largest peak
+working set, rt.static_word 97). A caller that runs several children
+cannot tell one child's peak from another's. `xo bench --ab` is the
+first such caller: on Windows it now reads cpu_ms as children_usage's
+growth across a round (exact, since it runs one child at a time), but a
+round's max_rss_kb would be the larger side's peak from the first round
+on, so it is not measured there. On darwin and Linux bench still parses
+/usr/bin/time's output for both.
+
+### Decision
+
+- `ProcOutput` gains `usage: ProcUsage`: the child's own user and system
+  CPU time and peak resident set (bytes), as the run that waited for it
+  read them.
+- `Child.wait_usage() -> (Int, ProcUsage) ! ProcErr` (`uses proc`):
+  wait's exit status with the same figures, for a spawned child.
+  (`Child.wait` keeps its signature.)
+- Sources: Linux and darwin `wait4` (the reap already waits; it passes
+  an rusage buffer: ru_utime, ru_stime, ru_maxrss in KiB on Linux and
+  bytes on darwin, scaled to bytes); Windows GetProcessTimes and
+  K32GetProcessMemoryInfo's PeakWorkingSetSize on the child's handle
+  before it is closed (the reap reads both today to add them to the
+  children's totals); WASI zeros, as Proc.usage. Go backend:
+  ProcessState.UserTime, SystemTime, and SysUsage's Maxrss
+  (syscall.Rusage; Windows: the same calls on the process handle).
+- A fake Proc (the test world, an attenuated Proc) returns zeros.
+- `xo bench` reads `usage` on every OS: cpu_ms and max_rss_kb from it,
+  and /usr/bin/time stays only on darwin, for `time -l`'s instructions
+  and cycles. Linux and Windows run the child alone. The Windows note
+  under the table goes.
+
+### Consequences
+
+- Not breaking: the field has a default (`usage: ProcUsage =
+  ProcUsage{user: 0s, system: 0s, max_rss: 0}`, as Request's fields
+  have), so a `ProcOutput` literal without it (a fake) still compiles,
+  and Proc's method signatures do not change. The Go backend's
+  generated ProcOutput gains the field (std/rt std_gen_prelude.go).
+- Bench's figures change source on Linux (GNU time's figures come from
+  the same wait4, so they should match; checked before the switch on
+  darwin and linux by running both on one program, 20 rounds each).
+- Spec std 3 (Proc), Appendix A (stdsync), std/changes/prelude.md with
+  an --ab timing row against Go's os/exec + ProcessState.
+
+### Alternatives
+
+- Keep children_usage only and difference it per child: exact for CPU,
+  impossible for the peak (a max is not differenced).
+- Bench opens the child itself through a Windows-only runtime call: a
+  private path std users would not have.
+- Keep GNU time on Linux and darwin: two parsers stay, and Windows still
+  lacks memory.
