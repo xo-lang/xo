@@ -119,6 +119,22 @@ not restart; the Mac's known_hosts entry changes with the host key):
   minor version bump that seed cannot build, put the new release there
   and change `OFF_SEED`.
 
+### WebAssembly tools (owner-approved 2026-10-30, decisions 0405 and 0447)
+
+Installed under /work/tools (it survives container recreates), pinned:
+wasmtime 50.0.1, wasm-tools 1.263.0, TinyGo 0.44.0 (go1.26.1, LLVM 22.1.4),
+Rust 1.99.1 (rustup, minimal profile) with the wasm32-wasip2 target. A job
+uses them with
+
+```
+export RUSTUP_HOME=/work/tools/rustup CARGO_HOME=/work/tools/cargo PATH=/work/tools/bin:$PATH
+```
+
+The Rust homes belong to the job user xo, so cargo can fetch crates; the
+rest is root-owned and read-only to jobs. About 2.0 GB. To upgrade, unpack
+the new release beside the old one and move the symlink in /work/tools/bin.
+Last verified: 2026-10-30.
+
 ## Findings (2026-10-29)
 
 - internal/llvm takes 30 minutes there against 46 to 56 on the loaded Mac.
