@@ -1,13 +1,18 @@
+use std/debug
 use std/http
 use std/log
 
 /// Serves "ok" on every path; PORT (default 8080), and IDLE_TIMEOUT_MS sets the server idle timeout, and HTTPS with h2 when
-/// TLS_CERT and TLS_KEY hold PEM text. For measuring idle connections.
+/// TLS_CERT and TLS_KEY hold PEM text, and the debug routes under /debug when DEBUG is 1 (XO_PROF=heap
+/// then serves GET /debug/heap). For measuring idle connections.
 fn main(os: Os) ! {
   let port = Int.parse(os.env.get("PORT") ?? "8080").or_err("PORT")?
   let addr = "127.0.0.1:${port}"
   var r = http.router()
   r.handle("GET /", fn(_req) { http.text(200, "ok") })
+  if os.env.get("DEBUG") == Some("1") {
+    r.mount("/debug", debug.router(os.clock, fn(_req) { true }))
+  }
   var srv = http.server(os.net.listen(addr)?, r)
   if let Some(cert) = os.env.get("TLS_CERT") {
     srv = srv.with_tls([http.tls_cert(cert.bytes(), (os.env.get("TLS_KEY") ?? "").bytes())?])
