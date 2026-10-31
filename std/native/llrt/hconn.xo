@@ -138,9 +138,12 @@ pub const TO_NB_READ = 17
 /// started, 1 being filled, 2 filled
 pub const TO_ONCE_H2 = 18
 pub const TO_ONCE_TLS = 19
+/// whether the engine holds nothing: no decrypted bytes, no partial record
+/// (1 yes), so a raw socket with nothing to read is an idle connection
+pub const TO_IDLE_EMPTY = 20
 
 /// The number of entries of the table.
-pub const TO_COUNT = 20
+pub const TO_COUNT = 21
 
 /// The table, made on first use by an installer (srvtls.xo install,
 /// srvh2c.xo install_h2c), each storing its own entries; 0 for none.
@@ -341,7 +344,11 @@ fn take_peek(hc: Int, p: Int, cap: Int) -> Int {
 pub fn park_ready(h: rthttp.HConn) -> Bool {
   let hc = rec(h)
   let s = ld(hc, HC_SRV)
-  if s == 0 || ld(hc, HC_TLS) != 0 || ld(hc, HC_H2) != 0 || ld(hc, HC_PEEK) != 0 || stopping_at(s) || poll.canceled() {
+  if s == 0 || ld(hc, HC_H2) != 0 || ld(hc, HC_PEEK) != 0 || stopping_at(s) || poll.canceled() {
+    return false
+  }
+  let tls = ld(hc, HC_TLS)
+  if tls != 0 && rt.call_c2(tls_op(TO_IDLE_EMPTY), tls, 0) != 1 {
     return false
   }
   let pd = conn_pd(hc)

@@ -34,6 +34,9 @@ fn srvtls_set_deadline(t: Int, when: Int) -> Int {
 /// Whether t's last wait passed its deadline (tlssrv.timed_out).
 fn srvtls_timed_out(t: Int, _u: Int) -> Int { if tlssrv.timed_out(t) { 1 } else { 0 } }
 
+/// Whether t holds no plaintext and no partial record (tlssrv.idle_empty).
+fn srvtls_idle_empty(t: Int, _u: Int) -> Int { if tlssrv.idle_empty(t) { 1 } else { 0 } }
+
 /// Reads without waiting (tlssrv.nb_read: h2srv.xo's fiber waits itself).
 fn srvtls_nb_read(t: Int, p: Int, n: Int) -> Int { tlssrv.nb_read(t, p, n) }
 

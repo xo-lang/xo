@@ -549,6 +549,23 @@ pub fn hc_read(t: Int, p: Int, n: Int) -> Int {
 /// read, 0 at the end, -1 when it failed, -2 when no record is complete.
 pub fn nb_read(t: Int, p: Int, n: Int) -> Int { read(t, p, n, true) }
 
+/// Whether the handshake is done and the engine holds nothing: no
+/// decrypted bytes waiting, no partial record read ahead (hconn.park_ready).
+pub fn idle_empty(t: Int) -> Bool {
+  match load(t) {
+    Some(c) => {
+      if c.done != 1 || !c.pend.is_empty() {
+        return false
+      }
+      if c.s12.is_empty() {
+        return c.s.app.is_empty() && c.s.rin.is_empty()
+      }
+      c.s12[0].app.is_empty() && tls12srv.pending(c.s12[0]) == 0
+    }
+    None => false
+  }
+}
+
 /// The deadline of the connection's waits from now on (monotonic ns, 0
 /// none; std.md 4.4: a server's read, head and idle timeouts reach a TLS
 /// connection's handshake and record reads through it).

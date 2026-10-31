@@ -31,6 +31,7 @@ pub fn install() {
   rt.mem_store(t, 8 * hconn.TO_SET_DEADLINE, rt.fn_addr("srvtls_set_deadline"), 8)
   rt.mem_store(t, 8 * hconn.TO_TIMED_OUT, rt.fn_addr("srvtls_timed_out"), 8)
   rt.mem_store(t, 8 * hconn.TO_NB_READ, rt.fn_addr("srvtls_nb_read"), 8)
+  rt.mem_store(t, 8 * hconn.TO_IDLE_EMPTY, rt.fn_addr("srvtls_idle_empty"), 8)
   rt.mem_store(t, 8 * hconn.TO_NEG, rt.fn_addr("srvtls_neg"), 8)
   srvh2c.fill(t)
   srvh2c.end_fill(t, hconn.TO_ONCE_TLS)
