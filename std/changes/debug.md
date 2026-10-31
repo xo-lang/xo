@@ -1,5 +1,19 @@
 # std/debug changes
 
+## 2026-10-31: fix: a heap snapshot's own work is not sampled as the program's
+
+- Kind: fix
+- Commit: (this commit)
+- Found by: Xo Lang 2 (ADR 0448 stage 4: an XO_PROF_HEAP_AT snapshot's DWARF read was about 50 MB of a warm build's exit profile)
+- Go reference: runtime/pprof (Go's profile writer does not sample its own symbolization as the program's allocation)
+- Test: internal/llvm TestProfHeap (snapshots still written and read); the self build's snapshot no longer lists dwline
+
+A heap snapshot (XO_PROF_HEAP_AT) symbolizes its samples, which reads the
+executable's DWARF, and those allocations were sampled into the profile
+as if the program had made them. The sampler is paused while a snapshot
+is written: each thread still draws its next sample point, so the
+sampling stays unbiased afterwards, but nothing is recorded.
+
 ## 2026-10-31: fix: the heap profile counts a grown big block at its size
 
 - Kind: fix

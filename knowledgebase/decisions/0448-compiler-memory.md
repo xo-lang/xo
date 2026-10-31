@@ -2,7 +2,9 @@
 
 Status: Accepted (owner, 2026-10-30). Proposed (xo-lang-4, 2026-10-30; the owner's priority of 2026-10-30
 evening: compiler memory, a Mac bottleneck). Stage owners (lead): stage 2
-xo-lang-4; stages 1 and 3 xo-lang-6, after 0381.
+xo-lang-4; stage 1 xo-lang-6, after 0381; stages 3 and 4 xo-lang-2 (lead,
+2026-10-30: stage 3 moved from xo-lang-6, paused for two days, and comes
+after stage 4).
 
 ## Context
 
@@ -305,6 +307,50 @@ is 43 words: its 15 Bools a word each), regalloc's ranges, and insert_rc
 on the root thread; the next levers are a smaller `Inst` and the
 inline fallback's copy (a shell of each function, its body read back from
 the insert_rc cache, cut `inline.verify`'s peak by 0.5 GB but not emit's).
+
+## Stage 4 shipped: allocation churn (xo-lang-2, 2026-10-30)
+
+The self-build's allocation (XO_PROF=heap at 16 MiB, each side's xo
+building the same compiler/xo, the linux/amd64 host): 724.9 GB before,
+525.3 GB after, -27.5%; every amd64 golden passes (460). Wall and
+max_rss by `xo bench --ab` on the linux/arm64 host (the self build, ten
+rounds): InsertRC's changes wall 0.992 (0.971 to 1.005, within noise),
+cpu 0.991 (0.986 to 0.993, better), max_rss 1.006 (0.994 to 1.023, within
+noise); sort_by in place wall 0.965 (0.954 to 0.979) and cpu 0.992 (0.987
+to 0.996) better, max_rss 1.014 (0.998 to 1.031) within noise; the whole
+stage after dce_keep's fix (0deb19338 against 2ca1d8a72) wall 0.959
+(0.954 to 0.968) and cpu 0.966 (0.963 to 0.968) better, max_rss 1.001
+(0.991 to 1.004) within noise. dce_keep compacting in place first kept
+each block's capacity (2M `Inst`s in the landing pad functions) through
+regalloc and emit, +3% max RSS; it now copies the kept instructions to a
+list of their size when fewer than a quarter remain.
+
+| change | site before (share) |
+|---|---|
+| list_sort_by sorts its index list in place (merge_sort_in_place), each list sized once; the unused merge_sort deleted | merge_sort[Int] 47.7 GB (6.6%), 93% of it regalloc merge_ranges' sort_by[Rng] |
+| Rc.group_releases: a run releasing fewer than GROUP_LEAVES leaves keeps its instructions with no maps; a group's keys grow in place (the list read from a map, pushed and stored back, copied per leaf); one-group check without a Set | group_releases 72.6 GB cumulative (10%), leaf_key 22.4 GB of it |
+| imm_at and leaf_group read the leaf path in place (Str slices are views) instead of splitting it | scan.split 38.9 GB (5.4%), 80% from immortal_leaf |
+| leaf_uses_fresh sizes its uses once from the memoized leaves | 28.3 GB cumulative |
+| Rc.liveness keeps the out sets as local key sets (RcFunc.live_out was never read); Rc.walk's live set holds keys, a branch's held leaves come from a local map | map.put[Map[Int, Leaf]] 35.6 GB cumulative (to 18.1) |
+| arm64 dce_keep compacts in place (was a reversed copy and back) | 17.4 GB (2.4%) |
+| fold_tuple_fields records the uses of tuples only, in place | 16.7 GB (2.3%) |
+| arm64 held_uses grows its lists in place (`update`) | 15.5 GB (2.1%) |
+| macho split_operands sizes its list for three operands | 8 GB on amd64 |
+| sepcomp_undefined maps std's store (read_mapped) instead of copying it | raw.bytes_buf: 35 of a warm coll build's 47 MB |
+
+The DWARF bullet of stage 4 above was a profiler artifact: dwline.cstr
+and parse_info (about 50 MB of the warm coll build's exit profile) were
+the XO_PROF_HEAP_AT snapshot's own symbolization, which the sampler
+counted into the exit profile; a build without XO_PROF never reads its
+DWARF. heapprof now pauses sampling while a snapshot is written
+(heapprof.pause), so the exit profile counts the program's allocation
+only.
+
+Next, by size after these: map.putk[Int] 42.9 GB (Map growth; there is
+no Map presize, which would need a std API), arm64 solve_live 37.9 GB,
+x86_sink_loads 29.3 GB, the remaining scan.split 27.8 GB (x86 callers),
+and the copy-modify-store sites `xo vet` reports as XO0532 (about 59 in
+compiler/).
 
 ## Consequences
 

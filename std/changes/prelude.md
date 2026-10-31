@@ -23,6 +23,26 @@ rusage (Linux and darwin) or the child's handle (Windows) as it waits;
 the Go backend reads the ProcessState (no peak on Windows). A
 `ProcOutput` literal without `usage` still compiles (zeros).
 
+## 2026-10-30: perf: List.sort_by sorts in place, each list sized once
+
+- Kind: perf
+- Commit: this commit
+- Found by: ADR 0448 stage 4 (the self-build's heap profile: merge_sort
+  was 6.6% of its allocation, nearly all from the compiler's regalloc)
+- Go reference: slices.SortStableFunc (bench/perf/sort/go `by`)
+- Test: `xo test --std-module=native/prelude` (47 passed, linux/amd64);
+  every amd64 golden (460) at the change
+- Timing: bench/perf/sort `by` (sort_by of 200,000 two-Int records five
+  times) --ab on the linux/arm64 host: wall 0.965 (0.958 to 1.392, within
+  noise), max_rss 0.729 (0.726 to 0.730, better), Xo 86 ms and 17.4 MB;
+  against Go: 0.17 s and 22.4 MB (n=10, the same host)
+
+The native List.sort_by sorted its index list with a merge sort that
+built a new list each pass, growing every list by push. It now sorts the
+index list in its own array (merge_sort_in_place, decision 0374's) and
+gives the key, index and result lists their length once. The order is
+the same: both sorts are stable. The unused merge_sort is deleted.
+
 ## 2026-10-30: behavior: resolver error texts in Xo's words, Go's where Go has them
 
 - Kind: behavior

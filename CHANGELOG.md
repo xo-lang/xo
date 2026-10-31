@@ -5,6 +5,7 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (XO_PROF=heap): a heap snapshot's own reading of the executable's debug information is no longer sampled as the program's allocation (about 50 MB of a warm build's exit profile).
 - Faster builds (arm64, amd64 native): a field read only read by field reads of it loads only the words they read. A landing pad in a `var b: Builder` method loaded b.m (592 words) whole to release one field of it, about 740 pads a function, and 98 percent of what isel made in ssa.Builder's largest functions was loads mir_dce then dropped. Self build on the Mac: emit's peak 8.1/7.4 to 6.8/6.7 GB, max RSS 7.6/7.1 to 6.6 GB, emit 26 to 29.5 s to 21 to 22 s; on linux/arm64 max RSS -10%, CPU -7% (decision 0448 stage 3; gotchas/arm64-isel-dead-field-loads.md).
 - Constant patterns (decision 0269): a `const` in a pattern, bare
   (`OK => ...`) or qualified (`codes.OK => ...`), matches by equality
@@ -53,6 +54,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   keeps its inline zero (FAULT_ZERO_MAX_WORDS): even returned from its
   own exit, the call result and the copy into the result were two frame
   copies (Huge.bump, 69,504 bytes).
+- Compiler (ADR 0448 stage 4): the self-build allocates 27.5% less (725
+  to 525 GB at the heap profile's rate): List.sort_by sorts in place, and
+  the RC pass, DCE, the tuple fold and the operand split stop copying
+  lists per use. A warm build maps std's store instead of copying it.
+  `XO_PROF=heap` with `XO_PROF_HEAP_AT` no longer counts the snapshot's
+  own symbolization as the program's allocation (about 50 MB of a warm
+  build's exit profile).
 - Compiler: a std function's parameter defaults are checked under its own
   file when the std records path joins its tree late; they were recorded
   under the caller's file, so `http.new_request("GET", url)` (the
