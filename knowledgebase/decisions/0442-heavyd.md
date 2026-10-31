@@ -1,6 +1,8 @@
 # 0442: heavyd, one daemon for the Mac's heavy slots, gates, measurements and quiet windows
 
-Status: Accepted (owner, 2026-10-30: the design; the switch from shadow
+Status: Accepted, switched (owner, 2026-10-31: "do 1", after the shadow
+evening; agents/heavy.sh is the heavyd client, legacy-heavy.sh the bash
+fallback). Earlier: accepted (owner, 2026-10-30: the design; the switch from shadow
 mode and the per-class time limits wait for the shadow log review and the
 owner's OK). Proposed by Xo Lang 2; the owner approved building it in Go
 first, to be converted to Xo later.
