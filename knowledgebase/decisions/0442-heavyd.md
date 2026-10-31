@@ -172,3 +172,11 @@ stagger and removes the gatestart lock it holds, and the shadow models the
 same (a gate it would have started, no longer waiting or running, ends
 its stagger). Approved by the owner with the switch; tests
 TestFinishEndsGateStagger and TestShadowGateExitEndsStagger.
+
+## Addendum 2026-10-31: the stall detector for every class
+
+The owner, 2026-10-31: "too many runs get hung". The stall detector (no
+CPU, no output and no new process) stopped only gates (HEAVY_GATE_STALL_MIN,
+20); slot and bulk runs now get it too, after HEAVY_STALL_MIN minutes
+(default 30, 0 turns it off), in the daemon and in the shadow. The
+offload hosts' jobs get the same rule in offload.sh (OFF_IDLE_MIN, 15).

@@ -66,7 +66,9 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   per agent, waiting or running: offload.sh counts the jobs of its
   Claude session and refuses a third with exit 5 (OFF_MAX_QUEUED,
   0 turns it off; lead, 2026-10-31: one agent had five --ab runs
-  queued). Only arm64 jobs count (each records its pid in
+  queued). A job whose process tree uses no CPU and starts no process
+  for OFF_IDLE_MIN minutes (default 15, 0 off) is stopped with exit 125
+  (lead, 2026-10-31: a bisect hung on stdin for 73 minutes). Only arm64 jobs count (each records its pid in
   ~/xo-lead/locks/offq; since 2026-10-31 amd64 jobs no longer use up
   the cap). A job whose ssh connection drops (its Mac side stopped) ends
   on the host too, within about 15 s, and its ticket goes with it.
