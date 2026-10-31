@@ -1,0 +1,42 @@
+// `while true` is a branch the native backend decides; when a value on the
+// kept path has its landing check past the loop, the exit stays a second
+// jump target, and the loop's values reach the exit through that edge's
+// moves (compiler/arm64 isel.xo; 2026-10-30: a callee that faults on
+// every target but darwin, as llrt darwin.wait4_ru, made the linux/arm64
+// build fail with "reads virtual register N before it is written").
+// internal/arm64 TestLinuxEmitDecidedExit emits it for linux/arm64.
+
+/// darwin only, as llrt darwin.wait4_ru on another target
+fn step_darwin(k: Int) -> Int {
+  if target.os != TargetOs.Darwin {
+    fault("darwin only")
+  }
+  k + 1
+}
+
+fn step(k: Int) -> Int { k + 2 }
+
+fn wait(l: Int, n: Int) -> (Int, List[Int]) {
+  var usage = [0, 0, 0]
+  var code = 0
+  var i = 0
+  while true {
+    let r = if l == 2 { step_darwin(i) } else { step(i) }
+    if r > n {
+      code = r
+      let rss = r * 7
+      usage = [r, r + 1, if l == 2 { rss } else { rss * 1024 }]
+      break
+    }
+    if r < 0 {
+      break
+    }
+    i += 1
+  }
+  (code, usage)
+}
+
+fn main(os: Os) {
+  let (c, u) = wait(os.env.args().len() + 1, 10)
+  os.stdio.println("${c} ${u[0]} ${u[1]} ${u[2]}")
+}

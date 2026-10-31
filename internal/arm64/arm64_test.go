@@ -437,6 +437,21 @@ func TestLinuxEmitCRC(t *testing.T) {
 	assembleELF(t, path)
 }
 
+// TestLinuxEmitDecidedExit emits golden loop_exit_decided for linux/arm64:
+// `while true` is a branch the backend decides, and its exit carries the
+// loop's values; the jump kept the exit only as a reachability target,
+// without the edge's moves, so the register check failed with "reads
+// virtual register N before it is written" (2026-10-30: llrt
+// proc.wait_exit's linux/arm64 build; the darwin build passed).
+func TestLinuxEmitDecidedExit(t *testing.T) {
+	t.Parallel()
+	path := filepath.Join(t.TempDir(), "exit.s")
+	if err := os.WriteFile(path, []byte(asm(t, filepath.Join("..", "llvm", "testdata", "golden", "loop_exit_decided"), "linux")), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	assembleELF(t, path)
+}
+
 // The tests of the Go emitter's internals (TestUnsupported on a module
 // built by hand, TestInlineVerifies on internal/ssa modules, the layout
 // and share probe options of the Go build package) went with decision

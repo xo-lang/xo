@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (native backends): a `while true` loop whose exit carries values
+  builds again when a call in it faults only on some targets: the
+  backend kept the loop's exit as a second jump target without the
+  exit's moves, and the build failed with "reads virtual register N
+  before it is written" (seen building xo for linux/arm64 from a std
+  change).
 - Tools: `xo dev size`'s usage shows `--diff [--top=N] A B` with flags
   before the files, the order it accepts (a flag after the files is read
   as a third file); it showed `--diff A B [--top=N]`.

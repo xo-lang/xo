@@ -2077,8 +2077,13 @@ fn (var g: G) branch_op(v: Int) {
     if !ssa.pads_reached(g.f, v, e) {
       // a value on the kept path lands on a check of the other edge's
       // blocks: they stay reachable, as the rt.landing branch's second
-      // target (2026-10-21: an inlined `ensures` that always fails)
-      ts.push(g.bmap[g.f.edges[if k { x.succs[1] } else { x.succs[0] }].to])
+      // target (2026-10-21: an inlined `ensures` that always fails).
+      // Through the edge's own moves (g.edge): the target's parameters
+      // are live into it, and a bare target left them unwritten on this
+      // path (2026-10-30: `while true` whose exit carries values, the
+      // linux/arm64 build of llrt proc.wait_exit, "reads virtual
+      // register 25 before it is written")
+      ts.push(g.edge(if k { x.succs[1] } else { x.succs[0] }))
     }
     let _j = g.add(Inst{kind: K_JUMP, targets: ts})
     return
