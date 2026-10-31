@@ -14,7 +14,7 @@ fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) -> IPat {
       let co = c.const_of_pattern(name)
       if co >= 0 {
         c.pat_const_at[c.key_of(span, pat_kind(p))] = co
-        return c.const_pattern(name, t, span)
+        return c.const_pattern(Expr.Ident(id: name), t, span)
       }
       if is_const_style(name.name) && !c.files[c.cur_file].generated {
         c.error("XO0430", span, "`${text(name.name)}` is spelled like a constant but no `const` of that name is in scope, so this pattern would bind a new name that matches everything (decision 0269)")
@@ -357,11 +357,18 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
   if nt >= 0 {
     return c.newtype_pattern(span, nt, parens, fields, rest, t, refutable)
   }
+  if path.len() == 2 && !parens && fields.is_empty() && !rest {
+    let co = c.qualified_const_of_pattern(path)
+    if co >= 0 {
+      c.pat_const_at[c.key_of(span, PAT_KIND + 6)] = co
+      return c.const_pattern(const_pat_expr(span, path), t, span)
+    }
+  }
   if path.len() == 1 && !parens && fields.is_empty() && !rest && !c.names_variant(path[0].name, t) {
     let co = c.const_of_pattern(path[0])
     if co >= 0 {
       c.pat_const_at[c.key_of(span, PAT_KIND + 6)] = co
-      return c.const_pattern(path[0], t, span)
+      return c.const_pattern(const_pat_expr(span, path), t, span)
     }
     if is_const_style(path[0].name) && !c.is_bad(t) {
       c.error("XO0430", span, "`${text(path[0].name)}` is spelled like a constant but no `const` of that name is in scope (decision 0269)")
@@ -587,10 +594,10 @@ fn (var c: Checker) const_of_pattern(name: Ident) -> Int {
 }
 
 /// A constant pattern matches by equality with the constant's value.
-fn (var c: Checker) const_pattern(name: Ident, t: Int, sp: Span) -> IPat {
-  let lt = c.infer(Expr.Ident(id: name), t)
+fn (var c: Checker) const_pattern(e: Expr, t: Int, sp: Span) -> IPat {
+  let lt = c.infer(e, t)
   if !c.is_bad(t) && !c.is_bad(lt) && !c.try_unify(lt, t) {
-    c.error("XO0302", sp, "constant `${text(name.name)}` of type `${c.show(lt)}` does not fit a value of type `${c.show(t)}`")
+    c.error("XO0302", sp, "the constant of type `${c.show(lt)}` does not fit a value of type `${c.show(t)}`")
     return wild_pat()
   }
   IPat{kind: IP_LIT}
@@ -619,4 +626,33 @@ fn (var c: Checker) names_variant(name: Bytes, t: Int) -> Bool {
   }
   let (pe, _) = c.prelude_variant(name)
   pe >= 0
+}
+
+/// The expression a constant pattern stands for: the name, or `mod.NAME`
+/// at the pattern's span (the checker, SSA and the Go backend all read it).
+pub fn const_pat_expr(span: Span, path: List[Ident]) -> Expr {
+  if path.len() == 1 {
+    return Expr.Ident(id: path[0])
+  }
+  Expr.SelectorExpr(span: span, x: Expr.Ident(id: path[0]), sel: path[1])
+}
+
+/// The `const` of an imported module a pattern `mod.NAME` names, or -1.
+fn (var c: Checker) qualified_const_of_pattern(path: List[Ident]) -> Int {
+  if c.lookup_local(path[0].name) >= 0 {
+    return -1
+  }
+  let imp = match c.file_import(path[0].name) {
+    Some(x) => x
+    None => return -1
+  }
+  if imp.module < 0 {
+    return -1
+  }
+  let o = c.mods[imp.module].members.get(path[1].name) ?? -1
+  if o >= 0 && c.objs[o].kind == ObjKind.Const {
+    c.use_import(path[0].name)
+    return o
+  }
+  -1
 }

@@ -2241,9 +2241,9 @@ fn (var b: Builder) pattern(v: Int, p: Pattern, fail: Int) {
         b.pattern(f, el, fail)
       }
     }
-    VariantPat(path: path, fields: fields, ..) => {
+    VariantPat(span: span, path: path, fields: fields, ..) => {
       if b.c.pat_const_in(b.s.file, p) >= 0 {
-        b.lit_test(v, Expr.Ident(id: path[0]), fail)
+        b.lit_test(v, check.const_pat_expr(span, path), fail)
         return
       }
       b.variant_pattern(v, p, fields, fail)

@@ -81,9 +81,9 @@ fn (var g: Gen) pat(p: Pattern, subj: Str, t0: Int, var m: Match) {
         g.pat(e, "${subj}.F${i}", els[i], m)
       }
     }
-    VariantPat(path: path, ..) => {
+    VariantPat(span: span, path: path, ..) => {
       if g.c.pat_const_in(g.f.file, p) >= 0 {
-        g.lit_cond(Expr.Ident(id: path[0]), subj, t, m)
+        g.lit_cond(check.const_pat_expr(span, path), subj, t, m)
         return
       }
       g.variant_pat(p, subj, t, m)
