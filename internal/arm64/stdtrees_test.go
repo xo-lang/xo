@@ -104,3 +104,71 @@ fn main(os: Os) {
 		t.Fatalf("outputs differ: %q against %q", out2, want1)
 	}
 }
+
+// TestStdRecordDefaultArgs: a std function whose tree the record leaves
+// pending (http.new_request) has its parameter defaults checked when the
+// tree is joined (check need_tree), under its own file. They were checked
+// under whichever file the checker was at, so the `headers = {}` default's
+// Map type was recorded against the caller's file and the SSA builder
+// reported XO1201 "this literal" (trace_ring on the linux/amd64 host,
+// 2026-10-30; gotchas/need-tree-defaults-current-file.md).
+func TestStdRecordDefaultArgs(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-stddefaults-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cache := filepath.Join(work, "cache")
+	cmd := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc=0"))
+	cmd.Env = append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache)
+	paths, err := cmd.Output()
+	if err != nil {
+		t.Fatalf("xo dev stdcache: %v", err)
+	}
+	lines := strings.Fields(string(paths))
+	if len(lines) != 2 {
+		t.Fatalf("xo dev stdcache printed %q, want the store and the facts", paths)
+	}
+	store, facts := lines[0], lines[1]
+	src := `use std/http
+
+fn main(os: Os) {
+  let req = http.new_request("GET", "/x")
+  let given = http.new_request("GET", "/y", {}, b"")
+  os.stdio.println("${req.headers.len() == given.headers.len()} ${req.body.len()} edit 0")
+}
+`
+	prog := filepath.Join(work, "prog")
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_STD_EXPORT=1", "XO_CACHE_STATS=1",
+		"XO_SEPCOMP=1", "XO_SEPCOMP_FACTS="+facts, "XO_SEPCOMP_STORE="+store)
+	for edit := 0; edit < 2; edit++ {
+		if err := os.WriteFile(filepath.Join(prog, "main.xo"), []byte(strings.Replace(src, "edit 0", "edit "+string(rune('0'+edit)), 1)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		out := filepath.Join(work, "prog"+string(rune('0'+edit)))
+		b := testtmp.Guard(exec.Command(xo, "build", "-o", out, "."))
+		b.Dir = prog
+		b.Env = env
+		if msgs, err := b.CombinedOutput(); err != nil {
+			t.Fatalf("build %d: %v\n%s", edit, err, msgs)
+		}
+		got, err := testtmp.Guard(exec.Command(out)).Output()
+		if err != nil {
+			t.Fatalf("run %d: %v", edit, err)
+		}
+		if want := "true 0 edit " + string(rune('0'+edit)) + "\n"; string(got) != want {
+			t.Fatalf("run %d printed %q, want %q", edit, got, want)
+		}
+	}
+}

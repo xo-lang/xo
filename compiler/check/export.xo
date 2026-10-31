@@ -1413,10 +1413,34 @@ pub fn (var c: Checker) need_tree(o: Int) uses fs.read {
   // a body joined after check_module ran over its (then empty) file:
   // marked for the lazy check as check_module would have, so the SSA
   // builder's check_lazy checks it before lowering it
-  if !c.objs[o].fn_decl.is_empty() && c.objs[o].module >= 0 && c.lazy_mod(c.objs[o].module) && !c.lazy_fns.contains(o) {
-    c.lazy_fns[o] = true
-    c.check_fn_defaults(o)
+  if c.objs[o].fn_decl.is_empty() || c.objs[o].module < 0 {
+    return
   }
+  if c.lazy_mod(c.objs[o].module) && !c.lazy_fns.contains(o) {
+    c.lazy_fns[o] = true
+  }
+  // its parameter defaults, which no pass has checked (the tree was not
+  // there), for every module, a declaration file's too (std/http's
+  // new_request is not lazy_mod), and under o's own file: a check_ty
+  // records each type under the current file, and the caller's file hid
+  // `headers = {}`'s Map type from the SSA builder (XO1201 "this
+  // literal"; -1 faulted check_key_types): trace_ring and log_with on
+  // the linux/amd64 host, 2026-10-30,
+  // gotchas/need-tree-defaults-current-file.md
+  // An interface's method has no file of its own: its defaults stay
+  // unchecked, as on every path (the SSA builder lowers an untyped empty
+  // `[]`, `{}` or `#{}` default from the parameter's type).
+  if f < 0 || f >= c.files.len() {
+    return
+  }
+  let saved_file = c.cur_file
+  let saved_mod = c.cur_mod
+  let saved_path = c.path
+  c.set_file(f)
+  c.check_fn_defaults(o)
+  c.cur_file = saved_file
+  c.cur_mod = saved_mod
+  c.path = saved_path
 }
 
 /// The type of std's native module that implements std type o (the

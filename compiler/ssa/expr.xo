@@ -1402,6 +1402,28 @@ fn (var b: Builder) foreign_value(e: Expr, f: Int, t: Int, sub: Map[Int, Int]) -
       }
     }
   }
+  // the same for an empty `{}` or `#{}` of a Map or Set t with no
+  // recorded type, as an interface method's default (map_lit's XO1201
+  // "this literal" otherwise; std/http's `headers = {}` met it on
+  // 2026-10-30 when check/need_tree recorded its type under another
+  // file, fixed there)
+  let empty_coll = match e {
+    MapLit(entries: es, ..) => es.is_empty()
+    SetLit(elems: es, ..) => es.is_empty()
+    _ => false
+  }
+  if empty_coll && b.m.types[t].coll {
+    let saved = b.s.file
+    let saved_sub = b.s.sub
+    b.s.file = f
+    b.s.sub = sub
+    let typed = b.m.types[b.type_of(e)].coll
+    b.s.file = saved
+    b.s.sub = saved_sub
+    if !typed {
+      return b.empty_map(t)
+    }
+  }
   let saved = b.s.file
   let saved_sub = b.s.sub
   b.s.file = f

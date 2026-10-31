@@ -5,6 +5,13 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Compiler: a std function's parameter defaults are checked under its own
+  file when the std records path joins its tree late; they were recorded
+  under the caller's file, so `http.new_request("GET", url)` (the
+  `headers = {}` default) could fail with XO1201 "this literal", or the
+  checker could fault in check_key_types, depending on whether std's
+  records were cached (gotchas/need-tree-defaults-current-file.md). An
+  empty `{}` or `#{}` default with no recorded type now lowers natively.
 - Tools: `xo dev size --by-cause` reports struct and tuple copies as their
   own cause, `copy` (decision 0443): a struct, tuple or variant value of
   more than a word built, taken apart or updated, and block arguments of
