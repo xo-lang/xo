@@ -7,6 +7,7 @@
 // jobs; a module of one part is generated as before.
 
 use github.com/xo-lang/xo/compiler/ssa
+use std/debug
 
 /// A module of fewer functions than PART_FUNCS is one part. A larger one
 /// is split into two groups, each keeping the functions' order: the
@@ -328,7 +329,7 @@ fn take_bodies(c: Mutex[Map[Int, ssa.Func]]) -> Map[Int, ssa.Func] {
 /// generate_parallel with the per-function cache fc (fcache.xo): a
 /// function whose key fc holds an entry for is placed from it instead of
 /// generated (with fc.verify, generated and compared with it).
-pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Program uses fs.write {
+pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_limit: Int = 0) -> Program uses fs.write {
   // m is `var` so the caller's module is the one whose functions' bodies
   // the parts take (below): a copy would keep every body to the end
   var plist = part_lists(m)
@@ -428,6 +429,14 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Pr
     }
     let order = cost.sort_by(fn(e) { 0 - e.1 })
     let next = Atomic[Int].new(0)
+    // the parts running at once are bounded by memory as well as by jobs
+    // (decision 0448 stage 3): a worker about to take a part while the
+    // heap has mapped more than mem_limit bytes waits for a running part
+    // to finish (its worker sends on finished, once per part, so the
+    // buffered channel never fills) and looks again; the last running
+    // worker never waits, so no bound deadlocks. 0: no bound.
+    let running = Atomic[Int].new(0)
+    let finished = Chan[()].new(cap: np + w)
     let done = scope s {
       var ts = []
       for _ in 0..w {
@@ -439,7 +448,15 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache) -> Pr
               break
             }
             let p = order[k].0
+            if mem_limit > 0 {
+              while debug.mem_mapped() > mem_limit && running.get() > 0 {
+                let _f = finished.recv()
+              }
+            }
+            let _up = running.add(1)
             mine.push((p, gen_part(m, os, taken, plist[p], names[p], fc, part_key(fc, p), p, take_bodies(cells[p]))))
+            let _down = running.add(-1)
+            let _sent = finished.try_send(())
           }
           mine
         }))
@@ -582,6 +599,11 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: S
   if fc.keys.is_empty() {
     for fi in fis {
       g.function(fi)
+      // its body dropped as soon as its text is placed (below too):
+      // a part's bodies went at the part's end, so the first wave's
+      // eight largest parts held theirs through their whole emit, the
+      // self build's peak (2026-10-30)
+      let _b = g.bodies.remove(fi)
     }
   } else {
     g.canon = true
@@ -597,6 +619,7 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: S
               g.nfunc += 1
               g.place_text(r, ws)
               reused += 1
+              let _b = g.bodies.remove(fi)
               continue
             }
           }
@@ -605,6 +628,7 @@ fn gen_part(m: ssa.Module, os: Str, taken: Map[Str, Bool], fis: List[Int], ns: S
       let s0 = g.skipped.len()
       let (r, ws) = g.canon_function(fi)
       g.place_text(r, ws)
+      let _b2 = g.bodies.remove(fi)
       if key.is_empty() || g.skipped.len() != s0 || !g.err.is_empty() {
         continue
       }

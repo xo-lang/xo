@@ -476,6 +476,46 @@ elsewhere in the emit.
 linux/arm64 `xo bench --ab` (the self build, ten rounds, e3630dd65
 against the change): CPU 0.996 (0.994 to 0.998) better, wall 0.996 (0.993 to 1.008) and max RSS 1.005 (0.988 to 1.017) within noise.
 
+### Stage 3 as built (xo-lang-6 and xo-lang-2, 2026-10-31)
+
+Lang 6's stage 3 work (branch xl113) rebased onto stage 1, then split by
+its linux/arm64 cost (lead, 2026-10-31: a stage may not be slower):
+
+- an idle emit worker returns its free memory (heap_grow TRIM from the
+  pool's idle path);
+- a part drops each function's body as soon as its text is placed, not
+  at the part's end (the first wave's eight largest parts held theirs
+  through their whole emit);
+- `XO_EMIT_MEM` bounds the parts running at once by the heap's mapped
+  bytes (off by default; toolchain.md).
+
+Held: ssa.pack_values, which copies every function's value table to its
+size before the emit (insert_rc's and the inliner's first push into a
+full table doubled it). As one serial pass on the main thread it cost
+0.3 to 0.6 s of the self build's wall (`phase pack`); it comes back on
+the emit's worker count, each table in a cell of its own, after its own
+--ab.
+
+Gates: arm64 goldens, the fixed point (s2 and s3 identical), and
+TestCodegenInputsClassified (XO_EMIT_MEM: none).
+
+| the self build | change | max RSS | wall | CPU |
+|---|---|---|---|---|
+| linux/arm64 --ab, self=a, 10 rounds | all four (with serial pack_values), 14a71b5e6 vs e73cd7a12 | 0.986 (0.974 to 0.994) better | 1.007 (1.0 to 1.014) worse | 1.003 (1.001 to 1.006) worse |
+| linux/arm64 --ab, self=a, 10 rounds | trim, body drop, XO_EMIT_MEM (bd0bd05a5 vs 5a4a8be01) | 1.005 (0.988 to 1.009), within noise | 0.996 (0.989 to 1.007), within noise | 0.999 (0.997 to 1.002), within noise |
+| linux/arm64 --ab, self=a, 10 rounds | pack_values on jobs tasks, over the line above | (measured with its own change) | | |
+| linux/amd64 --ab, self=a, 10 rounds | all four | 1.0 (0.988 to 1.015) | 1.015 | 0.993 (all within noise, wide spreads) |
+| linux/amd64, `XO_EMIT_MEM=5G` against off | the bound | 0.915 (0.905 to 0.923) better | 2.247 (2.163 to 2.264) worse | 0.821 better |
+| Mac emit peak, two rounds, loaded | main / body drop / all four | 6132 to 6196 / 6076, 6047 / 5989, 6023 MB | | |
+
+The 5 GB bound serializes most of emit on the amd64 host, so it stays
+off by default.
+
+pack_values packs after the inliner. Packing earlier (ssa.renumber's
+tables at their size, before inlining) saved 70 to 240 MB through
+insert_rc but cost 200 to 300 MB from emit on
+(gotchas/exact-ssa-tables-before-inline.md).
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

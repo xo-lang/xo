@@ -1715,7 +1715,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         }
       }
     }
-    var p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc)
+    var p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc, emit_mem_limit(os))
     t = lap(os, phases, "emit", t)
     if !fdir.is_empty() {
       // a build the run cache keys (a test's, or a build's or run's under
@@ -2250,6 +2250,21 @@ fn dw_real(gm: (Bool, Str, Str), t: Str) -> Str {
 /// arm64.generate_parallel, the parts' assembly): $XO_EMIT_JOBS, else
 /// the physical cores, at most 16 and a third of the memory in GB. The
 /// output does not depend on it.
+/// The heap bytes past which emit's workers wait for a running part
+/// before taking the next (decision 0448 stage 3, arm64 generate_cached):
+/// XO_EMIT_MEM (bytes, or with K, M, G; 0 or off: none, the default while
+/// it is measured).
+fn emit_mem_limit(os: Os) -> Int {
+  let v = os.env.get("XO_EMIT_MEM") ?? ""
+  if v.is_empty() || v == "off" || v == "0" {
+    return 0
+  }
+  let unit = v[v.len() - 1..]
+  let mult = if unit == "K" { 1024 } else if unit == "M" { 1048576 } else if unit == "G" { 1073741824 } else { 1 }
+  let digits = if mult == 1 { v } else { v[0..v.len() - 1] }
+  (Int.parse(digits) ?? 0) * mult
+}
+
 fn emit_jobs(os: Os) -> Int {
   let j = Int.parse(os.env.get("XO_EMIT_JOBS") ?? "") ?? 0
   if j > 0 {

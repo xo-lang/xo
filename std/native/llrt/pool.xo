@@ -40,6 +40,8 @@ use native/sys_windows
 
 /// C11's orders of the slot atomics.
 const RELAXED = 0
+/// rt.heap_grow's thread trim flag (cabi.xo TRIM, 2^57): the idle worker's heap trim.
+const HEAP_TRIM = 144115188075855872
 const ACQUIRE = 1
 const RELEASE = 2
 const SEQ_CST = 4
@@ -1290,6 +1292,10 @@ fn go_idle(p: Int, w: Int) -> Int {
     futex_wait_us(w.wrapping_add(W_WAKEW), 0, FIBER_TRIM_US)
     if rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {
       fiber_trim(fs, ops)
+      // and the thread's free heap pages of 16 KiB and over (cabi.xo
+      // heap_grow TRIM, heapos.xo trim_thread; decision 0448 stage 1): a
+      // worker idle this long frees what its last tasks left
+      let _t = rt.heap_grow(0, HEAP_TRIM)
     }
   }
   while rt.slot_load(w, W_WAKEW_I, ACQUIRE) == 0 {

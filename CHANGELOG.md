@@ -5,6 +5,11 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Memory (decision 0448 stage 3): the native emitter drops each
+  function's body as soon as its text is placed, not at its part's end;
+  an idle worker returns its free memory (heap_grow TRIM);
+  `XO_EMIT_MEM` bounds emit's concurrent parts by memory (off by
+  default). Self build, linux/arm64 --ab (ten rounds): wall 0.996 (0.989 to 1.007), CPU 0.999 (0.997 to 1.002) and max RSS 1.005 (0.988 to 1.009), all within noise; the Mac's emit peak about -1.7% (the body drop).
 - FIX (XO_PROF=heap): a heap snapshot's own reading of the executable's debug information is no longer sampled as the program's allocation (about 50 MB of a warm build's exit profile).
 - Memory (decision 0448 stage 3): the native backends' `Inst` keeps its
   fault exit (recover label, fault condition, fault function and its

@@ -296,6 +296,10 @@ fn heap_grow(h: Int, n: Int) -> Int {
     }
     return 0
   }
+  if n == TRIM {
+    heapos.trim_thread()
+    return 0
+  }
   if prof.supported() && n >= SAMPLE {
     return heapprof.sampled(h, rt.mem_load(h, PSAMPLE, 8), n - SAMPLE)
   }
@@ -322,6 +326,10 @@ const LOCK_SLOW = 1152921504606846976
 const LOCK_WAKE = 576460752303423488
 /// rt.heap_grow(p, PFREED): page block p, sampled, is freed (alloc.xo).
 const PFREED = 288230376151711744
+/// rt.heap_grow(0, TRIM): the calling thread gives the system its free
+/// page blocks (heapos.xo trim_thread; pool.xo's idle worker, which
+/// cannot import heapos; decision 0448 stage 1).
+const TRIM = 144115188075855872
 const PSAMPLE = 10360
 
 fn heap_lock() { heapos.lock() }
