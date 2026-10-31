@@ -1080,6 +1080,11 @@ pub struct H2Conn {
   /// whether a request's route reads its body itself (decision 0310),
   /// given its method and path; none: every body is read first
   streams: List[fn(Str, Str) -> Bool] = []
+  /// parks the idle connection (hserve.hc_park, decision 0449 stage 1c):
+  /// true when it parked; none: the connection never parks
+  parker: List[fn(H2Conn) -> Bool] = []
+  /// next() returned none because the connection parked, not ended
+  parked: Bool = false
 }
 
 /// The fiber's state of connection h (hserve.hc_h2 chose HTTP/2; c its
@@ -1281,6 +1286,10 @@ pub fn (var h: H2Conn) next() -> H2Req? {
     if pending {
       continue // more to send first
     }
+    if h.idle() && h.parker[0](h) {
+      h.parked = true
+      return None
+    }
     if !h.wait(x) && !h.keepalive() {
       break
     }
@@ -1289,6 +1298,21 @@ pub fn (var h: H2Conn) next() -> H2Req? {
   shutdown(c)
   unlk(c)
   None
+}
+
+/// Whether the connection waits with nothing in flight (decision 0449):
+/// no open stream, nothing buffered, queued or to send, settings
+/// received, no ping or deadline timer, not stopping. State then lives in
+/// the record and in h, not on the fiber.
+fn (h: H2Conn) idle() -> Bool {
+  if h.parker.is_empty() {
+    return false
+  }
+  let c = h.c
+  lk(c)
+  let ok = !on(c, C_DEAD) && !on(c, C_FAILED) && !on(c, C_STOP) && !on(c, C_GOAWAY) && !on(c, C_REJECT) && on(c, C_GOT_SETTINGS) && ld(c, C_NOPEN) == 0 && ntab(c) == 0 && ld(c, C_RFIRST) == 0 && ld(c, C_DQOFF) == ld(c, C_DQN) && ld(c, C_OUT + 8) == 0 && ld(c, C_BUF_OFF) == ld(c, C_BUF + 8) && ld(c, C_PIDLE) <= 0 && ld(c, C_DEADLINE) == 0 && ld(c, C_PDEAD) == 0 && !on(c, C_WOKEN)
+  unlk(c)
+  ok
 }
 
 /// Reads what the socket has (TLS records): the bytes read, 0 at the end

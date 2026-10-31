@@ -140,8 +140,8 @@ pub fn hc_note_done(h: rthttp.HConn) { hconn.note_done(h) }
 /// closed, or when idle_ns (the server's idle timeout, 0 none) passes
 /// without a request (the connection then closes). False when it did not
 /// park (the caller reads on).
-pub fn hc_park(h: rthttp.HConn, resume: fn() -> (), idle_ns: Int) -> Bool {
-  if !hconn.park_ready(h) {
+pub fn hc_park(h: rthttp.HConn, resume: fn() -> (), idle_ns: Int, h2: Bool = false) -> Bool {
+  if !hconn.park_ready(h, h2) {
     return false
   }
   let hc = hconn.rec(h)

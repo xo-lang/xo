@@ -346,10 +346,10 @@ fn take_peek(hc: Int, p: Int, cap: Int) -> Int {
 /// the socket empty and open). It marks the connection idle, so a stop
 /// closes it while parked; the caller then parks it or, if it does not,
 /// clears the mark by reading.
-pub fn park_ready(h: rthttp.HConn) -> Bool {
+pub fn park_ready(h: rthttp.HConn, h2: Bool = false) -> Bool {
   let hc = rec(h)
   let s = ld(hc, HC_SRV)
-  if s == 0 || ld(hc, HC_H2) != 0 || ld(hc, HC_PEEK) != 0 || stopping_at(s) || poll.canceled() {
+  if s == 0 || (ld(hc, HC_H2) != 0 && !h2) || ld(hc, HC_PEEK) != 0 || stopping_at(s) || poll.canceled() {
     return false
   }
   let tls = ld(hc, HC_TLS)

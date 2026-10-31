@@ -129,7 +129,7 @@ struct Server {
   /// names the TLS server's and HTTP/2's code, so a plain server links
   /// none of it.
   tls_setup: fn(rthttp.Srv, List[tls.TlsCert]) -> ()
-  h2: fn(rthttp.HConn, Int, Router) -> ()
+  h2: fn(rthttp.HConn, Int, Router) -> Bool
   /// What with_client_auth, with_protocols and with_tls' ALPN add to the
   /// server record after tls_setup, each with whether TLS is on: only
   /// the builder names the TLS server's and HTTP/2's code (a call in
@@ -2298,7 +2298,7 @@ fn (s: Server) with_h2_config(c: http.H2Config) -> Server { s with {h2cfg: Some(
 /// reached without TLS: hserve.hc_h2 is 0).
 fn no_tls(_srv: rthttp.Srv, _certs: List[tls.TlsCert]) {}
 
-fn no_h2(_hc: rthttp.HConn, _h2: Int, _r: Router) {}
+fn no_h2(_hc: rthttp.HConn, _h2: Int, _r: Router) -> Bool { false }
 
 /// The certificates of a server with TLS (with_tls).
 /// tls13srv's AUTH_* number of a tls.ClientAuth.
@@ -2417,7 +2417,7 @@ fn serve_mem(l: Listener, r: Router) {
 /// as net/http recovers per connection ("http: panic serving"): logged,
 /// the connection closed (serve_conn's defer), the server serving on. It
 /// once stopped the server (gotchas/native-server-unisolated-fault-wedges.md).
-fn serve_conn_isolated(hc: rthttp.HConn, r: Router, h2: fn(rthttp.HConn, Int, Router) -> (), lim: http1.Limits) {
+fn serve_conn_isolated(hc: rthttp.HConn, r: Router, h2: fn(rthttp.HConn, Int, Router) -> Bool, lim: http1.Limits) {
   match task.isolate(fn() -> () ! () { serve_conn(hc, r, h2, lim) }) {
     // the message alone: the location is the runtime's, not the program's
     Err(task.Isolated.Faulted(info)) => log.error("http: panic serving", {"fault": info.msg})
@@ -2436,7 +2436,7 @@ fn handshake_deadline(lim: http1.Limits) -> Int {
 }
 
 /// Serves the requests of one connection until it closes.
-fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> (), lim: http1.Limits) {
+fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> Bool, lim: http1.Limits) {
   var parked = false
   defer {
     if !parked {
@@ -2448,7 +2448,7 @@ fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Route
     h2 = hserve.hc_h2c(hc, handshake_deadline(lim))
   }
   if h2 != 0 {
-    serve_h2(hc, h2, r)
+    parked = serve_h2(hc, h2, r)
     return
   }
   http1.set_limits(hc, lim)
@@ -2458,7 +2458,7 @@ fn serve_conn(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Route
 /// A parked connection's task (hserve.hc_park): serve_h1 again, closing
 /// the connection when it ends unless it parks once more, with a fault
 /// ending that connection only (serve_conn_isolated).
-fn serve_conn_resume(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> (), lim: http1.Limits) {
+fn serve_conn_resume(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> Bool, lim: http1.Limits) {
   var parked = false
   defer {
     if !parked {
@@ -2476,7 +2476,7 @@ fn serve_conn_resume(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int
 /// parked while idle (decision 0449: its task ends, no stack waits for the
 /// next request, and hserve.hc_park's resume runs the loop again when
 /// bytes come), false when it ended.
-fn serve_h1(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> (), lim: http1.Limits) -> Bool {
+fn serve_h1(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router) -> Bool, lim: http1.Limits) -> Bool {
   // a handle_stream route reads its body itself (decision 0310)
   var rd = if r.streamed { http1.reader_streaming(hc, fn(m: Str, p: Str) -> Bool { route_streams(r, m, p) }) } else { http1.reader(hc) }
   while true {
@@ -2512,9 +2512,18 @@ fn serve_h1(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router)
 /// task of its own, as net/http runs a handler per stream; the scope ends
 /// when the connection does. Reached only through Server.h2, which only
 /// with_tls sets (decision 0244).
-fn serve_h2(hc: rthttp.HConn, h2: Int, r: Router) {
+fn serve_h2(hc: rthttp.HConn, h2: Int, r: Router) -> Bool {
   // a handle_stream route's request comes at its HEADERS (decision 0310)
   var hp = if r.streamed { h2srv.conn_streaming(hc, h2, fn(m: Str, p: Str) -> Bool { route_streams(r, m, p) }) } else { h2srv.conn(hc, h2) }
+  hp.parker = [fn(p: h2srv.H2Conn) -> Bool { hserve.hc_park(hc, fn() { serve_h2_resume(hc, h2, r, p) }, 0, true) }]
+  h2_loop(hp, r)
+}
+
+/// The requests of an HTTP/2 connection until it ends (false) or parks
+/// while idle (true, decision 0449 stage 1c: the record and hp keep its
+/// state, and serve_h2_resume runs the loop again when bytes come).
+fn h2_loop(hp0: h2srv.H2Conn, r: Router) -> Bool {
+  var hp = hp0
   scope s {
     while true {
       match hp.next() {
@@ -2524,6 +2533,23 @@ fn serve_h2(hc: rthttp.HConn, h2: Int, r: Router) {
         None => break
       }
     }
+  }
+  hp.parked
+}
+
+/// A parked HTTP/2 connection's task (hserve.hc_park): the loop again,
+/// closing the connection when it ends unless it parks once more.
+fn serve_h2_resume(hc: rthttp.HConn, h2: Int, r: Router, hp: h2srv.H2Conn) {
+  var parked = false
+  defer {
+    if !parked {
+      hserve.hc_close(hc)
+    }
+  }
+  match task.isolate(fn() -> Bool ! () { h2_loop(hp, r) }) {
+    Ok(p) => parked = p
+    Err(task.Isolated.Faulted(info)) => log.error("http: panic serving", {"fault": info.msg})
+    _ => ()
   }
 }
 
