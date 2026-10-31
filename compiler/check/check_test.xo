@@ -633,3 +633,20 @@ test "a valued enum reports a duplicate value (XO0428) and an invalid one (XO042
   expect(ls.filter(fn(l) { l.contains("\"XO0428\"") }).len()) == 1
   expect(ls.filter(fn(l) { l.contains("\"XO0429\"") }).len()) == 1
 }
+
+test "a bare const in a pattern matches by equality and a misspelled one is XO0430 (decision 0269)" {
+  let out = check_files(os, "p", [("p/main.xo", """
+    const OK = 200
+
+    fn f(s: Int) -> Int {
+      match s {
+        OK => 1
+        OKK => 2
+        _ => 0
+      }
+    }
+    """)])?
+  let ls = lines(out)
+  expect(ls.filter(fn(l) { l.contains("\"XO0430\"") }).len()) == 1
+  expect(ls.filter(fn(l) { l.contains("\"XO0302\"") }).len()) == 0
+}

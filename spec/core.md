@@ -1297,6 +1297,16 @@ match code {
 
 Patterns nest: `Some(Ok(v))`, `Err(LoadErr.NotFound(id))`.
 
+A bare name in a pattern that is a `const` of the current module matches by
+equality with the constant's value instead of binding (decision 0269):
+`match status { OK => "done", NOT_FOUND => "missing", _ => "other" }`. A
+variant of the matched enum, or of the prelude, with that name wins over a
+constant. A name spelled like a constant (upper case, digits and
+underscores, two or more characters) that is neither a constant nor a
+variant is `XO0430`, so a misspelled constant cannot bind a name that
+matches everything. A match over a constant pattern still needs a `_` or
+binding arm (`XO0301`).
+
 An unguarded `_` (or catch all binding) arm that hides variants of an enum
 declared in the same module is warning `XO0305`: list the variants, so that
 adding one later is a compile error at every `match`. Enums from other modules
@@ -3257,6 +3267,7 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0427` | error | checker | `xml.encode_value` or `xml.decode` of a type parameter instead of a concrete struct (core 2.9, decision 0315) |
 | `XO0428` | error | checker | two variants of a valued enum have the same value (core 2.3, decision 0269) |
 | `XO0429` | error | checker | an invalid valued enum: a value type other than `Int` or `Str`, a value on an enum with no value type, a variant with fields, type parameters, or a value that is not a constant of the value type (core 2.3, decision 0269) |
+| `XO0430` | error | checker | a pattern name spelled like a constant (upper case) that is neither a `const` in scope nor a variant: a misspelled constant pattern (core 3.5, decision 0269) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |

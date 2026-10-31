@@ -82,6 +82,11 @@ pub fn (c: Checker) pat_type_in(f: Int, p: Pattern) -> Int {
   c.pat_type_at.get(c.pat_key_in(f, p)) ?? -1
 }
 
+/// The `const` a bare name in a pattern matches, or -1 (decision 0269).
+pub fn (c: Checker) pat_const_in(f: Int, p: Pattern) -> Int {
+  c.pat_const_at.get(c.pat_key_in(f, p)) ?? -1
+}
+
 /// The variant a variant pattern names (Info.PatVariant).
 pub fn (c: Checker) pat_variant_in(f: Int, p: Pattern) -> VRef? {
   c.pat_variant_at.get(c.pat_key_in(f, p))

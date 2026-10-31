@@ -56,25 +56,14 @@ fn (var g: Gen) pat(p: Pattern, subj: Str, t0: Int, var m: Match) {
   }
   match p {
     WildcardPat(..) | BadPat(..) => {}
-    BindPat(name: name, ..) => m.binds.push(Bind{v: g.var_of(name), code: subj, t: t})
-    LitPat(value: value, ..) => {
-      if let Ident(id) = value {
-        if id.name == b"true" || id.name == b"false" {
-          if id.name == b"true" {
-            m.conds.push(subj)
-          } else {
-            m.conds.push("!" + subj)
-          }
-          return
-        }
+    BindPat(name: name, ..) => {
+      if g.c.pat_const_in(g.f.file, p) >= 0 {
+        g.lit_cond(Expr.Ident(id: name), subj, t, m)
+        return
       }
-      let lit = g.lit_pat_value(value, t)
-      if g.is_scalar(t) {
-        m.conds.push("${subj} == ${lit}")
-      } else {
-        m.conds.push("${g.rt()}Eq(${subj}, ${lit})")
-      }
+      m.binds.push(Bind{v: g.var_of(name), code: subj, t: t})
     }
+    LitPat(value: value, ..) => g.lit_cond(value, subj, t, m)
     RangePat(lo: lo, hi: hi, inclusive: inclusive, ..) => {
       let l = g.lit_pat_value(lo, t)
       let h = g.lit_pat_value(hi, t)
@@ -92,7 +81,13 @@ fn (var g: Gen) pat(p: Pattern, subj: Str, t0: Int, var m: Match) {
         g.pat(e, "${subj}.F${i}", els[i], m)
       }
     }
-    VariantPat(..) => g.variant_pat(p, subj, t, m)
+    VariantPat(path: path, ..) => {
+      if g.c.pat_const_in(g.f.file, p) >= 0 {
+        g.lit_cond(Expr.Ident(id: path[0]), subj, t, m)
+        return
+      }
+      g.variant_pat(p, subj, t, m)
+    }
     StructPat(span: span, fields: fields, ..) => {
       let o = g.nobj(t)
       if o < 0 {
@@ -179,6 +174,26 @@ fn (var g: Gen) lit_pat_value(e: Expr, t: Int) -> Str {
     _ => {}
   }
   g.val(e)
+}
+
+/// Adds the test of subj against a literal or constant pattern value.
+fn (var g: Gen) lit_cond(value: Expr, subj: Str, t: Int, var m: Match) {
+  if let Ident(id) = value {
+    if id.name == b"true" || id.name == b"false" {
+      if id.name == b"true" {
+        m.conds.push(subj)
+      } else {
+        m.conds.push("!" + subj)
+      }
+      return
+    }
+  }
+  let lit = g.lit_pat_value(value, t)
+  if g.is_scalar(t) {
+    m.conds.push("${subj} == ${lit}")
+  } else {
+    m.conds.push("${g.rt()}Eq(${subj}, ${lit})")
+  }
 }
 
 fn (var g: Gen) or_pat(p: Pattern, subj: Str, t: Int, var m: Match) {

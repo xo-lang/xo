@@ -10,7 +10,15 @@ fn (var c: Checker) pattern(p: Pattern, t: Int, refutable: Bool) -> IPat {
   c.pat_type_at[c.key_of(parser.pattern_span(p), pat_kind(p))] = t
   match p {
     WildcardPat(..) | BadPat(..) => wild_pat()
-    BindPat(name: name, ..) => {
+    BindPat(span: span, name: name) => {
+      let co = c.const_of_pattern(name)
+      if co >= 0 {
+        c.pat_const_at[c.key_of(span, pat_kind(p))] = co
+        return c.const_pattern(name, t, span)
+      }
+      if is_const_style(name.name) && !c.files[c.cur_file].generated {
+        c.error("XO0430", span, "`${text(name.name)}` is spelled like a constant but no `const` of that name is in scope, so this pattern would bind a new name that matches everything (decision 0269)")
+      }
       c.declare_local(name, t, c.pat_local)
       wild_pat()
     }
@@ -349,6 +357,17 @@ fn (var c: Checker) variant_pattern(span: Span, path: List[Ident], parens: Bool,
   if nt >= 0 {
     return c.newtype_pattern(span, nt, parens, fields, rest, t, refutable)
   }
+  if path.len() == 1 && !parens && fields.is_empty() && !rest && !c.names_variant(path[0].name, t) {
+    let co = c.const_of_pattern(path[0])
+    if co >= 0 {
+      c.pat_const_at[c.key_of(span, PAT_KIND + 6)] = co
+      return c.const_pattern(path[0], t, span)
+    }
+    if is_const_style(path[0].name) && !c.is_bad(t) {
+      c.error("XO0430", span, "`${text(path[0].name)}` is spelled like a constant but no `const` of that name is in scope (decision 0269)")
+      return wild_pat()
+    }
+  }
   let (en, v) = c.resolve_variant_path(span, path, t)
   if en < 0 {
     for f in fields {
@@ -552,4 +571,52 @@ fn (var c: Checker) struct_pattern(span: Span, path: List[Ident], fields: List[p
     }
   }
   ip
+}
+
+/// The `const` a bare name in a pattern refers to, or -1: a name of the
+/// current module that is not a local binding (decision 0269).
+fn (var c: Checker) const_of_pattern(name: Ident) -> Int {
+  if c.lookup_local(name.name) >= 0 {
+    return -1
+  }
+  let o = c.lookup_module_obj(c.cur_mod, name.name)
+  if o >= 0 && c.objs[o].kind == ObjKind.Const {
+    return o
+  }
+  -1
+}
+
+/// A constant pattern matches by equality with the constant's value.
+fn (var c: Checker) const_pattern(name: Ident, t: Int, sp: Span) -> IPat {
+  let lt = c.infer(Expr.Ident(id: name), t)
+  if !c.is_bad(t) && !c.is_bad(lt) && !c.try_unify(lt, t) {
+    c.error("XO0302", sp, "constant `${text(name.name)}` of type `${c.show(lt)}` does not fit a value of type `${c.show(t)}`")
+    return wild_pat()
+  }
+  IPat{kind: IP_LIT}
+}
+
+/// Upper case with underscores and digits, at least two characters: the
+/// spelling constants have.
+fn is_const_style(s: Bytes) -> Bool {
+  if s.len() < 2 {
+    return false
+  }
+  for ch in s {
+    if !((ch >= 'A' && ch <= 'Z') || (ch >= '0' && ch <= '9') || ch == '_') {
+      return false
+    }
+  }
+  s[0] >= 'A' && s[0] <= 'Z'
+}
+
+/// Whether a bare name is a variant of the matched enum or of the prelude
+/// (Some, None, Ok, Err), which a constant of that name does not replace.
+fn (var c: Checker) names_variant(name: Bytes, t: Int) -> Bool {
+  let r = c.resolve(t)
+  if c.tys[r].kind == TyKind.Named && c.objs[c.tys[r].obj].tkind == "enum" && c.variant_pos(c.tys[r].obj, name) >= 0 {
+    return true
+  }
+  let (pe, _) = c.prelude_variant(name)
+  pe >= 0
 }

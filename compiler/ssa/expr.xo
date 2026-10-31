@@ -2189,6 +2189,19 @@ fn (var b: Builder) match_expr(e: Expr) -> Int {
   b.unit()
 }
 
+/// Tests v for equality with the literal or constant value, branching to
+/// fail when it differs (a literal or constant pattern).
+fn (var b: Builder) lit_test(v: Int, value: Expr, fail: Int) {
+  let bt = b.bool_t()
+  let vt = b.vty(v)
+  let lit = b.value_as(value, vt)
+  if b.tkind(vt) == Kind.Str {
+    b.str_eq_br(v, lit, fail)
+  } else {
+    b.test_br(b.add(Op.Eq, bt, Aux.None, [v, lit]), fail)
+  }
+}
+
 /// Tests v against p, branching to fail when it does not match; continues
 /// where it matched, with the bindings written (pattern).
 fn (var b: Builder) pattern(v: Int, p: Pattern, fail: Int) {
@@ -2198,19 +2211,16 @@ fn (var b: Builder) pattern(v: Int, p: Pattern, fail: Int) {
   match p {
     WildcardPat(..) => {}
     BindPat(name: name, ..) => {
+      if b.c.pat_const_in(b.s.file, p) >= 0 {
+        b.lit_test(v, Expr.Ident(id: name), fail)
+        return
+      }
       let vo = b.c.var_of(b.s.file, name)
       if vo >= 0 {
         b.write_var(vo, v)
       }
     }
-    LitPat(value: value, ..) => {
-      let lit = b.value_as(value, vt)
-      if b.tkind(vt) == Kind.Str {
-        b.str_eq_br(v, lit, fail)
-      } else {
-        b.test_br(b.add(Op.Eq, bt, Aux.None, [v, lit]), fail)
-      }
-    }
+    LitPat(value: value, ..) => b.lit_test(v, value, fail)
     RangePat(lo: lo, hi: hi, inclusive: inclusive, ..) => {
       let lv = b.value_as(lo, vt)
       b.test_br(b.compare(Op.Ge, v, lv), fail)
@@ -2231,7 +2241,13 @@ fn (var b: Builder) pattern(v: Int, p: Pattern, fail: Int) {
         b.pattern(f, el, fail)
       }
     }
-    VariantPat(fields: fields, ..) => b.variant_pattern(v, p, fields, fail)
+    VariantPat(path: path, fields: fields, ..) => {
+      if b.c.pat_const_in(b.s.file, p) >= 0 {
+        b.lit_test(v, Expr.Ident(id: path[0]), fail)
+        return
+      }
+      b.variant_pattern(v, p, fields, fail)
+    }
     StructPat(fields: fields, ..) => {
       if b.tkind(vt) != Kind.Struct {
         b.unsupported("this struct pattern")

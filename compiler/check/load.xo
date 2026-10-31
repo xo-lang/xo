@@ -479,6 +479,8 @@ pub struct Checker {
   pub pat_type_at: Map[Int, Int] = {}
   pub pat_variant_at: Map[Int, VRef] = {}
   pub pat_newtype_at: Map[Int, Int] = {}
+  /// The `const` a bare name in a pattern matches by equality (decision 0269).
+  pub pat_const_at: Map[Int, Int] = {}
   /// The receiver and parameter bindings of a function body, by function
   /// object (RecvVar, ParamVars), and the parameter bindings of a closure
   /// by the key of its literal (ClosureParams).

@@ -1,0 +1,22 @@
+const OK = 200
+const MISSING = 404
+const NAME = "bob"
+
+fn name(s: Int) -> Str {
+  match s {
+    OK => "ok"
+    MISSING => "missing"
+    _ => "other"
+  }
+}
+
+fn who(s: Str) -> Int {
+  match s {
+    NAME => 1
+    _ => 0
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${name(200)} ${name(404)} ${name(1)} ${who("bob")} ${who("x")}")
+}
