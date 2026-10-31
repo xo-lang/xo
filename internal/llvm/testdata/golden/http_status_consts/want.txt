@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+200 404 418 511
+200 done
+201 done
+404 missing
+503 server error
+302 other
+true false
+--- stderr

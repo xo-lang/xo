@@ -1507,6 +1507,25 @@ the same way (the handler unwinds, the server keeps serving) but no crash
 bundle is written, and the error of a 500 is logged without frames.
 Streamed bodies (`http.stream`) are sent natively as net/http sends them.
 
+#### 4.2.1 Status codes (decision 0269, stage A)
+
+```
+type Status struct(Int)        // a distinct integer type
+const OK: Status = Status(200)
+const CREATED: Status = Status(201)
+const NOT_FOUND: Status = Status(404)
+...                            // every code Go's net/http names
+```
+
+`http.Status` is a newtype over `Int` (core 2.8) with a constant for each
+code Go's net/http names (`http.OK` to `http.NETWORK_AUTHENTICATION_REQUIRED`,
+62 of them, Go's names in upper case). A constant is a compile time value,
+so it is a pattern: `match s { http.OK | http.CREATED => ... http.Status(500..=599) => ... _ => ... }`
+(a `_` or binding arm is needed: the set is open). Stage A is additive: the
+status parameters and fields stay `Int` (`json`, `text`, `Response.status`,
+`StatusError.status`); the move to `Status`, its methods and `xo fix`'s
+rewrite of integer literals are the later step of decision 0269.
+
 ### 4.3 Requests and responses
 
 ```

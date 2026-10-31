@@ -1,0 +1,18 @@
+use std/http
+
+fn name(s: http.Status) -> Str {
+  match s {
+    http.OK | http.CREATED => "done"
+    http.NOT_FOUND => "missing"
+    http.Status(500..=599) => "server error"
+    _ => "other"
+  }
+}
+
+fn main(os: Os) {
+  os.stdio.println("${http.OK.0} ${http.NOT_FOUND.0} ${http.TEAPOT.0} ${http.NETWORK_AUTHENTICATION_REQUIRED.0}")
+  for c in [200, 201, 404, 503, 302] {
+    os.stdio.println("${c} ${name(http.Status(c))}")
+  }
+  os.stdio.println("${http.Status(404) == http.NOT_FOUND} ${http.OK == http.CREATED}")
+}

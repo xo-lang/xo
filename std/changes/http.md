@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-10-31: feature: http.Status and the status code constants (decision 0269 stage A)
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0269 (open sets as newtypes with named constants)
+- Go reference: net/http's StatusOK ... StatusNetworkAuthenticationRequired (62 codes)
+- Test: internal/llvm/testdata/golden/http_status_consts (arm64, LLVM, Go parity): the constants' values, constant patterns, a range arm, equality
+- Timing: none (compile time constants)
+
+`http.Status` is `type Status struct(Int)` with a constant per code Go names. It is additive:
+no signature changes yet (`status: Int` stays), so no existing program changes.
+
 ## 2026-10-31: perf: idle HTTP/2 connections park (decision 0449 stage 1c)
 
 - Kind: perf
