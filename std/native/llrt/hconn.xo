@@ -363,13 +363,26 @@ pub fn park_ready(h: rthttp.HConn) -> Bool {
   // MSG_PEEK: the byte stays for the read
   let r = sock.recv(pd_fd(pd), b, 1, 2)
   obj.free_obj(b)
-  poll.pd_end(pd)
   if !would_block(r) {
+    poll.pd_end(pd)
+    return false
+  }
+  // a short wait on this fiber first: a connection whose next request
+  // comes within the grace (a busy keep-alive client) never parks, which
+  // costs a resume task per request (the CRUD server, 32 busy connections:
+  // 187k to 168k req/s when every request parked, 2026-10-31)
+  let w = poll.pd_wait(pd, false, deadline(PARK_GRACE_NS))
+  poll.pd_end(pd)
+  if w != poll.TIMEOUT {
     return false
   }
   set_idle(hc, true)
   true
 }
+
+/// How long a connection waits on its own fiber for the next request
+/// before it parks (park_ready).
+const PARK_GRACE_NS = 2000000
 
 /// Reads from the connection itself (recv_until after the read ahead).
 fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
