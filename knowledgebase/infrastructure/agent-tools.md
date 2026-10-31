@@ -83,8 +83,20 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   1455 declarations the scan over-claims 129, 86 of them with no
   collision to explain them, and misses none; 43 are interface dispatch,
   which needs implementation edges). A `use go` or `use c` program needs
-  its binding first, or the command exits 1 naming it. Last verified:
-  2026-10-26.
+  its binding first, or the command exits 1 naming it. Since 2026-10-30
+  (decision 0381) the std graph (the edges whose sites are in std's
+  files, the same for every program checked by one xo over one std) is
+  cached once under `<backend cache>/edges/` and a program is checked
+  alone (about 0.3 s against 16 s with std's bodies): the first program
+  after a std or xo change pays the full check and stores the graph, the
+  rest read it; `XO_EDGES_CACHE=off` checks std's bodies with every
+  program, `XO_BACKEND_CACHE=verify` does both and compares,
+  `XO_CACHE_STATS=1` says hit or miss. The full sweep below (1035 programs,
+  2026-10-30) takes 202 s with the cache against 18.3 s a program
+  without (about 5.3 hours projected; 3.5 to 4 hours for the 890 of
+  2026-10-26), measured on the linux/arm64 host; the output is byte for
+  byte the uncached one (ten programs checked all four ways). Last
+  verified: 2026-10-30.
 - `xo edit [--dry-run] rename OLD NEW` renames functions, methods,
   constants, types, fields and enum variants (`Type.member`), and
   interface methods (`Iface.m`, with every implementing type's method),

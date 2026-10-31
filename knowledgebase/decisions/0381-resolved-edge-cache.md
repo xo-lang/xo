@@ -1,6 +1,6 @@
 # 0381: A program's resolved edge list is split, and the std graph is cached once instead of checked with every program
 
-Status: Accepted (owner, 2026-10-30; not built yet). Previously proposed (Xo DeepSeek 2, 2026-10-26, for the lead; nothing built).
+Status: Accepted (owner, 2026-10-30); built 2026-10-30 (xo-lang-6, see As built). Previously proposed (Xo DeepSeek 2, 2026-10-26, for the lead; nothing built).
 
 ## Context
 
@@ -88,6 +88,64 @@ under "std coverage", and its product is the list of declarations the scan
 credits that no edge reaches, with a reason each (interface dispatch
 against a corpus gap). Those entries are not recorded in
 internal/stdcoverage/allow.txt, which means "uncovered and accepted".
+
+## As built (2026-10-30, xo-lang-6)
+
+- compiler/cli/servers edges.xo `edges_of` checks the program and
+  returns its edges split: the std graph is every edge whose site is in
+  a file of the std tree (check.Module std_tree: std, native, llrt), and
+  with --impls every implementation edge with both ends there; the
+  program's own is the rest (its files, a binding's declaration file, an
+  impl edge with a program type at one end). It also reports the
+  bindings the program's modules use (`go`, `c`, both or none).
+- compiler/xo edgecache.xo holds `xo dev edges`: it checks the program
+  alone first (no std bodies, about 0.3 s), which gives its own edges and
+  its bindings, then reads the std graph from
+  `<backend cache>/edges/<key>`; the key is the SHA-256 of the cache
+  version, xo's identity (bcache.xo self_id, the executable's hash),
+  the bindings, --impls, and every std source's path and content hash
+  (not sizes and times as the std cache keys: a worktree at the same
+  commit shares the entry). The output is the program's own edges plus
+  the entry, sorted, the same lines in the same order as the uncached
+  command. A miss checks again with the std bodies, stores the std part
+  (written under a temporary name and renamed), and prints its own
+  edges and std's from that check; when the program's own edges differ
+  between the two checks it says so on standard error (and fails under
+  verify), which is the one way a cached graph could misreport a
+  program. A program in the std tree (no own edges) takes the uncached
+  path. `XO_EDGES_CACHE=off` or `XO_BACKEND_CACHE=off`: the one check
+  with the std bodies, no cache; `XO_BACKEND_CACHE=verify`: both checks,
+  the std graph compared with the entry and the own edges between the
+  checks, exit 1 on a difference. `XO_CACHE_STATS=1` prints
+  `cache edges off|miss|hit|verify`. Entries are marked used on a hit
+  and pruned with the backend cache (store-log kind `edges`).
+- The bindings flag covers `use c` too: a `use c` program's check also
+  takes the binding path, and the sample held none to show whether its
+  std graph is the plain one, so it gets its own entry.
+- Tests: cmd/xo TestDevEdgesCache (strwhere: off, miss, hit and verify
+  print identical bytes, one entry stored, no difference reported);
+  the existing TestDevEdges and the missing binding tests; the new
+  XO_EDGES_CACHE classified in internal/xotool codegen_test.go.
+- Measured (linux/arm64 offload host, 2026-10-30, xo at ee57ab0e8 with a private
+  backend cache: over ten programs (bench/perf base64, json, alloc,
+  http, big; the json_decode_fields, json_depth, json_omitempty,
+  codex_gaps and strwhere goldens) the output with the cache off, on the
+  miss, on the hit and under verify is byte for byte the same (291,039
+  to 291,719 lines each, 290,988 of them the std graph, one 30 MB
+  entry); wall per program 18.6 to 22.5 s off, 19.5 to 21.2 s on the
+  miss, 142 to 343 ms on the hit, 19.1 to 22.4 s under verify. The
+  sweep's first 20 programs took 366 s with the cache off (18.3 s each,
+  about 5.3 hours projected for the 1035 program list); every program
+  with the cache took 202 s (195 ms each): 1007 hits, 3 full checks (the
+  first program fills the entry; two programs in the std tree take the
+  uncached path), 25 `use go` or `use c` programs without a binding on
+  the host (exit 1 naming it, as before). The `use go` program of the
+  2026-10-26 sample (test_go_callback_task, bound first by `xo check`)
+  was checked on the Mac (darwin/arm64): the same four ways byte for
+  byte (291,273 lines, 161 its own), 19.1 s off against 159 ms on the
+  hit; its std graph has 291,028 lines against a plain program's
+  290,988 (std/go's bodies), under its own key (bindings `go`), two
+  entries in the cache after a plain program follows it.)
 
 ## Alternatives
 

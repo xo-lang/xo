@@ -4,7 +4,7 @@
 // compiler/cli/dev's (`rtpack` went with the C runtime, decision 0234).
 //
 //   xo dev dump lex|ast|types|ssa|asm|llvm|go [flags] PATH...
-//   xo dev edges [--out=FILE] DIR (the resolved references of a program)
+//   xo dev edges [--out=FILE] [--impls] DIR (the resolved references of a program; edgecache.xo)
 //   xo dev goldens|errorcheck|codegen [flags] DIR...
 
 use github.com/xo-lang/xo/compiler/lexer
@@ -15,7 +15,6 @@ use github.com/xo-lang/xo/compiler/arm64
 use github.com/xo-lang/xo/compiler/llvm
 use github.com/xo-lang/xo/compiler/gen
 use github.com/xo-lang/xo/compiler/cli/dev
-use github.com/xo-lang/xo/compiler/cli/servers
 
 fn dev_cmd(os: Os, args: List[Str]) -> Int {
   if args.is_empty() {
@@ -24,7 +23,9 @@ fn dev_cmd(os: Os, args: List[Str]) -> Int {
   }
   match args[0] {
     "dump" => dump_cmd(os, args[1..])
-    "edges" => servers.edges_cmd(os, args[1..])
+    // the resolved edges, the std graph from the edge cache (edgecache.xo,
+    // decision 0381)
+    "edges" => edges_cmd(os, args[1..])
     "build-each" => build_each_cmd(os, args[1..])
     "stdobj" => stdobj_cmd(os, args[1..])
     "stdcache" => stdcache_cmd(os, args[1..])

@@ -146,3 +146,61 @@ func devEdges(t *testing.T, dir string, extra ...string) [][]string {
 	}
 	return lines
 }
+
+// TestDevEdgesCache: the resolved edge cache (decision 0381). `xo dev
+// edges` prints the same lines with the cache off (XO_EDGES_CACHE=off:
+// std's bodies checked with the program), on a miss (the std graph
+// stored as one entry under <backend cache>/edges), on a hit (the program
+// alone checked, its own edges with the cached graph) and under
+// XO_BACKEND_CACHE=verify (both checks, compared with the entry); the
+// output has the program's own sites and std's.
+func TestDevEdgesCache(t *testing.T) {
+	if testing.Short() {
+		t.Skip("checks std's bodies three times, about 16 s each")
+	}
+	cache := filepath.Join(t.TempDir(), "backend")
+	setenv(t, "XO_BACKEND_CACHE_DIR", cache)
+	setenv(t, "XO_CACHE_STATS", "1")
+	dir := filepath.Join(repoRoot, "internal", "llvm", "testdata", "golden", "strwhere")
+	edges := func(mode, backend, want string) string {
+		t.Helper()
+		setenv(t, "XO_EDGES_CACHE", mode)
+		setenv(t, "XO_BACKEND_CACHE", backend)
+		var out, errOut bytes.Buffer
+		args := []string{"dev", "edges", dir}
+		if code := run(t, args, &out, &errOut); code != 0 {
+			t.Fatalf("xo dev edges (XO_EDGES_CACHE=%s XO_BACKEND_CACHE=%s): exit %d: %s", mode, backend, code, errOut.String())
+		}
+		if !strings.Contains(errOut.String(), want) || strings.Contains(errOut.String(), "differ") {
+			t.Errorf("xo dev edges (XO_EDGES_CACHE=%s XO_BACKEND_CACHE=%s): stderr %q, want %q and no difference", mode, backend, errOut.String(), want)
+		}
+		return out.String()
+	}
+	off := edges("off", "", "cache edges off")
+	if len(off) < 1000 || !strings.Contains(off, "\tstd/native/prelude.xo\t") || !strings.Contains(off, "\t"+filepath.Join(dir, "main.xo")+"\t") {
+		t.Fatalf("the uncached edges lack the program's or std's sites (%d bytes)", len(off))
+	}
+	miss := edges("", "", "cache edges miss (none, ")
+	entries, err := filepath.Glob(filepath.Join(cache, "edges", "*"))
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("after a miss: %d entries under %s, want 1 (%v)", len(entries), filepath.Join(cache, "edges"), err)
+	}
+	hit := edges("", "", "cache edges hit (none)")
+	verify := edges("", "verify", "cache edges verify (none, ")
+	for _, c := range []struct{ what, got string }{{"miss", miss}, {"hit", hit}, {"verify", verify}} {
+		if c.got != off {
+			a, b := strings.Split(off, "\n"), strings.Split(c.got, "\n")
+			only := 0
+			seen := map[string]bool{}
+			for _, l := range a {
+				seen[l] = true
+			}
+			for _, l := range b {
+				if !seen[l] {
+					only++
+				}
+			}
+			t.Errorf("the %s output differs from the uncached one: %d against %d lines, %d lines only in the %s output", c.what, len(a), len(b), only, c.what)
+		}
+	}
+}

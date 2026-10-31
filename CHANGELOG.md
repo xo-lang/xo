@@ -39,6 +39,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   listing, tree, probe or variable; no entry; the binary gone), then the
   run key's parts as `cache run key HASH12 TEXT`, so two builds that
   should share an entry can be compared.
+- `xo dev edges` caches the std graph (decision 0381): the edges whose
+  sites are in std's files are the same for every program checked by
+  one xo over one std, so they are stored once under the backend cache
+  (`edges/`, keyed on xo's identity, the program's bindings, --impls
+  and std's sources) and a program is checked alone, about 0.3 s
+  instead of 16 s; the output is unchanged. `XO_EDGES_CACHE=off`
+  checks std's bodies with every program, `XO_BACKEND_CACHE=verify`
+  compares both ways.
 - Repository (decision 0302): code copied or ported from outside the
   repository carries an `// Origin: KEY ...` line, each
   THIRD_PARTY_NOTICES item its `[key]`, and the -short

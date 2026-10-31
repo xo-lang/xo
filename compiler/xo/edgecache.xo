@@ -1,0 +1,228 @@
+// `xo dev edges` with the resolved edge cache (decision 0381). The edges
+// of a program (compiler/cli/servers edges.xo edges_of) split in two: the
+// program's own (sites in its files) and the std graph (sites in the std
+// tree's files), which is the same for every program checked by the same
+// xo over the same std with the same bindings, since the preload is the
+// std files on disk and each std body is checked once in its own scope.
+// The std graph is cached once, as <backend cache>/edges/<key>: the
+// SHA-256 of the cache version, xo's identity (self_id), the program's
+// bindings ("go", "c", both or none: a `use go` program's check takes
+// another path and produces another std graph), --impls, and every std
+// source's path and content hash (a worktree at the same commit shares
+// the entry). A hit checks the program alone (about 0.3 s against 16 s
+// with the std bodies) and prints its own edges with the cached graph; a
+// miss checks both ways, stores the std graph and warns when the
+// program's own edges differ between the two checks. XO_EDGES_CACHE=off
+// (or XO_BACKEND_CACHE=off) checks with the std bodies and no cache;
+// XO_BACKEND_CACHE=verify checks both ways, compares the full check's
+// std graph with the entry and its own edges with the program-only
+// check's, and exits 1 on a difference. The output is the same lines in
+// the same order either way (sorted), so internal/stdcoverage reads a
+// cached sweep unchanged. Entries are marked used and pruned with the
+// backend cache (compiler/prune, decision 0223).
+
+use github.com/xo-lang/xo/compiler/check
+use github.com/xo-lang/xo/compiler/cli/servers
+use github.com/xo-lang/xo/compiler/prune
+use std/crypto
+
+/// The entry format's version, part of the key.
+const EDGES_CACHE_VERSION = 1
+
+/// edges_cmd is `xo dev edges [--out=FILE] [--impls] [--dir=DIR] DIR`: the
+/// edges of the program in DIR (this directory when no DIR is given).
+fn edges_cmd(os: Os, args: List[Str]) -> Int {
+  var dir = "."
+  var out = ""
+  var saw_dir = false
+  var impls = false
+  for a in args {
+    if a.starts_with("--out=") {
+      out = a.trim_prefix("--out=")
+    } else if a == "--impls" {
+      impls = true
+    } else if a.starts_with("--dir=") {
+      dir = a.trim_prefix("--dir=")
+      saw_dir = true
+    } else if a.starts_with("-") {
+      os.stdio.eprintln("xo dev edges: unknown flag ${a.quote()}\n${servers.edges_usage()}")
+      return 2
+    } else if saw_dir {
+      os.stdio.eprintln("xo dev edges: one DIR\n${servers.edges_usage()}")
+      return 2
+    } else {
+      dir = a
+      saw_dir = true
+    }
+  }
+  let (lines, rc) = match edges_lines(os, dir, impls) {
+    Ok(x) => x
+    Err(e) => {
+      os.stdio.eprintln("xo dev edges: ${e}")
+      return 1
+    }
+  }
+  let text = lines.sort().join("\n")
+  if out.is_empty() {
+    os.stdio.println(text)
+    return rc
+  }
+  match os.fs.write(out, text.bytes()) {
+    Ok(_) => rc
+    Err(e) => {
+      os.stdio.eprintln("xo dev edges: ${out}: ${e.display()}")
+      1
+    }
+  }
+}
+
+/// $XO_EDGES_CACHE off, else the backend cache's mode (off, verify, on).
+fn edges_cache_mode(os: Os) -> Str {
+  if (os.env.get("XO_EDGES_CACHE") ?? "") == "off" {
+    return "off"
+  }
+  backend_cache_mode(os)
+}
+
+/// The edge lines of the program in dir (unsorted) and the exit code (1
+/// when a verify found a difference): the full check with no cache, else
+/// the program-only check with the cached std graph.
+fn edges_lines(os: Os, dir: Str, impls: Bool) -> (List[Str], Int) ! Str {
+  let mode = edges_cache_mode(os)
+  let goos = host_os(os)
+  let ctx = Ctx{goos: goos, std: check.std_dir(os.env, os.fs), xo: check.executable(os.env, os.fs), cache: user_cache_dir(os, goos)}
+  let bdir = if mode == "off" { "" } else { backend_cache_dir(os, ctx) }
+  let stats = !(os.env.get("XO_CACHE_STATS") ?? "").is_empty()
+  if bdir.is_empty() {
+    let e = servers.edges_of(os, dir, impls, true)?
+    if stats {
+      os.stdio.eprintln("cache edges off")
+    }
+    return Ok((e.own + e.std, 0))
+  }
+  // the program alone: its own edges and its bindings, the key's part
+  // only the check knows
+  let fast = servers.edges_of(os, dir, impls, false)?
+  // a program in the std tree itself has no own edges: the full check,
+  // since its std part is what the program is
+  let in_std = fast.own.is_empty() && !fast.std.is_empty()
+  let key = if in_std { "" } else { edges_key(os, ctx.std, fast.bindings, impls) }
+  let path = if key.is_empty() { "" } else { "${bdir}/edges/${key}" }
+  var entry: Option[Str] = None
+  if !path.is_empty() {
+    match os.fs.read(path) {
+      Ok(b) => entry = b.to_str()
+      // xo:allow XO0903 a miss
+      Err(_) => {}
+    }
+  }
+  if mode == "on" {
+    if let Some(t) = entry {
+      prune.mark_used_within(os.fs, os.clock, path, BACKEND_TOUCH)
+      if stats {
+        os.stdio.eprintln("cache edges hit (${fast.bindings})")
+      }
+      return Ok((fast.own + split_lines(t), 0))
+    }
+  }
+  // a miss, or verify: the full check
+  let full = servers.edges_of(os, dir, impls, true)?
+  var rc = 0
+  let fast_own = fast.own.sort().join("\n")
+  let full_own = full.own.sort().join("\n")
+  if fast_own != full_own {
+    let (a, b) = line_diff(fast_own, full_own)
+    os.stdio.eprintln("xo dev edges: the program's own edges differ between the program-only check and the check with std's bodies (${a} lines only in the first, ${b} only in the second): a cached std graph does not reproduce this program's full output")
+    if mode == "verify" {
+      rc = 1
+    }
+  }
+  let graph = full.std.sort().join("\n")
+  match entry {
+    Some(t) => {
+      if mode == "verify" && t != graph {
+        let (a, b) = line_diff(graph, t)
+        os.stdio.eprintln("XO_BACKEND_CACHE=verify: the std graph differs from its cache entry (${a} lines only in the check, ${b} only in the entry)")
+        rc = 1
+      }
+    }
+    None => {
+      if !path.is_empty() {
+        cache_put(os, path, graph.bytes())
+        note_store(os, "edges", bdir, 1)
+      }
+    }
+  }
+  if stats {
+    let what = if mode == "verify" { "verify" } else if path.is_empty() { "full (no key)" } else { "miss" }
+    os.stdio.eprintln("cache edges ${what} (${fast.bindings}, ${full.std.len()} std lines)")
+  }
+  Ok((full.own + full.std, rc))
+}
+
+/// The lines of an entry's text ("" holds none).
+fn split_lines(t: Str) -> List[Str] {
+  if t.is_empty() { [] } else { t.split("\n") }
+}
+
+/// How many lines of a are not in b, and of b not in a (both sorted
+/// texts of distinct lines).
+fn line_diff(a: Str, b: Str) -> (Int, Int) {
+  var sb: Set[Str] = #{}
+  for l in split_lines(b) {
+    sb.add(l)
+  }
+  var sa: Set[Str] = #{}
+  var only_a = 0
+  for l in split_lines(a) {
+    sa.add(l)
+    if !sb.contains(l) {
+      only_a += 1
+    }
+  }
+  var only_b = 0
+  for l in split_lines(b) {
+    if !sa.contains(l) {
+      only_b += 1
+    }
+  }
+  (only_a, only_b)
+}
+
+/// The std graph's key: the cache version, xo's identity, the program's
+/// bindings, --impls, and every std source's path and content hash; ""
+/// when xo's identity or std cannot be read (no cache then).
+fn edges_key(os: Os, std: Str, bindings: Str, impls: Bool) -> Str {
+  let id = self_id(os)
+  if id.is_empty() || std.is_empty() {
+    return ""
+  }
+  let tree = std_content_lines(os, std)
+  if tree.is_empty() {
+    return ""
+  }
+  crypto.sha256("xo edges v${EDGES_CACHE_VERSION}\n${id}\nbindings=${bindings}\nimpls=${impls}\n${tree}".bytes()).to_hex()
+}
+
+/// std's .xo files (not its tests) as "PATH SHA256" lines in path order:
+/// the checker reads their contents, so the key holds them (not sizes
+/// and times, as std_tree_lines: a worktree at the same commit then
+/// shares the entry); "" when std cannot be walked or a file read.
+fn std_content_lines(os: Os, std: Str) -> Str {
+  let files = match os.fs.walk(std) {
+    Ok(fs) => fs
+    Err(_) => return ""
+  }
+  var b = StrBuilder.new()
+  for f in files.sort_by(fn(f: FileInfo) -> Str { f.path }) {
+    if f.is_dir || !f.path.ends_with(".xo") || f.path.ends_with("_test.xo") {
+      continue
+    }
+    let data = match os.fs.read(f.path) {
+      Ok(d) => d
+      Err(_) => return ""
+    }
+    b.write("${f.path.trim_prefix(std)} ${crypto.sha256(data).to_hex()}\n")
+  }
+  b.freeze()
+}

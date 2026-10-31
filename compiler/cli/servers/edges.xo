@@ -26,6 +26,11 @@
 //
 // The edges are those of the last check, so a program that does not check
 // writes nothing and exits 1 with the reason on standard error.
+//
+// The command itself is compiler/xo edgecache.xo (decision 0381): the
+// edges split into the program's own and the std graph (edges_of), and
+// the std graph, the same for every program, is cached there once per xo
+// identity, std sources and bindings.
 
 use github.com/xo-lang/xo/compiler/check
 
@@ -34,62 +39,55 @@ pub fn edges_usage() -> Str {
   "usage: xo dev edges [--out=FILE] [--impls] [--dir=DIR] DIR\n  every resolved reference of the checked program in DIR as SRC and TGT declaration lines; --impls adds an edge from each interface method to the methods that implement it"
 }
 
-/// edges_cmd is `xo dev edges [--out=FILE] [--impls] [--dir=DIR] DIR`: the
-/// edges of the program in DIR (this directory when no DIR is given).
-pub fn edges_cmd(os: Os, args: List[Str]) -> Int uses (env, fs, fs.read, fs.write, stdio) {
-  var dir = "."
-  var out = ""
-  var saw_dir = false
-  var impls = false
-  for a in args {
-    if a.starts_with("--out=") {
-      out = a.trim_prefix("--out=")
-    } else if a == "--impls" {
-      impls = true
-    } else if a.starts_with("--dir=") {
-      dir = a.trim_prefix("--dir=")
-      saw_dir = true
-    } else if a.starts_with("-") {
-      os.stdio.eprintln("xo dev edges: unknown flag ${a.quote()}\n${edges_usage()}")
-      return 2
-    } else if saw_dir {
-      os.stdio.eprintln("xo dev edges: one DIR\n${edges_usage()}")
-      return 2
-    } else {
-      dir = a
-      saw_dir = true
-    }
-  }
-  var s = match session(os, dir) {
-    Ok(x) => x
-    Err(e) => {
-      os.stdio.eprintln("xo dev edges: ${e}")
-      return 1
-    }
-  }
-  var lines = s.edge_lines()
+/// The edges of a checked program, split (decision 0381): the std graph
+/// (the sites in the std tree's files, which every program's check
+/// resolves the same way, since each std body is checked once in its own
+/// scope and the preload is the files on disk, not the program's imports)
+/// and the program's own (sites in its files, in a binding's declaration
+/// file, and the impl edges with an end outside the std tree); and the
+/// bindings its modules use ("go", "c", "go,c" or "none"), which change
+/// the std graph a check produces and so are part of its cache key.
+pub struct Edges {
+  pub own: List[Str] = []
+  pub std: List[Str] = []
+  pub bindings: Str = "none"
+}
+
+/// edges_of: the edges of the program in dir, with the std implementation
+/// files preloaded and their bodies checked (preload: the full graph,
+/// about 16 s) or the program alone checked (its own edges, about 0.3 s;
+/// the std part then holds only the std bodies the check reached). impls
+/// adds the implementation edges (impl_lines). Neither list is sorted.
+pub fn edges_of(os: Os, dir: Str, impls: Bool, preload: Bool) -> Edges ! Str uses (env, fs, stdio) {
+  var s = session(os, dir, preload)?
+  var e = Edges{}
+  let (own, std) = s.edge_lines()
+  e.own = own
+  e.std = std
   if impls {
-    lines = lines + s.impl_lines()
-    lines = lines.sort()
+    let (iown, istd) = s.impl_lines()
+    e.own = e.own + iown
+    e.std = e.std + istd
   }
-  let text = lines.join("\n")
-  if out.is_empty() {
-    os.stdio.println(text)
-    return 0
-  }
-  match os.fs.write(out, text.bytes()) {
-    Ok(_) => 0
-    Err(e) => {
-      os.stdio.eprintln("xo dev edges: ${out}: ${e.display()}")
-      1
+  var go = false
+  var c = false
+  for m in s.res[0].c.mods {
+    if !m.go_path.is_empty() {
+      go = true
+    }
+    if !m.c_prefix.is_empty() {
+      c = true
     }
   }
+  e.bindings = if go && c { "go,c" } else if go { "go" } else if c { "c" } else { "none" }
+  Ok(e)
 }
 
 /// The headless session of the program in dir, checked, with the std
-/// implementation files loaded and their bodies checked too.
-fn session(os: Os, dir: Str) -> Session ! Str uses (stdio, fs, env) {
-  let s = agent_session(os, dir, impl_modules(os, std_dir(os)), false, [], false)?
+/// implementation files loaded and their bodies checked too (preload), or
+/// the program alone.
+fn session(os: Os, dir: Str, preload: Bool) -> Session ! Str uses (stdio, fs, env) {
+  let s = agent_session(os, dir, if preload { impl_modules(os, std_dir(os)) } else { [] }, false, [], false)?
   if !s.err.is_empty() {
     return Err(s.err)
   }
@@ -131,12 +129,28 @@ fn impl_modules(os: Os, std_dir: Str) -> List[Str] uses fs.read {
   out
 }
 
-/// The edge lines of the last check, sorted.
-fn (var s: Session) edge_lines() -> List[Str] {
+/// Whether file f of the last check is in the std tree (check.Module
+/// std_tree: std, native, llrt; not a `use go` or `use c` binding's
+/// declaration file, which is_std too).
+fn (s: Session) std_tree_file(f: Int) -> Bool {
+  s.res[0].c.mods[s.res[0].c.files[f].module].std_tree
+}
+
+/// Whether the file the checker names p is in the std tree.
+fn (s: Session) std_tree_path(p: Str) -> Bool {
+  let df = s.file_named(p)
+  df >= 0 && s.std_tree_file(df)
+}
+
+/// The edge lines of the last check: (the program's own, the std graph),
+/// a line by the file of its site.
+fn (var s: Session) edge_lines() -> (List[Str], List[Str]) {
   let c = s.res[0].c
   var out: List[Str] = []
+  var std: List[Str] = []
   for f in 0..c.files.len() {
     let path = c.files[f].path
+    let in_std = s.std_tree_file(f)
     for site in s.sites_of(f) {
       if site.id.name.is_empty() {
         continue
@@ -152,11 +166,15 @@ fn (var s: Session) edge_lines() -> List[Str] {
       }
       let (sl, sc) = line_col(c.files[f].src, off)
       let (spl, spll, spn) = s.src_decl(f, off)
-      out.push("${spl}\t${spll}\t${spn}\t${tg.def_file}\t${s.def_line(tg)}\t${s.target_name(tg)}\t${path}\t${sl}\t${sc}\t${check.text(site.id.name)}")
+      let line = "${spl}\t${spll}\t${spn}\t${tg.def_file}\t${s.def_line(tg)}\t${s.target_name(tg)}\t${path}\t${sl}\t${sc}\t${check.text(site.id.name)}"
+      if in_std {
+        std.push(line)
+      } else {
+        out.push(line)
+      }
     }
   }
-  out = out.sort()
-  out
+  (out, std)
 }
 
 /// The 1 based line of a target's declaration in its file, or 0.
@@ -174,8 +192,11 @@ fn (s: Session) def_line(tg: LspTarget) -> Int {
 /// to the type's method of that name (the checker's structural rule, the
 /// one rename_iface_method uses). SRC is the interface method, so a
 /// consumer that follows SRC reaches the implementations only when the
-/// interface method itself is reached.
-fn (var s: Session) impl_lines() -> List[Str] {
+/// interface method itself is reached. (the program's own, the std
+/// graph): an edge is the std graph's when both its ends are in the std
+/// tree; one with a program's type implementing a std interface, or a std
+/// type implementing the program's, is the program's own.
+fn (var s: Session) impl_lines() -> (List[Str], List[Str]) {
   var r = s.res[0]
   let c = r.c
   // a type's methods, by the receiver type's object
@@ -196,6 +217,7 @@ fn (var s: Session) impl_lines() -> List[Str] {
   }
   s.res[0] = r
   var out: List[Str] = []
+  var std: List[Str] = []
   for ti in ifaces {
     let meths = s.res[0].c.objs[ti].iface_meths
     for (_recv, ms) in by_recv.entries() {
@@ -221,11 +243,16 @@ fn (var s: Session) impl_lines() -> List[Str] {
         if tp.is_empty() {
           continue
         }
-        out.push("${sp}\t${sl}\t${sn}\t${tp}\t${tl}\t${tn}\t${sp}\t${sl}\t0\t${sn}")
+        let line = "${sp}\t${sl}\t${sn}\t${tp}\t${tl}\t${tn}\t${sp}\t${sl}\t0\t${sn}"
+        if s.std_tree_path(sp) && s.std_tree_path(tp) {
+          std.push(line)
+        } else {
+          out.push(line)
+        }
       }
     }
   }
-  out
+  (out, std)
 }
 
 /// The path, 1 based line and name of the declaration of object oi (a file
