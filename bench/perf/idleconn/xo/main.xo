@@ -1,0 +1,17 @@
+use std/http
+use std/log
+
+/// Serves "ok" on every path; PORT (default 8080), and HTTPS with h2 when
+/// TLS_CERT and TLS_KEY hold PEM text. For measuring idle connections.
+fn main(os: Os) ! {
+  let port = Int.parse(os.env.get("PORT") ?? "8080").or_err("PORT")?
+  let addr = "127.0.0.1:${port}"
+  var r = http.router()
+  r.handle("GET /", fn(_req) { http.text(200, "ok") })
+  var srv = http.server(os.net.listen(addr)?, r)
+  if let Some(cert) = os.env.get("TLS_CERT") {
+    srv = srv.with_tls([http.tls_cert(cert.bytes(), (os.env.get("TLS_KEY") ?? "").bytes())?])
+  }
+  log.info("listening", {"addr": addr})
+  srv.serve()?
+}
