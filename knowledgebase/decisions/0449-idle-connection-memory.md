@@ -218,6 +218,17 @@ Measured with it (same host, 5 runs): 189,308 (base) to 188,129 req/s
 (-0.6%, within noise), p50 136 to 138 us, CPU 11.68 to 11.76 us per request,
 peak RSS 72.2 to 65.4 MB: the no-slowdown gate passes.
 
+TLS memory per idle connection (survey of tlssrv.xo, 2026-10-31, before
+measuring): 50 KB against 6 KB plain. Each TLS read allocates a 16 KiB
+buffer (`raw.bytes_buf(16384)`) and `got` is a view of it (Bytes slices are
+views since 0330); the ClientHello's `sni` and `alpn`, the parsed hello and
+the record bytes handed to the engine are views of `got`, so one or two
+16 KiB blocks stay pinned per connection for a few dozen bytes. The server
+and connection structs, the record keys and the hash state are about 1 to
+2 KB; the handshake transcript and flight are cleared at the end of the
+handshake. First change: a read of at most 4,096 bytes is copied to its own
+size (SMALL_READ), so no view pins the buffer. Measured below.
+
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked
 connection pays one task start per request (a stack from the cache, no
