@@ -1036,3 +1036,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [removed-field-meets-new-use.md](removed-field-meets-new-use.md): a push removing a field met a new use on main after pushq's ungated overlap push; xocheck the rebased tree before pushing a removal (Observed)
 - [exact-ssa-tables-before-inline.md](exact-ssa-tables-before-inline.md): exact-size SSA tables saved heap before inlining and cost more from emit on; compare per-phase heap through the link (Observed)
 - [offload-job-scripts-share-work-dir.md](offload-job-scripts-share-work-dir.md): two concurrent host jobs on one /work path delete each other's tree (observed)
+- [heap-profile-misses-tls-allocations.md](heap-profile-misses-tls-allocations.md): Anticipated: XO_PROF=heap shows 88 KB in use for a server holding 750 MB of TLS connections; use RssAnon deltas and exit-time XO_HEAPSTATS
