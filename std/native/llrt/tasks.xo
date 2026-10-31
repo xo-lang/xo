@@ -929,9 +929,6 @@ pub fn run_claimed(t: Int, units: Int) {
   var c = ld(tb, 8 * TLS_CTX_SPARE)
   if c != 0 {
     st(tb, 8 * TLS_CTX_SPARE, 0)
-    // what the earlier run's task did to the context (and its wakers'
-    // park lock operations it took) happens before this run reuses it
-    tsan(RT_TSAN_ACQUIRE, c)
   } else {
     c = rt.heap_large(ctx.C_SIZE)
   }
@@ -989,8 +986,12 @@ pub fn run_claimed(t: Int, units: Int) {
   pool.unlock(c + ctx.C_PARK)
   // that thread's spare; a spare is never freed (one per thread, like a
   // root context), so the leak check does not see it
-  if ld(te, 8 * TLS_CTX_SPARE) == 0 {
-    tsan(RT_TSAN_RELEASE, c)
+  // Under --race no spare is kept: handing a context from one run to the
+  // next needs a happens-before edge for the detector, and an edge from
+  // the finished task to the next one hides races between the user's two
+  // tasks (TestRaceSyncTable's mutex case, 2026-10-31); a freed context
+  // goes back through the allocator instead.
+  if ld(te, 8 * TLS_CTX_SPARE) == 0 && ld(ctx.svc(), ctx.SV_TSAN) == 0 {
     st(te, 8 * TLS_CTX_SPARE, c)
   } else {
     rt.heap_release(c - 8)
