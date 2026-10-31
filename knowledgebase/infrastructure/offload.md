@@ -41,6 +41,11 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   `OFF_MAX_MIN` minutes holding the lock (default 180, exit 124, with a
   message; tier.sh's job 300), so a hung run cannot hold the one slot
   while the queue grows (lead, 2026-10-30: 9 jobs queued behind one run).
+  Before each arm64 job, when /work has under 15 GB free, offload.sh
+  deletes xo cache files idle over an hour (gocache, backend, testcc,
+  testbin, build under ~xo/.cache/xo) and prints the free space after
+  (lead, 2026-10-30: the cache regrew to 55 to 61 GB and filled /work
+  three times that day).
   The arm64 container runs 2 jobs at once (OFF_SLOTS=2 in offload.env;
   owner, 2026-10-30): slot 1 is `/work/offload.lock`, slot 2
   `/work/offload.lock.2`. A job that measures time or memory sets
