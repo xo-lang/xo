@@ -5,6 +5,15 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (darwin builds): a program built in a directory whose path has a
+  comma links again on the LLVM backend: the build directory's linker
+  options (-oso_prefix, -object_path_lto, the race runtime's rpath) go
+  through -Xlinker, since `-Wl,` split the path at the comma and ld read
+  its tail as an input file. `use c` objects compiled with -g (decision
+  0446) record their source directory relative to the working directory
+  under --trimpath and are named by their file name, so a binary carries
+  no build path and two builds are identical again on both native
+  backends.
 - Compiler: a std function's parameter defaults are checked under its own
   file when the std records path joins its tree late; they were recorded
   under the caller's file, so `http.new_request("GET", url)` (the

@@ -100,10 +100,15 @@ fn c_inputs(os: Os, c: check.Checker, dir: Str) -> CInputs {
 /// are the compile's own (the target's; -flto when the link runs LTO,
 /// so the object is bitcode and takes part in it). An object is named by
 /// its source bytes and flags under dir/cffi and reused while they are
-/// the same. The second result is the first failure's output, "" when
-/// every compile succeeded.
-fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str) -> (List[Str], Str) {
+/// the same. With trim (--trimpath) the objects record the source's
+/// directory relative to the working directory and "." as the compile
+/// directory, as the Xo code's DWARF does, so a binary carries no path of
+/// the machine that built it. The second result is the first failure's
+/// output, "" when every compile succeeded.
+fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim: Bool) -> (List[Str], Str) {
   var out: List[Str] = []
+  // xo:allow XO0903 the working directory from $PWD when getcwd fails
+  let cwd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
   for s in srcs {
     if !s.ends_with(".c") {
       out.push(s)
@@ -118,8 +123,18 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str) -> (
       Ok(_) => {}
       Err(e) => return ([], "${e}\n")
     }
-    let args = cflags + ["-g", "-O2", "-c", s]
-    let key = crypto.sha256("c_objects v1\n${args.join("\x00")}\n".bytes() + data).to_hex()
+    var args = cflags + ["-g", "-O2", "-c", s]
+    // the key names the source by its file name under trim: the
+    // generated sources (xo_buildinfo.c, the adapters) are written in
+    // each build's own directory, which the object does not record
+    var kargs = args
+    if trim {
+      let sd = dir_name(if is_abs_path(s) { s } else { "${cwd}/${s}" })
+      let rel = rel_or_dot(cwd, sd)
+      args = args + ["-fdebug-compilation-dir=.", "-ffile-prefix-map=${sd}=${rel}"]
+      kargs = cflags + ["-g", "-O2", "-c", "${rel}/${base_name(s)}", "-fdebug-compilation-dir=."]
+    }
+    let key = crypto.sha256("c_objects v2\n${kargs.join("\x00")}\n".bytes() + data).to_hex()
     let obj = "${cdir}/${base_name(s).trim_suffix(".c")}-${key[0..16]}.o"
     // xo:allow XO0903 an object that is not there is compiled
     if !(os.fs.exists(obj).ok() ?? false) {

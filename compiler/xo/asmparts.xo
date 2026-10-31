@@ -447,7 +447,13 @@ fn incr_texts(parts: List[Str], inc: IncrOut, march: Str) -> List[Str] {
 /// libraries, library directories, linker flags, and inputs.
 fn asm_cflags(flags: List[Str]) -> List[Str] {
   var cflags: List[Str] = []
+  var skip = false
   for f in flags {
+    // -Xlinker and its argument (wl_path) are the link's
+    if skip || f == "-Xlinker" {
+      skip = !skip && f == "-Xlinker"
+      continue
+    }
     if !(f.starts_with("-l") || f.starts_with("-L") || f.starts_with("-Wl,") || f.ends_with(".a") || f.ends_with(".o")) {
       cflags.push(f)
     }

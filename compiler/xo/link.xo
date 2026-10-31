@@ -130,16 +130,23 @@ fn embed_dsym(os: Os, bin: Str) -> Str {
   }
 }
 
+/// The linker option opt with the path p as its argument, passed through
+/// cc by -Xlinker: `-Wl,` splits its text at commas, so a path with a
+/// comma (a Go test's directory names its subtest) reached ld as two
+/// arguments, and the second as an input file it could not open
+/// (gotchas/wl-path-comma-splits.md).
+fn wl_path(opt: Str, p: Str) -> List[Str] { ["-Xlinker", opt, "-Xlinker", p] }
+
 /// The link flags that keep the object of an LTO link in the build
 /// directory dir (ld64's -object_path_lto: a file for full LTO, a
 /// directory for thin), so dsymutil finds its DWARF after the link; none
 /// without LTO, whose objects are the build directory's already.
 fn lto_object_flags(os: Os, dir: Str, lto: Str) -> List[Str] {
   match lto {
-    "full" => ["-Wl,-object_path_lto,${dir}/lto.o"]
+    "full" => wl_path("-object_path_lto", "${dir}/lto.o")
     "thin" => {
       os.fs.create_dir_all("${dir}/lto").ignore_err("the link reports it")
-      ["-Wl,-object_path_lto,${dir}/lto"]
+      wl_path("-object_path_lto", "${dir}/lto")
     }
     _ => []
   }

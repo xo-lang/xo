@@ -233,7 +233,7 @@ fn macho_link(os: Os, ctx: Ctx, tgoos: Str, flags: List[Str], srcs: List[Str], o
 /// exported as clang's own link does.
 fn race_link_flags(tgoos: Str, race_rt: Str) -> List[Str] {
   if tgoos == "darwin" {
-    return ["-fno-sanitize-link-runtime", race_rt, "-Wl,-rpath,@executable_path", "-Wl,-rpath,${dir_name(race_rt)}"]
+    return ["-fno-sanitize-link-runtime", race_rt, "-Wl,-rpath,@executable_path"] + wl_path("-rpath", dir_name(race_rt))
   }
   ["-fno-sanitize-link-runtime", "-Wl,--whole-archive", race_rt, "-Wl,--no-whole-archive", "-rdynamic", "-lpthread", "-ldl", "-lm", "-lrt"]
 }
