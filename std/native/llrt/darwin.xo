@@ -38,7 +38,7 @@ pub const CLOCK_MONOTONIC: Int = 6
 pub const CLOCK_UPTIME_RAW: Int = 8
 
 /// The calling thread's errno.
-fn errno() -> Int { rt.mem_load(sys_darwin.__error(), 0, 4) }
+pub fn errno() -> Int { rt.mem_load(sys_darwin.__error(), 0, 4) }
 
 /// r, or the negative errno when r is -1 (a failed call).
 fn ret(r: Int) -> Int {
@@ -394,8 +394,12 @@ fn keep(b: Bytes, r: Int) -> Int {
   r
 }
 
-/// libSystem's strerror text of errno e (macOS 26, ELAST 107; the C
-/// runtime's messages on macOS), "Unknown error: N" past the table.
+// Origin: go syscall zerrors_darwin_arm64.go (errors: the errno texts)
+/// The C runtime's strerror text of errno e on macOS: Go's table
+/// (syscall's errors, 1 to 106), first letter capitalized as libSystem's
+/// strerror spells it (decision 0302, owner 2026-10-30); 0 and 107
+/// (ENOTCAPABLE, past Go's table; macOS 26's ELAST is 107) as libSystem
+/// prints them, "Unknown error: N" past the table.
 pub fn strerror(e: Int) -> Str {
   match e {
     0 => "Undefined error: 0"

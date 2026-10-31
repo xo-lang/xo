@@ -182,8 +182,6 @@ fn fcntl(fd: Int, cmd: Int, va_arg: Int) -> Int32
 /// EAI code.
 fn getaddrinfo(host: Int, serv: Int, hints: Int, res: Int) -> Int32
 fn freeaddrinfo(ai: Int)
-/// gai_strerror(3): a zero terminated text.
-fn gai_strerror(code: Int) -> Int
 /// getpid(2) (std/native/llrt/prof.xo).
 fn getpid() -> Int32
 /// getifaddrs(3): the list of struct ifaddrs into the pointer at out, 0 or

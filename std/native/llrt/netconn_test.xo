@@ -1,0 +1,33 @@
+// Tests of netconn.xo's resolver error texts (decision 0302, owner
+// 2026-10-30): `xo test --std-module=native/llrt/netconn`, run by
+// internal/stdtest.
+
+use native/llrt/dns
+
+test "a resolver error's text is Go's where Go has one" {
+  expect(gai_text(dns.EAI_NONAME)) == "no such host"
+  expect(gai_text(dns.EAI_NODATA)) == "no such host"
+  expect(gai_text(dns.EAI_AGAIN)) == "server misbehaving"
+  expect(gai_text(dns.EAI_FAIL)) == "server misbehaving"
+  expect(gai_text(dns.EAI_SERVICE)) == "unknown port"
+  expect(gai_text(dns.EAI_SYSTEM)) == "system error"
+  expect(gai_text(-42)) == "resolver error 42"
+}
+
+test "EAI_SYSTEM with an errno names the errno" {
+  // ECONNREFUSED (61 on macOS, 111 on Linux): err_text's Go text
+  expect(gai_text(dns.EAI_ERRNO - econnrefused())) == "connection refused"
+}
+
+test "libSystem's EAI codes map to dns.xo's" {
+  expect(darwin_eai(2, 0)) == dns.EAI_AGAIN
+  expect(darwin_eai(4, 0)) == dns.EAI_FAIL
+  expect(darwin_eai(7, 0)) == dns.EAI_NODATA
+  expect(darwin_eai(8, 0)) == dns.EAI_NONAME
+  expect(darwin_eai(9, 0)) == dns.EAI_SERVICE
+  expect(darwin_eai(11, 0)) == dns.EAI_SYSTEM
+  expect(darwin_eai(11, 24)) == dns.EAI_ERRNO - 24
+  // macOS's EAI_AGAIN is 2, and minus 2 is EAI_NONAME's number: before
+  // the mapping a temporary failure read as `no such host`
+  expect(darwin_eai(2, 0) == dns.EAI_NONAME) == false
+}

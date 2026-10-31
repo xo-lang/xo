@@ -90,21 +90,33 @@ pub fn wsa_eai(g: Int) -> Int {
   }
 }
 
-/// glibc's gai_strerror text of code.
+/// The other EAI codes (glibc's numbers; netconn.xo's resolve_libc maps
+/// macOS's to them) and the base of a code carrying an errno: EAI_SYSTEM
+/// from the system's getaddrinfo is EAI_ERRNO - errno, so gai_text can
+/// name the error as Go does.
+pub const EAI_BADFLAGS: Int = -1
+pub const EAI_SOCKTYPE: Int = -7
+pub const EAI_ADDRFAMILY: Int = -9
+pub const EAI_MEMORY: Int = -10
+pub const EAI_ERRNO: Int = -100000
+
+/// The text of EAI code code in a NetErr, in Xo's own words (decision
+/// 0302, owner 2026-10-30), Go's where Go has them: a name with no
+/// address or none at all is `no such host`, a failed or unanswering
+/// server `server misbehaving` (net's errNoSuchHost, errServerMisbehaving),
+/// EAI_SYSTEM the errno's text (netconn.xo gai_text).
 pub fn gai_text(code: Int) -> Str {
   match code {
-    -1 => "Bad value for ai_flags"
-    -2 => "Name or service not known"
-    -3 => "Temporary failure in name resolution"
-    -4 => "Non-recoverable failure in name resolution"
-    -5 => "No address associated with hostname"
-    -6 => "ai_family not supported"
-    -7 => "ai_socktype not supported"
-    -8 => "Servname not supported for ai_socktype"
-    -9 => "Address family for hostname not supported"
-    -10 => "Memory allocation failure"
-    -11 => "System error"
-    _ => "Unknown error"
+    -1 => "bad lookup flags"
+    -2 | -5 => "no such host"
+    -3 | -4 => "server misbehaving"
+    -6 => "address family not supported"
+    -7 => "socket type not supported"
+    -8 => "unknown port"
+    -9 => "no address in the requested family"
+    -10 => "out of memory"
+    -11 => "system error"
+    _ => "resolver error ${0 - code}"
   }
 }
 

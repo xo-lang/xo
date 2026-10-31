@@ -5,6 +5,11 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Std (decision 0302, owner 2026-10-30): a failed name resolution on the
+  native backends reports Xo's own texts, Go's where Go has them (`no
+  such host`, `server misbehaving`, the errno's text for EAI_SYSTEM)
+  instead of glibc's or libSystem's gai_strerror texts; on macOS a
+  temporary resolver failure no longer reads as `no such host`.
 - Diagnostics: XO0520's note names what counts as a write-back:
   `m.put(k, v)`, `xs[i] = v`, the whole value passed to a call, or
   `update` in place; returning the changed copy does not count, since the

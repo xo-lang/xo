@@ -361,9 +361,9 @@ fn resolve(host: Str, port: Str, family: Int, passive: Bool, out: Int, cap: Int)
 /// allows it: mDNSResponder, .local names, the system's DNS
 /// configuration; ws2_32's on Windows, UNTESTED on windows), each
 /// result's struct sockaddr copied into an entry (struct addrinfo has the
-/// same offsets on both). An error on macOS is minus libSystem's
-/// (positive) EAI code, which gai_text takes back; on Windows dns.xo's EAI
-/// code for the Winsock error (dns.wsa_eai), so the texts are glibc's.
+/// same offsets on both). An error is dns.xo's EAI code (glibc's numbers):
+/// libSystem's code mapped (darwin_eai, EAI_SYSTEM with its errno), on
+/// Windows the Winsock error's (dns.wsa_eai).
 fn resolve_libc(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Bool, out: Int, cap: Int) -> Int {
   // the host and the port zero terminated, the hints (struct addrinfo,
   // 48 bytes: flags, family, socktype at 0, 4, 8), and the result's word
@@ -388,8 +388,10 @@ fn resolve_libc(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Bool, 
   let host = if hn == 0 { 0 } else { ha }
   let g = if sock.windows() { Int(sys_windows.getaddrinfo(host, pa, ia, resp)) } else { Int(sys_darwin.getaddrinfo(host, pa, ia, resp)) }
   if g != 0 {
+    // errno first: nothing may run between the call and __error()
+    let e = if sock.windows() { 0 } else { darwin.errno() }
     let _k = sock.keep(hb, sock.keep(pb, sock.keep(hints, 0)))
-    return if sock.windows() { dns.wsa_eai(g) } else { 0 - g }
+    return if sock.windows() { dns.wsa_eai(g) } else { darwin_eai(g, e) }
   }
   let first = rt.mem_load(resp, 0, 8)
   var a = first
@@ -412,18 +414,35 @@ fn resolve_libc(hp: Int, hn: Int, pp: Int, pn: Int, family: Int, passive: Bool, 
   }
   let _k = sock.keep(hb, sock.keep(pb, sock.keep(hints, 0)))
   if n == 0 {
-    // EAI_NONAME: libSystem's, dns.xo's on Windows
-    return if sock.windows() { dns.EAI_NONAME } else { -8 }
+    return dns.EAI_NONAME
   }
   n
 }
 
-/// The text of resolve's error code (glibc's gai_strerror texts;
-/// libSystem's own on macOS).
+/// dns.xo's EAI code for libSystem's (netdb.h's numbers) g, e its errno
+/// for EAI_SYSTEM (11).
+fn darwin_eai(g: Int, e: Int) -> Int {
+  match g {
+    1 => dns.EAI_ADDRFAMILY
+    2 => dns.EAI_AGAIN
+    3 => dns.EAI_BADFLAGS
+    4 => dns.EAI_FAIL
+    5 => dns.EAI_FAMILY
+    6 => dns.EAI_MEMORY
+    7 => dns.EAI_NODATA
+    8 => dns.EAI_NONAME
+    9 => dns.EAI_SERVICE
+    10 => dns.EAI_SOCKTYPE
+    11 => if e > 0 { dns.EAI_ERRNO - e } else { dns.EAI_SYSTEM }
+    _ => 0 - 1000 - g
+  }
+}
+
+/// The text of resolve's error code: dns.gai_text's, or the errno's
+/// (err_text) of an EAI_SYSTEM that carried one, as Go's DNSError.
 pub fn gai_text(code: Int) -> Str {
-  if os() == 2 {
-    let t = sys_darwin.gai_strerror(if code < 0 { 0 - code } else { code })
-    return raw.str_at(t, raw.cstr_len(t))
+  if code <= dns.EAI_ERRNO {
+    return err_text(dns.EAI_ERRNO - code)
   }
   dns.gai_text(code)
 }
@@ -873,7 +892,7 @@ pub fn lookup_host(lists: Str, host: Str) -> List[Str] {
     // EAI_NODATA too, as Go's resolvers: a name with no address (a
     // Docker resolver answers .invalid names so, the linux/arm64 offload
     // host, 2026-10-30) is `no such host`, not its gai text
-    let noname = n == dns.EAI_NONAME || n == dns.EAI_NODATA || (os() == 2 && n == -8) || (os() == 3 && n == -11001)
+    let noname = n == dns.EAI_NONAME || n == dns.EAI_NODATA
     fail(c, 4, if noname { "lookup ${host}: no such host" } else { "lookup ${host}: ${gai_text(n)}" })
     return []
   }

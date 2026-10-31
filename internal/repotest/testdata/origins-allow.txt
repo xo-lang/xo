@@ -39,6 +39,10 @@ std/native/llrt/dns.xo	/// glibc reloads it), and the word is one aligned store 
 std/native/llrt/dns.xo	// TCP too (glibc's res_send keeps the stream)
 std/native/llrt/dns.xo	// the failure to report (glibc's res_search): that of the name as
 std/native/llrt/dns.xo	// the last source, files, did not find it (glibc's h_errno is
+std/native/llrt/dns.xo	// glibc's getaddrinfo error codes
+std/native/llrt/dns.xo	/// The EAI code (glibc's, above) for a Winsock error of Windows'
+std/native/llrt/dns.xo	/// The other EAI codes (glibc's numbers; netconn.xo's resolve_libc maps
+std/native/llrt/netconn.xo	/// same offsets on both). An error is dns.xo's EAI code (glibc's numbers):
 std/native/llrt/flate.xo	// the trailer: gzip's CRC-32 and size, zlib's Adler-32
 std/native/llrt/libcio.xo	/// getdents64's buffer (glibc's struct dirent on 64 bit Linux is the
 std/native/llrt/netpolicy.xo	/// one; glibc's truncates it to 16 bits and binds another port
@@ -57,14 +61,3 @@ compiler/macho/glibc.xo	// stage 3): the default version of every symbol of glib
 compiler/macho/glibc.xo	// scripts/elf-glibc-versions.py; do not edit.
 compiler/macho/glibc_amd64.xo	// stage 3): the default version of every symbol of glibc 2.31's
 compiler/macho/glibc_amd64.xo	// scripts/elf-glibc-versions.py --amd64; do not edit.
-
-# Owner's call pending (decision 0302, Consequences: "glibc's texts ...
-# need a call: an item each, or an allowlist line saying why none is
-# needed"): glibc's gai_strerror texts, copied as data. Listed so -short
-# passes until the owner decides; they move to a notices item or to the
-# references.
-std/native/llrt/dns.xo	// glibc's getaddrinfo error codes
-std/native/llrt/dns.xo	/// The EAI code (glibc's, above) for a Winsock error of Windows'
-std/native/llrt/dns.xo	/// glibc's gai_strerror text of code.
-std/native/llrt/netconn.xo	/// code for the Winsock error (dns.wsa_eai), so the texts are glibc's.
-std/native/llrt/netconn.xo	/// The text of resolve's error code (glibc's gai_strerror texts;

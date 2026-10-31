@@ -1,5 +1,30 @@
 # prelude changes
 
+## 2026-10-30: behavior: resolver error texts in Xo's words, Go's where Go has them
+
+- Kind: behavior
+- Commit: this commit
+- Found by: decision 0302's origin audit (glibc's gai_strerror texts were
+  copied as data); owner's call 2026-10-30
+- Go reference: net's errNoSuchHost and errServerMisbehaving, cgo_unix.go's
+  EAI_SYSTEM case (the errno)
+- Test: std/native/llrt/netconn_test.xo (`xo test
+  --std-module=native/llrt/netconn`, arm64 and LLVM); goldens dns_records,
+  net_lookup_dial_timeout (arm64, LLVM, Go parity)
+- Timing: none (an error path's text)
+
+A failed resolution on the native backends (os.net.dial, listen,
+lookup_host and UDP's) no longer reports glibc's or libSystem's
+gai_strerror text: a name with no address is `no such host`, a failed or
+unanswering server `server misbehaving` (was `Temporary failure in name
+resolution` and `Non-recoverable failure in name resolution`),
+EAI_SYSTEM the errno's text, and the rare codes short phrases (`unknown
+port` for EAI_SERVICE, was `Servname not supported for ai_socktype`).
+macOS's codes are now mapped before use: its EAI_AGAIN (2) had read as
+`no such host`, since minus 2 is EAI_NONAME's number on Linux.
+darwin's strerror texts now come from Go's table, capitalized; every text
+is unchanged.
+
 ## 2026-10-30: feature: UInt64.from_bits and to_bits
 
 ## 2026-10-30: feature: List.filter_map

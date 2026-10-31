@@ -94,8 +94,22 @@ names).
   - The symbol version tables (compiler/macho glibc.xo, glibc_amd64.xo)
     are the interface names a binary must request to link against glibc,
     not copied code: they move to the reviewed references.
-  - gai_strerror's texts (dns.xo, netconn.xo; Go has no table, cgo calls
-    the C library's) and darwin.strerror's texts wait for the owner.
+  - gai_strerror's texts (owner, 2026-10-30): Xo's own words, Go's where
+    Go has them. EAI_NONAME and EAI_NODATA are `no such host`, EAI_AGAIN
+    and EAI_FAIL `server misbehaving` (net's errNoSuchHost and
+    errServerMisbehaving), EAI_SYSTEM the errno's text (as Go's DNSError
+    wraps the errno), the rare codes short phrases of Xo's (dns.xo
+    gai_text). macOS's codes are mapped to dns.xo's numbers first
+    (netconn.xo darwin_eai) instead of passing libSystem's gai_strerror
+    through. NetErr has no temporary flag, so EAI_AGAIN's Temporary (Go's
+    DNSError.IsTemporary) is not carried; that would be a NetErr change.
+  - darwin.strerror (owner, 2026-10-30): Go's zerrors_darwin_arm64.go
+    table with the first letter capitalized, as on Linux (`Origin: go`
+    marker). Errnos 1 to 106 match the old texts exactly; 0 and 107
+    (ENOTCAPABLE, newer than Go's table) keep libSystem's words, so no
+    output changes.
+  - The 5 pending allowlist lines are gone: the EAI number mentions moved
+    to the reviewed references.
 
 ## Alternatives
 
@@ -139,8 +153,7 @@ names).
   symbol version tables generated from glibc 2.31 (compiler/macho
   glibc.xo, glibc_amd64.xo). Each moves to a notices item or to the
   references when the owner decides. After the owner's calls in Consequences
-  (2026-10-30), 5 remain (the gai_strerror texts in dns.xo and
-  netconn.xo).
+  (2026-10-30) none remain.
 - Decision 4 (2026-10-30): scripts/release-licenses.sh STAGE, run by
   release.sh's layout on each staged tree, reads THIRD_PARTY_NOTICES's
   `[binary]` items; each must name a `lib/xo/...LICENSE` path, and when
