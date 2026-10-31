@@ -131,6 +131,8 @@ func main() {
 	mode := flag.String("mode", "h1", "h1 (plain keep-alive) or h2 (TLS, one transport per connection)")
 	pid := flag.Int("pid", 0, "server process id")
 	settle := flag.Duration("settle", 5*time.Second, "wait after the last response before measuring")
+	maxmaps := flag.Int("maxmaps", 0, "fail when the server has more than this many mappings (lines of /proc/PID/maps); 0 checks nothing")
+	again := flag.Bool("again", false, "h1: after the idle wait, send a second request on every held connection and fail if any fails")
 	flag.Parse()
 	if *gen != "" {
 		gencert(*gen)
@@ -202,5 +204,39 @@ func main() {
 	time.Sleep(*settle)
 	fmt.Printf("mode=%s n=%d ok=%d failed=%d\n", *mode, *n, ok, failed)
 	fmt.Printf("idle:   %s  %s\n        %s\n", status(*pid), smaps(*pid), maps(*pid))
-	_ = conns
+	bad := false
+	if failed != 0 {
+		fmt.Printf("FAIL: %d of %d connections failed\n", failed, *n)
+		bad = true
+	}
+	if *maxmaps > 0 {
+		b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/maps", *pid))
+		n := strings.Count(string(b), "\n")
+		fmt.Printf("server mappings: %d (limit %d)\n", n, *maxmaps)
+		if n > *maxmaps || n == 0 {
+			fmt.Println("FAIL: mappings over the limit (or the server is gone)")
+			bad = true
+		}
+	}
+	if *again {
+		nbad := 0
+		for _, c := range conns {
+			c.SetDeadline(time.Now().Add(10 * time.Second))
+			if _, err := c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n")); err != nil {
+				nbad++
+				continue
+			}
+			l, err := bufio.NewReader(c).ReadString('\n')
+			if err != nil || !strings.Contains(l, " 200 ") {
+				nbad++
+			}
+		}
+		fmt.Printf("second request: %d of %d held connections failed\n", nbad, len(conns))
+		if nbad != 0 {
+			bad = true
+		}
+	}
+	if bad {
+		os.Exit(1)
+	}
 }
