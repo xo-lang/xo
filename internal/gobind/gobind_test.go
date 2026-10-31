@@ -1496,6 +1496,20 @@ func TestSiteForms(t *testing.T) {
 	if !strings.Contains(strings.Join(imps, " "), "xgb_net_url=net/url") {
 		t.Errorf("no net/url import among the records: %v", imps)
 	}
+	// an adapter the program's package cannot paste keeps its call and
+	// gets a site-error record: io's implements constructors (io.reader,
+	// io.writer: xoNew_Go_io_Reader is unexported in rt; TestUseGoImplements
+	// failed to build with "undefined: rt.xoNew_Go_io_Reader", 2026-10-30)
+	_, b, _ = bindDecl(t, "io")
+	text = string(b.Adapter)
+	if e := grep(text, "//xo:site-error reader: names rt's unexported xoNew_"); e == "" {
+		t.Errorf("io.reader has no site-error record naming xoNew_:\n%s", grep(text, "//xo:site"))
+	}
+	for _, l := range strings.Split(text, "\n") {
+		if strings.HasPrefix(l, "//xo:site ") && strings.Contains(l, "xoNew_") {
+			t.Errorf("a site record names an unexported constructor: %s", l)
+		}
+	}
 	// a value mode adapter (crypto/sha256's sum256, replayed by value): the
 	// replay closure and the wrapper's end both carry the inner function's
 	// statements, since the inner (goCall_X) is unexported in rt and the

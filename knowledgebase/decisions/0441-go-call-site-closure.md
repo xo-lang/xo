@@ -68,6 +68,14 @@ the Xo line without a caller skip.
 - The zap workflow drops `zap.add_caller_skip(1)` and checks the exact
   line; gotcha go-adapter-frame-caller-skip.md and spec core 4.4's
   adapter frame bullet are superseded by this decision.
+  Version 34 (the same day): no record for an adapter that names rt's
+  unexported helpers (an implements constructor's xoNew_X: io.reader,
+  http.handler) or a generic type's method (its receiver names the
+  type's parameters), since the program's package cannot name either;
+  33's records made the Go backend write `rt.xoNew_Go_io_Reader` and
+  `rt.T`, which did not build (TestUseGoImplements,
+  TestUseGoGenericTypes, 2026-10-30; gotcha
+  go-site-form-names-rt-internals.md). Those calls keep the adapter.
 
 Measured on the linux/arm64 offload host, the Go backend
 (bench/results/go-site-forms-2026-10-30.md): the edit loop's rebuild

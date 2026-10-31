@@ -84,7 +84,11 @@ import (
 // filled Bytes out (decision 0445), no longer skipped.
 // 33 (2026-10-30): one //xo:site record per non generic adapter, the
 // call site form of decision 0441.
-const Version = 33
+// 34 (2026-10-30): no site record for an adapter naming rt's unexported
+// names (xoNew_X) or a generic type's method (its type parameters): the
+// records of 33 made the Go backend write rt.xoNew_Go_io_Reader and
+// rt.T, which do not build.
+const Version = 34
 
 // Binding is one bound Go package.
 type Binding struct {

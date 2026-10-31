@@ -1690,6 +1690,19 @@ func (g *gen) siteForm(adapter string) (lit string, imps []string, err error) {
 		return "", nil, fmt.Errorf("not one plain function")
 	}
 	w := decls[0]
+	if w.Recv != nil {
+		// a generic type's method: its receiver names the type's
+		// parameters (Go_X[T]), which are rt's and not the program
+		// package's (TestUseGoGenericTypes: "undefined: rt.T", 2026-10-30)
+		rt := w.Recv.List[0].Type
+		if st, ok := rt.(*ast.StarExpr); ok {
+			rt = st.X
+		}
+		switch rt.(type) {
+		case *ast.IndexExpr, *ast.IndexListExpr:
+			return "", nil, fmt.Errorf("a generic type's method")
+		}
+	}
 	body := append([]ast.Stmt(nil), w.Body.List...)
 	if len(decls) == 2 {
 		// value mode: the wrapper ends with the inner call, and its replay
@@ -1787,6 +1800,11 @@ func (g *gen) siteForm(adapter string) (lit string, imps []string, err error) {
 		aliasOf[a] = path
 	}
 	used := map[string]bool{}
+	// an unexported name of rt (an implements constructor xoNew_X, a
+	// helper) cannot be named from the program's package: no site form
+	// then, the adapter is called (TestUseGoImplements: "undefined:
+	// rt.xoNew_Go_io_Reader", 2026-10-30; goCall_X is flattened above)
+	unexported := ""
 	var walk func(n ast.Node) bool
 	walk = func(n ast.Node) bool {
 		switch x := n.(type) {
@@ -1808,12 +1826,18 @@ func (g *gen) siteForm(adapter string) (lit string, imps []string, err error) {
 				used[path] = true
 				x.Name = siteAlias(path)
 			default:
+				if !ast.IsExported(x.Name) && unexported == "" {
+					unexported = x.Name
+				}
 				x.Name = "%rt." + x.Name
 			}
 		}
 		return true
 	}
 	ast.Inspect(fl, walk)
+	if unexported != "" {
+		return "", nil, fmt.Errorf("names rt's unexported %s", unexported)
+	}
 	var b bytes.Buffer
 	if err := printer.Fprint(&b, fset, fl); err != nil {
 		return "", nil, err

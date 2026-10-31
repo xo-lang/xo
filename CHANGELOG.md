@@ -12,6 +12,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and module, from cause labels the emitter writes, which change no
   output byte; `--diff` compares two saved runs. xo 0.35's 71.6 MB of
   code: 26% body, 26% landing pads, 22% fault exits, 20% rc.
+- FIX (`use go`, Go backend): a binding's call site forms (decision
+  0441) left out for an adapter the program's package cannot paste: an
+  implements constructor (`io.reader`, `http.handler`: rt's unexported
+  `xoNew_` helpers) and a generic type's method (its type parameters);
+  the generated Go named `rt.xoNew_Go_io_Reader` and `rt.T` and did not
+  build (TestUseGoImplements, TestUseGoGenericTypes). Binding version
+  34: older bindings are rebound.
 - `--phase-times` after a run cache miss says why: `cache run miss:` and
   the first recorded input that no longer holds (a changed file,
   listing, tree, probe or variable; no entry; the binary gone), then the
