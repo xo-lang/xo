@@ -257,6 +257,7 @@ fn (var g: G) emit() {
   }
   g.cfi_start(b, pads)
   if !g.shrink {
+    g.cause_mark(b, C_FRAME)
     g.prologue(b)
     g.cfi_frame(b)
   }
@@ -305,6 +306,7 @@ fn (var g: G) emit() {
     g.cur = mb
     if g.shrink && g.fedge[mb] == 1 {
       // a way into the blocks that need the frame (shrink.xo)
+      g.cause_mark(b, C_FRAME)
       g.prologue(b)
     }
     if g.shrink && mb == g.pro {
@@ -346,6 +348,7 @@ fn (var g: G) emit() {
         g.dl_last = inst.line
         g.dl_last_inl = inst.inl
       }
+      g.cause_mark(b, if inst.kind == K_RET { C_FRAME } else { inst.cause })
       g.emit_inst(b, inst, next)
       g.pos = -1
       if k == 0 && head {
@@ -549,7 +552,7 @@ fn (g: G) local_empty_l(lines: List[Str]) -> Str {
   }
   // .long words: compiler/macho takes no .quad in code (IMMORTAL is
   // 1 << 63, its high half 2^31)
-  out.join("\n") + "\t.p2align 3\n${lab}:\n\t.long 0\n\t.long 2147483648\n\t.long 0\n\t.long 0\n\t.long 0\n\t.long 0\n"
+  out.join("\n") + g.empty_list_cause() + "\t.p2align 3\n${lab}:\n\t.long 0\n\t.long 2147483648\n\t.long 0\n\t.long 0\n\t.long 0\n\t.long 0\n"
 }
 
 /// The number of instructions past which a function's tbz and tbnz may
@@ -1427,10 +1430,11 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     let l = g.local("${g.lbl_prefix()}_pp${g.nstub}")
     b.push("\tcbnz w16, ${l}\n${l}_r:\n")
     let stub = g.sym("xo_preempt_stub")
+    let dc = g.cause_label(C_PREEMPT)
     if g.fr.leaf || (g.shrink && g.fl[g.cur]) {
-      g.stubs.push("${l}:\n\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n\tbl ${stub}\n\tldp x29, x30, [sp], #16\n\tb ${l}_r\n")
+      g.stubs.push("${dc}${l}:\n\tstp x29, x30, [sp, #-16]!\n\tmov x29, sp\n\tbl ${stub}\n\tldp x29, x30, [sp], #16\n\tb ${l}_r\n")
     } else {
-      g.stubs.push("${l}:\n\tbl ${stub}\n\tb ${l}_r\n")
+      g.stubs.push("${dc}${l}:\n\tbl ${stub}\n\tb ${l}_r\n")
     }
   }
   if inst.has_fault {
@@ -1508,7 +1512,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     } else {
       sb.push("\tbl ${inst.ffn}\n${after}\tbrk #1\n")
     }
-    g.stubs.push(sb.join(""))
+    g.stubs.push(g.cause_label(C_FAULT_STUB) + sb.join(""))
   }
   for st in stores {
     b.push(st)
@@ -1799,7 +1803,7 @@ fn (var g: G) pad_entry(pad: Int) -> Str {
   }
   let l = g.local("${g.lbl_prefix()}_pe${pad}")
   let set = if g.fr.rec == 0 { "\tmov sp, x29\n" } else { "\tsub sp, x29, #${g.fr.rec}\n" }
-  g.stubs.push("${l}:\n${set}\tb ${g.label(g.fwd(pad))}\n")
+  g.stubs.push("${g.cause_label(C_LANDING)}${l}:\n${set}\tb ${g.label(g.fwd(pad))}\n")
   g.pad_entries[pad] = l
   l
 }
@@ -1949,4 +1953,35 @@ fn (g: G) fwd(b0: Int) -> Int {
     b = ins[n - 1].targets[0]
   }
   b
+}
+
+/// decision 0443: a label line that starts cause c's bytes
+/// (`_x<c>_dc<n>`, a row label the text passes go past: lsr.xo
+/// is_row_label), counted by compiler/macho assemble_causes. The x86
+/// text has none yet.
+fn (var g: G) cause_label(c: Int) -> Str {
+  if g.x86 {
+    return ""
+  }
+  let l = g.local("${g.lbl_prefix()}_x${c}_dc${g.dc_n}")
+  g.dc_n += 1
+  "${l}:\n"
+}
+
+/// Writes a cause label when the text changes cause (decision 0443).
+fn (var g: G) cause_mark(var b: List[Str], c: Int) {
+  if c == g.dc_cur || g.x86 {
+    return
+  }
+  b.push(g.cause_label(c))
+  g.dc_cur = c
+}
+
+/// The cause label of a function's local empty list (local_empty_l and
+/// its port): data, decision 0443.
+fn (g: G) empty_list_cause() -> Str {
+  if g.x86 {
+    return ""
+  }
+  "${g.local("${g.lbl_prefix()}_el_x${C_DATA}_dc0")}:\n"
 }

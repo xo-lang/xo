@@ -683,5 +683,5 @@ fn (g: G) local_empty_ops(xs: List[Line]) -> Str {
   if !hit {
     return lines.join("\n")
   }
-  out.join("\n") + "\t.p2align 3\n${lab}:\n\t.long 0\n\t.long 2147483648\n\t.long 0\n\t.long 0\n\t.long 0\n\t.long 0\n"
+  out.join("\n") + g.empty_list_cause() + "\t.p2align 3\n${lab}:\n\t.long 0\n\t.long 2147483648\n\t.long 0\n\t.long 0\n\t.long 0\n\t.long 0\n"
 }

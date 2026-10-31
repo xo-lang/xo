@@ -1,0 +1,30 @@
+// xo dev size --by-cause (decision 0443): rows, names and reports.
+
+test "a mangled function's name and module" {
+  expect(demangle("_xo_f_main")) == "main"
+  expect(demangle("xo_f_dwline_2eparse__vars")) == "dwline.parse_vars"
+  expect(demangle("_xo_hKsB4YXRIq0")) == "_xo_hKsB4YXRIq0"
+  expect(module_of("compiler/arm64.G.emit")) == "compiler/arm64"
+  expect(module_of("dwline.parse_vars")) == "dwline"
+  expect(module_of("main")) == "(main)"
+}
+
+test "rows sum per function and cause" {
+  let r = parse_rows("_xo_f_main\t0\t224\n_xo_f_main\t2\t20\n_xo_f_f\t2\t8\nbad line\n")
+  expect(r.total) == 252
+  expect(by_cause(r).get(2) ?? 0) == 28
+  expect((r.per_fn.get("main") ?? {}).get(0) ?? 0) == 224
+}
+
+test "a diff shows the cause and the function that moved" {
+  let a = parse_rows("_xo_f_m\t0\t100\n_xo_f_m\t2\t40\n")
+  let z = parse_rows("_xo_f_m\t0\t100\n_xo_f_m\t2\t8\n")
+  let d = report_diff(a, z, 5)
+  expect(d.contains("140 -> 108 (-32)")) == true
+  expect(d.contains("fault_exit")) == true
+  expect(d.contains("-32  fault_exit  m")) == true
+}
+
+test "the code size of a binary" {
+  expect(text_size("not a binary at all, long enough to read a header from it".bytes())) == -1
+}

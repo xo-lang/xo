@@ -132,6 +132,7 @@ var codegenEnv = map[string]inputClass{
 	"XO_KEEP_MODS":            {"none", ""}, // 1 keeps the SSA modules before and after inlining alive (decision 0352 step C); the output is the same
 	"XO_BORROW_CHECK":         {"none", ""}, // runs the full inference too and compares; the flags are the same
 	"XO_KEEP_ASM":             {"none", ""}, // writes and keeps the assembly files only
+	"XO_SIZE_CAUSES":          {"none", ""}, // writes the code's bytes per cause (decision 0443); the objects are the same
 	"XO_KEEP_WAT":             {"none", ""}, // writes the .wat text beside a wasm build only
 	"XO_CACHE_PRUNE_BUDGET":   {"none", ""}, // how long a build prunes its caches
 	"XO_PRUNE_DETACH":         {"cache", ""},

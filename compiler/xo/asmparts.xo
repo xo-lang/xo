@@ -199,6 +199,13 @@ fn macho_object_keys(os: Os, srcs: List[Str], elf: Bool, coff: Bool, jobs: Int) 
 }
 
 fn cached_macho_objects(os: Os, ctx: Ctx, srcs: List[Str], elf: Bool, amd64: Bool, coff: Bool, jobs: Int) -> (List[Result[Bytes, Str]], Int, List[Str]) {
+  // $XO_SIZE_CAUSES=FILE (decision 0443, xo dev size --by-cause): every
+  // arm64 part assembled again, past the cache, with its code's bytes per
+  // function and cause written to FILE
+  let causes = os.env.get("XO_SIZE_CAUSES") ?? ""
+  if !causes.is_empty() && !amd64 && !coff {
+    return (causes_objects(os, srcs, elf, jobs, causes), srcs.len(), [])
+  }
   let dir = backend_cache_dir(os, ctx)
   if dir.is_empty() || srcs.len() < 2 {
     return (macho_objects(srcs, elf, amd64, coff, jobs), srcs.len(), [])
@@ -495,4 +502,55 @@ fn cached_cc_assemble(os: Os, ctx: Ctx, cc: Str, flags: List[Str], srcs: List[St
   }
   prune_backend_cache(os, "obj", dir, n)
   (objs, "", miss.len())
+}
+
+/// The objects of the arm64 assembly files srcs, as macho_objects makes
+/// them, with the rows of their code's bytes per function and cause
+/// (macho.assemble_causes, decision 0443) written to path, a part's rows
+/// after the part before it.
+fn causes_objects(os: Os, srcs: List[Str], elf: Bool, jobs: Int, path: Str) -> List[Result[Bytes, Str]] {
+  let n = srcs.len()
+  let w = jobs.min(n).max(1)
+  let next = Atomic[Int].new(0)
+  let done = scope sc {
+    var ts = []
+    for _ in 0..w {
+      ts.push(sc.spawn(fn() -> List[(Int, Result[(Bytes, Str), Str])] {
+        var mine: List[(Int, Result[(Bytes, Str), Str])] = []
+        while true {
+          let i = next.add(1) - 1
+          if i >= n {
+            break
+          }
+          mine.push((i, macho.assemble_causes(srcs[i].bytes(), elf)))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Result[(Bytes, Str), Str])] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: List[Result[Bytes, Str]] = []
+  var rows: List[Str] = []
+  for _ in 0..n {
+    out.push(Err("not assembled"))
+    rows.push("")
+  }
+  for (i, r) in done {
+    match r {
+      Ok((obj, rs)) => {
+        out[i] = Ok(obj)
+        rows[i] = rs
+      }
+      Err(e) => out[i] = Err(e)
+    }
+  }
+  match os.fs.write(path, rows.join("").bytes()) {
+    Ok(_) => {}
+    Err(e) => os.stdio.eprint("xo: XO_SIZE_CAUSES: ${e}\n")
+  }
+  out
 }

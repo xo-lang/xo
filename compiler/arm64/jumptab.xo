@@ -369,8 +369,13 @@ fn (var g: G) emit_switch(var b: List[Str], inst: Inst) {
     s.push("\t.long ${g.label(g.fwd(t))}-${tab}\n")
   }
   if 2 * g.ninst + n >= JT_INLINE_WORDS {
+    // the table in the body: its bytes are data (decision 0443), and
+    // what follows is in the cause before it
+    let back = g.dc_cur
+    g.cause_mark(b, C_DATA)
     b.push(s.join(""))
+    g.cause_mark(b, back)
     return
   }
-  g.stubs.push(s.join(""))
+  g.stubs.push(g.cause_label(C_DATA) + s.join(""))
 }

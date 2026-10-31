@@ -1,0 +1,126 @@
+// Code size by cause (decision 0443): the arm64 emitter writes a local
+// label `L<prefix>_x<code>_dc<n>` (ELF `.L...`) where the cause of the
+// code changes (compiler/arm64 mir.xo C_*). The labels are in no symbol
+// table and change no byte; assembled for causes, each function's bytes
+// are summed per cause from them.
+
+/// The Mach-O object of src, and per function and cause the bytes of its
+/// code: lines `function\tcause\tbytes`. A function runs from its symbol
+/// to the next symbol of its code section (or the section's end); it
+/// starts in cause 0, and each cause label switches the cause from its
+/// offset on. Bytes before a section's first symbol go to the function
+/// "-".
+pub fn assemble_causes(src: Bytes, elf: Bool) -> Result[(Bytes, Str), Str] {
+  var a = Asm{minos: (11, 0), elf: elf}
+  a.parse(src)
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  a.finish()
+  if !a.err.is_empty() {
+    return Err(a.err)
+  }
+  let rows = a.cause_rows()
+  Ok((if elf { a.write_elf() } else { a.write_object() }, rows))
+}
+
+/// The cause code of a cause label's name, or -1 for any other name:
+/// the digits after its last `_x`, which `_dc<digits>` ends.
+pub fn cause_of_label(name: Str) -> Int {
+  let x = name.rfind("_x") ?? -1
+  if x < 0 || !name.contains("_dc") {
+    return -1
+  }
+  var c = 0
+  var k = x + 2
+  var any = false
+  let bs = name.bytes()
+  while k < bs.len() && Int(bs[k]) >= 48 && Int(bs[k]) <= 57 {
+    c = c * 10 + (Int(bs[k]) - 48)
+    k += 1
+    any = true
+  }
+  if !any || k + 3 > bs.len() || name[k..k + 3] != "_dc" {
+    return -1
+  }
+  // the rest is digits only
+  var j = k + 3
+  if j >= bs.len() {
+    return -1
+  }
+  while j < bs.len() {
+    if Int(bs[j]) < 48 || Int(bs[j]) > 57 {
+      return -1
+    }
+    j += 1
+  }
+  c
+}
+
+/// Adds n bytes of cause c to function f.
+fn add_cause(var per: Map[Str, Map[Int, Int]], var order: List[Str], f: Str, c: Int, n: Int) {
+  if n <= 0 {
+    return
+  }
+  if !per.contains(f) {
+    per[f] = {}
+    order.push(f)
+  }
+  var m = per.get(f) ?? {}
+  m[c] = (m.get(c) ?? 0) + n
+  per[f] = m
+}
+
+/// The rows of assemble_causes from the laid out sections.
+fn (a: Asm) cause_rows() -> Str {
+  var out: List[Str] = []
+  for (si, s) in a.sects.indexed() {
+    if !s.code {
+      continue
+    }
+    let size = a.code_len(si)
+    // the section's marks: (offset, function symbol or -1, cause or -1)
+    var marks: List[(Int, Int, Int)] = []
+    for (i, y) in a.syms.indexed() {
+      if y.sect != si || y.mapsym || y.secsym {
+        continue
+      }
+      if y.temp {
+        let c = cause_of_label(bstr(y.name))
+        if c >= 0 {
+          marks.push((y.off, -1, c))
+        }
+      } else if !y.name.starts_with("ltmp".bytes()) {
+        // (ltmpN: a section's start symbol, not a function)
+        marks.push((y.off, i, -1))
+      }
+    }
+    // in offset order, a function's symbol before a cause label at its
+    // offset (its first cause label applies to it); stable otherwise
+    let sorted = marks.sort_by(fn(m: (Int, Int, Int)) -> Int { 2 * m.0 + (if m.1 >= 0 { 0 } else { 1 }) })
+    var fname = "-"
+    var cause = 0
+    var at = 0
+    var per: Map[Str, Map[Int, Int]] = {}
+    var order: List[Str] = []
+    for (off, sym, c) in sorted {
+      add_cause(per, order, fname, cause, off - at)
+      at = off
+      if sym >= 0 {
+        // two symbols at one offset (an alias): the later names it
+        fname = bstr(a.syms[sym].name)
+        cause = 0
+      } else {
+        cause = c
+      }
+    }
+    add_cause(per, order, fname, cause, size - at)
+    for f in order {
+      let m = per.get(f) ?? {}
+      for c in m.keys().sort() {
+        out.push("${f}\t${c}\t${m.get(c) ?? 0}\n")
+      }
+    }
+  }
+  out.join("")
+}

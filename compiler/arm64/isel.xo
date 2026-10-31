@@ -222,6 +222,9 @@ fn (var g: G) add(inst: Inst) -> Int {
   if x.kind == K_CALL && g.cur_pad >= 0 {
     x.pad = g.cur_pad
   }
+  if x.cause == 0 {
+    x.cause = g.cur_cause
+  }
   // in place (decision 0169); take_insts allocated an empty list per
   // instruction (bench/results/xo1-speed-2026-10-13.md)
   let b = g.cur
@@ -765,6 +768,9 @@ fn (var g: G) isel() {
     g.blocks[mb].id = g.nblock
     g.nblock += 1
     g.cur = mb
+    // decision 0443: the unwind exit, and what only landing pads reach
+    g.blk_cause = if b == g.f.unwind_exit { C_FAULT_EXIT } else if cold[b] { C_LANDING } else { C_BODY }
+    g.cur_cause = g.blk_cause
     if cold[b] {
       g.blocks[mb].cold = true
       g.cold.push(mb)
@@ -1185,8 +1191,29 @@ fn (var g: G) instr(v: Int) {
     // its calls and fault stubs unwind to the cleanup of its check
     g.cur_pad = g.bmap[g.pad_target(pad)]
   }
+  g.cur_cause = g.value_cause(v)
   g.instr1(v)
   g.cur_pad = -1
+  g.cur_cause = g.blk_cause
+}
+
+/// The size cause of the instructions lowered from value v (decision
+/// 0443): its block's (fault exit, landing), else retain, release and
+/// drop as rc, else an instruction inlined from std/llrt.
+fn (g: G) value_cause(v: Int) -> Int {
+  if g.blk_cause != C_BODY {
+    return g.blk_cause
+  }
+  let x = g.f.values[v]
+  if x.op is ssa.Op.Retain | ssa.Op.Release | ssa.Op.Drop {
+    return C_RC
+  }
+  // a runtime helper inlined into code outside the runtime (in llrt's own
+  // functions it is their body)
+  if x.inl >= 0 && x.inl < g.f.inl_sites.len() && g.f.inl_sites[x.inl].file.contains("llrt/") && !g.f.file.contains("llrt/") {
+    return C_INLINE_RT
+  }
+  C_BODY
 }
 
 /// Whether a logical operation takes a rotated operand (rot_operand): not

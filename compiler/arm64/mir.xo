@@ -77,9 +77,36 @@ fn regs(vs: List[Int]) -> List[Src] {
   out
 }
 
+// Size causes (decision 0443): what made an instruction, for `xo dev
+// size --by-cause`. The emitter writes a `_x<code>_dc<n>` label at each
+// change of cause (cause_mark); the assembler sums the bytes between
+// them (compiler/macho assemble_causes). Codes are only ever added.
+const C_BODY = 0
+/// the prologue, the epilogue and its return
+const C_FRAME = 1
+/// the blocks lowered from the SSA unwind exit (Func.unwind_exit)
+const C_FAULT_EXIT = 2
+/// what only landing pads reach (the cleanups), and the pad entries
+const C_LANDING = 3
+/// the out of line stubs of checked operations
+const C_FAULT_STUB = 4
+/// the preemption poll stubs (decision 0286)
+const C_PREEMPT = 5
+/// retain, release and drop (the SSA rc ops)
+const C_RC = 6
+/// struct and tuple copies
+const C_COPY = 7
+/// instructions inlined from std/llrt
+const C_INLINE_RT = 8
+/// bytes that are not instructions: jump tables, the local empty list
+const C_DATA = 9
+
 /// A machine instruction.
 struct Inst {
   kind: Int
+  /// its size cause (C_*, decision 0443), set by isel's add from the SSA
+  /// value or block it lowers; instructions made later stay C_BODY
+  cause: Int = 0
   /// a call in a cold block: the caller saved general registers live
   /// across it, each with its spill slot, stored before its argument moves and
   /// loaded after its results' (regalloc.xo cold_saves)

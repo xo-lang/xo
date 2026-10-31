@@ -88,6 +88,25 @@ assembler knows every instruction's bytes.
 - Any new text pass must pass `_dc` labels like the other row labels
   (the gotcha above names them all).
 
+## Shipped
+
+arm64 (2026-10-30, Xo Lang 2): the emitter's cause labels (compiler/arm64
+emit.xo cause_mark; isel.xo value_cause), compiler/macho causes.xo
+(assemble_causes), XO_SIZE_CAUSES in compiler/xo asmparts.xo, and
+`xo dev size` (compiler/cli/dev size.xo). Not yet: the copy cause (no
+emitter site tags inlined copies yet; they count as body) and amd64
+(its emitter writes no cause labels; XO_SIZE_CAUSES is ignored there).
+
+First numbers, with a stage 1 xo (the checkout's bin/xo, built by the
+older compiler): xo's rows cover 71,615,504 of its 71,616,076 `__text`
+bytes (99.9%; 47 s): body 26.2%, landing 25.7%, fault_exit 22.0%, rc
+19.9%, frame 2.7%, fault_stub 2.2%, inline_rt 0.7%, data 0.2%. A 320 KB
+test program: body 62.5%, fault_stub 20.3%, frame 7.5%, landing 5.5%.
+No output byte changes (scripts/identity of xo at the parent against
+this change): linux/arm64 117 of 117 programs identical (offload host),
+darwin/arm64 59 of 59 (every 8th golden, the Mac); fib and sieve's
+whole assembly is the same with the cause labels removed.
+
 ## Alternatives
 
 - **Disassembly with symbol heuristics** (Lang 1's prototype): too

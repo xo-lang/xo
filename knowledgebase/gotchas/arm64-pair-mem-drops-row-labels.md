@@ -16,3 +16,9 @@ keeps them, before the pair, instead of refusing to pair (which would
 make a build with debug information generate different code). A new
 kind of label referenced from another section must be kept the same
 way, or added to pair_mem's references.
+
+The row labels the text passes pass this way (lsr.xo is_row_label): `_dl`
+(debug line rows), `_dv` and `_dvs` (variable ranges), `_du`
+(asynchronous preemption ranges, decision 0318) and `_dc` (size causes,
+decision 0443). Each must change no instruction: a new kind is checked
+with scripts/identity against its parent.

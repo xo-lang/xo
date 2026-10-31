@@ -213,6 +213,13 @@ struct G {
   dbgs: List[Str] = []
   cur_line: Int = 0
   cur_inl: Int = -1
+  /// decision 0443: the size cause of what isel adds now (C_*), the one
+  /// of the block being lowered, and while emitting, the cause the text
+  /// is in and the cause labels made
+  cur_cause: Int = 0
+  blk_cause: Int = 0
+  dc_cur: Int = 0
+  dc_n: Int = 0
   dl_last: Int = 0
   dl_last_inl: Int = -1
   dl_rows: List[Str] = []
@@ -475,6 +482,10 @@ fn (var g: G) fail(msg: Str) {
 fn (var g: G) begin_func(fi: Int) {
   g.cur_line = 0
   g.cur_inl = -1
+  g.cur_cause = 0
+  g.blk_cause = 0
+  g.dc_cur = 0
+  g.dc_n = 0
   g.dl_last = 0
   g.dl_last_inl = -1
   g.dl_rows = []

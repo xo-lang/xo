@@ -1,0 +1,393 @@
+// `xo dev size --by-cause` (decision 0443): a native arm64 program's code
+// bytes split by what made them. The build writes the rows
+// (XO_SIZE_CAUSES, compiler/macho assemble_causes): `function\tcause\tbytes`
+// per line, from the cause labels the arm64 emitter writes.
+
+use github.com/xo-lang/xo/compiler/cli/core
+use github.com/xo-lang/xo/compiler/hostpath
+
+/// The cause names by code (compiler/arm64 mir.xo C_*).
+pub fn cause_name(c: Int) -> Str {
+  match c {
+    0 => "body"
+    1 => "frame"
+    2 => "fault_exit"
+    3 => "landing"
+    4 => "fault_stub"
+    5 => "preempt"
+    6 => "rc"
+    7 => "copy"
+    8 => "inline_rt"
+    9 => "data"
+    _ => "cause${c}"
+  }
+}
+
+/// A function's name from its symbol: arm64 mangle_fn undone (`xo_f_`,
+/// `__` for `_`, `_HH` for another byte), with Mach-O's leading `_`;
+/// any other symbol as it is.
+pub fn demangle(sym: Str) -> Str {
+  var s = sym
+  if s.starts_with("_xo_f_") {
+    s = s[1..s.len()]
+  }
+  if !s.starts_with("xo_f_") {
+    return sym
+  }
+  let bs = s.bytes()
+  var out = BytesBuilder.new()
+  var i = 5
+  while i < bs.len() {
+    if bs[i] == '_' {
+      if i + 1 < bs.len() && bs[i + 1] == '_' {
+        out.write(bs[i..i + 1])
+        i += 2
+        continue
+      }
+      if i + 2 < bs.len() {
+        if let Some(v) = Bytes.from_hex(s[i + 1..i + 3]) {
+          out.write(v)
+          i += 3
+          continue
+        }
+      }
+    }
+    out.write(bs[i..i + 1])
+    i += 1
+  }
+  out.freeze().to_str() ?? sym
+}
+
+/// The module of a function name: through the first `.` after its last
+/// `/` (`compiler/arm64.G.emit` is `compiler/arm64`).
+pub fn module_of(name: Str) -> Str {
+  let slash = name.rfind("/") ?? -1
+  let dot = name[slash + 1..name.len()].find(".") ?? -1
+  if dot < 0 {
+    return "(main)"
+  }
+  name[0..slash + 1 + dot]
+}
+
+/// The rows of a causes file: per function, per cause, its bytes.
+pub struct Rows {
+  pub per_fn: Map[Str, Map[Int, Int]] = {}
+  pub total: Int = 0
+}
+
+pub fn parse_rows(text: Str) -> Rows {
+  var r = Rows{}
+  for l in text.split("\n") {
+    let f = l.split("\t")
+    if f.len() != 3 {
+      continue
+    }
+    let c = Int.parse(f[1]) ?? -1
+    let n = Int.parse(f[2]) ?? 0
+    if c < 0 {
+      continue
+    }
+    let name = demangle(f[0])
+    var m = r.per_fn.get(name) ?? {}
+    m[c] = (m.get(c) ?? 0) + n
+    r.per_fn[name] = m
+    r.total += n
+  }
+  r
+}
+
+/// Bytes per cause over every function.
+pub fn by_cause(r: Rows) -> Map[Int, Int] {
+  var out: Map[Int, Int] = {}
+  for (_, m) in r.per_fn {
+    for (c, n) in m {
+      out[c] = (out.get(c) ?? 0) + n
+    }
+  }
+  out
+}
+
+fn pct(n: Int, total: Int) -> Str {
+  if total == 0 {
+    return "0.0%"
+  }
+  let t = n * 1000 / total
+  "${t / 10}.${t % 10}%"
+}
+
+fn pad(s: Str, w: Int) -> Str {
+  if s.len() >= w {
+    return s
+  }
+  s + " ".repeat(w - s.len())
+}
+
+fn lpad(s: Str, w: Int) -> Str {
+  if s.len() >= w {
+    return s
+  }
+  " ".repeat(w - s.len()) + s
+}
+
+/// The report: bytes per cause, then per cause its top functions and
+/// modules (causes other than body with any bytes).
+pub fn report_rows(r: Rows, top: Int) -> Str {
+  var b = StrBuilder.new()
+  let bc = by_cause(r)
+  b.write("code bytes by cause (total ${r.total}):\n")
+  for c in bc.keys().sort_by(fn(c: Int) -> Int { -(bc.get(c) ?? 0) }) {
+    let n = bc.get(c) ?? 0
+    b.write("  ${pad(cause_name(c), 12)} ${lpad("${n}", 12)}  ${lpad(pct(n, r.total), 6)}\n")
+  }
+  for c in bc.keys().sort() {
+    if c == 0 || top <= 0 {
+      continue
+    }
+    var fns: List[(Str, Int)] = []
+    var mods: Map[Str, Int] = {}
+    for (f, m) in r.per_fn {
+      let n = m.get(c) ?? 0
+      if n > 0 {
+        fns.push((f, n))
+        let md = module_of(f)
+        mods[md] = (mods.get(md) ?? 0) + n
+      }
+    }
+    b.write("\n${cause_name(c)}: ${fns.len()} functions\n")
+    for (f, n) in prefix(fns.sort_by(fn(p: (Str, Int)) -> Int { -p.1 }), top) {
+      b.write("  ${lpad("${n}", 10)}  ${f}\n")
+    }
+    b.write("  by module:\n")
+    var ms: List[(Str, Int)] = []
+    for (md, n) in mods {
+      ms.push((md, n))
+    }
+    for (md, n) in prefix(ms.sort_by(fn(p: (Str, Int)) -> Int { -p.1 }), top) {
+      b.write("  ${lpad("${n}", 10)}  ${md}\n")
+    }
+  }
+  b.freeze()
+}
+
+/// The difference of two runs: per cause, and the functions whose bytes
+/// of a cause changed most.
+pub fn report_diff(a: Rows, z: Rows, top: Int) -> Str {
+  var b = StrBuilder.new()
+  let ca = by_cause(a)
+  let cz = by_cause(z)
+  var cs: List[Int] = ca.keys()
+  for c in cz.keys() {
+    if !cs.contains(c) {
+      cs.push(c)
+    }
+  }
+  b.write("code bytes by cause: ${a.total} -> ${z.total} (${z.total - a.total})\n")
+  for c in cs.sort() {
+    let x = ca.get(c) ?? 0
+    let y = cz.get(c) ?? 0
+    b.write("  ${pad(cause_name(c), 12)} ${lpad("${x}", 12)} -> ${lpad("${y}", 12)}  ${lpad("${y - x}", 11)}\n")
+  }
+  var ds: List[(Str, Int, Int)] = []
+  var names: List[Str] = a.per_fn.keys()
+  for f in z.per_fn.keys() {
+    if !a.per_fn.contains(f) {
+      names.push(f)
+    }
+  }
+  for f in names {
+    let ma = a.per_fn.get(f) ?? {}
+    let mz = z.per_fn.get(f) ?? {}
+    for c in cs {
+      let d = (mz.get(c) ?? 0) - (ma.get(c) ?? 0)
+      if d != 0 {
+        ds.push((f, c, d))
+      }
+    }
+  }
+  b.write("\nlargest changes:\n")
+  for (f, c, d) in prefix(ds.sort_by(fn(p: (Str, Int, Int)) -> Int { -p.2.abs() }), top) {
+    b.write("  ${lpad("${d}", 10)}  ${pad(cause_name(c), 11)} ${f}\n")
+  }
+  b.freeze()
+}
+
+fn size_usage() -> Str {
+  "usage: xo dev size --by-cause [--top=N] [--save=FILE] [--flags='...'] PROG\n       xo dev size --by-cause --rows=FILE [--top=N]\n       xo dev size --by-cause --diff A B [--top=N]"
+}
+
+/// size_cmd is `xo dev size --by-cause`: builds PROG (a directory or a
+/// file, for arm64 native) with XO_SIZE_CAUSES set and reports its code
+/// bytes by cause; --rows reads a saved run, --diff compares two.
+fn size_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, rand, stdio) {
+  var fl = core.new_flags("dev size")
+  fl.bool_flag("by-cause", "split the code bytes by cause (decision 0443)")
+  fl.int_flag("top", 15, "functions and modules shown per cause")
+  fl.str_flag("save", "", "write the rows (function, cause, bytes) to FILE")
+  fl.str_flag("rows", "", "report a saved FILE instead of building")
+  fl.bool_flag("diff", "compare two saved rows files A and B")
+  fl.str_flag("flags", "", "more build flags, separated by spaces (--target=linux/arm64)")
+  fl.str_flag("xo", "", "the xo that builds PROG (default this one)")
+  if !fl.parse(os, args) {
+    return 2
+  }
+  if !fl.get_bool("by-cause") {
+    os.stdio.eprintln(size_usage())
+    return 2
+  }
+  let top = fl.get_int("top")
+  if fl.get_bool("diff") {
+    if fl.args.len() != 2 {
+      os.stdio.eprintln(size_usage())
+      return 2
+    }
+    let a = match read_rows(os, fl.args[0]) {
+      Some(r) => r
+      None => return 1
+    }
+    let z = match read_rows(os, fl.args[1]) {
+      Some(r) => r
+      None => return 1
+    }
+    os.stdio.print(report_diff(a, z, top))
+    return 0
+  }
+  if !fl.get_str("rows").is_empty() {
+    match read_rows(os, fl.get_str("rows")) {
+      Some(r) => os.stdio.print(report_rows(r, top))
+      None => return 1
+    }
+    return 0
+  }
+  if fl.args.len() != 1 {
+    os.stdio.eprintln(size_usage())
+    return 2
+  }
+  let base = if h.cache.is_empty() { "${hostpath.temp_dir(os.env)}/xo-dev-size" } else { "${h.cache}/xo/dev/size" }
+  let dir = "${base}/${os.clock.now().unix()}-${os.proc.pid()}"
+  match os.fs.create_dir_all(dir) {
+    Ok(_) => {}
+    Err(e) => {
+      os.stdio.eprintln("xo dev size: ${dir}: ${e}")
+      return 1
+    }
+  }
+  let rows_path = if fl.get_str("save").is_empty() { "${dir}/rows.tsv" } else { fl.get_str("save") }
+  var bargs = ["build", "-o", "${dir}/prog"]
+  for f in fl.get_str("flags").split(" ") {
+    if !f.is_empty() {
+      bargs.push(f)
+    }
+  }
+  bargs.push(fl.args[0])
+  let xo = if fl.get_str("xo").is_empty() { h.xo } else { fl.get_str("xo") }
+  let out = os.proc.cmd(xo, bargs).set_env("XO_SIZE_CAUSES", rows_path).output()
+  var built = false
+  match out {
+    Ok(o) => {
+      if o.code != 0 {
+        os.stdio.eprintln("xo dev size: xo build: ${(o.stderr.to_str() ?? "").trim()}")
+      } else {
+        built = true
+      }
+    }
+    Err(e) => os.stdio.eprintln("xo dev size: xo build: ${e}")
+  }
+  let rows = if built { read_rows(os, rows_path) } else { None }
+  // the binary's code, for the share the rows cover (code assembled
+  // elsewhere, a prebuilt object, has no rows)
+  let text = match os.fs.read("${dir}/prog") {
+    Ok(b) => text_size(b)
+    Err(_) => -1
+  }
+  // the tool's own directory (and the rows in it unless --save)
+  os.fs.remove_all(dir).ignore_err("a build directory of the tool's own")
+  let r = match rows {
+    Some(r) => r
+    None => return 1
+  }
+  if r.total == 0 {
+    os.stdio.eprintln("xo dev size: the build wrote no rows (an arm64 native build assembled by xo, not --ld=cc or --backend=llvm)")
+    return 1
+  }
+  if text > 0 {
+    os.stdio.println("the rows cover ${r.total} of the binary's ${text} code bytes (${pct(r.total, text)})")
+  }
+  os.stdio.print(report_rows(r, top))
+  0
+}
+
+/// The first n of xs (all of them when fewer).
+fn prefix[T](xs: List[T], n: Int) -> List[T] {
+  if n >= xs.len() {
+    return xs
+  }
+  xs[0..n]
+}
+
+fn read_rows(os: Os, p: Str) -> Rows? uses (fs.read, stdio) {
+  match os.fs.read(p) {
+    Ok(b) => Some(parse_rows(b.to_str() ?? ""))
+    Err(e) => {
+      os.stdio.eprintln("xo dev size: ${p}: ${e}")
+      None
+    }
+  }
+}
+
+fn le(b: Bytes, off: Int, n: Int) -> Int {
+  var v = 0
+  var k = n - 1
+  while k >= 0 {
+    v = v * 256 + Int(b[off + k])
+    k -= 1
+  }
+  v
+}
+
+/// The size of a Mach-O 64 bit binary's __TEXT,__text or an ELF64 one's
+/// .text, -1 when b is neither or has none.
+pub fn text_size(b: Bytes) -> Int {
+  if b.len() < 64 {
+    return -1
+  }
+  if le(b, 0, 4) == 0xfeedfacf {
+    let ncmds = le(b, 16, 4)
+    var off = 32
+    for _ in 0..ncmds {
+      if off + 8 > b.len() {
+        return -1
+      }
+      let cmd = le(b, off, 4)
+      let size = le(b, off + 4, 4)
+      if cmd == 0x19 {
+        let nsects = le(b, off + 64, 4)
+        for k in 0..nsects {
+          let s = off + 72 + 80 * k
+          if s + 80 <= b.len() && b[s..s + 6] == "__text".bytes() && b[s + 6] == 0 && b[s + 16..s + 22] == "__TEXT".bytes() {
+            return le(b, s + 40, 8)
+          }
+        }
+      }
+      off += size
+    }
+    return -1
+  }
+  if b[0..4] == b"\x7fELF" && b[4] == 2 {
+    let shoff = le(b, 0x28, 8)
+    let shentsize = le(b, 0x3a, 2)
+    let shnum = le(b, 0x3c, 2)
+    let shstrndx = le(b, 0x3e, 2)
+    if shoff + shentsize * shnum > b.len() || shstrndx >= shnum {
+      return -1
+    }
+    let strs = le(b, shoff + shentsize * shstrndx + 0x18, 8)
+    for k in 0..shnum {
+      let h = shoff + shentsize * k
+      let name = strs + le(b, h, 4)
+      if name + 6 <= b.len() && b[name..name + 6] == ".text".bytes() + b"\x00" {
+        return le(b, h + 0x20, 8)
+      }
+    }
+  }
+  -1
+}

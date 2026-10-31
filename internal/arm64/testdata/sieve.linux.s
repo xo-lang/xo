@@ -9,6 +9,7 @@ xo_f_main:
 	.cfi_startproc
 	.cfi_personality 155, DW.ref.xo_x_personality
 	.cfi_lsda 27, .LpGL1jtk_f1_lsda
+.LpGL1jtk_f1_x1_dc0:
 	stp x29, x30, [sp, #-48]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -21,6 +22,7 @@ xo_f_main:
 	.cfi_offset w22, -16
 	.cfi_offset w21, -8
 .LpGL1jtk_f1_b0:
+.LpGL1jtk_f1_x0_dc1:
 	mov x19, #0
 	mov x20, x19
 	b .LpGL1jtk_f1_b2
@@ -46,26 +48,34 @@ xo_f_main:
 	mov x22, x0
 .LpGL1jtk_f1_b6:
 .LpGL1jtk_f1_du0:
+.LpGL1jtk_f1_x8_dc3:
 	add x9, x22, x1, lsr #32
 	add x11, x9, #16
+.LpGL1jtk_f1_x0_dc4:
 .LpGL1jtk_f1_du1:
 .LpGL1jtk_f1_b7:
 .LpGL1jtk_f1_du2:
+.LpGL1jtk_f1_x8_dc5:
 	mov w2, w1
+.LpGL1jtk_f1_x0_dc6:
 .LpGL1jtk_f1_du3:
 .LpGL1jtk_f1_b8:
 .LpGL1jtk_f1_du4:
+.LpGL1jtk_f1_x8_dc7:
 	adrp x21, xo_static
 	add x21, x21, :lo12:xo_static
 	add x21, x21, #24
 	ldr x1, [x21, #24]
+.LpGL1jtk_f1_x0_dc8:
 	cmp x1, #1
 	b.ne .LpGL1jtk_f1_b19
 .LpGL1jtk_f1_du5:
 .LpGL1jtk_f1_b9:
 .LpGL1jtk_f1_du6:
+.LpGL1jtk_f1_x8_dc9:
 	ldp x20, x9, [x21, #0]
 	add x19, x9, x2
+.LpGL1jtk_f1_x0_dc10:
 	cbz x20, .LpGL1jtk_f1_b19
 .LpGL1jtk_f1_du7:
 .LpGL1jtk_f1_b10:
@@ -76,6 +86,7 @@ xo_f_main:
 	b.ge .LpGL1jtk_f1_b19
 .LpGL1jtk_f1_b16:
 .LpGL1jtk_f1_du8:
+.LpGL1jtk_f1_x8_dc11:
 	add x0, x20, x9
 	mov x1, x11
 .LpGL1jtk_f1_cs1a:
@@ -85,6 +96,7 @@ xo_f_main:
 	strb w9, [x20, x19]
 	add x9, x19, #1
 	str x9, [x21, #8]
+.LpGL1jtk_f1_x0_dc12:
 	b .LpGL1jtk_f1_b24
 .LpGL1jtk_f1_du9:
 .LpGL1jtk_f1_b19:
@@ -93,13 +105,16 @@ xo_f_main:
 .LpGL1jtk_f1_du11:
 .LpGL1jtk_f1_b21:
 .LpGL1jtk_f1_du12:
+.LpGL1jtk_f1_x8_dc13:
 	orr x10, x1, #1
 	mov x9, #0
 	orr x1, x10, x9
 	str x1, [x21, #24]
+.LpGL1jtk_f1_x0_dc14:
 .LpGL1jtk_f1_du13:
 .LpGL1jtk_f1_b22:
 .LpGL1jtk_f1_du14:
+.LpGL1jtk_f1_x8_dc15:
 	mov x4, #1
 	mov x0, x21
 	mov x3, x2
@@ -107,12 +122,14 @@ xo_f_main:
 .LpGL1jtk_f1_cs2a:
 	bl xo_f_stdio_2eout__slow
 .LpGL1jtk_f1_cs2b:
+.LpGL1jtk_f1_x0_dc16:
 .LpGL1jtk_f1_du15:
 .LpGL1jtk_f1_b24:
 .LpGL1jtk_f1_du16:
 .LpGL1jtk_f1_du17:
 .LpGL1jtk_f1_b27:
 .LpGL1jtk_f1_du18:
+.LpGL1jtk_f1_x6_dc17:
 	mov x0, x22
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -121,16 +138,19 @@ xo_f_main:
 .LpGL1jtk_f1_du19:
 .LpGL1jtk_f1_b25:
 .LpGL1jtk_f1_du20:
+.LpGL1jtk_f1_x3_dc18:
 	mov x0, x22
 	bl xo_hV7Co53ncOR
 .LpGL1jtk_f1_du21:
 .LpGL1jtk_f1_b26:
 .LpGL1jtk_f1_du22:
+.LpGL1jtk_f1_x2_dc19:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
 	b xo_x_fault_continue
 .LpGL1jtk_f1_du23:
+.LpGL1jtk_f1_x4_dc2:
 .LpGL1jtk_f1_fault1:
 	sub x15, x20, x0
 	mov x2, x0
@@ -154,6 +174,7 @@ xo_f_sieve:
 	.cfi_startproc
 	.cfi_personality 155, DW.ref.xo_x_personality
 	.cfi_lsda 27, .LpGL1jtk_f2_lsda
+.LpGL1jtk_f2_x1_dc0:
 	stp x29, x30, [sp, #-64]!
 	mov x29, sp
 	stp x20, x19, [sp, #16]
@@ -169,6 +190,7 @@ xo_f_sieve:
 	.cfi_offset w24, -16
 	.cfi_offset w23, -8
 .LpGL1jtk_f2_b0:
+.LpGL1jtk_f2_x0_dc1:
 	mov x22, x0
 	adr x21, .LpGL1jtk_f2_el
 	adds x24, x22, #1
@@ -242,8 +264,10 @@ xo_f_sieve:
 	cmp x10, x13
 	b.lt .LpGL1jtk_f2_b13
 .LpGL1jtk_f2_b32:
+.LpGL1jtk_f2_x6_dc11:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
+.LpGL1jtk_f2_x1_dc12:
 	mov x0, x20
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
@@ -251,16 +275,19 @@ xo_f_sieve:
 	ldp x29, x30, [sp], #64
 	ret
 .LpGL1jtk_f2_b1:
+.LpGL1jtk_f2_x3_dc13:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
 	b .LpGL1jtk_f2_b26
 .LpGL1jtk_f2_b5:
+.LpGL1jtk_f2_x0_dc14:
 	mov x0, x21
 	mov x1, #1
 	bl xo_x_obj_rl_grow_n
 	mov x21, x0
 	b .LpGL1jtk_f2_b7
 .LpGL1jtk_f2_b10:
+.LpGL1jtk_f2_x3_dc15:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
 	b .LpGL1jtk_f2_b26
@@ -276,13 +303,16 @@ xo_f_sieve:
 	mov x0, x21
 	bl xo_hG9GOmRI4zL
 .LpGL1jtk_f2_b26:
+.LpGL1jtk_f2_x2_dc16:
 	bl xo_x_fault_continue
 	mov x0, #0
+.LpGL1jtk_f2_x1_dc17:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x24, x23, [sp, #48]
 	ldp x29, x30, [sp], #64
 	ret
+.LpGL1jtk_f2_x4_dc2:
 .LpGL1jtk_f2_fault1:
 	mov x0, x22
 	mov x1, #43
@@ -295,9 +325,11 @@ xo_f_sieve:
 	bl xo_x_fault_raise_overflow
 .LpGL1jtk_f2_cs1b:
 	brk #1
+.LpGL1jtk_f2_x3_dc3:
 .LpGL1jtk_f2_pe16:
 	mov sp, x29
 	b .LpGL1jtk_f2_b19
+.LpGL1jtk_f2_x4_dc4:
 .LpGL1jtk_f2_fault2:
 	sub sp, sp, #16
 	str x10, [sp, #0]
@@ -311,6 +343,7 @@ xo_f_sieve:
 	bl xo_x_fault_raise_index
 .LpGL1jtk_f2_cs2b:
 	brk #1
+.LpGL1jtk_f2_x4_dc5:
 .LpGL1jtk_f2_fault3:
 	sub sp, sp, #16
 	str x10, [sp, #0]
@@ -327,6 +360,7 @@ xo_f_sieve:
 	bl xo_x_fault_raise_overflow
 .LpGL1jtk_f2_cs3b:
 	brk #1
+.LpGL1jtk_f2_x4_dc6:
 .LpGL1jtk_f2_fault4:
 	sub sp, sp, #16
 	stp x9, x10, [sp, #0]
@@ -341,9 +375,11 @@ xo_f_sieve:
 	bl xo_x_fault_raise_overflow
 .LpGL1jtk_f2_cs4b:
 	brk #1
+.LpGL1jtk_f2_x3_dc7:
 .LpGL1jtk_f2_pe20:
 	mov sp, x29
 	b .LpGL1jtk_f2_b23
+.LpGL1jtk_f2_x4_dc8:
 .LpGL1jtk_f2_fault5:
 	sub sp, sp, #16
 	stp x9, x10, [sp, #0]
@@ -357,9 +393,11 @@ xo_f_sieve:
 	bl xo_x_fault_raise_index
 .LpGL1jtk_f2_cs5b:
 	brk #1
+.LpGL1jtk_f2_x3_dc9:
 .LpGL1jtk_f2_pe22:
 	mov sp, x29
 	b .LpGL1jtk_f2_b25
+.LpGL1jtk_f2_x4_dc10:
 .LpGL1jtk_f2_fault6:
 	sub sp, sp, #16
 	stp x9, x10, [sp, #0]

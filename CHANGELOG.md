@@ -5,6 +5,13 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+
+- Tools: `xo dev size --by-cause PROG` (decision 0443): a native arm64
+  program's code bytes by cause (body, frame, fault exit, landing pads,
+  fault stubs, preemption stubs, rc, inlined runtime, data), per function
+  and module, from cause labels the emitter writes, which change no
+  output byte; `--diff` compares two saved runs. xo 0.35's 71.6 MB of
+  code: 26% body, 26% landing pads, 22% fault exits, 20% rc.
 - `--phase-times` after a run cache miss says why: `cache run miss:` and
   the first recorded input that no longer holds (a changed file,
   listing, tree, probe or variable; no entry; the binary gone), then the

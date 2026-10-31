@@ -626,6 +626,20 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Measuring
 
+- Code size by cause (decision 0443): `xo dev size --by-cause PROG`
+  builds PROG for arm64 native and splits its code bytes into body,
+  frame, fault_exit, landing, fault_stub, preempt, rc, inline_rt and
+  data, with the top functions and modules of each; `--save=FILE` keeps
+  the rows, `--diff A B` compares two saved runs. Use it for any push
+  that claims a size change (name the cause that moved, not only the
+  total) and at each release. xo itself takes about 50 s
+  (`xo dev size --by-cause ./compiler/xo`); size it with a stage 2 xo,
+  since the checkout's bin/xo was built by the older compiler and a
+  codegen change does not show in it. XO_SIZE_CAUSES=FILE on any arm64
+  build writes the rows (its parts assembled again past the object
+  cache); the tool prints the share of `__text` they cover (99.9% for
+  xo, 2026-10-30). Last verified: 2026-10-30.
+
 - Where an `--ab` runs (owner, 2026-10-30): a claim that is not darwin
   specific runs on the linux/arm64 offload host with
   `~/xo-lead/agents/ab-host.sh BASE NEW NAME [--rounds=N] -- self|edit
