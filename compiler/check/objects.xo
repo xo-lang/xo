@@ -73,6 +73,9 @@ pub struct VariantInfo {
   pub unit: Bool
   pub line: Int
   pub col: Int
+  /// A valued enum's value (decision 0269): ival for `Int`, sval for `Str`.
+  pub ival: Int = 0
+  pub sval: Bytes = b""
 }
 
 /// A declared parameter of a function.
@@ -112,6 +115,8 @@ pub struct Obj {
   // Types (decl.xo resolve_type_obj).
   pub fields: List[FieldInfo] = []
   pub variants: List[VariantInfo] = []
+  /// A valued enum's value type (decision 0269): 0 none, 1 `Int`, 2 `Str`.
+  pub value_kind: Int = 0
   /// Interface methods (Func objects).
   pub iface_meths: List[Int] = []
   /// Alias target or newtype underlying type.

@@ -284,6 +284,7 @@ fn (var c: Checker) resolve_type_obj(t: Int) {
       // keep their index)
       c.objs[t].variants = vs
       c.objs[t].derives = c.derives_of(ed.derive)
+      c.valued_enum(t, ed)
     }
     InterfaceDecl(d: id) => {
       c.resolve_constraints(id.type_params, c.objs[t].tparams, env)
@@ -1185,4 +1186,103 @@ fn doc_moves(doc: parser.Doc?) -> Bool {
     return (text(d.text)).contains("@moves")
   }
   false
+}
+
+/// A valued enum (decision 0269): `enum E: Int { A = 1, B }`. Checks the
+/// value type, the variants (field-less, no type parameters), and each
+/// value as a constant of the value type, numbers the variants without
+/// one, and reports a repeated value (XO0428). XO0429 is any other fault
+/// of the declaration.
+fn (var c: Checker) valued_enum(t: Int, ed: parser.EnumDecl) {
+  let vt = match ed.value_type {
+    Some(x) => x
+    None => {
+      for v in ed.variants {
+        if v.value != None {
+          c.error("XO0429", parser.expr_span(v.value ?? fault("unreachable")), "variant `${text(v.name.name)}` has a value but the enum names no value type; write `enum ${text(ed.name.name)}: Int` or `: Str` (decision 0269)")
+        }
+      }
+      return
+    }
+  }
+  var kind = 0
+  if text(vt.name) == "Int" {
+    kind = 1
+  } else if text(vt.name) == "Str" {
+    kind = 2
+  } else {
+    c.error("XO0429", vt.span, "an enum's value type is `Int` or `Str`, not `${text(vt.name)}` (decision 0269)")
+    return
+  }
+  if !ed.type_params.is_empty() {
+    c.error("XO0429", vt.span, "a valued enum takes no type parameters (decision 0269)")
+    return
+  }
+  c.objs[t].value_kind = kind
+  let f = c.objs[t].decl_file
+  let want = c.named(if kind == 1 { "Int" } else { "Str" })
+  var vs = c.objs[t].variants
+  var next = 0
+  var seen_i: Map[Int, Bytes] = {}
+  var seen_s: Map[Bytes, Bytes] = {}
+  for (i, v) in ed.variants.indexed() {
+    if v.fields != None {
+      c.error("XO0429", v.name.span, "variant `${text(v.name.name)}` of a valued enum has fields; a valued enum's variants are field-less (decision 0269)")
+      continue
+    }
+    var iv = next
+    var sv = v.name.name
+    if let Some(x) = v.value {
+      let saved_scopes = c.scopes
+      let saved = c.push_ctx(c.sink_ctx())
+      c.scopes = []
+      c.push_scope()
+      let ty = c.check_ty(x, want)
+      let before = c.diags.len()
+      c.check_const_expr(x)
+      c.ctx = saved
+      c.scopes = saved_scopes
+      if c.is_bad(ty) || c.diags.len() > before {
+        continue
+      }
+      if kind == 1 {
+        match c.const_int(f, x, 0) {
+          Some(n) => iv = n
+          None => {
+            c.error("XO0429", parser.expr_span(x), "the value of `${text(v.name.name)}` is not a constant `Int` (decision 0269)")
+            continue
+          }
+        }
+      } else {
+        match c.const_str(f, x, 0) {
+          Some(s) => sv = s.bytes()
+          None => {
+            c.error("XO0429", parser.expr_span(x), "the value of `${text(v.name.name)}` is not a constant `Str` (decision 0269)")
+            continue
+          }
+        }
+      }
+    }
+    if kind == 1 {
+      next = iv.wrapping_add(1)
+      if let Some(other) = seen_i.get(iv) {
+        c.error("XO0428", v.name.span, "variants `${text(other)}` and `${text(v.name.name)}` both have the value ${iv}")
+        continue
+      }
+      seen_i.put(iv, v.name.name)
+    } else {
+      if let Some(other) = seen_s.get(sv) {
+        c.error("XO0428", v.name.span, "variants `${text(other)}` and `${text(v.name.name)}` both have the value \"${text(sv)}\"")
+        continue
+      }
+      seen_s.put(sv, v.name.name)
+    }
+    for j in 0..vs.len() {
+      if vs[j].index == i {
+        vs[j].ival = iv
+        vs[j].sval = sv
+      }
+    }
+  }
+  c.objs[t].variants = vs
 }
