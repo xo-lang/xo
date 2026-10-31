@@ -149,8 +149,11 @@ stored in the event record, since a program without a server has no
 spawned beside the accept loop in `Server.serve`) takes the list and
 starts each resume function in the connection scope. The park point is
 `serve_h1`'s top of loop: no buffered request bytes, no server idle
-timeout (`with_idle_timeout` connections keep their stack; a pd deadline
-timer that resumes the continuation is stage 1d), a plain TCP connection
+timeout parks too (stage 1d: each continuation record has a deadline and
+is on the server's parked list; the resumer sweeps it, takes an expired
+record back from its descriptor with `pd_unpark`, closes the descriptor
+and resumes the connection to end it; the effective timeout is
+`idle_ns`, else `read_ns`, as `read_deadline`), a plain TCP connection
 (`hconn.park_ready`: a `MSG_PEEK` finds the socket empty), the server not
 stopping. TLS (1b) needs a "plaintext pending" operation on the TLS
 engine before a raw peek can say a connection is empty; HTTP/2 (1c)

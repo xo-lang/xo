@@ -36,6 +36,7 @@ use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
 use native/llrt/sanhook
+use native/llrt/sysio
 use native/llrt/stop
 use native/llrt/tasks
 use native/llrt/tlssrv
@@ -112,33 +113,50 @@ pub fn srv_group(s: rthttp.Srv) -> task.Group {
 // ---------------------------------------------------------------------------
 // Parked idle connections (decision 0449)
 
-/// The size of a continuation record: the server, the resume function's
-/// id in the stream table, and the next record of the ready list.
-const PC_SIZE = 24
+/// A continuation record (byte offsets): the server, the resume
+/// function's id in the stream table, the next record of the ready list,
+/// the connection's poll descriptor, its idle deadline (monotonic ns, 0
+/// none), and the links of the server's parked list.
+const PC_SIZE = 56
+const PC_SRV = 0
+const PC_ID = 8
+const PC_NEXT = 16
+const PC_PD = 24
+const PC_DL = 32
+const PC_PREV = 40
+const PC_PLINK = 48
 
 /// Parks idle connection h (its task is about to end): resume is run in a
 /// task of the server's scope when the connection becomes readable or is
-/// closed. False when it did not park (the caller reads on).
-pub fn hc_park(h: rthttp.HConn, resume: fn() -> ()) -> Bool {
+/// closed, or when idle_ns (the server's idle timeout, 0 none) passes
+/// without a request (the connection then closes). False when it did not
+/// park (the caller reads on).
+pub fn hc_park(h: rthttp.HConn, resume: fn() -> (), idle_ns: Int) -> Bool {
   if !hconn.park_ready(h) {
     return false
   }
   let hc = hconn.rec(h)
   let srv = ld(hc, hconn.HC_SRV)
+  let pd = hconn.conn_pd(hc)
   let id = stream_put(rt.any_of(resume))
   let pc = obj.alloc_obj(PC_SIZE)
-  st(pc, 0, srv)
-  st(pc, 8, id)
-  st(pc, 16, 0)
+  st(pc, PC_SRV, srv)
+  st(pc, PC_ID, id)
+  st(pc, PC_NEXT, 0)
+  st(pc, PC_PD, pd)
+  st(pc, PC_DL, if idle_ns > 0 { hconn.deadline(idle_ns) } else { 0 })
   hconn.rlock(srv)
-  st(srv, hconn.SR_PARKED, ld(srv, hconn.SR_PARKED) + 1)
+  parked_add(srv, pc)
   hconn.runlock(srv)
-  if poll.pd_park(hconn.conn_pd(hc), pc) {
+  if poll.pd_park(pd, pc) {
+    if idle_ns > 0 {
+      kick_resumer(srv)
+    }
     return true
   }
   // readiness came meanwhile: not parked after all
   hconn.rlock(srv)
-  st(srv, hconn.SR_PARKED, ld(srv, hconn.SR_PARKED) - 1)
+  parked_del(srv, pc)
   hconn.runlock(srv)
   let _f = stream_get(id, true)
   obj.free_obj(pc)
@@ -146,14 +164,41 @@ pub fn hc_park(h: rthttp.HConn, resume: fn() -> ()) -> Bool {
   false
 }
 
+/// Links pc into the server's parked list and counts it (RLOCK held).
+fn parked_add(srv: Int, pc: Int) {
+  let head = ld(srv, hconn.SR_PARKLIST)
+  st(pc, PC_PREV, 0)
+  st(pc, PC_PLINK, head)
+  if head != 0 {
+    st(head, PC_PREV, pc)
+  }
+  st(srv, hconn.SR_PARKLIST, pc)
+  st(srv, hconn.SR_PARKED, ld(srv, hconn.SR_PARKED) + 1)
+}
+
+/// Unlinks pc from the parked list and uncounts it (RLOCK held).
+fn parked_del(srv: Int, pc: Int) {
+  let prev = ld(pc, PC_PREV)
+  let next = ld(pc, PC_PLINK)
+  if prev != 0 {
+    st(prev, PC_PLINK, next)
+  } else {
+    st(srv, hconn.SR_PARKLIST, next)
+  }
+  if next != 0 {
+    st(next, PC_PREV, prev)
+  }
+  st(srv, hconn.SR_PARKED, ld(srv, hconn.SR_PARKED) - 1)
+}
+
 /// The poller's (or a closer's) hand-off of a fired continuation pc to its
 /// server's ready list, waking the resumer (cabi_http.xo pd_cont_fire).
 pub fn cont_fire(pc: Int) {
-  let srv = ld(pc, 0)
+  let srv = ld(pc, PC_SRV)
   hconn.rlock(srv)
-  st(pc, 16, ld(srv, hconn.SR_READY))
+  parked_del(srv, pc)
+  st(pc, PC_NEXT, ld(srv, hconn.SR_READY))
   st(srv, hconn.SR_READY, pc)
-  st(srv, hconn.SR_PARKED, ld(srv, hconn.SR_PARKED) - 1)
   let w = ld(srv, hconn.SR_RESUMER)
   hconn.runlock(srv)
   if w != 0 {
@@ -166,20 +211,64 @@ fn wake_resumer(w: Int) {
   pool.park_signal(ctx.pool(), w)
 }
 
+/// Wakes the resumer to look at the deadlines again.
+fn kick_resumer(srv: Int) {
+  hconn.rlock(srv)
+  let w = ld(srv, hconn.SR_RESUMER)
+  hconn.runlock(srv)
+  if w != 0 {
+    wake_resumer(w)
+  }
+}
+
+/// Closes the parked connections whose idle deadline passed: each is
+/// taken back from its descriptor (pd_unpark), so the poller no longer
+/// owns it, closed, and handed to the ready list to resume and end.
+/// Returns the earliest deadline left (0 none).
+fn sweep_idle(srv: Int) -> Int {
+  let now = sysio.mono_ns()
+  var next = 0
+  var expired: List[Int] = []
+  hconn.rlock(srv)
+  var pc = ld(srv, hconn.SR_PARKLIST)
+  while pc != 0 {
+    let dl = ld(pc, PC_DL)
+    if dl != 0 {
+      if dl <= now {
+        expired.push(pc)
+      } else if next == 0 || dl < next {
+        next = dl
+      }
+    }
+    pc = ld(pc, PC_PLINK)
+  }
+  hconn.runlock(srv)
+  for pc in expired {
+    // the poller may have fired it meanwhile: then it is not ours
+    if poll.pd_unpark(ld(pc, PC_PD), pc) {
+      poll.pd_close(ld(pc, PC_PD))
+      cont_fire(pc)
+    }
+  }
+  next
+}
+
 /// The next connection to resume, as the function to run (a resume
-/// function from hc_park), waiting for one; None when the server is
-/// stopping and nothing is parked or ready.
+/// function from hc_park), waiting for one (and closing parked
+/// connections that stay idle past the server's idle timeout); None when
+/// the server is stopping and nothing is parked or ready.
 pub fn resume_next(s: rthttp.Srv) -> (fn() -> ())? {
   let a = srec(s)
   let c = ctx.cur()
   let park = c + ctx.C_PARK
   while true {
+    let next = sweep_idle(a)
     hconn.rlock(a)
     let pc = ld(a, hconn.SR_READY)
     if pc != 0 {
-      st(a, hconn.SR_READY, ld(pc, 16))
+      st(a, hconn.SR_READY, ld(pc, PC_NEXT))
       hconn.runlock(a)
-      let id = ld(pc, 8)
+      let id = ld(pc, PC_ID)
       obj.free_obj(pc)
       let fs = stream_get(id, true)
       if !fs.is_empty() {
@@ -196,7 +285,14 @@ pub fn resume_next(s: rthttp.Srv) -> (fn() -> ())? {
     pool.park_reset(park)
     st(a, hconn.SR_RESUMER, park)
     hconn.runlock(a)
+    var t = 0
+    if next != 0 {
+      t = poll.timer_park(next, park)
+    }
     tasks.park_wait_n(c, true, false)
+    if t != 0 {
+      poll.timer_end(t)
+    }
     hconn.rlock(a)
     st(a, hconn.SR_RESUMER, 0)
     hconn.runlock(a)

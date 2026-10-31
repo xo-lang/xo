@@ -1,7 +1,7 @@
 use std/http
 use std/log
 
-/// Serves "ok" on every path; PORT (default 8080), and HTTPS with h2 when
+/// Serves "ok" on every path; PORT (default 8080), and IDLE_TIMEOUT_MS sets the server idle timeout, and HTTPS with h2 when
 /// TLS_CERT and TLS_KEY hold PEM text. For measuring idle connections.
 fn main(os: Os) ! {
   let port = Int.parse(os.env.get("PORT") ?? "8080").or_err("PORT")?
@@ -11,6 +11,9 @@ fn main(os: Os) ! {
   var srv = http.server(os.net.listen(addr)?, r)
   if let Some(cert) = os.env.get("TLS_CERT") {
     srv = srv.with_tls([http.tls_cert(cert.bytes(), (os.env.get("TLS_KEY") ?? "").bytes())?])
+  }
+  if let Some(ms) = os.env.get("IDLE_TIMEOUT_MS") {
+    srv = srv.with_idle_timeout(Duration.from_millis(Int.parse(ms).or_err("IDLE_TIMEOUT_MS")?))
   }
   log.info("listening", {"addr": addr})
   srv.serve()?

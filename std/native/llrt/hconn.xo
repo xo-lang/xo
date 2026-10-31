@@ -58,7 +58,10 @@ pub const SR_RLOCK = 104
 pub const SR_READY = 112
 pub const SR_RESUMER = 120
 pub const SR_PARKED = 128
-pub const SR_SIZE = 136
+/// the list of parked connections' records (hserve.xo, each with a
+/// deadline: the server's idle timeout), under SR_RLOCK
+pub const SR_PARKLIST = 136
+pub const SR_SIZE = 144
 
 /// A connection's record (byte offsets): the header; its server (a
 /// reference; 0 for a stream's connection); the net.Conn (a reference);
