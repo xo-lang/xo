@@ -406,8 +406,11 @@ fn keep(b: Bytes, r: Int) -> Int {
   r
 }
 
-/// glibc's strerror text of errno e (glibc 2.34; the C runtime's
-/// messages on Linux), "Unknown error N" past the table.
+// Origin: go syscall zerrors_linux_arm64.go (errors: the errno texts)
+/// The C runtime's strerror text of errno e on Linux: Go's table
+/// (syscall's errors, the same on every Linux architecture), first
+/// letter capitalized as a C library's strerror spells it (decision
+/// 0302); "Success" for 0 and "Unknown error N" past the table.
 pub fn strerror(e: Int) -> Str {
   match e {
     0 => "Success"

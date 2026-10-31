@@ -84,6 +84,18 @@ names).
   call (an item each, or an allowlist line saying why none is needed).
 - Cost: one test of about 100 ms in -short, and a marker line in a
   handful of files.
+- Owner's calls (2026-10-30, relayed by the lead):
+  - strerror (linux.xo): the texts come from Go's table (syscall's
+    zerrors_linux_*.go, which is glibc's text with the first letter
+    lowercased; 129 entries differ only in case), kept with the first
+    letter capitalized and the "Unknown error N" form, so the C runtime's
+    output does not change. linux.xo carries an `Origin: go` marker
+    (covered by the [go] item); err_msg still lowers the first letter.
+  - The symbol version tables (compiler/macho glibc.xo, glibc_amd64.xo)
+    are the interface names a binary must request to link against glibc,
+    not copied code: they move to the reviewed references.
+  - gai_strerror's texts (dns.xo, netconn.xo; Go has no table, cgo calls
+    the C library's) and darwin.strerror's texts wait for the owner.
 
 ## Alternatives
 
@@ -126,6 +138,8 @@ names).
   gai_strerror texts (libcstr.xo, linux.xo, dns.xo, netconn.xo) and the
   symbol version tables generated from glibc 2.31 (compiler/macho
   glibc.xo, glibc_amd64.xo). Each moves to a notices item or to the
-  references when the owner decides.
+  references when the owner decides. After the owner's calls in Consequences
+  (2026-10-30), 5 remain (the gai_strerror texts in dns.xo and
+  netconn.xo).
 - Not built yet: Decision 4 (scripts/release.sh checking each `[binary]`
   item's license file in the staged tree).

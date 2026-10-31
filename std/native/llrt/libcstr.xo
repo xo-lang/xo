@@ -273,8 +273,9 @@ pub fn strncmp(a: Int, b: Int, n: Int) -> Int {
 }
 
 // ---------------------------------------------------------------------------
-// strerror: glibc 2.34's texts (linux.xo strerror), as zero terminated C
-// strings from malloc, made once per errno and kept.
+// strerror: linux.xo strerror's texts (Go's table, first letter
+// capitalized), as zero terminated C strings from malloc, made once per
+// errno and kept.
 
 // ---------------------------------------------------------------------------
 // Integers from text

@@ -50,20 +50,21 @@ std/native/llrt/unwind.xo	/// _dl_find_object (glibc 2.35, past the 2.31 builds 
 std/native/sys_c.xo	/// thread_start): glibc's pthread_create sets up the thread's state
 std/native/sys_c.xo	/// errno's address (glibc's and musl's name; weak: the arm64 emitter
 
-# Owner's call pending (decision 0302, Consequences: "glibc's texts ...
-# need a call: an item each, or an allowlist line saying why none is
-# needed"): glibc 2.34's strerror texts and its gai_strerror texts,
-# copied as data, and the symbol version tables generated from glibc
-# 2.31 (compiler/macho glibc.xo). Listed so -short passes until the
-# owner decides; they move to a notices item or to the references.
+# Interface names (owner, 2026-10-30, decision 0302 Consequences): the
+# symbol version tables generated from glibc 2.31 are the interface names
+# a binary must request to link against glibc, not copied code.
 compiler/macho/glibc.xo	// stage 3): the default version of every symbol of glibc 2.31's
 compiler/macho/glibc.xo	// scripts/elf-glibc-versions.py; do not edit.
 compiler/macho/glibc_amd64.xo	// stage 3): the default version of every symbol of glibc 2.31's
 compiler/macho/glibc_amd64.xo	// scripts/elf-glibc-versions.py --amd64; do not edit.
+
+# Owner's call pending (decision 0302, Consequences: "glibc's texts ...
+# need a call: an item each, or an allowlist line saying why none is
+# needed"): glibc's gai_strerror texts, copied as data. Listed so -short
+# passes until the owner decides; they move to a notices item or to the
+# references.
 std/native/llrt/dns.xo	// glibc's getaddrinfo error codes
 std/native/llrt/dns.xo	/// The EAI code (glibc's, above) for a Winsock error of Windows'
 std/native/llrt/dns.xo	/// glibc's gai_strerror text of code.
-std/native/llrt/libcstr.xo	// strerror: glibc 2.34's texts (linux.xo strerror), as zero terminated C
-std/native/llrt/linux.xo	/// glibc's strerror text of errno e (glibc 2.34; the C runtime's
 std/native/llrt/netconn.xo	/// code for the Winsock error (dns.wsa_eai), so the texts are glibc's.
 std/native/llrt/netconn.xo	/// The text of resolve's error code (glibc's gai_strerror texts;
