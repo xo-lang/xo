@@ -11,8 +11,13 @@ day).
   `http.Status`. It breaks every handler that passes a status, so before it
   lands `xo fix` is run over bench/paper and the samples to count what it
   rewrites, and a blind-from-spec check confirms agents write `http.OK`.
-- The three new codes this record names (XO0421 to XO0423) are renumbered
-  when it is built: XO0421 is already taken.
+- The three new codes this record names (XO0428 to XO0430) are renumbered
+  when it is built: XO0428 is already taken.
+
+Note (2026-10-30): the codes this record first named, XO0421 to XO0423, were taken by
+XO0421 (integer literal range), XO0422 (wire name option) and XO0423 (XML format) before it was
+implemented; the three diagnostics are XO0428 (duplicate value), XO0429 (invalid valued enum)
+and XO0430 (misspelled constant pattern), claimed with code-claim.sh.
 
 ## Context
 
@@ -55,7 +60,7 @@ enum Color: Str { Red, Green, Blue }       // "Red", "Green", "Blue"
 - Default numbering: an `Int` variant without a value is the previous
   variant's value plus one, and the first is 0 (C, Rust, Swift). A `Str`
   variant without a value is its own name (Swift).
-- Values are unique within the enum: a repeat is a new error `XO0421`,
+- Values are unique within the enum: a repeat is a new error `XO0428`,
   which names both variants.
 - `e.value()` returns the value (`Int` or `Str`). `E.from(v)` returns
   `E?`: the variant with that value, or `None`. `Weekday.from(8)` is
@@ -63,7 +68,7 @@ enum Color: Str { Red, Green, Blue }       // "Red", "Green", "Blue"
   `.from(v).or_err(...)?` already cover both uses.
 - A value type other than `Int` or `Str`, a variant with fields in a
   valued enum, or a value that is not a constant of the value type is a
-  new error `XO0422`. An `Int` value outside the 64 bit range is the
+  new error `XO0429`. An `Int` value outside the 64 bit range is the
   existing integer literal error; there is no narrower range, since the
   value type is `Int`. (`use c` enums, below, are checked against C's
   `int` range when they are bound.)
@@ -78,7 +83,7 @@ enum Color: Str { Red, Green, Blue }       // "Red", "Green", "Blue"
   without a value type keeps today's encoding (`"Variant"`), which is the
   same text as a `Str` valued enum with default values, so adding `: Str`
   to such an enum does not change its wire format.
-- Generic valued enums are not allowed (`XO0422`): a valued enum has no
+- Generic valued enums are not allowed (`XO0429`): a valued enum has no
   fields, so a type parameter could not be used.
 
 ### 2. `E.all()` on field-less enums
@@ -116,7 +121,7 @@ pub fn (s: Status) is_success() -> Bool { s.0 >= 200 && s.0 <= 299 }
   (`NOT_FUOND`), which resolves to nothing and so binds a fresh name that
   matches everything (Rust's long-standing trap). A binding pattern
   spelled in the constant style, upper case with underscores, is
-  therefore a new error `XO0423`: constants are written that way and
+  therefore a new error `XO0430`: constants are written that way and
   bindings never need to be, so the typo is caught and the fix (the
   constant's nearest name) is suggested. The
   newtype pattern with a range already works for groups:
@@ -194,9 +199,9 @@ enum, since its values combine.
 
 | Code | Meaning |
 |------|---------|
-| `XO0421` | two variants of a valued enum have the same value |
-| `XO0422` | invalid valued enum: a value type other than `Int` or `Str`, a variant with fields, type parameters, or a value that is not a constant of the value type |
-| `XO0423` | a binding pattern is spelled like a constant (upper case) but no `const` of that name is in scope: a misspelled constant pattern |
+| `XO0428` | two variants of a valued enum have the same value |
+| `XO0429` | invalid valued enum: a value type other than `Int` or `Str`, a variant with fields, type parameters, or a value that is not a constant of the value type |
+| `XO0430` | a binding pattern is spelled like a constant (upper case) but no `const` of that name is in scope: a misspelled constant pattern |
 
 ## Consequences
 
@@ -219,7 +224,7 @@ enum, since its values combine.
   checker, listed in the change) and renames them before the rule takes
   effect, and `xo fix` does the same for users.
 - Implementation order when accepted: (1) valued enums, `all()`, Json,
-  `XO0421`, `XO0422`, spec core 2.3 and std.md JSON rules; (2) constant
+  `XO0428`, `XO0429`, spec core 2.3 and std.md JSON rules; (2) constant
   patterns and newtype consts, core 3.1 and 3.5; (3) http.Status and the
   `xo fix` migration, std.md 4; (4) use c enums, core (C interop); (5) the
   std tables. Each step is usable alone.
