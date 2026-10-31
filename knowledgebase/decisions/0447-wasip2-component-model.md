@@ -1,6 +1,6 @@
 # 0447: Xo programs on WASI preview 2 and the component model (wasi:http)
 
-Status: Proposed (xo-lang-4, 2026-10-30; research ADR, nothing built until the owner decides)
+Status: Accepted, direction and step 1 (owner, 2026-10-30): the hello-world wasi:http measurement first, later stages decided on its numbers; the owner approved installing wasmtime, wasm-tools, TinyGo and Rust's wasm32-wasip2 target on the linux/arm64 offload host. Proposed by xo-lang-4 the same day
 
 ## Context
 
