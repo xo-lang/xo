@@ -836,7 +836,10 @@ fn grow(hw: Int, l: Int, esize: Int) -> Int {
   if cap < 0 {
     return grow(hw, l, esize) // not taken: the inliner's cycle
   }
-  let ncap = if cap < 4 { 4 } else { addw(cap, cap) }
+  // Go's growslice curve: double up to 256 elements, then grow by a
+  // quarter plus 192 (toward 1.25x), so a large list holds at most
+  // about a fifth of its capacity unused, not half (decision 0452)
+  let ncap = if cap < 4 { 4 } else if cap < 256 { addw(cap, cap) } else { addw(cap, (cap + 768) >> 2) }
   // the new capacity first: the resize keeps the block or copies its
   // first bytes (the header with them), so nothing is live after the
   // call and it is a tail call

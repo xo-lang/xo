@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Memory and speed (decision 0452): a native List of 256 elements or
+  more grows by Go's slice step (a quarter plus 192 elements, toward
+  1.25x) instead of doubling. xo building itself on linux/arm64 (`xo
+  bench --ab`, ten rounds): wall 0.963 (0.959 to 0.968), CPU 0.986 and
+  max RSS 0.935 (0.914 to 0.943), all better; the Mac's emit peak about
+  -11%. bench/perf/alloc takes a repeat count (`alloc grow 300`).
 - Native backend (arm64), shared landing pad tails: the landing pad of
   each call releases every heap value live at it, so the pads of a
   function's calls release mostly the same values. compiler/ssa orders

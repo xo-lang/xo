@@ -1,6 +1,6 @@
 // Allocation heavy workloads for the native heap (decision 0207 stage 3:
 // the allocator in Xo against its C path, XO_LLRT_C=alloc). Usage:
-// alloc <workload>; prints "<workload> <checksum> <elapsed
+// alloc <workload> [repeats]; prints "<workload> <checksum> <elapsed
 // microseconds>". "none" is the setup alone.
 //
 //   small   short lists made and dropped (the free list pop and push)
@@ -119,16 +119,22 @@ fn tasks() -> Int {
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "small"
+  // an optional repeat count (alloc grow 300): a run long enough that
+  // the process start does not decide an --ab of a short workload
+  let reps = Int.parse(args.get(1) ?? "1") ?? 1
   let t = os.clock.now()
-  let sum = match w {
-    "none" => 0
-    "small" => small()
-    "mixed" => mixed()
-    "grow" => grow()
-    "strings" => strings()
-    "maps" => maps()
-    "tasks" => tasks()
-    _ => -1
+  var sum = 0
+  for _ in 0..reps {
+    sum += match w {
+      "none" => 0
+      "small" => small()
+      "mixed" => mixed()
+      "grow" => grow()
+      "strings" => strings()
+      "maps" => maps()
+      "tasks" => tasks()
+      _ => -1
+    }
   }
   let us = os.clock.since(t).nanos() / 1000
   os.stdio.println("${w} ${sum} ${us}")

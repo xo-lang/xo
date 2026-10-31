@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-10-31: perf: a large List grows by Go's slice step, not by doubling
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0448 stage 3 (xo's self build: doubled lists in emit's peak)
+- Go reference: runtime/slice.go growslice (newcap += (newcap + 3*threshold) >> 2 past 256 elements)
+- Test: arm64 goldens; bootstrap fixed point (s2 = s3); bench/perf/alloc grow and mixed; 20 million pushes against Go
+
+A List of 256 elements or more (std/native/llrt/obj.xo grow) grows by a
+quarter plus 192 elements instead of doubling, as Go's append does, so
+a large list holds at most about a fifth of its capacity unused, not
+half. Shorter lists still double. xo's self build on linux/arm64: wall
+0.963, CPU 0.986, max RSS 0.935 (all better). Timing row (20 million pushes into one List, the Mac, medians of five; Xo / Go): time 29.6 / 57.7 ms (0.51), max RSS 212 / 340 MB (0.62); before the change Xo was 29.6 ms and 301 MB. Decision 0452.
+
 ## 2026-10-30: feature: a child's own usage, ProcOutput.usage and Child.wait_usage
 
 - Kind: feature
