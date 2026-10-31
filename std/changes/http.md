@@ -1,5 +1,22 @@
 # std/http changes
 
+## 2026-10-31: perf: idle keep-alive connections park, on plain and TLS HTTP/1.1 (decision 0449 stage 1)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the owner, accepting decision 0449 (an idle connection held a fiber stack, two mappings, so a server stopped near 32,000 idle connections at the default vm.max_map_count)
+- Go reference: net/http holds an idle connection in a goroutine whose stack is heap; Go 1.28 parks idle HTTP/2 connections
+- Test: internal/stdtest TestIdleConnections40k and TestIdleConnections40kTLS (XO_TEST_IDLE40K=1, linux: 40,000 idle connections, every one answers a second request, under 20,000 mappings: 327 and 626)
+- Timing: bench/perf/http CRUD server, 32 busy connections, linux/arm64, 5 runs: 189,308 to 188,129 req/s (-0.6%, within noise), CPU 11.68 to 11.76 us per request; idle h1 RssAnon 6.4 KB a connection (plain), 50 KB (TLS)
+
+A connection that waits for its next request with nothing buffered no
+longer holds a task and its stack: the server parks it in the poller and
+starts a task when bytes arrive (a stack from the cache), or closes it at
+the idle timeout. A connection whose last gap between requests was under
+2 ms keeps its fiber, so a busy keep-alive client pays nothing. TLS
+connections park once the engine holds no plaintext and no partial record.
+HTTP/2 connections do not park yet.
+
 ## 2026-10-30: fix: Router.call builds for wasm (decision 0447)
 
 - Kind: fix
