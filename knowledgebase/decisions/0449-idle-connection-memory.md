@@ -207,10 +207,13 @@ run.sh, CRUD server, 32 workers, 5 runs, base f25d1f513 against 39166f720):
 every request parked, and the server lost speed: 187,494 to 167,661 req/s
 (-10.6%), p50 137 to 160 us, CPU 11.73 to 13.71 us per request, peak RSS
 68 to 97 MB. A closed loop client answers within about 150 us, so the
-connection parked (peek, record, poller, resume task) for nothing. Change:
-park_ready waits PARK_GRACE_NS (2 ms) on the connection's own fiber first
-(pd_wait with a deadline); a connection whose next request comes within the
-grace never parks, and one that stays quiet parks as before. Re-measured
+connection parked (peek, record, poller, resume task) for nothing. First change, a
+2 ms pd_wait before parking (PARK_GRACE_NS): 188,249 to 183,686 req/s (-2.4%),
+CPU 11.68 to 13.36 us per request (the timer per request). Second change,
+as built: a connection is "quick" when the gap before its last request
+(from the end of the previous response, HC_TEND, kept across a park) was
+under 2 ms (QUICK_GAP_NS); a quick connection does not park and waits on
+its own fiber with no extra timer; a quiet one parks as before. Re-measured
 below.
 
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)

@@ -126,6 +126,15 @@ const PC_DL = 32
 const PC_PREV = 40
 const PC_PLINK = 48
 
+/// Whether h is a busy keep-alive connection (hconn.quick).
+pub fn hc_quick(h: rthttp.HConn) -> Bool { hconn.quick(h) }
+
+/// hconn.note_request.
+pub fn hc_note_request(h: rthttp.HConn) { hconn.note_request(h) }
+
+/// hconn.note_done.
+pub fn hc_note_done(h: rthttp.HConn) { hconn.note_done(h) }
+
 /// Parks idle connection h (its task is about to end): resume is run in a
 /// task of the server's scope when the connection becomes readable or is
 /// closed, or when idle_ns (the server's idle timeout, 0 none) passes

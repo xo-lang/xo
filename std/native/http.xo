@@ -2480,11 +2480,12 @@ fn serve_h1(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router)
   // a handle_stream route reads its body itself (decision 0310)
   var rd = if r.streamed { http1.reader_streaming(hc, fn(m: Str, p: Str) -> Bool { route_streams(r, m, p) }) } else { http1.reader(hc) }
   while true {
-    if rd.buffered() == 0 && hserve.hc_park(hc, fn() { serve_conn_resume(hc, r, serve_h2, lim) }, if lim.idle_ns > 0 { lim.idle_ns } else { lim.read_ns }) {
+    if rd.buffered() == 0 && !hserve.hc_quick(hc) && hserve.hc_park(hc, fn() { serve_conn_resume(hc, r, serve_h2, lim) }, if lim.idle_ns > 0 { lim.idle_ns } else { lim.read_ns }) {
       return true
     }
     match rd.read() {
       Some(q) => {
+        hserve.hc_note_request(hc)
         var req = head_request(rd, q)
         let sq = rd.streamed()
         if sq != 0 {
@@ -2496,6 +2497,7 @@ fn serve_h1(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router)
           Some(x) => http1.respond(hc, x.status, x.body)
           None => open
         }
+        hserve.hc_note_done(hc)
         if !keep {
           break
         }

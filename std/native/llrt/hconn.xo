@@ -87,7 +87,12 @@ pub const HC_IP = 112
 /// Input read ahead by sniff_h2c and not yet taken (a block: its length, then
 /// up to 24 bytes), 0 for none.
 pub const HC_PEEK = 160
-pub const HC_SIZE = 168
+/// When the last response ended (monotonic ns, 0 before the first), and
+/// whether the gap before the last request was under QUICK_GAP_NS (1): a
+/// busy keep-alive connection does not park (note_request, note_done).
+pub const HC_TEND = 168
+pub const HC_QUICK = 176
+pub const HC_SIZE = 184
 
 /// The longest address text kept (INET6_ADDRSTRLEN less its zero byte).
 const IP_MAX = 45
@@ -363,26 +368,36 @@ pub fn park_ready(h: rthttp.HConn) -> Bool {
   // MSG_PEEK: the byte stays for the read
   let r = sock.recv(pd_fd(pd), b, 1, 2)
   obj.free_obj(b)
-  if !would_block(r) {
-    poll.pd_end(pd)
-    return false
-  }
-  // a short wait on this fiber first: a connection whose next request
-  // comes within the grace (a busy keep-alive client) never parks, which
-  // costs a resume task per request (the CRUD server, 32 busy connections:
-  // 187k to 168k req/s when every request parked, 2026-10-31)
-  let w = poll.pd_wait(pd, false, deadline(PARK_GRACE_NS))
   poll.pd_end(pd)
-  if w != poll.TIMEOUT {
+  if !would_block(r) {
     return false
   }
   set_idle(hc, true)
   true
 }
 
-/// How long a connection waits on its own fiber for the next request
-/// before it parks (park_ready).
-const PARK_GRACE_NS = 2000000
+/// A gap between two requests shorter than this marks the connection busy:
+/// it keeps its fiber and waits there, since parking and resuming a busy
+/// connection costs more than the stack it holds (the CRUD server, 32 busy
+/// connections: 187k to 168k req/s when every request parked, 2026-10-31).
+const QUICK_GAP_NS = 2000000
+
+/// Whether the last gap between requests on h was short (park_ready is
+/// not asked then).
+pub fn quick(h: rthttp.HConn) -> Bool { ld(rec(h), HC_QUICK) != 0 }
+
+/// A request head arrived on h: the gap since the last response decides
+/// quick.
+pub fn note_request(h: rthttp.HConn) {
+  let hc = rec(h)
+  let e = ld(hc, HC_TEND)
+  if e != 0 {
+    st(hc, HC_QUICK, if sysio.mono_ns() - e < QUICK_GAP_NS { 1 } else { 0 })
+  }
+}
+
+/// A response on h ended.
+pub fn note_done(h: rthttp.HConn) { st(rec(h), HC_TEND, sysio.mono_ns()) }
 
 /// Reads from the connection itself (recv_until after the read ahead).
 fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
