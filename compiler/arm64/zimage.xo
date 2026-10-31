@@ -165,7 +165,7 @@ fn (var g: G) zero_image_runs() -> Bool {
 /// (`str $u0, [$u1, #off]` of xzr or a register const_words_text reads),
 /// or (-1, 0).
 fn (g: G) const_store(x: Inst) -> (Int, Int) {
-  if x.kind != K_PLAIN || x.us.len() != 2 || !x.defs.is_empty() || x.has_fault || x.poll || !x.clobbers.is_empty() {
+  if x.kind != K_PLAIN || x.us.len() != 2 || !x.defs.is_empty() || x.has(IF_HAS_FAULT) || x.has(IF_POLL) || !x.clobbers.is_empty() {
     return (-1, 0)
   }
   var off = 0
