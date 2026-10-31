@@ -33,5 +33,14 @@ fn main(os: Os) {
   let f = Func{values: [Value{args: [0]}, Value{args: [0]}, Value{args: [1]}]}
   var us = [Value{args: []}]
   rename(us)
+  os.stdio.println("${first_bumped(us).args.len()}")
   os.stdio.println("${root(f, 2)} ${bump({"a": 1}, "a")}")
+}
+
+// returning the changed copy is not a write-back: the collection keeps
+// the old value (core 5.2; the note says so since 2026-10-30)
+fn first_bumped(users: List[Value]) -> Value {
+  var u = users[0]
+  u.args.push(1) // ERROR XO0520 "never written back"
+  u
 }

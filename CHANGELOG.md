@@ -5,6 +5,11 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Diagnostics: XO0520's note names what counts as a write-back:
+  `m.put(k, v)`, `xs[i] = v`, the whole value passed to a call, or
+  `update` in place; returning the changed copy does not count, since the
+  collection keeps the old value (core 5.2; a test helper that returned
+  its copy of `m.funcs[fi]` read the error as a false positive).
 - Release (decision 0302 point 4): scripts/release.sh checks each staged
   tree with scripts/release-licenses.sh, so an archive cannot ship a
   `[binary]` item's binary without the license file its notice names.

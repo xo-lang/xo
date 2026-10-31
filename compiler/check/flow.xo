@@ -1490,7 +1490,10 @@ fn (var c: Checker) lost_updates(sites: List[FlowSite], nodes: List[Node]) {
     let d = c.error("XO0520", events[lost].id.span, "mutation of `${vn}` is never written back")
     if d >= 0 {
       c.note_here(d, parser.expr_span(cd.value), "`${vn}` is a copy of a collection element taken here; changing it does not change the collection (core 5.2)")
-      c.note(d, "write it back (for example `m.put(k, ${vn})`) or mutate in place with `update` (core 5.2)")
+      // the forms that count, and the one that looks like it does
+      // (2026-10-30: a test helper returned its changed copy of
+      // `m.funcs[fi]` and read the error as a false positive)
+      c.note(d, "store it again after the change (`m.put(k, ${vn})`, `xs[i] = ${vn}`, or `${vn}` passed whole to a call) or change it in place with `update`; returning `${vn}` does not count, since the collection keeps the old value (core 5.2)")
     }
   }
 }

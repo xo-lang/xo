@@ -20,7 +20,7 @@
         }
       },
       {
-        "message": "write it back (for example `m.put(k, b)`) or mutate in place with `update` (core 5.2)"
+        "message": "store it again after the change (`m.put(k, b)`, `xs[i] = b`, or `b` passed whole to a call) or change it in place with `update`; returning `b` does not count, since the collection keeps the old value (core 5.2)"
       }
     ],
     "fixes": []
