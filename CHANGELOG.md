@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Tools: when `XO_DUMP_FN=NAME` matches no function, the note lists up
+  to five functions whose qualified names end with NAME (a method of
+  another module is named with its module: `ssa.Builder.rc_prepare`, not
+  `Builder.rc_prepare`).
 - FIX (native backends): a `while true` loop whose exit carries values
   builds again when a call in it faults only on some targets: the
   backend kept the loop's exit as a second jump target without the

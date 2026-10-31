@@ -1704,6 +1704,17 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     let gdw = (gm.debug_info, gm.comp_dir, gm.std_root)
     let gstd_obj = gm.std_obj
     let gsep = gm.sepcomp_program
+    // XO_DUMP_FN's qualified names whose last parts it names (a method's
+    // module prefix left out), for the note when nothing matches
+    let dump_want = os.env.get("XO_DUMP_FN") ?? ""
+    var dump_near: List[Str] = []
+    if !dump_want.is_empty() {
+      for f in gm.funcs {
+        if f.name.ends_with(".${dump_want}") && dump_near.len() < 5 {
+          dump_near.push(f.name)
+        }
+      }
+    }
     var p = arm64.generate_cached(gm, if march == "amd64" { "${tgoos}-amd64" } else { tgoos }, jobs, fc)
     t = lap(os, phases, "emit", t)
     if !fdir.is_empty() {
@@ -1726,9 +1737,11 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       t = lap(os, phases, "fn_store", t)
     }
     write_dumps(os, p.dumps)
-    let want = os.env.get("XO_DUMP_FN") ?? ""
-    if !want.is_empty() && !p.dumps.any(fn(d) { d.0 == want }) {
-      os.stdio.eprintln("xo: XO_DUMP_FN=${want}: no function of that name reached the backend (inlined into every caller and removed, unused, or misspelled; XO_INLINE_REPORT=1 lists the functions)")
+    if !dump_want.is_empty() && !p.dumps.any(fn(d) { d.0 == dump_want }) {
+      os.stdio.eprintln("xo: XO_DUMP_FN=${dump_want}: no function of that name reached the backend (inlined into every caller and removed, unused, or misspelled; XO_INLINE_REPORT=1 lists the functions)")
+      if !dump_near.is_empty() {
+        os.stdio.eprintln("  functions whose names end with it: ${dump_near.join(", ")}")
+      }
     }
     if !p.err.is_empty() {
       fail(os, p.err)
