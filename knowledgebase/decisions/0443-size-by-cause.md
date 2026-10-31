@@ -94,8 +94,7 @@ arm64 (2026-10-30, Xo Lang 2): the emitter's cause labels (compiler/arm64
 emit.xo cause_mark; isel.xo value_cause), compiler/macho causes.xo
 (assemble_causes), XO_SIZE_CAUSES in compiler/xo asmparts.xo, and
 `xo dev size` (compiler/cli/dev size.xo). Not yet: the copy cause (no
-emitter site tags inlined copies yet; they count as body) and amd64
-(its emitter writes no cause labels; XO_SIZE_CAUSES is ignored there).
+emitter site tags inlined copies yet; they count as body).
 
 First numbers, with a stage 1 xo (the checkout's bin/xo, built by the
 older compiler): xo's rows cover 71,615,504 of its 71,616,076 `__text`
@@ -106,6 +105,20 @@ No output byte changes (scripts/identity of xo at the parent against
 this change): linux/arm64 117 of 117 programs identical (offload host),
 darwin/arm64 59 of 59 (every 8th golden, the Mac); fib and sieve's
 whole assembly is the same with the cause labels removed.
+
+amd64 (2026-10-30, Xo Lang 2): x86emit.xo writes the same labels (its
+own block loop and prologues; data, preemption and fault stubs), its
+text passes lift `_dc` like the debug labels (x86_dbg_label), and
+compiler/macho assemble_causes_amd64 sums them; windows/amd64's COFF
+objects carry the labels but report no rows. The first identity run
+found that a label between a compare and its jcc broke the jump
+padding's macro-fusion pair (decision 0398: the fused instruction must
+be on the line before the jump), changing 3 of 59 darwin/amd64
+programs; the assembler now lets a cause label sit inside a pair
+(asm.xo define_sym, asm_amd64.xo x86_jump_pad). With that, no output
+byte changes: scripts/identity of main's xo against the amd64 step,
+darwin/amd64 117 of 117 programs identical (the Mac), linux/amd64 116 of
+116 (offload host; one golden fails to build with both xos).
 
 ## Alternatives
 

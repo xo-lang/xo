@@ -586,6 +586,15 @@ fn (var a: Asm) define_sym(i: Int, name: Bytes) {
   }
   if a.sects[a.cur].code {
     a.syms[i].off = a.code_len(a.cur)
+    if a.amd64 && a.syms[i].temp && cause_of_label(bstr(name)) >= 0 {
+      // a cause label (decision 0443) is no branch target: the jump
+      // padding is as without it (a jcc still fuses with the
+      // instruction on the line before the label)
+      if a.xlast_line == a.line - 1 {
+        a.xlast_line = a.line
+      }
+      return
+    }
     a.xlabel_at = a.syms[i].off
   } else {
     a.push_item(a.cur, Item.Label(i))

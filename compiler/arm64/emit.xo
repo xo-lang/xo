@@ -1957,12 +1957,9 @@ fn (g: G) fwd(b0: Int) -> Int {
 
 /// decision 0443: a label line that starts cause c's bytes
 /// (`_x<c>_dc<n>`, a row label the text passes go past: lsr.xo
-/// is_row_label), counted by compiler/macho assemble_causes. The x86
-/// text has none yet.
+/// is_row_label; x86emit.xo x86_dbg_label), counted by compiler/macho
+/// assemble_causes and assemble_causes_amd64.
 fn (var g: G) cause_label(c: Int) -> Str {
-  if g.x86 {
-    return ""
-  }
   let l = g.local("${g.lbl_prefix()}_x${c}_dc${g.dc_n}")
   g.dc_n += 1
   "${l}:\n"
@@ -1970,7 +1967,7 @@ fn (var g: G) cause_label(c: Int) -> Str {
 
 /// Writes a cause label when the text changes cause (decision 0443).
 fn (var g: G) cause_mark(var b: List[Str], c: Int) {
-  if c == g.dc_cur || g.x86 {
+  if c == g.dc_cur {
     return
   }
   b.push(g.cause_label(c))
@@ -1980,8 +1977,5 @@ fn (var g: G) cause_mark(var b: List[Str], c: Int) {
 /// The cause label of a function's local empty list (local_empty_l and
 /// its port): data, decision 0443.
 fn (g: G) empty_list_cause() -> Str {
-  if g.x86 {
-    return ""
-  }
   "${g.local("${g.lbl_prefix()}_el_x${C_DATA}_dc0")}:\n"
 }

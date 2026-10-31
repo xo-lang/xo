@@ -27,7 +27,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   keeps the settings, so these builds' cleanup keys change once
   (gotchas/link-view-dropped-build-settings.md).
 - Tools: `xo dev size --by-cause PROG` (decision 0443): a native arm64
-  program's code bytes by cause (body, frame, fault exit, landing pads,
+  or amd64 program's code bytes by cause (body, frame, fault exit, landing pads,
   fault stubs, preemption stubs, rc, inlined runtime, data), per function
   and module, from cause labels the emitter writes, which change no
   output byte; `--diff` compares two saved runs. xo 0.35's 71.6 MB of

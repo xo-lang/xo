@@ -38,3 +38,49 @@ test "only cause labels name a cause" {
   expect(cause_of_label("LnSf12_x6_dc")) == -1
   expect(cause_of_label("LnSf12_x_dc4")) == -1
 }
+
+fn causes_src_amd64(tags: Bool) -> Bytes {
+  let t = fn(l: Str) -> Str { if tags { "${l}:\n" } else { "" } }
+  var b = StrBuilder.new()
+  b.write("\t.text\n\t.globl f\n\t.p2align 4\nf:\n")
+  b.write(t(".Lf1_x1_dc0"))
+  b.write("\tpushq %rbp\n\tmovq %rsp, %rbp\n")
+  b.write(t(".Lf1_x0_dc1"))
+  b.write("\taddq $1, %rax\n\ttestq %rax, %rax\n\tjne .Lf1_s\n")
+  b.write(t(".Lf1_x1_dc2"))
+  b.write("\tpopq %rbp\n\tretq\n")
+  b.write(t(".Lf1_x4_dc3"))
+  b.write(".Lf1_s:\n\tud2\n")
+  b.freeze().bytes()
+}
+
+test "amd64: the bytes of each function by cause, and no byte changed" {
+  let (obj, rows) = assemble_causes_amd64(causes_src_amd64(true), true).or_fault("assemble")
+  // push 1 + mov 3; add 4 + test 3 + jne 2; pop 1 + ret 1; ud2 2
+  expect(rows) == "f\t0\t9\nf\t1\t6\nf\t4\t2\n"
+  expect(obj == assemble_elf_amd64(causes_src_amd64(false)).or_fault("without")) == true
+}
+
+fn causes_fused_src(tags: Bool) -> Bytes {
+  var b = StrBuilder.new()
+  b.write("\t.text\n\t.globl f\n\t.p2align 5\nf:\n")
+  for _ in 0..27 {
+    b.write("\tnop\n")
+  }
+  b.write("\tcmpq $1, %rax\n")
+  if tags {
+    b.write(".Lf1_x0_dc0:\n")
+  }
+  b.write("\tjne .Lf1_s\n\tretq\n.Lf1_s:\n\tud2\n")
+  b.freeze().bytes()
+}
+
+test "amd64: a cause label between a fused pair leaves its jump padding" {
+  // the cmp and jne straddle the 32 byte boundary: padded before the cmp
+  let with = assemble_elf_amd64(causes_fused_src(true)).or_fault("with")
+  let without = assemble_elf_amd64(causes_fused_src(false)).or_fault("without")
+  expect(with == without) == true
+  let (_, rows) = assemble_causes_amd64(causes_fused_src(true), true).or_fault("rows")
+  // 27 nops, 5 NOPs of padding and the cmp (4) before the label
+  expect(rows.starts_with("f\t0\t")) == true
+}

@@ -1,6 +1,7 @@
 // Code size by cause (decision 0443): the arm64 emitter writes a local
 // label `L<prefix>_x<code>_dc<n>` (ELF `.L...`) where the cause of the
-// code changes (compiler/arm64 mir.xo C_*). The labels are in no symbol
+// code changes (compiler/arm64 mir.xo C_*; the amd64 emitter the same
+// labels, assemble_causes_amd64). The labels are in no symbol
 // table and change no byte; assembled for causes, each function's bytes
 // are summed per cause from them.
 
@@ -22,6 +23,13 @@ pub fn assemble_causes(src: Bytes, elf: Bool) -> Result[(Bytes, Str), Str] {
   }
   let rows = a.cause_rows()
   Ok((if elf { a.write_elf() } else { a.write_object() }, rows))
+}
+
+/// assemble_causes for the amd64 emitter's text: the object of
+/// assemble_elf_amd64 (elf) or assemble_macho_amd64 (minos 11.0), with
+/// its rows.
+pub fn assemble_causes_amd64(src: Bytes, elf: Bool) -> Result[(Bytes, Str), Str] {
+  assemble_amd64_rows(src, elf, (11, 0), true, true)
 }
 
 /// The cause code of a cause label's name, or -1 for any other name:

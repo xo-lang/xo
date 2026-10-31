@@ -1,7 +1,8 @@
-// `xo dev size --by-cause` (decision 0443): a native arm64 program's code
+// `xo dev size --by-cause` (decision 0443): a native program's code
 // bytes split by what made them. The build writes the rows
 // (XO_SIZE_CAUSES, compiler/macho assemble_causes): `function\tcause\tbytes`
-// per line, from the cause labels the arm64 emitter writes.
+// per line, from the cause labels the native emitter writes (arm64 and
+// amd64; not windows' COFF objects).
 
 use github.com/xo-lang/xo/compiler/cli/core
 use github.com/xo-lang/xo/compiler/hostpath
@@ -216,7 +217,7 @@ fn size_usage() -> Str {
 }
 
 /// size_cmd is `xo dev size --by-cause`: builds PROG (a directory or a
-/// file, for arm64 native) with XO_SIZE_CAUSES set and reports its code
+/// file, native arm64 or amd64) with XO_SIZE_CAUSES set and reports its code
 /// bytes by cause; --rows reads a saved run, --diff compares two.
 fn size_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, fs.write, proc, rand, stdio) {
   var fl = core.new_flags("dev size")
@@ -225,7 +226,7 @@ fn size_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, 
   fl.str_flag("save", "", "write the rows (function, cause, bytes) to FILE")
   fl.str_flag("rows", "", "report a saved FILE instead of building")
   fl.bool_flag("diff", "compare two saved rows files A and B")
-  fl.str_flag("flags", "", "more build flags, separated by spaces (--target=linux/arm64)")
+  fl.str_flag("flags", "", "more build flags, separated by spaces (--target=linux/amd64)")
   fl.str_flag("xo", "", "the xo that builds PROG (default this one)")
   if !fl.parse(os, args) {
     return 2
@@ -306,7 +307,7 @@ fn size_cmd(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, 
     None => return 1
   }
   if r.total == 0 {
-    os.stdio.eprintln("xo dev size: the build wrote no rows (an arm64 native build assembled by xo, not --ld=cc or --backend=llvm)")
+    os.stdio.eprintln("xo dev size: the build wrote no rows (a native arm64 or amd64 build assembled by xo, not windows, --ld=cc or --backend=llvm)")
     return 1
   }
   if text > 0 {

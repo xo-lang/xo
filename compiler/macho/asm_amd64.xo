@@ -95,6 +95,15 @@ pub fn assemble_macho_amd64_raw(src: Bytes, minos: (Int, Int)) -> Result[Bytes, 
 }
 
 fn assemble_amd64(src: Bytes, elf: Bool, minos: (Int, Int), jpad: Bool) -> Result[Bytes, Str] {
+  match assemble_amd64_rows(src, elf, minos, jpad, false) {
+    Ok((obj, _)) => Ok(obj)
+    Err(e) => Err(e)
+  }
+}
+
+/// assemble_amd64, with the cause rows of assemble_causes when rows
+/// (decision 0443), else "".
+fn assemble_amd64_rows(src: Bytes, elf: Bool, minos: (Int, Int), jpad: Bool, rows: Bool) -> Result[(Bytes, Str), Str] {
   var long: Map[Int, Bool] = {}
   while true {
     var a = Asm{elf: elf, amd64: true, xlong: long, minos: minos, xjpad: jpad}
@@ -116,7 +125,8 @@ fn assemble_amd64(src: Bytes, elf: Bool, minos: (Int, Int), jpad: Bool) -> Resul
     if !a.err.is_empty() {
       return Err(a.err)
     }
-    return Ok(if elf { a.write_elf() } else { a.write_object() })
+    let rs = if rows { a.cause_rows() } else { "" }
+    return Ok((if elf { a.write_elf() } else { a.write_object() }, rs))
   }
   Err("unreachable")
 }
@@ -365,6 +375,13 @@ fn (var a: Asm) x86_jump_pad(n: Int) {
   while k > 0 {
     k -= 1
     a.sects[a.cur].words.push(tail[k])
+  }
+  // a cause label between the pair (decision 0443) goes past the fused
+  // instruction again
+  for i in 0..a.syms.len() {
+    if a.syms[i].sect == a.cur && a.syms[i].off == at && a.syms[i].temp && cause_of_label(bstr(a.syms[i].name)) >= 0 {
+      a.syms[i].off = at + pad
+    }
   }
   if a.xlabel_at == a.xlast_at {
     for i in 0..a.syms.len() {

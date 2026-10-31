@@ -238,6 +238,7 @@ fn (var g: G) x86_emit_once() {
     g.cfi_start(b, pads)
   }
   if !g.shrink {
+    g.cause_mark(b, C_FRAME)
     g.x86_prologue(b)
     g.x86_cfi_frame(b)
   }
@@ -285,6 +286,7 @@ fn (var g: G) x86_emit_once() {
     g.cur = mb
     if g.shrink && g.fedge[mb] == 1 {
       // a way into the blocks that need the frame (shrink.xo)
+      g.cause_mark(b, C_FRAME)
       g.x86_prologue(b)
     }
     if g.shrink && mb == g.pro {
@@ -326,6 +328,7 @@ fn (var g: G) x86_emit_once() {
         g.dl_last = inst.line
         g.dl_last_inl = inst.inl
       }
+      g.cause_mark(b, if inst.kind == K_RET { C_FRAME } else { inst.cause })
       g.x86_emit_inst(b, inst, next)
       g.pos = -1
       if k == 0 && head {
@@ -752,7 +755,7 @@ fn (var g: G) x86_emit_switch(var b: List[Str], inst: Inst) {
   for t in inst.targets[0..n] {
     s.push("\t.long ${g.label(g.fwd(t))}-${tab}\n")
   }
-  g.stubs.push(s.join(""))
+  g.stubs.push(g.cause_label(C_DATA) + s.join(""))
 }
 
 /// The register name of use v, reloading a spilled one into the scratch
@@ -1154,9 +1157,9 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     b.push("\ttestl ${r}, ${r}\n\tjne ${l}\n${l}_r:\n")
     let stub = g.sym("xo_preempt_stub")
     if g.os == "windows" {
-      g.stubs.push("${l}:\n\tcallq ${stub}\n\tjmp ${l}_r\n")
+      g.stubs.push("${g.cause_label(C_PREEMPT)}${l}:\n\tcallq ${stub}\n\tjmp ${l}_r\n")
     } else {
-      g.stubs.push("${l}:\n\tleaq -128(%rsp), %rsp\n\tcallq ${stub}\n\tleaq 128(%rsp), %rsp\n\tjmp ${l}_r\n")
+      g.stubs.push("${g.cause_label(C_PREEMPT)}${l}:\n\tleaq -128(%rsp), %rsp\n\tcallq ${stub}\n\tleaq 128(%rsp), %rsp\n\tjmp ${l}_r\n")
     }
   }
   if inst.has_fault {
@@ -1238,7 +1241,7 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     } else {
       sb.push("\tcallq ${inst.ffn}\n${after}\tud2\n")
     }
-    g.stubs.push(sb.join(""))
+    g.stubs.push(g.cause_label(C_FAULT_STUB) + sb.join(""))
   }
 }
 
@@ -2185,7 +2188,8 @@ fn x86_reload_peep(text: Str) -> Str {
 }
 
 /// text's lines without its debug labels (`..._dlN:`, `..._dvN:`,
-/// `..._dvsN:`: line rows and variable ranges, never branched to), and
+/// `..._dvsN:`: line rows and variable ranges; `..._dcN:`, size causes,
+/// decision 0443; never branched to), and
 /// for each line the debug labels before it (the last entry: those after
 /// the last line). A text pass then sees the same instructions next to
 /// each other with and without debug information (2026-10-20: with
@@ -2210,7 +2214,7 @@ fn x86_dbg_label(l: Str) -> Bool {
   if !l.ends_with(":") || l.starts_with("\t") {
     return false
   }
-  for tag in ["_dl", "_dvs", "_dv"] {
+  for tag in ["_dl", "_dvs", "_dv", "_dc"] {
     let i = last_index(l, tag)
     if i > 0 && i + tag.len() < l.len() - 1 && is_digits(l[i + tag.len()..l.len() - 1]) {
       return true
