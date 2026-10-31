@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-10-31: perf: idle HTTP/2 connections park (decision 0449 stage 1c)
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0449 (an idle h2 connection held a fiber stack, 32 KB resident, two mappings)
+- Go reference: Go 1.28 parks idle HTTP/2 connections
+- Test: internal/stdtest TestIdleConnections40kH2 (XO_TEST_IDLE40K=1, linux)
+- Timing: TODO (host run: mappings, RssAnon for 40,000 idle h2 connections)
+
+An HTTP/2 connection with no open stream, nothing buffered or to send, and no
+ping interval or deadline parks while it waits for its next frame: its task
+ends and a resumer restarts the frame loop on bytes. Connections with a ping
+interval (Server config) do not park yet.
+
 ## 2026-10-31: perf: a small TLS read no longer pins its 16 KiB buffer (decision 0449)
 
 - Kind: perf
