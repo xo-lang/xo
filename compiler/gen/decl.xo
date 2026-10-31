@@ -741,7 +741,8 @@ fn (var g: Gen) gen_func_with(fo: Int, sp: SpecReq?) {
   var recv = ""
   let rv = g.recv_var(fo)
   let is_spec = sp != None
-  if rv >= 0 {
+  // a static (a valued enum's from and all, decision 0269) has no receiver value
+  if rv >= 0 && !o.is_static {
     let name = g.decl_name(rv)
     var rtype = g.go_type(o.recv_ty)
     if o.recv_var {
@@ -788,7 +789,7 @@ fn (var g: Gen) gen_func_with(fo: Int, sp: SpecReq?) {
   }
   var fixed: List[Int] = []
   var by_ref: List[Int] = []
-  if rv >= 0 {
+  if rv >= 0 && !o.is_static {
     if o.recv_var {
       by_ref.push(rv)
     } else {
