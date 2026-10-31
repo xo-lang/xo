@@ -130,6 +130,17 @@ The cut:
    same way when no stream task is running and no frame is buffered; a
    connection with streams in flight keeps its reader.
 
+Mechanics found reading the code: the descriptor record (layout.xo D_*)
+has no free word (D_MU 0, fd 8, closed 12, ops 16, ready flags, D_RWAIT
+32, D_WWAIT 40, D_NEXT 48, D_TIMERS 56, D_SIZE 64; the Windows words start
+at 64), so D_CONT is word 64, D_SIZE 72 and the DW_* words move up 8.
+poll.xo cannot import tasks.xo (tasks imports poll), so `pd_ready` fires a
+continuation through a function table entry like `poll_park_wait`
+(`rt.call_c2(rt.fn_addr("pd_cont_fire"), pd, cont)`), defined in
+hserve.xo, which imports both and calls `tasks.spawn` with the stored
+closure words; `spawn` already runs on a thread that is not a worker
+(`poolsetup.root_worker`), as the poller is.
+
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked
 connection pays one task start per request (a stack from the cache, no
