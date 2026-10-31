@@ -70,7 +70,7 @@ func TestIdleConnections40k(t *testing.T) {
 	time.Sleep(2 * time.Second)
 
 	c := exec.Command(cli, "-addr", "127.0.0.1:"+port, "-n", "40000",
-		"-pid", fmt.Sprint(s.Process.Pid), "-settle", "10s", "-maxmaps", "20000", "-again")
+		"-pid", fmt.Sprint(s.Process.Pid), "-settle", "10s", "-maxmaps", "20000", "-again", "-srcs", "3")
 	out, err := c.CombinedOutput()
 	t.Logf("%s", lastLines(string(out), 8))
 	if err != nil {
