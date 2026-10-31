@@ -186,6 +186,14 @@ state, so it needs a resume entry). The ping timers (send_ping_timeout)
 need a poller timer on the continuation record instead of the fiber's
 sleep.
 
+First 40k run of stage 1 (linux/arm64 host, 2026-10-31, commit 4815d5011):
+40,000 connections all usable (vm.max_map_count there is 262,144), but
+72,277 mappings and 35,785 stack-sized anonymous mappings: nothing
+parked. Cause found by reading pd_park: it refuses while the descriptor's
+read readiness is set, and under epoll (edge triggered) the last read
+leaves it set; the Mac's kqueue path had parked. park_ready now clears it
+(poll.pd_clear_read) before its MSG_PEEK, the order a read uses.
+
 Risks to measure first: the 32 connection CRUD server (bench/perf/http)
 parks rarely, so `xo bench --ab` must show no slowdown there; a parked
 connection pays one task start per request (a stack from the cache, no
