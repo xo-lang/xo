@@ -980,6 +980,13 @@ pub fn run_claimed(t: Int, units: Int) {
   mfree(ld(c, ctx.C_HELD))
   mfree(ld(c, ctx.C_NET_MSG))
   fault.clear(c)
+  // a waker that signaled this task takes and drops the park lock; taking
+  // it once more here waits for one still inside and orders every earlier
+  // waker's writes before the context is recycled or freed (the race
+  // detector saw memset and free against a waker's lock write on another
+  // thread, 2026-10-31)
+  pool.lock(c + ctx.C_PARK)
+  pool.unlock(c + ctx.C_PARK)
   // that thread's spare; a spare is never freed (one per thread, like a
   // root context), so the leak check does not see it
   if ld(te, 8 * TLS_CTX_SPARE) == 0 {
