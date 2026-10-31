@@ -207,3 +207,26 @@ through the lead with XO_RTSTATS (inject, wake_push, idle_npblock,
 poll_return, idle_sleep). No timing claim comes from it (owner,
 2026-10-22: timing A/Bs run on the Mac in quiet windows only); expected
 direction as on Linux, inject adds near 0.
+
+## Measured on the linux/arm64 host (2026-10-30, Xo lang 5)
+
+The owner's "measure first" on decision 0301, which this decision built
+(bench/results/worker-netpoll-linux-2026-10-30.md): the CRUD server of
+bench/perf/http, the server on 6 CPUs and the load generator on 6 others,
+20 interleaved rounds, no CPU steal. Medians:
+
+| conc | server | req/s | p50 us | p99 us | CPU us/req | futex calls/req |
+|---|---|---|---|---|---|---|
+| 32 | Go 1.26.1 | 182,614 | 127 | 891 | 18.62 | |
+| 32 | worker polling | 219,486 | 120 | 703 | 13.62 | 0.31 |
+| 32 | XO_NETPOLL=0 | 186,717 | 155 | 686 | 12.87 | 0.35 |
+| 256 | Go 1.26.1 | 196,235 | 584 | 5,062 | 20.66 | |
+| 256 | worker polling | 224,798 | 1,174 | 3,768 | 16.01 | 0.45 |
+| 256 | XO_NETPOLL=0 | 226,512 | 1,084 | 3,538 | 15.00 | 0.31 |
+
+- Worker polling: +17.6% requests a second at 32 connections in every
+  round, -0.8% at 256 in every round (its readied fibers stolen: steals
+  0.34 against 0.17 a request), for 6 to 7% more CPU a request. The
+  default stays on.
+- Against Go: 14 to 20% more requests a second, p99 20 to 26% lower, CPU
+  a request 23 to 27% lower, at both levels in every round.

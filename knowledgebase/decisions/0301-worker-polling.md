@@ -1,7 +1,12 @@
 # 0301: Idle workers poll the network themselves
 
-Status: Proposed, measure first (owner, 2026-10-30: a prototype measurement before any decision). Previously proposed (Xo Lang 2, 2026-10-21; for the owner's decision, no
-implementation before it)
+Status: Superseded by 0324 (Xo lang 5, 2026-10-30). Decision 0324,
+accepted by the owner on 2026-10-21, already built this decision's stages
+1 to 3: idle workers wait in epoll or kqueue holding a poll token, np_break
+wakes them, and the poller thread is the fallback; XO_NETPOLL=0 keeps the
+old path. The owner's "measure first" (2026-10-30) is answered by 0324's
+"Measured on the linux/arm64 host (2026-10-30)" section. Proposed
+originally by Xo Lang 2, 2026-10-21.
 
 ## Context
 
