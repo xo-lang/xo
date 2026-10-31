@@ -6,6 +6,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 - FIX (XO_PROF=heap): a heap snapshot's own reading of the executable's debug information is no longer sampled as the program's allocation (about 50 MB of a warm build's exit profile).
+- Memory (decision 0448 stage 3): the native backends' `Inst` keeps its
+  fault exit (recover label, fault condition, fault function and its
+  arguments) in one optional `FaultExit`, set on about 0.45 percent of
+  instructions, 29 words down to 23. Output is byte-identical. xo
+  building itself on linux/arm64 (`xo bench --ab`): CPU 0.996 (0.994 to 0.998) better, wall 0.996 (0.993 to 1.008) and max RSS 1.005 (0.988 to 1.017) within noise.
 - Memory (decision 0448 stage 3): the native backends' machine
   instruction (`Inst`) keeps its fifteen flags as bits of one word, 43
   words down to 29. Output is byte-identical. xo building itself on

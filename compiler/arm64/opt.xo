@@ -2092,10 +2092,14 @@ fn (var g: G) hoist_consts() {
           inst.srcs[i].v = same_root(same, inst.srcs[i].v)
         }
       }
-      for i in 0..inst.fargs.len() {
-        if inst.fargs[i].kind == S_REG {
-          inst.fargs[i].v = same_root(same, inst.fargs[i].v)
+      if !inst.fx.is_empty() {
+        var fa = inst.fx[0].fargs
+        for i in 0..fa.len() {
+          if fa[i].kind == S_REG {
+            fa[i].v = same_root(same, fa[i].v)
+          }
         }
+        inst.fx[0].fargs = fa
       }
       ins[k] = inst
     }
@@ -2196,10 +2200,14 @@ fn (var g: G) copy_prop() {
           inst.srcs[i].v = same_root(same, inst.srcs[i].v)
         }
       }
-      for i in 0..inst.fargs.len() {
-        if inst.fargs[i].kind == S_REG {
-          inst.fargs[i].v = same_root(same, inst.fargs[i].v)
+      if !inst.fx.is_empty() {
+        var fa = inst.fx[0].fargs
+        for i in 0..fa.len() {
+          if fa[i].kind == S_REG {
+            fa[i].v = same_root(same, fa[i].v)
+          }
         }
+        inst.fx[0].fargs = fa
       }
       ins[k] = inst
     }
@@ -2363,7 +2371,7 @@ const HOIST_MAX = 4
 /// Whether inst may move to the preheader of the loop body
 /// (hoist_invariants' rule).
 fn (g: G) hoistable(inst: Inst, body: List[Bool], ndef: Map[Int, Int], defb: Map[Int, List[Int]], outside: Map[Int, Bool]) -> Bool {
-  if inst.kind != K_PLAIN || inst.has(IF_KONST) || inst.has(IF_KEEP) || inst.has(IF_FRAME) || inst.has(IF_HAS_FAULT) || inst.has(IF_X86) || inst.has(IF_EARLY) || !inst.recover.is_empty() || !inst.clobbers.is_empty() {
+  if inst.kind != K_PLAIN || inst.has(IF_KONST) || inst.has(IF_KEEP) || inst.has(IF_FRAME) || inst.has(IF_HAS_FAULT) || inst.has(IF_X86) || inst.has(IF_EARLY) || !inst.recover().is_empty() || !inst.clobbers.is_empty() {
     return false
   }
   if inst.defs.len() != 1 || inst.text.contains("\n") || inst.text.contains("[") {

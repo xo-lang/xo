@@ -546,8 +546,8 @@ fn (g: G) check_head(b: Int) -> Bool {
     return false
   }
   let inst = ins[0]
-  inst.kind == K_PLAIN && inst.has(IF_HAS_FAULT) && inst.defs.is_empty() && inst.recover.is_empty() &&
-    inst.text.starts_with("cmp ") && !inst.text.contains("\n") && !inv_cond(inst.fcond).is_empty()
+  inst.kind == K_PLAIN && inst.has(IF_HAS_FAULT) && inst.defs.is_empty() && inst.recover().is_empty() &&
+    inst.text.starts_with("cmp ") && !inst.text.contains("\n") && !inv_cond(inst.fcond()).is_empty()
 }
 
 /// Emits a jump to t, a block emitted before the current one that starts
@@ -570,7 +570,7 @@ fn (var g: G) rotate_jump(var b: List[Str], t: Int) -> Bool {
   let inst = g.blocks[t].insts[0]
   g.emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us})
   let lt = g.label(t)
-  b.push("\tb.${inv_cond(inst.fcond)} ${lt}_c\n\tb ${lt}\n")
+  b.push("\tb.${inv_cond(inst.fcond())} ${lt}_c\n\tb ${lt}\n")
   true
 }
 
@@ -1970,7 +1970,7 @@ fn (g: G) copyable(b: Int) -> Bool {
     if inst.kind == K_PMOVE {
       continue
     }
-    if inst.kind == K_PLAIN && !inst.has(IF_HAS_FAULT) && inst.recover.is_empty() {
+    if inst.kind == K_PLAIN && !inst.has(IF_HAS_FAULT) && inst.recover().is_empty() {
       continue
     }
     return false

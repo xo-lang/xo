@@ -460,6 +460,22 @@ peak 6113, 6156 -> 6016, 6026 MB, emit 18.0, 18.4 -> 17.9, 18.0 s. linux/arm64
 `xo bench --ab` (the self build, ten rounds, 0deb19338 against the
 change): max RSS 0.972 (0.961 to 0.981) and CPU 0.992 (0.991 to 0.999) better, wall 0.997 (0.989 to 1.017) within noise.
 
+The fault exit next: `recover`, `fcond`, `ffn` and `fargs` move into
+`fx: List[FaultExit]`, the immortal empty `[]` on instructions without
+one (a probe of the self build after regalloc: 9,709,737 instructions,
+44,150 with a fault exit, 0.45 percent), read through `Inst.recover()`,
+`fcond()`, `ffn()` and `fargs()`; 29 words down to 23. Output is
+byte-identical (scripts/identity, 236 compiles, 0 differing). On the Mac
+(the self build, two rounds) emit's peak 6133, 6035 -> 6111, 6081 MB,
+within noise: MIR lives one function at a time per emit worker, so an
+`Inst` cut pays only through the largest functions in flight together.
+The heap in use when half the parts are done (XO_PROF=heap, two rounds
+each) shows the cut: the instruction arrays (isel.xo G.add) 413, 595 ->
+316, 482 MB, all in use 3.25, 3.42 -> 3.14, 3.07 GB; the peak falls
+elsewhere in the emit.
+linux/arm64 `xo bench --ab` (the self build, ten rounds, e3630dd65
+against the change): CPU 0.996 (0.994 to 0.998) better, wall 0.996 (0.993 to 1.008) and max RSS 1.005 (0.988 to 1.017) within noise.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

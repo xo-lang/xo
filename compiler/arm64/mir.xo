@@ -102,6 +102,16 @@ const C_INLINE_RT = 8
 const C_DATA = 9
 
   /// A machine instruction.
+/// An instruction's fault side exit (Inst.fx; isel set_fault, checked).
+struct FaultExit {
+  /// how a fault stub recomputes an operand whose register the result
+  /// took ("add", "sub", "neg")
+  recover: Str = ""
+  fcond: Str = ""
+  ffn: Str = ""
+  fargs: List[Src] = []
+}
+
 struct Inst {
   kind: Int
   /// its flags, IF_* bits (fifteen Bools were a word each; ADR 0448 stage 3)
@@ -130,12 +140,10 @@ struct Inst {
   defs: List[Int] = []
   /// template uses first, then the vregs of srcs and fault args
   us: List[Int] = []
-  /// how a fault stub recomputes an operand whose register the result
-  /// took ("add", "sub", "neg")
-  recover: Str = ""
-  fcond: Str = ""
-  ffn: Str = ""
-  fargs: List[Src] = []
+  /// the fault side exit, one or none (FaultExit): 0.45% of the self
+  /// build's instructions have one, so the rest keep one word, not seven
+  /// (decision 0448 stage 3, 2026-10-31)
+  fx: List[FaultExit] = []
   /// K_CALL: the callee symbol and the arguments; K_PMOVE: the sources
   sym: Str = ""
   srcs: List[Src] = []
@@ -272,3 +280,9 @@ fn (g: G) msuccs(b: Int) -> List[Int] {
   }
   pads
 }
+
+/// The fault exit's fields, empty when the instruction has none.
+fn (x: Inst) recover() -> Str { if x.fx.is_empty() { "" } else { x.fx[0].recover } }
+fn (x: Inst) fcond() -> Str { if x.fx.is_empty() { "" } else { x.fx[0].fcond } }
+fn (x: Inst) ffn() -> Str { if x.fx.is_empty() { "" } else { x.fx[0].ffn } }
+fn (x: Inst) fargs() -> List[Src] { if x.fx.is_empty() { [] } else { x.fx[0].fargs } }

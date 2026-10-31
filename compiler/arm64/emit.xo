@@ -120,7 +120,7 @@ fn (g: G) out_arg_bytes() -> Int {
       // (decision 0228's 2026-10-25 addendum)
       if inst.has(IF_HAS_FAULT) {
         var n = 0
-        for l in g.call_locs(inst.fargs, -1) {
+        for l in g.call_locs(inst.fargs(), -1) {
           if l.reg < 0 {
             n = imax(n, l.slot + 1)
           }
@@ -1440,7 +1440,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
   if inst.has(IF_HAS_FAULT) {
     g.nstub += 1
     let l = g.local("${g.lbl_prefix()}_fault${g.nstub}")
-    b.push("\tb.${inst.fcond} ${l}\n")
+    b.push("\tb.${inst.fcond()} ${l}\n")
     var sb: List[Str] = []
     sb.push("${l}:\n")
     if g.m.debug_info && inst.line != 0 {
@@ -1488,7 +1488,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       }
       g.stub_sp = bytes
     }
-    var ms = g.call_moves(inst.fargs, "sp", 0)
+    var ms = g.call_moves(inst.fargs(), "sp", 0)
     g.recover_operand(sb, inst, ms)
     g.parallel(sb, ms)
     let stub_bytes = g.stub_sp
@@ -1508,9 +1508,9 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       let pad = g.pad_of(inst.pad)
       let entry = if saved.is_empty() { "" } else { g.pad_entry(pad) }
       g.stub_sites.push(CallSite{from: from2, to: to2, pad: pad, entry: entry})
-      sb.push("${from2}:\n\tbl ${inst.ffn}\n${to2}:\n${after}\tbrk #1\n")
+      sb.push("${from2}:\n\tbl ${inst.ffn()}\n${to2}:\n${after}\tbrk #1\n")
     } else {
-      sb.push("\tbl ${inst.ffn}\n${after}\tbrk #1\n")
+      sb.push("\tbl ${inst.ffn()}\n${after}\tbrk #1\n")
     }
     g.stubs.push(g.cause_label(C_FAULT_STUB) + sb.join(""))
   }
@@ -1703,7 +1703,7 @@ fn (g: G) move(var b: List[Str], dst: MLoc, src: MSrc) {
 /// call is in (the call clobbers every caller saved register, so none
 /// holds a value past it; x15 until it was allocated, 2026-10-16).
 fn (g: G) recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) {
-  if inst.recover.is_empty() {
+  if inst.recover().is_empty() {
     return
   }
   let (dl, ok) = g.vloc(inst.defs[0])
@@ -1711,7 +1711,7 @@ fn (g: G) recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) {
     return
   }
   let d = reg_name(dl.reg, false)
-  let args = inst.fargs
+  let args = inst.fargs()
   var used: List[Int] = [dl.reg]
   for a in args {
     if a.kind == S_REG && a.v != 0 {
@@ -1731,15 +1731,15 @@ fn (g: G) recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) {
     if !g.clobbered(args, k, dl.reg) {
       continue
     }
-    if inst.recover == "neg" {
+    if inst.recover() == "neg" {
       b.push("\tneg ${t}, ${d}\n")
-    } else if inst.recover == "add" {
+    } else if inst.recover() == "add" {
       let o = g.other_reg(b, args, 2 - k)
       b.push("\tsub ${t}, ${d}, ${o}\n")
-    } else if inst.recover == "sub" && k == 0 {
+    } else if inst.recover() == "sub" && k == 0 {
       let o = g.other_reg(b, args, 2)
       b.push("\tadd ${t}, ${d}, ${o}\n")
-    } else if inst.recover == "sub" {
+    } else if inst.recover() == "sub" {
       let o = g.other_reg(b, args, 0)
       b.push("\tsub ${t}, ${o}, ${d}\n")
     }

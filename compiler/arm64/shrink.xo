@@ -36,7 +36,7 @@ fn needs_frame0(inst: Inst) -> Bool {
       return true
     }
   }
-  for a in inst.fargs {
+  for a in inst.fargs() {
     if a.kind == S_FRAME || a.kind == S_MEM {
       return true
     }
@@ -301,7 +301,9 @@ fn (var g: G) shrink_split() {
       c.defs = rename_regs(inst.defs, m)
       c.us = rename_regs(inst.us, m)
       c.srcs = rename_srcs(inst.srcs, m)
-      c.fargs = rename_srcs(inst.fargs, m)
+      if !c.fx.is_empty() {
+        c.fx[0].fargs = rename_srcs(c.fx[0].fargs, m)
+      }
       out.push(c)
     }
     g.blocks[b].insts = out

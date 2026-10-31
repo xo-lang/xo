@@ -1507,7 +1507,7 @@ fn (var g: G) x86_retarget() {
           conds.push(inst.cond)
         }
         if inst.has(IF_HAS_FAULT) {
-          conds.push(inst.fcond)
+          conds.push(inst.fcond())
         }
         let x = g.x86_tpl(inst, conds)
         if !x.err.is_empty() {
@@ -1532,9 +1532,11 @@ fn (var g: G) x86_retarget() {
           }
         }
         if inst.has(IF_HAS_FAULT) {
-          ni.fcond = x86_cond(inst.fcond, x.kind)
-          if ni.fcond.is_empty() {
-            g.fail("amd64: ${g.f.name}: the fault condition ${inst.fcond} after a ${x.kind} compare")
+          if !ni.fx.is_empty() {
+            ni.fx[0].fcond = x86_cond(inst.fcond(), x.kind)
+          }
+          if ni.fcond().is_empty() {
+            g.fail("amd64: ${g.f.name}: the fault condition ${inst.fcond()} after a ${x.kind} compare")
             return
           }
         }
@@ -1548,7 +1550,7 @@ fn (var g: G) x86_retarget() {
             ni.us.push(inst.defs[di])
           }
           out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: src_regs(srcs), line: inst.line, inl: inst.inl, fl: IF_X86})
-          if !inst.has(IF_HAS_FAULT) || !inst.recover.is_empty() {
+          if !inst.has(IF_HAS_FAULT) || !inst.recover().is_empty() {
             // a checked add, sub, or neg whose fault stub recomputes the
             // operand from the result (x86_recover_operand): the tied
             // operand need not live past the copy, so the copy can be
@@ -2345,7 +2347,7 @@ fn (var g: G) x86_const_imm() {
           // a constant fault argument as the immediate (its register
           // need not live to the stub): the use set_fault added for it,
           // one the template does not name, goes
-          for (j, a) in inst.fargs.indexed() {
+          for (j, a) in inst.fargs().indexed() {
             let n = if a.kind == S_REG { kval.get(a.v) ?? MIN_INT } else { MIN_INT }
             if n == MIN_INT || (ndef.get(a.v) ?? 0) != 1 {
               continue
@@ -2371,7 +2373,7 @@ fn (var g: G) x86_const_imm() {
             inst.us = us
             inst.reg_hints = x86_drop_use(inst.reg_hints, u)
             inst.reg_bars = x86_drop_use(inst.reg_bars, u)
-            inst.fargs[j] = Src{kind: S_IMM, imm: n}
+            inst.fx[0].fargs[j] = Src{kind: S_IMM, imm: n}
           }
         }
         var again = true
@@ -2438,7 +2440,7 @@ fn (var g: G) x86_const_imm() {
         nuse[u] = (nuse.get(u) ?? 0) + 1
       }
       // a call's arguments and a fault's (not in us)
-      for sr in ins[k].srcs + ins[k].fargs {
+      for sr in ins[k].srcs + ins[k].fargs() {
         if sr.kind == S_REG {
           nuse[sr.v] = (nuse.get(sr.v) ?? 0) + 1
         }
@@ -2697,7 +2699,7 @@ const X86_SINK_REACH = 256
 /// (`D($uA)`, `D($uA,$uB)`, `D($uA,$uB,S)`) and width.
 fn x86_sink_load(inst: Inst) -> (Bool, Str, Int) {
   let bad = (false, "", 0)
-  if inst.kind != K_PLAIN || !inst.has(IF_X86) || inst.has(IF_HAS_FAULT) || !inst.recover.is_empty() || inst.has(IF_EARLY) || inst.defs.len() != 1 || inst.text.contains("\n") || !inst.text.ends_with(", $d0") {
+  if inst.kind != K_PLAIN || !inst.has(IF_X86) || inst.has(IF_HAS_FAULT) || !inst.recover().is_empty() || inst.has(IF_EARLY) || inst.defs.len() != 1 || inst.text.contains("\n") || !inst.text.ends_with(", $d0") {
     return bad
   }
   let sp = inst.text.find(" ") ?? -1
@@ -2723,7 +2725,7 @@ fn x86_sink_load(inst: Inst) -> (Bool, Str, Int) {
 /// from load l's (memory operand lm, width lw): the same base and index
 /// registers and scale, the displacements' byte ranges apart.
 fn x86_store_apart(c: Inst, lm: Str, lw: Int, l: Inst) -> Bool {
-  if c.kind != K_PLAIN || !c.has(IF_X86) || c.has(IF_HAS_FAULT) || !c.recover.is_empty() || c.text.contains("\n") {
+  if c.kind != K_PLAIN || !c.has(IF_X86) || c.has(IF_HAS_FAULT) || !c.recover().is_empty() || c.text.contains("\n") {
     return false
   }
   let sp = c.text.find(" ") ?? -1
@@ -2823,7 +2825,7 @@ fn (var g: G) x86_fold_loads() {
     }
     for k in 0..ins.len() {
       let inst = ins[k]
-      let ok_inst = inst.kind == K_PLAIN && inst.has(IF_X86) && !inst.has(IF_HAS_FAULT) && inst.recover.is_empty()
+      let ok_inst = inst.kind == K_PLAIN && inst.has(IF_X86) && !inst.has(IF_HAS_FAULT) && inst.recover().is_empty()
       for u in 0..inst.us.len() {
         let v = inst.us[u]
         let li = cand.get(v) ?? -1

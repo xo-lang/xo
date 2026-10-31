@@ -1165,7 +1165,7 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
   if inst.has(IF_HAS_FAULT) {
     g.nstub += 1
     let l = g.local("${g.lbl_prefix()}_fault${g.nstub}")
-    for jl in x86_jcc(inst.fcond, l) {
+    for jl in x86_jcc(inst.fcond(), l) {
       b.push(if jl.ends_with(":") { "${jl}\n" } else { "\t${jl}\n" })
     }
     var sb: List[Str] = []
@@ -1217,7 +1217,7 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
       }
       g.stub_sp = bytes
     }
-    var ms = g.x86_call_moves(inst.fargs, -1)
+    var ms = g.x86_call_moves(inst.fargs(), -1)
     g.x86_recover_operand(sb, inst, ms)
     g.x86_parallel(sb, ms)
     let stub_bytes = g.stub_sp
@@ -1235,11 +1235,11 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     if inst.pad >= 0 {
       let (from2, to2) = g.call_site_labels()
       g.stub_sites.push(CallSite{from: from2, to: to2, pad: g.pad_of(inst.pad)})
-      sb.push("${from2}:\n\tcallq ${inst.ffn}\n${to2}:\n${after}\tud2\n")
+      sb.push("${from2}:\n\tcallq ${inst.ffn()}\n${to2}:\n${after}\tud2\n")
     } else if win_leaf {
-      sb.push("\tjmp ${inst.ffn}\n")
+      sb.push("\tjmp ${inst.ffn()}\n")
     } else {
-      sb.push("\tcallq ${inst.ffn}\n${after}\tud2\n")
+      sb.push("\tcallq ${inst.ffn()}\n${after}\tud2\n")
     }
     g.stubs.push(g.cause_label(C_FAULT_STUB) + sb.join(""))
   }
@@ -1364,7 +1364,7 @@ fn x86_label_at(tb: Bytes, i: Int) -> Bool {
 /// (2026-10-19: progen arith seeds 74, 111, 122, 123, 145, 174 printed
 /// an operand 2^64 off in the fault message).
 fn (g: G) x86_recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) {
-  if inst.recover.is_empty() {
+  if inst.recover().is_empty() {
     return
   }
   let (dl, ok) = g.vloc(inst.defs[0])
@@ -1372,7 +1372,7 @@ fn (g: G) x86_recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) 
     return
   }
   let d = if dl.reg >= 0 { x86_reg(dl.reg, 8) } else { x86_mem_ref(dl) }
-  let args = inst.fargs
+  let args = inst.fargs()
   var used: List[Int] = [dl.reg]
   for (k, l) in g.x86_call_locs(args, -1).indexed() {
     used.push(l.reg)
@@ -1393,15 +1393,15 @@ fn (g: G) x86_recover_operand(var b: List[Str], inst: Inst, var ms: List[Move]) 
     if !g.x86_clobbered(args, k, dl) {
       continue
     }
-    if inst.recover == "neg" {
+    if inst.recover() == "neg" {
       b.push("\tmovq ${d}, ${tr}\n\tnegq ${tr}\n")
-    } else if inst.recover == "add" {
+    } else if inst.recover() == "add" {
       let o = g.x86_other_reg(b, args, 2 - k)
       b.push("\tmovq ${d}, ${tr}\n\tsubq ${o}, ${tr}\n")
-    } else if inst.recover == "sub" && k == 0 {
+    } else if inst.recover() == "sub" && k == 0 {
       let o = g.x86_other_reg(b, args, 2)
       b.push("\tmovq ${d}, ${tr}\n\taddq ${o}, ${tr}\n")
-    } else if inst.recover == "sub" {
+    } else if inst.recover() == "sub" {
       let o = g.x86_other_reg(b, args, 0)
       b.push("\tmovq ${o}, ${tr}\n\tsubq ${d}, ${tr}\n")
     }
@@ -1573,9 +1573,9 @@ fn (g: G) x86_check_head(b: Int) -> Bool {
     return false
   }
   let inst = ins[0]
-  inst.kind == K_PLAIN && inst.has(IF_HAS_FAULT) && inst.defs.is_empty() && inst.recover.is_empty() &&
-    inst.text.starts_with("cmp") && !inst.text.contains("\n") && !x86_inv(inst.fcond).is_empty() &&
-    !inst.fcond.contains("&") && !inst.fcond.contains("|")
+  inst.kind == K_PLAIN && inst.has(IF_HAS_FAULT) && inst.defs.is_empty() && inst.recover().is_empty() &&
+    inst.text.starts_with("cmp") && !inst.text.contains("\n") && !x86_inv(inst.fcond()).is_empty() &&
+    !inst.fcond().contains("&") && !inst.fcond().contains("|")
 }
 
 /// A jump back to t, a block laid out before the current one that starts
@@ -1598,7 +1598,7 @@ fn (var g: G) x86_rotate_jump(var b: List[Str], t: Int) -> Bool {
   let inst = g.blocks[t].insts[0]
   g.x86_emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us, fl: IF_X86})
   let lt = g.label(t)
-  b.push("\tj${x86_inv(inst.fcond)} ${lt}_c\n\tjmp ${lt}\n")
+  b.push("\tj${x86_inv(inst.fcond())} ${lt}_c\n\tjmp ${lt}\n")
   true
 }
 
