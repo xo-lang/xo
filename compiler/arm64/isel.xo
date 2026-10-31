@@ -1551,7 +1551,14 @@ fn (var g: G) instr1(v: Int) {
       if (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple) && 8 * g.nwords(t) <= 32760 {
         // a whole struct or tuple (ssa group_releases): its leaves
         // released from memory, in place when it is held there
-        let (ptr, ok) = g.mem_of(a)
+        var (ptr, ok) = g.mem_of(a)
+        if !ok && g.blk_cause == C_LANDING {
+          // in a landing pad (cold): a field of a value held in memory is
+          // dropped in place by its type's helper (ssa group_pads)
+          let (p2, ok2) = g.chain_mem(a)
+          ptr = p2
+          ok = ok2
+        }
         var ls0: List[Leaf] = []
         g.heap_leaves(t, 0, ls0)
         if ok && ls0.len() >= MEM_DROP_LEAVES {
@@ -4061,4 +4068,26 @@ fn (g: G) through_params(v0: Int) -> Int {
     v = e.args[k]
   }
   v
+}
+
+/// The address of v when v is a field read (through field reads) of a
+/// value held in memory, and whether it is one.
+fn (var g: G) chain_mem(v0: Int) -> (Int, Bool) {
+  var off = 0
+  var v = v0
+  for _ in 0..64 {
+    let x = g.f.values[v]
+    if x.op != ssa.Op.Field {
+      return (0, false)
+    }
+    let u = x.args[0]
+    let (o, _) = g.field_words(g.vty(u), aux_int(x.aux))
+    off += o
+    let (ptr, ok) = g.mem_of(u)
+    if ok {
+      return (g.addr_at(ptr, 8 * off), true)
+    }
+    v = u
+  }
+  (0, false)
 }

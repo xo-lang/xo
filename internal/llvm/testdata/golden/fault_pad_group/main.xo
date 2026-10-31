@@ -1,0 +1,99 @@
+// A fault in a call given one part of a method's `var` receiver, after
+// the receiver came back out of another call (State.note): the landing
+// pad releases the rest of the receiver. compiler/ssa grouppads.xo
+// releases each fully released subtree of it as one value (11 releases
+// instead of about 81 leaves), and the native backends drop a field of
+// the receiver held in memory (34 words: by reference) through its
+// type's drop helper (arm64 isel.xo chain_mem). The isolated task
+// unwinds, and the receiver's other parts are released exactly once.
+use std/task
+
+struct Inner {
+  name: Str
+  items: List[Str]
+  index: Map[Str, Int]
+}
+
+struct Mod {
+  label: Str
+  count: Int
+}
+
+struct State {
+  a: Inner
+  b: Inner
+  c: Inner
+  d: Inner
+  e: Inner
+  f: Inner
+  g: Inner
+  h: Inner
+  i: Inner
+  j: Inner
+  mod: Mod
+  log: List[Str]
+  steps: Int
+}
+
+fn inner(p: Str, n: Int) -> Inner {
+  var items: List[Str] = []
+  var index: Map[Str, Int] = {}
+  for i in 0..n {
+    items.push("${p}${i}")
+    index["${p}${i}"] = i
+  }
+  Inner{name: p, items: items, index: index}
+}
+
+fn bump(var m: Mod, limit: Int) {
+  m.count += 1
+  let parts = ["x", "y"]
+  if m.count > limit {
+    m.label = parts[m.count + 3]
+  }
+}
+
+// not inlined (a loop and a call per step): the receiver comes back out of a call
+fn (var s: State) note(what: Str) {
+  for k in 0..s.steps + 1 {
+    s.log.push("${what}${k}")
+    if s.log.len() > 50 {
+      s.log = []
+    }
+  }
+}
+
+fn (var s: State) work(limit: Int) {
+  s.note("a")
+  bump(s.mod, limit)
+  s.note("b")
+  bump(s.mod, limit)
+  s.note("c")
+  bump(s.mod, limit)
+  s.steps += 1
+}
+
+fn run(limit: Int) -> Str {
+  var s = State{a: inner("a", 2), b: inner("b", 3), c: inner("c", 1), d: inner("d", 1), e: inner("e", 1), f: inner("f", 1), g: inner("g", 1), h: inner("h", 1), i: inner("i", 1), j: inner("j", 1), mod: Mod{label: "m", count: 0}, log: [], steps: 0}
+  s.work(limit)
+  "${s.steps} ${s.a.items.len()} ${s.log.len()} ${s.mod.count}"
+}
+
+fn main(os: Os) {
+  for limit in [5, 0, 1, 2] {
+    match task.isolate(fn() -> Str { run(limit) }) {
+      Ok(r) => os.stdio.println("limit ${limit}: ok ${r}")
+      Err(task.Isolated.Faulted(info)) => os.stdio.println("limit ${limit}: fault ${info.msg}")
+      Err(_) => os.stdio.println("limit ${limit}: failed")
+    }
+  }
+  // many faults: a release missed or doubled in the pad shows here
+  var faults = 0
+  for i in 0..2000 {
+    match task.isolate(fn() -> Str { run(i % 3) }) {
+      Ok(_) => {}
+      Err(_) => faults += 1
+    }
+  }
+  os.stdio.println("faults: ${faults}")
+}

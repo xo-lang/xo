@@ -16,6 +16,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   exit's moves, and the build failed with "reads virtual register N
   before it is written" (seen building xo for linux/arm64 from a std
   change).
+- Native backend, smaller landing pads: a pad that releases most of a
+  root (a method's `var` receiver threaded out of the call that faulted,
+  but the part given to that call) releases each fully released subtree
+  as one value (compiler/ssa grouppads.xo, from 8 released leaves of a
+  root) instead of one field read and release per leaf, and a struct
+  release in a landing block drops a field of a value held in memory
+  through its type's drop helper at the field's address (arm64 isel.xo
+  chain_mem). ssa.Builder.net_err_func had 24 pads of about 712 releases
+  and 1,900 field reads each. xo's code by cause: 63.34 to 55.33 MB
+  (landing reads 6.07 to 0.45 MB, landing releases 12.43 to 10.14 MB);
+  stage 2 __text 64,321,440 to 56,330,136 bytes (-12.4%).
 - Tools: `xo dev size`'s usage shows `--diff [--top=N] A B` with flags
   before the files, the order it accepts (a flag after the files is read
   as a third file); it showed `--diff A B [--top=N]`.

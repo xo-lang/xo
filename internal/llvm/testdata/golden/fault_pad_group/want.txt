@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+limit 5: ok 1 2 3 3
+limit 0: fault index 4 out of range for List of length 2
+limit 1: fault index 5 out of range for List of length 2
+limit 2: fault index 6 out of range for List of length 2
+faults: 2000
+--- stderr

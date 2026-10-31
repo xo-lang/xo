@@ -1,0 +1,161 @@
+// Partly released roots in landing pads, grouped by subtree (landing pad
+// size study, 2026-10-30).
+//
+// A pad releases every leaf a function holds at its call. A method on a
+// large `var` receiver holds the whole receiver but the part it passed
+// to the call that faulted, so group_releases (all of a root's leaves or
+// nothing) leaves its pads releasing hundreds of leaves one by one:
+// ssa.Builder.net_err_func had 24 pads of about 712 releases and 1,900
+// field reads each. group_pads releases each fully released subtree as
+// one value (a struct's drop helper) and goes into a field only where
+// part of it is released.
+
+/// The fewest released leaves of one root in a pad that group_pads
+/// regroups.
+const PAD_GROUP_MIN = 8
+
+/// Regroups the releases of each pad (a block that jumps to the unwind
+/// exit) by subtree of their root.
+fn (var r: Rc) group_pads(var f: Func) {
+  let exit = f.unwind_exit
+  if exit < 0 {
+    return
+  }
+  var any = false
+  for bl in 0..f.blocks.len() {
+    let ins = f.blocks[bl].instrs
+    if bl == exit || ins.len() < PAD_GROUP_MIN {
+      continue
+    }
+    let t = ins[ins.len() - 1]
+    if f.values[t].op != Op.Jump || f.edges[f.values[t].succs[0]].to != exit || !f.edges[f.values[t].succs[0]].args.is_empty() {
+      continue
+    }
+    // the leaves each group's releases release, and how many times
+    var keys: Map[Int, Set[Int]] = {}
+    var count: Map[Int, Int] = {}
+    var nrel: Map[Int, Int] = {}
+    var site: Map[Int, (Int, Int)] = {}
+    var groups: List[Int] = []
+    var bad: Set[Int] = #{}
+    var group_of: Map[Int, Int] = {}
+    for v in ins {
+      if f.values[v].op != Op.Release {
+        continue
+      }
+      let ls = r.leaves(f, f.values[v].args[0])
+      var mine: Set[Int] = #{}
+      for l in ls {
+        let (g, root, comp) = r.leaf_group(f, l)
+        mine.add(g)
+        if !keys.contains(g) {
+          keys[g] = #{}
+          groups.push(g)
+          site[g] = (root, comp)
+        }
+        var ks = keys.get(g) ?? #{}
+        ks.add(leaf_key(l))
+        keys[g] = ks
+        count[g] = (count.get(g) ?? 0) + 1
+      }
+      if mine.len() == 1 {
+        for g in mine {
+          group_of[v] = g
+          nrel[g] = (nrel.get(g) ?? 0) + 1
+        }
+      } else {
+        for g in mine {
+          bad.add(g)
+        }
+      }
+    }
+    var regroup: Map[Int, List[Str]] = {}
+    for g in groups {
+      let ks = keys.get(g) ?? #{}
+      if bad.contains(g) || ks.len() < PAD_GROUP_MIN || ks.len() != (count.get(g) ?? 0) {
+        continue
+      }
+      let (root, comp) = site.get(g) ?? (-1, -1)
+      var paths: List[Str] = []
+      if comp >= 0 {
+        r.pad_cover(root, ".${comp}", r.field_type(f.values[root].ty, comp), ks, paths)
+      } else {
+        r.pad_cover(root, "", f.values[root].ty, ks, paths)
+      }
+      if paths.len() < (nrel.get(g) ?? 0) {
+        regroup[g] = paths
+      }
+    }
+    if regroup.is_empty() {
+      continue
+    }
+    var out: List[Int] = []
+    for v in ins[0..ins.len() - 1] {
+      if let Some(g) = group_of.get(v) {
+        if regroup.contains(g) {
+          continue
+        }
+      }
+      out.push(v)
+    }
+    for g in groups {
+      if let Some(paths) = regroup.get(g) {
+        let (root, _) = site.get(g) ?? (-1, -1)
+        var at: Map[Str, Int] = {}
+        for p in paths {
+          var w = root
+          var pre = ""
+          for s in p.split(".") {
+            if s.is_empty() {
+              continue
+            }
+            pre = "${pre}.${s}"
+            if let Some(x) = at.get(pre) {
+              w = x
+              continue
+            }
+            let i = Int.parse(s) ?? 0
+            w = new_value(f, bl, Op.Field, r.field_type(f.values[w].ty, i), Aux.I(n: i), [w])
+            out.push(w)
+            at[pre] = w
+          }
+          out.push(new_value(f, bl, Op.Release, -1, Aux.None, [w]))
+        }
+      }
+    }
+    out.push(t)
+    f.blocks[bl].instrs = out
+    any = true
+  }
+  if any {
+    remove_dead_fields(f)
+  }
+}
+
+/// The paths under prefix (of type t, in root's leaves) to release whole
+/// so that exactly the leaves ks are released: prefix itself when all of
+/// its leaves are in ks, else its fields' own.
+fn (var r: Rc) pad_cover(root: Int, prefix: Str, t: Int, ks: Set[Int], var out: List[Str]) {
+  let lps = r.leaf_paths(t)
+  var all = true
+  var none = true
+  for lp in lps {
+    if ks.contains(leaf_key(r.leaf(root, "${prefix}${lp}"))) {
+      none = false
+    } else {
+      all = false
+    }
+  }
+  if lps.is_empty() || none {
+    return
+  }
+  if all {
+    out.push(prefix)
+    return
+  }
+  if r.decomposable(t) {
+    for i in 0..r.num_fields(t) {
+      r.pad_cover(root, "${prefix}.${i}", r.field_type(t, i), ks, out)
+    }
+  }
+}

@@ -1366,6 +1366,7 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.sink_landings(f)
   r.um_fi = -1
   prune_landings(f)
+  r.group_pads(f)
   if r.chain {
     r.chain_pads(f)
   }
