@@ -49,8 +49,6 @@ pub fn passes() -> List[Str] {
     "push_runs",
     "inplace_elems",
     // per function: MIR
-    // zimage.xo: runs of constant word stores copy a read only image
-    "zero_images",
     "mir_dce",
     "thread_const",
     "thread_cset",

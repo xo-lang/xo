@@ -19,7 +19,8 @@ var passGate = regexp.MustCompile(`(?:\bg\.on\(|\bpass_on\([^,()]+, |\bpasses_of
 // not in compiler/arm64 passes.xo's passes(), or a listed one is gated
 // nowhere: XO_PASSES rejects a name passes() does not list, so an
 // unlisted pass could not be turned off, and gate.sh's alloff step (every
-// pass in passes() off) would leave it on (2026-10-21, the lead).
+// pass in passes() off) would leave it on (2026-10-21, the lead). A name
+// listed twice fails too.
 func TestPassesListed(t *testing.T) {
 	src, err := os.ReadFile(filepath.Join(root, "compiler", "arm64", "passes.xo"))
 	if err != nil {
@@ -33,6 +34,12 @@ func TestPassesListed(t *testing.T) {
 	}
 	listed := map[string]bool{}
 	for _, m := range regexp.MustCompile(`"([a-z0-9_]+)"`).FindAllStringSubmatch(body[i:i+j], -1) {
+		// one place each: passes() is the order a build runs them, and
+		// xo dev bisect-pass walks it (2026-10-31: zero_images was listed
+		// twice)
+		if listed[m[1]] {
+			t.Errorf("pass %q listed twice in compiler/arm64 passes.xo passes()", m[1])
+		}
 		listed[m[1]] = true
 	}
 	gated := map[string]string{}
