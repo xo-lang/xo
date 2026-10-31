@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+3 11 wa"rn Green
+100 105 106
+true true true true
+7 3 3
+Mon = 1
+Tue = 2
+Wed = 3
+Thu = 4
+Fri = 5
+Sat = 10
+Sun = 11
+weekend true
+{"day":2,"level":"wa\"rn","days":[1,3]}
+2 wa"rn 2
+err at $: unknown value 7 of enum Weekday
+err at $: unknown value `nope` of enum Level
+--- stderr

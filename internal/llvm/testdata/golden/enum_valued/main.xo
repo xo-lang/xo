@@ -1,0 +1,45 @@
+// Valued enums (decision 0269): value(), from(), all(), default
+// numbering, constant values, and derive Json by value.
+use std/json
+
+enum Weekday: Int { Mon = 1, Tue, Wed, Thu, Fri, Sat = 10, Sun } derive Json, Display, Ord
+enum Level: Str { Debug = "debug", Info = "info", Warn = "wa\"rn" } derive Json
+enum Color: Str { Red, Green, Blue }
+
+const BASE = 100
+
+enum Code: Int { A = BASE, B = BASE + 5, C }
+
+struct Rec { day: Weekday, level: Level, days: List[Weekday] } derive Json
+
+fn main(os: Os) {
+  os.stdio.println("${Weekday.Wed.value()} ${Weekday.Sun.value()} ${Level.Warn.value()} ${Color.Green.value()}")
+  os.stdio.println("${Code.A.value()} ${Code.B.value()} ${Code.C.value()}")
+  os.stdio.println("${Weekday.from(3) == Some(Weekday.Wed)} ${Weekday.from(8) == None} ${Level.from("info") == Some(Level.Info)} ${Color.from("Blue") == Some(Color.Blue)}")
+  os.stdio.println("${Weekday.all().len()} ${Level.all().len()} ${Color.all().len()}")
+  for d in Weekday.all() {
+    os.stdio.println("${d} = ${d.value()}")
+  }
+  // equality, ordering and match stay by variant
+  let w = Weekday.Sat
+  let name = match w {
+    Mon | Tue | Wed | Thu | Fri => "weekday"
+    Sat | Sun => "weekend"
+  }
+  os.stdio.println("${name} ${Weekday.Mon < Weekday.Sun}")
+  let r = Rec{day: Weekday.Tue, level: Level.Warn, days: [Weekday.Mon, Weekday.Wed]}
+  let text = json.encode_str(r)
+  os.stdio.println(text)
+  match json.decode_str[Rec](text) {
+    Ok(x) => os.stdio.println("${x.day.value()} ${x.level.value()} ${x.days.len()}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match json.decode_str[Weekday]("7") {
+    Ok(_) => os.stdio.println("decoded?")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+  match json.decode_str[Level]("\"nope\"") {
+    Ok(_) => os.stdio.println("decoded?")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+}

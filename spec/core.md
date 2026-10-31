@@ -754,6 +754,34 @@ pub enum LoadErr {
   a field of type `Never` cannot be constructed and may be omitted from a
   `match`.
 
+Valued enums (decision 0269). An enum whose variants are all field-less may
+declare a value type, `Int` or `Str`, after its name, and each variant may
+give its value:
+
+```
+enum Weekday: Int { Mon = 1, Tue, Wed, Thu, Fri, Sat, Sun }
+enum Level: Str { Debug = "debug", Info = "info", Warn = "warn" }
+enum Color: Str { Red, Green, Blue }       // "Red", "Green", "Blue"
+```
+
+- A value is a constant expression of the value type (a literal, a `const`,
+  arithmetic on them for `Int`). A variant without one is the previous
+  variant's value plus one (the first is 0) for `Int`, and its own name for
+  `Str`. Two variants with one value are `XO0428`. A value type other than
+  `Int` or `Str`, a value on an enum that names no value type, a variant
+  with fields, type parameters, or a value that is not a constant of the
+  value type are `XO0429`.
+- `e.value()` is the variant's value. `E.from(v)` is `E?`: the variant with
+  that value, or `None`. `E.all()` is `List[E]`, the variants in declaration
+  order (a list built per call in this implementation).
+- The enum stays a closed sum type: `match` is exhaustive by variant, and
+  equality, hashing, and `Ord` are by variant in declaration order, not by
+  value. Display prints the variant name.
+- `derive Json` writes and reads the value: `Weekday.Mon` is `1`,
+  `Level.Warn` is `"warn"`. A value no variant has is a decode error that
+  names the enum and the value. An enum without a value type keeps the
+  encoding `"Variant"`.
+
 ### 2.4 Interfaces
 
 ```
@@ -3227,6 +3255,8 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0425` | error | checker | a field type, a type parameter list, or a nested struct that `derive Xml` cannot map (core 2.9, decision 0315) |
 | `XO0426` | error | checker | a bad `xml` wire string: an unknown or unsupported option, `attr` with a path, `chardata` or `attr` on a type that cannot hold it (core 2.9, decision 0315) |
 | `XO0427` | error | checker | `xml.encode_value` or `xml.decode` of a type parameter instead of a concrete struct (core 2.9, decision 0315) |
+| `XO0428` | error | checker | two variants of a valued enum have the same value (core 2.3, decision 0269) |
+| `XO0429` | error | checker | an invalid valued enum: a value type other than `Int` or `Str`, a value on an enum with no value type, a variant with fields, type parameters, or a value that is not a constant of the value type (core 2.3, decision 0269) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |
