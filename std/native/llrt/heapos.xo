@@ -359,7 +359,8 @@ fn keep(m: Int, size: Int) -> Bool {
     // the table: a mapping of its own, kept for good
     t = map(GRAIN)
     rt.mem_store(t, 0, GRAIN, 8)
-    rt.mem_store(w, 0, t, 8)
+    // released: take reads the word before it takes the lock
+    rt.slot_store(w, 0, t, RELEASE)
   }
   let bytes = rt.mem_load(t, 8, 8)
   let k = rt.mem_load(t, 16, 8)
@@ -379,7 +380,9 @@ fn keep(m: Int, size: Int) -> Bool {
 /// back first; 0 when there is none.
 fn take(need: Int) -> Int {
   let w = rt.static_word(W_CACHE)
-  if rt.mem_load(w, 0, 8) == 0 {
+  // no table yet: nothing to take, without the lock (an atomic load, as
+  // keep's store; a plain read raced it under --race, http_h2c 2026-10-30)
+  if rt.slot_load(w, 0, ACQUIRE) == 0 {
     return 0
   }
   clock_take()
