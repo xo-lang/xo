@@ -13,7 +13,8 @@ fn main(os: Os) ! {
   if os.env.get("DEBUG") == Some("1") {
     r.mount("/debug", debug.router(os.clock, fn(_req) { true }))
   }
-  var srv = http.server(os.net.listen(addr)?, r)
+  let ln = os.net.listen(addr)?
+  var srv = http.server(ln, r)
   if let Some(cert) = os.env.get("TLS_CERT") {
     srv = srv.with_tls([http.tls_cert(cert.bytes(), (os.env.get("TLS_KEY") ?? "").bytes())?])
   }
@@ -21,11 +22,12 @@ fn main(os: Os) ! {
     srv = srv.with_idle_timeout(Duration.from_millis(Int.parse(ms).or_err("IDLE_TIMEOUT_MS")?))
   }
   if let Some(ms) = os.env.get("STOP_AFTER_MS") {
-    // for XO_HEAPSTATS, whose report runs at exit
+    // closes the listener, so serve returns and the program ends through
+    // its normal exit (XO_HEAPSTATS' report runs there, not at proc.exit)
     let d = Duration.from_millis(Int.parse(ms).or_err("STOP_AFTER_MS")?)
     os.tasks.spawn_background(fn() {
       os.clock.sleep(d)
-      os.proc.exit(0)
+      ln.close()
     })
   }
   log.info("listening", {"addr": addr})
