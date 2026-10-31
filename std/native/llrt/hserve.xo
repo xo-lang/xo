@@ -35,6 +35,7 @@ use native/llrt/poll
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/rc
+use native/llrt/sanhook
 use native/llrt/stop
 use native/llrt/tasks
 use native/llrt/tlssrv
@@ -92,6 +93,7 @@ fn srec(s: rthttp.Srv) -> Int { rt.obj_addr(s) }
 /// A new server, with the scope of its connections open.
 pub fn srv_new() -> rthttp.Srv {
   let s = tasks.new_handle(hconn.SR_SIZE, rt.fn_addr("srv_free"))
+  poll.set_cont_fire(rt.fn_addr("pd_cont_fire"))
   let root = stop.root()
   st(s, hconn.SR_SCOPE, tasks.scope_detached(if root != 0 { root } else { ld(ctx.cur(), ctx.C_NODE) }))
   let h = rt.obj_at[rthttp.Srv](s)
@@ -105,6 +107,104 @@ pub fn srv_group(s: rthttp.Srv) -> task.Group {
   let h = rt.obj_at[task.Group](g)
   tasks.h_release(g)
   h
+}
+
+// ---------------------------------------------------------------------------
+// Parked idle connections (decision 0449)
+
+/// The size of a continuation record: the server, the resume function's
+/// id in the stream table, and the next record of the ready list.
+const PC_SIZE = 24
+
+/// Parks idle connection h (its task is about to end): resume is run in a
+/// task of the server's scope when the connection becomes readable or is
+/// closed. False when it did not park (the caller reads on).
+pub fn hc_park(h: rthttp.HConn, resume: fn() -> ()) -> Bool {
+  if !hconn.park_ready(h) {
+    return false
+  }
+  let hc = hconn.rec(h)
+  let srv = ld(hc, hconn.HC_SRV)
+  let id = stream_put(rt.any_of(resume))
+  let pc = obj.alloc_obj(PC_SIZE)
+  st(pc, 0, srv)
+  st(pc, 8, id)
+  st(pc, 16, 0)
+  hconn.rlock(srv)
+  st(srv, hconn.SR_PARKED, ld(srv, hconn.SR_PARKED) + 1)
+  hconn.runlock(srv)
+  if poll.pd_park(hconn.conn_pd(hc), pc) {
+    return true
+  }
+  // readiness came meanwhile: not parked after all
+  hconn.rlock(srv)
+  st(srv, hconn.SR_PARKED, ld(srv, hconn.SR_PARKED) - 1)
+  hconn.runlock(srv)
+  let _f = stream_get(id, true)
+  obj.free_obj(pc)
+  hconn.set_idle(hc, false)
+  false
+}
+
+/// The poller's (or a closer's) hand-off of a fired continuation pc to its
+/// server's ready list, waking the resumer (cabi_http.xo pd_cont_fire).
+pub fn cont_fire(pc: Int) {
+  let srv = ld(pc, 0)
+  hconn.rlock(srv)
+  st(pc, 16, ld(srv, hconn.SR_READY))
+  st(srv, hconn.SR_READY, pc)
+  st(srv, hconn.SR_PARKED, ld(srv, hconn.SR_PARKED) - 1)
+  let w = ld(srv, hconn.SR_RESUMER)
+  hconn.runlock(srv)
+  if w != 0 {
+    wake_resumer(w)
+  }
+}
+
+fn wake_resumer(w: Int) {
+  sanhook.release(w)
+  pool.park_signal(ctx.pool(), w)
+}
+
+/// The next connection to resume, as the function to run (a resume
+/// function from hc_park), waiting for one; None when the server is
+/// stopping and nothing is parked or ready.
+pub fn resume_next(s: rthttp.Srv) -> (fn() -> ())? {
+  let a = srec(s)
+  let c = ctx.cur()
+  let park = c + ctx.C_PARK
+  while true {
+    hconn.rlock(a)
+    let pc = ld(a, hconn.SR_READY)
+    if pc != 0 {
+      st(a, hconn.SR_READY, ld(pc, 16))
+      hconn.runlock(a)
+      let id = ld(pc, 8)
+      obj.free_obj(pc)
+      let fs = stream_get(id, true)
+      if !fs.is_empty() {
+        if let Some(f) = rt.any_get[fn() -> ()](fs[0]) {
+          return Some(f)
+        }
+      }
+      continue
+    }
+    if hconn.stopping_at(a) && ld(a, hconn.SR_PARKED) == 0 {
+      hconn.runlock(a)
+      return None
+    }
+    pool.park_reset(park)
+    st(a, hconn.SR_RESUMER, park)
+    hconn.runlock(a)
+    tasks.park_wait_n(c, true, false)
+    hconn.rlock(a)
+    st(a, hconn.SR_RESUMER, 0)
+    hconn.runlock(a)
+    if poll.canceled() {
+      return None
+    }
+  }
+  None
 }
 
 /// Stops the server: connections close after their current request, and
@@ -127,6 +227,13 @@ fn stop_at(a: Int) {
     hc = ld(hc, hconn.HC_NEXT)
   }
   hconn.unlock(a)
+  // the resumer looks again: nothing parked ends it
+  hconn.rlock(a)
+  let w = ld(a, hconn.SR_RESUMER)
+  hconn.runlock(a)
+  if w != 0 {
+    wake_resumer(w)
+  }
 }
 
 /// Waits for the connections to end: after a stop request (core 7.5)

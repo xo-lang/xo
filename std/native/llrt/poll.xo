@@ -143,6 +143,7 @@ const D_RWAIT = layout.D_RWAIT
 const D_WWAIT = layout.D_WWAIT
 const D_NEXT = layout.D_NEXT
 const D_TIMERS = layout.D_TIMERS
+const D_CONT = layout.D_CONT
 
 /// A timer's park, C function, and fired flag (xo_rt.c struct xo_timer).
 const T_PARK = 16
@@ -215,6 +216,7 @@ pub fn pd_kick(pd: Int, mode: Int) {
 /// waiters, or keeps it for the next wait (xo_rt.c pd_ready).
 pub fn pd_ready(pd: Int, mode: Int) {
   stat(ST_POLL_EVENT)
+  var cont = 0
   lk(addw(pd, D_MU))
   if (mode & 1) != 0 {
     let w = rt.mem_load(pd, D_RWAIT, 8)
@@ -225,6 +227,8 @@ pub fn pd_ready(pd: Int, mode: Int) {
       rt.mem_store(pd, D_RWAIT, 0, 8)
     } else {
       rt.mem_store(pd, D_RREADY, 1, 4)
+      cont = rt.mem_load(pd, D_CONT, 8)
+      rt.mem_store(pd, D_CONT, 0, 8)
     }
   }
   if (mode & 2) != 0 {
@@ -239,6 +243,54 @@ pub fn pd_ready(pd: Int, mode: Int) {
     }
   }
   unlk(addw(pd, D_MU))
+  if cont != 0 {
+    cont_fire(pd, cont)
+  }
+}
+
+/// Hands the continuation cont of a parked connection (pd_park) to its
+/// server (cabi_http.xo pd_cont_fire through the function table: hserve.xo
+/// imports this module).
+fn cont_fire(pd: Int, cont: Int) {
+  let f = rt.mem_load(ev(), EV_CONTFIRE, 8)
+  if f != 0 {
+    let _r = rt.call_c2(f, pd, cont)
+  }
+}
+
+/// Sets the function that receives a parked connection's continuation
+/// (hserve.xo srv_new, rt.fn_addr of cabi_http.xo pd_cont_fire; a program
+/// without an HTTP server has no such export, so the address comes from
+/// the module that has).
+pub fn set_cont_fire(f: Int) { rt.mem_store(ev(), EV_CONTFIRE, f, 8) }
+
+/// Parks an idle connection's wait on pd (decision 0449): cont, an id the
+/// caller holds a resume function under, is handed to cont_fire when pd
+/// becomes readable or closes, and the caller's task may end meanwhile.
+/// False when it did not park, and the caller reads on: pd is closed,
+/// readiness is already recorded, or someone waits on it.
+pub fn pd_park(pd: Int, cont: Int) -> Bool {
+  lk(addw(pd, D_MU))
+  var ok = false
+  if rt.mem_load(pd, D_CLOSED, 4) == 0 && rt.mem_load(pd, D_RREADY, 4) == 0 && rt.mem_load(pd, D_RWAIT, 8) == 0 && rt.mem_load(pd, D_CONT, 8) == 0 {
+    rt.mem_store(pd, D_CONT, cont, 8)
+    ok = true
+  }
+  unlk(addw(pd, D_MU))
+  ok
+}
+
+/// Takes the continuation back before it fires (the caller found a
+/// reason not to end its task after pd_park), true when it was still
+/// there.
+pub fn pd_unpark(pd: Int, cont: Int) -> Bool {
+  lk(addw(pd, D_MU))
+  let mine = rt.mem_load(pd, D_CONT, 8) == cont
+  if mine {
+    rt.mem_store(pd, D_CONT, 0, 8)
+  }
+  unlk(addw(pd, D_MU))
+  mine
 }
 
 // ---------------------------------------------------------------------------
@@ -257,7 +309,7 @@ pub fn pd_ready(pd: Int, mode: Int) {
 const W_EV = 43
 /// Its size: the words below, Windows', then the network poll's of
 /// decision 0324.
-const EV_SIZE = 240
+const EV_SIZE = 248
 
 /// The event loop's record's words: the start's state
 /// (0 not started, 1 starting, 2 running), the lock word, the self
@@ -306,6 +358,8 @@ pub const EV_PENDN = 160
 pub const EV_SUBMU = 216
 pub const EV_SUBTAB = 224
 pub const EV_SUBN = 232
+/// the address of the parked connections' fire function (set_cont_fire)
+const EV_CONTFIRE = 240
 
 /// The ev record's address (sigsub.xo).
 pub fn ev_rec() -> Int { ev() }
@@ -560,6 +614,7 @@ fn wake(pd: Int, k: Int) {
 /// Closes pd: its waiters return CLOSED, and the fd closes once no
 /// operation runs.
 pub fn pd_close(pd: Int) {
+  var cont = 0
   lk(addw(pd, D_MU))
   if rt.mem_load(pd, D_CLOSED, 4) == 0 {
     rt.mem_store(pd, D_CLOSED, 1, 4)
@@ -569,6 +624,9 @@ pub fn pd_close(pd: Int) {
     }
     wake(pd, D_RWAIT)
     wake(pd, D_WWAIT)
+    // a parked connection resumes to see the closed descriptor and end
+    cont = rt.mem_load(pd, D_CONT, 8)
+    rt.mem_store(pd, D_CONT, 0, 8)
   }
   var fd = -1
   if rt.mem_load(pd, D_OPS, 4) == 0 {
@@ -577,6 +635,9 @@ pub fn pd_close(pd: Int) {
   unlk(addw(pd, D_MU))
   if fd >= 0 {
     fd_close(fd)
+  }
+  if cont != 0 {
+    cont_fire(pd, cont)
   }
 }
 

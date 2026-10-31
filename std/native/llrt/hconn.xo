@@ -48,7 +48,17 @@ pub const SR_CLOSED = 80
 pub const SR_H2C = 88
 /// the HTTP/2 settings block (hserve.srv_h2cfg): 5 words, 0 none
 pub const SR_H2CFG = 96
-pub const SR_SIZE = 104
+/// Parked idle connections (decision 0449, hserve.xo hc_park): the lock
+/// word of the ready list (not SR_MU: srv_stop closes descriptors under
+/// SR_MU, and a close fires a continuation), the list of the continuation
+/// records the poller fired (cont_fire; each: server, resume id, next),
+/// the park of the resumer task waiting for one (0 when none), and the
+/// number of connections parked and not yet fired.
+pub const SR_RLOCK = 104
+pub const SR_READY = 112
+pub const SR_RESUMER = 120
+pub const SR_PARKED = 128
+pub const SR_SIZE = 136
 
 /// A connection's record (byte offsets): the header; its server (a
 /// reference; 0 for a stream's connection); the net.Conn (a reference);
@@ -187,6 +197,11 @@ pub fn lock(s: Int) { pool.lock_k(s + SR_MU, pool.ST_LOCK_HTTP) }
 
 pub fn unlock(s: Int) { pool.unlock(s + SR_MU) }
 
+/// The ready list's lock (SR_RLOCK, decision 0449).
+pub fn rlock(s: Int) { pool.lock_k(s + SR_RLOCK, pool.ST_LOCK_HTTP) }
+
+pub fn runlock(s: Int) { pool.unlock(s + SR_RLOCK) }
+
 /// The text of the peer address of socket fd (inet_ntop's), or "".
 pub fn peer_ip(fd: Int) -> Str {
   let buf = raw.bytes_buf(128)
@@ -313,6 +328,33 @@ fn take_peek(hc: Int, p: Int, cap: Int) -> Int {
     st(pk, 0, n - k)
   }
   k
+}
+
+/// Whether idle connection h can park (decision 0449): a plain TCP
+/// connection of a running server with nothing to read now (a peek finds
+/// the socket empty and open). It marks the connection idle, so a stop
+/// closes it while parked; the caller then parks it or, if it does not,
+/// clears the mark by reading.
+pub fn park_ready(h: rthttp.HConn) -> Bool {
+  let hc = rec(h)
+  let s = ld(hc, HC_SRV)
+  if s == 0 || ld(hc, HC_TLS) != 0 || ld(hc, HC_H2) != 0 || ld(hc, HC_PEEK) != 0 || stopping_at(s) || poll.canceled() {
+    return false
+  }
+  let pd = conn_pd(hc)
+  if !poll.pd_begin(pd) {
+    return false
+  }
+  let b = obj.alloc_obj(8)
+  // MSG_PEEK: the byte stays for the read
+  let r = sock.recv(pd_fd(pd), b, 1, 2)
+  obj.free_obj(b)
+  poll.pd_end(pd)
+  if !would_block(r) {
+    return false
+  }
+  set_idle(hc, true)
+  true
 }
 
 /// Reads from the connection itself (recv_until after the read ahead).

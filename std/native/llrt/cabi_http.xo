@@ -28,3 +28,10 @@ fn streams_free() {
   // the system's roots the Xo client parsed (tlsio.xo)
   tlsio.roots_free()
 }
+
+/// A parked connection's continuation fired by the poller or a closer
+/// (poll.xo cont_fire, decision 0449): hserve.xo imports poll, so the
+/// call goes through the function table.
+fn pd_cont_fire(pd: Int, pc: Int) {
+  hserve.cont_fire(pc)
+}

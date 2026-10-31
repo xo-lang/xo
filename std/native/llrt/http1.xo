@@ -1843,6 +1843,13 @@ pub fn (var r: Reader) read() -> Req? {
   None
 }
 
+/// The bytes the reader holds that no request has consumed (a pipelined
+/// request's start): a connection with any does not park (decision 0449).
+pub fn (r: Reader) buffered() -> Int { xl(r.x, X_N) - xl(r.x, X_OFF) }
+
+/// Whether the server's idle timeout is set on the connection.
+pub fn (r: Reader) has_idle_limit() -> Bool { xl(r.x, X_IDLE_NS) > 0 }
+
 /// The connection.
 pub fn (r: Reader) conn() -> rthttp.HConn { r.h }
 
