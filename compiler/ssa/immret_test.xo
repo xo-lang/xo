@@ -1,0 +1,26 @@
+// imm_return_of: which fields of a function's one returned struct are
+// immortal, which its callers then leave unreleased.
+
+/// f returning a struct of one constant Str from block 0, its unwind
+/// exit when exit.
+fn imm_func(exit: Bool) -> Func {
+  var m = Module{}
+  let st = m.intern(SType{kind: Kind.Str, name: "Str"})
+  let rty = m.intern(SType{kind: Kind.Struct, name: "R"})
+  let fi = m.new_func("f", [], [rty])
+  var f = m.funcs[fi]
+  let c = f.add(0, Op.Const, st, Aux.S(s: ""), [])
+  let s = f.add(0, Op.Struct, rty, Aux.None, [c])
+  let _r = f.add(0, Op.Return, -1, Aux.None, [s])
+  f.unwind_exit = if exit { 0 } else { -1 }
+  m.funcs[fi] = f
+  m.funcs[fi]
+}
+
+test "a struct literal's constant field is immortal" {
+  expect(imm_return_of(imm_func(false))) == [true]
+}
+
+test "a function that returns only from its unwind exit has no immortal fields" {
+  expect(imm_return_of(imm_func(true)).is_empty()) == true
+}

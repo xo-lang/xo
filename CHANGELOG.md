@@ -39,6 +39,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the generated Go named `rt.xoNew_Go_io_Reader` and `rt.T` and did not
   build (TestUseGoImplements, TestUseGoGenericTypes). Binding version
   34: older bindings are rebound.
+- Native backend: a function that always faults no longer tells its
+  callers that fields of its result are immortal (compiler/ssa rc.xo
+  imm_return_of: its one return is its unwind exit's zero). The std store
+  failed reference count verification after inlining when
+  Request.with_body_reader always faulted under XO_STD_CONC=0 (74 errors
+  in http.ReverseProxy.serve, after 82a509844); 2d51a8403 hid it for
+  structs of eight fields or more. Test compiler/ssa immret_test.xo; the
+  std store at 110086203 builds with the parent of 2d51a8403 plus the fix.
 - `--phase-times` after a run cache miss says why: `cache run miss:` and
   the first recorded input that no longer holds (a changed file,
   listing, tree, probe or variable; no entry; the binary gone), then the

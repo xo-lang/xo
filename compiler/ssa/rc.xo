@@ -1657,6 +1657,14 @@ fn imm_return_of(f: Func) -> List[Bool] {
   if n != 1 || f.values[ret].args.len() != 1 {
     return []
   }
+  // a function that always faults returns only from its unwind exit: its
+  // zero result says nothing a caller may keep, and once the raise's
+  // landing is gone (after inlining) the function has no return, so the
+  // verifier would expect every field its callers left unreleased
+  // (http.ReverseProxy.serve in the std store, 74 errors, 2026-10-30)
+  if f.values[ret].block >= 0 && f.values[ret].block == f.unwind_exit {
+    return []
+  }
   let s = f.values[f.values[ret].args[0]]
   if s.op != Op.Struct {
     return []
