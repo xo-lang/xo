@@ -222,9 +222,51 @@ background.
    - raw.bytes_buf's growth: preallocate where the final size is known.
 
    Each is its own change with an `--ab` row.
+5. **The checker's peak in `xo test` with std's test variant**
+   (proposed by xo-lang-4 with stage 2's result, 2026-10-30; not yet
+   assigned). After stage 2, case (b)'s RSS is set by the checker, not
+   the link: `check.prefetch` maps 180 to 189 MB and `check.dirs` 247 to
+   260 MB, before anything can be freed. Most of it is std's parsed
+   function bodies, which a build against the variant does not lower:
+   the variant's facts already describe them. Parse std's bodies lazily
+   in that build (the checker's lazy mode, decision 0388's pending
+   trees), so only the bodies the program's own code reaches are
+   parsed. Measured as stage 2 was: `--phase-times` mapped heap at
+   check.dirs, and max RSS of `xo test --std-module=native/url` and
+   native/base64 with the variant warm.
 
 Each stage reports the table above again, before and after, and the
 profile of the case it targets.
+
+### Stage 2 result (xo-lang-4, 2026-10-30)
+
+The root in the test path was the strip's own condition: decision
+0352's `link_view` ran only for a build that was not a test, because
+`finish` listed the tests (`test_infos`, which reads the files' trees)
+after the link. `run_store` and `program_pure` read only the modules,
+which the view keeps. `xo test` now lists its tests before `lower` (and
+again after the module check cache's retry, which checks the program
+anew), and both strip sites drop `!tests`. TestFrontEndFreedByDefault
+checks that `xo test` prints `front_end_freed` and still runs its test.
+
+Measured on the Mac with one xo, std's test variant warm,
+`XO_SEPCOMP_BG=0`, the bin and test caches off, three runs each, against
+`XO_KEEP_FRONT=1` (the old test path):
+
+| `xo test --std-module=` | live at link.synthesize | mapped at link.synthesize | max RSS |
+|---|---|---|---|
+| native/url, kept | 155.8 MB | 298 MB | 307 to 310 MB |
+| native/url, freed | 14.7 MB | 213 MB | 282 to 285 MB |
+| native/base64, kept | 133.9 MB | 276 MB | 290 to 293 MB |
+| native/base64, freed | 7.9 MB (samples lost) | 218 MB | 262 to 266 MB |
+
+Live at link.synthesize is under the 60 MB target. RSS is not under
+200 MB: the mapped peak, 247 to 260 MB, is reached in `check.dirs`,
+before anything can be freed, and the 200 MB of mapped heap over 15 MB
+live at the link is stage 1's retention. RSS for (b) now waits on stage
+1 and on the checker's own peak (`check.prefetch` maps 180 to 189 MB of
+parsed std): a stage 5 candidate is parsing std's bodies for the variant
+lazily, since the variant's facts already cover them.
 
 ## Consequences
 

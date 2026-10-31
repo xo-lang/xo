@@ -15,6 +15,8 @@ import (
 // default): every default build kept about 130 MB of parse trees and
 // checker data through the passes. --phase-times prints the phase
 // front_end_freed where the front end goes; XO_KEEP_FRONT=1 keeps it.
+// xo test lets it go too since decision 0448 stage 2 (it lists its tests
+// before the lowering): its tests still run and report.
 func TestFrontEndFreedByDefault(t *testing.T) {
 	t.Parallel()
 	if testing.Short() {
@@ -31,8 +33,9 @@ func TestFrontEndFreedByDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 	for name, text := range map[string]string{
-		"xo.mod":  "module frontfree\n",
-		"main.xo": "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n",
+		"xo.mod":       "module frontfree\n",
+		"main.xo":      "fn main(os: Os) {\n  os.stdio.println(\"hi\")\n}\n\nfn twice(x: Int) -> Int {\n  x * 2\n}\n",
+		"main_test.xo": "test \"twice doubles\" {\n  expect(twice(21)) == 42\n}\n",
 	} {
 		if err := os.WriteFile(filepath.Join(dir, name), []byte(text), 0o644); err != nil {
 			t.Fatal(err)
@@ -54,6 +57,16 @@ func TestFrontEndFreedByDefault(t *testing.T) {
 		if se := phases(); !strings.Contains(se, "phase front_end_freed ") {
 			t.Fatalf("%s (%d): no phase front_end_freed in the default build's phase times:\n%s", what, i, se)
 		}
+	}
+	var so, se bytes.Buffer
+	if code := run(t, []string{"test", "-v", "--phase-times", "."}, &so, &se); code != 0 {
+		t.Fatalf("test: exit %d\n%s%s", code, so.String(), se.String())
+	}
+	if !strings.Contains(se.String(), "phase front_end_freed ") {
+		t.Fatalf("no phase front_end_freed in xo test's phase times:\n%s", se.String())
+	}
+	if out := so.String() + se.String(); !strings.Contains(out, "twice doubles") {
+		t.Fatalf("xo test did not report its test:\n%s", out)
 	}
 	setenv(t, "XO_KEEP_FRONT", "1")
 	if se := phases(); strings.Contains(se, "phase front_end_freed ") {

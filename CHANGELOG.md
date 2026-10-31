@@ -56,6 +56,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the reader, so a writer task running ahead of a late `Client.open` no
   longer grows memory without bound.
 
+- Memory (decision 0448 stage 2): `xo test` lets the front end go once
+  the program is lowered, as other native builds have since decision
+  0352: it lists its tests first. Live heap at the link of `xo test
+  --std-module=native/url` falls from 156 MB to 15 MB and max RSS from
+  about 309 MB to 283 MB; `XO_KEEP_FRONT=1` keeps the old path.
 - FIX (native builds): the cleanup cache key (decision 0382) of a
   build that lets the front end go (decision 0352) read the default
   settings, since Checker.link_view kept none of them: an `-s` or

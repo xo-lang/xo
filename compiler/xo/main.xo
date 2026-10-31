@@ -1167,7 +1167,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     tgoarch = "wasm"
   }
   // decision 0352: lower lets the checker go once the SSA is built, in a
-  // native build for one target OS that is not a test (2026-10-26: also
+  // native build for one target OS (a test build too since decision 0448
+  // stage 2, its tests listed first, below) (2026-10-26: also
   // under the module check cache's auto mode, the default since 2026-10-23,
   // whose retry reads only link_view's skip fields; strip was off for it, so
   // a default build kept the trees: 325 MB against 278 MB peak RSS)
@@ -1175,7 +1176,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   for tg in targets {
     one_os = one_os && tg.split("/")[0] == targets[0].split("/")[0]
   }
-  let strip = (backend is "arm64" | "amd64") && one_os && !tests && (os.env.get("XO_KEEP_FRONT") ?? "") != "1"
+  let strip = (backend is "arm64" | "amd64") && one_os && (os.env.get("XO_KEEP_FRONT") ?? "") != "1"
+  // a test build's tests, read from the syntax trees before lower lets
+  // them go (decision 0448 stage 2); run_store and program_pure read only
+  // the modules, which link_view keeps
+  var ts: List[TestInfo] = []
+  if tests {
+    ts = test_infos(c, root, o.wd, fz)
+  }
   // the build information's source hashes, before lower lets the
   // checker go (decision 0354 stage 2)
   if !tests {
@@ -1235,6 +1243,9 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
     o.chk_noskip = o.chk_noskip + no
     c = check_program(os, o, true)
     lo = lower(os, o, c, false, root, tests, release, uses_time, tgoos, tgoarch, backend == "wasm", backend is "arm64" | "amd64", t)
+    if tests {
+      ts = test_infos(c, root, o.wd, fz)
+    }
   }
   t = lo.t
   if !lo.skipped.is_empty() {
@@ -1559,7 +1570,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       os.fs.remove_all("${dir}-modules").ignore_err("only disk: the prune takes it after 30 minutes")
     }
     lap(os, phases, "cc", t)
-    return finish(os, ctx, o, c, root, [(ltarget, bin)], tests, fz)
+    return finish(os, ctx, o, c, root, [(ltarget, bin)], tests, ts)
   }
   // arm64 (and amd64, the arm64 MIR retargeted): the assembly of each
   // target; the host's is linked
@@ -1578,8 +1589,8 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // decision 0352: a build for one target OS reads only the modules, the
   // diagnostics and (xo dev's reuse) the parse cache of the checker from
   // here on; the rest, held by c, the builder and lo, goes before
-  // inlining (a test build keeps it: test_infos and run_store read it)
-  if one_os && !tests && (os.env.get("XO_KEEP_FRONT") ?? "") != "1" {
+  // inlining (a test build too: its tests were listed before lower)
+  if one_os && (os.env.get("XO_KEEP_FRONT") ?? "") != "1" {
     c = c.link_view(o.reuse_parse)
     b.c = c
     lo.b = b
@@ -2212,7 +2223,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   if o.cmd == "asm" {
     return Native{pc: c.parse_cache}
   }
-  finish(os, ctx, o, c, root, bins, tests, fz)
+  finish(os, ctx, o, c, root, bins, tests, ts)
 }
 
 /// The tasks of the parallel stages of a build (ssa insert_rc_jobs,
@@ -2395,7 +2406,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
 /// The end of a native build: the test list of a test binary, or the
 /// result of `build` (`os/arch: path` lines on standard output, or the
 /// JSON result).
-fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], tests: Bool, fz: FuzzSet) -> Native {
+fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(Str, Str)], tests: Bool, ts: List[TestInfo]) -> Native {
   // the outputs are in place: a stop from here on is the program's
   if let Some(d) = ctx.build_done {
     let _ = d.try_send(())
@@ -2405,7 +2416,6 @@ fn finish(os: Os, ctx: Ctx, o: Opts, c: check.Checker, root: Str, bins: List[(St
     host_bin = p
   }
   if tests {
-    let ts = test_infos(c, root, o.wd, fz)
     if !o.run_key.is_empty() {
       // with the warnings the build printed, which a hit prints again
       // (decision 0360; a build with a warning was not stored before)
