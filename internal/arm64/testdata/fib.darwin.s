@@ -43,8 +43,8 @@ LpGL1jtk_f1_du4:
 	adrp x21, _xo_static@PAGE
 	add x21, x21, _xo_static@PAGEOFF
 	add x21, x21, #24
-	ldr x9, [x21, #24]
-	cmp x9, #1
+	ldr x1, [x21, #24]
+	cmp x1, #1
 	b.ne LpGL1jtk_f1_b15
 LpGL1jtk_f1_du5:
 LpGL1jtk_f1_b5:
@@ -74,7 +74,6 @@ LpGL1jtk_f1_cs1b:
 LpGL1jtk_f1_du9:
 LpGL1jtk_f1_b15:
 LpGL1jtk_f1_du10:
-	ldr x1, [x21, #24]
 	tbnz x1, #0, LpGL1jtk_f1_b18
 LpGL1jtk_f1_du11:
 LpGL1jtk_f1_b17:

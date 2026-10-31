@@ -58,8 +58,8 @@ xo_f_main:
 	adrp x21, xo_static
 	add x21, x21, :lo12:xo_static
 	add x21, x21, #24
-	ldr x9, [x21, #24]
-	cmp x9, #1
+	ldr x1, [x21, #24]
+	cmp x1, #1
 	b.ne .LpGL1jtk_f1_b19
 .LpGL1jtk_f1_du5:
 .LpGL1jtk_f1_b9:
@@ -89,7 +89,6 @@ xo_f_main:
 .LpGL1jtk_f1_du9:
 .LpGL1jtk_f1_b19:
 .LpGL1jtk_f1_du10:
-	ldr x1, [x21, #24]
 	tbnz x1, #0, .LpGL1jtk_f1_b22
 .LpGL1jtk_f1_du11:
 .LpGL1jtk_f1_b21:
