@@ -3,9 +3,11 @@
 Status: Accepted (owner, 2026-10-31: "Can we run all the tests through
 heavy? Then have multiple lanes? And can the merge queue and other
 features go in there too?", then "Yes with the heavy stages" to the
-staged plan below). Stages 1 to 4 landed 2026-10-31: lanes in heavyd
+staged plan below). Stages 1 to 5a landed 2026-10-31: lanes in heavyd
 (041e4f0a9), offload.sh in the host lanes (e07848322), pushq in the merge
-lane (8e7a90ea6), routing (lane specs and host files).
+lane (8e7a90ea6), routing (9de7d3625), the win and docker lanes. Stage 5b
+(deleting the hosts' own queues and pushq's lock) waits until the lanes
+have run a day with no fallback in heavyd.log or the scripts' output.
 
 ## Context
 
@@ -39,7 +41,8 @@ daemon only says when), as heavy.sh's client already does.
   runs CMD with `HEAVY_LANE` and `HEAVY_LANE_SLOT` (the slot numbers) set
   and the caller's stdin and output, and exits with CMD's status. It
   exits 75 when no daemon answers, so the caller falls back to its old
-  lock; 5 when the cap refuses; 2 for an unknown lane.
+  lock; 76 when no lane matches (the caller falls back the same way); 5
+  when the cap refuses.
 - The rules, ported from offload.sh with their reasons: arrival order;
   `-x` (exclusive) takes every slot and blocks the leases behind it;
   backfill: while an exclusive lease waits, a plain lease may take a free
@@ -75,7 +78,9 @@ Stages, each pushed and running live before the next:
    amd64-run.sh) name it, so the put and the run reach the same host. A
    second arm64 host: its env file in ~/xo-lead and one line,
    `arm64-2 2 2 offload-2.env`.
-5. Docker and Windows lanes, then the per-script queues are deleted.
+5. Docker and Windows lanes (5a: `win 2 0 offload-win.env` for
+   OFF_KIND=win jobs, `docker 1` around scripts/docker-linux.sh's
+   container run), then the per-script queues are deleted (5b).
 
 ## Consequences
 

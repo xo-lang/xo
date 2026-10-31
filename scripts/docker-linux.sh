@@ -64,5 +64,14 @@ ro=":ro"
 if [ "${XO_DOCKER_RW:-}" = 1 ]; then
   ro=""
 fi
-exec docker run --rm --platform "linux/$arch" "$user" -v "$repo:/xo$ro" -v "$work:/work" -w /work \
-  -e HOME=/work/home "$image" sh -c "mkdir -p /work/home && $*"
+# the docker lane (decision 0451 stage 5): one container run at a time
+# on this Mac, in heavyd's queue (heavy.sh --status); with no daemon
+# (exit 75), or XO_DOCKER_NO_LANE=1, it runs at once as before
+hd=${XO_LEAD_DIR:-$HOME/xo-lead}/agents/heavyd
+run=(docker run --rm --platform "linux/$arch" "$user" -v "$repo:/xo$ro" -v "$work:/work" -w /work \
+  -e HOME=/work/home "$image" sh -c "mkdir -p /work/home && $*")
+if [ -x "$hd" ] && [ -z "${HEAVY_LANE:-}" ] && [ -z "${XO_DOCKER_NO_LANE:-}" ]; then
+  rc=0; "$hd" lease "-name=docker $arch" docker -- "${run[@]}" || rc=$?
+  [ "$rc" = 75 ] || [ "$rc" = 76 ] || exit "$rc"
+fi
+exec "${run[@]}"
