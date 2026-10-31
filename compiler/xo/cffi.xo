@@ -131,10 +131,15 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim
     if trim {
       let sd = dir_name(if is_abs_path(s) { s } else { "${cwd}/${s}" })
       let rel = rel_or_dot(cwd, sd)
-      args = args + ["-fdebug-compilation-dir=.", "-ffile-prefix-map=${sd}=${rel}"]
-      kargs = cflags + ["-g", "-O2", "-c", "${rel}/${base_name(s)}", "-fdebug-compilation-dir=."]
+      // the working directory as "." (the compile directory), then the
+      // source's directory: both compilers apply the last map that
+      // matches, so the source's wins below the working directory.
+      // -ffile-prefix-map, not clang's -fdebug-compilation-dir, which gcc
+      // (linux's cc) rejects
+      args = args + ["-ffile-prefix-map=${cwd}=.", "-ffile-prefix-map=${sd}=${rel}"]
+      kargs = cflags + ["-g", "-O2", "-c", "${rel}/${base_name(s)}", "cwd=."]
     }
-    let key = crypto.sha256("c_objects v2\n${kargs.join("\x00")}\n".bytes() + data).to_hex()
+    let key = crypto.sha256("c_objects v3\n${kargs.join("\x00")}\n".bytes() + data).to_hex()
     let obj = "${cdir}/${base_name(s).trim_suffix(".c")}-${key[0..16]}.o"
     // xo:allow XO0903 an object that is not there is compiled
     if !(os.fs.exists(obj).ok() ?? false) {
