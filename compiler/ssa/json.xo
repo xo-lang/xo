@@ -497,6 +497,25 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     b.retv(b.json_sub(acc, fv, b.c.subst(b.c.objs[obj].target, sb)))
     return
   }
+  if b.tkind(t) == Kind.Enum && tk == "enum" && b.c.objs[obj].value_kind != 0 {
+    // a valued enum (decision 0269) is its variant's value
+    let tag = b.add(Op.Tag, it, Aux.None, [v])
+    for vo in b.c.objs[obj].variants {
+      let vi = b.m.variant_index(t, check.text(vo.name))
+      if vi < 0 {
+        continue
+      }
+      let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(vi)]))
+      if b.c.objs[obj].value_kind == 1 {
+        b.retv(b.lit(acc, "${vo.ival}"))
+      } else {
+        b.retv(b.lit(acc, "\"${json_key_text(vo.sval)}\""))
+      }
+      b.if_then_end(no, join)
+    }
+    b.retv(acc)
+    return
+  }
   if b.tkind(t) == Kind.Enum && tk == "enum" {
     let tag = b.add(Op.Tag, it, Aux.None, [v])
     for vo in b.c.objs[obj].variants {
@@ -1030,6 +1049,45 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     // its underlying value's JSON (core 2.8, decision 0097)
     let v = b.dec_child(d, b.c.subst(b.c.objs[obj].target, sb), i, b.const_str(""))
     b.dec_ok(d, b.add(Op.Struct, t, Aux.None, [b.coerce(v, b.m.types[t].fields[0].ty)]))
+    return
+  }
+  if b.tkind(t) == Kind.Enum && tk == "enum" && b.c.objs[obj].value_kind != 0 {
+    // a valued enum (decision 0269) reads its variant's value
+    let ename = check.text(b.c.objs[obj].name)
+    if b.c.objs[obj].value_kind == 1 {
+      b.dec_need(d, JK_NUM, "expected integer")
+      let (no0, join0) = b.if_then_begin(b.add(Op.Not, bt, Aux.None, [b.json_rt("json_int_ok", bt, [d.src, d.tape, i])]))
+      b.dec_fail(d, "expected integer")
+      b.if_then_end(no0, join0)
+      let n = b.json_rt("json_int", it, [d.src, d.tape, i])
+      for vo in b.c.objs[obj].variants {
+        let vi = b.m.variant_index(t, check.text(vo.name))
+        if vi < 0 {
+          continue
+        }
+        let (no, join) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [n, b.cint(vo.ival)]))
+        b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), []))
+        b.if_then_end(no, join)
+      }
+      let m1 = b.call("str.concat_int", st, "", [b.const_str("unknown value "), n])
+      let m2 = b.call("str.concat", st, "", [m1, b.const_str(" of enum ${ename}")])
+      b.retv(b.dec_err(d, b.const_str(""), m2))
+      return
+    }
+    b.dec_need(d, JK_STR, "expected string")
+    let sv = b.dec_str(d, i)
+    for vo in b.c.objs[obj].variants {
+      let vi = b.m.variant_index(t, check.text(vo.name))
+      if vi < 0 {
+        continue
+      }
+      let (no, join) = b.if_then_begin(b.call("str.eq", bt, "", [sv, b.const_str(check.text(vo.sval))]))
+      b.dec_ok(d, b.add(Op.Variant, t, Aux.I(n: vi), []))
+      b.if_then_end(no, join)
+    }
+    let m1 = b.call("str.concat", st, "", [b.const_str("unknown value `"), sv])
+    let m2 = b.call("str.concat", st, "", [m1, b.const_str("` of enum ${ename}")])
+    b.retv(b.dec_err(d, b.const_str(""), m2))
     return
   }
   if b.tkind(t) == Kind.Enum && tk == "enum" {

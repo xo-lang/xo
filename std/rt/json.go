@@ -756,6 +756,31 @@ func JsonObject(x any, path string) (map[string]any, *Json_DecodeErr) {
 	return obj.vals, nil
 }
 
+// JsonEnumInt reads the integer value of a valued enum (decision 0269).
+func JsonEnumInt(x any, path string) (int64, *Json_DecodeErr) { return jsonInt(x, path, 64, true) }
+
+// JsonEnumUnknown is the error of a value no variant of enum name has.
+func JsonEnumUnknown(path, name, value string, quoted bool) *Json_DecodeErr {
+	if quoted {
+		value = "`" + value + "`"
+	}
+	return JsonErr(path, "unknown value "+value+" of enum "+name)
+}
+
+// JsonEnumUnknownInt is JsonEnumUnknown for an Int valued enum.
+func JsonEnumUnknownInt(path, name string, n int64) *Json_DecodeErr {
+	return JsonEnumUnknown(path, name, strconv.FormatInt(n, 10), false)
+}
+
+// JsonEnumStr reads the string value of a valued enum (decision 0269).
+func JsonEnumStr(x any, path string) (string, *Json_DecodeErr) {
+	s, ok := x.(string)
+	if !ok {
+		return "", JsonErr(path, "expected string")
+	}
+	return s, nil
+}
+
 // JsonVariant splits an enum's JSON form into the variant name and its
 // payload (nil for a unit variant written as a string).
 func JsonVariant(x any, path string) (string, any, bool, *Json_DecodeErr) {

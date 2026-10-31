@@ -226,6 +226,38 @@ fn (var g: Gen) gen_json_enum(t: Int) {
   let self = g.self_type(t)
   let tuse = g.tparam_use(g.c.objs[t].tparams)
   let variants = g.c.objs[t].variants
+  let vk = g.c.objs[t].value_kind
+  if vk != 0 {
+    // a valued enum (decision 0269) is its variant's value
+    g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) {")
+    g.pl("\tswitch v.Tag {")
+    for v in variants {
+      if vk == 1 {
+        g.pl("\tcase ${v.index + 1}:\n\t\tw.Int(${v.ival})")
+      } else {
+        g.pl("\tcase ${v.index + 1}:\n\t\tw.Str(${check.text(v.sval).quote()})")
+      }
+    }
+    g.pl("\t}\n}\n")
+    g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
+    if vk == 1 {
+      g.pl("\tn, err := ${rt}JsonEnumInt(x, path)\n\tif err != nil {\n\t\treturn err\n\t}\n\tswitch n {")
+    } else {
+      g.pl("\tn, err := ${rt}JsonEnumStr(x, path)\n\tif err != nil {\n\t\treturn err\n\t}\n\tswitch n {")
+    }
+    for v in variants {
+      let lit = if vk == 1 { "${v.ival}" } else { check.text(v.sval).quote() }
+      g.pl("\tcase ${lit}:\n\t\t*v = ${self}{Tag: ${v.index + 1}}\n\t\treturn nil")
+    }
+    g.pl("\t}")
+    if vk == 1 {
+      g.pl("\treturn ${rt}JsonEnumUnknownInt(path, ${check.text(g.c.objs[t].name).quote()}, n)")
+    } else {
+      g.pl("\treturn ${rt}JsonEnumUnknown(path, ${check.text(g.c.objs[t].name).quote()}, n, true)")
+    }
+    g.pl("}\n")
+    return
+  }
   g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) {")
   g.pl("\tswitch v.Tag {")
   for (vi, v) in variants.indexed() {
