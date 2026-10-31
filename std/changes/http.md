@@ -7,7 +7,7 @@
 - Found by: decision 0449 (an idle h2 connection held a fiber stack, 32 KB resident, two mappings)
 - Go reference: Go 1.28 parks idle HTTP/2 connections
 - Test: internal/stdtest TestIdleConnections40kH2 (XO_TEST_IDLE40K=1, linux)
-- Timing: TODO (host run: mappings, RssAnon for 40,000 idle h2 connections)
+- Timing: linux/arm64 host, 40,000 idle h2 connections over TLS, each with a second request answered: 470 server mappings, RssAnon 918,892 kB (about 23 KB each); before, an idle h2 connection held a fiber stack (two mappings, 32 KB resident) so a server stopped near 32,000
 
 An HTTP/2 connection with no open stream, nothing buffered or to send, and no
 ping interval or deadline parks while it waits for its next frame: its task
