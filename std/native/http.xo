@@ -76,9 +76,6 @@ struct Request {
   /// 0404 stage C), its pieces as the server's BodyPart (data the raw
   /// bytes, never shown as text). Hidden from Xo code.
   src: List[fn(Int) -> http1.BodyPart] = []
-  /// with_body_reader's closers of its source (a pipe's reader end), run
-  /// once the client is done with the request. Hidden from Xo code.
-  src_close: List[fn() -> ()] = []
   /// with_trailers' f (decision 0433), asked once the body is sent; one
   /// entry or none. Hidden from Xo code.
   trailer_fn: List[fn() -> Map[Str, Str]] = []
@@ -202,6 +199,10 @@ pub fn handoff_response(f: fn(rthttp.HConn) -> ()) -> http.Response {
 /// The body of a request to a handle_stream route (decision 0310).
 struct BodyReader {
   st: Mutex[BodyState]
+  /// closes the source's reading end (http.pipe's) for a client done with
+  /// a request that sends this body (with_body_reader); set when made and
+  /// read without st, which a read waiting on the source holds
+  close: List[fn() -> ()] = []
 }
 
 /// What a BodyReader read: from the connection (next: http1.body_next
@@ -213,9 +214,6 @@ struct BodyReader {
 struct BodyState {
   next: List[fn(Int) -> http1.BodyPart]
   finish: List[fn() -> ()]
-  /// closes the source's reading end (http.pipe's), for a client done
-  /// with a request that sends this body (with_body_reader)
-  closers: List[fn() -> ()] = []
   data: Bytes
   pos: Int
   err: Str
@@ -2847,8 +2845,7 @@ fn pipe() -> (PipeWriter, BodyReader) {
       stop.close()
     }
   }
-  let b = conn_body(next, [], [])
-  b.st.with(fn(var s: BodyState) { s.closers = [close_reader] })
+  let b = conn_body(next, [], []) with {close: [close_reader]}
   (PipeWriter{ch: ch, stop: stop, st: st}, b)
 }
 
@@ -2912,7 +2909,16 @@ fn (w: PipeWriter) close_with_error(e: IoErr) {
 }
 
 fn (r: Request) with_body_reader(b: http.BodyReader) -> Request {
+  let cl = rt.cast[http.BodyReader, BodyReader](b).close
   let f = fn(max: Int) -> http1.BodyPart {
+    if max < 0 {
+      // close_src: the client is done with the request, so the source's
+      // reading end closes (a pipe's writer then fails)
+      for c in cl {
+        c()
+      }
+      return http1.BodyPart{data: "", end: true, err: ""}
+    }
     match b.read(max) {
       Ok(Some(d)) => {
         let t = raw.str_at(raw.bytes_addr(d), d.len())
@@ -2923,8 +2929,7 @@ fn (r: Request) with_body_reader(b: http.BodyReader) -> Request {
       Err(e) => http1.BodyPart{data: "", end: false, err: "${e}"}
     }
   }
-  let cl = rt.cast[http.BodyReader, BodyReader](b).st.with_read(fn(s) { s.closers })
-  r with {body: b"", src: [f], src_close: cl}
+  r with {body: b"", src: [f]}
 }
 
 // ---------------------------------------------------------------------------
@@ -2960,8 +2965,9 @@ struct StreamState {
   /// the scope of a full duplex request body's sender (decision 0433),
   /// closed with the stream
   dsrv: rthttp.Srv? = None
-  /// the request body's closers (Request.src_close), run with dsrv's close
-  src_close: List[fn() -> ()] = []
+  /// the request body's source (Request.src), closed with dsrv's close
+  /// (close_src)
+  src_close: List[fn(Int) -> http1.BodyPart] = []
   /// the response's trailers (decision 0433), set when its body ends
   trailers: Map[Str, Str] = {}
 }
@@ -3077,7 +3083,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     _ => {
       // the request failed: its body's reader closes first, so a sender
       // waiting on a pipe ends and srv_close does not wait on it
-      close_src(req.src_close)
+      close_src(req.src)
       if let Some(ds) = dsrv {
         hserve.srv_close(ds)
       }
@@ -3094,7 +3100,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   let (h, _) = fields_in(r.headers)
   let gz = if r.gz { Some(compress.decompressor(compress.Format.Gzip)) } else { None }
   let idle = if req.idle_ns > 0 { req.idle_ns } else { c.timeout.nanos() }
-  let st = StreamState{conn: if r.open { r.conn } else { None }, h2: r.h2, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle, dsrv: dsrv, src_close: req.src_close}
+  let st = StreamState{conn: if r.open { r.conn } else { None }, h2: r.h2, read: r.read, https: r.https, addr: r.addr, name: r.name, roots: c.roots, buffered: r.body, off: 0, gz: gz, pending: b"", done: false, idle_ns: idle, dsrv: dsrv, src_close: req.src}
   Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: r.status, headers: h}, st: Mutex[StreamState].new(st)}))
 }
 
@@ -3224,10 +3230,12 @@ fn end_conn(x: StreamState, r: rthttp.CResp, keep: Bool, s: Int) {
   }
 }
 
-/// Runs a request body's closers (Request.src_close).
-fn close_src(fs: List[fn() -> ()]) {
+/// Closes a request body's source (with_body_reader's, called with a
+/// negative max; the source a read waits on is not locked for it): the
+/// client is done with the request.
+fn close_src(fs: List[fn(Int) -> http1.BodyPart]) {
   for f in fs {
-    f()
+    let _p = f(-1)
   }
 }
 
@@ -3475,7 +3483,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c))
   // done with the request: its body's reader closes (net/http closes
   // the request body), so a later write fails instead of waiting
-  close_src(req.src_close)
+  close_src(req.src)
   match r.err {
     0 => ()
     1 => return Err(http.ClientErr.InvalidUrl(msg: r.msg))
