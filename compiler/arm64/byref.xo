@@ -519,19 +519,17 @@ fn (var g: G) find_mem_only() {
 /// The users of every value (once per function).
 fn (var g: G) held_uses() {
   if !g.held.has_uses {
+    // each list grown in place (copied per use, 2.5% of the
+    // self-build's allocation, 2026-10-30, ADR 0448 stage 4)
     var us: Map[Int, List[Int]] = {}
     for b in 0..g.f.blocks.len() {
       for x in g.f.blocks[b].instrs {
         for a in g.f.values[x].args {
-          var l = us.get(a) ?? []
-          l.push(x)
-          us[a] = l
+          us.update(a, [], fn(var l) { l.push(x) })
         }
         for e in g.f.values[x].succs {
           for a in g.f.edges[e].args {
-            var l = us.get(a) ?? []
-            l.push(x)
-            us[a] = l
+            us.update(a, [], fn(var l) { l.push(x) })
           }
         }
       }

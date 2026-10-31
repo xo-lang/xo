@@ -949,27 +949,30 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
   if !any {
     return false
   }
+  // the uses of tuples only, the one kind read below, each list grown in
+  // place (every value's uses, copied per use, were 2.7% of the
+  // self-build's allocation, 2026-10-30, ADR 0448 stage 4)
   var us: Map[Int, List[Int]] = {}
   for bl in f.blocks {
     for v in bl.instrs {
       for a in f.values[v].args {
-        var l = us.get(a) ?? []
-        l.push(v)
-        us[a] = l
+        if a >= 0 && f.values[a].op == Op.Tuple {
+          us.update(a, [], fn(var l) { l.push(v) })
+        }
       }
       for e in f.values[v].succs {
         for a in f.edges[e].args {
-          var l = us.get(a) ?? []
-          l.push(-1)
-          us[a] = l
+          if a >= 0 && f.values[a].op == Op.Tuple {
+            us.update(a, [], fn(var l) { l.push(-1) })
+          }
         }
       }
     }
   }
   for d in f.dbinds {
-    var l = us.get(d.value) ?? []
-    l.push(-1)
-    us[d.value] = l
+    if d.value >= 0 && f.values[d.value].op == Op.Tuple {
+      us.update(d.value, [], fn(var l) { l.push(-1) })
+    }
   }
   var repl: Map[Int, Int] = {}
   var dead: Map[Int, Bool] = {}

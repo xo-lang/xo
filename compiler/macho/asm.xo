@@ -444,7 +444,10 @@ fn (var a: Asm) put_enc(e: Enc) {
 /// The operands of an instruction: split at commas outside brackets,
 /// each trimmed.
 pub fn split_operands(b: Bytes) -> List[Bytes] {
-  var out: List[Bytes] = []
+  // room for three operands, the most an instruction has, once: a list
+  // grown from empty reallocated at the second and third (1.5% of the
+  // amd64 self-build's allocation, 2026-10-30, ADR 0448 stage 4)
+  var out: List[Bytes] = List.with_capacity(3)
   var depth = 0
   var start = 0
   var q = false

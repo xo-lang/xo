@@ -303,61 +303,72 @@ fn dce_dead(insts: List[Inst], live: List[Bool]) -> Bool {
 /// instruction's lists and strings and freeing the old one dropped them
 /// again (bench/results/xo1-speed-2026-10-13.md).
 fn dce_keep(var insts: List[Inst], live: List[Bool]) {
-  // the kept instructions, last first
-  var rev: List[Inst] = List.with_capacity(insts.len())
-  while !insts.is_empty() {
-    match insts.pop() {
-      Some(x0) => {
-        var x = x0
-        if x.kind == K_PMOVE {
-          var all = true
-          for d in x.defs {
-            all = all && live[d]
+  // compacted in place, the kept instructions moved down to k: each
+  // one's fate reads only live, so the order does not matter (the list
+  // reversed into a second list and back was 3.2% of the self-build's
+  // allocation, 2026-10-30, ADR 0448 stage 4)
+  var k = 0
+  for i in 0..insts.len() {
+    var x = insts[i]
+    if x.kind == K_PMOVE {
+      var all = true
+      for d in x.defs {
+        all = all && live[d]
+      }
+      if !all || x.defs.is_empty() {
+        var defs: List[Int] = []
+        var srcs: List[Src] = []
+        for j in 0..x.defs.len() {
+          if live[x.defs[j]] {
+            defs.push(x.defs[j])
+            srcs.push(x.srcs[j])
           }
-          if !all || x.defs.is_empty() {
-            var defs: List[Int] = []
-            var srcs: List[Src] = []
-            for i in 0..x.defs.len() {
-              if live[x.defs[i]] {
-                defs.push(x.defs[i])
-                srcs.push(x.srcs[i])
-              }
-            }
-            if defs.is_empty() {
-              continue
-            }
-            var us: List[Int] = []
-            for a in srcs {
-              if a.kind == S_REG && a.v != 0 {
-                us.push(a.v)
-              }
-            }
-            x.defs = defs
-            x.srcs = srcs
-            x.us = us
-          }
-          rev.push(x)
+        }
+        if defs.is_empty() {
           continue
         }
-        if removable(x) {
-          var dead = true
-          for d in x.defs {
-            dead = dead && !live[d]
-          }
-          if dead {
-            continue
+        var us: List[Int] = []
+        for s in srcs {
+          if s.kind == S_REG && s.v != 0 {
+            us.push(s.v)
           }
         }
-        rev.push(x)
+        x.defs = defs
+        x.srcs = srcs
+        x.us = us
+        insts[k] = x
+        k += 1
+        continue
       }
-      None => {}
+    } else if removable(x) {
+      var dead = true
+      for d in x.defs {
+        dead = dead && !live[d]
+      }
+      if dead {
+        continue
+      }
     }
+    if k != i {
+      insts[k] = x
+    }
+    k += 1
   }
-  while !rev.is_empty() {
-    match rev.pop() {
-      Some(x) => insts.push(x)
-      None => {}
+  if k * 4 < insts.len() {
+    // most of it went: the kept ones to a list of their size, or the
+    // block keeps the room of every instruction isel made through
+    // regalloc and emit (2026-10-31: in place, a function whose landing
+    // pads made 2M instructions and kept 23k held 0.7 GB, and the self
+    // build's emit peak rose 0.5 to 0.9 GB, ADR 0448 stage 4)
+    var kept: List[Inst] = List.with_capacity(k)
+    for j in 0..k {
+      kept.push(insts[j])
     }
+    insts = kept
+    return
+  }
+  while insts.len() > k {
+    insts.pop()
   }
 }
 
