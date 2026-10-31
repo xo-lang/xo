@@ -75,9 +75,6 @@ websocket_tls # the wasm backend does not support the network (`rt.net_listen`):
 
 # The native heap's big blocks (rt.heap_big in alloc.alloc) have no wasm lowering:
 debug_routes # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
-http_handler_fault # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
-http_router_hooks # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc; until rt.heap_big on wasm
-http_router_paths # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 metrics_text # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 trace_ring # the wasm backend does not support the call `rt.heap_big` (stage 2), in alloc.alloc
 conn_deadline_move # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets

@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-10-30: fix: Router.call builds for wasm (decision 0447)
+
+- Kind: fix
+- Commit: this commit
+- Found by: xo-lang-4, starting decision 0447's wasi:http component (a router program's wasm build failed)
+- Go reference: none (Go's ServeMux has no in-process call; net/http/httptest's recorder is the nearest)
+- Test: internal/selfhost TestSelfhostWasm http_router_paths, http_router_hooks, http_handler_fault (off wasm_unsupported.txt)
+- Timing: none
+
+A program that dispatched through `Router.call` failed its wasm build
+("the wasm backend does not support the call `rt.heap_big`"): the
+collection of a streamed body reached the native server's buffer sink,
+which allocates with llrt's heap. No stream is made on wasm, so the
+collection is skipped there by a test the build decides, and the sink
+is not built.
+
 ## 2026-10-30: behavior: http.pipe() holds at most 64 KiB before its reader's first read, every backend (decision 0444)
 
 - Kind: behavior

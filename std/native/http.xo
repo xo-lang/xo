@@ -2045,6 +2045,13 @@ fn collect(r0: http.Response) -> http.Response {
   if r.stream == 0 {
     return r0
   }
+  if target.arch == TargetArch.Wasm32 {
+    // no stream is made on wasm (no native server there), and the build
+    // decides this test, so hserve's sink, which allocates with llrt's
+    // heap, is not built into a wasm program that dispatches in process
+    // (decision 0447)
+    return r0
+  }
   var body = "".bytes()
   let fs = hserve.stream_get(r.stream, false)
   if !fs.is_empty() {
