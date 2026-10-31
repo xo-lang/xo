@@ -581,3 +581,38 @@ test "a go.mod's go line" {
   expect(go_mod_go_line("module m\n\ngo 1.26.0 // the toolchain's\n\nrequire x v1\n")) == "1.26.0"
   expect(go_mod_go_line("module m\n")) == ""
 }
+
+test "link_view keeps the build's settings, which the cleanup cache's key reads after the lowering" {
+  var c = new_checker(os.fs, "std")
+  c.map_log = false
+  c.map_core = false
+  c.map_branch = true
+  c.async_preempt_ok = true
+  c.async_preempt_llvm = true
+  c.no_preempt = true
+  c.set_debug_contracts = 1
+  c.set_dbg = 0
+  c.set_error_args = 1
+  c.set_trace = 0
+  c.dwarf = false
+  c.pack_lists = true
+  c.inline_str = true
+  c.det = true
+  c.race = true
+  let v = c.link_view(false)
+  expect(v.map_log) == false
+  expect(v.map_core) == false
+  expect(v.map_branch) == true
+  expect(v.async_preempt_ok) == true
+  expect(v.async_preempt_llvm) == true
+  expect(v.no_preempt) == true
+  expect(v.set_debug_contracts) == 1
+  expect(v.set_dbg) == 0
+  expect(v.set_error_args) == 1
+  expect(v.set_trace) == 0
+  expect(v.dwarf) == false
+  expect(v.pack_lists) == true
+  expect(v.inline_str) == true
+  expect(v.det) == true
+  expect(v.race) == true
+}

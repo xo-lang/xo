@@ -2041,10 +2041,29 @@ struct Discard {
 /// the link), the diagnostics, and the parse cache when keep_parse (a
 /// caller that reuses it). Every file, object and type goes, which held
 /// the build's front end alive through code generation and the link.
+/// The build's settings stay: the cleanup cache's key reads them after
+/// the lowering (compiler/xo fe_settings), and without them an -s
+/// or --no-preempt build keyed as the defaults
+/// (gotchas/link-view-dropped-build-settings.md).
 pub fn (c: Checker) link_view(keep_parse: Bool) -> Checker {
   var v = Checker{fs: c.fs, std_dir: c.std_dir}
   v.mods = c.mods
   v.diags = c.diags
+  v.map_log = c.map_log
+  v.map_core = c.map_core
+  v.map_branch = c.map_branch
+  v.async_preempt_ok = c.async_preempt_ok
+  v.async_preempt_llvm = c.async_preempt_llvm
+  v.no_preempt = c.no_preempt
+  v.set_debug_contracts = c.set_debug_contracts
+  v.set_dbg = c.set_dbg
+  v.set_error_args = c.set_error_args
+  v.set_trace = c.set_trace
+  v.dwarf = c.dwarf
+  v.pack_lists = c.pack_lists
+  v.inline_str = c.inline_str
+  v.det = c.det
+  v.race = c.race
   // what a module check cache retry reads after the lowering (build_native)
   v.mod_skip = c.mod_skip
   v.mod_skip_auto = c.mod_skip_auto

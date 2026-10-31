@@ -6,6 +6,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
 
+- FIX (native builds): the cleanup cache key (decision 0382) of a
+  build that lets the front end go (decision 0352) read the default
+  settings, since Checker.link_view kept none of them: an `-s` or
+  `--no-preempt` build keyed its cleanup entries as a default build's.
+  No wrong output was found (`XO_BACKEND_CACHE=verify` passed: the
+  function bodies differ where the settings matter); link_view now
+  keeps the settings, so these builds' cleanup keys change once
+  (gotchas/link-view-dropped-build-settings.md).
 - Tools: `xo dev size --by-cause PROG` (decision 0443): a native arm64
   program's code bytes by cause (body, frame, fault exit, landing pads,
   fault stubs, preemption stubs, rc, inlined runtime, data), per function
