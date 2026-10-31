@@ -53,3 +53,11 @@ Not the fix (tried, negative): an acquire of T_GONE before the free, a TSan
 release/acquire around each run_fiber segment, keeping a spare context.
 Lesson: a write in the worker's context that a fiber later frees needs an
 explicit edge to the fiber that runs next.
+
+Lesson on checking (2026-10-31): the table has two failure lines,
+"a race reported although synchronized" (a false positive) and "no race
+reported without the synchronization" (a missed race). A check that greps
+only the first (or counts only one) passes a change that silences the
+second: 5c92e7f24 was pushed after a Linux run grepped for the first line
+only. Check a race-edge change on every platform with both lines counted
+and the test's own ok/FAIL line, never a filtered log.
