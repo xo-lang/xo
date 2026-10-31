@@ -55,3 +55,9 @@ fn mem_peak() -> Int
 /// The machine's physical memory in bytes, 0 when unknown (Windows and
 /// the Go backend for now).
 fn mem_total() -> Int
+
+/// Gives the system the pages of the calling thread's free heap blocks of
+/// 16 KiB and over (decision 0448; darwin for now): for a program that knows its live
+/// memory just fell, as xo does after its phases that free the most. The pages come back on
+/// the next use of those blocks. Nothing on the Go backend.
+fn mem_trim()

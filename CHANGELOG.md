@@ -61,6 +61,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `XO_PROF=heap` with `XO_PROF_HEAP_AT` no longer counts the snapshot's
   own symbolization as the program's allocation (about 50 MB of a warm
   build's exit profile).
+- Memory: a native program's heap on darwin gives freed memory back to
+  the system sooner (decision 0448 stage 1): a freed large block's cached
+  mapping has its pages marked reusable while it waits
+  (`XO_HEAP_CACHE_ADVISE=0` keeps the old behavior), the 16 KiB class's
+  full magazines give their pages back as the larger classes' did, and
+  `debug.mem_trim()` gives back the calling thread's free 16 KiB and
+  larger blocks (Linux unchanged: every variant cost a warm build 3 to
+  4.7% of wall there). xo trims after
+  its front_end_freed, emit and link phases. A warm `xo build` of
+  bench/perf/xo on darwin/arm64: peak footprint 101 to 55 MB, max RSS
+  125 to 95 MB, mapped heap peak 118 to about 80 MB (ADR 0448, Stage 1 as
+  built).
 - Compiler: a std function's parameter defaults are checked under its own
   file when the std records path joins its tree late; they were recorded
   under the caller's file, so `http.new_request("GET", url)` (the

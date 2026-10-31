@@ -162,6 +162,10 @@ const PT_CLINK = 4096
 const PAGE_MAGIC = 5784094464206446155
 /// A sampled page block's class word carries this bit (heapprof.xo).
 const PSAMPLED = 128
+/// A free page block whose pages were given back (heapos.xo trim_thread,
+/// scavenge) carries this bit until it is freed again (decision 0448
+/// stage 1), so a trim advises each block once.
+pub const PADVISED = 256
 const PCUR = 10952
 const PEND = 10960
 const PAGES = 10968
@@ -204,6 +208,9 @@ fn page_class(p: Int) -> Int {
   if c & PSAMPLED != 0 {
     rt.mem_store(w, 0, c & 127, 8)
     let _f = rt.heap_grow(p, PFREED)
+  } else if c & PADVISED != 0 {
+    // freed again after a trim: its pages were touched while it lived
+    rt.mem_store(w, 0, c & 127, 8)
   }
   c & 127
 }
@@ -665,7 +672,10 @@ pub fn free_mt(h: Int, p: Int) {
     // while it is held), so a short program that frees a few big blocks
     // never pays the system calls; the scavenge itself runs outside the
     // lock and before old is linked, while this thread alone holds it
-    if c >= SCAVENGE_FROM {
+    // (a page block of the 16 KiB class is whole pages too: decision
+    // 0448 stage 1, darwin only: on Linux the refaults cost the warm
+    // build's wall, heapos.xo cache_advise)
+    if c >= SCAVENGE_FROM || (pg && scavenge_pages()) {
       var k = 0
       clock(h, cen, c)
       var w = rt.slot_load(cen, c, RELAXED)
@@ -695,6 +705,16 @@ pub fn free_mt(h: Int, p: Int) {
   rt.mem_store(fl, MAG, rt.mem_load(fl, FREE_LISTS, 8), 8)
   rt.mem_store(fl, FREE_LISTS, 0, 8)
   rt.mem_store(fl, NFREE, 0, 8)
+}
+
+/// Whether the 16 KiB class's magazines are scavenged too (decision 0448
+/// stage 1): darwin, whose MADV_FREE_REUSABLE is lazy; resolved at
+/// compile time.
+fn scavenge_pages() -> Bool {
+  match target.os {
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
+  }
 }
 
 /// Resizes block p of old bytes to n bytes (xo_rt.c xo_resize): a block

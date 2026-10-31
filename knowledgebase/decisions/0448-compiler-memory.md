@@ -351,6 +351,104 @@ no Map presize, which would need a std API), arm64 solve_live 37.9 GB,
 x86_sink_loads 29.3 GB, the remaining scan.split 27.8 GB (x86 callers),
 and the copy-modify-store sites `xo vet` reports as XO0532 (about 59 in
 compiler/).
+## Stage 1, as built (xo-lang-6, 2026-10-30)
+
+Four changes to where the heap keeps freed memory, all in std/native/llrt
+and compiler/xo:
+
+- The large block cache (heapos.xo keep/take: 16 mappings, 64 MB; on
+  darwin every block over 16 KiB since mid_max fell to 16 KiB) kept its
+  mappings resident: a freed block's pages stayed in the footprint until
+  the mapping was reused or the process ended. keep now gives back the
+  pages past the mapping's first 16 KiB on darwin (MADV_FREE_REUSABLE:
+  lazy, the kernel takes the pages when memory is short and a reuse
+  before that costs nothing; under the cache's lock so no taker writes a
+  page the advice drops) and take marks them in use again
+  (MADV_FREE_REUSE, so the footprint counts them). `XO_HEAP_CACHE_ADVISE=0`
+  is the old behavior, for a comparison; the switch word lives in the
+  cache's table, read with no allocation.
+- The 16 KiB class's full magazines are scavenged as the 32 KiB and
+  larger classes' were (decision 0383): since decision 0425 its blocks
+  are whole pages with their links in the chunk's table. A scavenged
+  page block carries PADVISED in its table word until it is freed again,
+  so it is advised once.
+- `debug.mem_trim()` (std/debug, native; the Go backend's is empty):
+  the calling thread's free lists and spare magazines of the page
+  classes are advised, each block once (darwin). xo's `lap` calls it
+  after the phases that free the most: front_end_freed, emit and link.
+- Linux gets none of the three allocator changes, for now. Every Linux
+  variant measured cost the warm coll build's wall: a trim after each of
+  the 25 phases 1.047 (arm64), three trims 1.043, the cache's advice as
+  MADV_FREE instead of MADV_DONTNEED 1.039 with the RSS win gone; the
+  two attribution runs on linux/amd64 (the same 4 KiB pages, an empty
+  queue) put the cost in the allocator side, not the mapped store read:
+  V1 (the store copied again, the advice kept) 1.03 worse, V2 (the
+  advice off, the store mapped) 1.003 within noise. MADV_DONTNEED frees
+  the pages at once and the next phase faults them back in (4 KiB at a
+  time), while darwin's reusable pages cost nothing until memory is
+  short (0.992 there). Linux keeps decision 0383's behavior (the 32 KiB
+  and larger classes' magazines scavenged, the large cache resident); a
+  lazy Linux variant (MADV_FREE for the trims and the 16 KiB scavenge,
+  whose RSS win then shows only under memory pressure) is a follow-up
+  with its own `--ab`.
+- xo's undefined symbols check (main.xo sepcomp_undefined) read the std
+  store into a copy; it maps it as the link does (decision 0402). The
+  copy was the warm build's mapped peak: 118 MB against 83 MB in the
+  phase before. The same change landed first with stage 4 (xo-lang-2,
+  the table above), so this commit carries only the allocator side and
+  the trims; the measurements below include the mapped read.
+
+Case (c), coll (bench/perf/xo) on darwin/arm64, `/usr/bin/time -l`,
+base b7f4a38aa against this change (gate111, 2026-10-30 22:06):
+
+| Build | Max RSS before | after | Footprint before | after | Mapped peak before | after |
+|---|---|---|---|---|---|---|
+| warm | 125 MB | 93 to 95 MB | 101 MB | 55 MB | 118 MB (undef) | 79 to 83 MB (72 with a trim after every phase) |
+| edit | 126 MB | 95 MB | 101 MB | 55 MB | 118 MB | 99 MB |
+| cold | 349 MB | 352 MB | 332 MB | 325 MB | 329 MB | 329 MB |
+
+The large cache alone (the first prototype) took the footprint from
+100 to 73 MB and left the max RSS at 123 to 125 MB: the undef copy was
+the RSS peak. At exit the warm build holds 53 MB in the cache (advised,
+not resident), 15 chunks (60 MB mapped, the touched pages resident) and
+18 MB on class free lists, 16 MB of it in the 4 KiB to 8 KiB classes
+and the small ones. The cold build's 196 to 205 MB on free lists is in
+the 4 KiB and 8 KiB classes too: prefixed blocks whose link is their
+first word, with no whole 16 KiB page to give back. What is left of
+(c)'s target (under 60 MB RSS) is xo's own text (the binary's clean
+pages, 26 to 29 MB of RSS, not footprint) and those classes: a page run
+allocator for the 2 KiB to 8 KiB classes, or per chunk page accounting,
+is the next lever (stage 1b, not started). Output identity: the binary
+coll built with the switch off and on is byte identical; against the
+base xo it differs only by std's debug module, whose asm text for the
+program's own parts is identical (gate111b). Wall: `xo bench --ab` of
+the warm build, darwin (ab111) and linux/arm64 (ab-host edit mode):
+see the rows below.
+
+Wall rows, `xo bench --ab` of the warm coll build (edit mode: the front
+end and the std half from warm caches, the bin cache off, 10 rounds):
+
+| Host | Before | After | B / A |
+|---|---|---|---|
+| darwin/arm64 (ab111, quiet window, 0 loaded rounds) | 105.0 ms | 104.3 ms | 0.992, within noise (0.973 to 1.003); instructions 1.002; max RSS 0.76 |
+| linux/arm64 (ab-host stage1-coll, a trim after every phase) | 107.6 ms | 112.6 ms | 1.047, worse (1.035 to 1.059); max RSS 0.865 |
+| linux/arm64 (ab-host stage1-coll2, trims after front_end_freed, emit, link; the cache still MADV_DONTNEED) | 107.3 ms | 111.9 ms | 1.043, worse (1.035 to 1.054); max RSS 0.864 |
+| linux/arm64 (ab-host stage1-coll3, three trims, the cache MADV_FREE) | 107.7 ms | 111.8 ms | 1.039, worse (1.023 to 1.047); max RSS 0.987 |
+| linux/amd64 (stage1-v1: the store copied again, the advice kept) | 214.7 ms | 221.1 ms | 1.03, worse (1.016 to 1.036) |
+| linux/amd64 (stage1-v2: the advice off, the store mapped) | 216.1 ms | 216.7 ms | 1.003, within noise (0.984 to 1.011) |
+| linux/arm64 (ab-host stage1-final: as landed, the advice darwin only) | 107.3 ms | 106.8 ms | 0.996, within noise (0.983 to 1.003); max RSS 1.001 |
+
+Fixed point (fp111 and, with the three trims, fp112; bootstrap-xo.sh s2
+and s3 with the tree's xo as s1): ok, s2 367 s and s3 126 s on a loaded Mac. The self build on darwin
+(selfrss111, loaded Mac, caches off, default jobs; a footprint figure,
+not a wall claim): max RSS 5456 to 4896 MB, peak footprint 7095 to 6642
+MB, mapped peak 7426 to 7171 MB (emit), mapped at inline 5017 to 4634,
+at the link's end 3736 to 3313.
+
+Worker threads' free lists (the self build's emit workers) are not
+trimmed yet: pool.xo cannot import heapos (heapos imports pool), so an
+idle trim goes through cabi.xo heap_grow's flag path as the scavenge
+does; measured next on case (a) with stage 3.
 
 ## Consequences
 

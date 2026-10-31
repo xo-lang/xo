@@ -109,3 +109,7 @@ func Debug_mem_total(_ *Task) int64 { return 0 }
 
 // Debug_mem_peak is `debug.mem_peak()`: 0 on the Go backend.
 func Debug_mem_peak(_ *Task) int64 { return 0 }
+
+// Debug_mem_trim is `debug.mem_trim()`: the Go runtime's scavenger returns
+// memory itself.
+func Debug_mem_trim(_ *Task) {}

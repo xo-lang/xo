@@ -2689,6 +2689,16 @@ fn lap(os: Os, on: Bool, name: Str, t: Time) -> Time {
   // the memory budget's report names the phase in progress (decision
   // 0349): the one after the phase that just ended
   debug.mem_label("building, past phase ${name}")
+  // after the phases that free the most (the front end's trees, the
+  // parts' bodies, the link's inputs) the thread's free 16 KiB and larger
+  // blocks go back to the system (decision 0448 stage 1). Not at every
+  // phase: a trim after each of the 25 top level phases cost the warm
+  // coll build 4.7% of wall on linux/arm64 (ab-host stage1-coll: MADV_DONTNEED
+  // pages fault back in on the next phase's reuse; darwin's reusable
+  // pages cost nothing until memory is short, 0.992 there)
+  if name is "front_end_freed" | "emit" | "link" {
+    debug.mem_trim()
+  }
   if on {
     // with the heap's use so far (decision 0349's measure, in MiB)
     // to the hundredth of a millisecond: whole milliseconds dropped half

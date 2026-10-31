@@ -52,6 +52,8 @@ const W_CACHE = 25
 /// then their addresses.
 const CACHE_N = 16
 const CACHE_MAX = 67108864
+/// The byte of the table's advise switch (advise_on), past the entries.
+const CACHE_SWITCH = 24 + 8 * CACHE_N
 
 /// A large mapping's size is a multiple of this (16 KiB pages on Apple
 /// silicon, 64 KiB the Windows allocation granularity).
@@ -371,8 +373,62 @@ fn keep(m: Int, size: Int) -> Bool {
   rt.mem_store(t, (24).wrapping_add(k.wrapping_shl(3)), m, 8)
   rt.mem_store(t, 16, k.wrapping_add(1), 8)
   rt.mem_store(t, 8, bytes.wrapping_add(size), 8)
+  // the block's contents are dead: its pages past the first (the size
+  // word) go back to the system while the mapping waits in the cache
+  // (decision 0448 stage 1: a kept mapping stayed resident, so a build's
+  // transient tables held their RSS to exit), under the lock, so no taker
+  // writes a page the advice then drops
+  cache_advise(m, size, false)
   clock_give()
   true
+}
+
+/// The large block cache's mappings and the bytes they hold (diagnostics).
+pub fn cache_count() -> Int {
+  let t = rt.mem_load(rt.static_word(W_CACHE), 0, 8)
+  if t == 0 { 0 } else { rt.mem_load(t, 16, 8) }
+}
+pub fn cache_bytes() -> Int {
+  let t = rt.mem_load(rt.static_word(W_CACHE), 0, 8)
+  if t == 0 { 0 } else { rt.mem_load(t, 8, 8) }
+}
+
+/// Tells the system the pages of the cached mapping m (size bytes) past
+/// its first SCAV_PAGE are free (reuse false: Darwin MADV_FREE_REUSABLE,
+/// lazy: the kernel takes the pages when memory is short and a reuse
+/// before that costs nothing), or in use again (reuse true, Darwin
+/// MADV_FREE_REUSE, so the footprint counts them). Darwin only: on Linux
+/// stage 1's advice (this, trim_list, the 16 KiB scavenge) cost the warm
+/// coll build 3 to 4.7% of its wall on arm64 and amd64 (MADV_DONTNEED
+/// pages fault back in on reuse; MADV_FREE here alone left 1.039) and
+/// without it the build is within noise (ab-host stage1-v2, 2026-10-31),
+/// so Linux keeps decision 0383's behavior until a lazy variant is
+/// measured. XO_HEAP_CACHE_ADVISE=0 turns it off (the baseline).
+fn cache_advise(m: Int, size: Int, reuse: Bool) {
+  if size <= SCAV_PAGE || sanhook.sanitized() || sanhook.gorace() || !advise_on() {
+    return
+  }
+  match target.os {
+    TargetOs.Darwin => {
+      let _a = sys_darwin.madvise(m + SCAV_PAGE, size - SCAV_PAGE, if reuse { 8 } else { 7 })
+    }
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => {}
+  }
+}
+
+/// Whether kept mappings are advised: the table's word past its entries
+/// (CACHE_SWITCH: 0 unread, 1 on, 2 off), read under the cache's lock
+/// with no allocation (the value's first byte, so a release under the
+/// lock never allocates).
+fn advise_on() -> Bool {
+  let t = rt.mem_load(rt.static_word(W_CACHE), 0, 8)
+  var v = rt.mem_load(t, CACHE_SWITCH, 8)
+  if v == 0 {
+    let e = process.env_real_at("XO_HEAP_CACHE_ADVISE")
+    v = if e != 0 && rt.mem_load(e, 0, 1) == 48 && rt.mem_load(e, 1, 1) == 0 { 2 } else { 1 }
+    rt.mem_store(t, CACHE_SWITCH, v, 8)
+  }
+  v == 1
 }
 
 /// A cached mapping of at least need bytes and at most four times that
@@ -400,12 +456,54 @@ fn take(need: Int) -> Int {
       rt.mem_store(t, at, rt.mem_load(t, (24).wrapping_add(n.wrapping_shl(3)), 8), 8)
       rt.mem_store(t, 16, n, 8)
       rt.mem_store(t, 8, rt.mem_load(t, 8, 8).wrapping_sub(size), 8)
+      cache_advise(m, size, true)
       clock_give()
       return m
     }
   }
   clock_give()
   0
+}
+
+/// Gives the system the pages of the calling thread's free page blocks
+/// (classes PAGE_CLASS and up on its heap record's free lists and spare
+/// magazines; decision 0448 stage 1: a build's phase end, debug.mem_trim),
+/// each block once (alloc.xo PADVISED, cleared when it is freed again):
+/// the record is the thread's own, so no lock; the central lists'
+/// magazines are scavenged as they arrive (alloc.xo free_mt).
+pub fn trim_thread() {
+  if !pages_on() {
+    return
+  }
+  let h = thread_heap()
+  for c in PAGE_CLASS..NCLASS1 {
+    let fl = h.wrapping_add(c.wrapping_shl(3))
+    trim_list(rt.mem_load(fl, H_FREE_LISTS, 8), c)
+    trim_list(rt.mem_load(fl, H_MAG, 8), c)
+  }
+}
+
+/// trim_thread's walk of one list of page blocks of class c, linked
+/// through their chunk's table (alloc.xo PT_LINK).
+fn trim_list(p0: Int, c: Int) {
+  let size = (2048).wrapping_shl(c.wrapping_sub(65))
+  var p = p0
+  while p != 0 {
+    let cw = pword(p, PT_CLASS)
+    let v = rt.mem_load(cw, 0, 8)
+    if v & alloc.PADVISED == 0 {
+      rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
+      // darwin only, as cache_advise: Linux's MADV_DONTNEED refaults cost
+      // the warm build's wall (ab-host stage1-v1/v2, 2026-10-31)
+      match target.os {
+        TargetOs.Darwin => {
+          let _a = sys_darwin.madvise(p, size, 7)
+        }
+        TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => {}
+      }
+    }
+    p = rt.mem_load(pword(p, PT_LINK), 0, 8)
+  }
 }
 
 /// Takes and releases the cache's lock.
@@ -1068,6 +1166,14 @@ pub fn scavenge(m: Int, c: Int) {
     if pg {
       lo = r
       hi = r + size + 8
+      // once per free (alloc.xo PADVISED, cleared when it is freed again)
+      let cw = pword(r, PT_CLASS)
+      let v = rt.mem_load(cw, 0, 8)
+      if v & alloc.PADVISED != 0 {
+        hi = lo
+      } else {
+        rt.mem_store(cw, 0, v | alloc.PADVISED, 8)
+      }
     }
     if hi > lo {
       match target.os {

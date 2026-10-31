@@ -28,6 +28,23 @@ grown to megabytes showed its first 16 KiB, or nothing when that first
 size was not sampled. A resized block that was sampled now has its new
 size and address; the growth of one that was not counts as allocated
 bytes, so it is sampled as an allocation of that size is.
+## 2026-10-30: feature: mem_trim gives the thread's free heap pages back
+
+- Kind: feature
+- Commit: (this commit)
+- Decision: 0448 stage 1
+- Go reference: runtime/debug.FreeOSMemory (Go's runs a collection and returns every free span; Xo's returns the calling thread's free blocks of 16 KiB and over, each once, with no collection to run)
+- Test: cmd/xo TestHeapStatsFreeLists (the report's shape), the coll measurement in ADR 0448 (Stage 1 as built)
+
+`debug.mem_trim()` gives the system the pages of the calling thread's free
+heap blocks of 16 KiB and over (its free lists and spare magazines) on
+darwin; the pages come back on the blocks' next use. On Linux it does
+nothing yet (the page faults on reuse cost a warm build 3 to 4.7% of its
+wall; ADR 0448 Stage 1 as built). xo calls it after its
+front_end_freed, emit and link phases. With it the heap's large block cache gives back a cached
+mapping's pages while it waits (`XO_HEAP_CACHE_ADVISE=0` keeps them
+resident) and the 16 KiB class's full magazines are scavenged like the
+larger classes'. Nothing on the Go backend.
 
 ## 2026-10-30: fix: a CPU profile that filled its buffer says so on its exit line
 

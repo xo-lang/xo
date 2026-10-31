@@ -13,4 +13,5 @@ var (
 	_ func(*Task) int64                                                             = Debug_mem_mapped
 	_ func(*Task) int64                                                             = Debug_mem_peak
 	_ func(*Task) int64                                                             = Debug_mem_total
+	_ func(*Task)                                                                   = Debug_mem_trim
 )

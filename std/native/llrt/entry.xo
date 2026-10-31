@@ -474,8 +474,14 @@ fn heapstats() {
     }
     sum += n * (size + 8)
   }
+  var at = put(b, 0, "xo heapstats: large cache ")
+  at = put_int(b, at, heapos.cache_count())
+  at = put(b, at, " mappings (")
+  at = put_int(b, at, heapos.cache_bytes().shr_logical(20))
+  at = put(b, at, " MB)\n")
+  emit(b, at)
   let ch = heapos.chunks()
-  var at = put(b, 0, "xo heapstats: chunks ")
+  at = put(b, 0, "xo heapstats: chunks ")
   at = put_int(b, at, ch)
   at = put(b, at, " (")
   at = put_int(b, at, ch * CHUNK_MB)

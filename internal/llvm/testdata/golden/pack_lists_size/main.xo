@@ -22,4 +22,7 @@ fn main(os: Os) {
   let grew = debug.mem_peak() - before
   os.stdio.println("sum ${sum}")
   os.stdio.println(if grew < 24000000 { "packed" } else { "not packed: peak grew ${grew} bytes" })
+  // the thread's free 16 KiB and larger blocks go back to the system
+  // (decision 0448 stage 1); the peak above is already taken
+  debug.mem_trim()
 }
