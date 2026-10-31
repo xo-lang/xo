@@ -216,6 +216,16 @@ Connections with a ping interval or deadline do not park (a timer would
 need the resumer's deadline, not built). Proof: TestIdleConnections40kH2
 (client -mode h2, one transport per connection, a second GET on each).
 
+Stage 1c measured (linux/arm64 host, 2026-10-31, commit 092403076):
+TestIdleConnections40kH2 passes: 40,000 idle h2 connections over TLS, all
+answer a second request, 470 mappings, RssAnon 918,892 kB, so about 23 KB
+a connection (the 1,000 connection figure before was 127 KB, 5,000: 91 KB;
+Go: 44 to 53 KB). Part 3's target (at most Go's 44 KB per idle h2
+connection) is met without further heap cuts: the TLS engine is about
+19 KB of it (752,584 kB for 40,000 on h1). Parts left, if wanted: free the
+32 KB read buffer (C_BUF) and the write buffers at a park, which would
+trade resident memory for an allocation per resume.
+
 No-slowdown gate, first measurement (linux/arm64 host, 2026-10-31, bench/perf/http
 run.sh, CRUD server, 32 workers, 5 runs, base f25d1f513 against 39166f720):
 every request parked, and the server lost speed: 187,494 to 167,661 req/s
