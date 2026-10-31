@@ -268,6 +268,44 @@ live at the link is stage 1's retention. RSS for (b) now waits on stage
 parsed std): a stage 5 candidate is parsing std's bodies for the variant
 lazily, since the variant's facts already cover them.
 
+### Stage 3 first result (xo-lang-2, 2026-10-31)
+
+What emit holds is live data, not allocator retention. An earlier reading
+(2.2 GB live halfway through emit against about 7 GB mapped, so most of
+the peak looked like retention) rested on a heap profile that missed a
+big block's growth; with that fixed (e459813a2,
+gotchas/heap-profile-missed-grown-blocks.md), 4.6 GB is live at
+`emit_half`: the functions in flight's machine IR 2.8 GB (their
+instruction lists 1.5 GB, regalloc's ranges 0.7 GB), insert_rc on the root
+thread 0.5 GB, the inliner's copies 0.6 GB, the finished parts' text 0.4
+GB. The inline fallback's pre-inline module, kept until verify, was 1.1
+GB at `inline.verify`.
+
+Most of the instruction lists were waste. Counting each function's
+instructions after isel and after each pass showed the largest
+`ssa.Builder` methods making 50 to 90 times what they kept, all of it
+dropped by the first `mir_dce`: every landing pad loaded `b.m` (592
+words) whole to release one of its fields
+(gotchas/arm64-isel-dead-field-loads.md). A field read only read by field
+reads of it now loads only the words they read. The output is unchanged
+(scripts/identity: 117 programs on darwin/arm64 and linux/arm64, 234
+outputs, none differing). Self build on the Mac, cold caches, two rounds:
+
+| | emit peak (heap counter) | max RSS | emit |
+|---|---|---|---|
+| before | 8068, 7424 MB | 7619, 7059 MB | 26.0, 29.5 s |
+| after | 6784, 6745 MB | 6599, 6580 MB | 21.0, 22.0 s |
+
+On linux/arm64 (`xo bench --ab`, the self build, ten rounds, 64a2dd7b9 against
+the change): max RSS 0.903 (0.869 to 0.913), CPU 0.933 (0.928 to 0.937),
+wall 0.99 (0.978 to 0.999), all better.
+
+What is left at the peak is the in-flight functions' real IR (an `Inst`
+is 43 words: its 15 Bools a word each), regalloc's ranges, and insert_rc
+on the root thread; the next levers are a smaller `Inst` and the
+inline fallback's copy (a shell of each function, its body read back from
+the insert_rc cache, cut `inline.verify`'s peak by 0.5 GB but not emit's).
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

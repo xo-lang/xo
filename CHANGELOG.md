@@ -5,6 +5,7 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Faster builds (arm64, amd64 native): a field read only read by field reads of it loads only the words they read. A landing pad in a `var b: Builder` method loaded b.m (592 words) whole to release one field of it, about 740 pads a function, and 98 percent of what isel made in ssa.Builder's largest functions was loads mir_dce then dropped. Self build on the Mac: emit's peak 8.1/7.4 to 6.8/6.7 GB, max RSS 7.6/7.1 to 6.6 GB, emit 26 to 29.5 s to 21 to 22 s; on linux/arm64 max RSS -10%, CPU -7% (decision 0448 stage 3; gotchas/arm64-isel-dead-field-loads.md).
 - FIX (XO_PROF=heap): a big block that grows by resizing (a list or text grown to megabytes) counts in the heap profile's in use at its grown size; it counted at its first size, or not at all, so the self build's profile read 2.2 GB in use of about 7 GB.
 - Tools: when `XO_DUMP_FN=NAME` matches no function, the note lists up
   to five functions whose qualified names end with NAME (a method of

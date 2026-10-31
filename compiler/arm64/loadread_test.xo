@@ -1,0 +1,59 @@
+// load_read narrows a field read to the words its uses read
+// (gotchas/arm64-isel-dead-field-loads.md, decision 0448 stage 3).
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// Outer{x: Int, inner: Inner{f0..f9: Int}}; v0 an Outer, v1 its inner,
+/// v2 and v3 inner's fields 3 and 7, then extra.
+fn loadread_g(extra: List[ssa.Value]) -> G {
+  var m = ssa.Module{}
+  m.types.push(ssa.SType{kind: ssa.Kind.Int, name: "Int"})
+  var fs: List[ssa.SField] = []
+  for i in 0..10 {
+    fs.push(ssa.SField{name: "f${i}", ty: 0})
+  }
+  m.types.push(ssa.SType{kind: ssa.Kind.Struct, name: "Inner", fields: fs})
+  m.types.push(ssa.SType{kind: ssa.Kind.Struct, name: "Outer", fields: [ssa.SField{name: "x", ty: 0}, ssa.SField{name: "inner", ty: 1}]})
+  var f = ssa.Func{name: "pkg.f"}
+  f.values.push(ssa.Value{op: ssa.Op.Param, ty: 2, block: 0})
+  f.values.push(ssa.Value{op: ssa.Op.Field, ty: 1, args: [0], aux: ssa.Aux.I(1), block: 0})
+  f.values.push(ssa.Value{op: ssa.Op.Field, ty: 0, args: [1], aux: ssa.Aux.I(3), block: 0})
+  f.values.push(ssa.Value{op: ssa.Op.Field, ty: 0, args: [1], aux: ssa.Aux.I(7), block: 0})
+  var instrs = [1, 2, 3]
+  for x in extra {
+    instrs.push(f.values.len())
+    f.values.push(x)
+  }
+  f.blocks.push(ssa.Block{params: [0], instrs: instrs})
+  var g = new_gen(m, "darwin")
+  g.f = f
+  g
+}
+
+test "a field read only read by field reads loads the words they read" {
+  var g = loadread_g([])
+  let need = g.words_read(1, 10)
+  var at: List[Int] = []
+  for (k, n) in need.indexed() {
+    if n {
+      at.push(k)
+    }
+  }
+  expect(at) == [3, 7]
+}
+
+test "a field read with another use loads whole" {
+  var g = loadread_g([ssa.Value{op: ssa.Op.Release, args: [1], block: 0}])
+  expect(g.words_read(1, 10).is_empty()) == true
+}
+
+test "a field read a source variable binds loads whole" {
+  var g = loadread_g([])
+  g.f.dbinds.push(ssa.DBind{dvar: 0, value: 1})
+  expect(g.words_read(1, 10).is_empty()) == true
+}
+
+test "a small field read loads whole" {
+  var g = loadread_g([])
+  expect(g.words_read(1, LOAD_READ_MIN - 1).is_empty()) == true
+}

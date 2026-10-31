@@ -21,6 +21,8 @@ fn (var g: G) function(fi: Int) {
     return
   }
   g.fn_strs = {}
+  g.dbound_made = false
+  g.dbound_vals = {}
   g.begin_func(fi)
   g.isel()
   // the optional passes (passes.xo) unless $XO_PASSES turns them off
@@ -3815,7 +3817,7 @@ fn (var g: G) field_op(v: Int) {
       return
     }
     // a field of a value held in memory
-    g.set(v, g.load_words(g.held.mems[mu].ptr, off, g.layout(x.ty)))
+    g.set(v, g.load_read(v, g.held.mems[mu].ptr, off, g.layout(x.ty)))
     return
   }
   if let Some(ptr) = g.stable.get(u) {
@@ -3825,7 +3827,7 @@ fn (var g: G) field_op(v: Int) {
       g.stable[v] = g.addr_at(ptr, 8 * off)
       return
     }
-    g.set(v, g.load_words(ptr, off, g.layout(x.ty)))
+    g.set(v, g.load_read(v, ptr, off, g.layout(x.ty)))
     return
   }
   if g.lazy_res.contains((u, fi)) {
@@ -3834,6 +3836,82 @@ fn (var g: G) field_op(v: Int) {
   let ws = g.words(u)
   g.set(v, ws[off..off + n])
 }
+
+/// The words of field read v (layout lay, at word w0 of the memory at
+/// base) loaded for its uses: only the words its uses read when each is
+/// a field read of it, else all. A landing pad's cleanup in a `var b:
+/// Builder` method read b.m (Module, 592 words) whole to release one of
+/// its fields, 740 pads a function: 98 percent of the instructions isel
+/// made in ssa.Builder's largest functions were loads mir_dce dropped,
+/// 1.5 GB of the self build's 4.6 GB live halfway through emit (decision
+/// 0448 stage 3). A word no use reads is register 0, never read.
+fn (var g: G) load_read(v: Int, base: Int, w0: Int, lay: List[Bool]) -> List[Int] {
+  let need = g.words_read(v, lay.len())
+  if need.is_empty() {
+    return g.load_words(base, w0, lay)
+  }
+  var out: List[Int] = List.with_capacity(lay.len())
+  for k in 0..lay.len() {
+    if need[k] {
+      let (b, off) = g.mem_at(base, 8 * (w0 + k))
+      out.push(g.def1(lay[k], g.word_text(true, off), [b]))
+    } else {
+      out.push(0)
+    }
+  }
+  out
+}
+
+/// Which of the nw words of value v its uses read, when every use is a
+/// field read of v; empty when one reads it whole, or v is small
+/// (LOAD_READ_MIN words) or a source variable's binding (its location
+/// names every word).
+fn (var g: G) words_read(v: Int, nw: Int) -> List[Bool] {
+  if nw < LOAD_READ_MIN {
+    return []
+  }
+  g.held_uses()
+  let us = g.held.us.get(v) ?? []
+  if us.is_empty() {
+    return []
+  }
+  var need: List[Bool] = List.with_capacity(nw)
+  for _ in 0..nw {
+    need.push(false)
+  }
+  let t = g.vty(v)
+  for u in us {
+    let y = g.f.values[u]
+    if y.op != ssa.Op.Field || y.args.len() != 1 || y.args[0] != v || !y.succs.is_empty() {
+      return []
+    }
+    let (off, n) = g.field_words(t, aux_int(y.aux))
+    for k in off..off + n {
+      need[k] = true
+    }
+  }
+  if g.dbound().contains(v) {
+    return []
+  }
+  need
+}
+
+/// The values a source variable is bound to (Func.dbinds), once per
+/// function.
+fn (var g: G) dbound() -> Map[Int, Bool] {
+  if !g.dbound_made {
+    g.dbound_made = true
+    var m: Map[Int, Bool] = {}
+    for d in g.f.dbinds {
+      m[d.value] = true
+    }
+    g.dbound_vals = m
+  }
+  g.dbound_vals
+}
+
+/// The smallest field (in words) load_read narrows to the words read.
+const LOAD_READ_MIN = 8
 
 fn (var g: G) set_field_op(v: Int) {
   let x = g.f.values[v]
