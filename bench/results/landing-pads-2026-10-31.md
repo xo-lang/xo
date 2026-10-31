@@ -25,6 +25,7 @@ darwin/arm64.
 |---|---|---|---|
 | P1 | 64,321,440 | 56,330,136 | -12.4% |
 | lever 2 (base f25d1f513) | 56,430,920 | 50,821,296 | -9.9% |
+| tail merge (base bd0bd05a5, both passes off) | 51,269,220 | 45,150,244 | -11.9% |
 
 P1 by cause: landing reads 6.07 -> 0.45 MB, landing rc 12.43 -> 10.14 MB.
 
@@ -45,6 +46,30 @@ build and the fault paths.
 | lever 2 | self (n=10) | 1.006 (0.986 to 1.022), 52,284 -> 52,585 ms; cpu 0.999 (0.994 to 1.002); max RSS 1.006 (0.997 to 1.019) |
 | lever 2 | bench/perf/fault owned (n=10) | 1.011 (0.998 to 1.028), 25.67 -> 25.95 ms |
 | lever 2 | bench/perf/fault defer | 0.997 (0.993 to 1.0), 64.0 -> 63.82 ms; cpu 0.997; max RSS 1.0 |
+| tail merge (base 14a71b5e6) | self (n=10) | 0.812 (0.808 to 0.815), 50,164 -> 40,735 ms; cpu 0.962 (0.959 to 0.962); max RSS 0.971 (0.961 to 0.983) |
+| tail merge (base 14a71b5e6) | bench/perf/fault owned (n=10) | 1.004 (0.991 to 1.012), within noise, 25.53 -> 25.64 ms; max RSS 1.016 (6,876 -> 6,988 KB, every round) |
+| tail merge (base 14a71b5e6) | bench/perf/fault defer (n=10) | 0.997 (0.993 to 1.001), within noise, 63.82 -> 63.6 ms; max RSS 1.016 (7,004 -> 7,116 KB) |
+
+## Shared landing pad tails (tail_merge_cold + pad_release_order)
+
+Base origin/main 14a71b5e6; "both off" is the merge's first tree
+(no order pass yet) with `XO_PASSES=-tail_merge_cold`, so main's code.
+
+| build | stage 2 __text | build_native |
+|---|---|---|
+| both off | 56,873,096 | 5,364,840 |
+| merge only (pads in their old order) | 54,717,880 | 5,054,776 |
+| merge, releases reversed | 54,339,136 | 3,943,864 |
+| merge, releases by how many pads release each value | 53,354,800 | 3,241,408 |
+| as landed: + a short common run left to the longer runs below it | 50,791,928 (-10.7%) | 1,698,880 (-68%) |
+
+The order alone (merge off) grows __text by about 0.3 MB. build_native's
+cold instructions: 490,427 before, 40,160 after (a trie of the pads'
+tails over the same MIR bounds it at about 37,000).
+
+Rebased on lever 2 (static zero images), both passes on against both off with the same xo: stage 2 __text 51,269,220 -> 45,150,244 (-11.9%), build_native 5,364,840 -> 1,698,880 (-68.3%).
+
+LLVM: pad_release_order only (tail_merge_cold is native only): fault_pad_tails at -O1 331,244 -> 331,112 bytes; xo's LLVM column comes from the lead's full tier. amd64 sample: 48 ok. Speed (linux/arm64 --ab): ABROWS.
 
 ## Negative result: result homes (not landed)
 
@@ -81,4 +106,4 @@ v4):
 
 The pads' leaves are spread over many locals, so the next lever is
 sharing the pads' common code (a tail merge of cold blocks in arm64
-MIR), not homes.
+MIR), not homes: "Shared landing pad tails" above.

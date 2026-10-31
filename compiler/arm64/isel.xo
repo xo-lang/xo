@@ -77,6 +77,11 @@ fn (var g: G) function(fi: Int) {
     // the constants only the copied stores read
     g.dce()
   }
+  // tailmerge.xo: cold blocks' common tails shared, before register
+  // allocation (the same virtual registers)
+  if g.on("tail_merge_cold") && !g.x86 {
+    let _c = g.tail_merge_cold()
+  }
   if g.on("reuse_loads") {
     g.reuse_loads()
   }

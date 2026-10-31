@@ -5,6 +5,19 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native backend (arm64), shared landing pad tails: the landing pad of
+  each call releases every heap value live at it, so the pads of a
+  function's calls release mostly the same values. compiler/ssa orders
+  each pad's releases from the value the fewest pads release to the one
+  the most release (order_pad_releases, pass pad_release_order), so pads
+  end alike, and the MIR pass tail_merge_cold (compiler/arm64
+  tailmerge.xo, before register allocation) moves the instructions that
+  cold blocks ending in the same block share at their ends into blocks of
+  their own, a trie of the tails. xo's build_native had 556 pads holding
+  90 percent of its code: 5,364,840 to 1,698,880 bytes (-68%); xo's stage
+  2 __text 51,269,220 to 45,150,244 (-11.9%) on top of static zero images. The IR dump (XO_DUMP_FN)
+  lists the merge's groups. New golden fault_pad_tails.
+  bench/results/landing-pads-2026-10-31.md.
 - Memory (decision 0448 stage 3): the native emitter drops each
   function's body as soon as its text is placed, not at its part's end;
   an idle worker returns its free memory (heap_grow TRIM);

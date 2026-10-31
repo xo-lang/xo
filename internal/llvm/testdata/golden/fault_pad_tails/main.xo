@@ -1,0 +1,61 @@
+// Many heap values live across a run of calls that can fault: the landing
+// pad of each call releases what is live there, newest first (compiler/ssa
+// order_pad_releases), so the pads of neighboring calls end alike and
+// the native backend shares their ends (arm64 tailmerge.xo). A fault at
+// each call in turn must release every live value exactly once, through
+// whichever shared tail its pad jumps into.
+use std/task
+
+// not inlined (a loop): each use is a call with its own landing pad
+fn check(n: Int, at: Int) -> Int {
+  let parts = ["p", "q"]
+  var s = 0
+  for k in 0..n + 1 {
+    s += k
+  }
+  if n == at {
+    return parts[n + 5].len()
+  }
+  s + 1
+}
+
+fn run(at: Int) -> Str {
+  let a = "a${at}"
+  let b = ["b", "${at}"]
+  var sum = check(0, at)
+  let c = "c${sum}"
+  let d: Map[Str, Int] = {"d": sum}
+  sum += check(1, at)
+  let e = ["e${sum}"]
+  sum += check(2, at)
+  let f = "f${sum}"
+  let g = [a, c, f]
+  sum += check(3, at)
+  let h: Map[Str, Int] = {"h": sum}
+  sum += check(4, at)
+  let i = "i${sum}"
+  sum += check(5, at)
+  let j = [i, "j"]
+  sum += check(6, at)
+  sum += check(7, at)
+  "${sum} ${a.len() + b.len() + c.len() + d.len() + e.len() + f.len() + g.len() + h.len() + i.len() + j.len()}"
+}
+
+fn main(os: Os) {
+  for at in -1..8 {
+    match task.isolate(fn() -> Str { run(at) }) {
+      Ok(r) => os.stdio.println("at ${at}: ok ${r}")
+      Err(task.Isolated.Faulted(info)) => os.stdio.println("at ${at}: fault ${info.msg}")
+      Err(_) => os.stdio.println("at ${at}: failed")
+    }
+  }
+  // many faults: a release missed or doubled in a shared tail shows here
+  var faults = 0
+  for k in 0..4000 {
+    match task.isolate(fn() -> Str { run(k % 9 - 1) }) {
+      Ok(_) => {}
+      Err(_) => faults += 1
+    }
+  }
+  os.stdio.println("faults: ${faults}")
+}

@@ -36,6 +36,12 @@ fn (g: G) ir_text() -> Str {
   } else {
     g.m.write_func(b, g.f)
   }
+  if !g.tm_notes.is_empty() {
+    b.write("\n== tail merge\n")
+    for n in g.tm_notes {
+      b.write("${n}\n")
+    }
+  }
   b.write("\n== mir\n")
   let order = if g.order.is_empty() { mir_blocks(g.blocks.len()) } else { g.order }
   for bi in order {

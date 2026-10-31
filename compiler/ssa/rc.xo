@@ -72,6 +72,8 @@ struct Rc {
   fi: Int = -1
   // chain_pads runs (XO_PASSES=-chain_pads turns it off)
   chain: Bool = true
+  // order_pad_releases runs (XO_PASSES=-pad_release_order)
+  pad_order: Bool = true
   // each function's `var` parameter indexes, by name, and type word
   // counts (chain_pads)
   vparams: Map[Str, List[Int]] = {}
@@ -1131,6 +1133,7 @@ pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
   r.infer_borrows(b.m.funcs, jobs)
   r.apply_uniq(b.m)
   r.chain = !b.m.passes_off.contains("chain_pads")
+  r.pad_order = !b.m.passes_off.contains("pad_release_order")
   r
 }
 
@@ -1170,6 +1173,7 @@ pub fn (var b: Builder) rc_prepare_incr(jobs: Int, id: Str, prev: Map[Str, List[
   // decision 0322's apply_uniq is the caller's next step (compiler/xo
   // bcache.xo rc_cached, which times it), unlike rc_prepare's
   r.chain = !b.m.passes_off.contains("chain_pads")
+  r.pad_order = !b.m.passes_off.contains("pad_release_order")
   (r, rec, nd, !check || r.borrowed == full)
 }
 
@@ -1379,6 +1383,9 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.group_pads(f)
   if r.chain {
     r.chain_pads(f)
+  }
+  if r.pad_order {
+    order_pad_releases(f)
   }
   renumber(f)
   r.lm_fi = -1

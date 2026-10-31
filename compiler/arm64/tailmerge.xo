@@ -1,0 +1,222 @@
+// Cold blocks' common tails shared (2026-10-31): the landing pads of a
+// function's calls release every heap leaf it holds at the call, so pads
+// of neighboring calls end alike. build_native had 556 cold pads of up
+// to 2,288 calls holding 598,747 of its 667,630 MIR instructions (90
+// percent, 5.3 MB of xo's code). Cold blocks that jump to the same block
+// are grouped, their instructions compared from the end, and each run
+// that two or more share is moved into a block of its own that they jump
+// to (a trie of their tails). Before register allocation, so the shared
+// instructions name the same virtual registers: a pad's release of a
+// value live at many calls is one instruction in each.
+
+/// The least instructions a shared block saves (its copies in the other
+/// blocks less the jumps it adds) to be made.
+const TAIL_MERGE_MIN = 4
+
+/// Whether inst may move into a shared tail: no definitions (a release
+/// call returns nothing), no landing pad, no fault side exit, nothing that
+/// depends on where it is.
+fn tail_inst_ok(inst: Inst) -> Bool {
+  if !inst.defs.is_empty() || inst.pad >= 0 || inst.has(IF_HAS_FAULT) || inst.has(IF_POLL) || inst.has(IF_FRAME) || !inst.clobbers.is_empty() {
+    return false
+  }
+  if inst.kind == K_CALL {
+    return !inst.has(IF_NORET) && !inst.has(IF_TAIL) && !inst.has(IF_SVC) && !inst.has(IF_CPTR) && inst.csave.is_empty()
+  }
+  inst.kind == K_PLAIN
+}
+
+/// The text two instructions that do the same compare equal by: inst
+/// without its source line, inline site and size cause.
+fn tail_key(inst: Inst) -> Str {
+  var x = inst
+  x.line = 0
+  x.inl = -1
+  x.cause = 0
+  x.debug()
+}
+
+/// A cold block in a group: its block, and the keys (interned) of its
+/// instructions that may be shared, from the last one before its jump
+/// back.
+struct TailSeq {
+  b: Int
+  keys: List[Int] = []
+}
+
+/// Shares the common tails of cold blocks that jump to the same block.
+fn (var g: G) tail_merge_cold() -> Bool {
+  var groups: Map[Int, List[Int]] = {}
+  var targets: List[Int] = []
+  for b in 0..g.blocks.len() {
+    let bl = g.blocks[b]
+    let n = bl.insts.len()
+    if !bl.cold || n < TAIL_MERGE_MIN + 1 {
+      continue
+    }
+    let t = bl.insts[n - 1]
+    if t.kind != K_JUMP || t.targets.len() != 1 {
+      continue
+    }
+    let to = g.jump_dest(t.targets[0])
+    if let Some(l) = groups.get(to) {
+      var l2 = l
+      l2.push(b)
+      groups[to] = l2
+    } else {
+      groups[to] = [b]
+      targets.push(to)
+    }
+  }
+  var ids: Map[Str, Int] = {}
+  var changed = false
+  for to in targets {
+    let bs = groups.get(to) ?? []
+    if bs.len() < 2 {
+      continue
+    }
+    var seqs: List[TailSeq] = []
+    for b in bs {
+      var s = TailSeq{b: b}
+      let ins = g.blocks[b].insts
+      var k = ins.len() - 2
+      while k >= 0 && tail_inst_ok(ins[k]) {
+        let key = tail_key(ins[k])
+        var id = ids.get(key) ?? -1
+        if id < 0 {
+          id = ids.len()
+          ids[key] = id
+        }
+        s.keys.push(id)
+        k -= 1
+      }
+      if s.keys.len() >= TAIL_MERGE_MIN {
+        seqs.push(s)
+      }
+    }
+    let nb0 = g.blocks.len()
+    if seqs.len() < 2 {
+      g.tm_notes.push("to b${to}: ${bs.len()} blocks, ${seqs.len()} with a tail")
+      continue
+    }
+    // where each block's tail goes: (depth shared, block it jumps to)
+    var leaf: Map[Int, (Int, Int)] = {}
+    var all: List[Int] = []
+    for i in 0..seqs.len() {
+      all.push(i)
+    }
+    g.tail_share(seqs, all, 0, 0, to, leaf)
+    for s in seqs {
+      let (d, tb) = leaf.get(s.b) ?? (0, to)
+      if d == 0 || tb == to {
+        continue
+      }
+      let ins = g.blocks[s.b].insts
+      let n = ins.len()
+      var t = ins[n - 1]
+      t.targets = [tb]
+      var kept = ins[0..n - 1 - d]
+      kept.push(t)
+      g.blocks[s.b].insts = kept
+      changed = true
+    }
+    var lens: List[Int] = []
+    for s in seqs {
+      lens.push(s.keys.len())
+    }
+    g.tm_notes.push("to b${to}: ${bs.len()} blocks, ${seqs.len()} with a tail, tail lengths ${lens.debug()}, ${g.blocks.len() - nb0} shared")
+  }
+  changed
+}
+
+/// Block b past the blocks that only jump (each pad's own edge block,
+/// which the layout drops): pads that end in the same block group
+/// together.
+fn (g: G) jump_dest(b: Int) -> Int {
+  var x = b
+  var n = 0
+  while n < 64 {
+    let ins = g.blocks[x].insts
+    if ins.len() != 1 || ins[0].kind != K_JUMP || ins[0].targets.len() != 1 || ins[0].targets[0] == x {
+      return x
+    }
+    x = ins[0].targets[0]
+    n += 1
+  }
+  x
+}
+
+/// Shares the tails of seqs[mem], which agree on their first d keys, of
+/// which those past `from` are in no shared block yet (the ones before
+/// are, in block parent): a run two or more of them share becomes a block
+/// of its own when it saves TAIL_MERGE_MIN instructions; a shorter one is
+/// left to their longer common runs below it. leaf gets each block's
+/// depth and target.
+fn (var g: G) tail_share(seqs: List[TailSeq], mem: List[Int], d: Int, from: Int, parent: Int, var leaf: Map[Int, (Int, Int)]) {
+  var by: Map[Int, List[Int]] = {}
+  var order: List[Int] = []
+  for i in mem {
+    let s = seqs[i]
+    if s.keys.len() <= d {
+      leaf[s.b] = (from, parent)
+      continue
+    }
+    let k = s.keys[d]
+    if let Some(l) = by.get(k) {
+      var l2 = l
+      l2.push(i)
+      by[k] = l2
+    } else {
+      by[k] = [i]
+      order.push(k)
+    }
+  }
+  for k in order {
+    let grp = by.get(k) ?? []
+    if grp.len() < 2 {
+      let s = seqs[grp[0]]
+      leaf[s.b] = (from, parent)
+      continue
+    }
+    // the depth they all share
+    var e = d + 1
+    let k0 = seqs[grp[0]].keys
+    var same = true
+    while same {
+      if k0.len() <= e {
+        break
+      }
+      for i in grp {
+        let ks = seqs[i].keys
+        if ks.len() <= e || ks[e] != k0[e] {
+          same = false
+        }
+      }
+      if same {
+        e += 1
+      }
+    }
+    if (grp.len() - 1) * (e - from) < grp.len() + 1 + TAIL_MERGE_MIN {
+      // too short to share alone: its subgroups' longer runs take it
+      g.tail_share(seqs, grp, e, from, parent, leaf)
+      continue
+    }
+    // the shared block: the instructions at depths from to e - 1 of the
+    // first member, in their order, then a jump to parent
+    let s0 = seqs[grp[0]]
+    let ins = g.blocks[s0.b].insts
+    let n = ins.len()
+    let nb = g.new_block(true)
+    var body: List[Inst] = []
+    var k2 = e - 1
+    while k2 >= from {
+      body.push(ins[n - 2 - k2])
+      k2 -= 1
+    }
+    var j = ins[n - 1]
+    j.targets = [parent]
+    body.push(j)
+    g.blocks[nb].insts = body
+    g.tail_share(seqs, grp, e, e, nb, leaf)
+  }
+}

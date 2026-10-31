@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+at -1: ok 92 20
+at 0: fault index 5 out of range for List of length 2
+at 1: fault index 6 out of range for List of length 2
+at 2: fault index 7 out of range for List of length 2
+at 3: fault index 8 out of range for List of length 2
+at 4: fault index 9 out of range for List of length 2
+at 5: fault index 10 out of range for List of length 2
+at 6: fault index 11 out of range for List of length 2
+at 7: fault index 12 out of range for List of length 2
+faults: 3555
+--- stderr

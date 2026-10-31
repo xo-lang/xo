@@ -24,6 +24,9 @@ pub fn passes() -> List[Str] {
     // site constant argument (a closure of nothing or a literal)
     "specialize_args",
     "chain_pads",
+    // compiler/ssa chainpads.xo: a landing pad's releases newest first,
+    // so neighboring pads end alike (tail_merge_cold shares the ends)
+    "pad_release_order",
     // compiler/ssa uniqvar.xo (decision 0322): a `var` List parameter
     // every call passes unique skips its entry copy-on-write check
     "uniq_var_params",
@@ -62,6 +65,8 @@ pub fn passes() -> List[Str] {
     "copy_prop",
     // zimage.xo: runs of constant word stores copy a read only image
     "zero_images",
+    // tailmerge.xo: cold blocks (landing pads) that end alike share it
+    "tail_merge_cold",
     "reuse_loads",
     "reuse_flags",
     "tail_dup",
