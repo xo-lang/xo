@@ -81,7 +81,7 @@ fn race_reg_size(op: Str) -> Int {
 /// The access of instruction x, or kind 0 for none or one not handled.
 fn race_access(x: Inst) -> RaceAccess {
   let none = RaceAccess{}
-  if x.kind != K_PLAIN || x.x86 || x.frame {
+  if x.kind != K_PLAIN || x.has(IF_X86) || x.has(IF_FRAME) {
     return none
   }
   let text = race_line(x.text)
@@ -408,7 +408,7 @@ fn (var g: G) race_func_hooks() {
       if x.kind == K_ENTRY {
         let fp = g.new_vreg(false)
         let pc = g.new_vreg(false)
-        out.push(Inst{kind: K_PLAIN, text: "mov $d0, x29", defs: [fp], frame: true, line: x.line})
+        out.push(Inst{kind: K_PLAIN, text: "mov $d0, x29", defs: [fp], fl: IF_FRAME, line: x.line})
         out.push(Inst{kind: K_PLAIN, text: "ldr $d0, [$u0, #8]", defs: [pc], us: [fp], line: x.line})
         out.push(Inst{kind: K_CALL, sym: g.sym("xo_x_race_func_entry"), srcs: [rsrc(pc)], us: [pc], defs: if catches { [depth] } else { [] }, line: x.line})
       }

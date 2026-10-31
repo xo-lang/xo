@@ -163,7 +163,7 @@ fn (var g: G) call_value_op(v: Int) {
       us.push(a.v)
     }
   }
-  let _i = g.add(Inst{kind: K_CALL, srcs: args, defs: defs, us: us, indirect: true})
+  let _i = g.add(Inst{kind: K_CALL, srcs: args, defs: defs, us: us, fl: IF_INDIRECT})
   g.clobber()
   g.set(v, defs)
 }

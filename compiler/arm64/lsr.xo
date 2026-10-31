@@ -546,7 +546,7 @@ fn (g: G) check_head(b: Int) -> Bool {
     return false
   }
   let inst = ins[0]
-  inst.kind == K_PLAIN && inst.has_fault && inst.defs.is_empty() && inst.recover.is_empty() &&
+  inst.kind == K_PLAIN && inst.has(IF_HAS_FAULT) && inst.defs.is_empty() && inst.recover.is_empty() &&
     inst.text.starts_with("cmp ") && !inst.text.contains("\n") && !inv_cond(inst.fcond).is_empty()
 }
 
@@ -681,7 +681,7 @@ fn (var g: G) cluster_mem() {
 /// $u0, [$u1, #off]` (2) of cluster_mem, with its base register and
 /// offset; 0 otherwise.
 fn mem_word(inst: Inst) -> (Int, Int, Int) {
-  if inst.kind != K_PLAIN || inst.has_fault || inst.keep || inst.frame || inst.x86 || !inst.clobbers.is_empty() {
+  if inst.kind != K_PLAIN || inst.has(IF_HAS_FAULT) || inst.has(IF_KEEP) || inst.has(IF_FRAME) || inst.has(IF_X86) || !inst.clobbers.is_empty() {
     return (0, 0, 0)
   }
   let t = inst.text
@@ -721,7 +721,7 @@ fn mem_reg(inst: Inst) -> Int {
 /// for a load, any load), and writes neither base nor a register the
 /// access reads; off -1 skips the memory test.
 fn cluster_past(inst: Inst, k: Int, base: Int, off: Int) -> Bool {
-  if inst.kind != K_PLAIN || inst.has_fault || inst.keep || inst.frame || inst.x86 || !inst.clobbers.is_empty() || inst.early {
+  if inst.kind != K_PLAIN || inst.has(IF_HAS_FAULT) || inst.has(IF_KEEP) || inst.has(IF_FRAME) || inst.has(IF_X86) || !inst.clobbers.is_empty() || inst.has(IF_EARLY) {
     return false
   }
   if inst.text.contains("\n") || inst.defs.contains(base) {
@@ -1970,7 +1970,7 @@ fn (g: G) copyable(b: Int) -> Bool {
     if inst.kind == K_PMOVE {
       continue
     }
-    if inst.kind == K_PLAIN && !inst.has_fault && inst.recover.is_empty() {
+    if inst.kind == K_PLAIN && !inst.has(IF_HAS_FAULT) && inst.recover.is_empty() {
       continue
     }
     return false

@@ -450,6 +450,16 @@ trimmed yet: pool.xo cannot import heapos (heapos imports pool), so an
 idle trim goes through cabi.xo heap_grow's flag path as the scavenge
 does; measured next on case (a) with stage 3.
 
+### Stage 3: a smaller `Inst` (xo-lang-2, 2026-10-31)
+
+The machine instruction: its fifteen Bools are bits of
+one `fl` word (`Inst.has(IF_*)`, `fl_set`), 43 words down to 29. Output is
+byte-identical (scripts/identity, 235 compiles, 0 differing). On the Mac
+(the self build, two rounds) max RSS 5921, 5972 -> 5837, 5868 MB, emit's
+peak 6113, 6156 -> 6016, 6026 MB, emit 18.0, 18.4 -> 17.9, 18.0 s. linux/arm64
+`xo bench --ab` (the self build, ten rounds, 0deb19338 against the
+change): max RSS 0.972 (0.961 to 0.981) and CPU 0.992 (0.991 to 0.999) better, wall 0.997 (0.989 to 1.017) within noise.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

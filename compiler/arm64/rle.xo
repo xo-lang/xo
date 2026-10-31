@@ -25,7 +25,7 @@ fn mir_may_write(inst: Inst) -> Bool {
   // `cmp; b.eq` at its end forgot every load before its successors, so
   // no edge carried one)
   let br = inst.kind == K_CONDBR || inst.kind == K_JUMP
-  if (inst.kind != K_PLAIN && !br) || inst.x86 {
+  if (inst.kind != K_PLAIN && !br) || inst.has(IF_X86) {
     return true
   }
   for l in inst.text.split("\n") {
@@ -42,7 +42,7 @@ fn mir_may_write(inst: Inst) -> Bool {
 /// w and b forms): the text with its definition left out and its base
 /// the register's number; "" for anything else.
 fn load_key(inst: Inst) -> Str {
-  if inst.kind != K_PLAIN || inst.x86 || inst.has_fault || inst.defs.len() != 1 || inst.us.is_empty() || inst.us.len() > 2 || inst.text.contains("\n") {
+  if inst.kind != K_PLAIN || inst.has(IF_X86) || inst.has(IF_HAS_FAULT) || inst.defs.len() != 1 || inst.us.is_empty() || inst.us.len() > 2 || inst.text.contains("\n") {
     return ""
   }
   let t = inst.text

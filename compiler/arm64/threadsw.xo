@@ -36,7 +36,7 @@ fn (g: G) dup_block_ok(b: Int) -> Bool {
     if inst.kind == K_PMOVE {
       continue
     }
-    if inst.kind == K_PLAIN && !inst.poll && !inst.frame {
+    if inst.kind == K_PLAIN && !inst.has(IF_POLL) && !inst.has(IF_FRAME) {
       continue
     }
     return false

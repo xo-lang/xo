@@ -34,7 +34,7 @@ fn (g: G) dup_latch_ok(j: Int) -> Bool {
     if inst.kind == K_PMOVE {
       continue
     }
-    if inst.kind == K_PLAIN && !inst.poll && !inst.frame && inst.pad < 0 {
+    if inst.kind == K_PLAIN && !inst.has(IF_POLL) && !inst.has(IF_FRAME) && inst.pad < 0 {
       continue
     }
     return false

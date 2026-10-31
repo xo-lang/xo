@@ -169,7 +169,7 @@ test "x86_load_line, x86_drop_load: one of a ldp's two loads goes" {
   expect(j) == 0
   let (_o2, _j2, ok2) = x86_load_line("movq 8($u0,$u1,8), $d1", 1)
   expect(ok2) == false
-  let ld = Inst{kind: K_PLAIN, x86: true, text: "movq 0($u0), $d0\nmovq 8($u0), $d1", defs: [5, 6], us: [3]}
+  let ld = Inst{kind: K_PLAIN, fl: IF_X86, text: "movq 0($u0), $d0\nmovq 8($u0), $d1", defs: [5, 6], us: [3]}
   let r = x86_drop_load(ld, 0)
   expect(r.text) == "movq 8($u0), $d0"
   expect(r.defs) == [6]

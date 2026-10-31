@@ -1,7 +1,7 @@
 // konst_value (opt.xo): the value of each mov_imm form.
 
 fn konst_inst(text: Str) -> Inst {
-  Inst{kind: K_PLAIN, text: text, defs: [1], konst: true}
+  Inst{kind: K_PLAIN, text: text, defs: [1], fl: IF_KONST}
 }
 
 test "konst_value reads back every mov_imm form" {
@@ -17,6 +17,6 @@ test "konst_value refuses a text mov_imm does not give and a non constant" {
   expect(konst_value(konst_inst("movz $d0, #1, lsl #0\nmovk $d0, #0, lsl #16")).1) == false
   expect(konst_value(konst_inst("movz $d0, #1, lsl #16\nadd $d0, $d0, #1")).1) == false
   var i = konst_inst(mov_imm(1000000000))
-  i.konst = false
+  i.fl = i.fl & ~IF_KONST
   expect(konst_value(i).1) == false
 }

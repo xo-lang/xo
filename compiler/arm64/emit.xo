@@ -118,7 +118,7 @@ fn (g: G) out_arg_bytes() -> Int {
       // a fault stub's call too (a checked operation's arguments plus the
       // position's file, line, and column): past the registers on Win64
       // (decision 0228's 2026-10-25 addendum)
-      if inst.has_fault {
+      if inst.has(IF_HAS_FAULT) {
         var n = 0
         for l in g.call_locs(inst.fargs, -1) {
           if l.reg < 0 {
@@ -199,7 +199,7 @@ fn (var g: G) emit() {
   var calls = false
   for b in g.order {
     for inst in g.blocks[b].insts {
-      calls = calls || (inst.kind == K_CALL && !inst.tail) || inst.frame
+      calls = calls || (inst.kind == K_CALL && !inst.has(IF_TAIL)) || inst.has(IF_FRAME)
     }
   }
   fr.leaf = !calls && g.saved.is_empty() && g.slots == 0 && !g.out && g.mem_bytes == 0
@@ -977,13 +977,13 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
       g.parallel(b, saves)
     }
     g.parallel(b, g.call_moves_v(inst.srcs, "sp", 0, inst.vfix))
-    if inst.tail {
+    if inst.has(IF_TAIL) {
       // a tail call (shrink.xo mark_tails): the frame undone, a branch;
       // the callee returns to this function's caller
       g.unframe(b)
-      if inst.indirect {
+      if inst.has(IF_INDIRECT) {
         b.push("\tbr x0\n")
-      } else if inst.cptr {
+      } else if inst.has(IF_CPTR) {
         b.push("\tbr x${inst.srcs.len() - 1}\n")
       } else {
         b.push("\tb ${inst.sym}\n")
@@ -998,11 +998,11 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
       g.sites.push(CallSite{from: from, to: to, pad: g.pad_of(inst.pad)})
       cs_to = to
     }
-    if inst.indirect {
+    if inst.has(IF_INDIRECT) {
       b.push("\tblr x0\n")
-    } else if inst.svc {
+    } else if inst.has(IF_SVC) {
       b.push("\tmov x8, x6\n\tsvc #0\n")
-    } else if inst.cptr {
+    } else if inst.has(IF_CPTR) {
       b.push("\tblr x${inst.srcs.len() - 1}\n")
     } else {
       b.push("\tbl ${inst.sym}\n")
@@ -1010,7 +1010,7 @@ fn (var g: G) emit_inst(var b: List[Str], inst: Inst, next: Int) {
     if !cs_to.is_empty() {
       b.push("${cs_to}:\n")
     }
-    if inst.noret {
+    if inst.has(IF_NORET) {
       return
     }
     var ms: List[Move] = []
@@ -1318,7 +1318,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       taken.push(l.reg)
     }
   }
-  if inst.early {
+  if inst.has(IF_EARLY) {
     for r in use_reg {
       if r >= 0 {
         taken.push(r)
@@ -1340,8 +1340,8 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
   }
   // (not a template that names x16 or x17 itself)
   let own = t.contains("x16") || t.contains("x17") || t.contains("w16") || t.contains("w17")
-  var dgp = if inst.early || (!own && ngp > 0 && ngp + nsp <= 2) { ngp } else { 0 }
-  var dfp = if inst.early { nfp } else { 0 }
+  var dgp = if inst.has(IF_EARLY) || (!own && ngp > 0 && ngp + nsp <= 2) { ngp } else { 0 }
+  var dfp = if inst.has(IF_EARLY) { nfp } else { 0 }
   var def_reg: List[Int] = []
   var stores: List[Str] = []
   for d in inst.defs {
@@ -1421,7 +1421,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
   out.write(t[from..tn])
   out.write("\n")
   b.push(out.freeze())
-  if inst.poll {
+  if inst.has(IF_POLL) {
     // the cold path after the function: where x30 still holds the return
     // address (a leaf, or a block that runs without the frame, shrink.xo)
     // the call would overwrite it, so the stub keeps it in a frame record
@@ -1437,7 +1437,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
       g.stubs.push("${dc}${l}:\n\tbl ${stub}\n\tb ${l}_r\n")
     }
   }
-  if inst.has_fault {
+  if inst.has(IF_HAS_FAULT) {
     g.nstub += 1
     let l = g.local("${g.lbl_prefix()}_fault${g.nstub}")
     b.push("\tb.${inst.fcond} ${l}\n")

@@ -49,7 +49,7 @@ struct SPack {
 
 /// A Float load `ldr $d0, [$u0, #k]`: (k, base, def), or None.
 fn (g: G) slp_load(x: Inst) -> Option[(Int, Int, Int)] {
-  if x.kind != K_PLAIN || x.defs.len() != 1 || x.us.len() != 1 || x.has_fault || !x.clobbers.is_empty() {
+  if x.kind != K_PLAIN || x.defs.len() != 1 || x.us.len() != 1 || x.has(IF_HAS_FAULT) || !x.clobbers.is_empty() {
     return None
   }
   if !x.text.starts_with("ldr $d0, [$u0, #") || !x.text.ends_with("]") || !g.fp[x.defs[0]] || g.wide.contains(x.defs[0]) {
@@ -63,7 +63,7 @@ fn (g: G) slp_load(x: Inst) -> Option[(Int, Int, Int)] {
 
 /// A Float store `str $u0, [$u1, #k]`: (k, base, value), or None.
 fn (g: G) slp_store(x: Inst) -> Option[(Int, Int, Int)] {
-  if x.kind != K_PLAIN || !x.defs.is_empty() || x.us.len() != 2 || x.has_fault || !x.clobbers.is_empty() {
+  if x.kind != K_PLAIN || !x.defs.is_empty() || x.us.len() != 2 || x.has(IF_HAS_FAULT) || !x.clobbers.is_empty() {
     return None
   }
   if !x.text.starts_with("str $u0, [$u1, #") || !x.text.ends_with("]") || !g.fp[x.us[0]] || g.wide.contains(x.us[0]) {
@@ -77,7 +77,7 @@ fn (g: G) slp_store(x: Inst) -> Option[(Int, Int, Int)] {
 
 /// A Float operation the pass pairs: its mnemonic, or "".
 fn slp_op(x: Inst) -> Str {
-  if x.kind != K_PLAIN || x.defs.len() != 1 || x.has_fault || !x.clobbers.is_empty() || x.early {
+  if x.kind != K_PLAIN || x.defs.len() != 1 || x.has(IF_HAS_FAULT) || !x.clobbers.is_empty() || x.has(IF_EARLY) {
     return ""
   }
   for m in ["fadd", "fsub", "fmul", "fdiv"] {

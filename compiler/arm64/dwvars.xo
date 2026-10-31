@@ -345,7 +345,7 @@ fn (var g: G) dv_plan() -> DvPlan {
   if !g.kints.is_empty() || !g.ksyms.is_empty() {
     for b in g.blocks {
       for ins in b.insts {
-        if ins.konst {
+        if ins.has(IF_KONST) {
           continue
         }
         for d in ins.defs {

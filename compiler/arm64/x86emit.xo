@@ -162,8 +162,8 @@ fn (var g: G) x86_emit_once() {
   var stubs = false
   for b in g.order {
     for inst in g.blocks[b].insts {
-      calls = calls || (inst.kind == K_CALL && !inst.tail) || inst.frame
-      stubs = stubs || inst.has_fault
+      calls = calls || (inst.kind == K_CALL && !inst.has(IF_TAIL)) || inst.has(IF_FRAME)
+      stubs = stubs || inst.has(IF_HAS_FAULT)
     }
   }
   fr.leaf = !calls && g.saved.is_empty() && g.slots == 0 && !g.out && g.mem_bytes == 0
@@ -534,7 +534,7 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
     }
     // the register a C pointer call goes through: its last argument's
     var target = ""
-    if inst.cptr {
+    if inst.has(IF_CPTR) {
       let l = locs[locs.len() - 1]
       if l.reg >= 0 {
         target = x86_reg(l.reg, 8)
@@ -543,11 +543,11 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
         target = "%r11"
       }
     }
-    if inst.tail {
+    if inst.has(IF_TAIL) {
       g.x86_unframe(b)
-      if inst.indirect {
+      if inst.has(IF_INDIRECT) {
         b.push("\tjmpq *%rdi\n")
-      } else if inst.cptr {
+      } else if inst.has(IF_CPTR) {
         b.push("\tjmpq *${target}\n")
       } else {
         b.push("\tjmp ${inst.sym}\n")
@@ -562,11 +562,11 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
       g.sites.push(CallSite{from: from, to: to, pad: g.pad_of(inst.pad)})
       cs_to = to
     }
-    if inst.indirect {
+    if inst.has(IF_INDIRECT) {
       b.push("\tcallq *%rdi\n")
-    } else if inst.svc {
+    } else if inst.has(IF_SVC) {
       b.push("\tsyscall\n")
-    } else if inst.cptr {
+    } else if inst.has(IF_CPTR) {
       b.push("\tcallq *${target}\n")
     } else {
       b.push("\tcallq ${inst.sym}\n")
@@ -574,7 +574,7 @@ fn (var g: G) x86_emit_inst(var b: List[Str], inst: Inst, next: Int) {
     if !cs_to.is_empty() {
       b.push("${cs_to}:\n")
     }
-    if inst.noret {
+    if inst.has(IF_NORET) {
       return
     }
     var ms: List[Move] = []
@@ -713,7 +713,7 @@ fn (var g: G) x86_emit_condbr(var b: List[Str], inst: Inst, next: Int) {
     b.push("\tbtq $${inst.bit}, ${r}\n")
     cond = if inst.cond == "tbz" { "ae" } else { "b" }
   } else {
-    g.x86_emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us, x86: true})
+    g.x86_emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us, fl: IF_X86})
   }
   if t == f {
     if t != next {
@@ -950,7 +950,7 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
   if g.x86_emit_mem_rmw(b, inst) {
     return
   }
-  if inst.defs.len() == 1 && inst.us.is_empty() && !inst.has_fault {
+  if inst.defs.len() == 1 && inst.us.is_empty() && !inst.has(IF_HAS_FAULT) {
     // a constant of 32 bits into a spilled register: one store of the
     // immediate (2026-10-21: `movl $0, %r11d`, `movq %r11, 264(%rsp)`,
     // 719 times in bench/perf/tls)
@@ -1123,7 +1123,7 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     text = text[1..text.len()]
   }
   // a copy into the same register is nothing
-  if inst.clob_mid {
+  if inst.has(IF_CLOB_MID) {
     var keep: List[Str] = []
     for l in text.split("\n") {
       if !l.is_empty() && !x86_self_move(l) {
@@ -1143,7 +1143,7 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
   for (k, br) in borrowed.indexed() {
     b.push("\t${if br >= FP_BASE { "movsd" } else { "movq" }} ${g.x86_borrow_at(k)}(%rsp), ${x86_reg(br, 8)}\n")
   }
-  if inst.poll {
+  if inst.has(IF_POLL) {
     // a preemption poll (decision 0286 step 3): the flag's word is in the
     // scratch register; set, a stub after the function calls
     // xo_preempt_stub, which keeps every register, and comes back. Off
@@ -1162,7 +1162,7 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
       g.stubs.push("${g.cause_label(C_PREEMPT)}${l}:\n\tleaq -128(%rsp), %rsp\n\tcallq ${stub}\n\tleaq 128(%rsp), %rsp\n\tjmp ${l}_r\n")
     }
   }
-  if inst.has_fault {
+  if inst.has(IF_HAS_FAULT) {
     g.nstub += 1
     let l = g.local("${g.lbl_prefix()}_fault${g.nstub}")
     for jl in x86_jcc(inst.fcond, l) {
@@ -1301,7 +1301,7 @@ fn (g: G) x86_rz_ok() -> Bool {
     for inst in g.blocks[b].insts {
       // a fault stub calls the raise (and stores the saved registers)
       // with rsp where the prologue left it, over the frame
-      if inst.has_fault {
+      if inst.has(IF_HAS_FAULT) {
         return false
       }
       if inst.text.is_empty() {
@@ -1573,7 +1573,7 @@ fn (g: G) x86_check_head(b: Int) -> Bool {
     return false
   }
   let inst = ins[0]
-  inst.kind == K_PLAIN && inst.has_fault && inst.defs.is_empty() && inst.recover.is_empty() &&
+  inst.kind == K_PLAIN && inst.has(IF_HAS_FAULT) && inst.defs.is_empty() && inst.recover.is_empty() &&
     inst.text.starts_with("cmp") && !inst.text.contains("\n") && !x86_inv(inst.fcond).is_empty() &&
     !inst.fcond.contains("&") && !inst.fcond.contains("|")
 }
@@ -1596,7 +1596,7 @@ fn (var g: G) x86_rotate_jump(var b: List[Str], t: Int) -> Bool {
     return false
   }
   let inst = g.blocks[t].insts[0]
-  g.x86_emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us, x86: true})
+  g.x86_emit_plain(b, Inst{kind: K_PLAIN, text: inst.text, us: inst.us, fl: IF_X86})
   let lt = g.label(t)
   b.push("\tj${x86_inv(inst.fcond)} ${lt}_c\n\tjmp ${lt}\n")
   true
@@ -1611,7 +1611,7 @@ fn (var g: G) x86_rotate_jump(var b: List[Str], t: Int) -> Bool {
 /// 32 bit operations: on memory they keep the slot's upper half, where a
 /// register's is zeroed.
 fn (var g: G) x86_emit_mem_rmw(var b: List[Str], inst: Inst) -> Bool {
-  if inst.has_fault || inst.defs.len() != 1 {
+  if inst.has(IF_HAS_FAULT) || inst.defs.len() != 1 {
     return false
   }
   let lines = inst.text.split("\n")

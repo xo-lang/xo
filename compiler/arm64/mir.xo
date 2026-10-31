@@ -101,9 +101,11 @@ const C_INLINE_RT = 8
 /// bytes that are not instructions: jump tables, the local empty list
 const C_DATA = 9
 
-/// A machine instruction.
+  /// A machine instruction.
 struct Inst {
   kind: Int
+  /// its flags, IF_* bits (fifteen Bools were a word each; ADR 0448 stage 3)
+  fl: Int = 0
   /// its size cause (C_*, decision 0443), set by isel's add from the SSA
   /// value or block it lowers; instructions made later stay C_BODY
   cause: Int = 0
@@ -111,9 +113,6 @@ struct Inst {
   /// across it, each with its spill slot, stored before its argument moves and
   /// loaded after its results' (regalloc.xo cold_saves)
   csave: List[(Int, Int)] = []
-  /// a call of a runtime slow path (ssa cold_fn): cold wherever its
-  /// block is, so cold_saves and the hoisting passes treat it as one
-  cold_call: Bool = false
   text: Str = ""
   /// the packed source line it was selected for (ssa Value.line), 0 for
   /// none: a row of the debug line table (decision 0239)
@@ -123,30 +122,17 @@ struct Inst {
   /// physical registers its text writes besides its definitions (an
   /// atomic's status register): no value is given one across it
   clobbers: List[Int] = []
-  /// the clobbers hold only between the template's reads and writes
-  /// (x86_mul_pair): an operand that dies at it, or a definition, may
-  /// take one. reg_hints are registers its operands would like, reg_bars
+  /// reg_hints are registers its operands would like, reg_bars
   /// registers they must not take, each (operand, register), the operand
   /// k >= 0 for us[k] and -1 - k for defs[k]
-  clob_mid: Bool = false
   reg_hints: List[(Int, Int)] = []
   reg_bars: List[(Int, Int)] = []
   defs: List[Int] = []
   /// template uses first, then the vregs of srcs and fault args
   us: List[Int] = []
-  /// the defs are written before the uses are dead (they must not share
-  /// registers)
-  early: Bool = false
   /// how a fault stub recomputes an operand whose register the result
   /// took ("add", "sub", "neg")
   recover: Str = ""
-  /// the side exit of a checked instruction: when fcond holds after it,
-  /// the runtime function ffn is called with fargs (it does not return)
-  has_fault: Bool = false
-  /// a preemption poll (decision 0286 step 3): its text loads the flag
-  /// into w16; when it is set a stub calls xo_preempt_stub, which keeps
-  /// every register, and comes back
-  poll: Bool = false
   fcond: Str = ""
   ffn: Str = ""
   fargs: List[Src] = []
@@ -157,44 +143,73 @@ struct Inst {
   targets: List[Int] = []
   /// K_CONDBR with cond tbz or tbnz: the bit tested
   bit: Int = 0
-  /// K_CALL: the call never returns (a fault)
-  noret: Bool = false
-  /// K_CALL: through the code word of a closure, in x0 (`blr x0`)
-  indirect: Bool = false
-  /// K_CALL: a Linux system call (rt.sys6, decision 0206): the number is
-  /// the seventh argument (x6), moved to x8 for `svc #0`
-  svc: Bool = false
-  /// K_CALL: a C ABI call of the address in the last source register
-  /// (rt.call_c2, decision 0206 stage 2): `blr x<n>` after the n
-  /// arguments
-  cptr: Bool = false
   /// K_CALL: a variadic C function on Apple arm64 (decision 0213): the
   /// arguments from this index on go on the stack, 8 bytes each; -1 for
   /// none
   vfix: Int = -1
-  /// a plain instruction that makes a constant (hoistConsts may move it)
-  konst: Bool = false
-  /// a plain instruction that reads the frame pointer (rt.frame_addr,
-  /// decision 0233): the function is not a leaf, and its block has the
-  /// frame (shrink wrapping)
-  frame: Bool = false
-  /// a plain instruction with a memory effect (an atomic, decision
-  /// 0200): kept when its definitions are dead, never folded into a
-  /// branch
-  keep: Bool = false
-  /// K_PMOVE: the copies of shrink wrapping (shrink.xo), whose two sides
-  /// must not share a location (never coalesced)
-  nocoal: Bool = false
-  /// K_CALL: a tail call (shrink.xo mark_tails): its results are the
-  /// function's, returned by nothing but moves and jumps; emitted as the
-  /// frame undone and a branch
-  tail: Bool = false
   /// the landing pad block of a call or of a fault stub's call (decision
   /// 0085), -1 for none
   pad: Int = -1
-  /// an x86 template (decision 0254: written by retarget, or as x86 by
-  /// the front half for amd64)
-  x86: Bool = false
+}
+
+// Inst.fl bits: an instruction's yes/no properties, one bit each (a Bool
+// field took a word, and an Inst with fifteen of them 43 words; the self
+// build held 0.8 GB of instructions halfway through emit, ADR 0448 stage 3)
+/// a call of a runtime slow path (ssa cold_fn): cold wherever its
+/// block is, so cold_saves and the hoisting passes treat it as one
+const IF_COLD_CALL = 1
+/// the clobbers hold only between the template's reads and writes
+/// (x86_mul_pair): an operand that dies at it, or a definition, may
+/// take one
+const IF_CLOB_MID = 2
+/// the defs are written before the uses are dead (they must not share
+/// registers)
+const IF_EARLY = 4
+/// the side exit of a checked instruction: when fcond holds after it,
+/// the runtime function ffn is called with fargs (it does not return)
+const IF_HAS_FAULT = 8
+/// a preemption poll (decision 0286 step 3): its text loads the flag
+/// into w16; when it is set a stub calls xo_preempt_stub, which keeps
+/// every register, and comes back
+const IF_POLL = 16
+/// K_CALL: the call never returns (a fault)
+const IF_NORET = 32
+/// K_CALL: through the code word of a closure, in x0 (`blr x0`)
+const IF_INDIRECT = 64
+/// K_CALL: a Linux system call (rt.sys6, decision 0206): the number is
+/// the seventh argument (x6), moved to x8 for `svc #0`
+const IF_SVC = 128
+/// K_CALL: a C ABI call of the address in the last source register
+/// (rt.call_c2, decision 0206 stage 2): `blr x<n>` after the n
+/// arguments
+const IF_CPTR = 256
+/// a plain instruction that makes a constant (hoistConsts may move it)
+const IF_KONST = 512
+/// a plain instruction that reads the frame pointer (rt.frame_addr,
+/// decision 0233): the function is not a leaf, and its block has the
+/// frame (shrink wrapping)
+const IF_FRAME = 1024
+/// a plain instruction with a memory effect (an atomic, decision
+/// 0200): kept when its definitions are dead, never folded into a
+/// branch
+const IF_KEEP = 2048
+/// K_PMOVE: the copies of shrink wrapping (shrink.xo), whose two sides
+/// must not share a location (never coalesced)
+const IF_NOCOAL = 4096
+/// K_CALL: a tail call (shrink.xo mark_tails): its results are the
+/// function's, returned by nothing but moves and jumps; emitted as the
+/// frame undone and a branch
+const IF_TAIL = 8192
+/// an x86 template (decision 0254: written by retarget, or as x86 by
+/// the front half for amd64)
+const IF_X86 = 16384
+
+/// Whether instruction x has flag bit b (IF_*).
+fn (x: Inst) has(b: Int) -> Bool { x.fl & b != 0 }
+
+/// fl with bit b set when on, cleared otherwise.
+fn fl_set(fl: Int, b: Int, on: Bool) -> Int {
+  if on { fl | b } else { fl & ~b }
 }
 
 /// A machine block.

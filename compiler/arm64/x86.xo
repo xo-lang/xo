@@ -1459,7 +1459,7 @@ fn (var g: G) x86_retarget() {
       if inst.kind != K_PLAIN && inst.kind != K_PMOVE {
         inv = false
       }
-      if inst.x86 {
+      if inst.has(IF_X86) {
         if inst.kind == K_PLAIN {
           let (_l, i2) = x86_carry_polarity(inst.text.split("\n"), inv)
           inv = i2
@@ -1467,7 +1467,7 @@ fn (var g: G) x86_retarget() {
         out.push(inst)
         continue
       }
-      if inst.kind == K_PLAIN && !inst.has_fault {
+      if inst.kind == K_PLAIN && !inst.has(IF_HAS_FAULT) {
         // a carry chain: one instruction per link (x86_split)
         let parts = x86_split(inst)
         if !parts.is_empty() {
@@ -1481,8 +1481,8 @@ fn (var g: G) x86_retarget() {
             let (pl, i2) = x86_carry_polarity(x.lines, inv)
             inv = i2
             ni.text = pl.join("\n")
-            ni.x86 = true
-            ni.early = x.early
+            ni.fl = ni.fl | IF_X86
+            ni.fl = fl_set(ni.fl, IF_EARLY, x.early)
             ni.clobbers = x.clobbers
             if !x.ties.is_empty() {
               var dsts: List[Int] = []
@@ -1492,7 +1492,7 @@ fn (var g: G) x86_retarget() {
                 srcs.push(s)
                 ni.us.push(p.defs[di])
               }
-              out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: src_regs(srcs), line: inst.line, inl: inst.inl, x86: true})
+              out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: src_regs(srcs), line: inst.line, inl: inst.inl, fl: IF_X86})
               // the tied source is read by the copy, not the link
               ni.us = x86_untie_recovered(ni.us, ni.text, srcs, p.defs)
             }
@@ -1506,7 +1506,7 @@ fn (var g: G) x86_retarget() {
         if inst.kind == K_CONDBR {
           conds.push(inst.cond)
         }
-        if inst.has_fault {
+        if inst.has(IF_HAS_FAULT) {
           conds.push(inst.fcond)
         }
         let x = g.x86_tpl(inst, conds)
@@ -1521,8 +1521,8 @@ fn (var g: G) x86_retarget() {
         let (pl, i2) = x86_carry_polarity(x.lines, inv)
         inv = i2
         ni.text = pl.join("\n")
-        ni.x86 = true
-        ni.early = inst.early || x.early
+        ni.fl = ni.fl | IF_X86
+        ni.fl = fl_set(ni.fl, IF_EARLY, inst.has(IF_EARLY) || x.early)
         ni.clobbers = x.clobbers
         if inst.kind == K_CONDBR && !(inst.cond is "cbnz" | "tbz" | "tbnz") {
           ni.cond = x86_cond(inst.cond, x.kind)
@@ -1531,7 +1531,7 @@ fn (var g: G) x86_retarget() {
             return
           }
         }
-        if inst.has_fault {
+        if inst.has(IF_HAS_FAULT) {
           ni.fcond = x86_cond(inst.fcond, x.kind)
           if ni.fcond.is_empty() {
             g.fail("amd64: ${g.f.name}: the fault condition ${inst.fcond} after a ${x.kind} compare")
@@ -1547,8 +1547,8 @@ fn (var g: G) x86_retarget() {
             // the definition is read too
             ni.us.push(inst.defs[di])
           }
-          out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: src_regs(srcs), line: inst.line, inl: inst.inl, x86: true})
-          if !inst.has_fault || !inst.recover.is_empty() {
+          out.push(Inst{kind: K_PMOVE, defs: dsts, srcs: srcs, us: src_regs(srcs), line: inst.line, inl: inst.inl, fl: IF_X86})
+          if !inst.has(IF_HAS_FAULT) || !inst.recover.is_empty() {
             // a checked add, sub, or neg whose fault stub recomputes the
             // operand from the result (x86_recover_operand): the tied
             // operand need not live past the copy, so the copy can be
@@ -1560,15 +1560,15 @@ fn (var g: G) x86_retarget() {
             ni.us = x86_untie_recovered(ni.us, ni.text, srcs, inst.defs)
           }
         }
-        if inst.kind == K_PLAIN && !inst.has_fault {
+        if inst.kind == K_PLAIN && !inst.has(IF_HAS_FAULT) {
           g.x86_fuse_load(out, ni)
         }
         out.push(ni)
         continue
       }
       var ni = inst
-      ni.x86 = true
-      if inst.kind == K_CALL && inst.svc {
+      ni.fl = ni.fl | IF_X86
+      if inst.kind == K_CALL && inst.has(IF_SVC) {
         // the system call's locations (x86_call_locs)
         ni.vfix = -2
       }
@@ -1590,7 +1590,7 @@ fn (var g: G) x86_def1(text: Str, us: List[Int]) -> Int {
   for u in us {
     rs.push(g.real(u))
   }
-  let _i = g.add(Inst{kind: K_PLAIN, text: text, defs: [d], us: rs, x86: true})
+  let _i = g.add(Inst{kind: K_PLAIN, text: text, defs: [d], us: rs, fl: IF_X86})
   d
 }
 
@@ -1632,7 +1632,7 @@ fn (var g: G) x86_defs(text: Str, n: Int, us: List[Int]) -> List[Int] {
   for u in us {
     rs.push(g.real(u))
   }
-  let _i = g.add(Inst{kind: K_PLAIN, text: text, defs: ds, us: rs, x86: true})
+  let _i = g.add(Inst{kind: K_PLAIN, text: text, defs: ds, us: rs, fl: IF_X86})
   ds
 }
 
@@ -1642,7 +1642,7 @@ fn (var g: G) x86_store(text: Str, us: List[Int]) {
   for u in us {
     rs.push(g.real(u))
   }
-  let _i = g.add(Inst{kind: K_PLAIN, text: text, us: rs, x86: true})
+  let _i = g.add(Inst{kind: K_PLAIN, text: text, us: rs, fl: IF_X86})
   g.clobber()
 }
 
@@ -1786,7 +1786,7 @@ fn x86_split(inst: Inst) -> List[Inst] {
       // the carry of the chain's adds and adcs, or its borrow
       text = "x86kind ${if sub { "sub" } else { "add" }}\n${text}"
     }
-    out.push(Inst{kind: K_PLAIN, text: text, defs: defs, us: us, line: inst.line, inl: inst.inl, keep: inst.keep})
+    out.push(Inst{kind: K_PLAIN, text: text, defs: defs, us: us, line: inst.line, inl: inst.inl, fl: if inst.has(IF_KEEP) { IF_KEEP } else { 0 }})
   }
   out
 }
@@ -1984,7 +1984,7 @@ fn (var g: G) x86_fuse_load(var out: List[Inst], var ni: Inst) {
     if o.kind != K_PLAIN && o.kind != K_PMOVE {
       return
     }
-    if o.us.contains(x) || o.has_fault || o.keep || o.text.contains("(") || o.text.contains("call") || o.text.contains("lock") || o.text.contains("xchg") {
+    if o.us.contains(x) || o.has(IF_HAS_FAULT) || o.has(IF_KEEP) || o.text.contains("(") || o.text.contains("call") || o.text.contains("lock") || o.text.contains("xchg") {
       return
     }
     for d in o.defs {
@@ -1996,7 +1996,7 @@ fn (var g: G) x86_fuse_load(var out: List[Inst], var ni: Inst) {
     return
   }
   let ld = out[li]
-  if ld.kind != K_PLAIN || ld.has_fault || ld.keep || ld.defs.len() != 1 || ld.defs[0] != x || ld.text.contains("\n") {
+  if ld.kind != K_PLAIN || ld.has(IF_HAS_FAULT) || ld.has(IF_KEEP) || ld.defs.len() != 1 || ld.defs[0] != x || ld.text.contains("\n") {
     return
   }
   for u in ld.us {
@@ -2166,7 +2166,7 @@ fn x86_flag_neutral(inst: Inst) -> Bool {
   if inst.kind == K_PMOVE {
     return true
   }
-  if inst.kind != K_PLAIN || !inst.x86 || inst.has_fault {
+  if inst.kind != K_PLAIN || !inst.has(IF_X86) || inst.has(IF_HAS_FAULT) {
     return false
   }
   for l in inst.text.split("\n") {
@@ -2191,7 +2191,7 @@ fn x86_lines_read_flags(text: Str) -> Bool {
 
 /// Whether an x86 template reads the flags.
 fn x86_reads_flags(inst: Inst) -> Bool {
-  inst.kind == K_PLAIN && inst.x86 && x86_lines_read_flags(inst.text)
+  inst.kind == K_PLAIN && inst.has(IF_X86) && x86_lines_read_flags(inst.text)
 }
 
 /// The lines of a carry's save at the end of a template, for its last
@@ -2212,7 +2212,7 @@ fn x86_save_tail(inst: Inst) -> Str {
 /// Whether an x86 template may move across flag writers and readers: it
 /// reads no flags (no adc, sbb, cmov, set, jcc, cmc).
 fn x86_movable(inst: Inst) -> Bool {
-  if inst.kind != K_PLAIN || !inst.x86 || inst.has_fault || inst.keep || inst.frame {
+  if inst.kind != K_PLAIN || !inst.has(IF_X86) || inst.has(IF_HAS_FAULT) || inst.has(IF_KEEP) || inst.has(IF_FRAME) {
     return false
   }
   for l in inst.text.split("\n") {
@@ -2273,14 +2273,14 @@ fn (var g: G) x86_mul_pair() {
       var p = ins[i]
       p.text = "movq $u0, %rax\nmulq $u1\nmovq %rax, $d0\nmovq %rdx, $d1"
       p.defs = [lo, hi]
-      p.x86 = true
+      p.fl = p.fl | IF_X86
       p.clobbers = [XR_AX, XR_DX]
       // the factors and halves in rax and rdx where they can be (the
       // moves go): the first factor and the low half in rax, the high
       // half in rdx; the second factor not in rax (the first's move
       // writes it) unless it is the first, the low half not in rdx (the
       // high half's move reads it after)
-      p.clob_mid = true
+      p.fl = p.fl | IF_CLOB_MID
       p.reg_hints = [(0, XR_AX), (-1, XR_AX), (-2, XR_DX)]
       p.reg_bars = [(-1, XR_DX)]
       if p.us[1] != p.us[0] {
@@ -2302,7 +2302,7 @@ fn (var g: G) x86_mul_pair() {
 
 /// Whether inst is the plain product half text (x86_mul_pair).
 fn x86_mul_half(inst: Inst, text: Str) -> Bool {
-  inst.kind == K_PLAIN && !inst.x86 && !inst.has_fault && inst.text == text && inst.defs.len() == 1 && inst.us.len() == 2
+  inst.kind == K_PLAIN && !inst.has(IF_X86) && !inst.has(IF_HAS_FAULT) && inst.text == text && inst.defs.len() == 1 && inst.us.len() == 2
 }
 
 /// Constants as immediate operands (2026-10-20: arm64's MIR keeps a
@@ -2322,7 +2322,7 @@ fn (var g: G) x86_const_imm() {
       for d in inst.defs {
         ndef[d] = (ndef.get(d) ?? 0) + 1
       }
-      if inst.kind == K_PLAIN && inst.x86 && inst.defs.len() == 1 && inst.us.is_empty() && !inst.has_fault {
+      if inst.kind == K_PLAIN && inst.has(IF_X86) && inst.defs.len() == 1 && inst.us.is_empty() && !inst.has(IF_HAS_FAULT) {
         if let Some(n) = x86_const_def(inst.text) {
           kval[inst.defs[0]] = n
         }
@@ -2340,8 +2340,8 @@ fn (var g: G) x86_const_imm() {
       // a plain line, or a branch's compare (`cmpq $u1, $u0`); with a
       // fault too: its stub reads the fault arguments (fargs, read again
       // past the template's uses), not the template's registers
-      if (inst.kind == K_PLAIN || (inst.kind == K_CONDBR && !inst.text.is_empty())) && inst.x86 {
-        if inst.has_fault {
+      if (inst.kind == K_PLAIN || (inst.kind == K_CONDBR && !inst.text.is_empty())) && inst.has(IF_X86) {
+        if inst.has(IF_HAS_FAULT) {
           // a constant fault argument as the immediate (its register
           // need not live to the stub): the use set_fault added for it,
           // one the template does not name, goes
@@ -2416,7 +2416,7 @@ fn (var g: G) x86_const_imm() {
         }
         ins[k] = inst
       }
-      if ins[k].kind == K_PMOVE && ins[k].x86 {
+      if ins[k].kind == K_PMOVE && ins[k].has(IF_X86) {
         // a constant copied (a loop variable's start, 2026-10-20: portable
         // conv's h = 0 went `pushq 144(%rsp)`, `popq 24(%rsp)` from the
         // hoisted zero's slot): the move writes the immediate
@@ -2451,7 +2451,7 @@ fn (var g: G) x86_const_imm() {
     var ins = g.take_insts(b)
     var out: List[Inst] = List.with_capacity(ins.len())
     for inst in ins {
-      if inst.kind == K_PLAIN && inst.x86 && inst.defs.len() == 1 && inst.us.is_empty() && kval.contains(inst.defs[0]) && (nuse.get(inst.defs[0]) ?? 0) == 0 && (ndef.get(inst.defs[0]) ?? 0) == 1 {
+      if inst.kind == K_PLAIN && inst.has(IF_X86) && inst.defs.len() == 1 && inst.us.is_empty() && kval.contains(inst.defs[0]) && (nuse.get(inst.defs[0]) ?? 0) == 0 && (ndef.get(inst.defs[0]) ?? 0) == 1 {
         continue
       }
       out.push(inst)
@@ -2697,7 +2697,7 @@ const X86_SINK_REACH = 256
 /// (`D($uA)`, `D($uA,$uB)`, `D($uA,$uB,S)`) and width.
 fn x86_sink_load(inst: Inst) -> (Bool, Str, Int) {
   let bad = (false, "", 0)
-  if inst.kind != K_PLAIN || !inst.x86 || inst.has_fault || !inst.recover.is_empty() || inst.early || inst.defs.len() != 1 || inst.text.contains("\n") || !inst.text.ends_with(", $d0") {
+  if inst.kind != K_PLAIN || !inst.has(IF_X86) || inst.has(IF_HAS_FAULT) || !inst.recover.is_empty() || inst.has(IF_EARLY) || inst.defs.len() != 1 || inst.text.contains("\n") || !inst.text.ends_with(", $d0") {
     return bad
   }
   let sp = inst.text.find(" ") ?? -1
@@ -2723,7 +2723,7 @@ fn x86_sink_load(inst: Inst) -> (Bool, Str, Int) {
 /// from load l's (memory operand lm, width lw): the same base and index
 /// registers and scale, the displacements' byte ranges apart.
 fn x86_store_apart(c: Inst, lm: Str, lw: Int, l: Inst) -> Bool {
-  if c.kind != K_PLAIN || !c.x86 || c.has_fault || !c.recover.is_empty() || c.text.contains("\n") {
+  if c.kind != K_PLAIN || !c.has(IF_X86) || c.has(IF_HAS_FAULT) || !c.recover.is_empty() || c.text.contains("\n") {
     return false
   }
   let sp = c.text.find(" ") ?? -1
@@ -2823,7 +2823,7 @@ fn (var g: G) x86_fold_loads() {
     }
     for k in 0..ins.len() {
       let inst = ins[k]
-      let ok_inst = inst.kind == K_PLAIN && inst.x86 && !inst.has_fault && inst.recover.is_empty()
+      let ok_inst = inst.kind == K_PLAIN && inst.has(IF_X86) && !inst.has(IF_HAS_FAULT) && inst.recover.is_empty()
       for u in 0..inst.us.len() {
         let v = inst.us[u]
         let li = cand.get(v) ?? -1
@@ -2885,7 +2885,7 @@ fn (var g: G) x86_fold_loads() {
       }
       // the loads it makes (read after it, in this block, once each use
       // is seen)
-      if inst.kind == K_PLAIN && inst.x86 && !inst.has_fault && !inst.defs.is_empty() {
+      if inst.kind == K_PLAIN && inst.has(IF_X86) && !inst.has(IF_HAS_FAULT) && !inst.defs.is_empty() {
         let ls = inst.text.split("\n")
         if ls.len() == inst.defs.len() {
           for (n, d) in inst.defs.indexed() {
@@ -3051,7 +3051,7 @@ fn x86_may_write_mem(inst: Inst) -> Bool {
   if inst.kind == K_PMOVE {
     return false
   }
-  if inst.kind != K_PLAIN || !inst.x86 {
+  if inst.kind != K_PLAIN || !inst.has(IF_X86) {
     return true
   }
   for l in inst.text.split("\n") {
@@ -3098,7 +3098,7 @@ fn (var g: G) x86_carry_fuse() {
     var j = 0
     while j < ins.len() {
       let r = ins[j]
-      if r.kind != K_PLAIN || !r.x86 || r.text != "btq $0, $u0" || r.us.len() != 1 {
+      if r.kind != K_PLAIN || !r.has(IF_X86) || r.text != "btq $0, $u0" || r.us.len() != 1 {
         j += 1
         continue
       }
@@ -3114,7 +3114,7 @@ fn (var g: G) x86_carry_fuse() {
       while s >= 0 && !ins[s].defs.contains(k) {
         s -= 1
       }
-      if s < 0 || ins[s].kind != K_PLAIN || !ins[s].x86 || ins[s].defs[ins[s].defs.len() - 1] != k {
+      if s < 0 || ins[s].kind != K_PLAIN || !ins[s].has(IF_X86) || ins[s].defs[ins[s].defs.len() - 1] != k {
         j += 1
         continue
       }
@@ -3139,7 +3139,7 @@ fn (var g: G) x86_carry_fuse() {
       // carry before it) and moves, to the one that writes them only; a
       // flag writer moved above the head breaks no carry
       let a = if own { s - 1 } else { s }
-      if ins[a].kind != K_PLAIN || !ins[a].x86 {
+      if ins[a].kind != K_PLAIN || !ins[a].has(IF_X86) {
         j += 1
         continue
       }
@@ -3149,7 +3149,7 @@ fn (var g: G) x86_carry_fuse() {
           h -= 1
         }
       }
-      if h != s && (x86_reads_flags(ins[h]) || x86_flag_neutral(ins[h]) || !ins[h].x86 || ins[h].kind != K_PLAIN) {
+      if h != s && (x86_reads_flags(ins[h]) || x86_flag_neutral(ins[h]) || !ins[h].has(IF_X86) || ins[h].kind != K_PLAIN) {
         j += 1
         continue
       }
@@ -3174,7 +3174,7 @@ fn (var g: G) x86_carry_fuse() {
           continue
         }
         let t = ins[x]
-        if x != s && t.kind == K_PMOVE && t.x86 && x + 1 < j && !x86_flag_neutral(ins[x + 1]) && x86_movable(ins[x + 1]) {
+        if x != s && t.kind == K_PMOVE && t.has(IF_X86) && x + 1 < j && !x86_flag_neutral(ins[x + 1]) && x86_movable(ins[x + 1]) {
           // a tie's copy and its operation move together
           let o = ins[x + 1]
           var unit_ok = true

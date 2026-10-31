@@ -28,7 +28,7 @@
 /// Whether inst needs the frame whatever the allocation: a call but a
 /// tail call, the $OUT slot, the frame's memory.
 fn needs_frame0(inst: Inst) -> Bool {
-  if (inst.kind == K_CALL && !inst.tail) || inst.text.contains("$OUT") || inst.frame {
+  if (inst.kind == K_CALL && !inst.has(IF_TAIL)) || inst.text.contains("$OUT") || inst.has(IF_FRAME) {
     return true
   }
   for a in inst.srcs {
@@ -126,7 +126,7 @@ fn (g: G) frameless_exit(order: List[Int], region: List[Bool]) -> Bool {
   while !work.is_empty() {
     let b = work.pop() ?? 0
     for inst in g.blocks[b].insts {
-      if inst.kind == K_RET || (inst.kind == K_CALL && inst.tail) {
+      if inst.kind == K_RET || (inst.kind == K_CALL && inst.has(IF_TAIL)) {
         return true
       }
     }
@@ -338,7 +338,7 @@ fn (var g: G) shrink_split() {
     }
     var ins: List[Inst] = []
     if !defs.is_empty() {
-      ins.push(Inst{kind: K_PMOVE, defs: defs, srcs: srcs, us: us, nocoal: true})
+      ins.push(Inst{kind: K_PMOVE, defs: defs, srcs: srcs, us: us, fl: IF_NOCOAL})
     }
     ins.push(Inst{kind: K_JUMP, targets: [e.to]})
     g.blocks[x].insts = ins
@@ -485,7 +485,7 @@ fn (var g: G) mark_tails() {
     let n = g.blocks[b].insts.len()
     for k in 0..n {
       if g.blocks[b].insts[k].kind == K_CALL && g.tail_call(b, k) {
-        g.blocks[b].insts[k].tail = true
+        g.blocks[b].insts[k].fl = g.blocks[b].insts[k].fl | IF_TAIL
       }
     }
   }
@@ -494,7 +494,7 @@ fn (var g: G) mark_tails() {
 /// Whether call k of block b is a tail call (mark_tails).
 fn (g: G) tail_call(b: Int, k: Int) -> Bool {
   let c = g.blocks[b].insts[k]
-  if c.noret || c.svc || c.pad >= 0 || c.vfix >= 0 {
+  if c.has(IF_NORET) || c.has(IF_SVC) || c.pad >= 0 || c.vfix >= 0 {
     return false
   }
   for a in c.srcs {

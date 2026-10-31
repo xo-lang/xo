@@ -370,20 +370,20 @@ fn (var g: G) regalloc() {
       let inst = ins[j]
       let at = 4 * (first + j)
       if inst.kind == K_CALL {
-        if cold_saves && inst.cold_call && !inst.tail && !inst.noret && !inst.svc {
+        if cold_saves && inst.has(IF_COLD_CALL) && !inst.has(IF_TAIL) && !inst.has(IF_NORET) && !inst.has(IF_SVC) {
           cold_calls.push((at + 1, b, j))
         } else {
           calls.push(at + 1)
         }
       }
       if !inst.clobbers.is_empty() {
-        clobs.push((at, inst.clobbers, inst.clob_mid))
+        clobs.push((at, inst.clobbers, inst.has(IF_CLOB_MID)))
       }
       for d in inst.defs {
         if d == 0 {
           continue
         }
-        let dp = if inst.early { at } else { at + 2 }
+        let dp = if inst.has(IF_EARLY) { at } else { at + 2 }
         weight[d] = weight[d] + wt
         if bits_has(live, d) {
           push_rng(ranges, d, Rng{s: dp, e: end[d]})
@@ -462,7 +462,7 @@ fn (var g: G) regalloc() {
           push_int(barred, v, r)
         }
       }
-      if inst.kind == K_PMOVE && !inst.nocoal {
+      if inst.kind == K_PMOVE && !inst.has(IF_NOCOAL) {
         for (k, d) in inst.defs.indexed() {
           let a = inst.srcs[k]
           if a.kind == S_REG && a.v != 0 {
@@ -1129,7 +1129,7 @@ const SLOT_OUT = 2 << 24
 /// stack parameters, the return's stack results; and for a call (at its
 /// position), the clobber point of each word it gives its callee.
 fn (g: G) word_hints(inst: Inst, at: Int, var whint: List[List[Int]], var wclob: List[List[Int]]) {
-  if inst.kind == K_CALL && !inst.tail {
+  if inst.kind == K_CALL && !inst.has(IF_TAIL) {
     var nw = 0
     for (k, l) in g.call_locs(inst.srcs, inst.vfix).indexed() {
       if l.reg < 0 {

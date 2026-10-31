@@ -295,7 +295,7 @@ fn (var g: G) set_fault(i: Int, cond: Str, fname: Str, args: List[Src]) {
   let sym = g.sym(fault_entry(fname))
   let pad = g.cur_pad
   let b = g.cur
-  g.blocks[b].insts[i].has_fault = true
+  g.blocks[b].insts[i].fl = g.blocks[b].insts[i].fl | IF_HAS_FAULT
   g.blocks[b].insts[i].fcond = cond
   g.blocks[b].insts[i].ffn = sym
   g.blocks[b].insts[i].fargs = args
@@ -335,7 +335,7 @@ fn (var g: G) checked(fp: Bool, text: Str, us: List[Int], recover: Str, cond: St
   let b = g.cur
   let rs = g.blocks[b].insts[i].us
   if recover.is_empty() || (rs.len() == 2 && rs[0] == rs[1]) {
-    g.blocks[b].insts[i].early = true
+    g.blocks[b].insts[i].fl = g.blocks[b].insts[i].fl | IF_EARLY
   } else {
     g.blocks[b].insts[i].recover = recover
   }
@@ -380,7 +380,7 @@ fn (var g: G) imm(n: Int) -> Int {
 fn (var g: G) konst(d: Int) -> Int {
   let b = g.cur
   let n = g.blocks[b].insts.len()
-  g.blocks[b].insts[n - 1].konst = true
+  g.blocks[b].insts[n - 1].fl = g.blocks[b].insts[n - 1].fl | IF_KONST
   d
 }
 
@@ -1528,7 +1528,7 @@ fn (var g: G) instr1(v: Int) {
       let d = g.str_data(ws)
       let n = g.str_len(ws)
       let w1 = g.real(n)
-      let _c = g.add(Inst{kind: K_CALL, sym: g.sym(fault_entry("xo_fault")), srcs: [rsrc(d), rsrc(n)] + g.loc_args(x.pos), us: [d, w1], noret: true})
+      let _c = g.add(Inst{kind: K_CALL, sym: g.sym(fault_entry("xo_fault")), srcs: [rsrc(d), rsrc(n)] + g.loc_args(x.pos), us: [d, w1], fl: IF_NORET})
       let _t = g.add(Inst{kind: K_TRAP})
     }
     Retain => {

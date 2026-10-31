@@ -37,7 +37,7 @@ fn (g: G) chain_test(b: Int) -> ChainTest {
     return bad
   }
   let inst = g.blocks[b].insts[n - 1]
-  if inst.kind != K_CONDBR || inst.x86 || (inst.cond != "eq" && inst.cond != "ne") {
+  if inst.kind != K_CONDBR || inst.has(IF_X86) || (inst.cond != "eq" && inst.cond != "ne") {
     return bad
   }
   var k = 0
@@ -121,7 +121,7 @@ fn (g: G) only_test(b: Int, c: ChainTest, nuse: Map[Int, Int]) -> Bool {
     return false
   }
   let mv = ins[0]
-  mv.kind == K_PLAIN && mv.konst && mv.defs == [c.kreg] && (nuse.get(c.kreg) ?? 0) == 1
+  mv.kind == K_PLAIN && mv.has(IF_KONST) && mv.defs == [c.kreg] && (nuse.get(c.kreg) ?? 0) == 1
 }
 
 /// The number of reads of each register in g.

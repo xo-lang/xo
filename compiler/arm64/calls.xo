@@ -1037,7 +1037,7 @@ fn (var g: G) mark_cold_call(name: Str) {
   var k = g.blocks[g.cur].insts.len() - 1
   while k >= 0 {
     if g.blocks[g.cur].insts[k].kind == K_CALL {
-      g.blocks[g.cur].insts[k].cold_call = true
+      g.blocks[g.cur].insts[k].fl = g.blocks[g.cur].insts[k].fl | IF_COLD_CALL
       return
     }
     k -= 1
@@ -1576,8 +1576,8 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
             let ct = g.carry_in(x.args[2], zus)
             g.plain("${ct}adcs $d0, ${a0}, ${a1}\ncset $d1, cs", [d, c], zus)
           }
-          g.blocks[g.cur].insts[ii].early = true
-          g.blocks[g.cur].insts[ii].keep = true
+          g.blocks[g.cur].insts[ii].fl = g.blocks[g.cur].insts[ii].fl | IF_EARLY
+          g.blocks[g.cur].insts[ii].fl = g.blocks[g.cur].insts[ii].fl | IF_KEEP
           g.set(v, [if sum { d } else { c }])
           g.set(other, [if sum { c } else { d }])
         } else {
@@ -1652,7 +1652,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
           us.push(g.real(g.word(a)))
         }
         let d = g.new_vreg(false)
-        let _i = g.add(Inst{kind: K_PLAIN, text: ssa.crc32_fold_x86_lines_of(aux_str(x.aux), "$u0", "$u1", "$u2", "$d0").join("\n"), defs: [d], us: us, x86: true, clobbers: cl})
+        let _i = g.add(Inst{kind: K_PLAIN, text: ssa.crc32_fold_x86_lines_of(aux_str(x.aux), "$u0", "$u1", "$u2", "$d0").join("\n"), defs: [d], us: us, fl: IF_X86, clobbers: cl})
         g.set(v, [d])
       }
     }
@@ -1766,7 +1766,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       }
       let nm = aux_str(x.aux)
       let ls = if nm.ends_with("8") { ssa.chacha_poly8_avx2_lines(nm == "rt.chacha_poly_seal8", "$u0", "$u1", "$u2", "$u3", "$u4") } else { ssa.chacha_poly4_x86_lines(nm == "rt.chacha_poly_seal4", "$u0", "$u1", "$u2", "$u3", "$u4") }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ls.join("\n"), us: us, x86: true, clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ls.join("\n"), us: us, fl: IF_X86, clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -1783,7 +1783,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         us.push(g.real(g.word(a)))
       }
       let n = if aux_str(x.aux) == "rt.chacha_stream4" { "$u3" } else { "" }
-      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.chacha4_x86_lines("$u0", "$u1", "$u2", n).join("\n"), us: us, x86: true, clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: ssa.chacha4_x86_lines("$u0", "$u1", "$u2", n).join("\n"), us: us, fl: IF_X86, clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -1816,7 +1816,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // a read of the generic timer: kept, never merged or moved (keep)
       let reg = if aux_str(x.aux) == "rt.ticks" { "cntvct_el0" } else { "cntfrq_el0" }
       let d = g.new_vreg(false)
-      let _i = g.add(Inst{kind: K_PLAIN, text: "mrs $d0, ${reg}", defs: [d], keep: true})
+      let _i = g.add(Inst{kind: K_PLAIN, text: "mrs $d0, ${reg}", defs: [d], fl: IF_KEEP})
       g.set(v, [d])
     }
     "rt.chacha_stream4" => {
@@ -1876,7 +1876,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         us.push(g.real(g.word(a)))
       }
       let t = ssa.aes_gcm8_x86_lines(nr, name.contains("enc"), "$u0", "$u1", "$u2", "$u3", "$u4", "$u5", "$u6").join("\n")
-      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: us, x86: true, clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: us, fl: IF_X86, clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -1965,7 +1965,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       let t = (if aux_str(x.aux) == "rt.mlkem_ntt" { ssa.mlkem_ntt_sse2_lines("$u0", "$u1") } else { ssa.mlkem_inverse_ntt_sse2_lines("$u0", "$u1") }).join("\n")
-      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))], x86: true, clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1]))], fl: IF_X86, clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -1977,7 +1977,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         cl.push(FP_BASE + r)
       }
       let t = ssa.mlkem_mul_acc_sse2_lines("$u0", "$u1", "$u2", "$u3").join("\n")
-      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], x86: true, clobbers: cl})
+      let _i = g.add(Inst{kind: K_PLAIN, text: t, us: [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2])), g.real(g.word(x.args[3]))], fl: IF_X86, clobbers: cl})
       g.clobber()
       g.set(v, [])
     }
@@ -2104,7 +2104,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         us.push(r)
       }
       let defs = g.new_vregs([false])
-      let _i = g.add(Inst{kind: K_CALL, svc: true, srcs: args, defs: defs, us: us})
+      let _i = g.add(Inst{kind: K_CALL, fl: IF_SVC, srcs: args, defs: defs, us: us})
       g.clobber()
       g.set(v, defs)
     }
@@ -2134,7 +2134,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
         g.set(v, defs)
         return true
       }
-      let _i = g.add(Inst{kind: K_CALL, cptr: true, srcs: args, defs: defs, us: us})
+      let _i = g.add(Inst{kind: K_CALL, fl: IF_CPTR, srcs: args, defs: defs, us: us})
       g.clobber()
       g.set(v, defs)
     }
@@ -2215,7 +2215,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       // the frame kept for this instruction's block (Inst.frame)
       let d = g.new_vreg(false)
       let i = g.plain("mov $d0, x29", [d], [])
-      g.blocks[g.cur].insts[i].frame = true
+      g.blocks[g.cur].insts[i].fl = g.blocks[g.cur].insts[i].fl | IF_FRAME
       g.set(v, [d])
     }
     // the runtime's immortal placeholders (an unwinding operation's
@@ -2533,7 +2533,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       let c = g.new_vreg(false)
       let i = g.plain(t, [c], [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
       // a store: not dropped for its dead count
-      g.blocks[g.cur].insts[i].keep = true
+      g.blocks[g.cur].insts[i].fl = g.blocks[g.cur].insts[i].fl | IF_KEEP
       g.clobber()
       g.set(v, [])
     }
@@ -2554,7 +2554,7 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       // synchronization, which calls); what a poll does change, the
       // thread the task runs on, ends the thread local base's reuse
       // (tl_base checks for a poll)
-      let _i = g.add(Inst{kind: K_PLAIN, text: "ldr w16, [$u0]", us: [g.real(g.word(x.args[0]))], poll: true})
+      let _i = g.add(Inst{kind: K_PLAIN, text: "ldr w16, [$u0]", us: [g.real(g.word(x.args[0]))], fl: IF_POLL})
       if g.x86 {
         // amd64 keeps it until measured there
         g.clobber()
@@ -2720,7 +2720,7 @@ fn (var g: G) tl_base() -> Int {
     // _tls_index, plus xo_tlocal's offset in the block (x86win.xo)
     let d = g.new_vreg(false)
     let t = g.new_vreg(false)
-    let i = g.add(Inst{kind: K_PLAIN, text: "movl _tls_index(%rip), $wd1\nmovq %gs:88, $d0\nmovq ($d0,$d1,8), $d0\nleaq xo_tlocal@SECREL32($d0), $d0", defs: [d, t], us: [], x86: true, keep: true})
+    let i = g.add(Inst{kind: K_PLAIN, text: "movl _tls_index(%rip), $wd1\nmovq %gs:88, $d0\nmovq ($d0,$d1,8), $d0\nleaq xo_tlocal@SECREL32($d0), $d0", defs: [d, t], us: [], fl: IF_X86 | IF_KEEP})
     let _i = i
     return d
   }
@@ -2729,7 +2729,7 @@ fn (var g: G) tl_base() -> Int {
     // register but rax and rdi kept; a call, so the function makes its
     // frame (rsp aligned to 16 for the thunk's slow path)
     let d = g.new_vreg(false)
-    let i = g.add(Inst{kind: K_PLAIN, text: "movq _xo_tlocal@TLVP(%rip), %rdi\ncallq *(%rdi)\nmovq %rax, $d0", defs: [d], us: [], x86: true, clobbers: [0, 7], keep: true, frame: true})
+    let i = g.add(Inst{kind: K_PLAIN, text: "movq _xo_tlocal@TLVP(%rip), %rdi\ncallq *(%rdi)\nmovq %rax, $d0", defs: [d], us: [], fl: IF_X86 | IF_KEEP | IF_FRAME, clobbers: [0, 7]})
     let _i = i
     return d
   }
@@ -2742,7 +2742,7 @@ fn (var g: G) tl_base() -> Int {
     var i = g.tl_at
     while ok && i < ins.len() {
       let t = ins[i].text
-      if ins[i].kind != K_PLAIN || ins[i].poll || t.contains("bl ") || t.contains("blr ") || t.contains("svc") {
+      if ins[i].kind != K_PLAIN || ins[i].has(IF_POLL) || t.contains("bl ") || t.contains("blr ") || t.contains("svc") {
         ok = false
       }
       i += 1
@@ -2762,7 +2762,7 @@ fn (var g: G) tl_base() -> Int {
   let i = g.plain("adrp x16, _xo_tlv@PAGE\nadd x16, x16, _xo_tlv@PAGEOFF\nldr x17, [x16]\ncbz x17, 1f\nsub w17, w17, #1\nmrs x16, tpidrro_el0\nand x16, x16, #-8\nldr x17, [x16, x17, lsl #3]\ncbz x17, 1f\nadrp x16, _xo_tlv@PAGE\nadd x16, x16, _xo_tlv@PAGEOFF\nldr x16, [x16]\nlsr x16, x16, #32\nadd x17, x17, x16\nb 2f\n1:\nstp x0, x30, [sp, #-16]!\nbl _xo_tlv_slow\nldp x0, x30, [sp], #16\n2:\nmov $d0, x17", [v], [])
   // not moved, merged, or dropped by a later pass (the base is only valid
   // until the next call)
-  g.blocks[g.cur].insts[i].keep = true
+  g.blocks[g.cur].insts[i].fl = g.blocks[g.cur].insts[i].fl | IF_KEEP
   g.tl_v = v
   g.tl_blk = g.cur
   g.tl_at = g.blocks[g.cur].insts.len()
@@ -3055,7 +3055,7 @@ fn (var g: G) adc_chain(v: Int) -> Bool {
   // early: a sum is written before the later pairs' operands are read,
   // so no def may share a register with a use
   let ii = g.plain(text, defs, us)
-  g.blocks[g.cur].insts[ii].early = true
+  g.blocks[g.cur].insts[ii].fl = g.blocks[g.cur].insts[ii].fl | IF_EARLY
   for i in 0..sums.len() {
     g.set(sums[i], [defs[i]])
   }
@@ -3200,7 +3200,7 @@ fn (var g: G) adc_chain_split(sums: List[Int], cars: List[Int]) {
       text = "${text}\ncset $d1, cs"
     }
     let ii = g.plain(text, defs, us)
-    g.blocks[g.cur].insts[ii].keep = true
+    g.blocks[g.cur].insts[ii].fl = g.blocks[g.cur].insts[ii].fl | IF_KEEP
     g.set(sums[i], [d])
     if cars[i] >= 0 {
       // a carry inside the chain has no reader but the next pair (the
@@ -3447,7 +3447,7 @@ fn (var g: G) x86_atomic_def(text: Str, us: List[Int], clob: List[Int]) -> Int {
   let d = g.atomic_def(text, us)
   let b = g.cur
   let i = g.blocks[b].insts.len() - 1
-  g.blocks[b].insts[i].x86 = true
+  g.blocks[b].insts[i].fl = g.blocks[b].insts[i].fl | IF_X86
   g.blocks[b].insts[i].clobbers = clob
   d
 }
@@ -3456,8 +3456,8 @@ fn (var g: G) atomic_def(text: Str, us: List[Int]) -> Int {
   let d = g.new_vreg(false)
   let i = g.plain(text, [d], us)
   let b = g.cur
-  g.blocks[b].insts[i].early = true
-  g.blocks[b].insts[i].keep = true
+  g.blocks[b].insts[i].fl = g.blocks[b].insts[i].fl | IF_EARLY
+  g.blocks[b].insts[i].fl = g.blocks[b].insts[i].fl | IF_KEEP
   g.clobber()
   d
 }
