@@ -252,7 +252,7 @@ pub fn pd_ready(pd: Int, mode: Int) {
 /// server (cabi_http.xo pd_cont_fire through the function table: hserve.xo
 /// imports this module).
 fn cont_fire(pd: Int, cont: Int) {
-  let f = rt.mem_load(ev(), EV_CONTFIRE, 8)
+  let f = rt.slot_load[Int](ev() + EV_CONTFIRE, 0, ACQUIRE)
   if f != 0 {
     let _r = rt.call_c2(f, pd, cont)
   }
@@ -262,7 +262,12 @@ fn cont_fire(pd: Int, cont: Int) {
 /// (hserve.xo srv_new, rt.fn_addr of cabi_http.xo pd_cont_fire; a program
 /// without an HTTP server has no such export, so the address comes from
 /// the module that has).
-pub fn set_cont_fire(f: Int) { rt.mem_store(ev(), EV_CONTFIRE, f, 8) }
+pub fn set_cont_fire(f: Int) {
+  // every server stores the same address, from any thread, while the poller
+  // reads it: the first one wins (atomics: a plain store raced with
+  // poll_round and with another srv_new under --race)
+  let _s = rt.slot_cas(ev() + EV_CONTFIRE, 0, 0, f, ACQ_REL)
+}
 
 /// Parks an idle connection's wait on pd (decision 0449): cont, an id the
 /// caller holds a resume function under, is handed to cont_fire when pd

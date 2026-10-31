@@ -306,10 +306,44 @@ pub fn resume_next(s: rthttp.Srv) -> (fn() -> ())? {
     st(a, hconn.SR_RESUMER, 0)
     hconn.runlock(a)
     if poll.canceled() {
+      drain(a)
       return None
     }
   }
   None
+}
+
+/// The resumer ends (its scope canceled it) with connections still parked
+/// or fired and not yet resumed: each parked one is taken back and closed,
+/// and every fired record is freed with its resume function (which
+/// releases the connection), so no continuation record outlives the server
+/// (the arm64 goldens' "1 allocations still live at exit", 2026-10-31).
+fn drain(a: Int) {
+  var parked: List[Int] = []
+  hconn.rlock(a)
+  var pc = ld(a, hconn.SR_PARKLIST)
+  while pc != 0 {
+    parked.push(pc)
+    pc = ld(pc, PC_PLINK)
+  }
+  hconn.runlock(a)
+  for pc in parked {
+    if poll.pd_unpark(ld(pc, PC_PD), pc) {
+      poll.pd_close(ld(pc, PC_PD))
+      cont_fire(pc)
+    }
+  }
+  hconn.rlock(a)
+  var r = ld(a, hconn.SR_READY)
+  st(a, hconn.SR_READY, 0)
+  hconn.runlock(a)
+  while r != 0 {
+    let next = ld(r, PC_NEXT)
+    let id = ld(r, PC_ID)
+    obj.free_obj(r)
+    let _f = stream_get(id, true)
+    r = next
+  }
 }
 
 /// Stops the server: connections close after their current request, and
