@@ -266,11 +266,13 @@ fn dump_decl(var out: StrBuilder, depth: Int, label: Str, decl: Decl) {
       dump_doc(out, d, e.doc)
       dump_ident(out, d, "name", e.name)
       dump_type_params(out, d, e.type_params)
+      dump_ident_opt(out, d, "value_type", e.value_type)
       for (i, v) in e.variants.indexed() {
         head(out, d, "variants[${i}]", "Variant", v.span)
         out.write("\n")
         dump_doc(out, d + 1, v.doc)
         dump_ident(out, d + 1, "name", v.name)
+        dump_expr_opt(out, d + 1, "value", v.value)
         if let Some(fields) = v.fields {
           if fields.is_empty() {
             empty_list(out, d + 1, "fields")

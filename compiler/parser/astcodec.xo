@@ -320,11 +320,13 @@ fn (var e: Enc) decl(d: Decl) {
       e.bool(en.is_pub)
       e.ident(en.name)
       e.tparams(en.type_params)
+      e.oident(en.value_type)
       e.int(en.variants.len())
       for v in en.variants {
         e.span(v.span)
         e.odoc(v.doc)
         e.ident(v.name)
+        e.oexpr(v.value)
         match v.fields {
           Some(fs) => {
             e.bool(true)
@@ -1296,6 +1298,7 @@ fn (var r: Dec) decl() -> Decl {
       let pb = r.bool()
       let n = r.ident()
       let tps = r.tparams()
+      let vtype = r.oident()
       let nv = r.count()
       var vs: List[Variant] = []
       for _ in 0..nv {
@@ -1305,6 +1308,7 @@ fn (var r: Dec) decl() -> Decl {
         let vsp = r.span()
         let vdoc = r.odoc()
         let vname = r.ident()
+        let vval = r.oexpr()
         var vfs: List[VariantField]? = None
         if r.bool() {
           let nvf = r.count()
@@ -1321,10 +1325,10 @@ fn (var r: Dec) decl() -> Decl {
           }
           vfs = Some(l)
         }
-        vs.push(Variant{span: vsp, doc: vdoc, name: vname, fields: vfs})
+        vs.push(Variant{span: vsp, doc: vdoc, name: vname, fields: vfs, value: vval})
       }
       let dv = r.idents()
-      Decl.EnumDecl(d: EnumDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, variants: vs, derive: dv})
+      Decl.EnumDecl(d: EnumDecl{span: s, doc: doc, is_pub: pb, name: n, type_params: tps, value_type: vtype, variants: vs, derive: dv})
     }
     3 => {
       let s = r.span()

@@ -206,6 +206,8 @@ pub struct EnumDecl {
   pub is_pub: Bool
   pub name: Ident
   pub type_params: List[TypeParam]
+  /// `enum E: Int { ... }`: the value type (decision 0269), None for a plain enum.
+  pub value_type: Ident? = None
   pub variants: List[Variant] = []
   pub derive: List[Ident] = []
 }
@@ -216,6 +218,8 @@ pub struct Variant {
   pub doc: Doc?
   pub name: Ident
   pub fields: List[VariantField]? = None
+  /// `Name = expr` of a valued enum (decision 0269).
+  pub value: Expr? = None
 }
 
 /// `name: Type` or `from Type` (name None).

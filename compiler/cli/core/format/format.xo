@@ -968,6 +968,10 @@ fn (var p: Printer) derive(ds: List[parser.Ident], args: List[parser.DeriveArg])
 fn (var p: Printer) variant(v: parser.Variant) {
   p.w(name_of(v.name))
   p.done(end_off(v.name.span))
+  if let Some(x) = v.value {
+    p.w(" = ")
+    p.expr(x)
+  }
   let fields = match v.fields {
     Some(fs) => fs
     None => return
@@ -983,7 +987,12 @@ fn (var p: Printer) enum_decl(e: parser.EnumDecl) {
   p.pub_kw(e.is_pub)
   p.w("enum " + name_of(e.name))
   p.done(end_off(e.name.span))
-  let end = p.type_params(e.type_params, end_off(e.name.span))
+  var end = p.type_params(e.type_params, end_off(e.name.span))
+  if let Some(vt) = e.value_type {
+    p.w(": " + name_of(vt))
+    p.done(end_off(vt.span))
+    end = end_off(vt.span)
+  }
   p.w(" ")
   var items: List[Item] = []
   for v in e.variants {
