@@ -61,8 +61,12 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   (OFF_MAX_MIN over 180, the full tier's 300) holds a slot, the oldest
   plain job takes the free slot, since the exclusive one cannot start
   before the long job ends (tier 31 held a slot about two hours while
-  twelve jobs waited behind an exclusive --ab). Keep at most 2 jobs
-  queued per agent.
+  twelve jobs waited behind an exclusive --ab). At most 2 arm64 jobs
+  per agent, waiting or running: offload.sh counts the jobs of its
+  Claude session and refuses a third with exit 5 (OFF_MAX_QUEUED,
+  0 turns it off; lead, 2026-10-31: one agent had five --ab runs
+  queued). A job whose ssh connection drops (its Mac side stopped) ends
+  on the host too, within about 15 s, and its ticket goes with it.
 - `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
   self|self=a|edit PROG [FLAG...]|PROG [ARG...]` (`self=a`: BASE's
   compiler/xo as the self build's program, for a NEW whose compiler calls
