@@ -49,6 +49,14 @@ const BUMP_END = 32
 const RT_DEPTH = 40
 const RT_ALLOCS = 48
 const MID_MAX = 56
+/// The size classes' limit at most (heapos.xo MID_MAX: the 256 KiB class
+/// is the last), and a heap record's limit, read and set: for the llrt
+/// tests (obj_test raises this thread's to the limit for the page classes
+/// above darwin's limit at start, heapos.xo mid_default, and puts it
+/// back).
+pub const MID_MAX_LIMIT = 262136
+pub fn mid_max_of(h: Int) -> Int { rt.mem_load(h, MID_MAX, 8) }
+pub fn set_mid_max_of(h: Int, m: Int) { rt.mem_store(h, MID_MAX, m, 8) }
 const CENTRAL = 64
 const LAST = 72
 const FREE_LISTS = 80

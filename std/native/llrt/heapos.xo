@@ -805,7 +805,7 @@ const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73 + 24
 const H_MAG_CAP = 10368
 /// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).
 const MAG_BYTES = 65536
-const MID_MAX = 262136
+const MID_MAX = alloc.MID_MAX_LIMIT
 /// The size classes' limit at start: blocks above it are mapped from the
 /// system and returned to it by munmap when freed, while a freed class
 /// block stays on its free list. 16 KiB on darwin (2026-10-30, the self

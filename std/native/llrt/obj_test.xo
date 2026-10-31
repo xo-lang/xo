@@ -1,6 +1,7 @@
 // Tests of obj.xo (decision 0262): `xo test --std-module=native/llrt/obj`,
 // run by internal/stdtest.
 
+use native/llrt/alloc
 use native/rt
 
 test "Str == of 1 to 20 bytes: a difference at each place, and equal copies" {
@@ -22,6 +23,14 @@ test "Str == of 1 to 20 bytes: a difference at each place, and equal copies" {
 /// its free, stays in place when resized within its class and moves with
 /// its words when it outgrows it; the classes below keep their prefix.
 test "page class blocks are page aligned, kept, reused and resized" {
+  // the classes above 16 KiB are big blocks under darwin's limit at
+  // start (heapos.xo mid_default, 16 KiB since 2026-10-30: a 20000 byte
+  // block came back 16 past a page), so the test raises this thread's
+  // limit to MID_MAX (alloc.MID_MAX_LIMIT) for its blocks and puts it
+  // back at its end
+  let h = heap_word()
+  let mid0 = alloc.mid_max_of(h)
+  alloc.set_mid_max_of(h, alloc.MID_MAX_LIMIT)
   let p = alloc_obj(16000)
   expect(p & 16383) == 0
   let q = alloc_obj(8000)
@@ -64,9 +73,15 @@ test "page class blocks are page aligned, kept, reused and resized" {
   free_obj(t)
   free_obj(s)
   free_obj(p2)
+  alloc.set_mid_max_of(h, mid0)
 }
 
 test "many page class blocks across chunks are distinct and freed" {
+  // the 32 KiB class is a page class only above darwin's limit at start
+  // (the test above): raised for this thread while the blocks live
+  let h = heap_word()
+  let mid0 = alloc.mid_max_of(h)
+  alloc.set_mid_max_of(h, alloc.MID_MAX_LIMIT)
   // 600 blocks of 32 KiB: more than one 4 MiB page chunk (127 blocks each)
   var bs: List[Int] = []
   for k in 0..600 {
@@ -92,4 +107,5 @@ test "many page class blocks across chunks are distinct and freed" {
   let again = alloc_obj(30000)
   expect(again) == bs[599]
   free_obj(again)
+  alloc.set_mid_max_of(h, mid0)
 }
