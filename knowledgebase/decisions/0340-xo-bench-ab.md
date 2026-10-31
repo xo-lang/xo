@@ -73,7 +73,7 @@ b_i). The report is:
   interleaving are kept;
 - the verdict: **better** or **worse** when the interval excludes 1.0
   (direction from the table), else **within noise**; **too few rounds**
-  below 5 valid rounds. `--alpha` changes the level (default 0.05).
+  below 3 valid rounds (5 until the 2026-10-31 addendum). `--alpha` changes the level (default 0.05).
 
 A round marked `loaded` is excluded from the statistics by default
 (`--keep-loaded` includes it), and the report says how many rounds were
@@ -142,3 +142,15 @@ about 100 ms has a coarse `cpu_ms`.
 - **Extend `xo dev compare` (callgrind):** it counts instructions
   exactly but says nothing of wall, RSS or contention, which is where
   0077, 0286 and the ghash4 revert were decided.
+
+## Addendum 2026-10-31: three rounds
+
+The owner, 2026-10-31: "10 rounds sounds way too many", then "Do 3
+rounds". MIN_ROUNDS is 3 (was 5) and ab-host.sh runs 3 rounds after one
+warmup. With 3 paired rounds the bootstrap interval spans about the
+rounds' own spread, so a verdict of better or worse needs all three
+rounds on one side of 1.0; on a change with no effect that happens by
+chance about one time in four (one in eight for each direction). A
+verdict on an effect under about 3%, and any "no slower" claim, is
+confirmed with `--rounds=10`; a large effect (the tail merge's 0.812,
+whose 10-round interval was 0.808 to 0.815) needs no more.

@@ -1032,7 +1032,7 @@ two settings (`--env-a/--env-b`, `--args-a/--args-b`), in interleaved
 rounds (the order alternates each round) and prints per metric each
 side's median and interquartile spread, the ratio B/A with a 95%
 percentile bootstrap interval over the rounds, and a verdict (better,
-worse, within noise; too few rounds under 5; no ratio when A's median
+worse, within noise; too few rounds under 3 (decision 0340's 2026-10-31 addendum); no ratio when A's median
 is 0 and B's is not, both 0 is ratio 1; too coarse when both medians are
 under 10x the metric's resolution, cpu_ms being 10 ms). Metrics: wall_ms, cpu_ms,
 cpu_us_per_op, instructions, instructions_per_op, cycles, cycles_per_op and

@@ -103,8 +103,10 @@ pub fn bootstrap_ratio(a: List[Float], b: List[Float], resamples: Int, seed: Int
   Ratio{ratio: base, lo: quantile(ratios, alpha / 2.0), hi: quantile(ratios, 1.0 - alpha / 2.0)}
 }
 
-/// The fewest rounds a verdict is given for.
-pub const MIN_ROUNDS = 5
+/// The fewest rounds a verdict is given for (owner, 2026-10-31: 3, was 5;
+/// with 3 paired rounds the interval spans about the rounds' own spread, so a
+/// verdict needs all three rounds to agree).
+pub const MIN_ROUNDS = 3
 
 /// verdict is "better" when the interval lies wholly on the good side of
 /// 1.0, "worse" when wholly on the bad side, else "within noise"; "too few

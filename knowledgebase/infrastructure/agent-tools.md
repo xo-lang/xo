@@ -663,11 +663,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   compiler/xo; when NEW adds a std function the compiler calls, BASE
   cannot build it ("round 0: A: exit 1"), so use `self=a` (BASE's
   sources, which NEW's std also builds; 2026-10-30).
-  Rounds (owner, 2026-10-31: "10 rounds sounds way too many"): ab-host.sh
-  runs 5 rounds after 1 warmup (3 for `edit`). Rerun with `--rounds=10`
-  only when the 5-round interval reaches the claim's margin (a "no
-  slower" claim whose interval crosses 1.0, or an effect under about 1%);
-  a large effect needs no more.
+  Rounds (owner, 2026-10-31: "Do 3 rounds"): ab-host.sh runs 3 rounds
+  after 1 warmup (3 for `edit`), and xo bench gives a verdict from 3
+  rounds (decision 0340's addendum). A 3-round verdict needs all three
+  rounds to agree, which a change with no effect does one time in four,
+  so confirm with `--rounds=10` a verdict on an effect under about 3% and
+  every "no slower" claim; a large effect needs no more.
   The Mac's measure windows are only for darwin only claims (Mach-O,
   the macOS scheduler or syscalls) and Mac memory footprints.
 - A placement claim (a sweep over XO_ARM64_PAD, an alignment, a layout)

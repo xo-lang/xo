@@ -24,7 +24,8 @@ test "bootstrap ratio of a clear change excludes 1" {
   expect(r.hi < 1.0)
   expect(verdict(r, 10, true) == "better")
   expect(verdict(r, 10, false) == "worse")
-  expect(verdict(r, 4, true) == "too few rounds")
+  expect(verdict(r, 3, true) == "better")
+  expect(verdict(r, 2, true) == "too few rounds")
 }
 
 test "bootstrap ratio of noise includes 1" {
@@ -62,7 +63,7 @@ test "zero against nonzero has no ratio" {
   expect(!r.defined)
   expect(r.ratio == r.ratio)
   expect(verdict(r, 5, true) == "no ratio")
-  expect(verdict(r, 3, true) == "too few rounds")
+  expect(verdict(r, 2, true) == "too few rounds")
 }
 
 test "coarse metrics" {
