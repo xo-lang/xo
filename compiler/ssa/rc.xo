@@ -569,8 +569,19 @@ fn (var r: Rc) leaf_uses(f: Func, v: Int) -> List[Use] {
 /// leaf_uses without the memo.
 fn (var r: Rc) leaf_uses_fresh(f: Func, v: Int) -> List[Use] {
   let x = f.values[v]
-  var out = List[Use].with_capacity(x.args.len())
-  for (i, m) in r.modes(f, v).indexed() {
+  let ms = r.modes(f, v)
+  // the room every use needs, once: each argument's leaves (memoized) and
+  // an owner's use; a list of one slot an argument grew by doubling (the
+  // uses were 3.5% of the self-build's allocation, 2026-10-30, ADR 0448
+  // stage 4)
+  var n = 0
+  for (i, m) in ms.indexed() {
+    if m != Mode.No {
+      n += r.leaves(f, x.args[i]).len() + 1
+    }
+  }
+  var out = List[Use].with_capacity(n)
+  for (i, m) in ms.indexed() {
     if m == Mode.No {
       continue
     }
@@ -1073,7 +1084,6 @@ fn (k: Counted) borrows(l: Leaf) -> Int {
 /// The per function state of the pass (rcFunc).
 struct RcFunc {
   live_in: List[Map[Int, Leaf]] = []
-  live_out: List[Map[Int, Leaf]] = []
   /// live_in per block in sorted_leaves order, made once after liveness
   /// (edge_need read it for every edge, sorting again each time)
   live_sorted: List[List[Leaf]] = []
@@ -1383,14 +1393,16 @@ fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
   // predecessors once, where passes over every block rebuilt every set
   // until no size changed (bench/results/xo1-speed-2026-10-13.md). Only
   // the sets matter: the in sets are read sorted (sorted_leaves), the
-  // out sets not at all.
+  // out sets only here, so they keep the leaves' keys alone (a map of
+  // leaves per block was 4% of the self-build's allocation, 2026-10-30,
+  // ADR 0448 stage 4).
   let n = f.blocks.len()
   c.live_in = []
-  c.live_out = []
-  var preds: List[List[Int]] = []
+  var live_out: List[Set[Int]] = List.with_capacity(n)
+  var preds: List[List[Int]] = List.with_capacity(n)
   for _ in 0..n {
     c.live_in.push({})
-    c.live_out.push({})
+    live_out.push(#{})
     preds.push([])
   }
   for i in 0..n {
@@ -1434,10 +1446,10 @@ fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
     let l = wl.pop() ?? Leaf{root: 0, path: ""}
     let k = leaf_key(l)
     for p in preds[b] {
-      if c.live_out[p].contains(k) {
+      if live_out[p].contains(k) {
         continue
       }
-      c.live_out[p][k] = l
+      live_out[p].add(k)
       if f.values[l.root].block != p && !c.live_in[p].contains(k) {
         c.live_in[p][k] = l
         wb.push(p)
@@ -1498,10 +1510,19 @@ fn (r: Rc) rc_ops(var f: Func, op: Op, l: Leaf, bl: Int, n: Int) -> List[Int] {
 /// of these: x509.parse's 588 releases of a setfield's old value
 /// (2026-10-17, Xo lang 4's count).
 fn immortal_leaf(f: Func, l: Leaf, sums: Map[Str, List[Bool]]) -> Bool {
-  imm_at(f, l.root, l.path.split("."), 1, sums, 0, [])
+  imm_at(f, l.root, l.path, 1, sums, 0, [])
 }
 
-/// Whether the part at path parts[k..] of value v is immortal
+/// The end of the path part that starts at byte k of path (imm_at): the
+/// next dot, or the path's end.
+fn part_end(path: Str, k: Int) -> Int {
+  match path[k..path.len()].find(".") {
+    Some(i) => k + i
+    None => path.len()
+  }
+}
+
+/// Whether the part at path[k..] of value v is immortal
 /// (immortal_leaf): through struct and tuple literals, field updates, a
 /// call of a function of sums, and block parameters whose every incoming
 /// argument is (an inlined call's continuation); a parameter already
@@ -1509,7 +1530,11 @@ fn immortal_leaf(f: Func, l: Leaf, sums: Map[Str, List[Bool]]) -> Bool {
 /// from outside it decide (2026-10-24: a constant's list carried around
 /// a loop with the empty list before its first read was released each
 /// time the loop began, a call that kept the loop's constants in it).
-fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]], depth: Int, walking: List[(Int, Int)]) -> Bool {
+/// k is a byte offset just past a dot of the leaf's path (".0.2"), past
+/// its end when the walk reached the leaf: the path is read in place, not
+/// split (12 GB of the self-build's allocation, 2026-10-30, ADR 0448
+/// stage 4).
+fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth: Int, walking: List[(Int, Int)]) -> Bool {
   if depth > 24 {
     return false
   }
@@ -1531,20 +1556,20 @@ fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]],
     }
     for e in es {
       let args = f.edges[e].args
-      if pi >= args.len() || args[pi] < 0 || !imm_at(f, args[pi], parts, k, sums, depth + 1, w2) {
+      if pi >= args.len() || args[pi] < 0 || !imm_at(f, args[pi], path, k, sums, depth + 1, w2) {
         return false
       }
     }
     return true
   }
-  if k >= parts.len() {
+  if k > path.len() {
     if x.op == Op.Variant {
       // an enum is one leaf whose release releases its fields: a variant
       // of nothing but immortal fields (None, Some of a constant string)
       // is immortal (2026-10-24: view_lens hands an option of a view the
       // empty string, and drops its releases)
       for a in x.args {
-        if !imm_at(f, a, parts, k, sums, depth + 1, walking) {
+        if !imm_at(f, a, path, k, sums, depth + 1, walking) {
           return false
         }
       }
@@ -1552,20 +1577,21 @@ fn imm_at(f: Func, v: Int, parts: List[Str], k: Int, sums: Map[Str, List[Bool]],
     }
     return imm_value(x) || const_list(f, x)
   }
-  let idx = Int.parse(parts[k]) ?? -1
+  let e = part_end(path, k)
+  let idx = Int.parse(path[k..e]) ?? -1
   if x.op is Op.Struct | Op.Tuple {
     if idx < 0 || idx >= x.args.len() {
       return false
     }
-    return imm_at(f, x.args[idx], parts, k + 1, sums, depth + 1, walking)
+    return imm_at(f, x.args[idx], path, e + 1, sums, depth + 1, walking)
   }
   if x.op == Op.SetField {
     if aux_int(x.aux) == idx {
-      return imm_at(f, x.args[1], parts, k + 1, sums, depth + 1, walking)
+      return imm_at(f, x.args[1], path, e + 1, sums, depth + 1, walking)
     }
-    return imm_at(f, x.args[0], parts, k, sums, depth + 1, walking)
+    return imm_at(f, x.args[0], path, k, sums, depth + 1, walking)
   }
-  if x.op == Op.Call && k == parts.len() - 1 {
+  if x.op == Op.Call && e == path.len() {
     // a field of a call of a function whose one return is a struct
     // literal with that field immortal (immortal_returns)
     if let Some(fs) = sums.get(aux_name(x.aux)) {
@@ -1773,7 +1799,11 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
   let term = f.term(bl)
   let ni = f.blocks[bl].instrs.len()
   let body = f.blocks[bl].instrs[0..ni - 1]
-  var live: Map[Int, Leaf] = {}
+  // the leaves live below the current point, by key: the leaves
+  // themselves are read only for a branch's held set (a map of leaves per
+  // block was 2.7% of the self-build's allocation, 2026-10-30, ADR 0448
+  // stage 4)
+  var live: Set[Int] = #{}
   // the new instruction list, reversed
   var rev = List[Int].with_capacity(ni + ni / 2 + 4)
   match f.values[term].op {
@@ -1783,7 +1813,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
       for l in need.order() {
         var n = need.consumes(l)
         if r.tracked(f, l) {
-          live[leaf_key(l)] = l
+          live.add(leaf_key(l))
           n -= 1
         }
         for x in r.rc_ops(f, Op.Retain, l, bl, n) {
@@ -1799,16 +1829,18 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
     }
     Branch => {
       var needs: List[EdgeNeed] = []
+      var hm: Map[Int, Leaf] = {}
       for e in f.values[term].succs {
         let k = r.edge_need(f, c, e)
         for l in k.order() {
           if r.tracked(f, l) {
-            live[leaf_key(l)] = l
+            live.add(leaf_key(l))
+            hm[leaf_key(l)] = l
           }
         }
         needs.push(k)
       }
-      let held = r.sorted_leaves(f, live)
+      let held = r.sorted_leaves(f, hm)
       // on the cleanup path of a landing check, the operation checked
       // produced nothing (decision 0085)
       let (site, _) = landing_site(f, bl)
@@ -1829,7 +1861,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
       for l in k.order {
         var n = k.consumes(l)
         if r.tracked(f, l) {
-          live[leaf_key(l)] = l
+          live.add(leaf_key(l))
           n -= 1
         }
         for x in r.rc_ops(f, Op.Retain, l, bl, n) {
@@ -1847,7 +1879,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
       // the program stops: nothing is released
       for u in r.leaf_uses(f, term) {
         if r.tracked(f, u.l) {
-          live[leaf_key(u.l)] = u.l
+          live.add(leaf_key(u.l))
         }
       }
       rev.push(term)
@@ -1916,7 +1948,7 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
         }
       }
       if tr {
-        live[key] = l
+        live.add(key)
       }
     }
     var i = after.len() - 1
@@ -2144,14 +2176,34 @@ fn (var r: Rc) group_releases(var f: Func) {
       while j < ins.len() && (f.values[ins[j]].op is Op.Field | Op.Release) {
         j += 1
       }
+      // a joined group has at least GROUP_LEAVES released leaves: a run
+      // that releases fewer is kept as it is, with none of the maps below
+      // (most runs; the maps and sets of every run were 13.7% of the
+      // self-build's allocation, 2026-10-30, ADR 0448 stage 4)
+      var nleaves = 0
+      for k in i..j {
+        if f.values[ins[k]].op == Op.Release {
+          nleaves += r.leaves(f, f.values[ins[k]].args[0]).len()
+        }
+      }
+      if nleaves < GROUP_LEAVES {
+        for k in i..j {
+          out.push(ins[k])
+        }
+        i = j
+        continue
+      }
       // the leaves released in the run, by group: a root, or for the
       // results of a call one result (the arm64 emitter reads a call's
       // `var` results in place while only field reads use the call,
       // byref.xo lazy_result, and a release of the whole call would load
       // every word: bench/results/fast-builds-2026-10-13.md)
-      var by_group: Map[Int, List[Int]] = {}
+      // group g's released leaf keys are keys[gi[g]], its root and
+      // result gsite[gi[g]], in groups' order
+      var gi: Map[Int, Int] = {}
+      var keys: List[List[Int]] = []
       var groups: List[Int] = []
-      var gsite: Map[Int, (Int, Int)] = {}
+      var gsite: List[(Int, Int)] = []
       var bad: Set[Int] = #{}
       for k in i..j {
         let v = ins[k]
@@ -2160,29 +2212,38 @@ fn (var r: Rc) group_releases(var f: Func) {
         }
         let a = f.values[v].args[0]
         let ls = r.leaves(f, a)
-        var mine: Set[Int] = #{}
+        var g0 = -1
+        var mixed = false
         for l in ls {
           let (g, root, comp) = r.leaf_group(f, l)
-          mine.add(g)
-          if !by_group.contains(g) {
-            by_group[g] = []
-            groups.push(g)
-            gsite[g] = (root, comp)
+          if g0 == -1 {
+            g0 = g
+          } else if g != g0 {
+            mixed = true
           }
-          var ks = by_group.get(g) ?? []
-          ks.push(leaf_key(l))
-          by_group[g] = ks
+          let n = gi.get(g) ?? -1
+          if n < 0 {
+            gi[g] = groups.len()
+            groups.push(g)
+            gsite.push((root, comp))
+            keys.push([leaf_key(l)])
+          } else {
+            keys[n].push(leaf_key(l))
+          }
         }
-        if mine.len() > 1 {
-          for g in mine {
-            bad.add(g)
+        if mixed {
+          for l in ls {
+            bad.add(r.leaf_group(f, l).0)
           }
         }
       }
       var joined: Map[Int, Bool] = {}
-      for g in groups {
-        let ks = by_group.get(g) ?? []
-        let (root, comp) = gsite.get(g) ?? (-1, -1)
+      for (n, g) in groups.indexed() {
+        let ks = keys[n]
+        if ks.len() < GROUP_LEAVES {
+          continue
+        }
+        let (root, comp) = gsite[n]
         let all = r.group_leaves(f, root, comp)
         if bad.contains(g) || all.len() < GROUP_LEAVES || ks.len() != all.len() {
           continue
@@ -2236,8 +2297,7 @@ fn (var r: Rc) group_releases(var f: Func) {
 /// that is a call, the result it belongs to (else -1).
 fn (r: Rc) leaf_group(f: Func, l: Leaf) -> (Int, Int, Int) {
   if (f.values[l.root].op is Op.Call | Op.CallValue) && l.path.len() > 1 {
-    let first = l.path[1..l.path.len()].split(".")[0]
-    let comp = Int.parse(first) ?? -1
+    let comp = Int.parse(l.path[1..part_end(l.path, 1)]) ?? -1
     return (l.root * 4294967296 + comp + 1, l.root, comp)
   }
   (l.root * 4294967296, l.root, -1)
@@ -3001,7 +3061,7 @@ fn merge_jumps(var f: Func) {
 /// only field of its variant, and the enum leaf it reads is owned,
 /// counted, and dead after v, so the enum's release and the retains of
 /// the payload's live leaves would count the same words.
-fn (var r: Rc) movable(f: Func, v: Int, live: Map[Int, Leaf]) -> Bool {
+fn (var r: Rc) movable(f: Func, v: Int, live: Set[Int]) -> Bool {
   let x = f.values[v]
   if x.op != Op.Payload || x.args.len() != 1 {
     return false
