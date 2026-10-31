@@ -615,6 +615,7 @@ test "link_view keeps the build's settings, which the cleanup cache's key reads 
   expect(v.inline_str) == true
   expect(v.det) == true
   expect(v.race) == true
+}
 
 test "a valued enum reports a duplicate value (XO0428) and an invalid one (XO0429), decision 0269" {
   let out = check_files(os, "v", [("v/main.xo", """
