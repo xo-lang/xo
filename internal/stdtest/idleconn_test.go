@@ -24,13 +24,17 @@ import (
 //
 // Linux only (it reads /proc), and heavy (it needs 80,000 descriptors and
 // about a minute): it runs when XO_TEST_IDLE40K=1, on the offload host.
-func TestIdleConnections40k(t *testing.T) { idle40k(t, false) }
+func TestIdleConnections40k(t *testing.T) { idle40k(t, false, "h1") }
 
 // TestIdleConnections40kTLS is the same over HTTP/1.1 on TLS (decision
 // 0449 stage 1b): the idle TLS connections park too.
-func TestIdleConnections40kTLS(t *testing.T) { idle40k(t, true) }
+func TestIdleConnections40kTLS(t *testing.T) { idle40k(t, true, "h1") }
 
-func idle40k(t *testing.T, useTLS bool) {
+// TestIdleConnections40kH2 is the same over HTTP/2 (stage 1c): each
+// connection carries one finished request and parks.
+func TestIdleConnections40kH2(t *testing.T) { idle40k(t, true, "h2") }
+
+func idle40k(t *testing.T, useTLS bool, mode string) {
 	if runtime.GOOS != "linux" {
 		t.Skip("reads /proc/PID/maps")
 	}
@@ -74,7 +78,7 @@ func idle40k(t *testing.T, useTLS bool) {
 		cert, _ := os.ReadFile(filepath.Join(dir, "cert.pem"))
 		key, _ := os.ReadFile(filepath.Join(dir, "key.pem"))
 		s.Env = append(s.Env, "TLS_CERT="+string(cert), "TLS_KEY="+string(key))
-		args = append(args, "-tls")
+		args = append(args, "-tls", "-mode", mode)
 	}
 	if err := s.Start(); err != nil {
 		t.Fatal(err)

@@ -145,6 +145,7 @@ func main() {
 	sem := make(chan struct{}, 64)
 	var mu sync.Mutex
 	var conns []net.Conn
+	var clients []*http.Client
 	var ok, failed int
 	for i := 0; i < *n; i++ {
 		wg.Add(1)
@@ -157,14 +158,22 @@ func main() {
 			if *mode == "h2" {
 				tr := &http.Transport{ForceAttemptHTTP2: true, TLSClientConfig: &tls.Config{InsecureSkipVerify: true},
 					MaxIdleConnsPerHost: 1}
+				if *srcs > 1 {
+					la := &net.TCPAddr{IP: net.IPv4(127, 0, 0, byte(1+i%*srcs))}
+					tr.DialContext = (&net.Dialer{LocalAddr: la}).DialContext
+				}
 				var resp *http.Response
-				resp, err = (&http.Client{Transport: tr}).Get("https://" + *addr + "/")
+				cl := &http.Client{Transport: tr}
+				resp, err = cl.Get("https://" + *addr + "/")
 				if err == nil {
 					io.Copy(io.Discard, resp.Body)
 					resp.Body.Close()
 					if resp.ProtoMajor != 2 {
 						err = fmt.Errorf("proto %d", resp.ProtoMajor)
 					}
+					mu.Lock()
+					clients = append(clients, cl)
+					mu.Unlock()
 				}
 			} else {
 				var c net.Conn
@@ -246,7 +255,19 @@ func main() {
 				nbad++
 			}
 		}
-		fmt.Printf("second request: %d of %d held connections failed\n", nbad, len(conns))
+		for _, cl := range clients {
+			resp, err := cl.Get("https://" + *addr + "/")
+			if err != nil {
+				nbad++
+				continue
+			}
+			io.Copy(io.Discard, resp.Body)
+			resp.Body.Close()
+			if resp.ProtoMajor != 2 || resp.StatusCode != 200 {
+				nbad++
+			}
+		}
+		fmt.Printf("second request: %d of %d held connections failed\n", nbad, len(conns)+len(clients))
 		if nbad != 0 {
 			bad = true
 		}
