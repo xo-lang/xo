@@ -1886,7 +1886,12 @@ fn x86_commutes(op: Str) -> Bool {
 /// The registers live out of each block (by block index), the arm64
 /// MIR's (regalloc.xo's liveness, before the translation).
 fn (var g: G) x86_live_out() -> List[List[Int32]] {
-  g.x86_live().outs
+  let lv = g.x86_live()
+  var outs: List[List[Int32]] = List.with_capacity(lv.ins.len())
+  for b in 0..lv.ins.len() {
+    outs.push(lv.out(b))
+  }
+  outs
 }
 
 /// The registers live into and out of each block (by block index).
@@ -1925,17 +1930,23 @@ fn (var g: G) x86_live() -> Live {
     succs.push(ss)
   }
   let lv = solve_live(succs, gens, kills, n)
+  // by block, as the callers index them: each block's ins and its
+  // successors (Live.out reads them)
   var ins: List[List[Int32]] = []
-  var out: List[List[Int32]] = []
+  var bsuccs: List[List[Int]] = []
   for _ in 0..g.blocks.len() {
     ins.push([])
-    out.push([])
+    bsuccs.push([])
   }
   for (k, b) in order.indexed() {
     ins[b] = lv.ins[k]
-    out[b] = lv.outs[k]
+    var ss: List[Int] = []
+    for s in succs[k] {
+      ss.push(order[s])
+    }
+    bsuccs[b] = ss
   }
-  Live{ins: ins, outs: out}
+  Live{ins: ins, succs: bsuccs}
 }
 
 /// Load-op fusion: when ni is one two operand line `OP $uK, $d0` whose
@@ -2113,7 +2124,7 @@ fn (var g: G) x86_merge_blocks() {
           break
         }
         var out: Map[Int, Bool] = {}
-        for r32 in lv.outs[t] {
+        for r32 in lv.out(t) {
           let r = Int(r32)
           out[r] = true
         }

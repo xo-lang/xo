@@ -2640,7 +2640,7 @@ fn (var g: G) live_dce() {
   var touched: List[Int] = []
   for k in 0..order.len() {
     let b = order[k]
-    for v32 in lv.outs[k] {
+    for v32 in lv.out(k) {
       let v = Int(v32)
       live[v / BW] = live[v / BW] | bit_mask(v)
       touched.push(v)

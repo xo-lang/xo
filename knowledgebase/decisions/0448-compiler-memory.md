@@ -545,6 +545,13 @@ is not the peak (decision 0450 stays a stub). The sets now hold
 6040, 6018 -> 5422, 5499 MB (two builds each); linux/arm64 `xo bench
 --ab` (the self build, ten rounds): wall 0.982 (0.971 to 0.989), CPU 0.991 (0.988 to 0.995) and max RSS 0.918 (0.906 to 0.925), all better.
 
+The live-out sets next: they are the union of the successors' live-in
+sets, so `Live` keeps the successor lists and `Live.out(k)` merges them
+when the allocator asks (a block with one successor gets that list as
+is). Output byte-identical (236 compiles, 0 differing); the Mac's emit
+peak 5544, 5423 -> 5041, 4980 MB over the Int32 sets; linux/arm64 `xo
+bench --ab` (ten rounds): wall 0.974 (0.965 to 0.986), CPU 0.973 (0.970 to 0.982) and max RSS 0.931 (0.931 to 0.937), all better (three rounds, 118dfe1ce against the change).
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

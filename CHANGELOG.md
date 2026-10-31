@@ -34,6 +34,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   2 __text 51,269,220 to 45,150,244 (-11.9%) on top of static zero images. The IR dump (XO_DUMP_FN)
   lists the merge's groups. New golden fault_pad_tails.
   bench/results/landing-pads-2026-10-31.md.
+- Memory (decision 0448 stage 3): the register allocator no longer
+  stores each block's live-out set; `Live.out(k)` builds it from the
+  successors' live-in sets when asked (one successor returns its list
+  as is). Output is byte-identical (scripts/identity, 236 compiles, 0
+  differing). Self build on the Mac, on top of the Int32 sets: emit
+  peak 5544, 5423 MB to 5041, 4980 MB. linux/arm64 --ab: wall 0.974 (0.965 to 0.986), CPU 0.973 (0.970 to 0.982) and max RSS 0.931 (0.931 to 0.937), all better (three rounds, 118dfe1ce against the change).
 - Memory (decision 0448 stage 3): the native register allocator keeps
   each block's live register sets as `List[Int32]` (packed 4 bytes,
   decision 0369) instead of `List[Int]`; the largest function's sets

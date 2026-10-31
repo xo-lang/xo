@@ -85,14 +85,66 @@ fn new_bits(n: Int) -> List[Int] {
   out
 }
 
-/// The registers live into (ins) and out of (outs) each block, each a
-/// list in increasing order.
+/// The registers live into each block (ins), each a list in increasing
+/// order, and the blocks' successors.
 /// Virtual registers are below 2^31, so the sets hold them as Int32
 /// (packed 4 bytes, decision 0369): the largest function's sets were
 /// 1.01 GB of the self build's emit peak (decision 0448 stage 3).
+/// A block's live out set is not stored: it is the union of its
+/// successors' ins (Live.out), which held as a second set per block was
+/// half of the sets (decision 0448 stage 3).
 struct Live {
   ins: List[List[Int32]]
-  outs: List[List[Int32]]
+  succs: List[List[Int]]
+}
+
+/// The registers live out of block k: the union of its successors' ins,
+/// in increasing order (a single successor's own list, not a copy).
+fn (lv: Live) out(k: Int) -> List[Int32] {
+  let ss = lv.succs[k]
+  if ss.is_empty() {
+    return []
+  }
+  var acc = lv.ins[ss[0]]
+  for i in 1..ss.len() {
+    acc = merge_i32(acc, lv.ins[ss[i]])
+  }
+  acc
+}
+
+/// The sorted union of two increasing lists.
+fn merge_i32(a: List[Int32], b: List[Int32]) -> List[Int32] {
+  if b.is_empty() {
+    return a
+  }
+  if a.is_empty() {
+    return b
+  }
+  var out: List[Int32] = List.with_capacity(a.len() + b.len())
+  var i = 0
+  var j = 0
+  while i < a.len() && j < b.len() {
+    if a[i] < b[j] {
+      out.push(a[i])
+      i += 1
+    } else if b[j] < a[i] {
+      out.push(b[j])
+      j += 1
+    } else {
+      out.push(a[i])
+      i += 1
+      j += 1
+    }
+  }
+  while i < a.len() {
+    out.push(a[i])
+    i += 1
+  }
+  while j < b.len() {
+    out.push(b[j])
+    j += 1
+  }
+  out
 }
 
 /// Lists of block numbers by register: the blocks of register v are
@@ -151,7 +203,6 @@ fn solve_live(succs: List[List[Int]], gens: List[List[Int]], kills: List[List[In
   let nb = succs.len()
   var preds: List[List[Int]] = List.with_capacity(nb)
   var ins: List[List[Int32]] = List.with_capacity(nb)
-  var outs: List[List[Int32]] = List.with_capacity(nb)
   // the register (plus one) each block was last marked for
   var in_m: List[Int] = List.with_capacity(nb)
   var out_m: List[Int] = List.with_capacity(nb)
@@ -159,7 +210,6 @@ fn solve_live(succs: List[List[Int]], gens: List[List[Int]], kills: List[List[In
   for _ in 0..nb {
     preds.push([])
     ins.push([])
-    outs.push([])
     in_m.push(0)
     out_m.push(0)
     kill_m.push(0)
@@ -195,7 +245,6 @@ fn solve_live(succs: List[List[Int]], gens: List[List[Int]], kills: List[List[In
           continue
         }
         out_m[p] = st
-        outs[p].push(Int32(v))
         if kill_m[p] == st || in_m[p] == st {
           continue
         }
@@ -205,7 +254,7 @@ fn solve_live(succs: List[List[Int]], gens: List[List[Int]], kills: List[List[In
       }
     }
   }
-  Live{ins: ins, outs: outs}
+  Live{ins: ins, succs: succs}
 }
 
 fn bits_has(b: List[Int], i: Int) -> Bool {
@@ -283,7 +332,6 @@ fn (var g: G) regalloc() {
   }
   let lv = solve_live(succs, gens, kills, n)
   let live_in = lv.ins
-  let live_out = lv.outs
 
   // a register live into the entry is read before anything writes it
   // (gotchas/arm64-mir-param-without-moves.md)
@@ -359,7 +407,7 @@ fn (var g: G) regalloc() {
     let b = g.order[k]
     let bend = g.blocks[b].end
     let bstart = g.blocks[b].start
-    for v32 in live_out[k] {
+    for v32 in lv.out(k) {
       let v = Int(v32)
       live[v / BW] = live[v / BW] | bit_mask(v)
       end[v] = bend
