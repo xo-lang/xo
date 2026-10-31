@@ -668,7 +668,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   rounds (decision 0340's addendum). A 3-round verdict needs all three
   rounds to agree, which a change with no effect does one time in four,
   so confirm with `--rounds=10` a verdict on an effect under about 3% and
-  every "no slower" claim; a large effect needs no more.
+  every "no slower" claim; a large effect needs no more. More than 5
+  rounds run with `xo bench --early` (2026-10-31, owner's OK): from round 5
+  the run stops once wall, CPU and max RSS (or `--metrics`) are each
+  decided better, worse, or the same within 1% at two looks in a row,
+  each look at alpha over the number of looks; the output says "stopped
+  early after N of M rounds".
   The Mac's measure windows are only for darwin only claims (Mach-O,
   the macOS scheduler or syscalls) and Mac memory footprints.
 - A placement claim (a sweep over XO_ARM64_PAD, an alignment, a layout)

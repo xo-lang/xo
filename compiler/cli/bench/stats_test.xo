@@ -28,6 +28,16 @@ test "bootstrap ratio of a clear change excludes 1" {
   expect(verdict(r, 2, true) == "too few rounds")
 }
 
+test "early decisions" {
+  expect(early_alpha(0.05, 10) == 0.05 / 6.0)
+  expect(early_alpha(0.05, 5) == 0.05)
+  expect(decided(Ratio{ratio: 0.9, lo: 0.88, hi: 0.92}, true) == "better")
+  expect(decided(Ratio{ratio: 1.1, lo: 1.05, hi: 1.12}, true) == "worse")
+  expect(decided(Ratio{ratio: 1.0, lo: 0.995, hi: 1.004}, true) == "same")
+  expect(decided(Ratio{ratio: 1.0, lo: 0.98, hi: 1.03}, true) == "")
+  expect(decided(Ratio{ratio: 0.0, lo: 0.0, hi: 0.0, defined: false}, true) == "")
+}
+
 test "bootstrap ratio of noise includes 1" {
   let a = [100.0, 130.0, 80.0, 110.0, 95.0, 120.0, 85.0, 105.0, 90.0, 115.0]
   let b = [105.0, 90.0, 125.0, 85.0, 118.0, 92.0, 108.0, 99.0, 121.0, 83.0]

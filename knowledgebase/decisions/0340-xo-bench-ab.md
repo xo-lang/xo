@@ -154,3 +154,20 @@ chance about one time in four (one in eight for each direction). A
 verdict on an effect under about 3%, and any "no slower" claim, is
 confirmed with `--rounds=10`; a large effect (the tail merge's 0.812,
 whose 10-round interval was 0.808 to 0.815) needs no more.
+
+## Addendum 2026-10-31: early stopping (--early)
+
+Owner, 2026-10-31 ("6 yes"): the 10-round confirmations (effects under
+about 3%, "no slower" claims) held the arm64 host 20 to 30 minutes each.
+`xo bench --ab --early` treats --rounds as the most rounds. From round 5
+(EARLY_MIN) it looks after every usable round: each watched metric
+(--metrics, else wall_ms, cpu_ms, max_rss_kb; a too coarse one is skipped)
+is decided "better" or "worse" when its interval excludes 1, or "same"
+when the interval lies within 1 +- 1% (EARLY_EQ), and the run stops when
+every one is decided with the same answers at two looks in a row. Each
+look uses alpha divided by the number of looks (Bonferroni), so stopping
+early keeps the false verdict rate within alpha. The output and the JSON
+(`stopped_early`) say where it stopped. ab-host.sh passes --early for more
+than 5 rounds when NEW's xo bench has it. A 3-round run never stops early.
+First run (darwin, /bin/sleep 0.05 against 0.10, --rounds=12): stopped
+after 6 rounds, wall 1.807 worse, max RSS the same, CPU too coarse.

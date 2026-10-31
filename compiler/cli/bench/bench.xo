@@ -19,7 +19,7 @@ pub fn usage() -> Str {
     "usage: xo bench --ab [--rounds=N] [--warmup=N] [--env-a=K=V] [--env-b=K=V] [--args-a=WORDS] [--args-b=WORDS]",
     "                     [--max-load=X] [--load-wait=D] [--guard=CMD] [--no-guard] [--ops=N]",
     "                     [--metrics=a,b] [--keep-loaded] [--allow-fail] [--allow-fallback] [--timeout=D]",
-    "                     [--alpha=P] [--seed=N] [--json] A [B] [-- ARGS...]",
+    "                     [--alpha=P] [--seed=N] [--early] [--json] A [B] [-- ARGS...]",
   ].join("\n")
 }
 
@@ -47,6 +47,9 @@ struct Opts {
   alpha: Float = 0.05
   seed: Int = 1
   json: Bool = false
+  /// --early: stop before --rounds once every watched metric is decided
+  /// at two looks in a row (early_check)
+  early: Bool = false
   progs: List[Str] = []
 }
 
@@ -116,6 +119,8 @@ fn parse_opts(args: List[Str]) -> Opts ! Str {
       ab = true
     } else if a == "--json" {
       o.json = true
+    } else if a == "--early" {
+      o.early = true
     } else if a == "--keep-loaded" {
       o.keep_loaded = true
     } else if a == "--allow-fail" {
@@ -572,6 +577,38 @@ fn rows_of(o: Opts, rounds: List[Round]) -> List[Row] {
   rows
 }
 
+/// early_key is the early decisions of the watched metrics (--metrics, or
+/// wall_ms, cpu_ms and max_rss_kb where measured), "" while any is
+/// undecided, too coarse or missing; at the per-look alpha (early_alpha).
+fn early_key(o: Opts, used: List[Round]) -> Str {
+  if used.len() < EARLY_MIN {
+    return ""
+  }
+  var watch = o.metrics
+  if watch.is_empty() {
+    watch = ["wall_ms", "cpu_ms", "max_rss_kb"]
+  }
+  var oe = o
+  oe.alpha = early_alpha(o.alpha, o.rounds)
+  var key = ""
+  var n = 0
+  for r in rows_of(oe, used) {
+    if !watch.contains(r.name) {
+      continue
+    }
+    if r.verdict == "too coarse" {
+      continue
+    }
+    let d = decided(r.r, !higher_better(r.name))
+    if d.is_empty() {
+      return ""
+    }
+    key = "${key}${r.name}=${d} "
+    n += 1
+  }
+  if n == 0 { "" } else { key.trim() }
+}
+
 fn pad(s: Str, n: Int) -> Str {
   var t = s
   while t.len() < n {
@@ -589,9 +626,9 @@ fn table(rows: List[Row]) -> Str {
   out.freeze()
 }
 
-fn json_out(o: Opts, rounds: List[Round], used: Int, rows: List[Row]) -> Str {
+fn json_out(o: Opts, rounds: List[Round], used: Int, rows: List[Row], stopped: Str) -> Str {
   var out = StrBuilder.new()
-  out.write("{\"rounds\":${o.rounds},\"used\":${used},\"load_note\":${load_note(o, rounds).quote()},\"alpha\":${o.alpha},\"seed\":${o.seed},\"metrics\":{")
+  out.write("{\"rounds\":${o.rounds},\"used\":${used},\"load_note\":${load_note(o, rounds).quote()},\"alpha\":${o.alpha},\"seed\":${o.seed},\"stopped_early\":${stopped.quote()},\"metrics\":{")
   var first = true
   for r in rows {
     if !first {
@@ -690,6 +727,8 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
   let ab = side_args(o, false)
   var rounds: List[Round] = []
   var failed = false
+  var last_key = ""
+  var stopped = ""
   for n in 0..(o.warmup + o.rounds) {
     let a_first = n % 2 == 0
     var ra: Sample = Sample{vals: {}, ok: false, why: ""}
@@ -731,6 +770,20 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
       if !o.json {
         os.stdio.eprintln("round ${n - o.warmup + 1}/${o.rounds}: load ${fmt(la)} / ${fmt(lb)}${if loaded { " (loaded)" } else { "" }}")
       }
+      if o.early && !loaded {
+        var u: List[Round] = []
+        for r in rounds {
+          if o.keep_loaded || !r.loaded {
+            u.push(r)
+          }
+        }
+        let k = early_key(o, u)
+        if !k.is_empty() && k == last_key {
+          stopped = "stopped early after ${rounds.len()} of ${o.rounds} rounds: ${k} at two looks in a row (per-look alpha ${fmt(early_alpha(o.alpha, o.rounds))})"
+          break
+        }
+        last_key = k
+      }
     }
   }
   var used: List[Round] = []
@@ -741,11 +794,14 @@ pub fn run(os: Os, h: Host, args: List[Str]) -> Int uses (clock, env, fs.read, p
   }
   let rows = rows_of(o, used)
   if o.json {
-    os.stdio.println(json_out(o, rounds, used.len(), rows))
+    os.stdio.println(json_out(o, rounds, used.len(), rows, stopped))
   } else {
     os.stdio.println("A: ${pa} ${aa.join(" ")} ${o.env_a.join(" ")}")
     os.stdio.println("B: ${pb} ${ab.join(" ")} ${o.env_b.join(" ")}")
     os.stdio.println("${used.len()} of ${rounds.len()} rounds used (${rounds.len() - used.len()} loaded), loads A/B per round: ${rounds.map(fn(r: Round) -> Str { "${fmt(r.load_a)}/${fmt(r.load_b)}" }).join(" ")}\n")
+    if !stopped.is_empty() {
+      os.stdio.println("${stopped}\n")
+    }
     if rows.is_empty() {
       os.stdio.println("no round was usable: every round ran under load (see --max-load, --guard, --load-wait, --keep-loaded)")
       os.stdio.println(load_note(o, rounds))

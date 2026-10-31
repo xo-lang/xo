@@ -127,6 +127,44 @@ pub fn verdict(r: Ratio, rounds: Int, lower_better: Bool) -> Str {
   "within noise"
 }
 
+/// Early stopping (owner, 2026-10-31: "6 yes", for a host queue held by
+/// 10-round runs): with --early, --rounds is the most rounds, and the run
+/// stops once every watched metric is decided at two looks in a row.
+/// EARLY_MIN is the first round looked at.
+pub const EARLY_MIN = 5
+
+/// EARLY_EQ is the "no effect" margin: a metric whose interval lies
+/// wholly within 1 +- EARLY_EQ is decided as no change larger than that.
+pub const EARLY_EQ = 0.01
+
+/// early_alpha is the alpha of one look when up to `rounds` rounds are
+/// looked at from EARLY_MIN on: alpha split over the looks (Bonferroni),
+/// so stopping at the first decided look keeps the run's false verdict
+/// rate within alpha.
+pub fn early_alpha(alpha: Float, rounds: Int) -> Float {
+  let looks = rounds - EARLY_MIN + 1
+  if looks <= 1 {
+    return alpha
+  }
+  alpha / Float(looks)
+}
+
+/// decided is the early verdict of one metric's interval: "better" or
+/// "worse" (the interval excludes 1), "same" (wholly within 1 +-
+/// EARLY_EQ), else "" (undecided).
+pub fn decided(r: Ratio, lower_better: Bool) -> Str {
+  if !r.defined {
+    return ""
+  }
+  if r.lo > 1.0 || r.hi < 1.0 {
+    return verdict(r, MIN_ROUNDS, lower_better)
+  }
+  if r.lo >= 1.0 - EARLY_EQ && r.hi <= 1.0 + EARLY_EQ {
+    return "same"
+  }
+  ""
+}
+
 /// higher_better is true for a reported metric whose name says a larger
 /// value is better (rates and throughput); all others are lower is better.
 pub fn higher_better(name: Str) -> Bool {

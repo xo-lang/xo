@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `xo bench --ab --early` (decision 0340's addendum): --rounds becomes the
+  most rounds, and from round 5 the run stops once wall, CPU and max RSS
+  (or `--metrics`) are each decided better, worse or the same within 1%
+  at two looks in a row, each look at alpha over the number of looks.
 - Memory and speed (decision 0452): a native List of 256 elements or
   more grows by Go's slice step (a quarter plus 192 elements, toward
   1.25x) instead of doubling. xo building itself on linux/arm64 (`xo
