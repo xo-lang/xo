@@ -1037,3 +1037,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [exact-ssa-tables-before-inline.md](exact-ssa-tables-before-inline.md): exact-size SSA tables saved heap before inlining and cost more from emit on; compare per-phase heap through the link (Observed)
 - [offload-job-scripts-share-work-dir.md](offload-job-scripts-share-work-dir.md): two concurrent host jobs on one /work path delete each other's tree (observed)
 - [heap-profile-misses-tls-allocations.md](heap-profile-misses-tls-allocations.md): Anticipated: XO_PROF=heap shows 88 KB in use for a server holding 750 MB of TLS connections; use RssAnon deltas and exit-time XO_HEAPSTATS
+- [heapguard-http-goldens-flake-under-load.md](heapguard-http-goldens-flake-under-load.md): Observed: TestGoldenRunHeapGuard's TLS/http goldens time out at 30 s on a loaded Mac while a new compiler builds the goldens; compare binaries and rerun -parallel 1 before blaming the change
