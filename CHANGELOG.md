@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- FIX (LLVM backend): a fault in main could skip main's defers in a split
+  build at -O2 (`XO_LLVM_SPLIT`): clang turned the last call of main's
+  fault boundary frame (entry.main_on_fiber) into a tail call, so main ran
+  above the boundary and the unwinder stopped one frame short of it. A
+  function that reads its frame pointer now makes no tail calls on any
+  backend. gotchas/boundary-frame-tail-call.md.
 - `xo bench --ab --early` (decision 0340's addendum): --rounds becomes the
   most rounds, and from round 5 the run stops once wall, CPU and max RSS
   (or `--metrics`) are each decided better, worse or the same within 1%

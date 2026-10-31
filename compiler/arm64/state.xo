@@ -347,6 +347,9 @@ struct G {
   spec: Map[Int, Bool] = {}
   /// the function uses the $OUT slot
   out: Bool = false
+  /// the function reads its frame pointer (rt.frame_addr): no tail calls
+  /// (mark_tails)
+  frame_read: Bool = false
   /// releases cancelled by a retain (rc.xo cancel_rc)
   cancel: List[Bool] = []
   /// loop headers: induction variables (lsr.xo), by SSA block
@@ -556,6 +559,7 @@ fn (var g: G) begin_func(fi: Int) {
   g.len_param = {}
   g.field_lens = {}
   g.out = false
+  g.frame_read = false
   g.lsr = {}
   g.plans = []
   g.ranges = []

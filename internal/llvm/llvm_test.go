@@ -259,9 +259,12 @@ var shortGoldens = map[string]bool{"crypto_prims": true, "tls_x509": true, "faul
 // crypto, JSON, and TLS programs, whose loops the optimizer changes
 // most. The rest build at -O1 (2026-10-18: clang at -O2 with LTO was
 // most of internal/llvm's 50 minute run), which still runs the passes
-// that rely on the IR's attributes and metadata.
+// that rely on the IR's attributes and metadata. fault_task_exit and
+// fault_tasks fault through main's fiber, whose boundary frame clang at
+// -O2 tail-called away in split builds (gotcha boundary-frame-tail-call).
 var o2Goldens = map[string]bool{"crypto_prims": true, "tls_x509": true, "fault_defer_chain": true, "request_eq": true,
-	"crypto_mlkem": true, "native_crypto": true, "native_json": true, "json_text": true, "tls13_rfc8448": true, "tls_nistec": true, "cpu_sha256": true, "http_tls": true}
+	"crypto_mlkem": true, "native_crypto": true, "native_json": true, "json_text": true, "tls13_rfc8448": true, "tls_nistec": true, "cpu_sha256": true, "http_tls": true,
+	"fault_task_exit": true, "fault_tasks": true}
 
 // goldenOpt is the XO_LLVM_OPT setting of golden program dir (o2Goldens);
 // XO_TEST_LLVM_OPT (O0 to O3) sets every golden program's level, as

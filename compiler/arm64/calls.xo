@@ -2216,6 +2216,7 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       let d = g.new_vreg(false)
       let i = g.plain("mov $d0, x29", [d], [])
       g.blocks[g.cur].insts[i].fl = g.blocks[g.cur].insts[i].fl | IF_FRAME
+      g.frame_read = true
       g.set(v, [d])
     }
     // the runtime's immortal placeholders (an unwinding operation's

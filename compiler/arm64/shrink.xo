@@ -480,9 +480,12 @@ fn (g: G) edge_block(b: Int) -> Bool {
 /// tail call is emitted as the frame undone and a branch, so a block
 /// whose only call is one needs no frame, and a function whose only
 /// calls are tail calls is a leaf. Not when the frame holds memory a
-/// callee may be given the address of (byref.xo, the $OUT slot).
+/// callee may be given the address of (byref.xo, the $OUT slot), nor in
+/// a function that reads its frame pointer (rt.frame_addr): a fault
+/// boundary is that frame, and a callee that took its place would sit
+/// above it (gotcha boundary-frame-tail-call).
 fn (var g: G) mark_tails() {
-  if g.mem_bytes != 0 || g.out {
+  if g.mem_bytes != 0 || g.out || g.frame_read {
     return
   }
   for b in g.hot + g.cold {

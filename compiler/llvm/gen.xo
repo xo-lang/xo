@@ -294,7 +294,7 @@ fn runtime_decls() -> Str {
     // sanitize_thread (generate's replacement skips this spelling)
     "attributes #13 = { \"xo-norace\" uwtable }",
     "attributes #14 = { \"xo-norace\" uwtable \"no-builtins\" }",
-    "attributes #15 = { \"xo-norace\" uwtable noinline \"frame-pointer\"=\"all\" }",
+    "attributes #15 = { \"xo-norace\" uwtable noinline \"frame-pointer\"=\"all\" \"disable-tail-calls\"=\"true\" }",
     "attributes #16 = { \"xo-norace\" uwtable noinline cold }",
     "attributes #17 = { \"xo-norace\" uwtable noinline }",
     "; a preemption poll's slow call (decision 0286 step 3): the stub keeps every register and touches none of the program's memory",

@@ -26,8 +26,22 @@ fn main(os: Os) {
 // llvm: "ptrtoint ptr @xo_entry to i64" "ptrtoint ptr @strlen to i64"
 
 // rt.frame_addr is the frame pointer of a function that keeps its frame
-// record (a leaf otherwise) and is never inlined.
+// record (a leaf otherwise), is never inlined, and makes no tail call: a
+// fault boundary is such a frame (entry.main_on_fiber, tasks.run_entry),
+// and a callee that took its place would sit above the boundary, where
+// unwind.raise stops (2026-10-31: a split LLVM build at -O2 ran main
+// past main_on_fiber's frame and dropped main's defers).
 // func internal.frame_below
 // arm64: "stp x29, x30" "mov x[0-9]+, x29"
 // amd64: "pushq %rbp" "movq %rbp, %r"
-// llvm: "llvm.frameaddress.p0" "attributes #[0-9]+ = [{][^}]*noinline \"frame-pointer\"=\"all\""
+// llvm: "llvm.frameaddress.p0" "attributes #[0-9]+ = [{][^}]*noinline \"frame-pointer\"=\"all\" \"disable-tail-calls\"=\"true\""
+
+// The fault boundary frames call the entry (rt.call_c2) with a call, not
+// a tail call: the callee's frame stays below the boundary (gotcha
+// boundary-frame-tail-call). The LLVM side is the attribute above.
+// func entry.main_on_fiber
+// arm64: "blr x[0-9]+"
+// amd64: "callq \*%r"
+// func tasks.run_entry
+// arm64: "blr x[0-9]+"
+// amd64: "callq \*%r"

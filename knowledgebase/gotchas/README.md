@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [boundary-frame-tail-call.md](boundary-frame-tail-call.md): Observed 2026-10-31: clang at -O2 tail-called main from entry.main_on_fiber (the fault boundary frame), so unwind.raise stopped one frame short of main and dropped its defers in split LLVM builds; functions that call rt.frame_addr carry "disable-tail-calls"
 - [var-method-fault-reset.md](var-method-fault-reset.md): Observed and fixed 2026-10-30: a fault exit built zero results inline, so every `var g: G` method with a fault path carried a zero arm64 G (about 7 KB; 11.8 MB of xo's `__text` in 1,974 functions), hidden because pushes reported only their own delta and cold code never shows in profiles; zero_val.T took xo from 71.0 to 62.6 MB
 - [alarm-xo-run-orphans-program.md](alarm-xo-run-orphans-program.md): Observed 2026-10-30: perl's alarm on `xo run` ends xo, not the program it started, which keeps running with PPID 1 (and kept a heavy.sh gate slot); time the built binary itself, or `timeout -k` on Linux.
 - [hex-literal-past-int-max.md](hex-literal-past-int-max.md): Observed 2026-10-29: a Go uint64 constant past 2^63 fails XO0421; write it negative.
