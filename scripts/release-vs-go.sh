@@ -93,13 +93,10 @@ compile() {
 	mkdir -p "$cache"
 	local build
 	if [ "$side" = xo ]; then
-		# the cache statistics name the path the build took (its last lines
-		# in the log): "cache std ... reused" is separate compilation against
-		# std's variants, "cache stdx record loaded" the std records
 		# XO_BIN_CACHE=off: no whole-build run cache, which lives in the user
 		# cache and served a second run of this script with the same OUT its
 		# cold row in 70 ms (2026-10-29)
-		build=(env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BIN_CACHE=off XO_CACHE_STATS=1 "$XO" build -o "$bin" .)
+		build=(env XO_BACKEND_CACHE_DIR="$cache/backend" XO_BIN_CACHE=off "$XO" build -o "$bin" .)
 	else
 		build=(env GOCACHE="$cache/go" GOFLAGS=-trimpath go build -o "$bin" .)
 	fi
@@ -133,6 +130,14 @@ compile() {
 		printf '\nfunc releaseVsGoEdit() int {\n\treturn 7\n}\n' >>"$d/$mainf"
 	fi
 	edit=$(cd "$d" && timed "$OUT/build-$side-$name-edit.log" "${build[@]}")
+	# the path an edit takes, from an untimed build of another edit under
+	# the cache statistics, which cost the timed rows about 28 MB of peak
+	# RSS and 3% of the instructions (coll warm, 2026-11-01;
+	# gotchas/cache-stats-raise-rss.md)
+	if [ "$side" = xo ]; then
+		printf '\nfn release_vs_go_path() -> Int {\n  8\n}\n' >>"$d/$mainf"
+		(cd "$d" && env XO_CACHE_STATS=1 "${build[@]}" >"$OUT/build-$side-$name-path.log" 2>&1) || true
+	fi
 	# rebuild the unedited program for the size and run columns
 	cp "$src/$mainf" "$d/$mainf"
 	(cd "$d" && "${build[@]}" >/dev/null 2>&1)
@@ -145,7 +150,7 @@ compile() {
 	local path=-
 	if [ "$side" = xo ]; then
 		path=whole
-		local elog=$OUT/build-$side-$name-edit.log
+		local elog=$OUT/build-$side-$name-path.log
 		if grep -q '^cache std .* reused' "$elog" || grep -q '^cache stdx' "$elog"; then
 			path=separate
 			grep -q '^cache stdx record loaded' "$elog" && path="separate, std records"
@@ -163,7 +168,10 @@ compile() {
 	echo "Go $(go env GOVERSION). Build times are wall milliseconds of one build; peak MB is the"
 	echo "build's largest resident set (cold / warm / edit). Warm is the third unchanged build"
 	echo "(xo's parts pack is written on the second and read from the third); second is the second."
-	echo "The edit's path is what xo's cache statistics say the edit build did: separate (against"
+	echo "Reports through v0.35.0 ran xo's timed builds under XO_CACHE_STATS=1, which added about"
+	echo "28 MB to coll's warm peak (116 against 88 MB, 2026-11-01), so xo's peak MB steps down"
+	echo "from those reports to this one with no change in the compiler."
+	echo "The edit's path is what xo's cache statistics say an untimed build of another edit did: separate (against"
 	echo "std's variants, built after the cold row as a user's second build would have them),"
 	echo "with the std records, or whole (the whole program)."
 	echo "xo's builds run with the whole-build run cache off (XO_BIN_CACHE=off), so the second and"

@@ -258,7 +258,11 @@ create`. The order:
    (owner, 2026-10-22, every release): unpack the archive, then
    `HEAVY_CLASS=measure heavy.sh vsgo scripts/release-vs-go.sh
    UNPACKED/bin/xo OUT` in the private checkout, and commit
-   OUT/report.md as `bench/results/release-vs-go-vX.Y.Z.md`. It builds
+   OUT/report.md as `bench/results/release-vs-go-vX.Y.Z.md`. Reports
+   through v0.35.0 ran xo's timed builds under XO_CACHE_STATS=1, so xo's
+   peak MB steps down after them with no compiler change (about 28 MB on
+   coll's warm build; gotchas/cache-stats-raise-rss.md; last verified:
+   2026-11-01). It builds
    bench/perf's Go-twin programs (llvm, collections, conc) with xo and
    Go: compile cold, a second build, warm (the third unchanged build:
    xo writes a directory's parts pack on the second build and reads it
