@@ -1,0 +1,21 @@
+// A wasi:http component (decision 0447): main builds the router and
+// serves the component's request; internal/selfhost TestWasmComponentHTTP
+// runs it under host.mjs's stub wasi:http host.
+use std/http
+
+fn main(os: Os) {
+  var r = http.router()
+  r.handle("GET /", fn(q: http.Request) -> http.Response { http.text(200, "hello") })
+  r.handle("GET /users/{id:Int}", fn(q: http.Request) -> http.Response {
+    http.text(200, "user ${q.param_int("id")} x=${q.query("x") ?? "-"}")
+  })
+  r.handle("GET /h", fn(q: http.Request) -> http.Response {
+    var resp = http.text(200, "x-test ${q.header("x-test") ?? "-"} ua ${q.header("User-Agent") ?? "-"} empty [${q.header("X-Empty") ?? "none"}]")
+    var h = resp.headers
+    h["X-Out"] = "1"
+    resp with {headers: h}
+  })
+  r.handle("POST /echo", fn(q: http.Request) -> http.Response { http.text(200, "len ${q.body.len()} [${q.body.to_str() ?? ""}]") })
+  r.handle("GET /json", fn(q: http.Request) -> http.Response { http.json(201, {"a": 1}) })
+  http.serve_component(r)
+}

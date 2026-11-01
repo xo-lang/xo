@@ -47,3 +47,4 @@ x509.system_roots  reads the host's root store, which differs per machine
 # native. cmd/xo TestUseGoAny, TestUseGoAnyNoGoValue and TestUseGoAnyReplay
 # call every method.
 go.Any.*  a use go value: needs the Go backend, covered by cmd/xo TestUseGoAny*
+http.serve_component  a wasi:http component runs under a host, not as a program: needs the wasm backend and a host, covered by internal/selfhost TestWasmComponentHTTP

@@ -221,6 +221,48 @@ the linux/arm64 offload host.
 6. **Core-module ABIs.** proxy-wasm, Extism and Fastly's host calls, each
    an ADR of its own on `wasip1/wasm` if the owner wants that reach.
 
+## Step 1 results (2026-11-01, Xo Lang 4)
+
+The hello program (a router with `GET /` answering "hello") as a `wasi:http`
+0.2 component under `wasmtime serve`, against Rust (`wasm32-wasip2`, the
+`wasi` crate 0.14.7's bindings) and TinyGo (ydnar/wasi-http-go), on the linux/arm64
+offload host, alone on it:
+
+| component | bytes | first request, median of 5 (ms) | req/s | p50 (ms) | p90 (ms) | p99 (ms) |
+|---|---|---|---|---|---|---|
+| Xo | 275,013 | 15.9 | 75,620 | 0.363 | 0.703 | 1.417 |
+| Rust | 79,127 | 15.2 | 85,410 | 0.320 | 0.629 | 1.296 |
+| TinyGo | 2,910,541 | 23.6 | 28,109 | 1.080 | 1.727 | 2.673 |
+
+- All three pass `wasm-tools validate`, answer 200 with the body "hello", and
+  ran with 0 errors. Load: 0447's loadgen, 32 connections, 20 s, one run per
+  component, so these are a first reading, not an A/B. First request: serve's
+  start to the first 200, curl polling every 5 ms, so its resolution is coarse
+  and most of it is wasmtime's own start.
+- wasmtime serve makes an instance per request, so Xo runs main, and builds the
+  router, for each request. That is in its req/s.
+- Xo's 275,013 bytes are its core module, 250,019 bytes, wrapped with the
+  Bytecode Alliance's preview 1 adapter (proxy variant), the stage 1 experiment
+  this decision allows. wasm-tools wrote the component, not Xo: Xo does not yet
+  write the component sections.
+- The module's imports are named `@0.2.0`, and the host's WIT is 0.2.12. For this
+  measurement the names were rewritten to 0.2.12 in the text form before the
+  wrap (the functions used are the same). Pinning the WIT itself to 0.2.0 failed
+  on its `@since` feature gates.
+- Beyond the plan: the request's method, path, query, fields and body reach the
+  router, and the response's status, fields and body go back. A response
+  body is written in pieces and a request body read to its end; a `handle_stream`
+  route still gets it whole.
+- internal/selfhost TestWasmComponentHTTP covers this without wasmtime: a stub
+  `wasi:http` host under Node, written from the canonical ABI, with an instance
+  per request and with one instance for every request (the scheduler freed its
+  task list without clearing it, so a reused instance trapped on its third
+  request; fixed in rt3.xo).
+
+Not done, for the owner's decision on the next stages: the component sections
+written by Xo, WASI 0.2 imports in place of preview 1 (dropping the adapter),
+streaming a route's body, outgoing requests, Spin (not tried).
+
 ## Consequences
 
 - Xo becomes deployable to the component platforms (wasmtime serve,

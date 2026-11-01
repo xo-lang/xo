@@ -34,6 +34,10 @@ fn (var r: Router) not_found[E: Error, fx: Effects](h: fn(Request) -> Response !
 /// when it lacks one.
 fn (var r: Router) method_not_allowed[E: Error, fx: Effects](h: fn(Request) -> Response ! E uses fx) uses fx
 fn (r: Router) call(req: Request) -> Response
+/// Serves the request a wasi:http component was called with through r
+/// (decision 0447): main builds the router and calls this; faults off
+/// the wasm backend.
+fn serve_component(r: Router)
 
 /// An HTTP status code (decision 0269): a distinct integer type, so a
 /// status cannot be mixed up with another Int.

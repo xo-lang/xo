@@ -1045,3 +1045,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 	bl`) emits as `		bl`, which lsr.xo's text passes do not read as a call, so a reload of x17 past it was dropped (wrong results); write later lines without the tab
 - [arm64-plain-template-line-tab.md](arm64-plain-template-line-tab.md): Observed 2026-10-31: a K_PLAIN template's later line written with its own tab (`\n\tbl`) emits as two tabs, which lsr.xo's text passes do not read as a call, so a reload of x17 past it was dropped (wrong results); write later lines without the tab
 - [park-timer-closes-h2-connection.md](park-timer-closes-h2-connection.md): Observed 2026-11-01: a parked h2 connection's expired timer closed the descriptor, so the server ping was never sent; PC_KEEP resumes it open
+- [wasm-rt-alloc-not-object.md](wasm-rt-alloc-not-object.md): runtime WAT that returns a Str or Bytes uses `$rs_new`; `$alloc(n)`'s address is the first usable byte of a raw block (Observed)

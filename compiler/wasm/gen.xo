@@ -99,6 +99,9 @@ pub struct Gen {
   conc: Bool = false
   /// The program uses rt4.xo (files, constants, SHA-256).
   files: Bool = false
+  /// a wasi:http component (rt5.xo, decision 0447): the program calls
+  /// http.serve_component
+  comp: Bool = false
   /// An unsupported call faults when it runs instead of failing the build
   /// (`compiler/wasm --lax`, to see how far a program gets).
   lax: Bool = false
@@ -229,6 +232,7 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
   for (i, f) in m.funcs.indexed() {
     g.by_name[f.name] = i
   }
+  g.comp = g.is_component()
   if g.by_name.contains("wasi_gate") {
     g.wasi_xo = true
     g.lax = true
@@ -1507,6 +1511,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   if g.files {
     rt = rt + rt4_text(g, tz)
   }
+  if g.comp {
+    rt = rt + rt5_text(g)
+  }
   for fi in 0..g.m.funcs.len() {
     g.func(fi)
     if !g.err.is_empty() && !g.all {
@@ -1550,12 +1557,18 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   if g.files {
     b.write(rt4_imports())
   }
+  if g.comp {
+    b.write(rt5_imports())
+  }
   b.write(rt_imports())
   if g.conc {
     b.write(rt3_globals())
   }
   if g.files {
     b.write(rt4_globals())
+  }
+  if g.comp {
+    b.write(rt5_globals())
   }
   b.write("  (memory (export \"memory\") ${pages})\n")
   b.write("  (global $hp (mut i32) (i32.const ${heap}))\n")
@@ -1577,6 +1590,10 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     called_names(s, roots)
   }
   called_names("call $fault_report call $flush_exit0 call $consts_free", roots)
+  if g.comp {
+    // the handle export (rt5_handle) is written after the strip
+    called_names("call $handle_end", roots)
+  }
   for t in g.table {
     roots.push(t)
   }
@@ -1587,15 +1604,21 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   for f in g.funcs {
     b.write(f)
   }
-  b.write("  (func $_start (export \"_start\")\n")
-  for s in start {
-    b.write("    ${s}\n")
+  if g.comp {
+    // a wasi:http component's handle export runs main per request
+    // (rt5.xo); it has no _start
+    b.write(rt5_handle(start))
+  } else {
+    b.write("  (func $_start (export \"_start\")\n")
+    for s in start {
+      b.write("    ${s}\n")
+    }
+    b.write("    global.get $faulting\n    if\n      call $fault_report\n    end\n")
+    if g.files {
+      b.write("    call $consts_free\n")
+    }
+    b.write("    call $flush_exit0)\n")
   }
-  b.write("    global.get $faulting\n    if\n      call $fault_report\n    end\n")
-  if g.files {
-    b.write("    call $consts_free\n")
-  }
-  b.write("    call $flush_exit0)\n")
   // a table even when empty: the release of a function value calls
   // through it
   b.write("  (table ${g.table.len()} funcref)\n")

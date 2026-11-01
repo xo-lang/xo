@@ -1,0 +1,612 @@
+// The runtime of the WebAssembly backend for a wasi:http component
+// (decision 0447 step 1): a program that calls http.serve_component is
+// built as the core module of a `wasi:http/proxy` 0.2 component. It
+// exports `wasi:http/incoming-handler@0.2.0#handle` in place of
+// `_start`: handle keeps the request and response-outparam handles, runs
+// main (which builds its router and calls serve_component), and returns.
+// serve_component reads the request through wasi_http_method and
+// wasi_http_path and answers through wasi_http_respond, over the
+// wasi:http and wasi:io imports below, in the canonical ABI's flat forms.
+// cabi_realloc gives the host memory for the strings it returns. Stage 1
+// keeps the preview 1 imports of the rest of the runtime: the host wraps
+// the module with the preview 1 adapter for the proxy world.
+
+/// The runtime calls of rt5.xo.
+fn rt5_direct(name: Str) -> Bool {
+  name is "wasi_http_method" | "wasi_http_path" | "wasi_http_headers" | "wasi_http_body" | "wasi_http_respond"
+}
+
+/// Whether the program is a wasi:http component: it calls
+/// http.serve_component (std/native/http.xo).
+fn (g: Gen) is_component() -> Bool {
+  g.by_name.contains("http.serve_component")
+}
+
+/// The wasi:http and wasi:io imports of rt5.xo.
+fn rt5_imports() -> Str {
+  """
+    (import "wasi:http/types@0.2.0" "[method]incoming-request.method" (func $ireq_method (param i32 i32)))
+    (import "wasi:http/types@0.2.0" "[method]incoming-request.path-with-query" (func $ireq_path (param i32 i32)))
+    (import "wasi:http/types@0.2.0" "[resource-drop]incoming-request" (func $ireq_drop (param i32)))
+    (import "wasi:http/types@0.2.0" "[method]incoming-request.headers" (func $ireq_headers (param i32) (result i32)))
+    (import "wasi:http/types@0.2.0" "[method]fields.entries" (func $fields_entries (param i32 i32)))
+    (import "wasi:http/types@0.2.0" "[resource-drop]fields" (func $fields_drop (param i32)))
+    (import "wasi:http/types@0.2.0" "[method]incoming-request.consume" (func $ireq_consume (param i32 i32)))
+    (import "wasi:http/types@0.2.0" "[method]incoming-body.stream" (func $ibody_stream (param i32 i32)))
+    (import "wasi:http/types@0.2.0" "[resource-drop]incoming-body" (func $ibody_drop (param i32)))
+    (import "wasi:io/streams@0.2.0" "[method]input-stream.blocking-read" (func $istream_read (param i32 i64 i32)))
+    (import "wasi:io/streams@0.2.0" "[resource-drop]input-stream" (func $istream_drop (param i32)))
+    (import "wasi:io/error@0.2.0" "[resource-drop]error" (func $ioerr_drop (param i32)))
+    (import "wasi:http/types@0.2.0" "[constructor]fields" (func $fields_new (result i32)))
+    (import "wasi:http/types@0.2.0" "[method]fields.append" (func $fields_append (param i32 i32 i32 i32 i32 i32)))
+    (import "wasi:http/types@0.2.0" "[constructor]outgoing-response" (func $oresp_new (param i32) (result i32)))
+    (import "wasi:http/types@0.2.0" "[method]outgoing-response.set-status-code" (func $oresp_status (param i32 i32) (result i32)))
+    (import "wasi:http/types@0.2.0" "[method]outgoing-response.body" (func $oresp_body (param i32 i32)))
+    (import "wasi:http/types@0.2.0" "[method]outgoing-body.write" (func $obody_write (param i32 i32)))
+    (import "wasi:http/types@0.2.0" "[static]outgoing-body.finish" (func $obody_finish (param i32 i32 i32 i32)))
+    (import "wasi:http/types@0.2.0" "[static]response-outparam.set" (func $outparam_set (param i32 i32 i32 i32 i64 i32 i32 i32 i32)))
+    (import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-write-and-flush" (func $ostream_write (param i32 i32 i32 i32)))
+    (import "wasi:io/streams@0.2.0" "[resource-drop]output-stream" (func $ostream_drop (param i32)))
+
+  """
+}
+
+/// The globals of rt5.xo: the request and response-outparam handles of
+/// the call being served, whether it was answered, and a scratch area
+/// for the canonical ABI's return pointers.
+fn rt5_globals() -> Str {
+  """
+    (global $hreq (mut i32) (i32.const 0))
+    (global $hout (mut i32) (i32.const 0))
+    (global $hdone (mut i32) (i32.const 0))
+    (global $hret (mut i32) (i32.const 0))
+
+  """
+}
+
+/// The functions of rt5.xo (with the module's other runtime text, before
+/// the data's end is taken).
+fn rt5_text(var g: Gen) -> Str {
+  let methods = g.raw("GET    HEAD   POST   PUT    DELETE CONNECTOPTIONSTRACE  PATCH  ".bytes())
+  let e500 = g.str_obj("internal error".bytes())
+  // the 500's fields in wasi_http_respond's form
+  var hb = BytesBuilder.new()
+  hb.write("content-type".bytes())
+  hb.write_byte(0)
+  hb.write("text/plain; charset=utf-8".bytes())
+  hb.write_byte(0)
+  let h500b = hb.freeze()
+  let h500 = g.str_obj(h500b)
+  """
+    ;; the canonical ABI's allocator: a runtime block ($alloc's address is
+    ;; its first usable byte, $free takes it back); the strings it holds are
+    ;; copied into Xo objects and the block freed
+    (func $cabi_realloc (export "cabi_realloc") (param $old i32) (param $osize i32) (param $align i32) (param $n i32) (result i32) (local $p i32)
+      local.get $n
+      call $alloc
+      local.set $p
+      local.get $old
+      if
+        local.get $p
+        local.get $old
+        local.get $osize
+        local.get $n
+        local.get $osize
+        local.get $n
+        i32.lt_u
+        select
+        memory.copy
+        local.get $old
+        call $free
+      end
+      local.get $p)
+
+    ;; the scratch area of 16 bytes the imports return through
+    (func $hret_at (result i32)
+      global.get $hret
+      i32.eqz
+      if
+        i32.const 16
+        call $alloc
+        global.set $hret
+      end
+      global.get $hret)
+
+    ;; a Str object ({rc, cap, bytes}, $rs_new) of the n bytes at p (a
+    ;; cabi_realloc block, freed; an empty string may not be a block)
+    (func $str_take (param $p i32) (param $n i32) (result i32 i32) (local $o i32)
+      local.get $n
+      call $rs_new
+      local.tee $o
+      i32.const 8
+      i32.add
+      local.get $p
+      local.get $n
+      memory.copy
+      local.get $n
+      if
+        local.get $p
+        call $free
+      end
+      local.get $o
+      local.get $n)
+
+    ;; the request's method: a known one's name (7 bytes a name in the
+    ;; table above, trimmed), else `other`'s string
+    (func $wasi_http_method (result i32 i32) (local $r i32) (local $k i32) (local $n i32) (local $o i32)
+      global.get $hreq
+      call $hret_at
+      local.tee $r
+      call $ireq_method
+      local.get $r
+      i32.load8_u
+      local.tee $k
+      i32.const 9
+      i32.eq
+      if
+        local.get $r
+        i32.load offset=4
+        local.get $r
+        i32.load offset=8
+        call $str_take
+        return
+      end
+      i32.const ${methods}
+      local.get $k
+      i32.const 7
+      i32.mul
+      i32.add
+      local.set $o
+      i32.const 7
+      local.set $n
+      block $done
+        loop $trim
+          local.get $n
+          i32.eqz
+          br_if $done
+          local.get $o
+          local.get $n
+          i32.add
+          i32.const 1
+          i32.sub
+          i32.load8_u
+          i32.const 32
+          i32.ne
+          br_if $done
+          local.get $n
+          i32.const 1
+          i32.sub
+          local.set $n
+          br $trim
+        end
+      end
+      local.get $n
+      call $rs_new
+      local.tee $k
+      i32.const 8
+      i32.add
+      local.get $o
+      local.get $n
+      memory.copy
+      local.get $k
+      local.get $n)
+
+    ;; the request's path with query, "/" when it has none
+    (func $wasi_http_path (result i32 i32) (local $r i32) (local $o i32)
+      global.get $hreq
+      call $hret_at
+      local.tee $r
+      call $ireq_path
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load offset=4
+        local.get $r
+        i32.load offset=8
+        call $str_take
+        return
+      end
+      i32.const 1
+      call $rs_new
+      local.tee $o
+      i32.const 47
+      i32.store8 offset=8
+      local.get $o
+      i32.const 1)
+
+    ;; the request's fields: a Bytes object of each name and value
+    ;; followed by a zero byte; fields.entries' list and strings are
+    ;; cabi_realloc blocks, freed (an empty one may not be a block)
+    (func $wasi_http_headers (result i32 i32) (local $f i32) (local $r i32) (local $lp i32) (local $ln i32) (local $e i32) (local $end i32) (local $tot i32) (local $o i32) (local $at i32) (local $n i32)
+      global.get $hreq
+      call $ireq_headers
+      local.tee $f
+      call $hret_at
+      local.tee $r
+      call $fields_entries
+      local.get $r
+      i32.load
+      local.set $lp
+      local.get $r
+      i32.load offset=4
+      local.set $ln
+      local.get $lp
+      local.get $ln
+      i32.const 16
+      i32.mul
+      i32.add
+      local.set $end
+      local.get $lp
+      local.set $e
+      block $d1
+        loop $sum
+          local.get $e
+          local.get $end
+          i32.ge_u
+          br_if $d1
+          local.get $tot
+          local.get $e
+          i32.load offset=4
+          i32.add
+          local.get $e
+          i32.load offset=12
+          i32.add
+          i32.const 2
+          i32.add
+          local.set $tot
+          local.get $e
+          i32.const 16
+          i32.add
+          local.set $e
+          br $sum
+        end
+      end
+      local.get $tot
+      call $rs_new
+      local.tee $o
+      i32.const 8
+      i32.add
+      local.set $at
+      local.get $lp
+      local.set $e
+      block $d2
+        loop $copy
+          local.get $e
+          local.get $end
+          i32.ge_u
+          br_if $d2
+          ;; the name, then the value
+          local.get $e
+          i32.load offset=4
+          local.set $n
+          local.get $at
+          local.get $e
+          i32.load
+          local.get $n
+          memory.copy
+          local.get $at
+          local.get $n
+          i32.add
+          local.tee $at
+          i32.const 0
+          i32.store8
+          local.get $at
+          i32.const 1
+          i32.add
+          local.set $at
+          local.get $n
+          if
+            local.get $e
+            i32.load
+            call $free
+          end
+          local.get $e
+          i32.load offset=12
+          local.set $n
+          local.get $at
+          local.get $e
+          i32.load offset=8
+          local.get $n
+          memory.copy
+          local.get $at
+          local.get $n
+          i32.add
+          local.tee $at
+          i32.const 0
+          i32.store8
+          local.get $at
+          i32.const 1
+          i32.add
+          local.set $at
+          local.get $n
+          if
+            local.get $e
+            i32.load offset=8
+            call $free
+          end
+          local.get $e
+          i32.const 16
+          i32.add
+          local.set $e
+          br $copy
+        end
+      end
+      local.get $ln
+      if
+        local.get $lp
+        call $free
+      end
+      local.get $f
+      call $fields_drop
+      local.get $o
+      local.get $tot)
+
+    ;; the request's body: a Bytes object of the incoming-body stream read
+    ;; to its end (closed) in reads of up to 64 KiB; each read's list is a
+    ;; cabi_realloc block, appended and freed
+    (func $wasi_http_body (result i32 i32) (local $r i32) (local $body i32) (local $s i32) (local $o i32) (local $n i32) (local $p i32) (local $k i32)
+      i32.const 0
+      call $rs_new
+      local.set $o
+      global.get $hreq
+      call $hret_at
+      local.tee $r
+      call $ireq_consume
+      local.get $r
+      i32.load8_u
+      if
+        local.get $o
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=4
+      local.tee $body
+      local.get $r
+      call $ibody_stream
+      local.get $r
+      i32.load8_u
+      i32.eqz
+      if
+        local.get $r
+        i32.load offset=4
+        local.set $s
+        block $done
+          loop $read
+            local.get $s
+            i64.const 65536
+            local.get $r
+            call $istream_read
+            local.get $r
+            i32.load8_u
+            if
+              ;; last-operation-failed carries an error resource
+              local.get $r
+              i32.load8_u offset=4
+              i32.eqz
+              if
+                local.get $r
+                i32.load offset=8
+                call $ioerr_drop
+              end
+              br $done
+            end
+            local.get $r
+            i32.load offset=4
+            local.set $p
+            local.get $r
+            i32.load offset=8
+            local.set $k
+            local.get $o
+            local.get $n
+            local.get $p
+            local.get $k
+            call $rs_append
+            local.set $o
+            local.get $n
+            local.get $k
+            i32.add
+            local.set $n
+            local.get $k
+            if
+              local.get $p
+              call $free
+            end
+            br $read
+          end
+        end
+        local.get $s
+        call $istream_drop
+      end
+      local.get $body
+      call $ibody_drop
+      local.get $o
+      local.get $n)
+
+    ;; the length of the bytes from p up to the next zero byte (or end)
+    (func $zlen (param $p i32) (param $end i32) (result i32) (local $q i32)
+      local.get $p
+      local.set $q
+      block $d
+        loop $l
+          local.get $q
+          local.get $end
+          i32.ge_u
+          br_if $d
+          local.get $q
+          i32.load8_u
+          i32.eqz
+          br_if $d
+          local.get $q
+          i32.const 1
+          i32.add
+          local.set $q
+          br $l
+        end
+      end
+      local.get $q
+      local.get $p
+      i32.sub)
+
+    ;; the response: status, the fields (each name and value followed by
+    ;; a zero byte), and the body written in 4096 byte pieces
+    ;; (blocking-write-and-flush's limit)
+    (func $wasi_http_respond (param $status i64) (param $h i32) (param $hn i32) (param $b i32) (param $bn i32) (local $f i32) (local $resp i32) (local $body i32) (local $out i32) (local $r i32) (local $at i32) (local $k i32) (local $hend i32) (local $vp i32) (local $vn i32)
+      call $fields_new
+      local.set $f
+      local.get $h
+      i32.const 8
+      i32.add
+      local.tee $at
+      local.get $hn
+      i32.add
+      local.set $hend
+      block $hd
+        loop $field
+          local.get $at
+          local.get $hend
+          i32.ge_u
+          br_if $hd
+          local.get $at
+          local.get $hend
+          call $zlen
+          local.set $k
+          local.get $at
+          local.get $k
+          i32.add
+          i32.const 1
+          i32.add
+          local.tee $vp
+          local.get $hend
+          call $zlen
+          local.set $vn
+          ;; a name the host refuses is left out (append's error ignored)
+          local.get $f
+          local.get $at
+          local.get $k
+          local.get $vp
+          local.get $vn
+          call $hret_at
+          call $fields_append
+          local.get $vp
+          local.get $vn
+          i32.add
+          i32.const 1
+          i32.add
+          local.set $at
+          br $field
+        end
+      end
+      local.get $f
+      call $oresp_new
+      local.tee $resp
+      local.get $status
+      i32.wrap_i64
+      call $oresp_status
+      drop
+      local.get $resp
+      call $hret_at
+      local.tee $r
+      call $oresp_body
+      local.get $r
+      i32.load offset=4
+      local.set $body
+      ;; the response goes to the host before its body is written, as the
+      ;; bindings' handlers do
+      ;; set(outparam, result<own<outgoing-response>, error-code>): the
+      ;; result's case (0, ok), the response, then error-code's joined
+      ;; payload slots, zero (wasm-tools embed --dummy, wasi 0.2)
+      global.get $hout
+      i32.const 0
+      local.get $resp
+      i32.const 0
+      i64.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      i32.const 0
+      call $outparam_set
+      local.get $body
+      local.get $r
+      call $obody_write
+      local.get $r
+      i32.load offset=4
+      local.set $out
+      local.get $b
+      i32.const 8
+      i32.add
+      local.set $at
+      block $done
+        loop $piece
+          local.get $bn
+          i32.eqz
+          br_if $done
+          local.get $bn
+          i32.const 4096
+          local.get $bn
+          i32.const 4096
+          i32.lt_u
+          select
+          local.set $k
+          local.get $out
+          local.get $at
+          local.get $k
+          local.get $r
+          call $ostream_write
+          local.get $at
+          local.get $k
+          i32.add
+          local.set $at
+          local.get $bn
+          local.get $k
+          i32.sub
+          local.set $bn
+          br $piece
+        end
+      end
+      local.get $out
+      call $ostream_drop
+      local.get $body
+      i32.const 0
+      i32.const 0
+      local.get $r
+      call $obody_finish
+      i32.const 1
+      global.set $hdone)
+
+    ;; after main: a fault is reported, and a request main did not
+    ;; answer gets 500
+    (func $handle_end
+      global.get $faulting
+      if
+        call $fault_report
+      end
+      global.get $hdone
+      i32.eqz
+      if
+        i64.const 500
+        i32.const ${h500}
+        i32.const ${h500b.len()}
+        i32.const ${e500}
+        i32.const 14
+        call $wasi_http_respond
+      end
+      global.get $hreq
+      call $ireq_drop)
+
+  """
+}
+
+/// The handle export: the call's handles kept, main run (the start
+/// sequence), then handle_end.
+fn rt5_handle(start: List[Str]) -> Str {
+  var b = StrBuilder.new()
+  b.write("  (func $handle (export \"wasi:http/incoming-handler@0.2.0#handle\") (param $req i32) (param $out i32)\n")
+  b.write("    local.get $req\n    global.set $hreq\n    local.get $out\n    global.set $hout\n    i32.const 0\n    global.set $hdone\n")
+  for s in start {
+    b.write("    ${s}\n")
+  }
+  b.write("    call $handle_end)\n")
+  b.freeze()
+}

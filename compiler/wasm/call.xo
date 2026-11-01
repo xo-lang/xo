@@ -471,6 +471,10 @@ fn (var g: Gen) call(v: Int) {
         return
       }
       let op = name.trim_prefix("rt.")
+      if name.starts_with("rt.") && g.comp && rt5_direct(op) {
+        g.rt_call(v, "$${op}")
+        return
+      }
       if name.starts_with("rt.") && g.files && rt4_direct(op) {
         g.rt_call(v, "$${op}")
         if op == "const_once" {

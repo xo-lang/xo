@@ -1403,6 +1403,7 @@ fn ([var] r: Router) mount(prefix: Str, sub: Router)   // sub's routes under pre
 fn ([var] r: Router) not_found[E: Error, fx: Effects](h: fn(Request) -> Response ! E uses fx) uses fx            // the 404's response
 fn ([var] r: Router) method_not_allowed[E: Error, fx: Effects](h: fn(Request) -> Response ! E uses fx) uses fx   // the 405's; Allow added when missing
 fn (r: Router) call(req: Request) -> Response      // in process dispatch, for tests
+fn serve_component(r: Router)                      // answers a wasi:http component's request, wasm backend (decision 0447); faults elsewhere
 type Next = fn(Request) -> Response
 ```
 

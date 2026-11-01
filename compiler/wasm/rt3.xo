@@ -1005,7 +1005,10 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       i32.store offset=24
       call $wake)
 
-    ;; main ended: the scheduler's memory goes
+    ;; main ended: the scheduler's memory goes, and its list of tasks is
+    ;; empty again: a wasi:http component's instance runs the scheduler
+    ;; once per request (rt5.xo; the third run on one instance trapped on
+    ;; the freed list, 2026-10-31)
     (func $sched_end (local $m i32)
       global.get $mtask
       local.tee $m
@@ -1021,7 +1024,15 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       if
         global.get $act
         call $free
-      end)
+      end
+      i32.const 0
+      global.set $act
+      i32.const 0
+      global.set $nact
+      i32.const 0
+      global.set $actcap
+      i32.const 0
+      global.set $mtask)
 
     ;; ------------------------------------------------------------------
     ;; scopes and tasks

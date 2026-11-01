@@ -656,6 +656,82 @@ fn chain(mws: List[fn(Request, fn(Request) -> http.Response) -> http.Response], 
   next
 }
 
+/// Serves the request a wasi:http component was called with (decision
+/// 0447, option (a)): the component's `handle` export runs main for the
+/// request, main builds its router and calls this. The request's method
+/// path with query and fields come from the wasm runtime (rt.xo's
+/// wasi_http_method, wasi_http_path and wasi_http_headers over the
+/// incoming-request resource); the response's status, fields and body
+/// go back through wasi_http_respond. Off
+/// wasm it faults: a native program serves with http.server.
+pub fn serve_component(r: Router) {
+  if target.arch == TargetArch.Wasm32 {
+    let pq = rt.wasi_http_path()
+    let url = parse_url_loose(pq)
+    let path = match pq.find("?") {
+      Some(i) => pq[0..i]
+      None => pq
+    }
+    let raw_query = match pq.find("?") {
+      Some(i) => pq[i + 1..]
+      None => ""
+    }
+    let req = Request{method: rt.wasi_http_method(), path: path, url: url, headers: wasi_headers(rt.wasi_http_headers()), body: rt.wasi_http_body(), remote_ip: "", raw_query: raw_query}
+    let resp = r.call(req)
+    rt.wasi_http_respond(resp.status, wasi_header_bytes(resp.headers), resp.body)
+    return
+  }
+  fault("http.serve_component serves a wasi:http component's request: build with the wasm backend (decision 0447); a native program serves with http.server")
+}
+
+/// A wasi:http request's fields, as the wasm runtime packs them (each
+/// name and value followed by a zero byte, which no field holds): keyed
+/// by Go's canonical name, the first value of a repeated name, as the
+/// native server keeps them.
+fn wasi_headers(b: Bytes) -> Map[Str, Str] {
+  var h: Map[Str, Str] = {}
+  var name = ""
+  var at_name = true
+  var start = 0
+  var i = 0
+  while i < b.len() {
+    if b[i] == 0 {
+      let s = b[start..i].to_str() ?? ""
+      if at_name {
+        name = s
+      } else {
+        let k = http1.canonical_key(name)
+        if !h.contains(k) {
+          h[k] = s
+        }
+      }
+      at_name = !at_name
+      start = i + 1
+    }
+    i += 1
+  }
+  h
+}
+
+/// A response's fields packed for the wasm runtime (wasi_headers' form),
+/// with a Content-Type when it has none.
+fn wasi_header_bytes(h: Map[Str, Str]) -> Bytes {
+  var out = BytesBuilder.with_capacity(64)
+  if header_get(h, "Content-Type") == None {
+    out.write("content-type".bytes())
+    out.write_byte(0)
+    out.write("text/plain; charset=utf-8".bytes())
+    out.write_byte(0)
+  }
+  for (k, v) in h {
+    out.write(k.bytes())
+    out.write_byte(0)
+    out.write(v.bytes())
+    out.write_byte(0)
+  }
+  out.freeze()
+}
+
 /// In process dispatch: a streamed body is collected (std/rt's M_call).
 fn (r: Router) call(req: Request) -> http.Response { collect(call_raw(r, req)) }
 

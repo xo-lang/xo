@@ -330,6 +330,12 @@ func chain(mws []middleware, inner func(*Task, Http_Request) Http_Response) func
 // M_call is `r.call(req)`: in process dispatch. A streamed body is
 // collected into the response. The response goes back to Xo code, so no
 // arena response may be built while it runs (see Arena).
+// Http_serve_component answers a wasi:http component's request, which only
+// the wasm backend builds (decision 0447).
+func Http_serve_component(tk *Task, r Http_Router) {
+	FaultHere("http.serve_component serves a wasi:http component's request: build with the wasm backend (decision 0447); a native program serves with http.server")
+}
+
 func (r Http_Router) M_call(tk *Task, req Http_Request) Http_Response {
 	return noArenaResp(func(tk *Task, req Http_Request) Http_Response {
 		return r.call(tk, req).collect(tk)

@@ -1,0 +1,20 @@
+exports: cabi_realloc memory wasi:http/incoming-handler@0.2.0#handle
+mode: an instance per request
+/: 200 "hello" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/users/7?x=y: 200 "user 7 x=y" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/users/q: 400 "{\"error\":\"path segment `id` must be an Int\"}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/h: 200 "x-test a ua w47-node empty []" [["Content-Type","text/plain; charset=utf-8"],["X-Out","1"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+POST /echo: 200 "len 18 [hello request body]" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/json: 201 "{\"a\":1}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/nope: 404 "{\"error\":\"not found\"}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+NODE-HOST OK
+exports: cabi_realloc memory wasi:http/incoming-handler@0.2.0#handle
+mode: one instance for every request
+/: 200 "hello" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/users/7?x=y: 200 "user 7 x=y" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/users/q: 400 "{\"error\":\"path segment `id` must be an Int\"}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/h: 200 "x-test a ua w47-node empty []" [["Content-Type","text/plain; charset=utf-8"],["X-Out","1"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+POST /echo: 200 "len 18 [hello request body]" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/json: 201 "{\"a\":1}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/nope: 404 "{\"error\":\"not found\"}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+NODE-HOST OK

@@ -9,6 +9,7 @@ var (
 	_ func(*Task) Http_Router                                                                                                                           = Http_router
 	_ func(*Http_Router, *Task, string, Http_Router)                                                                                                    = (*Http_Router).M_mount
 	_ func(*Http_Router, *Task, Http_Request) Http_Response                                                                                             = (*Http_Router).M_call
+	_ func(*Task, Http_Router)                                                                                                                          = Http_serve_component
 	_ func(*Http_Request, *Task, string) string                                                                                                         = (*Http_Request).M_param
 	_ func(*Http_Request, *Task, string) int64                                                                                                          = (*Http_Request).M_param_int
 	_ func(*Http_Request, *Task, string) Option[string]                                                                                                 = (*Http_Request).M_query

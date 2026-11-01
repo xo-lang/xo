@@ -297,6 +297,18 @@ fn prefetch(a: Int)
 ///   84-88 std/native/llrt/membudget.xo: the memory budget (decision 0349): the bytes in use, the budget, the label's buffer, the stop's digit, the high-water mark
 ///   64-66 std/native/llrt/fault.xo: the address of cabi.xo fault_raise_msg (decision 0228; word 14 until 2026-10-16), XO_TRACEBACK's printer (0 not looked up, 1 off, else cabi.xo fault_traceback's address; decision 0239), and the address of cabi.xo fault_raise_pos, the raise of a generated code position (a file name, line and column) as fault.xo fire_pos calls it (decision 0228's 2026-10-25 addendum)
 fn static_word(k: Int) -> Int uses realtime
+/// A wasi:http component's request (decision 0447): its method, path
+/// with query, fields (each name and value followed by a zero byte) and
+/// body (the incoming-body stream read to its end),
+/// read through the incoming-request resource the handle export was
+/// called with, and its response (status, fields in the same form, body)
+/// written through outgoing-response. The wasm backend only (compiler/wasm
+/// rt5.xo); std's callers test target.arch first.
+fn wasi_http_method() -> Str
+fn wasi_http_path() -> Str
+fn wasi_http_headers() -> Bytes
+fn wasi_http_body() -> Bytes
+fn wasi_http_respond(status: Int, headers: Bytes, body: Bytes)
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
 // caller, in its `target.os` Linux arms.
