@@ -481,9 +481,24 @@ pub fn srv_h2cfg(s: rthttp.Srv, streams: Int, frame: Int, conn_win: Int, stream_
   st(blk, 64, if enc_table > 0 { enc_table } else { 0 })
 }
 
+/// Frees the continuation records of a list linked through word link.
+fn srv_free_conts(first: Int, link: Int) {
+  var pc = first
+  while pc != 0 {
+    let next = ld(pc, link)
+    obj.free_obj(pc)
+    pc = next
+  }
+}
+
 /// Frees server record a (its last reference went; cabi_http.xo
 /// srv_free).
 pub fn srv_free(a: Int) {
+  // continuation records no resumer took: fired after drain looked, or
+  // parked after it. Each resume function held a connection, which holds
+  // this server, so all of them went before this
+  srv_free_conts(ld(a, hconn.SR_READY), PC_NEXT)
+  srv_free_conts(ld(a, hconn.SR_PARKLIST), PC_PLINK)
   let sc = ld(a, hconn.SR_SCOPE)
   if sc != 0 && ld(a, hconn.SR_CLOSED) == 0 {
     // never closed (serve did not get to its end): its tasks hold the

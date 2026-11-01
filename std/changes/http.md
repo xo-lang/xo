@@ -14,6 +14,18 @@ was never seen and the client timed out.
 A parked connection is now watched for reads, with the AFD poll and with
 WSAPoll. Other systems are not affected: their poller registers every
 descriptor when it opens.
+## 2026-11-01: fix: no continuation record outlives a stopped server (decision 0449)
+
+- Kind: fix
+- Commit: this commit
+- Found by: the Lead's tier, TestGoldenTasks/http_conn_fault (1 live at exit)
+- Go reference: none (parking is Xo's own)
+- Test: golden http_conn_fault, repeated: 0 of 600 runs leak in its two cut down forms that leaked 8 to 9 and 5 of 200 before
+
+An HTTP/2 connection that fired, or parked, after the stopping server's
+resumer had taken its last look left its 64 byte record on the server's lists
+with no one to free it, so XO_LEAKCHECK sometimes reported 1 live block at
+exit. The server now frees what is left when it is freed.
 
 ## 2026-11-01: feature: http.serve_component serves a wasi:http component's request, wasm (decision 0447)
 
