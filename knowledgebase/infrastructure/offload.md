@@ -116,7 +116,7 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   with `XO_SEPCOMP=1` from stdcache's store and facts (a cross build
   gets none by default), for a cross link's claim; 5 warmups
   by default) or a program directory built by each side and run
-  with `ARG...`; 10 rounds and 2 warmups by default. The table
+  with `ARG...`; 3 rounds by default (decision 0340). The table
   streams back; the host keeps only the logs in `abNAME.out` (the two
   worktrees, the built xo and binaries, and the edit loop's caches go
   when the run ends, however it ends: 1.1 GB per run filled the disk,

@@ -31,7 +31,7 @@ load generator is a script (`A` is `sh`, `--args-a "run-a.sh"`); the
 measured process is then the script and everything it started and
 waited for.
 
-**Rounds.** `--rounds N` (default 10) rounds after `--warmup W`
+**Rounds.** `--rounds N` (default 10, 3 since the 2026-11-01 addendum) rounds after `--warmup W`
 (default 1, discarded). Each round runs A and B once, back to back; the
 order alternates by round (A B, B A, ...) so a drift, a thermal slope or
 a cache warmup does not favor a side. Per round and per side the
@@ -180,3 +180,12 @@ added with the three rounds addendum, is withdrawn; every --ab runs 3
 rounds. A no-effect change still shows three agreeing rounds about one
 time in four, so a 3-round verdict on a small effect is reported as such.
 --early stays for a run given more than 5 rounds by hand.
+
+## Addendum 2026-11-01: --rounds defaults to 3
+
+Owner's rule, through the lead, 2026-11-01: a direct `xo bench --ab` with no
+`--rounds` ran 10 rounds, 16 minutes of a Mac quiet window for three programs
+that 3 rounds would have answered. The default is now 3, as ab-host.sh's has been.
+--early's rule holds: its first look is round 5 and it needs two looks in a row,
+so it can stop only a run above 5 rounds, and `--early` alone runs 3 rounds and
+never stops early. A longer run still names `--rounds`.

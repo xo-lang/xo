@@ -39,6 +39,11 @@ test "options" {
   expect(parse_opts(["--ab", "a"]).is_err())
   expect(parse_opts(["--ab", "--env-b=X=1", "a"]).is_ok())
   expect(parse_opts(["--ab", "--rounds=x", "a", "b"]).is_err())
+  // every --ab runs 3 rounds unless told otherwise (decision 0340)
+  match parse_opts(["--ab", "a", "b"]) {
+    Ok(o) => expect(o.rounds == 3)
+    Err(e) => expect(e == "")
+  }
   expect(parse_opts(["--ab", "--bogus", "a", "b"]).is_err())
   match parse_opts(["--ab", "--rounds=7", "--env-a=K=V", "--args-b=-x 1", "p", "q", "--", "z"]) {
     Ok(o) => {

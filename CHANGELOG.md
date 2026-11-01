@@ -5,6 +5,8 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- `xo bench --ab` runs 3 rounds by default, was 10 (decision 0340). `--early` alone
+  now has nothing to stop: it needs `--rounds` above 5.
 - Self build: the heap counter's peak moves from hollow back to emit (about 4440
   to 4000 MB on the Mac, decision 0448): a part's hollowed text is dropped once
   its object and symbol facts exist, and those facts copy their names rather

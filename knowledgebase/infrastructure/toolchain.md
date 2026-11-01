@@ -1031,7 +1031,7 @@ codec), hooks in `caps.go`, `http.go`, `sched.go`, `main.go`, `stop.go`,
 `xo bench --ab [flags] A [B] [-- ARGS...]` (decision 0340,
 compiler/cli/bench, 2026-10-22) runs two programs, or one program under
 two settings (`--env-a/--env-b`, `--args-a/--args-b`), in interleaved
-rounds (the order alternates each round) and prints per metric each
+rounds (3 by default, `--rounds`; the order alternates each round) and prints per metric each
 side's median and interquartile spread, the ratio B/A with a 95%
 percentile bootstrap interval over the rounds, and a verdict (better,
 worse, within noise; too few rounds under 3 (decision 0340's 2026-10-31 addendum); no ratio when A's median

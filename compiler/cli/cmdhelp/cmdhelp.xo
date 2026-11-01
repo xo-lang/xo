@@ -731,7 +731,9 @@ cpu_us_per_op, instructions (macOS), max_rss_kb, and every number on the
 last JSON line the program prints (rps, ops, ...; names with rps, mbps,
 per_sec or throughput are higher is better).
 
-  --rounds=N         rounds measured (10); --warmup=N discarded first (1)
+  --rounds=N         rounds measured (3); --warmup=N discarded first (1)
+  --early            with --rounds above 5, stop once wall, CPU and max RSS (or
+                     --metrics) are decided at two looks in a row
   --env-a=K=V        environment for A (repeatable); --env-b=K=V for B
   --args-a=WORDS     arguments for A only; --args-b=WORDS for B; after --
                      they go to both

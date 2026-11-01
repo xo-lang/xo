@@ -24,7 +24,7 @@ pub fn usage() -> Str {
 }
 
 struct Opts {
-  rounds: Int = 10
+  rounds: Int = 3
   warmup: Int = 1
   env_a: List[Str] = []
   env_b: List[Str] = []

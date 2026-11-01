@@ -670,7 +670,7 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   Every --ab runs 3 rounds, small effects and "no slower" claims too
   (owner, 2026-10-31: "I thought all tests were dropped to 3?"; no
   10-round confirmations); report a 3-round verdict on an effect under
-  about 3% as such. A run given more than 5 rounds by hand runs with `xo bench --early` (2026-10-31, owner's OK): from round 5
+  about 3% as such. `xo bench --ab` itself defaults to 3 rounds since 2026-11-01. A run given more than 5 rounds by hand runs with `xo bench --early` (2026-10-31, owner's OK): from round 5
   the run stops once wall, CPU and max RSS (or `--metrics`) are each
   decided better, worse, or the same within 1% at two looks in a row,
   each look at alpha over the number of looks; the output says "stopped
