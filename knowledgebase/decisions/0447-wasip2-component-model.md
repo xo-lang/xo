@@ -1,6 +1,6 @@
 # 0447: Xo programs on WASI preview 2 and the component model (wasi:http)
 
-Status: Accepted, direction and step 1 (owner, 2026-10-30): the hello-world wasi:http measurement first, later stages decided on its numbers; the owner approved installing wasmtime, wasm-tools, TinyGo and Rust's wasm32-wasip2 target on the linux/arm64 offload host. Proposed by xo-lang-4 the same day
+Status: Accepted, direction and step 1 (owner, 2026-10-30): the hello-world wasi:http measurement first, later stages decided on its numbers; the owner approved installing wasmtime, wasm-tools, TinyGo and Rust's wasm32-wasip2 target on the linux/arm64 offload host. Proposed by xo-lang-4 the same day Next stage accepted (owner, 2026-11-01): Xo writes the component sections, WASI 0.2 imports in place of preview 1.
 
 ## Context
 
@@ -262,6 +262,14 @@ offload host, alone on it:
 Not done, for the owner's decision on the next stages: the component sections
 written by Xo, WASI 0.2 imports in place of preview 1 (dropping the adapter),
 streaming a route's body, outgoing requests, Spin (not tried).
+
+## Next stage accepted (owner, 2026-11-01)
+
+The owner accepted the next stage after step 1's results, as one piece of
+work: the component sections written by Xo itself, so a build needs neither
+wasm-tools nor the preview 1 adapter, and WASI 0.2 imports in place of
+preview 1. A handle_stream route on the input-stream, outgoing requests and
+response trailers come after this and are not decided yet.
 
 ## Consequences
 
