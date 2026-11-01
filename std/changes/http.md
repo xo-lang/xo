@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-01: perf: idle HTTP/2 connections with a ping interval or deadline park (decision 0449 stage 1c)
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0449 (idle connection memory)
+- Go reference: net/http's http2 server keeps a goroutine per idle connection; this has no Go counterpart
+- Test: internal/llvm/testdata/golden/http_h2_config (server pings on a parked connection), http_h2c, http_h2c_sniff, http_stream_body_h2
+- Timing: none; the 40k idle h2 check is internal/stdtest TestIdleConnections40kH2
+
+An idle h2 connection whose H2Config has send_ping_timeout, ping_timeout or a deadline used to keep its task. It now parks with the timer, and the timer resumes the open connection to send the ping or end it.
+
 ## 2026-10-31: feature: http.Status and the status code constants (decision 0269 stage A)
 
 - Kind: feature

@@ -2515,7 +2515,7 @@ fn serve_h1(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router)
 fn serve_h2(hc: rthttp.HConn, h2: Int, r: Router) -> Bool {
   // a handle_stream route's request comes at its HEADERS (decision 0310)
   var hp = if r.streamed { h2srv.conn_streaming(hc, h2, fn(m: Str, p: Str) -> Bool { route_streams(r, m, p) }) } else { h2srv.conn(hc, h2) }
-  hp.parker = [fn(p: h2srv.H2Conn) -> Bool { hserve.hc_park(hc, fn() { serve_h2_resume(hc, h2, r, p) }, 0, true) }]
+  hp.parker = [fn(p: h2srv.H2Conn, ns: Int) -> Bool { hserve.hc_park(hc, fn() { serve_h2_resume(hc, h2, r, p) }, ns, true) }]
   h2_loop(hp, r)
 }
 

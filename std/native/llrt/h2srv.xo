@@ -1082,7 +1082,7 @@ pub struct H2Conn {
   streams: List[fn(Str, Str) -> Bool] = []
   /// parks the idle connection (hserve.hc_park, decision 0449 stage 1c):
   /// true when it parked; none: the connection never parks
-  parker: List[fn(H2Conn) -> Bool] = []
+  parker: List[fn(H2Conn, Int) -> Bool] = []
   /// next() returned none because the connection parked, not ended
   parked: Bool = false
 }
@@ -1286,7 +1286,8 @@ pub fn (var h: H2Conn) next() -> H2Req? {
     if pending {
       continue // more to send first
     }
-    if h.idle() && h.parker[0](h) {
+    let wait_ns = h.idle()
+    if wait_ns >= 0 && h.parker[0](h, wait_ns) {
       h.parked = true
       return None
     }
@@ -1302,17 +1303,38 @@ pub fn (var h: H2Conn) next() -> H2Req? {
 
 /// Whether the connection waits with nothing in flight (decision 0449):
 /// no open stream, nothing buffered, queued or to send, settings
-/// received, no ping or deadline timer, not stopping. State then lives in
-/// the record and in h, not on the fiber.
-fn (h: H2Conn) idle() -> Bool {
+/// received, not stopping; then the ns until its next timer (the ping
+/// interval, a pending ping's answer, its deadline) or 0 for none; -1 when
+/// it must not park. State then lives in the record and in h, not on the
+/// fiber; the timer fires the resume, whose next() sends the ping or ends
+/// the connection as wait()'s timeout does.
+fn (h: H2Conn) idle() -> Int {
   if h.parker.is_empty() {
-    return false
+    return -1
   }
   let c = h.c
   lk(c)
-  let ok = !on(c, C_DEAD) && !on(c, C_FAILED) && !on(c, C_STOP) && !on(c, C_GOAWAY) && !on(c, C_REJECT) && on(c, C_GOT_SETTINGS) && ld(c, C_NOPEN) == 0 && ntab(c) == 0 && ld(c, C_RFIRST) == 0 && ld(c, C_DQOFF) == ld(c, C_DQN) && ld(c, C_OUT + 8) == 0 && ld(c, C_BUF_OFF) == ld(c, C_BUF + 8) && ld(c, C_PIDLE) <= 0 && ld(c, C_DEADLINE) == 0 && ld(c, C_PDEAD) == 0 && !on(c, C_WOKEN)
+  let ok = !on(c, C_DEAD) && !on(c, C_FAILED) && !on(c, C_STOP) && !on(c, C_GOAWAY) && !on(c, C_REJECT) && on(c, C_GOT_SETTINGS) && ld(c, C_NOPEN) == 0 && ntab(c) == 0 && ld(c, C_RFIRST) == 0 && ld(c, C_DQOFF) == ld(c, C_DQN) && ld(c, C_OUT + 8) == 0 && ld(c, C_BUF_OFF) == ld(c, C_BUF + 8) && !on(c, C_WOKEN)
+  var ns = -1
+  if ok {
+    ns = 0
+    var until = ld(c, C_DEADLINE)
+    if ld(c, C_PIDLE) > 0 {
+      let pw = if ld(c, C_PDEAD) != 0 { ld(c, C_PDEAD) } else { ld(c, C_LAST) + ld(c, C_PIDLE) }
+      if until == 0 || pw < until {
+        until = pw
+      }
+    }
+    if until != 0 {
+      // a timer already due does not park: next() waits (returning at
+      // once) and keepalive() sends the ping or ends the connection; a
+      // resume by that timer comes here first and must not park again
+      let d = until - now()
+      ns = if d > 0 { d } else { -1 }
+    }
+  }
   unlk(c)
-  ok
+  ns
 }
 
 /// Reads what the socket has (TLS records): the bytes read, 0 at the end

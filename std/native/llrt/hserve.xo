@@ -117,7 +117,7 @@ pub fn srv_group(s: rthttp.Srv) -> task.Group {
 /// function's id in the stream table, the next record of the ready list,
 /// the connection's poll descriptor, its idle deadline (monotonic ns, 0
 /// none), and the links of the server's parked list.
-const PC_SIZE = 56
+const PC_SIZE = 64
 const PC_SRV = 0
 const PC_ID = 8
 const PC_NEXT = 16
@@ -125,6 +125,7 @@ const PC_PD = 24
 const PC_DL = 32
 const PC_PREV = 40
 const PC_PLINK = 48
+const PC_KEEP = 56
 
 /// Whether h is a busy keep-alive connection (hconn.quick).
 pub fn hc_quick(h: rthttp.HConn) -> Bool { hconn.quick(h) }
@@ -154,6 +155,8 @@ pub fn hc_park(h: rthttp.HConn, resume: fn() -> (), idle_ns: Int, h2: Bool = fal
   st(pc, PC_NEXT, 0)
   st(pc, PC_PD, pd)
   st(pc, PC_DL, if idle_ns > 0 { hconn.deadline(idle_ns) } else { 0 })
+  // an h2 timer is the connection's own (ping, deadline): its resume runs on the open connection
+  st(pc, PC_KEEP, if h2 { 1 } else { 0 })
   hconn.rlock(srv)
   parked_add(srv, pc)
   hconn.runlock(srv)
@@ -255,7 +258,9 @@ fn sweep_idle(srv: Int) -> Int {
   for pc in expired {
     // the poller may have fired it meanwhile: then it is not ours
     if poll.pd_unpark(ld(pc, PC_PD), pc) {
-      poll.pd_close(ld(pc, PC_PD))
+      if ld(pc, PC_KEEP) == 0 {
+        poll.pd_close(ld(pc, PC_PD))
+      }
       cont_fire(pc)
     }
   }

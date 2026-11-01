@@ -5,6 +5,8 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- std/http (decision 0449 stage 1c): idle HTTP/2 connections with a ping
+  interval or deadline park with the timer instead of holding a task.
 - Compiler memory (decision 0448 stage 3): `ssa.Value` is two words smaller
   (11, was 13): `pad` and `inl` share a word, as do `ty` and `block`. Output
   unchanged. linux/arm64 self build (--ab, 3 rounds): wall 0.992, CPU 0.994,

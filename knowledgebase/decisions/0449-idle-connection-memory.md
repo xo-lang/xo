@@ -128,7 +128,12 @@ The cut:
    read blocks (`tlssrv` record read), because the TLS state is in the
    connection record already. HTTP/2 (stage 1c): the read loop parks the
    same way when no stream task is running and no frame is buffered; a
-   connection with streams in flight keeps its reader.
+   connection with streams in flight keeps its reader. A connection with
+   a ping interval or a deadline (H2Config) parks with the timer
+   (2026-11-01): `idle()` returns the ns to the next timer, the parked
+   record carries PC_KEEP, and `sweep_idle` resumes such a connection
+   open (it does not close the descriptor as for the h1 idle timeout);
+   the resume's wait()/keepalive() sends the ping or ends the connection.
 
 Mechanics found reading the code: the descriptor record (layout.xo D_*)
 has no free word (D_MU 0, fd 8, closed 12, ops 16, ready flags, D_RWAIT
