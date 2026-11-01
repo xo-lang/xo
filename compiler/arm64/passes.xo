@@ -78,6 +78,7 @@ pub fn passes() -> List[Str] {
     "mark_tails",
     "cold_saves",
     "arg_slots",
+    "slot_group",
     "shrink_split",
     "cluster_mem",
     "x86_merge_blocks",

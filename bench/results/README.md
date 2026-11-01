@@ -237,3 +237,4 @@
 - [worker-netpoll-linux-2026-10-30.md](worker-netpoll-linux-2026-10-30.md): decision 0324's worker polling against XO_NETPOLL=0 and Go 1.26.1 on the linux/arm64 host (CRUD server, 20 rounds, 32 and 256 connections): Xo 14 to 20% more req/s than Go, p99 20 to 26% lower, CPU a request 23 to 27% lower; polling +17.6% req/s at 32 connections, -0.8% at 256 (steals)
 - [landing-pads-2026-10-31.md](landing-pads-2026-10-31.md): landing pad size on xo (native arm64): P1 group_pads (stage 2 __text -12.4%) and lever 2 static zero images (-9.9%), with their `--ab` rows on the self build and the fault paths.
 - [rc-thunk-2026-10-31.md](rc-thunk-2026-10-31.md): retain thunk on xo (native arm64): inline retains were 10.3 MB; stage 2 __text -15.8% with `--ab` rows per program.
+- [slot-group-2026-11-01.md](slot-group-2026-11-01.md): spill slots of a word run together (native arm64): stage 2 __text -2.4% on the held merge, copy runs -35.8%, frames +2.8%, with `--ab` and HTTP rows.

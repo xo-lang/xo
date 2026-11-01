@@ -642,6 +642,59 @@ fn (var g: G) regalloc() {
     }
   }
 
+  // each group's neighbours in a run of word loads or stores
+  // (slot_group): consecutive `ldr` of one base at offsets 8 apart, and
+  // `str` likewise, with the slot offset from each other, so values
+  // copied word by word between an object and spill slots take
+  // consecutive slots and the copies become runs lsr.xo copy_runs_l
+  // copies 32 bytes at a time (2026-10-31: 2.58 MB of xo's code were
+  // runs of 8 or more word copies through x16 with scattered slots)
+  let sgroup = pass_on(g.m, "slot_group") && !g.x86
+  // each group's run (-1 for none) and its word in it; each run's
+  // groups and its first slot once a member spills (-1 before)
+  var grun: List[Int] = []
+  var gword: List[Int] = []
+  var runs: List[List[Int]] = []
+  var rbase: List[Int] = []
+  if sgroup {
+    for _ in 0..n {
+      grun.push(-1)
+      gword.push(0)
+    }
+    for b in g.order {
+      // the run being read: its base register, last offset and groups;
+      // likewise the stores'
+      var lb = -1
+      var lo = 0
+      var lrun: List[Int] = []
+      var sb = -1
+      var so = 0
+      var srun: List[Int] = []
+      for inst in g.blocks[b].insts {
+        let (isl, iss, off) = word_mem(inst.text)
+        if isl && inst.defs.len() == 1 && inst.us.len() == 1 {
+          if !(inst.us[0] == lb && off == lo + 8) {
+            add_slot_run(runs, rbase, grun, gword, lrun, g.fp)
+            lrun = []
+          }
+          lrun.push(find_leader(leader, inst.defs[0]))
+          lb = inst.us[0]
+          lo = off
+        } else if iss && inst.us.len() == 2 {
+          if !(inst.us[1] == sb && off == so + 8) {
+            add_slot_run(runs, rbase, grun, gword, srun, g.fp)
+            srun = []
+          }
+          srun.push(find_leader(leader, inst.us[0]))
+          sb = inst.us[1]
+          so = off
+        }
+      }
+      add_slot_run(runs, rbase, grun, gword, lrun, g.fp)
+      add_slot_run(runs, rbase, grun, gword, srun, g.fp)
+    }
+  }
+
   // allocation: greedy first fit in order of weight per length
   var order: List[Int] = []
   for v in 1..n {
@@ -729,6 +782,9 @@ fn (var g: G) regalloc() {
     g.slots = 0
     // the ranges each spill slot holds
     var slot_occ: List[List[Int]] = []
+    for r in 0..rbase.len() {
+      rbase[r] = -1
+    }
     // the ranges each stack word holds (wcode: its slot code): a call's
     // words from the point its callee may write them
     var wcode: List[Int] = []
@@ -843,13 +899,31 @@ fn (var g: G) regalloc() {
           }
           insert_ranges(slot_occ, k + 1, ranges[v])
         } else {
-          while k < slot_occ.len() && k < SLOT_SCAN_MAX && overlaps_sorted(slot_occ[k], ranges[v]) {
-            k += 1
+          // a run's word (slot_group): its run's first slot plus its
+          // word, the base chosen when the run's first member spills,
+          // where every member's slot is free over the member's ranges
+          // (members that later take a register leave theirs unused)
+          var hinted = false
+          let ru = if sgroup { grun[v] } else { -1 }
+          if ru >= 0 {
+            if rbase[ru] < 0 {
+              rbase[ru] = run_base(slot_occ, runs[ru], ranges)
+            }
+            let t = rbase[ru] + gword[v]
+            if t >= slot_occ.len() || !overlaps_sorted(slot_occ[t], ranges[v]) {
+              k = t
+              hinted = true
+            }
           }
-          if k >= SLOT_SCAN_MAX && k < slot_occ.len() {
-            k = slot_occ.len()
+          if !hinted {
+            while k < slot_occ.len() && k < SLOT_SCAN_MAX && overlaps_sorted(slot_occ[k], ranges[v]) {
+              k += 1
+            }
+            if k >= SLOT_SCAN_MAX && k < slot_occ.len() {
+              k = slot_occ.len()
+            }
           }
-          if k == slot_occ.len() {
+          while slot_occ.len() <= k {
             slot_occ.push([])
             g.slots += 1
           }
@@ -1170,6 +1244,64 @@ fn push_rng(var lists: List[List[Int]], i: Int, r: Int) {
 
 fn push_int(var lists: List[List[Int]], i: Int, x: Int) {
   lists[i].push(x)
+}
+
+/// Whether text is a word load `ldr $d0, [$u0, #off]` or a word store
+/// `str $u0, [$u1, #off]` (byref.xo and calls.xo templates), and off.
+fn word_mem(text: Str) -> (Bool, Bool, Int) {
+  let l = text.starts_with("ldr $d0, [$u0, #")
+  let st = !l && text.starts_with("str $u0, [$u1, #")
+  if !(l || st) || !text.ends_with("]") {
+    return (false, false, 0)
+  }
+  let p = "ldr $d0, [$u0, #".len()
+  match Int.parse(text[p..text.len() - 1]) {
+    Some(k) => (l, st, k)
+    None => (false, false, 0)
+  }
+}
+
+/// Records a run of four or more word copies' groups (slot_group): a
+/// group in a run already, or a floating point one, ends it there.
+fn add_slot_run(var runs: List[List[Int]], var rbase: List[Int], var grun: List[Int], var gword: List[Int], run: List[Int], fp: List[Bool]) {
+  var r: List[Int] = []
+  for v in run {
+    if v <= 0 || fp[v] || grun[v] >= 0 || r.contains(v) {
+      break
+    }
+    r.push(v)
+  }
+  if r.len() < 4 {
+    return
+  }
+  let id = runs.len()
+  for (j, v) in r.indexed() {
+    grun[v] = id
+    gword[v] = j
+  }
+  runs.push(r)
+  rbase.push(-1)
+}
+
+/// The first slot of a run (slot_group): the lowest where each member's
+/// slot is free over its ranges, scanning SLOT_SCAN_MAX, else past the
+/// slots taken.
+fn run_base(slot_occ: List[List[Int]], run: List[Int], ranges: List[List[Int]]) -> Int {
+  var b = 0
+  while b < slot_occ.len() && b < SLOT_SCAN_MAX {
+    var ok = true
+    for (j, v) in run.indexed() {
+      if b + j < slot_occ.len() && overlaps_sorted(slot_occ[b + j], ranges[v]) {
+        ok = false
+        break
+      }
+    }
+    if ok {
+      return b
+    }
+    b += 1
+  }
+  slot_occ.len()
 }
 
 /// The spill slots a value's first fit scan tries before it takes a new

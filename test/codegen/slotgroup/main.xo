@@ -1,0 +1,66 @@
+// Codegen patterns of slot_group (compiler/arm64 regalloc.xo): a large
+// struct copied from its parameter's memory, changed on one path, live
+// across calls and stored into an object: its words take consecutive
+// spill slots, so the copies go 32 bytes at a time (lsr.xo copy_runs_l)
+// and not a word at a time through x16.
+struct W {
+  w0: Str = "w0"
+  w1: Str = "w1"
+  w2: Str = "w2"
+  w3: Str = "w3"
+  w4: Str = "w4"
+  w5: Str = "w5"
+  w6: Str = "w6"
+  w7: Str = "w7"
+  w8: Str = "w8"
+  w9: Str = "w9"
+  w10: Str = "w10"
+  w11: Str = "w11"
+  w12: Str = "w12"
+  w13: Str = "w13"
+  w14: Str = "w14"
+  w15: Str = "w15"
+  w16: Str = "w16"
+  w17: Str = "w17"
+  w18: Str = "w18"
+  w19: Str = "w19"
+  w20: Str = "w20"
+  w21: Str = "w21"
+  w22: Str = "w22"
+  w23: Str = "w23"
+  a: Int = 0
+  b: Int = 0
+  l: Int = 0
+}
+
+fn note(var out: List[Int], n: Int) {
+  out.push(n)
+  if n > 1000 {
+    out.push(n - 1)
+  }
+}
+
+fn keep(var out: List[Int], var all: List[W], w0: W, n: Int) -> Int {
+  var w = w0
+  if w.a == 0 {
+    w.b = n
+  }
+  note(out, w.a)
+  note(out, w.b)
+  note(out, n)
+  all.push(w)
+  note(out, n + 1)
+  all.push(w)
+  w.a + w.l
+}
+
+fn main(os: Os) {
+  var out: List[Int] = []
+  var all: List[W] = []
+  let r = keep(out, all, W{a: 1, l: 2}, 3)
+  let r2 = keep(out, all, W{b: 4}, 5)
+  os.stdio.println("${r} ${r2} ${out.len()} ${all.len()} ${all[1].b} ${all[3].b}")
+}
+
+// func keep
+// arm64: "ldp q30, q31"
