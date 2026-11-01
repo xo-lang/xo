@@ -1,0 +1,191 @@
+// A `var` receiver whose method faults in a callee after changing it
+// (decision 0148: the callee's unwind exit writes zero values into the
+// memory; decision 0151: a merge where only one edge passes the memory
+// in place keeps it held, the others store their argument there). The
+// caller sees the value it had before the call: through Mutex.with,
+// which leaves the protected value unchanged when the closure faults
+// (core 5.4), and through a copy kept outside task.isolate. Runs without
+// a fault read every field after the same merges. Pos.walk is the shape
+// that held merge changes on arm64 (a `var` method inlined into a `var`
+// method of a nested struct, its unwind exit joining its return): its
+// code shrinks to a third, as xo's own ssa.Builder methods do.
+use std/task
+
+struct Big {
+  name: Str
+  log: List[Str] = []
+  seen: Map[Str, Int] = {}
+  n: Int = 0
+  a: Str = "a"
+  b: Str = "b"
+  c: Str = "c"
+  d: Str = "d"
+  e: Str = "e"
+  f: Str = "f"
+  g: Str = "g"
+  h: Str = "h"
+}
+
+struct Where {
+  file: Int = 0
+  files: List[Str] = ["a.xo", "b.xo"]
+  root: Str = "/src"
+  depth: Int = 0
+}
+
+/// A receiver like the compiler's ssa.Builder: a nested struct and
+/// methods that only read it through `var`.
+struct Pos {
+  w: Where = Where{}
+  big: Big = Big{name: "p"}
+  marks: List[Int] = []
+}
+
+fn (var p: Pos) file_name(f: Int) -> Str {
+  "${p.w.root}/${p.w.files[f]}"
+}
+
+fn (var p: Pos) pos_in(f: Int, line: Int) -> Str {
+  "${p.file_name(f)}:${line}"
+}
+
+/// The callee's unwind exit passes the zero Pos into the merge after
+/// the inlined pos_in; the other edge leaves p's memory in place.
+fn (var p: Pos) pos(line: Int) -> Str {
+  p.pos_in(p.w.file, line)
+}
+
+fn (var p: Pos) walk(n: Int) -> Int {
+  var total = 0
+  for i in 0..n {
+    p.marks.push(i)
+    p.w.file = i
+    total += p.pos(i * 10).len()
+  }
+  total
+}
+
+fn (p: Pos) show() -> Str {
+  "marks ${p.marks.len()} file ${p.w.file} files ${p.w.files.len()} ${p.big.show()}"
+}
+
+/// Two `var` memories swapped on one edge and left in place on the other:
+/// the edge reads both arguments before it stores either.
+fn swap_if(var x: Big, var y: Big, c: Bool) -> Int {
+  if c {
+    let t = x
+    x = y
+    y = t
+  }
+  let l = pick([1, 2], y.n)
+  x.n + y.n + l
+}
+
+fn pick(xs: List[Int], i: Int) -> Int {
+  xs[i]
+}
+
+/// Changes the receiver, then faults when i is out of range; the fault
+/// leaves through a merge the in-place path also reaches.
+fn (var b: Big) step(i: Int) -> Int {
+  b.log.push("step${i}")
+  b.n += i
+  if i % 2 == 0 {
+    b.a = "${b.a}${i}"
+  }
+  let v = pick([10, 20, 30], i)
+  b.seen["s${i}"] = v
+  v
+}
+
+/// Small enough to inline: its unwind exit (the zero value for the
+/// receiver) joins its return at a merge in the caller, which holds the
+/// receiver's memory in place on the other edge.
+fn (var b: Big) label(xs: List[Int], i: Int) -> Str {
+  b.n += 1
+  "${b.name}${pick(xs, i)}"
+}
+
+/// Carries the receiver through the inlined calls; faults when n passes
+/// the list.
+fn (var b: Big) labels(n: Int) -> Int {
+  var total = 0
+  for i in 0..n {
+    total += b.label([4, 5, 6], i).len()
+    b.log.push("l${i}")
+  }
+  total
+}
+
+/// A loop that carries the receiver through the faulting call.
+fn (var b: Big) steps(n: Int) -> Int {
+  var sum = 0
+  for i in 0..n {
+    sum += b.step(i)
+    if i == 1 {
+      b.h = "h${sum}"
+    }
+  }
+  sum
+}
+
+fn (b: Big) show() -> Str {
+  "${b.name}: log ${b.log.len()} seen ${b.seen.len()} n ${b.n} a ${b.a} h ${b.h} ${b.b}${b.c}${b.d}${b.e}${b.f}${b.g}"
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let m = Mutex[Big].new(Big{name: "m"})
+  m.with(fn(var b) { b.steps(2) })
+  io.println("before: ${m.with(fn(b) { b.show() })}")
+  match task.isolate(fn() -> Int ! () {
+    m.with(fn(var b) -> Int { b.steps(5) })
+  }) {
+    Ok(v) => io.println("steps: ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("steps: fault ${info.msg}")
+    Err(_) => io.println("steps: failed")
+  }
+  io.println("after: ${m.with(fn(b) { b.show() })}")
+  io.println("again: ${m.with(fn(var b) -> Int { b.steps(3) })} ${m.with(fn(b) { b.show() })}")
+  match task.isolate(fn() -> Int ! () {
+    m.with(fn(var b) -> Int { b.labels(5) })
+  }) {
+    Ok(v) => io.println("labels: ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("labels: fault ${info.msg}")
+    Err(_) => io.println("labels: failed")
+  }
+  io.println("labels after: ${m.with(fn(b) { b.show() })}")
+  io.println("labels again: ${m.with(fn(var b) -> Int { b.labels(3) })} ${m.with(fn(b) { b.show() })}")
+
+  let pm = Mutex[Pos].new(Pos{})
+  io.println("walk: ${pm.with(fn(var p) -> Int { p.walk(2) })} ${pm.with(fn(p) { p.show() })}")
+  match task.isolate(fn() -> Int ! () {
+    pm.with(fn(var p) -> Int { p.walk(4) })
+  }) {
+    Ok(v) => io.println("walk: ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("walk: fault ${info.msg}")
+    Err(_) => io.println("walk: failed")
+  }
+  io.println("walk after: ${pm.with(fn(p) { p.show() })}")
+
+  var sx = Big{name: "x", n: 1}
+  var sy = Big{name: "y", n: 0}
+  let sr = swap_if(sx, sy, true)
+  io.println("swap ${sr}: ${sx.show()} | ${sy.show()}")
+  let sr2 = swap_if(sx, sy, false)
+  io.println("no swap ${sr2}: ${sx.show()} | ${sy.show()}")
+
+  let k = Big{name: "k"}
+  for round in 0..3 {
+    match task.isolate(fn() -> Int ! () {
+      var w = k
+      w.steps(4 + round)
+    }) {
+      Ok(v) => io.println("k ${round}: ${v}")
+      Err(task.Isolated.Faulted(_)) => io.println("k ${round}: fault")
+      Err(_) => io.println("k ${round}: failed")
+    }
+  }
+  var w = k
+  io.println("k: ${k.show()} w ${w.steps(3)} ${w.show()}")
+}

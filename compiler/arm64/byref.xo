@@ -408,10 +408,14 @@ fn (g: G) held_in(b: Int, n: Int) -> List[HKey] {
           one = true
         }
       }
-      // a home in the frame also takes the parameter when one edge (a
-      // loop's back edge) passes it in place: the others store their
-      // argument there (isel.xo edge_moves), once before the loop
-      if all || (one && m.param < 0) {
+      // a home also takes the parameter when one edge passes it in
+      // place: the others store their argument there (isel.xo
+      // edge_moves). A frame home: a loop's back edge, the others once
+      // before the loop. A `var` parameter's memory: a merge with a
+      // fault path, whose unwind exit passes the zero value (the static
+      // zero image is copied in on that edge, not the whole value
+      // loaded into registers on every path and stored back)
+      if all || one {
         st[i] = HKey{v: p, k: -1}
         found = true
         break

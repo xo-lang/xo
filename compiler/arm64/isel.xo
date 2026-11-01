@@ -911,6 +911,9 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
   var srcs: List[Src] = []
   let to = g.f.edges[e].to
   let ps = g.f.blocks[to].params
+  // the memories this edge stores, after every argument is read: one
+  // argument can be another's memory (two `var` parameters swapped)
+  var stores: List[(Int, List[Int])] = []
   for (i, p) in ps.indexed() {
     let m = g.mem_only(p)
     if m >= 0 {
@@ -919,7 +922,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       let a = g.f.edges[e].args[i]
       if let Some(es) = g.held.edge.get(e) {
         if es[m] != g.key_of(a) {
-          g.edge_store_words(g.held.mems[m].ptr, g.words(a))
+          stores.push((g.held.mems[m].ptr, g.words(a)))
         }
       }
       continue
@@ -934,7 +937,7 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
       let a = g.f.edges[e].args[i]
       if let Some(es) = g.held.edge.get(e) {
         if es[hm] != g.key_of(a) {
-          g.edge_store_words(g.held.mems[hm].ptr, g.words(a))
+          stores.push((g.held.mems[hm].ptr, g.words(a)))
         }
       }
     }
@@ -949,6 +952,9 @@ fn (var g: G) edge_moves(e: Int) -> (List[Int], List[Src]) {
     }
     g.f32_param_move(p, g.f.edges[e].args[i], dsts, srcs)
     g.len_moves(p, pw, aw, dsts, srcs)
+  }
+  for (ptr, ws) in stores {
+    g.edge_store_words(ptr, ws)
   }
   g.lsr_moves(e, dsts, srcs)
 }

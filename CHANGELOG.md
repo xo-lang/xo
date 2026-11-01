@@ -5,6 +5,12 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- PERF (native arm64): a `var` parameter's memory stays held at a merge
+  where one edge passes it in place, the other edges storing their value
+  into it (decisions 0148, 0151). A merge after a call that can fault no
+  longer loads the whole receiver into registers on every path and
+  stores it back word by word. xo's stage 2 __text 38,082,764 to
+  36,494,348 bytes (-4.2%). New golden byref_fault_merge.
 - Self build: an SSA value is 9 words, was 11 (decision 0448): its position is an
   index into its function's table, sharing a word with its line. Mac peak footprint
   about -3%; max RSS on linux/arm64 unchanged (1.002).
