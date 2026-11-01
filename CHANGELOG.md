@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Self build on the Mac: the heap counter's peak falls 10% (about 3930 to 3540 MB,
+  decision 0448): the rewrite of the weak symbols frees each part's text as it copies
+  it. Linux's max RSS and wall are unchanged.
 - std/http (decision 0449 stage 1c): an HTTP/2 connection whose idle park
   was refused re-reads before waiting; a request that arrived as the park
   was tried could go unanswered until a deadline (TestH2Diff, under load).

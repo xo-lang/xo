@@ -321,6 +321,14 @@ pub fn generate_parallel(m0: ssa.Module, os: Str, jobs: Int) -> Program uses fs.
 }
 
 /// The bodies a part's cell holds, leaving it empty: the taker owns them.
+fn take_text(c: Mutex[Str]) -> Str {
+  c.with(fn(var t: Str) -> Str {
+    let out = t
+    t = ""
+    out
+  })
+}
+
 fn take_bodies(c: Mutex[Map[Int, ssa.Func]]) -> Map[Int, ssa.Func] {
   c.with(fn(var b: Map[Int, ssa.Func]) -> Map[Int, ssa.Func] {
     let out = b
@@ -567,7 +575,15 @@ pub fn generate_cached(var m: ssa.Module, os: Str, jobs: Int, fc: FnCache, mem_l
   // the module's own symbols are not weak (weak_ref), each file on a
   // task (a serial pass over xo's 1.1 GB was 0.3 s of an edit build)
   // and windows' calls retargeted (win_text) on the same tasks
-  let own = drop_weak_all(g.own_exports(), g.os, files, jobs, g.win_map())
+  // Each text goes as its copy is made: with the parts, files and the
+  // argument all holding them, the copy of 1.1 GB was emit's peak (decision 0448)
+  parts = []
+  var texts: List[Mutex[Str]] = []
+  for f in files {
+    texts.push(Mutex[Str].new(f))
+  }
+  files = []
+  let own = drop_weak_all(g.own_exports(), g.os, texts, jobs, g.win_map())
   // with parts, no whole text (Program.text joins them when wanted)
   Program{asm: if own.len() > 1 { "" } else { own.join("") }, err: g.err, skipped: skipped + g.skipped, dumps: g.dumps, parts: own, stores: stores, reused: reused, mismatches: mismatches, part_stores: part_stores, parts_reused: parts_reused, part_mismatches: part_mismatches, spills: spills}
 }
@@ -713,12 +729,12 @@ fn spill_part(fs: Fs, path: Str, var part: Part) uses fs.write {
 }
 
 /// drop_weak_in over each of files, on up to jobs tasks, in order.
-fn drop_weak_all(own: Map[Str, Bool], os: Str, files: List[Str], jobs: Int, win: Map[Str, Str]) -> List[Str] {
+fn drop_weak_all(own: Map[Str, Bool], os: Str, files: List[Mutex[Str]], jobs: Int, win: Map[Str, Str]) -> List[Str] {
   let n = files.len()
   if (own.is_empty() && win.is_empty()) || jobs <= 1 || n < 2 {
     var out: List[Str] = []
     for f in files {
-      out.push(win_retarget_both(drop_weak_in(own, os, f), win))
+      out.push(win_retarget_both(drop_weak_in(own, os, take_text(f)), win))
     }
     return out
   }
@@ -733,7 +749,7 @@ fn drop_weak_all(own: Map[Str, Bool], os: Str, files: List[Str], jobs: Int, win:
           if i >= n {
             break
           }
-          mine.push((i, win_retarget_both(drop_weak_in(own, os, files[i]), win)))
+          mine.push((i, win_retarget_both(drop_weak_in(own, os, take_text(files[i])), win)))
         }
         mine
       }))

@@ -704,6 +704,24 @@ The counter rises 398 MB in emit (3539 to 3937 MB), with regions or without, so 
 is not in blocks of 8 KiB or less. The next experiment is a heap profile at emit's peak
 of what is above 8 KiB.
 
+### Stage 3: emit's peak was one copy of all texts (xo-lang-2, 2026-11-01)
+
+Regions and a different part order left the Mac's counter peak within 4 MB, so it was
+read at checkpoints: 3539 MB through every part and the exports, then 3928 MB by emit's
+end. `drop_weak_all` copied every part's text (about 1.1 GB) while the parts, the files
+list and its own argument held the originals. Each task now takes its text from a cell
+(`take_text` in compiler/arm64/parallel.xo), so the original goes when its copy exists.
+Output is unchanged: identity on linux/arm64, 119 programs, 0 differing; the self build's
+output byte-identical on darwin/arm64 in each round below.
+
+Mac, 3 alternating rounds: counter peak 3940, 3932, 3931 to 3539, 3539, 3546 MB (-10%),
+now inline.apply's. Peak footprint 3755, 3741, 3762 to 3551, 3668, 3684 MiB. Max RSS 3996,
+4060 to 3668, 3671 MB in the two rounds without memory pressure; the third ran with walls
+of 90 and 182 s and is no reading. linux/arm64 self `--ab` (38006f0b3 vs 3dc41c015, 3
+rounds, all flagged loaded): wall 0.999 (0.995 to 1.003), CPU 1.0, max RSS 0.994 (0.99 to
+1.021): no claim on Linux, where the high-water mark is set elsewhere. Next: place that
+mark with the same checkpoints.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.
