@@ -185,6 +185,21 @@ Last verified: 2026-10-30.
   notes, `offload/linux-arm64-llvm-fails-2026-10-29.md`), assigned to
   Xo Lang 3.
 
+## The second linux/arm64 host
+
+The owner's second machine (2026-11-01): the same container setup at a
+private address in `~/xo-lead/offload-arm64b.env` (18 CPUs, 23 GB VM,
+container limit 20 GB, 2 slots), lane `arm64-2`. It also has
+`--cap-add=SYS_NICE` and `--ulimit rtprio=99`, so `chrt -f` works there,
+which the first host lacks. Same packages, LLVM, seed and WebAssembly tools
+as above. Only `ab-host.sh` with no `OFFLOAD_ENV` picks between the hosts
+(the first to free every slot); a bare `offload.sh` job stays on the first
+host, because agents' jobs lean on files already there. Name it with
+`OFFLOAD_ENV=offload-arm64b.env` (and `--put` to it first). Its commits sent
+are in `refs/offload-arm64b/sent`. Times differ between the hosts, so compare
+ratios. Memory-heavy runs (the tier's selfhost and llvm steps) stay on the
+first host. Last verified: 2026-11-01.
+
 ## The linux/amd64 host
 
 The owner's second machine (2026-10-29): a 16-core x86-64 box running
