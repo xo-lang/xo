@@ -76,7 +76,7 @@ test "a replayed body's cln key is its front end entry's and what the replay set
   // with its declaration, a constant numbered as this build numbers it
   var m3 = m
   var f3 = m3.funcs[fi]
-  f3.values[0].line += 4096
+  f3.values[0].lp = with_line(f3.values[0].lp, line_of(f3.values[0].lp) + 4096)
   m3.funcs[fi] = f3
   expect(cln_key(m3, fi, faults, tk, "id", "fl", facts) == k) == false
   var m4 = m

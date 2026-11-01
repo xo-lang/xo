@@ -45,7 +45,7 @@ pub fn fn_sum(f: ssa.Func) -> FnSum {
         s.tails.push(tail_at(f, v))
       }
       let x = f.values[v]
-      if ssa.pad_of(x.pi) >= 0 && x.op == ssa.Op.Call && (aux_str(x.aux) is "list.set" | "list.take") && !x.pos.is_empty() {
+      if ssa.pad_of(x.pi) >= 0 && x.op == ssa.Op.Call && (aux_str(x.aux) is "list.set" | "list.take") && ssa.has_pos(x.lp) {
         s.badpad = true
       }
       if ssa.pad_of(x.pi) >= 0 {

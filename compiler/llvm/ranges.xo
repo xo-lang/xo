@@ -564,7 +564,7 @@ fn (var g: Gen) find_safe(blocks: List[Int]) {
     var fs = g.fact_at[b]
     for v in g.f.blocks[b].instrs {
       let x = g.f.values[v]
-      if (x.op is ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul) && !x.pos.is_empty() && g.is_int(v) && g.no_overflow(v, fs) {
+      if (x.op is ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul) && ssa.has_pos(x.lp) && g.is_int(v) && g.no_overflow(v, fs) {
         g.rng_safe[v] = true
       }
       let (f, ok) = g.index_fact(v)

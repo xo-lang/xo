@@ -166,7 +166,7 @@ fn (var b: Builder) check_no_alloc() {
   for v in b.s.f.values {
     // the error at the offending value's statement, not wherever the
     // build left off (owner, 2026-10-21)
-    b.at_line(v.line)
+    b.at_line(line_of(v.lp))
     // `target`'s fields (a compile time match, sched.xo fiber_frame) are
     // scalar tags too
     if ty_of(v.tb) >= 0 && !(b.tkind(ty_of(v.tb)) is Kind.Int | Kind.Float | Kind.Bool | Kind.Unit) && !(b.m.types[ty_of(v.tb)].name is "Target" | "TargetOs" | "TargetArch") {

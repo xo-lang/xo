@@ -404,8 +404,8 @@ pub fn (var g: Gen) generate() -> Str {
   if g.dbg_sp >= 0 {
     g.cur_line = 0
     for v in g.f.values {
-      if v.line != 0 {
-        g.cur_line = v.line
+      if ssa.line_of(v.lp) != 0 {
+        g.cur_line = ssa.line_of(v.lp)
         break
       }
     }

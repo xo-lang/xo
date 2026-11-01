@@ -15,7 +15,7 @@ test "clang_ir_refs reads each .ll line once" {
 
 test "ir_line_source names the Xo function holding the line" {
   var f = ssa.Func{name: "main.area", file: "/src/app/main.xo"}
-  f.values = [ssa.Value{op: ssa.Op.Const, line: 7 * 4096 + 3}]
+  f.values = [ssa.Value{op: ssa.Op.Const, lp: ssa.pack_lp(0, 7 * 4096 + 3)}]
   var m = ssa.Module{}
   m.funcs = [ssa.Func{name: "main.main"}, f]
   let ir = "; header\ndefine internal i64 @\"x.main.area\"(i64 %p0) #0 {\nentry:\n  %r = add i64 %v9, 1\n  ret i64 %r\n}\n\ndefine void @xo_entry() #1 {\n  ret void\n}\n"

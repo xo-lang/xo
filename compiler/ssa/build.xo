@@ -2846,7 +2846,7 @@ fn (var b: Builder) add(op: Op, t: Int, aux: Aux, args0: List[Int]) -> Int {
     }
   }
   let v = b.s.f.add(b.s.cur, op, t, aux, args)
-  b.s.f.values[v].line = b.s.line
+  b.s.f.values[v].lp = with_line(b.s.f.values[v].lp, b.s.line)
   if b.s.any_defer && may_raise(op) {
     if b.s.shield == 0 && b.lexical_cleanup() {
       // its landing is placed when the next instruction comes (the caller
@@ -2869,7 +2869,7 @@ fn (var b: Builder) add(op: Op, t: Int, aux: Aux, args0: List[Int]) -> Int {
 }
 
 fn (var b: Builder) set_pos(v: Int, pos: Str) {
-  b.s.f.values[v].pos = pos
+  b.s.f.set_pos(v, pos)
 }
 
 fn (var b: Builder) unit() -> Int {

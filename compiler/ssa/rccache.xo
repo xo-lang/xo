@@ -395,11 +395,11 @@ fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_str("] ")
     write_int(b, pad_of(x.pi))
     b.write_byte(' ')
-    write_int(b, x.line)
+    write_int(b, line_of(x.lp))
     b.write_byte(' ')
-    write_int(b, x.pos.len())
+    write_int(b, f.pos_of(x).len())
     b.write_byte(':')
-    b.write_str(x.pos)
+    b.write_str(f.pos_of(x))
     b.write_byte('\n')
   }
   for (ei, e) in f.edges.indexed() {
@@ -433,11 +433,11 @@ fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str]) {
 fn key_replayed(var b: BytesBuilder, f: Func, tk: List[Str]) {
   key_head(b, f, tk)
   for x in f.values {
-    write_int(b, x.line)
+    write_int(b, line_of(x.lp))
     b.write_byte(' ')
-    write_int(b, x.pos.len())
+    write_int(b, f.pos_of(x).len())
     b.write_byte(':')
-    b.write_str(x.pos)
+    b.write_str(f.pos_of(x))
     b.write_byte(' ')
     key_aux(b, x.aux)
     b.write_byte(' ')
@@ -672,10 +672,10 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
     }
     e.sv(block_of(x.tb))
     e.sv(pad_of(x.pi))
-    e.sv(x.line)
+    e.sv(line_of(x.lp))
     e.sv(inl_of(x.pi))
     e.ints(x.succs)
-    e.str(x.pos)
+    e.str(f.pos_of(x))
   }
   e.uv(f.edges.len())
   for ed in f.edges {
@@ -930,7 +930,8 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
     if !r.ok {
       return None
     }
-    f.values.push(Value{op: op, tb: pack_tb(ty, block), args: args, aux: aux, succs: succs, pos: pos, pi: pack_pi(pad, inl), line: line})
+    f.values.push(Value{op: op, tb: pack_tb(ty, block), args: args, aux: aux, succs: succs, pi: pack_pi(pad, inl), lp: pack_lp(0, line)})
+    f.set_pos(f.values.len() - 1, pos)
   }
   let ne = r.uv()
   if !r.ok || ne > d.len() {

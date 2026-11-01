@@ -194,8 +194,6 @@ pub struct Value {
   pub aux: Aux = Aux.None
   /// Terminators: their edges.
   pub succs: List[Int] = []
-  /// `file:line:col` for operations that can fault.
-  pub pos: Str = ""
   /// The landing check of a call (Value.Pad, -1 for none) in the high half,
   /// and the inline site (Func.inl_sites) this value was copied in by the
   /// arm64 inliner (-1 for the function's own code; its line is then the
@@ -203,12 +201,20 @@ pub struct Value {
   /// pad_of, inl_of, with_pad, with_inl, pack_pi (decision 0448 stage 3:
   /// a word less for each of the values waiting in parts).
   pub pi: Int = -1
-  /// The source line of the statement it was lowered from, as line *
-  /// 4096 + column (column at most 4095), 0 for none: the debug line
-  /// tables (decision 0239). The file is the function's (Func.file).
-  pub line: Int = 0
+  /// For operations that can fault, its `file:line:col` as an index + 1
+  /// into Func.poss (0 for none) in the high half: has_pos, Func.pos_of,
+  /// Func.set_pos. The low half is the source line of the statement it
+  /// was lowered from, as line * 4096 + column (column at most 4095), 0
+  /// for none: the debug line tables (decision 0239); the file is the
+  /// function's (Func.file): line_of, with_line, pack_lp (decision 0448
+  /// stage 3).
+  pub lp: Int = 0
 }
 
+pub fn pack_lp(pos: Int, line: Int) -> Int { pos.wrapping_shl(32) | (line & 4294967295) }
+pub fn line_of(lp: Int) -> Int { lp & 4294967295 }
+pub fn with_line(lp: Int, line: Int) -> Int { pack_lp(lp >> 32, line) }
+pub fn has_pos(lp: Int) -> Bool { lp >> 32 != 0 }
 pub fn pack_tb(ty: Int, block: Int) -> Int { ty.wrapping_shl(32) | (block & 4294967295) }
 pub fn ty_of(tb: Int) -> Int { tb >> 32 }
 pub fn block_of(tb: Int) -> Int { tb.wrapping_shl(32) >> 32 }
@@ -303,6 +309,8 @@ pub struct Func {
   pub results: List[Int] = []
   pub blocks: List[Block] = []
   pub values: List[Value] = []
+  /// The positions of the values that can fault (Value.lp).
+  pub poss: List[Str] = []
   pub edges: List[Edge] = []
   /// The indexes of the `var` parameters (returned after the result).
   pub var_params: List[Int] = []
@@ -362,6 +370,22 @@ pub struct Func {
 /// A split generation's parts own their functions' bodies and drop them
 /// as each part is emitted (arm64/parallel.xo generate_cached); the
 /// module keeps the shells.
+/// The `file:line:col` of x, a value of f ("" for none).
+pub fn (f: Func) pos_of(x: Value) -> Str {
+  let i = x.lp >> 32
+  if i == 0 { "" } else { f.poss[i - 1] }
+}
+
+/// Sets value v's position.
+pub fn (var f: Func) set_pos(v: Int, pos: Str) {
+  if pos.is_empty() {
+    f.values[v].lp = pack_lp(0, line_of(f.values[v].lp))
+    return
+  }
+  f.poss.push(pos)
+  f.values[v].lp = pack_lp(f.poss.len(), line_of(f.values[v].lp))
+}
+
 pub fn (f: Func) shell() -> Func {
   Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader}
 }
@@ -925,8 +949,8 @@ pub fn (f: Func) at_source(line: Int, inl: Int, msg: Str) -> Str {
   if l == 0 {
     site = -1
     for v in f.values {
-      if v.line != 0 && inl_of(v.pi) < 0 {
-        l = v.line
+      if line_of(v.lp) != 0 && inl_of(v.pi) < 0 {
+        l = line_of(v.lp)
         break
       }
     }
@@ -1154,8 +1178,8 @@ fn (m: Module) write_value(var b: StrBuilder, f: Func, vi: Int) {
   if !ops.is_empty() {
     b.write(" ${ops.join(", ")}")
   }
-  if !v.pos.is_empty() {
-    b.write(" @ ${v.pos}")
+  if has_pos(v.lp) {
+    b.write(" @ ${f.pos_of(v)}")
   }
   if pad_of(v.pi) >= 0 {
     b.write(" lands v${pad_of(v.pi)}")

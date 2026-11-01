@@ -341,7 +341,7 @@ fn (var b: Builder) self_faults(v: Int) -> Bool {
   let x = b.s.f.values[v]
   match x.op {
     Fault => true
-    Add | Sub | Mul | Neg | Div | Rem | Shl | Shr | FloatToInt => !x.pos.is_empty()
+    Add | Sub | Mul | Neg | Div | Rem | Shl | Shr | FloatToInt => has_pos(x.lp)
     CallValue => true
     Call => {
       let name = match x.aux {
@@ -349,7 +349,7 @@ fn (var b: Builder) self_faults(v: Int) -> Bool {
         None | I(..) | F(..) | B(..) | Bs(..) | P(..) => ""
       }
       if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "Int.abs" {
-        return !x.pos.is_empty()
+        return has_pos(x.lp)
       }
       faulting_rt(name)
     }

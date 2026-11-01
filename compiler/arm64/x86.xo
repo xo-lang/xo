@@ -1613,7 +1613,7 @@ fn (var g: G) x86_disp(off: Int) -> (Int, Int)? {
     }
     return None
   }
-  if y.op == ssa.Op.Add && y.pos.is_empty() && g.kind(ssa.ty_of(y.tb)) == ssa.Kind.Int {
+  if y.op == ssa.Op.Add && !ssa.has_pos(y.lp) && g.kind(ssa.ty_of(y.tb)) == ssa.Kind.Int {
     for j in [1, 0] {
       let (c, cc) = g.const_int(y.args[j])
       if cc && imm32(c) {

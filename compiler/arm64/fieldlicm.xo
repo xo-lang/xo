@@ -218,9 +218,9 @@ fn hoist_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: 
       var nu = made.get((idx, lp, k)) ?? -1
       if nu < 0 {
         let ne = f.values.len()
-        f.values.push(ssa.Value{op: ssa.Op.Call, tb: ssa.pack_tb(ssa.ty_of(e.tb), p), args: [lp, idx], aux: e.aux, line: e.line, pi: ssa.pack_pi(-1, ssa.inl_of(e.pi))})
+        f.values.push(ssa.Value{op: ssa.Op.Call, tb: ssa.pack_tb(ssa.ty_of(e.tb), p), args: [lp, idx], aux: e.aux, lp: ssa.pack_lp(0, ssa.line_of(e.lp)), pi: ssa.pack_pi(-1, ssa.inl_of(e.pi))})
         nu = f.values.len()
-        f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(ssa.ty_of(x.tb), p), args: [ne], aux: x.aux, line: x.line, pi: ssa.pack_pi(-1, ssa.inl_of(x.pi))})
+        f.values.push(ssa.Value{op: ssa.Op.Field, tb: ssa.pack_tb(ssa.ty_of(x.tb), p), args: [ne], aux: x.aux, lp: ssa.pack_lp(0, ssa.line_of(x.lp)), pi: ssa.pack_pi(-1, ssa.inl_of(x.pi))})
         moved.push(ne)
         moved.push(nu)
         made[(idx, lp, k)] = nu
@@ -813,7 +813,7 @@ fn (pr: Proof) nonneg(f: ssa.Func, v: Int, seen: List[Int], d: Int) -> Bool {
       if !pr.nonneg(f, x.args[0], seen, d - 1) || !pr.nonneg(f, x.args[1], seen, d - 1) {
         return false
       }
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         return true
       }
       for j in 0..2 {
@@ -1305,7 +1305,7 @@ fn step_of(f: ssa.Func, pr: Proof, a: Int, base: Int, least: Int) -> Bool {
     if n < least {
       continue
     }
-    if !x.pos.is_empty() {
+    if ssa.has_pos(x.lp) {
       return true
     }
     if (n is 0 | 1) && !pr.bounds(ssa.block_of(x.tb), base).is_empty() {
@@ -1363,13 +1363,13 @@ fn drop_proven_pads(var f: ssa.Func, pr: Proof) -> Bool {
     }
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || aux_str(x.aux) != "list.index" || x.args.len() != 2 || x.pos.is_empty() {
+      if x.op != ssa.Op.Call || aux_str(x.aux) != "list.index" || x.args.len() != 2 || !ssa.has_pos(x.lp) {
         continue
       }
       if (ssa.pad_of(x.pi) >= 0 && !pad_droppable(f, b, ssa.pad_of(x.pi))) || !pr.proven(f, b, x.args[1], x.args[0]) {
         continue
       }
-      f.values[v].pos = ""
+      f.values[v].lp = ssa.pack_lp(0, ssa.line_of(f.values[v].lp))
       if ssa.pad_of(x.pi) >= 0 {
         var ins: List[Int] = []
         for u in f.blocks[b].instrs {
@@ -1427,7 +1427,7 @@ fn drop_pad(var f: ssa.Func, b: Int, w: Int) {
     return
   }
   let cleanup = tv.succs[0]
-  f.values[t] = ssa.Value{op: ssa.Op.Jump, succs: [tv.succs[1]], tb: ssa.pack_tb(-1, b), line: tv.line, pi: ssa.pack_pi(-1, ssa.inl_of(tv.pi))}
+  f.values[t] = ssa.Value{op: ssa.Op.Jump, succs: [tv.succs[1]], tb: ssa.pack_tb(-1, b), lp: ssa.pack_lp(0, ssa.line_of(tv.lp)), pi: ssa.pack_pi(-1, ssa.inl_of(tv.pi))}
   kill_edge(f, cleanup)
   f.land_rest.remove(f.edges[tv.succs[1]].to)
 }

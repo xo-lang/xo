@@ -13,12 +13,12 @@
 fn value_self_faults(x: Value) -> Bool {
   match x.op {
     Fault => true
-    Add | Sub | Mul | Neg | Div | Rem | Shl | Shr | FloatToInt => !x.pos.is_empty()
+    Add | Sub | Mul | Neg | Div | Rem | Shl | Shr | FloatToInt => has_pos(x.lp)
     CallValue => true
     Call => {
       let name = aux_name(x.aux)
       if name is "list.index" | "list.set" | "list.take" | "bytes.index" | "Int.abs" {
-        return !x.pos.is_empty()
+        return has_pos(x.lp)
       }
       faulting_rt(name)
     }

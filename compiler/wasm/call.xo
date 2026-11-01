@@ -405,7 +405,7 @@ fn (var g: Gen) call(v: Int) {
       g.def(v)
     }
     "Int.abs" => {
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         g.checked(v, "$abs_chk", 1)
         return
       }
@@ -435,7 +435,7 @@ fn (var g: Gen) call(v: Int) {
       g.def(v)
     }
     "bytes.index" => {
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         g.checked(v, "$bidx_chk", 2)
         return
       }
@@ -793,7 +793,7 @@ fn (var g: Gen) rt3_call(v: Int, name: Str) {
     // task group; the SSA's call (os.tasks) passes none, as the native
     // runtime's takes none (the wasm module did not compile with os.tasks
     // before, 2026-10-21)
-    let at = if x.pos.is_empty() { g.f.name } else { x.pos }
+    let at = if !ssa.has_pos(x.lp) { g.f.name } else { g.f.pos_of(x) }
     g.e("i32.const ${g.str_obj(at.bytes())}")
     g.e("i32.const ${at.len()}")
   }
@@ -832,7 +832,7 @@ fn (var g: Gen) elem_addr(v: Int, l: Int, i: Int, et: Int) -> Int {
   g.push(l)
   g.push(i)
   g.e("i32.const ${g.size(et)}")
-  if g.f.values[v].pos.is_empty() {
+  if !ssa.has_pos(g.f.values[v].lp) {
     g.e("call $elem")
     g.set(a)
     return a

@@ -1199,7 +1199,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   // the call's inline site, and the callee's own sites under it
   // (decision 0239: the line tables' inlined frames)
   let site = f.inl_sites.len()
-  f.inl_sites.push(ssa.InlSite{callee: callee.name, file: callee.file, call_line: f.values[call].line, parent: ssa.inl_of(f.values[call].pi)})
+  f.inl_sites.push(ssa.InlSite{callee: callee.name, file: callee.file, call_line: ssa.line_of(f.values[call].lp), parent: ssa.inl_of(f.values[call].pi)})
   var smap: List[Int] = []
   for cs in callee.inl_sites {
     smap.push(f.inl_sites.len())
@@ -1261,15 +1261,15 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
             args.push(vm.get(a) ?? a)
           }
           let nv = f.add(nb, x.op, ssa.ty_of(x.tb), x.aux, args)
-          f.values[nv].pos = x.pos
+          f.set_pos(nv, callee.pos_of(x))
           // the callee's own line in its file, at its site (decision
           // 0239); a value with no line, or of generated code, takes the
           // call's
-          if x.line != 0 && !callee.file.is_empty() {
-            f.values[nv].line = x.line
+          if ssa.line_of(x.lp) != 0 && !callee.file.is_empty() {
+            f.values[nv].lp = ssa.with_line(f.values[nv].lp, ssa.line_of(x.lp))
             f.values[nv].pi = ssa.with_inl(f.values[nv].pi, if ssa.inl_of(x.pi) >= 0 && ssa.inl_of(x.pi) < smap.len() { smap[ssa.inl_of(x.pi)] } else { site })
           } else {
-            f.values[nv].line = f.values[call].line
+            f.values[nv].lp = ssa.with_line(f.values[nv].lp, ssa.line_of(f.values[call].lp))
             f.values[nv].pi = ssa.with_inl(f.values[nv].pi, ssa.inl_of(f.values[call].pi))
           }
           // a fault in the copy lands where one in the call would

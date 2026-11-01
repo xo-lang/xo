@@ -326,7 +326,7 @@ fn (var g: G) range_of(v: Int) -> (Interval, Bool) {
       if k < 0 && k != MIN_INT {
         k = -k
       }
-      if k >= 2 && !x.pos.is_empty() {
+      if k >= 2 && ssa.has_pos(x.lp) {
         r = Interval{lo: imax(r.lo, (MIN_INT / k) * k), hi: imin(r.hi, (MAX_INT / k) * k)}
       }
       (r, true)

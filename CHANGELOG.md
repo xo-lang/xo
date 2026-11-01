@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Self build: an SSA value is 9 words, was 11 (decision 0448): its position is an
+  index into its function's table, sharing a word with its line. Mac peak footprint
+  about -3%; max RSS on linux/arm64 unchanged (1.002).
 - `xo bench --ab` runs 3 rounds by default, was 10 (decision 0340). `--early` alone
   now has nothing to stop: it needs `--rounds` above 5.
 - Self build: the heap counter's peak moves from hollow back to emit (about 4440

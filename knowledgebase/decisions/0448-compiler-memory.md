@@ -635,6 +635,26 @@ Left in hollow: the parts themselves (718 MB by `drop_weak_in`) stay live throug
 it; freeing them needs a check that `hollow_late` and `incr_texts` no longer read
 them.
 
+### Stage 3: `pos` and `line` share a word (xo-lang-2, 2026-11-01)
+
+`Value.pos` was a string, two words, set on 78,661 of 6,514,986 values (1.2%). It
+is now an index into `Func.poss`, packed with `line` in `Value.lp` (`pack_lp`,
+`line_of`, `with_line`, `has_pos`, `Func.pos_of`, `Func.set_pos` in
+compiler/ssa/ir.xo). A value is 9 words, was 11. Output is unchanged: identity on
+linux/arm64 and darwin/arm64, 119 programs each, 0 differing; amd64 sample 48 ok.
+
+The heap profile at the 24th part shows the bytes: `Func.add` and `add_param`
+630 MB to 516 MB. linux/arm64 self `--ab` on the hollow fix (5b1b00225 vs 8ff5fe4a8,
+3 rounds, 0 loaded, every effect under 3%): wall 0.986 (0.986 to 0.99), CPU 0.985
+(0.983 to 0.994), max RSS 1.002 (0.992 to 1.01, noise). An earlier run on f3e809947
+read wall 0.999, CPU 0.998, max RSS 1.008, all noise, so only one of two shows the
+speedup. Mac peak footprint, alternating, 3 rounds under other agents' load: 3916,
+3802 and 4008 MiB to 3783, 3765 and 3850 MiB (about -3%, lower in each pair). The
+Mac's counter peak (3977 to 3979 MB) and Linux's max RSS did not move: about 2 GB
+is in use of about 4 GB mapped at the peak, and retained free memory takes up what
+the live values give back. So further live cuts (an args pool, `succs` on `Block`)
+wait for retention to move.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

@@ -1202,8 +1202,8 @@ fn (g: G) unflip(a: Int) -> (Bool, Int, Bool, Int) {
 
 /// Lowers SSA value v.
 fn (var g: G) instr(v: Int) {
-  if g.f.values[v].line != 0 {
-    g.cur_line = g.f.values[v].line
+  if ssa.line_of(g.f.values[v].lp) != 0 {
+    g.cur_line = ssa.line_of(g.f.values[v].lp)
     g.cur_inl = ssa.inl_of(g.f.values[v].pi)
   }
   let pad = ssa.pad_of(g.f.values[v].pi)
@@ -1413,11 +1413,11 @@ fn (var g: G) instr1(v: Int) {
       // checked add (2026-10-30: text.parse_duration's
       // `-unit_limit(unit)`, a join of positive constants, was a negs and
       // a b.vs)
-      if x.pos.is_empty() || (g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Int && g.bounds(x.args[0]).0 > MIN_INT) {
+      if !ssa.has_pos(x.lp) || (g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Int && g.bounds(x.args[0]).0 > MIN_INT) {
         g.set(v, [g.def1(false, "neg $d0, $u0", [a])])
         return
       }
-      g.set(v, [g.checked(false, "negs $d0, $u0", [a], "neg", "vs", "xo_fault_neg", [rsrc(a)] + g.loc_args(x.pos))])
+      g.set(v, [g.checked(false, "negs $d0, $u0", [a], "neg", "vs", "xo_fault_neg", [rsrc(a)] + g.loc_args(g.f.pos_of(x)))])
     }
     Not => {
       if g.nuses[v] == 0 && g.lazy[x.args[0]] {
@@ -1475,9 +1475,9 @@ fn (var g: G) instr1(v: Int) {
     FloatToInt => {
       let a = g.word(x.args[0])
       let t = g.def1(true, "frintz $d0, $u0", [a])
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         let lo = g.fimm(float_bits(-9223372036854775808.0))
-        let la = g.loc_args(x.pos)
+        let la = g.loc_args(g.f.pos_of(x))
         g.check("fcmp $u0, $u1", [t, lo], "lt", "xo_fault_float_int", [rsrc(a)] + la)
         let hi = g.fimm(float_bits(9223372036854775808.0))
         g.check("fcmp $u0, $u1", [t, hi], "ge", "xo_fault_float_int", [rsrc(a)] + la)
@@ -1534,7 +1534,7 @@ fn (var g: G) instr1(v: Int) {
       let d = g.str_data(ws)
       let n = g.str_len(ws)
       let w1 = g.real(n)
-      let _c = g.add(Inst{kind: K_CALL, sym: g.sym(fault_entry("xo_fault")), srcs: [rsrc(d), rsrc(n)] + g.loc_args(x.pos), us: [d, w1], fl: IF_NORET})
+      let _c = g.add(Inst{kind: K_CALL, sym: g.sym(fault_entry("xo_fault")), srcs: [rsrc(d), rsrc(n)] + g.loc_args(g.f.pos_of(x)), us: [d, w1], fl: IF_NORET})
       let _t = g.add(Inst{kind: K_TRAP})
     }
     Retain => {
@@ -2817,7 +2817,7 @@ fn (g: G) range_subs(v: Int, lo: Int) -> List[(Int, Int, ssa.Op, Bool)] {
     if ssa.block_of(x.tb) < 0 || !dominates(g.proof.idom, g.cur_sb, ssa.block_of(x.tb)) {
       continue
     }
-    out.push((s, n, x.op, !x.pos.is_empty()))
+    out.push((s, n, x.op, ssa.has_pos(x.lp)))
   }
   out
 }
@@ -2994,7 +2994,7 @@ fn (g: G) spec_ok(v: Int) -> Bool {
   }
   let k = g.kind(ssa.ty_of(x.tb))
   match x.op {
-    Add | Sub | Mul => k == ssa.Kind.Float || k == ssa.Kind.Int && x.pos.is_empty()
+    Add | Sub | Mul => k == ssa.Kind.Float || k == ssa.Kind.Int && !ssa.has_pos(x.lp)
     Neg => k == ssa.Kind.Float
     And | Or | Xor | Not => k is ssa.Kind.Int | ssa.Kind.Bool
     IntToFloat => true
@@ -3133,7 +3133,7 @@ fn (var g: G) mul(v: Int) {
   if low.is_empty() {
     let (text, us, ok) = g.mul_long(x.args[0], x.args[1])
     if ok {
-      if x.pos.is_empty() || g.safe_mul(v) {
+      if !ssa.has_pos(x.lp) || g.safe_mul(v) {
         g.set(v, [g.def1(false, text, us)])
         return
       }
@@ -3141,13 +3141,13 @@ fn (var g: G) mul(v: Int) {
         // the product of two values below 2^32 is below 2^64: an Int
         // when bit 63 is clear
         let r = g.def1(false, text, us)
-        g.check("cmp $u0, #0", [r], "lt", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b)] + g.loc_args(x.pos))
+        g.check("cmp $u0, #0", [r], "lt", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b)] + g.loc_args(g.f.pos_of(x)))
         g.set(v, [r])
         return
       }
     }
   }
-  if x.pos.is_empty() || g.safe_mul(v) {
+  if !ssa.has_pos(x.lp) || g.safe_mul(v) {
     if !low.is_empty() {
       g.set(v, [g.def1(false, low, [g.word(p)])])
     } else {
@@ -3159,7 +3159,7 @@ fn (var g: G) mul(v: Int) {
     // decision 0254: imul and its overflow flag, not arm64's smulh and
     // compare (eight x86 instructions through rdx:rax); a constant factor
     // is imul's immediate
-    let la = g.loc_args(x.pos)
+    let la = g.loc_args(g.f.pos_of(x))
     let (k, kc) = g.const_int(q)
     let r = if kc && imm32(k) {
       g.checked(false, "x86_mulo $d0, $u0, #${k}", [g.word(p)], "", "vs", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b)] + la)
@@ -3176,7 +3176,7 @@ fn (var g: G) mul(v: Int) {
     r = g.def1(false, "mul $d0, $u0, $u1", [a, b])
   }
   let hi = g.def1(false, "smulh $d0, $u0, $u1", [a, b])
-  g.check("cmp $u0, $u1, asr #63", [hi, r], "ne", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b)] + g.loc_args(x.pos))
+  g.check("cmp $u0, $u1, asr #63", [hi, r], "ne", "xo_fault_overflow", [rsrc(a), isrc(42), rsrc(b)] + g.loc_args(g.f.pos_of(x)))
   g.set(v, [r])
 }
 
@@ -3281,7 +3281,7 @@ fn (var g: G) add_sub(v: Int) {
       swapped = true
     }
   }
-  var checked = !x.pos.is_empty()
+  var checked = ssa.has_pos(x.lp)
   let (n0, bconst) = g.const_int(b)
   if bconst && checked && g.safe_add(a, n0, x.op) {
     checked = false // the bounds of a prove it
@@ -3308,7 +3308,7 @@ fn (var g: G) add_sub(v: Int) {
       l = r
       r = t
     }
-    let pl = g.loc_args(x.pos)
+    let pl = g.loc_args(g.f.pos_of(x))
     g.set(v, [g.checked(false, text, [av], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r] + pl)])
     g.offset_facts(v, a, n0)
     return
@@ -3338,7 +3338,7 @@ fn (var g: G) add_sub(v: Int) {
     l = r
     r = t
   }
-  let pl = g.loc_args(x.pos)
+  let pl = g.loc_args(g.f.pos_of(x))
   g.set(v, [g.checked(false, text, [av, bv], ins, "vs", "xo_fault_overflow", [l, isrc(op_char(x.op)), r] + pl)])
   if bconst {
     g.offset_facts(v, a, n0)
@@ -3463,7 +3463,7 @@ fn (var g: G) ext_of(v: Int) -> (Int, Str) {
   let sfx = if bits == 8 { "b" } else if bits == 16 { "h" } else { "w" }
   let a = x.args[0]
   let y = g.f.values[a]
-  if y.op == ssa.Op.Add && g.nuses[a] == 1 && y.pos.is_empty() {
+  if y.op == ssa.Op.Add && g.nuses[a] == 1 && !ssa.has_pos(y.lp) {
     let (k, kc) = g.const_int(y.args[1])
     if kc && k == 1 << (bits - 1) {
       return (y.args[0], "sxt${sfx}")
@@ -3582,20 +3582,20 @@ fn (var g: G) div_rem(v: Int) {
   let _mi = g.m_()
   let nonzero = blo > 0 || bhi < 0 || g.cm.nonzero.contains(b)
   let no_overflow = blo > -1 || bhi < -1 || alo > MIN_INT
-  let zchk = !x.pos.is_empty() && !(is_const && kc != 0) && !nonzero
-  let ochk = is_div && !x.pos.is_empty() && !(is_const && kc != -1) && !no_overflow
+  let zchk = ssa.has_pos(x.lp) && !(is_const && kc != 0) && !nonzero
+  let ochk = is_div && ssa.has_pos(x.lp) && !(is_const && kc != -1) && !no_overflow
   // x86_64: a plain idiv (x86.xo sdivs), not arm64's sdiv semantics'
   // tests of 0 and -1, when the divisor is proven or checked not 0 and
   // the minimum by -1 (idiv's other fault) is ruled out or checked
   // (2026-10-23: portable divmod's checked `xs[i] / d`)
   let sdiv = if g.x86 && (nonzero || zchk) && (no_overflow || ochk) { "sdivs" } else { "sdiv" }
   if zchk {
-    g.check("cmp $u0, #0", [b], "eq", "xo_fault_divzero", [rsrc(a), isrc(op_char(x.op))] + g.loc_args(x.pos))
+    g.check("cmp $u0, #0", [b], "eq", "xo_fault_divzero", [rsrc(a), isrc(op_char(x.op))] + g.loc_args(g.f.pos_of(x)))
   }
   if is_div {
     if ochk {
       let mn = g.imm(MIN_INT)
-      g.check("cmp $u0, $u1\nccmn $u2, #1, #0, eq", [a, mn, b], "eq", "xo_fault_overflow", [rsrc(a), isrc(47), rsrc(b)] + g.loc_args(x.pos))
+      g.check("cmp $u0, $u1\nccmn $u2, #1, #0, eq", [a, mn, b], "eq", "xo_fault_overflow", [rsrc(a), isrc(47), rsrc(b)] + g.loc_args(g.f.pos_of(x)))
     }
     g.set(v, [g.def1(false, "${sdiv} $d0, $u0, $u1", [a, b])])
     return
@@ -3686,26 +3686,26 @@ fn (var g: G) shift(v: Int) {
       return
     }
     let r = g.def1(false, "lsl $d0, $u0, #${k}", [a])
-    if !x.pos.is_empty() && !g.safe_shl(x.args[0], k) {
+    if ssa.has_pos(x.lp) && !g.safe_shl(x.args[0], k) {
       let back = g.def1(false, "asr $d0, $u0, #${k}", [r])
-      g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), isrc(k)] + g.loc_args(x.pos))
+      g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), isrc(k)] + g.loc_args(g.f.pos_of(x)))
     }
     g.set(v, [r])
     return
   }
   let b = g.word(x.args[1])
   let (klo, khi) = g.bounds(x.args[1])
-  if !x.pos.is_empty() && (klo < 0 || khi > 63) {
-    g.check("cmp $u0, #64", [b], "hs", "xo_fault_shift", [rsrc(b)] + g.loc_args(x.pos))
+  if ssa.has_pos(x.lp) && (klo < 0 || khi > 63) {
+    g.check("cmp $u0, #64", [b], "hs", "xo_fault_shift", [rsrc(b)] + g.loc_args(g.f.pos_of(x)))
   }
   if x.op == ssa.Op.Shr {
     g.set(v, [g.def1(false, "asr $d0, $u0, $u1", [a, b])])
     return
   }
   let r = g.def1(false, "lsl $d0, $u0, $u1", [a, b])
-  if !x.pos.is_empty() && !(klo >= 0 && khi <= 63 && g.safe_shl(x.args[0], khi)) {
+  if ssa.has_pos(x.lp) && !(klo >= 0 && khi <= 63 && g.safe_shl(x.args[0], khi)) {
     let back = g.def1(false, "asr $d0, $u0, $u1", [r, b])
-    g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), rsrc(b)] + g.loc_args(x.pos))
+    g.check("cmp $u0, $u1", [back, a], "ne", "xo_fault_shl", [rsrc(a), rsrc(b)] + g.loc_args(g.f.pos_of(x)))
   }
   g.set(v, [r])
 }

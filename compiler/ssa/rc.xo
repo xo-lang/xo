@@ -2765,7 +2765,7 @@ fn (var r: Rc) reuse(var f: Func) {
 /// An inline operation that faults before it consumes its operands
 /// (keepsOperands).
 fn keeps_operands(x: Value) -> Bool {
-  x.op == Op.Call && (aux_name(x.aux) is "list.set" | "list.take") && !x.pos.is_empty()
+  x.op == Op.Call && (aux_name(x.aux) is "list.set" | "list.take") && has_pos(x.lp)
 }
 
 fn is_rc_op(o: Op) -> Bool {

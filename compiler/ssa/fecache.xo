@@ -1377,11 +1377,13 @@ fn shift_lines(var f: Func, delta: Int) {
   let pre = "${f.file}:"
   let d = delta * 4096
   for vi in 0..f.values.len() {
-    if f.values[vi].line > 0 {
-      f.values[vi].line += d
+    if line_of(f.values[vi].lp) > 0 {
+      f.values[vi].lp = with_line(f.values[vi].lp, line_of(f.values[vi].lp) + d)
     }
-    if f.values[vi].pos.starts_with(pre) {
-      f.values[vi].pos = shift_pos(f.values[vi].pos, pre, delta)
+  }
+  for i in 0..f.poss.len() {
+    if f.poss[i].starts_with(pre) {
+      f.poss[i] = shift_pos(f.poss[i], pre, delta)
     }
   }
   for i in 0..f.dvars.len() {
@@ -1416,11 +1418,13 @@ fn relocatable(f: Func, base: Int) -> Bool {
   let pre = "${f.file}:"
   for x in f.values {
     // packed lines (line * 4096 + column)
-    if x.line > 0 && x.line / 4096 < base {
+    if line_of(x.lp) > 0 && line_of(x.lp) / 4096 < base {
       return false
     }
-    if x.pos.starts_with(pre) {
-      match Int.parse(x.pos[pre.len()..x.pos.len()].split(":")[0]) {
+  }
+  for p in f.poss {
+    if p.starts_with(pre) {
+      match Int.parse(p[pre.len()..p.len()].split(":")[0]) {
         Some(l) => {
           if l < base {
             return false

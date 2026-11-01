@@ -3,7 +3,7 @@
 
 test "at_source names the value's line and the function" {
   var f = Func{name: "main.area", file: "/src/app/main.xo"}
-  f.values = [Value{op: Op.Const}, Value{op: Op.Const, line: 9 * 4096 + 5}]
+  f.values = [Value{op: Op.Const}, Value{op: Op.Const, lp: pack_lp(0, 9 * 4096 + 5)}]
   expect(f.at_source(12 * 4096 + 3, -1, "boom")) == "/src/app/main.xo:12:3: in `main.area`: boom"
   // no line yet: the function's first
   expect(f.at_source(0, -1, "boom")) == "/src/app/main.xo:9:5: in `main.area`: boom"

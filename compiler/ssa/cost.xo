@@ -122,12 +122,12 @@ fn copy_feeds_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   var walked: Map[Int, Bool] = {}
   for x in f.values {
     if x.op == Op.Call && aux_name(x.aux).starts_with("xo.mlog.eachpos[") {
-      walked[x.line / 4096] = true
+      walked[line_of(x.lp) / 4096] = true
     }
   }
   var seen: Map[Int, Bool] = {}
   for (vi, x) in f.values.indexed() {
-    if x.op != Op.Call || !copies_entries(aux_name(x.aux)) || walked.contains(x.line / 4096) {
+    if x.op != Op.Call || !copies_entries(aux_name(x.aux)) || walked.contains(line_of(x.lp) / 4096) {
       continue
     }
     // the copy, or what carries it (a tuple's fields, a block parameter),
@@ -135,12 +135,12 @@ fn copy_feeds_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
     if !reaches_loop(f, vi, users, inloop) {
       continue
     }
-    let line = x.line / 4096
+    let line = line_of(x.lp) / 4096
     if line <= 0 || seen.contains(line) {
       continue
     }
     seen[line] = true
-    out.push(CostNote{code: "XO0907", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this loop copies every entry of the map before it starts (a log-mode map read through a forked view, or a loop body with a closure, a defer, or over 64 nodes): each key and value is counted up and down once per loop, atomically on a map shared across threads; iterate the map directly in a small body, or read the entries once outside an outer loop"})
+    out.push(CostNote{code: "XO0907", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: "this loop copies every entry of the map before it starts (a log-mode map read through a forked view, or a loop body with a closure, a defer, or over 64 nodes): each key and value is counted up and down once per loop, atomically on a map shared across threads; iterate the map directly in a small body, or read the entries once outside an outer loop"})
   }
   out
 }
@@ -225,7 +225,7 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
           let ux = f.values[u]
           if ux.op == Op.CallValue {
             dropped = true
-            if f.values[at].line / 4096 <= 0 {
+            if line_of(f.values[at].lp) / 4096 <= 0 {
               // a field the RC pass made has no position: the call's
               at = u
             }
@@ -241,12 +241,12 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
       if !dropped || stored {
         continue
       }
-      let line = f.values[at].line / 4096
+      let line = line_of(f.values[at].lp) / 4096
       if line <= 0 || seen.contains(line) {
         continue
       }
       seen[line] = true
-      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: f.values[at].line % 4096, msg: "each iteration counts this element up and down: it goes to a function value whose result has its type, so the call hands it over (decision 0337; atomically, when the collection is shared across threads); call a named function that only reads it, or hoist the call"})
+      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: line_of(f.values[at].lp) % 4096, msg: "each iteration counts this element up and down: it goes to a function value whose result has its type, so the call hands it over (decision 0337; atomically, when the collection is shared across threads); call a named function that only reads it, or hoist the call"})
     }
   }
   out
@@ -301,12 +301,12 @@ fn callback_walks(m: Module, f: Func) -> List[CostNote] {
           }
         }
       }
-      let line = x.line / 4096
+      let line = line_of(x.lp) / 4096
       if !heap || line <= 0 || seen.contains(line) {
         continue
       }
       seen[line] = true
-      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this call counts each element up and down: it hands every element to a function value whose result has the element's type, which takes it (decision 0337; atomically, when the collection is shared across threads); a `for` loop over the collection borrows its elements (decision 0186), or call a named function that only reads them"})
+      out.push(CostNote{code: "XO0908", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: "this call counts each element up and down: it hands every element to a function value whose result has the element's type, which takes it (decision 0337; atomically, when the collection is shared across threads); a `for` loop over the collection borrows its elements (decision 0186), or call a named function that only reads them"})
     }
   }
   out
@@ -389,12 +389,12 @@ fn reuse_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
       if u.op != Op.Call || u.args.is_empty() || u.args[0] != vi {
         continue
       }
-      let line = u.line / 4096
+      let line = line_of(u.lp) / 4096
       if line <= 0 || seen.contains(line) || !carried_back(f, root, inl, ui) {
         continue
       }
       seen[line] = true
-      out.push(CostNote{code: "XO0909", fn_name: f.name, file: f.file, line: line, col: u.line % 4096, msg: "this list update copies the whole list on every iteration: the list is also kept in this iteration (stored, captured, or bound to a name used after the update), so it is shared when the update runs; update a copy you own, or keep the other holder out of the loop"})
+      out.push(CostNote{code: "XO0909", fn_name: f.name, file: f.file, line: line, col: line_of(u.lp) % 4096, msg: "this list update copies the whole list on every iteration: the list is also kept in this iteration (stored, captured, or bound to a name used after the update), so it is shared when the update runs; update a copy you own, or keep the other holder out of the loop"})
     }
   }
   out
@@ -575,7 +575,7 @@ fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
-      let line = x.line / 4096
+      let line = line_of(x.lp) / 4096
       if line <= 0 || seen.contains(line) {
         continue
       }
@@ -598,7 +598,7 @@ fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -
         continue
       }
       seen[line] = true
-      out.push(CostNote{code: "XO0910", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: msg})
+      out.push(CostNote{code: "XO0910", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: msg})
     }
   }
   out
@@ -802,7 +802,7 @@ fn view_stores(m: Module, f: Func, inloop: List[Bool]) -> List[CostNote] {
   var out: List[CostNote] = []
   var seen: Map[Int, Bool] = {}
   for (vi, x) in f.values.indexed() {
-    let line = x.line / 4096
+    let line = line_of(x.lp) / 4096
     // parser-shaped: the view is made in a loop (a tokenizer's slices) or is
     // an element of a split; one slice of an argument (a path, a name) is
     // too common and too small to note
@@ -811,7 +811,7 @@ fn view_stores(m: Module, f: Func, inloop: List[Bool]) -> List[CostNote] {
       continue
     }
     seen[line] = true
-    out.push(CostNote{code: "XO0911", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this view of a parameter's text is stored long-lived (in a field, a collection, or a returned struct): this keeps the whole input alive; clone() it"})
+    out.push(CostNote{code: "XO0911", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: "this view of a parameter's text is stored long-lived (in a field, a collection, or a returned struct): this keeps the whole input alive; clone() it"})
   }
   out
 }
@@ -860,7 +860,7 @@ fn slices_read_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   var seen: Map[Int, Bool] = {}
   let (users, edge) = cost_uses(f)
   for (vi, x) in f.values.indexed() {
-    let line = x.line / 4096
+    let line = line_of(x.lp) / 4096
     if x.op != Op.Call || !named(aux_name(x.aux), "rt.str_view") || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) || edge[vi] || users[vi].is_empty() {
       continue
     }
@@ -875,7 +875,7 @@ fn slices_read_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
       continue
     }
     seen[line] = true
-    out.push(CostNote{code: "XO0913", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this slice makes a view on every iteration only to read it by index or length (a range check, a count and a drop each time); read the whole text or bytes by offsets instead"})
+    out.push(CostNote{code: "XO0913", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: "this slice makes a view on every iteration only to read it by index or length (a range check, a count and a drop each time); read the whole text or bytes by offsets instead"})
   }
   out
 }
@@ -890,7 +890,7 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   var seen: Map[Int, Bool] = {}
   let (users, edge) = cost_uses(f)
   for (vi, x) in f.values.indexed() {
-    let line = x.line / 4096
+    let line = line_of(x.lp) / 4096
     if x.op != Op.Call || aux_name(x.aux) != "list.new" || x.args.len() != 1 || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) {
       continue
     }
@@ -932,7 +932,7 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
       continue
     }
     seen[line] = true
-    out.push(CostNote{code: "XO0914", fn_name: f.name, file: f.file, line: line, col: x.line % 4096, msg: "this list is allocated and freed on every iteration and only filled and read in it; keep its values in locals, or make one list before the loop and reuse it"})
+    out.push(CostNote{code: "XO0914", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: "this list is allocated and freed on every iteration and only filled and read in it; keep its values in locals, or make one list before the loop and reuse it"})
   }
   out
 }

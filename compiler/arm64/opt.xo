@@ -610,7 +610,7 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
       if o0 && o1 {
         return (Interval{lo: l0, hi: h0}, true)
       }
-      if x.pos.is_empty() || klo != khi {
+      if !ssa.has_pos(x.lp) || klo != khi {
         return none
       }
       (Interval{lo: sat_mul(a.lo, 1 << klo), hi: sat_mul(a.hi, 1 << klo)}, true)
@@ -985,7 +985,7 @@ fn (var g: G) cond_facts(c: Int, truth: Bool) {
     // overflows faults, so the difference is exact)
     for (s, z) in [(x, y), (y, x)] {
       let (c, isc) = g.const_int(z)
-      if isc && c >= 1 && g.op(s) == ssa.Op.Sub && !g.f.values[s].pos.is_empty() {
+      if isc && c >= 1 && g.op(s) == ssa.Op.Sub && ssa.has_pos(g.f.values[s].lp) {
         let a = g.arg(s, 0)
         let b = g.arg(s, 1)
         if g.has_val[a] && g.vals[a].len() == 1 {

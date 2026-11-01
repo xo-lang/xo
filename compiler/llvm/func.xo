@@ -292,7 +292,7 @@ fn (var g: Gen) fault_if(cond: Str, call: Str) {
 /// addendum). A position of another shape is its own file text with line
 /// 0, which the runtime prints as it is.
 fn (var g: Gen) loc(v: Int) -> Str {
-  let (file, line, col) = ssa.pos_split(g.f.values[v].pos)
+  let (file, line, col) = ssa.pos_split(g.f.pos_of(g.f.values[v]))
   "ptr ${g.cstr(file)}, i64 ${line}, i64 ${col}"
 }
 
@@ -881,8 +881,8 @@ fn (var g: Gen) same_projection(a0: Int, b0: Int) -> Bool {
 
 /// Lowers instruction v (instr).
 fn (var g: Gen) instr(v: Int) {
-  if g.f.values[v].line != 0 {
-    g.cur_line = g.f.values[v].line
+  if ssa.line_of(g.f.values[v].lp) != 0 {
+    g.cur_line = ssa.line_of(g.f.values[v].lp)
     g.cur_inl = ssa.inl_of(g.f.values[v].pi)
   }
   let pad = ssa.pad_of(g.f.values[v].pi)
@@ -917,7 +917,7 @@ fn (var g: Gen) instr_body(v: Int) {
         g.set(v, "f${ins} double ${a0}, ${a1}")
         return
       }
-      if x.pos.is_empty() || g.rng_safe[v] {
+      if !ssa.has_pos(x.lp) || g.rng_safe[v] {
         let a0 = g.op(args[0])
         let a1 = g.op(args[1])
         if aux_str(x.aux) == "wrap" {
@@ -948,7 +948,7 @@ fn (var g: Gen) instr_body(v: Int) {
       let kc = const_int(g.op(args[1]))
       let is_const = kc != None
       let k = kc ?? 0
-      if !x.pos.is_empty() && !(is_const && k != 0) {
+      if ssa.has_pos(x.lp) && !(is_const && k != 0) {
         let a1 = g.op(args[1])
         let z = g.def("icmp eq i64 ${a1}, 0")
         let b0 = g.op(args[0])
@@ -956,7 +956,7 @@ fn (var g: Gen) instr_body(v: Int) {
         g.fault_if(z, "@xo_x_fault_raise_divzero(i64 ${b0}, i64 ${op_char(x.op)}, ${l})")
       }
       if x.op == ssa.Op.Div {
-        if !x.pos.is_empty() && !(is_const && k != -1) {
+        if ssa.has_pos(x.lp) && !(is_const && k != -1) {
           let a1 = g.op(args[1])
           let m1 = g.def("icmp eq i64 ${a1}, -1")
           let a0 = g.op(args[0])
@@ -998,7 +998,7 @@ fn (var g: Gen) instr_body(v: Int) {
       g.set(v, "${ins} ${l} ${a0}, ${a1}")
     }
     Shl | Shr => {
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         let a1 = g.op(args[1])
         let bad = g.def("icmp uge i64 ${a1}, 64")
         let b1 = g.op(args[1])
@@ -1014,7 +1014,7 @@ fn (var g: Gen) instr_body(v: Int) {
       let a0 = g.op(args[0])
       let a1 = g.op(args[1])
       let r = g.def("shl i64 ${a0}, ${a1}")
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         let b1 = g.op(args[1])
         let back = g.def("ashr i64 ${r}, ${b1}")
         let b0 = g.op(args[0])
@@ -1032,7 +1032,7 @@ fn (var g: Gen) instr_body(v: Int) {
         g.set(v, "fneg double ${a0}")
         return
       }
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         let a0 = g.op(args[0])
         let bad = g.def("icmp eq i64 ${a0}, ${IMMORTAL}")
         let b0 = g.op(args[0])
@@ -1111,7 +1111,7 @@ fn (var g: Gen) instr_body(v: Int) {
     FloatToInt => {
       let a0 = g.op(args[0])
       let t = g.def("call double @llvm.trunc.f64(double ${a0})")
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         let lo = g.def("fcmp oge double ${t}, 0xC3E0000000000000")
         let hi = g.def("fcmp olt double ${t}, 0x43E0000000000000")
         let inr = g.def("and i1 ${lo}, ${hi}")

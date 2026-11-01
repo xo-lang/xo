@@ -932,7 +932,7 @@ fn (var g: Gen) arg(v: Int, i: Int) -> Int {
 
 /// `i32.const addr i32.const len` of the fault position of v.
 fn (var g: Gen) locp(v: Int) -> Str {
-  g.litp(g.f.values[v].pos)
+  g.litp(g.f.pos_of(g.f.values[v]))
 }
 
 /// A jump to block b (layout.xo lowers it: a `br` to b's label, or the
@@ -1410,7 +1410,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       let opn = if x.op == ssa.Op.Add { "add" } else if x.op == ssa.Op.Sub { "sub" } else { "mul" }
       if g.kind(t) == ssa.Kind.Float {
         g.binop(v, "f64.${opn}")
-      } else if !x.pos.is_empty() {
+      } else if ssa.has_pos(x.lp) {
         g.checked(v, "$${opn}_chk", 2)
       } else {
         g.binop(v, "i64.${opn}")
@@ -1420,7 +1420,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       let opn = if x.op == ssa.Op.Div { "div" } else { "rem" }
       if g.kind(t) == ssa.Kind.Float {
         g.binop(v, if x.op == ssa.Op.Rem { "call $fmod" } else { "f64.div" })
-      } else if !x.pos.is_empty() {
+      } else if ssa.has_pos(x.lp) {
         g.checked(v, "$${opn}_chk", 2)
       } else {
         g.binop(v, "i64.${opn}_s")
@@ -1431,7 +1431,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         g.push(g.arg(v, 0))
         g.e("f64.neg")
         g.def(v)
-      } else if !x.pos.is_empty() {
+      } else if ssa.has_pos(x.lp) {
         g.checked(v, "$neg_chk", 1)
       } else {
         g.e("i64.const 0")
@@ -1457,7 +1457,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
     }
     Shl | Shr => {
       let opn = if x.op == ssa.Op.Shl { "shl" } else { "shr" }
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         g.checked(v, "$${opn}_chk", 2)
       } else {
         g.binop(v, if x.op == ssa.Op.Shl { "i64.shl" } else { "i64.shr_s" })
@@ -1470,7 +1470,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
       g.def(v)
     }
     FloatToInt => {
-      if !x.pos.is_empty() {
+      if ssa.has_pos(x.lp) {
         g.checked(v, "$ftoi_chk", 1)
         return
       }

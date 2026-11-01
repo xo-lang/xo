@@ -67,8 +67,8 @@ fn (var g: Gen) debug_func() {
   }
   var line = 0
   for v in g.f.values {
-    if v.line != 0 {
-      line = v.line / 4096
+    if ssa.line_of(v.lp) != 0 {
+      line = ssa.line_of(v.lp) / 4096
       break
     }
   }
