@@ -230,3 +230,58 @@ bench/perf/http, the server on 6 CPUs and the load generator on 6 others,
   default stays on.
 - Against Go: 14 to 20% more requests a second, p99 20 to 26% lower, CPU
   a request 23 to 27% lower, at both levels in every round.
+
+## 256 connections: three spreads tried (2026-11-01, Xo Lang 4)
+
+The gap above at 256 connections, from Xo Lang 5's next ideas: a poll's
+readied fibers land on the polling worker's ring and others steal them.
+Three switches behind an environment variable on a branch that was not
+merged (l4-np): a keeps at most K of a poll's fibers on the ring and injects
+the rest; b keeps K and hands the rest, one each, to the run-next slot of
+workers asleep on their futex, waking only those; c makes a worker's poll
+take at most K events. bench/perf/http on the linux/arm64 host, OFF_EXCLUSIVE,
+10 s runs, order rotating, medians per mode. The poller thread and a and c ran
+10 to 11 rounds (stopped early once settled), b 3 rounds in its own run with
+its own baseline. These are host http bench figures, not `--ab`. Counters
+per request divide the whole run's counts, warmup included, by all its
+requests.
+
+| connections | mode | req/s | p99 us | futex_wait/req | steal/req | inject/req |
+|---:|---|---:|---:|---:|---:|---:|
+| 256 | worker polling | 214,960 | 3,955 | 0.195 | 0.333 | 0.000 |
+| 256 | XO_NETPOLL=0 | 216,969 | 3,665 | 0.137 | 0.177 | 0.388 |
+| 256 | a1 | 214,780 | 3,955 | 0.223 | 0.156 | 0.643 |
+| 256 | a4 | 214,494 | 3,972 | 0.219 | 0.220 | 0.405 |
+| 256 | c4 | 214,847 | 3,941 | 0.199 | 0.329 | 0.000 |
+| 32 | worker polling | 209,894 | 740 | 0.139 | 0.283 | 0.000 |
+| 32 | XO_NETPOLL=0 | 178,238 | 718 | 0.165 | 0.138 | 0.550 |
+| 32 | a1 | 212,811 | 738 | 0.144 | 0.118 | 0.675 |
+| 32 | a4 | 208,879 | 741 | 0.143 | 0.223 | 0.288 |
+| 32 | c4 | 210,165 | 732 | 0.139 | 0.271 | 0.000 |
+
+Experiment b's run (3 rounds):
+
+| connections | mode | req/s | p99 us | CPU us/req | futex_wait/req | steal/req |
+|---:|---|---:|---:|---:|---:|---:|
+| 256 | worker polling | 215,612 | 3,941 | 16.7 | 0.194 | 0.332 |
+| 256 | b1 | 209,668 | 4,153 | 19.1 | 0.245 | 0.412 |
+| 256 | b4 | 210,628 | 4,127 | 18.5 | 0.227 | 0.384 |
+| 32 | worker polling | 209,747 | 742 | 14.3 | 0.139 | 0.284 |
+| 32 | b1 | 195,454 | 769 | 19.4 | 0.237 | 0.471 |
+| 32 | b4 | 203,191 | 758 | 17.2 | 0.194 | 0.397 |
+
+- None closes the gap, and none ships. The gap itself reproduced: worker
+  polling -0.9% req/s against the poller thread at 256, p99 +8%, futex_wait
+  +42%, and +18% req/s at 32.
+- Steals are not the cost. a1 halves them and req/s does not move, because
+  the work goes to the inject queue instead and futex calls rise.
+- Waking sleepers is worse. b's hand-off did run (156,000 to 310,000 hands a
+  run at b1), and it costs 2.3% to 6.8% req/s and 11% to 36% more CPU a
+  request, with more futex calls and more steals; woken workers finishing
+  and sleeping again would fit that, but it was not traced. b1's first round at 32 connections was 169,979, an outlier
+  the median leaves out; the b4 and b1 differences hold in all 3 rounds.
+- c4 changes nothing measurable.
+- a1 at 32 connections is the one gain: +1.4%, quartiles not overlapping,
+  and level at 256. Not enough to change the default without an `--ab` and
+  a look at more connection counts.
+
