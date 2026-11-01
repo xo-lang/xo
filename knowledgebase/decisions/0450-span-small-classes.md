@@ -39,8 +39,9 @@ The mid classes are not the gap. Their blocks are about 60% filled
 (requested bytes over class bytes, cumulative: 0.61, 0.60, 0.59, 0.66 for
 2 to 16 KiB), but they hold only about 126 MB free at part 24, with mapped
 memory already at its level at part 40. XO_HEAP_MID_MAX=4096 lowers the
-Mac's peak about 10% (4333, 4366 to 3903, 3817 MB) at a wall of about 1.1
-times; where that saving comes from is not established.
+Mac's counter about 10% (4333, 4366 to 3903, 3817 MB) at a wall of about 1.1
+times, but its footprint only about 2% (4238, 4255 to 4203, 4117 MB), so
+most of that saving is in the counter, not in resident memory.
 
 ## What was tried
 
