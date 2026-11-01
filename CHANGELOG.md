@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Small builds on Linux: a warm or edit build's peak memory falls about 10% (coll, linux/arm64:
+  171 to 154 MB) and the build is about 1% faster: std's cached half no longer stores the raw
+  relocation and symbol tables the link has already read (decision 0448).
 - Self build on the Mac: the heap counter's peak falls 10% (about 3930 to 3540 MB,
   decision 0448): the rewrite of the weak symbols frees each part's text as it copies
   it. Linux's max RSS and wall are unchanged.

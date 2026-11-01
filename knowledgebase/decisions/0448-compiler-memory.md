@@ -729,6 +729,18 @@ then back to 3.7 GB by insert_rc's borrows and plan while the counter stays flat
 2928 MB, so that rise is pages touched again, not new mappings. The places are good to the
 phase, not the second: the plan lap contains the borrows and uniq_var_params laps.
 
+### Case (c) on Linux: the ELF half's raw tables (xo-lang-2, 2026-11-01)
+
+coll's warm and edit builds read 172 to 177 MB of max RSS on linux/arm64 against 85 MB on
+the Mac (anonymous about 146 MB, file pages 27 MB), so (c) is not darwin accounting. The
+largest step is link.store_prepare, 41 to 45 MB on the counter against 6 on the Mac: std's
+half is read whole and decoded. A census of the 27.0 MB file: `.rela*` section bytes 13.9
+MB, `.symtab` 2.5, `.strtab` 1.1, for a 2 MB program. The parser has already turned those
+into relocs and syms and no link reads the bytes again, so capture_half no longer carries
+them: 9.2 MB. `xo bench --ab` of coll's edit build (ab-host, 20dce828a vs 5a4a854b5, 3
+rounds, 0 loaded): wall 0.987 (0.981 to 0.992), CPU 0.988, max RSS 0.902 (0.893 to 0.929),
+171 to 154 MB. No Mach-O change: its half has no such sections (3.6 MB).
+
 Open: Linux's counter runs over 1 GB above the Mac's at the same commit (emit 4720 to 4853
 MB in the two rounds that have an emit row, against 3539 to 3546 on the Mac; it already
 reads 4128 to 4425 at insert_rc.apply). Not explained. First check when this resumes: the

@@ -62,6 +62,14 @@ test "an ELF link from std's half is the full link of the edited program" {
   }
   // used's adrp and add of msg and its call of inner stay in place
   expect(h.dropped > 0) == true
+  // the tables parsing already read are not carried
+  for ob in h.objs {
+    for x in ob.sects {
+      if x.typ == SHT_RELA || x.typ == SHT_SYMTAB || x.typ == SHT_STRTAB {
+        expect(x.data.is_empty()) == true
+      }
+    }
+  }
   let (want, _) = ehalf_full(ehalf_prog(2, false), store)
   expect(ehalf_hit(ehalf_prog(2, false), h) == want) == true
   let back = match elf_half_decode(elf_half_encode(h)) {

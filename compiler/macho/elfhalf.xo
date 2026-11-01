@@ -108,6 +108,13 @@ pub fn (s: ElfStoreLink) capture_half() -> ElfHalf? {
       let x = ob.sects[k]
       ob.sects[k].out = -1
       ob.sects[k].off = 0
+      // parse_elf_object already made these into relocs and syms, and
+      // no link reads their bytes again; they were 17.5 of the half's 27
+      // MB, which a warm build reads and holds (decision 0448, 2026-11-01)
+      if x.typ == SHT_RELA || x.typ == SHT_SYMTAB || x.typ == SHT_STRTAB {
+        ob.sects[k].data = b""
+        continue
+      }
       if let Some(at) = l.dbg_at.get((o, k)) {
         // std's DWARF (decision 0420, E3): its chunk comes first in each
         // joined section, so its offsets are the same in every link with
