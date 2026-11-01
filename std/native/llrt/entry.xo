@@ -456,6 +456,17 @@ pub fn finish() {
 /// carved (diagnostics, bench/results/xo1-speed).
 pub fn heapstats() {
   let b = rt.heap_large(256)
+  // the blocks allocated and not freed now (the leak check's count, before
+  // the program's values are dropped): what a running server holds
+  let lb = rt.heap_large(16)
+  heapos.live(lb, lb + 8)
+  var la = put(b, 0, "xo heapstats: live blocks ")
+  la = put_int(b, la, rt.mem_load(lb, 0, 8))
+  la = put(b, la, " of ")
+  la = put_int(b, la, rt.mem_load(lb, 8, 8))
+  la = put(b, la, " allocations\n")
+  emit(b, la)
+  release(lb)
   var sum = 0
   for c in 1..NCLASS + 1 {
     let n = heapos.nfree(c)
