@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Compiler diagnostics (decision 0448): each emit part sets the memory label
+  `emit start K` as it starts, so `XO_PROF_HEAP_AT="emit start K"` profiles
+  the heap at a chosen point in emit's peak.
 - Native backend (arm64), retain thunk: a retain of a List, Box, Handle
   or Str outside loops was about 32 bytes inline (the count's fast
   path and its own cold block for a shared count) and is now `mov x16`

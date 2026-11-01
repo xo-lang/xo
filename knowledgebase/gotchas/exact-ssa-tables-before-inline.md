@@ -23,3 +23,10 @@ Fix: none needed; renumber keeps growing its lists by push. Before
 sizing a structure exactly, compare the per-phase heap (`--phase-times`
 heap and peak columns, base against change) through emit and the link,
 not only where the structure is built.
+
+Same trap, earlier (xo-lang-6, 2026-10-30, the same renumber change on the
+arm64 host: max RSS 8248 against 8249 MB): an exact list is a full list, so
+the next push reallocates it and takes the slack back. Size a list at its
+last writer, or copy it to its size after the last pass, or leave it. The
+growth curve has changed since (decision 0452: doubling only under 256
+elements), so re-measure these figures before relying on them.
