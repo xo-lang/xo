@@ -719,8 +719,22 @@ now inline.apply's. Peak footprint 3755, 3741, 3762 to 3551, 3668, 3684 MiB. Max
 4060 to 3668, 3671 MB in the two rounds without memory pressure; the third ran with walls
 of 90 and 182 s and is no reading. linux/arm64 self `--ab` (38006f0b3 vs 3dc41c015, 3
 rounds, all flagged loaded): wall 0.999 (0.995 to 1.003), CPU 1.0, max RSS 0.994 (0.99 to
-1.021): no claim on Linux, where the high-water mark is set elsewhere. Next: place that
-mark with the same checkpoints.
+1.021): no claim on Linux, where the high-water mark is set elsewhere.
+
+Linux's mark, placed (489e2f331, linux/arm64, `/proc` sampled 5 times a second against the
+phase laps, 3 rounds on a loaded host, 2026-11-01): max RSS 4223, 4143, 3894 MB, nearly all
+anonymous (file pages 27 to 28 MB), reached in inline.apply in one round and at emit's end
+in two. RSS is about 3.6 GB at ssa's end and 2.8 to 2.9 GB after the front end is freed,
+then back to 3.7 GB by insert_rc's borrows and plan while the counter stays flat at about
+2928 MB, so that rise is pages touched again, not new mappings. The places are good to the
+phase, not the second: the plan lap contains the borrows and uniq_var_params laps.
+
+Open: Linux's counter runs over 1 GB above the Mac's at the same commit (emit 4720 to 4853
+MB in the two rounds that have an emit row, against 3539 to 3546 on the Mac; it already
+reads 4128 to 4425 at insert_rc.apply). Not explained. First check when this resumes: the
+targets' size class limits (heapos.xo mid_default: 16 KiB on darwin, about 256 KiB elsewhere,
+so Linux keeps freed 32 KiB to 256 KiB blocks mapped and counted). Paused 2026-11-01: the
+owner moved priority to case (c).
 
 ## Consequences
 
