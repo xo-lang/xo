@@ -580,6 +580,38 @@ Mac peak footprint, two rounds each: 4012 and 4181 MiB to 3860 and 4008 MiB
 and 4018 MB), and neither pair is enough to claim more than the direction.
 Next word: `pos` (two words and a string per faulting value).
 
+### Stage 3: what was held or not landed (xo-lang-2, 2026-11-01)
+
+Exact list capacity (newcap, branch l2-newcap2, e55e2b7b0 vs 2c968c4ec): held.
+linux/arm64 self --ab, two runs: wall 1.042 and 1.039, CPU 1.034 and 1.032,
+max RSS 0.929 and 0.941 (3 rounds; rounds at load 5.5 to 8.3). linux/amd64:
+wall 1.035, CPU 0.931, max RSS 0.939. The inliner is not the cause (one tail
+branch differs). A Linux profile shows samples +3.1% and +1.9% with no hot
+function and signs that flip between runs, which fits locality or layout but
+does not prove it. Next if revisited: hardware counters on the host, or exact
+capacity only for n >= 2.
+
+Renumber with_capacity (Lang 6): not landed, a net loss when measured.
+
+Pack values (Lang 6's Value list compaction, on the jobs tasks; branch l2-s3p2,
+d9fdb4a6f vs 3e43c0269): not landed. linux/arm64 self --ab, 3 rounds, 0 loaded:
+wall 1.009 (1.003 to 1.01), CPU 1.003 (1.002 to 1.005), max RSS 1.174 (1.167 to
+1.179) worse. Before decision 0452 the same idea measured max RSS 0.96 with wall
+1.009; the cause of the swing is not established (the copies now outlive their
+originals on another path, unverified).
+XO_DROP_FALLBACK (Lang 6's experiment, branch xl96c, which drops the pre-inline
+module before inlining, so a function that fails native code generation cannot
+fall back): not built. linux/arm64, off then on, 3 rounds: emit's counter peak
+5861, 5881, 5841 MB to 5557, 5533, 5590 MB (about -5%), max RSS 4962, 5007,
+4967 MB to 4899, 4866, 4959 MB (-0.2 to -2.8%, in KB/1000 units), wall 37 to 38 s
+unchanged. Shipping it needs the fallback to lower the function again from
+source, a design with a real cost for under 3% of RSS; revisit it if RSS at
+emit becomes the limit. The experiment's branch and worktree are removed;
+e762fe114 is the commit.
+
+Idle worker trim (xl113), the body drop and XO_EMIT_MEM landed in fcfda87f7, so
+Lang 6's stage 3 worktrees hold nothing else.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.
