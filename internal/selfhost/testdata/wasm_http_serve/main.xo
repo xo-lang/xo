@@ -1,0 +1,30 @@
+// A wasi:http component (decision 0447) for a real host: TestWasmComponentServe
+// runs it under `wasmtime serve` with only the proxy world's imports, one route
+// for each WASI 0.2 function the runtime uses in place of preview 1.
+use std/http
+
+fn main(os: Os) {
+  var r = http.router()
+  r.handle("GET /", fn(q: http.Request) -> http.Response { http.text(200, "hello") })
+  // past the 4096 bytes of one blocking-write-and-flush
+  r.handle("GET /big", fn(q: http.Request) -> http.Response { http.text(200, "x".repeat(20000)) })
+  r.handle("POST /echo", fn(q: http.Request) -> http.Response { http.text(200, "len ${q.body.len()}") })
+  r.handle("GET /head", fn(q: http.Request) -> http.Response { http.text(200, q.header("X-Test") ?? "-") })
+  r.handle("GET /sleep", fn(q: http.Request) -> http.Response {
+    let a = os.clock.now().unix_millis()
+    os.clock.sleep(20ms)
+    http.text(200, "slept ${os.clock.now().unix_millis() - a >= 20}")
+  })
+  r.handle("GET /now", fn(q: http.Request) -> http.Response { http.text(200, "after 2020 ${os.clock.now().unix() > 1577836800}") })
+  r.handle("GET /rand", fn(q: http.Request) -> http.Response { http.text(200, "rand ${os.rand.bytes(32).len()}") })
+  r.handle("GET /log", fn(q: http.Request) -> http.Response {
+    os.stdio.println("to stdout ${"y".repeat(5000)}")
+    os.stdio.eprintln("to stderr")
+    http.text(200, "logged")
+  })
+  r.handle("GET /fault", fn(q: http.Request) -> http.Response {
+    let l: List[Int] = []
+    http.text(200, "${l[q.path.len()]}")
+  })
+  http.serve_component(r)
+}

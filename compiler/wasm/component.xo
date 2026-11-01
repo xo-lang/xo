@@ -1,0 +1,819 @@
+// The component binary of a wasi:http program (decision 0447, the stage after
+// step 1): Xo writes the component around its core module, with no wasm-tools
+// and no preview 1 adapter. The core module's imports name the functions of
+// the WASI 0.2 interfaces below, in the canonical ABI's flat forms; each gets
+// its component type here, a `canon lower` and, for a resource drop, a `canon
+// resource.drop`. The handle export gets a `canon lift` and the exported
+// instance wasi:http/incoming-handler.
+//
+// `canon lower` with memory and cabi_realloc needs the core instance that the
+// lowered functions are imports of, so as wit-component does a shim core module
+// stands in: its functions call through a table, the core module is
+// instantiated against them, and a fixup core module then fills the table with
+// the lowered functions.
+
+const WASI_V = "@0.2.0"
+
+// The primitive value types, as s33 values (their one byte encodings).
+const VT_U8 = -3
+const VT_U16 = -5
+const VT_U32 = -7
+const VT_U64 = -9
+const VT_STRING = -13
+
+/// One import of the core module: its flat signature in value type bytes.
+struct CoreImport {
+  module: Str
+  name: Str
+  params: List[Int]
+  results: List[Int]
+}
+
+/// The imports of core module core.
+fn core_imports(core: Bytes) -> List[CoreImport] {
+  var sigs: List[(List[Int], List[Int])] = []
+  var imps: List[CoreImport] = []
+  var at = 8
+  while at < core.len() {
+    let id = Int(core[at])
+    at += 1
+    let (size, body) = read_uleb(core, at)
+    at = body
+    let end = at + size
+    if id == 1 {
+      var p = at
+      let (n, q) = read_uleb(core, p)
+      p = q
+      for _ in 0..n {
+        // 0x60 params results
+        p += 1
+        let (np, q1) = read_uleb(core, p)
+        p = q1
+        var ps: List[Int] = []
+        for _ in 0..np {
+          ps.push(Int(core[p]))
+          p += 1
+        }
+        let (nr, q2) = read_uleb(core, p)
+        p = q2
+        var rs: List[Int] = []
+        for _ in 0..nr {
+          rs.push(Int(core[p]))
+          p += 1
+        }
+        sigs.push((ps, rs))
+      }
+    } else if id == 2 {
+      var p = at
+      let (n, q) = read_uleb(core, p)
+      p = q
+      for _ in 0..n {
+        let (ml, q1) = read_uleb(core, p)
+        let m = core[q1..q1 + ml].to_str() ?? ""
+        p = q1 + ml
+        let (nl, q2) = read_uleb(core, p)
+        let f = core[q2..q2 + nl].to_str() ?? ""
+        p = q2 + nl
+        // 0x00: a function, the only kind the backend imports
+        p += 1
+        let (ti, q3) = read_uleb(core, p)
+        p = q3
+        imps.push(CoreImport{module: m, name: f, params: sigs[ti].0, results: sigs[ti].1})
+      }
+    }
+    at = end
+  }
+  imps
+}
+
+fn read_uleb(b: Bytes, at: Int) -> (Int, Int) {
+  var v = 0
+  var shift = 0
+  var p = at
+  while true {
+    let x = Int(b[p])
+    p += 1
+    v = v | ((x & 0x7F) << shift)
+    shift += 7
+    if (x & 0x80) == 0 {
+      break
+    }
+  }
+  (v, p)
+}
+
+// ---------------------------------------------------------------------------
+// Type encodings
+
+fn dt_own(t: Int) -> List[Int] {
+  var o: List[Int] = [0x69]
+  uleb(o, t)
+  o
+}
+
+fn dt_borrow(t: Int) -> List[Int] {
+  var o: List[Int] = [0x68]
+  uleb(o, t)
+  o
+}
+
+fn dt_list(v: Int) -> List[Int] {
+  var o: List[Int] = [0x70]
+  sleb(o, v)
+  o
+}
+
+fn dt_option(v: Int) -> List[Int] {
+  var o: List[Int] = [0x6B]
+  sleb(o, v)
+  o
+}
+
+fn dt_tuple(vs: List[Int]) -> List[Int] {
+  var o: List[Int] = [0x6F]
+  uleb(o, vs.len())
+  for v in vs {
+    sleb(o, v)
+  }
+  o
+}
+
+/// result<ok, err>, with -1000 for a missing side.
+fn dt_result(ok: Int, err: Int) -> List[Int] {
+  var o: List[Int] = [0x6A]
+  for v in [ok, err] {
+    if v == NO_TYPE {
+      o.push(0)
+    } else {
+      o.push(1)
+      sleb(o, v)
+    }
+  }
+  o
+}
+
+const NO_TYPE = -1000
+
+fn dt_record(fs: List[(Str, Int)]) -> List[Int] {
+  var o: List[Int] = [0x72]
+  uleb(o, fs.len())
+  for f in fs {
+    name_bytes(o, f.0)
+    sleb(o, f.1)
+  }
+  o
+}
+
+/// A variant's cases: NO_TYPE for a case with no payload.
+fn dt_variant(cs: List[(Str, Int)]) -> List[Int] {
+  var o: List[Int] = [0x71]
+  uleb(o, cs.len())
+  for c in cs {
+    name_bytes(o, c.0)
+    if c.1 == NO_TYPE {
+      o.push(0)
+    } else {
+      o.push(1)
+      sleb(o, c.1)
+    }
+    o.push(0)
+  }
+  o
+}
+
+/// An instance type being written: its declarations and local type count.
+struct InstTy {
+  body: List[Int] = []
+  n: Int = 0
+  t: Int = 0
+}
+
+/// A type of the enclosing component, as a local type.
+fn (var i: InstTy) outer(idx: Int) -> Int {
+  i.body.push(0x02)
+  i.body.push(0x03)
+  i.body.push(0x02)
+  i.body.push(0x01)
+  uleb(i.body, idx)
+  i.n += 1
+  i.t += 1
+  i.t - 1
+}
+
+fn (var i: InstTy) def(d: List[Int]) -> Int {
+  i.body.push(0x01)
+  extend(i.body, d)
+  i.n += 1
+  i.t += 1
+  i.t - 1
+}
+
+/// Exports local type ty under a name (`eq`).
+fn (var i: InstTy) eq(name: Str, ty: Int) -> Int {
+  i.body.push(0x04)
+  i.body.push(0x00)
+  name_bytes(i.body, name)
+  i.body.push(0x03)
+  i.body.push(0x00)
+  uleb(i.body, ty)
+  i.n += 1
+  i.t += 1
+  i.t - 1
+}
+
+/// Exports a new resource type.
+fn (var i: InstTy) res(name: Str) -> Int {
+  i.body.push(0x04)
+  i.body.push(0x00)
+  name_bytes(i.body, name)
+  i.body.push(0x03)
+  i.body.push(0x01)
+  i.n += 1
+  i.t += 1
+  i.t - 1
+}
+
+/// Exports a function; result NO_TYPE for none.
+fn (var i: InstTy) fun(name: Str, params: List[(Str, Int)], result: Int) {
+  var d: List[Int] = [0x40]
+  uleb(d, params.len())
+  for p in params {
+    name_bytes(d, p.0)
+    sleb(d, p.1)
+  }
+  if result == NO_TYPE {
+    d.push(0x01)
+    d.push(0x00)
+  } else {
+    d.push(0x00)
+    sleb(d, result)
+  }
+  let ty = i.def(d)
+  i.body.push(0x04)
+  i.body.push(0x00)
+  name_bytes(i.body, name)
+  i.body.push(0x01)
+  uleb(i.body, ty)
+  i.n += 1
+}
+
+fn (i: InstTy) encoded() -> List[Int] {
+  var o: List[Int] = [0x42]
+  uleb(o, i.n)
+  extend(o, i.body)
+  o
+}
+
+// ---------------------------------------------------------------------------
+// The interfaces
+
+fn ity_io_error() -> InstTy {
+  var i = InstTy{}
+  let _e = i.res("error")
+  i
+}
+
+fn ity_io_poll() -> InstTy {
+  var i = InstTy{}
+  let p = i.res("pollable")
+  let bp = i.def(dt_borrow(p))
+  i.fun("[method]pollable.block", [("self", bp)], NO_TYPE)
+  i
+}
+
+fn ity_io_streams(t_error: Int) -> InstTy {
+  var i = InstTy{}
+  let e0 = i.outer(t_error)
+  let e = i.eq("error", e0)
+  let own_e = i.def(dt_own(e))
+  let se0 = i.def(dt_variant([("last-operation-failed", own_e), ("closed", NO_TYPE)]))
+  let se = i.eq("stream-error", se0)
+  let inp = i.res("input-stream")
+  let outp = i.res("output-stream")
+  let bytes = i.def(dt_list(VT_U8))
+  let bi = i.def(dt_borrow(inp))
+  let r1 = i.def(dt_result(bytes, se))
+  i.fun("[method]input-stream.blocking-read", [("self", bi), ("len", VT_U64)], r1)
+  let bo = i.def(dt_borrow(outp))
+  let r2 = i.def(dt_result(NO_TYPE, se))
+  i.fun("[method]output-stream.blocking-write-and-flush", [("self", bo), ("contents", bytes)], r2)
+  i
+}
+
+fn ity_http_types(t_in: Int, t_out: Int) -> InstTy {
+  var i = InstTy{}
+  let in0 = i.outer(t_in)
+  let inp = i.eq("input-stream", in0)
+  let out0 = i.outer(t_out)
+  let outp = i.eq("output-stream", out0)
+  let m0 = i.def(dt_variant([("get", NO_TYPE), ("head", NO_TYPE), ("post", NO_TYPE), ("put", NO_TYPE), ("delete", NO_TYPE), ("connect", NO_TYPE), ("options", NO_TYPE), ("trace", NO_TYPE), ("patch", NO_TYPE), ("other", VT_STRING)]))
+  let method = i.eq("method", m0)
+  let opt_s = i.def(dt_option(VT_STRING))
+  let opt_u8 = i.def(dt_option(VT_U8))
+  let opt_u16 = i.def(dt_option(VT_U16))
+  let opt_u32 = i.def(dt_option(VT_U32))
+  let opt_u64 = i.def(dt_option(VT_U64))
+  let dns0 = i.def(dt_record([("rcode", opt_s), ("info-code", opt_u16)]))
+  let dns = i.eq("DNS-error-payload", dns0)
+  let tls0 = i.def(dt_record([("alert-id", opt_u8), ("alert-message", opt_s)]))
+  let tls = i.eq("TLS-alert-received-payload", tls0)
+  let fsz0 = i.def(dt_record([("field-name", opt_s), ("field-size", opt_u32)]))
+  let fsz = i.eq("field-size-payload", fsz0)
+  let opt_fsz = i.def(dt_option(fsz))
+  let ec0 = i.def(dt_variant([
+    ("DNS-timeout", NO_TYPE),
+    ("DNS-error", dns),
+    ("destination-not-found", NO_TYPE),
+    ("destination-unavailable", NO_TYPE),
+    ("destination-IP-prohibited", NO_TYPE),
+    ("destination-IP-unroutable", NO_TYPE),
+    ("connection-refused", NO_TYPE),
+    ("connection-terminated", NO_TYPE),
+    ("connection-timeout", NO_TYPE),
+    ("connection-read-timeout", NO_TYPE),
+    ("connection-write-timeout", NO_TYPE),
+    ("connection-limit-reached", NO_TYPE),
+    ("TLS-protocol-error", NO_TYPE),
+    ("TLS-certificate-error", NO_TYPE),
+    ("TLS-alert-received", tls),
+    ("HTTP-request-denied", NO_TYPE),
+    ("HTTP-request-length-required", NO_TYPE),
+    ("HTTP-request-body-size", opt_u64),
+    ("HTTP-request-method-invalid", NO_TYPE),
+    ("HTTP-request-URI-invalid", NO_TYPE),
+    ("HTTP-request-URI-too-long", NO_TYPE),
+    ("HTTP-request-header-section-size", opt_u32),
+    ("HTTP-request-header-size", opt_fsz),
+    ("HTTP-request-trailer-section-size", opt_u32),
+    ("HTTP-request-trailer-size", fsz),
+    ("HTTP-response-incomplete", NO_TYPE),
+    ("HTTP-response-header-section-size", opt_u32),
+    ("HTTP-response-header-size", fsz),
+    ("HTTP-response-body-size", opt_u64),
+    ("HTTP-response-trailer-section-size", opt_u32),
+    ("HTTP-response-trailer-size", fsz),
+    ("HTTP-response-transfer-coding", opt_s),
+    ("HTTP-response-content-coding", opt_s),
+    ("HTTP-response-timeout", NO_TYPE),
+    ("HTTP-upgrade-failed", NO_TYPE),
+    ("HTTP-protocol-error", NO_TYPE),
+    ("loop-detected", NO_TYPE),
+    ("configuration-error", NO_TYPE),
+    ("internal-error", opt_s),
+  ]))
+  let ec = i.eq("error-code", ec0)
+  let he0 = i.def(dt_variant([("invalid-syntax", NO_TYPE), ("forbidden", NO_TYPE), ("immutable", NO_TYPE)]))
+  let he = i.eq("header-error", he0)
+  let fields = i.res("fields")
+  let ireq = i.res("incoming-request")
+  let ibody = i.res("incoming-body")
+  let oresp = i.res("outgoing-response")
+  let obody = i.res("outgoing-body")
+  let outparam = i.res("response-outparam")
+  let bytes = i.def(dt_list(VT_U8))
+  let own_fields = i.def(dt_own(fields))
+  let b_fields = i.def(dt_borrow(fields))
+  i.fun("[constructor]fields", [], own_fields)
+  let r_he = i.def(dt_result(NO_TYPE, he))
+  i.fun("[method]fields.append", [("self", b_fields), ("name", VT_STRING), ("value", bytes)], r_he)
+  let entry = i.def(dt_tuple([VT_STRING, bytes]))
+  let entries = i.def(dt_list(entry))
+  i.fun("[method]fields.entries", [("self", b_fields)], entries)
+  let b_ireq = i.def(dt_borrow(ireq))
+  i.fun("[method]incoming-request.method", [("self", b_ireq)], method)
+  i.fun("[method]incoming-request.path-with-query", [("self", b_ireq)], opt_s)
+  i.fun("[method]incoming-request.headers", [("self", b_ireq)], own_fields)
+  let own_ibody = i.def(dt_own(ibody))
+  let r_ibody = i.def(dt_result(own_ibody, NO_TYPE))
+  i.fun("[method]incoming-request.consume", [("self", b_ireq)], r_ibody)
+  let b_ibody = i.def(dt_borrow(ibody))
+  let own_in = i.def(dt_own(inp))
+  let r_in = i.def(dt_result(own_in, NO_TYPE))
+  i.fun("[method]incoming-body.stream", [("self", b_ibody)], r_in)
+  let own_oresp = i.def(dt_own(oresp))
+  i.fun("[constructor]outgoing-response", [("headers", own_fields)], own_oresp)
+  let b_oresp = i.def(dt_borrow(oresp))
+  let r_unit = i.def(dt_result(NO_TYPE, NO_TYPE))
+  i.fun("[method]outgoing-response.set-status-code", [("self", b_oresp), ("status-code", VT_U16)], r_unit)
+  let own_obody = i.def(dt_own(obody))
+  let r_obody = i.def(dt_result(own_obody, NO_TYPE))
+  i.fun("[method]outgoing-response.body", [("self", b_oresp)], r_obody)
+  let b_obody = i.def(dt_borrow(obody))
+  let own_out = i.def(dt_own(outp))
+  let r_out = i.def(dt_result(own_out, NO_TYPE))
+  i.fun("[method]outgoing-body.write", [("self", b_obody)], r_out)
+  let opt_tr = i.def(dt_option(own_fields))
+  let r_ec = i.def(dt_result(NO_TYPE, ec))
+  i.fun("[static]outgoing-body.finish", [("this", own_obody), ("trailers", opt_tr)], r_ec)
+  let own_param = i.def(dt_own(outparam))
+  let r_resp = i.def(dt_result(own_oresp, ec))
+  i.fun("[static]response-outparam.set", [("param", own_param), ("response", r_resp)], NO_TYPE)
+  i
+}
+
+/// wasi:cli/stdout's or stderr's getter.
+fn ity_cli_stream(t_out: Int, getter: Str) -> InstTy {
+  var i = InstTy{}
+  let o0 = i.outer(t_out)
+  let o = i.eq("output-stream", o0)
+  let own_o = i.def(dt_own(o))
+  i.fun(getter, [], own_o)
+  i
+}
+
+fn ity_random() -> InstTy {
+  var i = InstTy{}
+  let bytes = i.def(dt_list(VT_U8))
+  i.fun("get-random-bytes", [("len", VT_U64)], bytes)
+  i
+}
+
+fn ity_wall_clock() -> InstTy {
+  var i = InstTy{}
+  let d0 = i.def(dt_record([("seconds", VT_U64), ("nanoseconds", VT_U32)]))
+  let d = i.eq("datetime", d0)
+  i.fun("now", [], d)
+  i
+}
+
+fn ity_monotonic(t_pollable: Int) -> InstTy {
+  var i = InstTy{}
+  let p0 = i.outer(t_pollable)
+  let p = i.eq("pollable", p0)
+  i.fun("now", [], VT_U64)
+  let own_p = i.def(dt_own(p))
+  i.fun("subscribe-duration", [("when", VT_U64)], own_p)
+  i
+}
+
+// ---------------------------------------------------------------------------
+// The two helper core modules
+
+fn core_section(var out: List[Int], id: Int, count: Int, body: List[Int]) {
+  var s: List[Int] = []
+  uleb(s, count)
+  extend(s, body)
+  section(out, id, s)
+}
+
+fn func_type_bytes(var o: List[Int], ps: List[Int], rs: List[Int]) {
+  o.push(0x60)
+  uleb(o, ps.len())
+  for p in ps {
+    o.push(p)
+  }
+  uleb(o, rs.len())
+  for r in rs {
+    o.push(r)
+  }
+}
+
+/// The shim: function k calls through slot k of the exported table $imports.
+fn shim_module(imps: List[CoreImport]) -> List[Int] {
+  var out: List[Int] = [0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]
+  var types: List[Int] = []
+  for m in imps {
+    func_type_bytes(types, m.params, m.results)
+  }
+  core_section(out, 1, imps.len(), types)
+  var funcs: List[Int] = []
+  for k in 0..imps.len() {
+    uleb(funcs, k)
+  }
+  core_section(out, 3, imps.len(), funcs)
+  // a table of funcref: min = max = n
+  var tab: List[Int] = [0x70, 0x01]
+  uleb(tab, imps.len())
+  uleb(tab, imps.len())
+  core_section(out, 4, 1, tab)
+  var exps: List[Int] = []
+  for k in 0..imps.len() {
+    name_bytes(exps, "${k}")
+    exps.push(0x00)
+    uleb(exps, k)
+  }
+  name_bytes(exps, "\$imports")
+  exps.push(0x01)
+  exps.push(0x00)
+  core_section(out, 7, imps.len() + 1, exps)
+  var code: List[Int] = []
+  for k in 0..imps.len() {
+    var b: List[Int] = [0x00]
+    for p in 0..imps[k].params.len() {
+      b.push(0x20)
+      uleb(b, p)
+    }
+    b.push(0x41)
+    sleb(b, k)
+    b.push(0x11)
+    uleb(b, k)
+    b.push(0x00)
+    b.push(0x0B)
+    uleb(code, b.len())
+    extend(code, b)
+  }
+  core_section(out, 10, imps.len(), code)
+  out
+}
+
+/// The fixup: its element segment fills the shim's table with the imported
+/// (lowered) functions.
+fn fixup_module(imps: List[CoreImport]) -> List[Int] {
+  var out: List[Int] = [0x00, 0x61, 0x73, 0x6D, 0x01, 0x00, 0x00, 0x00]
+  var types: List[Int] = []
+  for m in imps {
+    func_type_bytes(types, m.params, m.results)
+  }
+  core_section(out, 1, imps.len(), types)
+  var im: List[Int] = []
+  for k in 0..imps.len() {
+    name_bytes(im, "")
+    name_bytes(im, "${k}")
+    im.push(0x00)
+    uleb(im, k)
+  }
+  name_bytes(im, "")
+  name_bytes(im, "\$imports")
+  im.push(0x01)
+  im.push(0x70)
+  im.push(0x01)
+  uleb(im, imps.len())
+  uleb(im, imps.len())
+  core_section(out, 2, imps.len() + 1, im)
+  // an active segment at table 0, offset 0: i32.const 0, end
+  var el: List[Int] = [0x00, 0x41, 0x00, 0x0B]
+  uleb(el, imps.len())
+  for k in 0..imps.len() {
+    uleb(el, k)
+  }
+  core_section(out, 9, 1, el)
+  out
+}
+
+// ---------------------------------------------------------------------------
+// The component
+
+/// The component being written: its bytes and index spaces.
+struct Comp {
+  out: List[Int] = [0x00, 0x61, 0x73, 0x6D, 0x0D, 0x00, 0x01, 0x00]
+  types: Int = 0
+  insts: Int = 0
+  funcs: Int = 0
+  core_funcs: Int = 0
+  core_insts: Int = 0
+  /// A resource's component type, by name.
+  res: Map[Str, Int] = {}
+  /// An interface's instance, by name with its version.
+  iface: Map[Str, Int] = {}
+}
+
+fn (var c: Comp) deftype(d: List[Int]) -> Int {
+  var s: List[Int] = [1]
+  extend(s, d)
+  section(c.out, 7, s)
+  c.types += 1
+  c.types - 1
+}
+
+/// Imports interface name of instance type i.
+fn (var c: Comp) import_iface(name: Str, i: InstTy) -> Int {
+  let t = c.deftype(i.encoded())
+  var s: List[Int] = [1, 0x00]
+  name_bytes(s, name)
+  s.push(0x05)
+  uleb(s, t)
+  section(c.out, 10, s)
+  c.iface[name] = c.insts
+  c.insts += 1
+  c.insts - 1
+}
+
+/// The component type of the type export name of instance inst.
+fn (var c: Comp) alias_type(inst: Int, name: Str) -> Int {
+  var s: List[Int] = [1, 0x03, 0x00]
+  uleb(s, inst)
+  name_bytes(s, name)
+  section(c.out, 6, s)
+  c.res[name] = c.types
+  c.types += 1
+  c.types - 1
+}
+
+fn (var c: Comp) alias_func(inst: Int, name: Str) -> Int {
+  var s: List[Int] = [1, 0x01, 0x00]
+  uleb(s, inst)
+  name_bytes(s, name)
+  section(c.out, 6, s)
+  c.funcs += 1
+  c.funcs - 1
+}
+
+/// An export of core instance inst: sort 0 function, 1 table, 2 memory.
+fn (var c: Comp) alias_core(sort: Int, inst: Int, name: Str) -> Int {
+  var s: List[Int] = [1, 0x00, sort, 0x01]
+  uleb(s, inst)
+  name_bytes(s, name)
+  section(c.out, 6, s)
+  if sort == 0 {
+    c.core_funcs += 1
+    return c.core_funcs - 1
+  }
+  0
+}
+
+fn (var c: Comp) core_instantiate(module: Int, args: List[(Str, Int)]) -> Int {
+  var s: List[Int] = [1, 0x00]
+  uleb(s, module)
+  uleb(s, args.len())
+  for a in args {
+    name_bytes(s, a.0)
+    s.push(0x12)
+    uleb(s, a.1)
+  }
+  section(c.out, 2, s)
+  c.core_insts += 1
+  c.core_insts - 1
+}
+
+/// A core instance of exports (name, sort, index).
+fn (var c: Comp) core_inline(exports: List[(Str, Int, Int)]) -> Int {
+  var s: List[Int] = [1, 0x01]
+  uleb(s, exports.len())
+  for e in exports {
+    name_bytes(s, e.0)
+    s.push(e.1)
+    uleb(s, e.2)
+  }
+  section(c.out, 2, s)
+  c.core_insts += 1
+  c.core_insts - 1
+}
+
+/// The component of core module core, with the imports it names. Err is an
+/// import no interface below has.
+pub fn component_of(core: Bytes) -> (Bytes, Str) {
+  let all = core_imports(core)
+  // the resource drops need no memory and no shim
+  var shimmed: List[CoreImport] = []
+  for m in all {
+    if !m.name.starts_with("[resource-drop]") {
+      shimmed.push(m)
+    }
+  }
+  let wanted = fn(module: Str) -> Bool {
+    for m in all {
+      if m.module == module {
+        return true
+      }
+    }
+    false
+  }
+  var c = Comp{}
+  // m0 the program, m1 the shim, m2 the fixup
+  section(c.out, 1, core_list(core))
+  section(c.out, 1, shim_module(shimmed))
+  section(c.out, 1, fixup_module(shimmed))
+
+  let ie = c.import_iface("wasi:io/error${WASI_V}", ity_io_error())
+  let t_err = c.alias_type(ie, "error")
+  var t_poll = -1
+  if wanted("wasi:io/poll${WASI_V}") {
+    let ip = c.import_iface("wasi:io/poll${WASI_V}", ity_io_poll())
+    t_poll = c.alias_type(ip, "pollable")
+  }
+  let is = c.import_iface("wasi:io/streams${WASI_V}", ity_io_streams(t_err))
+  let t_in = c.alias_type(is, "input-stream")
+  let t_out = c.alias_type(is, "output-stream")
+  let ih = c.import_iface("wasi:http/types${WASI_V}", ity_http_types(t_in, t_out))
+  for r in ["fields", "incoming-request", "incoming-body", "outgoing-response", "outgoing-body", "response-outparam"] {
+    let _t = c.alias_type(ih, r)
+  }
+  if wanted("wasi:cli/stdout${WASI_V}") {
+    let _i = c.import_iface("wasi:cli/stdout${WASI_V}", ity_cli_stream(t_out, "get-stdout"))
+  }
+  if wanted("wasi:cli/stderr${WASI_V}") {
+    let _i = c.import_iface("wasi:cli/stderr${WASI_V}", ity_cli_stream(t_out, "get-stderr"))
+  }
+  if wanted("wasi:random/random${WASI_V}") {
+    let _i = c.import_iface("wasi:random/random${WASI_V}", ity_random())
+  }
+  if wanted("wasi:clocks/wall-clock${WASI_V}") {
+    let _i = c.import_iface("wasi:clocks/wall-clock${WASI_V}", ity_wall_clock())
+  }
+  if wanted("wasi:clocks/monotonic-clock${WASI_V}") {
+    let _i = c.import_iface("wasi:clocks/monotonic-clock${WASI_V}", ity_monotonic(t_poll))
+  }
+  for m in all {
+    if !c.iface.contains(m.module) {
+      return (b"", "the component has no interface ${m.module} for its import ${m.name}")
+    }
+  }
+
+  // the shim, its functions by core module, and the program against them
+  let shim = c.core_instantiate(1, [])
+  var by_module: Map[Str, List[(Str, Int, Int)]] = {}
+  var modules: List[Str] = []
+  var k = 0
+  for m in all {
+    var f = 0
+    if m.name.starts_with("[resource-drop]") {
+      let r = m.name.trim_prefix("[resource-drop]")
+      if !c.res.contains(r) {
+        return (b"", "the component has no resource ${r}")
+      }
+      var s: List[Int] = [1, 0x03]
+      uleb(s, c.res.get_or_fault(r, "checked above"))
+      section(c.out, 8, s)
+      f = c.core_funcs
+      c.core_funcs += 1
+    } else {
+      f = c.alias_core(0, shim, "${k}")
+      k += 1
+    }
+    if !by_module.contains(m.module) {
+      modules.push(m.module)
+      by_module[m.module] = []
+    }
+    var l = by_module.get_or_fault(m.module, "set above")
+    l.push((m.name, 0, f))
+    by_module[m.module] = l
+  }
+  var args: List[(Str, Int)] = []
+  for m in modules {
+    args.push((m, c.core_inline(by_module.get_or_fault(m, "set above"))))
+  }
+  let main = c.core_instantiate(0, args)
+  let _mem = c.alias_core(2, main, "memory")
+  let realloc = c.alias_core(0, main, "cabi_realloc")
+  let handle = c.alias_core(0, main, "wasi:http/incoming-handler${WASI_V}#handle")
+
+  // the lowered functions, and the fixup that puts them in the shim's table
+  var fills: List[(Str, Int, Int)] = []
+  k = 0
+  for m in shimmed {
+    let f = c.alias_func(c.iface.get_or_fault(m.module, "checked above"), m.name)
+    var s: List[Int] = [1, 0x01, 0x00]
+    uleb(s, f)
+    s.push(3)
+    s.push(0x00)
+    s.push(0x03)
+    s.push(0x00)
+    s.push(0x04)
+    uleb(s, realloc)
+    section(c.out, 8, s)
+    fills.push(("${k}", 0, c.core_funcs))
+    c.core_funcs += 1
+    k += 1
+  }
+  let _tab = c.alias_core(1, shim, "\$imports")
+  fills.push(("\$imports", 1, 0))
+  let fx = c.core_inline(fills)
+  let _fixup = c.core_instantiate(2, [("", fx)])
+
+  // the handler
+  let own_req = c.deftype(dt_own(c.res.get_or_fault("incoming-request", "aliased above")))
+  let own_out = c.deftype(dt_own(c.res.get_or_fault("response-outparam", "aliased above")))
+  var d: List[Int] = [0x40]
+  uleb(d, 2)
+  name_bytes(d, "request")
+  sleb(d, own_req)
+  name_bytes(d, "response-out")
+  sleb(d, own_out)
+  d.push(0x01)
+  d.push(0x00)
+  let t_handle = c.deftype(d)
+  var lift: List[Int] = [1, 0x00, 0x00]
+  uleb(lift, handle)
+  lift.push(0)
+  uleb(lift, t_handle)
+  section(c.out, 8, lift)
+  let f_handle = c.funcs
+  c.funcs += 1
+  var inst: List[Int] = [1, 0x01, 1, 0x00]
+  name_bytes(inst, "handle")
+  inst.push(0x01)
+  uleb(inst, f_handle)
+  section(c.out, 5, inst)
+  let exported = c.insts
+  c.insts += 1
+  var ex: List[Int] = [1, 0x00]
+  name_bytes(ex, "wasi:http/incoming-handler${WASI_V}")
+  ex.push(0x05)
+  uleb(ex, exported)
+  ex.push(0x00)
+  section(c.out, 11, ex)
+
+  var bb = BytesBuilder.with_capacity(c.out.len())
+  for x in c.out {
+    bb.write_byte(UInt8(x & 255))
+  }
+  (bb.freeze(), "")
+}
+
+fn core_list(core: Bytes) -> List[Int] {
+  var o: List[Int] = []
+  for b in core {
+    o.push(Int(b))
+  }
+  o
+}

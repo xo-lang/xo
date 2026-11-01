@@ -1,6 +1,6 @@
 # 0447: Xo programs on WASI preview 2 and the component model (wasi:http)
 
-Status: Accepted, direction and step 1 (owner, 2026-10-30): the hello-world wasi:http measurement first, later stages decided on its numbers; the owner approved installing wasmtime, wasm-tools, TinyGo and Rust's wasm32-wasip2 target on the linux/arm64 offload host. Proposed by xo-lang-4 the same day Next stage accepted (owner, 2026-11-01): Xo writes the component sections, WASI 0.2 imports in place of preview 1.
+Status: Accepted, direction and step 1 (owner, 2026-10-30): the hello-world wasi:http measurement first, later stages decided on its numbers; the owner approved installing wasmtime, wasm-tools, TinyGo and Rust's wasm32-wasip2 target on the linux/arm64 offload host. Proposed by xo-lang-4 the same day. Next stage accepted (owner, 2026-11-01) and done the same day: Xo writes the component sections, WASI 0.2 imports in place of preview 1.
 
 ## Context
 
@@ -270,6 +270,66 @@ work: the component sections written by Xo itself, so a build needs neither
 wasm-tools nor the preview 1 adapter, and WASI 0.2 imports in place of
 preview 1. A handle_stream route on the input-stream, outgoing requests and
 response trailers come after this and are not decided yet.
+
+## Next stage results (2026-11-01, Xo Lang 4)
+
+`xo build --backend=wasm` of a program that calls `http.serve_component` writes
+the component itself. No wasm-tools and no adapter are on the build path; both
+tools are test oracles only. The same hello program, setup and host as step 1,
+now 3 rounds, alone on the host (medians of the rounds; first request is the
+median of all 15 starts):
+
+| component | bytes | first request (ms) | req/s | p50 (ms) | p90 (ms) | p99 (ms) |
+|---|---|---|---|---|---|---|
+| Xo | 257,324 | 14.2 | 81,681 | 0.347 | 0.632 | 1.270 |
+| Rust | 79,127 | 14.0 | 89,238 | 0.315 | 0.584 | 1.201 |
+| TinyGo | 2,910,541 | 24.4 | 29,038 | 1.062 | 1.645 | 2.347 |
+
+- All three validate, answer 200 "hello", and ran with 0 errors. Round ranges of
+  req/s: Xo 80,831 to 81,757, Rust 88,798 to 89,499, TinyGo 29,011 to 29,397.
+- Xo is 8.5% below Rust in req/s, and 3.3 times Rust's size. Xo runs main and
+  builds the router for each request; that cost has not been separated from the
+  rest of the gap.
+- The component is 6.4% smaller than step 1's adapter-wrapped 275,013 bytes.
+  Step 1's 75,620 req/s was one run, and Rust also read higher today (85,410
+  then), so this table does not show a speedup from dropping the adapter.
+- `wasmtime serve` runs it with its default imports, without `-Scli` (the
+  measurement above kept step 1's `-Scli`, TestWasmComponentServe does not). The
+  component names WASI `@0.2.0`; wasmtime 50 and wasm-tools 1.263 accept that, so
+  step 1's rewrite of the names to 0.2.12 is gone.
+
+How it is built:
+
+- `compiler/wasm/component.xo` reads the core module's imports and writes the
+  component around it. It declares the interfaces it may need from
+  `wasi:io`, `wasi:http/types`, `wasi:cli`, `wasi:random` and `wasi:clocks`, and
+  imports an optional one only when the module uses it. An import with no
+  matching interface is a build error, not a broken component.
+- `canon lower` with memory and cabi_realloc needs the instance that is being
+  instantiated, so as wit-component does, a shim module calls through a table,
+  the program is instantiated against it, and a fixup module fills the table.
+- `compiler/wasm/rt6.xo` defines the preview 1 functions the runtime calls, with
+  their signatures, over WASI 0.2. stdout, stderr, the clocks, sleep and random
+  work. Arguments and the environment are empty. File operations and stdin reads
+  return ENOSYS. proc_exit traps. A non-component build is unchanged.
+- TestWasmComponentServe builds testdata/wasm_http_serve, runs `wasm-tools
+  validate`, and drives `wasmtime serve`: a body past the 4096 byte write piece, a
+  100,000 byte request body, a header, sleep, clocks, random, stdout and stderr, a
+  404, and a route that faults, followed by a served request. It skips where the
+  tools are absent, so it runs on the linux/arm64 offload hosts and not on the
+  Mac; TestWasmComponentHTTP still runs the core module under Node.
+
+Differs from the plan above, and left open:
+
+- The component comes from `--backend=wasm` plus the call to
+  `http.serve_component`. There is no `--targets=wasip2/wasm` yet, and
+  `--targets=wasip1/wasm` of such a program also gives a component.
+- The two new diagnostics in Consequences are not written: a component program
+  that opens a file gets ENOSYS at run time, not a build error, and one whose main
+  never hands over a router gets the 500 that rt5.xo's handle_end sends.
+- Spin and wasmCloud have not been tried. The only real host so far is wasmtime.
+- Golden coverage: one program, not every component golden; only the two tests
+  above run `wasm-tools validate` or a component.
 
 ## Consequences
 

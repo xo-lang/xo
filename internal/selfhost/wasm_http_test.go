@@ -11,9 +11,9 @@ import (
 )
 
 // TestWasmComponentHTTP builds testdata/wasm_http, a program that calls
-// http.serve_component, with `xo build --backend=wasm`: the core module
-// of a wasi:http 0.2 component (decision 0447, compiler/wasm rt5.xo).
-// testdata/wasm_http/host.mjs runs it under Node with stub wasi:http
+// http.serve_component, with `xo build --backend=wasm`: a wasi:http 0.2
+// component (decision 0447, compiler/wasm rt5.xo, rt6.xo, component.xo).
+// testdata/wasm_http/host.mjs runs its core module under Node with stub
 // imports written from the canonical ABI, so a wrong import signature
 // fails instantiation and a wrong layout shows in the answers: with a new
 // instance per request (wasmtime serve's default) and with one instance

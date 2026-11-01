@@ -7,9 +7,9 @@
 // serve_component reads the request through wasi_http_method and
 // wasi_http_path and answers through wasi_http_respond, over the
 // wasi:http and wasi:io imports below, in the canonical ABI's flat forms.
-// cabi_realloc gives the host memory for the strings it returns. Stage 1
-// keeps the preview 1 imports of the rest of the runtime: the host wraps
-// the module with the preview 1 adapter for the proxy world.
+// cabi_realloc gives the host memory for the strings it returns. The rest
+// of the runtime's system calls are rt6.xo's, and component.xo writes the
+// component around the module.
 
 /// The runtime calls of rt5.xo.
 fn rt5_direct(name: Str) -> Bool {

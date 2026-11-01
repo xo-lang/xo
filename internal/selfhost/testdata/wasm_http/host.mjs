@@ -1,15 +1,23 @@
 // The host side of internal/selfhost TestWasmComponentHTTP (decision 0447): runs a wasm
-// backend build of a wasi:http component's core module under Node with stub wasi:http 0.2.0
+// backend build of a wasi:http component (its core module, the first section) under Node with stub wasi:http 0.2.0
 // imports written from the canonical ABI, calls its handle export once per request, and prints
 // what each request got back (status, sorted fields, body, the handles it set and dropped).
-//   node host.mjs CORE.wasm fresh|reuse REQUEST...   (a REQUEST is a path, or "POST path")
+//   node host.mjs COMPONENT.wasm fresh|reuse REQUEST...   (a REQUEST is a path, or "POST path")
 import { readFileSync } from "node:fs";
-import { WASI } from "node:wasi";
 
 const file = process.argv[2];
 const fresh = process.argv[3] === "fresh";
 const paths = process.argv.slice(4);
-const mod = new WebAssembly.Module(readFileSync(file));
+// the component's first section is its core module
+const comp = readFileSync(file);
+if (comp[4] !== 0x0d || comp[8] !== 1) throw new Error("not a component with its core module first");
+let size = 0, at = 9;
+for (let shift = 0; ; shift += 7) {
+  const b = comp[at++];
+  size |= (b & 0x7f) << shift;
+  if ((b & 0x80) === 0) break;
+}
+const mod = new WebAssembly.Module(comp.subarray(at, at + size));
 console.log("exports:", WebAssembly.Module.exports(mod).map((e) => e.name).filter((n) => !n.startsWith("xo_")).sort().join(" "));
 
 let inst, mem;
@@ -62,8 +70,11 @@ const http = {
   "[static]response-outparam.set": (o, tag, r, ...rest) => { res.outparam = { o, tag, r } },
 };
 const streams = {
-  "[method]output-stream.blocking-write-and-flush": (s, p, n, ret) => { res.body += str(p, n); dv().setUint8(ret, 0) },
-  "[resource-drop]output-stream": (s) => { res.drops.push("output-stream") },
+  "[method]output-stream.blocking-write-and-flush": (s, p, n, ret) => {
+    if (s === H.stream) res.body += str(p, n); else process.stderr.write(str(p, n));
+    dv().setUint8(ret, 0);
+  },
+  "[resource-drop]output-stream": (s) => { if (s === H.stream) res.drops.push("output-stream") },
   "[method]input-stream.blocking-read": (s, max, ret) => {
     // the body in pieces of at most 6 bytes (and max), then closed
     if (bodyLeft.length === 0) { dv().setUint8(ret, 1); dv().setUint8(ret + 4, 1); return }
@@ -74,17 +85,27 @@ const streams = {
   "[resource-drop]input-stream": (s) => { res.drops.push("input-stream") },
 };
 // fresh: a new instance per request, as wasmtime serve runs a component by default
-let wasi, handle;
+let handle;
 function start() {
-  wasi = new WASI({ version: "preview1", args: ["xo"], env: {}, returnOnExit: true });
   inst = new WebAssembly.Instance(mod, {
-    wasi_snapshot_preview1: wasi.wasiImport,
     "wasi:http/types@0.2.0": http,
     "wasi:io/streams@0.2.0": streams,
     "wasi:io/error@0.2.0": { "[resource-drop]error": (e) => {} },
+    "wasi:io/poll@0.2.0": { "[method]pollable.block": (p) => {}, "[resource-drop]pollable": (p) => {} },
+    "wasi:cli/stdout@0.2.0": { "get-stdout": () => 81 },
+    "wasi:cli/stderr@0.2.0": { "get-stderr": () => 82 },
+    "wasi:random/random@0.2.0": { "get-random-bytes": (n, ret) => {
+      const k = Number(n), p = k ? inst.exports.cabi_realloc(0, 0, 1, k) : 0;
+      crypto.getRandomValues(u8().subarray(p, p + k));
+      dv().setUint32(ret, p, true); dv().setUint32(ret + 4, k, true);
+    } },
+    "wasi:clocks/wall-clock@0.2.0": { now: (ret) => {
+      const ms = Date.now();
+      dv().setBigUint64(ret, BigInt(Math.floor(ms / 1000)), true); dv().setUint32(ret + 8, (ms % 1000) * 1000000, true);
+    } },
+    "wasi:clocks/monotonic-clock@0.2.0": { now: () => process.hrtime.bigint(), "subscribe-duration": (d) => 90 },
   });
   mem = inst.exports.memory;
-  wasi.initialize({ exports: { memory: mem } });
   handle = inst.exports["wasi:http/incoming-handler@0.2.0#handle"];
 }
 start();

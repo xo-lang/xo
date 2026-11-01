@@ -33,6 +33,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   timed out at the client. It is watched now.
 - FIX (std/http): a parked HTTP/2 connection that fired as its server stopped
   leaked a 64 byte record (decision 0449).
+- std/http (wasm): `xo build --backend=wasm` of a program calling
+  `http.serve_component` writes the whole `wasi:http` 0.2 component, with no
+  wasm-tools and no preview 1 adapter, and its runtime uses WASI 0.2 imports
+  (decision 0447). `wasmtime serve` runs the output as it is. File operations
+  return ENOSYS there, and arguments and the environment are empty.
 - std/http (wasm): `http.serve_component(r)` builds a program as the core
   module of a `wasi:http` 0.2 component (decision 0447 step 1): its
   `handle` export runs main per request and answers through the router,

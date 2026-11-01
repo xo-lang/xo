@@ -254,6 +254,14 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
   if !aerr.is_empty() {
     return Program{wat: wat, err: "the assembler: ${aerr}"}
   }
+  if g.comp {
+    // a wasi:http program's output is the component around the module
+    let (c, cerr) = component_of(bin)
+    if !cerr.is_empty() {
+      return Program{wat: wat, err: cerr}
+    }
+    return Program{wat: wat, wasm: c}
+  }
   Program{wat: wat, wasm: bin}
 }
 
@@ -1512,7 +1520,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     rt = rt + rt4_text(g, tz)
   }
   if g.comp {
-    rt = rt + rt5_text(g)
+    rt = rt + rt5_text(g) + rt6_text()
   }
   for fi in 0..g.m.funcs.len() {
     g.func(fi)
@@ -1551,16 +1559,17 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   for s in g.sig_lines {
     b.write("  ${s}\n")
   }
-  if g.conc {
+  if g.conc && !g.comp {
     b.write(rt3_imports())
   }
-  if g.files {
+  if g.files && !g.comp {
     b.write(rt4_imports())
   }
   if g.comp {
     b.write(rt5_imports())
+    b.write(rt6_imports())
   }
-  b.write(rt_imports())
+  b.write(if g.comp { drop_preview1(rt_imports()) } else { rt_imports() })
   if g.conc {
     b.write(rt3_globals())
   }

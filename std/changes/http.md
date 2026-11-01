@@ -1,5 +1,22 @@
 # std/http changes
 
+## 2026-11-01: feature: http.serve_component builds a whole wasi:http component, with no other tools (decision 0447)
+
+- Kind: feature
+- Commit: this commit
+- Found by: xo-lang-4, decision 0447, the stage the owner accepted 2026-11-01
+- Go reference: none (Go's wasip2 handlers come from componentize-go or TinyGo with ydnar/wasi-http-go)
+- Test: internal/selfhost TestWasmComponentServe (testdata/wasm_http_serve under `wasmtime serve`, after `wasm-tools validate`; skips where they are not installed), TestWasmComponentHTTP (the core module under a stub host in Node)
+- Timing: hello program under `wasmtime serve`, linux/arm64, 32 connections, 3 rounds, median: Xo 81,681 req/s, 257,324 bytes; Rust 89,238 req/s, 79,127 bytes; TinyGo 29,038 req/s, 2,910,541 bytes (ADR 0447)
+
+`xo build --backend=wasm` of a program calling `http.serve_component` now
+writes the component itself: wasm-tools and the preview 1 adapter are gone
+from the path, and `wasmtime serve` takes the output as it is, with only the
+wasi:http/proxy world. The runtime's system calls use WASI 0.2 in place of
+preview 1: stdout, stderr, clocks and random work; arguments and the
+environment are empty; file operations and reads of stdin return ENOSYS. A route that faults ends the
+request with an error from the host and the next request gets a new instance.
+
 ## 2026-11-01: fix: a parked idle connection answers its next request on Windows (decision 0449)
 
 - Kind: fix
