@@ -2412,7 +2412,11 @@ fn signal(pl: Int, p: Int, handoff: Bool) {
   let f = rt.mem_load(p, PK_FIBER, 8)
   if f != 0 {
     rt.mem_store(p, PK_FIBER, 0, 8)
-    if sched.fiber_wake(f) != 0 {
+    // the waker's state write into a record another worker malloc'd
+    sanhook.ignore_writes(true)
+    let queued = sched.fiber_wake(f)
+    sanhook.ignore_writes(false)
+    if queued != 0 {
       push(pl, f | 1, handoff)
     }
   } else if rt.mem_load(p, PK_SLEEPING, 4) != 0 {
@@ -2722,9 +2726,11 @@ fn park_wait_fiber(pl: Int, c: Int, cancelable: Int, counted: Int, f: Int, node:
   klock_w(w, p)
   while rt.slot_load(p, PK_SIGNALED, ACQUIRE) == 0 && !(cancelable != 0 && node_canceled(node)) {
     rt.mem_store(p, PK_FIBER, f, 8)
+    sanhook.ignore_writes(true)
     sched.fiber_parking(f)
     unlock_w(w, p)
     park_switch(f)
+    sanhook.ignore_writes(false)
     w = rt.tlocal_get(TLS_W)
     klock_w(w, p)
     rt.mem_store(p, PK_FIBER, 0, 8)
@@ -3357,6 +3363,12 @@ pub fn defer_check() {
 /// defer_check for the calling thread's record w (scope_add has it: no
 /// thread local read, a _tlv_get_addr on macOS, per spawn).
 fn defer_check_w(w: Int) {
+  sanhook.ignore_all(true)
+  defer_check_ww(w)
+  sanhook.ignore_all(false)
+}
+
+fn defer_check_ww(w: Int) {
   let at = rt.slot_load(w, W_DEFER_AT_W, RELAXED)
   if at == 0 {
     return

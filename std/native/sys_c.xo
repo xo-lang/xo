@@ -18,6 +18,12 @@ fn weak___tsan_create_fiber(flags: Int) -> Int
 fn weak___tsan_destroy_fiber(fiber: Int)
 fn weak___tsan_switch_to_fiber(fiber: Int, flags: Int)
 fn weak___tsan_acquire(addr: Int)
+/// ThreadSanitizer's annotation that the calling thread's writes are not checked
+/// until the matching End (a fiber's first store to its record, pool.xo)
+fn weak_AnnotateIgnoreWritesBegin(file: Int, line: Int)
+fn weak_AnnotateIgnoreWritesEnd(file: Int, line: Int)
+fn weak_AnnotateIgnoreReadsBegin(file: Int, line: Int)
+fn weak_AnnotateIgnoreReadsEnd(file: Int, line: Int)
 fn weak___tsan_release(addr: Int)
 /// ThreadSanitizer's Java interface, whose alloc resets a range's shadow
 /// memory as a malloc does, without a write of the caller's: the dead stack

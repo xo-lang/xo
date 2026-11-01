@@ -329,6 +329,37 @@ pub fn worker_start(w: Int) {
   }
 }
 
+/// Whether the calling thread's writes go unchecked (on) or checked again
+/// (off): around the store of a fiber's state into a record the allocating
+/// worker malloc'd, which the sanitizer cannot order (a fiber switch orders
+/// nothing under --race).
+pub fn ignore_writes(on: Bool) {
+  if gorace() || !user_mode() {
+    return
+  }
+  if on {
+    sys_c.weak_AnnotateIgnoreWritesBegin(0, 0)
+  } else {
+    sys_c.weak_AnnotateIgnoreWritesEnd(0, 0)
+  }
+}
+
+/// ignore_writes for reads too: the monitor's deferral poll reads and
+/// writes the calling worker's record, which another fiber's context
+/// created (wakep's memset).
+pub fn ignore_all(on: Bool) {
+  if gorace() || !user_mode() {
+    return
+  }
+  if on {
+    sys_c.weak_AnnotateIgnoreReadsBegin(0, 0)
+    sys_c.weak_AnnotateIgnoreWritesBegin(0, 0)
+  } else {
+    sys_c.weak_AnnotateIgnoreWritesEnd(0, 0)
+    sys_c.weak_AnnotateIgnoreReadsEnd(0, 0)
+  }
+}
+
 /// Fiber f got a new stack: its ThreadSanitizer fiber.
 pub fn fiber_new(f: Int) {
   if gorace() {

@@ -61,3 +61,28 @@ only the first (or counts only one) passes a change that silences the
 second: 5c92e7f24 was pushed after a Linux run grepped for the first line
 only. Check a race-edge change on every platform with both lines counted
 and the test's own ok/FAIL line, never a filtered log.
+
+## Addendum 2 (2026-11-01): runtime records handed between TSan contexts
+
+After the claim edge, Linux TestRaceSyncTable still failed lazy_const (3 of
+5 repeats) and then mutex_loop: both are runtime records that one TSan
+context malloc'd or memset and a task fiber then wrote or read atomically,
+with no edge (a fiber switch orders nothing under --race, and a worker
+thread's clock does not reach the fibers that run on it): a fiber record
+(F_STATE, written by the parking fiber in park_wait_fiber and by the waker
+in park_signal, after the allocating worker's malloc) and a worker record
+(W_DEFER_AT_W, read by defer_check after wakep's memset). Fixes tried:
+- a TSan shadow reset of the new record (sanhook.record_reset): cleared
+  lazy_const but made chan, chan_buffered and select report nothing in
+  their unsynchronized form on Linux (the racy forms are the table's
+  second half): dropped;
+- a release/acquire mark on the record (merges the worker's clock into the
+  fiber: hides races, as the first claim edge did): not kept;
+- AnnotateIgnoreWritesBegin/End (and Reads for the poll) around the
+  runtime's own accesses to such a record (sanhook.ignore_writes,
+  ignore_all, user mode only): kept. Linux table 5 of 5 clean with both
+  failure lines counted, Mac table clean.
+When another runtime record shows up in a table failure, name it from the
+report's "Location is heap block of size N" (N minus the 8 byte prefix and
+the 16 byte libcmem header is the record size) and ignore only the
+runtime's accesses, never user code's.
