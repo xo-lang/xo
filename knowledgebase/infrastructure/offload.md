@@ -247,3 +247,12 @@ to `%USERPROFILE%\xo-ci\off`, then `wsl -e bash -l` on it under
   "Network is unreachable" instead of a timeout, so
   net_lookup_dial_timeout fails there until its output stops naming the
   error (Lang 2, 2026-10-30).
+
+## The tier's host steps (lead, 2026-11-01)
+
+`tier.sh` runs `offload-tier.sh` as one `offload.sh` call per step
+(prepare, gen, fuzz, selfhost, llvm, cmd, finish), so each step is its own
+lease and a waiting `--ab` runs between steps instead of waiting for the
+whole tier (tier 34 held the lane 1h18m; `--ab` runs waited up to 1h16m).
+A Mac tier step the memory cap stops (exit 143) runs once more at `-p=2`.
+Last verified: 2026-11-01
