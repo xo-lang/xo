@@ -655,6 +655,41 @@ is in use of about 4 GB mapped at the peak, and retained free memory takes up wh
 the live values give back. So further live cuts (an args pool, `succs` on `Block`)
 wait for retention to move.
 
+### Stage 3: retention, three attempts that did not land (xo-lang-2, 2026-11-01)
+
+About 2 GB is in use of about 4 GB mapped at the self build's peak, so retention
+limits it now, not live size. None of these three is landed.
+
+**A lower `mid_max`.** `XO_HEAP_MID_MAX=8192` on the Mac's self build, 3 alternating
+rounds under load 9 to 13: counter peak 3974, 3974, 3970 to 3706, 3705, 3710 MB
+(-6.7%), max RSS 4097, 4019, 4174 to 3672, 3734, 3617 MB (-11%), peak footprint 3835,
+3970, 3845 to 3764, 3773, 3770 MiB (-3%). Its cost: every 8 to 16 KiB block becomes a
+mapping. As a runtime default, darwin `--ab` (10 rounds, 0 loaded): `alloc grow` wall
+1.738, `alloc mixed` 1.2, a ring of 8 to 16 KiB buffers 1.11, and max RSS 1.04 to 1.06
+on all three, so it is closed as a default. For xo alone, a linux/arm64 self `--ab` (3
+rounds, all flagged loaded): wall 2.133 (2.121 to 2.148), CPU 1.276, max RSS 0.836.
+Wall far past CPU suggests threads waiting on mapping calls (not measured). A darwin
+only setter stays unproven: the Mac's wall read flat (53, 51, 41 to 52, 48, 52 s) under
+too much load to claim, and darwin was not measured in a quiet window. Branch
+`l2-xomid` holds `debug.mem_mid_max`.
+
+**`mem_trim` at each part's end.** Mac, 3 alternating rounds: footprint 3752, 3757, 3761
+to 3738, 3789, 3774 MiB, counter 3998, 3966, 3978 to 3970, 3974, 3966 MB: no change.
+Max RSS read 4076, 3999, 3767 to 3763, 3857, 3692 MB, which is noise of its own size.
+
+**Regions per function.** Heap samples tagged by the function being emitted (Mac, rates
+8 and 16 MiB agree; about 99 GB of volume): about 89% of the bytes die in their
+function, about 11% later in its part, none outlive the part. The sites that outlive a
+function are mostly its generator's per function lists (`G.add`, `G.inherit`, regalloc),
+which `begin_func` replaces at the next function, and fcache's encodings (`subst_tokens`,
+`put_field`, about 1.6% of the volume). Lists like those come at a steady rate through a
+function, so a region empties only at its end, and one function is large:
+`build_native` about 6.5 GB, `ssa.build_program` about 3.7 GB. Plain regions per function
+would raise the peak. Functions under 64 MB hold 54% of the volume, 64 to 512 MB 30%, and
+above that 16%, so regions capped at 64 MB reach about half, for a gain bounded by the
+760 to 876 MB of retained free bytes. That prototype, behind `XO_EMIT_REGION` in
+`llrt/obj.xo`, is the next experiment.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.
