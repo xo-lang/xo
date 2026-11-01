@@ -65,7 +65,7 @@ fn three_reads() -> (Module, Func) {
 fn count_calls(f: Func, name: Str) -> Int {
   var n = 0
   for v in f.values {
-    if v.block >= 0 && v.op == Op.Call && aux_name(v.aux) == name {
+    if block_of(v.tb) >= 0 && v.op == Op.Call && aux_name(v.aux) == name {
       n += 1
     }
   }

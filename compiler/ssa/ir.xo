@@ -186,26 +186,39 @@ pub enum Aux {
 /// An instruction or block parameter (ssa.Value); its ID is its index.
 pub struct Value {
   pub op: Op
-  /// The result type, -1 for none.
-  pub ty: Int = -1
+  /// The result type (-1 for none) in the high half, the block (-1 for
+  /// none) in the low: ty_of, block_of, with_ty, with_block, pack_tb
+  /// (decision 0448 stage 3).
+  pub tb: Int = -1
   pub args: List[Int] = []
   pub aux: Aux = Aux.None
-  pub block: Int = -1
   /// Terminators: their edges.
   pub succs: List[Int] = []
   /// `file:line:col` for operations that can fault.
   pub pos: Str = ""
-  /// The landing check of a call (Value.Pad), -1 for none.
-  pub pad: Int = -1
+  /// The landing check of a call (Value.Pad, -1 for none) in the high half,
+  /// and the inline site (Func.inl_sites) this value was copied in by the
+  /// arm64 inliner (-1 for the function's own code; its line is then the
+  /// callee's, in the site's file, decision 0239, inlined frames) in the low:
+  /// pad_of, inl_of, with_pad, with_inl, pack_pi (decision 0448 stage 3:
+  /// a word less for each of the values waiting in parts).
+  pub pi: Int = -1
   /// The source line of the statement it was lowered from, as line *
   /// 4096 + column (column at most 4095), 0 for none: the debug line
   /// tables (decision 0239). The file is the function's (Func.file).
   pub line: Int = 0
-  /// The inline site (Func.inl_sites) this value was copied in by the
-  /// arm64 inliner, -1 for the function's own code; its line is then the
-  /// callee's, in the site's file (decision 0239, inlined frames).
-  pub inl: Int = -1
 }
+
+pub fn pack_tb(ty: Int, block: Int) -> Int { ty.wrapping_shl(32) | (block & 4294967295) }
+pub fn ty_of(tb: Int) -> Int { tb >> 32 }
+pub fn block_of(tb: Int) -> Int { tb.wrapping_shl(32) >> 32 }
+pub fn with_ty(tb: Int, ty: Int) -> Int { pack_tb(ty, tb) }
+pub fn with_block(tb: Int, block: Int) -> Int { pack_tb(tb >> 32, block) }
+pub fn pack_pi(pad: Int, inl: Int) -> Int { pad.wrapping_shl(32) | (inl & 4294967295) }
+pub fn pad_of(pi: Int) -> Int { pi >> 32 }
+pub fn inl_of(pi: Int) -> Int { pi.wrapping_shl(32) >> 32 }
+pub fn with_pad(pi: Int, pad: Int) -> Int { pack_pi(pad, pi) }
+pub fn with_inl(pi: Int, inl: Int) -> Int { pack_pi(pi >> 32, inl) }
 
 /// The file, line, and column of a position "file:line:col" (Builder
 /// pos_in): the last two colons delimit them, so a file name with a
@@ -864,7 +877,7 @@ pub fn (var f: Func) new_block() -> Int {
 
 pub fn (var f: Func) add_param(b: Int, t: Int) -> Int {
   let v = f.values.len()
-  f.values.push(Value{op: Op.Param, ty: t, block: b})
+  f.values.push(Value{op: Op.Param, tb: pack_tb(t, b)})
   f.blocks[b].params.push(v)
   v
 }
@@ -872,7 +885,7 @@ pub fn (var f: Func) add_param(b: Int, t: Int) -> Int {
 /// Appends an instruction to block b.
 pub fn (var f: Func) add(b: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
   let v = f.values.len()
-  f.values.push(Value{op: op, ty: t, args: args, aux: aux, block: b})
+  f.values.push(Value{op: op, tb: pack_tb(t, b), args: args, aux: aux})
   f.blocks[b].instrs.push(v)
   v
 }
@@ -912,7 +925,7 @@ pub fn (f: Func) at_source(line: Int, inl: Int, msg: Str) -> Str {
   if l == 0 {
     site = -1
     for v in f.values {
-      if v.line != 0 && v.inl < 0 {
+      if v.line != 0 && inl_of(v.pi) < 0 {
         l = v.line
         break
       }
@@ -982,7 +995,7 @@ pub fn (m: Module) write_types(var b: StrBuilder) {
 /// string that holds the text.
 pub fn (m: Module) has_poison(f: Func) -> Bool {
   for v in f.values {
-    if v.ty >= 0 && m.types[v.ty].name.contains("<unsupported: ") {
+    if ty_of(v.tb) >= 0 && m.types[ty_of(v.tb)].name.contains("<unsupported: ") {
       return true
     }
     if v.op != Op.Const {
@@ -1043,7 +1056,7 @@ pub fn (m: Module) write_func(var b: StrBuilder, f: Func) {
   var ps: List[Str] = []
   for (i, p) in f.blocks[0].params.indexed() {
     let bw = if i < f.borrowed.len() && f.borrowed[i] { "borrow " } else { "" }
-    ps.push("${bw}v${p}: ${m.type_name(f.values[p].ty)}")
+    ps.push("${bw}v${p}: ${m.type_name(ty_of(f.values[p].tb))}")
   }
   var rs: List[Str] = []
   for r in f.results {
@@ -1066,7 +1079,7 @@ pub fn (m: Module) write_func(var b: StrBuilder, f: Func) {
     if !bl.params.is_empty() {
       var qs: List[Str] = []
       for p in bl.params {
-        qs.push("v${p}: ${m.type_name(f.values[p].ty)}")
+        qs.push("v${p}: ${m.type_name(ty_of(f.values[p].tb))}")
       }
       b.write("(${qs.join(", ")})")
     }
@@ -1114,8 +1127,8 @@ fn vname(v: Int) -> Str {
 
 fn (m: Module) write_value(var b: StrBuilder, f: Func, vi: Int) {
   let v = f.values[vi]
-  if v.ty >= 0 && !is_terminator(v.op) {
-    b.write("v${vi}: ${m.types[v.ty].name} = ")
+  if ty_of(v.tb) >= 0 && !is_terminator(v.op) {
+    b.write("v${vi}: ${m.types[ty_of(v.tb)].name} = ")
   }
   b.write(op_name(v.op))
   var ops: List[Str] = []
@@ -1144,8 +1157,8 @@ fn (m: Module) write_value(var b: StrBuilder, f: Func, vi: Int) {
   if !v.pos.is_empty() {
     b.write(" @ ${v.pos}")
   }
-  if v.pad >= 0 {
-    b.write(" lands v${v.pad}")
+  if pad_of(v.pi) >= 0 {
+    b.write(" lands v${pad_of(v.pi)}")
   }
 }
 

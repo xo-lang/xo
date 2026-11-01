@@ -532,7 +532,7 @@ fn (var g: G) bounds_iv(v: Int, d: Int) -> Interval {
 fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
   let x = g.f.values[v]
   let none = (Interval{lo: 0, hi: 0}, false)
-  if x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int {
+  if ssa.ty_of(x.tb) < 0 || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return none
   }
   match x.op {
@@ -667,7 +667,7 @@ fn (var g: G) derived(v: Int, d: Int) -> (Interval, Bool) {
       // Int words between IntConvs both ways: `(h % p) * 65599` reached
       // the remainder's bounds three levels down)
       let a = g.bounds_iv(x.args[0], d + 1)
-      let st = g.m.types[g.f.values[x.args[0]].ty]
+      let st = g.m.types[ssa.ty_of(g.f.values[x.args[0]].tb)]
       if st.kind != ssa.Kind.Int || st.bits <= 0 || st.bits >= 64 {
         return (a, true)
       }

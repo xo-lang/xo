@@ -1337,9 +1337,9 @@ fn (var b: Builder) match_tparams(pattern: Int, actual0: Int, var bound: Map[Int
 /// function being built, whose values live in b.s.f).
 fn (var b: Builder) func_value_type(fi: Int, p: Int) -> Int {
   if fi == b.s.fi {
-    return b.s.f.values[p].ty
+    return ty_of(b.s.f.values[p].tb)
   }
-  b.m.funcs[fi].values[p].ty
+  ty_of(b.m.funcs[fi].values[p].tb)
 }
 
 /// The `rt.Loc` arguments of the implementation's parameters after those

@@ -48,13 +48,13 @@ fn (var g: Gen) compute_homes(main: Int) {
     if ok {
       var shaped = true
       for (j, pi) in f.var_params.indexed() {
-        if pi >= f.blocks[0].params.len() || f.values[f.blocks[0].params[pi]].ty != f.results[j + 1] {
+        if pi >= f.blocks[0].params.len() || ssa.ty_of(f.values[f.blocks[0].params[pi]].tb) != f.results[j + 1] {
           shaped = false
         }
       }
       if shaped {
         for pi in f.var_params {
-          let t = f.values[f.blocks[0].params[pi]].ty
+          let t = ssa.ty_of(f.values[f.blocks[0].params[pi]].tb)
           if g.kind(t) is ssa.Kind.Struct | ssa.Kind.Tuple && g.nleaves(t) >= HOME_MIN {
             hs.push(pi)
           }
@@ -70,7 +70,7 @@ fn (var g: Gen) compute_homes(main: Int) {
   var htypes: Map[Int, Bool] = {}
   for (fi, hs) in g.homes.indexed() {
     for pi in hs {
-      htypes[g.m.funcs[fi].values[g.m.funcs[fi].blocks[0].params[pi]].ty] = true
+      htypes[ssa.ty_of(g.m.funcs[fi].values[g.m.funcs[fi].blocks[0].params[pi]].tb)] = true
     }
   }
   g.rhomes = []
@@ -79,7 +79,7 @@ fn (var g: Gen) compute_homes(main: Int) {
     let ok = fi != main && !f.indirect && !f.entry && !f.catches && !named.contains(f.name) && f.skip.is_empty()
     if ok {
       for (pi, p) in f.blocks[0].params.indexed() {
-        let pt = f.values[p].ty
+        let pt = ssa.ty_of(f.values[p].tb)
         if !f.var_params.contains(pi) && (htypes.contains(pt) || (g.kind(pt) is ssa.Kind.Struct | ssa.Kind.Tuple | ssa.Kind.Enum && g.nleaves(pt) >= HOME_MIN)) {
           rs.push(pi)
           g.homes[fi].push(pi)
@@ -219,7 +219,7 @@ fn (var g: Gen) snap_reads(a: Int, v: Int) -> List[Int] {
   var out: List[Int] = []
   for w in g.users[a] {
     let x = f.values[w]
-    if x.op != ssa.Op.Field || w == v || g.nleaves(x.ty) == 0 {
+    if x.op != ssa.Op.Field || w == v || g.nleaves(ssa.ty_of(x.tb)) == 0 {
       continue
     }
     let wb = g.blk[w]
@@ -393,7 +393,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
     chain.push(false)
   }
   let p0 = g.hval[h]
-  let ht = f.values[p0].ty
+  let ht = ssa.ty_of(f.values[p0].tb)
   chain[p0] = true
   if g.hro[h] {
     // read only: the home holds the parameter throughout
@@ -424,14 +424,14 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
   for (bi, b) in f.blocks.indexed() {
     if bi > 0 {
       for x in b.params {
-        if f.values[x].ty == ht && !b.preds.is_empty() {
+        if ssa.ty_of(f.values[x].tb) == ht && !b.preds.is_empty() {
           chain[x] = true
         }
       }
     }
     for v in b.instrs {
       let x = f.values[v]
-      if x.op == ssa.Op.SetField && x.ty == ht {
+      if x.op == ssa.Op.SetField && ssa.ty_of(x.tb) == ht {
         chain[v] = true
       }
       let ci = g.home_callee(v)
@@ -439,7 +439,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
         continue
       }
       for (j, pi) in g.m.funcs[ci].var_params.indexed() {
-        if !g.homes[ci].contains(pi) || pi >= x.args.len() || x.args[pi] < 0 || f.values[x.args[pi]].ty != ht {
+        if !g.homes[ci].contains(pi) || pi >= x.args.len() || x.args[pi] < 0 || ssa.ty_of(f.values[x.args[pi]].tb) != ht {
           continue
         }
         // every use of the call's tuple must be a field read
@@ -588,7 +588,7 @@ fn (var g: Gen) plan_home(h: Int, pos: List[Int], hi: List[Int], bend: List[Int]
       }
       for m in ms {
         for w in g.users[m] {
-          if f.values[w].op != ssa.Op.Field || g.nleaves(f.values[w].ty) == 0 || snapped[w] {
+          if f.values[w].op != ssa.Op.Field || g.nleaves(ssa.ty_of(f.values[w].tb)) == 0 || snapped[w] {
             continue
           }
           // only the reads that can run after the value is given up
@@ -921,7 +921,7 @@ fn (var g: Gen) plan_fields(pos: List[Int]) {
     changed = false
     for v in 0..nv {
       let x = f.values[v]
-      if x.op != ssa.Op.Field || g.held[v] >= 0 || g.mfield[v] >= 0 || pos[v] < 0 || g.nleaves(x.ty) == 0 || g.snapped(v) {
+      if x.op != ssa.Op.Field || g.held[v] >= 0 || g.mfield[v] >= 0 || pos[v] < 0 || g.nleaves(ssa.ty_of(x.tb)) == 0 || g.snapped(v) {
         continue
       }
       let a = x.args[0]
@@ -1000,18 +1000,18 @@ fn (g: Gen) home_state(h: Int, v: Int) -> Int {
 /// method's result and the `Checker`), only those before them.
 fn (var g: Gen) alloc_leaves(v: Int) -> List[Str] {
   let x = g.f.values[v]
-  let ls = g.leaves(x.ty)
+  let ls = g.leaves(ssa.ty_of(x.tb))
   let ci = g.home_callee(v)
   if ci < 0 || g.homes[ci].len() == g.rhomes[ci].len() {
     return ls
   }
   let vps = g.m.funcs[ci].var_params
-  let tys = g.field_tys(x.ty)
+  let tys = g.field_tys(ssa.ty_of(x.tb))
   var k = tys.len() - 1
   while k >= 1 && g.home_result(ci, k) && g.pass.contains(v * 4096 + vps[k - 1]) {
     k -= 1
   }
-  let n = g.field_off(x.ty, k) + g.nleaves(tys[k])
+  let n = g.field_off(ssa.ty_of(x.tb), k) + g.nleaves(tys[k])
   if n >= ls.len() {
     return ls
   }
@@ -1035,7 +1035,7 @@ fn (var g: Gen) take_snaps(d: Int) {
         _ => 0
       }
       let (mp, mo) = g.mem_of(a)
-      let ls = g.leaves(x.ty)
+      let ls = g.leaves(ssa.ty_of(x.tb))
       g.mem_push(mp, mo + 8 * g.field_off(g.vty(a), i), ls)
       g.set_range(g.loc(rep), ls.len())
     }
@@ -1082,7 +1082,7 @@ fn (var g: Gen) zero_homes() {
     }
     g.get(p)
     g.e("i32.const 0")
-    g.e("i32.const ${g.size(g.f.values[g.hval[h]].ty)}")
+    g.e("i32.const ${g.size(ssa.ty_of(g.f.values[g.hval[h]].tb))}")
     g.e("memory.fill")
   }
 }

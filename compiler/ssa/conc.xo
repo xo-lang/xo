@@ -682,7 +682,7 @@ fn (var b: Builder) runner(ft: Int, tt: Int, fails: Bool) -> Str {
   let u = b.m.funcs[fi].add(0, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
   // a fault in the task lands here too: rt.task_unwound records it for
   // the scope (decision 0085)
-  b.m.funcs[fi].values[r].pad = u
+  b.m.funcs[fi].values[r].pi = with_pad(b.m.funcs[fi].values[r].pi, u)
   let unw = b.m.funcs[fi].new_block()
   let done = b.m.funcs[fi].new_block()
   b.m.funcs[fi].branch(0, u, unw, done)
@@ -1264,7 +1264,7 @@ fn (var b: Builder) isolate(x: Expr) -> Int {
   let st = b.str_t()
   let r = b.s.f.add(b.s.cur, Op.CallValue, rt, Aux.None, vs)
   let u = b.s.f.add(b.s.cur, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
-  b.s.f.values[r].pad = u
+  b.s.f.values[r].pi = with_pad(b.s.f.values[r].pi, u)
   let (pad, normal) = b.branch(u)
   let join = b.new_block()
   let res = b.s.f.add_param(join, nt)
@@ -1420,7 +1420,7 @@ fn (var b: Builder) with_timeout(x: Expr, fo: Int) -> Int {
   let r = b.s.f.add(b.s.cur, Op.CallValue, rt, Aux.None, [fv])
   let u = b.s.f.add(b.s.cur, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
   // a fault in f closes the scope and goes on (decision 0085)
-  b.s.f.values[r].pad = u
+  b.s.f.values[r].pi = with_pad(b.s.f.values[r].pi, u)
   let join = b.new_block()
   let res = b.s.f.add_param(join, nt)
   let ei = b.m.variant_index(nt, "Err")
@@ -1651,7 +1651,7 @@ fn (var b: Builder) tasks_main(mf: Int, et: Int) {
   b.m.rename_func(mf, "main.run")
   var params: List[Int] = []
   for p in b.m.funcs[mf].blocks[0].params {
-    params.push(b.m.funcs[mf].values[p].ty)
+    params.push(ty_of(b.m.funcs[mf].values[p].tb))
   }
   let unit = b.unit_t()
   let it = b.int_t()

@@ -51,7 +51,7 @@ fn (var g: Gen) func(fi: Int) {
       continue
     }
     g.vbase[p] = ps.len()
-    for l in g.leaves(f.values[p].ty) {
+    for l in g.leaves(ssa.ty_of(f.values[p].tb)) {
       ps.push(l)
     }
   }
@@ -157,8 +157,8 @@ fn (var g: Gen) func(fi: Int) {
   // at entry (before a resumed task restores its locals)
   for (h, p) in g.hval.indexed() {
     if !g.hok[h] {
-      g.mem_push(g.hptr[h], 0, g.leaves(f.values[p].ty))
-      g.set_range(g.loc(p), g.nleaves(f.values[p].ty))
+      g.mem_push(g.hptr[h], 0, g.leaves(ssa.ty_of(f.values[p].tb)))
+      g.set_range(g.loc(p), g.nleaves(ssa.ty_of(f.values[p].tb)))
     }
   }
   // a function that can suspend (rt3.xo) saves its locals and its resume
@@ -750,7 +750,7 @@ fn (var g: Gen) plan_locals() {
       continue
     }
     let x = f.values[vi]
-    if x.op == ssa.Op.Field && x.args.len() == 1 && g.nleaves(x.ty) > 0 && g.held[vi] < 0 && g.mfield[vi] < 0 {
+    if x.op == ssa.Op.Field && x.args.len() == 1 && g.nleaves(ssa.ty_of(x.tb)) > 0 && g.held[vi] < 0 && g.mfield[vi] < 0 {
       let a = x.args[0]
       if pos[a] >= 0 && f.values[a].op != ssa.Op.Undef && g.held[a] < 0 && g.mfield[a] < 0 {
         src[vi] = a
@@ -784,7 +784,7 @@ fn (var g: Gen) plan_locals() {
   }
   for v in 0..nv {
     // an undefined value keeps zeroed locals of its own
-    if pos[v] < 0 || g.vbase[v] >= 0 || g.alias[v] || g.held[v] >= 0 || g.mfield[v] >= 0 || (g.snaprep[v] >= 0 && g.snaprep[v] != v) || g.nleaves(f.values[v].ty) == 0 || f.values[v].op == ssa.Op.Undef {
+    if pos[v] < 0 || g.vbase[v] >= 0 || g.alias[v] || g.held[v] >= 0 || g.mfield[v] >= 0 || (g.snaprep[v] >= 0 && g.snaprep[v] != v) || g.nleaves(ssa.ty_of(f.values[v].tb)) == 0 || f.values[v].op == ssa.Op.Undef {
       continue
     }
     starts[lo[v]].push(v)
@@ -817,7 +817,7 @@ fn (var g: Gen) plan_locals() {
         // a field update of a struct that dies here is made in place:
         // only the field's leaves are written
         let a = x.args[0]
-        if hi[a] == q && pos[v] == q && g.vbase[a] >= 0 && !moved[a] && f.values[a].ty == x.ty {
+        if hi[a] == q && pos[v] == q && g.vbase[a] >= 0 && !moved[a] && ssa.ty_of(f.values[a].tb) == ssa.ty_of(x.tb) {
           g.vbase[v] = g.vbase[a]
           moved[a] = true
           g.inplace[v] = true
@@ -863,7 +863,7 @@ fn (var g: Gen) alias_base(v: Int, src: List[Int]) -> Int {
     I(n) => n
     _ => 0
   }
-  g.vbase[v] = ab + g.field_off(g.f.values[a].ty, i)
+  g.vbase[v] = ab + g.field_off(ssa.ty_of(g.f.values[a].tb), i)
   g.vbase[v]
 }
 
@@ -879,13 +879,13 @@ fn (var g: Gen) loc(v: Int) -> Int {
     return b
   }
   if g.vbase[v] < 0 {
-    g.vbase[v] = g.tmps(g.leaves(g.f.values[v].ty))
+    g.vbase[v] = g.tmps(g.leaves(ssa.ty_of(g.f.values[v].tb)))
   }
   g.vbase[v]
 }
 
 fn (var g: Gen) vty(v: Int) -> Int {
-  g.f.values[v].ty
+  ssa.ty_of(g.f.values[v].tb)
 }
 
 /// Pushes the leaves of value v.
@@ -949,7 +949,7 @@ fn (var g: Gen) goto(b: Int) {
 /// `with` closure then returns with the fault still set, as the native
 /// landing pads do).
 fn (var g: Gen) fault_exit(v: Int) {
-  let pad = g.f.values[v].pad
+  let pad = ssa.pad_of(g.f.values[v].pi)
   if pad >= 0 {
     g.e("i32.const 0")
     g.e("global.set $prop")
@@ -1119,7 +1119,7 @@ fn (var g: Gen) const_words(v: Int) -> List[Int]? {
   match x.op {
     Const => {
       match x.aux {
-        I(n) => return Some([if g.kind(x.ty) == ssa.Kind.Float { float_bits(Float(n)) } else { n }])
+        I(n) => return Some([if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float { float_bits(Float(n)) } else { n }])
         F(f) => return Some([float_bits(f)])
         B(b) => return Some([if b { 1 } else { 0 }])
         S(s) => return Some([g.str_obj(s.bytes()), s.len()])
@@ -1129,7 +1129,7 @@ fn (var g: Gen) const_words(v: Int) -> List[Int]? {
     }
     Call => {
       if let S(n) = x.aux {
-        if n == "rt.rl_empty" && g.nleaves(x.ty) == 1 {
+        if n == "rt.rl_empty" && g.nleaves(ssa.ty_of(x.tb)) == 1 {
           return Some([g.empty_list])
         }
       }
@@ -1148,7 +1148,7 @@ fn (var g: Gen) const_words(v: Int) -> List[Int]? {
         }
         out = out + w
       }
-      if out.len() != g.nleaves(x.ty) {
+      if out.len() != g.nleaves(ssa.ty_of(x.tb)) {
         return None
       }
       return Some(out)
@@ -1176,10 +1176,10 @@ fn (var g: Gen) const_words(v: Int) -> List[Int]? {
           out.push(w[j])
         }
       }
-      while out.len() < 1 + g.words(x.ty) {
+      while out.len() < 1 + g.words(ssa.ty_of(x.tb)) {
         out.push(0)
       }
-      if out.len() != g.nleaves(x.ty) {
+      if out.len() != g.nleaves(ssa.ty_of(x.tb)) {
         return None
       }
       return Some(out)
@@ -1278,12 +1278,12 @@ fn (var g: Gen) release_run(instrs: List[Int], j: Int) -> Int {
       I(n) => n
       _ => -1
     }
-    if i < 0 || fields.contains(i) || !g.heap(fx.ty) {
+    if i < 0 || fields.contains(i) || !g.heap(ssa.ty_of(fx.tb)) {
       break
     }
     c = a
     fields.push(i)
-    cost += g.nleaves(fx.ty) + 2
+    cost += g.nleaves(ssa.ty_of(fx.tb)) + 2
     k += step
     last = k
   }
@@ -1334,7 +1334,7 @@ fn (g: Gen) same_place(a: Int, c: Int) -> Bool {
   if a == c {
     return true
   }
-  if g.f.values[a].ty != g.f.values[c].ty {
+  if ssa.ty_of(g.f.values[a].tb) != ssa.ty_of(g.f.values[c].tb) {
     return false
   }
   let (ma, oa) = g.mem_of(a)
@@ -1399,7 +1399,7 @@ fn (var g: Gen) checked(v: Int, fname: Str, nargs: Int) {
 
 fn (var g: Gen) instr(v: Int, bi: Int) {
   let x = g.f.values[v]
-  let t = x.ty
+  let t = ssa.ty_of(x.tb)
   if g.annotate {
     g.mop = ssa.op_name(x.op)
   }
@@ -1798,7 +1798,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         }
       }
       for (h, b) in stores {
-        g.mem_store(g.hptr[h], 0, b, g.leaves(g.f.values[g.hval[h]].ty))
+        g.mem_store(g.hptr[h], 0, b, g.leaves(ssa.ty_of(g.f.values[g.hval[h]].tb)))
       }
       g.e("return")
     }
@@ -1840,7 +1840,7 @@ fn (var g: Gen) constant(v: Int) {
   let x = g.f.values[v]
   match x.aux {
     I(n) => {
-      if g.kind(x.ty) == ssa.Kind.Float {
+      if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float {
         g.e("i64.const ${float_bits(Float(n))}")
         g.e("f64.reinterpret_i64")
       } else {
@@ -1861,8 +1861,8 @@ fn (var g: Gen) constant(v: Int) {
       g.e("i32.const ${b.len()}")
     }
     None | P(..) => {
-      if g.nleaves(x.ty) > 0 {
-        g.fail("the wasm backend does not support a constant of `${g.m.types[x.ty].name}`")
+      if g.nleaves(ssa.ty_of(x.tb)) > 0 {
+        g.fail("the wasm backend does not support a constant of `${g.m.types[ssa.ty_of(x.tb)].name}`")
       }
       return
     }

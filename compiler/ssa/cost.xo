@@ -105,7 +105,7 @@ fn copy_feeds_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
     for v in bl.instrs {
       for a in f.values[v].args {
         if a >= 0 && a < users.len() {
-          users[a].push(f.values[v].block)
+          users[a].push(block_of(f.values[v].tb))
         }
       }
     }
@@ -204,7 +204,7 @@ fn elem_count_per_iter(f: Func, inloop: List[Bool]) -> List[CostNote] {
   for bl in f.blocks {
     for r in bl.instrs {
       let rx = f.values[r]
-      if rx.op != Op.Retain || rx.args.is_empty() || rx.block < 0 || !inloop[rx.block] {
+      if rx.op != Op.Retain || rx.args.is_empty() || block_of(rx.tb) < 0 || !inloop[block_of(rx.tb)] {
         continue
       }
       let x = rx.args[0]
@@ -291,7 +291,7 @@ fn callback_walks(m: Module, f: Func) -> List[CostNote] {
       }
       var heap = false
       for a in x.args {
-        let t = f.values[a].ty
+        let t = ty_of(f.values[a].tb)
         if t < 0 || t >= m.types.len() || m.types[t].kind != Kind.Func {
           continue
         }
@@ -335,7 +335,7 @@ fn elem_of_outside(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
   if !elem || x < 0 || x >= f.values.len() {
     return false
   }
-  let b = f.values[x].block
+  let b = block_of(f.values[x].tb)
   f.values[x].op == Op.Param || b < 0 || !inloop[b]
 }
 
@@ -356,14 +356,14 @@ fn reuse_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   var body: Map[Int, List[Bool]] = {}
   var seen: Map[Int, Bool] = {}
   for (vi, x) in f.values.indexed() {
-    if x.op != Op.Reuse || x.args.is_empty() || x.block < 0 || !inloop[x.block] {
+    if x.op != Op.Reuse || x.args.is_empty() || block_of(x.tb) < 0 || !inloop[block_of(x.tb)] {
       continue
     }
     let root = below_fields(f, x.args[0])
-    if root < 0 || root >= f.values.len() || f.values[root].op != Op.Param || f.values[root].block < 0 {
+    if root < 0 || root >= f.values.len() || f.values[root].op != Op.Param || block_of(f.values[root].tb) < 0 {
       continue
     }
-    let h = f.values[root].block
+    let h = block_of(f.values[root].tb)
     var inl: List[Bool] = []
     if let Some(c) = body.get(h) {
       inl = c
@@ -371,13 +371,13 @@ fn reuse_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
       inl = loop_of(f, idom, h)
       body[h] = inl
     }
-    if inl.is_empty() || !inl[x.block] {
+    if inl.is_empty() || !inl[block_of(x.tb)] {
       continue
     }
     // a holder made in the loop: the same list counted up in its blocks
     var kept = false
     for y in f.values {
-      if y.op == Op.Retain && !y.args.is_empty() && y.block >= 0 && inl[y.block] && below_fields(f, y.args[0]) == root {
+      if y.op == Op.Retain && !y.args.is_empty() && block_of(y.tb) >= 0 && inl[block_of(y.tb)] && below_fields(f, y.args[0]) == root {
         kept = true
       }
     }
@@ -406,7 +406,7 @@ fn reuse_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
 /// not a copy bound to another name (`var c = xs; c[i] = ...`, which
 /// copies by the language's meaning).
 fn carried_back(f: Func, root: Int, inl: List[Bool], u: Int) -> Bool {
-  let h = f.values[root].block
+  let h = block_of(f.values[root].tb)
   var k = -1
   for (i, p) in f.blocks[h].params.indexed() {
     if p == root {
@@ -482,7 +482,7 @@ pub fn float_loop_latches(m: Module, f: Func) -> List[Bool] {
     var has = false
     for v in bl.instrs {
       let x = f.values[v]
-      if x.op is Op.Add | Op.Sub | Op.Mul | Op.Div && m.types[x.ty].kind == Kind.Float {
+      if x.op is Op.Add | Op.Sub | Op.Mul | Op.Div && m.types[ty_of(x.tb)].kind == Kind.Float {
         has = true
       }
     }
@@ -582,16 +582,16 @@ fn large_copies(m: Module, f: Func, inloop: List[Bool], var nw: Map[Int, Int]) -
       var msg = ""
       if x.op == Op.Closure && aux_name(x.aux).starts_with("${f.name}.fn") {
         for a in x.args {
-          let t = f.values[a].ty
+          let t = ty_of(f.values[a].tb)
           let n = type_words(m, nw, t, 0)
           if n > LARGE_WORDS && msg.is_empty() {
             msg = "the closure copies a `${type_label(m, t)}` (${n} words) into its environment when it is made, sharing each of its heap fields; bind the fields the body reads first and capture those"
           }
         }
       } else if x.op == Op.Variant && x.args.len() == 1 && list_elem_in_loop(f, x.args[0], inloop) {
-        let n = type_words(m, nw, f.values[x.args[0]].ty, 0)
+        let n = type_words(m, nw, ty_of(f.values[x.args[0]].tb), 0)
         if n > LARGE_WORDS {
-          msg = "this `${type_label(m, x.ty)}` holds ${n} words inline: making it copies them and shares each heap field of the payload, and every copy of it does again; return or keep what the caller needs (an index, a field) instead"
+          msg = "this `${type_label(m, ty_of(x.tb))}` holds ${n} words inline: making it copies them and shares each heap field of the payload, and every copy of it does again; return or keep what the caller needs (an index, a field) instead"
         }
       }
       if msg.is_empty() {
@@ -614,7 +614,7 @@ fn list_elem_in_loop(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
     return false
   }
   let v = f.values[x]
-  if v.op != Op.Call || aux_name(v.aux) != "list.index" || v.args.is_empty() || v.block < 0 || !inloop[v.block] {
+  if v.op != Op.Call || aux_name(v.aux) != "list.index" || v.args.is_empty() || block_of(v.tb) < 0 || !inloop[block_of(v.tb)] {
     return false
   }
   let l = below_fields(f, v.args[0])
@@ -625,7 +625,7 @@ fn list_elem_in_loop(f: Func, x0: Int, inloop: List[Bool]) -> Bool {
   if lv.op == Op.Call && aux_name(lv.aux) == "list.index" {
     return false
   }
-  lv.op == Op.Param || lv.block < 0 || !inloop[lv.block]
+  lv.op == Op.Param || block_of(lv.tb) < 0 || !inloop[block_of(lv.tb)]
 }
 
 /// The value x is a field (or a field of a field) of, or x.
@@ -735,7 +735,7 @@ fn view_stored(m: Module, f: Func, x0: Int, users: List[List[Int]]) -> Bool {
         // The whole tuple reaches both element reads, so only a field whose
         // type can hold a text view continues the chain: an Int element
         // stored beside the view is not the view being stored.
-        if w.ty >= 0 && w.ty < m.types.len() && m.types[w.ty].kind == Kind.Str {
+        if ty_of(w.tb) >= 0 && ty_of(w.tb) < m.types.len() && m.types[ty_of(w.tb)].kind == Kind.Str {
           work.push((u, agg))
         }
       } else if w.op == Op.Payload {
@@ -806,7 +806,7 @@ fn view_stores(m: Module, f: Func, inloop: List[Bool]) -> List[CostNote] {
     // parser-shaped: the view is made in a loop (a tokenizer's slices) or is
     // an element of a split; one slice of an argument (a path, a name) is
     // too common and too small to note
-    let tokenizer = x.op == Op.Call && (aux_name(x.aux) == "list.index" || (x.block >= 0 && x.block < inloop.len() && inloop[x.block]))
+    let tokenizer = x.op == Op.Call && (aux_name(x.aux) == "list.index" || (block_of(x.tb) >= 0 && block_of(x.tb) < inloop.len() && inloop[block_of(x.tb)]))
     if line <= 0 || seen.contains(line) || !tokenizer || !param_view(f, vi) || !view_stored(m, f, vi, users) {
       continue
     }
@@ -861,7 +861,7 @@ fn slices_read_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   let (users, edge) = cost_uses(f)
   for (vi, x) in f.values.indexed() {
     let line = x.line / 4096
-    if x.op != Op.Call || !named(aux_name(x.aux), "rt.str_view") || x.block < 0 || x.block >= inloop.len() || !inloop[x.block] || line <= 0 || seen.contains(line) || edge[vi] || users[vi].is_empty() {
+    if x.op != Op.Call || !named(aux_name(x.aux), "rt.str_view") || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) || edge[vi] || users[vi].is_empty() {
       continue
     }
     var reads = true
@@ -891,7 +891,7 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   let (users, edge) = cost_uses(f)
   for (vi, x) in f.values.indexed() {
     let line = x.line / 4096
-    if x.op != Op.Call || aux_name(x.aux) != "list.new" || x.args.len() != 1 || x.block < 0 || x.block >= inloop.len() || !inloop[x.block] || line <= 0 || seen.contains(line) {
+    if x.op != Op.Call || aux_name(x.aux) != "list.new" || x.args.len() != 1 || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) {
       continue
     }
     let c = f.values[x.args[0]]

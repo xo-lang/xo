@@ -66,7 +66,7 @@ test "a counted loop with an early exit is unrolled, each trip keeping its exit"
   // body: it does not lead back) is reached from each trip
   var lts = 0
   for v in f.values {
-    if v.op == Op.Lt && v.block >= 0 && v.args.len() == 2 {
+    if v.op == Op.Lt && block_of(v.tb) >= 0 && v.args.len() == 2 {
       if let Some(n) = const_word(f, v.args[1]) {
         if n == 2 {
           lts += 1

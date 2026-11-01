@@ -94,7 +94,7 @@ fn (var g: G) stack_closures() -> Map[Int, Bool] {
   g.stack_env_done = true
   var cand: Map[Int, Bool] = {}
   for (v, x) in g.f.values.indexed() {
-    if x.op != ssa.Op.Closure || x.args.is_empty() || x.block < 0 {
+    if x.op != ssa.Op.Closure || x.args.is_empty() || ssa.block_of(x.tb) < 0 {
       continue
     }
     var ok = true
@@ -142,7 +142,7 @@ fn (var g: G) capture_op(v: Int) {
   let env = g.real(g.words(x.args[0])[1])
   let (off, _) = g.capture_words(g.fi, aux_int(x.aux))
   var ws: List[Int] = []
-  for (k, fp) in g.layout(x.ty).indexed() {
+  for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
     ws.push(g.def1(fp, "ldr $d0, [$u0, #${ENV_HDR + 8 * (off + k)}]", [env]))
   }
   g.set(v, ws)
@@ -156,7 +156,7 @@ fn (var g: G) call_value_op(v: Int) {
   for a in x.args {
     args = args + regs(g.words(a))
   }
-  let defs = g.new_vregs(g.layout(x.ty))
+  let defs = g.new_vregs(g.layout(ssa.ty_of(x.tb)))
   var us: List[Int] = []
   for a in args {
     if a.v != 0 {
@@ -322,7 +322,7 @@ fn (var g: G) unbox_op(v: Int) {
   let x = g.f.values[v]
   let p = g.word(x.args[0])
   var ws: List[Int] = []
-  for (k, fp) in g.layout(x.ty).indexed() {
+  for (k, fp) in g.layout(ssa.ty_of(x.tb)).indexed() {
     ws.push(g.def1(fp, "ldr $d0, [$u0, #${BOX_HDR + 8 * k}]", [p]))
   }
   g.set(v, ws)

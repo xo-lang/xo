@@ -58,7 +58,7 @@ fn (var g: Gen) succs(b: Int) -> List[Int] {
 
 /// The type of value v.
 fn (var g: Gen) vty(v: Int) -> Int {
-  g.f.values[v].ty
+  ssa.ty_of(g.f.values[v].tb)
 }
 
 fn (var g: Gen) tmp() -> Str {
@@ -117,7 +117,7 @@ fn (var g: Gen) alias(v: Int, x: Str) {
 
 /// The operand text of v (op).
 fn (var g: Gen) op(v: Int) -> Str {
-  let t = g.f.values[v].ty
+  let t = ssa.ty_of(g.f.values[v].tb)
   if g.is_void(t) {
     return "zeroinitializer"
   }
@@ -194,8 +194,8 @@ fn (var g: Gen) cold_blocks() -> List[Bool] {
   }
   var any = false
   for x in g.f.values {
-    if x.pad >= 0 && x.pad < g.blk.len() && g.blk[x.pad] >= 0 {
-      let ss = g.succs(g.blk[x.pad])
+    if ssa.pad_of(x.pi) >= 0 && ssa.pad_of(x.pi) < g.blk.len() && g.blk[ssa.pad_of(x.pi)] >= 0 {
+      let ss = g.succs(g.blk[ssa.pad_of(x.pi)])
       if !ss.is_empty() {
         target[g.edge_to(ss[0])] = true
         any = true
@@ -242,7 +242,7 @@ fn (var g: Gen) cold_blocks() -> List[Bool] {
 }
 
 fn (var g: Gen) typed(v: Int) -> Str {
-  let l = g.ll(g.f.values[v].ty)
+  let l = g.ll(ssa.ty_of(g.f.values[v].tb))
   let o = g.op(v)
   "${l} ${o}"
 }
@@ -789,7 +789,7 @@ fn (var g: Gen) cancelled_release(v: Int) -> Int {
   }
   let x = f.values[v].args[0]
   let xv = f.values[x]
-  if xv.op != ssa.Op.Payload || !(g.kind(xv.ty) is ssa.Kind.Str | ssa.Kind.List) {
+  if xv.op != ssa.Op.Payload || !(g.kind(ssa.ty_of(xv.tb)) is ssa.Kind.Str | ssa.Kind.List) {
     return -1
   }
   let (tag, _) = match xv.aux {
@@ -797,7 +797,7 @@ fn (var g: Gen) cancelled_release(v: Int) -> Int {
     _ => (-1, -1)
   }
   let e = xv.args[0]
-  let et = f.values[e].ty
+  let et = ssa.ty_of(f.values[e].tb)
   if tag < 0 {
     return -1
   }
@@ -883,9 +883,9 @@ fn (var g: Gen) same_projection(a0: Int, b0: Int) -> Bool {
 fn (var g: Gen) instr(v: Int) {
   if g.f.values[v].line != 0 {
     g.cur_line = g.f.values[v].line
-    g.cur_inl = g.f.values[v].inl
+    g.cur_inl = ssa.inl_of(g.f.values[v].pi)
   }
-  let pad = g.f.values[v].pad
+  let pad = ssa.pad_of(g.f.values[v].pi)
   if pad >= 0 {
     // a fault lands on the cleanup of its check (decision 0085)
     let pb = g.blk[pad]
@@ -902,7 +902,7 @@ fn (var g: Gen) instr(v: Int) {
 fn (var g: Gen) instr_body(v: Int) {
   let x = g.f.values[v]
   let args = x.args
-  let vt = x.ty
+  let vt = ssa.ty_of(x.tb)
   match x.op {
     Const | Cap => return
     Add | Sub | Mul => {
@@ -1409,7 +1409,7 @@ fn (var g: Gen) loop_md(b: Int) -> Str {
 /// A field read (OpField).
 fn (var g: Gen) field(v: Int) {
   let x = g.f.values[v]
-  let vt = x.ty
+  let vt = ssa.ty_of(x.tb)
   if g.is_void(vt) {
     return
   }
@@ -1466,7 +1466,7 @@ fn (var g: Gen) set_field(v: Int) {
       return
     }
   }
-  let l = g.ll(x.ty)
+  let l = g.ll(ssa.ty_of(x.tb))
   let a0 = g.op(x.args[0])
   let t1 = g.typed(x.args[1])
   g.set(v, "insertvalue ${l} ${a0}, ${t1}, ${aux_int(x.aux)}")

@@ -15,7 +15,7 @@ fn reach_module() -> ssa.Module {
   m.funcs[0] = mf
   var af = m.funcs[1]
   let _ab = af.add(0, ssa.Op.Call, -1, ssa.Aux.S(s: "b"), [])
-  af.values.push(ssa.Value{op: ssa.Op.Call, ty: -1, aux: ssa.Aux.S(s: "d"), block: -1})
+  af.values.push(ssa.Value{op: ssa.Op.Call, tb: ssa.pack_tb(-1, -1), aux: ssa.Aux.S(s: "d")})
   m.funcs[1] = af
   m
 }

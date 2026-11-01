@@ -621,7 +621,7 @@ fn (g: G) op(v: Int) -> ssa.Op {
 }
 
 fn (g: G) vty(v: Int) -> Int {
-  g.f.values[v].ty
+  ssa.ty_of(g.f.values[v].tb)
 }
 
 fn (g: G) arg(v: Int, i: Int) -> Int {
@@ -638,7 +638,7 @@ fn (g: G) kind(t: Int) -> ssa.Kind {
 
 /// The kind of value v's type.
 fn (g: G) vkind(v: Int) -> ssa.Kind {
-  g.m.types[g.f.values[v].ty].kind
+  g.m.types[ssa.ty_of(g.f.values[v].tb)].kind
 }
 
 fn (g: G) tname(t: Int) -> Str {
@@ -696,7 +696,7 @@ fn (g: G) const_int(v0: Int) -> (Int, Bool) {
 fn (g: G) const_word(v0: Int) -> (Int, Bool) {
   let v = g.through_params(v0)
   let x = g.f.values[v]
-  if x.op == ssa.Op.IntConv && x.args.len() == 1 && g.m.types[x.ty].kind == ssa.Kind.Int && g.m.types[x.ty].bits == 0 {
+  if x.op == ssa.Op.IntConv && x.args.len() == 1 && g.m.types[ssa.ty_of(x.tb)].kind == ssa.Kind.Int && g.m.types[ssa.ty_of(x.tb)].bits == 0 {
     return g.const_int(x.args[0])
   }
   g.const_int(v)
@@ -707,7 +707,7 @@ fn (g: G) const_word(v0: Int) -> (Int, Bool) {
 /// internal/arm64 negConst.
 fn (g: G) neg_const(v: Int) -> (Int, Bool) {
   let x = g.f.values[v]
-  if x.op != ssa.Op.Neg || g.kind(x.ty) != ssa.Kind.Int {
+  if x.op != ssa.Op.Neg || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return (0, false)
   }
   let (n, ok) = g.const_int(x.args[0])
@@ -735,7 +735,7 @@ fn (g: G) is_param(v: Int) -> Bool {
 /// The SSA block a landing pad value w enters: the first successor of
 /// the branch on it (`v.Pad.Block.Term().Succs[0].To`).
 fn (g: G) pad_target(w: Int) -> Int {
-  let t = g.f.term(g.f.values[w].block)
+  let t = g.f.term(ssa.block_of(g.f.values[w].tb))
   g.f.edges[g.f.values[t].succs[0]].to
 }
 

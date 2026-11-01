@@ -507,27 +507,27 @@ fn (var g: G) words(v: Int) -> List[Int] {
       }
       _ => {
         g.fail("constant in ${g.f.name}")
-        return g.zeros(x.ty)
+        return g.zeros(ssa.ty_of(x.tb))
       }
     }
   }
   if let Some(ptr) = g.stable.get(v) {
-    return g.load_words(ptr, 0, g.layout(x.ty))
+    return g.load_words(ptr, 0, g.layout(ssa.ty_of(x.tb)))
   }
   if g.has_held {
     if let Some(m) = g.held.mem_only.get(v) {
       // held in memory at every use: loaded where it is needed whole
-      return g.load_words(g.held.mems[m].ptr, 0, g.layout(x.ty))
+      return g.load_words(g.held.mems[m].ptr, 0, g.layout(ssa.ty_of(x.tb)))
     }
   }
   if g.has_val[v] {
     return g.vals[v]
   }
-  if x.ty < 0 || g.nwords(x.ty) == 0 {
+  if ssa.ty_of(x.tb) < 0 || g.nwords(ssa.ty_of(x.tb)) == 0 {
     return []
   }
   g.fail("v${v} in ${g.f.name} used before it is defined")
-  g.zeros(x.ty)
+  g.zeros(ssa.ty_of(x.tb))
 }
 
 fn (var g: G) word(v: Int) -> Int {
@@ -652,12 +652,12 @@ fn (var g: G) isel() {
   // a test, where the compare and a jump do); the Not is left unread
   for b in 0..nb {
     let t = g.f.term(b)
-    if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 || g.f.values[t].pad >= 0 {
+    if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 || ssa.pad_of(g.f.values[t].pi) >= 0 {
       continue
     }
     let n = g.f.values[t].args[0]
     let nv = g.f.values[n]
-    if nv.op != ssa.Op.Not || nv.args.len() != 1 || g.nuses[n] != 1 || nv.ty < 0 || g.kind(nv.ty) != ssa.Kind.Bool {
+    if nv.op != ssa.Op.Not || nv.args.len() != 1 || g.nuses[n] != 1 || ssa.ty_of(nv.tb) < 0 || g.kind(ssa.ty_of(nv.tb)) != ssa.Kind.Bool {
       continue
     }
     let c = nv.args[0]
@@ -678,7 +678,7 @@ fn (var g: G) isel() {
   // the blocks landing pads enter (decision 0085)
   for b in 0..nb {
     for v in g.f.blocks[b].instrs {
-      let w = g.f.values[v].pad
+      let w = ssa.pad_of(g.f.values[v].pi)
       if w >= 0 {
         g.pads[g.pad_target(w)] = true
       }
@@ -1204,9 +1204,9 @@ fn (g: G) unflip(a: Int) -> (Bool, Int, Bool, Int) {
 fn (var g: G) instr(v: Int) {
   if g.f.values[v].line != 0 {
     g.cur_line = g.f.values[v].line
-    g.cur_inl = g.f.values[v].inl
+    g.cur_inl = ssa.inl_of(g.f.values[v].pi)
   }
-  let pad = g.f.values[v].pad
+  let pad = ssa.pad_of(g.f.values[v].pi)
   if pad >= 0 {
     // its calls and fault stubs unwind to the cleanup of its check
     g.cur_pad = g.bmap[g.pad_target(pad)]
@@ -1230,12 +1230,12 @@ fn (var g: G) value_cause(v: Int) -> Int {
   }
   // a runtime helper inlined into code outside the runtime (in llrt's own
   // functions it is their body)
-  if x.inl >= 0 && x.inl < g.f.inl_sites.len() && g.f.inl_sites[x.inl].file.contains("llrt/") && !g.f.file.contains("llrt/") {
+  if ssa.inl_of(x.pi) >= 0 && ssa.inl_of(x.pi) < g.f.inl_sites.len() && g.f.inl_sites[ssa.inl_of(x.pi)].file.contains("llrt/") && !g.f.file.contains("llrt/") {
     return C_INLINE_RT
   }
   // a struct, tuple or variant value of more than a word built, taken
   // apart or updated
-  if x.op is ssa.Op.Struct | ssa.Op.Tuple | ssa.Op.Variant | ssa.Op.Field | ssa.Op.SetField | ssa.Op.Payload && x.ty >= 0 && g.nwords(x.ty) > 1 {
+  if x.op is ssa.Op.Struct | ssa.Op.Tuple | ssa.Op.Variant | ssa.Op.Field | ssa.Op.SetField | ssa.Op.Payload && ssa.ty_of(x.tb) >= 0 && g.nwords(ssa.ty_of(x.tb)) > 1 {
     return C_COPY
   }
   C_BODY
@@ -1343,9 +1343,9 @@ fn (var g: G) instr1(v: Int) {
         let c = x.args[j]
         var cx = g.f.values[c]
         if let Some(y) = g.xor_ones(c) {
-          cx = ssa.Value{op: ssa.Op.Not, ty: cx.ty, aux: ssa.Aux.None, args: [y]}
+          cx = ssa.Value{op: ssa.Op.Not, tb: ssa.pack_tb(ssa.ty_of(cx.tb), -1), aux: ssa.Aux.None, args: [y]}
         }
-        if cx.op == ssa.Op.Not && g.kind(cx.ty) != ssa.Kind.Bool {
+        if cx.op == ssa.Op.Not && g.kind(ssa.ty_of(cx.tb)) != ssa.Kind.Bool {
           if g.x86 {
             // ~k of a constant k: x86's immediate (`n & ~31`: andq $-32,
             // not a mov, a not, and an and)
@@ -1405,7 +1405,7 @@ fn (var g: G) instr1(v: Int) {
         return
       }
       let a = g.word(x.args[0])
-      if g.kind(x.ty) == ssa.Kind.Float {
+      if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float {
         g.set(v, [g.def1(true, "fneg $d0, $u0", [a])])
         return
       }
@@ -1413,7 +1413,7 @@ fn (var g: G) instr1(v: Int) {
       // checked add (2026-10-30: text.parse_duration's
       // `-unit_limit(unit)`, a join of positive constants, was a negs and
       // a b.vs)
-      if x.pos.is_empty() || (g.kind(x.ty) == ssa.Kind.Int && g.bounds(x.args[0]).0 > MIN_INT) {
+      if x.pos.is_empty() || (g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Int && g.bounds(x.args[0]).0 > MIN_INT) {
         g.set(v, [g.def1(false, "neg $d0, $u0", [a])])
         return
       }
@@ -1425,7 +1425,7 @@ fn (var g: G) instr1(v: Int) {
         return
       }
       let a = g.word(x.args[0])
-      if g.kind(x.ty) == ssa.Kind.Bool {
+      if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Bool {
         g.set(v, [g.def1(false, "eor $d0, $u0, #1", [a])])
       } else {
         g.set(v, [g.def1(false, "mvn $d0, $u0", [a])])
@@ -1495,7 +1495,7 @@ fn (var g: G) instr1(v: Int) {
     }
     Field => g.field_op(v)
     SetField => g.set_field_op(v)
-    Variant => g.set(v, g.variant(x.ty, aux_int(x.aux), x.args))
+    Variant => g.set(v, g.variant(ssa.ty_of(x.tb), aux_int(x.aux), x.args))
     Tag => {
       let (ptr, ok) = g.mem_of(x.args[0])
       if ok {
@@ -1621,7 +1621,7 @@ fn (var g: G) instr1(v: Int) {
       let _r = g.call(h, regs(ws), [])
     }
     Jump => {
-      g.end_memo[x.block] = g.m_()
+      g.end_memo[ssa.block_of(x.tb)] = g.m_()
       let (dsts, srcs) = g.edge_moves(x.succs[0])
       g.pmove(dsts, srcs)
       let _j = g.add(Inst{kind: K_JUMP, targets: [g.bmap[g.f.edges[x.succs[0]].to]]})
@@ -1662,7 +1662,7 @@ fn (var g: G) instr1(v: Int) {
 fn (var g: G) fold_decided(blocks: List[Int], idom: List[Int]) {
   for b in blocks {
     let t = g.f.term(b)
-    if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 || g.f.values[t].pad >= 0 {
+    if t < 0 || g.f.values[t].op != ssa.Op.Branch || g.f.values[t].succs.len() != 2 || ssa.pad_of(g.f.values[t].pi) >= 0 {
       continue
     }
     let c = g.f.values[t].args[0]
@@ -1723,7 +1723,7 @@ fn (var g: G) fold_decided(blocks: List[Int], idom: List[Int]) {
 fn (g: G) xor_ones(v: Int) -> Int? {
   let x = g.f.values[v]
   // arm64 only: x86_64 keeps its eor and and (no output change there)
-  if g.x86 || x.op != ssa.Op.Xor || x.args.len() != 2 || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int {
+  if g.x86 || x.op != ssa.Op.Xor || x.args.len() != 2 || ssa.ty_of(x.tb) < 0 || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return None
   }
   for j in 0..2 {
@@ -1750,7 +1750,7 @@ fn (g: G) dom_decided(b: Int, c: Int, idom: List[Int]) -> Bool? {
   var steps = 0
   while d >= 0 && d != b && steps < 32 {
     let t = g.f.term(d)
-    if t >= 0 && g.f.values[t].op == ssa.Op.Branch && g.f.values[t].succs.len() == 2 && g.f.values[t].pad < 0 {
+    if t >= 0 && g.f.values[t].op == ssa.Op.Branch && g.f.values[t].succs.len() == 2 && ssa.pad_of(g.f.values[t].pi) < 0 {
       let c2 = g.f.values[t].args[0]
       let x2 = g.f.values[c2]
       // the same compare, or its negation (lt and ge, le and gt, eq and
@@ -1758,7 +1758,7 @@ fn (g: G) dom_decided(b: Int, c: Int, idom: List[Int]) -> Bool? {
       // on v < 0, and ints.u64_rem on Int(UInt64(v)) >= 0)
       let cmp = cv.op is ssa.Op.Eq | ssa.Op.Ne | ssa.Op.Lt | ssa.Op.Le | ssa.Op.Gt | ssa.Op.Ge
       // (integers only: a Float compare with a NaN is false both ways)
-      let inv = cmp && x2.op == negated_cmp(cv.op) && cv.args.len() == 2 && g.kind(g.f.values[cv.args[0]].ty) == ssa.Kind.Int
+      let inv = cmp && x2.op == negated_cmp(cv.op) && cv.args.len() == 2 && g.kind(ssa.ty_of(g.f.values[cv.args[0]].tb)) == ssa.Kind.Int
       if c2 == c || (cmp && (x2.op == cv.op || inv) && g.same_operands(x2.args, cv.args)) {
         for i in 0..2 {
           let s = g.f.edges[g.f.values[t].succs[i]].to
@@ -1890,10 +1890,10 @@ fn (g: G) same_operands(a: List[Int], b: List[Int]) -> Bool {
     }
     let (ka, ca) = g.const_int(a[i])
     let (kb, cb) = g.const_int(b[i])
-    if ca && cb && ka == kb && g.f.values[a[i]].ty == g.f.values[b[i]].ty {
+    if ca && cb && ka == kb && ssa.ty_of(g.f.values[a[i]].tb) == ssa.ty_of(g.f.values[b[i]].tb) {
       continue
     }
-    if g.f.values[a[i]].ty != g.f.values[b[i]].ty || g.word_source(a[i]) != g.word_source(b[i]) {
+    if ssa.ty_of(g.f.values[a[i]].tb) != ssa.ty_of(g.f.values[b[i]].tb) || g.word_source(a[i]) != g.word_source(b[i]) {
       return false
     }
   }
@@ -1906,7 +1906,7 @@ fn (g: G) word_source(v0: Int) -> Int {
   var v = v0
   for _ in 0..8 {
     let x = g.f.values[v]
-    if x.op != ssa.Op.IntConv || x.args.len() != 1 || !g.word64(x.ty) || !g.word64(g.f.values[x.args[0]].ty) {
+    if x.op != ssa.Op.IntConv || x.args.len() != 1 || !g.word64(ssa.ty_of(x.tb)) || !g.word64(ssa.ty_of(g.f.values[x.args[0]].tb)) {
       break
     }
     v = x.args[0]
@@ -1953,7 +1953,7 @@ fn (var g: G) fold_cond(c: Int, d: Int) -> (Int, Int, Bool) {
   if let Some(k) = g.decided(c) {
     return (if k { 1 } else { 0 }, c, false)
   }
-  if d <= 0 || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Bool {
+  if d <= 0 || ssa.ty_of(x.tb) < 0 || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Bool {
     return (-1, c, false)
   }
   if x.op == ssa.Op.Not && x.args.len() == 1 {
@@ -1991,7 +1991,7 @@ fn (var g: G) decided(c: Int) -> Bool? {
     return None
   }
   for a in x.args {
-    let t = g.f.values[a].ty
+    let t = ssa.ty_of(g.f.values[a].tb)
     if t < 0 || g.kind(t) != ssa.Kind.Int {
       return None
     }
@@ -2083,7 +2083,7 @@ fn (var g: G) nonzero_or(v: Int) -> Bool {
 
 fn (var g: G) branch_op(v: Int) {
   let x = g.f.values[v]
-  g.end_memo[x.block] = g.m_()
+  g.end_memo[ssa.block_of(x.tb)] = g.m_()
   let c = x.args[0]
   let cv = g.f.values[c]
   // a constant, or a Bool the operands' bounds decide through nots, ors,
@@ -2267,7 +2267,7 @@ fn (var g: G) select_branch(x: ssa.Value, cmp: Cmp) -> Bool {
 /// (bench/perf/text float_fmt 1.004x, 2026-10-17).
 fn (g: G) cond_from_const(x: ssa.Value) -> Bool {
   let c = x.args[0]
-  let bl = g.f.blocks[x.block]
+  let bl = g.f.blocks[ssa.block_of(x.tb)]
   var at = -1
   for (i, p) in bl.params.indexed() {
     if p == c {
@@ -2414,7 +2414,7 @@ fn (var g: G) range_branch(x: ssa.Value) -> Bool {
     return false
   }
   let br = g.f.values[b.instrs[n - 1]]
-  if br.op != ssa.Op.Branch || br.pad >= 0 || br.args[0] != b.instrs[n - 2] || !g.lazy[br.args[0]] {
+  if br.op != ssa.Op.Branch || ssa.pad_of(br.pi) >= 0 || br.args[0] != b.instrs[n - 2] || !g.lazy[br.args[0]] {
     return false
   }
   for k in 0..n - 2 {
@@ -2460,7 +2460,7 @@ fn (var g: G) range_or(x: ssa.Value) -> Bool {
     return false
   }
   let br = g.f.values[b.instrs[n - 1]]
-  if br.op != ssa.Op.Branch || br.pad >= 0 || br.args[0] != b.instrs[n - 2] || !g.lazy[br.args[0]] {
+  if br.op != ssa.Op.Branch || ssa.pad_of(br.pi) >= 0 || br.args[0] != b.instrs[n - 2] || !g.lazy[br.args[0]] {
     return false
   }
   for k in 0..n - 2 {
@@ -2505,7 +2505,7 @@ fn (var g: G) range_and(x: ssa.Value) -> Bool {
     return false
   }
   let jmp = g.f.values[b.instrs[n - 1]]
-  if jmp.op != ssa.Op.Jump || jmp.pad >= 0 {
+  if jmp.op != ssa.Op.Jump || ssa.pad_of(jmp.pi) >= 0 {
     return false
   }
   let eb = jmp.succs[0]
@@ -2528,7 +2528,7 @@ fn (var g: G) range_and(x: ssa.Value) -> Bool {
     }
   }
   let br = g.f.values[j.instrs[0]]
-  if br.op != ssa.Op.Branch || br.pad >= 0 {
+  if br.op != ssa.Op.Branch || ssa.pad_of(br.pi) >= 0 {
     return false
   }
   let p = br.args[0]
@@ -2585,7 +2585,7 @@ fn (var g: G) range_or_join(x: ssa.Value) -> Bool {
     return false
   }
   let jmp = g.f.values[b.instrs[n - 1]]
-  if jmp.op != ssa.Op.Jump || jmp.pad >= 0 {
+  if jmp.op != ssa.Op.Jump || ssa.pad_of(jmp.pi) >= 0 {
     return false
   }
   let eb = jmp.succs[0]
@@ -2608,7 +2608,7 @@ fn (var g: G) range_or_join(x: ssa.Value) -> Bool {
     }
   }
   let br = g.f.values[j.instrs[0]]
-  if br.op != ssa.Op.Branch || br.pad >= 0 {
+  if br.op != ssa.Op.Branch || ssa.pad_of(br.pi) >= 0 {
     return false
   }
   let p = br.args[0]
@@ -2671,7 +2671,7 @@ fn (var g: G) logic_value(x: ssa.Value) -> Bool {
       continue
     }
     let jmp = g.f.values[b.instrs[n - 1]]
-    if jmp.op != ssa.Op.Jump || jmp.pad >= 0 {
+    if jmp.op != ssa.Op.Jump || ssa.pad_of(jmp.pi) >= 0 {
       continue
     }
     let eb = jmp.succs[0]
@@ -2811,10 +2811,10 @@ fn (g: G) range_subs(v: Int, lo: Int) -> List[(Int, Int, ssa.Op, Bool)] {
       continue
     }
     let (n, nc) = g.const_int(x.args[1])
-    if !nc || n != (if x.op == ssa.Op.Sub { lo } else { -lo }) || !g.word64(x.ty) {
+    if !nc || n != (if x.op == ssa.Op.Sub { lo } else { -lo }) || !g.word64(ssa.ty_of(x.tb)) {
       continue
     }
-    if x.block < 0 || !dominates(g.proof.idom, g.cur_sb, x.block) {
+    if ssa.block_of(x.tb) < 0 || !dominates(g.proof.idom, g.cur_sb, ssa.block_of(x.tb)) {
       continue
     }
     out.push((s, n, x.op, !x.pos.is_empty()))
@@ -2972,7 +2972,7 @@ fn (g: G) forward(e: Int) -> (Int, Int, List[Int]) {
     return (t, e, [])
   }
   let j = g.f.values[b.instrs[n - 1]]
-  if j.op != ssa.Op.Jump || j.pad >= 0 {
+  if j.op != ssa.Op.Jump || ssa.pad_of(j.pi) >= 0 {
     return (t, e, [])
   }
   (g.f.edges[j.succs[0]].to, j.succs[0], spec)
@@ -2989,10 +2989,10 @@ const SPEC_MAX = 4
 /// cycles, 2026-10-17).
 fn (g: G) spec_ok(v: Int) -> Bool {
   let x = g.f.values[v]
-  if x.pad >= 0 || x.ty < 0 {
+  if ssa.pad_of(x.pi) >= 0 || ssa.ty_of(x.tb) < 0 {
     return false
   }
-  let k = g.kind(x.ty)
+  let k = g.kind(ssa.ty_of(x.tb))
   match x.op {
     Add | Sub | Mul => k == ssa.Kind.Float || k == ssa.Kind.Int && x.pos.is_empty()
     Neg => k == ssa.Kind.Float
@@ -3091,7 +3091,7 @@ fn (var g: G) len_moves(p: Int, pw: List[Int], aw: List[Int], var dsts: List[Int
 }
 
 fn (g: G) used_by_branch(v: Int) -> Bool {
-  let t = g.f.term(g.f.values[v].block)
+  let t = g.f.term(ssa.block_of(g.f.values[v].tb))
   t >= 0 && g.f.values[t].op == ssa.Op.Branch && g.f.values[t].args[0] == v
 }
 
@@ -3100,7 +3100,7 @@ fn (var g: G) mul(v: Int) {
   if g.f32_lazy(v) {
     return // f32_op
   }
-  if g.kind(x.ty) == ssa.Kind.Float {
+  if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float {
     let a = g.word(x.args[0])
     let b = g.word(x.args[1])
     g.set(v, [g.def1(true, "fmul $d0, $u0, $u1", [a, b])])
@@ -3185,11 +3185,11 @@ fn (var g: G) mul(v: Int) {
 /// single precision instead (f32_op, decision 0361).
 fn (g: G) f32_lazy(v: Int) -> Bool {
   let x = g.f.values[v]
-  if !(x.op is ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul | ssa.Op.Div) || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Float || g.m.types[x.ty].bits != 32 || x.args.len() != 2 || g.nuses[v] != 1 || g.has_val[v] {
+  if !(x.op is ssa.Op.Add | ssa.Op.Sub | ssa.Op.Mul | ssa.Op.Div) || ssa.ty_of(x.tb) < 0 || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Float || g.m.types[ssa.ty_of(x.tb)].bits != 32 || x.args.len() != 2 || g.nuses[v] != 1 || g.has_val[v] {
     return false
   }
   let u = g.users[v]
-  u >= 0 && g.f.values[u].op == ssa.Op.Call && aux_str(g.f.values[u].aux) == "rt.f32_round" && g.f.values[u].block == x.block
+  u >= 0 && g.f.values[u].op == ssa.Op.Call && aux_str(g.f.values[u].aux) == "rt.f32_round" && ssa.block_of(g.f.values[u].tb) == ssa.block_of(x.tb)
 }
 
 /// rt.f32_round(v) of an f32_lazy v: the single-precision operation on
@@ -3260,7 +3260,7 @@ fn (var g: G) add_sub(v: Int) {
   if g.f32_lazy(v) {
     return // made in single precision by its rt.f32_round (f32_op)
   }
-  if g.kind(x.ty) == ssa.Kind.Float {
+  if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float {
     let a = g.word(x.args[0])
     let b = g.word(x.args[1])
     g.set(v, [g.def1(true, "f${ins} $d0, $u0, $u1", [a, b])])
@@ -3392,7 +3392,7 @@ fn tst_bit(text: Str) -> Int {
 /// not made (compare; one bit is a tbz or tbnz in branch_op).
 fn (g: G) and_test(v: Int) -> Bool {
   let x = g.f.values[v]
-  if x.op != ssa.Op.And || g.kind(x.ty) != ssa.Kind.Int || g.nuses[v] != 1 || g.has_val[v] {
+  if x.op != ssa.Op.And || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int || g.nuses[v] != 1 || g.has_val[v] {
     return false
   }
   let (_, n) = g.and_imm(v)
@@ -3427,7 +3427,7 @@ fn (g: G) and_imm(v: Int) -> (Int, Int) {
 
 fn (g: G) rem_test(v: Int) -> Bool {
   let x = g.f.values[v]
-  if x.op != ssa.Op.Rem || g.kind(x.ty) != ssa.Kind.Int || g.nuses[v] != 1 {
+  if x.op != ssa.Op.Rem || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int || g.nuses[v] != 1 {
     return false
   }
   let (_, ok) = g.pow2(x.args[1])
@@ -3505,7 +3505,7 @@ fn (var g: G) div_rem(v: Int) {
   let x = g.f.values[v]
   let is_div = x.op == ssa.Op.Div
   let (k, p2) = g.pow2(x.args[1])
-  if p2 && g.kind(x.ty) == ssa.Kind.Int {
+  if p2 && g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Int {
     if g.rem_test(v) {
       return // lowered by the comparison
     }
@@ -3549,7 +3549,7 @@ fn (var g: G) div_rem(v: Int) {
   if is_div && g.f32_lazy(v) {
     return // f32_op
   }
-  if g.kind(x.ty) == ssa.Kind.Float {
+  if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Float {
     let a = g.word(x.args[0])
     let b = g.word(x.args[1])
     if is_div {
@@ -3567,7 +3567,7 @@ fn (var g: G) div_rem(v: Int) {
   let (kn, cn) = g.neg_const(x.args[1])
   let kc = if c0 { kc0 } else { kn }
   let is_const = c0 || cn
-  if is_const && g.kind(x.ty) == ssa.Kind.Int && kc != 0 && kc != 1 && kc != -1 && kc != MIN_INT {
+  if is_const && g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Int && kc != 0 && kc != 1 && kc != -1 && kc != MIN_INT {
     g.div_const(v, kc)
     return
   }
@@ -3827,7 +3827,7 @@ fn (var g: G) field_op(v: Int) {
   let (off, n) = g.field_words(g.vty(u), fi)
   let mu = g.mem_only(u)
   if mu >= 0 {
-    if g.big_by_ref(x.ty) && g.read_in_place(v, mu, g.key_of(u)) {
+    if g.big_by_ref(ssa.ty_of(x.tb)) && g.read_in_place(v, mu, g.key_of(u)) {
       // a large field of a value held in memory that holds it at every
       // read: read there where used (a match on an optional TLS 1.2
       // state loaded it whole on the TLS 1.3 path, tlssrv.recv_some)
@@ -3835,17 +3835,17 @@ fn (var g: G) field_op(v: Int) {
       return
     }
     // a field of a value held in memory
-    g.set(v, g.load_read(v, g.held.mems[mu].ptr, off, g.layout(x.ty)))
+    g.set(v, g.load_read(v, g.held.mems[mu].ptr, off, g.layout(ssa.ty_of(x.tb))))
     return
   }
   if let Some(ptr) = g.stable.get(u) {
-    if g.big_by_ref(x.ty) {
+    if g.big_by_ref(ssa.ty_of(x.tb)) {
       // a large field of read only memory: read in place where used,
       // passed on by address
       g.stable[v] = g.addr_at(ptr, 8 * off)
       return
     }
-    g.set(v, g.load_read(v, ptr, off, g.layout(x.ty)))
+    g.set(v, g.load_read(v, ptr, off, g.layout(ssa.ty_of(x.tb))))
     return
   }
   if g.lazy_res.contains((u, fi)) {
@@ -3933,7 +3933,7 @@ const LOAD_READ_MIN = 8
 
 fn (var g: G) set_field_op(v: Int) {
   let x = g.f.values[v]
-  let (off, n) = g.field_words(x.ty, aux_int(x.aux))
+  let (off, n) = g.field_words(ssa.ty_of(x.tb), aux_int(x.aux))
   if g.has_held {
     if let Some((m, at)) = g.held.nested.get(v) {
       // stored in place in the field of the held value; the outer set
@@ -3946,7 +3946,7 @@ fn (var g: G) set_field_op(v: Int) {
     // the call before it wrote the field in place (field homes)
     if g.mem_only(v) < 0 {
       let m = g.held.in_place.get(v) ?? 0
-      g.set(v, g.load_words(g.held.mems[m].ptr, 0, g.layout(x.ty)))
+      g.set(v, g.load_words(g.held.mems[m].ptr, 0, g.layout(ssa.ty_of(x.tb))))
     }
     return
   }
@@ -3964,7 +3964,7 @@ fn (var g: G) set_field_op(v: Int) {
         return
       }
       if u_only {
-        g.set(v, g.load_words(ptr, 0, g.layout(x.ty)))
+        g.set(v, g.load_words(ptr, 0, g.layout(ssa.ty_of(x.tb))))
         return
       }
       var ws = old
@@ -3996,15 +3996,15 @@ fn (var g: G) payload_op(v: Int) {
   if ok {
     // a payload of an enum in memory (decision 0153): read in place; a
     // large one of read only memory stays there
-    if g.stable.contains(e) && g.big_by_ref(x.ty) {
+    if g.stable.contains(e) && g.big_by_ref(ssa.ty_of(x.tb)) {
       g.stable[v] = g.addr_at(ptr, 8 * off)
       return
     }
-    g.set(v, g.load_words(ptr, off, g.layout(x.ty)))
+    g.set(v, g.load_words(ptr, off, g.layout(ssa.ty_of(x.tb))))
     return
   }
   let ws = g.words(e)[off..off + n]
-  g.set(v, g.from_payload(ws, g.layout(x.ty)))
+  g.set(v, g.from_payload(ws, g.layout(ssa.ty_of(x.tb))))
 }
 
 // ---------------------------------------------------------------------------
@@ -4069,7 +4069,7 @@ fn dominators_of(f: ssa.Func, blocks: List[Int]) -> List[Int] {
 /// code wrote lsl, lsr, and orr); the shifts, used only there, are dead.
 fn (var g: G) funnel(v: Int) -> Bool {
   let x = g.f.values[v]
-  if g.kind(x.ty) != ssa.Kind.Int {
+  if g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return false
   }
   for j in [0, 1] {
@@ -4144,10 +4144,10 @@ fn (g: G) through_params(v0: Int) -> Int {
   var v = v0
   for _ in 0..8 {
     let x = g.f.values[v]
-    if x.op != ssa.Op.Param || x.block < 0 {
+    if x.op != ssa.Op.Param || ssa.block_of(x.tb) < 0 {
       return v
     }
-    let bl = g.f.blocks[x.block]
+    let bl = g.f.blocks[ssa.block_of(x.tb)]
     if bl.preds.len() != 1 {
       return v
     }

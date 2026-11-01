@@ -557,7 +557,7 @@ fn (var g: G) bare_arm(v: Int, a: Int) -> Bool {
     return false
   }
   let vs = g.m.types[g.vty(a)].variants
-  var b = g.f.values[v].block
+  var b = ssa.block_of(g.f.values[v].tb)
   var steps = 0
   while steps < 8 {
     let preds = g.f.blocks[b].preds
@@ -630,7 +630,7 @@ fn (g: G) cancelled_release(v: Int) -> Int {
   }
   // the block runs only when e has the variant: its one predecessor
   // branches on tag(e) == Tag
-  let b = g.f.values[v].block
+  let b = ssa.block_of(g.f.values[v].tb)
   let preds = g.f.blocks[b].preds
   if preds.len() != 1 {
     return -1

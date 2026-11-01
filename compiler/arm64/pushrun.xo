@@ -55,7 +55,7 @@ fn (var g: G) plan_push_runs(blocks: List[Int]) {
       var cur = v
       while chain.len() < PUSH_RUN_MAX {
         let a = g.f.values[cur].args[0]
-        if !g.is_push(a) || g.f.values[a].pad >= 0 {
+        if !g.is_push(a) || ssa.pad_of(g.f.values[a].pi) >= 0 {
           break
         }
         // in the block, or in the one whose landing branch's normal edge
@@ -63,8 +63,8 @@ fn (var g: G) plan_push_runs(blocks: List[Int]) {
         // may fault between them, in a function with landing pads:
         // json scan), with the list's other uses releases (the pad drops
         // it; a skipped push's list is its input's, push_list)
-        let ab = g.f.values[a].block
-        let cb = g.f.values[cur].block
+        let ab = ssa.block_of(g.f.values[a].tb)
+        let cb = ssa.block_of(g.f.values[cur].tb)
         // across a fault point only for elements of no reference count
         // (Int, Float, Bool words): a value pushed before it is not yet
         // in the list, and a fault would leak one that owns memory
@@ -161,10 +161,10 @@ fn (g: G) local_list(v: Int, var seen: Map[Int, Bool]) -> Bool {
     }
     return false
   }
-  if x.op != ssa.Op.Param || x.block <= 0 {
+  if x.op != ssa.Op.Param || ssa.block_of(x.tb) <= 0 {
     return false
   }
-  let b = x.block
+  let b = ssa.block_of(x.tb)
   let pi = g.f.blocks[b].params.index_of(v) ?? -1
   if pi < 0 {
     return false

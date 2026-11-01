@@ -21,9 +21,9 @@ fn key_func_ref(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_str("b${bi} [${ints_line(bl.params)}] [${ints_line(bl.instrs)}] [${ints_line(bl.preds)}]\n")
   }
   for (vi, x) in f.values.indexed() {
-    b.write_str("v${vi} ${op_name(x.op)} ${tkey(tk, x.ty)} [${ints_line(x.args)}] ")
+    b.write_str("v${vi} ${op_name(x.op)} ${tkey(tk, ty_of(x.tb))} [${ints_line(x.args)}] ")
     key_aux(b, x.aux)
-    b.write_str(" ${x.block} [${ints_line(x.succs)}] ${x.pad} ${x.line} ${x.pos.len()}:${x.pos}\n")
+    b.write_str(" ${block_of(x.tb)} [${ints_line(x.succs)}] ${pad_of(x.pi)} ${x.line} ${x.pos.len()}:${x.pos}\n")
   }
   for (ei, e) in f.edges.indexed() {
     b.write_str("e${ei} ${e.from} ${e.to} [${ints_line(e.args)}]\n")
@@ -65,7 +65,7 @@ test "key_func writes the bytes of the interpolating version" {
   let _fl = f.add(0, Op.Const, -1, Aux.F(f: 2.5), [])
   f.values[c].line = 1234
   f.values[c].pos = "x.xo:12:34"
-  f.values[c].pad = 17
+  f.values[c].pi = with_pad(f.values[c].pi, 17)
   f.var_params = [1]
   f.captures = [st, 99]
   f.results = [it, -1]

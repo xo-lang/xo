@@ -56,8 +56,8 @@ pub fn cln_key(m: Module, fi: Int, faults: List[Bool], tk: List[Str], id: Str, f
   }
   b.write_str("reader=${f.reader} target=${f.target} moved=[${ints_line(mv.sort())}] sites=${f.inl_sites.len()}\n")
   for (vi, x) in f.values.indexed() {
-    if x.inl >= 0 {
-      b.write_str("inl ${vi} ${x.inl}\n")
+    if inl_of(x.pi) >= 0 {
+      b.write_str("inl ${vi} ${inl_of(x.pi)}\n")
     }
   }
   var seen: Map[Str, Bool] = {}
@@ -360,9 +360,9 @@ fn body_id(f: Func, e: Bytes, tk: List[Str]) -> Str {
     }
   }
   for x in f.values {
-    if !seen.contains(x.ty) {
-      seen[x.ty] = true
-      ts.push(x.ty)
+    if !seen.contains(ty_of(x.tb)) {
+      seen[ty_of(x.tb)] = true
+      ts.push(ty_of(x.tb))
     }
   }
   for d in f.dvars {

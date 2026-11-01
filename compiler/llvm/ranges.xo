@@ -95,7 +95,7 @@ fn (var g: Gen) ssa_const(v: Int) -> (Int, Bool) {
 
 /// Whether value v has kind Int.
 fn (var g: Gen) is_int(v: Int) -> Bool {
-  let t = g.f.values[v].ty
+  let t = ssa.ty_of(g.f.values[v].tb)
   t >= 0 && g.kind(t) == ssa.Kind.Int
 }
 
@@ -226,7 +226,7 @@ fn (var g: Gen) entry_facts(b: Int, base0: Int, exit: List[Int]) -> Int {
   if !is_compare(c.op) {
     return base
   }
-  let at = g.f.values[c.args[0]].ty
+  let at = ssa.ty_of(g.f.values[c.args[0]].tb)
   let st = g.m.types[at]
   if st.kind != ssa.Kind.Int || (st.bits == 64 && st.unsigned) {
     return base
@@ -802,7 +802,7 @@ fn (var g: Gen) inline_walk(sites: Map[Str, Int], fi: Int, var state: Map[Str, I
   for bl in g.m.funcs[fi].blocks {
     for v in bl.instrs {
       let x = g.m.funcs[fi].values[v]
-      if x.pad >= 0 {
+      if ssa.pad_of(x.pi) >= 0 {
         // it has landing pads of its own (decision 0085)
         c.bad = true
       }

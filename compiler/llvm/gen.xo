@@ -374,7 +374,7 @@ pub fn (var g: Gen) generate() -> Str {
   }
   for fi in 0..nf {
     for p in g.m.funcs[fi].blocks[0].params {
-      g.check_type(g.m.funcs[fi].values[p].ty)
+      g.check_type(ssa.ty_of(g.m.funcs[fi].values[p].tb))
     }
   }
   g.inlinable_set()
@@ -393,7 +393,7 @@ pub fn (var g: Gen) generate() -> Str {
   }
   var args: List[Str] = []
   for p in g.m.funcs[mi].blocks[0].params {
-    args.push("${g.ll(g.m.funcs[mi].values[p].ty)} zeroinitializer")
+    args.push("${g.ll(ssa.ty_of(g.m.funcs[mi].values[p].tb))} zeroinitializer")
   }
   let rl = g.res_ll(mi)
   // with debug information, xo_entry has a subprogram too: main is
@@ -804,7 +804,7 @@ fn (var g: Gen) by_ref_of(fi: Int) -> List[Bool] {
   if !f.indirect && !f.entry && !g.addr_taken.contains(f.name) && f.name != "main" {
     let ps = f.blocks[0].params
     for (i, p) in ps.indexed() {
-      let t = f.values[p].ty
+      let t = ssa.ty_of(f.values[p].tb)
       if (g.kind(t) is ssa.Kind.Struct | ssa.Kind.Enum) && g.size(t) >= BY_REF_MIN {
         if br.is_empty() {
           for _ in 0..ps.len() {
@@ -955,7 +955,7 @@ fn (var g: Gen) exports() {
     var ps: List[Str] = []
     var as_: List[Str] = []
     for (i, p) in f.blocks[0].params.indexed() {
-      let t = g.ll(f.values[p].ty)
+      let t = g.ll(ssa.ty_of(f.values[p].tb))
       ps.push("${t} %a${i}")
       as_.push("${t} %a${i}")
     }

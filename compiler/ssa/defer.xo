@@ -381,8 +381,8 @@ fn (var b: Builder) flush_landing() {
   let dl = b.s.pending_defer
   b.s.pending_defs = {}
   b.s.pending_defer = []
-  let wb = b.s.f.values[w].block
-  if wb != b.s.cur || b.s.f.term(b.s.cur) >= 0 || b.is_dead() || b.s.f.values[w].pad >= 0 {
+  let wb = block_of(b.s.f.values[w].tb)
+  if wb != b.s.cur || b.s.f.term(b.s.cur) >= 0 || b.is_dead() || pad_of(b.s.f.values[w].pi) >= 0 {
     return
   }
   if !b.self_faults(w) && !b.is_user_call(w) {
@@ -398,7 +398,7 @@ fn (var b: Builder) flush_landing() {
     }
   }
   let u = b.s.f.add(b.s.cur, Op.Call, b.bool_t(), Aux.S(s: "rt.landing"), [])
-  b.s.f.values[w].pad = u
+  b.s.f.values[w].pi = with_pad(b.s.f.values[w].pi, u)
   var callee = ""
   if b.s.f.values[w].op == Op.Call && !b.self_faults(w) {
     if let S(name) = b.s.f.values[w].aux {

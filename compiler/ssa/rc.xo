@@ -313,7 +313,7 @@ fn (var r: Rc) leaf_paths(t: Int) -> List[Str] {
 /// Whether v is a field read of a struct or tuple (isAlias).
 fn (r: Rc) is_alias(f: Func, v: Int) -> Bool {
   let x = f.values[v]
-  x.op == Op.Field && r.decomposable(f.values[x.args[0]].ty)
+  x.op == Op.Field && r.decomposable(ty_of(f.values[x.args[0]].tb))
 }
 
 fn aux_int(a: Aux) -> Int {
@@ -377,7 +377,7 @@ fn (r: Rc) leaves_stale(f: Func, v: Int) {
 /// leaves without the memo.
 fn (var r: Rc) leaves_fresh(f: Func, v: Int) -> List[Leaf] {
   let b = r.base(f, v)
-  let lps = r.leaf_paths(f.values[v].ty)
+  let lps = r.leaf_paths(ty_of(f.values[v].tb))
   var out = List[Leaf].with_capacity(lps.len())
   for lp in lps {
     if b.path.is_empty() {
@@ -392,11 +392,11 @@ fn (var r: Rc) leaves_fresh(f: Func, v: Int) -> List[Leaf] {
 /// Whether v is a root with heap leaves (isRoot).
 fn (var r: Rc) is_root(f: Func, v: Int) -> Bool {
   let x = f.values[v]
-  x.ty >= 0 && !is_terminator(x.op) && x.op != Op.Retain && x.op != Op.Release && !r.is_alias(f, v) && r.heap(x.ty)
+  ty_of(x.tb) >= 0 && !is_terminator(x.op) && x.op != Op.Retain && x.op != Op.Release && !r.is_alias(f, v) && r.heap(ty_of(x.tb))
 }
 
 fn param_index(f: Func, v: Int) -> Int {
-  let bl = f.values[v].block
+  let bl = block_of(f.values[v].tb)
   for (i, p) in f.blocks[bl].params.indexed() {
     if p == v {
       return i
@@ -413,7 +413,7 @@ fn (var r: Rc) kind(f: Func, v: Int) -> RootKind {
   let x = f.values[v]
   match x.op {
     Param => {
-      if x.block == 0 {
+      if block_of(x.tb) == 0 {
         let i = param_index(f, v)
         let bs = r.borrowed[r.fi]
         if i >= 0 && i < bs.len() && bs[i] {
@@ -470,7 +470,7 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
       // the closure borrowed; each argument borrowed unless its type is
       // the result's (decision 0337, fv_arg_owned)
       ms = fill_modes(n, Mode.Borrow)
-      let ft = f.values[x.args[0]].ty
+      let ft = ty_of(f.values[x.args[0]].tb)
       let c = f.values[x.args[0]]
       if c.op == Op.Closure {
         // the body's convention is its parameter 0's type: the same
@@ -488,7 +488,7 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
       }
     }
     Payload => {
-      if r.heap(x.ty) {
+      if r.heap(ty_of(x.tb)) {
         ms = fill_modes(n, Mode.Borrow)
       }
     }
@@ -642,7 +642,7 @@ fn (var r: Rc) edge_uses(f: Func, e: Int) -> List[Leaf] {
 /// A new value of f placed nowhere yet (newValue / mk).
 fn new_value(var f: Func, bl: Int, op: Op, t: Int, aux: Aux, args: List[Int]) -> Int {
   let v = f.values.len()
-  f.values.push(Value{op: op, ty: t, args: args, aux: aux, block: bl})
+  f.values.push(Value{op: op, tb: pack_tb(t, bl), args: args, aux: aux})
   v
 }
 
@@ -663,7 +663,7 @@ fn reuse_var_params(var f: Func, types: List[SType]) {
   var head: List[Int] = []
   for i in f.var_params {
     let p = f.blocks[0].params[i]
-    let pt = f.values[p].ty
+    let pt = ty_of(f.values[p].tb)
     if types[pt].kind != Kind.List {
       continue
     }
@@ -721,21 +721,21 @@ fn (var r: Rc) init_borrows(funcs: List[Func]) {
       continue
     }
     let ps = f.blocks[0].params
-    r.fparam0.push(if ps.is_empty() { -1 } else { f.values[ps[0]].ty })
+    r.fparam0.push(if ps.is_empty() { -1 } else { ty_of(f.values[ps[0]].tb) })
     var bs: List[Bool] = []
     for (i, p) in ps.indexed() {
-      var bw = r.heap(f.values[p].ty) && !f.var_params.contains(i)
+      var bw = r.heap(ty_of(f.values[p].tb)) && !f.var_params.contains(i)
       if f.indirect {
         // callers through a function value pass the closure and the
         // arguments the function type does not own borrowed (decision
         // 0337); the convention is the type's, so no scan changes it.
         // The caller reads it from the closure's type: a body whose
         // parameter 0 is another type would take what it was lent
-        let ct = f.values[ps[0]].ty
+        let ct = ty_of(f.values[ps[0]].tb)
         if ct < 0 || ct >= r.types.len() || r.types[ct].kind != Kind.Func {
           fault("internal: indirect function ${f.name}'s parameter 0 is not of a function type (decision 0337)")
         }
-        bw = i == 0 || (r.heap(f.values[p].ty) && !fv_arg_owned(r.types, ct, i - 1))
+        bw = i == 0 || (r.heap(ty_of(f.values[p].tb)) && !fv_arg_owned(r.types, ct, i - 1))
       }
       if f.entry {
         // the runtime hands over every argument
@@ -950,7 +950,7 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
   }
   var owned: List[Int] = []
   for (i, bs) in cons {
-    let pt = f.values[f.blocks[0].params[i]].ty
+    let pt = ty_of(f.values[f.blocks[0].params[i]].tb)
     if r.types[pt].kind != Kind.Enum || consumed_on_every_path(f, bs) {
       owned.push(i)
     }
@@ -963,7 +963,7 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
 fn (var r: Rc) consumed(f: Func, l: Leaf, bl: Int, cons0: Map[Int, List[Bool]]) -> Map[Int, List[Bool]] {
   var cons = cons0
   let p = l.root
-  if f.values[p].op != Op.Param || f.values[p].block != 0 {
+  if f.values[p].op != Op.Param || block_of(f.values[p].tb) != 0 {
     return cons
   }
   let i = param_index(f, p)
@@ -1033,7 +1033,7 @@ fn landing_site(f: Func, bl: Int) -> (Int, Int) {
     return (-1, -1)
   }
   let u = f.values[t].args[0]
-  if f.values[u].op != Op.Call || f.values[u].block != bl {
+  if f.values[u].op != Op.Call || block_of(f.values[u].tb) != bl {
     return (-1, -1)
   }
   let name = aux_name(f.values[u].aux)
@@ -1041,7 +1041,7 @@ fn landing_site(f: Func, bl: Int) -> (Int, Int) {
     return (-1, -1)
   }
   for v in f.blocks[bl].instrs {
-    if f.values[v].pad == u {
+    if pad_of(f.values[v].pi) == u {
       return (v, u)
     }
   }
@@ -1425,7 +1425,7 @@ fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
   for bi in 0..n {
     for v in f.blocks[bi].instrs {
       for x in r.leaf_uses(f, v) {
-        if r.tracked(f, x.l) && f.values[x.l.root].block != bi {
+        if r.tracked(f, x.l) && block_of(f.values[x.l.root].tb) != bi {
           let k = leaf_key(x.l)
           if !c.live_in[bi].contains(k) {
             c.live_in[bi][k] = x.l
@@ -1436,7 +1436,7 @@ fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
       }
       for e in f.values[v].succs {
         for l in r.edge_uses(f, e) {
-          if r.tracked(f, l) && f.values[l.root].block != bi {
+          if r.tracked(f, l) && block_of(f.values[l.root].tb) != bi {
             let k = leaf_key(l)
             if !c.live_in[bi].contains(k) {
               c.live_in[bi][k] = l
@@ -1457,7 +1457,7 @@ fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
         continue
       }
       live_out[p].add(k)
-      if f.values[l.root].block != p && !c.live_in[p].contains(k) {
+      if block_of(f.values[l.root].tb) != p && !c.live_in[p].contains(k) {
         c.live_in[p][k] = l
         wb.push(p)
         wl.push(l)
@@ -1481,7 +1481,7 @@ fn (r: Rc) leaf_value(var f: Func, l: Leaf, bl: Int) -> (List[Int], Int) {
   var k = 1
   while k <= pb.len() {
     if k == pb.len() || pb[k] == 46 {
-      v = new_value(f, bl, Op.Field, r.field_type(f.values[v].ty, i), Aux.I(n: i), [v])
+      v = new_value(f, bl, Op.Field, r.field_type(ty_of(f.values[v].tb), i), Aux.I(n: i), [v])
       code.push(v)
       i = 0
     } else {
@@ -1546,18 +1546,18 @@ fn imm_at(f: Func, v: Int, path: Str, k: Int, sums: Map[Str, List[Bool]], depth:
     return false
   }
   let x = f.values[v]
-  if x.op == Op.Param && x.block > 0 {
+  if x.op == Op.Param && block_of(x.tb) > 0 {
     if walking.contains((v, k)) {
       return true
     }
     let w2 = walking + [(v, k)]
     var pi = -1
-    for (i, p) in f.blocks[x.block].params.indexed() {
+    for (i, p) in f.blocks[block_of(x.tb)].params.indexed() {
       if p == v {
         pi = i
       }
     }
-    let es = f.blocks[x.block].preds
+    let es = f.blocks[block_of(x.tb)].preds
     if pi < 0 || es.is_empty() {
       return false
     }
@@ -1696,7 +1696,7 @@ fn imm_return_of(f: Func) -> List[Bool] {
   // landing is gone (after inlining) the function has no return, so the
   // verifier would expect every field its callers left unreleased
   // (http.ReverseProxy.serve in the std store, 74 errors, 2026-10-30)
-  if f.values[ret].block >= 0 && f.values[ret].block == f.unwind_exit {
+  if block_of(f.values[ret].tb) >= 0 && block_of(f.values[ret].tb) == f.unwind_exit {
     return []
   }
   let s = f.values[f.values[ret].args[0]]
@@ -2278,7 +2278,7 @@ fn (var r: Rc) group_releases(var f: Func) {
               placed.add(g)
               var w = root
               if comp >= 0 {
-                w = new_value(f, bl, Op.Field, r.field_type(f.values[root].ty, comp), Aux.I(n: comp), [root])
+                w = new_value(f, bl, Op.Field, r.field_type(ty_of(f.values[root].tb), comp), Aux.I(n: comp), [root])
                 out.push(w)
               }
               out.push(new_value(f, bl, Op.Release, -1, Aux.None, [w]))
@@ -2316,7 +2316,7 @@ fn (var r: Rc) group_leaves(f: Func, root: Int, comp: Int) -> List[Leaf] {
     return r.leaves(f, root)
   }
   var out: List[Leaf] = []
-  for lp in r.leaf_paths(r.field_type(f.values[root].ty, comp)) {
+  for lp in r.leaf_paths(r.field_type(ty_of(f.values[root].tb), comp)) {
     out.push(r.leaf(root, ".${comp}${lp}"))
   }
   out
@@ -2443,7 +2443,7 @@ struct Uniq {
 /// Whether List leaf l is provably unique where it is used (unique's
 /// uniq).
 fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
-  if u.retained.contains(leaf_key(l)) || f.values[l.root].ty < 0 {
+  if u.retained.contains(leaf_key(l)) || ty_of(f.values[l.root].tb) < 0 {
     return false
   }
   let v = l.root
@@ -2487,7 +2487,7 @@ fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
       return r.uniq(f, u, r.leaf(b.root, "${b.path}${l.path}"))
     }
     Param => {
-      if x.block == 0 {
+      if block_of(x.tb) == 0 {
         return false
       }
       return u.param.get(leaf_key(l)) ?? false
@@ -2535,7 +2535,7 @@ fn (var r: Rc) unique(f: Func) -> Uniq {
         continue
       }
       let i = param_index(f, l.root)
-      for e in f.blocks[f.values[l.root].block].preds {
+      for e in f.blocks[block_of(f.values[l.root].tb)].preds {
         let b = r.base(f, f.edges[e].args[i])
         if !r.uniq(f, u, r.leaf(b.root, "${b.path}${l.path}")) {
           u.param[leaf_key(l)] = false
@@ -2567,7 +2567,7 @@ fn (var r: Rc) handed_unique(f: Func, u: Uniq, l: Leaf, at: Int) -> Bool {
   }
   var k = -1
   if l.path.is_empty() {
-    k = if r.is_list(x.ty) { 0 } else { -1 }
+    k = if r.is_list(ty_of(x.tb)) { 0 } else { -1 }
   } else if !l.path[1..l.path.len()].contains(".") {
     // a leaf path is ".k..." (leaf_paths); one that does not parse is -1,
     // which call_hands_unique rejects
@@ -2594,7 +2594,7 @@ fn (var r: Rc) hoist_reuse(var f: Func) {
   for h in 1..f.blocks.len() {
     let ps = f.blocks[h].params
     for (i, p) in ps.indexed() {
-      let pt = f.values[p].ty
+      let pt = ty_of(f.values[p].tb)
       if pt < 0 {
         continue
       }
@@ -2695,13 +2695,13 @@ fn (var r: Rc) hoist_reuse(var f: Func) {
           let t = ins.pop() ?? -1
           var w = -1
           if k < 0 {
-            w = new_value(f, pb, Op.Reuse, f.values[a].ty, Aux.None, [a])
+            w = new_value(f, pb, Op.Reuse, ty_of(f.values[a].tb), Aux.None, [a])
             ins.push(w)
           } else {
             let ft = r.field_type(pt, k)
             let fv = new_value(f, pb, Op.Field, ft, Aux.I(n: k), [a])
             let ru = new_value(f, pb, Op.Reuse, ft, Aux.None, [fv])
-            w = new_value(f, pb, Op.SetField, f.values[a].ty, Aux.I(n: k), [a, ru])
+            w = new_value(f, pb, Op.SetField, ty_of(f.values[a].tb), Aux.I(n: k), [a, ru])
             ins.push(fv)
             ins.push(ru)
             ins.push(w)
@@ -2748,7 +2748,7 @@ fn (var r: Rc) reuse(var f: Func) {
           // mark every later pass and the verifier read), marked so the
           // backends lower it to nothing (decision 0322)
           let ax = if r.handed_unique(f, u, l, bl) { Aux.I(n: r.uq_mark) } else { Aux.None }
-          let x = new_value(f, bl, Op.Reuse, f.values[a].ty, ax, [a])
+          let x = new_value(f, bl, Op.Reuse, ty_of(f.values[a].tb), ax, [a])
           out.push(x)
           f.values[v].args[0] = x
         }
@@ -2778,7 +2778,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
   let nb = f.blocks.len()
   for bl in 0..nb {
     let (w, u) = landing_site(f, bl)
-    if w < 0 || f.values[w].block != bl {
+    if w < 0 || block_of(f.values[w].tb) != bl {
       continue
     }
     if keeps_operands(f.values[w]) {
@@ -2793,7 +2793,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
           if !l.path.is_empty() {
             for s in l.path[1..l.path.len()].split(".") {
               let i = Int.parse(s) ?? 0
-              v = new_value(f, -1, Op.Field, r.field_type(f.values[v].ty, i), Aux.I(n: i), [v])
+              v = new_value(f, -1, Op.Field, r.field_type(ty_of(f.values[v].tb), i), Aux.I(n: i), [v])
               code.push(v)
             }
           }
@@ -2813,7 +2813,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
       }
     }
     if wi < 0 || ui < wi {
-      f.values[w].pad = -1
+      f.values[w].pi = with_pad(f.values[w].pi, -1)
       continue
     }
     let between = f.blocks[bl].instrs[wi + 1..ui]
@@ -2850,7 +2850,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
       }
     }
     if !ok {
-      f.values[w].pad = -1
+      f.values[w].pi = with_pad(f.values[w].pi, -1)
       continue
     }
     if between.is_empty() {
@@ -2875,7 +2875,7 @@ fn (var r: Rc) sink_landings(var f: Func) {
         args.push(copies.get(a) ?? a)
       }
       let x = f.values[v]
-      let cv = new_value(f, -1, x.op, x.ty, x.aux, args)
+      let cv = new_value(f, -1, x.op, ty_of(x.tb), x.aux, args)
       copies[v] = cv
       pad_code.push(cv)
     }
@@ -2903,7 +2903,7 @@ fn edge_prepend(var f: Func, e: Int, code: List[Int]) {
   let to = f.edges[e].to
   if f.blocks[to].preds.len() == 1 && f.edges[e].args.is_empty() && f.blocks[to].params.is_empty() {
     for v in code {
-      f.values[v].block = to
+      f.values[v].tb = with_block(f.values[v].tb, to)
     }
     var ins = code
     for v in f.blocks[to].instrs {
@@ -2914,7 +2914,7 @@ fn edge_prepend(var f: Func, e: Int, code: List[Int]) {
   }
   let n = f.new_block()
   for v in code {
-    f.values[v].block = n
+    f.values[v].tb = with_block(f.values[v].tb, n)
   }
   split_edge(f, e, n, code)
 }
@@ -2928,7 +2928,7 @@ fn prune_landings(var f: Func) {
     var sites: Map[Int, List[Int]] = {}
     for bl in f.blocks {
       for v in bl.instrs {
-        let p = f.values[v].pad
+        let p = pad_of(f.values[v].pi)
         if p >= 0 {
           var s = sites.get(p) ?? []
           s.push(v)
@@ -2943,7 +2943,7 @@ fn prune_landings(var f: Func) {
         continue
       }
       let u = f.values[t].args[0]
-      if f.values[u].op != Op.Call || aux_name(f.values[u].aux) != "rt.landing" || f.values[u].block != bl {
+      if f.values[u].op != Op.Call || aux_name(f.values[u].aux) != "rt.landing" || block_of(f.values[u].tb) != bl {
         continue
       }
       let pad = f.values[t].succs[0]
@@ -2952,7 +2952,7 @@ fn prune_landings(var f: Func) {
         continue
       }
       for v in sites.get(u) ?? [] {
-        f.values[v].pad = -1
+        f.values[v].pi = with_pad(f.values[v].pi, -1)
       }
       let pto = f.edges[pad].to
       var preds: List[Int] = []
@@ -3044,7 +3044,7 @@ fn merge_jumps(var f: Func) {
       // every jump but the last block's is dropped
       let m = if i + 1 < chain.len() { tin.len() - 1 } else { tin.len() }
       for (j, v) in tin.indexed() {
-        f.values[v].block = bl
+        f.values[v].tb = with_block(f.values[v].tb, bl)
         for e in f.values[v].succs {
           f.edges[e].from = bl
         }
@@ -3073,7 +3073,7 @@ fn (var r: Rc) movable(f: Func, v: Int, live: Set[Int]) -> Bool {
   if x.op != Op.Payload || x.args.len() != 1 {
     return false
   }
-  let et = f.values[x.args[0]].ty
+  let et = ty_of(f.values[x.args[0]].tb)
   if et < 0 || r.types[et].kind != Kind.Enum {
     return false
   }

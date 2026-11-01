@@ -219,7 +219,7 @@ fn (g: G) step_of(iv: Int, a: Int) -> (Int, Bool) {
     return (0, true)
   }
   let x = g.f.values[a]
-  if (x.op != ssa.Op.Add && x.op != ssa.Op.Sub) || g.kind(x.ty) != ssa.Kind.Int {
+  if (x.op != ssa.Op.Add && x.op != ssa.Op.Sub) || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return (0, false)
   }
   let swap = x.op == ssa.Op.Add && x.args[1] == iv
@@ -241,7 +241,7 @@ fn (g: G) step_of(iv: Int, a: Int) -> (Int, Bool) {
 /// index is the parameter's, or -1; the list is -1 when none.
 fn (g: G) stable_list(xs: Int, h: Int, body: List[Bool], latches: List[Int]) -> (Int, Int) {
   let l = g.strip_set(xs)
-  if !body[g.f.values[l].block] {
+  if !body[ssa.block_of(g.f.values[l].tb)] {
     return (l, -1)
   }
   var k = -1
@@ -276,7 +276,7 @@ fn (g: G) strip_set(v0: Int) -> Int {
 /// buffer only; -1 when unknown (inPlace).
 fn (g: G) in_place_buf(v0: Int, root: Int, h: Int, body: List[Bool], var seen: Map[Int, Bool]) -> Int {
   let v = g.strip_set(v0)
-  let vb = g.f.values[v].block
+  let vb = ssa.block_of(g.f.values[v].tb)
   if v == root || !body[vb] || vb == h || !g.is_param(v) {
     if v == root {
       return root

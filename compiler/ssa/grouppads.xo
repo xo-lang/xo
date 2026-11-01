@@ -78,9 +78,9 @@ fn (var r: Rc) group_pads(var f: Func) {
       let (root, comp) = site.get(g) ?? (-1, -1)
       var paths: List[Str] = []
       if comp >= 0 {
-        r.pad_cover(root, ".${comp}", r.field_type(f.values[root].ty, comp), ks, paths)
+        r.pad_cover(root, ".${comp}", r.field_type(ty_of(f.values[root].tb), comp), ks, paths)
       } else {
-        r.pad_cover(root, "", f.values[root].ty, ks, paths)
+        r.pad_cover(root, "", ty_of(f.values[root].tb), ks, paths)
       }
       if paths.len() < (nrel.get(g) ?? 0) {
         regroup[g] = paths
@@ -115,7 +115,7 @@ fn (var r: Rc) group_pads(var f: Func) {
               continue
             }
             let i = Int.parse(s) ?? 0
-            w = new_value(f, bl, Op.Field, r.field_type(f.values[w].ty, i), Aux.I(n: i), [w])
+            w = new_value(f, bl, Op.Field, r.field_type(ty_of(f.values[w].tb), i), Aux.I(n: i), [w])
             out.push(w)
             at[pre] = w
           }

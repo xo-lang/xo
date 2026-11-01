@@ -97,7 +97,7 @@ fn (var b: Builder) with_budget(x: Expr, fo: Int) -> Int {
   let r = b.s.f.add(b.s.cur, Op.CallValue, rt, Aux.None, [fv])
   let u = b.s.f.add(b.s.cur, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
   // a fault in f closes the scope and goes on (decision 0085)
-  b.s.f.values[r].pad = u
+  b.s.f.values[r].pi = with_pad(b.s.f.values[r].pi, u)
   let join = b.new_block()
   let res = b.s.f.add_param(join, nt)
   let ei = b.m.variant_index(nt, "Err")

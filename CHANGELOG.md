@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Compiler memory (decision 0448 stage 3): `ssa.Value` is two words smaller
+  (11, was 13): `pad` and `inl` share a word, as do `ty` and `block`. Output
+  unchanged. linux/arm64 self build (--ab, 3 rounds): wall 0.992, CPU 0.994,
+  max RSS 0.984.
 - Compiler diagnostics (decision 0448): each emit part sets the memory label
   `emit start K` as it starts, so `XO_PROF_HEAP_AT="emit start K"` profiles
   the heap at a chosen point in emit's peak.

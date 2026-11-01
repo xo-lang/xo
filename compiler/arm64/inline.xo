@@ -540,7 +540,7 @@ fn devirtualize(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) {
       // and one that catches its faults (Map.update's closure with a var
       // parameter) only where the call lands: inlined, a fault in the
       // copy goes to that landing (decision 0317)
-      if ci >= 0 && m.funcs[ci].indirect && (!m.funcs[ci].catches || x.pad >= 0) {
+      if ci >= 0 && m.funcs[ci].indirect && (!m.funcs[ci].catches || ssa.pad_of(x.pi) >= 0) {
         f.values[v].op = ssa.Op.Call
         f.values[v].aux = ssa.Aux.S(s: name)
       }
@@ -770,11 +770,11 @@ fn fold_consts(var f: ssa.Func, types: List[ssa.SType]) {
     for bi in 0..f.blocks.len() {
       for v in f.blocks[bi].instrs {
         let x = f.values[v]
-        if x.pad >= 0 || x.ty < 0 || x.ty >= types.len() || types[x.ty].kind != ssa.Kind.Int || types[x.ty].bits != 0 {
+        if ssa.pad_of(x.pi) >= 0 || ssa.ty_of(x.tb) < 0 || ssa.ty_of(x.tb) >= types.len() || types[ssa.ty_of(x.tb)].kind != ssa.Kind.Int || types[ssa.ty_of(x.tb)].bits != 0 {
           continue
         }
         if let Some(r) = fold_value(f, x) {
-          f.values[v] = ssa.Value{op: ssa.Op.Const, ty: x.ty, aux: ssa.Aux.I(n: r), block: x.block}
+          f.values[v] = ssa.Value{op: ssa.Op.Const, tb: ssa.pack_tb(ssa.ty_of(x.tb), ssa.block_of(x.tb)), aux: ssa.Aux.I(n: r)}
           again = true
         }
       }
@@ -788,10 +788,10 @@ fn param_source(f: ssa.Func, v0: Int) -> Int {
   var v = v0
   for _ in 0..8 {
     let x = f.values[v]
-    if x.op != ssa.Op.Param || x.block <= 0 || f.blocks[x.block].preds.len() != 1 {
+    if x.op != ssa.Op.Param || ssa.block_of(x.tb) <= 0 || f.blocks[ssa.block_of(x.tb)].preds.len() != 1 {
       return v
     }
-    let bl = f.blocks[x.block]
+    let bl = f.blocks[ssa.block_of(x.tb)]
     var k = -1
     for (i, p) in bl.params.indexed() {
       if p == v {
@@ -884,7 +884,7 @@ fn fold_value(f: ssa.Func, x: ssa.Value) -> Int? {
 /// the same shape after lowering).
 fn tail_at(f: ssa.Func, v: Int) -> Bool {
   let x = f.values[v]
-  if x.pad >= 0 || x.block < 0 {
+  if ssa.pad_of(x.pi) >= 0 || ssa.block_of(x.tb) < 0 {
     return false
   }
   // a closure literal passed on: inlined, the callee's call of it
@@ -895,7 +895,7 @@ fn tail_at(f: ssa.Func, v: Int) -> Bool {
       return false
     }
   }
-  let ins = f.blocks[x.block].instrs
+  let ins = f.blocks[ssa.block_of(x.tb)].instrs
   let n = ins.len()
   if n < 2 || ins[n - 2] != v {
     return false
@@ -938,7 +938,7 @@ fn find_call(f: ssa.Func, m: ssa.Module, small: Map[Str, Bool], tailbig: Map[Str
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
-      if x.pad < 0 {
+      if ssa.pad_of(x.pi) < 0 {
         return v
       }
       if m.funcs[ci].results.len() == 1 {
@@ -963,7 +963,7 @@ fn find_zero_join(f: ssa.Func, by_name: Map[Str, Int]) -> Int {
     }
     for v in b.instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || x.pad >= 0 || !aux_str(x.aux).starts_with("zero_val.") || !by_name.contains(aux_str(x.aux)) {
+      if x.op != ssa.Op.Call || ssa.pad_of(x.pi) >= 0 || !aux_str(x.aux).starts_with("zero_val.") || !by_name.contains(aux_str(x.aux)) {
         continue
       }
       for e in f.values[t].succs {
@@ -991,7 +991,7 @@ fn find_zero_ret(f: ssa.Func, by_name: Map[Str, Int]) -> Int {
     }
     for v in b.instrs {
       let x = f.values[v]
-      if x.op != ssa.Op.Call || x.pad >= 0 || !aux_str(x.aux).starts_with("zero_val.") || !by_name.contains(aux_str(x.aux)) {
+      if x.op != ssa.Op.Call || ssa.pad_of(x.pi) >= 0 || !aux_str(x.aux).starts_with("zero_val.") || !by_name.contains(aux_str(x.aux)) {
         continue
       }
       for (k, a) in f.values[t].args.indexed() {
@@ -1027,7 +1027,7 @@ fn find_closure_call(f: ssa.Func, m: ssa.Module, padded: Map[Str, Bool], tailbig
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
-      if x.pad < 0 {
+      if ssa.pad_of(x.pi) < 0 {
         return v
       }
       if m.funcs[ci].results.len() == 1 {
@@ -1058,7 +1058,7 @@ fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], tailbig: Ma
       if ci >= 0 && m.funcs[ci].catches && !catch_inlinable(x, m.funcs[ci], m) {
         continue
       }
-      if x.pad < 0 {
+      if ssa.pad_of(x.pi) < 0 {
         return v
       }
       if m.funcs[ci].results.len() == 1 {
@@ -1079,7 +1079,7 @@ fn find_loop_call(f: ssa.Func, m: ssa.Module, loopy: Map[Str, Bool], tailbig: Ma
 /// landing does the same. Otherwise a fault in the copy would run
 /// g's cleanup and return normally into the caller.
 fn catch_inlinable(x: ssa.Value, g: ssa.Func, m: ssa.Module) -> Bool {
-  if x.pad < 0 || g.unwind_exit < 0 {
+  if ssa.pad_of(x.pi) < 0 || g.unwind_exit < 0 {
     return false
   }
   // its parameters (but the closure, parameter 0) hold no heap memory:
@@ -1089,7 +1089,7 @@ fn catch_inlinable(x: ssa.Value, g: ssa.Func, m: ssa.Module) -> Bool {
   // (TestGoldenRun/maps under XO_INLINE_STRICT=1: nested.update's
   // fn(var inner))
   for (i, p) in g.blocks[0].params.indexed() {
-    if i >= 1 && m.heap(g.values[p].ty) {
+    if i >= 1 && m.heap(ssa.ty_of(g.values[p].tb)) {
       return false
     }
   }
@@ -1112,10 +1112,10 @@ fn catch_inlinable(x: ssa.Value, g: ssa.Func, m: ssa.Module) -> Bool {
   for bl in g.blocks {
     for v in bl.instrs {
       let y = g.values[v]
-      if y.pad < 0 {
+      if ssa.pad_of(y.pi) < 0 {
         continue
       }
-      if !hands_back(g, y.pad) {
+      if !hands_back(g, ssa.pad_of(y.pi)) {
         return false
       }
     }
@@ -1163,7 +1163,7 @@ struct Pending {
 }
 
 fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
-  let b = f.values[call].block
+  let b = ssa.block_of(f.values[call].tb)
   let ins = f.blocks[b].instrs
   var at = -1
   for (i, v) in ins.indexed() {
@@ -1176,7 +1176,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   let rest = ins[at + 1..ins.len()]
   f.blocks[b].instrs = ins[0..at]
   for v in rest {
-    f.values[v].block = cont
+    f.values[v].tb = ssa.with_block(f.values[v].tb, cont)
     for e in f.values[v].succs {
       f.edges[e].from = cont
     }
@@ -1189,7 +1189,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   if res.len() == 1 {
     repl = res[0]
   } else {
-    repl = f.add(cont, ssa.Op.Tuple, f.values[call].ty, ssa.Aux.None, res)
+    repl = f.add(cont, ssa.Op.Tuple, ssa.ty_of(f.values[call].tb), ssa.Aux.None, res)
   }
   for v in rest {
     f.blocks[cont].instrs.push(v)
@@ -1199,7 +1199,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   // the call's inline site, and the callee's own sites under it
   // (decision 0239: the line tables' inlined frames)
   let site = f.inl_sites.len()
-  f.inl_sites.push(ssa.InlSite{callee: callee.name, file: callee.file, call_line: f.values[call].line, parent: f.values[call].inl})
+  f.inl_sites.push(ssa.InlSite{callee: callee.name, file: callee.file, call_line: f.values[call].line, parent: ssa.inl_of(f.values[call].pi)})
   var smap: List[Int] = []
   for cs in callee.inl_sites {
     smap.push(f.inl_sites.len())
@@ -1227,11 +1227,11 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
     bm[cb] = nb
     if cb != 0 {
       for p in callee.blocks[cb].params {
-        vm[p] = f.add_param(nb, callee.values[p].ty)
+        vm[p] = f.add_param(nb, ssa.ty_of(callee.values[p].tb))
       }
     }
   }
-  let pad = f.values[call].pad
+  let pad = ssa.pad_of(f.values[call].pi)
   var pads: List[(Int, Int)] = []
   var edges: List[Pending] = []
   for cb in order {
@@ -1260,25 +1260,25 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
           for a in x.args {
             args.push(vm.get(a) ?? a)
           }
-          let nv = f.add(nb, x.op, x.ty, x.aux, args)
+          let nv = f.add(nb, x.op, ssa.ty_of(x.tb), x.aux, args)
           f.values[nv].pos = x.pos
           // the callee's own line in its file, at its site (decision
           // 0239); a value with no line, or of generated code, takes the
           // call's
           if x.line != 0 && !callee.file.is_empty() {
             f.values[nv].line = x.line
-            f.values[nv].inl = if x.inl >= 0 && x.inl < smap.len() { smap[x.inl] } else { site }
+            f.values[nv].pi = ssa.with_inl(f.values[nv].pi, if ssa.inl_of(x.pi) >= 0 && ssa.inl_of(x.pi) < smap.len() { smap[ssa.inl_of(x.pi)] } else { site })
           } else {
             f.values[nv].line = f.values[call].line
-            f.values[nv].inl = f.values[call].inl
+            f.values[nv].pi = ssa.with_inl(f.values[nv].pi, ssa.inl_of(f.values[call].pi))
           }
           // a fault in the copy lands where one in the call would
           // (decision 0085), unless the callee gave it a landing of its own
           // (decision 0256): then the copy of that check, set below once
           // every value is copied (a check comes after what it guards)
-          f.values[nv].pad = pad
-          if x.pad >= 0 {
-            pads.push((nv, x.pad))
+          f.values[nv].pi = ssa.with_pad(f.values[nv].pi, pad)
+          if ssa.pad_of(x.pi) >= 0 {
+            pads.push((nv, ssa.pad_of(x.pi)))
           }
           vm[v] = nv
         }
@@ -1298,7 +1298,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
     // (the caller writes the new value only after the call returns): its
     // own landings, which only reach its unwind exit (catch_inlinable),
     // are the call's landing in the copy (decision 0317)
-    f.values[nv].pad = if callee.catches { pad } else { vm.get(cp) ?? pad }
+    f.values[nv].pi = ssa.with_pad(f.values[nv].pi, if callee.catches { pad } else { vm.get(cp) ?? pad })
   }
   for d in callee.dbinds {
     if let Some(nv) = vm.get(d.value) {

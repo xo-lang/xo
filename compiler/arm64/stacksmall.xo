@@ -129,10 +129,10 @@ fn const_through(f: ssa.Func, v0: Int, fx: SsFacts) -> Int {
         _ => -1
       }
     }
-    if x.op != ssa.Op.Param || x.block < 0 {
+    if x.op != ssa.Op.Param || ssa.block_of(x.tb) < 0 {
       return -1
     }
-    let bl = f.blocks[x.block]
+    let bl = f.blocks[ssa.block_of(x.tb)]
     let k = bl.params.index_of(v) ?? -1
     if k < 0 || bl.preds.len() != 1 {
       return -1

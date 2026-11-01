@@ -741,7 +741,7 @@ fn (var b: Builder) declare_exports_of(mi: Int, bare: Bool) {
     b.m.funcs[fi].entry = true
     b.m.funcs[fi].export = if bare { n } else { "xo_x_${n}" }
     for p in b.m.funcs[fi].blocks[0].params {
-      let t = b.m.funcs[fi].values[p].ty
+      let t = ty_of(b.m.funcs[fi].values[p].tb)
       if !(b.tkind(t) is Kind.Int | Kind.Float) {
         b.unsupported("a C ABI export with a `${b.m.types[t].name}` parameter")
       }
@@ -2380,7 +2380,7 @@ fn (var b: Builder) main_wrapper(mf: Int, et: Int) {
   b.m.rename_func(mf, "main.run")
   var params: List[Int] = []
   for p in b.m.funcs[mf].blocks[0].params {
-    params.push(b.m.funcs[mf].values[p].ty)
+    params.push(ty_of(b.m.funcs[mf].values[p].tb))
   }
   let unit = b.unit_t()
   let fi = b.m.new_func("main", params, [unit])
@@ -2683,14 +2683,14 @@ fn (var b: Builder) dead() {
 }
 
 fn (var b: Builder) write_var(vo: Int, v: Int) {
-  if b.s.pending >= 0 && b.s.f.values[b.s.pending].block == b.s.cur && !b.s.pending_defs.contains(vo) {
+  if b.s.pending >= 0 && block_of(b.s.f.values[b.s.pending].tb) == b.s.cur && !b.s.pending_defs.contains(vo) {
     // the landing of the pending operation reads what the variable held
     // before it (flush_landing)
     b.s.pending_defs[vo] = b.s.defs.get(def_key(vo, b.s.cur)) ?? -1
   }
   b.s.defs[def_key(vo, b.s.cur)] = v
   if !b.s.var_type.contains(vo) {
-    b.s.var_type[vo] = b.s.f.values[v].ty
+    b.s.var_type[vo] = ty_of(b.s.f.values[v].tb)
   }
   b.debug_bind(vo, v, b.s.line)
 }
@@ -2712,7 +2712,7 @@ fn (var b: Builder) debug_bind(vo: Int, v: Int, line: Int) {
     }
     let col = if o.col > 4095 { 4095 } else { o.col }
     k = b.s.f.dvars.len()
-    b.s.f.dvars.push(DVar{name: name, ty: b.s.f.values[v].ty, line: o.line * 4096 + col, param: o.local is "param" | "var-param" | "recv" | "var-recv"})
+    b.s.f.dvars.push(DVar{name: name, ty: ty_of(b.s.f.values[v].tb), line: o.line * 4096 + col, param: o.local is "param" | "var-param" | "recv" | "var-recv"})
     b.s.dvar_of[vo] = k
   }
   b.s.f.dbinds.push(DBind{dvar: k, value: v, line: line})
@@ -2779,7 +2779,7 @@ fn (var b: Builder) new_param(bl: Int, vo: Int) -> Int {
 
 /// Fills the argument of parameter p of its block on every incoming edge.
 fn (var b: Builder) add_args(vo: Int, p: Int) {
-  let bl = b.s.f.values[p].block
+  let bl = block_of(b.s.f.values[p].tb)
   var idx = -1
   for (i, q) in b.s.f.blocks[bl].params.indexed() {
     if q == p {
@@ -2818,7 +2818,7 @@ fn (var b: Builder) read(vo: Int) -> Int {
 // Emission helpers
 
 fn (var b: Builder) vty(v: Int) -> Int {
-  b.s.f.values[v].ty
+  ty_of(b.s.f.values[v].tb)
 }
 
 fn (var b: Builder) vop(v: Int) -> Op {
@@ -3242,7 +3242,7 @@ fn (var b: Builder) check_then(callee: Str, cleanup: Cleanup) {
   let name = if b.conc { "rt.unwinding" } else { "rt.landing" }
   let u = b.s.f.add(b.s.cur, Op.Call, b.bool_t(), Aux.S(s: name), [])
   if w >= 0 && (b.vop(w) is Op.Call | Op.CallValue) {
-    b.s.f.values[w].pad = u
+    b.s.f.values[w].pi = with_pad(b.s.f.values[w].pi, u)
   }
   let (yes, no) = b.branch(u)
   b.s.f.land_rest[no] = true
@@ -3637,7 +3637,7 @@ fn (var b: Builder) helper_name(name0: Str, ts: List[Int], captures: Bool) -> (S
       have = b.m.funcs[fi].captures
     } else {
       for p in b.m.funcs[fi].blocks[0].params {
-        have.push(b.m.funcs[fi].values[p].ty)
+        have.push(ty_of(b.m.funcs[fi].values[p].tb))
       }
     }
     if have == ts {

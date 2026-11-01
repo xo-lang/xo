@@ -383,17 +383,17 @@ fn key_blocks(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_byte(' ')
     b.write_str(op_name(x.op))
     b.write_byte(' ')
-    b.write_str(tkey(tk, x.ty))
+    b.write_str(tkey(tk, ty_of(x.tb)))
     b.write_str(" [")
     write_ints(b, x.args)
     b.write_str("] ")
     key_aux(b, x.aux)
     b.write_byte(' ')
-    write_int(b, x.block)
+    write_int(b, block_of(x.tb))
     b.write_str(" [")
     write_ints(b, x.succs)
     b.write_str("] ")
-    write_int(b, x.pad)
+    write_int(b, pad_of(x.pi))
     b.write_byte(' ')
     write_int(b, x.line)
     b.write_byte(' ')
@@ -441,7 +441,7 @@ fn key_replayed(var b: BytesBuilder, f: Func, tk: List[Str]) {
     b.write_byte(' ')
     key_aux(b, x.aux)
     b.write_byte(' ')
-    b.write_str(tkey(tk, x.ty))
+    b.write_str(tkey(tk, ty_of(x.tb)))
     b.write_byte('\n')
   }
   for d in f.dvars {
@@ -643,7 +643,7 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
   e.uv(f.values.len())
   for x in f.values {
     e.name(op_name(x.op))
-    e.ty(m, x.ty)
+    e.ty(m, ty_of(x.tb))
     e.ints(x.args)
     match x.aux {
       None => e.uv(0)
@@ -670,10 +670,10 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
         e.sv(field)
       }
     }
-    e.sv(x.block)
-    e.sv(x.pad)
+    e.sv(block_of(x.tb))
+    e.sv(pad_of(x.pi))
     e.sv(x.line)
-    e.sv(x.inl)
+    e.sv(inl_of(x.pi))
     e.ints(x.succs)
     e.str(x.pos)
   }
@@ -930,7 +930,7 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
     if !r.ok {
       return None
     }
-    f.values.push(Value{op: op, ty: ty, args: args, aux: aux, block: block, succs: succs, pos: pos, pad: pad, line: line, inl: inl})
+    f.values.push(Value{op: op, tb: pack_tb(ty, block), args: args, aux: aux, succs: succs, pos: pos, pi: pack_pi(pad, inl), line: line})
   }
   let ne = r.uv()
   if !r.ok || ne > d.len() {

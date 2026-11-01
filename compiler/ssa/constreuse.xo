@@ -38,22 +38,22 @@ fn const_reads(f: Func) -> List[CRead] {
     }
     let cmp = f.values[t].args[0]
     let cv = f.values[cmp]
-    if cv.op != Op.Ne || cv.block != b || cv.args.len() != 2 || const_int(f, cv.args[1]) != Some(0) {
+    if cv.op != Op.Ne || block_of(cv.tb) != b || cv.args.len() != 2 || const_int(f, cv.args[1]) != Some(0) {
       continue
     }
     let tw = cv.args[0]
     let tv = f.values[tw]
-    if tv.op != Op.Call || tv.block != b || aux_name(tv.aux) != "rt.slot_load" || tv.args.len() != 3 || const_int(f, tv.args[1]) != Some(CONST_TABLE_WORD) {
+    if tv.op != Op.Call || block_of(tv.tb) != b || aux_name(tv.aux) != "rt.slot_load" || tv.args.len() != 3 || const_int(f, tv.args[1]) != Some(CONST_TABLE_WORD) {
       continue
     }
     let w = tv.args[0]
     let wv = f.values[w]
-    if wv.op != Op.Call || wv.block != b || aux_name(wv.aux) != "rt.mem_load" || wv.args.is_empty() {
+    if wv.op != Op.Call || block_of(wv.tb) != b || aux_name(wv.aux) != "rt.mem_load" || wv.args.is_empty() {
       continue
     }
     let sw = wv.args[0]
     let sv = f.values[sw]
-    if sv.op != Op.Call || sv.block != b || aux_name(sv.aux) != "rt.static_word" || sv.args.is_empty() || const_int(f, sv.args[0]) != Some(CONST_SVC_WORD) {
+    if sv.op != Op.Call || block_of(sv.tb) != b || aux_name(sv.aux) != "rt.static_word" || sv.args.is_empty() || const_int(f, sv.args[0]) != Some(CONST_SVC_WORD) {
       continue
     }
     // the slot's state read and the built list's load: t's other users
@@ -65,7 +65,7 @@ fn const_reads(f: Func) -> List[CRead] {
     var inner: List[Int] = []
     var ok = true
     for (vi, x) in f.values.indexed() {
-      if x.block < 0 || x.args.is_empty() || x.args[0] != tw || vi == cmp {
+      if block_of(x.tb) < 0 || x.args.is_empty() || x.args[0] != tw || vi == cmp {
         continue
       }
       if x.op != Op.Call {
@@ -74,14 +74,14 @@ fn const_reads(f: Func) -> List[CRead] {
       }
       let n = aux_name(x.aux)
       if n == "rt.slot_load" && x.args.len() == 3 {
-        inner.push(x.block)
+        inner.push(block_of(x.tb))
         match const_int(f, x.args[1]) {
           Some(k) => idx = k
           None => ok = false
         }
       } else if n == "rt.mem_load" {
         // the built path: its block jumps to the join with it
-        let jt = f.term(x.block)
+        let jt = f.term(block_of(x.tb))
         if jt < 0 || f.values[jt].op != Op.Jump || f.values[jt].succs.len() != 1 {
           ok = false
           continue
@@ -93,7 +93,7 @@ fn const_reads(f: Func) -> List[CRead] {
           ok = false
           continue
         }
-        inner.push(x.block)
+        inner.push(block_of(x.tb))
         join = to
         res = f.blocks[to].params[pi]
         args = f.edges[e].args
@@ -104,7 +104,7 @@ fn const_reads(f: Func) -> List[CRead] {
     // the loads used only within the read
     for v in [sw, w] {
       for (vi, x) in f.values.indexed() {
-        if x.block >= 0 && x.args.contains(v) && vi != w && vi != tw {
+        if block_of(x.tb) >= 0 && x.args.contains(v) && vi != w && vi != tw {
           ok = false
         }
       }
@@ -112,7 +112,7 @@ fn const_reads(f: Func) -> List[CRead] {
     // the other arguments are the builder's variables, defined before
     // the read: the start block can pass them too
     for (k, a) in args.indexed() {
-      if k != pi && (inner.contains(f.values[a].block) || a == tw || a == w || a == sw || a == cmp) {
+      if k != pi && (inner.contains(block_of(f.values[a].tb)) || a == tw || a == w || a == sw || a == cmp) {
         ok = false
       }
     }
@@ -158,9 +158,9 @@ pub fn reuse_const_reads(var f: Func) -> Bool {
       }
     }
     for v in r.loads {
-      f.values[v].block = -1
+      f.values[v].tb = with_block(f.values[v].tb, -1)
     }
-    f.values[r.br].block = -1
+    f.values[r.br].tb = with_block(f.values[r.br].tb, -1)
     f.blocks[r.start].instrs = ins
     var jargs = r.args
     jargs[r.pi] = from
@@ -170,7 +170,7 @@ pub fn reuse_const_reads(var f: Func) -> Bool {
     return false
   }
   for vi in 0..f.values.len() {
-    if f.values[vi].block < 0 {
+    if block_of(f.values[vi].tb) < 0 {
       continue
     }
     var args: List[Int] = []
@@ -312,8 +312,8 @@ pub fn cache_const_reads(var f: Func) -> Bool {
       continue
     }
     let e0 = preheader(f, idom, h)
-    let bt = f.values[r.loads[3]].ty
-    let lt = f.values[r.res].ty
+    let bt = ty_of(f.values[r.loads[3]].tb)
+    let lt = ty_of(f.values[r.res].tb)
     let seen = f.add_param(h, bt)
     let list = f.add_param(h, lt)
     let p = f.edges[e0].from
@@ -415,7 +415,7 @@ fn split_read(var f: Func, r: CRead, p: Pre) -> Bool {
   let s2 = f.new_block()
   f.blocks[s2].instrs = rest
   for v in rest {
-    f.values[v].block = s2
+    f.values[v].tb = with_block(f.values[v].tb, s2)
   }
   // the read's branch now leaves the new block
   for e in f.values[r.br].succs {

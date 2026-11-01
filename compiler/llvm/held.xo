@@ -132,11 +132,11 @@ fn (var g: Gen) stable(v: Int) -> Bool {
         }
       }
     }
-    Payload | Field => r = g.is_agg(x.ty) && g.stable(x.args[0])
-    Unbox => r = g.is_agg(x.ty) && g.root_borrowed(x.args[0])
+    Payload | Field => r = g.is_agg(ssa.ty_of(x.tb)) && g.stable(x.args[0])
+    Unbox => r = g.is_agg(ssa.ty_of(x.tb)) && g.root_borrowed(x.args[0])
     Call => {
       if aux_str(x.aux) == "list.index" {
-        r = g.is_agg(x.ty) && g.kind(x.ty) != ssa.Kind.Unit && g.root_borrowed(x.args[0])
+        r = g.is_agg(ssa.ty_of(x.tb)) && g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Unit && g.root_borrowed(x.args[0])
       }
     }
     _ => {}
@@ -234,9 +234,9 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
           }
           _ => {}
         }
-        if x.pad >= 0 {
+        if ssa.pad_of(x.pi) >= 0 {
           // the Go code's pad shares st's memory unless a call copied it
-          landed[x.pad] = if pad_own { pad } else { st }
+          landed[ssa.pad_of(x.pi)] = if pad_own { pad } else { st }
         }
       }
       if g.held.changed {
@@ -344,7 +344,7 @@ fn (var g: Gen) find_mem_only() {
     for v in g.f.blocks[b].instrs {
       let x = g.f.values[v]
       if x.op == ssa.Op.Field && g.f.values[x.args[0]].op == ssa.Op.Call {
-        let m = g.mem_of(g.ll(x.ty))
+        let m = g.mem_of(g.ll(ssa.ty_of(x.tb)))
         if m >= 0 {
           cands[v] = m
         }

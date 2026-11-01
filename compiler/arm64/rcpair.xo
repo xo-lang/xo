@@ -156,7 +156,7 @@ fn sink_retains(var f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int]) -> Bool 
       for to in tos {
         // a copy of the retain (its landing and line too) at to's start
         var c = f.values[rv]
-        c.block = to
+        c.tb = ssa.with_block(c.tb, to)
         let nv = f.values.len()
         f.values.push(c)
         f.blocks[to].instrs = [nv] + f.blocks[to].instrs
@@ -196,7 +196,7 @@ fn sink_past(f: ssa.Func, m: ssa.Module, by_name: Map[Str, Int], x: ssa.Value, a
       }
       continue
     }
-    let ty = f.values[v].ty
+    let ty = ssa.ty_of(f.values[v].tb)
     if ty < 0 || !(m.types[ty].kind is ssa.Kind.Int | ssa.Kind.Bool | ssa.Kind.Float | ssa.Kind.Unit) {
       return false
     }
@@ -220,13 +220,13 @@ fn sink_root_ok(f: ssa.Func, by_name: Map[Str, Int], a0: Int, depth: Int) -> Boo
       return true
     }
     if x.op == ssa.Op.Param {
-      if x.block == 0 {
+      if ssa.block_of(x.tb) == 0 {
         return true
       }
       if depth <= 0 {
         return false
       }
-      let ps = f.blocks[x.block].params
+      let ps = f.blocks[ssa.block_of(x.tb)].params
       var k = -1
       for (i, p) in ps.indexed() {
         if p == a {
@@ -236,7 +236,7 @@ fn sink_root_ok(f: ssa.Func, by_name: Map[Str, Int], a0: Int, depth: Int) -> Boo
       if k < 0 {
         return false
       }
-      for e in f.blocks[x.block].preds {
+      for e in f.blocks[ssa.block_of(x.tb)].preds {
         let ea = f.edges[e].args
         if k >= ea.len() {
           return false
@@ -328,8 +328,8 @@ fn imm_post(f: ssa.Func, v: Int, depth: Int, walking: List[Int]) -> Bool {
       return false
     }
     Param => {
-      if x.block <= 0 || walking.contains(v) {
-        return x.block > 0
+      if ssa.block_of(x.tb) <= 0 || walking.contains(v) {
+        return ssa.block_of(x.tb) > 0
       }
       let (pi, es) = param_edges(f, v)
       if pi < 0 || es.is_empty() {
@@ -361,7 +361,7 @@ fn payload_imm(f: ssa.Func, o: Int, tg: Int, fd: Int, depth: Int, walking: List[
     }
     return fd < x.args.len() && imm_post(f, x.args[fd], depth + 1, walking)
   }
-  if x.op == ssa.Op.Param && x.block > 0 {
+  if x.op == ssa.Op.Param && ssa.block_of(x.tb) > 0 {
     if walking.contains(o) {
       return true
     }
@@ -383,7 +383,7 @@ fn payload_imm(f: ssa.Func, o: Int, tg: Int, fd: Int, depth: Int, walking: List[
 /// The index of block parameter v among its block's parameters and the
 /// block's incoming edges.
 fn param_edges(f: ssa.Func, v: Int) -> (Int, List[Int]) {
-  let b = f.values[v].block
+  let b = ssa.block_of(f.values[v].tb)
   var pi = -1
   for (i, p) in f.blocks[b].params.indexed() {
     if p == v {

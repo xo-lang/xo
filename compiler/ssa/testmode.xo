@@ -1000,7 +1000,7 @@ fn (var b: Builder) is_expect_compare(e: Expr) -> Bool {
 fn (var b: Builder) real_fs_wrapper(memfs: Int, real: Int) -> Str {
   var ps: List[Int] = []
   for p in b.m.funcs[memfs].blocks[0].params {
-    ps.push(b.m.funcs[memfs].values[p].ty)
+    ps.push(ty_of(b.m.funcs[memfs].values[p].tb))
   }
   b.gen_func("xo.testfs[${b.m.funcs[memfs].name}]", ps, b.m.funcs[memfs].results, Gen.TestFs(memfs: memfs, real: real))
 }

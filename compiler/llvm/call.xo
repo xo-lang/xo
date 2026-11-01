@@ -45,7 +45,7 @@ fn (var g: Gen) call(v: Int) {
   let x = g.f.values[v]
   let name = aux_str(x.aux)
   let args = x.args
-  let vt = x.ty
+  let vt = ssa.ty_of(x.tb)
   // the alias scopes of a list access (decision 0211, noalias.xo)
   let md = g.sc_md(v)
   let callee = g.by_name.get(name) ?? -1
@@ -544,7 +544,7 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
   let kept = g.kept_results(callee)
   let results = g.m.funcs[callee].results
   if kept.len() == results.len() {
-    if g.kind(x.ty) == ssa.Kind.Unit {
+    if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Unit {
       g.raise("", c)
       return
     }
@@ -1498,7 +1498,7 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
         _ => 8
       }
       let p = g.raw_at(x.args[0], x.args[1])
-      if w == 8 && g.kind(x.ty) is ssa.Kind.List | ssa.Kind.Handle {
+      if w == 8 && g.kind(ssa.ty_of(x.tb)) is ssa.Kind.List | ssa.Kind.Handle {
         // a word read as a list (ssa show.xo const_read)
         g.set(v, "load ptr, ptr ${p}, align 8")
       } else if w == 8 {
@@ -1604,7 +1604,7 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       let w1 = g.def("extractvalue %xo.str ${s}, 1")
       let lo = g.op(x.args[1])
       let hi = g.op(x.args[2])
-      g.emit("call void ${g.rc_fn("dup", x.ty)}(ptr ${obj})")
+      g.emit("call void ${g.rc_fn("dup", ssa.ty_of(x.tb))}(ptr ${obj})")
       let n = g.def("sub i64 ${hi}, ${lo}")
       let off = g.def("lshr i64 ${w1}, 32")
       let off2 = g.def("add i64 ${off}, ${lo}")
@@ -1614,7 +1614,7 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
     }
     "rt.obj_at" => {
       let p = g.raw_ptr(x.args[0])
-      g.emit("call void ${g.rc_fn("dup", x.ty)}(ptr ${p})")
+      g.emit("call void ${g.rc_fn("dup", ssa.ty_of(x.tb))}(ptr ${p})")
       g.alias(v, p)
     }
     "rt.str_at" => {
@@ -1872,7 +1872,7 @@ fn (var g: Gen) rt_call(v: Int) {
   }
   var ret = "void"
   var slot = ""
-  match g.kind(x.ty) {
+  match g.kind(ssa.ty_of(x.tb)) {
     Unit => {}
     Int | Bool => ret = "i64"
     Float => ret = "double"
@@ -1885,7 +1885,7 @@ fn (var g: Gen) rt_call(v: Int) {
       args.push("ptr ${slot}")
     }
     _ => {
-      g.fail("the runtime call `${name}` returns a `${g.m.types[x.ty].name}`")
+      g.fail("the runtime call `${name}` returns a `${g.m.types[ssa.ty_of(x.tb)].name}`")
       return
     }
   }
@@ -1914,7 +1914,7 @@ fn (var g: Gen) rt_call(v: Int) {
   if !export.is_empty() && ret == "ptr" {
     let r = g.tmp()
     g.raise(r, "i64 ${sym}(${args.join(", ")})${nounw}")
-    if g.kind(x.ty) == ssa.Kind.Str {
+    if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Str {
       // obj.xo's builders: the string object, its length in the slot
       let o = g.def("inttoptr i64 ${r} to ptr")
       let n = g.def("load i64, ptr ${slot}")
@@ -1926,7 +1926,7 @@ fn (var g: Gen) rt_call(v: Int) {
       let p = g.def("inttoptr i64 ${r} to ptr")
       let z = g.def("icmp eq i64 ${r}, 0")
       var none = ""
-      if g.kind(x.ty) == ssa.Kind.List {
+      if g.kind(ssa.ty_of(x.tb)) == ssa.Kind.List {
         none = g.empty_list()
       } else {
         none = g.zero_handle()
@@ -1938,7 +1938,7 @@ fn (var g: Gen) rt_call(v: Int) {
     return
   }
   let c = "${ret} ${sym}(${args.join(", ")})${nounw}"
-  match g.kind(x.ty) {
+  match g.kind(ssa.ty_of(x.tb)) {
     Unit => g.raise("", c)
     Bool => {
       let r = g.tmp()
@@ -1982,7 +1982,7 @@ fn platform_parts(name: Str) -> (Str, Str, Int) {
 fn (var g: Gen) platform_call(v: Int) {
   let x = g.f.values[v]
   let (os, sym, nfixed) = platform_parts(aux_str(x.aux))
-  let rk = g.kind(x.ty)
+  let rk = g.kind(ssa.ty_of(x.tb))
   if os == "cp" {
     // rt.sym_present (decision 0232): the weak symbol's address against
     // null (a function declaration, so a symbol with a C call
@@ -2036,14 +2036,14 @@ fn (var g: Gen) platform_call(v: Int) {
       }
     }
   }
-  let i32r = rk == ssa.Kind.Int && g.m.types[x.ty].bits == 32
+  let i32r = rk == ssa.Kind.Int && g.m.types[ssa.ty_of(x.tb)].bits == 32
   var ret = "void"
   match rk {
     Unit => {}
     Int => ret = if i32r { "i32" } else { "i64" }
     Float => ret = "double"
     _ => {
-      g.fail("the platform call `${sym}` returns a `${g.m.types[x.ty].name}`")
+      g.fail("the platform call `${sym}` returns a `${g.m.types[ssa.ty_of(x.tb)].name}`")
       return
     }
   }
@@ -2066,7 +2066,7 @@ fn (var g: Gen) platform_call(v: Int) {
     Int => {
       if i32r {
         let r = g.def(c)
-        let ext = if g.m.types[x.ty].unsigned { "zext" } else { "sext" }
+        let ext = if g.m.types[ssa.ty_of(x.tb)].unsigned { "zext" } else { "sext" }
         g.set(v, "${ext} i32 ${r} to i64")
       } else {
         g.set(v, c)

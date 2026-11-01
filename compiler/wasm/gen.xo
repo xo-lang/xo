@@ -1354,7 +1354,7 @@ fn (var g: Gen) find_susp() {
 fn (var g: Gen) args_key(f: ssa.Func, vs: List[Int]) -> Str {
   var b = StrBuilder.new()
   for v in vs {
-    for l in g.leaves(f.values[v].ty) {
+    for l in g.leaves(ssa.ty_of(f.values[v].tb)) {
       b.write(l)
       b.write(" ")
     }
@@ -1495,7 +1495,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   // other parameter: zero words, as the native entries pass
   var main_args = ""
   for p in mf.blocks[0].params {
-    for l in g.leaves(mf.values[p].ty) {
+    for l in g.leaves(ssa.ty_of(mf.values[p].tb)) {
       main_args = main_args + (if l == "f64" { "\n      f64.const 0" } else { "\n      ${l}.const 0" })
     }
   }
@@ -1515,7 +1515,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   }
   var start: List[Str] = []
   for p in mf.blocks[0].params {
-    let t = mf.values[p].ty
+    let t = ssa.ty_of(mf.values[p].tb)
     if !(g.kind(t) is ssa.Kind.Cap | ssa.Kind.Unit) && g.m.types[t].name != "xo.Os" {
       g.fail("main takes a `${g.m.types[t].name}`")
     }

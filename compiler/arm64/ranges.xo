@@ -69,7 +69,7 @@ fn (var g: G) compute_ranges(blocks: List[Int], idom: List[Int]) {
   for b in blocks {
     for v in g.f.blocks[b].instrs {
       let x = g.f.values[v]
-      if (x.op == ssa.Op.Rem || x.op == ssa.Op.And) && x.ty >= 0 && g.kind(x.ty) == ssa.Kind.Int {
+      if (x.op == ssa.Op.Rem || x.op == ssa.Op.And) && ssa.ty_of(x.tb) >= 0 && g.kind(ssa.ty_of(x.tb)) == ssa.Kind.Int {
         let (k0, ok) = g.const_int(x.args[1])
         if ok && k0 != MIN_INT {
           var k = k0
@@ -120,7 +120,7 @@ fn (var g: G) compute_ranges(blocks: List[Int], idom: List[Int]) {
       }
       for v in g.f.blocks[b].instrs {
         let x = g.f.values[v]
-        if x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int || x.op == ssa.Op.Const {
+        if ssa.ty_of(x.tb) < 0 || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int || x.op == ssa.Op.Const {
           continue
         }
         let (r0, ok) = g.range_of(v)
@@ -180,7 +180,7 @@ fn (g: G) midpoints(blocks: List[Int], idom: List[Int]) -> Map[Int, (Int, Int)] 
 /// Matches v = a + (b - a) / 2 (or `>> 1`, either operand order).
 fn (g: G) mid_of(v: Int) -> (Int, Int, Bool) {
   let x = g.f.values[v]
-  if x.op != ssa.Op.Add || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int {
+  if x.op != ssa.Op.Add || ssa.ty_of(x.tb) < 0 || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return (-1, -1, false)
   }
   for k in 0..2 {
@@ -495,7 +495,7 @@ fn (var g: G) safe_mul(v: Int) -> Bool {
 fn (var g: G) call_bound(x: ssa.Value) -> (Interval, Bool) {
   var r = full_interval()
   let ci = g.by_name.get(aux_str(x.aux)) ?? -1
-  if ci < 0 || x.ty < 0 || g.kind(x.ty) != ssa.Kind.Int {
+  if ci < 0 || ssa.ty_of(x.tb) < 0 || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.Int {
     return (r, true)
   }
   let lk = g.ret_ge_of(ci)

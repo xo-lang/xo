@@ -805,7 +805,7 @@ fn (var b: Builder) const_entry(name: Str, body: Str, lt: Int, f: Int) {
   let bt = b.bool_t()
   let r = b.s.f.add(b.s.cur, Op.Call, lt, Aux.S(s: body), [])
   let u = b.s.f.add(b.s.cur, Op.Call, bt, Aux.S(s: "rt.unwinding"), [])
-  b.s.f.values[r].pad = u
+  b.s.f.values[r].pi = with_pad(b.s.f.values[r].pi, u)
   let (pad, normal) = b.branch(u)
   b.s.cur = pad
   let caught = b.rt("fault_take", bt, [])

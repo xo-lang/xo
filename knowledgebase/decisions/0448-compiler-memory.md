@@ -563,6 +563,23 @@ merges as before. Output byte-identical (237 compiles, 0 differing); the
 Mac's emit peak 4934, 4915 -> 4498, 4479 MB, peak footprint 4.67, 4.64
 -> 4.35, 4.33 GB; linux/arm64 `xo bench --ab` (three rounds): wall 0.991 (0.990 to 0.992) and CPU 0.991 (0.985 to 0.992) better (a three round verdict on an effect under 3%), max RSS 0.887 (0.878 to 0.895) better (0579e8426 against the change).
 
+### Stage 3: a slimmer `ssa.Value` (xo-lang-2, 2026-11-01)
+
+A struct field is a word whatever its type, so packing needs accessors:
+`pad` and `inl` are the halves of `Value.pi`, `ty` and `block` of `Value.tb`
+(`pack_pi`, `pad_of`, `inl_of`, `with_pad`, `with_inl` and their `tb` twins in
+compiler/ssa/ir.xo; ids fit in 32 bits). A value is 11 words, was 13. The sites
+were rewritten by script from `xo refs` positions. Output is unchanged: identity
+on linux/arm64 and darwin/arm64, 119 programs each, 0 differing.
+
+linux/arm64 self `--ab` (d9fdb4a6f vs 9cdb7cd63, 3 rounds, every effect under
+3%, 2 of 3 rounds flagged loaded, mostly by the build's own threads): wall 0.992
+(0.991 to 0.993), CPU 0.994 (0.986 to 0.996), max RSS 0.984 (0.978 to 0.988).
+Mac peak footprint, two rounds each: 4012 and 4181 MiB to 3860 and 4008 MiB
+(about -4%). The Mac's heap counter peak did not move (3975 and 3971 MB to 3974
+and 4018 MB), and neither pair is enough to claim more than the direction.
+Next word: `pos` (two words and a string per faulting value).
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

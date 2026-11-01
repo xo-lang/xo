@@ -222,10 +222,10 @@ pub fn (var b: Builder) prune_unwind() {
 /// Removes check u of function fi (and w's landing on it): its branch
 /// becomes a jump to the normal successor.
 fn (var b: Builder) drop_check(fi: Int, u: Int, w: Int) {
-  if w >= 0 && b.m.funcs[fi].values[w].pad == u {
-    b.m.funcs[fi].values[w].pad = -1
+  if w >= 0 && pad_of(b.m.funcs[fi].values[w].pi) == u {
+    b.m.funcs[fi].values[w].pi = with_pad(b.m.funcs[fi].values[w].pi, -1)
   }
-  let bl = b.m.funcs[fi].values[u].block
+  let bl = block_of(b.m.funcs[fi].values[u].tb)
   let br = b.m.funcs[fi].term(bl)
   let yes = b.m.funcs[fi].values[br].succs[0]
   let no = b.m.funcs[fi].values[br].succs[1]
@@ -281,7 +281,7 @@ pub fn (var b: Builder) fold_known_calls() {
     var hit = false
     for vi in 0..b.m.funcs[fi].values.len() {
       let v = b.m.funcs[fi].values[vi]
-      if v.op != Op.Call || !v.args.is_empty() || v.pad >= 0 || v.block < 0 {
+      if v.op != Op.Call || !v.args.is_empty() || pad_of(v.pi) >= 0 || block_of(v.tb) < 0 {
         continue
       }
       if let Some(a) = known.get(user_callee(b.m, v)) {
@@ -384,7 +384,7 @@ fn fold_const_branches(var f: Func) -> Bool {
   var changed = false
   for vi in 0..f.values.len() {
     let v = f.values[vi]
-    if v.op == Op.Not && v.block >= 0 && v.args.len() == 1 && f.values[v.args[0]].op == Op.Const {
+    if v.op == Op.Not && block_of(v.tb) >= 0 && v.args.len() == 1 && f.values[v.args[0]].op == Op.Const {
       if let B(x) = f.values[v.args[0]].aux {
         f.values[vi].op = Op.Const
         f.values[vi].aux = Aux.B(b: !x)
@@ -392,7 +392,7 @@ fn fold_const_branches(var f: Func) -> Bool {
       }
       continue
     }
-    if v.block < 0 || v.args.len() != 2 || !(v.op is Op.Eq | Op.Ne | Op.Lt | Op.Le | Op.Gt | Op.Ge) {
+    if block_of(v.tb) < 0 || v.args.len() != 2 || !(v.op is Op.Eq | Op.Ne | Op.Lt | Op.Le | Op.Gt | Op.Ge) {
       continue
     }
     if let Some(x) = const_word(f, v.args[0]) {
@@ -486,9 +486,9 @@ pub fn pads_reached(f: Func, t: Int, keep: Int) -> Bool {
       continue
     }
     for v in f.blocks[bl].instrs {
-      let w = f.values[v].pad
+      let w = pad_of(f.values[v].pi)
       if w >= 0 {
-        let wb = f.values[w].block
+        let wb = block_of(f.values[w].tb)
         if wb < 0 || !reach[wb] {
           return false
         }
@@ -569,7 +569,7 @@ pub fn (var b: Builder) add_landings_with(faults: List[Bool], skip: Map[Int, Boo
       var i = off
       while i < src.len() {
         let x = b.s.f.values[src[i]]
-        if x.pad < 0 && !is_terminator(x.op) && raises(b.m, b.s.f, x, faults) {
+        if pad_of(x.pi) < 0 && !is_terminator(x.op) && raises(b.m, b.s.f, x, faults) {
           at = i
           end = i + 1
           break
@@ -582,7 +582,7 @@ pub fn (var b: Builder) add_landings_with(faults: List[Bool], skip: Map[Int, Boo
       if lazy {
         for k in off..end {
           let v = src[k]
-          b.s.f.values[v].block = bi
+          b.s.f.values[v].tb = with_block(b.s.f.values[v].tb, bi)
           for e in b.s.f.values[v].succs {
             b.s.f.edges[e].from = bi
           }
@@ -610,7 +610,7 @@ fn (var b: Builder) land_at(bl: Int, w: Int) -> Int {
   let rest = b.s.f.new_block()
   b.s.f.land_rest[rest] = true
   let u = b.s.f.add(bl, Op.Call, b.bool_t(), Aux.S(s: "rt.landing"), [])
-  b.s.f.values[w].pad = u
+  b.s.f.values[w].pi = with_pad(b.s.f.values[w].pi, u)
   let pad = b.s.f.new_block()
   b.s.f.branch(bl, u, pad, rest)
   let exit = b.unwind_exit()
@@ -740,7 +740,7 @@ pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
       // copy (bench/perf/xo sortpt 1.025x on Linux)
       var plain = true
       for p in f.blocks[b].params {
-        plain = plain && !m.heap(f.values[p].ty)
+        plain = plain && !m.heap(ty_of(f.values[p].tb))
       }
       if !plain {
         break
@@ -751,7 +751,7 @@ pub fn merge_straight(var f: Func, m: Module, calls: List[Bool]) -> Bool {
       let n = f.blocks[a].instrs.len()
       var ins = f.blocks[a].instrs[0..n - 1]
       for v in f.blocks[b].instrs {
-        f.values[v].block = a
+        f.values[v].tb = with_block(f.values[v].tb, a)
         for se in f.values[v].succs {
           f.edges[se].from = a
         }
@@ -827,10 +827,10 @@ pub fn cse(var f: Func, m: Module) -> Bool {
     for v in f.blocks[b].instrs {
       let x = f.values[v]
       let call = if x.op == Op.Call { cse_call(x.aux) } else { "" }
-      if call.is_empty() && (!cse_op(x.op) || x.ty < 0 || m.heap(x.ty)) {
+      if call.is_empty() && (!cse_op(x.op) || ty_of(x.tb) < 0 || m.heap(ty_of(x.tb))) {
         continue
       }
-      if !call.is_empty() && x.ty >= 0 && m.heap(x.ty) {
+      if !call.is_empty() && ty_of(x.tb) >= 0 && m.heap(ty_of(x.tb)) {
         if call != "list.index" {
           continue
         }
@@ -844,8 +844,8 @@ pub fn cse(var f: Func, m: Module) -> Bool {
       }
       // one with a landing stays (its block branches on the landing);
       // it may still be the twin a later one takes
-      let lands = x.pad >= 0
-      var key = "${op_name(x.op)} ${x.ty}"
+      let lands = pad_of(x.pi) >= 0
+      var key = "${op_name(x.op)} ${ty_of(x.tb)}"
       match x.aux {
         None => {}
         I(n) => key = "${key} #${n}"
@@ -865,8 +865,8 @@ pub fn cse(var f: Func, m: Module) -> Bool {
         let y = f.values[a]
         if y.op == Op.Const {
           match y.aux {
-            I(n) => args.push("k${y.ty}=${n}")
-            B(t) => args.push("k${y.ty}=${t}")
+            I(n) => args.push("k${ty_of(y.tb)}=${n}")
+            B(t) => args.push("k${ty_of(y.tb)}=${t}")
             None | F(..) | S(..) | Bs(..) | P(..) => ok = false
           }
         } else {
@@ -885,7 +885,7 @@ pub fn cse(var f: Func, m: Module) -> Bool {
       let prev = have.get(key) ?? []
       var hit = -1
       for u in prev {
-        let ub = f.values[u].block
+        let ub = block_of(f.values[u].tb)
         if ub == b || dominates(idom, ub, b) {
           hit = u
           break
@@ -1047,11 +1047,11 @@ pub fn fold_tuple_fields(var f: Func, m: Module) -> Bool {
 /// field of an aggregate.
 fn tuple_operand_owned(f: Func, m: Module, a: Int) -> Bool {
   let x = f.values[a]
-  if x.ty < 0 || !m.heap(x.ty) {
+  if ty_of(x.tb) < 0 || !m.heap(ty_of(x.tb)) {
     return true
   }
   match x.op {
-    Param => x.block != 0
+    Param => block_of(x.tb) != 0
     Const | Payload | Capture | Unbox | Field => false
     Call => !is_proj_call(aux_name(x.aux))
     _ => true
@@ -1126,9 +1126,9 @@ fn remove_blocks(var f: Func, keep: List[Bool]) {
   }
   f.blocks = blocks
   for i in 0..f.values.len() {
-    let bl = f.values[i].block
+    let bl = block_of(f.values[i].tb)
     if bl >= 0 {
-      f.values[i].block = map[bl]
+      f.values[i].tb = with_block(f.values[i].tb, map[bl])
     }
   }
   for i in 0..f.edges.len() {
@@ -1253,8 +1253,8 @@ fn renumber(var f: Func) {
       args.push(if a >= 0 { map[a] } else { -1 })
     }
     x.args = args
-    if x.pad >= 0 {
-      x.pad = map[x.pad]
+    if pad_of(x.pi) >= 0 {
+      x.pi = with_pad(x.pi, map[pad_of(x.pi)])
     }
     vals.push(x)
   }

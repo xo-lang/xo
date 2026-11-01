@@ -232,7 +232,7 @@ fn spec_clone(f: Func, k: Int, c: Value, name: Str) -> Func {
   g.ckey = ""
   let p = g.blocks[0].params[k]
   let nv = g.values.len()
-  g.values.push(Value{op: c.op, ty: c.ty, aux: c.aux, args: [], block: 0})
+  g.values.push(Value{op: c.op, tb: pack_tb(ty_of(c.tb), 0), aux: c.aux, args: []})
   g.blocks[0].instrs = [nv] + g.blocks[0].instrs
   for i in 0..g.values.len() {
     for j in 0..g.values[i].args.len() {

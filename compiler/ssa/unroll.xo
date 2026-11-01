@@ -86,7 +86,7 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
     None => return false
   }
   let step = f.values[f.edges[latch].args[pi]]
-  if step.op != Op.Add || step.block != body || step.args.len() != 2 || step.args[0] != hb.params[pi] || const_word(f, step.args[1]) != Some(1) {
+  if step.op != Op.Add || block_of(step.tb) != body || step.args.len() != 2 || step.args[0] != hb.params[pi] || const_word(f, step.args[1]) != Some(1) {
     return false
   }
   let n = k - c0
@@ -96,10 +96,10 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
   // the copies keep their landing check (decision 0085): the body's
   // values and the test share one (an inlined callee's values all land
   // at its call's check, as the values before the loop do)
-  let pad = f.values[cmp].pad
+  let pad = pad_of(f.values[cmp].pi)
   for v in bins {
     let x = f.values[v]
-    if (v != bt && x.pad != pad) || x.op == Op.Param || (v != bt && !x.succs.is_empty()) {
+    if (v != bt && pad_of(x.pi) != pad) || x.op == Op.Param || (v != bt && !x.succs.is_empty()) {
       return false
     }
   }
@@ -122,7 +122,7 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
         args.push(m.get(a) ?? a)
       }
       x.args = args
-      x.block = pre
+      x.tb = with_block(x.tb, pre)
       let c = f.values.len()
       f.values.push(x)
       copies.push(c)
@@ -159,7 +159,7 @@ fn unroll_at(var f: Func, h: Int) -> Bool {
   // the header's parameters read past the loop: the last trip's values
   for vi in 0..f.values.len() {
     let x = f.values[vi]
-    if x.block == h || x.block == body {
+    if block_of(x.tb) == h || block_of(x.tb) == body {
       continue
     }
     var hit = false
@@ -402,7 +402,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
   }
   // i + 1, i possibly passed on through the body's joins
   let step = f.values[f.edges[latch].args[pi]]
-  if step.op != Op.Add || step.block < 0 || !inb[step.block] || step.args.len() != 2 || through(f, inb, step.args[0], 8) != hb.params[pi] || const_word(f, step.args[1]) != Some(1) {
+  if step.op != Op.Add || block_of(step.tb) < 0 || !inb[block_of(step.tb)] || step.args.len() != 2 || through(f, inb, step.args[0], 8) != hb.params[pi] || const_word(f, step.args[1]) != Some(1) {
     return false
   }
   let n = k - c0
@@ -431,14 +431,14 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
   let ex_one = f.blocks[ex].preds.len() == 1 && !inb[ex]
   for vi in 0..f.values.len() {
     let x = f.values[vi]
-    if x.block < 0 || x.block == h || inb[x.block] {
+    if block_of(x.tb) < 0 || block_of(x.tb) == h || inb[block_of(x.tb)] {
       continue
     }
     for a in x.args {
       if mine.contains(a) {
         return false
       }
-      if hps.contains(a) && !(ex_one && x.block == ex) {
+      if hps.contains(a) && !(ex_one && block_of(x.tb) == ex) {
         return false
       }
     }
@@ -478,7 +478,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
       let c = bm.get(b) ?? -1
       for p in f.blocks[b].params {
         var x = f.values[p]
-        x.block = c
+        x.tb = with_block(x.tb, c)
         let nv = f.values.len()
         f.values.push(x)
         f.blocks[c].params.push(nv)
@@ -486,7 +486,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
       }
       for v in f.blocks[b].instrs {
         var x = f.values[v]
-        x.block = c
+        x.tb = with_block(x.tb, c)
         x.succs = []
         let nv = f.values.len()
         f.values.push(x)
@@ -501,9 +501,9 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
         args.push(m.get(a) ?? a)
       }
       f.values[nv].args = args
-      let pd = f.values[nv].pad
+      let pd = pad_of(f.values[nv].pi)
       if pd >= 0 {
-        f.values[nv].pad = m.get(pd) ?? pd
+        f.values[nv].pi = with_pad(f.values[nv].pi, m.get(pd) ?? pd)
       }
     }
     // the terminators' edges: within the trip, out of the body, and
@@ -559,7 +559,7 @@ fn unroll_region(var f: Func, h: Int) -> Bool {
   f.blocks[entry].preds = []
   if ex_one {
     for vi in 0..f.values.len() {
-      if f.values[vi].block != ex {
+      if block_of(f.values[vi].tb) != ex {
         continue
       }
       var args: List[Int] = []
@@ -589,10 +589,10 @@ fn through(f: Func, inb: List[Bool], v: Int, depth: Int) -> Int {
   var x = v
   for _ in 0..depth {
     let pv = f.values[x]
-    if pv.op != Op.Param || pv.block < 0 || !inb[pv.block] {
+    if pv.op != Op.Param || block_of(pv.tb) < 0 || !inb[block_of(pv.tb)] {
       return x
     }
-    let b = pv.block
+    let b = block_of(pv.tb)
     let j = f.blocks[b].params.index_of(x) ?? -1
     if j < 0 || f.blocks[b].preds.is_empty() {
       return x

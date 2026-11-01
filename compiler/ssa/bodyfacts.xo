@@ -51,7 +51,7 @@ pub fn body_facts(f: Func, types: List[SType]) -> BodyFacts {
   var params: List[Int] = []
   if !f.blocks.is_empty() {
     for p in f.blocks[0].params {
-      params.push(f.values[p].ty)
+      params.push(ty_of(f.values[p].tb))
     }
   }
   BodyFacts{nvalues: f.values.len(), params: params, names: names, faults: faults, imm: imm_return_of(f), ret_le: ret_le_param(f, types), ret_ge: ret_ge_param(f, types)}
@@ -234,7 +234,7 @@ pub fn (m: Module) param_types(fi: Int) -> List[Int] {
   var out: List[Int] = []
   if !f.blocks.is_empty() {
     for p in f.blocks[0].params {
-      out.push(f.values[p].ty)
+      out.push(ty_of(f.values[p].tb))
     }
   }
   out

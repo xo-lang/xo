@@ -46,7 +46,7 @@ fn (var r: Rc) chain_pads(var f: Func) {
     if let Some(p0) = r.pad_of(f, bl, exit) {
       var p = p0
       for a in p.ext {
-        p.home = p.home || homes.contains(f.values[a].ty)
+        p.home = p.home || homes.contains(ty_of(f.values[a].tb))
       }
       pads.push(p)
     }
@@ -126,7 +126,7 @@ fn (var r: Rc) home_types(f: Func) -> Set[Int] {
   let ps = f.blocks[0].params
   for i in f.var_params {
     if i < ps.len() {
-      r.add_home(out, f.values[ps[i]].ty)
+      r.add_home(out, ty_of(f.values[ps[i]].tb))
     }
   }
   for b in f.blocks {
@@ -137,7 +137,7 @@ fn (var r: Rc) home_types(f: Func) -> Set[Int] {
       }
       for i in r.vparams.get(aux_name(x.aux)) ?? [] {
         if i < x.args.len() {
-          r.add_home(out, f.values[x.args[i]].ty)
+          r.add_home(out, ty_of(f.values[x.args[i]].tb))
         }
       }
     }

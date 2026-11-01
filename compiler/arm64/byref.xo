@@ -348,8 +348,8 @@ fn (var g: G) compute_held(mems: List[HMem]) {
           }
           _ => {}
         }
-        if x.pad >= 0 {
-          landed[x.pad] = pad
+        if ssa.pad_of(x.pi) >= 0 {
+          landed[ssa.pad_of(x.pi)] = pad
         }
       }
     }
@@ -448,7 +448,7 @@ fn (var g: G) find_mem_only() {
     if b != 0 {
       if let Some(st) = g.held.inb.get(b) {
         for (i, k) in st.indexed() {
-          if k.k == -1 && k.v >= 0 && g.op(k.v) == ssa.Op.Param && g.f.values[k.v].block == b {
+          if k.k == -1 && k.v >= 0 && g.op(k.v) == ssa.Op.Param && ssa.block_of(g.f.values[k.v].tb) == b {
             cands[k.v] = i
           }
         }
@@ -457,7 +457,7 @@ fn (var g: G) find_mem_only() {
     for v in g.f.blocks[b].instrs {
       let x = g.f.values[v]
       if x.op == ssa.Op.Field && g.op(x.args[0]) == ssa.Op.Call {
-        let m = g.held_mem_of(x.ty)
+        let m = g.held_mem_of(ssa.ty_of(x.tb))
         if m >= 0 {
           cands[v] = m
         }
@@ -797,7 +797,7 @@ fn (var g: G) read_in_place(v: Int, m: Int, k: HKey) -> Bool {
       if st[m] != k {
         return false
       }
-      if (x.op is ssa.Op.Field | ssa.Op.Payload) && x.args[0] == w && g.big_by_ref(x.ty) {
+      if (x.op is ssa.Op.Field | ssa.Op.Payload) && x.args[0] == w && g.big_by_ref(ssa.ty_of(x.tb)) {
         work.push(u)
       }
     }

@@ -419,7 +419,7 @@ fn (var b: Builder) fe_entry(r: FeRec, fi: Int) -> Option[Bytes] {
       let ps = cf.blocks[0].params
       e.uv(ps.len())
       for v in ps {
-        e.str(b.fe_tname(cf.values[v].ty))
+        e.str(b.fe_tname(ty_of(cf.values[v].tb)))
       }
       e.uv(cf.results.len())
       for t in cf.results {
@@ -1329,7 +1329,7 @@ fn (b: Builder) sig_from(w: Int, skip: Int) -> Str {
   var ps: List[Str] = []
   for (i, v) in f.blocks[0].params.indexed() {
     if i >= skip {
-      ps.push(b.m.types[f.values[v].ty].name)
+      ps.push(b.m.types[ty_of(f.values[v].tb)].name)
     }
   }
   var rs: List[Str] = []

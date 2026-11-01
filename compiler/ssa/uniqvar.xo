@@ -145,7 +145,7 @@ fn udom(idom: List[Int], a: Int, b0: Int) -> Bool {
 /// its end).
 fn use_at(f: Func, s: UFn, u: UUse) -> (Int, Int) {
   if u.v >= 0 {
-    return (f.values[u.v].block, s.pos[u.v])
+    return (block_of(f.values[u.v].tb), s.pos[u.v])
   }
   (f.edges[u.e].from, 1000000000)
 }
@@ -220,7 +220,7 @@ fn (r: Rc) reads_only(f: Func, u: UUse) -> Bool {
 /// block parameters).
 fn (r: Rc) owned_at(f: Func, s: UFn, v: Int, own: UUse) -> Bool {
   let (ob, op) = use_at(f, s, own)
-  let dblock = f.values[v].block
+  let dblock = block_of(f.values[v].tb)
   for u in s.us[v] {
     if u.v == own.v && u.e == own.e && u.k == own.k {
       continue
@@ -269,7 +269,7 @@ fn (r: Rc) origin1(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, va
         return true
       }
       let ci = r.fidx.get(name) ?? -1
-      return ci >= 0 && uf.ret[ci] && r.is_list(x.ty)
+      return ci >= 0 && uf.ret[ci] && r.is_list(ty_of(x.tb))
     }
     // the copy-on-write check's result: a list held only here
     Reuse => return true
@@ -285,20 +285,20 @@ fn (r: Rc) origin1(funcs: List[Func], fi: Int, s: UFn, uf: UniqFacts, v: Int, va
         return k == 0
       }
       let ci = r.fidx.get(name) ?? -1
-      return ci >= 0 && call_hands_unique(f, s.idom, uf.facts(ci), c, k, x.block)
+      return ci >= 0 && call_hands_unique(f, s.idom, uf.facts(ci), c, k, block_of(x.tb))
     }
     Rebind => {
       let a = x.args[0]
       return r.owned_at(f, s, a, UUse{v: v, e: -1, k: 0}) && r.origin(funcs, fi, s, uf, a, memo)
     }
     Param => {
-      if x.block == 0 {
+      if block_of(x.tb) == 0 {
         let i = param_index(f, v)
         let es = uf.entry[fi]
         return i >= 0 && i < es.len() && es[i]
       }
       let i = param_index(f, v)
-      for e in f.blocks[x.block].preds {
+      for e in f.blocks[block_of(x.tb)].preds {
         let a = f.edges[e].args[i]
         if !r.owned_at(f, s, a, UUse{v: -1, e: e, k: i}) || !r.origin(funcs, fi, s, uf, a, memo) {
           return false
@@ -342,9 +342,9 @@ fn call_hands_unique(f: Func, idom: List[Int], facts: List[Bool], c: Int, k: Int
 /// whose cleanup does nothing but reach the unwind exit (trivial_pad),
 /// which is that same exit.
 fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
-  let cb = f.values[c].block
+  let cb = block_of(f.values[c].tb)
   let ins = f.blocks[cb].instrs
-  var u = f.values[c].pad
+  var u = pad_of(f.values[c].pi)
   if u < 0 {
     var after_c = false
     for v in ins {
@@ -353,7 +353,7 @@ fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
       } else if after_c && f.values[v].op == Op.Call && (aux_name(f.values[v].aux) is "rt.landing" | "rt.unwinding") {
         var claimed = false
         for w in ins {
-          claimed = claimed || f.values[w].pad == v
+          claimed = claimed || pad_of(f.values[w].pi) == v
         }
         if !claimed {
           u = v
@@ -366,7 +366,7 @@ fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
     return udom(idom, cb, b)
   }
   let l = f.values[u]
-  if l.block != cb || l.op != Op.Call || aux_name(l.aux) != "rt.landing" {
+  if block_of(l.tb) != cb || l.op != Op.Call || aux_name(l.aux) != "rt.landing" {
     return false
   }
   let t = f.values[ins[ins.len() - 1]]
@@ -379,7 +379,7 @@ fn past_landing(f: Func, idom: List[Int], c: Int, b: Int) -> Bool {
 /// Whether the Return r0 of f is a fault exit (its block calls
 /// rt.fault_continue): callers never read its outs.
 fn fault_exit(f: Func, r0: Int) -> Bool {
-  for v in f.blocks[f.values[r0].block].instrs {
+  for v in f.blocks[block_of(f.values[r0].tb)].instrs {
     let x = f.values[v]
     if x.op == Op.Call && aux_name(x.aux) == "rt.fault_continue" {
       return true
@@ -397,13 +397,13 @@ fn (r: Rc) uniq_facts(funcs: List[Func]) -> UniqFacts {
   for (fi, f) in funcs.indexed() {
     var es: List[Bool] = []
     for (i, p) in f.blocks[0].params.indexed() {
-      let t = f.values[p].ty
+      let t = ty_of(f.values[p].tb)
       es.push(cand[fi] && f.var_params.contains(i) && r.is_list(t))
     }
     uf.entry.push(es)
     var os: List[Bool] = []
     for i in f.var_params {
-      let t = f.values[f.blocks[0].params[i]].ty
+      let t = ty_of(f.values[f.blocks[0].params[i]].tb)
       os.push(cand[fi] && r.is_list(t))
     }
     uf.out.push(os)
@@ -582,7 +582,7 @@ fn mark_entry_reuse(var f: Func, es: List[Bool], mark: Int) {
     if x.op == Op.Reuse && x.args.len() == 1 {
       let p = x.args[0]
       let i = param_index(f, p)
-      if f.values[p].op == Op.Param && f.values[p].block == 0 && i >= 0 && i < es.len() && es[i] {
+      if f.values[p].op == Op.Param && block_of(f.values[p].tb) == 0 && i >= 0 && i < es.len() && es[i] {
         f.values[v].aux = Aux.I(n: mark)
       }
     }

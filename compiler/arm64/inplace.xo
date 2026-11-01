@@ -17,7 +17,7 @@ const IN_PLACE_MIN = 128
 /// Whether list element v (list.index) can be read in place.
 fn (var g: G) elem_in_place(v: Int) -> Bool {
   let x = g.f.values[v]
-  if !g.on("inplace_elems") || 8 * g.nwords(x.ty) < IN_PLACE_MIN {
+  if !g.on("inplace_elems") || 8 * g.nwords(ssa.ty_of(x.tb)) < IN_PLACE_MIN {
     return false
   }
   g.held_uses()
@@ -40,7 +40,7 @@ fn (var g: G) elem_in_place(v: Int) -> Bool {
         return false // passed on through a block edge
       }
       if ux.op is ssa.Op.Field | ssa.Op.Payload {
-        if ux.args[0] == w && g.big_by_ref(ux.ty) {
+        if ux.args[0] == w && g.big_by_ref(ssa.ty_of(ux.tb)) {
           work.push(u) // read in place too (field_op, payload_op)
         }
       } else if !(ux.op is ssa.Op.Tag | ssa.Op.Retain | ssa.Op.Release) {
@@ -49,12 +49,12 @@ fn (var g: G) elem_in_place(v: Int) -> Bool {
           return false
         }
       }
-      use_blocks[ux.block] = true
+      use_blocks[ssa.block_of(ux.tb)] = true
     }
   }
   // the blocks between the read and its uses: reached from the read's
   // block without passing it again, and reaching a use
-  let db = x.block
+  let db = ssa.block_of(x.tb)
   var fwd: Map[Int, Bool] = {}
   var stack = g.succ_blocks(db)
   while !stack.is_empty() {
@@ -123,7 +123,7 @@ fn (g: G) read_only_root(l: Int) -> Int {
       v = x.args[0]
       continue
     }
-    if x.op == ssa.Op.Param && x.block == 0 {
+    if x.op == ssa.Op.Param && ssa.block_of(x.tb) == 0 {
       for (i, p) in g.params().indexed() {
         if p == v && !g.is_var_param(g.fi, i) {
           return v

@@ -25,7 +25,7 @@ fn ret_bound_param(f: Func, types: List[SType], up: Bool) -> Int {
   }
   let ps = f.blocks[0].params
   for k in 0..ps.len() {
-    let pt = f.values[ps[k]].ty
+    let pt = ty_of(f.values[ps[k]].tb)
     if pt < 0 || pt >= types.len() || types[pt].kind != Kind.Int || types[pt].bits != 0 {
       continue
     }

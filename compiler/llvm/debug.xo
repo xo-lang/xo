@@ -8,6 +8,8 @@
 // shared header does not grow with the code.
 
 /// Makes the compile unit (generate, before the functions).
+use github.com/xo-lang/xo/compiler/ssa
+
 fn (var g: Gen) debug_unit() {
   if !g.m.debug_info {
     return
@@ -391,17 +393,17 @@ fn (var g: Gen) debug_bind(v: Int) {
       ds.push(d)
     }
   }
-  if ds.is_empty() || g.lazy[v] >= 0 || g.is_void(g.f.values[v].ty) {
+  if ds.is_empty() || g.lazy[v] >= 0 || g.is_void(ssa.ty_of(g.f.values[v].tb)) {
     return
   }
-  let lt = g.ll(g.f.values[v].ty)
+  let lt = g.ll(ssa.ty_of(g.f.values[v].tb))
   let o = g.op(v)
   // only a value defined in this block, or a constant: a debug use of a
   // value of another block makes instruction selection carry it across
   // blocks, which changes register allocation (decision 0252's gate;
   // netconn.dial_timeout, 2026-10-17)
   let here = (o == vname(v) && g.blk[v] == g.dbg_block) || g.dbg_temps.contains(o) || !(o.starts_with("%") || o.starts_with("@"))
-  let leaves = g.dbg_leaves(g.f.values[v].ty)
+  let leaves = g.dbg_leaves(ssa.ty_of(g.f.values[v].tb))
   if leaves.len() > 1 || !(leaves.len() == 1 && leaves[0].0.is_empty()) {
     // the code's own extractvalues of its parts describe a variable
     // bound to it only
@@ -424,7 +426,7 @@ fn (var g: Gen) debug_bind(v: Int) {
     }
     return
   }
-  let (whole, _) = g.layout(g.f.values[v].ty)
+  let (whole, _) = g.layout(ssa.ty_of(g.f.values[v].tb))
   for (path, plt, off, size) in leaves {
     // the scalar inserted at path when this block built the value; none
     // for a part of an aggregate that arrived whole (a parameter, a call's

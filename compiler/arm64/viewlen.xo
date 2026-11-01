@@ -19,9 +19,9 @@ fn view_lens(var f: ssa.Func) -> Bool {
   var it = -1
   var st = -1
   for x in f.values {
-    if x.op == ssa.Op.Call && aux_str(x.aux) == "Str.len" && x.args.len() == 1 && x.block >= 0 {
-      it = x.ty
-      st = f.values[x.args[0]].ty
+    if x.op == ssa.Op.Call && aux_str(x.aux) == "Str.len" && x.args.len() == 1 && ssa.block_of(x.tb) >= 0 {
+      it = ssa.ty_of(x.tb)
+      st = ssa.ty_of(f.values[x.args[0]].tb)
       break
     }
   }
@@ -59,16 +59,16 @@ fn view_lens(var f: ssa.Func) -> Bool {
   }
   for b in 1..f.blocks.len() {
     for p in f.blocks[b].params {
-      cand[p] = f.values[p].ty == st
+      cand[p] = ssa.ty_of(f.values[p].tb) == st
     }
     for v in f.blocks[b].instrs {
       let x = f.values[v]
-      cand[v] = cand[v] || (x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && x.ty == st)
+      cand[v] = cand[v] || (x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && ssa.ty_of(x.tb) == st)
     }
   }
   for v in f.blocks[0].instrs {
     let x = f.values[v]
-    cand[v] = x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && x.ty == st
+    cand[v] = x.op == ssa.Op.Call && aux_str(x.aux) == "rt.str_view" && x.args.len() == 3 && ssa.ty_of(x.tb) == st
   }
   // an option of a Str (2026-10-24, DS-2's `(b.cut_prefix(p) ?? b"").len()`:
   // the view travels in a variant, through option parameters, out of a
@@ -79,8 +79,8 @@ fn view_lens(var f: ssa.Func) -> Bool {
   var otys: Map[Int, Bool] = {}
   for v in 0..n {
     let x = f.values[v]
-    if x.block >= 0 && x.op == ssa.Op.Variant && x.args.len() == 1 && f.values[x.args[0]].ty == st {
-      otys[x.ty] = true
+    if ssa.block_of(x.tb) >= 0 && x.op == ssa.Op.Variant && x.args.len() == 1 && ssa.ty_of(f.values[x.args[0]].tb) == st {
+      otys[ssa.ty_of(x.tb)] = true
     }
   }
   var ocand: List[Bool] = []
@@ -91,15 +91,15 @@ fn view_lens(var f: ssa.Func) -> Bool {
     for b in 0..f.blocks.len() {
       if b > 0 {
         for p in f.blocks[b].params {
-          ocand[p] = otys.contains(f.values[p].ty)
+          ocand[p] = otys.contains(ssa.ty_of(f.values[p].tb))
         }
       }
       for v in f.blocks[b].instrs {
         let x = f.values[v]
-        if x.op == ssa.Op.Variant && otys.contains(x.ty) {
+        if x.op == ssa.Op.Variant && otys.contains(ssa.ty_of(x.tb)) {
           ocand[v] = x.args.is_empty() || cand[x.args[0]]
         }
-        if x.op == ssa.Op.Payload && x.ty == st && x.args.len() == 1 && otys.contains(f.values[x.args[0]].ty) {
+        if x.op == ssa.Op.Payload && ssa.ty_of(x.tb) == st && x.args.len() == 1 && otys.contains(ssa.ty_of(f.values[x.args[0]].tb)) {
           cand[v] = true
         }
       }
@@ -151,9 +151,9 @@ fn view_lens(var f: ssa.Func) -> Bool {
       }
       // a parameter: every value coming in is a candidate too (its length
       // rides the edge beside it)
-      if x.op == ssa.Op.Param && x.block > 0 {
-        let k = f.blocks[x.block].params.index_of(v) ?? -1
-        for e in f.blocks[x.block].preds {
+      if x.op == ssa.Op.Param && ssa.block_of(x.tb) > 0 {
+        let k = f.blocks[ssa.block_of(x.tb)].params.index_of(v) ?? -1
+        for e in f.blocks[ssa.block_of(x.tb)].preds {
           let args = f.edges[e].args
           if k < 0 || k >= args.len() || args[k] < 0 || args[k] >= n || !ocand[args[k]] {
             ok = false
@@ -199,8 +199,8 @@ fn view_lens(var f: ssa.Func) -> Bool {
       f.values[v].op = ssa.Op.Sub
       f.values[v].aux = ssa.Aux.None
       f.values[v].args = [a[2], a[1]]
-      f.values[v].pad = -1
-      f.values[v].ty = it
+      f.values[v].pi = ssa.with_pad(f.values[v].pi, -1)
+      f.values[v].tb = ssa.with_ty(f.values[v].tb, it)
       view[v] = true
     }
   }
@@ -241,10 +241,10 @@ fn view_lens(var f: ssa.Func) -> Bool {
     let x = f.values[v]
     if cand[v] && x.op == ssa.Op.Payload {
       let l = olen.get(x.args[0]) ?? -1
-      let z = f.add(x.block, ssa.Op.Const, it, ssa.Aux.I(n: 0), [])
+      let z = f.add(ssa.block_of(x.tb), ssa.Op.Const, it, ssa.Aux.I(n: 0), [])
       // before v in its block
       var ins: List[Int] = []
-      for u in f.blocks[x.block].instrs {
+      for u in f.blocks[ssa.block_of(x.tb)].instrs {
         if u == z {
           continue
         }
@@ -253,12 +253,12 @@ fn view_lens(var f: ssa.Func) -> Bool {
         }
         ins.push(u)
       }
-      f.blocks[x.block].instrs = ins
+      f.blocks[ssa.block_of(x.tb)].instrs = ins
       f.values[v].op = ssa.Op.Add
       f.values[v].aux = ssa.Aux.None
       f.values[v].args = [l, z]
-      f.values[v].ty = it
-      f.values[v].pad = -1
+      f.values[v].tb = ssa.with_ty(f.values[v].tb, it)
+      f.values[v].pi = ssa.with_pad(f.values[v].pi, -1)
       view[v] = true
     }
   }

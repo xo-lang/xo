@@ -148,7 +148,7 @@ fn (var g: Gen) scoped(f: ssa.Func, v: Int) -> Bool {
   if v < 0 {
     return false
   }
-  let t = f.values[v].ty
+  let t = ssa.ty_of(f.values[v].tb)
   t >= 0 && (g.kind(t) is ssa.Kind.List | ssa.Kind.Str)
 }
 
@@ -156,7 +156,7 @@ fn (var g: Gen) scoped(f: ssa.Func, v: Int) -> Bool {
 /// argument's, updated in place (isUpdate).
 fn (var g: Gen) is_update(f: ssa.Func, v: Int) -> Bool {
   let x = f.values[v]
-  if x.op != ssa.Op.Call || g.kind(x.ty) != ssa.Kind.List {
+  if x.op != ssa.Op.Call || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.List {
     return false
   }
   let n = aux_str(x.aux)
@@ -168,7 +168,7 @@ fn (var g: Gen) is_update(f: ssa.Func, v: Int) -> Bool {
 /// operation writes (isNewList).
 fn (var g: Gen) is_new_list(f: ssa.Func, v: Int) -> Bool {
   let x = f.values[v]
-  if x.op != ssa.Op.Call || g.kind(x.ty) != ssa.Kind.List {
+  if x.op != ssa.Op.Call || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.List {
     return false
   }
   let n = aux_str(x.aux)
@@ -180,7 +180,7 @@ fn (var g: Gen) is_new_list(f: ssa.Func, v: Int) -> Bool {
 /// argument's object or a new one; -1 otherwise (handedBack).
 fn (var g: Gen) handed_back(f: ssa.Func, v: Int) -> Int {
   let x = f.values[v]
-  if x.op != ssa.Op.Field || g.kind(x.ty) != ssa.Kind.List {
+  if x.op != ssa.Op.Field || g.kind(ssa.ty_of(x.tb)) != ssa.Kind.List {
     return -1
   }
   let c = f.values[x.args[0]]
@@ -311,7 +311,7 @@ fn (var g: Gen) same_var_of(fi: Int) -> List[Bool] {
   var out: List[Bool] = []
   for (j, i) in f.var_params.indexed() {
     let p = ps[i]
-    var ok = g.kind(f.values[p].ty) == ssa.Kind.List
+    var ok = g.kind(ssa.ty_of(f.values[p].tb)) == ssa.Kind.List
     for b in 0..f.blocks.len() {
       let t = f.term(b)
       if !ok || t < 0 || f.values[t].op != ssa.Op.Return {

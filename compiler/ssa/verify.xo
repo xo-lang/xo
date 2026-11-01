@@ -50,7 +50,7 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
   for bi in 0..nb {
     let bl = f.blocks[bi]
     for p in bl.params {
-      if f.values[p].op != Op.Param || f.values[p].block != bi {
+      if f.values[p].op != Op.Param || block_of(f.values[p].tb) != bi {
         errs.push("${pre}${bname(bi)}: parameter v${p} is malformed")
       }
       def[p] = Site{b: bi, idx: -1}
@@ -60,13 +60,13 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
         errs.push("${pre}${bname(bi)}: value v${v} defined twice")
       }
       def[v] = Site{b: bi, idx: i}
-      let p = f.values[v].pad
+      let p = pad_of(f.values[v].pi)
       if p >= 0 {
         // a landing: the check's call, which a branch on it ends its
         // block with (decision 0085)
         let x = f.values[p]
         let name = aux_name(x.aux)
-        let pb = x.block
+        let pb = block_of(x.tb)
         var ok = x.op == Op.Call && (name == "rt.landing" || name == "rt.unwinding") && pb >= 0 && pb < nb
         if ok {
           let t = f.term(pb)
@@ -76,7 +76,7 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
           errs.push("${pre}${bname(bi)}: v${v} lands on v${p}, which is not a check")
         }
       }
-      if f.values[v].block != bi {
+      if block_of(f.values[v].tb) != bi {
         errs.push("${pre}${bname(bi)}: v${v} does not belong to its block")
       }
     }
@@ -109,9 +109,9 @@ fn (var m: Module) verify_func(f: Func) -> List[Str] {
           continue
         }
         for (k, a) in ed.args.indexed() {
-          let at = if a >= 0 { f.values[a].ty } else { -1 }
-          if at != f.values[tps[k]].ty {
-            errs.push("${pre}${bname(bi)}: edge to ${bname(ed.to)} passes v${a}: ${m.tname(at)} for v${tps[k]}: ${m.tname(f.values[tps[k]].ty)}")
+          let at = if a >= 0 { ty_of(f.values[a].tb) } else { -1 }
+          if at != ty_of(f.values[tps[k]].tb) {
+            errs.push("${pre}${bname(bi)}: edge to ${bname(ed.to)} passes v${a}: ${m.tname(at)} for v${tps[k]}: ${m.tname(ty_of(f.values[tps[k]].tb))}")
           }
         }
       }
@@ -286,7 +286,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
   let bt = m.builtin(Kind.Bool)
   var ats: List[Int] = []
   for a in x.args {
-    ats.push(if a >= 0 { f.values[a].ty } else { -1 })
+    ats.push(if a >= 0 { ty_of(f.values[a].tb) } else { -1 })
   }
   let a0 = if n > 0 { ats[0] } else { -1 }
   let a1 = if n > 1 { ats[1] } else { -1 }
@@ -296,7 +296,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
     }
     ""
   }
-  let tk = if x.ty >= 0 { m.types[x.ty].kind } else { Kind.Bad }
+  let tk = if ty_of(x.tb) >= 0 { m.types[ty_of(x.tb)].kind } else { Kind.Bad }
   let k0 = if a0 >= 0 { m.types[a0].kind } else { Kind.Bad }
   match x.op {
     Const => {
@@ -307,7 +307,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         S(..) | Bs(..) => Kind.Str
         None | P(..) => Kind.Unit
       }
-      if x.ty < 0 || tk != want {
+      if ty_of(x.tb) < 0 || tk != want {
         return "constant of the wrong type"
       }
     }
@@ -316,7 +316,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       if !s.is_empty() {
         return s
       }
-      if a0 != a1 || a0 != x.ty || !(tk is Kind.Int | Kind.Float) {
+      if a0 != a1 || a0 != ty_of(x.tb) || !(tk is Kind.Int | Kind.Float) {
         return "operands and result must be one numeric type"
       }
     }
@@ -325,7 +325,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       if !s.is_empty() {
         return s
       }
-      if a0 != a1 || a0 != x.ty || !(tk is Kind.Int | Kind.Bool) {
+      if a0 != a1 || a0 != ty_of(x.tb) || !(tk is Kind.Int | Kind.Bool) {
         return "operands and result must be one Int or Bool type"
       }
     }
@@ -334,7 +334,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       if !s.is_empty() {
         return s
       }
-      if a0 != x.ty {
+      if a0 != ty_of(x.tb) {
         return "operand and result types differ"
       }
     }
@@ -343,7 +343,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       if !s.is_empty() {
         return s
       }
-      if a0 != a1 || x.ty != bt {
+      if a0 != a1 || ty_of(x.tb) != bt {
         return "comparison of different types, or a result that is not Bool"
       }
     }
@@ -363,12 +363,12 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       }
     }
     Struct => {
-      if tk != Kind.Struct || n != m.types[x.ty].fields.len() {
+      if tk != Kind.Struct || n != m.types[ty_of(x.tb)].fields.len() {
         return "struct operands do not match the fields"
       }
       for (i, a) in ats.indexed() {
-        if a != m.types[x.ty].fields[i].ty {
-          return "field ${m.types[x.ty].fields[i].name} has the wrong type"
+        if a != m.types[ty_of(x.tb)].fields[i].ty {
+          return "field ${m.types[ty_of(x.tb)].fields[i].name} has the wrong type"
         }
       }
     }
@@ -377,11 +377,11 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       if tk == Kind.Unit && n == 0 {
         return ""
       }
-      if tk != Kind.Tuple || n != m.types[x.ty].elems.len() {
+      if tk != Kind.Tuple || n != m.types[ty_of(x.tb)].elems.len() {
         return "tuple operands do not match the elements"
       }
       for (i, a) in ats.indexed() {
-        if a != m.types[x.ty].elems[i] {
+        if a != m.types[ty_of(x.tb)].elems[i] {
           return "element ${i} has the wrong type"
         }
       }
@@ -391,10 +391,10 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         I(n: t) => t
         None | F(..) | B(..) | S(..) | Bs(..) | P(..) => -1
       }
-      if tag < 0 || tk != Kind.Enum || tag >= m.types[x.ty].variants.len() {
+      if tag < 0 || tk != Kind.Enum || tag >= m.types[ty_of(x.tb)].variants.len() {
         return "variant of a non enum or a bad tag"
       }
-      let fs = m.types[x.ty].variants[tag].fields
+      let fs = m.types[ty_of(x.tb)].variants[tag].fields
       if fs.len() != n {
         return "variant operands do not match its fields"
       }
@@ -425,10 +425,10 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       if ft < 0 {
         return "field index out of range or not a struct or tuple"
       }
-      if x.op == Op.Field && x.ty != ft {
+      if x.op == Op.Field && ty_of(x.tb) != ft {
         return "result type is not the field type"
       }
-      if x.op == Op.SetField && (n != 2 || a1 != ft || x.ty != a0) {
+      if x.op == Op.SetField && (n != 2 || a1 != ft || ty_of(x.tb) != a0) {
         return "setfield operands or result have the wrong type"
       }
     }
@@ -445,7 +445,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       if tag < 0 || n != 1 || k0 != Kind.Enum || tag >= m.types[a0].variants.len() || fld >= m.types[a0].variants[tag].fields.len() {
         return "payload of a non enum or a bad reference"
       }
-      if x.ty != m.types[a0].variants[tag].fields[fld].ty {
+      if ty_of(x.tb) != m.types[a0].variants[tag].fields[fld].ty {
         return "result type is not the payload field type"
       }
     }
@@ -467,7 +467,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         }
         let rs = m.funcs[ci].results
         let want = if rs.len() > 1 { m.tuple(rs) } else { rs[0] }
-        if x.ty != want {
+        if ty_of(x.tb) != want {
           return "result type does not match the callee"
         }
       } else if !name.contains(".") {
@@ -476,13 +476,13 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
     }
     Closure => {
       let ci = m.func_index(aux_name(x.aux))
-      if ci < 0 || !m.funcs[ci].indirect || x.ty < 0 || tk != Kind.Func {
+      if ci < 0 || !m.funcs[ci].indirect || ty_of(x.tb) < 0 || tk != Kind.Func {
         return "closure of a function that is not Indirect, or not of a function type"
       }
       let g = m.funcs[ci]
       let pts = m.param_types(ci)
-      let ft = m.types[x.ty]
-      if pts.len() != ft.elems.len() + 1 || pts[0] != x.ty || g.results.len() != 1 || g.results[0] != ft.ret {
+      let ft = m.types[ty_of(x.tb)]
+      if pts.len() != ft.elems.len() + 1 || pts[0] != ty_of(x.tb) || g.results.len() != 1 || g.results[0] != ft.ret {
         return "closure type does not match its function"
       }
       for i in 1..pts.len() {
@@ -500,24 +500,24 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       }
     }
     Box => {
-      if n != 1 || x.ty < 0 || tk != Kind.Box || m.types[x.ty].elems[0] != a0 {
+      if n != 1 || ty_of(x.tb) < 0 || tk != Kind.Box || m.types[ty_of(x.tb)].elems[0] != a0 {
         return "box takes T to Box[T]"
       }
     }
     Unbox => {
-      if n != 1 || k0 != Kind.Box || x.ty != m.types[a0].elems[0] {
+      if n != 1 || k0 != Kind.Box || ty_of(x.tb) != m.types[a0].elems[0] {
         return "unbox takes Box[T] to T"
       }
     }
     Rebind => {
       let ci = m.func_index(aux_name(x.aux))
-      if ci < 0 || !m.funcs[ci].indirect || x.ty < 0 || tk != Kind.Func || n != 1 || k0 != Kind.Func {
+      if ci < 0 || !m.funcs[ci].indirect || ty_of(x.tb) < 0 || tk != Kind.Func || n != 1 || k0 != Kind.Func {
         return "rebind of a function that is not Indirect, or not of function types"
       }
       let g = m.funcs[ci]
       let pts = m.param_types(ci)
-      let ft = m.types[x.ty]
-      if pts.len() != ft.elems.len() + 1 || pts[0] != x.ty || g.results.len() != 1 || g.results[0] != ft.ret {
+      let ft = m.types[ty_of(x.tb)]
+      if pts.len() != ft.elems.len() + 1 || pts[0] != ty_of(x.tb) || g.results.len() != 1 || g.results[0] != ft.ret {
         return "rebind type does not match its function"
       }
     }
@@ -525,7 +525,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       let fname = aux_name(x.aux)
       if fname.starts_with("&") {
         // rt.sym_addr (decision 0234): a C level symbol by its exact name
-        if fname.len() < 2 || n != 0 || x.ty < 0 || tk != Kind.Int {
+        if fname.len() < 2 || n != 0 || ty_of(x.tb) < 0 || tk != Kind.Int {
           return "funcaddr of an empty C symbol, or not an Int"
         }
       } else if fname.starts_with("@") {
@@ -536,12 +536,12 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
             found = true
           }
         }
-        if !found || n != 0 || x.ty < 0 || tk != Kind.Int {
+        if !found || n != 0 || ty_of(x.tb) < 0 || tk != Kind.Int {
           return "funcaddr of a symbol that no C ABI export has, or not an Int"
         }
       } else {
         let ci = m.func_index(fname)
-        if ci < 0 || !m.funcs[ci].entry || n != 0 || x.ty < 0 || tk != Kind.Int {
+        if ci < 0 || !m.funcs[ci].entry || n != 0 || ty_of(x.tb) < 0 || tk != Kind.Int {
           return "funcaddr of a function that is not an entry, or not an Int"
         }
       }
@@ -554,7 +554,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
       // operand 0 is the function's own closure, or (the xo.eq function
       // of an interface value) another closure whose environment has the
       // same layout
-      if i == -1000000 || n != 1 || !f.indirect || (x.args[0] != f.blocks[0].params[0] && k0 != Kind.Func) || i < 0 || i >= f.captures.len() || x.ty != f.captures[i] {
+      if i == -1000000 || n != 1 || !f.indirect || (x.args[0] != f.blocks[0].params[0] && k0 != Kind.Func) || i < 0 || i >= f.captures.len() || ty_of(x.tb) != f.captures[i] {
         return "capture must read the environment of its own function"
       }
     }
@@ -563,7 +563,7 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         return "callv needs a function value"
       }
       let ft = m.types[a0]
-      if n - 1 != ft.elems.len() || x.ty != ft.ret {
+      if n - 1 != ft.elems.len() || ty_of(x.tb) != ft.ret {
         return "callv arguments or result do not match the function type"
       }
       for i in 1..n {
@@ -947,7 +947,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
           r.cset(us1.id, r.cur[us1.id] - 1)
         }
       }
-      if x.pad < 0 && !is_terminator(x.op) && raises(m, f, x, faults) {
+      if pad_of(x.pi) < 0 && !is_terminator(x.op) && raises(m, f, x, faults) {
         // a fault here leaves the function without cleanup (decision
         // 0085): nothing may be held
         let snap = r.snapshot()
@@ -1016,7 +1016,7 @@ fn (var r: Rc) verify_rc(m: Module, f: Func, faults: List[Bool]) -> List[Str] {
             for (j, k) in st.ids.indexed() {
               let l = r.vleaves[k]
               let rv = f.values[l.root]
-              if l.root == site || (site < 0 && rv.op == Op.Param && rv.block == b && b != 0) {
+              if l.root == site || (site < 0 && rv.op == Op.Param && block_of(rv.tb) == b && b != 0) {
                 continue
               }
               est.ids.push(k)
@@ -1128,7 +1128,7 @@ fn rc_checker(m: Module) -> Rc {
     r.fidx[f.name] = i
     r.borrowed.push(f.borrowed)
     let ps = if f.blocks.is_empty() { [] } else { f.blocks[0].params }
-    r.fparam0.push(if ps.is_empty() || ps[0] >= f.values.len() { -1 } else { f.values[ps[0]].ty })
+    r.fparam0.push(if ps.is_empty() || ps[0] >= f.values.len() { -1 } else { ty_of(f.values[ps[0]].tb) })
   }
   r
 }
@@ -1359,8 +1359,8 @@ pub fn (var m: Module) break_a_call() -> Bool {
     for b in m.funcs[fi].blocks {
       for v in b.instrs {
         let x = m.funcs[fi].values[v]
-        if x.op == Op.Call && x.ty >= 0 && m.signature_known(aux_name(x.aux)) {
-          m.funcs[fi].values[v].ty = if x.ty == bt { it } else { bt }
+        if x.op == Op.Call && ty_of(x.tb) >= 0 && m.signature_known(aux_name(x.aux)) {
+          m.funcs[fi].values[v].tb = with_ty(m.funcs[fi].values[v].tb, if ty_of(x.tb) == bt { it } else { bt })
           return true
         }
       }

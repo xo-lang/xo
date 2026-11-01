@@ -110,7 +110,7 @@ fn (var r: Rc) decide_borrow(f: Func, var st: Borrows, v: Int) {
     return
   }
   // the blocks v is live into and out of, and its last use in each
-  let db = f.values[v].block
+  let db = block_of(f.values[v].tb)
   let di = st.pos[v]
   var live_in: Map[Int, Bool] = {}
   var live_out: Map[Int, Bool] = {}
@@ -184,7 +184,7 @@ fn used_after(f: Func, st: Borrows, o: Leaf, s: BSite) -> Bool {
   // payload was shared at the move and dropped with it); s's own block
   // too when it is root's: root is made before s there, so a use before
   // s on the way back is the next value's (Mutex.with's loop of pushes)
-  let home = f.values[root].block
+  let home = block_of(f.values[root].tb)
   while !work.is_empty() {
     let b = work.pop() ?? 0
     for e in f.values[f.term(b)].succs {
