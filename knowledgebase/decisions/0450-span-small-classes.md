@@ -1,8 +1,7 @@
 # 0450: Small size classes carved from spans, so freed memory serves any class
 
-Status: Proposed (xo-lang-2, 2026-11-01; awaits the owner). The proposal is
-not to build spans: the measurements below find no footprint for them to
-return.
+Status: Accepted (owner, 2026-11-01): spans are not built. The measurements
+below find no footprint for them to return.
 
 ## Context
 
@@ -79,7 +78,7 @@ would not have, and it is one build per row: the bound is rough, not exact.
 
 ## Decision
 
-Proposed: do not build spans. The allocator work they need (a hot path
+Do not build spans (owner, 2026-11-01). The allocator work they need (a hot path
 change, a release path, list unlinking) has a measured reach under 2% of
 the peak. The peak is lowered by holding less live data (decision 0448's
 next item, a slimmer ssa.Value).
