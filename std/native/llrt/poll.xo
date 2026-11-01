@@ -280,8 +280,15 @@ pub fn pd_park(pd: Int, cont: Int) -> Bool {
   if rt.mem_load(pd, D_CLOSED, 4) == 0 && rt.mem_load(pd, D_RREADY, 4) == 0 && rt.mem_load(pd, D_RWAIT, 8) == 0 && rt.mem_load(pd, D_CONT, 8) == 0 {
     rt.mem_store(pd, D_CONT, cont, 8)
     ok = true
+    if windows() && afd() != 0 {
+      // the poller watches what someone waits for, a parked connection too
+      pd_arm(pd)
+    }
   }
   unlk(addw(pd, D_MU))
+  if ok && windows() && afd() == 0 {
+    poke()
+  }
   ok
 }
 
@@ -1763,7 +1770,7 @@ pub fn pd_arm(pd: Int) {
   if dev == 0 || rt.mem_load(pd, D_CLOSED, 4) != 0 || s32(rt.mem_load(pd, D_FD, 4)) < 0 || rt.mem_load(pd, D_DYING, 4) != 0 {
     return
   }
-  let want = (if rt.mem_load(pd, D_RWAIT, 8) != 0 { AFD_READ } else { 0 }) | (if rt.mem_load(pd, D_WWAIT, 8) != 0 { AFD_WRITE } else { 0 })
+  let want = (if rt.mem_load(pd, D_RWAIT, 8) != 0 || rt.mem_load(pd, D_CONT, 8) != 0 { AFD_READ } else { 0 }) | (if rt.mem_load(pd, D_WWAIT, 8) != 0 { AFD_WRITE } else { 0 })
   if want == 0 {
     return
   }
@@ -2122,7 +2129,7 @@ fn poll_main_wsa(e: Int) {
       lk(addw(p, D_MU))
       var want = 0
       if rt.mem_load(p, D_CLOSED, 4) == 0 && s32(rt.mem_load(p, D_FD, 4)) >= 0 {
-        want = (if rt.mem_load(p, D_RWAIT, 8) != 0 { POLLRDNORM } else { 0 }) | (if rt.mem_load(p, D_WWAIT, 8) != 0 { POLLWRNORM } else { 0 })
+        want = (if rt.mem_load(p, D_RWAIT, 8) != 0 || rt.mem_load(p, D_CONT, 8) != 0 { POLLRDNORM } else { 0 }) | (if rt.mem_load(p, D_WWAIT, 8) != 0 { POLLWRNORM } else { 0 })
       }
       if want != 0 {
         let f = addw(fds, nf * 16)

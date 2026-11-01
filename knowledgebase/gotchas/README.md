@@ -1048,3 +1048,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [wasm-rt-alloc-not-object.md](wasm-rt-alloc-not-object.md): runtime WAT that returns a Str or Bytes uses `$rs_new`; `$alloc(n)`'s address is the first usable byte of a raw block (Observed)
 - [slice-facts-pin-parent.md](slice-facts-pin-parent.md): Observed 2026-11-01: facts kept as Str slices pin each whole parent text (993 MB in the self build's hollow); clone what outlives the parent, and look for it under the parent's allocation site in a heap profile
 - [heap-profile-table-fills.md](heap-profile-table-fills.md): Observed 2026-11-01: 65,536 heap samples fill at rate times 65,536, and later allocations go unsampled; 16 MiB for a self build
+- [windows-poller-watches-only-waiters.md](windows-poller-watches-only-waiters.md): Observed 2026-11-01: on Windows a descriptor is polled only while something waits on it; a parked connection (D_CONT) was not, so its next request timed out

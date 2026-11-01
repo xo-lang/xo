@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-11-01: fix: a parked idle connection answers its next request on Windows (decision 0449)
+
+- Kind: fix
+- Commit: this commit
+- Found by: the Lead's tier, windows/amd64 sample at 28a0dbcf2 (http_server, http_tls)
+- Go reference: none (the runtime's own poller)
+- Test: goldens http_server and http_tls on windows/amd64 (`OFFLOAD_ENV=offload-win.env amd64-run.sh REV NAME http_server http_tls`)
+
+On Windows the poller watches only descriptors someone waits on, and a
+connection parked between requests counted as nobody, so its next request
+was never seen and the client timed out.
+A parked connection is now watched for reads, with the AFD poll and with
+WSAPoll. Other systems are not affected: their poller registers every
+descriptor when it opens.
+
 ## 2026-11-01: feature: http.serve_component serves a wasi:http component's request, wasm (decision 0447)
 
 - Kind: feature

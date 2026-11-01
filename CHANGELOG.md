@@ -9,6 +9,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   to 4000 MB on the Mac, decision 0448): a part's hollowed text is dropped once
   its object and symbol facts exist, and those facts copy their names rather
   than pin the text. Max RSS on linux/arm64 is unchanged (0.995, noise).
+
+- FIX (Windows, std/http): a server connection parked between requests
+  (decision 0449) was never watched by the poller, so its next request
+  timed out at the client. It is watched now.
 - std/http (wasm): `http.serve_component(r)` builds a program as the core
   module of a `wasi:http` 0.2 component (decision 0447 step 1): its
   `handle` export runs main per request and answers through the router,
