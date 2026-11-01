@@ -673,6 +673,12 @@ fn prof_finish() {
   }
 }
 
+/// XO_HEAPSTATS' report at os.proc.exit (process.xo exit): the report
+/// otherwise runs only when main returns (entry.xo finish).
+fn heapstats_finish() {
+  entry.heapstats()
+}
+
 /// The execution trace's file at os.proc.exit (process.xo exit).
 fn trace_finish() {
   if tracerec.built() {

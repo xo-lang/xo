@@ -35,6 +35,11 @@ pub fn exit(code: Int) {
   let _p = rt.call_c2(rt.fn_addr("prof_finish"), 0, 0)
   // the execution trace's file (trace.xo, through cabi.xo)
   let _t = rt.call_c2(rt.fn_addr("trace_finish"), 0, 0)
+  if !env_get("XO_HEAPSTATS").is_empty() {
+    // the free lists and chunks at this point (the heap is live: blocks
+    // held by running tasks are not on them)
+    let _h = rt.call_c2(rt.fn_addr("heapstats_finish"), 0, 0)
+  }
   if !env_get("XO_LEAKCHECK").is_empty() {
     // the leak report runs only when main returns (the C runtime's end
     // of main): here live frames still hold values, so say it was

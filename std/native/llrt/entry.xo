@@ -454,7 +454,7 @@ pub fn finish() {
 /// Where the heap's memory went: the blocks on each class's free list at
 /// exit (every block ever carved, when nothing is live) and the chunks
 /// carved (diagnostics, bench/results/xo1-speed).
-fn heapstats() {
+pub fn heapstats() {
   let b = rt.heap_large(256)
   var sum = 0
   for c in 1..NCLASS + 1 {
