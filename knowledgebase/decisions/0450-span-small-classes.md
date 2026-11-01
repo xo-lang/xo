@@ -94,10 +94,11 @@ it shrinks.
 - Spans with 256 KiB runs or larger: not measured. Longer runs group more
   allocation times together, so more live blocks per run are expected, not
   fewer whole pages.
-- Lifetime grouping (arenas per function in flight, decision 0435's
-  arena_mode): frees whole regions together, which is what the scan says
-  size classes do not. Not measured here; the concrete next experiment for
-  footprint after the slimmer ssa.Value.
+- Lifetime grouping (arenas per function in flight): frees whole regions
+  together, which the scan says size classes do not. Decision 0435's front
+  end arena measured no footprint win (its peak is the SSA plus emit's
+  transients), so this would have to cover the SSA and emit, a different
+  and larger arena. Not measured; a candidate after the slimmer ssa.Value.
 - Finer mid classes (Go's, 4 per doubling): reach limited by the live mid
   blocks, about 680 MB at part 24, so about 200 MB at best by the fill above.
   An estimate, and a change to the heap record's layout. Not built.
