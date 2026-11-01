@@ -45,7 +45,9 @@ decisions that follow. Numbers are max resident set size
 
 ## Measuring this
 
-- `XO_HEAPSTATS=1 ./prog`: blocks on each class's free list at exit, chunks
+- `XO_HEAPSTATS=1 ./prog` (os.proc.exit prints it too since 2026-11-01, and the first line is
+  `live blocks N of M allocations`; bench/perf/idleconn's `EXIT_AFTER_MS` ends the server with its
+  clients connected): blocks on each class's free list at exit, chunks
   carved, MB on free lists (counts the lists since dc49a61ac; before it the
   figure read stale per-class counters and printed 0 MB or a wrapped
   17592186044415 MB).

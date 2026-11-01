@@ -17,3 +17,12 @@ Fix to try: have the heap report count every allocation entry point, and
 make a full table evict rather than stop. Until then use RssAnon deltas
 between experiments (bench/perf/idleconn, TestIdleConnections40kTLS) and
 the XO_HEAPSTATS size class report at exit (gotchas/heapstats-walk-is-exit-only.md).
+
+Update 2026-11-01: the sample table (65,536) fills during the handshakes (about 880 allocations per
+TLS connection against 30 plain): at rate 1 with 200 connections 110,700 samples were lost, and
+at rate 1024 (17,371 samples, none lost) the profile still showed only 17 objects in use at
+os.proc.exit while the live block count was 74,140 for 2,000 held connections. So the in-use
+list does not hold the connections' allocations even when the table has room; cause still open
+(suspect: blocks allocated on a connection fiber and freed or handed over through a path the
+profiler's address table does not see). Use XO_HEAPSTATS `live blocks` and the plain-versus-TLS
+difference of the free lists until it is fixed.
