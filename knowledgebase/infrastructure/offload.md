@@ -187,18 +187,35 @@ Last verified: 2026-10-30.
 
 ## The second linux/arm64 host
 
-The owner's second machine (2026-11-01): the same container setup at a
-private address in `~/xo-lead/offload-arm64b.env` (18 CPUs, 23 GB VM,
-container limit 20 GB, 2 slots), lane `arm64-2`. It also has
-`--cap-add=SYS_NICE` and `--ulimit rtprio=99`, so `chrt -f` works there,
-which the first host lacks. Same packages, LLVM, seed and WebAssembly tools
-as above. Only `ab-host.sh` with no `OFFLOAD_ENV` picks between the hosts
-(the first to free every slot); a bare `offload.sh` job stays on the first
-host, because agents' jobs lean on files already there. Name it with
-`OFFLOAD_ENV=offload-arm64b.env` (and `--put` to it first). Its commits sent
-are in `refs/offload-arm64b/sent`. Times differ between the hosts, so compare
-ratios. Memory-heavy runs (the tier's selfhost and llvm steps) stay on the
-first host. Last verified: 2026-11-01.
+The owner's second machine (2026-11-01): the same container setup on an M5
+Pro Mac, at a private address in `~/xo-lead/offload-arm64b.env` (18 CPUs, 23
+GB VM, 2 slots), lane `pass2`. The first host runs on an M4 Pro. The second
+has `--cap-add=SYS_NICE` and `--ulimit rtprio=99`, so `chrt -f` works there,
+which the first host lacks. Same packages, LLVM, seed and WebAssembly tools as
+above. Use it for pass/fail runs, with `OFFLOAD_ENV=offload-arm64b.env` on
+both `--put` and the job, and a whole bundle the first time (a bare
+`offload.sh` job stays on the first host, since agents' jobs lean on files
+there). Its commits sent are in `refs/offload-arm64b/sent`. Memory-heavy runs
+(the tier's selfhost and llvm steps) stay on the first host.
+
+**`--ab` stays on the first host.** The lane's name is outside `arm64*` so
+`ab-host.sh` does not pick it, because of these controls: identical compiler
+and std on both sides (8fe1f704b and d1cd6520c, a script-only commit), self
+build, 3 rounds, sides swapped between runs:
+
+| host | wall B/A | CPU B/A | max RSS B/A |
+|---|---|---|---|
+| second (M5 Pro) | 0.957, 0.980, 1.040 | 0.930, 0.996, 1.048 | 0.999, 0.999, 0.994 |
+| first (M4 Pro) | 1.004, 1.001 | 1.007, 1.002 | 1.007, 1.006 |
+
+The verdict column called three of the second host's wall readings "better"
+or "worse" and one of the first host's "worse" with identical code, so a
+verdict at 3 rounds is not proof: read a small ratio against this table. On
+the first host a wall ratio beyond about 1% is real; RSS read 0.6% higher on
+side B whichever revision it was, so an RSS ratio within about 1% is not a
+claim. The second host's cause is not known (macOS placing VM CPUs on
+efficiency cores, heat, or other use of that Mac are untested). Last verified:
+2026-11-01.
 
 ## The linux/amd64 host
 
