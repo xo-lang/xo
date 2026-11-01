@@ -30,6 +30,15 @@ fn main(os: Os) ! {
       ln.close()
     })
   }
+  if let Some(ms) = os.env.get("EXIT_AFTER_MS") {
+    // ends the process with the connections still open (os.proc.exit), for
+    // XO_PROF=heap's and XO_HEAPSTATS' reports of what a held connection owns
+    let d = Duration.from_millis(Int.parse(ms).or_err("EXIT_AFTER_MS")?)
+    os.tasks.spawn_background(fn() {
+      os.clock.sleep(d)
+      os.proc.exit(0)
+    })
+  }
   log.info("listening", {"addr": addr})
   srv.serve()?
 }
