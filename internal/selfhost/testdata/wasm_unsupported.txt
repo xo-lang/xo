@@ -66,6 +66,7 @@ tz_table # std/time's zones need the zone data that `xo build --backend=wasm` em
 udp_echo # the wasm backend does not support the network (`rt.conn_close`): WASI preview1 has no sockets
 unix_kill # the wasm backend does not support processes (`proc.spawn`): WASI preview1 has none
 use_c_add # use c without the binding of addc.h in internal/llvm/testdata/golden/use_c_add/.xo/cbind (a Go build
+use_c_enum # use c without the binding of enumc.h in internal/llvm/testdata/golden/use_c_enum/.xo/cbind (a Go build or `xo bind --c` writes it)
 user_caps # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
 websocket # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 websocket_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
