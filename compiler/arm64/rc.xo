@@ -116,7 +116,9 @@ fn (var g: G) inc_thunk(str: Bool) -> Str {
   }
   let sym = g.helper_label("incth")
   g.helped[key] = sym
-  var b = "${g.cmt()} ${key}\n\t.p2align 2\n${g.alias(key)}${sym}:\n"
+  // the call frame information (no directives: the return address in x30)
+  // lets a profile's sample here keep its callers
+  var b = "${g.cmt()} ${key}\n\t.p2align 2\n${g.alias(key)}${sym}:\n\t.cfi_startproc\n"
   if str {
     b = b + "\ttbnz x16, #0, ${sym}_inl\n"
   }
@@ -125,14 +127,14 @@ fn (var g: G) inc_thunk(str: Bool) -> Str {
   } else {
     // the exclusive pair needs a status register: x15 saved around it
     // (the shared path only)
-    let atomic = "str x15, [sp, #-16]!\n${sym}_retry:\n\tldxr x17, [x16]\n\tsub x17, x17, #1\n\tstxr w15, x17, [x16]\n\tcbnz w15, ${sym}_retry\n\tldr x15, [sp], #16"
+    let atomic = "str x15, [sp, #-16]!\n\t.cfi_adjust_cfa_offset 16\n${sym}_retry:\n\tldxr x17, [x16]\n\tsub x17, x17, #1\n\tstxr w15, x17, [x16]\n\tcbnz w15, ${sym}_retry\n\tldr x15, [sp], #16\n\t.cfi_adjust_cfa_offset -16"
     b = b + "\tldr x17, [x16]\n\ttbnz x17, #63, ${sym}_sh\n\tadd x17, x17, #1\n\tstr x17, [x16]\n\tret\n" +
       "${sym}_sh:\n\ttbz x17, #62, ${sym}_ret\n\t${atomic}\n${sym}_ret:\n\tret\n"
   }
   if str {
     b = b + "${sym}_inl:\n\tret\n"
   }
-  g.helpers.push(b + "\n")
+  g.helpers.push(b + "\t.cfi_endproc\n\n")
   sym
 }
 
