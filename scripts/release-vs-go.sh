@@ -21,7 +21,7 @@
 # function appended to the module under test before each round, in copies
 # of GOROOT and xo's std).
 # SECTIONS (default "compile run test") limits the report's sections.
-# ROUNDS (default 10) sets the --ab rounds; WORKLOADS limits the run
+# ROUNDS (default 3, owner 2026-11-01) sets the --ab rounds; WORKLOADS limits the run
 # workloads (names as below). Run it through heavy.sh as HEAVY_CLASS=measure:
 # xo bench --ab refuses to run under a bulk or gate job (lead, 2026-10-30:
 # a bulk run for 0.35.0 reported every run row as failed).
@@ -32,7 +32,7 @@
 set -euo pipefail
 XO=${1:?usage: release-vs-go.sh XO OUT}
 OUT=${2:?usage: release-vs-go.sh XO OUT}
-ROUNDS=${ROUNDS:-10}
+ROUNDS=${ROUNDS:-3}
 SECTIONS=${SECTIONS:-compile run test}
 section() { [[ " $SECTIONS " == *" $1 "* ]]; }
 MAX_LOAD=${MAX_LOAD:-6}
