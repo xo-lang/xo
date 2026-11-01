@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-01: fix: an HTTP/2 connection whose idle park was refused re-reads before it waits (decision 0449 stage 1c)
+
+- Kind: fix
+- Commit: this commit
+- Found by: TestH2Diff (a raw case answered nothing for 30 s under load, native "open" where Go answers)
+- Go reference: none (net/http's http2 server blocks in a goroutine and has no park)
+- Test: internal/llvm TestH2Diff, 3 rounds of 4 concurrent runs on the Mac: 12 of 12 clean (about 39 to 41 s each), where the default failed about 1 in 4 and ran 79 s once; XO_THREADS=1 and parking off were clean
+- Timing: none
+
+hconn.park_ready clears the socket's read readiness and peeks; bytes the peek found refuse the park, but no edge announces them any more, and the h2 loop waited at once, so the connection sat silent until a deadline. The loop now reads once more after a refused park.
+
 ## 2026-11-01: feature: http.serve_component builds a whole wasi:http component, with no other tools (decision 0447)
 
 - Kind: feature

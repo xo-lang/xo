@@ -1235,6 +1235,10 @@ pub fn body_next(h: rthttp.HConn, max: Int) -> http1.BodyPart {
 pub fn (var h: H2Conn) next() -> H2Req? {
   let c = h.c
   let x = ctx.cur()
+  // a refused park read the socket's state (park_ready clears the
+  // readiness before its peek), so bytes it found are announced by no
+  // new edge: read once more before waiting
+  var reread = false
   while true {
     lk(c)
     if !on(c, C_DEAD) && !on(c, C_FAILED) {
@@ -1275,6 +1279,7 @@ pub fn (var h: H2Conn) next() -> H2Req? {
     }
     let r = h.read()
     if r > 0 {
+      reread = false
       if !h.feed() {
         break
       }
@@ -1287,10 +1292,15 @@ pub fn (var h: H2Conn) next() -> H2Req? {
       continue // more to send first
     }
     let wait_ns = h.idle()
-    if wait_ns >= 0 && h.parker[0](h, wait_ns) {
-      h.parked = true
-      return None
+    if wait_ns >= 0 && !reread {
+      if h.parker[0](h, wait_ns) {
+        h.parked = true
+        return None
+      }
+      reread = true
+      continue
     }
+    reread = false
     if !h.wait(x) && !h.keepalive() {
       break
     }

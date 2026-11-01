@@ -5,6 +5,9 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- std/http (decision 0449 stage 1c): an HTTP/2 connection whose idle park
+  was refused re-reads before waiting; a request that arrived as the park
+  was tried could go unanswered until a deadline (TestH2Diff, under load).
 - A growing List uses all of its heap block, as Go's append does (decision 0452):
   `bench/perf/alloc grow` wall 0.922; xo's self build max RSS 0.986 (3 rounds).
 - PERF (native arm64): spilled values of a struct copied word by word
