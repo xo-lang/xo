@@ -5,6 +5,8 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- A growing List uses all of its heap block, as Go's append does (decision 0452):
+  `bench/perf/alloc grow` wall 0.922; xo's self build max RSS 0.986 (3 rounds).
 - PERF (native arm64): a `var` parameter's memory stays held at a merge
   where one edge passes it in place, the other edges storing their value
   into it (decisions 0148, 0151). A merge after a call that can fault no

@@ -63,3 +63,14 @@ list's first push (4).
   Go's whole curve wins on every measure.
 - A fixed 1.5x factor: fewer resizes than 1.25x and more waste; Go's
   curve is measured and documented, and std follows Go.
+
+## Addendum 2026-11-01: capacity rounds up to the block
+
+Owner, 2026-11-01, accepted through the lead. As Go's `roundupsize`, a growing List
+takes what its block holds (`block_size` in std/native/llrt/obj.xo): the classes above
+1 KiB are powers of two, so a capacity of 128 or 256 elements plus the header took the
+next class half empty. linux/arm64 self `--ab` (9c49bc74f vs 3bb078e20, 3 rounds, 0
+loaded, every effect under 3%): wall 0.996 (0.995 to 0.998), CPU 0.998 (0.997 to 0.999),
+max RSS 0.986 (0.986 to 0.992). An earlier run on cf8fdebfa read wall 0.998, CPU 1.001,
+max RSS 0.98. `alloc grow` wall 0.922 (0.922 to 0.927), `alloc small` 1.0, both with max
+RSS 1.0. The self build's gate: bootstrap s1, s2, s3 and fixed point ok.

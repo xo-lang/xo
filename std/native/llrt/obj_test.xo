@@ -109,3 +109,23 @@ test "many page class blocks across chunks are distinct and freed" {
   free_obj(again)
   alloc.set_mid_max_of(h, mid0)
 }
+
+/// A growing List takes what its block holds (Go's roundupsize): the block
+/// sizes follow alloc.alloc's classes, and a list's capacity leaves no room
+/// for one more element in its block.
+test "a growing List's capacity fills its block" {
+  let h = heap_word()
+  expect(block_size(h, 100)) == 112
+  expect(block_size(h, 1024)) == 1024
+  expect(block_size(h, 1025)) == 2040
+  expect(block_size(h, 2041)) == 4088
+  let over = alloc.mid_max_of(h & -2) + 1
+  expect(block_size(h, over)) == over
+  var xs: List[Int] = []
+  for i in 0..200 {
+    xs.push(i)
+  }
+  let cap = rt.mem_load(rt.obj_addr(xs), 16, 8)
+  expect(cap >= 200)
+  expect(block_size(h, L_HDR + 8 * cap) < L_HDR + 8 * (cap + 1))
+}

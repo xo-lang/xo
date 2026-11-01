@@ -828,6 +828,23 @@ pub fn rl_grow(hw: Int, l: Int, esize: Int) -> Int {
   grow(hw, l, esize)
 }
 
+/// The bytes of the block the heap gives for b bytes (alloc.alloc's
+/// classes): 16 byte steps to SMALL_MAX, then powers of two less the 8
+/// byte prefix up to the heap's mid_max, else b (a big block).
+fn block_size(hw: Int, b: Int) -> Int {
+  if b <= SMALL_MAX {
+    return b.wrapping_add(15) & -16
+  }
+  if b > rt.mem_load(hw & -2, H_MID_MAX, 8) {
+    return b
+  }
+  var s = 2040
+  while s < b {
+    s = s.wrapping_shl(1).wrapping_add(8)
+  }
+  s
+}
+
 /// rl_grow of a list that is not the empty literal's. Out of line (it
 /// calls itself on a path never taken): the resize it inlines saves
 /// registers that rl_grow's other path does not need.
@@ -839,7 +856,11 @@ fn grow(hw: Int, l: Int, esize: Int) -> Int {
   // Go's growslice curve: double up to 256 elements, then grow by a
   // quarter plus 192 (toward 1.25x), so a large list holds at most
   // about a fifth of its capacity unused, not half (decision 0452)
-  let ncap = if cap < 4 { 4 } else if cap < 256 { addw(cap, cap) } else { addw(cap, (cap + 768) >> 2) }
+  let want = if cap < 4 { 4 } else if cap < 256 { addw(cap, cap) } else { addw(cap, (cap + 768) >> 2) }
+  // then up to what the block holds (Go's roundupsize): the classes
+  // above 1 KiB are powers of two, so a capacity of 128 or 256 elements
+  // with the header took the next class half empty
+  let ncap = if esize == 0 { want } else { subw(block_size(hw, addw(L_HDR, mulw(want, esize))), L_HDR) / esize }
   // the new capacity first: the resize keeps the block or copies its
   // first bytes (the header with them), so nothing is live after the
   // call and it is a tail call
@@ -926,6 +947,8 @@ const LEN_MASK = 4294967295
 /// The heap record's word with the size class of its last allocation
 /// (alloc.xo LAST): a string's capacity is that less the header.
 const H_LAST = 72
+/// The heap record's mid_max word (alloc.xo MID_MAX).
+const H_MID_MAX = 56
 
 /// A new string object with room for at least n bytes (xo_rt.c rs_new).
 fn rs_new(hw: Int, n: Int) -> Int {

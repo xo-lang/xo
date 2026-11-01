@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-11-01: perf: a growing List uses all of its block
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0448 stage 3 (xo's self build: lists a class too large)
+- Go reference: runtime/slice.go growslice (roundupsize)
+- Test: std/native/llrt obj_test "a growing List's capacity fills its block"; internal/stdtest; arm64 goldens list_*, pack_lists; bootstrap fixed point; bench/perf/alloc grow
+
+A List that grows (std/native/llrt/obj.xo grow) takes the capacity its heap block
+holds, as Go's append does, not only the capacity its curve asked for. bench/perf/alloc
+grow on linux/arm64: wall 0.922. xo's self build: wall 0.996, CPU 0.998, max RSS 0.986
+(3 rounds, each effect under 3%). Capacity stays unobservable.
+
 ## 2026-10-31: perf: a large List grows by Go's slice step, not by doubling
 
 - Kind: perf
