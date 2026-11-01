@@ -687,8 +687,22 @@ function, so a region empties only at its end, and one function is large:
 `build_native` about 6.5 GB, `ssa.build_program` about 3.7 GB. Plain regions per function
 would raise the peak. Functions under 64 MB hold 54% of the volume, 64 to 512 MB 30%, and
 above that 16%, so regions capped at 64 MB reach about half, for a gain bounded by the
-760 to 876 MB of retained free bytes. That prototype, behind `XO_EMIT_REGION` in
-`llrt/obj.xo`, is the next experiment.
+760 to 876 MB of retained free bytes.
+
+**Regions capped at 64 MB, built (never pushed, refs/recover/l2-region).** Blocks up to
+8 KiB of a function under the cap, from 256 KiB regions behind `XO_EMIT_REGION`; one xo,
+off then on, 3 alternating rounds on a quiet Mac: peak footprint 3742, 3757, 3753 to
+4223, 4212, 4208 MiB (+12%), max RSS 4060, 4075, 4070 to 4486, 4524, 4524 MB, counter
+3937, 3933, 3929 to 3933, 3933, 3933 MB (regions are not counted), emit 10.5, 10.6, 10.8
+to 10.5, 10.3, 10.2 s. Regions peaked at 452 to 466 MB, and that is about what footprint
+gained: emit's small allocations were running on memory the heap already held from
+earlier phases, and those free lists did not shrink when regions took the traffic. The
+mechanism is cheap but has nothing to save while that memory stays. The two builds'
+outputs were named differently, so this run did not check that their output matches.
+
+The counter rises 398 MB in emit (3539 to 3937 MB), with regions or without, so that rise
+is not in blocks of 8 KiB or less. The next experiment is a heap profile at emit's peak
+of what is above 8 KiB.
 
 ## Consequences
 
