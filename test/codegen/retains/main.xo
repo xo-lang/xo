@@ -39,9 +39,83 @@ fn copies(xs: List[Int], n: Int) -> List[List[Int]] {
   out
 }
 
+// A retain in a large loop calls the copy too (pass rc_thunk_loops): the
+// body is over 256 SSA values, about a dispatch loop's size.
+fn copies_big(xs: List[Int], n: Int) -> (List[List[Int]], Int) {
+  // arm64: "mov x16, x[0-9]+\n\tbl [L_]*xo_" -"tbn?z x[0-9]+, #63"
+  var out: List[List[Int]] = []
+  var s = n
+  for i in 0..n {
+    s = (s ^ (s >> 1)) + i * 3 - (s & 5)
+    s = (s ^ (s >> 2)) + i * 5 - (s & 6)
+    s = (s ^ (s >> 3)) + i * 7 - (s & 7)
+    s = (s ^ (s >> 4)) + i * 9 - (s & 8)
+    s = (s ^ (s >> 5)) + i * 11 - (s & 9)
+    s = (s ^ (s >> 6)) + i * 13 - (s & 10)
+    s = (s ^ (s >> 7)) + i * 15 - (s & 11)
+    s = (s ^ (s >> 8)) + i * 17 - (s & 12)
+    s = (s ^ (s >> 9)) + i * 19 - (s & 13)
+    s = (s ^ (s >> 10)) + i * 21 - (s & 14)
+    s = (s ^ (s >> 11)) + i * 23 - (s & 15)
+    s = (s ^ (s >> 12)) + i * 25 - (s & 16)
+    s = (s ^ (s >> 13)) + i * 27 - (s & 17)
+    s = (s ^ (s >> 1)) + i * 29 - (s & 18)
+    s = (s ^ (s >> 2)) + i * 31 - (s & 19)
+    s = (s ^ (s >> 3)) + i * 33 - (s & 20)
+    s = (s ^ (s >> 4)) + i * 35 - (s & 21)
+    s = (s ^ (s >> 5)) + i * 37 - (s & 22)
+    s = (s ^ (s >> 6)) + i * 39 - (s & 23)
+    s = (s ^ (s >> 7)) + i * 41 - (s & 24)
+    s = (s ^ (s >> 8)) + i * 43 - (s & 25)
+    s = (s ^ (s >> 9)) + i * 45 - (s & 26)
+    s = (s ^ (s >> 10)) + i * 47 - (s & 27)
+    s = (s ^ (s >> 11)) + i * 49 - (s & 28)
+    s = (s ^ (s >> 12)) + i * 51 - (s & 29)
+    s = (s ^ (s >> 13)) + i * 53 - (s & 30)
+    s = (s ^ (s >> 1)) + i * 55 - (s & 31)
+    s = (s ^ (s >> 2)) + i * 57 - (s & 32)
+    s = (s ^ (s >> 3)) + i * 59 - (s & 33)
+    s = (s ^ (s >> 4)) + i * 61 - (s & 34)
+    s = (s ^ (s >> 5)) + i * 63 - (s & 35)
+    s = (s ^ (s >> 6)) + i * 65 - (s & 36)
+    s = (s ^ (s >> 7)) + i * 67 - (s & 37)
+    s = (s ^ (s >> 8)) + i * 69 - (s & 38)
+    s = (s ^ (s >> 9)) + i * 71 - (s & 39)
+    s = (s ^ (s >> 10)) + i * 73 - (s & 40)
+    s = (s ^ (s >> 11)) + i * 75 - (s & 41)
+    s = (s ^ (s >> 12)) + i * 77 - (s & 42)
+    s = (s ^ (s >> 13)) + i * 79 - (s & 43)
+    s = (s ^ (s >> 1)) + i * 81 - (s & 44)
+    s = (s ^ (s >> 2)) + i * 83 - (s & 45)
+    s = (s ^ (s >> 3)) + i * 85 - (s & 46)
+    s = (s ^ (s >> 4)) + i * 87 - (s & 47)
+    s = (s ^ (s >> 5)) + i * 89 - (s & 48)
+    s = (s ^ (s >> 6)) + i * 91 - (s & 49)
+    s = (s ^ (s >> 7)) + i * 93 - (s & 50)
+    s = (s ^ (s >> 8)) + i * 95 - (s & 51)
+    s = (s ^ (s >> 9)) + i * 97 - (s & 52)
+    s = (s ^ (s >> 10)) + i * 99 - (s & 53)
+    s = (s ^ (s >> 11)) + i * 101 - (s & 54)
+    s = (s ^ (s >> 12)) + i * 103 - (s & 55)
+    s = (s ^ (s >> 13)) + i * 105 - (s & 56)
+    s = (s ^ (s >> 1)) + i * 107 - (s & 57)
+    s = (s ^ (s >> 2)) + i * 109 - (s & 58)
+    s = (s ^ (s >> 3)) + i * 111 - (s & 59)
+    s = (s ^ (s >> 4)) + i * 113 - (s & 60)
+    s = (s ^ (s >> 5)) + i * 115 - (s & 61)
+    s = (s ^ (s >> 6)) + i * 117 - (s & 62)
+    s = (s ^ (s >> 7)) + i * 119 - (s & 63)
+    s = (s ^ (s >> 8)) + i * 121 - (s & 64)
+    out.push(xs)
+  }
+  (out, s)
+}
+
 fn main(os: Os) {
   let n = os.env.args().len()
   os.stdio.println("${ok_sum(["${n}s", "x"])}")
   let (a, b) = twice([n, 2])
   os.stdio.println("${a.len() + b.len()} ${copies(a, n).len()}")
+  let (c, s) = copies_big(a, n)
+  os.stdio.println("${c.len()} ${s}")
 }

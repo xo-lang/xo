@@ -25,19 +25,35 @@ fn (g: G) push_loops() -> Bool {
   g.cur_sb >= 0 && in_loop(g.f, g.cur_sb)
 }
 
-/// Whether a retain here calls inc_thunk (pass rc_thunk): outside loops
-/// (a loop's retains keep the inline fast path), on arm64 but Windows,
+/// The SSA values of the largest loop whose retains stay inline.
+const RC_THUNK_LOOP = 256
+
+/// Whether a retain here calls inc_thunk (pass rc_thunk): outside loops,
+/// and in a loop whose innermost natural loop is over RC_THUNK_LOOP
+/// values (pass rc_thunk_loops: a small loop's retains keep the inline
+/// fast path, and so does an irreducible cycle's), on arm64 but Windows,
 /// not under --race (its instrumentation reads the inline sequence).
 fn (var g: G) rc_thunk_here() -> Bool {
   if g.x86 || g.os == "windows" || g.m.race || !g.on("rc_thunk") || g.cur_sb < 0 {
     return false
   }
-  if let Some(l) = g.sb_loop.get(g.cur_sb) {
-    return !l
+  var l = false
+  if let Some(k) = g.sb_loop.get(g.cur_sb) {
+    l = k
+  } else {
+    l = in_loop(g.f, g.cur_sb)
+    g.sb_loop[g.cur_sb] = l
   }
-  let l = in_loop(g.f, g.cur_sb)
-  g.sb_loop[g.cur_sb] = l
-  !l
+  if !l {
+    return true
+  }
+  if !g.on("rc_thunk_loops") {
+    return false
+  }
+  if g.sb_loop_size.is_empty() {
+    g.sb_loop_size = loop_sizes(g.f)
+  }
+  g.sb_loop_size[g.cur_sb] > RC_THUNK_LOOP
 }
 
 fn (var g: G) push_fast(v: Int, word: Bool) {

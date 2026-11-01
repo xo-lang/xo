@@ -53,6 +53,8 @@ pub fn passes() -> List[Str] {
     "inplace_elems",
     // rc.xo inc_thunk: a retain outside loops calls one out of line copy
     "rc_thunk",
+    // calls.xo rc_thunk_here: the retains of a large loop too
+    "rc_thunk_loops",
     // per function: MIR
     "mir_dce",
     "thread_const",

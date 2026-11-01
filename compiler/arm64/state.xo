@@ -400,6 +400,9 @@ struct G {
   lit_objs: Map[Int, Bool] = {}
   /// whether each SSA block of the function is in a loop (rc_thunk_here)
   sb_loop: Map[Int, Bool] = {}
+  /// the SSA values of the innermost natural loop of each SSA block, 0
+  /// for none; empty until a retain asks (rc_thunk_here)
+  sb_loop_size: List[Int] = []
   ksyms: Map[Int, Str] = {}
   /// the registers holding a symbol's address (sym_addr) and the
   /// floating point registers holding a constant's bits (fimm), for a

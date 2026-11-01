@@ -11,6 +11,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - std/http (decision 0449 stage 1c): an HTTP/2 connection whose idle park
   was refused re-reads before waiting; a request that arrived as the park
   was tried could go unanswered until a deadline (TestH2Diff, under load).
+- PERF (native arm64): a retain in a large loop (over 256 SSA values in its
+  innermost loop) calls the retain thunk too (pass rc_thunk_loops); smaller
+  loops stay inline. xo's stage 2 __text 35,639,004 to 33,811,420 bytes
+  (-5.1%); self build wall 0.964 and CPU 0.941 on linux/arm64 (3 rounds);
+  bench/perf/http unchanged.
 - A growing List uses all of its heap block, as Go's append does (decision 0452):
   `bench/perf/alloc grow` wall 0.922; xo's self build max RSS 0.986 (3 rounds).
 - PERF (native arm64): spilled values of a struct copied word by word

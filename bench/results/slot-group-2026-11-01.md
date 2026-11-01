@@ -32,6 +32,11 @@ copies.
 | bench/perf/alloc mixed | 0.991 (0.989 to 0.997) | better |
 | bench/perf/alloc strings | 0.973 (0.94 to 0.986) | better |
 
+Identical-code controls on that host read wall 1.004 and 1.001, max RSS
+1.007 and 1.006 (2026-11-01, infrastructure/offload.md): the verdicts for
+self max RSS and alloc mixed above are inside that band, so they are no
+claim.
+
 HTTP: bench/perf/http/run.sh, linux/arm64, arm64 backend, medians of 5
 runs per round, 32 workers, 10 s after 2 s warmup, loopback, ebfb1e308
 against the change on it. No errors and no GCs in any run.

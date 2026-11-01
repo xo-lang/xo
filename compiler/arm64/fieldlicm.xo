@@ -131,6 +131,30 @@ fn natural_loops(f: ssa.Func, rpo: List[Int], idom: List[Int], entry: Int) -> Li
   out
 }
 
+/// The SSA values of the innermost natural loop of each block of f, 0
+/// for a block in none (an irreducible cycle has no natural loop).
+fn loop_sizes(f: ssa.Func) -> List[Int] {
+  var out: List[Int] = []
+  for _ in 0..f.blocks.len() {
+    out.push(0)
+  }
+  let rpo = rpo_of(f)
+  for (_, body) in natural_loops(f, rpo, dominators_of(f, rpo), rpo[0]) {
+    var size = 0
+    for (b, inside) in body.indexed() {
+      if inside {
+        size += f.blocks[b].instrs.len()
+      }
+    }
+    for (b, inside) in body.indexed() {
+      if inside && (out[b] == 0 || size < out[b]) {
+        out[b] = size
+      }
+    }
+  }
+  out
+}
+
 /// Hoists the invariant fields of the loop with header h and blocks body
 /// into its preheader; whether it moved any.
 fn hoist_loop(var f: ssa.Func, types: List[ssa.SType], pr: Proof, h: Int, body: List[Bool]) -> Bool {
