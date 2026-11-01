@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Self build: the heap counter's peak moves from hollow back to emit (about 4440
+  to 4000 MB on the Mac, decision 0448): a part's hollowed text is dropped once
+  its object and symbol facts exist, and those facts copy their names rather
+  than pin the text. Max RSS on linux/arm64 is unchanged (0.995, noise).
 - std/http (wasm): `http.serve_component(r)` builds a program as the core
   module of a `wasi:http` 0.2 component (decision 0447 step 1): its
   `handle` export runs main per request and answers through the router,

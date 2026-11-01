@@ -30,7 +30,9 @@ pub struct UFacts {
   pub named: List[(Str, Str)] = []
 }
 
-/// The facts of part p (UFacts).
+/// The facts of part p (UFacts), as copies: a slice is a view that keeps
+/// the whole part alive (decision 0330), and a build holds the facts of
+/// every part while it assembles the rest (decision 0448 stage 3).
 pub fn undef_scan(p: Str) -> UFacts {
   var u = UFacts{}
   var seen: Map[Str, Bool] = {}
@@ -45,13 +47,13 @@ pub fn undef_scan(p: Str) -> UFacts {
     }
     if j > i {
       if starts_at(b, i, j, "// func ") {
-        fname = p[i + 8..j]
+        fname = p[i + 8..j].clone()
       } else if starts_at(b, i, j, "_xo_") && b[j - 1] == 58 {
-        u.defined.push(p[i..j - 1])
+        u.defined.push(p[i..j - 1].clone())
       } else if b[i] == 9 {
         if starts_at(b, i, j, "\t.weak_reference ") || starts_at(b, i, j, "\t.weak_definition ") {
           let k = if starts_at(b, i, j, "\t.weak_reference ") { i + 17 } else { i + 18 }
-          u.weak.push(p[k..j].trim())
+          u.weak.push(p[k..j].trim().clone())
         } else if !(starts_at(b, i, j, "\t.globl") || starts_at(b, i, j, "\t.private_extern") || starts_at(b, i, j, "\t.ascii") || starts_at(b, i, j, "\t.asciz") || starts_at(b, i, j, "\t.string")) {
           // (not a string's bytes: a Str literal may hold `_xo_` text)
           // the `_xo_` tokens of an instruction or a data directive
@@ -65,7 +67,7 @@ pub fn undef_scan(p: Str) -> UFacts {
               let s = p[k..e]
               if !seen.contains(s) {
                 seen[s] = true
-                u.named.push((s, fname))
+                u.named.push((s.clone(), fname))
               }
               k = e
             } else {

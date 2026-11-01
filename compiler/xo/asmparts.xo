@@ -403,17 +403,10 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, elf
     ufs.push(u)
   }
   if !amiss.is_empty() {
-    var texts: List[Str] = []
-    for i in amiss {
-      let (t, _, _) = arm64.hollow_rewrite(parts[i], facts[i], live[i], trap)
-      texts.push(t)
-    }
     var stored = 0
-    for (j, r) in macho_objects(texts, elf, amd64, false, jobs).indexed() {
+    for (j, (r, u)) in hollow_objects(parts, facts, live, amiss, trap, elf, amd64, jobs).indexed() {
       let i = amiss[j]
       out.objs[i] = r
-      // the undefined-symbol check is Mach-O's (main.xo, darwin)
-      let u = if elf { arm64.UFacts{} } else { arm64.undef_scan(texts[j]) }
       ufs[i] = u
       match r {
         Ok(b) => {
@@ -429,6 +422,49 @@ fn incr_hollow(os: Os, ctx: Ctx, parts: List[Str], march: Str, hollow: Bool, elf
   out.okeys = okeys
   out.undef = arm64.undef_combine(ufs)
   Some(out)
+}
+
+/// The objects and undefined-symbol facts of the parts amiss, hollowed, in
+/// amiss's order. Each task rewrites a part's text and drops it once its
+/// object is built: a list of every part's hollowed text beside the parts
+/// was the self build's peak (decision 0448 stage 3).
+fn hollow_objects(parts: List[Str], facts: List[arm64.HFacts], live: List[List[Bool]], amiss: List[Int], trap: Str, elf: Bool, amd64: Bool, jobs: Int) -> List[(Result[Bytes, Str], arm64.UFacts)] {
+  let n = amiss.len()
+  let next = Atomic[Int].new(0)
+  let done = scope sc {
+    var ts = []
+    for _ in 0..jobs.min(n).max(1) {
+      ts.push(sc.spawn(fn() -> List[(Int, Result[Bytes, Str], arm64.UFacts)] {
+        var mine: List[(Int, Result[Bytes, Str], arm64.UFacts)] = []
+        while true {
+          let j = next.add(1) - 1
+          if j >= n {
+            break
+          }
+          let i = amiss[j]
+          let (t, _, _) = arm64.hollow_rewrite(parts[i], facts[i], live[i], trap)
+          let r = assemble_one(t, elf, amd64)
+          // the undefined-symbol check is Mach-O's (main.xo, darwin)
+          let u = if elf { arm64.UFacts{} } else { arm64.undef_scan(t) }
+          mine.push((j, r, u))
+        }
+        mine
+      }))
+    }
+    var all: List[(Int, Result[Bytes, Str], arm64.UFacts)] = []
+    for t in ts {
+      all = all + t.await
+    }
+    all
+  }
+  var out: List[(Result[Bytes, Str], arm64.UFacts)] = []
+  for _ in 0..n {
+    out.push((Err("not assembled"), arm64.UFacts{}))
+  }
+  for (j, r, u) in done {
+    out[j] = (r, u)
+  }
+  out
 }
 
 /// The hollowed texts of an incr_hollow build, for a tool that reads them

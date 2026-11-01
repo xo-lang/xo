@@ -612,6 +612,29 @@ e762fe114 is the commit.
 Idle worker trim (xl113), the body drop and XO_EMIT_MEM landed in fcfda87f7, so
 Lang 6's stage 3 worktrees hold nothing else.
 
+### Stage 3: hollow's peak was pinned texts (xo-lang-2, 2026-11-01)
+
+The Mac's heap counter peak of a self build was in hollow (4440 MB), past emit
+(3985 MB), though RSS's plateau is earlier (3.3 to 3.9 GB from 20 s to 36 s).
+A 16 MiB heap profile charged the live bytes to the hollowed texts: 993 MB by
+the 80th of the parts. Each task now rewrites its own text, assembles it,
+scans it and drops it (`hollow_objects` in compiler/xo/asmparts.xo), and
+`undef_scan`'s names are clones. Dropping the texts alone moved the peak 43 MB,
+since the names were views that pinned each text (decision 0330). Output is
+unchanged: identity on linux/arm64 and darwin/arm64, 119 programs each, 0
+differing.
+
+Mac, two rounds each: counter peak 4441 and 4436 MB to 4009 and 3981 MB, hollow
+phase 2213 and 2227 ms to 1492 and 1538 ms, peak footprint 3852 and 3856 MiB to
+3810 and 3832 MiB, max RSS 4202 and 4208 MB to 4159 and 4144 MB. linux/arm64
+self `--ab` (c9a2c0392 vs 3d0eb1b80, 3 rounds, every effect under 3%): wall 1.0
+(0.991 to 1.005), CPU 1.004 (1.001 to 1.012, read as worse), max RSS 0.995 (0.978
+to 1.013, noise). So this removes hollow's spike and moves the counter's peak
+back to emit; it did not lower Linux's high-water mark, which is set elsewhere.
+Left in hollow: the parts themselves (718 MB by `drop_weak_in`) stay live through
+it; freeing them needs a check that `hollow_late` and `incr_texts` no longer read
+them.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.
