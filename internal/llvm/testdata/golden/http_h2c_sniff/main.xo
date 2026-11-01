@@ -21,7 +21,13 @@ fn frames(buf: Bytes) -> (Str, Bool) {
     }
     let t = byte(buf, i + 3)
     let fl = byte(buf, i + 4)
-    out += "type ${t} flags ${fl} len ${n}\n"
+    // HEADERS carries the date header, whose Huffman coded length changes
+    // with the clock's digits, so its length is not printed
+    if t == 1 {
+      out += "type ${t} flags ${fl}\n"
+    } else {
+      out += "type ${t} flags ${fl} len ${n}\n"
+    }
     if t == 0 && (fl & 1) != 0 {
       return (out, true)
     }

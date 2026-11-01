@@ -3,7 +3,7 @@ exit 0
 h1: 200 hello h2c
 h2c frames:
 type 0 flags 1 len 9
-type 1 flags 4 len 48
+type 1 flags 4
 type 4 flags 0 len 30
 type 4 flags 1 len 0
 type 8 flags 0 len 4
