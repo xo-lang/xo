@@ -39,6 +39,13 @@ type result struct {
 	Rate      float64 `json:"rate"`   // the open loop's target, 0 closed loop
 	CPUusReq  float64 `json:"cpu_us_per_req"`
 	BodyBytes int     `json:"body_bytes"`
+	// The open loop's two parts of the latency above: how late this generator
+	// sent (its own timers) and the send to the response's end (the server).
+	LateP50us float64 `json:"late_p50_us,omitempty"`
+	LateP99us float64 `json:"late_p99_us,omitempty"`
+	SvcP50us  float64 `json:"svc_p50_us,omitempty"`
+	SvcP99us  float64 `json:"svc_p99_us,omitempty"`
+	SvcP999us float64 `json:"svc_p999_us,omitempty"`
 }
 
 // cpuTicks is the user + system time of pid in clock ticks (Linux), or -1.
@@ -69,6 +76,7 @@ func main() {
 	// samples a worker keeps: 8M in all, at least 64k each
 	capPer := max(1<<16, (8<<20) / *conc)
 	lat := make([][]int32, *conc)
+	late := make([][]int32, *conc)
 	var measuring atomic.Bool
 	var stop atomic.Bool
 	var errs atomic.Int64
@@ -86,6 +94,9 @@ func main() {
 	base := time.Now().Add(100 * time.Millisecond)
 	for w := 0; w < *conc; w++ {
 		lat[w] = make([]int32, 0, capPer)
+		if *rate > 0 {
+			late[w] = make([]int32, 0, capPer)
+		}
 		c, err := net.Dial("tcp", *addr)
 		if err != nil {
 			fmt.Fprintln(os.Stderr, "dial:", err)
@@ -100,10 +111,12 @@ func main() {
 			next := base.Add(iv * time.Duration(w) / time.Duration(*conc))
 			for !stop.Load() {
 				t0 := time.Now()
+				sent := t0
 				if iv > 0 {
 					if d := time.Until(next); d > 0 {
 						time.Sleep(d)
 					}
+					sent = time.Now()
 					t0 = next
 					next = next.Add(iv)
 				}
@@ -138,6 +151,9 @@ func main() {
 				if measuring.Load() {
 					if len(lat[w]) < capPer {
 						lat[w] = append(lat[w], int32(d.Microseconds()))
+						if iv > 0 {
+							late[w] = append(late[w], int32(sent.Sub(t0).Microseconds()))
+						}
 					}
 					s := int(time.Since(start) / time.Second)
 					if s < secs {
@@ -194,6 +210,29 @@ func main() {
 	if t0 >= 0 && t1 >= 0 && len(all) > 0 {
 		// clock ticks are 100 a second on Linux
 		res.CPUusReq = float64(t1-t0) * 1e4 / float64(len(all))
+	}
+	if *rate > 0 {
+		var ls, ss []int32
+		for w, l := range lat {
+			for i, v := range l {
+				ls = append(ls, late[w][i])
+				ss = append(ss, v-late[w][i])
+			}
+		}
+		slices.Sort(ls)
+		slices.Sort(ss)
+		pick := func(a []int32, p float64) float64 {
+			if len(a) == 0 {
+				return 0
+			}
+			i := int(math.Ceil(p*float64(len(a)))) - 1
+			if i < 0 {
+				i = 0
+			}
+			return float64(a[i])
+		}
+		res.LateP50us, res.LateP99us = pick(ls, 0.50), pick(ls, 0.99)
+		res.SvcP50us, res.SvcP99us, res.SvcP999us = pick(ss, 0.50), pick(ss, 0.99), pick(ss, 0.999)
 	}
 	out, _ := json.Marshal(res)
 	fmt.Println(string(out))

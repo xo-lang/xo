@@ -17,7 +17,11 @@ per-connection array, and the client's own GC is off, so its allocations
 add nothing to the tail it measures. It prints one JSON line: requests,
 req/s, p50, p99, p99.9 and max latency (microseconds), the coefficient of
 variation of the per-second request counts (`sec_cv`), and with `-pid` the
-server's CPU per request (Linux /proc).
+server's CPU per request (Linux /proc). With `-rate` (the open loop) latency
+counts from each request's scheduled send, and the line also has `late_*`,
+how late the generator sent, and `svc_*`, the send to the response's end:
+at low rates the totals are mostly `late_*`, the generator's own timers.
+Go's `GET /alloc-strconv` is `/alloc` with strconv in place of fmt.Sprintf.
 
     loadgen -addr 127.0.0.1:18080 -path /alloc -c 32 -d 10s -warmup 2s -pid PID
 
