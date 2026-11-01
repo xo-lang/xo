@@ -13,7 +13,7 @@
 
 /// The runtime calls of rt5.xo.
 fn rt5_direct(name: Str) -> Bool {
-  name is "wasi_http_method" | "wasi_http_path" | "wasi_http_headers" | "wasi_http_body" | "wasi_http_respond"
+  name is "wasi_http_method" | "wasi_http_path" | "wasi_http_authority" | "wasi_http_headers" | "wasi_http_body" | "wasi_http_respond"
 }
 
 /// Whether the program is a wasi:http component: it calls
@@ -27,6 +27,7 @@ fn rt5_imports() -> Str {
   """
     (import "wasi:http/types@0.2.0" "[method]incoming-request.method" (func $ireq_method (param i32 i32)))
     (import "wasi:http/types@0.2.0" "[method]incoming-request.path-with-query" (func $ireq_path (param i32 i32)))
+    (import "wasi:http/types@0.2.0" "[method]incoming-request.authority" (func $ireq_authority (param i32 i32)))
     (import "wasi:http/types@0.2.0" "[resource-drop]incoming-request" (func $ireq_drop (param i32)))
     (import "wasi:http/types@0.2.0" "[method]incoming-request.headers" (func $ireq_headers (param i32) (result i32)))
     (import "wasi:http/types@0.2.0" "[method]fields.entries" (func $fields_entries (param i32 i32)))
@@ -214,6 +215,26 @@ fn rt5_text(var g: Gen) -> Str {
       i32.store8 offset=8
       local.get $o
       i32.const 1)
+
+    ;; the request's authority (the Host field), "" with none
+    (func $wasi_http_authority (result i32 i32) (local $r i32)
+      global.get $hreq
+      call $hret_at
+      local.tee $r
+      call $ireq_authority
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load offset=4
+        local.get $r
+        i32.load offset=8
+        call $str_take
+        return
+      end
+      i32.const 0
+      call $rs_new
+      i32.const 0)
 
     ;; the request's fields: a Bytes object of each name and value
     ;; followed by a zero byte; fields.entries' list and strings are

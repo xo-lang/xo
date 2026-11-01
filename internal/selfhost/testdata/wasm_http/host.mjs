@@ -40,6 +40,7 @@ const http = {
   "[method]incoming-request.consume": (r, ret) => { dv().setUint8(ret, 0); dv().setUint32(ret + 4, 60, true) },
   "[method]incoming-body.stream": (b, ret) => { dv().setUint8(ret, 0); dv().setUint32(ret + 4, 70, true) },
   "[resource-drop]incoming-body": (b) => { res.drops.push("incoming-body") },
+  "[method]incoming-request.authority": (r, ret) => { dv().setUint8(ret, 0) },
   "[method]incoming-request.path-with-query": (r, ret) => {
     const [p, n] = put(path);
     dv().setUint8(ret, 1); dv().setUint32(ret + 4, p, true); dv().setUint32(ret + 8, n, true);

@@ -82,7 +82,7 @@ fn bin_path(dir: Str, out: Str, name: Str, t: Str, many: Bool) -> Str {
   var exe = ""
   if parts[0] == "windows" {
     exe = ".exe"
-  } else if parts[0] == "wasip1" {
+  } else if parts[0] is "wasip1" | "wasip2" {
     exe = ".wasm"
   }
   if many {

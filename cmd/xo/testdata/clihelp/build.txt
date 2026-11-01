@@ -20,7 +20,9 @@ the Go toolchain, and a program with `use go` needs it. A linux/arm64
 target links with Xo's own linker, from any host (decision 0243).
 --no-gc (also on run and test) reports every construct, std API, or
 effect the native backends do not support as XO1201 before code
-generation (decision 0083). --backend=wasm builds a WASI preview1 module.
+generation (decision 0083). --backend=wasm builds a WASI preview1 module;
+--targets=wasip2/wasm, named alone, builds a program that calls
+http.serve_component as a wasi:http 0.2 component (decision 0447).
 Request scoped arenas for HTTP handlers are on by default (decision
 0066); --no-arenas (also on run and test) turns them off. --ci fails
 before building when a .xo file is not formatted (core 10.5) or dbg(...)

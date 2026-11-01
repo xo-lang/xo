@@ -22,6 +22,17 @@ fn main(os: Os) {
     os.stdio.eprintln("to stderr")
     http.text(200, "logged")
   })
+  r.handle("GET /stdin", fn(q: http.Request) -> http.Response { 
+    match os.stdio.read_line() {
+      Ok(Some(l)) => http.text(200, "stdin ${l}")
+      Ok(None) => http.text(200, "stdin at its end")
+      Err(e) => http.text(200, "stdin ${e}")
+    }
+  })
+  r.handle("GET /env", fn(q: http.Request) -> http.Response { http.text(200, "env ${os.env.get("PATH") ?? "-"} args ${os.env.args().len()}") })
+  r.handle("GET /exit", fn(q: http.Request) -> http.Response {
+    os.proc.exit(3)
+  })
   r.handle("GET /fault", fn(q: http.Request) -> http.Response {
     let l: List[Int] = []
     http.text(200, "${l[q.path.len()]}")

@@ -273,8 +273,8 @@ response trailers come after this and are not decided yet.
 
 ## Next stage results (2026-11-01, Xo Lang 4)
 
-`xo build --backend=wasm` of a program that calls `http.serve_component` writes
-the component itself. No wasm-tools and no adapter are on the build path; both
+A program that calls `http.serve_component` builds as the component itself
+(with `--backend=wasm` at the time of this table, `--targets=wasip2/wasm` since). No wasm-tools and no adapter are on the build path; both
 tools are test oracles only. The same hello program, setup and host as step 1,
 now 3 rounds, alone on the host (medians of the rounds; first request is the
 median of all 15 starts):
@@ -310,8 +310,8 @@ How it is built:
   the program is instantiated against it, and a fixup module fills the table.
 - `compiler/wasm/rt6.xo` defines the preview 1 functions the runtime calls, with
   their signatures, over WASI 0.2. stdout, stderr, the clocks, sleep and random
-  work. Arguments and the environment are empty. File operations and stdin reads
-  return ENOSYS. proc_exit traps. A non-component build is unchanged.
+  work. Arguments and the environment are empty. A file operation compiled in
+  returns ENOSYS (XO1515 stops a program that reaches one). proc_exit traps. A non-component build is unchanged.
 - TestWasmComponentServe builds testdata/wasm_http_serve, runs `wasm-tools
   validate`, and drives `wasmtime serve`: a body past the 4096 byte write piece, a
   100,000 byte request body, a header, sleep, clocks, random, stdout and stderr, a
@@ -319,17 +319,68 @@ How it is built:
   tools are absent, so it runs on the linux/arm64 offload hosts and not on the
   Mac; TestWasmComponentHTTP still runs the core module under Node.
 
-Differs from the plan above, and left open:
+## Targets, diagnostics and goldens (2026-11-01, Xo Lang 4)
 
-- The component comes from `--backend=wasm` plus the call to
-  `http.serve_component`. There is no `--targets=wasip2/wasm` yet, and
-  `--targets=wasip1/wasm` of such a program also gives a component.
-- The two new diagnostics in Consequences are not written: a component program
-  that opens a file gets ENOSYS at run time, not a build error, and one whose main
-  never hands over a router gets the 500 that rt5.xo's handle_end sends.
+The gaps the section above left, closed the same day at the lead's request.
+
+- `--targets=wasip2/wasm` builds the component and is named alone, not in
+  `all`. `--backend=wasm` alone and `--targets=wasip1/wasm` stay a preview 1
+  module, so such a build of a `serve_component` program is XO1514, not a
+  silent component.
+- XO1515: a wasip2/wasm program that reaches files, processes or sockets. The
+  module holds only what the program reaches, so a std function nothing calls
+  does not count. The message names the call and a chain of functions to it.
+- XO1516: a wasip2/wasm program that never calls `http.serve_component`.
+- TestWasmComponentGoldens runs native goldens both ways: the golden's source
+  with its main replaced, natively and under `wasmtime serve` after `wasm-tools
+  validate`, with one request script for both. Status, body and header fields
+  must match, except Date, Connection, Transfer-Encoding and Content-Length, and
+  a gzip body compares decoded. 18 goldens run, 16 from
+  internal/llvm/testdata/golden and 2 whose router is in main, ported to
+  testdata/wasm_goldens; the 28 others with a router are listed with a reason
+  in the test (client, connection, TLS, HTTP/2, upgrade, trailers), and
+  TestWasmComponentGoldensListed fails on a new one with neither.
+
+This found what the first version of serve_component got wrong, all fixed:
+repeated fields (the second Set-Cookie was lost); `req.path` left escaped; no
+host (wasmtime leaves Host out of the fields and gives it as the request's
+authority, now imported); a Content-Type invented in place of the server's
+sniffing, on a 204 too; `http.stream` routes answering 500; and `req.body` full
+in a handle_stream route.
+
+The hello program after these fixes, same setup as the table above, 3 rounds:
+
+| component | bytes | first request (ms) | req/s | p50 (ms) | p90 (ms) | p99 (ms) |
+|---|---|---|---|---|---|---|
+| Xo | 281,733 | 22.3 | 83,339 | 0.341 | 0.616 | 1.262 |
+| Rust | 79,127 | 14.0 | 89,794 | 0.313 | 0.581 | 1.187 |
+| TinyGo | 2,910,541 | 24.1 | 29,114 | 1.057 | 1.644 | 2.378 |
+
+Xo is 7.2% below Rust in req/s and 3.6 times its size; the fixes cost 24,409
+bytes (9.5%), and the size has not been broken down by cause. Round ranges of
+req/s: Xo 83,009 to 83,690, Rust 89,705 to 90,883, TinyGo 28,982 to 29,234. Xo's
+first request is bimodal, 13 to 15 ms or 22 to 27 ms (one start 83 ms), so its
+median moved from 14.2 by which side the middle start fell on; Rust's starts
+are nearly all in the low group. The cause is not traced, and these starts do
+not show that the fixes slowed it. 83,339 against the earlier 81,681 is not a
+speedup claim either: Rust also read higher.
+
+What a component still does not do:
+
+- `http.stream` runs when it is called and its response goes out whole, so a
+  flush reaches the client only at the end. A stream's function also runs before
+  the handler returns.
+- Arguments and the environment are empty, and `proc.exit` traps (the host
+  answers with an error, and the next request gets a new instance): the proxy
+  world has neither wasi:cli/environment nor wasi:cli/exit, checked in its WIT
+  0.2.12.
+- `os.stdio.read_line` faults, a 500 from a handler: std's stdin reader is the
+  native runtime's, and it faults on wasip1/wasm too (`rt.sys6` at stdin.sysread). The world has wasi:cli/stdin, so this can be done, but in
+  that reader rather than in rt6.xo's `fd_read`.
+- The wasm goldens are not rerun on the new target, as stage 3 of the plan
+  says: without a router they cannot be components (XO1516), and this decision's
+  first world is wasi:http. They would need a wasi:cli/run world.
 - Spin and wasmCloud have not been tried. The only real host so far is wasmtime.
-- Golden coverage: one program, not every component golden; only the two tests
-  above run `wasm-tools validate` or a component.
 
 ## Consequences
 

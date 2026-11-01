@@ -37,6 +37,8 @@ use github.com/xo-lang/xo/compiler/tzsel
 pub struct Program {
   pub wat: Str = ""
   pub wasm: Bytes = b""
+  /// The diagnostic code of err when it has one (XO1514 to XO1516).
+  pub code: Str = ""
   pub err: Str = ""
 }
 
@@ -213,17 +215,22 @@ pub fn generate_opts(m: ssa.Module, all: Bool, lax: Bool) -> Program {
 /// module's size can be attributed to constructs (`compiler/wasm
 /// --annotate`; the bytes are the same).
 pub fn generate_with(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool) -> Program {
-  gen_module(m, all, lax, annotate, [])
+  gen_module(m, all, lax, annotate, [], false)
 }
 
 /// generate_with, and tz the zone data of the program's constant zone
 /// names (compiler/tzsel tz_select): in the module only when std/time
 /// reads it (rt.tz_table), as a native program's xo_tzdata.
 pub fn generate_tz(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: tzsel.TZSel) -> Program {
-  gen_module(m, all, lax, annotate, [tz])
+  gen_module(m, all, lax, annotate, [tz], false)
 }
 
-fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzsel.TZSel]) -> Program {
+/// Lowers module m for wasip2/wasm: a wasi:http component (decision 0447).
+pub fn generate_component(m: ssa.Module, tz: tzsel.TZSel) -> Program {
+  gen_module(m, false, false, false, [tz], true)
+}
+
+fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzsel.TZSel], p2: Bool) -> Program {
   var g = Gen{m: atomics_to_runtime(m), all: all, lax: lax, annotate: annotate}
   for _ in 0..m.types.len() {
     g.leaf_memo.push([])
@@ -232,7 +239,20 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
   for (i, f) in m.funcs.indexed() {
     g.by_name[f.name] = i
   }
-  g.comp = g.is_component()
+  // the target decides what a build gives, and the program must fit it
+  g.comp = p2
+  if g.is_component() && !p2 {
+    return Program{code: "XO1514", err: "http.serve_component makes a wasi:http component, which a wasip1/wasm module cannot be: build with --targets=wasip2/wasm"}
+  }
+  if p2 {
+    if !g.is_component() {
+      return Program{code: "XO1516", err: "a wasip2/wasm program is a wasi:http component, and its main never calls http.serve_component: hand it a router, or build for wasip1/wasm"}
+    }
+    let lacks = g.component_lacks()
+    if !lacks.is_empty() {
+      return Program{code: "XO1515", err: lacks}
+    }
+  }
   if g.by_name.contains("wasi_gate") {
     g.wasi_xo = true
     g.lax = true
@@ -288,6 +308,63 @@ fn (var g: Gen) no_processes() {
       }
     }
   }
+}
+
+/// What the program uses that the wasi:http/proxy world does not have, as a
+/// message, or "". The module holds only what the program reaches, so a call
+/// here is a call the program can make.
+fn (g: Gen) component_lacks() -> Str {
+  for f in g.m.funcs {
+    for x in f.values {
+      if x.op != ssa.Op.Call {
+        continue
+      }
+      let name = match x.aux {
+        S(s) => s
+        _ => ""
+      }
+      let op = name.trim_prefix("rt.")
+      var what = ""
+      if name is "proc.run" | "proc.exec" | "proc.spawn" {
+        what = "processes"
+      } else if name.starts_with("rt.") && op.starts_with("fs_") {
+        what = "files"
+      } else if name.starts_with("rt.") && (op.starts_with("net_") || op.starts_with("listener_") || op.starts_with("conn_")) {
+        what = "sockets"
+      }
+      if !what.is_empty() {
+        return "a wasip2/wasm program is a wasi:http component, which has no ${what}: `${name}`, reached through ${g.call_chain(f.name)}"
+      }
+    }
+  }
+  ""
+}
+
+/// A chain of functions from one nothing in the module refers to, down to
+/// function name.
+fn (g: Gen) call_chain(name: Str) -> Str {
+  var chain = [name]
+  var at = name
+  while true {
+    var up = ""
+    for f in g.m.funcs {
+      if !chain.contains(f.name) && f.values.any(fn(x) {
+        match x.aux {
+          S(s) => s == at
+          _ => false
+        }
+      }) {
+        up = f.name
+        break
+      }
+    }
+    if up.is_empty() {
+      break
+    }
+    chain.insert(0, up)
+    at = up
+  }
+  chain.join(" -> ")
 }
 
 /// Records the first construct the backend does not support.

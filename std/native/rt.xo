@@ -306,6 +306,7 @@ fn static_word(k: Int) -> Int uses realtime
 /// rt5.xo); std's callers test target.arch first.
 fn wasi_http_method() -> Str
 fn wasi_http_path() -> Str
+fn wasi_http_authority() -> Str
 fn wasi_http_headers() -> Bytes
 fn wasi_http_body() -> Bytes
 fn wasi_http_respond(status: Int, headers: Bytes, body: Bytes)

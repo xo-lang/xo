@@ -1,0 +1,20 @@
+// internal/llvm/testdata/golden/http_router_hooks's router with its hooks and
+// middleware, whose golden builds it in main; TestWasmComponentGoldens gives this
+// file its main.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /items", fn(q: http.Request) -> http.Response { http.text(200, "list") })
+  r.handle("POST /items", fn(q: http.Request) -> http.Response { http.text(201, "made") })
+  r.handle("GET /items/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "item ${q.param("id")}") })
+  r.handle("/any", fn(q: http.Request) -> http.Response { http.text(200, "any ${q.method}") })
+  var sub = http.router()
+  sub.handle("GET /s", fn(q: http.Request) -> http.Response { http.text(200, "sub") })
+  sub.not_found(fn(q: http.Request) -> http.Response { http.text(404, "sub miss") })
+  r.mount("/m", sub)
+  r.not_found(fn(q: http.Request) -> http.Response { http.error_html(404, "Not Found", "no page at ${q.path} <here>") })
+  r.method_not_allowed(fn(q: http.Request) -> http.Response { http.text(405, "${q.method} not allowed on ${q.path}") })
+  r.wrap(fn(q: http.Request, next: http.Next) -> http.Response { next(q).with_header("X-Mw", "saw") })
+  r
+}

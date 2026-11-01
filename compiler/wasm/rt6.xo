@@ -2,10 +2,10 @@
 // may not import wasi_snapshot_preview1, so the preview 1 functions the rest of
 // the runtime calls are functions here, with the same signatures, over what the
 // wasi:http/proxy world gives. That world has no arguments, environment,
-// files or exit: arguments and the environment are empty, a file operation
-// (and, not wired yet, a read of stdin) returns ENOSYS, and proc_exit traps,
-// which the host answers with an error. strip_runtime keeps only what a
-// program reaches.
+// files or exit (a build that reaches files stops at XO1515): arguments and
+// the environment are empty, proc_exit traps, which the host answers with an
+// error, and a file operation that is compiled in anyway returns ENOSYS.
+// strip_runtime keeps only what a program reaches.
 
 /// A preview 1 import line, which a component does not write.
 fn drop_preview1(s: Str) -> Str {

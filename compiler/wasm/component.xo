@@ -382,6 +382,7 @@ fn ity_http_types(t_in: Int, t_out: Int) -> InstTy {
   let b_ireq = i.def(dt_borrow(ireq))
   i.fun("[method]incoming-request.method", [("self", b_ireq)], method)
   i.fun("[method]incoming-request.path-with-query", [("self", b_ireq)], opt_s)
+  i.fun("[method]incoming-request.authority", [("self", b_ireq)], opt_s)
   i.fun("[method]incoming-request.headers", [("self", b_ireq)], own_fields)
   let own_ibody = i.def(dt_own(ibody))
   let r_ibody = i.def(dt_result(own_ibody, NO_TYPE))
@@ -411,11 +412,11 @@ fn ity_http_types(t_in: Int, t_out: Int) -> InstTy {
   i
 }
 
-/// wasi:cli/stdout's or stderr's getter.
-fn ity_cli_stream(t_out: Int, getter: Str) -> InstTy {
+/// The getter of wasi:cli/stdout or stderr, of the stream type t.
+fn ity_cli_stream(t: Int, stream: Str, getter: Str) -> InstTy {
   var i = InstTy{}
-  let o0 = i.outer(t_out)
-  let o = i.eq("output-stream", o0)
+  let o0 = i.outer(t)
+  let o = i.eq(stream, o0)
   let own_o = i.def(dt_own(o))
   i.fun(getter, [], own_o)
   i
@@ -689,10 +690,10 @@ pub fn component_of(core: Bytes) -> (Bytes, Str) {
     let _t = c.alias_type(ih, r)
   }
   if wanted("wasi:cli/stdout${WASI_V}") {
-    let _i = c.import_iface("wasi:cli/stdout${WASI_V}", ity_cli_stream(t_out, "get-stdout"))
+    let _i = c.import_iface("wasi:cli/stdout${WASI_V}", ity_cli_stream(t_out, "output-stream", "get-stdout"))
   }
   if wanted("wasi:cli/stderr${WASI_V}") {
-    let _i = c.import_iface("wasi:cli/stderr${WASI_V}", ity_cli_stream(t_out, "get-stderr"))
+    let _i = c.import_iface("wasi:cli/stderr${WASI_V}", ity_cli_stream(t_out, "output-stream", "get-stderr"))
   }
   if wanted("wasi:random/random${WASI_V}") {
     let _i = c.import_iface("wasi:random/random${WASI_V}", ity_random())

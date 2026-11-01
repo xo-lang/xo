@@ -3365,6 +3365,9 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1511` | warning | checker | `read`, `read_text`, or `contains` on an `embed.Dir` constant, or a literal `.sub` of one, with a literal path it holds no file at; a key ending in the path is offered as a fix (decision 0304) |
 | `XO1512` | error | build | under `XO_BACKEND_CACHE=verify`, a build, run, or test the run cache would have served differs from its rebuild, in the binary or in what the build printed: an input the entry does not list, or a build that is not reproducible (decision 0360) |
 | `XO1513` | error | build | a command the WASI build of xo (`xo` built for wasip1/wasm) does not offer: it needs a process, a socket or a system tool that WASI preview1 does not have (`run`, `test`, `serve`, `get`, `build --backend=llvm`, ...); printed as `xo: COMMAND is not available in the WASI build`, exit status 2 (decision 0405) |
+| `XO1514` | error | build | a program that calls `http.serve_component` built for wasip1/wasm, which `--backend=wasm` alone is; it builds with `--targets=wasip2/wasm` (decision 0447) |
+| `XO1515` | error | build | a program built for wasip2/wasm reaches what the `wasi:http` proxy world does not have: files, processes or sockets; the message names the call and how it is reached (decision 0447) |
+| `XO1516` | error | build | a program built for wasip2/wasm whose main never calls `http.serve_component` (decision 0447) |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.
@@ -3586,6 +3589,13 @@ after the other targets are built (exit status 1). Several targets write
 `NAME-OS-ARCH` binaries (`.exe` for windows, `.wasm` for wasi) into `-o`'s
 directory; `-o NAME` for a windows target with no extension writes
 `NAME.exe`.
+
+`--targets=wasip2/wasm`, not part of `all`, builds a program that calls
+`http.serve_component` as a `wasi:http` 0.2 component (decision 0447), and is
+named alone. A program is a component or it is not: `http.serve_component` on
+wasip1/wasm is XO1514, and on wasip2/wasm a program that never calls it is
+XO1516 and one that reaches files, processes or sockets is XO1515. Each
+component's imports are `@0.2.0`.
 
 Binaries are static and builds are reproducible: the same source in the
 same directory, lockfile, and toolchain version produce byte identical

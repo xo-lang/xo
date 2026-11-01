@@ -1,0 +1,17 @@
+// internal/llvm/testdata/golden/http_router_paths's router, whose golden builds it
+// in main; TestWasmComponentGoldens gives this file its main.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /", fn(q: http.Request) -> http.Response { http.text(200, "root") })
+  r.handle("GET /users", fn(q: http.Request) -> http.Response { http.text(200, "list") })
+  r.handle("GET /users/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "user ${q.param_int("id")}") })
+  r.handle("PATCH /users/{id:Int}", fn(q: http.Request) -> http.Response { http.text(200, "patch ${q.param("id")}") })
+  r.handle("GET /users/me", fn(q: http.Request) -> http.Response { http.text(200, "me") })
+  r.handle("GET /a/{x}/b/{y}", fn(q: http.Request) -> http.Response { http.text(200, "ab [${q.param("x")}] [${q.param("y")}]") })
+  r.handle("GET /files/{p...}", fn(q: http.Request) -> http.Response { http.text(200, "files [${q.param("p")}]") })
+  r.handle("/any/{v}", fn(q: http.Request) -> http.Response { http.text(200, "any ${q.method} [${q.param("v")}]") })
+  r.handle("GET /x//y", fn(q: http.Request) -> http.Response { http.text(200, "xy") })
+  r
+}

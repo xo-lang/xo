@@ -11,7 +11,7 @@ import (
 )
 
 // TestWasmComponentHTTP builds testdata/wasm_http, a program that calls
-// http.serve_component, with `xo build --backend=wasm`: a wasi:http 0.2
+// http.serve_component, with `xo build --targets=wasip2/wasm`: a wasi:http 0.2
 // component (decision 0447, compiler/wasm rt5.xo, rt6.xo, component.xo).
 // testdata/wasm_http/host.mjs runs its core module under Node with stub
 // imports written from the canonical ABI, so a wrong import signature
@@ -33,11 +33,11 @@ func TestWasmComponentHTTP(t *testing.T) {
 	root := repoRoot(t)
 	dir := filepath.Join(root, "internal", "selfhost", "testdata", "wasm_http")
 	out := filepath.Join(t.TempDir(), "wasm_http.wasm")
-	cmd := testtmp.Guard(exec.Command(xo, "build", "--backend=wasm", "-o", out, "."))
+	cmd := testtmp.Guard(exec.Command(xo, "build", "--targets=wasip2/wasm", "-o", out, "."))
 	cmd.Dir = dir
 	cmd.Env = append(os.Environ(), "XO_STD="+filepath.Join(root, "std"), "XO_BIN_CACHE=off")
 	if b, err := cmd.CombinedOutput(); err != nil {
-		t.Fatalf("xo build --backend=wasm: %v\n%s", err, b)
+		t.Fatalf("xo build --targets=wasip2/wasm: %v\n%s", err, b)
 	}
 	want, err := os.ReadFile(filepath.Join(dir, "want.txt"))
 	if err != nil {

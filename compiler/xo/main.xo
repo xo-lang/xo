@@ -550,12 +550,12 @@ struct Native {
 
 /// The native backend that builds target tg ("" for none): arm64 for
 /// darwin/arm64 and linux/arm64, amd64 for linux, darwin and windows
-/// amd64 (decision 0254), wasm for wasip1/wasm.
+/// amd64 (decision 0254), wasm for wasip1/wasm and wasip2/wasm.
 fn target_backend(tg: Str) -> Str {
   match tg {
     "darwin/arm64" | "linux/arm64" => "arm64"
     "linux/amd64" | "darwin/amd64" | "windows/amd64" => "amd64"
-    "wasip1/wasm" => "wasm"
+    "wasip1/wasm" | "wasip2/wasm" => "wasm"
     _ => ""
   }
 }
@@ -1255,11 +1255,17 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   let tu = lo.tu
   if backend == "wasm" {
     // the zone data std/time reads (as the native link embeds it)
+    // a program is a wasi:http component (wasip2/wasm) or it is not
+    let p2 = targets.any(fn(tg) { tg == "wasip2/wasm" })
+    if p2 && targets.len() > 1 {
+      fail(os, "wasip2/wasm builds a wasi:http component, which no other target can also build: name it alone")
+    }
+    let wtarget = if p2 { "wasip2" } else { "wasip1" }
     // one of several targets: NAME-wasip1-wasm.wasm in -o's directory,
     // else the working directory, as bin_path names the others
     var wout = o.out
     if o.many_targets {
-      let base = "${prog_name(o.wd, o.dirs)}-wasip1-wasm.wasm"
+      let base = "${prog_name(o.wd, o.dirs)}-${wtarget}-wasm.wasm"
       if o.out.is_empty() {
         wout = abs_of(o.wd, base)
       } else {
@@ -1269,13 +1275,13 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
     }
     if debug_info_eff(o, release) == "split" {
-      fail(os, "--debug-info=split is for the native and LLVM backends' linux and darwin programs, not wasip1/wasm (decision 0355)")
+      fail(os, "--debug-info=split is for the native and LLVM backends' linux and darwin programs, not ${wtarget}/wasm (decision 0355)")
     }
-    let why = build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata, "wasip1"), o.skip_unsupported)
+    let why = build_wasm(os, ctx, b.m, wout, o.wd, o.dirs[0], tzsel.tz_select(os, ctx.std, tu, o.tzdata, "wasip1"), o.skip_unsupported, p2)
     if !why.is_empty() {
       return Native{skipped: why}
     }
-    return Native{bins: if wout.is_empty() { [] } else { [("wasip1/wasm", wout)] }, pc: c.parse_cache}
+    return Native{bins: if wout.is_empty() { [] } else { [("${wtarget}/wasm", wout)] }, pc: c.parse_cache}
   }
   // the build directory (buildDir, then the backend's subdirectory)
   let mode = if tests { 1 } else { 0 }

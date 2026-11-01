@@ -61,6 +61,12 @@ fn print_diags(os: Os, ds: List[check.Diag]) {
   }
 }
 
+/// Reports an error of the build as itself, with no place, and exits.
+fn fail_code(os: Os, code: Str, msg: Str) -> Never {
+  print_diags(os, [check.Diag{code: code, file: "", line: 0, col: 0, end_line: 0, end_col: 0, message: msg}])
+  os.proc.exit(1)
+}
+
 /// Whether the diagnostics block the build: an error, or a hole
 /// (XO0900) without --holes (internal/build checkOpts).
 fn blocks(ds: List[check.Diag], holes: Bool) -> Bool {
