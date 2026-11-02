@@ -786,8 +786,11 @@ fn (var b: Builder) run_job(j: Job) {
           b.sep_read = true
           // std's variant for this builder's concurrency (a program that
           // spawns is built again with it on, build_program_fe)
-          let fb = if b.conc && !b.c.sepcomp_facts_conc.is_empty() { b.c.sepcomp_facts_conc } else { b.c.sepcomp_facts }
-          for x in decode_std_facts(fb) ?? [] {
+          // the lazy checks copy c.objs at their first write (the driver
+          // holds it): before this read, which would otherwise take the
+          // freed block that copy reuses (decision 0448 case (c))
+          b.c.own_objs()
+          for x in decode_std_facts(b.c.read_sepcomp_facts(b.conc)) ?? [] {
             b.sep[x.name] = x
           }
         }

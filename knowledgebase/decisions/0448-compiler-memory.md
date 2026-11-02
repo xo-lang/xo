@@ -772,7 +772,7 @@ Mac, 3 rounds, no stats, RSS / footprint MB, 5a4a854b5 to this change: coll warm
 75-76 / 47 to 56-57 / 34-35. So conc-spawn meets the 60 MB target and coll does not yet. Go on the
 Mac for comparison: coll's edit link 66-68 / 29-30, compile 44-45 / 34-35.
 linux/arm64 `--ab` of coll's edit, 3 rounds, 0 loaded: wall 0.96 (0.949 to 0.962), CPU 0.953,
-max RSS 0.833 (0.818 to 0.849). Self build: wall 1.001, max RSS 1.001, within noise, so the
+max RSS 0.833 (0.818 to 0.849); conc-spawn's edit: wall 0.896, max RSS 0.825 (134 to 111 MB). Self build: wall 1.001, max RSS 1.001, within noise, so the
 smaller Obj does not move the self build's peak.
 
 Tried, negative: text layout (0403 stage 1) from 80 profiles of small builds at 10 kHz (89,311
@@ -782,9 +782,15 @@ once (MAP_FIXED) took RSS to 59 MB but cost 1 to 3% wall, dropped. XO_THREADS=1 
 Mac with the same wall; on Linux it saves about 20 of 154 MB (2 threads about the same, 4 about
 10) with the same wall: an open lever for Linux.
 
-Next for coll's last 6 MB: a one-shot release of the two 6.4 MB cached lists when the front end
-is freed (their pages are clean, darwin only), reading only the std facts variant the build
-uses (2 MB), std's half decode (3.25 MB live at the link), and exact once-run functions for the layout.
+Std's facts are read when the builder needs them, one variant of the two, about 2 MB less. That
+read would take the freed block force_body's copy reuses (coll rose to 70 MB), so the builder
+makes c.objs its own first (Checker.own_objs). Mac: coll warm and edit 65-66 / 41-42 to 64-66 / 41-42,
+conc-spawn unchanged. linux/arm64 --ab of coll's edit, 3 rounds, 0 loaded: wall 0.99 (0.99 to
+1.004), CPU 0.993, max RSS 0.969 (0.926 to 0.999).
+
+Next for coll's last 4 to 6 MB: exact once-run functions for the layout, a one-shot release of the two
+6.4 MB cached lists when the front end is freed (their pages are clean, darwin only), std's
+half decode (3.25 MB live at the link), and Obj's 22 Bools at a word each (168 B of about 536).
 
 ## Consequences
 

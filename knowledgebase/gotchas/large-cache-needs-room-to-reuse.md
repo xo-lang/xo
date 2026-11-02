@@ -11,6 +11,9 @@ Cause: the large cache takes a cached mapping only when its size is from `need` 
 copy still held elsewhere also keeps a block alive: `let fresh = c` for a retry held a whole
 Checker's records to the end of the check.
 
+An unrelated read can also take the block: the cache reuses a mapping up to 4 times the request, so
+a 2 MB file read took the 6.4 MB block a list was about to reuse, and RSS rose 4 MB.
+
 Fix: give the earlier lists room (`with_capacity(n * 3 / 2)`); untouched pages cost address space
 only. Find holders by reading what is copied before the free, then confirm with per mapping sizes
 from `vmmap` at each phase and `go tool pprof -sample_index=alloc_space -traces`. Decision 0448

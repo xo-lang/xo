@@ -885,20 +885,13 @@ fn check_program_ov(os: Os, o: Opts, native: Bool, ov: Map[Str, Bytes]) -> (chec
       // import it from source, the rest of std from the store
       c.sep_source = std_source_set(os, o.std, c.std_test)
     }
-    match os.fs.read(f0) {
-      Ok(d) => {
-        c.sepcomp_facts = d
-      }
-      Err(e) => fail(os, "XO_SEPCOMP_FACTS: ${f0}: ${e}")
-    }
-    if !f1.is_empty() {
-      match os.fs.read(f1) {
-        Ok(d) => {
-          c.sepcomp_facts_conc = d
-        }
-        Err(e) => fail(os, "XO_SEPCOMP_FACTS: ${f1}: ${e}")
+    for f in [f0, f1] {
+      if !f.is_empty() && (os.fs.stat(f).ok() ?? None) == None {
+        fail(os, "XO_SEPCOMP_FACTS: ${f}: no such file")
       }
     }
+    c.sepcomp_facts = f0
+    c.sepcomp_facts_conc = f1
   }
   tc = lap(os, o.phases, "check.setup", tc)
   if !pdir.is_empty() {

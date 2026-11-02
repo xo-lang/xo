@@ -32,14 +32,15 @@ pub struct Checker {
   /// and resolved, and their entry left in std_export_out for the driver
   /// to store under std_export_key
   pub std_export_on: Bool = false
-  /// decision 0388 stage 3 (XO_SEPCOMP=1): std's facts (stdf's bytes);
-  /// the SSA builder makes each std function they name an extern
-  /// instead of building its body
-  pub sepcomp_facts: Bytes = b""
+  /// decision 0388 stage 3 (XO_SEPCOMP=1): the path of std's facts (a stdf
+  /// file); the SSA builder makes each std function they name an extern
+  /// instead of building its body. It reads only the variant it needs,
+  /// about 2 MB each (decision 0448 case (c))
+  pub sepcomp_facts: Str = ""
   /// the facts of std built with concurrency on, for a build whose
   /// builder turns it on (XO_SEPCOMP_FACTS a directory: conc1.stdf);
   /// empty when one file serves both
-  pub sepcomp_facts_conc: Bytes = b""
+  pub sepcomp_facts_conc: Str = ""
   /// the std modules built from source although the facts name their
   /// functions: a --std-module run's module and every std module that
   /// imports it (the store's copies hold its old code; decision 0436
@@ -522,6 +523,23 @@ pub struct Checker {
 /// The directory the checker reads std from.
 pub fn (c: Checker) std_root() -> Str {
   c.std_dir
+}
+
+/// Makes c's object list its own now rather than at its first write.
+pub fn (var c: Checker) own_objs() {
+  if !c.objs.is_empty() {
+    c.objs[0].used = c.objs[0].used
+  }
+}
+
+/// The bytes of std's facts for a builder with concurrency conc; the driver
+/// saw the files when the build started, so a read that fails stops it.
+pub fn (c: Checker) read_sepcomp_facts(conc: Bool) -> Bytes uses fs.read {
+  let p = if conc && !c.sepcomp_facts_conc.is_empty() { c.sepcomp_facts_conc } else { c.sepcomp_facts }
+  match c.fs.read(p) {
+    Ok(d) => d
+    Err(e) => fault("XO_SEPCOMP_FACTS: ${p}: ${e}")
+  }
 }
 
 /// A fresh checker reading std declarations from std_dir.
