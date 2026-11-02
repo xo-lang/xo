@@ -467,6 +467,40 @@ fn take(need: Int) -> Int {
   0
 }
 
+/// Unmaps the large block cache's mappings of CACHE_DROP_MIN and over (a
+/// build's phase end, debug.mem_trim): the advice above leaves them in the
+/// RSS on Darwin and Linux has none (decision 0448 case (c)). Smaller ones
+/// stay: what comes next reuses them, and on Linux their pages would fault
+/// back in (conc-spawn's build, wall 1.03 with every mapping dropped).
+pub fn cache_drop() {
+  let w = rt.static_word(W_CACHE)
+  if rt.slot_load(w, 0, ACQUIRE) == 0 {
+    return
+  }
+  clock_take()
+  let t = rt.mem_load(w, 0, 8)
+  let n = rt.mem_load(t, 16, 8)
+  var bytes = rt.mem_load(t, 8, 8)
+  var kept = 0
+  var k = 0
+  while k < n {
+    let m = rt.mem_load(t, (24).wrapping_add(k.wrapping_shl(3)), 8)
+    let size = rt.mem_load(m, 0, 8)
+    if size >= CACHE_DROP_MIN {
+      bytes = bytes.wrapping_sub(size)
+      unmap_os(m, size)
+    } else {
+      rt.mem_store(t, (24).wrapping_add(kept.wrapping_shl(3)), m, 8)
+      kept = kept.wrapping_add(1)
+    }
+    k = k.wrapping_add(1)
+  }
+  rt.mem_store(t, 16, kept, 8)
+  rt.mem_store(t, 8, bytes, 8)
+  clock_give()
+}
+const CACHE_DROP_MIN = 2097152
+
 /// Gives the system the pages of the calling thread's free page blocks
 /// (classes PAGE_CLASS and up on its heap record's free lists and spare
 /// magazines; decision 0448 stage 1: a build's phase end, debug.mem_trim),

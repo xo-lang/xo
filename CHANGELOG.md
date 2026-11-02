@@ -18,6 +18,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - Small builds touch less of xo's own code (decision 0453): xo now ships a layout file that puts the
   functions a small build runs together. A warm or edit build of coll 64 to 59 MB RSS on the Mac
   (117 from 128 MB on linux/arm64), conc-spawn 56 to 53 MB (101 from 109 MB).
+- `debug.mem_trim` also unmaps the heap's cached large blocks of 2 MiB and over, and xo's phase ends use it (decision 0448): a warm or edit build of coll 51 to 46 MB RSS on the Mac (footprint 32 to 31), conc-spawn 44 to 40 MB (27), and about 8% less on linux/arm64 with the same wall.
 - Small builds: std's records relocate without copying the lists that do not change, std's facts go once the SSA is built, and a Mach-O relocation is 16 bytes, was 48 (decision 0448). A warm or edit build of coll 59 to 51 MB RSS on the Mac (footprint 40 to 32), conc-spawn 52 to 44 MB (33 to 27).
 - Small builds use less memory (decision 0448): a warm or edit build of coll 84 to 66 MB RSS on
   the Mac (footprint 52 to 41), 157 to 130 MB on linux/arm64 and 4% faster there; conc-spawn 75 to

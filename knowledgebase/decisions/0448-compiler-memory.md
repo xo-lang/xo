@@ -842,6 +842,14 @@ a 4 MiB bump chunk and a 4 MiB page chunk, mostly untouched), free lists 13 to 1
 ranked: unmapping the large cache at phase ends (needs acceptance), a thread's first chunks smaller, the counter
 charging a chunk as it is used.
 
+The large block cache (2026-11-02, the owner accepted the change to debug.mem_trim). mem_trim now also unmaps the
+cached large mappings of 2 MiB and over, on every target (CACHE_DROP_MIN), and xo trims at front_end_freed, emit and
+link. A kept mapping stays in the RSS: on darwin as reusable pages outside the footprint, on Linux with no advice at
+all. So on darwin most of this is the RSS reading and on Linux it is real memory. Dropping every mapping cost Linux
+its reuse: coll edit wall 1.008, 1.023, 1.032, 0.999 and conc-spawn 1.033 even with the trim only at emit and link.
+The 2 MiB bound keeps what the next phase reuses: Linux coll edit wall 0.991, 0.992, 1.001, RSS 0.902, 0.920, 0.936;
+conc-spawn wall 1.008, 1.010, 0.993, RSS 0.888, 0.974, 0.951. Full rows: bench/results/cache-drop-2026-11-02.md.
+
 Self build with THP off (2026-11-01, second linux/arm64 host, THP `always`, 3 alternating rounds, 8222cbb7c):
 max RSS default 3830, 3767, 3827 MB, PR_SET_THP_DISABLE 3800, 3873, 3860; emit's counter peak 4510, 4448, 4512
 against 4509, 4543, 4576. THP does not explain the Linux counter gap and does not move the self build's RSS,

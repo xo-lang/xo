@@ -1,0 +1,37 @@
+// debug.mem_trim also unmaps the large block cache (decision 0448): a large
+// block freed before a trim is gone from the cache, and the next one, here
+// or on another task while the trim runs, is a good new mapping.
+use std/debug
+
+fn fill(n: Int, k: Int) -> Int {
+  var xs = List[Int].with_capacity(n)
+  for i in 0..n {
+    xs.push(i + k)
+  }
+  var sum = 0
+  for x in xs {
+    sum += x
+  }
+  sum
+}
+
+fn main(os: Os) {
+  for k in 0..4 {
+    os.stdio.println("${fill(200000, k)}")
+    debug.mem_trim()
+  }
+  let n = scope s {
+    let a = s.spawn(fn() -> Int {
+      var t = 0
+      for k in 0..200 {
+        t += fill(100000, k)
+      }
+      t
+    })
+    for _ in 0..200 {
+      debug.mem_trim()
+    }
+    a.await
+  }
+  os.stdio.println("${n}")
+}

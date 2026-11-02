@@ -1,5 +1,19 @@
 # std/debug changes
 
+## 2026-11-02: perf: mem_trim also unmaps the cached large blocks of 2 MiB and over
+
+- Kind: perf
+- Commit: (this commit)
+- Found by: Xo Lang 2 (ADR 0448 case (c), accepted by the owner 2026-11-02)
+- Go reference: runtime/debug.FreeOSMemory (returns freed memory on request)
+- Test: internal/llvm/testdata/golden/mem_trim_large (blocks after a trim, and while another task allocates)
+
+`debug.mem_trim` now also unmaps the cached large blocks of 2 MiB and
+over, on every target. A kept mapping stayed in the RSS (on darwin as
+reusable pages, on Linux with no advice at all). The next such block maps
+anew, so a program that trims in a loop pays for the mappings; xo trims at
+three phase ends. Smaller cached blocks stay, for the next reuse.
+
 ## 2026-10-31: fix: a heap snapshot's own work is not sampled as the program's
 
 - Kind: fix

@@ -2706,7 +2706,8 @@ fn lap(os: Os, on: Bool, name: Str, t: Time) -> Time {
   debug.mem_label("building, past phase ${name}")
   // after the phases that free the most (the front end's trees, the
   // parts' bodies, the link's inputs) the thread's free 16 KiB and larger
-  // blocks go back to the system (decision 0448 stage 1). Not at every
+  // blocks and the big cached large blocks go back to the system (decision 0448
+  // stage 1, case (c)). Not at every
   // phase: a trim after each of the 25 top level phases cost the warm
   // coll build 4.7% of wall on linux/arm64 (ab-host stage1-coll: MADV_DONTNEED
   // pages fault back in on the next phase's reuse; darwin's reusable

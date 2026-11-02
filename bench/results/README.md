@@ -243,3 +243,4 @@
 - [rc-thunk-2026-10-31.md](rc-thunk-2026-10-31.md): retain thunk on xo (native arm64): inline retains were 10.3 MB; stage 2 __text -15.8% with `--ab` rows per program.
 - [slot-group-2026-11-01.md](slot-group-2026-11-01.md): spill slots of a word run together (native arm64): stage 2 __text -2.4% on the held merge, copy runs -35.8%, frames +2.8%, with `--ab` and HTTP rows.
 - [list-floor-2026-11-01.md](list-floor-2026-11-01.md): a list of elements over 256 bytes starts at one slot (decision 0452 addendum): TLS save -75% in use, `--ab` rows for big1, bign, mixed, small and self
+- [cache-drop-2026-11-02.md](cache-drop-2026-11-02.md): debug.mem_trim drops cached large blocks of 2 MiB and over (decision 0448): the variants, Linux and Mac rows.
