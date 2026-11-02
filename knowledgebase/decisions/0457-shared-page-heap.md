@@ -82,6 +82,32 @@ Every stage is measured on: 2,000 held TLS connections (RssAnon and AnonHugePage
 self, coll edit and alloc on the first host; and the Mac's coll warm footprint. A stage lands
 only with self wall within 1% and memory down on at least one of them.
 
+## Prototype results (2026-11-02)
+
+Xo Lang 2 built stages 1 to 4 on unpushed branches (l2-pheap to l2-pheap16; the table of
+branches, the logs and every number are in bench/results/pheap-2026-11-02.md). Correctness
+held: the goldens with XO_LEAKCHECK, TestRun and the XO_RC_CHECK goldens pass on linux/arm64 at
+stage 4, and Xo Lang 1's stress program (golden pheap_stress on l2-pheap8) is clean on
+linux/arm64 and darwin.
+
+- Idle server, 2,000 held TLS connections, THP always: stage 3 took Xo from 108-138 MB to 64-69
+  (Go 85-95). Decision 0456's v4, landed the same day, takes it to 60-64 on its own, and the
+  page heap on top of v4 measures 65-71: no further gain.
+- Self build, linux/arm64 (THP always), against its base: stage 1 wall 1.007, max RSS 1.027;
+  stage 3 wall 1.03, max RSS 1.058; all four stages wall 1.037 to 1.065 and max RSS 1.112 to
+  1.171 by the scavenger's goal; on top of 0456 v4 (l2-pheap16) wall 1.019, CPU 1.03, max RSS
+  1.041 against v4 alone.
+- Darwin self build footprint: 3.99-4.15 GB against 3.62-3.69 with every variant tried.
+- Cost: the scavenger released 13-16 GB over one self build and most of it faulted in again
+  (a goal tight enough for RSS costs wall), and reused runs keep pages that a fresh mapping of
+  a list's unwritten capacity never touches.
+
+Recommendation (Xo Lang 2): do not land the page heap in this form. With 0456 v4 the density it
+was for is reached by advice on the existing chunks, and every stage measured costs the self
+build. The pieces worth keeping if the question reopens: the per chunk longest free run
+(PT_MAX), the lock free switch read, and the stress golden. Whether to reject or park this
+decision is the owner's call; the status stays Proposed until then.
+
 ## Consequences
 
 - Freed pages serve any later large or page block, and any thread's runs. A thread that
