@@ -128,6 +128,25 @@ func aliasFunc(r *rand.Rand, id int, fields []aliasField) string {
 	}
 	n := 6 + r.Intn(7)
 	for s := 0; s < n; s++ {
+		if len(floats) >= 4 && r.Intn(4) == 0 {
+			// a pack whose operand is another pack's lanes in the other order
+			// (slp_f64 built it from scalars the pack replaced, 2026-11-02):
+			// x0 = a - k, x1 = b - 1, then y0 = c0 + x1, y1 = c1 + x0, and more
+			// packed operations after it
+			a, b := floats[r.Intn(len(floats))], floats[r.Intn(len(floats))]
+			c0, c1 := floats[r.Intn(len(floats))], floats[r.Intn(len(floats))]
+			x0, x1 := fmt.Sprintf("x%d", tmp), fmt.Sprintf("x%d", tmp+1)
+			tmp += 2
+			body = append(body,
+				fmt.Sprintf("  let %s = vs[i].%s - k", x0, a),
+				fmt.Sprintf("  let %s = vs[i].%s - 1.0", x1, b),
+				fmt.Sprintf("  vs[j].%s = vs[i].%s + %s", floats[r.Intn(len(floats))], c0, x1),
+				fmt.Sprintf("  vs[j].%s = vs[i].%s + %s", floats[r.Intn(len(floats))], c1, x0))
+			for m := r.Intn(3); m > 0; m-- {
+				body = append(body, fmt.Sprintf("  vs[j].%s = vs[j].%s * %s", floats[r.Intn(len(floats))], floats[r.Intn(len(floats))], []string{x0, x1, "k"}[r.Intn(3)]))
+			}
+			continue
+		}
 		storeP := r.Intn(5) < 2
 		if storeP {
 			f := fields[r.Intn(len(fields))]
