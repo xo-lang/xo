@@ -27,3 +27,12 @@ module. TestSelfhostWasm: 129 of 149 pass. Not done: wasm builds'
 goldens such as method_values print under the harness. When writing
 target dependent runtime code, make every arm lower on every backend,
 or guard on both `target.os` and `target.arch`.
+
+Observed again (2026-11-02, Xo Lang 2): `debug.mem_trim` ran the native
+heap's trim on wasm (its Darwin arm, the host's OS) and walked a heap
+thread record the wasm runtime never builds; called from a task beside
+others, its stores corrupted the scheduler's tasks (`wasm trap: null
+function or function signature mismatch` in `sched`, or a hang). Found by
+the alloc_stress golden; std/native/debug.xo now returns on
+`target.arch == TargetArch.Wasm32`. Native runtime entry points that
+std/native calls on wasm need the same arch guard.
