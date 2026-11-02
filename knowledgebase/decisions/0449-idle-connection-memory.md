@@ -310,6 +310,30 @@ had no park at all, so linger is ahead of it on speed and idle memory.
 Next (Lead, 2026-11-02): a cap on connections lingering at once (4 a
 CPU, l4-lcap), adopted only if /alloc keeps these numbers.
 
+### Adaptive linger (2026-11-02, Xo Lang 4 and Xo Lang 2)
+
+A connection whose linger times out parks at once on its later idles
+(HC_NOLINGER) until it comes back to park_ready within LINGER_NS of its
+last park (HC_PARKT): busy connections keep lingering, slow keep-alive
+connections stop holding a stack for 20 ms of every gap. Xo Lang 2's
+runs (first linux/arm64 host, one session, 2 rounds, RssAnon MB,
+round 1 / round 2; bursts over 6 source addresses, no lost connects):
+
+| run | linger (main) | cap 16 a CPU | adaptive |
+|---|---|---|---|
+| think 10 ms, n=2000 | 58.5 / 58.1 (165k / 179k req/s) | 56.3 / 54.9 (113k / 110k) | 56.5 / 59.8 (178k / 178k) |
+| think 10 ms, n=10000 | 126.8 / 104.9 | 100.1 / 84.3 | 112.5 / 101.1 |
+| think 30 ms, n=2000 | 71.4 / 69.8 (64k req/s) | 56.4 / 55.5 (58k) | 62.9 / 55.6 (56k / 52k) |
+| burst n=40000, idle | 264.1 / 251.5 | 268.5 / 242.2 | 284.9 / 251.4 |
+
+A count cap (4 or 16 lingerers a CPU) brought memory down but gave back
+the closed-loop gain, since any cap below the active connections parks
+most of them. The post-burst idle difference first reported (+15 to
+35 MB) came from rounds with lost connects; clean runs are level. The
+cost of adaptive: at 30 ms think time a connection that parks at once
+answers its next request later (64k to 52 to 56k req/s). /alloc:
+req/s 1.072 at 32 connections and 1.037 at 256 against main in the same job, CPU a request 0.965 and 0.961 (bench/perf/jitter, first linux/arm64 host, 3 rounds, 2026-11-02, both on main with a1 P, 25d23d18e, since reverted).
+
 ## Consequences
 
 - Fiber stacks stop being the per-connection cost; a server with many

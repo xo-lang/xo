@@ -1,5 +1,18 @@
 # std/http changes
 
+## 2026-11-02: perf: a slow keep-alive connection stops lingering before it parks (decision 0449)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 2's memory review of the 20 ms linger
+- Go reference: none
+- Test: Xo Lang 2's linger-mem runs (think time 10 and 30 ms at 2,000 and 10,000 connections, a 40,000 connection burst) and bench/perf/jitter /alloc on the linux/arm64 host
+- Timing: 30 ms think time at 2,000 connections: RssAnon 70 to 71 MB to 56 to 63 MB, req/s 64k to 52 to 56k; busy connections unchanged (178k req/s); /alloc req/s 1.072 at 32 connections and 1.037 at 256 against main in the same job, CPU a request 0.965 and 0.961 (bench/perf/jitter, first linux/arm64 host, 3 rounds, 2026-11-02, both on main with a1 P, 25d23d18e, since reverted)
+
+A connection whose 20 ms linger timed out parks at once on its later
+idles, until it comes back within 20 ms of its last park, so slow
+keep-alive traffic no longer holds a stack for 20 ms of every gap.
+
 ## 2026-11-02: fix: an HTTP/2 request whose trailers arrive late no longer hangs its streaming handler
 
 - Kind: fix
