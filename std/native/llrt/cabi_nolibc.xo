@@ -46,6 +46,14 @@ fn nl_start(sp: Int) -> Int {
 /// stderr.
 fn nl_std(i: Int) -> Int { libcio.std_file(i) }
 
+/// XO_THP=off in the environment nl_start recorded (decision 0454): the
+/// main thread's TLS block and stack are mapped before the heaps exist and
+/// entry.xo reads the variable, so they look at environ themselves.
+fn thp_env_off() -> Bool {
+  let env = rt.mem_load(rt.sym_addr("environ"), 0, 8)
+  env != 0 && libcmem.env_has(env, "XO_THP=off")
+}
+
 /// Maps and lays out the main thread's TLS block: its thread pointer,
 /// which x86_64 sets here (arch_prctl ARCH_SET_FS) and arm64 in the C
 /// (msr tpidr_el0, a register no system call writes).
@@ -54,6 +62,9 @@ fn nl_main_tp() -> Int {
   let area = linux.mmap(0, libcthr.tls_size(), 3, 34, -1, 0)
   if area < 0 && area > -4096 {
     libcio.die("mmap of the TLS block failed")
+  }
+  if thp_env_off() {
+    let _h = linux.madvise(area, libcthr.tls_size(), 15)
   }
   let tp = libcthr.tls_init(area)
   match target.arch {
@@ -73,6 +84,9 @@ fn nl_main_stack() -> Int {
   let st = linux.mmap(0, gb, 3, 16418, -1, 0)
   if st < 0 && st > -4096 {
     return 0
+  }
+  if thp_env_off() {
+    let _h = linux.madvise(st, gb, 15)
   }
   st + gb
 }

@@ -788,8 +788,24 @@ pub fn set_cut_off() {
 const THP_OFF = 1080
 
 pub fn set_thp_off() {
-  let cen = rt.mem_load(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_CENTRAL, 8)
+  let h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  let cen = rt.mem_load(h, H_CENTRAL, 8)
   rt.mem_store(cen, THP_OFF, 1, 8)
+  // the main thread's chunks made before this call (the startup's own
+  // allocations) are advised now
+  match target.os {
+    TargetOs.Linux => {
+      let e = rt.mem_load(h, 32, 8)
+      if e != 0 {
+        let _a = linux.madvise(e.wrapping_sub(CHUNK), CHUNK, 15)
+      }
+      let pe = rt.mem_load(h, H_PEND, 8)
+      if pe != 0 {
+        let _b = linux.madvise(pe.wrapping_sub(CHUNK), CHUNK, 15)
+      }
+    }
+    _ => {}
+  }
 }
 
 /// XO_THP=off for a Linux mapping outside the heap (a thread's stack): advises
