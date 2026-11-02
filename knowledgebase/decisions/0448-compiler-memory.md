@@ -858,9 +858,10 @@ RSS (about 3800), while the Mac's counter (3539-3546) sits near its footprint (3
 mapped and never resident: the real memory differs far less than the counter. Next for the parked item: the
 targets' size class limits (heapos.xo mid_default) with the counter read per class.
 
-Obj's 22 Bools in one word (2026-11-02, not landed; the lead declined the churn). Read through `fn (o: Obj) f()`
-methods (d749e20a8) it cost memory: each `c.objs[i].f()` copied the whole Obj, coll warm RSS 46 to 58 MB, Mac --ab
-wall 1.064 (gotcha byvalue-accessor-large-struct). With the bits in a one word `ObjFlags` field read as
+Obj's 22 Bools in one word (2026-11-02, not landed; the lead declined the churn). Through `fn (o: Obj) f()` and
+`fn (var o: Obj) set_f()` methods (d749e20a8) it cost memory: each setter on `c.objs[i]` moved the whole Obj out of
+the list and back (the getters inline to a bit test), coll warm RSS 46 to 58 MB, Mac --ab wall 1.064 (gotcha
+list-element-setter-moves-struct). With the bits in a one word `ObjFlags` field read as
 `x.flags.f()` (branch l2-objflags, 80a8523a0, about 280 sites): heap counter at check.setup 26 to 24 MB, fe.build
 40 to 37, chunks 56 to 48 MB, link peak 78 unchanged; coll warm RSS/footprint 46/30-31 flat, conc-spawn footprint
 27 to 25-26; Mac --ab coll warm wall 1.005, instructions 0.998, max RSS 0.999. Kept as a branch.

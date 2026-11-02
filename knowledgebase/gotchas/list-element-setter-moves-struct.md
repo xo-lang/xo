@@ -1,0 +1,32 @@
+# A var method or field write on a large list element moves the whole element
+
+Status: Observed (2026-11-02, compiler/check Obj Bool packing, decision 0448 case (c); diagnosed by Xo Lang 1)
+
+Symptom: packing Obj's 22 Bool fields into one `flags: Int`, read through
+`fn (o: Obj) done() -> Bool` and written through
+`fn (var o: Obj) set_done(v: Bool)` (d749e20a8), made coll's warm build
+use more memory, not less: RSS 46 to 58 MB, footprint 31 to 43 MB, heap at
+check.setup 26 to 36 MB, 39k more allocations; Mac --ab wall 1.064, cpu
+1.10, max RSS 1.237.
+
+Cause: the getters were free: `c.objs[i].done()` inlines to a load and a
+bit test, with no copy. The setters were not: `c.objs[v].set_used(true)`,
+a `var` receiver on a list element, lowers to list.take, setfield and
+list.set, which loads all 57 words of the element, writes the hole into
+its reference fields, sets one bit, and stores all 57 words back
+(Checker.mark_used grew to 661 instructions). A plain field write
+`xs[i].f = v` on a large element lowers the same way (take and set, plus
+an index to read the old value), so any one-field update of a large list
+element moves the whole element. The memory rise itself is measured, not
+yet explained by the moves alone.
+
+Fix: keep the bits in a one word struct field (`pub flags: ObjFlags`,
+with `fn (var f: ObjFlags) set_done(v: Bool)`), so a write moves one word:
+`c.objs[i].flags.set_done(true)` (80a8523a0): coll warm RSS back to 46 MB,
+heap counter at check.setup 26 to 24 MB, Mac --ab wall 1.005 (within
+noise), instructions 0.998. Rule, until the backend updates the changed
+fields in place (Xo Lang 1 is drafting it): write one field of a large
+list element through a small field struct, not a method on the element.
+
+Tooling note: `xo refs FILE:LINE:COL` of a method found only the
+declaring module's uses then (fixed in 27c2467fa).
