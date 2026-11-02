@@ -649,7 +649,7 @@ fn (var g: G) regalloc() {
   // consecutive slots and the copies become runs lsr.xo copy_runs_l
   // copies 32 bytes at a time (2026-10-31: 2.58 MB of xo's code were
   // runs of 8 or more word copies through x16 with scattered slots)
-  let sgroup = pass_on(g.m, "slot_group") && !g.x86
+  var sgroup = pass_on(g.m, "slot_group") && !g.x86
   // each group's run (-1 for none) and its word in it; each run's
   // groups and its first slot once a member spills (-1 before)
   var grun: List[Int] = []
@@ -965,6 +965,24 @@ fn (var g: G) regalloc() {
     // leaves for them (2026-10-22: with every optional pass off, xo's
     // self-build failed in the assembler on str x17, [sp, #32768])
     let bound = g.frame_bound(ncallee)
+    // slot_group's runs leave a slot unused where a member took a
+    // register: when those holes take the frame over the single stp
+    // prologue's 504 bytes or the 4 KiB probe, allocate again without the
+    // runs (regression B, 2026-11-02: http.respond's frame went from 368
+    // to 576 bytes and /alloc lost 12 to 22% of its requests a second)
+    if sgroup && runs.len() > 0 {
+      var holes = 0
+      for o in slot_occ {
+        if o.is_empty() {
+          holes += 1
+        }
+      }
+      let lean = bound - 8 * holes
+      if (bound > FRAME_PAIR_MAX && lean <= FRAME_PAIR_MAX) || (bound >= PROBE_FRAME && lean < PROBE_FRAME) {
+        sgroup = false
+        continue
+      }
+    }
     if g.base != 0 || g.x86 || (bound <= MAX_FRAME && bound + g.in_arg_bytes() <= MAX_FRAME + 4096) {
       g.occ_regs = occ
       break
@@ -1303,6 +1321,11 @@ fn run_base(slot_occ: List[List[Int]], run: List[Int], ranges: List[List[Int]]) 
   }
   slot_occ.len()
 }
+
+/// The largest frame the prologue's single `stp x29, x30, [sp, #-N]!`
+/// reaches, and the smallest that probes its pages (emit.xo probe_sp).
+const FRAME_PAIR_MAX = 504
+const PROBE_FRAME = 4096
 
 /// The spill slots a value's first fit scan tries before it takes a new
 /// slot.
