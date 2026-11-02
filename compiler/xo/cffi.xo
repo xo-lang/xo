@@ -130,7 +130,12 @@ fn c_objects(os: Os, cc: Str, cflags: List[Str], srcs: List[Str], dir: Str, trim
     var kargs = args
     if trim {
       let sd = dir_name(if is_abs_path(s) { s } else { "${cwd}/${s}" })
-      let rel = rel_or_dot(cwd, sd)
+      // a generated source, in the build's own directory, has no place to
+      // record, even when that directory is below the working directory
+      // (bootstrap-xo.sh OUT in the checkout: s2 and s3 differed by
+      // xo_buildinfo.c's and xo_tzdata.c's paths, gcc on linux, 2026-11-01)
+      let bd = if is_abs_path(dir) { dir } else { "${cwd}/${dir}" }
+      let rel = if sd == bd || sd.starts_with("${bd}/") { "." } else { rel_or_dot(cwd, sd) }
       // the working directory as "." (the compile directory), then the
       // source's directory: both compilers apply the last map that
       // matches, so the source's wins below the working directory.
