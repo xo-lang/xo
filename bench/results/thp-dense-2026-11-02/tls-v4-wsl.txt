@@ -1,0 +1,52 @@
+OFFLOAD-RC=0
+before: always [madvise] never
+set: [always] madvise never
+thp: [always] madvise never defrag: always defer defer+madvise [madvise] never; x86_64; nproc 28; free huge AnonHugePages:         0 kB
+-- round 1 xo
+xo: RssAnon 124616 kB, anon mappings 206, present 121 MB, smaps Rss 121 MB, AnonHugePages 90 MB
+xo: touched 2MiB regions 77 (fill 1-64:16 65-256:9 257-511:7 full:45), outside pages 12 MB, predicted RSS under always 166 MB, mean fill 79%
+xo:   VmFlags hg 0, nh 226
+idle:   VmRSS: 127540 kB  RssAnon: 124644 kB  Threads: 24  Pss: 127532 kB
+-- round 1 xo-ph
+xo-ph: RssAnon 62816 kB, anon mappings 211, present 61 MB, smaps Rss 61 MB, AnonHugePages 42 MB
+xo-ph: touched 2MiB regions 64 (fill 1-64:35 65-256:7 257-511:1 full:21), outside pages 12 MB, predicted RSS under always 140 MB, mean fill 48%
+xo-ph:   VmFlags hg 27, nh 287
+idle:   VmRSS: 67736 kB  RssAnon: 64840 kB  Threads: 22  Pss: 67728 kB
+-- round 1 go
+go: RssAnon 86800 kB, anon mappings 15, present 84 MB, smaps Rss 84 MB, AnonHugePages 78 MB
+go: touched 2MiB regions 50 (fill 1-64:6 65-256:2 257-511:2 full:40), outside pages 1 MB, predicted RSS under always 101 MB, mean fill 85%
+go:   VmFlags hg 0, nh 2
+idle:   VmRSS: 92688 kB  RssAnon: 86800 kB  Threads: 32  Pss: 92682 kB
+-- round 2 xo
+xo: RssAnon 134480 kB, anon mappings 241, present 131 MB, smaps Rss 131 MB, AnonHugePages 96 MB
+xo: touched 2MiB regions 85 (fill 1-64:22 65-256:7 257-511:8 full:48), outside pages 14 MB, predicted RSS under always 184 MB, mean fill 77%
+xo:   VmFlags hg 0, nh 266
+idle:   VmRSS: 137376 kB  RssAnon: 134480 kB  Threads: 28  Pss: 137368 kB
+-- round 2 xo-ph
+xo-ph: RssAnon 64136 kB, anon mappings 213, present 62 MB, smaps Rss 62 MB, AnonHugePages 44 MB
+xo-ph: touched 2MiB regions 72 (fill 1-64:44 65-256:5 257-511:1 full:22), outside pages 12 MB, predicted RSS under always 156 MB, mean fill 43%
+xo-ph:   VmFlags hg 29, nh 282
+idle:   VmRSS: 69012 kB  RssAnon: 66116 kB  Threads: 23  Pss: 69004 kB
+-- round 2 go
+go: RssAnon 92952 kB, anon mappings 15, present 90 MB, smaps Rss 90 MB, AnonHugePages 74 MB
+go: touched 2MiB regions 52 (fill 1-64:5 65-256:2 257-511:2 full:43), outside pages 1 MB, predicted RSS under always 105 MB, mean fill 87%
+go:   VmFlags hg 0, nh 2
+idle:   VmRSS: 98712 kB  RssAnon: 92952 kB  Threads: 31  Pss: 98706 kB
+-- round 3 xo
+xo: RssAnon 138176 kB, anon mappings 233, present 134 MB, smaps Rss 134 MB, AnonHugePages 116 MB
+xo: touched 2MiB regions 81 (fill 1-64:19 65-256:4 257-511:0 full:58), outside pages 16 MB, predicted RSS under always 178 MB, mean fill 83%
+xo:   VmFlags hg 0, nh 244
+idle:   VmRSS: 141072 kB  RssAnon: 138176 kB  Threads: 26  Pss: 141064 kB
+-- round 3 xo-ph
+xo-ph: RssAnon 64032 kB, anon mappings 213, present 62 MB, smaps Rss 62 MB, AnonHugePages 44 MB
+xo-ph: touched 2MiB regions 71 (fill 1-64:45 65-256:4 257-511:0 full:22), outside pages 14 MB, predicted RSS under always 156 MB, mean fill 44%
+xo-ph:   VmFlags hg 32, nh 279
+idle:   VmRSS: 68960 kB  RssAnon: 66064 kB  Threads: 23  Pss: 68952 kB
+-- round 3 go
+go: RssAnon 94988 kB, anon mappings 13, present 92 MB, smaps Rss 92 MB, AnonHugePages 88 MB
+go: touched 2MiB regions 57 (fill 1-64:9 65-256:3 257-511:1 full:44), outside pages 1 MB, predicted RSS under always 115 MB, mean fill 81%
+go:   VmFlags hg 0, nh 1
+idle:   VmRSS: 100684 kB  RssAnon: 94988 kB  Threads: 31  Pss: 100678 kB
+restored: always [madvise] never
+THP-RESTORED-OK
+OFFLOAD-RC=0

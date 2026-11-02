@@ -246,10 +246,20 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     // XO_CUT=N: at most N KiB of magazines are cut a growth (the default 1024)
     heapos.set_cut_kb(atoll(cutv))
   }
-  // XO_THP=off (decision 0454): the heap's mappings advise MADV_NOHUGEPAGE
+  // XO_THP (decisions 0454, 0456): off advises MADV_NOHUGEPAGE on the
+  // heap's mappings; kernel leaves the kernel's policy (the default before
+  // 0456); dense, Linux's default, gives huge pages to the chunks a thread
+  // fills
   let thp = process.env_real_at("XO_THP")
   if thp != 0 && rt.mem_load(thp, 0, 1) == 111 && rt.mem_load(thp, 1, 1) == 102 && rt.mem_load(thp, 2, 1) == 102 && rt.mem_load(thp, 3, 1) == 0 {
     heapos.set_thp_off()
+  } else if thp != 0 && rt.mem_load(thp, 0, 1) == 107 && rt.mem_load(thp, 1, 1) == 101 && rt.mem_load(thp, 2, 1) == 114 && rt.mem_load(thp, 3, 1) == 110 && rt.mem_load(thp, 4, 1) == 101 && rt.mem_load(thp, 5, 1) == 108 && rt.mem_load(thp, 6, 1) == 0 {
+    // XO_THP=kernel: no advice
+  } else {
+    match target.os {
+      TargetOs.Linux => heapos.set_thp_dense()
+      TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => {}
+    }
   }
   let mid = process.env_real_at("XO_HEAP_MID_MAX")
   if mid != 0 {

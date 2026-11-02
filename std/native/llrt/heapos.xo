@@ -100,7 +100,7 @@ fn map_os(size: Int) -> Int {
       m = linux.mmap(0, size, 3, 34, -1, 0)
       if m < 0 && m > -4096 {
         m = 0
-      } else if thp_off() {
+      } else if thp_mode() == 1 {
         let _h = linux.madvise(m, size, 15)
       }
     }
@@ -567,7 +567,9 @@ pub fn chunk(h: Int) {
   }
   // aligned to its size, so a page aligned prefixed block's chunk word is
   // found from the block (alloc.xo is_page; decision 0425)
+  let prev = rt.mem_load(h, 32, 8)
   let c = map_aligned(CHUNK)
+  thp_filled(prev, c)
   let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
   rt.mem_store(h, 24, c, 8)
   rt.mem_store(h, 32, c.wrapping_add(reserve(h, c, H_BLIM)), 8)
@@ -602,6 +604,19 @@ fn set_prot(a: Int, n: Int, prot: Int) {
 /// The new chunk c's usable bytes for heap record h, its limit recorded at
 /// lim (0: nothing to extend to).
 fn reserve(h: Int, c: Int, lim: Int) -> Int {
+  if rt.mem_load(h, lim, 8) == 0 && dense_halves() {
+    if h == rt.mem_load(rt.static_word(W_HEAPS), 0, 8) {
+      // the main thread's record: a program's single threaded work (a
+      // build's front end) allocates here densely from the start
+      thp_advise(c, CHUNK)
+      rt.mem_store(h, lim, 1, 8)
+      return CHUNK
+    }
+    // XO_THP=dense: the first chunk's first half only, still accessible
+    // (mapped NOHUGEPAGE); extend opens the second half advised HUGEPAGE
+    rt.mem_store(h, lim, c.wrapping_add(CHUNK), 8)
+    return HALF
+  }
   if !small_chunks() || rt.mem_load(h, lim, 8) != 0 {
     rt.mem_store(h, lim, 1, 8)
     return CHUNK
@@ -619,6 +634,13 @@ fn extend(h: Int, end: Int, lim: Int) -> Bool {
   let l = rt.mem_load(h, lim, 8)
   if l == 0 || e >= l {
     return false
+  }
+  if dense_halves() {
+    // XO_THP=dense: the first half is used up, so this record allocates
+    // densely: the second half may take huge pages before it faults
+    thp_advise(e, l.wrapping_sub(e))
+    rt.mem_store(h, end, l, 8)
+    return true
   }
   let used = e.wrapping_sub(l.wrapping_sub(CHUNK))
   let more = used.wrapping_mul(3)
@@ -669,7 +691,9 @@ pub fn pchunk(h: Int) {
   if extend(h, H_PEND, H_PLIM) {
     return
   }
+  let prev = rt.mem_load(h, H_PEND, 8)
   let c = map_aligned(CHUNK)
+  thp_filled(prev, c)
   rt.mem_store(c, 0, PAGE_MAGIC, 8)
   let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
   rt.mem_store(h, H_PCUR, c.wrapping_add(PAGE), 8)
@@ -818,17 +842,66 @@ pub fn advise_nohuge(m: Int, size: Int) {
 
 /// Whether huge pages are off; false before the heaps exist (their own
 /// records are mapped first).
-fn thp_off() -> Bool {
+fn thp_off() -> Bool { thp_mode() != 0 }
+
+/// XO_THP=dense, Linux's default (decision 0456, v4; bench/results/
+/// thp-dense-2026-11-02.md: Go's density rule): chunks are mapped
+/// MADV_NOHUGEPAGE as with off; a heap record's first chunk opens its first
+/// 2 MiB half only, and when the bump uses it up the second half is advised
+/// MADV_HUGEPAGE and opened; the main thread's record's first chunk is
+/// advised MADV_HUGEPAGE whole (a build's front end allocates there densely
+/// from the start); once a record has used a chunk up, the used chunk (for
+/// khugepaged) and its next chunk (before its pages fault) are advised
+/// MADV_HUGEPAGE. A thread that fills 2 MiB allocates densely; one that never
+/// does stays on small pages. Large blocks keep the kernel's policy.
+pub fn set_thp_dense() {
+  let cen = rt.mem_load(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_CENTRAL, 8)
+  rt.mem_store(cen, THP_OFF, 2, 8)
+}
+
+/// The huge page mode: 0 the default, 1 off, 2 dense; 0 before the heaps
+/// exist (their own records are mapped first).
+fn thp_mode() -> Int {
   let hs = rt.static_word(W_HEAPS)
   if hs == 0 {
-    return false
+    return 0
   }
   let h = rt.mem_load(hs, 0, 8)
   if h == 0 {
-    return false
+    return 0
   }
   let cen = rt.mem_load(h, H_CENTRAL, 8)
-  cen != 0 && rt.mem_load(cen, THP_OFF, 8) != 0
+  if cen == 0 { 0 } else { rt.mem_load(cen, THP_OFF, 8) }
+}
+
+/// Half a chunk: dense's first step.
+const HALF = 2097152
+
+/// Whether a first chunk opens by halves (XO_THP=dense on Linux).
+fn dense_halves() -> Bool {
+  match target.os {
+    TargetOs.Linux => thp_mode() == 2
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => false
+  }
+}
+
+fn thp_advise(a: Int, n: Int) {
+  match target.os {
+    TargetOs.Linux => {
+      let _h = linux.madvise(a, n, 14)
+    }
+    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => {}
+  }
+}
+
+/// XO_THP=dense: when the record's previous chunk ended at end (0: this
+/// is its first chunk), that used up chunk and the new chunk c may take
+/// huge pages.
+fn thp_filled(end: Int, c: Int) {
+  if end != 0 && dense_halves() {
+    thp_advise(end.wrapping_sub(CHUNK), CHUNK)
+    thp_advise(c, CHUNK)
+  }
 }
 
 /// A thread's chunk is used up for a request of n bytes (cabi.xo heap_grow):
