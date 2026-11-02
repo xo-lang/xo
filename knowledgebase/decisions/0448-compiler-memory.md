@@ -797,6 +797,25 @@ they stay partly used (allocator retention, owner acceptance needed); a one-shot
 decode (3.25 MB live at the link); Obj's 22 Bools at a word each (168 B of about 536); XO_THREADS on Linux (about
 20 MB).
 
+Retention counted (coll warm, Mac, 2026-11-01, on a tree with module_jobs below; `vmmap` per mapping at each phase, heap profile, XO_HEAPSTATS): the
+4 MiB chunks are 6 through the front end (14.6 MB resident) and 16 from cln.store on (19.6 MB resident at the link), 11 of
+them under 1 MB touched: the extra ten appear when the back end's tasks start on other threads. So the counter's 60 MB of
+chunks is mostly untouched space. Resident heap at link.synthesize is 39 MB (chunks 19.6, large blocks 12.9, other 6.8) against 14.9 live, 2.6
+times, and at the link's end about 33 MB. Free lists at exit hold 15 to 16 MB with no outlier class (64 B 1.8, 32 B 1.6, 16 KiB 1.4,
+8 KiB 1.3). Allocator retention is therefore not the main gap on the Mac: chunk pages track the front end's peak of small
+objects (about 17 of 28 MB live at fe.build). The levers are that peak and the large blocks' clean pages.
+
+Linux: transparent huge pages. The second linux/arm64 host has THP `always`, and first touch of a chunk can fault 2 MB, which fits
+Linux's higher RSS and its response to thread count (xo-lang-3 found the same on TLS connections). coll's edit, 3 rounds,
+RSS MB: default 121-125, THP off (PR_SET_THP_DISABLE) 88, XO_EMIT_JOBS=1 98, both 84; conc-spawn 90-98, 83, 88, 76. The wall of those rows is not
+comparable (the wrapper's python start). xo-lang-3 owns the MADV_NOHUGEPAGE measurement.
+
+Tried, held: the back end's tasks scaled with the module, 1 + functions / 256 (refs/recover/l2-modulejobs is local only;
+the change is `module_jobs` over emit_jobs at the inline, gen, passes and rc sites). linux/arm64 --ab, 3 rounds, 0 loaded: coll's edit wall 0.995, RSS 0.931;
+conc-spawn's wall 1.018 (0.983 to 1.024), RSS 0.893; bench/perf/http's edit wall 1.038 (1.023 to 1.038), RSS 0.998, worse; self 1.007 within noise. Function count
+does not separate coll (339) from the HTTP server (494), whose bodies are larger. Most of its RSS gain may be THP's. Mac: about 1 MB.
+Decide again after the THP result, with values rather than functions as the measure.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.
