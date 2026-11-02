@@ -62,6 +62,15 @@ to v0.35.0. Ratios are comparable across jobs; absolute req/s are not
    as removing the field (l4pts13).
 7. **a1 P (25d23d18e)** cost /alloc 0.756 / 0.895 against its parent in
    one job (pts12) and was reverted (b0d12f3f9); decision 0324.
+8. **Reverting narrow B on main** (9edfbf82c, a local commit that takes
+   compiler/arm64/regalloc.xo back from 10396987a's parent; not pushed)
+   brings /alloc back to v0.35.0 in one job: req/s 1.006 / 1.015 at c32 /
+   c256, CPU a request 0.993 / 0.986, against main's 0.839 / 0.823 (l4pts14,
+   built on the second host, measured on the first). It is not the 0.36
+   fix: Xo Lang 2's l2sshift job found the slow cases sit on one 4K phase
+   of the fiber stack (linger slow only at shift 3888, linger + narrow B
+   only at shift 0), so the revert only moves /alloc off that phase. The
+   fix is Xo Lang 2's stack phase change.
 
 ## Method notes
 
@@ -223,3 +232,11 @@ to v0.35.0. Ratios are comparable across jobs; absolute req/s are not
 | 7a4adabfe | + Response wasm function in the stream field (landed as 3f708df63) | 146,450 | 0.888 | 1.146 | 148,761 | 0.859 | 1.163 |
 | ec2398ed8 | Response without wasm-only ws field (experiment, on a144a3115) | 143,480 | 0.870 | 1.172 | 149,392 | 0.863 | 1.158 |
 | v0.35.0 | the 0.35 release (baseline) | 164,877 | 1 | 1 | 173,112 | 1 | 1 |
+
+### l4pts14
+
+| revision | what | c32 req/s | ratio | CPU a request | c256 req/s | ratio | CPU a request |
+|---|---|---|---|---|---|---|---|
+| 3f708df63 | main (ws holder landed) | 132,385 | 0.839 | 1.224 | 140,882 | 0.823 | 1.218 |
+| 9edfbf82c | main with narrow B reverted (local, not pushed) | 158,639 | 1.006 | 0.993 | 173,675 | 1.015 | 0.986 |
+| v0.35.0 | the 0.35 release (baseline) | 157,713 | 1 | 1 | 171,119 | 1 | 1 |
