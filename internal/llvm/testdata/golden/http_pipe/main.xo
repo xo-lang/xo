@@ -58,6 +58,10 @@ fn main(os: Os) {
         })
         // a body written piece by piece, then closed
         let (w, r) = http.pipe()
+        // the writer's late write is printed after the response: the
+        // client may see the end of the body before the writer prints
+        // (one run in 256 under load on linux/arm64, 2026-11-02)
+        let late = Chan[Str].new(cap: 1)
         s.spawn(fn() {
           for i in 0..5 {
             match w.write("piece ${i} ".repeat(100).bytes()) {
@@ -67,14 +71,15 @@ fn main(os: Os) {
           }
           w.close()
           match w.write(b"late") {
-            Ok(_) => os.stdio.println("late write: ok")
-            Err(e) => os.stdio.println("late write: ${e}")
+            Ok(_) => late.send("late write: ok")
+            Err(e) => late.send("late write: ${e}")
           }
         })
         match c.send(http.new_request("POST", "${base}/sum").with_body_reader(r)) {
           Ok(resp) => os.stdio.println("piped: ${resp.status} ${resp.text() ?? "?"}")
           Err(e) => os.stdio.println("piped: ${e}")
         }
+        os.stdio.println(late.recv() ?? "late write: none")
         // a full duplex response to a piped body
         let (wd, rd) = http.pipe()
         s.spawn(fn() {

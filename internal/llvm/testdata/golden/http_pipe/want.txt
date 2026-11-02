@@ -1,7 +1,7 @@
 exit 0
 --- stdout
-late write: io: read/write on closed pipe
 piped: 200 read 4000 bytes in some pieces
+late write: io: read/write on closed pipe
 duplex: 200 counted 6
 cut: delivered whole false
 prewrite: true true
