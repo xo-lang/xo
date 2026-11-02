@@ -1,6 +1,6 @@
 # 0460: Keep a value alive to the end of the statement that takes its raw address
 
-Status: Proposed (Xo Lang 1, 2026-11-02; the owner decides; drafted at the Lead's request)
+Status: Accepted (owner, 2026-11-02, on the count below; drafted by Xo Lang 1 at the Lead's request)
 
 ## Context
 
@@ -34,7 +34,7 @@ immortal list (false). A lint that follows addresses across blocks and
 closures is a dataflow analysis of its own; the compiler already knows
 both the address and the release.
 
-## Decision (proposed)
+## Decision
 
 The compiler extends the lifetime of a local to the end of the enclosing
 statement when the statement takes its raw address: an argument
@@ -45,6 +45,20 @@ the statement still need an explicit `raw.alive` (or a field that holds the
 value), as today.
 
 ## Consequences
+
+- The owner's condition, counted 2026-11-02: of the 7 std bugs fixed that
+  day (5 found by the race stress, 2 pushes from the lint), 6 had the
+  address and the release in one statement and would have been prevented:
+  h2w.xo's content-length, http1.xo's chunked body, websocket.xo's mask key
+  (the value is a temporary, `raw.bytes_addr(llrand.next_bytes(4))`, so the
+  rule covers temporaries as well as named locals), dns.xo's configuration
+  and hosts text (3 sites), the runtime's fault and error messages (8 sites
+  in cabi.xo and crash.xo) and h2srv.xo's trailers and Content-Length (2
+  sites); by site, 16 of 17. All 5 real XO0915 hits are among them. The one
+  not prevented is raw.u8s_copy_back, which keeps the address in a local
+  (`var a = rt.obj_addr(out)`) and uses it statements later; that shape
+  still needs `raw.alive` (or a field holding the value), and the race
+  build stays its check.
 
 - Removes the in-statement class without a lint or hand-written keep-alives;
   existing `raw.alive*` calls stay valid (a later use) and can be removed
