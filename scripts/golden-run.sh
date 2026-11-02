@@ -31,7 +31,7 @@ cp -R "$dir" "$tmp/run/$name"
 # timeout exists (Linux; macOS has none)
 limit=""
 if command -v timeout >/dev/null 2>&1; then
-  limit="timeout ${XO_GOLDEN_TIMEOUT:-600}"
+  limit="timeout -k 5 ${XO_GOLDEN_TIMEOUT:-600}"
 fi
 want=$dir/want.txt
 case $(uname -s) in

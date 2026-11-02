@@ -19,7 +19,7 @@ for d in "$dir"/*/; do
   fi
   for b in go amd64; do
     [ -x "$d/prog-$b" ] || continue
-    (cd "$d" && XO_CRASH_DIR=/tmp timeout 30 "./prog-$b" >"$b.stdout" 2>"$b.stderr"; echo $? >"$b.exit")
+    (cd "$d" && XO_CRASH_DIR=/tmp timeout -k 5 30 "./prog-$b" >"$b.stdout" 2>"$b.stderr"; echo $? >"$b.exit")
   done
   rm -f "$d/prog-amd64"
 done

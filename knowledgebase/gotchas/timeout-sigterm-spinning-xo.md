@@ -1,6 +1,6 @@
 # `timeout N prog` never ends a spinning Xo program
 
-Status: Observed (2026-10-21)
+Status: Observed (2026-10-21; again 2026-11-02, below)
 
 ## Symptom
 
@@ -22,3 +22,18 @@ second signal unless told to.
 Use `timeout -s KILL N` (exit 137) for a check that expects a hang, or
 `timeout -k 5 N` to follow the TERM with a KILL. Any harness that stops
 an Xo program with SIGTERM needs the same fallback.
+
+## Again, 2026-11-02: seven programs ran 10 hours on an offload host
+
+scripts/coll-diff.sh ran each generated program as `timeout 10 prog`
+(plain). Seven Go backend programs of overnight Coll runs ignored the
+TERM, kept 105% CPU each for about 10 h after their job and lease had
+ended (their directories deleted, the `timeout` still waiting), and
+took the host's load to 40+, slowing every job on it. They were stopped
+by PID. Fixed in 2bbe6f734: coll-diff.sh runs `timeout -k 5`.
+
+An audit of scripts/ and scripts/lead for plain `timeout` on a generated
+or test program found four more, now `timeout -k 5 N` (windows-batch.sh,
+progen-amd64-run.sh, golden-run.sh's $limit, ci/windows-pdb.sh's cdb);
+the ci/windows-*.sh runners and lead/offload.sh already used `-k`. A new
+script that bounds a program with `timeout` gives it `-k` from the start.

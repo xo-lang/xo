@@ -72,7 +72,7 @@ if [ -n "$cdb" ]; then
   pc=$(sed -n 's/^frames: \(0x[0-9a-f]*\).*/\1/p' "$k/segv.err")
   ib=$(sed -n 's/^pc .*(image base \(0x[0-9a-f]*\)).*/\1/p' "$k/segv.err")
   a=$(printf '0x%x' $((pc - ib + 0x140000000)))
-  timeout 120 "$cdb" -z "$(np "$k/crash.exe")" -y "$(np "$k")" -c ".reload /f; lm; x crash!poke; ln $a; .lines -e; q" > "$o/cdb.txt" 2>&1
+  timeout -k 5 120 "$cdb" -z "$(np "$k/crash.exe")" -y "$(np "$k")" -c ".reload /f; lm; x crash!poke; ln $a; .lines -e; q" > "$o/cdb.txt" 2>&1
   note "cdb (logged in cdb.txt): $(grep -c 'poke' "$o/cdb.txt") lines name poke"
 else
   note "no cdb on the runner: dbghelp only"

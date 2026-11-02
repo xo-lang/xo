@@ -126,7 +126,7 @@ if want 5; then
       continue
     fi
     for i in 1 2 3; do
-      out=$(set -o pipefail; XO_THREADS=1 XO_LEAKCHECK=1 XO_RTSTATS=1 timeout 300 "$exe" 2> "$HOME/batch-async.err" | tr -d '\r')
+      out=$(set -o pipefail; XO_THREADS=1 XO_LEAKCHECK=1 XO_RTSTATS=1 timeout -k 5 300 "$exe" 2> "$HOME/batch-async.err" | tr -d '\r')
       rc=$?
       n=$(grep -o 'preempt=[0-9]*' "$HOME/batch-async.err" | head -1 | cut -d= -f2)
       if [ "$rc" != 0 ] || [ "$out" != "$exp" ] || [ "${n:-0}" = 0 ]; then
