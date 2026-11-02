@@ -52,3 +52,15 @@ ports.
 
 To check a machine: `netstat -an -p tcp | grep -c TIME_WAIT` (macOS),
 `ss -tan state time-wait | wc -l` (Linux).
+
+## bench/perf/httpstreamsrv under `xo bench --ab` on the Mac
+
+Observed 2026-11-02 (xo-lang-4). `xo bench --ab` of httpstreamsrv on
+the Mac failed in round 2 with `B: exit 70`; run alone, the program
+faulted with `get: dial tcp 127.0.0.1:N: connect: can't assign requested
+address` after three runs, base and change alike. Each run dials about
+5,000 loopback connections from ephemeral ports, so three back to back
+runs fill macOS's 16,384 (16,328 sockets in TIME_WAIT). On Linux (28,232
+ports, and the hosts' `--ab` runs) it did not happen. On the Mac, leave
+35 s (2 MSL plus margin) between runs of it, or measure it on the
+linux/arm64 host.
