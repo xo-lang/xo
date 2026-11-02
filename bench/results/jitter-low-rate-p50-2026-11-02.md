@@ -63,8 +63,34 @@ The server part (svc) fell too at low rates (Xo 141 to 82, Go 148 to 89):
 it is measured from the actual send to the response read, and an idle
 generator also woke late to read the response. With `-awake`, Xo's p50 is
 flat (91 to 106 us) across the rates; no error in any run; server CPU a
-request unchanged within the rounds' spread except Xo at 20,000 (60.0 to
-70.7 us, one configuration, not followed up).
+request unchanged within the rounds' spread except Xo at 10,000 and 20,000
+(below).
+
+## Xo's CPU a request with -awake
+
+Xo's /alloc CPU a request rose with `-awake`: 60.0 to 70.7 us at 20,000 a
+second (3 rounds each: 60.05, 60.45, 60.0 against 68.45, 70.7, 71.0), and
+about 60 to 64 at 10,000; Go's did not move (127.3 and 125.4 at 20,000).
+The server and the generator are on disjoint CPUs (taskset 0-5 and 6-10
+or 6-11), and the CPU figure is the server's process alone
+(/proc/PID/stat utime + stime, every thread). Separated, 3 rounds at
+20,000 a second, the generator on CPUs 6-10:
+
+| run | Xo CPU us a request |
+|---|---|
+| plain | 59.6, 59.6, 59.6 |
+| a busy process (nice 0) on spare CPU 11 | 59.8, 60.0, 60.0 |
+| `-awake` | 67.7, 69.0, 69.7 |
+
+A process spinning beside it does not raise the server's CPU, so it is not
+the host (a VM) sharing cores. XO_RTSTATS, per request at 20,000 a second,
+plain against `-awake`: wakes 0.993 and 0.991, futex waits 1.114 and
+1.126, the same; poll returns 1.678 against 2.223, fiber parks 0.774
+against 0.983, steals 0.229 against 0.032. A late generator sent in
+bunches, and a worker's poll found several requests at once; on schedule,
+each request arrives alone and costs its own poll and park. The `-awake`
+figures are the even load an open loop means to offer; the older CPU
+figures had the bunching in them.
 
 Open loop numbers before this change (jitter-2026-10-30.md,
 jitter-encoder-2026-11-02.md) carry the generator's lateness in p50 and

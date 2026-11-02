@@ -22,6 +22,14 @@ outside the encoder (net/http, GC, building the page; not broken down).
 
 ## Latency p50 / p99 us
 
+These are totals from a generator without `-awake`: at 5,000 and 10,000 a
+second most of each figure is the generator's own lateness, not the
+server's (see the note below the table). The CPU table above is the
+server's process alone, with arrivals bunched by the late generator; with
+`-awake`, Xo's /alloc CPU a request at 20,000 a second is about 69 us
+instead of 59 and Go's about the same (jitter-low-rate-p50-2026-11-02.md),
+so Go hand-written is about 1.8x Xo there, not 2.1x.
+
 | rate/s | Go /alloc | Go /alloc-strconv | Go /alloc-hand | Xo /alloc |
 |---:|---|---|---|---|
 | 5,000 | 672 / 1,964 | 686 / 1,853 | 697 / 1,781 | 713 / 1,624 |
