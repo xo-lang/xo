@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- perf (native, amd64): a two word copy into the stack whose first word sits at 8 mod 16 copies that word alone, so no 16 byte movdqu store into the stack straddles a 4 KiB page (the amd64 form of the arm64 save pair fix): 82,849 such stores in xo for linux/amd64 to 0, .text +0.08%. bench/results/stack-phase-2026-11-02.md "amd64".
 - perf (native, arm64): callee saved registers are saved from a 16 byte aligned offset, so no register pair straddles a 4 KiB page. At one stack phase in 256 a pair did, and on a Linux VM on Apple silicon that cost /alloc 36% more CPU a request: 0.36's /alloc gap, which a 208 byte smaller frame upstream moved onto such a phase (decision 0459). `XO_STACK_SHIFT=N` moves every fiber's first frame N bytes lower to check a cost against the stack's address.
 - perf (native http): a Response no longer carries the wasm-only stream field decision 0447 added (/alloc on linux/arm64: req/s +12% at 32 and 256 connections, CPU a request -11%).
 - native http: a keep-alive connection whose 20 ms linger timed out parks at once on later idles until it is busy again (decision 0449), so slow keep-alive traffic holds less memory (30 ms think time at 2,000 connections: 70 MB to about 60 MB).

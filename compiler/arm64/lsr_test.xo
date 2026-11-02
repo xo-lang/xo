@@ -137,18 +137,18 @@ test "copy_runs: a call's stack arguments through x17" {
 
 test "x86_copy_runs: pushq and popq word copies go 16 bytes at a time through xmm15" {
   let t = "\tpushq 16(%rsp)\n\tpopq 64(%rsp)\n\tpushq 24(%rsp)\n\tpopq 72(%rsp)\n\tpushq 32(%rsp)\n\tpopq 80(%rsp)\n\tretq"
-  expect(x86_copy_runs(t)) == "\tmovdqu 16(%rsp), %xmm15\n\tmovdqu %xmm15, 64(%rsp)\n\tpushq 32(%rsp)\n\tpopq 80(%rsp)\n\tretq"
+  expect(x86_copy_runs(t, 0)) == "\tmovdqu 16(%rsp), %xmm15\n\tmovdqu %xmm15, 64(%rsp)\n\tpushq 32(%rsp)\n\tpopq 80(%rsp)\n\tretq"
 }
 
 test "x86_copy_runs: overlapping ranges, two other bases, and a later read of r11 stay" {
   let a = "\tpushq 16(%rsp)\n\tpopq 24(%rsp)\n\tpushq 24(%rsp)\n\tpopq 32(%rsp)\n\tretq"
-  expect(x86_copy_runs(a)) == a
+  expect(x86_copy_runs(a, 0)) == a
   let b = "\tmovq 8(%rbx), %r11\n\tmovq %r11, 16(%r12)\n\tmovq 16(%rbx), %r11\n\tmovq %r11, 24(%r12)\n\tretq"
-  expect(x86_copy_runs(b)) == b
+  expect(x86_copy_runs(b, 0)) == b
   let c = "\tmovq 8(%rbx), %r11\n\tmovq %r11, 16(%rsp)\n\tmovq 16(%rbx), %r11\n\tmovq %r11, 24(%rsp)\n\taddq %r11, %rax\n\tretq"
-  expect(x86_copy_runs(c)) == c
+  expect(x86_copy_runs(c, 0)) == c
   let d = "\tmovq 8(%rbx), %r11\n\tmovq %r11, 16(%rsp)\n\tmovq 16(%rbx), %r11\n\tmovq %r11, 24(%rsp)\n\tmovq $1, %r11\n\tretq"
-  expect(x86_copy_runs(d)) == "\tmovdqu 8(%rbx), %xmm15\n\tmovdqu %xmm15, 16(%rsp)\n\tmovq $1, %r11\n\tretq"
+  expect(x86_copy_runs(d, 0)) == "\tmovdqu 8(%rbx), %xmm15\n\tmovdqu %xmm15, 16(%rsp)\n\tmovq $1, %r11\n\tretq"
 }
 
 test "x86_fold_into: a load becomes the memory source of its one reader" {
@@ -191,4 +191,10 @@ test "x86_reload_peep: a store through r11 goes straight when r11 dies" {
   expect(x86_reload_peep("\tmovq %rax, %r11\n\tmovq %r11, 48(%rsp)\n\tretq")) == "\tmovq %rax, 48(%rsp)\n\tretq"
   let t = "\tmovq %rax, %r11\n\tmovq %r11, 48(%rsp)\n\taddq %r11, %rbx\n\tretq"
   expect(x86_reload_peep(t)) == t
+}
+
+test "x86_copy_runs: a run into rsp's words at 8 mod 16 copies its first word alone" {
+  let t = "\tpushq 16(%rsp)\n\tpopq 72(%rsp)\n\tpushq 24(%rsp)\n\tpopq 80(%rsp)\n\tpushq 32(%rsp)\n\tpopq 88(%rsp)\n\tretq"
+  expect(x86_copy_runs(t, 0)) == "\tpushq 16(%rsp)\n\tpopq 72(%rsp)\n\tmovdqu 24(%rsp), %xmm15\n\tmovdqu %xmm15, 80(%rsp)\n\tretq"
+  expect(x86_copy_runs(t, 8)) == "\tmovdqu 16(%rsp), %xmm15\n\tmovdqu %xmm15, 72(%rsp)\n\tpushq 32(%rsp)\n\tpopq 88(%rsp)\n\tretq"
 }

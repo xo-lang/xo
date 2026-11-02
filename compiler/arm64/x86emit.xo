@@ -378,7 +378,7 @@ fn (var g: G) x86_emit_once() {
   if g.os == "windows" {
     g.seh_end(b, sites)
     b.push("\n")
-    g.push_fn_text(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))))
+    g.push_fn_text(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join("")), g.x86_rsp_phase()))))))
     return
   }
   b.push("\t.cfi_endproc\n")
@@ -391,7 +391,7 @@ fn (var g: G) x86_emit_once() {
     g.lsda(sites)
   }
   b.push("\n")
-  g.push_fn_text(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join(""))))))))
+  g.push_fn_text(x86_rmw(x86_not_reuse(x86_r11_reuse(x86_imul3(x86_copy_runs(x86_reload_peep(b.join("")), g.x86_rsp_phase()))))))
 }
 
 /// The frame: rbp and the callee saved registers pushed, the rest of
@@ -1741,7 +1741,12 @@ fn movq_ops(l: Str) -> (Str, Str, Bool) {
 /// register with the two ranges apart (so loading two words before
 /// storing them reads what the word by word copy read), and, for the
 /// r11 form, when nothing reads r11 after the run before writing it.
-fn x86_copy_runs(text: Str) -> Str {
+/// rsp_ph is rsp's address mod 16 in the body (x86_rsp_phase): a run
+/// whose 16 byte stores into rsp's words would start at 8 mod 16 copies
+/// its first word alone, so no movdqu store straddles a 4 KiB page (one
+/// rsp phase in 256 put each such store across one; arm64's callee saved
+/// pairs did the same, decision 0459).
+fn x86_copy_runs(text: Str, rsp_ph: Int) -> Str {
   if !text.contains("\tpopq ") && !text.contains("\tmovq %r11, ") {
     return text
   }
@@ -1783,6 +1788,11 @@ fn x86_copy_runs(text: Str) -> Str {
     // the run's debug labels before it (its words are copies)
     x86_put_pre(out, pre, i, i + 2 * k)
     var j = 0
+    if bb == "%rsp" && (bo + rsp_ph) & 15 == 8 {
+      out.push(ls[i])
+      out.push(ls[i + 1])
+      j = 1
+    }
     while j + 2 <= k {
       out.push("\tmovdqu ${x86_mem_at(ab, ao + 8 * j)}, %xmm15")
       out.push("\tmovdqu %xmm15, ${x86_mem_at(bb, bo + 8 * j)}")
@@ -1796,6 +1806,20 @@ fn x86_copy_runs(text: Str) -> Str {
   }
   x86_put_pre(out, pre, n, n + 1)
   out.join("\n")
+}
+
+/// rsp's address mod 16 in a function's body: 0 after the prologue's
+/// pushes and its subtraction (the frame is 16 byte aligned), the pushes'
+/// own phase in a red zone frame (rsp not moved past them), 8 in a leaf
+/// (no push of rbp after the return address).
+fn (g: G) x86_rsp_phase() -> Int {
+  if g.fr.leaf {
+    return 8
+  }
+  if g.fr.rz > 0 {
+    return 8 * g.saved.len() & 15
+  }
+  0
 }
 
 /// The word copy at lines i and i + 1 (x86_copy_runs): its form (0

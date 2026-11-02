@@ -175,3 +175,41 @@ Every former bad phase now runs at the good phases' cost and at or below v0.35.0
 __text grows 216 bytes (32,698,876 to 32,699,092); its gate passed internal/arm64's full
 tests, the self rebuild fixed point, the amd64 cross builds and test/codegen's 262
 patterns.
+
+## amd64: two word stack copies peeled at 8 mod 16
+
+amd64 saves callee saved registers with pushq, one 8 byte store, which cannot straddle a
+page. The one 16 byte store into the stack is x86_copy_runs (compiler/arm64/x86emit.xo):
+it copies two words at a time through %xmm15 with movdqu, and into %rsp's words at 8 mod
+16 such a store straddles a page at one stack phase in 256, as the arm64 pairs did. The
+fix copies the first word of such a run alone, so every 16 byte store into the stack is
+16 byte aligned; the emitter knows %rsp's phase from the frame (x86_rsp_phase: a leaf
+frame is entered at 8 mod 16, a frame with a red zone sits at its pushes' parity).
+
+Misaligned 16 byte stores into %rsp (static count of movdqu to `N(%rsp)` with
+(N + phase) at 8 mod 16, linux/amd64), and .text:
+
+| program | stores before | after | .text before | after |
+|---|---|---|---|---|
+| jitter server | 563 | 0 | 912,640 | 913,376 (+736, +0.08%) |
+| xo (linux/amd64) | 82,849 | 0 | 97,974,400 | 98,053,408 (+79,008, +0.08%) |
+| bench/perf/headphase | 119 | 0 | | |
+
+Timing (AMD Ryzen 9 9955HX under WSL2, the linux/amd64 offload host): XO_STACK_SHIFT over
+all 256 phases showed no per phase structure, with or without the peel (the correlation
+between two rounds of the sweep was 0.11 before and -0.05 after, the noise about 7%), so
+on this x86 a page straddling store costs too little to see in a parse loop; the peel is
+kept for the CPUs where it does cost (it is the same pattern that cost 35% on arm64)
+at 0.08% of .text.
+
+The peel's own cost, `xo bench --ab` on the same host (ab-host, 3 rounds): headphase `run
+200000 0 1 ... 255` (200,000 head calls under each of 256 pad depths in one process; pad's
+frame is 112 bytes, 16 mod 32, so the depths reach every 16 byte phase of a page), A the
+bench alone (1ad9a5c65), B with the peel (ea063a667):
+
+| metric | A | B | B / A | 95% interval |
+|---|---|---|---|---|
+| wall ms | 199.0 | 199.7 | 1.004 | 0.976 to 1.01 (noise) |
+| CPU ms | 197.7 | 197.6 | 1.000 | 0.972 to 1.024 (noise) |
+
+Level: the peel costs nothing measurable here, and neither did the crossings it removes.
