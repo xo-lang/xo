@@ -27,7 +27,7 @@ undercount, which misleads.
 
 ## Consequences
 
-- Files written by this version are not read by an older `xo prof` (it ignores the new section type); files
+- Files written by this version are not read by an older `xo prof` (it skips the new section type and says "holds no samples", exit 1); files
   from older versions read as before (TestProfOldHeapRaw, testdata/prof/heap-v17.xoraw).
 - inuse values come from the live slots only, as before.
 - A free of a sampled block costs a hash of its up to 64 pcs and two atomics (once per rate bytes allocated,

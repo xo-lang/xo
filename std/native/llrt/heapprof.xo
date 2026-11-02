@@ -88,6 +88,7 @@ const AGG_PROBES = 64
 /// come (65,536 until 2026-11-01, when 2,000 TLS handshakes, about 880
 /// allocations each, filled it).
 const CAP = 262144
+// The free stack's links are slot indices plus 1 in 20 bits (recycle, take_free): CAP must stay under 1,048,575 (start refuses a larger one).
 /// The address set's entries (slot + 1, 0 empty, -1 a freed one's, which
 /// an insert reuses): four per slot, so probes stay short.
 const SET_N = 1048576
@@ -140,6 +141,9 @@ pub fn start(rate: Int) -> Bool {
   let r = map(R_SIZE)
   let slots = map(CAP * SLOT)
   let set = map(SET_N * 8)
+  if CAP >= 1048575 {
+    return false
+  }
   let pool = map(POOL_N * T_SIZE)
   let agg = map(AGG_N * AGG_SIZE)
   if r == 0 || slots == 0 || set == 0 || pool == 0 || agg == 0 {
