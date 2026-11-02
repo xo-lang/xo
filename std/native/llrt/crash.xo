@@ -782,6 +782,7 @@ fn phase2(r: Int) {
   }
   let s = prof.trace_text(pcs)
   stdio.write_all(2, raw.data(s), s.len())
+  raw.alive_str(s)
   watch(r, false)
 }
 

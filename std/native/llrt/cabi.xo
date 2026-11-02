@@ -806,6 +806,7 @@ fn fault_traceback(t: Int, now: Int) -> Int {
   }
   let s = prof.trace_text_at(fault.trace_pcs(t), fault.trace_regs(t))
   stdio.write_all(2, raw.data(s), s.len())
+  raw.alive_str(s)
   0
 }
 
@@ -883,6 +884,7 @@ fn fiber_map_failed(en: Int) {
   let mib = rt.mem_load(fs, 24, 8) / 1048576
   let m = "xo: fiber stack mmap failed (${sysio.err_msg(sysio.layer(), en)}) with ${rtstats.fibers_live()} stacks of ${mib} MiB mapped\n"
   stdio.write_all(2, raw.data(m), m.len())
+  raw.alive_str(m)
   heapos.oom()
 }
 
@@ -1033,6 +1035,7 @@ fn lock_held_switch() {
   stdio.flush()
   let m = "xo: lock held: a fiber switched away holding a runtime lock (std/native/llrt/pool.xo held)\n"
   stdio.write_all(2, raw.data(m), m.len())
+  raw.alive_str(m)
   process.os_exit(70)
 }
 
@@ -1040,6 +1043,7 @@ fn lock_order() {
   stdio.flush()
   let m = "xo: lock order: a park's lock taken while holding the pool's (std/native/llrt/pool.xo)\n"
   stdio.write_all(2, raw.data(m), m.len())
+  raw.alive_str(m)
   process.os_exit(70)
 }
 
@@ -1049,6 +1053,7 @@ fn ring_owner() {
   stdio.flush()
   let m = "xo: ring owner: a worker's ring used from another thread (a record kept across a park; std/native/llrt/pool.xo)\n"
   stdio.write_all(2, raw.data(m), m.len())
+  raw.alive_str(m)
   process.os_exit(70)
 }
 
@@ -1064,6 +1069,7 @@ fn obj_rl_not_unique(l: Int) {
   stdio.flush()
   let m = "xo: internal: a var List parameter proved unique (decision 0322) holds a shared list (count ${rt.mem_load(l, 0, 8)})\n"
   stdio.write_all(2, raw.data(m), m.len())
+  raw.alive_str(m)
   process.os_exit(70)
 }
 
@@ -1072,6 +1078,7 @@ fn deadlock() {
   // straight to the descriptor, as the C did (not the test world's fake)
   let m = "fault: XO-F001: deadlock: every task is blocked\n"
   stdio.write_all(2, raw.data(m), m.len())
+  raw.alive_str(m)
   process.os_exit(70)
 }
 

@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-11-02: fix: fault and out of memory messages were written from freed memory
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's XO0915 lint draft (xo vet --cost, a raw address used after its value was released), after the 2026-11-02 race stress found the class in std
+- Go reference: none
+- Test: cmd/xo TestVetCostStd with XO0915 (the lint's own push; it reports these lines without the fix)
+- Timing: none
+- Shipped in: every release with these messages, through v0.35.0
+
+A task's fault trace, a crash report's trace, the fiber stack mmap failure
+and the runtime's internal error messages were formatted into a string
+and written with `stdio.write_all(2, raw.data(s), s.len())`, whose own
+arguments were the string's last use, so it was released before the write
+(gotchas/raw-address-outlives-bytes.md). The message came out right while
+nothing reused the block; the strings now stay alive past the write.
+
 ## 2026-11-02: fix: a connection deadline already passed fails the next read or write at once
 
 - Kind: fix
