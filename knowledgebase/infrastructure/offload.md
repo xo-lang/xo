@@ -206,8 +206,10 @@ GB VM, 3 slots since 2026-11-02, at most 2 per agent), lane `pass2`.
 A full `internal/llvm` run there takes the whole host (`OFF_EXCLUSIVE=1`):
 beside other jobs clang is `Killed` at the container's memory limit, which
 reads as a failed golden (2026-11-02). The first host runs on an M4 Pro. The second
-has `--cap-add=SYS_NICE` and `--ulimit rtprio=99`, so `chrt -f` works there,
-which the first host lacks. Same packages, LLVM, seed and WebAssembly tools as
+has `--cap-add=SYS_NICE` and `--ulimit rtprio=99`, which the first host lacks.
+A job uses them with `OFF_RTPRIO=1` (offload.sh starts it as xo through
+setpriv instead of `su - xo`): su's pam_limits sets rtprio to 0 whatever
+limits.d says, so a plain job's `chrt -f` fails (Last verified: 2026-11-02). Same packages, LLVM, seed and WebAssembly tools as
 above. Use it for pass/fail runs, with `OFFLOAD_ENV=offload-arm64b.env` on
 both `--put` and the job, and a whole bundle the first time (a bare
 `offload.sh` job stays on the first host, since agents' jobs lean on files
