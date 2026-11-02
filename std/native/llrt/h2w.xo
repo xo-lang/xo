@@ -273,6 +273,7 @@ pub fn head(d: Int, ha: Int, hn: Int, status: Int, head_req: Bool, p: Int, pn: I
   } else if done && allowed && (pn > 0 || !head_req) {
     let cl = "${pn}"
     at = field(d, at, "content-length", raw.data(cl), cl.len())
+    raw.alive_str(cl)
     nf += 1
   }
   if http1w.find(ha, hn, "Date") < 0 {

@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-11-02: fix: an HTTP/2 response's content-length was copied from freed memory
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's race stress (every golden that serves HTTP/2 built with --race on linux/arm64: a heap-use-after-free in h2w.field, http_h2c_sniff, http_h2c, http_conn_fault, the tls goldens)
+- Go reference: none
+- Test: internal/llvm TestRaceStdNoUseAfterFree/http_h2c_sniff (a --race build reports the use after free before the fix)
+- Timing: none
+- Shipped in: v0.12.0 (b8cc0fe48, h2w.xo) through v0.35.0
+
+A native HTTP/2 response whose handler set no Content-Length got one
+from its body's length, formatted into a string whose last use was in
+the arguments of the call that copied it (`field(..., raw.data(cl),
+cl.len())`), so the string was released before the copy
+(gotchas/raw-address-outlives-bytes.md). The copy read the right bytes
+as long as nothing reused the block in between, which is why no output
+showed it; a --race build, whose heap is the C library's, reported it on
+every such response. The string now stays alive past the copy.
+
 ## 2026-11-02: perf: a native Response no longer carries the wasm stream's field (decision 0447)
 
 - Kind: perf
