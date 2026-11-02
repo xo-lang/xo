@@ -601,13 +601,24 @@ fn set_prot(a: Int, n: Int, prot: Int) {
   }
 }
 
+/// Whether h is the main thread's record: the list's last one, which no record
+/// links to (thread_heap links every other record before it; the list's head
+/// is the newest record, so comparing with the head took a thread's record for
+/// the main one and raced with the push, tier 38, 2026-11-02).
+fn is_main_record(h: Int) -> Bool {
+  rt.mem_load(h, H_NEXT, 8) == 0
+}
+
 /// The new chunk c's usable bytes for heap record h, its limit recorded at
 /// lim (0: nothing to extend to).
 fn reserve(h: Int, c: Int, lim: Int) -> Int {
   if rt.mem_load(h, lim, 8) == 0 && dense_halves() {
-    if h == rt.mem_load(rt.static_word(W_HEAPS), 0, 8) {
-      // the main thread's record: a program's single threaded work (a
-      // build's front end) allocates here densely from the start
+    if is_main_record(h) {
+      // the main thread's record, the list's last (thread_heap links every
+      // other record before it; the list's head is the newest record, and
+      // read here it raced with a new thread's push, tier 38, 2026-11-02): a
+      // program's single threaded work (a build's front end) allocates here
+      // densely from the start
       thp_advise(c, CHUNK)
       rt.mem_store(h, lim, 1, 8)
       return CHUNK

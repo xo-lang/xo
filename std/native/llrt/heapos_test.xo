@@ -1,0 +1,23 @@
+// Tests of heapos.xo: `xo test --std-module=native/llrt/heapos`, run by
+// internal/stdtest.
+
+use native/rt
+
+test "a record linked before the main one is not the main thread's record" {
+  // thread_heap's list: the main record last (H_NEXT 0), each newer record
+  // linking the one before it, the newest first (the list's head)
+  let main = rt.heap_large(H_SIZE)
+  let t1 = rt.heap_large(H_SIZE)
+  let t2 = rt.heap_large(H_SIZE)
+  rt.mem_store(main, H_NEXT, 0, 8)
+  rt.mem_store(t1, H_NEXT, main, 8)
+  rt.mem_store(t2, H_NEXT, t1, 8)
+  expect(is_main_record(main)) == true
+  // the newest record, the list's head, is a thread's: the check that
+  // compared with the head took it for the main one (tier 38, 2026-11-02)
+  expect(is_main_record(t2)) == false
+  expect(is_main_record(t1)) == false
+  rt.heap_release(t2.wrapping_sub(8))
+  rt.heap_release(t1.wrapping_sub(8))
+  rt.heap_release(main.wrapping_sub(8))
+}
