@@ -12,6 +12,10 @@ import (
 // directories under XO_COLL_DUMP (skipped without it): the input of the
 // differential runner (scripts/coll-diff.sh).
 func TestCollDump(t *testing.T) {
+	gen := Coll
+	if os.Getenv("XO_COLL_MODE") == "alias" {
+		gen = Alias
+	}
 	dir := os.Getenv("XO_COLL_DUMP")
 	if dir == "" {
 		t.Skip("set XO_COLL_DUMP=DIR [XO_COLL_FIRST=1 XO_COLL_COUNT=100]")
@@ -28,6 +32,6 @@ func TestCollDump(t *testing.T) {
 		d := filepath.Join(dir, fmt.Sprint(seed))
 		os.MkdirAll(d, 0o755)
 		os.WriteFile(filepath.Join(d, "xo.mod"), []byte(fmt.Sprintf("module example.com/coll%d\n", seed)), 0o644)
-		os.WriteFile(filepath.Join(d, "main.xo"), []byte(Coll(seed)), 0o644)
+		os.WriteFile(filepath.Join(d, "main.xo"), []byte(gen(seed)), 0o644)
 	}
 }
