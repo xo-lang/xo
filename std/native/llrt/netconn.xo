@@ -515,8 +515,14 @@ fn conn_new_mem(c: Int, me: Int) -> Int {
 /// does, data waiting or not.
 fn passed(cn: Int, w: Int) -> Bool {
   let dl = ld(cn, w)
-  dl != 0 && poll.now() >= dl
+  dl == PAST || (dl != 0 && poll.now() >= dl)
 }
+
+/// A deadline word for a time already passed: earlier than any reading,
+/// and passed without one. It was `poll.now() | 1`, one ns ahead of an
+/// even reading, so a write in the same clock tick went through
+/// (tls_deadline under load on linux/arm64, 2026-11-02).
+const PAST = 1
 
 /// passed for another module (TLS on cn): the read or write deadline.
 pub fn deadline_passed(cn: Int, write: Bool) -> Bool { passed(cn, if write { C_WDL } else { C_RDL }) }
@@ -535,7 +541,7 @@ pub fn user_deadline(cn: Int, write: Bool) -> Int {
 /// is false; which is 1 (read), 2 (write) or 3 (both). A waiting read or
 /// write wakes and waits again until the new deadline.
 pub fn set_deadline(cn: Int, which: Int, set: Bool, d: Int) {
-  let dl = if !set { 0 } else if d <= 0 { poll.now() | 1 } else { poll.deadline(d) }
+  let dl = if !set { 0 } else if d <= 0 { PAST } else { poll.deadline(d) }
   if (which & 1) != 0 {
     st(cn, C_RDL, dl)
   }

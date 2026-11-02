@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-02: fix: a connection deadline already passed fails the next read or write at once
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's concurrency stress (golden tls_deadline, 6 of 256 runs beside CPU burners on linux/arm64: "3 write ok")
+- Go reference: net.Conn's SetDeadline (a deadline in the past fails pending and later calls at once)
+- Test: native/llrt/netconn_test.xo "a deadline in the past fails at once on a clock that has not moved" (fails before the fix on the test world's standing clock)
+- Timing: none (one compare more on a read or write)
+- Shipped in: v0.33.1 (29db8153f, decision 0430) through v0.35.0
+
+`c.set_deadline(clock, t)` with t not after now stored the deadline as
+the monotonic reading with its low bit set, one ns ahead of an even
+reading, so a read or write in the same clock tick ran instead of failing
+with `Timeout`. On linux/arm64 the clock ticks every few ns and two
+readings often match; on a test world's clock, which stands still between
+sleeps, it failed every other time. A passed deadline is now a word that
+is always passed.
+
 ## 2026-11-02: fix: a dial reported a connection that had not been made
 
 - Kind: fix

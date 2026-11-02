@@ -58,3 +58,25 @@ test "a writable wake before the connect finished is not a connection" {
   poll.pd_end(pd)
   poll.pd_free(pd)
 }
+
+// A deadline already passed fails the next read or write at once, even
+// when the clock has not moved since it was set (decision 0430; the test
+// world's clock stands still between sleeps). It was stored as
+// now | 1, one ns ahead of an even reading, so a write in the same clock
+// tick went through (tls_deadline under load on linux/arm64, 2026-11-02)
+test "a deadline in the past fails at once on a clock that has not moved" {
+  let l = os.net.listen("past.test:1")?
+  let c = os.net.dial("past.test:1")?
+  let _sc = l.accept()?
+  for k in 0..2 {
+    // two readings of the standing clock: one of now and now + 1 ns is even
+    if k == 1 {
+      os.clock.sleep(1ns)
+    }
+    c.set_write_deadline(os.clock, Some(os.clock.now() - 1s))
+    expect(c.write("x".bytes()) == Err(NetErr.Timeout)) == true
+    c.set_read_deadline(os.clock, Some(os.clock.now() - 1s))
+    expect(c.read(8) == Err(NetErr.Timeout)) == true
+    c.set_deadline(os.clock, None)
+  }
+}
