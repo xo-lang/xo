@@ -21,3 +21,9 @@ chunks too (Xo Lang 2's review).
 
 **Avoid:** read `W_HEAPS` only under `hlock` or at startup (one thread); to
 identify a record use its own fields.
+
+**Second race, same day:** `thp_mode` (called on every chunk once dense was the
+default) reads the huge page mode through the list head with no lock, while
+`thread_heap` stored the head with a plain store: TSan again, and on arm64 no
+ordering for the record's fields. The head is now stored with release and read
+by `thp_mode` with acquire.
