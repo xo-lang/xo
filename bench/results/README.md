@@ -246,3 +246,4 @@
 - [list-floor-2026-11-01.md](list-floor-2026-11-01.md): a list of elements over 256 bytes starts at one slot (decision 0452 addendum): TLS save -75% in use, `--ab` rows for big1, bign, mixed, small and self
 - [cache-drop-2026-11-02.md](cache-drop-2026-11-02.md): debug.mem_trim drops cached large blocks of 2 MiB and over (decision 0448): the variants, Linux and Mac rows.
 - [thp-density-2026-11-02.md](thp-density-2026-11-02.md): why Go stays low under THP=always: 2 MiB region fill from pagemap at 2,000 TLS connections, Xo 19-23% (per thread chunks) against Go 71-75%; predicted and measured RSS under always; what Xo could copy
+- [thp-dense-2026-11-02.md](thp-dense-2026-11-02.md): XO_THP=dense (Go's density rule on Xo's chunks, branches l2-dense and l2-dense2, unpushed): idle TLS server memory equals XO_THP=off; v2 keeps the self build's wall on THP always, coll edit 1.043 with RSS 0.79, and 0.952 on a madvise host
