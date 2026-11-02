@@ -1,0 +1,120 @@
+// RC passes against aliases and closures: uniq_var_params (a `var` List
+// parameter every call passes unique skips its copy on write check),
+// sink_retains and cancel_rc_pairs. Each shape keeps a second holder of
+// the list (a closure, another list, a struct copy, a map, a returned
+// value) and checks it after a write through the var parameter.
+
+struct Box {
+  items: List[Int]
+  tag: Str
+}
+
+fn show(xs: List[Int]) -> Str {
+  var o = "["
+  for (i, x) in xs.indexed() {
+    o = o + (if i > 0 { "," } else { "" }) + "${x}"
+  }
+  o + "]"
+}
+
+fn showl(xss: List[List[Int]]) -> Str {
+  var o = ""
+  for xs in xss {
+    o = o + show(xs)
+  }
+  o
+}
+
+fn grow(var xs: List[Int], n: Int) {
+  for i in 0..n {
+    xs.push(i * 10)
+  }
+  if xs.len() > 0 {
+    xs[0] = xs[0] + 1
+  }
+}
+
+fn grow_ret(var xs: List[Int], n: Int) -> List[Int] {
+  grow(xs, n)
+  xs
+}
+
+fn deep(var xs: List[Int], d: Int) {
+  if d == 0 {
+    return
+  }
+  xs.push(d)
+  var c = xs
+  deep(c, d - 1)
+  deep(xs, d - 1)
+  xs.push(c.len())
+}
+
+fn closures(k: Int) -> Str {
+  var xs: List[Int] = []
+  xs.push(k)
+  let seen = fn() -> Int { xs.len() * 100 + xs[0] }
+  grow(xs, 2)
+  var fs: List[fn() -> Int] = []
+  for i in 0..3 {
+    let snap = xs
+    fs.push(fn() -> Int { snap.len() * 1000 + snap[snap.len() - 1] + i })
+    grow(xs, 1)
+  }
+  var out = "seen ${seen()} xs ${show(xs)}"
+  for f in fs {
+    out = out + " f ${f()}"
+  }
+  out
+}
+
+fn holders(k: Int) -> Str {
+  var held: List[List[Int]] = []
+  var xs: List[Int] = []
+  for i in 0..3 {
+    let h = xs
+    held.push(h)
+    grow(xs, i + k)
+  }
+  var m: Map[Str, List[Int]] = {}
+  let hm = xs
+  m["a"] = hm
+  grow(xs, 1)
+  let b = Box{items: xs, tag: "t"}
+  var c = b
+  grow(c.items, 1)
+  var t = xs
+  var r = grow_ret(t, 1)
+  let r2 = r
+  grow(r, 1)
+  "held ${showl(held)} m ${show(m.get("a") ?? [])} b ${show(b.items)} c ${show(c.items)} xs ${show(xs)} t ${show(t)} r ${show(r)} r2 ${show(r2)}"
+}
+
+fn fresh(k: Int) -> Str {
+  // unique at every call: the pass may drop the check here
+  var a: List[Int] = []
+  grow(a, k)
+  var b = [k, k]
+  grow(b, 1)
+  var d: List[Int] = []
+  deep(d, 3)
+  "a ${show(a)} b ${show(b)} d ${show(d)}"
+}
+
+fn swap_hold(k: Int) -> Str {
+  var xs = [1, 2, 3]
+  var ys = xs
+  let pick = if k > 0 { xs } else { ys }
+  grow(ys, 1)
+  grow(xs, k)
+  "pick ${show(pick)} xs ${show(xs)} ys ${show(ys)}"
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  os.stdio.println(closures(k))
+  os.stdio.println(holders(k))
+  os.stdio.println(fresh(k))
+  os.stdio.println(swap_hold(k))
+  os.stdio.println(swap_hold(0))
+}

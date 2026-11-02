@@ -1,0 +1,119 @@
+// x86_mul_pair: a product's low half (wrapping_mul) and high half
+// (mul_hi_unsigned) of the same two operands become one mulq. Shapes
+// where the names repeat but the values differ: the low half redefining
+// an operand (a loop's carried value), the high half first, swapped
+// operands, a value squared, halves of different products interleaved,
+// and a flag reader between the halves.
+
+fn chain(x0: Int, k: Int, n: Int) -> (Int, Int) {
+  var x = x0
+  var acc = 0
+  for _ in 0..n {
+    x = x.wrapping_mul(k)
+    acc = acc ^ x.mul_hi_unsigned(k)
+  }
+  (x, acc)
+}
+
+fn hi_first(x0: Int, k: Int, n: Int) -> (Int, Int) {
+  var x = x0
+  var acc = 0
+  for _ in 0..n {
+    let h = x.mul_hi_unsigned(k)
+    x = x.wrapping_mul(k)
+    acc = acc.wrapping_add(h ^ x.mul_hi_unsigned(k))
+  }
+  (x, acc)
+}
+
+fn swapped(a: Int, b: Int) -> (Int, Int, Int, Int) {
+  let lo = a.wrapping_mul(b)
+  let hi = b.mul_hi_unsigned(a)
+  let sq = a.wrapping_mul(a)
+  let sqh = a.mul_hi_unsigned(a)
+  (lo, hi, sq, sqh)
+}
+
+fn interleave(a: Int, b: Int, c: Int) -> Int {
+  let l1 = a.wrapping_mul(b)
+  let l2 = a.wrapping_mul(c)
+  let h2 = c.mul_hi_unsigned(a)
+  let h1 = a.mul_hi_unsigned(b)
+  let flag = l1 < l2
+  let h3 = b.mul_hi_unsigned(c)
+  let l3 = c.wrapping_mul(b)
+  if flag { l1 ^ h1 ^ l3 } else { l2 ^ h2 ^ h3 }
+}
+
+fn reassign(a0: Int, b: Int) -> (Int, Int) {
+  var a = a0
+  let lo = a.wrapping_mul(b)
+  a = lo
+  let hi = a.mul_hi_unsigned(b)
+  (lo, hi)
+}
+
+fn wide(xs: List[Int], k: Int) -> Int {
+  var carry = 0
+  var out = 0
+  for x in xs {
+    let lo = x.wrapping_mul(k)
+    let hi = x.mul_hi_unsigned(k)
+    let s = lo.wrapping_add(carry)
+    carry = hi + (if s.lt_unsigned(lo) { 1 } else { 0 })
+    out = out ^ s
+  }
+  out ^ carry
+}
+
+
+struct W {
+  a: Int
+  b: Int
+  c: Int
+}
+
+// a loaded word squared: both factors the same value, each folded to a
+// memory operand of the struct's base
+fn sq_field(w: W) -> (Int, Int) {
+  let x = w.b
+  (x.wrapping_mul(x), x.mul_hi_unsigned(x))
+}
+
+fn sq_fields(ws: List[W]) -> Int {
+  var acc = 0
+  for w in ws {
+    let x = w.c
+    acc = acc ^ x.wrapping_mul(x) ^ x.mul_hi_unsigned(x)
+    let y = w.a
+    acc = acc.wrapping_add(y.mul_hi_unsigned(y)).wrapping_add(y.wrapping_mul(y))
+  }
+  acc
+}
+
+fn prod_fields(w: W) -> (Int, Int) {
+  (w.a.wrapping_mul(w.b), w.b.mul_hi_unsigned(w.a))
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  let big = 6364136223846793005 + k
+  let (x1, a1) = chain(-7046029254386353131 + k, big, 50)
+  let (x2, a2) = hi_first(9172631812362820025 + k, big, 50)
+  let (l, h, s, sh) = swapped(-3 - k, big)
+  os.stdio.println("chain ${x1} ${a1}")
+  os.stdio.println("hi_first ${x2} ${a2}")
+  os.stdio.println("swapped ${l} ${h} ${s} ${sh}")
+  os.stdio.println("interleave ${interleave(big, -7 - k, 5124095577148911 + k)} ${interleave(3 + k, 5, 7)}")
+  let (rl, rh) = reassign(big, -1 - k)
+  os.stdio.println("reassign ${rl} ${rh}")
+  var xs: List[Int] = []
+  for i in 0..40 { xs.push((i + k).wrapping_mul(big) ^ i) }
+  os.stdio.println("wide ${wide(xs, big)} ${wide(xs, -1)}")
+  var ws: List[W] = []
+  for i in 0..9 { ws.push(W{a: (i + k).wrapping_mul(big), b: -1 - i, c: big ^ i}) }
+  let (q0, q1) = sq_field(ws[3])
+  let (q2, q3) = sq_field(W{a: 1, b: big + k, c: 2})
+  let (p0, p1) = prod_fields(ws[5])
+  os.stdio.println("sq ${q0} ${q1} ${q2} ${q3} ${sq_fields(ws)} prod ${p0} ${p1}")
+}

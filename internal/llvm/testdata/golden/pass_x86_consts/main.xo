@@ -1,0 +1,81 @@
+// x86_const_imm: a register whose one definition is a constant becomes
+// an immediate (32 bit signed), a shift's cl amount becomes `$n & 63`
+// (or 31 for 32 bit shifts), a constant index folds into a lea. Edges:
+// constants at and past the 32 bit signed range, the 32 bit forms on
+// sized types (movl zero extends), shifts by 31/32/33/63/64/65, and a
+// constant used in several widths in one function.
+
+fn show(xs: List[Int]) -> Str {
+  var o = "["
+  for (i, x) in xs.indexed() {
+    o = o + (if i > 0 { "," } else { "" }) + "${x}"
+  }
+  o + "]"
+}
+
+fn showb(xs: List[Bool]) -> Str {
+  var o = ""
+  for x in xs {
+    o = o + (if x { "1" } else { "0" })
+  }
+  o
+}
+
+fn sh64(x: Int) -> List[Int] {
+  [x.wrapping_shl(1), x.wrapping_shl(31), x.wrapping_shl(32), x.wrapping_shl(33), x.wrapping_shl(63), x >> 1, x >> 31, x >> 32, x >> 63,
+   x.shr_logical(1), x.shr_logical(63), x.wrapping_shl(64), x.wrapping_shl(65), x.wrapping_shl(127),
+   x.rotate_right(1), x.rotate_right(63), x.rotate_right(64), x.rotate_right(65)]
+}
+
+fn sh32(x: Int32, u: UInt32) -> List[Int] {
+  [Int((x & 16383) << 1), Int((x & 1) << 30), Int(x >> 1), Int(x >> 31), Int((u & 16383) << 1), Int((u & 1) << 31), Int(u >> 1), Int(u >> 31),
+   Int(x).rotate_right32(1), Int(x).rotate_right32(31), Int(x).rotate_right32(32), Int(x).rotate_right32(33)]
+}
+
+fn edges(x: Int) -> List[Int] {
+  [x.wrapping_add(2147483647), x.wrapping_add(2147483648), x.wrapping_sub(2147483648), x.wrapping_sub(2147483649), x & 2147483647, x & 4294967295,
+   x & -2147483648, x | -1, x ^ -1, x ^ 4294967296, x & 0, x | 0, x.wrapping_add(-1)]
+}
+
+fn cmps(x: Int) -> List[Bool] {
+  [x == 2147483647, x == 2147483648, x == -2147483648, x == -2147483649, x < 4294967295, x > -1,
+   x == 4294967295, (x & 255) == 255, x.lt_unsigned(-1), x.lt_unsigned(2147483648)]
+}
+
+fn sized(a: Int32, b: UInt32, c: UInt8, d: Int8, e: UInt16, f: Int64) -> List[Int] {
+  [Int(a + 2147483646), Int(a & -1), Int(a ^ 2147483647), Int(a - -2147483647),
+   Int(b + 4294967294), Int(b & 4294967295), Int(b ^ 2147483648), Int(b | 4026531840),
+   Int(c + 254), Int(c ^ 255), Int(c & 128), Int(d + 126), Int(d ^ -128), Int(e ^ 65535), Int(e + 65534),
+   Int(f + 2147483647), Int(f ^ -4294967296)]
+}
+
+fn widths(n: Int) -> Int {
+  // one constant 255 as an Int, an Int32 and a UInt8 operand
+  let a = n.wrapping_add(255)
+  let b = Int32(n & 1023) + 255
+  let c = UInt8(n & 0) + 255
+  let d = UInt32(n & 7) ^ 255
+  a + Int(b) + Int(c) + Int(d)
+}
+
+fn idx(xs: List[Int]) -> Int {
+  xs[0] + xs[1] * 3 + xs[7] - xs[xs.len() - 1]
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() - 1
+  for x in [0 + k, 1, -1, 2147483647, -2147483648, 4294967295, 9223372036854775807, -9223372036854775807 - 1, 6148914691236517205] {
+    os.stdio.println("sh64 ${x}: ${show(sh64(x))}")
+    os.stdio.println("edges ${x}: ${show(edges(x))}")
+    os.stdio.println("cmps ${x}: ${showb(cmps(x))}")
+    os.stdio.println("widths ${x}: ${widths(x)}")
+  }
+  for (a, b) in [(Int32(0), UInt32(0)), (Int32(-1), UInt32(4294967295)), (Int32(2147483647), UInt32(2147483648)), (Int32(-2147483648), UInt32(1))] {
+    os.stdio.println("sh32 ${a} ${b}: ${show(sh32(a, b))}")
+  }
+  os.stdio.println("sized: ${show(sized(Int32(1 + k), UInt32(1), UInt8(1), Int8(1), UInt16(1), Int64(0)))}")
+  os.stdio.println("sized: ${show(sized(Int32(-3), UInt32(0), UInt8(0), Int8(-128), UInt16(0), Int64(-9223372036854775807)))}")
+  var xs: List[Int] = []
+  for i in 0..10 { xs.push(i * 11 + k) }
+  os.stdio.println("idx ${idx(xs)}")
+}

@@ -1,0 +1,74 @@
+// x86_sink_loads moves a load down past stores through the same base to
+// bytes it does not read; x86_fold_loads folds a load read several times
+// and, when its base spills, refolds. Shapes: byte and halfword fields
+// beside word fields of one element written in place (take_in_place's
+// list.setf) between a load and its read, overlapping widths, and many
+// live words so the fold's base spills.
+
+struct P {
+  a: UInt8
+  b: UInt8
+  h: UInt16
+  w: Int32
+  q: Int
+  r: Int
+}
+
+fn show(ps: List[P]) -> Str {
+  var o = ""
+  for p in ps {
+    o = o + "(${p.a} ${p.b} ${p.h} ${p.w} ${p.q} ${p.r})"
+  }
+  o
+}
+
+fn bytes_between(var ps: List[P], i: Int, j: Int) -> Int {
+  let q0 = ps[i].q
+  ps[i].a = UInt8(q0 & 255)
+  ps[i].b = ps[i].a ^ 85
+  ps[i].h = UInt16(Int(ps[i].b) * 3)
+  let r0 = ps[i].r
+  ps[j].w = Int32(r0 & 65535)
+  ps[i].q = q0 + Int(ps[j].h)
+  ps[j].r = Int(ps[i].w) + r0
+  q0.wrapping_mul(3).wrapping_add(r0).wrapping_add(Int(ps[j].a))
+}
+
+fn many_live(ps: List[P], i: Int) -> Int {
+  let p = ps[i]
+  let x0 = p.q.wrapping_mul(3)
+  let x1 = p.r.wrapping_mul(5)
+  let x2 = p.q ^ p.r
+  let x3 = p.q.wrapping_add(p.r)
+  let x4 = p.q.mul_hi_unsigned(p.r)
+  let x5 = p.r.mul_hi_unsigned(p.q)
+  let x6 = p.q.wrapping_mul(p.q)
+  let x7 = p.r.wrapping_mul(p.r)
+  let x8 = p.q.wrapping_sub(p.r)
+  let x9 = (p.q & 1023) * Int(p.w)
+  let x10 = p.q.rotate_right(7)
+  let x11 = p.r.rotate_right(13)
+  let x12 = p.q.wrapping_add(x0)
+  let x13 = p.r.wrapping_add(x1)
+  let s = x0 ^ x1 ^ x2 ^ x3 ^ x4 ^ x5 ^ x6 ^ x7
+  s.wrapping_add(x8).wrapping_add(x9) ^ x10 ^ x11 ^ x12 ^ x13 ^ p.q ^ p.r
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  var ps: List[P] = []
+  for i in 0..6 {
+    ps.push(P{a: UInt8(i + k), b: UInt8(200 + i), h: UInt16(60000 + i), w: Int32(-i * 1000), q: 6364136223846793005 + i, r: -(i + 1) * 7777777777})
+  }
+  var t = 0
+  for i in 0..6 {
+    t = t ^ bytes_between(ps, i, (i * 5 + 1) % 6)
+    t = t ^ bytes_between(ps, i, i)
+  }
+  os.stdio.println("t ${t} ${show(ps)}")
+  var m = 0
+  for i in 0..6 {
+    m = m ^ many_live(ps, i)
+  }
+  os.stdio.println("m ${m}")
+}

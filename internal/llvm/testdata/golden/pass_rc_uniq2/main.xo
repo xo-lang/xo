@@ -1,0 +1,83 @@
+// uniq_var_params' out and result facts: a `var` out unique at every
+// Return, a List result, mutual recursion, a list both returned and kept
+// in a struct the caller also reads, and an early return of the shared
+// input on one path only.
+
+struct Acc {
+  xs: List[Int]
+  n: Int
+}
+
+fn show(xs: List[Int]) -> Str {
+  var o = "["
+  for (i, x) in xs.indexed() {
+    o = o + (if i > 0 { "," } else { "" }) + "${x}"
+  }
+  o + "]"
+}
+
+fn fill(var xs: List[Int], n: Int) {
+  for i in 0..n {
+    xs.push(i)
+  }
+}
+
+fn maybe_same(var xs: List[Int], keep: Bool) -> List[Int] {
+  if keep {
+    return xs
+  }
+  fill(xs, 1)
+  xs
+}
+
+fn even(var xs: List[Int], d: Int) {
+  if d > 0 {
+    xs.push(d)
+    odd(xs, d - 1)
+  }
+}
+
+fn odd(var xs: List[Int], d: Int) {
+  if d > 0 {
+    var c = xs
+    c.push(-d)
+    even(xs, d - 1)
+    xs.push(c.len())
+  }
+}
+
+fn into_acc(var a: Acc, k: Int) {
+  fill(a.xs, k)
+  a.n = a.xs.len()
+}
+
+fn ret_kept(k: Int) -> (List[Int], Acc) {
+  var xs: List[Int] = []
+  fill(xs, k)
+  let a = Acc{xs: xs, n: 0}
+  fill(xs, 1)
+  (xs, a)
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  var base = [7, 8]
+  var r1 = maybe_same(base, true)
+  fill(r1, 1)
+  var r2 = maybe_same(base, false)
+  fill(r2, 1)
+  os.stdio.println("base ${show(base)} r1 ${show(r1)} r2 ${show(r2)}")
+  var e: List[Int] = []
+  even(e, 4 + k)
+  os.stdio.println("even ${show(e)}")
+  var a = Acc{xs: [k], n: 0}
+  let a0 = a
+  into_acc(a, 3)
+  var b = a
+  into_acc(b, 1)
+  os.stdio.println("a0 ${show(a0.xs)} ${a0.n} a ${show(a.xs)} ${a.n} b ${show(b.xs)} ${b.n}")
+  let (xs, acc) = ret_kept(2 + k)
+  var ys = xs
+  fill(ys, 1)
+  os.stdio.println("xs ${show(xs)} acc ${show(acc.xs)} ys ${show(ys)}")
+}
