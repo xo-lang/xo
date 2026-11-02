@@ -3595,7 +3595,9 @@ directory; `-o NAME` for a windows target with no extension writes
 named alone. A program is a component or it is not: `http.serve_component` on
 wasip1/wasm is XO1514, and on wasip2/wasm a program that never calls it is
 XO1516 and one that reaches files, processes or sockets is XO1515. Each
-component's imports are `@0.2.0`.
+component's imports are `@0.2.0`. `http.Client` works through the host's
+`wasi:http/outgoing-handler`, imported only by a program that reaches it (see
+`spec/std.md`); `net.dial`'s own sockets stay XO1515.
 
 Binaries are static and builds are reproducible: the same source in the
 same directory, lockfile, and toolchain version produce byte identical

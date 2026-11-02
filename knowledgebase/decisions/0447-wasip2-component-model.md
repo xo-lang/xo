@@ -448,3 +448,27 @@ What a component still does not do:
   experimental.
 - Fastly Community, "WASM support for component model / WASIp2"
   (community.fastly.com/t/wasm-support-for-component-model-wasip2/3642): dated.
+
+## Outgoing requests (owner chose this stage, 2026-11-01; done 2026-11-02)
+
+`Client.send` and `Client.open` on wasip2/wasm reach
+`wasi:http/outgoing-handler` through three runtime calls (rt5.xo
+`wasi_http_send`, `wasi_http_resp_headers`, `wasi_http_resp_body`).
+
+- **One redirect loop.** The exchange is an arm inside `http1.client_do`, so
+  redirects, Authorization stripping, Referer, Net.only per hop and gzip have one
+  home with native. Writing a second loop was rejected: those are security
+  rules. The host follows no redirects and decodes no gzip itself.
+- **Imports follow reach.** A component imports the handler and the client's
+  resources only when it calls `wasi_http_send`, so TestWasmComponentHTTP's stub
+  host, which has no handler, still instantiates the others.
+- **The effect stays `net.dial`.** A Client keeps its declared effect, so `xo vet`
+  shows what it did; sockets of its own stay XO1515.
+- **Limits, recorded not hidden:** a request blocks the instance
+  (`pollable.block`), so tasks in a handler do not fan out requests concurrently;
+  bodies are held whole both ways; timeouts are the host's three per-phase ones;
+  request trailers fail; `with_roots` and `with_cert` fail, since the host owns
+  TLS. A fan-out over several pollables and streaming are next if wanted.
+- Found on the way: the 16 byte return area could not hold an `error-code`
+  (case at 8, payload at 16); it is 128 bytes now, which also covers
+  `outgoing-body.finish`'s error, which could have overrun it since step 1.

@@ -1,0 +1,50 @@
+// A wasi:http component's outgoing requests (decision 0447):
+// TestWasmComponentClient runs it under `wasmtime serve`. Each request names
+// the call to make: X-To its URL, X-Method its method, X-Timeout-Ms its
+// timeout, X-Auth an Authorization field, and the request's body its body.
+use std/http
+
+fn main(os: Os) {
+  var r = http.router()
+  r.handle("POST /call", fn(q: http.Request) -> http.Response {
+    let ms = Int.parse(q.header("X-Timeout-Ms") ?? "5000") ?? 5000
+    let c = http.client(os.net, timeout: ms * 1ms)
+    var h: Map[Str, Str] = {"X-Sent": "by-xo"}
+    if let Some(a) = q.header("X-Auth") {
+      h["Authorization"] = a
+    }
+    let req = http.new_request(q.header("X-Method") ?? "GET", q.header("X-To") ?? "", headers: h, body: q.body)
+    match c.send(req) {
+      Ok(resp) => http.text(200, "status ${resp.status} x-a ${resp.header("X-A") ?? "-"} ce ${resp.header("Content-Encoding") ?? "-"} body ${resp.body.to_str() ?? "?"}")
+      Err(e) => http.text(200, "err ${e}")
+    }
+  })
+  // a body reader sent whole
+  r.handle_stream("POST /piped", fn(q, body) {
+    let c = http.client(os.net)
+    match c.send(http.new_request("POST", q.header("X-To") ?? "").with_body_reader(body)) {
+      Ok(resp) => http.text(200, "status ${resp.status} body ${resp.body.to_str() ?? "?"}")
+      Err(e) => http.text(200, "err ${e}")
+    }
+  })
+  r.handle("POST /open", fn(q: http.Request) -> http.Response {
+    let c = http.client(os.net)
+    match c.open(http.new_request("GET", q.header("X-To") ?? "")) {
+      Ok(s) => {
+        let b = match s.read_all() {
+          Ok(b) => b
+          Err(e) => return http.text(200, "read err ${e}")
+        }
+        http.text(200, "status ${s.head().status} read ${b.len()}")
+      }
+      Err(e) => http.text(200, "err ${e}")
+    }
+  })
+  r.handle("POST /roots", fn(q: http.Request) -> http.Response {
+    match http.client(os.net).with_roots(b"") {
+      Ok(_) => http.text(200, "built")
+      Err(e) => http.text(200, "err ${e.msg}")
+    }
+  })
+  http.serve_component(r)
+}

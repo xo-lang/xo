@@ -98,6 +98,9 @@ arm64 wasi_http_headers the wasi:http component runtime is wasm only (compiler/w
 arm64 wasi_http_method the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_path the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_respond the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+arm64 wasi_http_resp_body the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+arm64 wasi_http_resp_headers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+arm64 wasi_http_send the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm atomic_add lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm atomic_max lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
@@ -195,6 +198,9 @@ llvm wasi_http_headers the wasi:http component runtime is wasm only (compiler/wa
 llvm wasi_http_method the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_path the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_respond the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+llvm wasi_http_resp_body the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+llvm wasi_http_resp_headers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+llvm wasi_http_send the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 wasm any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm dyn_raw lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)

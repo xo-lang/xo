@@ -4282,6 +4282,96 @@ pub struct CResult {
 
 fn cfail(err: Int, msg: Str) -> CResult { CResult{err: err, msg: msg, status: 0, headers: [], body: b""} }
 
+/// The wasi:http method variant's case of m; 9, `other`, carries the name.
+fn wasi_method_case(m: Str) -> Int {
+  match m {
+    "GET" => 0
+    "HEAD" => 1
+    "POST" => 2
+    "PUT" => 3
+    "DELETE" => 4
+    "CONNECT" => 5
+    "OPTIONS" => 6
+    "TRACE" => 7
+    "PATCH" => 8
+    _ => 9
+  }
+}
+
+/// What a wasi:http error-code's case means to client_do: send's error (2
+/// connect, 3 timeout, 4 protocol) and the case's name.
+fn wasi_error(k: Int) -> (Int, Str) {
+  let names = ["DNS timeout", "DNS error", "destination not found", "destination unavailable", "destination IP prohibited", "destination IP unroutable", "connection refused", "connection terminated", "connection timeout", "connection read timeout", "connection write timeout", "connection limit reached", "TLS protocol error", "TLS certificate error", "TLS alert received", "HTTP request denied", "HTTP request length required", "HTTP request body size", "HTTP request method invalid", "HTTP request URI invalid", "HTTP request URI too long", "HTTP request header section size", "HTTP request header size", "HTTP request trailer section size", "HTTP request trailer size", "HTTP response incomplete", "HTTP response header section size", "HTTP response header size", "HTTP response body size", "HTTP response trailer section size", "HTTP response trailer size", "HTTP response transfer coding", "HTTP response content coding", "HTTP response timeout", "HTTP upgrade failed", "HTTP protocol error", "loop detected", "configuration error", "internal error"]
+  let name = if k >= 0 && k < names.len() { names[k] } else { "error ${k}" }
+  let err = if k == 0 || k == 8 || k == 9 || k == 10 || k == 33 { 3 } else if k <= 7 || (k >= 11 && k <= 14) { 2 } else { 4 }
+  (err, name)
+}
+
+/// One exchange through wasi:http/outgoing-handler (rt5.xo's
+/// wasi_http_send), with the fields hclient.request adds: the host writes
+/// Host from the authority. A whole request, a whole response; whole is false
+/// for a streamed body or trailers, which this first stage does not send
+/// (Client.send reads a streamed body first).
+fn wasi_exchange(method: Str, https: Bool, host: Str, path: Str, hk: List[Str], hv: List[Str], body: Bytes, timeout: Int, prefix: Str, whole: Bool) -> CResult {
+  if !whole {
+    return cfail(4, prefix + ": a wasi:http component does not send request trailers")
+  }
+  var f = ""
+  var ua = false
+  var cl = false
+  var ae = false
+  var i = 0
+  while i < hk.len() {
+    let k = hk[i]
+    if k == "User-Agent" {
+      ua = true
+    }
+    if k == "Content-Length" {
+      cl = true
+    }
+    if k == "Accept-Encoding" || k == "Range" {
+      ae = true
+    }
+    // an empty User-Agent sends none, as hclient.request
+    if !(k == "User-Agent" && hv[i].is_empty()) {
+      f = f + k + "\u{0}" + hv[i] + "\u{0}"
+    }
+    i += 1
+  }
+  if !ua {
+    f = f + "User-Agent\u{0}Go-http-client/1.1\u{0}"
+  }
+  if !cl && (!body.is_empty() || method == "POST" || method == "PUT" || method == "PATCH") {
+    f = f + "Content-Length\u{0}${body.len()}\u{0}"
+  }
+  if !ae && method != "HEAD" {
+    f = f + "Accept-Encoding\u{0}gzip\u{0}"
+  }
+  let st = rt.wasi_http_send(wasi_method_case(method), method, if https { 1 } else { 0 }, host, path, f.bytes(), body, timeout)
+  if st == -1 {
+    return cfail(4, prefix + ": the host refused the request")
+  }
+  if st < 0 {
+    let (err, name) = wasi_error(-100 - st)
+    return cfail(err, prefix + ": " + name)
+  }
+  let hb = rt.wasi_http_resp_headers()
+  var headers: List[Str] = []
+  var start = 0
+  var name = true
+  i = 0
+  while i < hb.len() {
+    if hb[i] == 0 {
+      let t = hb[start..i].to_str() ?? ""
+      headers.push(if name { canonical_key(t) } else { t })
+      name = !name
+      start = i + 1
+    }
+    i += 1
+  }
+  CResult{err: 0, msg: "", status: st, headers: headers, body: rt.wasi_http_resp_body()}
+}
+
 /// net/http's urlErrorOp: the method with its first byte kept and the
 /// rest lowered, at most 30 bytes ("Get").
 fn url_op(m: Str) -> Str {
@@ -4330,7 +4420,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     iv.push(values[n])
     n += 1
   }
-  let when = if timeout > 0 { hclient.cl_deadline(timeout) } else { 0 }
+  let when = if timeout > 0 && target.arch != TargetArch.Wasm32 { hclient.cl_deadline(timeout) } else { 0 }
   let op = url_op(m)
   var method = m
   var raw = url
@@ -4415,111 +4505,123 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     // the request: the address (host:port, 80 or 443 by default), the
     // target (the escaped path and the query)
     let addr = if scan.find(name, ":", 0) >= 0 { "[" + name + "]:" + port } else { name + ":" + port }
-    var target = if u.path == "*" { "*" } else if u.path.is_empty() { "/" } else { escape_path(u.path) }
+    var target_of = if u.path == "*" { "*" } else if u.path.is_empty() { "/" } else { escape_path(u.path) }
     if !u.rawquery.is_empty() {
-      target = target + "?" + u.rawquery
+      target_of = target_of + "?" + u.rawquery
     }
     let prefix = url_op(method) + " " + q
-    var r = hclient.cl_start(https, addr, name, body, when, roots, prefix, true, h2c, alpn, h2cfg)
-    // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
-    // after the head
-    var h2x: H2X? = None
-    if hclient.h2(r) {
-      h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src, tnames, tfn)
-      if hclient.retry(r) && !src.is_empty() {
-        // a streamed body cannot be sent again (Go's error without
-        // Request.GetBody)
-        return cfail(4, op + " " + go_quote(raw) + ": http2: Transport: cannot retry err after Request.Body was written; define Request.GetBody to avoid this error")
-      }
-      if hclient.retry(r) {
-        // the server did not take the request on the pooled connection:
-        // it goes on a new one, as Transport retries it
-        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
-        if hclient.h2(r) {
-          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src, tnames, tfn)
-        }
-      }
-    }
     var status = 0
     var headers: List[Str] = []
     var rbody = b""
-    var h1 = hclient.reading(r)
-    // stream (decision 0404): the head only; the body follows on r
-    var hb = BodyRead{mode: 0, done: true}
-    if h1 {
-      var x = if stream {
-        let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
-        hb = hr.b
-        hr.x
-      } else {
-        h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn)
+    if target.arch == TargetArch.Wasm32 {
+      // a wasi:http component (decision 0447): the host holds the
+      // connections and TLS; one whole exchange, under the same redirects
+      let x = wasi_exchange(method, https, u.host, target_of, hk, hv, body, timeout, prefix, src.is_empty() && tnames.is_empty())
+      if x.err != 0 {
+        return x
       }
-      if x.none && hclient.reused(r) && replayable(method, hk) && src.is_empty() {
-        // the pooled connection was dead (the server closed it): the
-        // request goes once more on a new one, as Transport retries it
-        // (decision 0303)
-        r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
-        h1 = hclient.reading(r)
-        if hclient.h2(r) {
-          h2x = h2_run(r, stream, method, target, u.host, hk, hv, body.len(), src, tnames, tfn)
-        } else if h1 && stream {
-          let hr = h1_head_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
-          hb = hr.b
-          x = hr.x
-        } else if h1 {
-          x = h1_round(r, method, target, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn)
+      status = x.status
+      headers = x.headers
+      rbody = x.body
+    } else {
+      var r = hclient.cl_start(https, addr, name, body, when, roots, prefix, true, h2c, alpn, h2cfg)
+      // stream over HTTP/2 (decision 0404 stage B2): the exchange kept open
+      // after the head
+      var h2x: H2X? = None
+      if hclient.h2(r) {
+        h2x = h2_run(r, stream, method, target_of, u.host, hk, hv, body.len(), src, tnames, tfn)
+        if hclient.retry(r) && !src.is_empty() {
+          // a streamed body cannot be sent again (Go's error without
+          // Request.GetBody)
+          return cfail(4, op + " " + go_quote(raw) + ": http2: Transport: cannot retry err after Request.Body was written; define Request.GetBody to avoid this error")
         }
-      }
-      if h1 && hclient.err(r) == 0 {
-        status = x.status
-        headers = x.headers
-        rbody = x.body
-      }
-    }
-    if !h1 && hclient.err(r) == 0 {
-      // an HTTP/2 response
-      status = hclient.status(r)
-      headers = hclient.headers(r)
-      rbody = hclient.body(r)
-    }
-    let err = hclient.err(r)
-    if err != 0 {
-      return cfail(err, hclient.msg(r))
-    }
-    if stream && (h1 || h2x is Some(_)) {
-      let li0 = field_at(headers, "Location")
-      let hop = max_redirects > 0 && (status == 301 || status == 302 || status == 303 || (src.is_empty() && (status == 307 || status == 308))) && li0 >= 0 && !headers[li0 + 1].is_empty()
-      if !hop {
-        // the last response: its body is read as it arrives, a gzip one
-        // decoded by the client on send's terms
-        var gz = false
-        if method != "HEAD" && !has_key(hk, "Accept-Encoding") && !has_key(hk, "Range") {
-          let ce = field_at(headers, "Content-Encoding")
-          if ce >= 0 && ascii_lower(headers[ce + 1]) == "gzip" {
-            gz = true
-            headers = without_fields(headers, "Content-Encoding", "Content-Length")
+        if hclient.retry(r) {
+          // the server did not take the request on the pooled connection:
+          // it goes on a new one, as Transport retries it
+          r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
+          if hclient.h2(r) {
+            h2x = h2_run(r, stream, method, target_of, u.host, hk, hv, body.len(), src, tnames, tfn)
           }
         }
-        return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: https, addr: addr, name: name, gz: gz, h2: h2x}
       }
-      // a redirect: its body read and dropped, its connection pooled
-      // before the next hop
-      if let Some(x0) = h2x {
-        var x = x0
-        h2_pump(r, x, H2_TO_END)
-        h2_done(r, x)
-        if hclient.err(r) != 0 {
-          return cfail(hclient.err(r), hclient.msg(r))
+      var h1 = hclient.reading(r)
+      // stream (decision 0404): the head only; the body follows on r
+      var hb = BodyRead{mode: 0, done: true}
+      if h1 {
+        var x = if stream {
+          let hr = h1_head_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
+          hb = hr.b
+          hr.x
+        } else {
+          h1_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn)
+        }
+        if x.none && hclient.reused(r) && replayable(method, hk) && src.is_empty() {
+          // the pooled connection was dead (the server closed it): the
+          // request goes once more on a new one, as Transport retries it
+          // (decision 0303)
+          r = hclient.cl_start(https, addr, name, body, when, roots, prefix, false, h2c, alpn, h2cfg)
+          h1 = hclient.reading(r)
+          if hclient.h2(r) {
+            h2x = h2_run(r, stream, method, target_of, u.host, hk, hv, body.len(), src, tnames, tfn)
+          } else if h1 && stream {
+            let hr = h1_head_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, duplex, tnames, tfn)
+            hb = hr.b
+            x = hr.x
+          } else if h1 {
+            x = h1_round(r, method, target_of, u.host, hk, hv, body, https, addr, name, roots, src, tnames, tfn)
+          }
+        }
+        if h1 && hclient.err(r) == 0 {
+          status = x.status
+          headers = x.headers
+          rbody = x.body
         }
       }
-      while !hb.done {
-        let st = cbody_next(r, hb, 65536)
-        if st.s != CC_OK {
-          hclient.end_keep(r, false, https, addr, name, roots, st.s, if st.why.is_empty() { "" } else { "\u{1}" + st.why })
-          return cfail(hclient.err(r), hclient.msg(r))
-        }
+      if !h1 && hclient.err(r) == 0 {
+        // an HTTP/2 response
+        status = hclient.status(r)
+        headers = hclient.headers(r)
+        rbody = hclient.body(r)
       }
-      hclient.end_keep(r, hb.keep, https, addr, name, roots, CC_OK, "")
+      let err = hclient.err(r)
+      if err != 0 {
+        return cfail(err, hclient.msg(r))
+      }
+      if stream && (h1 || h2x is Some(_)) {
+        let li0 = field_at(headers, "Location")
+        let hop = max_redirects > 0 && (status == 301 || status == 302 || status == 303 || (src.is_empty() && (status == 307 || status == 308))) && li0 >= 0 && !headers[li0 + 1].is_empty()
+        if !hop {
+          // the last response: its body is read as it arrives, a gzip one
+          // decoded by the client on send's terms
+          var gz = false
+          if method != "HEAD" && !has_key(hk, "Accept-Encoding") && !has_key(hk, "Range") {
+            let ce = field_at(headers, "Content-Encoding")
+            if ce >= 0 && ascii_lower(headers[ce + 1]) == "gzip" {
+              gz = true
+              headers = without_fields(headers, "Content-Encoding", "Content-Length")
+            }
+          }
+          return CResult{err: 0, msg: "", status: status, headers: headers, body: b"", open: true, conn: Some(r), read: hb, https: https, addr: addr, name: name, gz: gz, h2: h2x}
+        }
+        // a redirect: its body read and dropped, its connection pooled
+        // before the next hop
+        if let Some(x0) = h2x {
+          var x = x0
+          h2_pump(r, x, H2_TO_END)
+          h2_done(r, x)
+          if hclient.err(r) != 0 {
+            return cfail(hclient.err(r), hclient.msg(r))
+          }
+        }
+        while !hb.done {
+          let st = cbody_next(r, hb, 65536)
+          if st.s != CC_OK {
+            hclient.end_keep(r, false, https, addr, name, roots, st.s, if st.why.is_empty() { "" } else { "\u{1}" + st.why })
+            return cfail(hclient.err(r), hclient.msg(r))
+          }
+        }
+        hclient.end_keep(r, hb.keep, https, addr, name, roots, CC_OK, "")
+      }
     }
     // a gzip body the request asked for (hclient.request and h2_exchange
     // add Accept-Encoding: gzip on the same terms) is decoded, without

@@ -123,15 +123,15 @@ var componentGoldens = []struct {
 // a connection, TLS, HTTP/2 or a raw socket, which the wasi:http handler has
 // no way to reach or leaves to the host.
 var componentGoldensNotRun = map[string]string{
-	"http_client":             "the client's redirects, timeouts and body rules are what it tests; outgoing requests are not decided",
-	"http_client_body_reader": "a route forwards through the client; outgoing requests are not decided",
+	"http_client":             "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
+	"http_client_body_reader": "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
+	"http_reverse_proxy":      "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_conn_fault":         "faults on a connection, which the host owns",
 	"http_duplex":             "reads and writes a stream at once; handle_stream on the input-stream is not decided",
 	"http_h2_config":          "HTTP/2 server settings, which the host owns",
 	"http_h2c":                "HTTP/2 on the wire, which the host owns",
 	"http_h2c_sniff":          "HTTP/2 on the wire, which the host owns",
 	"http_handler_fault":      "its router only faults; http_fault covers that",
-	"http_reverse_proxy":      "needs the client; outgoing requests are not decided",
 	"http_reverse_proxy_ws":   "needs the client and an upgrade",
 	"http_stream_body_h2":     "HTTP/2 on the wire, which the host owns; http_stream_body covers the routes",
 	"http_tls":                "TLS, which the host owns",

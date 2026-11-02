@@ -1406,6 +1406,8 @@ fn ([var] r: Router) not_found[E: Error, fx: Effects](h: fn(Request) -> Response
 fn ([var] r: Router) method_not_allowed[E: Error, fx: Effects](h: fn(Request) -> Response ! E uses fx) uses fx   // the 405's; Allow added when missing
 fn (r: Router) call(req: Request) -> Response      // in process dispatch, for tests
 fn serve_component(r: Router)                      // answers a wasi:http component's request; on the wasm backend the build's output is that component (decision 0447); faults elsewhere
+    // a wasi:http component's Client (decision 0447): send and open go through the host; the whole request and response are held, so a request
+    // blocks the instance, a piped body is read first, trailers are refused, and with_roots and with_cert fail because the host does TLS
 type Next = fn(Request) -> Response
 ```
 

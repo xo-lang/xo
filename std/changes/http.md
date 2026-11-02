@@ -1,5 +1,23 @@
 # std/http changes
 
+## 2026-11-02: feature: http.Client in a wasi:http component (decision 0447)
+
+- Kind: feature
+- Commit: this commit
+- Found by: xo-lang-4, decision 0447's next stage (owner, 2026-11-01)
+- Go reference: none (Go has no wasi:http client in net/http)
+- Test: internal/selfhost TestWasmComponentClient (wasmtime serve against a Go server)
+- Timing: none (the host holds the connection; no native comparison)
+
+On `--targets=wasip2/wasm`, `Client.send` and `Client.open` go through
+`wasi:http/outgoing-handler`, with the same redirects, Net.only checks,
+Authorization stripping and gzip as native. Limits of this stage: a request
+blocks the instance while it runs; request and response are held whole, so `open`
+reads its response before it returns and a piped body is read before it is sent;
+each timeout is the host's per-phase one, not one deadline across redirects;
+request trailers fail; `with_roots` and a client with `with_cert` fail, since the
+host does TLS. A component that does not reach the client imports nothing new.
+
 ## 2026-11-01: fix: an HTTP/2 connection whose idle park was refused re-reads before it waits (decision 0449 stage 1c)
 
 - Kind: fix

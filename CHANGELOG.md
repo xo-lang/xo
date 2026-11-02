@@ -11,6 +11,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   256 connections +3.1% req/s on linux/arm64 with p99 -1.5% and p99.9 +2.9% (10 rounds, ranges
   overlapping), `xo build` of xo 1.9% faster on linux/amd64; other cases within noise
   (bench/results/lock-spin-2026-11-01.md).
+- std/http: `http.Client` works in a wasi:http component (`--targets=wasip2/wasm`, decision 0447):
+  requests go through the host's `wasi:http/outgoing-handler`, with native's redirect, Net.only and
+  gzip behavior. A request blocks its instance and holds the body whole for now; see std/http's log.
 - Small builds touch less of xo's own code (decision 0453): xo now ships a layout file that puts the
   functions a small build runs together. A warm or edit build of coll 64 to 59 MB RSS on the Mac
   (117 from 128 MB on linux/arm64), conc-spawn 56 to 53 MB (101 from 109 MB).

@@ -340,6 +340,23 @@ fn (g: Gen) component_lacks() -> Str {
   ""
 }
 
+/// Whether the program makes outgoing requests (std/native/llrt/http1.xo
+/// wasi_exchange), which a component's world then imports.
+fn (g: Gen) is_client() -> Bool {
+  for f in g.m.funcs {
+    for x in f.values {
+      if x.op == ssa.Op.Call {
+        if let S(s) = x.aux {
+          if s == "rt.wasi_http_send" {
+            return true
+          }
+        }
+      }
+    }
+  }
+  false
+}
+
 /// A chain of functions from one nothing in the module refers to, down to
 /// function name.
 fn (g: Gen) call_chain(name: Str) -> Str {
@@ -1644,6 +1661,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   }
   if g.comp {
     b.write(rt5_imports())
+    if g.is_client() {
+      b.write(rt5_client_imports())
+    }
     b.write(rt6_imports())
   }
   b.write(if g.comp { drop_preview1(rt_imports()) } else { rt_imports() })

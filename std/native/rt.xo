@@ -310,6 +310,9 @@ fn wasi_http_authority() -> Str
 fn wasi_http_headers() -> Bytes
 fn wasi_http_body() -> Bytes
 fn wasi_http_respond(status: Int, headers: Bytes, body: Bytes)
+fn wasi_http_send(method_case: Int, method: Str, scheme_case: Int, authority: Str, path: Str, headers: Bytes, body: Bytes, timeout_ns: Int) -> Int
+fn wasi_http_resp_headers() -> Bytes
+fn wasi_http_resp_body() -> Bytes
 
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
 // caller, in its `target.os` Linux arms.

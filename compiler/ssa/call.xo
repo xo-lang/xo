@@ -1613,7 +1613,9 @@ fn wasm_only_rt(name: Str) -> Bool {
   if name is "fs_root" | "fs_mode" | "fs_new" | "fs_canceled" {
     return false
   }
-  name.starts_with("fs_")
+  // a wasi:http component's calls (compiler/wasm rt5.xo): std's client
+  // reaches them from its wasm arm on every target
+  name.starts_with("fs_") || name.starts_with("wasi_http_")
 }
 
 /// A call of a platform library function declared in

@@ -300,7 +300,9 @@ fn ity_io_streams(t_error: Int) -> InstTy {
   i
 }
 
-fn ity_http_types(t_in: Int, t_out: Int) -> InstTy {
+/// wasi:http/types: t_poll, when not -1 (a program that makes outgoing
+/// requests), adds the client's resources.
+fn ity_http_types(t_in: Int, t_out: Int, t_poll: Int) -> InstTy {
   var i = InstTy{}
   let in0 = i.outer(t_in)
   let inp = i.eq("input-stream", in0)
@@ -409,6 +411,63 @@ fn ity_http_types(t_in: Int, t_out: Int) -> InstTy {
   let own_param = i.def(dt_own(outparam))
   let r_resp = i.def(dt_result(own_oresp, ec))
   i.fun("[static]response-outparam.set", [("param", own_param), ("response", r_resp)], NO_TYPE)
+  if t_poll >= 0 {
+    let p0 = i.outer(t_poll)
+    let pl = i.eq("pollable", p0)
+    let own_pl = i.def(dt_own(pl))
+    let s0 = i.def(dt_variant([("HTTP", NO_TYPE), ("HTTPS", NO_TYPE), ("other", VT_STRING)]))
+    let scheme = i.eq("scheme", s0)
+    let opt_scheme = i.def(dt_option(scheme))
+    let oreq = i.res("outgoing-request")
+    let ropt = i.res("request-options")
+    let iresp = i.res("incoming-response")
+    let fut = i.res("future-incoming-response")
+    let own_oreq = i.def(dt_own(oreq))
+    let b_oreq = i.def(dt_borrow(oreq))
+    i.fun("[constructor]outgoing-request", [("headers", own_fields)], own_oreq)
+    i.fun("[method]outgoing-request.body", [("self", b_oreq)], r_obody)
+    i.fun("[method]outgoing-request.set-method", [("self", b_oreq), ("method", method)], r_unit)
+    i.fun("[method]outgoing-request.set-scheme", [("self", b_oreq), ("scheme", opt_scheme)], r_unit)
+    i.fun("[method]outgoing-request.set-authority", [("self", b_oreq), ("authority", opt_s)], r_unit)
+    i.fun("[method]outgoing-request.set-path-with-query", [("self", b_oreq), ("path-with-query", opt_s)], r_unit)
+    let own_ropt = i.def(dt_own(ropt))
+    let b_ropt = i.def(dt_borrow(ropt))
+    i.fun("[constructor]request-options", [], own_ropt)
+    i.fun("[method]request-options.set-connect-timeout", [("self", b_ropt), ("duration", opt_u64)], r_unit)
+    i.fun("[method]request-options.set-first-byte-timeout", [("self", b_ropt), ("duration", opt_u64)], r_unit)
+    i.fun("[method]request-options.set-between-bytes-timeout", [("self", b_ropt), ("duration", opt_u64)], r_unit)
+    let own_iresp = i.def(dt_own(iresp))
+    let b_iresp = i.def(dt_borrow(iresp))
+    i.fun("[method]incoming-response.status", [("self", b_iresp)], VT_U16)
+    i.fun("[method]incoming-response.headers", [("self", b_iresp)], own_fields)
+    i.fun("[method]incoming-response.consume", [("self", b_iresp)], r_ibody)
+    let b_fut = i.def(dt_borrow(fut))
+    i.fun("[method]future-incoming-response.subscribe", [("self", b_fut)], own_pl)
+    let r_inner = i.def(dt_result(own_iresp, ec))
+    let r_outer = i.def(dt_result(r_inner, NO_TYPE))
+    let opt_r = i.def(dt_option(r_outer))
+    i.fun("[method]future-incoming-response.get", [("self", b_fut)], opt_r)
+  }
+  i
+}
+
+/// wasi:http/outgoing-handler, over the types of t_http's resources.
+fn ity_outgoing_handler(t_oreq: Int, t_ropt: Int, t_fut: Int, t_ec: Int) -> InstTy {
+  var i = InstTy{}
+  let q0 = i.outer(t_oreq)
+  let q = i.eq("outgoing-request", q0)
+  let o0 = i.outer(t_ropt)
+  let o = i.eq("request-options", o0)
+  let f0 = i.outer(t_fut)
+  let f = i.eq("future-incoming-response", f0)
+  let e0 = i.outer(t_ec)
+  let e = i.eq("error-code", e0)
+  let own_q = i.def(dt_own(q))
+  let own_o = i.def(dt_own(o))
+  let own_f = i.def(dt_own(f))
+  let opt_o = i.def(dt_option(own_o))
+  let r = i.def(dt_result(own_f, e))
+  i.fun("handle", [("request", own_q), ("options", opt_o)], r)
   i
 }
 
@@ -685,9 +744,18 @@ pub fn component_of(core: Bytes) -> (Bytes, Str) {
   let is = c.import_iface("wasi:io/streams${WASI_V}", ity_io_streams(t_err))
   let t_in = c.alias_type(is, "input-stream")
   let t_out = c.alias_type(is, "output-stream")
-  let ih = c.import_iface("wasi:http/types${WASI_V}", ity_http_types(t_in, t_out))
+  let client = wanted("wasi:http/outgoing-handler${WASI_V}")
+  let ih = c.import_iface("wasi:http/types${WASI_V}", ity_http_types(t_in, t_out, if client { t_poll } else { -1 }))
   for r in ["fields", "incoming-request", "incoming-body", "outgoing-response", "outgoing-body", "response-outparam"] {
     let _t = c.alias_type(ih, r)
+  }
+  if client {
+    let t_oreq = c.alias_type(ih, "outgoing-request")
+    let t_ropt = c.alias_type(ih, "request-options")
+    let _i = c.alias_type(ih, "incoming-response")
+    let t_fut = c.alias_type(ih, "future-incoming-response")
+    let t_ec = c.alias_type(ih, "error-code")
+    let _h = c.import_iface("wasi:http/outgoing-handler${WASI_V}", ity_outgoing_handler(t_oreq, t_ropt, t_fut, t_ec))
   }
   if wanted("wasi:cli/stdout${WASI_V}") {
     let _i = c.import_iface("wasi:cli/stdout${WASI_V}", ity_cli_stream(t_out, "output-stream", "get-stdout"))

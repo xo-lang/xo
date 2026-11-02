@@ -2850,9 +2850,12 @@ fn stream_request(q: h2srv.H2Req) -> Request {
 // ---------------------------------------------------------------------------
 // Client (std.md 4.5)
 
-fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: tlsio.roots_system(), lists: rt.net_lists(net)} }
+fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: if target.arch == TargetArch.Wasm32 { rt.obj_at[rthttp.Roots](0) } else { tlsio.roots_system() }, lists: rt.net_lists(net)} }
 
 fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
+  if target.arch == TargetArch.Wasm32 {
+    return Err(http.TlsErr{msg: "a wasi:http component's host does TLS: with_roots has no place to go"})
+  }
   let r = tlsio.roots_pem(pem)
   let e = tlsio.roots_err(r)
   if !e.is_empty() {
@@ -3289,6 +3292,13 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     let st = StreamState{conn: None, h2: None, read: http1.BodyRead{mode: 0, done: true}, https: false, addr: "", name: "", roots: c.roots, buffered: resp.body, off: 0, gz: None, pending: b"", done: false, idle_ns: 0}
     return Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: resp.status, headers: resp.headers}, st: Mutex[StreamState].new(st)}))
   }
+  if target.arch == TargetArch.Wasm32 {
+    // a wasi:http component (decision 0447): the whole response, read as a
+    // stream, for now
+    let resp = c.send(req)?
+    let st = StreamState{conn: None, h2: None, read: http1.BodyRead{mode: 0, done: true}, https: false, addr: "", name: "", roots: c.roots, buffered: resp.body, off: 0, gz: None, pending: b"", done: false, idle_ns: 0}
+    return Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: resp.status, headers: resp.headers}, st: Mutex[StreamState].new(st)}))
+  }
   let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
   // a streamed request body is sent from a task, so the response head
@@ -3339,6 +3349,10 @@ fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
     let b = s.buffered[s.off..end]
     s.off = end
     return Ok(Some(b))
+  }
+  if target.arch == TargetArch.Wasm32 {
+    // a wasi:http component's stream is all in buffered (Client.open)
+    return Ok(None)
   }
   if let Some(x0) = s.h2 {
     var x = x0
@@ -3472,6 +3486,9 @@ fn close_src(fs: List[fn(Int) -> http1.BodyPart]) {
 fn end_duplex(var x: StreamState) {
   close_src(x.src_close)
   x.src_close = []
+  if target.arch == TargetArch.Wasm32 {
+    return
+  }
   if let Some(ds) = x.dsrv {
     x.dsrv = None
     hserve.srv_close(ds)
@@ -3574,28 +3591,32 @@ fn sorted_map(m: Map[Str, Str]) -> Map[Str, Str] {
 
 fn (s: ClientStream) close() {
   s.st.with(fn(var x: StreamState) {
-    if let Some(e0) = x.h2 {
-      // RST_STREAM CANCEL unless it ended; the connection stays pooled
-      var e = e0
-      if let Some(r) = x.conn {
-        http1.h2_cancel(r, e)
-        http1.h2_done(r, e)
+    if target.arch != TargetArch.Wasm32 {
+      if let Some(e0) = x.h2 {
+        // RST_STREAM CANCEL unless it ended; the connection stays pooled
+        var e = e0
+        if let Some(r) = x.conn {
+          http1.h2_cancel(r, e)
+          http1.h2_done(r, e)
+        }
+        x.h2 = None
+        x.conn = None
       }
-      x.h2 = None
+      match x.conn {
+        Some(r) => {
+          end_conn(x, r, x.read.done && x.read.keep, hclient.CC_OK)
+        }
+        None => ()
+      }
       x.conn = None
     }
-    match x.conn {
-      Some(r) => {
-        end_conn(x, r, x.read.done && x.read.keep, hclient.CC_OK)
-      }
-      None => ()
-    }
-    x.conn = None
     close_src(x.src_close)
     x.src_close = []
-    if let Some(ds) = x.dsrv {
-      x.dsrv = None
-      hserve.srv_close(ds)
+    if target.arch != TargetArch.Wasm32 {
+      if let Some(ds) = x.dsrv {
+        x.dsrv = None
+        hserve.srv_close(ds)
+      }
     }
     x.buffered = b""
     x.pending = b""
@@ -3703,9 +3724,13 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
     // FakeNet (a test without `uses net` and `xo test --real`)
     return send_mem(src_whole(req)?, raw)
   }
+  if target.arch == TargetArch.Wasm32 && c.cert is Some(_) {
+    return Err(http.ClientErr.Connect(msg: "a wasi:http component's host does TLS: with_cert has no place to go"))
+  }
   let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
-  let ta = trailer_args(req)
+  // a wasi:http component sends a whole body (decision 0447)
+  let ta = trailer_args(if target.arch == TargetArch.Wasm32 { src_whole(req)? } else { req })
   let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c))
   // done with the request: its body's reader closes (net/http closes
   // the request body), so a later write fails instead of waiting
