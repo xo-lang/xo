@@ -1,0 +1,297 @@
+// One field of a list element updated where it lies (pass take_in_place,
+// arm64), on the SSA after inlining.
+//
+// A write to a field of a list element (`xs[i].f = x`, and a `var`
+// method's setter on one, `xs[i].set_f(v)` once inlined) is
+// list.take(L, i), setfield on the element, and list.set of it back
+// (decision 0169): every word of the element moved out, the taken
+// slot's references replaced by the placeholder, and every word stored
+// back, for one field. The checker's Obj is 57 words: a setter of one
+// flag bit was 661 instructions (Checker.mark_used, Lang 2's flags
+// word, 2026-11-02). When the element only has its fields read and set
+// on its way back to the same slot, each set field is stored in the
+// slot (`list.setf K`) and each read loads the field from it
+// (`list.getf K`), on the list value the chain has reached at that
+// point; the take becomes the bounds check (list.index, with its
+// landing), whose loads go unused.
+//
+// The list is the take's: unique (the take's argument is its reuse),
+// reached by no other value, and its length unchanged until the set, so
+// the take's bounds check holds for every slot access. A read of the
+// element before a later field's set must come before that set, since
+// the slot holds the new value after it.
+
+use github.com/xo-lang/xo/compiler/ssa
+
+/// The uses of each value: the instructions with it as an argument, and
+/// the edges that pass it.
+struct TUses {
+  vals: Map[Int, List[Int]]
+  edges: Map[Int, List[Int]]
+}
+
+fn take_uses(f: ssa.Func) -> TUses {
+  var vals: Map[Int, List[Int]] = {}
+  var edges: Map[Int, List[Int]] = {}
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      for a in x.args {
+        var us = vals.get(a) ?? []
+        us.push(v)
+        vals[a] = us
+      }
+      for e in x.succs {
+        for a in f.edges[e].args {
+          var es = edges.get(a) ?? []
+          es.push(e)
+          edges[a] = es
+        }
+      }
+    }
+  }
+  TUses{vals: vals, edges: edges}
+}
+
+/// The position of v in its block, or -1.
+fn instr_at(f: ssa.Func, v: Int) -> Int {
+  let b = ssa.block_of(f.values[v].tb)
+  if b < 0 {
+    return -1
+  }
+  for (k, u) in f.blocks[b].instrs.indexed() {
+    if u == v {
+      return k
+    }
+  }
+  -1
+}
+
+/// Rewrites every list.take of f whose element only has fields read and
+/// scalar fields set before its list.set back into the same slot;
+/// whether it changed f.
+fn take_in_place(var f: ssa.Func, m: ssa.Module) -> Bool {
+  // the inlined receiver's variable would describe the list
+  if m.debug_info {
+    return false
+  }
+  var takes: List[Int] = []
+  for bl in f.blocks {
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op == ssa.Op.Call && aux_str(x.aux) == "list.take" && x.args.len() == 2 {
+        takes.push(v)
+      }
+    }
+  }
+  var changed = false
+  for t in takes {
+    // each rewrite changes the uses: counted again for the next
+    let u = take_uses(f)
+    if take_one(f, m, t, u) {
+      changed = true
+    }
+  }
+  changed
+}
+
+fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
+  let tx = f.values[t]
+  if !(u.edges.get(t) ?? []).is_empty() {
+    return false
+  }
+  // the take's two parts
+  var f0 = -1
+  var f1 = -1
+  for w in u.vals.get(t) ?? [] {
+    let wx = f.values[w]
+    if wx.op != ssa.Op.Field || wx.args.len() != 1 {
+      return false
+    }
+    let k = aux_int(wx.aux)
+    if k == 0 && f0 < 0 {
+      f0 = w
+    } else if k == 1 && f1 < 0 {
+      f1 = w
+    } else {
+      return false
+    }
+  }
+  if f0 < 0 || f1 < 0 {
+    return false
+  }
+  let et = ssa.ty_of(f.values[f1].tb)
+  if m.types[et].kind != ssa.Kind.Struct {
+    return false
+  }
+  // the list goes only to the set of the same slot
+  let s0 = u.vals.get(f0) ?? []
+  if s0.len() != 1 || !(u.edges.get(f0) ?? []).is_empty() {
+    return false
+  }
+  let s = s0[0]
+  let sx = f.values[s]
+  if sx.op != ssa.Op.Call || aux_str(sx.aux) != "list.set" || sx.args.len() != 3 || sx.args[0] != f0 || sx.args[1] != tx.args[1] || sx.args[2] == f0 {
+    return false
+  }
+  // the element's way from the take to the set: set fields, and block
+  // parameters of blocks with one predecessor
+  var back: List[Int] = []
+  var w = sx.args[2]
+  for _ in 0..64 {
+    if w == f1 {
+      break
+    }
+    let wx = f.values[w]
+    if wx.op == ssa.Op.SetField && wx.args.len() == 2 {
+      back.push(w)
+      w = wx.args[0]
+    } else if wx.op == ssa.Op.Param {
+      let pb = ssa.block_of(wx.tb)
+      if pb <= 0 || f.blocks[pb].preds.len() != 1 {
+        return false
+      }
+      let k = param_index(f, pb, w)
+      let e = f.edges[f.blocks[pb].preds[0]]
+      if k < 0 || k >= e.args.len() {
+        return false
+      }
+      back.push(w)
+      w = e.args[k]
+    } else {
+      return false
+    }
+  }
+  if w != f1 {
+    return false
+  }
+  var chain = [f1]
+  for k in 0..back.len() {
+    chain.push(back[back.len() - 1 - k])
+  }
+  // each member's uses: field reads, the next member, and the last one
+  // the set; the reads before the next member's set
+  for (ci, c) in chain.indexed() {
+    let last = ci == chain.len() - 1
+    let next = if last { s } else { chain[ci + 1] }
+    let nx = f.values[next]
+    let to_param = !last && nx.op == ssa.Op.Param
+    // where the reads must be: before the set that follows (or the
+    // set back), or in the block whose edge passes the member on
+    var rb = ssa.block_of(nx.tb)
+    var ri = instr_at(f, next)
+    if to_param {
+      rb = f.edges[f.blocks[ssa.block_of(nx.tb)].preds[0]].from
+      ri = f.blocks[rb].instrs.len()
+    }
+    var nexts = 0
+    for v in u.vals.get(c) ?? [] {
+      let vx = f.values[v]
+      if v == next && !to_param {
+        if vx.op == ssa.Op.SetField && (vx.args[0] != c || vx.args[1] == c) {
+          return false
+        }
+        if vx.op == ssa.Op.Call && (sx.args[2] != c || sx.args[0] == c) {
+          return false
+        }
+        nexts += 1
+        continue
+      }
+      if vx.op != ssa.Op.Field || vx.args.len() != 1 {
+        return false
+      }
+      if ssa.block_of(vx.tb) != rb || instr_at(f, v) >= ri {
+        return false
+      }
+    }
+    let es = u.edges.get(c) ?? []
+    if to_param {
+      if es.len() != 1 || es[0] != f.blocks[ssa.block_of(nx.tb)].preds[0] || nexts != 0 {
+        return false
+      }
+      var n = 0
+      for a in f.edges[es[0]].args {
+        if a == c {
+          n += 1
+        }
+      }
+      if n != 1 {
+        return false
+      }
+    } else if !es.is_empty() || nexts != 1 {
+      return false
+    }
+    // a set field holds no reference: its old value needs no release
+    let cx = f.values[c]
+    if cx.op == ssa.Op.SetField && m.heap(ssa.ty_of(f.values[cx.args[1]].tb)) {
+      return false
+    }
+  }
+  // the rewrite: the take is the bounds check, each member the list
+  // value with its fields stored
+  let l = tx.args[0]
+  let i = tx.args[1]
+  let lt = ssa.ty_of(f.values[l].tb)
+  f.values[t].aux = ssa.Aux.S(s: "list.index")
+  f.values[t].tb = ssa.with_ty(f.values[t].tb, et)
+  var lst: Map[Int, Int] = {}
+  lst[f1] = l
+  for c in chain {
+    let cx = f.values[c]
+    if c != f1 {
+      if cx.op == ssa.Op.SetField {
+        let k = aux_int(cx.aux)
+        f.values[c].op = ssa.Op.Call
+        f.values[c].tb = ssa.with_ty(cx.tb, lt)
+        f.values[c].args = [lst.get(cx.args[0]) ?? l, i, cx.args[1]]
+        f.values[c].aux = ssa.Aux.S(s: "list.setf ${k}")
+      } else {
+        // a block parameter: the list now, passed by its predecessor
+        let pb = ssa.block_of(cx.tb)
+        let e = f.blocks[pb].preds[0]
+        let k = param_index(f, pb, c)
+        let prev = f.edges[e].args[k]
+        f.edges[e].args[k] = lst.get(prev) ?? prev
+        f.values[c].tb = ssa.with_ty(cx.tb, lt)
+      }
+      lst[c] = c
+    }
+  }
+  for c in chain {
+    for v in u.vals.get(c) ?? [] {
+      let vx = f.values[v]
+      if vx.op == ssa.Op.Field {
+        f.values[v].op = ssa.Op.Call
+        f.values[v].args = [lst.get(c) ?? l, i]
+        f.values[v].aux = ssa.Aux.S(s: "list.getf ${aux_int(vx.aux)}")
+      }
+    }
+  }
+  replace_uses(f, s, lst.get(chain[chain.len() - 1]) ?? l)
+  drop_instr(f, s)
+  drop_instr(f, f0)
+  drop_instr(f, f1)
+  true
+}
+
+/// The index of parameter p among block b's, or -1.
+fn param_index(f: ssa.Func, b: Int, p: Int) -> Int {
+  for (k, q) in f.blocks[b].params.indexed() {
+    if q == p {
+      return k
+    }
+  }
+  -1
+}
+
+/// Takes v out of its block's instructions.
+fn drop_instr(var f: ssa.Func, v: Int) {
+  let b = ssa.block_of(f.values[v].tb)
+  var keep: List[Int] = []
+  for u in f.blocks[b].instrs {
+    if u != v {
+      keep.push(u)
+    }
+  }
+  f.blocks[b].instrs = keep
+}

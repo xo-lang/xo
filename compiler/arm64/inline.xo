@@ -721,6 +721,10 @@ fn inline_one(var m: ssa.Module, st: InlineState, fi: Int) -> Bool {
     // a block left only its jump joins the next
     let _s = ssa.merge_straight(f, m, block_calls_inline(f))
   }
+  // one field of a list element set where it lies (takeplace.xo)
+  if m.goarch == "arm64" && pass_on(m, "take_in_place") && take_in_place(f, m) {
+    ch = true
+  }
   // decision 0395's verifier rule: a frame object the passes after
   // stack_small gave a keeping use would outlive its frame
   if m.goarch == "arm64" {

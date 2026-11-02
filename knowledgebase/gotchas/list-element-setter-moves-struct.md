@@ -30,3 +30,15 @@ list element through a small field struct, not a method on the element.
 
 Tooling note: `xo refs FILE:LINE:COL` of a method found only the
 declaring module's uses then (fixed in 27c2467fa).
+
+## Fixed for scalar fields (2026-11-02, Xo Lang 1)
+
+Pass take_in_place (compiler/arm64 takeplace.xo) stores a scalar field
+of a list element in its slot (`list.setf K`) when the taken element
+only has fields read and scalar fields set on its way back to the same
+slot: the 14-word repro's setter is ldr, orr, str. A setter of a field
+holding a reference (Str, List, Box) still moves the element, and so
+does any element passed whole, or set back through a block with more
+than one predecessor. Golden pass_take_in_place covers equal indexes, a
+read of another element and of a `var` parameter between, a call that
+grows or shrinks the list, and a shared list.

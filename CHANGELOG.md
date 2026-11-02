@@ -5,6 +5,7 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native arm64: writing one scalar field of a list element (`xs[i].f = x`, or a `var` method setter such as `xs[i].set_done(true)`) stores that field in place instead of moving every word of the element out and back (pass take_in_place): a 14-word element's setter is ldr, orr, str; xo's `__text` -75,800 bytes.
 - Fixed a native arm64 build failure (`reads virtual register N before it is written`) in Float code that slp_f64 vectorizes: a pack whose lane an unvectorized instruction read before the pack. Since 4f3a667a4 (2026-11-02).
 - Native arm64: a retain outside loops is one `bl` to a retain thunk for the object's register (one per register, x0 to x28), not a `mov x16` and a `bl` to one thunk: 4 bytes per call site. xo's `__text` 33,946,260 to 32,764,092 bytes (-3.5%; 295,571 call sites).
 - Fixed a native arm64 link failure in separately compiled builds (the default once std's variants are cached): a fault exit's shared zero image could name a string literal of another part, a symbol local to that part's object (`xo: link: xo_..._str0_l is not defined`, byref_struct). `TestSepcompGoldens` builds goldens against std's variants.

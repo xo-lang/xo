@@ -1,0 +1,118 @@
+// pass take_in_place: one field of a large list element updated where it
+// lies (a `var` method setter, a field write) against what may alias it:
+// two indexes equal or not, a read of another element or of a `var`
+// parameter between the take and the set, a call between them that
+// pushes or pops the same list (a new buffer), and a list shared with
+// another binding, which copy-on-write must still copy.
+
+struct Rec {
+  name: Str
+  id: Int
+  tags: List[Str]
+  a: Int
+  b: Int
+  c: Int
+  note: Str
+  d: Int
+  e: Int
+  w: Float
+  flags: Int
+  kids: List[Int]
+}
+
+fn rec(i: Int) -> Rec {
+  Rec{name: "r${i}", id: i, tags: ["t${i}"], a: i, b: 2 * i, c: 3 * i, note: "n", d: 0, e: 0, w: 0.5 * Float(i), flags: i, kids: [i, i + 1]}
+}
+
+fn (o: Rec) done() -> Bool { (o.flags & 512) != 0 }
+fn (var o: Rec) set_done(v: Bool) { o.flags = if v { o.flags | 512 } else { o.flags & -513 } }
+fn (var o: Rec) bump(k: Int) { o.a = o.a + k; o.w = o.w + 1.0 }
+
+struct Table {
+  rs: List[Rec]
+  n: Int
+}
+
+fn (var t: Table) grow() -> Int {
+  // a new buffer: pushes past the capacity
+  for k in 0..40 { t.rs.push(rec(100 + k)) }
+  t.rs.len()
+}
+
+fn (var t: Table) shrink() -> Int {
+  let r = t.rs.pop() ?? rec(0)
+  r.a
+}
+
+fn (var t: Table) mark(i: Int) { t.rs[i].set_done(true) }
+
+
+fn show(t: Table) -> Str {
+  var s = 0
+  var f = 0
+  var w = 0.0
+  var names = ""
+  for (k, r) in t.rs.indexed() {
+    s = (s * 31 + r.a * 7 + r.b + r.c + r.d + r.e + r.id) % 1000000007
+    if r.done() { f += k + 1 }
+    w = w + r.w
+    if k < 6 { names = "${names}${r.name}/${r.tags.len()}/${r.kids.len()} " }
+  }
+  "len ${t.rs.len()} sum ${s} done ${f} w ${w} ${names}"
+}
+
+fn same(var t: Table, i: Int, j: Int) {
+  // i == j: the read of rs[j] sees the earlier write of rs[i]
+  t.rs[i].d = t.rs[j].a + 1
+  t.rs[j].e = t.rs[i].d * 2
+  t.rs[i].set_done(t.rs[j].e > 4)
+}
+
+fn between(var t: Table, i: Int, j: Int, var o: Rec) {
+  // a read of another element and of a `var` parameter between
+  let x = t.rs[j].b
+  t.rs[i].bump(x + o.c)
+  o.c = t.rs[i].a
+  t.rs[j].c = o.c + t.rs[i].c
+}
+
+fn calls(var t: Table, i: Int) -> Int {
+  // the value written is computed by a call that moves the buffer
+  t.rs[i].d = t.grow() + t.rs[i].a
+  t.rs[i].e = t.shrink()
+  t.rs[i].set_done(t.rs.len() % 2 == 0)
+  t.rs[i].a
+}
+
+fn shared(var t: Table, i: Int) -> (Table, Table) {
+  // a copy keeps the old element: the update copies the list first
+  let keep = t
+  t.rs[i].set_done(true)
+  t.rs[i].d = 77
+  var u = keep
+  u.rs[i].e = 5
+  (keep, u)
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  var t = Table{rs: [], n: 0}
+  for i in 0..20 { t.rs.push(rec(i)) }
+  for i in 0..20 { if i % 3 == k { t.mark(i) } }
+  os.stdio.println(show(t))
+  same(t, 4 + k, 4 + k)
+  same(t, 5 + k, 6 + k)
+  os.stdio.println(show(t))
+  var o = rec(9)
+  between(t, 7 + k, 7 + k, o)
+  between(t, 8 + k, 2 + k, o)
+  os.stdio.println("o ${o.c} ${show(t)}")
+  let a = calls(t, 3 + k)
+  os.stdio.println("calls ${a} ${show(t)}")
+  let (keep, u) = shared(t, 1 + k)
+  os.stdio.println("t ${show(t)}")
+  os.stdio.println("keep ${show(keep)}")
+  os.stdio.println("u ${show(u)}")
+  for i in 0..t.rs.len() { if i % 5 == 0 { t.rs[i].bump(i) } }
+  os.stdio.println(show(t))
+}

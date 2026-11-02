@@ -180,6 +180,12 @@ fn runtime_modes(name: Str) -> List[Mode]? {
   let c = Mode.Consume
   let w = Mode.Borrow
   let n = Mode.No
+  // arm64's take_in_place (compiler/arm64 takeplace.xo): a field of a
+  // list element stored where it lies, a scalar, into the list it
+  // updates as list.set does
+  if name.starts_with("list.setf ") {
+    return Some([c, n, n])
+  }
   match name {
     "str.concat" | "str.concat_obj" => Some([c, w])
     "str.concat_int" => Some([c, n])
@@ -211,11 +217,11 @@ fn runtime_modes(name: Str) -> List[Mode]? {
 }
 
 fn is_proj_call(name: Str) -> Bool {
-  name is "list.index" | "list.get"
+  name is "list.index" | "list.get" || name.starts_with("list.getf ")
 }
 
 fn is_update_call(name: Str) -> Bool {
-  name is "list.set" | "list.push" | "list.pop" | "list.take"
+  name is "list.set" | "list.push" | "list.pop" | "list.take" || name.starts_with("list.setf ")
 }
 
 fn (r: Rc) decomposable(t: Int) -> Bool {
@@ -2464,7 +2470,7 @@ fn (var r: Rc) uniq(f: Func, u: Uniq, l: Leaf) -> Bool {
   match x.op {
     Call => {
       let name = aux_name(x.aux)
-      if name is "list.new" | "list.set" | "list.push" {
+      if name is "list.new" | "list.set" | "list.push" || name.starts_with("list.setf ") {
         return l.path.is_empty()
       }
       if name is "list.pop" | "list.take" {

@@ -1147,6 +1147,10 @@ fn (var g: G) call_op(v: Int) {
     g.rt_call(v)
     return
   }
+  if name.starts_with("list.getf ") || name.starts_with("list.setf ") {
+    g.list_field(v, name)
+    return
+  }
   match name {
     "list.new" => {
       let es = g.esize(g.m.types[ssa.ty_of(x.tb)].elems[0])
@@ -3976,6 +3980,34 @@ fn (var g: G) platform_call(v: Int) {
     return
   }
   g.set(v, defs)
+}
+
+/// A field of a list element read or set where it lies (takeplace.xo):
+/// `list.getf K` (list, index) loads field K, `list.setf K` (list,
+/// index, value) stores it and is the list. The take they replaced
+/// checked the index, and the list's length is the same since.
+fn (var g: G) list_field(v: Int, name: Str) {
+  let x = g.f.values[v]
+  let k = Int.parse(name[10..name.len()]) ?? 0
+  let l = g.word(x.args[0])
+  let i = g.word(x.args[1])
+  let et = g.m.types[g.vty(x.args[0])].elems[0]
+  let base = g.elem_addr(l, i, x.args[1], et)
+  let (off, n) = g.field_words(et, k)
+  let lay = g.layout(et)
+  if name.starts_with("list.getf") {
+    var out: List[Int] = []
+    for w in off..off + n {
+      out.push(g.def1(lay[w], "ldr $d0, ${at_operand(base, w, 0)}", at_regs(base)))
+    }
+    g.set(v, out)
+    return
+  }
+  let ws = g.store_words(x.args[2])
+  for (j, w) in ws.indexed() {
+    g.store("str $u0, ${at_operand(base, off + j, 1)}", [w] + at_regs(base))
+  }
+  g.set(v, [l])
 }
 
 /// Whether list.set v stores into the slot a list.take of the same list

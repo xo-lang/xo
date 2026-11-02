@@ -44,6 +44,8 @@ pub fn passes() -> List[Str] {
     "hoist_fields",
     "fold_tuples",
     "cse",
+    // takeplace.xo: one field of a large list element set in place
+    "take_in_place",
     // per function: SSA analyses isel uses
     "lsr",
     "ranges",
