@@ -17,8 +17,15 @@ its reference fields, sets one bit, and stores all 57 words back
 (Checker.mark_used grew to 661 instructions). A plain field write
 `xs[i].f = v` on a large element lowers the same way (take and set, plus
 an index to read the old value), so any one-field update of a large list
-element moves the whole element. The memory rise itself is measured, not
-yet explained by the moves alone.
+element moves the whole element. The memory rise was a second effect
+(found by Xo Lang 1 from check.ExR.obj's SSA, 2026-11-02): with the Bools
+behind setters, compiler/ssa rc.xo's loop-entry reuse fired at each of
+ExR.obj's six loops that push to an Obj list field, and the field there
+was still the default empty list, which is never unique, so rl_copy
+allocated a 4-element buffer before the loop, kept in the Obj even when
+the loop never ran (FieldInfo: 4 x 152 + 16 = 624 bytes per field per
+Obj). With ObjFlags no reuse is placed. Fixed in a3d2916dc: the reuse
+skips an empty literal's list before a loop that only pushes to it.
 
 Fix: keep the bits in a one word struct field (`pub flags: ObjFlags`,
 with `fn (var f: ObjFlags) set_done(v: Bool)`), so a write moves one word:

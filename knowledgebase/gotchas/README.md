@@ -1063,3 +1063,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [list-element-setter-moves-struct.md](list-element-setter-moves-struct.md): a `var` method or field write on one field of a large list element moves the whole element (take, setfield, set); write through a one word field struct (Observed)
 - [coll-diff-needs-timeout.md](coll-diff-needs-timeout.md): without `timeout` (macOS) every coll-diff run read exit 127 and all programs compared the same; the script now refuses (Observed)
 - [empty-literal-reuse-allocates.md](empty-literal-reuse-allocates.md): rc.xo's loop-entry reuse copied the empty literal's list into a new list before a loop that may not run; skipped for push-only loops
+- [decision-narrowed-code-not.md](decision-narrowed-code-not.md): a decision narrowed a measured prototype (darwin only) in its text, the pushed code kept both platforms (0455 on Linux, f5392f175 to 2d90b65d9)
