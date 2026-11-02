@@ -6,7 +6,8 @@
 // that may copy the whole list every iteration (XO0909), a small view of a
 // parameter's text or bytes stored long-lived (XO0911), a slice in a loop
 // only read by index or length (XO0913), a small list made and dropped
-// every iteration (XO0914). Notes only, never errors; the driver turns them into vet's
+// every iteration (XO0914), a raw address used after its value was
+// released (XO0915, a warning). Notes only, never errors; the driver turns them into vet's
 // findings (compiler/xo vetcost.xo).
 
 /// A cost note at a source position of function fn_name.
@@ -41,7 +42,7 @@ pub fn cost_notes(m: Module, keep: List[Str]) -> List[CostNote] {
       continue
     }
     let inloop = loop_blocks(f)
-    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(m, f, inloop) + slices_read_in_loop(f, inloop) + small_lists_in_loop(f, inloop) {
+    for n in copy_feeds_loop(f, inloop) + elem_count_per_iter(f, inloop) + callback_walks(m, f) + reuse_in_loop(f, inloop) + large_copies(m, f, inloop, nwords) + view_stores(m, f, inloop) + slices_read_in_loop(f, inloop) + small_lists_in_loop(f, inloop) + freed_addresses(f) {
       var n2 = n
       n2.file = file
       out.push(n2)
@@ -933,6 +934,70 @@ fn small_lists_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
     }
     seen[line] = true
     out.push(CostNote{code: "XO0914", fn_name: f.name, file: f.file, line: line, col: line_of(x.lp) % 4096, msg: "this list is allocated and freed on every iteration and only filled and read in it; keep its values in locals, or make one list before the loop and reuse it"})
+  }
+  out
+}
+
+/// Calls whose result is an address into their first argument's memory.
+fn addr_of_call(name: Str) -> Bool {
+  name is "raw.data" | "raw.bytes_addr" | "rt.obj_addr" | "obj_addr"
+}
+
+/// XO0915: an address into a value (raw.data, raw.bytes_addr,
+/// rt.obj_addr) used after the value was released in the same block: a
+/// value is released right after its last named use, even inside the
+/// arguments of the call that takes its address
+/// (gotchas/raw-address-outlives-bytes.md), so `f(raw.data(s), s.len())`
+/// hands f freed memory. The fix is raw.alive(b) or raw.alive_str(s)
+/// after the last access. Addresses carried by add or sub count as the
+/// address; one stored or passed to another block is not followed.
+fn freed_addresses(f: Func) -> List[CostNote] {
+  var out: List[CostNote] = []
+  var seen: Map[Int, Bool] = {}
+  for bl in f.blocks {
+    // address value -> the value it points into; and the values released
+    var addr_of: Map[Int, Int] = {}
+    var released: Map[Int, Int] = {}
+    for v in bl.instrs {
+      let x = f.values[v]
+      if x.op == Op.Release || x.op == Op.Drop {
+        if !x.args.is_empty() {
+          released[x.args[0]] = v
+        }
+        continue
+      }
+      // a use of an address whose value is gone
+      var hit = -1
+      for a in x.args {
+        if let Some(into) = addr_of.get(a) {
+          if released.contains(into) {
+            hit = a
+          }
+        }
+      }
+      if hit >= 0 {
+        var line = line_of(f.values[hit].lp) / 4096
+        var col = line_of(f.values[hit].lp) % 4096
+        if line <= 0 {
+          line = line_of(x.lp) / 4096
+          col = line_of(x.lp) % 4096
+        }
+        if line > 0 && !seen.contains(line) {
+          seen[line] = true
+          out.push(CostNote{code: "XO0915", fn_name: f.name, file: f.file, line: line, col: col, msg: "this raw address is used after its value was released (a value is released at its last use, even inside the call that takes its address): keep it alive with raw.alive or raw.alive_str after the last access"})
+        }
+        continue
+      }
+      if x.op == Op.Call && addr_of_call(aux_name(x.aux)) && !x.args.is_empty() {
+        addr_of[v] = x.args[0]
+      } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
+        for a in x.args {
+          if let Some(into) = addr_of.get(a) {
+            addr_of[v] = into
+          }
+        }
+      }
+    }
   }
   out
 }

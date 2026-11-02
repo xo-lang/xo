@@ -13,7 +13,7 @@ import (
 
 // vetCostStdCodes are the xo vet --cost notes std is kept free of (the
 // std timing audit's lessons, knowledgebase/std-performance-guide.md).
-var vetCostStdCodes = map[string]bool{"XO0913": true, "XO0914": true}
+var vetCostStdCodes = map[string]bool{"XO0913": true, "XO0914": true, "XO0915": true}
 
 // TestVetCostStd runs xo vet --cost --cost-std over every program under
 // bench/perf (the std benches and their Go twins, which reach the std code

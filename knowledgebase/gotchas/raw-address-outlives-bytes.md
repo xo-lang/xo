@@ -54,3 +54,16 @@ value's first byte ("Accept:a\r\n b" read "b b"), on macOS the freed
 block was not touched, so TestHTTP1ParseDiff failed only on Linux. Fixed
 with raw.alive_str(src) after the push; the test is "an obsolete line
 fold joins the lines with one space" in http1_test.xo.
+
+Observed again (2026-11-02, Xo Lang 1): the race stress (every concurrent
+golden built with `--race` on linux/arm64, where the heap is glibc's and
+ThreadSanitizer sees every free) found five in shipped std: h2w.xo's HTTP/2
+content-length, http1.xo's chunked request body, websocket.xo's mask key,
+dns.xo's resolver configuration and hosts text, and raw.u8s_copy_back's grown
+output; internal/llvm TestRaceStdNoUseAfterFree (Linux only: the darwin
+--race build missed them) keeps one golden for each. `xo vet --cost
+--cost-std` now warns (XO0915) on an address used after its value's release
+in the same SSA block, and cmd/xo TestVetCostStd fails on a new one; it
+misses an address carried across blocks or into a closure (it caught 1 of
+the first 4), so the race build stays the check, and decision 0460 proposes
+removing the class in the compiler.

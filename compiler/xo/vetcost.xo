@@ -63,7 +63,7 @@ fn vet_cost(os: Os, args: List[Str]) -> List[check.Diag] {
   }
   var out: List[check.Diag] = []
   for n in ssa.cost_notes(lo.b.m, keep) {
-    out.push(check.Diag{code: n.code, file: n.file, line: n.line, col: n.col, end_line: n.line, end_col: n.col, message: n.msg, warning: true, note_sev: true})
+    out.push(check.Diag{code: n.code, file: n.file, line: n.line, col: n.col, end_line: n.line, end_col: n.col, message: n.msg, warning: true, note_sev: n.code != "XO0915"})
   }
   out
 }

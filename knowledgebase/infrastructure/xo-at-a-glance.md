@@ -121,7 +121,10 @@ lists the rest.
   Option in a loop, `XO0911` a view of a parameter's text or bytes (a
   slice, trim, cut, a piece of split, lines or split_where, or a
   trim*_where made in a loop) stored in a field or a returned collection,
-  which keeps the whole input alive (`clone()` it).
+  which keeps the whole input alive (`clone()` it). `XO0915` (a warning,
+  std's own code: `--cost --cost-std`) a raw address (`raw.data`,
+  `raw.bytes_addr`, `rt.obj_addr`) used after its value was released in
+  the same block (gotchas/raw-address-outlives-bytes.md).
 - `xo prof FILE|URL`: a URL is a running server's std/debug
   `/debug/profile?seconds=N` or `/debug/heap` (0325), fetched then
   summarized like a file; `/debug/sched` is printed.
