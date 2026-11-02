@@ -12,7 +12,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the Mac (footprint 52 to 41), 157 to 130 MB on linux/arm64 and 4% faster there; conc-spawn 75 to
   56 MB on the Mac. The checker kept up to five lists of every std object; it now touches two, and
   each object is about 20% smaller.
-- Lists of big elements start at one slot: a new list whose elements are over 256 bytes has room for 1, not 4 (decision 0452 addendum; obj.xo, LLVM, arm64 and wasm agree). A TLS connection's one-element List[Conn] took the 8,184 byte class; in use on 300 TLS conns: tlssrv.save 2,200 to 560 kB, total 3.43 to 1.85 MB. Cost: a list that grows from 1 to 20 big elements copies more (alloc bign 1.165x on linux/arm64, 5 rounds); self build RSS 0.973 better.
+- Lists of big elements start at one slot: a new list whose elements are over 256 bytes has room for 1, not 4 (decision 0452 addendum; obj.xo, LLVM, arm64 and wasm agree). A TLS connection's one-element List[Conn] took the 8,184 byte class; in use on 300 TLS conns: tlssrv.save 2,200 to 560 kB, total 3.43 to 1.85 MB. The first growth goes to 4, so growing from 1 costs one extra copy (alloc bign 1.046, noise); self build RSS 0.979 better (bench/results/list-floor-2026-11-01.md).
 - Small builds on Linux: a warm or edit build's peak memory falls about 10% (coll, linux/arm64:
   171 to 154 MB) and the build is about 1% faster: std's cached half no longer stores the raw
   relocation and symbol tables the link has already read (decision 0448).
