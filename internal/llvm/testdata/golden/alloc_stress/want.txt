@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+blocks 180 bad 0 held 36 held bad 0
+--- stderr

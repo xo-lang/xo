@@ -1,0 +1,105 @@
+// Allocator stress (Xo Lang 1, first written for decision 0457's page heap
+// prototype, which did not land): blocks of every size made on one thread and
+// checked and freed on another (small blocks, some page aligned by chance;
+// page blocks of 16 to 256 KiB; large blocks of up to 255 pages and past
+// them, so the large block and the mapping paths meet), a list grown by
+// pushes across the 255 page limit, and debug.mem_trim while blocks are live
+// on other threads, every block's words checked after.
+
+use std/debug
+
+fn fill(id: Int, n: Int) -> List[Int] {
+  var xs: List[Int] = List.with_capacity(n)
+  for i in 0..n {
+    xs.push(id.wrapping_mul(1000003) ^ i)
+  }
+  xs
+}
+
+fn bad(xs: List[Int], id: Int) -> Int {
+  var b = 0
+  for (i, x) in xs.indexed() {
+    if x != (id.wrapping_mul(1000003) ^ i) {
+      b += 1
+    }
+  }
+  b
+}
+
+// sizes in words: small, page block, large, and large
+// past 255 pages (4,177,920 bytes)
+fn size_of(k: Int) -> Int {
+  match k % 7 {
+    0 => 1 + k % 37
+    1 => 2100 + (k * 977) % 28000
+    2 => 40000 + (k * 7919) % 400000
+    3 => 520000 + (k * 31) % 9000
+    4 => 600000 + (k * 131) % 50000
+    5 => 3 + k % 300
+    _ => 1500 + k % 700
+  }
+}
+
+fn main(os: Os) {
+  let workers = 6
+  let per = 30
+  let ch = Chan[(Int, List[Int])].new(16)
+  let held = Chan[(Int, List[Int])].new(200)
+  let res = Chan[(Int, Int)].new(64)
+  scope s {
+    for _ in 0..workers {
+      s.spawn(fn() {
+        var b = 0
+        var n = 0
+        for (id, xs) in ch {
+          b += bad(xs, id)
+          n += 1
+          if id % 5 == 0 {
+            // kept alive past a trim, checked again at the end
+            held.send((id, xs))
+          }
+        }
+        res.send((n, b))
+      })
+    }
+    s.spawn(fn() {
+      for _ in 0..40 {
+        debug.mem_trim()
+        var g: List[Int] = []
+        for i in 0..560000 {
+          g.push(i)
+        }
+        if g[559999] != 559999 || g[300000] != 300000 {
+          res.send((-1, 1))
+        }
+      }
+    })
+    scope p {
+      for w in 0..workers {
+        p.spawn(fn() {
+          for j in 0..per {
+            let id = w * 1000 + j
+            ch.send((id, fill(id, size_of(id))))
+          }
+        })
+      }
+    }
+    ch.close()
+  }
+  held.close()
+  res.close()
+  var n = 0
+  var b = 0
+  for (k, x) in res {
+    n += if k > 0 { k } else { 0 }
+    b += x
+  }
+  debug.mem_trim()
+  var hb = 0
+  var hn = 0
+  for (id, xs) in held {
+    hb += bad(xs, id)
+    hn += 1
+  }
+  os.stdio.println("blocks ${n} bad ${b} held ${hn} held bad ${hb}")
+}
