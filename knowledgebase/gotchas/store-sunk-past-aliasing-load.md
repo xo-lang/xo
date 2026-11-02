@@ -27,3 +27,15 @@ first store. Golden: `slp_alias_store`. Any pass that moves a load or a
 store past another must treat two different base registers as the same
 memory unless it can prove otherwise; a test of such a pass runs each
 call with equal and unequal indexes.
+
+## Also observed: a group left scalar read a lane of a group made (2026-11-02)
+
+After the fix above, progen.Alias seeds 54, 64 and 66 (Lang 3) stopped
+miscompiling and failed to build instead: "m0 reads virtual register 49
+before it is written". slp_commit skipped a lane's read by an
+instruction that is itself packed, assuming it becomes the pack's; when
+that reader's group was rejected (here because one of its own lanes was
+read too early), the reader stayed scalar and read the other group's
+lane before its pack. The check now records such reads with the
+reader's group and leaves a group unmade, to a fixed point, when the
+reading group is not made. Goldens slp_alias_54, 64 and 66.

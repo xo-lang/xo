@@ -541,20 +541,26 @@ fn (var g: G) slp_commit(ch: List[Int], at: List[SPos], packs0: List[SPack], sto
     let r = slp_root(up, pj)
     save[r] = (save.get(r) ?? 0) + 1
   }
-  var gone: Map[Int, Bool] = {}
-  for pk in packs {
+  // the position of each packed instruction, with its group: a read
+  // there is the pack's only if that group is made
+  var gone: Map[Int, Int] = {}
+  for (pj, pk) in packs.indexed() {
     if pk.how != "build" {
-      gone[pk.m0.ord] = true
-      gone[pk.m1.ord] = true
+      gone[pk.m0.ord] = slp_root(up, pj)
+      gone[pk.m1.ord] = slp_root(up, pj)
     }
   }
-  for (_, s0, s1) in stores0 {
-    gone[s0.ord] = true
-    gone[s1.ord] = true
+  for (pj, s0, s1) in stores0 {
+    gone[s0.ord] = slp_root(up, pj)
+    gone[s1.ord] = slp_root(up, pj)
   }
-  for (_, r) in redus0 {
-    gone[r.ord] = true
+  for (pj, r) in redus0 {
+    gone[r.ord] = slp_root(up, pj)
   }
+  // the reads of a group's lanes before its pack by an instruction of
+  // another group: (the group that reads, the lane, its position, the
+  // pack's), bad when that group is not made
+  var early: Map[Int, List[(Int, Int, Int, Int)]] = {}
   var lane_of: Map[Int, Int] = {}
   for (pj, pk) in packs.indexed() {
     let r = slp_root(up, pj)
@@ -583,6 +589,12 @@ fn (var g: G) slp_commit(ch: List[Int], at: List[SPos], packs0: List[SPack], sto
       for u in vuses.get(l) ?? [] {
         let o = g.slp_ord(at, u)
         if o >= 0 && gone.contains(o) {
+          let gr = gone.get(o) ?? r
+          if gr != r && o <= pos {
+            var es = early.get(r) ?? []
+            es.push((gr, l, o, pos))
+            early[r] = es
+          }
           continue
         }
         // a read outside the chain, or before the pack: not v1's
@@ -613,6 +625,27 @@ fn (var g: G) slp_commit(ch: List[Int], at: List[SPos], packs0: List[SPack], sto
       why.push("group ${k}: made, save ${sv} cost ${co}")
     }
   }
+  // a group whose lane a group left scalar reads before the pack is not
+  // made either (Lang 3's progen.Alias seed 54, 2026-11-02: group 3 was
+  // left, so its fsub read group 5's lane, made later, before it was
+  // written); repeated, since each group left can leave another
+  var again = true
+  while again {
+    again = false
+    for k in 0..np {
+      if !made.contains(k) {
+        continue
+      }
+      for (gr, l, o, pos) in early.get(k) ?? [] {
+        if !made.contains(gr) {
+          made.remove(k)
+          why.push("group ${k}: lane v${l} read at ${o} (pack at ${pos}) by group ${gr}, not made")
+          again = true
+          break
+        }
+      }
+    }
+  }
   if made.is_empty() {
     return why.join(", ")
   }
@@ -639,16 +672,16 @@ fn (var g: G) slp_commit(ch: List[Int], at: List[SPos], packs0: List[SPack], sto
     if !keep[pj] {
       packs[pj].how = "skip"
     } else if pk.how != "build" {
-      gone[pk.m0.ord] = true
-      gone[pk.m1.ord] = true
+      gone[pk.m0.ord] = 0
+      gone[pk.m1.ord] = 0
     }
   }
   for (_, s0, s1) in stores {
-    gone[s0.ord] = true
-    gone[s1.ord] = true
+    gone[s0.ord] = 0
+    gone[s1.ord] = 0
   }
   for (_, r) in redus {
-    gone[r.ord] = true
+    gone[r.ord] = 0
   }
   for pk in packs {
     if pk.how is "skip" | "build" {
