@@ -5,12 +5,13 @@ the lead; for the owner)
 
 ## Context
 
-Main's /alloc (bench/perf/jitter) on the first linux/arm64 offload host (Neoverse) ran at
+Main's /alloc (bench/perf/jitter) on the first linux/arm64 offload host (a Linux VM on an M4 Pro, knowledgebase/infrastructure/offload.md) ran at
 0.79 to 0.81 of v0.35.0's req/s, CPU a request 1.27 (Xo Lang 4, 2026-11-02). Linger plus
 "narrow B" (slot_group) cost 25% more CPU a request than linger alone, though only
 http.respond's code differed, and xo_static, rt.static_word's table of runtime globals
-(decision 0207), sat 64 bytes lower (72 bytes less .text). Neoverse's
-spatial prefetcher pairs 64 byte lines, so the hypothesis was false sharing at 128 bytes in
+(decision 0207), sat 64 bytes lower (72 bytes less .text). The host's
+Apple cores have 128 byte cache lines (the hypothesis first named a Neoverse prefetcher that
+pairs 64 byte lines; the host is not a Neoverse, corrected 2026-11-02), so the hypothesis was false sharing at 128 bytes in
 that table, whose phase against the lines moved with every change to .text or .data
 before it (`.p2align 3`). Xo Lang 3 listed its hot words (read on every effect or poll:
 twflags 32-33, W_PREEMPT 76, the Date cache 69-74; written from several cores: heapos'

@@ -1,6 +1,7 @@
 # /alloc at two .data shifts: the 128 byte false sharing check (decision 0459), 2026-11-02
 
-Question: did 0.36's /alloc gap on Neoverse come from false sharing at 128 bytes in
+Question: did 0.36's /alloc gap on the first linux/arm64 host (a Linux VM on an
+M4 Pro, whose cores have 128 byte cache lines) come from false sharing at 128 bytes in
 rt.static_word's table (xo_static), whose phase against the lines moved with .text and .data
 size? Method: every server built on main a144a3115 with each variant's xo, then linked twice
 with XO_DATA_SHIFT=0 and 64 (Xo's ELF linker puts that many zero bytes before .data's first

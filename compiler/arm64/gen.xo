@@ -224,7 +224,7 @@ fn (g: G) end_data(var out: List[Str]) {
     // rt.static_word (decision 0207, work item B02): 256 words of
     // process globals (64 until decision 0237), zero at start (.quad
     // lines: compiler/macho's assembler has no .zero), 128 byte aligned:
-    // which words share a 128 byte line (Neoverse's prefetcher pairs 64
+    // which words share a 128 byte line (Apple's M series cores have 128
     // byte lines) no longer depends on the .data before it (decision 0459)
     out.push("${g.section("data")}${g.tramp_def("xo_static")}\t.p2align 7\n${g.tramp("xo_static")}:\n")
     for k in 0..STATIC_WORDS {

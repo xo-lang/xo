@@ -2,10 +2,10 @@
 
 Status: Observed (2026-11-02, Xo Lang 1, 3, 4 and 2)
 
-Symptom: main's bench/perf/jitter /alloc on a Neoverse host lost about 25% CPU a request
+Symptom: main's bench/perf/jitter /alloc on the first linux/arm64 host (a Linux VM on an M4 Pro) lost about 25% CPU a request
 when a change moved xo_static 64 bytes (72 bytes less .text), and padding probes that grew
-.text moved the speed back and forth; false sharing at 128 bytes (Neoverse pairs 64 byte
-lines) in rt.static_word's table looked like the cause.
+.text moved the speed back and forth; false sharing at 128 bytes (the M4's cache
+lines are 128 bytes) in rt.static_word's table looked like the cause.
 
 Cause: not .data. Linking the same objects with XO_DATA_SHIFT=0 and 64 (decision 0459),
 which moved xo_static to a different 128 byte phase with the code unchanged, moved CPU a
