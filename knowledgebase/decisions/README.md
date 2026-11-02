@@ -445,3 +445,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0453-xo-own-layout.md](0453-xo-own-layout.md): Accepted: xo ships its own layout file, made from callgrind runs of small builds, so a small build touches less of its code
 - [0455](0455-small-first-chunks.md): a heap record's first chunks start at 256 KiB on darwin, the rest reserved (Accepted 2026-11-02; decision 0448 case (c), mapped within 2 times live).
 - [0454-heap-huge-pages.md](0454-heap-huge-pages.md): Accepted (owner, 2026-11-02): XO_THP=off makes the heap advise MADV_NOHUGEPAGE on Linux; default unchanged; a server default is the goal
+- [0456](0456-thp-dense.md): XO_THP=dense, a heap record's chunks take huge pages only once it fills 2 MiB (Proposed; Go's density rule, decision 0454 follow-up).
