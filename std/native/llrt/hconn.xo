@@ -368,13 +368,30 @@ pub fn park_ready(h: rthttp.HConn, h2: Bool = false) -> Bool {
   // MSG_PEEK: the byte stays for the read
   let r = sock.recv(pd_fd(pd), b, 1, 2)
   obj.free_obj(b)
-  poll.pd_end(pd)
   if !would_block(r) {
+    poll.pd_end(pd)
     return false
   }
+  // a plain HTTP/1.1 connection lingers on its stack first: it parks only
+  // when no byte comes for LINGER_NS (a timer, not the gap note_request
+  // saw: under load, readiness reaches the connection a poll later, so a
+  // busy connection's gap looked idle and it parked on most requests,
+  // /alloc 0.66 to 0.78 of v0.35.0's req/s on linux/arm64, 2026-11-02)
+  if tls == 0 && !h2 {
+    let w = poll.pd_wait(pd, false, poll.deadline(LINGER_NS))
+    if w != poll.TIMEOUT {
+      poll.pd_end(pd)
+      return false
+    }
+  }
+  poll.pd_end(pd)
   set_idle(hc, true)
   true
 }
+
+/// How long an idle plain HTTP/1.1 connection waits on its stack before it
+/// parks (park_ready).
+const LINGER_NS = 20000000
 
 /// A gap between two requests shorter than this marks the connection busy:
 /// it keeps its fiber and waits there, since parking and resuming a busy

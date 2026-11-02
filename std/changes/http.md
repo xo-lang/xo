@@ -1,5 +1,23 @@
 # std/http changes
 
+## 2026-11-02: perf: an idle HTTP/1.1 connection parks only after 20 ms without a request (decision 0449)
+
+- Kind: perf
+- Commit: this commit
+- Found by: xo-lang-4, the /alloc regression bisect for 0.36 (Lead, 2026-11-02)
+- Go reference: none (net/http keeps a goroutine per connection and never parks)
+- Test: bench/perf/jitter /alloc on the linux/arm64 host (alloc-points, exclusive, 3 rounds) and the idle connection tests (bench/perf/idleconn at 2,000 and 40,000 connections)
+- Timing: /alloc req/s against v0.35.0, c32 0.775 to 1.023, c256 0.651 to 1.027; CPU a request 1.327 to 0.972 and 1.536 to 0.973 (linux/arm64, 2026-11-02)
+
+A plain HTTP/1.1 keep-alive connection decided to park from the gap since
+its last response (2 ms). Under load on Linux, readiness reaches a
+connection one poll later, so busy connections looked idle and parked on
+most requests (57% at 32 connections, 91% at 256), each park and resume
+costing a closure, the server's parked list and a task. Now the
+connection, after its peek finds no bytes, waits on its own stack with a
+20 ms timer and parks only when nothing came. Idle connections still
+park, 20 ms later. TLS and HTTP/2 connections are unchanged.
+
 ## 2026-11-02: feature: handle_stream and trailers in a wasi:http component (decision 0447)
 
 - Kind: feature

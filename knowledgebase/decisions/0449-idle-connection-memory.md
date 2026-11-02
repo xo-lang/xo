@@ -272,6 +272,44 @@ Proof: `TestIdleConnections40k` (internal/stdtest/idleconn_test.go,
 `XO_TEST_IDLE40K=1`, linux): 40,000 idle h1 connections, each answers a
 second request, fewer than 20,000 mappings in the server.
 
+## Busy connections parked under load: linger before parking (2026-11-02, Xo Lang 4)
+
+The 0.36 Xo-vs-Go run found bench/perf/jitter /alloc at 0.78 (c32) and
+0.65 (c256) of v0.35.0's req/s on linux/arm64 (first host, exclusive,
+3 rounds). The bisect named three steps: 3fdfa3fd3 (this decision's
+stage 1 park, 0.57 at c256 before the gap rule of 3f5e869f2 recovered
+part), 3b0ccbb29 (slot_group) and d71e1b442 (a wasm field in
+Response). Main with only the HTTP/1.1 park turned off ran at 1.01 and
+1.02, all three steps gone, so the park amplified the others.
+
+Cause: note_request's rule (a gap under QUICK_GAP_NS, 2 ms, since the
+last response marks the connection busy) misjudges under load. With
+workers polling (decision 0324), readiness reaches a connection one
+poll later, so a busy connection's gap looked idle, and any slowdown
+made more gaps long. rtstats on linux/arm64 counted a resume (a task
+spawn) for 57% of requests at c32 and 91% at c256; the Mac at c32
+parked almost never, which hid it. A readiness timestamp stamped by
+the poller (D_RTIME) still parked 22 to 25%: the stamp is the poll's
+time, not the bytes'. A 50 ms gap window helped c256 only (0.75).
+
+Fix: park_ready, after its peek finds no bytes, waits on the
+descriptor with a LINGER_NS (20 ms) timer on the connection's own
+stack, for a plain HTTP/1.1 connection (TLS and h2 keep their paths),
+and parks only when the timer expires; bytes or a close in that time
+return to the read loop. The gap rule stays as the fast path that
+skips the peek. Measured on 1ef022848 (same job): /alloc c32 1.023,
+c256 1.027 of v0.35.0 (CPU a request 0.972, 0.973), park-off 1.008
+and 1.015. Idle connections still park, 20 ms after their last
+request. Memory (Xo Lang 2's review, first host, exclusive, RssAnon,
+1ef022848 against linger): a pure closed loop costs nothing; slow
+keep-alive traffic does (30 ms think time at 2,000 connections +14 to
+16 MB, 10 ms at 10,000 +23 MB: connections linger 20 ms of each gap);
+after a 40,000 connection burst, idle RSS stays 15 to 25 MB above main
+once all have parked; TLS h1 is unchanged. v0.35.0, the release before,
+had no park at all, so linger is ahead of it on speed and idle memory.
+Next (Lead, 2026-11-02): a cap on connections lingering at once (4 a
+CPU, l4-lcap), adopted only if /alloc keeps these numbers.
+
 ## Consequences
 
 - Fiber stacks stop being the per-connection cost; a server with many
