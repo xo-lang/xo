@@ -63,7 +63,11 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   owner, 2026-10-30): slot 1 is `/work/offload.lock`, slot 2
   `/work/offload.lock.2`. A job that measures time or memory sets
   `OFF_EXCLUSIVE=1` and waits for both slots, so it runs alone
-  (ab-host.sh sets it). It takes both at once or neither, so a plain job
+  (ab-host.sh sets it; its remote half then waits, at most
+  AB_QUIET_MAX seconds (300), for the 1 minute load average to fall below
+  AB_QUIET_LOAD (1), since an exclusive lease that starts as a long
+  benchmark ends inherits its load: 8.03 on 12 CPUs on 2026-11-02, Last
+  verified: 2026-11-02). It takes both at once or neither, so a plain job
   never holds a slot while it waits. Jobs start in arrival order: each
   takes a ticket in `/work/offload.q`, and only the oldest live ticket may
   take a slot (one free slot for a plain job, every slot for an exclusive
