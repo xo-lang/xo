@@ -169,6 +169,8 @@ pub fn conf(certs: List[Bytes], key: Bytes) -> Conf {
 /// handshake transcript and keys.
 pub struct Server {
   pub conf: Conf
+  /// the leaf's key algorithm, set once the handshake parses the leaf
+  key_alg: Int
   pub state: Int
   pub err: Str
   pub closed: Bool
@@ -219,7 +221,7 @@ pub struct Server {
 
 /// A new server for conf, waiting for a ClientHello.
 pub fn server(cf: Conf) -> Server {
-  Server{conf: cf, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", scheme: 0, sni: "", hrr: false, resumed: false, hello: b"", rest: b"", seen: false, vers: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", trh: sha256.new(sha256.HASH_SHA256), trn: 0, trk: -1, random: b"", ch1: no_hello(), ccs_sent: false, c_hs: b"", client_fin: b"", c_ap: b"", tickets: false, rk: tlsrec.plain(), wk: tlsrec.plain()}
+  Server{conf: cf, key_alg: 0, state: WAIT_CH, err: "", closed: false, suite: 0, group: 0, alpn: "", scheme: 0, sni: "", hrr: false, resumed: false, hello: b"", rest: b"", seen: false, vers: false, rin: b"", hs: b"", app: b"", out: b"", tr: b"", trh: sha256.new(sha256.HASH_SHA256), trn: 0, trk: -1, random: b"", ch1: no_hello(), ccs_sent: false, c_hs: b"", client_fin: b"", c_ap: b"", tickets: false, rk: tlsrec.plain(), wk: tlsrec.plain()}
 }
 
 /// The bytes to send to the client, taken.
@@ -892,6 +894,7 @@ fn respond(var s: Server, h: Hello) {
     return
   }
   let key_alg = leaf.cert.key_alg
+  s.key_alg = key_alg
   let mine = tlssign.schemes_for(key_alg, leaf.cert.key)
   if mine.is_empty() {
     fail(s, ALERT_HANDSHAKE_FAILURE, "tls: unsupported certificate: private key is not supported")
@@ -1121,8 +1124,7 @@ fn client_verify(var s: Server, msg: Bytes) {
 /// Certificate and CertificateVerify, added to the transcript (FAILED
 /// when the key cannot sign).
 fn cert_flight(var s: Server, hash: Int) -> Bytes {
-  let leaf = x509.parse(s.conf.certs[0])
-  let key_alg = leaf.cert.key_alg
+  let key_alg = s.key_alg
   // Certificate: an empty context, each certificate with no extensions
   var entries: List[Bytes] = []
   for c in s.conf.certs {
