@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [data-shift-false-sharing-128.md](data-shift-false-sharing-128.md): Observed 2026-11-02: a 64 byte layout shift looked like 128 byte false sharing; XO_DATA_SHIFT showed .data alone moves /alloc by 1%, so tell code from data placement first
 - [store-sunk-past-aliasing-load.md](store-sunk-past-aliasing-load.md): Observed 2026-11-02: slp_f64 sank a Float store pair past a load through another base register that named the same element (vs[i], vs[j], i == j); treat two bases as the same memory unless proven otherwise.
 - [branch-compare-past-parallel-move.md](branch-compare-past-parallel-move.md): Observed 2026-11-01: thread_cset ran a compare after the block's parallel move, so a loop test compared a new value with itself and the loop left early; check that a compare moved down reads nothing the moves write.
 - [boundary-frame-tail-call.md](boundary-frame-tail-call.md): Observed 2026-10-31: clang at -O2 tail-called main from entry.main_on_fiber (the fault boundary frame), so unwind.raise stopped one frame short of main and dropped its defers in split LLVM builds; functions that call rt.frame_addr carry "disable-tail-calls"

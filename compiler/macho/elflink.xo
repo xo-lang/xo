@@ -145,6 +145,11 @@ pub struct ElfLinkOpts {
   /// (.rodata.xoprog, .text.xoprog) after std's, five load segments in
   /// place of three (decision 0420; out_order)
   pub split_prog: Bool = false
+  /// bytes of zeros before the first input section of .data (XO_DATA_SHIFT,
+  /// decision 0459): the same program measured with its .data 0, 64, 128
+  /// bytes on, a check of how much its speed depends on where its
+  /// writable words fall in the cache lines
+  pub data_shift: Int = 0
 }
 
 /// An input section, by its header index.
@@ -1127,6 +1132,9 @@ fn (var l: ELinker) place() {
       flags = SHF_ALLOC + SHF_WRITE
     }
     l.osects.push(EOSect{name: n, typ: typ, flags: flags})
+  }
+  if l.opts.data_shift > 0 {
+    l.osects[O_DATA].size = l.opts.data_shift
   }
   var arrays: List[(Int, Int, Int)] = []
   var bounded: List[(Int, Int)] = []

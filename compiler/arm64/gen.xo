@@ -214,7 +214,8 @@ fn (g: G) end_data(var out: List[Str]) {
   }
   if g.words_ref {
     // rt.sys_words (decision 0206 stage 2): 16 words, zero at start
-    out.push("${g.section("data")}${g.tramp_def("xo_sys_words")}\t.p2align 3\n${g.tramp("xo_sys_words")}:\n")
+    // 128 byte aligned, as xo_static below
+    out.push("${g.section("data")}${g.tramp_def("xo_sys_words")}\t.p2align 7\n${g.tramp("xo_sys_words")}:\n")
     for _ in 0..16 {
       out.push("\t.quad 0\n")
     }
@@ -222,8 +223,10 @@ fn (g: G) end_data(var out: List[Str]) {
   if g.static_ref {
     // rt.static_word (decision 0207, work item B02): 256 words of
     // process globals (64 until decision 0237), zero at start (.quad
-    // lines: compiler/macho's assembler has no .zero)
-    out.push("${g.section("data")}${g.tramp_def("xo_static")}\t.p2align 3\n${g.tramp("xo_static")}:\n")
+    // lines: compiler/macho's assembler has no .zero), 128 byte aligned:
+    // which words share a 128 byte line (Neoverse's prefetcher pairs 64
+    // byte lines) no longer depends on the .data before it (decision 0459)
+    out.push("${g.section("data")}${g.tramp_def("xo_static")}\t.p2align 7\n${g.tramp("xo_static")}:\n")
     for k in 0..STATIC_WORDS {
       // word 77: the unsafe range tables of asynchronous preemption
       // (decision 0318, apreempt.xo), the one word set at start

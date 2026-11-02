@@ -405,7 +405,7 @@ fn elf_link(os: Os, ctx: Ctx, flags: List[Str], srcs: List[Str], out: Str, stati
   let debug_link = if split { "${base_name(out)}.debug" } else { "" }
   // the program's own sections after std's, and std's half (decision
   // 0420), unless XO_STD_HALF=off
-  let eopts = macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link, release: release, split_prog: !ctx.sep_store.is_empty() && (os.env.get("XO_STD_HALF") ?? "") != "off"}
+  let eopts = macho.ElfLinkOpts{static: static, strip: strip, debug_link: debug_link, release: release, split_prog: !ctx.sep_store.is_empty() && (os.env.get("XO_STD_HALF") ?? "") != "off", data_shift: data_shift(os.env.get("XO_DATA_SHIFT") ?? "")}
   let ts = os.clock.now()
   let linked = if !through { macho.link_elf_split(parts + ins, eopts) } else { elf_store_laps(os, ctx, ins, store, lazy, store_n, eopts) }
   if !store_path.is_empty() && !store.is_empty() {
@@ -1959,4 +1959,15 @@ fn prog_debug_objects(os: Os, store: Str, ins: List[macho.LinkInput]) -> List[(S
     out.push((inp.path, kept))
   }
   out
+}
+
+/// XO_DATA_SHIFT's bytes (decision 0459, macho.ElfLinkOpts.data_shift): a
+/// decimal count, rounded down to a multiple of 8 and at most 4096; 0
+/// when empty or not a count. Linux links only.
+fn data_shift(v: Str) -> Int {
+  let n = Int.parse(v.trim()) ?? 0
+  if n <= 0 {
+    return 0
+  }
+  n.min(4096) / 8 * 8
 }

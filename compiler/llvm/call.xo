@@ -1267,7 +1267,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
       // object for every module of a split build
       if !g.emitted.contains("@.xo.sys_words") {
         g.emitted["@.xo.sys_words"] = true
-        g.helpers.push("${g.comdat_decl("@.xo.sys_words")}@.xo.sys_words = weak global [16 x i64] zeroinitializer${g.comdat()}, align 8\n\n")
+        g.helpers.push("${g.comdat_decl("@.xo.sys_words")}@.xo.sys_words = weak global [16 x i64] zeroinitializer${g.comdat()}, align 128\n\n")
       }
       g.set(v, "ptrtoint ptr @.xo.sys_words to i64")
     }
@@ -1281,7 +1281,7 @@ fn (var g: Gen) inline_rt(v: Int) -> Bool {
         // with asynchronous preemption word 77 holds the unsafe range
         // tables (decision 0318 stage 4), alike in every module
         let tables = if g.apre.is_empty() { "" } else { g.apre_tables() }
-        g.helpers.push("${tables}${g.comdat_decl("@.xo.static")}@.xo.static = weak global [256 x i64] ${g.apre_static_init()}${g.comdat()}, align 8${dbg}\n\n")
+        g.helpers.push("${tables}${g.comdat_decl("@.xo.static")}@.xo.static = weak global [256 x i64] ${g.apre_static_init()}${g.comdat()}, align 128${dbg}\n\n")
       }
       let p = g.def("getelementptr [256 x i64], ptr @.xo.static, i64 0, i64 ${g.op(x.args[0])}")
       g.set(v, "ptrtoint ptr ${p} to i64")
