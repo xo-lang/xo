@@ -172,6 +172,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- Separately compiled goldens (2026-11-02): every other golden test
+  builds whole programs, so `TestSepcompGoldens` (internal/arm64, not
+  -short) builds std's variants into a private cache and builds
+  scripts/docker-sepcomp-sample.txt's goldens plus sepcompGoldens against
+  them (the default path of a build outside the tests). A fault that
+  appears only with std's variants cached goes in sepcompGoldens.
 - Targeted pass goldens (2026-11-02): `pass_*` in
   internal/llvm/testdata/golden are programs aimed at what each optional
   native pass assumes (moves, loop-carried values, flags, spills, two

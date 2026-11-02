@@ -28,7 +28,7 @@ fn (g: G) const_words_text(ws: List[Int]) -> Str {
         b.write("\t.quad ${ZSTR}\n")
         continue
       }
-      if s.contains("\x01") || s.starts_with("L") || s.starts_with(".L") {
+      if s.contains("\x01") || s.starts_with("L") || s.starts_with(".L") || g.lit_symbol(s) {
         return ""
       }
       b.write("\t.quad ${s}\n")
@@ -39,6 +39,16 @@ fn (g: G) const_words_text(ws: List[Int]) -> Str {
     }
   }
   b.freeze()
+}
+
+/// Whether s is one of this part's literal symbols in std's store's
+/// atoms mode (gen.xo lit_label: `xo_<ns>strN_l`, `xo_<ns>locN_l`): a
+/// symbol local to the part's object, as an L label is to its function,
+/// so an image (emitted in whichever part holds the module's helpers)
+/// cannot name it (a separately compiled program, whose parts are in
+/// that mode, failed to link byref_struct, 2026-11-02).
+fn (g: G) lit_symbol(s: Str) -> Bool {
+  g.m.std_store && g.split && s.starts_with("xo_${g.ns}") && s.ends_with("_l")
 }
 
 /// The token in an image's words of the address of its own empty Str

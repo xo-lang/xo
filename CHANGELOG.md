@@ -5,6 +5,7 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Fixed a native arm64 link failure in separately compiled builds (the default once std's variants are cached): a fault exit's shared zero image could name a string literal of another part, a symbol local to that part's object (`xo: link: xo_..._str0_l is not defined`, byref_struct). `TestSepcompGoldens` builds goldens against std's variants.
 - `xo refs FILE:LINE:COL` finds a declaration's uses in every module under the root, as `xo refs NAME` does: a position checked only its file's directory, so compiler/check's `Obj.iface` by position listed 13 of its 33 references (none in compiler/ssa, gen or cli). The modules are filtered by the name spelled at the position.
 - XO_THP=off (decision 0454): a native program on Linux advises MADV_NOHUGEPAGE on the heap's mappings, so a sparse heap is not backed by 2 MiB pages where THP is `always`: 2,000 held TLS connections 95 to 108 MB -> 40 to 56 MB, a CRUD server's peak RSS 71 to 99 MB -> 21 to 28 MB; the self build costs 7.5% CPU, so the default is unchanged.
 - Fixed a native arm64 miscompile: two Float stores to adjacent fields of a list element (`vs[j].z = ...; vs[j].w = ...`) were paired into one store after a read of the same element through another index (`vs[i].z` with `i == j`), so the read saw the old value; since v0.25.0 (slp_f64, decision 0323). Golden `slp_alias_store`.

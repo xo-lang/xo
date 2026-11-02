@@ -48,3 +48,16 @@ build at all (`std variant: miss, the whole program is built
 from std's test variant. Build the test variants first, `xo dev
 stdcache --test --conc=0` and `--conc=1` (4f6caee06), and require
 `cache std <key> conc=... test=1 reused` in a check.
+
+## Also observed: a link failure only separate compilation had (2026-11-02, Xo Lang 1)
+
+byref_struct failed to link on main (`xo_pGL1jtk_str0_l is not defined`)
+whenever std's variants were cached, and passed every golden test: those
+build whole programs (xotool sets `XO_SEPCOMP_BG=0` and their caches hold
+no variant). It looked like a poisoned cache entry, since an empty cache
+dir linked; that was the first build of a fresh cache being whole-program.
+The cause was zimage.xo: in a separately compiled program, literals are
+part-local symbols (`xo_<ns>strN_l`), and a shared zero image named one
+from another part. `TestSepcompGoldens` (internal/arm64, not -short)
+now builds std's variants first, requires the `conc=false reused` line,
+and builds the docker sepcomp sample plus byref_struct against them.
