@@ -1155,11 +1155,12 @@ fn (var b: Builder) select_expr(e: Expr) -> Int {
           if name.name == b"recv" {
             b.rt("select_recv", -1, [sel, h])
             recvs[recvs.len() - 1] = b.typ(b.prelude_type("Option", [b.elem_check(hx)]))
-            wrecv[wrecv.len() - 1] = b.word_chan(b.elem_check(hx))
+            wrecv[wrecv.len() - 1] = b.word_chan(b.m.types[ht].elems[0])
           } else if name.name == b"send" {
             let sv = b.value_as(cargs[0].value, b.m.types[ht].elems[0])
             if b.word_chan(b.m.types[ht].elems[0]) {
               b.llrt_call("select_send_w", [b.chan_word(sel), b.chan_word(h), b.word_in(sv, b.m.types[ht].elems[0])])
+              b.chan_hold_t(h, b.apply(b.elem_check(hx)))
             } else {
               let one = b.one(sv)
               b.rt("select_send", -1, [sel, h, one])
@@ -1193,6 +1194,9 @@ fn (var b: Builder) select_expr(e: Expr) -> Int {
       var o = -1
       if wrecv[i] {
         let r = b.llrt_call("select_take_w", [b.chan_word(sel), b.cint(rt_idx[i])])
+        // sel's address again: a use after take_w, so the select is not
+        // released at the address taken for the call (as chan_hold)
+        let _k = b.chan_word(sel)
         o = b.word_option(r, ot, et)
       } else {
         let tl = b.rt("select_take", b.m.list(et), [sel, b.cint(rt_idx[i])])
@@ -1853,6 +1857,20 @@ fn (var b: Builder) chan_hold(h: Int, fo: Int, ci: check.CallInfo) {
     return
   }
   let f = b.declare(impl, [t])
+  let _u = b.call(b.m.funcs[f].name, b.unit_t(), "", [h])
+}
+
+/// Uses channel h (element type et, a checker type) after a word
+/// operation on its address, as chan_hold, for a select's word send arm:
+/// the arm's channel was released at its rt.obj_addr, before
+/// select_send_w read it (TSan on Linux, select_arm_order, 2026-11-02;
+/// gotchas/obj-addr-handle-released-early.md).
+fn (var b: Builder) chan_hold_t(h: Int, et: Int) {
+  let impl = b.prelude_impl("llrt_chan_hold")
+  if impl < 0 || et < 0 {
+    return
+  }
+  let f = b.declare(impl, [et])
   let _u = b.call(b.m.funcs[f].name, b.unit_t(), "", [h])
 }
 

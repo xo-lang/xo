@@ -1,0 +1,22 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): a select's word arms
+// keep their handles past the runtime calls that get their addresses
+// (compiler/ssa conc.xo chan_hold_t, and chan_word(sel) after select_take_w): a send arm's channel was released before
+// select_send_w took its reference, and the select before select_take_w
+// read a word receive arm (TSan, Linux, select_arm_order, 2026-11-02;
+// gotchas/obj-addr-handle-released-early.md).
+fn pick(k: Int) -> Int {
+  // llvm: "(?s)llrt_select_send_w.*xo\.drop\.Chan" "(?s)llrt_select_take_w.*xo\.drop\.Select"
+  let ch = Chan[Int].new(1)
+  let out = Chan[Int].new(1)
+  ch.send(k)
+  var got = 0
+  select {
+    v = ch.recv() => got = v ?? -1
+    out.send(5) => got = 3
+  }
+  got
+}
+
+fn main(os: Os) {
+  os.stdio.println("${pick(1)}")
+}
