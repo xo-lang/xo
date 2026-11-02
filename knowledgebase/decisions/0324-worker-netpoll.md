@@ -310,3 +310,35 @@ measured.
 - Alternatives: leave 100 (forgoes the gain); a lock-specific fix to the store's
   `Mutex` (the bench's, not the runtime's: helps one program); adaptive spinning
   as glibc's (not tried).
+
+## a1: a poll's batch past its first fiber is injected, Linux only (owner, 2026-11-02, Xo Lang 4)
+
+A worker that polls kept every fiber its poll readied on its own ring
+(W_NONEXT 2), so other workers stole them one at a time. a1 keeps the
+first (`np_keep()`, 1) and injects the rest, where any worker takes them,
+and np_spread wakes a worker for the one left. A poll's batch is now
+marked W_NONEXT 3, apart from a mutex's reader grants (2), which stay on
+the granting worker as decision 0077's addendum says.
+
+The first experiment changed both batches. Measured apart (bench/perf/http
+with a warm-up, 5 rounds, medians; and `xo bench --ab`), the two halves
+help different cases:
+
+| change | linux/arm64 c32 | linux/amd64 | Windows | --ab httpstreamsrv (arm64) |
+|---|---|---|---|---|
+| P: poll batches only | req/s -0.8%, CPU a request -5.9%; c1024 +2.7% | c32 -3.4%, c1024 +5.4% | c32 +9% (pinned), c1024 worse with load generator errors | CPU 0.886, RSS 0.94 |
+| R: reader grants only | req/s +4.1%, CPU -4.3% | +8 to +11% at every count | c1024 -17% with errors | CPU 1.006 (amd64 RSS 1.117) |
+
+The owner chose P on Linux only (2026-11-02). R stays parked until a
+benchmark with real reader contention exists: `conc`'s rwmutex runs
+about 6 ms with CPU equal to wall, so it shows no parallel readers, and
+both halves read level there (1.006, 1.009, 15 rounds). darwin and
+Windows keep every readied fiber (np_keep() 0), so their behavior is
+unchanged.
+
+Gate (a default change): on linux/arm64, the full internal/arm64
+TestGoldenRun and internal/stdtest suites and the fixed point (xo built
+with P rebuilds itself to the same bytes) pass on linux/arm64 (second
+host, 2026-11-02, d424e0c5b: arm64 134 s, stdtest 1312 s, bootstrap s1
+72 s, s2 126 s, s3 119 s); a confirming `--ab` of the landed branch
+against its parent (a144a3115 against 7e5f1c0d1, first linux/arm64 host, 3 rounds, host load 8 on both sides): bench/perf/httpstreamsrv CPU 0.893 (0.883 to 0.913, better), wall 0.992 and RSS 0.96 within noise.
