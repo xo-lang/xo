@@ -185,6 +185,10 @@ struct Response {
   /// and keeps the request body readable while the stream writes (Xo
   /// Lang 3's http1w part reads it). Hidden.
   duplex: Bool = false
+  /// wasm: http.stream's function (decision 0447), which serve_component
+  /// runs into the component's response as it is sent and collect runs
+  /// into a buffer. Hidden.
+  ws: rt.Any? = None
 }
 
 /// The 101 response that hands its connection to f (respond runs it):
@@ -251,6 +255,10 @@ const STREAM_BODY = "xo:stream-body"
 /// The most one read of a streamed body asks of the connection.
 const READ_MAX = 1048576
 
+/// Go's TrailerPrefix: a response header so named is a trailer (wasm:
+/// http.stream's set_trailer, which serve_component sends after the body).
+const TRAILER_PREFIX = "Trailer:"
+
 /// The writer of a streamed body: a sink into a buffer or a connection.
 struct BodyWriter {
   /// None on wasm, which writes to wb
@@ -259,6 +267,20 @@ struct BodyWriter {
   gz: Mutex[compress.Compressor]? = None
   /// wasm: the body so far, in place of a sink (http.stream)
   wb: Mutex[Bytes]? = None
+  /// wasm: set_trailer's trailers, [name, value, ...]
+  wt: Mutex[List[Str]]? = None
+  /// wasm: the component's response, written as it is made (serve_component)
+  wo: Mutex[WasiOut]? = None
+}
+
+/// A wasi:http component's streamed response (decision 0447): its head
+/// goes out with the first write or flush, as net/http's does, so a
+/// missing Content-Type is detected from the first bytes.
+struct WasiOut {
+  r: Response
+  sent: Bool = false
+  /// set_trailer's trailers, [name, value, ...]
+  trailers: List[Str] = []
 }
 
 // ---------------------------------------------------------------------------
@@ -667,6 +689,16 @@ fn chain(mws: List[fn(Request, fn(Request) -> http.Response) -> http.Response], 
 /// incoming-request resource); the response's status, fields and body
 /// go back through wasi_http_respond. Off
 /// wasm it faults: a native program serves with http.server.
+/// A handle_stream route's next read of a wasi:http request's body.
+fn wasi_body_next(max: Int) -> http1.BodyPart {
+  let d = rt.wasi_http_body_read(max)
+  if d.is_empty() {
+    // the trailers, as [name, value, ...] the way h2srv gives them
+    return http1.BodyPart{data: "", end: true, err: "", trailers: wasi_fields(rt.wasi_http_body_trailers())}
+  }
+  http1.BodyPart{data: d, end: false, err: ""}
+}
+
 pub fn serve_component(r: Router) {
   if target.arch == TargetArch.Wasm32 {
     let pq = rt.wasi_http_path()
@@ -683,14 +715,51 @@ pub fn serve_component(r: Router) {
     let u = parse_url_loose(pq)
     let url = u with {host: http1.host_name(raw_host), port: wasi_host_port(raw_host)}
     let method = rt.wasi_http_method()
-    var req = Request{method: method, path: path, url: url, headers: headers, body: rt.wasi_http_body(), remote_ip: "", raw_query: raw_query, fields: fields, raw_path: rawp, raw_host: raw_host}
-    if route_streams(r, method, path) {
-      // as the server does: a handle_stream route has its body in its reader
-      let b = BodyReader{st: Mutex[BodyState].new(BodyState{next: [], finish: [], data: req.body, pos: 0, err: "", end: false})}
-      req = req with {body: b"", values: [ReqValue{name: STREAM_BODY, v: rt.any_of(b)}]}
+    let streams = route_streams(r, method, path)
+    var req = Request{method: method, path: path, url: url, headers: headers, body: if streams { b"" } else { rt.wasi_http_body() }, remote_ip: "", raw_query: raw_query, fields: fields, raw_path: rawp, raw_host: raw_host}
+    if streams {
+      // as the server does: a handle_stream route has its body in its
+      // reader, read from the host's input-stream as it arrives
+      // its trailers: those the head's Trailer field declared, as the
+      // server keeps them
+      let b = conn_body(wasi_body_next, [], declared_trailers(header_get(headers, "Trailer") ?? ""))
+      req = req with {values: [ReqValue{name: STREAM_BODY, v: rt.any_of(b)}]}
     }
-    let resp = r.call(req)
-    rt.wasi_http_respond(resp.status, wasi_header_bytes(resp), resp.body)
+    let resp = call_raw(r, req)
+    let raw0 = rt.cast[http.Response, Response](resp)
+    if let Some(a) = raw0.ws {
+      if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](a) {
+        // http.stream: the head with the first write, the body as it is
+        // made, then the trailers
+        let o = Mutex[WasiOut].new(WasiOut{r: raw0 with {ws: None}})
+        f(BodyWriter{wo: Some(o)}).ignore_err("a stream that fails ends its body there, as the server's")
+        o.with(fn(var x) {
+          wasi_out_head(x, b"")
+          var trail = BytesBuilder.new()
+          var i = 0
+          while i + 1 < x.trailers.len() {
+            wasi_field(trail, x.trailers[i], x.trailers[i + 1])
+            i += 2
+          }
+          rt.wasi_http_end(trail.freeze())
+        })
+        return
+      }
+    }
+    // Go's TrailerPrefix headers (http.stream's set_trailer) go after the
+    // body as trailers
+    let raw = rt.cast[http.Response, Response](resp)
+    var heads: Map[Str, Str] = {}
+    var trail = BytesBuilder.new()
+    for (k, v) in raw.headers {
+      if k.starts_with(TRAILER_PREFIX) {
+        wasi_field(trail, k[TRAILER_PREFIX.len()..], v)
+      } else {
+        heads[k] = v
+      }
+    }
+    let sent = rt.cast[Response, http.Response](raw with {headers: heads})
+    rt.wasi_http_respond(resp.status, wasi_header_bytes(sent), resp.body, trail.freeze())
     return
   }
   fault("http.serve_component serves a wasi:http component's request: build with the wasm backend (decision 0447); a native program serves with http.server")
@@ -710,6 +779,25 @@ fn wasi_host_port(host: Str) -> Int? {
 /// server keeps them (decision 0288): the Map view under Go's canonical
 /// names joins a repeated name, Set-Cookie keeping its first value, and
 /// the fields are [] unless a name repeats.
+/// The fields of rt.wasi_http_headers' form as [name, value, ...], names
+/// canonical, every one kept.
+fn wasi_fields(b: Bytes) -> List[Str] {
+  var out: List[Str] = []
+  var at_name = true
+  var start = 0
+  var i = 0
+  while i < b.len() {
+    if b[i] == 0 {
+      let s = b[start..i].to_str() ?? ""
+      out.push(if at_name { http1.canonical_key(s) } else { s })
+      at_name = !at_name
+      start = i + 1
+    }
+    i += 1
+  }
+  out
+}
+
 fn wasi_headers(b: Bytes) -> (Map[Str, Str], List[Str]) {
   var h: Map[Str, Str] = {}
   var fields: List[Str] = []
@@ -752,6 +840,15 @@ fn wasi_field(var out: BytesBuilder, k: Str, v: Str) {
 
 /// A response's fields packed for the wasm runtime (wasi_headers' form),
 /// with a Content-Type sniffed as the server does when it has none.
+/// Sends o's head once, its Content-Type detected from first when missing.
+fn wasi_out_head(var o: WasiOut, first: Bytes) {
+  if o.sent {
+    return
+  }
+  o.sent = true
+  rt.wasi_http_head(o.r.status, wasi_header_bytes(rt.cast[Response, http.Response](o.r with {body: first})))
+}
+
 fn wasi_header_bytes(r0: http.Response) -> Bytes {
   let r = rt.cast[http.Response, Response](r0)
   var out = BytesBuilder.with_capacity(64)
@@ -2153,9 +2250,9 @@ fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> 
   if target.arch == TargetArch.Wasm32 {
     // a wasi:http response goes out whole, so its body is made here; a stream
     // that fails ends its body there, as collect does
-    let m = Mutex[Bytes].new(b"")
-    f(BodyWriter{wb: Some(m)}).ignore_err("a failed stream ends its body")
-    return rt.cast[Response, http.Response](Response{status: status, headers: {}, body: m.with(fn(var b) { b })})
+    // serve_component runs f as the response is sent (a component), and
+    // collect into a buffer (in process)
+    return rt.cast[Response, http.Response](Response{status: status, headers: {}, body: b"", ws: Some(rt.any_of(f))})
   }
   let r = Response{status: status, headers: {}, body: "".bytes(), stream: hserve.stream_put(rt.any_of(f))}
   rt.cast[Response, http.Response](r)
@@ -2165,14 +2262,30 @@ fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> 
 /// collected again.
 fn collect(r0: http.Response) -> http.Response {
   let r = rt.cast[http.Response, Response](r0)
-  if r.stream == 0 {
+  if target.arch == TargetArch.Wasm32 {
+    // no native stream on wasm, and the build decides this test, so
+    // hserve's sink, which allocates with llrt's heap, is not built into a
+    // wasm program (decision 0447)
+    if let Some(a) = r.ws {
+      if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](a) {
+        let m = Mutex[Bytes].new(b"")
+        let t = Mutex[List[Str]].new([])
+        f(BodyWriter{wb: Some(m), wt: Some(t)}).ignore_err("a failed stream ends its body")
+        // the trailers as Go's TrailerPrefix headers (net/http's
+        // ResponseRecorder keeps them apart; Router.call has only headers)
+        var h = r.headers
+        let tr = t.with(fn(var l) { l })
+        var i = 0
+        while i + 1 < tr.len() {
+          h["${TRAILER_PREFIX}${tr[i]}"] = tr[i + 1]
+          i += 2
+        }
+        return rt.cast[Response, http.Response](r with {headers: h, body: m.with(fn(var b) { b }), ws: None})
+      }
+    }
     return r0
   }
-  if target.arch == TargetArch.Wasm32 {
-    // no stream is made on wasm (no native server there), and the build
-    // decides this test, so hserve's sink, which allocates with llrt's
-    // heap, is not built into a wasm program that dispatches in process
-    // (decision 0447)
+  if r.stream == 0 {
     return r0
   }
   var body = "".bytes()
@@ -2193,6 +2306,20 @@ fn collect(r0: http.Response) -> http.Response {
 /// HTTP/2's trailing HEADERS); until then it is dropped.
 fn (w: BodyWriter) set_trailer(name: Str, value: Str) {
   if target.arch == TargetArch.Wasm32 {
+    if let Some(k) = http1.trailer_key(name) {
+      if let Some(t) = w.wt {
+        t.with(fn(var l) {
+          l.push(k)
+          l.push(value)
+        })
+      }
+      if let Some(o) = w.wo {
+        o.with(fn(var x) {
+          x.trailers.push(k)
+          x.trailers.push(value)
+        })
+      }
+    }
     return
   }
   if let Some(k) = http1.trailer_key(name) {
@@ -2207,19 +2334,31 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
-  if target.arch == TargetArch.Wasm32 {
-    if let Some(m) = w.wb {
-      m.with(fn(var b) { b = b + data })
-    }
-    return
-  }
   var out = data
   if let Some(m) = w.gz {
     out = m.with(fn(var c) { c.write(data) })
   }
-  if !hserve.sink_write(w.sink(), out) {
+  if !w.put(out) {
     return Err(IoErr.Io(msg: "write: connection closed"))
   }
+}
+
+/// Bytes past the compressor to where w writes: the sink, or on wasm the
+/// buffer or the component's response; false when the connection closed.
+fn (w: BodyWriter) put(out: Bytes) -> Bool {
+  if target.arch == TargetArch.Wasm32 {
+    if let Some(m) = w.wb {
+      m.with(fn(var b) { b = b + out })
+    }
+    if let Some(o) = w.wo {
+      o.with(fn(var x) { wasi_out_head(x, out) })
+      if !out.is_empty() {
+        rt.wasi_http_write(out)
+      }
+    }
+    return true
+  }
+  hserve.sink_write(w.sink(), out)
 }
 
 fn (w: BodyWriter) flush() -> () ! IoErr {
@@ -2227,6 +2366,12 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
     return Err(IoErr.Canceled)
   }
   if target.arch == TargetArch.Wasm32 {
+    if let Some(m) = w.gz {
+      let _ = w.put(m.with(fn(var c) { c.flush() }))
+    }
+    if let Some(o) = w.wo {
+      o.with(fn(var x) { wasi_out_head(x, b"") })
+    }
     return
   }
   if let Some(m) = w.gz {
@@ -2287,9 +2432,9 @@ fn response_without(r: http.Response, name: Str) -> http.Response {
 fn gzip_stream(f: fn(BodyWriter) -> () ! IoErr, level: compress.Level) -> fn(BodyWriter) -> () ! IoErr {
   fn(w: BodyWriter) -> () ! IoErr {
     let m = Mutex[compress.Compressor].new(compress.compressor(compress.Format.Gzip, level: level))
-    let r = f(BodyWriter{s: w.s, gz: Some(m)})
+    let r = f(w with {gz: Some(m)})
     let rest = m.with(fn(var c) { c.finish() })
-    if !hserve.sink_write(w.sink(), rest) {
+    if !w.put(rest) {
       return Err(IoErr.Io(msg: "write: connection closed"))
     }
     r
@@ -2305,7 +2450,8 @@ fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compr
   if response_header(resp0, "Content-Encoding") is Some(_) || response_header(resp0, "Content-Range") is Some(_) {
     return resp0
   }
-  let streamed = n.stream != 0
+  // wasm keeps a stream's function in ws (decision 0447)
+  let streamed = n.stream != 0 || n.ws is Some(_)
   var ct = response_header(resp0, "Content-Type") ?? ""
   if ct.is_empty() && !streamed && !n.body.is_empty() {
     ct = mime.detect_content_type(n.body)
@@ -2341,6 +2487,12 @@ fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compr
   let m = rt.cast[http.Response, Response](resp)
   if !streamed {
     return rt.cast[Response, http.Response](m with {body: compress.gzip(m.body, level: level)})
+  }
+  if let Some(a) = m.ws {
+    if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](a) {
+      return rt.cast[Response, http.Response](m with {ws: Some(rt.any_of(gzip_stream(f, level)))})
+    }
+    return resp
   }
   let fs = hserve.stream_get(m.stream, false)
   if fs.is_empty() {

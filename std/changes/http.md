@@ -1,5 +1,28 @@
 # std/http changes
 
+## 2026-11-02: feature: handle_stream and trailers in a wasi:http component (decision 0447)
+
+- Kind: feature
+- Commit: this commit
+- Found by: xo-lang-4, decision 0447's next stage (owner, 2026-11-02)
+- Go reference: net/http's Request.Body and Request.Trailer, and the TrailerPrefix response header
+- Test: internal/selfhost TestWasmComponentHTTP (the stub host: a body in pieces, a declared and an undeclared trailer, a streamed response in two writes with a trailer and a forbidden one) and TestWasmComponentServe (wasmtime serve: 100,000 bytes in several reads, a body in three pieces 50 ms apart read as they arrive, a request trailer, a response trailer, a 1 MiB streamed response, a route that answers after one read)
+- Timing: none (the host holds the connection)
+
+On `--targets=wasip2/wasm`, a `handle_stream` route's `BodyReader` reads the
+request body from the host's input-stream as it arrives, in place of the whole
+body read first, and `BodyReader.trailers()` has the trailers the request's
+`Trailer` field declared (`incoming-body.finish`), as the native server keeps
+them. A route that answers without reading to the end leaves the rest to the
+runtime. An `http.stream` response goes to the host as it is written: its
+head with the first write or flush (a missing Content-Type detected from
+those bytes, as net/http does), its body through the output-stream, then
+`BodyWriter.set_trailer`'s trailers through `outgoing-body.finish`, names a
+trailer may not carry dropped (a host may send only declared trailers, and only to a
+client that sent `TE: trailers`, as wasmtime serve does). In process (`Router.call`) the stream is
+collected as before, its trailers as Go TrailerPrefix headers. A client's
+request trailers still fail.
+
 ## 2026-11-02: feature: http.Client in a wasi:http component (decision 0447)
 
 - Kind: feature

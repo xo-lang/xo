@@ -204,6 +204,60 @@ func TestWasmComponentServe(t *testing.T) {
 			t.Errorf("%s %s: %d %q, want %d %q", c.method, c.path, status, got, c.status, c.want)
 		}
 	}
+	// handle_stream: 100,000 bytes read in many reads; a body sent in three
+	// pieces 50 ms apart is read as it arrives (a read for each piece at
+	// least), and its trailer reaches the route; a route that reads once
+	// and answers leaves the rest to the runtime, and the next request is
+	// served
+	if status, got := do("POST", "/stream", strings.Repeat("s", 100000), nil); status != 200 || !strings.HasPrefix(got, "len 100000 reads ") || strings.HasPrefix(got, "len 100000 reads 1 ") {
+		t.Errorf("POST /stream: %d %q, want len 100000 in several reads", status, got)
+	}
+	// with a trailer the head declares, set after the body is written
+	pr, pw := io.Pipe()
+	preq, _ := http.NewRequest("POST", base+"/stream", pr)
+	preq.Trailer = http.Header{"X-Trail": nil}
+	go func() {
+		for i := 0; i < 3; i++ {
+			pw.Write([]byte(strings.Repeat("p", 1000)))
+			time.Sleep(50 * time.Millisecond)
+		}
+		preq.Trailer.Set("X-Trail", "t9")
+		pw.Close()
+	}()
+	if resp, err := client.Do(preq); err != nil {
+		t.Errorf("POST /stream, piped: %v\n%s", err, logs.String())
+	} else {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		var n, reads int
+		var tr string
+		if _, err := fmt.Sscanf(string(b), "len %d reads %d trailer %s", &n, &reads, &tr); err != nil || n != 3000 || reads < 3 || tr != "t9" {
+			t.Errorf("POST /stream, piped: %d %q, want len 3000 in 3 reads or more and trailer t9", resp.StatusCode, b)
+		}
+	}
+	// a streamed response's trailers after its body; host, which a
+	// trailer may not carry, dropped. wasmtime's HTTP/1 server (hyper)
+	// sends trailers only to a request that sent TE: trailers
+	treq, _ := http.NewRequest("GET", base+"/trailer", nil)
+	treq.Header.Set("TE", "trailers")
+	if resp, err := client.Do(treq); err != nil {
+		t.Errorf("GET /trailer: %v", err)
+	} else {
+		b, _ := io.ReadAll(resp.Body)
+		resp.Body.Close()
+		if string(b) != "hello" || resp.Trailer.Get("X-Checksum") != "abc123" || resp.Trailer.Get("Host") != "" {
+			t.Errorf("GET /trailer: %q, trailers %v; the bytes on the wire:\n%s", b, resp.Trailer, rawGet(base, "/trailer"))
+		}
+	}
+	if status, got := do("GET", "/stream-big", "", nil); status != 200 || got != strings.Repeat("b", 1<<20) {
+		t.Errorf("GET /stream-big: %d, %d bytes", status, len(got))
+	}
+	if status, got := do("POST", "/half", strings.Repeat("h", 100000), nil); status != 200 || got != "first true" {
+		t.Errorf("POST /half: %d %q", status, got)
+	}
+	if status, got := do("GET", "/", "", nil); status != 200 || got != "hello" {
+		t.Errorf("after POST /half: %d %q", status, got)
+	}
 	// a fault: the program's report on stderr, an error status or a dropped
 	// connection, and the next request served by a new instance
 	// and so for proc.exit, which the proxy world has no way to do
@@ -224,4 +278,18 @@ func TestWasmComponentServe(t *testing.T) {
 	if s := logs.String(); !strings.Contains(s, "to stdout yyy") || !strings.Contains(s, "to stderr") {
 		t.Errorf("the host's output lacks the program's lines:\n%.2000s", s)
 	}
+}
+
+// rawGet sends GET path with TE: trailers over a raw connection and returns
+// what came back, for a failure's message.
+func rawGet(base, path string) string {
+	c, err := net.Dial("tcp", strings.TrimPrefix(base, "http://"))
+	if err != nil {
+		return err.Error()
+	}
+	defer c.Close()
+	c.SetDeadline(time.Now().Add(5 * time.Second))
+	fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: x\r\nTE: trailers\r\nConnection: close\r\n\r\n", path)
+	b, _ := io.ReadAll(c)
+	return string(b)
 }

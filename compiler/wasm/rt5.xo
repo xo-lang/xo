@@ -13,7 +13,7 @@
 
 /// The runtime calls of rt5.xo.
 fn rt5_direct(name: Str) -> Bool {
-  name is "wasi_http_send" | "wasi_http_resp_headers" | "wasi_http_resp_body" | "wasi_http_method" | "wasi_http_path" | "wasi_http_authority" | "wasi_http_headers" | "wasi_http_body" | "wasi_http_respond"
+  name is "wasi_http_send" | "wasi_http_resp_headers" | "wasi_http_resp_body" | "wasi_http_method" | "wasi_http_path" | "wasi_http_authority" | "wasi_http_headers" | "wasi_http_body" | "wasi_http_body_read" | "wasi_http_body_trailers" | "wasi_http_respond" | "wasi_http_head" | "wasi_http_write" | "wasi_http_end"
 }
 
 /// Whether the program is a wasi:http component: it calls
@@ -52,6 +52,18 @@ fn rt5_imports() -> Str {
   """
 }
 
+/// The imports of a component with a handle_stream route: its request's
+/// trailers.
+fn rt5_trailer_imports() -> Str {
+  """
+    (import "wasi:http/types@0.2.0" "[static]incoming-body.finish" (func $ibody_finish (param i32) (result i32)))
+    (import "wasi:http/types@0.2.0" "[method]future-trailers.subscribe" (func $ftr_subscribe (param i32) (result i32)))
+    (import "wasi:http/types@0.2.0" "[method]future-trailers.get" (func $ftr_get (param i32 i32)))
+    (import "wasi:http/types@0.2.0" "[resource-drop]future-trailers" (func $ftr_drop (param i32)))
+
+  """
+}
+
 /// The imports of a component that makes outgoing requests.
 fn rt5_client_imports() -> Str {
   """
@@ -86,8 +98,16 @@ fn rt5_globals() -> Str {
     (global $hreq (mut i32) (i32.const 0))
     (global $hout (mut i32) (i32.const 0))
     (global $hdone (mut i32) (i32.const 0))
+    ;; the response being written: its outgoing-body and output-stream
+    (global $rbody (mut i32) (i32.const 0))
+    (global $rout (mut i32) (i32.const 0))
     (global $hret (mut i32) (i32.const 0))
     (global $hresp (mut i32) (i32.const 0))
+    ;; a handle_stream route's request body: the incoming-body and its
+    ;; input-stream, and 0 not opened, 1 open, 2 ended
+    (global $hbody (mut i32) (i32.const 0))
+    (global $hstream (mut i32) (i32.const 0))
+    (global $hbst (mut i32) (i32.const 0))
 
   """
 }
@@ -414,6 +434,165 @@ fn rt5_text(var g: Gen) -> Str {
       local.get $r
       i32.load offset=4
       call $body_bytes)
+
+    ;; a handle_stream route's next read of the request body: at most max
+    ;; bytes as they arrive (input-stream.blocking-read), empty at its end
+    ;; (closed, or the host's error); the first read consumes the request
+    (func $wasi_http_body_read (param $max i64) (result i32 i32) (local $r i32) (local $p i32) (local $k i32) (local $o i32)
+      global.get $hbst
+      i32.eqz
+      if
+        i32.const 2
+        global.set $hbst
+        global.get $hreq
+        call $hret_at
+        local.tee $r
+        call $ireq_consume
+        local.get $r
+        i32.load8_u
+        i32.eqz
+        if
+          local.get $r
+          i32.load offset=4
+          global.set $hbody
+          global.get $hbody
+          local.get $r
+          call $ibody_stream
+          local.get $r
+          i32.load8_u
+          i32.eqz
+          if
+            local.get $r
+            i32.load offset=4
+            global.set $hstream
+            i32.const 1
+            global.set $hbst
+          else
+            global.get $hbody
+            call $ibody_drop
+            i32.const 0
+            global.set $hbody
+          end
+        end
+      end
+      global.get $hbst
+      i32.const 1
+      i32.ne
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      call $hret_at
+      local.set $r
+      block $got
+        loop $again
+          global.get $hstream
+          local.get $max
+          local.get $r
+          call $istream_read
+          local.get $r
+          i32.load8_u
+          if
+            ;; closed or failed: the end; last-operation-failed carries
+            ;; an error resource
+            local.get $r
+            i32.load8_u offset=4
+            i32.eqz
+            if
+              local.get $r
+              i32.load offset=8
+              call $ioerr_drop
+            end
+            ;; the body stays for its trailers (wasi_http_body_trailers)
+            global.get $hstream
+            call $istream_drop
+            i32.const 0
+            global.set $hstream
+            i32.const 2
+            global.set $hbst
+            i32.const 0
+            call $rs_new
+            i32.const 0
+            return
+          end
+          local.get $r
+          i32.load offset=8
+          local.tee $k
+          br_if $got
+          br $again
+        end
+      end
+      local.get $r
+      i32.load offset=4
+      local.set $p
+      i32.const 0
+      call $rs_new
+      i32.const 0
+      local.get $p
+      local.get $k
+      call $rs_append
+      local.set $o
+      local.get $p
+      call $free
+      local.get $o
+      local.get $k)
+
+    ;; a handle_stream route's request trailers, after its body's end, in
+    ;; wasi_http_headers' form: incoming-body.finish's future-trailers,
+    ;; waited for; empty when there are none or the host failed
+    (func $wasi_http_body_trailers (result i32 i32) (local $ft i32) (local $pl i32) (local $r i32)
+      global.get $hbody
+      i32.eqz
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      global.get $hbody
+      call $ibody_finish
+      local.set $ft
+      i32.const 0
+      global.set $hbody
+      local.get $ft
+      call $ftr_subscribe
+      local.tee $pl
+      call $poll_block
+      local.get $pl
+      call $poll_drop
+      call $hret_at
+      local.set $r
+      local.get $ft
+      local.get $r
+      call $ftr_get
+      local.get $ft
+      call $ftr_drop
+      ;; option<result<result<option<own<fields>>, error-code>>>: cases at
+      ;; 0, 8 and 16, the option's case at 24 and the fields at 28
+      local.get $r
+      i32.load8_u
+      i32.eqz
+      local.get $r
+      i32.load8_u offset=8
+      i32.or
+      local.get $r
+      i32.load8_u offset=16
+      i32.or
+      local.get $r
+      i32.load8_u offset=24
+      i32.eqz
+      i32.or
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=28
+      call $fields_bytes)
 
     ;; incoming-body body (dropped) read to its end
     (func $body_bytes (param $body i32) (result i32 i32) (local $r i32) (local $s i32) (local $o i32) (local $n i32) (local $p i32) (local $k i32)
@@ -789,7 +968,22 @@ fn rt5_text(var g: Gen) -> Str {
     ;; the response: status, the fields (each name and value followed by
     ;; a zero byte), and the body written in 4096 byte pieces
     ;; (blocking-write-and-flush's limit)
-    (func $wasi_http_respond (param $status i64) (param $h i32) (param $hn i32) (param $b i32) (param $bn i32) (local $f i32) (local $resp i32) (local $body i32) (local $out i32) (local $r i32) (local $at i32) (local $k i32) (local $hend i32) (local $vp i32) (local $vn i32)
+    (func $wasi_http_respond (param $status i64) (param $h i32) (param $hn i32) (param $b i32) (param $bn i32) (param $t i32) (param $tn i32)
+      local.get $status
+      local.get $h
+      local.get $hn
+      call $wasi_http_head
+      local.get $b
+      local.get $bn
+      call $wasi_http_write
+      local.get $t
+      local.get $tn
+      call $wasi_http_end)
+
+    ;; the response's head (decision 0447): sent to the host through the
+    ;; outparam before any of its body, whose outgoing-body and
+    ;; output-stream wasi_http_write and wasi_http_end use
+    (func $wasi_http_head (param $status i64) (param $h i32) (param $hn i32) (local $f i32) (local $resp i32) (local $r i32)
       local.get $h
       local.get $hn
       call $fields_of
@@ -807,9 +1001,7 @@ fn rt5_text(var g: Gen) -> Str {
       call $oresp_body
       local.get $r
       i32.load offset=4
-      local.set $body
-      ;; the response goes to the host before its body is written, as the
-      ;; bindings' handlers do
+      global.set $rbody
       ;; set(outparam, result<own<outgoing-response>, error-code>): the
       ;; result's case (0, ok), the response, then error-code's joined
       ;; payload slots, zero (wasm-tools embed --dummy, wasi 0.2)
@@ -823,25 +1015,57 @@ fn rt5_text(var g: Gen) -> Str {
       i32.const 0
       i32.const 0
       call $outparam_set
-      local.get $body
+      global.get $rbody
       local.get $r
       call $obody_write
       local.get $r
       i32.load offset=4
-      local.set $out
-      local.get $out
-      local.get $b
-      local.get $bn
-      call $ostream_all
-      local.get $out
-      call $ostream_drop
-      local.get $body
-      i32.const 0
-      i32.const 0
-      local.get $r
-      call $obody_finish
+      global.set $rout
+      ;; answered: a fault after this point ends the body, not a 500
       i32.const 1
       global.set $hdone)
+
+    ;; bytes of the response body, written as they come (blocking-write-
+    ;; and-flush in 4096 byte pieces)
+    (func $wasi_http_write (param $b i32) (param $bn i32)
+      global.get $rout
+      i32.eqz
+      if
+        return
+      end
+      global.get $rout
+      local.get $b
+      local.get $bn
+      call $ostream_all)
+
+    ;; the body's end: the stream dropped, then outgoing-body.finish with
+    ;; the trailers (in the headers' form; some(fields) when there are any)
+    (func $wasi_http_end (param $t i32) (param $tn i32)
+      global.get $rbody
+      i32.eqz
+      if
+        return
+      end
+      global.get $rout
+      call $ostream_drop
+      i32.const 0
+      global.set $rout
+      global.get $rbody
+      local.get $tn
+      i32.const 0
+      i32.ne
+      local.get $tn
+      if (result i32)
+        local.get $t
+        local.get $tn
+        call $fields_of
+      else
+        i32.const 0
+      end
+      call $hret_at
+      call $obody_finish
+      i32.const 0
+      global.set $rbody)
 
     ;; after main: a fault is reported, and a request main did not
     ;; answer gets 500
@@ -858,8 +1082,28 @@ fn rt5_text(var g: Gen) -> Str {
         i32.const ${h500b.len()}
         i32.const ${e500}
         i32.const 14
+        i32.const 0
+        i32.const 0
         call $wasi_http_respond
       end
+      ;; a body a handle_stream route left unread: its stream and body go
+      ;; first, as children of the request
+      global.get $hstream
+      if
+        global.get $hstream
+        call $istream_drop
+      end
+      global.get $hbody
+      if
+        global.get $hbody
+        call $ibody_drop
+      end
+      i32.const 0
+      global.set $hstream
+      i32.const 0
+      global.set $hbody
+      i32.const 0
+      global.set $hbst
       global.get $hreq
       call $ireq_drop)
 

@@ -482,3 +482,41 @@ in place of whole bodies; and trailers, both ways (incoming-body's
 `finish` future-trailers on requests, `outgoing-body.finish` with fields
 on responses), in place of failing. Queued after decision 0324's a1
 re-measure (xo-lang-4).
+
+## handle_stream and trailers results (2026-11-02, Xo Lang 4)
+
+- Request body: a `handle_stream` route's `BodyReader` reads the host's
+  input-stream as the route asks (`rt.wasi_http_body_read`, one
+  `blocking-read` of up to the asked size, the stream opened on the first
+  read); `handle` routes still get the whole body. A route that answers
+  before the end leaves the stream and body for the runtime to drop after
+  the response.
+- Request trailers: at the body's end the runtime calls
+  `incoming-body.finish`, waits on the future-trailers' pollable and reads
+  its fields; `BodyReader.trailers()` keeps the names the request's
+  `Trailer` field declared, as the native server does. The component
+  declares future-trailers and imports these functions only when the
+  program reaches the trailer read.
+- Response trailers: `BodyWriter.set_trailer` in `http.stream` keeps the
+  trailer (forbidden names dropped, as native) until the body's end, when
+  `outgoing-body.finish` sends them as some(fields). A handler's own Go
+  TrailerPrefix headers (`Trailer:Name`) go the same way.
+- Response body: `http.stream` keeps its function in a hidden field of the
+  response (`ws`), so `serve_component` runs it after routing: the head goes
+  to the host with the first write or flush (`rt.wasi_http_head`, the
+  outparam set then; a missing Content-Type detected from the first bytes,
+  as net/http does), each write goes to the output-stream
+  (`rt.wasi_http_write`), and the end drops the stream and finishes the body
+  with the trailers (`rt.wasi_http_end`). `wasi_http_respond` is now those
+  three in a row. `Router.call` (in process) collects the stream as before.
+  The stub host sees the two writes of a two-write route; wasmtime serves a
+  1 MiB body written in 64 KiB pieces.
+- Tests: TestWasmComponentHTTP (Node stub host: a body in 6 byte pieces
+  read 4 bytes at a time, a declared and an undeclared trailer, a response
+  trailer beside a forbidden one in a two-write stream, a route that reads
+  once) and TestWasmComponentServe (wasmtime serve with a Go client:
+  100,000 bytes in several reads, three 1,000 byte pieces 50 ms apart read
+  as they arrive with trailer t9, a response trailer, a 1 MiB streamed
+  body, and a request served after a route that read once).
+- Still failing: a client's request trailers (`Request.with_trailers` in a
+  component), since outgoing requests hold their body whole.

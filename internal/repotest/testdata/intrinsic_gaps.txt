@@ -93,11 +93,16 @@ arm64 sym_present lowered by compiler/ssa itself (an intrinsic of the builder, n
 arm64 time_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 arm64 time_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 arm64 wasi_http_body the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+arm64 wasi_http_body_read the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+arm64 wasi_http_body_trailers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_authority the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_headers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_method the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_path the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_respond the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+arm64 wasi_http_head the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+arm64 wasi_http_write the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+arm64 wasi_http_end the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_resp_body the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_resp_headers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_send the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
@@ -193,11 +198,16 @@ llvm sym_present lowered by compiler/ssa itself (an intrinsic of the builder, no
 llvm time_parse layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm time_parse_ok layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm wasi_http_body the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+llvm wasi_http_body_read the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+llvm wasi_http_body_trailers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_authority the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_headers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_method the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_path the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_respond the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+llvm wasi_http_head the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+llvm wasi_http_write the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+llvm wasi_http_end the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_resp_body the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_resp_headers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_send the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm

@@ -9,6 +9,50 @@ fn main(os: Os) {
   // past the 4096 bytes of one blocking-write-and-flush
   r.handle("GET /big", fn(q: http.Request) -> http.Response { http.text(200, "x".repeat(20000)) })
   r.handle("POST /echo", fn(q: http.Request) -> http.Response { http.text(200, "len ${q.body.len()}") })
+  // handle_stream: the body read from the host's input-stream as it
+  // arrives, in reads of at most 4096 bytes
+  r.handle_stream("POST /stream", fn(q: http.Request, b: http.BodyReader) -> http.Response {
+    var reads = 0
+    var n = 0
+    while true {
+      match b.read(4096) {
+        Ok(Some(d)) => {
+          reads += 1
+          n += d.len()
+        }
+        Ok(None) => break
+        Err(e) => return http.text(500, "read: ${e}")
+      }
+    }
+    http.text(200, "len ${n} reads ${reads} trailer ${b.trailers().get("X-Trail") ?? "-"}")
+  })
+  // one read, then the answer: the runtime drops the rest of the body
+  r.handle_stream("POST /half", fn(q: http.Request, b: http.BodyReader) -> http.Response {
+    let k = match b.read(4096) {
+      Ok(Some(d)) => d.len()
+      _ => -1
+    }
+    http.text(200, "first ${k > 0 && k <= 4096}")
+  })
+  // a streamed response's trailers (set_trailer) after its body; a name
+  // a trailer may not carry is dropped
+  r.handle("GET /trailer", fn(q: http.Request) -> http.Response {
+    http.stream(200, fn(w) {
+      w.write("hel".bytes())?
+      w.write("lo".bytes())?
+      w.set_trailer("x-checksum", "abc123")
+      w.set_trailer("host", "evil")
+    }).with_trailer_names(["X-Checksum"])
+  })
+  // a streamed body of 1 MiB in 64 KiB writes, sent as it is made
+  r.handle("GET /stream-big", fn(q: http.Request) -> http.Response {
+    http.stream(200, fn(w) {
+      let piece = "b".repeat(65536).bytes()
+      for _ in 0..16 {
+        w.write(piece)?
+      }
+    })
+  })
   r.handle("GET /head", fn(q: http.Request) -> http.Response { http.text(200, q.header("X-Test") ?? "-") })
   r.handle("GET /sleep", fn(q: http.Request) -> http.Response {
     let a = os.clock.now().unix_millis()

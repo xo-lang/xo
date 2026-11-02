@@ -43,7 +43,7 @@ func TestWasmComponentHTTP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	reqs := []string{"/", "/users/7?x=y", "/users/q", "/h", "POST /echo", "/json", "/nope"}
+	reqs := []string{"/", "/users/7?x=y", "/users/q", "/h", "POST /echo", "POST /stream", "POST /half", "/trailer", "/json", "/nope"}
 	var got []byte
 	for _, mode := range []string{"fresh", "reuse"} {
 		args := append([]string{filepath.Join(dir, "host.mjs"), out, mode}, reqs...)

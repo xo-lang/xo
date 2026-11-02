@@ -300,9 +300,11 @@ fn ity_io_streams(t_error: Int) -> InstTy {
   i
 }
 
-/// wasi:http/types: t_poll, when not -1 (a program that makes outgoing
-/// requests), adds the client's resources.
-fn ity_http_types(t_in: Int, t_out: Int, t_poll: Int) -> InstTy {
+/// wasi:http/types: client (a program that makes outgoing requests) adds
+/// the client's resources, trailers (a handle_stream route, which reads a
+/// request's trailers) incoming-body.finish and future-trailers; either
+/// needs t_poll, wasi:io/poll's pollable.
+fn ity_http_types(t_in: Int, t_out: Int, t_poll: Int, client: Bool, trailers: Bool) -> InstTy {
   var i = InstTy{}
   let in0 = i.outer(t_in)
   let inp = i.eq("input-stream", in0)
@@ -411,10 +413,24 @@ fn ity_http_types(t_in: Int, t_out: Int, t_poll: Int) -> InstTy {
   let own_param = i.def(dt_own(outparam))
   let r_resp = i.def(dt_result(own_oresp, ec))
   i.fun("[static]response-outparam.set", [("param", own_param), ("response", r_resp)], NO_TYPE)
-  if t_poll >= 0 {
+  var own_pl = -1
+  if client || trailers {
     let p0 = i.outer(t_poll)
     let pl = i.eq("pollable", p0)
-    let own_pl = i.def(dt_own(pl))
+    own_pl = i.def(dt_own(pl))
+  }
+  if trailers {
+    let ftr = i.res("future-trailers")
+    let own_ftr = i.def(dt_own(ftr))
+    i.fun("[static]incoming-body.finish", [("this", own_ibody)], own_ftr)
+    let b_ftr = i.def(dt_borrow(ftr))
+    i.fun("[method]future-trailers.subscribe", [("self", b_ftr)], own_pl)
+    let r_tin = i.def(dt_result(opt_tr, ec))
+    let r_tout = i.def(dt_result(r_tin, NO_TYPE))
+    let opt_t = i.def(dt_option(r_tout))
+    i.fun("[method]future-trailers.get", [("self", b_ftr)], opt_t)
+  }
+  if client {
     let s0 = i.def(dt_variant([("HTTP", NO_TYPE), ("HTTPS", NO_TYPE), ("other", VT_STRING)]))
     let scheme = i.eq("scheme", s0)
     let opt_scheme = i.def(dt_option(scheme))
@@ -745,9 +761,21 @@ pub fn component_of(core: Bytes) -> (Bytes, Str) {
   let t_in = c.alias_type(is, "input-stream")
   let t_out = c.alias_type(is, "output-stream")
   let client = wanted("wasi:http/outgoing-handler${WASI_V}")
-  let ih = c.import_iface("wasi:http/types${WASI_V}", ity_http_types(t_in, t_out, if client { t_poll } else { -1 }))
+  var trailers = false
+  for m in all {
+    if m.name == "[static]incoming-body.finish" {
+      trailers = true
+    }
+  }
+  if (client || trailers) && t_poll < 0 {
+    return (b"", "a wasi:http client or a handle_stream route needs wasi:io/poll's pollable")
+  }
+  let ih = c.import_iface("wasi:http/types${WASI_V}", ity_http_types(t_in, t_out, t_poll, client, trailers))
   for r in ["fields", "incoming-request", "incoming-body", "outgoing-response", "outgoing-body", "response-outparam"] {
     let _t = c.alias_type(ih, r)
+  }
+  if trailers {
+    let _t = c.alias_type(ih, "future-trailers")
   }
   if client {
     let t_oreq = c.alias_type(ih, "outgoing-request")

@@ -309,7 +309,19 @@ fn wasi_http_path() -> Str
 fn wasi_http_authority() -> Str
 fn wasi_http_headers() -> Bytes
 fn wasi_http_body() -> Bytes
-fn wasi_http_respond(status: Int, headers: Bytes, body: Bytes)
+/// A handle_stream route's next read of the request body, at most max
+/// bytes, as they arrive: empty at its end.
+fn wasi_http_body_read(max: Int) -> Str
+/// A handle_stream route's request trailers after its body's end, as
+/// wasi_http_headers: empty when there are none.
+fn wasi_http_body_trailers() -> Bytes
+fn wasi_http_respond(status: Int, headers: Bytes, body: Bytes, trailers: Bytes)
+/// A streamed response (http.stream in a component): its head sent, then
+/// its body written as it is made, then its end with the trailers (in
+/// wasi_http_headers' form).
+fn wasi_http_head(status: Int, headers: Bytes)
+fn wasi_http_write(data: Bytes)
+fn wasi_http_end(trailers: Bytes)
 fn wasi_http_send(method_case: Int, method: Str, scheme_case: Int, authority: Str, path: Str, headers: Bytes, body: Bytes, timeout_ns: Int) -> Int
 fn wasi_http_resp_headers() -> Bytes
 fn wasi_http_resp_body() -> Bytes

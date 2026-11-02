@@ -16,6 +16,42 @@ fn main(os: Os) {
     resp with {headers: h}
   })
   r.handle("POST /echo", fn(q: http.Request) -> http.Response { http.text(200, "len ${q.body.len()} [${q.body.to_str() ?? ""}]") })
+  // a handle_stream route reads the body as the host's input-stream gives
+  // it (host.mjs: pieces of at most 6 bytes and the read's max)
+  r.handle_stream("POST /stream", fn(q: http.Request, b: http.BodyReader) -> http.Response {
+    var reads = 0
+    var all = ""
+    while true {
+      match b.read(4) {
+        Ok(Some(d)) => {
+          reads += 1
+          all = all + (d.to_str() ?? "")
+        }
+        Ok(None) => break
+        Err(e) => return http.text(500, "read: ${e}")
+      }
+    }
+    let tr = b.trailers()
+    http.text(200, "reads ${reads} [${all}] trailers ${tr.len()} x-trail ${tr.get("X-Trail") ?? "-"}")
+  })
+  // one read and the answer: the rest of the body is left to the runtime
+  r.handle_stream("POST /half", fn(q: http.Request, b: http.BodyReader) -> http.Response {
+    let first = match b.read(4) {
+      Ok(Some(d)) => d.to_str() ?? ""
+      _ => "-"
+    }
+    http.text(200, "first [${first}]")
+  })
+  // a streamed response's trailers (set_trailer) after its body; a name
+  // a trailer may not carry is dropped
+  r.handle("GET /trailer", fn(q: http.Request) -> http.Response {
+    http.stream(200, fn(w) {
+      w.write("hel".bytes())?
+      w.write("lo".bytes())?
+      w.set_trailer("x-checksum", "abc123")
+      w.set_trailer("host", "evil")
+    })
+  })
   r.handle("GET /json", fn(q: http.Request) -> http.Response { http.json(201, {"a": 1}) })
   http.serve_component(r)
 }

@@ -343,11 +343,22 @@ fn (g: Gen) component_lacks() -> Str {
 /// Whether the program makes outgoing requests (std/native/llrt/http1.xo
 /// wasi_exchange), which a component's world then imports.
 fn (g: Gen) is_client() -> Bool {
+  g.calls("rt.wasi_http_send")
+}
+
+/// Whether the program reads a request's trailers (std/native/http.xo
+/// wasi_body_next, a handle_stream route's body).
+fn (g: Gen) reads_trailers() -> Bool {
+  g.calls("rt.wasi_http_body_trailers")
+}
+
+/// Whether a function of the module calls name.
+fn (g: Gen) calls(name: Str) -> Bool {
   for f in g.m.funcs {
     for x in f.values {
       if x.op == ssa.Op.Call {
         if let S(s) = x.aux {
-          if s == "rt.wasi_http_send" {
+          if s == name {
             return true
           }
         }
@@ -1663,6 +1674,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     b.write(rt5_imports())
     if g.is_client() {
       b.write(rt5_client_imports())
+    }
+    if g.reads_trailers() {
+      b.write(rt5_trailer_imports())
     }
     b.write(rt6_imports())
   }

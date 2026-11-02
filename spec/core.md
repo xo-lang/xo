@@ -3597,7 +3597,11 @@ wasip1/wasm is XO1514, and on wasip2/wasm a program that never calls it is
 XO1516 and one that reaches files, processes or sockets is XO1515. Each
 component's imports are `@0.2.0`. `http.Client` works through the host's
 `wasi:http/outgoing-handler`, imported only by a program that reaches it (see
-`spec/std.md`); `net.dial`'s own sockets stay XO1515.
+`spec/std.md`); `net.dial`'s own sockets stay XO1515. A `handle_stream` route
+reads the request body from the host's input-stream as it arrives, with its
+trailers (`incoming-body.finish`); an `http.stream` response's body goes to
+the host's output-stream as it is written, and its trailers through
+`outgoing-body.finish`.
 
 Binaries are static and builds are reproducible: the same source in the
 same directory, lockfile, and toolchain version produce byte identical

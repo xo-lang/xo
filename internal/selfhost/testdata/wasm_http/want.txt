@@ -5,6 +5,9 @@ mode: an instance per request
 /users/q: 400 "{\"error\":\"path segment `id` must be an Int\"}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 /h: 200 "x-test a, b ua w47-node empty []" [["Content-Type","text/plain; charset=utf-8"],["X-Out","1"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 POST /echo: 200 "len 18 [hello request body]" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+POST /stream: 200 "reads 5 [hello request body] trailers 1 x-trail t1" [["Content-Type","text/plain; charset=utf-8"]] drops fields,fields,finish,future-trailers,incoming-request,input-stream,output-stream ok
+POST /half: 200 "first [hell]" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/trailer: 200 "hello" [["content-type","text/plain; charset=utf-8"]] trailers [["X-Checksum","abc123"]] writes 2 drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 /json: 201 "{\"a\":1}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 /nope: 404 "{\"error\":\"not found\"}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 NODE-HOST OK
@@ -15,6 +18,9 @@ mode: one instance for every request
 /users/q: 400 "{\"error\":\"path segment `id` must be an Int\"}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 /h: 200 "x-test a, b ua w47-node empty []" [["Content-Type","text/plain; charset=utf-8"],["X-Out","1"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 POST /echo: 200 "len 18 [hello request body]" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+POST /stream: 200 "reads 5 [hello request body] trailers 1 x-trail t1" [["Content-Type","text/plain; charset=utf-8"]] drops fields,fields,finish,future-trailers,incoming-request,input-stream,output-stream ok
+POST /half: 200 "first [hell]" [["Content-Type","text/plain; charset=utf-8"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
+/trailer: 200 "hello" [["content-type","text/plain; charset=utf-8"]] trailers [["X-Checksum","abc123"]] writes 2 drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 /json: 201 "{\"a\":1}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 /nope: 404 "{\"error\":\"not found\"}" [["Content-Type","application/json"]] drops fields,incoming-body,incoming-request,input-stream,output-stream ok
 NODE-HOST OK

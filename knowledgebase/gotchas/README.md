@@ -1064,3 +1064,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [coll-diff-needs-timeout.md](coll-diff-needs-timeout.md): without `timeout` (macOS) every coll-diff run read exit 127 and all programs compared the same; the script now refuses (Observed)
 - [empty-literal-reuse-allocates.md](empty-literal-reuse-allocates.md): rc.xo's loop-entry reuse copied the empty literal's list into a new list before a loop that may not run; skipped for push-only loops
 - [decision-narrowed-code-not.md](decision-narrowed-code-not.md): a decision narrowed a measured prototype (darwin only) in its text, the pushed code kept both platforms (0455 on Linux, f5392f175 to 2d90b65d9)
+- [wasmtime-trailers-need-te.md](wasmtime-trailers-need-te.md): wasmtime serve (hyper) sends a component's response trailers only to a request with `TE: trailers`, and only declared names (Observed)

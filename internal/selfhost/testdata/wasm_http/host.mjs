@@ -33,13 +33,23 @@ function put(s) {
 }
 
 let path, method, bodyLeft, res;
-const H = { req: 1, out: 2, fields: 10, resp: 20, body: 30, stream: 40, reqFields: 50 };
-const reqHeaders = [["host", "localhost"], ["user-agent", "w47-node"], ["x-test", "a"], ["x-test", "b"], ["x-empty", ""]];
+const H = { req: 1, out: 2, fields: 10, resp: 20, body: 30, stream: 40, reqFields: 50, trailers: 91 };
+const reqHeaders = [["host", "localhost"], ["user-agent", "w47-node"], ["x-test", "a"], ["x-test", "b"], ["x-empty", ""], ["trailer", "X-Trail"]];
+// the request's trailers: x-other was not declared, so the server drops it
+const reqTrailers = [["x-trail", "t1"], ["x-other", "o"]];
 const http = {
   "[method]incoming-request.method": (r, ret) => { dv().setUint8(ret, method === "POST" ? 2 : 0) }, // get, post
   "[method]incoming-request.consume": (r, ret) => { dv().setUint8(ret, 0); dv().setUint32(ret + 4, 60, true) },
   "[method]incoming-body.stream": (b, ret) => { dv().setUint8(ret, 0); dv().setUint32(ret + 4, 70, true) },
   "[resource-drop]incoming-body": (b) => { res.drops.push("incoming-body") },
+  // finish consumes the body: its future-trailers gives fields H.trailers
+  "[static]incoming-body.finish": (b) => { res.drops.push("finish") ; return 85 },
+  "[method]future-trailers.subscribe": (f) => 86,
+  "[method]future-trailers.get": (f, ret) => {
+    // some(ok(ok(some(fields)))): cases at 0, 8, 16 and 24, the fields at 28
+    dv().setUint8(ret, 1); dv().setUint8(ret + 8, 0); dv().setUint8(ret + 16, 0); dv().setUint8(ret + 24, 1); dv().setUint32(ret + 28, H.trailers, true);
+  },
+  "[resource-drop]future-trailers": (f) => { res.drops.push("future-trailers") },
   "[method]incoming-request.authority": (r, ret) => { dv().setUint8(ret, 0) },
   "[method]incoming-request.path-with-query": (r, ret) => {
     const [p, n] = put(path);
@@ -49,9 +59,10 @@ const http = {
   "[method]incoming-request.headers": (r) => H.reqFields,
   "[method]fields.entries": (f, ret) => {
     // list<tuple<string, list<u8>>>: 16 byte elements, each string its own block
-    const n = reqHeaders.length;
+    const list = f === H.trailers ? reqTrailers : reqHeaders;
+    const n = list.length;
     const lp = n ? inst.exports.cabi_realloc(0, 0, 4, n * 16) : 0;
-    reqHeaders.forEach(([k, v], i) => {
+    list.forEach(([k, v], i) => {
       const [kp, kn] = put(k), [vp, vn] = put(v);
       const e = lp + i * 16;
       dv().setUint32(e, kp, true); dv().setUint32(e + 4, kn, true); dv().setUint32(e + 8, vp, true); dv().setUint32(e + 12, vn, true);
@@ -59,20 +70,26 @@ const http = {
     dv().setUint32(ret, lp, true); dv().setUint32(ret + 4, n, true);
   },
   "[resource-drop]fields": (f) => { res.drops.push("fields") },
-  "[constructor]fields": () => H.fields,
+  // each fields its own handle from H.fields up: the response's headers
+  // and its trailers apart
+  "[constructor]fields": () => { const h = H.fields + res.made.length; res.made.push([]); return h },
   "[method]fields.append": (f, np, nl, vp, vl, ret) => {
-    res.headers.push([str(np, nl), str(vp, vl)]); dv().setUint8(ret, 0);
+    res.made[f - H.fields].push([str(np, nl), str(vp, vl)]); dv().setUint8(ret, 0);
   },
   "[constructor]outgoing-response": (f) => { res.respFields = f; return H.resp },
   "[method]outgoing-response.set-status-code": (r, code) => { res.status = code; return 0 },
   "[method]outgoing-response.body": (r, ret) => { dv().setUint8(ret, 0); dv().setUint32(ret + 4, H.body, true) },
   "[method]outgoing-body.write": (b, ret) => { dv().setUint8(ret, 0); dv().setUint32(ret + 4, H.stream, true) },
-  "[static]outgoing-body.finish": (b, tag, tr, ret) => { res.finished = b === H.body && tag === 0; dv().setUint8(ret, 0) },
+  "[static]outgoing-body.finish": (b, tag, tr, ret) => {
+    res.finished = b === H.body;
+    if (tag === 1) res.trailers = res.made[tr - H.fields];
+    dv().setUint8(ret, 0);
+  },
   "[static]response-outparam.set": (o, tag, r, ...rest) => { res.outparam = { o, tag, r } },
 };
 const streams = {
   "[method]output-stream.blocking-write-and-flush": (s, p, n, ret) => {
-    if (s === H.stream) res.body += str(p, n); else process.stderr.write(str(p, n));
+    if (s === H.stream) { res.body += str(p, n); res.writes++ } else process.stderr.write(str(p, n));
     dv().setUint8(ret, 0);
   },
   "[resource-drop]output-stream": (s) => { if (s === H.stream) res.drops.push("output-stream") },
@@ -118,11 +135,11 @@ for (const p of paths) {
   // "POST /path" sends a body
   [method, path] = p.startsWith("POST ") ? ["POST", p.slice(5)] : ["GET", p];
   bodyLeft = method === "POST" ? "hello request body" : "";
-  res = { headers: [], body: "", drops: [] };
+  res = { made: [], body: "", drops: [], writes: 0 };
   handle(H.req, H.out);
   const ok = res.outparam && res.outparam.o === H.out && res.outparam.tag === 0 && res.outparam.r === H.resp && res.finished;
   if (!ok) bad++;
-  console.log(`${p}: ${res.status} ${JSON.stringify(res.body)} ${JSON.stringify(res.headers.sort())} drops ${res.drops.sort().join(",")} ${ok ? "ok" : "BAD"}`);
+  console.log(`${p}: ${res.status} ${JSON.stringify(res.body)} ${JSON.stringify((res.made[res.respFields - H.fields] || []).sort())}${res.trailers ? " trailers " + JSON.stringify(res.trailers) : ""}${res.writes > 1 ? " writes " + res.writes : ""} drops ${res.drops.sort().join(",")} ${ok ? "ok" : "BAD"}`);
 }
 console.log(bad === 0 ? "NODE-HOST OK" : `NODE-HOST ${bad} BAD`);
 process.exit(bad === 0 ? 0 : 1);

@@ -1408,6 +1408,9 @@ fn (r: Router) call(req: Request) -> Response      // in process dispatch, for t
 fn serve_component(r: Router)                      // answers a wasi:http component's request; on the wasm backend the build's output is that component (decision 0447); faults elsewhere
     // a wasi:http component's Client (decision 0447): send and open go through the host; the whole request and response are held, so a request
     // blocks the instance, a piped body is read first, trailers are refused, and with_roots and with_cert fail because the host does TLS
+    // in a component a handle_stream route reads the request body from the host as it arrives, and BodyReader.trailers has the
+    // request's declared trailers; http.stream's body goes to the host as it is written (the head with the first write or flush,
+    // its Content-Type detected from those bytes when missing), and its set_trailer trailers follow it
 type Next = fn(Request) -> Response
 ```
 
