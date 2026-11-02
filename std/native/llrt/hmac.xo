@@ -5,10 +5,11 @@ use native/llrt/sha256
 use native/rt
 
 /// A keyed HMAC: the inner hash after the inner padded key, and the outer
-/// padded key.
+/// hash after the outer padded key (as Go's crypto/hmac marshals both
+/// states: a sum starts from copies, so it compresses neither pad again).
 pub struct Mac {
   inner: sha256.Hasher
-  opad: Bytes
+  outer: sha256.Hasher
 }
 
 /// The key padded to the block and xored with x.
@@ -44,7 +45,9 @@ fn pad(hash: Int, key0: Bytes, x: Int) -> Bytes {
 pub fn new(hash: Int, key: Bytes) -> Mac {
   var h = sha256.new(hash)
   h.write(pad(hash, key, 0x36))
-  Mac{inner: h, opad: pad(hash, key, 0x5c)}
+  var o = sha256.new(hash)
+  o.write(pad(hash, key, 0x5c))
+  Mac{inner: h, outer: o}
 }
 
 /// The MAC of msg (m stays keyed for the next message).
@@ -52,8 +55,7 @@ pub fn (m: Mac) sum(msg: Bytes) -> Bytes {
   var h = m.inner.clone()
   h.write(msg)
   let d = h.sum()
-  var o = sha256.new(m.inner.hash)
-  o.write(m.opad)
+  var o = m.outer.clone()
   o.write(d)
   o.sum()
 }
