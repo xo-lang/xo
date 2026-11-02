@@ -16,6 +16,9 @@ func TestCollDump(t *testing.T) {
 	if os.Getenv("XO_COLL_MODE") == "alias" {
 		gen = Alias
 	}
+	if os.Getenv("XO_COLL_MODE") == "aliasempty" {
+		gen = AliasEmpty
+	}
 	if os.Getenv("XO_COLL_MODE") == "aliasbig" {
 		gen = AliasBig
 	}
