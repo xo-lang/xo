@@ -41,16 +41,16 @@ fn (l: Linker) half_pinned(out: Int) -> Bool {
 /// Whether relocation r of std's section x (object o) can change from
 /// one link with the half to the next.
 fn (l: Linker) half_moves(o: Int, x: ISect, r: IReloc) -> Bool {
-  if r.typ == R_GOT_LOAD_PAGE21 || r.typ == R_GOT_LOAD_PAGEOFF12 || r.typ == R_POINTER_TO_GOT || r.typ == R_TLVP_LOAD_PAGE21 || r.typ == R_TLVP_LOAD_PAGEOFF12 {
+  if r.typ() == R_GOT_LOAD_PAGE21 || r.typ() == R_GOT_LOAD_PAGEOFF12 || r.typ() == R_POINTER_TO_GOT || r.typ() == R_TLVP_LOAD_PAGE21 || r.typ() == R_TLVP_LOAD_PAGEOFF12 {
     return true
   }
   // an absolute pointer is a chained fixup: its value and its link to
   // the next one of its page
-  if r.typ == R_UNSIGNED && r.len == 3 {
+  if r.typ() == R_UNSIGNED && r.len() == 3 {
     return true
   }
-  if r.ext {
-    let (d, _i) = l.def_of(o, r.sym)
+  if r.ext() {
+    let (d, _i) = l.def_of(o, r.sym())
     if d < 0 || d >= l.prog_from {
       return true
     }
@@ -129,9 +129,9 @@ pub fn (s: StoreLink) capture_half() -> StdHalf? {
       let rs = x.relocs
       while q < rs.len() {
         let r = rs[q]
-        if (r.typ == R_ADDEND || r.typ == R_SUBTRACTOR) && q + 1 < rs.len() {
+        if (r.typ() == R_ADDEND || r.typ() == R_SUBTRACTOR) && q + 1 < rs.len() {
           let r2 = rs[q + 1]
-          if (r.typ == R_SUBTRACTOR && l.half_moves(o, x, r)) || l.half_moves(o, x, r2) {
+          if (r.typ() == R_SUBTRACTOR && l.half_moves(o, x, r)) || l.half_moves(o, x, r2) {
             keep.push(r)
             keep.push(r2)
           } else {
@@ -152,12 +152,12 @@ pub fn (s: StoreLink) capture_half() -> StdHalf? {
       // reads the instruction (or the addend) there
       var places: List[(Int, Int)] = []
       for r in keep {
-        if r.typ == R_ADDEND || r.typ == R_SUBTRACTOR {
+        if r.typ() == R_ADDEND || r.typ() == R_SUBTRACTOR {
           continue
         }
-        if r.len == 3 {
+        if r.len() == 3 {
           places.push((r.addr, 8))
-        } else if r.len == 2 {
+        } else if r.len() == 2 {
           places.push((r.addr, 4))
         }
       }

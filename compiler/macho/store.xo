@@ -65,13 +65,13 @@ fn (var r: SR) bytes() -> Bytes {
 /// flags (pcrel, len, ext, the type).
 fn sw_reloc(var b: BytesBuilder, x: IReloc) {
   sw32(b, x.addr)
-  sw32(b, x.sym)
-  sw32(b, (if x.pcrel { 1 } else { 0 }) | (x.len << 1) | (if x.ext { 8 } else { 0 }) | (x.typ << 4))
+  sw32(b, x.sym())
+  sw32(b, (if x.pcrel() { 1 } else { 0 }) | (x.len() << 1) | (if x.ext() { 8 } else { 0 }) | (x.typ() << 4))
 }
 
 fn rd_reloc(b: Bytes, at: Int) -> IReloc {
   let f = rd32(b, at + 8)
-  IReloc{addr: rd32(b, at), sym: rd32(b, at + 4), pcrel: (f & 1) != 0, len: (f >> 1) & 3, ext: (f & 8) != 0, typ: f >> 4}
+  new_ireloc(rd32(b, at), rd32(b, at + 4), (f & 1) != 0, (f >> 1) & 3, (f & 8) != 0, f >> 4)
 }
 
 /// store_encode: the store of objects (each made with
@@ -378,11 +378,11 @@ fn (l: Linker) uncoalesced_unwind(o: Int, s: ISect) -> ISect {
       continue
     }
     // the entry's function: a symbol, or a section and an address
-    let f = if r.ext {
-      let y = l.objs[o].syms[r.sym]
+    let f = if r.ext() {
+      let y = l.objs[o].syms[r.sym()]
       (y.sect, y.value)
     } else {
-      (r.sym, rd64(s.data, r.addr))
+      (r.sym(), rd64(s.data, r.addr))
     }
     if !gone.contains(f) {
       keep.push(r.addr)
@@ -622,9 +622,9 @@ pub fn store_prepare_cached(parsed: ParsedInputs, store: Bytes, opts: LinkOpts, 
     // (only keep_syms reads them: a cache hit has its answer)
     for t in if hit { [] } else { sects } {
       for x in t.relocs {
-        if x.ext && x.typ != R_ADDEND && x.sym < nsym && !named[x.sym] {
-          named[x.sym] = true
-          let y = v.sym(i, x.sym)
+        if x.ext() && x.typ() != R_ADDEND && x.sym() < nsym && !named[x.sym()] {
+          named[x.sym()] = true
+          let y = v.sym(i, x.sym())
           if (y.typ & N_TYPE) == N_UNDF {
             elsewhere.add(y.name)
           }
@@ -677,8 +677,8 @@ pub fn store_prepare_cached(parsed: ParsedInputs, store: Bytes, opts: LinkOpts, 
     for k in 0..sects.len() {
       for j in 0..sects[k].relocs.len() {
         let x = sects[k].relocs[j]
-        if x.ext && x.typ != R_ADDEND && x.sym < nsym {
-          sects[k].relocs[j].sym = symnew[x.sym]
+        if x.ext() && x.typ() != R_ADDEND && x.sym() < nsym {
+          sects[k].relocs[j] = x.with_sym(symnew[x.sym()])
         }
       }
     }

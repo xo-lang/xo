@@ -56,9 +56,9 @@ test "an x86_64 link: calls, stubs, rip relative data, pointers, and FDEs resolv
   for r in o.sects[0].relocs {
     let p = text + r.addr
     let disp = sext32(rd32(exe, text_off + r.addr))
-    let tail = if r.typ == RX_SIGNED_4 || (r.typ == RX_SIGNED && r.ext && bstr(o.syms[r.sym].name) == "_counter") { 4 } else { 0 }
+    let tail = if r.typ() == RX_SIGNED_4 || (r.typ() == RX_SIGNED && r.ext() && bstr(o.syms[r.sym()].name) == "_counter") { 4 } else { 0 }
     let dest = p + 4 + tail + disp
-    let what = if r.ext { bstr(o.syms[r.sym].name) } else { "section ${r.sym}" }
+    let what = if r.ext() { bstr(o.syms[r.sym()].name) } else { "section ${r.sym()}" }
     if what == "_helper" {
       expect(dest) == helper
     } else if what == "_puts" {

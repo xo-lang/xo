@@ -830,6 +830,18 @@ the passes (Builder.drop_std_facts) and an extern keeps no view (StdFact.without
 15.0 to 10.6 MB. Mac, 3 rounds: coll warm 56-57/37-38 to 52-53/33-34, edit 55-56/36-37 to 51-53/33; conc-spawn warm
 49-50/30-31 to 46/28, edit 49-50/30-31 to 45-46/27-28.
 
+Relocations (2026-11-02). macho.IReloc was six words, and a half's relocations were 3.3 of a small build's 15 MB
+at the link's end. It is two now, addr and the rest packed; the linker's output is unchanged. Mac, 3 rounds: coll
+warm 52-53/33-34 to 51/32, edit 51-53/33 to 50-51/31-32; conc-spawn warm 46/28 to 44-45/27-28, edit 45-46/27-28 to
+43-44/27. Mac --ab of coll's warm build, 3 rounds: wall 0.985 (0.966 to 1.02, within noise), instructions 0.998,
+max RSS 0.96.
+
+Mapped against live (2026-11-02, coll, Mac, same stack): the counter's peak is 78 to 86 MB with about 26 MB live at
+fe.build and 9 MB at link: "mapped within 2 times live" is not met. Chunks 11 to 17 (each thread that allocates takes
+a 4 MiB bump chunk and a 4 MiB page chunk, mostly untouched), free lists 13 to 14 MB, large cache 10 to 11 MB. Next,
+ranked: unmapping the large cache at phase ends (needs acceptance), a thread's first chunks smaller, the counter
+charging a chunk as it is used.
+
 Self build with THP off (2026-11-01, second linux/arm64 host, THP `always`, 3 alternating rounds, 8222cbb7c):
 max RSS default 3830, 3767, 3827 MB, PR_SET_THP_DISABLE 3800, 3873, 3860; emit's counter peak 4510, 4448, 4512
 against 4509, 4543, 4576. THP does not explain the Linux counter gap and does not move the self build's RSS,

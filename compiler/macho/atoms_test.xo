@@ -20,7 +20,7 @@ fn text_relocs(src: Bytes) -> (Int, Int) {
   for s in o.sects {
     if s.name == "__text" {
       for r in s.relocs {
-        if r.typ == R_BRANCH26 {
+        if r.typ() == R_BRANCH26 {
           n += 1
         }
       }

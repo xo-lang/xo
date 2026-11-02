@@ -163,7 +163,7 @@ fn (l: Linker) dw_fn_at(o: Int, s: ISect, rel_at: Map[Int, Int], off: Int) -> (I
 fn (l: Linker) dw_segs(o: Int, s: ISect, info: Bool, abbrev: Bytes) -> List[DwSeg] {
   var rel_at: Map[Int, Int] = {}
   for (i, r) in s.relocs.indexed() {
-    if r.typ == R_UNSIGNED && r.len == 3 && !r.pcrel {
+    if r.typ() == R_UNSIGNED && r.len() == 3 && !r.pcrel() {
       rel_at[r.addr] = i
     }
   }

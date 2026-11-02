@@ -35,8 +35,8 @@ fn (var l: Linker) count_unwind() {
     let s = l.objs[o].sects[k]
     n += s.size / 32
     for r in s.relocs {
-      if r.addr % 32 == 16 && r.ext {
-        pers.add(l.def_of(o, r.sym))
+      if r.addr % 32 == 16 && r.ext() {
+        pers.add(l.def_of(o, r.sym()))
       } else if r.addr % 32 == 24 {
         nlsda += 1
       }
@@ -187,10 +187,10 @@ fn (var l: Linker) cu_field(o: Int, s: ISect, rs: Map[Int, IReloc], at: Int) -> 
   let content = rd64(s.data, at)
   match rs.get(at) {
     Some(r) => {
-      if !r.ext {
-        return l.translate(o, r.sym, content)
+      if !r.ext() {
+        return l.translate(o, r.sym(), content)
       }
-      let (d, i) = l.def_of(o, r.sym)
+      let (d, i) = l.def_of(o, r.sym())
       if d < 0 {
         return 0
       }
@@ -228,8 +228,8 @@ fn (var l: Linker) unwind_info() {
       var pg = 0
       match rs.get(at + 16) {
         Some(r) => {
-          if r.ext {
-            let (d, i) = l.def_of(o, r.sym)
+          if r.ext() {
+            let (d, i) = l.def_of(o, r.sym())
             pg = l.got_addr(d, i)
           }
         }

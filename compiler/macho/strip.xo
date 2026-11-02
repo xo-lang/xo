@@ -122,11 +122,11 @@ fn eh_records(s: ISect) -> List[Int] {
 /// The (object, section) a relocation of object o reaches, (-1, -1) for an
 /// import or an absolute symbol.
 fn (l: Linker) reloc_sect(o: Int, s: ISect, r: IReloc) -> (Int, Int) {
-  if r.typ == R_ADDEND {
+  if r.typ() == R_ADDEND {
     return (-1, -1)
   }
-  if r.ext {
-    let (d, i) = l.def_of(o, r.sym)
+  if r.ext() {
+    let (d, i) = l.def_of(o, r.sym())
     if d < 0 {
       return (-1, -1)
     }
@@ -138,9 +138,9 @@ fn (l: Linker) reloc_sect(o: Int, s: ISect, r: IReloc) -> (Int, Int) {
   }
   // a section relative reference: the atom of the address the content
   // holds (a pointer), else every atom of that section
-  let ord = r.sym
+  let ord = r.sym()
   if l.objs[o].split.contains(ord) {
-    if r.typ == R_UNSIGNED && r.len == 3 {
+    if r.typ() == R_UNSIGNED && r.len() == 3 {
       return (o, atom_ordinal(l.objs[o], ord, rd64(s.data, r.addr)) - 1)
     }
     return (o, -1 - ord)
@@ -196,7 +196,7 @@ fn (l: Linker) unwind_refs() -> Map[(Int, Int), List[(Int, Int)]] {
           var fn_t = (-1, -1)
           var other: List[(Int, Int)] = []
           for r in s.relocs {
-            if r.addr >= at + 8 && r.addr < at + 4 + rd32(s.data, at) + 4 && r.typ != R_SUBTRACTOR {
+            if r.addr >= at + 8 && r.addr < at + 4 + rd32(s.data, at) + 4 && r.typ() != R_SUBTRACTOR {
               if r.addr == at + 8 {
                 fn_t = l.reloc_sect(o, s, r)
               } else {
@@ -407,11 +407,11 @@ fn (l: Linker) eh_live(o: Int, s: ISect, live: List[List[Bool]]) -> ISect {
   // start: otherwise the section is left whole
   var sub_at: Set[Int] = #{}
   for r in s.relocs {
-    if r.typ == R_SUBTRACTOR {
-      if !r.ext || r.len != 3 {
+    if r.typ() == R_SUBTRACTOR {
+      if !r.ext() || r.len() != 3 {
         return s
       }
-      let y = l.objs[o].syms[r.sym]
+      let y = l.objs[o].syms[r.sym()]
       if y.sect < 1 || y.value != s.addr || l.objs[o].sects[y.sect - 1].name != s.name {
         return s
       }
@@ -429,7 +429,7 @@ fn (l: Linker) eh_live(o: Int, s: ISect, live: List[List[Bool]]) -> ISect {
   // as the scan's did
   var fn_rel: Map[Int, IReloc] = {}
   for r in s.relocs {
-    if r.typ == R_UNSIGNED && r.ext {
+    if r.typ() == R_UNSIGNED && r.ext() {
       fn_rel[r.addr] = r
     }
   }
@@ -443,7 +443,7 @@ fn (l: Linker) eh_live(o: Int, s: ISect, live: List[List[Bool]]) -> ISect {
           // the function's own atom in this object (an FDE describes
           // this object's code; the name may resolve to another
           // object's copy of a weak definition)
-          let y = l.objs[o].syms[r.sym]
+          let y = l.objs[o].syms[r.sym()]
           let (t, j) = if (y.typ & N_TYPE) == 0x0e && y.sect >= 1 { (o, y.sect - 1) } else { l.reloc_sect(o, s, r) }
           k = t < 0 || j < 0 || live[t][j]
         }
