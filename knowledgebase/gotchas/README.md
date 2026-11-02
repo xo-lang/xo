@@ -1067,3 +1067,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [decision-narrowed-code-not.md](decision-narrowed-code-not.md): a decision narrowed a measured prototype (darwin only) in its text, the pushed code kept both platforms (0455 on Linux, f5392f175 to 2d90b65d9)
 - [wasmtime-trailers-need-te.md](wasmtime-trailers-need-te.md): wasmtime serve (hyper) sends a component's response trailers only to a request with `TE: trailers`, and only declared names (Observed)
 - [slot-group-holes-cross-frame-thresholds.md](slot-group-holes-cross-frame-thresholds.md): slot_group's unused slots pushed http.respond's frame past the 504 byte prologue; /alloc lost 22% (regression B).
+- [socket-writable-before-connect.md](socket-writable-before-connect.md): epoll reports a not yet connecting socket writable; registered before connect, a dial woke with SO_ERROR 0 and returned a connection that was never made; confirm with getpeername (Go's connect).
