@@ -2,7 +2,12 @@
 // them idle, and reports the server process's memory from /proc.
 //
 //	client -gencert DIR                     writes DIR/cert.pem and key.pem
-//	client -addr HOST:PORT -n N -mode h1|h2 -pid PID [-settle 5s]
+//	client -addr HOST:PORT -n N -mode h1|h2 -pid PID [-settle 5s] [-think 10ms]
+//
+// With -think D (h1), every connection sends a request D after each
+// response for the whole settle window instead of idling, and the server is
+// sampled at the window's end while that traffic runs: a connection that is
+// never idle longer than D never parks.
 package main
 
 import (
@@ -43,7 +48,7 @@ func status(pid int) string {
 	b, _ := os.ReadFile(fmt.Sprintf("/proc/%d/status", pid))
 	var keep []string
 	for _, l := range strings.Split(string(b), "\n") {
-		for _, p := range []string{"VmRSS", "RssAnon", "Threads"} {
+		for _, p := range []string{"VmHWM", "VmRSS", "RssAnon", "Threads"} {
 			if strings.HasPrefix(l, p+":") {
 				keep = append(keep, strings.Join(strings.Fields(l), " "))
 			}
@@ -124,6 +129,23 @@ func maps(pid int) string {
 	return out
 }
 
+// readResp reads one response's head and Content-Length body.
+func readResp(r *bufio.Reader) error {
+	var cl int
+	for {
+		l, e := r.ReadString('\n')
+		if e != nil {
+			return e
+		}
+		if l == "\r\n" {
+			break
+		}
+		fmt.Sscanf(strings.ToLower(l), "content-length: %d", &cl)
+	}
+	_, err := io.CopyN(io.Discard, r, int64(cl))
+	return err
+}
+
 func main() {
 	gen := flag.String("gencert", "", "write a self-signed cert and key to this directory and exit")
 	addr := flag.String("addr", "127.0.0.1:8080", "server address")
@@ -135,6 +157,7 @@ func main() {
 	srcs := flag.Int("srcs", 1, "h1: spread the connections over this many loopback source addresses (127.0.0.1, 127.0.0.2, ...): one source address reaches only about 28,000 ephemeral ports to one server address")
 	useTLS := flag.Bool("tls", false, "h1: speak HTTP/1.1 over TLS (ALPN http/1.1; the server needs TLS_CERT and TLS_KEY)")
 	again := flag.Bool("again", false, "h1: after the idle wait, send a second request on every held connection and fail if any fails")
+	think := flag.Duration("think", 0, "h1: during the settle window, send a request on every connection this long after each response, and sample while that runs (0: the connections idle)")
 	flag.Parse()
 	if *gen != "" {
 		gencert(*gen)
@@ -193,22 +216,7 @@ func main() {
 				if err == nil {
 					_, err = c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n"))
 					if err == nil {
-						r := bufio.NewReader(c)
-						var cl int
-						for {
-							l, e := r.ReadString('\n')
-							if e != nil {
-								err = e
-								break
-							}
-							if l == "\r\n" {
-								break
-							}
-							fmt.Sscanf(strings.ToLower(l), "content-length: %d", &cl)
-						}
-						if err == nil {
-							_, err = io.CopyN(io.Discard, r, int64(cl))
-						}
+						err = readResp(bufio.NewReader(c))
 					}
 					mu.Lock()
 					conns = append(conns, c)
@@ -225,10 +233,58 @@ func main() {
 		}()
 	}
 	wg.Wait()
-	time.Sleep(*settle)
+	var reqs, tfail int64
+	var twg sync.WaitGroup
+	if *think > 0 {
+		stop := time.Now().Add(*settle)
+		for _, c := range conns {
+			twg.Add(1)
+			go func(c net.Conn) {
+				defer twg.Done()
+				r := bufio.NewReader(c)
+				var k, f int64
+				for {
+					time.Sleep(*think)
+					if time.Now().After(stop) {
+						break
+					}
+					c.SetDeadline(time.Now().Add(10 * time.Second))
+					if _, err := c.Write([]byte("GET / HTTP/1.1\r\nHost: x\r\n\r\n")); err != nil {
+						f++
+						break
+					}
+					if err := readResp(r); err != nil {
+						f++
+						break
+					}
+					k++
+				}
+				mu.Lock()
+				reqs += k
+				tfail += f
+				mu.Unlock()
+			}(c)
+		}
+		// sample just before the window ends, while the requests still run
+		time.Sleep(*settle - *settle/20)
+	} else {
+		time.Sleep(*settle)
+	}
 	fmt.Printf("mode=%s n=%d ok=%d failed=%d\n", *mode, *n, ok, failed)
-	fmt.Printf("idle:   %s  %s\n        %s\n", status(*pid), smaps(*pid), maps(*pid))
+	label := "idle:  "
+	if *think > 0 {
+		label = "think: "
+	}
+	fmt.Printf("%s %s  %s\n        %s\n", label, status(*pid), smaps(*pid), maps(*pid))
 	bad := false
+	if *think > 0 {
+		twg.Wait()
+		fmt.Printf("think %v: %d requests over %v (%.0f/s), %d connections failed\n", *think, reqs, *settle,
+			float64(reqs)/settle.Seconds(), tfail)
+		if tfail != 0 {
+			bad = true
+		}
+	}
 	if failed != 0 {
 		fmt.Printf("FAIL: %d of %d connections failed\n", failed, *n)
 		bad = true
@@ -268,6 +324,7 @@ func main() {
 			}
 		}
 		fmt.Printf("second request: %d of %d held connections failed\n", nbad, len(conns)+len(clients))
+		fmt.Printf("after:  %s\n", status(*pid))
 		if nbad != 0 {
 			bad = true
 		}
