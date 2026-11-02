@@ -33,3 +33,9 @@ The runs on the linux/arm64 offload host (the server on CPUs 0-5, the
 load generator on 6-11, 20 interleaved rounds, each run's load average
 and CPU steal ticks logged) are in
 [bench/results/jitter-2026-10-30.md](../../results/jitter-2026-10-30.md).
+
+## Comparing revisions on the offload hosts
+
+`alloc-split.sh MODE SPECS NAME ROUNDS` builds each revision's server on the second host and measures all of
+them in one exclusive lease on the first (`alloc-build-remote.sh`, `alloc-measure-remote.sh`;
+knowledgebase/infrastructure/offload.md). Ratios are against v0.35.0's server built in the same job.

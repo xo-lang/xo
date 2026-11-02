@@ -110,6 +110,17 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   (`arm64-2 2 2 offload-2.env`); a job that names one (OFFLOAD_ENV, as
   ab-host.sh, tier.sh and amd64-run.sh do around their `--put`) stays on
   that host. Last verified: 2026-10-31.
+- `bench/perf/jitter/alloc-split.sh MODE SPECS NAME ROUNDS` (Lang 3, 2026-11-02, the Lead's bottleneck
+  review: host 1's exclusive lease held the builds of every revision): the builds of a /alloc comparison run on
+  the second host (`alloc-build-remote.sh`, lane pass2, not exclusive: the revisions' bundle, one xobuild and
+  one jitter server per spec, the base server from `$OFF_SEED`, the loadgen; MODE `last` builds every server
+  from the last revision's `bench/perf/jitter/xo`, `own` from each revision's own tree), the tar of binaries
+  (`bin/`, `env-pK`, `revs.txt`) goes second host, Mac (`offload.sh --get`, 43ca0e3d7), first host `/work/in`,
+  and `alloc-measure-remote.sh` holds the exclusive lease for the quiet wait and the rounds only (servers on
+  CPUs 0-5, loadgen 6-11). SPECS are `REV[+VAR=VALUE...]`: the VARs apply to that server's xo build and run
+  (`XO_ARM64_PAD=2`, `XO_DATA_SHIFT=64`). Measured on a two revision test: 33 s of build work off host 1 (warm
+  caches); a cold compiler build per revision is minutes. Both hosts' `$OFF_SEED` must be the same version
+  (v0.35.0 on 2026-11-02), since the base ratio is against it. Last verified: 2026-11-02.
 - `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
   self|self=a|edit PROG [FLAG...]|PROG [ARG...]` (`self=a`: BASE's
   compiler/xo as the self build's program, for a NEW whose compiler calls
