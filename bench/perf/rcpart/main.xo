@@ -1,0 +1,581 @@
+// Worst cases for a struct parameter borrowed though a path consumes some
+// of its leaves (decision 0149 and its revision): a leaf the body hands
+// back, updated by the caller, needs a count of one to update in place.
+// Usage: rcpart <workload> [repeats]; prints "<workload> <checksum>
+// <elapsed microseconds>"; rcpart check runs every row and names the slow
+// ones (internal/arm64 TestRcpartFlat). The self recursion keeps each
+// function out of line, so it keeps its parameter convention. Any change
+// to borrow inference runs this: each row is a way a borrowed leaf went
+// quadratic in the 2026-11-01 attempt (bench/results/part-borrow-2026-11-02.md).
+//
+//   strgrow  a Str leaf consumed and appended to in the callee, stored back
+//   strget   a getter of a Str leaf, appended to by the caller, stored back
+//   strwrap  a Str leaf put in a struct in the callee, appended to from it
+//   stredge  a Str leaf reaching an append through a merge in the callee
+//   strthru  a Str leaf returned by a function the callee passes it to,
+//            appended to there
+//   strmid   a getter's Str leaf appended to in a callee that holds its
+//            parameter borrowed
+//   strlist  a Str leaf read back from a local List, appended to
+//   stropt, strmap, strlistret, strpair, strtuple, strslot, stroptret,
+//   strafter, strnest   the leaf through an Option, a local Map, a List a
+//            callee returns, a struct or tuple result, a var parameter's
+//            field, an Option result, a loop over a returned List, and a
+//            nested struct, each appended to in the callee
+//   listget  the same with a List leaf
+//   mapput   decision 0149's first failure: a Map parameter consumed on all
+//            but one path and updated through it
+//   mapleaf  a Map leaf of a struct parameter, the other leaves only read
+//   setleaf  the same with a Set leaf
+
+struct Acc {
+  text: Str
+  note: Str
+  n: Int
+}
+
+struct Items {
+  xs: List[Int]
+  note: Str
+}
+
+struct Table {
+  m: Map[Int, Int]
+  note: Str
+}
+
+struct Outer {
+  acc: Acc
+  tag: Str
+}
+
+struct Tags {
+  s: Set[Int]
+  note: Str
+}
+
+struct Pair {
+  t: Str
+  k: Int
+}
+
+struct Slot {
+  t: Str
+}
+
+fn opt_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return opt_grow(a, d - 1)
+  }
+  let o: Str? = if a.n >= 0 { Some(a.text) } else { None }
+  var t = o ?? ""
+  t = t + "x"
+  t
+}
+
+fn nest_grow(o: Outer, d: Int) -> Str {
+  if d > 0 {
+    return nest_grow(o, d - 1)
+  }
+  var t = o.acc.text
+  t += "x"
+  t
+}
+
+fn add_leaf(t: Tags, k: Int, d: Int) -> Set[Int] {
+  if d > 0 {
+    return add_leaf(t, k, d - 1)
+  }
+  var x = t.s
+  x.add(k)
+  x
+}
+
+fn map_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return map_grow(a, d - 1)
+  }
+  var m: Map[Int, Str] = {}
+  m[1] = a.text
+  var t = m.get(1) ?? ""
+  t = t + "x"
+  t
+}
+
+fn mk(a: Acc, d: Int) -> List[Str] {
+  if d > 0 {
+    return mk(a, d - 1)
+  }
+  [a.text]
+}
+
+fn listret_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return listret_grow(a, d - 1)
+  }
+  let xs = mk(a, 1)
+  var t = xs[0]
+  t = t + "x"
+  t
+}
+
+fn pair_of(a: Acc, d: Int) -> Pair {
+  if d > 0 {
+    return pair_of(a, d - 1)
+  }
+  Pair{t: a.text, k: a.n}
+}
+
+fn pair_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return pair_grow(a, d - 1)
+  }
+  var t = pair_of(a, 1).t
+  t = t + "x"
+  t
+}
+
+fn tup_of(a: Acc, d: Int) -> (Str, Int) {
+  if d > 0 {
+    return tup_of(a, d - 1)
+  }
+  (a.text, a.n)
+}
+
+fn tup_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return tup_grow(a, d - 1)
+  }
+  let (s, _) = tup_of(a, 1)
+  var t = s
+  t = t + "x"
+  t
+}
+
+fn store(var s: Slot, a: Acc, d: Int) {
+  if d > 0 {
+    store(s, a, d - 1)
+    return
+  }
+  s.t = a.text
+}
+
+fn slot_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return slot_grow(a, d - 1)
+  }
+  var s = Slot{t: ""}
+  store(s, a, 1)
+  var t = s.t
+  s.t = ""
+  t = t + "x"
+  t
+}
+
+fn opt_of(a: Acc, d: Int) -> Str? {
+  if d > 0 {
+    return opt_of(a, d - 1)
+  }
+  if a.n < 0 {
+    return None
+  }
+  Some(a.text)
+}
+
+fn optret_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return optret_grow(a, d - 1)
+  }
+  var t = opt_of(a, 1) ?? ""
+  t = t + "x"
+  t
+}
+
+fn after_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return after_grow(a, d - 1)
+  }
+  var t = ""
+  for x in mk(a, 1) {
+    t = x
+  }
+  t = t + "x"
+  t
+}
+
+fn grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return grow(a, d - 1)
+  }
+  var t = a.text
+  t = t + "x"
+  t
+}
+
+struct Wrap {
+  t: Str
+  n: Int
+}
+
+fn wrap_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return wrap_grow(a, d - 1)
+  }
+  let w = Wrap{t: a.text, n: a.n}
+  var t = w.t
+  t = t + "x"
+  t
+}
+
+fn edge_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return edge_grow(a, d - 1)
+  }
+  var t = "start"
+  if a.n >= 0 {
+    t = a.text
+  }
+  t = t + "x"
+  t
+}
+
+fn pass(s: Str, d: Int) -> Str {
+  if d > 0 {
+    return pass(s, d - 1)
+  }
+  s
+}
+
+fn thru_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return thru_grow(a, d - 1)
+  }
+  var t = pass(a.text, 1)
+  t = t + "x"
+  t
+}
+
+fn text_of(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return text_of(a, d - 1)
+  }
+  a.text
+}
+
+fn mid_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return mid_grow(a, d - 1)
+  }
+  var t = text_of(a, 1)
+  t = t + "x"
+  t
+}
+
+fn list_grow(a: Acc, d: Int) -> Str {
+  if d > 0 {
+    return list_grow(a, d - 1)
+  }
+  let xs = [a.text]
+  var t = xs[0]
+  t = t + "x"
+  t
+}
+
+fn items_of(a: Items, d: Int) -> List[Int] {
+  if d > 0 {
+    return items_of(a, d - 1)
+  }
+  a.xs
+}
+
+fn put_maybe(m: Map[Int, Int], k: Int, d: Int) -> Map[Int, Int] {
+  if d > 0 {
+    return put_maybe(m, k, d - 1)
+  }
+  if k < 0 {
+    return {}
+  }
+  var x = m
+  x[k] = k + 1
+  x
+}
+
+fn put_leaf(t: Table, k: Int, d: Int) -> Map[Int, Int] {
+  if d > 0 {
+    return put_leaf(t, k, d - 1)
+  }
+  var x = t.m
+  x[k] = k + 1
+  x
+}
+
+fn strgrow() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strwrap() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: wrap_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn stredge() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: edge_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strthru() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: thru_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strmid() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: mid_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strlist() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: list_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strget() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    var t = text_of(a, 1)
+    t = t + "x"
+    a = Acc{text: t, note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn listget() -> Int {
+  var a = Items{xs: [], note: "n"}
+  for i in 0..200000 {
+    let note = a.note
+    var xs = items_of(a, 1)
+    xs.push(i)
+    a = Items{xs: xs, note: note}
+  }
+  a.xs.len()
+}
+
+fn mapput() -> Int {
+  var m: Map[Int, Int] = {}
+  for i in 0..200000 {
+    m = put_maybe(m, i % 50000, 1)
+  }
+  m.len()
+}
+
+fn mapleaf() -> Int {
+  var t = Table{m: {}, note: "n"}
+  for i in 0..200000 {
+    let note = t.note
+    t = Table{m: put_leaf(t, i % 50000, 1), note: note}
+  }
+  t.m.len()
+}
+
+const ROWS = ["strgrow", "strget", "strwrap", "stredge", "strthru", "strmid", "strlist", "stropt", "strmap", "strlistret", "strpair", "strtuple", "strslot", "stroptret", "strafter", "strnest", "listget", "mapput", "mapleaf", "setleaf"]
+
+fn stropt() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: opt_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strmap() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: map_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strlistret() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: listret_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strpair() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: pair_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strtuple() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: tup_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strslot() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: slot_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn stroptret() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: optret_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strafter() -> Int {
+  var a = Acc{text: "", note: "n", n: 0}
+  for _ in 0..200000 {
+    let note = a.note
+    let n = a.n
+    a = Acc{text: after_grow(a, 1), note: note, n: n + 1}
+  }
+  a.text.len() + a.n
+}
+
+fn strnest() -> Int {
+  var o = Outer{acc: Acc{text: "", note: "n", n: 0}, tag: "t"}
+  for _ in 0..200000 {
+    let tag = o.tag
+    let note = o.acc.note
+    o = Outer{acc: Acc{text: nest_grow(o, 1), note: note, n: 0}, tag: tag}
+  }
+  o.acc.text.len()
+}
+
+fn setleaf() -> Int {
+  var t = Tags{s: #{}, note: "n"}
+  for i in 0..200000 {
+    let note = t.note
+    t = Tags{s: add_leaf(t, i % 50000, 1), note: note}
+  }
+  t.s.len()
+}
+
+fn run(w: Str) -> Int {
+  match w {
+    "strgrow" => strgrow()
+    "strget" => strget()
+    "strwrap" => strwrap()
+    "stredge" => stredge()
+    "strthru" => strthru()
+    "strmid" => strmid()
+    "strlist" => strlist()
+    "stropt" => stropt()
+    "strmap" => strmap()
+    "strlistret" => strlistret()
+    "strpair" => strpair()
+    "strtuple" => strtuple()
+    "strslot" => strslot()
+    "stroptret" => stroptret()
+    "strafter" => strafter()
+    "strnest" => strnest()
+    "listget" => listget()
+    "mapput" => mapput()
+    "mapleaf" => mapleaf()
+    "setleaf" => setleaf()
+    _ => 0
+  }
+}
+
+/// The rows, each run until one turn is under SLOW_US: a row that copied
+/// its Str every turn takes about a second, a flat one a few milliseconds.
+const SLOW_US = 300000
+
+fn check(os: Os) {
+  var slow = 0
+  for w in ROWS {
+    var best = 1 << 60
+    for _ in 0..3 {
+      let t = os.clock.now()
+      let _ = run(w)
+      let us = os.clock.since(t).nanos() / 1000
+      if us < best {
+        best = us
+      }
+      if best < SLOW_US {
+        break
+      }
+    }
+    if best >= SLOW_US {
+      os.stdio.println("slow ${w} ${best}")
+      slow += 1
+    }
+  }
+  os.stdio.println("rcpart check: ${ROWS.len()} rows, ${slow} slow")
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = args.get(0) ?? "strgrow"
+  if w == "check" {
+    check(os)
+    return
+  }
+  let reps = Int.parse(args.get(1) ?? "1") ?? 1
+  let t = os.clock.now()
+  var sum = 0
+  for _ in 0..reps {
+    sum += run(w)
+  }
+  let us = os.clock.since(t).nanos() / 1000
+  os.stdio.println("${w} ${sum} ${us}")
+}
