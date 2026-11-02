@@ -446,3 +446,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0455](0455-small-first-chunks.md): a heap record's first chunks start at 256 KiB on darwin, the rest reserved (Accepted 2026-11-02; decision 0448 case (c), mapped within 2 times live).
 - [0454-heap-huge-pages.md](0454-heap-huge-pages.md): Accepted (owner, 2026-11-02): XO_THP=off makes the heap advise MADV_NOHUGEPAGE on Linux; default unchanged; a server default is the goal
 - [0456](0456-thp-dense.md): XO_THP=dense, a heap record's chunks take huge pages only once it has filled one (Proposed; Linux default for the owner; Go's density rule, decision 0454 follow-up).
+- [0457](0457-shared-page-heap.md): a shared, address ordered page heap for large blocks, page blocks and the threads' runs, with a whole huge page scavenger (Proposed; Go's mheap; stage 1 prototype first)
