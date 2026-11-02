@@ -20,3 +20,5 @@ XO_PROF_HEAP_RATE=16777216). Read the "samples lost" count in the .txt
 before trusting the top list. The in-use snapshot at a label
 (XO_PROF_HEAP_AT) is taken from the same table, so it has the same
 limit.
+
+Update 2026-11-01: CAP is 262,144 now (it filled with 2,000 TLS handshakes of about 880 allocations each); read 65536 above as 262144, and the 16 MiB rate still keeps a self build well inside it.

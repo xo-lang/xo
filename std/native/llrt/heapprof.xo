@@ -64,13 +64,14 @@ pub const S_ADDR = 8 + 8 * DEPTH
 pub const S_SIZE = S_ADDR + 8
 pub const S_FREED = S_ADDR + 16
 pub const SLOT = S_ADDR + 24
-/// The table's slots: 65,536 samples (32 GiB allocated at the default
-/// rate) in 36 MB of address space, its pages touched only as samples
-/// come.
-const CAP = 65536
+/// The table's slots: 262,144 samples (128 GiB allocated at the default
+/// rate) in 144 MB of address space, its pages touched only as samples
+/// come (65,536 until 2026-11-01, when 2,000 TLS handshakes, about 880
+/// allocations each, filled it).
+const CAP = 262144
 /// The address set's entries (slot + 1, 0 empty, -1 a freed one's, which
 /// an insert reuses): four per slot, so probes stay short.
-const SET_N = 262144
+const SET_N = 1048576
 const PROBES = 64
 /// The threads that can be sampled: an unwind record each, claimed on a
 /// thread's first sample.
