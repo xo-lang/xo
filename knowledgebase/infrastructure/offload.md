@@ -89,6 +89,26 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   ~/xo-lead/locks/offq; since 2026-10-31 amd64 jobs no longer use up
   the cap). A job whose ssh connection drops (its Mac side stopped) ends
   on the host too, within about 15 s, and its ticket goes with it.
+  Stopping a run (2026-11-02, after a stopped run went on on the amd64
+  host and its cleanup deleted the next run's directories): each run has
+  an id, and the host records the run's shell and its job (started with
+  setsid) in /work/offload.runs/ID (ssh host) or ~/xo-ci/runs/ID (WSL and
+  Git Bash). A TERM, INT or HUP to offload.sh (a TaskStop of the caller)
+  stops the local ssh and then, through a second ssh, every process of the
+  run on the host: the recorded PIDs and their descendants by /proc parent
+  links, the job's process group, and on Linux the job's session, which
+  also holds `timeout`'s own groups and orphans; TERM, then KILL after
+  3 s; by PID and group, never by name. That second ssh runs in a
+  process group of its own, since a TaskStop kills the caller's whole
+  group a moment after its TERM. Output now streams line by line (perl,
+  not tr and grep, which held it in a pipe buffer until the job ended).
+  Tested 2026-11-02 with a TaskStop of a sleeping job on the first arm64
+  host, the amd64 WSL host and Windows (nothing left, records removed),
+  and in scripts/lead/offload_test.sh. A kill -9 of offload.sh, which
+  runs no trap, ends its local ssh within 5 s (a watcher), and the ssh
+  host's wrapper then stops the job as above; the WSL and Windows kinds
+  have no such wrapper, so stop their callers with TERM. Last verified:
+  2026-11-02.
   Since 2026-10-31 (decision 0451 stage 2) the queue, the exclusive and
   backfill rules and the cap live in heavyd's lanes: offload.sh waits in
   the lane for its host (`arm64` for the ssh host, `amd64` for the WSL
