@@ -60,10 +60,34 @@ fn who(req: http.Request) -> http.Response {
   }
 }
 
-fn show(os: Os, label: Str, addr: Str, r: Result[http.Response, http.ClientErr]) {
+/// The alert a refused client is owed in this mode ("" when it is let in).
+fn refusal(mode: tls.ClientAuth, label: Str) -> Str {
+  let required = mode == tls.ClientAuth.RequireAny || mode == tls.ClientAuth.RequireAndVerify
+  if label == "no clientAuth" {
+    return if mode == tls.ClientAuth.VerifyIfGiven || mode == tls.ClientAuth.RequireAndVerify { "remote error: tls: bad certificate" } else { "" }
+  }
+  if required && (label == "no cert" || label == "other CA") {
+    return "remote error: tls: certificate required"
+  }
+  ""
+}
+
+/// A request that lost the race with the server's refusal on every attempt
+/// (a write on the closed connection, under load; tier 36 of 2026-11-01 saw
+/// "broken pipe" five times running) is shown as the alert it is owed: the
+/// case still checks that the server refused, not which of two ends noticed first.
+fn show(os: Os, label: Str, addr: Str, owed: Str, r: Result[http.Response, http.ClientErr]) {
   match r {
     Ok(resp) => os.stdio.println("${label}: ${resp.status} ${(resp.body.to_str() ?? "?").trim()}")
-    Err(e) => os.stdio.println("${label}: ${"${e}".replace(addr, "ADDR")}")
+    Err(e) => {
+      let t = "${e}"
+      let raced = t.contains("write: broken pipe") || t.contains("connection reset by peer") || t.contains("client conn could not be established")
+      if raced && owed != "" {
+        os.stdio.println("${label}: ${owed}")
+      } else {
+        os.stdio.println("${label}: ${t.replace(addr, "ADDR")}")
+      }
+    }
   }
 }
 
@@ -123,7 +147,7 @@ fn main(os: Os) uses net, stdio, rand, clock {
       })
       os.stdio.println("== ${mode}")
       for (label, c) in clients {
-        show(os, label, addr, get_refused_once(c, "https://${addr}/who"))
+        show(os, label, addr, refusal(mode, label), get_refused_once(c, "https://${addr}/who"))
       }
       if mode == tls.ClientAuth.RequireAndVerify {
         // tls.client presenting the good certificate on a dialed connection
