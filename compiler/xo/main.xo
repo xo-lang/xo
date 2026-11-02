@@ -2238,7 +2238,6 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   finish(os, ctx, o, c, root, bins, tests, ts)
 }
 
-/// The tasks of the parallel stages of a build (ssa insert_rc_jobs,
 /// The generated text t with the real paths in its .debug_str slots
 /// (arm64.dw_slots_text), for every reader but compiler/macho's
 /// assembler, whose objects are patched (arm64.dw_slots_obj).
@@ -2246,9 +2245,6 @@ fn dw_real(gm: (Bool, Str, Str), t: Str) -> Str {
   if gm.0 { arm64.dw_slots_text(t, gm.1, gm.2) } else { t }
 }
 
-/// arm64.generate_parallel, the parts' assembly): $XO_EMIT_JOBS, else
-/// the physical cores, at most 16 and a third of the memory in GB. The
-/// output does not depend on it.
 /// The heap bytes past which emit's workers wait for a running part
 /// before taking the next (decision 0448 stage 3, arm64 generate_cached):
 /// XO_EMIT_MEM (bytes, or with K, M, G; 0 or off: none, the default while
@@ -2264,6 +2260,10 @@ fn emit_mem_limit(os: Os) -> Int {
   (Int.parse(digits) ?? 0) * mult
 }
 
+/// The tasks of the parallel stages of a build (ssa insert_rc_jobs,
+/// arm64.generate_parallel, the parts' assembly): $XO_EMIT_JOBS, else
+/// the physical cores, at most 16 and a third of the memory in GB. The
+/// output does not depend on it.
 fn emit_jobs(os: Os) -> Int {
   let j = Int.parse(os.env.get("XO_EMIT_JOBS") ?? "") ?? 0
   if j > 0 {
