@@ -1,6 +1,6 @@
 # 0447: Xo programs on WASI preview 2 and the component model (wasi:http)
 
-Status: Accepted, direction and step 1 (owner, 2026-10-30): the hello-world wasi:http measurement first, later stages decided on its numbers; the owner approved installing wasmtime, wasm-tools, TinyGo and Rust's wasm32-wasip2 target on the linux/arm64 offload host. Proposed by xo-lang-4 the same day. Next stage accepted (owner, 2026-11-01) and done the same day: Xo writes the component sections, WASI 0.2 imports in place of preview 1.
+Status: Accepted, direction and step 1 (owner, 2026-10-30): the hello-world wasi:http measurement first, later stages decided on its numbers; the owner approved installing wasmtime, wasm-tools, TinyGo and Rust's wasm32-wasip2 target on the linux/arm64 offload host. Proposed by xo-lang-4 the same day. Next stage accepted (owner, 2026-11-01) and done the same day: Xo writes the component sections, WASI 0.2 imports in place of preview 1. Outgoing requests chosen (owner, 2026-11-01), done 2026-11-02. handle_stream and trailers accepted (owner, 2026-11-02), next.
 
 Next stage (owner, 2026-11-01): outgoing requests (`wasi:http/outgoing-handler`
 for std's HTTP client), before `handle_stream` and trailers.
@@ -472,3 +472,13 @@ What a component still does not do:
 - Found on the way: the 16 byte return area could not hold an `error-code`
   (case at 8, payload at 16); it is 128 bytes now, which also covers
   `outgoing-body.finish`'s error, which could have overrun it since step 1.
+
+## handle_stream and trailers accepted (owner, 2026-11-02)
+
+The owner accepted the next stage on 2026-11-02, after outgoing requests:
+a `handle_stream` route reads the request body from the host's
+input-stream as it arrives, and the response streams to its output-stream,
+in place of whole bodies; and trailers, both ways (incoming-body's
+`finish` future-trailers on requests, `outgoing-body.finish` with fields
+on responses), in place of failing. Queued after decision 0324's a1
+re-measure (xo-lang-4).
