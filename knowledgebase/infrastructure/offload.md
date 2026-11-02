@@ -45,7 +45,10 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
 
 - `scripts/lead/offload.sh SCRIPT|- [ARG...]` runs a bash script on the
   host as user `xo` under `flock /work/offload.lock` (one job at a time)
-  and exits with its status; `--put LOCAL REMOTE` copies a file. It needs
+  and exits with its status; `--put LOCAL REMOTE` copies a file (mode
+  644, owned by the host's ssh user: copy it before chmod in a job). REMOTE's
+  directory must exist: a missing one fails with scp's message and a hint
+  (scripts/lead/offload_test.sh; Last verified: 2026-11-02). It needs
   no heavy.sh slot (only ssh runs on the Mac). Exit 3: no offload.env;
   exit 4: no answer. On the arm64 host a job is stopped after
   `OFF_MAX_MIN` minutes holding the lock (default 180, exit 124, with a
