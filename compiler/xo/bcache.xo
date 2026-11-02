@@ -85,13 +85,23 @@ fn cache_id(os: Os) -> Str {
   // by the entry it reaches
   let (f0, f1) = sepcomp_fact_files(os, sp)
   let files = [f0, f1].filter(fn(f) { !f.is_empty() }).map(fn(f) { check.real_path(os.fs, f) })
-  let stamps = match check.stamp_files(os.fs, files, os.clock.now().unix_millis()) {
+  // a cache entry is keyed by its name alone, so it is never stamped: a
+  // stamp reads and hashes a file written within the settling window,
+  // and a facts entry the build before had just written is tens of MB
+  let other = files.filter(fn(f) { !facts_entry(f) })
+  let stamps = match check.stamp_files(os.fs, other, os.clock.now().unix_millis()) {
     Some(ss) => ss
     None => return id
   }
   var b = StrBuilder.new()
-  for st in stamps {
-    b.write(facts_id_line(st))
+  var k = 0
+  for f in files {
+    if facts_entry(f) {
+      b.write("key ${hostpath.base(f)}\n")
+    } else {
+      b.write(facts_id_line(stamps[k]))
+      k += 1
+    }
   }
   "${id} sepcomp ${crypto.sha256(b.freeze().bytes()).to_hex()}"
 }
@@ -100,11 +110,16 @@ fn cache_id(os: Os) -> Str {
 /// hex key and .stdf) by its name alone, any other file by its stamp
 /// (path, size, time and the settling window's hash).
 fn facts_id_line(st: check.FileStamp) -> Str {
-  let name = hostpath.base(st.path)
-  if name.len() == 69 && name.ends_with(".stdf") && name[0..64].runes().all(fn(r: Rune) -> Bool { r.is_digit() || (r >= 'a' && r <= 'f') }) {
-    return "key ${name}\n"
+  if facts_entry(st.path) {
+    return "key ${hostpath.base(st.path)}\n"
   }
   "${st.path.len()}:${st.path} ${st.size} ${st.mtime} ${st.sha}\n"
+}
+
+/// Whether facts file path is a cache entry (std/<64 hex digit key>.stdf).
+fn facts_entry(path: Str) -> Bool {
+  let name = hostpath.base(path)
+  name.len() == 69 && name.ends_with(".stdf") && name[0..64].runes().all(fn(r: Rune) -> Bool { r.is_digit() || (r >= 'a' && r <= 'f') })
 }
 
 /// XO_SEPCOMP_FACTS when XO_SEPCOMP=1, else "".
