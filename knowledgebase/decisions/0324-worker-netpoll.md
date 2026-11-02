@@ -285,3 +285,28 @@ Experiment b's run (3 rounds):
   and level at 256. Not enough to change the default without an `--ab` and
   a look at more connection counts.
 
+## Where the extra futex waits go, and lock spin rounds (2026-11-01, Xo Lang 4)
+
+Traced at 256 connections (futex_wait a request, by caller): 0.203 with worker
+polling, 0.141 with `XO_NETPOLL=0`. Of the +0.062, +0.050 are waits in
+`lock_slow`, not idle sleeps as predicted; `lock_mutex` a request is 0.170
+against 0.133, which by inference is the bench's store `Mutex`. Steals double,
+and earlier experiments here showed they are not the cost.
+
+Decision (owner, 2026-11-01): `lock_slow` spins 1600 rounds on Linux before it
+sleeps, in place of 100; other systems stay at 100 because they are not
+measured.
+
+- Against 100 on linux/arm64, 10 rounds: at 256 connections req/s +3.1%, p99
+  -1.5%, p99.9 +2.9%, ranges overlapping; at 32, req/s +1.5%, p99 and p99.9
+  level. `--ab`: self on amd64 wall 0.981, CPU 0.990; httpstreamsrv on arm64
+  wall 0.977, CPU 0.976; self on arm64, httpstreamsrv on amd64, and alloc within
+  noise. Oversubscribed at 2x CPUs, CPU does not rise. All of it is in
+  bench/results/lock-spin-2026-11-01.md.
+- It removes sleeps, not contention: `lock_slow` entries stay flat. It does not
+  close the gap to the poller thread in CPU a request at 256.
+- 3200 read higher in a sweep on an older main (c256: 100 222,833, 800 226,649,
+  1600 229,791, 3200 233,713, 3 rounds); 1600 is the value with `--ab` data, not a proven best.
+- Alternatives: leave 100 (forgoes the gain); a lock-specific fix to the store's
+  `Mutex` (the bench's, not the runtime's: helps one program); adaptive spinning
+  as glibc's (not tried).

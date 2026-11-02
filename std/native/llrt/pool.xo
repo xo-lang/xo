@@ -357,8 +357,11 @@ pub fn futex_wake(a: Int) {
 /// Takes the lock at l after its first try failed.
 pub fn lock_slow(l: Int) {
   stat(ST_LOCK_SLOW)
+  // Linux spins longer before a futex sleep (decision 0324's spin section:
+  // the HTTP bench's store lock at 256 connections); other systems as before
+  let rounds = if target.os == TargetOs.Linux { 1600 } else { 100 }
   var i = 0
-  while i < 100 {
+  while i < rounds {
     rt.spin_hint()
     if rt.slot_load(l, 0, RELAXED) == 0 && rt.slot_cas(l, 0, 0, 1, ACQUIRE) {
       return

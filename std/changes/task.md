@@ -1,5 +1,16 @@
 # std/task changes
 
+## 2026-11-01: perf: runtime locks spin longer before a futex sleep on Linux
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0324's futex trace, xo-lang-4
+- Go reference: none (Go's lock_futex spins differently, with its own active and passive rounds)
+- Test: bench/results/lock-spin-2026-11-01.md (10 round HTTP bench, `--ab`, oversubscribed)
+
+`lock_slow` spins 1600 rounds in place of 100 on Linux. Other systems are not
+measured and keep 100.
+
 ## 2026-11-01: fix: an idle main thread no longer locks a finished inline task's park
 
 - Kind: fix
