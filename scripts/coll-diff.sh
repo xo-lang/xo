@@ -9,9 +9,14 @@
 # SKIP_LLVM=1 (a host without clang, the amd64 offload host) compares native with the go backend only.
 # REF=llvm compares against llvm instead of go (goldens and corpora that the go backend
 # cannot build); programs that print timing or read the environment differ by themselves.
+# With REF=llvm a golden's want_go.txt (a pinned Go backend gap) is go's reference, and a
+# go run that times out is skipped, not counted as a difference.
 set -u
 XO=${1:?usage: coll-diff.sh XO DIR...}; shift
 JOBS=${JOBS:-4}
+# without timeout (macOS has none) every run exits 127 with no output and
+# all programs compare the same (2026-11-02)
+command -v timeout > /dev/null || { echo "coll-diff.sh: no timeout command (coreutils); every run would read exit 127"; exit 2; }
 case $(uname -m) in aarch64|arm64) NATIVE=arm64 ;; *) NATIVE=amd64 ;; esac
 T=$(mktemp -d); trap 'rm -rf "$T"' EXIT
 passes=$(XO_PASSES=-zz "$XO" build --backend=$NATIVE -o /dev/null "$1" 2>&1 | sed -n 's/.*the passes are //p' | head -1)
@@ -28,9 +33,20 @@ one() {
 	run go go; if [ -n "${SKIP_LLVM:-}" ]; then cp "$o/go.out" "$o/llvm.out"; else run llvm llvm; fi; run native $NATIVE; run alloff $NATIVE "$alloff"
 	ref=${REF:-go}
 	if grep -q -E "^BUILD FAILED|^exit (124|137)$" "$o/$ref.out"; then echo "REFFAIL $n: the $ref run failed or timed out (load?), not compared"; return; fi
+	# a golden whose want_go.txt pins a Go backend gap (native_sql: no
+	# Postgres driver, decision 0278 point 9) is compared on go against
+	# that file's exit status and stdout; a go run that timed out when go
+	# is not the reference is load, not a difference (map_log_model runs
+	# about 7 s on go, 2026-11-02)
+	skip=""
+	if [ $ref != go ] && [ -f "$d/want_go.txt" ]; then
+		awk 'NR==1{e=$0;next} /^--- stdout$/{s=1;next} /^--- stderr$/{s=0} s{print} END{print e}' "$d/want_go.txt" > "$o/want_go.out"
+		if cmp -s "$o/want_go.out" "$o/go.out"; then skip=go; echo "  $n: go matches its want_go.txt (a pinned gap)"; fi
+	fi
+	if [ $ref != go ] && grep -q -E "^exit (124|137)$" "$o/go.out"; then skip=go; echo "  $n: go timed out (load?), not compared"; fi
 	bad=""
 	for b in go llvm native alloff; do
-		[ $b = $ref ] || cmp -s "$o/$ref.out" "$o/$b.out" || bad="$bad $b"
+		[ $b = $ref ] || [ $b = "$skip" ] || cmp -s "$o/$ref.out" "$o/$b.out" || bad="$bad $b"
 	done
 	if [ -z "$bad" ]; then echo "same $n"; else
 		echo "DIFF $n:$bad"

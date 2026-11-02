@@ -123,6 +123,36 @@ func Internal_crypto_op(_ *Task, op string, a, b, c, d Bytes) Bytes {
 				strconv.FormatInt(ns[0], 10)+" "+
 				strconv.FormatInt(ns[1], 10)+" "+
 				strconv.FormatInt(ns[2], 10)+packed+" 0"), true
+		case "list_swap_at":
+			// a swap whose first index a guard proves in range and whose
+			// second it does not (std/native/internal.xo
+			// probe_list_swap_at): a's even bytes sum into i and its odd
+			// ones into j, and a j past the three element list faults as
+			// the native bounds check does, at the caller's .xo line
+			xs := []int64{1, 2, 3}
+			i, j := 0, 0
+			for k := 0; k < len(a); k++ {
+				if k%2 == 0 {
+					i += int(a[k])
+				} else {
+					j += int(a[k])
+				}
+			}
+			if i < len(xs) {
+				for range 2 {
+					if j >= len(xs) {
+						FaultHere("index %d out of range for List of length %d", j, len(xs))
+					}
+					xs[i], xs[j] = xs[j], xs[i]
+				}
+			}
+			bad := 0
+			for w, v := range xs {
+				if v != int64(1+w) {
+					bad++
+				}
+			}
+			r, ok = Bytes(strconv.Itoa(bad)), true
 		case "list_swap2":
 			// the cross-list element swap of decision 0374 step 3
 			// (std/native/internal.xo probe_list_swap2): Go's parallel

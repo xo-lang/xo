@@ -1061,3 +1061,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [generated-c-path-in-debug-info.md](generated-c-path-in-debug-info.md): a fixed point with OUT in the checkout differed by generated C paths; where the output goes can decide a pass (Observed)
 - [layout-file-module-root-and-seed.md](layout-file-module-root-and-seed.md): Observed 2026-11-01: a layout file is read at the module root, and the seed building the first stage must understand it
 - [byvalue-accessor-large-struct.md](byvalue-accessor-large-struct.md): a `fn (o: Big) f()` accessor read through a list element copies the whole struct; keep packed bits in a one word field struct (Observed)
+- [coll-diff-needs-timeout.md](coll-diff-needs-timeout.md): without `timeout` (macOS) every coll-diff run read exit 127 and all programs compared the same; the script now refuses (Observed)
