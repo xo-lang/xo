@@ -70,14 +70,16 @@ fn show(os: Os, label: Str, addr: Str, r: Result[http.Response, http.ClientErr])
 /// GET url, again when the request's write lost the race with the server's
 /// refusal (the server sends its alert and closes; a client that is still
 /// writing gets "broken pipe" or "connection reset" instead of the alert,
-/// a flake of the Go backend's net/http, tier 31 of 2026-10-31).
+/// a flake of the Go backend's net/http, tier 31 of 2026-10-31; the same
+/// race ends an HTTP/2 connection attempt as "http2: client conn could not be
+/// established", tier 35 of 2026-11-01).
 fn get_refused_once(c: http.Client, url: Str) -> Result[http.Response, http.ClientErr] {
   var r = c.get(url)
   for _ in 0..5 {
     match r {
       Err(e) => {
         let t = "${e}"
-        if t.contains("write: broken pipe") || t.contains("connection reset by peer") {
+        if t.contains("write: broken pipe") || t.contains("connection reset by peer") || t.contains("client conn could not be established") {
           r = c.get(url)
           continue
         }
