@@ -981,7 +981,19 @@ fn (var r: Reloc) idx(m: Map[Int, Int], i: Int) -> Int {
   }
 }
 
+// A warm build's records are at the offsets they were recorded at (only
+// module and file ids move), so most of an object's lists map to themselves:
+// each is shared when it does, no second copy of it while both records are
+// live (decision 0448 case (c)). The walk still sets r.ok.
+
 fn (var r: Reloc) objs_of(xs: List[Int]) -> List[Int] {
+  var same = true
+  for x in xs {
+    same = r.obj(x) == x && same
+  }
+  if same {
+    return xs
+  }
   var out = List[Int].with_capacity(xs.len())
   for x in xs {
     out.push(r.obj(x))
@@ -990,6 +1002,13 @@ fn (var r: Reloc) objs_of(xs: List[Int]) -> List[Int] {
 }
 
 fn (var r: Reloc) tys_of(xs: List[Int]) -> List[Int] {
+  var same = true
+  for x in xs {
+    same = r.ty(x) == x && same
+  }
+  if same {
+    return xs
+  }
   var out = List[Int].with_capacity(xs.len())
   for x in xs {
     out.push(r.ty(x))
@@ -1010,50 +1029,103 @@ fn (var r: Reloc) eff_item(e: EffItem) -> EffItem {
   x
 }
 
+fn (var r: Reloc) fields_of(xs: List[FieldInfo]) -> List[FieldInfo] {
+  var same = true
+  for f in xs {
+    same = r.ty(f.ty) == f.ty && same
+  }
+  if same {
+    return xs
+  }
+  var out: List[FieldInfo] = []
+  for f in xs {
+    var g = f
+    g.ty = r.ty(f.ty)
+    out.push(g)
+  }
+  out
+}
+
+fn (var r: Reloc) vfields_of(xs: List[VFieldInfo]) -> List[VFieldInfo] {
+  var same = true
+  for f in xs {
+    same = r.ty(f.ty) == f.ty && same
+  }
+  if same {
+    return xs
+  }
+  var out: List[VFieldInfo] = []
+  for f in xs {
+    var g = f
+    g.ty = r.ty(f.ty)
+    out.push(g)
+  }
+  out
+}
+
+fn (var r: Reloc) variants_of(xs: List[VariantInfo]) -> List[VariantInfo] {
+  var same = true
+  for v in xs {
+    for f in v.fields {
+      same = r.ty(f.ty) == f.ty && same
+    }
+  }
+  if same {
+    return xs
+  }
+  var out: List[VariantInfo] = []
+  for v in xs {
+    var w = v
+    w.fields = r.vfields_of(v.fields)
+    out.push(w)
+  }
+  out
+}
+
+fn (var r: Reloc) params_of(xs: List[ParamInfo]) -> List[ParamInfo] {
+  var same = true
+  for p in xs {
+    same = r.ty(p.ty) == p.ty && same
+  }
+  if same {
+    return xs
+  }
+  var out: List[ParamInfo] = []
+  for p in xs {
+    var g = p
+    g.ty = r.ty(p.ty)
+    out.push(g)
+  }
+  out
+}
+
+fn (var r: Reloc) obj_map(m: Map[Bytes, Int]) -> Map[Bytes, Int] {
+  var same = true
+  for (_k, f) in m.entries() {
+    same = r.obj(f) == f && same
+  }
+  if same {
+    return m
+  }
+  var out: Map[Bytes, Int] = {}
+  for (k, f) in m.entries() {
+    out[k] = r.obj(f)
+  }
+  out
+}
+
 fn (var r: Reloc) obj_rec(x0: Obj) -> Obj {
   var x = x0
   x.module = r.idx(r.mods, x0.module)
   x.tparams = r.objs_of(x0.tparams)
-  var fs: List[FieldInfo] = []
-  for f in x0.fields {
-    var g = f
-    g.ty = r.ty(f.ty)
-    fs.push(g)
-  }
-  x.fields = fs
-  var vs: List[VariantInfo] = []
-  for v in x0.variants {
-    var w = v
-    var vfs: List[VFieldInfo] = []
-    for vf in v.fields {
-      var g = vf
-      g.ty = r.ty(vf.ty)
-      vfs.push(g)
-    }
-    w.fields = vfs
-    vs.push(w)
-  }
-  x.variants = vs
+  x.fields = r.fields_of(x0.fields)
+  x.variants = r.variants_of(x0.variants)
   x.iface_meths = r.objs_of(x0.iface_meths)
   x.target = r.ty(x0.target)
-  var ms: Map[Bytes, Int] = {}
-  for (k, f) in x0.methods.entries() {
-    ms[k] = r.obj(f)
-  }
-  x.methods = ms
-  var ss: Map[Bytes, Int] = {}
-  for (k, f) in x0.statics.entries() {
-    ss[k] = r.obj(f)
-  }
-  x.statics = ss
+  x.methods = r.obj_map(x0.methods)
+  x.statics = r.obj_map(x0.statics)
   x.decl_file = r.idx(r.files, x0.decl_file)
-  var ps: List[ParamInfo] = []
-  for p in x0.params {
-    var g = p
-    g.ty = r.ty(p.ty)
-    ps.push(g)
-  }
-  x.params = ps
+  x.params = r.params_of(x0.params)
   x.result = r.ty(x0.result)
   x.err = r.ty(x0.err)
   x.recv = r.obj(x0.recv)

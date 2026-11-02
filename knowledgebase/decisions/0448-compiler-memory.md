@@ -743,7 +743,7 @@ rounds, 0 loaded): wall 0.987 (0.981 to 0.992), CPU 0.988, max RSS 0.902 (0.893 
 
 Open: Linux's counter runs over 1 GB above the Mac's at the same commit (emit 4720 to 4853
 MB in the two rounds that have an emit row, against 3539 to 3546 on the Mac; it already
-reads 4128 to 4425 at insert_rc.apply). Not explained. First check when this resumes: the
+reads 4128 to 4425 at insert_rc.apply). Not THP (measured below, 2026-11-01). First check when this resumes: the
 targets' size class limits (heapos.xo mid_default: 16 KiB on darwin, about 256 KiB elsewhere,
 so Linux keeps freed 32 KiB to 256 KiB blocks mapped and counted). Paused 2026-11-01: the
 owner moved priority to case (c).
@@ -815,6 +815,22 @@ the change is `module_jobs` over emit_jobs at the inline, gen, passes and rc sit
 conc-spawn's wall 1.018 (0.983 to 1.024), RSS 0.893; bench/perf/http's edit wall 1.038 (1.023 to 1.038), RSS 0.998, worse; self 1.007 within noise. Function count
 does not separate coll (339) from the HTTP server (494), whose bodies are larger. Most of its RSS gain may be THP's. Mac: about 1 MB.
 Decide again after the THP result, with values rather than functions as the measure.
+
+Relocation (2026-11-01). A warm build's records sit at the offsets they were recorded at: a trace of coll
+reads all four deltas 0, with only 106 of 107 module, module object and file ids renumbered. So nearly every
+list inside an object maps to itself, and relocate_export now shares each such list instead of copying it
+while both records are live (the walk still reports a reference it cannot map). A fast path returning the
+records whole never hit, because of those ids. Mac, 3 rounds, RSS / footprint MB: coll warm 59-60/40-41 to
+56-57/37-38, edit 55-56/36-37; conc-spawn warm 52/33-34 to 49-50/30-31, edit 49-50/30-31. Live at fe.build the rows
+Reloc.obj_rec (1.88 MB) and objs_of (0.9 MB) leave the profile.
+
+Self build with THP off (2026-11-01, second linux/arm64 host, THP `always`, 3 alternating rounds, 8222cbb7c):
+max RSS default 3830, 3767, 3827 MB, PR_SET_THP_DISABLE 3800, 3873, 3860; emit's counter peak 4510, 4448, 4512
+against 4509, 4543, 4576. THP does not explain the Linux counter gap and does not move the self build's RSS,
+though it does move small builds (above). Linux's counter (about 4500) now reads about 700 MB over its own max
+RSS (about 3800), while the Mac's counter (3539-3546) sits near its footprint (3551-3684), so the gap is mostly
+mapped and never resident: the real memory differs far less than the counter. Next for the parked item: the
+targets' size class limits (heapos.xo mid_default) with the counter read per class.
 
 ## Consequences
 
