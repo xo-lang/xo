@@ -1,0 +1,48 @@
+// Float stores paired by slp_f64 (decision 0323) through one element
+// while another index reads the list: vs[i] and vs[j] are different base
+// registers for the same element when i == j, so a load of vs[i] between
+// the two stores to vs[j] must see the first (arm64 native sank the pair
+// below that load and read the old z, until 2026-11-02).
+struct V {
+  x: Float
+  y: Float
+  z: Float
+  w: Float
+}
+
+fn mix(var vs: List[V], i: Int, j: Int, k: Float) {
+  let a = vs[i].x * k
+  let b = vs[i].y * k
+  vs[j].x = a + 1.0
+  vs[j].y = b + 1.0
+  let c = vs[i].x * 0.5
+  let d = vs[i].y * 0.5
+  vs[j].z = c - vs[i].w
+  vs[j].w = d - vs[i].z
+}
+
+fn chain(var vs: List[V], i: Int, j: Int) {
+  vs[j].x = vs[i].y + vs[i].x
+  vs[j].y = vs[i].x * vs[i].y
+  vs[j].z = vs[i].w / 4.0 + vs[j].x
+  vs[j].w = vs[i].z / 4.0 + vs[j].y
+}
+
+fn show(vs: List[V]) -> Str {
+  var s = ""
+  for v in vs {
+    s = "${s} (${v.x} ${v.y} ${v.z} ${v.w})"
+  }
+  s
+}
+
+fn main(os: Os) {
+  let k = Float(os.env.args().len() + 1)
+  var vs = [V{x: 1.0, y: 2.0, z: 3.0, w: 4.0}, V{x: 0.5, y: -1.5, z: 2.25, w: k}, V{x: k, y: 1.0e300, z: -0.0, w: 7.0}]
+  for (i, j) in [(0, 0), (0, 1), (1, 1), (2, 0), (2, 2), (1, 2)] {
+    mix(vs, i, j, k + 0.25)
+    os.stdio.println("mix ${i} ${j}${show(vs)}")
+    chain(vs, j, i)
+    os.stdio.println("chain ${j} ${i}${show(vs)}")
+  }
+}

@@ -377,11 +377,12 @@ fn (var g: G) slp_chain(ch: List[Int], ndef: Map[Int, Int], vuses: Map[Int, List
     }
   }
   // the loads the load packs take (they move to the earlier load)
-  var ldmem: Map[Int, Bool] = {}
+  // each load pack member's order: the order its pack loads at
+  var ldmem: Map[Int, Int] = {}
   for pk in packs {
     if pk.how == "load" {
-      ldmem[pk.m0.ord] = true
-      ldmem[pk.m1.ord] = true
+      ldmem[pk.m0.ord] = imin(pk.m0.ord, pk.m1.ord)
+      ldmem[pk.m1.ord] = imin(pk.m0.ord, pk.m1.ord)
     }
   }
   // store pairs of a pack's lanes, and faddp of its two lanes
@@ -475,19 +476,24 @@ fn (g: G) slp_loads_movable(at: List[SPos], o1: Int, o2: Int, base: Int, k: Int)
 
 /// Whether two Float stores to base at k and k + 8, at chain orders lo <
 /// hi, may both happen at hi: nothing between reads or writes that
-/// memory (no load of the base in [k, k + 16), no other write).
-fn (g: G) slp_stores_movable(at: List[SPos], lo: Int, hi: Int, base: Int, k: Int, ldmem: Map[Int, Bool]) -> Bool {
+/// memory (no load of the base in [k, k + 16), no load of another
+/// base, no other write).
+fn (g: G) slp_stores_movable(at: List[SPos], lo: Int, hi: Int, base: Int, k: Int, ldmem: Map[Int, Int]) -> Bool {
   for p in at[lo + 1..hi] {
     let x = g.blocks[p.b].insts[p.i]
-    if ldmem.contains(p.ord) {
-      // a load pack's member: it happens at the pack's earlier load
+    if (ldmem.get(p.ord) ?? hi) < lo {
+      // a load pack's member: it happens at the pack's earlier load,
+      // before both stores
       continue
     }
     if slp_writes(x) {
       return false
     }
     if let Some(l) = g.slp_load(x) {
-      if l.1 == base && l.0 + 8 > k && l.0 < k + 16 {
+      // another base may name the same memory: vs[i] and vs[j] with
+      // i == j (2026-11-02: `vs[j].z = c - vs[i].w; vs[j].w = d -
+      // vs[i].z` read the old z, the store of z sunk below that load)
+      if l.1 != base || (l.0 + 8 > k && l.0 < k + 16) {
         return false
       }
       continue

@@ -5,6 +5,7 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Fixed a native arm64 miscompile: two Float stores to adjacent fields of a list element (`vs[j].z = ...; vs[j].w = ...`) were paired into one store after a read of the same element through another index (`vs[i].z` with `i == j`), so the read saw the old value; since v0.25.0 (slp_f64, decision 0323). Golden `slp_alias_store`.
 - Fixed a native arm64 miscompile: a loop whose `var` Bool is set from a compare with a value read at the top of the loop (`let n = s.len(); s.add(x); c = s.len() != n`) could leave after one turn, because the compare ran after the moves into the loop header and saw the new value. `XO_PASSES=-thread_cset` works around it on older versions. Golden loop_compare_moved.
 - Runtime locks on Linux spin longer before they sleep (decision 0324): an HTTP server under
   256 connections +3.1% req/s on linux/arm64 with p99 -1.5% and p99.9 +2.9% (10 rounds, ranges
