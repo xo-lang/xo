@@ -251,7 +251,7 @@ there as a file: scp (`-O`, the legacy protocol, which both hosts take)
 to `%USERPROFILE%\xo-ci\off`, then `wsl -e bash -l` on it under
 `flock ~/xo-ci/offload.lock`.
 
-- `scripts/lead/amd64-run.sh REV NAME [GOLDEN|all|sample ...]` sends REV
+- `scripts/lead/amd64-run.sh REV NAME [GOLDEN|all|sample|passes ...]` sends REV
   as a bundle (the commits since `refs/offload-amd64/sent`) and runs
   `scripts/lead/offload-amd64.sh` there: xo built natively at REV with the
   seed, then `scripts/linux-goldens.sh` with `--backend=amd64` and no C
@@ -259,6 +259,15 @@ to `%USERPROFILE%\xo-ci\off`, then `wsl -e bash -l` on it under
   scripts/docker-amd64-sample.txt. Logs stay in `~/xo-ci/runNAME.out` in
   WSL. Unlike the Docker run on the Mac, nothing is emulated (no Rosetta)
   and xo is the native backend's, not a Go backend cross build.
+- `passes` (with or without goldens: `all passes`, which tier.sh runs
+  every 8 hours) is the x86 counterpart of internal/arm64's
+  TestGoldenPassesOff (2026-11-02): the pass hunt's goldens (`pass_*`,
+  `slp_*`, `rc_empty_*`) built with `--backend=amd64` and each x86 only
+  optional pass of compiler/arm64/passes.xo off alone (`XO_PASSES=-x86_...`,
+  which also bypasses the backend and function caches), then with every
+  optional pass off, each against its want.txt. A failure prints
+  `FAIL NAME with XO_PASSES=-PASS` (or `BUILD ...`), which tier.sh's
+  summary picks up; outputs in `~/xo-ci/runNAME.out/passes-PASS`.
 - First runs (2026-10-29, main aa9c8794d): xo built natively in 222 s
   (1 s when the host's cache has it); the 48 goldens of the sample in
   33 s, against about 15 minutes in Docker on the Mac; `all` (433, less
