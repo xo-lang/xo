@@ -1,0 +1,135 @@
+host load 7.09 7.00 7.31 1/310 3670103
+alloc-shift l2ashift (shifts 0,64): 5 revisions on Linux aarch64, 12 CPUs, go1.26.1
+p0s0 629e9cef9b9 built: xo_empty_list=4fc2e0 xo_sys_words=4fc308 xo_static=4fc388 
+p0s64 629e9cef9b9 built: xo_empty_list=4fc320 xo_sys_words=4fc348 xo_static=4fc3c8 
+p1s0 0992a036f22 built: xo_empty_list=4fc378 xo_sys_words=4fc3a0 xo_static=4fc480 
+p1s64 0992a036f22 built: xo_empty_list=4fc3f8 xo_sys_words=4fc420 xo_static=4fc500 
+p2s0 8f2ee5a1c7d built: xo_empty_list=4fc378 xo_sys_words=4fc400 xo_static=4fc480 
+p2s64 8f2ee5a1c7d built: xo_empty_list=4fc3f8 xo_sys_words=4fc480 xo_static=4fc500 
+p3s0 3ff5f4fd37a built: xo_empty_list=4fc0f8 xo_sys_words=4fc180 xo_static=4fc200 
+p3s64 3ff5f4fd37a built: xo_empty_list=4fc178 xo_sys_words=4fc200 xo_static=4fc280 
+p4s0 4e358890676 built: xo_empty_list=4fc378 xo_sys_words=4fc400 xo_static=4fc480 
+p4s64 4e358890676 built: xo_empty_list=4fc3f8 xo_sys_words=4fc480 xo_static=4fc500 
+loadgen flags: -c C -rate R -d 10s -warmup 2s -awake (default on in open loop); servers on CPUs 0-5, loadgen on 6-11
+p0s64 /alloc c256 rate0 r1 {"requests":1199078,"errors":0,"rps":119907.66253785566,"p50_us":1767,"p99_us":7578,"p999_us":11844,"max_us":23694,"sec_cv":0.15657109043028358,"rate":0,"cpu_us_per_req":45.935293617262595,"body_bytes":14683}
+  env p0s64 /alloc c256 rate0 r1: load_before 8.52 steal_ticks 0 load_after 10.97 lgerr 
+p1s0 /alloc c256 rate0 r1 {"requests":1351610,"errors":0,"rps":135160.88447799205,"p50_us":1625,"p99_us":6212,"p999_us":9286,"max_us":13203,"sec_cv":0.003350535296251007,"rate":0,"cpu_us_per_req":44.317517627126165,"body_bytes":14683}
+  env p1s0 /alloc c256 rate0 r1: load_before 10.97 steal_ticks 0 load_after 11.28 lgerr 
+p1s64 /alloc c256 rate0 r1 {"requests":1341658,"errors":0,"rps":134164.76630072508,"p50_us":1635,"p99_us":6246,"p999_us":9446,"max_us":13213,"sec_cv":0.003384662821013628,"rate":0,"cpu_us_per_req":44.683518452541556,"body_bytes":14683}
+  env p1s64 /alloc c256 rate0 r1: load_before 11.28 steal_ticks 0 load_after 10.12 lgerr 
+p2s0 /alloc c256 rate0 r1 {"requests":1343429,"errors":0,"rps":134342.8154177634,"p50_us":1641,"p99_us":6246,"p999_us":9328,"max_us":12648,"sec_cv":0.003182407822611044,"rate":0,"cpu_us_per_req":44.617169943480455,"body_bytes":14683}
+  env p2s0 /alloc c256 rate0 r1: load_before 10.12 steal_ticks 0 load_after 10.56 lgerr 
+p2s64 /alloc c256 rate0 r1 {"requests":1343977,"errors":0,"rps":134397.6685778251,"p50_us":1646,"p99_us":6254,"p999_us":9095,"max_us":13422,"sec_cv":0.004271373119111851,"rate":0,"cpu_us_per_req":44.61385871930844,"body_bytes":14683}
+  env p2s64 /alloc c256 rate0 r1: load_before 9.71 steal_ticks 0 load_after 9.91 lgerr 
+p3s0 /alloc c256 rate0 r1 {"requests":1468372,"errors":0,"rps":146836.87750216594,"p50_us":1505,"p99_us":5892,"p999_us":7542,"max_us":12120,"sec_cv":0.006423613976509729,"rate":0,"cpu_us_per_req":40.8275287188805,"body_bytes":14683}
+  env p3s0 /alloc c256 rate0 r1: load_before 9.91 steal_ticks 0 load_after 10.46 lgerr 
+p3s64 /alloc c256 rate0 r1 {"requests":1477967,"errors":0,"rps":147795.70725623437,"p50_us":1497,"p99_us":5874,"p999_us":7860,"max_us":12606,"sec_cv":0.0078959253798752,"rate":0,"cpu_us_per_req":40.56924139713539,"body_bytes":14683}
+  env p3s64 /alloc c256 rate0 r1: load_before 10.46 steal_ticks 0 load_after 10.39 lgerr 
+p4s0 /alloc c256 rate0 r1 {"requests":1347269,"errors":0,"rps":134726.26054874956,"p50_us":1637,"p99_us":6225,"p999_us":9224,"max_us":12575,"sec_cv":0.00548963282767947,"rate":0,"cpu_us_per_req":44.47515678012335,"body_bytes":14683}
+  env p4s0 /alloc c256 rate0 r1: load_before 9.64 steal_ticks 0 load_after 9.86 lgerr 
+p4s64 /alloc c256 rate0 r1 {"requests":1337327,"errors":0,"rps":133732.66037501273,"p50_us":1650,"p99_us":6239,"p999_us":9267,"max_us":13509,"sec_cv":0.00557134450445266,"rate":0,"cpu_us_per_req":44.79831783849425,"body_bytes":14683}
+  env p4s64 /alloc c256 rate0 r1: load_before 9.86 steal_ticks 0 load_after 10.26 lgerr 
+p0s0 /alloc c256 rate0 r1 {"requests":1335566,"errors":0,"rps":133556.45024315233,"p50_us":1658,"p99_us":6288,"p999_us":9689,"max_us":14039,"sec_cv":0.0035459257059160896,"rate":0,"cpu_us_per_req":44.879848693362966,"body_bytes":14683}
+  env p0s0 /alloc c256 rate0 r1: load_before 10.26 steal_ticks 0 load_after 10.88 lgerr 
+p0s64 /alloc c32 rate0 r1 {"requests":1315188,"errors":0,"rps":131518.76652847393,"p50_us":221,"p99_us":575,"p999_us":3203,"max_us":6338,"sec_cv":0.002662503995411992,"rate":0,"cpu_us_per_req":45.392749933849764,"body_bytes":14683}
+  env p0s64 /alloc c32 rate0 r1: load_before 10.88 steal_ticks 0 load_after 11.12 lgerr 
+p1s0 /alloc c32 rate0 r1 {"requests":1336970,"errors":0,"rps":133696.7130467448,"p50_us":216,"p99_us":575,"p999_us":3189,"max_us":6351,"sec_cv":0.0051919334777027855,"rate":0,"cpu_us_per_req":44.69060637112276,"body_bytes":14683}
+  env p1s0 /alloc c32 rate0 r1: load_before 10.23 steal_ticks 0 load_after 10.27 lgerr 
+p1s64 /alloc c32 rate0 r1 {"requests":1323368,"errors":0,"rps":132336.18402799784,"p50_us":219,"p99_us":574,"p999_us":3200,"max_us":7538,"sec_cv":0.00419134929157662,"rate":0,"cpu_us_per_req":45.127281300439485,"body_bytes":14683}
+  env p1s64 /alloc c32 rate0 r1: load_before 10.27 steal_ticks 0 load_after 10.88 lgerr 
+p2s0 /alloc c32 rate0 r1 {"requests":1333827,"errors":0,"rps":133382.5037543222,"p50_us":217,"p99_us":573,"p999_us":3188,"max_us":6405,"sec_cv":0.0022918386450651337,"rate":0,"cpu_us_per_req":44.80341153687847,"body_bytes":14683}
+  env p2s0 /alloc c32 rate0 r1: load_before 10.88 steal_ticks 0 load_after 10.25 lgerr 
+p2s64 /alloc c32 rate0 r1 {"requests":1321737,"errors":0,"rps":132173.61017481453,"p50_us":220,"p99_us":567,"p999_us":3209,"max_us":6403,"sec_cv":0.004917461517118693,"rate":0,"cpu_us_per_req":45.18296756465167,"body_bytes":14683}
+  env p2s64 /alloc c32 rate0 r1: load_before 10.25 steal_ticks 0 load_after 10.60 lgerr 
+p3s0 /alloc c32 rate0 r1 {"requests":1443384,"errors":0,"rps":144338.34761961366,"p50_us":200,"p99_us":534,"p999_us":3155,"max_us":6286,"sec_cv":0.006503730150244899,"rate":0,"cpu_us_per_req":41.20178691186822,"body_bytes":14683}
+  env p3s0 /alloc c32 rate0 r1: load_before 10.60 steal_ticks 0 load_after 10.64 lgerr 
+p3s64 /alloc c32 rate0 r1 {"requests":1461236,"errors":0,"rps":146123.5439031715,"p50_us":198,"p99_us":525,"p999_us":3151,"max_us":6390,"sec_cv":0.00584034738304087,"rate":0,"cpu_us_per_req":40.75317060351647,"body_bytes":14683}
+  env p3s64 /alloc c32 rate0 r1: load_before 10.64 steal_ticks 0 load_after 11.09 lgerr 
+p4s0 /alloc c32 rate0 r1 {"requests":1331488,"errors":0,"rps":133148.33671036243,"p50_us":218,"p99_us":560,"p999_us":3202,"max_us":6849,"sec_cv":0.00447842216355367,"rate":0,"cpu_us_per_req":44.88211684972001,"body_bytes":14683}
+  env p4s0 /alloc c32 rate0 r1: load_before 11.09 steal_ticks 0 load_after 11.31 lgerr 
+p4s64 /alloc c32 rate0 r1 {"requests":1319796,"errors":0,"rps":131979.2072958687,"p50_us":220,"p99_us":567,"p999_us":3207,"max_us":10838,"sec_cv":0.003317782438644075,"rate":0,"cpu_us_per_req":45.24941733419407,"body_bytes":14683}
+  env p4s64 /alloc c32 rate0 r1: load_before 10.40 steal_ticks 0 load_after 10.88 lgerr 
+p0s0 /alloc c32 rate0 r1 {"requests":1321559,"errors":0,"rps":132155.7677913699,"p50_us":220,"p99_us":575,"p999_us":3189,"max_us":8853,"sec_cv":0.004595323936186104,"rate":0,"cpu_us_per_req":45.2117536939327,"body_bytes":14683}
+  env p0s0 /alloc c32 rate0 r1: load_before 10.88 steal_ticks 0 load_after 10.90 lgerr 
+p1s0 /alloc c256 rate0 r2 {"requests":1348911,"errors":0,"rps":134890.72223853235,"p50_us":1637,"p99_us":6311,"p999_us":9068,"max_us":12697,"sec_cv":0.001490490820557275,"rate":0,"cpu_us_per_req":44.44325830243804,"body_bytes":14683}
+  env p1s0 /alloc c256 rate0 r2: load_before 10.90 steal_ticks 0 load_after 9.83 lgerr 
+p1s64 /alloc c256 rate0 r2 {"requests":1347590,"errors":0,"rps":134758.70908289883,"p50_us":1638,"p99_us":6211,"p999_us":9707,"max_us":14074,"sec_cv":0.0013444075766587435,"rate":0,"cpu_us_per_req":44.50166593696896,"body_bytes":14683}
+  env p1s64 /alloc c256 rate0 r2: load_before 9.83 steal_ticks 0 load_after 10.09 lgerr 
+p2s0 /alloc c256 rate0 r2 {"requests":1340941,"errors":0,"rps":134093.88426975897,"p50_us":1654,"p99_us":6250,"p999_us":9033,"max_us":13429,"sec_cv":0.0025676890154576176,"rate":0,"cpu_us_per_req":44.7148681411039,"body_bytes":14683}
+  env p2s0 /alloc c256 rate0 r2: load_before 10.09 steal_ticks 0 load_after 10.47 lgerr 
+p2s64 /alloc c256 rate0 r2 {"requests":1347723,"errors":0,"rps":134772.21963532543,"p50_us":1647,"p99_us":6229,"p999_us":9381,"max_us":14156,"sec_cv":0.0018248343661041275,"rate":0,"cpu_us_per_req":44.48243444684108,"body_bytes":14683}
+  env p2s64 /alloc c256 rate0 r2: load_before 10.47 steal_ticks 0 load_after 11.03 lgerr 
+p3s0 /alloc c256 rate0 r2 {"requests":1481676,"errors":0,"rps":148167.54991936812,"p50_us":1496,"p99_us":5808,"p999_us":7436,"max_us":12446,"sec_cv":0.0031380181847167014,"rate":0,"cpu_us_per_req":40.447439251226314,"body_bytes":14683}
+  env p3s0 /alloc c256 rate0 r2: load_before 11.03 steal_ticks 0 load_after 11.25 lgerr 
+p3s64 /alloc c256 rate0 r2 {"requests":1479856,"errors":0,"rps":147985.45441190994,"p50_us":1490,"p99_us":5840,"p999_us":7672,"max_us":12027,"sec_cv":0.0016194858380582523,"rate":0,"cpu_us_per_req":40.503940923981794,"body_bytes":14683}
+  env p3s64 /alloc c256 rate0 r2: load_before 10.35 steal_ticks 0 load_after 10.69 lgerr 
+p4s0 /alloc c256 rate0 r2 {"requests":1354814,"errors":0,"rps":135481.34857128008,"p50_us":1628,"p99_us":6221,"p999_us":9050,"max_us":13431,"sec_cv":0.0028810628184320086,"rate":0,"cpu_us_per_req":44.24223546553254,"body_bytes":14683}
+  env p4s0 /alloc c256 rate0 r2: load_before 10.69 steal_ticks 0 load_after 11.05 lgerr 
+p4s64 /alloc c256 rate0 r2 {"requests":1350597,"errors":0,"rps":135059.43826831458,"p50_us":1638,"p99_us":6217,"p999_us":9113,"max_us":12332,"sec_cv":0.0034210331178266837,"rate":0,"cpu_us_per_req":44.38037401238119,"body_bytes":14683}
+  env p4s64 /alloc c256 rate0 r2: load_before 11.05 steal_ticks 0 load_after 11.54 lgerr 
+p0s0 /alloc c256 rate0 r2 {"requests":1349297,"errors":0,"rps":134929.59255556544,"p50_us":1637,"p99_us":6183,"p999_us":8887,"max_us":13299,"sec_cv":0.0020131866592783343,"rate":0,"cpu_us_per_req":44.43795546866257,"body_bytes":14683}
+  env p0s0 /alloc c256 rate0 r2: load_before 11.54 steal_ticks 0 load_after 11.69 lgerr 
+p0s64 /alloc c256 rate0 r2 {"requests":1344962,"errors":0,"rps":134495.89115708513,"p50_us":1636,"p99_us":6226,"p999_us":9285,"max_us":12129,"sec_cv":0.003656838360162941,"rate":0,"cpu_us_per_req":44.58862034763808,"body_bytes":14683}
+  env p0s64 /alloc c256 rate0 r2: load_before 10.75 steal_ticks 0 load_after 11.10 lgerr 
+p1s0 /alloc c32 rate0 r2 {"requests":1339092,"errors":0,"rps":133909.1140169579,"p50_us":216,"p99_us":567,"p999_us":3191,"max_us":6444,"sec_cv":0.0030289082654457685,"rate":0,"cpu_us_per_req":44.612319392543604,"body_bytes":14683}
+  env p1s0 /alloc c32 rate0 r2: load_before 11.10 steal_ticks 0 load_after 11.36 lgerr 
+p1s64 /alloc c32 rate0 r2 {"requests":1324653,"errors":0,"rps":132464.4665203302,"p50_us":219,"p99_us":567,"p999_us":3211,"max_us":8749,"sec_cv":0.003557869849072451,"rate":0,"cpu_us_per_req":45.08350488769512,"body_bytes":14683}
+  env p1s64 /alloc c32 rate0 r2: load_before 11.36 steal_ticks 0 load_after 11.39 lgerr 
+p2s0 /alloc c32 rate0 r2 {"requests":1321312,"errors":0,"rps":132130.59818476447,"p50_us":220,"p99_us":569,"p999_us":3189,"max_us":6440,"sec_cv":0.0032837131294329047,"rate":0,"cpu_us_per_req":45.189932430796055,"body_bytes":14683}
+  env p2s0 /alloc c32 rate0 r2: load_before 10.48 steal_ticks 0 load_after 10.56 lgerr 
+p2s64 /alloc c32 rate0 r2 {"requests":1323072,"errors":0,"rps":132306.55384125235,"p50_us":220,"p99_us":566,"p999_us":3188,"max_us":6415,"sec_cv":0.004148128097582247,"rate":0,"cpu_us_per_req":45.16760992599042,"body_bytes":14683}
+  env p2s64 /alloc c32 rate0 r2: load_before 10.56 steal_ticks 0 load_after 11.08 lgerr 
+p3s0 /alloc c32 rate0 r2 {"requests":1477104,"errors":0,"rps":147709.97032646733,"p50_us":196,"p99_us":518,"p999_us":3130,"max_us":6316,"sec_cv":0.002551180156682689,"rate":0,"cpu_us_per_req":40.32214387070917,"body_bytes":14683}
+  env p3s0 /alloc c32 rate0 r2: load_before 11.08 steal_ticks 0 load_after 11.30 lgerr 
+p3s64 /alloc c32 rate0 r2 {"requests":1474730,"errors":0,"rps":147472.56427756159,"p50_us":196,"p99_us":518,"p999_us":3124,"max_us":6444,"sec_cv":0.003141835352662217,"rate":0,"cpu_us_per_req":40.34636848779098,"body_bytes":14683}
+  env p3s64 /alloc c32 rate0 r2: load_before 11.30 steal_ticks 0 load_after 11.48 lgerr 
+p4s0 /alloc c32 rate0 r2 {"requests":1323364,"errors":0,"rps":132336.25161136105,"p50_us":220,"p99_us":565,"p999_us":3202,"max_us":6246,"sec_cv":0.0036766408985390566,"rate":0,"cpu_us_per_req":45.172756701859804,"body_bytes":14683}
+  env p4s0 /alloc c32 rate0 r2: load_before 10.56 steal_ticks 0 load_after 10.71 lgerr 
+p4s64 /alloc c32 rate0 r2 {"requests":1321377,"errors":0,"rps":132136.7854548805,"p50_us":220,"p99_us":565,"p999_us":3204,"max_us":6231,"sec_cv":0.0033096195461089677,"rate":0,"cpu_us_per_req":45.21798093958045,"body_bytes":14683}
+  env p4s64 /alloc c32 rate0 r2: load_before 10.71 steal_ticks 0 load_after 11.19 lgerr 
+p0s0 /alloc c32 rate0 r2 {"requests":1330214,"errors":0,"rps":133021.1610540884,"p50_us":218,"p99_us":572,"p999_us":3186,"max_us":6259,"sec_cv":0.004813622372022956,"rate":0,"cpu_us_per_req":44.90254951458938,"body_bytes":14683}
+  env p0s0 /alloc c32 rate0 r2: load_before 11.19 steal_ticks 0 load_after 11.00 lgerr 
+p0s64 /alloc c32 rate0 r2 {"requests":1329711,"errors":0,"rps":132971.00686710677,"p50_us":218,"p99_us":569,"p999_us":3190,"max_us":6246,"sec_cv":0.004226073402715257,"rate":0,"cpu_us_per_req":44.92705557824219,"body_bytes":14683}
+  env p0s64 /alloc c32 rate0 r2: load_before 10.20 steal_ticks 0 load_after 10.25 lgerr 
+p1s64 /alloc c256 rate0 r3 {"requests":1347412,"errors":0,"rps":134740.55879662881,"p50_us":1646,"p99_us":6288,"p999_us":9441,"max_us":13925,"sec_cv":0.005185539592486285,"rate":0,"cpu_us_per_req":44.500123199140276,"body_bytes":14683}
+  env p1s64 /alloc c256 rate0 r3: load_before 10.25 steal_ticks 0 load_after 10.68 lgerr 
+p2s0 /alloc c256 rate0 r3 {"requests":1343229,"errors":0,"rps":134322.56302498616,"p50_us":1647,"p99_us":6223,"p999_us":9098,"max_us":12120,"sec_cv":0.002028222510223011,"rate":0,"cpu_us_per_req":44.6387027081756,"body_bytes":14683}
+  env p2s0 /alloc c256 rate0 r3: load_before 10.68 steal_ticks 0 load_after 10.90 lgerr 
+p2s64 /alloc c256 rate0 r3 {"requests":1349448,"errors":0,"rps":134944.55703232507,"p50_us":1635,"p99_us":6211,"p999_us":9202,"max_us":12243,"sec_cv":0.0043996745095628296,"rate":0,"cpu_us_per_req":44.432982967850556,"body_bytes":14683}
+  env p2s64 /alloc c256 rate0 r3: load_before 10.90 steal_ticks 0 load_after 11.30 lgerr 
+p3s0 /alloc c256 rate0 r3 {"requests":1488697,"errors":0,"rps":148869.31721232465,"p50_us":1478,"p99_us":5868,"p999_us":7974,"max_us":14386,"sec_cv":0.0034211079304917362,"rate":0,"cpu_us_per_req":40.28354997692613,"body_bytes":14683}
+  env p3s0 /alloc c256 rate0 r3: load_before 10.39 steal_ticks 0 load_after 10.72 lgerr 
+p3s64 /alloc c256 rate0 r3 {"requests":1486983,"errors":0,"rps":148697.9827082445,"p50_us":1494,"p99_us":5803,"p999_us":7643,"max_us":20580,"sec_cv":0.0033857283851627326,"rate":0,"cpu_us_per_req":40.32325857121433,"body_bytes":14683}
+  env p3s64 /alloc c256 rate0 r3: load_before 10.72 steal_ticks 0 load_after 10.80 lgerr 
+p4s0 /alloc c256 rate0 r3 {"requests":1354043,"errors":0,"rps":135403.82828014303,"p50_us":1625,"p99_us":6200,"p999_us":9395,"max_us":12519,"sec_cv":0.0042725529571697235,"rate":0,"cpu_us_per_req":44.282197832712846,"body_bytes":14683}
+  env p4s0 /alloc c256 rate0 r3: load_before 10.80 steal_ticks 0 load_after 10.11 lgerr 
+p4s64 /alloc c256 rate0 r3 {"requests":1345228,"errors":0,"rps":134522.7147395034,"p50_us":1643,"p99_us":6210,"p999_us":9262,"max_us":12771,"sec_cv":0.0019039381112297832,"rate":0,"cpu_us_per_req":44.57236988822713,"body_bytes":14683}
+  env p4s64 /alloc c256 rate0 r3: load_before 10.11 steal_ticks 0 load_after 10.56 lgerr 
+p0s0 /alloc c256 rate0 r3 {"requests":1342947,"errors":0,"rps":134293.0923371037,"p50_us":1637,"p99_us":6258,"p999_us":9836,"max_us":17067,"sec_cv":0.003777476141489073,"rate":0,"cpu_us_per_req":44.65552251875912,"body_bytes":14683}
+  env p0s0 /alloc c256 rate0 r3: load_before 10.56 steal_ticks 0 load_after 11.15 lgerr 
+p0s64 /alloc c256 rate0 r3 {"requests":1334754,"errors":0,"rps":133475.21308131158,"p50_us":1654,"p99_us":6245,"p999_us":9495,"max_us":14502,"sec_cv":0.002616472992107325,"rate":0,"cpu_us_per_req":44.907151430151174,"body_bytes":14683}
+  env p0s64 /alloc c256 rate0 r3: load_before 11.15 steal_ticks 0 load_after 11.11 lgerr 
+p1s0 /alloc c256 rate0 r3 {"requests":1343631,"errors":0,"rps":134362.64926705678,"p50_us":1638,"p99_us":6247,"p999_us":9291,"max_us":14019,"sec_cv":0.003253595629023945,"rate":0,"cpu_us_per_req":44.625347286569,"body_bytes":14683}
+  env p1s0 /alloc c256 rate0 r3: load_before 11.11 steal_ticks 0 load_after 11.32 lgerr 
+p1s64 /alloc c32 rate0 r3 {"requests":1330936,"errors":0,"rps":133093.3021371898,"p50_us":217,"p99_us":573,"p999_us":3199,"max_us":6355,"sec_cv":0.004200151015109245,"rate":0,"cpu_us_per_req":44.84813695023652,"body_bytes":14683}
+  env p1s64 /alloc c32 rate0 r3: load_before 10.41 steal_ticks 0 load_after 10.58 lgerr 
+p2s0 /alloc c32 rate0 r3 {"requests":1328460,"errors":0,"rps":132845.56598025138,"p50_us":219,"p99_us":567,"p999_us":3192,"max_us":6690,"sec_cv":0.007452837825464731,"rate":0,"cpu_us_per_req":44.98441804796531,"body_bytes":14683}
+  env p2s0 /alloc c32 rate0 r3: load_before 10.58 steal_ticks 0 load_after 11.19 lgerr 
+p2s64 /alloc c32 rate0 r3 {"requests":1321531,"errors":0,"rps":132152.97163981863,"p50_us":220,"p99_us":575,"p999_us":3192,"max_us":6426,"sec_cv":0.00430227004277625,"rate":0,"cpu_us_per_req":45.21271162008307,"body_bytes":14683}
+  env p2s64 /alloc c32 rate0 r3: load_before 11.19 steal_ticks 0 load_after 10.20 lgerr 
+p3s0 /alloc c32 rate0 r3 {"requests":1459898,"errors":0,"rps":145989.75916666436,"p50_us":199,"p99_us":518,"p999_us":3131,"max_us":6294,"sec_cv":0.0038252240538033514,"rate":0,"cpu_us_per_req":40.75627201352423,"body_bytes":14683}
+  env p3s0 /alloc c32 rate0 r3: load_before 10.20 steal_ticks 0 load_after 10.31 lgerr 
+p3s64 /alloc c32 rate0 r3 {"requests":1439656,"errors":0,"rps":143965.55194429876,"p50_us":200,"p99_us":535,"p999_us":3150,"max_us":6244,"sec_cv":0.005599005360855808,"rate":0,"cpu_us_per_req":41.4196169084837,"body_bytes":14683}
+  env p3s64 /alloc c32 rate0 r3: load_before 9.49 steal_ticks 0 load_after 9.57 lgerr 
+p4s0 /alloc c32 rate0 r3 {"requests":1330021,"errors":0,"rps":133002.02513316006,"p50_us":218,"p99_us":564,"p999_us":3206,"max_us":10384,"sec_cv":0.005729273662265044,"rate":0,"cpu_us_per_req":44.90906534558477,"body_bytes":14683}
+  env p4s0 /alloc c32 rate0 r3: load_before 9.57 steal_ticks 0 load_after 10.17 lgerr 
+p4s64 /alloc c32 rate0 r3 {"requests":1318391,"errors":0,"rps":131838.9878841247,"p50_us":220,"p99_us":567,"p999_us":3212,"max_us":18042,"sec_cv":0.0036114715555059865,"rate":0,"cpu_us_per_req":45.32039432914818,"body_bytes":14683}
+  env p4s64 /alloc c32 rate0 r3: load_before 10.17 steal_ticks 0 load_after 10.38 lgerr 
+p0s0 /alloc c32 rate0 r3 {"requests":1333677,"errors":0,"rps":133367.64770654534,"p50_us":217,"p99_us":569,"p999_us":3198,"max_us":6386,"sec_cv":0.0052740907556847825,"rate":0,"cpu_us_per_req":44.79345448710595,"body_bytes":14683}
+  env p0s0 /alloc c32 rate0 r3: load_before 9.55 steal_ticks 0 load_after 9.93 lgerr 
+p0s64 /alloc c32 rate0 r3 {"requests":1312035,"errors":0,"rps":131203.4419949583,"p50_us":222,"p99_us":581,"p999_us":3185,"max_us":6713,"sec_cv":0.003027788449351692,"rate":0,"cpu_us_per_req":45.48659144001494,"body_bytes":14683}
+  env p0s64 /alloc c32 rate0 r3: load_before 9.93 steal_ticks 0 load_after 10.23 lgerr 
+p1s0 /alloc c32 rate0 r3 {"requests":1323048,"errors":0,"rps":132304.62575480787,"p50_us":219,"p99_us":578,"p999_us":3203,"max_us":6307,"sec_cv":0.0025234434787122615,"rate":0,"cpu_us_per_req":45.19866248238915,"body_bytes":14683}
+  env p1s0 /alloc c32 rate0 r3: load_before 10.23 steal_ticks 0 load_after 9.60 lgerr 
+SHIFT-DONE
+OFFLOAD-RC=0

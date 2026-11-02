@@ -21,7 +21,8 @@ central and cache locks 22, 24, chunk count 23, poll's timer heap 40-42).
 One host 1 job (2026-11-02, 3 rounds, /alloc closed loop, servers on CPUs 0-5, the loadgen
 on 6-11, ~/xo-lead/notes/xo-lang-2/alloc-shift.log), every server built on main a144a3115
 and linked twice, with XO_DATA_SHIFT 0 and 64 (below). Median CPU µs a request (ratio to
-the first row), req/s:
+the first row), req/s; every row at both shifts, with ranges, the addresses and the method:
+bench/results/alloc-shift-2026-11-02.md:
 
 | server | shift | c256 | c32 |
 |---|---|---|---|
