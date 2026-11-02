@@ -22,6 +22,8 @@ import (
 var raceStdGoldens = []struct{ golden, site string }{
 	// an h2 response's content-length string, freed before field copied it
 	{"http_h2c_sniff", "h2w.field"},
+	// a client frame's mask bytes, freed before they were read
+	{"websocket", "WsConn.write_frame"},
 }
 
 // TestRaceStdNoUseAfterFree builds each of raceStdGoldens with --race on

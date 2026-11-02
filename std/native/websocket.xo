@@ -201,7 +201,9 @@ fn (c: WsConn) write_frame(op: Int, data: Bytes) -> () ! websocket.WsErr {
     if c.server {
       rt.mem_copy(a + hl, raw.bytes_addr(data), n)
     } else {
-      let k = rt.mem_load(raw.bytes_addr(llrand.next_bytes(4)), 0, 4)
+      let kb = llrand.next_bytes(4)
+      let k = rt.mem_load(raw.bytes_addr(kb), 0, 4)
+      raw.alive(kb)
       rt.mem_store(a, hl, k, 4)
       mask_to(a + hl + 4, data, 0, n, k, 0)
     }

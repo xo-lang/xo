@@ -1,5 +1,22 @@
 # std/websocket changes
 
+## 2026-11-02: fix: a client frame's mask key was read from freed memory
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's race stress (websocket, websocket_stop, websocket_deadline, websocket_tls and http_reverse_proxy_ws built with --race on linux/arm64: a heap-use-after-free in WsConn.write_frame)
+- Go reference: none
+- Test: internal/llvm TestRaceStdNoUseAfterFree/websocket (a --race build reports the use after free before the fix)
+- Timing: none
+- Shipped in: v0.34.0 (88348f593, websocket.xo) through v0.35.0
+
+A client's `write_frame` drew its four mask bytes into a fresh Bytes and
+read them through its raw address in one expression, so the Bytes was
+released before the read (gotchas/raw-address-outlives-bytes.md). The read
+saw the drawn bytes as long as nothing reused the block, and any four bytes
+are a valid mask, so no output showed it; a --race build reported it on
+every client frame. The Bytes now stays alive past the read.
+
 ## 2026-10-30: feature: deadlines, on_ping, on_pong, pong
 
 - Kind: feature
