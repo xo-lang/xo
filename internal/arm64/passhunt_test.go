@@ -51,6 +51,8 @@ var passHuntTargets = map[string][]string{
 	"slp_alias_54":           {"slp_f64"},
 	"slp_alias_64":           {"slp_f64"},
 	"slp_alias_66":           {"slp_f64"},
+	"slp_alias_387":          {"slp_f64"},
+	"slp_build_swapped":      {"slp_f64"},
 }
 
 // TestGoldenPassesOff runs the pass hunt's goldens with every optional pass

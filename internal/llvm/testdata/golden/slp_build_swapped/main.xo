@@ -1,0 +1,45 @@
+// slp_f64: a pack's lanes read by another pack in the other order (a
+// zip1 build of the scalars; progen.Alias seed 387's m2), with more
+// packed work after it so the group is made: the lanes must be extracted
+// after their pack.
+
+struct V {
+  a: Float
+  b: Float
+  c: Float
+}
+
+fn m2(vs: List[V], i: Int, k: Float) -> (Float, Float) {
+  let t1 = ((vs[i].b + 1.0) + (vs[i].a - k))
+  let t2 = ((vs[i].a + k) + (vs[i].b - 1.0))
+  let u2 = (t2 * k) * 3.0
+  let u1 = (t1 * k) * 3.0
+  let w2 = (u2 - 0.5) * (u2 + 2.0)
+  let w1 = (u1 - 0.5) * (u1 + 2.0)
+  ((w2 / 7.0) - 1.5, (w1 / 7.0) - 1.5)
+}
+
+fn m3(vs: List[V], i: Int, k: Float) -> (Float, Float, Float, Float) {
+  let p = vs[i].a - k
+  let q = vs[i].b - 1.0
+  let t1 = ((vs[i].b + 1.0) + p)
+  let t2 = ((vs[i].a + k) + q)
+  let u2 = (t2 * k) * 3.0
+  let u1 = (t1 * k) * 3.0
+  let w2 = (u2 - 0.5) * (u2 + 2.0)
+  let w1 = (u1 - 0.5) * (u1 + 2.0)
+  ((w2 / 7.0) - 1.5, (w1 / 7.0) - 1.5, p * 2.0, q * 3.0)
+}
+
+fn main(os: Os) {
+  let k = Float(os.env.args().len()) + 0.25
+  var vs: List[V] = []
+  for j in 0..4 {
+    vs.push(V{a: Float(j) * 1.5 - 2.0, b: 0.75 - Float(j), c: Float(j)})
+  }
+  for j in 0..4 {
+    let (x, y) = m2(vs, j, k)
+    let (p, q, r, s) = m3(vs, j, k)
+    os.stdio.println("${j}: ${x} ${y} ${p} ${q} ${r} ${s}")
+  }
+}

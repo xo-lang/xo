@@ -39,3 +39,18 @@ read too early), the reader stayed scalar and read the other group's
 lane before its pack. The check now records such reads with the
 reader's group and leaves a group unmade, to a fixed point, when the
 reading group is not made. Goldens slp_alias_54, 64 and 66.
+
+## Also observed: a build read a packed lane in the other order (2026-11-02)
+
+progen.Alias seed 387 (Lang 3) failed to build with "m2 reads virtual
+register 21 before it is written". An fadd pack's second operand was
+an fsub pack's two lanes in the other order (`b - 1.0` then `a - k`),
+so slp built it with zip1 from the two scalars, which the fsub pack
+had replaced. The read was skipped for the same reason as above (the
+reading fadd is packed), but this time the reader was made and still
+read the scalar, through the build. A lane a kept build reads is now
+extracted after its pack, and the lane's group is not made when the
+build's pack comes at or before the lane's. Golden slp_alias_387.
+The general rule: a "packed reader reads through the pack" shortcut
+holds only when the reader's operand is that pack, not a build of
+its lanes.

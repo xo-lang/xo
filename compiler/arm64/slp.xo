@@ -561,6 +561,26 @@ fn (var g: G) slp_commit(ch: List[Int], at: List[SPos], packs0: List[SPack], sto
   // another group: (the group that reads, the lane, its position, the
   // pack's), bad when that group is not made
   var early: Map[Int, List[(Int, Int, Int, Int)]] = {}
+  // the lanes a build reads, with the position of the pack the build
+  // feeds: a lane of another pack read there in the other order (Lang 3's
+  // progen.Alias seed 387, 2026-11-02: an fadd pack's operand was an fsub
+  // pack's lanes swapped, built with zip1 from the scalars the fsub pack
+  // had replaced) is a read of the scalar, so the lane is extracted
+  var bread: Map[Int, List[Int]] = {}
+  for pk in packs {
+    if pk.how is "build" | "load" {
+      continue
+    }
+    for a in pk.args {
+      if a >= 0 && packs[a].how == "build" {
+        for l in [packs[a].l0, packs[a].l1] {
+          var cs = bread.get(l) ?? []
+          cs.push(imax(pk.m0.ord, pk.m1.ord))
+          bread[l] = cs
+        }
+      }
+    }
+  }
   var lane_of: Map[Int, Int] = {}
   for (pj, pk) in packs.indexed() {
     let r = slp_root(up, pj)
@@ -600,6 +620,12 @@ fn (var g: G) slp_commit(ch: List[Int], at: List[SPos], packs0: List[SPack], sto
         // a read outside the chain, or before the pack: not v1's
         if o < 0 || o <= pos {
           bad[r] = "lane v${l} read at ${o} (pack at ${pos}, ${pk.how})"
+        }
+        read = true
+      }
+      for cp in bread.get(l) ?? [] {
+        if cp <= pos {
+          bad[r] = "lane v${l} built at ${cp} (pack at ${pos})"
         }
         read = true
       }
@@ -693,6 +719,18 @@ fn (var g: G) slp_commit(ch: List[Int], at: List[SPos], packs0: List[SPack], sto
         if !(o >= 0 && gone.contains(o)) {
           extract[l] = true
         }
+      }
+    }
+  }
+  // a lane a kept build reads (bread): the build's zip1 reads the scalar
+  for pk in packs {
+    if pk.how is "skip" | "build" | "load" {
+      continue
+    }
+    for a in pk.args {
+      if a >= 0 && packs[a].how == "build" {
+        extract[packs[a].l0] = true
+        extract[packs[a].l1] = true
       }
     }
   }

@@ -5,6 +5,7 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Native arm64: slp_f64 no longer drops a Float it packed when another pack reads its two lanes in the other order: the second pack built its operand from the scalars the first had replaced, and the build failed ("reads virtual register 21 before it is written", progen.Alias seed 387). Those lanes are now extracted after their pack.
 - A separately compiled build (the default since 2026-10-28) no longer reads and hashes std's variant facts file (2.09 MB) on each of its backend cache id lookups: the id names a facts file that is a cache entry by its key alone, but the stamp read it whenever the entry's time was within the 2 s settling window, which the backend cache's touch keeps setting (33 to 41 MB read per warm build). Mac coll warm --ab: wall 0.979, instructions 0.997, max RSS 0.99.
 - Native Linux: heap chunks are whole again, as decision 0455 says; f5392f175 started Linux's first chunks small too (256 KiB, grown in place), which cost conc-spawn's edit 2 to 3% wall with no RSS gain there.
 - Ownership: a loop that pushes to the empty literal's list (a struct's omitted list field, or `[]`) no longer copies it into a new list before the loop when it was not provably unique there (compiler/ssa rc.xo loop-entry reuse): a loop that never runs allocates nothing; each push keeps its own check.
