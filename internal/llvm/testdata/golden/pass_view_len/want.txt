@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+strip 3003 1000 0
+lens 2879196
+both 506 qqrrpp
+--- stderr

@@ -1,0 +1,93 @@
+// x86 isel passes: mul pairs whose operands are the same value or each
+// other's result, constants at the 32 bit immediate edges, loads moved
+// down past stores to neighboring bytes, loads folded with the base
+// redefined between.
+fn prods(a0: Int, b0: Int) -> Int {
+  var a = a0
+  var b = b0
+  var h = 0
+  for i in 0..12 {
+    let lo = a.wrapping_mul(b)
+    let hi = a.mul_hi_unsigned(b)
+    let sq = a.wrapping_mul(a)
+    let sqh = a.mul_hi_unsigned(a)
+    h = h ^ lo ^ hi.wrapping_shl(1) ^ sq ^ sqh.wrapping_shl(2)
+    let t = hi.wrapping_add(lo)
+    b = a
+    a = t ^ i
+  }
+  h
+}
+
+fn imms(x: Int) -> Int {
+  var s = 0
+  s = s ^ (x + 2147483647)
+  s = s ^ (x + 2147483648)
+  s = s ^ (x - 2147483648)
+  s = s ^ (x - 2147483649)
+  s = s ^ (x & 4294967295)
+  s = s ^ (x | 0 - 2147483648)
+  s = s ^ (x ^ 2147483648)
+  if x < 2147483648 {
+    s += 1
+  }
+  if x > 0 - 2147483649 {
+    s += 2
+  }
+  if x == 4294967296 {
+    s += 4
+  }
+  s
+}
+
+fn bytes_mix(n: Int) -> Int {
+  var b: List[UInt8] = []
+  for i in 0..32 {
+    b.push(UInt8((i * 29 + n) % 256))
+  }
+  var acc = 0
+  var i = 0
+  while i + 8 < b.len() {
+    let w = Int(b[i]) + Int(b[i + 1]) * 256
+    b[i + 1] = UInt8((Int(b[i + 2]) + 1) % 256)
+    b[i] = UInt8(w % 256)
+    let v = Int(b[i + 1])
+    acc = acc.wrapping_mul(31).wrapping_add(w + v)
+    i += 1
+  }
+  acc
+}
+
+struct W {
+  a: Int
+  b: Int
+  c: Int
+}
+
+fn walk(ws: List[W]) -> Int {
+  var i = 0
+  var s = 0
+  while i < ws.len() {
+    let w = ws[i]
+    s = s + w.a * 3 + w.b
+    i = i + w.c % 2 + 1
+    if i < ws.len() {
+      s = s - ws[i].a
+    }
+  }
+  s
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  os.stdio.println("prods ${prods(k * (0 - 7046029254386353131), 0 - 3)} ${prods(0 - 1, 0 - 1)} ${prods(k, k)}")
+  for x in [0, 1, 2147483647, 2147483648, 0 - 2147483648, 0 - 2147483649, 4294967295, 4294967296] {
+    os.stdio.println("imms ${x} ${imms(x * k)}")
+  }
+  os.stdio.println("bytes ${bytes_mix(k)} ${bytes_mix(k + 200)}")
+  var ws: List[W] = []
+  for j in 0..20 {
+    ws.push(W{a: j * k, b: 100 - j, c: j * 7 % 5})
+  }
+  os.stdio.println("walk ${walk(ws)}")
+}

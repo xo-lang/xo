@@ -1,0 +1,40 @@
+// view_lens on a loop parameter that joins views of s and s itself, read
+// only for its length, while s is read again after the jump.
+fn joined(s: Str, p: Str, q: Str) -> Int {
+  var t = s
+  var n = 0
+  for i in 0..6 {
+    t = if i % 3 == 0 { t.trim_prefix(p) } else if i % 3 == 1 { s.trim_suffix(q) } else { t }
+    n = n * 10 + t.len()
+  }
+  n * 100 + s.len()
+}
+
+fn lens(s: Str, ps: List[Str]) -> Int {
+  var acc = 0
+  for p in ps {
+    acc = acc * 7 + s.trim_prefix(p).len() + s.trim_suffix(p).len()
+  }
+  acc
+}
+
+fn swap_views(s: Str, p: Str) -> Int {
+  var a = s.trim_prefix(p)
+  var b = s
+  var n = 0
+  for _ in 0..5 {
+    let t = a
+    a = b.trim_prefix(p)
+    b = t
+    n = n * 10 + a.len() - b.len() + 5
+  }
+  n
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  let s = "ab".repeat(k + 2) + "xyzab"
+  os.stdio.println("joined ${joined(s, "ab", "ab")} ${joined(s, "", "zab")} ${joined("ab", "ab", "b")}")
+  os.stdio.println("lens ${lens(s, ["a", "ab", "abab", "", "b", "zab", s, s + "x"])}")
+  os.stdio.println("swap ${swap_views(s, "ab")} ${swap_views("abc", "abc")} ${s}")
+}

@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+joined 99979911 118888811 1111102
+lens 19775589
+swap 53535 55555 abababxyzab
+--- stderr

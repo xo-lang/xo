@@ -1,0 +1,97 @@
+// More live values than registers across calls in a loop, rotated each
+// turn; and a fast path with no call beside a slow one (shrink_split).
+fn f(x: Int) -> Int {
+  if x % 97 == 0 {
+    return x + 1
+  }
+  x * 3 - 1
+}
+
+fn many(n: Int, k: Int) -> Int {
+  var a0 = k
+  var a1 = k + 1
+  var a2 = k + 2
+  var a3 = k + 3
+  var a4 = k + 4
+  var a5 = k + 5
+  var a6 = k + 6
+  var a7 = k + 7
+  var a8 = k + 8
+  var a9 = k + 9
+  var b0 = k * 2
+  var b1 = k * 3
+  var b2 = k * 5
+  var b3 = k * 7
+  var b4 = k * 11
+  var b5 = k * 13
+  var b6 = k * 17
+  var b7 = k * 19
+  var b8 = k * 23
+  var b9 = k * 29
+  var c0 = 1.5
+  var c1 = 2.5
+  var c2 = 0.25
+  for i in 0..n {
+    let t = a0
+    a0 = f(a1) % 1000
+    a1 = a2 + b9
+    a2 = a3
+    a3 = f(a4 + i) % 1000
+    a4 = a5 ^ b0
+    a5 = a6
+    a6 = a7 + Int(c0)
+    a7 = a8
+    a8 = f(a9) % 1000
+    a9 = t
+    let u = b9
+    b9 = b8
+    b8 = b7 + a0
+    b7 = b6
+    b6 = b5 ^ a9
+    b5 = b4
+    b4 = b3 % 1000
+    b3 = b2
+    b2 = b1 + 1
+    b1 = b0
+    b0 = u % 1000
+    let v = c0
+    c0 = c1 * 0.5 + 1.0
+    c1 = c2 + Float(i)
+    c2 = v
+  }
+  a0 + a1 * 3 + a2 * 5 + a3 * 7 + a4 * 11 + a5 * 13 + a6 * 17 + a7 * 19 + a8 * 23 + a9 * 29 + b0 + b1 * 3 + b2 * 5 + b3 * 7 + b4 * 11 + b5 * 13 + b6 * 17 + b7 * 19 + b8 * 23 + b9 * 29 + Int(c0 + c1 + c2)
+}
+
+fn fast(xs: List[Int], i: Int) -> Int {
+  if i < xs.len() && xs[i] > 0 {
+    return xs[i] * 2
+  }
+  var s = 0
+  for x in xs {
+    s += f(x + i)
+  }
+  s
+}
+
+fn chain(x: Int, d: Int) -> Int {
+  if d == 0 {
+    return x
+  }
+  let y = chain(x + 1, d - 1)
+  if y % 3 == 0 {
+    return y / 3
+  }
+  y + x
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  for n in [0, 1, 2, 9, 50] {
+    os.stdio.println("many ${n} ${many(n, k)}")
+  }
+  let xs = [3, 0 - 1, 4, 0, 5]
+  for i in 0..7 {
+    os.stdio.println("fast ${i} ${fast(xs, i)}")
+  }
+  os.stdio.println("chain ${chain(k, 30)}")
+}

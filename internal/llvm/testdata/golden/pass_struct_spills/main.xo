@@ -1,0 +1,75 @@
+// Structs of many words copied between variables, list elements and
+// spill slots across calls (slot_group runs of word copies), rotated
+// each turn, one copy changed while the others must keep their words.
+struct S {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+  e: Int
+  f: Int
+}
+
+fn g(s: S, i: Int) -> S {
+  if i % 5 == 4 {
+    return S{a: s.f, b: s.e, c: s.d, d: s.c, e: s.b, f: s.a}
+  }
+  S{a: s.a + i, b: s.b, c: s.c * 2 % 1000, d: s.d, e: s.e - i, f: s.f}
+}
+
+fn sum(s: S) -> Int { s.a + s.b * 3 + s.c * 5 + s.d * 7 + s.e * 11 + s.f * 13 }
+
+fn rot(n: Int, k: Int) -> Int {
+  var p = S{a: k, b: 2, c: 3, d: 4, e: 5, f: 6}
+  var q = S{a: 10, b: k, c: 30, d: 40, e: 50, f: 60}
+  var r = S{a: 7, b: 8, c: k, d: 9, e: 1, f: 2}
+  var t = S{a: 0, b: 0, c: 0, d: k, e: 0, f: 0}
+  var xs: List[S] = [p, q]
+  for i in 0..n {
+    let old = p
+    p = g(q, i)
+    q = r
+    r = g(t, i + 1)
+    t = old
+    t.c = t.c + 1
+    xs.push(old)
+    xs[i % xs.len()] = g(xs[(i + 1) % xs.len()], i)
+    if sum(old) == sum(t) {
+      t.e = t.e - 1
+    }
+  }
+  var s = sum(p) * 1 + sum(q) * 3 + sum(r) * 5 + sum(t) * 7
+  for x in xs {
+    s = s * 3 % 1000003 + sum(x)
+  }
+  s
+}
+
+fn swap_elems(var xs: List[S]) -> Int {
+  var i = 0
+  while i + 1 < xs.len() {
+    let a = xs[i]
+    let b = xs[i + 1]
+    xs[i] = g(b, i)
+    xs[i + 1] = a
+    i += 2
+  }
+  var s = 0
+  for x in xs {
+    s = s * 7 % 1000003 + sum(x)
+  }
+  s
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  for n in [0, 1, 4, 13] {
+    os.stdio.println("rot ${n} ${rot(n, k)}")
+  }
+  var xs: List[S] = []
+  for i in 0..9 {
+    xs.push(S{a: i, b: i * k, c: 3, d: i % 4, e: 5 - i, f: k})
+  }
+  let keep = xs
+  os.stdio.println("swap ${swap_elems(xs)} ${sum(xs[0])} ${sum(keep[0])} ${sum(keep[8])}")
+}

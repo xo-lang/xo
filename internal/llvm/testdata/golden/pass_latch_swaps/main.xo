@@ -1,0 +1,99 @@
+// tail_dup copies a loop latch (plain instructions and parallel moves)
+// into each arm; the arms rotate loop-carried values in different orders.
+fn rotate(n: Int, k: Int) -> Int {
+  var a = k
+  var b = k + 1
+  var c = k + 2
+  var i = 0
+  while i < n {
+    if (a + i) % 3 == 0 {
+      let t = a
+      a = b
+      b = c
+      c = t
+    } else if (b + i) % 3 == 1 {
+      let t = c
+      c = b
+      b = a
+      a = t + 1
+    } else {
+      let t = a
+      a = c
+      c = t
+      b = b + a
+    }
+    i += 1
+  }
+  a * 10000 + b * 100 + c
+}
+
+fn fib_arms(n: Int, k: Int) -> Int {
+  var a = 0
+  var b = k
+  var i = 0
+  while i < n {
+    if i % 2 == 0 {
+      let t = a + b
+      a = b
+      b = t
+    } else {
+      let t = b - a
+      b = a
+      a = t
+    }
+    i += 1
+  }
+  a * 1000 + b
+}
+
+fn collatz(x0: Int) -> Int {
+  var x = x0
+  var steps = 0
+  var peak = x0
+  while x != 1 {
+    if x % 2 == 0 {
+      x = x / 2
+    } else {
+      x = 3 * x + 1
+      if x > peak {
+        peak = x
+      }
+    }
+    steps += 1
+  }
+  steps * 100000 + peak
+}
+
+fn swap_count(xs: List[Int]) -> (Int, Int) {
+  var lo = 0
+  var hi = 0
+  var prev = 0
+  for x in xs {
+    if x < prev {
+      let t = lo
+      lo = hi + x
+      hi = t
+    } else if x == prev {
+      hi = hi + lo
+    } else {
+      let t = hi
+      hi = lo
+      lo = t - x
+    }
+    prev = x
+  }
+  (lo, hi)
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  for n in [0, 1, 2, 3, 7, 20, 101] {
+    os.stdio.println("rotate ${n} ${rotate(n, k)} fib ${fib_arms(n, k)}")
+  }
+  for x in [1, 2, 3, 7, 27, 97] {
+    os.stdio.println("collatz ${x + k - 1} ${collatz(x + k - 1)}")
+  }
+  let xs = [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5, 8, 9, 7, 9, 3, 2, 3, 8, 4, 6, 2, 6, 4, 3, 3, 8]
+  let (lo, hi) = swap_count(xs)
+  os.stdio.println("swap ${lo} ${hi}")
+}

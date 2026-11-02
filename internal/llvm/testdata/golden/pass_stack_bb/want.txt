@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+local 4916 660916
+ret 010000000000000001 020000000000000002
+list ,0000,0102,0204,0306
+held 6831 6836
+cap 349 353 str s1 s10
+carried 43|44 first 61
+--- stderr

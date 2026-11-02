@@ -1,0 +1,74 @@
+// Bools from compares kept across moves, selects of loop-carried values,
+// and the same compare made twice with an operand changed between.
+fn sel(xs: List[Int]) -> Int {
+  var lo = 0
+  var hi = 0
+  var flip = false
+  for x in xs {
+    let bigger = x > hi
+    let t = lo
+    lo = if bigger { hi } else { lo + 1 }
+    hi = if bigger { x } else { t + hi % 7 }
+    if bigger == flip {
+      flip = !flip
+    }
+  }
+  lo * 10000 + hi * 10 + (if flip { 1 } else { 0 })
+}
+
+fn twice(a0: Int, b0: Int) -> Int {
+  var a = a0
+  var b = b0
+  var n = 0
+  while n < 50 {
+    let c1 = a < b
+    let t = a
+    a = b
+    b = t + 1
+    let c2 = a < b
+    if c1 && !c2 {
+      n += 3
+    } else if c1 == c2 {
+      n += 1
+      b = b - 2
+    } else {
+      n += 2
+      a = a + 5
+    }
+  }
+  a * 1000 + b
+}
+
+fn last_change(xs: List[Int]) -> Int {
+  var prev = 0 - 1
+  var changed = true
+  var rounds = 0
+  var ys = xs
+  while changed {
+    let before = prev
+    changed = false
+    var i = 0
+    while i + 1 < ys.len() {
+      if ys[i] > ys[i + 1] {
+        let t = ys[i]
+        ys[i] = ys[i + 1]
+        ys[i + 1] = t
+        changed = true
+      }
+      i += 1
+    }
+    prev = ys[0]
+    changed = changed || prev != before
+    rounds += 1
+  }
+  rounds * 1000 + ys[ys.len() - 1]
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  os.stdio.println("sel ${sel([5, 3, 8, 1, 9, 9, 2, 12, k, 4, 15])}")
+  for (a, b) in [(0, 0), (1, 0), (0, 1), (5, 2), (k, 10)] {
+    os.stdio.println("twice ${twice(a, b)}")
+  }
+  os.stdio.println("last ${last_change([9, 8, 7, 3, 5, 1, k, 6])}")
+}

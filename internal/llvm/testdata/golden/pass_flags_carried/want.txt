@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+sel 110111
+twice 77073
+twice 77074
+twice 73073
+twice 79078
+twice 73072
+last 6009
+--- stderr

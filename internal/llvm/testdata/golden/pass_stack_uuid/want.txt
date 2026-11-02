@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+uuid 1038271 123e4567e89b12d3a456426614174001 fffffffffffffffffffffffffffffff1 6ba7b8109dad11d180b400c04fd430c8
+--- stderr

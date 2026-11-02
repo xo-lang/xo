@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+best item4item4
+find item5item5item5
+fold 137 any true
+renamed 5020100 r
+renamed 15020100 r
+renamed 18020100 r
+--- stderr

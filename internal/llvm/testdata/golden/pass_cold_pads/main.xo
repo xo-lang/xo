@@ -1,0 +1,52 @@
+// tail_merge_cold shares the common tails of landing pads: a function
+// holds several heap values across calls that may fault, each pad
+// releasing what it holds; isolate catches the fault and the leak check
+// counts every allocation.
+use std/task
+
+fn step(s: Str, n: Int) -> Str {
+  if n == 0 {
+    fault("step ${s}")
+  }
+  "${s}${n}"
+}
+
+fn hold(n: Int) -> Int {
+  let a = "a${n}"
+  let b = [n, n + 1, n + 2]
+  let c = step(a, n - 1)
+  let d = "d${c}"
+  let e = step(d, n - 2)
+  let f = [a, c]
+  let g = step(e, n - 3)
+  let h = step("${g}${b.len()}", n - 4)
+  let i = step(h, n - 5)
+  a.len() + b.len() + c.len() + d.len() + e.len() + f.len() + g.len() + h.len() + i.len()
+}
+
+fn hold2(n: Int, xs: List[Str]) -> Int {
+  var acc = 0
+  for x in xs {
+    let y = step(x, n)
+    let z = step(y, n - 1)
+    let w = [y, z, x]
+    acc += step(w[0], n - 2).len() + w.len()
+  }
+  acc
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  for n in 0..8 {
+    match task.isolate(fn() -> Int ! () { hold(n + k - 1) }) {
+      Ok(v) => os.stdio.println("hold ${n}: ${v}")
+      Err(_) => os.stdio.println("hold ${n}: fault")
+    }
+  }
+  for n in 0..4 {
+    match task.isolate(fn() -> Int ! () { hold2(n + k - 1, ["x", "yy", "zzz"]) }) {
+      Ok(v) => os.stdio.println("hold2 ${n}: ${v}")
+      Err(_) => os.stdio.println("hold2 ${n}: fault")
+    }
+  }
+}

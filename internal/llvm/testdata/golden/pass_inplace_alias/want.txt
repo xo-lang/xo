@@ -1,0 +1,29 @@
+exit 0
+--- stdout
+set 0 0 29 11132
+push 0 3038 23
+call 0 0 11132
+swap 0 0 1601
+pop 52 977
+set 0 1 29 140
+push 0 38 23
+call 0 1 140
+swap 0 1 1704
+pop 52 977
+set 1 1 239 11143
+push 1 3041 23
+call 1 1 11143
+swap 1 1 11901
+pop 52 977
+set 2 1 349 460
+push 2 126 23
+call 2 1 460
+swap 2 1 4691
+pop 52 977
+set 2 2 349 11154
+push 2 3044 23
+call 2 2 11154
+swap 2 2 22201
+pop 52 977
+grow 445453
+--- stderr

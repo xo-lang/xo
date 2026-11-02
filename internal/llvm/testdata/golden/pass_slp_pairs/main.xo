@@ -1,0 +1,63 @@
+// slp_f64 pairs loads at k and k + 8 and their isomorphic operations;
+// here stores to the same list between and after the loads, and lanes
+// that read the other lane's new value.
+struct P {
+  x: Float
+  y: Float
+}
+
+fn shift(var xs: List[Float]) {
+  var i = 0
+  while i + 1 < xs.len() {
+    let a = xs[i]
+    let b = xs[i + 1]
+    xs[i] = b * 2.0 + 1.0
+    xs[i + 1] = xs[i] * 3.0 - a
+    i += 1
+  }
+}
+
+fn pairs(var xs: List[Float]) -> Float {
+  var i = 0
+  var s = 0.0
+  while i + 1 < xs.len() {
+    let a = xs[i] * 1.5
+    let b = xs[i + 1] * 1.5
+    xs[i + 1] = a + 0.25
+    xs[i] = b - 0.25
+    s = s + a / 3.0 + b / 3.0
+    i += 2
+  }
+  s
+}
+
+fn spin(p0: P, n: Int) -> P {
+  var p = p0
+  for _ in 0..n {
+    p = P{x: p.y * 0.5 + 1.0, y: p.x * 0.5 - 1.0}
+  }
+  p
+}
+
+fn show(xs: List[Float]) -> Str {
+  var s = ""
+  for x in xs {
+    s = "${s} ${x}"
+  }
+  s
+}
+
+fn main(os: Os) {
+  let k = Float((os.env.args().len() + 1))
+  var xs: List[Float] = []
+  for i in 0..9 {
+    xs.push(Float(i) * k + 0.125)
+  }
+  shift(xs)
+  os.stdio.println("shift ${show(xs)}")
+  var ys = xs
+  let s = pairs(ys)
+  os.stdio.println("pairs ${s} ${show(ys)} ${xs[0]}")
+  let p = spin(P{x: k, y: 2.0 * k}, 7)
+  os.stdio.println("spin ${p.x} ${p.y}")
+}

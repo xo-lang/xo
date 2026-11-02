@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+sweep 0 453 6 10
+call 0 1006 8
+self 5474 12 22
+fsweep 0 5.5 1.5
+sweep 1 114 7 11
+call 1 485 5
+self 6340 14 25
+fsweep 1 8.0 2.0
+sweep 2 575 8 12
+call 2 1574 12
+self 7206 16 28
+fsweep 2 -9.5 -0.5
+sweep 3 720 5 9
+call 3 1415 11
+self 4608 10 19
+fsweep 3 2.0 1.25
+--- stderr

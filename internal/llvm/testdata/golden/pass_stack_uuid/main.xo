@@ -1,0 +1,39 @@
+// stack_small takes uuid's bytes() (a 16 byte buffer only read) into a
+// frame slot; here results read in a loop beside ones that are kept, so
+// one slot serves every turn while a kept copy must stay intact.
+use std/uuid
+
+fn sum_bytes(u: uuid.Uuid) -> Int {
+  let b = u.bytes()
+  var s = 0
+  for i in 0..b.len() {
+    s = s * 7 % 1000003 + Int(b[i])
+  }
+  s
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  let texts = ["123e4567-e89b-12d3-a456-42661417400${k}", "00000000-0000-0000-0000-000000000000", "ffffffff-ffff-ffff-ffff-fffffffffff${k}", "6ba7b810-9dad-11d1-80b4-00c04fd430c8"]
+  var kept: List[Bytes] = []
+  var total = 0
+  for t in texts {
+    match uuid.parse(t) {
+      Ok(u) => {
+        total = total * 31 % 1000003 + sum_bytes(u)
+        let b = u.bytes()
+        if b[0] != UInt8(0) {
+          kept.push(b)
+        }
+        let c = u.bytes()
+        total += Int(c[15])
+      }
+      Err(_) => total += 1
+    }
+  }
+  var s = ""
+  for b in kept {
+    s = "${s} ${b.to_hex()}"
+  }
+  os.stdio.println("uuid ${total}${s}")
+}

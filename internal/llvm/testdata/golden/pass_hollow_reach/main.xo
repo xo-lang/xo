@@ -1,0 +1,77 @@
+// hollow empties the functions nothing in the assembly reaches: here
+// functions reached only through an interface value, a function value in
+// a list or a map, a closure returned from another, a derived method,
+// and a sort's comparison.
+use std/json
+
+interface Shape {
+  fn area(self) -> Int
+  fn name(self) -> Str
+}
+
+struct Sq {
+  s: Int
+}
+
+fn (q: Sq) area() -> Int { q.s * q.s }
+
+fn (q: Sq) name() -> Str { "sq${q.s}" }
+
+struct Rc {
+  w: Int
+  h: Int
+}
+
+fn (r: Rc) area() -> Int { r.w * r.h }
+
+fn (r: Rc) name() -> Str { "rc${r.w}x${r.h}" }
+
+struct Rec {
+  id: Int
+  tag: Str
+} derive Json
+
+fn dbl(x: Int) -> Int { x * 2 }
+
+fn neg(x: Int) -> Int { 0 - x }
+
+fn sq(x: Int) -> Int { x * x }
+
+fn adder(n: Int) -> fn(Int) -> Int {
+  fn(x: Int) -> Int { x + n }
+}
+
+fn pick(k: Int) -> Shape {
+  if k % 2 == 0 {
+    return Sq{s: k}
+  }
+  Rc{w: k, h: k + 1}
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  let fs = [dbl, neg, sq, adder(k)]
+  var acc = 0
+  for f in fs {
+    acc = acc * 10 + f(k + 2)
+  }
+  var m: Map[Str, fn(Int) -> Int] = {}
+  m["d"] = dbl
+  m["s"] = sq
+  for key in ["s", "d", "x"] {
+    match m.get(key) {
+      Some(f) => acc = acc + f(3)
+      None => acc = acc - 1
+    }
+  }
+  os.stdio.println("fns ${acc}")
+  for i in 0..4 {
+    let s = pick(i + k)
+    os.stdio.println("shape ${s.name()} ${s.area()}")
+  }
+  let r = Rec{id: k, tag: "t${k}"}
+  os.stdio.println("json ${json.encode(r).to_str() ?? "?"}")
+  var xs = [5, 3, 9, 1, k]
+  xs = xs.sort_by(fn(a: Int) -> Int { 0 - a })
+  os.stdio.println("sorted ${xs.len()} ${xs[0]} ${xs[4]}")
+}

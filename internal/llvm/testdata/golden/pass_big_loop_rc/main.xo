@@ -1,0 +1,262 @@
+// rc_thunk_loops: a loop over 256 SSA values takes the retain thunk; the
+// values retained are copied, one copy changed (copy on write) and kept.
+fn big(parts: List[Str], lists0: List[List[Int]], n: Int) -> (Int, Int, Int) {
+  var lists = lists0
+  var keep: List[Str] = []
+  var acc = 0
+  for i in 0..n {
+    let s0 = parts[(i + 0) % parts.len()]
+    var l0 = lists[(i * 1) % lists.len()]
+    if (i + 0) % 3 == 0 {
+      l0.push(s0.len() + 0)
+    }
+    acc = (acc * 31 + l0.len() * 7 + s0.len() + l0[l0.len() - 1]) % 1000000007
+    if (i ^ 0) % 5 == 1 {
+      keep.push(s0)
+      lists[0 % lists.len()] = l0
+    }
+    let s1 = parts[(i + 1) % parts.len()]
+    var l1 = lists[(i * 2) % lists.len()]
+    if (i + 1) % 3 == 0 {
+      l1.push(s1.len() + 1)
+    }
+    acc = (acc * 31 + l1.len() * 7 + s1.len() + l1[l1.len() - 1]) % 1000000007
+    if (i ^ 1) % 5 == 1 {
+      keep.push(s1)
+      lists[1 % lists.len()] = l1
+    }
+    let s2 = parts[(i + 2) % parts.len()]
+    var l2 = lists[(i * 3) % lists.len()]
+    if (i + 2) % 3 == 0 {
+      l2.push(s2.len() + 2)
+    }
+    acc = (acc * 31 + l2.len() * 7 + s2.len() + l2[l2.len() - 1]) % 1000000007
+    if (i ^ 2) % 5 == 1 {
+      keep.push(s2)
+      lists[2 % lists.len()] = l2
+    }
+    let s3 = parts[(i + 3) % parts.len()]
+    var l3 = lists[(i * 4) % lists.len()]
+    if (i + 3) % 3 == 0 {
+      l3.push(s3.len() + 3)
+    }
+    acc = (acc * 31 + l3.len() * 7 + s3.len() + l3[l3.len() - 1]) % 1000000007
+    if (i ^ 3) % 5 == 1 {
+      keep.push(s3)
+      lists[3 % lists.len()] = l3
+    }
+    let s4 = parts[(i + 4) % parts.len()]
+    var l4 = lists[(i * 5) % lists.len()]
+    if (i + 4) % 3 == 0 {
+      l4.push(s4.len() + 4)
+    }
+    acc = (acc * 31 + l4.len() * 7 + s4.len() + l4[l4.len() - 1]) % 1000000007
+    if (i ^ 4) % 5 == 1 {
+      keep.push(s4)
+      lists[4 % lists.len()] = l4
+    }
+    let s5 = parts[(i + 5) % parts.len()]
+    var l5 = lists[(i * 6) % lists.len()]
+    if (i + 5) % 3 == 0 {
+      l5.push(s5.len() + 5)
+    }
+    acc = (acc * 31 + l5.len() * 7 + s5.len() + l5[l5.len() - 1]) % 1000000007
+    if (i ^ 5) % 5 == 1 {
+      keep.push(s5)
+      lists[5 % lists.len()] = l5
+    }
+    let s6 = parts[(i + 6) % parts.len()]
+    var l6 = lists[(i * 7) % lists.len()]
+    if (i + 6) % 3 == 0 {
+      l6.push(s6.len() + 6)
+    }
+    acc = (acc * 31 + l6.len() * 7 + s6.len() + l6[l6.len() - 1]) % 1000000007
+    if (i ^ 6) % 5 == 1 {
+      keep.push(s6)
+      lists[6 % lists.len()] = l6
+    }
+    let s7 = parts[(i + 7) % parts.len()]
+    var l7 = lists[(i * 8) % lists.len()]
+    if (i + 7) % 3 == 0 {
+      l7.push(s7.len() + 7)
+    }
+    acc = (acc * 31 + l7.len() * 7 + s7.len() + l7[l7.len() - 1]) % 1000000007
+    if (i ^ 7) % 5 == 1 {
+      keep.push(s7)
+      lists[7 % lists.len()] = l7
+    }
+    let s8 = parts[(i + 8) % parts.len()]
+    var l8 = lists[(i * 9) % lists.len()]
+    if (i + 8) % 3 == 0 {
+      l8.push(s8.len() + 8)
+    }
+    acc = (acc * 31 + l8.len() * 7 + s8.len() + l8[l8.len() - 1]) % 1000000007
+    if (i ^ 8) % 5 == 1 {
+      keep.push(s8)
+      lists[8 % lists.len()] = l8
+    }
+    let s9 = parts[(i + 9) % parts.len()]
+    var l9 = lists[(i * 10) % lists.len()]
+    if (i + 9) % 3 == 0 {
+      l9.push(s9.len() + 9)
+    }
+    acc = (acc * 31 + l9.len() * 7 + s9.len() + l9[l9.len() - 1]) % 1000000007
+    if (i ^ 9) % 5 == 1 {
+      keep.push(s9)
+      lists[9 % lists.len()] = l9
+    }
+    let s10 = parts[(i + 10) % parts.len()]
+    var l10 = lists[(i * 11) % lists.len()]
+    if (i + 10) % 3 == 0 {
+      l10.push(s10.len() + 10)
+    }
+    acc = (acc * 31 + l10.len() * 7 + s10.len() + l10[l10.len() - 1]) % 1000000007
+    if (i ^ 10) % 5 == 1 {
+      keep.push(s10)
+      lists[10 % lists.len()] = l10
+    }
+    let s11 = parts[(i + 11) % parts.len()]
+    var l11 = lists[(i * 12) % lists.len()]
+    if (i + 11) % 3 == 0 {
+      l11.push(s11.len() + 11)
+    }
+    acc = (acc * 31 + l11.len() * 7 + s11.len() + l11[l11.len() - 1]) % 1000000007
+    if (i ^ 11) % 5 == 1 {
+      keep.push(s11)
+      lists[11 % lists.len()] = l11
+    }
+    let s12 = parts[(i + 12) % parts.len()]
+    var l12 = lists[(i * 13) % lists.len()]
+    if (i + 12) % 3 == 0 {
+      l12.push(s12.len() + 12)
+    }
+    acc = (acc * 31 + l12.len() * 7 + s12.len() + l12[l12.len() - 1]) % 1000000007
+    if (i ^ 12) % 5 == 1 {
+      keep.push(s12)
+      lists[12 % lists.len()] = l12
+    }
+    let s13 = parts[(i + 13) % parts.len()]
+    var l13 = lists[(i * 14) % lists.len()]
+    if (i + 13) % 3 == 0 {
+      l13.push(s13.len() + 13)
+    }
+    acc = (acc * 31 + l13.len() * 7 + s13.len() + l13[l13.len() - 1]) % 1000000007
+    if (i ^ 13) % 5 == 1 {
+      keep.push(s13)
+      lists[13 % lists.len()] = l13
+    }
+    let s14 = parts[(i + 14) % parts.len()]
+    var l14 = lists[(i * 15) % lists.len()]
+    if (i + 14) % 3 == 0 {
+      l14.push(s14.len() + 14)
+    }
+    acc = (acc * 31 + l14.len() * 7 + s14.len() + l14[l14.len() - 1]) % 1000000007
+    if (i ^ 14) % 5 == 1 {
+      keep.push(s14)
+      lists[14 % lists.len()] = l14
+    }
+    let s15 = parts[(i + 15) % parts.len()]
+    var l15 = lists[(i * 16) % lists.len()]
+    if (i + 15) % 3 == 0 {
+      l15.push(s15.len() + 15)
+    }
+    acc = (acc * 31 + l15.len() * 7 + s15.len() + l15[l15.len() - 1]) % 1000000007
+    if (i ^ 15) % 5 == 1 {
+      keep.push(s15)
+      lists[15 % lists.len()] = l15
+    }
+    let s16 = parts[(i + 16) % parts.len()]
+    var l16 = lists[(i * 17) % lists.len()]
+    if (i + 16) % 3 == 0 {
+      l16.push(s16.len() + 16)
+    }
+    acc = (acc * 31 + l16.len() * 7 + s16.len() + l16[l16.len() - 1]) % 1000000007
+    if (i ^ 16) % 5 == 1 {
+      keep.push(s16)
+      lists[16 % lists.len()] = l16
+    }
+    let s17 = parts[(i + 17) % parts.len()]
+    var l17 = lists[(i * 18) % lists.len()]
+    if (i + 17) % 3 == 0 {
+      l17.push(s17.len() + 17)
+    }
+    acc = (acc * 31 + l17.len() * 7 + s17.len() + l17[l17.len() - 1]) % 1000000007
+    if (i ^ 17) % 5 == 1 {
+      keep.push(s17)
+      lists[17 % lists.len()] = l17
+    }
+    let s18 = parts[(i + 18) % parts.len()]
+    var l18 = lists[(i * 19) % lists.len()]
+    if (i + 18) % 3 == 0 {
+      l18.push(s18.len() + 18)
+    }
+    acc = (acc * 31 + l18.len() * 7 + s18.len() + l18[l18.len() - 1]) % 1000000007
+    if (i ^ 18) % 5 == 1 {
+      keep.push(s18)
+      lists[18 % lists.len()] = l18
+    }
+    let s19 = parts[(i + 19) % parts.len()]
+    var l19 = lists[(i * 20) % lists.len()]
+    if (i + 19) % 3 == 0 {
+      l19.push(s19.len() + 19)
+    }
+    acc = (acc * 31 + l19.len() * 7 + s19.len() + l19[l19.len() - 1]) % 1000000007
+    if (i ^ 19) % 5 == 1 {
+      keep.push(s19)
+      lists[19 % lists.len()] = l19
+    }
+    let s20 = parts[(i + 20) % parts.len()]
+    var l20 = lists[(i * 21) % lists.len()]
+    if (i + 20) % 3 == 0 {
+      l20.push(s20.len() + 20)
+    }
+    acc = (acc * 31 + l20.len() * 7 + s20.len() + l20[l20.len() - 1]) % 1000000007
+    if (i ^ 20) % 5 == 1 {
+      keep.push(s20)
+      lists[20 % lists.len()] = l20
+    }
+    let s21 = parts[(i + 21) % parts.len()]
+    var l21 = lists[(i * 22) % lists.len()]
+    if (i + 21) % 3 == 0 {
+      l21.push(s21.len() + 21)
+    }
+    acc = (acc * 31 + l21.len() * 7 + s21.len() + l21[l21.len() - 1]) % 1000000007
+    if (i ^ 21) % 5 == 1 {
+      keep.push(s21)
+      lists[21 % lists.len()] = l21
+    }
+    let s22 = parts[(i + 22) % parts.len()]
+    var l22 = lists[(i * 23) % lists.len()]
+    if (i + 22) % 3 == 0 {
+      l22.push(s22.len() + 22)
+    }
+    acc = (acc * 31 + l22.len() * 7 + s22.len() + l22[l22.len() - 1]) % 1000000007
+    if (i ^ 22) % 5 == 1 {
+      keep.push(s22)
+      lists[22 % lists.len()] = l22
+    }
+    let s23 = parts[(i + 23) % parts.len()]
+    var l23 = lists[(i * 24) % lists.len()]
+    if (i + 23) % 3 == 0 {
+      l23.push(s23.len() + 23)
+    }
+    acc = (acc * 31 + l23.len() * 7 + s23.len() + l23[l23.len() - 1]) % 1000000007
+    if (i ^ 23) % 5 == 1 {
+      keep.push(s23)
+      lists[23 % lists.len()] = l23
+    }
+  }
+  var t = 0
+  for l in lists {
+    t = t * 3 + l.len()
+  }
+  (acc, keep.len(), t)
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  let parts = ["a", "bb", "ccc".repeat(k), "dddd", "", "ffffff"]
+  let lists = [[1], [2, 3], [k, 5, 6], [7]]
+  let (a, b, c) = big(parts, lists, 40)
+  os.stdio.println("big ${a} ${b} ${c} ${lists[0].len()} ${lists[2].len()}")
+}

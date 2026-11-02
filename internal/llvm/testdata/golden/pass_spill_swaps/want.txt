@@ -1,0 +1,16 @@
+exit 0
+--- stdout
+many 0 3350
+many 1 3434
+many 2 5718
+many 9 144875
+many 50 117938
+fast 0 6
+fast 1 45
+fast 2 8
+fast 3 73
+fast 4 10
+fast 5 103
+fast 6 118
+chain 191
+--- stderr

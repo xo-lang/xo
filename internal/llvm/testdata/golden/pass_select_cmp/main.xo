@@ -1,0 +1,46 @@
+// select_compares: a compare that only picks which of two other compares
+// decides a branch, with the operands changed between, signed edges,
+// and Bool values that decide again later.
+fn pick(xs: List[Int], lo: Int, hi: Int) -> Int {
+  var n = 0
+  var p = lo
+  for x in xs {
+    let up = x > p
+    if (if up { x < hi } else { x > lo }) {
+      n += 1
+      p = x
+    } else if (if x % 2 == 0 { p < x } else { p >= x }) {
+      n += 10
+    }
+  }
+  n * 1000 + p
+}
+
+fn edges(a: Int, b: Int, c: Int) -> Int {
+  var r = 0
+  if (if a < b { b < c } else { c < a }) {
+    r += 1
+  }
+  if (if a == b { a != c } else { b == c }) {
+    r += 2
+  }
+  if (if a.lt_unsigned(b) { b.lt_unsigned(c) } else { c.lt_unsigned(a) }) {
+    r += 4
+  }
+  r
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  os.stdio.println("pick ${pick([5, 3, 8, 1, 9, 9, 2, 12, k, 4, 15, 0 - 3], 2, 10)} ${pick([0 - 5, 0 - 1, 0, 7, 7, 8], 0 - 2, 7)}")
+  let vs = [0, 1, 0 - 1, 9223372036854775807, 0 - 9223372036854775807 - 1, k]
+  var s = 0
+  for a in vs {
+    for b in vs {
+      for c in vs {
+        s = s * 8 % 1000000007 + edges(a, b, c)
+      }
+    }
+  }
+  os.stdio.println("edges ${s}")
+}

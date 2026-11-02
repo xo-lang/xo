@@ -1,0 +1,15 @@
+exit 0
+--- stdout
+hold 0: 58
+hold 1: fault
+hold 2: fault
+hold 3: fault
+hold 4: fault
+hold 5: fault
+hold 6: 42
+hold 7: 42
+hold2 0: fault
+hold2 1: fault
+hold2 2: fault
+hold2 3: 21
+--- stderr

@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+folded 585351613
+dynamic 585351613
+table 782010
+--- stderr

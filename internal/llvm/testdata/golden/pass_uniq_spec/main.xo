@@ -1,0 +1,82 @@
+// uniq_var_params drops the copy on write check of a `var` List
+// parameter that every call passes unique; here some calls pass a list
+// still read after the call (a copy kept, a field, a capture, an element
+// of another list), which must keep its values. specialize_args clones a
+// callee for a literal or an empty closure argument; the clone's
+// parameter changes inside it and recursion passes other values.
+struct Box {
+  xs: List[Int]
+  tag: Int
+}
+
+fn fill(var xs: List[Int], n: Int) -> Int {
+  for i in 0..n {
+    if xs.len() > 0 {
+      xs[0] = xs[0] + i
+    }
+    xs.push(i * 10)
+  }
+  xs.len()
+}
+
+fn pass_on(var xs: List[Int], n: Int) -> Int {
+  if n == 0 {
+    return xs.len()
+  }
+  xs.push(n)
+  fill(xs, 1) + pass_on(xs, n - 1)
+}
+
+fn show(xs: List[Int]) -> Str {
+  var s = ""
+  for x in xs {
+    s = "${s} ${x}"
+  }
+  s
+}
+
+fn step(x: Int, f: fn(Int) -> Int, depth: Int) -> Int {
+  var y = x
+  var d = depth
+  while d > 0 {
+    y = f(y) + d
+    d -= 1
+  }
+  if y % 2 == 0 && depth > 0 {
+    return step(y / 2, f, depth - 1)
+  }
+  y
+}
+
+fn lit(s: Str, n: Int) -> Int {
+  var t = s
+  var i = n
+  while i > 0 {
+    t = "${t}${i}"
+    i -= 1
+  }
+  if t == "ab" {
+    return 0 - 1
+  }
+  t.len()
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  var a = [1, 2, 3]
+  let keep = a
+  os.stdio.println("fill ${fill(a, 3)} a${show(a)} keep${show(keep)}")
+  var b = Box{xs: [k, 5], tag: 1}
+  var bx = b.xs
+  os.stdio.println("box ${fill(bx, 2)} bx${show(bx)} b${show(b.xs)}")
+  var nested = [[1], [2, 2]]
+  var e = nested[1]
+  os.stdio.println("nested ${fill(e, 2)} e${show(e)} n${show(nested[1])}")
+  var c = [9]
+  let cap = fn() -> Int { c.len() }
+  os.stdio.println("cap ${pass_on(c, 3)} c${show(c)} ${cap()}")
+  var fresh: List[Int] = []
+  os.stdio.println("fresh ${pass_on(fresh, 4)}${show(fresh)}")
+  os.stdio.println("step ${step(k, fn(x: Int) -> Int { x * 3 + 1 }, 5)} ${step(7, fn(x: Int) -> Int { x - 2 }, 4)} ${step(k + 6, fn(x: Int) -> Int { x * 3 + 1 }, 5)}")
+  os.stdio.println("lit ${lit("a", 0)} ${lit("a", 3)} ${lit("ab", 0)} ${lit("ab", k)} ${lit("", 12)}")
+}

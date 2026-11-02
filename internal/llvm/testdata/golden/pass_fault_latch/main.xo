@@ -1,0 +1,76 @@
+// tail_dup and thread_switch copy a latch with a checked add (its fault
+// stub per copy, the landing pad shared) into each arm; the loop holds
+// heap values, the add overflows from different arms, and isolate
+// catches the fault (the leak check counts every allocation).
+use std/task
+
+fn disp(code: List[Int], start: Int) -> Int {
+  var acc = start
+  var names: List[Str] = ["x"]
+  var i = 0
+  var pc = 0
+  while i < 100 {
+    match code[pc % code.len()] {
+      0 => names.push("n${i}")
+      1 => {
+        let t = names.len()
+        acc = acc * 3
+        pc = pc + t % 2
+      }
+      2 => acc = acc - 7
+      3 => {
+        names = [names[0]]
+        acc = acc * 2
+      }
+      4 => pc += 2
+      5 => acc = acc + names.len()
+      6 => {
+        let t = acc
+        acc = acc * 2 - i
+        names.push("t${t % 10}")
+      }
+      7 => acc = acc - names.len() * 3
+      8 => acc = acc * 5
+      _ => acc = acc + 1
+    }
+    acc = acc + 4611686018427387000
+    acc = acc - 4611686018427387000
+    i += 1
+    pc += 1
+  }
+  acc + names.len()
+}
+
+fn arms(xs: List[Int], start: Int) -> Int {
+  var acc = start
+  var hold = "h${start}"
+  for x in xs {
+    if x % 2 == 0 {
+      hold = "${hold}e"
+      acc = acc * 2
+    } else {
+      acc = acc + x
+    }
+    acc = acc + 4611686018427387000
+    acc = acc - 4611686018427387000
+  }
+  acc + hold.len()
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  for c in [[0, 1, 2], [1, 1, 1, 3], [3, 0, 2, 2], [4, 0, 1], [5, 6, 7, 8, 9], [8, 8, 6, 0, 2]] {
+    for s in [k, 1000000000000, 0 - 1000000000000] {
+      match task.isolate(fn() -> Int ! () { disp(c, s) }) {
+        Ok(v) => os.stdio.println("disp ${v}")
+        Err(_) => os.stdio.println("disp fault")
+      }
+    }
+  }
+  for s in [k, 100000000000000000, 2000000000000000000] {
+    match task.isolate(fn() -> Int ! () { arms([2, 3, 4, 5, 6, 7, 8, 9], s) }) {
+      Ok(v) => os.stdio.println("arms ${v}")
+      Err(_) => os.stdio.println("arms fault")
+    }
+  }
+}

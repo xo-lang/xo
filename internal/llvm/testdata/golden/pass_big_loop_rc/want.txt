@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+big 16962957 200 880 1 3
+--- stderr

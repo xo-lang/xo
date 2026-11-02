@@ -1,0 +1,10 @@
+exit 0
+--- stdout
+fns 5808
+shape rc1x2 2
+shape sq2 4
+shape rc3x4 12
+shape sq4 16
+json {"id":1,"tag":"t1"}
+sorted 5 9 1
+--- stderr

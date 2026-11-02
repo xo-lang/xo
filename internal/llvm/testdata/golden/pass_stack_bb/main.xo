@@ -1,0 +1,106 @@
+// stack_small: a BytesBuilder of constant capacity whose object is only
+// read here is built in a frame slot. Here frozen bytes that leave (a
+// return, a list, a struct, a closure, a Str view, a loop parameter) and
+// one slot reused by a loop while an earlier turn's bytes are held.
+struct Holder {
+  b: Bytes
+}
+
+fn hexs(b: Bytes) -> Str { b.to_hex() }
+
+fn local_only(n: Int) -> Int {
+  var bb = BytesBuilder.with_capacity(16)
+  for i in 0..8 {
+    bb.write_byte(UInt8((n + i) % 256))
+  }
+  let b = bb.freeze()
+  var s = 0
+  for i in 0..b.len() {
+    s = s * 3 + Int(b[i])
+  }
+  s
+}
+
+fn ret(n: Int) -> Bytes {
+  var bb = BytesBuilder.with_capacity(16)
+  for i in 0..8 {
+    bb.write_byte(UInt8((n >> (8 * i)) & 255))
+  }
+  bb.write_byte(UInt8(n % 256))
+  bb.freeze()
+}
+
+fn listed(n: Int) -> List[Bytes] {
+  var out: List[Bytes] = []
+  for i in 0..n {
+    var bb = BytesBuilder.with_capacity(8)
+    bb.write_byte(UInt8(i))
+    bb.write_byte(UInt8(i * 2))
+    out.push(bb.freeze())
+  }
+  out
+}
+
+fn held(n: Int) -> Holder {
+  var bb = BytesBuilder.with_capacity(16)
+  bb.write_str("h${n}")
+  Holder{b: bb.freeze()}
+}
+
+fn cap(n: Int) -> fn() -> Int {
+  var bb = BytesBuilder.with_capacity(16)
+  bb.write_str("cc${n}")
+  let b = bb.freeze()
+  fn() -> Int { b.len() * 100 + Int(b[2]) }
+}
+
+fn as_str(n: Int) -> Str {
+  var bb = BytesBuilder.with_capacity(16)
+  bb.write_str("s${n}")
+  bb.freeze().to_str() ?? "?"
+}
+
+fn carried(n: Int) -> Str {
+  var prev = b""
+  var cur = b""
+  for i in 0..n {
+    var bb = BytesBuilder.with_capacity(8)
+    bb.write_byte(UInt8(65 + i))
+    prev = cur
+    cur = bb.freeze()
+  }
+  "${hexs(prev)}|${hexs(cur)}"
+}
+
+fn first_kept(n: Int) -> Str {
+  var first = b""
+  for i in 0..n {
+    var bb = BytesBuilder.with_capacity(8)
+    bb.write_byte(UInt8(97 + i))
+    let b = bb.freeze()
+    if i == 0 {
+      first = b
+    }
+  }
+  hexs(first)
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  os.stdio.println("local ${local_only(k)} ${local_only(k + 200)}")
+  let a = ret(k)
+  let b = ret(k + 1)
+  os.stdio.println("ret ${hexs(a)} ${hexs(b)}")
+  var j = ""
+  for x in listed(k + 3) {
+    j = "${j},${hexs(x)}"
+  }
+  os.stdio.println("list ${j}")
+  let h1 = held(k)
+  let h2 = held(k + 5)
+  os.stdio.println("held ${hexs(h1.b)} ${hexs(h2.b)}")
+  let f = cap(k)
+  let g = cap(k + 4)
+  os.stdio.println("cap ${f()} ${g()} str ${as_str(k)} ${as_str(k + 9)}")
+  os.stdio.println("carried ${carried(k + 3)} first ${first_kept(k + 4)}")
+}

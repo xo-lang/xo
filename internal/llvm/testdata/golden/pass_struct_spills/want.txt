@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+rot 0 58401
+rot 1 120873
+rot 4 361498
+rot 13 991479
+swap 246952 98 83 27
+--- stderr

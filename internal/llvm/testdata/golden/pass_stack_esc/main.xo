@@ -1,0 +1,73 @@
+// stack_small puts a small Str built in a function in the frame when it
+// is only read there; here small strings that leave through a view, a
+// list, a closure, a struct, a loop parameter, or a return, and one slot
+// reused by a loop while an earlier turn's string is still held.
+struct Holder {
+  s: Str
+}
+
+fn small(n: Int) -> Str { "v${n}" }
+
+fn view_out(n: Int) -> Str {
+  let s = "ab${n}cd"
+  s.trim_prefix("ab")
+}
+
+fn into_list(n: Int) -> List[Str] {
+  var out: List[Str] = []
+  for i in 0..n {
+    let s = "x${i}"
+    out.push(s)
+  }
+  out
+}
+
+fn captured(n: Int) -> fn() -> Int {
+  let s = "c${n}c"
+  fn() -> Int { s.len() }
+}
+
+fn in_struct(n: Int) -> Holder {
+  let s = "h${n}"
+  Holder{s: s}
+}
+
+fn carried(n: Int) -> Str {
+  var prev = ""
+  var cur = "0"
+  for i in 0..n {
+    prev = cur
+    cur = "${i}${i}"
+  }
+  "${prev}|${cur}"
+}
+
+fn kept(n: Int) -> Str {
+  var first = ""
+  for i in 0..n {
+    let s = "k${i}"
+    if i == 0 {
+      first = s
+    }
+  }
+  first
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  let a = view_out(k)
+  let b = view_out(k + 1)
+  os.stdio.println("view ${a} ${b}")
+  var joined = ""
+  for s in into_list(k + 3) {
+    joined = "${joined},${s}"
+  }
+  os.stdio.println("list ${joined}")
+  let f = captured(k * 7)
+  let g = captured(k)
+  os.stdio.println("cap ${f()} ${g()}")
+  let h1 = in_struct(k)
+  let h2 = in_struct(k + 9)
+  os.stdio.println("struct ${h1.s} ${h2.s} ${small(k)}")
+  os.stdio.println("carried ${carried(k + 4)} kept ${kept(k + 5)}")
+}

@@ -1,0 +1,43 @@
+// cancel_rc_pairs drops a retain and release around an inlined callee
+// that reads only fields of its argument; here the element's owner is
+// overwritten or dropped between such reads, and the closures read Str
+// and List fields of elements that the loop replaces.
+struct Item {
+  name: Str
+  tags: List[Str]
+  score: Int
+}
+
+fn best(xs: List[Item]) -> Str {
+  var top = xs[0]
+  for x in xs {
+    if x.score > top.score || (x.score == top.score && x.name.len() > top.name.len()) {
+      top = x
+    }
+  }
+  top.name
+}
+
+fn renamed(var xs: List[Item], i: Int) -> Int {
+  let f = fn(it: Item) -> Int { it.name.len() * 100 + it.tags.len() }
+  let before = f(xs[i])
+  xs[i] = Item{name: "r", tags: [], score: 0}
+  let after = f(xs[i])
+  before * 10000 + after
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  var xs: List[Item] = []
+  for i in 0..12 {
+    xs.push(Item{name: "item${i}".repeat(i % 3 + 1), tags: ["t${i}", "u"], score: (i * 7 + k) % 5})
+  }
+  os.stdio.println("best ${best(xs)}")
+  let found = xs.find(fn(it: Item) -> Bool { it.tags[0] == "t5" && it.name.len() > 3 })
+  os.stdio.println("find ${(found ?? xs[0]).name}")
+  let total = xs.fold(0, fn(a: Int, it: Item) -> Int { a + it.name.len() + it.tags[1].len() })
+  os.stdio.println("fold ${total} any ${xs.any(fn(it: Item) -> Bool { it.score == 4 })}")
+  for i in [0, 5, 11] {
+    os.stdio.println("renamed ${renamed(xs, i)} ${xs[i].name}")
+  }
+}

@@ -1,0 +1,90 @@
+// Two indexes that may name one element, around every pass that moves a
+// load or a store: cluster_mem (adjacent words joined into pairs),
+// reuse_loads (a second load of a word), slp_f64, and on x86 the load
+// sinking and folding passes. Each call runs with i == j and i != j.
+struct W {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+}
+
+struct F {
+  x: Float
+  y: Float
+}
+
+fn words(var ws: List[W], i: Int, j: Int) -> Int {
+  let a = ws[i].a
+  ws[j].a = a + 1
+  let b = ws[i].b
+  ws[j].b = ws[i].a + b
+  let c = ws[i].c
+  ws[j].d = c * 2
+  ws[j].c = ws[i].d + 3
+  ws[i].a + ws[j].b + ws[i].c + ws[j].d
+}
+
+fn reread(var ws: List[W], i: Int, j: Int) -> Int {
+  let x = ws[i].b
+  ws[j].b = x * 3
+  let y = ws[i].b
+  ws[j].c = y + 1
+  let z = ws[i].c
+  x * 10000 + y * 100 + z
+}
+
+fn pairs_rev(var ws: List[W], i: Int, j: Int) -> Int {
+  ws[j].b = ws[i].a
+  ws[j].a = ws[i].b
+  ws[j].d = ws[i].c
+  ws[j].c = ws[i].d
+  ws[i].a * 1000 + ws[i].b * 100 + ws[i].c * 10 + ws[i].d
+}
+
+fn fl(var fs: List[F], i: Int, j: Int) -> Float {
+  let x = fs[i].x
+  let y = fs[i].y
+  fs[j].y = x + 1.0
+  fs[j].x = fs[i].y * 2.0
+  fs[i].x + fs[i].y + x * 0.5 + y * 0.25
+}
+
+fn bytes(var bs: List[UInt8], i: Int, j: Int) -> Int {
+  let w = Int(bs[i]) + Int(bs[i + 1]) * 256
+  bs[j + 1] = UInt8(w % 251)
+  let v = Int(bs[i + 1])
+  bs[j] = UInt8((v + 7) % 256)
+  w * 1000 + v * 3 + Int(bs[i])
+}
+
+fn show(ws: List[W]) -> Str {
+  var s = ""
+  for w in ws {
+    s = "${s} ${w.a},${w.b},${w.c},${w.d}"
+  }
+  s
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  let idx = [(0, 0), (0, 1), (1, 0), (2, 2), (1, 2)]
+  var ws = [W{a: 1, b: 2, c: 3, d: 4}, W{a: 10, b: 20, c: 30, d: 40}, W{a: k, b: 7, c: 8, d: 9}]
+  for (i, j) in idx {
+    os.stdio.println("words ${i} ${j} ${words(ws, i, j)}${show(ws)}")
+    os.stdio.println("reread ${i} ${j} ${reread(ws, i, j)}${show(ws)}")
+    os.stdio.println("rev ${i} ${j} ${pairs_rev(ws, i, j)}${show(ws)}")
+  }
+  var fs = [F{x: 1.5, y: 2.5}, F{x: Float(k), y: -0.5}]
+  for (i, j) in [(0, 0), (0, 1), (1, 1), (1, 0)] {
+    let r = fl(fs, i, j)
+    os.stdio.println("fl ${i} ${j} ${r} ${fs[0].x} ${fs[0].y} ${fs[1].x} ${fs[1].y}")
+  }
+  var bs: List[UInt8] = []
+  for n in 0..8 {
+    bs.push(UInt8((n * 37 + k) % 256))
+  }
+  for (i, j) in [(0, 0), (1, 1), (0, 1), (1, 0), (2, 3), (3, 2), (4, 4)] {
+    os.stdio.println("bytes ${i} ${j} ${bytes(bs, i, j)} ${bs[i]} ${bs[j]} ${bs[j + 1]}")
+  }
+}

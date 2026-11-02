@@ -1,0 +1,47 @@
+// view_lens: a Str used only for its length becomes hi - lo; a loop
+// parameter carries the length beside the Str, which may alias an
+// argument read after the jump.
+fn strip_all(s: Str, p: Str) -> Int {
+  var t = s
+  var n = 0
+  while t.starts_with(p) {
+    t = t.trim_prefix(p)
+    n += 1
+  }
+  n * 1000 + t.len()
+}
+
+fn lens(s: Str, ps: List[Str]) -> Int {
+  var acc = 0
+  var cur = s
+  for p in ps {
+    let v = cur.trim_prefix(p)
+    acc = acc * 7 + v.len()
+    if v.len() % 2 == 0 {
+      cur = v
+    }
+  }
+  acc + cur.len() * 100000 + s.len()
+}
+
+fn both(s: Str, p: Str, q: Str) -> (Int, Str) {
+  var a = s.trim_prefix(p)
+  var b = s.trim_suffix(q)
+  var i = 0
+  while i < 3 {
+    let t = a
+    a = b
+    b = t.trim_prefix(p)
+    i += 1
+  }
+  (a.len() * 100 + b.len(), b)
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  let ab = "ab".repeat(k)
+  os.stdio.println("strip ${strip_all("abababxyz", ab)} ${strip_all("ab", ab)} ${strip_all("", ab)}")
+  os.stdio.println("lens ${lens("aaabbbcccdddeee", ["a", "aa", "b", "bb", "x", "c", "cc"])}")
+  let (n, s) = both("ppqqrrpp", "p", "pp")
+  os.stdio.println("both ${n} ${s}")
+}

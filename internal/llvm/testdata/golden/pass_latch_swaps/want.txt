@@ -1,0 +1,17 @@
+exit 0
+--- stdout
+rotate 0 10203 fib 1
+rotate 1 30501 fib 1001
+rotate 2 10603 fib 1
+rotate 3 60301 fib 1001
+rotate 7 100603 fib 1001
+rotate 20 112135 fib 1
+rotate 101 11285372160 fib 1001
+collatz 1 1
+collatz 2 100002
+collatz 3 700016
+collatz 7 1600052
+collatz 27 11109232
+collatz 97 11809232
+swap -52 -43
+--- stderr

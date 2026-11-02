@@ -1,0 +1,90 @@
+// inplace_elems reads an element of 128 bytes or more where it lies
+// when nothing between the read and its uses can write or free the
+// list's memory: here the list is written between through the same
+// variable at another index that may be the same, pushed (it may move),
+// popped, and passed to a var parameter, all before the element's fields
+// are read.
+struct Big {
+  f0: Int
+  f1: Int
+  f2: Int
+  f3: Int
+  f4: Int
+  f5: Int
+  f6: Int
+  f7: Int
+  f8: Int
+  f9: Int
+  f10: Int
+  f11: Int
+  f12: Int
+  f13: Int
+  f14: Int
+  f15: Int
+  f16: Int
+  name: Str
+}
+
+fn mk(b: Int) -> Big { Big{f0: b + 0, f1: b + 1, f2: b + 2, f3: b + 3, f4: b + 4, f5: b + 5, f6: b + 6, f7: b + 7, f8: b + 8, f9: b + 9, f10: b + 10, f11: b + 11, f12: b + 12, f13: b + 13, f14: b + 14, f15: b + 15, f16: b + 16, name: "n${b}"} }
+
+fn sum(e: Big) -> Int { e.f0 + e.f5 * 3 + e.f16 * 7 + e.name.len() }
+
+fn touch(var xs: List[Big], j: Int) {
+  xs[j] = mk(j * 100)
+}
+
+fn set_between(var xs: List[Big], i: Int, j: Int) -> Int {
+  let e = xs[i]
+  xs[j] = mk(1000 + j)
+  e.f0 * 10 + e.f16 + e.name.len()
+}
+
+fn push_between(var xs: List[Big], i: Int) -> Int {
+  let e = xs[i]
+  for n in 0..20 {
+    xs.push(mk(n))
+  }
+  e.f3 + e.f15 * 2 + e.name.len()
+}
+
+fn call_between(var xs: List[Big], i: Int, j: Int) -> Int {
+  let e = xs[i]
+  touch(xs, j)
+  sum(e)
+}
+
+fn field_swap(var xs: List[Big], i: Int, j: Int) -> Int {
+  let e = xs[i]
+  var n = xs[j]
+  n.f0 = e.f16
+  n.f16 = e.f0
+  xs[j] = n
+  xs[i].f1 + xs[j].f0 * 100 + xs[j].f16 + e.f0
+}
+
+fn pop_between(var xs: List[Big]) -> Int {
+  let e = xs[xs.len() - 1]
+  let _ = xs.pop()
+  xs.push(mk(77))
+  e.f2 + e.f9 + e.name.len()
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  for (i, j) in [(0, 0), (0, 1), (1, 1), (2, 1), (2, 2)] {
+    var xs = [mk(k), mk(20), mk(30)]
+    os.stdio.println("set ${i} ${j} ${set_between(xs, i, j)} ${sum(xs[i])}")
+    os.stdio.println("push ${i} ${push_between(xs, i)} ${xs.len()}")
+    os.stdio.println("call ${i} ${j} ${call_between(xs, i, j)}")
+    os.stdio.println("swap ${i} ${j} ${field_swap(xs, i, j)}")
+    os.stdio.println("pop ${pop_between(xs)} ${sum(xs[xs.len() - 1])}")
+  }
+  var ys = [mk(1)]
+  var s = 0
+  for i in 0..30 {
+    let e = ys[i / 2]
+    ys.push(mk(i))
+    s = s * 3 % 1000003 + e.f7 + e.name.len()
+  }
+  os.stdio.println("grow ${s}")
+}

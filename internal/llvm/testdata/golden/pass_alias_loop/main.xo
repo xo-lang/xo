@@ -1,0 +1,62 @@
+// A loop that reads a field of one element and writes the same field
+// through another index or a var parameter, where the indexes meet on
+// some turns: hoist_fields (a field memoized across the loop),
+// hoist_invariants, reuse_loads and inplace_elems must see the write.
+struct E {
+  key: Int
+  val: Int
+  f: Float
+}
+
+fn bump(var es: List[E], j: Int, d: Int) {
+  es[j].val = es[j].val + d
+}
+
+fn sweep(var es: List[E], i: Int) -> Int {
+  var s = 0
+  for j in 0..es.len() {
+    s = s * 3 + es[i].val
+    es[j].val = es[j].val + es[i].key
+    s = s + es[i].val
+  }
+  s
+}
+
+fn via_call(var es: List[E], i: Int) -> Int {
+  var s = 0
+  for j in 0..es.len() {
+    s = s * 5 + es[i].val
+    bump(es, j, 2)
+  }
+  s + es[i].val
+}
+
+fn self_field(var es: List[E]) -> Int {
+  var s = 0
+  for j in 0..es.len() {
+    let t = es[es[j].key % es.len()]
+    es[es[j].key % es.len()].val = t.val + es[j].val
+    s = s * 7 + es[j].val + t.val
+  }
+  s
+}
+
+fn fsweep(var es: List[E], i: Int) -> Float {
+  var s = 0.0
+  for j in 0..es.len() {
+    s = s + es[i].f
+    es[j].f = es[j].f * 0.5 + 1.0
+  }
+  s
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  for i in 0..4 {
+    var es = [E{key: 1, val: 5, f: 1.0}, E{key: 2, val: k, f: 2.0}, E{key: 3, val: 7, f: -3.0}, E{key: 0, val: 9, f: 0.5}]
+    os.stdio.println("sweep ${i} ${sweep(es, i)} ${es[0].val} ${es[3].val}")
+    os.stdio.println("call ${i} ${via_call(es, i)} ${es[i].val}")
+    os.stdio.println("self ${self_field(es)} ${es[1].val} ${es[2].val}")
+    os.stdio.println("fsweep ${i} ${fsweep(es, i)} ${es[i].f}")
+  }
+}

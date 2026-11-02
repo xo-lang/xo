@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+pick 46004 22000
+edges 149808187
+--- stderr

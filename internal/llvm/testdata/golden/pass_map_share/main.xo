@@ -1,0 +1,60 @@
+// map_core: the key side of every Map and Set of one key type is one copy
+// that takes the key lists. Maps and Sets of one key type with different
+// values, copies kept while the original grows, removes and re-adds, and
+// keys removed and re-inserted past a resize.
+fn show_m(m: Map[Int, Str]) -> Str {
+  var s = ""
+  for (k, v) in m {
+    s = "${s} ${k}=${v}"
+  }
+  s
+}
+
+fn show_s(st: Set[Int]) -> Str {
+  var s = ""
+  for k in st {
+    s = "${s} ${k}"
+  }
+  s
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  var a: Map[Int, Str] = {}
+  var b: Map[Int, Int] = {}
+  var c: Set[Int] = #{}
+  var d: Map[Str, Int] = {}
+  var e: Set[Str] = #{}
+  for i in 0..40 {
+    a[i * k % 23] = "a${i}"
+    b[i % 17] = (b.get(i % 17) ?? 0) + i
+    c.add(i * 3 % 29)
+    d["k${i % 13}"] = i
+    e.add("e${i % 11}")
+    if i % 5 == 0 {
+      let _ = a.remove(i % 23)
+      c.remove(i % 29)
+      let _ = d.remove("k${i % 7}")
+    }
+  }
+  let a2 = a
+  let c2 = c
+  for i in 100..140 {
+    a[i] = "x"
+    c.add(i)
+    let _ = a.remove(i - 100)
+    c.remove(i - 100)
+  }
+  os.stdio.println("a ${a.len()}${show_m(a2)}")
+  os.stdio.println("a now ${show_m(a)}")
+  os.stdio.println("c ${c.len()} ${c2.len()}${show_s(c2)}")
+  var bs = 0
+  for (kk, v) in b {
+    bs = bs * 7 % 1000003 + kk * v
+  }
+  var ds = 0
+  for (kk, v) in d {
+    ds = ds * 7 % 1000003 + kk.len() * 10 + v
+  }
+  os.stdio.println("b ${bs} d ${ds} e ${e.len()} ${e.contains("e3")} ${e.contains("e11")} ${c2.contains(3)} ${c.contains(3)}")
+}

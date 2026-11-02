@@ -172,6 +172,17 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
 
 ## Testing
 
+- Targeted pass goldens (2026-11-02): `pass_*` in
+  internal/llvm/testdata/golden are programs aimed at what each optional
+  native pass assumes (moves, loop-carried values, flags, spills, two
+  indexes naming one element). They run as goldens on every backend, and
+  `TestGoldenPassesOff` (internal/arm64, not -short) builds each with
+  every optional pass off and with each pass it targets off
+  (passHuntTargets), against the same want.txt. A new pass adds a program
+  aimed at its assumptions there, run with equal and unequal indexes
+  where it moves memory; check with `XO_PASSES=-PASS` and `otool -t`
+  that the pass changes the program's code, since the whole binary
+  differs either way.
 - Idle test steps (2026-10-30): `python3 scripts/serial-hold.py
   $logs/STEP.json` lists a gate step's serial top-level tests and how many
   tests ran at once per 100 s; go test runs serial tests alone before the

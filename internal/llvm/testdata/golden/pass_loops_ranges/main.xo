@@ -1,0 +1,69 @@
+// Induction variables (lsr), ranges that drop bounds checks (an index one
+// past the end must still fault), small loops unrolled, and counting
+// down to zero.
+use std/task
+
+fn strided(xs: List[Int], step: Int) -> Int {
+  var s = 0
+  var i = 0
+  var j = xs.len() - 1
+  while i < xs.len() && j >= 0 {
+    s = s * 7 + xs[i] - xs[j]
+    i += step
+    j -= step + 1
+  }
+  s * 100 + i * 10 + j
+}
+
+fn edge(xs: List[Int], n: Int) -> Int {
+  var s = 0
+  for i in 0..n {
+    s += xs[i]
+  }
+  s
+}
+
+fn down(xs: List[Int]) -> Int {
+  var i = xs.len()
+  var s = 0
+  while i > 0 {
+    i -= 1
+    s = s * 3 + xs[i]
+  }
+  s + i
+}
+
+fn pair_idx(xs: List[Int]) -> Int {
+  var s = 0
+  for i in 0..xs.len() {
+    let j = xs.len() - 1 - i
+    s += xs[i] * xs[j] + i * j
+  }
+  s
+}
+
+fn unroll(k: Int) -> Int {
+  var a = [k, k + 1, k + 2, k + 3]
+  for i in 0..4 {
+    a[(i + 1) % 4] = a[i] + a[(i + 3) % 4]
+  }
+  a[0] * 1000000 + a[1] * 10000 + a[2] * 100 + a[3]
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  var xs: List[Int] = []
+  for i in 0..13 {
+    xs.push(i * i - 5 * i + k)
+  }
+  for st in [1, 2, 3, 5] {
+    os.stdio.println("strided ${st} ${strided(xs, st)}")
+  }
+  for n in [12, 13, 14] {
+    match task.isolate(fn() -> Int ! () { edge(xs, n) }) {
+      Ok(v) => os.stdio.println("edge ${n} ${v}")
+      Err(_) => os.stdio.println("edge ${n} fault")
+    }
+  }
+  os.stdio.println("down ${down(xs)} pair ${pair_idx(xs)} unroll ${unroll(k)}")
+}

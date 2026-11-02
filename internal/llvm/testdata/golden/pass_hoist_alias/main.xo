@@ -1,0 +1,69 @@
+// A value read in a loop that the loop itself changes, through an
+// element, a field, or a var parameter: hoisting, field hoisting, cse and
+// load reuse must see the write.
+struct Acc {
+  total: Int
+  limit: Int
+  hist: List[Int]
+}
+
+fn bump(var a: Acc, x: Int) {
+  a.total += x
+  if a.total > a.limit {
+    a.limit = a.limit * 2
+  }
+}
+
+fn run_acc(xs: List[Int]) -> Int {
+  var a = Acc{total: 0, limit: 4, hist: []}
+  for x in xs {
+    let before = a.limit
+    bump(a, x)
+    a.hist.push(a.limit - before)
+    if a.limit != before {
+      a.total = a.total - before
+    }
+  }
+  a.total * 1000 + a.limit * 10 + a.hist.len()
+}
+
+fn self_index(var xs: List[Int]) -> Int {
+  var s = 0
+  for i in 0..xs.len() {
+    let j = xs[i] % xs.len()
+    xs[j] = xs[j] + xs[i]
+    s = s * 5 + xs[i] + xs[j]
+  }
+  s
+}
+
+fn lens(var xs: List[Int]) -> Int {
+  var i = 0
+  var s = 0
+  while i < xs.len() {
+    if xs[i] % 3 == 0 {
+      xs.push(xs[i] + 1)
+    }
+    s += xs.len()
+    i += 1
+  }
+  s
+}
+
+fn show(xs: List[Int]) -> Str {
+  var s = ""
+  for x in xs {
+    s = "${s} ${x}"
+  }
+  s
+}
+
+fn main(os: Os) {
+  let k = (os.env.args().len() + 1)
+  os.stdio.println("acc ${run_acc([3, 1, 4, 1, 5, 9, 2, 6, 5, 3, k])}")
+  var xs = [5, 3, 8, 1, 9, 2, 7, k]
+  let snap = xs
+  os.stdio.println("self ${self_index(xs)} ${show(xs)} ${show(snap)}")
+  var ys = [3, 1, 6, 4]
+  os.stdio.println("lens ${lens(ys)} ${show(ys)}")
+}

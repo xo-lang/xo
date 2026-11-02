@@ -1,0 +1,11 @@
+exit 0
+--- stdout
+strided 1 -1086619132
+strided 2 -21647103
+strided 3 -3017484
+strided 5 -410656
+edge 12 188
+edge 13 273
+edge 14 fault
+down 60982849 pair -897 unroll 17050611
+--- stderr
