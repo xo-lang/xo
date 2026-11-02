@@ -199,7 +199,10 @@ Last verified: 2026-10-30.
 
 The owner's second machine (2026-11-01): the same container setup on an M5
 Pro Mac, at a private address in `~/xo-lead/offload-arm64b.env` (18 CPUs, 23
-GB VM, 3 slots since 2026-11-02, at most 2 per agent), lane `pass2`. The first host runs on an M4 Pro. The second
+GB VM, 3 slots since 2026-11-02, at most 2 per agent), lane `pass2`.
+A full `internal/llvm` run there takes the whole host (`OFF_EXCLUSIVE=1`):
+beside other jobs clang is `Killed` at the container's memory limit, which
+reads as a failed golden (2026-11-02). The first host runs on an M4 Pro. The second
 has `--cap-add=SYS_NICE` and `--ulimit rtprio=99`, so `chrt -f` works there,
 which the first host lacks. Same packages, LLVM, seed and WebAssembly tools as
 above. Use it for pass/fail runs, with `OFFLOAD_ENV=offload-arm64b.env` on
