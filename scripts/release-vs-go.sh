@@ -186,15 +186,17 @@ compile() {
 	echo "warm rows are compiles through the back-end caches, not a cached result (before 2026-10-29"
 	echo "they could be the run cache's 10 to 20 ms)."
 	echo "Size is the default build's binary."
+} >"$report"
+
+# the pairs: NAME XO_SRC GO_SRC
+if section compile; then
+{
 	echo
 	echo "## Compile and size"
 	echo
 	echo "| program | side | cold ms | second ms | warm ms | edit ms | peak MB (c/w/e) | size MB | edit's path |"
 	echo "|---|---|---|---|---|---|---|---|---|"
-} >"$report"
-
-# the pairs: NAME XO_SRC GO_SRC
-if section compile; then
+} >>"$report"
 compile go llvm "$perf/llvm/go" main.go >>"$report"
 compile go coll "$perf/go" main.go >>"$report"
 compile go conc "$perf/conc/go" main.go >>"$report"
@@ -205,16 +207,20 @@ compile xo coll "$perf/xo" main.xo >>"$report"
 for w in spawn fanout pingpong mutex rwmutex pmap; do
 	compile xo "conc-$w" "$perf/conc/xo/$w" main.xo >>"$report"
 done
-fi
-
 {
 	echo
 	echo "The Go column builds one binary per group (llvm, coll, conc); the Xo"
 	echo "programs are one per workload except coll."
+} >>"$report"
+fi
+
+if section run; then
+{
 	echo
 	echo "## Run (xo bench --ab, A = Go, B = Xo, $ROUNDS rounds)"
 	echo
 } >>"$report"
+fi
 
 want() { section run && { [ -z "${WORKLOADS:-}" ] || [[ " $WORKLOADS " == *" $1 "* ]]; }; }
 ab() { # NAME GOBIN XOBIN ARG
@@ -248,6 +254,7 @@ if section test; then
 	tgo=$work/goroot/bin/go
 	tx=$work/test-cache
 	{
+		echo
 		echo "## Test (xo bench --ab, A = go test, B = xo test --std-module, $ROUNDS rounds)"
 		echo
 		echo "Cold empties every cache before each round (Go with -count=1); edit appends one"
@@ -288,6 +295,7 @@ fi
 # the http section: on the offload host (its seed is the base release)
 if section http; then
 	{
+		echo
 		echo "## HTTP server (bench/perf/jitter, linux/arm64 offload host)"
 		echo
 	} >>"$report"
