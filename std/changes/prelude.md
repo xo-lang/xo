@@ -1,5 +1,25 @@
 # prelude changes
 
+## 2026-11-02: fix: a dial reported a connection that had not been made
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's concurrency stress (golden net_lookup_dial_timeout, "blackhole: connected?" in 3 of 256 runs on linux/arm64 and 1 of 256 on linux/amd64, beside CPU burners)
+- Go reference: net/fd_unix.go connect (after a write wake, SO_ERROR 0 is a connection only when getpeername succeeds; ENOTCONN waits again)
+- Test: native/llrt/netconn_test.xo "a writable wake before the connect finished is not a connection" (fails before the fix); the stress rerun on both Linux hosts
+- Timing: none (one getpeername a dial)
+- Shipped in: v0.12.0 (d8c7f1d69, netconn.xo) through v0.35.0
+
+`os.net.dial` and `dial_timeout` on native targets register the socket
+with the poller before they connect it, and epoll reports a socket that
+is not connecting yet as writable (EPOLLOUT | EPOLLHUP). When the poller
+saw that event before the connect started, the dial woke with SO_ERROR
+0, which is also the value while a connect is in progress, and returned
+a connection that did not exist: a dial to an unroutable address
+"connected" instead of timing out, and a dial to a slow host could hand
+back a socket whose reads failed. The dial now confirms with
+getpeername, as Go's does, and otherwise waits for the next edge.
+
 ## 2026-11-01: perf: a growing List uses all of its block
 
 - Kind: perf

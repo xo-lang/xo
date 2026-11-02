@@ -3,6 +3,9 @@
 // internal/stdtest.
 
 use native/llrt/dns
+use native/llrt/ctx
+use native/llrt/poll
+use native/llrt/sock
 
 test "a resolver error's text is Go's where Go has one" {
   expect(gai_text(dns.EAI_NONAME)) == "no such host"
@@ -30,4 +33,28 @@ test "libSystem's EAI codes map to dns.xo's" {
   // macOS's EAI_AGAIN is 2, and minus 2 is EAI_NONAME's number: before
   // the mapping a temporary failure read as `no such host`
   expect(darwin_eai(2, 0) == dns.EAI_NONAME) == false
+}
+
+// A socket registered with the poller before its connect is reported
+// writable (epoll: a socket that is not connecting yet; kqueue likewise):
+// that wake is not a connection. connect_wait took it for one when
+// SO_ERROR was 0, and a dial to an unroutable address reported a
+// connection under load (net_lookup_dial_timeout, 2026-11-02). Here the
+// socket never connects, so the only end is the deadline.
+test "a writable wake before the connect finished is not a connection" {
+  if sock.windows() {
+    return
+  }
+  let fd = sock.socket(2, sock.SOCK_STREAM | cloexec(), 6)
+  expect(fd >= 0) == true
+  let _b = sock.nonblock(fd)
+  let pd = poll.pd_open(fd, true)
+  expect(pd > 0) == true
+  // the registration's edge, as the poller hands it to pd when it sees
+  // the event before the connect starts
+  poll.pd_ready(pd, 2)
+  let _g = poll.pd_begin(pd)
+  expect(connect_wait(ctx.cur(), pd, fd, poll.deadline(50000000))) == 2
+  poll.pd_end(pd)
+  poll.pd_free(pd)
 }

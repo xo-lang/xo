@@ -962,17 +962,43 @@ fn ip_of(a: Str) -> Str {
 /// Waits for the connect in progress on fd: 0 connected, a negative
 /// errno, 1 canceled, 2 the time is up.
 fn connect_wait(c: Int, pd: Int, fd: Int, when: Int) -> Int {
-  let w = poll.pd_wait_ctx(pd, true, c, when)
-  if w == poll.READY {
-    return sock.sock_err(fd)
+  while true {
+    let w = poll.pd_wait_ctx(pd, true, c, when)
+    if w == poll.CANCELED {
+      return 1
+    }
+    if w == poll.TIMEOUT {
+      return 2
+    }
+    if w != poll.READY {
+      return 0 - econnaborted()
+    }
+    let e = sock.sock_err(fd)
+    if e == 0 - einprogress() || e == 0 - EINTR {
+      continue
+    }
+    if e != 0 || sock.windows() || peer_known(fd) {
+      return e
+    }
+    // SO_ERROR is 0 while the connect is still in progress too: a wake
+    // before it finished (pd_open registers the socket before connect,
+    // and epoll reports a socket that is not yet connecting as writable)
+    // is not a connection. Wait for the next edge, as Go's connect does
+    // (getpeername, ENOTCONN: net/fd_unix.go). A dial to an unroutable
+    // address reported a connection under load (golden
+    // net_lookup_dial_timeout, 2026-11-02)
   }
-  if w == poll.CANCELED {
-    return 1
-  }
-  if w == poll.TIMEOUT {
-    return 2
-  }
-  0 - econnaborted()
+  0
+}
+
+/// Whether socket fd has a peer (getpeername succeeds): its connect
+/// finished.
+fn peer_known(fd: Int) -> Bool {
+  let sa = rt.heap_large(SA + 16).wrapping_sub(8)
+  rt.mem_store(sa, SA, SA, 4)
+  let r = sock.peername(fd, sa, sa + SA)
+  rt.heap_release(sa)
+  r == 0
 }
 
 /// dial giving up after d ns (d <= 0: no limit): the connection, or 0
