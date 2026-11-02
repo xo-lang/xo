@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+n 6 out 5 ab,abcd,apple,q,y o long0! s x c doc0doc0 4 m 9 d ab,abc,abcd,0
+--- stderr

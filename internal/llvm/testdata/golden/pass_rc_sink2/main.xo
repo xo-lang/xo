@@ -1,0 +1,92 @@
+// sink_retains moves a retain into the arms of the branch after it (each
+// arm its own), past direct calls that borrow the value; the owner must
+// be out of the call's reach (a parameter, or read from one through
+// fields, payloads and list.index). Shapes: an arm that consumes the
+// value into a list and one that drops it, a borrowing call that also
+// receives the owner (so it could free the value), a closure built in one
+// arm, a loop around the branch, and an enum payload.
+
+enum Tok {
+  Word(s: Str)
+  Num(n: Int)
+  Pair(a: Str, b: Str)
+}
+
+struct Doc {
+  title: Str
+  parts: List[Str]
+}
+
+fn blen(s: Str) -> Int {
+  s.len()
+}
+
+fn keep_or_drop(d: Doc, i: Int, var out: List[Str]) -> Int {
+  let s = d.parts[i]
+  if s.len() % 2 == 0 {
+    out.push(s)
+    return 1
+  }
+  blen(s)
+}
+
+fn owner_too(var ds: List[Doc], i: Int) -> Str {
+  let s = ds[i].title
+  if blen(s) > 2 {
+    ds[i] = Doc{title: "x", parts: []}
+    return s + "!"
+  }
+  s
+}
+
+fn closure_arm(d: Doc, k: Int) -> Str {
+  let t = d.title
+  if k > 1 {
+    let f = fn() -> Str { t + t }
+    return f()
+  }
+  "${blen(t)}"
+}
+
+fn tok(ts: List[Tok], var out: List[Str]) -> Int {
+  var n = 0
+  for t in ts {
+    match t {
+      Word(s) => {
+        if s.starts_with("a") {
+          out.push(s)
+        } else {
+          n += blen(s)
+        }
+      }
+      Num(v) => n += v
+      Pair(a, b) => {
+        if a == b {
+          out.push(a)
+        } else {
+          out.push(b)
+          n += blen(a)
+        }
+      }
+    }
+  }
+  n
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  let d = Doc{title: "doc${k}", parts: ["ab", "abc", "abcd", "${k}"]}
+  var out: List[Str] = []
+  var n = 0
+  for i in 0..4 {
+    n += keep_or_drop(d, i, out)
+  }
+  var ds = [Doc{title: "long${k}", parts: []}, Doc{title: "s", parts: []}]
+  let o1 = owner_too(ds, 0)
+  let o2 = owner_too(ds, 1)
+  let c1 = closure_arm(d, k + 2)
+  let c2 = closure_arm(d, 0)
+  let ts = [Tok.Word("apple"), Tok.Word("pear"), Tok.Num(3), Tok.Pair(a: "q", b: "q"), Tok.Pair(a: "x${k}", b: "y")]
+  let m = tok(ts, out)
+  os.stdio.println("n ${n} out ${out.len()} ${out.join(",")} o ${o1} ${o2} ${ds[0].title} c ${c1} ${c2} m ${m} d ${d.parts.join(",")}")
+}
