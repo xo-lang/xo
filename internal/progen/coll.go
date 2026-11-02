@@ -65,8 +65,8 @@ func Coll(seed int64) string {
 
 func collFunc(r *rand.Rand, i int) string {
 	k := collKinds[r.Intn(len(collKinds))]
-	shape := r.Intn(12)
-	if shape >= 9 {
+	shape := r.Intn(13)
+	if shape >= 11 {
 		shape = 9 // the minimal flag loop is the most frequent: nothing else reads the size
 	}
 	if k.shrink == nil && shape == 5 {
@@ -174,6 +174,24 @@ func collFunc(r *rand.Rand, i int) string {
 		add("  }")
 		add("  i += 1")
 		add("  more = " + k.size("c") + " != n")
+		add("}")
+	case 10: // two collections: one's change drives the other's loop test
+		k2 := collKinds[r.Intn(len(collKinds))]
+		add("var d: " + k2.typ + " = " + k2.init)
+		add("var more = true")
+		add("var i = 0")
+		add("while more {")
+		add("  let n = " + k.size("c"))
+		add("  let m = " + k2.size("d"))
+		add(fmt.Sprintf("  if i < %d {", lim))
+		add("    " + k.grow("c", "i"))
+		add("  }")
+		add("  if " + k.size("c") + " != n {")
+		add("    " + k2.grow("d", "i * 2"))
+		add("  }")
+		add("  i += 1")
+		add("  more = " + k2.size("d") + " != m")
+		add("  " + step(k.size("c")+" + "+k2.size("d")))
 		add("}")
 	default: // a copy keeps its own size and contents
 		add(fmt.Sprintf("for i in 0..%d {", lim))
