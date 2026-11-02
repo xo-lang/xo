@@ -103,6 +103,7 @@ names).
     (netconn.xo darwin_eai) instead of passing libSystem's gai_strerror
     through. NetErr has no temporary flag, so EAI_AGAIN's Temporary (Go's
     DNSError.IsTemporary) is not carried; that would be a NetErr change.
+    The owner declined that flag on 2026-11-01: NetErr stays without it.
   - darwin.strerror (owner, 2026-10-30): Go's zerrors_darwin_arm64.go
     table with the first letter capitalized, as on Linux (`Origin: go`
     marker). Errnos 1 to 106 match the old texts exactly; 0 and 107

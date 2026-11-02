@@ -2,6 +2,9 @@
 
 Status: Accepted, direction and step 1 (owner, 2026-10-30): the hello-world wasi:http measurement first, later stages decided on its numbers; the owner approved installing wasmtime, wasm-tools, TinyGo and Rust's wasm32-wasip2 target on the linux/arm64 offload host. Proposed by xo-lang-4 the same day. Next stage accepted (owner, 2026-11-01) and done the same day: Xo writes the component sections, WASI 0.2 imports in place of preview 1.
 
+Next stage (owner, 2026-11-01): outgoing requests (`wasi:http/outgoing-handler`
+for std's HTTP client), before `handle_stream` and trailers.
+
 ## Context
 
 The owner's direction of 2026-10-30 (knowledgebase/wasm-and-jit.md,

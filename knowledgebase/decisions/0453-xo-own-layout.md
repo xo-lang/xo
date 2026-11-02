@@ -1,6 +1,6 @@
 # 0453: xo ships its own layout file
 
-Status: Proposed (xo-lang-2, 2026-11-01). Extends 0403; changes its item 5 for one case
+Status: Accepted (owner, 2026-11-01). Proposed by xo-lang-2, 2026-11-01. Extends 0403; changes its item 5 for one case
 (a file with no target line). Serves 0448 case (c).
 
 ## Context
