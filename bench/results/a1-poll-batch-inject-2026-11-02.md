@@ -32,3 +32,7 @@ s3 119 s): pass.
 
 Raw outputs: ~/xo-lead/notes/xo-lang-4/out/a1p*.txt, a1r*.txt, pgate.txt
 (the agent's notes, not in the repository).
+
+## Reverted (2026-11-02)
+
+bench/perf/jitter /alloc, first linux/arm64 host, one job: req/s 132,426 against 100,127 at 32 connections (0.756, ranges apart) and 134,645 against 120,487 at 256 (0.895), CPU a request 1.037 and 1.064; p99 at 256 2.9 ms against 6.2 ms (one job, l4pts12: a144a3115 against 25d23d18e, 3 rounds, quiet host).

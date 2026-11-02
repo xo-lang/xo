@@ -643,11 +643,11 @@ fn wakep(p: Int) {
 
 /// w polls once (wait: at most that many ns for the next event or timer,
 /// -1 no limit), the fibers it readies pushed to its ring with no wake
-/// each (W_NONEXT 3, a poll's batch), then spread (np_spread): the events and timers
+/// each (W_NONEXT 2), then spread (np_spread): the events and timers
 /// handled, or -1 when it did not poll.
 fn np_poll(p: Int, w: Int, wait: Int) -> Int {
   let was = rt.mem_load(w, W_NONEXT, 8)
-  rt.mem_store(w, W_NONEXT, 3, 8)
+  rt.mem_store(w, W_NONEXT, 2, 8)
   let n = rt.call_c2(rt.fn_addr("np_poll"), wait, p)
   rt.mem_store(w, W_NONEXT, was, 8)
   if n > 0 {
@@ -664,24 +664,9 @@ fn np_poll(p: Int, w: Int, wait: Int) -> Int {
 /// (2026-10-21).
 fn np_spread(p: Int, w: Int) {
   let k = rt.slot_load(w, RQ_TAIL, SEQ_CST).wrapping_sub(rt.slot_load(w, 0, SEQ_CST))
-  // with the rest injected (push), one fiber left on the ring is still work
-  // another worker can take while w runs it
-  if k > 1 || (np_keep() > 0 && k >= np_keep()) {
+  if k > 1 {
     stat(ST_WAKE_SPREAD)
     wakep(p)
-  }
-}
-
-/// How many of a poll's readied fibers stay on the polling worker's ring;
-/// the rest go to the inject queue, where any worker takes them (decision
-/// 0324's a1, Linux only by the owner's decision of 2026-11-02:
-/// bench/perf/http CPU a request -5.9% at 32 connections on linux/arm64,
-/// httpstreamsrv CPU 0.886). 0 keeps them all, as before (darwin,
-/// Windows).
-fn np_keep() -> Int {
-  match target.os {
-    TargetOs.Linux => 1
-    TargetOs.Darwin | TargetOs.Windows | TargetOs.Wasi => 0
   }
 }
 
@@ -973,14 +958,8 @@ fn push(p: Int, t: Int, handoff: Bool) {
       return
     }
   } else {
-    if np_keep() > 0 && rt.mem_load(w, W_NONEXT, 8) == 3 && rt.slot_load(w, RQ_TAIL, SEQ_CST).wrapping_sub(rt.slot_load(w, 0, SEQ_CST)) >= np_keep() {
-      // a poll's batch past np_keep(): injected, not stolen later one by one;
-      // a mutex's reader grants (2) stay here (decision 0077's addendum)
-      inject_add(p, 0, 0, t)
-      return
-    }
     rq_put(p, w, t)
-    if rt.mem_load(w, W_NONEXT, 8) >= 2 {
+    if rt.mem_load(w, W_NONEXT, 8) == 2 {
       // a batch of wakes (mutex.xo grant_readers): one wakep after it
       return
     }
@@ -989,7 +968,7 @@ fn push(p: Int, t: Int, handoff: Bool) {
   wakep(p)
 }
 
-/// The wake after a batch of pushes that skipped theirs (W_NONEXT 2 or 3): a
+/// The wake after a batch of pushes that skipped theirs (W_NONEXT 2): a
 /// spinning worker that finds work wakes the next (find_work), so one
 /// starts the chain, and the wakes happen on the workers taking the
 /// work, not one by one on the pushing thread (bench/perf/http at 1024

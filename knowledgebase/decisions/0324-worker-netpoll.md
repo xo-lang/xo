@@ -342,3 +342,9 @@ with P rebuilds itself to the same bytes) pass on linux/arm64 (second
 host, 2026-11-02, d424e0c5b: arm64 134 s, stdtest 1312 s, bootstrap s1
 72 s, s2 126 s, s3 119 s); a confirming `--ab` of the landed branch
 against its parent (a144a3115 against 7e5f1c0d1, first linux/arm64 host, 3 rounds, host load 8 on both sides): bench/perf/httpstreamsrv CPU 0.893 (0.883 to 0.913, better), wall 0.992 and RSS 0.96 within noise.
+
+**Reverted (2026-11-02, Xo Lang 4).** Landed as 25d23d18e, P cost
+bench/perf/jitter's /alloc on the first linux/arm64 host: req/s 132,426 against 100,127 at 32 connections (0.756, ranges apart) and 134,645 against 120,487 at 256 (0.895), CPU a request 1.037 and 1.064; p99 at 256 2.9 ms against 6.2 ms (one job, l4pts12: a144a3115 against 25d23d18e, 3 rounds, quiet host). The
+owner's decision was to land P after the 0.36 /alloc regressions were
+fixed; it went in before, and the release's /alloc row comes first. P
+comes back with an /alloc row of its own beside the http ones above.
