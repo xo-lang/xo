@@ -51,6 +51,7 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   timed out at the client. It is watched now.
 - FIX (std/http): a parked HTTP/2 connection that fired as its server stopped
   leaked a 64 byte record (decision 0449).
+- FIX (runtime): an idle main thread no longer locks the park of a task that main's fiber ran inline after that task ended (`count_main`, since decision 0286). It could take a lock in a freed or reused context, so it could write into another object, crash or hang; normal builds have not been seen to. `conc_reader_yield` under load, linux/arm64: TSan reported it in 7 of 20 runs, 0 of 20 with the fix; with XO_HEAP_GUARD=1 366 of 500 runs crashed, 0 of 500 with the fix.
 - std/http (wasm): `xo build --targets=wasip2/wasm` of a program calling
   `http.serve_component` writes the whole `wasi:http` 0.2 component, with no
   wasm-tools and no preview 1 adapter, and its runtime uses WASI 0.2 imports

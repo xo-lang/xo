@@ -44,6 +44,7 @@ const RELAXED = 0
 const HEAP_TRIM = 144115188075855872
 const ACQUIRE = 1
 const RELEASE = 2
+const ACQ_REL = 3
 const SEQ_CST = 4
 
 /// The pool and worker records' layout is layout.xo's (decision 0341);
@@ -173,7 +174,8 @@ const F_ROOT = 96
 const F_ENDED = 104
 const F_ENDED_I = 13
 /// The park of main's counted wait while it is parked, 0 for none
-/// (root_idle counts it blocked): byte 112, word 14.
+/// (root_idle counts it blocked), 1 while count_main uses it: byte 112,
+/// word 14.
 const F_WAIT_I = 14
 const F_MAIN_RECORD = 128
 
@@ -2042,7 +2044,11 @@ fn count_main(p: Int) {
     return
   }
   let wp = rt.slot_load(mf, F_WAIT_I, ACQUIRE)
-  if wp != 0 {
+  // the park may be an inline task's, whose context is freed when the task
+  // ends: claimed here, main's fiber cannot leave its wait until the word
+  // is back (TSan: this klock on a context already reused, tier 35,
+  // conc_reader_yield, 2026-11-01). A claim that fails: main has resumed
+  if wp > 1 && rt.slot_cas(mf, F_WAIT_I, wp, 1, ACQ_REL) {
     klock(wp)
     // still parked there (PK_FIBER is main's until its signal or resume,
     // both under this lock): main may have resumed since the read above
@@ -2051,6 +2057,7 @@ fn count_main(p: Int) {
       rt.slot_add(dlk, DLK_BLOCKED, 1, SEQ_CST)
     }
     unlock(wp)
+    rt.slot_store(mf, F_WAIT_I, wp, RELEASE)
   }
 }
 
@@ -2573,10 +2580,12 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
       sched.fiber_parking(f)
       unlock(p)
       park_switch(f)
+      if main {
+        main_unclaim(f, p)
+      }
       klock(p)
       rt.mem_store(p, PK_FIBER, 0, 8)
       if main {
-        rt.slot_store(f, F_WAIT_I, 0, RELEASE)
         if rt.mem_load(p, PK_COUNTED, 4) != 0 {
           // counted, then not signaled (a spurious resume)
           rt.mem_store(p, PK_COUNTED, 0, 4)
@@ -2637,6 +2646,27 @@ pub fn park_wait(pl: Int, c: Int, cancelable0: Int, counted: Int, f: Int, rw: In
   }
   if cancelable != 0 {
     node_set_waiter(node, 0)
+  }
+}
+
+/// Main's fiber, resumed from the wait at p, takes p back from F_WAIT_I
+/// before it takes p's lock, since count_main takes that lock holding its
+/// claim. The fiber holds no lock here and count_main waits for nothing the
+/// fiber does (a signal holding p's lock takes the pool's, and neither is
+/// this fiber's), so the claim ends as soon as the root runs. A wake cannot
+/// be lost here: a signal sets PK_SIGNALED under p's lock whatever this word
+/// holds. A root the OS descheduled must not be spun against for a whole
+/// time slice: past the spin the fiber's thread sleeps in short waits, which
+/// need no wake from count_main.
+fn main_unclaim(f: Int, p: Int) {
+  var i = 0
+  while !rt.slot_cas(f, F_WAIT_I, p, 0, ACQ_REL) {
+    if i < 1000 {
+      rt.spin_hint()
+      i = i.wrapping_add(1)
+    } else {
+      futex_wait_us(f.wrapping_add(8 * F_WAIT_I), 1, 50)
+    }
   }
 }
 

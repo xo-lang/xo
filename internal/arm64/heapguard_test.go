@@ -1,10 +1,13 @@
 package arm64
 
 import (
+	"bytes"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -96,5 +99,50 @@ func TestGoldenRunHeapGuard(t *testing.T) {
 				t.Errorf("output differs from want.txt with XO_HEAP_GUARD=1\n--- want\n%s\n--- got\n%s", want, got)
 			}
 		})
+	}
+}
+
+// TestHeapGuardMainInlinePark repeats conc_reader_yield, built with
+// XO_HEAP_GUARD=1, while busy loops take the CPUs: main's idle thread
+// (pool.xo count_main) locked the park of a task main's fiber ran inline,
+// after the task ended and its context, here unmapped, was gone. Before the
+// fix 366 of 500 such runs ended in SIGSEGV on linux/arm64, and 0 of 200 with
+// the CPUs free, so the load is the test (gotchas/park-pointer-outlives-inline-task.md).
+// Not parallel: other tests' builds would change the load.
+func TestHeapGuardMainInlinePark(t *testing.T) {
+	if !native() {
+		t.Skip("the host is not arm64")
+	}
+	if testing.Short() {
+		t.Skip("builds and runs a program")
+	}
+	dir := filepath.Join("..", "llvm", "testdata", "golden", "conc_reader_yield")
+	res, err := sharedBuild(dir, xotool.Options{Backend: xotool.BackendArm64, Env: []string{"XO_HEAP_GUARD=1"}})
+	if err != nil {
+		t.Fatalf("build: %v", err)
+	}
+	if res.Failed {
+		t.Fatalf("build failed:\n%s", res.Output)
+	}
+	var stop atomic.Bool
+	defer stop.Store(true)
+	for range 2 * runtime.NumCPU() {
+		go func() {
+			for !stop.Load() {
+			}
+		}()
+	}
+	for i := range 30 {
+		cmd := testtmp.Guard(exec.Command(res.Binaries[xotool.Host()]))
+		cmd.Dir = dir
+		var stderr bytes.Buffer
+		cmd.Stderr = &stderr
+		if err := cmd.Run(); err != nil {
+			text := stderr.String()
+			if len(text) > 1500 {
+				text = text[:1500]
+			}
+			t.Fatalf("run %d of 30: %v\n%s", i+1, err, text)
+		}
 	}
 }
