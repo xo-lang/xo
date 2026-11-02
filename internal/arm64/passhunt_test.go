@@ -51,6 +51,7 @@ var passHuntTargets = map[string][]string{
 	"pass_rc_sink2":          {"sink_retains", "uniq_var_params", "take_in_place", "cancel_rc_pairs"},
 	"pass_inplace_sel":       {"inplace_elems", "select_compares", "devirtualize", "inline"},
 	"pass_devirt":            {"devirtualize", "inline"},
+	"pass_tsw_rc":            {"thread_switch", "jump_tables", "cancel_rc_pairs", "inline"},
 	"slp_alias_store":        {"slp_f64", "reuse_loads", "cluster_mem"},
 	"pass_take_in_place":     {"take_in_place", "inplace_elems"},
 	"pass_take_in_place_ref": {"take_in_place"},

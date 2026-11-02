@@ -1,0 +1,72 @@
+// pass hunt: thread_switch (an interpreter loop dispatching through a
+// jump table, its latch copied into each arm) and cancel_rc_pairs (the
+// retain and release an inlined field-reading callee leaves around an
+// element's Str).
+struct Item {
+  name: Str = ""
+  score: Int = 0
+  tag: Str = ""
+}
+
+fn run(code: List[Int], n0: Int) -> Int {
+  var pc = 0
+  var a = n0
+  var b = 1
+  var c = 0
+  var steps = 0
+  while pc < code.len() && steps < 100000 {
+    let op = code[pc]
+    steps += 1
+    match op {
+      0 => { a += 1 }
+      1 => { b = b * 3 % 1009 }
+      2 => { c = c + a - b }
+      3 => { a = a ^ (b << 1) }
+      4 => { if a % 5 == 0 { pc += 1 } }
+      5 => { b = b + c % 7 }
+      6 => { if c < 0 { c = -c } }
+      7 => { a = a % 100003 }
+      8 => { if a % 3 != 0 && pc > 2 { pc -= 3 } }
+      9 => { c = c ^ a }
+      _ => { b += 1 }
+    }
+    pc += 1
+  }
+  a * 31 + b * 7 + c + steps
+}
+
+fn key(it: Item) -> Int { it.score }
+fn klen(it: Item) -> Int { it.name.len() + it.score }
+
+fn max_by(xs: List[Item], k: fn(Item) -> Int) -> Int {
+  var best = -1
+  var bi = -1
+  for (i, x) in xs.indexed() {
+    let v = k(x)
+    if v > best {
+      best = v
+      bi = i
+    }
+  }
+  bi
+}
+
+fn sum_keys(xs: List[Item]) -> Int {
+  var t = 0
+  for x in xs {
+    t += key(x) + klen(x)
+  }
+  t
+}
+
+fn main(os: Os) {
+  let prog = [0, 1, 2, 3, 4, 5, 6, 7, 9, 2, 0, 8, 1, 5, 9, 6, 7, 10, 3, 4]
+  os.stdio.println("run ${run(prog, 3)} ${run(prog, 10)} ${run([0, 0, 2, 8, 9], 1)}")
+  var xs: List[Item] = []
+  for i in 0..30 {
+    xs.push(Item{name: "item-${i * 7 % 11}", score: i * 13 % 23, tag: "t${i}"})
+  }
+  let bi = max_by(xs, fn(it: Item) -> Int { it.score })
+  let bl = max_by(xs, fn(it: Item) -> Int { it.name.len() * 100 + it.score })
+  os.stdio.println("max ${bi} ${xs[bi].name} ${bl} ${xs[bl].tag} sum ${sum_keys(xs)}")
+}

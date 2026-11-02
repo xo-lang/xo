@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+run 1081 1615 106
+max 7 item-5 14 t14 sum 821
+--- stderr
