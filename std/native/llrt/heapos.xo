@@ -575,14 +575,15 @@ pub fn chunk(h: Int) {
 
 /// Whether a chunk starts small, the rest of its 4 MiB reserved (no access:
 /// no other mapping can land in it, as is_page needs, and no huge page is
-/// faulted in), on the systems whose mappings can be split.
+/// faulted in): darwin only (decision 0455). Linux keeps whole chunks: small
+/// first chunks cost its conc-spawn edit 2 to 3% wall with no RSS gain.
 fn small_chunks() -> Bool {
   if sanhook.sanitized() || sanhook.gorace() {
     return false
   }
   match target.os {
-    TargetOs.Linux | TargetOs.Darwin => true
-    TargetOs.Windows | TargetOs.Wasi => false
+    TargetOs.Darwin => true
+    TargetOs.Linux | TargetOs.Windows | TargetOs.Wasi => false
   }
 }
 
