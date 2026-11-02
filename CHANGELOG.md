@@ -3,8 +3,12 @@
 Xo stays on 0.x until the owner declares 1.0 (decision 0089). The toolchain
 minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
+Entries from v0.11.0 to v0.35.0 sit under the first release tag whose
+CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
+the text of every entry is unchanged).
 
 ## Unreleased
+
 - perf (native, arm64): callee saved registers are saved from a 16 byte aligned offset, so no register pair straddles a 4 KiB page. At one stack phase in 256 a pair did, and on a Linux VM on Apple silicon that cost /alloc 36% more CPU a request: 0.36's /alloc gap, which a 208 byte smaller frame upstream moved onto such a phase (decision 0459). `XO_STACK_SHIFT=N` moves every fiber's first frame N bytes lower to check a cost against the stack's address.
 - perf (native http): a Response no longer carries the wasm-only stream field decision 0447 added (/alloc on linux/arm64: req/s +12% at 32 and 256 connections, CPU a request -11%).
 - native http: a keep-alive connection whose 20 ms linger timed out parks at once on later idles until it is busy again (decision 0449), so slow keep-alive traffic holds less memory (30 ms think time at 2,000 connections: 70 MB to about 60 MB).
@@ -83,7 +87,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   to 4000 MB on the Mac, decision 0448): a part's hollowed text is dropped once
   its object and symbol facts exist, and those facts copy their names rather
   than pin the text. Max RSS on linux/arm64 is unchanged (0.995, noise).
-
 - FIX (Windows, std/http): a server connection parked between requests
   (decision 0449) was never watched by the poller, so its next request
   timed out at the client. It is watched now.
@@ -323,7 +326,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   written before its reader's first read; a write past that waits for
   the reader, so a writer task running ahead of a late `Client.open` no
   longer grows memory without bound.
-
 - Memory (decision 0448 stage 2): `xo test` lets the front end go once
   the program is lowered, as other native builds have since decision
   0352: it lists its tests first. Live heap at the link of `xo test
@@ -539,7 +541,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `use go` docs (core 4.4): a Go library that records its caller (zap's
   AddCaller) sees the binding's adapter frame; skip one more
   (`zap.add_caller_skip(1)` logs `main.xo:LINE`); the zap workflow checks it.
-
 - Native backends: a branch on a register just set to a constant of
   two to four instructions (movz or movn, then movk) goes straight to
   its outcome, as one of a single mov already did (compiler/arm64
@@ -633,20 +634,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   client (Go's `http.Protocols`, h2c with prior knowledge) and
   `with_h2_config(H2Config{...})` (Go's `HTTP2Config`). Go backend
   first; the native h2c server and client follow.
-
 - Mutual TLS (decision 0433): `http.Server.with_client_auth(mode,
   roots)` asks clients for a certificate in one of Go's five
   `tls.ClientAuth` modes, `http.Client.with_cert(cert)` and
   `tls.client(..., cert:)` present one, and `TlsState.verified_chains`
   shows what verified it. `TlsCert` moved to std/tls (`http.TlsCert`
   stays). Go backend first; the native handshake follows.
-
 - `xo prof` warns when a heap profile lost samples (its table holds 65,536): the totals undercount and the in use figure is unreliable, and it names an `XO_PROF_HEAP_RATE` that keeps about 50,000 samples.
 - std/http full duplex (decision 0433): `Response.with_full_duplex()`
   and `http.pipe()` (Go's `io.Pipe`: a PipeWriter that fills a
   BodyReader), so one task can write a request body while another reads
   the response.
-
 - FIX (native heap, --race): a program with threads built with `--race`
   could die in ThreadSanitizer's own code once a thread had freed a
   magazine's worth of 32 KiB or larger blocks (free_mt's count of the
@@ -654,11 +652,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   page blocks, which a sanitizer build keeps off; gotchas/
   page-table-link-with-pages-off.md). internal/llvm TestRuntimeAlloc
   caught it at the first main check.
-
 - `WsConn` has deadlines (`set_deadline`, `set_read_deadline`,
   `set_write_deadline`), `on_ping`, `on_pong` and `pong` (decision 0430,
   gorilla's); a write error sticks, as in gorilla.
-
 - `xo test` parses std's function bodies only where the check needs
   them, as `xo build` does (decision 0351): a one-test program's test
   build after an edit takes 0.728 of the wall time and 0.485 of the
@@ -666,21 +662,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   body.
 - `UInt64.from_bits(x)` and `u.to_bits()` reinterpret 64 bits between Int
   and UInt64.
-
 - On Linux an unchanged `xo build`, `xo run` or `xo test` hits the run
   cache again: the build's record of what it read listed /proc/meminfo
   (read for the build's memory budget), whose contents change on every
   read, so since 0.28.0 every Linux build missed and built again.
 - `List.filter_map(f)` keeps f's Some values in order; std.md 2 says
   `Str.bytes()` makes no copy.
-
 - `task.deadline(clock)` gives the nearest `with_timeout` deadline the
   current task works under, or None (decision 0430, Go's
   `ctx.Deadline()`); a spawned task keeps the one in force where it was
   spawned.
-
 - std/http trailers (decision 0433): `BodyWriter.set_trailer`, `Response.with_trailer_names`, `BodyReader.trailers`, `ClientStream.trailers` and `Request.with_trailers(names, f)`, as net/http's TrailerPrefix and Request/Response.Trailer; the Go backend sends and reads them, the native backend has the API and its trailers stay empty until its wire part (Xo Lang 3) lands.
-
 - A connection deadline set before each read costs about what Go's does
   (it was 13% slower than Go): each connection rearms one timer, and
   moving a deadline later no longer wakes the poller.
@@ -695,24 +687,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `set_deadline`, `set_read_deadline` and `set_write_deadline(clock,
   t)`. A read or write past the deadline fails with `Timeout`, and the
   connection stays usable once the deadline moves.
-
 - std/deque: a double ended queue with O(1) pushes and pops at both ends.
-
 - `backoff.retry_notify` calls a function with each error and the next
   delay before it sleeps (cenkalti's RetryNotify).
-
 - An effect variable shared by several callback parameters is the union
   of their arguments' effects (decision 0432): `both(pure_fn, clock_reader)`
   for `fn both[fx: Effects](a: fn() uses fx, b: fn() uses fx)` compiles
   whatever the argument order, and charges the caller the clock; before,
   the first argument fixed the set and the second was XO0701.
-
 - On the Go backend, a stop now waits for WebSocket handlers (and proxied
   upgrades) as it waits for requests, as the native backends did:
   `serve` returned while a handler that had upgraded its connection
   still ran, since net/http's Shutdown does not track a hijacked
   connection (decision 0429).
-
 - FIX (type checking): a function could perform effects it did not
   declare through a struct's effect parameter (a named pure function
   passed first fixed the call's effect variable, and a `Box[clock]`
@@ -720,7 +707,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   function parameter of function type, `if`/`match` branches that are
   functions and a closure's annotated parameter are checked the same
   way. Every program that did not leak an effect still checks.
-
 - An edit build of a native program parses only the std declarations it
   needs (decision 0428): std's record keeps each file's declaration
   ranges, and the check parses one declaration where it needs its tree
@@ -780,6 +766,17 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   once per period of CPU it used; on Linux each sample counts the
   thread's CPU time since its last one, so ticks the process-wide timer
   merged are not lost (4 tasks at 1 kHz on linux/arm64: 0.683 to 0.999).
+- BREAKING: the `Net` interface gains `interfaces() -> List[NetInterface]
+  ! NetErr` (Go's net.Interfaces with addresses, decision 0426): a type
+  implementing `Net` adds it.
+- BREAKING: the `Proc` interface gains `usage()` and `children_usage()`
+  (`ProcUsage`: CPU time and peak memory, Go's getrusage, decision 0426):
+  a type implementing `Proc` adds both.
+- BREAKING: the `Fs` interface gains `disk_usage(path) -> DiskUsage !
+  FsErr` (Go's statfs, decision 0426): a type implementing `Fs` adds it.
+
+## v0.35.0 (2026-10-30)
+
 - Native Windows DNS record lookups (`lookup_mx`, `lookup_txt`,
   `lookup_srv`, `lookup_addr`) work: Xo's own DNS client asks the network
   adapters' DNS servers and reads the Windows hosts file, as Go's pure Go
@@ -792,16 +789,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   skips; in the directory itself a cold build's spills made its key
   differ from an identical warm build's, so the second build linked
   again (TestMachoBinCache).
-- BREAKING: the `Net` interface gains `interfaces() -> List[NetInterface]
-  ! NetErr` (Go's net.Interfaces with addresses, decision 0426): a type
-  implementing `Net` adds it.
-
-- BREAKING: the `Proc` interface gains `usage()` and `children_usage()`
-  (`ProcUsage`: CPU time and peak memory, Go's getrusage, decision 0426):
-  a type implementing `Proc` adds both.
-
-- BREAKING: the `Fs` interface gains `disk_usage(path) -> DiskUsage !
-  FsErr` (Go's statfs, decision 0426): a type implementing `Fs` adds it.
 - The native back end's parts own their functions' SSA bodies and drop
   them as each part is emitted; the module keeps shells with body facts
   (decision 0424). The self build's heap past emit 9452 to 8180 MB and
@@ -822,7 +809,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   streams at once, 0.85x Go's time (was 1.74x).
 - std/crc32 on arm64: Castagnoli past 504 bytes runs three crc32cx chains
   at once, 0.48 of its time (about twice Go's speed).
-
 - Native DNS lookups keep /etc/resolv.conf and /etc/hosts in a process
   cache, rechecked every 5 seconds as Go's resolver does: an MX lookup
   runs 0.637 of its former instructions, 1.004x Go's.
@@ -1013,7 +999,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   XO_DUMP_DIR) is read as the `/` form at entry, and a UNC path
   (`\\server\share\x`) keeps its share as its volume; before, some
   variables were taken as relative paths and a UNC root lost a slash.
-
 - **Breaking** (decision 0406): the prelude's `Net` interface gains
   `dial_timeout(addr, d)` and `lookup_host(host)`, so a user type that
   implements `Net` (a fake or wrapper passed where a `Net` is expected)
@@ -1079,6 +1064,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   not their cache keys, so a build with the cache off, or with separate
   compilation's facts given explicitly, has the same GUID as the default
   build.
+
+## v0.34.0 (2026-10-29)
+
 - Windows: xo starts its child builds without an `env` program, which a
   Windows host has only under Git Bash: `xo dev stdcache` (std's
   variants for separate compilation) failed in 30 ms, and `--backend=go`
@@ -1189,6 +1177,34 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `xo bench --ab` started by heavy.sh as a gate or a slot run exits 2 at once
   saying to run it as its own HEAVY_CLASS=measure job, where it waited for the
   quiet window that was waiting for it (a 28 minute deadlock, 2026-10-27)
+- The windows/amd64 linker builds each output section as bytes appended
+  whole, with its relocations written over them, where it pushed every input
+  byte into a list and wrote every output byte alone; the HTTP server's edit
+  719 to 694 ms (the .exe and .pdb byte for byte the same)
+- A windows/amd64 edit rebuild no longer rewrites the DWARF slots of every
+  part's assembly text: the COFF parts are keyed and assembled with the
+  placeholders and the real paths patched into each object, as the Mach-O
+  parts are; the HTTP server's edit 795 to 719 ms (the .exe and .pdb byte
+  for byte the same)
+- Breaking: a `uuid.Uuid` is two Ints (its 128 bits) instead of its canonical
+  text (decision 0387; deprecated in 0.33.0 as vet's XO0912). Migration: `u.0`
+  becomes `u.display()` (or `"${u}"`); `uuid.Uuid(s)` becomes `uuid.parse(s)?`;
+  a pattern `uuid.Uuid(t)` becomes a binding and `t = u.display()`; `u.0 < v.0`
+  becomes `u < v` (the bytes' order, as before). The checker names
+  `display()` on `u.0`. Against google/uuid: parse 1.18, string 1.02, bytes
+  1.75 times Go's time (from 1.23, 0.35 and 4.24).
+- A windows/amd64 build writes its PDB faster: the DWARF reader pushes each
+  variable and inlined call in place instead of copying its function out and
+  back, keeps its abstract origins' records in a list indexed by a map, and
+  the module stream is sized first and then written into one buffer, and an
+  inline site's ranges are sorted only when out of order and its children
+  found once, and a location list's expressions are read in place (one
+  that repeats the entry before shares its pieces); the HTTP server's edit
+  spends 66 ms in the PDB instead of 105
+  (the PDB and the .exe byte for byte the same)
+
+## v0.33.1 (2026-10-28)
+
 - `use go` with an xo-gobind from another xo (an old one on PATH, or
   XO_GOBIND) is XO1101 naming the helper and both binding formats
   ("xo-gobind at PATH wrote binding format 5, this xo reads 7"), where every
@@ -1202,15 +1218,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `<user cache>/xo/gobind/<source>-<go version>/` and uses that build. A
   helper that still meets newer export data says so, naming both Go
   versions and the XO_GOBIND workaround, instead of panicking.
-- The windows/amd64 linker builds each output section as bytes appended
-  whole, with its relocations written over them, where it pushed every input
-  byte into a list and wrote every output byte alone; the HTTP server's edit
-  719 to 694 ms (the .exe and .pdb byte for byte the same)
-- A windows/amd64 edit rebuild no longer rewrites the DWARF slots of every
-  part's assembly text: the COFF parts are keyed and assembled with the
-  placeholders and the real paths patched into each object, as the Mach-O
-  parts are; the HTTP server's edit 795 to 719 ms (the .exe and .pdb byte
-  for byte the same)
 - `use go`: a Go type two bound packages use is one Xo type (decision 0392):
   `net.tcp_addr_from_addr_port` takes the `netip.AddrPort` netip makes, and
   golang.org/x/text/cases' functions take `language.Tag`, where each binding
@@ -1240,22 +1247,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `xo check --no-gc` (and a native build) of a `use go` program reports one
   XO1201 per Go package and file, at its `use go` line with the count of its
   uses, instead of one per Go call (a tester's program had 45)
-- Breaking: a `uuid.Uuid` is two Ints (its 128 bits) instead of its canonical
-  text (decision 0387; deprecated in 0.33.0 as vet's XO0912). Migration: `u.0`
-  becomes `u.display()` (or `"${u}"`); `uuid.Uuid(s)` becomes `uuid.parse(s)?`;
-  a pattern `uuid.Uuid(t)` becomes a binding and `t = u.display()`; `u.0 < v.0`
-  becomes `u < v` (the bytes' order, as before). The checker names
-  `display()` on `u.0`. Against google/uuid: parse 1.18, string 1.02, bytes
-  1.75 times Go's time (from 1.23, 0.35 and 4.24).
-- A windows/amd64 build writes its PDB faster: the DWARF reader pushes each
-  variable and inlined call in place instead of copying its function out and
-  back, keeps its abstract origins' records in a list indexed by a map, and
-  the module stream is sized first and then written into one buffer, and an
-  inline site's ranges are sorted only when out of order and its children
-  found once, and a location list's expressions are read in place (one
-  that repeats the entry before shares its pieces); the HTTP server's edit
-  spends 66 ms in the PDB instead of 105
-  (the PDB and the .exe byte for byte the same)
+
+## v0.33.0 (2026-10-27)
+
 - A windows/amd64 edit rebuild assembles only the parts it changed (their
   objects kept in the back-end cache, the rest assembled on parallel tasks as
   on darwin and linux): the HTTP server's body edit 2783 to 1179 ms, llvm-fib's
@@ -1491,7 +1485,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (no call site counted inside one, one instruction, never inlined), so both builds inline alike; a
   build without debug information is unchanged, byte for byte. TestDebugInfoSameCode now builds both
   variants with inlining on, so the same-code promise covers inlining.
-
 - arm64: a function's result bounded by one of its parameters is known to its callers (decision
   0376): `i < n` for an n from `strings.space_start(b, lo, b.len())` needs no bounds check.
   compiler/xo itself has 4% fewer bytes index checks and 2.5% fewer list index checks.
@@ -1500,6 +1493,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   every list literal and every call on a list in it, and XO1201 "the std function
   `NAME.f`" for a call of the module's own function, though the same code compiled in
   a program; only a `std/native/NAME` module's tests worked (decision 0262).
+
+## v0.32.0 (2026-10-25)
+
 - `xo build --inline-str` (experimental, decision 0370, arm64 and amd64, default off): a Str
   of up to 11 bytes keeps its text in its two words. A list of a million short keys takes
   0.38 of the memory, a `Map[Str, Int]` 0.69, its sort 0.62 (wall 0.77, 0.84 and 0.65);
@@ -1514,6 +1510,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   native and LLVM backends (decision 0369; `--pack-lists=false` turns it off): 10 million
   `UInt32` and 10 million `UInt8` in lists take 0.27 of the memory and run in 0.53 of the
   time.
+
+## v0.31.0 (2026-10-25)
+
 - Faster Unicode classification and text splitting on darwin/arm64 and linux/arm64:
   the native inliner counts 23 more runtime operations as leaf instructions, and a
   call in tail position stays a branch instead of pushing its caller over the inline
@@ -1525,6 +1524,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - darwin/arm64 binaries also drop the fault-location strings and string literal
   objects that only removed functions used (decision 0371's addendum): a release
   hello world is 299,289 bytes instead of 332,314 (-9.9%), a CRUD server 1.6% smaller.
+
+## v0.30.0 (2026-10-25)
+
 - Programs with several Map types are smaller on the native and LLVM backends: a
   Map's key-side code is generated once per key type, its values in a list or value
   log of their own (decision 0372). Eight `Map[Str, V]` types take 388,280 bytes of
@@ -1546,6 +1548,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   first and named the wrong lines), a keyword read as a name says so (XO0160, not
   "declarations are only allowed at top level"), and a block ending in a statement
   that did not parse adds no type mismatch.
+
+## v0.29.0 (2026-10-24)
+
 - A spawned task that loops over a Mutex (every call in its loop is a `Mutex.with`,
   `with_read` or an Atomic method) starts its spawn site small, so a one-shot burst
   of lock-bound tasks runs on the spawner instead of waking a worker per spawn
@@ -1603,21 +1608,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   that has every shard (the user cache: 23 GB, 256 shards of about 2,000
   entries) opens as before, at no cost: listing each shard to open only its
   keys was measured and dropped (7 ms a shard, 1.8 s a build).
-
-- Every released xo is built by its platform's native backend (decision
-  0362): linux/amd64 joins (it was the Go backend; a static binary with
-  no C library, which rebuilds itself to the same bytes), and seeds are
-  cross built natively. Development builds of xo on x86-64 hosts are
-  native too: about 4 times faster to build than LLVM -O0, and the xo
-  they make builds 2.5 times faster.
-
-- Windows: the checkout's `xo.exe` (scripts/xobuild) is built natively
-  (`--backend=amd64`, as the release's), not with the Go backend, whose
-  build of xo spent 540 to 600 s in each program's link (CI's runner);
-  builds there are 9.5 to 18 s again (run 40057967924). The CI script
-  suite takes `--seed-archive NAME SHA256` to seed xobuild from a
-  release archive.
-
 - `xo build` and `xo run` of an unchanged program reuse its binary
   through the run cache `xo test` uses, printing what the build printed
   (a warm build of a small HTTP server 0.54 s to 0.039 s, hello 0.28 s
@@ -1630,6 +1620,26 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `XO_BACKEND_CACHE=verify` rebuilds on a hit and reports a difference
   as XO1512.
 
+## v0.28.0 (2026-10-24)
+
+- Every released xo is built by its platform's native backend (decision
+  0362): linux/amd64 joins (it was the Go backend; a static binary with
+  no C library, which rebuilds itself to the same bytes), and seeds are
+  cross built natively. Development builds of xo on x86-64 hosts are
+  native too: about 4 times faster to build than LLVM -O0, and the xo
+  they make builds 2.5 times faster.
+- Windows: the checkout's `xo.exe` (scripts/xobuild) is built natively
+  (`--backend=amd64`, as the release's), not with the Go backend, whose
+  build of xo spent 540 to 600 s in each program's link (CI's runner);
+  builds there are 9.5 to 18 s again (run 40057967924). The CI script
+  suite takes `--seed-archive NAME SHA256` to seed xobuild from a
+  release archive.
+- xo warns when it is older than the std it runs with (`std/VERSION`):
+  `xo: warning: this xo (0.24.0) is older than std at DIR (0.27.0);
+  rebuild it`, so a stale `bin/xo` on PATH is noticed.
+
+## v0.27.0 (2026-10-23)
+
 - 0.27.0 (2026-10-23): breaking, a third-party `use go` needs a `require
   go` pin (XO1319, decision 0356) and std's errors print plain messages
   (0358); `xo check` about 2.5x faster warm and `--support` 2.3 to 2.6x;
@@ -1641,9 +1651,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and the 0.26.0 field reports' fixes (Intel Mac, Windows). Known gaps:
   spawning many short tasks, sorting Strs (1.18x Go), a contended
   RWMutex. The entries below, down to 0.26.0's, are in it.
-- xo warns when it is older than the std it runs with (`std/VERSION`):
-  `xo: warning: this xo (0.24.0) is older than std at DIR (0.27.0);
-  rebuild it`, so a stale `bin/xo` on PATH is noticed.
 - `xo doc NAME` and `xo def NAME` run outside a module (a scratch or home
   directory too large to check, or one with no `.xo` file) answer a std or
   prelude name from std, with a note, instead of failing; `--dir` keeps
@@ -1653,35 +1660,29 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - `xo check --support` is about 2.5 times faster on a warm run
   (compiler/xo 3.7 s to 1.6 s): it keeps the module check cache and
   builds through the front end cache (decision 0351 addendum).
-
 - darwin programs linked through cc (`use c`, `--ld=cc`) are
   reproducible: two builds of the same sources are byte-identical (ld64
   wrote each object's modification time into the debug map, which the
   UUID and code signature hash; the link now runs with ZERO_AR_DATE=1).
-
 - `xo check` is about 2.5 times faster on a warm run (compiler/xo 1.8 s
   to 0.67 s, a small server 0.59 s to 0.26 s) and peaks a third lower in
   memory: it skips a module unchanged since its last check, replaying
   its diagnostics and warnings, and checks the native runtime's bodies
   only as a build does (decision 0351 addendum). The output is
   unchanged; `XO_CHK_CACHE=off` checks everything.
-
 - `xo build` and `xo run` parse a std or runtime function body only
   when the checker needs it (decision 0351 stage 2, on by default;
   `XO_LAZY_PARSE=off` parses every body): the output is identical, and a
   small program's warm build peaks about 40% lower in memory.
-
 - Native binaries carry their build information, as Go backend ones
   always did, now with every effective setting of `--release`'s preset
   (decision 0354): `xo version -m BINARY` prints it (the xo, backend,
   target, ID, settings, stamps and sources' hashes), a native crash
   report adds a `build:` line, and `xo replay` rebuilds with the
   recorded settings.
-
 - xo.lock records each pinned Go module's go.sum hashes (`go <module>
   <version> h1:...` and its `/go.mod` line; decision 0356): a changed
   module is `XO1304`, a missing line `XO1305` (run `xo mod tidy`).
-
 - **Breaking** (decision 0356): a `use go` of a package outside Go's
   standard library needs its Go module pinned with `require go <module>
   <version>` in xo.mod; without it the use is `XO1319`. Builds used to
@@ -1689,7 +1690,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `.xo/`, so they were not reproducible. `xo fix` adds the line with
   the version the binding resolved, and `xo mod tidy` adds missing
   pins. Go's standard library packages need nothing.
-
 - `"${r?:?}"` (the try operator, then the Debug form) parses; it was
   read as Kotlin's elvis `?:` (XO0177 and XO0160), and only
   `"${(r?):?}"` worked.
@@ -1706,7 +1706,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   showed only its length), shows `os = Os` instead of `<unavailable>`,
   and leaves out a local that is not set yet at the fault (`let r =
   f()` faulting in `f`).
-
 - `--debug-info=split` (decision 0355) keeps the DWARF beside the
   program instead of in it: PROG.dSYM on darwin, PROG.debug on linux
   (a GNU build id in both and a `.gnu_debuglink` in the program, as
@@ -1714,7 +1713,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   lldb, gdb, llvm-symbolizer and addr2line find it there.
 - `xo dev symbolize` no longer prints `NAME+0x0x...` for a pc no table
   names.
-
 - `--release` is a preset (decision 0354): each of its settings has a
   flag of its own in any build (`xo build`, `run`, `test`) that wins
   over the preset whatever the order: `--debug-contracts`, `--dbg`,
@@ -1727,13 +1725,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - Every `DIR/...` walk skips `vendor/` directories, with or without
   `modules.txt`, as the go command does (owner, 2026-10-23); vendored
   code is checked only when its directory is named.
-
 - `xo fmt ./...` and `xo parse ./...` skip directories named `testdata`
   and names starting with `.` or `_`, as `check`, `vet`, `test`, `build`
   and `fix` already did, so a deliberately broken directory stays out of
   every `./...` (decision 0210). `fmt ./...` rewrote files under
   `testdata/`.
-
 - A parse error in a parameter list (`r: Int ! E`) no longer cascades:
   the function's parameters and result take any type, so its body and
   its callers report nothing more.
@@ -1747,7 +1743,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the native backends do: Apple clang 17's runtime stopped at SIGILL on
   an Intel Mac. A race build served from the build cache also copies the
   runtime beside its new output.
-
 - `xo check` checks by the native backends' rules by default, as a build
   does (owner, 2026-10-23): `use c` passes, and `--backend=go` checks by
   the Go backend's. The native support check (XO1201) is `--support`
@@ -1766,38 +1761,31 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (`use c`, `--ld=cc`) link again (undefined `___tsan_*` symbols), and
   a generic struct's field default that mentions its type parameter
   (`items: List[T] = []`) builds on the native backends.
-
 - `r ?? e => body` (decision 0321) builds when `r` is a plain variable,
   a parameter or a field: it failed on the native backends (XO1201
   converting `()` to `Int`) and the Go backend (`undefined:
   MISSING_VAR_ok`) while `xo check` passed it, and only `(r) ?? e =>`
   worked.
-
 - Warm builds are faster by default (owner, 2026-10-23): the module check
   cache is on (`XO_CHK_CACHE=auto`; a warm build of xo itself 0.885 of
   the wall time with 0.914 of the peak memory), and the cache's shared
   pack (decision 0351; a new program's first build 0.831 of the wall
   time, a warm build in a new directory 0.857). `XO_CHK_CACHE=off` and
   `XO_SHARED_PACK=off` turn them off.
-
 - `xo build --targets=all` skips a target the program cannot support, with
   a note naming it and why (a network program and wasip1/wasm, which has
   no sockets), and exits 0 when the rest built; a target named in
   `--targets` still fails. `--targets=wasip1/wasm` alone now builds with
   the wasm backend (it picked the host's backend and failed naming it).
-
 - A hole interpolated into a string (`"${???}"`) has type `Str`, with the
   values in scope that fit it, instead of `hole of type unknown`.
-
 - `xo test --explore` prints the exact command that reproduces a failure
   on its first seed too, as it did for later seeds (the Go backend said
   only `seed 1`, and `xo test --seed=1` without `--backend=go` passed).
-
 - A test block's `opt?` failure names where the value was missing:
   `error: missing value: find(x) at main.xo:61:11`, as decision 0347
   says and as `expect` failures do, so two `?` of the same text in one
   test are told apart. Every backend.
-
 - `xo test --seed=N` and `--explore=N` run natively on the deterministic
   scheduler (decision 0350, stage 2), as does a test that pins its seed
   (`test "x" seed N`): each test runs with its own seed, else `--seed`'s,
@@ -1805,12 +1793,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   fails, printing how to reproduce (`xo test --seed=S --run=...`) and pin
   it. Before, `--explore` chose the Go backend and native tests ignored
   their seeds. The seeds that expose a race differ from the Go backend's.
-
 - `XO_PROF=cpu` keeps the Xo caller of a sample taken in a C library
   system call (a file's open or read): the profile walk now follows
   the C library's frames above the system call stub back into the
   program, where before such samples showed `open` alone.
-
 - `xo run --seed=N` runs natively on a deterministic scheduler (decision
   0350, stage 1): one thread runs every task, and at each scheduling
   point (channel operations, `select`, `Mutex.with`, `spawn`, `await`,
@@ -1819,24 +1805,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   interleaving. `xo build --seed=N` builds such a program, which takes
   its seed from `XO_SEED` (default 1). Programs built without `--seed`
   are unchanged. Before, `xo run --seed` chose the Go backend.
-
 - Warm builds no longer look up, on every build, the front end cache
   entries of bodies the program never builds (one key per checked body,
   4,146 of a one-line program's 5,373): the build target's pack lists
   the keys found nowhere and skips them. A warm build of a one-line
   program uses about 7% less CPU (decision 0351).
-
 - `XO_CHK_CACHE=auto` skips the check of a module whose closures make a
   generic instance (a Map method first called in a `Mutex.with`
   closure): such a closure now has only its owning function checked
   again, as a body without a front end entry does; before, its whole
   module was checked on every build (bench/perf/http's never skipped).
-
 - `XO_BACKEND_CACHE=verify` no longer reports front end cache entries
   that another program recorded as differing: it compared the modules a
   body was first to build code of and its closure and constant numbers,
   which depend on what the build did before the body and which a replay
   redoes. Builds through the cache were already identical.
+
+## v0.26.0 (2026-10-22)
 
 - 0.26.0 (2026-10-22): Windows binaries signed (Azure Artifact Signing)
   and native windows/amd64 I/O on completion ports (decision 0324); large
@@ -1853,57 +1838,47 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   an 11.1 GB peak (bench/results/llvm-split-default-2026-10-22.md).
   Smaller programs stay one module with full LTO. XO_LLVM_SPLIT and
   XO_LLVM_JOBS still override.
-
 - `XO_CHK_CACHE=auto`: a skipped module whose body calls `xml.encode_value`
   or `xml.decode` and is built from source (its front end cache entry
   gone) builds again; the call reached the build unrewritten and failed
   with XO1201 before the recheck could run (TestModuleCheckAuto
   xml_derive). check_lazy now rewrites the calls of the bodies it checks.
-
 - `xo build -o /dev/null` works again: the hidden stage of an output
   whose directory cannot hold it (/dev) goes to the user cache, and the
   program's bytes are written to the output.
-
 - Native runtime on Linux: an idle worker waiting out a run-next grace
   (50 us) in the poller uses epoll_pwait2 (a nanosecond timeout, Linux
   5.11) instead of epoll_wait, which rounded the wait up to 1 ms; older
   kernels fall back to epoll_wait. HTTP/2 download and CRUD within noise
   (`xo bench --ab`).
-
 - xo stops itself past three quarters of physical memory, at least 16
   GiB (decision 0349's default, owner): a runaway build ends with
   `fatal error: memory budget exceeded` and its phase instead of swapping
   the machine. Builds of xo peak at 9.9 to 11.2 GB counted (18 GiB on a
   24 GB Mac). `XO_MAX_MEM` sets another budget, `off` none.
-
 - The memory budget (decision 0349) counts what the heap uses (large
   blocks by the bytes handed out, not the room a growing block reserves),
   which tracks the resident set: a cold self build of xo peaks at 9.9 GB
   counted against 9.1 GiB RSS. `xo build --phase-times` prints the heap
   and its peak after each phase, and `debug.mem_peak()` is new. xo sets
   no default budget for now.
-
 - The module check cache stays opt in (`XO_CHK_CACHE=auto`): it was
   made the default on 2026-10-22 and reverted the same night, when
   internal/arm64 TestModuleCheckAuto's xml_derive failed its warm build
   on main. scripts/gate.sh runs the TestModuleCheckAuto tests for any
   change to compiler/check or compiler/ssa.
-
 - `xo run --holes` and `xo test --holes` build natively (owner,
   2026-10-22): an evaluated `???` faults with `evaluated a hole \`???\``
   as on the Go backend, so `--holes` no longer needs Go installed.
-
 - `--hybrid` is deprecated (owner, 2026-10-22) and warns on every use:
   since the Go compiler's removal it has been a plain Go backend build.
   Use `--backend=go`, or the native backend (the default). It will be
   removed.
-
 - Native programs print a fault's frames by default (owner,
   2026-10-22): an uncaught fault's one line report is followed by
   `traceback:` and `  FUNCTION (FILE:LINE)` per frame down to main, as a
   hardware fault's report already was. `XO_TRACEBACK=0` turns it off.
   Each fault pays about 0.55 us for its trace; the binary is unchanged.
-
 - Messages: XO1201's note says to build with `--backend=go` (it said
   "build without --no-gc", also on default native builds that passed no
   `--no-gc`); "needs a native backend" names arm64, amd64, and llvm;
@@ -1915,7 +1890,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   matches, a Str view past 2 GiB (internal/arm64 TestStrViewPast2GiB,
   with 5 GB free), and on darwin atos names main.xo from the embedded
   DWARF (run it on the Intel laptop too).
-
 - A memory budget for native programs and for xo (decision 0349, owner):
   `XO_MAX_MEM=12G` (or `512M`, bytes; `off`) stops a program whose heap
   maps more, with status 70, `fatal error: memory budget exceeded: ...`
@@ -1924,7 +1898,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (the first default, half of physical memory, was removed the same day).
   `debug.mem_budget`, `debug.mem_label`, `debug.mem_mapped` and
   `debug.mem_total` are new in std/debug.
-
 - Native runtime: `List.join`, `Bytes.zeroed`-style buffers and
   `to_hex` producing more than 4 GiB fault ("strings: Join output over
   4 GiB", "Str or Bytes longer than 4 GiB") instead of returning a cut
@@ -1937,12 +1910,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   directory, where they were easy to lose (owner, 2026-10-22). The
   newest 100 are kept, the path is printed on standard error as before,
   `XO_CRASH_DIR` still overrides, and `xo clean -cache` leaves them.
-
 - Native runtime: a fault caught by `task.isolate` (an HTTP handler's
   500 included) under `XO_TRACEBACK` no longer leaks its trace: the
   block was released at the wrong address, about 1 KB a fault (200,000
   faults: 203 MB against 2.8 MB).
-
 - `xo build --targets=all` (and any target list mixing architectures)
   builds each target with its own native backend: 0.25.2 failed with
   "the arm64 backend builds for darwin/arm64 and linux/arm64, not
@@ -1982,7 +1953,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   - `xo run` sends a stop request it gets on to the program as SIGTERM
     when standard input is not a terminal (process managers, IDEs,
     Docker, scripts).
-
 - `xo build` and `xo run` (and `--watch`) no longer read `_test.xo`
   files (decision 0348, owner): a type error in a test file no longer
   fails a build, a helper declared only in a test file is not visible to
@@ -1996,7 +1966,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   key ends with the path it is offered as a fix, with a note that
   `SITE.sub("static")` drops the prefix. Paths computed at run time are
   not checked.
-
 - macOS 26's `atos` crashed on every native darwin executable's DWARF,
   so `--race` reports there named no Xo function, file or line: the
   line table's file names are now encoded the way clang encodes them
@@ -2027,7 +1996,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   archive: `bin` on the PATH, `xo version`, a three line hello world
   with `xo run .`, then `xo doc NAME`, `xo explain CODE` and the
   website's docs (scripts/release-readme.md).
-
 - `opt?` on an Option directly in a test block fails the test with
   `error: missing value: opt` instead of `XO0204` (decision 0347, owner):
   `let u = store.find(7)?` reads as in an Option function and still
@@ -2035,7 +2003,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   a failure like any other. Helper functions and fn literals keep the
   usual rules; in a `_test.xo` helper, `XO0204` and `XO0205` now note
   that the form is allowed directly in test blocks.
-
 - darwin executables carry their DWARF (decision 0346, owner): Xo's
   Mach-O linker writes it uncompressed into a `__DWARF` segment of the
   executable instead of a `NAME.dSYM` beside it, so a copied, cached,
@@ -2083,6 +2050,18 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `<user cache>/xo/watch/HASH`, not `.xo/watch` in the project, with the
   debug information named after the binary; `xo init` adds `/.xo/` (the
   `use go` and `use c` binding caches) to `.gitignore`.
+- A native program on Linux or macOS reports a hardware fault (SIGSEGV,
+  SIGBUS, SIGILL, SIGFPE, SIGTRAP: a miscompile, a runtime bug, or C code
+  behind `use c`) before the signal's default action ends it, with the
+  same exit status and core file: the signal and address, the pc, the
+  registers, and the frames named from the program's DWARF (decision
+  0343; `XO_CRASH_REPORT=0` turns it off). windows/amd64 programs report
+  an unhandled exception the same way (`fatal error:
+  EXCEPTION_ACCESS_VIOLATION: access violation (code 0xc0000005, write)
+  at address 0x10`), and keep the NTSTATUS as exit code.
+
+## v0.25.2 (2026-10-22)
+
 - 0.25.2 (2026-10-22), the first binary release: archives for
   darwin/arm64, darwin/amd64 (signed and notarized), linux/arm64,
   linux/amd64 and windows/amd64, each `xo` stamped with the commit it was
@@ -2100,15 +2079,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   result type (3b8975312). The arm64 inliner no longer inlines a function
   into itself after a callback brings its own call in (a compiler fault on
   generics, 1201c3153).
-- A native program on Linux or macOS reports a hardware fault (SIGSEGV,
-  SIGBUS, SIGILL, SIGFPE, SIGTRAP: a miscompile, a runtime bug, or C code
-  behind `use c`) before the signal's default action ends it, with the
-  same exit status and core file: the signal and address, the pc, the
-  registers, and the frames named from the program's DWARF (decision
-  0343; `XO_CRASH_REPORT=0` turns it off). windows/amd64 programs report
-  an unhandled exception the same way (`fatal error:
-  EXCEPTION_ACCESS_VIOLATION: access violation (code 0xc0000005, write)
-  at address 0x10`), and keep the NTSTATUS as exit code.
+
+## v0.25.1 (2026-10-22)
+
 - Diagnostics: an unknown method on a Set suggests `add` and `remove`
   (`insert`, `push`, `put`, `discard`, `delete`); `sub`, `add`,
   `elapsed` and the like on a Time or Duration suggest the operators or,
@@ -2117,6 +2090,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `m[k]?` and `m[k] ?? d` suggests `m.get(k)` (one error, with a fix),
   and on `m[k] += v` for a number or Str element `m.update(k, 0, fn(var
   e) { e += v })` (no new codes).
+
+## v0.25.0 (2026-10-22)
+
 - Any integer type indexes a List or Bytes: reads, assignments, `get`,
   and slice bounds, and a Str's slice bounds (decision 0331, 5aff68252).
 - `x ?? return v`, `?? break`, and `?? continue` on an Option, and the
@@ -2165,7 +2141,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   up and down each iteration, a list copied by each iteration's update,
   a large value copied into a closure or Option in a loop, a stored view
   of a parameter's text that keeps the whole input alive; 9b526de4f).
-
 - A function value borrows its arguments (decision 0337): a callback
   that only reads an element (`xs.any(fn(u) { u.name == n })`,
   `filter`, `fold`, a `fn` parameter) no longer counts its heap fields
@@ -2176,7 +2151,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   two tasks (bench/results/callbacks-0337-2026-10-22.md). `xo vet
   --cost` XO0908 now notes only the callbacks that still take their
   element.
-
 - The back-end cache's objects and parts name no directory, so a build
   in another worktree at the same commit reuses them (xo: 0/117 objects
   before): the arm64 emitter's DWARF names the compile directory and
@@ -2231,11 +2205,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   shares the map (decision 0335): the generated code marks a map where it
   copies one, as it marks lists. bench/perf putget -39%, update -40%;
   maps that are copied cost what they did.
-
 - `xo vet`'s `XO0906` also notes the four line Result `match`
   (`Ok(v) => v` and `Err(e) => return w`, `break`, or `continue`), with
   the fix `r ?? e => return w` (`Err(_)` gives `_ =>`; decision 0321).
-
 - A code generator failure names the Xo source: the native emitters'
   internal errors and amd64 template failures, the LLVM emitter's
   unsupported constructs, a clang error on the generated IR (mapped from
@@ -2244,14 +2216,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the value being lowered, or the function's first; an inlined callee is
   named in its own file). The SSA builder's were already XO1201
   diagnostics at the expression.
-
 - Linux builds with `--backend=llvm` link and run again: since asynchronous
   preemption for LLVM (decision 0318 stage 4) every one failed to link
   with ld.bfd's LLVM plugin and lld ("__start_xo_text can not be
   undefined in a subtraction expression"), and with that fixed crashed at
   start. Checked in Docker on linux/arm64 and linux/amd64 with both
   linkers.
-
 - A by value receiver that is a variable or a field path is read after the
   call's arguments, as a `var` receiver always was (decision 0326):
   `t.size(t.add(v))` sees the item `add` pushed. `xo vet`'s XO0537, which
@@ -2271,6 +2241,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   literal, work on the native backends (decision 0307, complete); the
   native capability values shrank (an Fs from about 66 words to 5);
   `os.tasks` compiles on wasm.
+
+## v0.24.0 (2026-10-21)
+
 - Raw multi-line strings (decision 0320): `r"""..."""` has no escapes
   and no interpolation and removes common indentation as `"""` does;
   `r#"""..."""#` may contain `"""`.
@@ -2285,6 +2258,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   pong between main and one task costs about 65 ns more a hop (two more
   stack switches); spawn and fan out are unchanged. XO_MAIN_FIBER=0 keeps
   main on its thread until 0.24.0 is cut.
+
+## v0.23.0 (2026-10-20)
+
 - std/http: header fields with repeated names, sent and received each:
   `header_values` and `add_header` on requests and responses, and
   `Response.with_cookie` and `cookies()`. A client response with several
@@ -2344,6 +2320,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - HTTP/2 keeps common header names and values as constants, and AES-GCM
   encrypts only the counter blocks a record needs: HTTP/2 requests 4.6%
   (arm64) and 3.6% (LLVM) fewer instructions, TLS requests 1.3%.
+- Fix: on Windows, `Fs.create_new` over a directory reported `IsDir`
+  instead of `Exists`, and over a dangling symbolic link it created the
+  link's target instead of reporting `Exists` (seen in the Windows golden
+  kit's run of fs_create_new, 2026-10-19).
+
+## v0.22.0 (2026-10-19)
+
 - The files a build target's last build parsed are parsed on tasks
   before the check, and the front end cache also keeps the bodies that
   reuse generic instances made before (xo after an edit: 0.6 to 1.3 s
@@ -2352,10 +2335,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   is opt in, XO_CHK_CACHE=1, until it covers the whole-program checks.
 - The back-end cache's prune removes empty directories (one per build
   target) unused for a week.
-- Fix: on Windows, `Fs.create_new` over a directory reported `IsDir`
-  instead of `Exists`, and over a dangling symbolic link it created the
-  link's target instead of reporting `Exists` (seen in the Windows golden
-  kit's run of fs_create_new, 2026-10-19).
 - The native TLS server keeps a connection's state where only its task
   reads it, instead of sharing the whole state again at every read and
   write: TLS requests 8.2% and HTTP/2 requests 9.2% fewer instructions
@@ -2369,7 +2348,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   strings lay there and every program faulted before main (0xC0000005,
   both backends). Regression test std/native/llrt/ctx_test.xo; gotcha
   svc-roots-slot-index.
-
 - The LLVM backend keeps a release's rare paths out of line (a shared
   count's drop, the releases of a fault's cleanup): xo built by LLVM
   51.5 MB to 32.6 MB of code, xo.exe 80.6 MB to 63.7 MB, HTTP and TLS
@@ -2413,7 +2391,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - The back-end cache also keeps each function's inlining, under a key
   chained from its reference counting key: a one-constant edit of xo
   rebuilds in 9.5 s (11.1 s before).
-
 - Faster rebuilds after an edit: borrow inference rescans only the
   callers of a function whose flags changed, the back-end cache's entries
   are read in parallel, and the verification after inlining skips
@@ -2421,9 +2398,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   11.1 s instead of 14.1 s (17.0 s of CPU instead of 25.2 s), and the
   binary is the same file as a build without the cache.
 
+## v0.21.0 (2026-10-18)
+
 - macOS x86_64 programs are assembled by Xo's own assembler (objects byte
   identical to clang's) and linked by Xo's own linker: no C toolchain.
-
 - Xo's own x86_64 backend builds macOS x86_64 programs
   (`--backend=amd64 --target=darwin/amd64`; linked by Apple's cc for now).
 - Outside text is always valid UTF-8 (decision 0259): HTTP header values,
@@ -2432,25 +2410,20 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   with U+FFFD; URL paths and queries keep it as a percent escape. A
   request path with a raw `\x82` used to fault a handler that sliced it,
   and a redirect to such a host ended an HTTP client.
-
 - x86_64 operates on spilled values in place (SHA-3's permutation 26%
   fewer instructions; a TLS handshake with ML-KEM 5%).
-
 - x86_64 multiprecision arithmetic keeps its carries in the flags
   (X25519's field multiply 22% fewer instructions; a TLS handshake 5%).
-
 - Full TLS 1.3 handshakes: -13.9% (arm64) and -13.6% (LLVM)
   instructions on the callgrind benchmark, -22% on linux/amd64: X25519's
   public key from a fixed base table (one ladder instead of two), the
   transcript hashed incrementally, cheaper encoders, and list literals
   allocated at their final size.
-
 - HTTP/2 server: -12.3% (arm64) and -8.2% (LLVM) instructions per
   request on the callgrind benchmark: the request checks compare in
   place, a request's parts are no longer packed and copied out again,
   and the TLS layer copies less per record and per call. HTTP/1.1 over
   TLS -5.7% on arm64.
-
 - darwin/amd64 (LLVM): a fault that task.isolate or a server's handler
   should catch no longer ends the program when the walk passes a frame
   with compact unwind information before a DWARF one (the unwinder's
@@ -2460,11 +2433,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   overflow check when the product's range proves it safe (Collatz: 7%
   fewer instructions on x86_64, 4% on arm64).
 
+## v0.20.0 (2026-10-18)
+
 - HTTP/1.1 responses on the native backends take the Date header's text
   from a cache of the current second shared by the threads (a sequence
   lock in runtime static words 69 to 74), as net/http does: plain HTTP
   -1.1% instructions per request on arm64.
-
 - Maps of up to 5 entries keep no hash table: a put appends without
   hashing or rebuilding, a lookup scans the keys (their lengths first),
   and the sixth put builds the table. Plain HTTP -4.5% (arm64) and -5.3%
@@ -2474,13 +2448,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - x86_64 functions make their stack frame only on the paths that need
   it (recursive Fibonacci: 26% fewer instructions, now fewer than
   LLVM's).
-
 - A Map's lists are sized at each rebuild for every entry until the next
   one, so small maps (an HTTP request's headers) do not grow them:
   plain HTTP -1.4% (arm64) and -1.2% (LLVM) instructions per request.
 - x86_64 code drops the register copy before most arithmetic (n-body
   23% and collatz 13% fewer instructions).
-
 - Plain HTTP/1.1 servers on the native backends: a request's header
   fields are copied once (not the whole line first), the field lists
   start with room for 8, and `to_upper`/`to_lower` of text already in
@@ -2488,13 +2460,11 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   fewer instructions per request (bench/results/http-callgrind-2026-10-17.md).
 - x86_64 programs without a C library copy 64 bytes a loop iteration
   (copying a large map: 21% fewer instructions, even with LLVM).
-
 - TLS servers on the native backends no longer copy a connection's state
   at every read and write (rt.any_take moves it out of its holder and
   back): 19% fewer instructions per request on arm64 and 27% on LLVM for
   HTTPS keep-alive, 13% and 19% for HTTP/2
   (bench/results/http-callgrind-2026-10-17.md).
-
 - `xo build --backend=wasm` embeds std/time's zone data as native builds
   do: the TZif data of each constant zone name, only when the program
   looks zones up (hello world and the playground's compiler do not
@@ -2504,23 +2474,19 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   instructions on arm64, now even with LLVM; 36% on x86_64). The
   runtime intrinsic behind it, rt.mem_copy_block, was approved by the
   owner on 2026-10-17 (decision 0207).
-
 - WebAssembly builds (WASI) read `Env.program`, `Env.vars` (sorted),
   `Proc.set_grace` and `task.stop_requested` (no signals: never), request
   values (`Any`), and `Fs.case_sensitive` (probed in the working
   directory, not assumed); reading a directory as a file is `IsDir`. A
   program that starts processes fails to build for wasm with "WASI
   preview1 has none", as one that uses sockets does.
-
 - LLVM debug builds show the parts of a parameter or a call's result
   that the code itself reads (a string parameter's length, a map's
   count), where before such values showed as not available.
-
 - arm64: pushing a byte or a word onto a string the code holds alone and
   that has room is inline (a count and capacity check, a store), the
   call only for a shared, literal, or full string: json/enc_strings 3.7%
   fewer instructions, json and text workloads 0.7 to 2%.
-
 - LLVM debug builds describe Str, List, Box, Map, Set, enum, function,
   and handle values to lldb and gdb as arm64 builds do (decision 0252
   stage 4): a list through its object, a struct, enum, or string the
@@ -2528,7 +2494,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   a call's result) shows as not available rather than with an earlier
   value. A Float32 variable now shows its value (it was read as half of
   the double the register holds). --release and -s builds are unchanged.
-
 - arm64 debug builds describe a variable's word that holds a constant by
   the constant (DW_OP_constu, or DW_OP_addrx of a string literal's
   static object): a literal field that no register keeps (an immortal
@@ -2536,10 +2501,8 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   lldb and gdb. On macOS a program linked with cc (it links C sources)
   shows the string's length but not its bytes: dsymutil cannot relocate
   a data address in a location list.
-
 - linux/amd64 floating point loops read their operands from memory
   directly (n-body 3% fewer instructions).
-
 - WebAssembly builds (WASI) rename, remove, set modification times,
   create and read symbolic links, and copy files (goldens fs_create_new
   and sys_files_clock now run on wasm). WASI preview1 has no permission
@@ -2549,17 +2512,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   1970 reports `Io(msg: "WASI has no times before 1970")`. `os.fs.cwd()` under WASI,
   which has no working directory, is rooted at "." (its paths resolve
   against the working directory's preopen, not against `/`).
-
 - WebAssembly builds (WASI) open files as handles: `Fs.open`, `create`,
   `open_append`, and `create_new` with their reads, line reads, writes,
   and close, and `create_dir_all`, `remove_all`, and `create_temp`, with
   the native backends' results (golden fs_handles).
-
 - Files of more than 2 GB can be written and read on macOS (one system
   call refused more than INT_MAX bytes): the native runtime moves at most
   1 GiB a call. Toolchain tests shrink the chunk through std/internal's
   rt_probe "io_chunk" (runtime static word 47).
-
 - Debuggers see Str, List, Map, Set, enum, and function values of arm64
   native builds (decision 0252 stage 4): lldb's `frame variable` shows a
   list's object (count, length, capacity, items), a string's bytes, and
@@ -2567,7 +2527,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - SHA-256 uses x86-64's SHA-NI instructions when CPUID reports them
   (owner approved, 2026-10-17; decision 0254), on Xo's amd64 backend and
   on LLVM, with the portable code kept for CPUs without them.
-
 - `Fs.create_new(path)`: a handle on a new file, or `Exists(path)` when
   anything is already there (a file, a directory, a symbolic link even
   when it dangles), as O_EXCL; on the native backends (Linux, macOS,
@@ -2575,18 +2534,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - The LLVM backend's Linux arm64 programs without a C library take the
   same single instruction atomics (one thread: task spawning 34% and
   fan-out 25 to 32% less CPU time).
-
 - Linux arm64 programs linked without libgcc use ARMv8.1's single
   instruction atomics when the CPU has them (XO_LSE=0 turns them off):
   task spawning and fan-out take 21 to 33% less CPU time.
-
 - arm64: a reload of a spilled value that x16 or x17 already holds is
   dropped (13.8% of reloads in the TLS client; fault/defer 10% fewer
   instructions, TLS handshakes 0.7 to 2%).
 - The amd64 backend selects x86's own forms for checked multiplies (imul
   and jo), constant offsets (displacements), and logical immediates:
   collatz 13%, iface 24%, hof 18% fewer instructions.
-
 - Debuggers see Int, Float, and Bool locals and parameters of LLVM
   native builds too (decision 0252 stage 3): lldb's `frame variable`
   prints them. -s and release builds carry none of it and cost what they
@@ -2597,7 +2553,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   iteration (no C library builds): copy-heavy programs 35 to 49% fewer
   instructions on amd64, arm64, and LLVM
   (bench/results/amd64-vs-llvm-2026-10-17.md).
-
 - arm64: small fixed-size copies are loads and stores (no memcpy call),
   and a chain of subtractions with borrow is subs and sbcs: P-256 and
   TLS 1.2 handshakes 12% fewer instructions.
@@ -2608,12 +2563,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
 - The amd64 backend lowers the carry-less multiply and the AES rounds to
   PCLMULQDQ and AES-NI when CPUID has them (decision 0254, stage 3):
   AES-GCM about 15 times faster on linux/amd64.
-
 - ML-KEM in the native TLS client costs less than half as much
   (bench/results/mlkem-client-2026-10-17.md): the hybrid handshake's
   ML-KEM part is 62% smaller on arm64 and 59% on LLVM, and
   encapsulation and decapsulation 28% and 29% smaller.
-
 - arm64: a chain of adds with carry is one instruction per pair with the
   carry in the flags, and each product it adds is made right before its
   pair: P-256's field product saves 1 register pair where it saved 5,
@@ -2627,11 +2580,13 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   stage 4; `macho elflink --static`): LLVM-compiled goldens assembled by
   Xo's x86-64 assembler and linked by it pass on linux/amd64 (29 of 29),
   and glibc (dynamic) x86-64 links too (12 of 12).
-
 - P-256's final subtraction takes its first limb as t0 + 1 and its masks
   as (carry - 1): three instructions fewer per field add, subtract and
   multiply (bench/perf/tls p256 on arm64: 1.3% fewer instructions, about
   4% fewer cycles).
+
+## v0.19.0 (2026-10-17)
+
 - Xo's own x86-64 assembler (decision 0254, stage 1): selfhost/macho
   encodes the amd64 emitter's AT&T text into ELF objects byte for byte
   as clang does (1,953 instruction forms, 3,192 forms of LLVM's own
@@ -2664,7 +2619,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   lldb's `frame variable` and gdb's `info locals` print them (Str, List,
   Map, and enums come later). Code is the same with and without debug
   information, checked on every golden.
-
 - A scope's join takes its own tasks' queue entries as it runs them
   (decision 0077's addendum), instead of visiting each task a second
   time later: bench/perf/conc spawn at XO_THREADS=1 83.5 to 66.2
@@ -2686,12 +2640,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   error and in `$XO_DUMP_DIR/xo-dump-<pid>.txt` (mode 0600, never through
   a symlink). The program keeps running; one worker or an idle server
   dumps too (the poller's thread writes it).
-
 - Native contract fuzzing draws small numbers, as the Go backend's does
   (std/rt GenRand.Small): it drew MaxInt and MinInt, so a function that
   overflows only at the extremes failed natively and passed on Go
   (the website tour's deposit; TestContractFuzzSmallInts).
-
 - An `else if` chain is parsed, checked, walked by the flow passes, and
   lowered to SSA in a loop instead of a call per `if`: in the wasm build
   of the compiler (the playground) a 200-branch chain needed more than
@@ -2701,12 +2653,10 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   2026e; decision 0094's addendum), which native and Go backend builds
   embed per use as before; scripts/tzdata-update.sh refreshes it per
   release. `--tzdata=system` still reads the operating system's.
-
 - A plain HTTP server links no TLS server and no HTTP/2 (decision 0244,
   owner): they are reached only through what `Server.with_tls` sets up,
   so json_server is 62 percent smaller on arm64 (2.5 MB to 944 KB
   stripped) and 70 percent on LLVM; HTTPS servers are unchanged.
-
 - A native spawn passes its closure as its code and environment, not in
   a list of one, and a task with a () result needs no result list
   (decision 0068's addendum): bench/perf/conc spawn at XO_THREADS=1 on
@@ -2731,7 +2681,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   written by one backend replays on the other). A 20 contract module:
   the check 0.19 to 0.27 s before (20 skipped), 0.40 to 0.44 s now (20
   fuzzed, 100 cases each), the whole `xo test` 0.98 to 1.02 s.
-
 - An execution trace for native programs (decision 0240): XO_TRACE=FILE
   (`xo run --trace=FILE`, `xo test --trace=FILE`) records spawns, task
   runs, parks with their reason (chan send and recv, select, mutex,
@@ -2742,7 +2691,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   a hook is a load and a branch; `xo build --release` leaves the
   recorder out unless `--trace-support`. arm64 branches on a compare
   with 0 as cbz or cbnz.
-
 - The wasm build of the compiler (the playground, decision 0242) is
   28.7 MB instead of 51.7 MB and builds a program in 1.53 s under Node
   instead of 8.5 s: the SSA builder's RC pass runs sequentially in a
@@ -2753,7 +2701,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   refuses a program that imports std/http before checking the HTTP
   runtime: the new playground downloads 2.13 MB instead of 23.5 MB and
   runs a program in 0.45 s instead of about 2.7 s in Chrome.
-
 - The native profiler on windows/amd64 (decision 0238 "Windows"):
   XO_PROF=cpu runs a sampler thread that suspends each thread whose CPU
   moved and walks it by the image's .pdata and RtlVirtualUnwind;
@@ -2768,7 +2715,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   `xo run --seed`/`--record` pick the Go backend and `--race` LLVM. A
   native `xo test` says how many contracts it did not fuzz (contract
   fuzzing needs `--backend=go` until native fuzzing lands).
-
 - Native builds check the runtime's function bodies only as the SSA
   builder reaches them (decision 0247): a hello build 947 to 622 ms,
   the 180 goldens 21% faster on arm64, the same binaries and LLVM IR on
@@ -2782,11 +2728,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   now produces a runnable static Linux binary for a program with no C
   library, linked by Xo's ELF linker (decision 0243); `-s` drops the ELF
   linker's local symbols.
-
 - linux/arm64: with no `--ld`, a program with no C library now links with
   Xo's own ELF linker (static, no C toolchain at link time; decision 0243
   step 3); `XO_NOLIBC=0` and `use c` programs keep cc and glibc.
-
 - `xo build --release` leaves the native profiler out unless
   `--profile-support` (decision 0238's addendum, the owner's rule): the
   SSA builders fold prof.supported(), so neither prof.xo's sampler nor
@@ -2802,7 +2746,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   tpidr_el0`, `.size .-SYM` and 4 byte debug pointers. The toolchain's
   own Linux self build keeps the C library until a Linux fixed point
   passes with none.
-
 - The heap profile samples in the heap's counting branch instead of
   switching the program to the threaded heap (decision 0238): with the
   profile on, a single threaded allocation bound program pays 1.22x to
@@ -2813,7 +2756,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   reads go to the wasm runtime's WASI random_get and environ_get
   (decision 0231's addendum, owner 2026-10-16). TestSelfhostWasm: 154
   pass, 26 unsupported, 0 fail of 180 (was 148, 31, 0).
-
 - XO_THREADS=1 (decision 0077's addendum): main's spawns no longer wake
   the one worker per task; main's join or next park runs them, else the
   monitor's tick (about 1 ms), as Go's GOMAXPROCS=1. bench/perf/conc at
@@ -2831,7 +2773,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   contended 0.915, ctx budget 0.922, ctx mutex 0.973, float_fmt 0.973),
   1 slower at 1.001. Variants that freed every constant made the
   digests 5 to 8% slower (bench/results/arm64-inline-cost-2026-10-16.md).
-
 - Constants fold in the SSA builder for `*`, `/` and `%` as for `+`
   and `-` (selfhost/ssa expr.xo): `W_DEFER_AT / 8` was a `mov` and an
   `asr` at run time on arm64 (the LLVM backend folded it). A product
@@ -2849,7 +2790,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   environment) with the new `raw.alive` and `raw.alive_str`, which keep
   a value until that point; the rt_addrs golden checks it after
   allocations that would reuse the bytes.
-
 - arm64: four instruction selections for bit tests and atomics. A
   negative mask is a logical immediate (`x & -4` one `and`, was a `mov`
   and an `and`; a negative literal reaches isel as a negation of its
@@ -2863,6 +2803,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   three folds. Also: bench/perf gen, glob, report and testworld's
   measure.sh skip the .dSYM's DWARF file when finding the test binary
   (it was found first since the line tables, decision 0239).
+- The native HTTP client decodes gzip bodies (std.md 4.5): it asked for
+  gzip (Accept-Encoding, as Transport does) but returned the compressed
+  bytes; now a gzip body is decoded without Content-Encoding and
+  Content-Length on HTTP/1.1 and HTTP/2, as on the Go backend, and a
+  request with its own Accept-Encoding or Range gets the body as sent
+  (gotcha native-http-client-gzip-body, golden http_gzip).
+
+## v0.18.0 (2026-10-16)
+
 - Fix: the DWARF reader (tracebacks, profiles) read the debug sections
   through addresses into a Bytes that was already released, so some
   builds (seen on macOS with LLVM) got wrong or missing lines and inlined
@@ -2870,7 +2819,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   The heap profile names inlined callees too (TestProfHeap's start), and
   TestTraceback and TestTracebackInlined run on LLVM as well as arm64, so
   CI's linux/arm64 runner checks LLVM's tracebacks.
-
 - `--race` on the LLVM backend (decision 0241's addendum): `xo
   build|run|test|asm --backend=llvm --race` marks every function, the
   runtime's too, sanitize_thread and builds with ThreadSanitizer (about
@@ -2882,21 +2830,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   flag, stdio.xo's buffer length, obj.xo's count checks, rtstats.xo's
   switch, mutex.xo's reader grant), checked over the 40 golden
   programs that use tasks and the three runtime tests.
-
-- The native HTTP client decodes gzip bodies (std.md 4.5): it asked for
-  gzip (Accept-Encoding, as Transport does) but returned the compressed
-  bytes; now a gzip body is decoded without Content-Encoding and
-  Content-Length on HTTP/1.1 and HTTP/2, as on the Go backend, and a
-  request with its own Accept-Encoding or Range gets the body as sent
-  (gotcha native-http-client-gzip-body, golden http_gzip).
-
 - Inlined calls in the profiler and tracebacks (decision 0239): dwline.xo
   reads .debug_info's DW_TAG_inlined_subroutine entries (arm64's and
   LLVM's), so pprof shows inlined callees as their own (inline) lines
   and the summary as their own rows, and XO_TRACEBACK prints them marked
   `[inlined]`. arm64 writes nested inlined frames (lldb: inner, then
   outer, both [inlined], then main).
-
 - The last C of the runtime's tests is gone but win_consts.c (decision
   0241): TestCryptoDiff and crypto_diff.c/crypto_ref.c (which checked
   the C hashes decision 0198 had already deleted, not std/crypto's Xo,
@@ -2917,17 +2856,14 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   150 workloads: 10 faster (argon2 0.985, chacha 0.985, p384 0.990, the
   other handshakes 0.995 to 0.998), sysio copy 1.031 in the sweep and a
   tie rerun five times. The forced spill test (XO_ARM64_REGS) passes.
-
 - arm64: `0 - b` of rt.int_wrap is `neg` (ct.mask_bit's mask was
   `mov x9, #0; sub`). Xo Lang 2's finding.
-
 - arm64 inlined frames in the line tables (decision 0239): the inliner
   keeps the callee's own lines and its call site; .debug_info has a
   DW_TAG_inlined_subroutine per run of inlined code, so lldb shows the
   inlined callee as a frame (`scale at main.xo:2:3 [inlined]` over
   `main at main.xo:9:5`). The function cache key holds the lines when
   debug information is on (a line-only change reused stale rows).
-
 - The shared count and heap stress tests are Xo (decision 0241):
   rc_threads.c and alloc_threads.c (876 lines of C) became
   internal/llvm/testdata/rt/rc_threads and alloc_threads, run under
@@ -2950,7 +2886,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   pair). arm64 TLS handshakes: p256 0.968, tls12 0.973, x25519 0.973,
   rsa2048 0.978, ed25519 0.980, p384 0.986 (151 workloads: 7 faster; 4
   slower rows with no function changed). Xo Lang 2's finding (5).
-
 - The task runtime's stress test is Xo (decision 0241):
   std/llrt/testdata/tasks.c (561 lines of C) became
   internal/llvm/testdata/rt/tasks, run under ThreadSanitizer with 1, 3,
@@ -2964,7 +2899,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   uncaught fault's frames (`  FUNCTION (FILE:LINE)`) after the one line
   report, on every native backend (spec core 8); `xo test` turns it on
   for its tests. TestTraceback, TestProfCPU checks the line.
-
 - macOS: builds linked through cc (the LLVM backend, arm64 `--ld=cc`)
   get PROG.dSYM too: `dsymutil` runs after the link (0.15 s), and an LTO
   link keeps its object for it, so lldb and the profiler see .xo lines
@@ -2997,7 +2931,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   bench/results/dwarf-line-tables-2026-10-16.md (TLS client: dSYM 25%,
   linux arm64 +25%, LLVM +39%; compile +3%). SSA values carry their
   statement's line (rc cache v2, arm64 function cache v2).
-
 - Scheduler (decision 0077's addendum, owner 2026-10-16): a channel's
   hand off and a ring's only spawn no longer wake an idle worker; a
   monitor thread (Go's sysmon, deferred wakes only) wakes one after 1 ms
@@ -3017,14 +2950,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (151 workloads: 8 faster; json enc_small 1.002 and sysio tree 1.007
   with only poll.afd_done changed, Windows code: noise). Xo Lang 2's
   TLS findings (1) and (2).
-
 - arm64: a funnel shift, `shl(a, k) | shr(b, 64 - k)` of rt.int_wrap
   (or `^`), selects extr, also when the shifts reach the `|` through an
   inlined call's continuation parameter; selfhost/macho encodes extr.
   aesgcm.ghash_hw 400 to 388 instructions (6 extr; 6 lsl and 6 lsr
   gone), 31 extr in the TLS client. arm64 sweep, 151 workloads: 4
   faster (httpclient h2big 0.994), testworld 5 1.001 at a 1.001 spread.
-
 - A native CPU profiler (decision 0238): XO_PROF=cpu (XO_PROF_HZ,
   XO_PROF_OUT), `xo run --profile=cpu`, `xo test --profile=cpu` sample
   the program's CPU time with SIGPROF, walk the frames with the fault
@@ -3043,7 +2974,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   an ML-KEM-768 loop (21 iterations) 0.976 of the instructions on the
   Mac. arm64 sweep, 151 workloads: 3 faster (p384 0.997, ed25519 0.996,
   text replace 0.996), text quote 1.002 with no function of it changed.
-
 - Benchmarks: Rust baselines for bench/perf/llvm (std only) and
   bench/perf/conc (tokio and std threads; run.sh's `rust` and `rust-ct`
   configurations), bench/perf/llvm/rust.sh and rust-docker.sh (Linux
@@ -3055,7 +2985,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   until the next call (a task may resume on another thread after any
   call, so never across one). Mac, instructions retired, XO_THREADS=1,
   5 reps: conc pingpong 0.866, spawn 0.974. Xo lang 4's (b).
-
 - arm64: thread locals inline on Linux (rt.tlocal_get, tlocal_set,
   tlocal_addr: tpidr_el0 plus xo_tlocal's local exec offset, then the
   slot, instead of a call of xo_tlocal_get), and rt.mem_set of zeros
@@ -3064,7 +2993,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   XO_THREADS=1: conc pingpong 229.7M to 219.2M instructions (0.954),
   spawn 413.4M to 388.4M (0.939; the C runtime's was 400.7M). Mac
   spawn 0.99; darwin's thread locals still call the TLV getter.
-
 - macOS: the TLS client loads the Security framework with dlopen at its
   first certificate verification instead of every https program linking
   Security and CoreFoundation: an https client's launch drops from 28.5M
@@ -3078,6 +3006,35 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   server that has exited and reports its exit, and testtmp.Lifeline's
   deadline extends to the test's own (gotchas/lifeline-subtest-once.md,
   TestHTTP1SendServerExited).
+- P-256 handshakes: nistec's final subtraction for P-256 with constant
+  limbs, and add4p and sub4p as add with carry chains: 7.7% to 9.0%
+  fewer instructions on arm64, 4.2% to 5.3% on LLVM
+  (bench/results/tls-arm64-gap-2026-10-16.md).
+- RSA and P-521 on arm64: bigmod's multiply and add rows at 7
+  instructions a word, the squaring's carries as chains, the
+  exponentiation's window selection in registers, and P-521's field
+  product on those rows: RSA server handshakes 26% fewer instructions on
+  arm64 (2% to 5% on LLVM), P-521 handshakes 35% (18% on LLVM)
+  (bench/results/tls-arm64-gap-2026-10-16.md).
+- X25519 on arm64: the generated 64 bit field
+  (scripts/x25519fe64.py) adds no literal zeros: fe64_mul 148 to 138
+  instructions, handshakes 1.5% to 2.4% fewer on arm64
+  (bench/results/tls-arm64-gap-2026-10-16.md).
+- P-256 and the NIST curves: nistec's final subtraction as one add with
+  carry chain and the scalar multiply's constant time table selection
+  over the live words only: P-256 handshakes 9.3% fewer instructions on
+  arm64 and 6.2% on LLVM (bench/results/tls-arm64-gap-2026-10-16.md,
+  with the arm64 against LLVM table of every TLS workload).
+- SHA-256 with the CPU's instructions (decision 0231's SHA-256
+  section, owner 2026-10-16): cpu.sha256_block, SHA256H, SHA256H2,
+  SHA256SU0, and SHA256SU1 on arm64 through both native backends, the
+  portable body elsewhere; TLS and std/crypto's sha256, hmac_sha256,
+  and PBKDF2 take it. Handshakes 3% to 8% fewer instructions (an ECDSA
+  server's 13% to 14%), PBKDF2 4.2 to 4.7 times fewer
+  (bench/results/sha256-hw-2026-10-16.md); TestSHA256HWDiff.
+
+## v0.17.0 (2026-10-16)
+
 - The back-end cache (`<user cache>/xo/backend`) holds its 8 GiB cap
   under bursts of builds: entries stay protected for 2 minutes instead
   of 2 hours, and a prune runs whenever an eighth of the cap has been
@@ -3122,7 +3079,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   that instruction, and fails the build when none is left. Templates
   name any number of operands ($u10 and up). `XO_ARM64_REGS=N` (test
   only) limits the allocator so most values spill; TestGoldenRunSpill.
-
 - Tests: internal/testtmp Lifeline: a long-running native child a Go test
   starts (the HTTP parse and fuzz servers, the TLS, TLS matrix, H2 and
   TLS server diff peers, TestGoldenASan's goldens, cmd/xo's notes
@@ -3207,6 +3163,48 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   for the struct's helper, which saved them again (past 8 words with a
   frame and a stack copy). std's memfs test (a Map of 9 word nodes,
   shared on every operation): 12.27G to 11.42G instructions on arm64.
+- bench/perf/tls: server workloads (srv-rsa2048, srv-rsa4096,
+  srv-p256): the Xo server's instructions per handshake against Go's
+  client; RSA 2048 server handshakes 30% to 33% fewer instructions with
+  the bigmod change, 4096 43% to 46%
+  (bench/results/rsa-bigmod-2026-10-16.md).
+- RSA: bigmod.xo's Montgomery product as a double width product (or a
+  dedicated square) and Montgomery's reduction in single pass rows on
+  cpu.adc: signatures 32% to 46% fewer instructions, verifications 44%
+  to 53%, on both backends (bench/perf/rsa, new;
+  bench/results/rsa-bigmod-2026-10-16.md); TestRSADiff against
+  crypto/rsa for 1024 to 4096 bit keys.
+- arm64: the cpu.adc chains are back on (the emitter's distinct
+  registers for spilled operands, 4bf54541), up to 8 pairs an
+  instruction: TLS handshakes 7% to 9% fewer instructions on arm64
+  (bench/results/tls-perf-2026-10-15.md).
+- arm64: each cpu.adc pair is an instruction template of its own again
+  (calls.xo ADC_CHAINS off): a chain of up to ten operands could reload
+  a fourth spilled operand into x15 over the third, silently; arm64
+  handshakes about 10% slower until the emitter serves longer templates
+  (gotchas/arm64-template-scratch-reuse.md, internal/arm64
+  TestNoSharedScratchReload).
+- TLS: a P-256 squaring of 10 products (nistec.xo sqr4p) and X25519 on
+  four 64 bit limbs modulo 2^256 - 38 on adc chains (x25519.xo,
+  scripts/x25519fe64.py): the X25519 handshake 7.5M to 7.1M instructions
+  on LLVM (10.8M to 10.5M on arm64), RSA-2048 8.4M to 7.9M, TLS 1.2 9.1M
+  to 8.4M; TestX25519Diff (bench/results/tls-perf-2026-10-15.md steps 13
+  and 14).
+- cpu.adc and cpu.adc_carry, add with carry in (decision 0231's
+  addendum): adcs chains on arm64 and LLVM; P-256's field product sums
+  with them, the X25519 handshake with a P-256 chain 8.8M to 7.5M
+  instructions on LLVM and 11.5M to 10.8M on arm64
+  (bench/results/tls-perf-2026-10-15.md step 12).
+- TLS: P-256's field product reduces by shifts (nistec.xo mul4p,
+  generated by scripts/nistecmul4p.py) and P-256's point formulas call
+  the 4 limb field functions without dispatch: the X25519 handshake
+  with a P-256 chain 10.5M to 8.8M instructions on LLVM (11.5M on
+  arm64), RSA-2048 10.4M to 9.3M, TLS 1.2 12.1M to 10.4M; TestNistecDiff
+  checks every NIST curve against crypto/ecdsa
+  (bench/results/tls-perf-2026-10-15.md step 11).
+
+## v0.16.0 (2026-10-16)
+
 - No runtime C (decision 0234): Windows' stack overflow handler is Xo
   (std/native/llrt/entry.xo on_overflow, the cabi.xo export registered
   with AddVectoredExceptionHandler through rt.fn_addr; it flushes
@@ -3276,89 +3274,12 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Windows headers but windows.h and the #pragma comment(lib) lines are
   gone, and the driver passes the import libraries (kernel32, ws2_32,
   bcrypt, synchronization, ntdll, shell32, crypt32) on a Windows link.
-- bench/perf/tls: server workloads (srv-rsa2048, srv-rsa4096,
-  srv-p256): the Xo server's instructions per handshake against Go's
-  client; RSA 2048 server handshakes 30% to 33% fewer instructions with
-  the bigmod change, 4096 43% to 46%
-  (bench/results/rsa-bigmod-2026-10-16.md).
-
-- RSA: bigmod.xo's Montgomery product as a double width product (or a
-  dedicated square) and Montgomery's reduction in single pass rows on
-  cpu.adc: signatures 32% to 46% fewer instructions, verifications 44%
-  to 53%, on both backends (bench/perf/rsa, new;
-  bench/results/rsa-bigmod-2026-10-16.md); TestRSADiff against
-  crypto/rsa for 1024 to 4096 bit keys.
-
-- P-256 handshakes: nistec's final subtraction for P-256 with constant
-  limbs, and add4p and sub4p as add with carry chains: 7.7% to 9.0%
-  fewer instructions on arm64, 4.2% to 5.3% on LLVM
-  (bench/results/tls-arm64-gap-2026-10-16.md).
-
-- RSA and P-521 on arm64: bigmod's multiply and add rows at 7
-  instructions a word, the squaring's carries as chains, the
-  exponentiation's window selection in registers, and P-521's field
-  product on those rows: RSA server handshakes 26% fewer instructions on
-  arm64 (2% to 5% on LLVM), P-521 handshakes 35% (18% on LLVM)
-  (bench/results/tls-arm64-gap-2026-10-16.md).
-
-- X25519 on arm64: the generated 64 bit field
-  (scripts/x25519fe64.py) adds no literal zeros: fe64_mul 148 to 138
-  instructions, handshakes 1.5% to 2.4% fewer on arm64
-  (bench/results/tls-arm64-gap-2026-10-16.md).
-
-- P-256 and the NIST curves: nistec's final subtraction as one add with
-  carry chain and the scalar multiply's constant time table selection
-  over the live words only: P-256 handshakes 9.3% fewer instructions on
-  arm64 and 6.2% on LLVM (bench/results/tls-arm64-gap-2026-10-16.md,
-  with the arm64 against LLVM table of every TLS workload).
-
-- SHA-256 with the CPU's instructions (decision 0231's SHA-256
-  section, owner 2026-10-16): cpu.sha256_block, SHA256H, SHA256H2,
-  SHA256SU0, and SHA256SU1 on arm64 through both native backends, the
-  portable body elsewhere; TLS and std/crypto's sha256, hmac_sha256,
-  and PBKDF2 take it. Handshakes 3% to 8% fewer instructions (an ECDSA
-  server's 13% to 14%), PBKDF2 4.2 to 4.7 times fewer
-  (bench/results/sha256-hw-2026-10-16.md); TestSHA256HWDiff.
-
-- arm64: the cpu.adc chains are back on (the emitter's distinct
-  registers for spilled operands, 4bf54541), up to 8 pairs an
-  instruction: TLS handshakes 7% to 9% fewer instructions on arm64
-  (bench/results/tls-perf-2026-10-15.md).
-- arm64: each cpu.adc pair is an instruction template of its own again
-  (calls.xo ADC_CHAINS off): a chain of up to ten operands could reload
-  a fourth spilled operand into x15 over the third, silently; arm64
-  handshakes about 10% slower until the emitter serves longer templates
-  (gotchas/arm64-template-scratch-reuse.md, internal/arm64
-  TestNoSharedScratchReload).
-
-- TLS: a P-256 squaring of 10 products (nistec.xo sqr4p) and X25519 on
-  four 64 bit limbs modulo 2^256 - 38 on adc chains (x25519.xo,
-  scripts/x25519fe64.py): the X25519 handshake 7.5M to 7.1M instructions
-  on LLVM (10.8M to 10.5M on arm64), RSA-2048 8.4M to 7.9M, TLS 1.2 9.1M
-  to 8.4M; TestX25519Diff (bench/results/tls-perf-2026-10-15.md steps 13
-  and 14).
-
-- cpu.adc and cpu.adc_carry, add with carry in (decision 0231's
-  addendum): adcs chains on arm64 and LLVM; P-256's field product sums
-  with them, the X25519 handshake with a P-256 chain 8.8M to 7.5M
-  instructions on LLVM and 11.5M to 10.8M on arm64
-  (bench/results/tls-perf-2026-10-15.md step 12).
-
-- TLS: P-256's field product reduces by shifts (nistec.xo mul4p,
-  generated by scripts/nistecmul4p.py) and P-256's point formulas call
-  the 4 limb field functions without dispatch: the X25519 handshake
-  with a P-256 chain 10.5M to 8.8M instructions on LLVM (11.5M on
-  arm64), RSA-2048 10.4M to 9.3M, TLS 1.2 12.1M to 10.4M; TestNistecDiff
-  checks every NIST curve against crypto/ecdsa
-  (bench/results/tls-perf-2026-10-15.md step 11).
-
 - LLVM backend: the runtime's slow paths (the pool lock's, the futex
   wake, the heap's reserve and push, budget, mutex, stdio) are noinline
   and cold, and a test block's function is noinline, so neither takes
   the registers of a caller's hot loop: testworld rand against
   pre-zero-C main 1.081 to 1.028, atomic get 1.058 to 0.996, the rest of
   bench/perf within noise (bench/results/llvm-rand-atomic-2026-10-16.md).
-
 - `xo test --no-gc` runs its batches as parallel processes: chunks of
   whole tests (a property test's cases together, one module directory
   each), XO_TEST_JOBS at once, else one per physical core; the report is
@@ -3366,27 +3287,23 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   0.26 s warm on 12 cores. The Go tests give the xo they run
   XO_TEST_JOBS=2 (internal/xotool TestJobsEnv); the run cache's key
   leaves XO_TEST_JOBS out (decision 0235).
-
 - `xo test --no-gc`: the time limit's watchdog no longer polls (a
   select on the end of the run's output and `after limit`): the 20 ms
   poll made each test process and shrinking replay up to 20 ms slower,
   nogc/prop's fixture 0.92 s to 20.6 s warm, now back under 0.5 s;
   TestNoGCShrinkOverhead guards it (gotchas/polling-watchdog-scope-wait.md).
-
 - `xo test --timeout=D`: the real time each test, property case, and
   shrinking replay may take (default 60s, the Go backend's limit; 0 for
   none, also on the Go backend). Natively a test past it fails with the
   Go backend's message and its log records, its process is killed, and
   the next test runs (decision 0235, spec core 9.2; TestNoGCTimeout).
   The native harness now reads each test process's streams as they come.
-
 - `xo test --no-gc` shrinks a failing property test's input over a
   pipe: one test binary serves the replays (XO_TEST_SERVE), a case not
   smaller than the best skips its body without ending it, and only an
   improving replay starts a new one; nogc/prop's fixture 2.4 s to 0.9 s
   warm, reports unchanged (decision 0235,
   bench/results/xo-test-batched-2026-10-15.md).
-
 - XO_NOLIBC=1: the backends' process entry ran in Docker (linux/arm64
   native, linux/amd64 emulated: hello and five goldens, cross linked on
   the Mac), so std/llrt/xo_nolibc.c's C entry (_start, xo_nolibc_start,
@@ -3425,13 +3342,15 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   5.7 s to 2.4 s, selfhost/lexer with XO_TEST_BATCH=0 4.1 s to 2.0 s;
   reports unchanged (428 old against new comparisons)
   (bench/results/xo-test-batched-2026-10-15.md).
-
 - `xo test` on the native backends keeps a run cache (decision 0236
   item 3, selfhost/xo testcache.xo): with nothing changed (every std
   file, each module directory, xo.mod and xo.lock up the tree, xo
   itself, the toolchain, XO_ variables), the stored test binary and test
   list run without a check or build. examples/notes-service warm: arm64
   4.0 s to 1.5 s, LLVM 6.4 s to 2.6 s; selfhost/prune 1.1 s to 0.1 s.
+
+## v0.15.0 (2026-10-15)
+
 - `xo test --no-gc` runs tests and property cases in batches, many per
   process (decision 0235, XO_TEST_BATCH): the test binary's main loops
   over the test world's next run and resets the test world between
@@ -3442,7 +3361,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   test` 4.65 s to 1.24 s (614 processes to 1); plain test packages 4 to
   7 percent faster (bench/results/xo-test-batched-2026-10-15.md).
   XO_TEST_BATCH=0 restores one process per test and per case.
-
 - `xo test` (decision 0236): the LLVM backend builds test binaries at
   -O0 with no LTO unless `XO_LLVM_OPT` names a level, and test binaries
   are cached in the user cache's xo/testbin when `XO_BIN_CACHE` is unset
@@ -3516,6 +3434,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   rl_grow_n), and the weak definitions of the immortal placeholders
   (every program defines them). The C tests call obj.xo's exports
   through testdata/xcalls.h.
+
+## v0.14.0 (2026-10-15)
+
 - ML-KEM and SHA-3 (std/native/llrt mlkem.xo, sha3.xo): Keccak in locals
   in Go's in-place form, wrapping field arithmetic, in-place sums of
   products, constant tables read once, lane-wide squeezes. ML-KEM-768
@@ -3653,6 +3574,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   services record; xo_rt.c's pdsvc_canceled, poll_signal_cb,
   poll_stop_cb, stop_signal and park_signal, and cabi.xo's park_signal
   export, go.
+
+## v0.13.0 (2026-10-15)
+
 - Native runtime (two phase shutdown): stop.xo cancels main's root
   (pool.xo node_cancel), reads the timers' clock and makes the third
   signal's exit (stdio.xo flush, process.xo os_exit(130)) itself instead
@@ -3793,6 +3717,22 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   through std/llrt/testdata/xcalls.h. xo_set_grace stays: the SSA
   builders still lower Proc.set_grace to it, which no golden reached
   until the new proc_set_grace golden (every backend).
+- Mbed TLS and fiat-crypto removed (owner approval 2026-10-15; decision
+  0202 supersedes 0105 and 0134): third_party/ (Mbed TLS 4.1.1 and
+  fiat-crypto, 9 MB), their vendor scripts, std/llrt/xo_tls.c and
+  xo_http.c's TLS section, std/native/llrt tlsio_c.xo, tlssrv_c.xo,
+  cabi_tls.xo and tlscert.xo's Mbed parts, rthttp.xo's TLS declarations,
+  the build glue (selfhost/xo tls.xo: needs_tls, the library's build and
+  cache; the link's tls flags; rtpack's libxotls.a and TLS variants, pack
+  format 2 with 16 variants; internal/xotool tls.go), the
+  `<user cache>/xo/mbedtls` cache, $XO_TLS_CACHE, `xo rtpack --ar`, and
+  TestTLSLeaks (Mbed's own allocations). `XO_LLRT_C=tlsio` and `tlssrv`
+  now fail as unknown C paths; XO_NOLIBC builds take TLS programs. Needs
+  a seed of 0.12.0 or later: the 0.11.0 seed cannot build xo from these
+  sources (gotchas/seed-0.11-links-frameworks-only-for-mbed.md).
+
+## v0.12.0 (2026-10-15)
+
 - LLVM backend: the module head no longer declares the C entries
   generated code stopped calling in the entries batches E1 to E3
   (xo_rc_alloc, rc_free, rc_defer, rs_concat, rl_new, rl_new_n,
@@ -3810,7 +3750,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   a group with a key share. ECDSA P-521 certificates work on TLS 1.3
   (0x0603) and 1.2, and P-224 on TLS 1.2. The interop matrix checks
   them against Go's clients.
-
 - Windows standard input (zero-C B32 part 2): the pump that joins a pipe
   or the console to a loopback socket is Xo (stdin.xo); xo_stdin.c is
   deleted and xo_win.c is at 395 lines. UNTESTED on windows (the 15
@@ -3826,19 +3765,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   of the C entries, which stay for code of earlier compilers. arm64 at or
   under the step before; LLVM string heavy text 1.02
   (bench/results/generated-entries-2026-10-15.md).
-- Mbed TLS and fiat-crypto removed (owner approval 2026-10-15; decision
-  0202 supersedes 0105 and 0134): third_party/ (Mbed TLS 4.1.1 and
-  fiat-crypto, 9 MB), their vendor scripts, std/llrt/xo_tls.c and
-  xo_http.c's TLS section, std/native/llrt tlsio_c.xo, tlssrv_c.xo,
-  cabi_tls.xo and tlscert.xo's Mbed parts, rthttp.xo's TLS declarations,
-  the build glue (selfhost/xo tls.xo: needs_tls, the library's build and
-  cache; the link's tls flags; rtpack's libxotls.a and TLS variants, pack
-  format 2 with 16 variants; internal/xotool tls.go), the
-  `<user cache>/xo/mbedtls` cache, $XO_TLS_CACHE, `xo rtpack --ar`, and
-  TestTLSLeaks (Mbed's own allocations). `XO_LLRT_C=tlsio` and `tlssrv`
-  now fail as unknown C paths; XO_NOLIBC builds take TLS programs. Needs
-  a seed of 0.12.0 or later: the 0.11.0 seed cannot build xo from these
-  sources (gotchas/seed-0.11-links-frameworks-only-for-mbed.md).
 - Fix: `xo test --no-gc` hung on tests that sleep under the virtual
   clock since B22 remnants batch 2 (0e1771fd): poll.xo read the virtual
   clock at a word index where its constant was a byte offset
@@ -3868,7 +3794,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   fault when run, as sys6 and fs_set_err do. TestSelfhostWasmFsWrite
   passes again; it had failed since a4ed9cd0
   (gotchas/wasm-rejects-calls-in-dead-native-arms.md).
-
 - AES-GCM: whole block AES intrinsics (cpu.aes_enc10/12/14, the state
   in a register) and one pmull for both halves of a GHASH product on
   arm64. Bulk AES-128-GCM on LLVM 27.3M to 17.9M instructions a MiB
@@ -3879,7 +3804,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   constant on every backend. The arm64 backend used to call the enum's
   equality at run time. test/codegen/enums covers it. sysio.clock_now
   uses `==` again (sysio clock on arm64: 0.93 of main).
-
 - Native runtime performance (the zero-C perf sweep's scheduler paths):
   a context's wait makes no C call outside ThreadSanitizer builds
   (tasks.xo park_wait_n reads the test world's flags from static words),
@@ -3897,7 +3821,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   parse left the RSA public half unset, so mbedtls_pk_check_pair failed;
   xo_tls.c now sets it after the parse. X25519 and X448 PKCS#8 keys are
   an unknown key type, as Go's (gotchas/mbedtls-pkcs8-rsa-check-pair.md).
-
 - Native runtime (decision 0232, the port): the sanitizer fiber hooks,
   ThreadSanitizer's edges, pthread_create on the Linux C library, and
   fiber stacks mapped through libc under ThreadSanitizer moved from
@@ -3917,7 +3840,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
     with `match` because the arm64 backend does not fold `==` on the
     target enums (gotchas/arm64-target-enum-eq-not-folded.md). sysio
     clock went from 1.08x main to 0.99x on arm64 and 0.96x on LLVM.
-
 - Native backends (zero-C audit, generated-code entries E1): LLVM code
   calls obj.xo's list and string entries through their exports instead of
   the C forwarders (xo_rl_free, rl_share, rc_defer, rl_new_n,
@@ -4014,7 +3936,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   reference port does the hybrid with crypto/mlkem; tls13_go replays a
   Go server's X25519MLKEM768 trace (whole and a byte at a time), and
   TestTLS13ReplayDiff fuzzes it too (0 differences).
-
 - Native runtime (decision 0232, items 1 and 2): std/native/sys_c.xo
   calls C library and sanitizer functions on every native OS, with weak
   references and rt.sym_present for symbols a build may not link (arm64:
@@ -4031,7 +3952,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (static word 31) are freed at exit too (tlsio.roots_free from
   cabi_http.xo's streams_free). TestGolden and TestGoldenRun pass for
   http_tls and http_tls_keys on both TLS paths.
-
 - Native runtime (zero-C audit item B31, part 16, decision 0202): the
   Xo client's system roots off macOS are Xo's: tlscert.xo collects the
   DERs (Linux: $SSL_CERT_FILE or the distribution's bundle, then
@@ -4043,7 +3963,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Mbed path still loads its roots through tlscert.xo's Mbed loaders.
   UNTESTED on linux and windows (cross built for linux/arm64; Windows
   needs XO_WINSYSROOT).
-
 - Native runtime (zero-C audit item B31, part 15; decision 0193 step
   5's zones): tz.xo splits so that the host's zones link without
   std/time's zone table: tzrules.xo (the rules: TZif parsing, lookup,
@@ -4055,7 +3974,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (xo_tls_c_local_off) is gone again; the TLS 1.2 hand-off passes it too
   (xo-fa's tls12 zone_off). The time goldens (clock_timers, realtime_*,
   sys_files_clock, tz_table) pass.
-
 - TLS 1.2 server (tls12srv.xo): every handshake message is decoded as
   Go's unmarshalHandshakeMessage does for its type before the state
   check (decode_error, not unexpected_message, for a message of the
@@ -4073,7 +3991,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (xo_tls_c_local_off): tz.xo would bring std/time's embedded zone table
   into every https program, so the end pass needs tz.xo's host lookup
   apart from the table before this C goes (done in part 15).
-
 - Native runtime (zero-C audit item B31, part 13, decision 0202): the
   Xo client's custom roots (Client.with_roots) are parsed once, in Xo,
   as Go's AppendCertsFromPEM (x509.xo, so exactly the certificates Go
@@ -4083,7 +4000,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   roots. The system's roots stay the C's record: macOS verifies through
   the Security framework; on Linux and Windows the Xo client still reads
   them from Mbed's chain (the next step).
-
 - TLS 1.2 server session tickets (tls12srv.xo with tlsticket.xo, RFC
   5077): golden tls12_tickets, crypto/tls's client resuming against the
   Xo server byte for byte (a ticket issued, resumed, resumed a byte at a
@@ -4111,7 +4027,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   11's gap. TestX509VerifyDiff adds random policies, mappings, policy
   constraints and inhibitAnyPolicy: 20,000 chains over two seeds, no
   difference (about 5 percent refused for their policies).
-
 - Native runtime (zero-C audit item B31, post-quantum, decision 0202):
   ML-KEM-768 (FIPS 203) in Xo (std/native/llrt/mlkem.xo, as Go's, with
   the implicit rejection in constant time) over SHA-3 and SHAKE
@@ -4139,7 +4054,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Verify: 20,000 chains over two seeds, no difference. Known gap, next:
   Go's certificate policy validation (policiesValid) is not done, so a
   chain Go refuses for its policies verifies here (closed by part 12).
-
 - Native runtime (zero-C audit, scheduler block S1): a context's wait
   on its park is Xo (std/native/llrt/tasks.xo park_wait_n: the output
   flush, the budget's pause, the root thread's helping record, the test
@@ -4180,7 +4094,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (61 in all, no difference). The TLS 1.2 hand-off passes the Security
   framework's table to tls12.xo (xo-fa's apple_svc), so on macOS with the
   system's roots both versions verify as Go.
-
 - Native TLS performance, step 4: Go's point doubling formula and
   inversion by addition chain (P-256's field) or a fixed window (the
   other exponents): handshakes about 8% fewer instructions on LLVM
@@ -4240,7 +4153,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   Known gaps: a SAN URI is checked as IA5 only (Go also parses it with
   net/url, whose port is in http1.xo; closed by part 10); P-224 and P-521
   signatures are not verified (refused).
-
 - Native TLS 1.2 client: offers the four ECDHE CBC-SHA suites after the
   AEADs, as Go's client does by default (tls12.default_suites, which
   tlsio.xo's combined ClientHello uses too); golden tls12_client adds a
@@ -4330,7 +4242,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   certificate's text (x509.xo parses some certificates Go's parser
   refuses, such as a malformed OID or an invalid PrintableString, and
   Go adds a hint to an unknown authority), the next item to tighten.
-
 - Native runtime (B31, TLS 1.2 version negotiation): tls12.resume takes
   over from tls13.xo when a TLS 1.2 ServerHello answers one ClientHello
   offering TLS 1.3 and 1.2 (as Go's client: no second, 1.2 only hello),
@@ -4366,7 +4277,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   macOS's system roots are checked by x509verify.xo, not the Security framework as Go does; a
   certificate's expiry text gives the time in UTC, not the local zone.
   The server's TLS stays Mbed's until xo-2b's tls13srv.xo lands.
-
 - Native runtime (zero-C audit item B31, TLS 1.3 server, decision 0202):
   the TLS 1.3 server in Xo, sans I/O (std/native/llrt/tls13srv.xo, as
   Go's handshake_server_tls13.go: ClientHello checks, Go's choice of
@@ -4393,7 +4303,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   now a full port of tls13.xo (std/rt/internal_tls13.go), and the client
   takes fixed random, session id and key hooks. rsa.xo gains
   sign_pss_salt (a fixed salt) for the TLS 1.3 server's RFC 8448 replay.
-
 - Native runtime (zero-C audit, the xo_rt.c memory block): real-time
   sections (core 6.5, decision 0133) are Xo: obj.xo queues and drains
   the deferred frees, std/native/llrt/rtsec.xo enters and leaves the
@@ -4415,7 +4324,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   scheme mapping and key shares for the TLS 1.3 server. The golden
   tls13_rfc8448 also replays RFC 8448's trace from the client's X25519
   private key and a low order server share.
-
 - Native runtime (zero-C audit items B22 and B23, remnants batch 1): the
   network is Xo (std/native/llrt/netconn.xo): Net.listen and Net.dial
   (TCP and "unix:PATH"), Listener.accept, addr and close, Conn.read,
@@ -4441,7 +4349,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   data and alert records equal the RFC's, fed whole and a byte at a
   time) and six failures against a Go replay. X25519 (x25519.xo) is next;
   not on the TLS path yet (Mbed TLS stays, decision 0193).
-
 - Native runtime (zero-C audit item B15, part 3): the rest of the test
   world is Xo and std/llrt/xo_testing.c is deleted (252 lines): the
   start (twrun.xo start; SIGPIPE in entry.xo), the virtual clock's move
@@ -4479,7 +4386,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   internal.crypto_op gains the chain area; the golden tls_verify diffs 41
   cases against Go's x509.Verify (outcome and chain). Not on the TLS path
   yet.
-
 - Native runtime (zero-C audit item B31, TLS primitives 4, decision
   0202): X25519 in Xo (std/native/llrt/x25519.xo), RFC 7748, as Go's
   crypto/ecdh X25519, constant time: the Montgomery ladder over all 255
@@ -4490,7 +4396,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   crypto_prims checks RFC 7748's 5.2 vectors and 1,000 iterations, 6.1's
   key exchange, low order and non canonical points, and random scalars
   against Go. Not on the TLS path yet.
-
 - Native runtime (zero-C audit item B31, TLS primitives 3, decision
   0202): ChaCha20, Poly1305, and the ChaCha20-Poly1305 AEAD in Xo
   (std/native/llrt/chacha.xo), RFC 8439 (12 byte nonce, 16 byte tag),
@@ -4502,7 +4407,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   checks RFC 8439's 2.3.2, 2.4.2, 2.5.2, 2.6.2, 2.8.2 and appendix A.3's
   Poly1305 edge cases, tag failures, and every length to 200 against Go.
   Not on the TLS path yet.
-
 - Native runtime (zero-C audit item B31, TLS primitives 2, decision
   0202): AES and AES-GCM in Xo (std/native/llrt/aesgcm.xo),
   as Go's crypto/aes and cipher.NewGCM (12 byte nonce, 16 byte tag),
@@ -4512,7 +4416,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   crypto_prims checks FIPS 197 appendix C, the GCM test cases 1 to 4,
   15, 16, tag failures, and every length to 80 against Go. Not on the
   TLS path yet.
-
 - Native runtime (zero-C audit item B31, part 2, decision 0202): P-256
   and P-384 (std/native/llrt/nistec.xo: ECDH and ECDSA signing and
   verification, Montgomery field arithmetic and the complete addition
@@ -4528,7 +4431,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (under -short), and tls_rsa diff them against Go's crypto/ecdh,
   crypto/ecdsa, crypto/rsa, and crypto/x509 (PKCS #1 v1.5 signatures byte
   for byte). Not on the TLS path yet.
-
 - Native runtime (zero-C audit item B31, TLS primitives 1, decision
   0202): SHA-256, SHA-384, and SHA-512 (std/native/llrt/sha256.xo,
   incremental with clone, SHA-384 and SHA-512 on B08's SHA-512
@@ -4539,7 +4441,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   internal_crypto.go is the Go backend's, over Go's crypto packages); the
   golden crypto_prims checks FIPS 180-4, RFC 4231, RFC 5869, and RFC
   8448 vectors and runs under -short. Not on the TLS path yet.
-
 - Native runtime (zero-C audit, next small files batch): file and lock
   handles are records of fsops.xo with Xo free functions (the services
   record's words 128 and 136); collection constants are consts.xo's
@@ -4549,7 +4450,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   xo_bytes.c 232 to 200. TestFarOutSlot now checks the rs_push_rune
   call, the last runtime call that returns a Str through a length
   pointer in that program. UNTESTED on linux and windows.
-
 - Native runtime (zero-C audit item B30): the TLS runtime's certificate
   work that needs no TLS state is Xo (std/native/llrt/tlscert.xo):
   http.tls_cert's PEM scan and tls.X509KeyPair's error texts,
@@ -4568,7 +4468,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   str_slice, str_join, str_repeat, and bytes_decode are raw.xo's.
   xo_stdin.c 226 to 66 lines, xo_sys.c 64 to 24, xo_bytes.c 272 to 232,
   xo_std.c 226 to 191. UNTESTED on linux and windows.
-
 - Native runtime (zero-C audit item B28, part 2): the HTTP/2 server is
   Xo (std/native/llrt/h2srv.xo): the connection's fiber (the preface,
   the frames and their checks, header blocks through hpack.xo, flow
@@ -4892,6 +4791,9 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the print, exit, env, and rune count forwards; about 200 lines), and
   `Stdio.write` writes through std/native/llrt/stdio.xo instead of the C
   `xo_print` (gotchas/runtime-c-the-seed-still-calls.md).
+
+## v0.11.0 (2026-10-14)
+
 - Native runtime (zero-C audit item B13, stage 2; decision 0226): the
   list objects (a new list, growth, the copy of a shared list, the
   release of a list's elements) and the drop worklist are Xo
@@ -5303,7 +5205,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (all native backends). Argon2id written in Xo went from 2.21 to 1.13
   times the C's instructions on arm64 (1.29 to 1.25 on LLVM); it stays
   C. Output is unchanged.
-
 - Faster on the native backends: Str.split, Str.lines, Str.rune_count,
   Str.find and contains, Bytes.to_hex, Bytes.rune_count, and
   Bytes.to_str (UTF-8 validity) are now Xo in the runtime, scanning 16
@@ -5332,7 +5233,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   times the C's instructions on arm64). `XO_LLRT_C=ints,glob,digest,gen`
   builds the C paths for comparison
   (bench/results/runtime-port-portable-2026-10-13.md).
-
 - Changed: on the native backends, the HTTP/2 server's HPACK (header
   block decoding and encoding), the HTTP/1.1 server's request parsing
   (request line, header fields, request targets and queries, chunked
@@ -5523,7 +5423,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   and -1 can fault). A negative literal is now a constant there (no
   overflow check). Duration text in Xo is still 1.171x of the C on
   arm64 and 1.087x on LLVM in instructions, so it keeps its C path.
-
 - The self hosted `xo` can be bootstrapped without Go:
   `scripts/bootstrap-xo.sh SEED` builds selfhost/xo with a given xo and
   then with itself twice, with no Go on PATH, and checks the fixed point
@@ -5538,7 +5437,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   the SSA, LLVM, arm64, and Go generator comparisons, so a replayed
   mismatch names the function; the mutation generators no longer need
   internal/lexer.
-
 - The self hosted `xo` has `xo rtpack` (decision 0178): the prebuilt
   runtime packs scripts/release.sh ships, byte identical to the Go
   command's. Switch point B's gate passes: cmd/xo's whole suite against
@@ -5566,7 +5464,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   gcc as `cc` (a fixed `.file`); the bin cache's copy fallback no longer
   makes a parallel exec fail with "text file busy". scripts/remote-full.sh
   gains `--cmd`, `--hold`, and per-package durations at the end of its log.
-
 - The self hosted `xo` (xo1) closes the gaps of decision 0178's switch
   point B outside stage 6: `build`, `run`, and `test` default to the Go
   backend as `xo` does; std is found beside the binary (lib/xo/std of a
@@ -5832,7 +5729,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   (Go backend; native XO1201 planned; programs without a budget are
   unchanged). New fault `XO-F008`. The supply-chain replication blocks 12
   of 17 scenarios (was 10 of 15).
-
 - xo1 (`selfhost/xo`, decision 0174) does what internal/build adds for
   native builds, with the same cache keys (shared caches): the TLS
   library of std/http, the zone data of std/time, prebuilt runtime packs
@@ -6094,7 +5990,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   tags instead of boxing both values.
 - Spec 5.2: a receiver that is not `var` is evaluated before the
   arguments, like any operand (the behavior of every backend).
-
 - LLVM backend: enums of 256 bytes or more are passed by reference, and
   values in memory nothing writes during the call (by reference
   parameters, their fields and payloads, box contents and list elements
@@ -6251,7 +6146,6 @@ release is the "Changes in 0.N" section of `spec/core.md`.
   every backend; a constant range longer than N is XO1402, otherwise
   iteration N + 1 faults with XO-F006, and `xo test` fuzzes functions
   with bounded loops.
-
 - Native TLS: ECDSA P-256 signing and verification run on fiat-crypto's
   verified field arithmetic (vendored at a pinned commit,
   `third_party/fiat-crypto`, decision 0134) instead of Mbed TLS's bignum
