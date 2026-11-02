@@ -894,6 +894,8 @@ fn put_table(var b: BytesBuilder, t: Table) {
 /// Section types (keep in step with compiler/xo prof.xo).
 const PS_CPU = 16
 const PS_HEAP = 17
+/// The heap section of decision 0458: each record also carries the number of samples it stands for (a stack and size whose freed samples were folded, heapprof.xo).
+const PS_HEAP2 = 18
 
 /// path with each %p as the process id (a profile per process of xo
 /// test --profile).
@@ -1627,13 +1629,31 @@ fn heap_section(var b: BytesBuilder, r: Int) -> Int {
     put_stack(body, st)
     put(body, ld(p, heapprof.S_SIZE))
     put(body, ld(p, heapprof.S_FREED))
+    put(body, 1)
+    samples.push(st)
+  }
+  // the freed samples folded by stack and size (decision 0458)
+  for i in 0..heapprof.agg_n() {
+    let e = heapprof.agg_entry(r, i)
+    if e == 0 {
+      continue
+    }
+    let d = heapprof.agg_depth(e)
+    var st: List[Int] = []
+    for j in 0..d {
+      st.push(heapprof.agg_pc(e, j))
+    }
+    put_stack(body, st)
+    put(body, heapprof.agg_size(e))
+    put(body, 1)
+    put(body, heapprof.agg_count(e))
     samples.push(st)
   }
   put(o, samples.len())
   o.write(body.freeze())
   let (lo, hi) = heapprof.text(r)
   put_table(o, table_of(samples, lo, hi))
-  put_section(b, PS_HEAP, o.freeze())
+  put_section(b, PS_HEAP2, o.freeze())
   samples.len()
 }
 

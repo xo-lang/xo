@@ -1,0 +1,19 @@
+// The heap profile's recycling test program (internal/llvm prof_test.go
+// TestProfHeapRecycle, decision 0458): 400,000 short lived lists, more
+// than the sample table's 262,144 slots at rate 1, so every sample past
+// the table's size needs a recycled slot; the profile must count them all
+// and lose none.
+fn one(i: Int) -> Int {
+  var l: List[Int] = []
+  l.push(i)
+  l.push(i + 1)
+  l.len()
+}
+
+fn main(os: Os) {
+  var t = 0
+  for i in 0..400000 {
+    t += one(i)
+  }
+  os.stdio.println("done ${t}")
+}

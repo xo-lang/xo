@@ -53,6 +53,11 @@ const R_POOL_N = 72
 const R_POOL_NEXT = 80
 const R_T0 = 88
 const R_PAUSE = 96
+/// The aggregate of freed samples (decision 0458): its table, and the stack
+/// of recycled slots (a tag in the bits above 20, then a slot's index plus
+/// 1; 0 empty).
+const R_AGG = 104
+const R_FREE = 112
 const R_SIZE = 128
 
 /// The deepest stack a sample keeps; a slot: the frame count (0 until the
@@ -64,6 +69,20 @@ pub const S_ADDR = 8 + 8 * DEPTH
 pub const S_SIZE = S_ADDR + 8
 pub const S_FREED = S_ADDR + 16
 pub const SLOT = S_ADDR + 24
+/// An aggregate entry (decision 0458): the freed samples of one stack and
+/// size: its state (0 empty, 1 being written, 2 ready), the stack's hash,
+/// its frame count, the size, the number of samples, then the pcs.
+const A_STATE = 0
+const A_HASH = 8
+const A_DEPTH = 16
+const A_SIZE = 24
+const A_COUNT = 32
+const A_PCS = 40
+const AGG_SIZE = A_PCS + 8 * DEPTH
+/// The aggregate's entries: 16,384 distinct (stack, size) pairs, 8.5 MB of
+/// address space, its pages touched only as entries are made.
+const AGG_N = 16384
+const AGG_PROBES = 64
 /// The table's slots: 262,144 samples (128 GiB allocated at the default
 /// rate) in 144 MB of address space, its pages touched only as samples
 /// come (65,536 until 2026-11-01, when 2,000 TLS handshakes, about 880
@@ -122,7 +141,8 @@ pub fn start(rate: Int) -> Bool {
   let slots = map(CAP * SLOT)
   let set = map(SET_N * 8)
   let pool = map(POOL_N * T_SIZE)
-  if r == 0 || slots == 0 || set == 0 || pool == 0 {
+  let agg = map(AGG_N * AGG_SIZE)
+  if r == 0 || slots == 0 || set == 0 || pool == 0 || agg == 0 {
     return false
   }
   for i in 0..POOL_N {
@@ -137,6 +157,7 @@ pub fn start(rate: Int) -> Bool {
   st(r, R_RATE, rate)
   st(r, R_POOL, pool)
   st(r, R_POOL_N, POOL_N)
+  st(r, R_AGG, agg)
   rt.slot_store(rt.static_word(W_HPROF), 0, r, RELEASE)
   true
 }
@@ -190,8 +211,99 @@ pub fn big_alloc(h: Int, a: Int, n: Int) {
 pub fn freed(a: Int) {
   let r = rt.slot_load(rt.static_word(W_HPROF), 0, ACQUIRE)
   if r != 0 {
-    let _k = forget(r, a)
+    let k = forget(r, a)
+    if k >= 0 {
+      fold(r, k)
+    }
   }
+}
+
+/// Slot k, whose block was freed, goes into the aggregate (its stack and
+/// size, one more sample) and the slot to the stack of free slots, so a
+/// program that allocates past the table's size is still counted whole.
+/// A full aggregate keeps the slot as a freed sample (the table's end then
+/// loses samples as before).
+fn fold(r: Int, k: Int) {
+  let p = ld(r, R_SLOTS).wrapping_add(k.wrapping_mul(SLOT))
+  let d = ld(p, 0)
+  if d <= 0 {
+    return
+  }
+  let size = ld(p, S_SIZE)
+  var h = size.wrapping_mul(-7046029254386353131)
+  for j in 0..d {
+    h = (h ^ ld(p, 8 + 8 * j)).wrapping_mul(1099511628211)
+  }
+  if h == 0 {
+    h = 1
+  }
+  let agg = ld(r, R_AGG)
+  var i = h.shr_logical(20) & (AGG_N - 1)
+  for _ in 0..AGG_PROBES {
+    let e = agg.wrapping_add(i.wrapping_mul(AGG_SIZE))
+    var state = rt.slot_load(e, A_STATE / 8, ACQUIRE)
+    if state == 0 && rt.slot_cas(e, A_STATE / 8, 0, 1, ACQ_REL) {
+      st(e, A_HASH, h)
+      st(e, A_DEPTH, d)
+      st(e, A_SIZE, size)
+      for j in 0..d {
+        st(e, A_PCS + 8 * j, ld(p, 8 + 8 * j))
+      }
+      rt.slot_store(e, A_STATE / 8, 2, RELEASE)
+      state = 2
+    }
+    while state == 1 {
+      state = rt.slot_load(e, A_STATE / 8, ACQUIRE)
+    }
+    if state == 2 && ld(e, A_HASH) == h && ld(e, A_SIZE) == size && ld(e, A_DEPTH) == d {
+      var same = true
+      for j in 0..d {
+        if ld(e, A_PCS + 8 * j) != ld(p, 8 + 8 * j) {
+          same = false
+          break
+        }
+      }
+      if same {
+        let _c = rt.slot_add(e, A_COUNT / 8, 1, RELAXED)
+        recycle(r, k, p)
+        return
+      }
+    }
+    i = i.wrapping_add(1) & (AGG_N - 1)
+  }
+}
+
+/// Slot k (at p) is free again: skipped by the writer (frame count 0) and
+/// pushed on the free stack, its link in the size word.
+fn recycle(r: Int, k: Int, p: Int) {
+  rt.slot_store(p, 0, 0, RELEASE)
+  while true {
+    let h = rt.slot_load(r, R_FREE / 8, ACQUIRE)
+    st(p, S_SIZE, h & 1048575)
+    let nh = (h.shr_logical(20).wrapping_add(1)).wrapping_shl(20) | (k.wrapping_add(1))
+    if rt.slot_cas(r, R_FREE / 8, h, nh, ACQ_REL) {
+      return
+    }
+  }
+}
+
+/// A recycled slot, or -1 when none: the free stack's top.
+fn take_free(r: Int) -> Int {
+  while true {
+    let h = rt.slot_load(r, R_FREE / 8, ACQUIRE)
+    let idx = h & 1048575
+    if idx == 0 {
+      return -1
+    }
+    let k = idx.wrapping_sub(1)
+    let p = ld(r, R_SLOTS).wrapping_add(k.wrapping_mul(SLOT))
+    let next = ld(p, S_SIZE)
+    let nh = (h.shr_logical(20).wrapping_add(1)).wrapping_shl(20) | next
+    if rt.slot_cas(r, R_FREE / 8, h, nh, ACQ_REL) {
+      return k
+    }
+  }
+  -1
 }
 
 /// Big block a moved to b (cabi.xo heap_big_resize): a sampled a's slot
@@ -258,12 +370,16 @@ fn sample(r: Int, h: Int, a: Int, n: Int) {
   if first || rt.slot_load(r, R_PAUSE / 8, ACQUIRE) != 0 {
     return
   }
-  let k = rt.slot_add(r, R_NEXT / 8, 1, ACQ_REL)
+  var k = take_free(r)
+  if k < 0 {
+    k = rt.slot_add(r, R_NEXT / 8, 1, ACQ_REL)
+  }
   if k >= ld(r, R_CAP) {
     let _l = rt.slot_add(r, R_LOST / 8, 1, RELAXED)
     return
   }
   let p = ld(r, R_SLOTS).wrapping_add(k.wrapping_mul(SLOT))
+  st(p, S_FREED, 0)
   let d = unwind.prof_trace(t, p + 8, DEPTH)
   st(p, S_ADDR, a)
   st(p, S_SIZE, n)
@@ -401,3 +517,19 @@ pub fn rate(r: Int) -> Int { ld(r, R_RATE) }
 
 /// The program's text, (start, end).
 pub fn text(r: Int) -> (Int, Int) { unwind.prof_text(ld(r, R_POOL)) }
+
+/// The aggregate's entries (decision 0458): the writer's view, entry i's
+/// address, or 0 when it is empty.
+pub fn agg_entry(r: Int, i: Int) -> Int {
+  let e = ld(r, R_AGG).wrapping_add(i.wrapping_mul(AGG_SIZE))
+  if ld(e, A_STATE) == 2 { e } else { 0 }
+}
+
+/// The number of aggregate entries.
+pub fn agg_n() -> Int { AGG_N }
+
+/// An entry's frame count, size, sample count, and pc j.
+pub fn agg_depth(e: Int) -> Int { ld(e, A_DEPTH) }
+pub fn agg_size(e: Int) -> Int { ld(e, A_SIZE) }
+pub fn agg_count(e: Int) -> Int { ld(e, A_COUNT) }
+pub fn agg_pc(e: Int, j: Int) -> Int { ld(e, A_PCS + 8 * j) }

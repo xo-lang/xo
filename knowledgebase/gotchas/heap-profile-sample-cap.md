@@ -1,6 +1,6 @@
 # A heap profile of a large build keeps only its first 65536 samples
 
-Status: Observed (2026-10-29, xo-lang-6)
+Status: Observed (2026-10-29, xo-lang-6); fixed 2026-11-02 by decision 0458 (freed samples fold into an aggregate and their slots recycle: only live blocks past the table's size are lost)
 
 Symptom: `XO_PROF=heap XO_PROF_HEAP_RATE=65536 xo build compiler/xo`
 reported "65536 heap samples" and its alloc_space total was 5.04 GB,

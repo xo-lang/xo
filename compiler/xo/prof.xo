@@ -19,6 +19,7 @@ use std/http
 /// Section types (std/native/llrt/prof.xo writes them).
 const PS_CPU = 16
 const PS_HEAP = 17
+const PS_HEAP2 = 18
 
 /// A raw profile's locations and functions, as the program named them.
 struct ProfTable {
@@ -50,6 +51,9 @@ struct ProfHeap {
   sizes: List[Int] = []
   /// 0 live, 1 freed, 2 not tracked for frees
   freed: List[Int] = []
+  /// the samples each record stands for (1 in a PS_HEAP section; a PS_HEAP2
+  /// record folds the freed samples of one stack and size)
+  counts: List[Int] = []
   tab: ProfTable = ProfTable{}
 }
 
@@ -161,7 +165,7 @@ fn prof_parse(b: Bytes) -> (ProfCpu?, ProfHeap?) ! Str {
         return Err("a truncated CPU profile section")
       }
       cpu = Some(c)
-    } else if typ == PS_HEAP {
+    } else if typ == PS_HEAP || typ == PS_HEAP2 {
       var h = ProfHeap{}
       h.rate = r.word()
       h.lost = r.word()
@@ -174,6 +178,7 @@ fn prof_parse(b: Bytes) -> (ProfCpu?, ProfHeap?) ! Str {
         h.samples.push(r.stack())
         h.sizes.push(r.word())
         h.freed.push(r.word())
+        h.counts.push(if typ == PS_HEAP2 { r.word() } else { 1 })
       }
       h.tab = r.table()
       if r.bad {
@@ -529,7 +534,7 @@ fn prof_heap_out(os: Os, h0: ProfHeap, out: Str, replace: Bool) -> () ! Str uses
   let t = h.tab
   var vals: List[List[Int]] = []
   for (i, size) in h.sizes.indexed() {
-    let sc = heap_scale(size, h.rate)
+    let sc = heap_scale(size, h.rate) * Float(h.counts[i])
     let objs = Int(sc + 0.5)
     let bytes = Int(Float(size) * sc + 0.5)
     let live = h.freed[i] == 0

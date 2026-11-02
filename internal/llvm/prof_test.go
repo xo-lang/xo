@@ -376,6 +376,84 @@ func TestProfHeapGrown(t *testing.T) {
 	}
 }
 
+// TestProfHeapRecycle: a run past the sample table's size (decision 0458):
+// 400,000 short lived lists at rate 1 against 262,144 slots lose no sample,
+// and the allocated objects count every one of them (the freed samples
+// fold by stack and size, their slots recycle).
+func TestProfHeapRecycle(t *testing.T) {
+	if testing.Short() {
+		t.Skip("builds and runs a program per native backend")
+	}
+	if runtime.GOOS != "darwin" && runtime.GOOS != "linux" {
+		t.Skip("the heap profile needs the unwind tables' walk (darwin, linux)")
+	}
+	backends := []string{xotool.BackendLLVM}
+	if runtime.GOARCH == "arm64" {
+		backends = append(backends, xotool.BackendArm64)
+	}
+	for _, be := range backends {
+		t.Run(be, func(t *testing.T) {
+			if be == xotool.BackendLLVM {
+				if _, err := xotool.Clang(); err != nil {
+					t.Skip("clang not found")
+				}
+			}
+			res, err := xotool.Build([]string{filepath.Join("testdata", "prof", "recycle")}, xotool.Options{Backend: be})
+			if err != nil || res.Failed {
+				t.Fatalf("build: %v %v", err, res)
+			}
+			bin := res.Binaries[xotool.Host()]
+			dir := t.TempDir()
+			cmd := testtmp.Guard(exec.Command(bin))
+			cmd.Dir = dir
+			cmd.Env = append(os.Environ(), "XO_PROF=heap", "XO_PROF_HEAP_RATE=1")
+			got, err := runCombined(cmd, 2*time.Minute)
+			if err != nil || !strings.Contains(got, "done 800000") {
+				t.Fatalf("run: %v\n%s", err, got)
+			}
+			xoProf(t, dir, filepath.Join(dir, "xo-prof.xoraw"))
+			txt, err := os.ReadFile(filepath.Join(dir, "xo-prof.heap.txt"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(txt), "lost") {
+				t.Fatalf("samples lost past the table's size:\n%s", txt)
+			}
+			// every list's block counts once (400,000), the runtime's own few allocations on top
+			if _, objs := heapTotal(string(txt), "allocated: "); objs < 400000 || objs > 400300 {
+				t.Fatalf("allocated %d objects, want 400,000 lists:\n%s", objs, txt)
+			}
+		})
+	}
+}
+
+// TestProfOldHeapRaw: a heap profile written before decision 0458 (section
+// type 17, no per record count; testdata/prof/heap-v17.xoraw, TestProfHeap's
+// program at the default rate, so an estimate) still converts, with its 2000
+// held strings in use.
+func TestProfOldHeapRaw(t *testing.T) {
+	if testing.Short() {
+		t.Skip("runs xo prof")
+	}
+	raw, err := os.ReadFile(filepath.Join("testdata", "prof", "heap-v17.xoraw"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	dir := t.TempDir()
+	path := filepath.Join(dir, "old.xoraw")
+	if err := os.WriteFile(path, raw, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	xoProf(t, dir, path)
+	txt, err := os.ReadFile(filepath.Join(dir, "old.heap.txt"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if inuse, objs := heapTotal(string(txt), "in use: "); inuse < 1000000 || inuse > 8000000 || objs < 1000 || objs > 8000 {
+		t.Fatalf("in use %d bytes in %d objects, want an estimate of about 2 MB in 2000:\n%s", inuse, objs, txt)
+	}
+}
+
 // TestProfGating: decision 0238's gating. A --release build leaves the
 // profiler out (prof.start's symbol is not in the binary) and says so
 // when XO_PROF asks; --profile-support keeps it; a profile is written
