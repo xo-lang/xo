@@ -36,6 +36,7 @@ and CPU steal ticks logged) are in
 
 ## Comparing revisions on the offload hosts
 
-`alloc-split.sh MODE SPECS NAME ROUNDS` builds each revision's server on the second host and measures all of
-them in one exclusive lease on the first (`alloc-build-remote.sh`, `alloc-measure-remote.sh`;
+`alloc-split.sh MODE SPECS NAME ROUNDS` builds each revision's server on the Mac (`alloc-build-mac.sh`, a gate job cross-building
+linux/arm64; `ALLOC_BUILD=host2` builds on the second host with `alloc-build-remote.sh`) and measures all of
+them in one exclusive lease on the first (`alloc-measure-remote.sh`;
 knowledgebase/infrastructure/offload.md). Ratios are against v0.35.0's server built in the same job.

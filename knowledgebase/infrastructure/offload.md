@@ -137,7 +137,10 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   from the last revision's `bench/perf/jitter/xo`, `own` from each revision's own tree), the tar of binaries
   (`bin/`, `env-pK`, `revs.txt`) goes second host, Mac (`offload.sh --get`, 43ca0e3d7), first host `/work/in`,
   and `alloc-measure-remote.sh` holds the exclusive lease for the quiet wait and the rounds only (servers on
-  CPUs 0-5, loadgen 6-11). SPECS are `REV[+VAR=VALUE...]`: the VARs apply to that server's xo build and run
+  CPUs 0-5, loadgen 6-11). Default build place since 2026-11-02 (the Lead: a build waited 36 min for pass2 while
+  host 1 sat idle): the Mac, `alloc-build-mac.sh` as a `HEAVY_CLASS=gate` job cross-building linux/arm64 with the
+  darwin v0.35.0 xo (`XO_MAC_SEED`, default `~/xo-seed-0.35.0-21620368/xo/bin/xo`); `ALLOC_BUILD=host2` keeps the
+  second host. SPECS are `REV[+VAR=VALUE...]`: the VARs apply to that server's xo build and run
   (`XO_ARM64_PAD=2`, `XO_DATA_SHIFT=64`). Measured on a two revision test: 33 s of build work off host 1 (warm
   caches); a cold compiler build per revision is minutes. Both hosts' `$OFF_SEED` must be the same version
   (v0.35.0 on 2026-11-02), since the base ratio is against it. Last verified: 2026-11-02.
