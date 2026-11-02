@@ -20,7 +20,15 @@
 # (every cache emptied before each round, Go with -count=1) and edit (one
 # function appended to the module under test before each round, in copies
 # of GOROOT and xo's std).
-# SECTIONS (default "compile run test") limits the report's sections.
+# HTTP (2026-11-02, Lead): bench/perf/jitter's server (Xo at HTTP_REV, default
+# the checkout's HEAD; Xo the offload host's seed, the release before; Go with
+# the hand encoder) under its loadgen with -awake, on the first linux/arm64
+# offload host with OFF_EXCLUSIVE=1 (loopback HTTP on the Mac runs out of
+# ports, gotchas/loopback-time-wait-exhausts-ports.md): scripts/release-vs-go-
+# http.sh, HTTP_ROUNDS rounds (default 5); the report gives each row's
+# medians with their ranges. Run it before seed-hosts.sh moves the host's seed
+# to the new release, or the base is the release itself.
+# SECTIONS (default "compile run test http") limits the report's sections.
 # ROUNDS (default 3, owner 2026-11-01) sets the --ab rounds; WORKLOADS limits the run
 # workloads (names as below). Run it through heavy.sh as HEAVY_CLASS=measure:
 # xo bench --ab refuses to run under a bulk or gate job (lead, 2026-10-30:
@@ -33,7 +41,7 @@ set -euo pipefail
 XO=${1:?usage: release-vs-go.sh XO OUT}
 OUT=${2:?usage: release-vs-go.sh XO OUT}
 ROUNDS=${ROUNDS:-3}
-SECTIONS=${SECTIONS:-compile run test}
+SECTIONS=${SECTIONS:-compile run test http}
 section() { [[ " $SECTIONS " == *" $1 "* ]]; }
 MAX_LOAD=${MAX_LOAD:-6}
 WAIT_MIN=${WAIT_MIN:-30}
@@ -276,6 +284,69 @@ if section test; then
 			} >>"$report"
 		done
 	done
+fi
+# the http section: on the offload host (its seed is the base release)
+if section http; then
+	{
+		echo "## HTTP server (bench/perf/jitter, linux/arm64 offload host)"
+		echo
+	} >>"$report"
+	agents=$HOME/xo-lead/agents
+	if [ ! -x "$agents/offload.sh" ]; then
+		echo "(skipped: no $agents/offload.sh)" >>"$report"
+	else
+		rev=$(git -C "$root" rev-parse --verify "${HTTP_REV:-HEAD}^{commit}")
+		(
+			. "$HOME/xo-lead/offload.env"
+			b=rvg-http-$$
+			git -C "$root" branch -q -f "$b" "$rev"
+			bundle=$(mktemp "${TMPDIR:-/tmp}/rvg-http.XXXXXX")
+			git -C "$root" bundle create -q "$bundle" "$b"
+			git -C "$root" branch -q -D "$b"
+			put=/work/in/rvg-http-$$.bundle
+			"$agents/offload.sh" --put "$bundle" "$put" || { rm -f "$bundle"; exit 4; }
+			rm -f "$bundle"
+			OFF_EXCLUSIVE=1 "$agents/offload.sh" "$root/scripts/release-vs-go-http.sh" "$rev" "rvg$$" "$OFF_SEED" /work/priv /work "$put" "${HTTP_ROUNDS:-5}"
+		) >"$OUT/http.txt" 2>&1 || true
+		python3 - "$OUT/http.txt" >>"$report" <<'PY'
+import re, json, statistics as st, sys
+lines = open(sys.argv[1], errors="replace").read().splitlines()
+R = {}
+for l in lines:
+    m = re.match(r"(xo|base|go) (\S+) c(\d+) rate(\d+) r(\d+) (\{.*\})", l)
+    if m:
+        R.setdefault((m[2], int(m[3]), int(m[4])), {}).setdefault(m[1], []).append(json.loads(m[6]))
+for l in lines:
+    if l.startswith(("host load", "release-vs-go-http ", "xo ", "loadgen flags")) and not re.match(r"(xo|base|go) \S+ c\d+ ", l):
+        print("- " + l)
+if not R:
+    print("\n(no runs: see http.txt)\n" + "\n".join("    " + l for l in lines[-15:]))
+    sys.exit()
+print("- Go's /alloc rows are its /alloc-hand (json.Marshal written by hand, as Xo's derive encodes).")
+print("- Rounds: %d per row; each cell is the median, its range in brackets; CPU is the server's CPU microseconds per request.\n" % max(len(v) for x in R.values() for v in x.values()))
+F = [("rps", "req/s", 0), ("p50_us", "p50 us", 0), ("p99_us", "p99 us", 0), ("p999_us", "p99.9 us", 0), ("max_us", "max us", 0), ("cpu_us_per_req", "CPU us/req", 1), ("errors", "errors", 0)]
+print("| row | server | " + " | ".join(f[1] for f in F) + " |")
+print("|---|---|" + "---|" * len(F))
+for k in sorted(R):
+    row = f"{k[0]} c{k[1]}" + (f" open {k[2]}/s" if k[2] else "")
+    for s in ("xo", "base", "go"):
+        v = R[k].get(s)
+        if not v:
+            continue
+        cells = []
+        for n, _, d in F:
+            x = [a.get(n, 0) for a in v]
+            cells.append(f"{st.median(x):,.{d}f} [{min(x):,.{d}f} to {max(x):,.{d}f}]")
+        print(f"| {row} | {s} | " + " | ".join(cells) + " |")
+print()
+for k in sorted(R):
+    med = {(s, n): st.median([a.get(n, 0) for a in v]) for s, v in R[k].items() for n, _, _ in F}
+    row = f"{k[0]} c{k[1]}" + (f" open {k[2]}/s" if k[2] else "")
+    for b, a in (("xo", "go"), ("xo", "base")):
+        if (a, "rps") in med and (b, "rps") in med:
+            print(f"- {row}, {b}/{a} medians: " + ", ".join(f"{lab} {med[(b, n)] / med[(a, n)]:.3f}" for n, lab, _ in F if n != "errors" and med[(a, n)]))
+PY
+	fi
 fi
 rm -rf "${work:?}"
 echo "release-vs-go: $report"

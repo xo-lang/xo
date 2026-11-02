@@ -278,7 +278,17 @@ create`. The order:
    compares `xo test --std-module=native/M` with `go test PKG` for base64
    and json, cold (every cache emptied) and after a one function edit to
    the module under test, in copies of GOROOT and the release's std;
-   SECTIONS="compile run test" (the default) picks sections. Last
+   An http section (2026-11-02, Lead) runs bench/perf/jitter's server
+   (Xo at HTTP_REV, default HEAD; Xo the offload host's seed, the
+   release before; Go with the hand encoder) under its loadgen with
+   `-awake`, through scripts/release-vs-go-http.sh on the first
+   linux/arm64 offload host (OFF_EXCLUSIVE=1; loopback HTTP on the Mac
+   runs out of ports): closed loop /hello and /alloc at 32 and 256
+   connections, open loop /alloc at 10k and 20k req/s, servers pinned to
+   CPUs 0-5 and the loadgen to 6-11, HTTP_ROUNDS rounds (default 5),
+   medians with their ranges. Run it before step 6a moves the host's
+   seed, or the base is the new release itself.
+   SECTIONS="compile run test http" (the default) picks sections. Last
    verified: 2026-10-30 (test section smoke run, SECTIONS=test ROUNDS=2).
 8. the website's comparison pages (owner, 2026-10-23): refresh the
    tables of `content/docs/xo-and-go.md` from step 7's
