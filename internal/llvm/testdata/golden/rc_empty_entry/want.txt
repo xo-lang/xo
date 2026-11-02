@@ -1,0 +1,20 @@
+exit 0
+--- stdout
+local keep 0 xs 0 0
+field alt 1 7 xs 0 0
+closure 0 xs 0
+reads 0 snaps  tags 0
+setters k 0 xs 0 0 tags 0
+local keep 0 xs 1 1
+field alt 1 7 xs 1 0
+closure 0 xs 1
+reads 0 snaps 0, tags 1
+setters k 2 xs 1 2 tags 1
+local keep 0 xs 3 6
+field alt 1 7 xs 3 6
+closure 0 xs 3
+reads 31 snaps 0,1,2, tags 3
+setters k 3 xs 3 12 tags 3
+zero keep 0 xs 1 9 p 5 q -1 r2 1 1
+zero keep 0 xs 3 13 p 5 q 1 r2 2 1
+--- stderr

@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+pop -1 0/0/0
+heap_pop -1 0/0/0
+sort 0 0/0/0
+sort_by 0 0/0/0
+heapify 0 0/0/0
+insert 1 7 0/0/0
+heap_push 1 0/0/0
+push str 1 0/0/0
+field 9 0/0/0
+param 105 0/0/0
+pop param -1 0/0/0
+heap_pop param -2 0/0/0
+sort param 0 0/0/0
+insert param 1 0/0/0
+heapify param 0 0/0/0
+shared 1 0 0/0/0
+--- stderr

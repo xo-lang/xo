@@ -1062,3 +1062,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [layout-file-module-root-and-seed.md](layout-file-module-root-and-seed.md): Observed 2026-11-01: a layout file is read at the module root, and the seed building the first stage must understand it
 - [list-element-setter-moves-struct.md](list-element-setter-moves-struct.md): a `var` method or field write on one field of a large list element moves the whole element (take, setfield, set); write through a one word field struct (Observed)
 - [coll-diff-needs-timeout.md](coll-diff-needs-timeout.md): without `timeout` (macOS) every coll-diff run read exit 127 and all programs compared the same; the script now refuses (Observed)
+- [empty-literal-reuse-allocates.md](empty-literal-reuse-allocates.md): rc.xo's loop-entry reuse copied the empty literal's list into a new list before a loop that may not run; skipped for push-only loops

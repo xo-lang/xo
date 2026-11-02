@@ -45,6 +45,8 @@ var passHuntTargets = map[string][]string{
 	"pass_x86_words":      {},
 	"slp_alias_store":     {"slp_f64", "reuse_loads", "cluster_mem"},
 	"pass_take_in_place":  {"take_in_place", "inplace_elems"},
+	"rc_empty_entry":      {"cancel_rc_pairs", "sink_retains"},
+	"rc_empty_inplace":    {"inplace_elems", "take_in_place"},
 	"slp_alias_54":        {"slp_f64"},
 	"slp_alias_64":        {"slp_f64"},
 	"slp_alias_66":        {"slp_f64"},

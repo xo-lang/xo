@@ -1,0 +1,11 @@
+// remove_at(0) on `[]` through a var parameter: a fault, before any
+// write to the shared empty list.
+
+fn take_first(var xs: List[Int]) -> Int { xs.remove_at(0) }
+
+fn main(os: Os) {
+  let e: List[Int] = []
+  os.stdio.println("before ${e.len()}")
+  var t: List[Int] = []
+  os.stdio.println("${take_first(t)}")
+}

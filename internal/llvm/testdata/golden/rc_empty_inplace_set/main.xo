@@ -1,0 +1,11 @@
+// set at 0 on `[]` through a var parameter: a fault, before any write to
+// the shared empty list.
+
+fn set_first(var xs: List[Int], v: Int) { xs.set(0, v) }
+
+fn main(os: Os) {
+  var e: List[Int] = []
+  os.stdio.println("before ${e.len()}")
+  set_first(e, 3)
+  os.stdio.println("after ${e.len()}")
+}

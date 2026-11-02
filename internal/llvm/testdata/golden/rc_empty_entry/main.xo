@@ -1,0 +1,104 @@
+// The empty list a struct literal's omitted list field holds (the
+// immortal rt.rl_empty), pushed to in a loop: rc.xo's loop-entry reuse.
+// The empty list is also held elsewhere before the loop (another local,
+// another field, a closure), the loop reads or passes the list between
+// pushes, and a loop that runs zero times is followed by in-place writes.
+
+struct R {
+  name: Str
+  xs: List[Int] = []
+  alt: List[Int] = []
+  tags: List[Str] = []
+  k: Int
+}
+
+fn sum(xs: List[Int]) -> Int {
+  var s = 0
+  for x in xs { s += x }
+  s
+}
+
+fn other_local(n: Int) -> Str {
+  var r = R{name: "a", k: 0}
+  let keep = r.xs
+  for i in 0..n { r.xs.push(i + 1) }
+  "local keep ${keep.len()} xs ${r.xs.len()} ${sum(r.xs)}"
+}
+
+fn other_field(n: Int) -> Str {
+  var r = R{name: "b", k: 1}
+  r.alt = r.xs
+  for i in 0..n { r.xs.push(i * 2) }
+  r.alt.push(7)
+  "field alt ${r.alt.len()} ${sum(r.alt)} xs ${r.xs.len()} ${sum(r.xs)}"
+}
+
+fn closure(n: Int) -> Str {
+  var r = R{name: "c", k: 2}
+  let held = r.xs
+  let f = fn() -> Int { held.len() * 100 + sum(held) }
+  for i in 0..n { r.xs.push(i) }
+  "closure ${f()} xs ${r.xs.len()}"
+}
+
+fn reads_between(n: Int) -> Str {
+  var r = R{name: "d", k: 3}
+  var total = 0
+  var snaps: List[List[Int]] = []
+  for i in 0..n {
+    total += sum(r.xs)
+    snaps.push(r.xs)
+    r.xs.push(i + 10)
+    r.tags.push("t${r.xs.len()}")
+  }
+  var lens = ""
+  for s in snaps { lens = "${lens}${s.len()}," }
+  "reads ${total} snaps ${lens} tags ${r.tags.len()}"
+}
+
+fn after_zero(n: Int) -> Str {
+  var r = R{name: "e", k: 4}
+  let keep = r.xs
+  for i in 0..n { r.xs.push(i) }
+  // the loop ran zero times: r.xs may still be the empty literal's list
+  r.xs.insert(0, 5)
+  r.xs.heap_push(3)
+  r.xs.sort_in_place()
+  let p = r.xs.pop() ?? -1
+  r.xs.set(0, 9)
+  var r2 = R{name: "f", k: 5}
+  for i in 0..n { r2.xs.push(i) }
+  let q = r2.xs.pop() ?? -1
+  r2.xs.sort_in_place()
+  r2.xs.heap_push(1)
+  "zero keep ${keep.len()} xs ${r.xs.len()} ${sum(r.xs)} p ${p} q ${q} r2 ${r2.xs.len()} ${sum(r2.xs)}"
+}
+
+fn (var r: R) set_a(v: Bool) { r.k = if v { r.k | 1 } else { r.k & -2 } }
+fn (var r: R) set_b(v: Bool) { r.k = if v { r.k | 2 } else { r.k & -3 } }
+
+fn setters(n: Int, a: Bool) -> Str {
+  // inlined setters with branches before the loop: their joins make r a
+  // block parameter, so the list entering the loop is not proved unique
+  // (Lang 2's ExR.obj with Obj's flag setters, d749e20a8)
+  var r = R{name: "g", k: 0}
+  r.set_a(a)
+  r.set_b(!a)
+  r.set_a(n > 1)
+  for i in 0..n { r.xs.push(i + r.k) }
+  for i in 0..n { r.tags.push("s${i}") }
+  "setters k ${r.k} xs ${r.xs.len()} ${sum(r.xs)} tags ${r.tags.len()}"
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  for n in [0 + k, 1 + k, 3 + k] {
+    os.stdio.println(other_local(n))
+    os.stdio.println(other_field(n))
+    os.stdio.println(closure(n))
+    os.stdio.println(reads_between(n))
+    os.stdio.println(setters(n, n % 2 == 0))
+  }
+  os.stdio.println(after_zero(0 + k))
+  os.stdio.println(after_zero(2 + k))
+}

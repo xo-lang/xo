@@ -1,0 +1,85 @@
+// Every in-place List operation on `[]` (the immortal empty list the
+// native backends share, which the uniqueness analysis counts as unique),
+// on a local and through a `var` parameter: none may write the shared
+// list. After each, a fresh `[]` must still be empty.
+
+struct P {
+  a: Int
+  b: Int
+}
+
+fn fresh() -> Str {
+  let e: List[Int] = []
+  let s: List[Str] = []
+  let ps: List[P] = []
+  "${e.len()}/${s.len()}/${ps.len()}"
+}
+
+fn by_param(var xs: List[Int], k: Int) -> Int {
+  xs.push(k)
+  xs.set(0, k + 1)
+  xs[0] = xs[0] + 1
+  xs.len() * 100 + xs[0]
+}
+
+fn pop_param(var xs: List[Int]) -> Int { xs.pop() ?? -1 }
+fn heap_pop_param(var xs: List[Int]) -> Int { xs.heap_pop() ?? -2 }
+fn sort_param(var xs: List[Int]) -> Int {
+  xs.sort_in_place()
+  xs.len()
+}
+fn insert_param(var xs: List[Int]) -> Int {
+  xs.insert(0, 4)
+  xs.len()
+}
+fn heapify_param(var xs: List[Int]) -> Int {
+  xs.heapify()
+  xs.len()
+}
+
+fn main(os: Os) {
+  var out: List[Str] = []
+  var a: List[Int] = []
+  out.push("pop ${a.pop() ?? -1} ${fresh()}")
+  var b: List[Int] = []
+  out.push("heap_pop ${b.heap_pop() ?? -1} ${fresh()}")
+  var c: List[Int] = []
+  c.sort_in_place()
+  out.push("sort ${c.len()} ${fresh()}")
+  var d: List[Int] = []
+  d.sort_in_place_by(fn(x: Int) -> Int { -x })
+  out.push("sort_by ${d.len()} ${fresh()}")
+  var e: List[Int] = []
+  e.heapify()
+  out.push("heapify ${e.len()} ${fresh()}")
+  var g: List[Int] = []
+  g.insert(0, 7)
+  out.push("insert ${g.len()} ${g[0]} ${fresh()}")
+  var h: List[Int] = []
+  h.heap_push(5)
+  out.push("heap_push ${h.len()} ${fresh()}")
+  var s: List[Str] = []
+  s.push("x")
+  out.push("push str ${s.len()} ${fresh()}")
+  var ps: List[P] = []
+  ps.push(P{a: 1, b: 2})
+  ps[0].a = 9
+  out.push("field ${ps[0].a} ${fresh()}")
+  var v_by_param: List[Int] = []
+  out.push("param ${by_param(v_by_param, 3)} ${fresh()}")
+  var v_pop_param: List[Int] = []
+  out.push("pop param ${pop_param(v_pop_param)} ${fresh()}")
+  var v_heap_pop_param: List[Int] = []
+  out.push("heap_pop param ${heap_pop_param(v_heap_pop_param)} ${fresh()}")
+  var v_sort_param: List[Int] = []
+  out.push("sort param ${sort_param(v_sort_param)} ${fresh()}")
+  var v_insert_param: List[Int] = []
+  out.push("insert param ${insert_param(v_insert_param)} ${fresh()}")
+  var v_heapify_param: List[Int] = []
+  out.push("heapify param ${heapify_param(v_heapify_param)} ${fresh()}")
+  var shared: List[Int] = []
+  let other = shared
+  shared.push(1)
+  out.push("shared ${shared.len()} ${other.len()} ${fresh()}")
+  for line in out { os.stdio.println(line) }
+}
