@@ -1,0 +1,94 @@
+// rwread: reader contention on one RWMutex (Mutex.with_read, decision
+// 0063), for the scheduler's reader grants (mutex.xo grant_readers,
+// decision 0324's a1 R). TASKS tasks share one hot table of 4,096
+// entries behind a Mutex; each makes OPS accesses, of which WRITES per
+// 1,000 are writes (`with`, holding the lock for HOLD steps of work) and
+// the rest reads (`with_read`, summing 16 entries), with THINK steps of
+// work outside the lock between accesses. Writers are preferred (spec
+// std.md), so each write parks the readers that arrive behind it and
+// wakes them as one batch: the path R changes. The worker threads are
+// XO_THREADS (default one per CPU); measure.sh sweeps them.
+// Usage: rwread [TASKS [OPS [WRITES [THINK [HOLD]]]]], defaults 256 4000
+// 5 50 200. Prints "rwread tasks T ops N writes W reads R ms M
+// reads_per_ms X sum S Z": S is the table's total, 8,386,560 on every run
+// (a write moves one unit between two entries), and Z is 0. Each task's
+// choices of read or write come from its own seed, so W and R are the
+// same for every run of one argument set.
+const SIZE = 4096
+
+fn work(x: Int, n: Int) -> Int {
+  var h = x
+  for _ in 0..n {
+    h = (h * 1103515245 + 12345) % 2147483648
+  }
+  h
+}
+
+fn arg(a: List[Str], i: Int, d: Int) -> Int {
+  Int.parse(a.get(i) ?? "") ?? d
+}
+
+fn main(os: Os) uses stdio, env, clock {
+  let a = os.env.args()
+  let tasks = arg(a, 0, 256)
+  let ops = arg(a, 1, 4000)
+  let writes = arg(a, 2, 5)
+  let think = arg(a, 3, 50)
+  let hold = arg(a, 4, 200)
+  var init: List[Int] = []
+  for i in 0..SIZE {
+    init.push(i)
+  }
+  let m = Mutex[List[Int]].new(init)
+  let nw = Atomic[Int].new(0)
+  let nr = Atomic[Int].new(0)
+  let odd = Atomic[Int].new(0)
+  let t0 = os.clock.now()
+  scope s {
+    for t in 0..tasks {
+      s.spawn(fn() {
+        var h = t * 7919 + 1
+        var w = 0
+        var r = 0
+        for _ in 0..ops {
+          h = work(h, think)
+          if (h / 7) % 1000 < writes {
+            // move one unit between two entries: every entry's total stays
+            let j = h % SIZE
+            let k = (h / SIZE) % SIZE
+            let hh = h
+            m.with(fn(var l) {
+              let x = work(hh, hold)
+              l[j] = l[j] + 1
+              l[k] = l[k] - 1 + x % 1
+            })
+            w += 1
+          } else {
+            let base = h % SIZE
+            let v = m.with_read(fn(l) {
+              var sum = 0
+              for q in 0..16 {
+                sum += l[(base + q * 257) % SIZE]
+              }
+              sum
+            })
+            if v == -1 { odd.add(1) }
+            r += 1
+          }
+        }
+        nw.add(w)
+        nr.add(r)
+      })
+    }
+  }
+  let ms = os.clock.since(t0).nanos() / 1000000
+  let total = m.with_read(fn(l) {
+    var sum = 0
+    for v in l {
+      sum += v
+    }
+    sum
+  })
+  let per = if ms > 0 { nr.get() / ms } else { 0 }
+  os.stdio.println("rwread tasks ${tasks} ops ${ops} writes ${nw.get()} reads ${nr.get()} ms ${ms} reads_per_ms ${per} sum ${total} ${odd.get()}")
+}

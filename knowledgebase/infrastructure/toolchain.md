@@ -636,6 +636,7 @@ bench/perf/http/run.sh                                  # task 01 HTTP load: Go 
 bench/perf/llvm/run.sh                                  # compute and string workloads: Go vs Xo (Go backend) vs Xo --backend=llvm (RSS=1: peak memory table)
 bench/perf/llvm/native.sh                               # same workloads: Go vs Xo --backend=llvm vs Xo --backend=arm64, time and peak RSS (arm64 host)
 bench/perf/hybrid/run.sh                                # Xo (Go backend) vs xo build --hybrid vs --backend=arm64: median wall ms and cycles of 7 interleaved runs (arm64 host, decision 0084)
+bench/perf/rwread/measure.py OUT XO_A [XO_B]            # reader contention on one Mutex (with_read) across XO_THREADS: reads/ms, wall, CPU, RSS, B/A (see Benchmark tooling)
 bench/perf/conc/run.sh                                  # concurrency: Go vs Xo (Go backend) vs llvm vs arm64 (and arm64 XO_THREADS=1); medians of wall, CPU, cycles, interleaved (see Benchmark tooling)
 python3 bench/perf/conc/profile.py p.trace 40 ./bin     # summarize an xctrace CPU Profiler trace by function (PROFILE_FUNC=name: hot offsets in one function)
 go test -run '^$' -fuzz=FuzzParse -fuzztime=60s ./internal/parser/   # optional fuzzing
@@ -1533,6 +1534,24 @@ Last verified: 2026-10-07
   leaf addresses in the export are the PC plus one). ThreadSanitizer runs
   of these programs need reduced sizes
   (`gotchas/tsan-fiber-trace-crash.md`).
+- `bench/perf/rwread/measure.py OUT XO_A [XO_B]` (2026-11-02, for
+  decision 0324's a1 R, the scheduler's handling of a mutex's reader
+  grants): reader contention on one `Mutex` (`with_read`, decision 0063).
+  256 tasks each make 4,000 accesses to one shared table of 4,096 entries:
+  reads sum 16 entries, writes (`WRITES` per 1,000, default 1, 10 and 100)
+  hold the lock for `HOLD` work steps, with `THINK` steps outside the lock
+  between accesses. Writers are preferred, so each write parks the readers
+  behind it and wakes them as one batch. It sweeps `XO_THREADS` (`THREADS`,
+  default 1 2 4 8 N) and, with two xo binaries, alternates them every round
+  (`ROUNDS`, default 5). It prints medians and ranges of reads a millisecond (the
+  program's own count), wall ms, CPU ms (user plus system) and peak RSS
+  (CPU from each run's wait4; peak RSS from wait4 on darwin and from GNU
+  time's %M on Linux, where a process keeps the peak RSS of the process
+  that started it across exec, so a spawn from Python read Python's 12 MB
+  on every run), with B/A
+  ratios. `--bins` takes prebuilt binaries (built on another host); `PIN`
+  is a taskset CPU list on Linux. The program checks the table's total
+  (8,386,560) every run. Last verified: 2026-11-02
 - `bench/perf/run.sh`: builds `bench/perf/xo` (Xo) and `bench/perf/go`
   (hand written Go, its own `go.mod`), runs each workload `REPS` times
   (default 5), and prints a Markdown table of the best times and the
