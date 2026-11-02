@@ -90,3 +90,5 @@ writes) and compiler/wasm (`$min_cap`, `$rl_new_n`, `$rl_grow`, the empty litera
 calls obj.xo. Lists of elements up to 256 bytes are unchanged, so their output is too.
 Growth from the floor of 1 doubles (1, 2, 4, then 4 elements as before), so a list of
 big structs that grows to many elements costs up to two extra copies.
+
+Growth from the floor: the first growth of any list goes to 4 slots, so a big-element list that grows from 1 pays one extra copy, not the 1, 2, 4 steps (measured: alloc bign 1.165x with plain doubling from 1).

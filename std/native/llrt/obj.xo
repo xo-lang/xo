@@ -864,7 +864,9 @@ fn grow(hw: Int, l: Int, esize: Int) -> Int {
   // Go's growslice curve: double up to 256 elements, then grow by a
   // quarter plus 192 (toward 1.25x), so a large list holds at most
   // about a fifth of its capacity unused, not half (decision 0452)
-  let want = if cap < min_cap(esize) { min_cap(esize) } else if cap < 256 { addw(cap, cap) } else { addw(cap, (cap + 768) >> 2) }
+  // a list of big elements starts at one slot but its first growth goes
+  // to 4, so growing from 1 costs one extra copy at most (0452 addendum)
+  let want = if cap < 4 { 4 } else if cap < 256 { addw(cap, cap) } else { addw(cap, (cap + 768) >> 2) }
   // then up to what the block holds (Go's roundupsize): the classes
   // above 1 KiB are powers of two, so a capacity of 128 or 256 elements
   // with the header took the next class half empty

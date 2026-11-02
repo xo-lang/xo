@@ -1753,11 +1753,9 @@ fn rt_text(var g: Gen) -> Str {
       i32.const 1
       i32.shl
       local.tee $cap
-      local.get $es
-      call $min_cap
+      i32.const 4
       local.get $cap
-      local.get $es
-      call $min_cap
+      i32.const 4
       i32.gt_u
       select
       local.tee $cap
