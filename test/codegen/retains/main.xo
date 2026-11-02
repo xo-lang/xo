@@ -21,17 +21,17 @@ fn ok_sum(xs: List[Str]) -> Int {
 }
 
 // A retain outside loops calls the one out of line copy (rc.xo
-// inc_thunk, pass rc_thunk): the object in x16 and a bl, no inline count
+// inc_thunk, pass rc_thunk): one bl to its register's thunk, no mov and no inline count
 // test.
 fn twice(xs: List[Int]) -> (List[Int], List[Int]) {
-  // arm64: "mov x16, x[0-9]+\n\tbl [L_]*xo_" -"tbn?z x[0-9]+, #63"
+  // arm64: "bl [L_]*xo_[A-Za-z0-9_]+_x[0-9]+\n" -"tbn?z x[0-9]+, #63" -"mov x16, x[0-9]+\n\tbl"
   (xs, xs)
 }
 
 // In a loop the retain stays inline (its fast path tests bit 63 of the
 // count).
 fn copies(xs: List[Int], n: Int) -> List[List[Int]] {
-  // arm64: "tbn?z x[0-9]+, #63" -"mov x16, x[0-9]+\n\tbl"
+  // arm64: "tbn?z x[0-9]+, #63" -"bl [L_]*xo_[A-Za-z0-9_]+_x[0-9]+\n"
   var out: List[List[Int]] = []
   for _ in 0..n {
     out.push(xs)
@@ -42,7 +42,7 @@ fn copies(xs: List[Int], n: Int) -> List[List[Int]] {
 // A retain in a large loop calls the copy too (pass rc_thunk_loops): the
 // body is over 256 SSA values, about a dispatch loop's size.
 fn copies_big(xs: List[Int], n: Int) -> (List[List[Int]], Int) {
-  // arm64: "mov x16, x[0-9]+\n\tbl [L_]*xo_" -"tbn?z x[0-9]+, #63"
+  // arm64: "bl [L_]*xo_[A-Za-z0-9_]+_x[0-9]+\n" -"tbn?z x[0-9]+, #63" -"mov x16, x[0-9]+\n\tbl"
   var out: List[List[Int]] = []
   var s = n
   for i in 0..n {

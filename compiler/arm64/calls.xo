@@ -177,7 +177,7 @@ fn (var g: G) inc_str(p0: Int) {
   if g.rc_thunk_here() {
     // the Str thunk tests the inline bit itself
     let th = g.inc_thunk(true)
-    let _c = g.add(Inst{kind: K_PLAIN, text: "mov x16, $u0\nbl ${th}", us: [g.real(p0)], clobbers: [16, 17, 30], fl: IF_FRAME | IF_KEEP})
+    let _c = g.add(Inst{kind: K_PLAIN, text: "bl ${th}_$u0", us: [g.real(p0)], clobbers: [16, 17, 30], fl: IF_FRAME | IF_KEEP})
     g.clobber()
     return
   }
@@ -197,9 +197,10 @@ fn (var g: G) inc_str(p0: Int) {
 fn (var g: G) inc(p0: Int) {
   let p = g.real(p0)
   if g.rc_thunk_here() {
-    // inc_thunk: x16 the object; the frame holds the link register
+    // inc_thunk: the thunk of the object's register; the frame holds
+    // the link register
     let th = g.inc_thunk(false)
-    let _c = g.add(Inst{kind: K_PLAIN, text: "mov x16, $u0\nbl ${th}", us: [p], clobbers: [16, 17, 30], fl: IF_FRAME | IF_KEEP})
+    let _c = g.add(Inst{kind: K_PLAIN, text: "bl ${th}_$u0", us: [p], clobbers: [16, 17, 30], fl: IF_FRAME | IF_KEEP})
     g.clobber()
     return
   }

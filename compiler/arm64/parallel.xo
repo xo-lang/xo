@@ -172,6 +172,27 @@ fn (var g: G) alias(key: Str) -> Str {
   "${named}${g.hidden_global(ext)}${g.weak_def(ext)}${ty}${ext}:\n"
 }
 
+/// alias's symbols for one of the entries of the helper of key (a retain
+/// thunk's register, rc.xo inc_thunk): its named local and, in a split
+/// generation, its global, each the helper's with _suffix.
+fn (var g: G) alias_sub(key: Str, suffix: Str) -> Str {
+  if g.defer_helpers {
+    return ""
+  }
+  var named = ""
+  if g.os != "windows" {
+    let rd = "${g.fname(key)}_${suffix}"
+    let rty = if g.os == "linux" { "\t.type ${rd}, %function\n" } else { "" }
+    named = "${rty}${rd}:\n"
+  }
+  if !g.split {
+    return named
+  }
+  let ext = "${g.helper_ext(key)}_${suffix}"
+  let ty = if g.os == "linux" { "\t.type ${ext}, %function\n" } else { "" }
+  "${named}${g.hidden_global(ext)}${g.weak_def(ext)}${ty}${ext}:\n"
+}
+
 /// Generates the helper a part wanted (Want), once.
 fn (var g: G) gen_want(w: Want) {
   match w.op {
