@@ -16,6 +16,9 @@ func TestCollDump(t *testing.T) {
 	if os.Getenv("XO_COLL_MODE") == "alias" {
 		gen = Alias
 	}
+	if os.Getenv("XO_COLL_MODE") == "aliasbig" {
+		gen = AliasBig
+	}
 	dir := os.Getenv("XO_COLL_DUMP")
 	if dir == "" {
 		t.Skip("set XO_COLL_DUMP=DIR [XO_COLL_FIRST=1 XO_COLL_COUNT=100]")
