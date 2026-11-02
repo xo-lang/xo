@@ -1,5 +1,23 @@
 # std/http changes
 
+## 2026-11-02: fix: a chunked request body was copied from freed memory
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's race stress (http_wire and http_client_body_reader built with --race on linux/arm64: a heap-use-after-free in http1.x_put)
+- Go reference: none
+- Test: internal/llvm TestRaceStdNoUseAfterFree/http_wire (a --race build reports the use after free before the fix)
+- Timing: none
+- Shipped in: v0.12.0 (bedead10b, http1.xo) through v0.35.0
+
+A native HTTP/1.1 server decoded a chunked request body into a string and
+appended it to the request's body buffer with
+`x_put(..., raw.data(c.body), c.body.len())`; the string's last use was in
+those arguments, so it was released before the copy
+(gotchas/raw-address-outlives-bytes.md). The handler saw the right body
+as long as nothing reused the block in between; a --race build reported
+it on every chunked request. The string now stays alive past the copy.
+
 ## 2026-11-02: fix: an HTTP/2 response's content-length was copied from freed memory
 
 - Kind: fix

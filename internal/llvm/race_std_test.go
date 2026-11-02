@@ -22,6 +22,8 @@ import (
 var raceStdGoldens = []struct{ golden, site string }{
 	// an h2 response's content-length string, freed before field copied it
 	{"http_h2c_sniff", "h2w.field"},
+	// a chunked request body, freed before it was appended to the request
+	{"http_wire", "http1.x_put"},
 	// a client frame's mask bytes, freed before they were read
 	{"websocket", "WsConn.write_frame"},
 	// the resolver configuration's host name and hosts file, freed before they were copied

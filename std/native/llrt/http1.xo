@@ -2040,6 +2040,7 @@ fn (var r: Reader) read_one() -> Int {
         }
         xs(x, X_BODY_N, 0)
         x_put(x, X_BODY, raw.data(c.body), c.body.len())
+        raw.alive_str(c.body)
         if c.res == HB_OK {
           xs(x, X_OFF, xl(x, X_OFF) + c.used)
           break
