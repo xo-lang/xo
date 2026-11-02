@@ -1,7 +1,9 @@
 # 0457: A shared, address ordered page heap for page blocks, large blocks and the threads' runs
 
-Status: Proposed (Xo Lang 2, 2026-11-02; the lead's item after decision 0456; needs the
-owner's acceptance, allocator change). Stage 1 is a prototype to measure, not a default.
+Status: Rejected (owner, 2026-11-02): v4 (ADR 0456) delivers the idle-memory win; the page
+heap adds cost on top of it, see bench/results/pheap-2026-11-02.md. (Proposed by Xo Lang 2,
+2026-11-02, as the lead's item after decision 0456.) The prototype branches l2-pheap to
+l2-pheap16 are kept for reference.
 
 ## Context
 
@@ -105,8 +107,8 @@ linux/arm64 and darwin.
 Recommendation (Xo Lang 2): do not land the page heap in this form. With 0456 v4 the density it
 was for is reached by advice on the existing chunks, and every stage measured costs the self
 build. The pieces worth keeping if the question reopens: the per chunk longest free run
-(PT_MAX), the lock free switch read, and the stress golden. Whether to reject or park this
-decision is the owner's call; the status stays Proposed until then.
+(PT_MAX), the lock free switch read, and the stress golden. The owner rejected the decision in
+this form on 2026-11-02 (Status above).
 
 ## Consequences
 
