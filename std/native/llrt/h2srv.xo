@@ -1758,6 +1758,7 @@ fn (var h: H2Conn) on_headers(sid: Int, flags: Int, prio: Bool, dep: Int) {
         }
         let line = k + "\n" + values[i] + "\n"
         put(st, S_TRL, raw.data(line), line.len())
+        raw.alive_str(line)
       }
     }
     sto(st, S_STATE, ST_HCR)
@@ -1935,6 +1936,7 @@ fn (var h: H2Conn) request(st: Int, names: List[Str], values: List[Str], truncat
   if !end_stream && has_clen {
     // the first value (a joined value does not parse: 0)
     let v = h2w.parse_uint63(raw.data(clen), clen.len())
+    raw.alive_str(clen)
     sto(st, S_DECLEN, if v >= 0 { v } else { 0 })
   }
   sto(st, S_KIND, kind)

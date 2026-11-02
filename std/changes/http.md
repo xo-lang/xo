@@ -1,5 +1,22 @@
 # std/http changes
 
+## 2026-11-02: fix: an HTTP/2 request's trailers were copied from freed memory
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's XO0915 lint draft (xo vet --cost, a raw address used after its value was released), after the 2026-11-02 race stress found the class in std
+- Go reference: none
+- Test: cmd/xo TestVetCostStd with XO0915 (the lint's own push; it reports these lines without the fix)
+- Timing: none
+- Shipped in: every release with HTTP/2 request trailers, through v0.35.0
+
+A native HTTP/2 server joined each request trailer into a line and copied
+it with `put(..., raw.data(line), line.len())`, the line's last use, so it
+was released before the copy (gotchas/raw-address-outlives-bytes.md). The
+handler saw the right trailers while nothing reused the block; the line
+now stays alive past the copy, as does the Content-Length value parsed
+the same way (shared with the header list, so only its count dropped).
+
 ## 2026-11-02: fix: a chunked request body was copied from freed memory
 
 - Kind: fix
