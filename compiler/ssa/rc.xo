@@ -181,10 +181,10 @@ fn runtime_modes(name: Str) -> List[Mode]? {
   let w = Mode.Borrow
   let n = Mode.No
   // arm64's take_in_place (compiler/arm64 takeplace.xo): a field of a
-  // list element stored where it lies, a scalar, into the list it
-  // updates as list.set does
+  // list element stored where it lies, into the list it updates as
+  // list.set does; the value moves in
   if name.starts_with("list.setf ") {
-    return Some([c, n, n])
+    return Some([c, n, c])
   }
   match name {
     "str.concat" | "str.concat_obj" => Some([c, w])

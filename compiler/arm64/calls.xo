@@ -4004,8 +4004,20 @@ fn (var g: G) list_field(v: Int, name: Str) {
     return
   }
   let ws = g.store_words(x.args[2])
+  // a field holding a reference: the old value released after the store
+  // (takeplace.xo took its read and release into this)
+  let ft = g.m.types[et].fields[k].ty
+  var old: List[Int] = []
+  if g.heap(ft) {
+    for w in off..off + n {
+      old.push(g.def1(lay[w], "ldr $d0, ${at_operand(base, w, 0)}", at_regs(base)))
+    }
+  }
   for (j, w) in ws.indexed() {
     g.store("str $u0, ${at_operand(base, off + j, 1)}", [w] + at_regs(base))
+  }
+  if !old.is_empty() {
+    g.release(ft, old)
   }
   g.set(v, [l])
 }

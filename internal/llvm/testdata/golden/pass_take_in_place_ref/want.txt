@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+n2 n3 len 12 h 701223963 n0,L0,1 n1,L1,1 n2,L2,1 n7,L3,1 n4,L4,1 
+n4 1 len 12 h 639354944 n0,L0,1 n1,L1,1 n2,L2,1 n7,L3,1 x4,n4:2,3 
+s len 12 h 218861483 n0,L0,1 n1,L1,1 n2,L2,1 n7,L3,1 x4,n4:2,3 
+t len 42 h 539573481 zero,L0,1 g42,n2:2,1 n2,L2,1 n7,L3,1 x4,n4:2,3 
+snap len 12 h 218861483 n0,L0,1 n1,L1,1 n2,L2,1 n7,L3,1 x4,n4:2,3 
+len 42 h 413430096 zero,q:2,1 g42,n2:2,1 n2,L2,1 n7,L3,1 x4,q:4,3 
+--- stderr

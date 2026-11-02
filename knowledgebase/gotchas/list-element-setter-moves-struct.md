@@ -43,9 +43,14 @@ declaring module's uses then (fixed in 27c2467fa).
 Pass take_in_place (compiler/arm64 takeplace.xo) stores a scalar field
 of a list element in its slot (`list.setf K`) when the taken element
 only has fields read and scalar fields set on its way back to the same
-slot: the 14-word repro's setter is ldr, orr, str. A setter of a field
-holding a reference (Str, List, Box) still moves the element, and so
-does any element passed whole, or set back through a block with more
-than one predecessor. Golden pass_take_in_place covers equal indexes, a
+slot: the 14-word repro's setter is ldr, orr, str. A field holding a
+reference (Str, List, Box) is stored in place too when its old value is
+read and released before the set, which is what the lowering of a field
+write emits (stage 2, the same day): load the old value, store the new
+one, release the old. An element passed whole, or set back through a
+block with more than one predecessor, still moves. Golden pass_take_in_place covers equal indexes, a
 read of another element and of a `var` parameter between, a call that
-grows or shrinks the list, and a shared list.
+grows or shrinks the list, and a shared list; pass_take_in_place_ref
+the same for Str and List fields (a swap of two elements' names, equal
+indexes, the old value kept past its replacement, a call that grows the
+list between the read of the new value and its store).

@@ -68,28 +68,49 @@ fn instr_at(f: ssa.Func, v: Int) -> Int {
 }
 
 /// Rewrites every list.take of f whose element only has fields read and
-/// scalar fields set before its list.set back into the same slot;
+/// fields set before its list.set back into the same slot (a field
+/// holding a reference when its old value was read and released);
 /// whether it changed f.
 fn take_in_place(var f: ssa.Func, m: ssa.Module) -> Bool {
   // the inlined receiver's variable would describe the list
   if m.debug_info {
     return false
   }
+  // the takes whose index a list.set also uses: the only candidates,
+  // found without counting every value's uses (most functions have none;
+  // the pass runs in the serial inline phase)
   var takes: List[Int] = []
+  var set_idx: Set[Int] = #{}
   for bl in f.blocks {
     for v in bl.instrs {
       let x = f.values[v]
-      if x.op == ssa.Op.Call && aux_str(x.aux) == "list.take" && x.args.len() == 2 {
-        takes.push(v)
+      if x.op == ssa.Op.Call && x.args.len() >= 2 {
+        let n = aux_str(x.aux)
+        if n == "list.take" && x.args.len() == 2 {
+          takes.push(v)
+        } else if n == "list.set" && x.args.len() == 3 {
+          set_idx.add(x.args[1])
+        }
       }
     }
   }
-  var changed = false
+  var cand: List[Int] = []
   for t in takes {
-    // each rewrite changes the uses: counted again for the next
-    let u = take_uses(f)
+    if set_idx.contains(f.values[t].args[1]) {
+      cand.push(t)
+    }
+  }
+  takes = cand
+  if takes.is_empty() {
+    return false
+  }
+  // each rewrite changes the uses: counted again after one
+  var changed = false
+  var u = take_uses(f)
+  for t in takes {
     if take_one(f, m, t, u) {
       changed = true
+      u = take_uses(f)
     }
   }
   changed
@@ -100,9 +121,10 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
   if !(u.edges.get(t) ?? []).is_empty() {
     return false
   }
-  // the take's two parts
+  // the take's parts: its list, and the element (projected again where a
+  // field holding a reference is read for its release)
   var f0 = -1
-  var f1 = -1
+  var f1s: List[Int] = []
   for w in u.vals.get(t) ?? [] {
     let wx = f.values[w]
     if wx.op != ssa.Op.Field || wx.args.len() != 1 {
@@ -111,16 +133,16 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
     let k = aux_int(wx.aux)
     if k == 0 && f0 < 0 {
       f0 = w
-    } else if k == 1 && f1 < 0 {
-      f1 = w
+    } else if k == 1 {
+      f1s.push(w)
     } else {
       return false
     }
   }
-  if f0 < 0 || f1 < 0 {
+  if f0 < 0 || f1s.is_empty() {
     return false
   }
-  let et = ssa.ty_of(f.values[f1].tb)
+  let et = ssa.ty_of(f.values[f1s[0]].tb)
   if m.types[et].kind != ssa.Kind.Struct {
     return false
   }
@@ -139,7 +161,7 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
   var back: List[Int] = []
   var w = sx.args[2]
   for _ in 0..64 {
-    if w == f1 {
+    if f1s.contains(w) {
       break
     }
     let wx = f.values[w]
@@ -162,9 +184,23 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
       return false
     }
   }
-  if w != f1 {
+  if !f1s.contains(w) {
     return false
   }
+  let f1 = w
+  // the other projections: read only, as the chain's first member is
+  var others: List[Int] = []
+  for p in f1s {
+    if p != f1 {
+      if !(u.edges.get(p) ?? []).is_empty() {
+        return false
+      }
+      others.push(p)
+    }
+  }
+  // the reads of a replaced reference and their releases: the store
+  // releases it (list.setf of a reference field)
+  var dropped: List[Int] = []
   var chain = [f1]
   for k in 0..back.len() {
     chain.push(back[back.len() - 1 - k])
@@ -185,7 +221,13 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
       ri = f.blocks[rb].instrs.len()
     }
     var nexts = 0
-    for v in u.vals.get(c) ?? [] {
+    var readers = u.vals.get(c) ?? []
+    if ci == 0 {
+      for p in others {
+        readers = readers + (u.vals.get(p) ?? [])
+      }
+    }
+    for v in readers {
       let vx = f.values[v]
       if v == next && !to_param {
         if vx.op == ssa.Op.SetField && (vx.args[0] != c || vx.args[1] == c) {
@@ -221,10 +263,18 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
     } else if !es.is_empty() || nexts != 1 {
       return false
     }
-    // a set field holds no reference: its old value needs no release
+    // a set field holding a reference: its old value read before (from
+    // the state before it, with no earlier set of that field) and
+    // released, so the slot's store moves the new one in and nothing
+    // holds the old one twice
     let cx = f.values[c]
     if cx.op == ssa.Op.SetField && m.heap(ssa.ty_of(f.values[cx.args[1]].tb)) {
-      return false
+      let (r, z) = take_old_released(f, u, chain, others, ci, aux_int(cx.aux))
+      if r < 0 {
+        return false
+      }
+      dropped.push(r)
+      dropped.push(z)
     }
   }
   // the rewrite: the take is the bounds check, each member the list
@@ -257,10 +307,16 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
       lst[c] = c
     }
   }
-  for c in chain {
-    for v in u.vals.get(c) ?? [] {
+  for (ci, c) in chain.indexed() {
+    var readers = u.vals.get(c) ?? []
+    if ci == 0 {
+      for p in others {
+        readers = readers + (u.vals.get(p) ?? [])
+      }
+    }
+    for v in readers {
       let vx = f.values[v]
-      if vx.op == ssa.Op.Field {
+      if vx.op == ssa.Op.Field && !dropped.contains(v) {
         f.values[v].op = ssa.Op.Call
         f.values[v].args = [lst.get(c) ?? l, i]
         f.values[v].aux = ssa.Aux.S(s: "list.getf ${aux_int(vx.aux)}")
@@ -271,7 +327,43 @@ fn take_one(var f: ssa.Func, m: ssa.Module, t: Int, u: TUses) -> Bool {
   drop_instr(f, s)
   drop_instr(f, f0)
   drop_instr(f, f1)
+  for p in others {
+    drop_instr(f, p)
+  }
+  for d in dropped {
+    drop_instr(f, d)
+  }
   true
+}
+
+/// The read of the value field k held before chain member ci (a set of
+/// k) and its release, (-1, -1) when there is none: a field read of k of
+/// an earlier member (or of another projection of the element) whose
+/// one use is a release in its block, and no earlier set of k. The store
+/// of the new value releases the old one instead.
+fn take_old_released(f: ssa.Func, u: TUses, chain: List[Int], others: List[Int], ci: Int, k: Int) -> (Int, Int) {
+  var srcs: List[Int] = []
+  for j in 0..ci {
+    let cj = f.values[chain[j]]
+    if j > 0 && cj.op == ssa.Op.SetField && aux_int(cj.aux) == k {
+      return (-1, -1)
+    }
+    srcs.push(chain[j])
+  }
+  srcs = srcs + others
+  for c in srcs {
+    for r in u.vals.get(c) ?? [] {
+      let rx = f.values[r]
+      if rx.op != ssa.Op.Field || aux_int(rx.aux) != k || !(u.edges.get(r) ?? []).is_empty() {
+        continue
+      }
+      let zs = u.vals.get(r) ?? []
+      if zs.len() == 1 && f.values[zs[0]].op == ssa.Op.Release && ssa.block_of(f.values[zs[0]].tb) == ssa.block_of(rx.tb) {
+        return (r, zs[0])
+      }
+    }
+  }
+  (-1, -1)
 }
 
 /// The index of parameter p among block b's, or -1.

@@ -1,0 +1,104 @@
+// pass take_in_place, fields that hold references: a Str or List field
+// of a list element replaced where it lies, its old value released.
+// Equal and unequal indexes, a field read before it is replaced and the
+// value kept, an element's field moved into another element of the same
+// list, a call between that grows the list, and a shared list.
+
+struct Node {
+  name: Str
+  id: Int
+  kids: List[Int]
+  a: Int
+  b: Int
+  c: Int
+  label: Str
+  w: Float
+}
+
+fn node(i: Int) -> Node {
+  Node{name: "n${i}", id: i, kids: [i], a: i, b: 0, c: 0, label: "L${i}", w: 0.0}
+}
+
+fn (var o: Node) rename(s: Str) { o.name = s }
+fn (var o: Node) relabel(s: Str) { o.label = "${s}:${o.label.len()}" }
+fn (var o: Node) set_kids(ks: List[Int]) { o.kids = ks }
+
+struct Tree {
+  ns: List[Node]
+}
+
+fn (var t: Tree) grow() -> Str {
+  for k in 0..30 { t.ns.push(node(200 + k)) }
+  "g${t.ns.len()}"
+}
+
+fn show(t: Tree) -> Str {
+  var h = 0
+  var out = ""
+  for (k, n) in t.ns.indexed() {
+    h = (h * 131 + n.name.len() * 7 + n.label.len() + n.kids.len() * 3 + n.a) % 1000000007
+    if k < 5 { out = "${out}${n.name},${n.label},${n.kids.len()} " }
+  }
+  "len ${t.ns.len()} h ${h} ${out}"
+}
+
+fn swap_names(var t: Tree, i: Int, j: Int) -> Str {
+  // the old name read, then replaced; i == j keeps it
+  let old = t.ns[i].name
+  t.ns[i].name = t.ns[j].name
+  t.ns[j].rename(old)
+  old
+}
+
+fn keep_old(var t: Tree, i: Int) -> (Str, List[Int]) {
+  let n0 = t.ns[i].name
+  let k0 = t.ns[i].kids
+  t.ns[i].rename("x${i}")
+  t.ns[i].set_kids([1, 2, 3])
+  t.ns[i].relabel(n0)
+  (n0, k0)
+}
+
+fn self_assign(var t: Tree, i: Int) {
+  // the old and the new value one object
+  t.ns[i].name = t.ns[i].name
+  t.ns[i].kids = t.ns[i].kids
+  t.ns[i].rename(t.ns[i].name)
+}
+
+fn from_other(var t: Tree, i: Int, j: Int) {
+  // the new value another element's field of the same list, then that
+  // element's field replaced while the copy lives on
+  t.ns[i].label = t.ns[j].label
+  t.ns[j].relabel("o")
+  t.ns[i].kids = t.ns[j].kids
+  t.ns[j].set_kids([9])
+}
+
+fn with_call(var t: Tree, i: Int) {
+  t.ns[i].name = t.grow()
+  t.ns[i].relabel(t.ns[i + 1].name)
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len()
+  var t = Tree{ns: []}
+  for i in 0..12 { t.ns.push(node(i)) }
+  let s1 = swap_names(t, 2 + k, 2 + k)
+  let s2 = swap_names(t, 3 + k, 7 + k)
+  os.stdio.println("${s1} ${s2} ${show(t)}")
+  let (n0, k0) = keep_old(t, 4 + k)
+  os.stdio.println("${n0} ${k0.len()} ${show(t)}")
+  self_assign(t, 5 + k)
+  self_assign(t, 5 + k)
+  from_other(t, 8 + k, 9 + k)
+  from_other(t, 6 + k, 6 + k)
+  os.stdio.println("s ${show(t)}")
+  let snap = t
+  with_call(t, 1 + k)
+  t.ns[0].rename("zero")
+  os.stdio.println("t ${show(t)}")
+  os.stdio.println("snap ${show(snap)}")
+  for i in 0..t.ns.len() { if i % 4 == 0 { t.ns[i].relabel("q") } }
+  os.stdio.println(show(t))
+}
