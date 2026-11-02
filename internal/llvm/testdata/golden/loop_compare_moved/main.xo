@@ -1,0 +1,80 @@
+// A loop's Bool set from a compare with a value read at the loop's top:
+// thread_cset moved the compare below the latch's parallel move, which
+// wrote the register holding that value, so it compared the new value
+// with itself and left the loop after one turn (native, until 2026-11-01).
+fn set_rounds() -> Set[Int] {
+  var s: Set[Int] = #{}
+  var c = true
+  var i = 0
+  while c {
+    let n = s.len()
+    if i < 3 {
+      s.add(i)
+    }
+    i += 1
+    c = s.len() != n
+  }
+  s
+}
+
+fn set_fixed_point(xs: List[Int]) -> Set[Int] {
+  var s: Set[Int] = #{}
+  var c = true
+  while c {
+    let n = s.len()
+    for x in xs {
+      if x == 0 || s.contains(x - 1) {
+        s.add(x)
+      }
+    }
+    c = s.len() != n
+  }
+  s
+}
+
+fn list_rounds() -> List[Int] {
+  var xs: List[Int] = []
+  var c = true
+  while c {
+    let n = xs.len()
+    if n < 3 {
+      xs.push(n)
+    }
+    c = xs.len() != n
+  }
+  xs
+}
+
+fn int_rounds(limit: Int) -> Int {
+  var x = 0
+  var c = true
+  while c {
+    let n = x
+    if x < limit {
+      x += 1
+    }
+    c = x != n
+  }
+  x
+}
+
+fn not_equal_flipped(limit: Int) -> Int {
+  var x = 0
+  var same = false
+  while !same {
+    let n = x
+    if x < limit {
+      x += 1
+    }
+    same = x == n
+  }
+  x
+}
+
+fn main(os: Os) {
+  os.stdio.println("set rounds ${set_rounds().len()}")
+  os.stdio.println("set fixed point ${set_fixed_point([2, 1, 0]).len()}")
+  os.stdio.println("list rounds ${list_rounds().len()}")
+  os.stdio.println("int rounds ${int_rounds(3)}")
+  os.stdio.println("flipped ${not_equal_flipped(3)}")
+}

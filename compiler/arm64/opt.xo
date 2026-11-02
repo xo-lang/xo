@@ -1615,6 +1615,13 @@ fn (var g: G) thread_cset() {
     if inv_cond(cond0).is_empty() {
       continue
     }
+    // the compare now runs after the move and the chain's moves: one that
+    // writes a register it reads would change what it compares (2026-11-01:
+    // `let n = s.len(); s.add(x); c = s.len() != n`, n the header's parameter
+    // for the length, compared the new length with itself and left the loop)
+    if mv.defs.any(fn(d) { def.us.contains(d) }) || chain.any(fn(m) { m.defs.any(fn(d) { def.us.contains(d) }) }) {
+      continue
+    }
     let cond = if flip { inv_cond(cond0) } else { cond0 }
     var ins = g.take_insts(p)
     ins[np - 1] = Inst{kind: K_CONDBR, text: def.text[0..i], us: def.us, cond: cond, targets: g.blocks[j].insts[0].targets}

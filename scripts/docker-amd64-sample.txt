@@ -55,3 +55,4 @@ sql_conv
 sql_wire_names
 xml_basic
 fault_pad_proved
+loop_compare_moved

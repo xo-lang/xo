@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+set rounds 3
+set fixed point 3
+list rounds 3
+int rounds 3
+flipped 3
+--- stderr

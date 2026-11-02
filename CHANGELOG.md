@@ -5,6 +5,7 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Fixed a native arm64 miscompile: a loop whose `var` Bool is set from a compare with a value read at the top of the loop (`let n = s.len(); s.add(x); c = s.len() != n`) could leave after one turn, because the compare ran after the moves into the loop header and saw the new value. `XO_PASSES=-thread_cset` works around it on older versions. Golden loop_compare_moved.
 - Small builds touch less of xo's own code (decision 0453): xo now ships a layout file that puts the
   functions a small build runs together. A warm or edit build of coll 64 to 59 MB RSS on the Mac
   (117 from 128 MB on linux/arm64), conc-spawn 56 to 53 MB (101 from 109 MB).
