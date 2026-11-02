@@ -78,7 +78,9 @@ fn fp_scratch(k: Int) -> Int {
 ///	[0, out_args)             stack arguments of calls (when any)
 ///	[out_off, out_off+8)      the $OUT slot (length out parameter)
 ///	[spill_base, ...)         spill slots, 8 bytes each
-///	[save_base, ...)          callee saved registers
+///	[save_base, ...)          callee saved registers, from a multiple of 16
+///	                          (a pair never straddles a 4 KiB page:
+///	                          decision 0459)
 ///	[mem_off, ...)            memory of by reference arguments (byref.xo)
 ///	[rec, rec+16)             the frame record (x29, x30); x29 = sp + rec
 ///
@@ -158,7 +160,7 @@ fn (g: G) in_arg_bytes() -> Int {
 /// An upper bound of the frame emit lays out with saved callee saved
 /// registers.
 fn (g: G) frame_bound(saved: Int) -> Int {
-  g.out_arg_bytes() + 16 + 8 + 8 * g.slots + 8 * saved + g.mem_bytes + 16
+  g.out_arg_bytes() + 16 + 8 + 8 * g.slots + 8 + 8 * saved + g.mem_bytes + 16
 }
 
 fn (g: G) label(b: Int) -> Str {
@@ -212,7 +214,12 @@ fn (var g: G) emit() {
   if g.out {
     fr.spill_base += 8
   }
-  fr.save_base = fr.spill_base + 8 * g.slots
+  // 16 byte aligned, so each pair of saved registers is: a pair at 8
+  // mod 16 crosses a 4 KiB page at one stack phase in 256, and a store
+  // across a page cost /alloc 36% CPU on a Linux VM on an M4 Pro at the
+  // phases that put one there (decision 0459,
+  // bench/results/stack-phase-2026-11-02.md)
+  fr.save_base = align16(fr.spill_base + 8 * g.slots)
   fr.mem_off = fr.save_base + 8 * g.saved.len()
   if fr.out_args == 0 {
     fr.size = align16(fr.mem_off + g.mem_bytes)
@@ -229,6 +236,7 @@ fn (var g: G) emit() {
     if g.out {
       fr.save_base += 8
     }
+    fr.save_base = align16(fr.save_base)
     fr.rec = align16(fr.save_base + 8 * g.saved.len())
     fr.spill_base = fr.rec + 16
     fr.mem_off = fr.spill_base + 8 * g.slots
@@ -869,7 +877,7 @@ fn (g: G) saves(var b: List[Str], one: Str, two: Str) {
   while k < n {
     let r = g.saved[k]
     let off = g.fr.save_base + 8 * k
-    if k + 1 < n && (g.saved[k + 1] >= FP_BASE) == (r >= FP_BASE) && off <= 496 {
+    if k + 1 < n && (g.saved[k + 1] >= FP_BASE) == (r >= FP_BASE) && off <= 496 && off & 15 == 0 {
       b.push("\t${two} ${reg_name(g.saved[k + 1], false)}, ${reg_name(r, false)}, [sp, #${off}]\n")
       k += 2
       continue
@@ -1883,7 +1891,7 @@ fn (g: G) cfi_frame(var b: List[Str]) {
   while k < n {
     let r = g.saved[k]
     let off = fr.save_base + 8 * k
-    if k + 1 < n && (g.saved[k + 1] >= FP_BASE) == (r >= FP_BASE) && off <= 496 {
+    if k + 1 < n && (g.saved[k + 1] >= FP_BASE) == (r >= FP_BASE) && off <= 496 && off & 15 == 0 {
       b.push(cfi_at(g.saved[k + 1], off - fr.size))
       b.push(cfi_at(r, off + 8 - fr.size))
       k += 2
