@@ -65,7 +65,7 @@ func Coll(seed int64) string {
 
 func collFunc(r *rand.Rand, i int) string {
 	k := collKinds[r.Intn(len(collKinds))]
-	shape := r.Intn(7)
+	shape := r.Intn(9)
 	if k.shrink == nil && shape == 5 {
 		shape = 0
 	}
@@ -137,6 +137,28 @@ func collFunc(r *rand.Rand, i int) string {
 		add("  }")
 		add("  " + step(k.size("c")))
 		add("}")
+	case 7: // a helper changes the collection through a var parameter
+		add("var i = 0")
+		add(fmt.Sprintf("while i < %d {", lim))
+		add("  let n = " + k.size("c"))
+		add(fmt.Sprintf("  g%d(c, i + k)", i))
+		add("  if " + k.size("c") + " == n {")
+		add("    " + step("500"))
+		add("  }")
+		add("  " + step(k.size("c")+" * 2 - n"))
+		add("  i += 1")
+		add("}")
+	case 8: // the previous size carried across iterations
+		add("var prev = -1")
+		add("var i = 0")
+		add("while " + k.size("c") + " != prev && i < 200 {")
+		add("  prev = " + k.size("c"))
+		add(fmt.Sprintf("  if i < %d {", lim))
+		add("    " + k.grow("c", fmt.Sprintf("i / %d", 1+r.Intn(3))))
+		add("  }")
+		add("  i += 1")
+		add("}")
+		add(step("i"))
 	default: // a copy keeps its own size and contents
 		add(fmt.Sprintf("for i in 0..%d {", lim))
 		add("  " + k.grow("c", "i"))
@@ -155,6 +177,9 @@ func collFunc(r *rand.Rand, i int) string {
 	}
 	add("return acc + " + k.size("c"))
 	var b strings.Builder
+	if shape == 7 {
+		fmt.Fprintf(&b, "fn g%d(var c: %s, x: Int) {\n  %s\n}\n\n", i, k.typ, k.grow("c", "x"))
+	}
 	fmt.Fprintf(&b, "fn f%d(k: Int) -> Int {\n", i)
 	for _, l := range body {
 		b.WriteString("  " + l + "\n")
