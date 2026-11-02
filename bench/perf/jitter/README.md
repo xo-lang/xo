@@ -20,7 +20,11 @@ variation of the per-second request counts (`sec_cv`), and with `-pid` the
 server's CPU per request (Linux /proc). With `-rate` (the open loop) latency
 counts from each request's scheduled send, and the line also has `late_*`,
 how late the generator sent, and `svc_*`, the send to the response's end:
-at low rates the totals are mostly `late_*`, the generator's own timers.
+at low rates the totals were mostly `late_*`, the generator's own timers
+(Go's runtime sleeps in a millisecond epoll wait when every P is idle).
+`-awake` (on by default in the open loop, 2026-11-02) keeps one goroutine
+runnable so a send fires on time; `-awake=false` gives the old behavior
+(bench/results/jitter-low-rate-p50-2026-11-02.md).
 Go's `GET /alloc-strconv` is `/alloc` with strconv in place of fmt.Sprintf.
 
     loadgen -addr 127.0.0.1:18080 -path /alloc -c 32 -d 10s -warmup 2s -pid PID

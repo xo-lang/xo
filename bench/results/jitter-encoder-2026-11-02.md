@@ -33,6 +33,6 @@ At 20,000 Go's `/alloc` saturates.
 A comparison of Xo with Go on this bench uses the `/alloc-hand` row: it is the
 fair baseline against Xo's generated encoder.
 
-Open: the higher p50 at low rates (5,000 and 10,000 against 20,000) shows on
-Go's hand-written route as well as Xo's, so it is not Xo's runtime alone; it is
-not explained.
+The higher p50 at low rates (5,000 and 10,000 against 20,000), on Go's
+hand-written route as well as Xo's, was the load generator's own timer:
+explained and fixed in jitter-low-rate-p50-2026-11-02.md (loadgen -awake).

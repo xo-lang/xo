@@ -18,6 +18,7 @@ import (
 	"math"
 	"net"
 	"os"
+	"runtime"
 	"runtime/debug"
 	"slices"
 	"strconv"
@@ -69,6 +70,7 @@ func main() {
 	warm := flag.Duration("warmup", 2*time.Second, "warmup before measuring")
 	pid := flag.Int("pid", 0, "server pid for CPU per request")
 	rate := flag.Float64("rate", 0, "open loop: requests a second in all, each connection sending on its own fixed schedule, latency counted from the scheduled send (no coordinated omission); 0 sends back to back")
+	awake := flag.Bool("awake", true, "open loop: keep one goroutine runnable, so a send's timer fires on time; with every P idle, Go's runtime sleeps in epoll_pwait with a whole millisecond timeout and a send ran up to 1 ms late (late p50 about 550 us at 5,000/s, 6 us with this; bench/results/jitter-low-rate-p50-2026-11-02.md)")
 	flag.Parse()
 	debug.SetGCPercent(-1)
 
@@ -79,6 +81,13 @@ func main() {
 	late := make([][]int32, *conc)
 	var measuring atomic.Bool
 	var stop atomic.Bool
+	if *rate > 0 && *awake {
+		go func() {
+			for !stop.Load() {
+				runtime.Gosched()
+			}
+		}()
+	}
 	var errs atomic.Int64
 	var bodyLen atomic.Int64
 	secs := int(dur.Seconds()) + 2
