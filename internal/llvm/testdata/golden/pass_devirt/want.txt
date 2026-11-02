@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+fold 425896 16
+twice 101 -5
+chosen 30 12
+rot 29626
+table 231 132 157
+--- stderr

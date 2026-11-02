@@ -1,0 +1,63 @@
+// pass hunt: devirtualize (a call through a capture-free closure made in
+// the same function becomes a direct call), against closures chosen by a
+// branch, reassigned in a loop, stored in a list, and passed to small
+// higher order functions the inliner takes in.
+fn apply(f: fn(Int) -> Int, x: Int) -> Int { f(x) }
+
+fn twice(f: fn(Int) -> Int, x: Int) -> Int { f(f(x)) }
+
+fn fold(xs: List[Int], z: Int, f: fn(Int, Int) -> Int) -> Int {
+  var acc = z
+  for x in xs {
+    acc = f(acc, x)
+  }
+  acc
+}
+
+fn chosen(c: Bool, x: Int) -> Int {
+  var f = fn(a: Int) -> Int { a + 1 }
+  if c {
+    f = fn(a: Int) -> Int { a * 3 }
+  }
+  f(x) + apply(f, x)
+}
+
+fn rotating(n: Int) -> Int {
+  var f = fn(a: Int) -> Int { a + 2 }
+  var t = 0
+  for i in 0..n {
+    t = t * 7 % 100003 + f(i)
+    if i % 3 == 0 {
+      f = fn(a: Int) -> Int { a * a % 97 }
+    } else if i % 3 == 1 {
+      f = fn(a: Int) -> Int { 50 - a }
+    } else {
+      f = fn(a: Int) -> Int { a + 2 }
+    }
+  }
+  t
+}
+
+fn table(x: Int) -> Int {
+  let fs: List[fn(Int) -> Int] = [fn(a: Int) -> Int { a + 10 }, fn(a: Int) -> Int { a * 2 }, fn(a: Int) -> Int { a - 7 }]
+  var t = 0
+  for (i, f) in fs.indexed() {
+    t += f(x + i) * (i + 1)
+  }
+  let g = fs[x % 3]
+  t + g(100)
+}
+
+fn main(os: Os) {
+  var xs: List[Int] = []
+  for i in 0..50 {
+    xs.push(i * 13 % 17)
+  }
+  let s = fold(xs, 0, fn(a: Int, b: Int) -> Int { a * 31 % 1000003 + b })
+  let m = fold(xs, -1, fn(a: Int, b: Int) -> Int { if b > a { b } else { a } })
+  os.stdio.println("fold ${s} ${m}")
+  os.stdio.println("twice ${twice(fn(a: Int) -> Int { a * a + 1 }, 3)} ${apply(fn(a: Int) -> Int { a - 9 }, 4)}")
+  os.stdio.println("chosen ${chosen(true, 5)} ${chosen(false, 5)}")
+  os.stdio.println("rot ${rotating(40)}")
+  os.stdio.println("table ${table(4)} ${table(5)} ${table(6)}")
+}
