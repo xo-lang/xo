@@ -65,8 +65,8 @@ func Coll(seed int64) string {
 
 func collFunc(r *rand.Rand, i int) string {
 	k := collKinds[r.Intn(len(collKinds))]
-	shape := r.Intn(13)
-	if shape >= 11 {
+	shape := r.Intn(14)
+	if shape >= 12 {
 		shape = 9 // the minimal flag loop is the most frequent: nothing else reads the size
 	}
 	if k.shrink == nil && shape == 5 {
@@ -193,6 +193,27 @@ func collFunc(r *rand.Rand, i int) string {
 		add("  more = " + k2.size("d") + " != m")
 		add("  " + step(k.size("c")+" + "+k2.size("d")))
 		add("}")
+	case 11: // loop-carried locals rotate around the size read (register moves, spills)
+		add("var a = k")
+		add("var b = k + 1")
+		add("var e = k + 2")
+		add("var f = k + 3")
+		add("var more = true")
+		add("var i = 0")
+		add("while more {")
+		add("  let n = " + k.size("c"))
+		add("  let t = a")
+		add("  a = (b + n) % 1009")
+		add("  b = (e + i) % 1013")
+		add("  e = (f * 3) % 1019")
+		add("  f = (t + b) % 1021")
+		add(fmt.Sprintf("  if i < %d {", lim))
+		add("    " + k.grow("c", "a % 7"))
+		add("  }")
+		add("  i += 1")
+		add("  more = " + k.size("c") + " != n")
+		add("}")
+		add(step("a + b + e + f"))
 	default: // a copy keeps its own size and contents
 		add(fmt.Sprintf("for i in 0..%d {", lim))
 		add("  " + k.grow("c", "i"))
