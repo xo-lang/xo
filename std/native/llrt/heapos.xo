@@ -792,6 +792,14 @@ pub fn set_thp_off() {
   rt.mem_store(cen, THP_OFF, 1, 8)
 }
 
+/// XO_THP=off for a Linux mapping outside the heap (a thread's stack): advises
+/// MADV_NOHUGEPAGE on [m, m + size) once the heaps exist and the knob is set.
+pub fn advise_nohuge(m: Int, size: Int) {
+  if thp_off() {
+    let _h = linux.madvise(m, size, 15)
+  }
+}
+
 /// Whether huge pages are off; false before the heaps exist (their own
 /// records are mapped first).
 fn thp_off() -> Bool {

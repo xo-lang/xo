@@ -6,6 +6,7 @@
 // tls_size and tls_init. Every function takes and returns Int words
 // (addresses are Ints); none may fault or allocate: tls_size and tls_init
 // run before the main thread has its thread pointer.
+use native/llrt/heapos
 use native/llrt/libcmem
 use native/llrt/linux
 use native/llrt/obj
@@ -167,6 +168,7 @@ pub fn thread_create(stack: Int, f: Int, arg: Int) -> Int {
     return -linux.EAGAIN
   }
   linux.mprotect(m, page, 0)
+  heapos.advise_nohuge(m, len)
   let rec = m + page + st
   rt.mem_store(rec, 8, m, 8)
   rt.mem_store(rec, 16, len, 8)
