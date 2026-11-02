@@ -336,6 +336,15 @@ both halves read level there (1.006, 1.009, 15 rounds). darwin and
 Windows keep every readied fiber (np_keep() 0), so their behavior is
 unchanged.
 
+**R on a contended benchmark (2026-11-02, Xo Lang 4).** bench/perf/rwread
+(256 tasks on one `Mutex`, `with_read` with writes swept, `XO_THREADS`
+swept) on the first linux/arm64 host (a Linux VM on an M4 Pro), R against
+main, 5 rounds: at 100 writes in 1,000, reads a millisecond 0.73 to 0.75
+at 2 to 12 threads (ranges apart), CPU 1.15 to 1.28; at 10 writes wall
+0.93 to 0.97 but CPU 1.12 to 1.15 from 4 threads; level at 1 write and at
+one thread; RSS level. R stays parked
+(bench/results/a1-poll-batch-inject-2026-11-02.md).
+
 Gate (a default change): on linux/arm64, the full internal/arm64
 TestGoldenRun and internal/stdtest suites and the fixed point (xo built
 with P rebuilds itself to the same bytes) pass on linux/arm64 (second
