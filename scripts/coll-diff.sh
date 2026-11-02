@@ -6,6 +6,7 @@
 # swept with each pass off alone (XO_PASSES=-NAME) to name the pass whose removal
 # makes native agree with go. Output: one line per difference, then totals.
 #   scripts/coll-diff.sh $PWD/bin/xo /work/coll/*      (JOBS=4 programs at once)
+# SKIP_LLVM=1 (a host without clang, the amd64 offload host) compares native with the go backend only.
 # REF=llvm compares against llvm instead of go (goldens and corpora that the go backend
 # cannot build); programs that print timing or read the environment differ by themselves.
 set -u
@@ -24,7 +25,7 @@ one() {
 			timeout ${RUN_TIMEOUT:-10} "$o/$1" > "$o/$1.out" 2> "$o/$1.err"; echo "exit $?" >> "$o/$1.out"
 		else echo "BUILD FAILED" > "$o/$1.out"; fi
 	}
-	run go go; run llvm llvm; run native $NATIVE; run alloff $NATIVE "$alloff"
+	run go go; if [ -n "${SKIP_LLVM:-}" ]; then cp "$o/go.out" "$o/llvm.out"; else run llvm llvm; fi; run native $NATIVE; run alloff $NATIVE "$alloff"
 	ref=${REF:-go}
 	if grep -q -E "^BUILD FAILED|^exit (124|137)$" "$o/$ref.out"; then echo "REFFAIL $n: the $ref run failed or timed out (load?), not compared"; return; fi
 	bad=""
