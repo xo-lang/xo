@@ -254,3 +254,4 @@
 - [slot-group-frames-2026-11-02.md](slot-group-frames-2026-11-02.md): regression B, slot_group's unused slots past the 504 byte prologue; /alloc c32 0.777 -> 1.002 of v0.35.0.
 - [pass-hunt-2026-11-02.md](pass-hunt-2026-11-02.md): the optional pass miscompile hunt: 2 slp_f64 miscompiles fixed, 1722 large-golden and 160 progen pass-off runs clean, x86 passes off clean, cancel_rc_pairs live in 80 goldens, stress findings.
 - [a1-poll-batch-inject-2026-11-02.md](a1-poll-batch-inject-2026-11-02.md): decision 0324's a1, a poll's readied fibers past the first injected (Linux default since 2026-11-02): http CRUD and --ab rows for P and R on arm64, amd64 and Windows, and the default-change gate
+- [alloc-regression-2026-11-02.md](alloc-regression-2026-11-02.md): the /alloc regression since v0.35.0 on linux/arm64: bisect passes, the fixes tried (park off, fix A, linger, layout probes, P) and runtime spawn counts, every job's table against v0.35.0
