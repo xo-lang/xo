@@ -665,7 +665,7 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
         if e.sub == None && e.name.name == b"realtime" && !iface {
           // a discipline, not an effect (core 6.5)
           c.objs[fo].realtime = true
-          c.objs[fo].realtime_span = e.span
+          c.objs[fo].realtime_span = [e.span]
           continue
         }
         use_list.push(e)
@@ -683,7 +683,7 @@ fn (var c: Checker) resolve_sig(fo: Int, env0: TypeEnv, iface: Bool) {
       }
       if is_effect_label(name) && name != "ffi" {
         let d = c.error("XO1405", e.span, "a real-time function may not perform `${name}`; the only effect it may declare is `ffi`")
-        c.note_here(d, c.objs[fo].realtime_span, "`${c.display_name(fo)}` is real-time (core 6.5)")
+        c.note_here(d, c.objs[fo].realtime_span[0], "`${c.display_name(fo)}` is real-time (core 6.5)")
       }
     }
   }
@@ -979,10 +979,8 @@ fn (var c: Checker) resolve_named_type(span: Span, path: List[Ident], args: List
   for a in targs {
     if c.tys[a].kind == TyKind.EffArg && c.tys[a].eff >= 0 {
       for it in c.esets[c.tys[a].eff] {
-        if it.param >= 0 && c.objs[it.param].elided && c.objs[it.param].elided_file.is_empty() {
-          c.objs[it.param].elided_file = if env.file >= 0 { c.files[env.file].path } else { c.path }
-          c.objs[it.param].elided_at = span
-          c.objs[it.param].elided_text = type_text(Type.NamedType(span: span, path: path, args: fargs))
+        if it.param >= 0 && c.objs[it.param].elided && c.objs[it.param].elided_from.is_empty() {
+          c.objs[it.param].elided_from = [ElidedFrom{file: if env.file >= 0 { c.files[env.file].path } else { c.path }, at: span, text: type_text(Type.NamedType(span: span, path: path, args: fargs))}]
         }
       }
     }

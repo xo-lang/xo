@@ -1054,3 +1054,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [phase-peak-may-be-its-last-step.md](phase-peak-may-be-its-last-step.md): Observed 2026-11-01: a phase line's peak does not say when in the phase; emit's 3937 MB was one copy of all part texts after the parts, so fixes aimed at the parts moved nothing; read mem_mapped and mem_peak at checkpoints first
 - [wasi-http-host-not-in-fields.md](wasi-http-host-not-in-fields.md): wasi:http gives Host as the authority; compare a component with the native server, not a stub host (Observed)
 - [arm64-helper-without-cfi-loses-callers.md](arm64-helper-without-cfi-loses-callers.md): a helper with no `.cfi_startproc` shows flat time in a profile and no callers.
+- [large-cache-needs-room-to-reuse.md](large-cache-needs-room-to-reuse.md): lists freed in turn still touch new pages when the next one does not fit the cached mapping

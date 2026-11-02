@@ -78,7 +78,7 @@ pub struct StdFileRec {
   pub ranges: List[parser.DeclRange] = []
 }
 
-const EXPORT_VERSION = "xo std export v4 (declaration ranges in the file records)"
+const EXPORT_VERSION = "xo std export v5 (declaration ranges in the file records, rare object fields as lists)"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {
@@ -428,7 +428,10 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
   w.bool(x.moves)
   w.bool(x.move_only)
   w.bool(x.realtime)
-  w.span(x.realtime_span)
+  w.uv(x.realtime_span.len())
+  for s in x.realtime_span {
+    w.span(s)
+  }
   w.sv(x.ty)
   w.bool(x.done)
   w.bool(x.checking)
@@ -441,14 +444,19 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
   w.sv(x.group_frame)
   w.bool(x.awaited)
   w.bool(x.used)
-  w.span(x.let_span)
+  w.uv(x.let_at.offset)
+  w.uv(x.let_at.line)
+  w.uv(x.let_at.col)
   w.uv(t[ti])
   w.sv(x.constraint)
   w.bool(x.implicit)
   w.bool(x.elided)
-  w.str(x.elided_file)
-  w.span(x.elided_at)
-  w.str(x.elided_text)
+  w.uv(x.elided_from.len())
+  for f in x.elided_from {
+    w.str(f.file)
+    w.span(f.at)
+    w.str(f.text)
+  }
 }
 
 /// An object's record; its trees (fn_decl, defaults, const_val,
@@ -552,7 +560,9 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
   x.moves = r.bool()
   x.move_only = r.bool()
   x.realtime = r.bool()
-  x.realtime_span = r.span()
+  for _ in 0..r.uv() {
+    x.realtime_span.push(r.span())
+  }
   x.ty = r.sv()
   x.done = r.bool()
   x.checking = r.bool()
@@ -564,14 +574,18 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
   x.group_frame = r.sv()
   x.awaited = r.bool()
   x.used = r.bool()
-  x.let_span = r.span()
+  let lo = r.uv()
+  let ll = r.uv()
+  x.let_at = parser.Pos{offset: lo, line: ll, col: r.uv()}
   trees.push(r.uv())
   x.constraint = r.sv()
   x.implicit = r.bool()
   x.elided = r.bool()
-  x.elided_file = r.str()
-  x.elided_at = r.span()
-  x.elided_text = r.str()
+  for _ in 0..r.uv() {
+    let f = r.str()
+    let at = r.span()
+    x.elided_from.push(ElidedFrom{file: f, at: at, text: r.str()})
+  }
   (x, trees)
 }
 
@@ -744,6 +758,13 @@ pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
   b.evar_hi = r.uv()
   var e = StdExport{block: b}
   let no = r.uv()
+  // sized: the lists of every std object were most of a small build's
+  // large blocks (decision 0448 case (c)). The room is untouched pages:
+  // this block and relocate_export's are freed in turn and hold the
+  // lists after them, install_std's and force_body's copy (which adds
+  // the program's objects), and a block too small for those is not reused.
+  e.objs = List.with_capacity(no * 3 / 2)
+  e.trees = List.with_capacity(no)
   for _ in 0..no {
     if !r.ok {
       return None
@@ -753,6 +774,7 @@ pub fn decode_std_export(d: Bytes) -> Option[StdExport] {
     e.trees.push(t)
   }
   let nt = r.uv()
+  e.tys = List.with_capacity(nt)
   for _ in 0..nt {
     if !r.ok {
       return None
@@ -1091,9 +1113,11 @@ pub fn (c: Checker) relocate_export(e: StdExport, at: StdBlock) -> Option[StdExp
     }
   }
   var out = StdExport{block: StdBlock{obj_lo: at.obj_lo, obj_hi: at.obj_lo + (b.obj_hi - b.obj_lo), ty_lo: at.ty_lo, ty_hi: at.ty_lo + (b.ty_hi - b.ty_lo), eset_lo: at.eset_lo, eset_hi: at.eset_lo + (b.eset_hi - b.eset_lo), evar_lo: at.evar_lo, evar_hi: at.evar_lo + (b.evar_hi - b.evar_lo)}, trees: e.trees}
+  out.objs = List.with_capacity(e.objs.len() * 3 / 2)
   for x in e.objs {
     out.objs.push(r.obj_rec(x))
   }
+  out.tys = List.with_capacity(e.tys.len())
   for t in e.tys {
     out.tys.push(r.ty_rec(t))
   }
@@ -1288,7 +1312,14 @@ fn (c: Checker) join_trees(x0: Obj, t: List[Int], owner: Option[Obj]) -> Option[
 /// nothing changed, when a tree cannot be joined.
 pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
   let lo = e.block.obj_lo
-  var objs: List[Obj] = []
+  // the checker's objects so far, then std's: assigned whole below, so a
+  // failed install leaves c.objs as it was, with no second list of std's;
+  // the room is untouched pages for the program's own, which would
+  // otherwise copy the whole list at their first push (decision 0448)
+  var objs: List[Obj] = List.with_capacity((c.objs.len() + e.objs.len()) * 9 / 8)
+  for o in c.objs {
+    objs.push(o)
+  }
   var pending: List[(Int, List[Int], Int)] = []
   for (i, x) in e.objs.indexed() {
     // an object of a file not parsed (trees_lazy): installed without
@@ -1328,12 +1359,8 @@ pub fn (var c: Checker) install_std(e: StdExport) -> Bool {
   for (f, sf) in c.files.indexed() {
     fpath[sf.path] = f
   }
-  for o in objs {
-    c.objs.push(o)
-  }
-  for t in e.tys {
-    c.tys.push(t)
-  }
+  c.objs = objs
+  c.tys = c.tys + e.tys
   for s in e.esets {
     c.esets.push(s)
   }

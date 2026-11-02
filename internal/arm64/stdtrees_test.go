@@ -172,3 +172,75 @@ fn main(os: Os) {
 		}
 	}
 }
+
+// TestStdRecordBindRetry: a check that restarts for a missing `use c`
+// binding starts again with std's records: the first check's checker no
+// longer holds them, since their list was held to the end of the check
+// (decision 0448 case (c)), so check_dirs_bound decodes them again.
+func TestStdRecordBindRetry(t *testing.T) {
+	t.Parallel()
+	if testing.Short() {
+		t.Skip("builds programs")
+	}
+	if _, err := exec.LookPath("clang"); err != nil && os.Getenv("XO_CLANG") == "" {
+		t.Skip("clang not found")
+	}
+	xo, err := xotool.Path()
+	if err != nil {
+		t.Fatal(err)
+	}
+	work, err := testtmp.Dir("xo-stdretry-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer os.RemoveAll(work)
+	cache := filepath.Join(work, "cache")
+	prog := filepath.Join(work, "prog")
+	if err := os.MkdirAll(prog, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	env := append(os.Environ(), "XO_BACKEND_CACHE=on", "XO_BACKEND_CACHE_DIR="+cache, "XO_CACHE_STATS=1", "XO_BIN_CACHE=off", "XO_CBIND_DIR=")
+	write := func(name, text string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(prog, name), []byte(text), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	build := func() string {
+		t.Helper()
+		b := testtmp.Guard(exec.Command(xo, "build", "-o", filepath.Join(work, "out"), "."))
+		b.Dir = prog
+		b.Env = env
+		msgs, err := b.CombinedOutput()
+		if err != nil {
+			t.Fatalf("build: %v\n%s", err, msgs)
+		}
+		return string(msgs)
+	}
+	write("xo.mod", "module ex\n")
+	for k := 0; k < 2; k++ {
+		c := testtmp.Guard(exec.Command(xo, "dev", "stdcache", "--conc="+string(rune('0'+k))))
+		c.Dir = prog
+		c.Env = env
+		if msgs, err := c.CombinedOutput(); err != nil {
+			t.Fatalf("xo dev stdcache: %v\n%s", err, msgs)
+		}
+	}
+	for edit := 0; edit < 2; edit++ {
+		write("main.xo", "fn main(os: Os) {\n  os.stdio.println(\"edit "+string(rune('0'+edit))+"\")\n}\n")
+		build()
+	}
+	write("two.h", "int two_add(int a, int b);\n")
+	write("two.c", "#include \"two.h\"\nint two_add(int a, int b) { return a + b; }\n")
+	write("main.xo", "use c \"two.h\" link \"two.c\"\n\nfn main(os: Os) {\n  os.stdio.println(\"${two.two_add(1, 2)}\")\n}\n")
+	if msgs := build(); !strings.Contains(msgs, "cache stdx record loaded") {
+		t.Fatalf("the build did not load std's records:\n%s", msgs)
+	}
+	got, err := testtmp.Guard(exec.Command(filepath.Join(work, "out"))).Output()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if string(got) != "3\n" {
+		t.Fatalf("printed %q, want 3", got)
+	}
+}

@@ -56,12 +56,29 @@ fn (var c: Checker) go_miss(f: Int, sp: Span, gopath: Str, root: Str, cache: Str
   }
 }
 
+/// c for a later restart, without its decoded std records: their object
+/// list is about 4 MB, and held here run could not free it before its next
+/// list (decision 0448 case (c)). record_again decodes them for a restart,
+/// which only a missing binding or module asks for.
+fn (c: Checker) without_record() -> Checker {
+  var f = c
+  f.std_record = None
+  f
+}
+
+fn (var c: Checker) record_again(had: Bool) {
+  if had {
+    c.std_record = decode_std_entry(c.std_export_in, c.std_header_fp)
+  }
+}
+
 /// check_dirs, binding first what the run lacks: every `use go` package
 /// missing from the binding cache and every `use c` header (rebound when
 /// missing or changed); the directories are checked again from the state
 /// before the run when a binding was written or failed.
 pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str uses (fs, proc, env) {
-  let fresh = c
+  let had_record = c.std_record != None
+  let fresh = c.without_record()
   c.check_dirs(dirs)?
   var failed: Map[Str, Str] = {}
   var tried: Set[Str] = #{}
@@ -106,6 +123,7 @@ pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str us
       return Ok(())
     }
     c = fresh
+    c.record_again(had_record)
     c.bind_failed = failed
     c.check_dirs(dirs)?
   }
@@ -118,7 +136,8 @@ pub fn (var c: Checker) check_dirs_bound(os: Os, dirs: List[Str]) -> () ! Str us
 /// cannot import) downloads one version and returns its directory or the
 /// problem, which the next run reports as mod.Load does.
 pub fn (var c: Checker) check_dirs_fetching(os: Os, dirs: List[Str], fetch: fn(Str, Str) -> Str ! Problem uses (fs, proc, net, rand, env)) -> () ! Str uses (fs, proc, net, rand, env) {
-  let fresh = c
+  let had_record = c.std_record != None
+  let fresh = c.without_record()
   c.check_dirs_bound(os, dirs)?
   var failed: Map[Str, Problem] = {}
   var tried: Set[Str] = #{}
@@ -141,6 +160,7 @@ pub fn (var c: Checker) check_dirs_fetching(os: Os, dirs: List[Str], fetch: fn(S
       }
     }
     c = fresh
+    c.record_again(had_record)
     c.fetch_failed = failed
     c.check_dirs_bound(os, dirs)?
   }

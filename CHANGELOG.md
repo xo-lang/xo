@@ -5,6 +5,10 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- Small builds use less memory (decision 0448): a warm or edit build of coll 84 to 66 MB RSS on
+  the Mac (footprint 52 to 41), 157 to 130 MB on linux/arm64 and 4% faster there; conc-spawn 75 to
+  56 MB on the Mac. The checker kept up to five lists of every std object; it now touches two, and
+  each object is about 20% smaller.
 - Small builds on Linux: a warm or edit build's peak memory falls about 10% (coll, linux/arm64:
   171 to 154 MB) and the build is about 1% faster: std's cached half no longer stores the raw
   relocation and symbol tables the link has already read (decision 0448).

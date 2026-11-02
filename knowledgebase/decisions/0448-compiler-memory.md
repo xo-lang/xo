@@ -748,6 +748,44 @@ targets' size class limits (heapos.xo mid_default: 16 KiB on darwin, about 256 K
 so Linux keeps freed 32 KiB to 256 KiB blocks mapped and counted). Paused 2026-11-01: the
 owner moved priority to case (c).
 
+## Case (c): the lists of std's objects (xo-lang-2, 2026-11-01)
+
+A small build touched five lists of every std object, 5.2 to 5.9 MB each, about 28 MB of 85:
+decode_std_export's, relocate_export's, install_std's, new_module's (install left no room, so
+the program's first object copied the list) and force_body's copy (the builder's lazy check
+writes objects while the driver's checker still holds the list). They now touch two:
+
+- Records go once relocated: `c.std_record` is cleared and the decoded record dropped before
+  install_std, whose list is assigned whole.
+- check_dirs_bound and check_dirs_fetching kept `let fresh = c` for a restart, which held the
+  records to the end of the check. The copy no longer has them; a restart decodes them
+  again (TestStdRecordBindRetry).
+- Room in untouched pages: install_std's list has 1/8 extra, so the program's objects do not
+  copy it. decode's and relocate's have 3/2, because the large cache reuses a mapping only when
+  it is big enough: install_std takes decode's block and force_body's copy takes relocate's.
+- An Obj is about 20% smaller (a list goes from 5.4 to 4.3 MB): realtime_span and the three
+  elided fields became zero or one element lists, and let_span became let_at, its start, the
+  only part read.
+
+Mac, 3 rounds, no stats, RSS / footprint MB, 5a4a854b5 to this change: coll warm 84-85 / 52 to
+65-66 / 40-42, edit 84 / 52-53 to 65-66 / 41-42; conc-spawn warm 74-76 / 47 to 55 / 34-35, edit
+75-76 / 47 to 56-57 / 34-35. So conc-spawn meets the 60 MB target and coll does not yet. Go on the
+Mac for comparison: coll's edit link 66-68 / 29-30, compile 44-45 / 34-35.
+linux/arm64 `--ab` of coll's edit, 3 rounds, 0 loaded: wall 0.96 (0.949 to 0.962), CPU 0.953,
+max RSS 0.833 (0.818 to 0.849). Self build: wall 1.001, max RSS 1.001, within noise, so the
+smaller Obj does not move the self build's peak.
+
+Tried, negative: text layout (0403 stage 1) from 80 profiles of small builds at 10 kHz (89,311
+samples, 1,885 functions): coll 85 to 83 MB, __TEXT resident 23.4 to 21.6. Sampling misses the
+functions that run once, which is most of the touched text. Freeing cached mappings' pages at
+once (MAP_FIXED) took RSS to 59 MB but cost 1 to 3% wall, dropped. XO_THREADS=1 saves 3 to 4 MB on the
+Mac with the same wall; on Linux it saves about 20 of 154 MB (2 threads about the same, 4 about
+10) with the same wall: an open lever for Linux.
+
+Next for coll's last 6 MB: a one-shot release of the two 6.4 MB cached lists when the front end
+is freed (their pages are clean, darwin only), reading only the std facts variant the build
+uses (2 MB), std's half decode (3.25 MB live at the link), and exact once-run functions for the layout.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

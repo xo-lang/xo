@@ -77,12 +77,23 @@ fn (var c: Checker) run() -> () ! Str {
     // source read or hashed); verify always hashes
     fp = if !c.std_header_fp.is_empty() && !c.std_export_verify { c.std_header_fp } else { c.std_fingerprint(std_mods) }
     if !c.std_export_verify {
-      let found = match c.std_record {
+      var found = match c.std_record {
         Some(e) => Some(e)
         None => decode_std_entry(c.std_export_in, fp)
       }
+      // each of these lists holds every std object, 5 MB for any program:
+      // the records go as soon as they are relocated, so the next list
+      // takes their mapping instead of touching new pages (decision 0448
+      // case (c))
+      c.std_record = None
+      var rel: Option[StdExport] = None
+      let had = found != None
       if let Some(e) = found {
-        match c.relocate_export(e, at) {
+        rel = c.relocate_export(e, at)
+      }
+      found = None
+      if had {
+        match rel {
           Some(r) => {
             c.std_export_used = c.install_std(r)
             if !c.std_export_used && c.std_export_why.is_empty() {

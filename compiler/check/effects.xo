@@ -128,14 +128,15 @@ fn (c: Checker) log_fix(fd: parser.FnDecl) -> (Str, List[DEdit]) {
 fn (var c: Checker) elided_effect_note(d: Int, sub: Flat, sup: Flat, ob: EffOb) {
   for p in sub.params {
     let o = c.objs[p]
-    if sup.params.contains(p) || !o.elided || o.elided_file.is_empty() {
+    if sup.params.contains(p) || !o.elided || o.elided_from.is_empty() {
       continue
     }
-    var tn = o.elided_text
+    let from = o.elided_from[0]
+    var tn = from.text
     if let Some(i) = tn.find("[") {
       tn = text(tn.bytes()[0..i])
     }
-    c.diags[d].notes.push(DNote{message: "`${text(o.name)}` is the effect argument left out of `${o.elided_text}` here; an omitted effect argument stays an abstract effect variable of the function (core 6.2), as Rust and TypeScript generics would infer it, so a `uses` list cannot name it: write the effect argument, `${tn}[..., net.dial]` naming the effects of the value passed in, or let the closure's effects be inferred", span: Some(JSpan{file: o.elided_file, line: o.elided_at.start.line, col: o.elided_at.start.col})})
+    c.diags[d].notes.push(DNote{message: "`${text(o.name)}` is the effect argument left out of `${from.text}` here; an omitted effect argument stays an abstract effect variable of the function (core 6.2), as Rust and TypeScript generics would infer it, so a `uses` list cannot name it: write the effect argument, `${tn}[..., net.dial]` naming the effects of the value passed in, or let the closure's effects be inferred", span: Some(JSpan{file: from.file, line: from.at.start.line, col: from.at.start.col})})
     if !ob.uses_file.is_empty() {
       c.fix(d, "remove the closure's `uses` clause so its effects are inferred", [DEdit{span: JSpan{file: ob.uses_file, line: ob.uses_clause.start.line, col: ob.uses_clause.start.col, end_line: ob.uses_clause.end.line, end_col: ob.uses_clause.end.col}, replace: ""}])
     }

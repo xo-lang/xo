@@ -170,9 +170,10 @@ pub struct Obj {
   /// the text after `@internal:` on that doc line, the public way the
   /// XO0605 note names
   pub internal_hint: Str = ""
-  /// Declared `uses realtime` (core 6.5), and where.
+  /// Declared `uses realtime` (core 6.5), and where (zero or one element:
+  /// a rare field, and every program holds thousands of objects).
   pub realtime: Bool = false
-  pub realtime_span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+  pub realtime_span: List[Span] = []
 
   // Constants and locals.
   /// Const, Local: the type, -1 until known.
@@ -197,9 +198,9 @@ pub struct Obj {
   /// binding never read is XO0110.
   pub used: Bool = false
   /// Local: bound by a `let` of a single name (stmt.go VarObj.decl): the
-  /// statement's span and value (zero or one element), for the fixes of
+  /// statement's start and value (zero or one element), for the fixes of
   /// XO0201 and XO0502.
-  pub let_span: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
+  pub let_at: parser.Pos = parser.Pos{offset: 0, line: 0, col: 0}
   pub let_value: List[parser.Expr] = []
 
   // Type parameters.
@@ -209,10 +210,15 @@ pub struct Obj {
   /// 6.2): the function may perform it.
   pub elided: Bool = false
   /// Elided: the type written without its effect arguments that created
-  /// it (file "" for none) and its text, for the XO0701 note.
-  pub elided_file: Str = ""
-  pub elided_at: Span = Span{start: parser.Pos{offset: 0, line: 0, col: 0}, end: parser.Pos{offset: 0, line: 0, col: 0}}
-  pub elided_text: Str = ""
+  /// it and its text, for the XO0701 note (zero or one element).
+  pub elided_from: List[ElidedFrom] = []
+}
+
+/// Where an elided effect parameter came from (Obj.elided_from).
+pub struct ElidedFrom {
+  pub file: Str
+  pub at: Span
+  pub text: Str
 }
 
 /// A module: a directory of .xo files, or a std declaration file.
