@@ -213,9 +213,11 @@ or "worse" and one of the first host's "worse" with identical code, so a
 verdict at 3 rounds is not proof: read a small ratio against this table. On
 the first host a wall ratio beyond about 1% is real; RSS read 0.6% higher on
 side B whichever revision it was, so an RSS ratio within about 1% is not a
-claim. The second host's cause is not known (macOS placing VM CPUs on
-efficiency cores, heat, or other use of that Mac are untested). Last verified:
-2026-11-01.
+claim. The owner was using the second host's Mac during these runs (owner,
+2026-11-01), which Linux's load guard cannot see, so that use is the likely
+cause. Three more controls in the same conditions read wall 0.994, 0.987, 1.059.
+Rerun the controls with that Mac idle before routing `--ab` there; timing runs
+are only valid while it is idle. Last verified: 2026-11-01.
 
 ## The linux/amd64 host
 
