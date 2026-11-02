@@ -1,5 +1,19 @@
 # std/debug changes
 
+## 2026-11-02: fix: mem_trim does nothing on wasm
+
+- Kind: fix
+- Commit: (this commit)
+- Found by: Xo Lang 2 (the alloc_stress golden trapped on wasm)
+- Go reference: none (runtime/debug.FreeOSMemory has no wasm specific path)
+- Test: internal/llvm/testdata/golden/alloc_stress (wasm, through TestSelfhostWasm)
+
+`debug.mem_trim` called from a task while other tasks ran made a wasm
+module trap (`null function or function signature mismatch` in the
+scheduler) or hang: it walked the native heap's thread record, which the
+wasm runtime's own allocator never builds, and its stores landed in the
+scheduler's memory. It now returns at once on wasm, as on the Go backend.
+
 ## 2026-11-02: perf: mem_trim also unmaps the cached large blocks of 2 MiB and over
 
 - Kind: perf

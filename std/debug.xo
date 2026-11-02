@@ -60,5 +60,5 @@ fn mem_total() -> Int
 /// 16 KiB and over (decision 0448; darwin for now), and on every target unmaps the cached
 /// large blocks of 2 MiB and over: for a program that knows its live memory just fell, as xo
 /// does after its phases that free the most. The pages come back on the next use of those
-/// blocks, and the next such large block maps anew. Nothing on the Go backend.
+/// blocks, and the next such large block maps anew. Nothing on the Go and wasm backends.
 fn mem_trim()

@@ -132,6 +132,12 @@ pub fn mem_mapped() -> Int { heapos.mapped_bytes() }
 pub fn mem_total() -> Int { heapos.phys_mem() }
 
 pub fn mem_trim() {
+  // the wasm runtime has its own allocator: the native heap's records do
+  // not exist there, and trim_thread's walk corrupted the scheduler's
+  // tasks (alloc_stress, 2026-11-02); target.os is the host's on wasm
+  if target.arch == TargetArch.Wasm32 {
+    return
+  }
   heapos.trim_thread()
   heapos.cache_drop()
 }
