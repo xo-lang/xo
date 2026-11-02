@@ -52,6 +52,9 @@ a THP=always host sets it to hold its working set to the small page footprint.
   sources: the first heap record's mappings (made before entry.xo reads
   XO_THP), thread stacks, the TLS block and cabi_nolibc's no-reserve stack.
   Follow-up: advise those too.
+  Thread stacks (libcthr.xo) are advised since 2026-11-02 (heapos.advise_nohuge); the
+  main thread's TLS block and 1 GiB stack (cabi_nolibc) and the first heap
+  records are mapped before entry.xo reads XO_THP and stay open.
 - Windows, Darwin and Wasi are unaffected.
 
 ## Alternatives
