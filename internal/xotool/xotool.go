@@ -363,7 +363,7 @@ func Inputs(root string) ([]string, error) {
 		if d.IsDir() && (d.Name() == "testdata" || strings.HasPrefix(d.Name(), ".")) {
 			return filepath.SkipDir
 		}
-		if !d.IsDir() && (strings.HasSuffix(p, ".xo") || d.Name() == "xo.mod") {
+		if !d.IsDir() && (strings.HasSuffix(p, ".xo") || d.Name() == "xo.mod" || d.Name() == "xo.layout") {
 			rel, _ := filepath.Rel(root, p)
 			add(filepath.ToSlash(rel))
 		}

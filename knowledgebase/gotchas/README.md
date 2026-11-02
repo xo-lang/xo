@@ -1057,3 +1057,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [large-cache-needs-room-to-reuse.md](large-cache-needs-room-to-reuse.md): lists freed in turn still touch new pages when the next one does not fit the cached mapping
 - [park-pointer-outlives-inline-task.md](park-pointer-outlives-inline-task.md): a saved park can outlive an inline task on main's fiber; TSan memset against klock (Observed)
 - [generated-c-path-in-debug-info.md](generated-c-path-in-debug-info.md): a fixed point with OUT in the checkout differed by generated C paths; where the output goes can decide a pass (Observed)
+- [layout-file-module-root-and-seed.md](layout-file-module-root-and-seed.md): Observed 2026-11-01: a layout file is read at the module root, and the seed building the first stage must understand it

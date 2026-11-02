@@ -786,11 +786,16 @@ Std's facts are read when the builder needs them, one variant of the two, about 
 read would take the freed block force_body's copy reuses (coll rose to 70 MB), so the builder
 makes c.objs its own first (Checker.own_objs). Mac: coll warm and edit 65-66 / 41-42 to 64-66 / 41-42,
 conc-spawn unchanged. linux/arm64 --ab of coll's edit, 3 rounds, 0 loaded: wall 0.99 (0.99 to
-1.004), CPU 0.993, max RSS 0.969 (0.926 to 0.999).
+1.004), CPU 0.993, max RSS 0.969 (0.926 to 0.999), inside what an A/A control read on this host (0.969), so no Linux RSS claim.
 
-Next for coll's last 4 to 6 MB: exact once-run functions for the layout, a one-shot release of the two
-6.4 MB cached lists when the front end is freed (their pages are clean, darwin only), std's
-half decode (3.25 MB live at the link), and Obj's 22 Bools at a word each (168 B of about 536).
+Decision 0453 orders xo's code by the functions small builds run, which meets case (c)'s RSS target on the Mac:
+coll 58-59 MB, conc-spawn 52-54 (footprint 39-40 and 34-35), with Linux at 117 and 101 MB. Not met: "mapped heap within 2
+times live". At coll's link the counter reads 76 to 84 MB and the resident heap 45 against 15 live (3 times); the
+counter charges each 4 MiB chunk whole, and a dozen are touched only lightly. Next, ranked: which classes spread over those chunks and why
+they stay partly used (allocator retention, owner acceptance needed); a one-shot release of the two
+6.4 MB cached lists when the front end is freed (clean pages, darwin only, must keep wall within 1%); std's half
+decode (3.25 MB live at the link); Obj's 22 Bools at a word each (168 B of about 536); XO_THREADS on Linux (about
+20 MB).
 
 ## Consequences
 

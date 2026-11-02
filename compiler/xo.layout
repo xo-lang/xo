@@ -1,0 +1,2915 @@
+xo layout v1
+samples 2398755337
+fn xo.hash[Str] 131982795
+fn macho.bstr 114980733
+fn macho.rd64 84933521
+fn check.ExR.uv 82967941
+fn obj.rl_free_n_slow 61689768
+fn alloc.alloc 50066241
+fn obj.rs_append 48854834
+fn cabi_libc.memcpy 40811466
+fn obj.try_pop 36332304
+fn obj.rl_free 35910821
+fn obj.hresize 33075486
+fn check.Reloc.idx 31385929
+fn xo.map.rebuildk[Str] 30103090
+fn xo.map.put[Map[Int, Int]] 29024762
+fn cabi.obj_rl_grow_n 28465453
+fn lz4.decompress 27483275
+fn macho.ELinker.symtab 26857667
+fn macho.ELinker.gc_sections 26760803
+fn xo.map.put[Map[Str, github.com/xo-lang/xo/compiler/ssa.Op]] 26425485
+fn xo.map.putk[Int] 24973791
+fn cabi.obj_rl_new_n 24928783
+fn obj.reserve_slow 24617571
+fn ssa.EntryR.uv 23408972
+fn scan.span 22724260
+fn obj.hfree 22509225
+fn sha256.block256 21355335
+fn scan.find_bytes 20842080
+fn check.ExR.sv 20428669
+fn arm64.G.regalloc 19346661
+fn cabi.obj_rl_copy_n 18356423
+fn scan.split 17496533
+fn check.Reloc.obj_rec 17177781
+fn cabi.obj_rl_free_n 15965105
+fn macho.ELinker.place 15514469
+fn prelude.list_sort_str 15506654
+fn arm64.G.lbl_prefix 15403175
+fn check.Reloc.ty 15311753
+fn xo.map.put[Map[Int, Bool]] 15295370
+fn num.append_int 13850941
+fn ssa.SfR.uv 13789513
+fn scan.eq_at 13472628
+fn cabi_libc.memcmp 13220148
+fn xo.map.put[Map[Str, Int]] 12877159
+fn cabi.obj_rs_push_byte 12319774
+fn xo.map.put[Map[Str, StdFact]] 12112569
+fn xo.map.put[Map[Str, (Int, Int)]] 12056453
+fn cabi_libc.memmove 11948970
+fn libcstr.move_small 11795784
+fn scan.find_byte 10895832
+fn arm64.solve_live 10885035
+fn arm64.G.label 10636193
+fn check.Checker.install_std 10227833
+fn arm64.G.msuccs 10156307
+fn arm64.G.inherit 9997859
+fn cabi.obj_rs_concat 9958763
+fn cabi.obj_str_eq 9573516
+fn arm64.G.emit 9551277
+fn arm64.G.dfs_loops 9419619
+fn lexer.Lexer.next 9218874
+fn scan.find_short 9193043
+fn arm64.drop_weak_in 9087967
+fn macho.ELinker.def_of 8994095
+fn obj.grow 8881276
+fn arm64.overlaps_sorted 8804827
+fn arm64.label_def 8698693
+fn arm64.line_label_refs 8671355
+fn prelude.merge_runs_in_place[Int] 8429525
+fn check.Checker.iface_closures 8254425
+fn check.Checker.relocate_export 8144917
+fn macho.ELinker.reloc 8104633
+fn macho.ELinker.debug_sections 8067943
+fn check.Reloc.obj 8067013
+fn check.ExR.bytes 7643777
+fn check.ExR.obj 7511061
+fn prelude.merge_sort_in_place[Int] 7450191
+fn check.Reloc.objs_of 7413297
+fn arm64.G.live_dce 7285045
+fn lexer.Lexer.advance 7210379
+fn arm64.G.emit_plain 6989335
+fn ssa.SfR.bools 6849445
+fn dropm G 6824981
+fn ssa.Builder.is_prelude_mod 6765579
+fn ssa.EntryR.ints 6253279
+fn ssa.EntryR.sv 6215845
+fn arm64.push_rng 6195329
+fn ssa.decode_func_at 6060736
+fn lexer.Lexer.skip_space_and_comments 5964773
+fn arm64.G.stub_saves 5926373
+fn arm64.G.hoist_consts 5830193
+fn cabi.ctx_unwinding 5729333
+fn ssa.EntryR.str 5692221
+fn obj.halloc 5691989
+fn lz4.compress 5643533
+fn arm64.G.emit_inst 5468833
+fn check.ExR.str 5391825
+fn prelude.fs_clean_slash 5176497
+fn parser.Parser.lex_habits 5095485
+fn check.Checker.ensure_decl 4985365
+fn macho.ELinker.relocate 4773983
+fn arm64.G.memo_at 4726561
+fn arm64.G.dv_field 4676027
+fn obj.rs_new_mt 4665656
+fn ssa.write_int 4542225
+fn arm64.parse_ldr 4507531
+fn prelude.list_sort_by[Int, Int, ()]#specdf0d5ffd6b35 4497647
+fn check.ExR.bool 4487365
+fn arm64.G.reuse_loads 4417767
+fn check.Reloc.eset 4329457
+fn ssa.decode_std_facts 4323273
+fn arm64.reload_reuse_l 4309139
+fn cabi.obj_rc_free 4271815
+fn arm64.same_root 4267393
+fn cabi.heap_grow 4174031
+fn macho.classify 4117915
+fn arm64.G.copy_prop 4081785
+fn lexer.Lexer.emit 3992875
+fn ssa.SfR.bytes 3903057
+fn obj.rs_push_word 3842721
+fn arm64.G.hoist_invariants 3815045
+fn prelude.llrt_str_slice_chk 3785613
+fn xo.map.put[Map[Int, (List[Int], Int)]] 3774673
+fn macho.ELinker.scan 3737909
+fn arm64.G.all_blocks 3710491
+fn dup Aux 3631649
+fn xo.mlog.find[xo.MapLogK[Str]] 3623493
+fn arm64.G.mpreds_all 3589679
+fn ssa.EntryR.bytes 3553069
+fn arm64.G.compute_ranges 3545679
+fn arm64.G.fold_not_tests 3440539
+fn xo.map.put[Map[Str, Bool]] 3419610
+fn arm64.G.fwd 3385251
+fn arm64.G.isel 3383217
+fn arm64.G.plan_lsr 3381181
+fn ssa.value_self_faults 3292595
+fn arm64.G.flush_memo 3264891
+fn arm64.G.local_empty_l 3238523
+fn ssa.EntryW.uv 3191205
+fn arm64.G.vloc 3190091
+fn ssa.Module.verify_func 3146861
+fn xo.mlog.probe[xo.MapLogK[Str]] 3118567
+fn xo.mlog.findx[xo.MapLogK[Str]] 3091079
+fn cabi.obj_rl_share 3058590
+fn arm64.dce_live 3027439
+fn parser.Parser.next 2990049
+fn check.Reloc.ty_rec 2964421
+fn arm64.by_reg 2901623
+fn arm64.G.through_params 2871795
+fn check.Checker.join_trees 2850181
+fn arm64.gen_kill 2818739
+fn arm64.writes_scratch 2768515
+fn arm64.G.unsafe_fn_tables 2740173
+fn arm64.merge_ranges 2727919
+fn arm64.pure_op 2653173
+fn xo.map.put[Map[Int, github.com/xo-lang/xo/compiler/ssa.Site]] 2616643
+fn check.ExR.ints 2577973
+fn arm64.G.thread_cset 2574337
+fn arm64.G.cause_label 2550225
+fn arm64.G.slp_chain 2497463
+fn xo.map.scan[Str] 2439287
+fn alloc.free_mt 2432726
+fn lexer.Lexer.comment 2405945
+fn ssa.Builder.specialize_pass 2391171
+fn arm64.G.zero_image_runs 2385117
+fn arm64.dv_stub_expr 2384183
+fn arm64.store_span_l 2364085
+fn arm64.G.slp_f64 2363877
+fn ssa.Module.check_types 2324217
+fn arm64.pair_mem_l 2230455
+fn prelude.list_sort_by[Int, Int, ()].fn351 2216977
+fn arm64.G.reg_uses 2176521
+fn arm64.G.add 2175839
+fn xo.map.putk[Str] 2142404
+fn arm64.mir_may_write 2141637
+fn arm64.G.place_latches 2124789
+fn ssa.Func.set_pos 2104663
+fn arm64.G.debug_sections 2098153
+fn arm64.G.call_locs 2072487
+fn arm64.konst_value 2053109
+fn ssa.Module.builtin 2037121
+fn prelude.list_sort_by[Int, (Int, Int), ()].fn474 2035819
+fn xo.map.put[Map[Int, github.com/xo-lang/xo/compiler/check.Flat]] 1966173
+fn xo.map.put[Map[Int, List[Int]]] 1964822
+fn arm64.G.dv_plan 1961419
+fn arm64.insert_ranges 1939069
+fn arm64.is_row_label 1909037
+fn arm64.G.loop_depth 1885159
+fn arm64.parse_str 1829201
+fn xo.mlog.each[xo.MapLogK[Str]] 1782715
+fn ssa.Rc.luses 1777993
+fn arm64.G.range_set 1754099
+fn ssa.op_name 1732886
+fn arm64.G.thread 1710979
+fn lexer.lookup 1694761
+fn ssa.Builder.add 1690511
+fn ssa.Module.func_index 1677458
+fn macho.Out.le 1673339
+fn xo.map.put[Map[Int, (Int, Int)]] 1640215
+fn macho.ELinker.layout 1608633
+fn check.Checker.solve_effects 1571662
+fn raw.put 1569405
+fn arm64.G.instr1 1564375
+fn text.parse_int 1552372
+fn prelude.list_sort_by[Patch, Int, ()].fn494 1544281
+fn arm64.G.range_of 1517819
+fn arm64.G.parallel 1517285
+fn ssa.Rc.modes 1501111
+fn arm64.G.word_hints 1456471
+fn arm64.dominators_of 1456427
+fn ssa.EntryW.sv 1445147
+fn xo.map.put[Map[Int, List[SPos]]] 1441973
+fn ssa.TypeHasher.visit 1436179
+fn arm64.G.take_insts 1414225
+fn check.Checker.run 1411567
+fn xo.maph.logget[Map[Str, (Int, Int)]] 1402499
+fn arm64.G.dce 1400185
+fn cabi.obj_rs_push_word 1399553
+fn rc.dec 1391716
+fn ssa.Rc.cset 1356505
+fn arm64.G.far_tests_l 1347999
+fn macho.rd_erel 1344765
+fn ssa.Rc.leaf_uses 1316227
+fn raw.str_cut 1304544
+fn arm64.dce_use 1302383
+fn ssa.key_blocks 1302074
+fn ssa.cln_key 1294764
+fn arm64.G.hoistable 1272545
+fn ssa.Rc.leaf_uses_fresh 1265823
+fn xo.mlog.probe[xo.MapLogK[Int]] 1265728
+fn arm64.rpo_succs 1264775
+fn ssa.Rc.snapshot 1235869
+fn arm64.G.begin_func 1234038
+fn arm64.G.const_defs 1201757
+fn ssa.EntryR.ty 1195741
+fn arm64.dce_sites 1192125
+fn arm64.copy_runs_l 1173211
+fn xo.map.put[Map[Str, Str]] 1167896
+fn ssa.rc_key 1160415
+fn arm64.G.jump_tables 1150467
+fn scan.tail16 1138267
+fn arm64.G.instr 1127785
+fn ssa.user_callee 1115353
+fn xo.map.put[Map[Int, Str]] 1113538
+fn parser.Parser.parse_type 1106293
+fn ssa.body_id 1102419
+fn xo.mlog.recordk[xo.MapLogK[Int]] 1090515
+fn ssa.Rc.uniq_facts 1080067
+fn arm64.G.bounds_at 1074771
+fn ssa.Rc.verify_rc 1057785
+fn xo.mlog.findx[xo.MapLogK[Int]] 1054491
+fn pack_entries 1054197
+fn arm64.G.tail_dup 1053337
+fn ssa.Func.add 1053170
+fn macho.ELinker.contents 1047387
+fn ssa.borrow_hash 1032313
+fn check.Reloc.tys_of 1031665
+fn ssa.Rc.leaves 1026589
+fn obj.rs_new_n 1024785
+fn macho.ELinker.sym_addr 1019003
+fn arm64.merge_sorted 1018125
+fn arm64.G.neg_chain 1017833
+fn ssa.Rc.heap 996287
+fn arm64.G.cluster_mem 983577
+fn arm64.Dw.bytes 967661
+fn libcmem.malloc_tc 959767
+fn arm64.drop_unreached 947352
+fn arm64.merge_i32 942691
+fn ssa.Rc.unique 942611
+fn cpu.hw 938797
+fn arm64.inline_walk 925943
+fn arm64.natural_loops 924685
+fn xo.map.put[Map[Int, SPos]] 922681
+fn ssa.dom_walk 917901
+fn arm64.G.put_insts 915729
+fn ssa.Builder.type_name 914425
+fn arm64.load_key 903975
+fn ssa.dominators 902537
+fn xo.cmp[(Int, Int)] 899044
+fn ssa.Builder.rc_run 897879
+fn ssa.ops_by_name 876122
+fn libcstr.memset 864517
+fn ssa.faulting_rt 855227
+fn arm64.dce_count_defs 853941
+fn arm64.parse_sp_str 851965
+fn arm64.dw_slot_text 849189
+fn arm64.G.out_arg_bytes 841507
+fn arm64.G.dom_decided 841181
+fn arm64.G.compute_ub 840963
+fn arm64.G.words 839919
+fn arm64.by_reg_fill 837665
+fn arm64.mem_word 829221
+fn ssa.Builder.begin 818074
+fn arm64.Dw.uleb 817887
+fn ssa.Builder.read_var 801782
+fn ssa.Rc.is_root 794131
+fn prelude.llrt_rs_put 788421
+fn eq Mode 786969
+fn ssa.EntryW.ty 783309
+fn arm64.dce_roots 780795
+fn arm64.key_text 772589
+fn ssa.borrow_callers 768201
+fn check.decode_std_export 765905
+fn obj.push_slow 750821
+fn arm64.G.thread_const_once 748825
+fn arm64.dce_keep 746743
+fn xo.mlog.find[xo.MapLogK[Int]] 744940
+fn ssa.imm_return_of 737559
+fn obj.hmove 733601
+fn ssa.pads_reached 720947
+fn parser.Parser.tok_at 714599
+fn check.Checker.flatten_into 713775
+fn prelude.list_sort_by[Patch, Int, ()]#spec5345fc410d2 712811
+fn ssa.Builder.rc_run.fn334 712682
+fn shared_read 712611
+fn ssa.uniq_candidates 710837
+fn prelude.list_sort_by[Int, (Int, Int), ()] 708653
+fn arm64.G.frame_homes_of 702227
+fn arm64.is_xreg 698269
+fn ssa.key_aux 697074
+fn xo.map.put[Map[(Int, Int), Bool]] 693433
+fn ssa.reuse_var_params 688325
+fn arm64.G.in_arg_bytes 686217
+fn arm64.G.layout 684887
+fn arm64.dce_reach 675659
+fn arm64.G.slp_chains 674933
+fn arm64.find_leader 674489
+fn arm64.G.call_bound 669537
+fn check.text 665989
+fn arm64.G.derived 656859
+fn ssa.encode_func 656324
+fn arm64.G.call_site_labels 655409
+fn arm64.G.rle_edge 654163
+fn xo.mlog.vals[xo.MapLog[Map[Str, (Int, Int)]]] 652921
+fn prelude.list_sort[Int] 645933
+fn arm64.any_line_ends 644747
+fn linux.names 642129
+fn arm64.G.m_ 641545
+fn arm64.G.edge_moves 638461
+fn xo.maph.logget[Map[Int, Int]] 626517
+fn arm64.G.call_op 621953
+fn arm64.needs_frame0 619235
+fn prelude.list_sort_by[Int, Float, ()].fn479 618489
+fn ssa.Builder.end 618012
+fn arm64.is_digits 616053
+fn prelude.pdq_insertion 608725
+fn prelude.fs_join 605371
+fn macho.Out.bytes 600545
+fn ssa.Builder.fe_ident 599803
+fn arm64.G.const_store 599785
+fn xo.map.put[Map[Str, List[Int]]] 597713
+fn arm64.G.value_cause 592465
+fn ssa.EntryR.types 589361
+fn arm64.G.select_compares 588833
+fn xo.slice[List[Move]] 570563
+fn ssa.Builder.new_block 567821
+fn check.Reloc.eff_item 567041
+fn arm64.G.plan_push_runs 565471
+fn ssa.Rc.lid 565429
+fn xo.maph.putbody[Map[Int, Int]] 564651
+fn scan.eq_long 562487
+fn xo.map.put[Map[Int, BodyFacts]] 559768
+fn arm64.dw_slots_obj 559741
+fn arm64.any_has 558713
+fn xo.map.put[Map[Str, Import]] 558365
+fn arm64.add_slot_run 558105
+fn macho.ELinker.rel_sect 556669
+fn prelude.fs_info_of 554889
+fn prelude.fs_base 550257
+fn arm64.G.reuse_flags 546159
+fn cache_get_packed 543232
+fn arm64.G.move_chain 542705
+fn xo.map.put[Map[Int, LazyFn]] 540633
+fn arm64.G.dv_copies 535635
+fn ssa.EntryW.name 535566
+fn xo.map.put[Map[Int, List[Str]]] 535489
+fn arm64.scratch_written 531545
+fn arm64.release_view 527749
+fn ssa.Builder.typ 524112
+fn lexer.Lexer.run 523785
+fn obj.rc_defer_n 520873
+fn xo.maph.slowput[Map[Int, Int]] 515777
+fn ssa.decode_facts 515693
+fn arm64.G.midpoints 514215
+fn ssa.Func.add_param 513740
+fn ssa.EntryW.ints 511401
+fn obj.rc_defer 506865
+fn macho.parse_elf_object 505609
+fn arm64.G.chain_test 499489
+fn ssa.EntryW.str 495164
+fn cabi.any_new 494185
+fn ssa.Rc.leaf_paths 492485
+fn parser.Parser.skip_body 492025
+fn ssa.Rc.clear 491561
+fn parser.Parser.expect_ident 486795
+fn arm64.G.slp_load 484037
+fn arm64.G.plain 482561
+fn xo.map.put[Map[Int, ERel]] 481583
+fn xo.maph.putrest[Map[Int, Int]] 480963
+fn parser.Parser.expect 477045
+fn arm64.G.tail_call 475787
+fn arm64.uleb_bytes 475631
+fn arm64.inline_intrinsic 473701
+fn tasks.new_object 465486
+fn xo.maph.putbody[Map[Int, Bool]] 464021
+fn cabi.obj_rs_with_cap 463297
+fn arm64.new_proof 462007
+fn check.Checker.load_std_record 461841
+fn lexer.is_letter 459691
+fn linux.statx 455157
+fn xo.mlog.put[xo.MapLog[Map[Int, Int]]] 452375
+fn cabi.any_free 445921
+fn ssa.Builder.declare0 445107
+fn ssa.txt 443214
+fn ssa.Rc.lids 441267
+fn arm64.G.cause_mark 434121
+fn check.ExR.ty 432281
+fn arm64.Dw.str 431887
+fn ssa.Rc.leaves_fresh 430107
+fn ssa.Rc.base 429195
+fn ssa.Rc.uniq 428979
+fn ssa.Builder.add_args 428819
+fn ssa.Builder.rc_prepare_incr 427583
+fn parser.Parser.parse_postfix 425519
+fn xo.map.putk[(Int, Int)] 423645
+fn cabi.any_get 419945
+fn arm64.inline_one 415817
+fn arm64.push_int 414341
+fn ssa.Module.new_func 414204
+fn xo.map.put[Set[Int]] 411637
+fn xo.map.put[Map[Int, Map[Int, List[Str]]]] 403487
+fn ssa.Module.taken_names 401199
+fn landings_cleanup_cached 400532
+fn ssa.raises 398603
+fn ssa.Rc.leaf 398199
+fn parser.Parser.leading_operator 391707
+fn arm64.G.func_begin 387775
+fn process.entry_is 383920
+fn arm64.G.plans_of 383623
+fn macho.ELinker.eh_frame_hdr 383555
+fn arm64.G.lsr_header 380275
+fn obj.h_free_n 375492
+fn ssa.Module.verify_jobs_skip.fn283 373259
+fn arm64.G.msrc_of 370845
+fn ssa.Builder.tasks_expr 369203
+fn check.Checker.subst 368787
+fn num.append_uint 364997
+fn obj.rs_append_bytes 364111
+fn arm64.G.range_get 359031
+fn xo.map.put[Map[Str, (List[Bool], Int)]] 353465
+fn arm64.G.unsafe_span 352029
+fn ssa.Builder.set_pos 351536
+fn ssa.aux_name 350833
+fn xo.map.put[Map[Int, Map[Str, Int]]] 349317
+fn ssa.imm_at 348655
+fn arm64.G.chain_blocks 347117
+fn arm64.G.def1 346320
+fn arm64.flag_test 345307
+fn ssa.Module.fault_facts 341503
+fn arm64.label_counts 336855
+fn hostpath.clean_w 332089
+fn xo.maph.putrest[Map[Int, Bool]] 331784
+fn sysio.fs_stat 329905
+fn ssa.is_terminator 328265
+fn xo.listcat[List[(Int, github.com/xo-lang/xo/compiler/ssa.Func)]] 328216
+fn arm64.G.branch_facts 325223
+fn ssa.body_facts 324249
+fn process.env_real_at 323563
+fn macho.ELinker.dw_strip.fn488 320971
+fn ssa.Rc.imm_id 320271
+fn arm64.x16_word 319767
+fn arm64.inline_costs 319239
+fn arm64.inline_cached 319120
+fn cabi.heap_large 318911
+fn lexer.Lexer.number 318499
+fn check.Checker.effect_reads_across_modules 318263
+fn xo.map.put[Map[Str, github.com/xo-lang/xo/compiler/arm64.InlineCost]] 317470
+fn scan.text 315969
+fn ssa.Builder.new_param 315475
+fn parser.Parser.parse_fn_decl 313795
+fn arm64.G.move 312701
+fn xo.mlog.claim[xo.MapLog[Map[Int, Int]]] 308653
+fn linux.cpath 306080
+fn check.Checker.set_type 302277
+fn xo.map.put[Map[Str, List[Bool]]] 300029
+fn xo.maph.ktolog[xo.MapLogK[Int]] 299901
+fn ssa.Rc.load 295197
+fn xo.maph.remrest[Map[Int, List[Str]]] 290685
+fn part_keys.fn90 288849
+fn ssa.Rc.kind 288491
+fn arm64.SumReader.strs 286137
+fn arm64.G.branch_op 285599
+fn parser.Parser.foreign_self_param 284765
+fn ssa.Builder.obj_mod 284718
+fn libcmem.free_tc 284661
+fn macho.Out.u32 280923
+fn arm64.Live.out 278421
+fn macho.ELinker.dw_strip 278197
+fn ssa.key_replayed 277604
+fn xo.mlog.record[xo.MapLog[Map[Int, Int]]] 277293
+fn pack_store 276484
+fn prelude.list_sort[Str] 276394
+fn arm64.G.dv_type_ok 276139
+fn arm64.G.new_vreg 275171
+fn macho.dw_skip_die 273829
+fn ssa.renumber 272997
+fn linux.stat 272671
+fn xo.maph.putbody[Map[Str, Int]] 272184
+fn arm64.Dw.u8 271927
+fn check.fw_expr 270428
+fn macho.Out.u8 268831
+fn prelude.fs_stat 268296
+fn prelude.list_sort_by[Int, Float, ()] 268141
+fn xo.map.put[Map[(Int, Int), Int]] 266479
+fn ssa.Builder.run_job 264857
+fn arm64.G.chain 263451
+fn ssa.landing_site 261361
+fn arm64.inlinable 260541
+fn arm64.G.decided 260523
+fn xo.map.put[Map[Str, (Str, Str)]] 255465
+fn xo.maph.logget[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]] 253269
+fn std_tree_sum 252385
+fn parser.Parser.parse_primary 250827
+fn macho.Asm.parse_line 248515
+fn prelude.list_sort_by[(Int, SPack), Int, ()]#spec9a819e581b10 248331
+fn arm64.G.list_words 247775
+fn prelude.list_insert[Int] 246591
+fn ssa.cleanup_func 245948
+fn arm64.cluster_past 242379
+fn xo.map.put[Map[Int, List[(Int, Int)]]] 241583
+fn ssa.Builder.seal 241012
+fn check.Checker.top_decl 238804
+fn arm64.SumReader.uv 237555
+fn arm64.part_lists 233747
+fn ssa.Builder.obj_name 231497
+fn check.Checker.new_module 231345
+fn prelude.fs_check 230932
+fn macho.Out.zeros 230705
+fn arm64.G.lsr_moves 229513
+fn ssa.cold_fn 227967
+fn arm64.G.word_source 227511
+fn prelude.list_sort_by[Pair, Float, ()].fn478 225499
+fn alloc.mag_count 224474
+fn arm64.G.stack_closures 221053
+fn cabi.obj_rc_alloc 219906
+fn ssa.cln_hits 219273
+fn check.Checker.need_tree 218718
+fn parser.Parser.parse_param 217927
+fn arm64.G.thread_switch 217345
+fn xo.maph.putbody[Map[Str, github.com/xo-lang/xo/compiler/ssa.Op]] 213245
+fn check.pre_expr 211670
+fn ssa.Module.block_names 210795
+fn arm64.G.pmove_srcs 210794
+fn arm64.name_closure 208905
+fn ssa.Module.extern_borrows 208597
+fn prelude.fs_rel 208451
+fn parser.parse_decl 207025
+fn arm64.G.field_op 205333
+fn parser.Parser.list_close 205287
+fn arm64.G.bound_of 202521
+fn ssa.Func.jump 201435
+fn macho.dw_runs 201053
+fn arm64.G.konst 199501
+fn ssa.Module.may_fault 197091
+fn arm64.G.shrink_split 197049
+fn xo.map.vcompact[github.com/xo-lang/xo/compiler/ssa.Func] 195177
+fn ssa.Builder.int_t 192813
+fn xo.map.put[Map[Int, github.com/xo-lang/xo/compiler/ssa.Func]] 191347
+fn arm64.G.dv_op 191254
+fn arm64.G.plan_field_lens 189187
+fn xo.mlog.putpos[xo.MapLogK[Int]] 187065
+fn xo.slice[List[Int]] 187000
+fn arm64.G.compare 186649
+fn check.Checker.walk_named 185652
+fn prelude.pdq_int 184164
+fn parser.Parser.list_open 181849
+fn xo.mlog.record[xo.MapLog[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]]] 181613
+fn ssa.Builder.add_landings_with 180367
+fn arm64.G.logic_value 179631
+fn parser.Parser.parse_top_decl 179481
+fn obj.rs_push_words 178461
+fn xo.map.put[Map[Int, List[Bool]]] 177401
+fn arm64.G.emit_condbr 177261
+fn prelude.list_sort_by[FileInfo, Str, ()]#spec81bad8c32842 176973
+fn parser.Parser.list_sep 176857
+fn arm64.loop_sizes 173345
+fn parser.Parser.parse_binary 173227
+fn prelude.int_range_list 172452
+fn xo.maph.putbody[Map[Int, SPos]] 171865
+fn macho.dw_keep_with 170377
+fn arm64.G.switch_path 169709
+fn xo.mlog.probe[xo.MapLogK[(Int, Int, Int)]] 169339
+fn parser.Parser.collect_docs 169253
+fn arm64.mov_imm 167669
+fn ssa.type_refs 166339
+fn prelude.str_replace 164493
+fn ssa.Func.link 162117
+fn arm64.G.dup_latch 159915
+fn xo.mlog.claimk[xo.MapLogK[Int]] 159905
+fn ssa.Rc.rc_cached 159525
+fn xo.iface[native.userfs.UserEnv].SepEnv.get 159455
+fn arm64.G.thread_const 159121
+fn arm64.G.cfi_start 158953
+fn ssa.Builder.write_var 158386
+fn prelude.checked 157593
+fn xo.slice[List[Str]] 157517
+fn prelude.pdq_partition 156025
+fn ssa.Builder.jump 155837
+fn ssa.body_ids_of.fn226 155255
+fn check.Checker.lookup_local 155254
+fn prelude.list_sort_by[Pair, Float, ()]#spec350bb718ab27 154673
+fn ssa.Rc.vstart 153531
+fn arm64.G.call_moves_v 153485
+fn arm64.G.const_before 153253
+fn std_tree_lines 153021
+fn parser.Parser.parse_params 152829
+fn arm64.G.narrow 151847
+fn parser.Parser.foreign_stmt 150767
+fn prelude.str_runes 149353
+fn arm64.G.new_vregs 148687
+fn prelude.str_trim_prefix 148273
+fn ssa.Module.check_assumptions 147703
+fn pack_entry 147573
+fn arm64.find_loop_call 147149
+fn ssa.part_end 147073
+fn xo.map.put[Map[Int, MemAt]] 146587
+fn arm64.rpo_of 145185
+fn arm64.G.forward 144275
+fn xo.slice[List[Inst]] 143637
+fn prelude.list_sort_by[(Str, Int), Str, ()]#spec27868ff8a251 143377
+fn ssa.Builder.tkind 142273
+fn ssa.key_body 142075
+fn arm64.G.func_header 137461
+fn prelude.list_sort_by[FileInfo, Str, ()].fn137 136729
+fn parser.Parser.parse_expr 136529
+fn arm64.dv_ops_text 136147
+fn xo.mlog.put[xo.MapLog[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]]] 135937
+fn arm64.G.call 135753
+fn check.Checker.ident_obj 135690
+fn arm64.G.slp_f64.fn394 132513
+fn arm64.site_chain 132467
+fn ssa.Rc.infer_borrows_incr 131557
+fn arm64.G.eq_aggregate 130019
+fn cabi.obj_rs_append_bytes 129916
+fn dupp Ty 129842
+fn arm64.G.lsda_label 128449
+fn ssa.Builder.run_queue 128195
+fn xo.map.put[Map[Int, Doc]] 128109
+fn parser.Parser.got 128019
+fn arm64.G.inline_rt 126659
+fn arm64.dw_var 126579
+fn check.Checker.check_export_names 126141
+fn arm64.G.add_sub 125061
+fn arm64.sat_mul 124399
+fn parser.Parser.parse_unary 123047
+fn arm64.imm_post 122235
+fn parser.expr_span 122200
+fn arm64.G.field_words 122091
+fn parser.Parser.parse_clauses 122017
+fn arm64.inlinable_set 121225
+fn xo.maph.putrest[Map[Str, Int]] 120964
+fn macho.dw_skip_form 120229
+fn arm64.inline_level 120035
+fn arm64.G.pad_target 119989
+fn arm64.G.len_moves 119075
+fn ssa.Builder.debug_bind 117755
+fn arm64.G.set 117219
+fn arm64.G.narrow_w 117151
+fn check.Reloc.evar 116953
+fn ssa.Func.branch 114705
+fn cache_id 114111
+fn arm64.len_root 113199
+fn lexer.Lexer.string_lit 112701
+fn arm64.G.lsda 112079
+fn ssa.Builder.block 112005
+fn check.Checker.infer0 111582
+fn ssa.Builder.declare_exports_of 111465
+fn xo.iface[native.userfs.UserOs].native.userfs.OsFields.fs 111057
+fn arm64.G.reach 110987
+fn prelude.list_sort_int 110946
+fn xo.map.put[Map[Str, (Int, Int, Int)]] 110341
+fn xo.maph.loglookup[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]] 110017
+fn arm64.G.heavy 110015
+fn ssa.Rc.init_borrows 109953
+fn arm64.Dw.sleb 109895
+fn check.Checker.check_args 109774
+fn dup Str 109611
+fn lexer.Lexer.parse_int 109057
+fn macho.ELinker.elf_follows 108587
+fn check.Checker.new_local 108397
+fn ssa.Builder.impl_named 107652
+fn check.Checker.record_rec 107526
+fn arm64.G.word 107291
+fn obj.rs_new 106880
+fn macho.split_operands 106857
+fn heapos.mag_caps 103441
+fn arm64.G.dup_block_ok 103051
+fn ssa.remove_blocks 102087
+fn build_native 102021
+fn ssa.uses_of 101559
+fn arm64.G.lsr_params 101115
+fn ssa.const_reads 100401
+fn arm64.G.check_head 100327
+fn check.Checker.check_module 99956
+fn ssa.Builder.user_cap_check 99501
+fn strings.replace_build 99289
+fn arm64.G.step_of 99071
+fn parser.Parser.parse_type_param 99057
+fn xo.map.put[Map[Int, Offset]] 98735
+fn check.Checker.var_of 97935
+fn ssa.Builder.unwind_block 97818
+fn ssa.Func.new_block 97705
+fn arm64.rt_path 97341
+fn arm64.new_gen 97201
+fn ssa.prune_func 96775
+fn arm64.G.elem_addr 96273
+fn xo.maph.putbody[Map[Int, List[Str]]] 96055
+fn arm64.sleb_bytes 96025
+fn check.Checker.set_file 95629
+fn xo.maph.slowput[Map[(Int, Int, Int), Int]] 95623
+fn ssa.Builder.fold_known_calls 95037
+fn prelude.list_sort_by[(Int, Int), Int, ()].fn157 94969
+fn arm64.G.tail_merge_cold 94835
+fn ssa.Builder.unwind 94765
+fn arm64.G.select_branch 94571
+fn hostpath.abs_w 94177
+fn scan.eq_text 94109
+fn arm64.in_loop 93509
+fn arm64.dv_stub_op 93479
+fn xo.maph.putrest[Map[Str, github.com/xo-lang/xo/compiler/ssa.Op]] 93445
+fn check.Checker.named_obj 93314
+fn ssa.Module.is_extern 93003
+fn ssa.key_func 92961
+fn hostpath.is_abs_w 92121
+fn parser.Parser.parse_fn_type 92069
+fn check.Checker.note_spawn_binding 92039
+fn parser.kind_text 91989
+fn arm64.G.edge 91577
+fn arm64.sum_at 91417
+fn ssa.Module.intern 91405
+fn check.ExR.span 90989
+fn xo.maph.slowput[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]] 90793
+fn macho.ELinker.undefined_in 89727
+fn xo.maph.tolog[Map[Int, Int]] 88651
+fn macho.sym_entry 88089
+fn arm64.G.mark_tails 87841
+fn ssa.Module.named 87841
+fn parser.Parser.scan_for_header 87657
+fn arm64.reader_hidden 87613
+fn ssa.Builder.bool_t 87089
+fn xo.maph.slowput[Map[Str, Bool]] 86711
+fn parser.Parser.foreign_result 86687
+fn arm64.G.exports 86389
+fn prelude.list_sort_by[FileInfo, Str, ()]#specee21615a999b 85871
+fn xo.map.put[Map[Int, Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]]] 85645
+fn alloc.refill_alloc 85523
+fn arm64.G.rc_helper 85093
+fn prelude.fs_resolve 84991
+fn arm64.past_rows 84617
+fn prelude.list_sort_by[(Int, Int), Int, ()]#spec54f86c12f7a6 83921
+fn xo.map.put[Map[(Int, Int, Int), Int]] 82063
+fn lexer.without_byte 81913
+fn userfs.OsFields.fs 81304
+fn parser.Parser.short_decl 81275
+fn ssa.Builder.exit_to 81045
+fn ssa.Rc.alive 80459
+fn arm64.G.cond_facts 80265
+fn parser.Parser.unparenthesized_effect 80245
+fn ssa.cln_hits.fn222 80202
+fn arm64.G.dw_type 80063
+fn ssa.force_lazy.fn166 80047
+fn xo.iface[native.userfs.UserOs].native.userfs.OsFields.env 79780
+fn binfo_sources 79221
+fn ssa.Module.heap_in 79196
+fn parser.Parser.foreign_unary 78417
+fn arm64.G.store 78313
+fn xo.maph.putbody[Map[Str, Bool]] 77876
+fn ssa.EntryR.bool 77106
+fn ssa.Builder.expr_at 76965
+fn arm64.Dw.quad 76879
+fn arm64.reg_name 76681
+fn xo.maph.putrest[Map[Int, List[Str]]] 76601
+fn check.Checker.write_ty 76528
+fn ssa.Builder.spec_callee_at 75801
+fn ssa.Rc.apply_uniq 75775
+fn arm64.G.esize 75611
+fn arm64.decode_sum 74711
+fn file_stamp 74605
+fn arm64.G.empty_list_cause 74551
+fn xo.maph.putrest[Map[Int, SPos]] 73921
+fn ssa.Builder.type_params 73661
+fn ssa.Builder.param_bindings 73527
+fn prelude.list_sort_by[(Str, Str, Bool), Str, ()]#spec4486301039b4 72917
+fn arm64.find_zero_join 72861
+fn ssa.Builder.prune_unwind 71753
+fn arm64.G.new_block 71729
+fn arm64.G.set_fault 71729
+fn macho.ELinker.add_globals 71575
+fn arm64.G.sdiv_quot 71543
+fn arm64.G.pad_entry 71351
+fn rt_sums 70961
+fn arm64.G.data_list 70381
+fn ssa.Builder.named_type 69870
+fn macho.encode_op 69645
+fn ssa.Module.func_type 69632
+fn arm64.G.f32_param_move 69487
+fn ssa.Builder.fe_replay 69252
+fn prelude.list_sort_by[Str, Str, ()]#2.fn413 68761
+fn userfs.OsFields.env 68198
+fn ssa.type_desc 68063
+fn ssa.key_head 67987
+fn check.clean 67789
+fn ssa.UniqFacts.facts 67343
+fn ssa.body_ids_of 67175
+fn xo.mlog.newdir[List[List[xo.MapEntry[Int]]]] 66901
+fn lexer.Lexer.digits 66879
+fn xo.mlog.newdir[List[List[Int]]] 66661
+fn xo.map.put[Map[Int, LsrLoop]] 66023
+fn xo.mlog.flatten[xo.MapLogK[Int]] 65763
+fn xo.mlog.findx[xo.MapLogK[(Int, Int, Int)]] 65745
+fn arm64.G.list_len 65697
+fn asm_bytes 65417
+fn ssa.Builder.importer_built 65393
+fn arm64.G.from_memory 65241
+fn parser.Parser.parse_type_params 65185
+fn arm64.G.overflow_test 65083
+fn ssa.imm_value 64885
+fn check.Checker.prelude_obj 64647
+fn arm64.G.load_elem 64537
+fn arm64.G.heap 64225
+fn ssa.Builder.fe_fixed 64171
+fn check.words 64158
+fn arm64.G.release 63809
+fn xo.mlog.put[xo.MapLog[Map[(Int, Int, Int), Int]]] 63397
+fn xo.maph.putrest[Map[Str, Bool]] 62944
+fn arm64.G.cimm 62613
+fn check.Checker.mark_used 62311
+fn check.Checker.stmt 62227
+fn parser.Parser.parse_simple_stmt 61831
+fn arm64.inline_keys 61765
+fn ssa.Module.tuple 61680
+fn parser.Parser.foreign_inc_dec 61191
+fn sysio.set_err 60929
+fn xo.mlog.putpos[xo.MapLogK[Str]] 60924
+fn cabi.obj_rs_push_words 60827
+fn check.Checker.qual_name 60712
+fn ssa.force_lazy 60615
+fn macho.le_put 60417
+fn xo.map.put[Map[Int, CallInfo]] 59966
+fn check.Checker.lookup_module_obj 59856
+fn check.Checker.check_fn_decl 59557
+fn ssa.Builder.expr 59537
+fn check.Checker.nat_in 59517
+fn parser.Parser.doc_for 59429
+fn ssa.Module.immortal_returns_m 59041
+fn ssa.Builder.rc_prepare 58314
+fn macho.Asm.write_elf 57665
+fn check.Checker.stored_updates 57365
+fn ssa.Builder.branch 57021
+fn macho.dw_write_runs 56663
+fn check.Checker.split_critical_sections 56630
+fn check.Checker.resolve_sig 56251
+fn arm64.G.fold_cond 55529
+fn arm64.G.store_elem 55523
+fn ssa.Builder.ident 55227
+fn ssa.shift_lines 54962
+fn arm64.mangle_fn 54771
+fn parser.Parser.parse_err_spec 54637
+fn check.expr_kind 54464
+fn arm64.G.nwords 54135
+fn ssa.type_keys 54049
+fn check.Checker.resolve_named_type 54027
+fn xo.mlog.put[xo.MapLog[Map[Str, Bool]]] 53792
+fn ssa.Rc.borrow_round.fn503 53769
+fn arm64.G.by_ref_of 53723
+fn ssa.Builder.fe_entry 53428
+fn check.Checker.declare 53057
+fn ssa.fold_tuple_fields 52987
+fn ssa.is_update_call 52921
+fn ssa.Module.renumber_shells 52911
+fn ssa.Builder.member 52248
+fn alloc.clock 52219
+fn xo.map.put[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]] 51941
+fn raw.decode 51503
+fn macho.unquote 51425
+fn arm64.inv_cond 51239
+fn check.Checker.display_name 51235
+fn check.Checker.unify 51090
+fn ssa.le_holds 51001
+fn ssa.force_lazy_unfacted 50929
+fn arm64.G.regalloc.fn396 50913
+fn arm64.entry_parts 50829
+fn prelude.pdq_partial_insertion 50411
+fn macho.ELinker.eh_live 50277
+fn check.unparen 50218
+fn ssa.Rc.borrow_scan 49741
+fn parser.Parser.parse_pat_alt 49553
+fn ssa.after 49537
+fn check.export_clashes 49517
+fn arm64.at_operand 49433
+fn ssa.Module.param_types 49397
+fn check.Checker.check_fn_defaults 49244
+fn arm64.G.ext_test 48853
+fn arm64.G.known_bool 48815
+fn check.Checker.call_func 48767
+fn check.ExR.eff_item 48437
+fn xo.map.put[Map[Str, github.com/xo-lang/xo/compiler/ssa.Kind]] 48316
+fn parser.Parser.parse_stmt 48227
+fn xo.mlog.find[xo.MapLogK[(Int, Int, Int)]] 48127
+fn sysio.read_file 47917
+fn parser.Parser.parse_type_top 47881
+fn xo.maph.loglookup[Map[Str, Bool]] 47639
+fn check.Checker.mutex_with 47573
+fn macho.Asm.directive 47537
+fn xo.map.remove[Map[Int, List[Int]]] 47317
+fn macho.Asm.define_numeric 47299
+fn arm64.G.and_test 47255
+fn check.Checker.block 46765
+fn xo.mlog.recordk[xo.MapLogK[Str]] 46709
+fn ssa.Builder.tasks_opt 46379
+fn num.ndigits8 46311
+fn check.Checker.type_in 45944
+fn parser.Parser.parse_receiver 45859
+fn check.Checker.assignable 45717
+fn poll.canceled 45665
+fn ssa.fe_variant 45617
+fn ssa.cse 45453
+fn xo.mlog.record[xo.MapLog[Map[(Int, Int, Int), Int]]] 45411
+fn check.Checker.resolve_sigs 45209
+fn arm64.find_call 45077
+fn ssa.Builder.type_of 45058
+fn prelude.fs_read 44837
+fn arm64.G.data_addr 44727
+fn check.Checker.lazy_mod 44665
+fn alloc.cunlock 44483
+fn ssa.Builder.coerce_at 44436
+fn prelude.list_sort_by[(Str, Str, Bool), Str, ()].fn239 44065
+fn macho.trim 44057
+fn ssa.Builder.vty 44051
+fn ssa.Builder.native_mod 43881
+fn check.Checker.call_in 43861
+fn ssa.Builder.call_as_via 43752
+fn arm64.G.heap_leaves 43455
+fn ssa.Builder.mod_prefix 43173
+fn arm64.find_closure_call 43017
+fn arm64.cut_parts 42899
+fn check.Checker.flow_cands 42697
+fn arm64.stack_small_violations 42313
+fn check.Checker.pop_scope 42228
+fn ssa.Builder.insert_rc_keys 42121
+fn prelude.fs_read_link 41757
+fn check.Checker.check0 41565
+fn ssa.rc_checker 41405
+fn ssa.const_list 41197
+fn parser.find_bytes 41057
+fn arm64.G.f32_lazy 41003
+fn ssa.Builder.path_named_mods 40793
+fn xo.maph.slowput[Map[Int, MemAt]] 40717
+fn arm64.devirtualize 40585
+fn macho.SR.u32 39673
+fn alloc.resize_aligned 39618
+fn macho.patches_in_order 39549
+fn arm64.G.own_exports 39401
+fn ssa.Rc.owner_use 39349
+fn xo.maph.loglookup[Map[Str, (Int, Int)]] 39209
+fn macho.Asm.parse 39093
+fn xo.maph.putbody[Map[Str, Import]] 38809
+fn hostpath.volume_w 38761
+fn ssa.remove_dead_fields 38711
+fn ssa.cln_keys 38489
+fn macho.cie_fde_encoding 38487
+fn ssa.borrow_hashes 38487
+fn arm64.G.elem_base1 38417
+fn ssa.Builder.is_dead 37930
+fn check.Checker.check_derives_comparable 37809
+fn arm64.G.unflip 37593
+fn check.Checker.infer 37445
+fn ssa.Rc.parent 37255
+fn arm64.G.scratch_reg 37017
+fn xo.maph.putbody[Map[(Int, Int, Int), Int]] 36981
+fn json_str 36893
+fn arm64.G.bounds_check 36873
+fn prelude.cap_admits 36829
+fn xo.maph.putbody[Map[Int, MemAt]] 36821
+fn parser.Parser.braces_more 36751
+fn debug.mem_label 36521
+fn ssa.Rc.walk 36315
+fn check.stamp_files 36271
+fn hostpath.slash_w 36121
+fn arm64.G.stable_list 36109
+fn ssa.Builder.fail_err 35919
+fn arm64.G.put 35873
+fn arm64.copy_moves 35791
+fn arm64.G.ret_le_of 35743
+fn ssa.Builder.impl_type 35425
+fn arm64.G.on 35273
+fn macho.Asm.sym 35201
+fn check.Checker.resolve_type 35085
+fn xo.mlog.vals[xo.MapLog[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]]] 35041
+fn arm64.G.clobber 34889
+fn rc_cached 34721
+fn ssa.remove_trivial_params 34709
+fn xo.maph.putrest[Map[(Int, Int, Int), Int]] 34335
+fn arm64.G.prologue 34309
+fn ssa.Rc.rc_func 34081
+fn xo.map.putk[(Int, Int, Int)] 34003
+fn arm64.pass_on 33935
+fn ssa.fe_keys 33917
+fn ssa.Module.list 33820
+fn ssa.Builder.tasks_stmt 33671
+fn macho.write_patched 33601
+fn lexer.Lexer.cook 33385
+fn parser.Parser.parse_effect_clause 33377
+fn nolibc 33369
+fn xo.maph.putbody[Map[Int, Doc]] 33369
+fn xo.maph.logget[Map[(Int, Int, Int), Int]] 33291
+fn alloc.page_class 33201
+fn strings.trim 33019
+fn arm64.imm_text 32841
+fn ssa.Builder.call 32623
+fn check.Checker.mod_cache_replay 32421
+fn xo.mlog.remove[xo.MapLog[Map[Int, List[Str]]]] 32381
+fn ssa.Builder.nat_check 31959
+fn check.Checker.resolve_type_obj 31697
+fn ssa.Module.mark_extern 31687
+fn xo.maph.putbody[Map[Int, List[Int]]] 31612
+fn arm64.G.imm 31433
+fn ssa.Builder.func_name 31287
+fn ssa.ufn 31205
+fn macho.get_uleb 31109
+fn check.Checker.mod_zones 31107
+fn xo.maph.oflog[Map[Int, Int]] 31005
+fn parser.Parser.parse_effect 30989
+fn ssa.Builder.insert_rc_apply 30937
+fn prelude.texts 30885
+fn ssa.Rc.heap_in 30747
+fn parser.Parser.parse_block 30509
+fn check.fields 30341
+fn pool.mon_scan 30247
+fn check.Checker.mk_named 29999
+fn arm64.G.range_and 29817
+fn arm64.fn_order_of 29739
+fn arm64.G.rc_at 29707
+fn arm64.store_spans 29663
+fn arm64.G.shrink_plan 29633
+fn xo.mlog.put[xo.MapLog[Map[Int, MemAt]]] 29475
+fn arm64.G.range_branch 29215
+fn xo.maph.slowput[Map[Str, (Int, Int)]] 29149
+fn arm64.G.reuse 29111
+fn arm64.is_compare 29097
+fn ssa.Rc.owned_at 29061
+fn lower 28755
+fn check.Checker.cand_events 28575
+fn macho.reversed 28305
+fn arm64.G.rt_call 28141
+fn arm64.G.rotate_jump 28043
+fn macho.Asm.elf_directive 27969
+fn check.fw_stmt 27929
+fn macho.Asm.register 27619
+fn check.Checker.binary_type 27603
+fn check.Checker.is_move_only 27409
+fn check.Checker.coerce_to 27404
+fn ssa.shift_pos 27313
+fn xo.maph.slowrem[Map[Int, List[Str]]] 27277
+fn check.pre_stmt 27071
+fn arm64.G.range_or 27001
+fn parser.Parser.parse_bounds 26993
+fn check.Checker.named 26876
+fn xo.mlog.vtable[List[List[List[Str]]]] 26749
+fn arm64.G.range_or_join 26481
+fn check.Checker.resolve_args_for 26479
+fn arm64.G.elem_base 26415
+fn process.cstr 26357
+fn unicode.map_case 26295
+fn ssa.find_repl 26241
+fn xo.maph.putbody[Map[(Int, Int), Int]] 26219
+fn ssa.Builder.snapshot 26218
+fn ssa.Rc.borrow_projections 26139
+fn tasks.run_claimed 26114
+fn xo.mlog.each[xo.MapLogK[Int]] 26031
+fn ssa.known_result 26005
+fn xo.map.put[Map[Str, github.com/xo-lang/xo/compiler/macho.Enc]] 25985
+fn num.append_wide 25841
+fn arm64.G.wrap_op 25833
+fn arm64.G.offset_base 25641
+fn ssa.Builder.value_as 25355
+fn arm64.adc_pairs 25345
+fn xo.maph.putrest[Map[Int, List[Int]]] 25273
+fn ssa.Builder.run_gens 25255
+fn prelude.list_sort_by[(Str, Str), Str, ()]#2.fn426 25129
+fn arm64.gen_part 25127
+fn borrow_record_read 25071
+fn ssa.Builder.cleanup_all_jobs 24974
+fn ssa.Builder.cint 24939
+fn xo.maph.putrest[Map[Int, MemAt]] 24841
+fn ssa.Builder.apply 24817
+fn arm64.generate_cached 24577
+fn arm64.G.inc 24487
+fn arm64.G.helper_ext 24429
+fn arm64.hfacts_decode 24199
+fn check.Checker.ctor_in 24073
+fn arm64.cfi_at 24051
+fn prelude.fs_walk_dir 23905
+fn arm64.G.bare_arm 23805
+fn ssa.Rc.borrow_rounds 23645
+fn xo.mlog.put[xo.MapLog[Map[Str, (Int, Int)]]] 23503
+fn arm64.G.mul 23287
+fn ssa.Module.check_types.fn282 22987
+fn check.Checker.declare_local 22976
+fn ssa.Builder.vop 22873
+fn arm64.G.mem_only 22865
+fn check.is_derivable_name 22787
+fn arm64.G.strip_set 22735
+fn ssa.Builder.binary 22658
+fn ssa.Builder.declare_exports 22487
+fn arm64.G.scratch_or_fail 22475
+fn xo.maph.ktolog[xo.MapLogK[Str]] 22261
+fn xo.maph.logget[Map[Str, Int]] 22133
+fn arm64.konst_key 22009
+fn ssa.Builder.file_name 22009
+fn arm64.G.logic_const 21899
+fn macho.skip_leb 21897
+fn ssa.Builder.fe_const_ids 21855
+fn check.Checker.perform 21799
+fn check.Checker.unify_tracked 21760
+fn arm64.G.inline_raw 21621
+fn arm64.inline_state_jobs 21535
+fn check.Checker.call_method 21363
+fn macho.encode_op_fix 21335
+fn check.Checker.check_name 21318
+fn lexer.valid_underscores 21253
+fn ssa.write_ints 20853
+fn xo.maph.logget[Map[Int, List[Str]]] 20785
+fn xo.maph.putrest[Map[Str, Import]] 20777
+fn ssa.Builder.cleanup_skip_jobs 20685
+fn ssa.Rc.origin1 20675
+fn sysio.fs_read 20543
+fn ssa.names_file 20494
+fn ssa.kind_text 20469
+fn strings.space_start 20465
+fn check.derivable_table 20454
+fn pool.scope_join 20414
+fn macho.Asm.label_sym 20321
+fn ssa.Builder.fidx 20282
+fn ssa.Builder.iface_type 20253
+fn build_info 20245
+fn ssa.Builder.str_t 20093
+fn arm64.G.funnel 20085
+fn macho.outline_atomic_lse 20061
+fn check.Checker.same_effects 19905
+fn check.Checker.copy_out_init 19883
+fn xo.mlog.record[xo.MapLog[Map[Int, MemAt]]] 19809
+fn arm64.G.frameless_exit 19747
+fn macho.Asm.elf_apply_fixes 19741
+fn arm64.G.fold_decided 19733
+fn ssa.Builder.uses_os_tasks 19697
+fn macho.ELinker.write 19677
+fn ssa.Builder.call_expr 19651
+fn check.Checker.check_ty 19649
+fn digest.finish 19571
+fn self_id 19477
+fn check.Checker.use_var 19374
+fn arm64.G.saves 19339
+fn cabi.obj_rc_defer_n 19297
+fn check.Checker.check_struct_extras 19273
+fn pool.any_work 19243
+fn arm64.G.rot_operand 19233
+fn ssa.Builder.stmt_body 19205
+fn arm64.G.checked 19149
+fn macho.parse_op 19137
+fn cabi.task_spawn_fn 18996
+fn arm64.G.frame_region 18929
+fn check.Checker.prelude_missing 18909
+fn xo.iface[native.userfs.UserOs].native.userfs.OsFields.clock 18876
+fn ssa.pos_split 18797
+fn fe_cached_build 18653
+fn arm64.Dw.u32 18485
+fn ssa.Builder.is_ret_ctor 18465
+fn xo.map.put[Map[Str, github.com/xo-lang/xo/compiler/lexer.Kind]] 18393
+fn process.env_real 18391
+fn check.Checker.fresh_subst 18383
+fn ssa.Rc.liveness 18325
+fn ssa.Rc.borrow_round 18207
+fn xo.maph.putbody[Map[Str, (Int, Int)]] 18193
+fn parser.cut_tokens 18175
+fn macho.Asm.push_item 18097
+fn arm64.G.real 18025
+fn check.Checker.int_fits 18016
+fn ssa.Builder.thunk_func 18016
+fn ssa.spec_clone 17851
+fn xo.maph.putrest[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]] 17801
+fn arm64.G.less_ub 17733
+fn arm64.file_index 17733
+fn std_cache_key 17705
+fn ssa.cache_const_reads 17641
+fn macho.parse_operand 17533
+fn ssa.Builder.is_dyn 17465
+fn check.Checker.force_body 17443
+fn arm64.fn_sum 17413
+fn macho.dw_abbrevs 17285
+fn prelude.list_sort_by[github.com/xo-lang/xo/compiler/ssa.Leaf, (Int, Str), ()]#spec1dfca076b989 17281
+fn prelude.str_rfind 17249
+fn ssa.Builder.user_realtime 17213
+fn check.is_protected 17171
+fn ssa.Builder.place 17171
+fn ssa.Builder.ambiguous_type_names 17151
+fn check.Checker.pattern 17141
+fn ssa.Builder.arith 17116
+fn arm64.G.same_loaded 17115
+fn check.Checker.declare_var 17111
+fn check.Checker.expand_derives 16995
+fn prelude.llrt_env_get 16967
+fn macho.dw_new_starts 16925
+fn strings.space_end 16854
+fn ssa.Builder.llrt_flag_call 16641
+fn macho.reg 16549
+fn check.Checker.args_subst 16534
+fn xo.map.remove[Map[Int, github.com/xo-lang/xo/compiler/ssa.Func]] 16515
+fn xo.maph.putrest[Map[Int, Doc]] 16513
+fn arm64.G.pow2 16467
+fn arm64.G.str_base_heap 16445
+fn ssa.rt_export 16369
+fn parser.Parser.at_type_params 16183
+fn parser.Parser.parse_match 16111
+fn parser.Parser.parse_file 16071
+fn xo.mlog.vals[xo.MapLog[Map[Int, Int]]] 16065
+fn xo.map.put[Map[(Int, Int), List[(Int, Int)]]] 16043
+fn parser.Parser.parse_pattern 15947
+fn linux.open 15842
+fn ssa.arg_exprs 15790
+fn ssa.EntryW.bytes 15736
+fn arm64.find_zero_ret 15625
+fn macho.Asm.elf_reloc 15549
+fn macho.ElfStoreLink.resolve_half 15537
+fn arm64.G.function 15505
+fn check.place_root 15474
+fn parser.Parser.parse_for 15457
+fn macho.elf_eh_records 15421
+fn ssa.Builder.recorder_call 15398
+fn check.Checker.link_view 15273
+fn linux.clock_gettime 15227
+fn xo.maph.putbody[Map[Int, Str]] 15225
+fn dir_name 15183
+fn check.is_int_name 15159
+fn ssa.Builder.is_std_mod 15137
+fn cabi_libc.memset 15096
+fn arm64.passes 15049
+fn ssa.EdgeNeed.order 15031
+fn inline_or_defer 15017
+fn cabi.obj_h_free 15016
+fn ssa.Builder.std_call 14987
+fn cabi.heap_release 14965
+fn check.Checker.parse_lazy_path 14961
+fn xo.maph.putbody[Map[Int, List[Bool]]] 14953
+fn arm64.G.loc_label 14903
+fn check.join_bytes 14831
+fn arm64.G.use_reg 14797
+fn ssa.Builder.int_lit 14748
+fn xo.mlog.eachpos[xo.MapLogK[Str]] 14737
+fn ssa.Builder.named_obj 14696
+fn arm64.G.less_fact 14661
+fn incr_hollow 14647
+fn userfs.OsFields.clock 14556
+fn macho.elf_prep_key 14515
+fn ssa.spec_uses 14503
+fn ssa.Builder.io_call 14382
+fn xo.mlog.eachpos[xo.MapLogK[Int]] 14379
+fn lexer.Lexer.scan_interp 14359
+fn ssa.Builder.finish_fn 14335
+fn parser.Parser.parse_struct_body 14323
+fn arm64.asm_bytes 14293
+fn macho.Asm.map_code 14245
+fn macho.ELinker.phdrs 14237
+fn check.Checker.check_lazy 14217
+fn xo.maph.slowput[Map[Int, List[Str]]] 14217
+fn prelude.list_sort_by[Str, Str, ()]#2#spec1853a5aa7033 14117
+fn ssa.Builder.run_job_fe 13998
+fn check.Checker.record 13972
+fn ssa.Rc.reuse 13965
+fn ssa.Builder.reaches 13951
+fn ssa.Builder.fe_tname 13946
+fn check.Checker.declare_type 13925
+fn ssa.Builder.run_defers 13660
+fn linux.words 13569
+fn arm64.G.nonzero_or 13551
+fn arm64.G.join_facts 13525
+fn cabi.scope_open 13519
+fn prelude.fs_read_dir 13477
+fn ssa.RcState.put 13417
+fn check.Checker.new_obj 13365
+fn arm64.G.pmove 13357
+fn heapos.large_room 13345
+fn arm64.G.option 13321
+fn ssa.Rc.origin 13177
+fn ssa.Builder.unit_t 12949
+fn macho.ELinker.undefined 12897
+fn ssa.Rc.group_releases 12863
+fn check.to_snake 12849
+fn arm64.G.pad_of 12817
+fn arm64.G.recover_operand 12713
+fn pack_dir 12661
+fn ssa.keeps_operands 12661
+fn arm64.hoist_fields 12653
+fn check_program_ov 12633
+fn pool.scope_add_at 12591
+fn ssa.Module.ret_bounds 12499
+fn arm64.G.f32_params 12477
+fn poll.poll_round 12474
+fn xo.maph.putrest[Map[(Int, Int), Int]] 12469
+fn lap 12457
+fn arm64.G.dw_words 12359
+fn ssa.fe_rename 12332
+fn check.Checker.load_native 12329
+fn xo.maph.putrest[Map[Int, List[Bool]]] 12329
+fn check.Checker.find_method_any 12312
+fn macho.sw32 12301
+fn arm64.G.branch_preds 12269
+fn membudget.add 12219
+fn check.expand_or 12199
+fn ssa.Builder.set_line 12181
+fn arm64.with_edges 12029
+fn ssa.Builder.body_of 12014
+fn check.Checker.subst_eff 11900
+fn xo.maph.putbody[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]] 11877
+fn prelude.fs_read_text 11845
+fn check.Checker.call 11724
+fn arm64.G.sym_addr 11715
+fn backend_cache_mode 11611
+fn ssa.Builder.result_parts 11528
+fn arm64.rename_regs 11521
+fn lexer.ends_statement 11521
+fn prelude.fs_cwd_path 11519
+fn parser.Parser.parse_if 11497
+fn xo.maph.remrest[Map[Int, List[Int]]] 11457
+fn ssa.Builder.no_alloc_prefix 11439
+fn heapos.release 11409
+fn ssa.Builder.declare 11373
+fn ssa.Builder.trace_type 11309
+fn arm64.G.elem_in_place 11237
+fn xo.droplist[List[Int]] 11161
+fn check.is_snake 11102
+fn arm64.hollow_extra_from 11101
+fn xo.mlog.put[xo.MapLog[Map[Int, List[Str]]]] 11089
+fn parser.Parser.parse_enum 11009
+fn arm64.G.hidden_global 10915
+fn arm64.fp_caller 10891
+fn ssa.Builder.map_values_hof 10864
+fn xo.map.remove[Map[Str, Int]] 10813
+fn prelude.fs_exists 10732
+fn check.Checker.call_selector 10717
+fn arm64.G.unframe 10679
+fn arm64.G.atomic_def 10665
+fn ssa.Builder.result_of 10654
+fn arm64.G.dw_base 10579
+fn xo.maph.putrest[Map[Int, List[(Int, Int)]]] 10577
+fn ssa.Builder.mod_uses_tasks 10457
+fn arm64.G.loc_args 10435
+fn xo.maph.putbody[Map[(Int, Int), Bool]] 10401
+fn arm64.base62 10339
+fn arm64.G.div_rem 10321
+fn ssa.Builder.target_test 10273
+fn libcmem.auxval 10269
+fn tasks.scope_close 10267
+fn parser.Parser.close_brace 10201
+fn ssa.Builder.pattern 10173
+fn ssa.Builder.iop 10159
+fn macho.Asm.layout 10141
+fn parser.Parser.type_args_ahead 10123
+fn show.append_rune 10089
+fn arm64.G.elem_helper 10085
+fn parser.Parser.parse_expr_no_lit 10037
+fn parser.Parser.skip_newlines 10011
+fn xo.map.put[Map[Int, DwAbbrev]] 9957
+fn arm64.int_cond 9939
+fn ssa.Builder.retv 9933
+fn ssa.Rc.returned_unique 9907
+fn ssa.Builder.is_expect_call 9886
+fn check.Checker.ident 9885
+fn check.Checker.operand_hint 9883
+fn macho.SR.bytes 9861
+fn macho.dw_keep.fn486 9829
+fn linux.clock_ns 9811
+fn macho.strtab_build_at 9801
+fn ssa.Builder.body 9793
+fn ssa.EntryW.types 9789
+fn ssa.Builder.if_expr 9751
+fn check.Checker.type_call_in 9745
+fn prelude.list_sort_by[(Str, Str), Str, ()]#2#spec4bea8a039589 9701
+fn ssa.Builder.place_set_at 9681
+fn ssa.Builder.int_const_of 9587
+fn arm64.G.half32 9575
+fn arm64.G.str_eq_const 9571
+fn xo.mlog.record[xo.MapLog[Map[Int, List[Str]]]] 9569
+fn raw.str_repeat 9467
+fn ssa.Builder.test_br 9384
+fn arm64.G.weak_def 9307
+fn pool.steal_round 9297
+fn show.append_u64 9217
+fn check.real_path 9181
+fn check.Checker.check_ceiling 9170
+fn ssa.Builder.check_lazy 9150
+fn ssa.prune_landings 9115
+fn ssa.Rc.edge_code 9107
+fn check.Checker.mod_cache_load 9070
+fn macho.Asm.func_sizes 9009
+fn obj.free1 8997
+fn cabi.np_poll 8994
+fn ssa.Builder.prelude_type 8964
+fn ssa.Builder.mfield 8955
+fn check.Checker.flow_bodies 8891
+fn xo.mlog.probe[xo.MapLogK[(Int, Int)]] 8877
+fn ssa.Builder.ret_at 8876
+fn parser.Parser.parse_string 8865
+fn check.Checker.missing 8853
+fn ssa.Builder.stmt 8851
+fn ssa.Builder.list_move_call 8834
+fn check.Checker.wire_keys 8827
+fn parser.is_type_name 8743
+fn ssa.Rc.held 8737
+fn check.default_rows 8707
+fn check.Checker.type_of_expr 8682
+fn ssa.Rc.rc_ops 8669
+fn fsops.read_link 8655
+fn check.Checker.performed 8614
+fn check.Checker.check 8574
+fn arm64.G.gp_caller_t 8551
+fn parser.Parser.parse_cond_block 8543
+fn ssa.Builder.test_cap_call 8529
+fn check.Checker.define 8501
+fn ssa.Rc.edge_uses 8489
+fn check.after_tab 8452
+fn ssa.aux_int 8391
+fn ssa.Builder.fe_own_flags 8378
+fn check.Checker.loop_body 8371
+fn macho.Asm.define_sym 8361
+fn ssa.Rc.sorted_leaves 8339
+fn check.Checker.check_dirs_bound 8329
+fn arm64.G.rc_thunk_here 8287
+fn ssa.le_value 8277
+fn xo.maph.putbody[Map[Int, (Int, Int)]] 8273
+fn arm64.G.add_forms 8241
+fn check.Checker.resolve_constraints 8179
+fn ssa.add_site 8087
+fn ssa.Builder.rt 8075
+fn macho.mem_op 8065
+fn prelude.fs_create_dir_all 8062
+fn arm64.G.str_obj 8057
+fn arm64.drop_proven_pads 7979
+fn pool.node_link 7976
+fn ssa.Builder.mf 7966
+fn xo.maph.oflog[Map[(Int, Int, Int), Int]] 7913
+fn ssa.build_program_fe 7893
+fn arm64.run1 7871
+fn cabi.task_await 7765
+fn ssa.Builder.check_then 7702
+fn ssa.cln_known 7669
+fn user_cache_dir 7665
+fn check.Checker.resolve_type_arg 7664
+fn check.Checker.check_dirs_fetching 7629
+fn xo.mlog.claim[xo.MapLog[Map[Str, (Int, Int)]]] 7627
+fn xo.mlog.vtable[List[List[github.com/xo-lang/xo/compiler/parser.Decl]]] 7601
+fn ssa.Counted.add 7599
+fn inline_through_cache 7567
+fn ssa.Builder.user_cap_call 7563
+fn xo.maph.putbody[Map[Int, List[SPos]]] 7561
+fn ssa.Builder.place_get_at 7483
+fn ssa.ufn_of 7461
+fn check.Checker.bind 7454
+fn check.Checker.undone_writes 7427
+fn ssa.ret_bound_param 7421
+fn parser.Parser.check_struct_lit_in_cond 7419
+fn arm64.rename_srcs 7411
+fn macho.Asm.flush_pend 7373
+fn arm64.ones_run 7369
+fn obj.try_new 7365
+fn check.Checker.ref_of 7356
+fn parser.Parser.foreign_for 7355
+fn xo.maph.tolog[Map[Str, Int]] 7345
+fn ssa.Rc.branch_code 7337
+fn unicode.case_append 7297
+fn process.args 7291
+fn pool.unlock 7272
+fn check.Checker.let_stmt 7247
+fn arm64.G.defers 7243
+fn check.Checker.binary 7240
+fn check.Checker.file_import 7192
+fn pool.np_block 7149
+fn heapos.trim_thread 7066
+fn xo.maph.putbody[Map[Int, github.com/xo-lang/xo/compiler/ssa.Site]] 7041
+fn ssa.Builder.fs_user_call 6993
+fn check.Checker.has_open_vars 6963
+fn check.Checker.own_objs 6945
+fn macho.Asm.finish 6913
+fn xo.maph.putbody[Map[Int, Map[Int, List[Str]]]] 6913
+fn xo.maph.putbody[Map[Int, Map[Str, Int]]] 6913
+fn check.Checker.fn_lit 6903
+fn xo.mlog.record[xo.MapLog[Map[Str, (Int, Int)]]] 6873
+fn arm64.G.alias 6861
+fn check.Checker.place_type 6817
+fn arm64.G.cell_addr 6807
+fn macho.dw_droppable 6793
+fn xo.maph.putrest[Map[Int, Str]] 6748
+fn arm64.G.addr 6721
+fn xo.maph.putbody[Map[Int, List[(Int, Int)]]] 6721
+fn arm64.G.store_words 6699
+fn check.Checker.push_ctx 6657
+fn check.Checker.std_root 6657
+fn ssa.Builder.cln_flags 6653
+fn ssa.Builder.for_stmt 6649
+fn xo.map.put[Map[Int, github.com/xo-lang/xo/compiler/ssa.Leaf]] 6625
+fn xo.map.put[Set[Str]] 6621
+fn backend_cache_dir 6611
+fn parser.Parser.braces_close 6601
+fn ssa.Builder.conc_type 6519
+fn ssa.Rc.edge_need 6513
+fn ssa.Builder.bop 6468
+fn check.Checker.attach_method 6461
+fn arm64.Proof.bounds 6443
+fn ssa.Builder.fe_begin 6433
+fn macho.ELinker.synthesize_start 6425
+fn xo.mlog.newdir[List[List[xo.MapEntry[(Int, Int, Int)]]]] 6421
+fn eq Span 6401
+fn ssa.Rc.tracked 6401
+fn xo.maph.putbody[Set[Int]] 6401
+fn check.Checker.is_numeric 6389
+fn macho.elf_half_decode 6389
+fn cache_get_all 6381
+fn xo.maph.putrest[Map[Str, (Int, Int)]] 6377
+fn parser.Parser.parse_derive 6321
+fn check.Checker.implements 6313
+fn arm64.G.cfi_frame 6307
+fn macho.ELinker.dw_strip.fn490 6293
+fn text.append_quote 6293
+fn arm64.G.neg_const 6289
+fn arm64.G.mark_cold_call 6265
+fn parser.Parser.parse_struct 6265
+fn ssa.Builder.boxed 6233
+fn parser.stmt_span 6218
+fn ssa.Builder.word_method 6199
+fn check.Checker.require_irrefutable 6191
+fn check.Checker.fn_type_effect_args 6177
+fn check.Checker.occurs 6166
+fn arm64.G.atomic 6163
+fn arm64.addsub_imm 6149
+fn xo.maph.entry[xo.MapLogK[Str]] 6145
+fn arm64.G.const_word 6115
+fn ssa.Rc.cancel 6111
+fn ssa.Rc.home_types 6101
+fn xo.maph.ktolog[xo.MapLogK[(Int, Int)]] 6065
+fn sysio.clock_now 6056
+fn ssa.reuse_const_reads 6049
+fn parser.Parser.match_close 6047
+fn check.Checker.new_tparams 5993
+fn ssa.Builder.impl_of 5968
+fn prelude.fs_write 5957
+fn macho.parse_int 5929
+fn parser.Parser.foreign_binary 5913
+fn check.fw_block 5850
+fn arm64.G.bounds 5845
+fn check.Checker.go_any_list 5841
+fn xo.map.put[Map[Int, UFn]] 5833
+fn check.Checker.pat_const_in 5801
+fn ssa.merge_jumps 5773
+fn pool.find_work 5682
+fn xo.mlog.claim[xo.MapLog[Map[Int, List[Str]]]] 5677
+fn parser.Parser.parse_index 5671
+fn arm64.hoist_loop 5633
+fn ssa.relocatable 5603
+fn ssa.Builder.is_proc_run 5584
+fn xo.maph.putbody[Map[Str, Str]] 5581
+fn fspath.mkdir_walk 5579
+fn macho.imm 5545
+fn check.Checker.local_env 5527
+fn macho.dw_head 5519
+fn check.Checker.ctors_of 5511
+fn ssa.Counted.consumes 5485
+fn xo.maph.slowput[Map[Int, Bool]] 5468
+fn xo.maph.putbody[Map[Int, Offset]] 5457
+fn check.Checker.deep_copy 5425
+fn ssa.Module.verify_jobs_skip 5391
+fn arm64.G.cancel_rc 5379
+fn parser.Parser.braces_open 5375
+fn check.Checker.if_expr 5340
+fn ssa.Builder.nat_of 5333
+fn value_flags 5333
+fn parser.Parser.member_end 5329
+fn xo.maph.putbody[Map[Int, LsrLoop]] 5321
+fn arm64.fold_value 5295
+fn check.Checker.call_ident 5291
+fn arm64.G.dw_struct 5277
+fn ssa.Builder.test_call 5265
+fn ssa.Builder.place_set 5262
+fn macho.shift_op 5257
+fn prelude.int_to_str_base 5253
+fn ssa.Builder.native_waits 5230
+fn check.Checker.mod_cache_entries 5216
+fn check.decode_std_entry 5181
+fn ssa.Builder.tasks_block 5179
+fn ssa.Builder.is_conc_call 5177
+fn ssa.Rc.infer_borrows 5165
+fn ssa.Builder.value 5152
+fn check.Checker.env_with 5125
+fn ssa.program_builder 5121
+fn arm64.G.plan_held 5089
+fn pack_words 5083
+fn xo.mlog.put[xo.MapLog[Map[Int, Bool]]] 5078
+fn check.new_checker 5077
+fn xo.maph.putbody[Map[Int, github.com/xo-lang/xo/compiler/ssa.Leaf]] 5077
+fn check.Checker.insert_edit 5065
+fn ssa.Builder.selector 5047
+fn ssa.Builder.local 5041
+fn pool.node_unlink 5019
+fn arm64.G.elem_fn 5007
+fn arm64.G.mul_long 5007
+fn macho.Asm.emit_data 4977
+fn ssa.Builder.run_job0 4957
+fn ssa.Builder.zero_val_name 4945
+fn prelude.list_any[DwSeg, ()] 4933
+fn arm64.G.dv_const 4931
+fn prelude.list_reverse[(Str, Str)] 4913
+fn xo.slice[List[UCheck]] 4884
+fn ssa.Rc.chain_pads 4867
+fn check.Checker.field_text 4856
+fn xo.maph.putrest[Map[(Int, Int), Bool]] 4855
+fn prelude.fs_rename 4854
+fn arm64.G.index_facts 4843
+fn arm64.G.leaf_call 4803
+fn ssa.Rc.pad_of 4803
+fn macho.ELinker.atoms_obj 4801
+fn check.Checker.var_stmt 4733
+fn tasks.tsan 4733
+fn xo.maph.putrest[Set[Int]] 4701
+fn arm64.G.set_field_op 4689
+fn xo.mlog.vals[xo.MapLog[Map[Int, MemAt]]] 4689
+fn arm64.G.inc_thunk 4687
+fn pool.take_local 4660
+fn check.Checker.check_var_aliases 4654
+fn ssa.Builder.cln_facts 4591
+fn sysio.clock_read 4579
+fn check.Checker.contains_bad 4553
+fn arm64.dv_int 4535
+fn c_inputs 4533
+fn arm64.G.dec_text 4487
+fn cache_put 4487
+fn arm64.G.and_imm 4453
+fn check.Checker.names_only_decl 4395
+fn libcmem.malloc 4381
+fn sysio.mono_ns 4355
+fn arm64.G.retain 4343
+fn entry_get 4334
+fn check.executable 4325
+fn ssa.Builder.mlog_slot 4302
+fn ssa.Builder.param 4285
+fn ssa.EntryW.bool 4268
+fn ssa.Builder.expr_never 4237
+fn check.Checker.range_expr 4231
+fn arm64.scratch_dead 4205
+fn ssa.Builder.loop_tick 4196
+fn xo.map.put[Map[Int, List[FlowEvent]]] 4189
+fn arm64.G.dw_flush 4179
+fn xo.mlog.vals[xo.MapLog[Map[Int, List[Str]]]] 4177
+fn check.Checker.resolve_err_spec 4161
+fn check.is_literal 4159
+fn ssa.Builder.indexed_recv 4155
+fn ssa.Builder.wait_call 4155
+fn ssa.Rc.sink_landings 4149
+fn xo.mlog.newdir[List[List[List[Str]]]] 4141
+fn arm64.G.str_len 4135
+fn arm64.Proof.proven 4115
+fn check.Checker.resolve_types 4087
+fn macho.ELinker.need_got 4081
+fn macho.atomic_word 4073
+fn arm64.G.offset_facts 4061
+fn gen_module 4059
+fn check.Checker.infer_left 4045
+fn pool.wakep 4027
+fn heapos.map_os 4005
+fn ssa.Builder.end_fail 3994
+fn ssa.Builder.insert_rc_keys.fn227 3957
+fn ssa.borrow_hashes.fn335 3957
+fn check.Checker.is_result 3937
+fn xo.slice[List[IPat]] 3921
+fn ssa.Builder.mkeysig 3911
+fn ssa.Rc.set 3899
+fn ssa.Builder.unit 3887
+fn ssa.Builder.note_binding 3880
+fn arm64.G.variant 3871
+fn check.Checker.const_int 3862
+fn cabi.task_free 3860
+fn ssa.Builder.ensures_of 3859
+fn check.Checker.abs 3853
+fn check.Checker.resolve_effects 3845
+fn prof.heap_at_label 3829
+fn parser.Parser.swift_interp 3823
+fn check.Checker.check_realtime 3802
+fn check.pre_block 3787
+fn sepcomp_facts_path 3787
+fn ssa.chains_to 3787
+fn rtstats.count 3754
+fn ssa.Builder.if_then_end 3751
+fn ssa.Builder.place_get 3733
+fn xo.mlog.record[xo.MapLog[Map[Int, Bool]]] 3733
+fn check.Checker.field_of 3722
+fn check.Checker.is_task_group 3719
+fn xo.droplist[List[Str]] 3705
+fn ssa.Builder.user_holder 3693
+fn arm64.G.dw_object 3691
+fn check.Checker.chain_node 3691
+fn arm64.G.in_place_buf 3685
+fn check.Checker.parse_file_ast 3675
+fn ssa.Builder.string_lit 3670
+fn xo.maph.putrest[Map[Int, (Int, Int)]] 3667
+fn pool.plock 3661
+fn check.ModR.s 3656
+fn xo.map.putk[Bool] 3653
+fn ssa.Builder.if_then_begin 3650
+fn ssa.Builder.zero 3643
+fn check.Checker.comparable 3615
+fn check.Checker.struct_lit 3598
+fn arm64.G.big_by_ref 3595
+fn check.Checker.check_clauses 3588
+fn arm64.G.push_fn_text 3587
+fn ssa.Builder.mem_fs_call 3561
+fn ssa.Builder.zeroable 3557
+fn arm64.Proof.proven_at 3553
+fn heapos.cache_advise 3533
+fn compress_on 3507
+fn arm64.G.retarget 3491
+fn check.Checker.tainted_ref 3466
+fn ssa.Module.box_of 3441
+fn parser.pattern_span 3439
+fn ssa.Builder.land_at 3437
+fn fsops.names 3405
+fn ssa.new_builder 3401
+fn cache_get 3398
+fn ssa.EdgeNeed.consumes 3395
+fn macho.ELinker.got_addr 3385
+fn xo.mlog.recordk[xo.MapLogK[(Int, Int)]] 3385
+fn check.Checker.read_sepcomp_facts 3369
+fn elf_prep_file 3365
+fn check.Checker.check_time_layouts 3349
+fn ssa.Rc.touches 3349
+fn check.Checker.iter_elem 3342
+fn xo.maph.putrest[Map[Int, List[SPos]]] 3331
+fn ssa.Builder.check 3327
+fn arm64.G.safe_mul 3321
+fn xo.map.put[Map[Int, Map[Int, Bool]]] 3311
+fn pool.rq_put 3301
+fn ssa.Builder.arm_to 3300
+fn ssa.Builder.fe_closure_made 3288
+fn arm64.tail_key 3275
+fn macho.Asm.new_numeric 3255
+fn ssa.runtime_mod 3241
+fn xo.maph.putrest[Map[Int, Map[Int, List[Str]]]] 3241
+fn xo.maph.putrest[Map[Int, Map[Str, Int]]] 3241
+fn ssa.Builder.zero_val_of 3233
+fn ssa.Builder.if_head 3228
+fn parser.Parser.parse_pat_literal 3193
+fn arm64.G.drop_memo 3191
+fn ssa.Builder.assign 3188
+fn arm64.G.to_int 3177
+fn check.Checker.source_path 3177
+fn xo.maph.slowput[Map[(Int, Int), Int]] 3167
+fn xo.maph.tolog[Map[Int, Bool]] 3159
+fn ssa.Builder.nofe_fo 3141
+fn macho.Out.pad 3125
+fn xo.maph.putrest[Map[Int, github.com/xo-lang/xo/compiler/ssa.Site]] 3121
+fn check.Checker.arm_body 3119
+fn arm64.G.str_list_drop 3113
+fn arm64.G.cell_base_off 3105
+fn macho.Asm.elf_new_section 3097
+fn check.Checker.require_mutable 3093
+fn check.Checker.call_result 3085
+fn check.Checker.type_of 3083
+fn arm64.G.atomic_inc 3081
+fn arm64.G.ord_arg 3041
+fn check.Checker.const_of_pattern 3041
+fn arm64.tail_at 3033
+fn check.Checker.const_type 3028
+fn macho.Asm.map_data 3013
+fn check.is_upper_camel 3009
+fn ssa.Builder.poll 2998
+fn arm64.G.unsafe_fn_table 2997
+fn arm64.G.data 2983
+fn arm64.G.mem_of 2971
+fn check.Checker.stmt_never 2969
+fn ssa.Builder.maph_lt 2968
+fn check.pat_kind 2961
+fn ssa.Builder.call_as 2959
+fn check.Checker.check_index 2947
+fn main.run 2941
+fn xo.mlog.put[xo.MapLog[Map[Str, Int]]] 2935
+fn arm64.G.shift 2929
+fn obj.heap_init 2917
+fn ssa.Builder.is_with_budget 2908
+fn check.Checker.eager_of 2906
+fn xo.maph.putbody[Map[Bool, Int]] 2905
+fn ssa.Builder.capture_expr 2896
+fn prelude.str_trim_suffix 2885
+fn cabi.heap_big_release 2881
+fn parser.Parser.parse_interp_part 2867
+fn macho.Asm.expr 2857
+fn check.Checker.eager_name 2854
+fn check.Checker.check_loop_bound 2839
+fn ssa.Builder.bytes_plus 2836
+fn ssa.Builder.build 2835
+fn xo.maph.slowput[Map[Str, Int]] 2831
+fn arm64.Proof.div_of_len 2829
+fn ssa.Builder.str_len_of 2814
+fn prelude.list_sort_by[(Int, Int), Int, ()]#specd7e9532cdec9 2805
+fn ssa.Builder.derived_in_c 2801
+fn ssa.Builder.field_index 2801
+fn chan.recv_body 2793
+fn ssa.Builder.unwind_target 2788
+fn ssa.Builder.func_value_type 2776
+fn linux.write_all 2774
+fn xo.maph.putbody[Map[Int, List[FlowEvent]]] 2773
+fn xo.maph.oflog[Map[Int, MemAt]] 2761
+fn ssa.Builder.mlog_probe 2739
+fn arm64.G.leaf_words 2731
+fn macho.label_op 2713
+fn arm64.borrow_flag_peep_l 2683
+fn xo.maph.loglookup[Map[Int, Int]] 2673
+fn ssa.cln_keys.fn221 2667
+fn SegWriter.add 2658
+fn macho.Out.u64 2641
+fn xo.debug[List[(Int, Int)]] 2641
+fn ssa.Builder.test_world_call 2625
+fn check.Checker.display 2613
+fn ssa.Builder.lists_lookup 2607
+fn check.Checker.assign_decl_habit 2595
+fn cabi.heap_big 2593
+fn debug_info_eff 2593
+fn arm64.G.proved_index 2589
+fn arm64.shared_name 2587
+fn xo.mlog.claim[xo.MapLog[Map[Str, Int]]] 2581
+fn parser.Parser.parse_field_inits 2553
+fn xo.iface[native.userfs.UserOs].native.userfs.OsFields.rand 2545
+fn note_store 2535
+fn ssa.expr_has_try 2524
+fn arm64.hollow_dead_names 2523
+fn check.scan_lines 2521
+fn prune.mark_used_within 2521
+fn xo.maph.putrest[Map[Int, LsrLoop]] 2521
+fn xo.mlog.newdir[List[List[MemAt]]] 2521
+fn pool.inject_pop 2513
+fn std_code_changed.fn76 2501
+fn check.Checker.is_sized_int 2491
+fn arm64.G.rt 2485
+fn parser.parse_file_mode 2484
+fn xo.maph.putrest[Map[Str, Str]] 2481
+fn arm64.G.payload_op 2467
+fn ssa.order_pad_releases 2463
+fn sepcomp_fact_files 2457
+fn xo.mlog.claim[xo.MapLog[Map[Int, Bool]]] 2452
+fn arm64.G.check 2451
+fn macho.Asm.word_fix 2449
+fn ssa.Module.handle 2449
+fn arm64.G.dw_ref 2447
+fn check.Checker.index_type 2434
+fn parser.Parser.foreign_field 2431
+fn ssa.Builder.is_os 2423
+fn xo.maph.putrest[Map[Int, Offset]] 2419
+fn ssa.Builder.drop_check 2413
+fn parse_prefetch 2393
+fn macho.Asm.map_sym 2389
+fn check.Checker.assign 2358
+fn arm64.G.dw_array 2351
+fn fspath.cwd 2351
+fn xo.mlog.putpos[xo.MapLogK[(Int, Int)]] 2343
+fn heapos.map_aligned 2326
+fn arm64.promote_plan 2325
+fn ssa.Builder.intrinsic 2311
+fn xo.maph.oflog[Map[Str, Int]] 2301
+fn xo.slice[List[github.com/xo-lang/xo/compiler/ssa.Job]] 2288
+fn cache_id.fn54 2281
+fn parser.txt 2281
+fn xo.maph.putrest[Map[Int, github.com/xo-lang/xo/compiler/ssa.Leaf]] 2269
+fn ssa.edge_prepend 2257
+fn cabi.mutex_lock 2253
+fn arm64.G.bounds_iv 2243
+fn arm64.G.epilogue 2235
+fn cabi.scope_free 2233
+fn ssa.Builder.call_result 2221
+fn arm64.parse_passes 2219
+fn xo.run[Task[List[(Int, Str)], ()]] 2215
+fn check.Checker.finish_groups 2211
+fn pool.defer_wake 2209
+fn ssa.Builder.tasks_list 2205
+fn lz4.put_seq 2201
+fn macho.elf_store_prepare_half 2197
+fn with_env 2197
+fn check.Checker.collection_lit 2181
+fn ssa.Builder.result_t 2175
+fn ssa.Builder.place_cur 2168
+fn arm64.drop_move 2167
+fn heapos.cunlock 2161
+fn ssa.Builder.map_type 2161
+fn ssa.cmp_op 2142
+fn macho.ELinker.out_order 2137
+fn arm64.G.dec_or_defer 2135
+fn ssa.Builder.value_call 2129
+fn check.join 2125
+fn ssa.Builder.field_type 2118
+fn cabi.mutex_unlock 2113
+fn cabi.poll_thread 2100
+fn check_program 2093
+fn linux.auxval 2085
+fn put_uv 2074
+fn heapos.clock 2071
+fn xo.mlog.put[xo.MapLog[Map[(Int, Int), Int]]] 2071
+fn xo.maph.putrest[Map[Bool, Int]] 2069
+fn libcmem.state 2063
+fn build_dir 2057
+fn check.Checker.const_handle 2053
+fn elf_half_file_for 2001
+fn linux.random 1981
+fn pool.dl_check 1979
+fn check.Checker.check_key_type 1977
+fn lexer.Lexer.advance_n 1973
+fn prelude.bytes_decode_rune 1973
+fn ssa.Builder.preempt_poll 1972
+fn userfs.OsFields.rand 1969
+fn ssa.Builder.mlog_vtable 1966
+fn prelude.str_repeat 1951
+fn cap_env 1945
+fn check.Checker.find_mod_root 1933
+fn ssa.Builder.mlog_slot8 1921
+fn ssa.type_words 1907
+fn arm64.G.atomic_dec 1905
+fn fsops.fail 1903
+fn arm64.G.far_slots_l 1891
+fn parser.Parser.foreign_primary 1885
+fn xo.mlog.record[xo.MapLog[Map[Str, Int]]] 1881
+fn check.Checker.call_value 1875
+fn cabi_nolibc.nl_start 1873
+fn ssa.Builder.mlog_findx 1869
+fn check.esc_expr 1865
+fn link_inputs 1865
+fn check.Checker.record_text 1858
+fn heapos.unmap_os 1857
+fn parser.iface_bytes 1854
+fn macho.shdr 1849
+fn check.Checker.lost_updates 1848
+fn check.Checker.is_unit 1827
+fn check.Checker.is_ord 1825
+fn ssa.Builder.fe_seal 1823
+fn macho.Asm.elf_section_directive 1821
+fn ssa.Builder.const_value 1816
+fn arm64.G.entry 1813
+fn emit_jobs 1809
+fn arm64.G.from_payload 1807
+fn prelude.llrt_env_program 1795
+fn check.Checker.match_expr 1783
+fn xo.maph.putbody[Map[Str, github.com/xo-lang/xo/compiler/ssa.Kind]] 1781
+fn text.append_time 1775
+fn ssa.Builder.mlog_ktype 1771
+fn check.wire_case 1769
+fn parser.Parser.parse_paren_or_tuple 1765
+fn scan.hex8 1764
+fn check.Checker.expand_embeds 1761
+fn tasks.wl_wake 1745
+fn ssa.Builder.void_cap_type 1733
+fn check.Checker.func_assignable 1724
+fn xo.mlog.newdir[List[List[xo.MapEntry[Str]]]] 1711
+fn ssa.Builder.for_up_to_begin 1709
+fn xo.map.put[Map[Int, List[DwSeg]]] 1709
+fn arm64.drop_weak_all 1705
+fn ssa.Builder.ty_args 1701
+fn check.Checker.load_dir 1699
+fn ssa.Rc.anchors 1697
+fn ssa.Rc.group_pads 1697
+fn prelude.fs_remove_all 1693
+fn arm64.G.push_n 1681
+fn xo.map.put[Map[Bool, Int]] 1673
+fn ssa.Builder.mlog_each 1652
+fn arm64.G.eq_helper 1647
+fn ssa.Builder.match_expr 1642
+fn check.Checker.option_elem 1633
+fn check.Checker.up 1621
+fn libcthr.tls_size 1621
+fn ssa.Builder.float_t 1621
+fn ssa.Builder.to_lower_recv 1618
+fn pool.run_fiber 1617
+fn fault.clear 1616
+fn ssa.Builder.map_find 1608
+fn elf_link 1605
+fn zentry_path 1571
+fn check.Checker.variant_pattern 1565
+fn macho.ELinker.dw_strip.fn489 1561
+fn check.decode_std_header 1557
+fn ssa.Builder.hash_func 1555
+fn check.Checker.variant_from_hint 1546
+fn ssa.Builder.map_call 1545
+fn xo.maph.putrest[Map[Int, github.com/xo-lang/xo/compiler/ssa.Func]] 1539
+fn ssa.Builder.loop_bound 1534
+fn prelude.list_map[Str, Str, ()] 1527
+fn parse_args 1525
+fn arm64.G.poison_frame 1521
+fn chan.send_body 1521
+fn ssa.Builder.strip_true 1513
+fn prelude.fs_err 1507
+fn ssa.fe_site_ids 1496
+fn check.Checker.safe_nav_fix 1486
+fn ssa.Builder.fault_zero 1483
+fn arm64.reg_tokens 1471
+fn front 1469
+fn check.Checker.find_method 1468
+fn debug.mem_total 1465
+fn xo.mlog.claim[xo.MapLog[Map[Str, Bool]]] 1463
+fn arm64.G.find_addr_taken 1461
+fn ssa.Builder.pos 1459
+fn arm64.resplit 1457
+fn xo.map.put[Map[Int, (Str, List[Int])]] 1455
+fn macho.ELinker.dynstr 1445
+fn ssa.Builder.closure 1445
+fn store_entries 1443
+fn ssa.Builder.read 1441
+fn ssa.Builder.compare 1430
+fn ssa.Builder.unbox 1429
+fn xo.maph.remrest[Map[Str, Int]] 1429
+fn part_keys 1425
+fn xo.maph.putbody[Map[Str, List[Int]]] 1425
+fn ssa.Builder.mlog_lvl_at 1416
+fn macho.addsub_word 1405
+fn arm64.G.store_hole 1399
+fn consts.slow 1397
+fn pool.go_idle 1397
+fn ssa.Builder.fe_thunk_there 1396
+fn ssa.Builder.map_scan 1384
+fn arm64.G.other_reg 1381
+fn ssa.Builder.decl_file 1381
+fn pool.park_wait 1374
+fn check.path_volume 1369
+fn pool.defer_check_w 1366
+fn check.parse_mod_file 1361
+fn check.Checker.check_exhaustive 1359
+fn linux.strerror 1359
+fn check.pad 1351
+fn arm64.G.payload_words 1345
+fn crash.thread_init 1345
+fn parser.is_upper 1345
+fn xo.maph.logget[Map[Int, MemAt]] 1343
+fn std_variant_peek 1337
+fn check.Checker.src_of 1333
+fn ssa.Builder.if_finish 1330
+fn macho.ELinker.collect_imports 1329
+fn xo.const[check.KIND_NAMES] 1329
+fn ssa.Builder.mlog_find 1320
+fn xo.iface[native.userfs.UserEnv].SepEnv.program 1313
+fn check.Checker.exists 1309
+fn macho.ELinker.rest_layout 1295
+fn ssa.Builder.set_flag 1293
+fn xo.maph.oflog[Map[Int, Bool]] 1289
+fn arm64.function_keys 1283
+fn ssa.Builder.compare_values 1280
+fn arm64.G.dw_ptr 1277
+fn ssa.Rc.insert 1267
+fn macho.ph 1261
+fn check.Checker.mark_evar 1259
+fn budget.release 1257
+fn ssa.fault_scans 1257
+fn ssa.Builder.try_expr 1251
+fn ssa.Builder.mlog_at 1250
+fn arm64.G.gen_want 1249
+fn parser.Parser.parse_const 1249
+fn ssa.Builder.maph_putbody 1246
+fn tasks.run_entry 1236
+fn arm64.G.tail_share 1233
+fn xo.maph.putbody[Map[Int, CallInfo]] 1227
+fn arm64.decode_all 1225
+fn check.Checker.check_key_types 1225
+fn parser.Parser.brace_is_map 1225
+fn xo.maph.putrest[Map[Int, List[FlowEvent]]] 1222
+fn sums_of 1218
+fn pool.run_item 1210
+fn check.Checker.close_eff 1209
+fn check.Checker.check_dirs 1201
+fn ssa.Builder.arm_body 1201
+fn xo.mlog.newdir[List[List[github.com/xo-lang/xo/compiler/parser.Decl]]] 1201
+fn prune.from_env 1180
+fn ssa.Builder.lists_type 1180
+fn ssa.Builder.walk_expr 1172
+fn xo.mlog.newdir[List[List[Bool]]] 1171
+fn xo.map.put[Map[Str, Lock]] 1165
+fn xo.maph.putbody[Map[Int, BodyFacts]] 1163
+fn arm64.Dw.offset 1155
+fn ssa.Builder.for_up_to_end 1154
+fn arm64.G.rem_test 1151
+fn arm64.G.csel_of 1141
+fn check.Checker.check_ret 1141
+fn check.Checker.load_build_list 1141
+fn ssa.Module.add_clone 1141
+fn check.Checker.selector 1138
+fn macho.assemble_elf 1137
+fn xo.run[Task[List[(Str, Str)], ()]] 1130
+fn xo.maph.putbody[Map[Int, ERel]] 1129
+fn prune.due 1119
+fn ssa.Builder.struct_lit_as 1118
+fn parser.parse_body 1115
+fn arm64.G.file_header 1113
+fn parser.Parser.arm_end 1105
+fn ssa.Builder.runner 1105
+fn xo.maph.oflog[Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]] 1105
+fn ssa.Builder.leave_section 1103
+fn passes_changed 1097
+fn parser.Parser.parse_fn_lit 1093
+fn std_code_changed 1093
+fn ssa.Builder.map_rebuild 1090
+fn ncores 1085
+fn ssa.Builder.mlog_vals 1083
+fn xo.maph.putbody[Map[Str, github.com/xo-lang/xo/compiler/macho.Enc]] 1081
+fn arm64.G.safe_add 1077
+fn heapos.thread_heap 1077
+fn prelude.fs_walk 1077
+fn check.Checker.coerce_ret 1075
+fn ssa.Rc.path_ranks 1061
+fn check.Checker.is_collection 1060
+fn ssa.Builder.mlog_vlvl_at 1060
+fn prune_backend_cache 1046
+fn macho.Asm.elf_section 1045
+fn check.Checker.result_of 1041
+fn unwind.eh_frame_hdr 1033
+fn ssa.Builder.main_fo_of 1031
+fn fsops.raw_kind 1030
+fn parser.Parser.parse_pat_fields 1029
+fn check.Checker.need_go_comparable 1027
+fn entry_put 1027
+fn parser.Parser.foreign_postfix 1025
+fn xo.maph.remrest[Map[Int, Int]] 1025
+fn cabi.heap_big_resize 1021
+fn check.Checker.read_source 1021
+fn xo.maph.putbody[Set[Str]] 1021
+fn cabi.mon_main 1019
+fn check.Checker.is_handle 1013
+fn check.Checker.parse_into 1009
+fn tasks.canceled 1009
+fn xo.mlog.vals[xo.MapLog[Map[Int, Bool]]] 1005
+fn xo.maph.remrest[Map[Int, github.com/xo-lang/xo/compiler/ssa.Func]] 1003
+fn seg_begin 995
+fn ssa.Builder.invariant_of 993
+fn parser.Parser.parse_while 991
+fn base_name 989
+fn arm64.G.dw_enum 985
+fn arm64.G.local_list 985
+fn backend_policy 980
+fn ssa.Builder.maph_goback 977
+fn prelude.fs_remove 976
+fn sysio.fs_status 963
+fn prelude.list_sort_by[EDynRel, Int, ()]#specdccd5a271592 953
+fn prelude.str_starts_with 953
+fn ssa.Builder.cbool 953
+fn xo.mlog.record[xo.MapLog[Map[Str, Bool]]] 953
+fn ssa.Builder.mkeyargs 946
+fn ssa.Builder.unwind_exit 943
+fn xo.mlog.record[xo.MapLog[Map[(Int, Int), Int]]] 941
+fn ld_objects 937
+fn macho.gp_of 937
+fn arm64.G.zero_test_use 929
+fn ssa.Rc.leaf_value 929
+fn xo.debug[List[Src]] 925
+fn opt_eff 921
+fn xo.maph.oflog[Map[(Int, Int), Int]] 921
+fn mutex.held_add_slow 913
+fn check.Checker.named1 911
+fn borrow_record_write 899
+fn check.compare_versions 897
+fn finish 897
+fn prelude.list_sort_by[DepModule, Str, ()]#spec8d9b3e570da 893
+fn prelude.pdq_break_patterns 889
+fn ssa.Builder.lists_put 889
+fn xo.maph.putbody[Map[Int, github.com/xo-lang/xo/compiler/ssa.Func]] 889
+fn ssa.Builder.variant 887
+fn check.Checker.bind_eff 885
+fn arm64.G.atomic_result 881
+fn check.Checker.propagate 879
+fn fspath.remove_walk 873
+fn ssa.Builder.eq_values 869
+fn unwind.prof_text 861
+fn passes_off 853
+fn cabi.worker_main 850
+fn arm64.ufacts_decode 841
+fn ssa.Builder.mlog_newdir 841
+fn pack_write_src 837
+fn ssa.Builder.holds_coll_in 833
+fn ssa.Builder.maph_putrest 833
+fn arm64.part_names 829
+fn check.Checker.prelude_variant 827
+fn pool.signal 827
+fn chan.new 825
+fn check.Checker.log_fix 825
+fn check.Checker.read_mod_file 825
+fn cache_get_all.fn240 813
+fn xo.maph.putbody[Map[Str, StdFact]] 809
+fn ssa.Builder.prelude_impl 806
+fn SegWriter.end 803
+fn arm64.undef_combine 801
+fn xo.maph.loglookup[Map[Int, Bool]] 796
+fn arm64.G.word_const 793
+fn rand.next_bytes 793
+fn check.Checker.fresh_eset 791
+fn linux.unlink 791
+fn check.Checker.expr_stmt 790
+fn linux.sigaction 789
+fn prelude.list_sort_by[(Int, Str), Int, ()]#spec18399bbb1750 789
+fn cabi.chan_try_send 781
+fn xo.maph.putrest[Map[Str, github.com/xo-lang/xo/compiler/ssa.Kind]] 781
+fn xo.mlog.newdir[List[List[xo.MapEntry[(Int, Int)]]]] 781
+fn stale_std_note 769
+fn check.Checker.derives_of 761
+fn parser.Parser.parse_map_lit 761
+fn write_or_fail 761
+fn xo.const[compiler.STD_CODE_ENV] 761
+fn check.Checker.closure_params 759
+fn arm64.G.div_const 757
+fn ssa.Builder.is_iface 757
+fn mem_gb 745
+fn parser.Parser.ternary_ahead 745
+fn parse_list_store 741
+fn sepcomp_default 737
+fn stage 737
+fn poolsetup.ready 735
+fn xo.iface[native.userfs.UserEnv].SepEnv.args 735
+fn check.Checker.group_call_frame 734
+fn arm64.Proof.at_most 733
+fn online_cpus 733
+fn ssa.Builder.maph_slowput 730
+fn ssa.Builder.cat 726
+fn ssa.Builder.maph_logget 726
+fn macho.base_of 721
+fn ssa.Builder.flush_landing 718
+fn arm64.G.env_share 717
+fn pool.monitor 717
+fn xo.maph.putrest[Map[Int, List[DwSeg]]] 717
+fn ssa.Builder.mlog_recordk 716
+fn check.Checker.cand_events.fn437 712
+fn ssa.Builder.while_loop 711
+fn arm64.G.env_drop 707
+fn ssa.Builder.mlog_record 703
+fn ssa.Builder.mlog_share_into 702
+fn check.Checker.rewrite_xml_calls 701
+fn cabi.obj_rs_append 697
+fn entry.start 697
+fn ssa.Builder.dyn_iface 693
+fn xo.maph.tolog[Map[(Int, Int), Bool]] 691
+fn check.Checker.new_tparam 687
+fn check.esc_stmt 687
+fn Stage.commit 681
+fn backend_groups 681
+fn ssa.orderable_in 679
+fn check.Checker.lit_pattern 673
+fn std_obj_dir 669
+fn check.put_s 667
+fn ssa.Builder.mlog_claim 667
+fn ssa.layout_value 667
+fn run_key_of 665
+fn ssa.Builder.mlog_claimk 657
+fn version_cmd 657
+fn arm64.G.capture_op 653
+fn arm64.G.join_tests 653
+fn arm64.drop_weak_all.fn169 653
+fn parse_prefetch.fn274 653
+fn cabi.atomic_free 651
+fn ssa.Builder.const_str 647
+fn cabi.chan_free 645
+fn check.Checker.rel_dir 645
+fn check.Checker.read_lock 641
+fn prelude.list_sort_by[(Str, Int), Str, ()]#spec11ae4fe0fcc3 641
+fn prelude.list_sort_by[(Str, Str), Str, ()]#spec118e0ec98541 641
+fn cabi.task_wanted 634
+fn ssa.Builder.list_insert_fn 633
+fn arm64.G.section 631
+fn xo.maph.putrest[Map[Str, List[Int]]] 625
+fn ssa.Builder.mlog_hash_if 622
+fn ssa.Builder.fs_type 621
+fn xo.run[Task[List[(Int, github.com/xo-lang/xo/compiler/ssa.Func)], ()]] 619
+fn ssa.fe_flags 617
+fn check.Checker.structural 615
+fn ssa.Builder.add_landings 615
+fn ssa.Builder.capture_ident 614
+fn arm64.G.helper_label 613
+fn arm64.sub_sp 613
+fn prelude.file_write 613
+fn xo.maph.putbody[Map[Int, LazyFn]] 611
+fn ssa.Builder.map_vcompact 609
+fn bin_cache_dir 605
+fn ssa.Builder.capture_stmt 603
+fn ssa.Builder.walk_stmt 602
+fn cabi.atomic_new 601
+fn check.doc_moves 601
+fn line_root 601
+fn ssa.Builder.conc_call 599
+fn check.Checker.load_impl 597
+fn check.Checker.try_unify 597
+fn check.is_const_style 597
+fn arm64.probe_sp 595
+fn cabi_libc.pthread_create 593
+fn ssa.Builder.fe_skip 589
+fn check.Checker.option_of 586
+fn xo.maph.putbody[Map[Str, Lock]] 585
+fn macho.dw_keep 583
+fn parser.Parser.foreign_elif 581
+fn path_arg 581
+fn prelude.fs_append 581
+fn check.Checker.list_dir 577
+fn pool.count_main 577
+fn ssa.Builder.mlog_lvl_lists 576
+fn ssa.Builder.mstruct 575
+fn check.Checker.parse_cached 569
+fn macho.sym_of 569
+fn xo.maph.putrest[Set[Str]] 569
+fn macho.gp 565
+fn xo.slice[List[ParamInfo]] 565
+fn arm64.G.agg_rc 563
+fn cabi.heap_large_resize 561
+fn cabi.mutex_free 561
+fn pool.klock 561
+fn xo.slice[List[(Int, Expr, Int, Int)]] 561
+fn prune.stored 559
+fn arm64.G.call_value_op 553
+fn arm64.G.inc_text 553
+fn check.is_upper_snake 549
+fn ssa.Rc.consumed 547
+fn check.Checker.load_prelude 545
+fn xo.eqc[StdExport?] 545
+fn ssa.Builder.empty_map 543
+fn check.to_upper_camel 541
+fn default_ld 541
+fn xo.maph.putbody[Map[Str, (List[Bool], Int)]] 541
+fn check.version_parts 537
+fn ssa.Builder.comparable 537
+fn xo.maph.putbody[Map[Str, List[Bool]]] 535
+fn poll.poke 533
+fn poolsetup.cpu_count 533
+fn check.Checker.find_work 529
+fn sepcomp_store 529
+fn ssa.Builder.mlog_build_index 528
+fn ssa.Builder.mlog_flatten 527
+fn ssa.stmt_has_try 523
+fn libcthr.tls_init 521
+fn link_from_elf_half 521
+fn macho.Out.u16 521
+fn xo.maph.putrest[Map[Str, StdFact]] 521
+fn xo.run[Task[List[(Int, List[Str])], ()]] 521
+fn arm64.G.capture_words 519
+fn arm64.inline_module 517
+fn prelude.fs_set_modified 517
+fn ssa.Builder.frame_owner 517
+fn xo.maph.putrest[Map[Str, github.com/xo-lang/xo/compiler/macho.Enc]] 517
+fn ssa.Builder.is_trace 514
+fn arm64.take_text 513
+fn fe_program_id 513
+fn whole_key 513
+fn ssa.Builder.maph_tolog 511
+fn ssa.Builder.closure_body 506
+fn check.Checker.instantiate 505
+fn ssa.Builder.cmp_func 505
+fn xo.maph.putrest[Map[Int, ERel]] 505
+fn check.Checker.nearest_work 501
+fn entry.run_main_fiber 501
+fn in_scope 501
+fn ssa.Builder.variant_name 501
+fn check.strip_comment 497
+fn arm64.Dw.u16 489
+fn arm64.G.eq_at 489
+fn std_tree_lines.fn152 489
+fn check.Checker.map_lit 487
+fn ssa.Builder.mlog_table 487
+fn xo.run[Task[List[(Int, List[github.com/xo-lang/xo/compiler/ssa.Func], RcOut)], ()]] 487
+fn ssa.Builder.lit_test 484
+fn check.Checker.constraint_is 481
+fn check.Checker.field_hidden 481
+fn fn_cache_load 481
+fn prelude.fs_set_mode 481
+fn ssa.Builder.is_prelude_named 479
+fn pool.thread_run 477
+fn ssa.Builder.put_body_core 477
+fn ssa.fold_tuple_fields.fn470 477
+fn xo.maph.putrest[Map[Int, BodyFacts]] 473
+fn prelude.llrt_env_args 471
+fn ssa.rt_export_none 471
+fn prelude.bytes_zeroed 465
+fn arm64.payload_imm 461
+fn ssa.SfR.sv 461
+fn ssa.Builder.main_os 458
+fn check.Checker.load_imports 457
+fn ssa.Builder.maph_get 451
+fn macho.ELinker.version_list 449
+fn poolsetup.setup 449
+fn sched.fiber_park 446
+fn check.op_text 445
+fn llrt_c_names 445
+fn ssa.nonneg 445
+fn binfo_object 441
+fn ssa.Builder.drop_list 440
+fn ssa.Builder.mlog_putpos 440
+fn ssa.Builder.maph_is_log 435
+fn StoreSrc.keys 433
+fn check.embed_call 433
+fn fe_settings 433
+fn tz_object_elf 433
+fn ssa.Builder.maph_kvl 425
+fn std_parts_used 425
+fn sweep_asm 425
+fn xo.iface[native.userfs.UserOs].native.userfs.OsFields.stdio 425
+fn xo.map.put[Map[Int, (Bool, Bool)]] 425
+fn xo.maph.putbody[Map[Str, ParseEntry]] 425
+fn cabi.np_break 423
+fn macho.Asm.word 421
+fn prelude.list_sort_by[(Str, Int), Str, ()]#specf67902473558 421
+fn xo.map.put[Map[Int, VRef]] 421
+fn check.std_dir 417
+fn xo.iface[native.userfs.UserOs].native.userfs.OsFields.tasks 417
+fn xo.slice[List[github.com/xo-lang/xo/compiler/check.Diag]] 411
+fn xo.maph.loglookup[Map[Str, Int]] 407
+fn xo.maph.putbody[Map[Str, github.com/xo-lang/xo/compiler/arm64.InlineCost]] 405
+fn ssa.Builder.maph_entry 403
+fn ssa.Builder.maph_vpos 403
+fn check.Checker.check_derives 401
+fn pool.map_stack 401
+fn check.Checker.load_denies 397
+fn check.Checker.resolve_variant_path 397
+fn ssa.Builder.check_invariant 397
+fn arm64.copy_block 393
+fn parser.sort_diags 393
+fn ssa.Builder.lists_value 393
+fn ssa.Builder.mlog_record_type 393
+fn ssa.Builder.os_type 393
+fn xo.const[lexer.KEYWORDS] 393
+fn ssa.Builder.maph_ktolog 390
+fn host_counts 385
+fn ssa.Builder.capture_block 385
+fn xo.maph.putbody[Map[Int, Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]]] 385
+fn check.Checker.resolve_deps 377
+fn ssa.Builder.list_remove_at_fn 377
+fn xo.maph.putbody[Map[Int, github.com/xo-lang/xo/compiler/check.Flat]] 377
+fn check.stmt_span 376
+fn elf_half_load 373
+fn xo.maph.putbody[Map[Int, DwAbbrev]] 373
+fn xo.maph.putbody[Map[Str, (Int, Int, Int)]] 373
+fn write_exe 369
+fn pool.futex_wake 367
+fn ssa.Builder.raw_intrinsic 367
+fn arm64.take_bodies 365
+fn prelude.list_sort_by[(Str, Str), Str, ()]#spece332c64c2f29 365
+fn ssa.Builder.mlog_put 365
+fn ssa.Builder.obj_count 365
+fn check.Checker.pat_type_in 364
+fn ssa.Builder.is_void_cap 362
+fn check.Checker.use_import 361
+fn poll.ev_start 361
+fn xo.maph.putbody[Map[Str, (Str, Str)]] 361
+fn ssa.Builder.num_fields 358
+fn check.Checker.mod_paths 357
+fn xo.maph.putbody[Map[Str, github.com/xo-lang/xo/compiler/lexer.Kind]] 357
+fn ssa.Builder.failing_spawn 356
+fn ssa.Builder.is_never 355
+fn prelude.fs_open_mode 354
+fn ssa.Builder.map_putk 354
+fn arm64.G.inc_str 353
+fn prelude.list_sort[Str]#2 353
+fn xo.maph.putbody[Map[Int, (Bool, Bool)]] 353
+fn xo.maph.putbody[Map[Int, (List[Int], Int)]] 353
+fn prelude.fs_create_new 352
+fn pool.async_thread 349
+fn arm64.G.leaves_and_then 345
+fn userfs.OsFields.stdio 345
+fn userfs.OsFields.tasks 345
+fn xo.maph.putbody[Map[(Int, Int), List[(Int, Int)]]] 345
+fn ssa.Builder.struct_lit 342
+fn pool.park_switch 341
+fn ssa.Builder.finish_task 340
+fn arm64.G.same_projection 337
+fn check.ModR.i 337
+fn ssa.Builder.str_eq_br 337
+fn xo.maph.putbody[Map[Int, List[DwSeg]]] 337
+fn parse_targets 333
+fn check.Checker.check_effects 329
+fn cabi.fiber_main 326
+fn defer_inline_verify 325
+fn arm64.G.release_func 323
+fn ssa.Builder.iface_call 323
+fn heapos.pages_on 321
+fn std_cache_dir 321
+fn parser.Parser.parse_interface_body 319
+fn check.stamps_hold 317
+fn parser.Parser.paren_for 315
+fn cabi.stop_stopping 313
+fn tz_object 313
+fn xo.maph.remrest[Set[Int]] 311
+fn check.Checker.open_evar 309
+fn check.Checker.pat_variant_in 309
+fn ssa.Builder.pos_line 309
+fn ssa.Builder.insert_slot 308
+fn arm64.G.str_data 307
+fn arm64.record_at 305
+fn check.Checker.report_edition_aliases 305
+fn check.Checker.set_mod_env 305
+fn cabi.mutex_new 301
+fn cabi_libc.pthread_attr_init 301
+fn check.Checker.is_dir 301
+fn prep_dir 301
+fn stdio.put_locked 297
+fn xo.maph.putrest[Map[Int, LazyFn]] 295
+fn arm64.G.closure_op 291
+fn cabi.chan_close 289
+fn check.dir_stamps_hold 289
+fn xo.map.remove[Map[Int, Int]] 289
+fn check.Checker.variant_text 286
+fn ssa.parse_lowerings 285
+fn whole_cache_dir 285
+fn arm64.G.const_int 283
+fn cabi.const_once 281
+fn check.Checker.join 281
+fn macho_link 281
+fn xo.maph.putbody[Map[Int, (Str, List[Int])]] 280
+fn arm64.add_off 279
+fn bin_path 277
+fn check.Checker.load_std 277
+fn xo.maph.oflog[Map[(Int, Int), Bool]] 277
+fn ssa.Builder.check_invariant_at 276
+fn ssa.Builder.os_field 276
+fn cabi.task_done 274
+fn check.Checker.group_escapes 274
+fn ssa.Builder.mlog_claim_type 274
+fn cabi_c.main 273
+fn check_assumptions 269
+fn linux.utimens 269
+fn linux.vdso_clock 269
+fn arm64.G.only_return 267
+fn check.Checker.comparable_named 267
+fn poolsetup.atoi 265
+fn rand.entropy 265
+fn ssa.Builder.method_on 263
+fn xo.maph.putrest[Map[Str, ParseEntry]] 261
+fn ssa.cleanup_funcs 259
+fn xo.mlog.claim[xo.MapLog[Map[(Int, Int), Bool]]] 259
+fn xo.run[Task[List[(Int, List[Int])], ()]] 259
+fn check.Checker.check_default 257
+fn ssa.Builder.num_text 257
+fn ssa.Builder.consumed 256
+fn macho.Asm.elf_eh_frame 253
+fn parser.Parser.parse_interface 253
+fn raw.bytes_len 253
+fn ssa.Builder.own_void_cap 253
+fn xo.mlog.put[xo.MapLog[Map[(Int, Int), Bool]]] 253
+fn zunpack 253
+fn xo.maph.putrest[Map[Int, CallInfo]] 252
+fn ssa.Rc.hoist_reuse 251
+fn arm64.encode_all 249
+fn macho.parse_elf_inputs 249
+fn servers.is_agent_command 249
+fn ssa.Builder.mlog_push 249
+fn stdio.lock 249
+fn xo.map.put[Map[Str, ParseEntry]] 249
+fn mutex.held_del 241
+fn sock.nonblock 241
+fn ssa.Builder.user_rect 241
+fn tzsel.tz_select 241
+fn xo.maph.putrest[Map[Str, (List[Bool], Int)]] 241
+fn xo.maph.slowput[Map[(Int, Int), Bool]] 241
+fn check.put_i 239
+fn ssa.Builder.maph_marked 239
+fn ssa.Builder.loc_args 235
+fn ssa.Builder.map_update_take 235
+fn xo.maph.putrest[Map[Str, List[Bool]]] 235
+fn check.Checker.newtype_of_pattern 233
+fn check.Checker.pat_newtype_in 233
+fn native_build_info 233
+fn rel_to 233
+fn macho.SR.u64 229
+fn sysfs_cores 229
+fn ssa.Builder.map_live 228
+fn check.Checker.warn_wildcard_own_enum 227
+fn ssa.Builder.maph_value 227
+fn ssa.Builder.mlog_type 225
+fn ssa.nonpos_const 225
+fn ssa.user_fields 225
+fn arm64.decode_all.fn390 223
+fn arm64.encode_all.fn391 223
+fn ssa.Builder.ret 221
+fn ssa.cln_full_keys 221
+fn std_tree_lines.fn154 221
+fn xo.const[check.WIRE_DERIVES] 221
+fn xo.iface[native.userfs.UserOs].native.userfs.OsFields.net 221
+fn xo.iface[native.userfs.UserOs].native.userfs.OsFields.proc 221
+fn xo.maph.putrest[Map[Str, github.com/xo-lang/xo/compiler/arm64.InlineCost]] 221
+fn ssa.Builder.list_elem_at 219
+fn ssa.Builder.variant_pattern 219
+fn ssa.Builder.io_arg 218
+fn chan.try_recv_locked 217
+fn fetch_bin 217
+fn pool.register_worker 217
+fn tasks.park_wait_n 217
+fn xo.run[Task[List[(Str, ParseEntry)], ()]] 217
+fn ssa.Builder.self_faults 216
+fn check.Checker.add_derived_file 213
+fn ssa.immortal_returns 213
+fn check.Checker.module_path_for 211
+fn arm64.win_retarget_both 209
+fn chan.try_send_locked 209
+fn prof.finish 209
+fn xo.run[Task[Int, ()]] 209
+fn ssa.Builder.is_lists 208
+fn ssa.Builder.maph_of_log 207
+fn ssa.Builder.known_none 206
+fn check.Checker.report_unused 205
+fn servers.forward_cli 205
+fn ssa.Builder.coerce 205
+fn ssa.Builder.undef 205
+fn xo.mlog.eachpos[xo.MapLogK[(Int, Int)]] 205
+fn fsops.open 204
+fn prune.run 201
+fn ssa.Builder.mlog_kv 200
+fn prelude.list_sort_by[(Int, Str), Int, ()]#2#spec50a506509815 197
+fn tzsel.tz_select_mode 197
+fn arm64.G.func_rc 195
+fn arm64.promote_loop 195
+fn ssa.Builder.mlog_value_at 195
+fn check.Checker.derives 193
+fn check.Checker.mentions_param 193
+fn check.Checker.realtime_cycles 193
+fn check.Checker.try_expr 193
+fn macho.ELinker.half_pins 193
+fn sorted_diags 193
+fn ssa.Builder.option_elem 193
+fn xo.maph.putbody[Map[Int, Map[Int, Bool]]] 193
+fn xo.maph.putbody[Map[Int, ModEntry]] 193
+fn ssa.Builder.maph_of_log_body 192
+fn cache_note 191
+fn ssa.Builder.map_put 191
+fn check.Checker.finish_renames 189
+fn check.Checker.refutable_pattern 189
+fn ssa.Builder.mlog_eachpos 187
+fn xo.maph.putbody[Map[Int, UFn]] 187
+fn arm64.load_call 185
+fn arm64.module_sums_jobs 185
+fn crash.install 185
+fn xo.maph.oflog[Map[Str, (Int, Int)]] 185
+fn ssa.Builder.map_grows 183
+fn ssa.Builder.mlog_home 182
+fn poolsetup.env_int 181
+fn xo.maph.putrest[Map[Int, Map[Int, github.com/xo-lang/xo/compiler/parser.Decl]]] 181
+fn xo.maph.putrest[Map[Str, Lock]] 181
+fn arm64.is_len_call 177
+fn check.Checker.check_unused_imports 177
+fn elf_store_laps 177
+fn set_value 177
+fn xo.maph.putbody[Map[Int, VRef]] 177
+fn pool.node_cancel 173
+fn ssa.Builder.specialize_args 173
+fn xo.maph.putrest[Map[Str, (Str, Str)]] 173
+fn ssa.Builder.map_rebuildk 171
+fn xo.mlog.findx[xo.MapLogK[(Int, Int)]] 171
+fn SegWriter.flush 170
+fn mutex.wake 169
+fn parse_list_path 169
+fn ssa.Builder.defer_landing_here 169
+fn stdio.out_slow 169
+fn tasks.prog_group_set 169
+fn userfs.OsFields.net 169
+fn userfs.OsFields.proc 169
+fn xo.maph.putrest[Map[Int, github.com/xo-lang/xo/compiler/check.Flat]] 169
+fn xo.maph.putrest[Map[Str, (Int, Int, Int)]] 169
+fn xo.mlog.record[xo.MapLog[Map[(Int, Int), Bool]]] 169
+fn ssa.Builder.fe_finalize 166
+fn ssa.Builder.put_body 166
+fn Stage.abandon 165
+fn watch_stages.fn16 165
+fn ssa.Builder.log_from 163
+fn ssa.Builder.map_lit 163
+fn cabi.fs_file_free 162
+fn check.Checker.report_discards 161
+fn libcmem.free 161
+fn macho_bin_key 161
+fn xo.maph.putrest[Map[Int, DwAbbrev]] 161
+fn xo.slice[List[Operand]] 161
+fn check.decode_mod_entry 160
+fn stdio.write_all 157
+fn xo.maph.putrest[Map[(Int, Int), List[(Int, Int)]]] 157
+fn xo.maph.putrest[Map[Int, (Bool, Bool)]] 157
+fn xo.maph.putrest[Map[Int, (List[Int], Int)]] 157
+fn xo.maph.putrest[Map[Str, github.com/xo-lang/xo/compiler/lexer.Kind]] 157
+fn ssa.Builder.is_fs 156
+fn ssa.Builder.own_os_field 156
+fn ssa.Builder.dead 155
+fn check.Checker.call_effarg 153
+fn emit_mem_limit 153
+fn ssa.Builder.mlog_probe_j 153
+fn ssa.recv_after_args 153
+fn arm64.len_value_root 151
+fn pool.idle_unlist 150
+fn ssa.Builder.mlog_sole 148
+fn ssa.Builder.spawn 148
+fn macho.array_tags 145
+fn native_backend 145
+fn sepcomp_objs 145
+fn xo.map.remove[Map[Int, Bool]] 145
+fn apply_stamps 141
+fn cabi.chan_recv 141
+fn check.parse_diags 141
+fn check.rel_path 141
+fn store_bin 141
+fn ssa.Builder.build_gen 140
+fn ssa.Builder.mlog_entry_at 140
+fn fsops.open_once 139
+fn xo.maph.oflog[Map[Str, Bool]] 139
+fn ssa.Builder.maph_fork_body 138
+fn cmdhelp.commands 137
+fn macho.cond 137
+fn ssa.Builder.layer_call 137
+fn prelude.file_close 136
+fn ssa.Builder.for_mlog_root 135
+fn xo.run[Task[List[(Int, github.com/xo-lang/xo/compiler/ssa.Func, Bool)], ()]] 135
+fn ssa.Builder.new_scope 134
+fn ssa.Builder.put_insert_inline 133
+fn parser.parse_file 129
+fn ssa.Builder.putk_type 127
+fn ssa.Builder.maph_slow 126
+fn abs_line_root 125
+fn arm64.key_texts_all 125
+fn cabi_libc.pthread_join 125
+fn xo.run[Task[(), ()]] 125
+fn ssa.Builder.mlog_level 122
+fn Stage.commit.fn71 121
+fn cmdhelp.is_help_flag 121
+fn macho.Asm.register_expr 121
+fn macho.rk_of 121
+fn poll.epoll_add 121
+fn ssa.Builder.maph_prep 121
+fn xo.maph.putrest[Map[Int, (Str, List[Int])]] 121
+fn xo.mlog.newdir[List[List[(Int, Int)]]] 121
+fn check.Checker.closure_escapes 120
+fn ssa.Builder.task_type 119
+fn check.Checker.static_subst 118
+fn ssa.Builder.closure_with 117
+fn ssa.Builder.iface_subst 117
+fn ssa.Builder.maph_fork_lists 117
+fn chan.cq_take 113
+fn check.Checker.scope_expr 113
+fn check.base 113
+fn check.local_name 113
+fn hostpath.is_root_w 113
+fn ssa.Builder.lockish 113
+fn check.Checker.match_recv 111
+fn check.specialize 111
+fn no_std_facts_dump 111
+fn sums_of.fn231 111
+fn macho.ELinker.rest_write 109
+fn prelude.list_any[FileInfo, ()] 109
+fn ssa.Builder.is_spawn 109
+fn arm64.G.win_map 105
+fn entry.main_on_fiber 103
+fn check.Checker.type_member 102
+fn ssa.Builder.mlog_vpush 102
+fn cabi.heap_threads 101
+fn is_dir 101
+fn pool.klock_w 101
+fn ssa.Builder.adapt_result 101
+fn verify_after_dce 101
+fn ssa.Builder.maph_mark 98
+fn ssa.Builder.maph_shared 98
+fn cabi.prog_group 97
+fn check.Checker.unary 97
+fn ssa.cleanup_funcs.fn332 97
+fn std_released 97
+fn stdio.unlock 97
+fn write_dumps 97
+fn check.Checker.undo 95
+fn ssa.Builder.atomic_op 95
+fn ssa.Builder.for_map 95
+fn ssa.Builder.method_of 95
+fn ssa.Builder.stdio_llrt 95
+fn xo.map.put[Map[Int, ModEntry]] 95
+fn ssa.Builder.declare_dump_roots 93
+fn stdio.flush_out 93
+fn xo.maph.putrest[Map[Int, ModEntry]] 93
+fn check.Checker.missing_else_fix 91
+fn ssa.Builder.cap_user_field 91
+fn xo.maph.putrest[Map[Int, Map[Int, Bool]]] 91
+fn ssa.Builder.llrt 90
+fn check.major_suffix 89
+fn pool.cancel_locked 89
+fn prof.start 89
+fn ssa.Builder.mlog_lprobe 88
+fn arm64.G.race_acquire 85
+fn check.encode_mod_entry 85
+fn libcmem.unlock 85
+fn macho.ElfStoreLink.layout 85
+fn poolsetup.root_worker 85
+fn prelude.list_any[Str, ()] 85
+fn ssa.Builder.maph_sole 85
+fn trace.finish 85
+fn ssa.cln_encode 83
+fn check.Checker.identical 81
+fn check.is_derivable 81
+fn in_scope.fn276 81
+fn inline_verified 81
+fn sock.fcntl 81
+fn xo.maph.putrest[Map[Int, UFn]] 81
+fn ssa.Builder.close_status 79
+fn ssa.Builder.cmp_sub 79
+fn ssa.Builder.maph_lookup 79
+fn xo.maph.putrest[Map[Int, VRef]] 79
+fn arm64.G.race_release 77
+fn arm64.take_bodies.fn168 77
+fn cabi_nolibc.nl_main_stack 77
+fn cabi_nolibc.nl_main_tp 77
+fn check.Checker.record_spawn 77
+fn cmdhelp.takes_dirs 77
+fn ctx.root_out 77
+fn run_key 77
+fn ssa.Builder.with_closure 77
+fn ssa.fv_arg_owned 77
+fn arm64.G.closure_fill 75
+fn ssa.Builder.lists_fields 75
+fn xo.mlog.find[xo.MapLogK[(Int, Int)]] 75
+fn macho.Out.done 73
+fn print_diags 73
+fn ssa.Builder.for_map_lists 73
+fn ssa.Builder.insert_rc_jobs 73
+fn ssa.Builder.target_part 73
+fn xo.mlog.entries[xo.MapLog[Map[Str, (Int, Int)]]] 73
+fn cabi.fiber_run_task 71
+fn ssa.Builder.scope_expr 70
+fn macho.ElfStoreLink.write 69
+fn ssa.Builder.mkeyparams 69
+fn xo.maph.loglookup[Map[(Int, Int), Bool]] 69
+fn check.Checker.contains_scope 68
+fn arm64.take_text.fn284 65
+fn cabi.chan_send 65
+fn entry_path 65
+fn cabi.scope_close 63
+fn main 63
+fn ssa.Builder.loc 62
+fn cabi.stop_chan_new 61
+fn cabi_libc.pthread_attr_setstacksize 61
+fn ssa.Builder.map_update 58
+fn chan.entry 57
+fn check.Checker.is_expect_call 57
+fn check.Checker.pub_in 57
+fn poolsetup.page_size 57
+fn prog_name 57
+fn ssa.udom 57
+fn arm64.inline_apply 53
+fn ssa.Builder.atomic_xo 53
+fn fallback_text 51
+fn ssa.Builder.clock_now 50
+fn prelude.list_sort_by[(Int, Str), Int, ()].fn247 49
+fn ssa.Builder.has_invariant 49
+fn ssa.Builder.with_err 49
+fn check.Checker.call_static 47
+fn ssa.Builder.map_kvl 47
+fn cabi.task_unwound 45
+fn chan.cq_del 45
+fn check.is_remote 45
+fn ssa.Builder.maph_branches 45
+fn ssa.Builder.maph_loglookup 45
+fn arm64.G.tramp 41
+fn cabi_libc.pthread_attr_destroy 41
+fn ssa.Builder.llrt_or_rt 41
+fn ssa.Builder.mlog_lookup 41
+fn ssa.Module.verify_all_jobs 41
+fn ssa.Builder.det_point 39
+fn ssa.Builder.llrt_or_none 39
+fn cabi.fault_continue 37
+fn ssa.Builder.finish_scope 37
+fn ssa.Builder.maph_cowed 35
+fn xo.droplist[List[(Int, Str)]] 35
+fn ssa.Builder.maph_lists_own 34
+fn arm64.G.race_checks 33
+fn cabi_libc.pthread_attr_setdetachstate 33
+fn chan.cq_push 33
+fn ssa.Builder.main_unnamed 33
+fn ssa.Builder.is_user_call 32
+fn ssa.Builder.map_index 31
+fn cabi.run_main_fiber 29
+fn ssa.Builder.cmp_lt 29
+fn ssa.Builder.failing_spawns 29
+fn ssa.Builder.list_cap 29
+fn ssa.Builder.maph_put_pro 28
+fn ssa.Builder.map_lookup 26
+fn ssa.Builder.map_value 26
+fn macho.imm_of 25
+fn budget.resume 21
+fn cabi.rtstats_switch 21
+fn macho.zr_kind 21
+fn sanhook.ignore_writes 21
+fn check.Checker.if_value 19
+fn ssa.Builder.walk_opt 19
+fn xo.droplist[List[(Str, Str)]] 18
+fn ssa.Builder.user_fs_check 17
+fn ssa.Builder.walk_list 17
+fn cabi.chan_new 13
+fn cabi.heap_thread 13
+fn lower.fn52 13
+fn xo.droplist[Str] 13
+fn xo.droplist[List[(Int, github.com/xo-lang/xo/compiler/ssa.Func)]] 11
+fn cabi.prog_group_clear 9
+fn os_path 9
+fn xo.droplist[List[(Int, List[Str])]] 9
+fn xo.droplist[List[(Int, List[github.com/xo-lang/xo/compiler/ssa.Func], RcOut)]] 9
+fn xo.droplist[Map[Str, Str]] 9
+fn cabi.poll_ev_start 5
+fn cabi.prog_group_set 5
+fn cabi_libc.exit 5
+fn path_env 5
+fn ssa.Builder.fe_final_own 5
+fn xo.droplist[()] 5
+fn xo.droplist[List[(Int, List[Int])]] 5
+fn xo.droplist[List[(Str, ParseEntry)]] 5
+fn xo.droplist[Map[Int, github.com/xo-lang/xo/compiler/ssa.Func]] 5
+fn cabi.run_claimed 3
+fn sanhook.task_exit 3
+fn xo.droplist[List[(Int, github.com/xo-lang/xo/compiler/ssa.Func, Bool)]] 3
