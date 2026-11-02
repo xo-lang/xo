@@ -444,3 +444,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0452-list-growth-curve.md](0452-list-growth-curve.md): Accepted (owner, 2026-10-31): a native List grows by Go's slice curve (double to 256 elements, then toward 1.25x) instead of doubling; the self build on linux/arm64 wall 0.963, max RSS 0.935; the Mac's emit peak about -11% (0448)
 - [0453-xo-own-layout.md](0453-xo-own-layout.md): Accepted: xo ships its own layout file, made from callgrind runs of small builds, so a small build touches less of its code
 - [0455](0455-small-first-chunks.md): a heap record's first chunks start at 256 KiB on darwin, the rest reserved (Proposed; decision 0448 case (c), mapped within 2 times live).
+- [0454-heap-huge-pages.md](0454-heap-huge-pages.md): Accepted (owner, 2026-11-02): XO_THP=off makes the heap advise MADV_NOHUGEPAGE on Linux; default unchanged; a server default is the goal
