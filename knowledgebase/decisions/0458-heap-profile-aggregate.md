@@ -1,6 +1,6 @@
 # 0458: the heap profile folds freed samples by stack and size and recycles their slots
 
-Status: Accepted (owner, 2026-11-02; the Lead chose variant A)
+Status: Proposed (lead chose variant A, 2026-11-02; implemented in a0a7c158d)
 
 ## Context
 
