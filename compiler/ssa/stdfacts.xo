@@ -300,8 +300,17 @@ pub fn (var m: Module) add_extern(f: Func, x: StdFact) -> Int {
   bf.faults = x.faults
   bf.names = []
   m.facts[fi] = bf
-  m.externs[f.name] = x
+  m.externs[f.name] = x.without_views(f.name)
   fi
+}
+
+/// x without its views of the facts file (name is the function's own): the
+/// file can go once the SSA is built (decision 0448 case (c)).
+fn (x: StdFact) without_views(name: Str) -> StdFact {
+  var y = x
+  y.name = name
+  y.body = b""
+  y
 }
 
 /// Makes function fi of m, declared and not built, an extern answered by
@@ -311,7 +320,7 @@ pub fn (var m: Module) mark_extern(fi: Int, x: StdFact) {
   bf.faults = x.faults
   bf.names = []
   m.facts[fi] = bf
-  m.externs[m.funcs[fi].name] = x
+  m.externs[m.funcs[fi].name] = x.without_views(m.funcs[fi].name)
 }
 
 /// Each extern's borrowed flags (exact: the calling convention std's

@@ -809,6 +809,13 @@ fn (var b: Builder) run_job(j: Job) {
   b.run_job_fe(j)
 }
 
+/// Lets std's facts go once no job will read them: an extern keeps its own
+/// (mark_extern), and these with the file they view were 5 MB of a small
+/// build's link (decision 0448 case (c)).
+pub fn (var b: Builder) drop_std_facts() {
+  b.sep = {}
+}
+
 /// run_job0 through the front end cache for a body that is not generic.
 fn (var b: Builder) run_job_fe(j: Job) {
   if !b.fe.on {

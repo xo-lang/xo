@@ -824,6 +824,12 @@ records whole never hit, because of those ids. Mac, 3 rounds, RSS / footprint MB
 56-57/37-38, edit 55-56/36-37; conc-spawn warm 52/33-34 to 49-50/30-31, edit 49-50/30-31. Live at fe.build the rows
 Reloc.obj_rec (1.88 MB) and objs_of (0.9 MB) leave the profile.
 
+Std's facts (2026-11-01). The builder's map of std's facts (about 2.8 MB) and the facts file (2 MB, which every
+extern's name and body viewed) stayed live to the link's end, 5 of its 15 MB. The builder drops the map before
+the passes (Builder.drop_std_facts) and an extern keeps no view (StdFact.without_views). Live at link.synthesize
+15.0 to 10.6 MB. Mac, 3 rounds: coll warm 56-57/37-38 to 52-53/33-34, edit 55-56/36-37 to 51-53/33; conc-spawn warm
+49-50/30-31 to 46/28, edit 49-50/30-31 to 45-46/27-28.
+
 Self build with THP off (2026-11-01, second linux/arm64 host, THP `always`, 3 alternating rounds, 8222cbb7c):
 max RSS default 3830, 3767, 3827 MB, PR_SET_THP_DISABLE 3800, 3873, 3860; emit's counter peak 4510, 4448, 4512
 against 4509, 4543, 4576. THP does not explain the Linux counter gap and does not move the self build's RSS,

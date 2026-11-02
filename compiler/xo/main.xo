@@ -2389,6 +2389,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
   // the zone data std/time needs, noted as the Go builder lowers
   let tu = if uses_time { tzsel.tz_use(c, b.m, root) } else { tzsel.TZUse{} }
   t = lap(os, o.phases, "tz", t)
+  b.drop_std_facts()
   // the passes run in a scope whose one task lets the front end go
   let lo = scope s {
     if strip {
