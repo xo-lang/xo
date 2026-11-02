@@ -43,6 +43,15 @@ a THP=always host sets it to hold its working set to the small page footprint.
   example from the first accepted connection, covering memory already mapped
   (prototype and numbers to come back to the owner).
 - A mapping made before the heaps exist (their own records) is not advised.
+- Why Go stays low (bench/results/thp-density-2026-11-02.md, 2026-11-02):
+  at 2,000 TLS connections Xo's touched 2 MiB regions are 19 to 23% full
+  (each thread's own 4 MiB chunks use about 260 KiB), Go's 71 to 75%; the
+  pagemap prediction from XO_THP=off's layout, 96 to 111 MB, matches the
+  default's measured 95 to 108 MB.
+- XO_THP=off still left 12 to 14 MB of huge pages on the always host. Open
+  sources: the first heap record's mappings (made before entry.xo reads
+  XO_THP), thread stacks, the TLS block and cabi_nolibc's no-reserve stack.
+  Follow-up: advise those too.
 - Windows, Darwin and Wasi are unaffected.
 
 ## Alternatives
