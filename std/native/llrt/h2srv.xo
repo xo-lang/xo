@@ -1761,6 +1761,10 @@ fn (var h: H2Conn) on_headers(sid: Int, flags: Int, prio: Bool, dep: Int) {
       }
     }
     sto(st, S_STATE, ST_HCR)
+    // a handler waiting in body_next for more of the body wakes to the end
+    // and the trailers, as a DATA frame's END_STREAM wakes it (a request
+    // whose trailers came in a later read than its last DATA hung)
+    signal_stream(st)
     complete(c, st)
     return
   }

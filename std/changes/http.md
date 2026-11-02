@@ -1,5 +1,22 @@
 # std/http changes
 
+## 2026-11-02: fix: an HTTP/2 request whose trailers arrive late no longer hangs its streaming handler
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Lang 1, http_trailers under load (1 run in about 1,900, 2026-11-02)
+- Go reference: net/http's http2 server (processTrailerHeaders ends the body and wakes its reader)
+- Test: internal/llvm TestH2Diff's raw "late trailers" case (HEADERS and DATA, a 300 ms pause, then the trailers): the native server never answered before this fix
+- Timing: none
+
+A trailing HEADERS frame that ended a request's stream marked the body
+done but did not wake a `handle_stream` handler already waiting for more
+of it (a DATA frame's END_STREAM did), so a request whose trailers came
+in a later read than its last DATA hung until the client gave up. The
+code is the same in v0.35.0, where a client sending HTTP/2 request
+trailers (a gRPC client, for one) to a `handle_stream` route could hit
+it.
+
 ## 2026-11-02: perf: an idle HTTP/1.1 connection parks only after 20 ms without a request (decision 0449)
 
 - Kind: perf

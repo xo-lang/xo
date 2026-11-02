@@ -225,6 +225,11 @@ fn routes(clock: Clock) -> http.Router uses clock {
     let ok = req.body == "z".repeat(req.body.len()).bytes()
     http.text(200, "len=${req.body.len()} ok=${ok}")
   })
+  // a body read as it arrives (probeH2Raw's late trailers)
+  r.handle_stream("POST /up", fn(_req, b) {
+    let data = b.read_all()?
+    http.text(200, "read ${data.len()} bytes")
+  })
   r.handle("GET /big/{n:Int}", fn(req) { http.text(200, "b".repeat(req.param_int("n"))) })
   r.handle("GET /bytes/{n:Int}", fn(req) { http.empty(200).with_header("X-N", "${req.param_int("n")}") })
   r.handle("GET /status/{code:Int}", fn(req) { http.empty(req.param_int("code")) })
@@ -946,6 +951,14 @@ func probeH2Raw(out *strings.Builder, addr string, p *testPKI) {
 		{"post with body and trailers", func(h *h2conn) {
 			h.headers(1, false, h2Req("POST", "/echo")...)
 			h.frame(0, 0, 1, []byte("zzzz"))
+			h.headers(1, true, "x-trailer", "1")
+		}, 0},
+		// the trailers come after the handler waits for more of the body: they
+		// must wake it (a request so made hung, 2026-11-02)
+		{"late trailers", func(h *h2conn) {
+			h.headers(1, false, h2Req("POST", "/up")...)
+			h.frame(0, 0, 1, []byte("zzzz"))
+			time.Sleep(300 * time.Millisecond)
 			h.headers(1, true, "x-trailer", "1")
 		}, 0},
 		{"trailers with a pseudo field", func(h *h2conn) {
