@@ -19,7 +19,7 @@ fn token_len(hs: List[Str]) -> Int {
 // equal, is two overlapping loads and immediates, not a call of obj.str_eq
 // (compiler/arm64 calls.xo str_eq_const, 2026-10-24); 17 bytes stays a call.
 fn count_nobody(hs: List[Str]) -> Int {
-  // arm64: "ccmp" -"_xo_x_obj_str_eq"
+  // arm64: "ccmp" -"_?xo_x_obj_str_eq"
   // amd64 has no str_eq_const yet (bench/results/amd64-parity-by-target-2026-10-27.md):
   // amd64: "_xo_x_obj_str_eq"
   var n = 0
@@ -32,7 +32,7 @@ fn count_nobody(hs: List[Str]) -> Int {
 }
 
 fn count_long(hs: List[Str]) -> Int {
-  // arm64: "_xo_x_obj_str_eq"
+  // arm64: "_?xo_x_obj_str_eq"
   // amd64: "_xo_x_obj_str_eq"
   var n = 0
   for h in hs {
@@ -53,7 +53,7 @@ const CP: Bytes = b"  "
 // the space form is the one that recognizes it (the tab form spelled a
 // separator no line holds, 2026-10-26).
 fn cut_len(n: Int) -> Int {
-  // arm64: -"bl _xo_h"
+  // arm64: -"bl _?xo_h"
   // amd64: -"callq _xo_h"
   var t = 0
   for _ in 0..n {
@@ -68,7 +68,7 @@ fn cut_len(n: Int) -> Int {
 // 2026-10-26: 67 sites of `b[b.len() / 2]` and `b[b.len() >> 1]` in
 // bench/perf kept a compare and a branch that cannot fire).
 fn half_byte(b: Bytes) -> Int {
-  // arm64: "asr x[0-9]+, x[0-9]+, #1" -"_xo_x_fault_raise_bytes_index"
+  // arm64: "asr x[0-9]+, x[0-9]+, #1" -"_?xo_x_fault_raise_bytes_index"
   // amd64: "sarq \$1, %r" -"_xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     return Int(b[b.len() / 2])
@@ -77,7 +77,7 @@ fn half_byte(b: Bytes) -> Int {
 }
 
 fn half_shift(b: Bytes) -> Int {
-  // arm64: -"_xo_x_fault_raise_bytes_index"
+  // arm64: -"_?xo_x_fault_raise_bytes_index"
   // amd64: -"_xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     return Int(b[b.len() >> 1])
@@ -88,7 +88,7 @@ fn half_shift(b: Bytes) -> Int {
 // Without the length guard the check stays: a length of 0 makes the index 0
 // too, and b[0] into an empty Bytes faults.
 fn half_unguarded(b: Bytes) -> Int {
-  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // arm64: "bl _?xo_x_fault_raise_bytes_index"
   // amd64: "callq _xo_x_fault_raise_bytes_index"
   Int(b[b.len() / 2])
 }
@@ -96,7 +96,7 @@ fn half_unguarded(b: Bytes) -> Int {
 // A shift of 0 and a division by a non-constant leave the index possibly
 // equal to the length.
 fn half_none(b: Bytes, one: Int) -> Int {
-  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // arm64: "bl _?xo_x_fault_raise_bytes_index"
   // amd64: "callq _xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     return Int(b[b.len() >> 0]) + Int(b[b.len() / one])
@@ -106,7 +106,7 @@ fn half_none(b: Bytes, one: Int) -> Int {
 
 // A list index takes the same rule (calls.xo bounds_check).
 fn half_elem(xs: List[Str]) -> Str {
-  // arm64: -"_xo_x_fault_raise_index"
+  // arm64: -"_?xo_x_fault_raise_index"
   // amd64: -"_xo_x_fault_raise_index"
   if xs.len() > 0 {
     return xs[xs.len() / 2]
@@ -117,7 +117,7 @@ fn half_elem(xs: List[Str]) -> Str {
 // A guard on another Bytes proves nothing about this one's length: the
 // check stays (len_pos matches the container by len_root).
 fn half_other(a: Bytes, b: Bytes) -> Int {
-  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // arm64: "bl _?xo_x_fault_raise_bytes_index"
   // amd64: "callq _xo_x_fault_raise_bytes_index"
   if a.len() > 0 {
     return Int(b[b.len() / 2])
@@ -128,7 +128,7 @@ fn half_other(a: Bytes, b: Bytes) -> Int {
 // The false edge of `len > 0` proves nothing about the length there: only
 // the true edge of a comparison is a fact (new_proof).
 fn half_else(b: Bytes) -> Int {
-  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // arm64: "bl _?xo_x_fault_raise_bytes_index"
   // amd64: "callq _xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     0
@@ -140,7 +140,7 @@ fn half_else(b: Bytes) -> Int {
 // A guard in a block that does not dominate the index proves nothing about
 // it: the fact belongs to the `> 0` edge's block only.
 fn half_after(b: Bytes) -> Int {
-  // arm64: "bl _xo_x_fault_raise_bytes_index"
+  // arm64: "bl _?xo_x_fault_raise_bytes_index"
   // amd64: "callq _xo_x_fault_raise_bytes_index"
   if b.len() > 0 {
     0

@@ -32,7 +32,7 @@ fn slow(x: Int) -> Int {
 }
 
 fn latch_call(x: Int) -> Int {
-  // arm64: "bl _xo_f_slow" -"bl _xo_f_slow[\s\S]*bl _xo_f_slow"
+  // arm64: "bl _?xo_f_slow" -"bl _?xo_f_slow[\s\S]*bl _?xo_f_slow"
   var n = x
   var c = 0
   while n > 1 {

@@ -45,7 +45,7 @@ fn is_red(c: Color) -> Bool {
 // Between the parse and the return: the text's release on Some and the
 // Err arm's drop, not a third (2026-10-26, bench/perf/text dur_parse).
 fn ok_nanos(t: Str) -> Int {
-  // arm64: "bl _xo_f_text_2eparse__duration" -"(?s)parse__duration.*bl _xo_h.*bl _xo_h.*bl _xo_h.*\tret"
+  // arm64: "bl _?xo_f_text_2eparse__duration" -"(?s)parse__duration.*bl _?xo_h.*bl _?xo_h.*bl _?xo_h.*\tret"
   // amd64: "callq _xo_f_text_2eparse__duration" -"(?s)parse__duration.*callq _xo_h.*callq _xo_h.*callq _xo_h.*\tretq"
   match Duration.parse(t) {
     Ok(d) => d.nanos()

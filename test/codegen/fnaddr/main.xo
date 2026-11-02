@@ -21,7 +21,7 @@ fn main(os: Os) {
 // rt.sym_addr is the C symbol's address under its exact name, declared
 // when the module does not define it.
 // func internal.rt_op
-// arm64: "adrp[^\n]*xo_entry" "adrp[^\n]*strlen@GOTPAGE"
+// arm64: "adrp[^\n]*xo_entry" "adrp[^\n]*(strlen@GOTPAGE|:got:strlen)"
 // amd64: "leaq _xo_entry\(%rip\)" "_strlen@GOTPCREL\(%rip\)"
 // llvm: "ptrtoint ptr @xo_entry to i64" "ptrtoint ptr @strlen to i64"
 

@@ -39,7 +39,7 @@ const XS: List[Int] = [3, 1, 4, 1, 5, 9]
 // own drop code, so it never matched there; a variant holding a List[Str]
 // shows the bl _xo_h call, 2026-10-26).
 fn cycle(n: Int) -> Int {
-  // arm64: "_xo_x_const_once" -"b\.hs" -"bl _xo_h"
+  // arm64: "_?xo_x_const_once" -"b\.hs" -"bl _?xo_h"
   // amd64: "_xo_x_const_once" -"\tjae " -"callq _xo_h"
   var s = 0
   for i in 0..n {

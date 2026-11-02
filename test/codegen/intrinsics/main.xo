@@ -156,7 +156,7 @@ fn main(os: Os) {
 // lookups at every launch before, 2026-10-28; --race keeps it:
 // internal/llvm TestRaceDefaultNative)
 // func internal.sysc_op
-// arm64: "bl _getpid" "_getpid@GOTPAGE\n\tldr x[0-9]+, \[x[0-9]+, _getpid@GOTPAGEOFF\]" -"___tsan_acquire"
+// arm64: "bl _?getpid" "(_getpid@GOTPAGE\n\tldr x[0-9]+, \[x[0-9]+, _getpid@GOTPAGEOFF\]|:got:getpid\n\tldr x[0-9]+, \[x[0-9]+, :got_lo12:getpid\])" -"__tsan_acquire"
 // amd64: "callq _getpid" "_getpid@GOTPCREL\(%rip\)" -"___tsan_acquire"
 // llvm: "call i32 @getpid\(\)" "icmp ne ptr @getpid, null" "icmp ne ptr @__tsan_acquire, null"
 
