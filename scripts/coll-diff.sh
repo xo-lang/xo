@@ -26,6 +26,7 @@ one() {
 	}
 	run go go; run llvm llvm; run native $NATIVE; run alloff $NATIVE "$alloff"
 	ref=${REF:-go}
+	if grep -q -E "^BUILD FAILED|^exit (124|137)$" "$o/$ref.out"; then echo "REFFAIL $n: the $ref run failed or timed out (load?), not compared"; return; fi
 	bad=""
 	for b in go llvm native alloff; do
 		[ $b = $ref ] || cmp -s "$o/$ref.out" "$o/$b.out" || bad="$bad $b"
@@ -43,4 +44,4 @@ one() {
 }
 export -f one
 printf '%s\n' "$@" | xargs -P "$JOBS" -I{} bash -c 'one {}' | tee "$T/log"
-echo "programs: $(grep -c '^\(same\|DIFF\)' "$T/log"), same: $(grep -c '^same' "$T/log"), differ: $(grep -c '^DIFF' "$T/log")"
+echo "reference failed: $(grep -c '^REFFAIL' "$T/log"), programs: $(grep -c '^\(same\|DIFF\|REFFAIL\)' "$T/log"), same: $(grep -c '^same' "$T/log"), differ: $(grep -c '^DIFF' "$T/log")"
