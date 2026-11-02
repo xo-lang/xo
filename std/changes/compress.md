@@ -1,5 +1,23 @@
 # std/compress changes
 
+## 2026-11-02: fix: inflating a back reference that grew the output read the old output after it was freed
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's race stress (http_gzip, http_gzip_responses and http_client_stream built with --race on linux/arm64: a heap-use-after-free in raw.u8s_copy_back)
+- Go reference: none
+- Test: internal/llvm TestRaceStdNoUseAfterFree/http_gzip (a --race build reports the use after free before the fix)
+- Timing: none
+- Shipped in: v0.34.0 (07a089cec, raw.xo) through v0.35.0
+
+When a back reference (a DEFLATE length and distance) did not fit in the
+output list's capacity, the inflater made a larger list and copied the
+output into it, but the old list's last use was taking its address, so it
+was released before the copy read it (gotchas/raw-address-outlives-bytes.md).
+The copy read the right bytes as long as nothing reused the block in
+between; a --race build reported it on the first growing back reference.
+The old list now stays alive past the copy.
+
 ## 2026-10-28: perf: hdec_init builds its tables in locals
 
 - Kind: perf

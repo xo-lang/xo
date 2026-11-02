@@ -140,6 +140,10 @@ pub fn u8s_copy_back(var out: List[UInt8], dist: Int, length: Int) {
     let nl = List[UInt8].with_capacity(want)
     let b = rt.obj_addr(nl)
     rt.mem_copy(b + 24, a + 24, n)
+    // the old list stays alive past the copy: its last use was its
+    // address, so it was released before the copy read it
+    // (gotchas/raw-address-outlives-bytes.md)
+    let _old = out.len()
     rt.mem_store(b, 8, n, 8)
     out = nl
     a = b

@@ -28,6 +28,8 @@ var raceStdGoldens = []struct{ golden, site string }{
 	{"websocket", "WsConn.write_frame"},
 	// the resolver configuration's host name and hosts file, freed before they were copied
 	{"net_lookup_dial_timeout", "dns.config and dns.hosts_text"},
+	// the inflater's output list, freed before a growing back reference copied it
+	{"http_gzip", "raw.u8s_copy_back"},
 }
 
 // TestRaceStdNoUseAfterFree builds each of raceStdGoldens with --race on
