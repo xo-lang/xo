@@ -1,0 +1,32 @@
+// cancel_rc_pairs meets a retain that sink_retains moved into a branch
+// arm with that arm's release: Duration.parse, inlined at its one call
+// site, keeps its text in DurationErr on one path and releases it on the
+// others, and the caller retained the element of its local list before
+// the call (bench/perf/text dur_parse). Here the list's elements are
+// replaced between rounds, the text a round reads is kept past the
+// replacement, and the error's text leaves the loop.
+fn rounds(k: Int) -> (Int, Str) {
+  var texts: List[Str] = []
+  for i in 0..12 {
+    texts.push(if i % 3 == 0 { "${i}h${k}m" } else if i % 3 == 1 { "bad${i}" } else { "${i * k}.5s" })
+  }
+  var sum = 0
+  var kept = ""
+  for r in 0..4 {
+    for t in texts {
+      match Duration.parse(t) {
+        Ok(d) => sum = (sum + d.nanos() % 1000003) % 1000000007
+        Err(_) => sum += 1
+      }
+    }
+    kept = "${kept},${texts[r + 1]}"
+    texts[r + 1] = "${r}s"
+  }
+  (sum, "${kept} ${texts[1]} ${texts[4]}")
+}
+
+fn main(os: Os) {
+  let k = os.env.args().len() + 1
+  let (s, t) = rounds(k)
+  os.stdio.println("rounds ${s} ${t}")
+}

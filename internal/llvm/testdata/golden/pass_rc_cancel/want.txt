@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+rounds 23769329 ,bad1,2.5s,3h1m,bad4 0s 3s
+--- stderr

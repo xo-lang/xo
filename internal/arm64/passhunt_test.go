@@ -29,6 +29,7 @@ var passHuntTargets = map[string][]string{
 	"pass_latch_swaps":    {"tail_dup", "thread", "copy_prop", "thread_cset", "place_latches"},
 	"pass_loops_ranges":   {"lsr", "ranges", "unroll_small", "push_runs", "place_latches"},
 	"pass_map_share":      {"map_core", "specialize_args"},
+	"pass_rc_cancel":      {"cancel_rc_pairs", "sink_retains"},
 	"pass_rc_pairs":       {"cancel_rc_pairs", "sink_retains", "rc_thunk"},
 	"pass_select_cmp":     {"select_compares", "thread_cset", "reuse_flags", "thread"},
 	"pass_slp_pairs":      {"slp_f64", "reuse_loads", "cluster_mem"},
