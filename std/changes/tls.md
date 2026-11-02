@@ -1,5 +1,19 @@
 # std/tls changes
 
+## 2026-11-01: perf: fewer allocations in a TLS 1.3 server handshake
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF=heap alloc_objects of 60 handshakes (sha256.Hasher.sum 22%, hkdf.expand_label 35%, cert_flight 24% of the objects), decision 0449 idle connection memory
+- Go reference: crypto/hmac keeps the marshaled inner and outer states after the padded key
+- Test: TestTLS13ReplayDiff and TestTLSServerReplayDiff (byte compared with Go's crypto/tls)
+- Timing: handshakes a second, linux/arm64, tlsrate hs p256 and x25519, 2 warm rounds each: base 14,207 and 14,361 (p256), 14,945 and 14,811 (x25519); new 14,242 and 14,309 (p256), 14,943 and 14,898 (x25519): no change (the handshake is the key exchange and the signature). Go's crypto/tls: not rerun here. Allocations for 2,000 held TLS connections: 1,730,380 to 1,604,409 (-7%)
+
+hmac.Mac keeps the outer hash after its padded key, so a sum copies it
+instead of building a hasher and compressing the pad block again;
+hkdf.expand of one block builds no output builder; the TLS 1.3 server
+reads the leaf's key algorithm once (it parsed the leaf twice).
+
 ## 2026-10-30: feature: client certificates on a TLS 1.2 server and client (decision 0433)
 
 - Kind: feature
