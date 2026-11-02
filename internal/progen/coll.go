@@ -65,7 +65,10 @@ func Coll(seed int64) string {
 
 func collFunc(r *rand.Rand, i int) string {
 	k := collKinds[r.Intn(len(collKinds))]
-	shape := r.Intn(9)
+	shape := r.Intn(12)
+	if shape >= 9 {
+		shape = 9 // the minimal flag loop is the most frequent: nothing else reads the size
+	}
 	if k.shrink == nil && shape == 5 {
 		shape = 0
 	}
@@ -161,6 +164,17 @@ func collFunc(r *rand.Rand, i int) string {
 		add("  i += 1")
 		add("}")
 		add(step("i"))
+	case 9: // the flag loop with nothing else in it (thread_cset, 2026-11-01)
+		add("var more = true")
+		add("var i = 0")
+		add("while more {")
+		add("  let n = " + k.size("c"))
+		add(fmt.Sprintf("  if i < %d {", lim))
+		add("    " + k.grow("c", "i"))
+		add("  }")
+		add("  i += 1")
+		add("  more = " + k.size("c") + " != n")
+		add("}")
 	default: // a copy keeps its own size and contents
 		add(fmt.Sprintf("for i in 0..%d {", lim))
 		add("  " + k.grow("c", "i"))
@@ -178,6 +192,9 @@ func collFunc(r *rand.Rand, i int) string {
 		add("}")
 	}
 	add("return acc + " + k.size("c"))
+	if shape == 9 {
+		body[1] = "let acc = k"
+	}
 	var b strings.Builder
 	if shape == 7 {
 		fmt.Fprintf(&b, "fn g%d(var c: %s, x: Int) {\n  %s\n}\n\n", i, k.typ, k.grow("c", "x"))
