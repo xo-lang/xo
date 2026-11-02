@@ -15,8 +15,11 @@ job at a time. They replace the EC2 CI (decision 0423).
 
 ## What runs there
 
-`scripts/lead/tier.sh` sends the tier's commit as a git bundle (the
-commits since `refs/offload/sent`, all of them the first time; the host
+`scripts/lead/tier.sh` sends the tier's commit as a git bundle to the
+second arm64 host, or the first when that one does not answer (since
+2026-11-01: a step on the first host holds back every `--ab`). The bundle
+has the commits since `refs/offload-arm64b/sent` (`refs/offload/sent` on
+the first host), all of them the first time; the host
 has no access to the private repository, and the public one's hashes
 differ, since publish.sh rewrites its history) and runs
 `scripts/lead/offload-tier.sh` there in the background, beside the Mac's
@@ -27,7 +30,14 @@ steps, logging to `~/xo-lead/agents/lead-tierN-off-cmd.log`:
 - Linux coverage the Mac cannot give (reported as `linux NAME: ...`, not
   failing the tier until their known failures are fixed): `llvm`, `cmd`.
 
-When the host does not answer, tier.sh runs every step on the Mac as
+A step's exit 5 means only a `linux` step failed: the host's last line
+then reads `offload tier N: ok, linux steps FAILED: NAME`. `gate.sh`'s whole
+output for a failed step is in `/tmp/xo-gate-tierN/NAME.txt` on that host.
+While a tier holds the Mac, `hourly.sh` runs main's fixed point on the
+second host (offload-tier.sh's `fp` step, logged to `hourly.log`), then its
+usual check after the tier. Last verified: 2026-11-01.
+
+When no host answers, tier.sh runs every step on the Mac as
 before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
 (darwin coverage), the newest Go and sepcomp Docker steps.
 
