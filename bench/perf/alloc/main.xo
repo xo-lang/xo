@@ -10,6 +10,10 @@
 //   grow    lists grown by push from empty (resizes through the classes)
 //   strings strings built by interpolation and append, then dropped
 //   maps    maps of 1 to 64 entries built and dropped
+//   big1    lists of one struct of 40 Ints (320 bytes, over the 256 byte
+//           floor of decision 0452's addendum), made and dropped
+//   bign    the same structs pushed into lists of 1 to 20 (growth from
+//           the floor: 1, 2, 4, 8, 16, 32 against 4, 8, 16, 32)
 //   tasks   tasks that allocate on worker threads and hand the lists
 //           back (the threaded paths: magazines, the central lists)
 
@@ -116,6 +120,78 @@ fn tasks() -> Int {
   total
 }
 
+struct Big {
+  a: Int
+  b: Int
+  c: Int
+  d: Int
+  e: Int
+  f: Int
+  g: Int
+  h: Int
+  i: Int
+  j: Int
+  k: Int
+  l: Int
+  m: Int
+  n: Int
+  o: Int
+  p: Int
+  q: Int
+  r: Int
+  s: Int
+  t: Int
+  u: Int
+  v: Int
+  w: Int
+  x: Int
+  y: Int
+  z: Int
+  a1: Int
+  b1: Int
+  c1: Int
+  d1: Int
+  e1: Int
+  f1: Int
+  g1: Int
+  h1: Int
+  i1: Int
+  j1: Int
+  k1: Int
+  l1: Int
+  m1: Int
+  n1: Int
+}
+
+fn big(x: Int) -> Big {
+  Big{a: x, b: 1, c: 2, d: 3, e: 4, f: 5, g: 6, h: 7, i: 8, j: 9, k: 10, l: 11, m: 12, n: 13, o: 14, p: 15, q: 16, r: 17, s: 18, t: 19, u: 20, v: 21, w: 22, x: 23, y: 24, z: 25, a1: 26, b1: 27, c1: 28, d1: 29, e1: 30, f1: 31, g1: 32, h1: 33, i1: 34, j1: 35, k1: 36, l1: 37, m1: 38, n1: 39}
+}
+
+fn big1() -> Int {
+  var sum = 0
+  for i in 0..300000 {
+    var xs: List[Big] = []
+    xs.push(big(i))
+    sum += xs[0].a + xs[0].n1
+  }
+  sum
+}
+
+fn bign() -> Int {
+  var sum = 0
+  var r = 777
+  for i in 0..60000 {
+    r = next(r)
+    let n = 1 + (r >> 8) % 20
+    var xs: List[Big] = []
+    for j in 0..n {
+      xs.push(big(i + j))
+    }
+    sum += xs[n - 1].a + xs.len()
+  }
+  sum
+}
+
 fn main(os: Os) {
   let args = os.env.args()
   let w = args.get(0) ?? "small"
@@ -132,6 +208,8 @@ fn main(os: Os) {
       "grow" => grow()
       "strings" => strings()
       "maps" => maps()
+      "big1" => big1()
+      "bign" => bign()
       "tasks" => tasks()
       _ => -1
     }
