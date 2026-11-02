@@ -247,10 +247,18 @@ fn try_pop(h: Int, cap: Int, esize: Int) -> Int {
   l
 }
 
-/// A new empty list object with room for n elements (at least 4) of esize
-/// bytes (xo_rl_new_n).
+/// The fewest elements a new list holds: 4, or 1 for elements over 256
+/// bytes (decision 0452's addendum: four of them are over 1 KiB, and a
+/// list of one big struct, a connection's state, held four slots). The
+/// LLVM backend (compiler/llvm/call.xo list.new) and the wasm runtime
+/// (compiler/wasm/rt.xo rl_new_n) state the same rule.
+pub fn min_cap(esize: Int) -> Int { if esize > 256 { 1 } else { 4 } }
+
+/// A new empty list object with room for n elements (at least min_cap) of
+/// esize bytes (xo_rl_new_n).
 pub fn rl_new_n(n: Int, esize: Int) -> Int {
-  let cap = if n < 4 { 4 } else { n }
+  let m = min_cap(esize)
+  let cap = if n < m { m } else { n }
   let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
   if h != 0 {
     let l = try_new(h, cap, esize)
@@ -284,11 +292,11 @@ pub fn rl_grow_n(l: Int, esize: Int) -> Int {
   let h = rt.mem_load(rt.static_word(HEAP), 0, 8)
   if h != 0 {
     if count(l) == IMMORTAL {
-      let n = try_new(h, 4, esize)
+      let n = try_new(h, min_cap(esize), esize)
       if n != 0 {
         return n
       }
-      return rl_new(h, 4, esize)
+      return rl_new(h, min_cap(esize), esize)
     }
     return grow(h, l, esize)
   }
@@ -300,7 +308,7 @@ fn rl_grow_mt(l: Int, esize: Int) -> Int {
   if count(l) == IMMORTAL {
     let t = rt.tlocal_get(TLS_HEAP)
     if t != 0 {
-      let n = try_pop(t, 4, esize)
+      let n = try_pop(t, min_cap(esize), esize)
       if n != 0 {
         return n
       }
@@ -784,10 +792,10 @@ pub fn rl_copy(hw: Int, l: Int, esize: Int, dup: Int, drop: Int) -> Int {
     // to copy, count, or give back. The count is read atomically: a
     // shared list's count changes under other threads (a plain load is a
     // ThreadSanitizer race, rc_threads test_list)
-    return rl_new(hw, 4, esize)
+    return rl_new(hw, min_cap(esize), esize)
   }
   let len = rt.mem_load(l, 8, 8)
-  let c = rl_new(hw, if len < 4 { 4 } else { len }, esize)
+  let c = rl_new(hw, if len < min_cap(esize) { min_cap(esize) } else { len }, esize)
   rt.mem_store(c, 8, len, 8)
   rt.mem_copy(addw(c, L_HDR), addw(l, L_HDR), mulw(len, esize))
   if dup != 0 {
@@ -823,7 +831,7 @@ pub fn rl_share(l: Int, esize: Int, share: Int) { each(l, esize, share) }
 /// here) becomes a new list.
 pub fn rl_grow(hw: Int, l: Int, esize: Int) -> Int {
   if count(l) == IMMORTAL {
-    return rl_new(hw, 4, esize)
+    return rl_new(hw, min_cap(esize), esize)
   }
   grow(hw, l, esize)
 }
@@ -856,7 +864,7 @@ fn grow(hw: Int, l: Int, esize: Int) -> Int {
   // Go's growslice curve: double up to 256 elements, then grow by a
   // quarter plus 192 (toward 1.25x), so a large list holds at most
   // about a fifth of its capacity unused, not half (decision 0452)
-  let want = if cap < 4 { 4 } else if cap < 256 { addw(cap, cap) } else { addw(cap, (cap + 768) >> 2) }
+  let want = if cap < min_cap(esize) { min_cap(esize) } else if cap < 256 { addw(cap, cap) } else { addw(cap, (cap + 768) >> 2) }
   // then up to what the block holds (Go's roundupsize): the classes
   // above 1 KiB are powers of two, so a capacity of 128 or 256 elements
   // with the header took the next class half empty

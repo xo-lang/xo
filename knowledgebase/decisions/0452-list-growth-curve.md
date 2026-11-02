@@ -74,3 +74,19 @@ loaded, every effect under 3%): wall 0.996 (0.995 to 0.998), CPU 0.998 (0.997 to
 max RSS 0.986 (0.986 to 0.992). An earlier run on cf8fdebfa read wall 0.998, CPU 1.001,
 max RSS 0.98. `alloc grow` wall 0.922 (0.922 to 0.927), `alloc small` 1.0, both with max
 RSS 1.0. The self build's gate: bootstrap s1, s2, s3 and fixed point ok.
+
+## Addendum 2026-11-01: a list of big elements starts at one slot
+
+Owner, 2026-11-01, through the lead. A new list had room for at least 4 elements
+(`obj.rl_new_n`, the first push into an empty literal's list, `rl_copy`, and `grow`'s
+floor), so `tlssrv.save`'s list of one `Conn` (1,872 bytes: a `Server` of 1,792 bytes
+holding a 248 byte `Conf` copy, a `Hello`, two `Keys` and a certificate) took the 8,184
+byte class, 64% of a TLS server's in-use bytes (XO_PROF=heap at rate 512, 300 held
+connections; 2,000 held connections: RssAnon 111 to 115 MB against 79 to 81 MB for Go's
+crypto/tls). The floor is now `obj.min_cap(esize)`: 4, or 1 when an element is over 256
+bytes (four would be over 1 KiB). `with_capacity(n)` takes the larger of n and the floor,
+as before. The same rule stands in compiler/llvm/call.xo (`list.new`, the header it
+writes) and compiler/wasm (`$min_cap`, `$rl_new_n`, `$rl_grow`, the empty literal); arm64
+calls obj.xo. Lists of elements up to 256 bytes are unchanged, so their output is too.
+Growth from the floor of 1 doubles (1, 2, 4, then 4 elements as before), so a list of
+big structs that grows to many elements costs up to two extra copies.

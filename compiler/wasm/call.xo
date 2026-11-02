@@ -159,7 +159,7 @@ fn (var g: Gen) call(v: Int) {
         g.e("i32.const ${es}")
         g.e("call $rl_new_n")
       } else {
-        g.e("i32.const 4")
+        g.e("i32.const ${if es > 256 { 1 } else { 4 }}")
         g.e("i32.const ${es}")
         g.e("call $rl_new")
       }

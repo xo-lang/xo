@@ -73,16 +73,19 @@ fn (var g: Gen) call(v: Int) {
         let r = g.def("call i64 @xo_x_obj_rl_new_n(i64 ${a0}, i64 ${g.esize(et)}) #6")
         let p = g.def("inttoptr i64 ${r} to ptr")
         // the header obj.rl_new_n wrote (count 1, length 0, capacity
-        // max(n, 4)), again where LLVM sees it: it then knows the new list
+        // max(n, min_cap)), again where LLVM sees it: it then knows the new list
         // is held only here and how long it is (2026-10-21: nbody's
         // bodies() list, decision 0322's step C; plain stores, the list
         // is no other thread's yet)
         g.emit("store i64 1, ptr ${p}${TBAA_RC}")
         let lp = g.def("getelementptr %xo.rlist, ptr ${p}, i32 0, i32 1")
         g.emit("store i64 0, ptr ${lp}${TBAA_HDR}")
-        // max(n, 4): a constant folded here, else llvm.smax (no
-        // `select`: test/codegen consttime forbids one in sc_reduce)
-        let cap = if let Some(k) = Int.parse(a0) { "${k.max(4)}" } else { g.def("call i64 @llvm.smax.i64(i64 ${a0}, i64 4)") }
+        // max(n, obj.min_cap(esize)): 1 for elements over 256 bytes, else 4
+        // (decision 0452's addendum). A constant folded here, else
+        // llvm.smax (no `select`: test/codegen consttime forbids one in
+        // sc_reduce)
+        let mc = if g.esize(et) > 256 { 1 } else { 4 }
+        let cap = if let Some(k) = Int.parse(a0) { "${k.max(mc)}" } else { g.def("call i64 @llvm.smax.i64(i64 ${a0}, i64 ${mc})") }
         let cp = g.def("getelementptr %xo.rlist, ptr ${p}, i32 0, i32 2")
         g.emit("store i64 ${cap}, ptr ${cp}${TBAA_HDR}")
         g.alias(v, p)

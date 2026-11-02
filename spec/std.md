@@ -376,7 +376,9 @@ returns `List[U] ! E`.
 `List[T].with_capacity(n)` (also `List.with_capacity(n)` where the type is
 known) is an empty list, equal to `[]`, whose first `n` pushes append
 without growing it; `n` below 0 counts as 0. Capacity is not observable
-(decision 0170).
+(decision 0170). A new list has room for at least 4 elements, or for 1
+when its elements are over 256 bytes (decision 0452's addendum: a list of
+one connection's state held four).
 
 ### 2.4 Map[K, V] and Set[T]
 
