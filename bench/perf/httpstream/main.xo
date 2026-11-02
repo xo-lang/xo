@@ -1,47 +1,36 @@
-// A loopback HTTP server's streamed responses (http.stream) under keep-alive
-// clients: BodyWriter's write and flush path, for `xo bench --ab`.
+// The client of bench/perf/httpstream (decision 0404 stage B): one GET of
+// a SIZE byte body from serve/ at ADDR, read as a stream (MODE=stream:
+// Client.open and read in 64 KiB pieces, the bytes counted and dropped)
+// or whole (MODE=send: Client.send). Peak RSS is the point: a stream's
+// stays flat as SIZE grows, send's grows with it. Prints the bytes read.
 use std/http
 
-const CLIENTS = 8
-const REQUESTS = 4000
-const WRITES = 16
-const CHUNK = 4096
-
-fn routes() -> http.Router {
-  let chunk = "x".repeat(CHUNK).bytes()
-  var r = http.router()
-  r.handle("GET /s", fn(_req) {
-    http.stream(200, fn(w) {
-      for i in 0..WRITES {
-        w.write(chunk)?
-        if i % 4 == 3 {
-          w.flush()?
-        }
-      }
-    }).with_header("Content-Type", "text/plain")
-  })
-  r
-}
-
-fn main(os: Os) {
-  let l = os.net.listen("127.0.0.1:0").or_fault("listen")
-  let srv = http.server(l, routes())
-  let url = "http://${l.addr()}/s"
-  let total = Mutex[Int].new(0)
-  scope s {
-    s.spawn_background(fn() { srv.serve().ignore_err("the bench's server") })
-    scope c {
-      for _ in 0..CLIENTS {
-        c.spawn(fn() {
-          let cl = http.client(os.net, timeout: 30s)
-          for _ in 0..REQUESTS {
-            let resp = cl.get(url).or_fault("get")
-            total.with(fn(var t) { t += resp.body.len() })
-          }
-        })
-      }
+fn main(os: Os) ! {
+  let addr = os.env.get("ADDR") ?? "127.0.0.1:18097"
+  let size = os.env.get("SIZE") ?? "104857600"
+  let mode = os.env.get("MODE") ?? "stream"
+  let c = http.client(os.net, 300s)
+  let url = "http://${addr}/big?n=${size}"
+  var total = 0
+  if mode == "send" {
+    match c.get(url) {
+      Ok(r) => total = r.body.len()
+      Err(e) => fault("get: ${e}")
     }
-    s.cancel()
+  } else {
+    match c.open(http.new_request("GET", url)) {
+      Ok(s) => {
+        loop: while true {
+          match s.read(65536) {
+            Ok(Some(b)) => total += b.len()
+            Ok(None) => break loop
+            Err(e) => fault("read: ${e}")
+          }
+        }
+        s.close()
+      }
+      Err(e) => fault("open: ${e}")
+    }
   }
-  os.stdio.println("${total.with(fn(var t) { t })}")
+  os.stdio.println("${total}")
 }
