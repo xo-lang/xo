@@ -289,6 +289,14 @@ there as a file: scp (`-O`, the legacy protocol, which both hosts take)
 to `%USERPROFILE%\xo-ci\off`, then `wsl -e bash -l` on it under
 `flock ~/xo-ci/offload.lock`.
 
+Not for HTTP throughput (Xo Lang 2, 2026-11-02): loopback HTTP inside WSL2
+there runs about 20 times below the linux/arm64 hosts for Go and Xo alike
+(bench/perf/jitter /alloc at 32 connections: Go 3,600 req/s at 870 to 920 us
+CPU a request, Xo 8,100 to 8,600 req/s at 630 to 660 us), so the host's
+network stack, not the program, sets the number
+(gotchas/wsl2-loopback-http-throughput.md). Use it for amd64 correctness and
+CPU-bound timings; HTTP throughput needs bare Linux. Last verified: 2026-11-02
+
 - `scripts/lead/amd64-run.sh REV NAME [GOLDEN|all|sample|passes ...]` sends REV
   as a bundle (the commits since `refs/offload-amd64/sent`) and runs
   `scripts/lead/offload-amd64.sh` there: xo built natively at REV with the

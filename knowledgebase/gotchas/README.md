@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [wsl2-loopback-http-throughput.md](wsl2-loopback-http-throughput.md): Observed 2026-11-02: loopback HTTP on the WSL2 amd64 offload host runs about 20x below the arm64 hosts, Go's jitter server worse than Xo's; not for HTTP throughput (a1's amd64 HTTP rows in doubt)
 - [data-shift-false-sharing-128.md](data-shift-false-sharing-128.md): Observed 2026-11-02: a 64 byte layout shift looked like 128 byte false sharing; XO_DATA_SHIFT showed .data alone moves /alloc by 1%, so tell code from data placement first
 - [store-sunk-past-aliasing-load.md](store-sunk-past-aliasing-load.md): Observed 2026-11-02: slp_f64 sank a Float store pair past a load through another base register that named the same element (vs[i], vs[j], i == j); treat two bases as the same memory unless proven otherwise.
 - [branch-compare-past-parallel-move.md](branch-compare-past-parallel-move.md): Observed 2026-11-01: thread_cset ran a compare after the block's parallel move, so a loop test compared a new value with itself and the loop left early; check that a compare moved down reads nothing the moves write.
