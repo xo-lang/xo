@@ -138,6 +138,10 @@ const FS_MAIN = 40
 /// The shared cache's takes and returns so far (under its lock): a worker
 /// that slept FIBER_TRIM_US with no change trims the cache (fiber_trim).
 const FS_OPS = 48
+/// The bytes each fiber's first frame sits below its stack's top
+/// (XO_STACK_SHIFT, decision 0459's layout check for the stack: 0, the
+/// default, none).
+pub const FS_SHIFT = 56
 /// The stacks the shared cache keeps: up to the recent peak, FIBER_CACHE
 /// at most, and FIBER_KEEP once the pool has been idle FIBER_TRIM_US
 /// (2026-10-19, Go's scavenger in spirit: with 64 at most, a burst of 2,000
@@ -1925,7 +1929,8 @@ fn fiber_new(fs: Int, w: Int, t: Int) -> Int {
   // the first frame, for the switch the compiler emits
   let mem = rt.mem_load(f, F_MEM, 8)
   let size = rt.mem_load(f, F_SIZE, 8)
-  rt.mem_store(f, F_SP, sched.fiber_frame(f, mem, size - win_save(mem, size), WIN_COMMIT - win_save(mem, size), rt.mem_load(fs, FS_MAIN, 8)), 8)
+  let shift = rt.mem_load(fs, FS_SHIFT, 8)
+  rt.mem_store(f, F_SP, sched.fiber_frame(f, mem, size - win_save(mem, size) - shift, WIN_COMMIT - win_save(mem, size), rt.mem_load(fs, FS_MAIN, 8)), 8)
   f
 }
 

@@ -186,6 +186,13 @@ fn fibers_setup(p: Int) {
   }
   rt.mem_store(fs, FS_STACK, mb * 1048576, 8)
   rt.mem_store(fs, FS_PAGE, page_size(), 8)
+  // XO_STACK_SHIFT=N: every fiber's first frame N bytes lower (a multiple
+  // of 16, at most 64 KiB), to check a cost against the stack's address
+  // (decision 0459)
+  let sh = env_int("XO_STACK_SHIFT")
+  if sh > 0 {
+    rt.mem_store(fs, pool.FS_SHIFT, sh.min(65536) / 16 * 16, 8)
+  }
   rt.mem_store(fs, FS_MAIN, rt.mem_load(svc, ctx.SV_FIBER_MAIN, 8), 8)
   rt.mem_store(p, P_FIBERS, fs, 8)
   rt.mem_store(p, P_WORKER_MAIN, rt.mem_load(svc, ctx.SV_WORKER_MAIN, 8), 8)

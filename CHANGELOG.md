@@ -5,6 +5,7 @@ minor matches the spec draft; the full list of language changes for each
 release is the "Changes in 0.N" section of `spec/core.md`.
 
 ## Unreleased
+- perf (native, arm64): callee saved registers are saved from a 16 byte aligned offset, so no register pair straddles a 4 KiB page. At one stack phase in 256 a pair did, and on a Linux VM on Apple silicon that cost /alloc 36% more CPU a request: 0.36's /alloc gap, which a 208 byte smaller frame upstream moved onto such a phase (decision 0459). `XO_STACK_SHIFT=N` moves every fiber's first frame N bytes lower to check a cost against the stack's address.
 - perf (native http): a Response no longer carries the wasm-only stream field decision 0447 added (/alloc on linux/arm64: req/s +12% at 32 and 256 connections, CPU a request -11%).
 - native http: a keep-alive connection whose 20 ms linger timed out parks at once on later idles until it is busy again (decision 0449), so slow keep-alive traffic holds less memory (30 ms think time at 2,000 connections: 70 MB to about 60 MB).
 - Native: rt.static_word's and rt.sys_words' tables are 128 byte aligned, so which runtime words share a cache line pair no longer changes with unrelated code and data (decision 0459; no speed change measured). `XO_DATA_SHIFT=N` links a Linux program with N bytes of zeros before its .data, to measure the same code with its data moved: on /alloc a 64 byte shift moved CPU a request by 1%, so 0.36's /alloc gap is not .data false sharing.
