@@ -153,6 +153,14 @@ sets the cycles, SCENARIOS narrows the list. Repeats agree within about
 when reads return). Docker Desktop's VM has no hardware counters, so
 `perf stat` (the CI measure suite) does not work there; callgrind does.
 
+## Streamed HTTP responses: `bench/perf/httpstream`
+
+An `xo bench --ab` program: a loopback server's `http.stream` route under 8
+keep-alive clients, 4000 requests each of 16 writes of 4 KiB with flushes, so
+BodyWriter's write and flush path. `~/xo-lead/agents/ab-host.sh BASE NEW NAME --
+bench/perf/httpstream`; BASE and NEW both need the program. About 650 ms a run on
+the linux/arm64 offload host (2026-11-01).
+
 ## GET /users of the CRUD servers: encoded under the read lock (2026-10-21)
 
 Since 2026-10-21 (owner's decision) both CRUD servers (`bench/perf/http/xo`,
