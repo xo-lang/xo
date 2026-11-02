@@ -21,7 +21,7 @@ one() {
 	d=$1; n=$(basename "$d"); o=$T/$n; mkdir -p "$o"
 	run() { # label backend [passes]
 		if XO_PASSES=${3:-} "$XO" build --backend=$2 -o "$o/$1" "$d" > "$o/$1.build" 2>&1; then
-			timeout 60 "$o/$1" > "$o/$1.out" 2> "$o/$1.err"; echo "exit $?" >> "$o/$1.out"
+			timeout ${RUN_TIMEOUT:-10} "$o/$1" > "$o/$1.out" 2> "$o/$1.err"; echo "exit $?" >> "$o/$1.out"
 		else echo "BUILD FAILED" > "$o/$1.out"; fi
 	}
 	run go go; run llvm llvm; run native $NATIVE; run alloff $NATIVE "$alloff"
@@ -32,7 +32,7 @@ one() {
 	done
 	if [ -z "$bad" ]; then echo "same $n"; else
 		echo "DIFF $n:$bad"
-		if ! cmp -s "$o/$ref.out" "$o/native.out"; then
+		if ! cmp -s "$o/$ref.out" "$o/native.out" && cmp -s "$o/$ref.out" "$o/llvm.out"; then
 			for p in $(echo "$passes" | tr -d ' ' | sed 's/,/ /g'); do
 				run sweep $NATIVE "-$p"
 				cmp -s "$o/$ref.out" "$o/sweep.out" && echo "  $n: native agrees with $ref when $p is off"
