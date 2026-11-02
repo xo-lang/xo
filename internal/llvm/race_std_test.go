@@ -24,6 +24,8 @@ var raceStdGoldens = []struct{ golden, site string }{
 	{"http_h2c_sniff", "h2w.field"},
 	// a client frame's mask bytes, freed before they were read
 	{"websocket", "WsConn.write_frame"},
+	// the resolver configuration's host name and hosts file, freed before they were copied
+	{"net_lookup_dial_timeout", "dns.config and dns.hosts_text"},
 }
 
 // TestRaceStdNoUseAfterFree builds each of raceStdGoldens with --race on

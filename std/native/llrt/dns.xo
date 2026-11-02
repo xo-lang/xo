@@ -211,6 +211,8 @@ fn config() -> Config {
       rt.mem_store(nb, 32, if text.is_none() { -1 } else { tb.len() }, 8)
       rt.mem_copy(nb + CONF_HEAD, raw.data(host), host.len())
       rt.mem_copy(nb + CONF_HEAD + host.len(), raw.bytes_addr(tb), tb.len())
+      raw.alive_str(host)
+      raw.alive(tb)
       if b != 0 {
         rt.heap_release(b - 8)
       }
@@ -306,6 +308,7 @@ fn hosts_text() -> Bytes? {
       rt.mem_store(nb, 16, if text.is_none() { -1 } else { sz }, 8)
       rt.mem_store(nb, 24, if text.is_none() { -1 } else { tb.len() }, 8)
       rt.mem_copy(nb + HOSTS_HEAD, raw.bytes_addr(tb), tb.len())
+      raw.alive(tb)
       if b != 0 {
         rt.heap_release(b - 8)
       }

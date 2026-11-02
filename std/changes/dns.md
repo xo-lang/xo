@@ -1,5 +1,24 @@
 # std/dns changes
 
+## 2026-11-02: fix: the resolver configuration and hosts file were copied from freed memory
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's race stress (net_lookup_dial_timeout, the tls and websocket goldens built with --race on linux/arm64: a heap-use-after-free in dns.config and dns.hosts_text)
+- Go reference: none
+- Test: internal/llvm TestRaceStdNoUseAfterFree/net_lookup_dial_timeout (a --race build reports the use after free before the fix)
+- Timing: none
+- Shipped in: v0.35.0 (26eaef119, dns.xo) through v0.35.0
+
+Reading /etc/resolv.conf (or Windows' adapters), the host name and the
+hosts file into the resolver's cached block copied each from a value
+whose last use was in the arguments of the copy itself
+(`rt.mem_copy(..., raw.data(host), host.len())`), so the value was
+released before the copy (gotchas/raw-address-outlives-bytes.md). The
+copy read the right bytes as long as nothing reused the block in between;
+a --race build, whose heap is the C library's, reported it on the first
+lookup. The values now stay alive past their copies.
+
 ## 2026-10-30: port: native Windows record lookups
 
 - Kind: port
