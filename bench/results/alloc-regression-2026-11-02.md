@@ -71,6 +71,32 @@ to v0.35.0. Ratios are comparable across jobs; absolute req/s are not
    of the fiber stack (linger slow only at shift 3888, linger + narrow B
    only at shift 0), so the revert only moves /alloc off that phase. The
    fix is Xo Lang 2's stack phase change.
+9. **Main with the stack phase fix** (7afa6e957, measured at ada68b353;
+   decision 0459, bench/results/stack-phase-2026-11-02.md:154) in two jobs
+   on the first host, 3 rounds each, against v0.35.0 in the same job:
+
+   | job | arm | c32 req/s | c256 req/s | c32 CPU us | c256 CPU us |
+   |---|---|---|---|---|---|
+   | l4pts15 | main 3f708df63 (no fix) | 0.833 | 0.801 | 41.75 (1.239) | 40.96 (1.251) |
+   | l4pts15 | main ada68b353 | 0.966 | 0.953 | 35.22 (1.045) | 34.34 (1.049) |
+   | l4pts15 | v0.35.0 | 164,909 | 182,149 | 33.70 | 32.74 |
+   | l4pts16 | main ada68b353 | 0.965 | 0.954 | 35.25 (1.048) | 34.25 (1.047) |
+   | l4pts16 | main + a1 P (73a081b7b, local) | 0.702 | 0.807 | 35.99 (1.070) | 35.59 (1.088) |
+   | l4pts16 | v0.35.0 | 164,780 | 182,413 | 33.64 | 32.70 |
+
+   The fix takes main from 0.83 to 0.97 of v0.35.0; about 4.5% CPU a
+   request is left on this host, with every arm's range (fresh process each
+   round) within 0.1 to 0.6 us, so it is not a per start address effect.
+   a1 P on top still loses (stays parked). On the Mac (darwin/arm64, real M4 Pro, 16 KiB
+   pages), one job of the same three servers built natively (l4macm, 5
+   rounds, fresh process each, server CPU from ps around a 10 s run after a
+   2 s warm run; the Mac was shared, load 3 to 21) has main level with
+   v0.35.0: req/s 0.980 / 1.033 at c32 / c256, CPU a request 1.004 / 1.014,
+   every range overlapping v0.35.0's; main without the fix (3f708df63) is
+   level too (0.978 / 1.043, CPU 1.009 / 1.034), as the stack phase finding
+   predicts for 16 KiB pages. With Graviton's under 1%
+   (stack-phase-2026-11-02.md:89-114), the first host's 4.5% is the 4 KiB
+   page VM's; owner, 2026-11-02: it ships in 0.36 as a known VM-only cost.
 
 ## Method notes
 
