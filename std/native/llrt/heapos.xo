@@ -562,12 +562,75 @@ fn clock_give() {
 /// Gives heap record h a new chunk to carve blocks from (its bump words
 /// at 24 and 32, alloc.xo BUMP_CUR and BUMP_END).
 pub fn chunk(h: Int) {
+  if extend(h, 32, H_BLIM) {
+    return
+  }
   // aligned to its size, so a page aligned prefixed block's chunk word is
   // found from the block (alloc.xo is_page; decision 0425)
   let c = map_aligned(CHUNK)
   let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
   rt.mem_store(h, 24, c, 8)
-  rt.mem_store(h, 32, c.wrapping_add(CHUNK), 8)
+  rt.mem_store(h, 32, c.wrapping_add(reserve(h, c, H_BLIM)), 8)
+}
+
+/// Whether a chunk starts small, the rest of its 4 MiB reserved (no access:
+/// no other mapping can land in it, as is_page needs, and no huge page is
+/// faulted in), on the systems whose mappings can be split.
+fn small_chunks() -> Bool {
+  if sanhook.sanitized() || sanhook.gorace() {
+    return false
+  }
+  match target.os {
+    TargetOs.Linux | TargetOs.Darwin => true
+    TargetOs.Windows | TargetOs.Wasi => false
+  }
+}
+
+fn set_prot(a: Int, n: Int, prot: Int) {
+  match target.os {
+    TargetOs.Linux => {
+      let _r = linux.mprotect(a, n, prot)
+    }
+    TargetOs.Darwin => {
+      let _r = sys_darwin.mprotect(a, n, prot)
+    }
+    TargetOs.Windows | TargetOs.Wasi => {}
+  }
+}
+
+/// The new chunk c's usable bytes for heap record h, its limit recorded at
+/// lim (0: nothing to extend to).
+fn reserve(h: Int, c: Int, lim: Int) -> Int {
+  if !small_chunks() || rt.mem_load(h, lim, 8) != 0 {
+    rt.mem_store(h, lim, 1, 8)
+    return CHUNK
+  }
+  set_prot(c.wrapping_add(FIRST_CHUNK), CHUNK - FIRST_CHUNK, 0)
+  mapped(FIRST_CHUNK - CHUNK)
+  rt.mem_store(h, lim, c.wrapping_add(CHUNK), 8)
+  FIRST_CHUNK
+}
+
+/// Grows the chunk ending at h's word at `end` to four times its size, up to
+/// its limit: whether it did.
+fn extend(h: Int, end: Int, lim: Int) -> Bool {
+  let e = rt.mem_load(h, end, 8)
+  let l = rt.mem_load(h, lim, 8)
+  if l == 0 || e >= l {
+    return false
+  }
+  let used = e.wrapping_sub(l.wrapping_sub(CHUNK))
+  let more = used.wrapping_mul(3)
+  let g = if more < l.wrapping_sub(e) { more } else { l.wrapping_sub(e) }
+  set_prot(e, g, 3)
+  mapped(g)
+  rt.mem_store(h, end, e.wrapping_add(g), 8)
+  true
+}
+
+/// Whether heap record h's chunks can grow in place (no cut needed first).
+pub fn can_extend(h: Int) -> Bool {
+  rt.mem_load(h, 32, 8) < rt.mem_load(h, H_BLIM, 8)
 }
 
 /// The page blocks' table (alloc.xo PT_CLASS, PT_LINK, PT_CLINK) and the
@@ -580,6 +643,13 @@ const PAGE_CLASS = 68
 const H_PCUR = 10952
 const H_PEND = 10960
 const H_PAGES = 10968
+/// The ends of the bump chunk's and the page chunk's reservations.
+const H_BLIM = 10976
+const H_PLIM = 10984
+/// A chunk's bytes at first (a thread that allocates little touches little
+/// of its two chunks: a dozen of them were most of a small build's mapped
+/// heap, decision 0448).
+const FIRST_CHUNK = 262144
 /// A page chunk's first word (alloc.xo PAGE_MAGIC).
 const PAGE_MAGIC = 5784094464206446155
 
@@ -595,11 +665,14 @@ pub fn pages_on() -> Bool { !sanhook.sanitized() && !sanhook.gorace() && !sanhoo
 /// links, the pages after it carved as page blocks (alloc.xo alloc);
 /// counted with the chunks.
 pub fn pchunk(h: Int) {
+  if extend(h, H_PEND, H_PLIM) {
+    return
+  }
   let c = map_aligned(CHUNK)
   rt.mem_store(c, 0, PAGE_MAGIC, 8)
   let _n = rt.slot_add(rt.static_word(W_CHUNKS), 0, 1, RELAXED)
   rt.mem_store(h, H_PCUR, c.wrapping_add(PAGE), 8)
-  rt.mem_store(h, H_PEND, c.wrapping_add(CHUNK), 8)
+  rt.mem_store(h, H_PEND, c.wrapping_add(reserve(h, c, H_PLIM)), 8)
 }
 
 /// A mapping of size bytes (a power of two) aligned to size: twice the
@@ -675,6 +748,7 @@ fn pword(p: Int, t: Int) -> Int {
   let base = p & (0).wrapping_sub(CHUNK)
   base.wrapping_add(t).wrapping_add(p.wrapping_sub(base).shr_logical(14).wrapping_shl(3))
 }
+
 
 /// The chunks mapped so far.
 pub fn chunks() -> Int { rt.slot_load(rt.static_word(W_CHUNKS), 0, RELAXED) }
@@ -966,7 +1040,7 @@ const W_HSIZE = 29
 /// per size class, 1 to 72); then each class's magazine size (alloc.xo
 /// MAG_CAP, written by mag_caps); then the page chunk's bump words and the
 /// page blocks flag (alloc.xo PCUR, PEND, PAGES; decision 0425).
-const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73 + 24
+const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73 + 24 + 16
 /// The first word of the per class magazine sizes (alloc.xo MAG_CAP).
 const H_MAG_CAP = 10368
 /// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).

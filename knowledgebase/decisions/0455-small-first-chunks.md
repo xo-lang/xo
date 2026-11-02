@@ -1,6 +1,6 @@
 # 0455: A heap record's first chunks start at 256 KiB
 
-Status: Proposed (needs the owner's acceptance, allocator change).
+Status: Accepted (owner, 2026-11-02). Proposed (Xo Lang 2, 2026-11-02).
 
 ## Context
 

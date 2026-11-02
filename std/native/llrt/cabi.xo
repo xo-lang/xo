@@ -310,7 +310,7 @@ fn heap_grow(h: Int, n: Int) -> Int {
   }
   // decision 0383 (a): a cut of the central magazines of a larger class
   // before a new chunk
-  if heapos.cut_for(h, n) {
+  if !heapos.can_extend(h) && heapos.cut_for(h, n) {
     return alloc.alloc(h, n)
   }
   heapos.chunk(h)
