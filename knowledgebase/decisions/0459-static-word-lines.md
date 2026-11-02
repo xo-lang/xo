@@ -1,7 +1,8 @@
 # 0459: Runtime tables 128 byte aligned, and XO_DATA_SHIFT to check layout sensitivity
 
-Status: Proposed (Xo Lang 2, 2026-11-02; the 0.36 /alloc blocker's runtime side, assigned by
-the lead; for the owner)
+Status: Accepted (owner, 2026-11-02, including items 4 and 5: the 16 byte aligned
+callee-saved area, 7afa6e957, and the XO_STACK_SHIFT check knob; proposed by Xo Lang 2,
+2026-11-02, the 0.36 /alloc blocker's runtime side, assigned by the lead)
 
 ## Context
 
