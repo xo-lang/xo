@@ -1,0 +1,112 @@
+// bench/perf/headphase (Xo Lang 2, 2026-11-02; decision 0459): a call
+// shaped like http1's head_of (eleven arguments, most of several words, so
+// most go in stack words that the caller copies from its spill slots in
+// runs, 16 bytes at a time on amd64), in a loop under DEPTH frames of a
+// small recursive function, so the copies' stores sit at another rsp phase
+// of a 4 KiB page at each depth. http1.parse_head itself is a private
+// runtime module a program cannot import. Measures what a 16 byte store
+// across a page costs, and what copying a run's first word alone costs.
+//
+//   headphase sweep ITERS       shifts 0 to 4080 by 16: the ns of 100 calls at each
+//   headphase run ITERS D...    ITERS calls under D frames of pad, in this
+//                               process (for xo bench)
+
+struct Url {
+  scheme: Str
+  host: Str
+  path: Str
+  query: Str
+  port: Int
+}
+
+/// head_of's shape: a sum over its arguments so none is dead. Out of
+/// line (it calls itself on a path never taken), as head_of is.
+fn head(method: Str, target: Str, major: Int, minor: Int, url: Url, query: List[Str], keys: List[Str], vals: List[Str], used: Int, connect: Bool, spaced: Bool) -> Int {
+  if used < 0 {
+    return head(method, target, major, minor, url, query, keys, vals, used + 1, connect, spaced)
+  }
+  var s = method.len() + target.len() + major * 10 + minor + url.scheme.len() + url.host.len() + url.path.len() + url.query.len() + url.port
+  s += query.len() + keys.len() + vals.len() + used
+  if connect { s += 1 }
+  if spaced { s += 2 }
+  s
+}
+
+/// iters calls of head; their sum.
+fn calls(u: Url, ks: List[Str], vs: List[Str], iters: Int) -> Int {
+  var s = 0
+  var m = "GET"
+  var t = "/alloc"
+  for i in 0..iters {
+    s += head(m, t, 1, i & 1, u, ks, ks, vs, i, i & 7 == 0, i & 3 == 0)
+    if s & 1023 == 0 {
+      m = t
+    }
+  }
+  s
+}
+
+/// ITERS calls in a task (whose stack XO_STACK_SHIFT moves): the
+/// nanoseconds of 100 calls, then the sum's low bit.
+fn work(os: Os, iters: Int) {
+  let u = Url{scheme: "http", host: "127.0.0.1:18080", path: "/alloc", query: "", port: 18080}
+  let ks = ["Host", "User-Agent", "Accept"]
+  let vs = ["127.0.0.1:18080", "xo-loadgen/1", "*/*"]
+  let r = Atomic[Int].new(0)
+  let ns = Atomic[Int].new(0)
+  let clock = os.clock
+  scope sc {
+    sc.spawn(fn() {
+      let t = clock.now()
+      r.set(calls(u, ks, vs, iters))
+      ns.set(clock.since(t).nanos())
+    })
+  }
+  os.stdio.println("${ns.get() * 100 / iters} ${r.get() & 1}")
+}
+
+/// ITERS calls under n more frames of this function (its frame 16 mod 32
+/// bytes on amd64, so 256 depths reach every 16 byte phase of a page).
+fn pad(n: Int, u: Url, ks: List[Str], vs: List[Str], iters: Int) -> Int {
+  if n <= 0 {
+    return calls(u, ks, vs, iters)
+  }
+  pad(n - 1, u, ks, vs, iters) + 1
+}
+
+/// This program again with XO_STACK_SHIFT=shift: its output.
+fn child(os: Os, shift: Int, iters: Int) -> Str ! {
+  let o = os.proc.cmd(os.env.program(), ["work", "${iters}"]).set_env("XO_STACK_SHIFT", "${shift}").output()?
+  (o.stdout.to_str() ?? "").trim()
+}
+
+fn main(os: Os) ! {
+  let a = os.env.args()
+  if a.len() >= 2 && a[0] == "work" {
+    work(os, Int.parse(a[1]) ?? 1000000)
+    return
+  }
+  if a.len() >= 2 && a[0] == "sweep" {
+    // shifts 0 to 4080 in 16 byte steps: one line each, shift and ns a
+    // 100 calls
+    let iters = Int.parse(a[1]) ?? 2000000
+    for k in 0..256 {
+      os.stdio.println("${16 * k} ${child(os, 16 * k, iters)?}")
+    }
+    return
+  }
+  if a.len() >= 3 && a[0] == "run" {
+    // in this process (xo bench times it): ITERS calls under each depth
+    let u = Url{scheme: "http", host: "127.0.0.1:18080", path: "/alloc", query: "", port: 18080}
+    let ks = ["Host", "User-Agent", "Accept"]
+    let vs = ["127.0.0.1:18080", "xo-loadgen/1", "*/*"]
+    let iters = Int.parse(a[1]) ?? 1000000
+    var s = 0
+    for i in 2..a.len() {
+      s += pad(Int.parse(a[i]) ?? 0, u, ks, vs, iters)
+    }
+    os.stdio.println("${s & 1}")
+    return
+  }
+  os.stdio.println("usage: headphase sweep ITERS | run ITERS DEPTH... | work ITERS")
+}
