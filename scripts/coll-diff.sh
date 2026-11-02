@@ -6,6 +6,8 @@
 # swept with each pass off alone (XO_PASSES=-NAME) to name the pass whose removal
 # makes native agree with go. Output: one line per difference, then totals.
 #   scripts/coll-diff.sh $PWD/bin/xo /work/coll/*      (JOBS=4 programs at once)
+# REF=llvm compares against llvm instead of go (goldens and corpora that the go backend
+# cannot build); programs that print timing or read the environment differ by themselves.
 set -u
 XO=${1:?usage: coll-diff.sh XO DIR...}; shift
 JOBS=${JOBS:-4}
@@ -23,16 +25,17 @@ one() {
 		else echo "BUILD FAILED" > "$o/$1.out"; fi
 	}
 	run go go; run llvm llvm; run native $NATIVE; run alloff $NATIVE "$alloff"
+	ref=${REF:-go}
 	bad=""
-	for b in llvm native alloff; do
-		cmp -s "$o/go.out" "$o/$b.out" || bad="$bad $b"
+	for b in go llvm native alloff; do
+		[ $b = $ref ] || cmp -s "$o/$ref.out" "$o/$b.out" || bad="$bad $b"
 	done
 	if [ -z "$bad" ]; then echo "same $n"; else
 		echo "DIFF $n:$bad"
-		if ! cmp -s "$o/go.out" "$o/native.out"; then
+		if ! cmp -s "$o/$ref.out" "$o/native.out"; then
 			for p in $(echo "$passes" | tr -d ' ' | sed 's/,/ /g'); do
 				run sweep $NATIVE "-$p"
-				cmp -s "$o/go.out" "$o/sweep.out" && echo "  $n: native agrees with go when $p is off"
+				cmp -s "$o/$ref.out" "$o/sweep.out" && echo "  $n: native agrees with $ref when $p is off"
 			done
 		fi
 		mkdir -p "${KEEP:-/tmp/coll-diff-keep}" && cp -r "$d" "${KEEP:-/tmp/coll-diff-keep}/$n"
