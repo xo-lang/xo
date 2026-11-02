@@ -877,7 +877,7 @@ fn thp_mode() -> Int {
   if hs == 0 {
     return 0
   }
-  let h = rt.mem_load(hs, 0, 8)
+  let h = rt.slot_load(hs, 0, ACQUIRE)
   if h == 0 {
     return 0
   }
@@ -1273,7 +1273,8 @@ pub fn thread_heap() -> Int {
   // profiling: the first allocation's hook draws this record's first gap
   rt.mem_store(h, H_SAMPLE_AT, if prof != 0 { 0 } else { NEVER }, 8)
   rt.mem_store(h, H_NEXT, first, 8)
-  rt.mem_store(w, 0, h, 8)
+  // the list's head is also read without the lock (thp_mode): published with release
+  rt.slot_store(w, 0, h, RELEASE)
   hlock_give()
   rt.tlocal_set(TLS_HEAP, h)
   h
