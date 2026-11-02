@@ -27,7 +27,7 @@ one() {
 	d=$1; n=$(basename "$d"); o=$T/$n; mkdir -p "$o"
 	run() { # label backend [passes]
 		if XO_PASSES=${3:-} "$XO" build --backend=$2 -o "$o/$1" "$d" > "$o/$1.build" 2>&1; then
-			timeout ${RUN_TIMEOUT:-10} "$o/$1" > "$o/$1.out" 2> "$o/$1.err"; echo "exit $?" >> "$o/$1.out"
+			timeout -k 5 ${RUN_TIMEOUT:-10} "$o/$1" > "$o/$1.out" 2> "$o/$1.err"; echo "exit $?" >> "$o/$1.out"
 		else echo "BUILD FAILED" > "$o/$1.out"; fi
 	}
 	run go go; if [ -n "${SKIP_LLVM:-}" ]; then cp "$o/go.out" "$o/llvm.out"; else run llvm llvm; fi; run native $NATIVE; run alloff $NATIVE "$alloff"
