@@ -172,24 +172,37 @@ struct Client {
   redirects: Int = 10
 }
 
-/// http.Response with the number of its streamed body's function (0:
-/// none; decision 0083, std/rt's XStream), hidden from Xo code.
+/// http.Response with its streamed body's function, hidden from Xo code:
+/// on native the function's number in hserve's table as an Any of Int
+/// (decision 0083, std/rt's XStream; sid), on wasm the function itself
+/// (decision 0447: serve_component runs it into the component's response
+/// as it is sent, collect into a buffer). One field for both, so a native
+/// Response carries no wasm-only word (a word more cost /alloc 9% CPU a
+/// request on linux/arm64, 2026-11-02).
 struct Response {
   status: Int
   headers: Map[Str, Str]
   body: Bytes
-  stream: Int = 0
+  stream: rt.Any? = None
   /// as Request.fields (decision 0288)
   fields: List[Str] = []
   /// with_full_duplex (decision 0433): the server sends the head at once
   /// and keeps the request body readable while the stream writes (Xo
   /// Lang 3's http1w part reads it). Hidden.
   duplex: Bool = false
-  /// wasm: http.stream's function (decision 0447), which serve_component
-  /// runs into the component's response as it is sent and collect runs
-  /// into a buffer. Hidden.
-  ws: rt.Any? = None
 }
+
+/// The native stream number of r (0: none); a wasm stream's function
+/// gives 0.
+fn sid(r: Response) -> Int {
+  if let Some(a) = r.stream {
+    return rt.any_get[Int](a) ?? 0
+  }
+  0
+}
+
+/// stream's value for a native stream of function f.
+fn sput(f: rt.Any) -> rt.Any? { Some(rt.any_of(hserve.stream_put(f))) }
 
 /// The 101 response that hands its connection to f (respond runs it):
 /// std/websocket's upgrade (decision 0313). `pub` in a native module is
@@ -197,7 +210,7 @@ struct Response {
 /// `use native/http`; programs cannot import native/ modules, and
 /// std/http's declaration file does not list it.
 pub fn handoff_response(f: fn(rthttp.HConn) -> ()) -> http.Response {
-  rt.cast[Response, http.Response](Response{status: 101, headers: {}, body: b"", stream: hserve.stream_put(rt.any_of(f))})
+  rt.cast[Response, http.Response](Response{status: 101, headers: {}, body: b"", stream: sput(rt.any_of(f))})
 }
 
 /// The body of a request to a handle_stream route (decision 0310).
@@ -727,11 +740,11 @@ pub fn serve_component(r: Router) {
     }
     let resp = call_raw(r, req)
     let raw0 = rt.cast[http.Response, Response](resp)
-    if let Some(a) = raw0.ws {
+    if let Some(a) = raw0.stream {
       if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](a) {
         // http.stream: the head with the first write, the body as it is
         // made, then the trailers
-        let o = Mutex[WasiOut].new(WasiOut{r: raw0 with {ws: None}})
+        let o = Mutex[WasiOut].new(WasiOut{r: raw0 with {stream: None}})
         f(BodyWriter{wo: Some(o)}).ignore_err("a stream that fails ends its body there, as the server's")
         o.with(fn(var x) {
           wasi_out_head(x, b"")
@@ -2252,9 +2265,9 @@ fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> 
     // that fails ends its body there, as collect does
     // serve_component runs f as the response is sent (a component), and
     // collect into a buffer (in process)
-    return rt.cast[Response, http.Response](Response{status: status, headers: {}, body: b"", ws: Some(rt.any_of(f))})
+    return rt.cast[Response, http.Response](Response{status: status, headers: {}, body: b"", stream: Some(rt.any_of(f))})
   }
-  let r = Response{status: status, headers: {}, body: "".bytes(), stream: hserve.stream_put(rt.any_of(f))}
+  let r = Response{status: status, headers: {}, body: "".bytes(), stream: sput(rt.any_of(f))}
   rt.cast[Response, http.Response](r)
 }
 
@@ -2266,7 +2279,7 @@ fn collect(r0: http.Response) -> http.Response {
     // no native stream on wasm, and the build decides this test, so
     // hserve's sink, which allocates with llrt's heap, is not built into a
     // wasm program (decision 0447)
-    if let Some(a) = r.ws {
+    if let Some(a) = r.stream {
       if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](a) {
         let m = Mutex[Bytes].new(b"")
         let t = Mutex[List[Str]].new([])
@@ -2280,16 +2293,16 @@ fn collect(r0: http.Response) -> http.Response {
           h["${TRAILER_PREFIX}${tr[i]}"] = tr[i + 1]
           i += 2
         }
-        return rt.cast[Response, http.Response](r with {headers: h, body: m.with(fn(var b) { b }), ws: None})
+        return rt.cast[Response, http.Response](r with {headers: h, body: m.with(fn(var b) { b }), stream: None})
       }
     }
     return r0
   }
-  if r.stream == 0 {
+  if sid(r) == 0 {
     return r0
   }
   var body = "".bytes()
-  let fs = hserve.stream_get(r.stream, false)
+  let fs = hserve.stream_get(sid(r), false)
   if !fs.is_empty() {
     if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
       let s = hserve.sink_buf()
@@ -2297,7 +2310,7 @@ fn collect(r0: http.Response) -> http.Response {
       body = hserve.sink_take(s)
     }
   }
-  rt.cast[Response, http.Response](r with {body: body, stream: 0})
+  rt.cast[Response, http.Response](r with {body: body, stream: None})
 }
 
 /// A trailer after the body (decision 0433): the name canonical, Go's
@@ -2451,7 +2464,7 @@ fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compr
     return resp0
   }
   // wasm keeps a stream's function in ws (decision 0447)
-  let streamed = n.stream != 0 || n.ws is Some(_)
+  let streamed = n.stream is Some(_)
   var ct = response_header(resp0, "Content-Type") ?? ""
   if ct.is_empty() && !streamed && !n.body.is_empty() {
     ct = mime.detect_content_type(n.body)
@@ -2488,19 +2501,19 @@ fn gzip_response(req: Request, resp0: http.Response, min_size: Int, level: compr
   if !streamed {
     return rt.cast[Response, http.Response](m with {body: compress.gzip(m.body, level: level)})
   }
-  if let Some(a) = m.ws {
+  // a wasm stream holds its function, a native one its number (sid)
+  if let Some(a) = m.stream {
     if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](a) {
-      return rt.cast[Response, http.Response](m with {ws: Some(rt.any_of(gzip_stream(f, level)))})
+      return rt.cast[Response, http.Response](m with {stream: Some(rt.any_of(gzip_stream(f, level)))})
     }
-    return resp
   }
-  let fs = hserve.stream_get(m.stream, false)
+  let fs = hserve.stream_get(sid(m), false)
   if fs.is_empty() {
     return resp
   }
   if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
     let id = hserve.stream_put(rt.any_of(gzip_stream(f, level)))
-    return rt.cast[Response, http.Response](m with {stream: id})
+    return rt.cast[Response, http.Response](m with {stream: Some(rt.any_of(id))})
   }
   resp
 }
@@ -2865,11 +2878,12 @@ fn serve_stream(q: h2srv.H2Req, r: Router) {
 /// names no HTTP/2 code, decision 0244).
 fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   let resp = rt.cast[http.Response, Response](call_raw(r, req))
-  if resp.status == 101 && resp.stream != 0 {
+  let id = sid(resp)
+  if resp.status == 101 && id != 0 {
     // a connection hand-off (decision 0313, handoff_response: std/websocket's
     // upgrade): its function owns the connection, which closes when it
     // returns
-    let fs = hserve.stream_get(resp.stream, true)
+    let fs = hserve.stream_get(id, true)
     if !fs.is_empty() {
       if let Some(f) = rt.any_get[fn(rthttp.HConn) -> ()](fs[0]) {
         f(hc)
@@ -2879,7 +2893,7 @@ fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
   }
   // a full duplex stream (decision 0433, with_full_duplex) sends its head
   // at once and leaves the request body to the stream's function
-  let duplex = resp.duplex && resp.stream != 0 && !req.values.is_empty()
+  let duplex = resp.duplex && id != 0 && !req.values.is_empty()
   if !req.values.is_empty() && !duplex {
     // what the handler of a streamed body left: discarded or closing
     // (net/http's writeHeader)
@@ -2899,14 +2913,14 @@ fn respond(hc: rthttp.HConn, req: Request, r: Router) -> (Bool, Response?) {
       }
     }
   }
-  if resp.stream != 0 {
+  if id != 0 {
     // a streamed body goes out as f makes it (std/rt's serve)
     let s = hserve.sink_conn(hc, resp.status, resp.headers.get("Trailer") != None)
     if duplex {
       // the head now: the client may wait for it before it sends more
       let _ = hserve.sink_flush(s)
     }
-    let fs = hserve.stream_get(resp.stream, true)
+    let fs = hserve.stream_get(id, true)
     if !fs.is_empty() {
       if let Some(f) = rt.any_get[fn(BodyWriter) -> () ! IoErr](fs[0]) {
         f(BodyWriter{s: Some(s)}).ignore_err("a stream that fails ends its body there, as net/http")

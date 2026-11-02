@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-11-02: perf: a native Response no longer carries the wasm stream's field (decision 0447)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 3 (the /alloc drop at d71e1b442), Xo Lang 4 and Xo Lang 2 (measured at two data layouts)
+- Go reference: none
+- Test: native/http's tests, the http goldens (internal/arm64 TestGoldenRun), the wasm component tests (internal/selfhost TestWasmComponent*); bench/perf/jitter /alloc on the linux/arm64 host
+- Timing: bench/perf/jitter /alloc on the first linux/arm64 host, one job (l4pts13, 3 rounds): req/s 146,450 against main's 131,181 at 32 connections (1.116) and 148,761 against 133,049 at 256 (1.118), CPU a request 0.891 and 0.894; the experiment that removed the field measured the same (143,480 and 149,392)
+
+decision 0447 gave every Response a hidden `ws: rt.Any?` for a wasm
+`http.stream`'s function; a native server paid for the word on every
+response. The function now lives in the `stream` field, which on native
+holds the stream's number (as an Any of Int, made only for a streamed
+response).
+
 ## 2026-11-02: perf: a slow keep-alive connection stops lingering before it parks (decision 0449)
 
 - Kind: perf

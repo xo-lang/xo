@@ -502,7 +502,9 @@ re-measure (xo-lang-4).
   `outgoing-body.finish` sends them as some(fields). A handler's own Go
   TrailerPrefix headers (`Trailer:Name`) go the same way.
 - Response body: `http.stream` keeps its function in a hidden field of the
-  response (`ws`), so `serve_component` runs it after routing: the head goes
+  response (`ws` at first; since 2026-11-02 the `stream` field native uses
+  for its stream number, as an Any, so a native Response carries no
+  wasm-only word: bench/perf/jitter /alloc on the first linux/arm64 host, one job (l4pts13, 3 rounds): req/s 146,450 against main's 131,181 at 32 connections (1.116) and 148,761 against 133,049 at 256 (1.118), CPU a request 0.891 and 0.894; the experiment that removed the field measured the same (143,480 and 149,392)), so `serve_component` runs it after routing: the head goes
   to the host with the first write or flush (`rt.wasi_http_head`, the
   outparam set then; a missing Content-Type detected from the first bytes,
   as net/http does), each write goes to the output-stream
