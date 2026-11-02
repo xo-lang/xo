@@ -168,9 +168,19 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
     // the file is checked with its directory
     dir = dir_of(abs_of(cwd, a.file))
   }
-  // a position's file is checked with its directory
-  if let Some((file, _, _)) = position_of(a.target) {
-    dir = dir_of(abs_of(os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? "", file))
+  // a position's file is checked with its directory; refs of a position
+  // under the root keep the root, so the modules that import the file's
+  // are searched too, filtered by the name spelled there (before,
+  // compiler/check's Obj.iface by position missed its uses in
+  // compiler/ssa, gen and cli; 2026-11-02)
+  var pos_word = ""
+  if let Some((file, line, col)) = position_of(a.target) {
+    let fp = abs_of(cwd, file)
+    let root = abs_of(cwd, dir).trim_suffix("/")
+    pos_word = if cmd == "refs" && fp.starts_with("${root}/") { word_at(os, fp, line, col) } else { "" }
+    if pos_word.is_empty() {
+      dir = dir_of(fp)
+    }
   }
   // the std and runtime modules a name refers to load with the program
   var preload = if a.target.is_empty() || position_of(a.target).is_some() { [] } else if cmd == "refs" { semantic.preloads_wide(os, std_dir(os), a.target) } else { semantic.preloads_for(os, std_dir(os), a.target) }
@@ -220,6 +230,8 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
         let segs = t.split("/")
         let ds = segs[segs.len() - 1].split(".")
         words.push(ds[ds.len() - 1])
+      } else if !pos_word.is_empty() {
+        words.push(pos_word)
       }
     }
     if a.target.is_empty() || words.any(fn(w) { w.is_empty() }) || words.len() < 1 + a.more.len() {
@@ -714,6 +726,25 @@ fn line_col(src: Bytes, off: Int) -> (Int, Int) {
 }
 
 /// The byte offset of 1 based line and byte column in src, or -1.
+/// The identifier spelled at a position of the file at path, or "" when
+/// the file cannot be read or no identifier is there.
+fn word_at(os: Os, path: Str, line: Int, col: Int) -> Str uses fs.read {
+  let src = os.fs.read(path).ok() ?? return ""
+  let off = offset_of(src, line, col)
+  if off < 0 || off >= src.len() || !is_ident_byte(src[off]) {
+    return ""
+  }
+  var a = off
+  while a > 0 && is_ident_byte(src[a - 1]) {
+    a -= 1
+  }
+  var b = off
+  while b < src.len() && is_ident_byte(src[b]) {
+    b += 1
+  }
+  src[a..b].to_str() ?? ""
+}
+
 fn offset_of(src: Bytes, line: Int, col: Int) -> Int {
   var l = 1
   var i = 0

@@ -1489,6 +1489,53 @@ func TestAgentRefsSpellFilter(t *testing.T) {
 	}
 }
 
+// TestAgentRefsPositionAcrossModules: refs of a method by position
+// lists its uses in the modules that import the declaring one, as refs
+// of its name does; before, a position checked only the file's own
+// directory (compiler/check's Obj.iface missed compiler/ssa, gen and
+// cli, 2026-11-02).
+func TestAgentRefsPositionAcrossModules(t *testing.T) {
+	t.Parallel()
+	root := writeFiles(t, map[string]string{
+		"lib/xo.mod":  "module example.com/lib\n",
+		"lib/obj.xo":  "pub struct Obj {\n  pub k: Int\n}\n\npub fn (o: Obj) iface() -> Bool { o.k > 0 }\n\npub fn count(xs: List[Obj]) -> Int {\n  var n = 0\n  for x in xs {\n    if x.iface() {\n      n += 1\n    }\n  }\n  n\n}\n",
+		"app/xo.mod":  "module example.com/app\n",
+		"app/main.xo": "use example.com/lib\n\nfn main(os: Os) {\n  let xs = [lib.Obj{k: 1}, lib.Obj{k: 0}]\n  if xs[0].iface() {\n    os.stdio.println(\"${lib.count(xs)}\")\n  }\n}\n",
+	})
+	refs := func(target string) []string {
+		t.Helper()
+		var out, errOut bytes.Buffer
+		if code := run(t, []string{"refs", "--dir=" + root, "--json", target}, &out, &errOut); code != 0 {
+			t.Fatalf("refs %s: exit %d: %s%s", target, code, out.String(), errOut.String())
+		}
+		var v struct {
+			References []struct {
+				File string `json:"file"`
+				Line int    `json:"line"`
+				Col  int    `json:"col"`
+			} `json:"references"`
+		}
+		if err := json.Unmarshal(out.Bytes(), &v); err != nil {
+			t.Fatalf("refs %s: %v\n%s", target, err, out.String())
+		}
+		var got []string
+		for _, r := range v.References {
+			got = append(got, fmt.Sprintf("%s:%d:%d", filepath.Base(filepath.Dir(r.File))+"/"+filepath.Base(r.File), r.Line, r.Col))
+		}
+		sort.Strings(got)
+		return got
+	}
+	byPos := refs(filepath.Join(root, "lib", "obj.xo") + ":5:17")
+	byName := refs("Obj.iface")
+	want := "app/main.xo:5:12 lib/obj.xo:10:10 lib/obj.xo:5:17"
+	if strings.Join(byPos, " ") != want {
+		t.Errorf("refs by position = %v, want %s", byPos, want)
+	}
+	if strings.Join(byName, " ") != strings.Join(byPos, " ") {
+		t.Errorf("refs by name %v, by position %v", byName, byPos)
+	}
+}
+
 // TestAgentRefsBrokenBody: a function body that spells the name looked
 // for but does not parse (bench/paper's blind solutions) stops neither
 // xo refs nor its other modules' answers; before, the lazy parse of the
