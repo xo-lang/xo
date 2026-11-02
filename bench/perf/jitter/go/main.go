@@ -65,6 +65,12 @@ func main() {
 		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
 		w.Write(b)
 	})
+	mux.HandleFunc("GET /alloc-hand", func(w http.ResponseWriter, r *http.Request) {
+		b := appendPage(make([]byte, 0, 16384), pageStrconv(items))
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Content-Length", strconv.Itoa(len(b)))
+		w.Write(b)
+	})
 	mux.HandleFunc("GET /alloc-strconv", func(w http.ResponseWriter, r *http.Request) {
 		b, err := json.Marshal(pageStrconv(items))
 		if err != nil {
@@ -79,4 +85,77 @@ func main() {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
+}
+
+// appendPage is json.Marshal(p) written by hand, GET /alloc-hand: Xo's
+// derived encoder is code generated per type, encoding/json reflects, so
+// this is the Go side of that comparison (decision 0324's option 3). The
+// same bytes as json.Marshal: TestAppendPage.
+func appendPage(b []byte, p Page) []byte {
+	b = append(b, `{"total":`...)
+	b = strconv.AppendInt(b, int64(p.Total), 10)
+	b = append(b, `,"items":`...)
+	if p.Items == nil {
+		b = append(b, "null"...)
+	} else {
+		b = append(b, '[')
+		for i, it := range p.Items {
+			if i > 0 {
+				b = append(b, ',')
+			}
+			b = append(b, `{"id":`...)
+			b = strconv.AppendInt(b, int64(it.ID), 10)
+			b = append(b, `,"name":`...)
+			b = appendString(b, it.Name)
+			b = append(b, `,"tags":`...)
+			if it.Tags == nil {
+				b = append(b, "null"...)
+			} else {
+				b = append(b, '[')
+				for j, t := range it.Tags {
+					if j > 0 {
+						b = append(b, ',')
+					}
+					b = appendString(b, t)
+				}
+				b = append(b, ']')
+			}
+			b = append(b, `,"score":`...)
+			b = appendFloat(b, it.Score)
+			b = append(b, `,"active":`...)
+			b = strconv.AppendBool(b, it.Active)
+			b = append(b, '}')
+		}
+		b = append(b, ']')
+	}
+	return append(b, '}')
+}
+
+// appendString quotes s as encoding/json does for ASCII without <, >, & or
+// controls; anything else goes through json.Marshal.
+func appendString(b []byte, s string) []byte {
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if c < 0x20 || c >= 0x80 || c == '"' || c == '\\' || c == '<' || c == '>' || c == '&' {
+			q, _ := json.Marshal(s)
+			return append(b, q...)
+		}
+	}
+	b = append(b, '"')
+	b = append(b, s...)
+	return append(b, '"')
+}
+
+// appendFloat is encoding/json's float64 form: 'f' unless the exponent is
+// small or large, then 'e' with a two digit exponent.
+func appendFloat(b []byte, f float64) []byte {
+	abs := f
+	if abs < 0 {
+		abs = -abs
+	}
+	if abs != 0 && (abs < 1e-6 || abs >= 1e21) {
+		q, _ := json.Marshal(f)
+		return append(b, q...)
+	}
+	return strconv.AppendFloat(b, f, 'f', -1, 64)
 }
