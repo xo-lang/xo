@@ -47,13 +47,19 @@ to v0.35.0. Ratios are comparable across jobs; absolute req/s are not
    128 at 0x68 and 0x18) moved it, and Xo Lang 2's XO_DATA_SHIFT run
    (0 against 64 bytes, and 128-byte lines for the runtime's static words)
    stayed within 1% ([alloc-shift-2026-11-02.md](alloc-shift-2026-11-02.md),
-   decision 0459's "Finding: refuted on main"). Code placement is measured
-   next (Lang 1's XO_ARM64_PAD sweep, decision 0075).
+   decision 0459's "Finding: refuted on main"). Code placement is refuted
+   too: Xo Lang 2's l2pad2 job built both with every padding and alignment
+   arm of the XO_ARM64_PAD sweep (decision 0075), and every arm kept them
+   apart (linger 32.4 to 34.2 µs a request, linger + narrow B 45.7 to 47.5).
+   So is buffer copying (Xo Lang 2's heapcmp). The open lead is 4K stack
+   aliasing (narrow B changes frame sizes; Xo Lang 2's l2sshift job
+   shifts the stack to test it).
 6. **The wasm-only Response field** (d71e1b442: `ws: rt.Any?` on every
    native Response) costs about 9% CPU a request at both data shifts
    (ec2398ed8 removes it: pts8, and Xo Lang 2's alloc-shift run). It is
-   folded into the existing stream field (Xo Lang 4, l4pts13 measures
-   it against main and ec2398ed8; its row is added when it lands).
+   folded into the existing stream field (3f708df63): req/s 1.116 and
+   1.118 against main in one job, CPU a request 0.891 and 0.894, the same
+   as removing the field (l4pts13).
 7. **a1 P (25d23d18e)** cost /alloc 0.756 / 0.895 against its parent in
    one job (pts12) and was reverted (b0d12f3f9); decision 0324.
 
@@ -63,6 +69,8 @@ to v0.35.0. Ratios are comparable across jobs; absolute req/s are not
   seed) and its jitter server; pts1 to pts10 and pts12 build every
   server from the last revision's jitter source, pts11 from each
   revision's own (the layout probes change the server source).
+- pts13 built on the second host and only measured on the first
+  (bench/perf/jitter/alloc-split.sh, Xo Lang 3).
 - pts1's second point (2e667a3d2) did not build (an effect error of the
   time) and is left out.
 - The 1 minute load average at a job's start was high when it followed
@@ -206,3 +214,12 @@ to v0.35.0. Ratios are comparable across jobs; absolute req/s are not
 | a144a3115 | main (h2 trailers fix; parent of P) | 132,426 | 0.803 | 1.282 | 134,645 | 0.774 | 1.293 |
 | 25d23d18e | main with a1 P | 100,127 | 0.607 | 1.330 | 120,487 | 0.693 | 1.375 |
 | v0.35.0 | the 0.35 release (baseline) | 164,891 | 1 | 1 | 173,939 | 1 | 1 |
+
+### l4pts13
+
+| revision | what | c32 req/s | ratio | CPU a request | c256 req/s | ratio | CPU a request |
+|---|---|---|---|---|---|---|---|
+| 45b3157ec | main (P reverted, adaptive linger) | 131,181 | 0.796 | 1.285 | 133,049 | 0.769 | 1.301 |
+| 7a4adabfe | + Response wasm function in the stream field (landed as 3f708df63) | 146,450 | 0.888 | 1.146 | 148,761 | 0.859 | 1.163 |
+| ec2398ed8 | Response without wasm-only ws field (experiment, on a144a3115) | 143,480 | 0.870 | 1.172 | 149,392 | 0.863 | 1.158 |
+| v0.35.0 | the 0.35 release (baseline) | 164,877 | 1 | 1 | 173,112 | 1 | 1 |
