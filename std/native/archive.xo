@@ -1180,6 +1180,7 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
   var out = BytesBuilder.new()
   var count = 0
   var files: List[ZipFile] = []
+  var zs = flate.new_stream(5)
   for e in entries {
     let p = match archive_path(e.path) {
       Some(x) => x
@@ -1237,7 +1238,7 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
     out.write(hdr)
     count += hdr.len()
     if !e.is_dir {
-      let comp = flate.deflate_bytes(e.data, 5)
+      let comp = flate.deflate_again(zs, e.data)
       out.write(comp)
       count += comp.len()
       zf.crc = flate.crc32(t, 0, e.data)

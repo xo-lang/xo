@@ -2031,6 +2031,38 @@ fn deflater_for(level: Int) -> Deflater {
   Deflater{good: cfg.0, lazy: cfg.1, nice: cfg.2, chain: cfg.3, fast_skip: cfg.4, data: b"", base: 0, index: 0, window_end: 0, block_start: 0, byte_available: false, sync: false, tokens: [], length: MIN_MATCH - 1, offset: 0, max_insert_index: 0, chain_head: -1, hash_head: if level >= 2 { raw.zero_u32s(HASH_SIZE) } else { [] }, hash_prev: if level >= 2 { raw.zero_u32s(WINDOW_SIZE) } else { [] }, hash_offset: 1, blocks: new_blocks()}
 }
 
+/// compressor.reset for levels 2 to 9: the hash tables zeroed where they
+/// are and the position state at its start, so one Stream writes many
+/// short streams (zip's files) without allocating 640 KB each (Go's zip
+/// keeps Writers in a sync.Pool for this).
+fn (var d: Deflater) reset() {
+  raw.clear_u32s(d.hash_head)
+  raw.clear_u32s(d.hash_prev)
+  d.data = b""
+  d.base = 0
+  d.index = 0
+  d.window_end = 0
+  d.block_start = 0
+  d.byte_available = false
+  d.sync = false
+  d.tokens = []
+  d.length = MIN_MATCH - 1
+  d.offset = 0
+  d.max_insert_index = 0
+  d.chain_head = -1
+  d.hash_offset = 1
+  d.blocks.w = BitWriter{out: [], bits: 0, nbits: 0}
+}
+
+/// data compressed at the level of s (2 to 9) as a stream of its own,
+/// s reused: the same bytes deflate_level makes.
+pub fn deflate_again(var s: Stream, data: Bytes) -> Bytes {
+  s.d.reset()
+  s.write(data)
+  s.close()
+  s.take()
+}
+
 /// A Writer at level (-2 HuffmanOnly, 0 NoCompression, 1 BestSpeed, 2 to
 /// 9; -1 is 6).
 pub fn new_stream(level0: Int) -> Stream {

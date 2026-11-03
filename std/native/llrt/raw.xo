@@ -165,6 +165,17 @@ pub fn u8s_copy_back(var out: List[UInt8], dist: Int, length: Int) {
   rt.mem_store(a, 8, n + length, 8)
 }
 
+/// Sets every element of xs to zero in place (Go's clear): a table kept
+/// across streams is zeroed where it is, with no allocation.
+pub fn clear_u32s(xs: List[UInt32]) {
+  let n = xs.len()
+  if n <= 0 {
+    return
+  }
+  let es = if target.arch == TargetArch.Wasm32 { 8 } else { 4 }
+  rt.mem_set(rt.obj_addr(xs) + rt.layout(2), 0, n * es)
+}
+
 /// zero_ints for UInt32 elements: packed four bytes an element on the
 /// native targets, a word an element on wasm (gotchas/packed-list-raw-copy-wasm.md).
 pub fn zero_u32s(n: Int) -> List[UInt32] {
