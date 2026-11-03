@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-03: perf: a netpoller wait in a program with no concurrency wakes at once
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 1, moving std/dns lookups onto the netpoller (31ba6938b, reverted in db6eefbfc): about 0.8 ms more per lookup against a server in another process
+- Go reference: none (Go's runtime always has its scheduler)
+- Test: internal/arm64 TestGoldenRun net, dns, http, sleep, signal and concurrency goldens on linux/arm64
+- Timing: 5000 lookups of a no-concurrency program against a responder in another process, on linux/arm64 with the dns change applied: 4.1 s to 0.19 s
+- Shipped in: unreleased (the ticks since decision 0324)
+
+A program without concurrency in its code as the compiler counts it
+(concflag.xo) runs main on its own thread, with no workers, but its
+poller was set up for decision 0324, where idle workers poll the network
+and the poller thread only ticks (every 0.5 ms and up). Nothing else
+polled, so each wake of a netpoller wait waited for the next tick. Such a
+program's poller thread now waits in epoll or kqueue itself
+(gotchas/netpoll-wait-idle-wake-latency.md).
+
 ## 2026-11-03: fix: long standard input on wasm
 
 - Kind: fix

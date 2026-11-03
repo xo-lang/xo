@@ -11,6 +11,7 @@
 // allocates Xo values or faults.
 use native/llrt/layout
 use native/llrt/budget
+use native/llrt/concflag
 use native/llrt/ctx
 use native/llrt/heapos
 use native/llrt/linux
@@ -1645,6 +1646,15 @@ fn np_wanted() -> Bool {
     TargetOs.Wasi => false
   }
   if !os_ok || virt() {
+    return false
+  }
+  // a program that cannot use concurrency (concflag.xo: main on its own
+  // thread, no root loop, no workers) has no one to poll: the poller
+  // thread's ticks (NP_TICK_MIN and up) were then the only polls, and
+  // each wake of a netpoller wait waited for one, about 0.8 ms
+  // (gotchas/netpoll-wait-idle-wake-latency.md); it waits in the poller
+  // itself instead
+  if !concflag.built() {
     return false
   }
   let v = process.env_real("XO_NETPOLL")
