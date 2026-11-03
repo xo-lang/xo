@@ -7,7 +7,7 @@
 - Go reference: encoding/xml Decoder.Token and RawToken (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/xml (a Reader against tokens and raw_tokens on every document, go, arm64, LLVM), xmlfuzz (every fuzz case reads through a Reader too), bench/perf/xml stream
 
-`xml.reader(text, strict: true)`, `xml.raw_reader(text)` and `Reader.next() -> Token? ! XmlErr` (decision 0463): the tokens of `tokens` and `raw_tokens` one at a time, None at the end, the same error again after a failure. `tokens` and `parse` are unchanged. The memory effect is in bench/results/std-twin-rows8-2026-11-03.md.
+`xml.reader(text, strict: true)`, `xml.raw_reader(text)` and `Reader.next() -> Token? ! XmlErr` (decision 0463): the tokens of `tokens` and `raw_tokens` one at a time, None at the end, the same error again after a failure. `tokens` and `parse` are unchanged. bench/perf/xml `stream` against `tokens`, host 1 (std-twin-rows8-2026-11-03.md): peak memory 0.70 of Go's against 7.2 for the list, wall 1.18 against 1.17.
 
 ## 2026-11-03: perf: character data with a standard entity stays on the fast path
 
