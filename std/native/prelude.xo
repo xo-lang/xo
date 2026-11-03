@@ -3900,6 +3900,11 @@ fn proc_ppid(p: Proc) -> Int uses proc { procid.ppid() }
 
 /// Proc.request_stop (decision 0407): core 7.5's phase 1 once.
 fn proc_request_stop(p: Proc) uses proc {
+  if target.arch == TargetArch.Wasm32 {
+    // the wasm runtime's stop state (compiler/wasm rt3.xo)
+    rt.wasi_stop_request()
+    return
+  }
   if !stop.requested() {
     stop.signal()
   }

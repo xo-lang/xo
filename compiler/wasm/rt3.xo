@@ -73,6 +73,14 @@ fn rt3_globals() -> Str {
     (global $sstate (mut i32) (i32.const 0))
     (global $cur (mut i32) (i32.const 0))
     (global $mtask (mut i32) (i32.const 0))
+    ;; a stop request (Proc.request_stop, core 7.5 phase 1; WASI has no
+    ;; signals; whether one came is rt.xo's $stop_req): task.stopping's channel (0 until first
+    ;; asked), the grace period, when it ends (0 none), and main's root
+    ;; cancel node, which the grace period's end cancels
+    (global $stop_ch (mut i32) (i32.const 0))
+    (global $stop_grace (mut i64) (i64.const 30000000000))
+    (global $stop_at (mut i64) (i64.const 0))
+    (global $stop_root (mut i32) (i32.const 0))
     (global $ssb (mut i32) (i32.const 0))
     (global $ssn (mut i32) (i32.const 0))
     (global $sscap (mut i32) (i32.const 0))
@@ -740,6 +748,20 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
 
     ;; fires the deadlines of scopes that passed (scope_deadline_fire)
     (func $timers (local $s i32) (local $pp i32) (local $now i64)
+      global.get $stop_at
+      i64.eqz
+      i32.eqz
+      if
+        call $mono
+        global.get $stop_at
+        i64.ge_s
+        if
+          i64.const 0
+          global.set $stop_at
+          global.get $stop_root
+          call $ncancel
+        end
+      end
       global.get $dscopes
       i32.eqz
       if
@@ -796,6 +818,9 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
 
     ;; the earliest deadline of a blocked task or a scope, 0 for none
     (func $next_deadline (result i64) (local $d i64) (local $i i32) (local $t i32) (local $s i32) (local $w i64)
+      ;; the grace period's end
+      global.get $stop_at
+      local.set $d
       block $x
         loop $l
           local.get $i
@@ -909,6 +934,22 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       local.get $m
       i32.const -1
       i32.store offset=12
+      ;; main's root cancel node {canceled, parent}: every context
+      ;; descends from it, and a stop's grace period's end cancels it
+      i32.const 8
+      call $alloc
+      local.tee $i
+      i64.const 0
+      i64.store
+      local.get $i
+      global.set $stop_root
+      local.get $m
+      local.get $i
+      i32.store offset=104
+      local.get $i
+      global.set $node
+      i32.const 0
+      local.set $i
       local.get $m
       call $act_push
       loop $round
@@ -1123,6 +1164,26 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       end
       local.get $m
       call $free
+      global.get $stop_ch
+      if
+        global.get $stop_ch
+        call $wasi_h_release
+        i32.const 0
+        global.set $stop_ch
+      end
+      ;; main's root node (main's context in the globals keeps no other
+      ;; use of it once main ended)
+      global.get $node
+      global.get $stop_root
+      i32.eq
+      if
+        i32.const 0
+        global.set $node
+      end
+      global.get $stop_root
+      call $free
+      i32.const 0
+      global.set $stop_root
       global.get $act
       if
         global.get $act
@@ -1949,18 +2010,67 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       i32.store
       local.get $e)
 
-    ;; task.stopping(): the channel closed when a stop is requested; a new
-    ;; reference. WASI has no signals, so nothing requests a stop: a
-    ;; channel of its own for each call, never closed and never sent on,
-    ;; which its holder releases (one shared like the native targets'
-    ;; std/native/llrt/stop.xo stopping would stay live at exit)
+    ;; task.stopping(): the channel closed when a stop is requested
+    ;; (rt.wasi_stop_request), made on first use and shared, as
+    ;; std/native/llrt/stop.xo's; a new reference ($sched_end drops the
+    ;; runtime's own, so it is not live at exit)
     (func $task_stopping (param $drop i64) (result i32)
-      i64.const 0
-      local.get $drop
-      i32.const ${stop_at}
-      i32.const 13
-      call $chan_new
-    )
+      global.get $stop_ch
+      i32.eqz
+      if
+        i64.const 0
+        local.get $drop
+        i32.const ${stop_at}
+        i32.const 13
+        call $chan_new
+        global.set $stop_ch
+        global.get $stop_req
+        if
+          global.get $stop_ch
+          call $chan_close
+        end
+      end
+      global.get $stop_ch
+      call $rc_inc
+      global.get $stop_ch)
+
+    ;; Proc.request_stop: once, the stop request: task.stopping's channel
+    ;; closes, task.stop_requested is true and the grace period starts,
+    ;; whose end cancels main's root (std/native/llrt/stop.xo signal's
+    ;; first signal)
+    (func $wasi_stop_request
+      global.get $stop_req
+      if
+        return
+      end
+      i32.const 1
+      global.set $stop_req
+      global.get $stop_ch
+      if
+        global.get $stop_ch
+        call $chan_close
+      end
+      call $mono
+      global.get $stop_grace
+      i64.add
+      global.set $stop_at
+      call $wake)
+
+    ;; proc.set_grace(d): the grace period; after a request its end moves
+    ;; to d from now (stop.xo set_grace counts from the request; close
+    ;; enough here, where a request and set_grace are both the program's)
+    (func $wasi_set_grace (param $d i64)
+      local.get $d
+      global.set $stop_grace
+      global.get $stop_at
+      i64.eqz
+      if
+        return
+      end
+      call $mono
+      local.get $d
+      i64.add
+      global.set $stop_at)
 
     (func $chan_new (param $cap i64) (param $drop i64) (param $lo i32) (param $ln i32) (result i32) (local $c i32)
       local.get $cap

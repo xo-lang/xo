@@ -929,3 +929,17 @@ the host's random bits (rt.wasi_rand_u64, the wasm runtime's
 random_get). lookup_addr reads /etc/hosts through the filesystem first,
 as natively. The error texts are netconn.lookup_records'.
 
+### A stop request in a wasm program (2026-11-03, R2j)
+
+`Proc.request_stop()` starts core 7.5's phase 1 on wasm too (WASI has
+no signals, so it is the only way there): `task.stop_requested()` turns
+true, task.stopping's channel, now one shared channel made on first use
+as std/native/llrt/stop.xo's, closes, and the grace period starts
+(`proc.set_grace`, 30 seconds by default); its end cancels main's root,
+a cancel node the task runtime now gives main (rt3.xo `$stop_root`,
+which every context descends from), from the scheduler's timers, and
+the scheduler's clock wait counts it as a deadline. A program without
+tasks only sees stop_requested change. http.Server's serve already
+stops on task.stopping in a command (R2a), so a server drains and
+returns: websocket_stop leaves the unsupported list.
+

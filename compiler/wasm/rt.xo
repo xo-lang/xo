@@ -41,6 +41,8 @@ fn rt_imports() -> Str {
     (global $dqcap (mut i32) (i32.const 0))
     (global $ddepth (mut i32) (i32.const 0))
     (global $fdetn (mut i32) (i32.const 0))
+    ;; Proc.request_stop ran (rt3.xo's stop state uses it too)
+    (global $stop_req (mut i32) (i32.const 0))
     (global $live (mut i64) (i64.const 0))
     (global $total (mut i64) (i64.const 0))
 
@@ -5607,9 +5609,16 @@ fn rt_text(var g: Gen) -> Str {
 
     (func $set_grace (param $d i64))
 
-    ;; task.stop_requested(): never (WASI has no signals)
+    ;; task.stop_requested(): whether Proc.request_stop ran (WASI has no
+    ;; signals; rt3.xo's $wasi_stop_request in a program with tasks)
     (func $stop_requested (result i32)
-      i32.const 0)
+      global.get $stop_req)
+
+    ;; Proc.request_stop with no tasks: nothing waits on task.stopping
+    ;; and there is no root to cancel, so only stop_requested changes
+    (func $wasi_stop_flag
+      i32.const 1
+      global.set $stop_req)
 
     ;; env.get(name): the value in a list of one, or the empty list
     (func $env_get (param $o i32) (param $n i32) (result i32) (local $c i32) (local $vv i32) (local $buf i32) (local $i i32) (local $p i32) (local $k i32) (local $l i32)

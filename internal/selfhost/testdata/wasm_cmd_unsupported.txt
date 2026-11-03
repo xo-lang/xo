@@ -27,4 +27,3 @@ unix_kill # XO1515: no processes in a WASI 0.2 world (proc.spawn)
 use_c_add # use c: no C calls on wasm
 use_c_enum # use c: no C calls on wasm
 user_caps # XO1515: no processes in a WASI 0.2 world (proc.run)
-websocket_stop # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm

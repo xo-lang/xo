@@ -407,6 +407,8 @@ fn wasi_udp_local(c: Conn) -> Bytes
 /// wasm only: 64 random bits from the host (WASI random_get), as a
 /// command's Rand (std/dns's query IDs, decision 0447 R2i).
 fn wasi_rand_u64() -> Int
+/// wasm only: Proc.request_stop (compiler/wasm rt3.xo's stop state).
+fn wasi_stop_request()
 /// which 1 read, 2 write, 3 both; d ns from now when set.
 fn wasi_sock_deadline(c: Conn, which: Int, set: Bool, d: Int)
 /// A lookup of host started: its stream, 0 on an error.

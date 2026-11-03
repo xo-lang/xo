@@ -1221,7 +1221,8 @@ dump. `stop_notify(c)` ends c's subscription, closes c, and gives each
 signal with no subscription left its default back (Hangup, User1 and
 User2 end the program then, as they do unsubscribed). `request_stop()`
 starts core 7.5's phase 1 as the first signal does, so a program that
-took over Interrupt shuts down the same way:
+took over Interrupt shuts down the same way (on wasm, which has no
+signals, it is the only way to start it; decision 0447 R2j):
 
 ```xo
 let sigs = os.proc.notify([Signal.Interrupt, Signal.Terminate, Signal.Hangup])

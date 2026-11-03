@@ -459,6 +459,16 @@ fn (var g: Gen) call(v: Int) {
     _ => {
       // a runtime function of rt.xo taking the operands' leaves and
       // returning the result's (xo_<name> of std/llrt)
+      if (name is "rt.set_grace" | "rt.wasi_stop_request") && g.conc {
+        // a stop request in a program with tasks (rt3.xo's stop state)
+        g.rt_call(v, if name == "rt.set_grace" { "$wasi_set_grace" } else { "$wasi_stop_request" })
+        return
+      }
+      if name == "rt.wasi_stop_request" {
+        // no tasks: only task.stop_requested changes (rt.xo)
+        g.rt_call(v, "$wasi_stop_flag")
+        return
+      }
       if name.starts_with("rt.") && (rt_direct(name.trim_prefix("rt.")) || rt2_direct(name.trim_prefix("rt."))) {
         g.rt_call(v, "$${name.trim_prefix("rt.")}")
         if ssa.faulting_rt(name) {

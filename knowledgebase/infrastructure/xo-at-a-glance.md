@@ -145,4 +145,5 @@ lists the rest.
   work in a command over sockets, https and HTTP/2 included (decision
   0447 R2b, R2e, R2f, R2g; idle connections pooled as natively; no system
   roots); std/udp and std/dns's records work in a command too
-  (decision 0447 R2h, R2i).
+  (decision 0447 R2h, R2i); `os.proc.request_stop()` starts the
+  shutdown on wasm (R2j: stop_requested, stopping, the grace period).

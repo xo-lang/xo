@@ -271,6 +271,7 @@ arm64 wasi_sock_readable the wasi:sockets command runtime is wasm only (compiler
 arm64 wasi_sock_try_read the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_rand_u64 the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_udp_local the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_stop_request the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_udp_open the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_udp_recv the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_udp_send the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
@@ -295,6 +296,7 @@ llvm wasi_sock_readable the wasi:sockets command runtime is wasm only (compiler/
 llvm wasi_sock_try_read the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_rand_u64 the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_udp_local the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_stop_request the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_udp_open the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_udp_recv the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_udp_send the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
