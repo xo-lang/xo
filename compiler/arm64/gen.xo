@@ -359,12 +359,22 @@ fn (g: G) section(kind: Str) -> Str {
 /// Starts a function symbol (local unless global); the default layout
 /// (functions 4 byte aligned, no padding: decision 0158 ports no layout
 /// instrument).
+/// A function's alignment directive: 4 bytes, or 2^XO_ARM64_FN_ALIGN
+/// (ssa.Module.arm64_fn_align, a measurement instrument), for the
+/// program's functions and the drop, share, eq and closure environment
+/// helpers alike.
+fn (g: G) fn_align() -> Str {
+  "\t.p2align ${if g.m.arm64_fn_align > 2 { g.m.arm64_fn_align } else { 2 }}\n"
+}
+
 fn (g: G) func_header(var b: List[Str], s: Str, global: Bool) {
-  b.push("\t.p2align 2\n")
-  // the pad sweep's shift (XO_ARM64_PAD): nops before the label, never run
+  // the pad sweep's shift (XO_ARM64_PAD): nops before the label, never
+  // run, and before the alignment (XO_ARM64_FN_ALIGN), which they then
+  // shift only between functions
   for _ in 0..g.m.arm64_pad {
     b.push("\tnop\n")
   }
+  b.push(g.fn_align())
   if global {
     b.push("\t.globl ${s}\n")
   } else if g.split {

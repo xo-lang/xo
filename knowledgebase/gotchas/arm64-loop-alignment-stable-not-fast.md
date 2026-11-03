@@ -28,3 +28,16 @@ shape change, do not align; sweep `XO_ARM64_LAYOUT=pad=K` (K = 0 to 15)
 and compare medians over the shifts, with 16 copies of one binary as
 the noise floor. Only collatz, nbody, and sort have spreads above run
 noise on a shared host.
+
+Again on 2026-11-03 (Xo Lang 1, linux/arm64 host 1, `XO_ARM64_FN_ALIGN`,
+every function and helper aligned, across `XO_ARM64_PAD=0..3`): collatz,
+whose unaligned pads 1 to 3 ran 0.94 of pad 0's time, ran at pad 0's
+slow time at every pad with 64 byte alignment (1.002 to 1.005); /alloc's
+spread over pads was 2.0 percent unaligned, 2.5 at 64 bytes and 1.4 at
+128 (rps at 32 connections); the xo self build was within noise
+everywhere. Alignment cost xo's __text 1.43 percent and the /alloc
+server's 7.3 at 64 bytes. Loop tops aligned were also slower for x86 sort
+(bench/results/sort1m-x86-2026-10-27.md) and aligned hot blocks did not
+remove interp's spread (bench/results/pgo-layout-stage2-2026-10-29.md):
+judge a placement sensitive change by its median over pads, not by
+aligning.

@@ -460,6 +460,12 @@ pub struct Module {
   /// placement effect from a cost of the code's shape (0, the default:
   /// none).
   pub arm64_pad: Int = 0
+  /// A measurement instrument (2026-11-03, the /alloc placement steps):
+  /// every function starts at a multiple of 2^arm64_fn_align bytes
+  /// ($XO_ARM64_FN_ALIGN, log2; 0, the default: 4 bytes). The pad's nops
+  /// come before the alignment, so a pad sweep under it moves only where
+  /// the aligned functions land, not their offset within a cache line.
+  pub arm64_fn_align: Int = 0
   /// The functions' order in the text (decision 0403: a layout file's,
   /// hot first), indices into funcs; empty for the declared order.
   pub fn_order: List[Int] = []

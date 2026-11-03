@@ -2912,6 +2912,7 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
   gm.race = o.race
   gm.arm64_regs = Int.parse(os.env.get("XO_ARM64_REGS") ?? "") ?? 0
   gm.arm64_pad = Int.parse(os.env.get("XO_ARM64_PAD") ?? "") ?? 0
+  gm.arm64_fn_align = Int.parse(os.env.get("XO_ARM64_FN_ALIGN") ?? "") ?? 0
   gm.thread_switch_only = os.env.get("XO_THREAD_SWITCH") ?? ""
   if gm.thread_switch_only.starts_with("@") {
     let nf = gm.thread_switch_only[1..gm.thread_switch_only.len()]

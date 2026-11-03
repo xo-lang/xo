@@ -132,7 +132,7 @@ fn (var g: G) inc_thunk(str: Bool) -> Str {
     let t = if r == 17 { "x16" } else { "x17" }
     // the call frame information (no directives: the return address in
     // x30) lets a profile's sample here keep its callers
-    b.write("${g.cmt()} ${key} ${obj}\n\t.p2align 2\n${g.alias_sub(key, obj)}${lbl}:\n\t.cfi_startproc\n")
+    b.write("${g.cmt()} ${key} ${obj}\n${g.fn_align()}${g.alias_sub(key, obj)}${lbl}:\n\t.cfi_startproc\n")
     if str {
       b.write("\ttbnz ${obj}, #0, ${lbl}_inl\n")
     }
@@ -170,7 +170,7 @@ fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
   let sym = g.local("xo_${g.ns}${kind}${id}")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("${g.cmt()} ${kind} ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} ${kind} ${g.tname(t)}\n${g.fn_align()}${g.alias(key)}${sym}:\n")
   if g.x86 {
     g.x86_rc_body(b, kind, sym, id, t)
     b.push("\n")
@@ -462,7 +462,7 @@ fn (var g: G) elem_helper(kind: Str, t: Int) -> Str {
   let sym = g.local("xo_${g.ns}${kind}p${g.nhelp}")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("${g.cmt()} ${kind}p ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} ${kind}p ${g.tname(t)}\n${g.fn_align()}${g.alias(key)}${sym}:\n")
   if g.x86 {
     g.x86_elem_body(b, kind, sym, t)
     g.helpers.push(b.join(""))
@@ -772,7 +772,7 @@ fn (var g: G) box_share(t: Int) -> Str {
   let sym = g.helper_label("boxshare")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("${g.cmt()} boxshare ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} boxshare ${g.tname(t)}\n${g.fn_align()}${g.alias(key)}${sym}:\n")
   var ls: List[Leaf] = []
   g.heap_leaves(g.m.types[t].elems[0], 0, ls)
   g.leaves_and_then(b, "share", ls, BOX_HDR, "")
@@ -794,7 +794,7 @@ fn (var g: G) mem_drop(t: Int) -> Str {
   let sym = g.helper_label("dropm")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("${g.cmt()} dropm ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} dropm ${g.tname(t)}\n${g.fn_align()}${g.alias(key)}${sym}:\n")
   var ls: List[Leaf] = []
   g.heap_leaves(t, 0, ls)
   g.leaves_and_then(b, "drop", ls, 0, "")
@@ -815,7 +815,7 @@ fn (var g: G) box_drop(t: Int) -> Str {
   let sym = g.helper_label("boxdrop")
   g.helped[key] = sym
   var b: List[Str] = []
-  b.push("${g.cmt()} boxdrop ${g.tname(t)}\n\t.p2align 2\n${g.alias(key)}${sym}:\n")
+  b.push("${g.cmt()} boxdrop ${g.tname(t)}\n${g.fn_align()}${g.alias(key)}${sym}:\n")
   var ls: List[Leaf] = []
   g.heap_leaves(g.m.types[t].elems[0], 0, ls)
   g.leaves_and_then(b, "drop", ls, BOX_HDR, g.sym("xo_x_obj_rc_free"))
