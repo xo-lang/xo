@@ -104,6 +104,11 @@ pub struct Gen {
   /// The program uses the network (rt9.xo over wasi:sockets, decision
   /// 0447); only a wasip2 command has it
   net: Bool = false
+  /// the network's kinds the program calls (rt9.xo's shared functions
+  /// name only their imports, so the component asks for no other;
+  /// decision 0447 R2h)
+  udp: Bool = false
+  tcp: Bool = false
   /// a runtime record of llrt is made (rt.wasi_handle_new: rt.xo
   /// handle_text)
   handles: Bool = false
@@ -1444,6 +1449,11 @@ fn (var g: Gen) find_susp() {
           // the network waits in the task runtime's scheduler
           g.conc = true
           g.net = true
+          if name.starts_with("rt.wasi_udp_") {
+            g.udp = true
+          } else if rt9_tcp(name) {
+            g.tcp = true
+          }
           if rt9_blocking(name) {
             s = true
           }
@@ -1852,5 +1862,73 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     b.write("  ${d}\n")
   }
   b.write(")\n")
+  if g.cmd || g.comp {
+    // a component imports the interfaces its core module imports, and the
+    // runtime's import blocks list a whole interface (rt9.xo's TCP and
+    // UDP): keep only the functions the module calls, so a UDP only
+    // program asks the host for no TCP (decision 0447 R2h)
+    return drop_unused_imports(b.freeze())
+  }
   b.freeze()
+}
+
+/// Module text t without its imported functions that nothing else names
+/// (a call, an elem entry): the `(import ... (func $name ...))` lines
+/// whose $name appears on no other line.
+fn drop_unused_imports(t: Str) -> Str {
+  let lines = t.split("\n")
+  var used: Set[Str] = #{}
+  var names: List[Str] = []
+  for l in lines {
+    let lt = l.trim_start()
+    if lt.starts_with("(import ") {
+      names.push(import_func_name(lt))
+      continue
+    }
+    names.push("")
+    let b = l.bytes()
+    var i = 0
+    while i < b.len() {
+      if b[i] == 36 {
+        var j = i + 1
+        while j < b.len() && ident_byte(Int(b[j])) {
+          j += 1
+        }
+        used.add(l[i..j])
+        i = j
+      } else {
+        i += 1
+      }
+    }
+  }
+  var out = StrBuilder.new()
+  for (k, l) in lines.indexed() {
+    if names[k] != "" && !used.contains(names[k]) {
+      continue
+    }
+    out.write(l)
+    if k + 1 < lines.len() {
+      out.write("\n")
+    }
+  }
+  out.freeze()
+}
+
+/// The $name of an import line's function, "" for another import.
+fn import_func_name(l: Str) -> Str {
+  let at = l.find("(func $") ?? -1
+  if at < 0 {
+    return ""
+  }
+  let b = l.bytes()
+  var j = at + 6
+  while j < b.len() && ident_byte(Int(b[j])) {
+    j += 1
+  }
+  l[at + 6..j]
+}
+
+/// Whether c can follow $ in a WAT identifier (as this backend writes them).
+fn ident_byte(c: Int) -> Bool {
+  (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95 || c == 46 || c == 45 || c == 36
 }

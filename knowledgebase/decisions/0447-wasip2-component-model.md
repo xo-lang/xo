@@ -912,7 +912,16 @@ udp_write and udp_local_addr give std/native/udp.xo's wasm arms the
 native error texts. The component imports udp and udp-create-socket
 only when the core module uses them, and tcp, tcp-create-socket only
 for TCP (ip-name-lookup for TCP or lookups), so a UDP only program asks
-the host for no TCP.
+the host for no TCP. (Correction, 2026-11-03: as first pushed that was
+not so. The core module imported every function of rt9.xo's import
+block, since nothing dropped an import no code calls, and the connection
+shutdown and address functions called both kinds' imports, so every
+network program imported TCP and UDP, and every command the whole of
+wasi:cli and wasi:random. A command or component now keeps only the
+imported functions its module calls (gen.xo drop_unused_imports), and
+rt9.xo's shared functions name only the kinds the program uses (gen's
+udp and tcp flags); TestWasmCommandImports pins it:
+gotchas/wasm-component-imports-whole-block.md.)
 
 ### DNS records in a command (2026-11-03, R2i)
 

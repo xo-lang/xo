@@ -43,6 +43,12 @@ fn rt9_blocking(name: Str) -> Bool {
   name is "rt.wasi_sock_accept" | "rt.wasi_sock_connected" | "rt.wasi_sock_read" | "rt.wasi_sock_readable" | "rt.wasi_sock_write" | "rt.wasi_sock_next" | "rt.wasi_udp_recv" | "rt.wasi_udp_send"
 }
 
+/// Whether rt9 function name works on a TCP socket or its streams (the
+/// rest: the outcome, close, deadlines and lookups, or rt.wasi_udp_*).
+fn rt9_tcp(name: Str) -> Bool {
+  name is "rt.wasi_sock_listen" | "rt.wasi_sock_local" | "rt.wasi_sock_peer" | "rt.wasi_sock_accept" | "rt.wasi_sock_connect" | "rt.wasi_sock_connected" | "rt.wasi_sock_read" | "rt.wasi_sock_try_read" | "rt.wasi_sock_readable" | "rt.wasi_sock_write" | "rt.wasi_sock_lclose"
+}
+
 /// The imports of rt9.xo.
 fn rt9_imports() -> Str {
   """
@@ -121,7 +127,73 @@ fn rt9_sched(rt3: Str) -> Str {
 fn rt9_text(var g: Gen) -> Str {
   let dead = g.str_obj(b"")
   let conn_free = g.table_index("$sk_conn_free")
-  let lis_free = g.table_index("$sk_lis_free")
+  // a listener's free is in the table, so kept whenever rt9 is: only a
+  // TCP program has listeners (it calls TCP's drop; $wasi_sock_listen,
+  // its one user, is stripped otherwise)
+  let lis_free = if g.tcp { g.table_index("$sk_lis_free") } else { 0 }
+  // a connection's shutdown and address for the kinds the program uses
+  // only: each names its kind's imports, which the component then asks
+  // the host for (decision 0447 R2h)
+  let udp_shut = if g.udp { """
+      local.get $c
+      i32.load offset=48
+      if
+        ;; udp: the streams, children of the socket, first
+        local.get $c
+        i32.load offset=12
+        call $udp_idrop
+        local.get $c
+        i32.load offset=16
+        call $udp_odrop
+        local.get $c
+        i32.load offset=8
+        call $udp_drop
+        return
+      end""" } else { "" }
+  let tcp_shut = if g.tcp { """
+      local.get $c
+      i32.load offset=16
+      if
+        ;; what the stream holds goes out before it is dropped
+        local.get $c
+        i32.load offset=16
+        call $hret_at
+        call $sk_oflush
+        local.get $c
+        i32.load offset=16
+        call $ostream_drop
+      end
+      local.get $c
+      i32.load offset=12
+      if
+        local.get $c
+        i32.load offset=12
+        call $sk_idrop
+      end
+      local.get $c
+      i32.load offset=8
+      call $sk_drop""" } else { "" }
+  let udp_addr = if g.udp { """
+      local.get $remote
+      i32.const 2
+      i32.eq
+      if
+        local.get $s
+        local.get $r
+        call $udp_local
+        br $got
+      end""" } else { "" }
+  let tcp_addr = if g.tcp { """
+      local.get $remote
+      if
+        local.get $s
+        local.get $r
+        call $sk_remote
+      else
+        local.get $s
+        local.get $r
+        call $sk_local
+      end""" } else { "" }
   """
     ;; the outcome of the last network operation (netwasi.xo's): a NetErr
     ;; status (0 none) and its message
@@ -733,43 +805,8 @@ fn rt9_text(var g: Gen) -> Str {
       i32.store offset=20
       local.get $c
       call $sk_unwait
-      local.get $c
-      i32.load offset=48
-      if
-        ;; udp: the streams, children of the socket, first
-        local.get $c
-        i32.load offset=12
-        call $udp_idrop
-        local.get $c
-        i32.load offset=16
-        call $udp_odrop
-        local.get $c
-        i32.load offset=8
-        call $udp_drop
-        return
-      end
-      local.get $c
-      i32.load offset=16
-      if
-        ;; what the stream holds goes out before it is dropped
-        local.get $c
-        i32.load offset=16
-        call $hret_at
-        call $sk_oflush
-        local.get $c
-        i32.load offset=16
-        call $ostream_drop
-      end
-      local.get $c
-      i32.load offset=12
-      if
-        local.get $c
-        i32.load offset=12
-        call $sk_idrop
-      end
-      local.get $c
-      i32.load offset=8
-      call $sk_drop)
+${udp_shut}
+${tcp_shut})
 
     ;; Net.listen's socket: bound to the address (v6, the 4 or 16 bytes ip,
     ;; port) and listening
@@ -880,24 +917,9 @@ fn rt9_text(var g: Gen) -> Str {
     (func $sk_addr_bytes (param $s i32) (param $remote i32) (result i32 i32) (local $r i32) (local $o i32) (local $i i32) (local $w i32)
       call $hret_at
       local.set $r
-      local.get $remote
-      i32.const 2
-      i32.eq
-      if
-        local.get $s
-        local.get $r
-        call $udp_local
-      else
-        local.get $remote
-        if
-          local.get $s
-          local.get $r
-          call $sk_remote
-        else
-          local.get $s
-          local.get $r
-          call $sk_local
-        end
+      block $got
+${udp_addr}
+${tcp_addr}
       end
       local.get $r
       i32.load8_u
