@@ -30,3 +30,13 @@ Runes below 0xC0 (0xA0 for the compatibility forms) are their own normalization 
 - Timing: Mac iteration (not evidence) bench/perf/norm: NFC 2.2 of x/text, NFD 1.3, NFKC 1.4; host rows in bench/results/std-twin-rows16-2026-11-03.md: NFC 1.64, NFD 1.13, NFKC 1.11 of x/text
 
 Decompositions are 7 byte records (a rune or a run of runes at one delta, then the delta or a position in a pool of varint runes) found by a binary search bounded by a 64 rune block index; composition pairs by a search bounded by an index on the first rune; the segment loop walks the bytes, one class list per run.
+
+## 2026-11-03: perf: NFC and NFKC skip runes that are their own normalization
+
+- Kind: perf
+- Commit: this commit
+- Test: the corpus above, unchanged (arm64, LLVM, Go backend)
+- Cost: +2.9 KB of tables (4 byte records of ranges: NFC_UNSTABLE 281, NFKC_UNSTABLE 455; see scripts/gennorm) and +0.8 KB of code; a program importing std/norm grows 82,848 bytes (file, Mac), 17 percent less than Go's +100,096 stripped; table data 64.0 KB against Go's 64.5 KB
+- Timing: Mac iteration (not evidence) bench/perf/norm: NFC 172 to 97 ms (Go 88), NFKC 177 to 119 (Go 118); host row follows in bench/results/std-twin-norm-2026-11-03.md
+
+For NFC and NFKC the segment loop starts a run only at a rune from U+C0 that NFC (NFKC) can change, reorder or combine with its predecessor (a generated table of ranges), so text that is already normalized is copied without a decomposition, a reorder or a composition (Go's quickSpan).

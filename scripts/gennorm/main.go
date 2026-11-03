@@ -76,11 +76,27 @@ func decomps(keys, offs, runes []int) (recs, pool []byte) {
 func main() {
 	path := os.Args[1]
 	var ck, co, cr, kk, ko, kr, cc, pk, pv []int
+	var uc, uk []int
+	add := func(u []int, r int) []int {
+		if n := len(u); n >= 2 && u[n-1] == r-1 {
+			u[n-1] = r
+			return u
+		}
+		return append(u, r, r)
+	}
 	for r := rune(0); r <= 0x10FFFF; r++ {
 		if r >= 0xD800 && r <= 0xDFFF || (r >= 0xAC00 && r <= 0xD7A3) {
 			continue
 		}
 		s := string(r)
+		if r >= 0xC0 {
+			if norm.NFC.String(s) != s || !norm.NFC.PropertiesString(s).BoundaryBefore() {
+				uc = add(uc, int(r))
+			}
+			if norm.NFKC.String(s) != s || !norm.NFKC.PropertiesString(s).BoundaryBefore() {
+				uk = add(uk, int(r))
+			}
+		}
 		d := norm.NFD.String(s)
 		k := norm.NFKD.String(s)
 		if d != s {
@@ -174,6 +190,23 @@ func main() {
 		}
 		compIdx = append(compIdx, idx16(first)...)
 	}
+	// ranges of runes from U+C0 whose NFC (NFKC) form is not themselves or that combine backward, as 4 byte records: first rune (3 bytes) and the length minus one
+	unst := func(u []int) []byte {
+		var out []byte
+		for i := 0; i < len(u); i += 2 {
+			for a := u[i]; a <= u[i+1]; {
+				n := u[i+1] - a
+				if n > 255 {
+					n = 255
+				}
+				out = append(out, byte(a), byte(a>>8), byte(a>>16), byte(n))
+				a += n + 1
+			}
+		}
+		return out
+	}
+	w.WriteString("/// Runes from U+C0 on that NFC can change or reorder, or that combine with a rune before them, as 4 byte records ascending: the first rune (3 bytes) and the length minus one. Text of all other runes is its own NFC.\nconst NFC_UNSTABLE: Bytes = " + lit(unst(uc)) + "\n\n")
+	w.WriteString("/// The same for NFKC.\nconst NFKC_UNSTABLE: Bytes = " + lit(unst(uk)) + "\n\n")
 	w.WriteString("/// Per block of 64 runes up to U+3000 (and one more), 2 bytes: the last record of CANON that starts at or before the block's first rune, to bound the search.\nconst CANON_IDX: Bytes = " + lit(blockIdx(cr7)) + "\n\n")
 	w.WriteString("/// The same for COMPAT.\nconst COMPAT_IDX: Bytes = " + lit(blockIdx(kr7)) + "\n\n")
 	w.WriteString("/// Per first rune up to U+400 (and one more), 2 bytes: the first record of COMP whose first rune is at least that.\nconst COMP_IDX: Bytes = " + lit(compIdx) + "\n\n")
