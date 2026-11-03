@@ -1064,6 +1064,21 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   Name the files one by one under zsh, then read `git diff` and
   `git add` (it stages nothing). Last verified: 2026-10-21.
 
+### Origin claims (scripts/shipped-in.sh)
+
+- `scripts/shipped-in.sh REV...` prints, for each revision, the first
+  release tag (v*, by version) that contains it, or `unreleased`, with
+  the dates. Every origin claim ("Shipped in:" in std/changes, "since
+  vX" or "first in vX" in CHANGELOG.md, a report, a release note's Known
+  issues, a message to the lead) comes from its output, pasted or
+  quoted, never from memory or a guess (lead, 2026-11-03: a wasm stdin
+  bug was reported as shipped in v0.36.0 when the feature reaching it
+  came after the tag, and two earlier origin claims were corrected).
+- A tag containing the commit that wrote the faulty code is not enough
+  for a behavior claim: run it also for the commit that made the path
+  reachable (the feature or caller that first runs it) and use the later
+  of the two tags. Last verified: 2026-11-03.
+
 ## Coming
 
 - `dbg` in pure and no-GC code (0265), vet hints for
