@@ -320,9 +320,51 @@ pub fn elf_store_prepare(parsed: ElfProg, store: Bytes, opts: ElfLinkOpts, cache
         ob.sects.push(ESect{name: nm, typ: typ, flags: flags, align: align, info: info, data: "".bytes(), size: rec_size(store, q), store_dead: true})
       }
     }
-    for j in 0..v.nsyms[i] {
+    // the locals of std's dead sections that no relocation names are left
+    // out as they are read (most of its symbols, which nothing reads; a
+    // first build's link held 15.6 MB of them past layout, 2026-11-03),
+    // as elfhalf.xo drop_dead_locals does for the half, without a copy
+    let ns = v.nsyms[i]
+    var named: List[Bool] = List.with_capacity(ns)
+    for _ in 0..ns {
+      named.push(false)
+    }
+    for t in ob.sects {
+      for r in t.relocs {
+        if r.sym >= 0 && r.sym < ns {
+          named.set(r.sym, true)
+        }
+      }
+      if t.typ == SHT_GROUP && t.info >= 0 && t.info < ns {
+        named.set(t.info, true)
+      }
+    }
+    var map: List[Int] = List.with_capacity(ns)
+    for j in 0..ns {
       let y = v.sym(i, j)
-      ob.syms.push(ESym{name: y.name, info: y.typ & 255, other: (y.typ >> 8) & 255, shndx: y.sect, value: y.value, size: y.desc})
+      let info = y.typ & 255
+      if j > 0 && (info >> 4) == STB_LOCAL && y.sect > 0 && y.sect < SHN_LORESERVE && y.sect < ob.sects.len() && ob.sects[y.sect].store_dead && !named[j] {
+        map.push(-1)
+      } else {
+        map.push(ob.syms.len())
+        ob.syms.push(ESym{name: y.name, info: info, other: (y.typ >> 8) & 255, shndx: y.sect, value: y.value, size: y.desc})
+      }
+    }
+    if ob.syms.len() < ns {
+      for k in 0..ob.sects.len() {
+        if !ob.sects[k].relocs.is_empty() {
+          var rs = ob.sects[k].relocs
+          for j in 0..rs.len() {
+            var r = rs[j]
+            r.sym = map[r.sym]
+            rs.set(j, r)
+          }
+          ob.sects[k].relocs = rs
+        }
+        if ob.sects[k].typ == SHT_GROUP && ob.sects[k].info >= 0 && ob.sects[k].info < ns {
+          ob.sects[k].info = map[ob.sects[k].info]
+        }
+      }
     }
     l.objs.push(ob)
   }

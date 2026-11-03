@@ -1026,3 +1026,13 @@ own peak: check.prefetch (+43 MB of heap in that build) and ssa.
   earlier where the call graph allows it.
 - Lowering the self-build's parallelism to cut the emit peak: a slower
   build. Stage 3 bounds it by memory only when memory is short.
+
+## A program's first build on Linux: std's store symbols (xo-lang-2, 2026-11-03)
+
+Past link.layout of a first build (coll on linux/arm64) 21.6 MB was in use, 15.6 MB of it
+elf_store_prepare's symbols: as in std's half (above), most are locals of std's dead sections
+that no relocation names. elf_store_prepare now leaves them out as it reads each stored object
+(the half's drop_dead_locals made a copy of each list, and the freed copies raised an edit
+build's max RSS 3.5%). Outputs byte-identical (coll, conc-spawn, the HTTP server, first and second
+builds); first build max RSS 188.5 to 183.4, 119.7 to 115.1 and 212.6 to 202.3 MB (one run each);
+edit builds within noise (coll RSS 1.000, HTTP 1.023, wall 1.016 and 1.014, ab-host, 3 rounds).
