@@ -308,11 +308,14 @@ pub fn large_resize(b: Int, n: Int) -> Int {
     return b.wrapping_add(8)
   }
   let old = (0).wrapping_sub(rt.mem_load(b, 0, 8))
-  // a growing block (a list's or a string's doubling) gets room for
-  // twice n, so its next growth stays in place: the pages past what is
+  // a growing block (a list's or a string's growth) gets room for four
+  // times n, so its next growths stay in place: the pages past what is
   // written are reserved, not used (realloc grows a large block in place
-  // or remaps its pages)
-  let p = large_room(n, if n > old { n.wrapping_shl(1) } else { n })
+  // or remaps its pages). Four, not two: a list past 256 elements grows
+  // by about 1.25x (decision 0452), so twice n copied it every 2.4x of
+  // growth, each copy faulting in fresh pages (darwin's coll push 1.124
+  // of the doubling curve, max RSS 1.10)
+  let p = large_room(n, if n > old { n.wrapping_shl(2) } else { n })
   rt.mem_copy(p, b.wrapping_add(8), if old < n { old } else { n })
   release(b)
   p

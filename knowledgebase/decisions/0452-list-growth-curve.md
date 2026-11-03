@@ -92,3 +92,19 @@ Growth from the floor of 1 doubles (1, 2, 4, then 4 elements as before), so a li
 big structs that grows to many elements costs up to two extra copies.
 
 Growth from the floor: the first growth of any list goes to 4 slots, so a big-element list that grows from 1 pays one extra copy, not the 1, 2, 4 steps (measured: alloc bign 1.165x with plain doubling from 1).
+
+Addendum (2026-11-03, Xo Lang 2): the curve's cost on darwin. Lang 4's 0.36.0 comparison found
+coll push 1.152x of v0.35.0 on darwin (0.952 on linux/arm64) and bisected it to this decision.
+heapos.xo large_resize moved a growing large block into a mapping with room for twice its new
+size, so its next growth stayed in place; that room fit doubling (a copy every 4x of growth) but
+not this curve (a copy every 2.4x), and each copy faults in fresh pages. The room is now four
+times the size (a copy every 4.9x); the reserved pages are not touched and the memory budget
+counts the bytes handed out, not the room. Darwin, xo bench --ab of main's coll against the
+change: push wall 0.863, instructions 0.863, max RSS 0.741; against the doubling curve: push
+wall 0.901, max RSS 0.815. Linux/arm64 ab-host (3 rounds): push wall 1.010 (within noise), max RSS 0.763; putget wall 1.011 (within noise), max RSS 0.880; the self build wall 1.006 (a 3-round "worse" under 1%, 2 of 3 rounds loaded), max RSS 1.001.
+
+The reservation is not memory: XO_MAX_MEM counts the bytes handed out, so one list grown to 320 MB
+under XO_MAX_MEM=512M (about 1.3 GB reserved) runs on darwin and linux/arm64, and one grown to 1 GB
+stops with the budget's error (617 and 514 MB mapped); golden mem_budget_growth holds a 24 MB list
+under 64 MB. Linux's default overcommit (heuristic, mode 0) and mode 1 allow the reservation; in
+strict mode 2 it counts toward the commit limit (not measured: the hosts run mode 1).

@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-03: perf: a growing large list or string reserves room for four times its size
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 4's 0.36.0 release comparison (darwin coll push 1.152x of v0.35.0, bisected to decision 0452's growth curve, 188398ede)
+- Go reference: none (Go's growslice copies at every growth past the block's size class; Xo grows a large block in place inside its mapping)
+- Test: golden mem_budget_growth (a 24 MB list under XO_MAX_MEM=64M: the reservation is not counted); bench/perf/xo push, putget and update under xo bench --ab on the Mac; linux/arm64 ab-host
+- Timing: darwin, main's coll against the change, 5 rounds: push wall 0.863, instructions 0.863, max RSS 0.741 (56,080 to 41,568 KB); against v0.35.0's doubling curve: push wall 0.901, max RSS 0.815. putget and update max RSS 0.952. linux/arm64 ab-host (3 rounds): push wall 1.010 (within noise), max RSS 0.763; putget wall 1.011 (within noise), max RSS 0.880; the self build wall 1.006 (a 3-round "worse" under 1%, 2 of 3 rounds loaded), max RSS 1.001.
+- Shipped in: not yet released (the regression shipped in v0.36.0)
+
+A large block that grows (a list past its size class, a string being
+built) is moved into a mapping with room for four times its new size
+instead of twice: the pages past what is written stay reserved, not
+used, and its next growths stay in place. With decision 0452's curve (a
+quarter more past 256 elements) twice the size copied the list every
+2.4x of growth, each copy faulting in fresh pages, which cost darwin
+the most; four times copies it every 4.9x, fewer copies than the old
+doubling curve made.
 ## 2026-11-03: feature: TCP in a wasip2/wasm command
 
 - Kind: feature

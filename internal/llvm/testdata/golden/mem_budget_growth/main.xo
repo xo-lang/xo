@@ -1,0 +1,16 @@
+// A list grown past the heap's size classes under a memory budget
+// (XO_MAX_MEM=64M, env.txt): its block reserves room for four times its
+// size (heapos.xo large_resize), about 96 MB of address space for these
+// 24 MB, which the budget must not count; only the bytes handed out are
+// (decision 0349, decision 0452's addendum).
+fn main(os: Os) {
+  var xs: List[Int] = []
+  for i in 0..3000000 {
+    xs.push(i)
+  }
+  var sum = 0
+  for x in xs {
+    sum += x
+  }
+  os.stdio.println("${xs.len()} ${sum}")
+}
