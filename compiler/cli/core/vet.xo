@@ -993,6 +993,50 @@ fn io_default(c: check.Checker, f: Int, file: Str, span: parser.Span, x: parser.
   Some(d)
 }
 
+/// XO0916 (decision 0464): `time.format` or `time.parse` with a layout that
+/// is a compile time string. Each call parses the layout text again (5.4
+/// and 4.7 of Go's wall), where a `const Layout` is parsed once (2.0 and
+/// 1.9); the check keeps std's own hot paths honest.
+fn time_layout_str(c: check.Checker, f: Int, file: Str, span: parser.Span, args: List[parser.Arg], fo: Int) -> Diag? {
+  if fo < 0 || c.objs[fo].recv >= 0 || c.objs[fo].recv_ty >= 0 {
+    return None
+  }
+  let tm = c.mod_index.get("std/time") ?? -1
+  if tm < 0 || c.objs[fo].module != tm {
+    return None
+  }
+  let name = text_of(c.objs[fo].name)
+  let idx = if name == "format" { 2 } else if name == "parse" { 1 } else { return None }
+  var layout: parser.Expr? = None
+  var pos = 0
+  for a in args {
+    if let Some(n) = a.name {
+      if n.name == b"layout" {
+        layout = Some(a.value)
+      }
+      continue
+    }
+    if pos == idx {
+      layout = Some(a.value)
+    }
+    pos += 1
+  }
+  let arg = match layout {
+    Some(x) => x
+    None => return None
+  }
+  let text = match c.const_str(f, arg, 0) {
+    Some(x) => x
+    None => return None
+  }
+  if allowed(c, f, span.start.line, "XO0916") {
+    return None
+  }
+  var d = vdiag("XO0916", false, file, span, "`time.${name}` parses the layout ${go_quote(text)} on every call; a `const Layout` is parsed once")
+  d.notes.push(check.DNote{message: "declare `const L: time.Layout = time.layout(...)` and call `L.${name}(...)`: the same text, 2 to 3 times faster (decision 0332, decision 0464); a layout that varies at run time, or a call that is not hot, can say why with `// xo:allow XO0916 REASON`"})
+  Some(d)
+}
+
 /// Whether x is an empty value: `[]`, `{}`, `#{}`, `""`, `b""`, `None`,
 /// `false`, or `0`.
 fn empty_value(x: parser.Expr) -> Bool {
@@ -1078,6 +1122,9 @@ fn vet_call(c: check.Checker, f: Int, file: Str, call: parser.Expr, span: parser
     None => return None
   }
   let fo = ci.fn_obj
+  if let Some(d) = time_layout_str(c, f, file, span, args, fo) {
+    return Some(d)
+  }
   if fo < 0 || !c.mods[c.objs[fo].module].is_prelude {
     return None
   }

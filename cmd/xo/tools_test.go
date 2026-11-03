@@ -940,6 +940,62 @@ fn main(os: Os) {
 	}
 }
 
+// TestVetTimeLayoutStr covers XO0916 (decision 0464): time.format or
+// time.parse with a compile time string layout (a literal at line 6, a
+// std constant at line 7, a string constant at line 8, a parse at line
+// 9) warns; a const Layout's methods, a layout built at run time, and an
+// allow comment with a reason (line 16) do not.
+func TestVetTimeLayoutStr(t *testing.T) {
+	t.Parallel()
+	src := `use std/time
+
+const L: time.Layout = time.layout("{year}")
+const TEXT = "{year}-{month}"
+
+fn a(t: time.Time, z: time.Zone) -> Str { time.format(t, z, "{year}") }
+fn b(t: time.Time, z: time.Zone) -> Str { time.format(t, z, time.RFC3339) }
+fn c(t: time.Time, z: time.Zone) -> Str { time.format(t, z, TEXT) }
+fn d(z: time.Zone) -> Time ! ParseErr { time.parse("2000", "{year}", z) }
+fn e(t: time.Time, z: time.Zone) -> Str { L.format(t, z) }
+fn f(t: time.Time, z: time.Zone, n: Str) -> Str { time.format(t, z, "{${n}}") }
+fn g(t: time.Time, z: time.Zone, n: Str) -> Str { time.format(t, z, n) }
+fn h(t: time.Time, z: time.Zone) -> Str {
+  // xo:allow XO0916 a cold path
+  time.format(t, z, "{year}")
+}
+
+fn main(os: Os) {
+  let z = time.utc()
+  os.stdio.println(a(time.now(), z) + b(time.now(), z) + c(time.now(), z) + e(time.now(), z) + g(time.now(), z, "{year}") + h(time.now(), z))
+}
+`
+	dir := writeFiles(t, map[string]string{"main.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"vet", "--json", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("exit %d: %s", code, errOut.String())
+	}
+	var res struct {
+		Diagnostics []struct {
+			Code string `json:"code"`
+			Span struct {
+				Line int `json:"line"`
+			} `json:"span"`
+		} `json:"diagnostics"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &res); err != nil {
+		t.Fatalf("bad JSON: %v\n%s", err, out.String())
+	}
+	var got []string
+	for _, d := range res.Diagnostics {
+		if d.Code == "XO0916" {
+			got = append(got, fmt.Sprint(d.Span.Line))
+		}
+	}
+	if want := "6, 7, 8, 9"; strings.Join(got, ", ") != want {
+		t.Errorf("XO0916 at %v, want %s\n%s", got, want, out.String())
+	}
+}
+
 // TestVetMatchExit covers XO0906 (decision 0321): the four line `match`
 // that only unwraps an Option (line 2) or a Result (lines 12 and 18) or
 // leaves gets a note whose fix writes it with `??`; a Result arm that

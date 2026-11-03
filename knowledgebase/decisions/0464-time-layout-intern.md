@@ -1,6 +1,6 @@
 # 0464: parsed time layouts are interned, so a string layout costs a const Layout's walk
 
-Status: Proposed (Xo Lang 3, 2026-11-03; the Lead asked for a hoist of literal layouts, this is the library side alternative, pending the Lead's answer)
+Status: Proposed (Xo Lang 3, 2026-11-03; the owner decided 2026-11-03 to keep it Proposed, deferred to a later seed: the interning needs a runtime primitive, so it cannot block the 0.37 seed cut; `xo vet` XO0916 covers the cost meanwhile)
 
 ## Context
 
@@ -50,6 +50,13 @@ shared with xo_rt.c's older readers), an immortal-entry constructor, and TestCod
 classification for the new state. Tests: a race test (16 tasks formatting and parsing 10
 distinct layouts and 200 colliding ones, under `--race`), the layout bound (65th colliding
 layout still correct), and the existing time corpus on all three backends.
+
+## Owner decision (2026-11-03)
+
+Keep this Proposed and deferred to a later seed. Meanwhile `xo vet` warns (XO0916) when
+`time.format` or `time.parse` gets a compile time string layout, suggesting the const
+`Layout` form (spec/core.md code table, `xo explain XO0916`); no runtime change. std's own
+uses pass the check (`xo vet std`: no XO0916).
 
 ## Consequences
 
