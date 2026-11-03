@@ -1,0 +1,145 @@
+// bytebuf: decision 0480's measurement. Records cut from bytes that arrive
+// in 4 KiB pieces, against Go's bytes.Buffer (twin.go.txt). Usage:
+// `<program> WORKLOAD`, where WORKLOAD is none, or small (1,000,000 lines
+// of 20 to 80 bytes), large1 (one 1 MiB line) or large64 (one 64 MiB
+// line) followed by _concat (today's `rest + piece`) or _views (option
+// B3: a partial record kept as a view or a list of views, joined once).
+// Prints `<workload> <records> <bytes>` (newlines not counted); the twin
+// prints the same.
+
+const PIECE = 4096
+
+/// Lines of 20 to 80 bytes (the newline included) to about 1 MiB, and
+/// their count.
+fn small_pattern() -> (Bytes, Int) {
+  let letters = b"abcdefghijklmnopqrstuvwxyz"
+  var out = BytesBuilder.with_capacity(1048576 + 80)
+  var k = 0
+  while out.len() < 1048576 {
+    out.write(letters[k % 26..k % 26 + 1].repeat(19 + (k * 37) % 61))
+    out.write(b"\n")
+    k += 1
+  }
+  (out.freeze(), k)
+}
+
+/// The pieces of the stream: reps copies of pattern, each in PIECE byte views.
+fn pieces(pattern: Bytes, reps: Int) -> List[Bytes] {
+  var ps: List[Bytes] = []
+  for _r in 0..reps {
+    var o = 0
+    while o < pattern.len() {
+      let e = if o + PIECE < pattern.len() { o + PIECE } else { pattern.len() }
+      ps.push(pattern[o..e])
+      o = e
+    }
+  }
+  ps
+}
+
+/// One line of n bytes and its newline, in PIECE byte pieces.
+fn large_pieces(n: Int) -> List[Bytes] {
+  let block = b"x".repeat(PIECE)
+  var ps: List[Bytes] = []
+  var left = n
+  while left > 0 {
+    let k = if left < PIECE { left } else { PIECE }
+    ps.push(block[0..k])
+    left -= k
+  }
+  ps.push(b"\n")
+  ps
+}
+
+/// Today's form: the unread rest and the next piece concatenated.
+fn concat(ps: List[Bytes]) -> (Int, Int) {
+  var count = 0
+  var total = 0
+  var rest = b""
+  for p in ps {
+    // a newline can only be in the new piece
+    match p.find(b"\n") {
+      None => {
+        rest = rest + p
+        continue
+      }
+      Some(_) => {}
+    }
+    rest = rest + p
+    while true {
+      match rest.find(b"\n") {
+        Some(i) => {
+          count += 1
+          total += i
+          rest = rest[i + 1..rest.len()]
+        }
+        None => break
+      }
+    }
+  }
+  (count, total)
+}
+
+/// Option B3: a record inside a piece is a view of it; one that spans
+/// pieces keeps views of them and is joined once.
+fn views(ps: List[Bytes]) -> (Int, Int) {
+  var count = 0
+  var total = 0
+  var held: List[Bytes] = []
+  var held_len = 0
+  for p in ps {
+    var off = 0
+    if held_len > 0 {
+      match p.find(b"\n") {
+        None => {
+          held.push(p)
+          held_len += p.len()
+          continue
+        }
+        Some(i) => {
+          var j = BytesBuilder.with_capacity(held_len + i)
+          for h in held {
+            j.write(h)
+          }
+          j.write(p[0..i])
+          let rec = j.freeze()
+          count += 1
+          total += rec.len()
+          held = []
+          held_len = 0
+          off = i + 1
+        }
+      }
+    }
+    while off < p.len() {
+      match p[off..p.len()].find(b"\n") {
+        Some(i) => {
+          count += 1
+          total += i
+          off += i + 1
+        }
+        None => {
+          held.push(p[off..p.len()])
+          held_len += p.len() - off
+          off = p.len()
+        }
+      }
+    }
+  }
+  (count, total)
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var ps: List[Bytes] = []
+  if w.starts_with("small") {
+    let (pat, lines) = small_pattern()
+    ps = pieces(pat, (1000000 + lines - 1) / lines)
+  } else if w.starts_with("large1_") {
+    ps = large_pieces(1048576)
+  } else if w.starts_with("large64") {
+    ps = large_pieces(67108864)
+  }
+  let r = if w == "none" { (0, 0) } else if w.ends_with("_concat") { concat(ps) } else { views(ps) }
+  os.stdio.println("${w} ${r.0} ${r.1}")
+}

@@ -1,0 +1,89 @@
+// The Go twin of bench/perf/bytebuf: every workload cuts its records with a
+// bytes.Buffer (Write each piece, IndexByte over the bytes not yet
+// searched, Next through the newline), Go's form of decision 0480's
+// ByteBuffer.
+package main
+
+import (
+	"bytes"
+	"fmt"
+	"os"
+	"strings"
+)
+
+const piece = 4096
+
+func smallPattern() ([]byte, int) {
+	letters := "abcdefghijklmnopqrstuvwxyz"
+	var out bytes.Buffer
+	k := 0
+	for out.Len() < 1048576 {
+		out.WriteString(strings.Repeat(letters[k%26:k%26+1], 19+(k*37)%61))
+		out.WriteByte('\n')
+		k++
+	}
+	return out.Bytes(), k
+}
+
+func pieces(pattern []byte, reps int) [][]byte {
+	var ps [][]byte
+	for r := 0; r < reps; r++ {
+		for o := 0; o < len(pattern); o += piece {
+			e := min(o+piece, len(pattern))
+			ps = append(ps, pattern[o:e])
+		}
+	}
+	return ps
+}
+
+func largePieces(n int) [][]byte {
+	block := bytes.Repeat([]byte("x"), piece)
+	var ps [][]byte
+	for left := n; left > 0; left -= piece {
+		ps = append(ps, block[:min(left, piece)])
+	}
+	return append(ps, []byte("\n"))
+}
+
+func cut(ps [][]byte) (int, int) {
+	count, total := 0, 0
+	var buf bytes.Buffer
+	searched := 0
+	for _, p := range ps {
+		buf.Write(p)
+		for {
+			i := bytes.IndexByte(buf.Bytes()[searched:], '\n')
+			if i < 0 {
+				searched = buf.Len()
+				break
+			}
+			rec := buf.Next(searched + i + 1)
+			count++
+			total += len(rec) - 1
+			searched = 0
+		}
+	}
+	return count, total
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	var ps [][]byte
+	switch {
+	case strings.HasPrefix(w, "small"):
+		pat, lines := smallPattern()
+		ps = pieces(pat, (1000000+lines-1)/lines)
+	case strings.HasPrefix(w, "large1_"):
+		ps = largePieces(1048576)
+	case strings.HasPrefix(w, "large64"):
+		ps = largePieces(67108864)
+	}
+	c, t := 0, 0
+	if w != "none" {
+		c, t = cut(ps)
+	}
+	fmt.Printf("%s %d %d\n", w, c, t)
+}

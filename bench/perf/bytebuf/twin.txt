@@ -1,0 +1,7 @@
+# twincheck: bytebuf's workloads (the same names on both sides; large64_concat is quadratic, left out).
+- - none
+- - small_concat
+- - small_views
+- - large1_concat
+- - large1_views
+- - large64_views
