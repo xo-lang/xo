@@ -1,0 +1,26 @@
+// bcrypt: std/bcrypt against golang.org/x/crypto/bcrypt (twin.go.txt): 20
+// hashes of one password at cost 10 (random salts, so the checksum counts
+// lengths), and 20 comparisons of Go's own test hash and password at cost
+// 10; `none` is the setup alone. Usage: `<program> none|hash|compare`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/bcrypt
+
+const H: Str = "$2a$10$XajjQvNhvvRt5GSeFk1xFeyqRrsxkhBkUiQeg0dt.wU1qD4aFDcga"
+
+fn main(os: Os) uses stdio, env, rand {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  if w == "hash" {
+    for _ in 0..20 {
+      let h = bcrypt.hash(b"benchmark password", os.rand, 10).ok() ?? fault("hash")
+      sum += h.len()
+    }
+  } else if w == "compare" {
+    for _ in 0..20 {
+      if bcrypt.compare(H, b"allmine").is_ok() {
+        sum += 1
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

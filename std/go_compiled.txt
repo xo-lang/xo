@@ -19,3 +19,4 @@ jpeg
 cbor
 charset
 otp
+bcrypt

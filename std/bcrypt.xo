@@ -1,0 +1,49 @@
+// std/bcrypt (spec/std.md 53). Declaration file. golang.org/x/crypto/bcrypt:
+// password hashes in the format of OpenBSD's bcrypt ($2a$ with a cost, a
+// 22 character salt and a 31 character hash), `hash` and `compare` as
+// GenerateFromPassword and CompareHashAndPassword, to verify hashes made
+// by other systems and to make new ones. Passwords are bytes (at most 72
+// for `hash`). CPU heavy by design: a cost of 10 is about 50 ms, and each
+// step up doubles it.
+
+/// The lowest cost `hash` accepts; a lower one is replaced by DEFAULT_COST
+/// (Go's MinCost).
+const MIN_COST: Int = 4
+/// The highest cost (Go's MaxCost).
+const MAX_COST: Int = 31
+/// The cost `hash` uses by default and for a cost below MIN_COST (Go's
+/// DefaultCost).
+const DEFAULT_COST: Int = 10
+
+/// Go's errors, with Go's texts as `display()`: `crypto/bcrypt:
+/// hashedPassword is not the hash of the given password`, `crypto/bcrypt:
+/// hashedSecret too short to be a bcrypted password`, `crypto/bcrypt: bcrypt
+/// algorithm version '3' requested is newer than current version '2'`,
+/// `crypto/bcrypt: bcrypt hashes must start with '$', but hashedSecret
+/// started with 'x'`, `crypto/bcrypt: cost 3 is outside allowed inclusive
+/// range 4..31`, `bcrypt: password length exceeds 72 bytes`; Corrupt is a
+/// cost or salt that is not valid text (Go's strconv and base64 errors).
+enum BcryptErr {
+  Mismatch
+  HashTooShort
+  VersionTooNew(version: Int)
+  InvalidPrefix(byte: Int)
+  InvalidCost(cost: Int)
+  PasswordTooLong
+  Corrupt(msg: Str)
+}
+
+fn (e: BcryptErr) display() -> Str
+
+/// A new hash of password (Go's GenerateFromPassword): 60 characters,
+/// with a random salt drawn from rand. A cost below MIN_COST is
+/// DEFAULT_COST; above MAX_COST is `InvalidCost`; a password over 72 bytes
+/// is `PasswordTooLong`.
+fn hash(password: Bytes, rand: Rand, cost: Int = 10) -> Str ! BcryptErr uses rand
+/// Ok when hashed is the bcrypt hash of password (Go's
+/// CompareHashAndPassword), `Mismatch` when it is not, and the other
+/// errors when hashed is not a bcrypt hash. The comparison of the hashes
+/// takes the same time wherever they differ.
+fn compare(hashed: Str, password: Bytes) -> () ! BcryptErr
+/// The cost hashed was made with (Go's Cost).
+fn cost(hashed: Str) -> Int ! BcryptErr

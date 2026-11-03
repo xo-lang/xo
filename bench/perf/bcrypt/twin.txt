@@ -1,0 +1,5 @@
+# twincheck: bcrypt: three workloads (none is the setup alone); Go is golang.org/x/crypto/bcrypt.
+require golang.org/x/crypto v0.58.0
+- - none
+- - hash
+- - compare
