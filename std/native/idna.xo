@@ -590,7 +590,7 @@ fn validate_and_map(o: Opts, s: Str) -> Mapped {
       continue
     }
     if c == DISALLOWED {
-      if err == None {
+      if err.is_none() {
         err = Some(rune_err(r, "P1"))
       }
       continue
@@ -829,14 +829,14 @@ fn process(o: Opts, s0: Str, to_ascii: Bool) -> (Str, idna.IdnaErr?) {
     }
   }
   let label_code = "A4"
-  if err == None && o.dns_len && s.is_empty() {
+  if err.is_none() && o.dns_len && s.is_empty() {
     err = Some(label_err(s, label_code))
   }
   var labels = li_new(s)
   while !li_done(labels) {
     let label = li_label(labels)
     if label.is_empty() {
-      if err == None && o.dns_len {
+      if err.is_none() && o.dns_len {
         err = Some(label_err(s, label_code))
       }
       li_next(labels)
@@ -846,32 +846,32 @@ fn process(o: Opts, s0: Str, to_ascii: Bool) -> (Str, idna.IdnaErr?) {
       let enc = label[4..label.len()]
       match decode(enc) {
         Err(e) => {
-          if err == None {
+          if err.is_none() {
             err = Some(e)
           }
           li_next(labels)
           continue
         }
         Ok(u) => {
-          if err == None && !u.is_empty() && is_ascii_str(u) {
+          if err.is_none() && !u.is_empty() && is_ascii_str(u) {
             err = Some(puny_err(enc))
           }
           is_bidi_s = is_bidi_s || direction_rtl(u)
           li_set(labels, u)
-          if err == None && o.from_puny {
+          if err.is_none() && o.from_puny {
             err = validate_from_puny(o, u)
           }
-          if err == None {
+          if err.is_none() {
             err = validate_label(o, u, label_code)
           }
         }
       }
-    } else if err == None {
+    } else if err.is_none() {
       err = validate_label(o, label, label_code)
     }
     li_next(labels)
   }
-  if is_bidi_s && o.bidirule && err == None {
+  if is_bidi_s && o.bidirule && err.is_none() {
     li_reset(labels)
     while !li_done(labels) {
       if !bidi_valid(li_label(labels)) {
@@ -892,7 +892,7 @@ fn process(o: Opts, s0: Str, to_ascii: Bool) -> (Str, idna.IdnaErr?) {
             li_set(labels, a)
           }
           Err(e) => {
-            if err == None {
+            if err.is_none() {
               err = Some(e)
             }
             label = ""
@@ -901,14 +901,14 @@ fn process(o: Opts, s0: Str, to_ascii: Bool) -> (Str, idna.IdnaErr?) {
         }
       }
       let n = label.len()
-      if o.dns_len && err == None && (n == 0 || n > 63) {
+      if o.dns_len && err.is_none() && (n == 0 || n > 63) {
         err = Some(label_err(label, label_code))
       }
       li_next(labels)
     }
   }
   s = li_result(labels)
-  if to_ascii && o.dns_len && err == None {
+  if to_ascii && o.dns_len && err.is_none() {
     var n = s.len()
     if n > 0 && s[n - 1..n] == "." {
       n -= 1
