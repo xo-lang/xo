@@ -1,0 +1,398 @@
+// The network of a wasip2 command over wasi:sockets (decision 0447, R1 of
+// the wasi:sockets plan): Net.listen, Net.dial, Net.dial_timeout,
+// Net.lookup_host, Listener's and Conn's methods and connection deadlines,
+// which the SSA builder calls in a wasm module in place of the native
+// runtime's (std/native/prelude.xo's llrt_wasi_*, ssa/conc.xo sock_rt).
+// The Net.only check, address parsing and the error texts are netconn.xo's;
+// compiler/wasm rt9.xo makes the wasi:sockets calls and waits in the task
+// scheduler. A failed call records NetErr's status and message
+// (rt.wasi_sock_set), which the SSA's net_result reads, and returns a
+// handle that is not open (the immortal empty string's object).
+use native/llrt/dns
+use native/llrt/netpolicy
+use native/llrt/tlsname
+use native/rt
+
+const CLOSED_TEXT = "use of closed network connection"
+
+/// rt9.xo's errors (1 + a wasi:sockets error-code, then its own).
+const E_TIMEOUT = 6
+const E_REFUSED = 15
+const E_NAME = 19
+const E_CLOSED = 100
+const E_CANCELED = 101
+const E_DEADLINE = 102
+const E_END = 103
+
+/// A handle of type T that is not open, for a failed call's result: the
+/// reference counting never frees the immortal object it is.
+fn dead[T]() -> T { rt.obj_at[T](rt.obj_addr("")) }
+
+fn fail(status: Int, msg: Str) { rt.wasi_sock_set(status, msg) }
+
+fn ok() { rt.wasi_sock_set(0, "") }
+
+/// The NetErr of the last operation's outcome, None when it succeeded (the
+/// prelude's net_err_now).
+pub fn err_now() -> NetErr? {
+  match rt.wasi_sock_status() {
+    0 => None
+    1 => Some(NetErr.InvalidAddr(msg: rt.wasi_sock_msg()))
+    2 => Some(NetErr.Refused)
+    3 => Some(NetErr.Timeout)
+    5 => Some(NetErr.Canceled)
+    6 => Some(NetErr.Denied(addr: rt.wasi_sock_msg()))
+    _ => Some(NetErr.Io(msg: rt.wasi_sock_msg()))
+  }
+}
+
+/// The text of rt9.xo's error e: netconn.err_text's for the errors both
+/// have.
+fn err_text(e: Int) -> Str {
+  match e {
+    2 => "permission denied"
+    3 => "operation not supported"
+    4 => "invalid argument"
+    5 => "cannot allocate memory"
+    6 => "operation timed out"
+    11 => "too many open files"
+    12 => "can't assign requested address"
+    13 => "address already in use"
+    14 => "no route to host"
+    15 => "connection refused"
+    16 => "connection reset by peer"
+    17 => "software caused connection abort"
+    18 => "message too long"
+    19 => "no such host"
+    20 => "temporary failure in name resolution"
+    100 => CLOSED_TEXT
+    104 => "broken pipe"
+    _ => "wasi:sockets error ${e - 1}"
+  }
+}
+
+/// The 4 or 16 bytes of the IP literal host, or None.
+fn ip_of(host: Str) -> Bytes? {
+  let ip = tlsname.parse_ip(host)?
+  var b = BytesBuilder.with_capacity(16)
+  let from = if host.contains(":") { 0 } else { 12 }
+  for i in from..16 {
+    b.write_byte(UInt8(ip[i] & 255))
+  }
+  Some(b.freeze())
+}
+
+fn zeros(n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  for _ in 0..n {
+    b.write_byte(0)
+  }
+  b.freeze()
+}
+
+/// The decimal port, or -1 (a service name: wasi:sockets has no lookup
+/// of one).
+fn port_of(port: Str) -> Int {
+  if port.is_empty() {
+    return -1
+  }
+  var v = 0
+  for c in port.bytes() {
+    let d = Int(c) - 48
+    if d < 0 || d > 9 {
+      return -1
+    }
+    v = v * 10 + d
+    if v > 65535 {
+      return -1
+    }
+  }
+  v
+}
+
+/// The address as "ip:port" or "[ip]:port", an unspecified one as the
+/// loopback (netconn.fmt_addr).
+fn fmt_addr(ip: Bytes, port: Int) -> Str {
+  var zero = true
+  for c in ip {
+    if c != 0 {
+      zero = false
+    }
+  }
+  if ip.len() == 4 {
+    return "${if zero { "127.0.0.1" } else { dns.ntop(ip) }}:${port}"
+  }
+  "[${if zero { "::1" } else { dns.ntop(ip) }}]:${port}"
+}
+
+/// The addresses of host to try, in order (an IP literal, else the
+/// lookup's), or the lookup's error (E_NAME when it found none).
+fn addrs_of(host: Str) -> (List[Bytes], Int) {
+  if let Some(ip) = ip_of(host) {
+    return ([ip], 0)
+  }
+  let s = rt.wasi_sock_resolve(host)
+  if s == 0 {
+    return ([], rt.wasi_sock_err())
+  }
+  var out: List[Bytes] = []
+  var e = 0
+  while true {
+    let a = rt.wasi_sock_next(s)
+    let r = rt.wasi_sock_err()
+    if r == E_END {
+      break
+    }
+    if r != 0 {
+      e = r
+      break
+    }
+    if !out.contains(a) {
+      out.push(a)
+    }
+  }
+  rt.wasi_sock_resolve_end(s)
+  if out.is_empty() && e == 0 {
+    e = E_NAME
+  }
+  (out, e)
+}
+
+/// The text of a lookup's error for host (Go's "lookup HOST: no such
+/// host").
+fn lookup_text(host: Str, e: Int) -> Str {
+  if e == E_NAME || e == 21 {
+    return "lookup ${host}: no such host"
+  }
+  "lookup ${host}: ${err_text(e)}"
+}
+
+/// `net.listen(addr)` (netconn.listen).
+pub fn listen(lists: Str, addr: Str) -> Listener {
+  if !netpolicy.admits_addr(lists, addr) {
+    fail(6, addr)
+    return dead()
+  }
+  if addr.starts_with("unix:") {
+    fail(4, "listen unix ${addr[5..]}: wasi:sockets has no Unix domain sockets")
+    return dead()
+  }
+  let (has, host, port) = netpolicy.split_hostport(addr)
+  if !has || host.len() >= 256 || port.len() >= 32 {
+    fail(4, "listen tcp ${addr}: address ${addr}: missing port in address")
+    return dead()
+  }
+  if netpolicy.port_out_of_range(port) {
+    fail(4, "listen tcp ${addr}: address ${port}: invalid port")
+    return dead()
+  }
+  let p = port_of(port)
+  if p < 0 {
+    fail(4, "listen tcp ${addr}: unknown port")
+    return dead()
+  }
+  var ips: List[Bytes] = []
+  if host.is_empty() {
+    // the wildcard: IPv6's (wasmtime makes it IPv6 only), then IPv4's
+    ips = [zeros(16), zeros(4)]
+  } else {
+    let (xs, e) = addrs_of(host)
+    if e != 0 {
+      fail(4, "listen tcp ${addr}: ${lookup_text(host, e)}")
+      return dead()
+    }
+    ips = xs
+  }
+  var e = 0
+  for ip in ips {
+    let l = rt.wasi_sock_listen(ip.len() == 16, ip, p)
+    e = rt.wasi_sock_err()
+    if e == 0 {
+      ok()
+      return l
+    }
+  }
+  fail(4, "listen tcp ${addr}: bind: ${err_text(e)}")
+  dead()
+}
+
+/// `l.addr()`: the bound address, a port 0 picked (a list of one, as the
+/// runtime's).
+pub fn listener_addr(l: Listener) -> List[Str] {
+  let b = rt.wasi_sock_local(l)
+  if b.len() < 7 {
+    return [""]
+  }
+  [fmt_addr(b[3..b.len()], Int(b[1]) * 256 + Int(b[2]))]
+}
+
+/// `l.accept()` (netconn.listener_accept).
+pub fn listener_accept(l: Listener) -> ServerConn {
+  let c = rt.wasi_sock_accept(l)
+  let e = rt.wasi_sock_err()
+  if e == 0 {
+    ok()
+    return c
+  }
+  if e == E_CANCELED {
+    fail(5, "")
+  } else {
+    fail(4, "accept tcp ${listener_addr(l)[0]}: ${err_text(e)}")
+  }
+  c
+}
+
+pub fn listener_close(l: Listener) { rt.wasi_sock_lclose(l) }
+
+/// `net.dial(addr)`: Net.only's lists first, then dial with Net.dial's
+/// own 30 seconds (netconn.dial).
+pub fn dial(lists: Str, addr: Str) -> Conn {
+  if !netpolicy.admits_addr(lists, addr) {
+    fail(6, addr)
+    return dead()
+  }
+  dial_limit(addr, 30000000000, 4)
+}
+
+/// `net.dial_timeout(addr, d)` (decision 0406): Timeout when d passes.
+pub fn dial_timeout(lists: Str, addr: Str, d: Int) -> Conn {
+  if !netpolicy.admits_addr(lists, addr) {
+    fail(6, addr)
+    return dead()
+  }
+  dial_limit(addr, if d > 0 { d } else { 1 }, 3)
+}
+
+/// A dial within d ns: the time up is NetErr status timeout_tag, Io's text
+/// for Net.dial's own limit (netconn.dial_timeout); each address of the
+/// host in turn until one connects.
+fn dial_limit(addr: Str, d: Int, timeout_tag: Int) -> Conn {
+  if addr.starts_with("unix:") {
+    fail(4, "dial unix ${addr[5..]}: wasi:sockets has no Unix domain sockets")
+    return dead()
+  }
+  let (has, host, port) = netpolicy.split_hostport(addr)
+  if !has || host.len() >= 256 || port.len() >= 32 {
+    fail(4, "dial tcp ${addr}: address ${addr}: missing port in address")
+    return dead()
+  }
+  if netpolicy.port_out_of_range(port) {
+    fail(4, "dial tcp ${addr}: address ${port}: invalid port")
+    return dead()
+  }
+  let p = port_of(port)
+  if p < 0 {
+    fail(4, "dial tcp ${addr}: unknown port")
+    return dead()
+  }
+  let (ips, le) = addrs_of(if host.is_empty() { "localhost" } else { host })
+  if le != 0 {
+    if le == E_CANCELED {
+      fail(5, "")
+    } else {
+      fail(4, "dial tcp ${addr}: ${lookup_text(host, le)}")
+    }
+    return dead()
+  }
+  var e = 0
+  for ip in ips {
+    let c = rt.wasi_sock_connect(ip.len() == 16, ip, p, d)
+    e = rt.wasi_sock_err()
+    if e == 0 {
+      rt.wasi_sock_connected(c)
+      e = rt.wasi_sock_err()
+      if e == 0 {
+        ok()
+        return c
+      }
+    }
+    if e == E_CANCELED || e == E_DEADLINE {
+      break
+    }
+  }
+  if e == E_CANCELED {
+    fail(5, "")
+  } else if e == E_DEADLINE || e == E_TIMEOUT {
+    if timeout_tag == 3 {
+      fail(3, "")
+    } else {
+      fail(4, "dial tcp ${addr}: i/o timeout")
+    }
+  } else if e == E_REFUSED {
+    fail(2, "")
+  } else {
+    fail(4, "dial tcp ${addr}: connect: ${err_text(e)}")
+  }
+  dead()
+}
+
+/// `net.lookup_host(host)` (netconn.lookup_host): the addresses as text.
+pub fn lookup_host(lists: Str, host: Str) -> List[Str] {
+  if !netpolicy.admits(lists, host, "0") {
+    fail(6, host)
+    return []
+  }
+  let (ips, e) = addrs_of(host)
+  if e != 0 {
+    if e == E_CANCELED {
+      fail(5, "")
+    } else {
+      fail(4, lookup_text(host, e))
+    }
+    return []
+  }
+  var out: List[Str] = []
+  for ip in ips {
+    out.push(dns.ntop(ip))
+  }
+  ok()
+  out
+}
+
+/// `c.read(max)` (netconn.conn_read): a list of the bytes read, empty at
+/// the end of the stream (as Str, the runtime's list: decision 0259's
+/// cast, the bytes are the program's own data).
+pub fn conn_read(c: Conn, max0: Int) -> List[Str] {
+  if max0 <= 0 {
+    ok()
+    return [""]
+  }
+  let max = if max0 > 1048576 { 1048576 } else { max0 }
+  let b = rt.wasi_sock_read(c, max)
+  let e = rt.wasi_sock_err()
+  if e == 0 {
+    ok()
+    return [rt.cast[Bytes, Str](b)]
+  }
+  if e == E_END {
+    ok()
+  } else if e == E_CANCELED {
+    fail(5, "")
+  } else if e == E_DEADLINE {
+    fail(3, "")
+  } else {
+    fail(4, "read tcp: ${err_text(e)}")
+  }
+  []
+}
+
+/// `c.write(data)` (netconn.conn_write): every byte.
+pub fn conn_write(c: Conn, data: Str) {
+  rt.wasi_sock_write(c, rt.cast[Str, Bytes](data))
+  let e = rt.wasi_sock_err()
+  if e == 0 {
+    ok()
+  } else if e == E_CANCELED {
+    fail(5, "")
+  } else if e == E_DEADLINE {
+    fail(3, "")
+  } else {
+    fail(4, "write tcp: ${err_text(e)}")
+  }
+}
+
+pub fn conn_close(c: Conn) { rt.wasi_sock_close(c) }
+
+/// A connection deadline (netconn.set_deadline): which 1 read, 2 write, 3
+/// both; d ns from now when set.
+pub fn set_deadline(c: Conn, which: Int, set: Bool, d: Int) { rt.wasi_sock_deadline(c, which, set, d) }

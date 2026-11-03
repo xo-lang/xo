@@ -1,0 +1,1411 @@
+// The network of a wasip2 command over wasi:sockets 0.2 (decision 0447, R1
+// of the wasi:sockets plan): TCP listen, accept, connect, read, write and
+// close, deadlines, and name lookup. The logic that must match the native
+// runtime (Net.only, address parsing, the error texts and NetErr statuses)
+// is Xo, std/native/llrt/netwasi.xo, which the SSA builder calls in a wasm
+// module in place of the runtime's rt.net_*, rt.listener_* and rt.conn_*
+// (ssa/conc.xo net_rt); this runtime marshals the canonical ABI and waits.
+//
+// A call that would block (accept, finish-connect, a read with no data, a
+// write the stream cannot take, a lookup in progress) subscribes to the
+// resource's pollable, records it in the wait table and suspends the task
+// ($block); the scheduler, when no task can run, polls every recorded
+// pollable (and a clock pollable for the next deadline) in $io_poll, drops
+// them, and wakes the waiters, which repeat their call. A write keeps how
+// far it got in its connection, so a repeated call goes on from there.
+//
+// Objects (rt3.xo's handles: {rc, free, ...}):
+//   listener   0 rc, 4 free, 8 tcp-socket, 12 closed
+//   connection 0 rc, 4 free, 8 tcp-socket, 12 input-stream, 16
+//              output-stream, 20 closed, 24 read deadline, 32 write
+//              deadline (i64s, monotonic ns, 0 none; the read deadline
+//              is the connect deadline until connected), 40 bytes of the
+//              current write done
+// A call that fails returns the immortal empty string's object as its
+// handle, which the reference counting never frees, and records the error
+// for $wasi_sock_err: 0 none, 1 + a wasi:sockets error-code, 100 the
+// object is closed, 101 canceled, 102 a deadline passed, 103 the end of
+// the stream, 104 the stream closed under a write.
+
+/// The runtime calls of rt9.xo (the operands' leaves, like rt3.xo's).
+fn rt9_direct(name: Str) -> Bool {
+  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
+}
+
+/// The calls of rt9.xo that can suspend the task.
+fn rt9_blocking(name: Str) -> Bool {
+  name is "rt.wasi_sock_accept" | "rt.wasi_sock_connected" | "rt.wasi_sock_read" | "rt.wasi_sock_write" | "rt.wasi_sock_next"
+}
+
+/// The imports of rt9.xo.
+fn rt9_imports() -> Str {
+  """
+    (import "wasi:sockets/instance-network@0.2.0" "instance-network" (func $sk_inst (result i32)))
+    (import "wasi:sockets/tcp-create-socket@0.2.0" "create-tcp-socket" (func $sk_create (param i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-bind" (func $sk_sbind (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.finish-bind" (func $sk_fbind (param i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-connect" (func $sk_sconn (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.finish-connect" (func $sk_fconn (param i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.start-listen" (func $sk_slisten (param i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.finish-listen" (func $sk_flisten (param i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.accept" (func $sk_accept (param i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.local-address" (func $sk_local (param i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.subscribe" (func $sk_sub (param i32) (result i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[resource-drop]tcp-socket" (func $sk_drop (param i32)))
+    (import "wasi:sockets/ip-name-lookup@0.2.0" "resolve-addresses" (func $sk_resolve (param i32 i32 i32 i32)))
+    (import "wasi:sockets/ip-name-lookup@0.2.0" "[method]resolve-address-stream.resolve-next-address" (func $sk_rnext (param i32 i32)))
+    (import "wasi:sockets/ip-name-lookup@0.2.0" "[method]resolve-address-stream.subscribe" (func $sk_rsub (param i32) (result i32)))
+    (import "wasi:sockets/ip-name-lookup@0.2.0" "[resource-drop]resolve-address-stream" (func $sk_rdrop (param i32)))
+    (import "wasi:io/streams@0.2.0" "[method]input-stream.read" (func $sk_iread (param i32 i64 i32)))
+    (import "wasi:io/streams@0.2.0" "[method]input-stream.subscribe" (func $sk_isub (param i32) (result i32)))
+    (import "wasi:io/streams@0.2.0" "[resource-drop]input-stream" (func $sk_idrop (param i32)))
+    (import "wasi:io/streams@0.2.0" "[method]output-stream.check-write" (func $sk_ocheck (param i32 i32)))
+    (import "wasi:io/streams@0.2.0" "[method]output-stream.write" (func $sk_owrite (param i32 i32 i32 i32)))
+    (import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $sk_oflush (param i32 i32)))
+    (import "wasi:io/streams@0.2.0" "[method]output-stream.subscribe" (func $sk_osub (param i32) (result i32)))
+    (import "wasi:io/poll@0.2.0" "poll" (func $sk_poll (param i32 i32 i32)))
+
+  """
+}
+
+/// The globals of rt9.xo: the outcome rt.net_status and rt.net_msg read
+/// (set by netwasi.xo), the last call's error, the network, and the wait
+/// table ({pollable, owner} pairs).
+fn rt9_globals(var g: Gen) -> Str {
+  let empty = g.str_obj(b"")
+  "    (global $nstat (mut i32) (i32.const 0))\n    (global $nmsg (mut i32) (i32.const ${empty}))\n    (global $nmsgn (mut i32) (i32.const 0))\n    (global $skerr (mut i32) (i32.const 0))\n    (global $skab (mut i32) (i32.const 0))\n    (global $sknet (mut i32) (i32.const -1))\n    (global $wq (mut i32) (i32.const 0))\n    (global $wn (mut i32) (i32.const 0))\n    (global $wcap (mut i32) (i32.const 0))\n"
+}
+
+/// rt3.xo's scheduler with $io_poll before it sleeps or reports a deadlock:
+/// the waits on sockets are what can still wake a task.
+fn rt9_sched(rt3: Str) -> Str {
+  var out = StrBuilder.new()
+  let ls = rt3.lines()
+  var done = false
+  for (i, l) in ls.indexed() {
+    out.write(l)
+    out.write("\n")
+    if !done && l.trim() == "local.tee $d" && i > 0 && ls[i - 1].trim() == "call $next_deadline" {
+      let ind = l[0..l.len() - l.trim_start().len()]
+      out.write("${ind}call $io_poll\n${ind}br_if $round\n${ind}local.get $d\n")
+      done = true
+    }
+  }
+  if !done {
+    fault("rt9_sched: rt3.xo's idle step changed")
+  }
+  out.freeze()
+}
+
+/// The functions of rt9.xo.
+fn rt9_text(var g: Gen) -> Str {
+  let dead = g.str_obj(b"")
+  let conn_free = g.table_index("$sk_conn_free")
+  let lis_free = g.table_index("$sk_lis_free")
+  """
+    ;; the outcome of the last network operation (netwasi.xo's): a NetErr
+    ;; status (0 none) and its message
+    (func $net_status (result i64)
+      global.get $nstat
+      i64.extend_i32_u)
+
+    (func $net_msg (result i32 i32)
+      global.get $nmsg
+      call $rc_inc
+      global.get $nmsg
+      global.get $nmsgn)
+
+    (func $wasi_sock_status (result i64)
+      call $net_status)
+
+    (func $wasi_sock_msg (result i32 i32)
+      call $net_msg)
+
+    (func $wasi_sock_set (param $s i64) (param $m i32) (param $mn i32) (local $o i32)
+      local.get $s
+      i32.wrap_i64
+      global.set $nstat
+      local.get $m
+      call $rc_inc
+      global.get $nmsg
+      local.set $o
+      local.get $m
+      global.set $nmsg
+      local.get $mn
+      global.set $nmsgn
+      local.get $o
+      call $rc_dec
+      if
+        local.get $o
+        call $free
+      end)
+
+    (func $wasi_sock_err (result i64)
+      global.get $skerr
+      i64.extend_i32_u)
+
+    (func $sk_fail (param $e i32) (result i32)
+      local.get $e
+      global.set $skerr
+      i32.const ${dead})
+
+    ;; the instance's network, got once
+    (func $sk_net (result i32)
+      global.get $sknet
+      i32.const -1
+      i32.eq
+      if
+        call $sk_inst
+        global.set $sknet
+      end
+      global.get $sknet)
+
+    ;; 0 when the result<_, error-code> at r is ok, else 1 + its code
+    (func $sk_unit (param $r i32) (result i32)
+      local.get $r
+      i32.load8_u
+      i32.eqz
+      if
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load8_u offset=1
+      i32.const 1
+      i32.add)
+
+    ;; the flattened ip-socket-address of an address of 4 or 16 bytes at d
+    ;; and port: the case, then 11 words (ipv4: port and 4 bytes; ipv6:
+    ;; port, flow-info, 8 words, scope-id), through a 48 byte block
+    (func $sk_addr (param $v6 i32) (param $d i32) (param $port i32) (result i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32) (local $b i32)
+      global.get $skab
+      i32.eqz
+      if
+        i32.const 48
+        call $alloc
+        global.set $skab
+      end
+      global.get $skab
+      local.tee $b
+      i32.const 0
+      i32.const 48
+      memory.fill
+      local.get $b
+      local.get $v6
+      i32.store
+      local.get $b
+      local.get $port
+      i32.store offset=4
+      local.get $v6
+      if
+        local.get $b
+        local.get $d
+        i32.const 0
+        i32.add
+        call $sk_be16
+        i32.store offset=12
+        local.get $b
+        local.get $d
+        i32.const 2
+        i32.add
+        call $sk_be16
+        i32.store offset=16
+        local.get $b
+        local.get $d
+        i32.const 4
+        i32.add
+        call $sk_be16
+        i32.store offset=20
+        local.get $b
+        local.get $d
+        i32.const 6
+        i32.add
+        call $sk_be16
+        i32.store offset=24
+        local.get $b
+        local.get $d
+        i32.const 8
+        i32.add
+        call $sk_be16
+        i32.store offset=28
+        local.get $b
+        local.get $d
+        i32.const 10
+        i32.add
+        call $sk_be16
+        i32.store offset=32
+        local.get $b
+        local.get $d
+        i32.const 12
+        i32.add
+        call $sk_be16
+        i32.store offset=36
+        local.get $b
+        local.get $d
+        i32.const 14
+        i32.add
+        call $sk_be16
+        i32.store offset=40
+      else
+        local.get $b
+        local.get $d
+        i32.load8_u offset=0
+        i32.store offset=8
+        local.get $b
+        local.get $d
+        i32.load8_u offset=1
+        i32.store offset=12
+        local.get $b
+        local.get $d
+        i32.load8_u offset=2
+        i32.store offset=16
+        local.get $b
+        local.get $d
+        i32.load8_u offset=3
+        i32.store offset=20
+      end
+      local.get $b
+      i32.load offset=0
+      local.get $b
+      i32.load offset=4
+      local.get $b
+      i32.load offset=8
+      local.get $b
+      i32.load offset=12
+      local.get $b
+      i32.load offset=16
+      local.get $b
+      i32.load offset=20
+      local.get $b
+      i32.load offset=24
+      local.get $b
+      i32.load offset=28
+      local.get $b
+      i32.load offset=32
+      local.get $b
+      i32.load offset=36
+      local.get $b
+      i32.load offset=40
+      local.get $b
+      i32.load offset=44)
+
+    (func $sk_be16 (param $p i32) (result i32)
+      local.get $p
+      i32.load8_u
+      i32.const 8
+      i32.shl
+      local.get $p
+      i32.load8_u offset=1
+      i32.or)
+
+    ;; a Bytes of the n bytes at p (a cabi_realloc block, freed)
+    (func $sk_take (param $p i32) (param $n i32) (result i32 i32) (local $o i32)
+      local.get $n
+      call $rs_new
+      local.tee $o
+      i32.const 8
+      i32.add
+      local.get $p
+      local.get $n
+      memory.copy
+      local.get $n
+      if
+        local.get $p
+        call $free
+      end
+      local.get $o
+      local.get $n)
+
+    ;; records pollable p for owner o and suspends the task; the deadline
+    ;; dl (0 none) wakes it as well
+    (func $sk_wait (param $p i32) (param $o i32) (param $dl i64) (local $nb i32) (local $nc i32) (local $e i32)
+      global.get $wn
+      global.get $wcap
+      i32.ge_u
+      if
+        global.get $wcap
+        i32.const 1
+        i32.shl
+        i32.const 8
+        i32.add
+        local.tee $nc
+        i32.const 3
+        i32.shl
+        call $alloc
+        local.set $nb
+        global.get $wq
+        if
+          local.get $nb
+          global.get $wq
+          global.get $wn
+          i32.const 3
+          i32.shl
+          memory.copy
+          global.get $wq
+          call $free
+        end
+        local.get $nb
+        global.set $wq
+        local.get $nc
+        global.set $wcap
+      end
+      global.get $wq
+      global.get $wn
+      i32.const 3
+      i32.shl
+      i32.add
+      local.tee $e
+      local.get $p
+      i32.store
+      local.get $e
+      local.get $o
+      i32.store offset=4
+      global.get $wn
+      i32.const 1
+      i32.add
+      global.set $wn
+      global.get $cur
+      local.get $dl
+      i64.store offset=128
+      call $block)
+
+    ;; drops the waits of owner o (being closed) and wakes their tasks
+    (func $sk_unwait (param $o i32) (local $i i32) (local $j i32) (local $e i32)
+      block $x
+        loop $l
+          local.get $i
+          global.get $wn
+          i32.ge_u
+          br_if $x
+          global.get $wq
+          local.get $i
+          i32.const 3
+          i32.shl
+          i32.add
+          local.tee $e
+          i32.load offset=4
+          local.get $o
+          i32.eq
+          if
+            local.get $e
+            i32.load
+            call $poll_drop
+          else
+            global.get $wq
+            local.get $j
+            i32.const 3
+            i32.shl
+            i32.add
+            local.get $e
+            i64.load
+            i64.store
+            local.get $j
+            i32.const 1
+            i32.add
+            local.set $j
+          end
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $j
+      global.set $wn
+      call $wake)
+
+    ;; the scheduler's wait when no task can run (rt3.xo's $sched): 0 when
+    ;; no task waits on a socket; else polls their pollables and, when d is
+    ;; not 0, a clock pollable for the deadline d, then drops them all and
+    ;; wakes the waiting tasks, which repeat their calls
+    (func $io_poll (param $d i64) (result i32) (local $n i32) (local $b i32) (local $i i32) (local $clk i32) (local $now i64) (local $r i32)
+      global.get $wn
+      i32.eqz
+      if
+        i32.const 0
+        return
+      end
+      global.get $wn
+      local.tee $n
+      i32.const 1
+      i32.add
+      i32.const 2
+      i32.shl
+      call $alloc
+      local.set $b
+      block $x
+        loop $l
+          local.get $i
+          local.get $n
+          i32.ge_u
+          br_if $x
+          local.get $b
+          local.get $i
+          i32.const 2
+          i32.shl
+          i32.add
+          global.get $wq
+          local.get $i
+          i32.const 3
+          i32.shl
+          i32.add
+          i32.load
+          i32.store
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      local.get $d
+      i64.eqz
+      i32.eqz
+      if
+        call $mono
+        local.set $now
+        local.get $d
+        local.get $now
+        i64.sub
+        local.tee $now
+        i64.const 0
+        i64.lt_s
+        if
+          i64.const 0
+          local.set $now
+        end
+        local.get $now
+        call $mono_sub
+        local.set $clk
+        local.get $b
+        local.get $n
+        i32.const 2
+        i32.shl
+        i32.add
+        local.get $clk
+        i32.store
+        local.get $n
+        i32.const 1
+        i32.add
+        local.set $n
+      end
+      local.get $b
+      local.get $n
+      call $hret_at
+      local.tee $r
+      call $sk_poll
+      local.get $r
+      i32.load offset=4
+      if
+        local.get $r
+        i32.load
+        call $free
+      end
+      local.get $clk
+      if
+        local.get $clk
+        call $poll_drop
+      end
+      local.get $b
+      call $free
+      i32.const 0
+      local.set $i
+      block $x
+        loop $l
+          local.get $i
+          global.get $wn
+          i32.ge_u
+          br_if $x
+          global.get $wq
+          local.get $i
+          i32.const 3
+          i32.shl
+          i32.add
+          i32.load
+          call $poll_drop
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end
+      i32.const 0
+      global.set $wn
+      call $wake
+      i32.const 1)
+
+    ;; the start of a repeatable call: the task's resumption ends, its
+    ;; deadline wake is cleared; 1 when its context is canceled (the error
+    ;; recorded)
+    (func $sk_enter (result i32)
+      call $resumed
+      if
+        global.get $cur
+        i64.const 0
+        i64.store offset=128
+      end
+      call $ctx_canceled
+      if
+        i32.const 101
+        global.set $skerr
+        i32.const 1
+        return
+      end
+      i32.const 0
+      global.set $skerr
+      i32.const 0)
+
+    ;; a new socket of the family (v6: ipv6) or 0, the error recorded
+    (func $sk_new (param $v6 i32) (result i32) (local $r i32)
+      local.get $v6
+      call $hret_at
+      local.tee $r
+      call $sk_create
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        i32.const 1
+        i32.add
+        global.set $skerr
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=4)
+
+    (func $sk_lis_free (param $l i32)
+      local.get $l
+      i32.load offset=12
+      i32.eqz
+      if
+        local.get $l
+        i32.load offset=8
+        call $sk_drop
+      end
+      local.get $l
+      call $free)
+
+    (func $sk_conn_free (param $c i32)
+      local.get $c
+      call $sk_conn_shut
+      local.get $c
+      call $free)
+
+    ;; closes connection c's streams and socket, once
+    (func $sk_conn_shut (param $c i32)
+      local.get $c
+      i32.load offset=20
+      if
+        return
+      end
+      local.get $c
+      i32.const 1
+      i32.store offset=20
+      local.get $c
+      call $sk_unwait
+      local.get $c
+      i32.load offset=16
+      if
+        ;; what the stream holds goes out before it is dropped
+        local.get $c
+        i32.load offset=16
+        call $hret_at
+        call $sk_oflush
+        local.get $c
+        i32.load offset=16
+        call $ostream_drop
+      end
+      local.get $c
+      i32.load offset=12
+      if
+        local.get $c
+        i32.load offset=12
+        call $sk_idrop
+      end
+      local.get $c
+      i32.load offset=8
+      call $sk_drop)
+
+    ;; Net.listen's socket: bound to the address (v6, the 4 or 16 bytes ip,
+    ;; port) and listening
+    (func $wasi_sock_listen (param $v6 i32) (param $ip i32) (param $ipn i32) (param $port i64) (result i32) (local $s i32) (local $e i32) (local $l i32)
+      i32.const 0
+      global.set $skerr
+      local.get $v6
+      call $sk_new
+      local.tee $s
+      i32.eqz
+      if
+        global.get $skerr
+        call $sk_fail
+        return
+      end
+      local.get $s
+      call $sk_net
+      local.get $v6
+      local.get $ip
+      i32.const 8
+      i32.add
+      local.get $port
+      i32.wrap_i64
+      call $sk_addr
+      call $hret_at
+      call $sk_sbind
+      call $hret_at
+      call $sk_unit
+      local.tee $e
+      i32.eqz
+      if
+        local.get $s
+        call $hret_at
+        call $sk_fbind
+        call $hret_at
+        call $sk_unit
+        local.set $e
+      end
+      local.get $e
+      i32.eqz
+      if
+        local.get $s
+        call $hret_at
+        call $sk_slisten
+        call $hret_at
+        call $sk_unit
+        local.set $e
+      end
+      local.get $e
+      i32.eqz
+      if
+        local.get $s
+        call $hret_at
+        call $sk_flisten
+        call $hret_at
+        call $sk_unit
+        local.set $e
+      end
+      local.get $e
+      if
+        local.get $s
+        call $sk_drop
+        local.get $e
+        call $sk_fail
+        return
+      end
+      i32.const 16
+      i32.const ${lis_free}
+      call $obj_new
+      local.tee $l
+      local.get $s
+      i32.store offset=8
+      local.get $l)
+
+    ;; the bound address: v6 (0 or 1), the port's two bytes, the 4 or 16
+    ;; bytes of the address; empty on an error
+    (func $wasi_sock_local (param $l i32) (result i32 i32) (local $r i32) (local $o i32) (local $i i32) (local $w i32)
+      local.get $l
+      i32.load offset=12
+      if
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $l
+      i32.load offset=8
+      call $hret_at
+      local.tee $r
+      call $sk_local
+      local.get $r
+      i32.load8_u
+      if
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load8_u offset=4
+      if
+        i32.const 19
+        call $rs_new
+        local.tee $o
+        i32.const 1
+        i32.store8 offset=8
+        local.get $o
+        local.get $r
+        i32.load16_u offset=8
+        i32.const 8
+        i32.shr_u
+        i32.store8 offset=9
+        local.get $o
+        local.get $r
+        i32.load8_u offset=8
+        i32.store8 offset=10
+        block $x
+          loop $y
+            local.get $i
+            i32.const 8
+            i32.ge_u
+            br_if $x
+            local.get $o
+            local.get $i
+            i32.const 1
+            i32.shl
+            i32.add
+            local.get $r
+            local.get $i
+            i32.const 1
+            i32.shl
+            i32.add
+            i32.load16_u offset=16
+            local.tee $w
+            i32.const 8
+            i32.shr_u
+            i32.store8 offset=11
+            local.get $o
+            local.get $i
+            i32.const 1
+            i32.shl
+            i32.add
+            local.get $w
+            i32.store8 offset=12
+            local.get $i
+            i32.const 1
+            i32.add
+            local.set $i
+            br $y
+          end
+        end
+        local.get $o
+        i32.const 19
+        return
+      end
+      i32.const 7
+      call $rs_new
+      local.tee $o
+      i32.const 0
+      i32.store8 offset=8
+      local.get $o
+      local.get $r
+      i32.load16_u offset=8
+      i32.const 8
+      i32.shr_u
+      i32.store8 offset=9
+      local.get $o
+      local.get $r
+      i32.load8_u offset=8
+      i32.store8 offset=10
+      local.get $o
+      local.get $r
+      i32.load offset=10 align=1
+      i32.store offset=11 align=1
+      local.get $o
+      i32.const 7)
+
+    ;; Listener.accept: the next connection
+    (func $wasi_sock_accept (param $l i32) (result i32) (local $r i32) (local $c i32)
+      call $sk_enter
+      if
+        i32.const ${dead}
+        return
+      end
+      local.get $l
+      i32.load offset=12
+      if
+        i32.const 100
+        call $sk_fail
+        return
+      end
+      local.get $l
+      i32.load offset=8
+      call $hret_at
+      local.tee $r
+      call $sk_accept
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        i32.const 8
+        i32.eq
+        if
+          local.get $l
+          i32.load offset=8
+          call $sk_sub
+          local.get $l
+          i64.const 0
+          call $sk_wait
+          i32.const ${dead}
+          return
+        end
+        local.get $r
+        i32.load8_u offset=4
+        i32.const 1
+        i32.add
+        call $sk_fail
+        return
+      end
+      i32.const 48
+      i32.const ${conn_free}
+      call $obj_new
+      local.tee $c
+      local.get $r
+      i32.load offset=4
+      i32.store offset=8
+      local.get $c
+      local.get $r
+      i32.load offset=8
+      i32.store offset=12
+      local.get $c
+      local.get $r
+      i32.load offset=12
+      i32.store offset=16
+      local.get $c)
+
+    ;; Listener.close: a waiting accept fails (closed)
+    (func $wasi_sock_lclose (param $l i32)
+      local.get $l
+      i32.load offset=12
+      if
+        return
+      end
+      local.get $l
+      i32.const 1
+      i32.store offset=12
+      local.get $l
+      call $sk_unwait
+      local.get $l
+      i32.load offset=8
+      call $sk_drop)
+
+    ;; the start of a connection to the address, which wasi_sock_connected
+    ;; waits for; d (ns, 0 none) limits it
+    (func $wasi_sock_connect (param $v6 i32) (param $ip i32) (param $ipn i32) (param $port i64) (param $d i64) (result i32) (local $s i32) (local $e i32) (local $c i32)
+      i32.const 0
+      global.set $skerr
+      local.get $v6
+      call $sk_new
+      local.tee $s
+      i32.eqz
+      if
+        global.get $skerr
+        call $sk_fail
+        return
+      end
+      local.get $s
+      call $sk_net
+      local.get $v6
+      local.get $ip
+      i32.const 8
+      i32.add
+      local.get $port
+      i32.wrap_i64
+      call $sk_addr
+      call $hret_at
+      call $sk_sconn
+      call $hret_at
+      call $sk_unit
+      local.tee $e
+      if
+        local.get $s
+        call $sk_drop
+        local.get $e
+        call $sk_fail
+        return
+      end
+      i32.const 48
+      i32.const ${conn_free}
+      call $obj_new
+      local.tee $c
+      local.get $s
+      i32.store offset=8
+      local.get $d
+      i64.eqz
+      i32.eqz
+      if
+        local.get $c
+        call $mono
+        local.get $d
+        i64.add
+        i64.store offset=24
+      end
+      local.get $c)
+
+    ;; waits for connection c's connect to finish
+    (func $wasi_sock_connected (param $c i32) (local $r i32)
+      call $sk_enter
+      if
+        return
+      end
+      local.get $c
+      i64.load offset=24
+      i64.eqz
+      i32.eqz
+      if
+        call $mono
+        local.get $c
+        i64.load offset=24
+        i64.ge_s
+        if
+          i32.const 102
+          global.set $skerr
+          return
+        end
+      end
+      local.get $c
+      i32.load offset=8
+      call $hret_at
+      local.tee $r
+      call $sk_fconn
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        i32.const 8
+        i32.eq
+        if
+          local.get $c
+          i32.load offset=8
+          call $sk_sub
+          local.get $c
+          local.get $c
+          i64.load offset=24
+          call $sk_wait
+          return
+        end
+        local.get $r
+        i32.load8_u offset=4
+        i32.const 1
+        i32.add
+        global.set $skerr
+        return
+      end
+      local.get $c
+      local.get $r
+      i32.load offset=4
+      i32.store offset=12
+      local.get $c
+      local.get $r
+      i32.load offset=8
+      i32.store offset=16
+      local.get $c
+      i64.const 0
+      i64.store offset=24)
+
+    ;; whether connection c's deadline at offset k (24 read, 32 write) has
+    ;; passed
+    (func $sk_passed (param $c i32) (param $k i32) (result i32)
+      local.get $c
+      local.get $k
+      i32.add
+      i64.load
+      i64.eqz
+      if
+        i32.const 0
+        return
+      end
+      call $mono
+      local.get $c
+      local.get $k
+      i32.add
+      i64.load
+      i64.ge_s)
+
+    ;; Conn.read: up to max bytes; empty with error 103 at the end
+    (func $wasi_sock_read (param $c i32) (param $max i64) (result i32 i32) (local $r i32)
+      call $sk_enter
+      if
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const 100
+        global.set $skerr
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.const 24
+      call $sk_passed
+      if
+        i32.const 102
+        global.set $skerr
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.load offset=12
+      local.get $max
+      call $hret_at
+      local.tee $r
+      call $sk_iread
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        if
+          ;; closed: the end of the stream
+          i32.const 103
+          global.set $skerr
+        else
+          local.get $r
+          i32.load offset=8
+          call $ioerr_drop
+          i32.const 16
+          global.set $skerr
+        end
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=8
+      i32.eqz
+      if
+        local.get $c
+        i32.load offset=12
+        call $sk_isub
+        local.get $c
+        local.get $c
+        i64.load offset=24
+        call $sk_wait
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=4
+      local.get $r
+      i32.load offset=8
+      call $sk_take)
+
+    ;; Conn.write: every byte of the n at p (a Bytes object), from where
+    ;; a suspended call of it got to
+    (func $wasi_sock_write (param $c i32) (param $p i32) (param $n i32) (local $r i32) (local $k i32) (local $done i32)
+      call $sk_enter
+      if
+        local.get $c
+        i32.const 0
+        i32.store offset=40
+        return
+      end
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const 100
+        global.set $skerr
+        return
+      end
+      block $out
+        loop $more
+          local.get $c
+          i32.load offset=40
+          local.tee $done
+          local.get $n
+          i32.ge_u
+          br_if $out
+          local.get $c
+          i32.const 32
+          call $sk_passed
+          if
+            local.get $c
+            i32.const 0
+            i32.store offset=40
+            i32.const 102
+            global.set $skerr
+            return
+          end
+          local.get $c
+          i32.load offset=16
+          call $hret_at
+          local.tee $r
+          call $sk_ocheck
+          local.get $r
+          i32.load8_u
+          if
+            local.get $r
+            i32.load8_u offset=8
+            if
+              i32.const 104
+              global.set $skerr
+            else
+              local.get $r
+              i32.load offset=12
+              call $ioerr_drop
+              i32.const 16
+              global.set $skerr
+            end
+            local.get $c
+            i32.const 0
+            i32.store offset=40
+            return
+          end
+          local.get $r
+          i64.load offset=8
+          i64.eqz
+          if
+            local.get $c
+            i32.load offset=16
+            call $sk_osub
+            local.get $c
+            local.get $c
+            i64.load offset=32
+            call $sk_wait
+            return
+          end
+          ;; at most what check-write allows
+          local.get $n
+          local.get $done
+          i32.sub
+          local.set $k
+          local.get $r
+          i64.load offset=8
+          local.get $k
+          i64.extend_i32_u
+          i64.lt_u
+          if
+            local.get $r
+            i64.load offset=8
+            i32.wrap_i64
+            local.set $k
+          end
+          local.get $c
+          i32.load offset=16
+          local.get $p
+          i32.const 8
+          i32.add
+          local.get $done
+          i32.add
+          local.get $k
+          local.get $r
+          call $sk_owrite
+          local.get $r
+          i32.load8_u
+          if
+            local.get $r
+            i32.load8_u offset=4
+            if
+              i32.const 104
+              global.set $skerr
+            else
+              local.get $r
+              i32.load offset=8
+              call $ioerr_drop
+              i32.const 16
+              global.set $skerr
+            end
+            local.get $c
+            i32.const 0
+            i32.store offset=40
+            return
+          end
+          local.get $c
+          local.get $done
+          local.get $k
+          i32.add
+          i32.store offset=40
+          br $more
+        end
+      end
+      local.get $c
+      i32.const 0
+      i32.store offset=40)
+
+    ;; Conn.close: waiting reads and writes fail (closed)
+    (func $wasi_sock_close (param $c i32)
+      local.get $c
+      call $sk_conn_shut)
+
+    ;; a deadline of connection c: which 1 read, 2 write, 3 both; d ns from
+    ;; now when set
+    (func $wasi_sock_deadline (param $c i32) (param $which i64) (param $set i32) (param $d i64) (local $at i64)
+      local.get $set
+      if
+        call $mono
+        local.get $d
+        i64.const 1
+        local.get $d
+        i64.const 0
+        i64.gt_s
+        select
+        i64.add
+        local.set $at
+      end
+      local.get $which
+      i64.const 1
+      i64.and
+      i64.eqz
+      i32.eqz
+      if
+        local.get $c
+        local.get $at
+        i64.store offset=24
+      end
+      local.get $which
+      i64.const 2
+      i64.and
+      i64.eqz
+      i32.eqz
+      if
+        local.get $c
+        local.get $at
+        i64.store offset=32
+      end
+      ;; a task waiting on c sees the new deadline when it repeats its call
+      call $wake)
+
+    ;; the start of a lookup of the name (n bytes at h's): its stream, or 0
+    ;; with the error recorded
+    (func $wasi_sock_resolve (param $h i32) (param $hn i32) (result i64) (local $r i32)
+      i32.const 0
+      global.set $skerr
+      call $sk_net
+      local.get $h
+      i32.const 8
+      i32.add
+      local.get $hn
+      call $hret_at
+      local.tee $r
+      call $sk_resolve
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        i32.const 1
+        i32.add
+        global.set $skerr
+        i64.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=4
+      i64.extend_i32_u)
+
+    ;; the next address of lookup stream s: 4 or 16 bytes; empty at the end
+    ;; (error 103) or on an error
+    (func $wasi_sock_next (param $s i64) (result i32 i32) (local $r i32) (local $o i32) (local $i i32) (local $w i32)
+      call $sk_enter
+      if
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $s
+      i32.wrap_i64
+      call $hret_at
+      local.tee $r
+      call $sk_rnext
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=2
+        i32.const 8
+        i32.eq
+        if
+          local.get $s
+          i32.wrap_i64
+          call $sk_rsub
+          i32.const 0
+          i64.const 0
+          call $sk_wait
+          i32.const ${dead}
+          i32.const 0
+          return
+        end
+        local.get $r
+        i32.load8_u offset=2
+        i32.const 1
+        i32.add
+        global.set $skerr
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load8_u offset=2
+      i32.eqz
+      if
+        i32.const 103
+        global.set $skerr
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load8_u offset=4
+      if
+        i32.const 16
+        call $rs_new
+        local.set $o
+        block $x
+          loop $y
+            local.get $i
+            i32.const 8
+            i32.ge_u
+            br_if $x
+            local.get $r
+            local.get $i
+            i32.const 1
+            i32.shl
+            i32.add
+            i32.load16_u offset=6
+            local.set $w
+            local.get $o
+            local.get $i
+            i32.const 1
+            i32.shl
+            i32.add
+            local.get $w
+            i32.const 8
+            i32.shr_u
+            i32.store8 offset=8
+            local.get $o
+            local.get $i
+            i32.const 1
+            i32.shl
+            i32.add
+            local.get $w
+            i32.store8 offset=9
+            local.get $i
+            i32.const 1
+            i32.add
+            local.set $i
+            br $y
+          end
+        end
+        local.get $o
+        i32.const 16
+        return
+      end
+      i32.const 4
+      call $rs_new
+      local.tee $o
+      local.get $r
+      i32.load offset=6 align=1
+      i32.store offset=8 align=1
+      local.get $o
+      i32.const 4)
+
+    (func $wasi_sock_resolve_end (param $s i64)
+      local.get $s
+      i64.eqz
+      if
+        return
+      end
+      local.get $s
+      i32.wrap_i64
+      call $sk_rdrop)
+
+  """
+}

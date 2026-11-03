@@ -681,3 +681,47 @@ with wasi:http's `HTTP-request-denied`, which the client reports as
 the test checks it. So a component needs no change for Spin: what it may
 reach is the manifest's business, and the error says which request was
 refused.
+
+### Sockets in a command (2026-11-03)
+
+A command reaches the network through `wasi:sockets` 0.2 (`network`,
+`instance-network`, `tcp`, `tcp-create-socket`, `ip-name-lookup`), the
+first of two steps (R1; R2 is HTTP, TLS, UDP and DNS records over it): TCP listen, accept, dial
+(`Net.dial`, `Net.dial_timeout`), read, write, close, connection
+deadlines, `Net.lookup_host`, and `Net.only`.
+
+- The logic that must match the native runtime is Xo:
+  std/native/llrt/netwasi.xo checks Net.only (netpolicy), parses
+  addresses, tries a host's addresses in turn, and records NetErr's
+  status and the native runtime's texts (`listen tcp ADDR: bind: ...`,
+  `dial tcp ADDR: i/o timeout`, Refused, Canceled). In a wasm module the
+  SSA builder calls the native prelude's `llrt_wasi_<name>` in place of
+  `rt.net_listen`, `rt.net_dial`, `rt.listener_*` and `rt.conn_*`
+  (ssa/conc.xo sock_rt), so wait_call, net_result and Stream's dispatch
+  are unchanged; `Net.dial_timeout`, `Net.lookup_host` and the
+  set_deadline methods take a `target.arch` arm of the prelude.
+- compiler/wasm rt9.xo marshals the canonical ABI and waits: a call that
+  would block (accept, finish-connect, a read with no data, a write the
+  stream cannot take, a lookup in progress) subscribes to its pollable,
+  records it, and suspends the task; when no task can run, the scheduler
+  polls every recorded pollable with `wasi:io/poll.poll` (and a clock
+  pollable for the next deadline), drops them, and wakes the waiters,
+  which repeat their calls. A write keeps its progress in the connection.
+  Closing a listener or connection drops its waits and wakes its tasks,
+  whose calls then fail with `use of closed network connection`.
+- The network is granted from the component's imports, not its source:
+  a component that imports `wasi:sockets/tcp` (or udp) runs with
+  `wasmtime run -S inherit-network=y`, one that imports
+  `wasi:sockets/ip-name-lookup` with `-S allow-ip-name-lookup=y`, and
+  one that imports neither gets neither (TestWasmCommandGoldens'
+  wasmNetFlags reads `wasm-tools component wit`). `xo run` builds only
+  for the host, so the rule is the test runner's and the docs' until it
+  runs wasm.
+- Differences from native: no Unix domain sockets (`unix:` addresses
+  fail with Io), no service-name ports, a wildcard listen (`:PORT`) is
+  IPv6 only under wasmtime (which sets IPV6_V6ONLY) with an IPv4 bind as
+  its fallback, and a canceled listen is not checked before it binds.
+- TestWasmCommandGoldens now tries every golden, those wasm_unsupported.txt
+  skips on wasip1 too; wasm_cmd_unsupported.txt lists the ones a command
+  cannot run yet (HTTP servers and clients over raw sockets, TLS, UDP, DNS
+  records: the R2 step).

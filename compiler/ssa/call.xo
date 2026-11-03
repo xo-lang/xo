@@ -1614,8 +1614,9 @@ fn wasm_only_rt(name: Str) -> Bool {
     return false
   }
   // a wasi:http component's calls (compiler/wasm rt5.xo): std's client
-  // reaches them from its wasm arm on every target
-  name.starts_with("fs_") || name.starts_with("wasi_http_")
+  // reaches them from its wasm arm on every target; a wasip2 command's
+  // sockets (rt9.xo, std/native/llrt/netwasi.xo)
+  name.starts_with("fs_") || name.starts_with("wasi_http_") || name.starts_with("wasi_sock_")
 }
 
 /// A call of a platform library function declared in

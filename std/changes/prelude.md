@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-11-03: feature: TCP in a wasip2/wasm command
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0447 (wasi:sockets, step R1)
+- Go reference: none (Go's wasip1 port has no sockets)
+- Test: goldens net_echo, conn_deadline, conn_deadline_move, conn_iface, net_dial_dual_stack, net_lookup_dial_timeout, net_short_str on wasip2/wasm (TestWasmCommandGoldens under wasmtime with the network flags its imports ask for)
+- Timing: none
+- Shipped in: none yet
+
+`Net.listen`, `Net.dial`, `Net.dial_timeout`, `Net.lookup_host`,
+`Net.only`, `Listener` and `Conn` (with `set_deadline` and its read and
+write forms) work in a wasip2/wasm command over `wasi:sockets` 0.2, with
+the native targets' NetErr values and texts
+(std/native/llrt/netwasi.xo; compiler/wasm rt9.xo). Unix domain sockets
+and service-name ports are not available there (`Io`).
+
 ## 2026-11-02: fix: standard input on wasm
 
 - Kind: fix

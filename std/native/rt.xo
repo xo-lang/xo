@@ -326,6 +326,40 @@ fn wasi_http_send(method_case: Int, method: Str, scheme_case: Int, authority: St
 fn wasi_http_resp_headers() -> Bytes
 fn wasi_http_resp_body() -> Bytes
 
+/// The network of a wasip2 command over wasi:sockets (decision 0447;
+/// compiler/wasm rt9.xo), for std/native/llrt/netwasi.xo, which the SSA
+/// builder calls in a wasm module in place of the network's runtime
+/// calls. ip is 4 or 16 bytes; a failed call records its error for
+/// wasi_sock_err (0 none, 1 + a wasi:sockets error-code, 100 closed, 101
+/// canceled, 102 a deadline passed, 103 the end of the stream or the
+/// lookup, 104 the stream closed under a write) and returns a handle that
+/// is not open. The wasm backend only.
+fn wasi_sock_err() -> Int
+/// The outcome rt.net_status and rt.net_msg give (NetErr's status, 0 ok).
+fn wasi_sock_set(status: Int, msg: Str)
+fn wasi_sock_status() -> Int
+fn wasi_sock_msg() -> Str
+fn wasi_sock_listen(v6: Bool, ip: Bytes, port: Int) -> Listener
+/// The bound address: v6 (0 or 1), the port's two bytes, the address.
+fn wasi_sock_local(l: Listener) -> Bytes
+fn wasi_sock_accept(l: Listener) -> ServerConn
+fn wasi_sock_lclose(l: Listener)
+/// A connect started, limited to d ns (0 none); wasi_sock_connected waits
+/// for it.
+fn wasi_sock_connect(v6: Bool, ip: Bytes, port: Int, d: Int) -> Conn
+fn wasi_sock_connected(c: Conn)
+/// At most max bytes; empty with error 103 at the end.
+fn wasi_sock_read(c: Conn, max: Int) -> Bytes
+fn wasi_sock_write(c: Conn, data: Bytes)
+fn wasi_sock_close(c: Conn)
+/// which 1 read, 2 write, 3 both; d ns from now when set.
+fn wasi_sock_deadline(c: Conn, which: Int, set: Bool, d: Int)
+/// A lookup of host started: its stream, 0 on an error.
+fn wasi_sock_resolve(host: Str) -> Int
+/// The lookup's next address (4 or 16 bytes), empty at its end (103).
+fn wasi_sock_next(s: Int) -> Bytes
+fn wasi_sock_resolve_end(s: Int)
+
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
 // caller, in its `target.os` Linux arms.
 

@@ -101,6 +101,9 @@ pub struct Gen {
   conc: Bool = false
   /// The program uses rt4.xo (files, constants, SHA-256).
   files: Bool = false
+  /// The program uses the network (rt9.xo over wasi:sockets, decision
+  /// 0447); only a wasip2 command has it
+  net: Bool = false
   /// a wasi:http component (rt5.xo, decision 0447): the program calls
   /// http.serve_component
   comp: Bool = false
@@ -334,7 +337,8 @@ fn (g: Gen) component_lacks() -> Str {
         // a command has wasi:filesystem (rt8.xo); the proxy world has none
         // fs_canceled asks the task, not the files (call.xo lowers it)
         what = "files"
-      } else if name.starts_with("rt.") && (op.starts_with("net_") || op.starts_with("listener_") || op.starts_with("conn_")) {
+      } else if name.starts_with("rt.") && (op.starts_with("net_") || op.starts_with("listener_") || op.starts_with("conn_") || rt9_direct(op)) && g.comp {
+        // a command has wasi:sockets (rt9.xo); the proxy world has none
         what = "sockets"
       }
       if !what.is_empty() {
@@ -1380,7 +1384,7 @@ fn (var g: Gen) find_susp() {
     for x in f.values {
       if x.op == ssa.Op.Call {
         if let S(n) = x.aux {
-          if rt3_blocking(n) {
+          if rt3_blocking(n) || rt9_blocking(n) {
             blocks = true
           }
         }
@@ -1411,6 +1415,13 @@ fn (var g: Gen) find_susp() {
           cs.push(ci)
         } else if name.starts_with("rt.") && rt4_direct(name.trim_prefix("rt.")) {
           g.files = true
+        } else if name.starts_with("rt.") && rt9_direct(name.trim_prefix("rt.")) {
+          // the network waits in the task runtime's scheduler
+          g.conc = true
+          g.net = true
+          if rt9_blocking(name) {
+            s = true
+          }
         } else if name.starts_with("rt.") && rt3_direct(name.trim_prefix("rt.")) {
           g.conc = true
           if rt3_blocking(name) {
@@ -1624,7 +1635,11 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   g.find_susp()
   g.compute_homes(main)
   if g.conc {
-    rt = rt + rt3_text(g, main, main_res, main_args)
+    let t3 = rt3_text(g, main, main_res, main_args)
+    rt = rt + (if g.net && g.cmd { rt9_sched(t3) } else { t3 })
+  }
+  if g.net && g.cmd {
+    rt = rt + rt9_text(g)
   }
   if g.files {
     rt = rt + rt4_text(g, tz)
@@ -1708,6 +1723,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     if g.files {
       b.write(rt8_imports())
     }
+    if g.net {
+      b.write(rt9_imports())
+    }
   }
   b.write(if g.comp || g.cmd { drop_preview1(rt_imports()) } else { rt_imports() })
   if g.conc {
@@ -1723,6 +1741,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     b.write(rt7_globals())
     if g.files {
       b.write(rt8_globals())
+    }
+    if g.net {
+      b.write(rt9_globals(g))
     }
   }
   b.write("  (memory (export \"memory\") ${pages})\n")

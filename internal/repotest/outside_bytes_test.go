@@ -96,6 +96,7 @@ func TestOutsideBytesValidated(t *testing.T) {
 		"std/native/testing.xo":      3, // test fakes: the program's own text
 		"std/native/time.xo":         1, // format_items: ASCII digits and names and the layout's own text
 		"std/native/llrt/netconn.xo": 1,
+		"std/native/llrt/netwasi.xo": 1, // conn_read on wasm: a read's bytes are the program's data, as netconn's read_list
 		"std/native/llrt/raw.xo":     2, // the conversion helpers themselves
 		"std/native/llrt/scan.xo":    1, // text_of: validates
 		"std/native/internal.xo":     1, // uuid_text_words: 36 ASCII bytes it wrote itself (hex digits and dashes)

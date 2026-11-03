@@ -24,6 +24,7 @@ use native/llrt/cabi_tw
 // that makes a network call (ssa importer_built, uses_net)
 use native/llrt/cabi_net
 use native/llrt/netconn
+use native/llrt/netwasi
 use native/llrt/tasks
 use native/llrt/fault
 use native/llrt/ftoa
@@ -3881,6 +3882,14 @@ fn net_err_now() -> NetErr {
 /// Net.dial_timeout (decision 0406): Net.dial with the caller's limit
 /// over the lookup and the connect, Timeout when it passes.
 fn net_dial_timeout(n: Net, addr: Str, d: Duration) -> Conn ! NetErr uses net.dial {
+  if target.arch == TargetArch.Wasm32 {
+    // a wasip2 command's wasi:sockets (decision 0447)
+    let c = netwasi.dial_timeout(rt.net_lists(n), addr, d.nanos())
+    if let Some(e) = netwasi.err_now() {
+      return Err(e)
+    }
+    return Ok(c)
+  }
   let p = netconn.dial_limit(rt.net_lists(n), addr, d.nanos())
   if p == 0 {
     return Err(net_err_now())
@@ -3901,6 +3910,16 @@ fn server_conn_set_read_deadline(c: ServerConn, clock: Clock, t: Time?) uses clo
 fn server_conn_set_write_deadline(c: ServerConn, clock: Clock, t: Time?) uses clock { conn_deadline(rt.obj_addr(c), 2, clock, t) }
 
 fn conn_deadline(cn: Int, which: Int, clock: Clock, t: Time?) uses clock {
+  if target.arch == TargetArch.Wasm32 {
+    // a wasip2 command's wasi:sockets (decision 0447): cn is the handle's
+    // address, held by the caller's value
+    let c = rt.obj_at[Conn](cn)
+    match t {
+      Some(at) => netwasi.set_deadline(c, which, true, (at - clock.now()).nanos())
+      None => netwasi.set_deadline(c, which, false, 0)
+    }
+    return
+  }
   match t {
     Some(at) => netconn.set_deadline(cn, which, true, (at - clock.now()).nanos())
     None => netconn.set_deadline(cn, which, false, 0)
@@ -3910,12 +3929,32 @@ fn conn_deadline(cn: Int, which: Int, clock: Clock, t: Time?) uses clock {
 /// Net.lookup_host (decision 0406): the addresses dial would try for
 /// host, as text.
 fn net_lookup_host(n: Net, host: Str) -> List[Str] ! NetErr uses net.dial {
+  if target.arch == TargetArch.Wasm32 {
+    let xs = netwasi.lookup_host(rt.net_lists(n), host)
+    if let Some(e) = netwasi.err_now() {
+      return Err(e)
+    }
+    return Ok(xs)
+  }
   let addrs = netconn.lookup_host(rt.net_lists(n), host)
   if netconn.status() != 0 {
     return Err(net_err_now())
   }
   Ok(addrs)
 }
+
+/// The network's runtime calls in a wasm module (decision 0447): the SSA
+/// builder calls these in place of rt.net_listen, rt.net_dial,
+/// rt.listener_* and rt.conn_* (ssa/conc.xo sock_rt), on the same
+/// arguments; std/native/llrt/netwasi.xo over wasi:sockets.
+fn llrt_wasi_net_listen(lists: Str, addr: Str) -> Listener { netwasi.listen(lists, addr) }
+fn llrt_wasi_net_dial(lists: Str, addr: Str) -> Conn { netwasi.dial(lists, addr) }
+fn llrt_wasi_listener_addr(l: Listener) -> List[Str] { netwasi.listener_addr(l) }
+fn llrt_wasi_listener_accept(l: Listener) -> ServerConn { netwasi.listener_accept(l) }
+fn llrt_wasi_listener_close(l: Listener) { netwasi.listener_close(l) }
+fn llrt_wasi_conn_read(c: Conn, max: Int) -> List[Str] { netwasi.conn_read(c, max) }
+fn llrt_wasi_conn_write(c: Conn, data: Str) { netwasi.conn_write(c, data) }
+fn llrt_wasi_conn_close(c: Conn) { netwasi.conn_close(c) }
 
 /// The native backends' layout of the prelude's NetInterface and InterfaceFlags (decision 0426): a
 /// prelude struct is opaque to the native SSA builder unless this module

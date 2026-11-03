@@ -1507,6 +1507,24 @@ fn (var b: Builder) net_result(ok: Int, rt: Int) -> Int {
   res
 }
 
+/// rt.<name> of the network (wait_call's and conn_method's), or in a wasm
+/// module the native prelude's llrt_wasi_<name> on the same arguments
+/// (std/native/llrt/netwasi.xo over wasi:sockets, compiler/wasm/rt9.xo,
+/// decision 0447), which records the outcome net_result reads. t -1 is
+/// unit.
+fn (var b: Builder) sock_rt(name: Str, t: Int, args: List[Int]) -> Int {
+  if b.wasm {
+    let impl = b.prelude_impl("llrt_wasi_${name}")
+    if impl >= 0 {
+      b.set_flag(2)
+      let f = b.declare(impl, [])
+      let rs = b.m.funcs[f].results
+      return b.call(b.m.funcs[f].name, if rs.is_empty() { b.unit_t() } else { rs[0] }, "", args)
+    }
+  }
+  b.rt(name, t, args)
+}
+
 /// The function that makes the NetErr (type et) of a runtime status
 /// code; the message of InvalidAddr and Io comes from rt.net_msg
 /// (netErrFunc).
@@ -1548,7 +1566,7 @@ fn (var b: Builder) net_err_func(et: Int) -> Str {
 /// result; None for another method.
 fn (var b: Builder) conn_method(name: Str, recv: Int, args: List[Int], want: Int) -> Int? {
   if name == "close" && args.is_empty() {
-    b.rt("conn_close", -1, [recv])
+    b.sock_rt("conn_close", -1, [recv])
     return Some(b.unit())
   }
   if !(name is "read" | "write") || args.len() != 1 {
@@ -1560,11 +1578,11 @@ fn (var b: Builder) conn_method(name: Str, recv: Int, args: List[Int], want: Int
     return Some(b.conc_off(want))
   }
   if name == "read" {
-    let l = b.rt("conn_read", b.m.list(b.str_t()), [recv, args[0]])
+    let l = b.sock_rt("conn_read", b.m.list(b.str_t()), [recv, args[0]])
     let ok = b.m.types[want].variants[b.m.variant_index(want, "Ok")].fields[0].ty
     return Some(b.net_result(b.pop_one(l, ok), want))
   }
-  b.rt("conn_write", -1, [recv, args[0]])
+  b.sock_rt("conn_write", -1, [recv, args[0]])
   Some(b.net_result(b.unit(), want))
 }
 
@@ -1601,41 +1619,41 @@ fn (var b: Builder) wait_call(key: Str, fo: Int, es: List[Expr?], recv: Int, nt:
       b.set_flag(2)
       // the Net's attenuation lists first (Net.only, decision 0175)
       let lists = b.add(Op.Field, st, Aux.I(n: 0), [recv])
-      let h = b.rt("net_listen", b.m.handle("Listener", []), [lists, b.io_arg(fo, es, 0, st)])
+      let h = b.sock_rt("net_listen", b.m.handle("Listener", []), [lists, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(h, nt))
     }
     "Net.dial" => {
       b.set_flag(2)
       let lists = b.add(Op.Field, st, Aux.I(n: 0), [recv])
-      let h = b.rt("net_dial", b.m.handle("Conn", []), [lists, b.io_arg(fo, es, 0, st)])
+      let h = b.sock_rt("net_dial", b.m.handle("Conn", []), [lists, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(h, nt))
     }
     "Listener.addr" => {
-      let l = b.rt("listener_addr", b.m.list(st), [recv])
+      let l = b.sock_rt("listener_addr", b.m.list(st), [recv])
       return Some(b.call("list.index", st, "", [l, b.cint(0)]))
     }
     "Listener.accept" => {
       // the handle the prelude declares: Conn, or ServerConn (decision
       // 0280 phase 2), so this compiler builds either prelude
       let okt = b.m.types[nt].variants[b.m.variant_index(nt, "Ok")].fields[0].ty
-      let h = b.rt("listener_accept", okt, [recv])
+      let h = b.sock_rt("listener_accept", okt, [recv])
       return Some(b.net_result(h, nt))
     }
     "Listener.close" => {
-      b.rt("listener_close", -1, [recv])
+      b.sock_rt("listener_close", -1, [recv])
       return Some(b.unit())
     }
     "Conn.read" | "ServerConn.read" => {
-      let l = b.rt("conn_read", b.m.list(st), [recv, b.io_arg(fo, es, 0, it)])
+      let l = b.sock_rt("conn_read", b.m.list(st), [recv, b.io_arg(fo, es, 0, it)])
       let ok = b.m.types[nt].variants[b.m.variant_index(nt, "Ok")].fields[0].ty
       return Some(b.net_result(b.pop_one(l, ok), nt))
     }
     "Conn.write" | "ServerConn.write" => {
-      b.rt("conn_write", -1, [recv, b.io_arg(fo, es, 0, st)])
+      b.sock_rt("conn_write", -1, [recv, b.io_arg(fo, es, 0, st)])
       return Some(b.net_result(b.unit(), nt))
     }
     "Conn.close" | "ServerConn.close" => {
-      b.rt("conn_close", -1, [recv])
+      b.sock_rt("conn_close", -1, [recv])
       return Some(b.unit())
     }
     _ => {}

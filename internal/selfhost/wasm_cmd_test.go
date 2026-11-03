@@ -43,7 +43,6 @@ func TestWasmCommandGoldens(t *testing.T) {
 		t.Fatal(err)
 	}
 	root := repoRoot(t)
-	skipP1 := listFile(t, filepath.Join(root, "internal", "selfhost", "testdata", "wasm_unsupported.txt"))
 	known := listFile(t, filepath.Join(root, "internal", "selfhost", "testdata", "wasm_cmd_unsupported.txt"))
 	dirs, err := filepath.Glob(filepath.Join(root, "internal", "llvm", "testdata", "golden", "*"))
 	if err != nil || len(dirs) == 0 {
@@ -63,7 +62,9 @@ func TestWasmCommandGoldens(t *testing.T) {
 	t.Run("goldens", func(t *testing.T) {
 		for _, d := range dirs {
 			name := filepath.Base(d)
-			if _, ok := skipP1[name]; ok || !sel(name) || !matchAny(pats, name) {
+			// every golden, those preview 1 cannot run too (a wasip2
+			// command has sockets, decision 0447): the list says which fail
+			if !sel(name) || !matchAny(pats, name) {
 				continue
 			}
 			if _, err := os.Stat(filepath.Join(d, "main.xo")); err != nil {
@@ -119,6 +120,13 @@ func commandGolden(t *testing.T, xo string, env []string, d string) string {
 	// its environment (cmd.Env below) and argv[0], the program's path
 	// (with no cache of wasmtime's own, which would follow the golden's HOME)
 	args = append(args, "-S", "inherit-env=y", "--argv0", comp, "-C", "cache=n")
+	// the network only for a component that imports wasi:sockets (decision
+	// 0447: least privilege, decided from its imports, not its source)
+	wit, err := testtmp.Guard(exec.Command("wasm-tools", "component", "wit", comp)).CombinedOutput()
+	if err != nil {
+		return "wasm-tools component wit: " + firstLine(string(wit))
+	}
+	args = append(args, wasmNetFlags(string(wit))...)
 	// the environment as runWasm gives the Node runner: the test's, then
 	// env.txt's (a later value wins), inherited by the program
 	runEnv := os.Environ()
@@ -136,7 +144,7 @@ func commandGolden(t *testing.T, xo string, env []string, d string) string {
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err := cmd.Run()
+	err = cmd.Run()
 	code := 0
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {
@@ -167,6 +175,20 @@ func commandGolden(t *testing.T, xo string, env []string, d string) string {
 }
 
 var wantExitRE = regexp.MustCompile(`^exit (\d+)\n`)
+
+// wasmNetFlags are wasmtime's flags for the network a component's WIT
+// (wasm-tools component wit) imports: none without wasi:sockets, the
+// sockets for tcp or udp, name lookup for ip-name-lookup (decision 0447).
+func wasmNetFlags(wit string) []string {
+	var fl []string
+	if strings.Contains(wit, "import wasi:sockets/tcp@") || strings.Contains(wit, "import wasi:sockets/udp@") {
+		fl = append(fl, "-S", "inherit-network=y")
+	}
+	if strings.Contains(wit, "import wasi:sockets/ip-name-lookup@") {
+		fl = append(fl, "-S", "allow-ip-name-lookup=y")
+	}
+	return fl
+}
 
 // listFile reads a list of golden names, one a line, with # comments.
 func listFile(t *testing.T, path string) map[string]string {

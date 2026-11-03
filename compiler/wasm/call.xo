@@ -470,6 +470,15 @@ fn (var g: Gen) call(v: Int) {
         g.rt3_call(v, name)
         return
       }
+      if name.starts_with("rt.") && rt9_direct(name.trim_prefix("rt.")) {
+        // the network over wasi:sockets (rt9.xo): a wasip2 command's
+        if !g.cmd {
+          g.fail(if g.comp { "a wasi:http component has no sockets (`${name}`): build the program as a wasip2/wasm command" } else { "the wasm backend does not support the network (`${name}`): WASI preview1 has no sockets" })
+          return
+        }
+        g.rt3_call(v, name)
+        return
+      }
       let op = name.trim_prefix("rt.")
       if name == "rt.wasi_stdin_read" {
         // stdin (rt7.xo): wasi:cli/stdin in a command, fd_read in a
@@ -798,7 +807,7 @@ fn (var g: Gen) temp_make(a: Int, k: Int) -> Int {
 fn (var g: Gen) rt3_call(v: Int, name: Str) {
   let x = g.f.values[v]
   let fname = name.trim_prefix("rt.")
-  let id = if rt3_blocking(name) { g.resume_point() } else { -1 }
+  let id = if rt3_blocking(name) || rt9_blocking(name) { g.resume_point() } else { -1 }
   let atomic = fname.starts_with("atomic_")
   if fname == "prog_group" && x.args.is_empty() {
     // $prog_group takes the place for its fault when the program has no

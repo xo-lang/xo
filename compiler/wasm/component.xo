@@ -291,18 +291,33 @@ fn ity_io_error() -> InstTy {
   i
 }
 
-fn ity_io_poll() -> InstTy {
+/// wasi:io/poll; sock adds poll, which the network's scheduler waits in
+/// (rt9.xo).
+fn ity_io_poll(sock: Bool) -> InstTy {
   var i = InstTy{}
   let p = i.res("pollable")
   let bp = i.def(dt_borrow(p))
   i.fun("[method]pollable.block", [("self", bp)], NO_TYPE)
+  if sock {
+    let l = i.def(dt_list(bp))
+    let r = i.def(dt_list(VT_U32))
+    i.fun("poll", [("in", l)], r)
+  }
   i
 }
 
-fn ity_io_streams(t_error: Int) -> InstTy {
+/// wasi:io/streams; t_poll (wasi:io/poll's pollable, -1 for none) adds
+/// what a socket's streams use (rt9.xo): read, check-write, write,
+/// blocking-flush and the subscribes.
+fn ity_io_streams(t_error: Int, t_poll: Int) -> InstTy {
   var i = InstTy{}
   let e0 = i.outer(t_error)
   let e = i.eq("error", e0)
+  var p = -1
+  if t_poll >= 0 {
+    let p0 = i.outer(t_poll)
+    p = i.eq("pollable", p0)
+  }
   let own_e = i.def(dt_own(e))
   let se0 = i.def(dt_variant([("last-operation-failed", own_e), ("closed", NO_TYPE)]))
   let se = i.eq("stream-error", se0)
@@ -315,6 +330,129 @@ fn ity_io_streams(t_error: Int) -> InstTy {
   let bo = i.def(dt_borrow(outp))
   let r2 = i.def(dt_result(NO_TYPE, se))
   i.fun("[method]output-stream.blocking-write-and-flush", [("self", bo), ("contents", bytes)], r2)
+  if p >= 0 {
+    let own_p = i.def(dt_own(p))
+    i.fun("[method]input-stream.read", [("self", bi), ("len", VT_U64)], r1)
+    i.fun("[method]input-stream.subscribe", [("self", bi)], own_p)
+    let r3 = i.def(dt_result(VT_U64, se))
+    i.fun("[method]output-stream.check-write", [("self", bo)], r3)
+    i.fun("[method]output-stream.write", [("self", bo), ("contents", bytes)], r2)
+    i.fun("[method]output-stream.blocking-flush", [("self", bo)], r2)
+    i.fun("[method]output-stream.subscribe", [("self", bo)], own_p)
+  }
+  i
+}
+
+/// wasi:sockets' error-code, in its order (network.wit).
+const SOCK_ERRORS = ["unknown", "access-denied", "not-supported", "invalid-argument", "out-of-memory", "timeout", "concurrency-conflict", "not-in-progress", "would-block", "invalid-state", "new-socket-limit", "address-not-bindable", "address-in-use", "remote-unreachable", "connection-refused", "connection-reset", "connection-aborted", "datagram-too-large", "name-unresolvable", "temporary-resolver-failure", "permanent-resolver-failure"]
+
+/// wasi:sockets/network: the network resource and the address types.
+fn ity_sock_network() -> InstTy {
+  var i = InstTy{}
+  let _n = i.res("network")
+  let ec0 = i.def(dt_enum(SOCK_ERRORS))
+  let _ec = i.eq("error-code", ec0)
+  let fam0 = i.def(dt_enum(["ipv4", "ipv6"]))
+  let _fam = i.eq("ip-address-family", fam0)
+  let a4_0 = i.def(dt_tuple([VT_U8, VT_U8, VT_U8, VT_U8]))
+  let a4 = i.eq("ipv4-address", a4_0)
+  let a6_0 = i.def(dt_tuple([VT_U16, VT_U16, VT_U16, VT_U16, VT_U16, VT_U16, VT_U16, VT_U16]))
+  let a6 = i.eq("ipv6-address", a6_0)
+  let ip0 = i.def(dt_variant([("ipv4", a4), ("ipv6", a6)]))
+  let _ip = i.eq("ip-address", ip0)
+  let s4_0 = i.def(dt_record([("port", VT_U16), ("address", a4)]))
+  let s4 = i.eq("ipv4-socket-address", s4_0)
+  let s6_0 = i.def(dt_record([("port", VT_U16), ("flow-info", VT_U32), ("address", a6), ("scope-id", VT_U32)]))
+  let s6 = i.eq("ipv6-socket-address", s6_0)
+  let sa0 = i.def(dt_variant([("ipv4", s4), ("ipv6", s6)]))
+  let _sa = i.eq("ip-socket-address", sa0)
+  i
+}
+
+/// wasi:sockets/instance-network, over network's t_net.
+fn ity_sock_instance(t_net: Int) -> InstTy {
+  var i = InstTy{}
+  let n0 = i.outer(t_net)
+  let n = i.eq("network", n0)
+  let own_n = i.def(dt_own(n))
+  i.fun("instance-network", [], own_n)
+  i
+}
+
+/// wasi:sockets/tcp: what rt9.xo calls of tcp-socket.
+fn ity_sock_tcp(t_net: Int, t_ec: Int, t_sa: Int, t_in: Int, t_out: Int, t_poll: Int) -> InstTy {
+  var i = InstTy{}
+  let n0 = i.outer(t_net)
+  let n = i.eq("network", n0)
+  let sa0 = i.outer(t_sa)
+  let sa = i.eq("ip-socket-address", sa0)
+  let ec0 = i.outer(t_ec)
+  let ec = i.eq("error-code", ec0)
+  let in0 = i.outer(t_in)
+  let inp = i.eq("input-stream", in0)
+  let out0 = i.outer(t_out)
+  let outp = i.eq("output-stream", out0)
+  let p0 = i.outer(t_poll)
+  let p = i.eq("pollable", p0)
+  let s = i.res("tcp-socket")
+  let bs = i.def(dt_borrow(s))
+  let bn = i.def(dt_borrow(n))
+  let own_s = i.def(dt_own(s))
+  let own_in = i.def(dt_own(inp))
+  let own_out = i.def(dt_own(outp))
+  let own_p = i.def(dt_own(p))
+  let none = i.def(dt_result(NO_TYPE, ec))
+  i.fun("[method]tcp-socket.start-bind", [("self", bs), ("network", bn), ("local-address", sa)], none)
+  i.fun("[method]tcp-socket.finish-bind", [("self", bs)], none)
+  i.fun("[method]tcp-socket.start-connect", [("self", bs), ("network", bn), ("remote-address", sa)], none)
+  let streams = i.def(dt_result(i.def(dt_tuple([own_in, own_out])), ec))
+  i.fun("[method]tcp-socket.finish-connect", [("self", bs)], streams)
+  i.fun("[method]tcp-socket.start-listen", [("self", bs)], none)
+  i.fun("[method]tcp-socket.finish-listen", [("self", bs)], none)
+  let acc = i.def(dt_result(i.def(dt_tuple([own_s, own_in, own_out])), ec))
+  i.fun("[method]tcp-socket.accept", [("self", bs)], acc)
+  let la = i.def(dt_result(sa, ec))
+  i.fun("[method]tcp-socket.local-address", [("self", bs)], la)
+  i.fun("[method]tcp-socket.subscribe", [("self", bs)], own_p)
+  i
+}
+
+/// wasi:sockets/tcp-create-socket, over tcp's t_sock.
+fn ity_sock_create(t_fam: Int, t_ec: Int, t_sock: Int) -> InstTy {
+  var i = InstTy{}
+  let f0 = i.outer(t_fam)
+  let f = i.eq("ip-address-family", f0)
+  let s0 = i.outer(t_sock)
+  let s = i.eq("tcp-socket", s0)
+  let ec0 = i.outer(t_ec)
+  let ec = i.eq("error-code", ec0)
+  let own_s = i.def(dt_own(s))
+  let r = i.def(dt_result(own_s, ec))
+  i.fun("create-tcp-socket", [("address-family", f)], r)
+  i
+}
+
+/// wasi:sockets/ip-name-lookup.
+fn ity_sock_lookup(t_poll: Int, t_net: Int, t_ec: Int, t_ip: Int) -> InstTy {
+  var i = InstTy{}
+  let p0 = i.outer(t_poll)
+  let p = i.eq("pollable", p0)
+  let n0 = i.outer(t_net)
+  let n = i.eq("network", n0)
+  let ec0 = i.outer(t_ec)
+  let ec = i.eq("error-code", ec0)
+  let ip0 = i.outer(t_ip)
+  let ip = i.eq("ip-address", ip0)
+  let rs = i.res("resolve-address-stream")
+  let brs = i.def(dt_borrow(rs))
+  let own_p = i.def(dt_own(p))
+  let next = i.def(dt_result(i.def(dt_option(ip)), ec))
+  i.fun("[method]resolve-address-stream.resolve-next-address", [("self", brs)], next)
+  i.fun("[method]resolve-address-stream.subscribe", [("self", brs)], own_p)
+  let bn = i.def(dt_borrow(n))
+  let own_rs = i.def(dt_own(rs))
+  let r = i.def(dt_result(own_rs, ec))
+  i.fun("resolve-addresses", [("network", bn), ("name", VT_STRING)], r)
   i
 }
 
@@ -862,13 +1000,32 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
   let ie = c.import_iface("wasi:io/error${WASI_V}", ity_io_error())
   let t_err = c.alias_type(ie, "error")
   var t_poll = -1
+  let sock = wanted("wasi:sockets/tcp${WASI_V}")
   if wanted("wasi:io/poll${WASI_V}") {
-    let ip = c.import_iface("wasi:io/poll${WASI_V}", ity_io_poll())
+    let ip = c.import_iface("wasi:io/poll${WASI_V}", ity_io_poll(sock))
     t_poll = c.alias_type(ip, "pollable")
   }
-  let is = c.import_iface("wasi:io/streams${WASI_V}", ity_io_streams(t_err))
+  if sock && t_poll < 0 {
+    return (b"", "the network needs wasi:io/poll's pollable")
+  }
+  let is = c.import_iface("wasi:io/streams${WASI_V}", ity_io_streams(t_err, if sock { t_poll } else { -1 }))
   let t_in = c.alias_type(is, "input-stream")
   let t_out = c.alias_type(is, "output-stream")
+  if sock {
+    // the network (rt9.xo, decision 0447)
+    let inet = c.import_iface("wasi:sockets/network${WASI_V}", ity_sock_network())
+    let t_net = c.alias_type(inet, "network")
+    let t_ec = c.alias_type(inet, "error-code")
+    let t_fam = c.alias_type(inet, "ip-address-family")
+    let t_ip = c.alias_type(inet, "ip-address")
+    let t_sa = c.alias_type(inet, "ip-socket-address")
+    let _n = c.import_iface("wasi:sockets/instance-network${WASI_V}", ity_sock_instance(t_net))
+    let itcp = c.import_iface("wasi:sockets/tcp${WASI_V}", ity_sock_tcp(t_net, t_ec, t_sa, t_in, t_out, t_poll))
+    let t_sock = c.alias_type(itcp, "tcp-socket")
+    let _c = c.import_iface("wasi:sockets/tcp-create-socket${WASI_V}", ity_sock_create(t_fam, t_ec, t_sock))
+    let il = c.import_iface("wasi:sockets/ip-name-lookup${WASI_V}", ity_sock_lookup(t_poll, t_net, t_ec, t_ip))
+    let _r = c.alias_type(il, "resolve-address-stream")
+  }
   let client = wanted("wasi:http/outgoing-handler${WASI_V}")
   var trailers = false
   for m in all {

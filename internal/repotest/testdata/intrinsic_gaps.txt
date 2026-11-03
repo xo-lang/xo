@@ -255,3 +255,37 @@ wasm time_parse not supported on wasm yet (no program the wasm goldens build rea
 wasm time_parse_ok not supported on wasm yet (no program the wasm goldens build reaches it)
 wasm unwind_resume the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
 wasm unwind_save the native runtime's (stacks, scheduler, unwinder, native heap): the wasm runtime has its own
+arm64 wasi_sock_accept the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_close the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_connect the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_connected the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_deadline the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_err the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_lclose the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_listen the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_local the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_msg the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_next the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_read the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_resolve the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_resolve_end the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_set the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_status the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_write the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_accept the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_close the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_connect the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_connected the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_deadline the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_err the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_lclose the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_listen the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_local the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_msg the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_next the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_read the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_resolve the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_resolve_end the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_set the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_status the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_write the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
