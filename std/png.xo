@@ -2,7 +2,7 @@
 // rules are listed at the top of std/prelude.xo. Go's image/png, Decode,
 // DecodeConfig and Encode, over whole buffers: the image Go decodes to
 // for each color type and bit depth, and the bytes Go's encoder writes
-// (std/compress's zlib at the same level). One Image holds Go's seven
+// (std/compress at the same level). One Image holds Go's seven
 // concrete image types with their Pix layouts. Pure.
 
 /// The image types image/png decodes to and encodes, each with Go's pix
@@ -40,8 +40,8 @@ struct Config {
   model: Model
 }
 
-/// Go's png.CompressionLevel: Default (zlib's), None, Speed (zlib 1) or Best
-/// (zlib 9).
+/// Go's png.CompressionLevel: Default (std/compress's default level), None,
+/// Speed (compress level 1) or Best (level 9).
 enum Compression {
   Default
   None
