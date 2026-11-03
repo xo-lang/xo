@@ -1,5 +1,18 @@
 # std/otp changes
 
+## 2026-11-03: perf: hotp follows crypto's faster HMAC and SHA-1
+
+- Kind: perf
+- Commit: 075763993, c5643cda2
+- Found by: the std timing rows (std-twin-rows14: otp sha1 1.36 of Go) and XO_PROF on linux/arm64
+- Go reference: crypto/hmac New (the pads), crypto/sha1 checkSum
+- Test: internal/stdtest corpora otp, crypto and aead on arm64, LLVM and Go; bench/perf/otp twincheck
+- Timing: otp sha1 1.071 of Go's wall (was 1.36), 0.969 of its CPU (bench/results/std-twin-rows18-2026-11-03.md)
+- Shipped in: not yet released
+
+No change in std/otp itself: its codes come from crypto.hmac, whose pads
+and SHA-1 finish got faster (std/changes/crypto.md).
+
 ## 2026-11-03: feature: std/otp, HOTP and TOTP one time passwords
 
 - Kind: feature

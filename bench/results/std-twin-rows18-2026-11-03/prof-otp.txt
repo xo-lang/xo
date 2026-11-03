@@ -1,0 +1,55 @@
+offload: /work had 27 GB free; pruned xo cache files idle over 360 min, now 27G
+linux/arm64: /work/l2prof/prog
+sha1 14822195144507
+xo profile: 144 samples in /work/l2prof/out/p.xoraw (`xo prof /work/l2prof/out/p.xoraw` writes the pprof files and summaries)
+xo cpu profile: 144 samples (144ms) in 146ms of wall time at 1000 Hz
+
+top 30 by flat
+      flat  flat%   sum%        cum   cum%  line (the hottest)  function
+      41ms 28.47% 28.47%       41ms 28.47%  crypto.xo:184       crypto.padded_key
+      35ms 24.31% 52.78%       49ms 34.03%  sha1.xo:47          sha1.compress
+       7ms  4.86% 57.64%      132ms 91.67%  otp.xo:41           otp.hotp
+       5ms  3.47% 61.11%        5ms  3.47%  -                   drop Str
+       5ms  3.47% 64.58%        5ms  3.47%  alloc.xo:311        alloc.alloc
+       5ms  3.47% 68.06%       48ms 33.33%  sha1.xo:148         sha1.Hasher.sum
+       4ms  2.78% 70.83%        4ms  2.78%  alloc.xo:467        alloc.free
+       4ms  2.78% 73.61%        4ms  2.78%  obj.xo:345          obj.rl_free_n
+       4ms  2.78% 76.39%        4ms  2.78%  num.xo:75           num.append_int
+       2ms  1.39% 77.78%        2ms  1.39%  alloc.xo:412        alloc.alloc_fast
+       2ms  1.39% 79.17%        3ms  2.08%  obj.xo:1123         obj.move_at
+       2ms  1.39% 80.56%        2ms  1.39%  libcstr.xo:72       libcstr.copy_words
+       2ms  1.39% 81.94%        2ms  1.39%  obj.xo:757          obj.heap_word
+       2ms  1.39% 83.33%        2ms  1.39%  otp.xo:21           otp.pow10
+       2ms  1.39% 84.72%        2ms  1.39%  -                   inc thunk_x25
+       2ms  1.39% 86.11%        2ms  1.39%  -                   inc thunk_x2
+       2ms  1.39% 87.50%        2ms  1.39%  rc.xo:65            rc.dec
+       2ms  1.39% 88.89%        5ms  3.47%  obj.xo:1244         obj.rs_append_bytes
+       2ms  1.39% 90.28%       20ms 13.89%  sha1.xo:118         sha1.Hasher.write
+       2ms  1.39% 91.67%       26ms 18.06%  crypto.xo:137       crypto.absorb
+       1ms  0.69% 92.36%        1ms  0.69%  libcstr.xo:171      libcstr.memmove
+       1ms  0.69% 93.06%        1ms  0.69%  obj.xo:1052         obj.reserve
+       1ms  0.69% 93.75%        1ms  0.69%  obj.xo:284          obj.rl_new_n
+       1ms  0.69% 94.44%        1ms  0.69%  obj.xo:276          obj.min_cap
+       1ms  0.69% 95.14%       12ms  8.33%  obj.xo:810          obj.rl_copy
+       1ms  0.69% 95.83%        1ms  0.69%  -                   drop List[Int]
+       1ms  0.69% 96.53%        1ms  0.69%  -                   inc thunk_x21
+       1ms  0.69% 97.22%        1ms  0.69%  -                   inc thunk_x1
+       1ms  0.69% 97.92%        1ms  0.69%  obj.xo:124          obj.halloc
+       1ms  0.69% 98.61%        3ms  2.08%  obj.xo:1003         obj.rs_new_n
+
+top 30 by cumulative
+      flat  flat%   sum%        cum   cum%  line (the hottest)  function
+       0ms  0.00%  0.00%      136ms 94.44%  main.xo:14          main
+       0ms  0.00%  0.00%      135ms 93.75%  sched.xo:267        sched.fiber_main
+       0ms  0.00%  0.00%      135ms 93.75%  -                   xo_fiber_entry
+       0ms  0.00%  0.00%      135ms 93.75%  -                   main
+       0ms  0.00%  0.00%      135ms 93.75%  entry.xo:222        entry.main_on_fiber
+       0ms  0.00%  0.00%      135ms 93.75%  cabi.xo:732         cabi.fiber_main
+       7ms  4.86%  4.86%      132ms 91.67%  otp.xo:41           otp.hotp
+       0ms  0.00%  4.86%      119ms 82.64%  crypto.xo:213       crypto.hmac
+       0ms  0.00%  4.86%       60ms 41.67%  crypto.xo:201       crypto.Hasher.sum
+       0ms  0.00%  4.86%       50ms 34.72%  crypto.xo:164       crypto.finish
+      35ms 24.31% 29.17%       49ms 34.03%  sha1.xo:47          sha1.compress
+       0ms  0.00% 29.17%       48ms 33.33%  crypto.xo:192       crypto.hmac_hasher
+       5ms  3.47% 32.64%       48ms 33.33%  sha1.xo:148         sha1.Hasher.sum
+OFFLOAD-RC=0

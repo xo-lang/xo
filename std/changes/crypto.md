@@ -1,5 +1,20 @@
 # std/crypto changes
 
+## 2026-11-03: perf: HMAC pads a key a word at a time; SHA-1 finishes with one append
+
+- Kind: perf
+- Commit: 075763993, c5643cda2
+- Found by: the std timing rows (std-twin-rows14: otp sha1 1.36 of Go) and XO_PROF on linux/arm64
+- Go reference: crypto/hmac New (the pads), crypto/sha1 checkSum
+- Test: internal/stdtest corpora otp, crypto and aead on arm64, LLVM and Go; bench/perf/otp twincheck
+- Timing: otp sha1 1.071 of Go's wall (was 1.36), 0.969 of its CPU (bench/results/std-twin-rows18-2026-11-03.md)
+- Shipped in: not yet released
+
+HMAC built each 64 to 136 byte padded key a checked byte at a time, twice
+per MAC; it now starts from the pad constant and XORs the key in 8 bytes
+at a time. A SHA-1 digest pads with one append of zeros and writes its
+five words with one call.
+
 ## 2026-11-03: perf: SHA-1 with the CPU's SHA-1 instructions (arm64 SHA1C and the rest, x86-64 SHA-NI)
 
 - Kind: perf

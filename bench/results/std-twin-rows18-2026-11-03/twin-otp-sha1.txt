@@ -1,0 +1,10 @@
+offload: /work had 28 GB free; pruned xo cache files idle over 360 min, now 28G
+linux/arm64: /work/l2twin/xoprog
+build env: none
+go go1.26.1; host Linux 7.0.14-linuxkit aarch64; rev c5643cda2
+== sha1: sha1 14822195144507 | sha1 14822195144507
+wall_ms               91.48       97.96       4.4% 1.469%       1.071   1.035 to 1.088    worse (n=15)
+cpu_ms                101.1       97.96       4.633% 1.487%     0.969   0.939 to 0.989    better (n=15)
+max_rss_kb            10552       1216        3.052% 0.329%     0.115   0.112 to 0.116    better (n=15)
+twin: ok
+OFFLOAD-RC=0
