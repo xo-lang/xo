@@ -301,6 +301,14 @@ indexed by byte; a struct of handles is copied into every spawn
 (XO0534, 44 and 58 heap fields) with no way to share it; no
 `List.filter_map` and no deque; `backoff.retry` has no notify hook (Go's
 RetryNotify) and its `retryable` must be pure; no 128 bit integer.
+Status 2026-11-03: the std level ones are done (`List.filter_map`
+5f339ffc8, std/deque e71fc47f2, `backoff.retry_notify` with effectful
+`retryable` and `notify` e44acf4a8, `UInt64.from_bits` b77c120c5, all
+2026-10-30) except an append and consume buffer for non Stream sources,
+decision 0480 (Proposed; std/bufio covers a Stream, Bytes slices are
+views). Open for the language owner: explicit enum variant numbers, a
+`Str` byte index, a 128 bit integer, and sharing a struct of handles
+across spawns (XO0534).
 
 Found wrong or missing in the spec: std 2.4 shows no way to write an
 empty `Set` (no `Set.new`, no literal; `[].to_set()` works); std 33
