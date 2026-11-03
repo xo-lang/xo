@@ -47,3 +47,12 @@ The 0..255 clamp of each IDCT output is done with shifts and masks instead of tw
 - Test: testdata/corpus/jpeg, testdata/corpus/jpegfuzz (unchanged output), bench/perf/jpeg
 
 `to_rgba`'s channel clamps and the sign extension of `receive_extend` use shifts and masks instead of branches. bench/perf/jpeg decode 1.14 to 1.03, with `to_rgba` 1.19 to 1.07.
+
+## 2026-11-03: perf: to_rgba chroma index by shifts
+
+- Kind: perf
+- Commit: this commit
+- Found by: host profile of the rgba workload (image_to_rgba 15% flat)
+- Test: testdata/corpus/jpeg, testdata/corpus/jpegfuzz (unchanged output), bench/perf/jpeg
+
+`to_rgba` takes the chroma row and column of each pixel with shifts (the ratios are 1, 2 or 4) instead of two divisions. bench/perf/jpeg: decode 1.01, with `to_rgba` 1.07 to 1.04 of Go's wall; the module meets decision 0461's 1.05 on both workloads.
