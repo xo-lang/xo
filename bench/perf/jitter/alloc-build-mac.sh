@@ -18,7 +18,9 @@ for sp in "${specs[@]}"; do revs+=("${sp%%+*}"); e=""; [ "$sp" != "${sp#*+}" ] &
 for k in "${!revs[@]}"; do git -C "$top" worktree add -q --detach "$W/w$k" "${revs[$k]}" || exit 2; done
 B=$W/bin; mkdir -p "$B"
 J=$W/w$((${#revs[@]} - 1))/bench/perf/jitter
-( cd "$J/loadgen" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$B/loadgen" . ) || exit 1
+# the load generator of the last spec, else this checkout's (a sweep whose last revision predates it)
+L=$J/loadgen; [ -d "$L" ] || L=$top/bench/perf/jitter/loadgen
+( cd "$L" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$B/loadgen" . ) || exit 1
 "$seed" build --targets=linux/arm64 -o "$B/srv-base" "$J/xo" > "$W/xobuild-base.txt" 2>&1 || { tail -5 "$W/xobuild-base.txt"; exit 1; }
 : > "$B/revs.txt"
 echo "base $("$seed" version | sed "s/ darwin.*//") (cross-built on the Mac)" >> "$B/revs.txt"
