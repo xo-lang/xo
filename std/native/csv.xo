@@ -42,11 +42,42 @@ struct Rd {
   b: Bytes
   at: Int = 0
   num_line: Int = 0
+  /// the file a Reader pulls more text from (None: b is all of it)
+  f: File? = None
+  /// the file has no more text, or failed (io_err says which)
+  f_done: Bool = false
+  io_err: Str = ""
+}
+
+/// Reads the next chunk of the file into the buffer, dropping the lines
+/// already read; the file's end or failure marks it done.
+fn fill(var r: Rd) uses fs.read {
+  let f = match r.f {
+    Some(x) => x
+    None => {
+      r.f_done = true
+      return
+    }
+  }
+  match f.read(65536) {
+    Ok(Some(chunk)) => {
+      r.b = r.b[r.at..] + chunk
+      r.at = 0
+    }
+    Ok(None) => r.f_done = true
+    Err(e) => {
+      r.io_err = e.display()
+      r.f_done = true
+    }
+  }
 }
 
 /// The next line, and whether the text had nothing left (io.EOF).
-fn (var r: Rd) read_line() -> (Bytes, Bool) {
+fn (var r: Rd) read_line() -> (Bytes, Bool) uses fs.read {
   r.num_line += 1
+  while !r.f_done && scan.find_byte(r.b, r.at, r.b.len(), 10) < 0 {
+    fill(r)
+  }
   if r.at >= r.b.len() {
     return (b"", true)
   }
@@ -105,7 +136,7 @@ struct Opts {
 
 /// reader.go readRecord: the next record and the line it starts on (None
 /// at the end), or the error.
-fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr {
+fn read_record(var r: Rd, o: Opts) -> (List[Str], Int)? ! csv.CsvErr uses fs.read {
   var line = b""
   var eof = false
   while !eof {
@@ -228,7 +259,7 @@ fn check_delims(sep: Rune, comment: Rune, at: rt.Loc) {
 }
 
 /// csv.Reader.ReadAll with FieldsPerRecord fields.
-fn read_all(text: Str, o: Opts, fields0: Int) -> List[List[Str]] ! csv.CsvErr {
+fn read_all(text: Str, o: Opts, fields0: Int) -> List[List[Str]] ! csv.CsvErr uses fs.read {
   var r = Rd{b: text.bytes()}
   var fields = fields0
   var out: List[List[Str]] = []
@@ -248,6 +279,40 @@ fn read_all(text: Str, o: Opts, fields0: Int) -> List[List[Str]] ! csv.CsvErr {
     out.push(rec)
   }
   Ok(out)
+}
+
+/// csv.Reader over a File: a line buffer, the options, and FieldsPerRecord
+/// (set by the first record when 0).
+struct Reader {
+  rd: Rd
+  o: Opts
+  fields: Int
+}
+
+fn reader(f: File, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1, lazy_quotes: Bool = false, trim_leading_space: Bool = false, at: rt.Loc) -> Reader {
+  check_delims(sep, comment, at)
+  Reader{rd: Rd{b: b"", f: Some(f)}, o: Opts{sep: sep, comment: comment, lazy: lazy_quotes, trim: trim_leading_space}, fields: fields}
+}
+
+/// Reader.Read: the next record, None at the end of the file; a failure
+/// of the file is a CsvErr with line 0 and the file's error as its text.
+fn (var r: Reader) read() -> List[Str]? ! csv.CsvErr uses fs.read {
+  let got = read_record(r.rd, r.o)
+  if r.rd.io_err != "" {
+    return Err(csv.CsvErr{start_line: 0, line: 0, column: 0, msg: r.rd.io_err})
+  }
+  let (rec, rec_line) = match got? {
+    Some(x) => x
+    None => return Ok(None)
+  }
+  if r.fields > 0 {
+    if rec.len() != r.fields {
+      return Err(csv.CsvErr{start_line: rec_line, line: rec_line, column: 1, msg: ERR_FIELD_COUNT})
+    }
+  } else if r.fields == 0 {
+    r.fields = rec.len()
+  }
+  Ok(Some(rec))
 }
 
 fn parse(text: Str, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1, lazy_quotes: Bool = false, trim_leading_space: Bool = false, at: rt.Loc) -> List[List[Str]] ! csv.CsvErr {

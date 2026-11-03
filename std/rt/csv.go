@@ -126,3 +126,67 @@ func Csv_format(_ *Task, rows List[List[string]], sep Rune, crlf bool) string {
 	}
 	return b.String()
 }
+
+// fileSrc is a File as an io.Reader: each Read is File.read, and the
+// file's failure is kept for the CsvErr.
+type fileSrc struct {
+	f   File
+	tk  *Task
+	err *FsErr
+}
+
+func (s *fileSrc) Read(p []byte) (int, error) {
+	r := s.f.M_read(s.tk, int64(len(p)))
+	if !r.Ok {
+		e := r.E
+		s.err = &e
+		return 0, errors.New("file")
+	}
+	if !r.V.Some {
+		return 0, io.EOF
+	}
+	return copy(p, r.V.V), nil
+}
+
+// Csv_Reader is `csv.Reader`: Go's csv.Reader over a File.
+type Csv_Reader struct {
+	r   *csv.Reader
+	src *fileSrc
+}
+
+func (Csv_Reader) XoDebug(b *strings.Builder) { b.WriteString("<csv.reader>") }
+func (x Csv_Reader) M_debug(*Task) string     { return Debug(x) }
+
+// Csv_reader is `csv.reader(f, sep, comment, fields, lazy_quotes,
+// trim_leading_space)`.
+func Csv_reader(tk *Task, f File, sep Rune, comment Rune, fields int64, lazy bool, trim bool) Csv_Reader {
+	csvCheckDelims(rune(sep), rune(comment))
+	src := &fileSrc{f: f, tk: tk}
+	r := csv.NewReader(src)
+	r.Comma = rune(sep)
+	r.Comment = rune(comment)
+	r.FieldsPerRecord = int(fields)
+	r.LazyQuotes = lazy
+	r.TrimLeadingSpace = trim
+	return Csv_Reader{r: r, src: src}
+}
+
+// M_read is `Reader.read()`.
+func (x *Csv_Reader) M_read(tk *Task) Result[Option[List[string]], Csv_CsvErr] {
+	x.src.tk = tk
+	rec, err := x.r.Read()
+	if err == io.EOF {
+		return Ok[Option[List[string]], Csv_CsvErr](Option[List[string]]{})
+	}
+	if err != nil {
+		if x.src.err != nil {
+			return Err[Option[List[string]]](Csv_CsvErr{F_msg: x.src.err.M_display(tk)})
+		}
+		var pe *csv.ParseError
+		if errors.As(err, &pe) {
+			return Err[Option[List[string]]](Csv_CsvErr{F_start_line: int64(pe.StartLine), F_line: int64(pe.Line), F_column: int64(pe.Column), F_msg: pe.Err.Error()})
+		}
+		return Err[Option[List[string]]](Csv_CsvErr{F_msg: err.Error()})
+	}
+	return Ok[Option[List[string]], Csv_CsvErr](Some(ListOf(rec...)))
+}

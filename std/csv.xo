@@ -26,6 +26,17 @@ fn (e: CsvErr) display() -> Str
 /// default here; 0 the first record's; N exactly N), `lazy_quotes`
 /// and `trim_leading_space` are LazyQuotes and TrimLeadingSpace.
 fn parse(text: Str, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1, lazy_quotes: Bool = false, trim_leading_space: Bool = false) -> List[List[Str]] ! CsvErr
+/// Records read one at a time from an open file (Go's csv.NewReader(file),
+/// Read), the options as `parse`'s: the file is read as the records are
+/// asked for, so a file larger than memory can be walked. A quoted field
+/// may hold line breaks.
+struct Reader {}
+
+fn reader(f: File, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1, lazy_quotes: Bool = false, trim_leading_space: Bool = false) -> Reader
+/// The next record, None at the end of the file. A parse error is as
+/// `parse`'s; a failure of the file is a CsvErr with `line` 0 and the
+/// file's error text as `msg`.
+fn (var r: Reader) read() -> List[Str]? ! CsvErr uses fs.read
 /// The records after the first, each a map from the first record's
 /// fields (the header) to its own; every record must have the header's
 /// number of fields (`wrong number of fields`).

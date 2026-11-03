@@ -1,5 +1,16 @@
 # std/csv changes
 
+## 2026-11-03: feature: csv.reader, records read from a File one at a time
+
+- Kind: feature
+- Commit: this commit
+- Found by: the 2026-10-30 backend survey (std-coverage.md rank 3: a CSV import job over a file larger than memory)
+- Go reference: encoding/csv NewReader(io.Reader) and Reader.Read (reader.go) of go1.26.1
+- Test: corpus csv, Go's reader_test.go cases read through a file, and a 4,000 row file past the read chunk with quoted line breaks across chunks, on arm64, LLVM and the Go backend
+- Timing: see bench/results/std-twin-rows9-2026-11-03.md
+
+`csv.reader(file, ...)` and `Reader.read()` (spec/std.md 16): the options of `parse`, the same records and errors, the file read in 64 KiB chunks.
+
 ## 2026-10-23: feature: valid_sep and valid_comment check a delimiter before it faults
 
 - Kind: feature

@@ -6682,6 +6682,37 @@ fn read_of(text: Str, sep: Rune, comment: Rune, fields: Int, lazy: Bool, trim: B
   }
 }
 
+/// The records of text read one at a time through a csv.reader over a file
+/// of it, as read_of shows them.
+fn reader_of(fs: Fs, text: Str, sep: Rune, comment: Rune, fields: Int, lazy: Bool, trim: Bool) -> Str uses fs.read, fs.write {
+  match fs.write("reader_cases.csv", text.bytes()) {
+    Ok(_) => {}
+    Err(e) => return "write ${e.display()}"
+  }
+  let f = match fs.open("reader_cases.csv") {
+    Ok(x) => x
+    Err(e) => return "open ${e.display()}"
+  }
+  var r = csv.reader(f, sep: sep, comment: comment, fields: fields, lazy_quotes: lazy, trim_leading_space: trim)
+  var recs: List[List[Str]] = []
+  var out = ""
+  while true {
+    match r.read() {
+      Ok(Some(rec)) => recs.push(rec)
+      Ok(None) => break
+      Err(e) => {
+        out = "err ${e.display()}"
+        break
+      }
+    }
+  }
+  f.close().ignore_err("a read only handle")
+  if out != "" {
+    return out
+  }
+  recs_of(recs)
+}
+
 fn first_read(bad: List[(Str, Rune, Rune, Int, Bool, Bool, Str, Str)]) -> List[(Str, Rune, Rune, Int, Bool, Bool, Str, Str)] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
 }
@@ -6707,6 +6738,31 @@ test "parse is Go's csv.Reader: quoting, embedded newlines, lazy quotes, field c
     }
   }
   expect(first_read(bad)) == []
+}
+
+test "reader reads Go's csv.Reader cases from a file one record at a time" {
+  var bad: List[(Str, Rune, Rune, Int, Bool, Bool, Str, Str)] = []
+  for (text, sep, comment, fields, lazy, trim, want) in READ_CASES {
+    let got = reader_of(os.fs, text, sep, comment, fields, lazy, trim)
+    if got != want {
+      bad.push((text, sep, comment, fields, lazy, trim, got, want))
+    }
+  }
+  expect(first_read(bad)) == []
+}
+
+test "reader over a file larger than its read chunk, with quoted line breaks across chunks" {
+  var text = ""
+  var n = 0
+  while n < 4000 {
+    text = text + "row${n},\"two\nlines ${n}\",\"q\"\"${n}\"\r\n"
+    n += 1
+  }
+  expect(text.len() > 131072) == true
+  expect(reader_of(os.fs, text, ',', '\0', 3, false, false)) == read_of(text, ',', '\0', 3, false, false)
+  // an error deep in the file keeps the line and column of the whole text
+  let bad = text + "x,\"unterminated\n"
+  expect(reader_of(os.fs, bad, ',', '\0', -1, false, false)) == read_of(bad, ',', '\0', -1, false, false)
 }
 
 test "parse on a view of a longer text" {

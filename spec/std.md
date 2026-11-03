@@ -3964,9 +3964,19 @@ pub fn parse_maps(text: Str, sep: Rune = ',', comment: Rune = '\0', lazy_quotes:
                   trim_leading_space: Bool = false) -> List[Map[Str, Str]] ! CsvErr
 pub fn format(rows: List[List[Str]], sep: Rune = ',', crlf: Bool = false) -> Str
 pub fn valid_sep(r: Rune) -> Bool           // a usable `sep`: Go's validDelim
+struct Reader {}                            // records read from a File as they are asked for
+pub fn reader(f: File, sep: Rune = ',', comment: Rune = '\0', fields: Int = -1,
+              lazy_quotes: Bool = false, trim_leading_space: Bool = false) -> Reader
+pub fn (var r: Reader) read() -> List[Str]? ! CsvErr uses fs.read   // None at the end of the file
 pub fn valid_comment(r: Rune) -> Bool       // a usable `comment`, `'\0'` (none) included
 ```
 
+- `csv.reader(file)` is Go's csv.NewReader(file) and `read()` its Read:
+  the file is read in 64 KiB chunks as records are asked for (so a file
+  larger than memory can be walked), a quoted field may hold line breaks,
+  and records, errors and their line and column are `parse`'s on the same
+  text. A failure of the file is a CsvErr with `line` 0 and the file's
+  error text as `msg`. The options are `parse`'s.
 - Go's csv.Reader: `sep` is Comma, `comment` Comment (`'\0'` for none:
   lines starting with it are skipped), `fields` FieldsPerRecord (-1 any
   number, the default here where Go's is 0; 0 the first record's; N
