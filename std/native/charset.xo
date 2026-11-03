@@ -167,12 +167,8 @@ fn decode(data: Bytes, cs: charset.Charset, lossy: Bool = false) -> Str ! charse
       while i < n {
         let b = data[i]
         if b < 0x80 {
-          var j = i + 1
-          while j < n && data[j] < 0x80 {
-            j += 1
-          }
-          out.write(data[i..j])
-          i = j
+          out.write_byte(b)
+          i += 1
           continue
         }
         i += 1
@@ -188,12 +184,8 @@ fn decode(data: Bytes, cs: charset.Charset, lossy: Bool = false) -> Str ! charse
       while i < n {
         let b = data[i]
         if b < 0x80 {
-          var j = i + 1
-          while j < n && data[j] < 0x80 {
-            j += 1
-          }
-          out.write(data[i..j])
-          i = j
+          out.write_byte(b)
+          i += 1
           continue
         }
         i += 1
