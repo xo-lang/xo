@@ -1124,6 +1124,12 @@ fn zone_name_len(s: Bytes, at: Int) -> Int {
     return k
   }
   if s[at] == '+' || s[at] == '-' {
+    // time.parseSignedOffset: a zone named by a signed hour of at most
+    // 23 (`-07`), which, being no zone time knows, has offset zero
+    let (x, n) = digits(s, at + 1, 1, 20)
+    if n > 0 && x <= 23 {
+      return 1 + n
+    }
     return 0
   }
   var upper = 0

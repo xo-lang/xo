@@ -1,5 +1,20 @@
 # std/mail changes
 
+## 2026-11-02: fix: parse_date reads a zone named by a signed hour (`-07`) as Go does
+
+- Kind: fix
+- Commit: this commit
+- Found by: the mail fuzz harness (internal/stdtest/mailfuzz_test.go, addresses, address lists, messages and dates against Go's net/mail)
+- Go reference: time/format.go parseTimeZone and parseSignedOffset (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/mailfuzz (2,000 cases, the `+3`, `-23` and `-24` zones among them) on arm64, LLVM and the Go backend; TestMailFuzz seeds 2 to 6; the mail corpus and module tests
+- Timing: none (one more branch for a zone that starts with a sign)
+- Shipped in: v0.24.0 (100730e63, zone_name_len) through v0.36.0
+
+`Mon, 02 Jan 2006 15:04:05 -07` was `mail: header could not be parsed`;
+Go's time.Parse takes a sign and an hour of at most 23 as a zone name
+with no offset it knows, so the date is read at offset zero, as `EST` or
+any other name is on a machine whose local zone does not define it.
+
 ## 2026-10-28: perf: parse_date's layout lists are constants
 
 - Kind: perf
