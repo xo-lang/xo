@@ -227,7 +227,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | runtime, runtime/debug, runtime/metrics, runtime/pprof, runtime/trace, runtime/race, runtime/coverage, runtime/cgo | not planned | The runtime is Xo's own; profiling (0238), tracing (0240), race (0273) are toolchain features. |
 | plugin | not planned | Static binaries only. |
 | reflect, unsafe | not planned | No reflection; derive replaces it. |
-| image, image/* | not planned | Image work is not std's backend scope; a module can port it. |
+| image, image/* | image/png in progress (decision 0466), jpeg next; the rest not planned | Roadmap priority 1 (Lead, 2026-11-03); image, image/color, image/draw, image/gif stay a module's job. |
 
 ## Outside Go's standard library
 
