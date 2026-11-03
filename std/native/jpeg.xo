@@ -147,6 +147,7 @@ struct Dec {
   hmin: List[Int] = []
   hmax: List[Int] = []
   hidx: List[Int] = []
+  /// The quantization tables in natural (row major) order.
   quant: List[Int] = []
   made: Bool = false
   ystride: Int = 0
@@ -508,7 +509,7 @@ fn process_dqt(var d: Dec, n0: Int) -> () ! jpeg.JpegErr {
           return Err(jpeg.JpegErr.Truncated)
         }
         for i in 0..64 {
-          d.quant[tq * 64 + i] = byte_at(d, at + i)
+          d.quant[tq * 64 + UNZIG[i]] = byte_at(d, at + i)
         }
       }
     } else if pq == 1 {
@@ -521,7 +522,7 @@ fn process_dqt(var d: Dec, n0: Int) -> () ! jpeg.JpegErr {
           return Err(jpeg.JpegErr.Truncated)
         }
         for i in 0..64 {
-          d.quant[tq * 64 + i] = (byte_at(d, at + 2 * i) << 8) | byte_at(d, at + 2 * i + 1)
+          d.quant[tq * 64 + UNZIG[i]] = (byte_at(d, at + 2 * i) << 8) | byte_at(d, at + 2 * i + 1)
         }
       }
     } else {
@@ -699,9 +700,8 @@ fn make_img(var d: Dec, mxx: Int, myy: Int) {
 /// reconstructBlock).
 fn reconstruct_block(var d: Dec, var b: List[Int], bx: Int, by: Int, ci: Int) {
   let qo = d.ctq[ci] * 64
-  for zig in 0..64 {
-    let u = UNZIG[zig]
-    b[u] = w32(b[u] * d.quant[qo + zig])
+  for k in 0..64 {
+    b[k] = w32(b[k] * d.quant[qo + k])
   }
   idct_rows(b)
   idct_cols(b)
