@@ -1036,3 +1036,21 @@ that no relocation names. elf_store_prepare now leaves them out as it reads each
 build's max RSS 3.5%). Outputs byte-identical (coll, conc-spawn, the HTTP server, first and second
 builds); first build max RSS 188.5 to 183.4, 119.7 to 115.1 and 212.6 to 202.3 MB (one run each);
 edit builds within noise (coll RSS 1.000, HTTP 1.023, wall 1.016 and 1.014, ab-host, 3 rounds).
+
+## A first build: the identity hash and std's sum (xo-lang-2, 2026-11-03)
+
+A build with a new xo, or the first after std changes, has no std record and no memo of xo's own
+identity. On darwin coll's first such build peaked at 140 MB of heap for 61 MB in use (max RSS 170
+MB against 108 for the next build), and its ssa phase took 574 ms against 12:
+- self_id read the whole executable (79 MB) to hash it when its memo was missing: 75 MB of the
+  peak at once. It now reads a megabyte at a time (the id is unchanged: it matches shasum).
+- fe_keys keyed every std body whose tree was loaded, and std_tree_sum parsed every std file its
+  memo lacked for their key, though under separate compilation std's bodies come from its store
+  (with the record their trees are not loaded, so none was keyed). Neither is done now under
+  separate compilation (ssa.fe_std_keyed).
+Darwin coll first build: max RSS 170 to 111 MB, ssa 574 to 74 ms. Linux/arm64 (one run each, the
+first program in a fresh cache): 188 to 161 MB; outputs byte-identical (coll, conc-spawn, HTTP,
+first and second builds).
+What is left of a first build once std's record and xo's memo exist (linux/arm64, conc-spawn
+after coll warmed the cache): heap peak 67 MB against 52 for the next build, all of it
+link.half_save (15.5 ms, the ELF half written for a new link key, decision 0400).
