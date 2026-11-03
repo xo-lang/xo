@@ -1,5 +1,17 @@
 # std/mime changes
 
+## 2026-11-03: perf: format_media_type writes a lower case token as it is
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/mime format 1.31 of Go's wall on host 1 (bench/results/std-twin-rows-2026-11-03.md)
+- Go reference: mime mediatype.go FormatMediaType, strings.ToLower (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/mime and mimefuzz (go, arm64, LLVM), TestMimeFuzz
+
+The type, subtype and attribute names are written as they are when they have no upper case letter (they are
+tokens, so ASCII), where `to_lower()` copied them. Xo / Go wall of format: 1.313 to 1.284 (quiet `xo bench
+--ab`, host 1, 15 rounds).
+
 ## 2026-10-28: perf: format_media_type escapes a quoted value in one pass
 
 - Kind: perf

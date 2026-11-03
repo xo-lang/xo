@@ -65,3 +65,19 @@ bench/perf/xmlcodec (twin.go.txt: encoding/xml Marshal and Unmarshal), main at 9
 
 Encode is 0.57 of Go's wall and decode 1.13, so xmlcodec is Solid on performance (its page row cited
 xml-parse-2026-10-22.md, a std/xml parse figure).
+
+## Tightening the two slowest (same host and method, later the same day)
+
+archive zip, Xo / Go wall: 1.352 first run; 1.229 after `flate.new_stream` stopped building the unused tables
+of the other levels; 1.203 (interval 1.196 to 1.208) with one flate Stream reset between files (Go's zip pools
+its Writers). An XO_PROF=cpu profile of 3,000 passes after both: Deflater.deflate 42% flat, libcstr.memset 19%
+(the hash tables zeroed per file, as Go's compressor.reset does), hash4 7%, bit_counts 7%, insert_hash 5%:
+what is left is the match search, which gzip (0.96 of Go's wall) already runs at Go's speed on 32 KB buffers;
+for 1 to 4 KB files the per-stream setup is a larger share on both sides.
+
+mime format: 1.313 first run; 1.284 (interval 1.265 to 1.304) with lower-case tokens written as they are
+(strings.ToLower's no-change path). The profile (6,000,000 passes) is flat: obj_rl_share 9%, StrBuilder
+rs_append 8%, list_sort_str 12% (the sorted key list), format_media_type itself 8%, write_lower 10%; no single
+cost to port from Go. Left at 1.28.
+
+mime and archive stay Solid on performance (within 2x, not at or better than Go's).
