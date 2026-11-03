@@ -9,6 +9,8 @@
 // (rt.wasi_sock_set), which the SSA's net_result reads, and returns a
 // handle that is not open (the immortal empty string's object).
 use native/llrt/dns
+use native/llrt/raw
+use native/llrt/sysio
 use native/llrt/netpolicy
 use native/llrt/tlsname
 use native/rt
@@ -396,3 +398,51 @@ pub fn conn_close(c: Conn) { rt.wasi_sock_close(c) }
 /// A connection deadline (netconn.set_deadline): which 1 read, 2 write, 3
 /// both; d ns from now when set.
 pub fn set_deadline(c: Conn, which: Int, set: Bool, d: Int) { rt.wasi_sock_deadline(c, which, set, d) }
+
+// ---------------------------------------------------------------------------
+// The HTTP server's connection I/O on wasm (hconn.xo's arms, decision 0447
+// R2a): cn is the connection record's ServerConn (R1's connection object),
+// p a runtime buffer, deadline monotonic ns (sysio.mono_ns, 0 none).
+
+/// A relative deadline from now for rt.wasi_sock_deadline (1 ns when it
+/// already passed, so the wait ends at once).
+fn left_of(deadline: Int) -> Int {
+  let left = deadline - sysio.mono_ns()
+  if left > 0 { left } else { 1 }
+}
+
+/// At most cap bytes into p (hconn.recv_raw): the count, 0 at the end of
+/// the stream, -2 when the deadline passed first, -1 on an error or a
+/// canceled task.
+pub fn hc_recv(cn: Int, p: Int, cap: Int, deadline: Int) -> Int {
+  let c = rt.obj_at[Conn](cn)
+  if deadline != 0 {
+    rt.wasi_sock_deadline(c, 1, true, left_of(deadline))
+  }
+  let b = rt.wasi_sock_read(c, if cap > 1048576 { 1048576 } else { cap })
+  let e = rt.wasi_sock_err()
+  if deadline != 0 {
+    rt.wasi_sock_deadline(c, 1, false, 0)
+  }
+  if e == 0 {
+    rt.mem_copy(p, raw.bytes_addr(b), b.len())
+    return b.len()
+  }
+  if e == E_END { 0 } else if e == E_DEADLINE { -2 } else { -1 }
+}
+
+/// The n bytes at p sent (hconn.send_until): 0 when every byte went, -2
+/// when the deadline passed first, -1 when the connection broke or the
+/// task was canceled.
+pub fn hc_send(cn: Int, p: Int, n: Int, deadline: Int) -> Int {
+  let c = rt.obj_at[Conn](cn)
+  if deadline != 0 {
+    rt.wasi_sock_deadline(c, 2, true, left_of(deadline))
+  }
+  rt.wasi_sock_write(c, raw.str_at(p, n).bytes())
+  let e = rt.wasi_sock_err()
+  if deadline != 0 {
+    rt.wasi_sock_deadline(c, 2, false, 0)
+  }
+  if e == 0 { 0 } else if e == E_DEADLINE { -2 } else { -1 }
+}

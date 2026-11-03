@@ -337,6 +337,24 @@ fn wasi_http_resp_body() -> Bytes
 fn wasi_sock_err() -> Int
 /// The outcome rt.net_status and rt.net_msg give (NetErr's status, 0 ok).
 fn wasi_sock_set(status: Int, msg: Str)
+/// wasm only (decision 0447 R2a): rc.inc, rc.dec and tasks.h_release on
+/// a wasm object, whose count is 4 bytes at 0 and its free entry's table
+/// index 4 bytes at 4 (a native object's count is 8 bytes, which llrt's rc
+/// stores would write over the free entry with)
+fn wasi_rc_inc(p: Int)
+fn wasi_rc_dec(p: Int) -> Int
+fn wasi_h_release(p: Int)
+/// wasm only (decision 0447 R2a): the monotonic clock in nanoseconds
+/// (the task runtime's $mono, WASI's monotonic clock), sysio.mono_ns's
+/// wasm arm
+fn wasi_mono_ns() -> Int
+/// wasm only (decision 0447 R2a): the table index of the C ABI export
+/// function NAME (a string literal), a runtime record's free hook.
+fn wasi_hook(name: Str) -> Int
+/// wasm only: a zeroed runtime record of n bytes with one reference, as
+/// tasks.new_handle's, whose last release calls hook (wasi_hook) with its
+/// address.
+fn wasi_handle_new(n: Int, hook: Int) -> Int
 fn wasi_sock_status() -> Int
 fn wasi_sock_msg() -> Str
 fn wasi_sock_listen(v6: Bool, ip: Bytes, port: Int) -> Listener

@@ -29,7 +29,7 @@
 
 /// The runtime calls of rt9.xo (the operands' leaves, like rt3.xo's).
 fn rt9_direct(name: Str) -> Bool {
-  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
+  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end" | "wasi_handle_new"
 }
 
 /// The calls of rt9.xo that can suspend the task.
@@ -102,6 +102,8 @@ fn rt9_text(var g: Gen) -> Str {
   let dead = g.str_obj(b"")
   let conn_free = g.table_index("$sk_conn_free")
   let lis_free = g.table_index("$sk_lis_free")
+  let hfree = g.table_index("$hfree_any")
+  let hooksig = g.sig(["i64"], [])
   """
     ;; the outcome of the last network operation (netwasi.xo's): a NetErr
     ;; status (0 none) and its message
@@ -577,11 +579,43 @@ fn rt9_text(var g: Gen) -> Str {
       local.get $r
       i32.load offset=4)
 
+    ;; rt.wasi_handle_new (decision 0447 R2a): a zeroed runtime record of n
+    ;; bytes with one reference, as tasks.new_handle's (the caller takes its
+    ;; own with rt.obj_at and drops this one), its fields at the native
+    ;; offsets (16 on);
+    ;; word 8, the native free hook's place, holds hook (rt.wasi_hook), which
+    ;; $hfree_any calls with the record's address at its last release
+    (func $wasi_handle_new (param $n i64) (param $hook i64) (result i64) (local $p i32)
+      local.get $n
+      i32.wrap_i64
+      i32.const ${hfree}
+      call $obj_new
+      local.tee $p
+      local.get $hook
+      i64.store offset=8
+      local.get $p
+      i64.extend_i32_u)
+
+    (func $hfree_any (param $p i32)
+      local.get $p
+      i64.extend_i32_u
+      local.get $p
+      i64.load offset=8
+      i32.wrap_i64
+      call_indirect (type ${hooksig})
+      local.get $p
+      call $free)
+
+    ;; a listener never closed: a canceled accept's pollable (a child of
+    ;; the socket, still in the wait list) goes first, or the drop traps
+    ;; "resource has children"
     (func $sk_lis_free (param $l i32)
       local.get $l
       i32.load offset=12
       i32.eqz
       if
+        local.get $l
+        call $sk_unwait
         local.get $l
         i32.load offset=8
         call $sk_drop

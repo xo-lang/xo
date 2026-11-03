@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-11-03: feature: http.Server in a wasip2/wasm command
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0447 R2a (lead-approved 2026-11-03)
+- Go reference: none
+- Test: goldens http_wire, http_multipart_stream, http_stream_body on wasip2/wasm commands (TestWasmCommandGoldens) and natively
+- Timing: none
+
+A wasip2/wasm command (a program that does not call http.serve_component) can
+serve HTTP/1.1 with http.Server over wasi:sockets: the native server's code runs
+unchanged (parsing, headers, response writing, error texts), and only its
+connection I/O and runtime records have wasm arms (decision 0447 "http.Server in
+a command"). Not yet on wasm: HTTP/2, TLS, the peer address (remote_ip is
+empty), idle connection parking, half-close.
+
 ## 2026-11-03: perf: parse_set_cookie and Expires dates no longer lower case copies
 
 - Kind: perf

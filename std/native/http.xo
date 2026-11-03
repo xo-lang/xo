@@ -2655,48 +2655,59 @@ fn (s: Server) serve() -> () ! http.HttpErr uses net.listen {
   if let Some(cf) = s.h2cfg {
     hserve.srv_h2cfg(srv, cf.max_concurrent_streams, cf.max_read_frame_size, cf.max_receive_buffer_per_connection, cf.max_receive_buffer_per_stream, cf.max_decoder_header_table_size, cf.send_ping_timeout.nanos(), cf.ping_timeout.nanos(), cf.write_byte_timeout.nanos(), cf.max_encoder_header_table_size)
   }
-  let conns = hserve.srv_group(srv)
   let l = s.l
   let r = s.r
   let h2 = s.h2
   let lim = http1.Limits{read_ns: s.read_ns, head_ns: s.head_ns, idle_ns: s.idle_ns, max_head: s.max_head, max_body: s.max_body}
   var failed = ""
-  scope sc {
-    sc.spawn_background(fn() {
-      // a stop request (core 7.5): stop accepting, close idle
-      // connections
-      let _ = task.stopping().recv()
-      hserve.srv_stop(srv)
-      l.close()
-    })
-    sc.spawn_background(fn() {
-      // the connections parked idle (decision 0449): each resumes in a
-      // task of the connection scope when bytes come
-      while true {
-        match hserve.resume_next(srv) {
-          Some(f) => conns.spawn_background(f)
-          None => break
-        }
-      }
-    })
-    while {
-      match l.accept() {
-        Ok(c) => {
-          let hc = hserve.hc_new(srv, c)
-          conns.spawn_background(fn() { serve_conn_isolated(hc, r, h2, lim) })
-        }
-        Err(NetErr.Io(msg)) => {
-          if !task.stop_requested() && !task.is_canceled() {
-            failed = msg
+  // on wasm the connections are foreground tasks of a scope around the
+  // accept loop's, so a stop ends accepting while the requests in flight
+  // finish, and the scope's end waits for them (native: hserve's
+  // connection scope and srv_wait; decision 0447 R2a)
+  let wasm = target.arch == TargetArch.Wasm32
+  scope cs {
+    let conns = if wasm { cs.group() } else { hserve.srv_group(srv) }
+    scope sc {
+      sc.spawn_background(fn() {
+        // a stop request (core 7.5): stop accepting, close idle
+        // connections
+        let _ = task.stopping().recv()
+        hserve.srv_stop(srv)
+        l.close()
+      })
+      sc.spawn_background(fn() {
+        // the connections parked idle (decision 0449): each resumes in a
+        // task of the connection scope when bytes come
+        while true {
+          match hserve.resume_next(srv) {
+            Some(f) => conns.spawn_background(f)
+            None => break
           }
-          break
         }
-        Err(_) => break
+      })
+      while {
+        match l.accept() {
+          Ok(c) => {
+            let hc = hserve.hc_new(srv, c)
+            if wasm {
+              let _ = conns.spawn(fn() { serve_conn_isolated(hc, r, h2, lim) })
+            } else {
+              conns.spawn_background(fn() { serve_conn_isolated(hc, r, h2, lim) })
+            }
+          }
+          Err(NetErr.Io(msg)) => {
+            if !task.stop_requested() && !task.is_canceled() {
+              failed = msg
+            }
+            break
+          }
+          Err(_) => break
+        }
       }
     }
+    hserve.srv_stop(srv)
+    hserve.srv_wait(srv)
   }
-  hserve.srv_stop(srv)
-  hserve.srv_wait(srv)
   if !failed.is_empty() {
     return Err(http.HttpErr.Io(msg: failed))
   }

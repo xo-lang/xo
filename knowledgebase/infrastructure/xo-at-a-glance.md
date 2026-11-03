@@ -137,5 +137,7 @@ lists the rest.
   listen, dial, lookup_host, deadlines, Net.only; `wasmtime run -S
   inherit-network=y -S allow-ip-name-lookup=y` when it imports them);
   processes, and files or sockets in a `wasi:http` component, are XO1515;
-  HTTP servers and clients over sockets, TLS, UDP and DNS records do not
-  run in a command yet (wasm_cmd_unsupported.txt).
+  `http.Server` serves HTTP/1.1 in a command (the native server's code,
+  decision 0447 R2a; no HTTP/2, TLS, peer address or idle parking yet);
+  `http.Client` over sockets, TLS, UDP and DNS records do not run in a
+  command yet (wasm_cmd_unsupported.txt).

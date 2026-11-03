@@ -725,3 +725,36 @@ deadlines, `Net.lookup_host`, and `Net.only`.
   skips on wasip1 too; wasm_cmd_unsupported.txt lists the ones a command
   cannot run yet (HTTP servers and clients over raw sockets, TLS, UDP, DNS
   records: the R2 step).
+
+### http.Server in a command (2026-11-03, R2a)
+
+The lead approved serving HTTP in a wasip2/wasm command on one condition:
+no second server that can drift from the native one. So the whole native
+server runs on wasm (http.xo, http1's parsing, header handling, response
+writing and error texts, which are the observable output), and only the
+layer under it changes, in llrt's hconn and hserve behind
+`target.arch == TargetArch.Wasm32` arms:
+
+- Connection I/O: hconn's recv_raw, send_at and send_until read and write
+  R1's wasi:sockets connection (netwasi hc_recv and hc_send, deadlines as
+  relative timeouts); shut_wr does nothing (wasi:sockets shutdown is not
+  imported yet); there is no idle parking (park_ready, hc_park), no peer
+  address (remote_ip is empty), and no HTTP/2 (hc_h2, hc_h2c return 0).
+- Records: the server, connection and sink records are wasm objects
+  (rt.wasi_handle_new, with the cabi_http free hook's table index from
+  rt.wasi_hook), counted by rc.inc, rc.dec and tasks.h_release's wasm
+  arms (rt.wasi_rc_inc, wasi_rc_dec, wasi_h_release over the wasm object
+  header: a 4-byte count and the free entry's index); obj.alloc_obj and
+  free_obj use the wasm runtime's blocks (rt.heap_large, which now reuses
+  freed blocks, R2a-0), and a record's hook ends with obj.free_rec.
+- Tasks: Server.serve wraps its accept scope in an outer scope; on wasm
+  each connection is a foreground task of that scope's group, so a stop
+  ends accepting while requests in flight finish and the scope's end
+  waits for them (natively hserve's connection scope and srv_wait).
+- Clock: sysio.mono_ns reads the task runtime's monotonic clock
+  (rt.wasi_mono_ns).
+
+The drift test is the goldens: the same want.txt on native and on the
+wasip2 command. Only http_wire, http_multipart_stream and
+http_stream_body drive the server without http.Client; the other HTTP
+goldens wait for the client in a command (R2b).

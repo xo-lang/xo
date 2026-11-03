@@ -32,6 +32,11 @@ const ACQ_REL = 3
 /// count goes up by one; a shared count down by one (relaxed); an
 /// immortal count stays.
 pub fn inc(p: Int) {
+  if target.arch == TargetArch.Wasm32 {
+    // a wasm object's count is 4 bytes, its free entry the next 4
+    rt.wasi_rc_inc(p)
+    return
+  }
   let c = rt.slot_load(p, 0, RELAXED)
   if c > 0 {
     rt.mem_store(p, 0, c.wrapping_add(1), 8)
@@ -53,6 +58,9 @@ pub fn dec_shared(p: Int) -> Int {
 /// last one (the caller then releases the children and frees it), else
 /// 0. An immortal count stays.
 pub fn dec(p: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    return rt.wasi_rc_dec(p)
+  }
   let c = rt.slot_load(p, 0, RELAXED)
   if c > 1 {
     rt.mem_store(p, 0, c.wrapping_sub(1), 8)

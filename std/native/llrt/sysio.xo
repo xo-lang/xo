@@ -290,6 +290,9 @@ pub fn real_ns() -> Int {
 /// CLOCK_MONOTONIC on Linux, CLOCK_UPTIME_RAW on macOS, QueryPerformanceCounter on
 /// Windows.
 pub fn mono_ns() -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    return rt.wasi_mono_ns()
+  }
   let f = rt.slot_load[Int](rt.sys_words(), 0, 0)
   if f > 0 {
     // the timespec in words 5 and 6 of the thread's runtime table (an

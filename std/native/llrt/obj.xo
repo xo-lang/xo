@@ -149,10 +149,31 @@ fn hfree(hw: Int, p: Int) {
 /// A block of n bytes for a runtime object (xo_alloc): the calling
 /// thread's heap, refilled from the central lists with other threads
 /// running.
-pub fn alloc_obj(n: Int) -> Int { halloc(heap_word(), n) }
+pub fn alloc_obj(n: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    // the wasm runtime's blocks (no native heap on wasm, decision 0447 R2a)
+    return rt.heap_large(n)
+  }
+  halloc(heap_word(), n)
+}
 
 /// Frees the runtime object p (xo_free).
-pub fn free_obj(p: Int) { hfree(heap_word(), p) }
+pub fn free_obj(p: Int) {
+  if target.arch == TargetArch.Wasm32 {
+    rt.heap_release(p - 8)
+    return
+  }
+  hfree(heap_word(), p)
+}
+
+/// Frees runtime record p at the end of its free hook (tasks.new_handle's
+/// records): free_obj natively; on wasm the record (rt.wasi_handle_new) is
+/// freed by its object's own free entry after the hook returns.
+pub fn free_rec(p: Int) {
+  if target.arch != TargetArch.Wasm32 {
+    free_obj(p)
+  }
+}
 
 /// Counts an object made outside the heap (heapos map_file) as an
 /// allocation of the calling thread's heap.

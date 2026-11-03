@@ -93,6 +93,14 @@ fn srec(s: rthttp.Srv) -> Int { rt.obj_addr(s) }
 
 /// A new server, with the scope of its connections open.
 pub fn srv_new() -> rthttp.Srv {
+  if target.arch == TargetArch.Wasm32 {
+    // no connection scope or continuations on wasm: serve's own scope runs
+    // the connections (http.xo, decision 0447 R2a)
+    let w = rt.wasi_handle_new(hconn.SR_SIZE, rt.wasi_hook("srv_free"))
+    let h = rt.obj_at[rthttp.Srv](w)
+    tasks.h_release(w)
+    return h
+  }
   let s = tasks.new_handle(hconn.SR_SIZE, rt.fn_addr("srv_free"))
   poll.set_cont_fire(rt.fn_addr("pd_cont_fire"))
   let root = stop.root()
@@ -142,6 +150,10 @@ pub fn hc_note_done(h: rthttp.HConn) { hconn.note_done(h) }
 /// without a request (the connection then closes). False when it did not
 /// park (the caller reads on).
 pub fn hc_park(h: rthttp.HConn, resume: fn() -> (), idle_ns: Int, h2: Bool = false) -> Bool {
+  if target.arch == TargetArch.Wasm32 {
+    // no idle parking (decision 0449) on wasm
+    return false
+  }
   if !hconn.park_ready(h, h2) {
     return false
   }
@@ -272,6 +284,9 @@ fn sweep_idle(srv: Int) -> Int {
 /// connections that stay idle past the server's idle timeout); None when
 /// the server is stopping and nothing is parked or ready.
 pub fn resume_next(s: rthttp.Srv) -> (fn() -> ())? {
+  if target.arch == TargetArch.Wasm32 {
+    return None
+  }
   let a = srec(s)
   let c = ctx.cur()
   let park = c + ctx.C_PARK
@@ -366,11 +381,15 @@ fn stop_at(a: Int) {
       // GOAWAY, then the streams in flight finish
       let _s = rt.call_c2(hconn.tls_op(hconn.TO_H2_STOP), h2, 0)
     } else if hconn.idle_at(hc) {
-      poll.pd_close(hconn.conn_pd(hc))
+      close_conn(hc)
     }
     hc = ld(hc, hconn.HC_NEXT)
   }
   hconn.unlock(a)
+  if target.arch == TargetArch.Wasm32 {
+    // no resumer (no idle parking on wasm)
+    return
+  }
   // the resumer looks again: nothing parked ends it
   hconn.rlock(a)
   let w = ld(a, hconn.SR_RESUMER)
@@ -385,6 +404,10 @@ fn stop_at(a: Int) {
 /// ended); else (serve's task was canceled) at most 30 s, as net/http's
 /// Shutdown in std/rt.
 pub fn srv_wait(s: rthttp.Srv) {
+  if target.arch == TargetArch.Wasm32 {
+    // serve's scope waits for the connections' tasks (http.xo)
+    return
+  }
   let a = srec(s)
   let c = ctx.cur()
   let stopping = stop.requested()
@@ -422,6 +445,16 @@ pub fn srv_wait(s: rthttp.Srv) {
 }
 
 /// Cancels the connections left and waits for their tasks.
+/// Closes connection record hc's socket: a read or write waiting on it
+/// ends.
+fn close_conn(hc: Int) {
+  if target.arch == TargetArch.Wasm32 {
+    rt.wasi_sock_close(rt.obj_at[Conn](ld(hc, hconn.HC_CONN)))
+  } else {
+    poll.pd_close(hconn.conn_pd(hc))
+  }
+}
+
 pub fn srv_close(s: rthttp.Srv) {
   let a = srec(s)
   if ld(a, hconn.SR_CLOSED) != 0 {
@@ -432,10 +465,14 @@ pub fn srv_close(s: rthttp.Srv) {
   hconn.lock(a)
   var hc = ld(a, hconn.SR_CONNS)
   while hc != 0 {
-    poll.pd_close(hconn.conn_pd(hc))
+    close_conn(hc)
     hc = ld(hc, hconn.HC_NEXT)
   }
   hconn.unlock(a)
+  if target.arch == TargetArch.Wasm32 {
+    // no connection scope: serve's own scope ended its tasks
+    return
+  }
   let c = ctx.cur()
   let saved = ld(c, ctx.C_NODE)
   let u = rt.mem_load(c, ctx.C_UNWINDING, 4)
@@ -513,7 +550,7 @@ pub fn srv_free(a: Int) {
   if tls != 0 {
     let _f = rt.call_c2(hconn.tls_op(hconn.TO_SRV_FREE), tls, 0)
   }
-  obj.free_obj(a)
+  obj.free_rec(a)
 }
 
 // ---------------------------------------------------------------------------
@@ -523,13 +560,18 @@ pub fn srv_free(a: Int) {
 pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
   let a = srec(s)
   let cn = rt.obj_addr(c)
-  let hc = tasks.new_handle(hconn.HC_SIZE, rt.fn_addr("hc_free"))
+  let wasm = target.arch == TargetArch.Wasm32
+  let hc = if wasm { rt.wasi_handle_new(hconn.HC_SIZE, rt.wasi_hook("hc_free")) } else { tasks.new_handle(hconn.HC_SIZE, rt.fn_addr("hc_free")) }
   rc.inc(a)
   rc.inc(cn)
   st(hc, hconn.HC_SRV, a)
   st(hc, hconn.HC_CONN, cn)
-  let pd = hconn.conn_pd(hc)
-  hconn.set_ip(hc, hconn.peer_ip(rt.mem_load(pd, 8, 4)))
+  // on wasm R1's connection (no poll descriptor; the peer's address is
+  // not read yet, decision 0447 R2a)
+  let pd = if wasm { 0 } else { hconn.conn_pd(hc) }
+  if !wasm {
+    hconn.set_ip(hc, hconn.peer_ip(rt.mem_load(pd, 8, 4)))
+  }
   hconn.lock(a)
   let first = ld(a, hconn.SR_CONNS)
   st(hc, hconn.HC_NEXT, first)
@@ -544,7 +586,11 @@ pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
     st(hc, hconn.HC_TLS, rt.call_c2(hconn.tls_op(hconn.TO_CONN), tls, pd))
   }
   if hconn.stopping_at(a) {
-    poll.pd_close(pd)
+    if wasm {
+      rt.wasi_sock_close(rt.obj_at[Conn](cn))
+    } else {
+      poll.pd_close(pd)
+    }
   }
   hconn.unlock(a)
   hconn.take(hc)
@@ -567,6 +613,10 @@ fn tls_deadline(tls: Int, when: Int) {
 }
 
 pub fn hc_h2(h: rthttp.HConn, when: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    // no HTTP/2 on wasm yet (decision 0447 R2a: HTTP/1.1 first)
+    return 0
+  }
   let hc = hconn.rec(h)
   let tls = ld(hc, hconn.HC_TLS)
   if tls == 0 || ld(hc, hconn.HC_CONN) == 0 {
@@ -597,6 +647,10 @@ pub fn srv_h2c(s: rthttp.Srv, only: Bool = false) {
 /// read stay for HTTP/1.1. The sniff waits under when (the read header
 /// timeout, monotonic ns, 0 none).
 pub fn hc_h2c(h: rthttp.HConn, when: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    // no HTTP/2 on wasm yet (decision 0447 R2a: HTTP/1.1 first)
+    return 0
+  }
   let hc = hconn.rec(h)
   let s = ld(hc, hconn.HC_SRV)
   if s == 0 || ld(s, hconn.SR_H2C) == 0 || ld(hc, hconn.HC_TLS) != 0 || ld(hc, hconn.HC_CONN) == 0 {
@@ -622,7 +676,7 @@ pub fn hc_close(h: rthttp.HConn) {
   if tls != 0 {
     let _c = rt.call_c2(hconn.tls_op(hconn.TO_CLOSE_NOTIFY), tls, 0)
   }
-  poll.pd_close(hconn.conn_pd(hc))
+  close_conn(hc)
   hconn.unregister(hc)
 }
 
@@ -644,7 +698,7 @@ pub fn hc_free(hc: Int) {
     if x1 != 0 {
       http1.x1_free(x1)
     }
-    obj.free_obj(hc)
+    obj.free_rec(hc)
     tasks.h_release(owner)
     return
   }
@@ -654,7 +708,11 @@ pub fn hc_free(hc: Int) {
     let _f = rt.call_c2(hconn.tls_op(hconn.TO_H2_FREE), h2, 0)
   }
   let cn = ld(hc, hconn.HC_CONN)
-  poll.pd_close(hconn.conn_pd(hc))
+  if target.arch != TargetArch.Wasm32 {
+    // on wasm the connection's own free entry closes it (rt9.xo
+    // $sk_conn_free)
+    poll.pd_close(hconn.conn_pd(hc))
+  }
   tasks.h_release(cn)
   tasks.h_release(ld(hc, hconn.HC_SRV))
   if x1 != 0 {
@@ -664,13 +722,18 @@ pub fn hc_free(hc: Int) {
   if tls != 0 {
     let _f = rt.call_c2(hconn.tls_op(hconn.TO_FREE), tls, 0)
   }
-  obj.free_obj(hc)
+  obj.free_rec(hc)
 }
 
 // ---------------------------------------------------------------------------
 // Streamed bodies (http.stream, decision 0083)
 
-fn sink_new() -> Int { tasks.new_handle(SK_SIZE, rt.fn_addr("sink_free")) }
+fn sink_new() -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    return rt.wasi_handle_new(SK_SIZE, rt.wasi_hook("sink_free"))
+  }
+  tasks.new_handle(SK_SIZE, rt.fn_addr("sink_free"))
+}
 
 fn sink_take_handle(k: Int) -> rthttp.Sink {
   let h = rt.obj_at[rthttp.Sink](k)
@@ -893,7 +956,7 @@ pub fn sink_free(k: Int) {
   if hc != 0 {
     tasks.h_release(hc)
   }
-  obj.free_obj(k)
+  obj.free_rec(k)
 }
 
 // ---------------------------------------------------------------------------

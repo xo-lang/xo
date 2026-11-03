@@ -289,3 +289,16 @@ llvm wasi_sock_resolve_end the wasi:sockets command runtime is wasm only (compil
 llvm wasi_sock_set the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_sock_status the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_sock_write the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_hook the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+arm64 wasi_handle_new the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+arm64 wasi_rc_inc the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+arm64 wasi_rc_dec the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+arm64 wasi_h_release the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+llvm wasi_hook the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+llvm wasi_handle_new the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+llvm wasi_rc_inc the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+llvm wasi_rc_dec the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+llvm wasi_h_release the wasm HTTP server's runtime records are wasm only (compiler/wasm rt.xo and rt9.xo, decision 0447 R2a); native records are tasks.new_handle's
+arm64 wasi_mono_ns sysio.mono_ns's wasm arm (compiler/wasm rt3.xo $mono, decision 0447 R2a); native reads its own clocks
+llvm wasi_mono_ns sysio.mono_ns's wasm arm (compiler/wasm rt3.xo $mono, decision 0447 R2a); native reads its own clocks
+wasm wasi_hook the SSA builder lowers it (compiler/ssa call.xo wasi_hook: a FuncAddr of the C ABI export, decision 0447 R2a), so no wasm backend lowering

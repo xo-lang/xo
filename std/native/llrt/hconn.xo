@@ -13,6 +13,7 @@
 // windows: written on macOS and checked by the cross build only.
 use native/llrt/layout
 use native/llrt/dns
+use native/llrt/netwasi
 use native/llrt/obj
 use native/llrt/poll
 use native/llrt/pool
@@ -209,14 +210,32 @@ pub fn deadline(d: Int) -> Int {
   if d > 0 && now > 9223372036854775807 - d { 9223372036854775807 } else { now + d }
 }
 
-pub fn lock(s: Int) { pool.lock_k(s + SR_MU, pool.ST_LOCK_HTTP) }
+// On wasm a server's tasks run one at a time (rt3.xo), so its locks are
+// not taken (decision 0447 R2a).
+pub fn lock(s: Int) {
+  if target.arch != TargetArch.Wasm32 {
+    pool.lock_k(s + SR_MU, pool.ST_LOCK_HTTP)
+  }
+}
 
-pub fn unlock(s: Int) { pool.unlock(s + SR_MU) }
+pub fn unlock(s: Int) {
+  if target.arch != TargetArch.Wasm32 {
+    pool.unlock(s + SR_MU)
+  }
+}
 
 /// The ready list's lock (SR_RLOCK, decision 0449).
-pub fn rlock(s: Int) { pool.lock_k(s + SR_RLOCK, pool.ST_LOCK_HTTP) }
+pub fn rlock(s: Int) {
+  if target.arch != TargetArch.Wasm32 {
+    pool.lock_k(s + SR_RLOCK, pool.ST_LOCK_HTTP)
+  }
+}
 
-pub fn runlock(s: Int) { pool.unlock(s + SR_RLOCK) }
+pub fn runlock(s: Int) {
+  if target.arch != TargetArch.Wasm32 {
+    pool.unlock(s + SR_RLOCK)
+  }
+}
 
 /// The text of the peer address of socket fd (inet_ntop's), or "".
 pub fn peer_ip(fd: Int) -> Str {
@@ -352,6 +371,10 @@ fn take_peek(hc: Int, p: Int, cap: Int) -> Int {
 /// closes it while parked; the caller then parks it or, if it does not,
 /// clears the mark by reading.
 pub fn park_ready(h: rthttp.HConn, h2: Bool = false) -> Bool {
+  if target.arch == TargetArch.Wasm32 {
+    // no idle parking (decision 0449) on wasm: the connection's task waits
+    return false
+  }
   let hc = rec(h)
   let s = ld(hc, HC_SRV)
   if s == 0 || (ld(hc, HC_H2) != 0 && !h2) || ld(hc, HC_PEEK) != 0 || stopping_at(s) || poll.canceled() {
@@ -444,6 +467,12 @@ fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
       return -1
     }
   }
+  if target.arch == TargetArch.Wasm32 {
+    // R1's connection (std/native/llrt/netwasi.xo, decision 0447 R2a)
+    let k = netwasi.hc_recv(ld(hc, HC_CONN), p, cap, deadline)
+    set_idle(hc, false)
+    return k
+  }
   var r = -1
   let tls = ld(hc, HC_TLS)
   if poll.canceled() {
@@ -491,6 +520,9 @@ fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
 /// Sends the n bytes at p: false when the connection broke.
 pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
   let hc = rec(h)
+  if target.arch == TargetArch.Wasm32 {
+    return netwasi.hc_send(ld(hc, HC_CONN), p, n, 0) == 0
+  }
   let tls = ld(hc, HC_TLS)
   if tls != 0 {
     return rt.call_c4(tls_op(TO_WRITE), tls, p, n, 0) == 0
@@ -527,6 +559,9 @@ pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
 /// or the task was canceled. On TLS the record flush waits with it
 /// (TO_SET_DEADLINE, as recv_until).
 pub fn send_until(h: rthttp.HConn, p: Int, n: Int, deadline: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    return netwasi.hc_send(ld(rec(h), HC_CONN), p, n, deadline)
+  }
   if poll.canceled() {
     return -1
   }
@@ -594,6 +629,10 @@ pub fn stopping(h: rthttp.HConn) -> Bool {
 
 /// Shuts down the sending side (after a 431 answer).
 pub fn shut_wr(h: rthttp.HConn) {
+  if target.arch == TargetArch.Wasm32 {
+    // not yet: wasi:sockets' shutdown(send) is not imported (rt9.xo)
+    return
+  }
   let hc = rec(h)
   if ld(hc, HC_CONN) != 0 {
     let _r = sock.shutdown(pd_fd(conn_pd(hc)), SHUT_WR)

@@ -1386,6 +1386,9 @@ fn (var b: Builder) intrinsic(x: Expr, ci: check.CallInfo) -> Int {
   if name == "fn_addr" {
     return b.fn_addr(es)
   }
+  if name == "wasi_hook" && b.wasm {
+    return b.wasi_hook(es)
+  }
   if name == "sym_addr" {
     return b.sym_addr(es)
   }
@@ -1528,6 +1531,35 @@ fn (var b: Builder) sym_present(x: Expr, es: List[Expr?]) -> Int {
 /// which the emitters take as a C symbol, not a function of the
 /// module). The argument is a string literal naming an export of the
 /// program.
+/// rt.wasi_hook("NAME") in a wasm build: the table index of the C ABI
+/// export module's function NAME (a free hook of a runtime record,
+/// compiler/wasm rt9.xo $hfree_any), the function built for it. Unlike
+/// rt.fn_addr, which stays a faulting call on wasm (lowering it would
+/// build every function it names, native ones included), only the wasm
+/// arms that need a hook name one.
+fn (var b: Builder) wasi_hook(es: List[Expr?]) -> Int {
+  let it = b.int_t()
+  let name = match es[0] ?? fault("arg") {
+    StringLit(s) => if s.parts.len() == 1 && s.parts[0].expr == None { check.text(s.parts[0].text) } else { "" }
+    _ => ""
+  }
+  var o = -1
+  for m in b.c.mods {
+    if m.path == "native/llrt/cabi" || m.path.starts_with("native/llrt/cabi_") {
+      let k = m.members.get(name.bytes()) ?? -1
+      if k >= 0 && b.c.objs[k].kind == check.ObjKind.Func && b.c.objs[k].recv < 0 {
+        o = k
+      }
+    }
+  }
+  if o < 0 {
+    b.unsupported("rt.wasi_hook of `${name}`, which no C ABI export module (native/llrt/cabi*) defines")
+    return b.undef(it)
+  }
+  let fi = b.declare(o, [])
+  b.add(Op.FuncAddr, it, Aux.S(s: b.m.funcs[fi].name), [])
+}
+
 fn (var b: Builder) fn_addr(es: List[Expr?]) -> Int {
   let it = b.int_t()
   let name = match es[0] ?? fault("arg") {
@@ -1615,8 +1647,9 @@ fn wasm_only_rt(name: Str) -> Bool {
   }
   // a wasi:http component's calls (compiler/wasm rt5.xo): std's client
   // reaches them from its wasm arm on every target; a wasip2 command's
-  // sockets (rt9.xo, std/native/llrt/netwasi.xo)
-  name.starts_with("fs_") || name.starts_with("wasi_http_") || name.starts_with("wasi_sock_")
+  // sockets (rt9.xo, std/native/llrt/netwasi.xo) and the records of its
+  // HTTP server's wasm arms (decision 0447 R2a)
+  name.starts_with("fs_") || name.starts_with("wasi_http_") || name.starts_with("wasi_sock_") || name is "wasi_hook" | "wasi_handle_new" | "wasi_rc_inc" | "wasi_rc_dec" | "wasi_h_release" | "wasi_mono_ns"
 }
 
 /// A call of a platform library function declared in

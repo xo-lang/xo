@@ -12,6 +12,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/xo-lang/xo/internal/runfilter"
 	"github.com/xo-lang/xo/internal/testtmp"
@@ -98,6 +99,9 @@ func TestWasmCommandGoldens(t *testing.T) {
 	}
 }
 
+// commandGoldenTimeout bounds one golden's run.
+const commandGoldenTimeout = 120 * time.Second
+
 // commandGolden builds and runs golden dir d as a command: "" when it
 // matches its want file, else why not.
 func commandGolden(t *testing.T, xo string, env []string, d string) string {
@@ -144,7 +148,20 @@ func commandGolden(t *testing.T, xo string, env []string, d string) string {
 	}
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &stdout, &stderr
-	err = cmd.Run()
+	if err := cmd.Start(); err != nil {
+		return "wasmtime: " + err.Error()
+	}
+	// a golden that never exits fails by name instead of holding the suite
+	// (a server waiting on a connection, 2026-11-03)
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case err = <-done:
+	case <-time.After(commandGoldenTimeout):
+		_ = cmd.Process.Kill()
+		<-done
+		return "wasmtime: no exit in " + commandGoldenTimeout.String() + "\n--- stdout so far\n" + stdout.String()
+	}
 	code := 0
 	var ee *exec.ExitError
 	if errors.As(err, &ee) {

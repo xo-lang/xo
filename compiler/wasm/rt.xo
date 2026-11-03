@@ -431,6 +431,18 @@ fn rt_text(var g: Gen) -> Str {
       end)
 
     ;; 1 when p loses its last reference (the caller frees it)
+    ;; tasks.h_release on wasm (rt.wasi_h_release): the last reference
+    ;; frees the object through its free entry
+    (func $wasi_h_release (param $p i32)
+      local.get $p
+      call $rc_dec
+      if
+        local.get $p
+        local.get $p
+        i32.load offset=4
+        call $rc_defer
+      end)
+
     (func $rc_dec (param $p i32) (result i32) (local $c i32)
       local.get $p
       i32.load

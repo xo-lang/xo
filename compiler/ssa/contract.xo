@@ -207,7 +207,8 @@ fn (var b: Builder) no_alloc_prefix() -> Str {
 /// Whether a reference count or heap function may call the function
 /// named n (check_no_alloc): the inline raw memory and atomic
 /// intrinsics, memcpy, the prefetch hint, the process globals
-/// (rt.static_word), the C paths' rt.rc_*_c and rt.alloc_*_c, and the heap's platform calls rt.heap_* (malloc,
+/// (rt.static_word), the C paths' rt.rc_*_c and rt.alloc_*_c, rc's wasm
+/// counts rt.wasi_rc_inc and rt.wasi_rc_dec, and the heap's platform calls rt.heap_* (malloc,
 /// realloc, free, a new chunk, the central lists' mutex: they exit on
 /// out of memory, never fault).
 /// In the scheduler core (sched.xo, decision 0212) also the task
@@ -218,6 +219,11 @@ fn rc_callee_ok(n: Str) -> Bool {
     return true
   }
   if n.starts_with("rt.heap_") {
+    return true
+  }
+  // rc.inc and rc.dec's wasm arms (decision 0447 R2a): the wasm runtime's
+  // own counts, which neither allocate nor fault
+  if n is "rt.wasi_rc_inc" | "rt.wasi_rc_dec" {
     return true
   }
   if n is "rt.stack_switch" | "rt.fiber_start_addr" | "rt.frame_addr" | "rt.tlocal_get" | "rt.tlocal_set" | "rt.tlocal_addr" | "rt.mem_set" | "rt.sched_hook" | "rt.sched_run_task" {
