@@ -119,12 +119,20 @@ fn min_int(a: Int, b: Int) -> Int { if a < b { a } else { b } }
 fn abs_int(x: Int) -> Int { if x < 0 { 0 - x } else { x } }
 
 fn paeth(a: Int, b: Int, c: Int) -> Int {
-  var pc = c
-  var pa = b - pc
-  var pb = a - pc
-  pc = abs_int(pa + pb)
-  pa = abs_int(pa)
-  pb = abs_int(pb)
+  // Go's paeth.go without the calls: pa, pb and pc are |p - a|, |p - b| and
+  // |p - c| for p = a + b - c
+  var pa = b - c
+  var pb = a - c
+  var pc = pa + pb
+  if pa < 0 {
+    pa = 0 - pa
+  }
+  if pb < 0 {
+    pb = 0 - pb
+  }
+  if pc < 0 {
+    pc = 0 - pc
+  }
   if pa <= pb && pa <= pc {
     return a
   } else if pb <= pc {
@@ -463,7 +471,29 @@ fn read_pass(d: Dec, raw: Bytes, off0: Int, width: Int, height: Int) -> (Pass, I
         if i < bpp {
           buf[co + i] = UInt8((Int(raw[base + i]) + Int(buf[po + i])) & 255)
         } else {
-          buf[co + i] = UInt8((Int(raw[base + i]) + paeth(Int(buf[co + i - bpp]), Int(buf[po + i]), Int(buf[po + i - bpp]))) & 255)
+          // paeth(a, b, c) written out: a left, b up, c up and left
+          let a = Int(buf[co + i - bpp])
+          let b = Int(buf[po + i])
+          let c = Int(buf[po + i - bpp])
+          var pa = b - c
+          var pb = a - c
+          var pc = pa + pb
+          if pa < 0 {
+            pa = 0 - pa
+          }
+          if pb < 0 {
+            pb = 0 - pb
+          }
+          if pc < 0 {
+            pc = 0 - pc
+          }
+          var pr = c
+          if pa <= pb && pa <= pc {
+            pr = a
+          } else if pb <= pc {
+            pr = b
+          }
+          buf[co + i] = UInt8((Int(raw[base + i]) + pr) & 255)
         }
       }
     } else {

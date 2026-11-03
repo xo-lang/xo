@@ -107,9 +107,21 @@ fn inflate(data: Bytes, max_size: Int) -> Bytes ! compress.CompressErr {
 fn adler32(data: Bytes) -> Int {
   var a = 1
   var b = 0
-  for c in data {
-    a = (a + Int(c)) % 65521
-    b = (b + a) % 65521
+  var i = 0
+  let n = data.len()
+  while i < n {
+    // hash/adler32's nmax: the most bytes a 32 bit sum holds before the modulus
+    var end = i + 5552
+    if end > n {
+      end = n
+    }
+    for c in data[i..end] {
+      a += Int(c)
+      b += a
+    }
+    a = a % 65521
+    b = b % 65521
+    i = end
   }
   (b << 16) | a
 }

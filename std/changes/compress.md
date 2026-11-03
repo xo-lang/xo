@@ -1,5 +1,16 @@
 # std/compress changes
 
+## 2026-11-03: perf: the Adler-32 sum takes the modulus once per 5552 bytes
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF=cpu of bench/perf/png decode: compress.adler32 was 29% of the run (two modulus operations a byte)
+- Go reference: hash/adler32 (nmax)
+- Test: internal/stdtest/testdata/corpus/compress and compressfuzz, bench/perf/png
+
+`adler32` (zlib's trailer, written and checked) summed with `% 65521` after every byte; it now adds up to
+5552 bytes (hash/adler32's nmax, the most a 32 bit sum holds) before taking the modulus. Same sums.
+
 ## 2026-11-03: perf: a level 2 to 9 stream builds only its Deflater's tables
 
 - Kind: perf
