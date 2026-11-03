@@ -106,8 +106,9 @@ to v0.35.0. Ratios are comparable across jobs; absolute req/s are not
    | main ada68b353 | 0.995 | 1.015 | 1.011 | 1.037 |
    | v0.35.0 | 127,732 | 152,862 | 48.37 us | 48.39 us |
 
-   (medians; ranges: v0.35.0's c256 req/s 130,621 to 159,392, main's c256
-   CPU 47.05 to 50.69 us with one zero sample, a ps read that missed; the
+   (medians; ranges: v0.35.0's c256 req/s 130,621 to 159,392, main ada68b353's
+   c256 CPU up to 50.69 us, its lowest sample a zero, a ps read that
+   missed; the
    arms' ranges overlap v0.35.0's at c32 and on c256 req/s.) With Graviton's under 1%
    (stack-phase-2026-11-02.md:89-114), the first host's 4.5% is the 4 KiB
    page VM's; owner, 2026-11-02: it ships in 0.36 as a known VM-only cost.
