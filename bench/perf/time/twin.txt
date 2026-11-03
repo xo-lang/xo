@@ -1,0 +1,6 @@
+# twincheck: time: six workloads (none is the setup alone), the same names on both sides.
+- - none
+- - format
+- - parse
+- - civil
+- - duration

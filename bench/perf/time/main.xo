@@ -1,0 +1,40 @@
+// time: std/time against Go's time (twin.go.txt): format 300,000 times in UTC (ISO) and New York (long
+// form), parse 300,000 ISO texts, civil (calendar fields) of 300,000 instants in New York, and 10,000,000
+// Duration additions; `none` is the setup alone. Usage: `<program> none|format|parse|civil|duration`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/time
+
+fn main(os: Os) {
+  let mode = os.env.args().get(0) ?? "none"
+  let ny = time.zone("America/New_York").ok() ?? fault("zone")
+  let utc = time.utc()
+  var n = 0
+  if mode == "format" {
+    for i in 0..300000 {
+      let t = Time.from_unix(1760000000 + i * 37)
+      n += time.format(t, utc, "{year}-{month}-{day}T{hour}:{minute}:{second}{offset}").len()
+      n += time.format(t, ny, "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}").len()
+    }
+  }
+  if mode == "parse" {
+    for i in 0..300000 {
+      let s = "2026-10-${10 + i % 20}T12:34:56Z"
+      let t = time.parse(s, "{year}-{month}-{day}T{hour}:{minute}:{second}{offset}", utc).ok() ?? fault("parse")
+      n += t.unix() % 7
+    }
+  }
+  if mode == "civil" {
+    for i in 0..300000 {
+      let c = time.civil(Time.from_unix(1760000000 + i * 3601), ny)
+      n += c.date.day + c.time.hour
+    }
+  }
+  if mode == "duration" {
+    var d = 0s
+    for i in 0..10000000 {
+      d = d + 1500ms * (i % 7) - 20us
+      n += d.millis() % 3
+    }
+  }
+  os.stdio.println("${mode} ${n}")
+}

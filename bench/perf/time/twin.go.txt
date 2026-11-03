@@ -1,0 +1,48 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+)
+
+func main() {
+	mode := "none"
+	if len(os.Args) > 1 {
+		mode = os.Args[1]
+	}
+	ny, err := time.LoadLocation("America/New_York")
+	if err != nil {
+		panic(err)
+	}
+	n := 0
+	switch mode {
+	case "format":
+		for i := 0; i < 300000; i++ {
+			t := time.Unix(int64(1760000000+i*37), 0)
+			n += len(t.UTC().Format("2006-01-02T15:04:05Z07:00"))
+			n += len(t.In(ny).Format("Mon, 02 Jan 2006 15:04:05 MST"))
+		}
+	case "parse":
+		for i := 0; i < 300000; i++ {
+			s := fmt.Sprintf("2026-10-%dT12:34:56Z", 10+i%20)
+			t, err := time.Parse("2006-01-02T15:04:05Z07:00", s)
+			if err != nil {
+				panic(err)
+			}
+			n += int(t.Unix() % 7)
+		}
+	case "civil":
+		for i := 0; i < 300000; i++ {
+			t := time.Unix(int64(1760000000+i*3601), 0).In(ny)
+			n += t.Day() + t.Hour()
+		}
+	case "duration":
+		var d time.Duration
+		for i := 0; i < 10000000; i++ {
+			d = d + 1500*time.Millisecond*time.Duration(i%7) - 20*time.Microsecond
+			n += int(d.Milliseconds() % 3)
+		}
+	}
+	fmt.Printf("%s %d\n", mode, n)
+}
