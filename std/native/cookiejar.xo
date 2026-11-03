@@ -32,11 +32,26 @@ fn is_ascii(s: Str) -> Bool {
   true
 }
 
+/// Whether s has only digits and dots, as an IPv4 address does: a host
+/// name fails here without a parse and its error (Go's ParseIP fails
+/// without one).
+fn ipv4_chars(s: Str) -> Bool {
+  for c in s.bytes() {
+    if !((c >= 0x30 && c <= 0x39) || c == 0x2e) {
+      return false
+    }
+  }
+  !s.is_empty()
+}
+
 /// isIP: a host with a colon or a percent is an IPv6 address, else an
 /// address that parses.
 fn is_ip(host: Str) -> Bool {
   if host.contains(":") || host.contains("%") {
     return true
+  }
+  if !ipv4_chars(host) {
+    return false
   }
   match netip.parse_addr(host) {
     Ok(_) => true
@@ -122,6 +137,9 @@ fn is_localhost(host0: Str) -> Bool {
 fn secure_match(e: cookiejar.Entry, https: Bool) -> Bool {
   if !e.secure || https || is_localhost(e.domain) {
     return true
+  }
+  if !e.domain.contains(":") && !ipv4_chars(e.domain) {
+    return false
   }
   match netip.parse_addr(e.domain) {
     Ok(a) => a.is_loopback()
