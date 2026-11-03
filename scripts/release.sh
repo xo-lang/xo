@@ -153,6 +153,13 @@ elif [ -z "${XO_SIGN_ID:-}" ]; then
 elif [ "${XO_RELEASE_NO_NOTARIZE:-}" != 1 ] && [ -z "${XO_NOTARY_PROFILE:-}" ] && [ -z "${APPLE_API_KEY:-}" ]; then
 	echo "release.sh: notarizing needs XO_NOTARY_PROFILE (xcrun notarytool store-credentials NAME, the owner) or APPLE_API_KEY, APPLE_API_KEY_ID, APPLE_API_ISSUER; XO_RELEASE_NO_NOTARIZE=1 signs only" >&2
 	exit 1
+elif [ "${XO_RELEASE_NO_NOTARIZE:-}" != 1 ] && [ -n "${XO_NOTARY_PROFILE:-}" ] &&
+	! xcrun notarytool history --keychain-profile "$XO_NOTARY_PROFILE" > /dev/null 2>&1; then
+	# before the build, not after it: 0.36.0's build ran about 40 minutes and
+	# then stopped at notarizing because the profile was gone from the
+	# keychain (gotchas/notary-profile-missing.md)
+	echo "release.sh: the notary profile $XO_NOTARY_PROFILE does not work (xcrun notarytool history failed); the owner runs xcrun notarytool store-credentials $XO_NOTARY_PROFILE, or XO_RELEASE_NO_NOTARIZE=1 signs only" >&2
+	exit 1
 fi
 win=${XO_RELEASE_WINDOWS:-native}
 [ "$win" = 1 ] && win=native
