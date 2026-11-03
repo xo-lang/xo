@@ -62,7 +62,7 @@ By section (Go: `__text` code; tables are `__noptrdata` plus `__rodata`; `__gopc
 
 - **std/norm: smaller than Go's**: +66 KB against +100 KB stripped (34 percent less; +121 KB with Go's debug sections), with code 2.5 times smaller (+9.4 KB against +23.5 KB) and table data 10 percent smaller (58.2 KB against 64.5 KB).
 - **std/idna: smaller than Go's**: +167 KB against +233 KB stripped (28 percent less; +274 KB default), with code 20 percent smaller (+43 KB against +54 KB) and table data 11 percent smaller (120 KB against 134 KB, both including norm and the Bidi table).
-- Speed: bench/results/std-twin-rows15-2026-11-03.md (norm is still slower than Go's, see there).
+- Speed: bench/results/std-twin-rows16-2026-11-03.md (norm is still slower than Go's, see there).
 
 How it got there, from the first measurement of the same day (std-norm-size-2026-11-03.md: norm +292 KB; the first idna build: +300 KB): (1) norm's tables as byte records, not `List[Int]` constants (200 KB to 70 KB, and the list initializers' code went); (2) idna's joiner state table as a `Bytes` constant: a `List` constant is built by a lazy initializer at first use, which links in the runtime's task pool (the program grew by about 85 KB of runtime for one 48 element list); (3) no Unicode printing or case tables linked for an error message and an ASCII lower case; (4) runs of runes with the same delta stored once (idna's mappings, norm's compatibility decompositions); idna's infos (119 distinct) stored once and referenced by a byte.
 
@@ -83,4 +83,4 @@ Both modules are now smaller than Go's, so the fix path is about margin and spee
 
 1. Norm's composition pairs (8.5 KB) are the inverse of the canonical two rune decompositions; storing only the decompositions and deriving the pair on lookup would drop them, at a cost in lookup time that has to be measured.
 2. A two stage block table (an index of blocks, deduplicated blocks of values) for idna's 7,380 ranges would trade the binary search for two reads, as Go's trie does; worth it only if the timing rows show the search.
-3. Speed: norm's NFC is 2.7 of Go's time on a Mac run after the byte packing (the record decoding), and was 2.1 before it on the host (bench/results/std-twin-rows12-2026-11-03.md); the host rows are in std-twin-rows15-2026-11-03.md.
+3. Speed: norm's NFC is 2.7 of Go's time on a Mac run after the byte packing (the record decoding), and was 2.1 before it on the host (bench/results/std-twin-rows12-2026-11-03.md); the host rows are in std-twin-rows16-2026-11-03.md.
