@@ -83,6 +83,11 @@ pub struct FeCache {
   by_ident: Map[Str, Int] = {}
 }
 
+/// Whether fe_keys keys std's bodies: not under separate compilation
+/// (a build or run with std's facts), where they come from std's store
+/// (decision 0388) and its record leaves their trees unloaded anyway.
+pub fn fe_std_keyed(c: check.Checker) -> Bool { !(c.trees_lazy && !c.sepcomp_facts.is_empty()) }
+
 /// The keys of the bodies the builder may take from the cache: every
 /// function that is not generic and has a body. flags are the build's
 /// (fe_flags). A body of std, the prelude or the native runtime is keyed
@@ -93,6 +98,7 @@ pub struct FeCache {
 /// module's body by its interface closure and the root.
 pub fn fe_keys(c: check.Checker, flags: Str, root: Str, std_sum: Str) -> Map[Int, Str] {
   let closure = c.iface_closures()
+  let std_keyed = fe_std_keyed(c)
   // a std module the build has as its root (xo test --std-module): its
   // functions are named as the main module's (unprefixed), so a std body
   // calling them names them so; std bodies key on it ("" for a program)
@@ -120,6 +126,13 @@ pub fn fe_keys(c: check.Checker, flags: Str, root: Str, std_sum: Str) -> Map[Int
       continue
     }
     let md = c.mods[o.module]
+    // separate compilation: std's bodies come from its store and are not
+    // lowered, so none is keyed, as with std's record, whose trees are
+    // not loaded here (a first build without the record keyed every std
+    // body: 190 ms and 80 MB of the build's peak, 2026-11-03)
+    if !std_keyed && (md.is_std || md.is_prelude || md.native) && !md.root && !c.sep_source.contains(md.path) {
+      continue
+    }
     // a root module (a std module under test, --std-module) is the
     // program's own: its functions are named and built as the main
     // module's
