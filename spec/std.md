@@ -1926,9 +1926,9 @@ set and when received: Go's list, Authorization, Cache-Control,
 Connection, Content-Encoding, Content-Length, Content-Range,
 Content-Type, Expect, Host, Keep-Alive, Max-Forwards, Pragma,
 Proxy-Authenticate, Proxy-Authorization, Proxy-Connection, Range, Realm,
-Te, Trailer, Transfer-Encoding and Www-Authenticate. The native backend
-sends and receives none yet (its wire support follows decision 0433's
-split); there `trailers()` is empty.
+Te, Trailer, Transfer-Encoding and Www-Authenticate. Every backend sends
+and receives them (the native one since e0444461a); golden http_trailers
+checks the native and Go backends agree.
 
 `display` of these errors prints plain text (decision 0358): `HttpErr` the
 message of an `Io` or `canceled`; `ClientErr` `invalid URL: MSG`, MSG for a
