@@ -3,7 +3,6 @@ package selfhost
 import (
 	"bytes"
 	"compress/gzip"
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -22,12 +21,21 @@ import (
 
 // TestWasmComponentClient runs std's HTTP client in a wasi:http component
 // under `wasmtime serve` against a Go server (decision 0447): fields, body,
-// redirects, gzip, errors.
+// redirects, gzip, errors. XO_WASM_HOST=spin serves it with `spin up`, whose
+// spin.toml allows the test servers' origins (allowed_outbound_hosts) and no
+// other, so a request to an unlisted origin must fail.
 func TestWasmComponentClient(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program")
 	}
-	for _, tool := range []string{"wasm-tools", "wasmtime"} {
+	host := os.Getenv("XO_WASM_HOST")
+	if host == "" {
+		host = "wasmtime"
+	}
+	if host != "wasmtime" && host != "spin" {
+		t.Fatalf("XO_WASM_HOST=%s: want wasmtime or spin", host)
+	}
+	for _, tool := range []string{"wasm-tools", host} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not found", tool)
 		}
@@ -94,17 +102,23 @@ func TestWasmComponentClient(t *testing.T) {
 	}
 	closed := "http://" + l2.Addr().String() + "/"
 	l2.Close()
+	// a server Spin's manifest does not list
+	unlisted := httptest.NewServer(back)
+	defer unlisted.Close()
 
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	var logs bytes.Buffer
-	srv := exec.CommandContext(ctx, "wasmtime", "serve", "--addr", addr, comp)
+	srv := wasmHostCommand(t, host, comp, addr, []string{bs.URL, other, strings.TrimSuffix(closed, "/")})
 	srv.Stdout, srv.Stderr = &logs, &logs
+	// the lifeline stops the server's process group (spin up runs its
+	// trigger as a child) when the test ends
+	cut := testtmp.Lifeline(t, srv, 10*time.Minute)
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Wait()
-	defer cancel()
+	defer func() {
+		cut()
+		srv.Wait()
+	}()
 	up := time.Now().Add(30 * time.Second)
 	for {
 		c, err := net.Dial("tcp", addr)
@@ -113,15 +127,16 @@ func TestWasmComponentClient(t *testing.T) {
 			break
 		}
 		if time.Now().After(up) {
-			t.Fatalf("wasmtime serve did not listen\n%s", logs.String())
+			t.Fatalf("%s did not listen\n%s", host, logs.String())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
 	client := &http.Client{Timeout: 30 * time.Second}
-	for _, c := range []struct {
+	type clientCase struct {
 		name, path, to, method, body, timeout, auth string
 		want                                        string
-	}{
+	}
+	cases := []clientCase{
 		{name: "get", path: "/call", to: bs.URL + "/hello?a=1", method: "GET", want: "status 200 x-a b ce - body hi GET by-xo Go-http-client/1.1 q=a=1 auth=\"\""},
 		{name: "post", path: "/call", to: bs.URL + "/echo", method: "POST", body: strings.Repeat("z", 100000), want: "status 200 x-a - ce - body len 100000 cl 100000 sum 100000"},
 		{name: "put", path: "/call", to: bs.URL + "/echo", method: "PUT", body: "zz", want: "status 200 x-a - ce - body len 2 cl 2 sum 2"},
@@ -135,7 +150,11 @@ func TestWasmComponentClient(t *testing.T) {
 		{name: "open", path: "/open", to: bs.URL + "/big", want: "status 200 read 300000"},
 		{name: "with_roots", path: "/roots", want: "err a wasi:http component's host does TLS: with_roots has no place to go"},
 		{name: "piped body", path: "/piped", to: bs.URL + "/echo", body: "hello", want: "status 200 body len 5 cl 5 sum 0"},
-	} {
+	}
+	if host == "spin" {
+		cases = append(cases, clientCase{name: "unlisted origin", path: "/call", to: unlisted.URL + "/hello", method: "GET", want: "HTTP request denied"})
+	}
+	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			req, err := http.NewRequest("POST", "http://"+addr+c.path, strings.NewReader(c.body))
 			if err != nil {
@@ -158,7 +177,8 @@ func TestWasmComponentClient(t *testing.T) {
 			defer resp.Body.Close()
 			b, _ := io.ReadAll(resp.Body)
 			got := string(b)
-			if c.want == "connection refused" {
+			if c.want == "connection refused" || c.want == "HTTP request denied" {
+				t.Logf("%s under %s: %q", c.name, host, got)
 				if !strings.Contains(got, c.want) {
 					t.Errorf("got %d %q, want an error naming %q\n%.2000s", resp.StatusCode, got, c.want, logs.String())
 				}

@@ -143,15 +143,7 @@ func TestWasmComponentServe(t *testing.T) {
 	addr := l.Addr().String()
 	l.Close()
 	var logs bytes.Buffer
-	srv := exec.Command("wasmtime", "serve", "--addr", addr, comp)
-	if host == "spin" {
-		manifest := "spin_manifest_version = 2\n\n[application]\nname = \"serve\"\n\n[[trigger.http]]\nroute = \"/...\"\ncomponent = \"serve\"\n\n[component.serve]\nsource = \"serve.wasm\"\n"
-		if err := os.WriteFile(filepath.Join(tmp, "spin.toml"), []byte(manifest), 0o644); err != nil {
-			t.Fatal(err)
-		}
-		srv = exec.Command("spin", "up", "--from", filepath.Join(tmp, "spin.toml"), "--listen", addr)
-		srv.Dir = tmp
-	}
+	srv := wasmHostCommand(t, host, comp, addr, nil)
 	srv.Stdout, srv.Stderr = &logs, &logs
 	// the lifeline stops the server's process group (spin up runs its
 	// trigger as a child) when the test ends
@@ -312,4 +304,31 @@ func rawGet(base, path string) string {
 	fmt.Fprintf(c, "GET %s HTTP/1.1\r\nHost: x\r\nTE: trailers\r\nConnection: close\r\n\r\n", path)
 	b, _ := io.ReadAll(c)
 	return string(b)
+}
+
+// wasmHostCommand is the command that serves the component comp on addr
+// under host: `wasmtime serve`, or `spin up` from a spin.toml written beside
+// comp with one wildcard route, whose component may make outgoing requests
+// to the origins of outbound (Spin's allowed_outbound_hosts; wasmtime serve
+// allows every host).
+func wasmHostCommand(t *testing.T, host, comp, addr string, outbound []string) *exec.Cmd {
+	t.Helper()
+	if host != "spin" {
+		return exec.Command("wasmtime", "serve", "--addr", addr, comp)
+	}
+	dir := filepath.Dir(comp)
+	var hosts []string
+	for _, o := range outbound {
+		hosts = append(hosts, fmt.Sprintf("%q", o))
+	}
+	manifest := "spin_manifest_version = 2\n\n[application]\nname = \"xo\"\n\n[[trigger.http]]\nroute = \"/...\"\ncomponent = \"xo\"\n\n[component.xo]\nsource = \"" + filepath.Base(comp) + "\"\n"
+	if len(hosts) > 0 {
+		manifest += "allowed_outbound_hosts = [" + strings.Join(hosts, ", ") + "]\n"
+	}
+	if err := os.WriteFile(filepath.Join(dir, "spin.toml"), []byte(manifest), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	cmd := exec.Command("spin", "up", "--from", filepath.Join(dir, "spin.toml"), "--listen", addr)
+	cmd.Dir = dir
+	return cmd
 }

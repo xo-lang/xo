@@ -663,3 +663,21 @@ connections, 20 s, 3 runs each, every response checked to be "hello":
   where wasmtime passes them through. The outgoing-request component
   (TestWasmComponentClient) was not run under Spin; it would need
   `allowed_outbound_hosts` in spin.toml.
+
+### Outgoing requests under Spin (2026-11-03)
+
+TestWasmComponentClient takes `XO_WASM_HOST=spin` too: the spin.toml
+(written by wasmHostCommand, shared with TestWasmComponentServe) lists the
+test servers' origins in `allowed_outbound_hosts`, for example
+`allowed_outbound_hosts = ["http://127.0.0.1:41235", "http://localhost:41235"]`.
+On the second linux/arm64 host (Spin 4.2.6, checksum checked against the
+release's checksums file; wasmtime 50.0.1) every case passes under both
+hosts: fields, a 100000 byte POST, PUT, 404, redirects (Authorization kept
+on the same origin and dropped on another), gzip, a refused connection, a
+timeout, a streamed 300000 byte body, the with_roots error and a piped
+body. Under Spin a request to an origin the manifest does not list fails
+with wasi:http's `HTTP-request-denied`, which the client reports as
+`protocol error: Get "http://127.0.0.1:PORT/hello": HTTP request denied`;
+the test checks it. So a component needs no change for Spin: what it may
+reach is the manifest's business, and the error says which request was
+refused.
