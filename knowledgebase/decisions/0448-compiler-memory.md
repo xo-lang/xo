@@ -980,6 +980,25 @@ symbol's address, the symbol table). Same environment, A then B: in use at link.
 HTTP server link byte-identical. linux/arm64 ab-host edit builds against 0906f6390, 3 rounds:
 max RSS coll 0.873, conc-spawn 0.850, the HTTP server 0.904; wall 0.972, 0.949 (within noise), 0.955.
 
+Where the Linux peak is after these (4cc56a650, coll edit build on host 1, 2026-11-03): the heap
+counter peaks at 52 MB in link.write (74 before, at link.resolve), the front end at 41 to 43 MB,
+max RSS 60.2 MB (78 to 82 before). The link's own live data is small now: 12.6 MB in use past
+link.layout (the half file's bytes 6.3 MB, the output sections 2.4 MB from ELinker.place, the
+decoded half 1.6 MB) and 2.1 MB at link.key, against a counter of 40 MB there. So most of the
+peak is now what the front end and emit freed and the heap kept (about 13 MB in free page blocks
+of 16 KiB and over and 9 MB in smaller classes at exit), which turns around the retention census
+above (at most about 8 MB of a peak the link's data then dominated).
+
+Tried and dropped: giving Linux the free page blocks back (MADV_DONTNEED) at the trim after emit
+only, before the link, which reuses little (refs/recover/l2-lintrim, measurement only). It lowers
+the RSS during the link (a build with VmRSS printed per phase: 88.4 to 83.9 MB after emit, 99.1 to
+95.7 MB in link.write) but not the peak, which the front end sets first (VmHWM 98 MB at ssa in
+that build, a link reaching it again only). ab-host against 4cc56a650, 3 rounds: coll edit max
+RSS 0.992, wall 1.008; conc-spawn 0.951 (within noise), wall 0.968; the self build 0.998, wall
+0.999 (all within noise); so it was not proposed for the owner's acceptance. Darwin already
+advises those blocks (MADV_FREE_REUSABLE) at every trim. The next Linux lever is the front end's
+own peak: check.prefetch (+43 MB of heap in that build) and ssa.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.
