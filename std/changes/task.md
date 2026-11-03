@@ -1,5 +1,21 @@
 # std/task changes
 
+## 2026-11-02: fix: Windows preemption no longer loses a preempted task's registers under load
+
+- Kind: fix
+- Commit: this commit
+- Found by: the 2026-11-02 Windows stress (async_preempt_regs under load), xo-lang-1
+- Go reference: runtime/os_windows.go preemptM (Go reads the thread's context into a buffer of the monitor's own)
+- Test: async_preempt_regs and async_preempt_alloc, 4 rounds of 32 copies beside CPU burners on windows/amd64 (main: async_preempt_regs 26 of 128 failed, 13 hangs, 12 C0000005 and 1 wrong sum, async_preempt_alloc 2 of 128 hung; with the fix, 8 rounds: no hang and no fault in 512 runs, async_preempt_alloc 256 of 256; 8 of 256 async_preempt_regs runs still print a wrong integer sum, a separate bug still open)
+
+Present since v0.25.0 (native Windows preemption, decision 0318). The monitor read a suspended thread's registers straight
+into the fiber's save area. Under load the thread it had just sent to the park
+routine could still be waiting to run when the next kick came, and that read
+overwrote the registers the park routine was about to restore. The task then
+looped in the park routine (a hang), faulted, or continued with wrong integer
+registers. The registers are now read into the scratch half and copied into
+the save area only when the thread is redirected.
+
 ## 2026-11-01: perf: runtime locks spin longer before a futex sleep on Linux
 
 - Kind: perf

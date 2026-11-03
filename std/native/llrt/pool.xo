@@ -1608,19 +1608,35 @@ fn win_kick(w: Int, t: Int) {
   let f = rt.slot_load(w, W_RUNF / 8, ACQUIRE)
   if f != 0 && rt.mem_load(w, W_APOK, 8) != 0 && rt.mem_load(w, W_LOCKS, 8) == 0 && rt.mem_load(f, F_NOPRE, 8) == 0 {
     let cx = win_ctx(f)
+    // read into the lower half, never into cx itself: an earlier kick's
+    // CONTEXT stays in cx until the fiber's park routine restores it, and
+    // a thread a kick redirected may not have run yet when the next kick
+    // reads it (a loaded machine), so reading into cx lost the
+    // interrupted registers (2026-11-02: async_preempt_regs hung, faulted
+    // or printed a wrong sum under load)
+    let nx = cx.wrapping_sub(WIN_SAVE / 2)
     // CONTEXT_FULL: control, integer, floating point
-    rt.mem_store(cx, 48, 1048587, 4)
-    if Int(sys_windows.GetThreadContext(t, cx)) != 0 {
-      let pc = rt.mem_load(cx, 248, 8)
-      let sp = rt.mem_load(cx, 152, 8)
+    rt.mem_store(nx, 48, 1048587, 4)
+    if Int(sys_windows.GetThreadContext(t, nx)) != 0 {
+      let pc = rt.mem_load(nx, 248, 8)
+      let sp = rt.mem_load(nx, 152, 8)
       let a = rt.slot_load(w, W_PREEMPT_I, RELAXED)
-      if a != 0 && sp.wrapping_sub(rt.mem_load(f, F_MEM, 8)) >= ASYNC_ROOM && async_pc_ok(pc) && rt.slot_cas(w, W_PREEMPT_I, a, 0, RELAXED) {
+      // SuspendThread is asynchronous: the thread is stopped only once
+      // GetThreadContext returns (Go's preemptM), so what was read above
+      // may describe a fiber it has since switched away from. Read again,
+      // and take the context only when its sp is on f's own stack
+      // (another fiber's context in f's save area was restored by the
+      // wrong fiber: a wrong integer sum under load, 2026-11-02)
+      let mem = rt.mem_load(f, F_MEM, 8)
+      let size = rt.mem_load(f, F_SIZE, 8)
+      let off = sp.wrapping_sub(mem)
+      let same = rt.slot_load(w, W_RUNF / 8, ACQUIRE) == f && rt.mem_load(w, W_APOK, 8) != 0 && rt.mem_load(w, W_LOCKS, 8) == 0 && rt.mem_load(f, F_NOPRE, 8) == 0
+      if same && a != 0 && off >= ASYNC_ROOM && off < size - win_save(mem, size) && async_pc_ok(pc) && rt.slot_cas(w, W_PREEMPT_I, a, 0, RELAXED) {
         let _d = rt.slot_add[Int](rt.static_word(W_PREEMPT), 0, -1, RELEASE)
-        // a copy to change: rip, rsp (below what the interrupted code
-        // used, at a call's alignment), rcx the saved CONTEXT; only
-        // control and integer set
-        let nx = cx.wrapping_sub(WIN_SAVE / 2)
-        rt.mem_copy(nx, cx, WIN_CTX)
+        // the interrupted CONTEXT kept in cx; nx changed: rip, rsp (below
+        // what the interrupted code used, at a call's alignment), rcx the
+        // saved CONTEXT; only control and integer set
+        rt.mem_copy(cx, nx, WIN_CTX)
         rt.mem_store(nx, 48, 1048579, 4)
         rt.mem_store(nx, 248, rt.fn_addr("on_wpark"), 8)
         rt.mem_store(nx, 152, (sp.wrapping_sub(256) & -16).wrapping_sub(8), 8)
