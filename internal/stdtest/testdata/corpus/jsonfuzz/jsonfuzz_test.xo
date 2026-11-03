@@ -21623,3 +21623,186 @@ test "json fuzz 2002" {
   }
 }
 
+struct JfRec {
+  a: Int?
+  b: Float?
+  s: Str?
+} derive Json
+
+struct JfOne {
+  a: Int?
+} derive Json
+
+fn jf_oi(o: Int?) -> Str {
+  match o {
+    Some(n) => "${n}"
+    None => "none"
+  }
+}
+
+fn jf_rec(raw: Bytes) -> Str {
+  match json.decode[JfRec](raw) {
+    Ok(r) => {
+      let b = match r.b {
+        Some(f) => "${f.to_bits()}"
+        None => "none"
+      }
+      "a=${jf_oi(r.a)}|b=${b}|s=${r.s ?? "none"}"
+    }
+    Err(_) => "err"
+  }
+}
+
+fn jf_one(raw: Bytes) -> Str {
+  match json.decode[JfOne](raw) {
+    Ok(r) => "a=${jf_oi(r.a)}"
+    Err(_) => "err"
+  }
+}
+
+fn jf_map(raw: Bytes) -> Str {
+  match json.decode[Map[Str, Int]](raw) {
+    Ok(m) => {
+      var parts: List[Str] = []
+      for (k, v) in m {
+        parts.push("${k}=${v}")
+      }
+      parts.sort().join(",")
+    }
+    Err(_) => "err"
+  }
+}
+
+test "json typed 0" {
+  let raw = b"{\x22a\x22: 1, \x22a\x22: 2}"
+  expect(jf_rec(raw)) == "a=2|b=none|s=none"
+  expect(jf_one(raw)) == "a=2"
+  expect(jf_map(raw)) == "a=2"
+}
+
+test "json typed 1" {
+  let raw = b"{\x22a\x22: \x22x\x22, \x22a\x22: 1}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "err"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 2" {
+  let raw = b"{\x22a\x22: 1, \x22a\x22: \x22x\x22}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "err"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 3" {
+  let raw = b"{\x22a\x22: 1.5, \x22a\x22: 1}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "err"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 4" {
+  let raw = b"{\x22b\x22: 1e400, \x22b\x22: 1}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "a=none"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 5" {
+  let raw = b"{\x22b\x22: 1, \x22b\x22: 1e400}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "a=none"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 6" {
+  let raw = b"{\x22s\x22: 1, \x22s\x22: \x22t\x22}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "a=none"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 7" {
+  let raw = b"{\x22s\x22: \x22t\x22, \x22s\x22: null}"
+  expect(jf_rec(raw)) == "a=none|b=none|s=none"
+  expect(jf_one(raw)) == "a=none"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 8" {
+  let raw = b"{\x22a\x22: null, \x22a\x22: 3}"
+  expect(jf_rec(raw)) == "a=3|b=none|s=none"
+  expect(jf_one(raw)) == "a=3"
+  expect(jf_map(raw)) == "a=3"
+}
+
+test "json typed 9" {
+  let raw = b"{\x22a\x22: 1, \x22b\x22: 2.5, \x22s\x22: \x22x\x22, \x22a\x22: 4}"
+  expect(jf_rec(raw)) == "a=4|b=4612811918334230528|s=x"
+  expect(jf_one(raw)) == "a=4"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 10" {
+  let raw = b"{\x22z\x22: \x22x\x22, \x22z\x22: 1, \x22a\x22: 1}"
+  expect(jf_rec(raw)) == "a=1|b=none|s=none"
+  expect(jf_one(raw)) == "a=1"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 11" {
+  let raw = b"{\x22a\x22: [1], \x22a\x22: 1}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "err"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 12" {
+  let raw = b"{\x22a\x22: {}, \x22a\x22: 1}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "err"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 13" {
+  let raw = b"{\x22b\x22: true, \x22b\x22: 0.5}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "a=none"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 14" {
+  let raw = b"{\x22a\x22: 9223372036854775808, \x22a\x22: 1}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "err"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 15" {
+  let raw = b"{\x22a\x22: 1, \x22b\x22: 2, \x22a\x22: 3, \x22b\x22: \x22q\x22}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "a=3"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 16" {
+  let raw = b"{\x22\x5cu0061\x22: \x22x\x22, \x22a\x22: 1}"
+  expect(jf_rec(raw)) == "err"
+  expect(jf_one(raw)) == "err"
+  expect(jf_map(raw)) == "err"
+}
+
+test "json typed 17" {
+  let raw = b"{\x22a\x22: 1}"
+  expect(jf_rec(raw)) == "a=1|b=none|s=none"
+  expect(jf_one(raw)) == "a=1"
+  expect(jf_map(raw)) == "a=1"
+}
+
+test "json typed 18" {
+  let raw = b"{}"
+  expect(jf_rec(raw)) == "a=none|b=none|s=none"
+  expect(jf_one(raw)) == "a=none"
+  expect(jf_map(raw)) == ""
+}
+

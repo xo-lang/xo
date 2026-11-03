@@ -984,6 +984,17 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     }
     let mv = b.local()
     b.write_var(mv, b.empty_map(t))
+    // the values a duplicate key replaced decode first, their results
+    // dropped: Go's decoder reads every member, so one that does not
+    // decode fails the decode (found by internal/stdtest/jsonfuzz_test.go,
+    // 2026-11-02); its key node is three before it
+    let rep = b.json_rt("json_replaced", b.m.list(it), [d.src, d.tape, i])
+    let rv = b.local()
+    let (rk, rhead, rexit) = b.for_up_to_begin(b.call("list.len", it, "", [rep]), rv)
+    let rn = b.call("list.index", it, "", [rep, rk])
+    let rkey = b.dec_str(d, b.add(Op.Sub, it, Aux.None, [rn, b.cint(3)]))
+    let _dup = b.dec_child(d, args[1], rn, b.call("str.concat", st, "", [b.const_str("."), rkey]))
+    b.for_up_to_end(rk, rv, rhead, rexit)
     let mem = b.json_rt("json_members", b.m.list(it), [d.src, d.tape, i])
     let iv = b.local()
     let n = b.call("list.len", it, "", [mem])
@@ -1197,9 +1208,11 @@ fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_
     packed.write("${Rune(0)}")
   }
   var idx = -1
+  var nidx = -1
+  let lt = b.m.list(it)
   if all {
-    let lt = b.m.list(it)
     idx = b.json_rt("json_find_all", lt, [d.src, d.tape, o, b.const_str(packed.freeze()), b.cint(fs.len())])
+    nidx = b.call("list.len", it, "", [idx])
   }
   for (fk, f) in fs.indexed() {
     let j = if all { b.call("list.index", it, "", [idx, b.cint(fk)]) } else { b.json_rt("json_find", it, [d.src, d.tape, o, b.const_str(f.key)]) }
@@ -1208,6 +1221,32 @@ fn (var b: Builder) dec_fields(d: Dec, o: Int, seg: Str, fs: List[JField], with_
     let (found, missing) = b.branch(b.add(Op.Ge, bt, Aux.None, [j, b.cint(0)]))
     b.s.cur = found
     let fseg = b.const_str("${seg}.${f.key}")
+    // the values a duplicate key replaced decode first, their results
+    // dropped: Go's decoder reads every member, so one that does not
+    // decode fails the decode (jsontext.find_all lists them after the
+    // fields' slots; found by internal/stdtest/jsonfuzz_test.go,
+    // 2026-11-02)
+    if all {
+      let (nod, joind) = b.if_then_begin(b.add(Op.Gt, bt, Aux.None, [nidx, b.cint(fs.len())]))
+      let dv = b.local()
+      let npairs = b.add(Op.Div, it, Aux.None, [b.add(Op.Sub, it, Aux.None, [nidx, b.cint(fs.len())]), b.cint(2)])
+      let (q, headd, exitd) = b.for_up_to_begin(npairs, dv)
+      let at = b.add(Op.Add, it, Aux.None, [b.cint(fs.len()), b.add(Op.Mul, it, Aux.None, [q, b.cint(2)])])
+      let fi = b.call("list.index", it, "", [idx, at])
+      let (nom, joinm) = b.if_then_begin(b.add(Op.Eq, bt, Aux.None, [fi, b.cint(fk)]))
+      let dn = b.call("list.index", it, "", [idx, b.add(Op.Add, it, Aux.None, [at, b.cint(1)])])
+      let _dup = b.dec_child(d, f.ct, dn, fseg)
+      b.if_then_end(nom, joinm)
+      b.for_up_to_end(q, dv, headd, exitd)
+      b.if_then_end(nod, joind)
+    } else {
+      let dups = b.json_rt("json_find_dups", lt, [d.src, d.tape, o, b.const_str(f.key)])
+      let dv = b.local()
+      let (q, headd, exitd) = b.for_up_to_begin(b.call("list.len", it, "", [dups]), dv)
+      let dn = b.call("list.index", it, "", [dups, q])
+      let _dup = b.dec_child(d, f.ct, dn, fseg)
+      b.for_up_to_end(q, dv, headd, exitd)
+    }
     let v = b.dec_child(d, f.ct, j, fseg)
     let cv = b.coerce(v, f.st)
     b.jump(join, [cv])

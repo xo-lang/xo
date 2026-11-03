@@ -669,6 +669,33 @@ fn range_eq(a: Bytes, ai: Int, b: Bytes, bi: Int, n: Int) -> Bool {
   true
 }
 
+/// The tape indexes of the values of the members of the object at i whose
+/// key is key, except the last (find's) and nulls, in document order: the
+/// values a duplicate key replaces, which Go's decoder still reads
+/// (find_all; a null into a value is a no-op in Go).
+pub fn find_dups(src: Bytes, tape: List[Int], i: Int, key: Str) -> List[Int] {
+  let m = tape[i + 1]
+  let kb = key.bytes()
+  let kn = kb.len()
+  var out: List[Int] = []
+  var last = -1
+  var j = i + 3
+  var k = 0
+  while k < m {
+    let v = j + 3
+    let raw = tape[j + 2]
+    if (raw == kn && range_eq(src, tape[j + 1], kb, 0, kn)) || (raw > LEN_MASK && key_eq_slow(src, tape, j, key)) {
+      if last >= 0 && tape[last] != 0 {
+        out.push(last)
+      }
+      last = v
+    }
+    j = next(tape, v)
+    k += 1
+  }
+  out
+}
+
 /// The tape index of the value of the last member of the object at i
 /// whose key is key, or -1 (std/rt keeps the last value).
 pub fn find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int {
@@ -704,8 +731,13 @@ pub fn find(src: Bytes, tape: List[Int], i: Int, key: Str) -> Int {
 /// (each under 128 bytes), then 8 zero bytes (key_eq_padded reads whole
 /// words). A member counts for the key it equals (the
 /// keys are distinct); a later member of the same key replaces it, as in
-/// find. The keys are tried from the one after the last match, so members
-/// in the fields' order cost one compare each.
+/// find, and the replaced member is listed after the nk slots as a pair
+/// (key index, value node), in document order, unless it is null: Go's
+/// decoder reads every
+/// member, so a replaced value that does not decode still fails the
+/// decode (found by internal/stdtest/jsonfuzz_test.go, 2026-11-02). The
+/// keys are tried from the one after the last match, so members in the
+/// fields' order cost one compare each.
 pub fn find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List[Int] {
   var out: List[Int] = List.with_capacity(nk)
   for _ in 0..nk {
@@ -724,6 +756,10 @@ pub fn find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List
     if raw > LEN_MASK {
       let f = keys_match_slow(src, tape, j, kb, nk)
       if f >= 0 {
+        if out[f] >= 0 && tape[out[f]] != 0 {
+          out.push(f)
+          out.push(out[f])
+        }
         out[f] = v
       }
     } else {
@@ -737,6 +773,10 @@ pub fn find_all(src: Bytes, tape: List[Int], i: Int, keys: Str, nk: Int) -> List
       while c < nk {
         let kl = Int(kb[p])
         if raw == kl && key_eq_padded(src, at, kb, p + 1, kl) {
+          if out[f] >= 0 && tape[out[f]] != 0 {
+            out.push(f)
+            out.push(out[f])
+          }
           out[f] = v
           hf = f + 1
           hp = p + 1 + kl
@@ -854,7 +894,16 @@ fn key_hash(src: Bytes, tape: List[Int], j: Int) -> Int {
 /// once, at its first position, with its last value: (key node, value
 /// node) pairs of tape indexes. Small objects compare each key with the
 /// ones before it; larger ones find keys again through a hash table.
-pub fn members(src: Bytes, tape: List[Int], i: Int) -> List[Int] {
+pub fn members(src: Bytes, tape: List[Int], i: Int) -> List[Int] { members_with(src, tape, i, false) }
+
+/// The value nodes of the object at i that a later member of the same key
+/// replaces, in document order, nulls left out: a Map decode reads them
+/// before the members' last values, as Go's decoder reads every member
+/// (a null into a value is a no-op in Go, never an error).
+pub fn replaced(src: Bytes, tape: List[Int], i: Int) -> List[Int] { members_with(src, tape, i, true) }
+
+fn members_with(src: Bytes, tape: List[Int], i: Int, want_rep: Bool) -> List[Int] {
+  var rep: List[Int] = []
   let m = tape[i + 1]
   var out = List[Int].with_capacity(if m < 2 { 4 } else { 2 * m })
   var j = i + 3
@@ -873,6 +922,9 @@ pub fn members(src: Bytes, tape: List[Int], i: Int) -> List[Int] {
         e += 1
       }
       if dup >= 0 {
+        if want_rep && tape[out[2 * dup + 1]] != 0 {
+          rep.push(out[2 * dup + 1])
+        }
         out.set(2 * dup + 1, v)
       } else {
         out.push(j)
@@ -882,7 +934,7 @@ pub fn members(src: Bytes, tape: List[Int], i: Int) -> List[Int] {
       j = next(tape, v)
       k += 1
     }
-    return out
+    return if want_rep { rep } else { out }
   }
   var slots = 16
   while slots < 2 * m {
@@ -907,6 +959,9 @@ pub fn members(src: Bytes, tape: List[Int], i: Int) -> List[Int] {
       s = (s + 1) & (slots - 1)
     }
     if dup >= 0 {
+      if want_rep && tape[out[2 * dup + 1]] != 0 {
+        rep.push(out[2 * dup + 1])
+      }
       out.set(2 * dup + 1, v)
     } else {
       out.push(j)
@@ -917,7 +972,7 @@ pub fn members(src: Bytes, tape: List[Int], i: Int) -> List[Int] {
     j = next(tape, v)
     k += 1
   }
-  out
+  if want_rep { rep } else { out }
 }
 
 /// Whether the number node at i is an Int (strconv.ParseInt of its

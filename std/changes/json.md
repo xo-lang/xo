@@ -1,5 +1,23 @@
 # std/json changes
 
+## 2026-11-02: fix: typed decode reads a duplicate key's replaced values, as in Go
+
+- Kind: fix
+- Commit: this commit
+- Found by: the json fuzz harness's duplicate key finding (the entry below), which noted typed decode as open; the lead asked for it fixed
+- Go reference: encoding/json Unmarshal into a struct and a map (go1.26.1): every member is decoded in turn, so an error in a value a later duplicate replaces is still returned
+- Test: internal/stdtest/testdata/corpus/jsonfuzz/jsonfuzz_test.xo ("json typed" cases: a struct of three Option fields, a struct of one, and Map[Str, Int], against Go's answers)
+
+`decode[T]` of a struct or a `Map[Str, V]` read only each key's last
+value, so `{"a": "x", "a": 1}` decoded into a struct with `a: Int?` (or a
+Map[Str, Int]) succeeded with 1, where Go fails on "x". A struct's
+decoder now decodes the values a duplicate replaced before the last one
+(jsontext.find_all lists them after the fields' slots; objects without a
+duplicate key take the old path with one more compare), and a map
+decodes every member as written (jsontext.members_all; a key keeps its
+first position and its last value, as before). A replaced value that
+fits still leaves the last one; unknown keys are still skipped unread.
+
 ## 2026-11-02: fix: a number out of range under a duplicate key fails decode, as in Go
 
 - Kind: fix

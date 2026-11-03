@@ -330,8 +330,135 @@ func jfXoFile(seed int64, cases []jfCase) string {
 		}
 		b.WriteString("}\n\n")
 	}
+	b.WriteString(jfTypedXo)
+	for i, in := range jfTyped {
+		rec, one, m := jfTypedGo([]byte(in))
+		fmt.Fprintf(&b, "test \"json typed %d\" {\n  let raw = %s\n", i, ufBytes([]byte(in)))
+		fmt.Fprintf(&b, "  expect(jf_rec(raw)) == %s\n  expect(jf_one(raw)) == %s\n  expect(jf_map(raw)) == %s\n}\n\n", xoStr(rec), xoStr(one), xoStr(m))
+	}
 	return b.String()
 }
+
+// jfTyped are inputs for typed decode, most with a duplicate key: Go's
+// decoder reads every member, so a value a later duplicate replaces still
+// fails the decode when it does not fit (decode[T] dropped those errors
+// until 2026-11-02), and a replaced value that fits leaves the last one.
+var jfTyped = []string{
+	`{"a": 1, "a": 2}`, `{"a": "x", "a": 1}`, `{"a": 1, "a": "x"}`, `{"a": 1.5, "a": 1}`,
+	`{"b": 1e400, "b": 1}`, `{"b": 1, "b": 1e400}`, `{"s": 1, "s": "t"}`, `{"s": "t", "s": null}`,
+	`{"a": null, "a": 3}`, `{"a": 1, "b": 2.5, "s": "x", "a": 4}`, `{"z": "x", "z": 1, "a": 1}`,
+	`{"a": [1], "a": 1}`, `{"a": {}, "a": 1}`, `{"b": true, "b": 0.5}`, `{"a": 9223372036854775808, "a": 1}`,
+	`{"a": 1, "b": 2, "a": 3, "b": "q"}`, `{"\u0061": "x", "a": 1}`, `{"a": 1}`, `{}`,
+}
+
+// jfTypedGo is Go's answer for in decoded into a struct of three optional
+// fields, a struct of one, and a map of ints: "err" or the fields.
+func jfTypedGo(in []byte) (string, string, string) {
+	var rec struct {
+		A *int64   `json:"a"`
+		B *float64 `json:"b"`
+		S *string  `json:"s"`
+	}
+	r := "err"
+	if json.Unmarshal(in, &rec) == nil {
+		r = "a=" + jfOpt(rec.A) + "|b=" + jfOptF(rec.B) + "|s=" + jfOptS(rec.S)
+	}
+	var one struct {
+		A *int64 `json:"a"`
+	}
+	o := "err"
+	if json.Unmarshal(in, &one) == nil {
+		o = "a=" + jfOpt(one.A)
+	}
+	var m map[string]int64
+	ms := "err"
+	if json.Unmarshal(in, &m) == nil {
+		keys := make([]string, 0, len(m))
+		for k := range m {
+			keys = append(keys, k)
+		}
+		sort.Strings(keys)
+		parts := []string{}
+		for _, k := range keys {
+			parts = append(parts, fmt.Sprintf("%s=%d", k, m[k]))
+		}
+		ms = strings.Join(parts, ",")
+	}
+	return r, o, ms
+}
+
+func jfOpt(p *int64) string {
+	if p == nil {
+		return "none"
+	}
+	return strconv.FormatInt(*p, 10)
+}
+
+func jfOptF(p *float64) string {
+	if p == nil {
+		return "none"
+	}
+	return strconv.FormatInt(int64(math.Float64bits(*p)), 10)
+}
+
+func jfOptS(p *string) string {
+	if p == nil {
+		return "none"
+	}
+	return *p
+}
+
+const jfTypedXo = `struct JfRec {
+  a: Int?
+  b: Float?
+  s: Str?
+} derive Json
+
+struct JfOne {
+  a: Int?
+} derive Json
+
+fn jf_oi(o: Int?) -> Str {
+  match o {
+    Some(n) => "${n}"
+    None => "none"
+  }
+}
+
+fn jf_rec(raw: Bytes) -> Str {
+  match json.decode[JfRec](raw) {
+    Ok(r) => {
+      let b = match r.b {
+        Some(f) => "${f.to_bits()}"
+        None => "none"
+      }
+      "a=${jf_oi(r.a)}|b=${b}|s=${r.s ?? "none"}"
+    }
+    Err(_) => "err"
+  }
+}
+
+fn jf_one(raw: Bytes) -> Str {
+  match json.decode[JfOne](raw) {
+    Ok(r) => "a=${jf_oi(r.a)}"
+    Err(_) => "err"
+  }
+}
+
+fn jf_map(raw: Bytes) -> Str {
+  match json.decode[Map[Str, Int]](raw) {
+    Ok(m) => {
+      var parts: List[Str] = []
+      for (k, v) in m {
+        parts.push("${k}=${v}")
+      }
+      parts.sort().join(",")
+    }
+    Err(_) => "err"
+  }
+}
+
+`
 
 // jfCoverage fails when the cases stop reaching the parser's parts: the
 // floors are a fraction of what seed 1 reaches, so a generator change that
