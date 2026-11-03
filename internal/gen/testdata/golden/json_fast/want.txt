@@ -6,7 +6,7 @@ exit 0
 {"name":"café","nick":"日本","ids":[],"inner":null,"ratio":1}
 {"name":"a","nick":null,"ids":[],"inner":null,"ratio":1}
 {"name":"second","nick":null,"ids":[],"inner":null,"ratio":1}
-{"name":"fixed by the later key","nick":null,"ids":[],"inner":null,"ratio":1}
+error at $.name: expected string
 {"name":"n","nick":null,"ids":[],"inner":{"n":5,"ok":true},"ratio":1}
 error at $.inner: missing field `ok`
 error at $.ids[0]: expected integer

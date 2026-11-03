@@ -1,5 +1,28 @@
 # std/json changes
 
+## 2026-11-02: fix: the Go backend's typed decode reads a duplicate key's replaced values, as in Go
+
+- Kind: fix
+- Commit: this commit
+- Found by: the lead's 2-hourly main check (internal/llvm TestGenGoldensNative/json_fast): after the native fix below, arm64 and LLVM failed `{"name": 1, "name": "x"}` into a `name: Str` field and the Go backend still decoded it
+- Go reference: encoding/json Unmarshal into a struct and a map (go1.26.1): an UnmarshalTypeError in a value a later duplicate key replaces is still returned
+- Test: internal/gen/testdata/golden/json_fast (now `error at $.name: expected string` on every backend), TestGenGoldensNative, the json and jsonfuzz corpora on the Go backend (41 of 2,022 jsonfuzz cases failed there before)
+- Timing: none (an object with no duplicate key takes the same path; one with a duplicate copies its member map once)
+- Shipped in: the Go backend's decoder since the first release (9713c481f, v0.7.0) through v0.35.0; fixed in v0.36.0
+
+std/rt's parsed object now keeps the non-null values a later member of
+the same key replaced. A struct field's decode reads them before the
+last value and a `Map[Str, V]` decode reads them before its members,
+each result dropped, so the Go backend fails where arm64 and LLVM fail
+(jsontext.find_dups and replaced).
+
+Running the json fuzz corpus on the Go backend (it had run only on arm64
+and LLVM) found two more differences, fixed here: `decode[json.Value]`
+of a number out of Float's range gave Null instead of failing (Go and
+native fail), and the range check skipped a value a duplicate key
+replaced (now checked in document order); `compact` and `indent` failed
+on such a number, where Go's Compact and Indent check the syntax only.
+
 ## 2026-11-02: fix: typed decode reads a duplicate key's replaced values, as in Go
 
 - Kind: fix

@@ -290,10 +290,7 @@ func (p *jsonFast) object(depth int) (any, bool) {
 		if !ok {
 			return nil, false
 		}
-		if _, dup := obj.vals[k]; !dup {
-			obj.keys = append(obj.keys, k)
-		}
-		obj.vals[k] = v
+		obj.put(k, v)
 		p.skip()
 		if p.i >= len(p.b) {
 			return nil, false

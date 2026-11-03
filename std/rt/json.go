@@ -241,6 +241,17 @@ func jsonFloat(f float64) string {
 
 // JsonDec decodes the parsed JSON value x into dst.
 func JsonDec[T any](tk *Task, dst *T, x any, path string) *Json_DecodeErr {
+	if dd, ok := x.(*jsonDup); ok {
+		// the values a duplicate key replaced decode first, their results
+		// dropped, as Go's decoder reads every member
+		for _, p := range dd.prev {
+			var s T
+			if err := JsonDec(tk, &s, p, path); err != nil {
+				return err
+			}
+		}
+		x = dd.last
+	}
 	switch d := any(dst).(type) {
 	case *int64:
 		n, err := jsonInt(x, path, 64, true)
@@ -401,6 +412,51 @@ func jsonUint(x any, path string, bits int) (uint64, *Json_DecodeErr) {
 type jsonObj struct {
 	keys []string
 	vals map[string]any
+	// reps are the non-null values a later member of the same key
+	// replaced, in document order: Go's decoder reads every member, so a
+	// typed decode reads them too (std/native's jsontext.find_dups and
+	// replaced; a null into a value is a no-op in Go)
+	reps []jsonRep
+	// all is every member as written, kept from an object's first
+	// duplicate key on (nil without one): a Value's range check names
+	// the first number out of range in document order
+	all []jsonRep
+}
+
+// jsonRep is a member whose value a later member of its key replaced.
+type jsonRep struct {
+	k string
+	v any
+}
+
+// jsonDup is a struct field's value with the values it replaced
+// (JsonObject), which JsonDec decodes first.
+type jsonDup struct {
+	prev []any
+	last any
+}
+
+// put sets member k to v, keeping a replaced non-null value in reps.
+func (o *jsonObj) put(k string, v any) {
+	if old, dup := o.vals[k]; !dup {
+		o.keys = append(o.keys, k)
+	} else {
+		if old != nil {
+			o.reps = append(o.reps, jsonRep{k, old})
+		}
+		if o.all == nil {
+			// no key repeated before this one: the members so far are
+			// the keys with their values
+			o.all = make([]jsonRep, len(o.keys))
+			for i, kk := range o.keys {
+				o.all[i] = jsonRep{kk, o.vals[kk]}
+			}
+		}
+	}
+	if o.all != nil {
+		o.all = append(o.all, jsonRep{k, v})
+	}
+	o.vals[k] = v
 }
 
 // jsonParse parses JSON text into *jsonObj, []any, json.Number, string,
@@ -530,10 +586,7 @@ func jsonValue(dec *json.Decoder) (any, error) {
 				if err != nil {
 					return nil, err
 				}
-				if _, dup := obj.vals[k]; !dup {
-					obj.keys = append(obj.keys, k)
-				}
-				obj.vals[k] = v
+				obj.put(k, v)
 			}
 			if _, err := dec.Token(); err != nil {
 				return nil, err
@@ -679,6 +732,14 @@ func (m *Map[K, V]) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
 	if !ok {
 		return JsonErr(path, "expected object")
 	}
+	// the values a duplicate key replaced decode first, their results
+	// dropped, as Go's decoder reads every member
+	for _, r := range obj.reps {
+		var v V
+		if err := JsonDec(tk, &v, r.v, path+"."+r.k); err != nil {
+			return err
+		}
+	}
 	var out Map[K, V]
 	for _, k := range obj.keys {
 		kk, ok := any(k).(K)
@@ -753,7 +814,23 @@ func JsonObject(x any, path string) (map[string]any, *Json_DecodeErr) {
 	if !ok {
 		return nil, JsonErr(path, "expected object")
 	}
-	return obj.vals, nil
+	if len(obj.reps) == 0 {
+		return obj.vals, nil
+	}
+	// a duplicate key's field reads its replaced values first (JsonDec)
+	m := make(map[string]any, len(obj.vals))
+	for k, v := range obj.vals {
+		m[k] = v
+	}
+	for _, r := range obj.reps {
+		d, ok := m[r.k].(*jsonDup)
+		if !ok {
+			d = &jsonDup{last: obj.vals[r.k]}
+			m[r.k] = d
+		}
+		d.prev = append(d.prev, r.v)
+	}
+	return m, nil
 }
 
 // JsonEnumInt reads the integer value of a valued enum (decision 0269).
