@@ -5521,3 +5521,97 @@ fn clockerr_display(e: ClockErr) -> Str {
     Canceled => "canceled"
   }
 }
+
+// ---------------------------------------------------------------------------
+// ByteBuffer (decision 0480; std/rt bytebuf.go on the Go backend)
+
+struct ByteBuffer {
+  /// the storage: its bytes before off were consumed, the rest are unread
+  s: Str = ""
+  off: Int = 0
+  /// the unread bytes read_until searched for delim and did not find it in
+  /// (a later call starts after them)
+  scanned: Int = 0
+  delim: Int = -1
+}
+
+fn bytebuffer_new() -> ByteBuffer { ByteBuffer{} }
+
+fn bytebuffer_with_capacity(n: Int) -> ByteBuffer {
+  if n <= 0 { ByteBuffer{} } else { ByteBuffer{s: rt.rs_with_cap(n)} }
+}
+
+fn bytebuffer_len(b: ByteBuffer) -> Int { b.s.len() - b.off }
+
+/// Appends in place while the storage has room and no view holds it, else
+/// to new storage (a view keeps the old one). When half or more of the
+/// storage was consumed, the unread bytes move to new storage first: each
+/// byte is copied a constant number of times overall, as Go's grow.
+fn bytebuffer_write(var b: ByteBuffer, data: Bytes) {
+  let n = data.len()
+  if n == 0 {
+    return
+  }
+  let end = b.s.len()
+  let unread = end - b.off
+  if b.off > 0 && b.off >= unread {
+    let old = b.s
+    b.s = ""
+    b.s = rt.rs_append_bytes(rt.rs_with_cap(2 * unread + n), old.bytes(), b.off, end, 0)
+    b.off = 0
+  }
+  // the field let go first, so that the storage is not shared by it and
+  // the append can be in place
+  let t = b.s
+  b.s = ""
+  b.s = rt.rs_append_bytes(t, data, 0, n, 0)
+}
+
+/// Consumes k of the unread bytes (0 <= k <= len); drops the storage once
+/// all are read.
+fn bytebuffer_take(var b: ByteBuffer, k: Int) {
+  b.off += k
+  b.scanned = if b.scanned > k { b.scanned - k } else { 0 }
+  if b.off == b.s.len() {
+    b.s = ""
+    b.off = 0
+  }
+}
+
+fn bytebuffer_clamp(b: ByteBuffer, n: Int) -> Int {
+  let m = b.s.len() - b.off
+  if n < 0 { 0 } else if n > m { m } else { n }
+}
+
+fn bytebuffer_peek(b: ByteBuffer, n: Int) -> Bytes {
+  let k = bytebuffer_clamp(b, n)
+  b.s.bytes()[b.off..b.off + k]
+}
+
+fn bytebuffer_next(var b: ByteBuffer, n: Int) -> Bytes {
+  let k = bytebuffer_clamp(b, n)
+  let v = b.s.bytes()[b.off..b.off + k]
+  bytebuffer_take(b, k)
+  v
+}
+
+fn bytebuffer_discard(var b: ByteBuffer, n: Int) { bytebuffer_take(b, bytebuffer_clamp(b, n)) }
+
+fn bytebuffer_read_until(var b: ByteBuffer, delim: UInt8) -> Bytes? {
+  let d = Int(delim)
+  let from = b.off + if b.delim == d { b.scanned } else { 0 }
+  let end = b.s.len()
+  let all = b.s.bytes()
+  let i = scan.find_byte(all, from, end, d)
+  if i < 0 {
+    b.delim = d
+    b.scanned = end - b.off
+    return None
+  }
+  let k = i + 1 - b.off
+  let v = all[b.off..i + 1]
+  bytebuffer_take(b, k)
+  Some(v)
+}
+
+fn bytebuffer_find(b: ByteBuffer, sub: Bytes) -> Int? { b.s.bytes()[b.off..b.s.len()].find(sub) }

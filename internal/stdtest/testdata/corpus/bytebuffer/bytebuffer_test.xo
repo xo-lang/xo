@@ -1,0 +1,184 @@
+// The prelude's ByteBuffer (decision 0480), with the tests of Go's
+// bytes/buffer_test.go that apply to its methods ported (TestNewBuffer,
+// TestBasicOperations, TestLargeStringWrites, TestLargeByteWrites,
+// TestMixedReadsAndWrites, TestNext, TestReadBytes, TestReadEmptyAtEOF,
+// TestBufferGrowth's reuse; Copyright 2009 The Go Authors, BSD-style
+// license) and the view rule of 0480 (a returned view stays valid).
+
+const N = 10000
+
+/// Go's testBytes: N bytes of 'a' + i % 26.
+fn test_bytes() -> Bytes {
+  var b = BytesBuilder.with_capacity(N)
+  for i in 0..N {
+    b.write_byte(UInt8.try(97 + i % 26) ?? 0)
+  }
+  b.freeze()
+}
+
+/// Reads everything left (Go's check after empty).
+fn rest(var b: ByteBuffer) -> Bytes { b.next(b.len()) }
+
+test "a new buffer is empty (TestNewBuffer, TestReadEmptyAtEOF)" {
+  var b = ByteBuffer.new()
+  expect(b.len()) == 0
+  expect(b.next(5)) == b""
+  expect(b.peek(5)) == b""
+  expect(b.read_until(0x0A)) == None
+  b.discard(3)
+  expect(b.len()) == 0
+  expect(b.find(b"x")) == None
+  var c = ByteBuffer.with_capacity(64)
+  expect(c.len()) == 0
+  c.write(b"abc")
+  expect(rest(c)) == b"abc"
+}
+
+test "basic operations (TestBasicOperations)" {
+  let data = test_bytes()
+  var b = ByteBuffer.new()
+  for _ in 0..5 {
+    b.write(data[0..1])
+    expect(b.len()) == 1
+    b.write(data[1..26])
+    expect(b.len()) == 26
+    expect(b.peek(26)) == data[0..26]
+    b.discard(10)
+    expect(b.peek(100)) == data[10..26]
+    b.write(data[26..30])
+    expect(b.len()) == 20
+    expect(b.next(1)) == data[10..11]
+    expect(b.next(100)) == data[11..30]
+    expect(b.len()) == 0
+  }
+}
+
+test "large writes then reads empty it (TestLargeStringWrites, TestLargeByteWrites)" {
+  let data = test_bytes()
+  var b = ByteBuffer.new()
+  var i = 3
+  while i < 30 {
+    var want = 0
+    for _ in 0..i {
+      b.write(data[0..N])
+      want += N
+    }
+    expect(b.len()) == want
+    for _ in 0..i {
+      expect(b.next(N)) == data
+    }
+    expect(b.len()) == 0
+    i += 3
+  }
+}
+
+test "mixed reads and writes keep the order (TestMixedReadsAndWrites)" {
+  let data = test_bytes()
+  var b = ByteBuffer.new()
+  var want = BytesBuilder.new()
+  var read = BytesBuilder.new()
+  var x = 7
+  for i in 0..50 {
+    x = (x * 1103515245 + 12345) % 2147483648
+    let n = x % N
+    if i % 2 == 0 {
+      b.write(data[0..n])
+      want.write(data[0..n])
+    } else {
+      read.write(b.next(n / 2))
+    }
+  }
+  read.write(rest(b))
+  expect(read.freeze()) == want.freeze()
+}
+
+test "next returns what is unread, up to n (TestNext)" {
+  let src = b"\x00\x01\x02\x03\x04"
+  for i in 0..6 {
+    for j in i..6 {
+      for k in 0..7 {
+        var b = ByteBuffer.new()
+        b.write(src[0..j])
+        expect(b.next(i).len()) == i
+        let want = if i + k < j { i + k } else { j }
+        expect(b.next(k)) == src[i..want]
+        expect(rest(b)) == src[want..j]
+      }
+    }
+  }
+}
+
+test "read_until through each delimiter (TestReadBytes)" {
+  // (buffer, delim, records, the rest when the last has no delim)
+  let cases: List[(Bytes, UInt8, List[Bytes], Bytes)] = [
+    (b"", 0, [], b""),
+    (b"a\x00", 0, [b"a\x00"], b""),
+    (b"abbbaaaba", 0x62, [b"ab", b"b", b"b", b"aaab"], b"a"),
+    (b"hello\x01world", 1, [b"hello\x01"], b"world"),
+    (b"foo\nbar", 0, [], b"foo\nbar"),
+    (b"alpha\nbeta\ngamma\n", 0x0A, [b"alpha\n", b"beta\n", b"gamma\n"], b""),
+    (b"alpha\nbeta\ngamma", 0x0A, [b"alpha\n", b"beta\n"], b"gamma"),
+  ]
+  for (buf, delim, recs, tail) in cases {
+    var b = ByteBuffer.new()
+    b.write(buf)
+    var got: List[Bytes] = []
+    while let Some(r) = b.read_until(delim) {
+      got.push(r)
+    }
+    expect(got) == recs
+    expect(rest(b)) == tail
+  }
+}
+
+test "read_until resumes after a partial record and a new delimiter" {
+  var b = ByteBuffer.new()
+  b.write(b"ab,cd")
+  expect(b.read_until(0x0A)) == None
+  b.write(b"e\nf")
+  // a different delimiter searches the unread bytes from the start
+  expect(b.read_until(0x2C)) == Some(b"ab,")
+  expect(b.read_until(0x0A)) == Some(b"cde\n")
+  expect(b.read_until(0x0A)) == None
+  expect(b.find(b"f")) == Some(0)
+  b.write(b"gh\n")
+  expect(b.find(b"h\n")) == Some(2)
+  expect(b.read_until(0x0A)) == Some(b"fgh\n")
+  expect(b.len()) == 0
+}
+
+test "a view stays valid after later writes and the storage moves (decision 0480)" {
+  let data = test_bytes()
+  var b = ByteBuffer.new()
+  b.write(data[0..100])
+  let v = b.next(40)
+  let p = b.peek(20)
+  for _ in 0..50 {
+    b.write(data)
+    b.discard(N)
+  }
+  expect(v) == data[0..40]
+  expect(p) == data[40..60]
+  expect(b.len()) == 60
+  // the stream's last 60 bytes: each round wrote N and consumed N
+  expect(rest(b)) == data[N - 60..N]
+}
+
+test "growth after consuming keeps the content (TestBufferGrowth)" {
+  let data = test_bytes()
+  var b = ByteBuffer.new()
+  for _ in 0..1000 {
+    b.write(data[0..1024])
+    expect(b.next(1024)) == data[0..1024]
+    expect(b.len()) == 0
+  }
+  // a growing unread part: 24 bytes left each round
+  var out = BytesBuilder.new()
+  for _ in 0..1000 {
+    b.write(data[0..1024])
+    out.write(b.next(1000))
+  }
+  expect(b.len()) == 24000
+  out.write(rest(b))
+  expect(out.freeze()) == data[0..1024].repeat(1000)
+}

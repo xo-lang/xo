@@ -2,8 +2,9 @@
 // in 4 KiB pieces, against Go's bytes.Buffer (twin.go.txt). Usage:
 // `<program> WORKLOAD`, where WORKLOAD is none, or small (1,000,000 lines
 // of 20 to 80 bytes), large1 (one 1 MiB line) or large64 (one 64 MiB
-// line) followed by _concat (today's `rest + piece`) or _views (option
-// B3: a partial record kept as a view or a list of views, joined once).
+// line) followed by _concat (today's `rest + piece`), _views (option
+// B3: a partial record kept as a view or a list of views, joined once) or
+// _buf (option B1, the prelude's ByteBuffer).
 // Prints `<workload> <records> <bytes>` (newlines not counted); the twin
 // prints the same.
 
@@ -129,6 +130,22 @@ fn views(ps: List[Bytes]) -> (Int, Int) {
   (count, total)
 }
 
+/// Option B1: the naive loop over a ByteBuffer (read_until resumes its
+/// search where the last one stopped).
+fn buf(ps: List[Bytes]) -> (Int, Int) {
+  var count = 0
+  var total = 0
+  var b = ByteBuffer.new()
+  for p in ps {
+    b.write(p)
+    while let Some(rec) = b.read_until(0x0A) {
+      count += 1
+      total += rec.len() - 1
+    }
+  }
+  (count, total)
+}
+
 fn main(os: Os) uses stdio, env {
   let w = os.env.args().get(0) ?? "none"
   var ps: List[Bytes] = []
@@ -140,6 +157,6 @@ fn main(os: Os) uses stdio, env {
   } else if w.starts_with("large64") {
     ps = large_pieces(67108864)
   }
-  let r = if w == "none" { (0, 0) } else if w.ends_with("_concat") { concat(ps) } else { views(ps) }
+  let r = if w == "none" { (0, 0) } else if w.ends_with("_concat") { concat(ps) } else if w.ends_with("_buf") { buf(ps) } else { views(ps) }
   os.stdio.println("${w} ${r.0} ${r.1}")
 }

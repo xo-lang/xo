@@ -747,6 +747,23 @@ fn (b: BytesBuilder) len() -> Int
 /// @moves
 fn (b: BytesBuilder) freeze() -> Bytes
 
+/// Bytes appended at the back and consumed from the front (Go's
+/// bytes.Buffer, decision 0480): records cut from bytes that arrive in
+/// pieces cost time linear in their size. peek, next and read_until
+/// return views that stay valid after later writes.
+/// @move_only
+struct ByteBuffer {}
+
+fn (static: ByteBuffer) new() -> ByteBuffer
+fn (static: ByteBuffer) with_capacity(n: Int) -> ByteBuffer
+fn (var b: ByteBuffer) write(data: Bytes)
+fn (b: ByteBuffer) len() -> Int
+fn (b: ByteBuffer) peek(n: Int) -> Bytes
+fn (var b: ByteBuffer) next(n: Int) -> Bytes
+fn (var b: ByteBuffer) read_until(delim: UInt8) -> Bytes?
+fn (var b: ByteBuffer) discard(n: Int)
+fn (b: ByteBuffer) find(sub: Bytes) -> Int?
+
 fn (static: Secret[T]) new(v: T) -> Secret[T]
 fn (s: Secret[T]) reveal() -> T
 

@@ -230,6 +230,15 @@ var (
 	_ func(*BytesBuilder, *Task, int64, int64, int64)               = (*BytesBuilder).M_put_be
 	_ func(*BytesBuilder, *Task) int64                              = (*BytesBuilder).M_len
 	_ func(*BytesBuilder, *Task) Bytes                              = (*BytesBuilder).M_freeze
+	_ func(*Task) ByteBuffer                                        = ByteBuffer_new
+	_ func(*Task, int64) ByteBuffer                                 = ByteBuffer_with_capacity
+	_ func(*ByteBuffer, *Task, Bytes)                               = (*ByteBuffer).M_write
+	_ func(*ByteBuffer, *Task) int64                                = (*ByteBuffer).M_len
+	_ func(*ByteBuffer, *Task, int64) Bytes                         = (*ByteBuffer).M_peek
+	_ func(*ByteBuffer, *Task, int64) Bytes                         = (*ByteBuffer).M_next
+	_ func(*ByteBuffer, *Task, uint8) Option[Bytes]                 = (*ByteBuffer).M_read_until
+	_ func(*ByteBuffer, *Task, int64)                               = (*ByteBuffer).M_discard
+	_ func(*ByteBuffer, *Task, Bytes) Option[int64]                 = (*ByteBuffer).M_find
 	_ func(*FsErr, *Task) string                                    = (*FsErr).M_display
 	_ func(*Task, Fs, string, int64) Result[Unit, FsErr]            = Prelude_create_dir_all_mode
 	_ func(*Task, Fs, string, string) Result[string, FsErr]         = Prelude_read_text_or
