@@ -1,6 +1,6 @@
 # Timing rows against Go, part 9 (2026-11-03)
 
-Linux/arm64 offload host,  style runs (scratchpad twin-ab2: 15 rounds, Go and Xo alternated, caches off) of the bench/perf twins added with this batch: hash (crc64, crc64e, adler32 and the existing crc32, crc32c, fnv rows), csv (parse, format and the new streaming ), bcrypt, charset and bufio.  is the setup alone. Go is the standard library's package, except bcrypt (golang.org/x/crypto/bcrypt v0.58.0) and charset (golang.org/x/text encoding/unicode and charmap v0.43.0). Rows are as measured, not selected: ADR 0461 counts a row Proven at 1.05 of Go's wall or less.
+Linux/arm64 offload host, `xo bench --ab` style runs (scratchpad twin-ab2: 15 rounds, Go and Xo alternated, caches off) of the bench/perf twins added with this batch: hash (crc64, crc64e, adler32 and the existing crc32, crc32c, fnv rows), csv (parse, format and the new streaming `reader`), bcrypt, charset and bufio. `none` is the setup alone. Go is the standard library's package, except bcrypt (golang.org/x/crypto/bcrypt v0.58.0) and charset (golang.org/x/text encoding/unicode and charmap v0.43.0). Rows are as measured, not selected: ADR 0461 counts a row Proven at 1.05 of Go's wall or less.
 
 | bench | workload | Go wall (ms) | Xo wall (ms) | Xo / Go | interval | peak memory |
 |---|---|---|---|---|---|---|
@@ -33,7 +33,7 @@ Linux/arm64 offload host,  style runs (scratchpad twin-ab2: 15 rounds, Go and Xo
 Reading:
 
 - hash: crc64 (1.04) and adler32 (1.05) are within noise of Go; crc64e 1.10 has an interval of 1.01 to 1.23 and uses the same slicing-by-8 tables and loop as crc64 (Go's crc64 also uses slicing-by-8 for both tables), so the gap between the two rows is noise; it is re-measured with the next batch. crc32c is 0.42 (Go's crc32c has no arm64 assembly path here), fnv128a 0.79.
-- csv: parse 0.66, format 0.69 and the streaming  over a File 0.69 of Go's wall at 0.46 to 0.72 of its peak memory.
-- bufio: lines 0.64, until 0.69 and exact 0.70 of Go's bufio.Reader over 1460 byte chunks (the  row, the building of the 8 MiB test data, is 0.57).
+- csv: parse 0.66, format 0.69 and the streaming `reader` over a File 0.69 of Go's wall at 0.46 to 0.72 of its peak memory.
+- bufio: lines 0.56, until 0.73 and exact 0.67 of Go's bufio.Reader over 1460 byte chunks (the `none` row, the building of the 8 MiB test data, is 0.67).
 - bcrypt: hash 1.44 and compare 1.55 of x/crypto's. Not Proven. The 16 Blowfish rounds do four List reads each and each is bounds checked; Go reads fixed arrays by byte index, with no checks. Next experiment: an inner loop on the form the sha256 and aes inner loops use.
 - charset: the first run, on a twin whose test text was 50% non-ASCII (unrealistic); decode is 1.8 to 2.1 of Go's, encode to Windows-1252 0.64. The twin data was then made text-like (90% ASCII) and decode given an ASCII run fast path; the re-run replaces these rows in the next part.
