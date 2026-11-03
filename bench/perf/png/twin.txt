@@ -1,0 +1,4 @@
+# twincheck: png: three workloads (none is the setup alone), the same names on both sides.
+- - encode
+- - decode
+- - none
