@@ -343,6 +343,7 @@ many services hit the gap, blockers (no workaround) first:
 | 15 | Rate limiting and backoff closed 2026-10-29 (std/rate, std/backoff); migrations open. Rate limiting (token bucket), backoff, migrations | gateway, web app, scheduler | awkward | x/time/rate, cenkalti/backoff, golang-migrate (all outside Go's std) | S each |
 | 16 | Closed 2026-10-29 (walk_dir, FileInfo.is_symlink, create_dir_all_mode, write_atomic, toml.encode, cli float_flag). Fs walk with SkipDir and early stop, the symlink bit in FileInfo, a mode on create_dir_all and atomic writes; a TOML encoder; a float flag | CLI | awkward | filepath.WalkDir, os.WriteFile, BurntSushi/toml | S each |
 | 17 | Time.truncate, a Weekday number, a ticker | scheduler | minor | time | S |
+| 18 | Design item (Xo Lang 3, 2026-11-03): a lazy `DirEntry` for `fs.walk_dir`. Go's WalkDir hands each entry with its name and type from the directory read and stats only on `Info()`; Xo's walk gives a full `FileInfo` per entry, so a walk that only wants names or the directory bit pays one stat each (bench/perf/walkdir walk_info 1.54 of Go's wall). A lazy entry (name, is_dir, is_symlink from the read; `info()` stats) would match Go and keep the clean path fast path | CLI, build tools | awkward | filepath.WalkDir, fs.DirEntry | M |
 
 Language obstacles the services met (not std, for the language owners):
 a sort with a comparator (`sort_by` takes a key only, so a descending
