@@ -552,3 +552,9 @@ func Str_rfind(_ *Task, s, sub string) Option[int64] {
 	}
 	return Some(int64(i))
 }
+
+// Rt_cast is native/rt's cast between two types of one representation; the
+// Go backend meets it for Bytes to Str in the modules it compiles from their
+// native source (norm, idna): Bytes is an immutable string here, so this
+// is a free conversion, not a copy.
+func Rt_cast[A, B ~string](_ *Task, a A) B { return B(a) }

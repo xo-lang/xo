@@ -6,6 +6,7 @@
 // unicode/norm (Copyright 2011 The Go Authors, BSD-style license;
 // THIRD_PARTY_NOTICES).
 use std/norm
+use native/rt
 
 // BEGIN GENERATED
 // Unicode 15.0.0, from golang.org/x/text/unicode/norm (scripts/gennorm): 2061 canonical and 3812 compatibility decompositions, 388 combining class ranges, 941 composition pairs.
@@ -409,7 +410,7 @@ fn normalize(s: Str, f: norm.Form) -> Str {
     pos = at
   }
   out.write_str(s[pos..at])
-  out.freeze().to_str() ?? s
+  rt.cast[Bytes, Str](out.freeze())
 }
 
 fn is_normalized(s: Str, f: norm.Form) -> Bool {
