@@ -578,6 +578,11 @@ fn validate_and_map(o: Opts, s: Str) -> Mapped {
     let r = ru & 0xFFFFFFFF
     let sz = ru >> 32
     pos += sz
+    if (r >= 97 && r <= 122) || (r >= 48 && r <= 57) || r == 45 || r == 46 {
+      // plain ASCII: valid, never mapped, no flags, as in the plain name shortcut
+      at += 1
+      continue
+    }
     let v = lookup(r)
     bits = bits | flags_of(v) << 8 | cat_of(v)
     if may_need_norm(v) {
