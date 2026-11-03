@@ -38,14 +38,7 @@ const ST_FAIL: Int = 5
 const ST_AFTER: Int = 4
 
 /// joinStates, a row of 8 per state (start, virama, before, before virama, after, fail).
-const JOIN_STATES: List[Int] = [
-  0, 2, 2, 0, 0, 5, 5, 1,
-  0, 2, 2, 0, 0, 0, 0, 0,
-  0, 2, 2, 2, 0, 5, 4, 3,
-  0, 2, 2, 2, 0, 0, 0, 0,
-  0, 5, 2, 4, 0, 5, 5, 4,
-  5, 5, 5, 5, 5, 5, 5, 5,
-]
+const JOIN_STATES: Bytes = b"\x00\x02\x02\x00\x00\x05\x05\x01\x00\x02\x02\x00\x00\x00\x00\x00\x00\x02\x02\x02\x00\x05\x04\x03\x00\x02\x02\x02\x00\x00\x00\x00\x00\x05\x02\x04\x00\x05\x05\x04\x05\x05\x05\x05\x05\x05\x05\x05"
 
 const B_L: Int = 0
 const B_R: Int = 1
@@ -682,9 +675,9 @@ fn validate_label(o: Opts, s: Str, label_code: Str) -> idna.IdnaErr? {
     } else if r == 0x200c {
       jt = JOIN_ZWNJ
     }
-    st = JOIN_STATES[st * 8 + jt]
+    st = Int(JOIN_STATES[st * 8 + jt])
     if is_virama(v) {
-      st = JOIN_STATES[st * 8 + JOIN_VIRAMA]
+      st = Int(JOIN_STATES[st * 8 + JOIN_VIRAMA])
     }
   }
   if any_join && (st == ST_FAIL || st == ST_AFTER) {
