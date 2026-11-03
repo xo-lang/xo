@@ -10,7 +10,7 @@ import (
 	"strings"
 )
 
-const n = 200000
+const n = 4000000
 
 var texts = []string{
 	"  the quick brown fox jumps over the lazy dog  ",

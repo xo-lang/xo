@@ -7,7 +7,7 @@
 // Usage: trimperf <workload>; prints "<workload> <checksum>", the same
 // line the Go twin prints.
 
-const N = 200000
+const N = 4000000
 
 const TEXTS: List[Str] = [
   "  the quick brown fox jumps over the lazy dog  ",

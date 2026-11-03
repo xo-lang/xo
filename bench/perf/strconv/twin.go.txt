@@ -43,7 +43,7 @@ func main() {
 		fts = append(fts, ftoa(f))
 	}
 	sum := 0
-	for p := 0; p < 300; p++ {
+	for p := 0; p < 6000; p++ {
 		switch w {
 		case "atoi":
 			for _, t := range texts {

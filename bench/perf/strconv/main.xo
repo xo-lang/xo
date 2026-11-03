@@ -1,7 +1,7 @@
 // strconv: the text of numbers, against Go's strconv (twin.go.txt):
 // atoi parses 1,000 decimal integers (Int.parse), itoa writes 1,000
 // integers as text ("${n}"), atof parses 1,000 decimals (Float.parse),
-// ftoa writes 1,000 decimals as text ("${f}"); each 300 passes. Usage:
+// ftoa writes 1,000 decimals as text ("${f}"); each 6000 passes. Usage:
 // `<program> atoi|itoa|atof|ftoa`. Prints `<workload> <checksum>`; the twin
 // prints the same.
 
@@ -30,7 +30,7 @@ fn main(os: Os) {
     fts.push("${f}")
   }
   var sum = 0
-  for _ in 0..300 {
+  for _ in 0..6000 {
     if w == "atoi" {
       for t in texts {
         sum += Int.parse(t) ?? fault("parse")
