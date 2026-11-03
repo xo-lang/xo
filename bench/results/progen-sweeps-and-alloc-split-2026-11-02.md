@@ -35,6 +35,17 @@ Base 2, current main (f58b4116f and later), counting run as of 13:19 local time:
 | AliasEmpty | 1-800 | 800 | 800 | 0 |
 | Coll | 10600-11399 | 800 | 800 | 0 |
 
+### AliasBig cold-cache sweep (2026-11-03)
+
+AliasBig 1-3200 again on the second linux/arm64 host with a private cold `XO_BACKEND_CACHE_DIR`, the fixed
+`coll-diff.sh` (TIMEOUT lines, outputs kept) and `RUN_TIMEOUT=60`, after the counting run showed 5 AliasBig
+output differences that no rerun reproduced (alone, 30 repeats, under load, at 10 s and 60 s, cold cache for
+600 programs). Result: no output difference and no timeout in 3,200 programs. Four programs (1498, 1964,
+2057, 2058) printed DIFF with the output `BUILD FAILED` (host at 17 to 25 GB free; the build error was not
+kept); each matched on every backend when rerun alone. `coll-diff.sh` now reports that as BUILDFAIL (1701fb9b8).
+The 5 counting-run differences stay unexplained: they were never reproduced and their cache entry
+(5ccfef4d41955890) had been pruned before it could be checked.
+
 ### linux/amd64 (the owner's amd64 host, no LLVM, `SKIP_LLVM`)
 
 Coll 5,000 (seeds 3000-7999) and 1,000 (20000-20999), Alias 3,000, AliasBig 300 and 1,000, AliasEmpty 200,
