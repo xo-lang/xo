@@ -55,6 +55,19 @@ one() {
 	for b in go llvm native alloff; do
 		grep -q -E "^exit (124|137)$" "$o/$b.out" && to="$to $b"
 	done
+	# a build that failed in a non-reference backend is a tool or host
+	# problem (a cache file pruned under the run, a full disk), not a
+	# difference: BUILDFAIL with the build logs kept (four aliasbig
+	# programs read DIFF with "BUILD FAILED" output, 2026-11-03)
+	bf=""
+	for b in go llvm native alloff; do
+		grep -q "^BUILD FAILED" "$o/$b.out" && bf="$bf $b"
+	done
+	if [ -n "$bf" ]; then
+		echo "BUILDFAIL $n:$bf"
+		mkdir -p "${KEEP:-/tmp/coll-diff-keep}/$n" && cp -r "$d/." "${KEEP:-/tmp/coll-diff-keep}/$n/" && cp "$o"/*.out "$o"/*.build "${KEEP:-/tmp/coll-diff-keep}/$n/" 2>/dev/null
+		return
+	fi
 	if [ -n "$to" ]; then
 		echo "TIMEOUT $n:$to"
 		mkdir -p "${KEEP:-/tmp/coll-diff-keep}/$n" && cp -r "$d/." "${KEEP:-/tmp/coll-diff-keep}/$n/" && cp "$o"/*.out "${KEEP:-/tmp/coll-diff-keep}/$n/"
@@ -74,4 +87,4 @@ one() {
 }
 export -f one
 printf '%s\n' "$@" | xargs -P "$JOBS" -I{} bash -c 'one {}' | tee "$T/log"
-echo "reference failed: $(grep -c '^REFFAIL' "$T/log"), programs: $(grep -c '^\(same\|DIFF\|REFFAIL\|TIMEOUT\)' "$T/log"), same: $(grep -c '^same' "$T/log"), differ: $(grep -c '^DIFF' "$T/log"), timeout: $(grep -c '^TIMEOUT' "$T/log")"
+echo "reference failed: $(grep -c '^REFFAIL' "$T/log"), programs: $(grep -c '^\(same\|DIFF\|REFFAIL\|TIMEOUT\|BUILDFAIL\)' "$T/log"), same: $(grep -c '^same' "$T/log"), differ: $(grep -c '^DIFF' "$T/log"), timeout: $(grep -c '^TIMEOUT' "$T/log"), build failed: $(grep -c '^BUILDFAIL' "$T/log")"

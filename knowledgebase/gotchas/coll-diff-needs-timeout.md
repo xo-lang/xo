@@ -26,3 +26,12 @@ in three 100 program batches rerun with RUN_TIMEOUT=60 under load.
 coll-diff.sh now prints `TIMEOUT` (counted apart from `differ`) for any
 backend's exit 124 or 137, and a DIFF keeps every backend's .out and .err
 beside the source.
+
+Addendum (2026-11-03): a build that fails in a non-reference backend also
+read as DIFF (its output is the line `BUILD FAILED`). A cold-cache aliasbig
+sweep on a host with 17 to 25 GB free reported four such DIFFs (1498,
+1964, 2057, 2058); each built and matched when rerun alone. coll-diff.sh
+now prints `BUILDFAIL` (counted apart as `build failed: N`) and keeps the
+sources, outputs and `*.build` logs under KEEP. A BUILDFAIL is a host
+problem (a cache file pruned under the run, a full disk) until a rerun
+alone fails the same way.
