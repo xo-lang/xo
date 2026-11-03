@@ -679,3 +679,7 @@ secondary line.
 No wall time regression: every wall ratio is within noise in both orders. The reversed
 run's instructions read 0.3% more for main's binary in the B slot, the same size as the
 control's spread, and the forward run shows the opposite sign within noise.
+
+## Rows refreshed (2026-11-03)
+
+csv, xml, compress, archive, mime and mail: bench/results/std-twin-rows-2026-11-03.md (host 1, all six within 1.35x of Go after the xml entity fast path).

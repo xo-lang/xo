@@ -1,5 +1,19 @@
 # std/xml changes
 
+## 2026-11-03: perf: character data with a standard entity stays on the fast path
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/xml (new twin, bench/results/std-twin-rows-2026-11-03.md): tokens 1.57x Go's wall on host 1; XO_PROF=cpu showed Dec.getc 21% and Dec.text 14% flat
+- Go reference: encoding/xml xml.go Decoder.text (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/xml and xmlfuzz (go, arm64, LLVM), TestXmlFuzz
+
+Character data and attribute values of printable ASCII and the five standard entities (`&lt;`, `&gt;`,
+`&amp;`, `&apos;`, `&quot;`) are read in the fast path (text_entities); any other byte (a numeric or
+other entity, `]`, `\r`, a byte over 126) still takes the byte by byte path from the same position, so
+results and errors are unchanged. Quiet `xo bench --ab` on host 1, 15 rounds, Xo / Go wall: tokens 1.572
+to 1.148, tree 1.245 to 0.945.
+
 ## 2026-10-27: feature: escape_to appends Go's EscapeText of a string to a builder
 
 - Kind: feature
