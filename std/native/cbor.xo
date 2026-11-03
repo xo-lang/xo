@@ -1,0 +1,846 @@
+// std/cbor on the native backends and, through std/go_compiled.txt, on the
+// Go backend (decision 0312): one source for RFC 8949 CBOR. The decoder
+// reads a whole buffer into a Value tree (definite and indefinite lengths,
+// limits checked before anything is allocated from a length), the encoder
+// writes the preferred serialization (shortest heads, shortest float) with
+// an optional deterministic map order, and the diagnostic notation and
+// the JSON bridge follow sections 8 and 6.
+use std/base64
+use std/binary
+use std/cbor
+use std/json
+
+// ---------------------------------------------------------------------------
+// Errors
+
+fn cborerr_display(e: cbor.CborErr) -> Str {
+  match e {
+    cbor.CborErr.Truncated => "cbor: unexpected EOF"
+    cbor.CborErr.Syntax(m) => "cbor: " + m
+    cbor.CborErr.Invalid(m) => "cbor: " + m
+    cbor.CborErr.Limit(m) => "cbor: " + m
+  }
+}
+
+fn syntax(msg: Str) -> cbor.CborErr { cbor.CborErr.Syntax(msg: msg) }
+
+fn invalid(msg: Str) -> cbor.CborErr { cbor.CborErr.Invalid(msg: msg) }
+
+fn limit(msg: Str) -> cbor.CborErr { cbor.CborErr.Limit(msg: msg) }
+
+// ---------------------------------------------------------------------------
+// Helpers on the model
+
+fn from_int(n: Int) -> cbor.Value {
+  if n >= 0 {
+    cbor.Value.Uint(n: UInt64.from_bits(n))
+  } else {
+    // -1 - n, as the bit pattern of the unsigned magnitude
+    cbor.Value.Nint(n: UInt64.from_bits(-1 - n))
+  }
+}
+
+fn value_to_int(v: cbor.Value) -> Int? {
+  match v {
+    cbor.Value.Uint(n) => {
+      let b = n.to_bits()
+      if b < 0 { None } else { Some(b) }
+    }
+    cbor.Value.Nint(n) => {
+      let b = n.to_bits()
+      if b < 0 { None } else { Some(-1 - b) }
+    }
+    _ => None
+  }
+}
+
+fn value_get(v: cbor.Value, key: Str) -> cbor.Value? {
+  match v {
+    cbor.Value.Map(pairs) => {
+      var found: cbor.Value? = None
+      for p in pairs {
+        match p.0 {
+          cbor.Value.TextString(s) => {
+            if s == key {
+              found = Some(p.1)
+            }
+          }
+          _ => {}
+        }
+      }
+      found
+    }
+    _ => None
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Encoder
+
+fn put_be(var out: BytesBuilder, v: Int, n: Int) {
+  var i = n - 1
+  while i >= 0 {
+    out.write_byte(UInt8((v >> (8 * i)) & 255))
+    i -= 1
+  }
+}
+
+/// A head: the major type and its argument n (a 64 bit pattern).
+fn put_head(var out: BytesBuilder, major: Int, n: Int) {
+  let m = major << 5
+  if n < 0 {
+    out.write_byte(UInt8(m | 27))
+    put_be(out, n, 8)
+  } else if n < 24 {
+    out.write_byte(UInt8(m | n))
+  } else if n < 256 {
+    out.write_byte(UInt8(m | 24))
+    out.write_byte(UInt8(n))
+  } else if n < 65536 {
+    out.write_byte(UInt8(m | 25))
+    put_be(out, n, 2)
+  } else if n < 4294967296 {
+    out.write_byte(UInt8(m | 26))
+    put_be(out, n, 4)
+  } else {
+    out.write_byte(UInt8(m | 27))
+    put_be(out, n, 8)
+  }
+}
+
+/// The shortest float (half, single, double) that holds f, as
+/// (bytes in the argument, bits).
+fn float_shortest(f: Float) -> (Int, Int) {
+  let bits = f.to_bits()
+  let sign = (bits >> 63) & 1
+  let exp = (bits >> 52) & 2047
+  let mant = bits & 4503599627370495
+  if exp == 2047 {
+    if mant != 0 {
+      return (2, 32256)
+    }
+    return (2, (sign << 15) | 31744)
+  }
+  if exp == 0 && mant == 0 {
+    return (2, sign << 15)
+  }
+  let e = exp - 1023
+  if exp != 0 {
+    if e >= -14 && e <= 15 && (mant & 4398046511103) == 0 {
+      return (2, (sign << 15) | ((e + 15) << 10) | (mant >> 42))
+    }
+    if e >= -24 && e < -14 {
+      let full = 4503599627370496 | mant
+      let shift = 28 - e
+      if (full & ((1 << shift) - 1)) == 0 {
+        return (2, (sign << 15) | (full >> shift))
+      }
+    }
+    if e >= -126 && e <= 127 && (mant & 536870911) == 0 {
+      return (4, (sign << 31) | ((e + 127) << 23) | (mant >> 29))
+    }
+    if e >= -149 && e < -126 {
+      let full = 4503599627370496 | mant
+      let shift = -97 - e
+      if (full & ((1 << shift) - 1)) == 0 {
+        return (4, (sign << 31) | (full >> shift))
+      }
+    }
+  }
+  (8, bits)
+}
+
+fn put_float(var out: BytesBuilder, f: Float) {
+  let (n, bits) = float_shortest(f)
+  if n == 2 {
+    out.write_byte(UInt8(249))
+  } else if n == 4 {
+    out.write_byte(UInt8(250))
+  } else {
+    out.write_byte(UInt8(251))
+  }
+  put_be(out, bits, n)
+}
+
+fn enc_item(v: cbor.Value, det: Bool, depth: Int, var out: BytesBuilder) -> () ! cbor.CborErr {
+  if depth > 1000 {
+    return Err(limit("value nested deeper than 1000 levels"))
+  }
+  match v {
+    cbor.Value.Uint(n) => put_head(out, 0, n.to_bits())
+    cbor.Value.Nint(n) => put_head(out, 1, n.to_bits())
+    cbor.Value.ByteString(b) => {
+      put_head(out, 2, b.len())
+      out.write(b)
+    }
+    cbor.Value.TextString(s) => {
+      put_head(out, 3, s.len())
+      out.write_str(s)
+    }
+    cbor.Value.Array(items) => {
+      put_head(out, 4, items.len())
+      for it in items {
+        enc_item(it, det, depth + 1, out)?
+      }
+    }
+    cbor.Value.Map(pairs) => {
+      put_head(out, 5, pairs.len())
+      if det {
+        var keys: List[Bytes] = []
+        var hexes: List[Str] = []
+        for p in pairs {
+          var kb = BytesBuilder.new()
+          enc_item(p.0, det, depth + 1, kb)?
+          let b = kb.freeze()
+          keys.push(b)
+          hexes.push(b.to_hex())
+        }
+        var idx: List[Int] = []
+        for i in 0..pairs.len() {
+          idx.push(i)
+        }
+        let order = idx.sort_by(fn(i) { hexes[i] })
+        for i in order {
+          out.write(keys[i])
+          enc_item(pairs[i].1, det, depth + 1, out)?
+        }
+      } else {
+        for p in pairs {
+          enc_item(p.0, det, depth + 1, out)?
+          enc_item(p.1, det, depth + 1, out)?
+        }
+      }
+    }
+    cbor.Value.Tag(num, inner) => {
+      put_head(out, 6, num.to_bits())
+      enc_item(inner, det, depth + 1, out)?
+    }
+    cbor.Value.Simple(n) => {
+      if n >= 0 && n < 20 {
+        out.write_byte(UInt8(224 | n))
+      } else if n >= 32 && n < 256 {
+        out.write_byte(UInt8(248))
+        out.write_byte(UInt8(n))
+      } else {
+        return Err(invalid("simple value ${n} cannot be encoded"))
+      }
+    }
+    cbor.Value.Bool(b) => out.write_byte(UInt8(if b { 245 } else { 244 }))
+    cbor.Value.Null => out.write_byte(UInt8(246))
+    cbor.Value.Undefined => out.write_byte(UInt8(247))
+    cbor.Value.Float(f) => put_float(out, f)
+  }
+}
+
+fn encode(v: cbor.Value, deterministic: Bool) -> Bytes ! cbor.CborErr {
+  var out = BytesBuilder.new()
+  enc_item(v, deterministic, 0, out)?
+  out.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// Decoder
+
+struct Dec {
+  data: Bytes
+  pos: Int = 0
+  max_depth: Int
+  dup: Bool
+  utf8: Bool = true
+}
+
+fn float_of_half(h: Int) -> Float {
+  let sign = (h >> 15) & 1
+  let e = (h >> 10) & 31
+  let m = h & 1023
+  let s = sign.wrapping_shl(63)
+  if e == 31 {
+    return Float.from_bits(s | (2047 << 52) | (m << 42))
+  }
+  if e == 0 {
+    return half_sub(s, m)
+  }
+  Float.from_bits(s | ((e - 15 + 1023) << 52) | (m << 42))
+}
+
+fn half_sub(s: Int, m: Int) -> Float {
+  let f = Float(m) * Float.from_bits((1023 - 24) << 52)
+  if s != 0 { -f } else { f }
+}
+
+fn float_of_single(w: Int) -> Float {
+  let sign = (w >> 31) & 1
+  let e = (w >> 23) & 255
+  let m = w & 8388607
+  let s = sign.wrapping_shl(63)
+  if e == 255 {
+    return Float.from_bits(s | (2047 << 52) | (m << 29))
+  }
+  if e == 0 {
+    let f = Float(m) * Float.from_bits((1023 - 149) << 52)
+    return if s != 0 { -f } else { f }
+  }
+  Float.from_bits(s | ((e - 127 + 1023) << 52) | (m << 29))
+}
+
+fn need(d: Dec, n: Int) -> () ! cbor.CborErr {
+  if n < 0 || d.data.len() - d.pos < n {
+    return Err(cbor.CborErr.Truncated)
+  }
+}
+
+/// The item's head: (major type, additional information, argument bits).
+/// The additional information is 31 for an indefinite length or a break.
+fn read_head(var d: Dec) -> (Int, Int, Int) ! cbor.CborErr {
+  need(d, 1)?
+  let ib = Int(d.data[d.pos])
+  d.pos += 1
+  let major = ib >> 5
+  let ai = ib & 31
+  if ai < 24 {
+    return (major, ai, ai)
+  }
+  if ai == 24 {
+    need(d, 1)?
+    let v = Int(d.data[d.pos])
+    d.pos += 1
+    if major == 7 && v < 32 {
+      return Err(syntax("invalid simple value ${v}"))
+    }
+    return (major, ai, v)
+  }
+  if ai == 25 {
+    need(d, 2)?
+    let v = (Int(d.data[d.pos]) << 8) | Int(d.data[d.pos + 1])
+    d.pos += 2
+    return (major, ai, v)
+  }
+  if ai == 26 {
+    need(d, 4)?
+    var v = 0
+    for i in 0..4 {
+      v = (v << 8) | Int(d.data[d.pos + i])
+    }
+    d.pos += 4
+    return (major, ai, v)
+  }
+  if ai == 27 {
+    need(d, 8)?
+    let v = binary.get_u64_be(d.data, d.pos)
+    d.pos += 8
+    return (major, ai, v)
+  }
+  if ai == 31 {
+    if major == 0 || major == 1 || major == 6 {
+      return Err(syntax("invalid additional information 31 for major type ${major}"))
+    }
+    return (major, ai, 0)
+  }
+  Err(syntax("invalid additional information ${ai} for major type ${major}"))
+}
+
+/// The chunks of an indefinite length string, joined.
+fn read_chunks(var d: Dec, major: Int) -> Bytes ! cbor.CborErr {
+  var out = BytesBuilder.new()
+  while true {
+    need(d, 1)?
+    if d.data[d.pos] == UInt8(255) {
+      d.pos += 1
+      break
+    }
+    let (m, ai, n) = read_head(d)?
+    if m != major {
+      return Err(syntax("wrong chunk type ${m} in an indefinite length string of type ${major}"))
+    }
+    if ai == 31 {
+      return Err(syntax("indefinite length chunk in an indefinite length string"))
+    }
+    need(d, n)?
+    let chunk = d.data[d.pos..(d.pos + n)]
+    if major == 3 && d.utf8 {
+      if chunk.to_str() == None {
+        return Err(invalid("invalid UTF-8 in text string"))
+      }
+    }
+    out.write(chunk)
+    d.pos += n
+  }
+  out.freeze()
+}
+
+fn read_text(var d: Dec, ai: Int, n: Int) -> Str ! cbor.CborErr {
+  if ai == 31 {
+    let b = read_chunks(d, 3)?
+    return b.to_str() ?? ""
+  }
+  need(d, n)?
+  let chunk = d.data[d.pos..(d.pos + n)]
+  d.pos += n
+  match chunk.to_str() {
+    Some(s) => s
+    None => {
+      if d.utf8 {
+        return Err(invalid("invalid UTF-8 in text string"))
+      }
+      ""
+    }
+  }
+}
+
+fn check_dups(pairs: List[(cbor.Value, cbor.Value)]) -> () ! cbor.CborErr {
+  var seen: Set[Str] = #{}
+  for p in pairs {
+    match p.0 {
+      cbor.Value.Float(f) => {
+        // a NaN key is never equal to another key (Go's map semantics)
+        if f.is_nan() {
+          continue
+        }
+      }
+      _ => {}
+    }
+    let kb = encode(p.0, true)?
+    let h = kb.to_hex()
+    if seen.contains(h) {
+      return Err(invalid("duplicate map key"))
+    }
+    seen.add(h)
+  }
+}
+
+fn read_item(var d: Dec, depth: Int) -> cbor.Value ! cbor.CborErr {
+  let (major, ai, n) = read_head(d)?
+  if major == 0 {
+    return cbor.Value.Uint(n: UInt64.from_bits(n))
+  }
+  if major == 1 {
+    return cbor.Value.Nint(n: UInt64.from_bits(n))
+  }
+  if major == 2 {
+    if ai == 31 {
+      return cbor.Value.ByteString(b: read_chunks(d, 2)?)
+    }
+    need(d, n)?
+    let b = d.data[d.pos..(d.pos + n)]
+    d.pos += n
+    return cbor.Value.ByteString(b: b)
+  }
+  if major == 3 {
+    return cbor.Value.TextString(s: read_text(d, ai, n)?)
+  }
+  if major == 4 || major == 5 {
+    if depth + 1 > d.max_depth {
+      return Err(limit("exceeded max nested level ${d.max_depth}"))
+    }
+    let per = if major == 4 { 1 } else { 2 }
+    var items: List[cbor.Value] = []
+    if ai != 31 {
+      // every item takes a byte at least
+      if n < 0 || n > (d.data.len() - d.pos) / per {
+        return Err(cbor.CborErr.Truncated)
+      }
+      for _ in 0..(n * per) {
+        items.push(read_item(d, depth + 1)?)
+      }
+    } else {
+      while true {
+        need(d, 1)?
+        if d.data[d.pos] == UInt8(255) {
+          d.pos += 1
+          break
+        }
+        items.push(read_item(d, depth + 1)?)
+      }
+      if major == 5 && items.len() % 2 == 1 {
+        return Err(syntax("unexpected break in a map"))
+      }
+    }
+    if major == 4 {
+      return cbor.Value.Array(items: items)
+    }
+    var pairs: List[(cbor.Value, cbor.Value)] = []
+    var i = 0
+    while i < items.len() {
+      pairs.push((items[i], items[i + 1]))
+      i += 2
+    }
+    if d.dup {
+      check_dups(pairs)?
+    }
+    return cbor.Value.Map(pairs: pairs)
+  }
+  if major == 6 {
+    need(d, 1)?
+    var child = depth
+    if (Int(d.data[d.pos]) >> 5) == 6 {
+      child = depth + 1
+      if child > d.max_depth {
+        return Err(limit("exceeded max nested level ${d.max_depth}"))
+      }
+    }
+    let inner = read_item(d, child)?
+    return cbor.Value.Tag(num: UInt64.from_bits(n), v: inner)
+  }
+  // major 7
+  if ai == 20 { return cbor.Value.Bool(b: false) }
+  if ai == 21 { return cbor.Value.Bool(b: true) }
+  if ai == 22 { return cbor.Value.Null }
+  if ai == 23 { return cbor.Value.Undefined }
+  if ai == 25 { return cbor.Value.Float(f: float_of_half(n)) }
+  if ai == 26 { return cbor.Value.Float(f: float_of_single(n)) }
+  if ai == 27 { return cbor.Value.Float(f: Float.from_bits(n)) }
+  if ai == 31 {
+    return Err(syntax("unexpected break"))
+  }
+  cbor.Value.Simple(n: n)
+}
+
+fn decode_prefix(data: Bytes, max_depth: Int, reject_dup_keys: Bool) -> (cbor.Value, Int) ! cbor.CborErr {
+  var d = Dec{data: data, max_depth: max_depth, dup: reject_dup_keys}
+  let v = read_item(d, 0)?
+  (v, d.pos)
+}
+
+fn decode(data: Bytes, max_depth: Int, reject_dup_keys: Bool) -> cbor.Value ! cbor.CborErr {
+  let (v, used) = decode_prefix(data, max_depth, reject_dup_keys)?
+  if used != data.len() {
+    return Err(invalid("${data.len() - used} bytes of extraneous data starting at index ${used}"))
+  }
+  v
+}
+
+fn well_formed(data: Bytes, max_depth: Int) -> Bool {
+  var d = Dec{data: data, max_depth: max_depth, dup: false, utf8: false}
+  match read_item(d, 0) {
+    Ok(_) => d.pos == data.len()
+    Err(_) => false
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Diagnostic notation (RFC 8949 Section 8)
+
+fn hex4(n: Int) -> Str {
+  let digits = "0123456789abcdef"
+  var out = BytesBuilder.new()
+  for i in 0..4 {
+    let nib = (n >> (4 * (3 - i))) & 15
+    out.write_byte(UInt8(Int(digits.bytes()[nib])))
+  }
+  (out.freeze().to_str()) ?? ""
+}
+
+fn diag_text(s: Str) -> Str {
+  var out = BytesBuilder.new()
+  out.write_byte(UInt8(34))
+  for r in s.runes() {
+    let c = Int(r)
+    if c == 9 {
+      out.write_str("\\t")
+    } else if c == 10 {
+      out.write_str("\\n")
+    } else if c == 13 {
+      out.write_str("\\r")
+    } else if c == 92 {
+      out.write_str("\\\\")
+    } else if c == 34 {
+      out.write_str("\\\"")
+    } else if c >= 32 && c <= 126 {
+      out.write_byte(UInt8(c))
+    } else if c < 65536 {
+      out.write_str("\\u" + hex4(c))
+    } else {
+      let v = c - 65536
+      out.write_str("\\u" + hex4(55296 + (v >> 10)))
+      out.write_str("\\u" + hex4(56320 + (v & 1023)))
+    }
+  }
+  out.write_byte(UInt8(34))
+  (out.freeze().to_str()) ?? ""
+}
+
+/// The shortest decimal digits of a finite, nonzero, positive f and the
+/// exponent of its first digit (f = 0.d1d2... * 10^k is not used: the value
+/// is d1.d2d3... * 10^exp10).
+fn float_digits(f: Float) -> (Str, Int) {
+  // the shortest text Float displays as: digits, optional fraction, optional exponent
+  let t = "${f}"
+  var mant = t
+  var e = 0
+  match t.find("e") {
+    Some(i) => {
+      mant = t[0..i]
+      e = Int.parse(t[(i + 1)..t.len()].trim_prefix("+")) ?? 0
+    }
+    None => {}
+  }
+  var ip = mant
+  var fp = ""
+  match mant.find(".") {
+    Some(i) => {
+      ip = mant[0..i]
+      fp = mant[(i + 1)..mant.len()]
+    }
+    None => {}
+  }
+  var digits = ip + fp
+  var exp10 = ip.len() - 1 + e
+  // strip leading zeros
+  var lead = 0
+  while lead < digits.len() - 1 && digits[lead..(lead + 1)] == "0" {
+    lead += 1
+  }
+  digits = digits[lead..digits.len()]
+  exp10 -= lead
+  // strip trailing zeros
+  var end = digits.len()
+  while end > 1 && digits[(end - 1)..end] == "0" {
+    end -= 1
+  }
+  (digits[0..end], exp10)
+}
+
+fn diag_float(f: Float) -> Str {
+  if f.is_nan() {
+    return "NaN"
+  }
+  if f.is_inf() {
+    return if f > 0.0 { "Infinity" } else { "-Infinity" }
+  }
+  let neg = f.to_bits() < 0
+  let a = f.abs()
+  if a == 0.0 {
+    return if neg { "-0.0" } else { "0.0" }
+  }
+  let (digits, e) = float_digits(a)
+  var body = ""
+  if a < 0.000001 || a >= 1e21 {
+    // d.ddde+XX, Go's 'e' form with a one digit exponent below e-9 cleaned
+    var m = digits[0..1]
+    if digits.len() > 1 {
+      m = m + "." + digits[1..digits.len()]
+    } else {
+      m = m + ".0"
+    }
+    var es = "${if e < 0 { -e } else { e }}"
+    if es.len() < 2 {
+      es = "0" + es
+    }
+    if e < 0 && es.starts_with("0") {
+      es = es[1..es.len()]
+    }
+    body = m + "e" + (if e < 0 { "-" } else { "+" }) + es
+  } else if e >= 0 {
+    if digits.len() <= e + 1 {
+      body = digits + "0".repeat(e + 1 - digits.len()) + ".0"
+    } else {
+      body = digits[0..(e + 1)] + "." + digits[(e + 1)..digits.len()]
+    }
+  } else {
+    body = "0." + "0".repeat(-e - 1) + digits
+  }
+  if neg { "-" + body } else { body }
+}
+
+fn u64_text(n: UInt64) -> Str {
+  "${n}"
+}
+
+/// The decimal text of the big endian number b (plus one when plus_one is
+/// set), in limbs of nine digits.
+fn big_decimal(b: Bytes, plus_one: Bool) -> Str {
+  var limbs: List[Int] = [0]
+  for i in 0..b.len() {
+    var carry = Int(b[i])
+    for j in 0..limbs.len() {
+      let v = limbs[j] * 256 + carry
+      limbs.set(j, v % 1000000000)
+      carry = v / 1000000000
+    }
+    while carry > 0 {
+      limbs.push(carry % 1000000000)
+      carry = carry / 1000000000
+    }
+  }
+  if plus_one {
+    var j = 0
+    var carry = 1
+    while carry > 0 {
+      if j == limbs.len() {
+        limbs.push(0)
+      }
+      let v = limbs[j] + carry
+      limbs.set(j, v % 1000000000)
+      carry = v / 1000000000
+      j += 1
+    }
+  }
+  var out = "${limbs[limbs.len() - 1]}"
+  var k = limbs.len() - 2
+  while k >= 0 {
+    let t = "${limbs[k]}"
+    out = out + "0".repeat(9 - t.len()) + t
+    k -= 1
+  }
+  out
+}
+
+fn be8(n: UInt64) -> Bytes {
+  let v = n.to_bits()
+  var out = BytesBuilder.new()
+  put_be(out, v, 8)
+  out.freeze()
+}
+
+fn diag_item(v: cbor.Value, var out: List[Str]) {
+  match v {
+    cbor.Value.Uint(n) => out.push(u64_text(n))
+    cbor.Value.Nint(n) => out.push("-" + big_decimal(be8(n), true))
+    cbor.Value.ByteString(b) => out.push("h'" + b.to_hex() + "'")
+    cbor.Value.TextString(s) => out.push(diag_text(s))
+    cbor.Value.Array(items) => {
+      out.push("[")
+      var first = true
+      for it in items {
+        if !first {
+          out.push(", ")
+        }
+        first = false
+        diag_item(it, out)
+      }
+      out.push("]")
+    }
+    cbor.Value.Map(pairs) => {
+      out.push("{")
+      var first = true
+      for p in pairs {
+        if !first {
+          out.push(", ")
+        }
+        first = false
+        diag_item(p.0, out)
+        out.push(": ")
+        diag_item(p.1, out)
+      }
+      out.push("}")
+    }
+    cbor.Value.Tag(num, inner) => {
+      // a bignum (tag 2 or 3 on a byte string) is written as its number
+      var done = false
+      if num.to_bits() == 2 || num.to_bits() == 3 {
+        match inner {
+          cbor.Value.ByteString(b) => {
+            out.push(if num.to_bits() == 2 { big_decimal(b, false) } else { "-" + big_decimal(b, true) })
+            done = true
+          }
+          _ => {}
+        }
+      }
+      if !done {
+        out.push(u64_text(num) + "(")
+        diag_item(inner, out)
+        out.push(")")
+      }
+    }
+    cbor.Value.Simple(n) => out.push("simple(${n})")
+    cbor.Value.Bool(b) => out.push(if b { "true" } else { "false" })
+    cbor.Value.Null => out.push("null")
+    cbor.Value.Undefined => out.push("undefined")
+    cbor.Value.Float(f) => out.push(diag_float(f))
+  }
+}
+
+fn value_diagnostic(v: cbor.Value) -> Str {
+  var parts: List[Str] = []
+  diag_item(v, parts)
+  parts.join("")
+}
+
+// ---------------------------------------------------------------------------
+// The JSON bridge (RFC 8949 Section 6)
+
+fn json_key(k: cbor.Value) -> Str ! cbor.CborErr {
+  match k {
+    cbor.Value.TextString(s) => s
+    cbor.Value.Uint(_) => value_diagnostic(k)
+    cbor.Value.Nint(_) => value_diagnostic(k)
+    cbor.Value.Float(_) => value_diagnostic(k)
+    cbor.Value.Bool(b) => if b { "true" } else { "false" }
+    cbor.Value.Null => "null"
+    _ => Err(invalid("a map key of this kind has no JSON form"))
+  }
+}
+
+fn value_to_json(v: cbor.Value) -> json.Value ! cbor.CborErr {
+  match v {
+    cbor.Value.Uint(n) => {
+      match value_to_int(v) {
+        Some(i) => json.Value.Int(n: i)
+        None => json.Value.Num(n: Float.parse(u64_text(n)) ?? 0.0)
+      }
+    }
+    cbor.Value.Nint(n) => {
+      match value_to_int(v) {
+        Some(i) => json.Value.Int(n: i)
+        None => json.Value.Num(n: Float.parse(diag_nint(n)) ?? 0.0)
+      }
+    }
+    cbor.Value.ByteString(b) => json.Value.Str(s: base64.encode(b, base64.Base64.RawUrl))
+    cbor.Value.TextString(s) => json.Value.Str(s: s)
+    cbor.Value.Array(items) => {
+      var out: List[json.Value] = []
+      for it in items {
+        out.push(value_to_json(it)?)
+      }
+      json.Value.List(items: out)
+    }
+    cbor.Value.Map(pairs) => {
+      var out: List[(Str, json.Value)] = []
+      for p in pairs {
+        out.push((json_key(p.0)?, value_to_json(p.1)?))
+      }
+      json.Value.Object(fields: out)
+    }
+    cbor.Value.Tag(_, inner) => value_to_json(inner)?
+    cbor.Value.Simple(n) => json.Value.Str(s: "simple(${n})")
+    cbor.Value.Bool(b) => json.Value.Bool(b: b)
+    cbor.Value.Null => json.Value.Null
+    cbor.Value.Undefined => json.Value.Null
+    cbor.Value.Float(f) => {
+      if f.is_nan() || f.is_inf() {
+        return Err(invalid("NaN and infinity have no JSON form"))
+      }
+      json.Value.Num(n: f)
+    }
+  }
+}
+
+fn diag_nint(n: UInt64) -> Str {
+  let one: cbor.Value = cbor.Value.Nint(n: n)
+  value_diagnostic(one)
+}
+
+fn from_json(j: json.Value) -> cbor.Value {
+  match j {
+    json.Value.Null => cbor.Value.Null
+    json.Value.Bool(b) => cbor.Value.Bool(b: b)
+    json.Value.Int(n) => from_int(n)
+    json.Value.Num(n) => cbor.Value.Float(f: n)
+    json.Value.Str(s) => cbor.Value.TextString(s: s)
+    json.Value.List(items) => {
+      var out: List[cbor.Value] = []
+      for it in items {
+        out.push(from_json(it))
+      }
+      cbor.Value.Array(items: out)
+    }
+    json.Value.Object(fields) => {
+      var out: List[(cbor.Value, cbor.Value)] = []
+      for f in fields {
+        out.push((cbor.Value.TextString(s: f.0), from_json(f.1)))
+      }
+      cbor.Value.Map(pairs: out)
+    }
+    json.Value.Trusted(_, s) => cbor.Value.TextString(s: s)
+  }
+}

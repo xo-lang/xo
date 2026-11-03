@@ -6583,3 +6583,58 @@ fn decode_config(data: Bytes) -> Config ! JpegErr
   anything is allocated (Go allocates from the header).
 - Not ported: the `image.Image` interface, `jpeg.Encode`, and the `Reader`
   interface (whole buffers only).
+
+## 50. std/cbor
+
+RFC 8949 CBOR over a `Value` tree (decision 0468): encode with the preferred
+serialization, decode definite and indefinite lengths with limits, the
+diagnostic notation of section 8, and the JSON bridge of section 6. Pure.
+
+```xo
+enum Value { Uint(n: UInt64), Nint(n: UInt64), ByteString(b: Bytes), TextString(s: Str),
+             Array(items: List[Value]), Map(pairs: List[(Value, Value)]), Tag(num: UInt64, v: Value),
+             Simple(n: Int), Bool(b: Bool), Null, Undefined, Float(f: Float) }
+enum CborErr { Truncated, Syntax(msg: Str), Invalid(msg: Str), Limit(msg: Str) }
+fn (e: CborErr) display() -> Str
+fn from_int(n: Int) -> Value
+fn (v: Value) to_int() -> Int?
+fn (v: Value) get(key: Str) -> Value?
+fn encode(v: Value, deterministic: Bool = false) -> Bytes ! CborErr
+fn decode(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> Value ! CborErr
+fn decode_prefix(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> (Value, Int) ! CborErr
+fn well_formed(data: Bytes, max_depth: Int = 128) -> Bool
+fn (v: Value) diagnostic() -> Str
+fn (v: Value) to_json() -> json.Value ! CborErr
+fn from_json(j: json.Value) -> Value
+```
+
+- The model holds the whole format: `Uint(n)` is n and `Nint(n)` is -1-n, each
+  to 64 bits, so every integer CBOR can write is a value; a map keeps its pairs
+  in order with any key; `Simple(n)` is a simple value other than false, true,
+  null and undefined (0 to 19, 32 to 255).
+- `encode` writes the preferred serialization: shortest integer heads, the
+  shortest of half, single and double that holds a float (NaN as `f97e00`,
+  infinities as half), definite lengths. With `deterministic` the pairs of
+  every map are sorted bytewise by the encoding of the key (RFC 8949 4.2.1).
+  `Simple(n)` outside 0 to 19 and 32 to 255 is `Invalid`.
+- `decode` reads one item and refuses data after it (`Invalid`); `decode_prefix`
+  returns the number of bytes used (a CBOR sequence, RFC 8742). Indefinite
+  length strings, arrays and maps are read into definite values. `Truncated`
+  is data that ends inside an item, a length past the data included (nothing is
+  allocated from a length); `Syntax` is what is not well formed (additional
+  information 28 to 30, a break outside an indefinite item, a wrong or
+  indefinite chunk, a map with an odd count, a two byte simple value below 32);
+  `Invalid` is text that is not UTF-8 (each chunk of an indefinite text string
+  is checked) and, with `reject_dup_keys`, a repeated map key (keys compare by
+  their deterministic encoding; a NaN key is never a repeat); `Limit` is nesting
+  past `max_depth` (arrays, maps and chains of tags; one tag does not count).
+- `well_formed` is RFC 8949 section 5.3.1: no UTF-8 or key checks.
+- `diagnostic` is section 8 notation, with a bignum (tag 2 or 3 on a byte
+  string) written as its number and floats as ES6 number text with a decimal
+  point (`1.0`, `1.0e+300`, `NaN`, `Infinity`).
+- `to_json` follows section 6.2: byte strings as base64url without padding,
+  tags dropped, `Undefined` as null, `Simple(n)` as the text `simple(n)`, map
+  keys of text, integer, float, bool and null kinds as their text; NaN,
+  infinity and other keys are `Invalid`. `from_json` follows 6.1.
+- Not ported: a derive for typed values (use `derive Json` through `to_json`
+  and `from_json`), streaming, the date and time tag helpers.

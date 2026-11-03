@@ -66,6 +66,7 @@ var generators = map[string]func() string{
 	"xmlcodec":   xmlcodecCorpus,
 	"netip":      netipCorpus,
 	"path":       pathCorpus,
+	"cbor":       cborCorpus,
 	"jpeg":       jpegCorpus,
 	"png":        pngCorpus,
 	"prelude":    preludeCorpus,

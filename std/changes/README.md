@@ -57,3 +57,4 @@ entries yet.
 - [html.md](html.md): std/html (escape_string, unescape_string)
 - [png.md](png.md): std/png (spec/std.md 48)
 - [jpeg.md](jpeg.md): std/jpeg (spec/std.md 49)
+- [cbor.md](cbor.md): std/cbor (spec/std.md 50)

@@ -1,0 +1,100 @@
+// std/cbor (spec/std.md 50, decision 0468). Declaration file. RFC 8949
+// CBOR over a Value tree that holds the whole data model: encode with the
+// preferred serialization (and the deterministic map order of section
+// 4.2.1), decode definite and indefinite lengths with limits, the
+// diagnostic notation of section 8, and the JSON bridge of section 6.
+// Pure.
+use std/json
+
+/// A CBOR data item. Integers keep the full range of the format: `Uint(n)`
+/// is n (0 to 2^64-1) and `Nint(n)` is -1-n (-1 down to -2^64), so
+/// `Nint(0)` is -1. A map keeps its pairs in order, with any key. `Simple(n)`
+/// is a simple value other than false, true, null and undefined (n is 0 to
+/// 19 or 32 to 255). A decoded half, single or double float is a `Float`;
+/// `encode` writes the shortest of the three that holds the value.
+enum Value {
+  Uint(n: UInt64)
+  Nint(n: UInt64)
+  ByteString(b: Bytes)
+  TextString(s: Str)
+  Array(items: List[Value])
+  Map(pairs: List[(Value, Value)])
+  Tag(num: UInt64, v: Value)
+  Simple(n: Int)
+  Bool(b: Bool)
+  Null
+  Undefined
+  Float(f: Float)
+}
+
+/// `Truncated`: the data ends inside an item. `Syntax`: not well formed
+/// (a reserved additional information, a break outside an indefinite item,
+/// an indefinite string with a chunk of another kind or an indefinite
+/// chunk, an odd number of items in an indefinite map, a simple value below
+/// 32 written in two bytes). `Invalid`: well formed but refused (text that
+/// is not UTF-8, a repeated map key when `reject_dup_keys` is set, data after
+/// the item, a `Simple` or float that cannot be written). `Limit`: more
+/// nesting than max_depth, or an item larger than the data.
+enum CborErr {
+  Truncated
+  Syntax(msg: Str)
+  Invalid(msg: Str)
+  Limit(msg: Str)
+}
+
+fn (e: CborErr) display() -> Str
+
+/// The value of `n` as an Int-valued item: `Uint(n)` for n >= 0, `Nint(-1-n)`
+/// below.
+fn from_int(n: Int) -> Value
+
+/// The Int an item holds: Uint or Nint within Int's range; None for any
+/// other item or a value past Int.
+fn (v: Value) to_int() -> Int?
+
+/// The value in a map with a text key; None for a missing key or a value
+/// that is not a map.
+fn (v: Value) get(key: Str) -> Value?
+
+/// Encodes v with the preferred serialization (shortest integer heads, the
+/// shortest float that holds the value, definite lengths). With
+/// `deterministic` (RFC 8949 Section 4.2.1) the pairs of every map are
+/// sorted bytewise by the encoding of the key. `Invalid` for a `Simple`
+/// that is not 0 to 19 or 32 to 255.
+fn encode(v: Value, deterministic: Bool = false) -> Bytes ! CborErr
+
+/// One data item; nothing may follow it. `max_depth` bounds the nesting of
+/// arrays, maps and tags; with `reject_dup_keys` a map with a repeated key
+/// is `Invalid`.
+fn decode(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> Value ! CborErr
+
+/// The first item of data and the number of bytes it takes; what follows is
+/// left for the caller (a CBOR sequence, RFC 8742).
+fn decode_prefix(data: Bytes, max_depth: Int = 128, reject_dup_keys: Bool = false) -> (Value, Int) ! CborErr
+
+/// Whether data is exactly one well formed item (no UTF-8 or duplicate key
+/// check), as RFC 8949 Section 5.3.1 defines it.
+fn well_formed(data: Bytes, max_depth: Int = 128) -> Bool
+
+/// RFC 8949 Section 8: integers in decimal, byte strings as h'0102', text in
+/// double quotes with JSON escapes (non ASCII as \uXXXX), arrays `[1, 2]`,
+/// maps `{1: 2}`, tags `N(item)`, `simple(N)`, `true`, `false`, `null`,
+/// `undefined`, and floats with a decimal point or exponent (`1.0`, `1.5e+300`,
+/// `NaN`, `Infinity`, `-Infinity`; ES6 number text). An indefinite length item
+/// is written as its definite value.
+fn (v: Value) diagnostic() -> Str
+
+/// RFC 8949 Section 6.2, the item as JSON: integers and floats as numbers
+/// (a float without a fraction stays a float; a Nint or Uint past Int is
+/// a number text through Float), byte strings as base64url text without
+/// padding, text as text, `Null` and `Undefined` as null, `true` and `false`,
+/// arrays, maps with text, integer, float, bool or null keys as objects (the
+/// key's text), tags dropped (their content kept), `Simple(n)` as the text
+/// `simple(n)`. NaN and infinity are `Invalid`, as is a map key that is
+/// not one of those kinds.
+fn (v: Value) to_json() -> json.Value ! CborErr
+
+/// RFC 8949 Section 6.1, the JSON value as an item: Null, Bool, Int as Uint
+/// or Nint, Num as Float, Str as TextString, List as Array, Object as Map
+/// with text keys. A `Trusted` value is its text.
+fn from_json(j: json.Value) -> Value

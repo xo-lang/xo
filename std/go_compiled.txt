@@ -16,3 +16,4 @@ rate
 backoff
 png
 jpeg
+cbor
