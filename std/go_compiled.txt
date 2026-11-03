@@ -21,3 +21,4 @@ charset
 otp
 bcrypt
 cookiejar
+norm

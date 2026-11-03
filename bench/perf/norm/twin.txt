@@ -1,0 +1,7 @@
+# twincheck: norm: five workloads (none is the setup alone); Go is golang.org/x/text unicode/norm.
+require golang.org/x/text v0.43.0
+- - none
+- - ascii
+- - nfc
+- - nfd
+- - nfkc

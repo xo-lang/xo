@@ -1,0 +1,49 @@
+// norm: std/norm against golang.org/x/text's unicode/norm (twin.go.txt): a
+// text of about 600000 characters (9 in 10 ASCII, the rest Latin letters
+// with accents, as precomposed runes and as a letter and a combining mark,
+// a few Hangul syllables and ligatures) put through NFC, NFD and NFKC 20
+// times each; `ascii` normalizes pure ASCII 20 times; `none` is the setup
+// alone. Usage: `<program> none|ascii|nfc|nfd|nfkc`. Prints
+// `<workload> <checksum>` (the length of the last result); the twin prints
+// the same.
+use std/norm
+
+fn text(ascii: Bool) -> Str {
+  var b = StrBuilder.new()
+  var r = 1
+  for _ in 0..600000 {
+    r = (r * 1103515245 + 12345) % 2147483648
+    let k = (r >> 16) % 40
+    if ascii || k < 36 {
+      b.write("${Rune(32 + (r >> 8) % 95)}")
+    } else if k < 37 {
+      b.write("${Rune(0xC0 + (r >> 8) % 64)}")
+    } else if k < 38 {
+      b.write("${Rune(97 + (r >> 8) % 26)}${Rune(0x300 + (r >> 4) % 0x30)}")
+    } else if k < 39 {
+      b.write("${Rune(0xAC00 + (r >> 8) % 11172)}")
+    } else {
+      b.write("${Rune(0xFB00 + (r >> 8) % 7)}")
+    }
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let s = text(w == "ascii")
+  var n = 0
+  if w != "none" {
+    for _ in 0..20 {
+      let t = if w == "nfd" {
+        norm.normalize(s, norm.Form.Nfd)
+      } else if w == "nfkc" {
+        norm.normalize(s, norm.Form.Nfkc)
+      } else {
+        norm.normalize(s, norm.Form.Nfc)
+      }
+      n = t.len()
+    }
+  }
+  os.stdio.println("${w} ${n}")
+}

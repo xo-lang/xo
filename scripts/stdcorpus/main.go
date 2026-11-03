@@ -91,6 +91,7 @@ var generators = map[string]func() string{
 	"heapops":    heapopsCorpus,
 	"otp":        otpCorpus,
 	"cookiejar":  cookiejarCorpus,
+	"norm":       normCorpus,
 	"bcrypt":     bcryptCorpus,
 }
 

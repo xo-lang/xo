@@ -1,0 +1,26 @@
+// std/norm (spec/std.md 60, decision 0476). Declaration file. Unicode
+// normalization of golang.org/x/text/unicode/norm: the four forms of UAX
+// #15 (NFC, NFD, NFKC, NFKD) on Str, so two spellings of the same text
+// (`é` as one rune or `e` and a combining accent) compare equal after
+// `normalize(s, Form.Nfc)`. Unicode 15.0.0.
+
+/// A normalization form.
+enum Form {
+  /// Canonical decomposition, then canonical composition (the usual form for
+  /// storing and comparing text).
+  Nfc
+  /// Canonical decomposition.
+  Nfd
+  /// Compatibility decomposition, then canonical composition.
+  Nfkc
+  /// Compatibility decomposition.
+  Nfkd
+} derive Display
+
+/// The Unicode version of the tables (`15.0.0`).
+fn unicode_version() -> Str
+
+/// s in the form f (Form.String). ASCII text is returned as it is.
+fn normalize(s: Str, f: Form) -> Str
+/// Whether s is already in the form f (Form.IsNormalString).
+fn is_normalized(s: Str, f: Form) -> Bool
