@@ -895,3 +895,22 @@ anyway). The idle connections are not closed at exit on wasm
 (atexit.set_streams takes a native function address; the instance's
 sockets end with it).
 
+### UDP in a command (2026-11-03, R2h)
+
+std/udp works in a command over wasi:sockets/udp and udp-create-socket
+(0.2.x). rt9.xo's wasi_udp_open binds the socket (start-bind and
+finish-bind, port 0 and the unspecified address for a dial) and opens
+its datagram streams, with the peer as the stream's remote address for
+udp.dial; the socket and both streams live in a 56 byte connection
+record (kind 1 at offset 48), so wasi_sock_close, the deadlines and
+cancellation are the TCP ones. wasi_udp_recv receives one datagram (a
+receive of 1, waiting on the incoming stream's pollable as a read
+does) and returns its sender's address before the data in one Bytes;
+wasi_udp_send waits on check-send and sends one datagram, to an
+address or (none) the dialed peer. netwasi's udp_open, udp_read,
+udp_write and udp_local_addr give std/native/udp.xo's wasm arms the
+native error texts. The component imports udp and udp-create-socket
+only when the core module uses them, and tcp, tcp-create-socket only
+for TCP (ip-name-lookup for TCP or lookups), so a UDP only program asks
+the host for no TCP.
+

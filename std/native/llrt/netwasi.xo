@@ -530,3 +530,119 @@ pub fn hc_send(cn: Int, p: Int, n: Int, deadline: Int) -> Int {
   }
   if e == 0 { 0 } else if e == E_DEADLINE { -2 } else { -1 }
 }
+
+// ---------------------------------------------------------------------------
+// UDP in a command (std/udp, decision 0447 R2h): rt9.xo's udp socket in a
+// Conn, as netconn's UDP natively.
+
+/// udp.listen (dial false) or udp.dial: the socket, or dead with the
+/// error recorded (err_now).
+pub fn udp_open(lists: Str, addr: Str, dial: Bool) -> Conn {
+  let op = if dial { "dial" } else { "listen" }
+  if !netpolicy.admits_addr(lists, addr) {
+    fail(6, addr)
+    return dead()
+  }
+  let (has, host, port) = netpolicy.split_hostport(addr)
+  if !has || host.len() >= 256 || port.len() >= 32 {
+    fail(4, "${op} udp ${addr}: address ${addr}: missing port in address")
+    return dead()
+  }
+  if netpolicy.port_out_of_range(port) {
+    fail(4, "${op} udp ${addr}: address ${port}: invalid port")
+    return dead()
+  }
+  let p = port_of(port)
+  if p < 0 {
+    fail(4, "${op} udp ${addr}: unknown port")
+    return dead()
+  }
+  var ips: List[Bytes] = []
+  if host.is_empty() {
+    ips = if dial { [ip_of("127.0.0.1") ?? zeros(4)] } else { [zeros(16), zeros(4)] }
+  } else {
+    let (xs, e) = addrs_of(host)
+    if e != 0 {
+      fail(4, "${op} udp ${addr}: ${lookup_text(host, e)}")
+      return dead()
+    }
+    ips = xs
+  }
+  var e = 0
+  for ip in ips {
+    let v6 = ip.len() == 16
+    let c = if dial { rt.wasi_udp_open(v6, zeros(ip.len()), 0, true, v6, ip, p) } else { rt.wasi_udp_open(v6, ip, p, false, false, b"", 0) }
+    e = rt.wasi_sock_err()
+    if e == 0 {
+      ok()
+      return c
+    }
+  }
+  fail(4, "${op} udp ${addr}: ${if dial { "connect" } else { "bind" }}: ${err_text(e)}")
+  dead()
+}
+
+/// read_from: the next datagram (at most max bytes) and its sender.
+pub fn udp_read(c: Conn, max0: Int) -> (Bytes, Str) {
+  let max = if max0 < 1 { 1 } else if max0 > 65535 { 65535 } else { max0 }
+  let b = rt.wasi_udp_recv(c, max)
+  let e = rt.wasi_sock_err()
+  if e != 0 {
+    udp_fail("read", e)
+    return (b"", "")
+  }
+  ok()
+  let n = Int(b[0])
+  let a = b[1..1 + n]
+  (b[1 + n..b.len()], fmt_addr(a[3..a.len()], Int(a[1]) * 256 + Int(a[2])))
+}
+
+/// write_to (addr "" for a dialed socket's write): one datagram.
+pub fn udp_write(lists: Str, c: Conn, data: Bytes, addr: Str) {
+  if addr.is_empty() {
+    rt.wasi_udp_send(c, data, false, false, b"", 0)
+  } else {
+    if !netpolicy.admits_addr(lists, addr) {
+      fail(6, addr)
+      return
+    }
+    let (has, host, port) = netpolicy.split_hostport(addr)
+    let p = port_of(port)
+    if !has || p < 0 {
+      fail(4, "write udp: address ${addr}: missing port in address")
+      return
+    }
+    let (xs, le) = addrs_of(host)
+    if le != 0 || xs.is_empty() {
+      fail(4, "write udp: ${lookup_text(host, le)}")
+      return
+    }
+    rt.wasi_udp_send(c, data, true, xs[0].len() == 16, xs[0], p)
+  }
+  let e = rt.wasi_sock_err()
+  if e != 0 {
+    udp_fail("write", e)
+    return
+  }
+  ok()
+}
+
+fn udp_fail(op: Str, e: Int) {
+  if e == E_CANCELED {
+    fail(5, "")
+  } else if e == E_DEADLINE {
+    fail(3, "")
+  } else {
+    fail(4, "${op} udp: ${err_text(e)}")
+  }
+}
+
+/// local_addr: the bound address ("" once closed).
+pub fn udp_local_addr(c: Conn) -> Str {
+  let b = rt.wasi_udp_local(c)
+  if b.len() < 7 {
+    return ""
+  }
+  fmt_addr(b[3..b.len()], Int(b[1]) * 256 + Int(b[2]))
+}
+

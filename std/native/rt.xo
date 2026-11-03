@@ -392,6 +392,18 @@ fn wasi_sock_try_read(c: Conn, max: Int) -> Bytes
 fn wasi_sock_readable(c: Conn)
 fn wasi_sock_write(c: Conn, data: Bytes)
 fn wasi_sock_close(c: Conn)
+/// wasm only (decision 0447 R2h): a udp socket bound to (v6, ip, port)
+/// with its datagram streams, for any peer or (dial) the peer (rv6, rip,
+/// rport); a Conn the other wasi_sock calls close and give deadlines.
+fn wasi_udp_open(v6: Bool, ip: Bytes, port: Int, dial: Bool, rv6: Bool, rip: Bytes, rport: Int) -> Conn
+/// wasm only: the next datagram, at most max bytes, as one Bytes: the
+/// sender's address length, its bytes (as wasi_sock_local's), the data.
+fn wasi_udp_recv(c: Conn, max: Int) -> Bytes
+/// wasm only: one datagram, to (rv6, rip, rport) when to, else to the
+/// dialed peer.
+fn wasi_udp_send(c: Conn, data: Bytes, to: Bool, rv6: Bool, rip: Bytes, rport: Int)
+/// wasm only: the bound address, as wasi_sock_local's bytes.
+fn wasi_udp_local(c: Conn) -> Bytes
 /// which 1 read, 2 write, 3 both; d ns from now when set.
 fn wasi_sock_deadline(c: Conn, which: Int, set: Bool, d: Int)
 /// A lookup of host started: its stream, 0 on an error.

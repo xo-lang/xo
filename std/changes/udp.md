@@ -1,5 +1,19 @@
 # std/udp changes
 
+## 2026-11-03: port: std/udp in a wasip2/wasm command
+
+- Kind: port
+- Commit: this commit
+- Found by: Lang 4, decision 0447 step R2 (the networking std modules on wasip2)
+- Go reference: none
+- Test: goldens udp_echo and udp_no_tasks as wasm commands (TestWasmCommandGoldens)
+- Timing: none
+- Shipped in: unreleased
+
+udp.listen, udp.dial, read_from, write_to, write, local_addr and close
+run over wasi:sockets/udp in a command, with the native error texts and
+deadlines (decision 0447 R2h).
+
 ## 2026-11-03: fix: a program whose only network is std/udp builds, and keeps the shutdown
 
 - Kind: fix

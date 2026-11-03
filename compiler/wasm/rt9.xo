@@ -20,7 +20,12 @@
 //              output-stream, 20 closed, 24 read deadline, 32 write
 //              deadline (i64s, monotonic ns, 0 none; the read deadline
 //              is the connect deadline until connected), 40 bytes of the
-//              current write done, 44 std/tls's upgrade mark
+//              current write done, 44 std/tls's upgrade mark, 48 the
+//              kind (0 tcp, 1 udp)
+//   udp        a connection record (the same offsets for closed and the
+//              deadlines, so wasi_sock_close and wasi_sock_deadline serve
+//              both): 8 udp-socket, 12 incoming-datagram-stream, 16
+//              outgoing-datagram-stream, 48 kind 1 (decision 0447 R2h)
 // A call that fails returns the immortal empty string's object as its
 // handle, which the reference counting never frees, and records the error
 // for $wasi_sock_err: 0 none, 1 + a wasi:sockets error-code, 100 the
@@ -30,12 +35,12 @@
 
 /// The runtime calls of rt9.xo (the operands' leaves, like rt3.xo's).
 fn rt9_direct(name: Str) -> Bool {
-  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_peer" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_try_read" | "wasi_sock_readable" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
+  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_peer" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_try_read" | "wasi_sock_readable" | "wasi_udp_open" | "wasi_udp_recv" | "wasi_udp_send" | "wasi_udp_local" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
 }
 
 /// The calls of rt9.xo that can suspend the task.
 fn rt9_blocking(name: Str) -> Bool {
-  name is "rt.wasi_sock_accept" | "rt.wasi_sock_connected" | "rt.wasi_sock_read" | "rt.wasi_sock_readable" | "rt.wasi_sock_write" | "rt.wasi_sock_next"
+  name is "rt.wasi_sock_accept" | "rt.wasi_sock_connected" | "rt.wasi_sock_read" | "rt.wasi_sock_readable" | "rt.wasi_sock_write" | "rt.wasi_sock_next" | "rt.wasi_udp_recv" | "rt.wasi_udp_send"
 }
 
 /// The imports of rt9.xo.
@@ -66,6 +71,19 @@ fn rt9_imports() -> Str {
     (import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $sk_oflush (param i32 i32)))
     (import "wasi:io/streams@0.2.0" "[method]output-stream.subscribe" (func $sk_osub (param i32) (result i32)))
     (import "wasi:io/poll@0.2.0" "poll" (func $sk_poll (param i32 i32 i32)))
+    (import "wasi:sockets/udp-create-socket@0.2.0" "create-udp-socket" (func $udp_create (param i32 i32)))
+    (import "wasi:sockets/udp@0.2.0" "[method]udp-socket.start-bind" (func $udp_sbind (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))
+    (import "wasi:sockets/udp@0.2.0" "[method]udp-socket.finish-bind" (func $udp_fbind (param i32 i32)))
+    (import "wasi:sockets/udp@0.2.0" "[method]udp-socket.stream" (func $udp_stream (param i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32 i32)))
+    (import "wasi:sockets/udp@0.2.0" "[method]udp-socket.local-address" (func $udp_local (param i32 i32)))
+    (import "wasi:sockets/udp@0.2.0" "[resource-drop]udp-socket" (func $udp_drop (param i32)))
+    (import "wasi:sockets/udp@0.2.0" "[method]incoming-datagram-stream.receive" (func $udp_recv (param i32 i64 i32)))
+    (import "wasi:sockets/udp@0.2.0" "[method]incoming-datagram-stream.subscribe" (func $udp_isub (param i32) (result i32)))
+    (import "wasi:sockets/udp@0.2.0" "[resource-drop]incoming-datagram-stream" (func $udp_idrop (param i32)))
+    (import "wasi:sockets/udp@0.2.0" "[method]outgoing-datagram-stream.check-send" (func $udp_check (param i32 i32)))
+    (import "wasi:sockets/udp@0.2.0" "[method]outgoing-datagram-stream.send" (func $udp_send (param i32 i32 i32 i32)))
+    (import "wasi:sockets/udp@0.2.0" "[method]outgoing-datagram-stream.subscribe" (func $udp_osub (param i32) (result i32)))
+    (import "wasi:sockets/udp@0.2.0" "[resource-drop]outgoing-datagram-stream" (func $udp_odrop (param i32)))
 
   """
 }
@@ -716,6 +734,21 @@ fn rt9_text(var g: Gen) -> Str {
       local.get $c
       call $sk_unwait
       local.get $c
+      i32.load offset=48
+      if
+        ;; udp: the streams, children of the socket, first
+        local.get $c
+        i32.load offset=12
+        call $udp_idrop
+        local.get $c
+        i32.load offset=16
+        call $udp_odrop
+        local.get $c
+        i32.load offset=8
+        call $udp_drop
+        return
+      end
+      local.get $c
       i32.load offset=16
       if
         ;; what the stream holds goes out before it is dropped
@@ -842,19 +875,29 @@ fn rt9_text(var g: Gen) -> Str {
       i32.const 1
       call $sk_addr_bytes)
 
-    ;; socket s's local (remote 0) or remote address as bytes
+    ;; socket s's local (remote 0) or remote (1) address as bytes; 2: udp
+    ;; socket s's local address
     (func $sk_addr_bytes (param $s i32) (param $remote i32) (result i32 i32) (local $r i32) (local $o i32) (local $i i32) (local $w i32)
       call $hret_at
       local.set $r
       local.get $remote
+      i32.const 2
+      i32.eq
       if
         local.get $s
         local.get $r
-        call $sk_remote
+        call $udp_local
       else
-        local.get $s
-        local.get $r
-        call $sk_local
+        local.get $remote
+        if
+          local.get $s
+          local.get $r
+          call $sk_remote
+        else
+          local.get $s
+          local.get $r
+          call $sk_local
+        end
       end
       local.get $r
       i32.load8_u
@@ -942,6 +985,511 @@ fn rt9_text(var g: Gen) -> Str {
       local.get $o
       i32.const 7)
 
+    ;; UDP (decision 0447 R2h). A new udp socket of the family (v6) or 0,
+    ;; the error recorded
+    (func $udp_new (param $v6 i32) (result i32) (local $r i32)
+      local.get $v6
+      call $hret_at
+      local.tee $r
+      call $udp_create
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        i32.const 1
+        i32.add
+        global.set $skerr
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=4)
+
+    ;; std/udp's listen (dial 0) and dial: a udp socket bound to the local
+    ;; address (v6, the 4 or 16 bytes ip, port; port 0 picks one) and its
+    ;; datagram streams, for any peer or, dialed, the remote address (rv6,
+    ;; rip, rport); a connection record (udp), or dead with the error
+    ;; recorded
+    (func $wasi_udp_open (param $v6 i32) (param $ip i32) (param $ipn i32) (param $port i64) (param $dial i32) (param $rv6 i32) (param $rip i32) (param $ripn i32) (param $rport i64) (result i32) (local $s i32) (local $e i32) (local $r i32) (local $c i32)
+      i32.const 0
+      global.set $skerr
+      local.get $v6
+      call $udp_new
+      local.tee $s
+      i32.eqz
+      if
+        global.get $skerr
+        call $sk_fail
+        return
+      end
+      local.get $s
+      call $sk_net
+      local.get $v6
+      local.get $ip
+      i32.const 8
+      i32.add
+      local.get $port
+      i32.wrap_i64
+      call $sk_addr
+      call $hret_at
+      call $udp_sbind
+      call $hret_at
+      call $sk_unit
+      local.tee $e
+      i32.eqz
+      if
+        local.get $s
+        call $hret_at
+        call $udp_fbind
+        call $hret_at
+        call $sk_unit
+        local.set $e
+      end
+      local.get $e
+      i32.eqz
+      if
+        local.get $dial
+        if
+          local.get $s
+          i32.const 1
+          local.get $rv6
+          local.get $rip
+          i32.const 8
+          i32.add
+          local.get $rport
+          i32.wrap_i64
+          call $sk_addr
+          call $hret_at
+          local.tee $r
+          call $udp_stream
+        else
+          local.get $s
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          i32.const 0
+          call $hret_at
+          local.tee $r
+          call $udp_stream
+        end
+        local.get $r
+        i32.load8_u
+        if
+          local.get $r
+          i32.load8_u offset=4
+          i32.const 1
+          i32.add
+          local.set $e
+        end
+      end
+      local.get $e
+      if
+        local.get $s
+        call $udp_drop
+        local.get $e
+        call $sk_fail
+        return
+      end
+      i32.const 56
+      i32.const ${conn_free}
+      call $obj_new
+      local.tee $c
+      local.get $s
+      i32.store offset=8
+      local.get $c
+      local.get $r
+      i32.load offset=4
+      i32.store offset=12
+      local.get $c
+      local.get $r
+      i32.load offset=8
+      i32.store offset=16
+      local.get $c
+      i32.const 1
+      i32.store offset=48
+      local.get $c)
+
+    ;; the bytes of the ip-socket-address at a (its case at a, the payload
+    ;; at a+4) as $sk_addr_bytes writes them: v6 (0 or 1), the port's two
+    ;; bytes, the 4 or 16 bytes of the address; to d, their count returned
+    (func $sk_addr_into (param $a i32) (param $d i32) (result i32) (local $i i32) (local $w i32)
+      local.get $d
+      local.get $a
+      i32.load8_u
+      i32.store8
+      local.get $d
+      local.get $a
+      i32.load16_u offset=4
+      i32.const 8
+      i32.shr_u
+      i32.store8 offset=1
+      local.get $d
+      local.get $a
+      i32.load8_u offset=4
+      i32.store8 offset=2
+      local.get $a
+      i32.load8_u
+      i32.eqz
+      if
+        local.get $d
+        local.get $a
+        i32.load offset=6 align=1
+        i32.store offset=3 align=1
+        i32.const 7
+        return
+      end
+      block $x
+        loop $y
+          local.get $i
+          i32.const 8
+          i32.ge_u
+          br_if $x
+          local.get $a
+          local.get $i
+          i32.const 1
+          i32.shl
+          i32.add
+          i32.load16_u offset=12
+          local.set $w
+          local.get $d
+          local.get $i
+          i32.const 1
+          i32.shl
+          i32.add
+          local.get $w
+          i32.const 8
+          i32.shr_u
+          i32.store8 offset=3
+          local.get $d
+          local.get $i
+          i32.const 1
+          i32.shl
+          i32.add
+          local.get $w
+          i32.store8 offset=4
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $y
+        end
+      end
+      i32.const 19)
+
+    ;; UdpConn.read_from: the next datagram (at most max bytes of it), as
+    ;; one Bytes: the sender's address length, its bytes ($sk_addr_into),
+    ;; then the data; a repeatable call (it waits for a datagram under
+    ;; the read deadline)
+    (func $wasi_udp_recv (param $c i32) (param $max i64) (result i32 i32) (local $r i32) (local $d i32) (local $n i32) (local $al i32) (local $o i32)
+      call $sk_enter
+      if
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const 100
+        global.set $skerr
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.const 24
+      call $sk_passed
+      if
+        i32.const 102
+        global.set $skerr
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.load offset=12
+      i64.const 1
+      call $hret_at
+      local.tee $r
+      call $udp_recv
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        i32.const 1
+        i32.add
+        global.set $skerr
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=8
+      i32.eqz
+      if
+        local.get $r
+        i32.load offset=4
+        local.tee $d
+        if
+          local.get $d
+          call $free
+        end
+        local.get $c
+        i32.load offset=12
+        call $udp_isub
+        local.get $c
+        local.get $c
+        i64.load offset=24
+        call $sk_wait
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      ;; the one datagram: data {ptr, len}, then its address at 8
+      local.get $r
+      i32.load offset=4
+      local.set $d
+      local.get $d
+      i32.load offset=4
+      local.tee $n
+      local.get $max
+      i32.wrap_i64
+      i32.gt_u
+      if
+        local.get $max
+        i32.wrap_i64
+        local.set $n
+      end
+      ;; v6: 19 bytes, v4: 7
+      i32.const 19
+      i32.const 7
+      local.get $d
+      i32.load8_u offset=8
+      select
+      local.set $al
+      i32.const 1
+      local.get $al
+      i32.add
+      local.get $n
+      i32.add
+      call $rs_new
+      local.tee $o
+      local.get $al
+      i32.store8 offset=8
+      local.get $d
+      i32.const 8
+      i32.add
+      local.get $o
+      i32.const 9
+      i32.add
+      call $sk_addr_into
+      drop
+      local.get $o
+      i32.const 9
+      i32.add
+      local.get $al
+      i32.add
+      local.get $d
+      i32.load
+      local.get $n
+      memory.copy
+      local.get $d
+      i32.load offset=4
+      if
+        local.get $d
+        i32.load
+        call $free
+      end
+      local.get $d
+      call $free
+      i32.const 0
+      global.set $skerr
+      local.get $o
+      i32.const 1
+      local.get $al
+      i32.add
+      local.get $n
+      i32.add)
+
+    ;; the ip-socket-address of the 4 or 16 bytes at ip and port (v6) to
+    ;; memory at a (the case at a, the payload at a+4)
+    (func $sk_addr_store (param $a i32) (param $v6 i32) (param $ip i32) (param $port i32) (local $i i32)
+      local.get $a
+      i32.const 0
+      i32.const 32
+      memory.fill
+      local.get $a
+      local.get $v6
+      i32.store8
+      local.get $a
+      local.get $port
+      i32.store16 offset=4
+      local.get $v6
+      i32.eqz
+      if
+        local.get $a
+        local.get $ip
+        i32.load align=1
+        i32.store offset=6 align=1
+        return
+      end
+      block $x
+        loop $y
+          local.get $i
+          i32.const 8
+          i32.ge_u
+          br_if $x
+          local.get $a
+          local.get $i
+          i32.const 1
+          i32.shl
+          i32.add
+          local.get $ip
+          local.get $i
+          i32.const 1
+          i32.shl
+          i32.add
+          call $sk_be16
+          i32.store16 offset=12
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $y
+        end
+      end)
+
+    ;; UdpConn.write_to and write: one datagram of the n bytes at p (a
+    ;; Bytes object), to (rv6, rip, rport) when to, else to the dialed
+    ;; peer; a repeatable call (it waits while the stream cannot send,
+    ;; under the write deadline)
+    (func $wasi_udp_send (param $c i32) (param $p i32) (param $n i32) (param $to i32) (param $rv6 i32) (param $rip i32) (param $ripn i32) (param $rport i64) (local $r i32) (local $b i32)
+      call $sk_enter
+      if
+        return
+      end
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const 100
+        global.set $skerr
+        return
+      end
+      local.get $c
+      i32.const 32
+      call $sk_passed
+      if
+        i32.const 102
+        global.set $skerr
+        return
+      end
+      local.get $c
+      i32.load offset=16
+      call $hret_at
+      local.tee $r
+      call $udp_check
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=8
+        i32.const 1
+        i32.add
+        global.set $skerr
+        return
+      end
+      local.get $r
+      i64.load offset=8
+      i64.eqz
+      if
+        local.get $c
+        i32.load offset=16
+        call $udp_osub
+        local.get $c
+        local.get $c
+        i64.load offset=32
+        call $sk_wait
+        return
+      end
+      ;; one outgoing-datagram: data {ptr, len}, option<ip-socket-address>
+      ;; (its case at 8, the address at 12)
+      i32.const 44
+      call $alloc
+      local.tee $b
+      i32.const 0
+      i32.const 44
+      memory.fill
+      local.get $b
+      local.get $p
+      i32.const 8
+      i32.add
+      i32.store
+      local.get $b
+      local.get $n
+      i32.store offset=4
+      local.get $to
+      if
+        local.get $b
+        i32.const 1
+        i32.store8 offset=8
+        local.get $b
+        i32.const 12
+        i32.add
+        local.get $rv6
+        local.get $rip
+        i32.const 8
+        i32.add
+        local.get $rport
+        i32.wrap_i64
+        call $sk_addr_store
+      end
+      local.get $c
+      i32.load offset=16
+      local.get $b
+      i32.const 1
+      call $hret_at
+      local.tee $r
+      call $udp_send
+      local.get $b
+      call $free
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=8
+        i32.const 1
+        i32.add
+        global.set $skerr
+        return
+      end
+      i32.const 0
+      global.set $skerr)
+
+    ;; UdpConn.local_addr: as $wasi_sock_local; empty once closed
+    (func $wasi_udp_local (param $c i32) (result i32 i32)
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.load offset=8
+      i32.const 2
+      call $sk_addr_bytes)
+
     ;; Listener.accept: the next connection
     (func $wasi_sock_accept (param $l i32) (result i32) (local $r i32) (local $c i32)
       call $sk_enter
@@ -985,7 +1533,7 @@ fn rt9_text(var g: Gen) -> Str {
         call $sk_fail
         return
       end
-      i32.const 48
+      i32.const 56
       i32.const ${conn_free}
       call $obj_new
       local.tee $c
@@ -1053,7 +1601,7 @@ fn rt9_text(var g: Gen) -> Str {
         call $sk_fail
         return
       end
-      i32.const 48
+      i32.const 56
       i32.const ${conn_free}
       call $obj_new
       local.tee $c
