@@ -84,3 +84,20 @@ Both modules are now smaller than Go's, so the fix path is about margin and spee
 1. Norm's composition pairs (8.5 KB) are the inverse of the canonical two rune decompositions; storing only the decompositions and deriving the pair on lookup would drop them, at a cost in lookup time that has to be measured.
 2. A two stage block table (an index of blocks, deduplicated blocks of values) for idna's 7,380 ranges would trade the binary search for two reads, as Go's trie does; worth it only if the timing rows show the search.
 3. Speed: norm's NFC is 2.7 of Go's time on a Mac run after the byte packing (the record decoding), and was 2.1 before it on the host (bench/results/std-twin-rows12-2026-11-03.md); the host rows are in std-twin-rows16-2026-11-03.md.
+
+## After the block index (3e47b249a, 2026-11-03)
+
+Same method, rebuilt with xo 0.37.0 at 3e47b249a (Go binaries as above). The Mach-O file size moves in 16 KB pages (`__TEXT` is 344,064 bytes), so the earlier 399,747 and 299,155 became 416,227 and 315,635 by one page, while the section sums grew by 5.5 KB (the block indexes: norm 2.2 KB, idna 0.4 KB, and 2.2 KB of code). Sections are the exact figures; file sizes are the fair whole-binary comparison but carry up to a page of rounding.
+
+| | no import | imports idna | idna adds | imports norm only | norm adds |
+|---|---|---|---|---|---|
+| Go, file (default) | 2,492,450 | 2,766,354 | +273,904 | 2,613,122 | +120,672 |
+| Go, file (`-s -w`) | 1,657,842 | 1,890,626 | +232,784 | 1,757,938 | +100,096 |
+| Xo, file | 232,675 | 416,227 | +183,552 | 315,635 | +82,960 |
+| Xo `__text` | 135,256 | 180,668 | +45,412 | 146,732 | +11,476 |
+| Xo `__const` | 11,595 | 135,083 | +123,488 | 72,731 | +61,136 |
+| Go `__text` | 648,580 | 702,292 | +53,712 | 672,116 | +23,536 |
+| Go table data (`__noptrdata` + `__rodata`) | 233,000 | 367,398 | +134,466 | 297,382 | +64,450 |
+| Go `__gopclntab` | 663,546 | 704,008 | +40,462 | 682,254 | +18,708 |
+
+Verdict: Xo is still smaller than Go on the whole binary, by 21 percent for idna (+183.6 KB against +232.8 KB stripped, 33 percent against the default build) and 17 percent for norm (+83.0 KB against +100.1 KB stripped). The 167 KB and 66 KB figures above were measured lower inside one page; the margin is smaller than they said. Code is smaller than Go's (idna 45 KB against 54 KB, norm 11.5 KB against 23.5 KB) and tables are 8 percent smaller for idna (123.5 KB against 134.5 KB) and 5 percent for norm (61.1 KB against 64.5 KB).
