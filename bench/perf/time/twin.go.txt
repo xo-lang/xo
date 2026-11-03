@@ -17,13 +17,13 @@ func main() {
 	}
 	n := 0
 	switch mode {
-	case "format":
+	case "format", "format_layout":
 		for i := 0; i < 300000; i++ {
 			t := time.Unix(int64(1760000000+i*37), 0)
 			n += len(t.UTC().Format("2006-01-02T15:04:05Z07:00"))
 			n += len(t.In(ny).Format("Mon, 02 Jan 2006 15:04:05 MST"))
 		}
-	case "parse":
+	case "parse", "parse_layout":
 		for i := 0; i < 300000; i++ {
 			s := fmt.Sprintf("2026-10-%dT12:34:56Z", 10+i%20)
 			t, err := time.Parse("2006-01-02T15:04:05Z07:00", s)

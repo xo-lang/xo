@@ -775,7 +775,7 @@ fn args_text(name: Str, args: List[Str]) -> Str {
 fn layout_items(layout: Str) -> List[Item] ! Str {
   let b = layout.bytes()
   let n = b.len()
-  var items: List[Item] = []
+  var items: List[Item] = List[Item].with_capacity(16)
   var lit = ""
   var start = 0
   var hour12 = false
@@ -789,7 +789,7 @@ fn layout_items(layout: Str) -> List[Item] ! Str {
       i += 1
       continue
     }
-    lit = lit + layout[start..i]
+    lit = if lit == "" { layout[start..i] } else { lit + layout[start..i] }
     var j = i + 1
     while j < n && b[j] != 123 && b[j] != 125 {
       j += 1
@@ -849,7 +849,7 @@ fn layout_items(layout: Str) -> List[Item] ! Str {
     i = j + 1
     start = i
   }
-  lit = lit + layout[start..n]
+  lit = if lit == "" { layout[start..n] } else { lit + layout[start..n] }
   if lit != "" {
     items.push(Item{lit: lit, field: "", arg: ""})
   }

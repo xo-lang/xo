@@ -1,8 +1,12 @@
-// time: std/time against Go's time (twin.go.txt): format 300,000 times in UTC (ISO) and New York (long
+// time: std/time against Go's time (twin.go.txt): format 300,000 times (`format`: layout strings, parsed on
+// each call as Go does; `format_layout`: the same layouts as consts, parsed once) in UTC (ISO) and New York (long
 // form), parse 300,000 ISO texts, civil (calendar fields) of 300,000 instants in New York, and 10,000,000
 // Duration additions; `none` is the setup alone. Usage: `<program> none|format|parse|civil|duration`.
 // Prints `<workload> <checksum>`; the twin prints the same.
 use std/time
+
+const ISO: time.Layout = time.layout("{year}-{month}-{day}T{hour}:{minute}:{second}{offset}")
+const LONG: time.Layout = time.layout("{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}")
 
 fn main(os: Os) {
   let mode = os.env.args().get(0) ?? "none"
@@ -14,6 +18,20 @@ fn main(os: Os) {
       let t = Time.from_unix(1760000000 + i * 37)
       n += time.format(t, utc, "{year}-{month}-{day}T{hour}:{minute}:{second}{offset}").len()
       n += time.format(t, ny, "{weekday:short}, {day} {month:short} {year} {hour}:{minute}:{second} {zone}").len()
+    }
+  }
+  if mode == "format_layout" {
+    for i in 0..300000 {
+      let t = Time.from_unix(1760000000 + i * 37)
+      n += ISO.format(t, utc).len()
+      n += LONG.format(t, ny).len()
+    }
+  }
+  if mode == "parse_layout" {
+    for i in 0..300000 {
+      let s = "2026-10-${10 + i % 20}T12:34:56Z"
+      let t = ISO.parse(s, utc).ok() ?? fault("parse")
+      n += t.unix() % 7
     }
   }
   if mode == "parse" {
