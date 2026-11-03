@@ -59,23 +59,49 @@ fn name_of(cs: charset.Charset) -> Str {
   }
 }
 
+/// cp (0 to 0x10FFFF, not a surrogate) as UTF-8 bytes.
+fn put8(var out: BytesBuilder, cp: Int) {
+  if cp < 0x80 {
+    out.write_byte(UInt8(cp))
+  } else if cp < 0x800 {
+    out.write_byte(UInt8(0xC0 | (cp >> 6)))
+    out.write_byte(UInt8(0x80 | (cp & 63)))
+  } else if cp < 0x10000 {
+    out.write_byte(UInt8(0xE0 | (cp >> 12)))
+    out.write_byte(UInt8(0x80 | ((cp >> 6) & 63)))
+    out.write_byte(UInt8(0x80 | (cp & 63)))
+  } else {
+    out.write_byte(UInt8(0xF0 | (cp >> 18)))
+    out.write_byte(UInt8(0x80 | ((cp >> 12) & 63)))
+    out.write_byte(UInt8(0x80 | ((cp >> 6) & 63)))
+    out.write_byte(UInt8(0x80 | (cp & 63)))
+  }
+}
+
 fn decode_utf16(data: Bytes, start: Int, big: Bool, lossy: Bool) -> Str ! charset.CharsetErr {
   var out = BytesBuilder.with_capacity(data.len())
   let n = data.len()
   var i = start
+  let hi = if big { 0 } else { 1 }
+  let lo = 1 - hi
   while i < n {
     if i + 1 >= n {
       if !lossy {
         return Err(bad(i, "odd number of UTF-16 bytes"))
       }
-      out.write_rune(Rune(0xFFFD))
+      put8(out, 0xFFFD)
       break
     }
-    let u = if big { (Int(data[i]) << 8) | Int(data[i + 1]) } else { (Int(data[i + 1]) << 8) | Int(data[i]) }
+    let u = (Int(data[i + hi]) << 8) | Int(data[i + lo])
+    if u < 0x80 {
+      out.write_byte(UInt8(u))
+      i += 2
+      continue
+    }
     if u >= 0xD800 && u < 0xDC00 {
       var low = -1
       if i + 3 < n {
-        let v = if big { (Int(data[i + 2]) << 8) | Int(data[i + 3]) } else { (Int(data[i + 3]) << 8) | Int(data[i + 2]) }
+        let v = (Int(data[i + 2 + hi]) << 8) | Int(data[i + 2 + lo])
         if v >= 0xDC00 && v < 0xE000 {
           low = v
         }
@@ -84,11 +110,11 @@ fn decode_utf16(data: Bytes, start: Int, big: Bool, lossy: Bool) -> Str ! charse
         if !lossy {
           return Err(bad(i, "unpaired UTF-16 surrogate"))
         }
-        out.write_rune(Rune(0xFFFD))
+        put8(out, 0xFFFD)
         i += 2
         continue
       }
-      out.write_rune(Rune(0x10000 + ((u - 0xD800) << 10) + (low - 0xDC00)))
+      put8(out, 0x10000 + ((u - 0xD800) << 10) + (low - 0xDC00))
       i += 4
       continue
     }
@@ -96,11 +122,11 @@ fn decode_utf16(data: Bytes, start: Int, big: Bool, lossy: Bool) -> Str ! charse
       if !lossy {
         return Err(bad(i, "unpaired UTF-16 surrogate"))
       }
-      out.write_rune(Rune(0xFFFD))
+      put8(out, 0xFFFD)
       i += 2
       continue
     }
-    out.write_rune(Rune(u))
+    put8(out, u)
     i += 2
   }
   Ok(out.freeze().to_str() ?? "")
@@ -136,15 +162,47 @@ fn decode(data: Bytes, cs: charset.Charset, lossy: Bool = false) -> Str ! charse
     }
     charset.Charset.Latin1 => {
       var out = BytesBuilder.with_capacity(data.len() * 2)
-      for b in data {
-        out.write_rune(Rune(Int(b)))
+      let n = data.len()
+      var i = 0
+      while i < n {
+        let b = data[i]
+        if b < 0x80 {
+          var j = i + 1
+          while j < n && data[j] < 0x80 {
+            j += 1
+          }
+          out.write(data[i..j])
+          i = j
+          continue
+        }
+        i += 1
+        out.write_byte(UInt8(0xC0 | (Int(b) >> 6)))
+        out.write_byte(UInt8(0x80 | (Int(b) & 63)))
       }
       Ok(out.freeze().to_str() ?? "")
     }
     charset.Charset.Windows1252 => {
       var out = BytesBuilder.with_capacity(data.len() * 2)
-      for b in data {
-        out.write_rune(Rune(w1252_rune(Int(b))))
+      let n = data.len()
+      var i = 0
+      while i < n {
+        let b = data[i]
+        if b < 0x80 {
+          var j = i + 1
+          while j < n && data[j] < 0x80 {
+            j += 1
+          }
+          out.write(data[i..j])
+          i = j
+          continue
+        }
+        i += 1
+        if b >= 0xA0 {
+          out.write_byte(UInt8(0xC0 | (Int(b) >> 6)))
+          out.write_byte(UInt8(0x80 | (Int(b) & 63)))
+        } else {
+          put8(out, w1252_rune(Int(b)))
+        }
       }
       Ok(out.freeze().to_str() ?? "")
     }
@@ -175,6 +233,12 @@ fn encode(text: Str, cs: charset.Charset) -> Bytes ! charset.CharsetErr {
       var out = BytesBuilder.with_capacity(src.len())
       var i = 0
       while i < src.len() {
+        let c = Int(src[i])
+        if c < 0x80 {
+          out.write_byte(UInt8(c))
+          i += 1
+          continue
+        }
         let (r, size) = src.decode_rune(i)
         let b = w1252_byte(Int(r))
         if b < 0 {
@@ -206,6 +270,18 @@ fn encode_utf16(src: Bytes, big: Bool, bom: Bool) -> Bytes {
   }
   var i = 0
   while i < src.len() {
+    let c = Int(src[i])
+    if c < 0x80 {
+      if big {
+        out.write_byte(0)
+        out.write_byte(UInt8(c))
+      } else {
+        out.write_byte(UInt8(c))
+        out.write_byte(0)
+      }
+      i += 1
+      continue
+    }
     let (r, size) = src.decode_rune(i)
     let cp = Int(r)
     if cp >= 0x10000 {

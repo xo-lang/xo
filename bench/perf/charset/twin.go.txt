@@ -14,12 +14,12 @@ func text() string {
 	r := 1
 	for i := 0; i < 600000; i++ {
 		r = (r*1103515245 + 12345) % 2147483648
-		k := (r >> 16) % 20
-		if k < 14 {
+		k := (r >> 16) % 40
+		if k < 36 {
 			b.WriteRune(rune(32 + (r>>8)%95))
-		} else if k < 17 {
+		} else if k < 38 {
 			b.WriteRune(rune(0xA0 + (r>>8)%96))
-		} else if k < 19 {
+		} else if k < 39 {
 			b.WriteRune(0x20AC)
 		} else {
 			b.WriteRune(rune(0x10000 + (r>>8)%0x1000))
@@ -34,6 +34,9 @@ func bytes1252() []byte {
 	for i := range b {
 		r = (r*1103515245 + 12345) % 2147483648
 		v := (r >> 16) & 255
+		if (r>>24)%10 != 0 {
+			v = 32 + v%95
+		}
 		if v == 0x81 || v == 0x8D || v == 0x8F || v == 0x90 || v == 0x9D {
 			v = 0x41
 		}

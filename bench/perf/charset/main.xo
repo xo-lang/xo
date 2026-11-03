@@ -8,18 +8,18 @@
 // `<workload> <checksum>`; the twin prints the same.
 use std/charset
 
-/// A text of about 1 MiB: a deterministic mix, 7 in 10 characters ASCII.
+/// A text of about 1 MiB: a deterministic mix, 9 in 10 characters ASCII, as text is.
 fn text() -> Str {
   var b = StrBuilder.new()
   var r = 1
   for _ in 0..600000 {
     r = (r * 1103515245 + 12345) % 2147483648
-    let k = (r >> 16) % 20
-    if k < 14 {
+    let k = (r >> 16) % 40
+    if k < 36 {
       b.write("${Rune(32 + (r >> 8) % 95)}")
-    } else if k < 17 {
+    } else if k < 38 {
       b.write("${Rune(0xA0 + (r >> 8) % 96)}")
-    } else if k < 19 {
+    } else if k < 39 {
       b.write("${Rune(0x20AC)}")
     } else {
       b.write("${Rune(0x10000 + (r >> 8) % 0x1000)}")
@@ -28,13 +28,16 @@ fn text() -> Str {
   b.freeze()
 }
 
-/// 1 MiB of windows-1252 bytes without the five unassigned ones.
+/// 1 MiB of windows-1252 bytes, 9 in 10 printable ASCII, without the five unassigned ones.
 fn bytes1252() -> Bytes {
   var b = BytesBuilder.with_capacity(1048576)
   var r = 7
   for _ in 0..1048576 {
     r = (r * 1103515245 + 12345) % 2147483648
     var v = (r >> 16) & 255
+    if (r >> 24) % 10 != 0 {
+      v = 32 + v % 95
+    }
     if v == 0x81 || v == 0x8D || v == 0x8F || v == 0x90 || v == 0x9D {
       v = 0x41
     }
