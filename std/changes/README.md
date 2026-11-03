@@ -55,6 +55,7 @@ entries yet.
 - [charset.md](charset.md): std/charset (spec/std.md 54)
 - [heap.md](heap.md): std/heap (spec/std.md 56)
 - [otp.md](otp.md): std/otp (spec/std.md 57)
+- [bcrypt.md](bcrypt.md): std/bcrypt (spec/std.md 53)
 - [dns.md](dns.md): std/dns (spec/std.md 46)
 - [backoff.md](backoff.md): std/backoff (spec/std.md 43)
 - [rate.md](rate.md): std/rate (spec/std.md 42)

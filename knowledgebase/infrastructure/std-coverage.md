@@ -244,7 +244,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | Redis client | redis/go-redis | none | planned | RESP over Net. |
 | Argon2, BLAKE2b | golang.org/x/crypto | std/crypto | done | Decision 0059. |
 | ChaCha20-Poly1305, HKDF, SHA-3 | golang.org/x/crypto | std/crypto | done | ChaCha20-Poly1305 through `aead_key`, HKDF (`hkdf`), SHA3-256 and SHA3-512 as `Hash` (2026-10-29). |
-| bcrypt | golang.org/x/crypto/bcrypt | none | planned | To verify hashes migrated from other systems. |
+| bcrypt | golang.org/x/crypto/bcrypt | std/bcrypt | done | `hash`, `compare`, `cost` (spec/std.md 53); one source for every backend; Go's hashes and error texts on seeded salts and malformed hashes. |
 | WebSocket | golang.org/x/net/websocket, gorilla, coder/websocket | std/websocket | partial | gorilla's behavior, ws:// both sides and wss:// in dial (decision 0313). Missing: permessage-deflate, a message written in pieces, the Autobahn run (stage 3). |
 | HTTP/2 | golang.org/x/net/http2 | std/http | done | Decision 0121. |
 | JWT, JOSE | golang-jwt, go-jose | none | planned | HS256 is writable today by hand; RS256 and ES256 need public RSA and ECDSA. |

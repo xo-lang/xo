@@ -10,6 +10,8 @@ LICENSE and std/LICENSE.
      std/rt/xcrypto_argon2.go, std/rt/xcrypto_blake2b.go
        (golang.org/x/crypto v0.55.0, packages argon2 and blake2b;
        decision 0059)
+     std/native/bcrypt.xo (golang.org/x/crypto v0.58.0, packages bcrypt
+       and blowfish, ported to Xo; the file says which code it follows)
 
    Ported to Xo or modeled on Go's standard library (the files say which
    Go code they follow): parts of std/ and std/native/, including the
