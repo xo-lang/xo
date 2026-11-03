@@ -29,11 +29,13 @@ header.
   bits.
 - Corpus from Go (186 cases) and a fuzz differential (350 files in the committed corpus,
   fresh seeds in TestJpegFuzz, 12,000 cases agree on arm64 and LLVM), as for std/png.
-- Timing (host 1, bench/perf/jpeg, four of Go's test images, 100 passes): decode 1.14,
-  decode with `to_rgba` 1.19 of Go's wall (1.38 and 1.41 before progressive scans decoded in place and the quantization tables were kept in natural order). Under the 1.05 of decision 0461, so the module is
-  Fast, not Proven; profile: Huffman decode and reconstruct (dequantize, IDCT, color store)
-  split the time about evenly. Tried and measured slower on arm64: written out Huffman table
-  hits, a DC only shortcut, an IDCT row shortcut.
+- Timing (host 1, bench/perf/jpeg, four of Go's test images, 100 passes): decode 1.03 and
+  decode with `to_rgba` 1.07 of Go's wall (decision 0461 asks for about 1.05: decode meets it,
+  `to_rgba` is a little over). It was 1.38 and 1.41 at the first port. What moved it: progressive
+  scans decode in place on the coefficient list, quantization tables in natural order, and
+  branch free clamps and sign extension (the values are unpredictable, so branches cost more
+  than the masks). Tried and measured slower on arm64: written out Huffman table hits, a DC only
+  shortcut, an IDCT row shortcut.
 - No encoder: `jpeg.Encode` is a separate item if a program needs it.
 
 ## Alternatives

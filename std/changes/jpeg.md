@@ -38,3 +38,12 @@ The tables are stored in row major order when read, so dequantizing a block walk
 - Test: testdata/corpus/jpeg, testdata/corpus/jpegfuzz (unchanged output), bench/perf/jpeg
 
 The 0..255 clamp of each IDCT output is done with shifts and masks instead of two compares and a branch (the values are unpredictable). bench/perf/jpeg decode 1.22 to 1.14, with `to_rgba` 1.24 to 1.19.
+
+## 2026-11-03: perf: branch free YCbCr to RGB clamp and receive_extend
+
+- Kind: perf
+- Commit: this commit
+- Found by: host A/B after the IDCT clamp (the same unpredictable branches)
+- Test: testdata/corpus/jpeg, testdata/corpus/jpegfuzz (unchanged output), bench/perf/jpeg
+
+`to_rgba`'s channel clamps and the sign extension of `receive_extend` use shifts and masks instead of branches. bench/perf/jpeg decode 1.14 to 1.03, with `to_rgba` 1.19 to 1.07.
