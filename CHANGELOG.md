@@ -135,6 +135,10 @@ it). Bugs that came and went within this cycle are not listed.
   set); each now gives Go's answer, and several other archives read as Go
   reads them (std/changes/archive.md): since v0.11.0 (the native port,
   dbd0ec952); a cut zip directory's error text since v0.24.0.
+- The Go backend's json decode now fails on a duplicate key's replaced
+  value of the wrong type and on a number out of Float's range, matching
+  Go and the native backends; `json.compact` and `json.indent` accept such
+  numbers as Go does (std/changes/json.md): since v0.7.0.
 
 - Native dial on Linux could return a connection that was never made (the
   socket watched before connect, then SO_ERROR 0 taken as done): since
@@ -195,6 +199,7 @@ it). Bugs that came and went within this cycle are not listed.
 
 ### Every change in 0.36.0
 
+- FIX (std/rt json, Go backend): a typed decode reads a duplicate key's replaced value as Go and the native backends do (a replaced value of the wrong type fails), `decode[json.Value]` of a number out of Float's range fails instead of giving Null, and `json.compact` and `json.indent` check syntax only, as Go's do. Gate: internal/gen json_fast. std/changes/json.md.
 - FIX (std/archive, security): untar and unzip of a hostile archive no longer crash a native program (an index out of range on a zip local header before the data, an integer overflow on a tar or PAX time past 2262 or a zip NTFS time with its top bit set); each gives Go's answer, 64-bit fields are read with a wrapping shift, and tar's padding end, PAX global headers, old GNU sparse maps and special headers, and zip's directory count, cut local headers, non UTF-8 names and unknown Unix file types now read as Go reads them. Found by the archive fuzz harness (internal/stdtest/archivefuzz_test.go, 2,010 corpus cases on arm64, LLVM and the Go backend). std/changes/archive.md.
 - FIX (native): `net.dial` of a name with IPv6 and IPv4 addresses races them as Go's dual stack dial does, the second family 300 ms after the first (decision 0462). On Windows, where localhost is ::1 first and a refused connect takes about 2 s, every dial to localhost with an IPv4-only listener cost 2 s (golden tls_coalesced_finish: 84 s, past its 60 s timeout under load); now 300 ms at most. Since v0.7.0.
 - fix (native, LLVM): a select's word send arm keeps its channel, and a word receive arm keeps its select, alive until the runtime call that uses them returns; both were released as soon as their address was taken, so a send arm whose channel had no later use could free it while select still read it (TSan use-after-free in select_arm_order under --race on Linux). A select's receive arm now takes the word path whenever its element is a word (it was decided from a checker type id read as an SSA type, so it varied with unrelated types). Codegen pattern test test/codegen/selectrc; gotcha obj-addr-handle-released-early.md.
