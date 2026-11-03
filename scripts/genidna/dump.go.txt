@@ -168,6 +168,21 @@ func Dump(path string) {
 		}
 	}
 	flush()
+	// ascii index: the range of each rune below 0x80
+	var aidx []byte
+	for r := 0; r < 0x80; r++ {
+		last := 0
+		for i := 0; i < nrec; i++ {
+			st := int(recs[7*i]) | int(recs[7*i+1])<<8 | int(recs[7*i+2])<<16
+			if st <= r {
+				last = i
+			}
+		}
+		if last > 255 {
+			panic("ascii range index over 255")
+		}
+		aidx = append(aidx, byte(last))
+	}
 	// block index: for b up to 0x3400/64, the last range starting at or before b*64
 	var bidx []byte
 	for b := 0; b <= 0x3400/64; b++ {
@@ -184,6 +199,7 @@ func Dump(path string) {
 	fmt.Fprintf(&w, "// Unicode %s, from golang.org/x/net/idna's tables (scripts/genidna): %d ranges of runes (%d bytes), %d distinct infos and %d bytes of mappings.\n", UnicodeVersion, nrec, len(recs), len(infos)/4, len(maps))
 	fmt.Fprintf(&w, "const UNICODE_VERSION: Str = %q\n\n", UnicodeVersion)
 	w.WriteString("/// Per range of runes, 7 bytes, ascending: its first rune (3 bytes), the number of its entry in INFOS, and 3 bytes of data: for a mapping of one rune the zigzag delta from the rune, for a longer mapping its position plus one in MAPS, else 0.\nconst RANGES: Bytes = " + bytesLit(recs) + "\n\n")
+	w.WriteString("/// Per rune below U+80, 1 byte: its range in RANGES.\nconst ASCII_RANGE: Bytes = " + bytesLit(aidx) + "\n\n")
 	w.WriteString("/// Per block of 64 runes up to U+3400 (and one more), 2 bytes: the last range of RANGES that starts at or before the block's first rune, to bound the search.\nconst BLOCKS: Bytes = " + bytesLit(bidx) + "\n\n")
 	w.WriteString("/// Per distinct info, 4 bytes: the category, the flags (join type, attributes, may need norm, bidi), the bidi class and the kind of mapping (0 none, 1 one rune by delta, 2 a string in MAPS).\nconst INFOS: Bytes = " + bytesLit(infos) + "\n\n")
 	w.WriteString("/// Mappings of more than one rune (or none), each a count and that many varint runes.\nconst MAPS: Bytes = " + bytesLit(maps) + "\n\n")
