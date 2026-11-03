@@ -1,0 +1,116 @@
+// std/heap on the native backends (spec/std.md 56; the Go backend has
+// std/rt/heap.go): Go's container/heap algorithm (heap.go; Copyright 2009
+// The Go Authors, BSD-style license; THIRD_PARTY_NOTICES) over a List.
+
+struct Heap[T] {
+  _items: List[T]
+  _less: fn(T, T) -> Bool
+  _moved: fn(T, Int)
+}
+
+fn new[T](less: fn(T, T) -> Bool) -> Heap[T] {
+  Heap[T]{_items: [], _less: less, _moved: fn(_x: T, _i: Int) {}}
+}
+
+fn tracked[T](less: fn(T, T) -> Bool, moved: fn(T, Int)) -> Heap[T] {
+  Heap[T]{_items: [], _less: less, _moved: moved}
+}
+
+fn from_list[T](items: List[T], less: fn(T, T) -> Bool) -> Heap[T] {
+  var h = Heap[T]{_items: items, _less: less, _moved: fn(_x: T, _i: Int) {}}
+  var i = h._items.len() / 2 - 1
+  while i >= 0 {
+    h.down(i, h._items.len())
+    i -= 1
+  }
+  h
+}
+
+/// Swaps positions i and j and reports both.
+fn (var h: Heap[T]) swap(i: Int, j: Int) {
+  let a = h._items[i]
+  let b = h._items[j]
+  h._items[i] = b
+  h._items[j] = a
+  (h._moved)(b, i)
+  (h._moved)(a, j)
+}
+
+fn (var h: Heap[T]) up(j0: Int) {
+  var j = j0
+  while j > 0 {
+    let i = (j - 1) / 2
+    if i == j || !(h._less)(h._items[j], h._items[i]) {
+      break
+    }
+    h.swap(i, j)
+    j = i
+  }
+}
+
+/// Go's down: sifts position i0 down within the first n; true if it moved.
+fn (var h: Heap[T]) down(i0: Int, n: Int) -> Bool {
+  var i = i0
+  while true {
+    let j1 = 2 * i + 1
+    if j1 >= n {
+      break
+    }
+    var j = j1
+    let j2 = j1 + 1
+    if j2 < n && (h._less)(h._items[j2], h._items[j1]) {
+      j = j2
+    }
+    if !(h._less)(h._items[j], h._items[i]) {
+      break
+    }
+    h.swap(i, j)
+    i = j
+  }
+  i > i0
+}
+
+fn (var h: Heap[T]) push(x: T) {
+  h._items.push(x)
+  (h._moved)(x, h._items.len() - 1)
+  h.up(h._items.len() - 1)
+}
+
+fn (var h: Heap[T]) pop() -> T? {
+  h.remove(0)
+}
+
+fn (h: Heap[T]) peek() -> T? { h._items.get(0) }
+
+fn (h: Heap[T]) get(i: Int) -> T? { h._items.get(i) }
+
+fn (var h: Heap[T]) remove(i: Int) -> T? {
+  let n = h._items.len() - 1
+  if i < 0 || i > n {
+    return None
+  }
+  if n != i {
+    h.swap(i, n)
+    if !h.down(i, n) {
+      h.up(i)
+    }
+  }
+  h._items.pop()
+}
+
+fn (var h: Heap[T]) fix(i: Int, x: T) {
+  if i < 0 || i >= h._items.len() {
+    fault("heap.fix: position out of range")
+  }
+  h._items[i] = x
+  (h._moved)(x, i)
+  if !h.down(i, h._items.len()) {
+    h.up(i)
+  }
+}
+
+fn (h: Heap[T]) len() -> Int { h._items.len() }
+
+fn (h: Heap[T]) is_empty() -> Bool { h._items.len() == 0 }
+
+fn (h: Heap[T]) to_list() -> List[T] { h._items }

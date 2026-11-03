@@ -1,0 +1,45 @@
+// std/heap (spec/std.md 56, decision 0472). Declaration file; encoding rules
+// are listed at the top of std/prelude.xo. A binary heap ordered by a
+// comparison the caller gives, after Go's container/heap (heap.go: Init,
+// Push, Pop, Remove, Fix), with a callback that reports where each element
+// lands in place of Go's Swap bookkeeping. Its own module, not the prelude:
+// a program's own Heap keeps compiling.
+
+/// A binary heap: the element for which `less` holds against all others
+/// comes out first. A value, as List: a copy shares the elements until one
+/// of them is written. Equal elements come out in no particular order.
+struct Heap[T] {
+  /// private: the elements in heap order, and the two functions given
+  /// (declared so that a copy of a heap shares its elements as a List does
+  /// on the Go backend too; use the methods)
+  _items: List[T]
+  _less: fn(T, T) -> Bool
+  _moved: fn(T, Int)
+}
+
+/// An empty heap; less(a, b) is true when a comes out before b.
+fn new[T](less: fn(T, T) -> Bool) -> Heap[T]
+/// An empty heap that calls moved(x, i) each time an element x lands at
+/// position i (a push, a sift, the element a remove moves into the gap), so
+/// a caller can keep the position of each element for `remove` and `fix`.
+fn tracked[T](less: fn(T, T) -> Bool, moved: fn(T, Int)) -> Heap[T]
+/// The heap of items, in O(n) (heap.Init).
+fn from_list[T](items: List[T], less: fn(T, T) -> Bool) -> Heap[T]
+/// Adds x in O(log n) (heap.Push).
+fn (var h: Heap[T]) push(x: T)
+/// The least element, removed, in O(log n); None when empty (heap.Pop).
+fn (var h: Heap[T]) pop() -> T?
+/// The least element, kept; None when empty.
+fn (h: Heap[T]) peek() -> T?
+/// The element at heap position i (0 is the least); None out of range.
+fn (h: Heap[T]) get(i: Int) -> T?
+/// The element at position i, removed, in O(log n); None out of range
+/// (heap.Remove).
+fn (var h: Heap[T]) remove(i: Int) -> T?
+/// Replaces the element at position i by x and restores the order, in
+/// O(log n) (heap.Fix after changing it); a fault when i is out of range.
+fn (var h: Heap[T]) fix(i: Int, x: T)
+fn (h: Heap[T]) len() -> Int
+fn (h: Heap[T]) is_empty() -> Bool
+/// The elements in heap order (the least first, the rest not sorted).
+fn (h: Heap[T]) to_list() -> List[T]

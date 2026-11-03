@@ -85,6 +85,7 @@ var generators = map[string]func() string{
 	"tabwriter":  tabwriterCorpus,
 	"backoff":    backoffCorpus,
 	"deque":      dequeCorpus,
+	"heap":       heapCorpus,
 	"rate":       rateCorpus,
 	"heapops":    heapopsCorpus,
 }

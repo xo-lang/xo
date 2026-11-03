@@ -1,0 +1,5 @@
+# twincheck: heap: four workloads (none is the setup alone); Go is container/heap on a []int.
+- - none
+- - sort
+- - steady
+- - fix

@@ -1,0 +1,73 @@
+package main
+
+import (
+	"container/heap"
+	"fmt"
+	"os"
+)
+
+type ih []int
+
+func (h ih) Len() int           { return len(h) }
+func (h ih) Less(i, j int) bool { return h[i] < h[j] }
+func (h ih) Swap(i, j int)      { h[i], h[j] = h[j], h[i] }
+func (h *ih) Push(x any)        { *h = append(*h, x.(int)) }
+func (h *ih) Pop() any {
+	old := *h
+	n := len(old)
+	x := old[n-1]
+	*h = old[:n-1]
+	return x
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	r := 1
+	switch w {
+	case "sort":
+		h := &ih{}
+		for i := 0; i < 500000; i++ {
+			r = (r*1103515245 + 12345) % 2147483648
+			heap.Push(h, r)
+		}
+		i := 0
+		for h.Len() > 0 {
+			x := heap.Pop(h).(int)
+			i++
+			sum += x % 1000 * (i % 7)
+		}
+	case "steady":
+		h := &ih{}
+		for i := 0; i < 1000; i++ {
+			r = (r*1103515245 + 12345) % 2147483648
+			heap.Push(h, r)
+		}
+		for i := 0; i < 2000000; i++ {
+			x := heap.Pop(h).(int)
+			sum += x % 1000
+			r = (r*1103515245 + 12345) % 2147483648
+			heap.Push(h, x+r%100000)
+		}
+	case "fix":
+		items := make(ih, 100000)
+		for i := range items {
+			r = (r*1103515245 + 12345) % 2147483648
+			items[i] = r
+		}
+		h := &items
+		heap.Init(h)
+		for i := 0; i < 1000000; i++ {
+			r = (r*1103515245 + 12345) % 2147483648
+			j := (r >> 8) % 100000
+			r = (r*1103515245 + 12345) % 2147483648
+			(*h)[j] = r
+			heap.Fix(h, j)
+		}
+		sum = (*h)[0]
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

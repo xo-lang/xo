@@ -110,7 +110,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | Go package | Xo | Status | Notes |
 |---|---|---|---|
 | sort, slices, maps, cmp | prelude List, Map, Set, Ord | done | sort, sort_by (stable), sort_in_place, group_by, filter, map, fold, find, index_of, keys, values; min, max, clamp on any Ord value. Missing: binary search, List min and max (slices.Min), dedup (slices.Compact), chunks. |
-| container/heap | none | planned | A priority queue type for schedulers and timers. |
+| container/heap | std/heap | done | Heap[T] by a comparison function with remove, fix and a moved callback (spec/std.md 56, decision 0472). |
 | container/list, container/ring | none | not planned | List and Buf cover them. |
 | iter | for loops over List, Map, Set, Range | not planned | No iterator protocol in the language (core). |
 | unique, weak, structs | none | not planned | Runtime and layout concerns the language does not expose. |
@@ -344,7 +344,7 @@ many services hit the gap, blockers (no workaround) first:
 | 10 | std/metrics: gauges and collectors read at scrape time, deleting a series, Summary quantiles | exporter, scheduler | awkward | prometheus Collector, GaugeFunc, Summary | S to M |
 | 11 | HTTP server: read and idle timeouts, header limits, a body limit per route, Request host, TLS state, raw query and escaped path, HTML error pages, Redirect | gateway, web app | awkward | net/http Server, MaxBytesReader, Request.Host, URL.RawQuery | S each |
 | 12 | Text formatting: width, padding, zero padding, fixed precision floats; an aligned table writer | CLI | awkward | fmt verbs, strconv.FormatFloat, text/tabwriter | S |
-| 13 | A priority queue with Remove and Fix | scheduler | awkward | container/heap | S |
+| 13 | Closed 2026-11-03 (`std/heap`). A priority queue with Remove and Fix | scheduler | awkward | container/heap | S |
 | 14 | A logger that carries fields (Logger.With) | scheduler | awkward | log/slog | S |
 | 15 | Rate limiting and backoff closed 2026-10-29 (std/rate, std/backoff); migrations open. Rate limiting (token bucket), backoff, migrations | gateway, web app, scheduler | awkward | x/time/rate, cenkalti/backoff, golang-migrate (all outside Go's std) | S each |
 | 16 | Closed 2026-10-29 (walk_dir, FileInfo.is_symlink, create_dir_all_mode, write_atomic, toml.encode, cli float_flag). Fs walk with SkipDir and early stop, the symlink bit in FileInfo, a mode on create_dir_all and atomic writes; a TOML encoder; a float flag | CLI | awkward | filepath.WalkDir, os.WriteFile, BurntSushi/toml | S each |

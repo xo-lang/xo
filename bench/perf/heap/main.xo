@@ -1,0 +1,59 @@
+// heap: std/heap against Go's container/heap (twin.go.txt): 500000 pushes of
+// pseudo random ints then every pop (`sort`), a steady state of 1000 jobs
+// with 2 million pop and push pairs (`steady`), and 1000000 random fixes of
+// positions in a heap of 100000 (`fix`). `none` is the setup alone. Usage:
+// `<program> none|sort|steady|fix`. Prints `<workload> <checksum>`; the twin
+// prints the same.
+use std/heap
+
+fn lt(a: Int, b: Int) -> Bool { a < b }
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  var r = 1
+  if w == "sort" {
+    var h = heap.new(lt)
+    for _ in 0..500000 {
+      r = (r * 1103515245 + 12345) % 2147483648
+      h.push(r)
+    }
+    var i = 0
+    while true {
+      match h.pop() {
+        Some(x) => {
+          i += 1
+          sum += x % 1000 * (i % 7)
+        }
+        None => break
+      }
+    }
+  } else if w == "steady" {
+    var h = heap.new(lt)
+    for _ in 0..1000 {
+      r = (r * 1103515245 + 12345) % 2147483648
+      h.push(r)
+    }
+    for _ in 0..2000000 {
+      let x = h.pop() ?? 0
+      sum += x % 1000
+      r = (r * 1103515245 + 12345) % 2147483648
+      h.push(x + r % 100000)
+    }
+  } else if w == "fix" {
+    var items: List[Int] = []
+    for _ in 0..100000 {
+      r = (r * 1103515245 + 12345) % 2147483648
+      items.push(r)
+    }
+    var h = heap.from_list(items, lt)
+    for _ in 0..1000000 {
+      r = (r * 1103515245 + 12345) % 2147483648
+      let i = (r >> 8) % 100000
+      r = (r * 1103515245 + 12345) % 2147483648
+      h.fix(i, r)
+    }
+    sum = h.peek() ?? 0
+  }
+  os.stdio.println("${w} ${sum}")
+}
