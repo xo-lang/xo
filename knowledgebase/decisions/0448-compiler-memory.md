@@ -1086,5 +1086,5 @@ with tens of MB to GB in use, keeps its reuse. Against main (3 rounds each):
 | linux/arm64 conc-spawn edit build | 1.021 (within noise) | 0.997 (within noise) |
 | linux/arm64 self build | 1.003 (within noise) | 0.991 (within noise) |
 
-Branch l2-capcache, held until the owner accepts the retention change.
+Pushed as f3f9552ac after the owner accepted the retention change (2026-11-03).
 

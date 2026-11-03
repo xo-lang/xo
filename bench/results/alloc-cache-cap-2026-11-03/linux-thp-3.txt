@@ -1,0 +1,8 @@
+thp: [always] madvise never defrag always defer defer+madvise [madvise] never
+f3f9552aca8736a6e5dded34b7fa1101ab14a20d kernel rss_kb 13344 [13344 13344 13344 13344 13348 ] wall_s 0.03
+f3f9552aca8736a6e5dded34b7fa1101ab14a20d dense rss_kb 10704 [10704 10708 10704 10704 10708 ] wall_s 0.03
+f3f9552aca8736a6e5dded34b7fa1101ab14a20d off rss_kb 5604 [5604 5604 5604 5604 5604 ] wall_s 0.03
+b376345b6 kernel rss_kb 13344 [13344 13348 13344 13344 13344 ] wall_s 0.03
+b376345b6 dense rss_kb 8696 [8696 8696 8696 8696 8700 ] wall_s 0.03
+b376345b6 off rss_kb 5604 [5604 5604 5604 5604 5604 ] wall_s 0.03
+OFFLOAD-RC=0

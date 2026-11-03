@@ -1,0 +1,7 @@
+host: Linux 7.0.14-linuxkit aarch64, 12 CPUs, thp [always] madvise never, go version go1.26.1 linux/arm64
+3389eb2c0e965afbbfa5ff1fc1ecc9ea77b49682 = 3389eb2c0e965afbbfa5ff1fc1ecc9ea77b49682 xo xo 0.36.0 linux/arm64
+3389eb2c0e965afbbfa5ff1fc1ecc9ea77b49682 putget rss_kb 8696 [8700 8676 8696 8696 8696 8676 8696] wall_s 0.09 [0.10 0.10 0.09 0.09 0.07 0.09 0.09]
+3389eb2c0e965afbbfa5ff1fc1ecc9ea77b49682 push rss_kb 31764 [31768 31764 31748 31764 31744 31764 31764] wall_s 0.02 [0.02 0.01 0.02 0.02 0.01 0.02 0.02]
+go putget rss_kb 9996 [7928 9992 9996 10012 10000 9976 10008] wall_s 0.12 [0.13 0.12 0.11 0.13 0.14 0.10 0.07]
+go push rss_kb 88232 [72900 89980 66752 95592 88232 88596 82836] wall_s 0.02 [0.06 0.04 0.02 0.02 0.02 0.02 0.02]
+OFFLOAD-RC=0
