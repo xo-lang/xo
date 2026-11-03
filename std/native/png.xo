@@ -910,12 +910,26 @@ fn walk(data: Bytes, config_only: Bool, max_pixels: Int) -> (Dec, png.Image?) ! 
           }
           z = zb.freeze()
         }
-        img = Some(decode_image(d, z)?)
-        if cut {
-          return Err(png.PngErr.Truncated)
+        match decode_image(d, z) {
+          Ok(im) => img = Some(im)
+          Err(e) => {
+            // the stream ran out inside a chunk whose checksum is bad:
+            // Go meets the checksum first
+            if last_bad && e.display() == "png: invalid format: not enough pixel data" {
+              return Err(format_err("invalid checksum"))
+            }
+            // the same after every row: the trailing read's error is wrapped
+            if last_bad && e.display() == "png: invalid format: unexpected EOF" {
+              return Err(format_err("png: invalid format: invalid checksum"))
+            }
+            return Err(e)
+          }
         }
         if last_bad {
           return Err(format_err("invalid checksum"))
+        }
+        if cut {
+          return Err(png.PngErr.Truncated)
         }
         pos = end
         continue
