@@ -29,6 +29,21 @@ trim_end_chars return rt.str_view(s, 0, s.len()) for an empty s or
 cutset. Every return is then a view of the receiver, so decision 0465
 step 2 marks them and their callers count the result only where they must
 own it.
+## 2026-11-03: feature: ByteBuffer, Go's bytes.Buffer for parsers
+
+- Kind: feature
+- Commit: this commit
+- Found by: the backend survey of 2026-10-30 (std-coverage.md: no cursor to consume Bytes from the front), decided 2026-11-03 as decision 0480 (B1)
+- Go reference: bytes.Buffer (Write, Len, Next, ReadBytes, Bytes); buffer_test.go ported
+- Test: internal/stdtest corpus bytebuffer (Go's TestNewBuffer, TestBasicOperations, TestLargeStringWrites, TestLargeByteWrites, TestMixedReadsAndWrites, TestNext, TestReadBytes, TestReadEmptyAtEOF, TestBufferGrowth, and views after writes) on every backend
+- Timing: TIMING
+- Shipped in: not yet released
+
+`ByteBuffer.new()`, `write`, `len`, `peek`, `next`, `read_until`,
+`discard` and `find`: a record cut from bytes that arrive in pieces costs
+time linear in its size, where `rest + piece` copies the unread rest each
+time. Returned records are views that stay valid after later writes.
+
 ## 2026-11-03: feature: NetConn, a connection interface with deadlines
 
 - Kind: feature

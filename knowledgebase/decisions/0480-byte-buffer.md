@@ -1,11 +1,14 @@
 # 0480: A byte buffer to consume from the front (Go's bytes.Buffer)
 
-Status: Accepted on a condition (owner, 2026-11-03, through the lead): B1
-ships only if the measurement passes (peak RSS no worse than Go's
-bytes.Buffer on 1M small records and on 1 MiB and 64 MiB records, with Go's
-buffer_test ported), and if a simpler option (B3, B4) wins the measurement
-the choice comes back to the owner instead. Measured 2026-11-03: B3 meets
-the bar (below); back to the owner, B1 not built.
+Status: Accepted, B1 (owner, 2026-11-03, through the lead, after reading
+the three loops side by side: B3 is fast but asks every parser for about
+25 lines of bookkeeping, while B1 reads like the naive loop without its
+quadratic trap). Gate: bench/perf/bytebuf's `_buf` no slower than B3's
+`_views` (host 1 --ab), peak RSS at or under Go's bytes.Buffer on small,
+large1 and large64, Go's buffer_test ported, every backend including the
+Go wrapper with its view copy. B3's numbers below are the bar. An earlier
+status, Accepted on a condition with B3 meeting it, sent the choice back
+to the owner.
 
 ## Context
 
@@ -39,7 +42,7 @@ size. Go's answer is bytes.Buffer: Write appends, Next(n) and ReadBytes
 consume, and the unread part slides to the front only when the buffer
 must grow (amortized constant work per byte).
 
-## Decision (proposed; options below)
+## Decision
 
 Option B1, a prelude `ByteBuffer`, Go's bytes.Buffer cut to what a parser
 needs:
@@ -77,7 +80,7 @@ fn (b: ByteBuffer) find(sub: Bytes) -> Int?             // offset in the unread 
 
 ## Options
 
-- **B1, `ByteBuffer` in the prelude (proposed).** It covers push sources
+- **B1, `ByteBuffer` in the prelude (chosen).** It covers push sources
   (a Decompressor, a caller's framer) and pull sources (a loop that
   writes what it reads). Go's type and names.
 - **B2, a pull source for bufio** (`bufio.reader_from(fn(max) -> Bytes?

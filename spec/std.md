@@ -528,10 +528,28 @@ fn ([var] b: BytesBuilder) write_rune(r: Rune) // its UTF-8 encoding
 fn ([var] b: BytesBuilder) put_le(at: Int, v: Int, n: Int) // overwrite n (1, 2, 4, 8) bytes in place; put_be too
 fn (b: BytesBuilder) len() -> Int            // also on StrBuilder
 fn (b: BytesBuilder) freeze() -> Bytes       // moves b
+ByteBuffer.new() -> ByteBuffer               // also with_capacity(n); move only
+fn ([var] b: ByteBuffer) write(data: Bytes)  // appended at the back
+fn (b: ByteBuffer) len() -> Int              // the unread bytes
+fn (b: ByteBuffer) peek(n: Int) -> Bytes     // up to n unread bytes, not consumed
+fn ([var] b: ByteBuffer) next(n: Int) -> Bytes // up to n bytes, consumed
+fn ([var] b: ByteBuffer) read_until(delim: UInt8) -> Bytes? // through delim, consumed; None: nothing consumed
+fn ([var] b: ByteBuffer) discard(n: Int)     // up to n bytes
+fn (b: ByteBuffer) find(sub: Bytes) -> Int?  // offset in the unread bytes
 
 Secret[T].new(v: T) -> Secret[T]
 fn (s: Secret[T]) reveal() -> T
 ```
+
+`ByteBuffer` (decision 0480) is Go's bytes.Buffer for cutting records from
+bytes that arrive in pieces: the loop `b.write(piece)` then `while let
+Some(rec) = b.read_until(0x0A)` costs time linear in the bytes, since
+`read_until` resumes its search where the last call with the same
+delimiter stopped, and the unread bytes move to new storage only once
+half the storage was consumed. `peek`, `next` and `read_until` return
+views of the buffer's storage that stay valid after later writes (a write
+never changes bytes a view holds; Go's `Next` is valid only until the next
+write). A count `n` below 0 is 0 and above `len()` is `len()`.
 
 `BytesBuilder.put_le` and `put_be` (decision 0399) overwrite the `n` bytes
 `at..at + n` of what has been written, in place (Go's
@@ -5051,7 +5069,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-487 declarations.
+496 declarations.
 
 ### Range
 
@@ -5558,6 +5576,20 @@ fn (var b: BytesBuilder) put_le(at: Int, v: Int, n: Int)
 fn (var b: BytesBuilder) put_be(at: Int, v: Int, n: Int)
 fn (b: BytesBuilder) len() -> Int
 fn (b: BytesBuilder) freeze() -> Bytes
+```
+
+### ByteBuffer
+
+```
+fn (static: ByteBuffer) new() -> ByteBuffer
+fn (static: ByteBuffer) with_capacity(n: Int) -> ByteBuffer
+fn (var b: ByteBuffer) write(data: Bytes)
+fn (b: ByteBuffer) len() -> Int
+fn (b: ByteBuffer) peek(n: Int) -> Bytes
+fn (var b: ByteBuffer) next(n: Int) -> Bytes
+fn (var b: ByteBuffer) read_until(delim: UInt8) -> Bytes?
+fn (var b: ByteBuffer) discard(n: Int)
+fn (b: ByteBuffer) find(sub: Bytes) -> Int?
 ```
 
 ### Secret
