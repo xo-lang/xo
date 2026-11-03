@@ -11,3 +11,12 @@
 - Timing: bench/results/std-twin-rows12-2026-11-03.md: NFC 5.67, NFD 2.09, NFKC 3.84, ASCII 1.17 of x/text's wall, peak memory 1.6 to 2.0; not Proven, a quick check scan and table lookup are next
 
 `norm.Form`, `norm.normalize`, `norm.is_normalized`, `norm.unicode_version` (spec/std.md 60).
+
+## 2026-11-03: perf: normalize copies the text that needs nothing and works only on the runs that do
+
+- Kind: perf
+- Commit: this commit
+- Test: the corpus above, unchanged (arm64, LLVM, Go backend)
+- Timing: Mac iteration (not evidence), bench/perf/norm: NFC 2.3, NFD 1.4, NFKC 1.7 of x/text's time, from 5.7, 2.1, 3.8 on host 1; the host row follows in bench/results
+
+Runes below 0xC0 (0xA0 for the compatibility forms) are their own normalization and never combine with a rune before them, so `normalize` copies them as slices and runs decomposition, reordering and composition only on each run of runes from there up plus the one starter before it; a rune below 0x300 skips the composition pair lookup; the result is built in a `BytesBuilder` with `write_rune`.
