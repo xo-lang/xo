@@ -376,7 +376,13 @@ fn keep(m: Int, size: Int) -> Bool {
   }
   let bytes = rt.mem_load(t, 8, 8)
   let k = rt.mem_load(t, 16, 8)
-  if k >= CACHE_N || bytes.wrapping_add(size) > CACHE_MAX {
+  // and at most a quarter of the bytes the program has in use (decision
+  // 0448, the bounded cache): a kept mapping's touched pages stay resident (darwin's
+  // reusable pages count in max RSS too), which a small program pays for
+  // (coll putget max RSS 8.3 MB with the cache, 5.2 without), while xo's
+  // builds, with far more in use, keep the cache's reuse (without any
+  // cache their linux/arm64 edit builds ran 1.04 to 1.07x)
+  if k >= CACHE_N || bytes.wrapping_add(size) > CACHE_MAX || bytes.wrapping_add(size) > (membudget.mapped() >> 2) {
     clock_give()
     return false
   }

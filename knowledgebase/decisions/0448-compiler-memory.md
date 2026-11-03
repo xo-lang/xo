@@ -1054,3 +1054,37 @@ first and second builds).
 What is left of a first build once std's record and xo's memo exist (linux/arm64, conc-spawn
 after coll warmed the cache): heap peak 67 MB against 52 for the next build, all of it
 link.half_save (15.5 ms, the ELF half written for a new link key, decision 0400).
+## The large block cache bounded by the bytes in use (xo-lang-2, 2026-11-03; accepted (owner, 2026-11-03))
+
+Accepted (owner, 2026-11-03): the retention change ships in 0.37.0.
+
+Lang 4's 0.36.0 comparison found coll putget's max RSS 1.18x of v0.35.0 on darwin and 1.32 to 1.39x
+on linux/arm64. The bisects name 188398ede (decision 0452's curve; mostly fixed by e68bf2fac's 4n
+growth room) and 4c397e82b (decision 0425: blocks of 16 KiB and over as page and large blocks).
+What is left is heapos.xo's large block cache (up to 16 mappings and 64 MB): a freed mapping it
+keeps holds its touched pages, which count in max RSS on both systems (darwin's
+MADV_FREE_REUSABLE does not lower it: putget 8,624 KB with XO_HEAP_CACHE_ADVISE=0 or not). At exit
+putget held 14 mappings (8 MB) for a heap peak of 6.4 MB.
+
+Without the cache (measurement only, refs/recover/l2-nocache): darwin putget max RSS 0.624 (wall
+1.003), push 0.630 (wall 0.909); linux/arm64 putget 0.683, push 0.701 (wall 0.692). But xo's
+builds need it: linux/arm64 coll edit wall 1.039, conc-spawn edit 1.072, the self build 1.018.
+
+Proposed: keep a freed mapping only while the cache stays under a quarter of the bytes the program
+has in use (membudget.mapped()), besides CACHE_N and CACHE_MAX. A small program caches little; xo,
+with tens of MB to GB in use, keeps its reuse. Against main (3 rounds each):
+
+| Run | wall | max RSS |
+|---|---|---|
+| darwin coll putget | noisy (load 6) | 0.761 (8,240 to 6,272 KB; v0.35.0 7,296) |
+| darwin coll push | noisy (load 6) | 0.644 |
+| darwin xo build of coll (no bin cache) | 0.991 | 0.817 |
+| darwin self build | 1.000 | 0.998 |
+| linux/arm64 coll putget | 0.921 (within noise) | 0.847 |
+| linux/arm64 coll push | 0.664 | 0.762 |
+| linux/arm64 coll edit build | 1.013 (within noise) | 0.970 (within noise) |
+| linux/arm64 conc-spawn edit build | 1.021 (within noise) | 0.997 (within noise) |
+| linux/arm64 self build | 1.003 (within noise) | 0.991 (within noise) |
+
+Branch l2-capcache, held until the owner accepts the retention change.
+

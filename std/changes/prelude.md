@@ -33,6 +33,21 @@ buffer grew past 4 KiB: a long line, or many lines read ahead. The
 buffer's growth (rt.heap_large_resize) copied from 8 bytes before the
 old block (gotchas/wasm-heap-large-resize-prefix.md). Each read's 64 KiB
 block is also given back now instead of leaked.
+## 2026-11-03: perf: the large block cache holds at most a quarter of the bytes in use
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 4's 0.36.0 release comparison (coll putget max RSS 1.18x of v0.35.0 on darwin, 1.32 to 1.39x on linux/arm64)
+- Go reference: none (Go's heap scavenger returns free spans in the background; Xo's cache keeps freed mappings for reuse)
+- Test: golden mem_trim_large and the heap and alloc goldens; bench/perf/xo putget and push under xo bench --ab (darwin) and ab-host (linux/arm64)
+- Timing: max RSS putget 0.761 (darwin) and 0.847 (linux/arm64), push 0.644 and 0.762, push wall 0.664 on linux/arm64; xo's builds within noise (decision 0448)
+- Shipped in: not yet released
+
+A freed large block's mapping is kept for reuse only while the kept
+mappings stay under a quarter of the bytes the program has in use, as
+well as the cache's 16 mappings and 64 MB. A kept mapping's touched
+pages stay resident, so a small program that grows and drops large
+tables no longer carries several megabytes of them to exit.
 
 ## 2026-11-03: perf: a growing large list or string reserves room for four times its size
 
