@@ -404,6 +404,7 @@ pub fn task_await(t: Int, lp: Int, ln: Int) -> Int {
     }
     // not started yet: run it here (its spawn released it for
     // ThreadSanitizer: the queues are Xo, not instrumented)
+    sanhook.acquire(t)
     if sched.task_claim(t) != 0 {
       tsan(RT_TSAN_ACQUIRE, t)
       run_claimed(t, 2)

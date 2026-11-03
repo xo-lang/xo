@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-02: fix: `--race` no longer reports the runtime's own task, fiber and worker records as races
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's concurrency stress under `--race` on linux/arm64 (conc_scopes, conc_mutex, async_preempt_regs, conc_stress: sched.task_claim, fiber_yield, pool.preempt, rq_put)
+- Go reference: none (Go's race detector resets a block's shadow at allocation, as the race heap's malloc now does)
+- Test: the 23 conc_*, async_* and task_* goldens built with `--race` report nothing on a linux/arm64 host; TestRaceSyncTable and TestTSanSameThreadRace still pass (their unsynchronized cases report); TestPreemptMigrate/llvm-race no longer skipped on linux
+- Timing: none (release and acquire calls are no-ops without ThreadSanitizer)
+- Shipped in: not yet released
+
+A task queued by `rq_put` is released and acquired where it is claimed;
+the race heap's malloc and a new worker's record memset run with writes
+ignored, so ThreadSanitizer resets their shadow instead of recording the
+allocating thread's write (gotchas/race-runtime-records-false-reports.md).
+
 ## 2026-11-02: fix: fault and out of memory messages were written from freed memory
 
 - Kind: fix

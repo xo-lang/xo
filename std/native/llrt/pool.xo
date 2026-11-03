@@ -512,7 +512,10 @@ pub fn thread_run(f: Int, arg: Int, size: Int, n: Int) -> Bool {
 /// spinning count already taken for it): whether it started.
 fn start_worker(p: Int) -> Bool {
   let w = rt.heap_large(W_SIZE)
+  // --race: not a write of this thread's that the new worker's reads race
+  sanhook.ignore_writes(true)
   rt.mem_set(w, 0, W_SIZE)
+  sanhook.ignore_writes(false)
   rt.mem_store(w, W_LIVE, 1, 4)
   rt.mem_store(w, W_IDX, workers(p), 8)
   register_worker(p, w)
@@ -913,6 +916,9 @@ fn rq_put(p: Int, w: Int, x: Int) {
     det.add(x)
     return
   }
+  // --race: the record (task, or fiber with bit 0) is handed to whoever
+  // runs it; run_item acquires
+  sanhook.release(x & -2)
   while true {
     owner_check(w)
     if sched.rq_put(w, x) != 0 {
@@ -1374,10 +1380,12 @@ pub fn worker_main(w: Int) -> Int {
 /// Runs a queue item on w's thread: resumes a fiber, or starts a task on
 /// a new fiber unless a helper ran it already.
 pub fn run_item(p: Int, w: Int, it: Int) {
+  sanhook.acquire(it & -2)
   if (it & 1) != 0 {
     run_fiber(p, w, it ^ 1)
     return
   }
+  sanhook.acquire(it)
   if sched.task_claim(it) == 0 {
     // run by a thread that helped: its queue entry is over, and the
     // scope's join waits for that too (no queue holds a task the scope
@@ -3078,6 +3086,7 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
     if t == 0 {
       break
     }
+    sanhook.acquire(t)
     if sched.task_claim(t) != 0 {
       sanhook.acquire(t)
       let _r = rt.call_c2(rt.fn_addr("run_claimed"), t, 4)
@@ -3097,6 +3106,7 @@ pub fn scope_join(pl: Int, s: Int, c: Int, f: Int, rw: Int) {
     var t = rt.mem_load(s, S_LIST, 8)
     unlock(m)
     while t != 0 {
+      sanhook.acquire(t)
       if rt.slot_load(t, T_STATE, ACQUIRE) == 0 && sched.task_claim(t) != 0 {
         // claimed: it runs here, its queue entry still queued (its
         // spawn released it)

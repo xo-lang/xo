@@ -386,7 +386,12 @@ fn malloc_tc(n: Int) -> Int {
     // a --race build (decision 0273 mode 2): the C library's malloc,
     // whose interceptor resets the block's shadow memory (heapos.xo
     // large_room); the header as a big block's, minus its size
+    // the block's shadow is reset, not written as this thread's: the fiber
+    // or worker record in it is first used by another thread, with no
+    // order TSan can see (a fiber switch orders nothing)
+    sanhook.ignore_writes(true)
     let m = sys_c.weak_malloc(addw(n, 16))
+    sanhook.ignore_writes(false)
     if m == 0 {
       return 0
     }

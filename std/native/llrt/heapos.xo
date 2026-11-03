@@ -270,7 +270,12 @@ fn large_room(n: Int, room: Int) -> Int {
     // ordering it can see; Go's race detector resets a block's shadow at
     // allocation too). The same layout: its size word, the prefix, the
     // bytes.
+    // the block's shadow is reset, not written as this thread's: the fiber
+    // or worker record in it is first used by another thread, with no
+    // order TSan can see (a fiber switch orders nothing)
+    sanhook.ignore_writes(true)
     let m = sys_c.weak_malloc(n.wrapping_add(16))
+    sanhook.ignore_writes(false)
     if m == 0 {
       oom()
     }
