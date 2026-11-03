@@ -1,6 +1,6 @@
 # 0473: std/otp, HOTP and TOTP one time passwords (proposal)
 
-Status: Proposed
+Status: Accepted (owner, 2026-11-03), with a change: `verify` returns the matched time step
 
 ## Context
 
@@ -18,7 +18,7 @@ a counter encoded little endian, the code not zero padded). pquerna/otp is the G
    ```xo
    pub fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: Hash = Hash.Sha1) -> Str     // RFC 4226
    pub fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: Hash = Hash.Sha1) -> Str   // RFC 6238
-   pub fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: Hash = Hash.Sha1, skew: Int = 1) -> Bool
+   pub fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: Hash = Hash.Sha1, skew: Int = 1) -> Int?
    pub fn generate_secret(r: Rand, len: Int = 20) -> Bytes uses rand                                     // crypto random
    pub fn uri(issuer: Str, account: Str, secret: Bytes, period: Int = 30, digits: Int = 6, algo: Hash = Hash.Sha1) -> Str   // otpauth://totp/...
    ```
@@ -53,3 +53,11 @@ stores state.
 
 Listed above (2, 3). Also rejected: a base32 text secret as the parameter (the module would decode on every
 call and callers keep raw keys anyway); a clock inside `verify` (untestable without a fake).
+
+## Owner decision (2026-11-03)
+
+Accepted with one change (Xo Lead's suggestion): `verify` returns the matched time step (`Int?`: the counter
+`unix / period + offset` that matched, `None` when no step in the window matches) instead of `Bool`, so a caller
+can store the last step used and reject a replay of the same code (RFC 6238 section 5.2). Every candidate step is
+still compared, in constant time, before the result is chosen. A test checks that a second `verify` of the same
+code returns the same step, which is how a caller detects the replay.

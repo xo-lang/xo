@@ -1,6 +1,6 @@
 # 0474: std/cron, schedule parsing and next fire time (proposal)
 
-Status: Proposed
+Status: Accepted (owner, 2026-11-03)
 
 ## Context
 

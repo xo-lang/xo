@@ -1,6 +1,6 @@
 # 0475: std/cookiejar, a cookie jar for the HTTP client (proposal)
 
-Status: Proposed
+Status: Accepted (owner, 2026-11-03); the http.Client wiring is a separate later change
 
 ## Context
 

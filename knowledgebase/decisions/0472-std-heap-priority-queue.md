@@ -1,6 +1,6 @@
 # 0472: std/heap, a priority queue with Remove and Fix (proposal)
 
-Status: Proposed
+Status: Accepted (owner, 2026-11-03)
 
 ## Context
 

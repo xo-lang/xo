@@ -1,6 +1,6 @@
 # 0476: std/norm and std/idna, Unicode normalization and internationalised domain names (proposal)
 
-Status: Proposed
+Status: Partly accepted (owner, 2026-11-03): std/norm now, with its real cost (`__text` and binary size of a program importing it) reported; std/idna waits for the owner after that number
 
 ## Context
 
@@ -57,3 +57,8 @@ by the caller on a host before building a `Url`.
 
 Listed above (2, 3). Also rejected: normalizing inside `Str` operations or comparison (changes the meaning of
 `==` for every program).
+
+## Owner decision (2026-11-03)
+
+std/norm is accepted now: implement it and report its real cost (`__text` and binary size of a program that imports
+it against one that does not). std/idna waits for the owner's word after that number.
