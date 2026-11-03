@@ -158,6 +158,7 @@ var codegenFields = map[string]inputClass{
 	"race":                {"keyed", "race=${m.race}"},
 	"inline_deny":         {"keyed", "deny ${m.inline_deny"},
 	"passes_off":          {"keyed", "passes ${m.passes_off"},
+	"passes_on":           {"bypass", "passes_changed(os)"},        // XO_PASSES' `+name` entries (decision 0465's view_proj): any entry bypasses the caches; the rc cache key also says vp=
 	"reader_bodies":       {"keyed", "readers ${m.reader_bodies}"}, // the inliner decides for the DWARF readers and what only they reach differently (arm64/inline.xo release_view)
 	"dump_fn":             {"keyed", "dumpfn=${m.dump_fn}"},        // XO_DUMP_FN: the code is the same, but a cached function would not be generated and dumped
 	"rc_check":            {"none", ""},                            // XO_RC_CHECK: marks Reuse values in the SSA bodies every cache key hashes

@@ -203,7 +203,7 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   let f = m.funcs[fi]
   var b = BytesBuilder.new()
   b.write_str("${RC_CACHE_VERSION}\n${id}\n${m.goarch}\n")
-  b.write_str("self ${bools_text(r.borrowed[fi])} last=${(r.fidx.get(f.name) ?? -1) == fi} imm=${r.skip_imm} ak=${r.addr_keep} ${r.addr_drop}\n")
+  b.write_str("self ${bools_text(r.borrowed[fi])} last=${(r.fidx.get(f.name) ?? -1) == fi} imm=${r.skip_imm} ak=${r.addr_keep} ${r.addr_drop} vp=${r.view_proj}\n")
   if key_body(b, m, fi, f, tk) {
     // apply_uniq's marks, which the body id does not cover
     let es = if fi < r.uq_entry.len() { bools_text(r.uq_entry[fi]) } else { "-" }

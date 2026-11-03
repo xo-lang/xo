@@ -40,7 +40,18 @@ pub fn fn_sum(f: ssa.Func) -> FnSum {
   var s = FnSum{blocks: f.blocks.len(), indirect: f.indirect, catches: f.catches, nres: f.results.len()}
   for bl in f.blocks {
     s.adc += adc_pairs(f, bl.instrs)
+    var prev = -1
     for v in bl.instrs {
+      // a view's Retain right after its rt.str_borrow (decision 0465's
+      // view_proj) is the count rt.str_view took itself: not counted,
+      // so a function's cost is the same with views projections
+      // (scan.trim_chars went from 149 to 151 instructions, over
+      // INLINE_ONE_PADDED_INSTRS, and the trims 18 to 26% slower)
+      let pv = prev
+      prev = v
+      if f.values[v].op == ssa.Op.Retain && pv >= 0 && f.values[v].args == [pv] && f.values[pv].op == ssa.Op.Call && aux_str(f.values[pv].aux) == "rt.str_borrow" {
+        continue
+      }
       if f.values[v].op == ssa.Op.Call {
         s.tails.push(tail_at(f, v))
       }

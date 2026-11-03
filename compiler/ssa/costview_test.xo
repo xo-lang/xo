@@ -1,0 +1,44 @@
+// XO0915 for views that take no count (decision 0465's view_proj): an
+// rt.str_borrow used after the release of the Str it views is reported, one
+// retained first is not.
+
+/// f: s, a view of s (rt.str_borrow), then, in order, the ops of shape
+/// ("retain": the view retained, "release": s released, "use": the view's
+/// length), each at its own line.
+fn view_func(shape: List[Str]) -> Func {
+  var m = Module{}
+  let fi = m.new_func("f", [], [])
+  var f = m.funcs[fi]
+  let s = f.add(0, Op.Const, -1, Aux.S(s: "hello"), [])
+  let lo = f.add(0, Op.Const, -1, Aux.I(n: 1), [])
+  let hi = f.add(0, Op.Const, -1, Aux.I(n: 3), [])
+  let v = f.add(0, Op.Call, -1, Aux.S(s: "rt.str_borrow"), [s, lo, hi])
+  f.values[v].lp = 2 * 4096 + 1
+  for (k, op) in shape.indexed() {
+    let x = match op {
+      "retain" => f.add(0, Op.Retain, -1, Aux.None, [v])
+      "release" => f.add(0, Op.Release, -1, Aux.None, [s])
+      _ => f.add(0, Op.Call, -1, Aux.S(s: "Str.len"), [v])
+    }
+    f.values[x].lp = (3 + k) * 4096 + 1
+  }
+  m.funcs[fi] = f
+  m.funcs[fi]
+}
+
+fn codes(f: Func) -> List[Str] {
+  var out: List[Str] = []
+  for n in freed_addresses(f) {
+    out.push("${n.code}:${n.line}")
+  }
+  out
+}
+
+test "XO0915: a borrowed view used after its Str's release" {
+  expect(codes(view_func(["release", "use"]))) == ["XO0915:2"]
+}
+
+test "XO0915: a borrowed view used before the release, or retained first, is not reported" {
+  expect(codes(view_func(["use", "release"]))) == []
+  expect(codes(view_func(["retain", "release", "use"]))) == []
+}

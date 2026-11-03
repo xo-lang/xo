@@ -312,7 +312,7 @@ fn imm_post(f: ssa.Func, v: Int, depth: Int, walking: List[Int]) -> Bool {
       }
       return false
     }
-    Call => return aux_str(x.aux) == "rt.str_view" && x.args.len() >= 1 && imm_post(f, x.args[0], depth + 1, walking)
+    Call => return (aux_str(x.aux) is "rt.str_view" | "rt.str_borrow") && x.args.len() >= 1 && imm_post(f, x.args[0], depth + 1, walking)
     Variant => {
       for a in x.args {
         if !imm_post(f, a, depth + 1, walking) {

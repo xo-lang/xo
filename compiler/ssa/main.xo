@@ -141,6 +141,16 @@ fn dump_body(os: Os, args: List[Str]) ! {
     c.dump_roots = fns
     var b = build_program(c, wd, tests)
     b.m.show_dvars = debug_vars
+    // the passes $XO_PASSES turns on (`+name`), for rc's view_proj
+    // (decision 0465); the dump's module is the host's
+    for e in (os.env.get("XO_PASSES") ?? "").split(",") {
+      if e.trim().starts_with("+") {
+        b.m.passes_on.push(e.trim()[1..e.trim().len()])
+      }
+    }
+    if b.m.goarch.is_empty() {
+      b.m.goarch = "arm64"
+    }
     if !b.why.is_empty() {
       out.write("== unsupported ${b.why}\n")
       continue

@@ -2668,9 +2668,12 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
       g.set(v, [rp, rn])
       return true
     }
-    "rt.str_view" => {
+    "rt.str_view" | "rt.str_borrow" => {
       // s[lo..hi] with the range already checked (decision 0330 step 3): the
-      // same object, counted once more, and w1 = (hi - lo) | ((off + lo) << 32)
+      // same object, counted once more, and w1 = (hi - lo) | ((off + lo) << 32);
+      // rt.str_borrow (decision 0465's view_proj) takes no count: the
+      // reference counting retains it where it must be owned
+      let counted = name == "rt.str_view"
       let ws = g.words(x.args[0])
       let lo = g.real(g.word(x.args[1]))
       let hi = g.real(g.word(x.args[2]))
@@ -2686,7 +2689,9 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
         let cont = g.new_block(false)
         let _b = g.add(Inst{kind: K_CONDBR, cond: "tbnz", bit: 0, us: [obj], targets: [slow, fast]})
         g.cur = fast
-        g.inc(obj)
+        if counted {
+          g.inc(obj)
+        }
         let n = g.def1(false, "sub $d0, $u0, $u1", [hi, lo])
         let off = g.def1(false, "lsr $d0, $u0, #32", [w1])
         let off2 = g.def1(false, "add $d0, $u0, $u1", [off, lo])
@@ -2735,7 +2740,9 @@ fn (var g: G) inline_raw(v: Int) -> Bool {
         g.set(v, [rp, rn])
         return true
       }
-      g.inc(obj)
+      if counted {
+        g.inc(obj)
+      }
       let n = g.def1(false, "sub $d0, $u0, $u1", [hi, lo])
       let off = g.def1(false, "lsr $d0, $u0, #32", [w1])
       let off2 = g.def1(false, "add $d0, $u0, $u1", [off, lo])

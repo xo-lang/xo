@@ -32,6 +32,12 @@ pub fn passes() -> List[Str] {
     // markers after the releases are placed (off: kept, for a dump)
     "addr_keep",
     "addr_keep_drop",
+    // compiler/ssa rc.xo (decision 0465, Proposed: off unless
+    // XO_PASSES=+view_proj): a Str view (rt.str_view) is a projection of
+    // the Str it views, counted by the reference counting where it must
+    // be owned and borrowed (no count) where its source outlives it; it
+    // is emitted as rt.str_borrow, which takes no count
+    "view_proj",
     // compiler/ssa uniqvar.xo (decision 0322): a `var` List parameter
     // every call passes unique skips its entry copy-on-write check
     "uniq_var_params",
@@ -111,9 +117,9 @@ pub fn pass_on(m: ssa.Module, name: Str) -> Bool {
 }
 
 /// The passes $XO_PASSES turns off (`-name` entries, comma separated) and
-/// on (`+name`: one the build leaves off for a target; none today, hollow on
-/// darwin/amd64 having been on by default since 2026-10-26; decisions 0184,
-/// 0371), or why the value is wrong. Naming a
+/// on (`+name`: one the build leaves off, view_proj while decision 0465 is
+/// Proposed; hollow on darwin/amd64 has been on by default since
+/// 2026-10-26, decisions 0184, 0371), or why the value is wrong. Naming a
 /// pass both ways, or twice one way, is an error.
 pub fn parse_passes(v: Str) -> (List[Str], List[Str], Str) {
   var off: List[Str] = []

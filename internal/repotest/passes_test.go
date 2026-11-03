@@ -12,8 +12,9 @@ import (
 
 // passGate matches a check of whether an optional pass is on: the arm64
 // emitter's g.on("NAME"), passes.xo's pass_on(m, "NAME"), and a direct
-// passes_off.contains("NAME").
-var passGate = regexp.MustCompile(`(?:\bg\.on\(|\bpass_on\([^,()]+, |\bpasses_off\.contains\()"([a-z0-9_]+)"\)`)
+// passes_off.contains("NAME") or, for a pass a build leaves off,
+// passes_on.contains("NAME") (decision 0465's view_proj).
+var passGate = regexp.MustCompile(`(?:\bg\.on\(|\bpass_on\([^,()]+, |\bpasses_(?:off|on)\.contains\()"([a-z0-9_]+)"\)`)
 
 // TestPassesListed fails when a pass the compiler gates by $XO_PASSES is
 // not in compiler/arm64 passes.xo's passes(), or a listed one is gated

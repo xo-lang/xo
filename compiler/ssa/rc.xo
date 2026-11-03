@@ -77,6 +77,8 @@ struct Rc {
   /// decision 0460's markers placed, and removed after the releases
   addr_keep: Bool = true
   addr_drop: Bool = true
+  /// decision 0465: rt.str_view a projection (view_proj)
+  view_proj: Bool = false
   // each function's `var` parameter indexes, by name, and type word
   // counts (chain_pads)
   vparams: Map[Str, List[Int]] = {}
@@ -217,6 +219,13 @@ fn runtime_modes(name: Str) -> List[Mode]? {
     "rt.any_new" => Some([c, n, w])
     _ => None
   }
+}
+
+/// Whether decision 0465's views as projections are on for m: asked
+/// for (XO_PASSES=+view_proj) on a native target, whose emitters lower
+/// rt.str_borrow (wasm copies a slice, so its view is a new value).
+pub fn view_proj_on(m: Module) -> Bool {
+  m.passes_on.contains("view_proj") && (m.goarch is "arm64" | "amd64")
 }
 
 fn is_proj_call(name: Str) -> Bool {
@@ -433,7 +442,9 @@ fn (var r: Rc) kind(f: Func, v: Int) -> RootKind {
     Const => return RootKind.Borrowed
     Payload | Capture | Unbox => return r.proj_kind(f, v)
     Call => {
-      if is_proj_call(aux_name(x.aux)) {
+      // rt.str_borrow is always one (only view_proj makes it, and the
+      // verifier's Rc reads the module after it)
+      if is_proj_call(aux_name(x.aux)) || aux_name(x.aux) == "rt.str_borrow" || (r.view_proj && aux_name(x.aux) == "rt.str_view") {
         return r.proj_kind(f, v)
       }
     }
@@ -1145,6 +1156,7 @@ pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
   r.pad_order = !b.m.passes_off.contains("pad_release_order")
   r.addr_keep = !b.m.passes_off.contains("addr_keep")
   r.addr_drop = !b.m.passes_off.contains("addr_keep_drop")
+  r.view_proj = view_proj_on(b.m)
   r
 }
 
@@ -1187,6 +1199,7 @@ pub fn (var b: Builder) rc_prepare_incr(jobs: Int, id: Str, prev: Map[Str, List[
   r.pad_order = !b.m.passes_off.contains("pad_release_order")
   r.addr_keep = !b.m.passes_off.contains("addr_keep")
   r.addr_drop = !b.m.passes_off.contains("addr_keep_drop")
+  r.view_proj = view_proj_on(b.m)
   (r, rec, nd, !check || r.borrowed == full)
 }
 
@@ -1405,6 +1418,9 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   }
   if r.addr_drop {
     drop_addr_keeps(f)
+  }
+  if r.view_proj {
+    borrow_views(f)
   }
   renumber(f)
   r.lm_fi = -1
@@ -3311,6 +3327,21 @@ fn drop_addr_keeps(var f: Func) {
     }
     if cut {
       f.blocks[bi].instrs = out
+    }
+  }
+}
+
+/// decision 0465: with views projections (view_proj), a view's count is
+/// the reference counting's (a Retain where it must be owned, none where
+/// borrowed), so its call no longer takes one: rt.str_borrow, which the
+/// native emitters lower as rt.str_view without the count. (Folding an
+/// owned view's Retain back into a counted rt.str_view broke the inlined
+/// module's verification of xo itself, 2026-11-03: the verifier counts a
+/// counted view as owned where the pass had treated it as a projection.)
+fn borrow_views(var f: Func) {
+  for i in 0..f.values.len() {
+    if f.values[i].op == Op.Call && aux_name(f.values[i].aux) == "rt.str_view" {
+      f.values[i].aux = Aux.S("rt.str_borrow")
     }
   }
 }

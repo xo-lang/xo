@@ -1600,14 +1600,17 @@ fn (var g: Gen) inline_raw(v: Int) -> Bool {
       }
       g.set(v, "ptrtoint ptr ${o} to i64")
     }
-    "rt.str_view" => {
-      // s[lo..hi] with the range already checked (decision 0330 step 3), as arm64
+    "rt.str_view" | "rt.str_borrow" => {
+      // s[lo..hi] with the range already checked (decision 0330 step 3), as
+      // arm64; rt.str_borrow (decision 0465) takes no count
       let s = g.op(x.args[0])
       let obj = g.def("extractvalue %xo.str ${s}, 0")
       let w1 = g.def("extractvalue %xo.str ${s}, 1")
       let lo = g.op(x.args[1])
       let hi = g.op(x.args[2])
-      g.emit("call void ${g.rc_fn("dup", ssa.ty_of(x.tb))}(ptr ${obj})")
+      if name == "rt.str_view" {
+        g.emit("call void ${g.rc_fn("dup", ssa.ty_of(x.tb))}(ptr ${obj})")
+      }
       let n = g.def("sub i64 ${hi}, ${lo}")
       let off = g.def("lshr i64 ${w1}, 32")
       let off2 = g.def("add i64 ${off}, ${lo}")

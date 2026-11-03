@@ -2442,6 +2442,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
     t = os.clock.now()
     // the reference counting's optional pass (rc.xo chain_pads)
     b.m.passes_off = passes_off(os)
+    b.m.passes_on = passes_on(os)
     b.m.rc_check = (os.env.get("XO_RC_CHECK") ?? "") == "1"
     // a callee per constant argument (decision 0368), before the reference
     // counting so its caches see the clones as functions
@@ -2772,6 +2773,16 @@ fn passes_off(os: Os) -> List[Str] {
   off
 }
 
+/// The optional passes a build leaves off that $XO_PASSES turns on
+/// (`+name` entries).
+fn passes_on(os: Os) -> List[Str] {
+  let (_off, on, err) = arm64.parse_passes(os.env.get("XO_PASSES") ?? "")
+  if !err.is_empty() {
+    fail(os, err)
+  }
+  on
+}
+
 /// Whether $XO_PASSES changes which passes run, with a `-name` or a
 /// `+name` entry. The caches' keys do not say which passes ran, so any
 /// entry turns them off (a `-hollow` build must not reuse a plain
@@ -2811,6 +2822,7 @@ fn inline_or_defer(os: Os, var mi: ssa.Module, jobs: Int, phases: Bool, tgoos: S
     mi.inline_deny = deny.split(",")
   }
   mi.passes_off = passes_off(os)
+  mi.passes_on = passes_on(os)
   // XO_INLINE_REPORT=NAME (a part of the names, or 1 for every function):
   // how the inliner takes each, on standard error
   let report = os.env.get("XO_INLINE_REPORT") ?? ""
@@ -2859,6 +2871,7 @@ fn gen_module(os: Os, o: Opts, ctx: Ctx, c: check.Checker, m: ssa.Module, tgoos:
     t = lap(os, phases, "dce", t)
   }
   gm.passes_off = passes_off(os)
+  gm.passes_on = passes_on(os)
   // decision 0403 stage 1: the functions' order from the layout file; a
   // profile of another target is ignored with one line
   if !o.layout_text.is_empty() {

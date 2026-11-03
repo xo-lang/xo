@@ -505,6 +505,9 @@ pub struct Module {
   /// PASSES): miscompile triage (`xo dev bisect-pass`) builds with
   /// passes off to find the one whose output diverges.
   pub passes_off: List[Str] = []
+  /// The optional passes a build leaves off that $XO_PASSES turns on
+  /// (`+name`): rc.xo view_proj (decision 0465) while it is Proposed.
+  pub passes_on: List[Str] = []
   /// XO_RC_CHECK=1: each copy-on-write check decision 0322 proves
   /// unneeded stays, as a check that reports and exits when its list is
   /// shared (uniqvar.xo apply_uniq).

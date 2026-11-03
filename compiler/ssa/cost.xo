@@ -661,7 +661,7 @@ fn named(n0: Str, base: Str) -> Bool {
 /// The calls whose result is a view of their first argument (decision
 /// 0330): a slice, and the trims.
 fn view_call(name: Str) -> Bool {
-  named(name, "rt.str_view") || named(name, "prelude.str_trim") || named(name, "prelude.str_trim_start") || named(name, "prelude.str_trim_end") || named(name, "prelude.str_trim_prefix") || named(name, "prelude.str_trim_suffix") || named(name, "prelude.str_cut") || named(name, "prelude.str_cut_prefix") || named(name, "prelude.str_cut_suffix") || named(name, "prelude.str_trim_chars") || named(name, "prelude.str_trim_start_chars") || named(name, "prelude.str_trim_end_chars") || named(name, "prelude.str_trim_where") || named(name, "prelude.str_trim_start_where") || named(name, "prelude.str_trim_end_where") || named(name, "prelude.bytes_cut") || named(name, "prelude.bytes_cut_prefix") || named(name, "prelude.bytes_cut_suffix") || named(name, "prelude.bytes_trim_where") || named(name, "prelude.bytes_trim_start_where") || named(name, "prelude.bytes_trim_end_where")
+  named(name, "rt.str_view") || named(name, "rt.str_borrow") || named(name, "prelude.str_trim") || named(name, "prelude.str_trim_start") || named(name, "prelude.str_trim_end") || named(name, "prelude.str_trim_prefix") || named(name, "prelude.str_trim_suffix") || named(name, "prelude.str_cut") || named(name, "prelude.str_cut_prefix") || named(name, "prelude.str_cut_suffix") || named(name, "prelude.str_trim_chars") || named(name, "prelude.str_trim_start_chars") || named(name, "prelude.str_trim_end_chars") || named(name, "prelude.str_trim_where") || named(name, "prelude.str_trim_start_where") || named(name, "prelude.str_trim_end_where") || named(name, "prelude.bytes_cut") || named(name, "prelude.bytes_cut_prefix") || named(name, "prelude.bytes_cut_suffix") || named(name, "prelude.bytes_trim_where") || named(name, "prelude.bytes_trim_start_where") || named(name, "prelude.bytes_trim_end_where")
 }
 
 /// The value a Field, Rebind, or Payload chain starts from (a Payload: an
@@ -862,7 +862,7 @@ fn slices_read_in_loop(f: Func, inloop: List[Bool]) -> List[CostNote] {
   let (users, edge) = cost_uses(f)
   for (vi, x) in f.values.indexed() {
     let line = line_of(x.lp) / 4096
-    if x.op != Op.Call || !named(aux_name(x.aux), "rt.str_view") || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) || edge[vi] || users[vi].is_empty() {
+    if x.op != Op.Call || !(named(aux_name(x.aux), "rt.str_view") || named(aux_name(x.aux), "rt.str_borrow")) || block_of(x.tb) < 0 || block_of(x.tb) >= inloop.len() || !inloop[block_of(x.tb)] || line <= 0 || seen.contains(line) || edge[vi] || users[vi].is_empty() {
       continue
     }
     var reads = true
@@ -951,6 +951,10 @@ fn addr_of_call(name: Str) -> Bool {
 /// hands f freed memory. The fix is raw.alive(b) or raw.alive_str(s)
 /// after the last access. Addresses carried by add or sub count as the
 /// address; one stored or passed to another block is not followed.
+/// A view that takes no count (rt.str_borrow, decision 0465's view_proj)
+/// is checked the same way until it is retained: the reference counting
+/// borrows it only while the Str it views is alive, and a use after that
+/// Str's release is a view of freed text.
 fn freed_addresses(f: Func) -> List[CostNote] {
   var out: List[CostNote] = []
   var seen: Map[Int, Bool] = {}
@@ -958,8 +962,14 @@ fn freed_addresses(f: Func) -> List[CostNote] {
     // address value -> the value it points into; and the values released
     var addr_of: Map[Int, Int] = {}
     var released: Map[Int, Int] = {}
+    var views: Map[Int, Bool] = {}
     for v in bl.instrs {
       let x = f.values[v]
+      if x.op == Op.Retain && !x.args.is_empty() && views.contains(x.args[0]) {
+        // a retained view owns a count of its text from here on
+        let _r = addr_of.remove(x.args[0])
+        continue
+      }
       if x.op == Op.Release || x.op == Op.Drop {
         if !x.args.is_empty() {
           released[x.args[0]] = v
@@ -984,11 +994,19 @@ fn freed_addresses(f: Func) -> List[CostNote] {
         }
         if line > 0 && !seen.contains(line) {
           seen[line] = true
-          out.push(CostNote{code: "XO0915", fn_name: f.name, file: f.file, line: line, col: col, msg: "this raw address is used after its value was released (a value is released at its last use, even inside the call that takes its address): keep it alive with raw.alive or raw.alive_str after the last access"})
+          if views.contains(hit) {
+            out.push(CostNote{code: "XO0915", fn_name: f.name, file: f.file, line: line, col: col, msg: "this view, borrowed without a count (decision 0465), is used after the Str it views was released: the reference counting must retain it (a compiler bug, not the program's)"})
+          } else {
+            out.push(CostNote{code: "XO0915", fn_name: f.name, file: f.file, line: line, col: col, msg: "this raw address is used after its value was released (a value is released at its last use, even inside the call that takes its address): keep it alive with raw.alive or raw.alive_str after the last access"})
+          }
         }
         continue
       }
-      if x.op == Op.Call && addr_of_call(aux_name(x.aux)) && !x.args.is_empty() {
+      if x.op == Op.Call && aux_name(x.aux) == "rt.str_borrow" && !x.args.is_empty() {
+        // a view of a borrowed view points into the first one's text
+        addr_of[v] = addr_of.get(x.args[0]) ?? x.args[0]
+        views[v] = true
+      } else if x.op == Op.Call && addr_of_call(aux_name(x.aux)) && !x.args.is_empty() {
         addr_of[v] = x.args[0]
       } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
         for a in x.args {

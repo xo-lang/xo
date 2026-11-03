@@ -27,7 +27,7 @@ const STACK_SMALL_MAX = 64
 /// length set, its type relabelled, a view of it): the result is followed
 /// as the object.
 fn same_object_call(name: Str) -> Bool {
-  name is "rt.rs_set_len" | "rt.str_view" || name.starts_with("rt.cast")
+  name is "rt.rs_set_len" | "rt.str_view" | "rt.str_borrow" || name.starts_with("rt.cast")
 }
 
 /// Calls that read their arguments and keep nothing of them past the call.

@@ -45,6 +45,34 @@ Gates: XO0915 clean over std (cmd/xo TestVetCostStd), TestRaceStdNoUseAfterFree,
 the 2026-11-02 race stress, and `xo bench --ab` on the trim rows. The default
 on push waits for the owner's acceptance.
 
+## Step 1 landed, opt-in (2026-11-03, Xo Lang 1)
+
+`XO_PASSES=+view_proj` (off by default while this decision is Proposed;
+native arm64 and amd64 only, since wasm copies a slice): rc.xo treats
+`rt.str_view` as a projection of the Str it views (kind(), as list.get), and
+borrow_views emits it as `rt.str_borrow`, which the arm64 and LLVM emitters
+lower without the count; insert_rc retains the view where it must be owned and
+borrow_projections leaves it uncounted where the source outlives it. XO0915
+(cost.xo freed_addresses) checks an uncounted view against its source's
+release until the view is retained. Four places keyed on the old shape had to
+follow, each found by a failure: the verifier's own Rc (verify.xo; rc.xo
+kind() treats rt.str_borrow as a projection with no flag), the inliner's
+leaf list (inline.xo inline_intrinsic) and cost (inlsum.xo fn_sum: a Retain
+right after its rt.str_borrow is not counted; scan.trim_chars went from 149 to
+151 instructions over INLINE_ONE_PADDED_INSTRS), and view_lens (viewlen.xo, a
+view only measured is its length); gotchas/rc-pass-shape-crosses-inline-limit.md.
+Folding an owned view's Retain back into a counted rt.str_view broke the
+inlined module's verification of xo itself and was dropped.
+
+Gate (host 2, linux/arm64, every arm64 golden and the vet cost, race
+use-after-free, LLVM string and repo tests with the pass on): pass; xo builds
+itself with it on by default (the measure commit). `xo bench --ab` on the same
+host, on against off by default (15 rounds): a program of views made and
+compared in place (inlined slices) 0.92; trimchars trim 0.975 and trim_start
+0.989 (within noise), trim_end 1.018 (within noise, 21 rounds) and 1.035 with
+the sides' order swapped. Step 1 alone does not reach the trims' `drop Str`:
+trim_chars returns its view, so the count stays; that is step 2's variant.
+
 ## Consequences
 
 - Removes the `drop Str` share of trim and slice heavy loops (24% of this profile).
