@@ -80,33 +80,30 @@ func (c info) appendMapping(b []byte, s string) []byte {
 }
 
 func Dump(path string) {
-	const block = 512
-	var stream []byte
-	var index []byte
+	var recs, maps []byte
 	var cur rec
 	start := 0
 	var haveCur bool
 	nrec := 0
-	flush := func(end int) {
-		// record for [start, end)
-		stream = varint(stream, end-start-1)
-		stream = append(stream, byte(cur.cat), byte(cur.flags), byte(cur.class))
-		switch cur.kind {
-		case 0:
-		case 1:
-			stream = varint(stream, 0)
-			stream = varint(stream, zigzag(cur.delta))
-		case 2:
-			stream = varint(stream, len(cur.str)+1)
-			for _, m := range cur.str {
-				stream = varint(stream, int(m))
+	flush := func() {
+		recs = append(recs, byte(start), byte(start>>8), byte(start>>16), byte(cur.cat), byte(cur.flags), byte(cur.class))
+		pos := 0
+		if cur.kind != 0 {
+			pos = len(maps) + 1
+			switch cur.kind {
+			case 1:
+				maps = varint(maps, 0)
+				maps = varint(maps, zigzag(cur.delta))
+			case 2:
+				maps = varint(maps, len(cur.str)+1)
+				for _, m := range cur.str {
+					maps = varint(maps, int(m))
+				}
 			}
 		}
+		recs = append(recs, byte(pos), byte(pos>>8), byte(pos>>16))
 		nrec++
 	}
-	// index entries need the offset and start of the record holding each block's first rune; build as we go
-	type ent struct{ off, start int }
-	var ents []ent
 	for r := rune(0); r <= 0x10FFFF; r++ {
 		var x rec
 		if r >= 0xD800 && r <= 0xDFFF {
@@ -147,7 +144,7 @@ func Dump(path string) {
 			if info.isMapped() {
 				mb := mappingOf(info, r)
 				ms := []rune(string(mb))
-				if len(ms) == 1 && string(mb) != "�" {
+				if len(ms) == 1 && string(mb) != "\ufffd" {
 					x.kind = 1
 					x.delta = int(ms[0]) - int(r)
 				} else {
@@ -159,51 +156,16 @@ func Dump(path string) {
 		if !haveCur {
 			cur, haveCur, start = x, true, int(r)
 		} else if !cur.same(x) {
-			flush(int(r))
+			flush()
 			cur, start = x, int(r)
 		}
 	}
-	flush(0x110000)
-	// second pass for the index: walk the stream
-	pos, rs := 0, 0
-	for b := 0; b*block < 0x110000; b++ {
-		first := b * block
-		for {
-			// decode record at pos
-			p := pos
-			l, n := uvar(stream, p)
-			p += n
-			end := rs + l + 1
-			if first < end {
-				ents = append(ents, ent{pos, rs})
-				break
-			}
-			cat := stream[pos+n]
-			p += 3
-			if cat == 1 || cat == 2 || cat == 3 {
-				m, n2 := uvar(stream, p)
-				p += n2
-				if m == 0 {
-					_, n3 := uvar(stream, p)
-					p += n3
-				} else {
-					for i := 0; i < m-1; i++ {
-						_, n3 := uvar(stream, p)
-						p += n3
-					}
-				}
-			}
-			pos, rs = p, end
-		}
-	}
-	for _, e := range ents {
-		index = append(index, byte(e.off), byte(e.off>>8), byte(e.off>>16), byte(e.start), byte(e.start>>8), byte(e.start>>16))
-	}
+	flush()
 	var w strings.Builder
-	fmt.Fprintf(&w, "// Unicode %s, from golang.org/x/net/idna's tables (scripts/genidna): %d ranges, %d bytes, an index of %d blocks of %d runes.\n", UnicodeVersion, nrec, len(stream), len(ents), block)
+	fmt.Fprintf(&w, "// Unicode %s, from golang.org/x/net/idna's tables (scripts/genidna): %d ranges of runes (%d bytes) and %d bytes of mappings.\n", UnicodeVersion, nrec, len(recs), len(maps))
 	fmt.Fprintf(&w, "const UNICODE_VERSION: Str = %q\n\n", UnicodeVersion)
-	w.WriteString("/// Per range of runes: the length minus one (varint), the category, the flags (join type, attributes, may need norm, bidi), the bidi class, and for mapped categories the mapping (0 and a zigzag varint delta from the rune, or a count plus 1 and that many varint runes).\nconst RANGES: Bytes = " + bytesLit(stream) + "\n\n")
-	w.WriteString("/// Per block of 512 runes: the offset in RANGES of the range holding its first rune (3 bytes) and that range's first rune (3 bytes).\nconst INDEX: Bytes = " + bytesLit(index) + "\n\n")
+	w.WriteString("/// Per range of runes, 9 bytes, ascending: its first rune (3 bytes), the category, the flags (join type, attributes, may need norm, bidi), the bidi class, and the position plus one of its mapping in MAPS (3 bytes, 0 for none).\nconst RANGES: Bytes = " + bytesLit(recs) + "\n\n")
+	w.WriteString("/// Mappings: 0 and a zigzag varint delta from the rune, or a count plus 1 and that many varint runes.\nconst MAPS: Bytes = " + bytesLit(maps) + "\n\n")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		panic(err)
@@ -216,19 +178,6 @@ func Dump(path string) {
 	}
 	if err := os.WriteFile(path, []byte(src[:i]+"// BEGIN GENERATED\n"+w.String()+src[j:]), 0o644); err != nil {
 		panic(err)
-	}
-}
-
-func uvar(b []byte, p int) (int, int) {
-	v, s, n := 0, 0, 0
-	for {
-		c := b[p+n]
-		n++
-		v |= int(c&0x7f) << s
-		if c < 0x80 {
-			return v, n
-		}
-		s += 7
 	}
 }
 

@@ -1,0 +1,53 @@
+package main
+
+import (
+	"fmt"
+	"os"
+
+	"golang.org/x/net/idna"
+)
+
+func names(w string) []string {
+	switch w {
+	case "ascii":
+		return []string{"www.example.com", "api.v2.service.internal.example.org", "a-b-c.example.net", "EXAMPLE.COM", "cdn1.static-assets.example.io", "mail.example.co.uk", "x.y.z", "localhost"}
+	case "mixed":
+		return []string{"bücher.example.com", "例え.jp", "правда.рф", "faß.de", "München.Straße.de", "xn--bcher-kva.example.com", "xn--80aswg.xn--p1ai", "ΕΛΛΗΝΙΚΑ.gr"}
+	}
+	return []string{"ééééééééééééééééééééééééééééééaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com", "日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語.jp", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com", "ЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖ.рф"}
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	if w != "none" {
+		ns := names(w)
+		rounds := 1000
+		switch w {
+		case "ascii":
+			rounds = 20000
+		case "mixed":
+			rounds = 4000
+		}
+		for i := 0; i < rounds; i++ {
+			for _, n := range ns {
+				a, err := idna.Lookup.ToASCII(n)
+				if err != nil {
+					a = ""
+				}
+				sum += len(a)
+				if w == "mixed" {
+					u, err := idna.Lookup.ToUnicode(n)
+					if err != nil {
+						u = ""
+					}
+					sum += len(u)
+				}
+			}
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}
