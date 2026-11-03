@@ -1,0 +1,13 @@
+offload: /work had 28 GB free; pruned xo cache files idle over 360 min, now 28G
+linux/arm64: /work/l2twin/xoprog
+go go1.26.1; host Linux 7.0.14-linuxkit aarch64; rev 230901596654e38a44334c7e643e5e70991ed864
+== walk: walk 400000 | walk 400000
+wall_ms               21.39       3.408       3.988% 7.036%     0.159   0.152 to 0.166    better (n=15)
+cpu_ms                21.62       3.371       3.612% 6.274%     0.156   0.148 to 0.161    too coarse (n=15)
+max_rss_kb            3644        1224        56.59% 0.327%     0.336   0.214 to 0.336    better (n=15)
+== keys: keys 0 | keys 0
+wall_ms               18.76       2.422       5.632% 1.573%     0.129   0.126 to 0.135    better (n=15)
+cpu_ms                19.05       2.362       5.223% 1.693%     0.124   0.122 to 0.13     too coarse (n=15)
+max_rss_kb            5700        1224        36.6% 0.327%      0.215   0.213 to 0.336    better (n=15)
+twin: ok
+OFFLOAD-RC=0

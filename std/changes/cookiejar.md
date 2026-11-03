@@ -1,5 +1,22 @@
 # std/cookiejar changes
 
+## 2026-11-03: perf: no IP parse of host names; domain maps changed in place
+
+- Kind: perf
+- Commit: this push (std/cookiejar and compiler/ssa map.xo)
+- Found by: the std timing rows (std-twin-rows12: 1.54 to 1.68 of Go) and XO_PROF on linux/arm64
+- Go reference: net/http/cookiejar jar.go (isIP through net.ParseIP; entries changed in place)
+- Test: internal/stdtest corpus cookiejar on arm64, LLVM and Go; bench/perf/cookiejar twincheck; test/codegen/maps
+- Timing: get 1.415 of Go's wall (was 1.54), both 1.476 (was 1.681), set within noise of Go on linux/arm64 (bench/results/std-twin-cookiejar-2026-11-03.md)
+- Shipped in: not yet released
+
+A host name is no longer parsed as an IP address (a byte other than a
+digit or a dot, and no colon, rules it out, as Go's ParseIP fails without
+an error value), and a domain's cookie map is changed through Map.update
+instead of read and written back. Map.update's closure no longer keeps
+the value it was given for a fault (compiler/ssa), which had made every
+write to a nested map copy it (gotchas/var-closure-kept-value-copies-map.md).
+
 ## 2026-11-03: feature: std/cookiejar, a cookie jar with Go's rules
 
 - Kind: feature

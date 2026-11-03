@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - feature (prelude): `NetConn`, Go's net.Conn: Stream's read, write and close plus `set_deadline`, `set_read_deadline` and `set_write_deadline`, satisfied by Conn, ServerConn and tls.TlsConn, so one code path sets deadlines on a plain or TLS connection (`let c: NetConn = if tls { t } else { conn }`); Stream is unchanged (decision 0481).
+- perf (compiler): a closure given to `Map.update` no longer keeps the value it was given for a fault (only `Mutex.with`'s must, core 5.4); keeping it made every write in the closure copy a nested map and turn it into the map log form. std/cookiejar also skips the IP parse of host names and changes a domain's map in place: 1.476 of Go's wall on linux/arm64 (was 1.681).
 - perf (std/cron): `Schedule.next` skips a day that cannot match by arithmetic instead of a civil conversion through the zone: monthly_last 0.857 of robfig/cron's wall on linux/arm64 (was 3.82), fire times unchanged.
 - wasm: in a wasip2/wasm command with tasks, a stdin read waits only for its own task: the reading task parks on the stdin stream's pollable and the others keep running, where before the whole instance blocked until input came (decision 0447 R2k, TestWasmCommandStdinParks).
 - perf (crypto, otp): HMAC builds its padded keys a word at a time and SHA-1 finishes a digest with one append, so std/otp's SHA-1 codes are 1.071 of Go's wall on linux/arm64 (was 1.36) and 0.969 of its CPU.

@@ -1,0 +1,102 @@
+offload: /work had 29 GB free; pruned xo cache files idle over 360 min, now 29G
+linux/arm64: /work/l2prof/prog
+both 937420
+xo profile: 320 samples in /work/l2prof/out/p.xoraw (`xo prof /work/l2prof/out/p.xoraw` writes the pprof files and summaries)
+xo cpu profile: 320 samples (320ms) in 322ms of wall time at 1000 Hz
+
+top 30 by flat
+      flat  flat%   sum%        cum   cum%  line (the hottest)  function
+      45ms 14.06% 14.06%      117ms 36.56%  cookiejar.xo:173    cookiejar.jar_cookies.fn2
+      43ms 13.44% 27.50%       43ms 13.44%  -                   drop Str
+      11ms  3.44% 30.94%       14ms  4.38%  obj.xo:405          obj.str_eq
+       9ms  2.81% 33.75%       22ms  6.88%  cookiejar.xo:90     cookiejar.domain_match
+       9ms  2.81% 36.56%       22ms  6.88%  obj.xo:1096         obj.reserve_slow
+       9ms  2.81% 39.38%       37ms 11.56%  -                   xo.maph.slowput[Map[Str, cookiejar.Entry]]
+       6ms  1.88% 41.25%        7ms  2.19%  obj.xo:788          obj.each
+       6ms  1.88% 43.13%        6ms  1.88%  -                   share Str
+       6ms  1.88% 45.00%        6ms  1.88%  scan.xo:163         scan.eq_at
+       6ms  1.88% 46.88%       45ms 14.06%  -                   xo.map.put[Map[Str, cookiejar.Entry]]
+       6ms  1.88% 48.75%        8ms  2.50%  -                   xo.mlog.recordk[xo.MapLogK[Str]]
+       5ms  1.56% 50.31%        5ms  1.56%  alloc.xo:467        alloc.free
+       5ms  1.56% 51.88%        5ms  1.56%  -                   dupp xo.MapLog[Map[Str, Map[Str, cookiejar.Entry]]]
+       5ms  1.56% 53.44%        6ms  1.88%  libcstr.xo:92       libcstr.move_small
+       4ms  1.25% 54.69%        9ms  2.81%  obj.xo:1127         obj.move_at
+       4ms  1.25% 55.94%        4ms  1.25%  libcstr.xo:68       libcstr.copy_words
+       4ms  1.25% 57.19%        4ms  1.25%  -                   share cookiejar.Entry
+       4ms  1.25% 58.44%        4ms  1.25%  -                   inc thunk_x3
+       4ms  1.25% 59.69%       36ms 11.25%  cookiejar.xo:133    cookiejar.should_send
+       4ms  1.25% 60.94%        4ms  1.25%  -                   xo.mlog.vals[xo.MapLog[Map[Str, cookiejar.Entry]]]
+       4ms  1.25% 62.19%       10ms  3.13%  -                   xo.mlog.flatten[xo.MapLogK[Str]]
+       3ms  0.94% 63.13%        8ms  2.50%  libcstr.xo:115      libcstr.memcpy
+       3ms  0.94% 64.06%        3ms  0.94%  ints.xo:134         ints.str_hash
+       3ms  0.94% 65.00%        3ms  0.94%  -                   drop Result[Bytes, netip.ParseErr]
+       3ms  0.94% 65.94%        3ms  0.94%  -                   drop List[xo.MapLevel[Str]]
+       3ms  0.94% 66.88%        3ms  0.94%  -                   inc thunk_x16
+       3ms  0.94% 67.81%        3ms  0.94%  alloc.xo:299        alloc.alloc
+       3ms  0.94% 68.75%        3ms  0.94%  cabi.xo:429         cabi.obj_rs_concat
+       3ms  0.94% 69.69%       24ms  7.50%  -                   xo.mlog.record[xo.MapLog[Map[Str, cookiejar.Entry]]]
+       3ms  0.94% 70.63%        4ms  1.25%  -                   xo.mlog.each[xo.MapLogK[Str]]
+
+top 30 by cumulative
+      flat  flat%   sum%        cum   cum%  line (the hottest)  function
+       0ms  0.00%  0.00%      221ms 69.06%  sched.xo:267        sched.fiber_main
+       0ms  0.00%  0.00%      221ms 69.06%  -                   xo_fiber_entry
+       0ms  0.00%  0.00%      221ms 69.06%  -                   main
+       0ms  0.00%  0.00%      221ms 69.06%  entry.xo:222        entry.main_on_fiber
+       0ms  0.00%  0.00%      221ms 69.06%  cabi.xo:732         cabi.fiber_main
+       0ms  0.00%  0.00%      221ms 69.06%  main.xo:28          main
+       3ms  0.94%  0.94%      134ms 41.88%  cookiejar.xo:207    cookiejar.jar_cookies
+      45ms 14.06% 15.00%      117ms 36.56%  cookiejar.xo:173    cookiejar.jar_cookies.fn2
+       0ms  0.00% 15.00%       80ms 25.00%  cookiejar.xo:285    cookiejar.jar_set_cookies
+       2ms  0.63% 15.63%       69ms 21.56%  cookiejar.xo:287    cookiejar.jar_set_cookies.fn1
+       6ms  1.88% 17.50%       45ms 14.06%  -                   xo.map.put[Map[Str, cookiejar.Entry]]
+      43ms 13.44% 30.94%       43ms 13.44%  -                   drop Str
+       1ms  0.31% 31.25%       39ms 12.19%  -                   xo.maph.putrest[Map[Str, cookiejar.Entry]]
+== lines
+      flat  flat%   sum%        cum   cum%
+      43ms 13.44% 13.44%       43ms 13.44%  drop Str
+      29ms  9.06% 22.50%       29ms  9.06%  cookiejar.jar_cookies.fn2 std/native/cookiejar.xo:173
+       9ms  2.81% 25.31%       37ms 11.56%  xo.maph.slowput[Map[Str, cookiejar.Entry]]
+       7ms  2.19% 27.50%       43ms 13.44%  cookiejar.jar_cookies.fn2 std/native/cookiejar.xo:178
+       6ms  1.88% 29.38%        6ms  1.88%  cookiejar.jar_cookies.fn2 std/native/cookiejar.xo:174
+       6ms  1.88% 31.25%        6ms  1.88%  share Str
+       6ms  1.88% 33.12%       45ms 14.06%  xo.map.put[Map[Str, cookiejar.Entry]]
+       6ms  1.88% 35.00%        8ms  2.50%  xo.mlog.recordk[xo.MapLogK[Str]]
+       5ms  1.56% 36.56%        5ms  1.56%  dupp xo.MapLog[Map[Str, Map[Str, cookiejar.Entry]]]
+       5ms  1.56% 38.12%        5ms  1.56%  obj.reserve_slow std/native/llrt/obj.xo:1096
+       5ms  1.56% 39.69%        5ms  1.56%  obj.str_eq std/native/llrt/obj.xo:405 (inline)
+       4ms  1.25% 40.94%       15ms  4.69%  cookiejar.domain_match std/native/cookiejar.xo:89 (inline)
+       4ms  1.25% 42.19%        4ms  1.25%  cookiejar.domain_match std/native/cookiejar.xo:90 (inline)
+       4ms  1.25% 43.44%       36ms 11.25%  cookiejar.should_send std/native/cookiejar.xo:133
+       4ms  1.25% 44.69%        4ms  1.25%  inc thunk_x3
+       4ms  1.25% 45.94%        4ms  1.25%  obj.move_at std/native/llrt/obj.xo:1127
+       4ms  1.25% 47.19%        4ms  1.25%  scan.eq_at std/native/llrt/scan.xo:163
+       4ms  1.25% 48.44%        4ms  1.25%  share cookiejar.Entry
+       4ms  1.25% 49.69%       10ms  3.12%  xo.mlog.flatten[xo.MapLogK[Str]]
+       4ms  1.25% 50.94%        4ms  1.25%  xo.mlog.vals[xo.MapLog[Map[Str, cookiejar.Entry]]]
+       3ms  0.94% 51.88%        3ms  0.94%  alloc.free std/native/llrt/alloc.xo:467 (inline)
+       3ms  0.94% 52.81%        3ms  0.94%  cabi.obj_rs_concat std/native/llrt/cabi.xo:429
+       3ms  0.94% 53.75%        3ms  0.94%  drop List[xo.MapLevel[Str]]
+       3ms  0.94% 54.69%        3ms  0.94%  drop Result[Bytes, netip.ParseErr]
+       3ms  0.94% 55.62%        3ms  0.94%  inc thunk_x16
+       3ms  0.94% 56.56%        3ms  0.94%  obj.each std/native/llrt/obj.xo:788
+       3ms  0.94% 57.50%        4ms  1.25%  obj.reserve_slow std/native/llrt/obj.xo:1102
+       3ms  0.94% 58.44%        3ms  0.94%  obj.str_eq std/native/llrt/obj.xo:408 (inline)
+       3ms  0.94% 59.38%        4ms  1.25%  obj.str_eq std/native/llrt/obj.xo:414 (inline)
+       3ms  0.94% 60.31%        4ms  1.25%  xo.mlog.each[xo.MapLogK[Str]]
+       3ms  0.94% 61.25%       24ms  7.50%  xo.mlog.record[xo.MapLog[Map[Str, cookiejar.Entry]]]
+       2ms  0.62% 61.88%        2ms  0.62%  alloc.free std/native/llrt/alloc.xo:464
+       2ms  0.62% 62.50%        2ms  0.62%  alloc.resize std/native/llrt/alloc.xo:798
+       2ms  0.62% 63.12%        4ms  1.25%  cookiejar.jar_cookies std/native/cookiejar.xo:207
+       2ms  0.62% 63.75%       22ms  6.88%  cookiejar.jar_cookies.fn2 std/native/cookiejar.xo:190
+       2ms  0.62% 64.38%        2ms  0.62%  drop List[Int]
+       2ms  0.62% 65.00%        2ms  0.62%  drop List[Str]
+       2ms  0.62% 65.62%        2ms  0.62%  drop cookiejar.Entry
+       2ms  0.62% 66.25%        2ms  0.62%  dropp cookiejar.Entry
+       2ms  0.62% 66.88%        2ms  0.62%  dupp xo.MapLog[Map[Str, cookiejar.Entry]]
+       2ms  0.62% 67.50%        2ms  0.62%  inc thunk_x1
+       2ms  0.62% 68.12%        2ms  0.62%  libcstr.copy_words std/native/llrt/libcstr.xo:68 (inline)
+       2ms  0.62% 68.75%        2ms  0.62%  libcstr.memcpy std/native/llrt/libcstr.xo:115 (inline)
+       2ms  0.62% 69.38%        2ms  0.62%  libcstr.move_small std/native/llrt/libcstr.xo:108
+       2ms  0.62% 70.00%        2ms  0.62%  libcstr.move_small std/native/llrt/libcstr.xo:92
+OFFLOAD-RC=0

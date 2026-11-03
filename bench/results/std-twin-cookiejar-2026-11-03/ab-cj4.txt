@@ -1,0 +1,20 @@
+offload: /work had 27 GB free; pruned xo cache files idle over 360 min, now 27G
+ab-host l2cj4: A 74a02542e4 B 6cecf84589 on Linux aarch64, 12 CPUs
+ab-host: xo a built in 1 s (xo 0.37.0 linux/arm64)
+ab-host: xo b built in 0 s (xo 0.37.0 linux/arm64)
+ab-host: quiet wait 0 s, load 0.09 0.67 1.58
+round 1/3: load 0.16 / 0.16
+round 2/3: load 0.16 / 0.16
+round 3/3: load 0.16 / 0.16
+A: /work/abl2cj4.out/prog-a both 
+B: /work/abl2cj4.out/prog-b both 
+3 of 3 rounds used (0 loaded), loads A/B per round: 0.16/0.16 0.16/0.16 0.16/0.16
+
+metric                A median    B median    spread A/B        B / A   95% interval      verdict
+wall_ms               288.3       278.1       0.462% 0.195%     0.965   0.96 to 0.968     better (n=3)
+cpu_ms                288.3       278.1       0.465% 0.191%     0.965   0.96 to 0.968     better (n=3)
+max_rss_kb            1220        1220        0% 0%             1.0     1.0 to 1.0        within noise (n=3)
+load: median 0.16 (A) / 0.16 (B); loaded: 0 of 3 rounds (at or above 6.0; baseline 0.16 + 3.0, at least 6.0)
+instructions, cycles, ipc: n/a (only macOS time -l reports them)
+ab-host l2cj4: ok in 4 s
+OFFLOAD-RC=0
