@@ -863,8 +863,7 @@ fn pool_take_kind(h1: Int, roots: Int, kp: Int, kn: Int) -> Int {
 /// at most 100 stay, the oldest goes (MaxIdleConns); an HTTP/1.1 one
 /// closes when 2 for its key are idle already (MaxIdleConnsPerHost).
 fn pool_put(pc: Int) {
-  // no pool on wasm (start_wasm dials each request, decision 0447 R2b)
-  if target.arch == TargetArch.Wasm32 || ld4(pc, P_BROKEN) != 0 || ld4(pc, P_GOAWAY) != 0 || ld4(pc, P_SPENT) != 0 {
+  if ld4(pc, P_BROKEN) != 0 || ld4(pc, P_GOAWAY) != 0 || ld4(pc, P_SPENT) != 0 {
     conn_free(pc)
     return
   }
@@ -888,8 +887,11 @@ fn pool_put(pc: Int) {
     }
   }
   st(pc, P_IDLE, sysio.mono_ns())
-  // the idle connections are closed at exit (entry.xo, decision 0233)
-  atexit.set_streams(rt.fn_addr("streams_free"))
+  if target.arch != TargetArch.Wasm32 {
+    // the idle connections are closed at exit (entry.xo, decision 0233);
+    // a wasm instance's sockets end with it
+    atexit.set_streams(rt.fn_addr("streams_free"))
+  }
   let pl = h2pool()
   var drop = 0
   pool.lock(pl + PL_MU)
@@ -922,6 +924,14 @@ const H1_PER_HOST = 2
 fn idle_ok(c: Int) -> Bool {
   if ld(c, C_N) != ld(c, C_OFF) || rt.mem_load(c, C_EOF, 4) != 0 {
     return false
+  }
+  if target.arch == TargetArch.Wasm32 {
+    // no peek on wasm: a byte read means the connection is not usable
+    // anyway (R1's connection in C_PD; -2: nothing waits)
+    let b = rt.heap_large(8) - 8
+    let k = netwasi.hc_try_recv(ld(c, C_PD), b, 1)
+    rt.heap_release(b)
+    return k == -2
   }
   let t = rt.heap_large(8) - 8
   let r = sock.recv(rt.mem_load(c, C_FD, 4), t, 1, MSG_PEEK)
@@ -994,8 +1004,7 @@ fn pool_key(https: Bool, addr: Str, tls_host: Str) -> Str { if https { addr + "|
 /// error.
 pub fn end_keep(r: rthttp.CResp, keep: Bool, https: Bool, addr: Str, tls_host: Str, roots: rthttp.Roots, s: Int, why: Str) {
   let a = rec(r)
-  // no connection pool on wasm (start_wasm): the connection closes
-  if keep && s == CC_OK && ld(a, R_CN) != 0 && target.arch != TargetArch.Wasm32 {
+  if keep && s == CC_OK && ld(a, R_CN) != 0 {
     let key = pool_key(https, addr, tls_host)
     h1_put(a, rt.obj_addr(roots), raw.data(key), key.len())
     raw.alive_str(key)
@@ -1296,7 +1305,7 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
   if target.arch == TargetArch.Wasm32 {
     let w = rt.wasi_handle_new(R_SIZE, rt.wasi_hook("cresp_free"))
     st(w, R_PREFIX, cstr_dup(prefix))
-    start_wasm(w, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, h2c, alpn, cfg)
+    start_wasm(w, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, pool, h2c, alpn, cfg)
     let hw = rt.obj_at[rthttp.CResp](w)
     tasks.h_release(w)
     return hw
@@ -1312,9 +1321,20 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
 /// start on wasm (a wasip2/wasm command, decision 0447 R2b): HTTP/1.1
 /// on a new connection over R1's wasi:sockets each time, with TLS over it
 /// for https (R2e), and HTTP/2 when ALPN chooses it or with prior
-/// knowledge (R2f: conn_new and an exchange, as start); no connection
-/// pool (pool_put closes).
-fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, h2c: Bool, alpn: List[Str], cfg: List[Int]) {
+/// knowledge (R2f: conn_new and an exchange, as start); an idle pooled
+/// connection first, as start (R2g).
+fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str], cfg: List[Int]) {
+  let key = pool_key(https, addr, tls_host) + cfg_key(cfg)
+  if (https || h2c) && pool && (alpn.is_empty() || alpn.contains("h2")) {
+    let pc = pool_take(roots, raw.data(key), key.len())
+    if pc != 0 {
+      exchange_start(r, pc, 1, raw.bytes_addr(body), body.len(), dl)
+      return
+    }
+  }
+  if pool && !h2c && h1_take(r, roots, raw.data(key), key.len(), dl) {
+    return
+  }
   let d = if dl != 0 { dl - sysio.mono_ns() } else { 0 }
   if dl != 0 && d <= 0 {
     fail(r, 3, "")

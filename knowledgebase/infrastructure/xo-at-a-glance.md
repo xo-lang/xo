@@ -143,5 +143,6 @@ lists the rest.
   in a command (the native server's code, decision 0447 R2a, R2d, R2f;
   no idle parking); `http.Client`, std/tls's client and std/websocket
   work in a command over sockets, https and HTTP/2 included (decision
-  0447 R2b, R2e, R2f; no connection pool, no system roots); UDP and DNS
+  0447 R2b, R2e, R2f, R2g; idle connections pooled as natively; no system
+  roots); UDP and DNS
   records do not run in a command yet (wasm_cmd_unsupported.txt).

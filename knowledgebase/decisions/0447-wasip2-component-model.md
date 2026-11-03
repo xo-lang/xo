@@ -880,3 +880,18 @@ knowledge (h2c), handing the dialed connection to conn_new and an
 exchange as start does; there is no pool on wasm (pool_put closes the
 connection, conn_free closes it through wasi_sock_close), so each
 request dials, as R2b's HTTP/1.1 does.
+
+### Connection pool in a command (2026-11-03, R2g)
+
+http.Client in a command keeps idle connections as natively (decision
+0303's HTTP/1.1 pool and the HTTP/2 one: hclient's pool at ctx.svc()'s
+SV_H2_POOL, under pool.lock, which never contends on one thread since no
+wait holds it). start_wasm takes an idle connection for the key before it
+dials, end_keep and pool_put keep connections on wasm, and idle_ok, which
+peeks the socket natively, reads one byte without waiting on wasm
+(hc_try_recv: nothing there means usable; a byte, the end or an error
+means the server closed or broke it, and the connection is dropped
+anyway). The idle connections are not closed at exit on wasm
+(atexit.set_streams takes a native function address; the instance's
+sockets end with it).
+

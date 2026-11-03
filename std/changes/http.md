@@ -1,5 +1,19 @@
 # std/http changes
 
+## 2026-11-03: feature: http.Client reuses connections in a wasip2/wasm command
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0447 R2g
+- Go reference: none
+- Test: golden http_client_keepalive as a wasip2/wasm command (TestWasmCommandGoldens)
+- Timing: none
+
+http.Client in a wasip2/wasm command keeps idle HTTP/1.1 and HTTP/2
+connections and reuses them, as natively (up to 100 idle, 2 per host for
+HTTP/1.1, 90 s), instead of dialing (and, for https, a TLS handshake) for
+every request.
+
 ## 2026-11-03: feature: HTTP/2 server in a wasip2/wasm command
 
 - Kind: feature

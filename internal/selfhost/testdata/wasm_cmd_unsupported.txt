@@ -16,7 +16,6 @@ fs_mkdir_mode # WASI has no file modes or locks: create_dir_all_mode
 fs_ops_edges # WASI has no times before 1970
 handle_drop_leak # XO1515: no processes in a WASI 0.2 world (proc.spawn)
 host_usage # XO1515: no processes in a WASI 0.2 world (proc.run)
-http_client_keepalive # counts reused connections: http.Client in a command has no connection pool (each request dials, decision 0447 R2b, R2f)
 lock_drop_relock # WASI has no file modes or locks
 net_only # XO1515: no processes in a WASI 0.2 world (proc.run)
 proc_child_usage # XO1515: no processes in a WASI 0.2 world (proc.spawn)
