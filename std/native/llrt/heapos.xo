@@ -615,30 +615,14 @@ fn set_prot(a: Int, n: Int, prot: Int) {
   }
 }
 
-/// Whether h is the main thread's record: the list's last one, which no record
-/// links to (thread_heap links every other record before it; the list's head
-/// is the newest record, so comparing with the head took a thread's record for
-/// the main one and raced with the push, tier 38, 2026-11-02).
-fn is_main_record(h: Int) -> Bool {
-  rt.mem_load(h, H_NEXT, 8) == 0
-}
-
 /// The new chunk c's usable bytes for heap record h, its limit recorded at
 /// lim (0: nothing to extend to).
 fn reserve(h: Int, c: Int, lim: Int) -> Int {
   if rt.mem_load(h, lim, 8) == 0 && dense_halves() {
-    if is_main_record(h) {
-      // the main thread's record, the list's last (thread_heap links every
-      // other record before it; the list's head is the newest record, and
-      // read here it raced with a new thread's push, tier 38, 2026-11-02): a
-      // program's single threaded work (a build's front end) allocates here
-      // densely from the start
-      thp_advise(c, CHUNK)
-      rt.mem_store(h, lim, 1, 8)
-      return CHUNK
-    }
     // XO_THP=dense: the first chunk's first half only, still accessible
-    // (mapped NOHUGEPAGE); extend opens the second half advised HUGEPAGE
+    // (mapped NOHUGEPAGE), the main thread's record's too (decision 0469: its
+    // whole first chunk advised HUGEPAGE cost a small program 2 MB for no
+    // measured build speed); extend opens the second half advised HUGEPAGE
     rt.mem_store(h, lim, c.wrapping_add(CHUNK), 8)
     return HALF
   }
@@ -873,9 +857,8 @@ fn thp_off() -> Bool { thp_mode() != 0 }
 /// thp-dense-2026-11-02.md: Go's density rule): chunks are mapped
 /// MADV_NOHUGEPAGE as with off; a heap record's first chunk opens its first
 /// 2 MiB half only, and when the bump uses it up the second half is advised
-/// MADV_HUGEPAGE and opened; the main thread's record's first chunk is
-/// advised MADV_HUGEPAGE whole (a build's front end allocates there densely
-/// from the start); once a record has used a chunk up, the used chunk (for
+/// MADV_HUGEPAGE and opened, the main thread's record's as every other's
+/// (decision 0469 dropped 0456's exception); once a record has used a chunk up, the used chunk (for
 /// khugepaged) and its next chunk (before its pages fault) are advised
 /// MADV_HUGEPAGE. A thread that fills 2 MiB allocates densely; one that never
 /// does stays on small pages. Large blocks keep the kernel's policy.

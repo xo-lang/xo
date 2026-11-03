@@ -1,7 +1,8 @@
 # 0456: XO_THP=dense, huge pages for heap chunks a thread fills
 
 Status: Accepted (owner, 2026-11-02, with v4 as Linux's default; proposed by Xo Lang 2,
-2026-11-02).
+2026-11-02). Amended by [0469](0469-thp-dense-no-main-exception.md) (owner, 2026-11-03): the
+main thread's record no longer advises its first chunk whole; it opens by halves like every other.
 
 ## Context
 
@@ -27,7 +28,8 @@ decision). Darwin, Windows and wasm are unchanged.
   0455's limit word; no mprotect, the half stays accessible).
 - The main thread's record is the exception: its first chunk is advised MADV_HUGEPAGE whole,
   since a program's single threaded work (a build's front end) allocates there densely from
-  the start.
+  the start. (Dropped by decision 0469, 2026-11-03: it cost coll putget 2 MB and no measured
+  build speed.)
 - Once a heap record has used a chunk up, that chunk (for khugepaged) and the record's next
   chunk are advised MADV_HUGEPAGE. The advice comes at map time, before the next chunk's pages
   fault, so a busy record's later chunks get huge pages at once.
@@ -70,7 +72,7 @@ change is in the CHANGELOG entry.
 - THP `madvise` (Ubuntu's default, WSL): MADV_HUGEPAGE is new there, so threads that fill
   chunks now get huge pages: coll's edit 7% faster for 14.5% more max RSS.
 - The main thread's first chunk takes huge pages from the start, so a server's main thread
-  costs up to one 4 MiB chunk of huge pages more than off.
+  costs up to one 4 MiB chunk of huge pages more than off (no longer, since decision 0469).
 - A few madvise calls per heap record over its life.
 - Go's other half, one address ordered page heap whose touched regions are full, is what keeps
   Go both fast and low. That is the larger change, decided separately.

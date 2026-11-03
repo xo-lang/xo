@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-03: perf: XO_THP=dense opens the main thread's first heap chunk by halves too
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 4's 0.36.0 release comparison (coll putget max RSS on linux/arm64), Xo Lang 2's THP breakdown
+- Go reference: Go's heap advises huge pages by density for every heap region alike
+- Test: arm64 heap, alloc and mem goldens; bench/perf/xo putget per XO_THP mode on linux/arm64; ab-host coll edit and self build
+- Timing: putget max RSS 10,704 to 8,696 KB (dense, linux/arm64 THP always; 0.84 of v0.35.0); coll edit wall 0.989, self 1.002, both within noise (decision 0469)
+- Shipped in: not yet released
+
+On Linux the main thread's heap no longer advises its whole first 4 MiB
+chunk for huge pages from the start; like every other thread's, it opens
+the first 2 MiB on small pages and advises the rest once that is used up.
+A small program no longer faults a huge page it barely touches.
+
 ## 2026-11-03: perf: a netpoller wait in a program with no concurrency wakes at once
 
 - Kind: perf

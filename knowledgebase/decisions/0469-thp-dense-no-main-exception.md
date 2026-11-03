@@ -1,6 +1,6 @@
 # 0469: XO_THP=dense without the main thread's exception
 
-Status: Proposed (amends decision 0456; owner's call)
+Status: Accepted (owner, 2026-11-03; amends decision 0456; proposed by Xo Lang 2, 2026-11-03)
 
 ## Context
 Decision 0456 (v4) advises the main thread's heap record's first 4 MiB chunk MADV_HUGEPAGE

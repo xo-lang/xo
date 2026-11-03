@@ -27,3 +27,7 @@ default) reads the huge page mode through the list head with no lock, while
 `thread_heap` stored the head with a plain store: TSan again, and on arm64 no
 ordering for the record's fields. The head is now stored with release and read
 by `thp_mode` with acquire.
+
+**Since decision 0469 (2026-11-03):** the main thread's branch in `reserve` is gone (the
+main record opens by halves like every other), so `is_main_record` and its test were
+removed; the lesson stands for any code that picks one record out of the list.
