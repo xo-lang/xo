@@ -28,9 +28,11 @@ robfig/cron's `Next` gets right and hand written loops get wrong.
    `@midnight`, `@hourly` and `@every DURATION` (a constant delay from `after`, robfig's ConstantDelaySchedule,
    rounded down to the second); a leading `TZ=Name` or `CRON_TZ=Name` field sets the zone (as the Go
    package). When both day of month and day of week are restricted, either matching fires (robfig's and Vixie
-   cron's rule). `next` follows robfig's `SpecSchedule.Next`: a wall clock time that does not exist (the spring
-   forward gap) fires at the first instant after the gap, one that happens twice (the fall back overlap)
-   fires once, at the first occurrence.
+   cron's rule: with either field starred, both must match). `next` is a port of robfig's `SpecSchedule.Next`
+(spec.go), loop for loop: the same walk over month, day, hour, minute and second, so its behaviour at
+daylight saving changes is robfig's, quirks included (Go's `time.Date` reading of a civil time: one in a
+gap becomes the later instant, one in an overlap the earlier, which `time.instant` expresses with
+`Ambiguity.Later` and `Earlier`).
    Cost: std/cron.xo, a pure native source (about 150 lines, std/go_compiled.txt), spec/std.md section,
    std/changes, corpus of seeded specs and start times in several zones (including DST gaps and overlaps)
    against robfig/cron v3 (an oracle module as bcryptoracle, GOPROXY permitting, else a faithful port of
