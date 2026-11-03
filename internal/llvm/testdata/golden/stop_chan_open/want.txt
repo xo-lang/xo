@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+first: open
+again: open
+requested: false
+--- stderr

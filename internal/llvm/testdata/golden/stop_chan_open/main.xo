@@ -1,0 +1,20 @@
+// task.stopping() when no stop is requested: the channel stays open, so a
+// select on it takes its `after` arm, and a later call gives an open
+// channel too. A wasm build makes it in its own runtime (rt3.xo
+// $task_stopping, decision 0447): WASI has no signals, so it never closes.
+use std/task
+
+fn wait(os: Os, ch: Chan[()]) -> Str {
+  var got = "none"
+  select {
+    v = ch.recv() => got = "closed ${v.is_none()}"
+    after 20ms => got = "open"
+  }
+  got
+}
+
+fn main(os: Os) {
+  os.stdio.println("first: ${wait(os, task.stopping())}")
+  os.stdio.println("again: ${wait(os, task.stopping())}")
+  os.stdio.println("requested: ${task.stop_requested()}")
+}

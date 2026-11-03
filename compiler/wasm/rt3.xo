@@ -53,7 +53,7 @@ fn rt3_blocking(name: Str) -> Bool {
 
 /// The runtime functions of rt3.xo called with the operands' leaves.
 fn rt3_direct(name: Str) -> Bool {
-  name is "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_unlock" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "task_deadline_left" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end"
+  name is "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_unlock" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "task_deadline_left" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end" | "task_stopping"
 }
 
 /// The WASI imports of the task runtime: the clocks and waiting for one.
@@ -103,6 +103,7 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
   let runsig = g.sig(["i32", "i32"], [])
   let empty = g.empty_list
   let zh = g.str_obj(b"")
+  let stop_at = g.str_obj(b"task.stopping")
   let task_free = g.table_index("$task_free")
   let scope_free = g.table_index("$scope_free")
   let chan_free = g.table_index("$chan_free")
@@ -1845,6 +1846,19 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       i32.add
       i32.store
       local.get $e)
+
+    ;; task.stopping(): the channel closed when a stop is requested; a new
+    ;; reference. WASI has no signals, so nothing requests a stop: a
+    ;; channel of its own for each call, never closed and never sent on,
+    ;; which its holder releases (one shared like the native targets'
+    ;; std/native/llrt/stop.xo stopping would stay live at exit)
+    (func $task_stopping (param $drop i64) (result i32)
+      i64.const 0
+      local.get $drop
+      i32.const ${stop_at}
+      i32.const 13
+      call $chan_new
+    )
 
     (func $chan_new (param $cap i64) (param $drop i64) (param $lo i32) (param $ln i32) (result i32) (local $c i32)
       local.get $cap
