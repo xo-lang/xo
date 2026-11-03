@@ -35,6 +35,19 @@ the native targets' NetErr values and texts
 (std/native/llrt/netwasi.xo; compiler/wasm rt9.xo). Unix domain sockets
 and service-name ports are not available there (`Io`).
 
+## 2026-11-03: perf: fs paths already clean are returned unchanged (walk_dir, Fs.join)
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/walkdir walk 1.92 of Go's wall; profile: statx 36%, linux.names 20%, fs_clean_slash 20%
+- Go reference: path.Clean (go1.26.1) lazy buffer fast path
+- Test: bench/perf/walkdir (twincheck), `xo test --std-module=native/prelude`, internal/stdtest corpora, fixed point
+
+`fs_clean_slash` checks first (`fs_is_clean`) whether the path has no empty, "." or ".." segment and no trailing
+slash, and returns it without splitting and joining. Xo / Go wall of walk: 1.92 to 1.54. The remaining gap is
+the API: Xo's FileInfo holds size, mode and time, so read_dir stats every entry, where Go's DirEntry stats only
+on Info(); with Go calling Info() on each entry too (`walk_info`), Xo / Go is 0.95.
+
 ## 2026-11-02: fix: standard input on wasm
 
 - Kind: fix
