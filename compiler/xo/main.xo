@@ -1608,7 +1608,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
   // the inline cache's hits left undecoded until read (decision 0283
   // stage B), where the per-function cache is used
   let lazy_inl = (march == "arm64" || march == "amd64") && !o.race && !release && o.cmd != "asm" && !passes_changed(os) && backend_cache_mode(os) != "verify" && (os.env.get("XO_LAZY_INLINE") ?? "") != "off" && (os.env.get("XO_INLINE_BREAK") ?? "").is_empty()
-  let (inl0, pend0, fb0) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
+  let (inl0, pend0, fb0) = inline_or_defer(os, mi, module_jobs(os, mi.funcs.len()), phases, cur_os, release, cur_rk, later, lazy_inl)
   var inl = inl0
   var pend = pend0
   // the first verification error of an inlined module built without
@@ -1628,14 +1628,14 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       mi = cur.m
       mi.reader_bodies = o.cmd != "asm" && !o.strip && debug_info_eff(o, release) != "off"
       let ta = check_assumptions(os, mi, phases, l.t)
-      let (inl2, pend2, fb2) = inline_or_defer(os, mi, emit_jobs(os), phases, cur_os, release, cur_rk, later, lazy_inl)
+      let (inl2, pend2, fb2) = inline_or_defer(os, mi, module_jobs(os, mi.funcs.len()), phases, cur_os, release, cur_rk, later, lazy_inl)
       inl = inl2
       pend = pend2
       inl_fb = fb2
       t = lap(os, phases, "inline", ta)
     }
     // arm64.generate_module(cur.m, tgoos, false), timed
-    let jobs = emit_jobs(os)
+    let jobs = module_jobs(os, mi.funcs.len())
     // with the per-function cache (decision 0220 addendum stage B)
     let (gm0, t1) = gen_module(os, o, ctx, c, if inl { mi } else { cur.m }, tgoos, release, jobs, phases, t)
     var gm = gm0
@@ -2274,6 +2274,29 @@ fn emit_jobs(os: Os) -> Int {
   ncores(os).min(16).min(mem_gb(os) / 3).max(1)
 }
 
+/// The functions per task of a module's parallel stages past the first
+/// two (module_jobs).
+const MODULE_JOB_FUNCS = 1024
+
+/// The tasks of a module's parallel stages (the inliner, the passes, the
+/// landing pads, insert_rc, the code generator) for a module of funcs
+/// functions: emit_jobs, at most 2 + funcs / MODULE_JOB_FUNCS. Each task
+/// that runs on another worker thread gives that thread its own heap
+/// chunks, so a small build on many cores held memory for work two tasks
+/// finish as soon: linux/arm64, 12 cores, edit builds with every task
+/// count capped at 2: coll max RSS 0.913, the HTTP server's 0.943, wall
+/// 1.0 and 0.996; at 1 the HTTP server's wall was 1.029 (decision 0448,
+/// "a small module's tasks").
+fn module_jobs(os: Os, funcs: Int) -> Int { small_jobs(os, 2 + funcs / MODULE_JOB_FUNCS) }
+
+/// emit_jobs, at most cap unless $XO_EMIT_JOBS sets the count.
+fn small_jobs(os: Os, cap: Int) -> Int {
+  if (Int.parse(os.env.get("XO_EMIT_JOBS") ?? "") ?? 0) > 0 {
+    return emit_jobs(os)
+  }
+  emit_jobs(os).min(cap)
+}
+
 /// The linker of a host link with no --ld (decision 0182 next step 1 and
 /// its 2026-10-16 addendum): compiler/macho on darwin when the assembler
 /// is not --as=cc and no `use c` source is linked, else cc; --ld=cc
@@ -2407,7 +2430,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
       t = lap(os, o.phases, "front_end_freed", t)
     }
     // b.run_passes(), timed; may_fault's scans on tasks
-    b.m.jobs = emit_jobs(os)
+    b.m.jobs = module_jobs(os, b.m.funcs.len())
     let tp = t
     b.keep_unwind_names = !(os.env.get("XO_STD_FACTS_DUMP") ?? "").is_empty() || !(os.env.get("XO_STD_FACTS_VERIFY") ?? "").is_empty()
     b.prune_unwind()
@@ -2415,7 +2438,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
     b.fold_known_calls()
     t = lap(os, o.phases, "prune_unwind.fold", t)
     let _p = lap(os, o.phases, "prune_unwind", tp)
-    landings_cleanup_cached(os, b, release, fe_settings(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, trace_support_eff(o, release), soft_cpu, heap_guard), emit_jobs(os), o.phases)
+    landings_cleanup_cached(os, b, release, fe_settings(c, root, tests, release, tests && o.real, tgoos, tgoarch, wasm, !wasm && nolibc(os, o, c, tgoos), prof, trace_support_eff(o, release), soft_cpu, heap_guard), module_jobs(os, b.m.funcs.len()), o.phases)
     t = os.clock.now()
     // the reference counting's optional pass (rc.xo chain_pads)
     b.m.passes_off = passes_off(os)
@@ -2424,7 +2447,7 @@ fn lower(os: Os, o: Opts, var c: check.Checker, strip: Bool, root: Str, tests: B
     // counting so its caches see the clones as functions
     b.specialize_args()
     t = lap(os, o.phases, "specialize_args", t)
-    let rk = rc_cached(os, b, release, emit_jobs(os), o.phases, lazy)
+    let rk = rc_cached(os, b, release, module_jobs(os, b.m.funcs.len()), o.phases, lazy)
     t = lap(os, o.phases, "insert_rc", t)
     Lowered{b: b, tu: tu, t: t, rc_keys: rk}
   }

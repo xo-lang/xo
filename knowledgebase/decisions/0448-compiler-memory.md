@@ -866,6 +866,39 @@ list-element-setter-moves-struct). With the bits in a one word `ObjFlags` field 
 40 to 37, chunks 56 to 48 MB, link peak 78 unchanged; coll warm RSS/footprint 46/30-31 flat, conc-spawn footprint
 27 to 25-26; Mac --ab coll warm wall 1.005, instructions 0.998, max RSS 0.999. Kept as a branch.
 
+### Case (c) on Linux: a small module's tasks (xo-lang-2, 2026-11-02)
+
+XO_THREADS=1 saved about 20 MB on Linux (above). The compiler's lever is its own task count: each
+task of a module's parallel stages (the inliner, the passes, the landing pads, insert_rc, the
+code generator) that runs on another worker thread gives that thread its own heap chunks.
+linux/arm64 (12 cores), `xo bench --ab` edit builds, 3 rounds, 0 loaded, every emit_jobs site
+capped at k (refs/recover/l2-thr-k1, k2, k4 on ae104ff32):
+
+| k | coll RSS / wall | conc-spawn RSS / wall | HTTP server RSS / wall | self wall / RSS |
+|---|---|---|---|---|
+| A/A | 1.021 / 0.993 | 0.999 / 0.976 | | |
+| 1 | 0.923 / 0.976 | 0.905 / 0.975 | 0.895 / 1.029 (worse) | |
+| 2 | 0.913 / 1.0 | 1.0 / 0.995 | 0.943 / 0.996 | 2.378 / 0.862 |
+| 4 | 1.013 / 0.993 | 1.0 / 1.049 (worse) | | |
+
+So two tasks keep a small build's wall and drop up to 9% of its RSS, one task costs the HTTP
+server 3% wall, and the self build needs every task. module_jobs caps the module sites at
+2 + functions / 1024 (coll 339 functions, the HTTP server 494: 2 tasks; xo itself: emit_jobs).
+The parse prefetch (bcache.xo) takes 2 + files / 64. Base 28cdc166b, 3 rounds, 0 loaded:
+
+| | coll RSS / wall | conc-spawn RSS / wall | HTTP server RSS / wall | self wall / RSS |
+|---|---|---|---|---|
+| module sites only | 0.932 / 0.989 | 0.973 / 0.951 | 0.98 / 1.015 (noise) | 1.001 / 0.993 |
+| and the prefetch (landed) | 0.934 / 0.994 | 0.976 / 0.999 | 0.954 / 0.997 | 0.985 / 0.992 (2 of 3 rounds loaded) |
+
+ab-host has no unchanged warm rebuild mode, so these are edit builds; the Mac is unaffected in
+practice (XO_THREADS=1 saved 3 to 4 MB there). XO_EMIT_JOBS still sets every count.
+
+Tried, negative: a thread's first bump region as a 256 KiB slice of a shared chunk
+(refs/recover/l2-slices, f9f0e3228): coll RSS 0.979 wall 1.0, conc-spawn 0.98 / 1.035 worse,
+HTTP 0.978 / 1.017 worse, self 0.993 / 1.004. With THP dense (0456) a lightly used chunk costs
+few pages, so sharing it saves little and the shared lock costs wall.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

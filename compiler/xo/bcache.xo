@@ -1962,7 +1962,9 @@ fn parse_prefetch(os: Os, var c: check.Checker, dir: Str) {
   let next = Atomic[Int].new(0)
   let parsed = scope s {
     var ts = []
-    for _ in 0..emit_jobs(os).min(n).max(1) {
+    // two tasks and one per 64 files more (small_jobs: each task's worker
+    // keeps its own heap chunks; decision 0448, a small module's tasks)
+    for _ in 0..small_jobs(os, 2 + n / 64).min(n).max(1) {
       ts.push(s.spawn(fn() -> List[(Str, check.ParseEntry)] {
         var mine: List[(Str, check.ParseEntry)] = []
         while true {
