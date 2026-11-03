@@ -669,6 +669,14 @@ fn make_img(var d: Dec, mxx: Int, myy: Int) {
   d.mxx = mxx
   d.myy = myy
   d.made = true
+  if d.progressive {
+    // every component's blocks, so the coefficient list grows once
+    var total = 0
+    for i in 0..d.n_comp {
+      total += mxx * myy * d.ch[i] * d.cv[i] * 64
+    }
+    d.pcoef = List[Int32].with_capacity(total)
+  }
   if d.n_comp == 1 {
     d.ystride = 8 * mxx
     d.py.write(Bytes.zeroed(8 * mxx * 8 * myy))
@@ -738,12 +746,13 @@ fn reconstruct_block(var d: Dec, var b: List[Int], bx: Int, by: Int, ci: Int) {
 /// Refines non-zero entries of b in zig-zag order, skipping the first nz zero
 /// entries when nz >= 0; the position it stopped at, or a negative bit error
 /// code.
-fn refine_nonzeroes(var d: Dec, var b: List[Int], zig0: Int, zig_end: Int, nz0: Int, delta: Int) -> Int {
+fn refine_nonzeroes(var d: Dec, pb: Int, zig0: Int, zig_end: Int, nz0: Int, delta: Int) -> Int {
   var zig = zig0
   var nz = nz0
   while zig <= zig_end {
-    let u = UNZIG[zig]
-    if b[u] == 0 {
+    let u = pb + UNZIG[zig]
+    let cur = Int(d.pcoef[u])
+    if cur == 0 {
       if nz == 0 {
         break
       }
@@ -756,10 +765,10 @@ fn refine_nonzeroes(var d: Dec, var b: List[Int], zig0: Int, zig_end: Int, nz0: 
       return d.ec
     }
     if bit != 0 {
-      if b[u] >= 0 {
-        b[u] = w32(b[u] + delta)
+      if cur >= 0 {
+        d.pcoef[u] = Int32(w32(cur + delta))
       } else {
-        b[u] = w32(b[u] - delta)
+        d.pcoef[u] = Int32(w32(cur - delta))
       }
     }
     zig += 1
@@ -768,7 +777,7 @@ fn refine_nonzeroes(var d: Dec, var b: List[Int], zig0: Int, zig_end: Int, nz0: 
 }
 
 /// A successive approximation refinement block (Go's refine, section G.1.2).
-fn refine(var d: Dec, var b: List[Int], ta: Int, zig_start: Int, zig_end: Int, delta: Int) -> () ! jpeg.JpegErr {
+fn refine(var d: Dec, pb: Int, ta: Int, zig_start: Int, zig_end: Int, delta: Int) -> () ! jpeg.JpegErr {
   let ht = 4 + ta
   if zig_start == 0 {
     let bit = decode_bit(d)
@@ -776,7 +785,7 @@ fn refine(var d: Dec, var b: List[Int], ta: Int, zig_start: Int, zig_end: Int, d
       return Err(bit_err(d.ec))
     }
     if bit != 0 {
-      b[0] = b[0] | delta
+      d.pcoef[pb] = Int32(w32(Int(d.pcoef[pb]) | delta))
     }
     return
   }
@@ -816,7 +825,7 @@ fn refine(var d: Dec, var b: List[Int], ta: Int, zig_start: Int, zig_end: Int, d
         return Err(fmt_err("unexpected Huffman code"))
       }
       if !done {
-        zig = refine_nonzeroes(d, b, zig, zig_end, val0, delta)
+        zig = refine_nonzeroes(d, pb, zig, zig_end, val0, delta)
         if zig < 0 {
           return Err(bit_err(zig))
         }
@@ -824,7 +833,7 @@ fn refine(var d: Dec, var b: List[Int], ta: Int, zig_start: Int, zig_end: Int, d
           return Err(fmt_err("too many coefficients"))
         }
         if z != 0 {
-          b[UNZIG[zig]] = z
+          d.pcoef[pb + UNZIG[zig]] = Int32(z)
         }
         zig += 1
       }
@@ -832,7 +841,7 @@ fn refine(var d: Dec, var b: List[Int], ta: Int, zig_start: Int, zig_end: Int, d
   }
   if d.eob_run > 0 {
     d.eob_run -= 1
-    let r = refine_nonzeroes(d, b, zig, zig_end, -1, delta)
+    let r = refine_nonzeroes(d, pb, zig, zig_end, -1, delta)
     if r < 0 {
       return Err(bit_err(r))
     }
@@ -875,12 +884,6 @@ fn find_rst(var d: Dec, expected: Int, t0_in: Int, t1_in: Int) -> () ! jpeg.Jpeg
 fn load_block(d: Dec, base: Int, var b: List[Int]) {
   for k in 0..64 {
     b[k] = Int(d.pcoef[base + k])
-  }
-}
-
-fn store_block(var d: Dec, base: Int, b: List[Int]) {
-  for k in 0..64 {
-    d.pcoef[base + k] = Int32(w32(b[k]))
   }
 }
 
@@ -1007,14 +1010,13 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! jpeg.JpegErr {
           var pb = 0
           if d.progressive {
             pb = d.pbase[ci] + (by * mxx * hi + bx) * 64
-            load_block(d, pb, b)
           } else {
             for k in 0..64 {
               b[k] = 0
             }
           }
           if ah != 0 {
-            refine(d, b, scan_ta[i], zig_start, zig_end, 1 << al)?
+            refine(d, pb, scan_ta[i], zig_start, zig_end, 1 << al)?
           } else {
             var zig = zig_start
             if zig == 0 {
@@ -1031,7 +1033,11 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! jpeg.JpegErr {
                 return Err(bit_err(d.ec))
               }
               dc[ci] = w32(dc[ci] + dc_delta)
-              b[0] = w32(dc[ci] << al)
+              if d.progressive {
+                d.pcoef[pb] = Int32(w32(dc[ci] << al))
+              } else {
+                b[0] = w32(dc[ci] << al)
+              }
             }
             if zig <= zig_end && d.eob_run > 0 {
               d.eob_run -= 1
@@ -1053,7 +1059,11 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! jpeg.JpegErr {
                   if ac == ERRV {
                     return Err(bit_err(d.ec))
                   }
-                  b[UNZIG[zig]] = w32(ac << al)
+                  if d.progressive {
+                    d.pcoef[pb + UNZIG[zig]] = Int32(w32(ac << al))
+                  } else {
+                    b[UNZIG[zig]] = w32(ac << al)
+                  }
                 } else {
                   if val0 != 15 {
                     d.eob_run = 1 << val0
@@ -1074,7 +1084,6 @@ fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! jpeg.JpegErr {
             }
           }
           if d.progressive {
-            store_block(d, pb, b)
             continue
           }
           reconstruct_block(d, b, bx, by, ci)
