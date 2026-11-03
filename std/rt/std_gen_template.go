@@ -121,4 +121,5 @@ func (v Template_Template) M_debug(*Task) string { return Debug(v) }
 func (v *Template_Template) XoMark() {
 	v.F_sources.XoMark()
 	v.F_funcs.XoMark()
+	MarkP(&v.F_parsed)
 }

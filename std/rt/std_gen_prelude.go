@@ -267,6 +267,11 @@ func (v Os) XoDebug(b *strings.Builder) {
 
 func (v Os) M_debug(*Task) string { return Debug(v) }
 
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Os) XoMark() {
+	MarkP(&v.F_tasks)
+}
+
 type FsErr struct {
 	Tag int
 	P   any

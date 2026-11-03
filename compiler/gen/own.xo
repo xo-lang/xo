@@ -6,6 +6,14 @@
 
 use github.com/xo-lang/xo/compiler/check
 
+/// A struct of a std module (not the prelude) whose declaration file
+/// leaves it empty (`struct Deque[T] {}`): its fields live in std/rt, where
+/// it may hold a list and mark it in an XoMark method, so a copy must call
+/// rt.MarkP (a no-op for a type without one).
+fn (g: Gen) opaque_std(o: Int) -> Bool {
+  g.c.objs[o].opaque && g.is_std_mod(g.omod(o)) && !g.oprelude(o)
+}
+
 /// Whether values of t may hold a List inline (holdsList).
 fn (var g: Gen) holds_list(t: Int) -> Bool {
   var seen: Map[Int, Bool] = {}
@@ -48,6 +56,9 @@ fn (var g: Gen) holds_list1(t0: Int, var seen: Map[Int, Bool]) -> Bool {
         return false
       }
       let k = g.tkind(o)
+      if k == "struct" && g.opaque_std(o) {
+        return true
+      }
       if k == "struct" {
         seen[o] = true
         let s = g.subst_of(o, t)
@@ -119,6 +130,9 @@ fn (var g: Gen) mark_stmts(addr: Str, t0: Int) -> List[Str] {
           let b = g.mark_stmts(addr + ".E", x.args[1])
           return wrap_if(addr + ".Ok", a, b)
         }
+      }
+      if g.opaque_std(x.obj) {
+        return ["${g.rt()}MarkP(&${addr})"]
       }
       // a struct or newtype: its generated XoMark (markMethod)
       [addr + ".XoMark()"]

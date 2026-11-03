@@ -86,6 +86,17 @@ func (v Testing_TestOs) XoDebug(b *strings.Builder) {
 
 func (v Testing_TestOs) M_debug(*Task) string { return Debug(v) }
 
+// XoMark marks the lists held by the fields (see rt.List).
+func (v *Testing_TestOs) XoMark() {
+	MarkP(&v.F_net)
+	MarkP(&v.F_fs)
+	MarkP(&v.F_clock)
+	MarkP(&v.F_env)
+	MarkP(&v.F_stdio)
+	MarkP(&v.F_proc)
+	MarkP(&v.F_tasks)
+}
+
 type Testing_FsOp struct {
 	Tag int
 	P   any

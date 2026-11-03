@@ -430,6 +430,9 @@ func (v X509_Certificate) M_debug(*Task) string { return Debug(v) }
 func (v *X509_Certificate) XoMark() {
 	v.F_issuer.XoMark()
 	v.F_subject.XoMark()
+	if v.F_public_key.Some {
+		MarkP(&v.F_public_key.V)
+	}
 	v.F_dns_names.XoMark()
 	v.F_ip_addresses.XoMark()
 	v.F_email_addresses.XoMark()
@@ -767,6 +770,9 @@ func (v X509_CertificateRequest) M_debug(*Task) string { return Debug(v) }
 // XoMark marks the lists held by the fields (see rt.List).
 func (v *X509_CertificateRequest) XoMark() {
 	v.F_subject.XoMark()
+	if v.F_public_key.Some {
+		MarkP(&v.F_public_key.V)
+	}
 	v.F_dns_names.XoMark()
 	v.F_ip_addresses.XoMark()
 	v.F_email_addresses.XoMark()

@@ -1,0 +1,18 @@
+// A copy of a std type that the declaration file leaves opaque
+// (`struct Deque[T] {}`) must not alias the original: the Go backend marks
+// the lists a value holds when it is copied (own.xo holds_list), and it
+// used to skip opaque std structs, so the copy and the original shared one
+// ring and a write through one showed in the other (found 2026-11-03 with
+// std/heap). Every backend prints the same.
+use std/deque
+
+fn main(os: Os) uses stdio {
+  var a: deque.Deque[Int] = deque.new(cap: 16)
+  a.push_back(1)
+  a.push_back(2)
+  var b = a
+  b.push_back(9)
+  a.push_back(7)
+  let x = a.pop_front()
+  os.stdio.println("b=${b.to_list().len()} ${b.get(2) ?? -1} ${b.front() ?? -1} a=${a.get(2) ?? -1} ${x ?? -1}")
+}

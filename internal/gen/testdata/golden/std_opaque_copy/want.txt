@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+b=3 9 1 a=-1 1
+--- stderr

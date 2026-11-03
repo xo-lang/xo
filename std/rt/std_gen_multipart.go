@@ -103,6 +103,7 @@ func (v Multipart_Form) M_debug(*Task) string { return Debug(v) }
 
 // XoMark marks the lists held by the fields (see rt.List).
 func (v *Multipart_Form) XoMark() {
+	MarkP(&v.F_values)
 	v.F_files.XoMark()
 }
 
