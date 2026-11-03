@@ -448,16 +448,16 @@ fn decode(encoded: Str) -> Str ! idna.IdnaErr {
     output.insert(i, n)
     i += 1
   }
-  var sb = StrBuilder.new()
+  var sb = BytesBuilder.with_capacity(output.len() * 3)
   for r in output {
-    sb.write("${Rune(r)}")
+    sb.write_rune(Rune(r))
   }
-  sb.freeze()
+  sb.freeze().to_str() ?? ""
 }
 
 fn encode(prefix: Str, s: Str) -> Str ! idna.IdnaErr {
-  var out = StrBuilder.new()
-  out.write(prefix)
+  var out = BytesBuilder.with_capacity(prefix.len() + s.len() + 8)
+  out.write_str(prefix)
   var delta = 0
   var n = INITIAL_N
   var bias = INITIAL_BIAS
@@ -467,14 +467,14 @@ fn encode(prefix: Str, s: Str) -> Str ! idna.IdnaErr {
   for r in rs {
     if Int(r) < 0x80 {
       b += 1
-      out.write("${r}")
+      out.write_rune(r)
     } else {
       remaining += 1
     }
   }
   var h = b
   if b > 0 {
-    out.write("-")
+    out.write_byte(45)
   }
   while remaining != 0 {
     var m = MAX_I32
@@ -513,11 +513,11 @@ fn encode(prefix: Str, s: Str) -> Str ! idna.IdnaErr {
         if q < t {
           break
         }
-        out.write("${Rune(encode_digit(t + (q - t) % (BASE - t)))}")
+        out.write_byte(UInt8(encode_digit(t + (q - t) % (BASE - t))))
         q = (q - t) / (BASE - t)
         k += BASE
       }
-      out.write("${Rune(encode_digit(q))}")
+      out.write_byte(UInt8(encode_digit(q)))
       bias = adapt(delta, h + 1, h == b)
       delta = 0
       h += 1
@@ -526,7 +526,7 @@ fn encode(prefix: Str, s: Str) -> Str ! idna.IdnaErr {
     delta += 1
     n += 1
   }
-  out.freeze()
+  out.freeze().to_str() ?? ""
 }
 
 // idna.go
