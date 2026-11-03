@@ -1,6 +1,6 @@
 # 0470: std/charset, text encodings (UTF-16, Windows-1252, Latin-1) (proposal)
 
-Status: Proposed
+Status: Accepted (owner, 2026-11-03)
 
 ## Context
 

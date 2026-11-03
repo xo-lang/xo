@@ -1,6 +1,6 @@
 # 0471: std/bufio, a buffered reader over a Stream (proposal)
 
-Status: Proposed
+Status: Accepted (owner, 2026-11-03)
 
 ## Context
 
