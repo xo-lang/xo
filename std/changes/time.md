@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-03: perf: a layout string is parsed with fewer allocations
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/time (new twin): format 7.0 and parse 6.1 of Go's wall with string layouts; layout_items 51% of the format profile
+- Go reference: time format.go (go1.26.1)
+- Test: bench/perf/time (twincheck), `xo test --std-module=time`, internal/stdtest corpus time
+
+`layout_items` keeps the literal before a field as a view of the layout where it is the only one, and sizes
+its item list once. Xo / Go wall with string layouts: format 7.0 to 5.4, parse 6.1 to 4.7; with `time.Layout`
+consts (decision 0332) format is 2.03 and parse 1.90. Prefer a const Layout in hot code.
+
 ## 2026-10-30: perf: a duration's sign byte is read once (Duration.parse)
 
 - Kind: perf

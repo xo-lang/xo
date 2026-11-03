@@ -1,5 +1,17 @@
 # std/html changes
 
+## 2026-11-03: perf: escape_string counts with a table and returns its bytes as the Str they are
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/html escape 2.31 of Go's wall on host 1 (bench/results/std-twin-rows2-2026-11-03.md)
+- Go reference: html escape.go EscapeString (go1.26.1)
+- Test: bench/perf/html (twincheck), `xo test --std-module=native/html`
+
+The first pass adds each byte's extra length from a 256 byte table instead of five comparisons, and the
+built bytes are returned as a Str without a UTF-8 check (they are ASCII replacements between runs of a
+valid text). Xo / Go wall of escape: 2.31 to 1.75 (quiet `xo bench --ab`, host 1, 15 rounds).
+
 ## 2026-10-30: perf: escape_string and unescape_string copy runs between the special bytes
 
 - Kind: perf
