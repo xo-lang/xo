@@ -11,7 +11,7 @@ Host 1 (linux/arm64, `twin-ab2`, n=15, ratio is Xo wall over Go wall), as rows16
 | norm | nfd | 1.13 | | 1.08 |
 | norm | nfkc | 1.11 | | 1.08 |
 
-Not Proven (ADR 0461: at most about 1.05); idna mixed and long and norm NFC remain slower than Go. Run to run spread on long is about 0.08. Remaining cost per the Mac profile: allocation of the per run decomposition lists, `compose`, and `lookup` (13 percent of idna mixed).
+Superseded by the sections below: after the ASCII index and the NFC quickSpan table (std-twin-norm-2026-11-03.md) NFC and NFKC are faster than Go and idna mixed is at 1.05. This section: not Proven (ADR 0461: at most about 1.05); the run to run spread on long is about 0.08.
 
 ## Per phase (host 1, n=15; ratio of Xo to Go wall)
 
