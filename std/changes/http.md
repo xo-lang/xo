@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-11-03: feature: HTTP/2 server in a wasip2/wasm command
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0447 R2f
+- Go reference: none
+- Test: goldens http_h2c, http_h2c_sniff, http_trailers, http_duplex, http_h2_config, http_conn_fault as wasip2/wasm commands (TestWasmCommandGoldens)
+- Timing: none
+
+http.Server serves HTTP/2 in a wasip2/wasm command: h2c (with_protocols
+UnencryptedHttp2) and over TLS when ALPN chooses h2, with streamed
+bodies and trailers. http.Client in a command speaks HTTP/2 too (ALPN h2
+over https, prior knowledge with UnencryptedHttp2), one connection per
+request (no connection pool on wasm).
+
 ## 2026-11-03: feature: https in a wasip2/wasm command
 
 - Kind: feature

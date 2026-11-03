@@ -16,13 +16,7 @@ fs_mkdir_mode # WASI has no file modes or locks: create_dir_all_mode
 fs_ops_edges # WASI has no times before 1970
 handle_drop_leak # XO1515: no processes in a WASI 0.2 world (proc.spawn)
 host_usage # XO1515: no processes in a WASI 0.2 world (proc.run)
-http_client_keepalive # the HTTP client over sockets in a command (rt.wasi_http_send is a wasi:http component's), step R2
-http_conn_fault # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_duplex # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_h2_config # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_h2c # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_h2c_sniff # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_trailers # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
+http_client_keepalive # counts reused connections: http.Client in a command has no connection pool (each request dials, decision 0447 R2b, R2f)
 lock_drop_relock # WASI has no file modes or locks
 net_only # XO1515: no processes in a WASI 0.2 world (proc.run)
 proc_child_usage # XO1515: no processes in a WASI 0.2 world (proc.spawn)

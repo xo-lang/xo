@@ -25,6 +25,7 @@ const E_CLOSED = 100
 const E_CANCELED = 101
 const E_DEADLINE = 102
 const E_END = 103
+const E_NOTHING = 105
 
 /// A handle of type T that is not open, for a failed call's result: the
 /// reference counting never frees the immortal object it is.
@@ -488,6 +489,28 @@ pub fn hc_recv(cn: Int, p: Int, cap: Int, deadline: Int) -> Int {
     return b.len()
   }
   if e == E_END { 0 } else if e == E_DEADLINE { -2 } else { -1 }
+}
+
+/// What connection cn has now, at most cap bytes into p, without waiting
+/// (HTTP/2's reads, hconn.h2_read; decision 0447 R2f): the count, 0 at
+/// the end of the stream, -2 when nothing is there yet, -1 on an error.
+pub fn hc_try_recv(cn: Int, p: Int, cap: Int) -> Int {
+  let c = rt.obj_at[Conn](cn)
+  let b = rt.wasi_sock_try_read(c, if cap > 1048576 { 1048576 } else { cap })
+  let e = rt.wasi_sock_err()
+  if e == 0 {
+    rt.mem_copy(p, raw.bytes_addr(b), b.len())
+    return b.len()
+  }
+  if e == E_END { 0 } else if e == E_NOTHING { -2 } else { -1 }
+}
+
+/// Waits until connection cn has bytes or its end, reading nothing (the
+/// HTTP/2 reader task, decision 0447 R2f): false when it was closed, the
+/// task canceled, or the connection's read deadline passed.
+pub fn hc_readable(cn: Int) -> Bool {
+  rt.wasi_sock_readable(rt.obj_at[Conn](cn))
+  rt.wasi_sock_err() == 0
 }
 
 /// The n bytes at p sent (hconn.send_until): 0 when every byte went, -2

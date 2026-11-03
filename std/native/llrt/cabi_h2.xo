@@ -6,7 +6,9 @@
 // only links no TLS server: srvh2c.xo installs these entries, and
 // srvtls.xo installs them with the TLS ones. Every top level function
 // here is an export, xo_x_<name>; the arguments and results are Ints
-// (rt.call_c2 and call_c4).
+// (rt.call_c2 and call_c4), each taking exactly its call's Ints and
+// returning an Int, since wasm calls them through the table by that type
+// (decision 0447).
 use native/llrt/h2srv
 use native/llrt/hconn
 use native/rt
@@ -15,17 +17,29 @@ fn ld(p: Int, off: Int) -> Int { rt.mem_load(p, off, 8) }
 
 fn st(p: Int, off: Int, v: Int) { rt.mem_store(p, off, v, 8) }
 
-fn srvtls_h2_stop(c: Int) { h2srv.conn_stop(c) }
+fn srvtls_h2_stop(c: Int, _u: Int) -> Int {
+  h2srv.conn_stop(c)
+  0
+}
 
-fn srvtls_h2_free(c: Int) { h2srv.conn_free(c) }
+fn srvtls_h2_free(c: Int, _u: Int) -> Int {
+  h2srv.conn_free(c)
+  0
+}
 
-fn srvtls_h2_stream_release(s: Int) { h2srv.stream_release(s) }
+fn srvtls_h2_stream_release(s: Int, _u: Int) -> Int {
+  h2srv.stream_release(s)
+  0
+}
 
 /// h2srv.emit, the status and whether the response started packed into
 /// one argument (status * 2 + started: call_c4 takes four).
 fn srvtls_h2_emit(hc: Int, status2: Int, p: Int, n: Int) -> Int { h2srv.emit(hconn.handle(hc), status2 / 2, (status2 & 1) != 0, p, n) }
 
-fn srvtls_h2_respond_at(hc: Int, status: Int, p: Int, n: Int) { h2srv.respond_at(hconn.handle(hc), status, p, n) }
+fn srvtls_h2_respond_at(hc: Int, status: Int, p: Int, n: Int) -> Int {
+  h2srv.respond_at(hconn.handle(hc), status, p, n)
+  0
+}
 
 fn srvtls_h2_finish(hc: Int, p: Int, n: Int, trl: Int) -> Int { if h2srv.finish(hconn.handle(hc), p, n, trl) { 1 } else { 0 } }
 

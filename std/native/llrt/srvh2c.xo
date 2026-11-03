@@ -43,12 +43,19 @@ pub fn end_fill(t: Int, k: Int) {
 
 /// Stores the HTTP/2 entries in table t.
 pub fn fill(t: Int) {
-  if target.arch == TargetArch.Wasm32 {
-    // no HTTP/2 on wasm (hserve.hc_h2 and hc_h2c return 0; decision
-    // 0447 R2d)
+  if !begin_fill(t, hconn.TO_ONCE_H2) {
     return
   }
-  if !begin_fill(t, hconn.TO_ONCE_H2) {
+  if target.arch == TargetArch.Wasm32 {
+    // the exports' table indexes (call_indirect, decision 0447)
+    rt.mem_store(t, 8 * hconn.TO_H2_STOP, rt.wasi_hook("srvtls_h2_stop"), 8)
+    rt.mem_store(t, 8 * hconn.TO_H2_FREE, rt.wasi_hook("srvtls_h2_free"), 8)
+    rt.mem_store(t, 8 * hconn.TO_H2_STREAM_RELEASE, rt.wasi_hook("srvtls_h2_stream_release"), 8)
+    rt.mem_store(t, 8 * hconn.TO_H2_EMIT, rt.wasi_hook("srvtls_h2_emit"), 8)
+    rt.mem_store(t, 8 * hconn.TO_H2_RESPOND_AT, rt.wasi_hook("srvtls_h2_respond_at"), 8)
+    rt.mem_store(t, 8 * hconn.TO_H2_FINISH, rt.wasi_hook("srvtls_h2_finish"), 8)
+    rt.mem_store(t, 8 * hconn.TO_H2C, rt.wasi_hook("srvh2c"), 8)
+    end_fill(t, hconn.TO_ONCE_H2)
     return
   }
   rt.mem_store(t, 8 * hconn.TO_H2_STOP, rt.fn_addr("srvtls_h2_stop"), 8)

@@ -698,7 +698,12 @@ fn conn_free(pc: Int) {
   }
   let c = pc + P_C
   tlsio.free(ld(c, C_TLS))
-  poll.pd_close(ld(c, C_PD))
+  if target.arch == TargetArch.Wasm32 {
+    // R1's connection (its record's address in C_PD; decision 0447 R2f)
+    rt.wasi_sock_close(rt.obj_at[Conn](ld(pc, P_CN)))
+  } else {
+    poll.pd_close(ld(c, C_PD))
+  }
   tasks.h_release(ld(pc, P_CN))
   tasks.h_release(ld(pc, P_ROOTS))
   free_c(ld(c, C_BUF))
@@ -858,7 +863,8 @@ fn pool_take_kind(h1: Int, roots: Int, kp: Int, kn: Int) -> Int {
 /// at most 100 stay, the oldest goes (MaxIdleConns); an HTTP/1.1 one
 /// closes when 2 for its key are idle already (MaxIdleConnsPerHost).
 fn pool_put(pc: Int) {
-  if ld4(pc, P_BROKEN) != 0 || ld4(pc, P_GOAWAY) != 0 || ld4(pc, P_SPENT) != 0 {
+  // no pool on wasm (start_wasm dials each request, decision 0447 R2b)
+  if target.arch == TargetArch.Wasm32 || ld4(pc, P_BROKEN) != 0 || ld4(pc, P_GOAWAY) != 0 || ld4(pc, P_SPENT) != 0 {
     conn_free(pc)
     return
   }
@@ -1290,7 +1296,7 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
   if target.arch == TargetArch.Wasm32 {
     let w = rt.wasi_handle_new(R_SIZE, rt.wasi_hook("cresp_free"))
     st(w, R_PREFIX, cstr_dup(prefix))
-    start_wasm(w, https, addr, tls_host, dl, rt.obj_addr(roots), prefix, h2c)
+    start_wasm(w, https, addr, tls_host, body, dl, rt.obj_addr(roots), prefix, h2c, alpn, cfg)
     let hw = rt.obj_at[rthttp.CResp](w)
     tasks.h_release(w)
     return hw
@@ -1305,12 +1311,10 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
 
 /// start on wasm (a wasip2/wasm command, decision 0447 R2b): HTTP/1.1
 /// on a new connection over R1's wasi:sockets each time, with TLS over it
-/// for https (R2e, ALPN http/1.1 only); no connection pool, no HTTP/2 yet.
-fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, dl: Int, roots: Int, prefix: Str, h2c: Bool) {
-  if h2c {
-    fail(r, 2, "HTTP/2 in a wasip2/wasm command is not on wasm yet")
-    return
-  }
+/// for https (R2e), and HTTP/2 when ALPN chooses it or with prior
+/// knowledge (R2f: conn_new and an exchange, as start); no connection
+/// pool (pool_put closes).
+fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, h2c: Bool, alpn: List[Str], cfg: List[Int]) {
   let d = if dl != 0 { dl - sysio.mono_ns() } else { 0 }
   if dl != 0 && d <= 0 {
     fail(r, 3, "")
@@ -1337,7 +1341,7 @@ fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, dl: Int, roots: Int
   st(r, R_CN, cna)
   if https {
     // tlsio reads and writes the Conn itself on wasm (its pd)
-    let started = tlsio.client_with(cna, tls_host, roots, dl, ["http/1.1"], tlsio.VERIFY_FULL)
+    let started = tlsio.client_with(cna, tls_host, roots, dl, if alpn.is_empty() { ["h2", "http/1.1"] } else { alpn }, tlsio.VERIFY_FULL)
     if started.status != CC_OK {
       rt.wasi_sock_close(rt.obj_at[Conn](cna))
       if started.status == CC_TIMEOUT {
@@ -1352,8 +1356,27 @@ fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, dl: Int, roots: Int
       return
     }
     st(c, C_TLS, started.conn)
+    if tlsio.alpn_h2(started.conn) {
+      start_h2_wasm(r, c, cna, https, addr, tls_host, body, dl, roots, cfg)
+      return
+    }
+  }
+  if h2c && !https {
+    start_h2_wasm(r, c, cna, https, addr, tls_host, body, dl, roots, cfg)
+    return
   }
   st4(r, R_READING, 1)
+}
+
+/// An HTTP/2 exchange on r over the dialed connection cna and its ccon c
+/// (start's tail): the connection takes both over.
+fn start_h2_wasm(r: Int, c: Int, cna: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, cfg: List[Int]) {
+  st(r, R_CN, 0)
+  let key = pool_key(https, addr, tls_host) + cfg_key(cfg)
+  let pc = conn_new(cna, c, roots, raw.data(key), key.len(), cfg)
+  raw.alive_str(key)
+  rt.mem_set(c, 0, 72)
+  exchange_start(r, pc, 0, raw.bytes_addr(body), body.len(), dl)
 }
 
 fn start(r: Int, https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roots: Int, prefix: Str, pool: Bool, h2c: Bool, alpn: List[Str], cfg: List[Int]) {

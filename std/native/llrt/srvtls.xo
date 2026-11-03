@@ -23,7 +23,7 @@ pub fn install() {
   }
   if target.arch == TargetArch.Wasm32 {
     // the table indexes of the exports (call_indirect, decision 0447
-    // R2d); no HTTP/2 on wasm (hserve.hc_h2 returns 0)
+    // R2d), HTTP/2's with them (R2f)
     rt.mem_store(t, 8 * hconn.TO_SRV_FREE, rt.wasi_hook("srvtls_srv_free"), 8)
     rt.mem_store(t, 8 * hconn.TO_CONN, rt.wasi_hook("srvtls_conn"), 8)
     rt.mem_store(t, 8 * hconn.TO_CLOSE_NOTIFY, rt.wasi_hook("srvtls_close_notify"), 8)
@@ -34,6 +34,9 @@ pub fn install() {
     rt.mem_store(t, 8 * hconn.TO_TIMED_OUT, rt.wasi_hook("srvtls_timed_out"), 8)
     rt.mem_store(t, 8 * hconn.TO_IDLE_EMPTY, rt.wasi_hook("srvtls_idle_empty"), 8)
     rt.mem_store(t, 8 * hconn.TO_NEG, rt.wasi_hook("srvtls_neg"), 8)
+    rt.mem_store(t, 8 * hconn.TO_H2, rt.wasi_hook("srvtls_h2"), 8)
+    rt.mem_store(t, 8 * hconn.TO_NB_READ, rt.wasi_hook("srvtls_nb_read"), 8)
+    srvh2c.fill(t)
     srvh2c.end_fill(t, hconn.TO_ONCE_TLS)
     return
   }

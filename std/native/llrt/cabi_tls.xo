@@ -60,7 +60,9 @@ fn srvtls_neg(t: Int, _u: Int) -> Int { tlssrv.neg_any(t) }
 /// handshake failed (which http1.xo's reads find). Was hserve.xo hc_h2's
 /// second half; hserve.xo marked the connection idle first.
 fn srvtls_h2(hc: Int, t: Int) -> Int {
-  let ok = !poll.canceled() && tlssrv.handshake(t)
+  // (poll.canceled reads a native context: on wasm the handshake's own
+  // waits see a cancellation)
+  let ok = (target.arch == TargetArch.Wasm32 || !poll.canceled()) && tlssrv.handshake(t)
   hconn.set_idle(hc, false)
   if !ok {
     return 0

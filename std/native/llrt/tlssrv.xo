@@ -480,10 +480,6 @@ pub fn conn(h: Int, pd: Int) -> Int {
   cf.ticket_keys = keys
   cf.now = now
   cf.alpn = if st.alpn.is_empty() { ["h2", "http/1.1"] } else { st.alpn }
-  if target.arch == TargetArch.Wasm32 {
-    // no HTTP/2 on wasm yet (srvh2c.fill): never let ALPN choose h2
-    cf.alpn = cf.alpn.filter(fn(p) { p != "h2" })
-  }
   cf.client_auth = st.client_auth
   cf.client_cas = st.client_cas
   cf.client_roots = st.client_roots
@@ -1031,18 +1027,17 @@ fn fill(var c: Conn, nb: Bool) -> Bool {
 /// fill on wasm: pd is the connection's Conn (decision 0447 R2d); a read
 /// without waiting (nb, HTTP/2's) is not on wasm.
 fn fill_wasm(var c: Conn, nb: Bool) -> Bool {
-  if nb {
-    c.status = -2
-    return false
-  }
   let buf = raw.bytes_buf(16384)
-  let r = netwasi.hc_recv(c.pd, raw.bytes_addr(buf), 16384, c.when)
+  // nb: what the socket has now, for HTTP/2's reads (decision 0447 R2f)
+  let r = if nb { netwasi.hc_try_recv(c.pd, raw.bytes_addr(buf), 16384) } else { netwasi.hc_recv(c.pd, raw.bytes_addr(buf), 16384, c.when) }
   if r > 0 {
     took(c, buf, r)
     return true
   }
   if r == 0 {
     c.eof = true
+  } else if nb && r == -2 {
+    c.status = -2
   } else {
     c.status = if r == -2 { CC_TIMEOUT } else { CC_ERR }
   }

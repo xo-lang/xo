@@ -362,6 +362,12 @@ fn wasi_hook(name: Str) -> Int
 /// tasks.new_handle's, whose last release calls hook (wasi_hook) with its
 /// address.
 fn wasi_handle_new(n: Int, hook: Int) -> Int
+/// wasm only: waits until the park word at p is signaled (and clears
+/// it), the monotonic deadline (ns, 0 none) passes, or the task is
+/// canceled: 1 signaled, 0 the deadline, -1 canceled (decision 0447 R2f).
+fn wasi_park_wait(p: Int, deadline: Int) -> Int
+/// wasm only: signals the park word at p (wasi_park_wait).
+fn wasi_park_signal(p: Int)
 fn wasi_sock_status() -> Int
 fn wasi_sock_msg() -> Str
 fn wasi_sock_listen(v6: Bool, ip: Bytes, port: Int) -> Listener
@@ -378,6 +384,12 @@ fn wasi_sock_connect(v6: Bool, ip: Bytes, port: Int, d: Int) -> Conn
 fn wasi_sock_connected(c: Conn)
 /// At most max bytes; empty with error 103 at the end.
 fn wasi_sock_read(c: Conn, max: Int) -> Bytes
+/// wasm only: what c has now, at most max bytes; empty with error 105
+/// when nothing is there yet, 103 at the end (decision 0447 R2f).
+fn wasi_sock_try_read(c: Conn, max: Int) -> Bytes
+/// wasm only: waits until c has bytes or its end, reading nothing; the
+/// error (wasi_sock_status) tells a closed, canceled or timed out wait.
+fn wasi_sock_readable(c: Conn)
 fn wasi_sock_write(c: Conn, data: Bytes)
 fn wasi_sock_close(c: Conn)
 /// which 1 read, 2 write, 3 both; d ns from now when set.

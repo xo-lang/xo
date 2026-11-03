@@ -686,6 +686,9 @@ pub fn h2_read(h: rthttp.HConn, p: Int, cap: Int) -> Int {
     return rt.call_c4(tls_op(TO_NB_READ), tls, p, cap, 0)
   }
   // plain (h2c): -2 when nothing is there
+  if target.arch == TargetArch.Wasm32 {
+    return netwasi.hc_try_recv(ld(hc, HC_CONN), p, cap)
+  }
   let pd = conn_pd(hc)
   var r = -1
   if poll.pd_begin(pd) {
@@ -743,7 +746,9 @@ pub fn pd(h: rthttp.HConn) -> Int { conn_pd(rec(h)) }
 /// and holds h.
 pub fn stream(h: rthttp.HConn, sr: Int) -> rthttp.HConn {
   let hc = rec(h)
-  let t = tasks.new_handle(HC_SIZE, rt.fn_addr("hc_free"))
+  // on wasm the free hook's table index (decision 0447 R2f), as hserve's
+  // hc_new
+  let t = if target.arch == TargetArch.Wasm32 { rt.wasi_handle_new(HC_SIZE, rt.wasi_hook("hc_free")) } else { tasks.new_handle(HC_SIZE, rt.fn_addr("hc_free")) }
   rc.inc(hc)
   st(t, HC_OWNER, hc)
   st(t, HC_H2S, sr)

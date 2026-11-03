@@ -267,6 +267,8 @@ arm64 wasi_sock_local the wasi:sockets command runtime is wasm only (compiler/wa
 arm64 wasi_sock_msg the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_sock_next the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_sock_read the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_readable the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+arm64 wasi_sock_try_read the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_sock_resolve the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_sock_resolve_end the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 arm64 wasi_sock_set the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
@@ -284,6 +286,8 @@ llvm wasi_sock_local the wasi:sockets command runtime is wasm only (compiler/was
 llvm wasi_sock_msg the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_sock_next the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_sock_read the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_readable the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
+llvm wasi_sock_try_read the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_sock_resolve the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_sock_resolve_end the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
 llvm wasi_sock_set the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447); native builds reach the sockets through netconn
@@ -305,8 +309,12 @@ wasm wasi_hook the SSA builder lowers it (compiler/ssa call.xo wasi_hook: a Func
 arm64 wasi_scope_new hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
 arm64 wasi_scope_group hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
 arm64 wasi_scope_close hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
+arm64 wasi_park_signal HTTP/2's park on wasm (compiler/wasm rt3.xo, decision 0447 R2f); native parks through poll.xo
+arm64 wasi_park_wait HTTP/2's park on wasm (compiler/wasm rt3.xo, decision 0447 R2f); native parks through poll.xo
 llvm wasi_scope_new hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
 llvm wasi_scope_group hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
 llvm wasi_scope_close hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
+llvm wasi_park_signal HTTP/2's park on wasm (compiler/wasm rt3.xo, decision 0447 R2f); native parks through poll.xo
+llvm wasi_park_wait HTTP/2's park on wasm (compiler/wasm rt3.xo, decision 0447 R2f); native parks through poll.xo
 arm64 wasi_sock_peer the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
 llvm wasi_sock_peer the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername

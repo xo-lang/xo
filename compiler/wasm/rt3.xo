@@ -48,12 +48,12 @@
 
 /// The blocking runtime calls: where a task can suspend.
 fn rt3_blocking(name: Str) -> Bool {
-  name is "rt.atomic_get" | "rt.atomic_set" | "rt.atomic_swap" | "rt.atomic_cas" | "rt.atomic_add" | "rt.atomic_max" | "rt.is_canceled" | "rt.chan_send" | "rt.chan_recv" | "rt.task_await" | "rt.scope_close" | "rt.wasi_scope_close" | "rt.select_wait" | "rt.mutex_lock" | "rt.mutex_rlock" | "rt.clock_sleep" | "rt.clock_sleep_or_cancel"
+  name is "rt.atomic_get" | "rt.atomic_set" | "rt.atomic_swap" | "rt.atomic_cas" | "rt.atomic_add" | "rt.atomic_max" | "rt.is_canceled" | "rt.chan_send" | "rt.chan_recv" | "rt.task_await" | "rt.scope_close" | "rt.wasi_scope_close" | "rt.wasi_park_wait" | "rt.select_wait" | "rt.mutex_lock" | "rt.mutex_rlock" | "rt.clock_sleep" | "rt.clock_sleep_or_cancel"
 }
 
 /// The runtime functions of rt3.xo called with the operands' leaves.
 fn rt3_direct(name: Str) -> Bool {
-  name is "wasi_mono_ns" | "wasi_scope_new" | "wasi_scope_group" | "wasi_scope_close" | "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_unlock" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "task_deadline_left" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end" | "task_stopping"
+  name is "wasi_mono_ns" | "wasi_park_wait" | "wasi_park_signal" | "wasi_scope_new" | "wasi_scope_group" | "wasi_scope_close" | "scope_open" | "scope_close" | "scope_cancel" | "scope_group" | "scope_fail_task" | "scope_fail_site" | "task_spawn" | "task_await" | "task_result" | "task_done" | "task_unwound" | "fault_rethrow" | "is_canceled" | "shield_begin" | "shield_end" | "shield_abort" | "chan_new" | "chan_send" | "chan_recv" | "chan_try_send" | "chan_try_recv" | "chan_close" | "chan_len" | "mutex_new" | "mutex_lock" | "mutex_unlock" | "mutex_rlock" | "mutex_runlock" | "atomic_new" | "atomic_get" | "atomic_set" | "atomic_swap" | "atomic_cas" | "atomic_add" | "atomic_max" | "select_new" | "select_recv" | "select_send" | "select_after" | "select_wait" | "select_take" | "prog_group_set" | "prog_group_clear" | "prog_group" | "clock_now" | "task_deadline_left" | "clock_sleep" | "clock_sleep_or_cancel" | "scope_deadline" | "scope_timed_out" | "h_zero" | "tick" | "budget_open" | "budget_end" | "task_stopping"
 }
 
 /// The WASI imports of the task runtime: the clocks and waiting for one.
@@ -665,6 +665,61 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
       local.get $n
       global.set $node
       local.get $r)
+
+    ;; rt.wasi_park_wait: waits until the park word at p is signaled
+    ;; (rt.wasi_park_signal; the word is cleared), the monotonic deadline
+    ;; dl (ns, 0 none) passes, or the task is canceled: 1 signaled, 0
+    ;; the deadline, -1 canceled (HTTP/2's waits, decision 0447 R2f;
+    ;; llrt's poll.canceled reads native contexts). Blocking: a
+    ;; resumption calls it again; any $wake retries it
+    (func $wasi_park_wait (param $p i64) (param $dl i64) (result i64)
+      call $resumed
+      if
+        global.get $cur
+        i64.const 0
+        i64.store offset=128
+      end
+      local.get $p
+      i32.wrap_i64
+      i32.load
+      if
+        local.get $p
+        i32.wrap_i64
+        i32.const 0
+        i32.store
+        i64.const 1
+        return
+      end
+      call $ctx_canceled
+      if
+        i64.const -1
+        return
+      end
+      local.get $dl
+      i64.eqz
+      i32.eqz
+      if
+        call $mono
+        local.get $dl
+        i64.ge_s
+        if
+          i64.const 0
+          return
+        end
+      end
+      global.get $cur
+      local.get $dl
+      i64.store offset=128
+      call $block
+      i64.const 0)
+
+    ;; rt.wasi_park_signal: signals the park word at p; its waiter runs
+    (func $wasi_park_signal (param $p i64)
+      local.get $p
+      i32.wrap_i64
+      i32.const 1
+      i32.store
+      call $wake)
 
     ;; rt.wasi_mono_ns: the monotonic clock for llrt's sysio.mono_ns
     ;; (decision 0447 R2a)

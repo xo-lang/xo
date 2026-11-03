@@ -39,6 +39,7 @@
 use native/llrt/ctx
 use native/llrt/h2w
 use native/llrt/hpack
+use native/llrt/netwasi
 use native/llrt/inlstr
 use native/llrt/http1
 use native/llrt/http1w
@@ -193,7 +194,12 @@ const C_LAST = 672
 const C_PDEAD = 680
 const C_WTO = 688
 const C_ETAB = 696
-const C_SIZE = 704 // own: this module\'s connection record, not the context
+/// wasm only (decision 0447 R2f): the park word the connection's fiber
+/// waits on (wake, the reader task) and the one its reader task waits on
+/// for the fiber to have read
+const C_WPARK = 704
+const C_WREAD = 712
+const C_SIZE = 720 // own: this module\'s connection record, not the context
 /// A stream record's words: its connection's record, its id, the
 /// references, whether it is in the table, the request's state (ST_*);
 /// the request (the fiber's, until dispatched): its parts (an Any of
@@ -258,7 +264,10 @@ const S_TRL = 368
 /// The response trailers (decision 0433), a block of "name\nvalue\n" pairs sent
 /// as a trailing HEADERS frame after the body.
 const S_OTRL = 392
-const S_SIZE = 416
+/// wasm only: the park word a stream's task waits on (S_WAITER holds its
+/// address while it waits)
+const S_WPARK = 416
+const S_SIZE = 424
 
 // slot atomics' orders (rt.xo)
 const ACQUIRE = 1
@@ -410,6 +419,12 @@ fn conn_window(c: Int, n: Int) -> Bool {
 // Streams (the lock held)
 
 fn wake(c: Int) {
+  if target.arch == TargetArch.Wasm32 {
+    // the fiber's park word (H2Conn.wait): a signal before its wait makes
+    // the wait return at once, as C_WOKEN does natively
+    rt.wasi_park_signal(c + C_WPARK)
+    return
+  }
   let w = ld(c, C_WAITER)
   if w != 0 {
     rtstats.count(rtstats.SIG_H2)
@@ -473,7 +488,11 @@ fn signal_stream(st: Int) {
   let w = ld(st, S_WAITER)
   if w != 0 {
     rtstats.count(rtstats.SIG_H2)
-    poll.park_signal(w)
+    if target.arch == TargetArch.Wasm32 {
+      rt.wasi_park_signal(w)
+    } else {
+      poll.park_signal(w)
+    }
     sto(st, S_WAITER, 0)
   }
 }
@@ -973,6 +992,20 @@ fn wait_backlog(st: Int) -> Bool {
   var x = 0
   lk(c)
   while !on(st, S_DEAD) && ld(st, S_OUT + 8) - ld(st, S_OFF) > BACKLOG {
+    if target.arch == TargetArch.Wasm32 {
+      let wp = st + S_WPARK
+      sto(st, S_WAITER, wp)
+      unlk(c)
+      let w = rt.wasi_park_wait(wp, 0)
+      lk(c)
+      if ld(st, S_WAITER) == wp {
+        sto(st, S_WAITER, 0)
+      }
+      if w < 0 {
+        break
+      }
+      continue
+    }
     if x == 0 {
       x = ctx.cur()
     }
@@ -1208,6 +1241,21 @@ pub fn body_next(h: rthttp.HConn, max: Int) -> http1.BodyPart {
       unlk(c)
       return http1.BodyPart{data: "", end: false, err: "client disconnected"}
     }
+    if target.arch == TargetArch.Wasm32 {
+      let wp = st + S_WPARK
+      sto(st, S_WAITER, wp)
+      unlk(c)
+      let w = rt.wasi_park_wait(wp, 0)
+      lk(c)
+      if ld(st, S_WAITER) == wp {
+        sto(st, S_WAITER, 0)
+      }
+      if w < 0 {
+        unlk(c)
+        return http1.BodyPart{data: "", end: false, err: "client disconnected"}
+      }
+      continue
+    }
     if x == 0 {
       x = ctx.cur()
     }
@@ -1381,6 +1429,9 @@ fn (h: H2Conn) read() -> Int {
 /// must end (closed, canceled, the deadline).
 fn (h: H2Conn) wait(x: Int) -> Bool {
   let c = h.c
+  if target.arch == TargetArch.Wasm32 {
+    return h.wait_wasm()
+  }
   let park = poll.park_of(x)
   pool.park_reset(park)
   lk(c)
@@ -1412,6 +1463,43 @@ fn (h: H2Conn) wait(x: Int) -> Bool {
     ok = false
   }
   ok
+}
+
+/// The reader task of an HTTP/2 connection on wasm (decision 0447 R2f;
+/// http.xo h2_loop runs it in the background of the connection's scope):
+/// wasm has no wait for "input or a signal", so this task waits for the
+/// socket's input (reading nothing) and signals the fiber's park, then
+/// waits until the fiber read and waits again. It ends when the
+/// connection is closed or its read deadline passes (signaling the fiber
+/// once more, whose read then sees why) or the task is canceled.
+pub fn reader_wasm(h: H2Conn) {
+  let c = h.c
+  let cn = rt.mem_load(hconn.rec(h.h), hconn.HC_CONN, 8)
+  while netwasi.hc_readable(cn) {
+    rt.wasi_park_signal(c + C_WPARK)
+    if rt.wasi_park_wait(c + C_WREAD, 0) < 0 {
+      return
+    }
+  }
+  rt.wasi_park_signal(c + C_WPARK)
+}
+
+/// wait on wasm (decision 0447 R2f): the fiber's park word, signaled by a
+/// stream task (wake) or the connection's reader task (input or its end),
+/// until the same deadline as natively; false when the deadline passed or
+/// the task was canceled. The reader is let go first, since the caller
+/// read until nothing was there.
+fn (h: H2Conn) wait_wasm() -> Bool {
+  let c = h.c
+  var until = ld(c, C_DEADLINE)
+  if ld(c, C_PIDLE) > 0 && on(c, C_GOT_SETTINGS) {
+    let pw = if ld(c, C_PDEAD) != 0 { ld(c, C_PDEAD) } else { ld(c, C_LAST) + ld(c, C_PIDLE) }
+    if until == 0 || pw < until {
+      until = pw
+    }
+  }
+  rt.wasi_park_signal(c + C_WREAD)
+  rt.wasi_park_wait(c + C_WPARK, until) == 1
 }
 
 /// After a wait that ended: whether the connection goes on because a

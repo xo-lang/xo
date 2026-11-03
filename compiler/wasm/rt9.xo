@@ -20,21 +20,25 @@
 //              output-stream, 20 closed, 24 read deadline, 32 write
 //              deadline (i64s, monotonic ns, 0 none; the read deadline
 //              is the connect deadline until connected), 40 bytes of the
-//              current write done
+//              current write done, 44 std/tls's upgrade mark, 48
+//              whether wasi_sock_readable waits, 52 the wait table's
+//              generation then ($wgen: $io_poll and $sk_unwait drop
+//              pollables and count it up)
 // A call that fails returns the immortal empty string's object as its
 // handle, which the reference counting never frees, and records the error
 // for $wasi_sock_err: 0 none, 1 + a wasi:sockets error-code, 100 the
 // object is closed, 101 canceled, 102 a deadline passed, 103 the end of
-// the stream, 104 the stream closed under a write.
+// the stream, 104 the stream closed under a write, 105 nothing to read yet
+// (wasi_sock_try_read).
 
 /// The runtime calls of rt9.xo (the operands' leaves, like rt3.xo's).
 fn rt9_direct(name: Str) -> Bool {
-  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_peer" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
+  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_peer" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_try_read" | "wasi_sock_readable" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
 }
 
 /// The calls of rt9.xo that can suspend the task.
 fn rt9_blocking(name: Str) -> Bool {
-  name is "rt.wasi_sock_accept" | "rt.wasi_sock_connected" | "rt.wasi_sock_read" | "rt.wasi_sock_write" | "rt.wasi_sock_next"
+  name is "rt.wasi_sock_accept" | "rt.wasi_sock_connected" | "rt.wasi_sock_read" | "rt.wasi_sock_readable" | "rt.wasi_sock_write" | "rt.wasi_sock_next"
 }
 
 /// The imports of rt9.xo.
@@ -74,7 +78,7 @@ fn rt9_imports() -> Str {
 /// table ({pollable, owner} pairs).
 fn rt9_globals(var g: Gen) -> Str {
   let empty = g.str_obj(b"")
-  "    (global $nstat (mut i32) (i32.const 0))\n    (global $nmsg (mut i32) (i32.const ${empty}))\n    (global $nmsgn (mut i32) (i32.const 0))\n    (global $skerr (mut i32) (i32.const 0))\n    (global $skab (mut i32) (i32.const 0))\n    (global $sknet (mut i32) (i32.const -1))\n    (global $wq (mut i32) (i32.const 0))\n    (global $wn (mut i32) (i32.const 0))\n    (global $wcap (mut i32) (i32.const 0))\n"
+  "    (global $nstat (mut i32) (i32.const 0))\n    (global $nmsg (mut i32) (i32.const ${empty}))\n    (global $nmsgn (mut i32) (i32.const 0))\n    (global $skerr (mut i32) (i32.const 0))\n    (global $skab (mut i32) (i32.const 0))\n    (global $sknet (mut i32) (i32.const -1))\n    (global $wq (mut i32) (i32.const 0))\n    (global $wn (mut i32) (i32.const 0))\n    (global $wcap (mut i32) (i32.const 0))\n    (global $wgen (mut i32) (i32.const 0))\n"
 }
 
 /// rt3.xo's scheduler with $io_poll before it sleeps or reports a deadlock:
@@ -414,6 +418,10 @@ fn rt9_text(var g: Gen) -> Str {
       end
       local.get $j
       global.set $wn
+      global.get $wgen
+      i32.const 1
+      i32.add
+      global.set $wgen
       call $wake)
 
     ;; the scheduler's wait when no task can run (rt3.xo's $sched): 0 when
@@ -534,6 +542,10 @@ fn rt9_text(var g: Gen) -> Str {
       end
       i32.const 0
       global.set $wn
+      global.get $wgen
+      i32.const 1
+      i32.add
+      global.set $wgen
       call $wake
       i32.const 1)
 
@@ -883,7 +895,7 @@ fn rt9_text(var g: Gen) -> Str {
         call $sk_fail
         return
       end
-      i32.const 48
+      i32.const 56
       i32.const ${conn_free}
       call $obj_new
       local.tee $c
@@ -951,7 +963,7 @@ fn rt9_text(var g: Gen) -> Str {
         call $sk_fail
         return
       end
-      i32.const 48
+      i32.const 56
       i32.const ${conn_free}
       call $obj_new
       local.tee $c
@@ -1123,6 +1135,163 @@ fn rt9_text(var g: Gen) -> Str {
       local.get $r
       i32.load offset=8
       call $sk_take)
+
+    ;; Conn.read without the wait: what the input stream has now, at
+    ;; most max bytes; empty with error 105 when nothing is there yet
+    ;; (HTTP/2's reads, decision 0447 R2f)
+    (func $wasi_sock_try_read (param $c i32) (param $max i64) (result i32 i32) (local $r i32)
+      call $sk_enter
+      if
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const 100
+        global.set $skerr
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.load offset=12
+      local.get $max
+      call $hret_at
+      local.tee $r
+      call $sk_iread
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        if
+          i32.const 103
+          global.set $skerr
+        else
+          local.get $r
+          i32.load offset=8
+          call $ioerr_drop
+          i32.const 16
+          global.set $skerr
+        end
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=8
+      i32.eqz
+      if
+        i32.const 105
+        global.set $skerr
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=4
+      local.get $r
+      i32.load offset=8
+      call $sk_take)
+
+    ;; waits until connection c's input stream has bytes or its end (or
+    ;; the read deadline passes, the task is canceled, c is closed: the
+    ;; error recorded), reading nothing (HTTP/2's reader, decision 0447
+    ;; R2f); a repeatable call: its resumption returns
+    ;; Any wake resumes it ($wake wakes every blocked task: HTTP/2's park
+    ;; signals), so while its pollable is still in the wait table (no
+    ;; $io_poll or $sk_unwait dropped the table's pollables since: the
+    ;; generation is the same; a handle number can be reused, so it is not
+    ;; looked up) it blocks again rather than subscribing anew (each
+    ;; subscribe is a handle: a loop of wakes filled the store's handle
+    ;; table, http_h2_config 2026-11-03).
+    (func $wasi_sock_readable (param $c i32) (local $p i32)
+      call $resumed
+      if
+        global.get $cur
+        i64.const 0
+        i64.store offset=128
+        local.get $c
+        i32.load offset=48
+        local.set $p
+        local.get $c
+        i32.const 0
+        i32.store offset=48
+        call $ctx_canceled
+        if
+          i32.const 101
+          global.set $skerr
+          return
+        end
+        local.get $c
+        i32.load offset=20
+        if
+          i32.const 100
+          global.set $skerr
+          return
+        end
+        local.get $c
+        i32.const 24
+        call $sk_passed
+        if
+          i32.const 102
+          global.set $skerr
+          return
+        end
+        local.get $p
+        if
+          local.get $c
+          i32.load offset=52
+          global.get $wgen
+          i32.eq
+          if
+            local.get $c
+            i32.const 1
+            i32.store offset=48
+            global.get $cur
+            local.get $c
+            i64.load offset=24
+            i64.store offset=128
+            call $block
+            return
+          end
+        end
+        i32.const 0
+        global.set $skerr
+        return
+      end
+      call $ctx_canceled
+      if
+        i32.const 101
+        global.set $skerr
+        return
+      end
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const 100
+        global.set $skerr
+        return
+      end
+      i32.const 0
+      global.set $skerr
+      local.get $c
+      i32.load offset=12
+      call $sk_isub
+      local.set $p
+      local.get $c
+      i32.const 1
+      i32.store offset=48
+      local.get $c
+      global.get $wgen
+      i32.store offset=52
+      local.get $p
+      local.get $c
+      local.get $c
+      i64.load offset=24
+      call $sk_wait)
 
     ;; Conn.write: every byte of the n at p (a Bytes object), from where
     ;; a suspended call of it got to

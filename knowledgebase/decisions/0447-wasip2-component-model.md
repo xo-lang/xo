@@ -824,3 +824,54 @@ there, waited for by the scope's end). hserve.hc_new also sets the
 connection's peer address on wasm (rt.wasi_sock_peer, tcp-socket's
 remote-address), so Request.remote_addr and the proxy's X-Forwarded-For
 match native.
+
+### HTTP/2 server in a command (2026-11-03, R2f)
+
+The native HTTP/2 connection fiber (h2srv.xo H2Conn.wait) waits for any
+of three things at once: the socket's input, a stream task's wake (its
+park), or a deadline (poll.pd_wait_or_signal). A wasm task can block on
+one pollable, and its scheduler had no park. R2f adds the smallest pieces
+that make that wait possible without changing the scheduler:
+
+- rt3.xo wasi_park_wait(p, deadline) and wasi_park_signal(p): a park is a
+  word in memory; signal stores 1 and wakes the blocked tasks (they
+  retry), wait returns 1 (and clears the word) when it is set, 0 when the
+  deadline passed, -1 when the task is canceled (llrt's poll.canceled
+  reads a native context, so the wasm arms take cancellation from here).
+- rt9.xo wasi_sock_try_read (error 105: nothing yet, never waits) and
+  wasi_sock_readable (waits for input on the connection's stream under
+  its read deadline, reading nothing); netwasi hc_try_recv and
+  hc_readable.
+- A reader task per HTTP/2 connection (h2srv.reader_wasm, started by
+  http.xo h2_loop with spawn_background): it waits until the socket is
+  readable, signals the fiber's park, then waits on a second park until
+  the fiber has read everything (the fiber signals it before each wait).
+  The fiber's reads are non-blocking (hconn.h2_read through
+  hc_try_recv, and tlssrv's nb_read through the same call for TLS), as
+  natively.
+- Park words in the records: C_WPARK and C_WREAD in the connection
+  record, S_WPARK in the stream record (natively 16 and 8 bytes more per
+  record, unused). wake, signal_stream, wait_backlog and the body read's
+  wait use them on wasm in place of poll.park_of and pool.park_reset.
+- A wake resumes every blocked task on wasm, so wasi_sock_readable keeps
+  its pollable across wakes for others (the wait table's generation in
+  the connection record, 48 and 52; the record is 56 bytes): subscribing
+  on each wake filled the handle table (gotchas/
+  wasm-wake-resubscribes-pollables.md).
+- h2srv's connection lock (slot_cas) is never held across a wait or a
+  socket write (the output is swapped out first), so on one thread it
+  never contends.
+- hserve.hc_h2c and hc_h2 serve HTTP/2 on wasm; srvtls.install's wasm
+  table gains TO_H2 and TO_NB_READ and srvh2c's entries; R2e's filter
+  that kept h2 out of the wasm TLS server's ALPN is gone. hconn.stream
+  makes a stream's connection handle with rt.wasi_handle_new (a
+  rt.fn_addr there faulted the first run).
+
+The client: the native client sends one request at a time on a
+connection, and its reads already wait on the socket on wasm (R2b's
+fill), so it needs no reader task. hclient.start_wasm offers h2 by ALPN
+(as native, unless the caller's protocols leave it out) and takes prior
+knowledge (h2c), handing the dialed connection to conn_new and an
+exchange as start does; there is no pool on wasm (pool_put closes the
+connection, conn_free closes it through wasi_sock_close), so each
+request dials, as R2b's HTTP/1.1 does.

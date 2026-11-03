@@ -1658,7 +1658,7 @@ fn wasm_only_rt(name: Str) -> Bool {
   // reaches them from its wasm arm on every target; a wasip2 command's
   // sockets (rt9.xo, std/native/llrt/netwasi.xo) and the records of its
   // HTTP server's wasm arms (decision 0447 R2a)
-  name.starts_with("fs_") || name.starts_with("wasi_http_") || name.starts_with("wasi_sock_") || name is "wasi_hook" | "wasi_handle_new" | "wasi_rc_inc" | "wasi_rc_dec" | "wasi_h_release" | "wasi_mono_ns" | "wasi_scope_new" | "wasi_scope_group" | "wasi_scope_close"
+  name.starts_with("fs_") || name.starts_with("wasi_http_") || name.starts_with("wasi_sock_") || name is "wasi_hook" | "wasi_handle_new" | "wasi_rc_inc" | "wasi_rc_dec" | "wasi_h_release" | "wasi_mono_ns" | "wasi_scope_new" | "wasi_scope_group" | "wasi_scope_close" | "wasi_park_wait" | "wasi_park_signal"
 }
 
 /// A call of a platform library function declared in
