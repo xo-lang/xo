@@ -1,0 +1,38 @@
+// std/idna (spec/std.md 61, decision 0476). Declaration file. Internationalised
+// domain names as in golang.org/x/net/idna: UTS 46 mapping and validation,
+// RFC 3492 punycode, the joiner, hyphen and Bidi rules, for Unicode 15.0.0.
+
+/// Why a name was rejected. `code` is the UTS 46 status code x/net/idna
+/// reports (`P1` a disallowed rune, `V2` and `V3` hyphens, `C` a joiner, `B`
+/// the Bidi rule, `A3` and `P4` punycode, `A4` length, ...) and `msg` its text,
+/// for example `idna: invalid label "-a"`.
+struct IdnaErr {
+  code: Str
+  msg: Str
+}
+
+fn (e: IdnaErr) display() -> Str
+
+/// x/net/idna's profiles.
+enum Profile {
+  /// Map and validate a name to look it up (`idna.Lookup`): UTS 46 mapping,
+  /// STD3 rules, hyphens, joiners and the Bidi rule, the non transitional
+  /// processing.
+  Lookup
+  /// Validate without mapping, with the DNS length limits (`idna.Registration`).
+  Registration
+  /// Like Lookup, for showing a name (`idna.Display`).
+  Display
+  /// Only convert the labels with punycode (`idna.Punycode`, what
+  /// `idna.ToASCII` and `idna.ToUnicode` use).
+  Punycode
+}
+
+/// The Unicode version of the tables (`15.0.0`).
+fn unicode_version() -> Str
+
+/// The ASCII form of a domain name: each label that is not ASCII becomes
+/// `xn--` and its punycode.
+fn to_ascii(domain: Str, p: Profile = Profile.Lookup) -> Str ! IdnaErr
+/// The Unicode form of a domain name: each `xn--` label decoded.
+fn to_unicode(domain: Str, p: Profile = Profile.Lookup) -> Str ! IdnaErr

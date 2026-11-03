@@ -1,0 +1,243 @@
+// dump prints the table of std/idna (scripts/genidna copies this file next to
+// x/net's idna tables, trie and trieval, so it can read their internals).
+package idna
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"golang.org/x/text/unicode/bidi"
+)
+
+func varint(b []byte, v int) []byte {
+	for v >= 0x80 {
+		b = append(b, byte(v&0x7f|0x80))
+		v >>= 7
+	}
+	return append(b, byte(v))
+}
+
+func zigzag(d int) int {
+	if d < 0 {
+		return -2*d - 1
+	}
+	return 2 * d
+}
+
+type rec struct {
+	cat, flags, class int
+	kind              int // 0 none, 1 delta, 2 string
+	delta             int
+	str               []rune
+}
+
+func (a rec) same(b rec) bool {
+	if a.cat != b.cat || a.flags != b.flags || a.class != b.class || a.kind != b.kind || a.delta != b.delta || len(a.str) != len(b.str) {
+		return false
+	}
+	for i := range a.str {
+		if a.str[i] != b.str[i] {
+			return false
+		}
+	}
+	return true
+}
+
+func mappingOf(v info, r rune) []byte {
+	return v.appendMapping(nil, string(r))
+}
+
+// from x/net/idna's idna.go (BSD-style license, Copyright 2016 The Go Authors)
+func (c info) isBidi(s string) bool {
+	if !c.isMapped() {
+		return c&attributesMask == rtl
+	}
+	p, _ := bidi.LookupString(s)
+	switch p.Class() {
+	case bidi.R, bidi.AL, bidi.AN:
+		return true
+	}
+	return false
+}
+
+func (c info) appendMapping(b []byte, s string) []byte {
+	index := int(c >> indexShift)
+	if c&xorBit == 0 {
+		p := index
+		return append(b, mappings[mappingIndex[p]:mappingIndex[p+1]]...)
+	}
+	b = append(b, s...)
+	if c&inlineXOR == inlineXOR {
+		b[len(b)-1] ^= byte(index)
+	} else {
+		for p := len(b) - int(xorData[index]); p < len(b); p++ {
+			index++
+			b[p] ^= xorData[index]
+		}
+	}
+	return b
+}
+
+func Dump(path string) {
+	const block = 512
+	var stream []byte
+	var index []byte
+	var cur rec
+	start := 0
+	var haveCur bool
+	nrec := 0
+	flush := func(end int) {
+		// record for [start, end)
+		stream = varint(stream, end-start-1)
+		stream = append(stream, byte(cur.cat), byte(cur.flags), byte(cur.class))
+		switch cur.kind {
+		case 0:
+		case 1:
+			stream = varint(stream, 0)
+			stream = varint(stream, zigzag(cur.delta))
+		case 2:
+			stream = varint(stream, len(cur.str)+1)
+			for _, m := range cur.str {
+				stream = varint(stream, int(m))
+			}
+		}
+		nrec++
+	}
+	// index entries need the offset and start of the record holding each block's first rune; build as we go
+	type ent struct{ off, start int }
+	var ents []ent
+	for r := rune(0); r <= 0x10FFFF; r++ {
+		var x rec
+		if r >= 0xD800 && r <= 0xDFFF {
+			x = rec{cat: int(disallowed)}
+		} else {
+			v, sz := trie.lookupString(string(r))
+			if sz == 0 {
+				panic(fmt.Sprintf("no trie value for %U", r))
+			}
+			info := info(v)
+			x.cat = int(info.category())
+			join := 0
+			if !info.isMapped() {
+				join = int(info.joinType())
+			}
+			attr := 0
+			if !info.isMapped() {
+				switch info & attributesMask {
+				case rtl:
+					attr = 1
+				case modifier:
+					attr = 2
+				case viramaModifier:
+					attr = 3
+				}
+			}
+			may := 0
+			if info&mayNeedNorm != 0 {
+				may = 1
+			}
+			isb := 0
+			if info.isBidi(string(r)) {
+				isb = 1
+			}
+			x.flags = join | attr<<3 | may<<5 | isb<<6
+			p, _ := bidi.LookupRune(r)
+			x.class = int(p.Class())
+			if info.isMapped() {
+				mb := mappingOf(info, r)
+				ms := []rune(string(mb))
+				if len(ms) == 1 && string(mb) != "�" {
+					x.kind = 1
+					x.delta = int(ms[0]) - int(r)
+				} else {
+					x.kind = 2
+					x.str = ms
+				}
+			}
+		}
+		if !haveCur {
+			cur, haveCur, start = x, true, int(r)
+		} else if !cur.same(x) {
+			flush(int(r))
+			cur, start = x, int(r)
+		}
+	}
+	flush(0x110000)
+	// second pass for the index: walk the stream
+	pos, rs := 0, 0
+	for b := 0; b*block < 0x110000; b++ {
+		first := b * block
+		for {
+			// decode record at pos
+			p := pos
+			l, n := uvar(stream, p)
+			p += n
+			end := rs + l + 1
+			if first < end {
+				ents = append(ents, ent{pos, rs})
+				break
+			}
+			cat := stream[pos+n]
+			p += 3
+			if cat == 1 || cat == 2 || cat == 3 {
+				m, n2 := uvar(stream, p)
+				p += n2
+				if m == 0 {
+					_, n3 := uvar(stream, p)
+					p += n3
+				} else {
+					for i := 0; i < m-1; i++ {
+						_, n3 := uvar(stream, p)
+						p += n3
+					}
+				}
+			}
+			pos, rs = p, end
+		}
+	}
+	for _, e := range ents {
+		index = append(index, byte(e.off), byte(e.off>>8), byte(e.off>>16), byte(e.start), byte(e.start>>8), byte(e.start>>16))
+	}
+	var w strings.Builder
+	fmt.Fprintf(&w, "// Unicode %s, from golang.org/x/net/idna's tables (scripts/genidna): %d ranges, %d bytes, an index of %d blocks of %d runes.\n", UnicodeVersion, nrec, len(stream), len(ents), block)
+	fmt.Fprintf(&w, "const UNICODE_VERSION: Str = %q\n\n", UnicodeVersion)
+	w.WriteString("/// Per range of runes: the length minus one (varint), the category, the flags (join type, attributes, may need norm, bidi), the bidi class, and for mapped categories the mapping (0 and a zigzag varint delta from the rune, or a count plus 1 and that many varint runes).\nconst RANGES: Bytes = " + bytesLit(stream) + "\n\n")
+	w.WriteString("/// Per block of 512 runes: the offset in RANGES of the range holding its first rune (3 bytes) and that range's first rune (3 bytes).\nconst INDEX: Bytes = " + bytesLit(index) + "\n\n")
+	b, err := os.ReadFile(path)
+	if err != nil {
+		panic(err)
+	}
+	src := string(b)
+	i := strings.Index(src, "// BEGIN GENERATED\n")
+	j := strings.Index(src, "// END GENERATED\n")
+	if i < 0 || j < 0 {
+		panic("markers missing")
+	}
+	if err := os.WriteFile(path, []byte(src[:i]+"// BEGIN GENERATED\n"+w.String()+src[j:]), 0o644); err != nil {
+		panic(err)
+	}
+}
+
+func uvar(b []byte, p int) (int, int) {
+	v, s, n := 0, 0, 0
+	for {
+		c := b[p+n]
+		n++
+		v |= int(c&0x7f) << s
+		if c < 0x80 {
+			return v, n
+		}
+		s += 7
+	}
+}
+
+func bytesLit(b []byte) string {
+	var w strings.Builder
+	w.WriteString(`b"`)
+	for _, c := range b {
+		fmt.Fprintf(&w, `\x%02x`, c)
+	}
+	w.WriteString(`"`)
+	return w.String()
+}

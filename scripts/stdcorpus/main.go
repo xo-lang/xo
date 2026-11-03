@@ -92,6 +92,7 @@ var generators = map[string]func() string{
 	"otp":        otpCorpus,
 	"cookiejar":  cookiejarCorpus,
 	"norm":       normCorpus,
+	"idna":       idnaCorpus,
 	"bcrypt":     bcryptCorpus,
 }
 
