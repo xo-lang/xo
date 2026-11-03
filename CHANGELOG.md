@@ -9,7 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
-## v0.36.0 (draft, not released)
+## v0.36.0 (2026-11-02)
 
 The summary below covers a8087860b (0.35.0's version commit; the v0.35.0
 tag is that commit plus the run cache fix) to the release commit. Speed and
