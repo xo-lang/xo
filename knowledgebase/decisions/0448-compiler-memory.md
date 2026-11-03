@@ -943,6 +943,14 @@ So the half is held twice, as its file's bytes and decoded. Next (the new item 2
 half from views of its file's bytes or drop the bytes once decoded, and see what of the decoded
 18 MB resolve and layout read.
 
+The decoded 18 MB is not relocations: coll's half has 51,628 sections in 40 objects (one per
+function) and 3,497 relocations, and each section allocated its own empty relocation list. They
+now share the empty literal's list (elfhalf.xo): elf_half_decode in use 18.2 to 11.3 MB at
+link.resolve, store_prepare's rise +28 to +20 MB. linux/arm64 ab-host edit builds, 3 rounds, 0
+loaded: coll max RSS 0.942, wall 0.983; conc-spawn 0.903, 0.975; the HTTP server 0.974, 0.943. The rest of the
+11.3 MB is the section records themselves (about 220 bytes each); a store_dead section, most of
+std's, needs only its size and name.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.

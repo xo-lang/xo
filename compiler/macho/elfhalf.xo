@@ -387,9 +387,15 @@ pub fn elf_half_decode(b: Bytes) -> ElfHalf? {
       at += dl
       let nr = rd32(b, at)
       at += 4
-      var relocs: List[ERel] = List.with_capacity(nr)
-      for k in 0..nr {
-        relocs.push(rd_erel(b, at + ELF_REL * k))
+      // most of std's sections (one per function) have no relocations
+      // left: they share the empty literal's list instead of each
+      // allocating one (51,628 sections, 3,497 relocations in coll's half)
+      var relocs: List[ERel] = []
+      if nr > 0 {
+        relocs = List.with_capacity(nr)
+        for k in 0..nr {
+          relocs.push(rd_erel(b, at + ELF_REL * k))
+        }
       }
       at += ELF_REL * nr
       sects.push(ESect{name: name, typ: typ, flags: flags, align: align, info: info, data: data, size: size, relocs: relocs, dead: (df & 1) != 0, store_dead: (df & 2) != 0})
