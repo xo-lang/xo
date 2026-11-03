@@ -10,6 +10,6 @@ Linux/arm64 offload host 1, 15 rounds, Go and Xo alternated, caches off, at main
 | bcrypt | hash | 882.9 | 1047 | 1.186 | 1.185-1.189 | 1.44 |
 | bcrypt | compare | 929.6 | 1111 | 1.195 | 1.164-1.211 | 1.55 |
 
-Not Proven. otp SHA-1 fell from 4.8 to 1.36 of Go with the hardware compression; what is left is the HMAC around it (Go's crypto/hmac reuses the two key pad states, this port compresses the pads again for each code), and SHA-256 and SHA-512 (1.55, 1.66) have no hardware path yet. bcrypt fell from 1.44 and 1.55 to 1.19 and 1.20; the rest is the checked S-box loads and overflow checked adds in the F loop.
+Not Proven. otp SHA-1 fell from 4.8 to 1.36 of Go with the hardware compression; what is left of the 1.36 is not yet profiled (both sides do four compressions per code; the extra may be the allocations around `crypto.hmac`); SHA-256 and SHA-512 (1.55, 1.66) have no hardware path yet. bcrypt fell from 1.44 and 1.55 to 1.19 and 1.20; the rest is the checked S-box loads and overflow checked adds in the F loop.
 
-Next: otp keeps the HMAC pad states per call (two fewer compressions of four); SHA-256 and SHA-512 on the CPU's instructions (Lang 1, same shape as SHA-1); bcrypt's F loop with a word array that needs no bounds check.
+Next: profile otp's `hotp` for where the 1.36 goes; SHA-256 and SHA-512 on the CPU's instructions (Lang 1, same shape as SHA-1); bcrypt's F loop with a word array that needs no bounds check.
