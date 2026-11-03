@@ -38,6 +38,10 @@ pub fn passes() -> List[Str] {
     // be owned and borrowed (no count) where its source outlives it; it
     // is emitted as rt.str_borrow, which takes no count
     "view_proj",
+    // compiler/llvm func.xo (decision 0338): Float loops marked for a
+    // full unroll; off for a clang before LLVM 19 (compiler/xo clang.xo
+    // unroll_cap_ok)
+    "unroll_full",
     // compiler/ssa uniqvar.xo (decision 0322): a `var` List parameter
     // every call passes unique skips its entry copy-on-write check
     "uniq_var_params",

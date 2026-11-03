@@ -24,3 +24,12 @@ Also: when testing a clang hang, a `perl -e 'alarm N; exec @ARGV'
 clang ...` wrapper stops only the driver; its cc1 child keeps running.
 Add `-fintegrated-cc1` so the compile runs in the process the alarm
 stops.
+
+Also (2026-11-03, Xo Lang 1): the option is LLVM 19's (llvm-project
+#78648; Apple clang 17), and clang 18, Ubuntu 24.04's, refuses it: every
+LLVM build there failed with "Unknown command line argument
+'-pragma-unroll-full-max-iterations=32'", though CLANG_MIN is 16. xo now
+passes it only to a clang that knows it (compiler/xo clang.xo
+unroll_cap_ok) and, for an older one, marks no loop for a full unroll
+(the module's unroll_full off, compiler/llvm func.xo), since without the
+cap such a mark can run for minutes; only the threshold goes to it.

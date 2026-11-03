@@ -15,13 +15,36 @@ fn find_clang(os: Os) -> Str {
 /// The major version of an LLVM clang (`clang version N...`), or 0 for
 /// none or another compiler: Apple's clang numbers its versions apart
 /// from LLVM's (its 15 is LLVM 16), and a --cc that is not clang has no
-/// such line.
-fn clang_major(os: Os, clang: Str) -> Int {
+/// such line; then Apple clang's own major (0 for any other).
+fn clang_major(os: Os, clang: Str) -> (Int, Int) {
   let (out, err) = combined(os, clang, ["--version"])
   if !err.is_empty() {
+    return (0, 0)
+  }
+  (parse_clang_major(out), parse_apple_major(out))
+}
+
+/// Apple clang's major (`Apple clang version N...`), 0 for any other.
+fn parse_apple_major(out: Str) -> Int {
+  let first = out.split("\n")[0]
+  let i = first.find("Apple clang version ") ?? -1
+  if i < 0 {
     return 0
   }
-  parse_clang_major(out)
+  let rest = first[i + "Apple clang version ".len()..first.len()]
+  let dot = rest.find(".") ?? rest.len()
+  Int.parse(rest[0..dot]) ?? 0
+}
+
+/// Whether clang knows `-pragma-unroll-full-max-iterations` (split.xo
+/// unroll_flags): LLVM 19 added it (llvm-project #78648), which Apple
+/// clang 17 is based on. Ubuntu 24.04's clang 18 stopped every LLVM build
+/// on it (2026-11-03). An unknown version (neither) is taken to.
+fn unroll_cap_ok(llvm: Int, apple: Int) -> Bool {
+  if apple > 0 {
+    return apple >= 17
+  }
+  llvm == 0 || llvm >= 19
 }
 
 /// The version line's major number (clang_major), 0 when there is none.

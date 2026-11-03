@@ -271,12 +271,16 @@ fn single_lto_flags(mode: Str) -> List[Str] {
 /// (which GNU ld refuses without LTO). nbody at -O3's speed (2,318 to
 /// 1,160 M instructions). Among the link flags, so the binary cache keys
 /// on it and split_build compiles with it.
-fn unroll_flags(opt: Str, goos: Str, lto: Str) -> List[Str] {
+///
+/// cap: clang knows the iteration cap (clang.xo unroll_cap_ok); without
+/// it only the threshold, and the IR marks no loop (unroll_full off).
+fn unroll_flags(opt: Str, goos: Str, lto: Str, cap: Bool) -> List[Str] {
   if opt == "-O0" {
     return []
   }
   var out: List[Str] = []
-  for u in ["-pragma-unroll-threshold=300", "-pragma-unroll-full-max-iterations=32"] {
+  let us = if cap { ["-pragma-unroll-threshold=300", "-pragma-unroll-full-max-iterations=32"] } else { ["-pragma-unroll-threshold=300"] }
+  for u in us {
     out = out + ["-mllvm", u]
     if lto != "none" {
       out.push(if goos == "darwin" { "-Wl,-mllvm,${u}" } else { "-Wl,-plugin-opt=${u}" })

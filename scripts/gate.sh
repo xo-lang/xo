@@ -388,7 +388,17 @@ for step in "$@"; do
       echo "fp: $(tail -1 "$logs/fp.txt")"
     else
       failed=1
-      echo "fp: FAIL ($logs/fp.txt)"
+      # the bootstrap's own logs, before the cleanup below deletes them (an
+      # s3 failure on 2026-11-03 left only "see .../out/log.txt", and three
+      # reruns passed); XO_GATE_FP_KEEP=1 keeps the whole output (s2 and
+      # s3 with their assembly for scripts/identity, a few GB)
+      for f in log.txt times.txt hello.txt; do
+        [ -f "$tmp/out/$f" ] && cp "$tmp/out/$f" "$logs/fp-$f"
+      done
+      echo "fp: FAIL ($logs/fp.txt, $logs/fp-log.txt)"
+      if [ "${XO_GATE_FP_KEEP:-}" = 1 ]; then
+        mv "$tmp/out" "$logs/fp-out" && echo "fp: output kept in $logs/fp-out"
+      fi
     fi
     rm -rf "$tmp" ;;
   warm)

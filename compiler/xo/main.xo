@@ -1313,13 +1313,19 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
         fail(os, "the LLVM backend needs clang: install it or set XO_CLANG")
       }
     }
-    let cmaj = clang_major(os, cc)
+    let (cmaj, amaj) = clang_major(os, cc)
+    // a clang before LLVM 19 has no cap on a full unroll's iterations, so
+    // the IR marks no loop for one (gotchas/llvm-unroll-full-pragma-iterations.md)
+    let ucap = unroll_cap_ok(cmaj, amaj)
     if cmaj > 0 && cmaj < CLANG_MIN {
       print_diags(os, [check.Diag{code: "XO1505", file: "", line: 0, col: 0, end_line: 0, end_col: 0, message: "the LLVM backend needs clang ${CLANG_MIN} or later, but ${cc} is clang ${cmaj}: install a newer clang and set XO_CLANG, or build with a native backend (the default)"}])
       os.proc.exit(1)
     }
     // DWARF line tables (decision 0239), as for arm64 below
     var lm = b.m
+    if !ucap {
+      lm.passes_off.push("unroll_full")
+    }
     lm.debug_info = o.cmd != "asm" && !o.strip && debug_info_eff(o, release) != "off"
     // the line root (the sources' names are relative to it: ssa file_name)
     // is the compilation directory, not the working directory, which
@@ -1467,7 +1473,7 @@ fn build_native(os: Os, ctx: Ctx, o0: Opts, backend: Str) -> Native {
       }
     }
     let lto1 = single_lto(split)
-    lk.flags = lk.flags + unroll_flags(split.opt, lctx.tgoos, if multi { split.lto } else { lto1 })
+    lk.flags = lk.flags + unroll_flags(split.opt, lctx.tgoos, if multi { split.lto } else { lto1 }, ucap)
     // the `use c` sources as objects with debug information (decision
     // 0446): bitcode when the link runs LTO, so it inlines them as
     // before

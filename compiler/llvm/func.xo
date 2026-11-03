@@ -487,7 +487,9 @@ fn (var g: Gen) lower_func(fi: Int) {
   for _ in 0..g.f.values.len() {
     g.blk.push(-1)
   }
-  g.unroll_latch = ssa.float_loop_latches(g.m, g.f)
+  // unroll_full off: a clang before LLVM 19, with no cap on the
+  // iterations (compiler/xo clang.xo unroll_cap_ok)
+  g.unroll_latch = if g.m.passes_off.contains("unroll_full") { [] } else { ssa.float_loop_latches(g.m, g.f) }
   g.ends = []
   g.texts = []
   for b in 0..g.f.blocks.len() {

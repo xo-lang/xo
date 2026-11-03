@@ -56,8 +56,8 @@ func sha1Compress(st *[5]uint32, p []byte) {
 }
 
 // TestSHA1HWDiff checks cpu.sha1_block (decision 0231's SHA-1 addendum):
-// its instructions (SHA1C and the rest on arm64, through both native
-// backends) and its body (the `_soft` op) against a Go reference
+// its instructions (SHA1C and the rest on arm64, SHA-NI on x86-64,
+// through LLVM and the native backend) and its body (the `_soft` op) against a Go reference
 // compression on edge and random states and blocks; then std's SHA-1
 // (sha1.xo, which takes the instructions when the CPU has them), one
 // shot, split and as HMAC, against crypto/sha1 on lengths around every
@@ -67,8 +67,16 @@ func TestSHA1HWDiff(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program on each native backend")
 	}
-	if runtime.GOARCH != "arm64" {
-		t.Skip("the SHA-1 instructions checked here are arm64's (x86-64's SHA-NI: the cpu_sha1 golden in the amd64 sample)")
+	// arm64's SHA-1 instructions, or x86-64's SHA-NI where the CPU has
+	// them (the amd64 host's run, 2026-11-03: the LLVM backend's SHA-NI asm
+	// had no other check); a CPU without them checks the software path
+	native := xotool.BackendArm64
+	switch runtime.GOARCH {
+	case "arm64":
+	case "amd64":
+		native = "amd64"
+	default:
+		t.Skip("no native backend on " + runtime.GOARCH)
 	}
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
@@ -155,7 +163,7 @@ func TestSHA1HWDiff(t *testing.T) {
 	for _, c := range cases {
 		in.WriteString(c.line + "\n")
 	}
-	for _, be := range []string{xotool.BackendLLVM, xotool.BackendArm64} {
+	for _, be := range []string{xotool.BackendLLVM, native} {
 		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be, NoGC: true})
 		if err != nil || res.Failed {
 			t.Fatalf("build (%s): %v %v", be, err, res.Output)
