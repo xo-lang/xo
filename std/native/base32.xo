@@ -68,11 +68,15 @@ fn encode(data: Bytes, enc: base32.Base32 = base32.Base32.Std) -> Str {
 }
 
 fn decode(s: Str, enc: base32.Base32 = base32.Base32.Std) -> Bytes ! base32.DecodeErr {
-  var stripped = BytesBuilder.with_capacity(s.len())
-  for c in s.bytes() {
-    if c != 10 && c != 13 { stripped.write_byte(c) }
+  // copy only when there is a newline to drop (Go skips them in place)
+  var src = s.bytes()
+  if s.contains("\n") || s.contains("\r") {
+    var stripped = BytesBuilder.with_capacity(s.len())
+    for c in s.bytes() {
+      if c != 10 && c != 13 { stripped.write_byte(c) }
+    }
+    src = stripped.freeze()
   }
-  let src = stripped.freeze()
   let tbl = if enc is Hex | RawHex { DEC_HEX } else { DEC_STD }
   let pad = padded(enc)
   let olen = src.len()

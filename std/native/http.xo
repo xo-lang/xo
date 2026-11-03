@@ -4106,33 +4106,36 @@ fn parse_set_cookie(line: Str) -> http.Cookie ! http.CookieErr {
     if !vok {
       continue
     }
-    let la = attr.to_lower()
-    if la == "samesite" {
+    // attr is ASCII here, so a fold compare equals a lower cased one without the copy
+    if attr.equal_fold("samesite") {
       c.same_site = if !ascii_only(val) { http.SameSite.Default } else {
-        match val.to_lower() {
-          "lax" => http.SameSite.Lax
-          "strict" => http.SameSite.Strict
-          "none" => http.SameSite.None
-          _ => http.SameSite.Default
+        if val.equal_fold("lax") {
+          http.SameSite.Lax
+        } else if val.equal_fold("strict") {
+          http.SameSite.Strict
+        } else if val.equal_fold("none") {
+          http.SameSite.None
+        } else {
+          http.SameSite.Default
         }
       }
-    } else if la == "secure" {
+    } else if attr.equal_fold("secure") {
       c.secure = true
-    } else if la == "httponly" {
+    } else if attr.equal_fold("httponly") {
       c.http_only = true
-    } else if la == "domain" {
+    } else if attr.equal_fold("domain") {
       c.domain = val
-    } else if la == "max-age" {
+    } else if attr.equal_fold("max-age") {
       if let Some(secs) = Int.parse(val) {
         if !(secs != 0 && val.starts_with("0")) {
           c.max_age = if secs <= 0 { -1 } else { secs }
         }
       }
-    } else if la == "expires" {
+    } else if attr.equal_fold("expires") {
       c.expires = cookie_date(val)
-    } else if la == "path" {
+    } else if attr.equal_fold("path") {
       c.path = val
-    } else if la == "partitioned" {
+    } else if attr.equal_fold("partitioned") {
       c.partitioned = true
     }
   }
