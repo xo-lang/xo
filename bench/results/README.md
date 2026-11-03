@@ -162,6 +162,7 @@
 - [std-twin-rows5-2026-11-03.md](std-twin-rows5-2026-11-03.md): std/png against Go's image/png (decode 1.04, encode 0.94; decode was 1.22 before compress's Adler-32 took the modulus once per 5552 bytes)
 - [std-twin-rows6-2026-11-03.md](std-twin-rows6-2026-11-03.md): std/jpeg against Go's image/jpeg (decode 1.01, with RGBA conversion 1.04)
 - [std-twin-rows7-2026-11-03.md](std-twin-rows7-2026-11-03.md): std/cbor against fxamacker/cbor (decode 0.43, encode 0.26, deterministic encode 0.62)
+- [std-twin-rows11-2026-11-03.md](std-twin-rows11-2026-11-03.md): std/otp (decision 0473) against crypto/hmac HOTP: SHA-1 4.78, SHA-256 and SHA-512 1.57 of Go's wall (not Proven: no hardware SHA-1 path) on the linux/arm64 host
 - [std-twin-rows10-2026-11-03.md](std-twin-rows10-2026-11-03.md): std/heap (decision 0472) against container/heap: sort 0.82, steady 0.69, fix 1.02 of Go's wall on the linux/arm64 host
 - [std-twin-rows9-2026-11-03.md](std-twin-rows9-2026-11-03.md): hash (crc64, crc64e, adler32), csv reader, bcrypt (1.44 hash, 1.55 compare: not Proven), charset first run (decode 1.8 to 2.1) and bufio (0.64 to 0.70) against Go on the linux/arm64 host
 - [std-twin-rows8-2026-11-03.md](std-twin-rows8-2026-11-03.md): std/xml Reader (decision 0463) against Decoder.Token: stream 1.18 of Go wall at 0.70 of its peak memory, against 7.2 for the tokens list.
