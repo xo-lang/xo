@@ -979,6 +979,15 @@ fn (var g: Gen) exports() {
       }
     }
   }
+  if g.emitted.contains("@xo_async_stub") {
+    // only xo_async_stub's module asm calls the park export: LTO would
+    // drop it
+    for f in g.m.funcs {
+      if f.export == "xo_x_async_park" {
+        used.push("ptr @xo_x_async_park")
+      }
+    }
+  }
   if !used.is_empty() {
     g.funcs.push("@llvm.used = appending global [${used.len()} x ptr] [${used.join(", ")}], section \"llvm.metadata\"\n")
   }

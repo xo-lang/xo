@@ -1660,6 +1660,18 @@ pub fn async_wpark(cx: Int) {
   sys_windows.RtlRestoreContext(cx, 0)
 }
 
+/// The park of Windows' preemption through cabi.xo async_park, called by
+/// xo_async_stub with the interrupted registers saved on the fiber's
+/// stack: yields the fiber, which runs again on this worker (the code it
+/// interrupted may hold values derived from this thread), and returns.
+pub fn async_park() {
+  let w = rt.tlocal_get(TLS_W)
+  let f = rt.tlocal_get(TLS_FIB)
+  stat(ST_PREEMPT)
+  rt.mem_store(w, W_ASYNC, 1, 8)
+  sched.fiber_yield(f)
+}
+
 /// Puts fiber f, preempted by SIGURG, on w's own list.
 fn pin_push(w: Int, f: Int) {
   if det.built() {

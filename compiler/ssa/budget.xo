@@ -233,6 +233,34 @@ fn runtime_mod(p: Str) -> Bool {
   p.starts_with("native/llrt") || p.starts_with("native/rt") || p.starts_with("native/sys_")
 }
 
+/// The body of xo_async_stub on windows/amd64 (decision 0318): the place
+/// asynchronous preemption sends a thread to (std/native/llrt pool.xo
+/// win_kick pushes the interrupted pc as its return address and changes
+/// only rip and rsp), which keeps every register a callee may change and
+/// the flags itself, as Go's asyncPreempt does, around the runtime's
+/// xo_x_async_park, and returns to the interrupted code. The thread's own
+/// registers are saved, so nothing depends on what GetThreadContext read.
+/// The xmm saves start at 112, 0 mod 16 like the frame (decision 0459's
+/// class: no 16 byte store straddles).
+pub fn async_stub_amd64() -> List[Str] {
+  let gp = ["rax", "rcx", "rdx", "rsi", "rdi", "r8", "r9", "r10", "r11"]
+  var b = ["pushq %rbp", "movq %rsp, %rbp", "pushfq", "andq $-16, %rsp", "subq $368, %rsp"]
+  for (i, r) in gp.indexed() {
+    b.push("movq %${r}, ${32 + 8 * i}(%rsp)")
+  }
+  for i in 0..16 {
+    b.push("movups %xmm${i}, ${112 + 16 * i}(%rsp)")
+  }
+  b.push("callq xo_x_async_park")
+  for i in 0..16 {
+    b.push("movups ${112 + 16 * i}(%rsp), %xmm${i}")
+  }
+  for (i, r) in gp.indexed() {
+    b.push("movq ${32 + 8 * i}(%rsp), %${r}")
+  }
+  b + ["leaq -8(%rbp), %rsp", "popfq", "popq %rbp", "retq"]
+}
+
 /// The body of xo_preempt_stub on amd64 (decision 0286 step 3; both
 /// emitters define it, compiler/arm64 x86rt.xo and compiler/llvm): a
 /// preemption poll's slow path, which keeps every register either

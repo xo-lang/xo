@@ -1238,6 +1238,11 @@ fn (var g: Gen) instr_body(v: Int) {
       // rt.sym_addr (decision 0234): `&` and a C level symbol, declared
       // unless the module defines it
       let p = if n.starts_with("@") { n } else if n.starts_with("&") { g.c_sym(n[1..n.len()]) } else { fname(n) }
+      if n == "&xo_async_stub" {
+        // Windows' asynchronous preemption stub (pool.xo win_kick):
+        // preempt_asm defines it
+        g.emitted["@xo_async_stub"] = true
+      }
       g.set(v, "ptrtoint ptr ${p} to i64")
     }
     Rebind => {

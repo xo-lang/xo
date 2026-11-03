@@ -32,8 +32,17 @@ fn (var g: Gen) preempt_stub() { g.emitted["@xo_preempt_stub"] = true }
 /// module asm is kept as written (and a split build puts it in its first
 /// module, split.xo parse_ir).
 fn (g: Gen) preempt_asm() -> Str {
+  var out = ""
+  if g.emitted.contains("@xo_async_stub") && g.goos == "windows" && g.arch() == "amd64" {
+    // Windows' asynchronous preemption stub (ssa.async_stub_amd64), in
+    // the module of pool.xo win_kick, which names it
+    for l in [".text", ".globl xo_async_stub", ".p2align 4", "xo_async_stub:"] + ssa.async_stub_amd64() {
+      out = out + "module asm \"${l}\"\n"
+    }
+    out = out + "\n"
+  }
   if !g.emitted.contains("@xo_preempt_stub") {
-    return ""
+    return out
   }
   let s = if g.goos == "darwin" { "_xo_preempt_stub" } else { "xo_preempt_stub" }
   var ls: List[Str] = [".text"]
@@ -47,7 +56,6 @@ fn (g: Gen) preempt_asm() -> Str {
   // the body on x86_64 is ssa.preempt_stub_amd64's (decision 0286 step 3)
   let body = if g.arch() == "amd64" { ssa.preempt_stub_amd64(g.goos) } else { ssa.preempt_stub_arm64(g.goos) }
   ls = ls + [".p2align 2", "${s}:"] + body
-  var out = ""
   for l in ls {
     out = out + "module asm \"${l}\"\n"
   }

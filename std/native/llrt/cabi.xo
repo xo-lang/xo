@@ -760,6 +760,10 @@ fn mon_main(p: Int) -> Int {
 /// change and calls this, so a poll site in a loop clobbers nothing.
 fn preempt() { pool.preempt() }
 
+/// Asynchronous preemption's park on windows/amd64 (decision 0318): the
+/// emitter's xo_async_stub saves the registers and flags and calls this.
+fn async_park() { pool.async_park() }
+
 fn park_reset(p: Int) { pool.park_reset(p) }
 
 fn node_link(n: Int, parent: Int) { pool.node_link(n, parent) }
