@@ -463,3 +463,4 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0471](0471-std-bufio-reader.md): accepted (owner, 2026-11-03): std/bufio, a Reader over any Stream (read, read_until and read_line with a limit, read_exact, peek) with a BufErr; closes survey rank 8
 - [0472](0472-std-heap-priority-queue.md): proposed: std/heap, a binary min-heap Heap[T] by a caller comparison with push, pop, peek, remove(i), fix(i, x) and a moved(x, i) callback for index bookkeeping; closes survey rank 13 (container/heap)
 - [0473](0473-std-otp.md): proposed: std/otp, hotp, totp, verify (constant time, skew window), generate_secret and an otpauth uri over std/crypto hmac and std/base32; closes survey TOTP
+- [0474](0474-std-cron.md): proposed: std/cron, parse a robfig/cron spec (5 fields, descriptors, @every, TZ=) into a Schedule and next(after) with DST gap and overlap rules; closes survey rank 8
