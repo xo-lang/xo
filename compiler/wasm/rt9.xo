@@ -20,10 +20,7 @@
 //              output-stream, 20 closed, 24 read deadline, 32 write
 //              deadline (i64s, monotonic ns, 0 none; the read deadline
 //              is the connect deadline until connected), 40 bytes of the
-//              current write done, 44 std/tls's upgrade mark, 48
-//              whether wasi_sock_readable waits, 52 the wait table's
-//              generation then ($wgen: $io_poll and $sk_unwait drop
-//              pollables and count it up)
+//              current write done, 44 std/tls's upgrade mark
 // A call that fails returns the immortal empty string's object as its
 // handle, which the reference counting never frees, and records the error
 // for $wasi_sock_err: 0 none, 1 + a wasi:sockets error-code, 100 the
@@ -75,7 +72,7 @@ fn rt9_imports() -> Str {
 
 /// The globals of rt9.xo: the outcome rt.net_status and rt.net_msg read
 /// (set by netwasi.xo), the last call's error, the network, and the wait
-/// table ({pollable, owner} pairs).
+/// table ({pollable, owner, task, unused} entries of 16 bytes).
 fn rt9_globals(var g: Gen) -> Str {
   let empty = g.str_obj(b"")
   "    (global $nstat (mut i32) (i32.const 0))\n    (global $nmsg (mut i32) (i32.const ${empty}))\n    (global $nmsgn (mut i32) (i32.const 0))\n    (global $skerr (mut i32) (i32.const 0))\n    (global $skab (mut i32) (i32.const 0))\n    (global $sknet (mut i32) (i32.const -1))\n    (global $wq (mut i32) (i32.const 0))\n    (global $wn (mut i32) (i32.const 0))\n    (global $wcap (mut i32) (i32.const 0))\n    (global $wgen (mut i32) (i32.const 0))\n"
@@ -334,7 +331,7 @@ fn rt9_text(var g: Gen) -> Str {
         i32.const 8
         i32.add
         local.tee $nc
-        i32.const 3
+        i32.const 4
         i32.shl
         call $alloc
         local.set $nb
@@ -343,7 +340,7 @@ fn rt9_text(var g: Gen) -> Str {
           local.get $nb
           global.get $wq
           global.get $wn
-          i32.const 3
+          i32.const 4
           i32.shl
           memory.copy
           global.get $wq
@@ -356,7 +353,7 @@ fn rt9_text(var g: Gen) -> Str {
       end
       global.get $wq
       global.get $wn
-      i32.const 3
+      i32.const 4
       i32.shl
       i32.add
       local.tee $e
@@ -365,14 +362,89 @@ fn rt9_text(var g: Gen) -> Str {
       local.get $e
       local.get $o
       i32.store offset=4
+      local.get $e
+      global.get $cur
+      i32.store offset=8
       global.get $wn
       i32.const 1
       i32.add
       global.set $wn
+      ;; the wait table's generation (+1) and the deadline, for
+      ;; $sk_reblock
+      global.get $cur
+      global.get $wgen
+      i32.const 1
+      i32.add
+      i32.store offset=208
+      global.get $cur
+      local.get $dl
+      i64.store offset=216
       global.get $cur
       local.get $dl
       i64.store offset=128
       call $block)
+
+    ;; on a resumption: when the task's pollable is still in the wait
+    ;; table (no $io_poll dropped the table since: the generation is the
+    ;; same; $sk_unwait clears the word of each task whose entry it drops;
+    ;; a handle number can be reused, so it is not looked up), its
+    ;; deadline has not passed and it is not
+    ;; canceled, the wake was for another task ($wake wakes every blocked
+    ;; task: a park signal, a channel): it blocks again on the same
+    ;; pollable and returns 1, rather than its call subscribing anew
+    ;; (each subscribe is a handle: tasks waking each other in a loop
+    ;; filled the store's handle table, http_h2_config 2026-11-03,
+    ;; gotchas/wasm-wake-resubscribes-pollables.md). Else 0, the task's
+    ;; wait over.
+    (func $sk_reblock (result i32) (local $g i32) (local $dl i64)
+      global.get $cur
+      i32.load offset=208
+      local.set $g
+      global.get $cur
+      i32.const 0
+      i32.store offset=208
+      local.get $g
+      i32.eqz
+      if
+        i32.const 0
+        return
+      end
+      local.get $g
+      i32.const 1
+      i32.sub
+      global.get $wgen
+      i32.ne
+      if
+        i32.const 0
+        return
+      end
+      call $ctx_canceled
+      if
+        i32.const 0
+        return
+      end
+      global.get $cur
+      i64.load offset=216
+      local.tee $dl
+      i64.eqz
+      i32.eqz
+      if
+        call $mono
+        local.get $dl
+        i64.ge_s
+        if
+          i32.const 0
+          return
+        end
+      end
+      global.get $cur
+      local.get $g
+      i32.store offset=208
+      global.get $cur
+      local.get $dl
+      i64.store offset=128
+      call $block
+      i32.const 1)
 
     ;; drops the waits of owner o (being closed) and wakes their tasks
     (func $sk_unwait (param $o i32) (local $i i32) (local $j i32) (local $e i32)
@@ -384,7 +456,7 @@ fn rt9_text(var g: Gen) -> Str {
           br_if $x
           global.get $wq
           local.get $i
-          i32.const 3
+          i32.const 4
           i32.shl
           i32.add
           local.tee $e
@@ -395,15 +467,28 @@ fn rt9_text(var g: Gen) -> Str {
             local.get $e
             i32.load
             call $poll_drop
+            ;; its task's wait is over ($sk_reblock)
+            local.get $e
+            i32.load offset=8
+            i32.const 0
+            i32.store offset=208
           else
             global.get $wq
             local.get $j
-            i32.const 3
+            i32.const 4
             i32.shl
             i32.add
             local.get $e
             i64.load
             i64.store
+            global.get $wq
+            local.get $j
+            i32.const 4
+            i32.shl
+            i32.add
+            local.get $e
+            i64.load offset=8
+            i64.store offset=8
             local.get $j
             i32.const 1
             i32.add
@@ -418,10 +503,6 @@ fn rt9_text(var g: Gen) -> Str {
       end
       local.get $j
       global.set $wn
-      global.get $wgen
-      i32.const 1
-      i32.add
-      global.set $wgen
       call $wake)
 
     ;; the scheduler's wait when no task can run (rt3.xo's $sched): 0 when
@@ -456,7 +537,7 @@ fn rt9_text(var g: Gen) -> Str {
           i32.add
           global.get $wq
           local.get $i
-          i32.const 3
+          i32.const 4
           i32.shl
           i32.add
           i32.load
@@ -528,7 +609,7 @@ fn rt9_text(var g: Gen) -> Str {
           br_if $x
           global.get $wq
           local.get $i
-          i32.const 3
+          i32.const 4
           i32.shl
           i32.add
           i32.load
@@ -551,10 +632,19 @@ fn rt9_text(var g: Gen) -> Str {
 
     ;; the start of a repeatable call: the task's resumption ends, its
     ;; deadline wake is cleared; 1 when its context is canceled (the error
-    ;; recorded)
+    ;; recorded), 2 when it blocked again ($sk_reblock: the caller returns
+    ;; as when it suspends)
     (func $sk_enter (result i32)
       call $resumed
       if
+        call $sk_reblock
+        if
+          ;; blocked again: the caller returns as when it suspended
+          i32.const 0
+          global.set $skerr
+          i32.const 2
+          return
+        end
         global.get $cur
         i64.const 0
         i64.store offset=128
@@ -895,7 +985,7 @@ fn rt9_text(var g: Gen) -> Str {
         call $sk_fail
         return
       end
-      i32.const 56
+      i32.const 48
       i32.const ${conn_free}
       call $obj_new
       local.tee $c
@@ -963,7 +1053,7 @@ fn rt9_text(var g: Gen) -> Str {
         call $sk_fail
         return
       end
-      i32.const 56
+      i32.const 48
       i32.const ${conn_free}
       call $obj_new
       local.tee $c
@@ -1200,25 +1290,16 @@ fn rt9_text(var g: Gen) -> Str {
     ;; the read deadline passes, the task is canceled, c is closed: the
     ;; error recorded), reading nothing (HTTP/2's reader, decision 0447
     ;; R2f); a repeatable call: its resumption returns
-    ;; Any wake resumes it ($wake wakes every blocked task: HTTP/2's park
-    ;; signals), so while its pollable is still in the wait table (no
-    ;; $io_poll or $sk_unwait dropped the table's pollables since: the
-    ;; generation is the same; a handle number can be reused, so it is not
-    ;; looked up) it blocks again rather than subscribing anew (each
-    ;; subscribe is a handle: a loop of wakes filled the store's handle
-    ;; table, http_h2_config 2026-11-03).
-    (func $wasi_sock_readable (param $c i32) (local $p i32)
+    (func $wasi_sock_readable (param $c i32)
       call $resumed
       if
+        call $sk_reblock
+        if
+          return
+        end
         global.get $cur
         i64.const 0
         i64.store offset=128
-        local.get $c
-        i32.load offset=48
-        local.set $p
-        local.get $c
-        i32.const 0
-        i32.store offset=48
         call $ctx_canceled
         if
           i32.const 101
@@ -1239,24 +1320,6 @@ fn rt9_text(var g: Gen) -> Str {
           i32.const 102
           global.set $skerr
           return
-        end
-        local.get $p
-        if
-          local.get $c
-          i32.load offset=52
-          global.get $wgen
-          i32.eq
-          if
-            local.get $c
-            i32.const 1
-            i32.store offset=48
-            global.get $cur
-            local.get $c
-            i64.load offset=24
-            i64.store offset=128
-            call $block
-            return
-          end
         end
         i32.const 0
         global.set $skerr
@@ -1280,14 +1343,6 @@ fn rt9_text(var g: Gen) -> Str {
       local.get $c
       i32.load offset=12
       call $sk_isub
-      local.set $p
-      local.get $c
-      i32.const 1
-      i32.store offset=48
-      local.get $c
-      global.get $wgen
-      i32.store offset=52
-      local.get $p
       local.get $c
       local.get $c
       i64.load offset=24
@@ -1297,10 +1352,17 @@ fn rt9_text(var g: Gen) -> Str {
     ;; a suspended call of it got to
     (func $wasi_sock_write (param $c i32) (param $p i32) (param $n i32) (local $r i32) (local $k i32) (local $done i32)
       call $sk_enter
+      local.tee $k
       if
-        local.get $c
-        i32.const 0
-        i32.store offset=40
+        ;; canceled: the write starts over; blocked again: it goes on
+        local.get $k
+        i32.const 1
+        i32.eq
+        if
+          local.get $c
+          i32.const 0
+          i32.store offset=40
+        end
         return
       end
       local.get $c
@@ -1465,8 +1527,11 @@ fn rt9_text(var g: Gen) -> Str {
         local.get $at
         i64.store offset=32
       end
-      ;; a task waiting on c sees the new deadline when it repeats its call
-      call $wake)
+      ;; a task waiting on c sees the new deadline when it repeats its
+      ;; call: its wait is dropped (a $wake alone would let $sk_reblock
+      ;; keep the old deadline: conn_deadline hung, 2026-11-03)
+      local.get $c
+      call $sk_unwait)
 
     ;; the start of a lookup of the name (n bytes at h's): its stream, or 0
     ;; with the error recorded

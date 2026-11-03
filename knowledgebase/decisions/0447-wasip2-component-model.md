@@ -850,14 +850,19 @@ that make that wait possible without changing the scheduler:
   hc_try_recv, and tlssrv's nb_read through the same call for TLS), as
   natively.
 - Park words in the records: C_WPARK and C_WREAD in the connection
-  record, S_WPARK in the stream record (natively 16 and 8 bytes more per
-  record, unused). wake, signal_stream, wait_backlog and the body read's
+  record, S_WPARK in the stream record (wasm only, after the native
+  record's end). wake, signal_stream, wait_backlog and the body read's
   wait use them on wasm in place of poll.park_of and pool.park_reset.
-- A wake resumes every blocked task on wasm, so wasi_sock_readable keeps
-  its pollable across wakes for others (the wait table's generation in
-  the connection record, 48 and 52; the record is 56 bytes): subscribing
-  on each wake filled the handle table (gotchas/
-  wasm-wake-resubscribes-pollables.md).
+- A wake resumes every blocked task on wasm, so a waiting socket call
+  keeps its pollable across wakes for others (the wait table's
+  generation and the wait's deadline in the task record, words 208 and
+  216, checked by $sk_reblock in every repeatable call; a close or a new
+  deadline ends the connection's waits through $sk_unwait, which clears
+  the tasks it finds in their wait table entries): subscribing on
+  each wake filled the handle table (gotchas/
+  wasm-wake-resubscribes-pollables.md). The park words are wasm only:
+  h2srv's c_size and s_size add them after the native record's end, so
+  native records keep their sizes (704 and 416 bytes).
 - h2srv's connection lock (slot_cas) is never held across a wait or a
   socket write (the output is swapped out first), so on one thread it
   never contends.

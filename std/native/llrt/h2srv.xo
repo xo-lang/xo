@@ -196,10 +196,13 @@ const C_WTO = 688
 const C_ETAB = 696
 /// wasm only (decision 0447 R2f): the park word the connection's fiber
 /// waits on (wake, the reader task) and the one its reader task waits on
-/// for the fiber to have read
+/// for the fiber to have read; past the native record's end (c_size)
 const C_WPARK = 704
 const C_WREAD = 712
-const C_SIZE = 720 // own: this module\'s connection record, not the context
+const C_SIZE = 704 // own: this module\'s connection record, not the context
+
+/// The connection record's size: wasm's has the park words after it.
+fn c_size() -> Int { if target.arch == TargetArch.Wasm32 { C_SIZE + 16 } else { C_SIZE } }
 /// A stream record's words: its connection's record, its id, the
 /// references, whether it is in the table, the request's state (ST_*);
 /// the request (the fiber's, until dispatched): its parts (an Any of
@@ -265,9 +268,12 @@ const S_TRL = 368
 /// as a trailing HEADERS frame after the body.
 const S_OTRL = 392
 /// wasm only: the park word a stream's task waits on (S_WAITER holds its
-/// address while it waits)
+/// address while it waits); past the native record's end (s_size)
 const S_WPARK = 416
-const S_SIZE = 424
+const S_SIZE = 416
+
+/// The stream record's size: wasm's has the park word after it.
+fn s_size() -> Int { if target.arch == TargetArch.Wasm32 { S_SIZE + 8 } else { S_SIZE } }
 
 // slot atomics' orders (rt.xo)
 const ACQUIRE = 1
@@ -803,8 +809,8 @@ pub fn conn_open(why: Str, cfg: Int = 0) -> Int {
 /// unread input, gotchas/windows-shutdown-resets-unread-input.md) drop
 /// the input for a second as after a connection error.
 pub fn conn_new(why: Str, linger: Bool, cfg: Int = 0) -> Int {
-  let c = rt.heap_large(C_SIZE)
-  rt.mem_set(c, 0, C_SIZE)
+  let c = rt.heap_large(c_size())
+  rt.mem_set(c, 0, c_size())
   // the settings: the server's block (hserve.srv_h2cfg: max streams,
   // max frame, connection window, stream window, decoder table) or Go's
   // defaults
@@ -1866,8 +1872,8 @@ fn (var h: H2Conn) on_headers(sid: Int, flags: Int, prio: Bool, dep: Int) {
     stream_err(c, sid, if on(c, C_UNACKED) { E_REFUSED } else { E_PROTOCOL })
     return
   }
-  st = rt.heap_large(S_SIZE)
-  rt.mem_set(st, 0, S_SIZE)
+  st = rt.heap_large(s_size())
+  rt.mem_set(st, 0, s_size())
   sto(st, S_C, c)
   sto(st, S_ID, sid)
   sto(st, S_REFS, 1)

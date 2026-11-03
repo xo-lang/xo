@@ -26,7 +26,9 @@
 //            it suspended, 120 blocked, 124 its channel entry, 128
 //            deadline (i64, ns; 0 none), 136 held mutexes, 140 its fault
 //            {msg, msgn, loc, locn, detail, detailn, locobj at 168}, 164
-//            the drop of its result list; 176 bytes
+//            the drop of its result list, 208 rt9.xo's socket wait
+//            (the wait table's generation + 1, 0 none), 216 that wait's
+//            deadline (i64); 224 bytes
 //   scope    0 rc, 4 free, 8 body node {canceled, parent}, 16 tasks
 //            node, 20 task list, 24 tasks not done, 28 closed, 32 failed
 //            task, 36 faulted task, 40 parent node, 44 replaced task
@@ -899,7 +901,7 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
     ;; runs the program: main as the first task, then every task until
     ;; main ends
     (func $sched (local $m i32) (local $i i32) (local $t i32) (local $how i32) (local $progress i32) (local $d i64)
-      i32.const 208
+      i32.const 224
       i32.const ${task_free}
       call $obj_new
       local.tee $m
@@ -1481,7 +1483,7 @@ fn rt3_text(var g: Gen, main: Int, main_res: List[Str], main_args: Str) -> Str {
         i32.const ${zh}
         return
       end
-      i32.const 208
+      i32.const 224
       i32.const ${task_free}
       call $obj_new
       local.tee $t

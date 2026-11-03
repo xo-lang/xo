@@ -22,15 +22,25 @@ the pollables filled the store's handle table.
 
 ## Fix
 
-`wasi_sock_readable` marks its wait in the connection record (offset 48)
-with the wait table's generation (`$wgen`, offset 52), which `$io_poll`
-and `$sk_unwait` count up when they drop pollables. A resumption with
-the same generation is a wake for someone else: it blocks again on the
-pollable it already has. (Not a lookup of the pollable's number: a
-dropped handle's number can be reused.)
+`$sk_wait` records, in the waiting task (words 208 and 216), the wait
+table's generation (`$wgen`, which `$io_poll` counts up when it drops the
+table) and the wait's deadline, and the task in its wait table entry;
+`$sk_unwait` (a close, and a deadline set on the connection) clears the
+word of each task whose entry it drops, so only those tasks subscribe
+again (a global count would make every waiter on every connection
+subscribe again at each deadline set, which servers do per request). On a resumption,
+`$sk_reblock` (from `$sk_enter`, so every repeatable call: read, write,
+accept, connect, a lookup's next, and `wasi_sock_readable`) blocks the
+task again on the pollable it already has while the generation is the
+same, the deadline has not passed and the task is not canceled; the call
+returns as when it suspends (`$sk_enter` returns 2; a write keeps its
+progress). Not a lookup of the pollable's number: a dropped handle's
+number can be reused. The first fix (2026-11-03, b84a0b69c) did this for
+`wasi_sock_readable` only, in the connection record; the Lead asked for
+every call, since a server under load is where tasks wake each other in
+a loop.
 
-The other repeatable calls (read, write, accept, connect) still
-subscribe again after such a wake; each wake adds one pollable until the
-next `$io_poll`, which is bounded unless tasks wake each other in a
-loop. Give a new waiting call the same generation check if it can be
-woken in a loop.
+A deadline set while a call waits must end that wait: `wasi_sock_deadline`
+woke the tasks so they would repeat their call under the new deadline, and
+the re-block kept the old one instead (conn_deadline hung, 2026-11-03); it
+now drops the connection's waits with `$sk_unwait`.
