@@ -52,6 +52,13 @@ func jsonValueAt(x any, path string) (Json_Value, *Json_DecodeErr) {
 		}
 		return Json_Value{Tag: 6, P: Json_Value_List{F_items: ListFromSlice(items)}}, nil
 	case *jsonObj:
+		// the values a duplicate key replaced are range checked too, in
+		// document order, as Go's decoder reads every member
+		for _, m := range t.all {
+			if _, err := jsonValueAt(m.v, path+"."+m.k); err != nil {
+				return Json_Value{}, err
+			}
+		}
 		fs := make([]Tuple2[string, Json_Value], len(t.keys))
 		for i, k := range t.keys {
 			v, err := jsonValueAt(t.vals[k], path+"."+k)
@@ -156,7 +163,12 @@ func (v Json_Value) XoJsonEnc(tk *Task, w *JsonW) {
 
 // XoJsonDec reads any JSON value into v.
 func (v *Json_Value) XoJsonDec(tk *Task, x any, path string) *Json_DecodeErr {
-	*v = jsonValueOf(x)
+	// a number out of Float's range fails, as in Go and std/native
+	jv, err := jsonValueAt(x, path)
+	if err != nil {
+		return err
+	}
+	*v = jv
 	return nil
 }
 
@@ -177,8 +189,10 @@ func Json_encode_indent_str[T any](tk *Task, v T, prefix string, indent string) 
 // Json_indent is `json.indent(text, prefix, indent)`: Go's Indent; a text
 // that is not JSON is parse_value's error.
 func Json_indent(tk *Task, text string, prefix string, indent string) Result[string, Json_DecodeErr] {
-	if r := Json_parse_value(tk, text); !r.Ok {
-		return Err[string](r.E)
+	// the syntax only: Go's Compact and Indent take a number out of
+	// Float's range
+	if _, err := jsonParse([]byte(text)); err != nil {
+		return Err[string](*err)
 	}
 	var b bytes.Buffer
 	if err := json.Indent(&b, []byte(text), prefix, indent); err != nil {
@@ -189,8 +203,10 @@ func Json_indent(tk *Task, text string, prefix string, indent string) Result[str
 
 // Json_compact is `json.compact(text)`: Go's Compact.
 func Json_compact(tk *Task, text string) Result[string, Json_DecodeErr] {
-	if r := Json_parse_value(tk, text); !r.Ok {
-		return Err[string](r.E)
+	// the syntax only: Go's Compact and Indent take a number out of
+	// Float's range
+	if _, err := jsonParse([]byte(text)); err != nil {
+		return Err[string](*err)
 	}
 	var b bytes.Buffer
 	if err := json.Compact(&b, []byte(text)); err != nil {
