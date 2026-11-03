@@ -4064,7 +4064,11 @@ pub fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
   error (zip slip); so is a tar or zip entry that is a link or a device.
   Directories are written with a trailing `/` and read without it. A PAX
   global header (`git archive` writes one holding the commit) describes
-  the archive, not an entry, and `untar` skips it (2026-10-12).
+  the archive, not an entry, and `untar` skips it (2026-10-12) after the
+  path rule checks its name (or its own `path` record), as Go's reader
+  returns it under that name. Reading follows Go's archive/tar and
+  archive/zip errors exactly; internal/stdtest/archivefuzz_test.go checks
+  hostile archives against them on every backend.
 - `tar` writes PAX headers with the entries' modes (`0o7777`) and times;
   `zip` deflates files and stores their modes and times (with Unix
   extended timestamps, so times before 1980 survive).
