@@ -1,4 +1,4 @@
-# std twin rows 19: norm and idna with in-place UTF-8 decoding (2026-11-03)
+# std twin idna (and norm): host rows (2026-11-03)
 
 Host 1 (linux/arm64, `twin-ab2`, n=15, ratio is Xo wall over Go wall), as rows16. idna ab4 is 623895699 (validate_and_map and validate_label decode in place); idna ab5 and norm ab6 add std/norm's normalize_run decoding in place.
 

@@ -2,7 +2,9 @@
 // profile: ToASCII of 8 plain ASCII names 20000 times; ToASCII and ToUnicode
 // of 8 names with non ASCII labels and punycode labels 4000 times; ToASCII
 // of 4 names with 60 character labels 1000 times; `none` is the setup alone.
-// Usage: `<program> none|ascii|mixed|long`. Prints `<workload> <checksum>`
+// Usage: `<program> none|ascii|mixed|long|map|nfcmap|enc|dec` (map: ToUnicode of
+// composed non ASCII names; nfcmap: of decomposed ones; enc: ToASCII of the map
+// names; dec: ToUnicode of their Punycode forms; 4000 rounds of 8 names). Prints `<workload> <checksum>`
 // (the sum of the lengths of the results); the twin prints the same.
 use std/idna
 
@@ -11,6 +13,12 @@ fn names(w: Str) -> List[Str] {
     ["www.example.com", "api.v2.service.internal.example.org", "a-b-c.example.net", "EXAMPLE.COM", "cdn1.static-assets.example.io", "mail.example.co.uk", "x.y.z", "localhost"]
   } else if w == "mixed" {
     ["bücher.example.com", "例え.jp", "правда.рф", "faß.de", "München.Straße.de", "xn--bcher-kva.example.com", "xn--80aswg.xn--p1ai", "ΕΛΛΗΝΙΚΑ.gr"]
+  } else if w == "map" || w == "enc" {
+    ["bücher.example.com", "例え.jp", "правда.рф", "faß.de", "münchen.straße.de", "ελληνικά.gr", "café.example.org", "日本語.example.jp"]
+  } else if w == "nfcmap" {
+    ["bücher.example.com", "café.example.org", "münchen.straße.de", "århus.dk", "ñandú.es", "öl.de", "été.fr", "über.de"]
+  } else if w == "dec" {
+    ["xn--bcher-kva.example.com", "xn--r8jz45g.jp", "xn--80aafi6cg.xn--p1ai", "xn--fa-hia.de", "xn--mnchen-3ya.xn--strae-oqa.de", "xn--hxargifdar.gr", "xn--caf-dma.example.org", "xn--wgv71a119e.example.jp"]
   } else {
     ["ééééééééééééééééééééééééééééééaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.com", "日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語日本語.jp", "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa.example.com", "ЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖЖ.рф"]
   }
@@ -21,9 +29,13 @@ fn main(os: Os) uses stdio, env {
   var sum = 0
   if w != "none" {
     let ns = names(w)
-    let rounds = if w == "ascii" { 20000 } else if w == "mixed" { 4000 } else { 1000 }
+    let rounds = if w == "ascii" { 20000 } else if w == "mixed" || w == "map" || w == "nfcmap" || w == "enc" || w == "dec" { 4000 } else { 1000 }
     for _ in 0..rounds {
       for n in ns {
+        if w == "map" || w == "nfcmap" || w == "dec" {
+          sum += (idna.to_unicode(n).ok() ?? "").len()
+          continue
+        }
         sum += (idna.to_ascii(n).ok() ?? "").len()
         if w == "mixed" {
           sum += (idna.to_unicode(n).ok() ?? "").len()

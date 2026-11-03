@@ -1,6 +1,10 @@
-# twincheck: idna: four workloads (none is the setup alone); Go is golang.org/x/net idna.
+# twincheck: idna: eight workloads (none is the setup alone); Go is golang.org/x/net idna.
 require golang.org/x/net v0.60.0
 - - none
 - - ascii
 - - mixed
 - - long
+- - map
+- - nfcmap
+- - enc
+- - dec
