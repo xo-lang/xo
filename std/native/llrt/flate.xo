@@ -686,6 +686,10 @@ struct Blocks {
   fixed_off: Encoder
 }
 
+fn no_blocks() -> Blocks {
+  Blocks{w: BitWriter{out: [], bits: 0, nbits: 0}, lit_freq: [], off_freq: [], codegen: [], codegen_freq: [], lit_enc: new_encoder(0), off_enc: new_encoder(0), cg_enc: new_encoder(0), fixed_lit: new_encoder(0), fixed_off: new_encoder(0)}
+}
+
 fn new_blocks() -> Blocks {
   Blocks{w: BitWriter{out: [], bits: 0, nbits: 0}, lit_freq: zeros(286), off_freq: zeros(30), codegen: zeros(286 + 30 + 1), codegen_freq: zeros(19), lit_enc: new_encoder(286), off_enc: new_encoder(30), cg_enc: new_encoder(19), fixed_lit: fixed_literal_encoding(), fixed_off: fixed_offset_encoding()}
 }
@@ -1797,6 +1801,8 @@ struct Fast {
   cur: Int
 }
 
+fn no_fast() -> Fast { Fast{val: [], off: [], prev: b"", cur: MAX_STORE} }
+
 fn new_fast() -> Fast { Fast{val: zeros(FAST_TABLE), off: zeros(FAST_TABLE), prev: b"", cur: MAX_STORE} }
 
 /// Four little endian bytes at i in one load (binary.LittleEndian.Uint32).
@@ -2029,6 +2035,12 @@ fn deflater_for(level: Int) -> Deflater {
 /// 9; -1 is 6).
 pub fn new_stream(level0: Int) -> Stream {
   let level = if level0 == -1 { 6 } else { level0 }
+  // levels 2 to 9 run in Deflater (its own Blocks); the Stream's Blocks
+  // and Fast are for the other levels, and building them zeroed 256 KB
+  // for nothing in each stream (archive zip makes one stream a file)
+  if level >= 2 {
+    return Stream{level: level, d: deflater_for(level), blocks: no_blocks(), fast: no_fast(), buf: b"", ws: 0, we: 0, sync: false}
+  }
   Stream{level: level, d: deflater_for(level), blocks: new_blocks(), fast: new_fast(), buf: b"", ws: 0, we: 0, sync: false}
 }
 
