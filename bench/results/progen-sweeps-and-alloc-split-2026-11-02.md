@@ -43,6 +43,9 @@ output differences that no rerun reproduced (alone, 30 repeats, under load, at 1
 600 programs). Result: no output difference and no timeout in 3,200 programs. Four programs (1498, 1964,
 2057, 2058) printed DIFF with the output `BUILD FAILED` (host at 17 to 25 GB free; the build error was not
 kept); each matched on every backend when rerun alone. `coll-diff.sh` now reports that as BUILDFAIL (1701fb9b8).
+A rerun of AliasBig 1-3000 the same night, after the host's cache prune was fixed (35a5681e3) and with
+`coll-diff.sh` reporting BUILDFAIL separately: 30 of 30 batches same (3,000 programs), 0 differ, 0 timeout,
+0 build failed, 0 reference failed.
 The 5 counting-run differences stay unexplained: they were never reproduced and their cache entry
 (5ccfef4d41955890) had been pruned before it could be checked.
 
