@@ -139,6 +139,8 @@ Implementation notes (stage C, xo-lang-5, 2026-10-30):
 
 ## Options for the owner
 
+Superseded by [0481](0481-deadline-stream-interface.md) (owner, 2026-11-03): Stream stays as it is; a separate `NetConn` interface carries the setters.
+
 - **Stream gains the deadline setters (BREAKING).** The setters are on the concrete types only. Adding them to the `Stream` interface would let a function given either kind of connection set them, but it breaks every user type that implements Stream. It can be added later without undoing anything here.
 
 ## Alternatives
