@@ -124,6 +124,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | math/rand, math/rand/v2 | prelude Rand capability | done | Secure in programs, seeded in tests. |
 | math/cmplx | none | not planned | No backend use. |
 | hash | std/crypto Hasher | partial | A streaming hasher for the cryptographic hashes (decision 0279); no interface user types implement. |
+| image/jpeg | std/jpeg | done | Decode and DecodeConfig as `jpeg.decode`, `jpeg.decode_config` over one `Image` with Go's four decoded types, Go's integer IDCT and error texts (spec/std.md 49, decision 0467, 2026-11-03); no Encode. |
 | image/png | std/png | done | Decode, DecodeConfig and Encode as `png.decode`, `png.decode_config`, `png.encode` over one `Image` with Go's seven pix layouts (spec/std.md 48, decision 0466, 2026-11-03); byte exact encode, Go's error texts. |
 | hash/crc32 | std/crc32 | done | IEEE and Castagnoli, `checksum` and `update` (spec/std.md 44); Castagnoli in software (Go uses CRC32C instructions). |
 | hash/fnv | std/fnv | done | 32, 64 and 128 bit FNV-1 and FNV-1a, `sum*` and `update*` (spec/std.md 45). |
@@ -228,7 +229,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | runtime, runtime/debug, runtime/metrics, runtime/pprof, runtime/trace, runtime/race, runtime/coverage, runtime/cgo | not planned | The runtime is Xo's own; profiling (0238), tracing (0240), race (0273) are toolchain features. |
 | plugin | not planned | Static binaries only. |
 | reflect, unsafe | not planned | No reflection; derive replaces it. |
-| image, image/color, image/draw, image/gif | not planned | image/jpeg (decode) is next on the roadmap (Lead, 2026-11-03); image/png is done (std/png, decision 0466); the rest stay a module's job. |
+| image, image/color, image/draw, image/gif | not planned | image/png and image/jpeg (decode) are done (std/png 0466, std/jpeg 0467); the rest stay a module's job. |
 
 ## Outside Go's standard library
 

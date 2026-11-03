@@ -56,3 +56,4 @@ entries yet.
 - [cli.md](cli.md): std/cli (spec/std.md 14)
 - [html.md](html.md): std/html (escape_string, unescape_string)
 - [png.md](png.md): std/png (spec/std.md 48)
+- [jpeg.md](jpeg.md): std/jpeg (spec/std.md 49)

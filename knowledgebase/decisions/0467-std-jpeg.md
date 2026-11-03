@@ -1,6 +1,6 @@
 # 0467: std/jpeg, a port of Go's image/jpeg decoder
 
-Status: Proposed (Xo Lang 3, 2026-11-03; roadmap priority 1 after std/png, from the Xo Lead)
+Status: Accepted (Xo Lang 3, 2026-11-03; roadmap priority 1 after std/png, from the Xo Lead)
 
 ## Context
 
@@ -15,12 +15,27 @@ A new module `std/jpeg`, written once in Xo (std/native/jpeg.xo, go_compiled lik
 a port of Go's decoder with its integer IDCT and color handling, so the decoded planes match
 Go byte for byte; decode and decode_config only (no encoder in this decision).
 
-The API is written when the port is done; its shape follows std/png: one `Image` struct that
-carries Go's planar layouts (Gray, YCbCr with its subsample ratio and strides, CMYK, RGBA),
-a `Config`, a `JpegErr` enum with Go's `FormatError` and `UnsupportedError` texts, and
-`to_rgba` for programs that only want pixels.
+The API (spec/std.md 49) follows std/png: one `Image` struct that carries Go's planar
+layouts (Gray, YCbCr with its subsample ratio, CMYK, RGBA) with tight rows, a `Config`, a
+`JpegErr` enum with Go's `FormatError` and `UnsupportedError` texts plus `Truncated`, and
+`to_rgba` for programs that only want pixels. A frame over `max_pixels` is refused from the
+header.
 
 ## Consequences
 
-To be filled in with the implementation (corpus from Go's image/testdata, a fuzz differential
-and a timing row, as for std/png).
+- The decoder reads a whole buffer (Go reads a stream): Go's bit reader and its one byte
+  unread are kept as an index into the buffer. Go's int32 arithmetic is emulated where it can
+  wrap (before a right shift in the IDCT and at stores); the bit accumulator is masked to 32
+  bits.
+- Corpus from Go (186 cases) and a fuzz differential (350 files in the committed corpus,
+  fresh seeds in TestJpegFuzz, 12,000 cases agree on arm64 and LLVM), as for std/png.
+- Timing (host 1, bench/perf/jpeg, four of Go's test images, 100 passes): decode 1.38,
+  decode with `to_rgba` 1.41 of Go's wall. Under the 1.05 of decision 0461, so the module is
+  Fast, not Proven; profile: Huffman decode and reconstruct (dequantize, IDCT, color store)
+  split the time about evenly. Tried and measured slower on arm64: written out Huffman table
+  hits, a DC only shortcut, an IDCT row shortcut.
+- No encoder: `jpeg.Encode` is a separate item if a program needs it.
+
+## Alternatives
+
+- Binding a C decoder: rejected; the bytes must match Go's decoder, including its IDCT and error texts, and std stays pure Xo.

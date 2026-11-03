@@ -1,0 +1,1643 @@
+// std/jpeg on the native backends and, through std/go_compiled.txt, on the
+// Go backend (decision 0312): one source, Go's image/jpeg decoder (reader.go,
+// huffman.go, scan.go, dct.go; Copyright 2009 and 2025 The Go Authors,
+// BSD-style license) over a whole buffer. Go's int32 arithmetic wraps; Xo's
+// Int is 64 bits, so the wrap is taken where it shows (before a right shift
+// and when a value is stored: the sums and products between two such points
+// agree modulo 2**32), which keeps the planes Go returns even for hostile
+// coefficients.
+use std/jpeg
+
+const UNZIG: List[Int] = [
+  0,
+  1,
+  8,
+  16,
+  9,
+  2,
+  3,
+  10,
+  17,
+  24,
+  32,
+  25,
+  18,
+  11,
+  4,
+  5,
+  12,
+  19,
+  26,
+  33,
+  40,
+  48,
+  41,
+  34,
+  27,
+  20,
+  13,
+  6,
+  7,
+  14,
+  21,
+  28,
+  35,
+  42,
+  49,
+  56,
+  57,
+  50,
+  43,
+  36,
+  29,
+  22,
+  15,
+  23,
+  30,
+  37,
+  44,
+  51,
+  58,
+  59,
+  52,
+  45,
+  38,
+  31,
+  39,
+  46,
+  53,
+  60,
+  61,
+  54,
+  47,
+  55,
+  62,
+  63,
+]
+
+/// The value receive_extend returns when it fails (d.ec has the code).
+const ERRV: Int = -1099511627776
+
+fn fmt_err(msg: Str) -> jpeg.JpegErr { jpeg.JpegErr.Format(msg: msg) }
+
+fn unsup(msg: Str) -> jpeg.JpegErr { jpeg.JpegErr.Unsupported(msg: msg) }
+
+fn jpegerr_display(e: jpeg.JpegErr) -> Str {
+  match e {
+    jpeg.JpegErr.Format(msg) => "invalid JPEG format: " + msg
+    jpeg.JpegErr.Unsupported(msg) => "unsupported JPEG feature: " + msg
+    jpeg.JpegErr.Truncated => "unexpected EOF"
+  }
+}
+
+/// The error of a failed bit reader (the codes decode_huffman, decode_bit,
+/// decode_bits and receive_extend leave).
+fn bit_err(code: Int) -> jpeg.JpegErr {
+  if code == -1 {
+    return fmt_err("short Huffman data")
+  }
+  if code == -2 {
+    return fmt_err("missing 0xff00 sequence")
+  }
+  if code == -3 {
+    return fmt_err("uninitialized Huffman table")
+  }
+  fmt_err("bad Huffman code")
+}
+
+fn w32(x: Int) -> Int { ((x + 2147483648) & 4294967295) - 2147483648 }
+
+fn zlist(n: Int) -> List[Int] {
+  var l: List[Int] = List[Int].with_capacity(n)
+  for _ in 0..n {
+    l.push(0)
+  }
+  l
+}
+
+/// The decoder's state (Go's decoder struct). A Huffman table t (tc * 4 +
+/// th) has its codes count in hn[t], its look-up table in hlut[t * 256 ..],
+/// its values in hvals[t * 256 ..] and its minCodes, maxCodes and
+/// valsIndices in hmin, hmax and hidx[t * 16 ..].
+struct Dec {
+  data: Bytes = b""
+  i: Int = 0
+  n_unread: Int = 0
+  ba: Int = 0
+  bm: Int = 0
+  bn: Int = 0
+  ec: Int = 0
+  w: Int = 0
+  h: Int = 0
+  n_comp: Int = 0
+  ri: Int = 0
+  baseline: Bool = false
+  progressive: Bool = false
+  jfif: Bool = false
+  adobe_valid: Bool = false
+  adobe_t: Int = 0
+  eob_run: Int = 0
+  ch: List[Int] = []
+  cv: List[Int] = []
+  cc: List[Int] = []
+  ctq: List[Int] = []
+  hn: List[Int] = []
+  hlut: List[Int] = []
+  hvals: List[Int] = []
+  hmin: List[Int] = []
+  hmax: List[Int] = []
+  hidx: List[Int] = []
+  quant: List[Int] = []
+  made: Bool = false
+  ystride: Int = 0
+  cstride: Int = 0
+  kstride: Int = 0
+  py: BytesBuilder = BytesBuilder.new()
+  pcb: BytesBuilder = BytesBuilder.new()
+  pcr: BytesBuilder = BytesBuilder.new()
+  pk: BytesBuilder = BytesBuilder.new()
+  pcoef: List[Int32] = []
+  pbase: List[Int] = []
+  mxx: Int = 0
+  myy: Int = 0
+}
+
+fn dec_new(data: Bytes) -> Dec {
+  var d = Dec{}
+  d.data = data
+  d.ch = zlist(4)
+  d.cv = zlist(4)
+  d.cc = zlist(4)
+  d.ctq = zlist(4)
+  d.hn = zlist(8)
+  d.hlut = zlist(8 * 256)
+  d.hvals = zlist(8 * 256)
+  d.hmin = zlist(8 * 16)
+  d.hmax = zlist(8 * 16)
+  d.hidx = zlist(8 * 16)
+  d.quant = zlist(4 * 64)
+  d.pbase = [-1, -1, -1, -1]
+  d
+}
+
+// ---------------------------------------------------------------------------
+// Bytes and bits
+
+/// The next byte, or -1 at the end of the data (Go's io.ErrUnexpectedEOF).
+fn read_byte(var d: Dec) -> Int {
+  if d.i >= d.data.len() {
+    return -1
+  }
+  let x = Int(d.data[d.i])
+  d.i += 1
+  d.n_unread = 0
+  x
+}
+
+/// Undoes the most recent read_byte_stuffed: gives a byte of data back from
+/// the bits to the data (Go's unreadByteStuffedByte).
+fn unread_stuffed(var d: Dec) {
+  d.i -= d.n_unread
+  d.n_unread = 0
+  if d.bn >= 8 {
+    d.ba = d.ba >> 8
+    d.bn -= 8
+    d.bm = d.bm >> 8
+  }
+}
+
+/// The next byte of Huffman data: the byte, -1 at the end of the data, or -2
+/// for a 0xff not followed by 0x00 (Go's errMissingFF00).
+fn read_byte_stuffed(var d: Dec) -> Int {
+  if d.i + 2 <= d.data.len() {
+    let x = Int(d.data[d.i])
+    d.i += 1
+    d.n_unread = 1
+    if x != 255 {
+      return x
+    }
+    if d.data[d.i] != 0 {
+      return -2
+    }
+    d.i += 1
+    d.n_unread = 2
+    return 255
+  }
+  d.n_unread = 0
+  var x = read_byte(d)
+  if x < 0 {
+    return -1
+  }
+  d.n_unread = 1
+  if x != 255 {
+    return x
+  }
+  x = read_byte(d)
+  if x < 0 {
+    return -1
+  }
+  d.n_unread = 2
+  if x != 0 {
+    return -2
+  }
+  255
+}
+
+/// The overshot bytes given back before a read that ignores byte stuffing.
+fn unread_overshoot(var d: Dec) {
+  if d.n_unread != 0 {
+    if d.bn >= 8 {
+      unread_stuffed(d)
+    }
+    d.n_unread = 0
+  }
+}
+
+/// Reads n bytes without regard to byte stuffing: the offset of the first,
+/// or -1 when the data ends first.
+fn read_full(var d: Dec, n: Int) -> Int {
+  unread_overshoot(d)
+  if d.i + n > d.data.len() {
+    d.i = d.data.len()
+    return -1
+  }
+  let at = d.i
+  d.i += n
+  at
+}
+
+fn ignore(var d: Dec, n: Int) -> () ! jpeg.JpegErr {
+  unread_overshoot(d)
+  if d.i + n > d.data.len() {
+    d.i = d.data.len()
+    return Err(jpeg.JpegErr.Truncated)
+  }
+  d.i += n
+}
+
+/// Reads bytes until the bits hold n: 0, or the code of the failure (-1
+/// short Huffman data, -2 missing 0xff00).
+fn ensure_nbits(var d: Dec, n: Int) -> Int {
+  while true {
+    let c = read_byte_stuffed(d)
+    if c < 0 {
+      return c
+    }
+    d.ba = ((d.ba << 8) | c) & 4294967295
+    d.bn += 8
+    if d.bm == 0 {
+      d.bm = 128
+    } else {
+      d.bm = (d.bm << 8) & 4294967295
+    }
+    if d.bn >= n {
+      break
+    }
+  }
+  0
+}
+
+/// RECEIVE and EXTEND of section F.2.2.1; ERRV on failure.
+fn receive_extend(var d: Dec, t: Int) -> Int {
+  if d.bn < t {
+    let s = ensure_nbits(d, t)
+    if s != 0 {
+      d.ec = s
+      return ERRV
+    }
+  }
+  d.bn -= t
+  d.bm = d.bm >> t
+  let s = 1 << t
+  var x = (d.ba >> d.bn) & (s - 1)
+  if x < (s >> 1) {
+    x += ((-1) << t) + 1
+  }
+  x
+}
+
+/// The next Huffman coded value of table t, or a negative code (-1, -2 as
+/// ensure_nbits, -3 uninitialized table, -4 bad code).
+fn decode_huffman(var d: Dec, t: Int) -> Int {
+  if d.hn[t] == 0 {
+    return -3
+  }
+  var fast = true
+  if d.bn < 8 {
+    let s = ensure_nbits(d, 8)
+    if s != 0 {
+      // no more bytes of data in this segment: undo the read that failed and
+      // try the bits already held
+      if d.n_unread != 0 {
+        unread_stuffed(d)
+      }
+      fast = false
+    }
+  }
+  if fast {
+    let v = d.hlut[t * 256 + ((d.ba >> (d.bn - 8)) & 255)]
+    if v != 0 {
+      let n = (v & 255) - 1
+      d.bn -= n
+      d.bm = d.bm >> n
+      return v >> 8
+    }
+  }
+  var code = 0
+  for i in 0..16 {
+    if d.bn == 0 {
+      let s = ensure_nbits(d, 1)
+      if s != 0 {
+        return s
+      }
+    }
+    if (d.ba & d.bm) != 0 {
+      code = code | 1
+    }
+    d.bn -= 1
+    d.bm = d.bm >> 1
+    if code <= d.hmax[t * 16 + i] {
+      return d.hvals[t * 256 + d.hidx[t * 16 + i] + code - d.hmin[t * 16 + i]]
+    }
+    code = code << 1
+  }
+  -4
+}
+
+/// One bit (0 or 1), or -1 with the code in d.ec.
+fn decode_bit(var d: Dec) -> Int {
+  if d.bn == 0 {
+    let s = ensure_nbits(d, 1)
+    if s != 0 {
+      d.ec = s
+      return -1
+    }
+  }
+  let ret = if (d.ba & d.bm) != 0 { 1 } else { 0 }
+  d.bn -= 1
+  d.bm = d.bm >> 1
+  ret
+}
+
+/// n bits, or -1 with the code in d.ec.
+fn decode_bits(var d: Dec, n: Int) -> Int {
+  if d.bn < n {
+    let s = ensure_nbits(d, n)
+    if s != 0 {
+      d.ec = s
+      return -1
+    }
+  }
+  let ret = (d.ba >> (d.bn - n)) & ((1 << n) - 1)
+  d.bn -= n
+  d.bm = d.bm >> n
+  ret
+}
+
+// ---------------------------------------------------------------------------
+// Segments
+
+fn byte_at(d: Dec, at: Int) -> Int { Int(d.data[at]) }
+
+fn process_dht(var d: Dec, n0: Int) -> () ! jpeg.JpegErr {
+  var n = n0
+  while n > 0 {
+    if n < 17 {
+      return Err(fmt_err("DHT has wrong length"))
+    }
+    let at = read_full(d, 17)
+    if at < 0 {
+      return Err(jpeg.JpegErr.Truncated)
+    }
+    let tc = byte_at(d, at) >> 4
+    if tc > 1 {
+      return Err(fmt_err("bad Tc value"))
+    }
+    let th = byte_at(d, at) & 15
+    if th > 3 || (d.baseline && th > 1) {
+      return Err(fmt_err("bad Th value"))
+    }
+    let t = tc * 4 + th
+    var counts = zlist(16)
+    var total = 0
+    for i in 0..16 {
+      counts[i] = byte_at(d, at + 1 + i)
+      total += counts[i]
+    }
+    d.hn[t] = total
+    if total == 0 {
+      return Err(fmt_err("Huffman table has zero length"))
+    }
+    if total > 256 {
+      return Err(fmt_err("Huffman table has excessive length"))
+    }
+    n -= total + 17
+    if n < 0 {
+      return Err(fmt_err("DHT has wrong length"))
+    }
+    let vat = read_full(d, total)
+    if vat < 0 {
+      return Err(jpeg.JpegErr.Truncated)
+    }
+    for k in 0..total {
+      d.hvals[t * 256 + k] = byte_at(d, vat + k)
+    }
+    // the look-up table
+    for k in 0..256 {
+      d.hlut[t * 256 + k] = 0
+    }
+    var x = 0
+    var code = 0
+    for i in 0..8 {
+      code = code << 1
+      for _ in 0..counts[i] {
+        // the code length is 1+i: shift code by 8-(1+i) for the high bits of
+        // every 8 bit sequence whose high bits match code; the high 8 bits of
+        // the entry are the value, the low 8 bits 1 plus the code length
+        let base = (code << (7 - i)) & 255
+        let lut_value = (d.hvals[t * 256 + x] << 8) | (2 + i)
+        for k in 0..(1 << (7 - i)) {
+          d.hlut[t * 256 + (base | k)] = lut_value
+        }
+        code += 1
+        x += 1
+      }
+    }
+    // minCodes, maxCodes and valsIndices
+    var c = 0
+    var index = 0
+    for i in 0..16 {
+      let cnt = counts[i]
+      if cnt == 0 {
+        d.hmin[t * 16 + i] = -1
+        d.hmax[t * 16 + i] = -1
+        d.hidx[t * 16 + i] = -1
+      } else {
+        d.hmin[t * 16 + i] = c
+        d.hmax[t * 16 + i] = c + cnt - 1
+        d.hidx[t * 16 + i] = index
+        c += cnt
+        index += cnt
+      }
+      c = c << 1
+    }
+  }
+}
+
+fn process_dqt(var d: Dec, n0: Int) -> () ! jpeg.JpegErr {
+  var n = n0
+  var brk = false
+  while n > 0 && !brk {
+    n -= 1
+    let x = read_byte(d)
+    if x < 0 {
+      return Err(jpeg.JpegErr.Truncated)
+    }
+    let tq = x & 15
+    if tq > 3 {
+      return Err(fmt_err("bad Tq value"))
+    }
+    let pq = x >> 4
+    if pq == 0 {
+      if n < 64 {
+        brk = true
+      } else {
+        n -= 64
+        let at = read_full(d, 64)
+        if at < 0 {
+          return Err(jpeg.JpegErr.Truncated)
+        }
+        for i in 0..64 {
+          d.quant[tq * 64 + i] = byte_at(d, at + i)
+        }
+      }
+    } else if pq == 1 {
+      if n < 128 {
+        brk = true
+      } else {
+        n -= 128
+        let at = read_full(d, 128)
+        if at < 0 {
+          return Err(jpeg.JpegErr.Truncated)
+        }
+        for i in 0..64 {
+          d.quant[tq * 64 + i] = (byte_at(d, at + 2 * i) << 8) | byte_at(d, at + 2 * i + 1)
+        }
+      }
+    } else {
+      return Err(fmt_err("bad Pq value"))
+    }
+  }
+  if n != 0 {
+    return Err(fmt_err("DQT has wrong length"))
+  }
+}
+
+fn process_dri(var d: Dec, n: Int) -> () ! jpeg.JpegErr {
+  if n != 2 {
+    return Err(fmt_err("DRI has wrong length"))
+  }
+  let at = read_full(d, 2)
+  if at < 0 {
+    return Err(jpeg.JpegErr.Truncated)
+  }
+  d.ri = (byte_at(d, at) << 8) + byte_at(d, at + 1)
+}
+
+fn process_app0(var d: Dec, n0: Int) -> () ! jpeg.JpegErr {
+  var n = n0
+  if n < 5 {
+    return ignore(d, n)
+  }
+  let at = read_full(d, 5)
+  if at < 0 {
+    return Err(jpeg.JpegErr.Truncated)
+  }
+  n -= 5
+  d.jfif = d.data[at..at + 5] == b"JFIF\x00"
+  if n > 0 {
+    return ignore(d, n)
+  }
+}
+
+fn process_app14(var d: Dec, n0: Int) -> () ! jpeg.JpegErr {
+  var n = n0
+  if n < 12 {
+    return ignore(d, n)
+  }
+  let at = read_full(d, 12)
+  if at < 0 {
+    return Err(jpeg.JpegErr.Truncated)
+  }
+  n -= 12
+  if d.data[at..at + 5] == b"Adobe" {
+    d.adobe_valid = true
+    d.adobe_t = byte_at(d, at + 11)
+  }
+  if n > 0 {
+    return ignore(d, n)
+  }
+}
+
+fn process_sof(var d: Dec, n: Int) -> () ! jpeg.JpegErr {
+  if d.n_comp != 0 {
+    return Err(fmt_err("multiple SOF markers"))
+  }
+  if n == 9 {
+    d.n_comp = 1
+  } else if n == 15 {
+    d.n_comp = 3
+  } else if n == 18 {
+    d.n_comp = 4
+  } else {
+    return Err(unsup("number of components"))
+  }
+  let at = read_full(d, n)
+  if at < 0 {
+    return Err(jpeg.JpegErr.Truncated)
+  }
+  if byte_at(d, at) != 8 {
+    return Err(unsup("precision"))
+  }
+  d.h = (byte_at(d, at + 1) << 8) + byte_at(d, at + 2)
+  d.w = (byte_at(d, at + 3) << 8) + byte_at(d, at + 4)
+  if byte_at(d, at + 5) != d.n_comp {
+    return Err(fmt_err("SOF has wrong length"))
+  }
+  for i in 0..d.n_comp {
+    d.cc[i] = byte_at(d, at + 6 + 3 * i)
+    for j in 0..i {
+      if d.cc[i] == d.cc[j] {
+        return Err(fmt_err("repeated component identifier"))
+      }
+    }
+    d.ctq[i] = byte_at(d, at + 8 + 3 * i)
+    if d.ctq[i] > 3 {
+      return Err(fmt_err("bad Tq value"))
+    }
+    let hv = byte_at(d, at + 7 + 3 * i)
+    var h = hv >> 4
+    var v = hv & 15
+    if h < 1 || 4 < h || v < 1 || 4 < v {
+      return Err(fmt_err("luma/chroma subsampling ratio"))
+    }
+    if h == 3 || v == 3 {
+      return Err(unsup("luma/chroma subsampling ratio"))
+    }
+    if d.n_comp == 1 {
+      h = 1
+      v = 1
+    } else if d.n_comp == 3 {
+      if i == 0 {
+        if v == 4 {
+          return Err(unsup("luma/chroma subsampling ratio"))
+        }
+      } else if i == 1 {
+        if d.ch[0] % h != 0 || d.cv[0] % v != 0 {
+          return Err(unsup("luma/chroma subsampling ratio"))
+        }
+      } else {
+        if d.ch[1] != h || d.cv[1] != v {
+          return Err(unsup("luma/chroma subsampling ratio"))
+        }
+      }
+    } else {
+      if i == 0 {
+        if hv != 0x11 && hv != 0x22 {
+          return Err(unsup("luma/chroma subsampling ratio"))
+        }
+      } else if i == 1 || i == 2 {
+        if hv != 0x11 {
+          return Err(unsup("luma/chroma subsampling ratio"))
+        }
+      } else {
+        if d.ch[0] != h || d.cv[0] != v {
+          return Err(unsup("luma/chroma subsampling ratio"))
+        }
+      }
+    }
+    d.ch[i] = h
+    d.cv[i] = v
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Image data
+
+/// Allocates the planes (Go's makeImg).
+fn make_img(var d: Dec, mxx: Int, myy: Int) {
+  d.mxx = mxx
+  d.myy = myy
+  d.made = true
+  if d.n_comp == 1 {
+    d.ystride = 8 * mxx
+    d.py.write(Bytes.zeroed(8 * mxx * 8 * myy))
+    return
+  }
+  let h0 = d.ch[0]
+  let v0 = d.cv[0]
+  d.ystride = 8 * h0 * mxx
+  d.cstride = 8 * d.ch[1] * mxx
+  d.py.write(Bytes.zeroed(d.ystride * 8 * v0 * myy))
+  d.pcb.write(Bytes.zeroed(d.cstride * 8 * d.cv[1] * myy))
+  d.pcr.write(Bytes.zeroed(d.cstride * 8 * d.cv[1] * myy))
+  if d.n_comp == 4 {
+    d.kstride = 8 * d.ch[3] * mxx
+    d.pk.write(Bytes.zeroed(d.kstride * 8 * d.cv[3] * myy))
+  }
+}
+
+/// Dequantizes, runs the inverse DCT and stores the block (Go's
+/// reconstructBlock).
+fn reconstruct_block(var d: Dec, var b: List[Int], bx: Int, by: Int, ci: Int) {
+  let qo = d.ctq[ci] * 64
+  for zig in 0..64 {
+    let u = UNZIG[zig]
+    b[u] = w32(b[u] * d.quant[qo + zig])
+  }
+  idct_rows(b)
+  idct_cols(b)
+  var stride = d.ystride
+  if d.n_comp != 1 {
+    if ci == 1 || ci == 2 {
+      stride = d.cstride
+    } else if ci == 3 {
+      stride = d.kstride
+    }
+  }
+  let base = 8 * (by * stride + bx)
+  for y in 0..8 {
+    var hi = 0
+    var lo = 0
+    for x in 0..8 {
+      let v = b[y * 8 + x]
+      let c = if v < -128 { 0 } else if v > 127 { 255 } else { v + 128 }
+      if x < 4 {
+        hi = (hi << 8) | c
+      } else {
+        lo = (lo << 8) | c
+      }
+    }
+    let at = base + y * stride
+    if d.n_comp == 1 || ci == 0 {
+      d.py.put_be(at, hi, 4)
+      d.py.put_be(at + 4, lo, 4)
+    } else if ci == 1 {
+      d.pcb.put_be(at, hi, 4)
+      d.pcb.put_be(at + 4, lo, 4)
+    } else if ci == 2 {
+      d.pcr.put_be(at, hi, 4)
+      d.pcr.put_be(at + 4, lo, 4)
+    } else {
+      d.pk.put_be(at, hi, 4)
+      d.pk.put_be(at + 4, lo, 4)
+    }
+  }
+}
+
+/// Refines non-zero entries of b in zig-zag order, skipping the first nz zero
+/// entries when nz >= 0; the position it stopped at, or a negative bit error
+/// code.
+fn refine_nonzeroes(var d: Dec, var b: List[Int], zig0: Int, zig_end: Int, nz0: Int, delta: Int) -> Int {
+  var zig = zig0
+  var nz = nz0
+  while zig <= zig_end {
+    let u = UNZIG[zig]
+    if b[u] == 0 {
+      if nz == 0 {
+        break
+      }
+      nz -= 1
+      zig += 1
+      continue
+    }
+    let bit = decode_bit(d)
+    if bit < 0 {
+      return d.ec
+    }
+    if bit != 0 {
+      if b[u] >= 0 {
+        b[u] = w32(b[u] + delta)
+      } else {
+        b[u] = w32(b[u] - delta)
+      }
+    }
+    zig += 1
+  }
+  zig
+}
+
+/// A successive approximation refinement block (Go's refine, section G.1.2).
+fn refine(var d: Dec, var b: List[Int], ta: Int, zig_start: Int, zig_end: Int, delta: Int) -> () ! jpeg.JpegErr {
+  let ht = 4 + ta
+  if zig_start == 0 {
+    let bit = decode_bit(d)
+    if bit < 0 {
+      return Err(bit_err(d.ec))
+    }
+    if bit != 0 {
+      b[0] = b[0] | delta
+    }
+    return
+  }
+  var zig = zig_start
+  if d.eob_run == 0 {
+    var done = false
+    while zig <= zig_end && !done {
+      var z = 0
+      let value = decode_huffman(d, ht)
+      if value < 0 {
+        return Err(bit_err(value))
+      }
+      let val0 = value >> 4
+      let val1 = value & 15
+      if val1 == 0 {
+        if val0 != 15 {
+          d.eob_run = 1 << val0
+          if val0 != 0 {
+            let bits = decode_bits(d, val0)
+            if bits < 0 {
+              return Err(bit_err(d.ec))
+            }
+            d.eob_run = d.eob_run | bits
+          }
+          done = true
+        }
+      } else if val1 == 1 {
+        z = delta
+        let bit = decode_bit(d)
+        if bit < 0 {
+          return Err(bit_err(d.ec))
+        }
+        if bit == 0 {
+          z = 0 - z
+        }
+      } else {
+        return Err(fmt_err("unexpected Huffman code"))
+      }
+      if !done {
+        zig = refine_nonzeroes(d, b, zig, zig_end, val0, delta)
+        if zig < 0 {
+          return Err(bit_err(zig))
+        }
+        if zig > zig_end {
+          return Err(fmt_err("too many coefficients"))
+        }
+        if z != 0 {
+          b[UNZIG[zig]] = z
+        }
+        zig += 1
+      }
+    }
+  }
+  if d.eob_run > 0 {
+    d.eob_run -= 1
+    let r = refine_nonzeroes(d, b, zig, zig_end, -1, delta)
+    if r < 0 {
+      return Err(bit_err(r))
+    }
+  }
+}
+
+/// Advances past the next RST marker that matches expected, given the two
+/// bytes t0 and t1 read where it should be (Go's findRST).
+fn find_rst(var d: Dec, expected: Int, t0_in: Int, t1_in: Int) -> () ! jpeg.JpegErr {
+  var t0 = t0_in
+  var t1 = t1_in
+  while true {
+    var i = 0
+    if t0 == 255 {
+      if t1 == expected {
+        return
+      } else if t1 == 255 {
+        i = 1
+      } else if t1 != 0 {
+        return Err(fmt_err("bad RST marker"))
+      }
+    } else if t1 == 255 {
+      t0 = 255
+      i = 1
+    }
+    let at = read_full(d, 2 - i)
+    if at < 0 {
+      return Err(jpeg.JpegErr.Truncated)
+    }
+    if i == 1 {
+      t0 = t1
+      t1 = byte_at(d, at)
+    } else {
+      t0 = byte_at(d, at)
+      t1 = byte_at(d, at + 1)
+    }
+  }
+}
+
+fn load_block(d: Dec, base: Int, var b: List[Int]) {
+  for k in 0..64 {
+    b[k] = Int(d.pcoef[base + k])
+  }
+}
+
+fn store_block(var d: Dec, base: Int, b: List[Int]) {
+  for k in 0..64 {
+    d.pcoef[base + k] = Int32(w32(b[k]))
+  }
+}
+
+/// A scan (Go's processSOS, section B.2.3).
+fn process_sos(var d: Dec, n: Int, max_pixels: Int) -> () ! jpeg.JpegErr {
+  if d.n_comp == 0 {
+    return Err(fmt_err("missing SOF marker"))
+  }
+  if n < 6 || 4 + 2 * d.n_comp < n || n % 2 != 0 {
+    return Err(fmt_err("SOS has wrong length"))
+  }
+  let at = read_full(d, n)
+  if at < 0 {
+    return Err(jpeg.JpegErr.Truncated)
+  }
+  let n_comp = byte_at(d, at)
+  if n != 4 + 2 * n_comp {
+    return Err(fmt_err("SOS length inconsistent with number of components"))
+  }
+  var scan_ci = zlist(4)
+  var scan_td = zlist(4)
+  var scan_ta = zlist(4)
+  var total_hv = 0
+  for i in 0..n_comp {
+    let cs = byte_at(d, at + 1 + 2 * i)
+    var ci = -1
+    for j in 0..d.n_comp {
+      if cs == d.cc[j] {
+        ci = j
+      }
+    }
+    if ci < 0 {
+      return Err(fmt_err("unknown component selector"))
+    }
+    scan_ci[i] = ci
+    for j in 0..i {
+      if scan_ci[i] == scan_ci[j] {
+        return Err(fmt_err("repeated component selector"))
+      }
+    }
+    total_hv += d.ch[ci] * d.cv[ci]
+    scan_td[i] = byte_at(d, at + 2 + 2 * i) >> 4
+    if scan_td[i] > 3 || (d.baseline && scan_td[i] > 1) {
+      return Err(fmt_err("bad Td value"))
+    }
+    scan_ta[i] = byte_at(d, at + 2 + 2 * i) & 15
+    if scan_ta[i] > 3 || (d.baseline && scan_ta[i] > 1) {
+      return Err(fmt_err("bad Ta value"))
+    }
+  }
+  if d.n_comp > 1 && total_hv > 10 {
+    return Err(fmt_err("total sampling factors too large"))
+  }
+  var zig_start = 0
+  var zig_end = 63
+  var ah = 0
+  var al = 0
+  if d.progressive {
+    zig_start = byte_at(d, at + 1 + 2 * n_comp)
+    zig_end = byte_at(d, at + 2 + 2 * n_comp)
+    ah = byte_at(d, at + 3 + 2 * n_comp) >> 4
+    al = byte_at(d, at + 3 + 2 * n_comp) & 15
+    if (zig_start == 0 && zig_end != 0) || zig_start > zig_end || 64 <= zig_end {
+      return Err(fmt_err("bad spectral selection bounds"))
+    }
+    if zig_start != 0 && n_comp != 1 {
+      return Err(fmt_err("progressive AC coefficients for more than one component"))
+    }
+    if ah != 0 && ah != al + 1 {
+      return Err(fmt_err("bad successive approximation values"))
+    }
+  }
+  let h0 = d.ch[0]
+  let v0 = d.cv[0]
+  let mxx = (d.w + 8 * h0 - 1) / (8 * h0)
+  let myy = (d.h + 8 * v0 - 1) / (8 * v0)
+  if !d.made {
+    if d.w * d.h > max_pixels {
+      return Err(fmt_err("image too large"))
+    }
+    make_img(d, mxx, myy)
+  }
+  if d.progressive {
+    for i in 0..n_comp {
+      let ci = scan_ci[i]
+      if d.pbase[ci] < 0 {
+        d.pbase[ci] = d.pcoef.len()
+        let blocks = mxx * myy * d.ch[ci] * d.cv[ci]
+        for _ in 0..(blocks * 64) {
+          d.pcoef.push(Int32(0))
+        }
+      }
+    }
+  }
+  d.ba = 0
+  d.bm = 0
+  d.bn = 0
+  var mcu = 0
+  var expected_rst = 0xd0
+  var b = zlist(64)
+  var dc = zlist(4)
+  var block_count = 0
+  for my in 0..myy {
+    for mx in 0..mxx {
+      for i in 0..n_comp {
+        let ci = scan_ci[i]
+        let hi = d.ch[ci]
+        let vi = d.cv[ci]
+        for j in 0..(hi * vi) {
+          var bx = 0
+          var by = 0
+          if n_comp != 1 {
+            bx = hi * mx + j % hi
+            by = vi * my + j / hi
+          } else {
+            let q = mxx * hi
+            bx = block_count % q
+            by = block_count / q
+            block_count += 1
+            if bx * 8 >= d.w || by * 8 >= d.h {
+              continue
+            }
+          }
+          var pb = 0
+          if d.progressive {
+            pb = d.pbase[ci] + (by * mxx * hi + bx) * 64
+            load_block(d, pb, b)
+          } else {
+            for k in 0..64 {
+              b[k] = 0
+            }
+          }
+          if ah != 0 {
+            refine(d, b, scan_ta[i], zig_start, zig_end, 1 << al)?
+          } else {
+            var zig = zig_start
+            if zig == 0 {
+              zig += 1
+              let value = decode_huffman(d, scan_td[i])
+              if value < 0 {
+                return Err(bit_err(value))
+              }
+              if value > 16 {
+                return Err(unsup("excessive DC component"))
+              }
+              let dc_delta = receive_extend(d, value)
+              if dc_delta == ERRV {
+                return Err(bit_err(d.ec))
+              }
+              dc[ci] = w32(dc[ci] + dc_delta)
+              b[0] = w32(dc[ci] << al)
+            }
+            if zig <= zig_end && d.eob_run > 0 {
+              d.eob_run -= 1
+            } else {
+              let ht = 4 + scan_ta[i]
+              while zig <= zig_end {
+                let value = decode_huffman(d, ht)
+                if value < 0 {
+                  return Err(bit_err(value))
+                }
+                let val0 = value >> 4
+                let val1 = value & 15
+                if val1 != 0 {
+                  zig += val0
+                  if zig > zig_end {
+                    break
+                  }
+                  let ac = receive_extend(d, val1)
+                  if ac == ERRV {
+                    return Err(bit_err(d.ec))
+                  }
+                  b[UNZIG[zig]] = w32(ac << al)
+                } else {
+                  if val0 != 15 {
+                    d.eob_run = 1 << val0
+                    if val0 != 0 {
+                      let bits = decode_bits(d, val0)
+                      if bits < 0 {
+                        return Err(bit_err(d.ec))
+                      }
+                      d.eob_run = d.eob_run | bits
+                    }
+                    d.eob_run -= 1
+                    break
+                  }
+                  zig += 15
+                }
+                zig += 1
+              }
+            }
+          }
+          if d.progressive {
+            store_block(d, pb, b)
+            continue
+          }
+          reconstruct_block(d, b, bx, by, ci)
+        }
+      }
+      mcu += 1
+      if d.ri > 0 && mcu % d.ri == 0 && mcu < mxx * myy {
+        let rat = read_full(d, 2)
+        if rat < 0 {
+          return Err(jpeg.JpegErr.Truncated)
+        }
+        let t0 = byte_at(d, rat)
+        let t1 = byte_at(d, rat + 1)
+        if t0 != 255 || t1 != expected_rst {
+          find_rst(d, expected_rst, t0, t1)?
+        }
+        expected_rst += 1
+        if expected_rst == 0xd8 {
+          expected_rst = 0xd0
+        }
+        d.ba = 0
+        d.bm = 0
+        d.bn = 0
+        for k in 0..4 {
+          dc[k] = 0
+        }
+        d.eob_run = 0
+      }
+    }
+  }
+}
+
+/// Dequantizes and stores every block a progressive image gathered (Go's
+/// reconstructProgressiveImage).
+fn reconstruct_progressive(var d: Dec) {
+  let h0 = d.ch[0]
+  let mxx = (d.w + 8 * h0 - 1) / (8 * h0)
+  var b = zlist(64)
+  for i in 0..d.n_comp {
+    if d.pbase[i] < 0 {
+      continue
+    }
+    let v = 8 * d.cv[0] / d.cv[i]
+    let h = 8 * d.ch[0] / d.ch[i]
+    let stride = mxx * d.ch[i]
+    var by = 0
+    while by * v < d.h {
+      var bx = 0
+      while bx * h < d.w {
+        load_block(d, d.pbase[i] + (by * stride + bx) * 64, b)
+        reconstruct_block(d, b, bx, by, i)
+        bx += 1
+      }
+      by += 1
+    }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// The driver and the result
+
+/// Whether the 3 component image is RGB, not YCbCr (Go's isRGB).
+fn is_rgb(d: Dec) -> Bool {
+  if d.jfif {
+    return false
+  }
+  if d.adobe_valid && d.adobe_t == 0 {
+    return true
+  }
+  d.cc[0] == 82 && d.cc[1] == 71 && d.cc[2] == 66
+}
+
+fn subsample_of(d: Dec) -> jpeg.Subsample {
+  let r = (d.ch[0] / d.ch[1]) * 16 + d.cv[0] / d.cv[1]
+  if r == 0x12 {
+    return jpeg.Subsample.S440
+  }
+  if r == 0x21 {
+    return jpeg.Subsample.S422
+  }
+  if r == 0x22 {
+    return jpeg.Subsample.S420
+  }
+  if r == 0x41 {
+    return jpeg.Subsample.S411
+  }
+  if r == 0x42 {
+    return jpeg.Subsample.S410
+  }
+  jpeg.Subsample.S444
+}
+
+/// The part of a plane that is the image: rows of w bytes out of rows of
+/// stride bytes.
+fn crop(plane: Bytes, stride: Int, w: Int, h: Int) -> Bytes {
+  if stride == w {
+    return plane[0..w * h]
+  }
+  var out = BytesBuilder.with_capacity(w * h)
+  for y in 0..h {
+    out.write(plane[y * stride..y * stride + w])
+  }
+  out.freeze()
+}
+
+/// color.YCbCrToRGB: three bytes packed as r << 16 | g << 8 | b.
+fn ycbcr_rgb(y: Int, cb: Int, cr: Int) -> Int {
+  let yy1 = y * 65793
+  let cb1 = cb - 128
+  let cr1 = cr - 128
+  var r = yy1 + 91881 * cr1
+  if (r & 4278190080) == 0 {
+    r = r >> 16
+  } else if r < 0 {
+    r = 0
+  } else {
+    r = 255
+  }
+  var g = yy1 - 22554 * cb1 - 46802 * cr1
+  if (g & 4278190080) == 0 {
+    g = g >> 16
+  } else if g < 0 {
+    g = 0
+  } else {
+    g = 255
+  }
+  var b = yy1 + 116130 * cb1
+  if (b & 4278190080) == 0 {
+    b = b >> 16
+  } else if b < 0 {
+    b = 0
+  } else {
+    b = 255
+  }
+  (r << 16) | (g << 8) | b
+}
+
+fn chroma_dims(sub: jpeg.Subsample, w: Int, h: Int) -> (Int, Int) {
+  match sub {
+    jpeg.Subsample.S444 => (w, h)
+    jpeg.Subsample.S440 => (w, (h + 1) / 2)
+    jpeg.Subsample.S422 => ((w + 1) / 2, h)
+    jpeg.Subsample.S420 => ((w + 1) / 2, (h + 1) / 2)
+    jpeg.Subsample.S411 => ((w + 3) / 4, h)
+    jpeg.Subsample.S410 => ((w + 3) / 4, (h + 1) / 2)
+  }
+}
+
+fn ratios(sub: jpeg.Subsample) -> (Int, Int) {
+  match sub {
+    jpeg.Subsample.S444 => (1, 1)
+    jpeg.Subsample.S440 => (1, 2)
+    jpeg.Subsample.S422 => (2, 1)
+    jpeg.Subsample.S420 => (2, 2)
+    jpeg.Subsample.S411 => (4, 1)
+    jpeg.Subsample.S410 => (4, 2)
+  }
+}
+
+/// The result once the segments are read (the end of Go's decode).
+fn finish(var d: Dec) -> jpeg.Image ! jpeg.JpegErr {
+  if d.progressive {
+    reconstruct_progressive(d)
+  }
+  if !d.made {
+    return Err(fmt_err("missing SOS marker"))
+  }
+  let w = d.w
+  let h = d.h
+  if d.n_comp == 1 {
+    return jpeg.Image{width: w, height: h, model: jpeg.Model.Gray, pix: crop(d.py.freeze(), d.ystride, w, h)}
+  }
+  let sub = subsample_of(d)
+  let dims = chroma_dims(sub, w, h)
+  let cw = dims.0
+  let ch = dims.1
+  let yp = crop(d.py.freeze(), d.ystride, w, h)
+  let cbp = crop(d.pcb.freeze(), d.cstride, cw, ch)
+  let crp = crop(d.pcr.freeze(), d.cstride, cw, ch)
+  let rt = ratios(sub)
+  if d.n_comp == 4 {
+    let kp = crop(d.pk.freeze(), d.kstride, w, h)
+    if !d.adobe_valid {
+      return Err(unsup("unknown color model: 4-component JPEG doesn't have Adobe APP14 metadata"))
+    }
+    var out = BytesBuilder.with_capacity(w * h * 4)
+    if d.adobe_t != 0 {
+      // YCbCrK: the RGB of the YCbCr part is the CMY, the black is inverted
+      for y in 0..h {
+        for x in 0..w {
+          let rgb = ycbcr_rgb(Int(yp[y * w + x]), Int(cbp[(y / rt.1) * cw + x / rt.0]), Int(crp[(y / rt.1) * cw + x / rt.0]))
+          out.write_byte(UInt8(rgb >> 16))
+          out.write_byte(UInt8((rgb >> 8) & 255))
+          out.write_byte(UInt8(rgb & 255))
+          out.write_byte(UInt8(255 - Int(kp[y * w + x])))
+        }
+      }
+    } else {
+      // CMYK: each channel inverted; M and Y may be subsampled
+      let sub_m = d.ch[1] != d.ch[0] || d.cv[1] != d.cv[0]
+      let sub_y = d.ch[2] != d.ch[0] || d.cv[2] != d.cv[0]
+      for y in 0..h {
+        for x in 0..w {
+          out.write_byte(UInt8(255 - Int(yp[y * w + x])))
+          let mi = if sub_m { (y / 2) * cw + x / 2 } else { y * cw + x }
+          out.write_byte(UInt8(255 - Int(cbp[mi])))
+          let yi = if sub_y { (y / 2) * cw + x / 2 } else { y * cw + x }
+          out.write_byte(UInt8(255 - Int(crp[yi])))
+          out.write_byte(UInt8(255 - Int(kp[y * w + x])))
+        }
+      }
+    }
+    return jpeg.Image{width: w, height: h, model: jpeg.Model.CMYK, pix: out.freeze()}
+  }
+  if is_rgb(d) {
+    let c_scale = d.ch[0] / d.ch[1]
+    var out = BytesBuilder.with_capacity(w * h * 4)
+    for y in 0..h {
+      for x in 0..w {
+        out.write_byte(yp[y * w + x])
+        out.write_byte(cbp[(y / rt.1) * cw + x / c_scale])
+        out.write_byte(crp[(y / rt.1) * cw + x / c_scale])
+        out.write_byte(UInt8(255))
+      }
+    }
+    return jpeg.Image{width: w, height: h, model: jpeg.Model.RGBA, pix: out.freeze()}
+  }
+  jpeg.Image{width: w, height: h, model: jpeg.Model.YCbCr, subsample: sub, y: yp, cb: cbp, cr: crp}
+}
+
+/// Reads the segments; with config_only stops at the first scan (or after
+/// the frame header of a JFIF file), as Go's decode does. Ok(true) means the
+/// image is complete (EOI seen).
+fn segments(var d: Dec, config_only: Bool, max_pixels: Int) -> Bool ! jpeg.JpegErr {
+  var at = read_full(d, 2)
+  if at < 0 {
+    return Err(jpeg.JpegErr.Truncated)
+  }
+  if byte_at(d, at) != 255 || byte_at(d, at + 1) != 0xd8 {
+    return Err(fmt_err("missing SOI marker"))
+  }
+  while true {
+    at = read_full(d, 2)
+    if at < 0 {
+      return Err(jpeg.JpegErr.Truncated)
+    }
+    var t0 = byte_at(d, at)
+    var t1 = byte_at(d, at + 1)
+    while t0 != 255 {
+      t0 = t1
+      let x = read_byte(d)
+      if x < 0 {
+        return Err(jpeg.JpegErr.Truncated)
+      }
+      t1 = x
+    }
+    var marker = t1
+    if marker == 0 {
+      continue
+    }
+    while marker == 255 {
+      let x = read_byte(d)
+      if x < 0 {
+        return Err(jpeg.JpegErr.Truncated)
+      }
+      marker = x
+    }
+    if marker == 0xd9 {
+      break
+    }
+    if 0xd0 <= marker && marker <= 0xd7 {
+      continue
+    }
+    at = read_full(d, 2)
+    if at < 0 {
+      return Err(jpeg.JpegErr.Truncated)
+    }
+    let n = (byte_at(d, at) << 8) + byte_at(d, at + 1) - 2
+    if n < 0 {
+      return Err(fmt_err("short segment length"))
+    }
+    if marker == 0xc0 || marker == 0xc1 || marker == 0xc2 {
+      d.baseline = marker == 0xc0
+      d.progressive = marker == 0xc2
+      let r = process_sof(d, n)
+      if config_only && d.jfif {
+        r?
+        return false
+      }
+      r?
+    } else if marker == 0xc4 {
+      if config_only {
+        ignore(d, n)?
+      } else {
+        process_dht(d, n)?
+      }
+    } else if marker == 0xdb {
+      if config_only {
+        ignore(d, n)?
+      } else {
+        process_dqt(d, n)?
+      }
+    } else if marker == 0xda {
+      if config_only {
+        return false
+      }
+      process_sos(d, n, max_pixels)?
+    } else if marker == 0xdd {
+      if config_only {
+        ignore(d, n)?
+      } else {
+        process_dri(d, n)?
+      }
+    } else if marker == 0xe0 {
+      process_app0(d, n)?
+    } else if marker == 0xee {
+      process_app14(d, n)?
+    } else if (0xe0 <= marker && marker <= 0xef) || marker == 0xfe {
+      ignore(d, n)?
+    } else if marker < 0xc0 {
+      return Err(fmt_err("unknown marker"))
+    } else {
+      return Err(unsup("unknown marker"))
+    }
+  }
+  true
+}
+
+fn decode(data: Bytes, max_pixels: Int) -> jpeg.Image ! jpeg.JpegErr {
+  var d = dec_new(data)
+  segments(d, false, max_pixels)?
+  finish(d)?
+}
+
+fn decode_config(data: Bytes) -> jpeg.Config ! jpeg.JpegErr {
+  var d = dec_new(data)
+  let complete = segments(d, true, 0)?
+  if complete {
+    // the end of the image without a scan: Go's decode goes on to its
+    // missing SOS marker error
+    return Err(fmt_err("missing SOS marker"))
+  }
+  if d.n_comp == 1 {
+    return jpeg.Config{width: d.w, height: d.h, model: jpeg.Model.Gray}
+  }
+  if d.n_comp == 3 {
+    let m = if is_rgb(d) { jpeg.Model.RGBA } else { jpeg.Model.YCbCr }
+    return jpeg.Config{width: d.w, height: d.h, model: m}
+  }
+  if d.n_comp == 4 {
+    return jpeg.Config{width: d.w, height: d.h, model: jpeg.Model.CMYK}
+  }
+  Err(fmt_err("missing SOF marker"))
+}
+
+fn image_chroma_width(img: jpeg.Image) -> Int {
+  if img.model != jpeg.Model.YCbCr {
+    return 0
+  }
+  chroma_dims(img.subsample, img.width, img.height).0
+}
+
+fn image_chroma_height(img: jpeg.Image) -> Int {
+  if img.model != jpeg.Model.YCbCr {
+    return 0
+  }
+  chroma_dims(img.subsample, img.width, img.height).1
+}
+
+fn image_to_rgba(img: jpeg.Image) -> Bytes {
+  let w = img.width
+  let h = img.height
+  var out = BytesBuilder.with_capacity(w * h * 4)
+  if img.model == jpeg.Model.Gray {
+    for i in 0..(w * h) {
+      let g = img.pix[i]
+      out.write_byte(g)
+      out.write_byte(g)
+      out.write_byte(g)
+      out.write_byte(UInt8(255))
+    }
+  } else if img.model == jpeg.Model.RGBA {
+    out.write(img.pix)
+  } else if img.model == jpeg.Model.CMYK {
+    for i in 0..(w * h) {
+      let k = Int(img.pix[4 * i + 3])
+      let wk = 65535 - k * 257
+      for c in 0..3 {
+        let v = (65535 - Int(img.pix[4 * i + c]) * 257) * wk / 65535
+        out.write_byte(UInt8(v >> 8))
+      }
+      out.write_byte(UInt8(255))
+    }
+  } else {
+    let rt = ratios(img.subsample)
+    let cw = image_chroma_width(img)
+    for y in 0..h {
+      for x in 0..w {
+        let ci = (y / rt.1) * cw + x / rt.0
+        let rgb = ycbcr_rgb(Int(img.y[y * w + x]), Int(img.cb[ci]), Int(img.cr[ci]))
+        out.write_byte(UInt8(rgb >> 16))
+        out.write_byte(UInt8((rgb >> 8) & 255))
+        out.write_byte(UInt8(rgb & 255))
+        out.write_byte(UInt8(255))
+      }
+    }
+  }
+  out.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// The inverse DCT (dct.go, Go 1.26: Loeffler, Ligtenberg and Moschytz with
+// integer constants; written out from its idctRows and idctCols)
+
+fn idct_rows(var b: List[Int]) {
+  for i in 0..8 {
+    let o = 8 * i
+    var x0 = b[o + 0]
+    var x7 = b[o + 1]
+    var x2 = b[o + 2]
+    var x5 = b[o + 3]
+    var x1 = b[o + 4]
+    var x6 = b[o + 5]
+    var x3 = b[o + 6]
+    var x4 = b[o + 7]
+    x0 = x0 << 17
+    x1 = x1 << 17
+    var s = x0 + x1
+    x1 = x0 - x1
+    x0 = s
+    let t1 = 70936 * (x2 + x3)
+    let u1 = t1 + (-242190) * x3
+    let v1 = t1 - (-100318) * x2
+    x2 = u1
+    x3 = v1
+    s = x1 + x2
+    x2 = x1 - x2
+    x1 = s
+    s = x0 + x3
+    x3 = x0 - x3
+    x0 = s
+    x4 = x4 << 7
+    x7 = x7 << 7
+    s = x7 + x4
+    x4 = x7 - x4
+    x7 = s
+    x6 = x6 * 181
+    x5 = x5 * 181
+    s = x7 + x5
+    x5 = x7 - x5
+    x7 = s
+    s = x4 + x6
+    x6 = x4 - x6
+    x4 = s
+    x4 = (((x4 + 2147483648) & 4294967295) - 2147483648) >> 2
+    x7 = (((x7 + 2147483648) & 4294967295) - 2147483648) >> 2
+    let t2 = 3406 * (x4 + x7)
+    let u2 = t2 + (-5682) * x7
+    let v2 = t2 - (1130) * x4
+    x4 = u2
+    x7 = v2
+    x5 = (((x5 + 2147483648) & 4294967295) - 2147483648) >> 2
+    x6 = (((x6 + 2147483648) & 4294967295) - 2147483648) >> 2
+    let t3 = 4017 * (x5 + x6)
+    let u3 = t3 + (-4816) * x6
+    let v3 = t3 - (3218) * x5
+    x5 = u3
+    x6 = v3
+    s = x0 + x7
+    x7 = x0 - x7
+    x0 = s
+    s = x1 + x6
+    x6 = x1 - x6
+    x1 = s
+    s = x2 + x5
+    x5 = x2 - x5
+    x2 = s
+    s = x3 + x4
+    x4 = x3 - x4
+    x3 = s
+    b[o + 0] = ((x0 + 2147483648) & 4294967295) - 2147483648
+    b[o + 1] = ((x1 + 2147483648) & 4294967295) - 2147483648
+    b[o + 2] = ((x2 + 2147483648) & 4294967295) - 2147483648
+    b[o + 3] = ((x3 + 2147483648) & 4294967295) - 2147483648
+    b[o + 4] = ((x4 + 2147483648) & 4294967295) - 2147483648
+    b[o + 5] = ((x5 + 2147483648) & 4294967295) - 2147483648
+    b[o + 6] = ((x6 + 2147483648) & 4294967295) - 2147483648
+    b[o + 7] = ((x7 + 2147483648) & 4294967295) - 2147483648
+  }
+}
+
+fn idct_cols(var b: List[Int]) {
+  for i in 0..8 {
+    var x0 = b[0 + i]
+    var x7 = b[8 + i]
+    var x2 = b[16 + i]
+    var x5 = b[24 + i]
+    var x1 = b[32 + i]
+    var x6 = b[40 + i]
+    var x3 = b[48 + i]
+    var x4 = b[56 + i]
+    x0 = x0 + 524288
+    var s = x0 + x1
+    x1 = x0 - x1
+    x0 = (((s + 2147483648) & 4294967295) - 2147483648) >> 2
+    x1 = (((x1 + 2147483648) & 4294967295) - 2147483648) >> 2
+    x2 = (((x2 + 2147483648) & 4294967295) - 2147483648) >> 13
+    x3 = (((x3 + 2147483648) & 4294967295) - 2147483648) >> 13
+    let t4 = 1108 * (x2 + x3)
+    let u4 = t4 + (-3784) * x3
+    let v4 = t4 - (-1568) * x2
+    x2 = u4
+    x3 = v4
+    s = x1 + x2
+    x2 = x1 - x2
+    x1 = s
+    s = x0 + x3
+    x3 = x0 - x3
+    x0 = s
+    s = x7 + x4
+    x4 = x7 - x4
+    x7 = s
+    x5 = ((((x5 + 2147483648) & 4294967295) - 2147483648) >> 13) * 11585
+    x6 = ((((x6 + 2147483648) & 4294967295) - 2147483648) >> 13) * 11585
+    s = x7 + x5
+    x5 = x7 - x5
+    x7 = s
+    s = x4 + x6
+    x6 = x4 - x6
+    x4 = s
+    x4 = (((x4 + 2147483648) & 4294967295) - 2147483648) >> 14
+    x7 = (((x7 + 2147483648) & 4294967295) - 2147483648) >> 14
+    let t5 = 3406 * (x4 + x7)
+    let u5 = t5 + (-5682) * x7
+    let v5 = t5 - (1130) * x4
+    x4 = u5
+    x7 = v5
+    x5 = (((x5 + 2147483648) & 4294967295) - 2147483648) >> 14
+    x6 = (((x6 + 2147483648) & 4294967295) - 2147483648) >> 14
+    let t6 = 4017 * (x5 + x6)
+    let u6 = t6 + (-4816) * x6
+    let v6 = t6 - (3218) * x5
+    x5 = u6
+    x6 = v6
+    s = x0 + x7
+    x7 = x0 - x7
+    x0 = s
+    s = x1 + x6
+    x6 = x1 - x6
+    x1 = s
+    s = x2 + x5
+    x5 = x2 - x5
+    x2 = s
+    s = x3 + x4
+    x4 = x3 - x4
+    x3 = s
+    b[0 + i] = (((x0 + 2147483648) & 4294967295) - 2147483648) >> 18
+    b[8 + i] = (((x1 + 2147483648) & 4294967295) - 2147483648) >> 18
+    b[16 + i] = (((x2 + 2147483648) & 4294967295) - 2147483648) >> 18
+    b[24 + i] = (((x3 + 2147483648) & 4294967295) - 2147483648) >> 18
+    b[32 + i] = (((x4 + 2147483648) & 4294967295) - 2147483648) >> 18
+    b[40 + i] = (((x5 + 2147483648) & 4294967295) - 2147483648) >> 18
+    b[48 + i] = (((x6 + 2147483648) & 4294967295) - 2147483648) >> 18
+    b[56 + i] = (((x7 + 2147483648) & 4294967295) - 2147483648) >> 18
+  }
+}

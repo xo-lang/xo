@@ -6544,3 +6544,42 @@ fn encode(img: Image, level: Compression = Compression.Default) -> Bytes ! PngEr
   model, width and height say.
 - Not ported: the `image.Image` interface and other color models, `png`'s
   `EncoderBufferPool`, interlaced encode (Go has none).
+
+## 49. std/jpeg
+
+Go's image/jpeg decoder over whole buffers: `decode` and `decode_config`
+(decision 0467). Baseline and progressive JPEG, every chroma subsampling
+ratio Go supports, restart intervals, Adobe CMYK, YCCK and RGB, and Go
+1.26's integer IDCT, so the decoded planes are the bytes Go's decoder
+returns. One `Image` struct holds Go's four decoded image types. Pure.
+
+```xo
+enum Model { Gray, YCbCr, CMYK, RGBA } derive Eq, Display
+enum Subsample { S444, S440, S422, S420, S411, S410 } derive Eq, Display
+struct Image { width: Int, height: Int, model: Model, subsample: Subsample = Subsample.S444,
+               pix: Bytes = b"", y: Bytes = b"", cb: Bytes = b"", cr: Bytes = b"" }
+struct Config { width: Int, height: Int, model: Model }
+enum JpegErr { Format(msg: Str), Unsupported(msg: Str), Truncated }
+fn (e: JpegErr) display() -> Str
+fn (img: Image) chroma_width() -> Int
+fn (img: Image) chroma_height() -> Int
+fn (img: Image) to_rgba() -> Bytes
+fn decode(data: Bytes, max_pixels: Int = 100000000) -> Image ! JpegErr
+fn decode_config(data: Bytes) -> Config ! JpegErr
+```
+
+- `decode` returns the type Go's `jpeg.Decode` does: Gray for one component,
+  YCbCr for three (with the chroma `subsample` ratio), CMYK for four
+  components (Adobe transform 0 or 2, the YCCK case, converted as Go does),
+  and RGBA for an RGB JPEG (an Adobe marker that says RGB, or components named
+  R, G and B). Rows are tight (no stride padding): a plane has exactly
+  `width * height` bytes (chroma planes `chroma_width() * chroma_height()`).
+- `to_rgba` converts as Go's `draw.Draw` does (color.YCbCrToRGB,
+  color.CMYKToRGB, gray with alpha 255).
+- `JpegErr` carries Go's errors: `Format` and `Unsupported` with the text after
+  `invalid JPEG format: ` or `unsupported JPEG feature: ` (`display` gives the
+  full text) and `Truncated` for `unexpected EOF`. A frame header asking for
+  more than `max_pixels` pixels is `Format("image too large")`, refused before
+  anything is allocated (Go allocates from the header).
+- Not ported: the `image.Image` interface, `jpeg.Encode`, and the `Reader`
+  interface (whole buffers only).

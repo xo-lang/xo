@@ -1,0 +1,80 @@
+// std/jpeg (spec/std.md 49, decision 0467). Declaration file. Go's
+// image/jpeg Decode and DecodeConfig over whole buffers: baseline and
+// progressive JPEG, every chroma subsampling Go supports, restart
+// intervals, Adobe CMYK, YCCK and RGB, with Go's integer IDCT, so the
+// decoded planes are the bytes Go's decoder returns. Pure.
+
+/// The image types image/jpeg decodes to:
+/// Gray (`pix`, 1 byte a pixel), YCbCr (the `y`, `cb` and `cr` planes with
+/// the chroma `subsample` ratio), CMYK (`pix`, 4 bytes a pixel, Go's
+/// image.CMYK: 255 is full ink) and RGBA (`pix`, 4 bytes a pixel with alpha
+/// 255; Go's decoder returns it for an RGB JPEG, one with an Adobe marker
+/// that says RGB or components named R, G and B).
+enum Model {
+  Gray
+  YCbCr
+  CMYK
+  RGBA
+} derive Eq, Display
+
+/// Go's image.YCbCrSubsampleRatio: how the chroma planes are subsampled
+/// against luma (4:4:4 none, 4:4:0 vertical, 4:2:2 horizontal, 4:2:0 both,
+/// 4:1:1 horizontal by 4, 4:1:0 horizontal by 4 and vertical by 2).
+enum Subsample {
+  S444
+  S440
+  S422
+  S420
+  S411
+  S410
+} derive Eq, Display
+
+/// A decoded image. Rows are tight (no padding): `pix` has `width * height`
+/// bytes for Gray and `width * height * 4` for CMYK and RGBA; a YCbCr image
+/// has `y` of `width * height` bytes and `cb` and `cr` of `chroma_width *
+/// chroma_height` bytes each (`pix` is empty).
+struct Image {
+  width: Int
+  height: Int
+  model: Model
+  subsample: Subsample = Subsample.S444
+  pix: Bytes = b""
+  y: Bytes = b""
+  cb: Bytes = b""
+  cr: Bytes = b""
+}
+
+/// The size and image type of a JPEG (Go's image.Config).
+struct Config {
+  width: Int
+  height: Int
+  model: Model
+}
+
+/// Go's errors: `invalid JPEG format: ...` (Format), `unsupported JPEG
+/// feature: ...` (Unsupported) and `unexpected EOF` (Truncated); also Format
+/// for a JPEG whose frame header asks for more than max_pixels pixels,
+/// `image too large`.
+enum JpegErr {
+  Format(msg: Str)
+  Unsupported(msg: Str)
+  Truncated
+}
+
+fn (e: JpegErr) display() -> Str
+
+/// The size of a YCbCr image's chroma planes.
+fn (img: Image) chroma_width() -> Int
+fn (img: Image) chroma_height() -> Int
+
+/// The image as `width * height * 4` bytes of 8 bit RGBA, as Go's draw.Draw
+/// converts it: YCbCr through color.YCbCrToRGB, CMYK through color.CMYKToRGB,
+/// Gray as gray with alpha 255.
+fn (img: Image) to_rgba() -> Bytes
+
+/// Go's jpeg.Decode. A header over max_pixels pixels is refused before
+/// anything is allocated (Go allocates from the header).
+fn decode(data: Bytes, max_pixels: Int = 100000000) -> Image ! JpegErr
+
+/// Go's jpeg.DecodeConfig: the size and image type without the pixels.
+fn decode_config(data: Bytes) -> Config ! JpegErr

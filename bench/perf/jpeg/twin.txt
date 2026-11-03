@@ -1,0 +1,4 @@
+# twincheck: jpeg: three workloads (none is the setup alone), the same names on both sides.
+- - decode
+- - rgba
+- - none

@@ -95,7 +95,7 @@ streams (0433), mutual TLS (`with_client_auth`, `Client.with_cert`),
 streaming bodies, multipart, ServeContent, gzip), tls, websocket, json (derive, Value,
 streaming decoder), xml (tokens, tree, derive), sql (Postgres driver),
 csv, toml, regexp, time, url, netip, udp, mime, mail, smtp, multipart,
-template, embed, compress, big, base64/base32, binary, uuid, path, png (decode and encode, 0466),
+template, embed, compress, big, base64/base32, binary, uuid, path, png (decode and encode, 0466), jpeg (decode, 0467),
 crypto, archive, log, task, testing, cli, term, go (`use go` bindings).
 `time` layouts are named fields (`"{year}-{month}-{day}"`), checked at
 compile time when constant; `time.layout(text)` gives a `Layout` parsed
