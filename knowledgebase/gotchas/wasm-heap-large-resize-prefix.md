@@ -7,7 +7,9 @@ Symptom: on wasip1/wasm and wasip2/wasm, standard input past about 4 KiB
 of buffered input came back corrupted: a 20,000-byte first line read
 right, the 100-byte lines after it did not ("each as written false").
 Any wasm runtime buffer grown with `rt.heap_large_resize` (stdin.xo put,
-twrun, det) was affected.
+twrun, det) was affected. Not in a release: standard input on wasm came
+in b16428830, after v0.36.0 (a read faulted before), and no other caller
+of the resize was found that a v0.36.0 wasm program reaches.
 
 Cause: `rt.heap_large_resize(b, n)` and `rt.heap_release(b)` take the
 block's prefix, 8 bytes before its data, as on the native heap

@@ -8,7 +8,7 @@
 - Go reference: none
 - Test: golden stdin_long_line on wasip1/wasm, wasip2/wasm and natively
 - Timing: none
-- Shipped in: every release with wasip1/wasm stdin, through v0.36.0
+- Shipped in: none (standard input on wasm came in b16428830, after v0.36.0; before it a read faulted)
 
 Reading standard input on wasm corrupted what followed once the input
 buffer grew past 4 KiB: a long line, or many lines read ahead. The
