@@ -1,0 +1,41 @@
+// mapiter: what std/cookiejar's lookup does per cookie, alone: a walk over
+// a Map[Str, Entry] of 35 entries with five Str fields, 100000 times,
+// against Go's map walk (twin.go.txt). Usage: `<program> none|walk|keys`
+// (walk binds each entry; keys binds only the key). Prints `<workload>
+// <count>`; the twin prints the same.
+struct Entry {
+  name: Str
+  value: Str
+  domain: Str
+  path: Str
+  secure: Bool
+  seq: Int
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var m: Map[Str, Entry] = {}
+  for i in 0..35 {
+    let d = "h${i % 8}.example.com"
+    m["${d};/p${i % 5};n${i}"] = Entry{name: "n${i}", value: "v${i}", domain: d, path: "/p${i % 5}", secure: i % 3 == 0, seq: i}
+  }
+  var count = 0
+  if w == "walk" {
+    for _r in 0..100000 {
+      for (id, e) in m {
+        if e.domain == "h3.example.com" && id.len() > 0 {
+          count += 1
+        }
+      }
+    }
+  } else if w == "keys" {
+    for _r in 0..100000 {
+      for (id, _e) in m {
+        if id.len() > 30 {
+          count += 1
+        }
+      }
+    }
+  }
+  os.stdio.println("${w} ${count}")
+}

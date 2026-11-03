@@ -1,0 +1,45 @@
+// The Go twin of bench/perf/mapiter: the same walks over a Go map.
+package main
+
+import (
+	"fmt"
+	"os"
+)
+
+type Entry struct {
+	Name, Value, Domain, Path string
+	Secure                    bool
+	Seq                       int
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	m := map[string]Entry{}
+	for i := 0; i < 35; i++ {
+		d := fmt.Sprintf("h%d.example.com", i%8)
+		m[fmt.Sprintf("%s;/p%d;n%d", d, i%5, i)] = Entry{Name: fmt.Sprintf("n%d", i), Value: fmt.Sprintf("v%d", i), Domain: d, Path: fmt.Sprintf("/p%d", i%5), Secure: i%3 == 0, Seq: i}
+	}
+	count := 0
+	switch w {
+	case "walk":
+		for r := 0; r < 100000; r++ {
+			for id, e := range m {
+				if e.Domain == "h3.example.com" && len(id) > 0 {
+					count++
+				}
+			}
+		}
+	case "keys":
+		for r := 0; r < 100000; r++ {
+			for id := range m {
+				if len(id) > 30 {
+					count++
+				}
+			}
+		}
+	}
+	fmt.Printf("%s %d\n", w, count)
+}
