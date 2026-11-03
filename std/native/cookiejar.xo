@@ -181,36 +181,38 @@ fn jar_cookies(j: cookiejar.Jar, u: http.Url, now: Time) -> List[http.Cookie] {
   let https = u.scheme == "https"
   let path = if u.path.is_empty() { "/" } else { u.path }
   let selected = j.st.with(fn(var s: cookiejar.JarState) -> List[cookiejar.Entry] {
-    var chosen: List[cookiejar.Entry] = []
-    var sub = s.entries.get(key) ?? {}
-    if sub.is_empty() {
-      return chosen
+    if !s.entries.contains(key) {
+      return []
     }
-    var dead: List[Str] = []
-    var touched: List[Str] = []
-    for (id, e) in sub {
-      if e.persistent && !(e.expires > now) {
-        dead.push(id)
-        continue
+    // changed in place through update (a get would share the domain's map,
+    // and the first write would copy it)
+    let (chosen, empty) = s.entries.update(key, {}, fn(var sub: Map[Str, cookiejar.Entry]) -> (List[cookiejar.Entry], Bool) {
+      var chosen: List[cookiejar.Entry] = []
+      var dead: List[Str] = []
+      var touched: List[Str] = []
+      for (id, e) in sub {
+        if e.persistent && !(e.expires > now) {
+          dead.push(id)
+          continue
+        }
+        if !should_send(e, https, host, path) {
+          continue
+        }
+        chosen.push(e)
+        touched.push(id)
       }
-      if !should_send(e, https, host, path) {
-        continue
+      for id in dead {
+        let _old = sub.remove(id)
       }
-      chosen.push(e)
-      touched.push(id)
-    }
-    for id in dead {
-      let _old = sub.remove(id)
-    }
-    for id in touched {
-      var e = sub.get(id) ?? fault("cookiejar: entry")
-      e.last_access = now
-      sub[id] = e
-    }
-    if sub.is_empty() {
+      for id in touched {
+        var e = sub.get(id) ?? fault("cookiejar: entry")
+        e.last_access = now
+        sub[id] = e
+      }
+      (chosen, sub.is_empty())
+    })
+    if empty {
       let _old = s.entries.remove(key)
-    } else {
-      s.entries[key] = sub
     }
     chosen
   })
@@ -301,33 +303,38 @@ fn jar_set_cookies(j: cookiejar.Jar, u: http.Url, cs: List[http.Cookie], now: Ti
   let key = jar_key(host)
   let def_path = default_path(u.path)
   j.st.with(fn(var s: cookiejar.JarState) {
-    var sub = s.entries.get(key) ?? {}
-    for c in cs {
-      let r = new_entry(c, now, def_path, host) ?? continue
-      var e = r.0
-      let id = entry_id(e.domain, e.path, e.name)
-      if r.1 {
-        let _old = sub.remove(id)
-        continue
-      }
-      match sub.get(id) {
-        Some(old) => {
-          e.creation = old.creation
-          e.seq = old.seq
+    let base = s.next_seq
+    // changed in place through update, as in jar_cookies; the closure
+    // returns how many sequence numbers it took
+    let (used, empty) = s.entries.update(key, {}, fn(var sub: Map[Str, cookiejar.Entry]) -> (Int, Bool) {
+      var used = 0
+      for c in cs {
+        let r = new_entry(c, now, def_path, host) ?? continue
+        var e = r.0
+        let id = entry_id(e.domain, e.path, e.name)
+        if r.1 {
+          let _old = sub.remove(id)
+          continue
         }
-        None => {
-          e.creation = now
-          e.seq = s.next_seq
-          s.next_seq += 1
+        match sub.get(id) {
+          Some(old) => {
+            e.creation = old.creation
+            e.seq = old.seq
+          }
+          None => {
+            e.creation = now
+            e.seq = base + used
+            used += 1
+          }
         }
+        e.last_access = now
+        sub[id] = e
       }
-      e.last_access = now
-      sub[id] = e
-    }
-    if sub.is_empty() {
+      (used, sub.is_empty())
+    })
+    s.next_seq += used
+    if empty {
       let _old = s.entries.remove(key)
-    } else {
-      s.entries[key] = sub
     }
   })
 }
