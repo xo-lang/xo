@@ -30,9 +30,10 @@ it stands in for always did: wasip1 has no per-descriptor wait that the
 task runtime parks on, so other tasks do not run during either. A
 wasip2 command reads stdin through wasi:cli/stdin's stream
 (blocking-read, rt7.xo), which never answers EAGAIN and also waits for
-the whole instance; parking only the reading task there (subscribe to
-the stream's pollable, as rt9.xo's socket reads do) is a separate
-change.
+the whole instance without tasks; with tasks (2026-11-03, decision
+0447 R2k) the read parks only its task on the stream's pollable
+(rt9.xo $wasi_stdin_wait_read), as the socket reads do, and
+TestWasmCommandStdinParks proves the other tasks run meanwhile.
 
 How to avoid: a wasm runtime call on a host file descriptor treats
 EAGAIN (and EINTR) as "not yet", never as the error, since the WASI host

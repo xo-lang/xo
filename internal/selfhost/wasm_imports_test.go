@@ -36,6 +36,10 @@ func TestWasmCommandImports(t *testing.T) {
 			[]string{"wasi:cli/stdout@"}, []string{"wasi:sockets/"}},
 		{"udp", "use std/udp\n\nfn main(os: Os) {\n  match udp.listen(os.net, \"127.0.0.1:0\") {\n    Ok(c) => os.stdio.println(c.local_addr())\n    Err(e) => os.stdio.println(\"${e}\")\n  }\n}\n",
 			[]string{"wasi:sockets/udp@", "wasi:sockets/udp-create-socket@"}, []string{"wasi:sockets/tcp@", "wasi:sockets/tcp-create-socket@"}},
+		// a stdin read that parks its task brings in rt9.xo's waits but
+		// none of its sockets (decision 0447 R2k)
+		{"stdin_tasks", "fn main(os: Os) {\n  let out = os.stdio\n  scope s {\n    s.spawn(fn() {\n      match out.read_line() {\n        Ok(Some(l)) => out.println(l)\n        _ => out.println(\"end\")\n      }\n    })\n  }\n}\n",
+			[]string{"wasi:cli/stdin@", "wasi:io/poll@"}, []string{"wasi:sockets/"}},
 		{"tcp", "fn main(os: Os) {\n  match os.net.listen(\"127.0.0.1:0\") {\n    Ok(l) => os.stdio.println(\"${l.addr()}\")\n    Err(e) => os.stdio.println(\"${e}\")\n  }\n}\n",
 			[]string{"wasi:sockets/tcp@", "wasi:sockets/tcp-create-socket@"}, []string{"wasi:sockets/udp@", "wasi:sockets/udp-create-socket@"}},
 	} {

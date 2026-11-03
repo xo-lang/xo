@@ -1052,6 +1052,14 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
     }
     false
   }
+  let wanted_fn = fn(module: Str, name: Str) -> Bool {
+    for m in all {
+      if m.module == module && m.name == name {
+        return true
+      }
+    }
+    false
+  }
   var c = Comp{}
   // m0 the program, m1 the shim, m2 the fixup
   section(c.out, 1, core_list(core))
@@ -1064,14 +1072,17 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
   let tcp = wanted("wasi:sockets/tcp${WASI_V}")
   let udp = wanted("wasi:sockets/udp${WASI_V}")
   let sock = tcp || udp
+  // a stream's pollable and poll without sockets: a command with tasks
+  // parks its stdin read on them (rt9.xo $wasi_stdin_wait_read, R2k)
+  let waits = sock || wanted_fn("wasi:io/streams${WASI_V}", "[method]input-stream.subscribe")
   if wanted("wasi:io/poll${WASI_V}") {
-    let ip = c.import_iface("wasi:io/poll${WASI_V}", ity_io_poll(sock))
+    let ip = c.import_iface("wasi:io/poll${WASI_V}", ity_io_poll(waits))
     t_poll = c.alias_type(ip, "pollable")
   }
-  if sock && t_poll < 0 {
-    return (b"", "the network needs wasi:io/poll's pollable")
+  if waits && t_poll < 0 {
+    return (b"", "a wait on a stream needs wasi:io/poll's pollable")
   }
-  let is = c.import_iface("wasi:io/streams${WASI_V}", ity_io_streams(t_err, if sock { t_poll } else { -1 }))
+  let is = c.import_iface("wasi:io/streams${WASI_V}", ity_io_streams(t_err, if waits { t_poll } else { -1 }))
   let t_in = c.alias_type(is, "input-stream")
   let t_out = c.alias_type(is, "output-stream")
   if sock {

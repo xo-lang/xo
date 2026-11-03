@@ -952,3 +952,24 @@ tasks only sees stop_requested change. http.Server's serve already
 stops on task.stopping in a command (R2a), so a server drains and
 returns: websocket_stop leaves the unsupported list.
 
+### Stdin parks its task in a command with tasks (2026-11-03, R2k)
+
+A wasip2 command's stdin read was wasi:cli/stdin's blocking-read, which
+stops the whole instance: a program whose one task waits for input ran
+none of its others meanwhile. In a command with tasks the read now is a
+suspension point: rt9.xo's $wasi_stdin_wait_read reads what the stream
+has (input-stream.read) and, when nothing is there yet, waits on the
+stream's pollable through the socket wait table ($sk_wait), so the
+scheduler runs the other tasks and comes back when input arrives. The
+gen scan marks rt.wasi_stdin_read as a wait in a command, and a program
+that reads stdin with tasks includes rt9.xo's scheduler (its socket
+imports go unused and are dropped, R2h's correction), and the
+component declares wasi:io/streams' read and subscribe and wasi:io/poll's
+poll whenever the core module subscribes to a stream (component.xo, which
+declared them only with sockets: the first build of a stdin reader failed
+`wasm-tools validate`). TestWasmCommandImports pins that such a program
+imports wasi:cli/stdin and wasi:io/poll but no wasi:sockets. A command without
+tasks keeps the blocking read; a wasip1 module keeps fd_read with the
+EAGAIN backoff (gotchas/wasm-stdin-eagain.md). Proof:
+TestWasmCommandStdinParks (one task reads a line written 3 s late while
+another prints five ticks: the ticks come first).

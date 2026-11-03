@@ -496,6 +496,10 @@ fn (var g: Gen) call(v: Int) {
         if g.comp {
           g.e("i64.const 0")
           g.def(v)
+        } else if g.stdin_park {
+          // a command with tasks: the reading task parks (rt9.xo)
+          g.stdin = true
+          g.rt3_call(v, name, fname0: "wasi_stdin_wait_read", wait: true)
         } else {
           g.stdin = true
           g.rt_call(v, "$wasi_stdin_read")
@@ -878,10 +882,12 @@ fn (var g: Gen) temp_make(a: Int, k: Int) -> Int {
   t
 }
 
-fn (var g: Gen) rt3_call(v: Int, name: Str) {
+/// fname0: the runtime function when it is not $<name> (wait: it can
+/// suspend the task, as rt3_blocking's and rt9_blocking's do).
+fn (var g: Gen) rt3_call(v: Int, name: Str, fname0: Str = "", wait: Bool = false) {
   let x = g.f.values[v]
-  let fname = name.trim_prefix("rt.")
-  let id = if rt3_blocking(name) || rt9_blocking(name) { g.resume_point() } else { -1 }
+  let fname = if fname0 == "" { name.trim_prefix("rt.") } else { fname0 }
+  let id = if wait || rt3_blocking(name) || rt9_blocking(name) { g.resume_point() } else { -1 }
   let atomic = fname.starts_with("atomic_")
   if fname == "prog_group" && x.args.is_empty() {
     // $prog_group takes the place for its fault when the program has no

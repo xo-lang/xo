@@ -1800,6 +1800,72 @@ ${tcp_addr}
       i32.load offset=8
       call $sk_take)
 
+    ;; rt.wasi_stdin_read in a command with tasks: at most n bytes of
+    ;; stdin into p, their count, 0 at its end, -5 for a failed read;
+    ;; when nothing is there yet the task waits on the stream's pollable
+    ;; (the call is a resume point and comes again), so the other tasks
+    ;; run meanwhile (rt7.xo's blocking-read stopped them all)
+    (func $wasi_stdin_wait_read (param $p i64) (param $n i64) (result i64) (local $r i32) (local $q i32) (local $k i32)
+      call $sk_enter
+      if
+        i64.const -5
+        return
+      end
+      global.get $hstdin
+      i32.eqz
+      if
+        call $cli_stdin
+        global.set $hstdin
+      end
+      global.get $hstdin
+      local.get $n
+      call $hret_at
+      local.tee $r
+      call $sk_iread
+      local.get $r
+      i32.load8_u
+      if
+        ;; closed is the end; last-operation-failed drops its error
+        local.get $r
+        i32.load8_u offset=4
+        if
+          i64.const 0
+          return
+        end
+        local.get $r
+        i32.load offset=8
+        call $ioerr_drop
+        i64.const -5
+        return
+      end
+      local.get $r
+      i32.load offset=8
+      i32.eqz
+      if
+        global.get $hstdin
+        call $sk_isub
+        i32.const 0
+        i64.const 0
+        call $sk_wait
+        i64.const 0
+        return
+      end
+      local.get $r
+      i32.load offset=4
+      local.set $q
+      local.get $r
+      i32.load offset=8
+      local.set $k
+      local.get $p
+      i32.wrap_i64
+      local.get $q
+      local.get $k
+      memory.copy
+      local.get $q
+      call $free
+      local.get $k
+      i64.extend_i32_u)
+
     ;; Conn.read without the wait: what the input stream has now, at
     ;; most max bytes; empty with error 105 when nothing is there yet
     ;; (HTTP/2's reads, decision 0447 R2f)

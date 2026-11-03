@@ -108,6 +108,10 @@ pub struct Gen {
   /// name only their imports, so the component asks for no other;
   /// decision 0447 R2h)
   udp: Bool = false
+  /// a command with tasks reads stdin: the read parks its task on the
+  /// stream's pollable (rt9.xo $wasi_stdin_wait_read) instead of
+  /// blocking every task
+  stdin_park: Bool = false
   tcp: Bool = false
   /// a runtime record of llrt is made (rt.wasi_handle_new: rt.xo
   /// handle_text)
@@ -1397,7 +1401,7 @@ fn (var g: Gen) find_susp() {
     for x in f.values {
       if x.op == ssa.Op.Call {
         if let S(n) = x.aux {
-          if rt3_blocking(n) || rt9_blocking(n) {
+          if rt3_blocking(n) || rt9_blocking(n) || (n == "rt.wasi_stdin_read" && g.cmd) {
             blocks = true
           }
         }
@@ -1443,6 +1447,10 @@ fn (var g: Gen) find_susp() {
         }
         if let Some(ci) = g.by_name.get(name) {
           cs.push(ci)
+        } else if name == "rt.wasi_stdin_read" && g.cmd {
+          // a wait when the program has tasks (stdin_park below)
+          g.stdin_park = true
+          s = true
         } else if name.starts_with("rt.") && rt4_direct(name.trim_prefix("rt.")) {
           g.files = true
         } else if name.starts_with("rt.") && rt9_direct(name.trim_prefix("rt.")) {
@@ -1473,7 +1481,13 @@ fn (var g: Gen) find_susp() {
     for i in 0..g.susp.len() {
       g.susp[i] = false
     }
+    g.stdin_park = false
     return
+  }
+  if g.stdin_park {
+    // the stdin read waits in rt9.xo's scheduler, whose socket imports
+    // nothing calls are dropped (drop_unused_imports)
+    g.net = true
   }
   // the parameter types of the targets that can suspend
   var skeys: Set[Str] = #{}
