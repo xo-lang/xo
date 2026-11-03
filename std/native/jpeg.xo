@@ -719,7 +719,10 @@ fn reconstruct_block(var d: Dec, var b: List[Int], bx: Int, by: Int, ci: Int) {
     var lo = 0
     for x in 0..8 {
       let v = b[y * 8 + x]
-      let c = if v < -128 { 0 } else if v > 127 { 255 } else { v + 128 }
+      // clamp to 0..255 without a branch: below zero all bits drop, above 255 all rise
+      var c = v + 128
+      c = c & ~(c >> 63)
+      c = (c | ((255 - c) >> 63)) & 255
       if x < 4 {
         hi = (hi << 8) | c
       } else {
