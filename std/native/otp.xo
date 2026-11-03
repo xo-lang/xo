@@ -54,33 +54,37 @@ fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: crypt
   hotp(secret, unix / period, digits, algo)
 }
 
-fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, skew: Int = 1) -> Bool {
+fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, skew: Int = 1) -> Int? {
   check_params(digits, algo)
   if period < 1 || unix < 0 || skew < 0 {
-    return false
+    return None
   }
   let b = code.bytes()
   if b.len() != digits {
-    return false
+    return None
   }
   for c in b {
     if c < '0' || c > '9' {
-      return false
+      return None
     }
   }
   let step = unix / period
-  var ok = false
+  var found = -1
   var k = -skew
   while k <= skew {
     if step + k >= 0 {
       let want = hotp(secret, step + k, digits, algo).bytes()
-      if crypto.equal(want, b) {
-        ok = true
+      if crypto.equal(want, b) && found < 0 {
+        found = step + k
       }
     }
     k += 1
   }
-  ok
+  if found < 0 {
+    None
+  } else {
+    Some(found)
+  }
 }
 
 fn generate_secret(r: Rand, len: Int = 20) -> Bytes uses rand {

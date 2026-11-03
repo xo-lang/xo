@@ -12,13 +12,15 @@ fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: crypto.Hash = crypto
 /// The TOTP code (RFC 6238) at unix seconds: hotp of `unix / period`.
 /// A fault for a period under 1 or a negative unix, and hotp's.
 fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str
-/// Whether code is the TOTP code of the step of `unix` or of one of `skew`
-/// steps either side (clock drift). Each candidate is compared in constant
+/// The time step (`unix / period` plus an offset, the counter that was
+/// hashed) whose TOTP code is `code`, among the step of `unix` and `skew`
+/// steps either side (clock drift); None when none matches. The caller
+/// stores the last step it accepted and rejects a step that is not later
+/// (RFC 6238 section 5.2, replay). Each candidate is compared in constant
 /// time and every one is compared, so the time taken does not say which
-/// matched. A code that is not `digits` ASCII digits is false, never a
-/// fault: it is untrusted input. Does not remember a used code: replay
-/// protection belongs to the caller.
-fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, skew: Int = 1) -> Bool
+/// matched. A code that is not `digits` ASCII digits is None, never a
+/// fault: it is untrusted input. Does not remember a used code.
+fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, skew: Int = 1) -> Int?
 /// A random secret of len bytes (20, the length of an HMAC-SHA1 key, is
 /// what authenticator apps expect).
 fn generate_secret(r: Rand, len: Int = 20) -> Bytes uses rand

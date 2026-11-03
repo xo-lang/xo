@@ -167,22 +167,37 @@ test "RFC 6238 appendix B" {
   }
 }
 
-test "verify accepts the step and skew steps either side, and refuses bad input" {
+test "verify returns the matched step: the step and skew steps either side, and refuses bad input" {
   let key = b"12345678901234567890"
   let now = 1111111109
+  let step = now / 30
   let here = otp.totp(key, now)
-  expect(otp.verify(key, here, now)) == true
-  expect(otp.verify(key, otp.totp(key, now - 30), now)) == true
-  expect(otp.verify(key, otp.totp(key, now + 30), now)) == true
-  expect(otp.verify(key, otp.totp(key, now - 60), now)) == false
-  expect(otp.verify(key, otp.totp(key, now - 60), now, skew: 2)) == true
-  expect(otp.verify(key, otp.totp(key, now - 30), now, skew: 0)) == false
-  expect(otp.verify(key, "12345", now)) == false
-  expect(otp.verify(key, "1234567", now)) == false
-  expect(otp.verify(key, "12345a", now)) == false
-  expect(otp.verify(key, "", now)) == false
-  expect(otp.verify(key, here, 5, skew: 3)) == false
-  expect(otp.verify(key, otp.totp(key, 0), 5, skew: 3)) == true
+  expect(otp.verify(key, here, now)) == Some(step)
+  expect(otp.verify(key, otp.totp(key, now - 30), now)) == Some(step - 1)
+  expect(otp.verify(key, otp.totp(key, now + 30), now)) == Some(step + 1)
+  expect(otp.verify(key, otp.totp(key, now - 60), now)) == None
+  expect(otp.verify(key, otp.totp(key, now - 60), now, skew: 2)) == Some(step - 2)
+  expect(otp.verify(key, otp.totp(key, now - 30), now, skew: 0)) == None
+  expect(otp.verify(key, "12345", now)) == None
+  expect(otp.verify(key, "1234567", now)) == None
+  expect(otp.verify(key, "12345a", now)) == None
+  expect(otp.verify(key, "", now)) == None
+  expect(otp.verify(key, here, 5, skew: 3)) == None
+  expect(otp.verify(key, otp.totp(key, 0), 5, skew: 3)) == Some(0)
+}
+
+test "a second verify of the same code returns the same step, so a caller detects the replay" {
+  let key = b"12345678901234567890"
+  let code = otp.totp(key, 1111111109)
+  var last = -1
+  let first = otp.verify(key, code, 1111111109) ?? -1
+  expect(first > last) == true
+  last = first
+  let again = otp.verify(key, code, 1111111109 + 20) ?? -1
+  expect(again) == last
+  expect(again > last) == false
+  let next = otp.verify(key, otp.totp(key, 1111111109 + 30), 1111111109 + 30) ?? -1
+  expect(next > last) == true
 }
 
 test "generate_secret has the length asked for" {
