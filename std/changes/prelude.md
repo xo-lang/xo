@@ -75,7 +75,7 @@ nothing reused the block; the strings now stay alive past the write.
 - Go reference: net.Conn's SetDeadline (a deadline in the past fails pending and later calls at once)
 - Test: native/llrt/netconn_test.xo "a deadline in the past fails at once on a clock that has not moved" (fails before the fix on the test world's standing clock)
 - Timing: none (one compare more on a read or write)
-- Shipped in: v0.33.1 (29db8153f, decision 0430) through v0.35.0
+- Shipped in: none (29db8153f, decision 0430 stage A, came after v0.35.0; corrected 2026-11-02)
 
 `c.set_deadline(clock, t)` with t not after now stored the deadline as
 the monotonic reading with its low bit set, one ns ahead of an even
@@ -93,7 +93,7 @@ is always passed.
 - Go reference: net/fd_unix.go connect (after a write wake, SO_ERROR 0 is a connection only when getpeername succeeds; ENOTCONN waits again)
 - Test: native/llrt/netconn_test.xo "a writable wake before the connect finished is not a connection" (fails before the fix); the stress rerun on both Linux hosts
 - Timing: none (one getpeername a dial)
-- Shipped in: v0.12.0 (d8c7f1d69, netconn.xo) through v0.35.0
+- Shipped in: v0.7.0 (9863f53aa, the C runtime's dial; ported to netconn.xo in v0.12.0 by d8c7f1d69) through v0.35.0
 
 `os.net.dial` and `dial_timeout` on native targets register the socket
 with the poller before they connect it, and epoll reports a socket that

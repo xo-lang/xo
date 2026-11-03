@@ -8,13 +8,208 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
-- perf (memory): a small build runs its parallel stages on fewer tasks: a module's inliner, passes, landing pads, insert_rc and code generator take at most 2 + functions / 1024 tasks and the parse prefetch 2 + files / 64, since each task on another worker thread kept its own heap chunks (decision 0448). linux/arm64 edit builds, 12 cores: max RSS coll 0.934, conc-spawn 0.976, the HTTP server 0.954, wall unchanged; the self build keeps every task. XO_EMIT_JOBS still sets the count.
 
-- FIX (native): `net.dial` of a name with IPv6 and IPv4 addresses races them as Go's dual stack dial does, the second family 300 ms after the first (decision 0462). On Windows, where localhost is ::1 first and a refused connect takes about 2 s, every dial to localhost with an IPv4-only listener cost 2 s (golden tls_coalesced_finish: 84 s, past its 60 s timeout under load); now 300 ms at most. Since v0.7.0.
-- fix (native, LLVM): a select's word send arm keeps its channel, and a word receive arm keeps its select, alive until the runtime call that uses them returns; both were released as soon as their address was taken, so a send arm whose channel had no later use could free it while select still read it (TSan use-after-free in select_arm_order under --race on Linux). A select's receive arm now takes the word path whenever its element is a word (it was decided from a checker type id read as an SSA type, so it varied with unrelated types). Codegen pattern test test/codegen/selectrc; gotcha obj-addr-handle-released-early.md.
+- perf (memory): a small build runs its parallel stages on fewer tasks: a module's inliner, passes, landing pads, insert_rc and code generator take at most 2 + functions / 1024 tasks and the parse prefetch 2 + files / 64, since each task on another worker thread kept its own heap chunks (decision 0448). linux/arm64 edit builds, 12 cores: max RSS coll 0.934, conc-spawn 0.976, the HTTP server 0.954, wall unchanged; the self build keeps every task. XO_EMIT_JOBS still sets the count.
 - feature (wasm): `--targets=wasip2/wasm` builds a program without `http.serve_component` as a `wasi:cli/command` 0.2 component (its `wasi:cli/run` export runs main; arguments, environment, stdin, stdout and stderr through `wasi:cli`; a status other than 0 is exit's err) instead of XO1516; 428 of the 445 wasm goldens run under `wasmtime run`, the 17 others need files (XO1515). Decision 0447 stage 3.
 - fix (wasm): reading standard input works on wasip1/wasm (`fd_read`) and in a wasip2 command (`wasi:cli/stdin`); it faulted before.
+
+## v0.36.0 (2026-11-02)
+
+The summary below covers a8087860b (0.35.0's version commit; the v0.35.0
+tag is that commit plus the run cache fix) to the release commit. Speed and
+memory figures are `xo bench --ab` results or committed results files,
+cited by file and line; every change is listed under "Every change in
+0.36.0".
+
+### Known issues
+
+- **/alloc in a 4 KiB page VM.** bench/perf/jitter's /alloc on the first
+  linux/arm64 host (a Linux VM on an M4 Pro, 4 KiB guest pages) runs at
+  0.966 and 0.953 of v0.35.0's requests a second at 32 and 256
+  connections, with about 4.5% more CPU a request, in two jobs
+  (bench/results/alloc-regression-2026-11-02.md:74-114, finding 9). The
+  same servers on the Mac (darwin, 16 KiB pages) are level with v0.35.0
+  in requests a second (0.995 to 1.015), with 1 to 4% more CPU a request
+  in a quiet-window job (same finding), and the stack phases behind the gap cost under 1% on
+  bare-metal Graviton 4 (bench/results/stack-phase-2026-11-02.md:89-114),
+  so this ships as a known cost of that VM (owner, 2026-11-02). The part
+  that was Xo's, prologue stores that crossed a 4 KiB page at one fiber
+  stack phase in 256 (0.83 of v0.35.0 before), is fixed (decision 0459,
+  bench/results/stack-phase-2026-11-02.md:154-176).
+- **Windows preemption under load.** With this release's fix for lost
+  registers (below), 8 of 256 runs of async_preempt_regs beside CPU
+  burners on windows/amd64 still print a wrong integer sum (0 of 128 with
+  `XO_PREEMPT=0`); the cause is open
+  (knowledgebase/gotchas/windows-preempt-context-overwrite.md:31).
+
+### Coming in the next release
+
+- Decision 0460 is accepted: the compiler will keep a value alive past the
+  last use of a raw address taken from it, the class of use-after-free bugs
+  fixed below. In 0.36.0 its lint, `XO0915`, finds them (Tools).
+
+### Language
+
+- Valued enums (decision 0269): `enum Code: Int { Ok = 200, Missing = 404 }`
+  and `enum Level: Str { Low = "low" }`, with `value()`, `E.from(v)`,
+  `E.all()` and Json by value; a `const` in a pattern matches by equality
+  (XO0430 for a misspelled one); a C `enum` binds as a valued enum.
+- An effect variable shared by several callback parameters is the union of
+  their effects (decision 0432), and effects can no longer leak through a
+  struct's effect parameter (a program that leaked one now fails XO0701).
+- `List.filter_map`, `UInt64.from_bits` and `to_bits`; `${x:?}` uses a
+  type's own `debug()`.
+
+### Breaking
+
+- std/uuid's `Uuid` fields are private (XO0605; decision 0440).
+- `Net`, `Proc` and `Fs` gain `interfaces()`, `usage()` and
+  `children_usage()`, and `disk_usage()` (decision 0426): a type
+  implementing one adds them.
+- `use go`: a Go library that records its caller now sees the Xo line, so a
+  program that added `zap.add_caller_skip(1)` for 0.35.0 drops it. Bindings
+  are rebound once (format 34).
+
+### std
+
+- HTTP: mutual TLS on TLS 1.3 and 1.2, server and client (decision 0433);
+  HTTP/2 without TLS (h2c) and `H2Config` (decision 0434); trailers on
+  HTTP/1.1 and HTTP/2; full duplex with `http.pipe()` (decision 0444);
+  `http.Status` and its 62 constants; idle keep-alive connections, plain,
+  TLS and HTTP/2, park without a fiber stack (decision 0449: 40,000 idle
+  HTTP/1.1 connections in 293 mappings and 255 MB, knowledgebase/decisions/
+  0449-idle-connection-memory.md:202-205; 40,000 idle TLS connections in
+  752,584 kB, :261).
+- wasm: `http.serve_component` builds a whole `wasi:http` 0.2 component
+  that `wasmtime serve` runs as it is, with `handle_stream`, trailers and
+  `http.Client` inside it (decision 0447).
+- Deadlines on `Conn`, `ServerConn`, `TlsConn` and `WsConn` (decision
+  0430), and `task.deadline`; WebSocket `on_ping`, `on_pong` and `pong`.
+- New: std/deque, `backoff.retry_notify`, `read_mapped`,
+  `Net.interfaces`, `Proc.usage`, `ProcOutput.usage`, `Child.wait_usage`,
+  `Fs.disk_usage`, `debug.mem_trim`.
+
+### Tools
+
+- `xo test` replays a passed run (` (cached)`, decision 0439), links std's
+  test variant (decision 0436), and parses only the std bodies it needs:
+  an edit's `--std-module` run on linux/arm64 takes 0.58 (base64), 0.512
+  (url) and 0.406 (json) of the wall time it took before
+  (knowledgebase/decisions/0436-std-test-variant.md:78-83).
+- No silent success (decision 0437): `xo test` names its skips, an unknown
+  `--std-module` exits 2, `xo query` outside a module exits 2.
+- `xo bench --ab` runs 3 rounds by default and takes `--early`; `xo dev size
+  --by-cause` shows a program's code by cause.
+- Windows: an edit's link reads std from a cached half and the PDB is
+  written while the program runs.
+- `xo vet --cost` reports `XO0915`, a raw address (`raw.data`,
+  `raw.bytes_addr`, `rt.obj_addr`) used after its value was released in
+  the same block (decision 0460); std's own code is checked with
+  `--cost-std`, and cmd/xo's tests fail on a new one.
+
+### Code size, speed and memory
+
+- xo's own code (native arm64 `__text`, stage 2) from 71.4 MB (the
+  cycle's first measurement, 2026-10-30) to 32.8 MB:
+  struct zeros from one function per type, shared landing pad tails
+  (bench/results/landing-pads-2026-10-31.md:26-28), static zero images, and
+  retain thunks (bench/results/rc-thunk-2026-10-31.md:36-38: the self build's
+  wall 0.843 and max RSS 0.843 of its base on linux/arm64).
+- Small builds use less memory: a warm or edit build of coll on the Mac
+  from 84 MB to 46 MB of RSS over five changes (the decision 0448 and 0453
+  entries below, each with its own measurement).
+- Linux: huge pages follow density by default (decision 0456; 2,000 held
+  TLS connections under THP always: 63 to 64 MB RssAnon against 125 to 138
+  MB with the old behavior and 87 to 95 MB for Go,
+  bench/results/thp-dense-2026-11-02.md:80).
+- Runtime locks on Linux spin longer before a futex sleep: +3.1% req/s at
+  256 connections on linux/arm64 (bench/results/lock-spin-2026-11-01.md:20).
+- A list of elements over 256 bytes starts with one slot: 300 TLS
+  connections' save lists 2,200 to 560 kB (bench/results/
+  list-floor-2026-11-01.md:7).
+
+### Fixed bugs, with the release that shipped them
+
+Each line names the first release with the bug (found by reading the
+history: the commit that brought the faulty code, and the first tag holding
+it). Bugs that came and went within this cycle are not listed.
+
+- Security: a hostile archive crashed a native program in untar or unzip
+  instead of returning an error (a zip whose local header fell before the
+  data, a tar or PAX time past 2262, a zip NTFS time with its top bit
+  set); each now gives Go's answer, and several other archives read as Go
+  reads them (std/changes/archive.md): since v0.11.0 (the native port,
+  dbd0ec952); a cut zip directory's error text since v0.24.0.
+- The Go backend's json decode now fails on a duplicate key's replaced
+  value of the wrong type and on a number out of Float's range, matching
+  Go and the native backends; `json.compact` and `json.indent` accept such
+  numbers as Go does (std/changes/json.md): since v0.7.0.
+
+- Native dial on Linux could return a connection that was never made (the
+  socket watched before connect, then SO_ERROR 0 taken as done): since
+  v0.7.0 (the C runtime; ported unchanged to Xo in v0.12.0).
+- Go backend: two builds of one program at the same time broke each other's
+  build tree; `use go`: two binds at the same time failed XO1101: since
+  v0.7.0.
+- Go backend: an Xo fault in a Go callback that Go recovers logged a raw
+  value: since v0.7.0.
+- Type checking: a function could perform effects it did not declare
+  through a struct's effect parameter: since v0.11.0.
+- Native server: a 431 reply closed without a lingering read, so the client
+  could see a reset instead of the reply: since v0.12.0 (413: v0.35.0).
+- `XO_PROF=cpu` undercounted samples (on macOS about 0.14 of the CPU time):
+  since v0.18.0. The heap profile counted a grown big block at its first
+  size: since v0.18.0.
+- Linux `-s` builds kept Xo's function names in the symbol table: since
+  v0.19.0.
+- Miscompile (arm64): a loop's `var` Bool set from a compare with a value
+  read at the loop's top could end the loop after one turn: reachable since
+  v0.19.0.
+- Runtime: an idle main thread could lock the park of a finished inline
+  task's freed context: since v0.24.0. LLVM split builds at -O2 could skip
+  main's defers after a fault: since v0.24.0. Go backend: a server stop did
+  not wait for upgraded WebSocket connections: since v0.24.0.
+- `${x:?}` printed a user type's derived form instead of its own `debug()`:
+  since v0.24.0 (std's `Uuid` since v0.34.0).
+- HTTP/2: a `handle_stream` request whose trailers arrived in a later read
+  than its last DATA frame hung: since v0.25.0.
+- Miscompile (arm64, slp_f64): two Float stores to a list element paired
+  past a read of the same element through another index: since v0.25.0.
+  Two slp_f64 build failures ("reads virtual register N before it is
+  written"): since v0.25.0.
+- A `while true` loop whose exit carries values failed to build when a call
+  in it faults only on some targets: since v0.25.0. The heap snapshot's own
+  reading of debug information was sampled as the program's: since v0.25.0.
+- `debug.mem_total` returned 0 on Windows: since v0.26.0.
+- darwin LLVM builds in a directory with a comma in its path failed to
+  link: since v0.29.0 (v0.18.0 with `--lto`).
+- The cleanup cache keyed `-s` and `--no-preempt` builds as default ones
+  (no wrong output found): since v0.33.0.
+- `Net.lookup_host` of a name with no address did not say `no such host`,
+  and `go.out[T]()` of a List or Map allocated `[]any`: since v0.35.0.
+- Windows: a dial to `localhost` with a server listening on 127.0.0.1 only
+  waited about 2 s for `::1` first (dials now race the two address
+  families, decision 0462): since v0.7.0.
+- Windows: asynchronous preemption could lose a preempted task's registers
+  under load (hangs, C0000005, wrong values): since v0.25.0.
+- Memory read after it was freed, found by the 2026-11-02 race stress and
+  `XO0915`: a chunked request body and an HTTP/2 response's
+  content-length, since v0.12.0; fault traces, crash reports and the
+  runtime's error messages, in every release with them; inflating a back
+  reference that grew the output and a WebSocket client frame's mask key,
+  since v0.34.0; the resolver configuration and hosts file, since v0.35.0.
+- A select's word send arm could release its channel, and a word receive
+  arm its select, before the runtime call that used them returned (found
+  by ThreadSanitizer on Linux; first release not traced).
+
+### Every change in 0.36.0
+
+- FIX (std/rt json, Go backend): a typed decode reads a duplicate key's replaced value as Go and the native backends do (a replaced value of the wrong type fails), `decode[json.Value]` of a number out of Float's range fails instead of giving Null, and `json.compact` and `json.indent` check syntax only, as Go's do. Gate: internal/gen json_fast. std/changes/json.md.
+- FIX (std/archive, security): untar and unzip of a hostile archive no longer crash a native program (an index out of range on a zip local header before the data, an integer overflow on a tar or PAX time past 2262 or a zip NTFS time with its top bit set); each gives Go's answer, 64-bit fields are read with a wrapping shift, and tar's padding end, PAX global headers, old GNU sparse maps and special headers, and zip's directory count, cut local headers, non UTF-8 names and unknown Unix file types now read as Go reads them. Found by the archive fuzz harness (internal/stdtest/archivefuzz_test.go, 2,010 corpus cases on arm64, LLVM and the Go backend). std/changes/archive.md.
+- FIX (native): `net.dial` of a name with IPv6 and IPv4 addresses races them as Go's dual stack dial does, the second family 300 ms after the first (decision 0462). On Windows, where localhost is ::1 first and a refused connect takes about 2 s, every dial to localhost with an IPv4-only listener cost 2 s (golden tls_coalesced_finish: 84 s, past its 60 s timeout under load); now 300 ms at most. Since v0.7.0.
+- fix (native, LLVM): a select's word send arm keeps its channel, and a word receive arm keeps its select, alive until the runtime call that uses them returns; both were released as soon as their address was taken, so a send arm whose channel had no later use could free it while select still read it (TSan use-after-free in select_arm_order under --race on Linux). A select's receive arm now takes the word path whenever its element is a word (it was decided from a checker type id read as an SSA type, so it varied with unrelated types). Codegen pattern test test/codegen/selectrc; gotcha obj-addr-handle-released-early.md.
 - perf (native, amd64): a two word copy into the stack whose first word sits at 8 mod 16 copies that word alone, so no 16 byte movdqu store into the stack straddles a 4 KiB page (the amd64 form of the arm64 save pair fix): 82,849 such stores in xo for linux/amd64 to 0, .text +0.08%. bench/results/stack-phase-2026-11-02.md "amd64".
+
 - perf (native, arm64): callee saved registers are saved from a 16 byte aligned offset, so no register pair straddles a 4 KiB page. At one stack phase in 256 a pair did, and on a Linux VM on Apple silicon that cost /alloc 36% more CPU a request: 0.36's /alloc gap, which a 208 byte smaller frame upstream moved onto such a phase (decision 0459). `XO_STACK_SHIFT=N` moves every fiber's first frame N bytes lower to check a cost against the stack's address.
 - perf (native http): a Response no longer carries the wasm-only stream field decision 0447 added (/alloc on linux/arm64: req/s +12% at 32 and 256 connections, CPU a request -11%).
 - native http: a keep-alive connection whose 20 ms linger timed out parks at once on later idles until it is busy again (decision 0449), so slow keep-alive traffic holds less memory (30 ms think time at 2,000 connections: 70 MB to about 60 MB).
@@ -32,7 +227,7 @@ the text of every entry is unchanged).
 - Native arm64: a write of a Str, List or other reference field of a list element (`xs[i].name = s`) also stores in place (take_in_place stage 2): load the old value, store the new one, release the old, instead of moving the element.
 - std/http (wasip2/wasm): in a `wasi:http` component a `handle_stream` route reads the request body from the host as it arrives, `BodyReader.trailers()` has the request's declared trailers, and an `http.stream` response goes to the host as it is written, its `set_trailer` trailers after the body (decision 0447).
 - Native arm64: writing one scalar field of a list element (`xs[i].f = x`, or a `var` method setter such as `xs[i].set_done(true)`) stores that field in place instead of moving every word of the element out and back (pass take_in_place): a 14-word element's setter is ldr, orr, str; xo's `__text` -75,800 bytes.
-- Fixed a native arm64 build failure (`reads virtual register N before it is written`) in Float code that slp_f64 vectorizes: a pack whose lane an unvectorized instruction read before the pack. Since 4f3a667a4 (2026-11-02).
+- Fixed a native arm64 build failure (`reads virtual register N before it is written`) in Float code that slp_f64 vectorizes: a pack whose lane an unvectorized instruction read before the pack. The code is from v0.25.0 (eff7996a8); it first failed after 4f3a667a4 (2026-11-02).
 - Native arm64: a retain outside loops is one `bl` to a retain thunk for the object's register (one per register, x0 to x28), not a `mov x16` and a `bl` to one thunk: 4 bytes per call site. xo's `__text` 33,946,260 to 32,764,092 bytes (-3.5%; 295,571 call sites).
 - Fixed a native arm64 link failure in separately compiled builds (the default once std's variants are cached): a fault exit's shared zero image could name a string literal of another part, a symbol local to that part's object (`xo: link: xo_..._str0_l is not defined`, byref_struct). `TestSepcompGoldens` builds goldens against std's variants.
 - Go backend: `internal.crypto_op("rt.list_swap_at")` runs the native probe's swap, so the golden list_swap_guard prints `in range: 0` and faults on the second index as native does (it faulted with an unknown op). scripts/coll-diff.sh with REF=llvm compares a golden's Go run against its want_go.txt (a pinned gap: native_sql's Postgres driver, decision 0278 point 9), skips a Go run that timed out (map_log_model takes about 7 s on Go on the Mac and passed a 120 s limit on a linux host at load 25), and refuses to run without `timeout` (macOS), where every run read exit 127.
@@ -534,7 +729,7 @@ the text of every entry is unchanged).
 - `${x:?}` uses a type's own `debug()` (spec core 1.6), as `x.debug()`
   does, on the native and Go backends, also inside a List, an Option, a
   Map, a field of a derived type, log fields and error frames: a user
-  type printed its derived form (`P{x: 1}`) since 0.33.0, and std's
+  type printed its derived form (`P{x: 1}`) since 0.24.0, when `${x:?}` arrived, and std's
   `uuid.Uuid` its internal words (`Uuid{hi: ..., lo: ...}`) instead of
   `Uuid("...")` since 0.34.0 (owner report b18); on the Go backend
   `big.BigInt` inside a List printed `BigInt{key: ...}`. Golden own_debug.
