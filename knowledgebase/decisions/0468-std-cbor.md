@@ -1,6 +1,6 @@
 # 0468: std/cbor, RFC 8949 CBOR encode and decode
 
-Status: Proposed (implemented 2026-11-03 for owner review; roadmap priority 1, assigned by the lead)
+Status: Accepted (owner, 2026-11-03)
 
 ## Context
 

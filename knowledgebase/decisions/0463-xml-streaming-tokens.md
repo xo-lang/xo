@@ -1,6 +1,6 @@
 # 0463: A streaming token reader for std/xml (proposal)
 
-Status: Proposed (Xo Lang 3, 2026-11-03, at the Lead's request: "write up what a streaming tokens API would take"; no code change)
+Status: Accepted (owner, 2026-11-03)
 
 ## Context
 

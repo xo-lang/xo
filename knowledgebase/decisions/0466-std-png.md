@@ -1,6 +1,6 @@
 # 0466: std/png, a port of Go's image/png (decode and encode)
 
-Status: Proposed (implemented 2026-11-03 for owner review; roadmap priority 1, assigned by the lead)
+Status: Accepted (owner, 2026-11-03)
 
 ## Context
 
