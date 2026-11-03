@@ -1,0 +1,8 @@
+exit 0
+--- stdout
+abc a9993e364706816aba3e25717850c26c9cd0d89d same
+blocks 50 of 50 agree
+sha1 abc a9993e364706816aba3e25717850c26c9cd0d89d
+sha1 two 84983e441c3bd26ebaae4aa1f95129e5e54670f1
+hmac de7c9b85b8b78aa6bc8a7a36f70a90701c9db4d9
+--- stderr

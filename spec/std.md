@@ -3111,7 +3111,11 @@ pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
   macOS, by `AT_HWCAP` on Linux) and in portable Xo elsewhere; the
   results are the same bytes either way (decision 0231, owner
   2026-10-16). Not observable from programs: it is an internal
-  intrinsic (std/native/llrt/cpu.xo `sha256_block`), not API.
+  intrinsic (std/native/llrt/cpu.xo `sha256_block`), not API. SHA-1
+  (`digest(Sha1, ...)`, `hmac(Sha1, ...)`, the TLS 1.2 CBC suites' MAC)
+  likewise takes the CPU's SHA-1 instructions (arm64's SHA1 extension,
+  x86-64's SHA-NI; `sha1_block`, decision 0231's SHA-1 addendum,
+  2026-11-03).
 - Randomness comes only from the `Rand` capability (section 3.4), as
   everywhere else: cryptographically secure in programs, seeded from the
   test seed in tests, so a test that creates tokens or salts is

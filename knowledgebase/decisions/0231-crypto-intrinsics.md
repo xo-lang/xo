@@ -352,3 +352,40 @@ Tests: cpu_test "keccak_f1600 is its body" (FIPS 202's zero-state lanes;
 the kernel against the body on 200 seeded states), the sha3_vectors
 golden (want.txt from Go's crypto/sha3), compiler/macho's encoding table
 (words from clang), test/codegen/intrinsics sha3.permute.
+
+## Addendum (2026-11-03): SHA-1's compression (sha1_block)
+
+cpu.sha1_block(st, p, k) compresses the 64 byte block at p into the five
+state words at st (one UInt32 in each 8 byte word, as sha1.xo keeps
+them); k is the four round constants, each in a 16 byte row (sha1.xo's
+K1). Lead's request after Lang 3's std/otp timing row: HMAC-SHA1 at
+4.8x Go's time, which uses the CPU's SHA-1 instructions. One sequence
+per architecture in compiler/ssa sha1hw.xo, used by both native
+lowerings:
+
+- arm64: SHA1C, SHA1P, SHA1M, SHA1H, SHA1SU0, SHA1SU1 in the Linux
+  kernel's sha1-ce order without its interleave: abcd packed into v16,
+  e in s17 and s18 by turns (each group's SHA1H gives the next e from a
+  before the rounds change abcd), the message in v19, v20, v29, v30
+  byte swapped by rev32, W + K in v31. The native backend saves v16 to
+  v20 below sp as sha256_block does; LLVM emits the sequence as one
+  inline asm with `.arch_extension sha2` and the q registers clobbered.
+- x86-64: SHA-NI's SHA1RNDS4, SHA1NEXTE, SHA1MSG1, SHA1MSG2 in Intel's
+  reference order (the kernel's sha1_ni), the constants the
+  instruction's own (k unused), xmm0 to xmm10 and r11 saved (native) or
+  clobbered (LLVM).
+- hw() has the new bit HW_SHA1 (2048): every Apple arm64 CPU, Linux
+  arm64 by AT_HWCAP's SHA1 bit (32), x86-64 by CPUID leaf 7's SHA bit
+  (29), which is HW_SHA256's too. sha1.xo's compress takes the
+  instructions when hw() has it; wasm, other targets and code an older
+  xo compiled run sha1_block_soft (FIPS 180-4 6.1.2 on the words in
+  memory) or sha1.xo's own rounds.
+- xo's assemblers encode the new forms (macho op.xo: sha1c/p/m qD, sN,
+  vM.4s, sha1h, sha1su0, sha1su1, from clang's words; enc_amd64.xo's
+  0f 38 c8 to ca and 0f 3a cc ib), each with a row in their tables.
+- Checks: TestSHA1HWDiff (internal/llvm): the instructions and the body
+  against a Go reference compression on edge and 200 random states and
+  blocks, and std's SHA-1 one shot, split and as HMAC against
+  crypto/sha1 on every length from 0 to 200 and around 4096, on both
+  arm64 backends; the cpu_sha1 golden (also in the amd64 sample).
+- Timing: `xo bench --ab` on the first linux/arm64 offload host, 2026-11-03, bench/perf/sha1 (SHA-1 of 64 KiB 2,000 times and HMAC-SHA1 of an 8 byte counter 1,500,000 times), A 5cb9bae79 (the parent with only the program) and B 3f303624e: wall 3012 ms to 645.6 ms, B/A 0.214 (95% interval 0.213 to 0.217, 6 rounds)

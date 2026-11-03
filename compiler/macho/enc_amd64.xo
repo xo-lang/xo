@@ -659,6 +659,10 @@ fn sse_map(s: Str) -> (Int, Int, Int, Bool)? {
     "sha256rnds2" => Some((0x38, 0xcb, 0, false))
     "sha256msg1" => Some((0x38, 0xcc, 0, false))
     "sha256msg2" => Some((0x38, 0xcd, 0, false))
+    "sha1nexte" => Some((0x38, 0xc8, 0, false))
+    "sha1msg1" => Some((0x38, 0xc9, 0, false))
+    "sha1msg2" => Some((0x38, 0xca, 0, false))
+    "sha1rnds4" => Some((0x3a, 0xcc, 0, true))
     _ => None
   }
 }

@@ -3,7 +3,11 @@
 // crypto/hmac: incremental (write, a sum that does not consume the
 // hasher, so more can be written after it, as Go's tls10MAC does) and one
 // shot. Nothing branches on the data, only on lengths. SHA-1 is used only
-// as HMAC's hash here, where its collisions do not matter.
+// as HMAC's hash here, where its collisions do not matter. The
+// compression takes the CPU's SHA-1 instructions where it has them
+// (cpu.sha1_block, decision 0231's SHA-1 addendum, 2026-11-03).
+use native/llrt/cpu
+use native/llrt/raw
 use native/rt
 
 const M32 = 0xFFFFFFFF
@@ -28,8 +32,23 @@ fn rotl(x: Int, n: Int) -> Int { x.rotate_right32(32 - n) }
 /// The big endian 32 bit word of b at i.
 fn be32(b: Bytes, i: Int) -> Int { rt.bytes_word(b, i).swap_bytes().shr_logical(32) }
 
-/// One 64 byte block of b from i into st.
+/// The round constants for cpu.sha1_block: each of the four in a 16 byte
+/// row of 4 byte little endian words.
+const K1: Bytes = b"\x99\x79\x82\x5a\x99\x79\x82\x5a\x99\x79\x82\x5a\x99\x79\x82\x5a\xa1\xeb\xd9\x6e\xa1\xeb\xd9\x6e\xa1\xeb\xd9\x6e\xa1\xeb\xd9\x6e\xdc\xbc\x1b\x8f\xdc\xbc\x1b\x8f\xdc\xbc\x1b\x8f\xdc\xbc\x1b\x8f\xd6\xc1\x62\xca\xd6\xc1\x62\xca\xd6\xc1\x62\xca\xd6\xc1\x62\xca"
+
+/// One 64 byte block of b from i into st: cpu.sha1_block's instructions
+/// when the CPU has them, else the rounds below.
 fn compress(var st: List[Int], b: Bytes, i: Int) {
+  if (cpu.hw() & cpu.HW_SHA1) != 0 && i + BLOCK <= b.len() {
+    // an index store first: it copies st if another value shares its
+    // words (sum's copy of a Hasher's), which the raw writes below would
+    // otherwise change too
+    st[0] = st[0]
+    cpu.sha1_block(rt.obj_addr(st).wrapping_add(rt.layout(2)), raw.bytes_addr(b).wrapping_add(i), raw.bytes_addr(K1))
+    keep(b)
+    keep_ints(st)
+    return
+  }
   var w: List[Int] = []
   for t in 0..16 {
     w.push(if i + 4 * t + 8 <= b.len() { be32(b, i + 4 * t) } else { be32_slow(b, i + 4 * t) })
@@ -72,6 +91,20 @@ fn compress(var st: List[Int], b: Bytes, i: Int) {
   st[2] = (st[2] + c) & M32
   st[3] = (st[3] + d) & M32
   st[4] = (st[4] + e) & M32
+}
+
+/// A use of b after its last raw access.
+fn keep(b: Bytes) {
+  if b.len() < 0 {
+    return
+  }
+}
+
+/// A use of st after its last raw access.
+fn keep_ints(st: List[Int]) {
+  if st.len() < 0 {
+    return
+  }
 }
 
 /// be32 near the end of b (bytes_word reads 8 bytes).

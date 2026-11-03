@@ -852,6 +852,40 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 			out = binary.LittleEndian.AppendUint32(out, h[i]+x[i])
 		}
 		return Bytes(out), true
+	case "sha1_block":
+		// SHA-1's compression of the 64 byte block b into the state a
+		// (five little endian 32 bit words); the constants c are the
+		// standard four, as cpu.xo's op lays them out (each in a 16 byte row)
+		var h [5]uint32
+		for i := 0; i < 5; i++ {
+			h[i] = binary.LittleEndian.Uint32([]byte(a[4*i:]))
+		}
+		var w [80]uint32
+		for i := 0; i < 16; i++ {
+			w[i] = binary.BigEndian.Uint32([]byte(b[4*i:]))
+		}
+		for i := 16; i < 80; i++ {
+			w[i] = bits.RotateLeft32(w[i-3]^w[i-8]^w[i-14]^w[i-16], 1)
+		}
+		x := h
+		for i := 0; i < 80; i++ {
+			var f uint32
+			switch {
+			case i < 20:
+				f = x[1]&x[2] | ^x[1]&x[3]
+			case i >= 40 && i < 60:
+				f = x[1]&x[2] | x[1]&x[3] | x[2]&x[3]
+			default:
+				f = x[1] ^ x[2] ^ x[3]
+			}
+			t := bits.RotateLeft32(x[0], 5) + f + x[4] + binary.LittleEndian.Uint32([]byte(c[16*(i/20):])) + w[i]
+			x = [5]uint32{t, x[0], bits.RotateLeft32(x[1], 30), x[2], x[3]}
+		}
+		out := make([]byte, 0, 20)
+		for i := 0; i < 5; i++ {
+			out = binary.LittleEndian.AppendUint32(out, h[i]+x[i])
+		}
+		return Bytes(out), true
 	case "carry":
 		x := binary.LittleEndian.Uint64([]byte(a))
 		y := binary.LittleEndian.Uint64([]byte(b))

@@ -1,0 +1,30 @@
+// SHA-1 on the native backends (decision 0231's SHA-1 addendum,
+// 2026-11-03: cpu.sha1_block's instructions against the rounds in Xo):
+// SHA-1 of 64 KiB 2,000 times (the compression), then HMAC-SHA1 of an
+// 8 byte counter under a 20 byte key 1,500,000 times (a TOTP code's
+// shape: four compressions a MAC). Prints a checksum, the same on every
+// backend and revision; `xo bench --ab` times the whole run.
+use std/crypto
+
+fn main(os: Os) uses stdio {
+  var big = BytesBuilder.new()
+  for i in 0..65536 {
+    big.write_byte(UInt8(i % 251))
+  }
+  let data = big.freeze()
+  var h = 0
+  for _ in 0..2000 {
+    let d = crypto.digest(Sha1, data)
+    h = (h * 31 + Int(d[0])) % 1000000007
+  }
+  let key = b"12345678901234567890"
+  for i in 0..1500000 {
+    var c = BytesBuilder.new()
+    for j in 0..8 {
+      c.write_byte(UInt8((i >> (8 * (7 - j))) & 255))
+    }
+    let m = crypto.hmac(Sha1, key, c.freeze())
+    h = (h * 31 + Int(m[19])) % 1000000007
+  }
+  os.stdio.println("sha1 ${h}")
+}

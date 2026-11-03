@@ -230,6 +230,8 @@ fn (var b: Builder) cpu_call(x: Expr, ci: check.CallInfo) -> Int? {
     // and amd64 (AES-NI and PCLMULQDQ, ssa x86aesgcm8.xo, 2026-10-27)
     "aes_gcm8_enc10" | "aes_gcm8_enc12" | "aes_gcm8_enc14" | "aes_gcm8_dec10" | "aes_gcm8_dec12" | "aes_gcm8_dec14" => if b.goarch == "arm64" || b.goarch == "amd64" { b.obj_name(fo) } else { "" }
     "sha256_block" => "sha256_block"
+    // SHA-1's (ssa sha1hw.xo): arm64's SHA1 instructions, x86-64's SHA-NI
+    "sha1_block" => if b.goarch == "arm64" || b.goarch == "amd64" { "sha1_block" } else { "" }
     // decision 0329: NEON on arm64 (and LLVM's vectors there); SSSE3 on
     // amd64 (ssa x86chacha.xo, 2026-10-27)
     "chacha_blocks4" => if b.goarch == "arm64" || b.goarch == "amd64" { "chacha_blocks4" } else { "" }

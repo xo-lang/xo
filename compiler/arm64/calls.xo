@@ -2047,6 +2047,31 @@ fn (var g: G) inline_rt(v: Int) -> Bool {
       g.x86_store(t.join("\n"), [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
       g.set(v, [])
     }
+    "rt.sha1_block" if g.x86 => {
+      // SHA-NI (cpu.hw()'s HW_SHA1, CPUID leaf 7): xmm0 to xmm10 saved
+      // below rsp and restored, as sha256_block's
+      var t: List[Str] = ["subq $176, %rsp"]
+      for r in 0..11 {
+        t.push("movdqu %xmm${r}, ${16 * r}(%rsp)")
+      }
+      t = t + ssa.sha1_ni_lines("$u0", "$u1")
+      for r in 0..11 {
+        t.push("movdqu ${16 * r}(%rsp), %xmm${r}")
+      }
+      t.push("addq $176, %rsp")
+      g.x86_store(t.join("\n"), [g.word(x.args[0]), g.word(x.args[1]), g.word(x.args[2])])
+      g.set(v, [])
+    }
+    "rt.sha1_block" => {
+      // ssa.sha1_a64_lines in v16 to v20 and v29 to v31; v16 to v20 may
+      // hold the allocator's values, so they are saved below sp and
+      // restored, as sha256_block's
+      var t: List[Str] = ["sub sp, sp, #80", "str q16, [sp]", "str q17, [sp, #16]", "str q18, [sp, #32]", "str q19, [sp, #48]", "str q20, [sp, #64]"]
+      t = t + ssa.sha1_a64_lines("$u0", "$u1", "$u2")
+      t = t + ["ldr q16, [sp]", "ldr q17, [sp, #16]", "ldr q18, [sp, #32]", "ldr q19, [sp, #48]", "ldr q20, [sp, #64]", "add sp, sp, #80"]
+      g.store(t.join("\n"), [g.real(g.word(x.args[0])), g.real(g.word(x.args[1])), g.real(g.word(x.args[2]))])
+      g.set(v, [])
+    }
     "rt.sha256_block" => {
       // the state as abcd in v16 and efgh in v17 (each packed from four
       // 8 byte words), the message in v19, v20, v29, v30, W + K in v31,

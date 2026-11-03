@@ -49,6 +49,11 @@ pub const HW_CRC32C: Int = 512
 /// x86-64's VPCLMULQDQ on 256 bit registers (CPUID.7.0 ECX bit 10, with
 /// AVX2): crc32_fold_ymm.
 pub const HW_VPCLMUL: Int = 1024
+/// SHA-1's compression (sha1_block; decision 0231's SHA-1 addendum,
+/// 2026-11-03): arm64's SHA1 instructions (every Apple arm64 CPU, Linux's
+/// AT_HWCAP SHA1 bit) and x86-64's SHA-NI (CPUID leaf 7 EBX bit 29, the
+/// bit HW_SHA256 has there: one extension has both).
+pub const HW_SHA1: Int = 2048
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -58,6 +63,7 @@ const W_HW = 30
 const AT_HWCAP = 16
 const HWCAP_AES = 8
 const HWCAP_PMULL = 16
+const HWCAP_SHA1 = 32
 const HWCAP_SHA2 = 64
 const HWCAP_CRC32 = 128
 
@@ -99,7 +105,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C | HW_VPCLMUL)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C | HW_VPCLMUL | HW_SHA1)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -109,10 +115,10 @@ pub fn hw() -> Int {
 fn detect() -> Int {
   match target.arch {
     TargetArch.Arm64 => match target.os {
-      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256 | HW_CRC32 | HW_SHA3
+      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256 | HW_CRC32 | HW_SHA3 | HW_SHA1
       TargetOs.Linux => {
         let h = linux.auxval(AT_HWCAP)
-        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 }) | (if (h & HWCAP_CRC32) != 0 { HW_CRC32 } else { 0 })
+        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 }) | (if (h & HWCAP_CRC32) != 0 { HW_CRC32 } else { 0 }) | (if (h & HWCAP_SHA1) != 0 { HW_SHA1 } else { 0 })
       }
       _ => 0
     }
@@ -126,7 +132,7 @@ fn detect() -> Int {
       let sse_bits = (1 << 9) | (1 << 19)
       let avx_bits = (1 << 27) | (1 << 28)
       let avx2 = (c & avx_bits) == avx_bits && (xgetbv0() & 6) == 6 && (b.shr_logical(5) & 1) != 0
-      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 } else { 0 }) | (if fma { HW_FMA } else { 0 }) | (if (c & sse_bits) == sse_bits { HW_SSSE3 } else { 0 }) | (if avx2 { HW_AVX2 } else { 0 }) | (if (c.shr_logical(20) & 1) != 0 { HW_CRC32C } else { 0 }) | (if avx2 && (cpuid7_ecx().shr_logical(10) & 1) != 0 { HW_VPCLMUL } else { 0 })
+      (if (c.shr_logical(25) & 1) != 0 { HW_AES } else { 0 }) | (if (c.shr_logical(1) & 1) != 0 { HW_CLMUL } else { 0 }) | (if (b.shr_logical(29) & 1) != 0 { HW_SHA256 | HW_SHA1 } else { 0 }) | (if fma { HW_FMA } else { 0 }) | (if (c & sse_bits) == sse_bits { HW_SSSE3 } else { 0 }) | (if avx2 { HW_AVX2 } else { 0 }) | (if (c.shr_logical(20) & 1) != 0 { HW_CRC32C } else { 0 }) | (if avx2 && (cpuid7_ecx().shr_logical(10) & 1) != 0 { HW_VPCLMUL } else { 0 })
     }
     _ => 0
   }
@@ -710,6 +716,48 @@ pub fn sha256_block_soft(st: Int, p: Int, k: Int) {
 }
 
 // ---------------------------------------------------------------------------
+// SHA-1's compression (SHA1C, SHA1P, SHA1M, SHA1H, SHA1SU0, SHA1SU1 on
+// arm64; SHA-NI's SHA1RNDS4, SHA1NEXTE, SHA1MSG1, SHA1MSG2 on x86-64)
+
+/// FIPS 180-4's SHA-1 compression of one block: the 5 state words at st
+/// (a to e, one UInt32 in each 8 byte word, as sha1.xo keeps them) take
+/// in the 64 bytes at p; k is the four round constants, each repeated in
+/// a 16 byte row of 4 byte little endian words (64 bytes; sha1.xo's K1),
+/// which arm64 loads and x86-64's SHA1RNDS4 has built in. Call it only
+/// when hw() has HW_SHA1 (decision 0231's SHA-1 addendum, 2026-11-03).
+pub fn sha1_block(st: Int, p: Int, k: Int) { sha1_block_soft(st, p, k) }
+
+/// sha1_block's body: FIPS 180-4 6.1.2 on the words in memory.
+pub fn sha1_block_soft(st: Int, p: Int, k: Int) {
+  var w: List[Int] = []
+  for i in 0..16 {
+    w.push(be32(p, 4 * i))
+  }
+  for i in 16..80 {
+    w.push((w[i - 3] ^ w[i - 8] ^ w[i - 14] ^ w[i - 16]).rotate_right32(31))
+  }
+  var a = rt.mem_load(st, 0, 8)
+  var b = rt.mem_load(st, 8, 8)
+  var c = rt.mem_load(st, 16, 8)
+  var d = rt.mem_load(st, 24, 8)
+  var e = rt.mem_load(st, 32, 8)
+  for i in 0..80 {
+    let f = if i < 20 { d ^ (b & (c ^ d)) } else if i >= 40 && i < 60 { (b & c) | (d & (b | c)) } else { b ^ c ^ d }
+    let t = add32(add32(add32(a.rotate_right32(27), f), add32(e, rt.mem_load(k, 16 * (i / 20), 4))), w[i])
+    e = d
+    d = c
+    c = b.rotate_right32(2)
+    b = a
+    a = t
+  }
+  rt.mem_store(st, 0, add32(rt.mem_load(st, 0, 8), a), 8)
+  rt.mem_store(st, 8, add32(rt.mem_load(st, 8, 8), b), 8)
+  rt.mem_store(st, 16, add32(rt.mem_load(st, 16, 8), c), 8)
+  rt.mem_store(st, 24, add32(rt.mem_load(st, 24, 8), d), 8)
+  rt.mem_store(st, 32, add32(rt.mem_load(st, 32, 8), e), 8)
+}
+
+// ---------------------------------------------------------------------------
 // Checks
 
 /// The address of the first word of xs.
@@ -734,7 +782,9 @@ fn block(b: Bytes) -> List[Int] { [rt.bytes_word(b, 0), rt.bytes_word(b, 8)] }
 /// byte state a, round key b), aes_last (state a, round keys b and c),
 /// sha256_block (the state a as 8 four byte little endian words, the 64
 /// byte block b, the round constants c as sha256_block takes them; the
-/// new state as a was), mul_hi_signed (the words a and b; the high word);
+/// new state as a was), sha1_block (the state a as 5 four byte little
+/// endian words, the 64 byte block b, the constants c as sha1_block
+/// takes them; the new state as a was), mul_hi_signed (the words a and b; the high word);
 /// with `_soft` after the name, the body, on every backend (without it,
 /// the instructions on arm64 and LLVM, on a CPU that has them). None if
 /// unknown.
@@ -1067,6 +1117,31 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       }
       var o = rt.rs_with_cap(32)
       for i in 0..8 {
+        o = rt.rs_push_word(o, rt.mem_load(addr(st), 8 * i, 8), 4)
+      }
+      keep(st)
+      keep(blk)
+      keep(k)
+      Some(o.bytes())
+    }
+    "sha1_block" => {
+      var st: List[Int] = []
+      for i in 0..5 {
+        // byte by byte: a is 20 bytes, and bytes_word reads 8
+        st.push(Int(a[4 * i]) | Int(a[4 * i + 1]).wrapping_shl(8) | Int(a[4 * i + 2]).wrapping_shl(16) | Int(a[4 * i + 3]).wrapping_shl(24))
+      }
+      let blk = [rt.bytes_word(b, 0), rt.bytes_word(b, 8), rt.bytes_word(b, 16), rt.bytes_word(b, 24), rt.bytes_word(b, 32), rt.bytes_word(b, 40), rt.bytes_word(b, 48), rt.bytes_word(b, 56)]
+      var k: List[Int] = []
+      for i in 0..8 {
+        k.push(rt.bytes_word(c, 8 * i))
+      }
+      if soft {
+        sha1_block_soft(addr(st), addr(blk), addr(k))
+      } else {
+        sha1_block(addr(st), addr(blk), addr(k))
+      }
+      var o = rt.rs_with_cap(20)
+      for i in 0..5 {
         o = rt.rs_push_word(o, rt.mem_load(addr(st), 8 * i, 8), 4)
       }
       keep(st)

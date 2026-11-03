@@ -1,0 +1,90 @@
+// SHA-1's compression with the CPU's instructions (decision 0231's SHA-1
+// addendum, 2026-11-03): the instruction sequences both native lowerings
+// of rt.sha1_block use (compiler/arm64 calls.xo, compiler/llvm call.xo).
+// The state is five 8 byte words of 32 bit values at st (a to e, as
+// std/native/llrt/sha1.xo keeps them), the block 64 bytes at p.
+
+/// The arm64 SHA1C, SHA1P, SHA1M, SHA1H, SHA1SU0 and SHA1SU1 compression
+/// of one block, the Linux kernel's sha1-ce form without its interleave:
+/// abcd in v16 (packed from four words), e in s17 and s18 by turns (each
+/// group's SHA1H gives the next group's e from a), the message in v19,
+/// v20, v29 and v30, W + K in v31; k is the four round constants, each
+/// repeated in a 16 byte row (64 bytes). Uses v16 to v20 and v29 to v31,
+/// which the caller saves or lists as clobbered.
+pub fn sha1_a64_lines(st: Str, p: Str, k: Str) -> List[Str] {
+  let m = ["v19", "v20", "v29", "v30"]
+  var t: List[Str] = ["ldr q16, [${st}]", "ldr q17, [${st}, #16]", "uzp1 v16.4s, v16.4s, v17.4s", "ldr d17, [${st}, #32]"]
+  for i in 0..4 {
+    t.push("ldr q${if i < 2 { 19 + i } else { 27 + i }}, [${p}, #${16 * i}]")
+    t.push("rev32 ${m[i]}.16b, ${m[i]}.16b")
+  }
+  for i in 0..20 {
+    let w = m[i % 4]
+    // e alternates between s17 and s18: SHA1H writes the next one from
+    // a before the group's rounds change abcd
+    let ec = if i % 2 == 0 { 17 } else { 18 }
+    let op = if i < 5 { "sha1c" } else if i >= 10 && i < 15 { "sha1m" } else { "sha1p" }
+    t.push("ldr q31, [${k}, #${16 * (i / 5)}]")
+    t.push("add v31.4s, v31.4s, ${w}.4s")
+    if i < 16 {
+      t.push("sha1su0 ${w}.4s, ${m[(i + 1) % 4]}.4s, ${m[(i + 2) % 4]}.4s")
+    }
+    t.push("sha1h s${35 - ec}, s16")
+    t.push("${op} q16, s${ec}, v31.4s")
+    if i < 16 {
+      t.push("sha1su1 ${w}.4s, ${m[(i + 3) % 4]}.4s")
+    }
+  }
+  // the sums with the state before: e (in s17 after the last group, its
+  // other lanes zero, as the 8 byte word's high half is) and abcd,
+  // unpacked to 8 byte words
+  t = t + ["ldr d31, [${st}, #32]", "add v17.4s, v17.4s, v31.4s", "str d17, [${st}, #32]"]
+  t = t + ["ldr q18, [${st}]", "ldr q31, [${st}, #16]", "uzp1 v18.4s, v18.4s, v31.4s", "add v16.4s, v16.4s, v18.4s"]
+  t = t + ["ushll v18.2d, v16.2s, #0", "ushll2 v31.2d, v16.4s, #0", "str q18, [${st}]", "str q31, [${st}, #16]"]
+  t
+}
+
+/// The x86-64 SHA-NI compression of one SHA-1 block (SHA1RNDS4,
+/// SHA1NEXTE, SHA1MSG1, SHA1MSG2; CPUID leaf 7's SHA bit, as SHA-256's),
+/// Intel's reference order (the Linux kernel's sha1_ni form): abcd in
+/// xmm1 (a in the top lane), e in xmm2 and xmm3 by turns, the message in
+/// xmm4 to xmm7, the byte reverse mask in xmm8 (built in r11 and xmm0),
+/// the state before in xmm9 and xmm10. The round constants are the
+/// instruction's own. Uses xmm0 to xmm10 and r11, which the caller saves
+/// or lists as clobbered.
+pub fn sha1_ni_lines(st: Str, p: Str) -> List[Str] {
+  var t: List[Str] = ["movd 0(${st}), %xmm1", "pinsrd $1, 8(${st}), %xmm1", "pinsrd $2, 16(${st}), %xmm1", "pinsrd $3, 24(${st}), %xmm1", "pshufd $27, %xmm1, %xmm1"]
+  t = t + ["pxor %xmm2, %xmm2", "pinsrd $3, 32(${st}), %xmm2", "movdqa %xmm1, %xmm9", "movdqa %xmm2, %xmm10"]
+  // the 16 bytes reversed (0x000102...0f as a 128 bit little endian value)
+  t = t + ["movabsq $579005069656919567, %r11", "movq %r11, %xmm8", "movabsq $283686952306183, %r11", "movq %r11, %xmm0", "punpcklqdq %xmm0, %xmm8"]
+  for j in 0..4 {
+    t.push("movdqu ${16 * j}(${p}), %xmm${4 + j}")
+    t.push("pshufb %xmm8, %xmm${4 + j}")
+  }
+  for g in 0..20 {
+    let msg = "%xmm${4 + g % 4}"
+    let ec = if g % 2 == 0 { "%xmm2" } else { "%xmm3" }
+    let en = if g % 2 == 0 { "%xmm3" } else { "%xmm2" }
+    t.push(if g == 0 { "paddd ${msg}, ${ec}" } else { "sha1nexte ${msg}, ${ec}" })
+    t.push("movdqa %xmm1, ${en}")
+    if g >= 3 && g <= 18 {
+      t.push("sha1msg2 ${msg}, %xmm${4 + (g + 1) % 4}")
+    }
+    t.push("sha1rnds4 $${g / 5}, ${ec}, %xmm1")
+    // the schedule: group g starts group g + 3's words (sha1msg1), adds
+    // group g + 2's xor (pxor) and finishes group g + 1's (sha1msg2)
+    if g >= 1 && g <= 16 {
+      t.push("sha1msg1 ${msg}, %xmm${4 + (g + 3) % 4}")
+    }
+    if g >= 2 && g <= 17 {
+      t.push("pxor ${msg}, %xmm${4 + (g + 2) % 4}")
+    }
+  }
+  // e after the last group is in xmm2 (its copy of abcd), abcd in xmm1
+  t = t + ["sha1nexte %xmm10, %xmm2", "paddd %xmm9, %xmm1", "pshufd $27, %xmm1, %xmm1"]
+  for j in 0..4 {
+    t.push("pextrd $${j}, %xmm1, %r11d")
+    t.push("movq %r11, ${8 * j}(${st})")
+  }
+  t + ["pextrd $3, %xmm2, %r11d", "movq %r11, 32(${st})"]
+}

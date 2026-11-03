@@ -1,0 +1,74 @@
+// SHA-1's compression of std/native/llrt/cpu.xo (sha1_block: SHA1C, SHA1P,
+// SHA1M and SHA1H on arm64, SHA-NI on x86-64; decision 0231's SHA-1
+// addendum, 2026-11-03) against its portable body, through
+// internal.crypto_op: the padded block of "abc" from the initial state
+// (FIPS 180-4's digest), then 50 states and blocks from a SHA-256 stream;
+// the lowered one runs only where cpu.hw() reports SHA-1 (else the body
+// twice), and only whether the two agree is printed, the same on every
+// machine. Then std's SHA-1 (sha1.xo, which takes the instructions) on
+// FIPS 180-4's two message examples.
+use std/crypto
+use std/internal
+
+const K: List[Int] = [0x5a827999, 0x5a827999, 0x5a827999, 0x5a827999, 0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1, 0x6ed9eba1, 0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc, 0x8f1bbcdc, 0xca62c1d6, 0xca62c1d6, 0xca62c1d6, 0xca62c1d6]
+
+const IV: List[Int] = [0x67452301, 0xefcdab89, 0x98badcfe, 0x10325476, 0xc3d2e1f0]
+
+/// Words as little endian 32 bit bytes (crypto_op's layout).
+fn le32(ws: List[Int]) -> Bytes {
+  var b = BytesBuilder.new()
+  for w in ws {
+    for i in 0..4 {
+      b.write_byte(UInt8((w >> (8 * i)) & 255))
+    }
+  }
+  b.freeze()
+}
+
+/// The state as big endian bytes (the digest's order).
+fn be_digest(st: Bytes) -> Str {
+  var b = BytesBuilder.new()
+  for i in 0..5 {
+    for j in 0..4 {
+      b.write_byte(st[4 * i + 3 - j])
+    }
+  }
+  b.freeze().to_hex()
+}
+
+fn main(os: Os) uses stdio {
+  let hw = Int.parse(internal.crypto_op("cpu.hw", b"", b"", b"", b"").to_str() ?? "0") ?? 0
+  let lowered = if (hw & 2048) != 0 { "cpu.sha1_block" } else { "cpu.sha1_block_soft" }
+  let k = le32(K)
+  // "abc", 0x80, zeros, the bit length 24
+  var blk = BytesBuilder.new()
+  blk.write_str("abc")
+  blk.write_byte(UInt8(0x80))
+  for _ in 0..59 {
+    blk.write_byte(UInt8(0))
+  }
+  blk.write_byte(UInt8(24))
+  let abc = blk.freeze()
+  let d1 = internal.crypto_op(lowered, le32(IV), abc, k, b"")
+  let d2 = internal.crypto_op("cpu.sha1_block_soft", le32(IV), abc, k, b"")
+  os.stdio.println("abc ${be_digest(d1)} ${if d1 == d2 { "same" } else { "differs" }}")
+  var seed = crypto.digest(Sha256, b"cpu_sha1")
+  var same = 0
+  for i in 0..50 {
+    let st = seed[0..20]
+    seed = crypto.digest(Sha256, seed)
+    let b = seed + crypto.digest(Sha256, seed + b"x")
+    seed = crypto.digest(Sha256, b)
+    let x = internal.crypto_op(lowered, st, b, k, b"")
+    let y = internal.crypto_op("cpu.sha1_block_soft", st, b, k, b"")
+    if x == y {
+      same += 1
+    } else {
+      os.stdio.println("block ${i} differs: ${x.to_hex()} ${y.to_hex()}")
+    }
+  }
+  os.stdio.println("blocks ${same} of 50 agree")
+  os.stdio.println("sha1 abc ${crypto.digest(Sha1, "abc".bytes()).to_hex()}")
+  os.stdio.println("sha1 two ${crypto.digest(Sha1, "abcdbcdecdefdefgefghfghighijhijkijkljklmklmnlmnomnopnopq".bytes()).to_hex()}")
+  os.stdio.println("hmac ${crypto.hmac(Sha1, b"key", "The quick brown fox jumps over the lazy dog".bytes()).to_hex()}")
+}

@@ -177,7 +177,7 @@ fn mem_text(m: Mem) -> Str {
 /// stay on the text path).
 pub fn encode_op(o: Op) -> Int {
   let n = o.ops.len()
-  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" | "eor3" | "bcax" | "rax1" | "xar" {
+  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" | "sha1c" | "sha1p" | "sha1m" | "sha1h" | "sha1su0" | "sha1su1" | "eor3" | "bcax" | "rax1" | "xar" {
     return simd_word(o.m, o.ops)
   }
   // decision 0373's case fold adds cmhs and bic on whole bytes
@@ -1389,6 +1389,27 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     }
     return (if m == "sha256h" { 0x5e004000 } else { 0x5e005000 }) | (y * 0x10000) | (x * 32) | d
   }
+  if m is "sha1c" | "sha1p" | "sha1m" {
+    // sha1c qD, sN, vM.4s (the SHA-1 rounds: e in a scalar register)
+    let (d, kd) = rk_of(o[0])
+    let (x, kx) = rk_of(o[1])
+    let (y, ay) = if n == 3 { v_of(o[2]) } else { (-1, "") }
+    if kd != RQ || kx != RS || y < 0 || ay != "4s" {
+      return -1
+    }
+    let base = match m {
+      "sha1c" => 0x5e000000
+      "sha1p" => 0x5e001000
+      _ => 0x5e002000
+    }
+    return base | (y * 0x10000) | (x * 32) | d
+  }
+  if m == "sha1h" {
+    // sha1h sD, sN: a rotated left by 30
+    let (d, kd) = rk_of(o[0])
+    let (x, kx) = rk_of(o[1])
+    return if n != 2 || kd != RS || kx != RS { -1 } else { 0x5e280800 | (x * 32) | d }
+  }
   if m == "addv" {
     // addv bD, vN.8b (bD a Raw operand)
     let (x, ax) = v_of(o[1])
@@ -1519,18 +1540,20 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
       let j = if ax == "d[1]" { 1 } else { 0 }
       0x6e080400 | (i * 0x100000) | (j * 0x4000) | (x * 32) | d
     }
-    "add" | "uzp1" | "sha256su1" => {
+    "add" | "uzp1" | "sha256su1" | "sha1su0" => {
       if d < 0 || x < 0 || y < 0 || ad != "4s" || ax != "4s" || ay != "4s" {
         return -1
       }
       let base = match m {
         "add" => 0x4ea08400
         "uzp1" => 0x4e801800
+        "sha1su0" => 0x5e003000
         _ => 0x5e006000
       }
       base | (y * 0x10000) | (x * 32) | d
     }
     "sha256su0" => if n != 2 || d < 0 || x < 0 || ad != "4s" || ax != "4s" { -1 } else { 0x5e282800 | (x * 32) | d }
+    "sha1su1" => if n != 2 || d < 0 || x < 0 || ad != "4s" || ax != "4s" { -1 } else { 0x5e281800 | (x * 32) | d }
     "ushll" | "ushll2" => {
       // ushll vD.2d, vN.2s, #0 (uxtl); ushll2 vD.2d, vN.4s, #0 (uxtl2)
       let want = if m == "ushll" { "2s" } else { "4s" }

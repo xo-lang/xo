@@ -38,6 +38,7 @@ json_text
 native_json
 crypto_prims
 cpu_sha256
+cpu_sha1
 native_crypto
 rc_values
 rc_closures

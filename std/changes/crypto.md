@@ -1,5 +1,13 @@
 # std/crypto changes
 
+## 2026-11-03: perf: SHA-1 with the CPU's SHA-1 instructions (arm64 SHA1C and the rest, x86-64 SHA-NI)
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 3's std/otp timing row (HMAC-SHA1 at 4.8x Go's time, otp branch 239f0b7b9); Go's crypto/sha1 uses the instructions
+- Go reference: crypto/sha1 sha1block_arm64.s and sha1block_amd64.go's SHA-NI path (the kernel's sha1-ce and sha1_ni sequences)
+- Test: TestSHA1HWDiff (internal/llvm: blocks against a Go reference, digest, split and HMAC against crypto/sha1 on lengths 0 to 200 and around 4096, both arm64 backends); golden cpu_sha1 (arm64, LLVM, amd64 sample)
+- Timing: `xo bench --ab` on the first linux/arm64 offload host, 2026-11-03, bench/perf/sha1 (SHA-1 of 64 KiB 2,000 times and HMAC-SHA1 of an 8 byte counter 1,500,000 times), A 5cb9bae79 (the parent with only the program) and B 3f303624e: wall 3012 ms to 645.6 ms, B/A 0.214 (95% interval 0.213 to 0.217, 6 rounds)
 
 ## 2026-10-29: feature: ed25519_sign takes Go's 64 byte private key (0.65 of Go's signing time)
 
