@@ -15,14 +15,16 @@
 #            the branch changes is native backend only (owner,
 #            2026-10-18; see native_only below); XO_GATE_LLVM=1 runs it;
 #            with TestGoldenGoParity (XO_TEST_GO_PARITY=1) when the
-#            branch changes compiler/gen or std/rt (go_backend). Its
+#            branch changes compiler/gen, std/rt, or a std module std/rt
+#            also implements (go_backend). Its
 #            golden programs are only those the change touches (owner,
 #            2026-10-22; llvm_goldens below): XO_GATE_LLVM=all runs
 #            every one
 #   corpora  internal/stdtest's differential corpora on the Go backend
 #            (TestStdCorpora/go/) and internal/llvm's Test*Diff
-#            differential tests: run when the branch changes std/rt or
-#            compiler/gen (go_backend); skipped otherwise
+#            differential tests: run when the branch changes std/rt,
+#            compiler/gen, or a std module std/rt also implements
+#            (go_backend, std_twin); skipped otherwise
 #   cmd      the full tests of cmd/xo
 #   gen      the full tests of internal/gen
 #   fuzz     the private-module parser differentials of internal/stdtest
@@ -151,13 +153,48 @@ native_only() {
   ! echo "$files" | grep -v -E '^(compiler/arm64/|compiler/macho/|internal/arm64/|knowledgebase/|bench/results/)|\.md$' | grep -q .
 }
 # go_backend: the branch changes the Go backend's code generator or its
-# runtime, so internal/llvm's goldens run on the Go backend too
+# runtime, or a std module the Go backend implements in std/rt (std_twin),
+# so internal/llvm's goldens run on the Go backend too
 # (TestGoldenGoParity: TestGolden checks want.txt with the LLVM build
-# only since 2026-10-18).
+# only since 2026-10-18) and the corpora step runs.
 go_backend() {
   base=${XO_GATE_BASE:-$(git merge-base HEAD origin/main)}
-  { git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; } | grep -q -E '^(compiler/gen/|std/rt/)'
+  local files f
+  files=$({ git diff --name-only "$base" HEAD; git status --porcelain | cut -c4-; })
+  echo "$files" | grep -q -E '^(compiler/gen/|std/rt/)' && return 0
+  for f in $(echo "$files" | grep -E '^std/(native/(llrt/)?)?[a-z0-9_]+\.xo$'); do
+    std_twin "$f" && return 0
+  done
+  return 1
 }
+# std_twin: std file f is a module's that std/rt also implements, so a
+# change to it can make the native backends differ from the Go backend:
+# std/MOD.xo or std/native/MOD.xo (or its _test.xo, or rtMOD.xo, the
+# module's runtime half: rtjson.xo) where std/rt has MOD.go or
+# std_gen_MOD.go, or std/native/llrt/X.xo where X starts with
+# such a module's name of four letters or more (jsontext is json's,
+# http1 is http's; the runtime's own files, sched or tasks, are not a
+# module's). Lead, 2026-11-02: a native json fix (f3524650c) passed its
+# gate and turned main's TestGenGoldensNative/json_fast red, since only
+# compiler/gen and std/rt changes ran the Go backend's checks.
+std_twin() {
+  local m x
+  m=${1##*/}
+  m=${m%.xo}
+  m=${m%_test}
+  case $1 in
+  std/native/llrt/*)
+    for x in std/*.xo; do
+      x=${x##*/}
+      x=${x%.xo}
+      [ ${#x} -ge 4 ] || continue
+      case $m in "$x"*) mod_twin "$x" && return 0 ;; esac
+    done
+    return 1 ;;
+  esac
+  mod_twin "$m" || { [ "${m#rt}" != "$m" ] && mod_twin "${m#rt}"; }
+}
+mod_twin() { [ -f "std/rt/$1.go" ] || [ -f "std/rt/std_gen_$1.go" ]; }
 # check_change: the branch changes the checker or the SSA builder, whose
 # whole-program passes the module check cache's skipped modules must
 # replay (gotchas/module-check-cache-skips-whole-program-passes.md), or
@@ -326,7 +363,7 @@ for step in "$@"; do
       # ran, kept main red for 1 h 30 min)
       full diffs ./internal/llvm -run 'Diff$'
     else
-      echo "corpora: skipped (no std/rt or compiler/gen change)"
+      echo "corpora: skipped (no std/rt, compiler/gen or std module with a std/rt twin changed)"
     fi ;;
   cmd) full cmd ./cmd/xo ;;
   gen) full gen ./internal/gen ;;

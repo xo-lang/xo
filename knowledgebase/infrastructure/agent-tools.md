@@ -569,6 +569,16 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   0.33.0's exit criterion 6 is met.
   A divergence is reported to the lead before std changes, never fixed in
   the probe.
+- Go backend parity in scripts/gate.sh (lead, 2026-11-02): the `llvm`
+  step sets XO_TEST_GO_PARITY=1 and the `corpora` step runs the Go
+  backend's corpora and internal/llvm's `Diff$` tests when the change
+  touches compiler/gen, std/rt, or a std module std/rt also implements
+  (`std_twin`: std/MOD.xo, std/native/MOD.xo, rtMOD.xo or a _test.xo with
+  std/rt/MOD.go or std_gen_MOD.go, and llrt files named after such a
+  module, jsontext for json, http1 for http). A native std fix gates
+  with `scripts/gate.sh WT llvm corpora` so the Go backend is checked
+  before the push, not on main an hour later (0579a7513's json fix
+  turned TestGenGoldensNative/json_fast red that way).
 - `go run ./scripts/stdgen` after changing a std type (a struct, enum,
   newtype, or interface in std/*.xo) or a std function's signature:
   regenerates std/rt/std_gen_M.go, the Go backend's declarations of
