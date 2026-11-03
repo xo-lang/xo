@@ -40,6 +40,11 @@ func TestWasmUnsupportedListsNetGoldens(t *testing.T) {
 	for _, d := range dirs {
 		files, _ := filepath.Glob(filepath.Join(d, "*.xo"))
 		for _, f := range files {
+			// "*.xo" also matches a build's .xo cache directory
+			// (use_c_add's, left by a golden run in the tree)
+			if fi, err := os.Stat(f); err == nil && fi.IsDir() {
+				continue
+			}
 			src, err := os.ReadFile(f)
 			if err != nil {
 				t.Fatal(err)
