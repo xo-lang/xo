@@ -159,7 +159,7 @@
 - [netip-2026-10-22.md](netip-2026-10-22.md): netip against Go's net/netip (bench/perf/netip): parse_ipv6 by index into a builder, displays into one builder: 1,016 M to 872 M instructions (1.85x to 1.58x Go), `--ab` wall 0.829, instructions 0.858.
 - [std-twin-rows4-2026-11-03.md](std-twin-rows4-2026-11-03.md): walkdir after the clean-path fast path (walk 1.92 to 1.54; 0.95 when Go also reads each entry's info); dns mx is wakeup latency
 - [std-twin-rows5-2026-11-03.md](std-twin-rows5-2026-11-03.md): std/png against Go's image/png (decode 1.04, encode 0.94; decode was 1.22 before compress's Adler-32 took the modulus once per 5552 bytes)
-- [std-twin-rows6-2026-11-03.md](std-twin-rows6-2026-11-03.md): std/jpeg against Go's image/jpeg (decode 1.25, with RGBA conversion 1.30; not Proven)
+- [std-twin-rows6-2026-11-03.md](std-twin-rows6-2026-11-03.md): std/jpeg against Go's image/jpeg (decode 1.22, with RGBA conversion 1.24; not Proven)
 - [std-twin-rows7-2026-11-03.md](std-twin-rows7-2026-11-03.md): std/cbor against fxamacker/cbor (decode 0.43, encode 0.26, deterministic encode 0.62)
 - [std-twin-rows3-2026-11-03.md](std-twin-rows3-2026-11-03.md): rows for toml, rate, aead, uuid, websocket (vendored Go modules) and base32/cookie after fixes (base32 decode 1.76 to 0.47, setcookie 1.52 to 1.02)
 - [std-twin-rows2-2026-11-03.md](std-twin-rows2-2026-11-03.md): timing rows against Go for 26 more bench/perf twins (prelude text and bytes, strconv, sort, regexp, base32/64, path, html, time, template, big, hash, deque, dns, x509, crypto, walkdir) on host 1; html escape 2.31 to 1.75, time format 7.0 to 5.4 (string layouts), trim 2.2 left unchanged with the cause.

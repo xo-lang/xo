@@ -20,3 +20,12 @@ fuzz cases (four seeds) agree with Go on arm64 and LLVM.
 - Test: testdata/corpus/jpeg, testdata/corpus/jpegfuzz (unchanged output), bench/perf/jpeg
 
 A progressive scan copied each block's 64 coefficients out of the coefficient list and back (37% of the profile); it now reads and writes the list at the block's offset. bench/perf/jpeg decode 1.38 to 1.25 of Go's wall.
+
+## 2026-11-03: perf: quantization tables in natural order
+
+- Kind: perf
+- Commit: this commit
+- Found by: host profile of the restart interval image (reconstruct_block 63%)
+- Test: testdata/corpus/jpeg, testdata/corpus/jpegfuzz (unchanged output), bench/perf/jpeg
+
+The tables are stored in row major order when read, so dequantizing a block walks both in order without the zigzag lookup. bench/perf/jpeg decode 1.25 to 1.22, with `to_rgba` 1.30 to 1.24.

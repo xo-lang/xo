@@ -29,8 +29,8 @@ header.
   bits.
 - Corpus from Go (186 cases) and a fuzz differential (350 files in the committed corpus,
   fresh seeds in TestJpegFuzz, 12,000 cases agree on arm64 and LLVM), as for std/png.
-- Timing (host 1, bench/perf/jpeg, four of Go's test images, 100 passes): decode 1.25,
-  decode with `to_rgba` 1.30 of Go's wall (1.38 and 1.41 before progressive scans decoded in place). Under the 1.05 of decision 0461, so the module is
+- Timing (host 1, bench/perf/jpeg, four of Go's test images, 100 passes): decode 1.22,
+  decode with `to_rgba` 1.24 of Go's wall (1.38 and 1.41 before progressive scans decoded in place and the quantization tables were kept in natural order). Under the 1.05 of decision 0461, so the module is
   Fast, not Proven; profile: Huffman decode and reconstruct (dequantize, IDCT, color store)
   split the time about evenly. Tried and measured slower on arm64: written out Huffman table
   hits, a DC only shortcut, an IDCT row shortcut.
