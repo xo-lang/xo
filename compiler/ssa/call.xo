@@ -2258,8 +2258,8 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   let key = "${rname}.${fname}"
   if rname == "Fs" {
     // fsCall: the function fs_<name> of the native prelude
-    if fname == "lock" {
-      // waits, polling on the event loop's timers (decision 0172)
+    if WAITS.contains(key) {
+      // Fs.lock waits, polling on the event loop's timers (decision 0172)
       b.set_flag(1)
       if !b.conc {
         return Some(b.conc_off(b.nat_of(x)))
@@ -2304,8 +2304,8 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
   let it = b.int_t()
   let st = b.str_t()
   let es = arg_exprs(b.c.objs[fo].params, args)
-  if key is "Clock.sleep" | "Clock.sleep_or_cancel" | "Net.listen" | "Net.dial" | "Net.dial_timeout" | "Net.lookup_host" | "Listener.accept" | "Conn.read" | "Conn.write" | "ServerConn.read" | "ServerConn.write" | "Proc.pipeline" {
-    // operations that wait: the program needs unwinding checks
+  if b.call_waits(fo, key) {
+    // operations that wait (waits.xo): the program needs unwinding checks
     b.set_flag(1)
     if !b.conc {
       return Some(b.conc_off(nt))
@@ -2551,9 +2551,7 @@ fn (var b: Builder) pop_one(l: Int, ot: Int) -> Int {
 /// Whether the Stdio method name reads standard input (it waits on the
 /// event loop: the program needs unwinding checks); internal/ssa's
 /// stdioReads.
-fn stdio_reads(name: Str) -> Bool {
-  name is "read_line" | "read_all" | "lines" | "read_secret" | "read_bytes" | "read_all_bytes"
-}
+fn stdio_reads(name: Str) -> Bool { WAITS.contains("Stdio.${name}") }
 
 /// The native prelude function implementing the capability method key,
 /// or ""; internal/ssa's capImpls.
@@ -2593,28 +2591,24 @@ fn cap_impl(key: Str) -> Str {
 }
 
 /// Whether fo is a std function that declares a network effect (`uses
-/// net.dial`, std/dns's lookups, std/udp's sockets and the rest): it waits
-/// on the network through the native runtime, so the program keeps the
-/// scheduler and its waits unwind as the prelude's Net calls do (core
-/// 7.5). The prelude's own are native_waits and the call.xo table; std/dns
-/// and std/udp reach netconn directly and were missed (2026-11-03: a
-/// program using only them had no concurrency, so SIGTERM killed it
-/// without its defers, and std/udp's handles named an export it did not
-/// build).
+/// net.dial`: the prelude's Net, Listener and Conn methods, std/dns's
+/// lookups, std/udp's sockets and the rest): it waits on the network, so
+/// the program keeps the scheduler and its waits unwind (core 7.5), and
+/// builds the network runtime's exports (waits.xo).
 fn (var b: Builder) net_waits(fo: Int) -> Bool {
   let m = b.obj_mod(fo)
-  m >= 0 && b.c.mods[m].is_std && !b.is_prelude_mod(m) && b.c.declares_net(fo)
+  m >= 0 && b.c.mods[m].is_std && b.c.declares_net(fo)
 }
 
 /// Whether fo is a prelude method the native prelude implements that
-/// waits on the event loop; internal/ssa's nativeWaits.
+/// waits on the event loop (waits.xo WAITS); internal/ssa's nativeWaits.
 fn (var b: Builder) native_waits(fo: Int) -> Bool {
   let r = b.c.objs[fo].recv
   let m = b.obj_mod(fo)
   if r < 0 || b.c.objs[fo].is_static || m < 0 || !b.is_prelude_mod(m) {
     return false
   }
-  "${b.obj_name(r)}.${b.obj_name(fo)}" is "Cmd.output" | "Cmd.run" | "Cmd.spawn" | "Child.write" | "Child.read" | "Child.read_err" | "Child.read_line" | "Child.wait" | "Child.wait_usage"
+  WAITS.contains("${b.obj_name(r)}.${b.obj_name(fo)}")
 }
 
 /// A call of native/llrt/userfs's user(f) (decision 0307): the user

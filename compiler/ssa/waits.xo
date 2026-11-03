@@ -1,0 +1,36 @@
+// Which calls make a program concurrent (concflag.xo, the ADR 0371
+// addendum): the program keeps the scheduler, the poller and the monitor,
+// and is built with unwinding checks, when a body it builds calls one that
+// waits on the event loop. The network is read from declared effects:
+// every function that declares `net` (or `net.dial`, `net.listen`) waits
+// on it, whatever module implements it, so a new std module cannot be
+// missed (std/dns and std/udp were, until 2026-11-03:
+// gotchas/conc-count-by-name-lists.md). The other effects are too coarse
+// to tell (`clock` is now and sleep, `stdio` is print and read, `proc` is
+// exit and spawn, `fs` is a read and a lock), so their waiting methods are
+// listed in WAITS and the rest in NO_WAIT; internal/repotest
+// TestWaitsClassified fails when a std function with no Xo body declares
+// one of those effects and is in neither, and when a name in them is not
+// such a function. Std code with a body needs no entry: its waits are
+// calls the count sees. The language's own (scopes, tasks, channels,
+// Mutex, Atomic, os.tasks) are counted where they are built (conc.xo).
+
+/// Prelude capability methods (`Type.method`) that wait on the event
+/// loop.
+const WAITS = ["Clock.sleep", "Clock.sleep_or_cancel", "Stdio.read_line", "Stdio.read_all", "Stdio.lines", "Stdio.read_secret", "Stdio.read_bytes", "Stdio.read_all_bytes", "Fs.lock", "Proc.run", "Proc.pipeline", "Cmd.output", "Cmd.run", "Cmd.spawn", "Child.write", "Child.read", "Child.read_err", "Child.read_line", "Child.wait", "Child.wait_usage"]
+
+/// Std functions with no Xo body that declare `clock`, `stdio`, `proc` or
+/// `fs` and do not wait at the call (or wait only through calls their
+/// native body makes, which the count sees).
+const NO_WAIT = ["Clock.now", "Clock.since", "Stdio.print", "Stdio.println", "Stdio.eprint", "Stdio.eprintln", "Stdio.write", "Stdio.stdin_is_tty", "Stdio.stdout_is_tty", "Stdio.stderr_is_tty", "Stdio.width", "Proc.exit", "Proc.set_grace", "Proc.pid", "Proc.ppid", "Proc.usage", "Proc.children_usage", "Proc.kill", "Proc.notify", "Proc.stop_notify", "Proc.request_stop", "Fs.stat", "Fs.exists", "Fs.disk_usage", "Fs.read", "Fs.read_text", "Fs.read_dir", "Fs.walk", "Fs.write", "Fs.create_temp", "Fs.rename", "Fs.remove", "Fs.remove_all", "Fs.create_dir_all", "Fs.set_modified", "Fs.open", "Fs.create", "Fs.open_append", "Fs.create_new", "Fs.append", "Fs.copy", "Fs.mode", "Fs.set_mode", "Fs.symlink", "Fs.read_link", "Fs.glob", "Fs.try_lock", "File.read", "File.read_line", "File.write", "File.sync", "prelude.create_dir_all_mode", "prelude.walk_dir", "prelude.read_text_or", "prelude.read_or", "prelude.read_mapped", "prelude.write_atomic", "Conn.set_deadline", "Conn.set_read_deadline", "Conn.set_write_deadline", "ServerConn.set_deadline", "ServerConn.set_read_deadline", "ServerConn.set_write_deadline", "TlsConn.set_deadline", "TlsConn.set_read_deadline", "TlsConn.set_write_deadline", "WsConn.set_deadline", "WsConn.set_read_deadline", "WsConn.set_write_deadline", "backoff.retry", "backoff.retry_notify", "cli.parse_or_exit", "debug.router", "internal.lock_shared", "internal.dir_names", "log.configure", "Registry.handler_at", "Registry.middleware", "Limiter.tokens", "Limiter.allow", "Limiter.allow_n", "Limiter.reserve", "Limiter.reserve_n", "Limiter.wait", "Limiter.wait_n", "Limiter.set_limit", "Limiter.set_burst", "Reservation.delay", "Reservation.cancel", "task.with_budget", "task.with_timeout", "task.deadline", "task.map_concurrent_until", "term.color_enabled", "term.painter", "time.ticker", "Ticker.wait", "Ticker.reset", "Ring.middleware", "uuid.v7", "x509.system_roots"]
+
+/// Whether a call of fo (a prelude capability method's `Type.method` key,
+/// or "" for another call) waits on the event loop: a network effect it
+/// declares, else WAITS.
+fn (var b: Builder) call_waits(fo: Int, key: Str) -> Bool {
+  let m = b.obj_mod(fo)
+  if m >= 0 && b.c.mods[m].is_std && b.c.declares_net(fo) {
+    return true
+  }
+  !key.is_empty() && WAITS.contains(key)
+}

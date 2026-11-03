@@ -22,9 +22,17 @@ was missed the same way.
 
 Fix: ssa/call.xo net_waits: a call of a std function (not the prelude's)
 whose declared effects include `net` or `net.*` (check.declares_net) sets
-both flags. A std module that waits on something else outside these
-lists (a file, a timer of its own) would be missed the same way: give
-its waiting functions an effect and count it, or add them to the lists.
+both flags (b8a051ecf). Then the class (2026-11-03, compiler/ssa/waits.xo):
+every std function declaring a network effect, the prelude's Net,
+Listener and Conn methods too, counts as waiting from its effect, so a
+new network module needs no entry. The other effects are too coarse to
+decide it (`clock` is now and sleep, `stdio` print and read, `proc` exit
+and spawn, `fs` a read and a lock), so their waiting methods are the
+WAITS list and the rest NO_WAIT, and internal/repotest
+TestWaitsClassified fails when a std function with no Xo body declares
+clock, stdio, proc or fs and is in neither list (or a listed name is
+gone). A new std module that waits on something else must declare one
+of those effects, and the test then asks for its entry.
 
 Check: a golden of the module with no task in the program
 (dns_no_tasks, udp_no_tasks), and for the shutdown, internal/llvm
