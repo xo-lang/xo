@@ -1,5 +1,17 @@
 # std/compress changes
 
+## 2026-11-03: perf: a level 2 to 9 stream builds only its Deflater's tables
+
+- Kind: perf
+- Commit: this commit
+- Found by: XO_PROF=cpu of bench/perf/archive zip on host 1: libcstr.memset 27% of the run (each file's stream zeroed 640 KB of hash tables plus 256 KB of the BestSpeed encoder's table it never used)
+- Go reference: compress/flate deflate.go NewWriter (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/compress and compressfuzz (go, arm64, LLVM), TestCompressFuzz
+
+`flate.new_stream` at levels 2 to 9 no longer builds the Stream's own Blocks and Fast tables (the
+Deflater has its own Blocks). New `flate.deflate_again(s, data)` writes data as a stream of its own with
+an existing Stream, its hash tables zeroed in place as Go's compressor.reset does; the bytes are the same.
+
 ## 2026-11-02: fix: inflating a back reference that grew the output read the old output after it was freed
 
 - Kind: fix

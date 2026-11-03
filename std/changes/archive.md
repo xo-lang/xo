@@ -1,5 +1,18 @@
 # std/archive changes
 
+## 2026-11-03: perf: zip writes every file with one flate stream
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/archive zip 1.35 of Go's wall on host 1 (bench/results/std-twin-rows-2026-11-03.md)
+- Go reference: archive/zip writer.go (its compressor Writers come from a sync.Pool), compress/flate deflate.go reset (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/archive and archivefuzz (go, arm64, LLVM), TestArchiveFuzz
+
+`archive.zip` deflates all files with one flate Stream, reset between them, instead of a new Stream
+(640 KB of hash tables) for each. The archive bytes are the same. Quiet `xo bench --ab` on host 1, 15
+rounds, Xo / Go wall of zip: 1.352 to 1.203 (with the compress change above; the unused-tables change
+alone gave 1.229).
+
 ## 2026-11-02: fix: untar and unzip of hostile archives no longer fault, and read as Go does
 
 - Kind: fix, security
@@ -8,7 +21,7 @@
 - Go reference: archive/zip reader.go (Reader.init, readDirectoryHeader, findBodyOffset, the NTFS extra time, unixModeToFileMode), archive/tar reader.go (Reader.next's global header, tryReadFull, readSpecialFile, readOldGNUSparseMap, validateSparseEntries), strings.Reader.ReadAt, time.Time.UnixNano (go1.26.1)
 - Test: internal/stdtest/testdata/corpus/archivefuzz (2,010 cases: seed 1's and the later seeds' cases that found these) on arm64, LLVM and the Go backend; TestArchiveFuzz seeds 2 to 16; internal/llvm and internal/arm64 archive goldens; std/native archive module tests
 - Timing: none (a correctness and security fix; the extra checks run once per header or directory entry)
-- Shipped in: v0.11.0 (dbd0ec952, the native port: the zip local header read with no check for a negative offset, the tar, PAX and NTFS time conversions, the zip file type rule, the global header skip, the padding and special-header reads, the raw-name quoting) through v0.35.0; the zip directory count's `unexpected EOF` reply from v0.24.0 (004dd2d45) through v0.35.0; fixed in v0.36.0 (a965a35be)
+- Shipped in: v0.11.0 (dbd0ec952, the native port: the zip local header read with no check for a negative offset, the tar, PAX and NTFS time conversions, the zip file type rule, the global header skip, the padding and special-header reads, the raw-name quoting) through v0.35.0; the zip directory count's `unexpected EOF` reply from v0.24.0 (004dd2d45) through v0.35.0; fixed in v0.36.0 (943e349c5)
 
 On native builds an archive could crash the program instead of returning
 an error: a zip whose central directory, with the base offset Go
