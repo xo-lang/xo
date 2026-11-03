@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -158,9 +159,37 @@ func modSetup(t testing.TB, src string) *modtest.Env {
 	return modtest.SetupWith(t, src, modtest.Compare, func(k, v string) { setenv(t, k, v) })
 }
 
+// buildOpts is o with t's setenv calls added to o.Env, for xotool.Build,
+// which starts xo with this process's environment and o.Env: without
+// them a test's XO_BUILD_DIR never reached the build, which then shared
+// <user cache>/xo/build with every other build on the machine (2026-11-03).
+func buildOpts(t testing.TB, o xotool.Options) xotool.Options {
+	testEnvMu.Lock()
+	vars, _ := resolved(t)
+	testEnvMu.Unlock()
+	env := append([]string{}, o.Env...)
+	for k, v := range vars {
+		env = append(env, k+"="+v)
+	}
+	o.Env = env
+	return o
+}
+
 // command is exec.Command in t's working directory with t's environment.
 func command(t testing.TB, name string, args ...string) *exec.Cmd {
 	cmd := testtmp.Guard(exec.Command(name, args...))
 	cmd.Dir, cmd.Env = workdir(t), environ(t)
 	return cmd
+}
+
+// TestBuildOptsCarrySetenv: a test's setenv reaches xotool.Build's xo
+// through buildOpts, for the test and its subtests, after any o.Env.
+func TestBuildOptsCarrySetenv(t *testing.T) {
+	setenv(t, "XO_BUILD_DIR", "/nonexistent/build")
+	t.Run("sub", func(t *testing.T) {
+		o := buildOpts(t, xotool.Options{Env: []string{"A=1"}})
+		if len(o.Env) < 2 || o.Env[0] != "A=1" || !slices.Contains(o.Env, "XO_BUILD_DIR=/nonexistent/build") {
+			t.Fatalf("Env = %q", o.Env)
+		}
+	})
 }

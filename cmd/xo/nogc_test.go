@@ -166,7 +166,7 @@ func TestNoGCTestLeaks(t *testing.T) {
 			// in the full tier, 2026-10-30)
 			t.Run(fmt.Sprintf("%s/%s", filepath.Base(dir), be), func(t *testing.T) {
 				t.Parallel()
-				res, err := xotool.Build([]string{dir}, xotool.Options{Mode: xotool.ModeTest, NoGC: true, Backend: be, Out: filepath.Join(t.TempDir(), "tests")})
+				res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Mode: xotool.ModeTest, NoGC: true, Backend: be, Out: filepath.Join(t.TempDir(), "tests")}))
 				if err != nil || res.Failed {
 					t.Fatalf("%s on %s: %v %s", dir, be, err, res.Output)
 				}
@@ -318,7 +318,7 @@ func TestNoGCNotesServer(t *testing.T) {
 	var want string
 	for _, be := range backends {
 		opts := xotool.Options{Backend: be, NoGC: be != xotool.BackendGo, Out: filepath.Join(t.TempDir(), "notes")}
-		res, err := xotool.Build([]string{dir}, opts)
+		res, err := xotool.Build([]string{dir}, buildOpts(t, opts))
 		if err != nil || res.Failed {
 			t.Fatalf("%s: %v %s", be, err, res.Output)
 		}

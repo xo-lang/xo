@@ -50,7 +50,7 @@ fn main(os: Os) ! {
 func TestProfURL(t *testing.T) {
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := writeFiles(t, map[string]string{"main.xo": profURLProg})
-	res, err := xotool.Build([]string{dir}, xotool.Options{Backend: nativeBackends(t)[0], Out: filepath.Join(t.TempDir(), "srv")})
+	res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: nativeBackends(t)[0], Out: filepath.Join(t.TempDir(), "srv")}))
 	if err != nil || res.Failed {
 		t.Fatalf("build: %v %s", err, res.Output)
 	}

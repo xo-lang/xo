@@ -38,7 +38,7 @@ func TestHeapStatsFreeLists(t *testing.T) {
 	setenv(t, "XO_BUILD_DIR", filepath.Join(t.TempDir(), "build"))
 	dir := writeFiles(t, map[string]string{"main.xo": heapStatsProg})
 	for _, be := range nativeBackends(t) {
-		res, err := xotool.Build([]string{dir}, xotool.Options{Backend: be, Out: filepath.Join(t.TempDir(), "prog")})
+		res, err := xotool.Build([]string{dir}, buildOpts(t, xotool.Options{Backend: be, Out: filepath.Join(t.TempDir(), "prog")}))
 		if err != nil || res.Failed {
 			t.Fatalf("build on %s: %v %s", be, err, res.Output)
 		}
