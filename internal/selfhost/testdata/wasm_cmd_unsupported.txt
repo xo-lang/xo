@@ -15,36 +15,23 @@ fs_mkdir_mode # WASI has no file modes or locks: create_dir_all_mode
 fs_ops_edges # WASI has no times before 1970
 handle_drop_leak # XO1515: no processes in a WASI 0.2 world (proc.spawn)
 host_usage # XO1515: no processes in a WASI 0.2 world (proc.run)
-http_client # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_client_body_reader # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_client_keepalive # the HTTP client over sockets in a command (rt.wasi_http_send is a wasi:http component's), step R2
-http_client_policy # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_client_responses # the HTTP client over sockets in a command (rt.wasi_http_send is a wasi:http component's), step R2
-http_client_stream # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_conn_fault # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_duplex # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_fault # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_form # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_gzip # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_gzip_responses # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_h2_config # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_h2c # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_h2c_sniff # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_header_fields # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_pipe # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_reverse_proxy # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_reverse_proxy_ws # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_server # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
+http_pipe # a streamed request body in full duplex (a sender task while the response is read) needs a detached task scope in the wasm runtime (decision 0447 R2c); without it the body is sent first
+http_reverse_proxy # a streamed request body in full duplex (a sender task while the response is read) needs a detached task scope in the wasm runtime (decision 0447 R2c); without it the body is sent first
+http_reverse_proxy_ws # a streamed request body in full duplex (a sender task while the response is read) needs a detached task scope in the wasm runtime (decision 0447 R2c); without it the body is sent first
 http_server_limits # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_server_request # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-http_stream # the HTTP client over sockets in a command (rt.wasi_http_write is a wasi:http component's), step R2
 http_stream_body_h2 # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_tls # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_tls_keys # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 http_tls_state # the HTTP client over sockets in a command (rt.wasi_http_send is a wasi:http component's), step R2
 http_trailers # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 lock_drop_relock # WASI has no file modes or locks
-multipart_basic # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 net_only # XO1515: no processes in a WASI 0.2 world (proc.run)
 proc_child_usage # XO1515: no processes in a WASI 0.2 world (proc.spawn)
 proc_children_load # XO1515: no processes in a WASI 0.2 world (proc.exec)
@@ -63,8 +50,6 @@ unix_kill # XO1515: no processes in a WASI 0.2 world (proc.spawn)
 use_c_add # use c: no C calls on wasm
 use_c_enum # use c: no C calls on wasm
 user_caps # XO1515: no processes in a WASI 0.2 world (proc.run)
-websocket # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
-websocket_deadline # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 websocket_stop # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 websocket_tls # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm
 websocket_tls_deadline # HTTP over sockets in a command: the server runs (R2a), but this golden also needs http.Client in a command (R2b), TLS, HTTP/2 or WebSocket on wasm

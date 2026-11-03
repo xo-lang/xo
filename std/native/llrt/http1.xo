@@ -34,6 +34,7 @@ use native/llrt/hconn
 use native/rt
 use native/rthttp
 use native/llrt/raw as rawb
+use native/llrt/wasiworld
 
 /// net/http's DefaultMaxHeaderBytes plus the 4096 bytes of slack its
 /// server reads; a longer head is 431.
@@ -4421,7 +4422,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     iv.push(values[n])
     n += 1
   }
-  let when = if timeout > 0 && target.arch != TargetArch.Wasm32 { hclient.cl_deadline(timeout) } else { 0 }
+  let when = if timeout > 0 && !wasiworld.component() { hclient.cl_deadline(timeout) } else { 0 }
   let op = url_op(m)
   var method = m
   var raw = url
@@ -4514,7 +4515,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     var status = 0
     var headers: List[Str] = []
     var rbody = b""
-    if target.arch == TargetArch.Wasm32 {
+    if wasiworld.component() {
       // a wasi:http component (decision 0447): the host holds the
       // connections and TLS; one whole exchange, under the same redirects
       let x = wasi_exchange(method, https, u.host, target_of, hk, hv, body, timeout, prefix, src.is_empty() && tnames.is_empty())

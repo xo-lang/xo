@@ -1,0 +1,9 @@
+// Whether a wasip2/wasm build is a wasi:http component (decision 0447
+// R2b): the compiler folds a call of this to the builder's wasi_comp,
+// which is true when the program calls http.serve_component (the wasm
+// backend's is_component), so only the arm of the build's world is built
+// and the other world's imports never enter the module. A wasip2/wasm
+// command (wasi:cli/command) takes the native code over wasi:sockets.
+// A build that does not fold it (the native backends, a test of this
+// module) takes the command's arm.
+pub fn component() -> Bool { false }

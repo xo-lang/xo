@@ -1,5 +1,20 @@
 # std/http changes
 
+## 2026-11-03: feature: http.Client in a wasip2/wasm command
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0447 R2b
+- Go reference: none
+- Test: goldens http_client, http_client_body_reader, http_client_policy, http_client_stream, http_fault, http_form, http_gzip, http_gzip_responses, http_server, http_server_request, multipart_basic, http_client_responses, http_stream, websocket, websocket_deadline on wasip2/wasm commands (TestWasmCommandGoldens) and natively
+- Timing: none
+
+A wasip2/wasm command's http.Client is the native client over wasi:sockets
+(hclient's wasm arms), streamed request and response bodies included; a
+wasi:http component's client is unchanged. https and HTTP/2 return an error
+saying they are not on wasm yet, each request dials (no pool), and a streamed
+request body is sent before the response is read (no full duplex yet).
+
 ## 2026-11-03: feature: http.Server in a wasip2/wasm command
 
 - Kind: feature

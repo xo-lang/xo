@@ -104,6 +104,9 @@ pub struct Gen {
   /// The program uses the network (rt9.xo over wasi:sockets, decision
   /// 0447); only a wasip2 command has it
   net: Bool = false
+  /// a runtime record of llrt is made (rt.wasi_handle_new: rt.xo
+  /// handle_text)
+  handles: Bool = false
   /// a wasi:http component (rt5.xo, decision 0447): the program calls
   /// http.serve_component
   comp: Bool = false
@@ -1411,6 +1414,9 @@ fn (var g: Gen) find_susp() {
           S(n) => n
           _ => ""
         }
+        if name == "rt.wasi_handle_new" {
+          g.handles = true
+        }
         if let Some(ci) = g.by_name.get(name) {
           cs.push(ci)
         } else if name.starts_with("rt.") && rt4_direct(name.trim_prefix("rt.")) {
@@ -1633,6 +1639,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     }
   }
   g.find_susp()
+  if g.handles {
+    rt = rt + handle_text(g)
+  }
   g.compute_homes(main)
   if g.conc {
     let t3 = rt3_text(g, main, main_res, main_args)

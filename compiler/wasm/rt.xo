@@ -5738,3 +5738,40 @@ fn rt_text(var g: Gen) -> Str {
 
   """
 }
+
+/// The runtime records of llrt on wasm (rt.wasi_handle_new and its free
+/// entry, decision 0447 R2a), only in a module that makes one (Gen.handles):
+/// the free entry takes a table slot.
+fn handle_text(var g: Gen) -> Str {
+  let hfree = g.table_index("$hfree_any")
+  let hooksig = g.sig(["i64"], [])
+  """
+    ;; rt.wasi_handle_new (decision 0447 R2a; in the base runtime, since
+    ;; an in-process response's sink uses it in a wasip1 module too): a zeroed runtime record of n
+    ;; bytes with one reference, as tasks.new_handle's (the caller takes its
+    ;; own with rt.obj_at and drops this one), its fields at the native
+    ;; offsets (16 on);
+    ;; word 8, the native free hook's place, holds hook (rt.wasi_hook), which
+    ;; $hfree_any calls with the record's address at its last release
+    (func $wasi_handle_new (param $n i64) (param $hook i64) (result i64) (local $p i32)
+      local.get $n
+      i32.wrap_i64
+      i32.const ${hfree}
+      call $obj_new
+      local.tee $p
+      local.get $hook
+      i64.store offset=8
+      local.get $p
+      i64.extend_i32_u)
+
+    (func $hfree_any (param $p i32)
+      local.get $p
+      i64.extend_i32_u
+      local.get $p
+      i64.load offset=8
+      i32.wrap_i64
+      call_indirect (type ${hooksig})
+      local.get $p
+      call $free)
+"""
+}

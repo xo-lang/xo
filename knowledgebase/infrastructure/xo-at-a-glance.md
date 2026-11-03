@@ -139,5 +139,7 @@ lists the rest.
   processes, and files or sockets in a `wasi:http` component, are XO1515;
   `http.Server` serves HTTP/1.1 in a command (the native server's code,
   decision 0447 R2a; no HTTP/2, TLS, peer address or idle parking yet);
-  `http.Client` over sockets, TLS, UDP and DNS records do not run in a
-  command yet (wasm_cmd_unsupported.txt).
+  `http.Client` and std/websocket work in a command over sockets (the
+  native client, decision 0447 R2b; no https, HTTP/2 or connection pool
+  yet); TLS, UDP and DNS records do not run in a command yet
+  (wasm_cmd_unsupported.txt).

@@ -112,6 +112,11 @@ pub fn srv_new() -> rthttp.Srv {
 
 /// The scope of the connection tasks as a task.Group.
 pub fn srv_group(s: rthttp.Srv) -> task.Group {
+  if target.arch == TargetArch.Wasm32 {
+    // no connection scope on wasm (srv_new): Server.serve uses its own
+    // scope's group there
+    fault("hserve.srv_group: no connection scope on wasm")
+  }
   let g = tasks.scope_group(ld(srec(s), hconn.SR_SCOPE))
   let h = rt.obj_at[task.Group](g)
   tasks.h_release(g)
@@ -970,8 +975,11 @@ fn table() -> Int { ctx.svc() + ctx.SV_STREAMS }
 
 /// Keeps f (an Any of the stream's function): its number.
 pub fn stream_put(f: rt.Any) -> Int {
-  // the table is freed at exit (entry.xo, decision 0233)
-  atexit.set_streams(rt.fn_addr("streams_free"))
+  if target.arch != TargetArch.Wasm32 {
+    // the table is freed at exit (entry.xo, decision 0233); a wasm
+    // instance's memory ends with it
+    atexit.set_streams(rt.fn_addr("streams_free"))
+  }
   let a = rt.obj_addr(f)
   rc.inc(a)
   let t = table()

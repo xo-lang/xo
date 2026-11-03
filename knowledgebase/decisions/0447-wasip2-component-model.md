@@ -758,3 +758,24 @@ The drift test is the goldens: the same want.txt on native and on the
 wasip2 command. Only http_wire, http_multipart_stream and
 http_stream_body drive the server without http.Client; the other HTTP
 goldens wait for the client in a command (R2b).
+
+### http.Client in a command (2026-11-03, R2b)
+
+A wasip2/wasm program is a wasi:http component when it calls
+http.serve_component, else a command, and the client must take wasi:http
+in the one and wasi:sockets in the other. The wasm backend knows the
+world (`g.comp`) only after the SSA build, when the functions only the
+other world's arm calls are already in the module and the backend lowers
+every function. So the SSA builder decides it, as it decides
+`concflag.built()` and `prof.supported()`: `native/llrt/wasiworld.component()`
+folds to `Builder.wasi_comp` and only the taken arm is built. The first
+build guesses a command; when it finds http.serve_component (the
+backend's own test), build_program_fe builds again with the flag set, as
+it rebuilds for need_conc, so only a component pays a second build. The
+front end cache keys bodies by it (`comp=` in fe_own_flags).
+
+In a command the client is the native one over R1's sockets: hclient's
+wasm arms dial through netwasi.dial_addr and read and write with
+netwasi's hc_recv and hc_send, so its requests and its handling of
+responses are the native client's. Not on wasm yet: https (an error that
+says so), HTTP/2, the connection pool (each request dials).

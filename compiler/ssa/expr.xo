@@ -756,6 +756,10 @@ fn (var b: Builder) target_test(e: Expr) -> Bool? {
     // handlers need them; a release build gives them up for size)
     return Some(b.conc || !b.release)
   }
+  if b.llrt_flag_call(e, "native/llrt/wasiworld", "component") {
+    // a wasi:http component rather than a command (decision 0447 R2b)
+    return Some(b.wasi_comp)
+  }
   if b.llrt_flag_call(e, "native/llrt/inlstr", "built") {
     // a short Str's text in its words (--inline-str, decision 0370)
     return Some(b.c.inline_str)

@@ -542,6 +542,15 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
+      if name == "rt.wasi_handle_new" {
+        // a runtime record with a free hook (rt.xo $wasi_handle_new;
+        // decision 0447 R2a)
+        g.push(x.args[0])
+        g.push(x.args[1])
+        g.e("call $wasi_handle_new")
+        g.def(v)
+        return
+      }
       if name is "rt.wasi_rc_inc" | "rt.wasi_rc_dec" | "rt.wasi_h_release" {
         // llrt's rc.inc, rc.dec and tasks.h_release on a wasm object
         // (rt.xo $rc_inc, $rc_dec, $wasi_h_release; decision 0447 R2a)

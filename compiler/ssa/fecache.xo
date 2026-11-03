@@ -181,7 +181,7 @@ pub fn fe_flags(line_root: Str, tests: Bool, release: Bool, real_tests: Bool, go
 
 /// The flags the builder sets itself, compared with an entry's.
 fn (var b: Builder) fe_own_flags() -> Str {
-  "conc=${b.conc} budgets=${b.budgets} scan=${b.scan_budget} rt=${b.user_realtime()}"
+  "conc=${b.conc} comp=${b.wasi_comp} budgets=${b.budgets} scan=${b.scan_budget} rt=${b.user_realtime()}"
 }
 
 /// FNV-1a over s, continued from h.

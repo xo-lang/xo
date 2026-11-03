@@ -225,6 +225,10 @@ pub struct Builder {
   /// folds to the wasm runtime's layout, and no C ABI export is built (no
   /// C calls them).
   pub wasm: Bool = false
+  /// a wasip2/wasm build of a wasi:http component (the program calls
+  /// http.serve_component): wasiworld.component()'s value (decision 0447
+  /// R2b); build_program_fe sets it after a first build finds the call
+  pub wasi_comp: Bool = false
   /// The program links with no C library (XO_NOLIBC=1, decision 0206
   /// stage 2): native/llrt/cabi_nolibc's exports are built, and only then.
   pub nolibc: Bool = false
@@ -451,6 +455,15 @@ pub fn build_program_fe(c: check.Checker, line_root: Str, tests: Bool, release: 
     // without them when fe.start_conc guessed wrong: the first build is
     // dropped, its stores and counts with it
     b = program_builder(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, fe, b.need_conc)
+    b.build()
+  }
+  if wasm && b.m.funcs.any(fn(f: Func) -> Bool { f.name == "http.serve_component" }) {
+    // a wasi:http component (decision 0447 R2b): built again with
+    // wasiworld.component() true, so the client's wasi:http arms are built
+    // instead of the command's sockets (the first build guessed a command)
+    let conc = b.conc
+    b = program_builder(c, line_root, tests, release, real_tests, goos, goarch, wasm, nolibc, prof, trace_support, soft_cpu, heap_guard, fe, conc)
+    b.wasi_comp = true
     b.build()
   }
   b.m.goarch = goarch

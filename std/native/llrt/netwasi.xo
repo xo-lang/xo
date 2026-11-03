@@ -265,6 +265,19 @@ pub fn dial_timeout(lists: Str, addr: Str, d: Int) -> Conn {
   dial_limit(addr, if d > 0 { d } else { 1 }, 3)
 }
 
+/// A connection to addr for the HTTP client (hclient start_wasm, decision
+/// 0447 R2b): its record's address with one reference the caller owns, d
+/// ns its limit (0: Net.dial's own), the outcome in rt.wasi_sock_status.
+pub fn dial_addr(addr: Str, d: Int) -> Int {
+  let c = dial_limit(addr, if d > 0 { d } else { 30000000000 }, if d > 0 { 3 } else { 4 })
+  if rt.wasi_sock_status() != 0 {
+    return 0
+  }
+  let a = rt.obj_addr(c)
+  rt.wasi_rc_inc(a)
+  a
+}
+
 /// A dial within d ns: the time up is NetErr status timeout_tag, Io's text
 /// for Net.dial's own limit (netconn.dial_timeout); each address of the
 /// host in turn until one connects.

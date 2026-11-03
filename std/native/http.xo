@@ -13,6 +13,7 @@ use std/log
 use std/task
 use std/tls
 use std/x509
+use native/llrt/wasiworld
 use native/llrt/hconn
 use native/llrt/hserve
 use native/rt
@@ -2260,7 +2261,7 @@ fn response_decode_json[T: Json](r: http.Response) -> T ! js.DecodeErr { js.deco
 /// The body is produced by f while the response is sent; dispatched in
 /// process it is collected (std.md 4.3, decision 0083).
 fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> http.Response uses fx {
-  if target.arch == TargetArch.Wasm32 {
+  if wasiworld.component() {
     // a wasi:http response goes out whole, so its body is made here; a stream
     // that fails ends its body there, as collect does
     // serve_component runs f as the response is sent (a component), and
@@ -2275,7 +2276,7 @@ fn stream[fx: Effects](status: Int, f: fn(BodyWriter) -> () ! IoErr uses fx) -> 
 /// collected again.
 fn collect(r0: http.Response) -> http.Response {
   let r = rt.cast[http.Response, Response](r0)
-  if target.arch == TargetArch.Wasm32 {
+  if wasiworld.component() {
     // no native stream on wasm, and the build decides this test, so
     // hserve's sink, which allocates with llrt's heap, is not built into a
     // wasm program (decision 0447)
@@ -2318,7 +2319,7 @@ fn collect(r0: http.Response) -> http.Response {
 /// rthttp.sink_set_trailer, with HTTP/1.1's chunked trailer section and
 /// HTTP/2's trailing HEADERS); until then it is dropped.
 fn (w: BodyWriter) set_trailer(name: Str, value: Str) {
-  if target.arch == TargetArch.Wasm32 {
+  if wasiworld.component() {
     if let Some(k) = http1.trailer_key(name) {
       if let Some(t) = w.wt {
         t.with(fn(var l) {
@@ -2359,14 +2360,18 @@ fn (w: BodyWriter) write(data: Bytes) -> () ! IoErr {
 /// Bytes past the compressor to where w writes: the sink, or on wasm the
 /// buffer or the component's response; false when the connection closed.
 fn (w: BodyWriter) put(out: Bytes) -> Bool {
-  if target.arch == TargetArch.Wasm32 {
+  if wasiworld.component() {
     if let Some(m) = w.wb {
       m.with(fn(var b) { b = b + out })
     }
-    if let Some(o) = w.wo {
-      o.with(fn(var x) { wasi_out_head(x, out) })
-      if !out.is_empty() {
-        rt.wasi_http_write(out)
+    // a component's streamed response (serve_component); a command has no
+    // wo, and the wasi:http calls are not built into it
+    if wasiworld.component() {
+      if let Some(o) = w.wo {
+        o.with(fn(var x) { wasi_out_head(x, out) })
+        if !out.is_empty() {
+          rt.wasi_http_write(out)
+        }
       }
     }
     return true
@@ -2378,12 +2383,14 @@ fn (w: BodyWriter) flush() -> () ! IoErr {
   if task.is_canceled() {
     return Err(IoErr.Canceled)
   }
-  if target.arch == TargetArch.Wasm32 {
+  if wasiworld.component() {
     if let Some(m) = w.gz {
       let _ = w.put(m.with(fn(var c) { c.flush() }))
     }
-    if let Some(o) = w.wo {
-      o.with(fn(var x) { wasi_out_head(x, b"") })
+    if wasiworld.component() {
+      if let Some(o) = w.wo {
+        o.with(fn(var x) { wasi_out_head(x, b"") })
+      }
     }
     return
   }
@@ -3469,7 +3476,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
     let st = StreamState{conn: None, h2: None, read: http1.BodyRead{mode: 0, done: true}, https: false, addr: "", name: "", roots: c.roots, buffered: resp.body, off: 0, gz: None, pending: b"", done: false, idle_ns: 0}
     return Ok(rt.cast[ClientStream, http.ClientStream](ClientStream{hd: http.ResponseHead{status: resp.status, headers: resp.headers}, st: Mutex[StreamState].new(st)}))
   }
-  if target.arch == TargetArch.Wasm32 {
+  if wasiworld.component() {
     // a wasi:http component (decision 0447): the whole response, read as a
     // stream, for now
     let resp = c.send(req)?
@@ -3482,7 +3489,9 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   // may come before the body ends (full duplex, decision 0433)
   var dsrv: rthttp.Srv? = None
   var duplex: List[fn(fn() -> ())] = []
-  if !req.src.is_empty() {
+  // on wasm the body is sent before the response is read (no sender
+  // task: a wasm server record has no connection scope, decision 0447 R2b)
+  if !req.src.is_empty() && target.arch != TargetArch.Wasm32 {
     let ds = hserve.srv_new()
     let g = hserve.srv_group(ds)
     dsrv = Some(ds)
@@ -3527,7 +3536,7 @@ fn raw_next(var s: StreamState, max: Int) -> Result[Bytes?, http.ClientErr] {
     s.off = end
     return Ok(Some(b))
   }
-  if target.arch == TargetArch.Wasm32 {
+  if wasiworld.component() {
     // a wasi:http component's stream is all in buffered (Client.open)
     return Ok(None)
   }
@@ -3663,7 +3672,7 @@ fn close_src(fs: List[fn(Int) -> http1.BodyPart]) {
 fn end_duplex(var x: StreamState) {
   close_src(x.src_close)
   x.src_close = []
-  if target.arch == TargetArch.Wasm32 {
+  if wasiworld.component() {
     return
   }
   if let Some(ds) = x.dsrv {
@@ -3768,7 +3777,7 @@ fn sorted_map(m: Map[Str, Str]) -> Map[Str, Str] {
 
 fn (s: ClientStream) close() {
   s.st.with(fn(var x: StreamState) {
-    if target.arch != TargetArch.Wasm32 {
+    if !wasiworld.component() {
       if let Some(e0) = x.h2 {
         // RST_STREAM CANCEL unless it ended; the connection stays pooled
         var e = e0
@@ -3789,7 +3798,7 @@ fn (s: ClientStream) close() {
     }
     close_src(x.src_close)
     x.src_close = []
-    if target.arch != TargetArch.Wasm32 {
+    if !wasiworld.component() {
       if let Some(ds) = x.dsrv {
         x.dsrv = None
         hserve.srv_close(ds)
@@ -3907,7 +3916,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
   let (names, values) = header_lists(req)
   let timeout = if req.timeout_ns > 0 { req.timeout_ns } else { c.timeout.nanos() }
   // a wasi:http component sends a whole body (decision 0447)
-  let ta = trailer_args(if target.arch == TargetArch.Wasm32 { src_whole(req)? } else { req })
+  let ta = trailer_args(if wasiworld.component() { src_whole(req)? } else { req })
   let r = http1.client_do(req.method, raw, names, values, ta.body, timeout, c.roots, c.lists, c.redirects, false, ta.src, h2c: client_h2c(c), alpn: client_alpn(c), tnames: ta.names, tfn: ta.fns, h2cfg: client_h2cfg(c))
   // done with the request: its body's reader closes (net/http closes
   // the request body), so a later write fails instead of waiting
