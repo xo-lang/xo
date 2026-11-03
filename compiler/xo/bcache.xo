@@ -156,8 +156,27 @@ fn self_id(os: Os) -> Str {
     }
     _ => {}
   }
-  let id = match os.fs.read(p) {
-    Ok(b) => crypto.sha256(b).to_hex()
+  // a megabyte at a time: the whole executable read at once was 75 MB of
+  // the peak of a build with a new xo (its first, with no memo; a first
+  // build peaked at 140 MB of heap for 61 in use, 2026-11-03)
+  let id = match os.fs.open(p) {
+    Ok(f) => {
+      var h = crypto.hasher(crypto.Hash.Sha256)
+      var ok = true
+      var more = true
+      while more {
+        match f.read(1 << 20) {
+          Ok(Some(b)) => h.write(b)
+          Ok(None) => more = false
+          Err(_) => {
+            ok = false
+            more = false
+          }
+        }
+      }
+      f.close().ignore_err("read only: a close error loses nothing")
+      if ok { h.sum().to_hex() } else { "" }
+    }
     // xo:allow XO0903 no id: the build runs without the backend cache
     Err(_) => ""
   }
