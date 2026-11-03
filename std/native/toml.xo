@@ -682,9 +682,32 @@ fn is_date(s: Str) -> Bool {
       return false
     }
   }
-  true
+  let y = num_at(s, 0, 4)
+  let m = num_at(s, 5, 2)
+  let d = num_at(s, 8, 2)
+  var days = 31
+  if m == 4 || m == 6 || m == 9 || m == 11 {
+    days = 30
+  } else if m == 2 {
+    days = 28
+    if y % 4 == 0 && (y % 100 != 0 || y % 400 == 0) {
+      days = 29
+    }
+  }
+  m >= 1 && m <= 12 && d >= 1 && d <= days
 }
 
+/// The decimal value of s's n digits at i (checked as digits already).
+fn num_at(s: Str, i: Int, n: Int) -> Int {
+  var v = 0
+  for k in i..i + n {
+    v = v * 10 + Int(raw.str_byte(s, k)) - 48
+  }
+  v
+}
+
+/// RFC 3339's ranges, as Go's time.Parse checks them: hour 0 to 23,
+/// minute and second 0 to 59 (no leap second), an offset's hour 0 to 23.
 fn is_time(s: Str) -> Bool {
   if s.len() < 8 {
     return false
@@ -698,6 +721,9 @@ fn is_time(s: Str) -> Bool {
     } else if !is_dec(c) {
       return false
     }
+  }
+  if num_at(s, 0, 2) > 23 || num_at(s, 3, 2) > 59 || num_at(s, 6, 2) > 59 {
+    return false
   }
   var rest = raw.str_slice(s, 8, s.len())
   if rest.starts_with(".") {
@@ -713,7 +739,7 @@ fn is_time(s: Str) -> Bool {
   if rest == "" || rest == "Z" || rest == "z" {
     return true
   }
-  rest.len() == 6 && (rest.starts_with("+") || rest.starts_with("-")) && is_dec(raw.str_byte(rest, 1)) && is_dec(raw.str_byte(rest, 2)) && raw.str_byte(rest, 3) == 58 && is_dec(raw.str_byte(rest, 4)) && is_dec(raw.str_byte(rest, 5))
+  rest.len() == 6 && (rest.starts_with("+") || rest.starts_with("-")) && is_dec(raw.str_byte(rest, 1)) && is_dec(raw.str_byte(rest, 2)) && raw.str_byte(rest, 3) == 58 && is_dec(raw.str_byte(rest, 4)) && is_dec(raw.str_byte(rest, 5)) && num_at(rest, 1, 2) <= 23 && num_at(rest, 4, 2) <= 59
 }
 
 /// The RFC 3339 text of a date or time token, or None.

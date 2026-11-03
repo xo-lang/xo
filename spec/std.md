@@ -4103,7 +4103,11 @@ fn load(fs: Fs) -> Config ! Error uses fs.read {
   (decimal, `0x`, `0o`, `0b`, underscores between digits) a JSON
   integer, a float a JSON number (its text without `+` and underscores),
   a boolean a boolean, and a date or time its RFC 3339 text (a space
-  between date and time and lower case `t` and `z` become `T` and `Z`).
+  between date and time and lower case `t` and `z` become `T` and `Z`;
+  a field out of RFC 3339's range is an error, as Go's `time.Parse`
+  checks it: a month 1 to 12, a day of that month (February 29 only in a
+  leap year), hour 0 to 23, minute and second 0 to 59, an offset's hour
+  0 to 23 and minute 0 to 59).
   `decode[T]` then follows the `derive Json` rules of section 5: missing
   keys take field defaults, unknown keys are ignored, `Duration` fields
   take `"1m30s"` text, an offset date-time decodes into `Time`, and a
@@ -4115,7 +4119,9 @@ fn load(fs: Fs) -> Config ! Error uses fs.read {
   tables]]` headers, inline tables, and arrays over several lines with
   comments and a trailing comma. Defining a key or a table twice, adding
   to an inline table, and mixing a table with an array of tables are
-  errors with their line.
+  errors with their line. Conformance: toml-test v1.5.0's TOML 1.0.0
+  documents (internal/stdtest/testdata/toml-test) and an invariant fuzz
+  run on every backend (internal/stdtest/tomlfuzz_test.go).
 - `to_json` gives the JSON text, for code that wants to read a document
   without a struct (`json.decode[Map[Str, ...]]`) or print it.
 - `encode(v)` writes a document in the layout of

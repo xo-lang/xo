@@ -521,11 +521,31 @@ type tomlNonFinite string
 // tomlDateTime recognizes the four TOML date and time forms and returns
 // their RFC 3339 text (`T` and `Z` upper case, a space read as `T`).
 func tomlDateTime(tok string) (any, bool) {
+	num := func(s string) int { return int(s[0]-'0')*10 + int(s[1]-'0') }
+	// RFC 3339's ranges, as time.Parse checks them: a day of its month,
+	// hour 0 to 23, minute and second 0 to 59, an offset's hour 0 to 23.
 	isDate := func(s string) bool {
-		return len(s) == 10 && isDec(s[0]) && isDec(s[1]) && isDec(s[2]) && isDec(s[3]) && s[4] == '-' && isDec(s[5]) && isDec(s[6]) && s[7] == '-' && isDec(s[8]) && isDec(s[9])
+		if !(len(s) == 10 && isDec(s[0]) && isDec(s[1]) && isDec(s[2]) && isDec(s[3]) && s[4] == '-' && isDec(s[5]) && isDec(s[6]) && s[7] == '-' && isDec(s[8]) && isDec(s[9])) {
+			return false
+		}
+		y, m, d := num(s)*100+num(s[2:]), num(s[5:]), num(s[8:])
+		days := 31
+		switch m {
+		case 4, 6, 9, 11:
+			days = 30
+		case 2:
+			days = 28
+			if y%4 == 0 && (y%100 != 0 || y%400 == 0) {
+				days = 29
+			}
+		}
+		return m >= 1 && m <= 12 && d >= 1 && d <= days
 	}
 	isTime := func(s string) bool {
 		if len(s) < 8 || !(isDec(s[0]) && isDec(s[1]) && s[2] == ':' && isDec(s[3]) && isDec(s[4]) && s[5] == ':' && isDec(s[6]) && isDec(s[7])) {
+			return false
+		}
+		if num(s) > 23 || num(s[3:]) > 59 || num(s[6:]) > 59 {
 			return false
 		}
 		rest := s[8:]
@@ -543,7 +563,7 @@ func tomlDateTime(tok string) (any, bool) {
 		case rest == "", rest == "Z", rest == "z":
 			return true
 		case len(rest) == 6 && (rest[0] == '+' || rest[0] == '-') && isDec(rest[1]) && isDec(rest[2]) && rest[3] == ':' && isDec(rest[4]) && isDec(rest[5]):
-			return true
+			return num(rest[1:]) <= 23 && num(rest[4:]) <= 59
 		}
 		return false
 	}

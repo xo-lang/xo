@@ -1,5 +1,19 @@
 # std/toml changes
 
+## 2026-11-02: fix: a date or time with a field out of range is an error
+
+- Kind: fix
+- Commit: this commit
+- Found by: the toml-test conformance corpus (internal/stdtest/tomlfuzz_test.go, toml-test v1.5.0's TOML 1.0.0 documents): 29 of its invalid documents decoded
+- Go reference: time.Parse's range checks (time/format.go: month, day of the month with leap years, hour, minute, second, zone offset)
+- Test: internal/stdtest/testdata/corpus/tomltest (543 documents, 179 valid with values, 364 errors) and tomlfuzz (2,000 documents, invariants) on arm64, LLVM and the Go backend; std/rt TestTomlErrors (six new cases); TestTomlFuzz seeds 2 and 3
+
+`2006-13-01`, `2006-01-32`, `1988-02-30`, `2100-02-29`, `24:00:00`,
+`00:60:00`, `00:00:61` and an offset of `+25:00` or `+12:61` were taken
+as dates and times; each is now `bad value`, as in a local date, a
+local time, a local date-time and an offset date-time alike. Both
+parsers (std/native/toml.xo and std/rt/toml.go) check the same ranges.
+
 ## 2026-10-29: perf: toml.encode writes into one builder
 
 - Kind: perf
