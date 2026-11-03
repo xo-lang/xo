@@ -104,6 +104,11 @@ pub struct Gen {
   /// a wasi:http component (rt5.xo, decision 0447): the program calls
   /// http.serve_component
   comp: Bool = false
+  /// a wasip2/wasm command (rt7.xo, decision 0447 stage 3): a program
+  /// built for wasip2/wasm that does not serve wasi:http
+  cmd: Bool = false
+  /// a call of rt.wasi_stdin_read was lowered (rt7_p1_text's fd_read import)
+  stdin: Bool = false
   /// An unsupported call faults when it runs instead of failing the build
   /// (`compiler/wasm --lax`, to see how far a program gets).
   lax: Bool = false
@@ -240,14 +245,12 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
     g.by_name[f.name] = i
   }
   // the target decides what a build gives, and the program must fit it
-  g.comp = p2
+  g.comp = p2 && g.is_component()
+  g.cmd = p2 && !g.comp
   if g.is_component() && !p2 {
     return Program{code: "XO1514", err: "http.serve_component makes a wasi:http component, which a wasip1/wasm module cannot be: build with --targets=wasip2/wasm"}
   }
   if p2 {
-    if !g.is_component() {
-      return Program{code: "XO1516", err: "a wasip2/wasm program is a wasi:http component, and its main never calls http.serve_component: hand it a router, or build for wasip1/wasm"}
-    }
     let lacks = g.component_lacks()
     if !lacks.is_empty() {
       return Program{code: "XO1515", err: lacks}
@@ -274,9 +277,9 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
   if !aerr.is_empty() {
     return Program{wat: wat, err: "the assembler: ${aerr}"}
   }
-  if g.comp {
-    // a wasi:http program's output is the component around the module
-    let (c, cerr) = component_of(bin)
+  if g.comp || g.cmd {
+    // a wasip2 program's output is the component around the module
+    let (c, cerr) = component_of(bin, g.cmd)
     if !cerr.is_empty() {
       return Program{wat: wat, err: cerr}
     }
@@ -327,13 +330,14 @@ fn (g: Gen) component_lacks() -> Str {
       var what = ""
       if name is "proc.run" | "proc.exec" | "proc.spawn" {
         what = "processes"
-      } else if name.starts_with("rt.") && op.starts_with("fs_") {
+      } else if name.starts_with("rt.") && op.starts_with("fs_") && op != "fs_canceled" {
+        // fs_canceled asks the task, not the files (call.xo lowers it)
         what = "files"
       } else if name.starts_with("rt.") && (op.starts_with("net_") || op.starts_with("listener_") || op.starts_with("conn_")) {
         what = "sockets"
       }
       if !what.is_empty() {
-        return "a wasip2/wasm program is a wasi:http component, which has no ${what}: `${name}`, reached through ${g.call_chain(f.name)}"
+        return "a wasip2/wasm program ${if g.comp { "is a wasi:http component, which has" } else { "has" }} no ${what}: `${name}`, reached through ${g.call_chain(f.name)}"
       }
     }
   }
@@ -1627,6 +1631,13 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   if g.comp {
     rt = rt + rt5_text(g) + rt6_text()
   }
+  if g.cmd {
+    rt = rt + drop_funcs(rt6_text(), rt7_replaces()) + rt7_text()
+  } else if !g.comp {
+    // strip_runtime drops it when nothing reads stdin; it reads
+    // functions a line at a time, so this one starts a line
+    rt = rt + "\n" + rt7_p1_text()
+  }
   for fi in 0..g.m.funcs.len() {
     g.func(fi)
     if !g.err.is_empty() && !g.all {
@@ -1664,11 +1675,14 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   for s in g.sig_lines {
     b.write("  ${s}\n")
   }
-  if g.conc && !g.comp {
+  if g.conc && !g.comp && !g.cmd {
     b.write(rt3_imports())
   }
-  if g.files && !g.comp {
+  if g.files && !g.comp && !g.cmd {
     b.write(rt4_imports())
+  } else if !g.comp && !g.cmd && g.stdin {
+    // stdin without files: rt7_p1_text's fd_read
+    b.write("    (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))\n")
   }
   if g.comp {
     b.write(rt5_imports())
@@ -1680,7 +1694,11 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     }
     b.write(rt6_imports())
   }
-  b.write(if g.comp { drop_preview1(rt_imports()) } else { rt_imports() })
+  if g.cmd {
+    b.write(rt6_imports())
+    b.write(rt7_imports())
+  }
+  b.write(if g.comp || g.cmd { drop_preview1(rt_imports()) } else { rt_imports() })
   if g.conc {
     b.write(rt3_globals())
   }
@@ -1689,6 +1707,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   }
   if g.comp {
     b.write(rt5_globals())
+  }
+  if g.cmd {
+    b.write(rt7_globals())
   }
   b.write("  (memory (export \"memory\") ${pages})\n")
   b.write("  (global $hp (mut i32) (i32.const ${heap}))\n")
@@ -1728,6 +1749,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     // a wasi:http component's handle export runs main per request
     // (rt5.xo); it has no _start
     b.write(rt5_handle(start))
+  } else if g.cmd {
+    // a command's run export (rt7.xo)
+    b.write(rt7_run(start, g.files))
   } else {
     b.write("  (func $_start (export \"_start\")\n")
     for s in start {

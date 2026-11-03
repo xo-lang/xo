@@ -106,6 +106,7 @@ arm64 wasi_http_end the wasi:http component runtime is wasm only (compiler/wasm 
 arm64 wasi_http_resp_body the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_resp_headers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 arm64 wasi_http_send the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+arm64 wasi_stdin_read the wasm stdin read is wasm only (compiler/wasm rt7.xo, decision 0447 stage 3); llrt stdin.xo calls it only in its Wasm32 arm
 llvm any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm atomic_add lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 llvm atomic_max lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
@@ -211,6 +212,7 @@ llvm wasi_http_end the wasi:http component runtime is wasm only (compiler/wasm r
 llvm wasi_http_resp_body the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_resp_headers the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
 llvm wasi_http_send the wasi:http component runtime is wasm only (compiler/wasm rt5.xo, decision 0447); http.serve_component faults off wasm
+llvm wasi_stdin_read the wasm stdin read is wasm only (compiler/wasm rt7.xo, decision 0447 stage 3); llrt stdin.xo calls it only in its Wasm32 arm
 wasm any_of lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm cast lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)
 wasm dyn_raw lowered by compiler/ssa itself (an intrinsic of the builder, no runtime call)

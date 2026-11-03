@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+lines: "first line" "second, with a tab\there"
+chunks: each 1 to 5 bytes true, rest 173 bytes, ends 6520726573740a
+after the end: true 0
+--- stderr

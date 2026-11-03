@@ -471,6 +471,18 @@ fn (var g: Gen) call(v: Int) {
         return
       }
       let op = name.trim_prefix("rt.")
+      if name == "rt.wasi_stdin_read" {
+        // stdin (rt7.xo): wasi:cli/stdin in a command, fd_read in a
+        // preview 1 module; a wasi:http component's is empty
+        if g.comp {
+          g.e("i64.const 0")
+          g.def(v)
+        } else {
+          g.stdin = true
+          g.rt_call(v, "$wasi_stdin_read")
+        }
+        return
+      }
       if name.starts_with("rt.") && g.comp && rt5_direct(op) {
         g.rt_call(v, "$${op}")
         return

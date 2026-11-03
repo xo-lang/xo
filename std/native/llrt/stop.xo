@@ -109,14 +109,27 @@ pub fn init() {
   rt.mem_store(rt.static_word(W_REC), 0, r, 8)
 }
 
-/// Whether a stop was requested (task.stop_requested).
-pub fn requested() -> Bool { rt.slot_load(rec(), R_REQUESTED / 8, ACQUIRE) != 0 }
+/// Whether a stop was requested (task.stop_requested). A program with no
+/// record (wasm, where entry.xo's init does not run) has none: reading
+/// through a zero record read address 16 of linear memory, which was not
+/// zero after the first read of stdin there, so the next read was
+/// canceled.
+pub fn requested() -> Bool {
+  let r = rec()
+  r != 0 && rt.slot_load(r, R_REQUESTED / 8, ACQUIRE) != 0
+}
 
 /// Whether the stop canceled main's root context.
-pub fn canceled() -> Bool { rt.slot_load(rec(), R_CANCELED / 8, ACQUIRE) != 0 }
+pub fn canceled() -> Bool {
+  let r = rec()
+  r != 0 && rt.slot_load(r, R_CANCELED / 8, ACQUIRE) != 0
+}
 
 /// Main's root context (a node), or 0.
-pub fn root() -> Int { rt.slot_load(rec(), R_ROOT / 8, ACQUIRE) }
+pub fn root() -> Int {
+  let r = rec()
+  if r == 0 { 0 } else { rt.slot_load(r, R_ROOT / 8, ACQUIRE) }
+}
 
 /// Sets main's root context to n unless one is set (run_main's start).
 pub fn set_root(n: Int) {

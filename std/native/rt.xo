@@ -329,6 +329,10 @@ fn wasi_http_resp_body() -> Bytes
 // Linux system calls (decision 0206): std/native/llrt/linux.xo is the only
 // caller, in its `target.os` Linux arms.
 
+/// At most n bytes of stdin into p on wasm (compiler/wasm rt7.xo,
+/// decision 0447 stage 3): their count, 0 at the end, minus errno. The
+/// wasm backend only; stdin.xo's sysread tests target.arch first.
+fn wasi_stdin_read(p: Int, n: Int) -> Int
 /// The Linux system call nr with six arguments: the kernel's result, a
 /// negative errno on failure (lowered inline: `svc #0` with the number
 /// in x8 on arm64, `syscall` on x86_64).

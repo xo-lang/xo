@@ -128,3 +128,9 @@ lists the rest.
 - `xo prof FILE|URL`: a URL is a running server's std/debug
   `/debug/profile?seconds=N` or `/debug/heap` (0325), fetched then
   summarized like a file; `/debug/sched` is printed.
+- Targets: `xo build --targets=wasip1/wasm` (a preview 1 module) and
+  `--targets=wasip2/wasm` (core 10, decision 0447): a `wasi:http`
+  component for a program that calls `http.serve_component` (served by
+  `wasmtime serve`, Spin), else a `wasi:cli/command` component (`wasmtime
+  run`) with arguments, environment, stdin and output; files, processes
+  and sockets on wasip2 are XO1515.

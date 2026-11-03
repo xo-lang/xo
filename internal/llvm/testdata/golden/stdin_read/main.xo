@@ -1,0 +1,20 @@
+// Standard input read to its end (std.md 3.6): lines, then the rest in
+// chunks, then nothing past the end. On wasm it is read with fd_read in a
+// wasip1/wasm module and through wasi:cli/stdin in a wasip2/wasm command
+// (decision 0447 stage 3); stdin.txt holds the input.
+fn main(os: Os) ! {
+  let out = os.stdio
+  let first = out.read_line()? ?? "<end>"
+  let second = out.read_line()? ?? "<end>"
+  out.println("lines: ${first.quote()} ${second.quote()}")
+  var sizes: List[Int] = []
+  var total = BytesBuilder.new()
+  while let Some(b) = out.read_bytes(5)? {
+    sizes.push(b.len())
+    total.write(b)
+  }
+  let rest = total.freeze()
+  // how a read splits the input depends on the platform, so only its sum
+  out.println("chunks: each 1 to 5 bytes ${sizes.all(fn(n) { n >= 1 && n <= 5 })}, rest ${rest.len()} bytes, ends ${rest[rest.len() - 7..].to_hex()}")
+  out.println("after the end: ${out.read_line()?.is_none()} ${out.read_all()?.len()}")
+}

@@ -1,0 +1,22 @@
+# Goldens TestWasmCommandGoldens expects not to build or run on wasip2/wasm
+# (decision 0447 stage 3, 2026-11-02): goldens TestSelfhostWasm runs on
+# wasip1/wasm (those of wasm_unsupported.txt are not tried) that a
+# wasi:cli/command component cannot run yet. A golden not listed that fails,
+# and a listed golden that passes, fail the test. Reason after the name.
+archive_formats # files (XO1515 at `rt.fs_read`): a command reaches files through wasi:filesystem, not written yet
+dir_names # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet
+embed_dir_fs # files (XO1515 at `rt.fs_names`): a command reaches files through wasi:filesystem, not written yet
+env_program # files (XO1515 at `rt.fs_stat`): a command reaches files through wasi:filesystem, not written yet
+fs_create_new # files (XO1515 at `rt.fs_file_write`): a command reaches files through wasi:filesystem, not written yet
+fs_handles # files (XO1515 at `rt.fs_file_write`): a command reaches files through wasi:filesystem, not written yet
+fs_native # files (XO1515 at `rt.fs_case_sensitive`): a command reaches files through wasi:filesystem, not written yet
+fs_paths_os # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet
+fs_read_mapped # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet
+fs_symlink_info # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet
+fs_walk_dir # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet
+host_disk # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet
+native_bytes # files (XO1515 at `rt.fs_read`): a command reaches files through wasi:filesystem, not written yet
+os_literal # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet
+prelude_additions # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet
+sys_files_clock # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet
+user_fs # files (XO1515 at `rt.fs_write`): a command reaches files through wasi:filesystem, not written yet

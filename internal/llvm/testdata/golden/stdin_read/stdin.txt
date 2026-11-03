@@ -1,0 +1,11 @@
+first line
+second, with a tab	here
+line 3 of the rest
+line 4 of the rest
+line 5 of the rest
+line 6 of the rest
+line 7 of the rest
+line 8 of the rest
+line 9 of the rest
+line 10 of the rest
+line 11 of the rest

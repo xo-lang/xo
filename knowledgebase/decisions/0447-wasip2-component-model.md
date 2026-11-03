@@ -522,3 +522,107 @@ re-measure (xo-lang-4).
   body, and a request served after a route that read once).
 - Still failing: a client's request trailers (`Request.with_trailers` in a
   component), since outgoing requests hold their body whole.
+
+## Stage 3: commands and stdin (2026-11-02, Xo Lang 4)
+
+The lead queued stage 3 (owner, 2026-11-02): plain programs first, then
+stdin, then a second real host.
+
+- A wasip2/wasm program that does not call `http.serve_component` is now a
+  `wasi:cli/command` 0.2 component (compiler/wasm rt7.xo,
+  component.xo's `run` world) instead of XO1516. Its core module exports
+  `wasi:cli/run@0.2.0#run`, which runs main and returns ok; preview 1's
+  `proc_exit`, arguments and environment are rt7.xo's over
+  `wasi:cli/exit` and `wasi:cli/environment`, and its output is rt6.xo's
+  `wasi:cli/stdout` and `stderr`. `wasi:cli/exit` has only ok and err, so a
+  status other than 0 reaches the host as 1.
+- Stdin: std's `sysread` (std/native/llrt/stdin.xo) calls the new
+  `rt.wasi_stdin_read` on wasm: `wasi:cli/stdin`'s input-stream
+  (`blocking-read`) in a command, `fd_read` of descriptor 0 in a wasip1
+  module (which faulted at `rt.sys6` before), and empty in a `wasi:http`
+  component. New golden stdin_read; the Node runner now feeds a golden's
+  stdin.txt. A second read was canceled on both wasm targets: stop.xo's
+  state record is made only by a native start, and `stop.requested()`
+  read address 16 through the zero record
+  (gotchas/llrt-record-unset-on-wasm.md); a zero record now means no
+  stop.
+- `rt.fs_canceled` no longer counts as files for XO1515: it asks the task,
+  not the file system.
+- internal/selfhost TestWasmCommandGoldens reruns the wasm goldens on
+  wasip2/wasm under `wasmtime run` (stdin, arguments and environment from
+  the golden; a 1 GiB wasm stack, as the Node runner's worker has, with
+  `async-stack-size` above it), checked with `wasm-tools validate`. On the
+  second linux/arm64 host (wasmtime 50.0.1): 428 of the 445 goldens the
+  wasip1 run tries pass; the 17 others use files (`rt.fs_write`,
+  `rt.fs_read`, `rt.fs_stat`...), which a command would reach through
+  `wasi:filesystem`, not written yet, and are listed in
+  testdata/wasm_cmd_unsupported.txt with that reason.
+
+Next for commands: files through `wasi:filesystem` (preopens and
+descriptors in place of rt4.xo's preview 1 calls), which would take the
+17 listed goldens.
+
+### Spin, the second real host (2026-11-02)
+
+Spin 4.2.6 (the release tarball for linux-aarch64, sha256 checked against
+the release's checksums) on the first linux/arm64 offload host, in
+/work/l4tools (approved by the lead as infrastructure), beside wasmtime
+50.0.1 in the same directory. The hello component of the step 1 results,
+built by main's xo (65fe77aee) with `--targets=wasip2/wasm`, 322,947
+bytes, unchanged between the two hosts. Spin needs only this spin.toml
+(no `allowed_outbound_hosts`: the component makes no outgoing request):
+
+```toml
+spin_manifest_version = 2
+
+[application]
+name = "xo-hello"
+version = "0.1.0"
+
+[[trigger.http]]
+route = "/..."
+component = "hello"
+
+[component.hello]
+source = "hello.wasm"
+```
+
+`spin up --from spin.toml --listen ADDR` starts a second `spin` process
+(the trigger), so stopping it means stopping its process group. One job,
+the hosts alternating; first request: the server's start to the first 200
+(the loadgen polls every 2 ms), 5 each; load: 0447's loadgen, 32
+connections, 20 s, 3 runs each, every response checked to be "hello":
+
+| host | first request, median of 5 (ms) | req/s | p50 (ms) | p90 (ms) | p99 (ms) | errors |
+|---|---|---|---|---|---|---|
+| wasmtime serve | 16.8 | 75,973 | 0.354 | 0.716 | 1.460 | 0 |
+| spin up | 25.0 | 57,591 | 0.266 | 0.473 | 1.227 | 0 |
+
+- The load columns are each the median of the 3 runs. Both hosts
+  answered every request (4.6 million under wasmtime, 3.5 million under
+  Spin) with 0 errors. The first start of each was the slowest (67.4 and
+  113.1 ms, likely a cold page cache); the medians are of all 5 starts.
+- Spin's latencies are lower to the 99th percentile but its req/s is 24%
+  lower: at 32 connections its req/s means 0.555 ms a request on average,
+  more than its p90. A second job with a loadgen that also reports the
+  mean, p99.9 and the slowest requests (two runs a host, 20 s, 32
+  connections) shows a 40 ms tail: under Spin 7,084 and 7,195 of about
+  1.15 million requests (0.62%) took over 40 ms (p99.9 41.9 ms, max 52 to
+  69 ms), under wasmtime none took over 25 ms (p99.9 3.5 ms). A step at
+  40 ms is the mark of Nagle's algorithm meeting Linux's delayed ACK (a
+  response written in two pieces without TCP_NODELAY): the host's server,
+  not the component. Not confirmed with a packet trace.
+- Results: ~/xo-lead/notes/xo-lang-4/out/spin2.txt (lead's notes, not in
+  the repository); script spin-hello.sh beside it.
+- What works under Spin: all of TestWasmComponentServe, which now takes
+  `XO_WASM_HOST=spin` (it writes the spin.toml above and serves the
+  component with `spin up`): routes with fields and status, a large body,
+  a POST echo, HEAD, sleep, clocks, random, stderr, stdin (empty), the
+  environment and 404; handle_stream's body read as it arrives with its
+  trailer; a streamed response with trailers; and a fault's 500 with the
+  next request still served. Passed under both hosts on the first offload
+  host, wasm-tools 1.263.0 validating the component. Spin writes a
+  component's stdout and stderr to `.spin/logs/` in the working directory,
+  where wasmtime passes them through. The outgoing-request component
+  (TestWasmComponentClient) was not run under Spin; it would need
+  `allowed_outbound_hosts` in spin.toml.

@@ -2,7 +2,6 @@ package selfhost
 
 import (
 	"bytes"
-	"context"
 	"fmt"
 	"io"
 	"net"
@@ -19,7 +18,7 @@ import (
 )
 
 // TestWasmComponentTargets checks what each WASI target gives (decision 0447):
-// the output's kind, and XO1514 to XO1516 for a program that does not fit.
+// the output's kind, and XO1514 and XO1515 for a program that does not fit.
 func TestWasmComponentTargets(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs")
@@ -53,7 +52,8 @@ fn main(os: Os) {
 		{"module by backend", plain, []string{"--backend=wasm"}, module, "", ""},
 		{"component on wasip1", fmt.Sprintf(serve, ""), []string{"--targets=wasip1/wasm"}, nil, "XO1514", "--targets=wasip2/wasm"},
 		{"component by backend", fmt.Sprintf(serve, ""), []string{"--backend=wasm"}, nil, "XO1514", "--targets=wasip2/wasm"},
-		{"no router", plain, []string{"--targets=wasip2/wasm"}, nil, "XO1516", "serve_component"},
+		{"command", plain, []string{"--targets=wasip2/wasm"}, component, "", ""},
+		{"command reading a file", "fn main(os: Os) {\n  let _b = os.fs.read(\"/etc/hosts\") ?? _ => b\"\"\n}\n", []string{"--targets=wasip2/wasm"}, nil, "XO1515", "files"},
 		{"a file read", fmt.Sprintf(serve, `let _b = os.fs.read("/etc/hosts") ?? _ => b"";`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "files"},
 		{"a process", fmt.Sprintf(serve, `let _p = os.proc.run("true", []).ignore_err("test");`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "processes"},
 		{"a socket", fmt.Sprintf(serve, `let _l = os.net.listen("127.0.0.1:0").ignore_err("test");`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "sockets"},
@@ -101,12 +101,20 @@ fn main(os: Os) {
 // and serves it with `wasmtime serve` given only the wasi:http/proxy world
 // (decision 0447): both tools are test oracles, never build steps. It skips
 // where they are not installed (the Mac); the linux/arm64 offload hosts have
-// them.
+// them. XO_WASM_HOST=spin serves it with Spin's `spin up` instead, from a
+// spin.toml of one wildcard route (stage 3, the second real host).
 func TestWasmComponentServe(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds a program")
 	}
-	for _, tool := range []string{"wasm-tools", "wasmtime"} {
+	host := os.Getenv("XO_WASM_HOST")
+	if host == "" {
+		host = "wasmtime"
+	}
+	if host != "wasmtime" && host != "spin" {
+		t.Fatalf("XO_WASM_HOST=%s: want wasmtime or spin", host)
+	}
+	for _, tool := range []string{"wasm-tools", host} {
 		if _, err := exec.LookPath(tool); err != nil {
 			t.Skipf("%s not found", tool)
 		}
@@ -134,16 +142,27 @@ func TestWasmComponentServe(t *testing.T) {
 	}
 	addr := l.Addr().String()
 	l.Close()
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 	var logs bytes.Buffer
-	srv := exec.CommandContext(ctx, "wasmtime", "serve", "--addr", addr, comp)
+	srv := exec.Command("wasmtime", "serve", "--addr", addr, comp)
+	if host == "spin" {
+		manifest := "spin_manifest_version = 2\n\n[application]\nname = \"serve\"\n\n[[trigger.http]]\nroute = \"/...\"\ncomponent = \"serve\"\n\n[component.serve]\nsource = \"serve.wasm\"\n"
+		if err := os.WriteFile(filepath.Join(tmp, "spin.toml"), []byte(manifest), 0o644); err != nil {
+			t.Fatal(err)
+		}
+		srv = exec.Command("spin", "up", "--from", filepath.Join(tmp, "spin.toml"), "--listen", addr)
+		srv.Dir = tmp
+	}
 	srv.Stdout, srv.Stderr = &logs, &logs
+	// the lifeline stops the server's process group (spin up runs its
+	// trigger as a child) when the test ends
+	cut := testtmp.Lifeline(t, srv, 10*time.Minute)
 	if err := srv.Start(); err != nil {
 		t.Fatal(err)
 	}
-	defer srv.Wait()
-	defer cancel()
+	defer func() {
+		cut()
+		srv.Wait()
+	}()
 	base := "http://" + addr
 	client := &http.Client{Timeout: 30 * time.Second}
 	up := time.Now().Add(30 * time.Second)
@@ -154,7 +173,7 @@ func TestWasmComponentServe(t *testing.T) {
 			break
 		}
 		if time.Now().After(up) {
-			t.Fatalf("wasmtime serve did not listen\n%s", logs.String())
+			t.Fatalf("%s did not listen\n%s", host, logs.String())
 		}
 		time.Sleep(10 * time.Millisecond)
 	}
@@ -191,8 +210,9 @@ func TestWasmComponentServe(t *testing.T) {
 		{"GET", "/now", "", nil, 200, "after 2020 true"},
 		{"GET", "/rand", "", nil, 200, "rand 32"},
 		{"GET", "/log", "", nil, 200, "logged"},
-		// std's stdin reader is the native runtime's, which faults on wasm
-		{"GET", "/stdin", "", nil, 500, `{"error":"internal error"}`},
+		// a wasi:http component has no standard input: it reads as empty
+		// (rt.wasi_stdin_read, decision 0447 stage 3)
+		{"GET", "/stdin", "", nil, 200, "stdin at its end"},
 		{"GET", "/env", "", nil, 200, "env - args 0"},
 		{"GET", "/nope", "", nil, 404, `{"error":"not found"}`},
 	} {

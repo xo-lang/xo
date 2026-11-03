@@ -497,6 +497,25 @@ fn ity_cli_stream(t: Int, stream: Str, getter: Str) -> InstTy {
   i
 }
 
+/// wasi:cli/exit: exit with ok or err (the host's status 0 or 1).
+fn ity_cli_exit() -> InstTy {
+  var i = InstTy{}
+  let r = i.def(dt_result(NO_TYPE, NO_TYPE))
+  i.fun("exit", [("status", r)], NO_TYPE)
+  i
+}
+
+/// wasi:cli/environment: the arguments and the environment.
+fn ity_cli_environment() -> InstTy {
+  var i = InstTy{}
+  let args = i.def(dt_list(VT_STRING))
+  i.fun("get-arguments", [], args)
+  let pair = i.def(dt_tuple([VT_STRING, VT_STRING]))
+  let env = i.def(dt_list(pair))
+  i.fun("get-environment", [], env)
+  i
+}
+
 fn ity_random() -> InstTy {
   var i = InstTy{}
   let bytes = i.def(dt_list(VT_U8))
@@ -726,8 +745,10 @@ fn (var c: Comp) core_inline(exports: List[(Str, Int, Int)]) -> Int {
 }
 
 /// The component of core module core, with the imports it names. Err is an
-/// import no interface below has.
-pub fn component_of(core: Bytes) -> (Bytes, Str) {
+/// import no interface below has. run: a command (decision 0447 stage 3),
+/// which exports wasi:cli/run's run where a wasi:http program exports
+/// incoming-handler's handle.
+pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
   let all = core_imports(core)
   // the resource drops need no memory and no shim
   var shimmed: List[CoreImport] = []
@@ -770,14 +791,17 @@ pub fn component_of(core: Bytes) -> (Bytes, Str) {
   if (client || trailers) && t_poll < 0 {
     return (b"", "a wasi:http client or a handle_stream route needs wasi:io/poll's pollable")
   }
-  let ih = c.import_iface("wasi:http/types${WASI_V}", ity_http_types(t_in, t_out, t_poll, client, trailers))
-  for r in ["fields", "incoming-request", "incoming-body", "outgoing-response", "outgoing-body", "response-outparam"] {
-    let _t = c.alias_type(ih, r)
+  var ih = -1
+  if !run {
+    ih = c.import_iface("wasi:http/types${WASI_V}", ity_http_types(t_in, t_out, t_poll, client, trailers))
+    for r in ["fields", "incoming-request", "incoming-body", "outgoing-response", "outgoing-body", "response-outparam"] {
+      let _t = c.alias_type(ih, r)
+    }
   }
-  if trailers {
+  if trailers && !run {
     let _t = c.alias_type(ih, "future-trailers")
   }
-  if client {
+  if client && !run {
     let t_oreq = c.alias_type(ih, "outgoing-request")
     let t_ropt = c.alias_type(ih, "request-options")
     let _i = c.alias_type(ih, "incoming-response")
@@ -790,6 +814,15 @@ pub fn component_of(core: Bytes) -> (Bytes, Str) {
   }
   if wanted("wasi:cli/stderr${WASI_V}") {
     let _i = c.import_iface("wasi:cli/stderr${WASI_V}", ity_cli_stream(t_out, "output-stream", "get-stderr"))
+  }
+  if wanted("wasi:cli/stdin${WASI_V}") {
+    let _i = c.import_iface("wasi:cli/stdin${WASI_V}", ity_cli_stream(t_in, "input-stream", "get-stdin"))
+  }
+  if wanted("wasi:cli/exit${WASI_V}") {
+    let _i = c.import_iface("wasi:cli/exit${WASI_V}", ity_cli_exit())
+  }
+  if wanted("wasi:cli/environment${WASI_V}") {
+    let _i = c.import_iface("wasi:cli/environment${WASI_V}", ity_cli_environment())
   }
   if wanted("wasi:random/random${WASI_V}") {
     let _i = c.import_iface("wasi:random/random${WASI_V}", ity_random())
@@ -842,7 +875,7 @@ pub fn component_of(core: Bytes) -> (Bytes, Str) {
   let main = c.core_instantiate(0, args)
   let _mem = c.alias_core(2, main, "memory")
   let realloc = c.alias_core(0, main, "cabi_realloc")
-  let handle = c.alias_core(0, main, "wasi:http/incoming-handler${WASI_V}#handle")
+  let entry = c.alias_core(0, main, if run { "wasi:cli/run${WASI_V}#run" } else { "wasi:http/incoming-handler${WASI_V}#handle" })
 
   // the lowered functions, and the fixup that puts them in the shim's table
   var fills: List[(Str, Int, Int)] = []
@@ -867,6 +900,35 @@ pub fn component_of(core: Bytes) -> (Bytes, Str) {
   let fx = c.core_inline(fills)
   let _fixup = c.core_instantiate(2, [("", fx)])
 
+  if run {
+    // run: func() -> result
+    let r = c.deftype(dt_result(NO_TYPE, NO_TYPE))
+    var d: List[Int] = [0x40, 0x00, 0x00]
+    sleb(d, r)
+    let t_run = c.deftype(d)
+    var lift: List[Int] = [1, 0x00, 0x00]
+    uleb(lift, entry)
+    lift.push(0)
+    uleb(lift, t_run)
+    section(c.out, 8, lift)
+    let f_run = c.funcs
+    c.funcs += 1
+    var inst: List[Int] = [1, 0x01, 1, 0x00]
+    name_bytes(inst, "run")
+    inst.push(0x01)
+    uleb(inst, f_run)
+    section(c.out, 5, inst)
+    let exported = c.insts
+    c.insts += 1
+    var ex: List[Int] = [1, 0x00]
+    name_bytes(ex, "wasi:cli/run${WASI_V}")
+    ex.push(0x05)
+    uleb(ex, exported)
+    ex.push(0x00)
+    section(c.out, 11, ex)
+    return (bytes_of(c.out), "")
+  }
+
   // the handler
   let own_req = c.deftype(dt_own(c.res.get_or_fault("incoming-request", "aliased above")))
   let own_out = c.deftype(dt_own(c.res.get_or_fault("response-outparam", "aliased above")))
@@ -880,7 +942,7 @@ pub fn component_of(core: Bytes) -> (Bytes, Str) {
   d.push(0x00)
   let t_handle = c.deftype(d)
   var lift: List[Int] = [1, 0x00, 0x00]
-  uleb(lift, handle)
+  uleb(lift, entry)
   lift.push(0)
   uleb(lift, t_handle)
   section(c.out, 8, lift)
@@ -899,12 +961,15 @@ pub fn component_of(core: Bytes) -> (Bytes, Str) {
   uleb(ex, exported)
   ex.push(0x00)
   section(c.out, 11, ex)
+  (bytes_of(c.out), "")
+}
 
-  var bb = BytesBuilder.with_capacity(c.out.len())
-  for x in c.out {
+fn bytes_of(out: List[Int]) -> Bytes {
+  var bb = BytesBuilder.with_capacity(out.len())
+  for x in out {
     bb.write_byte(UInt8(x & 255))
   }
-  (bb.freeze(), "")
+  bb.freeze()
 }
 
 fn core_list(core: Bytes) -> List[Int] {

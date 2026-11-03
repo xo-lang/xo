@@ -337,6 +337,9 @@ func runWasm(t *testing.T, node, runner, wasm, dir string, leak bool) wasmRun {
 	cmd := exec.Command(node, args...)
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
+	if data, err := os.ReadFile(filepath.Join(dir, "stdin.txt")); err == nil {
+		cmd.Stdin = bytes.NewReader(data)
+	}
 	if data, err := os.ReadFile(filepath.Join(dir, "env.txt")); err == nil {
 		cmd.Env = append(cmd.Env, strings.Fields(string(data))...)
 	}

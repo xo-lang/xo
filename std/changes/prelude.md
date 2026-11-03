@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-02: fix: standard input on wasm
+
+- Kind: fix
+- Commit: this commit
+- Found by: decision 0447 stage 3 (wasip2 commands), reading stdin
+- Go reference: none (Go's wasip1 port reads fd 0 with fd_read)
+- Test: golden stdin_read on wasip1/wasm (Node), on wasip2/wasm (TestWasmCommandGoldens under wasmtime) and natively
+- Timing: none
+- Shipped in: every release with wasip1/wasm, through v0.35.0
+
+Reading `os.stdio` on wasm faulted (`rt.sys6`, a Linux system call). It
+now reads descriptor 0 with `fd_read` on wasip1/wasm and `wasi:cli/stdin`
+in a wasip2/wasm command; a `wasi:http` component's standard input is
+empty. A second read on wasm was also canceled: `stop.requested()` read
+through a state record that only a native start makes
+(gotchas/llrt-record-unset-on-wasm.md); with no record it now reports no
+stop.
+
 ## 2026-11-02: fix: `--race` no longer reports the runtime's own task, fiber and worker records as races
 
 - Kind: fix

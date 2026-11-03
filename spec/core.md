@@ -3367,8 +3367,8 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO1512` | error | build | under `XO_BACKEND_CACHE=verify`, a build, run, or test the run cache would have served differs from its rebuild, in the binary or in what the build printed: an input the entry does not list, or a build that is not reproducible (decision 0360) |
 | `XO1513` | error | build | a command the WASI build of xo (`xo` built for wasip1/wasm) does not offer: it needs a process, a socket or a system tool that WASI preview1 does not have (`run`, `test`, `serve`, `get`, `build --backend=llvm`, ...); printed as `xo: COMMAND is not available in the WASI build`, exit status 2 (decision 0405) |
 | `XO1514` | error | build | a program that calls `http.serve_component` built for wasip1/wasm, which `--backend=wasm` alone is; it builds with `--targets=wasip2/wasm` (decision 0447) |
-| `XO1515` | error | build | a program built for wasip2/wasm reaches what the `wasi:http` proxy world does not have: files, processes or sockets; the message names the call and how it is reached (decision 0447) |
-| `XO1516` | error | build | a program built for wasip2/wasm whose main never calls `http.serve_component` (decision 0447) |
+| `XO1515` | error | build | a program built for wasip2/wasm reaches what its world does not have: files, processes or sockets; the message names the call and how it is reached (decision 0447) |
+| `XO1516` | error | build | a program built for wasip2/wasm whose main never calls `http.serve_component` (decision 0447); no longer reported since stage 3 (2026-11-02), when such a program became a `wasi:cli/command` component |
 
 `XO1001` is reserved: no `std/sys/<os>` module exists yet (14), so it is
 never reported.
@@ -3591,12 +3591,20 @@ after the other targets are built (exit status 1). Several targets write
 directory; `-o NAME` for a windows target with no extension writes
 `NAME.exe`.
 
-`--targets=wasip2/wasm`, not part of `all`, builds a program that calls
-`http.serve_component` as a `wasi:http` 0.2 component (decision 0447), and is
-named alone. A program is a component or it is not: `http.serve_component` on
-wasip1/wasm is XO1514, and on wasip2/wasm a program that never calls it is
-XO1516 and one that reaches files, processes or sockets is XO1515. Each
-component's imports are `@0.2.0`. `http.Client` works through the host's
+`--targets=wasip2/wasm`, not part of `all`, builds a WASI 0.2 component and
+is named alone (decision 0447). A program that calls `http.serve_component`
+is a `wasi:http` 0.2 component (the `wasi:http/proxy` world); any other
+program is a `wasi:cli/command` component, whose `wasi:cli/run` export runs
+main (stage 3, 2026-11-02): its arguments and environment are
+`wasi:cli/environment`'s, its input `wasi:cli/stdin`'s (as standard input
+is fd_read's on wasip1/wasm; a `wasi:http` component's is empty), its output
+`wasi:cli/stdout` and `stderr`'s, and
+an exit status other than 0 (a fault, `proc.exit(n)`) is `wasi:cli/exit`'s
+err, which a host reports as status 1. `http.serve_component` on
+wasip1/wasm is XO1514; on wasip2/wasm a program that reaches files,
+processes or sockets is XO1515 (XO1516, a program with no router, is no
+longer reported: such a program is a command). Each component's imports
+are `@0.2.0`. `http.Client` works through the host's
 `wasi:http/outgoing-handler`, imported only by a program that reaches it (see
 `spec/std.md`); `net.dial`'s own sockets stay XO1515. A `handle_stream` route
 reads the request body from the host's input-stream as it arrives, with its

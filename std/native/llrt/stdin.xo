@@ -437,6 +437,9 @@ fn win_sysread(p: Int, n: Int, pd: Int) -> Int {
 /// when the poller's descriptor (pd, not 0) has nothing yet, else minus
 /// errno. EINTR and EAGAIN on a direct read are retried.
 fn sysread(p: Int, n: Int, pd: Int) -> Int {
+  if target.arch == TargetArch.Wasm32 {
+    return rt.wasi_stdin_read(p, n)
+  }
   if target.os == TargetOs.Windows {
     return win_sysread(p, n, pd)
   }
