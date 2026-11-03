@@ -1007,6 +1007,175 @@ fn peer_known(fd: Int) -> Bool {
   r == 0
 }
 
+/// Whether the resolved addresses at out hold more than one family.
+fn families_mixed(out: Int, n: Int) -> Bool {
+  let f0 = family(out)
+  for i in 1..n {
+    if family(out + SA * i) != f0 {
+      return true
+    }
+  }
+  false
+}
+
+/// The first address at or after index from whose family is f (same) or
+/// is not f (!same), or -1.
+fn next_addr(out: Int, n: Int, from: Int, f: Int, same: Bool) -> Int {
+  var i = from
+  while i < n {
+    if (family(out + SA * i) == f) == same {
+      return i
+    }
+    i += 1
+  }
+  -1
+}
+
+/// Starts a connect to sa on a new nonblocking socket: (fd, pd, e) with
+/// e 0 connected, 0 - einprogress() in flight, or the error (pd 0, the
+/// socket closed).
+fn dial_start(sa: Int) -> (Int, Int, Int) {
+  let f = family(sa)
+  let fd = sock.socket(f, sock.SOCK_STREAM | cloexec(), 6)
+  if fd < 0 {
+    return (0, 0, fd)
+  }
+  let _b = sock.nonblock(fd)
+  let pd = poll.pd_open(fd, true)
+  if pd < 0 {
+    let _c = sock.close(fd)
+    return (0, 0, pd)
+  }
+  let _g = poll.pd_begin(pd)
+  var e = sock.connect(fd, sa, sa_len(f))
+  while e == 0 - EINTR {
+    e = sock.connect(fd, sa, sa_len(f))
+  }
+  if e != 0 && e != 0 - einprogress() {
+    poll.pd_end(pd)
+    poll.pd_free(pd)
+    return (0, 0, e)
+  }
+  (fd, pd, e)
+}
+
+/// A connect's state after its socket was reported writable: 0 connected,
+/// 1 still in flight (connect_wait's checks), or the error.
+fn dial_check(fd: Int) -> Int {
+  let e = sock.sock_err(fd)
+  if e == 0 - einprogress() || e == 0 - EINTR {
+    return 1
+  }
+  if e != 0 {
+    return e
+  }
+  if sock.windows() || peer_known(fd) { 0 } else { 1 }
+}
+
+/// Drops a connect in flight.
+fn dial_drop(pd: Int) {
+  if pd != 0 {
+    poll.pd_end(pd)
+    poll.pd_free(pd)
+  }
+}
+
+/// Go's dual stack dial (net/dial.go dialParallel, RFC 6555): the
+/// addresses of the first one's family in order (the primaries), and
+/// 300 ms after the first started, or once the primaries are used up,
+/// the others (the fallbacks) beside them; the first connection wins and
+/// the other attempt is dropped. (connection, 0), or (0, error): 1
+/// canceled, 2 the time is up, else the primaries' last error (the
+/// fallbacks' when no primary got as far as an error).
+fn dial_race(c: Int, out: Int, n: Int, when: Int) -> (Int, Int) {
+  let f0 = family(out)
+  let fall_at = poll.deadline(300000000)
+  var next = [0, 0]
+  var fds = [0, 0]
+  var pds = [0, 0]
+  var errs = [0, 0]
+  var used = [false, false]
+  var fall = false
+  while true {
+    // keep one attempt in flight per started chain
+    for k in 0..2 {
+      if k == 1 && !fall {
+        if !used[0] && poll.now() < fall_at {
+          break
+        }
+        fall = true
+      }
+      while pds[k] == 0 && !used[k] {
+        let i = next_addr(out, n, next[k], f0, k == 0)
+        if i < 0 {
+          used[k] = true
+          break
+        }
+        next[k] = i + 1
+        let (fd, pd, e) = dial_start(out + SA * i)
+        if e == 0 {
+          poll.pd_end(pd)
+          dial_drop(pds[1 - k])
+          return (conn_new(c, fd, pd), 0)
+        }
+        if pd == 0 {
+          errs[k] = e
+        } else {
+          fds[k] = fd
+          pds[k] = pd
+        }
+      }
+    }
+    if pds[0] == 0 && pds[1] == 0 {
+      if used[0] && (fall && used[1]) {
+        return (0, if errs[0] != 0 { errs[0] } else { errs[1] })
+      }
+      continue
+    }
+    var k = 0
+    if pds[0] != 0 && pds[1] != 0 {
+      k = poll.pd_wait2_w(pds[0], pds[1], c, when)
+    } else {
+      k = if pds[0] != 0 { 0 } else { 1 }
+      // until the fallbacks start, if they have not
+      var dl = when
+      if !fall && (dl == 0 || fall_at < dl) {
+        dl = fall_at
+      }
+      let w = poll.pd_wait_ctx(pds[k], true, c, dl)
+      if w == poll.TIMEOUT && (dl != when) {
+        continue
+      }
+      if w != poll.READY {
+        k = 0 - w
+      }
+    }
+    if k < 0 {
+      dial_drop(pds[0])
+      dial_drop(pds[1])
+      if k == 0 - poll.CANCELED {
+        return (0, 1)
+      }
+      if k == 0 - poll.TIMEOUT {
+        return (0, 2)
+      }
+      return (0, 0 - econnaborted())
+    }
+    let e = dial_check(fds[k])
+    if e == 0 {
+      poll.pd_end(pds[k])
+      dial_drop(pds[1 - k])
+      return (conn_new(c, fds[k], pds[k]), 0)
+    }
+    if e != 1 {
+      dial_drop(pds[k])
+      pds[k] = 0
+      errs[k] = e
+    }
+  }
+  (0, 0)
+}
+
 /// dial giving up after d ns (d <= 0: no limit): the connection, or 0
 /// with the error recorded (xo_http.c's client dials with it too).
 pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4) -> Int {
@@ -1047,38 +1216,46 @@ pub fn dial_timeout(addr: Str, d: Int, timeout_tag: Int = 4) -> Int {
   }
   var e = 0
   var cn = 0
-  for i in 0..n {
-    let sa = out + SA * i
-    let f = family(sa)
-    let fd = sock.socket(f, sock.SOCK_STREAM | cloexec(), 6)
-    if fd < 0 {
-      e = fd
-      continue
-    }
-    let _b = sock.nonblock(fd)
-    let pd = poll.pd_open(fd, true)
-    if pd < 0 {
-      e = pd
-      let _c = sock.close(fd)
-      continue
-    }
-    let _g = poll.pd_begin(pd)
-    e = sock.connect(fd, sa, sa_len(f))
-    while e == 0 - EINTR {
+  if families_mixed(out, n) {
+    // IPv6 and IPv4 addresses (localhost on Windows: ::1 first, and a
+    // refused connect there takes 2 s): Go's dual stack race
+    let (rc, re) = dial_race(c, out, n, when)
+    cn = rc
+    e = re
+  } else {
+    for i in 0..n {
+      let sa = out + SA * i
+      let f = family(sa)
+      let fd = sock.socket(f, sock.SOCK_STREAM | cloexec(), 6)
+      if fd < 0 {
+        e = fd
+        continue
+      }
+      let _b = sock.nonblock(fd)
+      let pd = poll.pd_open(fd, true)
+      if pd < 0 {
+        e = pd
+        let _c = sock.close(fd)
+        continue
+      }
+      let _g = poll.pd_begin(pd)
       e = sock.connect(fd, sa, sa_len(f))
-    }
-    if e == 0 - einprogress() {
-      e = connect_wait(c, pd, fd, when)
-    }
-    poll.pd_end(pd)
-    if e == 0 {
-      cn = conn_new(c, fd, pd)
-      break
-    }
-    poll.pd_free(pd)
-    if e == 1 || e == 2 {
-      // canceled, or the time is up
-      break
+      while e == 0 - EINTR {
+        e = sock.connect(fd, sa, sa_len(f))
+      }
+      if e == 0 - einprogress() {
+        e = connect_wait(c, pd, fd, when)
+      }
+      poll.pd_end(pd)
+      if e == 0 {
+        cn = conn_new(c, fd, pd)
+        break
+      }
+      poll.pd_free(pd)
+      if e == 1 || e == 2 {
+        // canceled, or the time is up
+        break
+      }
     }
   }
   mfree(out)

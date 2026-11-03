@@ -15,6 +15,23 @@ the race heap's malloc and a new worker's record memset run with writes
 ignored, so ThreadSanitizer resets their shadow instead of recording the
 allocating thread's write (gotchas/race-runtime-records-false-reports.md).
 
+## 2026-11-02: fix: a dial to localhost on Windows waited 2 s for ::1
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1's Windows concurrency stress (golden tls_coalesced_finish timed out in 128 of 128 runs; alone it took 84 s, 2 s a connection)
+- Go reference: net/dial.go dialParallel (RFC 6555, a 300 ms fallback delay)
+- Test: golden net_dial_dual_stack (five dials to localhost with a listener on 127.0.0.1 under 5 s: 10 s on Windows before, `fast false`)
+- Timing: tls_coalesced_finish on Windows 84 s to under 1 s alone; no change for a name of one family
+- Shipped in: v0.7.0 (the C runtime's dial tried addresses in turn) through v0.35.0
+
+`net.dial` tried a name's addresses one at a time. Windows resolves
+localhost to `::1` and then `127.0.0.1`, and a refused connect there
+takes about 2 s, so a dial to localhost with a server listening on
+127.0.0.1 only spent 2 s on `::1` first. A name with IPv6 and IPv4
+addresses is now raced as Go does (decision 0462): the other family
+starts 300 ms after the first attempt, the first connection wins.
+
 ## 2026-11-02: fix: fault and out of memory messages were written from freed memory
 
 - Kind: fix

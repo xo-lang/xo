@@ -1,0 +1,52 @@
+// net.dial to a name with IPv6 and IPv4 addresses races them as Go does
+// (net/dial.go dialParallel): the second family starts 300 ms after the
+// first. On Windows `localhost` is ::1 first and a refused connect there
+// takes about 2 s, so a listener on 127.0.0.1 alone cost every dial to
+// localhost 2 s (tls_coalesced_finish: 84 s for its 40 connections,
+// 2026-11-02). Five dials must finish in well under the 10 s the
+// one-at-a-time dial took there; each family alone must still connect.
+
+fn dials(os: Os, host: Str, l: Listener, n: Int) -> Int {
+  let port = l.addr().split(":").last() ?? ""
+  var ok = 0
+  for _ in 0..n {
+    match os.net.dial("${host}:${port}") {
+      Ok(c) => {
+        ok += 1
+        c.close()
+      }
+      Err(e) => os.stdio.println("dial ${host}: ${e}")
+    }
+  }
+  ok
+}
+
+fn main(os: Os) {
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let t = os.clock.now()
+      let ok = dials(os, "localhost", l, 5)
+      let fast = os.clock.since(t) < 5s
+      os.stdio.println("localhost to 127.0.0.1: ${ok} of 5, fast ${fast}")
+      l.close()
+    }
+    Err(e) => os.stdio.println("listen: ${e}")
+  }
+  // ::1 alone: hosts with no IPv6 loopback skip it
+  match os.net.listen("[::1]:0") {
+    Ok(l) => {
+      let ok = dials(os, "localhost", l, 1)
+      os.stdio.println("localhost to ::1: ${if ok == 1 || !has_v6(os) { "ok" } else { "failed" }}")
+      l.close()
+    }
+    Err(_) => os.stdio.println("localhost to ::1: ok")
+  }
+}
+
+/// Whether localhost resolves to an IPv6 address here.
+fn has_v6(os: Os) -> Bool {
+  match os.net.lookup_host("localhost") {
+    Ok(a) => a.any(fn(x) { x.contains(":") })
+    Err(_) => false
+  }
+}

@@ -1,0 +1,5 @@
+exit 0
+--- stdout
+localhost to 127.0.0.1: 5 of 5, fast true
+localhost to ::1: ok
+--- stderr

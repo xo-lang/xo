@@ -743,6 +743,103 @@ pub fn pd_wait_ctx(pd: Int, write: Bool, c: Int, deadline: Int) -> Int {
   res
 }
 
+/// Waits until descriptor pa or pb is writable (two connects in flight,
+/// netconn.dial_race): 0 pa, 1 pb, or 0 - TIMEOUT, 0 - CANCELED,
+/// 0 - CLOSED. The task's one park sits in both write slots; readiness
+/// handed to the side not returned is kept for that side's next wait.
+/// The deadline is on pa's timer.
+pub fn pd_wait2_w(pa: Int, pb: Int, c: Int, deadline: Int) -> Int {
+  let park = addw(c, ctx.C_PARK)
+  rt.mem_store(c, ctx.C_LOCKS, 0, 8)
+  let win = windows()
+  var t = 0
+  var res = 0 - TIMEOUT
+  while true {
+    if budget.canceled(c) {
+      res = 0 - CANCELED
+      break
+    }
+    pool.park_reset(park)
+    // readiness kept on either side, or the park in both slots
+    var found = -1
+    var reg0 = false
+    var reg1 = false
+    for k in 0..2 {
+      let pd = if k == 0 { pa } else { pb }
+      lk(addw(pd, D_MU))
+      if rt.mem_load(pd, D_CLOSED, 4) != 0 {
+        found = 2
+      } else if rt.mem_load(pd, D_WREADY, 4) != 0 {
+        rt.mem_store(pd, D_WREADY, 0, 4)
+        found = k
+      } else {
+        rt.mem_store(pd, D_WWAIT, park, 8)
+        if k == 0 {
+          reg0 = true
+        } else {
+          reg1 = true
+        }
+        if win && afd() != 0 {
+          pd_arm(pd)
+        }
+      }
+      unlk(addw(pd, D_MU))
+      if found >= 0 {
+        break
+      }
+    }
+    if found < 0 {
+      if win && afd() == 0 {
+        poke()
+      }
+      if deadline != 0 && t == 0 {
+        t = pd_timer(pa, true)
+        timer_arm(t, deadline, park)
+      }
+      if !(t != 0 && fired(t)) {
+        wait(c)
+      }
+    }
+    // take the park out of both slots: a registered side whose slot the
+    // poller emptied was handed readiness; the first is the answer, a
+    // second keeps it
+    for k in 0..2 {
+      if (k == 0 && reg0) || (k == 1 && reg1) {
+        let pd = if k == 0 { pa } else { pb }
+        lk(addw(pd, D_MU))
+        if rt.mem_load(pd, D_WWAIT, 8) == park {
+          rt.mem_store(pd, D_WWAIT, 0, 8)
+        } else if rt.mem_load(pd, D_CLOSED, 4) != 0 {
+          if found < 0 {
+            found = 2
+          }
+        } else if found < 0 {
+          found = k
+        } else {
+          rt.mem_store(pd, D_WREADY, 1, 4)
+        }
+        unlk(addw(pd, D_MU))
+      }
+    }
+    if found == 2 {
+      res = 0 - CLOSED
+      break
+    }
+    if found >= 0 {
+      res = found
+      break
+    }
+    if t != 0 && fired(t) {
+      res = 0 - TIMEOUT
+      break
+    }
+  }
+  if t != 0 {
+    timer_disarm(t)
+  }
+  res
+}
+
 /// The deadline timer of pd's reads (or writes): made with its pair the
 /// first time a wait has a deadline, and kept until pd is freed
 /// (pd_timers_free), so a wait with the same deadline as the last does

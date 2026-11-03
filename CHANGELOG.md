@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- FIX (native): `net.dial` of a name with IPv6 and IPv4 addresses races them as Go's dual stack dial does, the second family 300 ms after the first (decision 0462). On Windows, where localhost is ::1 first and a refused connect takes about 2 s, every dial to localhost with an IPv4-only listener cost 2 s (golden tls_coalesced_finish: 84 s, past its 60 s timeout under load); now 300 ms at most. Since v0.7.0.
 
 - fix (native, LLVM): a select's word send arm keeps its channel, and a word receive arm keeps its select, alive until the runtime call that uses them returns; both were released as soon as their address was taken, so a send arm whose channel had no later use could free it while select still read it (TSan use-after-free in select_arm_order under --race on Linux). A select's receive arm now takes the word path whenever its element is a word (it was decided from a checker type id read as an SSA type, so it varied with unrelated types). Codegen pattern test test/codegen/selectrc; gotcha obj-addr-handle-released-early.md.
 - perf (native, amd64): a two word copy into the stack whose first word sits at 8 mod 16 copies that word alone, so no 16 byte movdqu store into the stack straddles a 4 KiB page (the amd64 form of the arm64 save pair fix): 82,849 such stores in xo for linux/amd64 to 0, .text +0.08%. bench/results/stack-phase-2026-11-02.md "amd64".

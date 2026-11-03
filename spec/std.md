@@ -922,6 +922,13 @@ alone though it reads and writes, and a function given only a
 `ServerConn` cannot dial. Both are handles with the same behavior;
 `Stream` takes either, under `net`.
 
+`dial` of a name with IPv6 and IPv4 addresses (decision 0462) races them
+as Go's dual stack dial does: the addresses of the first one's family in
+order, and, 300 ms after the first started or once those failed, the
+other family's beside them; the first connection wins and the other
+attempt is dropped. An error is the first family's when it got one. A
+name of one family dials its addresses one at a time, as before.
+
 TCP connections (decision 0071): `accept` waits for the next connection;
 `read` returns at most `max` bytes (at most 1 MiB; fewer when fewer are
 there) and `None` at the end of the stream; `write` returns when every
