@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- feature (prelude): `NetConn`, Go's net.Conn: Stream's read, write and close plus `set_deadline`, `set_read_deadline` and `set_write_deadline`, satisfied by Conn, ServerConn and tls.TlsConn, so one code path sets deadlines on a plain or TLS connection (`let c: NetConn = if tls { t } else { conn }`); Stream is unchanged (decision 0481).
 - perf (std/cron): `Schedule.next` skips a day that cannot match by arithmetic instead of a civil conversion through the zone: monthly_last 0.857 of robfig/cron's wall on linux/arm64 (was 3.82), fire times unchanged.
 - wasm: in a wasip2/wasm command with tasks, a stdin read waits only for its own task: the reading task parks on the stdin stream's pollable and the others keep running, where before the whole instance blocked until input came (decision 0447 R2k, TestWasmCommandStdinParks).
 - feature (std): `Duration.round` and `truncate` (Go's Duration.Round and Truncate), `Bytes.to_str_lossy` (each invalid UTF-8 byte U+FFFD, as std reads outside text) and `Bytes.to_valid_utf8(replacement)` (Go's ToValidUTF8), and `Db.begin(isolation:, read_only:)` with `sql.Isolation` (Go's TxOptions: a driver gets SET TRANSACTION after BEGIN; the in memory Db refuses writes in a read only transaction with 25006). Go's tests ported into the time, bytes and sql corpora (survey 2026-10-30 rank 13).

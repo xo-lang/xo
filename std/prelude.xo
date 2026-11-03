@@ -996,6 +996,18 @@ interface Stream {
   fn close(self)
 }
 
+/// A connection whose reads and writes take deadlines (Go's net.Conn):
+/// Conn, ServerConn and TlsConn. Every NetConn is also a Stream
+/// (decision 0481).
+interface NetConn {
+  fn read(self, max: Int) -> Bytes? ! NetErr uses net
+  fn write(self, data: Bytes) -> () ! NetErr uses net
+  fn close(self)
+  fn set_deadline(self, clock: Clock, t: Time?) uses clock
+  fn set_read_deadline(self, clock: Clock, t: Time?) uses clock
+  fn set_write_deadline(self, clock: Clock, t: Time?) uses clock
+}
+
 /// A network interface of the host (Net.interfaces, decision 0426; Go's
 /// net.Interface and its Addrs).
 struct NetInterface {

@@ -1,5 +1,18 @@
 # prelude changes
 
+## 2026-11-03: feature: NetConn, a connection interface with deadlines
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0430's owner option (Stream deadline setters), decided 2026-11-03 as decision 0481
+- Go reference: net.Conn (SetDeadline, SetReadDeadline, SetWriteDeadline)
+- Test: golden netconn_deadline (plain and TLS through one NetConn: read timeout, request, write past its deadline) on arm64, LLVM and Go
+- Timing: none (an interface; calls dispatch as Stream's do)
+- Shipped in: not yet released
+
+`NetConn` has Stream's methods and the three deadline setters; `Conn`,
+`ServerConn` and `tls.TlsConn` satisfy it. Stream is unchanged.
+
 ## 2026-11-03: feature: Duration.round and truncate, Bytes.to_str_lossy and to_valid_utf8
 
 - Kind: feature

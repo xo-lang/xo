@@ -1,0 +1,71 @@
+// Decision 0481: NetConn, Go's net.Conn, is the interface with the
+// deadline setters that Conn, ServerConn and TlsConn satisfy, beside
+// Stream. The queueworker shape: one code path talks to a server over
+// plain TCP or TLS, chosen at run time with the type written on the `if`
+// (core 2.10: without it the arms do not join), and sets its deadlines
+// through the interface; a NetConn is also passed where a Stream is
+// expected. Every backend must agree. The certificates are golden
+// tls_client's.
+use std/http
+use std/tls
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle("GET /hello", fn(_req) { http.text(200, "hello") })
+  r
+}
+
+fn show(r: Result[Bytes?, NetErr]) -> Str {
+  match r {
+    Ok(Some(b)) => "data ${(b.to_str() ?? "?").split("\r\n")[0]}"
+    Ok(None) => "end"
+    Err(e) => "err ${e}"
+  }
+}
+
+/// A Stream's first answer to a request (no deadlines here).
+fn ask(s: Stream) -> Str uses net {
+  s.write("GET /hello HTTP/1.1\r\nHost: test\r\nConnection: close\r\n\r\n".bytes()) ?? e => return "write ${e}"
+  show(s.read(4096))
+}
+
+/// The worker: a read that times out through the interface, then a
+/// request with the deadline cleared.
+fn work(c: NetConn, clock: Clock) -> Str uses clock, net {
+  c.set_read_deadline(clock, Some(clock.now() + 50ms))
+  let first = show(c.read(64))
+  c.set_deadline(clock, None)
+  let answer = ask(c)
+  c.set_write_deadline(clock, Some(clock.now() - 1s))
+  let late = match c.write("x".bytes()) {
+    Ok(_) => "write ok"
+    Err(e) => "write ${e}"
+  }
+  c.close()
+  "${first}; ${answer}; ${late}"
+}
+
+fn main(os: Os) {
+  let clock = os.clock
+  let ca = tls.roots(ca_pem()).or_fault("roots")
+  let good = http.tls_cert(good_cert(), good_key()).or_fault("good")
+  let lt = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let lp = os.net.listen("127.0.0.1:0").or_fault("listen")
+  let st = http.server(lt, routes()).with_tls([good])
+  let sp = http.server(lp, routes())
+  scope s {
+    s.spawn_background(fn() { st.serve().ignore_err("test") })
+    s.spawn_background(fn() { sp.serve().ignore_err("test") })
+    for use_tls in [false, true] {
+      let addr = if use_tls { lt.addr() } else { lp.addr() }
+      let raw = os.net.dial(addr).or_fault("dial")
+      let c: NetConn = if use_tls { tls.client(raw, "localhost", roots: Some(ca)).or_fault("client") } else { raw }
+      os.stdio.println("tls=${use_tls}: ${work(c, clock)}")
+    }
+  }
+  os.stdio.println("done")
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

@@ -893,7 +893,23 @@ interface Stream {                                 // either kind of connection
   fn write(self, data: Bytes) -> () ! NetErr uses net
   fn close(self)
 }
+interface NetConn {                                // decision 0481: Go's net.Conn
+  fn read(self, max: Int) -> Bytes? ! NetErr uses net
+  fn write(self, data: Bytes) -> () ! NetErr uses net
+  fn close(self)
+  fn set_deadline(self, clock: Clock, t: Time?) uses clock
+  fn set_read_deadline(self, clock: Clock, t: Time?) uses clock
+  fn set_write_deadline(self, clock: Clock, t: Time?) uses clock
+}
 ```
+
+`NetConn` (decision 0481) is a connection with deadlines: `Conn`,
+`ServerConn` and `tls.TlsConn` satisfy it, and every NetConn is also a
+Stream. Code that talks over plain TCP or TLS chosen at run time writes
+the type on the join, `let c: NetConn = if tls { tls_conn } else { conn
+}` (core 2.10; without it the arms are `XO0401`), then sets deadlines
+through `c`. `Stream` keeps its three methods, so user types that
+implement it are unaffected.
 
 ```
 struct NetInterface {

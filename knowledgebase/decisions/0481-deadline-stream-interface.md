@@ -1,7 +1,7 @@
 # 0481: A connection interface with deadlines, beside Stream
 
-Status: Accepted (owner, 2026-11-03; through the lead); implementation in
-progress (Xo Lang 2). Supersedes the "Options for the owner" entry of
+Status: Accepted (owner, 2026-11-03; through the lead); implemented
+2026-11-03 (Xo Lang 2). Supersedes the "Options for the owner" entry of
 [0430](0430-connection-deadlines.md) (adding the setters to `Stream`).
 
 ## Context
@@ -49,6 +49,8 @@ own proposal, not part of this decision.
 ## Consequences
 
 - spec/std.md lists NetConn beside Stream; std/changes/prelude.md.
+- The native backends lower NetConn's calls as Stream's, as ordinary
+  interface calls (compiler/ssa/call.xo).
 - A golden on the queueworker shape (dial plain or TLS, pick by a flag
   with the annotated `if`, set a read deadline through NetConn and see the
   read time out) on every backend.
