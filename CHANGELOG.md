@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (memory, Linux): std's half for an ELF link no longer keeps its dead sections (about 30,400 of coll's 51,600, one per std function the program does not use): in use at the link's peak falls from 16.2 to 12.7 MB, the output unchanged (decision 0448). linux/arm64 edit builds: max RSS coll 0.873, conc-spawn 0.850, the HTTP server 0.904; wall 0.972, 0.949, 0.955.
 - perf (memory, Linux): an ELF link through std's half holds about half the memory at its peak (in use at link.resolve 29.3 to 16.9 MB for coll, output unchanged): std's half no longer keeps the local symbols of its dead sections that no relocation names (78,725 of coll's 105,356 symbols are dead sections' locals), so its file is smaller too, and the section strip no longer copies std's section lists to mark sections dead that already were (decision 0448). linux/arm64 edit builds: max RSS coll 0.896, conc-spawn 0.930, the HTTP server 0.927.
 - perf (memory, Linux): an ELF link through std's half no longer allocates an empty relocation list per section (std's half has about 51,600 sections and 3,500 relocations for a small program): the decoded half falls from 18.2 to 11.3 MB at the link's peak (decision 0448). linux/arm64 edit builds: max RSS coll 0.942, conc-spawn 0.903, the HTTP server 0.974; wall 0.983, 0.975, 0.943.
 

@@ -174,6 +174,7 @@ pub fn (s: ElfStoreLink) capture_half() -> ElfHalf? {
     // file is keyed by xo's self_id, so none written before this is read.
     let (kept_syms, remap) = drop_dead_locals(ob.sects, ob.syms)
     ob.syms = kept_syms
+    drop_dead_sects(ob)
     maps.push(remap)
     objs.push(ob)
   }
@@ -334,6 +335,59 @@ pub fn elf_half_encode(h: ElfHalf) -> Bytes {
 
 /// The half in b, None when b is not one: section bytes and names are
 /// views of b.
+/// Leaves out ob's dead sections (most of std's half: one per function
+/// the program does not use), after drop_dead_locals: what still names
+/// one (a global symbol, a group member) names a single dead section at
+/// the end instead, which every reader of a symbol's section checks first
+/// (defines, the symbol's address, the symbol table). Section indexes move
+/// down; a group's members are rewritten.
+fn drop_dead_sects(var ob: EObj) {
+  var map: List[Int] = List.with_capacity(ob.sects.len())
+  var keep = 0
+  for (k, s) in ob.sects.indexed() {
+    if k > 0 && s.dead && s.typ != SHT_GROUP {
+      map.push(-1)
+    } else {
+      map.push(keep)
+      keep += 1
+    }
+  }
+  if keep == ob.sects.len() {
+    return
+  }
+  let stub = keep
+  var out: List[ESect] = List.with_capacity(keep + 1)
+  for (k, s) in ob.sects.indexed() {
+    if map[k] < 0 {
+      continue
+    }
+    var t = s
+    if t.typ == SHT_GROUP && t.data.len() >= 4 {
+      var d = BytesBuilder.new()
+      sw32(d, rd32(t.data, 0))
+      var m = 4
+      while m + 4 <= t.data.len() {
+        let j = rd32(t.data, m)
+        sw32(d, if j >= 0 && j < map.len() && map[j] >= 0 { map[j] } else { stub })
+        m += 4
+      }
+      t.data = d.freeze()
+    }
+    out.push(t)
+  }
+  out.push(ESect{name: "", typ: 0, flags: 0, align: 1, data: "".bytes(), size: 0, dead: true, store_dead: true})
+  ob.sects = out
+  for i in 0..ob.syms.len() {
+    let x = ob.syms[i].shndx
+    if x > 0 && x < SHN_LORESERVE && x < map.len() {
+      let nx = if map[x] >= 0 { map[x] } else { stub }
+      if nx != x {
+        ob.syms[i].shndx = nx
+      }
+    }
+  }
+}
+
 /// syms without the local symbols of dead sections that no relocation of
 /// sects names, and the old index to new index map (empty when nothing is
 /// left out; a dropped symbol maps to -1); sects' relocations and a group

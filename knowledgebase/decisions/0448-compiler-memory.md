@@ -971,6 +971,15 @@ linux/arm64 ab-host edit builds against 902e37b4c, 3 rounds: max RSS coll 0.896,
 conc-spawn 0.930, the HTTP server 0.927; wall 0.984, 0.935, 1.011 (within noise). What is left at link.resolve: the
 decoded half (8.2 MB) and the half file's bytes (7.5 MB, viewed by every kept name and section).
 
+Then the half's dead sections (30,446 of coll's 51,628 records, one per function the program does
+not use): the half leaves them out when it is written (elfhalf.xo drop_dead_sects), and what
+still names one (a global symbol of a dead section, a group member) names one dead section at the
+end of its object instead, which every reader of a symbol's section checks first (defines, the
+symbol's address, the symbol table). Same environment, A then B: in use at link.resolve 16.2 to
+12.7 MB, the half file's bytes 7.5 to 5.9 MB, max RSS 67.2 to 60.5 MB; coll, conc-spawn and the
+HTTP server link byte-identical. linux/arm64 ab-host edit builds against 0906f6390, 3 rounds:
+max RSS coll 0.873, conc-spawn 0.850, the HTTP server 0.904; wall 0.972, 0.949 (within noise), 0.955.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.
