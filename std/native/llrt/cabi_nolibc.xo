@@ -46,12 +46,15 @@ fn nl_start(sp: Int) -> Int {
 /// stderr.
 fn nl_std(i: Int) -> Int { libcio.std_file(i) }
 
-/// XO_THP=off in the environment nl_start recorded (decision 0454): the
-/// main thread's TLS block and stack are mapped before the heaps exist and
-/// entry.xo reads the variable, so they look at environ themselves.
+/// Whether the main thread's TLS block and stack are mapped
+/// MADV_NOHUGEPAGE: under XO_THP=off (decision 0454) and the default dense
+/// (decision 0477: under THP=always the first touched 2 MiB of the stack
+/// was a huge page, about 2 MB of every program's RSS), not under
+/// XO_THP=kernel. They are mapped before the heaps exist and entry.xo
+/// reads the variable, so they look at the environment nl_start recorded.
 fn thp_env_off() -> Int {
   let env = rt.mem_load(rt.sym_addr("environ"), 0, 8)
-  if env != 0 && libcmem.env_has(env, "XO_THP=off") { 1 } else { 0 }
+  if env != 0 && libcmem.env_has(env, "XO_THP=kernel") { 0 } else { 1 }
 }
 
 /// Maps and lays out the main thread's TLS block: its thread pointer,

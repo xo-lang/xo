@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-03: perf: XO_THP=dense keeps the main thread's stack and TLS off huge pages
+
+- Kind: perf
+- Commit: this commit
+- Found by: Xo Lang 2's THP threshold sweep (the dense-vs-off max RSS gap on linux/arm64)
+- Go reference: Go's main goroutine stack is a heap span like any other, not a 1 GiB mapping
+- Test: ab-host bench/perf/xo push, self build and a deep recursion program on linux/arm64; arm64 heap goldens
+- Timing: max RSS about 2 MB lower in every program under THP=always (putget 8,696 to 6,612 KB, csv reader 5,908 to 4,068); push wall 1.002, self 0.992, deep recursion 0.995 (decision 0477)
+- Shipped in: not yet released
+
+On Linux the main thread's 1 GiB stack and its TLS block are now mapped
+MADV_NOHUGEPAGE under the default XO_THP=dense, as thread and fiber stacks
+already were; under THP=always the first touched 2 MiB of the stack had
+been a huge page. XO_THP=kernel keeps the kernel's policy for them.
+
 ## 2026-11-03: perf: XO_THP=dense opens the main thread's first heap chunk by halves too
 
 - Kind: perf

@@ -41,7 +41,7 @@ blocks (1 to 4.6 MB); a chunk threshold, only json small (1.6 MB).
 | C | deeprec | 5 quiet | 0.995 (0.942 to 1.005) | 0.788 |
 
 Large blocks without huge pages fault 4 KiB at a time: push, which grows a large list, takes
-6.8 ms against 15.7 ms. B is rejected. C is proposed as decision 0477 (its code waits for the owner). deeprec is a measurement-only
+6.8 ms against 15.7 ms. B is rejected. C ships as decision 0477 (accepted by the owner, 2026-11-03). deeprec is a measurement-only
 program, not in the repository: 40 non-tail recursions 150,000 calls deep with a wrapping
 checksum (several MB of the main stack, 9,756 to 7,692 KB max RSS), the case where a stack
 without huge pages costs most (lead, 2026-11-03); within noise.

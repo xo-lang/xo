@@ -1,6 +1,6 @@
 # 0477: XO_THP=dense keeps the main thread's stack and TLS off huge pages
 
-Status: Proposed (Xo Lang 2, 2026-11-03; amends decisions 0456 and 0469)
+Status: Accepted (owner, 2026-11-03; amends decisions 0456 and 0469; proposed by Xo Lang 2, 2026-11-03)
 
 ## Context
 Under XO_THP=dense, Linux's default (decision 0456), the heap maps its chunks
