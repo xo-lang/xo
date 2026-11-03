@@ -1,0 +1,32 @@
+// csv: std/csv against Go's encoding/csv (twin.go.txt): 20,000 rows of six
+// fields (quoted fields, a doubled quote, an empty field) parsed 10 times,
+// and the same rows formatted 10 times; `none` is the text build alone.
+// Usage: `<program> none|parse|format`. Prints `<workload> <checksum>`; the
+// twin prints the same.
+use std/csv
+
+fn text() -> Str {
+  var b = StrBuilder.new()
+  for i in 0..20000 {
+    b.write("${i},name${i % 97},\"quoted, field ${i}\",,\"say \"\"hi\"\" ${i % 13}\",tail${i % 7}\n")
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let t = text()
+  var sum = t.len()
+  if w == "parse" {
+    for _ in 0..10 {
+      let rows = csv.parse(t).ok() ?? fault("parse")
+      sum += rows.len() + rows[rows.len() - 1].len()
+    }
+  } else if w == "format" {
+    let rows = csv.parse(t).ok() ?? fault("parse")
+    for _ in 0..10 {
+      sum += csv.format(rows).len()
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

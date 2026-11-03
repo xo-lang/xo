@@ -1,0 +1,78 @@
+package main
+
+import (
+	"encoding/xml"
+	"fmt"
+	"io"
+	"os"
+	"strings"
+)
+
+func doc() string {
+	var b strings.Builder
+	b.Grow(2000000)
+	b.WriteString("<items>\n")
+	for i := 0; i < 20000; i++ {
+		fmt.Fprintf(&b, "  <item id=\"%d\" kind=\"k%d\"><name>item number %d</name><note>a note &amp; text %d</note></item>\n", i, i%5, i, i%31)
+	}
+	b.WriteString("</items>\n")
+	return b.String()
+}
+
+type item struct {
+	ID   string `xml:"id,attr"`
+	Kind string `xml:"kind,attr"`
+	Name string `xml:"name"`
+	Note string `xml:"note"`
+}
+
+type items struct {
+	Item []item `xml:"item"`
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	t := doc()
+	sum := len(t)
+	if w == "tokens" {
+		for p := 0; p < 8; p++ {
+			d := xml.NewDecoder(strings.NewReader(t))
+			for {
+				tk, err := d.Token()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					panic(err)
+				}
+				switch v := tk.(type) {
+				case xml.StartElement:
+					sum += 1 + len(v.Name.Local)
+					for _, a := range v.Attr {
+						sum += len(a.Name.Local) + len(a.Value)
+					}
+				case xml.EndElement:
+					sum += 1 + len(v.Name.Local)
+				case xml.CharData:
+					sum += 1 + len(v)
+				default:
+					sum++
+				}
+			}
+		}
+	} else if w == "tree" {
+		for p := 0; p < 8; p++ {
+			var r items
+			if err := xml.Unmarshal([]byte(t), &r); err != nil {
+				panic(err)
+			}
+			for _, it := range r.Item {
+				sum += len(it.ID) + len(it.Name) + len(it.Note)
+			}
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

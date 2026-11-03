@@ -1,0 +1,4 @@
+# twincheck: csv: three workloads (none is the text build alone), the same names on both sides.
+- - none
+- - parse
+- - format

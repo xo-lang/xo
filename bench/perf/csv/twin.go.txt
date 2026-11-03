@@ -1,0 +1,47 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+	"encoding/csv"
+)
+
+func text() string {
+	var b strings.Builder
+	b.Grow(2000000)
+	for i := 0; i < 20000; i++ {
+		fmt.Fprintf(&b, "%d,name%d,\"quoted, field %d\",,\"say \"\"hi\"\" %d\",tail%d\n", i, i%97, i, i%13, i%7)
+	}
+	return b.String()
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	t := text()
+	sum := len(t)
+	if w == "parse" {
+		for p := 0; p < 10; p++ {
+			rows, err := csv.NewReader(strings.NewReader(t)).ReadAll()
+			if err != nil {
+				panic(err)
+			}
+			sum += len(rows) + len(rows[len(rows)-1])
+		}
+	} else if w == "format" {
+		rows, err := csv.NewReader(strings.NewReader(t)).ReadAll()
+		if err != nil {
+			panic(err)
+		}
+		for p := 0; p < 10; p++ {
+			var b strings.Builder
+			cw := csv.NewWriter(&b)
+			cw.WriteAll(rows)
+			sum += b.Len()
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

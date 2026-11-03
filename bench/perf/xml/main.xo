@@ -1,0 +1,52 @@
+// xml: std/xml against Go's encoding/xml (twin.go.txt): a 20,000 item
+// document (about 1.7 MB: two attributes, two child elements with text)
+// read as tokens 8 times (`tokens`: Decoder.Token against xml.tokens, the
+// tokens counted and their text and names summed), and parsed into a tree 8
+// times (`tree`: xml.parse against Go's Unmarshal into structs); `none` is
+// the document build alone. Usage: `<program> none|tokens|tree`. Prints
+// `<workload> <checksum>`; the twin prints the same.
+use std/xml
+
+fn doc() -> Str {
+  var b = StrBuilder.new()
+  b.write("<items>\n")
+  for i in 0..20000 {
+    b.write("  <item id=\"${i}\" kind=\"k${i % 5}\"><name>item number ${i}</name><note>a note &amp; text ${i % 31}</note></item>\n")
+  }
+  b.write("</items>\n")
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let t = doc()
+  var sum = t.len()
+  if w == "tokens" {
+    for _ in 0..8 {
+      let toks = xml.tokens(t).ok() ?? fault("tokens")
+      for tk in toks {
+        match tk {
+          Start(name, attrs) => {
+            sum += 1 + name.local.len()
+            for a in attrs {
+              sum += a.name.local.len() + a.value.len()
+            }
+          }
+          End(name) => sum += 1 + name.local.len()
+          Text(s) => sum += 1 + s.len()
+          _ => sum += 1
+        }
+      }
+    }
+  } else if w == "tree" {
+    for _ in 0..8 {
+      let root = xml.parse(t).ok() ?? fault("parse")
+      for it in root.children_named("item") {
+        sum += (it.attr("id") ?? "").len()
+        if let n = it.child("name") { sum += n.text().len() }
+        if let n = it.child("note") { sum += n.text().len() }
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
