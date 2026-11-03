@@ -1,0 +1,49 @@
+offload: /work had 15 GB free; pruned xo cache files idle over 360 min, now 15G
+host: Linux 7.0.14-linuxkit aarch64, 12 CPUs, thp [always] madvise never defrag always defer defer+madvise [madvise] never
+rev 3ee78e47d3231b814c789755e6a9f25358dc6f87
+XO_THP=dense xo:putget rss_kb 8696 [8696 8696 8696 8672 8696 ] wall_s 0.10
+XO_THP=dense xo:push rss_kb 31748 [31744 31748 31764 31748 31744 ] wall_s 0.02
+XO_THP=dense xo:sortint rss_kb 8548 [8548 8564 8548 8564 8548 ] wall_s 0.51
+XO_THP=dense xo:grid rss_kb 8568 [8572 8568 8568 8552 8568 ] wall_s 0.02
+XO_THP=dense xo:hof rss_kb 33172 [33172 33176 33172 33240 33172 ] wall_s 0.11
+XO_THP=dense json:small rss_kb 8964 [8960 8964 8964 8976 8980 ] wall_s 0.03
+XO_THP=dense json:maps rss_kb 8980 [8980 8980 8980 8964 8980 ] wall_s 0.04
+XO_THP=dense csv:parse rss_kb 10196 [9992 10196 10200 10200 10196 ] wall_s 0.05
+XO_THP=dense csv:reader rss_kb 5908 [5908 5884 5960 5908 5904 ] wall_s 0.19
+XO_THP=dense,XO_THP_STACKS=small xo:putget rss_kb 6612 [6612 6612 6612 6612 6616 ] wall_s 0.10
+XO_THP=dense,XO_THP_STACKS=small xo:push rss_kb 29680 [29704 29680 29680 29680 29684 ] wall_s 0.01
+XO_THP=dense,XO_THP_STACKS=small xo:sortint rss_kb 6504 [6484 6508 6484 6504 6504 ] wall_s 0.60
+XO_THP=dense,XO_THP_STACKS=small xo:grid rss_kb 6484 [6484 6504 6484 6504 6484 ] wall_s 0.03
+XO_THP=dense,XO_THP_STACKS=small xo:hof rss_kb 31204 [31204 31204 31204 31204 31204 ] wall_s 0.05
+XO_THP=dense,XO_THP_STACKS=small json:small rss_kb 7012 [7012 7012 7012 7012 7012 ] wall_s 0.01
+XO_THP=dense,XO_THP_STACKS=small json:maps rss_kb 7012 [7012 7016 7012 7012 7016 ] wall_s 0.02
+XO_THP=dense,XO_THP_STACKS=small csv:parse rss_kb 8152 [8152 8152 8152 8152 8152 ] wall_s 0.04
+XO_THP=dense,XO_THP_STACKS=small csv:reader rss_kb 4068 [4068 4068 4068 3972 3696 ] wall_s 0.07
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small xo:putget rss_kb 5604 [5588 5604 5604 5604 5608 ] wall_s 0.18
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small xo:push rss_kb 28564 [28548 28564 28564 28544 28568 ] wall_s 0.06
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small xo:sortint rss_kb 5428 [5300 5428 5428 5428 5428 ] wall_s 0.33
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small xo:grid rss_kb 5428 [5428 5428 5428 5428 5428 ] wall_s 0.02
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small xo:hof rss_kb 26536 [26628 26516 26536 26536 26516 ] wall_s 0.15
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small json:small rss_kb 6912 [6892 6892 6912 6912 6912 ] wall_s 0.04
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small json:maps rss_kb 6892 [6912 6912 6892 6892 6892 ] wall_s 0.05
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small csv:parse rss_kb 6964 [6956 6976 6956 6980 6964 ] wall_s 0.10
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small csv:reader rss_kb 2876 [2876 2876 2876 2876 2876 ] wall_s 0.07
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small,XO_THP_MIN=16 xo:putget rss_kb 5584 [5588 5584 5584 5584 5604 ] wall_s 0.15
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small,XO_THP_MIN=16 xo:push rss_kb 28564 [28544 28564 28544 28564 28656 ] wall_s 0.05
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small,XO_THP_MIN=16 xo:sortint rss_kb 5428 [5428 5556 5428 5428 5428 ] wall_s 0.50
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small,XO_THP_MIN=16 xo:grid rss_kb 5428 [5428 5428 5428 5428 5428 ] wall_s 0.05
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small,XO_THP_MIN=16 xo:hof rss_kb 26536 [26536 26516 26612 26536 26516 ] wall_s 0.13
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small,XO_THP_MIN=16 json:small rss_kb 5328 [5328 5328 5328 5328 5328 ] wall_s 0.02
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small,XO_THP_MIN=16 json:maps rss_kb 5328 [5328 5328 5328 5328 5328 ] wall_s 0.05
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small,XO_THP_MIN=16 csv:parse rss_kb 6844 [6844 6844 6844 6844 6844 ] wall_s 0.07
+XO_THP=dense,XO_THP_STACKS=small,XO_THP_LARGE=small,XO_THP_MIN=16 csv:reader rss_kb 2876 [2876 2876 2876 2876 2876 ] wall_s 0.15
+XO_THP=off xo:putget rss_kb 5604 [5604 5604 5584 5604 5584 ] wall_s 0.14
+XO_THP=off xo:push rss_kb 28564 [28564 28544 28564 28544 28564 ] wall_s 0.03
+XO_THP=off xo:sortint rss_kb 5428 [5428 5428 5428 5428 5428 ] wall_s 0.36
+XO_THP=off xo:grid rss_kb 5428 [5428 5428 5428 5428 5428 ] wall_s 0.03
+XO_THP=off xo:hof rss_kb 26536 [26540 26536 26516 26536 26516 ] wall_s 0.11
+XO_THP=off json:small rss_kb 5328 [5328 5328 5328 5328 5328 ] wall_s 0.02
+XO_THP=off json:maps rss_kb 5328 [5328 5328 5328 5328 5328 ] wall_s 0.03
+XO_THP=off csv:parse rss_kb 6844 [6844 6844 6844 6844 6844 ] wall_s 0.09
+XO_THP=off csv:reader rss_kb 2876 [2876 2876 2876 2876 2748 ] wall_s 0.12
+OFFLOAD-RC=0

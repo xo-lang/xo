@@ -1,0 +1,26 @@
+offload: /work had 19 GB free; pruned xo cache files idle over 360 min, now 19G
+ab-host l2thpstkpush: A c89997b6fa1 B b866c387fee on Linux aarch64, 12 CPUs
+ab-host: xo a built in 0 s (xo 0.37.0 linux/arm64)
+ab-host: xo b built in 48 s (xo 0.37.0 linux/arm64)
+ab-host: quiet wait 70 s, load 0.92 1.92 5.50
+round 1/9: load 0.92 / 0.92
+round 2/9: load 0.92 / 0.92
+round 3/9: load 0.92 / 0.92
+round 4/9: load 0.92 / 0.92
+round 5/9: load 0.92 / 0.92
+round 6/9: load 0.92 / 0.92
+round 7/9: load 0.92 / 0.92
+round 8/9: load 0.92 / 0.92
+round 9/9: load 0.92 / 0.92
+A: /work/abl2thpstkpush.out/prog-a push 
+B: /work/abl2thpstkpush.out/prog-b push 
+9 of 9 rounds used (0 loaded), loads A/B per round: 0.92/0.92 0.92/0.92 0.92/0.92 0.92/0.92 0.92/0.92 0.92/0.92 0.92/0.92 0.92/0.92 0.92/0.92
+
+metric                A median    B median    spread A/B        B / A   95% interval      verdict
+wall_ms               7.077       7.093       5.11% 4.741%      1.002   0.968 to 1.049    within noise (n=9)
+cpu_ms                6.993       7.012       4.862% 5.163%     1.003   0.972 to 1.045    too coarse (n=9)
+max_rss_kb            31768       29700       0.013% 0%         0.935   0.935 to 0.935    better (n=9)
+load: median 0.92 (A) / 0.92 (B); loaded: 0 of 9 rounds (at or above 6.0; baseline 0.92 + 3.0, at least 6.0)
+instructions, cycles, ipc: n/a (only macOS time -l reports them)
+ab-host l2thpstkpush: ok in 2 s
+OFFLOAD-RC=0

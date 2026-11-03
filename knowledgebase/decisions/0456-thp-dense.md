@@ -3,6 +3,8 @@
 Status: Accepted (owner, 2026-11-02, with v4 as Linux's default; proposed by Xo Lang 2,
 2026-11-02). Amended by [0469](0469-thp-dense-no-main-exception.md) (owner, 2026-11-03): the
 main thread's record no longer advises its first chunk whole; it opens by halves like every other.
+Amended by [0477](0477-thp-dense-main-stack.md) (proposed, 2026-11-03): the main thread's stack
+and TLS block are MADV_NOHUGEPAGE under dense too.
 
 ## Context
 

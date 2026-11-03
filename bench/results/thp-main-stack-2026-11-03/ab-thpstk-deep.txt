@@ -1,0 +1,22 @@
+offload: /work had 19 GB free; pruned xo cache files idle over 360 min, now 19G
+ab-host l2thpdeep2: A ec4c828ecac B add71dc2554 on Linux aarch64, 12 CPUs
+ab-host: xo a built in 1 s (xo 0.37.0 linux/arm64)
+ab-host: xo b built in 0 s (xo 0.37.0 linux/arm64)
+ab-host: quiet wait 10 s, load 0.97 2.29 4.03
+round 1/5: load 0.97 / 0.97
+round 2/5: load 0.97 / 0.97
+round 3/5: load 0.97 / 0.97
+round 4/5: load 0.97 / 0.97
+round 5/5: load 0.97 / 0.97
+A: /work/abl2thpdeep2.out/prog-a  
+B: /work/abl2thpdeep2.out/prog-b  
+5 of 5 rounds used (0 loaded), loads A/B per round: 0.97/0.97 0.97/0.97 0.97/0.97 0.97/0.97 0.97/0.97
+
+metric                A median    B median    spread A/B        B / A   95% interval      verdict
+wall_ms               36.46       36.28       0.573% 0.352%     0.995   0.942 to 1.005    within noise (n=5)
+cpu_ms                36.42       36.19       0.629% 0.379%     0.994   0.939 to 1.005    too coarse (n=5)
+max_rss_kb            9756        7692        0% 0%             0.788   0.788 to 0.788    better (n=5)
+load: median 0.97 (A) / 0.97 (B); loaded: 0 of 5 rounds (at or above 6.0; baseline 0.97 + 3.0, at least 6.0)
+instructions, cycles, ipc: n/a (only macOS time -l reports them)
+ab-host l2thpdeep2: ok in 2 s
+OFFLOAD-RC=0

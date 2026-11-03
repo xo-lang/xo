@@ -1,0 +1,23 @@
+offload: /work had 19 GB free; pruned xo cache files idle over 360 min, now 19G
+ab-host l2thpstk: A c89997b6fa1 B b866c387fee on Linux aarch64, 12 CPUs
+ab-host: xo a built in 0 s (xo 0.37.0 linux/arm64)
+ab-host: xo b built in 1 s (xo 0.37.0 linux/arm64)
+ab-host: quiet wait 5 s, load 0.94 1.46 4.65
+round 1/5: load 5.69 / 4.77
+round 2/5: load 6.21 / 7.25 (loaded)
+round 3/5: load 7.74 / 6.93 (loaded)
+round 4/5: load 7.12 / 7.03 (loaded)
+round 5/5: load 6.79 / 7.0 (loaded)
+A: /work/abl2thpstk/a/bin/xo build -o /work/abl2thpstk.out/xo /work/abl2thpstk/b/compiler/xo 
+B: /work/abl2thpstk/b/bin/xo build -o /work/abl2thpstk.out/xo /work/abl2thpstk/b/compiler/xo XO_STD=/work/abl2thpstk/b/std
+5 of 5 rounds used (0 loaded), loads A/B per round: 5.69/4.77 6.21/7.25 7.74/6.93 7.12/7.03 6.79/7.0
+
+metric                A median    B median    spread A/B        B / A   95% interval      verdict
+wall_ms               31811       31550       1.2% 0.376%       0.992   0.973 to 0.998    better (n=5)
+cpu_ms                209117      207768      0.688% 0.286%     0.994   0.98 to 0.998     better (n=5)
+max_rss_kb            4354164     4362352     0.559% 0.247%     1.002   0.981 to 1.013    within noise (n=5)
+load: median 6.79 (A) / 7.0 (B); loaded: 4 of 5 rounds (at or above 6.0; baseline 0.94 + 3.0, at least 6.0)
+warning: the machine was busy through the run (median load at or above 6.0): wall and cpu ratios are not reliable; measure with HEAVY_CLASS=measure (agent-tools.md Measuring) or --max-load
+instructions, cycles, ipc: n/a (only macOS time -l reports them)
+ab-host l2thpstk: ok in 381 s
+OFFLOAD-RC=0

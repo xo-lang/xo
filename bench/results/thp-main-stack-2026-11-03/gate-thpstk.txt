@@ -1,0 +1,11 @@
+host: Linux 6.12.76-linuxkit aarch64, thp [always] madvise never
+rev d73cb9b75066c61f74115044b4636c7f39c590a9
+xobuild ok: xo 0.37.0 linux/arm64
+xo: 1 warning in files outside the directories built (XO_WARNINGS=all prints them)
+linux/arm64: /work/l2thpgate/xo2
+self build: 38.33 s, max RSS 3874008 KB
+xo 0.37.0 linux/arm64
+ok  	github.com/xo-lang/xo/internal/arm64	2.592s
+ok  	github.com/xo-lang/xo/internal/arm64	0.824s
+gate-thpstk: ok
+OFFLOAD-RC=0

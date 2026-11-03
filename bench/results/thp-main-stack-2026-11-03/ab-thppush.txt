@@ -1,0 +1,25 @@
+offload: /work had 19 GB free; pruned xo cache files idle over 360 min, now 19G
+ab-host l2thppush: A c89997b6fa1 B bc119f40ff2 on Linux aarch64, 12 CPUs
+ab-host: xo a built in 1 s (xo 0.37.0 linux/arm64)
+ab-host: xo b built in 0 s (xo 0.37.0 linux/arm64)
+ab-host: quiet wait 0 s, load 0.88 3.06 7.58
+round 1/9: load 1.05 / 1.05
+round 2/9: load 1.05 / 1.05
+round 3/9: load 1.05 / 1.05
+round 4/9: load 1.05 / 1.05
+round 5/9: load 1.05 / 1.05
+round 6/9: load 1.05 / 1.05
+A: /work/abl2thppush.out/prog-a push 
+B: /work/abl2thppush.out/prog-b push 
+6 of 6 rounds used (0 loaded), loads A/B per round: 1.05/1.05 1.05/1.05 1.05/1.05 1.05/1.05 1.05/1.05 1.05/1.05
+
+stopped early after 6 of 9 rounds: wall_ms=worse max_rss_kb=better at two looks in a row (per-look alpha 0.01)
+
+metric                A median    B median    spread A/B        B / A   95% interval      verdict
+wall_ms               6.797       15.69       2.9% 32.43%       2.308   1.987 to 3.248    worse (n=6)
+cpu_ms                6.705       15.58       2.991% 32.79%     2.324   1.996 to 3.293    too coarse (n=6)
+max_rss_kb            31764       28564       0% 0%             0.899   0.899 to 0.899    better (n=6)
+load: median 1.05 (A) / 1.05 (B); loaded: 0 of 6 rounds (at or above 6.0; baseline 1.05 + 3.0, at least 6.0)
+instructions, cycles, ipc: n/a (only macOS time -l reports them)
+ab-host l2thppush: ok in 2 s
+OFFLOAD-RC=0
