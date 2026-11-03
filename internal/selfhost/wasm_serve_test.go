@@ -53,7 +53,10 @@ fn main(os: Os) {
 		{"component on wasip1", fmt.Sprintf(serve, ""), []string{"--targets=wasip1/wasm"}, nil, "XO1514", "--targets=wasip2/wasm"},
 		{"component by backend", fmt.Sprintf(serve, ""), []string{"--backend=wasm"}, nil, "XO1514", "--targets=wasip2/wasm"},
 		{"command", plain, []string{"--targets=wasip2/wasm"}, component, "", ""},
-		{"command reading a file", "fn main(os: Os) {\n  let _b = os.fs.read(\"/etc/hosts\") ?? _ => b\"\"\n}\n", []string{"--targets=wasip2/wasm"}, nil, "XO1515", "files"},
+		// a command has files and sockets (wasi:filesystem, wasi:sockets;
+		// decision 0447); only a component lacks them
+		{"command reading a file", "fn main(os: Os) {\n  let _b = os.fs.read(\"/etc/hosts\") ?? _ => b\"\"\n}\n", []string{"--targets=wasip2/wasm"}, component, "", ""},
+		{"command with a socket", "fn main(os: Os) {\n  let _l = os.net.listen(\"127.0.0.1:0\").ignore_err(\"test\")\n}\n", []string{"--targets=wasip2/wasm"}, component, "", ""},
 		{"a file read", fmt.Sprintf(serve, `let _b = os.fs.read("/etc/hosts") ?? _ => b"";`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "files"},
 		{"a process", fmt.Sprintf(serve, `let _p = os.proc.run("true", []).ignore_err("test");`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "processes"},
 		{"a socket", fmt.Sprintf(serve, `let _l = os.net.listen("127.0.0.1:0").ignore_err("test");`), []string{"--targets=wasip2/wasm"}, nil, "XO1515", "sockets"},
