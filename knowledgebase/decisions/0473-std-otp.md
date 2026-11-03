@@ -19,7 +19,7 @@ a counter encoded little endian, the code not zero padded). pquerna/otp is the G
    pub fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: Hash = Hash.Sha1) -> Str     // RFC 4226
    pub fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: Hash = Hash.Sha1) -> Str   // RFC 6238
    pub fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: Hash = Hash.Sha1, skew: Int = 1) -> Bool
-   pub fn generate_secret(len: Int = 20) -> Bytes uses rand                                      // crypto random
+   pub fn generate_secret(r: Rand, len: Int = 20) -> Bytes uses rand                                     // crypto random
    pub fn uri(issuer: Str, account: Str, secret: Bytes, period: Int = 30, digits: Int = 6, algo: Hash = Hash.Sha1) -> Str   // otpauth://totp/...
    ```
 
