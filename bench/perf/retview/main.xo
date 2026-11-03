@@ -1,0 +1,177 @@
+// Decision 0465 step 2's ceiling (2026-11-03): a function too big to
+// inline returns a view of its borrowed Str parameter (field: part k of a
+// line, by offsets). Before step 2 the callee
+// retains the view it returns and the caller releases it; with step 2 the
+// view comes back uncounted and the caller retains it only where it must
+// own it.
+// Usage: retviewperf <workload>; prints "<workload> <checksum>".
+//   use   the result's length only (step 2: no count at all)
+//   keep  every result stored in a List (step 2: the caller retains)
+
+const N = 3000000
+
+/// Part k of a line by fixed offsets: only slices of line and constants
+/// (what step 2 recognizes: a loop, `bytes()`, a std trim or the parameter
+/// itself returned leaves a function out, 2026-11-03), and branches enough that the
+/// inliner leaves it a call (XO_INLINE_REPORT=field: "returns a view"
+/// with step 2, "no (size)" without).
+fn field(line: Str, k: Int) -> Str {
+  let n = line.len()
+  if n < 16 {
+    return "short"
+  }
+  if k == 0 {
+    if n % 3 == 1 {
+      return line[0..n - 0]
+    }
+    if n % 5 == 2 {
+      return line[0..n - 1]
+    }
+    return line[1..9]
+  }
+  if k == 1 {
+    if n % 3 == 2 {
+      return line[1..n - 1]
+    }
+    if n % 5 == 3 {
+      return line[0..n - 2]
+    }
+    return line[2..10]
+  }
+  if k == 2 {
+    if n % 3 == 0 {
+      return line[2..n - 2]
+    }
+    if n % 5 == 4 {
+      return line[0..n - 3]
+    }
+    return line[3..11]
+  }
+  if k == 3 {
+    if n % 3 == 1 {
+      return line[3..n - 3]
+    }
+    if n % 5 == 0 {
+      return line[0..n - 4]
+    }
+    return line[4..12]
+  }
+  if k == 4 {
+    if n % 3 == 2 {
+      return line[4..n - 4]
+    }
+    if n % 5 == 1 {
+      return line[0..n - 5]
+    }
+    return line[5..13]
+  }
+  if k == 5 {
+    if n % 3 == 0 {
+      return line[5..n - 5]
+    }
+    if n % 5 == 2 {
+      return line[0..n - 6]
+    }
+    return line[6..14]
+  }
+  if k == 6 {
+    if n % 3 == 1 {
+      return line[6..n - 6]
+    }
+    if n % 5 == 3 {
+      return line[0..n - 7]
+    }
+    return line[7..15]
+  }
+  if k == 7 {
+    if n % 3 == 2 {
+      return line[7..n - 7]
+    }
+    if n % 5 == 4 {
+      return line[0..n - 8]
+    }
+    return line[8..16]
+  }
+  if k == 8 {
+    if n % 3 == 0 {
+      return line[8..n - 8]
+    }
+    if n % 5 == 0 {
+      return line[0..n - 9]
+    }
+    return line[9..17]
+  }
+  if k == 9 {
+    if n % 3 == 1 {
+      return line[9..n - 9]
+    }
+    if n % 5 == 1 {
+      return line[0..n - 10]
+    }
+    return line[10..18]
+  }
+  if k == 10 {
+    if n % 3 == 2 {
+      return line[10..n - 10]
+    }
+    if n % 5 == 2 {
+      return line[0..n - 11]
+    }
+    return line[11..19]
+  }
+  if k == 11 {
+    if n % 3 == 0 {
+      return line[11..n - 11]
+    }
+    if n % 5 == 3 {
+      return line[0..n - 12]
+    }
+    return line[12..20]
+  }
+  if k < 0 {
+    return "negative"
+  }
+  line[0..1]
+}
+
+fn lines() -> List[Str] {
+  var out: List[Str] = []
+  for i in 0..16 {
+    out.push(" a=${i} ;  b = x${i * 3}  ; c ; d=  ${i}${i}  ")
+  }
+  out
+}
+
+fn use_all(ls: List[Str]) -> Int {
+  var n = 0
+  for i in 0..N {
+    n += field(ls[i % ls.len()], i % 12).len()
+  }
+  n
+}
+
+fn keep_all(ls: List[Str]) -> Int {
+  var n = 0
+  var kept: List[Str] = []
+  for i in 0..N {
+    kept.push(field(ls[i % ls.len()], i % 12))
+    if kept.len() == 64 {
+      n += kept[i % 64].len()
+      kept = []
+    }
+  }
+  n
+}
+
+fn main(os: Os) {
+  let args = os.env.args()
+  let w = if args.len() > 0 { args[0] } else { "none" }
+  let ls = lines()
+  var n = 0
+  if w == "use" {
+    n = use_all(ls)
+  } else if w == "keep" {
+    n = keep_all(ls)
+  }
+  os.stdio.println("${w} ${n}")
+}
