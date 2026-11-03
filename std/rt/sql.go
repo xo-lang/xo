@@ -450,9 +450,10 @@ func (d Sql_Db) M_close(tk *Task) Result[Unit, Sql_SqlErr] {
 	return Ok[Unit, Sql_SqlErr](Unit{})
 }
 
-// M_begin is `db.begin()`: the transaction holds a pool permit (and the
-// writer permit of a single writer backend) until commit or rollback.
-func (d Sql_Db) M_begin(tk *Task) Result[Sql_Tx, Sql_SqlErr] {
+// M_begin is `db.begin(isolation, read_only)`: the transaction holds a
+// pool permit (and the writer permit of a single writer backend) until
+// commit or rollback.
+func (d Sql_Db) M_begin(tk *Task, isolation Sql_Isolation, readOnly bool) Result[Sql_Tx, Sql_SqlErr] {
 	db := d.d
 	if db == nil || db.closed.Load() {
 		return sqlFail[Sql_Tx](sqlTagClosed)
@@ -470,15 +471,41 @@ func (d Sql_Db) M_begin(tk *Task) Result[Sql_Tx, Sql_SqlErr] {
 	var be SqlTxBackend
 	var err error
 	if b, ok := db.be.(*sqlDriverBackend); ok {
-		be, err = b.BeginTk(tk)
+		be, err = b.BeginTk(tk, sqlTxMode(isolation, readOnly))
 	} else {
 		be, err = db.be.Begin()
+		if mt, ok := be.(*memTx); ok && err == nil {
+			mt.readOnly = readOnly
+		}
 	}
 	if err != nil {
 		db.release()
 		return sqlFailErr[Sql_Tx](err)
 	}
 	return Ok[Sql_Tx, Sql_SqlErr](Sql_Tx{t: &sqlTx{db: db, be: be}})
+}
+
+// sqlTxMode is std/native/sql.xo's tx_mode: the SET TRANSACTION statement
+// for the options, "" for the defaults.
+func sqlTxMode(isolation Sql_Isolation, readOnly bool) string {
+	var modes []string
+	switch isolation.Tag {
+	case 2:
+		modes = append(modes, "ISOLATION LEVEL READ UNCOMMITTED")
+	case 3:
+		modes = append(modes, "ISOLATION LEVEL READ COMMITTED")
+	case 4:
+		modes = append(modes, "ISOLATION LEVEL REPEATABLE READ")
+	case 5:
+		modes = append(modes, "ISOLATION LEVEL SERIALIZABLE")
+	}
+	if readOnly {
+		modes = append(modes, "READ ONLY")
+	}
+	if len(modes) == 0 {
+		return ""
+	}
+	return "SET TRANSACTION " + strings.Join(modes, ", ")
 }
 
 func (d *sqlDB) release() {

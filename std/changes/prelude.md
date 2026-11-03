@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-03: feature: Duration.round and truncate, Bytes.to_str_lossy and to_valid_utf8
+
+- Kind: feature
+- Commit: this commit
+- Found by: the backend survey of 2026-10-30, rank 13 (std-coverage.md)
+- Go reference: time.Duration.Round and Truncate; bytes.ToValidUTF8 and string([]rune(s))
+- Test: internal/stdtest corpora time (time_test.go's durationRoundTests and durationTruncateTests plus 300 seeded pairs) and bytes (bytes_test.go's toValidUTF8Tests plus the seeded invalid UTF-8 cases), native and Go backends
+- Timing: bench/perf/bytestransform on linux/arm64: to_valid_utf8 0.68 of Go's ToValidUTF8 wall, to_str_lossy 0.97 of utf8.Valid plus string([]rune) (bench/results/std-twin-rows15-2026-11-03.md)
+- Shipped in: not yet released
+
+`d.round(m)` and `d.truncate(m)` are Go's Duration.Round and Truncate:
+the nearest multiple of m (halves away from zero, the largest or smallest
+Duration on overflow) and the multiple toward zero; d itself for m <= 0.
+`b.to_str_lossy()` turns Bytes into text the way std reads outside text
+(each byte of an invalid UTF-8 sequence U+FFFD, decision 0259), so
+gunzipped or socket bytes get what `Fs.read_text` gives; `to_valid_utf8`
+is Go's ToValidUTF8, one replacement for each run of invalid bytes.
+
 ## 2026-11-03: perf: XO_THP=dense keeps the main thread's stack and TLS off huge pages
 
 - Kind: perf

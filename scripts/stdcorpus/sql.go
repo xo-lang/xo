@@ -144,6 +144,107 @@ test "a transaction on the in memory Db commits one row and rolls another back" 
   tx3.rollback()?
   db.close()?
 }
+
+/// A driver that records each statement and refuses a SET TRANSACTION
+/// naming READ UNCOMMITTED, as a server without that level would.
+struct ModeDriver {
+  log: Mutex[List[Str]]
+}
+
+struct ModeConn {
+  log: Mutex[List[Str]]
+}
+
+fn (d: ModeDriver) connect(net: Net, dsn: Str) -> sql.DriverConn ! sql.SqlErr uses net.dial {
+  Ok(ModeConn{log: d.log})
+}
+
+fn (c: ModeConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.SqlErr uses net.dial {
+  record(c.log, q)
+  Ok(sql.DriverRows{columns: [], rows: []})
+}
+
+fn (c: ModeConn) exec(q: Str, args: List[sql.SqlValue]) -> sql.ExecResult ! sql.SqlErr uses net.dial {
+  record(c.log, q)
+  if q.contains("UNCOMMITTED") {
+    return Err(sql.SqlErr.Server(code: "0A000", msg: "unsupported isolation level"))
+  }
+  Ok(sql.ExecResult{rows_affected: 0, last_insert_id: 0})
+}
+
+fn (c: ModeConn) begin() -> () ! sql.SqlErr uses net.dial {
+  record(c.log, "BEGIN")
+  Ok(())
+}
+
+fn (c: ModeConn) commit() -> () ! sql.SqlErr uses net.dial {
+  record(c.log, "COMMIT")
+  Ok(())
+}
+
+fn (c: ModeConn) rollback() -> () ! sql.SqlErr uses net.dial {
+  record(c.log, "ROLLBACK")
+  Ok(())
+}
+
+fn (c: ModeConn) ping() -> () ! sql.SqlErr uses net.dial { Ok(()) }
+
+fn (c: ModeConn) close() uses net.dial {}
+
+fn (c: ModeConn) is_broken() -> Bool { false }
+
+test "begin's isolation and read_only reach a driver as SET TRANSACTION after BEGIN" {
+  let log: Mutex[List[Str]] = Mutex.new([])
+  let db = sql.open_driver(os.net, ModeDriver{log: log}, "mode", max_open: 1)?
+  let cases: List[(sql.Isolation, Bool, Str)] = [
+    (sql.Isolation.Default, false, "BEGIN|COMMIT"),
+    (sql.Isolation.Default, true, "BEGIN|SET TRANSACTION READ ONLY|COMMIT"),
+    (sql.Isolation.ReadCommitted, false, "BEGIN|SET TRANSACTION ISOLATION LEVEL READ COMMITTED|COMMIT"),
+    (sql.Isolation.RepeatableRead, true, "BEGIN|SET TRANSACTION ISOLATION LEVEL REPEATABLE READ, READ ONLY|COMMIT"),
+    (sql.Isolation.Serializable, false, "BEGIN|SET TRANSACTION ISOLATION LEVEL SERIALIZABLE|COMMIT"),
+  ]
+  for (iso, ro, want) in cases {
+    log.with(fn(var ls: List[Str]) -> () { ls = [] })
+    let tx = db.begin(isolation: iso, read_only: ro)?
+    tx.commit()?
+    expect((iso, ro, log.with_read(fn(ls: List[Str]) -> Str { ls.join("|") }))) == (iso, ro, want)
+  }
+  // a refused mode rolls back, returns the server's error and gives the
+  // connection back (max_open 1: the next begin would wait forever)
+  log.with(fn(var ls: List[Str]) -> () { ls = [] })
+  expect(match db.begin(isolation: sql.Isolation.ReadUncommitted) {
+    Ok(_) => "ok"
+    Err(e) => e.display()
+  }) == "unsupported isolation level (SQLSTATE 0A000)"
+  expect(log.with_read(fn(ls: List[Str]) -> Str { ls.join("|") })) == "BEGIN|SET TRANSACTION ISOLATION LEVEL READ UNCOMMITTED|ROLLBACK"
+  let tx = db.begin()?
+  tx.rollback()?
+  db.close()?
+}
+
+test "a read only transaction on the in memory Db reads and refuses writes as Postgres does" {
+  let db = sql.memory("CREATE TABLE t (id SERIAL, n INT)")?
+  db.exec("INSERT INTO t (n) VALUES (1)")?
+  let tx = db.begin(read_only: true)?
+  expect(tx.query_one("SELECT n FROM t")?.int("n")?) == 1
+  for q in ["INSERT INTO t (n) VALUES (2)", "  update t SET n = 3", "DELETE FROM t", "CREATE TABLE u (id INT)"] {
+    expect(match tx.exec(q) {
+      Ok(_) => "ok"
+      Err(Server(code, msg)) => "${code} ${msg}"
+      Err(e) => e.display()
+    }) == "25006 cannot execute ${q.trim().split(" ")[0].to_upper()} in a read-only transaction"
+  }
+  tx.commit()?
+  expect(db.query("SELECT n FROM t")?.len()) == 1
+  // every level runs: the in memory Db is serializable whatever is asked
+  for iso in [sql.Isolation.ReadUncommitted, sql.Isolation.ReadCommitted, sql.Isolation.RepeatableRead, sql.Isolation.Serializable] {
+    let t2 = db.begin(isolation: iso)?
+    t2.exec("INSERT INTO t (n) VALUES (4)")?
+    t2.rollback()?
+  }
+  expect(db.query("SELECT n FROM t")?.len()) == 1
+  db.close()?
+}
 `
 
 const sqlTests = `

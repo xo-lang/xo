@@ -1,5 +1,5 @@
-// Bytes.replace, replace_n, to_lower, to_upper, equal_fold and repeat
-// workloads against Go's bytes package (the twin is twin.go.txt): texts
+// Bytes.replace, replace_n, to_lower, to_upper, equal_fold, repeat,
+// to_str_lossy and to_valid_utf8 workloads against Go's bytes package (the twin is twin.go.txt): texts
 // with ASCII, multi byte, invalid UTF-8 and empty values, old and new of
 // every kind (an absent one, an empty one, a multi byte one), and counts
 // of every kind. The workload is picked once, outside the loop.
@@ -22,6 +22,7 @@ const NEWS: List[Bytes] = [b"", b"X", b"<>", b"é"]
 const FOLDS: List[Bytes] = [b"HELLO", b"1,2,3,4", b"ABCABCABCABCABCABCABC", b"✓", b"\xfe"]
 const NS: List[Int] = [1, 0, -1, 2, 1000]
 const REPEATS: List[Int] = [0, 1, 2, 3]
+const VALID_REPLS: List[Str] = ["\u{FFFD}", "", "?"]
 
 fn replace_all() -> Int {
   var n = 0
@@ -73,6 +74,24 @@ fn repeat_all() -> Int {
   n
 }
 
+// lossy_all and valid_all: Bytes.to_str_lossy and to_valid_utf8 (one text
+// in six has invalid UTF-8, the rest take the valid fast path).
+fn lossy_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].to_str_lossy().len()
+  }
+  n
+}
+
+fn valid_all() -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].to_valid_utf8(VALID_REPLS[i % VALID_REPLS.len()]).len()
+  }
+  n
+}
+
 // index_all is the loop's own cost, the two table lookups and the lengths,
 // with no transform, so a row can be read net of it.
 fn index_all() -> Int {
@@ -99,6 +118,10 @@ fn main(os: Os) {
     n = fold_all()
   } else if w == "repeat" {
     n = repeat_all()
+  } else if w == "lossy" {
+    n = lossy_all()
+  } else if w == "valid" {
+    n = valid_all()
   } else if w == "index" {
     n = index_all()
   }

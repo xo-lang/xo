@@ -1,6 +1,6 @@
 // The Go twin of bench/perf/bytestransform/main.xo: the same texts, olds,
 // news and loop counts through bytes.ReplaceAll, Replace, ToLower, ToUpper,
-// EqualFold and Repeat, printing the same "<workload> <checksum>" line. It
+// EqualFold, Repeat, string([]rune) and strings.ToValidUTF8, printing the same "<workload> <checksum>" line. It
 // is a .txt so the Go tool does not build it as part of the repository;
 // copy it out and `go build` it.
 package main
@@ -9,6 +9,8 @@ import (
 	"bytes"
 	"fmt"
 	"os"
+	"strings"
+	"unicode/utf8"
 )
 
 const n = 200000
@@ -27,6 +29,7 @@ var news = [][]byte{[]byte(""), []byte("X"), []byte("<>"), []byte("é")}
 var folds = [][]byte{[]byte("HELLO"), []byte("1,2,3,4"), []byte("ABCABCABCABCABCABCABC"), []byte("✓"), []byte("\xfe")}
 var ns = []int{1, 0, -1, 2, 1000}
 var repeats = []int{0, 1, 2, 3}
+var validRepls = []string{"\uFFFD", "", "?"}
 
 func replaceAll() int {
 	sum := 0
@@ -78,6 +81,29 @@ func repeatAll() int {
 	return sum
 }
 
+// lossyAll is the Go form of to_str_lossy: string([]rune(s)) after the
+// utf8.Valid check a Go program makes first.
+func lossyAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		b := texts[i%len(texts)]
+		if utf8.Valid(b) {
+			sum += len(string(b))
+		} else {
+			sum += len(string([]rune(string(b))))
+		}
+	}
+	return sum
+}
+
+func validAll() int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += len(strings.ToValidUTF8(string(texts[i%len(texts)]), validRepls[i%len(validRepls)]))
+	}
+	return sum
+}
+
 func indexAll() int {
 	sum := 0
 	for i := 0; i < n; i++ {
@@ -105,6 +131,10 @@ func main() {
 		sum = foldAll()
 	case "repeat":
 		sum = repeatAll()
+	case "lossy":
+		sum = lossyAll()
+	case "valid":
+		sum = validAll()
 	case "index":
 		sum = indexAll()
 	}

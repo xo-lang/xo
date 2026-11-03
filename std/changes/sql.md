@@ -1,5 +1,20 @@
 # std/sql changes
 
+## 2026-11-03: feature: begin takes an isolation level and read_only (Go's TxOptions)
+
+- Kind: feature
+- Commit: this commit
+- Found by: the backend survey of 2026-10-30, rank 13 (std-coverage.md: ledger)
+- Go reference: database/sql DB.BeginTx with sql.TxOptions; pgx's stdlib begin modes
+- Test: internal/stdtest corpus sql (a recording driver sees SET TRANSACTION per level and read_only, a refused mode rolls back and frees the connection; the in memory Db refuses writes with 25006), native and Go backends
+- Shipped in: not yet released
+
+`db.begin(isolation: sql.Isolation.Serializable, read_only: true)`; both
+default to what `begin()` did. A driver gets `SET TRANSACTION ISOLATION
+LEVEL ..., READ ONLY` right after BEGIN (the DriverConn interface is
+unchanged); the in memory Db is serializable at every level and refuses a
+write in a read only transaction with Postgres's 25006.
+
 ## 2026-10-23: behavior: SqlErr prints plain messages (decision 0358)
 
 - Kind: behavior

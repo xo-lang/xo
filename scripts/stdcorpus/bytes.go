@@ -14,7 +14,7 @@ import (
 // The bytes corpus: Go's bytes package as the oracle for Bytes.contains,
 // starts_with, ends_with, count, split, split_n, fields, trim, trim_prefix,
 // trim_suffix, replace, replace_n, to_lower, to_upper, equal_fold and
-// repeat, on Go's own test cases, on the boundary cases the methods
+// repeat (and to_valid_utf8 and to_str_lossy), on Go's own test cases, on the boundary cases the methods
 // document, and on seeded random bytes (invalid UTF-8 included: these are
 // bytes, not text).
 
@@ -722,7 +722,7 @@ func bytesCorpus() string {
 	}
 
 	var o strings.Builder
-	o.WriteString(header("Go's bytes.Contains, HasPrefix, HasSuffix, Count, SplitN, SplitAfter, Fields, TrimSpace, TrimPrefix, TrimSuffix, Replace, ToLower, ToUpper, EqualFold, Repeat, IndexAny, LastIndexAny, ContainsAny, ContainsRune, Cut, CutPrefix and CutSuffix on Go's bytes_test.go cases (containsTests, the TestCountByte and TestCountByteNoMatch windows, splittests, splitaftertests, fieldstests, trimSpaceTests, trimTests, ReplaceTests, upperTests, lowerTests, EqualFoldTests, RepeatTests, indexAnyTests, lastIndexAnyTests, ContainsRuneTests, cutTests, cutPrefixTests, cutSuffixTests), on the boundary cases the methods document, and on seeded random bytes with invalid UTF-8 (Go's bytes tests are Copyright 2009 The Go Authors, BSD-style license)"))
+	o.WriteString(header("Go's bytes.Contains, HasPrefix, HasSuffix, Count, SplitN, SplitAfter, Fields, TrimSpace, TrimPrefix, TrimSuffix, Replace, ToLower, ToUpper, EqualFold, Repeat, IndexAny, LastIndexAny, ContainsAny, ContainsRune, Cut, CutPrefix, CutSuffix and ToValidUTF8 on Go's bytes_test.go cases (containsTests, the TestCountByte and TestCountByteNoMatch windows, splittests, splitaftertests, fieldstests, trimSpaceTests, trimTests, ReplaceTests, upperTests, lowerTests, EqualFoldTests, RepeatTests, indexAnyTests, lastIndexAnyTests, ContainsRuneTests, cutTests, cutPrefixTests, cutSuffixTests, toValidUTF8Tests), on the boundary cases the methods document, and on seeded random bytes with invalid UTF-8 (Go's bytes tests are Copyright 2009 The Go Authors, BSD-style license)"))
 	o.WriteString("\n/// (b, sub, Go's Contains, HasPrefix, HasSuffix and Count)\nconst CASES: List[(Bytes, Bytes, Bool, Bool, Bool, Int)] = [\n")
 	for _, c := range cs {
 		fmt.Fprintf(&o, "  (%s, %s, %v, %v, %v, %d),\n", xbytes(c.b), xbytes(c.sub),
@@ -985,11 +985,44 @@ func bytesMiscTables() string {
 		fmt.Fprintf(&o, "  (%s, %s),\n", xbytes(c.b), xq(d.String()))
 	}
 	o.WriteString("]\n")
+
+	// Bytes.to_valid_utf8 and to_str_lossy: Go's bytes_test.go
+	// toValidUTF8Tests, then the cases above with four replacements in turn;
+	// to_str_lossy is Go's string([]rune(string(b))).
+	type validCase struct{ in, repl string }
+	vcs := []validCase{
+		{"", "\uFFFD"}, {"abc", "\uFFFD"}, {"\uFDDD", "\uFFFD"}, {"a\xffb", "\uFFFD"},
+		{"a\xffb\uFFFD", "X"}, {"a☺\xffb☺\xC0\xAFc☺\xff", ""}, {"a☺\xffb☺\xC0\xAFc☺\xff", "日本語"},
+		{"\xC0\xAF", "\uFFFD"}, {"\xE0\x80\xAF", "\uFFFD"}, {"\xed\xa0\x80", "abc"},
+		{"\xed\xbf\xbf", "\uFFFD"}, {"\xF0\x80\x80\xaf", "☺"}, {"\xF8\x80\x80\x80\xAF", "\uFFFD"},
+		{"\xFC\x80\x80\x80\x80\xAF", "\uFFFD"},
+	}
+	repls := []string{"\uFFFD", "", "X", "日本語"}
+	for i, c := range cs {
+		vcs = append(vcs, validCase{string(c.b), repls[i%len(repls)]})
+	}
+	o.WriteString("\n/// (b, replacement, Go's ToValidUTF8, Go's string([]rune(string(b))))\nconst MISC_VALID: List[(Bytes, Str, Str, Str)] = [\n")
+	for _, c := range vcs {
+		fmt.Fprintf(&o, "  (%s, %s, %s, %s),\n", xbytes([]byte(c.in)), xq(c.repl), xq(strings.ToValidUTF8(c.in, c.repl)), xq(string([]rune(c.in))))
+	}
+	o.WriteString("]\n")
 	o.WriteString(bytesMiscTests)
 	return o.String()
 }
 
 const bytesMiscTests = `
+test "to_valid_utf8 is Go's ToValidUTF8 and to_str_lossy is string([]rune)" {
+  var bad: List[(Bytes, Str, Str, Str)] = []
+  for (b, repl, want, lossy) in MISC_VALID {
+    let got = b.to_valid_utf8(repl)
+    let got_lossy = b.to_str_lossy()
+    if got != want || got_lossy != lossy {
+      bad.push((b, repl, got, got_lossy))
+    }
+  }
+  expect(show_misc(bad)) == []
+}
+
 fn show_misc[T](bad: List[T]) -> List[T] {
   bad[0..(if bad.len() < 20 { bad.len() } else { 20 })]
 }

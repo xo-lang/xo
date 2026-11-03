@@ -101,6 +101,16 @@ func Duration_abs(_ *Task, d Duration) Duration {
 	return d
 }
 
+// Duration_round is `d.round(m)`: Go's Duration.Round.
+func Duration_round(_ *Task, d, m Duration) Duration {
+	return Duration(time.Duration(d).Round(time.Duration(m)))
+}
+
+// Duration_truncate is `d.truncate(m)`: Go's Duration.Truncate.
+func Duration_truncate(_ *Task, d, m Duration) Duration {
+	return Duration(time.Duration(d).Truncate(time.Duration(m)))
+}
+
 // Time_UNIX_EPOCH is `Time.UNIX_EPOCH`.
 func Time_UNIX_EPOCH(*Task) Time { return 0 }
 

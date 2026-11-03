@@ -290,7 +290,7 @@ how many services hit the gap:
 | 10 | HTTP/2 without TLS (h2c, prior knowledge) and server HTTP/2 settings (max streams, keepalive ping, GOAWAY by age) | grpcsvc | awkward | x/net/http2 AllowHTTP, http.Protocols, http2.Server | M |
 | 11 | Protobuf runtime and a gRPC library (`derive Proto` is reserved for after 1.0) | grpcsvc | awkward (hand written) | google.golang.org/protobuf, grpc (outside Go's std) | L |
 | 12 | Unicode normalization (NFC) and IDNA. Closed 2026-11-03 (`std/norm`, `std/idna`, decision 0476) | dataport | awkward | x/text/unicode/norm, x/net/idna | M |
-| 13 | Minor: `Db.begin` isolation options; Duration round and truncate; lossy Bytes to Str (read_text is lossy, gunzipped bytes are not); identifier quoting for SQL; two digit years; trace ids on outbound requests; Redis and JWT clients (outside Go's std too) | ledger, dataport, chathub, queueworker | minor | sql.TxOptions, Duration.Round, strings.ToValidUTF8, pgx.Identifier, otelhttp | S each |
+| 13 | Minor: done 2026-11-03: `Db.begin(isolation:, read_only:)`, `Duration.round` and `truncate`, `Bytes.to_str_lossy` and `to_valid_utf8`. Left (new design, for a later ADR): identifier quoting for SQL; two digit years; trace ids on outbound requests; Redis and JWT clients (outside Go's std too) | ledger, dataport, chathub, queueworker | minor | sql.TxOptions, Duration.Round, strings.ToValidUTF8, pgx.Identifier, otelhttp | S each |
 
 Language obstacles the services met (for the language owners): enum
 variants cannot carry explicit numbers (gRPC codes became Int

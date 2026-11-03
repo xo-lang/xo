@@ -599,6 +599,51 @@ fn bytes_rune_count(b: Bytes) -> Int { scan.bytes_rune_count(b) }
 
 fn bytes_to_hex(b: Bytes) -> Str { scan.to_hex(b) }
 
+/// Each byte of an invalid UTF-8 sequence U+FFFD: the runtime's own
+/// conversion of outside bytes (decision 0259).
+fn bytes_to_str_lossy(b: Bytes) -> Str { scan.text_of(b) }
+
+/// Go's bytes.ToValidUTF8.
+fn bytes_to_valid_utf8(b: Bytes, replacement: Str) -> Str {
+  if let Some(s) = b.to_str() {
+    return s
+  }
+  utf8_fix(b, replacement)
+}
+
+/// b with replacement for each run of invalid bytes (Go's ToValidUTF8);
+/// the valid stretches are copied whole.
+fn utf8_fix(b: Bytes, replacement: Str) -> Str {
+  let rep = replacement.bytes()
+  var out = BytesBuilder.with_capacity(b.len() + rep.len())
+  var start = 0
+  var i = 0
+  var bad = false
+  while i < b.len() {
+    if b[i] < 0x80 {
+      i += 1
+      bad = false
+      continue
+    }
+    let (_, size) = b.decode_rune(i)
+    if size == 1 {
+      out.write(b[start..i])
+      if !bad {
+        out.write(rep)
+      }
+      bad = true
+      i += 1
+      start = i
+      continue
+    }
+    bad = false
+    i += size
+  }
+  out.write(b[start..])
+  // valid: the copied stretches are, and so is replacement
+  out.freeze().to_str() ?? ""
+}
+
 /// Whether sub is at b[i:] (i + sub.len() <= b.len()).
 fn bytes_at(b: Bytes, sub: Bytes, i: Int) -> Bool {
   var j = 0
@@ -4485,6 +4530,46 @@ fn duration_from_secs(s: Float) -> Duration { Duration.from_nanos(Int((s * 10000
 
 /// math.Round(d * f) nanoseconds.
 fn duration_scale(d: Duration, f: Float) -> Duration { Duration.from_nanos(Int((Float(d.nanos()) * f).round())) }
+
+/// Go's Duration.Round (time.go): halfway away from zero, saturating at
+/// the ends of Duration's range.
+fn duration_round(d: Duration, m: Duration) -> Duration {
+  let n = d.nanos()
+  let mn = m.nanos()
+  if mn <= 0 {
+    return d
+  }
+  // r is in [0, mn): r < mn - r is Go's lessThanHalf without its
+  // unsigned overflow
+  if n < 0 {
+    let r = -(n % mn)
+    if r < mn - r {
+      return Duration.from_nanos(n + r)
+    }
+    if n >= -9223372036854775807 - 1 + (mn - r) {
+      return Duration.from_nanos(n - (mn - r))
+    }
+    return Duration.from_nanos(-9223372036854775807 - 1)
+  }
+  let r = n % mn
+  if r < mn - r {
+    return Duration.from_nanos(n - r)
+  }
+  if n <= 9223372036854775807 - (mn - r) {
+    return Duration.from_nanos(n + (mn - r))
+  }
+  Duration.from_nanos(9223372036854775807)
+}
+
+/// Go's Duration.Truncate.
+fn duration_truncate(d: Duration, m: Duration) -> Duration {
+  let mn = m.nanos()
+  if mn <= 0 {
+    return d
+  }
+  let n = d.nanos()
+  Duration.from_nanos(n - n % mn)
+}
 
 fn duration_ceil_seconds(d: Duration) -> Int {
   let n = d.nanos()

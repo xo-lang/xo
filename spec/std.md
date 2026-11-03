@@ -224,6 +224,8 @@ fn (s: Str) bytes() -> Bytes                 // no copy: s's own bytes (a short 
 fn (b: Bytes) len() -> Int                   // b[i] is the byte at i, a UInt8
 fn (b: Bytes) is_empty() -> Bool             // `for x in b` yields each byte (core 3.5)
 fn (b: Bytes) to_str() -> Str?               // None if not valid UTF-8
+fn (b: Bytes) to_str_lossy() -> Str          // each byte of an invalid sequence U+FFFD (the outside text rule; Go's string([]rune(s)))
+fn (b: Bytes) to_valid_utf8(replacement: Str) -> Str  // bytes.ToValidUTF8: each run of invalid bytes becomes one replacement
 fn (b: Bytes) to_hex() -> Str                // lowercase
 fn (b: Bytes) to_base64() -> Str             // standard encoding, padded
 Bytes.from_hex(s: Str) -> Bytes?
@@ -462,6 +464,8 @@ fn (d: Duration) nanos() -> Int
 fn (d: Duration) scale(f: Float) -> Duration // rounds to the nearest nanosecond
 fn (d: Duration) ceil_seconds() -> Int
 fn (d: Duration) abs() -> Duration           // durations may be negative
+fn (d: Duration) round(m: Duration) -> Duration     // Duration.Round: nearest multiple, halves away from zero, saturating; d when m <= 0
+fn (d: Duration) truncate(m: Duration) -> Duration  // Duration.Truncate: toward zero; d when m <= 0
 
 struct DurationErr { input: Str }  // displays as `invalid duration "1x": expected numbers with units ...`
 
@@ -2845,7 +2849,8 @@ fn add(db: sql.Db, owner: Int, body: Str, at: Time) -> Note ! sql.SqlErr uses ne
 ### 10.5 Transactions
 
 ```
-fn (d: Db) begin() -> Tx ! SqlErr uses net.dial
+enum Isolation { Default, ReadUncommitted, ReadCommitted, RepeatableRead, Serializable }
+fn (d: Db) begin(isolation: Isolation = Isolation.Default, read_only: Bool = false) -> Tx ! SqlErr uses net.dial
 fn (t: Tx) query(q: Str, args: List[SqlValue] = []) -> List[Row] ! SqlErr uses net.dial
 fn (t: Tx) query_one(q: Str, args: List[SqlValue] = []) -> Row ! SqlErr uses net.dial
 fn (t: Tx) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses net.dial
@@ -2870,6 +2875,15 @@ tx.commit()?
 task is cancelled or the function returns an error. A statement that fails
 inside a transaction leaves the transaction usable and its earlier work intact.
 A `Tx` is a handle: copies share the transaction.
+
+`isolation` and `read_only` are Go's `sql.TxOptions`. A driver's
+connection runs `SET TRANSACTION ISOLATION LEVEL ..., READ ONLY` (the
+modes asked for, in that order) right after `begin`, nothing for the
+defaults; an error there rolls back and is `begin`'s error. The in memory
+driver is serializable whatever the level, and in a read only transaction
+refuses every statement but a SELECT with
+`Server(code: "25006", msg: "cannot execute INSERT in a read-only transaction")`,
+as Postgres does.
 
 ### 10.6 Errors and the in memory driver
 
@@ -5017,7 +5031,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-477 declarations.
+481 declarations.
 
 ### Range
 
@@ -5259,6 +5273,8 @@ fn (s: Str) unquote() -> Str?
 fn (b: Bytes) len() -> Int
 fn (b: Bytes) is_empty() -> Bool
 fn (b: Bytes) to_str() -> Str?
+fn (b: Bytes) to_str_lossy() -> Str
+fn (b: Bytes) to_valid_utf8(replacement: Str) -> Str
 fn (b: Bytes) to_hex() -> Str
 fn (b: Bytes) clone() -> Bytes
 fn (b: Bytes) to_base64() -> Str
@@ -5421,6 +5437,8 @@ fn (d: Duration) nanos() -> Int
 fn (d: Duration) scale(f: Float) -> Duration
 fn (d: Duration) ceil_seconds() -> Int
 fn (d: Duration) abs() -> Duration
+fn (d: Duration) round(m: Duration) -> Duration
+fn (d: Duration) truncate(m: Duration) -> Duration
 ```
 
 ### DurationErr

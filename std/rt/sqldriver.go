@@ -136,7 +136,7 @@ func (b *sqlDriverBackend) PingTk(tk *Task) error {
 	return driverUnit(x.c.M_ping(tk))
 }
 
-func (b *sqlDriverBackend) BeginTk(tk *Task) (SqlTxBackend, error) {
+func (b *sqlDriverBackend) BeginTk(tk *Task, mode string) (SqlTxBackend, error) {
 	x, err := b.take(tk)
 	if err != nil {
 		return nil, err
@@ -144,6 +144,13 @@ func (b *sqlDriverBackend) BeginTk(tk *Task) (SqlTxBackend, error) {
 	if err := driverUnit(x.c.M_begin(tk)); err != nil {
 		b.give(tk, x)
 		return nil, err
+	}
+	if mode != "" {
+		if r := x.c.M_exec(tk, mode, sqlValues(nil)); !r.Ok {
+			x.c.M_rollback(tk)
+			b.give(tk, x)
+			return nil, &sqlErrBox{r.E}
+		}
 	}
 	return &sqlDriverTx{b: b, x: x}, nil
 }

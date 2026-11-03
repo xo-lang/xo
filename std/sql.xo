@@ -38,6 +38,16 @@ fn bytes(b: Bytes) -> SqlValue
 fn json[T: Json](v: T) -> SqlValue
 fn array(items: List[SqlValue]) -> SqlValue
 
+/// A transaction's isolation level (Go's sql.IsolationLevel, the four of
+/// standard SQL); Default is the server's own.
+enum Isolation {
+  Default
+  ReadUncommitted
+  ReadCommitted
+  RepeatableRead
+  Serializable
+}
+
 enum SqlErr {
   Syntax(msg: Str)
   /// A key, uniqueness, NOT NULL, check, or type violation: code is the
@@ -97,7 +107,12 @@ fn (d: Db) exec(q: Str, args: List[SqlValue] = []) -> ExecResult ! SqlErr uses n
 fn (d: Db) query_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> List[T] ! SqlErr uses net.dial
 /// `query_one` with the row decoded into `T`.
 fn (d: Db) query_one_as[T: SqlRow](q: Str, args: List[SqlValue] = []) -> T ! SqlErr uses net.dial
-fn (d: Db) begin() -> Tx ! SqlErr uses net.dial
+/// A transaction (Go's DB.BeginTx): isolation and read_only are Go's
+/// sql.TxOptions. A driver's connection gets `SET TRANSACTION ...` with
+/// them right after BEGIN (nothing for the defaults); the in memory
+/// database is serializable whatever the level, and refuses a write in a
+/// read only transaction with Server("25006", ...), as Postgres does.
+fn (d: Db) begin(isolation: Isolation = Isolation.Default, read_only: Bool = false) -> Tx ! SqlErr uses net.dial
 fn (d: Db) ping() -> () ! SqlErr uses net.dial
 fn (d: Db) close() -> () ! SqlErr
 

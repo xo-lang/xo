@@ -128,8 +128,9 @@ func (m *memBackend) Begin() (SqlTxBackend, error) {
 }
 
 type memTx struct {
-	b      *memBackend
-	tables map[string]*memTable
+	b        *memBackend
+	tables   map[string]*memTable
+	readOnly bool
 }
 
 func (t *memTx) Query(q string, args []any) ([]string, [][]any, error) {
@@ -143,6 +144,13 @@ func (t *memTx) Query(q string, args []any) ([]string, [][]any, error) {
 }
 
 func (t *memTx) Exec(q string, args []any) (int64, int64, error) {
+	if t.readOnly {
+		// Postgres's refusal; every statement but a SELECT writes here
+		w, _, _ := strings.Cut(strings.TrimSpace(q), " ")
+		if w = strings.ToUpper(w); w != "SELECT" {
+			return 0, 0, &sqlErrBox{sqlE(sqlTagServer, Sql_SqlErr_Server{F_code: "25006", F_msg: "cannot execute " + w + " in a read-only transaction"})}
+		}
+	}
 	// a failed statement leaves the transaction as it was
 	work := copyTables(t.tables)
 	n, id, err := memExec(work, q, args)

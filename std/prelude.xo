@@ -386,6 +386,13 @@ fn (s: Str) bytes() -> Bytes
 fn (b: Bytes) len() -> Int
 fn (b: Bytes) is_empty() -> Bool
 fn (b: Bytes) to_str() -> Str?
+/// b as text with each byte of an invalid UTF-8 sequence U+FFFD, the rule
+/// std's outside text follows (std.md 0, decision 0259; Go's
+/// `string([]rune(string(b)))`); b's text itself when it is valid.
+fn (b: Bytes) to_str_lossy() -> Str
+/// Go's bytes.ToValidUTF8: b as text with each run of invalid UTF-8
+/// bytes replaced by one copy of replacement ("" drops them).
+fn (b: Bytes) to_valid_utf8(replacement: Str) -> Str
 fn (b: Bytes) to_hex() -> Str
 /// An explicit copy of b in a buffer of its own (see Str.clone).
 fn (b: Bytes) clone() -> Bytes
@@ -656,6 +663,13 @@ fn (d: Duration) nanos() -> Int
 fn (d: Duration) scale(f: Float) -> Duration
 fn (d: Duration) ceil_seconds() -> Int
 fn (d: Duration) abs() -> Duration
+/// Go's Duration.Round: d rounded to the nearest multiple of m, halfway
+/// values away from zero; d itself when m <= 0, and the largest or
+/// smallest Duration when the result would overflow.
+fn (d: Duration) round(m: Duration) -> Duration
+/// Go's Duration.Truncate: d rounded toward zero to a multiple of m; d
+/// itself when m <= 0.
+fn (d: Duration) truncate(m: Duration) -> Duration
 
 /// The error of `Duration.parse`: the text that is not a duration.
 struct DurationErr {

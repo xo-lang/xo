@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"math"
+	"strings"
 	"unicode/utf8"
 )
 
@@ -428,6 +429,26 @@ func Bytes_zeroed(_ *Task, n int64) Bytes {
 // Str_clone is `s.clone()`: Go strings are immutable and substrings share by
 // design, so the copy is the value itself (decision 0330 views are native only).
 func Str_clone(_ *Task, s string) string { return s }
+
+// Bytes_to_str_lossy is `b.to_str_lossy()`: each byte of an invalid
+// UTF-8 sequence U+FFFD, as string([]rune(s)) (decision 0259).
+func Bytes_to_str_lossy(_ *Task, b Bytes) string {
+	s := string(b)
+	if utf8.ValidString(s) {
+		return s
+	}
+	var o strings.Builder
+	o.Grow(len(s) + 8)
+	for _, r := range s {
+		o.WriteRune(r)
+	}
+	return o.String()
+}
+
+// Bytes_to_valid_utf8 is `b.to_valid_utf8(replacement)`: Go's ToValidUTF8.
+func Bytes_to_valid_utf8(_ *Task, b Bytes, replacement string) string {
+	return strings.ToValidUTF8(string(b), replacement)
+}
 
 // Bytes_clone is `b.clone()`: Bytes is a Go string here, so it is its own copy.
 func Bytes_clone(_ *Task, b Bytes) Bytes { return b }

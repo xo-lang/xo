@@ -1,0 +1,17 @@
+offload: /work had 16 GB free; pruned xo cache files idle over 360 min, now 16G
+linux/arm64: /work/l2twin13/xobt
+go go1.26.1; host Linux 7.0.14-linuxkit aarch64
+== index: index 5973331 | index 5973331
+wall_ms               0.913       0.856       8.506% 6.454%     0.938   0.907 to 1.009    within noise (n=15)
+cpu_ms                0.954       0.776       6.918% 4.317%     0.813   0.789 to 0.86     too coarse (n=15)
+max_rss_kb            5724        1232        35.92% 0.325%     0.215   0.213 to 0.333    better (n=15)
+== lossy: lossy 5866663 | lossy 5866663
+wall_ms               4.776       4.631       3.933% 2.336%     0.97    0.952 to 0.986    better (n=15)
+cpu_ms                4.908       4.546       3.943% 1.815%     0.926   0.901 to 0.939    too coarse (n=15)
+max_rss_kb            3704        1232        55.78% 0.325%     0.333   0.213 to 0.333    better (n=15)
+== valid: valid 5733331 | valid 5733331
+wall_ms               7.218       4.895       3.177% 1.195%     0.678   0.669 to 0.687    better (n=15)
+cpu_ms                7.844       4.801       2.613% 1.271%     0.612   0.604 to 0.622    too coarse (n=15)
+max_rss_kb            10148       1232        10.98% 0.325%     0.121   0.121 to 0.152    better (n=15)
+twin-r13: ok
+OFFLOAD-RC=0

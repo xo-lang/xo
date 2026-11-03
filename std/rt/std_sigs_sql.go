@@ -20,7 +20,7 @@ var (
 	_ func(*Sql_Db, *Task, string, List[Sql_SqlValue]) Result[List[Sql_Row], Sql_SqlErr]         = (*Sql_Db).M_query
 	_ func(*Sql_Db, *Task, string, List[Sql_SqlValue]) Result[Sql_Row, Sql_SqlErr]               = (*Sql_Db).M_query_one
 	_ func(*Sql_Db, *Task, string, List[Sql_SqlValue]) Result[Sql_ExecResult, Sql_SqlErr]        = (*Sql_Db).M_exec
-	_ func(*Sql_Db, *Task) Result[Sql_Tx, Sql_SqlErr]                                            = (*Sql_Db).M_begin
+	_ func(*Sql_Db, *Task, Sql_Isolation, bool) Result[Sql_Tx, Sql_SqlErr]                       = (*Sql_Db).M_begin
 	_ func(*Sql_Db, *Task) Result[Unit, Sql_SqlErr]                                              = (*Sql_Db).M_ping
 	_ func(*Sql_Db, *Task) Result[Unit, Sql_SqlErr]                                              = (*Sql_Db).M_close
 	_ func(*Sql_Tx, *Task, string, List[Sql_SqlValue]) Result[List[Sql_Row], Sql_SqlErr]         = (*Sql_Tx).M_query

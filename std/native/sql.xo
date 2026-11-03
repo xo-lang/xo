@@ -199,6 +199,7 @@ struct Tx {
 struct TxState {
   tables: Map[Str, Table]
   done: Bool
+  read_only: Bool = false
 }
 
 struct Row {
@@ -339,7 +340,7 @@ fn (d: Db) close() -> () ! sql.SqlErr {
   }
 }
 
-fn (d: Db) begin() -> Tx ! sql.SqlErr uses net.dial {
+fn (d: Db) begin(isolation: sql.Isolation = sql.Isolation.Default, read_only: Bool = false) -> Tx ! sql.SqlErr uses net.dial {
   d.ready()?
   if let Some(p) = d.pool {
     // the transaction holds its permit and connection until it ends
@@ -348,6 +349,13 @@ fn (d: Db) begin() -> Tx ! sql.SqlErr uses net.dial {
       p.give(t)
       return Err(e)
     }
+    if let Some(mode) = tx_mode(isolation, read_only) {
+      if let Err(e) = t.c.exec(mode, []) {
+        let _ = t.c.rollback().ignore_err("the SET TRANSACTION error is the one to report")
+        p.give(t)
+        return Err(e)
+      }
+    }
     return Tx{st: Mutex.new(TxState{tables: {}, done: false}), db: d, conn: Some(t)}
   }
   // the single writer permit; waiting is a cancellation point
@@ -355,7 +363,38 @@ fn (d: Db) begin() -> Tx ! sql.SqlErr uses net.dial {
     return Err(sql.SqlErr.Canceled)
   }
   let tables = d.st.with_read(fn(st) { st.tables })
-  Tx{st: Mutex.new(TxState{tables: tables, done: false}), db: d}
+  Tx{st: Mutex.new(TxState{tables: tables, done: false, read_only: read_only}), db: d}
+}
+
+/// The statement that sets a driver transaction's options after BEGIN
+/// (pgx's stdlib puts the same modes in its BEGIN); None for the defaults.
+fn tx_mode(isolation: sql.Isolation, read_only: Bool) -> Str? {
+  var modes: List[Str] = []
+  match isolation {
+    Default => {}
+    ReadUncommitted => modes.push("ISOLATION LEVEL READ UNCOMMITTED")
+    ReadCommitted => modes.push("ISOLATION LEVEL READ COMMITTED")
+    RepeatableRead => modes.push("ISOLATION LEVEL REPEATABLE READ")
+    Serializable => modes.push("ISOLATION LEVEL SERIALIZABLE")
+  }
+  if read_only {
+    modes.push("READ ONLY")
+  }
+  if modes.is_empty() {
+    return None
+  }
+  Some("SET TRANSACTION ${modes.join(", ")}")
+}
+
+/// Postgres's refusal of a write in a read only transaction, for the in
+/// memory database: every statement but a SELECT writes there.
+fn read_only_refusal(q: Str) -> sql.SqlErr? {
+  let t = q.trim()
+  let word = t[0..(t.find(" ") ?? t.len())].to_upper()
+  if word == "SELECT" {
+    return None
+  }
+  Some(sql.SqlErr.Server(code: "25006", msg: "cannot execute ${word} in a read-only transaction"))
 }
 
 fn (t: Tx) query(q: Str, args: List[sql.SqlValue] = []) -> List[Row] ! sql.SqlErr uses net.dial {
@@ -406,6 +445,11 @@ fn (t: Tx) exec(q: Str, args: List[sql.SqlValue] = []) -> sql.ExecResult ! sql.S
   t.st.with(fn(var ts) -> sql.ExecResult ! sql.SqlErr {
     if ts.done {
       return Err(sql.SqlErr.TxDone)
+    }
+    if ts.read_only {
+      if let Some(e) = read_only_refusal(q) {
+        return Err(e)
+      }
     }
     // a failed statement leaves the transaction as it was
     var work = ts.tables

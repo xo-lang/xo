@@ -141,6 +141,8 @@ var (
 	_ func(*Task, Bytes) int64                                      = Bytes_len
 	_ func(*Task, Bytes) bool                                       = Bytes_is_empty
 	_ func(*Task, Bytes) Option[string]                             = Bytes_to_str
+	_ func(*Task, Bytes) string                                     = Bytes_to_str_lossy
+	_ func(*Task, Bytes, string) string                             = Bytes_to_valid_utf8
 	_ func(*Task, Bytes) string                                     = Bytes_to_hex
 	_ func(*Task, Bytes) Bytes                                      = Bytes_clone
 	_ func(*Task, Bytes) string                                     = Bytes_to_base64
@@ -209,6 +211,8 @@ var (
 	_ func(*Task, Duration, float64) Duration                       = Duration_scale
 	_ func(*Task, Duration) int64                                   = Duration_ceil_seconds
 	_ func(*Task, Duration) Duration                                = Duration_abs
+	_ func(*Task, Duration, Duration) Duration                      = Duration_round
+	_ func(*Task, Duration, Duration) Duration                      = Duration_truncate
 	_ func(*DurationErr, *Task) string                              = (*DurationErr).M_display
 	_ func(*Scope, *Task)                                           = (*Scope).M_cancel
 	_ func(*Scope, *Task) Task_Group                                = (*Scope).M_group

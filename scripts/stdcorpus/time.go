@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"math"
 	"math/rand"
 	"os"
 	"path/filepath"
@@ -247,6 +248,41 @@ func timeCorpus() string {
 	for _, ns := range nanos {
 		d := time.Duration(ns)
 		fmt.Fprintf(&o, "  (%d, %s, %d),\n", ns, xq(d.String()), d.Milliseconds())
+	}
+	o.WriteString("]\n")
+
+	// Duration.round and truncate: Go's time_test.go durationRoundTests and
+	// durationTruncateTests (their d and m), then seeded pairs of every
+	// scale, the ends of the range and m <= 0 included; the expectation is
+	// Go's Round and Truncate.
+	type durPair struct{ d, m int64 }
+	const sec, min = int64(time.Second), int64(time.Minute)
+	pairs := []durPair{
+		{0, sec}, {min, -7 * sec}, {min, 0}, {min, 1}, {min + 10*sec, 10 * sec},
+		{2*min + 10*sec, min}, {10*min + 10*sec, 3 * min}, {min + 10*sec, min + 10*sec + 1},
+		{min + 10*sec, int64(time.Hour)}, {-min, sec}, {-10 * min, 3 * min}, {-10 * min, int64(time.Hour)},
+		{min, -11 * sec}, {2 * min, min}, {2*min + 30*sec, min}, {2*min + 50*sec, min},
+		{-min, 1}, {-2 * min, min}, {-2*min - 10*sec, min}, {-2*min - 30*sec, min}, {-2*min - 50*sec, min},
+		{8e18, 3e18}, {9e18, 5e18}, {-8e18, 3e18}, {-9e18, 5e18}, {3<<61 - 1, 3 << 61},
+		{math.MaxInt64, 2}, {math.MinInt64, 2}, {math.MaxInt64, math.MaxInt64}, {math.MinInt64, math.MaxInt64},
+		{math.MinInt64, 1}, {math.MaxInt64, math.MinInt64},
+	}
+	rp := rand.New(rand.NewSource(97))
+	for i := 0; i < 300; i++ {
+		d := rp.Int63() >> uint(rp.Intn(63))
+		if rp.Intn(2) == 0 {
+			d = -d
+		}
+		m := rp.Int63() >> uint(rp.Intn(63))
+		if rp.Intn(10) == 0 {
+			m = -m
+		}
+		pairs = append(pairs, durPair{d, m})
+	}
+	o.WriteString("\n/// (nanoseconds d, nanoseconds m, Go's d.Round(m), Go's d.Truncate(m), as nanoseconds)\nconst DUR_ROUND_CASES: List[(Int, Int, Int, Int)] = [\n")
+	for _, p := range pairs {
+		d, m := time.Duration(p.d), time.Duration(p.m)
+		fmt.Fprintf(&o, "  (%d, %d, %d, %d),\n", p.d, p.m, int64(d.Round(m)), int64(d.Truncate(m)))
 	}
 	o.WriteString("]\n")
 
@@ -580,6 +616,20 @@ test "Duration.parse reads back what a Duration displays" {
     }
   }
   expect(show3(bad)) == []
+}
+
+test "Duration.round and truncate are Go's Round and Truncate" {
+  var bad: List[(Str, Str, Str)] = []
+  for (d, m, want_round, want_trunc) in DUR_ROUND_CASES {
+    let x = Duration.from_nanos(d)
+    let y = Duration.from_nanos(m)
+    let got = "${x.round(y).nanos()} ${x.truncate(y).nanos()}"
+    let want = "${want_round} ${want_trunc}"
+    if got != want {
+      bad.push(("${d}.round(${m})", got, want))
+    }
+  }
+  expect(bad) == []
 }
 
 test "from_nanos, from_millis, millis and nanos are Go's" {
