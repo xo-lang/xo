@@ -91,6 +91,7 @@ func TestOutsideBytesValidated(t *testing.T) {
 	// or already validated
 	casts := map[string]int{
 		"std/native/csv.xo":          1, // field_str: a slice of the Str text at a field boundary, valid as the text is
+		"std/native/html.xo":         1, // escape_string: the Str text with ASCII replacements between its own runs, valid as the text is
 		"std/native/archive.xo":      1, // parse_pax: records parsed on raw bytes, keys and values validated
 		"std/native/testing.xo":      3, // test fakes: the program's own text
 		"std/native/time.xo":         1, // format_items: ASCII digits and names and the layout's own text
