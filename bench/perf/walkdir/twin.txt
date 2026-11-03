@@ -1,3 +1,4 @@
 # twincheck: walkdir: two workloads (none is the setup alone); Go is path/filepath.WalkDir.
 - - none
 - - walk
+- - walk_info

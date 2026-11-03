@@ -2375,9 +2375,45 @@ fn fs_clean(p: Str) -> Str {
 }
 
 // fs_clean_slash is Go's path.Clean of a slash separated path.
+/// Whether p is already what fs_clean_slash returns: no empty, "." or ".."
+/// segment and no trailing slash (Go's path.Clean returns such a path
+/// without building a copy).
+fn fs_is_clean(p: Str) -> Bool {
+  let b = p.bytes()
+  let n = b.len()
+  if n == 0 {
+    return false
+  }
+  if n == 1 {
+    return true
+  }
+  if b[n - 1] == 47 {
+    return false
+  }
+  var i = if b[0] == 47 { 1 } else { 0 }
+  while i < n {
+    var j = i
+    while j < n && b[j] != 47 {
+      j += 1
+    }
+    let l = j - i
+    if l == 0 {
+      return false
+    }
+    if b[i] == 46 && (l == 1 || (l == 2 && b[i + 1] == 46)) {
+      return false
+    }
+    i = j + 1
+  }
+  true
+}
+
 fn fs_clean_slash(p: Str) -> Str {
   if p == "" {
     return "."
+  }
+  if fs_is_clean(p) {
+    return p
   }
   let rooted = p.starts_with("/")
   var parts: List[Str] = []
