@@ -1334,6 +1334,22 @@ fn (var g: G) instr1(v: Int) {
           g.set(v, [g.word(p)])
           return
         }
+        // a field of a shift, `(x >> k) & (2^w - 1)`: one ubfx, the asr
+        // then dead when nothing else reads it; asr and ubfx agree on
+        // bits k to k + w - 1 while k + w <= 64 (2026-11-03: Blowfish's F
+        // took an asr and an and for each of its three byte reads)
+        if !g.x86 {
+          let sx = g.f.values[p]
+          let (k, kc) = if sx.op == ssa.Op.Shr && sx.args.len() == 2 { g.const_word(sx.args[1]) } else { (0, false) }
+          var w = 0
+          while w < 63 && (n >> w) != 0 {
+            w += 1
+          }
+          if kc && k > 0 && k < 64 && k + w <= 64 {
+            g.set(v, [g.def1(false, "ubfx $d0, $u0, #${k}, #${w}", [g.word(sx.args[0])])])
+            return
+          }
+        }
       }
       if qc && (if g.x86 { imm32(n) } else { ones_run(n) }) {
         // a logical immediate (decision 0184)

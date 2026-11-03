@@ -46,6 +46,11 @@ const ENCODINGS: List[(Str, Int)] = [
   ("and x12, x9, #2147483647", 0x9240792c),
   ("and x11, x9, x13", 0x8a0d012b),
   ("asr x10, x11, #4", 0x9344fd6a),
+  // a field of a shift (isel's `(x >> k) & mask`), words from clang
+  ("ubfx x10, x14, #16, #8", 0xd3505dca),
+  ("ubfx x9, x8, #24, #8", 0xd3587d09),
+  ("ubfx x1, x2, #8, #8", 0xd3483c41),
+  ("ubfx w3, w4, #5, #3", 0x53051c83),
   ("asr x9, x12, x10", 0x9aca2989),
   ("b L", 0x14000001),
   ("b.eq L", 0x54000020),

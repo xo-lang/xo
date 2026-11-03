@@ -224,6 +224,7 @@ pub fn encode_op(o: Op) -> Int {
     "and" | "orr" | "eor" | "ands" | "bic" | "orn" | "eon" | "bics" => return logical_word(o.m, o.ops)
     "extr" => return extr_word(o.ops)
     "lsl" | "lsr" | "asr" | "ror" => return shift_word(o.m, o.ops)
+    "ubfx" => return ubfx_word(o.ops)
     "cmp" | "cmn" => {
       // subs or adds into the zero register
       if n < 2 || n > 3 {
@@ -460,6 +461,25 @@ fn extr_word(o: List[Operand]) -> Int {
     Some(v) => if v < 0 || v >= size { -1 } else { 0x13800000 | (sfd * 0x80000000) | nbit | (r * 0x10000) | (v * 0x400) | (n * 32) | d }
     None => -1
   }
+}
+
+/// ubfx d, s, #lsb, #width: ubfm with immr lsb and imms lsb + width - 1.
+fn ubfx_word(o: List[Operand]) -> Int {
+  if o.len() != 4 {
+    return -1
+  }
+  let (d, sfd) = gp_of(o[0], false)
+  let (s, sfs) = gp_of(o[1], false)
+  if d < 0 || s < 0 || sfd != sfs {
+    return -1
+  }
+  let size = if sfd == 1 { 64 } else { 32 }
+  let lsb = imm_of(o[2]) ?? -1
+  let w = imm_of(o[3]) ?? -1
+  if lsb < 0 || w < 1 || lsb + w > size {
+    return -1
+  }
+  0x53000000 | (sfd * 0x80000000) | (if sfd == 1 { 0x400000 } else { 0 }) | (lsb * 0x10000) | ((lsb + w - 1) * 0x400) | (s * 32) | d
 }
 
 /// lsl, lsr, asr, ror by an immediate (ubfm, sbfm, extr) or a register

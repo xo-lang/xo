@@ -509,6 +509,14 @@ fn (var g: G) elem_addr(l: Int, i: Int, iv: Int, et: Int) -> ElemAt {
     }
   }
   let o = g.offs.get(i) ?? Offset{a: -1, c: 0}
+  if o.a >= 0 && es == 8 && !is_bool && !g.x86 && o.c > 0 && LIST_HDR + 8 * o.c < 0x1000000 && !(iv >= 0 && (g.off_bases.get(iv) ?? false)) && !g.cm.bases.contains((l, o.a, es)) {
+    // a one word element at a + c, c > 0 (a table's row: Blowfish's
+    // `S1 + byte`): [l + 24 + 8c, a, lsl #3], the base once per block
+    // (data_off), where [l + 8a, #24 + 8c] took an add each load
+    // (2026-11-03); not when a loop's pointer (lsr.xo) already makes
+    // that [p, #24 + 8c]
+    return ElemAt{base: g.data_off(l, o.c), idx: o.a, sh: 3}
+  }
   if o.a >= 0 && o.c > -4096 && o.c < 4096 && es < 4096 {
     let off = LIST_HDR + o.c * es
     if fits_off(off, es, nw) {
@@ -546,6 +554,29 @@ fn (var g: G) data_addr(l: Int) -> Int {
   let d = g.def1(false, "add $d0, $u0, #${LIST_HDR}", [l])
   let _mj = g.m_()
   g.cm.bases[(l, 0, -24)] = d
+  d
+}
+
+/// The address of element c of list l (one word elements), once per
+/// block: the base of elem_addr's [base, a, lsl #3] for an index a + c.
+fn (var g: G) data_off(l: Int, c: Int) -> Int {
+  let _mi = g.m_()
+  if let Some(d) = g.cm.bases.get((l, c, -25)) {
+    return d
+  }
+  // past 4095: the page part with `lsl #12`, then the rest (byref.xo's)
+  let off = LIST_HDR + 8 * c
+  let hi = off & ~4095
+  let lo = off & 4095
+  var d = l
+  if hi != 0 {
+    d = g.def1(false, "add $d0, $u0, #${hi >> 12}, lsl #12", [d])
+  }
+  if lo != 0 {
+    d = g.def1(false, "add $d0, $u0, #${lo}", [d])
+  }
+  let _mj = g.m_()
+  g.cm.bases[(l, c, -25)] = d
   d
 }
 
@@ -3625,6 +3656,24 @@ fn (var g: G) atomic(v: Int) {
         g.store("str $u0, [$u1, #${off}]", [g.word(x.args[2]), base])
         g.set(v, [])
       }
+      return
+    }
+  }
+  if name == "rt.slot_load" && g.ord_arg(v, x.args.len() - 1) == 0 && !g.x86 {
+    // relaxed with an index i = a + c: one add of the header and c's
+    // words, then ldr [t, a, lsl #3], where cell_addr's add of the
+    // scaled index, add of the header and ldr were three (2026-11-03:
+    // Blowfish's S box reads through slot_load, each `S1 + byte`)
+    let int_form = g.kind(g.vty(x.args[0])) == ssa.Kind.Int
+    let ir = g.word(x.args[1])
+    let o = g.offs.get(ir) ?? Offset{a: -1, c: 0}
+    let (ia, c) = if o.a >= 0 && o.c > -512 && o.c < 512 { (o.a, o.c) } else { (ir, 0) }
+    let off = (if int_form { 0 } else { LIST_HDR }) + 8 * c
+    if off >= 0 && off < 4096 {
+      let l = g.word(x.args[0])
+      let base = if int_form { g.real(l) } else { l }
+      let t = if off == 0 { base } else { g.def1(false, "add $d0, $u0, #${off}", [base]) }
+      g.atomic_result(v, g.atomic_def("ldr $d0, [$u0, $u1, lsl #3]", [t, ia]))
       return
     }
   }
