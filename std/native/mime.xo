@@ -50,6 +50,23 @@ fn needs_encoding(s: Str) -> Bool {
   false
 }
 
+/// s (a token, so ASCII) in lower case: written as it is when it has no
+/// upper case letter, as strings.ToLower returns its argument.
+fn write_lower(var b: StrBuilder, s: Str) {
+  var upper = false
+  for c in s.bytes() {
+    if c >= 65 && c <= 90 {
+      upper = true
+      break
+    }
+  }
+  if upper {
+    b.write(s.to_lower())
+  } else {
+    b.write(s)
+  }
+}
+
 fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str {
   var b = StrBuilder.new()
   match kind.find("/") {
@@ -57,7 +74,7 @@ fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str {
       if !is_token(kind) {
         return ""
       }
-      b.write(kind.to_lower())
+      write_lower(b, kind)
     }
     Some(i) => {
       let major = kind[0..i]
@@ -65,9 +82,9 @@ fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str {
       if !is_token(major) || !is_token(sub) {
         return ""
       }
-      b.write(major.to_lower())
+      write_lower(b, major)
       b.write("/")
-      b.write(sub.to_lower())
+      write_lower(b, sub)
     }
   }
   let hex = UPPER_HEX.bytes()
@@ -77,7 +94,7 @@ fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str {
     if !is_token(attr) {
       return ""
     }
-    b.write(attr.to_lower())
+    write_lower(b, attr)
     if needs_encoding(value) {
       b.write("*=utf-8''")
       var out = BytesBuilder.new()
