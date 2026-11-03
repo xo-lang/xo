@@ -1,0 +1,88 @@
+// bufio: std/bufio's Reader against Go's bufio.Reader (twin.go.txt) on 8 MiB
+// of in-memory data served in 1460 byte chunks, as a connection does: every
+// line, every comma separated record (`read_until`), every 24 byte frame
+// (`read_exact`). `none` builds the data only. Usage: `<program>
+// none|lines|until|exact`. Prints `<workload> <checksum>`; the twin prints
+// the same.
+use std/bufio
+
+struct Src {
+  data: Bytes
+  pos: Mutex[Int]
+}
+
+fn (s: Src) read(max: Int) -> Bytes? ! NetErr uses net {
+  s.pos.with(fn(var p: Int) -> Bytes? ! NetErr {
+    if p >= s.data.len() {
+      return Ok(None)
+    }
+    var n = 1460
+    if n > max {
+      n = max
+    }
+    if n > s.data.len() - p {
+      n = s.data.len() - p
+    }
+    let out = s.data[p..p + n]
+    p += n
+    Ok(Some(out))
+  })
+}
+
+fn (s: Src) write(data: Bytes) -> () ! NetErr uses net { Ok(()) }
+
+fn (s: Src) close() {}
+
+/// 8 MiB: lines of 20 to 75 bytes, a comma in about every 12th byte.
+fn build() -> Bytes {
+  var b = BytesBuilder.with_capacity(8388608)
+  var r = 1
+  while b.len() < 8388608 - 100 {
+    r = (r * 1103515245 + 12345) % 2147483648
+    let n = 20 + (r >> 16) % 56
+    for _ in 0..n {
+      r = (r * 1103515245 + 12345) % 2147483648
+      if (r >> 16) % 12 == 0 {
+        b.write_byte(',')
+      } else {
+        b.write_byte(UInt8(97 + (r >> 16) % 26))
+      }
+    }
+    b.write_byte('\n')
+  }
+  b.freeze()
+}
+
+fn main(os: Os) uses stdio, env, net {
+  let w = os.env.args().get(0) ?? "none"
+  let data = build()
+  var sum = 0
+  if w == "none" {
+    sum = data.len()
+  } else {
+    var r = bufio.reader(Src{data: data, pos: Mutex[Int].new(0)})
+    if w == "lines" {
+      while true {
+        match r.read_line() {
+          Ok(Some(s)) => sum += s.len() + 1
+          _ => break
+        }
+      }
+    } else if w == "until" {
+      while true {
+        match r.read_until(',') {
+          Ok(Some(b)) => sum += b.len() + Int(b[0])
+          _ => break
+        }
+      }
+    } else {
+      while true {
+        match r.read_exact(24) {
+          Ok(b) => sum += Int(b[0]) + Int(b[23])
+          _ => break
+        }
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

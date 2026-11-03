@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/bufio: a buffered Reader over any Stream (Conn, ServerConn, TLS): read, read_until and read_line with a record limit, read_exact, peek, buffered; lines are views of the chunk read (decision 0471, spec/std.md 55, std/changes/bufio.md).
 - perf (memory, Linux): with XO_THP=dense (the default) the main thread's heap opens its first chunk by 2 MiB halves like every other thread's, instead of advising the whole 4 MiB chunk for huge pages at once (decision 0469, amending 0456): coll putget max RSS 10,704 to 8,696 KB on linux/arm64 (0.84 of v0.35.0), builds within noise.
 - std/crc64 and std/adler32: Go's hash/crc64 (ISO and ECMA, slicing-by-8) and hash/adler32, `checksum` and `update` of each; Go's values on its golden strings and on pseudo random buffers (spec/std.md 51 and 52, std/changes/crc64.md and adler32.md).
 - wasm: HTTP/2 in a wasip2/wasm command (decision 0447 R2f): http.Server serves h2c and HTTP/2 over TLS (ALPN h2, which R2e kept off), and http.Client speaks HTTP/2 there (ALPN h2, prior knowledge), one connection per request; a reader task per server connection and new runtime parks (rt3 wasi_park_wait/signal, rt9 wasi_sock_try_read/readable) stand in for the native wait on input or a signal. std/changes/http.md.

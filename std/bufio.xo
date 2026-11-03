@@ -1,0 +1,50 @@
+// std/bufio (spec/std.md 55, decision 0471). Declaration file. A buffered
+// reader over any `Stream` (a Conn, a ServerConn, a TLS connection), after
+// Go's bufio.Reader: the line, delimiter, exact-count and peek reads every
+// line protocol needs, without the quadratic copy a hand written buffer
+// over `read(max)` makes. A line or record is a view of the chunk it
+// arrived in unless it spans chunks.
+
+/// Why a read failed: the stream's own error (a timeout, a cancellation,
+/// a reset), a record longer than the limit given (a caller closes the
+/// connection), or the stream ending before `read_exact`
+/// had its bytes. Displays as the stream's error text, `bufio: record too
+/// long` and `bufio: unexpected EOF`.
+enum BufErr {
+  Net(err: NetErr)
+  TooLong
+  UnexpectedEof
+}
+
+fn (e: BufErr) display() -> Str
+
+/// A reader over a stream (move only: its buffer belongs to it, and bytes
+/// it read are not given back to the stream).
+struct Reader {}
+
+/// A reader over s that reads `size` bytes at a time (Go's NewReaderSize;
+/// 4096 is Go's default, and at least 16 is used).
+fn reader(s: Stream, size: Int = 4096) -> Reader
+/// Up to max bytes: what is buffered, else one read of the stream; None at
+/// the end of the stream (Go's Read).
+fn (var r: Reader) read(max: Int) -> Bytes? ! NetErr uses net
+/// The bytes up to and including the next `delim` (Go's ReadBytes). None
+/// at the end of the stream with nothing left; at its end with bytes left
+/// and no delimiter, those bytes are the last record. `TooLong` when
+/// `limit` bytes come without a delimiter, so a peer cannot grow it
+/// without bound; the chunks of the record already gathered are dropped
+/// and the current chunk stays buffered, so a caller closes the connection.
+fn (var r: Reader) read_until(delim: UInt8, limit: Int = 1048576) -> Bytes? ! BufErr uses net
+/// The next line without its "\n" or "\r\n" (Go's ReadString('\n') with the
+/// line ending trimmed, as bufio.Scanner's ScanLines), invalid UTF-8
+/// replaced by U+FFFD; a last line without an ending is a line. None at
+/// the end with nothing left.
+fn (var r: Reader) read_line(limit: Int = 1048576) -> Str? ! BufErr uses net
+/// Exactly n bytes (Go's io.ReadFull); `UnexpectedEof` when the stream ends
+/// first (what was read is lost); n 0 is empty.
+fn (var r: Reader) read_exact(n: Int) -> Bytes ! BufErr uses net
+/// The next n bytes without consuming them (Go's Peek), fewer only when the
+/// stream ends first. Reads from the stream to fill.
+fn (var r: Reader) peek(n: Int) -> Bytes ! BufErr uses net
+/// The bytes buffered and not yet read (Go's Buffered).
+fn (r: Reader) buffered() -> Int

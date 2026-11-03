@@ -185,7 +185,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | os/exec | prelude Proc, Cmd, Child | done | Section 3.8. |
 | os/signal | core 7.5 shutdown, task.stop_requested, Proc.kill | partial | Two phase stop on SIGTERM and SIGINT. Missing: subscribing to other signals (SIGHUP for a reload, SIGUSR1), signal.Notify (2 of 5 services in the 2026-10-29 survey). |
 | os/user | Env.home | partial | Home directory only. |
-| io, io/fs, bufio, io/ioutil | File, Conn, Child read and write, Fs.walk | partial | Byte streams exist per handle. Missing: a common reader and writer interface, buffered readers over a Conn. |
+| io, io/fs, bufio, io/ioutil | File, Conn, Child read and write, Fs.walk | partial | Byte streams exist per handle. Buffered readers over a Conn or Stream: std/bufio (spec/std.md 55, decision 0471). Missing: a common reader and writer interface. |
 | path | std/path | done | Clean, Join, Dir, Base, Ext, Split and IsAbs, and Go's Match as `is_match` (ErrBadPattern as `PathErr`, 2026-10-23). |
 | path/filepath | prelude Fs paths, std/path | done | Every Fs path uses `/` on every OS (section 3.1). |
 | embed | std/embed (with core 3.1's `embed`) | done | a constant of `Str`, `Bytes`, or `embed.Dir` set to `embed("path or glob")`, decision 0304: one file as text or bytes, or a tree; `Dir.fs()` is a read-only `Fs` over it (decision 0307), as embed.FS is an fs.FS. Not covered: `open` as a stream over an embedded file (read the whole file). |
@@ -282,7 +282,7 @@ how many services hit the gap:
 | 5 | Deadlines on Conn, TlsConn and WsConn (read and write), a WebSocket pong handler; and reading the current task's deadline to pass on (grpc-timeout) | queueworker, chathub, grpcsvc | awkward (with_timeout cancels, and the connection is then lost) | net.Conn SetDeadline, gorilla SetWriteDeadline, SetPongHandler, context.Deadline | M |
 | 6 | An exact decimal type (parse, format, rounding modes, allocation) | ledger, dataport | awkward (hand written on BigInt or cents) | shopspring/decimal, cockroachdb/apd (outside Go's std) | M |
 | 7 | A type's own JSON form (Money as "12.34") and internally tagged enums (`{"type": "say", ...}`) | ledger, chathub | awkward | encoding/json Marshaler, Unmarshaler | M |
-| 8 | A buffered reader over a Conn or Stream (read_line, read_exact, peek) | queueworker (every line protocol) | awkward | bufio.Reader | S |
+| 8 | Closed 2026-11-03 (`std/bufio`). A buffered reader over a Conn or Stream (read_line, read_exact, peek) | queueworker (every line protocol) | awkward | bufio.Reader | S |
 | 9 | Large data paths: a row cursor for queries (results are read whole), COPY FROM, a zip reader and writer by entry, a streaming XML token reader | dataport | awkward | database/sql Rows, pgx CopyFrom, archive/zip, encoding/xml Decoder | M each |
 | 10 | HTTP/2 without TLS (h2c, prior knowledge) and server HTTP/2 settings (max streams, keepalive ping, GOAWAY by age) | grpcsvc | awkward | x/net/http2 AllowHTTP, http.Protocols, http2.Server | M |
 | 11 | Protobuf runtime and a gRPC library (`derive Proto` is reserved for after 1.0) | grpcsvc | awkward (hand written) | google.golang.org/protobuf, grpc (outside Go's std) | L |

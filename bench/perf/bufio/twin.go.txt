@@ -1,0 +1,97 @@
+package main
+
+import (
+	"bufio"
+	"fmt"
+	"io"
+	"os"
+)
+
+type src struct {
+	data []byte
+	pos  int
+}
+
+func (s *src) Read(p []byte) (int, error) {
+	if s.pos >= len(s.data) {
+		return 0, io.EOF
+	}
+	n := 1460
+	if n > len(p) {
+		n = len(p)
+	}
+	if n > len(s.data)-s.pos {
+		n = len(s.data) - s.pos
+	}
+	copy(p, s.data[s.pos:s.pos+n])
+	s.pos += n
+	return n, nil
+}
+
+func build() []byte {
+	b := make([]byte, 0, 8388608)
+	r := 1
+	for len(b) < 8388608-100 {
+		r = (r*1103515245 + 12345) % 2147483648
+		n := 20 + (r>>16)%56
+		for i := 0; i < n; i++ {
+			r = (r*1103515245 + 12345) % 2147483648
+			if (r>>16)%12 == 0 {
+				b = append(b, ',')
+			} else {
+				b = append(b, byte(97+(r>>16)%26))
+			}
+		}
+		b = append(b, '\n')
+	}
+	return b
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	data := build()
+	sum := 0
+	if w == "none" {
+		sum = len(data)
+	} else {
+		r := bufio.NewReaderSize(&src{data: data}, 4096)
+		switch w {
+		case "lines":
+			for {
+				b, err := r.ReadBytes('\n')
+				if err != nil && len(b) == 0 {
+					break
+				}
+				n := len(b)
+				if n > 0 && b[n-1] == '\n' {
+					n--
+					if n > 0 && b[n-1] == '\r' {
+						n--
+					}
+				}
+				s := string(b[:n])
+				sum += len(s) + 1
+			}
+		case "until":
+			for {
+				b, err := r.ReadBytes(',')
+				if err != nil && len(b) == 0 {
+					break
+				}
+				sum += len(b) + int(b[0])
+			}
+		default:
+			buf := make([]byte, 24)
+			for {
+				if _, err := io.ReadFull(r, buf); err != nil {
+					break
+				}
+				sum += int(buf[0]) + int(buf[23])
+			}
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

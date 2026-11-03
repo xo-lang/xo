@@ -1,0 +1,5 @@
+# twincheck: bufio: three workloads over 8 MiB served in 1460 byte chunks (none builds the data); Go is bufio.Reader (ReadBytes, io.ReadFull).
+- - none
+- - lines
+- - until
+- - exact
