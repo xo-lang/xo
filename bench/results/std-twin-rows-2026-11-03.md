@@ -52,3 +52,16 @@ mime and mail are 0.5 to 1.0 of Go's.
 
 Left over the Go twin: archive zip 1.35, mime format 1.31, xml tokens 1.15, mail display 1.15, archive tar
 1.08, mime parse 1.10. None is over 1.5x.
+
+## xmlcodec (derive Xml's encode and decode), same host and method
+
+bench/perf/xmlcodec (twin.go.txt: encoding/xml Marshal and Unmarshal), main at 902e37b4c:
+
+| workload | Go wall | Xo wall | wall | interval | peak memory |
+|---|---|---|---|---|---|
+| xmlcodec none | 0.78 ms | 0.434 ms | 0.556 | 0.542 to 0.564 | 1.0 |
+| xmlcodec encode | 183.3 ms | 105.2 ms | 0.574 | 0.564 to 0.58 | 0.582 |
+| xmlcodec decode | 654.8 ms | 739.1 ms | 1.129 | 1.113 to 1.14 | 0.587 |
+
+Encode is 0.57 of Go's wall and decode 1.13, so xmlcodec is Solid on performance (its page row cited
+xml-parse-2026-10-22.md, a std/xml parse figure).
