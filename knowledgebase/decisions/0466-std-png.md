@@ -1,6 +1,6 @@
 # 0466: std/png, a port of Go's image/png (decode and encode)
 
-Status: Proposed (Xo Lang 3, 2026-11-03; roadmap priority 1, from the Xo Lead)
+Status: Accepted (Xo Lang 3, 2026-11-03; roadmap priority 1 from the Xo Lead; implemented the same day)
 
 ## Context
 
@@ -37,11 +37,12 @@ struct Config { width: Int, height: Int, model: Model }
 
 enum Compression { Default, None, Speed, Best }          // Go's CompressionLevel
 
-fn decode(data: Bytes) -> Image ! PngErr                 // Go's png.Decode: the model Go picks for the color type
+fn decode(data: Bytes, max_pixels: Int = 100000000) -> Image ! PngErr   // Go's png.Decode: the model Go picks for the color type
 fn decode_config(data: Bytes) -> Config ! PngErr         // png.DecodeConfig
 fn encode(img: Image, level: Compression = Compression.Default) -> Bytes ! PngErr   // png.Encoder.Encode
 fn (img: Image) at(x: Int, y: Int) -> Int                // 0xRRGGBBAA non premultiplied, like color.NRGBAModel
 fn image(width: Int, height: Int, model: Model) -> Image // zeroed pixels
+fn (m: Model) bytes_per_pixel() -> Int
 ```
 
 `PngErr` is an enum of Go's `FormatError` and `UnsupportedError` with their messages (the
@@ -86,3 +87,18 @@ beyond pixel access, EncodeBuffer pools (the encoder allocates its own buffers).
 - A `use go` binding to Go's image/png: only the Go backend, and the native backends are the
   default.
 - Do nothing: programs keep carrying their own decoders.
+
+## Implementation notes (2026-11-03)
+
+- A header over `max_pixels` is `Format("image too large")`; where Go allocates the image from the header
+  and then fails on short data, Xo reads the stream for its errors without allocating.
+- Go inflates as it reads rows, so a file with two faults in its pixel data stream (a bad row filter before a
+  corrupt block, a bad IDAT checksum before the end of the data) names the first one it reaches. Xo inflates
+  the whole buffer, and when that fails inflates again in growing pieces for the rows before the error.
+  The corpus and the fuzz compare errors of the pixel data stream by kind only; every other error is
+  compared exactly (text included), as are the decoded type, size, pix and palette.
+- "too much pixel data" for trailing bytes after the zlib stream inside an IDAT is not reproduced
+  (`compress.unzlib` reports no consumed length); a small std/compress addition would close it.
+- The fuzz found three ordering differences (a bad IDAT checksum met before the end of short data, the
+  checksum of the last IDAT checked before a cut file, the wrapped error text for a bad checksum after all
+  rows), all fixed; 36,000 fresh cases on six seeds agree on arm64 and LLVM.

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- std/png (decision 0466, spec/std.md 48): Go's image/png over whole buffers, `png.decode`, `png.decode_config` and `png.encode` with Go's image types, pix layouts and error texts, byte exact encode at every compression level. Corpora from Go (its test images, changed copies, Go encoded images) and a 1,000 case fuzz differential, with fresh seeds in `TestPngFuzz`; timing row in bench/perf/png.
 - scripts/shipped-in.sh REV...: the first release tag containing each revision (or unreleased), the source of every "Shipped in" or "since vX" claim (agent-tools.md "Origin claims").
 - wasm: standard input past about 4 KiB of buffered input is no longer corrupted on wasip1/wasm and wasip2/wasm (never released: standard input on wasm came after v0.36.0, b16428830): growing a runtime buffer (rt.heap_large_resize) read its old size and copied its bytes from 8 bytes before the block (gotchas/wasm-heap-large-resize-prefix.md). Runtime blocks a wasm program gives back are now reused (free lists by power-of-two size) instead of never freed: each standard input read leaked 64 KiB. Golden stdin_long_line.
 - wasm: `task.stopping()` builds (it failed with "the wasm backend does not support the call `rt.task_stopping`"): a channel that never closes, since WASI has no signals to request a stop; `http.Server.serve` used it, which stopped every HTTP server from building for wasip2/wasm. Golden stop_chan_open.

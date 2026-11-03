@@ -55,3 +55,4 @@ entries yet.
 - [trace.md](trace.md): std/trace (spec/std.md 38)
 - [cli.md](cli.md): std/cli (spec/std.md 14)
 - [html.md](html.md): std/html (escape_string, unescape_string)
+- [png.md](png.md): std/png (spec/std.md 48)

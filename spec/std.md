@@ -6497,3 +6497,50 @@ fn (d: Deque[T]) to_list() -> List[T]           // front to back
   by `var` or keep it in one place to avoid the copy.
 - There is no `for x in d` (core 3.5 iterates the built in collections
   only): `for x in d.to_list()`.
+
+## 48. std/png
+
+Go's image/png over whole buffers: `decode`, `decode_config` and `encode`
+(decision 0466). One `Image` struct holds Go's seven concrete image types
+with their `Pix` layouts, so the pixel bytes are what Go's decoder returns
+and what Go's encoder takes. Pure; decode and encode go through std/compress.
+
+```xo
+enum Model { Gray, Gray16, Paletted, RGBA, NRGBA, RGBA64, NRGBA64 } derive Eq, Display
+struct Image { width: Int, height: Int, model: Model, pix: Bytes, palette: List[Int] = [] }
+struct Config { width: Int, height: Int, model: Model }
+enum Compression { Default, None, Speed, Best } derive Eq
+enum PngErr { Format(msg: Str), Unsupported(msg: Str), Truncated, Flate(msg: Str) }
+fn (e: PngErr) display() -> Str
+fn image(width: Int, height: Int, model: Model) -> Image
+fn (m: Model) bytes_per_pixel() -> Int
+fn (img: Image) at(x: Int, y: Int) -> Int          // 0xRRGGBBAA, not premultiplied
+fn decode(data: Bytes, max_pixels: Int = 100000000) -> Image ! PngErr
+fn decode_config(data: Bytes) -> Config ! PngErr
+fn encode(img: Image, level: Compression = Compression.Default) -> Bytes ! PngErr
+```
+
+- `decode` returns the type Go's `png.Decode` does: gray is Gray (8 bit or
+  less, scaled to 8) or Gray16; palette color types are Paletted (a palette
+  grows to the largest index in the data, new entries opaque black); opaque
+  truecolor is RGBA or RGBA64; truecolor or gray with alpha or a tRNS chunk
+  is NRGBA or NRGBA64. Adam7 interlacing is read. Chunk order, lengths and
+  CRC-32 checks are Go's, in Go's order.
+- `PngErr` carries Go's errors: `Format` and `Unsupported` with the text after
+  `png: invalid format: ` or `png: unsupported feature: ` (`display` gives the
+  full text), `Truncated` for `unexpected EOF`, and `Flate` for the zlib
+  reader's own errors. A header over `max_pixels` pixels is `Format("image too
+  large")`, refused before anything is allocated (Go allocates from the
+  header). Where a file has more than one fault in its pixel data stream the
+  error that comes first can differ from Go's (Go inflates as it reads rows;
+  Xo inflates a buffer and reads again for the rows before an error); the file
+  is refused either way, and every error outside the stream is Go's exactly.
+- `encode` writes Go's bytes at every level: the filter chosen per row by the
+  sum of absolute differences (none for Paletted or `Compression.None`), 8 or
+  16 bit truecolor or gray, 1, 2, 4 or 8 bit palettes with a tRNS chunk for
+  palette alpha, truecolor with alpha only when a pixel is not opaque, IDAT
+  chunks of 32,768 bytes, and the zlib stream at the same level
+  (`Speed` is zlib 1, `Best` 9). It faults when `pix` is not the size the
+  model, width and height say.
+- Not ported: the `image.Image` interface and other color models, `png`'s
+  `EncoderBufferPool`, interlaced encode (Go has none).
