@@ -269,6 +269,89 @@ fn plain_text_byte(c: Int) -> Bool {
   (c >= 32 && c < 127 && c != 60 && c != 38 && c != 93) || c == 9 || c == 10
 }
 
+/// The length of the standard entity (&lt; &gt; &amp; &apos; &quot;) at
+/// src[i], which is a &, or 0.
+fn entity_len(src: Bytes, i: Int) -> Int {
+  let n = src.len()
+  if i + 3 < n {
+    let c1 = Int(src[i + 1])
+    let c2 = Int(src[i + 2])
+    let c3 = Int(src[i + 3])
+    if c3 == 59 && ((c1 == 108 && c2 == 116) || (c1 == 103 && c2 == 116)) {
+      return 4
+    }
+    if i + 4 < n && c1 == 97 && c2 == 109 && c3 == 112 && Int(src[i + 4]) == 59 {
+      return 5
+    }
+    if i + 5 < n && Int(src[i + 5]) == 59 {
+      let c4 = Int(src[i + 4])
+      if (c1 == 113 && c2 == 117 && c3 == 111 && c4 == 116) || (c1 == 97 && c2 == 112 && c3 == 111 && c4 == 115) {
+        return 6
+      }
+    }
+  }
+  0
+}
+
+fn entity_text(src: Bytes, i: Int) -> Str {
+  let c1 = Int(src[i + 1])
+  if c1 == 108 {
+    "<"
+  } else if c1 == 103 {
+    ">"
+  } else if c1 == 113 {
+    "\""
+  } else if Int(src[i + 2]) == 109 {
+    "&"
+  } else {
+    "'"
+  }
+}
+
+/// text's fast path for character data of plain ASCII and the five
+/// standard entities: the pieces joined in a builder. None when another
+/// byte comes first (the byte by byte path takes the text from d.pos,
+/// which is unchanged).
+fn (var d: Dec) text_entities(quote: Int, a: Int, i0: Int, lines0: Int) -> Str? {
+  let n = d.src.len()
+  var sb = StrBuilder.new()
+  var seg = a
+  var i = i0
+  var lines = lines0
+  while i < n {
+    let c = Int(d.src[i])
+    if c == 38 {
+      let k = entity_len(d.src, i)
+      if k == 0 {
+        return None
+      }
+      sb.write(d.whole[seg..i])
+      sb.write(entity_text(d.src, i))
+      i += k
+      seg = i
+      continue
+    }
+    if !plain_text_byte(c) || c == quote {
+      break
+    }
+    if c == 10 {
+      lines += 1
+    }
+    i += 1
+  }
+  if i >= n {
+    return None
+  }
+  let c = Int(d.src[i])
+  if (quote < 0 && c == 60) || (quote >= 0 && c == quote) {
+    sb.write(d.whole[seg..i])
+    d.pos = if quote >= 0 { i + 1 } else { i }
+    d.line += lines
+    return Some(sb.freeze())
+  }
+  None
+}
+
 fn (var d: Dec) text(quote: Int, cdata: Bool) -> Str? {
   // character data of plain ASCII up to its end (<, or the quote): a
   // slice of the text. Anything else (an entity, a ], \r, a byte over
@@ -300,6 +383,11 @@ fn (var d: Dec) text(quote: Int, cdata: Bool) -> Str? {
         d.pos = i + 1
         d.line += lines
         return Some(d.whole[a..i])
+      }
+      if c == 38 && entity_len(d.src, i) > 0 {
+        if let Some(t) = d.text_entities(quote, a, i, lines) {
+          return Some(t)
+        }
       }
     }
   }
