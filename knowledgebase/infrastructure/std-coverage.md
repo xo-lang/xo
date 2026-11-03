@@ -278,13 +278,8 @@ how many services hit the gap:
 |---|---|---|---|---|---|
 | 1 | HTTP/2 trailers: a handler cannot send trailers after the body, the client cannot read them; and no full duplex stream (a `handle_stream` body cannot be read while `http.stream` writes) | grpcsvc (every gRPC server and client) | blocker | net/http ResponseWriter.Trailer, TrailerPrefix, Response.Trailer, ResponseController.EnableFullDuplex | M to L |
 | 2 | Mutual TLS: a server cannot request and verify client certificates, a client cannot present one | grpcsvc (service meshes, internal APIs) | blocker | crypto/tls Config ClientAuth, ClientCAs, Certificates | M |
-<<<<<<< HEAD
 | 3 | Closed 2026-11-03 (`csv.reader`). A streaming CSV reader over a File (csv.parse takes the whole text; read_line breaks quoted newlines) | dataport | blocker for large files | encoding/csv NewReader(io.Reader).Read | S to M |
-| 4 | Text encodings: UTF-16 (Excel's Unicode Text) and Windows-1252 decoding and encoding | dataport | blocker | x/text/encoding/unicode, charmap | S to M |
-=======
-| 3 | A streaming CSV reader over a File (csv.parse takes the whole text; read_line breaks quoted newlines) | dataport | blocker for large files | encoding/csv NewReader(io.Reader).Read | S to M |
 | 4 | Closed 2026-11-03 (`std/charset`). Text encodings: UTF-16 (Excel's Unicode Text) and Windows-1252 decoding and encoding | dataport | blocker | x/text/encoding/unicode, charmap | S to M |
->>>>>>> d4fa218e2 (std/charset: spec 54, change log, CHANGELOG, std coverage, timing twin)
 | 5 | Deadlines on Conn, TlsConn and WsConn (read and write), a WebSocket pong handler; and reading the current task's deadline to pass on (grpc-timeout) | queueworker, chathub, grpcsvc | awkward (with_timeout cancels, and the connection is then lost) | net.Conn SetDeadline, gorilla SetWriteDeadline, SetPongHandler, context.Deadline | M |
 | 6 | An exact decimal type (parse, format, rounding modes, allocation) | ledger, dataport | awkward (hand written on BigInt or cents) | shopspring/decimal, cockroachdb/apd (outside Go's std) | M |
 | 7 | A type's own JSON form (Money as "12.34") and internally tagged enums (`{"type": "say", ...}`) | ledger, chathub | awkward | encoding/json Marshaler, Unmarshaler | M |
