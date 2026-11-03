@@ -30,18 +30,26 @@ rm -f "$bundle" 2>/dev/null
 rm -rf "$W"; git worktree prune
 specs=(${a//,/ }) revs=() envs=()
 for sp in "${specs[@]}"; do revs+=("${sp%%+*}"); e=""; [ "$sp" != "${sp#*+}" ] && e="${sp#*+}"; envs+=("${e//+/ }"); done
-for k in "${!revs[@]}"; do git worktree add -q --detach "$W/w$k" "${revs[$k]}" || exit 2; done
+for k in "${!revs[@]}"; do [ "${revs[$k]}" = base ] && continue; git worktree add -q --detach "$W/w$k" "${revs[$k]}" || exit 2; done
 rm -f "$L/holder"; rmdir "$L"; trap - EXIT
 cleanup() { cd "$work"; for k in "${!revs[@]}"; do git -C "$P" worktree remove --force "$W/w$k" 2>/dev/null; done; rm -rf "$W"; }
 trap cleanup EXIT
 B=$W/bin; mkdir -p "$B"
 echo "host load $(cat /proc/loadavg)"
-J=$W/w$((${#revs[@]} - 1))/bench/perf/jitter
+jl=$((${#revs[@]} - 1)); while [ $jl -gt 0 ] && [ "${revs[$jl]}" = base ]; do jl=$((jl - 1)); done
+J=$W/w$jl/bench/perf/jitter
 ( cd "$J/loadgen" && go build -o "$B/loadgen" . ) || exit 1
 "$seed" build -o "$B/srv-base" "$J/xo" > "$W/xobuild-base.txt" 2>&1 || { tail -5 "$W/xobuild-base.txt"; exit 1; }
 : > "$B/revs.txt"
 echo "base $("$seed" version)" >> "$B/revs.txt"
 for k in "${!revs[@]}"; do
+	if [ "${revs[$k]}" = base ]; then
+		# the base release itself at a pad (alloc-split.sh ALLOC_PADS): built by the seed, as srv-base
+		env ${envs[$k]} "$seed" build -o "$B/srv-p$k" "$J/xo" > "$W/srv$k.txt" 2>&1 || { echo "p$k: base server build failed: $(tail -3 "$W/srv$k.txt" | tr '\n' ' ')"; continue; }
+		line="p$k base $("$seed" version | cut -d' ' -f2) built env [${envs[$k]}]"
+		echo "$line"; echo "$line" >> "$B/revs.txt"; echo "${envs[$k]}" > "$B/env-p$k"
+		continue
+	fi
 	T=$W/w$k
 	( cd "$T" && XO_SEED=$seed go run ./scripts/xobuild ) > "$W/xobuild$k.txt" 2>&1 || { echo "p$k ${revs[$k]}: xobuild failed: $(tail -3 "$W/xobuild$k.txt" | tr '\n' ' ')"; continue; }
 	src=$J/xo; [ "$mode" = own ] && src=$T/bench/perf/jitter/xo

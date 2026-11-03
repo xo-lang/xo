@@ -285,9 +285,15 @@ create`. The order:
    linux/arm64 offload host (OFF_EXCLUSIVE=1; loopback HTTP on the Mac
    runs out of ports): closed loop /hello and /alloc at 32 and 256
    connections, open loop /alloc at 10k and 20k req/s, servers pinned to
-   CPUs 0-5 and the loadgen to 6-11, HTTP_ROUNDS rounds (default 5),
-   medians with their ranges. Run it before step 6a moves the host's
-   seed, or the base is the new release itself.
+   CPUs 0-5 and the loadgen to 6-11, medians with their ranges. Both
+   Xo servers are built at each XO_ARM64_PAD of HTTP_PADS (default
+   "0 1 2 3", 2026-11-03, Lead; HTTP_ROUNDS then defaults to 3, else 5)
+   and bench/perf/jitter/pads.py's verdict calls a row slower or faster
+   than the release before only when the two ranges over pads do not
+   overlap: a revision's /alloc moves about 4 percent with where its
+   code lands, and a report of single builds once called that a
+   regression (the 2026-11-03 /alloc bisect). Run it before step 6a
+   moves the host's seed, or the base is the new release itself.
    SECTIONS="compile run test http" (the default) picks sections. Last
    verified: 2026-10-30 (test section smoke run, SECTIONS=test ROUNDS=2).
 8. the website's comparison pages (owner, 2026-10-23): refresh the

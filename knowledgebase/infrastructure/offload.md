@@ -144,6 +144,8 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   (`XO_ARM64_PAD=2`, `XO_DATA_SHIFT=64`). Measured on a two revision test: 33 s of build work off host 1 (warm
   caches); a cold compiler build per revision is minutes. Both hosts' `$OFF_SEED` must be the same version
   (v0.35.0 on 2026-11-02), since the base ratio is against it. Last verified: 2026-11-02.
+  Since 2026-11-03 (Lead) every spec and the base release are built at each pad of `ALLOC_PADS` (default
+  `0 1 2 3`) and `pads.py` judges each against the base by its median over pads (bench/perf/jitter/README.md).
 - `scripts/lead/ab-host.sh BASE NEW NAME [--rounds=N] [--warmup=N] --
   self|self=a|edit PROG [FLAG...]|PROG [ARG...]` (`self=a`: BASE's
   compiler/xo as the self build's program, for a NEW whose compiler calls

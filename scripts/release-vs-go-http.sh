@@ -8,8 +8,11 @@
 # closed loop /hello and /alloc at 32 and 256 connections, open loop /alloc with 64 connections at
 # 10k and 20k req/s (Go's /alloc row is its /alloc-hand); DURATION (10s) after a 2 s warm-up, servers interleaved in a rotating order per
 # round. Prints one line per run: "SERVER PATH cC rateR rN {loadgen json}".
+# PADS (the 8th argument, a space list; default none): both Xo servers are built at each XO_ARM64_PAD
+# and named xo.pK and base.pK, so pads.py judges xo against base by the median over pads (a revision's
+# /alloc moves about 4 percent with where its code lands; Lead, 2026-11-03).
 set -u
-a=$1 name=$2 seed=$3 P=$4 work=$5 bundle=$6 rounds=$7
+a=$1 name=$2 seed=$3 P=$4 work=$5 bundle=$6 rounds=$7 pads=${8:-}
 W=$work/rvg$name
 L=$P.lockdir boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
 hp= hb=
@@ -39,8 +42,18 @@ echo "release-vs-go-http $name: $(git -C "$T" rev-parse --short HEAD) on $(uname
 J=$T/bench/perf/jitter
 ( cd "$J/loadgen" && go build -o "$B/loadgen" . ) || exit 1
 ( cd "$J/go" && go build -o "$B/srv-go" . ) || exit 1
-"$T/bin/xo" build -o "$B/srv-xo" "$J/xo" > "$W/xobuild-srv.txt" 2>&1 || { tail -5 "$W/xobuild-srv.txt"; exit 1; }
-"$seed" build -o "$B/srv-base" "$J/xo" > "$W/xobuild-srv35.txt" 2>&1 || { tail -5 "$W/xobuild-srv35.txt"; exit 1; }
+servers="xo base go"
+if [ -n "$pads" ]; then
+	servers=go
+	for k in $pads; do
+		XO_ARM64_PAD=$k "$T/bin/xo" build -o "$B/srv-xo.p$k" "$J/xo" > "$W/xobuild-srv.txt" 2>&1 || { tail -5 "$W/xobuild-srv.txt"; exit 1; }
+		XO_ARM64_PAD=$k "$seed" build -o "$B/srv-base.p$k" "$J/xo" > "$W/xobuild-srv35.txt" 2>&1 || { tail -5 "$W/xobuild-srv35.txt"; exit 1; }
+		servers="$servers xo.p$k base.p$k"
+	done
+else
+	"$T/bin/xo" build -o "$B/srv-xo" "$J/xo" > "$W/xobuild-srv.txt" 2>&1 || { tail -5 "$W/xobuild-srv.txt"; exit 1; }
+	"$seed" build -o "$B/srv-base" "$J/xo" > "$W/xobuild-srv35.txt" 2>&1 || { tail -5 "$W/xobuild-srv35.txt"; exit 1; }
+fi
 echo "xo $("$T/bin/xo" version); base $("$seed" version)"
 echo "loadgen flags: -c C -rate R -d ${DURATION:-10s} -warmup 2s -awake (default on in open loop); servers on CPUs ${SRV_CPUS:-0-5}, loadgen on ${GEN_CPUS:-6-11}"
 ulimit -n 65536 2>/dev/null || true
@@ -67,8 +80,9 @@ one() { # server path conc rate round
 for r in $(seq 1 $rounds); do
 	for cfg in "/hello 32 0" "/hello 256 0" "/alloc 32 0" "/alloc 256 0" "/alloc 64 10000" "/alloc 64 20000"; do
 		set -- $cfg
-		case $((r % 3)) in 1) o="xo base go";; 2) o="go xo base";; 0) o="base go xo";; esac
-		for srv in $o; do one $srv $1 $2 $3 $r; done
+		# a rotating order: each server starts the row in turn
+		o=($servers); n=${#o[@]}
+		for k in $(seq 0 $((n - 1))); do one ${o[$(((k + r) % n))]} $1 $2 $3 $r; done
 	done
 done
 echo VSGO-HTTP-DONE

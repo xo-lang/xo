@@ -28,6 +28,13 @@
 # http.sh, HTTP_ROUNDS rounds (default 5); the report gives each row's
 # medians with their ranges. Run it before seed-hosts.sh moves the host's seed
 # to the new release, or the base is the release itself.
+# HTTP_PADS (default "0 1 2 3"; "" for one build each, the old form; Lead,
+# 2026-11-03): both Xo servers are built at each XO_ARM64_PAD and the report
+# adds bench/perf/jitter/pads.py's verdict: Xo at HTTP_REV is called slower or
+# faster than the release before only when their ranges over pads do not
+# overlap, since a revision's /alloc moves about 4 percent with where its code
+# lands (0.958 to 1.003 of v0.35.0 for one revision). HTTP_ROUNDS defaults to
+# 3 with pads (12 runs per Xo side and row), 5 without.
 # SECTIONS (default "compile run test http") limits the report's sections.
 # ROUNDS (default 3, owner 2026-11-01) sets the --ab rounds; WORKLOADS limits the run
 # workloads (names as below). Run it through heavy.sh as HEAVY_CLASS=measure:
@@ -304,6 +311,8 @@ if section http; then
 		echo "(skipped: no $agents/offload.sh)" >>"$report"
 	else
 		rev=$(git -C "$root" rev-parse --verify "${HTTP_REV:-HEAD}^{commit}")
+		hpads=${HTTP_PADS-0 1 2 3}
+		hrounds=${HTTP_ROUNDS:-$([ -n "$hpads" ] && echo 3 || echo 5)}
 		(
 			. "$HOME/xo-lead/offload.env"
 			b=rvg-http-$$
@@ -314,14 +323,14 @@ if section http; then
 			put=/work/in/rvg-http-$$.bundle
 			"$agents/offload.sh" --put "$bundle" "$put" || { rm -f "$bundle"; exit 4; }
 			rm -f "$bundle"
-			OFF_EXCLUSIVE=1 "$agents/offload.sh" "$root/scripts/release-vs-go-http.sh" "$rev" "rvg$$" "$OFF_SEED" /work/priv /work "$put" "${HTTP_ROUNDS:-5}"
+			OFF_EXCLUSIVE=1 "$agents/offload.sh" "$root/scripts/release-vs-go-http.sh" "$rev" "rvg$$" "$OFF_SEED" /work/priv /work "$put" "$hrounds" "$hpads"
 		) >"$OUT/http.txt" 2>&1 || true
 		python3 - "$OUT/http.txt" >>"$report" <<'PY'
 import re, json, statistics as st, sys
 lines = open(sys.argv[1], errors="replace").read().splitlines()
 R = {}
 for l in lines:
-    m = re.match(r"(xo|base|go) (\S+) c(\d+) rate(\d+) r(\d+) (\{.*\})", l)
+    m = re.match(r"(xo|base|go)(?:\.p\d+)? (\S+) c(\d+) rate(\d+) r(\d+) (\{.*\})", l)
     if m:
         R.setdefault((m[2], int(m[3]), int(m[4])), {}).setdefault(m[1], []).append(json.loads(m[6]))
 for l in lines:
@@ -331,6 +340,8 @@ if not R:
     print("\n(no runs: see http.txt)\n" + "\n".join("    " + l for l in lines[-15:]))
     sys.exit()
 print("- Go's /alloc rows are its /alloc-hand (json.Marshal written by hand, as Xo's derive encodes).")
+if any(re.match(r"(xo|base)\.p\d+ ", l) for l in lines):
+    print("- Built at each XO_ARM64_PAD of HTTP_PADS: the table pools every pad's rounds; the pad sweep verdict below judges xo against base.")
 print("- Rounds: %d per row; each cell is the median, its range in brackets; CPU is the server's CPU microseconds per request.\n" % max(len(v) for x in R.values() for v in x.values()))
 F = [("rps", "req/s", 0), ("p50_us", "p50 us", 0), ("p99_us", "p99 us", 0), ("p999_us", "p99.9 us", 0), ("max_us", "max us", 0), ("cpu_us_per_req", "CPU us/req", 1), ("errors", "errors", 0)]
 print("| row | server | " + " | ".join(f[1] for f in F) + " |")
@@ -354,6 +365,10 @@ for k in sorted(R):
         if (a, "rps") in med and (b, "rps") in med:
             print(f"- {row}, {b}/{a} medians: " + ", ".join(f"{lab} {med[(b, n)] / med[(a, n)]:.3f}" for n, lab, _ in F if n != "errors" and med[(a, n)]))
 PY
+		if grep -qE '^(xo|base)\.p[0-9]+ ' "$OUT/http.txt"; then
+			echo >>"$report"
+			python3 -I "$perf/jitter/pads.py" "$OUT/http.txt" >>"$report"
+		fi
 	fi
 fi
 rm -rf "${work:?}"

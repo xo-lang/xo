@@ -40,3 +40,10 @@ and CPU steal ticks logged) are in
 linux/arm64; `ALLOC_BUILD=host2` builds on the second host with `alloc-build-remote.sh`) and measures all of
 them in one exclusive lease on the first (`alloc-measure-remote.sh`;
 knowledgebase/infrastructure/offload.md). Ratios are against v0.35.0's server built in the same job.
+
+Placement (2026-11-03, Lead): a revision's /alloc moves about 4 percent with where its code lands
+(`XO_ARM64_PAD`: one revision measured 0.958 to 1.003 of v0.35.0). So `alloc-split.sh` builds every spec,
+and the base release (the spec `base`, built by the seed), at each pad of `ALLOC_PADS` (default `0 1 2 3`;
+empty for one build per spec), and `pads.py LOG [REF]` prints each group's median over pads of its per-pad
+medians, the range of those, and a verdict against the base: slower or faster only when the ranges do not
+overlap, else placement. `scripts/release-vs-go-http.sh` does the same for the release report (`HTTP_PADS`).
