@@ -1,6 +1,6 @@
 # 0467: std/jpeg, a port of Go's image/jpeg decoder
 
-Status: Accepted (Xo Lang 3, 2026-11-03; roadmap priority 1 after std/png, from the Xo Lead)
+Status: Proposed (implemented 2026-11-03 for owner review; roadmap priority 1, assigned by the lead)
 
 ## Context
 

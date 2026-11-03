@@ -1,6 +1,6 @@
 # 0468: std/cbor, RFC 8949 CBOR encode and decode
 
-Status: Accepted (Xo Lang 3, 2026-11-03; roadmap priority 1 after std/jpeg, from the Xo Lead)
+Status: Proposed (implemented 2026-11-03 for owner review; roadmap priority 1, assigned by the lead)
 
 ## Context
 

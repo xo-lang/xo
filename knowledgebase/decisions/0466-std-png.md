@@ -1,6 +1,6 @@
 # 0466: std/png, a port of Go's image/png (decode and encode)
 
-Status: Accepted (Xo Lang 3, 2026-11-03; roadmap priority 1 from the Xo Lead; implemented the same day)
+Status: Proposed (implemented 2026-11-03 for owner review; roadmap priority 1, assigned by the lead)
 
 ## Context
 

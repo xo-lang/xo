@@ -858,23 +858,23 @@ fn walk(data: Bytes, config_only: Bool, max_pixels: Int) -> (Dec, png.Image?) ! 
     let length = be32(data, pos)
     let ts = pos + 4
     let at = pos + 8
-    let typ = data[ts..ts + 4]
+    let typ = be32(data, ts)
     var handled = false
-    if typ == b"IHDR" {
+    if typ == 1229472850 {
       if d.stage != DS_START {
         return Err(format_err("chunk out of order"))
       }
       d.stage = DS_IHDR
       parse_ihdr(d, data, at, length, max_pixels)?
       handled = true
-    } else if typ == b"PLTE" {
+    } else if typ == 1347179589 {
       if d.stage != DS_IHDR {
         return Err(format_err("chunk out of order"))
       }
       d.stage = DS_PLTE
       parse_plte(d, data, at, length)?
       handled = true
-    } else if typ == b"tRNS" {
+    } else if typ == 1951551059 {
       if cb_paletted(d.cb) {
         if d.stage != DS_PLTE {
           return Err(format_err("chunk out of order"))
@@ -889,7 +889,7 @@ fn walk(data: Bytes, config_only: Bool, max_pixels: Int) -> (Dec, png.Image?) ! 
       d.stage = DS_TRNS
       parse_trns(d, data, at, length)?
       handled = true
-    } else if typ == b"IDAT" {
+    } else if typ == 1229209940 {
       if d.stage < DS_IHDR || d.stage > DS_IDAT || (d.stage == DS_IHDR && cb_paletted(d.cb)) {
         return Err(format_err("chunk out of order"))
       }
@@ -910,7 +910,7 @@ fn walk(data: Bytes, config_only: Bool, max_pixels: Int) -> (Dec, png.Image?) ! 
           if !have(data, end, 8) {
             cut = true
             more = false
-          } else if data[end + 4..end + 8] != b"IDAT" {
+          } else if be32(data, end + 4) != 1229209940 {
             more = false
           } else {
             let len2 = be32(data, end)
@@ -965,7 +965,7 @@ fn walk(data: Bytes, config_only: Bool, max_pixels: Int) -> (Dec, png.Image?) ! 
         continue
       }
       handled = false
-    } else if typ == b"IEND" {
+    } else if typ == 1229278788 {
       if d.stage != DS_IDAT {
         return Err(format_err("chunk out of order"))
       }
