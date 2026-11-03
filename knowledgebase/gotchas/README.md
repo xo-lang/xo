@@ -1079,3 +1079,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [llrt-record-unset-on-wasm.md](llrt-record-unset-on-wasm.md): Observed 2026-11-02: stop.xo's record is made by entry.xo, which wasm never runs, so stop.requested() read address 16 and stdin's second read on wasm was canceled; guard a zero record
 - [wasm-runtime-text-line-start.md](wasm-runtime-text-line-start.md): Observed 2026-11-02: strip_runtime finds a runtime function only at a line start; appended text without a leading newline was stripped ("call of unknown function")
 - [wasm-runtime-duplicate-func-name.md](wasm-runtime-duplicate-func-name.md): a wasm runtime function name given twice took the other's calls; asm.xo now rejects it
+- [notary-profile-missing.md](notary-profile-missing.md): Observed 2026-11-02: the xo-notary keychain profile was gone at release time; check it before the build, notarize the signed files later without re-signing.
