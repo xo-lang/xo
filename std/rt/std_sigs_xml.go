@@ -6,15 +6,18 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Xml_XmlErr, *Task) string                               = (*Xml_XmlErr).M_display
-	_ func(*Task, string, bool) Result[List[Xml_Token], Xml_XmlErr] = Xml_tokens
-	_ func(*Task, string) Result[List[Xml_Token], Xml_XmlErr]       = Xml_raw_tokens
-	_ func(*Task, string, bool) Result[Xml_Element, Xml_XmlErr]     = Xml_parse
-	_ func(*Xml_Element, *Task, string) Option[string]              = (*Xml_Element).M_attr
-	_ func(*Xml_Element, *Task, string) Option[Xml_Element]         = (*Xml_Element).M_child
-	_ func(*Xml_Element, *Task, string) List[Xml_Element]           = (*Xml_Element).M_children_named
-	_ func(*Xml_Element, *Task) string                              = (*Xml_Element).M_text
-	_ func(*Xml_Element, *Task, string) Result[string, Xml_XmlErr]  = (*Xml_Element).M_encode
-	_ func(*Task, string) string                                    = Xml_escape
-	_ func(*Task, *StrBuilder, string)                              = Xml_escape_to
+	_ func(*Xml_XmlErr, *Task) string                                = (*Xml_XmlErr).M_display
+	_ func(*Task, string, bool) Result[List[Xml_Token], Xml_XmlErr]  = Xml_tokens
+	_ func(*Task, string) Result[List[Xml_Token], Xml_XmlErr]        = Xml_raw_tokens
+	_ func(*Task, string, bool) Xml_Reader                           = Xml_reader
+	_ func(*Task, string) Xml_Reader                                 = Xml_raw_reader
+	_ func(*Xml_Reader, *Task) Result[Option[Xml_Token], Xml_XmlErr] = (*Xml_Reader).M_next
+	_ func(*Task, string, bool) Result[Xml_Element, Xml_XmlErr]      = Xml_parse
+	_ func(*Xml_Element, *Task, string) Option[string]               = (*Xml_Element).M_attr
+	_ func(*Xml_Element, *Task, string) Option[Xml_Element]          = (*Xml_Element).M_child
+	_ func(*Xml_Element, *Task, string) List[Xml_Element]            = (*Xml_Element).M_children_named
+	_ func(*Xml_Element, *Task) string                               = (*Xml_Element).M_text
+	_ func(*Xml_Element, *Task, string) Result[string, Xml_XmlErr]   = (*Xml_Element).M_encode
+	_ func(*Task, string) string                                     = Xml_escape
+	_ func(*Task, *StrBuilder, string)                               = Xml_escape_to
 )

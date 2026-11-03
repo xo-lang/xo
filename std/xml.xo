@@ -43,6 +43,19 @@ fn tokens(text: Str, strict: Bool = true) -> List[Token] ! XmlErr
 /// matching.
 fn raw_tokens(text: Str) -> List[Token] ! XmlErr
 
+/// Tokens one at a time (Go's Decoder.Token and RawToken): the same tokens as
+/// `tokens` and `raw_tokens`, without holding the list; the input stays
+/// (decision 0463).
+struct Reader {}
+
+/// A reader of text's tokens (`tokens`'s rules, strict: false as there).
+fn reader(text: Str, strict: Bool = true) -> Reader
+/// A reader of Decoder.RawToken's tokens (`raw_tokens`).
+fn raw_reader(text: Str) -> Reader
+/// The next token, None at the end of the input; an error is returned again
+/// by every later call.
+fn (var r: Reader) next() -> Token? ! XmlErr
+
 /// An element and everything inside it.
 struct Element {
   name: Name

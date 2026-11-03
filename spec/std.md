@@ -4914,6 +4914,10 @@ enum Token { Start(name, attrs), End(name), Text(s), Comment(s), ProcInst(target
 struct XmlErr { line: Int, msg: Str }   // line > 0: displays as Go's "XML syntax error on line N: MSG"
 pub fn tokens(text: Str, strict: Bool = true) -> List[Token] ! XmlErr
 pub fn raw_tokens(text: Str) -> List[Token] ! XmlErr
+struct Reader {}                                              // tokens one at a time (decision 0463)
+pub fn reader(text: Str, strict: Bool = true) -> Reader
+pub fn raw_reader(text: Str) -> Reader
+fn (var r: Reader) next() -> Token? ! XmlErr                  // None at the end of the input
 struct Element { name: Name, attrs: List[Attr], children: List[Node] }
 enum Node { Elem(e), Text(s), Comment(s), ProcInst(target, inst), Directive(s), Raw(s) }   // Raw: written as is by encode (derive Xml's text)
 pub fn parse(text: Str, strict: Bool = true) -> Element ! XmlErr
@@ -4930,6 +4934,11 @@ pub fn decode[T: Xml](text: Str) -> T ! XmlErr                         // Go's U
     URL), and start and end tags are matched;
   - entities and CDATA are decoded, and `\r\n` becomes `\n`.
 - `raw_tokens` is RawToken: prefixes as written, nothing matched.
+- `reader` and `raw_reader` give the same tokens one `next()` at a time
+  (Go's Decoder.Token and RawToken loop) without building the list, so a
+  program that counts or filters tokens holds the input and one token. At
+  the end `next` returns None; after an error every later call returns the
+  same error. The input stays a `Str` (the reader holds it).
 - `strict: false` is Go's `Strict = false` with `HTMLAutoClose` and
   `HTMLEntity`: unquoted attribute values, `&nbsp;`, `<br>` without an
   end tag.

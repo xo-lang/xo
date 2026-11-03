@@ -37,7 +37,7 @@ func main() {
 	}
 	t := doc()
 	sum := len(t)
-	if w == "tokens" {
+	if w == "tokens" || w == "stream" {
 		for p := 0; p < 8; p++ {
 			d := xml.NewDecoder(strings.NewReader(t))
 			for {

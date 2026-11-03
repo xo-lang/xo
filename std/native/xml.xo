@@ -1073,6 +1073,29 @@ fn tokens(text: Str, strict: Bool) -> List[xml.Token] ! xml.XmlErr { read_all(te
 
 fn raw_tokens(text: Str) -> List[xml.Token] ! xml.XmlErr { read_all(text, true, true) }
 
+/// xml.Reader: a decoder and whether it reads raw tokens.
+struct Reader {
+  d: Dec
+  raw: Bool
+}
+
+fn reader(text: Str, strict: Bool) -> Reader { Reader{d: Dec{src: text.bytes(), whole: text, strict: strict}, raw: false} }
+
+fn raw_reader(text: Str) -> Reader { Reader{d: Dec{src: text.bytes(), whole: text, strict: true}, raw: true} }
+
+fn (var r: Reader) next() -> xml.Token? ! xml.XmlErr {
+  let t = if r.raw { r.d.raw() } else { r.d.token() }
+  match t {
+    Some(x) => Ok(Some(x))
+    None => {
+      if r.d.at_eof() {
+        return Ok(None)
+      }
+      Err(err_of(r.d))
+    }
+  }
+}
+
 // ---------------------------------------------------------------------------
 // The tree (std/rt/xml.go builds it the same way)
 

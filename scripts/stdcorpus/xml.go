@@ -316,6 +316,46 @@ fn toks(r: Result[List[xml.Token], xml.XmlErr]) -> Str {
   }
 }
 
+/// The tokens a Reader gives, as toks shows tokens' result: the list, or
+/// the error (twice: it comes again).
+fn reader_toks(r: xml.Reader) -> Str {
+  var rd = r
+  var out: List[Str] = []
+  while true {
+    match rd.next() {
+      Ok(Some(t)) => out.push(tok_text(t))
+      Ok(None) => return out.join(" ")
+      Err(e) => {
+        let again = match rd.next() {
+          Err(e2) => e2.line == e.line && e2.msg == e.msg
+          _ => false
+        }
+        return if again { "err ${e.line} ${e.msg}" } else { "error not repeated" }
+      }
+    }
+  }
+  ""
+}
+
+test "a Reader gives the tokens of tokens and raw_tokens" {
+  var bad: List[(Str, Str, Str)] = []
+  for (doc, strict, lenient, raw, _enc) in DOCS {
+    let got = reader_toks(xml.reader(doc))
+    if got != strict {
+      bad.push((doc, got, strict))
+    }
+    let got2 = reader_toks(xml.reader(doc, strict: false))
+    if got2 != lenient {
+      bad.push((doc, got2, lenient))
+    }
+    let got3 = reader_toks(xml.raw_reader(doc))
+    if got3 != raw {
+      bad.push((doc, got3, raw))
+    }
+  }
+  expect(first_bad(bad)) == []
+}
+
 test "tokens and raw_tokens are Go's Decoder's" {
   var bad: List[(Str, Str, Str)] = []
   for (doc, strict, lenient, raw, _enc) in DOCS {

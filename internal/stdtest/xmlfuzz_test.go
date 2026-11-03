@@ -222,7 +222,7 @@ fn xf_tok(t: xml.Token) -> Str {
 /// mode 0 tokens, 1 tokens not strict, 2 raw_tokens
 fn xf_line(doc: Str, mode: Int) -> Str {
   let r = if mode == 0 { xml.tokens(doc) } else if mode == 1 { xml.tokens(doc, strict: false) } else { xml.raw_tokens(doc) }
-  match r {
+  let want = match r {
     Ok(ts) => {
       var parts: List[Str] = []
       for t in ts {
@@ -232,6 +232,31 @@ fn xf_line(doc: Str, mode: Int) -> Str {
     }
     Err(e) => "err " + e.display()
   }
+  // a Reader gives the same tokens, then the same error (twice)
+  var rd = if mode == 0 { xml.reader(doc) } else if mode == 1 { xml.reader(doc, strict: false) } else { xml.raw_reader(doc) }
+  var parts: List[Str] = []
+  var got = ""
+  while true {
+    match rd.next() {
+      Ok(Some(t)) => parts.push(xf_tok(t))
+      Ok(None) => {
+        got = "ok " + parts.join(",")
+        break
+      }
+      Err(e) => {
+        let again = match rd.next() {
+          Err(e2) => e2.display() == e.display()
+          _ => false
+        }
+        got = if again { "err " + e.display() } else { "error not repeated" }
+        break
+      }
+    }
+  }
+  if got != want {
+    return "reader differs: " + got
+  }
+  want
 }
 
 `

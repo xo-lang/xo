@@ -83,6 +83,45 @@ func xmlRead(next func() (xml.Token, error)) ([]Xml_Token, error) {
 	}
 }
 
+// Xml_Reader is `xml.Reader`: a Decoder and whether it reads raw tokens.
+type Xml_Reader struct {
+	d   *xml.Decoder
+	raw bool
+	err error
+}
+
+func (Xml_Reader) XoDebug(b *strings.Builder) { b.WriteString("<xml.Reader>") }
+
+func Xml_reader(_ *Task, text string, strict bool) Xml_Reader {
+	return Xml_Reader{d: xmlDecoder(text, strict)}
+}
+
+func Xml_raw_reader(_ *Task, text string) Xml_Reader {
+	return Xml_Reader{d: xmlDecoder(text, true), raw: true}
+}
+
+// M_next is Reader.next: the next token, None at the end, and a failure
+// again on every later call.
+func (r *Xml_Reader) M_next(_ *Task) Result[Option[Xml_Token], Xml_XmlErr] {
+	if r.err == nil {
+		var t xml.Token
+		var err error
+		if r.raw {
+			t, err = r.d.RawToken()
+		} else {
+			t, err = r.d.Token()
+		}
+		if err == nil {
+			return Ok[Option[Xml_Token], Xml_XmlErr](Some(xmlToken(xml.CopyToken(t))))
+		}
+		r.err = err
+	}
+	if r.err == io.EOF {
+		return Ok[Option[Xml_Token], Xml_XmlErr](None[Xml_Token]())
+	}
+	return Err[Option[Xml_Token]](xmlErr(r.err))
+}
+
 func Xml_tokens(_ *Task, text string, strict bool) Result[List[Xml_Token], Xml_XmlErr] {
 	ts, err := xmlRead(xmlDecoder(text, strict).Token)
 	if err != nil {

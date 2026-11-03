@@ -3,7 +3,9 @@
 // read as tokens 8 times (`tokens`: Decoder.Token against xml.tokens, the
 // tokens counted and their text and names summed), and parsed into a tree 8
 // times (`tree`: xml.parse against Go's Unmarshal into structs); `none` is
-// the document build alone. Usage: `<program> none|tokens|tree`. Prints
+// the document build alone. `stream` is `tokens` through a Reader (one token alive at a
+// time; the twin runs the same Token loop). Usage: `<program>
+// none|tokens|stream|tree`. Prints
 // `<workload> <checksum>`; the twin prints the same.
 use std/xml
 
@@ -25,6 +27,28 @@ fn main(os: Os) uses stdio, env {
     for _ in 0..8 {
       let toks = xml.tokens(t).ok() ?? fault("tokens")
       for tk in toks {
+        match tk {
+          Start(name, attrs) => {
+            sum += 1 + name.local.len()
+            for a in attrs {
+              sum += a.name.local.len() + a.value.len()
+            }
+          }
+          End(name) => sum += 1 + name.local.len()
+          Text(s) => sum += 1 + s.len()
+          _ => sum += 1
+        }
+      }
+    }
+  } else if w == "stream" {
+    for _ in 0..8 {
+      var rd = xml.reader(t)
+      while true {
+        let tk = match rd.next() {
+          Ok(Some(x)) => x
+          Ok(None) => break
+          Err(_) => fault("reader")
+        }
         match tk {
           Start(name, attrs) => {
             sum += 1 + name.local.len()
