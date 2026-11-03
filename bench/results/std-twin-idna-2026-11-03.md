@@ -27,3 +27,18 @@ Workloads in bench/perf/idna: `map` ToUnicode of 8 composed non-ASCII names (map
 | long | 5.54 | 8.48 | 1.53 | 6.16 | 1.10 |
 
 "After" is 45cac086e: Punycode encode and decode write into a BytesBuilder instead of allocating a string per rune (interpolation). Reading the table: composing (nfcmap) is already faster than Go's; Punycode went from 1.6 to 1.2 and 1.3; what is left is `map` at 1.42 (the lookup and validation of already composed names, before quickSpan reached NFC) and the Punycode loops. All still above ADR 0461's 1.05 except long (1.10).
+
+## After the ASCII index (1e5f98fe6; host 1, n=15)
+
+| workload | Go ms | Xo ms | ratio | interval | before (ab7) |
+|---|---|---|---|---|---|
+| none | 0.603 | 0.312 | 0.52 | 0.49-0.58 | 0.55 |
+| ascii | 27.18 | 20.38 | 0.75 | 0.74-0.77 | 0.76 |
+| mixed | 21.69 | 22.82 | 1.05 | 1.04-1.06 | 1.34 |
+| long | 5.466 | 5.328 | 0.975 | 0.96-0.98 | 1.10 |
+| map | 4.332 | 5.187 | 1.20 | 1.18-1.22 | 1.42 |
+| nfcmap | 14.76 | 8.348 | 0.57 | 0.55-0.58 | 0.67 |
+| enc | 9.776 | 10.74 | 1.10 | 1.09-1.11 | 1.20 |
+| dec | 14.28 | 14.14 | 0.99 | 0.98-1.00 | 1.29 |
+
+`lookup` was half of the `map` profile (a binary search per rune); runes below U+80 now index their range directly (128 bytes of table). mixed is at 1.05, long and dec are at or faster than Go, enc 1.10 and map 1.20 remain. Against ADR 0461 (at most about 1.05): ascii, long, dec, nfcmap and none are Proven on this set; mixed is at the line (interval 1.04-1.06); enc and map are not.

@@ -285,3 +285,4 @@
 - [std-twin-rows16-2026-11-03.md](std-twin-rows16-2026-11-03.md): host rows for std/norm and std/idna after the byte tables and block indexes (norm NFC 1.64, NFD 1.13, NFKC 1.11; idna ascii 0.72, mixed 1.69, long 1.65 of Go); not Proven.
 - [std-twin-rows17-2026-11-03.md](std-twin-rows17-2026-11-03.md): host rows for std/norm and std/idna with in-place UTF-8 decoding (idna mixed 1.54, long 1.49; norm NFC 1.55, NFD 1.08); not Proven.
 - [std-twin-idna-2026-11-03.md](std-twin-idna-2026-11-03.md): host rows for std/norm and std/idna with in-place UTF-8 decoding (idna mixed 1.54, long 1.49; norm NFC 1.55, NFD 1.08); not Proven.
+- [std-twin-norm-2026-11-03.md](std-twin-norm-2026-11-03.md): host rows for std/norm (NFC 0.88, NFKC 0.77, NFD 1.09 of x/text after the quickSpan table), and its size.
