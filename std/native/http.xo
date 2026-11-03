@@ -4339,11 +4339,20 @@ fn cookie_domain_name(s0: Str) -> Bool {
   ok
 }
 
+const COOKIE_WEEKDAYS: List[Str] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"]
+
+const COOKIE_MONTHS: List[Str] = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
+
 /// The weekday a cookie date names: one of the seven three letter names, in
 /// any case. Go reads "wed" and "WED" and refuses "Xyz", "Wedn" and "W"
 /// (measured 2026-10-26).
 fn cookie_weekday_ok(w: Str) -> Bool {
-  ["mon", "tue", "wed", "thu", "fri", "sat", "sun"].contains(w.to_lower())
+  for d in COOKIE_WEEKDAYS {
+    if w.equal_fold(d) {
+      return true
+    }
+  }
+  false
 }
 
 /// The zone a cookie date names: whether Go's time.Parse reads all of z as
@@ -4483,10 +4492,9 @@ fn cookie_date(v: Str) -> Time? {
   // Go's month lookup folds ASCII case ("JUN", "jun" and "juN" read) and
   // takes the three letter names only: "June" matches "Jun" and leaves "e",
   // which the layout's next space does not read, so the date does not parse
-  let months = ["jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec"]
   var month = 0
-  for (i, m) in months.indexed() {
-    if m == dmy[1].to_lower() {
+  for (i, m) in COOKIE_MONTHS.indexed() {
+    if dmy[1].equal_fold(m) {
       month = i + 1
     }
   }
