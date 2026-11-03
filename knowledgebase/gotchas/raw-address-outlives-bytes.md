@@ -67,3 +67,10 @@ in the same SSA block, and cmd/xo TestVetCostStd fails on a new one; it
 misses an address carried across blocks or into a closure (it caught 1 of
 the first 4), so the race build stays the check, and decision 0460 proposes
 removing the class in the compiler.
+
+Since decision 0460 (2026-11-02) the compiler keeps a value alive to every
+use of a raw address taken from it in the same function, so
+`f(raw.data(s), s.len())` is safe without `raw.alive_str(s)`; an address
+kept in a field, passed through a block parameter, or handed to another
+function that keeps it still needs `raw.alive` (or a field that holds the
+value).

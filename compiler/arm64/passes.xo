@@ -27,6 +27,11 @@ pub fn passes() -> List[Str] {
     // compiler/ssa chainpads.xo: a landing pad's releases newest first,
     // so neighboring pads end alike (tail_merge_cold shares the ends)
     "pad_release_order",
+    // compiler/ssa rc.xo (decision 0460): a value kept alive to the last
+    // use of its raw address in a block; addr_keep_drop removes its
+    // markers after the releases are placed (off: kept, for a dump)
+    "addr_keep",
+    "addr_keep_drop",
     // compiler/ssa uniqvar.xo (decision 0322): a `var` List parameter
     // every call passes unique skips its entry copy-on-write check
     "uniq_var_params",

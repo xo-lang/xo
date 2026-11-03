@@ -74,6 +74,9 @@ struct Rc {
   chain: Bool = true
   // order_pad_releases runs (XO_PASSES=-pad_release_order)
   pad_order: Bool = true
+  /// decision 0460's markers placed, and removed after the releases
+  addr_keep: Bool = true
+  addr_drop: Bool = true
   // each function's `var` parameter indexes, by name, and type word
   // counts (chain_pads)
   vparams: Map[Str, List[Int]] = {}
@@ -1140,6 +1143,8 @@ pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
   r.apply_uniq(b.m)
   r.chain = !b.m.passes_off.contains("chain_pads")
   r.pad_order = !b.m.passes_off.contains("pad_release_order")
+  r.addr_keep = !b.m.passes_off.contains("addr_keep")
+  r.addr_drop = !b.m.passes_off.contains("addr_keep_drop")
   r
 }
 
@@ -1180,6 +1185,8 @@ pub fn (var b: Builder) rc_prepare_incr(jobs: Int, id: Str, prev: Map[Str, List[
   // bcache.xo rc_cached, which times it), unlike rc_prepare's
   r.chain = !b.m.passes_off.contains("chain_pads")
   r.pad_order = !b.m.passes_off.contains("pad_release_order")
+  r.addr_keep = !b.m.passes_off.contains("addr_keep")
+  r.addr_drop = !b.m.passes_off.contains("addr_keep_drop")
   (r, rec, nd, !check || r.borrowed == full)
 }
 
@@ -1371,6 +1378,9 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
     return
   }
   var c = RcFunc{}
+  if r.addr_keep {
+    keep_addr_values(f)
+  }
   r.borrow_projections(f)
   r.um_fi = -1
   r.liveness(f, c)
@@ -1392,6 +1402,9 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   }
   if r.pad_order {
     order_pad_releases(f)
+  }
+  if r.addr_drop {
+    drop_addr_keeps(f)
   }
   renumber(f)
   r.lm_fi = -1
@@ -3153,4 +3166,151 @@ fn (var r: Rc) movable(f: Func, v: Int, live: Set[Int]) -> Bool {
   }
   let p = ls[0]
   r.kind(f, p.root) == RootKind.Owned && r.tracked(f, p) && !live.contains(leaf_key(p))
+}
+
+/// The calls whose result is an address into their first argument's
+/// memory (decision 0460).
+fn addr_call(name: Str) -> Bool {
+  name is "raw.data" | "raw.bytes_addr" | "rt.obj_addr"
+}
+
+/// The marker keep_addr_values inserts and drop_addr_keeps removes.
+const ADDR_KEEP = "rt.addr_keep"
+
+/// Decision 0460: a value whose raw address (raw.data, raw.bytes_addr,
+/// rt.obj_addr, or an add or sub of one) is used later stays alive up to
+/// each use: a borrowing marker call of the value goes right after the
+/// address's last use in each block that uses it, so the liveness pass
+/// places the value's release after it (it was released at its last named
+/// use, even inside the arguments of the call that took its address,
+/// gotchas/raw-address-outlives-bytes.md). drop_addr_keeps removes the
+/// markers once the releases are placed. The uses are followed across
+/// blocks (a statement's arguments are split into several blocks until
+/// the blocks are joined after this pass), but not through a block
+/// parameter: an address passed to one keeps its value only to the jump.
+/// A last use that can fault is followed by its landing check: the
+/// marker goes first in the check's continuing successor instead, never
+/// between the operation and its check.
+fn keep_addr_values(var f: Func) {
+  // address value -> the value it points into, in the values' order (an
+  // operand is made before its uses)
+  var into: Map[Int, Int] = {}
+  for (v, x) in f.values.indexed() {
+    if x.op == Op.Call && addr_call(aux_name(x.aux)) && !x.args.is_empty() {
+      into[v] = x.args[0]
+    } else if (x.op == Op.Add || x.op == Op.Sub) && x.args.len() == 2 {
+      for a in x.args {
+        if let Some(o) = into.get(a) {
+          into[v] = o
+        }
+      }
+    }
+  }
+  if into.is_empty() {
+    return
+  }
+  // per block, the markers to put first (a landing's continuing block)
+  var first: Map[Int, List[Int]] = {}
+  for bi in 0..f.blocks.len() {
+    let ins = f.blocks[bi].instrs
+    if ins.is_empty() {
+      continue
+    }
+    // each value's last use of an address in this block (an index into
+    // ins; the terminator's index for a jump's argument)
+    var last: Map[Int, Int] = {}
+    for (k, v) in ins.indexed() {
+      let x = f.values[v]
+      for a in x.args {
+        if let Some(o) = into.get(a) {
+          last[o] = k
+        }
+      }
+      for e in x.succs {
+        for a in f.edges[e].args {
+          if let Some(o) = into.get(a) {
+            last[o] = k
+          }
+        }
+      }
+    }
+    if last.is_empty() {
+      continue
+    }
+    let nt = ins.len() - 1
+    // after each position, the markers of the values whose last use it is
+    // (before the terminator for the terminator's own use)
+    var after: Map[Int, List[Int]] = {}
+    for (o, k0) in last {
+      var k = k0
+      if k == nt {
+        k = nt - 1
+      } else if k + 1 < nt && is_landing(f, ins[k + 1]) {
+        // the landing's branch: yes goes to the pad, no continues
+        let t = f.values[ins[nt]]
+        if t.op == Op.Branch && t.succs.len() == 2 {
+          let to = f.edges[t.succs[1]].to
+          var l = first.get(to) ?? []
+          l.push(o)
+          first[to] = l
+        }
+        continue
+      }
+      var l = after.get(k) ?? []
+      l.push(o)
+      after[k] = l
+    }
+    var out: List[Int] = []
+    // markers before the first instruction (k == -1: a terminator alone)
+    if let Some(os) = after.get(-1) {
+      for o in os.sort() {
+        out.push(new_value(f, bi, Op.Call, -1, Aux.S(ADDR_KEEP), [o]))
+      }
+    }
+    for (k, v) in ins.indexed() {
+      out.push(v)
+      if let Some(os) = after.get(k) {
+        for o in os.sort() {
+          out.push(new_value(f, bi, Op.Call, -1, Aux.S(ADDR_KEEP), [o]))
+        }
+      }
+    }
+    f.blocks[bi].instrs = out
+  }
+  for (bi, os) in first {
+    var out: List[Int] = []
+    for o in os.sort() {
+      out.push(new_value(f, bi, Op.Call, -1, Aux.S(ADDR_KEEP), [o]))
+    }
+    for v in f.blocks[bi].instrs {
+      out.push(v)
+    }
+    f.blocks[bi].instrs = out
+  }
+}
+
+/// Whether v is a landing check (`call rt.landing`, or `rt.unwinding`
+/// after a call; landing_site's two).
+fn is_landing(f: Func, v: Int) -> Bool {
+  let x = f.values[v]
+  x.op == Op.Call && aux_name(x.aux) is "rt.landing" | "rt.unwinding"
+}
+
+/// Removes keep_addr_values' markers.
+fn drop_addr_keeps(var f: Func) {
+  for bi in 0..f.blocks.len() {
+    var out: List[Int] = []
+    var cut = false
+    for v in f.blocks[bi].instrs {
+      let x = f.values[v]
+      if x.op == Op.Call && aux_name(x.aux) == ADDR_KEEP {
+        cut = true
+      } else {
+        out.push(v)
+      }
+    }
+    if cut {
+      f.blocks[bi].instrs = out
+    }
+  }
 }

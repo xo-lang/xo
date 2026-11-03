@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 
+- FIX (compiler): a value whose raw address (`raw.data`, `raw.bytes_addr`, `rt.obj_addr`) is taken stays alive to the address's last use in the function, so std code such as `f(raw.data(s), s.len())` no longer reads freed memory when `s` was released inside the call's own arguments (decision 0460, Accepted 2026-11-02; the class behind the five std use-after-frees the 2026-11-02 race stress found). `XO_PASSES=-addr_keep` turns it off.
 - perf (memory): a small build runs its parallel stages on fewer tasks: a module's inliner, passes, landing pads, insert_rc and code generator take at most 2 + functions / 1024 tasks and the parse prefetch 2 + files / 64, since each task on another worker thread kept its own heap chunks (decision 0448). linux/arm64 edit builds, 12 cores: max RSS coll 0.934, conc-spawn 0.976, the HTTP server 0.954, wall unchanged; the self build keeps every task. XO_EMIT_JOBS still sets the count.
 - feature (wasm): `--targets=wasip2/wasm` builds a program without `http.serve_component` as a `wasi:cli/command` 0.2 component (its `wasi:cli/run` export runs main; arguments, environment, stdin, stdout and stderr through `wasi:cli`; a status other than 0 is exit's err) instead of XO1516; 428 of the 445 wasm goldens run under `wasmtime run`, the 17 others need files (XO1515). Decision 0447 stage 3.
 - fix (wasm): reading standard input works on wasip1/wasm (`fd_read`) and in a wasip2 command (`wasi:cli/stdin`); it faulted before.

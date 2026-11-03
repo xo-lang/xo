@@ -2,4 +2,3 @@
 # FILE<TAB>CODE<TAB>TRIMMED SOURCE LINE<TAB>REASON (measured, with the commit)
 std/native/archive.xo	XO0913	if rest[rest_n - 1..rest_n] != "\n" {	once per pax record header, not per byte: a one byte view compared to the record terminator (2026-10-28)
 std/native/llrt/tasks.xo	XO0915	rt.obj_addr(e)	the empty list is immortal (obj.is_immortal), so its release frees nothing; its address is the shared empty list (2026-11-02)
-std/native/tls.xo	XO0915	let started = tlsio.client_with(netconn.conn_pd(cn), host, rt.obj_addr(r), dl, alpn, v, ccerts, ckey)	r is shared: a field of the caller's Roots, or the system roots kept in a static word (tlsio.roots_system_at), so its release only drops a count (2026-11-02)

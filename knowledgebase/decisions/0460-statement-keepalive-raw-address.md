@@ -59,6 +59,11 @@ value), as today.
   (`var a = rt.obj_addr(out)`) and uses it statements later; that shape
   still needs `raw.alive` (or a field holding the value), and the race
   build stays its check.
+- As implemented (Implementation below), the pass follows an address
+  across the blocks of its function, so it also prevents the seventh bug:
+  with every hand keep-alive removed, all 7 of the day's bugs (17 of 17
+  sites) are covered, where the statement rule counted above covered 6
+  (16 of 17). The race test proves it on the five goldens (2026-11-02).
 
 - Removes the in-statement class without a lint or hand-written keep-alives;
   existing `raw.alive*` calls stay valid (a later use) and can be removed
@@ -78,3 +83,33 @@ value), as today.
 - Keep the hand-written `raw.alive*`: the status quo; the class recurs.
 - Make raw address functions borrow until the end of the enclosing
   function: simpler rule, holds memory longer (big Bytes in loops).
+
+## Implementation (2026-11-02, Xo Lang 1)
+
+compiler/ssa rc.xo `keep_addr_values`, before the liveness pass of
+insert_rc: for each address taken from a value (`raw.data`,
+`raw.bytes_addr`, `rt.obj_addr`, or an add or sub of one), a borrowing
+marker call of the value (`rt.addr_keep`) goes right after the address's
+last use in every block that uses it, so the value's release is placed after
+each use; `drop_addr_keeps` removes the markers once the releases are
+placed. The uses are followed across blocks, which the first version (per
+block) missed: at this pass a statement's arguments are still split into
+several blocks (the landing checks of the calls among them), joined only
+after it. A use followed by its landing check (`rt.landing` or
+`rt.unwinding`) gets its marker first in the check's continuing block,
+never between the operation and its check (the inlined module's verifier
+failed on that). An address passed to a block parameter keeps its value
+only to the jump. That reaches further than the decision asked: it also
+keeps raw.u8s_copy_back's list alive to the copy in a later block, the case
+the count above says a statement rule would not prevent.
+
+Proof (2026-11-02, linux/arm64, host 2): with the change and the
+keep-alives of the five race fixes removed (h2w, http1, websocket, dns,
+raw.u8s_copy_back), internal/llvm TestRaceStdNoUseAfterFree passes on all
+five goldens; without the change each fails with a use after free. The
+hand keep-alives stay in std (they are harmless and keep older compilers
+right). `XO_PASSES=-addr_keep` turns the pass off, to bisect a use after
+free to it; `-addr_keep_drop` leaves the markers in a dump. The rc cache
+version is v12, and its key holds both switches. XO0915 stays as a guard
+for an address the pass does not follow (one carried in a field or through
+a block parameter).
