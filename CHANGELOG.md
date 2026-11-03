@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- compiler (native arm64 and amd64): decision 0465's Str views as projections (view_proj) are on by default: a view of a Str (a slice, trim, split part) takes no reference count where the Str it views outlives it, and is counted only where it must be owned; `XO_PASSES=-view_proj` turns it off. A program of views made and compared in place ran 0.92 of the time on the linux/arm64 host.
 - std/bufio: a buffered Reader over any Stream (Conn, ServerConn, TLS): read, read_until and read_line with a record limit, read_exact, peek, buffered; lines are views of the chunk read (decision 0471, spec/std.md 55, std/changes/bufio.md).
 - std/charset: decode and encode UTF-16 (little and big endian, with a byte order mark), Latin-1 and Windows-1252, strict or lossy, WHATWG `lookup` of labels, and Go's utf16 code unit conversions; one source for every backend (decision 0470, spec/std.md 54, std/changes/charset.md).
 - std/heap: Heap[T], a binary heap ordered by a comparison function with push, pop, peek, remove(i), fix(i, x) and a moved callback for position bookkeeping, Go's container/heap algorithm (decision 0472, spec/std.md 56, std/changes/heap.md).

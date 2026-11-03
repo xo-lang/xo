@@ -221,11 +221,12 @@ fn runtime_modes(name: Str) -> List[Mode]? {
   }
 }
 
-/// Whether decision 0465's views as projections are on for m: asked
-/// for (XO_PASSES=+view_proj) on a native target, whose emitters lower
-/// rt.str_borrow (wasm copies a slice, so its view is a new value).
+/// Whether decision 0465's views as projections are on for m: on a
+/// native target, whose emitters lower rt.str_borrow (wasm copies a
+/// slice, so its view is a new value), unless XO_PASSES=-view_proj (on by
+/// default since 2026-11-03, the owner's acceptance of 0465).
 pub fn view_proj_on(m: Module) -> Bool {
-  m.passes_on.contains("view_proj") && (m.goarch is "arm64" | "amd64")
+  !m.passes_off.contains("view_proj") && (m.goarch is "arm64" | "amd64")
 }
 
 fn is_proj_call(name: Str) -> Bool {

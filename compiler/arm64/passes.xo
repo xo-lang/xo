@@ -32,8 +32,8 @@ pub fn passes() -> List[Str] {
     // markers after the releases are placed (off: kept, for a dump)
     "addr_keep",
     "addr_keep_drop",
-    // compiler/ssa rc.xo (decision 0465, Proposed: off unless
-    // XO_PASSES=+view_proj): a Str view (rt.str_view) is a projection of
+    // compiler/ssa rc.xo (decision 0465, on by default since 2026-11-03;
+    // XO_PASSES=-view_proj turns it off): a Str view (rt.str_view) is a projection of
     // the Str it views, counted by the reference counting where it must
     // be owned and borrowed (no count) where its source outlives it; it
     // is emitted as rt.str_borrow, which takes no count

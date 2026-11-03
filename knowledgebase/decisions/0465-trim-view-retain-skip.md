@@ -73,6 +73,16 @@ compared in place (inlined slices) 0.92; trimchars trim 0.975 and trim_start
 the sides' order swapped. Step 1 alone does not reach the trims' `drop Str`:
 trim_chars returns its view, so the count stays; that is step 2's variant.
 
+## Default on (2026-11-03, Xo Lang 1)
+
+After the owner's acceptance, view_proj is on by default on the native
+targets (rc.xo view_proj_on: unless `XO_PASSES=-view_proj`; wasm stays off,
+since it copies a slice). Gate under the defaults rule, on the first
+linux/arm64 offload host, 2026-11-03: scripts/gate.sh arm64 llvm cmd fp
+with XO_GATE_LLVM=1 (the arm64 goldens, the full LLVM goldens and the -O2
+sample, the full cmd/xo suite, the fixed point, chkcache, cross) all
+pass, after xo test compiler/ssa compiler/arm64 (107 passed).
+
 ## Consequences
 
 - Removes the `drop Str` share of trim and slice heavy loops (24% of this profile).
