@@ -1468,10 +1468,15 @@ fn image_to_rgba(img: jpeg.Image) -> Bytes {
   } else {
     let rt = ratios(img.subsample)
     let cw = image_chroma_width(img)
+    // the ratios are 1, 2 or 4: shifts, not divisions, and the chroma row is fixed per row
+    let sx = if rt.0 == 4 { 2 } else if rt.0 == 2 { 1 } else { 0 }
+    let sy = if rt.1 == 4 { 2 } else if rt.1 == 2 { 1 } else { 0 }
     for y in 0..h {
+      let crow = (y >> sy) * cw
+      let yrow = y * w
       for x in 0..w {
-        let ci = (y / rt.1) * cw + x / rt.0
-        let rgb = ycbcr_rgb(Int(img.y[y * w + x]), Int(img.cb[ci]), Int(img.cr[ci]))
+        let ci = crow + (x >> sx)
+        let rgb = ycbcr_rgb(Int(img.y[yrow + x]), Int(img.cb[ci]), Int(img.cr[ci]))
         out.write_byte(UInt8(rgb >> 16))
         out.write_byte(UInt8((rgb >> 8) & 255))
         out.write_byte(UInt8(rgb & 255))
