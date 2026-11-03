@@ -1,5 +1,21 @@
 # std/task changes
 
+## 2026-11-03: fix: Windows preemption no longer gives a task a wrong integer result under load
+
+- Kind: fix
+- Commit: this commit
+- Found by: the 2026-11-02 Windows stress (async_preempt_regs under load), xo-lang-1
+- Go reference: runtime/os_windows.go preemptM and runtime/preempt_amd64.s asyncPreempt (the thread saves its own registers)
+- Test: async_preempt_regs, 16 rounds of 32 copies beside CPU burners on windows/amd64, the host to itself (main: 6 of 512 wrong sums; now 0 of 512, and 0 of 1,024 over two runs; async_preempt_alloc 0 of 512)
+
+Present since v0.25.0 (native Windows preemption, decision 0318). A task
+preempted on Windows was resumed from the registers the monitor had read
+from its suspended thread, and in about 1 in 100 runs of a busy machine
+one of its integer values came back wrong. The monitor now only sends the
+thread to a routine that saves the thread's own registers on the task's
+stack, parks the task, and restores them when it runs again, as Go does
+(decision 0318's 2026-11-03 addendum).
+
 ## 2026-11-02: fix: Windows preemption no longer loses a preempted task's registers under load
 
 - Kind: fix

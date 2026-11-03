@@ -330,6 +330,16 @@ CPU-bound timings; HTTP throughput needs bare Linux. Last verified: 2026-11-02
   priv repository sets `core.autocrlf false` (Git for Windows' default
   CRLF checkout broke go.mod). Git Bash has no flock: locks are
   directories (`~/xo-ci/offload.lockdir.N`, stale when its shell is gone).
+- Cold Windows builds until the 0.37 seed (2026-11-03, decision 0318's
+  2026-11-03 addendum): the 0.34.0 and 0.35.0 seeds cannot build main on
+  Windows since the async stub change (their emitter defines no
+  xo_async_stub, which xobuild's smoke build links). An xo of its first
+  commit (built before the rebase that made it ffdfe7d76 on main) with its
+  std is kept in
+  `C:\Users\xo\xo-ci\seed\xo-7950290dbbb8` (`~/xo-ci/seed/xo-7950290dbbb8/bin/xo.exe`
+  in Git Bash); pass it as the seed (`XO_SEED`, or a script's SEED
+  argument) for a Windows build that has no cached ancestor build. Delete
+  it once the 0.37 seed is on the host. Last verified: 2026-11-03.
 - Windows privileges (owner, 2026-10-30): Developer Mode is on, so user
   xo creates symbolic links without elevation, and xo is an
   administrator with LocalAccountTokenFilterPolicy=1, so jobs on the box

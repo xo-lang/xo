@@ -1,6 +1,6 @@
 # Windows preemption: a second kick overwrote the saved CONTEXT
 
-Status: Observed (2026-11-02, Xo Lang 1)
+Status: Observed (2026-11-02, Xo Lang 1); resolved 2026-11-03
 
 Symptom: on windows/amd64 under load (32 copies beside CPU burners),
 async_preempt_regs hung (26 of 128 runs past 300 s; the median run is 5 s),
@@ -28,7 +28,16 @@ two; record each run's NT exit code (through PowerShell's Start-Process,
 since MSYS bash folds C0000005 into 139) and keep the hangs apart from the
 faults.
 
-Still open (2026-11-02): with the fix, 8 of 256 async_preempt_regs runs under
+Resolved (2026-11-03, decision 0318's addendum): the wrong sums that
+remained after this fix are gone since win_kick stopped restoring a CONTEXT
+at all: like Go's preemptM it pushes the interrupted pc and sends the thread
+to xo_async_stub, which saves the thread's own registers (0 of 1,024 runs,
+against 6 of 512 before). Ten experiments ruled out every part of the
+CONTEXT path one at a time without finding which register read was wrong;
+the lesson: on Windows, do not resume a thread from registers
+GetThreadContext reported; let the thread save its own.
+
+Before the 2026-11-03 change, with the fix, 8 of 256 async_preempt_regs runs under
 the same load print a wrong integer sum (no hang, no fault). Preemption causes
 it (0 of 128 with XO_PREEMPT=0); it is not an early loop exit (the wrong sums
 match no iteration count of the loop); the loop's integers live partly in

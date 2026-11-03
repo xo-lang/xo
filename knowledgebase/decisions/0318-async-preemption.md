@@ -132,7 +132,8 @@ redirects itself into a stub that saves every register and yields.
    again it restores the saved CONTEXT with RtlRestoreContext, which the
    runtime already uses to resume after an exception, every register
    and RIP at once. Go's preemptM on Windows suspends and resumes the
-   same way.
+   same way. (Replaced by the 2026-11-03 addendum: the thread saves its
+   own registers in xo_async_stub; no CONTEXT is restored.)
 7. **Interactions.**
    - The CPU profiler (SIGPROF, decision 0238) and SIGURG are separate
      handlers. A SIGPROF while a fiber is set aside samples the thread's
@@ -451,3 +452,60 @@ register program): its loops spend most of their time in the allocator
 and in runtime code inlined into them, where the handler declines and
 the monitor asks again at its next tick. Expected, and the reason the
 test counts preemptions over three runs.
+
+## Addendum (2026-11-03): Windows preempts as Go's preemptM does
+
+Status: Accepted (lead, 2026-11-03).
+
+Context: under load (32 copies beside CPU burners), async_preempt_regs
+printed a wrong integer sum in 1 to 3% of runs on windows/amd64 after the
+2026-11-02 save area fix (gotchas/windows-preempt-context-overwrite.md).
+Each part of the CONTEXT path was ruled out on its own: restoring at once
+without yielding (0 of 256), writing the read registers back unchanged
+(0 of 256), NtContinue in place of RtlRestoreContext (still 7 of 512), and
+traces that compared the whole CONTEXT, the whole stack, the 192 bytes
+below rsp, the restoring fiber, its save area, and the thread it ran on
+between the kick and the restore (none differed in any failing run). The
+failure needed three tasks on the worker (one task at a time and two at
+a time were clean), and changing the loop's code generation hid it. So the
+integer registers the kick restored were already wrong when it read them,
+or wrong in a way none of those checks could see.
+
+Decision: win_kick no longer restores a CONTEXT. Like Go's preemptM, it
+writes the interrupted pc below the interrupted rsp (Windows x64 has no red
+zone) and sets only RIP and RSP (CONTEXT_CONTROL): the thread runs
+xo_async_stub (compiler/ssa budget.xo async_stub_amd64, emitted by the
+native emitter's Windows scheduler file and, as module asm, by the LLVM
+backend where win_kick names it), which saves the registers a callee may
+change (rax, rcx, rdx, rsi, rdi, r8 to r11), the flags, and xmm0 to
+xmm15 itself, calls cabi.xo async_park (pool.xo async_park: yields to the
+back of this worker's pinned list), restores them, and returns to the
+interrupted pc. Every register the interrupted code holds is the thread's
+own, never one GetThreadContext reported. The checks before the redirect
+are unchanged (W_RUNF re-read, no runtime lock, F_NOPRE, the pc in a
+table's text outside its ranges, rsp on the fiber's stack). The save area
+at a fiber stack's top holds the one CONTEXT the kick reads (1,280 bytes;
+2,560 before), and RtlRestoreContext and on_wpark are no longer used for
+preemption.
+
+Consequences: on the Windows host under the same load, exclusive (one job
+on the host), 16 rounds of 32 copies, async_preempt_regs went from 6 of 512
+wrong sums (72 preemptions in a sampled run) to 0 of 512 (65 preemptions),
+and 0 of 1,024 over two such runs; async_preempt_alloc 0 of 512. The kick
+writes 8 bytes on the fiber's stack (below rsp, unused under the Windows
+ABI) and the stub's frame (about 400 bytes) sits below that while the fiber
+is parked, inside the stack room the checks already require (ASYNC_ROOM).
+The stub is Windows only: the cross builds for darwin/arm64, linux/arm64
+and linux/amd64 name no xo_async_stub (win_kick is dead code there). It
+landed in two commits: the first adds the stub and the park export with
+no use, the second switches win_kick over. A seed older than the first
+cannot build the second on Windows (its emitter defines no xo_async_stub,
+and xobuild's Windows smoke build links win_kick), so a Windows build of
+main from such a seed goes through an xo of the first commit (xobuild takes
+the newest cached build of an ancestor) until the next seed (gotchas/
+seed-older-than-intrinsics.md); darwin and Linux builds are unaffected.
+
+Alternatives: keep the CONTEXT path and find the remaining cause (ten
+experiments did not locate it); NtContinue (still failed); reading the
+CONTEXT twice (narrowed the window to about 0.2%, did not close it).
+

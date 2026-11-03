@@ -35,7 +35,7 @@ fn apre_rt_file(p: Str) -> Bool {
 /// The signal handlers' own entries: never guarded (the handler would
 /// see its own count).
 fn apre_exempt(n: Str) -> Bool {
-  n is "cabi.on_urg" | "cabi.on_wpark" | "cabi.on_prof" | "pool.async_signal" | "pool.async_wpark" | "prof.on_signal"
+  n is "cabi.on_urg" | "cabi.async_park" | "cabi.on_prof" | "pool.async_signal" | "pool.async_park" | "prof.on_signal"
 }
 
 /// Marks every function of the module (g.apre): APRE_GUARD for a runtime
