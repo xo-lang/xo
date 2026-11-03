@@ -181,8 +181,11 @@ func TestSelfhostWasm(t *testing.T) {
 	// a golden that stops building or running for wasm must not hide in the
 	// unsupported count (0.34.0: every scope, spawn and Chan golden went
 	// unsupported at once): only the goldens of testdata/wasm_unsupported.txt
-	// may be, and a new one is an error
-	if os.Getenv("XO_WASM_GOLDENS") == "" && !filtered {
+	// may be, and a new one is an error. This holds for a subset too
+	// (XO_WASM_GOLDENS, -run): pushq runs the new goldens that way, and
+	// skipping the check there let net_dial_dual_stack reach main unlisted
+	// (2026-11-02); only the pass count below needs every golden
+	{
 		expected := map[string]bool{}
 		if b, err := os.ReadFile(filepath.Join(root, "internal", "selfhost", "testdata", "wasm_unsupported.txt")); err == nil {
 			for _, l := range strings.Split(string(b), "\n") {
