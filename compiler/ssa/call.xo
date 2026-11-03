@@ -407,8 +407,11 @@ fn (var b: Builder) closure_body(fi: Int, lit: parser.FnLit, file: Int, result: 
   let ps = b.c.closure_params(file, lit)
   if pack {
     // the value given (closureWith): what a failing or unwinding call
-    // hands back
-    b.s.pack_orig = b.param(1)
+    // hands back, when the closure catches (Mutex.with's; Map.update's
+    // neither catches nor keeps it)
+    if b.s.f.catches {
+      b.s.pack_orig = b.param(1)
+    }
     if ps.len() == 1 && ps[0] >= 0 {
       b.write_var(ps[0], b.param(1))
       b.s.var_params = [ps[0]]

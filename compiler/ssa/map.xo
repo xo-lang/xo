@@ -998,7 +998,11 @@ fn (var b: Builder) map_update(x: Expr, var p: Place, args: List[Expr?]) -> Int 
   let nt = b.nat_of(x)
   let vt = map_val(b.m, t)
   let fe = args[2] ?? fault("arg")
-  let (fv, packed) = b.with_closure(fe, vt)
+  // keep: false: nothing reads the value a faulting closure would hand
+  // back (the caller unwinds, and a store needs f's success), and keeping
+  // it alive made every write in f copy the value first (a nested Map's
+  // lists, then the map log, 2026-11-03)
+  let (fv, packed) = b.with_closure(fe, vt, false)
   if fv < 0 {
     return b.undef(nt)
   }
@@ -1105,8 +1109,11 @@ fn (var b: Builder) with_err(e: Expr) -> Int {
 /// The closure given to `update` (or `with`): a literal with a `var`
 /// parameter becomes a function value returning (result, new value),
 /// packed (true); anything else is an ordinary function value
-/// (withClosure). The value is -1 when it cannot be lowered.
-fn (var b: Builder) with_closure(e: Expr, et: Int) -> (Int, Bool) {
+/// (withClosure). The value is -1 when it cannot be lowered. keep: the
+/// closure catches its faults and hands back the value it was given
+/// (Mutex.with, whose value must survive a fault, core 5.4); without it a
+/// fault goes on to the caller (Map.update).
+fn (var b: Builder) with_closure(e: Expr, et: Int, keep: Bool = true) -> (Int, Bool) {
   let nct = b.nat_check(e)
   if nct < 0 || b.c.tys[b.c.resolve(nct)].kind != check.TyKind.Func || b.c.tys[b.c.resolve(nct)].args.len() != 1 {
     b.unsupported("this closure")
@@ -1119,7 +1126,7 @@ fn (var b: Builder) with_closure(e: Expr, et: Int) -> (Int, Bool) {
     return (b.value_as(e, ft), false)
   }
   match e {
-    FnLit(lit) => return (b.closure_with(lit, ct, et), true)
+    FnLit(lit) => return (b.closure_with(lit, ct, et, keep), true)
     _ => {}
   }
   b.unsupported("a function value with a `var` parameter that is not a closure literal")
@@ -1128,7 +1135,7 @@ fn (var b: Builder) with_closure(e: Expr, et: Int) -> (Int, Bool) {
 
 /// A closure literal with a `var` parameter whose function returns its
 /// result and the parameter's new value as one tuple (closureWith).
-fn (var b: Builder) closure_with(lit: parser.FnLit, ct: check.Ty, et: Int) -> Int {
+fn (var b: Builder) closure_with(lit: parser.FnLit, ct: check.Ty, et: Int, keep: Bool) -> Int {
   let err_t = b.fail_err(b.apply(ct.err))
   let rv = b.typ(b.result_of(b.apply(ct.result), err_t))
   let t = b.m.func_type([et], b.m.tuple([rv, et]))
@@ -1155,8 +1162,9 @@ fn (var b: Builder) closure_with(lit: parser.FnLit, ct: check.Ty, et: Int) -> In
   b.m.funcs[fi].indirect = true
   b.m.funcs[fi].captures = cap_ts
   // a fault in it hands back the value it was given, like cancellation
-  // (the caller goes on unwinding, decision 0085)
-  b.m.funcs[fi].catches = true
+  // (the caller goes on unwinding, decision 0085), when the caller keeps
+  // that value (keep)
+  b.m.funcs[fi].catches = keep
   b.fe_closure_made(fi)
   b.queue.push(Job.Closure(fi: fi, lit: lit, file: b.s.file, result: b.apply(ct.result), err_t: err_t, owner: owner, closures: b.s.closures + 1, sub: b.s.sub, caps: caps, cap_ts: cap_ts, pack: true, polls: b.s.polls))
   b.add(Op.Closure, t, Aux.S(s: name), vals)
