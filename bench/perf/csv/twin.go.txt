@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"encoding/csv"
@@ -42,6 +43,33 @@ func main() {
 			cw.WriteAll(rows)
 			sum += b.Len()
 		}
+	}
+	if w == "reader" {
+		if err := os.WriteFile("csv_reader.tmp", []byte(t), 0o644); err != nil {
+			panic(err)
+		}
+		for p := 0; p < 10; p++ {
+			f, err := os.Open("csv_reader.tmp")
+			if err != nil {
+				panic(err)
+			}
+			r := csv.NewReader(f)
+			n, last := 0, 0
+			for {
+				rec, err := r.Read()
+				if err == io.EOF {
+					break
+				}
+				if err != nil {
+					panic(err)
+				}
+				n++
+				last = len(rec)
+			}
+			f.Close()
+			sum += n + last
+		}
+		os.Remove("csv_reader.tmp")
 	}
 	fmt.Printf("%s %d\n", w, sum)
 }

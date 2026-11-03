@@ -1,7 +1,8 @@
 // csv: std/csv against Go's encoding/csv (twin.go.txt): 20,000 rows of six
 // fields (quoted fields, a doubled quote, an empty field) parsed 10 times,
-// and the same rows formatted 10 times; `none` is the text build alone.
-// Usage: `<program> none|parse|format`. Prints `<workload> <checksum>`; the
+// the same rows formatted 10 times, and the same text read 10 times from a
+// file one record at a time (`reader`); `none` is the text build alone.
+// Usage: `<program> none|parse|format|reader`. Prints `<workload> <checksum>`; the
 // twin prints the same.
 use std/csv
 
@@ -13,7 +14,7 @@ fn text() -> Str {
   b.freeze()
 }
 
-fn main(os: Os) uses stdio, env {
+fn main(os: Os) uses stdio, env, fs.read, fs.write {
   let w = os.env.args().get(0) ?? "none"
   let t = text()
   var sum = t.len()
@@ -27,6 +28,28 @@ fn main(os: Os) uses stdio, env {
     for _ in 0..10 {
       sum += csv.format(rows).len()
     }
+  }
+  if w == "reader" {
+    os.fs.write("csv_reader.tmp", t.bytes()).ok() ?? fault("write")
+    for _ in 0..10 {
+      let f = os.fs.open("csv_reader.tmp").ok() ?? fault("open")
+      var r = csv.reader(f)
+      var n = 0
+      var last = 0
+      while true {
+        match r.read() {
+          Ok(Some(rec)) => {
+            n += 1
+            last = rec.len()
+          }
+          Ok(None) => break
+          Err(_) => fault("read")
+        }
+      }
+      f.close().ignore_err("a read only handle")
+      sum += n + last
+    }
+    os.fs.remove("csv_reader.tmp").ignore_err("scratch file")
   }
   os.stdio.println("${w} ${sum}")
 }
