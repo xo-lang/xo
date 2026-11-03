@@ -1,5 +1,31 @@
 # std/dns changes
 
+## 2026-11-03: fix: a program whose only network is std/dns keeps the scheduler and the shutdown; a lookup unwinds on cancellation and shows prior output
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1 (the netpoller tick of gotchas/netpoll-wait-idle-wake-latency.md: a lookup only program had no scheduler)
+- Go reference: none
+- Test: golden dns_no_tasks; internal/llvm TestNativeSignalNetNoTasks/dns
+- Timing: none (the lookup's poll still waits on the thread)
+- Shipped in: since std/dns (decision 0417) through v0.35.0
+
+Three faults of a lookup:
+
+- A program with no task in its code whose only network was std/dns was
+  built without the scheduler (std/dns's lookups were not counted as
+  concurrency), so the first SIGTERM killed it at once (status 143), with
+  no defer run and its buffered output lost, where core 7.5 cancels
+  nothing at the first signal. A call of a std function that declares a
+  network effect now counts as concurrency (ssa/call.xo net_waits).
+- A lookup waited in one poll until its timeout (10 s with the default
+  resolver options), so the second signal, or a canceled task, did not
+  unwind it until then. The poll now waits at most 100 ms at a time and
+  looks at the task's cancellation between.
+- What the program printed before a lookup stayed in the output buffer
+  until the lookup ended: the lookup now flushes standard output before
+  it waits, as a task's park does.
+
 ## 2026-11-02: fix: the resolver configuration and hosts file were copied from freed memory
 
 - Kind: fix

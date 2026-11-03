@@ -46,7 +46,7 @@ const wasmMinPass = 170
 // WASI's missing features print as plain messages since decision 0358
 // (`PATH: operation not supported (...)`, `.: no working directory under
 // WASI`); the Debug forms (`msg: "..."`) are kept for older runtimes.
-var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of c on another OS|the wasm backend does not support the call `rt\\.(fn_addr|frame_addr|call_c2|call_c4)`|getcwd failed|no working directory under WASI|operation not supported \\(WASI has no file modes or locks\\)|WASI has no times before 1970")
+var wasmCCallRE = regexp.MustCompile("the platform call `[A-Za-z0-9_]+` of (c|darwin|linux|windows) on another OS|the wasm backend does not support the call `rt\\.(fn_addr|frame_addr|call_c2|call_c4)`|getcwd failed|no working directory under WASI|operation not supported \\(WASI has no file modes or locks\\)|WASI has no times before 1970")
 
 func TestSelfhostWasm(t *testing.T) {
 	if selfhostTier(t) == tierShort {

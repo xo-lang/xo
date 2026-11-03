@@ -56,9 +56,11 @@ use native/llrt/darwin
 use native/llrt/host
 use native/llrt/linux
 use native/llrt/obj
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/sock
+use native/llrt/stdio
 use native/llrt/sysio
 use native/llrt/tlsname
 use native/llrt/winadapters
@@ -1487,8 +1489,18 @@ fn new_id() -> Int {
 
 /// Waits until one of the descriptors fds is ready for events (POLLIN 1,
 /// POLLOUT 4) or the monotonic deadline passes: the ready flags (revents)
-/// per descriptor, all zero at the deadline; None on a poll failure.
+/// per descriptor, all zero at the deadline; None on a poll failure or
+/// when the calling task is canceled. The poll waits at most
+/// CANCEL_SLICE_NS at a time and looks at the task's cancellation between
+/// (the second signal of core 7.5 unwinds a lookup at once, not at its
+/// timeout), keeping the poll on the thread, which answers a server in
+/// another process sooner than the netpoller (2026-11-03: about 10 us a
+/// lookup).
 fn wait(fds: List[Int], events: Int, deadline: Int) -> List[Int]? {
+  // standard output reaches its reader before the wait, as at a task's
+  // park (tasks.xo park_wait_n): a program blocked in a lookup had not
+  // shown what it printed before it
+  stdio.flush()
   let n = fds.len()
   let pb = raw.bytes_buf(8 * n + 16)
   let p = raw.bytes_addr(pb)
@@ -1499,14 +1511,17 @@ fn wait(fds: List[Int], events: Int, deadline: Int) -> List[Int]? {
       rt.mem_store(p, 8 * i + 4, events, 2)
       rt.mem_store(p, 8 * i + 6, 0, 2)
     }
-    var left = deadline - now()
-    if left < 0 {
-      left = 0
+    if poll.canceled() {
+      let _k = sock.keep(pb, 0)
+      return None
     }
+    let total = deadline - now()
+    let left = if total < 0 { 0 } else if total > CANCEL_SLICE_NS { CANCEL_SLICE_NS } else { total }
     rt.mem_store(ts, 0, left / 1000000000, 8)
     rt.mem_store(ts, 8, left % 1000000000, 8)
     let r = if os() == 3 { win_poll(fds, events, p, left) } else if os() == 2 { mac_poll(p, n, left) } else { sock.ppoll(p, n, ts) }
-    if r == -sock.EINTR {
+    if r == -sock.EINTR || (r == 0 && left < total) {
+      // a signal, or a slice ended before the deadline: look again
       continue
     }
     if r < 0 {
@@ -1522,6 +1537,9 @@ fn wait(fds: List[Int], events: Int, deadline: Int) -> List[Int]? {
   }
   None
 }
+
+/// wait's longest poll between looks at the task's cancellation (ns).
+const CANCEL_SLICE_NS = 100000000
 
 /// poll(2) on macOS of the n pollfds at p for left nanoseconds (rounded
 /// up to a millisecond): the count ready, or the negative errno.

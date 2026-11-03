@@ -1,0 +1,16 @@
+// A program whose only network is std/udp, with no task anywhere in its
+// code: the compiler counts the socket's network effect as concurrency
+// (ssa/call.xo net_waits), so it keeps the scheduler and builds
+// cabi_net's exports, which netconn's connection handles name. Before
+// 2026-11-03 it did not build (`_xo_x_nc_conn_free` ... no function of
+// the program defines it).
+use std/udp
+
+fn main(os: Os) uses stdio, net {
+  let c = udp.listen(os.net, "127.0.0.1:0").or_fault("listen")
+  c.write_to(b"ping", c.local_addr()).or_fault("write")
+  match c.read_from() {
+    Ok((d, from)) => os.stdio.println("read ${d.len()} bytes, from itself ${from == c.local_addr()}")
+    Err(e) => os.stdio.println("err ${e}")
+  }
+}

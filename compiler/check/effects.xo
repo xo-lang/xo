@@ -7,6 +7,22 @@
 
 use github.com/xo-lang/xo/compiler/parser
 
+/// Whether function fo declares a network effect (`uses net`, `net.dial`
+/// or `net.listen`): the SSA builder's test for a std function that waits
+/// on the network (ssa/call.xo net_waits).
+pub fn (c: Checker) declares_net(fo: Int) -> Bool {
+  let set = c.objs[fo].declared
+  if set < 0 || set >= c.esets.len() {
+    return false
+  }
+  for it in c.esets[set] {
+    if it.label == "net" || it.label.starts_with("net.") {
+      return true
+    }
+  }
+  false
+}
+
 /// One member of an effect set: a label, an effect parameter (a TParam
 /// object), an effect variable, or the (inferred) effects of a function
 /// that is not pub, with the substitution of its effect parameters at

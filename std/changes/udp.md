@@ -1,5 +1,24 @@
 # std/udp changes
 
+## 2026-11-03: fix: a program whose only network is std/udp builds, and keeps the shutdown
+
+- Kind: fix
+- Commit: this commit
+- Found by: Lang 1, checking which std modules the compiler's concurrency count missed (after the netpoller tick of gotchas/netpoll-wait-idle-wake-latency.md)
+- Go reference: none
+- Test: golden udp_no_tasks; internal/llvm TestNativeSignalNetNoTasks/udp
+- Timing: none
+- Shipped in: since std/udp (decision 0406) through v0.35.0
+
+A program with no task in its code whose only network was std/udp did
+not build (`_xo_x_nc_conn_free` is named in `netconn.conn_new` but no
+function of the program defines it): the compiler counted neither its
+network nor its concurrency, so it built neither the network runtime's
+exports nor the scheduler. A call of a std function that declares a
+network effect now counts as both (ssa/call.xo net_waits), so such a
+program builds, and the two phase shutdown of core 7.5 applies to it: a
+blocked read unwinds at the second signal and main's defers run.
+
 ## 2026-10-30: fix: a cut datagram on Windows
 
 - Kind: fix

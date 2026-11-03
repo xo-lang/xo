@@ -31,12 +31,12 @@ func nativeBackends() []string {
 	return bs
 }
 
-var signalBins sync.Map // backend -> func() (string, error)
+var signalBins sync.Map // backend and testdata directory -> func() (string, error)
 
-func signalBinary(t *testing.T, backend string) string {
+func signalBinary(t *testing.T, backend, dir string) string {
 	t.Helper()
-	f, _ := signalBins.LoadOrStore(backend, sync.OnceValues(func() (string, error) {
-		res, err := xotool.Build([]string{filepath.Join("testdata", "signal")}, xotool.Options{Backend: backend})
+	f, _ := signalBins.LoadOrStore(backend+" "+dir, sync.OnceValues(func() (string, error) {
+		res, err := xotool.Build([]string{filepath.Join("testdata", dir)}, xotool.Options{Backend: backend})
 		if err != nil {
 			return "", err
 		}
@@ -62,10 +62,16 @@ type nativeChild struct {
 
 func startNative(t *testing.T, backend string, env ...string) *nativeChild {
 	t.Helper()
+	return startNativeIn(t, backend, "signal", env...)
+}
+
+// startNativeIn starts testdata/DIR built with backend.
+func startNativeIn(t *testing.T, backend, dir string, env ...string) *nativeChild {
+	t.Helper()
 	if _, err := xotool.Clang(); err != nil {
 		t.Skip("clang not found")
 	}
-	bin := signalBinary(t, backend)
+	bin := signalBinary(t, backend, dir)
 	cmd := testtmp.Guard(exec.Command(bin))
 	cmd.Env = append(os.Environ(), env...)
 	stopAttr(cmd)

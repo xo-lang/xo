@@ -6,6 +6,7 @@
 cmd_inherit # the wasm backend does not support processes (`proc.exec`): WASI preview1 has none
 conn_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 conn_iface # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+dns_no_tasks # the wasm backend does not support the call `rt.call_c2` (std/dns's native resolver)
 dns_records # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 fs_atomic # operation not supported (WASI has no file modes or locks): write_atomic's mode
 fs_cwd_path # no working directory under WASI
@@ -65,6 +66,7 @@ tls_deadline # the wasm backend does not support the network (`rt.net_listen`): 
 tls_peer_certs # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 tz_table # std/time's zones need the zone data that `xo build --backend=wasm` embeds
 udp_echo # the wasm backend does not support the network (`rt.conn_close`): WASI preview1 has no sockets
+udp_no_tasks # std/udp reaches netconn's name resolution, a platform call of darwin or linux, which faults on WASI by design
 unix_kill # the wasm backend does not support processes (`proc.spawn`): WASI preview1 has none
 use_c_add # use c without the binding of addc.h in internal/llvm/testdata/golden/use_c_add/.xo/cbind (a Go build
 use_c_enum # use c without the binding of enumc.h in internal/llvm/testdata/golden/use_c_enum/.xo/cbind (a Go build or `xo bind --c` writes it)

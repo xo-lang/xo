@@ -28,6 +28,11 @@ Fix: poll.xo np_wanted is false when concflag.built() is (the poller
 thread waits in epoll or kqueue itself, as before decision 0324): 4.1 s
 to 0.19 s for that program.
 
+Follow up (2026-11-03): the count itself missed std/dns and std/udp,
+which reach the network runtime directly rather than through the
+prelude's Net methods; a call of a std function that declares a network
+effect now counts (ssa/call.xo net_waits; gotchas/conc-count-by-name-lists.md).
+
 Check: measure a netpoller change against a peer outside the program as
 well as an in-process one, and with a program that has no concurrency in
 its code: a benchmark whose server is a task of the same program keeps

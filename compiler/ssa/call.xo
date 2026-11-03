@@ -153,6 +153,15 @@ fn (var b: Builder) call_expr(x: Expr) -> Int {
         return b.conc_off(b.nat_of(x))
       }
     }
+    if b.net_waits(fo) {
+      // and the network's runtime exports (cabi_net), which netconn's
+      // handles name
+      b.set_flag(2)
+      b.set_flag(1)
+      if !b.conc {
+        return b.conc_off(b.nat_of(x))
+      }
+    }
     if let Some(v) = b.word_method(x, ci) {
       return v
     }
@@ -2581,6 +2590,20 @@ fn cap_impl(key: Str) -> Str {
     "Proc.children_usage" => "proc_children_usage"
     _ => ""
   }
+}
+
+/// Whether fo is a std function that declares a network effect (`uses
+/// net.dial`, std/dns's lookups, std/udp's sockets and the rest): it waits
+/// on the network through the native runtime, so the program keeps the
+/// scheduler and its waits unwind as the prelude's Net calls do (core
+/// 7.5). The prelude's own are native_waits and the call.xo table; std/dns
+/// and std/udp reach netconn directly and were missed (2026-11-03: a
+/// program using only them had no concurrency, so SIGTERM killed it
+/// without its defers, and std/udp's handles named an export it did not
+/// build).
+fn (var b: Builder) net_waits(fo: Int) -> Bool {
+  let m = b.obj_mod(fo)
+  m >= 0 && b.c.mods[m].is_std && !b.is_prelude_mod(m) && b.c.declares_net(fo)
 }
 
 /// Whether fo is a prelude method the native prelude implements that

@@ -1,0 +1,31 @@
+// The two phase shutdown (core 7.5) of a program with no tasks whose only
+// waits are std/udp's and std/dns's, driven by TestNativeSignalNetNoTasks
+// in signal_net_test.go: the compiler counts their network effects as
+// concurrency (ssa/call.xo net_waits), so the first signal cancels
+// nothing and the second unwinds the wait and runs main's defer. Before
+// 2026-11-03 such a program had no scheduler: SIGTERM killed it without
+// its defer, and the udp mode did not build. MODE udp blocks in a read of
+// a socket nothing writes to; MODE dns looks a name up at PORT, a UDP
+// server of the test's that never answers. Nothing here spawns.
+use std/dns
+use std/udp
+
+fn main(os: Os) uses stdio, env, net {
+  defer os.stdio.println("cleanup ran")
+  let mode = os.env.get("MODE") ?? "udp"
+  if mode == "dns" {
+    let r = dns.Resolver{server: "127.0.0.1:${os.env.get("PORT") ?? "9"}"}
+    os.stdio.println("ready")
+    match r.lookup_mx(os.net, "x.test.") {
+      Ok(_) => os.stdio.println("answered")
+      Err(_) => os.stdio.println("lookup ended")
+    }
+    return
+  }
+  let c = udp.listen(os.net, "127.0.0.1:0").or_fault("listen")
+  os.stdio.println("ready")
+  match c.read_from() {
+    Ok(_) => os.stdio.println("read")
+    Err(_) => os.stdio.println("read ended")
+  }
+}

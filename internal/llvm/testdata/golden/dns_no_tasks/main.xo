@@ -1,0 +1,16 @@
+// A program whose only network is std/dns, with no task anywhere in its
+// code: the lookups' network effect counts as concurrency (ssa/call.xo
+// net_waits), so the program keeps the scheduler (before 2026-11-03 it ran
+// with none: its poller only ticked, and SIGTERM killed it without its
+// defers; internal/llvm TestNativeSignalNetNoTasks). A server with no
+// listener refuses at once, so the lookup fails without a wait.
+use std/dns
+
+fn main(os: Os) uses stdio, net {
+  defer os.stdio.println("deferred")
+  let r = dns.Resolver{server: "127.0.0.1:9"}
+  match r.lookup_mx(os.net, "x.test.") {
+    Ok(a) => os.stdio.println("ok ${a.len()}")
+    Err(_) => os.stdio.println("lookup failed")
+  }
+}

@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+read 4 bytes, from itself true
+--- stderr
