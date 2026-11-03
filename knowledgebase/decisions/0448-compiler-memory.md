@@ -907,6 +907,42 @@ Tried, negative: a thread's first bump region as a 256 KiB slice of a shared chu
 HTTP 0.978 / 1.017 worse, self 0.993 / 1.004. With THP dense (0456) a lightly used chunk costs
 few pages, so sharing it saves little and the shared lock costs wall.
 
+
+### Case (c) on Linux: allocator retention is at most about 8 MB at the peak (xo-lang-2, 2026-11-02)
+
+Allocator retention: at most about 8 MB at the Linux peak; the peak is the link's own data
+(store_prepare 36 to 64 MB, resolve to 74). Measured on host 1 (linux/arm64, 12 cores, THP
+`always`), natively, in ab-host's edit environment (a private HOME, `xo dev stdcache` first, std
+half on, no background separate compilation, no bin cache), coll's warm build with the xo of
+the small module's tasks above (ea1661b98). A measurement-only xo (refs/recover/l2-freelists,
+a219e9994, never landed) prints the bytes on every free list (every record's lists and spare
+magazines and the central lists) as `--phase-times`' second figure:
+
+| phase | heap counter MB | on free lists MB |
+|---|---|---|
+| check | 24 | 1 |
+| fe.build, ssa | 41 | 0 |
+| front_end_freed | 34 | 2 |
+| cln.store, insert_rc, inline | 38 | 9 to 12 |
+| emit | 36 | 15 |
+| link.store_prepare | 64 | 8 |
+| link.resolve (the peak) | 74 | 8 |
+| link.layout | 72 | 14 |
+| link.write | 62 | 35 |
+
+Max RSS 78 to 82 MB. The 36 MB on free lists at exit (13 to 15 chunks; the 256 and 128 KiB page
+classes 11.8 and 7.1 MB, 160 bytes 8.7 MB, 64 bytes 2.0 MB; the large cache 16 mappings, 10 MB),
+which made the chunks look three times live, is freed in link.write, after the peak, so it does
+not set the RSS. XO_THREADS=1 gives 76 to 80 MB, 11 to 12 chunks.
+
+What the link holds at link.resolve (XO_PROF=heap at one sample per 64 KiB, XO_PROF_HEAP_AT
+"past phase link.resolve"; 36.1 MB in use): macho.elf_half_decode 18.2 MB (std's ELF half
+decoded, elfhalf.xo:402), raw.bytes_buf 10.3 MB (9.2 MB of it the cache files cache_get read
+through fs_read), macho.ELinker.gc_sections 5.5 MB (elfstrip.xo:115), maps of names 1.4 MB.
+So the half is held twice, as its file's bytes and decoded. Next (the new item 2): decode the
+half from views of its file's bytes or drop the bytes once decoded, and see what of the decoded
+18 MB resolve and layout read.
+
 ## Consequences
 
 - One ADR, the plan and its targets; each stage lands as its own change.
