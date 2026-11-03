@@ -780,6 +780,31 @@ netwasi's hc_recv and hc_send, so its requests and its handling of
 responses are the native client's. Not on wasm yet: https (an error that
 says so), HTTP/2, the connection pool (each request dials).
 
+### TLS in a command (2026-11-03, R2d and R2e)
+
+Crypto and the TLS protocol code already ran on wasm (their goldens pass
+on wasip1); what was native only was the glue to sockets. The server's
+TLS stays behind hconn.xo's ops table (srvtls.xo), which keeps TLS out of
+a plain HTTP program's binary: on wasm its entries are rt.wasi_hook table
+indexes, and rt.call_c2 and call_c4 lower to a call_indirect of
+(i64 x 2 or 4) -> i64, so every cabi_tls entry takes exactly the Ints its
+call passes and returns an Int (harmless under the C ABI natively). A TLS
+read waits on a socket, so the call can suspend: it is emitted as a call
+through a function value (resume point, call_indirect, suspend check),
+and find_susp counts C ABI exports' FuncAddrs as targets and a call_c's
+Ints as its key. (Setting Func.indirect on them instead broke rc.xo,
+which takes an indirect function's first parameter for a closure's.)
+tlssrv.xo and tlsio.xo read and write the connection through netwasi's
+hc_recv and hc_send (their pd is the Conn on wasm); a timed read keeps
+the connection's own deadline (a user's) and restores it after. The
+client: hclient.start_wasm runs tlsio.client_with over the dialed Conn
+(ALPN http/1.1 only), and std/tls's client takes a command's Conn
+(tls.xo client_wasm) with an upgrade mark in a word of the runtime's
+connection record that rt9 leaves alone (offset 44) and the connection's
+deadlines for the handshake. No system roots on wasm (no store): a
+client without roots verifies against none. HTTP/2 stays off on wasm
+(srvh2c.fill does nothing; hc_h2 returns 0).
+
 ### Full duplex in a command (2026-11-03, R2c)
 
 The native client sends a streamed request body from a task of a server

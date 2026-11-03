@@ -3037,7 +3037,7 @@ fn stream_request(q: h2srv.H2Req) -> Request {
 fn client(net: Net, timeout: Duration = 30s) -> Client { Client{timeout: timeout, roots: if target.arch == TargetArch.Wasm32 { rt.obj_at[rthttp.Roots](0) } else { tlsio.roots_system() }, lists: rt.net_lists(net)} }
 
 fn (c: Client) with_roots(pem: Bytes) -> Client ! http.TlsErr {
-  if target.arch == TargetArch.Wasm32 {
+  if wasiworld.component() {
     return Err(http.TlsErr{msg: "a wasi:http component's host does TLS: with_roots has no place to go"})
   }
   let r = tlsio.roots_pem(pem)
@@ -3908,7 +3908,7 @@ fn (c: Client) send(req: Request) -> http.Response ! http.ClientErr uses net.dia
     // FakeNet (a test without `uses net` and `xo test --real`)
     return send_mem(src_whole(req)?, raw)
   }
-  if target.arch == TargetArch.Wasm32 && c.cert is Some(_) {
+  if wasiworld.component() && c.cert is Some(_) {
     return Err(http.ClientErr.Connect(msg: "a wasi:http component's host does TLS: with_cert has no place to go"))
   }
   let (names, values) = header_lists(req)

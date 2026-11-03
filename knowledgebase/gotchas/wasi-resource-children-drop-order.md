@@ -20,6 +20,11 @@ free entry did not.
 Fix: every path that drops a socket drops its waits first (`$sk_unwait`
 before `$sk_drop`), and its streams before the socket
 (`$sk_conn_shut`'s order: output stream, input stream, socket).
+The same trap came back on 2026-11-03 (R2e, tls_coalesced_finish and
+websocket_tls): a lookup's resolve stream was dropped while a canceled
+task's wait on its pollable was queued with no owner, so nothing could
+remove it; the wait now names the stream as its owner and
+`$wasi_sock_resolve_end` unwaits it first.
 Check a new wasi resource free entry against the close path; a
 golden run once is not enough, run it several times with the harness's
 flags (wasm_cmd_test.go).

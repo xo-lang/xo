@@ -467,15 +467,16 @@ fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
       return -1
     }
   }
-  if target.arch == TargetArch.Wasm32 {
-    // R1's connection (std/native/llrt/netwasi.xo, decision 0447 R2a)
+  if target.arch == TargetArch.Wasm32 && ld(hc, HC_TLS) == 0 {
+    // R1's connection (std/native/llrt/netwasi.xo, decision 0447 R2a);
+    // TLS below reads it itself (tlssrv.fill_wasm, R2d)
     let k = netwasi.hc_recv(ld(hc, HC_CONN), p, cap, deadline)
     set_idle(hc, false)
     return k
   }
   var r = -1
   let tls = ld(hc, HC_TLS)
-  if poll.canceled() {
+  if target.arch != TargetArch.Wasm32 && poll.canceled() {
     r = -1
   } else if tls != 0 {
     // the handshake first, then decrypted bytes; both wait with the
@@ -520,12 +521,12 @@ fn recv_raw(hc: Int, p: Int, cap: Int, idle: Bool, deadline: Int) -> Int {
 /// Sends the n bytes at p: false when the connection broke.
 pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
   let hc = rec(h)
-  if target.arch == TargetArch.Wasm32 {
-    return netwasi.hc_send(ld(hc, HC_CONN), p, n, 0) == 0
-  }
   let tls = ld(hc, HC_TLS)
   if tls != 0 {
     return rt.call_c4(tls_op(TO_WRITE), tls, p, n, 0) == 0
+  }
+  if target.arch == TargetArch.Wasm32 {
+    return netwasi.hc_send(ld(hc, HC_CONN), p, n, 0) == 0
   }
   let pd = conn_pd(hc)
   if !poll.pd_begin(pd) {
@@ -559,10 +560,10 @@ pub fn send_at(h: rthttp.HConn, p: Int, n: Int) -> Bool {
 /// or the task was canceled. On TLS the record flush waits with it
 /// (TO_SET_DEADLINE, as recv_until).
 pub fn send_until(h: rthttp.HConn, p: Int, n: Int, deadline: Int) -> Int {
-  if target.arch == TargetArch.Wasm32 {
+  if target.arch == TargetArch.Wasm32 && ld(rec(h), HC_TLS) == 0 {
     return netwasi.hc_send(ld(rec(h), HC_CONN), p, n, deadline)
   }
-  if poll.canceled() {
+  if target.arch != TargetArch.Wasm32 && poll.canceled() {
     return -1
   }
   let hc = rec(h)

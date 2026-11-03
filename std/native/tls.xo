@@ -6,6 +6,7 @@ use std/x509
 use native/rt
 use native/rthttp
 use native/llrt/cabi_tlsclient
+use native/llrt/netwasi
 use native/llrt/netconn
 use native/llrt/raw
 use native/llrt/tlsio
@@ -64,6 +65,11 @@ fn cert(cert_pem: Bytes, key_pem: Bytes) -> TlsCert ! tls.TlsErr {
 /// answers a request with no certificate.
 fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Verify.Full, alpn: List[Str] = [], cert: TlsCert? = None) -> TlsConn ! NetErr uses net.dial {
   let cn = rt.obj_addr(c)
+  if target.arch == TargetArch.Wasm32 {
+    // a wasip2 command's connection (netwasi.xo, decision 0447 R2e):
+    // tlsio reads and writes it, and its own deadlines apply to them
+    return client_wasm(c, host, roots, verify, alpn, cert)
+  }
   if netconn.conn_upgraded(cn) {
     return Err(NetErr.Io(msg: "use of a connection upgraded to TLS"))
   }
@@ -109,6 +115,44 @@ fn client(c: Conn, host: Str, roots: Roots? = None, verify: tls.Verify = tls.Ver
   TlsConn{c: c, h: Some(tlsio.handle_new(started.conn))}
 }
 
+/// client on wasm: no upgrade mark, no system roots (none on wasm).
+fn client_wasm(c: Conn, host: Str, roots: Roots?, verify: tls.Verify, alpn: List[Str], cert: TlsCert?) -> TlsConn ! NetErr uses net.dial {
+  let cn = rt.obj_addr(c)
+  if netwasi.upgraded(cn) {
+    return Err(NetErr.Io(msg: "use of a connection upgraded to TLS"))
+  }
+  netwasi.upgrade(cn)
+  let r = match roots {
+    Some(x) => rt.obj_addr(x.r)
+    None => 0
+  }
+  let v = match verify {
+    Full => tlsio.VERIFY_FULL
+    ChainOnly => tlsio.VERIFY_CHAIN
+    None => tlsio.VERIFY_NONE
+  }
+  var ccerts: List[Bytes] = []
+  var ckey = b""
+  if let Some(tc) = cert {
+    ccerts = tc.c.certs
+    ckey = tc.c.key
+  }
+  let started = tlsio.client_with(cn, host, r, netwasi.user_deadline(cn), alpn, v, ccerts, ckey)
+  if started.status == tlsio.CC_TIMEOUT {
+    return Err(NetErr.Timeout)
+  }
+  if started.status == tlsio.CC_CANCELED {
+    return Err(NetErr.Canceled)
+  }
+  if started.status != tlsio.CC_OK {
+    let msg = if started.msg == "http: server gave HTTP response to HTTPS client" { "tls: first record does not look like a TLS handshake" } else { started.msg }
+    return Err(NetErr.Io(msg: msg))
+  }
+  // the handshake's deadline ends; the connection's own apply after
+  tlsio.set_conn(started.conn, cn)
+  TlsConn{c: c, h: Some(tlsio.handle_new(started.conn))}
+}
+
 fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial {
   let h = match t.h {
     Some(x) => {
@@ -122,7 +166,7 @@ fn (t: TlsConn) read(max: Int) -> Bytes? ! NetErr uses net.dial {
   if max <= 0 {
     return Some(b"")
   }
-  if netconn.deadline_passed(rt.obj_addr(t.c), false) {
+  if target.arch != TargetArch.Wasm32 && netconn.deadline_passed(rt.obj_addr(t.c), false) {
     return Err(NetErr.Timeout)
   }
   let n = if max > 1048576 { 1048576 } else { max }
@@ -147,7 +191,7 @@ fn (t: TlsConn) write(data: Bytes) -> () ! NetErr uses net.dial {
     }
     None => return passthrough_write(t.c, data)
   }
-  if netconn.deadline_passed(rt.obj_addr(t.c), true) {
+  if target.arch != TargetArch.Wasm32 && netconn.deadline_passed(rt.obj_addr(t.c), true) {
     // as Go's: the failed write breaks the TLS stream for good
     tlsio.fail_writes(h, tlsio.CC_TIMEOUT)
     return Err(NetErr.Timeout)
@@ -166,6 +210,10 @@ fn (t: TlsConn) close() {
     }
     tlsio.handle_close(x)
     tlsio.close_notify(tlsio.handle_conn(x))
+  }
+  if target.arch == TargetArch.Wasm32 {
+    t.c.close()
+    return
   }
   netconn.conn_close(rt.obj_addr(t.c))
 }

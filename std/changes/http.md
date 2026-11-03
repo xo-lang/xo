@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-11-03: feature: https in a wasip2/wasm command
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0447 R2d, R2e
+- Go reference: none
+- Test: goldens http_tls, http_tls_keys, http_tls_state, tls_client, tls_coalesced_finish, tls_deadline, tls_mtls, tls_peer_certs, websocket_tls, websocket_tls_deadline as wasip2/wasm commands (TestWasmCommandGoldens)
+- Timing: none
+
+http.Server.with_tls and with_client_auth serve TLS in a wasip2/wasm
+command, and http.Client does https there (with_roots and with_cert
+included), over wasi:sockets with the native TLS code; HTTP/1.1 only (no
+HTTP/2 on wasm yet). There are no system roots on wasm: pass roots with
+with_roots. A wasi:http component still refuses with_roots and with_cert
+(its host does TLS).
+
 ## 2026-11-03: feature: full duplex http.Client requests in a wasip2/wasm command
 
 - Kind: feature

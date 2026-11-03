@@ -542,6 +542,40 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
+      if name is "rt.call_c2" | "rt.call_c4" {
+        // a C ABI export through its table index (rt.wasi_hook; the TLS
+        // ops table, decision 0447 R2d): each target takes 2 or 4 Ints
+        // and returns an Int; it may suspend, as a call through a
+        // function value (func.xo CallValue). Any other word (a native
+        // hook loaded from memory, 0) faults as before, with the message
+        // of the calls below ($cabi_ok, written with the table)
+        g.cabi_ok = true
+        g.push(x.args[0])
+        g.e("i32.wrap_i64")
+        g.e("call $cabi_ok")
+        g.e("i32.eqz")
+        g.e("if")
+        let msg = if g.wasi_xo { "xo: this needs a process, a socket or a system tool (`${name}`), which is not available in the WASI build (XO1513)" } else { "the wasm backend does not support the call `${name}`" }
+        g.e("i32.const ${g.str_obj(msg.bytes())}")
+        g.e("i32.const ${msg.len()}")
+        g.e(g.litp(comment_text(g.f.name)))
+        g.e("call $fault_str")
+        g.fault_exit(v)
+        g.e("end")
+        let id = g.resume_point()
+        var ps: List[Str] = []
+        for a in x.args[1..x.args.len()] {
+          ps.push("i64")
+          g.push(a)
+        }
+        let s = g.sig(ps, ["i64"])
+        g.push(x.args[0])
+        g.e("i32.wrap_i64")
+        g.e("call_indirect (type ${s})")
+        g.suspend_check(id)
+        g.def(v)
+        return
+      }
       if name == "rt.wasi_handle_new" {
         // a runtime record with a free hook (rt.xo $wasi_handle_new;
         // decision 0447 R2a)
@@ -588,7 +622,7 @@ fn (var g: Gen) call(v: Int) {
         g.def(v)
         return
       }
-      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "call_c2" | "call_c4" | "sys_words" | "auxval" | "sys_clone" | "tw_fake" | "fs_set_err" | "test_log" | "frame_addr" | "fn_addr" {
+      if g.lax || op.starts_with("pc.") || op is "sys6" | "sys_restorer" | "sys_words" | "auxval" | "sys_clone" | "tw_fake" | "fs_set_err" | "test_log" | "frame_addr" | "fn_addr" {
         // --lax: the call faults when it runs; so do the Linux system
         // calls of std/native/llrt/linux.xo and sysio.xo (decision 0206),
         // in `target.os` arms the passes may leave in a WASI module,

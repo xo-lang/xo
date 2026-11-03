@@ -43,6 +43,11 @@ pub fn end_fill(t: Int, k: Int) {
 
 /// Stores the HTTP/2 entries in table t.
 pub fn fill(t: Int) {
+  if target.arch == TargetArch.Wasm32 {
+    // no HTTP/2 on wasm (hserve.hc_h2 and hc_h2c return 0; decision
+    // 0447 R2d)
+    return
+  }
   if !begin_fill(t, hconn.TO_ONCE_H2) {
     return
   }

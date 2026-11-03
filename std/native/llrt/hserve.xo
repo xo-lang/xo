@@ -598,7 +598,8 @@ pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
   st(hc, hconn.HC_REG, 1)
   let tls = ld(a, hconn.SR_TLS)
   if tls != 0 {
-    st(hc, hconn.HC_TLS, rt.call_c2(hconn.tls_op(hconn.TO_CONN), tls, pd))
+    // on wasm tlssrv reads and writes the Conn itself (decision 0447 R2d)
+    st(hc, hconn.HC_TLS, rt.call_c2(hconn.tls_op(hconn.TO_CONN), tls, if wasm { cn } else { pd }))
   }
   if hconn.stopping_at(a) {
     if wasm {

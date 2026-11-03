@@ -10,6 +10,7 @@
 use native/llrt/atexit
 use native/llrt/hconn
 use native/llrt/netconn
+use native/llrt/netwasi
 use native/llrt/poll
 use native/llrt/raw
 use native/llrt/rc
@@ -429,6 +430,16 @@ fn send_all(var c: Conn, b: Bytes) -> Bool {
   if n == 0 {
     return true
   }
+  if target.arch == TargetArch.Wasm32 {
+    // pd is the connection's Conn on wasm (decision 0447 R2e)
+    let w = netwasi.hc_send(c.pd, raw.bytes_addr(b), n, c.when)
+    raw.alive(b)
+    if w == 0 {
+      return true
+    }
+    c.status = if w == -2 { CC_TIMEOUT } else { CC_ERR }
+    return false
+  }
   let fd = rt.mem_load(c.pd, 8, 4)
   let p = raw.bytes_addr(b)
   var off = 0
@@ -457,6 +468,25 @@ fn send_all(var c: Conn, b: Bytes) -> Bool {
 /// Reads what the server sent into the client: false when the input
 /// ended or a wait failed.
 fn fill(var c: Conn) -> Bool {
+  if target.arch == TargetArch.Wasm32 {
+    let buf = raw.bytes_buf(16384)
+    let r = netwasi.hc_recv(c.pd, raw.bytes_addr(buf), 16384, c.when)
+    if r > 0 {
+      let got = raw.bytes_len(buf, r)
+      if c.first.len() < 5 {
+        let k = if 5 - c.first.len() < r { 5 - c.first.len() } else { r }
+        c.first = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(5), c.first, 0, c.first.len(), 0), got, 0, k, 0).bytes()
+      }
+      take_in(c, got)
+      return true
+    }
+    if r == 0 {
+      c.eof = true
+    } else {
+      c.status = if r == -2 { CC_TIMEOUT } else { CC_ERR }
+    }
+    return false
+  }
   let fd = rt.mem_load(c.pd, 8, 4)
   let buf = raw.bytes_buf(16384)
   while true {
@@ -674,6 +704,14 @@ const H_SIZE = tasks.HANDLE_FIELDS + 16
 /// function (cabi_tlsclient.xo tls_h_free) frees h when its last reference
 /// goes.
 pub fn handle_new(h: Int) -> rthttp.TlsH {
+  if target.arch == TargetArch.Wasm32 {
+    // a runtime record with its hook (decision 0447 R2e)
+    let w = rt.wasi_handle_new(H_SIZE, rt.wasi_hook("tls_h_free"))
+    rt.mem_store(w, H_CONN, h, 8)
+    let hw = rt.obj_at[rthttp.TlsH](w)
+    tasks.h_release(w)
+    return hw
+  }
   let (v, t) = tasks.make_handle[rthttp.TlsH](H_SIZE, rt.fn_addr("tls_h_free"))
   rt.mem_store(t, H_CONN, h, 8)
   v
@@ -691,6 +729,10 @@ pub fn handle_close(t: rthttp.TlsH) { rt.mem_store(rt.obj_addr(t), H_CLOSED, 1, 
 /// A std/tls handle's free function: frees its connection.
 pub fn handle_free(t: Int) {
   free(rt.mem_load(t, H_CONN, 8))
+  if target.arch == TargetArch.Wasm32 {
+    // the runtime frees a wasm record after its hook
+    return
+  }
   tasks.free_handle(t)
 }
 

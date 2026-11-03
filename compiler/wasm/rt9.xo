@@ -1352,7 +1352,9 @@ fn rt9_text(var g: Gen) -> Str {
           local.get $s
           i32.wrap_i64
           call $sk_rsub
-          i32.const 0
+          ;; the stream owns the wait: resolve_end drops it first
+          local.get $s
+          i32.wrap_i64
           i64.const 0
           call $sk_wait
           i32.const ${dead}
@@ -1433,12 +1435,17 @@ fn rt9_text(var g: Gen) -> Str {
       local.get $o
       i32.const 4)
 
+    ;; a lookup a canceled task left waits on the stream's pollable, its
+    ;; child: that goes first, or the drop traps (resource has children)
     (func $wasi_sock_resolve_end (param $s i64)
       local.get $s
       i64.eqz
       if
         return
       end
+      local.get $s
+      i32.wrap_i64
+      call $sk_unwait
       local.get $s
       i32.wrap_i64
       call $sk_rdrop)

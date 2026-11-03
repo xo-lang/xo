@@ -11,6 +11,7 @@
 // certificates (never asked for, as Go's default). Windows and Linux
 // are UNTESTED.
 use native/llrt/ed25519
+use native/llrt/netwasi
 use native/llrt/nistec
 use native/llrt/poll
 use native/llrt/rand
@@ -479,6 +480,10 @@ pub fn conn(h: Int, pd: Int) -> Int {
   cf.ticket_keys = keys
   cf.now = now
   cf.alpn = if st.alpn.is_empty() { ["h2", "http/1.1"] } else { st.alpn }
+  if target.arch == TargetArch.Wasm32 {
+    // no HTTP/2 on wasm yet (srvh2c.fill): never let ALPN choose h2
+    cf.alpn = cf.alpn.filter(fn(p) { p != "h2" })
+  }
   cf.client_auth = st.client_auth
   cf.client_cas = st.client_cas
   cf.client_roots = st.client_roots
@@ -526,7 +531,10 @@ pub fn handshake(t: Int) -> Bool {
       for m in ["GET /", "HEAD ", "POST ", "PUT /", "OPTIO"] {
         if c.first == m.bytes() {
           let msg = "HTTP/1.0 400 Bad Request\r\n\r\nClient sent an HTTP request to an HTTPS server.\n".bytes()
-          if poll.pd_begin(c.pd) {
+          if target.arch == TargetArch.Wasm32 {
+            let _w = netwasi.hc_send(c.pd, raw.bytes_addr(msg), msg.len(), 0)
+            raw.alive(msg)
+          } else if poll.pd_begin(c.pd) {
             let _w = sock.send(rt.mem_load(c.pd, 8, 4), raw.bytes_addr(msg), msg.len(), NOSIGNAL)
             poll.pd_end(c.pd)
           }
@@ -927,6 +935,16 @@ fn send_all(var c: Conn, b: Bytes) -> Bool {
   if n == 0 {
     return true
   }
+  if target.arch == TargetArch.Wasm32 {
+    // pd is the connection's Conn on wasm (decision 0447 R2d)
+    let w = netwasi.hc_send(c.pd, raw.bytes_addr(b), n, c.when)
+    raw.alive(b)
+    if w == 0 {
+      return true
+    }
+    c.status = if w == -2 { CC_TIMEOUT } else { CC_ERR }
+    return false
+  }
   if !poll.pd_begin(c.pd) {
     c.status = CC_ERR
     return false
@@ -963,6 +981,9 @@ fn send_all(var c: Conn, b: Bytes) -> Bool {
 /// Reads what the client sent into the server: false when the input
 /// ended, a wait failed, or (nb) nothing is there (status -2).
 fn fill(var c: Conn, nb: Bool) -> Bool {
+  if target.arch == TargetArch.Wasm32 {
+    return fill_wasm(c, nb)
+  }
   if poll.canceled() {
     c.status = CC_CANCELED
     return false
@@ -978,33 +999,7 @@ fn fill(var c: Conn, nb: Bool) -> Bool {
   while true {
     let r = sock.read(fd, raw.bytes_addr(buf), 16384)
     if r > 0 {
-      // a small read is copied to its own size: got is a view of the 16 KiB
-      // read buffer, and the ClientHello's sni, alpn and parsed fields (and
-      // an application record's bytes) are views of got, so an idle TLS
-      // connection kept a whole buffer for a few dozen bytes (decision 0449
-      // stage 1b: 50 KB an idle TLS connection against 6 KB plain)
-      let view = raw.bytes_len(buf, r)
-      let got = if r <= SMALL_READ { rt.rs_append_bytes(rt.rs_with_cap(r), view, 0, r, 0).bytes() } else { view }
-      if c.first.len() < 5 {
-        let k = if 5 - c.first.len() < r { 5 - c.first.len() } else { r }
-        c.first = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(5), c.first, 0, c.first.len(), 0), got, 0, k, 0).bytes()
-      }
-      if c.pend.is_empty() {
-        // the usual read: the buffer becomes pend, not a copy of it
-        c.pend = got
-      } else {
-        c.pend = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(c.pend.len() + r), c.pend, 0, c.pend.len(), 0), got, 0, r, 0).bytes()
-      }
-      if !done(c) {
-        // the handshake takes everything
-        feed(c, c.pend)
-        c.pend = b""
-        if done(c) {
-          // the handshake ended inside this read: what feed kept of a
-          // record the read cut (the head of the next one) goes on in pend
-          c.pend = take_rin(c)
-        }
-      }
+      took(c, buf, r)
       ok = true
       break
     }
@@ -1031,6 +1026,58 @@ fn fill(var c: Conn, nb: Bool) -> Bool {
   }
   poll.pd_end(c.pd)
   ok
+}
+
+/// fill on wasm: pd is the connection's Conn (decision 0447 R2d); a read
+/// without waiting (nb, HTTP/2's) is not on wasm.
+fn fill_wasm(var c: Conn, nb: Bool) -> Bool {
+  if nb {
+    c.status = -2
+    return false
+  }
+  let buf = raw.bytes_buf(16384)
+  let r = netwasi.hc_recv(c.pd, raw.bytes_addr(buf), 16384, c.when)
+  if r > 0 {
+    took(c, buf, r)
+    return true
+  }
+  if r == 0 {
+    c.eof = true
+  } else {
+    c.status = if r == -2 { CC_TIMEOUT } else { CC_ERR }
+  }
+  false
+}
+
+/// Takes the r bytes a read put in buf (fill).
+fn took(var c: Conn, buf: Bytes, r: Int) {
+  // a small read is copied to its own size: got is a view of the 16 KiB
+  // read buffer, and the ClientHello's sni, alpn and parsed fields (and
+  // an application record's bytes) are views of got, so an idle TLS
+  // connection kept a whole buffer for a few dozen bytes (decision 0449
+  // stage 1b: 50 KB an idle TLS connection against 6 KB plain)
+  let view = raw.bytes_len(buf, r)
+  let got = if r <= SMALL_READ { rt.rs_append_bytes(rt.rs_with_cap(r), view, 0, r, 0).bytes() } else { view }
+  if c.first.len() < 5 {
+    let k = if 5 - c.first.len() < r { 5 - c.first.len() } else { r }
+    c.first = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(5), c.first, 0, c.first.len(), 0), got, 0, k, 0).bytes()
+  }
+  if c.pend.is_empty() {
+    // the usual read: the buffer becomes pend, not a copy of it
+    c.pend = got
+  } else {
+    c.pend = rt.rs_append_bytes(rt.rs_append_bytes(rt.rs_with_cap(c.pend.len() + r), c.pend, 0, c.pend.len(), 0), got, 0, r, 0).bytes()
+  }
+  if !done(c) {
+    // the handshake takes everything
+    feed(c, c.pend)
+    c.pend = b""
+    if done(c) {
+      // the handshake ended inside this read: what feed kept of a
+      // record the read cut (the head of the next one) goes on in pend
+      c.pend = take_rin(c)
+    }
+  }
 }
 
 /// Gives the server the first complete record of pend: whether there was

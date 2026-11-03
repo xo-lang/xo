@@ -107,6 +107,11 @@ pub struct Gen {
   /// a runtime record of llrt is made (rt.wasi_handle_new: rt.xo
   /// handle_text)
   handles: Bool = false
+  /// rt.call_c2 or call_c4 is lowered (call.xo): $cabi_ok tells a table
+  /// index of a C ABI export from any other word
+  cabi_ok: Bool = false
+  /// the table entries of C ABI exports (func.xo FuncAddr)
+  cabi_tab: Set[Str] = #{}
   /// a wasi:http component (rt5.xo, decision 0447): the program calls
   /// http.serve_component
   comp: Bool = false
@@ -1391,10 +1396,15 @@ fn (var g: Gen) find_susp() {
             blocks = true
           }
         }
-      } else if x.op == ssa.Op.Rebind {
+      } else if x.op is ssa.Op.Rebind | ssa.Op.FuncAddr {
+        // a C ABI export's FuncAddr (rt.wasi_hook) is called through the
+        // table too (rt.call_c2 and call_c4, decision 0447 R2d); other
+        // FuncAddrs (task entries, list drops) are not called as values
         if let S(n) = x.aux {
-          if let Some(ci) = g.by_name.get(n) {
-            target[ci] = true
+          if x.op == ssa.Op.Rebind || n.starts_with("cabi") {
+            if let Some(ci) = g.by_name.get(n) {
+              target[ci] = true
+            }
           }
         }
       }
@@ -1408,6 +1418,15 @@ fn (var g: Gen) find_susp() {
     for x in f.values {
       if x.op == ssa.Op.CallValue && blocks {
         cv.push(g.args_key(f, x.args))
+      }
+      if x.op == ssa.Op.Call && blocks {
+        // a C ABI export through its table index (call.xo): its targets
+        // take only the Ints after the index
+        if let S(n) = x.aux {
+          if n is "rt.call_c2" | "rt.call_c4" {
+            cv.push(g.args_key(f, x.args[1..x.args.len()]))
+          }
+        }
       }
       if x.op == ssa.Op.Call {
         let name = match x.aux {
@@ -1811,6 +1830,17 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   // a table even when empty: the release of a function value calls
   // through it
   b.write("  (table ${g.table.len()} funcref)\n")
+  if g.cabi_ok {
+    // the table indexes of the C ABI exports (rt.wasi_hook's), the only
+    // targets rt.call_c2 and call_c4 call on wasm
+    b.write("  (func $cabi_ok (param i32) (result i32)\n    i32.const 0\n")
+    for (i, t) in g.table.indexed() {
+      if g.cabi_tab.contains(t) {
+        b.write("    local.get 0\n    i32.const ${i}\n    i32.eq\n    i32.or\n")
+      }
+    }
+    b.write("  )\n")
+  }
   if !g.table.is_empty() {
     b.write("  (elem (i32.const 0) func ${g.table.join(" ")})\n")
   }

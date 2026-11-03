@@ -1547,7 +1547,12 @@ fn (var b: Builder) net_err_func(et: Int) -> Str {
     let c = b.m.funcs[fi].add(cur, Op.Eq, bt, Aux.None, [sv, k])
     b.m.funcs[fi].branch(cur, c, yes, no)
     var fs: List[Int] = []
-    if v.fields.len() == 1 {
+    if v.fields.len() == 1 && b.wasm {
+      // the wasm runtime's message is a Str (rt9.xo $wasi_sock_msg; its
+      // $net_msg is not the list the native runtime returns, decision
+      // 0447 R2e)
+      fs.push(b.m.funcs[fi].add(yes, Op.Call, st, Aux.S(s: "rt.wasi_sock_msg"), []))
+    } else if v.fields.len() == 1 {
       let l = b.m.funcs[fi].add(yes, Op.Call, b.m.list(st), Aux.S(s: "rt.net_msg"), [])
       let z = b.m.funcs[fi].add(yes, Op.Const, it, Aux.I(n: 0), [])
       fs.push(b.m.funcs[fi].add(yes, Op.Call, st, Aux.S(s: "list.index"), [l, z]))

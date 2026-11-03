@@ -21,6 +21,22 @@ pub fn install() {
     srvh2c.fill(t)
     return
   }
+  if target.arch == TargetArch.Wasm32 {
+    // the table indexes of the exports (call_indirect, decision 0447
+    // R2d); no HTTP/2 on wasm (hserve.hc_h2 returns 0)
+    rt.mem_store(t, 8 * hconn.TO_SRV_FREE, rt.wasi_hook("srvtls_srv_free"), 8)
+    rt.mem_store(t, 8 * hconn.TO_CONN, rt.wasi_hook("srvtls_conn"), 8)
+    rt.mem_store(t, 8 * hconn.TO_CLOSE_NOTIFY, rt.wasi_hook("srvtls_close_notify"), 8)
+    rt.mem_store(t, 8 * hconn.TO_FREE, rt.wasi_hook("srvtls_free"), 8)
+    rt.mem_store(t, 8 * hconn.TO_READ, rt.wasi_hook("srvtls_read"), 8)
+    rt.mem_store(t, 8 * hconn.TO_WRITE, rt.wasi_hook("srvtls_write"), 8)
+    rt.mem_store(t, 8 * hconn.TO_SET_DEADLINE, rt.wasi_hook("srvtls_set_deadline"), 8)
+    rt.mem_store(t, 8 * hconn.TO_TIMED_OUT, rt.wasi_hook("srvtls_timed_out"), 8)
+    rt.mem_store(t, 8 * hconn.TO_IDLE_EMPTY, rt.wasi_hook("srvtls_idle_empty"), 8)
+    rt.mem_store(t, 8 * hconn.TO_NEG, rt.wasi_hook("srvtls_neg"), 8)
+    srvh2c.end_fill(t, hconn.TO_ONCE_TLS)
+    return
+  }
   rt.mem_store(t, 8 * hconn.TO_SRV_FREE, rt.fn_addr("srvtls_srv_free"), 8)
   rt.mem_store(t, 8 * hconn.TO_CONN, rt.fn_addr("srvtls_conn"), 8)
   rt.mem_store(t, 8 * hconn.TO_CLOSE_NOTIFY, rt.fn_addr("srvtls_close_notify"), 8)

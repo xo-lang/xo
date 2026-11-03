@@ -103,7 +103,7 @@ fn wait_res(w: Int) -> Int {
 /// of room, the read part moved to the front first): CC_OK, CC_EOF, or
 /// the failure.
 pub fn fill(c: Int) -> Int {
-  if target.arch == TargetArch.Wasm32 {
+  if target.arch == TargetArch.Wasm32 && ld(c, C_TLS) == 0 {
     return fill_wasm(c)
   }
   if (rt.mem_load(c, C_FD, 4) & 4294967295) == 4294967295 {
@@ -130,7 +130,7 @@ pub fn fill(c: Int) -> Int {
   let p = ld(c, C_BUF) + n
   let tls = ld(c, C_TLS)
   if tls != 0 {
-    if poll.canceled() {
+    if target.arch != TargetArch.Wasm32 && poll.canceled() {
       return CC_CANCELED
     }
     let r = tlsio.read(tls, p, cap - n)
@@ -205,7 +205,7 @@ fn fill_wasm(c: Int) -> Int {
 
 /// Writes the n bytes at p on connection c: CC_OK or the failure.
 pub fn send(c: Int, p: Int, n: Int) -> Int {
-  if target.arch == TargetArch.Wasm32 {
+  if target.arch == TargetArch.Wasm32 && ld(c, C_TLS) == 0 {
     let w = netwasi.hc_send(ld(c, C_PD), p, n, ld(c, C_WHEN))
     return if w == 0 { CC_OK } else if w == -2 { CC_TIMEOUT } else { CC_ERR }
   }
@@ -473,7 +473,7 @@ pub fn read_direct(r: rthttp.CResp, p: Int, n: Int) -> Int {
   if rt.mem_load(c, C_EOF, 4) != 0 {
     return 0
   }
-  if target.arch == TargetArch.Wasm32 {
+  if target.arch == TargetArch.Wasm32 && ld(c, C_TLS) == 0 {
     let k = netwasi.hc_recv(ld(c, C_PD), p, n, ld(c, C_WHEN))
     if k == 0 {
       rt.mem_store(c, C_EOF, 1, 4)
@@ -486,7 +486,7 @@ pub fn read_direct(r: rthttp.CResp, p: Int, n: Int) -> Int {
   }
   let tls = ld(c, C_TLS)
   if tls != 0 {
-    if poll.canceled() {
+    if target.arch != TargetArch.Wasm32 && poll.canceled() {
       return 0 - CC_CANCELED
     }
     let k = tlsio.read(tls, p, n)
@@ -1290,7 +1290,7 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
   if target.arch == TargetArch.Wasm32 {
     let w = rt.wasi_handle_new(R_SIZE, rt.wasi_hook("cresp_free"))
     st(w, R_PREFIX, cstr_dup(prefix))
-    start_wasm(w, https, addr, dl, h2c)
+    start_wasm(w, https, addr, tls_host, dl, rt.obj_addr(roots), prefix, h2c)
     let hw = rt.obj_at[rthttp.CResp](w)
     tasks.h_release(w)
     return hw
@@ -1303,12 +1303,12 @@ pub fn cl_start(https: Bool, addr: Str, tls_host: Str, body: Bytes, dl: Int, roo
   h
 }
 
-/// start on wasm (a wasip2/wasm command, decision 0447 R2b): plain
-/// HTTP/1.1 on a new connection over R1's wasi:sockets each time (no
-/// connection pool, no TLS, no HTTP/2 yet).
-fn start_wasm(r: Int, https: Bool, addr: Str, dl: Int, h2c: Bool) {
-  if https || h2c {
-    fail(r, 2, if https { "https in a wasip2/wasm command: TLS is not on wasm yet" } else { "HTTP/2 in a wasip2/wasm command is not on wasm yet" })
+/// start on wasm (a wasip2/wasm command, decision 0447 R2b): HTTP/1.1
+/// on a new connection over R1's wasi:sockets each time, with TLS over it
+/// for https (R2e, ALPN http/1.1 only); no connection pool, no HTTP/2 yet.
+fn start_wasm(r: Int, https: Bool, addr: Str, tls_host: Str, dl: Int, roots: Int, prefix: Str, h2c: Bool) {
+  if h2c {
+    fail(r, 2, "HTTP/2 in a wasip2/wasm command is not on wasm yet")
     return
   }
   let d = if dl != 0 { dl - sysio.mono_ns() } else { 0 }
@@ -1335,6 +1335,24 @@ fn start_wasm(r: Int, https: Bool, addr: Str, dl: Int, h2c: Bool) {
   st(c, C_PD, cna)
   st(c, C_WHEN, dl)
   st(r, R_CN, cna)
+  if https {
+    // tlsio reads and writes the Conn itself on wasm (its pd)
+    let started = tlsio.client_with(cna, tls_host, roots, dl, ["http/1.1"], tlsio.VERIFY_FULL)
+    if started.status != CC_OK {
+      rt.wasi_sock_close(rt.obj_at[Conn](cna))
+      if started.status == CC_TIMEOUT {
+        fail(r, 3, "")
+      } else if started.status == CC_CANCELED {
+        fail(r, 5, "")
+      } else if started.kind == 2 {
+        fail(r, 2, started.msg)
+      } else {
+        fail(r, 4, prefix + ": " + started.msg)
+      }
+      return
+    }
+    st(c, C_TLS, started.conn)
+  }
   st4(r, R_READING, 1)
 }
 

@@ -1,5 +1,22 @@
 # std/tls changes
 
+## 2026-11-03: feature: TLS in a wasip2/wasm command
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0447 R2d, R2e
+- Go reference: none
+- Test: goldens http_tls, http_tls_keys, http_tls_state, tls_client, tls_coalesced_finish, tls_deadline, tls_mtls, tls_peer_certs, websocket_tls, websocket_tls_deadline as wasip2/wasm commands (TestWasmCommandGoldens)
+- Timing: none
+
+tls.client works on a wasip2/wasm command's connection: the native TLS
+code reads and writes it over wasi:sockets, the connection's deadlines
+apply to the handshake and after it, and a read or write of the plain
+connection after the upgrade fails as natively. There are no system roots
+on wasm: a client without roots verifies against none (an unknown
+authority error), so pass roots. HTTP/2 over TLS is not on wasm yet (ALPN
+offers http/1.1 only).
+
 ## 2026-11-01: perf: fewer allocations in a TLS 1.3 server handshake
 
 - Kind: perf

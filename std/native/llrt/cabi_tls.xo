@@ -6,24 +6,35 @@
 // server and no HTTP/2: a plain HTTP server is about half the size
 // (bench/results/binary-size-native-2026-10-16.md). Every top level
 // function here is an export, xo_x_<name>; the arguments and results are
-// Ints (rt.call_c2 and call_c4).
+// Ints (rt.call_c2 and call_c4), and each takes exactly the 2 or 4 Ints
+// its call passes and returns an Int: on wasm the call is a call_indirect,
+// which traps on any other shape (decision 0447 R2d).
 use native/llrt/cabi_h2
 use native/llrt/h2srv
 use native/llrt/hconn
 use native/llrt/poll
 use native/llrt/tlssrv
 
-fn srvtls_srv_free(t: Int) { tlssrv.srv_free(t) }
+fn srvtls_srv_free(t: Int, _u: Int) -> Int {
+  tlssrv.srv_free(t)
+  0
+}
 
 fn srvtls_conn(t: Int, pd: Int) -> Int { tlssrv.conn(t, pd) }
 
-fn srvtls_close_notify(t: Int) { tlssrv.close_notify(t) }
+fn srvtls_close_notify(t: Int, _u: Int) -> Int {
+  tlssrv.close_notify(t)
+  0
+}
 
-fn srvtls_free(t: Int) { tlssrv.free(t) }
+fn srvtls_free(t: Int, _u: Int) -> Int {
+  tlssrv.free(t)
+  0
+}
 
-fn srvtls_read(t: Int, p: Int, n: Int) -> Int { tlssrv.hc_read(t, p, n) }
+fn srvtls_read(t: Int, p: Int, n: Int, _u: Int) -> Int { tlssrv.hc_read(t, p, n) }
 
-fn srvtls_write(t: Int, p: Int, n: Int) -> Int { tlssrv.write(t, p, n) }
+fn srvtls_write(t: Int, p: Int, n: Int, _u: Int) -> Int { tlssrv.write(t, p, n) }
 
 /// The deadline of t's reads and handshake (tlssrv.set_deadline, 0 none).
 fn srvtls_set_deadline(t: Int, when: Int) -> Int {
@@ -38,7 +49,7 @@ fn srvtls_timed_out(t: Int, _u: Int) -> Int { if tlssrv.timed_out(t) { 1 } else 
 fn srvtls_idle_empty(t: Int, _u: Int) -> Int { if tlssrv.idle_empty(t) { 1 } else { 0 } }
 
 /// Reads without waiting (tlssrv.nb_read: h2srv.xo's fiber waits itself).
-fn srvtls_nb_read(t: Int, p: Int, n: Int) -> Int { tlssrv.nb_read(t, p, n) }
+fn srvtls_nb_read(t: Int, p: Int, n: Int, _u: Int) -> Int { tlssrv.nb_read(t, p, n) }
 
 /// The Any record of t's tlsneg.Negotiated, 0 for none (tlssrv.neg_any).
 fn srvtls_neg(t: Int, _u: Int) -> Int { tlssrv.neg_any(t) }

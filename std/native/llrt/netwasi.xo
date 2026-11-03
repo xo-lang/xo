@@ -378,6 +378,10 @@ pub fn lookup_host(lists: Str, host: Str) -> List[Str] {
 /// the end of the stream (as Str, the runtime's list: decision 0259's
 /// cast, the bytes are the program's own data).
 pub fn conn_read(c: Conn, max0: Int) -> List[Str] {
+  if upgraded(rt.obj_addr(c)) {
+    fail(4, UPGRADED_TEXT)
+    return []
+  }
   if max0 <= 0 {
     ok()
     return [""]
@@ -403,6 +407,10 @@ pub fn conn_read(c: Conn, max0: Int) -> List[Str] {
 
 /// `c.write(data)` (netconn.conn_write): every byte.
 pub fn conn_write(c: Conn, data: Str) {
+  if upgraded(rt.obj_addr(c)) {
+    fail(4, UPGRADED_TEXT)
+    return
+  }
   rt.wasi_sock_write(c, rt.cast[Str, Bytes](data))
   let e = rt.wasi_sock_err()
   if e == 0 {
@@ -417,6 +425,30 @@ pub fn conn_write(c: Conn, data: Str) {
 }
 
 pub fn conn_close(c: Conn) { rt.wasi_sock_close(c) }
+
+// The runtime's connection record (compiler/wasm rt9.xo): the read and
+// write deadlines (the monotonic clock's ns, 0 none) at 24 and 32, and a
+// word at 44 the runtime leaves alone, std/tls's mark (decision 0447 R2e).
+const CN_RDL = 24
+const CN_WDL = 32
+const CN_UP = 44
+/// The error of a read or write on a connection std/tls took over
+/// (netconn.xo's).
+const UPGRADED_TEXT = "use of a connection upgraded to TLS"
+
+/// Whether std/tls took over connection record cn (tls.client).
+pub fn upgraded(cn: Int) -> Bool { rt.mem_load(cn, CN_UP, 4) != 0 }
+
+/// Marks connection record cn taken over by std/tls.
+pub fn upgrade(cn: Int) { rt.mem_store(cn, CN_UP, 1, 4) }
+
+/// The earlier of connection record cn's read and write deadlines (0
+/// none): a TLS handshake's (Go's Handshake under the conn's deadlines).
+pub fn user_deadline(cn: Int) -> Int {
+  let r = rt.mem_load(cn, CN_RDL, 8)
+  let w = rt.mem_load(cn, CN_WDL, 8)
+  if r == 0 { w } else if w != 0 && w < r { w } else { r }
+}
 
 /// A connection deadline (netconn.set_deadline): which 1 read, 2 write, 3
 /// both; d ns from now when set.
@@ -439,13 +471,17 @@ fn left_of(deadline: Int) -> Int {
 /// canceled task.
 pub fn hc_recv(cn: Int, p: Int, cap: Int, deadline: Int) -> Int {
   let c = rt.obj_at[Conn](cn)
-  if deadline != 0 {
+  // the earlier of deadline and the connection's own (a user's, std/tls),
+  // which stays after
+  let own = rt.mem_load(cn, CN_RDL, 8)
+  let set = deadline != 0 && (own == 0 || deadline < own)
+  if set {
     rt.wasi_sock_deadline(c, 1, true, left_of(deadline))
   }
   let b = rt.wasi_sock_read(c, if cap > 1048576 { 1048576 } else { cap })
   let e = rt.wasi_sock_err()
-  if deadline != 0 {
-    rt.wasi_sock_deadline(c, 1, false, 0)
+  if set {
+    rt.mem_store(cn, CN_RDL, own, 8)
   }
   if e == 0 {
     rt.mem_copy(p, raw.bytes_addr(b), b.len())
@@ -459,13 +495,15 @@ pub fn hc_recv(cn: Int, p: Int, cap: Int, deadline: Int) -> Int {
 /// task was canceled.
 pub fn hc_send(cn: Int, p: Int, n: Int, deadline: Int) -> Int {
   let c = rt.obj_at[Conn](cn)
-  if deadline != 0 {
+  let own = rt.mem_load(cn, CN_WDL, 8)
+  let set = deadline != 0 && (own == 0 || deadline < own)
+  if set {
     rt.wasi_sock_deadline(c, 2, true, left_of(deadline))
   }
   rt.wasi_sock_write(c, raw.str_at(p, n).bytes())
   let e = rt.wasi_sock_err()
-  if deadline != 0 {
-    rt.wasi_sock_deadline(c, 2, false, 0)
+  if set {
+    rt.mem_store(cn, CN_WDL, own, 8)
   }
   if e == 0 { 0 } else if e == E_DEADLINE { -2 } else { -1 }
 }
