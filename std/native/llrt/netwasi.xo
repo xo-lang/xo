@@ -646,3 +646,177 @@ pub fn udp_local_addr(c: Conn) -> Str {
   fmt_addr(b[3..b.len()], Int(b[1]) * 256 + Int(b[2]))
 }
 
+// ---------------------------------------------------------------------------
+// DNS records in a command (std/dns, decision 0447 R2i): llrt/dns.xo's
+// queries and answer checks over the UDP socket above (TCP after a
+// truncated answer), as its lookup_records natively; resolv.conf and the
+// hosts file are read through the command's filesystem.
+
+/// The text of the file at path, or None.
+fn file_text(path: Str) -> Bytes? {
+  let f = rt.fs_read(path)
+  if f.is_empty() { None } else { Some(f[0]) }
+}
+
+/// The names the hosts file gives address ip (std/dns lookup_addr).
+pub fn hosts_names(ip: Bytes) -> List[Str] { dns.hosts_names_in(file_text("/etc/hosts"), ip) }
+
+/// netconn.lookup_records in a command: the answer message of the first
+/// name of the search list with records of qtype, or b"" with the error
+/// recorded (err_now).
+pub fn lookup_records(lists: Str, subject: Str, name: Str, qtype: Int, server: Str) -> Bytes {
+  if !netpolicy.admits(lists, subject.trim_suffix("."), "0") {
+    fail(6, subject)
+    return b""
+  }
+  let text = file_text("/etc/resolv.conf")
+  var conf = dns.parse_resolv(if let Some(t) = text { dns.text_lines(t) } else { None }, "")
+  if server != "" {
+    let colon = server.rfind(":") ?? -1
+    let host = if colon < 0 { server } else { server[0..colon].trim_prefix("[").trim_suffix("]") }
+    let port = if colon < 0 { 53 } else { Int.parse(server[colon + 1..server.len()]) ?? -1 }
+    match dns.parse_addr(host) {
+      Some(a) if port > 0 && port <= 65535 => {
+        conf.servers = [a]
+        conf.port = port
+      }
+      _ => {
+        fail(4, "lookup ${name} on ${server}: cannot unmarshal DNS message")
+        return b""
+      }
+    }
+  }
+  if !dns.is_domain_name(name) {
+    fail(4, "lookup ${name}: no such host")
+    return b""
+  }
+  let on = if conf.servers.is_empty() { "" } else { " on ${server_text(conf.servers[0].ip, conf.port)}" }
+  var kind = dns.KIND_NOTFOUND
+  for fq in dns.name_list(conf, name) {
+    let (k, m) = try_name(conf, fq, qtype)
+    if k == dns.KIND_OK {
+      ok()
+      return m
+    }
+    kind = if k == dns.KIND_NODATA { dns.KIND_NOTFOUND } else { k }
+  }
+  if kind == dns.KIND_NOTFOUND {
+    fail(4, "lookup ${name}${on}: no such host")
+  } else if kind == dns.KIND_TEMP {
+    fail(4, "lookup ${name}${on}: server misbehaving")
+  } else {
+    fail(4, "lookup ${name}${on}: cannot unmarshal DNS message")
+  }
+  b""
+}
+
+/// "ip:port", "[ip]:port" for IPv6 (llrt/dns.xo's server_text).
+fn server_text(ip: Bytes, port: Int) -> Str {
+  if ip.len() == 16 { "[${dns.ntop(ip)}]:${port}" } else { "${dns.ntop(ip)}:${port}" }
+}
+
+/// The rooted name fq's records of qtype from the servers in turn, the
+/// configuration's attempts times (llrt/dns.xo's try_name for one type):
+/// the final kind and the answer message.
+fn try_name(conf: dns.Config, fq: Str, qtype: Int) -> (Int, Bytes) {
+  var r = (dns.KIND_TEMP, b"")
+  for _ in 0..conf.attempts {
+    for a in conf.servers {
+      r = exchange(conf, a.ip, fq, qtype)
+      if r.0 == dns.KIND_OK || r.0 == dns.KIND_NOTFOUND || r.0 == dns.KIND_NODATA {
+        return r
+      }
+    }
+  }
+  r
+}
+
+/// One query for fq's qtype records to the server at ip (conf.port) over
+/// UDP, or TCP when use-vc is set or the UDP answer is truncated: its
+/// kind and, when it is KIND_OK, the message.
+fn exchange(conf: dns.Config, ip: Bytes, fq: Str, qtype: Int) -> (Int, Bytes) {
+  let id = rt.wasi_rand_u64() & 65535
+  let q = dns.query(id, fq, qtype, conf.trust_ad)
+  if conf.use_tcp {
+    return tcp_exchange(conf, ip, fq, qtype, id, q)
+  }
+  let v6 = ip.len() == 16
+  let c = rt.wasi_udp_open(v6, zeros(ip.len()), 0, true, v6, ip, conf.port)
+  if rt.wasi_sock_err() != 0 {
+    return (dns.KIND_TEMP, b"")
+  }
+  rt.wasi_sock_deadline(c, 3, true, conf.timeout * 1000000000)
+  var r = (dns.KIND_TEMP, b"")
+  rt.wasi_udp_send(c, q, false, false, b"", 0)
+  if rt.wasi_sock_err() == 0 {
+    while true {
+      let b = rt.wasi_udp_recv(c, 65535)
+      if rt.wasi_sock_err() != 0 {
+        // the deadline, or an ICMP refusal: temporary
+        break
+      }
+      let n = Int(b[0])
+      let (kind, xs) = dns.answer(b[1 + n..b.len()], id, fq, qtype)
+      if kind == dns.KIND_IGNORE {
+        continue
+      }
+      r = (kind, if kind == dns.KIND_OK && !xs.is_empty() { xs[0].ip } else { b"" })
+      break
+    }
+  }
+  rt.wasi_sock_close(c)
+  if r.0 == dns.KIND_TRUNC {
+    return tcp_exchange(conf, ip, fq, qtype, id, q)
+  }
+  r
+}
+
+/// Query q (ID id) over TCP with its two byte length, within the
+/// configuration's timeout (dnsStreamRoundTrip).
+fn tcp_exchange(conf: dns.Config, ip: Bytes, fq: Str, qtype: Int, id: Int, q: Bytes) -> (Int, Bytes) {
+  let timeout = conf.timeout * 1000000000
+  let c = dial_limit(server_text(ip, conf.port), timeout, 4)
+  if rt.wasi_sock_status() != 0 {
+    return (dns.KIND_TEMP, b"")
+  }
+  rt.wasi_sock_deadline(c, 3, true, timeout)
+  var w = BytesBuilder.with_capacity(q.len() + 2)
+  w.write_byte(UInt8((q.len() >> 8) & 255))
+  w.write_byte(UInt8(q.len() & 255))
+  w.write(q)
+  rt.wasi_sock_write(c, w.freeze())
+  var r = (dns.KIND_TEMP, b"")
+  if rt.wasi_sock_err() == 0 {
+    let head = read_full(c, 2)
+    if head.len() == 2 {
+      let n = Int(head[0]) * 256 + Int(head[1])
+      let body = read_full(c, n)
+      if body.len() == n {
+        let (kind, xs) = dns.answer(body, id, fq, qtype)
+        r = if kind == dns.KIND_IGNORE || kind == dns.KIND_TRUNC {
+          // errInvalidDNSResponse
+          (dns.KIND_FAIL, b"")
+        } else {
+          (kind, if kind == dns.KIND_OK && !xs.is_empty() { xs[0].ip } else { b"" })
+        }
+      }
+    }
+  }
+  rt.wasi_sock_close(c)
+  r
+}
+
+/// n bytes from c, or fewer when the stream ends, fails or its deadline
+/// passes.
+fn read_full(c: Conn, n: Int) -> Bytes {
+  var b = BytesBuilder.with_capacity(n)
+  while b.len() < n {
+    let x = rt.wasi_sock_read(c, n - b.len())
+    if rt.wasi_sock_err() != 0 || x.is_empty() {
+      break
+    }
+    b.write(x)
+  }
+  b.freeze()
+}
+

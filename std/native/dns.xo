@@ -5,6 +5,7 @@
 use std/dns
 use native/rt
 use native/llrt/netconn
+use native/llrt/netwasi
 use native/llrt/dns as ldns
 
 /// The NetErr of the calling context's failed lookup (netconn's tags).
@@ -22,9 +23,18 @@ fn err_now() -> NetErr {
 /// The answer records of type qtype for name (subject is what an
 /// attenuated Net must admit), as (response, data offset, data length).
 fn records(n: Net, r: dns.Resolver, subject: Str, name: Str, qtype: Int) -> (Bytes, List[(Int, Int)]) ! NetErr {
-  let m = netconn.lookup_records(rt.net_lists(n), subject, name, qtype, r.server)
-  if netconn.status() != 0 {
-    return Err(err_now())
+  var m = b""
+  if target.arch == TargetArch.Wasm32 {
+    // a command's own DNS client over wasi:sockets (decision 0447 R2i)
+    m = netwasi.lookup_records(rt.net_lists(n), subject, name, qtype, r.server)
+    if let Some(e) = netwasi.err_now() {
+      return Err(e)
+    }
+  } else {
+    m = netconn.lookup_records(rt.net_lists(n), subject, name, qtype, r.server)
+    if netconn.status() != 0 {
+      return Err(err_now())
+    }
   }
   match ldns.answers(m, qtype) {
     Some(xs) => Ok((m, xs))
@@ -39,7 +49,7 @@ fn malformed(name: Str) -> NetErr {
 }
 
 /// A random Int in 0..n (Go's randIntn), n > 0.
-fn rand_below(n: Int) -> Int { ldns.random32() % n }
+fn rand_below(n: Int) -> Int { if target.arch == TargetArch.Wasm32 { (rt.wasi_rand_u64() & 0xffffffff) % n } else { ldns.random32() % n } }
 
 fn resolver_lookup_mx(r: dns.Resolver, n: Net, name: Str) -> List[dns.Mx] ! NetErr uses net.dial {
   let (m, xs) = records(n, r, name, name, ldns.TYPE_MX)?
@@ -182,7 +192,7 @@ fn resolver_lookup_addr(r: dns.Resolver, n: Net, ip: Str) -> List[Str] ! NetErr 
     None => return Err(NetErr.Io(msg: "lookup ${ip}: unrecognized address"))
   }
   let key = unmap(a.ip)
-  let names = ldns.hosts_names(key)
+  let names = if target.arch == TargetArch.Wasm32 { netwasi.hosts_names(key) } else { ldns.hosts_names(key) }
   if !names.is_empty() {
     return Ok(names)
   }

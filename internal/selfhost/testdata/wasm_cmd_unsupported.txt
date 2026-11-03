@@ -6,8 +6,6 @@
 # Since 2026-11-03 every golden is tried, those of wasm_unsupported.txt too
 # (TCP over wasi:sockets, step R1); the network ones wait for step R2.
 cmd_inherit # XO1515: no processes in a WASI 0.2 world (proc.exec)
-dns_no_tasks # UDP, DNS records or the native sql driver (rt.heap_big in alloc.alloc), step R2
-dns_records # UDP, DNS records or the native sql driver (rt.heap_big in alloc.alloc), step R2
 fs_atomic # WASI has no file modes or locks: write_atomic's mode
 fs_cwd_path # no working directory under WASI
 fs_dir_errors # WASI has no file modes or locks

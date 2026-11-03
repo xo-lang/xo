@@ -1,5 +1,21 @@
 # std/dns changes
 
+## 2026-11-03: port: std/dns in a wasip2/wasm command
+
+- Kind: port
+- Commit: this commit
+- Found by: Lang 4, decision 0447 step R2 (the networking std modules on wasip2)
+- Go reference: none
+- Test: goldens dns_records and dns_no_tasks as wasm commands (TestWasmCommandGoldens)
+- Timing: none
+- Shipped in: unreleased
+
+lookup_mx, lookup_txt, lookup_srv and lookup_addr, with the default
+resolver (resolv.conf read through the command's filesystem) or a
+Resolver's server, run in a command over its own DNS client on
+wasi:sockets UDP, with TCP after a truncated answer and the native
+error texts (decision 0447 R2i).
+
 ## 2026-11-03: fix: a program whose only network is std/dns keeps the scheduler and the shutdown; a lookup unwinds on cancellation and shows prior output
 
 - Kind: fix

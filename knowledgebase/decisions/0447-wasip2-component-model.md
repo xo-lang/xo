@@ -914,3 +914,18 @@ only when the core module uses them, and tcp, tcp-create-socket only
 for TCP (ip-name-lookup for TCP or lookups), so a UDP only program asks
 the host for no TCP.
 
+### DNS records in a command (2026-11-03, R2i)
+
+std/dns's MX, TXT, SRV and PTR lookups work in a command. wasi:sockets'
+ip-name-lookup only resolves addresses, so the command runs llrt/dns.xo's
+own client: netwasi.lookup_records reads /etc/resolv.conf through the
+command's filesystem (llrt/dns.xo's defaults when it cannot), takes the
+search list from dns.name_list, and sends dns.query over the R2h UDP
+socket, one socket per query with the configuration's timeout as its
+deadline; dns.answer checks each datagram (another ID or question is
+read past), and a truncated answer (or use-vc) asks again over TCP with
+the two byte length. Query IDs and std/dns's MX and SRV shuffles take
+the host's random bits (rt.wasi_rand_u64, the wasm runtime's
+random_get). lookup_addr reads /etc/hosts through the filesystem first,
+as natively. The error texts are netconn.lookup_records'.
+

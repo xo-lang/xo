@@ -339,7 +339,7 @@ fn os() -> Int {
 fn file_lines(path: Str) -> List[Str]? { text_lines(read_file(path)?) }
 
 /// The lines of b, as file_lines gives them.
-fn text_lines(b: Bytes) -> List[Str]? {
+pub fn text_lines(b: Bytes) -> List[Str]? {
   if let Some(t) = b.to_str() {
     return Some(t.split("\n"))
   }
@@ -1227,9 +1227,9 @@ pub const KIND_TEMP: Int = 3
 pub const KIND_FAIL: Int = 4
 /// An answer to ignore (another ID or question, or one that does not
 /// parse): the UDP read waits on (Go's dnsPacketRoundTrip).
-const KIND_IGNORE: Int = 5
+pub const KIND_IGNORE: Int = 5
 /// A truncated answer: TCP next.
-const KIND_TRUNC: Int = 6
+pub const KIND_TRUNC: Int = 6
 
 /// The meaning of response m to the query id, name (rooted), qtype:
 /// (kind, addresses) as checkResponse, checkHeader, skipToAnswer, and
@@ -2295,9 +2295,13 @@ pub fn random32() -> Int { new_id() * 65536 + new_id() }
 
 /// The host names /etc/hosts gives the address ip, rooted, in the file's
 /// order (Go's lookupStaticAddr for LookupAddr).
-pub fn hosts_names(ip: Bytes) -> List[Str] {
+pub fn hosts_names(ip: Bytes) -> List[Str] { hosts_names_in(hosts_text(), ip) }
+
+/// hosts_names in the hosts file text h (a wasm command reads it through
+/// its filesystem, decision 0447 R2i).
+pub fn hosts_names_in(h0: Bytes?, ip: Bytes) -> List[Str] {
   var out: List[Str] = []
-  let lines = if let Some(h) = hosts_text() { text_lines(h) ?? [] } else { [] }
+  let lines = if let Some(h) = h0 { text_lines(h) ?? [] } else { [] }
   for line in lines {
     let f = fields(cut_at(line, "#"))
     if f.len() < 2 {

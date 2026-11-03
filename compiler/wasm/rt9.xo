@@ -35,7 +35,7 @@
 
 /// The runtime calls of rt9.xo (the operands' leaves, like rt3.xo's).
 fn rt9_direct(name: Str) -> Bool {
-  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_peer" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_try_read" | "wasi_sock_readable" | "wasi_udp_open" | "wasi_udp_recv" | "wasi_udp_send" | "wasi_udp_local" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
+  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_peer" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_try_read" | "wasi_sock_readable" | "wasi_udp_open" | "wasi_udp_recv" | "wasi_udp_send" | "wasi_udp_local" | "wasi_rand_u64" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
 }
 
 /// The calls of rt9.xo that can suspend the task.
@@ -1489,6 +1489,10 @@ fn rt9_text(var g: Gen) -> Str {
       i32.load offset=8
       i32.const 2
       call $sk_addr_bytes)
+
+    ;; rt.wasi_rand_u64: 64 random bits (std/dns's query IDs)
+    (func $wasi_rand_u64 (result i64)
+      call $rand_u64)
 
     ;; Listener.accept: the next connection
     (func $wasi_sock_accept (param $l i32) (result i32) (local $r i32) (local $c i32)
