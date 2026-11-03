@@ -53,7 +53,7 @@ a default).
 
 ## Consequences
 
-New public API (hence this ADR). One new std module, `std/charset`; spec/std.md section 53; the enum and
+New public API (hence this ADR). One new std module, `std/charset`; spec/std.md section 54; the enum and
 function names are the commitment. The Go backend carries a table for Windows-1252 only. The lossy flag
 makes the failure mode explicit rather than the `read_text` style silent loss.
 

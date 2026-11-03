@@ -52,6 +52,7 @@ entries yet.
 - [crc32.md](crc32.md): std/crc32 (spec/std.md 44)
 - [crc64.md](crc64.md): std/crc64 (spec/std.md 51)
 - [adler32.md](adler32.md): std/adler32 (spec/std.md 52)
+- [charset.md](charset.md): std/charset (spec/std.md 54)
 - [dns.md](dns.md): std/dns (spec/std.md 46)
 - [backoff.md](backoff.md): std/backoff (spec/std.md 43)
 - [rate.md](rate.md): std/rate (spec/std.md 42)

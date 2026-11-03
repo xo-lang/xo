@@ -1,0 +1,99 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+
+	"golang.org/x/text/encoding/charmap"
+	"golang.org/x/text/encoding/unicode"
+)
+
+func text() string {
+	var b strings.Builder
+	r := 1
+	for i := 0; i < 600000; i++ {
+		r = (r*1103515245 + 12345) % 2147483648
+		k := (r >> 16) % 20
+		if k < 14 {
+			b.WriteRune(rune(32 + (r>>8)%95))
+		} else if k < 17 {
+			b.WriteRune(rune(0xA0 + (r>>8)%96))
+		} else if k < 19 {
+			b.WriteRune(0x20AC)
+		} else {
+			b.WriteRune(rune(0x10000 + (r>>8)%0x1000))
+		}
+	}
+	return b.String()
+}
+
+func bytes1252() []byte {
+	b := make([]byte, 1048576)
+	r := 7
+	for i := range b {
+		r = (r*1103515245 + 12345) % 2147483648
+		v := (r >> 16) & 255
+		if v == 0x81 || v == 0x8D || v == 0x8F || v == 0x90 || v == 0x9D {
+			v = 0x41
+		}
+		b[i] = byte(v)
+	}
+	return b
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	u16 := unicode.UTF16(unicode.LittleEndian, unicode.IgnoreBOM)
+	sum := 0
+	switch w {
+	case "utf16_encode":
+		t := text()
+		for i := 0; i < 20; i++ {
+			e, err := u16.NewEncoder().Bytes([]byte(t))
+			if err != nil {
+				panic(err)
+			}
+			sum += len(e) + int(e[len(e)-3])
+		}
+	case "utf16_decode":
+		e, err := u16.NewEncoder().Bytes([]byte(text()))
+		if err != nil {
+			panic(err)
+		}
+		for i := 0; i < 20; i++ {
+			t, err := u16.NewDecoder().Bytes(e)
+			if err != nil {
+				panic(err)
+			}
+			sum += len(t)
+		}
+	case "w1252_decode":
+		b := bytes1252()
+		for i := 0; i < 20; i++ {
+			t, err := charmap.Windows1252.NewDecoder().Bytes(b)
+			if err != nil {
+				panic(err)
+			}
+			sum += len(t)
+		}
+	case "w1252_encode":
+		t, err := charmap.Windows1252.NewDecoder().Bytes(bytes1252())
+		if err != nil {
+			panic(err)
+		}
+		for i := 0; i < 20; i++ {
+			e, err := charmap.Windows1252.NewEncoder().Bytes(t)
+			if err != nil {
+				panic(err)
+			}
+			sum += len(e) + int(e[len(e)-1])
+		}
+	case "none":
+		sum = len(text()) + len(bytes1252())
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

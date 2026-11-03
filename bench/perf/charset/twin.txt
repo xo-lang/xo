@@ -1,0 +1,7 @@
+# twincheck: charset: five workloads (none is the setup alone); Go is golang.org/x/text encoding/unicode and charmap.
+require golang.org/x/text v0.43.0
+- - none
+- - utf16_encode
+- - utf16_decode
+- - w1252_decode
+- - w1252_encode

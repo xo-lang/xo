@@ -79,7 +79,8 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | strconv | prelude Int.parse, parse_base, to_str_base, Float.parse, Bool.parse, quote, unquote | done | ParseInt, FormatInt, ParseBool, Unquote added (decision 0287). Not planned: the Append functions (StrBuilder covers them). |
 | unicode | prelude Rune | done | is_letter, is_digit, is_number, is_space, is_upper, is_lower, is_title, is_punct, is_control, is_graphic, is_mark, is_symbol, is_print, to_lower, to_upper, to_title (Go's tables, decision 0079) (2026-10-29). Not offered: range tables by name (unicode.In, unicode.Han). |
 | unicode/utf8 | prelude Str, Bytes | done | rune_count, decode_rune, UTF-8 validity rules (decision 0259). |
-| unicode/utf16 | none | planned | Needed for Windows and JSON surrogate work only inside std today; no user API. |
+| unicode/utf16 | std/charset | done | `utf16_units` and `from_utf16_units` (spec/std.md 54, decision 0470). |
+| x/text encoding/unicode, charmap | std/charset | done | UTF-16 (LE, BE, BOM), Latin-1 and Windows-1252 decode and encode, WHATWG labels (decision 0470). |
 | encoding/json | std/json | partial | `derive Json`, Patch, typed decode with paths, wire key names (`kind as "type"` and `derive Json(case: ...)`, decision 0277), json.Value for JSON of any shape (2026-10-21), `as "key,omitempty"` and the push-style json.Decoder of value streams (decision 0309). Missing: json.Value as a field of a `derive Json` struct or a `post_json` argument (RawMessage, `any`), indented output (MarshalIndent), Number. |
 | encoding/base64 | std/base64, prelude Bytes | done | Std, Url, RawStd, RawUrl with Go's decoding rules (decision 0279). |
 | encoding/base32 | std/base32 | done | Std, Hex, RawStd, RawHex (decision 0279). |
@@ -277,8 +278,13 @@ how many services hit the gap:
 |---|---|---|---|---|---|
 | 1 | HTTP/2 trailers: a handler cannot send trailers after the body, the client cannot read them; and no full duplex stream (a `handle_stream` body cannot be read while `http.stream` writes) | grpcsvc (every gRPC server and client) | blocker | net/http ResponseWriter.Trailer, TrailerPrefix, Response.Trailer, ResponseController.EnableFullDuplex | M to L |
 | 2 | Mutual TLS: a server cannot request and verify client certificates, a client cannot present one | grpcsvc (service meshes, internal APIs) | blocker | crypto/tls Config ClientAuth, ClientCAs, Certificates | M |
+<<<<<<< HEAD
 | 3 | Closed 2026-11-03 (`csv.reader`). A streaming CSV reader over a File (csv.parse takes the whole text; read_line breaks quoted newlines) | dataport | blocker for large files | encoding/csv NewReader(io.Reader).Read | S to M |
 | 4 | Text encodings: UTF-16 (Excel's Unicode Text) and Windows-1252 decoding and encoding | dataport | blocker | x/text/encoding/unicode, charmap | S to M |
+=======
+| 3 | A streaming CSV reader over a File (csv.parse takes the whole text; read_line breaks quoted newlines) | dataport | blocker for large files | encoding/csv NewReader(io.Reader).Read | S to M |
+| 4 | Closed 2026-11-03 (`std/charset`). Text encodings: UTF-16 (Excel's Unicode Text) and Windows-1252 decoding and encoding | dataport | blocker | x/text/encoding/unicode, charmap | S to M |
+>>>>>>> d4fa218e2 (std/charset: spec 54, change log, CHANGELOG, std coverage, timing twin)
 | 5 | Deadlines on Conn, TlsConn and WsConn (read and write), a WebSocket pong handler; and reading the current task's deadline to pass on (grpc-timeout) | queueworker, chathub, grpcsvc | awkward (with_timeout cancels, and the connection is then lost) | net.Conn SetDeadline, gorilla SetWriteDeadline, SetPongHandler, context.Deadline | M |
 | 6 | An exact decimal type (parse, format, rounding modes, allocation) | ledger, dataport | awkward (hand written on BigInt or cents) | shopspring/decimal, cockroachdb/apd (outside Go's std) | M |
 | 7 | A type's own JSON form (Money as "12.34") and internally tagged enums (`{"type": "say", ...}`) | ledger, chathub | awkward | encoding/json Marshaler, Unmarshaler | M |
