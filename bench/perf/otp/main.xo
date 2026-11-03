@@ -1,0 +1,18 @@
+// otp: std/otp against Go's crypto/hmac HOTP (twin.go.txt): 300000 codes per
+// algorithm. Usage: `<program> none|sha1|sha256|sha512`. Prints `<workload>
+// <checksum>` (the sum of the codes); the twin prints the same.
+use std/otp
+use std/crypto
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  let key = b"12345678901234567890123456789012"
+  var sum = 0
+  if w != "none" {
+    let a = if w == "sha256" { crypto.Hash.Sha256 } else if w == "sha512" { crypto.Hash.Sha512 } else { crypto.Hash.Sha1 }
+    for i in 0..300000 {
+      sum += Int.parse(otp.hotp(key, i, 8, a)) ?? 0
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

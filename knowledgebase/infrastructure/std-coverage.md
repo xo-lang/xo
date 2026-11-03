@@ -251,7 +251,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | CBOR | fxamacker/cbor | std/cbor | done | RFC 8949 `Value` tree, `decode`, `encode` (preferred and deterministic), diagnostic notation, JSON bridge (decision 0468, section 50, 2026-11-03). No derive for typed values. |
 | UUID | google/uuid | std/uuid | done | v4 and v7 from Rand and Clock, parsing (decision 0282). |
 | OAuth2 client | golang.org/x/oauth2 | none | planned | Needs form encoding. |
-| TOTP | pquerna/otp | none | planned | Needs HMAC-SHA1 and base32. |
+| TOTP | pquerna/otp | std/otp | done | hotp, totp, verify, generate_secret, uri (spec/std.md 57, decision 0473). |
 | Migrations | golang-migrate, goose | none | planned | std/embed landed (28b3fe3b), so migration files can be embedded. |
 | Cron schedules | robfig/cron | none | planned | |
 | Prometheus exposition | prometheus/client_golang | std/metrics | done | Registry, counters, gauges, histograms, text exposition and handler (section 37). |

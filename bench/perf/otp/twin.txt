@@ -1,0 +1,5 @@
+# twincheck: otp: four workloads (none is the setup alone); Go is crypto/hmac with the RFC 4226 truncation.
+- - none
+- - sha1
+- - sha256
+- - sha512

@@ -54,6 +54,7 @@ entries yet.
 - [adler32.md](adler32.md): std/adler32 (spec/std.md 52)
 - [charset.md](charset.md): std/charset (spec/std.md 54)
 - [heap.md](heap.md): std/heap (spec/std.md 56)
+- [otp.md](otp.md): std/otp (spec/std.md 57)
 - [dns.md](dns.md): std/dns (spec/std.md 46)
 - [backoff.md](backoff.md): std/backoff (spec/std.md 43)
 - [rate.md](rate.md): std/rate (spec/std.md 42)

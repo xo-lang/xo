@@ -1,0 +1,40 @@
+package main
+
+import (
+	"crypto/hmac"
+	"crypto/sha1"
+	"crypto/sha256"
+	"crypto/sha512"
+	"encoding/binary"
+	"fmt"
+	"hash"
+	"os"
+)
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	key := []byte("12345678901234567890123456789012")
+	sum := 0
+	if w != "none" {
+		var h func() hash.Hash = sha1.New
+		if w == "sha256" {
+			h = sha256.New
+		} else if w == "sha512" {
+			h = sha512.New
+		}
+		for i := 0; i < 300000; i++ {
+			m := hmac.New(h, key)
+			var c [8]byte
+			binary.BigEndian.PutUint64(c[:], uint64(i))
+			m.Write(c[:])
+			s := m.Sum(nil)
+			off := s[len(s)-1] & 15
+			v := binary.BigEndian.Uint32(s[off:off+4]) & 0x7fffffff
+			sum += int(v % 100000000)
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

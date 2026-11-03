@@ -1,0 +1,105 @@
+// std/otp: one pure source for the native backends and, through
+// std/go_compiled.txt, the Go backend (decision 0312). RFC 4226 section 5
+// and RFC 6238; the URI follows pquerna/otp's Key.URL.
+use std/crypto
+use std/base32
+use std/url
+
+fn check_params(digits: Int, algo: crypto.Hash) {
+  if digits < 6 || digits > 8 {
+    fault("otp: digits must be 6, 7 or 8")
+  }
+  match algo {
+    Sha1 | Sha256 | Sha512 => {}
+    _ => fault("otp: algo must be Sha1, Sha256 or Sha512")
+  }
+}
+
+fn pow10(n: Int) -> Int {
+  var p = 1
+  for _ in 0..n {
+    p *= 10
+  }
+  p
+}
+
+fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str {
+  check_params(digits, algo)
+  if counter < 0 {
+    fault("otp: counter must not be negative")
+  }
+  var msg = BytesBuilder.with_capacity(8)
+  var shift = 56
+  while shift >= 0 {
+    msg.write_byte(UInt8((counter >> shift) & 255))
+    shift -= 8
+  }
+  let mac = crypto.hmac(algo, secret, msg.freeze())
+  let off = Int(mac[mac.len() - 1]) & 15
+  let bin = ((Int(mac[off]) & 127) << 24) | (Int(mac[off + 1]) << 16) | (Int(mac[off + 2]) << 8) | Int(mac[off + 3])
+  var code = "${bin % pow10(digits)}"
+  while code.len() < digits {
+    code = "0" + code
+  }
+  code
+}
+
+fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str {
+  if period < 1 {
+    fault("otp: period must be at least 1")
+  }
+  if unix < 0 {
+    fault("otp: unix time must not be negative")
+  }
+  hotp(secret, unix / period, digits, algo)
+}
+
+fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, skew: Int = 1) -> Bool {
+  check_params(digits, algo)
+  if period < 1 || unix < 0 || skew < 0 {
+    return false
+  }
+  let b = code.bytes()
+  if b.len() != digits {
+    return false
+  }
+  for c in b {
+    if c < '0' || c > '9' {
+      return false
+    }
+  }
+  let step = unix / period
+  var ok = false
+  var k = -skew
+  while k <= skew {
+    if step + k >= 0 {
+      let want = hotp(secret, step + k, digits, algo).bytes()
+      if crypto.equal(want, b) {
+        ok = true
+      }
+    }
+    k += 1
+  }
+  ok
+}
+
+fn generate_secret(r: Rand, len: Int = 20) -> Bytes uses rand {
+  crypto.random_bytes(r, len)
+}
+
+fn uri(issuer: Str, account: Str, secret: Bytes, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str {
+  check_params(digits, algo)
+  let name = match algo {
+    Sha256 => "SHA256"
+    Sha512 => "SHA512"
+    _ => "SHA1"
+  }
+  let label = url.path_escape(issuer) + ":" + url.path_escape(account)
+  var q = url.values()
+  q.set("algorithm", name)
+  q.set("digits", "${digits}")
+  q.set("issuer", issuer)
+  q.set("period", "${period}")
+  q.set("secret", base32.encode(secret, base32.Base32.RawStd))
+  "otpauth://totp/" + label + "?" + q.encode()
+}

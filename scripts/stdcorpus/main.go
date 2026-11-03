@@ -88,6 +88,7 @@ var generators = map[string]func() string{
 	"heap":       heapCorpus,
 	"rate":       rateCorpus,
 	"heapops":    heapopsCorpus,
+	"otp":        otpCorpus,
 }
 
 func main() {

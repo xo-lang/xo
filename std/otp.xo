@@ -1,0 +1,29 @@
+// std/otp (spec/std.md 57, decision 0473). Declaration file. One time
+// passwords: HOTP (RFC 4226), TOTP (RFC 6238) and the otpauth:// URI an
+// authenticator app scans, over std/crypto's hmac and std/base32. Pure but
+// for `generate_secret`, which takes the Rand capability.
+use std/crypto
+
+/// The HOTP code (RFC 4226) of counter: `digits` decimal digits (6 to 8,
+/// zero padded), HMAC over algo (Sha1, Sha256 or Sha512), the 8 byte
+/// big endian counter and the dynamic truncation of section 5.3. A fault
+/// for other digits or algo, or a negative counter.
+fn hotp(secret: Bytes, counter: Int, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str
+/// The TOTP code (RFC 6238) at unix seconds: hotp of `unix / period`.
+/// A fault for a period under 1 or a negative unix, and hotp's.
+fn totp(secret: Bytes, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str
+/// Whether code is the TOTP code of the step of `unix` or of one of `skew`
+/// steps either side (clock drift). Each candidate is compared in constant
+/// time and every one is compared, so the time taken does not say which
+/// matched. A code that is not `digits` ASCII digits is false, never a
+/// fault: it is untrusted input. Does not remember a used code: replay
+/// protection belongs to the caller.
+fn verify(secret: Bytes, code: Str, unix: Int, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1, skew: Int = 1) -> Bool
+/// A random secret of len bytes (20, the length of an HMAC-SHA1 key, is
+/// what authenticator apps expect).
+fn generate_secret(r: Rand, len: Int = 20) -> Bytes uses rand
+/// The Key URI Format of an authenticator app (Google Authenticator wiki,
+/// pquerna/otp's Key.URL): `otpauth://totp/ISSUER:ACCOUNT?algorithm=SHA1&digits=6&issuer=ISSUER&period=30&secret=BASE32`,
+/// the parameters sorted, the label and values percent encoded, the secret
+/// unpadded base32.
+fn uri(issuer: Str, account: Str, secret: Bytes, period: Int = 30, digits: Int = 6, algo: crypto.Hash = crypto.Hash.Sha1) -> Str
