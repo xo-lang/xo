@@ -3513,6 +3513,8 @@ fn (e: LayoutErr) display() -> Str               // bad layout "{yr}": unknown f
 pub fn format(t: Time, z: Zone, layout: Str) -> Str             // faults on a bad layout (constant layouts are checked at compile time)
 pub fn parse(s: Str, layout: Str, z: Zone) -> Time ! ParseErr   // z applies when the text has no offset
 pub fn check_layout(layout: Str) -> () ! LayoutErr
+// Hot code uses a `const Layout`: format with a string layout parses it on every call (5.4x Go's wall,
+// 4.7x for parse); the same layout as a const runs at 2.03x and 1.90x (bench/results/std-twin-rows2-2026-11-03.md)
 struct Layout                                              // a layout parsed once (decision 0332)
 pub fn layout(text: Str) -> Layout                         // faults on a bad layout; `const ISO: Layout = layout("{year}-{month}-{day}")` parses it on first use
 fn (l: Layout) format(t: Time, z: Zone) -> Str             // as format(t, z, text), without the layout walk
