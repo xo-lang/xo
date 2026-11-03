@@ -1,5 +1,44 @@
 # std/archive changes
 
+## 2026-11-02: fix: untar and unzip of hostile archives no longer fault, and read as Go does
+
+- Kind: fix, security
+- Commit: this commit
+- Found by: the archive fuzz harness (internal/stdtest/archivefuzz_test.go: archives from Go's tar and zip writers and hand-built tar headers, cut short or with fields changed, against the Go backend's untar and unzip), seeds 1 to 16
+- Go reference: archive/zip reader.go (Reader.init, readDirectoryHeader, findBodyOffset, the NTFS extra time, unixModeToFileMode), archive/tar reader.go (Reader.next's global header, tryReadFull, readSpecialFile, readOldGNUSparseMap, validateSparseEntries), strings.Reader.ReadAt, time.Time.UnixNano (go1.26.1)
+- Test: internal/stdtest/testdata/corpus/archivefuzz (2,010 cases: seed 1's and the later seeds' cases that found these) on arm64, LLVM and the Go backend; TestArchiveFuzz seeds 2 to 16; internal/llvm and internal/arm64 archive goldens; std/native archive module tests
+
+On native builds an archive could crash the program instead of returning
+an error: a zip whose central directory, with the base offset Go
+computes, put a local header before the start of the data (an index out
+of range; Go: `strings.Reader.ReadAt: negative offset`), a tar or PAX
+modification time past the year 2262 or a zip NTFS time with its top bit
+set (an integer overflow; Go wraps, as Time.UnixNano does). Each now
+gives Go's answer, and a 64-bit field is read as Go's int64(uint64) with
+a wrapping shift. The rest gave a
+different answer from Go:
+
+- a tar archive that ends inside an entry's padding, or without its two
+  zero blocks after a header's padding, was `unexpected EOF`; Go reads
+  the padding with tryReadFull, whose short read is the end of the
+  archive, so the entries before it are returned;
+- a PAX global header (`g`) was skipped before its name was checked; Go
+  returns it from Next under its own name (or its own `path` record), so
+  a global header named `.`, empty, or `../up` is the path error, and the
+  records and long name read before it no longer apply to the next entry;
+- an old GNU sparse header (`S`) in a non-GNU archive, or with an
+  invalid sparse map, is `invalid tar header` before the type check;
+- a PAX or long-name header claiming more than 1 MiB with fewer bytes
+  left is `unexpected EOF`, not `header field too long`;
+- a zip whose entry count disagrees with its directory now gives the
+  reason the directory stopped (`zip: not a valid zip file` for a bad
+  signature, `EOF` when nothing is left), not always `unexpected EOF`; a
+  local header cut short is `EOF`;
+- a zip entry name that is not UTF-8 is quoted in errors as Go quotes its
+  bytes (`\xNN`);
+- a zip entry with an unknown Unix file type in its attributes is a
+  regular file, as in Go.
+
 ## 2026-10-28: perf: CRC-32 a word a step with arm64's crc32x
 
 - Kind: perf

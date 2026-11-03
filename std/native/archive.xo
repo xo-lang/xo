@@ -18,6 +18,31 @@ use native/rt
 
 fn byte_of(b: Bytes, i: Int) -> Int { Int(b[i]) }
 
+/// strconv.Quote of bytes: \xNN for each byte of an invalid sequence
+/// (url.xo's go_q).
+fn go_q(b: Bytes) -> Str {
+  if let Some(s) = b.to_str() {
+    return s.quote()
+  }
+  var out = StrBuilder.new()
+  out.write("\"")
+  var i = 0
+  while i < b.len() {
+    let (r, n) = b.decode_rune(i)
+    if r == '\u{FFFD}' && n == 1 {
+      let h = "0123456789abcdef"
+      let v = Int(b[i])
+      out.write("\\x" + h[v >> 4..(v >> 4) + 1] + h[v & 15..(v & 15) + 1])
+    } else {
+      let q = b[i..i + n].to_str().or_fault("rune").quote()
+      out.write(q[1..q.len() - 1])
+    }
+    i += n
+  }
+  out.write("\"")
+  out.freeze()
+}
+
 fn bytes_of(l: List[Int]) -> Bytes {
   var b = BytesBuilder.with_capacity(l.len())
   for x in l {
@@ -44,7 +69,8 @@ fn get_u32(b: Bytes, i: Int) -> Int { get_u16(b, i) | (get_u16(b, i + 2) << 16) 
 
 /// A little endian uint64 (one at or above 2^63 is negative: callers
 /// refuse it, as Go's checks against maxInt64 do).
-fn get_u64(b: Bytes, i: Int) -> Int { get_u32(b, i) | (get_u32(b, i + 4) << 32) }
+/// The 64 bits as an Int (Go's int64(uint64): the top bit is the sign).
+fn get_u64(b: Bytes, i: Int) -> Int { get_u32(b, i) | get_u32(b, i + 4).wrapping_shl(32) }
 
 /// A list of n zeros in one allocation (decision 0207 stage 2).
 fn zeros(n: Int) -> List[Int] { raw.zero_ints(n) }
@@ -522,7 +548,7 @@ fn parse_pax_time(s: Str) -> Int? {
     None => return None
   }
   if sn == "" {
-    return Some(secs * 1000000000)
+    return Some(secs.wrapping_mul(1000000000))
   }
   var nanos = 0
   var i = 0
@@ -542,9 +568,9 @@ fn parse_pax_time(s: Str) -> Int? {
     i += 1
   }
   if ss.starts_with("-") {
-    return Some(secs * 1000000000 - nanos)
+    return Some(secs.wrapping_mul(1000000000).wrapping_sub(nanos))
   }
-  Some(secs * 1000000000 + nanos)
+  Some(secs.wrapping_mul(1000000000).wrapping_add(nanos))
 }
 
 /// parsePAX of the records: the map, or None (ErrHeader).
@@ -868,7 +894,8 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       }
     }
     var size = size0 ?? 0
-    var mtime_ns = (mtime0 ?? 0) * 1000000000
+    // Go's Time.UnixNano, which wraps for a time past 2262
+    var mtime_ns = (mtime0 ?? 0).wrapping_mul(1000000000)
     let mode = mode0 ?? 0
     pos += 512
     // header only types have no data
@@ -882,7 +909,9 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
     }
     if flag == 120 || flag == 103 || flag == 76 || flag == 75 {
       // a PAX header or a GNU long name: the next header's
-      if nb > 1048576 {
+      // readSpecialFile reads up to 1 MiB and a byte: too long only
+      // when that much is there, else a short body's unexpected EOF
+      if nb > 1048576 && n - pos > 1048576 {
         return Err("untar: archive/tar: header field too long")
       }
       if n - pos < nb {
@@ -895,12 +924,25 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
       if (flag == 120 || flag == 103) && parse_pax(body).is_none() {
         return Err(ERR_HEADER)
       }
+      if flag == 103 {
+        // Next returns a global header as a header under its own name (a
+        // path record of its own replacing it), before its padding is
+        // read, so untar checks that path before it skips the entry
+        // (Reader.next, Archive_untar)
+        var gname = name
+        match (parse_pax(body) ?? {}).get("path") {
+          Some(v) => if v != "" { gname = v }
+          None => ()
+        }
+        if archive_path(gname).is_none() {
+          return Err("untar: entry path ${gname.quote()} leaves the archive")
+        }
+      }
       let pad = (512 - nb % 512) % 512
       if n - pos < pad {
-        if pos == n {
-          break
-        }
-        return Err("untar: unexpected EOF")
+        // the padding is read with tryReadFull, which gives io.EOF for
+        // a short read too: the archive ends here, as in Go
+        break
       }
       pos += pad
       if flag == 120 || flag == 103 {
@@ -911,8 +953,10 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
         if flag == 103 {
           // a global header (written by `git archive`, holding the
           // commit) describes the archive, not an entry: skipped (std.md
-          // 18)
+          // 18); the records and long name read before it are dropped,
+          // as Reader.next returns with them unused
           pax = {}
+          long_name = ""
         }
       } else if flag == 76 {
         long_name = parse_cstr(body, 0, body.len())
@@ -963,6 +1007,60 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
     if nb < 0 {
       return Err(ERR_HEADER)
     }
+    if flag == 83 {
+      // an old GNU sparse file: its map is read and checked before the
+      // entry is refused as neither a file nor a directory
+      // (readOldGNUSparseMap, validateSparseEntries)
+      if !gnu {
+        return Err(ERR_HEADER)
+      }
+      let real = match parse_numeric(data, pos - 512 + 483, 12) {
+        Some(v) => v
+        None => return Err(ERR_HEADER)
+      }
+      var blk = pos - 512
+      var at = 386
+      var count = 4
+      var ext = 482
+      var pre_end = 0
+      var ok = real >= 0
+      while true {
+        var k = 0
+        while k < count {
+          let e = blk + at + 24 * k
+          if byte_of(data, e) == 0 {
+            break
+          }
+          let off = parse_numeric(data, e, 12)
+          let len = parse_numeric(data, e + 12, 12)
+          if off.is_none() || len.is_none() {
+            return Err(ERR_HEADER)
+          }
+          let o = off ?? 0
+          let l = len ?? 0
+          if o < 0 || l < 0 || o > 9223372036854775807 - l || o + l > real || pre_end > o {
+            ok = false
+          } else {
+            pre_end = o + l
+          }
+          k += 1
+        }
+        if byte_of(data, blk + ext) == 0 {
+          break
+        }
+        if n - pos < 512 {
+          return Err("untar: unexpected EOF")
+        }
+        blk = pos
+        pos += 512
+        at = 0
+        count = 21
+        ext = 504
+      }
+      if !ok {
+        return Err(ERR_HEADER)
+      }
+    }
     let p = match archive_path(name) {
       Some(x) => x
       None => return Err("untar: entry path ${name.quote()} leaves the archive")
@@ -996,10 +1094,8 @@ fn untar_entries(data: Bytes) -> List[archive.Entry] ! Str {
     pos += nb
     let pad = (512 - nb % 512) % 512
     if n - pos < pad {
-      if pos == n {
-        break
-      }
-      return Err("untar: unexpected EOF")
+      // a short padding ends the archive (tryReadFull's io.EOF)
+      break
     }
     pos += pad
   }
@@ -1063,6 +1159,9 @@ fn detect_utf8(s: Str) -> (Bool, Bool) {
 
 struct ZipFile {
   name: Str
+  /// the name's bytes, which an error quotes as Go does (\xNN for a
+  /// byte that is not UTF-8)
+  raw: Bytes
   creator: Int
   flags: Int
   method: Int
@@ -1118,7 +1217,7 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
     put_u32(xb, secs & 0xffffffff)
     let extra = xb.freeze()
     let nb = name.bytes()
-    var zf = ZipFile{name: name, creator: 0x0314, flags: flags, method: method, time: time, date: date, crc: 0, csize: 0, usize: 0, extra: extra, attrs: attrs, offset: count}
+    var zf = ZipFile{name: name, raw: name.bytes(), creator: 0x0314, flags: flags, method: method, time: time, date: date, crc: 0, csize: 0, usize: 0, extra: extra, attrs: attrs, offset: count}
     // the local header
     var h = BytesBuilder.new()
     put_u32(h, 0x04034b50)
@@ -1192,13 +1291,23 @@ const ERR_FORMAT: Str = "zip: not a valid zip file"
 
 /// readDirectoryHeader at pos: the file and the position after it, or
 /// None at the end of the directory (ErrFormat or a short read).
-fn zip_dir_header(data: Bytes, pos: Int) -> (ZipFile, Int)? ! Str {
+/// readDirectoryHeader: the entry and the offset after it, or why the
+/// directory stops: `unexpected EOF` (a short header), ERR_FORMAT (not a
+/// header), or `EOF` (nothing left to read, which ends the read
+/// with that error).
+fn zip_dir_header(data: Bytes, pos: Int) -> (ZipFile, Int) ! Str {
   let n = data.len()
-  if pos < 0 || n - pos < 46 {
-    return None
+  if pos < 0 || pos > n {
+    return Err("unexpected EOF")
+  }
+  if pos == n {
+    return Err("EOF")
+  }
+  if n - pos < 46 {
+    return Err("unexpected EOF")
   }
   if get_u32(data, pos) != 0x02014b50 {
-    return None
+    return Err(ERR_FORMAT)
   }
   let csize = get_u32(data, pos + 20)
   let usize = get_u32(data, pos + 24)
@@ -1207,8 +1316,11 @@ fn zip_dir_header(data: Bytes, pos: Int) -> (ZipFile, Int)? ! Str {
   let clen = get_u16(data, pos + 32)
   let offset = get_u32(data, pos + 42)
   let p = pos + 46
+  if nlen + xlen + clen > 0 && p == n {
+    return Err("EOF")
+  }
   if n - p < nlen + xlen + clen {
-    return None
+    return Err("unexpected EOF")
   }
   // a size or offset at its 32-bit maximum is in the zip64 extra field,
   // in the order usize, csize, offset (readDirectoryHeader)
@@ -1260,8 +1372,8 @@ fn zip_dir_header(data: Bytes, pos: Int) -> (ZipFile, Int)? ! Str {
   if need_c || need_o {
     return Err(ERR_FORMAT)
   }
-  let zf = ZipFile{name: scan.text_of(sub(data, p, p + nlen)), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize64, usize: usize64, extra: x, attrs: get_u32(data, pos + 38), offset: offset64}
-  Some((zf, p + nlen + xlen + clen))
+  let zf = ZipFile{name: scan.text_of(sub(data, p, p + nlen)), raw: sub(data, p, p + nlen), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize64, usize: usize64, extra: x, attrs: get_u32(data, pos + 38), offset: offset64}
+  (zf, p + nlen + xlen + clen)
 }
 
 /// The modification time of a central directory entry in Unix
@@ -1301,8 +1413,10 @@ fn zip_modified(zf: ZipFile) -> Int {
           break
         }
         if atag == 1 && asize == 24 {
-          let ts = get_u32(x, k + 4) * 4294967296 + get_u32(x, k)
-          mod = (floor_div(ts, 10000000) - 11644473600) * 1000000000 + (ts - floor_div(ts, 10000000) * 10000000) * 100
+          // int64(uint64), then Go's truncating / and %, and
+          // UnixNano's wrapping
+          let ts = get_u64(x, k)
+          mod = (ts / 10000000 - 11644473600).wrapping_mul(1000000000).wrapping_add((ts % 10000000) * 100)
           found = true
         }
         k += asize
@@ -1401,31 +1515,40 @@ fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
   }
   if base > 0 {
     match zip_dir_header(data, dir_off) {
-      Ok(Some(_)) => base = 0
-      _ => ()
+      Ok(_) => base = 0
+      Err(_) => ()
     }
   }
   var files: List[ZipFile] = []
   var pos = base + dir_off
+  var stop = ""
   while true {
-    match zip_dir_header(data, pos)? {
-      Some((zf, next)) => {
+    match zip_dir_header(data, pos) {
+      Ok((zf, next)) => {
         var f = zf
-        f.offset = f.offset + base
+        f.offset = f.offset.wrapping_add(base)
         files.push(f)
         pos = next
       }
-      None => break
+      Err(e) => {
+        if e == "EOF" {
+          return Err(e)
+        }
+        stop = e
+        break
+      }
     }
   }
+  // the count is compared in 16 bits; a wrong one returns why the
+  // directory stopped (Reader.init)
   if (files.len() & 65535) != (records & 65535) {
-    return Err("unexpected EOF")
+    return Err(stop)
   }
   var out: List[archive.Entry] = []
   for zf in files {
     let p = match archive_path(zf.name) {
       Some(x) => x
-      None => return Err("entry path ${zf.name.quote()} leaves the archive")
+      None => return Err("entry path ${go_q(zf.raw)} leaves the archive")
     }
     // FileHeader.Mode
     let creator = zf.creator >> 8
@@ -1449,10 +1572,12 @@ fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
     var e = archive.Entry{path: p, data: b"", mode: perm, is_dir: false, modified: Time.UNIX_EPOCH + Duration.from_nanos(zip_modified(zf))}
     if typ == 0x4000 || zf.name.ends_with("/") {
       e.is_dir = true
-    } else if typ == 0x8000 || typ == 0 {
+    } else if typ != 0x6000 && typ != 0x2000 && typ != 0x1000 && typ != 0xa000 && typ != 0xc000 {
+      // unixModeToFileMode marks only a device, pipe, link or socket; any
+      // other file type, unknown ones too, is a regular file
       e.data = zip_read(data, zf, t, fixed)?
     } else {
-      return Err("entry ${zf.name.quote()} is not a file or a directory")
+      return Err("entry ${go_q(zf.raw)} is not a file or a directory")
     }
     out.push(e)
   }
@@ -1464,11 +1589,16 @@ fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
 fn zip_read(data: Bytes, zf: ZipFile, t: List[Int], fixed: flate.HDec) -> Bytes ! Str {
   let size = data.len()
   let ho = zf.offset
+  if ho < 0 {
+    // the Go backend reads the archive through a strings.Reader
+    return Err("strings.Reader.ReadAt: negative offset")
+  }
   if ho >= size {
     return Err("EOF")
   }
   if size - ho < 30 {
-    return Err("unexpected EOF")
+    // strings.Reader.ReadAt's short read is io.EOF (findBodyOffset)
+    return Err("EOF")
   }
   if get_u32(data, ho) != 0x04034b50 {
     return Err(ERR_FORMAT)
