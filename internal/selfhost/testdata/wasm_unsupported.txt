@@ -85,3 +85,4 @@ conn_deadline_move # the wasm backend does not support the network (`rt.net_list
 http_duplex # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 host_usage # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
 proc_child_usage # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
+netconn_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets

@@ -5048,7 +5048,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-481 declarations.
+487 declarations.
 
 ### Range
 
@@ -5666,6 +5666,17 @@ fn (c: ServerConn) set_write_deadline(clock: Clock, t: Time?) uses clock
 fn read(self, max: Int) -> Bytes? ! NetErr uses net
 fn write(self, data: Bytes) -> () ! NetErr uses net
 fn close(self)
+```
+
+### NetConn
+
+```
+fn read(self, max: Int) -> Bytes? ! NetErr uses net
+fn write(self, data: Bytes) -> () ! NetErr uses net
+fn close(self)
+fn set_deadline(self, clock: Clock, t: Time?) uses clock
+fn set_read_deadline(self, clock: Clock, t: Time?) uses clock
+fn set_write_deadline(self, clock: Clock, t: Time?) uses clock
 ```
 
 ### Net
