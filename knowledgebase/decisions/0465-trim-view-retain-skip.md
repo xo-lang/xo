@@ -1,6 +1,6 @@
 # 0465: a Str view that is only measured or compared does not retain its text
 
-Status: Proposed (draft by Xo Lang 3, 2026-11-03; implementation for Lang 1, who owns insert_rc)
+Status: Accepted (owner, 2026-11-03). Drafted by Xo Lang 3 (2026-11-03); implementation by Lang 1, who owns insert_rc: step 1 (view_proj, opt-in) in 13a19d72f.
 
 ## Context
 
