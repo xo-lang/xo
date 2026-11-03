@@ -132,5 +132,6 @@ lists the rest.
   `--targets=wasip2/wasm` (core 10, decision 0447): a `wasi:http`
   component for a program that calls `http.serve_component` (served by
   `wasmtime serve`, Spin), else a `wasi:cli/command` component (`wasmtime
-  run`) with arguments, environment, stdin and output; files, processes
-  and sockets on wasip2 are XO1515.
+  run`) with arguments, environment, stdin, output and files
+  (`wasi:filesystem`, preopens `.` and `/`); processes and sockets, and
+  files in a `wasi:http` component, are XO1515.

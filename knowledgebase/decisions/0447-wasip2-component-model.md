@@ -558,9 +558,46 @@ stdin, then a second real host.
   `wasi:filesystem`, not written yet, and are listed in
   testdata/wasm_cmd_unsupported.txt with that reason.
 
-Next for commands: files through `wasi:filesystem` (preopens and
-descriptors in place of rt4.xo's preview 1 calls), which would take the
-17 listed goldens.
+### Files in a command (2026-11-02)
+
+A command reaches files through `wasi:filesystem` 0.2 (`types` and
+`preopens`): compiler/wasm rt8.xo implements the twelve preview 1 calls
+rt4.xo makes (path_open, fd_read, fd_close, path_filestat_get, fd_readdir,
+path_create_directory, path_remove_directory, path_unlink_file,
+path_rename, path_readlink, path_symlink, path_filestat_set_times) and
+rt6.xo's write to a descriptor 3 and up, over descriptors, so rt4.xo is
+unchanged:
+
+- a table in linear memory (256 entries of 32 bytes) maps a preview 1
+  descriptor to a `descriptor` handle, the offset its reads and writes
+  are at (wasi:filesystem's `read` and `write` take one), an append flag
+  (a write in append mode stats the file for its size first) and the
+  `directory-entry-stream` being read;
+- descriptors 3 and 4 are the preopens named `.` and `/` from
+  `get-directories`, as compiler/wasm/run.mjs preopens them for a
+  preview 1 module; other preopens are dropped;
+- preview 1's open flags and lookup flags have the same bits as
+  `open-flags` and `path-flags`; the rights become `descriptor-flags`
+  (read for fd_read or fd_readdir, write for fd_write);
+- `error-code` maps to preview 1's errno by name (a packed table);
+- fd_readdir's cookie is the count of entries before; a cookie other than
+  the stream's place opens it again and skips that many; an entry that
+  does not fit is cut, as preview 1 allows, and read again by the next
+  call;
+- component.xo declares the subset of `wasi:filesystem/types` the runtime
+  calls (with `descriptor-stat`, `new-timestamp`, `directory-entry` and
+  `error-code`, and wall-clock's `datetime` through an alias), imported
+  only by a program that reaches files.
+
+Files stay XO1515 in a `wasi:http` component (the proxy world has no
+`wasi:filesystem`). TestWasmCommandGoldens runs `wasmtime run --dir .::.
+--dir /::/`, the environment the Node runner gives (the test's, then
+env.txt's), argv[0] the program's path, and wasmtime's own cache off (it
+would follow a golden's HOME). On the second linux/arm64 host (wasmtime
+50.0.1): all 445 goldens the wasip1 run tries pass as commands, the 17
+file goldens among them, so testdata/wasm_cmd_unsupported.txt lists none;
+TestSelfhostWasm (449 pass, 75 unsupported, 0 fail) and
+TestWasmComponentServe pass with the same build.
 
 ### Spin, the second real host (2026-11-02)
 

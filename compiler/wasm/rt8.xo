@@ -1,0 +1,1096 @@
+// The files of a wasip2/wasm command (decision 0447 stage 3): rt4.xo's
+// preview 1 file calls over wasi:filesystem 0.2. A table in linear memory
+// maps a preview 1 descriptor (3 and up) to a wasi:filesystem descriptor
+// handle and the offset its reads and writes are at (wasi:filesystem's read
+// and write take an offset). Descriptor 3 is the preopened directory named
+// "." and 4 the one named "/", as compiler/wasm/run.mjs preopens them for a
+// preview 1 module. An entry is 32 bytes: the handle (0), in use (4),
+// append (8), the directory-entry-stream handle of a directory being read
+// (12), the offset (16, i64) and the entries of that stream read (24).
+
+/// The imports of rt8.xo.
+fn rt8_imports() -> Str {
+  """
+    (import "wasi:filesystem/preopens@0.2.0" "get-directories" (func $wfs_preopens (param i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.read" (func $wfs_dread (param i32 i64 i64 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.write" (func $wfs_dwrite (param i32 i32 i32 i64 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.read-directory" (func $wfs_readdir (param i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.create-directory-at" (func $wfs_mkdir (param i32 i32 i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.stat" (func $wfs_fstat (param i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.stat-at" (func $wfs_stat (param i32 i32 i32 i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.set-times-at" (func $wfs_times (param i32 i32 i32 i32 i32 i64 i32 i32 i64 i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.open-at" (func $wfs_open (param i32 i32 i32 i32 i32 i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.readlink-at" (func $wfs_readlink (param i32 i32 i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.remove-directory-at" (func $wfs_rmdir (param i32 i32 i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.rename-at" (func $wfs_rename (param i32 i32 i32 i32 i32 i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.symlink-at" (func $wfs_symlink (param i32 i32 i32 i32 i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]descriptor.unlink-file-at" (func $wfs_unlink (param i32 i32 i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[method]directory-entry-stream.read-directory-entry" (func $wfs_dirent (param i32 i32)))
+    (import "wasi:filesystem/types@0.2.0" "[resource-drop]descriptor" (func $wfs_ddrop (param i32)))
+    (import "wasi:filesystem/types@0.2.0" "[resource-drop]directory-entry-stream" (func $wfs_sdrop (param i32)))
+
+  """
+}
+
+/// The global of rt8.xo: the descriptor table, made at the first use.
+fn rt8_globals() -> Str {
+  "    (global $fdtab (mut i32) (i32.const 0))\n"
+}
+
+/// The functions of rt6.xo (its ENOSYS file calls and its file write) that
+/// rt8.xo replaces.
+fn rt8_replaces() -> List[Str] {
+  ["path_open", "fd_read", "fd_close", "path_filestat_get", "fd_readdir", "path_create_directory", "path_remove_directory", "path_unlink_file", "path_rename", "path_readlink", "path_symlink", "path_filestat_set_times", "fd_write_file"]
+}
+
+/// The functions of rt8.xo.
+fn rt8_text() -> Str {
+  """
+    ;; wasi:filesystem's error-code as a preview 1 errno (an unknown one is EIO)
+    (func $fs_errno (param $e i32) (result i32) (local $w i64)
+      local.get $e
+      i32.const 37
+      i32.ge_u
+      if
+        i32.const 29
+        return
+      end
+      i64.const 0x1413100a08070602
+      i64.const 0x201f1d1c1b1a1916
+      i64.const 0x33302e2c2b252322
+      i64.const 0x3f3d3c3b3a383736
+      i64.const 0x1d1d1d4b4a464540
+      local.get $e
+      i32.const 32
+      i32.lt_u
+      select
+      local.get $e
+      i32.const 24
+      i32.lt_u
+      select
+      local.get $e
+      i32.const 16
+      i32.lt_u
+      select
+      local.get $e
+      i32.const 8
+      i32.lt_u
+      select
+      local.get $e
+      i32.const 7
+      i32.and
+      i32.const 3
+      i32.shl
+      i64.extend_i32_u
+      i64.shr_u
+      i32.wrap_i64
+      i32.const 255
+      i32.and)
+
+    ;; the table entry of preview 1 descriptor fd, 0 for none; the table is
+    ;; made on the first call, with the preopens "." and "/"
+    (func $fs_entry (param $fd i32) (result i32) (local $r i32) (local $p i32) (local $k i32) (local $i i32) (local $e i32) (local $n i32) (local $slot i32)
+      global.get $fdtab
+      i32.eqz
+      if
+        i32.const 8192
+        call $alloc
+        global.set $fdtab
+        global.get $fdtab
+        i32.const 0
+        i32.const 8192
+        memory.fill
+        call $hret_at
+        local.set $r
+        local.get $r
+        call $wfs_preopens
+        local.get $r
+        i32.load
+        local.set $p
+        local.get $r
+        i32.load offset=4
+        local.set $k
+        block $done
+          loop $next
+            local.get $i
+            local.get $k
+            i32.ge_u
+            br_if $done
+            local.get $p
+            local.get $i
+            i32.const 12
+            i32.mul
+            i32.add
+            local.set $e
+            local.get $e
+            i32.load offset=8
+            local.set $n
+            i32.const -1
+            local.set $slot
+            local.get $n
+            i32.const 1
+            i32.eq
+            if
+              local.get $e
+              i32.load offset=4
+              i32.load8_u
+              i32.const 46
+              i32.eq
+              if
+                i32.const 0
+                local.set $slot
+              end
+              local.get $e
+              i32.load offset=4
+              i32.load8_u
+              i32.const 47
+              i32.eq
+              if
+                i32.const 1
+                local.set $slot
+              end
+            end
+            local.get $slot
+            i32.const 0
+            i32.ge_s
+            if
+              global.get $fdtab
+              local.get $slot
+              i32.const 5
+              i32.shl
+              i32.add
+              local.tee $slot
+              local.get $e
+              i32.load
+              i32.store
+              local.get $slot
+              i32.const 1
+              i32.store offset=4
+            else
+              local.get $e
+              i32.load
+              call $wfs_ddrop
+            end
+            local.get $n
+            if
+              local.get $e
+              i32.load offset=4
+              call $free
+            end
+            local.get $i
+            i32.const 1
+            i32.add
+            local.set $i
+            br $next
+          end
+        end
+        local.get $k
+        if
+          local.get $p
+          call $free
+        end
+      end
+      local.get $fd
+      i32.const 3
+      i32.lt_u
+      local.get $fd
+      i32.const 259
+      i32.ge_u
+      i32.or
+      if
+        i32.const 0
+        return
+      end
+      global.get $fdtab
+      local.get $fd
+      i32.const 3
+      i32.sub
+      i32.const 5
+      i32.shl
+      i32.add
+      local.tee $e
+      i32.load offset=4
+      i32.eqz
+      if
+        i32.const 0
+        return
+      end
+      local.get $e)
+
+    ;; the handle of fd, -1 for none
+    (func $fs_h (param $fd i32) (result i32) (local $e i32)
+      local.get $fd
+      call $fs_entry
+      local.tee $e
+      i32.eqz
+      if
+        i32.const -1
+        return
+      end
+      local.get $e
+      i32.load)
+
+    ;; a result<_, error-code> at r as an errno
+    (func $fs_unit (param $r i32) (result i32)
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=1
+        call $fs_errno
+        return
+      end
+      i32.const 0)
+
+    ;; an option<datetime> at t as nanoseconds, 0 for none
+    (func $fs_time (param $t i32) (result i64)
+      local.get $t
+      i32.load8_u
+      i32.eqz
+      if
+        i64.const 0
+        return
+      end
+      local.get $t
+      i64.load offset=8
+      i64.const 1000000000
+      i64.mul
+      local.get $t
+      i64.load32_u offset=16
+      i64.add)
+
+    ;; a descriptor-type as a preview 1 filetype
+    (func $fs_ftype (param $t i32) (result i32)
+      i64.const 0x0604070003020100
+      local.get $t
+      i32.const 7
+      i32.and
+      i32.const 3
+      i32.shl
+      i64.extend_i32_u
+      i64.shr_u
+      i32.wrap_i64
+      i32.const 255
+      i32.and)
+
+    (func $path_open (param $dfd i32) (param $lf i32) (param $p i32) (param $n i32) (param $of i32) (param $rights i64) (param $ri i64) (param $ff i32) (param $out i32) (result i32) (local $h i32) (local $r i32) (local $df i32) (local $i i32) (local $e i32)
+      local.get $dfd
+      call $fs_h
+      local.tee $h
+      i32.const -1
+      i32.eq
+      if
+        i32.const 8
+        return
+      end
+      ;; read for fd_read or fd_readdir, write for fd_write
+      local.get $rights
+      i64.const 0x4002
+      i64.and
+      i64.const 0
+      i64.ne
+      local.get $rights
+      i64.const 0x40
+      i64.and
+      i64.const 0
+      i64.ne
+      i32.const 1
+      i32.shl
+      i32.or
+      local.tee $df
+      i32.eqz
+      if
+        i32.const 1
+        local.set $df
+      end
+      call $hret_at
+      local.set $r
+      local.get $h
+      local.get $lf
+      i32.const 1
+      i32.and
+      local.get $p
+      local.get $n
+      local.get $of
+      i32.const 15
+      i32.and
+      local.get $df
+      local.get $r
+      call $wfs_open
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        call $fs_errno
+        return
+      end
+      ;; a free entry past the preopens
+      call $fs_entry_init
+      i32.const 2
+      local.set $i
+      block $found
+        loop $next
+          local.get $i
+          i32.const 256
+          i32.ge_u
+          if
+            local.get $r
+            i32.load offset=4
+            call $wfs_ddrop
+            i32.const 33
+            return
+          end
+          global.get $fdtab
+          local.get $i
+          i32.const 5
+          i32.shl
+          i32.add
+          local.tee $e
+          i32.load offset=4
+          i32.eqz
+          br_if $found
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $next
+        end
+      end
+      local.get $e
+      i32.const 0
+      i32.const 32
+      memory.fill
+      local.get $e
+      local.get $r
+      i32.load offset=4
+      i32.store
+      local.get $e
+      i32.const 1
+      i32.store offset=4
+      local.get $e
+      local.get $ff
+      i32.const 1
+      i32.and
+      i32.store offset=8
+      local.get $out
+      local.get $i
+      i32.const 3
+      i32.add
+      i32.store
+      i32.const 0)
+
+    ;; makes the table if no call has yet
+    (func $fs_entry_init
+      i32.const 3
+      call $fs_entry
+      drop)
+
+    (func $fd_read (param $fd i32) (param $iov i32) (param $n i32) (param $nr i32) (result i32) (local $e i32) (local $r i32) (local $total i32) (local $want i32) (local $q i32) (local $k i32)
+      local.get $fd
+      call $fs_entry
+      local.tee $e
+      i32.eqz
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      block $done
+        loop $next
+          local.get $n
+          i32.eqz
+          br_if $done
+          local.get $iov
+          i32.load offset=4
+          local.set $want
+          local.get $e
+          i32.load
+          local.get $want
+          i64.extend_i32_u
+          local.get $e
+          i64.load offset=16
+          local.get $r
+          call $wfs_dread
+          local.get $r
+          i32.load8_u
+          if
+            local.get $r
+            i32.load8_u offset=4
+            call $fs_errno
+            return
+          end
+          local.get $r
+          i32.load offset=4
+          local.set $q
+          local.get $r
+          i32.load offset=8
+          local.set $k
+          local.get $iov
+          i32.load
+          local.get $q
+          local.get $k
+          memory.copy
+          local.get $k
+          if
+            local.get $q
+            call $free
+          end
+          local.get $e
+          local.get $e
+          i64.load offset=16
+          local.get $k
+          i64.extend_i32_u
+          i64.add
+          i64.store offset=16
+          local.get $total
+          local.get $k
+          i32.add
+          local.set $total
+          ;; a short read or the end stops
+          local.get $k
+          local.get $want
+          i32.lt_u
+          br_if $done
+          local.get $iov
+          i32.const 8
+          i32.add
+          local.set $iov
+          local.get $n
+          i32.const 1
+          i32.sub
+          local.set $n
+          br $next
+        end
+      end
+      local.get $nr
+      local.get $total
+      i32.store
+      i32.const 0)
+
+    ;; fd_write of a file (rt6.xo's fd_write calls it for fd 3 and up); an
+    ;; append descriptor writes at the file's size
+    (func $fd_write_file (param $fd i32) (param $iov i32) (param $n i32) (param $nw i32) (result i32) (local $e i32) (local $r i32) (local $total i32) (local $k i32)
+      local.get $fd
+      call $fs_entry
+      local.tee $e
+      i32.eqz
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $e
+      i32.load offset=8
+      if
+        local.get $e
+        i32.load
+        local.get $r
+        call $wfs_fstat
+        local.get $r
+        i32.load8_u
+        if
+          local.get $r
+          i32.load8_u offset=8
+          call $fs_errno
+          return
+        end
+        local.get $e
+        local.get $r
+        i64.load offset=24
+        i64.store offset=16
+      end
+      block $done
+        loop $next
+          local.get $n
+          i32.eqz
+          br_if $done
+          local.get $e
+          i32.load
+          local.get $iov
+          i32.load
+          local.get $iov
+          i32.load offset=4
+          local.get $e
+          i64.load offset=16
+          local.get $r
+          call $wfs_dwrite
+          local.get $r
+          i32.load8_u
+          if
+            local.get $r
+            i32.load8_u offset=8
+            call $fs_errno
+            return
+          end
+          local.get $r
+          i32.load offset=8
+          local.set $k
+          local.get $e
+          local.get $e
+          i64.load offset=16
+          local.get $k
+          i64.extend_i32_u
+          i64.add
+          i64.store offset=16
+          local.get $total
+          local.get $k
+          i32.add
+          local.set $total
+          local.get $iov
+          i32.const 8
+          i32.add
+          local.set $iov
+          local.get $n
+          i32.const 1
+          i32.sub
+          local.set $n
+          br $next
+        end
+      end
+      local.get $nw
+      local.get $total
+      i32.store
+      i32.const 0)
+
+    (func $fd_close (param $fd i32) (result i32) (local $e i32)
+      local.get $fd
+      call $fs_entry
+      local.tee $e
+      i32.eqz
+      if
+        i32.const 8
+        return
+      end
+      ;; the preopens stay open
+      local.get $fd
+      i32.const 5
+      i32.lt_u
+      if
+        i32.const 0
+        return
+      end
+      local.get $e
+      i32.load offset=12
+      if
+        local.get $e
+        i32.load offset=12
+        call $wfs_sdrop
+      end
+      local.get $e
+      i32.load
+      call $wfs_ddrop
+      local.get $e
+      i32.const 0
+      i32.const 32
+      memory.fill
+      i32.const 0)
+
+    (func $path_filestat_get (param $fd i32) (param $lf i32) (param $p i32) (param $n i32) (param $buf i32) (result i32) (local $h i32) (local $r i32)
+      local.get $fd
+      call $fs_h
+      local.tee $h
+      i32.const -1
+      i32.eq
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $h
+      local.get $lf
+      i32.const 1
+      i32.and
+      local.get $p
+      local.get $n
+      local.get $r
+      call $wfs_stat
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=8
+        call $fs_errno
+        return
+      end
+      local.get $buf
+      i32.const 0
+      i32.const 64
+      memory.fill
+      local.get $buf
+      local.get $r
+      i32.load8_u offset=8
+      call $fs_ftype
+      i32.store8 offset=16
+      local.get $buf
+      local.get $r
+      i64.load offset=16
+      i64.store offset=24
+      local.get $buf
+      local.get $r
+      i64.load offset=24
+      i64.store offset=32
+      local.get $buf
+      local.get $r
+      i32.const 32
+      i32.add
+      call $fs_time
+      i64.store offset=40
+      local.get $buf
+      local.get $r
+      i32.const 56
+      i32.add
+      call $fs_time
+      i64.store offset=48
+      local.get $buf
+      local.get $r
+      i32.const 80
+      i32.add
+      call $fs_time
+      i64.store offset=56
+      i32.const 0)
+
+    ;; the next entry of e's stream into r: 1 for one (its type at r+8,
+    ;; name at r+12 and r+16), 0 at the end, -errno for an error
+    (func $fs_next (param $e i32) (param $r i32) (result i32)
+      local.get $e
+      i32.load offset=12
+      local.get $r
+      call $wfs_dirent
+      local.get $r
+      i32.load8_u
+      if
+        i32.const 0
+        local.get $r
+        i32.load8_u offset=4
+        call $fs_errno
+        i32.sub
+        return
+      end
+      local.get $r
+      i32.load8_u offset=4)
+
+    ;; preview 1's readdir over a directory-entry-stream: the cookie is the
+    ;; count of entries before; a cookie other than the stream's place opens
+    ;; the stream again and skips that many. No . and .. entries.
+    (func $fd_readdir (param $fd i32) (param $buf i32) (param $len i32) (param $cookie i64) (param $out i32) (result i32) (local $e i32) (local $r i32) (local $got i32) (local $used i32) (local $nl i32) (local $t i32) (local $k i32)
+      local.get $fd
+      call $fs_entry
+      local.tee $e
+      i32.eqz
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $e
+      i32.load offset=12
+      i32.eqz
+      local.get $e
+      i64.load32_u offset=24
+      local.get $cookie
+      i64.ne
+      i32.or
+      if
+        local.get $e
+        i32.load offset=12
+        if
+          local.get $e
+          i32.load offset=12
+          call $wfs_sdrop
+        end
+        local.get $e
+        i32.load
+        local.get $r
+        call $wfs_readdir
+        local.get $r
+        i32.load8_u
+        if
+          local.get $e
+          i32.const 0
+          i32.store offset=12
+          local.get $r
+          i32.load8_u offset=4
+          call $fs_errno
+          return
+        end
+        local.get $e
+        local.get $r
+        i32.load offset=4
+        i32.store offset=12
+        local.get $e
+        i32.const 0
+        i32.store offset=24
+        block $skipped
+          loop $skip
+            local.get $e
+            i64.load32_u offset=24
+            local.get $cookie
+            i64.ge_u
+            br_if $skipped
+            local.get $e
+            local.get $r
+            call $fs_next
+            local.tee $got
+            i32.const 0
+            i32.lt_s
+            if
+              i32.const 0
+              local.get $got
+              i32.sub
+              return
+            end
+            local.get $got
+            i32.eqz
+            br_if $skipped
+            local.get $r
+            i32.load offset=16
+            if
+              local.get $r
+              i32.load offset=12
+              call $free
+            end
+            local.get $e
+            local.get $e
+            i32.load offset=24
+            i32.const 1
+            i32.add
+            i32.store offset=24
+            br $skip
+          end
+        end
+      end
+      block $done
+        loop $next
+          local.get $used
+          local.get $len
+          i32.ge_u
+          br_if $done
+          local.get $e
+          local.get $r
+          call $fs_next
+          local.tee $got
+          i32.const 0
+          i32.lt_s
+          if
+            i32.const 0
+            local.get $got
+            i32.sub
+            return
+          end
+          local.get $got
+          i32.eqz
+          br_if $done
+          local.get $r
+          i32.load offset=16
+          local.set $nl
+          ;; the dirent and its name, then as much of it as fits
+          local.get $nl
+          i32.const 24
+          i32.add
+          call $alloc
+          local.set $t
+          local.get $t
+          local.get $e
+          i64.load32_u offset=24
+          i64.const 1
+          i64.add
+          i64.store
+          local.get $t
+          i64.const 0
+          i64.store offset=8
+          local.get $t
+          local.get $nl
+          i32.store offset=16
+          local.get $t
+          i32.const 0
+          i32.store offset=20
+          local.get $t
+          local.get $r
+          i32.load8_u offset=8
+          call $fs_ftype
+          i32.store8 offset=20
+          local.get $t
+          i32.const 24
+          i32.add
+          local.get $r
+          i32.load offset=12
+          local.get $nl
+          memory.copy
+          local.get $nl
+          if
+            local.get $r
+            i32.load offset=12
+            call $free
+          end
+          local.get $len
+          local.get $used
+          i32.sub
+          local.tee $k
+          local.get $nl
+          i32.const 24
+          i32.add
+          local.get $k
+          local.get $nl
+          i32.const 24
+          i32.add
+          i32.lt_u
+          select
+          local.set $k
+          local.get $buf
+          local.get $used
+          i32.add
+          local.get $t
+          local.get $k
+          memory.copy
+          local.get $t
+          call $free
+          local.get $used
+          local.get $k
+          i32.add
+          local.set $used
+          local.get $e
+          local.get $e
+          i32.load offset=24
+          i32.const 1
+          i32.add
+          i32.store offset=24
+          br $next
+        end
+      end
+      local.get $out
+      local.get $used
+      i32.store
+      i32.const 0)
+
+    (func $path_create_directory (param $fd i32) (param $p i32) (param $n i32) (result i32) (local $h i32) (local $r i32)
+      local.get $fd
+      call $fs_h
+      local.tee $h
+      i32.const -1
+      i32.eq
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $h
+      local.get $p
+      local.get $n
+      local.get $r
+      call $wfs_mkdir
+      local.get $r
+      call $fs_unit)
+
+    (func $path_remove_directory (param $fd i32) (param $p i32) (param $n i32) (result i32) (local $h i32) (local $r i32)
+      local.get $fd
+      call $fs_h
+      local.tee $h
+      i32.const -1
+      i32.eq
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $h
+      local.get $p
+      local.get $n
+      local.get $r
+      call $wfs_rmdir
+      local.get $r
+      call $fs_unit)
+
+    (func $path_unlink_file (param $fd i32) (param $p i32) (param $n i32) (result i32) (local $h i32) (local $r i32)
+      local.get $fd
+      call $fs_h
+      local.tee $h
+      i32.const -1
+      i32.eq
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $h
+      local.get $p
+      local.get $n
+      local.get $r
+      call $wfs_unlink
+      local.get $r
+      call $fs_unit)
+
+    (func $path_rename (param $fd i32) (param $p i32) (param $n i32) (param $fd2 i32) (param $p2 i32) (param $n2 i32) (result i32) (local $h i32) (local $h2 i32) (local $r i32)
+      local.get $fd
+      call $fs_h
+      local.set $h
+      local.get $fd2
+      call $fs_h
+      local.set $h2
+      local.get $h
+      i32.const -1
+      i32.eq
+      local.get $h2
+      i32.const -1
+      i32.eq
+      i32.or
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $h
+      local.get $p
+      local.get $n
+      local.get $h2
+      local.get $p2
+      local.get $n2
+      local.get $r
+      call $wfs_rename
+      local.get $r
+      call $fs_unit)
+
+    (func $path_readlink (param $fd i32) (param $p i32) (param $n i32) (param $buf i32) (param $len i32) (param $out i32) (result i32) (local $h i32) (local $r i32) (local $k i32)
+      local.get $fd
+      call $fs_h
+      local.tee $h
+      i32.const -1
+      i32.eq
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $h
+      local.get $p
+      local.get $n
+      local.get $r
+      call $wfs_readlink
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        call $fs_errno
+        return
+      end
+      local.get $r
+      i32.load offset=8
+      local.tee $k
+      local.get $len
+      local.get $k
+      local.get $len
+      i32.lt_u
+      select
+      local.set $k
+      local.get $buf
+      local.get $r
+      i32.load offset=4
+      local.get $k
+      memory.copy
+      local.get $r
+      i32.load offset=8
+      if
+        local.get $r
+        i32.load offset=4
+        call $free
+      end
+      local.get $out
+      local.get $k
+      i32.store
+      i32.const 0)
+
+    (func $path_symlink (param $op i32) (param $on i32) (param $fd i32) (param $p i32) (param $n i32) (result i32) (local $h i32) (local $r i32)
+      local.get $fd
+      call $fs_h
+      local.tee $h
+      i32.const -1
+      i32.eq
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $h
+      local.get $op
+      local.get $on
+      local.get $p
+      local.get $n
+      local.get $r
+      call $wfs_symlink
+      local.get $r
+      call $fs_unit)
+
+    ;; fst: preview 1's fstflags (1 atim, 2 atim_now, 4 mtim, 8 mtim_now)
+    (func $path_filestat_set_times (param $fd i32) (param $lf i32) (param $p i32) (param $n i32) (param $at i64) (param $mt i64) (param $fst i32) (result i32) (local $h i32) (local $r i32)
+      local.get $fd
+      call $fs_h
+      local.tee $h
+      i32.const -1
+      i32.eq
+      if
+        i32.const 8
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $h
+      local.get $lf
+      i32.const 1
+      i32.and
+      local.get $p
+      local.get $n
+      ;; new-timestamp: 0 no-change, 1 now, 2 the time given
+      i32.const 2
+      i32.const 1
+      i32.const 0
+      local.get $fst
+      i32.const 2
+      i32.and
+      select
+      local.get $fst
+      i32.const 1
+      i32.and
+      select
+      local.get $at
+      i64.const 1000000000
+      i64.div_u
+      local.get $at
+      i64.const 1000000000
+      i64.rem_u
+      i32.wrap_i64
+      i32.const 2
+      i32.const 1
+      i32.const 0
+      local.get $fst
+      i32.const 8
+      i32.and
+      select
+      local.get $fst
+      i32.const 4
+      i32.and
+      select
+      local.get $mt
+      i64.const 1000000000
+      i64.div_u
+      local.get $mt
+      i64.const 1000000000
+      i64.rem_u
+      i32.wrap_i64
+      local.get $r
+      call $wfs_times
+      local.get $r
+      call $fs_unit)
+
+  """
+}

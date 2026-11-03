@@ -330,7 +330,8 @@ fn (g: Gen) component_lacks() -> Str {
       var what = ""
       if name is "proc.run" | "proc.exec" | "proc.spawn" {
         what = "processes"
-      } else if name.starts_with("rt.") && op.starts_with("fs_") && op != "fs_canceled" {
+      } else if name.starts_with("rt.") && op.starts_with("fs_") && op != "fs_canceled" && g.comp {
+        // a command has wasi:filesystem (rt8.xo); the proxy world has none
         // fs_canceled asks the task, not the files (call.xo lowers it)
         what = "files"
       } else if name.starts_with("rt.") && (op.starts_with("net_") || op.starts_with("listener_") || op.starts_with("conn_")) {
@@ -1631,7 +1632,14 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   if g.comp {
     rt = rt + rt5_text(g) + rt6_text()
   }
-  if g.cmd {
+  if g.cmd && g.files {
+    // a command's files: rt8.xo over wasi:filesystem
+    var drop = rt7_replaces()
+    for n in rt8_replaces() {
+      drop.push(n)
+    }
+    rt = rt + drop_funcs(rt6_text(), drop) + rt7_text() + rt8_text()
+  } else if g.cmd {
     rt = rt + drop_funcs(rt6_text(), rt7_replaces()) + rt7_text()
   } else if !g.comp {
     // strip_runtime drops it when nothing reads stdin; it reads
@@ -1697,6 +1705,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   if g.cmd {
     b.write(rt6_imports())
     b.write(rt7_imports())
+    if g.files {
+      b.write(rt8_imports())
+    }
   }
   b.write(if g.comp || g.cmd { drop_preview1(rt_imports()) } else { rt_imports() })
   if g.conc {
@@ -1710,6 +1721,9 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   }
   if g.cmd {
     b.write(rt7_globals())
+    if g.files {
+      b.write(rt8_globals())
+    }
   }
   b.write("  (memory (export \"memory\") ${pages})\n")
   b.write("  (global $hp (mut i32) (i32.const ${heap}))\n")

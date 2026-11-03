@@ -480,6 +480,7 @@ fn (var a: Asm) parse_import() {
   a.expect(T_CLOSE)
   let fi = a.funcs.len()
   a.funcs.push(AFunc{name: name, ty: a.sig_index(s), imported: true, module: module, field: field})
+  a.name_once(name)
   a.func_at[name] = fi
 }
 
@@ -515,7 +516,17 @@ fn (var a: Asm) parse_func() {
   a.skip_to_close()
   a.funcs.push(AFunc{name: name, ty: a.sig_index(s), body: body, local_names: names, locals: locals})
   if !name.is_empty() {
+    a.name_once(name)
     a.func_at[name] = fi
+  }
+}
+
+/// Fails the module when a function name is given twice: the later one
+/// would take every call by that name (an rt8.xo import named as an rt4.xo
+/// function took rt4's calls, 2026-11-02).
+fn (var a: Asm) name_once(name: Str) {
+  if a.func_at.contains(name) && a.err.is_empty() {
+    a.err = "wat: the function name ${name} is given twice"
   }
 }
 

@@ -15,6 +15,7 @@
 const WASI_V = "@0.2.0"
 
 // The primitive value types, as s33 values (their one byte encodings).
+const VT_BOOL = -1
 const VT_U8 = -3
 const VT_U16 = -5
 const VT_U32 = -7
@@ -179,6 +180,23 @@ fn dt_variant(cs: List[(Str, Int)]) -> List[Int] {
     o.push(0)
   }
   o
+}
+
+fn dt_labels(code: Int, ls: List[Str]) -> List[Int] {
+  var o: List[Int] = [code]
+  uleb(o, ls.len())
+  for l in ls {
+    name_bytes(o, l)
+  }
+  o
+}
+
+fn dt_enum(ls: List[Str]) -> List[Int] {
+  dt_labels(0x6D, ls)
+}
+
+fn dt_flags(ls: List[Str]) -> List[Int] {
+  dt_labels(0x6E, ls)
 }
 
 /// An instance type being written: its declarations and local type count.
@@ -531,6 +549,76 @@ fn ity_wall_clock() -> InstTy {
   i
 }
 
+/// wasi:filesystem/types: what a command's file runtime (rt8.xo) calls;
+/// t_dt is wasi:clocks/wall-clock's datetime.
+fn ity_fs_types(t_dt: Int) -> InstTy {
+  var i = InstTy{}
+  let dt0 = i.outer(t_dt)
+  let dt = i.eq("datetime", dt0)
+  let ty0 = i.def(dt_enum(["unknown", "block-device", "character-device", "directory", "fifo", "symbolic-link", "regular-file", "socket"]))
+  let ty = i.eq("descriptor-type", ty0)
+  let df0 = i.def(dt_flags(["read", "write", "file-integrity-sync", "data-integrity-sync", "requested-write-sync", "mutate-directory"]))
+  let df = i.eq("descriptor-flags", df0)
+  let odt = i.def(dt_option(dt))
+  let st0 = i.def(dt_record([("type", ty), ("link-count", VT_U64), ("size", VT_U64), ("data-access-timestamp", odt), ("data-modification-timestamp", odt), ("status-change-timestamp", odt)]))
+  let st = i.eq("descriptor-stat", st0)
+  let pf0 = i.def(dt_flags(["symlink-follow"]))
+  let pf = i.eq("path-flags", pf0)
+  let of0 = i.def(dt_flags(["create", "directory", "exclusive", "truncate"]))
+  let of = i.eq("open-flags", of0)
+  let nt0 = i.def(dt_variant([("no-change", NO_TYPE), ("now", NO_TYPE), ("timestamp", dt)]))
+  let nt = i.eq("new-timestamp", nt0)
+  let de0 = i.def(dt_record([("type", ty), ("name", VT_STRING)]))
+  let de = i.eq("directory-entry", de0)
+  let ec0 = i.def(dt_enum(FS_ERRORS))
+  let ec = i.eq("error-code", ec0)
+  let d = i.res("descriptor")
+  let ds = i.res("directory-entry-stream")
+  let bd = i.def(dt_borrow(d))
+  let own_d = i.def(dt_own(d))
+  let own_ds = i.def(dt_own(ds))
+  let bytes = i.def(dt_list(VT_U8))
+  let none = i.def(dt_result(NO_TYPE, ec))
+  let rd = i.def(dt_result(i.def(dt_tuple([bytes, VT_BOOL])), ec))
+  i.fun("[method]descriptor.read", [("self", bd), ("length", VT_U64), ("offset", VT_U64)], rd)
+  let wr = i.def(dt_result(VT_U64, ec))
+  i.fun("[method]descriptor.write", [("self", bd), ("buffer", bytes), ("offset", VT_U64)], wr)
+  let rdir = i.def(dt_result(own_ds, ec))
+  i.fun("[method]descriptor.read-directory", [("self", bd)], rdir)
+  i.fun("[method]descriptor.create-directory-at", [("self", bd), ("path", VT_STRING)], none)
+  let rst = i.def(dt_result(st, ec))
+  i.fun("[method]descriptor.stat", [("self", bd)], rst)
+  i.fun("[method]descriptor.stat-at", [("self", bd), ("path-flags", pf), ("path", VT_STRING)], rst)
+  i.fun("[method]descriptor.set-times-at", [("self", bd), ("path-flags", pf), ("path", VT_STRING), ("data-access-timestamp", nt), ("data-modification-timestamp", nt)], none)
+  let ro = i.def(dt_result(own_d, ec))
+  i.fun("[method]descriptor.open-at", [("self", bd), ("path-flags", pf), ("path", VT_STRING), ("open-flags", of), ("flags", df)], ro)
+  let rs = i.def(dt_result(VT_STRING, ec))
+  i.fun("[method]descriptor.readlink-at", [("self", bd), ("path", VT_STRING)], rs)
+  i.fun("[method]descriptor.remove-directory-at", [("self", bd), ("path", VT_STRING)], none)
+  i.fun("[method]descriptor.rename-at", [("self", bd), ("old-path", VT_STRING), ("new-descriptor", bd), ("new-path", VT_STRING)], none)
+  i.fun("[method]descriptor.symlink-at", [("self", bd), ("old-path", VT_STRING), ("new-path", VT_STRING)], none)
+  i.fun("[method]descriptor.unlink-file-at", [("self", bd), ("path", VT_STRING)], none)
+  let bds = i.def(dt_borrow(ds))
+  let rde = i.def(dt_result(i.def(dt_option(de)), ec))
+  i.fun("[method]directory-entry-stream.read-directory-entry", [("self", bds)], rde)
+  i
+}
+
+/// wasi:filesystem's error-code, in its order (types.wit).
+const FS_ERRORS = ["access", "would-block", "already", "bad-descriptor", "busy", "deadlock", "quota", "exist", "file-too-large", "illegal-byte-sequence", "in-progress", "interrupted", "invalid", "io", "is-directory", "loop", "too-many-links", "message-size", "name-too-long", "no-device", "no-entry", "no-lock", "insufficient-memory", "insufficient-space", "not-directory", "not-empty", "not-recoverable", "unsupported", "no-tty", "no-such-device", "overflow", "not-permitted", "pipe", "read-only", "invalid-seek", "text-file-busy", "cross-device"]
+
+/// wasi:filesystem/preopens, t_d types' descriptor.
+fn ity_fs_preopens(t_d: Int) -> InstTy {
+  var i = InstTy{}
+  let d0 = i.outer(t_d)
+  let d = i.eq("descriptor", d0)
+  let own_d = i.def(dt_own(d))
+  let pair = i.def(dt_tuple([own_d, VT_STRING]))
+  let l = i.def(dt_list(pair))
+  i.fun("get-directories", [], l)
+  i
+}
+
 fn ity_monotonic(t_pollable: Int) -> InstTy {
   var i = InstTy{}
   let p0 = i.outer(t_pollable)
@@ -827,8 +915,16 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
   if wanted("wasi:random/random${WASI_V}") {
     let _i = c.import_iface("wasi:random/random${WASI_V}", ity_random())
   }
-  if wanted("wasi:clocks/wall-clock${WASI_V}") {
-    let _i = c.import_iface("wasi:clocks/wall-clock${WASI_V}", ity_wall_clock())
+  let files = wanted("wasi:filesystem/types${WASI_V}") || wanted("wasi:filesystem/preopens${WASI_V}")
+  if wanted("wasi:clocks/wall-clock${WASI_V}") || files {
+    let iw = c.import_iface("wasi:clocks/wall-clock${WASI_V}", ity_wall_clock())
+    if files {
+      let t_dt = c.alias_type(iw, "datetime")
+      let ift = c.import_iface("wasi:filesystem/types${WASI_V}", ity_fs_types(t_dt))
+      let t_d = c.alias_type(ift, "descriptor")
+      let _t = c.alias_type(ift, "directory-entry-stream")
+      let _p = c.import_iface("wasi:filesystem/preopens${WASI_V}", ity_fs_preopens(t_d))
+    }
   }
   if wanted("wasi:clocks/monotonic-clock${WASI_V}") {
     let _i = c.import_iface("wasi:clocks/monotonic-clock${WASI_V}", ity_monotonic(t_poll))

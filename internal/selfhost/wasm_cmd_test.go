@@ -113,19 +113,24 @@ func commandGolden(t *testing.T, xo string, env []string, d string) string {
 	// worker with a 1 GiB stack) for their deep recursion; wasmtime runs a
 	// component on an async stack, which must hold the wasm stack
 	args := []string{"run", "-W", "max-wasm-stack=1073741824,async-stack-size=1077936128"}
+	// the preopens of the Node runner (run.mjs): the golden's directory as
+	// "." and the root as "/" (rt8.xo's descriptors 3 and 4)
+	args = append(args, "--dir", ".::.", "--dir", "/::/")
+	// its environment (cmd.Env below) and argv[0], the program's path
+	// (with no cache of wasmtime's own, which would follow the golden's HOME)
+	args = append(args, "-S", "inherit-env=y", "--argv0", comp, "-C", "cache=n")
+	// the environment as runWasm gives the Node runner: the test's, then
+	// env.txt's (a later value wins), inherited by the program
+	runEnv := os.Environ()
 	if data, err := os.ReadFile(filepath.Join(d, "env.txt")); err == nil {
-		for _, kv := range strings.Fields(string(data)) {
-			if !strings.HasPrefix(kv, "#") {
-				args = append(args, "--env", kv)
-			}
-		}
+		runEnv = append(runEnv, strings.Fields(string(data))...)
 	}
 	args = append(args, comp)
 	if data, err := os.ReadFile(filepath.Join(d, "args.txt")); err == nil {
 		args = append(args, strings.Fields(string(data))...)
 	}
 	cmd := testtmp.Guard(exec.Command("wasmtime", args...))
-	cmd.Dir = d
+	cmd.Dir, cmd.Env = d, runEnv
 	if data, err := os.ReadFile(filepath.Join(d, "stdin.txt")); err == nil {
 		cmd.Stdin = bytes.NewReader(data)
 	}
