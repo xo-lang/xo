@@ -1,21 +1,14 @@
-# Timing rows against Go, part 17 (2026-11-03)
+# std twin rows 17: norm and idna with in-place UTF-8 decoding (2026-11-03)
 
-Linux/arm64 offload host (the first, exclusive). bench/perf/cron at
-95b06977e against robfig/cron v3.0.1 (Go 1.26.1): `xo bench --ab` with Go
-as A and Xo as B, 15 rounds (twin-cron.txt; script twin.sh).
+Host 1 (linux/arm64, `twin-ab2`, n=15, ratio is Xo wall over Go wall), as rows16. idna ab4 is 623895699 (validate_and_map and validate_label decode in place); idna ab5 and norm ab6 add std/norm's normalize_run decoding in place.
 
-| bench | workload | Go wall (ms) | Xo wall (ms) | Xo / Go | interval | peak memory |
-|---|---|---|---|---|---|---|
-| cron | none | 0.617 | 0.533 | 0.864 | 0.808-0.915 | 0.211 |
-| cron | every5 | 103.7 | 20.15 | 0.194 | 0.177-0.264 | 0.21 |
-| cron | weekday_ny | 249.4 | 60.63 | 0.243 | 0.238-0.283 | 0.351 |
-| cron | monthly_last | 2.774 | 2.378 | 0.857 | 0.846-0.89 | 0.211 |
+| module | workload | rows16 | ab4 | ab5 / ab6 |
+|---|---|---|---|---|
+| idna | ascii | 0.72 | 0.71 | 0.74 |
+| idna | mixed | 1.69 | 1.57 | 1.54 |
+| idna | long | 1.65 | 1.41 | 1.49 |
+| norm | nfc | 1.64 | | 1.55 |
+| norm | nfd | 1.13 | | 1.08 |
+| norm | nfkc | 1.11 | | 1.08 |
 
-`monthly_last` was 3.821 of Go's wall (std-twin-rows13-2026-11-03.md).
-`Schedule.next` converted a civil time through the zone for every day that
-could not match, about 30 a fire. It now steps such a day by arithmetic:
-the next day at the same clock, read as UTC, is one day on, and when the
-zone's offset there is the one Go's time.Date lookup returns, the result
-and its civil time need no conversion. The parent against the change on
-the same host (ab-host, 3 rounds, ab-cron.txt): wall 10.4 to 2.423 ms,
-B/A 0.233 (0.232-0.237). All three schedules are Proven better than Go.
+Not Proven (ADR 0461: at most about 1.05); idna mixed and long and norm NFC remain slower than Go. Run to run spread on long is about 0.08. Remaining cost per the Mac profile: allocation of the per run decomposition lists, `compose`, and `lookup` (13 percent of idna mixed).
