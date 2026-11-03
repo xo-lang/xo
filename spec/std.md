@@ -6647,3 +6647,39 @@ fn from_json(j: json.Value) -> Value
   infinity and other keys are `Invalid`. `from_json` follows 6.1.
 - Not ported: a derive for typed values (use `derive Json` through `to_json`
   and `from_json`), streaming, the date and time tag helpers.
+
+## 51. std/crc64
+
+Status: implemented on every backend (2026-11-03): Go's hash/crc64, run
+by the Go backend itself (`std/rt/crc64.go`) and ported natively
+(`std/native/crc64.xo`: slicing-by-8 over Go's tables); Go's values on
+its golden strings and on pseudo random buffers of 0 to 1,500,000 bytes
+(corpus `crc64`). Pure.
+
+```xo
+enum Poly { Iso, Ecma }
+pub fn checksum(data: Bytes, poly: Poly = Poly.Iso) -> Int             // Checksum(data, MakeTable(poly))
+pub fn update(crc: Int, data: Bytes, poly: Poly = Poly.Iso) -> Int     // Update
+```
+
+- A checksum is 64 bits: the Int's bits are Go's uint64, so one past 2^63
+  is negative (as `fnv.sum64`). `update(checksum(a), b) == checksum(a +
+  b)` and `update(0, d) == checksum(d)`.
+- ISO is the polynomial of Redis and HDLC; ECMA that of xz.
+
+## 52. std/adler32
+
+Status: implemented on every backend (2026-11-03): Go's hash/adler32, run
+by the Go backend itself (`std/rt/adler32.go`) and ported natively
+(`std/native/adler32.xo`); Go's values on its golden strings and on
+pseudo random buffers (corpus `adler32`). Pure.
+
+```xo
+pub fn checksum(data: Bytes) -> Int          // Checksum: 0 to 2^32 - 1, 1 for empty data
+pub fn update(sum: Int, data: Bytes) -> Int  // Write on a digest at that state
+```
+
+- `update(checksum(a), b) == checksum(a + b)` and `update(1, d) ==
+  checksum(d)`.
+- Adler-32 is the checksum of zlib (RFC 1950). It is weak on short inputs:
+  for detecting corruption, not for hashing.

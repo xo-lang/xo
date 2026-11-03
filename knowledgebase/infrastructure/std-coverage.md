@@ -128,7 +128,9 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | image/png | std/png | done | Decode, DecodeConfig and Encode as `png.decode`, `png.decode_config`, `png.encode` over one `Image` with Go's seven pix layouts (spec/std.md 48, decision 0466, 2026-11-03); byte exact encode, Go's error texts. |
 | hash/crc32 | std/crc32 | done | IEEE and Castagnoli, `checksum` and `update` (spec/std.md 44); Castagnoli in software (Go uses CRC32C instructions). |
 | hash/fnv | std/fnv | done | 32, 64 and 128 bit FNV-1 and FNV-1a, `sum*` and `update*` (spec/std.md 45). |
-| hash/adler32, hash/crc64, hash/maphash | none | planned | maphash is internal to Map. |
+| hash/adler32 | std/adler32 | done | `checksum` and `update` (spec/std.md 52); Go's values on its golden strings and buffers across the block size. |
+| hash/crc64 | std/crc64 | done | ISO and ECMA, `checksum` and `update`, slicing-by-8 (spec/std.md 51). |
+| hash/maphash | none | planned | maphash is internal to Map. |
 
 ### Cryptography
 
