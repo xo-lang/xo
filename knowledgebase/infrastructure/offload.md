@@ -212,8 +212,12 @@ not restart; the Mac's known_hosts entry changes with the host key):
 - the seed: the 0.37.0 linux-arm64 seed in
   `/work/seed/xo-0.37.0-linux-arm64` (both arm64 hosts; last verified:
   2026-11-03); after a minor version bump that seed cannot build,
-  unpack the new seed there and change `OFF_SEED`. `alloc-split.sh`'s
-  base spec is built by `$OFF_SEED`, so it moves with the seed.
+  unpack the new seed there and change `OFF_SEED`. The base of a
+  comparison does not follow the seed (2026-11-03): `alloc-split.sh`'s
+  base server is built by `ALLOC_BASE_XO` (the Mac build: a darwin xo,
+  default `XO_MAC_SEED`, v0.35.0; `ALLOC_BUILD=host2`: required) and
+  release-vs-go.sh's http section by `HTTP_BASE_XO` (required), each the
+  release compared against.
 
 ### WebAssembly tools (owner-approved 2026-10-30, decisions 0405 and 0447)
 

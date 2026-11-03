@@ -292,8 +292,11 @@ create`. The order:
    than the release before only when the two ranges over pads do not
    overlap: a revision's /alloc moves about 4 percent with where its
    code lands, and a report of single builds once called that a
-   regression (the 2026-11-03 /alloc bisect). Run it before step 6a
-   moves the host's seed, or the base is the new release itself.
+   regression (the 2026-11-03 /alloc bisect). The base servers are
+   built by HTTP_BASE_XO, the release before's linux/arm64 xo on the
+   first offload host (for 0.37.0's report, v0.36.0's), required since
+   2026-11-03 so the base no longer follows the host's seed (the section
+   is skipped without it; the seed builds only Xo at HTTP_REV).
    SECTIONS="compile run test http" (the default) picks sections. Last
    verified: 2026-10-30 (test section smoke run, SECTIONS=test ROUNDS=2).
 8. the website's comparison pages (owner, 2026-10-23): refresh the

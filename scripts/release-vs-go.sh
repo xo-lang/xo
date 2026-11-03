@@ -35,6 +35,11 @@
 # overlap, since a revision's /alloc moves about 4 percent with where its code
 # lands (0.958 to 1.003 of v0.35.0 for one revision). HTTP_ROUNDS defaults to
 # 3 with pads (12 runs per Xo side and row), 5 without.
+# HTTP_BASE_XO (required for the http section; Lead, 2026-11-03): the release
+# before's linux/arm64 xo on the first offload host (for 0.37.0's report,
+# v0.36.0's), which builds the base servers. The host's OFF_SEED only builds
+# Xo at HTTP_REV: it moves with every seed cut, so a base that followed it
+# would compare 0.37 against 0.37.
 # SECTIONS (default "compile run test http") limits the report's sections.
 # ROUNDS (default 3, owner 2026-11-01) sets the --ab rounds; WORKLOADS limits the run
 # workloads (names as below). Run it through heavy.sh as HEAVY_CLASS=measure:
@@ -309,6 +314,8 @@ if section http; then
 	agents=$HOME/xo-lead/agents
 	if [ ! -x "$agents/offload.sh" ]; then
 		echo "(skipped: no $agents/offload.sh)" >>"$report"
+	elif [ -z "${HTTP_BASE_XO:-}" ]; then
+		echo "(skipped: set HTTP_BASE_XO to the release before's linux/arm64 xo on the first offload host)" >>"$report"
 	else
 		rev=$(git -C "$root" rev-parse --verify "${HTTP_REV:-HEAD}^{commit}")
 		hpads=${HTTP_PADS-0 1 2 3}
@@ -323,7 +330,7 @@ if section http; then
 			put=/work/in/rvg-http-$$.bundle
 			"$agents/offload.sh" --put "$bundle" "$put" || { rm -f "$bundle"; exit 4; }
 			rm -f "$bundle"
-			OFF_EXCLUSIVE=1 "$agents/offload.sh" "$root/scripts/release-vs-go-http.sh" "$rev" "rvg$$" "$OFF_SEED" /work/priv /work "$put" "$hrounds" "$hpads"
+			OFF_EXCLUSIVE=1 "$agents/offload.sh" "$root/scripts/release-vs-go-http.sh" "$rev" "rvg$$" "$OFF_SEED" /work/priv /work "$put" "$hrounds" "$hpads" "$HTTP_BASE_XO"
 		) >"$OUT/http.txt" 2>&1 || true
 		python3 - "$OUT/http.txt" >>"$report" <<'PY'
 import re, json, statistics as st, sys

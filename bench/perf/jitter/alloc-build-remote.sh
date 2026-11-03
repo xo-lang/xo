@@ -4,10 +4,11 @@
 # 2026-11-02: their builds ran inside host 1's exclusive lease). SPECS is a comma list of REV[+VAR=VALUE...].
 # MODE last: every server is built from the LAST rev's bench/perf/jitter/xo (alloc-points); own: from its
 # own tree (alloc-own, alloc-env). The VARs apply to that server's xo build (and are carried for its run).
+# BASE_XO (8th, default SEED; alloc-split.sh ALLOC_BASE_XO) builds the base server and the "base" specs.
 # Writes $WORK/out/NAME.tar: bin/{loadgen,srv-base,srv-pK,env-pK} and revs.txt (the "p$k hash date built" lines
 # and "base VERSION"), for alloc-measure-remote.sh on host 1. Static linux/arm64 binaries run on either host.
 set -u
-mode=$1 a=$2 name=$3 seed=$4 P=$5 work=$6 bundle=$7
+mode=$1 a=$2 name=$3 seed=$4 P=$5 work=$6 bundle=$7 basexo=${8:-$4}
 W=$work/rvb$name; OUT=$work/out; mkdir -p "$OUT"
 t0=$(date +%s)
 find "$OUT" -name "*.tar" -mmin +720 -delete 2>/dev/null
@@ -39,14 +40,14 @@ echo "host load $(cat /proc/loadavg)"
 jl=$((${#revs[@]} - 1)); while [ $jl -gt 0 ] && [ "${revs[$jl]}" = base ]; do jl=$((jl - 1)); done
 J=$W/w$jl/bench/perf/jitter
 ( cd "$J/loadgen" && go build -o "$B/loadgen" . ) || exit 1
-"$seed" build -o "$B/srv-base" "$J/xo" > "$W/xobuild-base.txt" 2>&1 || { tail -5 "$W/xobuild-base.txt"; exit 1; }
+"$basexo" build -o "$B/srv-base" "$J/xo" > "$W/xobuild-base.txt" 2>&1 || { tail -5 "$W/xobuild-base.txt"; exit 1; }
 : > "$B/revs.txt"
-echo "base $("$seed" version)" >> "$B/revs.txt"
+echo "base $("$basexo" version)" >> "$B/revs.txt"
 for k in "${!revs[@]}"; do
 	if [ "${revs[$k]}" = base ]; then
 		# the base release itself at a pad (alloc-split.sh ALLOC_PADS): built by the seed, as srv-base
-		env ${envs[$k]} "$seed" build -o "$B/srv-p$k" "$J/xo" > "$W/srv$k.txt" 2>&1 || { echo "p$k: base server build failed: $(tail -3 "$W/srv$k.txt" | tr '\n' ' ')"; continue; }
-		line="p$k base $("$seed" version | cut -d' ' -f2) built env [${envs[$k]}]"
+		env ${envs[$k]} "$basexo" build -o "$B/srv-p$k" "$J/xo" > "$W/srv$k.txt" 2>&1 || { echo "p$k: base server build failed: $(tail -3 "$W/srv$k.txt" | tr '\n' ' ')"; continue; }
+		line="p$k base $("$basexo" version | cut -d' ' -f2) built env [${envs[$k]}]"
 		echo "$line"; echo "$line" >> "$B/revs.txt"; echo "${envs[$k]}" > "$B/env-p$k"
 		continue
 	fi

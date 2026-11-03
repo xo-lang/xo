@@ -12,6 +12,9 @@
 # median over pads, slower or faster only when the pad ranges do not overlap: a revision's /alloc moves about
 # 4 percent with where its code lands, so one build per side can show a regression that is placement
 # (Lead, 2026-11-03; gotchas/arm64-loop-alignment-stable-not-fast.md). The rounds per pad stay ROUNDS.
+# ALLOC_BASE_XO (Lead, 2026-11-03): the xo that builds the base server and the "base" specs, pinned to the
+# release compared against rather than following a seed. ALLOC_BUILD=mac: a darwin xo (default XO_MAC_SEED, the
+# v0.35.0 release); host2: a path on the second host, required (its OFF_SEED moves with every seed cut).
 set -u
 S=$(cd "$(dirname "$0")" && pwd)
 cd "$S" && cd "$(git rev-parse --show-toplevel)"
@@ -33,12 +36,15 @@ t0=$(date +%s)
 if [ $bm = mac ]; then
 	seedm=${XO_MAC_SEED:-$HOME/xo-seed-0.35.0-51882bb7/xo/bin/xo}
 	[ -x "$seedm" ] || { echo "alloc-split: no darwin seed xo at $seedm (XO_MAC_SEED)"; exit 3; }
-	HEAVY_CLASS=gate $HOME/xo-lead/agents/heavy.sh alloc-mac-$name $S/alloc-build-mac.sh $mode $a $name "$seedm" $tar || { echo "alloc-split: the Mac build failed"; exit 5; }
+	basem=${ALLOC_BASE_XO:-$seedm}
+	[ -x "$basem" ] || { echo "alloc-split: no darwin base xo at $basem (ALLOC_BASE_XO)"; exit 3; }
+	HEAVY_CLASS=gate $HOME/xo-lead/agents/heavy.sh alloc-mac-$name $S/alloc-build-mac.sh $mode $a $name "$seedm" $tar "$basem" || { echo "alloc-split: the Mac build failed"; exit 5; }
 	t1=$(date +%s)
 else
+	[ -n "${ALLOC_BASE_XO:-}" ] || { echo "alloc-split: ALLOC_BUILD=host2 needs ALLOC_BASE_XO, the base release's xo on the second host"; exit 2; }
 	git bundle create -q $bundle "${brs[@]}"; git branch -q -D "${brs[@]}"
 	OFFLOAD_ENV=offload-arm64b.env $A --put $bundle /work/in/$name.bundle || exit 4
-	OFFLOAD_ENV=offload-arm64b.env $A $S/alloc-build-remote.sh $mode $a $name "$seed2" /work/priv /work /work/in/$name.bundle || { echo "alloc-split: the build failed"; exit 5; }
+	OFFLOAD_ENV=offload-arm64b.env $A $S/alloc-build-remote.sh $mode $a $name "$seed2" /work/priv /work /work/in/$name.bundle "$ALLOC_BASE_XO" || { echo "alloc-split: the build failed"; exit 5; }
 	t1=$(date +%s)
 	OFFLOAD_ENV=offload-arm64b.env $A --get /work/out/$name.tar $tar || exit 6
 fi

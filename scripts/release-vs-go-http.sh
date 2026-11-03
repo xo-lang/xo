@@ -8,11 +8,13 @@
 # closed loop /hello and /alloc at 32 and 256 connections, open loop /alloc with 64 connections at
 # 10k and 20k req/s (Go's /alloc row is its /alloc-hand); DURATION (10s) after a 2 s warm-up, servers interleaved in a rotating order per
 # round. Prints one line per run: "SERVER PATH cC rateR rN {loadgen json}".
+# BASE_XO (the 9th argument, default SEED; release-vs-go.sh HTTP_BASE_XO): the xo of the release the report
+# compares against, which builds the base servers; SEED only builds Xo at REV.
 # PADS (the 8th argument, a space list; default none): both Xo servers are built at each XO_ARM64_PAD
 # and named xo.pK and base.pK, so pads.py judges xo against base by the median over pads (a revision's
 # /alloc moves about 4 percent with where its code lands; Lead, 2026-11-03).
 set -u
-a=$1 name=$2 seed=$3 P=$4 work=$5 bundle=$6 rounds=$7 pads=${8:-}
+a=$1 name=$2 seed=$3 P=$4 work=$5 bundle=$6 rounds=$7 pads=${8:-} basexo=${9:-$3}
 W=$work/rvg$name
 L=$P.lockdir boot=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null)
 hp= hb=
@@ -47,14 +49,14 @@ if [ -n "$pads" ]; then
 	servers=go
 	for k in $pads; do
 		XO_ARM64_PAD=$k "$T/bin/xo" build -o "$B/srv-xo.p$k" "$J/xo" > "$W/xobuild-srv.txt" 2>&1 || { tail -5 "$W/xobuild-srv.txt"; exit 1; }
-		XO_ARM64_PAD=$k "$seed" build -o "$B/srv-base.p$k" "$J/xo" > "$W/xobuild-srv35.txt" 2>&1 || { tail -5 "$W/xobuild-srv35.txt"; exit 1; }
+		XO_ARM64_PAD=$k "$basexo" build -o "$B/srv-base.p$k" "$J/xo" > "$W/xobuild-srv35.txt" 2>&1 || { tail -5 "$W/xobuild-srv35.txt"; exit 1; }
 		servers="$servers xo.p$k base.p$k"
 	done
 else
 	"$T/bin/xo" build -o "$B/srv-xo" "$J/xo" > "$W/xobuild-srv.txt" 2>&1 || { tail -5 "$W/xobuild-srv.txt"; exit 1; }
-	"$seed" build -o "$B/srv-base" "$J/xo" > "$W/xobuild-srv35.txt" 2>&1 || { tail -5 "$W/xobuild-srv35.txt"; exit 1; }
+	"$basexo" build -o "$B/srv-base" "$J/xo" > "$W/xobuild-srv35.txt" 2>&1 || { tail -5 "$W/xobuild-srv35.txt"; exit 1; }
 fi
-echo "xo $("$T/bin/xo" version); base $("$seed" version)"
+echo "xo $("$T/bin/xo" version); base $("$basexo" version)"
 echo "loadgen flags: -c C -rate R -d ${DURATION:-10s} -warmup 2s -awake (default on in open loop); servers on CPUs ${SRV_CPUS:-0-5}, loadgen on ${GEN_CPUS:-6-11}"
 ulimit -n 65536 2>/dev/null || true
 SRV=${SRV_CPUS:-0-5} GEN=${GEN_CPUS:-6-11}

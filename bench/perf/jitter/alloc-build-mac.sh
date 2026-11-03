@@ -5,9 +5,10 @@
 # 2026-11-02: 36 min wait for pass2 while host 1 sat idle). SPECS is a comma list of REV[+VAR=VALUE...] of THIS
 # checkout; MODE last builds every server from the LAST rev's bench/perf/jitter/xo, own from each rev's tree.
 # SEED_XO is the darwin xo of the base release (v0.35.0) that builds each rev's xo and the base server.
+# BASE_XO (6th, default SEED_XO; alloc-split.sh ALLOC_BASE_XO) builds the base server and the "base" specs.
 # Writes OUTTAR with the layout of alloc-build-remote.sh (bin/{loadgen,srv-base,srv-pK,env-pK}, revs.txt).
 set -u
-mode=$1 a=$2 name=$3 seed=$4 outtar=$5
+mode=$1 a=$2 name=$3 seed=$4 outtar=$5 basexo=${6:-$4}
 top=$(git rev-parse --show-toplevel) || exit 2
 W=$(mktemp -d "${TMPDIR:-/tmp}/rvmac.XXXXXX") || exit 2
 cleanup() { for d in "$W"/w*; do [ -d "$d" ] && git -C "$top" worktree remove --force "$d" 2>/dev/null; done; rm -rf "$W"; }
@@ -22,14 +23,14 @@ J=$W/w$jl/bench/perf/jitter
 # the load generator of the last spec, else this checkout's (a sweep whose last revision predates it)
 L=$J/loadgen; [ -d "$L" ] || L=$top/bench/perf/jitter/loadgen
 ( cd "$L" && GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -o "$B/loadgen" . ) || exit 1
-"$seed" build --targets=linux/arm64 -o "$B/srv-base" "$J/xo" > "$W/xobuild-base.txt" 2>&1 || { tail -5 "$W/xobuild-base.txt"; exit 1; }
+"$basexo" build --targets=linux/arm64 -o "$B/srv-base" "$J/xo" > "$W/xobuild-base.txt" 2>&1 || { tail -5 "$W/xobuild-base.txt"; exit 1; }
 : > "$B/revs.txt"
-echo "base $("$seed" version | sed "s/ darwin.*//") (cross-built on the Mac)" >> "$B/revs.txt"
+echo "base $("$basexo" version | sed "s/ darwin.*//") (cross-built on the Mac)" >> "$B/revs.txt"
 for k in "${!revs[@]}"; do
 	if [ "${revs[$k]}" = base ]; then
 		# the base release itself at a pad (alloc-split.sh ALLOC_PADS): built by the seed, as srv-base
-		env ${envs[$k]} "$seed" build --targets=linux/arm64 -o "$B/srv-p$k" "$J/xo" > "$W/srv$k.txt" 2>&1 || { echo "p$k: base server build failed: $(tail -3 "$W/srv$k.txt" | tr '\n' ' ')"; continue; }
-		line="p$k base $("$seed" version | cut -d' ' -f2) built env [${envs[$k]}]"
+		env ${envs[$k]} "$basexo" build --targets=linux/arm64 -o "$B/srv-p$k" "$J/xo" > "$W/srv$k.txt" 2>&1 || { echo "p$k: base server build failed: $(tail -3 "$W/srv$k.txt" | tr '\n' ' ')"; continue; }
+		line="p$k base $("$basexo" version | cut -d' ' -f2) built env [${envs[$k]}]"
 		echo "$line"; echo "$line" >> "$B/revs.txt"; echo "${envs[$k]}" > "$B/env-p$k"
 		continue
 	fi

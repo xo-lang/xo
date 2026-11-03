@@ -47,3 +47,7 @@ and the base release (the spec `base`, built by the seed), at each pad of `ALLOC
 empty for one build per spec), and `pads.py LOG [REF]` prints each group's median over pads of its per-pad
 medians, the range of those, and a verdict against the base: slower or faster only when the ranges do not
 overlap, else placement. `scripts/release-vs-go-http.sh` does the same for the release report (`HTTP_PADS`).
+
+The base server is built by `ALLOC_BASE_XO` (`HTTP_BASE_XO` in the release report), pinned to the release
+compared against: with the Mac build a darwin xo, default `XO_MAC_SEED` (v0.35.0); with `ALLOC_BUILD=host2`
+a path on the second host, required, since the hosts' `OFF_SEED` moves with every seed cut (2026-11-03).
