@@ -2,7 +2,6 @@
 // go1.26.1). Two sums mod 65521, kept as Ints: with 64 bit sums the
 // modulus is taken once a megabyte (Go's nmax of 5552 is the 32 bit
 // limit), eight bytes a step read as one word.
-use std/adler32
 use native/rt
 
 const MOD: Int = 65521
