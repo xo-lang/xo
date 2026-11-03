@@ -894,6 +894,14 @@ The parse prefetch (bcache.xo) takes 2 + files / 64. Base 28cdc166b, 3 rounds, 0
 ab-host has no unchanged warm rebuild mode, so these are edit builds; the Mac is unaffected in
 practice (XO_THREADS=1 saved 3 to 4 MB there). XO_EMIT_JOBS still sets every count.
 
+Predicted against measured: this section's list put XO_THREADS on Linux at "about 20 MB" (20 of
+154 MB, coll's edit with XO_THREADS=1, measured before THP dense and the front end's cuts). Landed,
+the saving is 5.6 MB on coll (85.0 to 79.4 MB), 5.4 MB on the HTTP server (117.2 to 111.8) and 2.0 MB
+on conc-spawn (83.2 to 81.2): 2.4 to 6.6% of max RSS, about a quarter of the estimate. Most of the
+estimate's 20 MB went with decision 0456 (a lightly used chunk no longer faults 2 MiB pages) and
+the smaller front end before this change, so fewer threads had less left to save; one task
+(k = 1) would add 2 to 4 MB more at 3% of the HTTP server's wall.
+
 Tried, negative: a thread's first bump region as a 256 KiB slice of a shared chunk
 (refs/recover/l2-slices, f9f0e3228): coll RSS 0.979 wall 1.0, conc-spawn 0.98 / 1.035 worse,
 HTTP 0.978 / 1.017 worse, self 0.993 / 1.004. With THP dense (0456) a lightly used chunk costs
