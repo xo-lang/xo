@@ -311,9 +311,8 @@ fn receive_extend(var d: Dec, t: Int) -> Int {
   d.bm = d.bm >> t
   let s = 1 << t
   var x = (d.ba >> d.bn) & (s - 1)
-  if x < (s >> 1) {
-    x += ((-1) << t) + 1
-  }
+  // below half the range the value is negative: add (-1 << t) + 1 without a branch
+  x += ((x - (s >> 1)) >> 63) & (((-1) << t) + 1)
   x
 }
 
@@ -1197,30 +1196,16 @@ fn ycbcr_rgb(y: Int, cb: Int, cr: Int) -> Int {
   let yy1 = y * 65793
   let cb1 = cb - 128
   let cr1 = cr - 128
-  var r = yy1 + 91881 * cr1
-  if (r & 4278190080) == 0 {
-    r = r >> 16
-  } else if r < 0 {
-    r = 0
-  } else {
-    r = 255
-  }
-  var g = yy1 - 22554 * cb1 - 46802 * cr1
-  if (g & 4278190080) == 0 {
-    g = g >> 16
-  } else if g < 0 {
-    g = 0
-  } else {
-    g = 255
-  }
-  var b = yy1 + 116130 * cb1
-  if (b & 4278190080) == 0 {
-    b = b >> 16
-  } else if b < 0 {
-    b = 0
-  } else {
-    b = 255
-  }
+  // each channel is clamped to 0..255 after the shift, without a branch
+  var r = (yy1 + 91881 * cr1) >> 16
+  r = r & ~(r >> 63)
+  r = (r | ((255 - r) >> 63)) & 255
+  var g = (yy1 - 22554 * cb1 - 46802 * cr1) >> 16
+  g = g & ~(g >> 63)
+  g = (g | ((255 - g) >> 63)) & 255
+  var b = (yy1 + 116130 * cb1) >> 16
+  b = b & ~(b >> 63)
+  b = (b | ((255 - b) >> 63)) & 255
   (r << 16) | (g << 8) | b
 }
 
