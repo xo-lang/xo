@@ -1,4 +1,4 @@
-// Origin: go
+// Origin: cron
 // std/cron: one pure source for the native backends and, through
 // std/go_compiled.txt, the Go backend (decision 0312). A port of
 // github.com/robfig/cron/v3 v3.0.1 (parser.go, spec.go, constantdelay.go;

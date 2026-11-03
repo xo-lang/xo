@@ -178,7 +178,7 @@ LICENSE and std/LICENSE.
 
    License: public domain.
 
-7. robfig/cron v3.0.1 [std/cron]
+7. robfig/cron v3.0.1 [cron]
 
    Source: https://github.com/robfig/cron, parser.go, spec.go and
    constantdelay.go ported to std/native/cron.xo and std/rt/cron.go.
