@@ -94,7 +94,21 @@ to v0.35.0. Ratios are comparable across jobs; absolute req/s are not
    v0.35.0: req/s 0.980 / 1.033 at c32 / c256, CPU a request 1.004 / 1.014,
    every range overlapping v0.35.0's; main without the fix (3f708df63) is
    level too (0.978 / 1.043, CPU 1.009 / 1.034), as the stack phase finding
-   predicts for 16 KiB pages. With Graviton's under 1%
+   predicts for 16 KiB pages. A second Mac job in a quiet window the lead
+   opened (l4macq3, 23:09 to 23:24, 7 rounds, the same method; the only
+   other load one core of an unrelated node process; the 1-minute load
+   before a point, 19 to 22, is mostly the job's own previous point) agrees
+   on req/s and puts CPU a request 1 to 4% over v0.35.0:
+
+   | arm | c32 req/s | c256 req/s | c32 CPU | c256 CPU |
+   |---|---|---|---|---|
+   | main 3f708df63 (no fix) | 1.002 | 1.003 | 1.012 | 1.023 |
+   | main ada68b353 | 0.995 | 1.015 | 1.011 | 1.037 |
+   | v0.35.0 | 127,732 | 152,862 | 48.37 us | 48.39 us |
+
+   (medians; ranges: v0.35.0's c256 req/s 130,621 to 159,392, main's c256
+   CPU 47.05 to 50.69 us with one zero sample, a ps read that missed; the
+   arms' ranges overlap v0.35.0's at c32 and on c256 req/s.) With Graviton's under 1%
    (stack-phase-2026-11-02.md:89-114), the first host's 4.5% is the 4 KiB
    page VM's; owner, 2026-11-02: it ships in 0.36 as a known VM-only cost.
 
