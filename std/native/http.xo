@@ -3489,9 +3489,7 @@ fn (c: Client) open(req: Request) -> http.ClientStream ! http.ClientErr uses net
   // may come before the body ends (full duplex, decision 0433)
   var dsrv: rthttp.Srv? = None
   var duplex: List[fn(fn() -> ())] = []
-  // on wasm the body is sent before the response is read (no sender
-  // task: a wasm server record has no connection scope, decision 0447 R2b)
-  if !req.src.is_empty() && target.arch != TargetArch.Wasm32 {
+  if !req.src.is_empty() {
     let ds = hserve.srv_new()
     let g = hserve.srv_group(ds)
     dsrv = Some(ds)

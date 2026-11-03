@@ -302,3 +302,11 @@ llvm wasi_h_release the wasm HTTP server's runtime records are wasm only (compil
 arm64 wasi_mono_ns sysio.mono_ns's wasm arm (compiler/wasm rt3.xo $mono, decision 0447 R2a); native reads its own clocks
 llvm wasi_mono_ns sysio.mono_ns's wasm arm (compiler/wasm rt3.xo $mono, decision 0447 R2a); native reads its own clocks
 wasm wasi_hook the SSA builder lowers it (compiler/ssa call.xo wasi_hook: a FuncAddr of the C ABI export, decision 0447 R2a), so no wasm backend lowering
+arm64 wasi_scope_new hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
+arm64 wasi_scope_group hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
+arm64 wasi_scope_close hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
+llvm wasi_scope_new hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
+llvm wasi_scope_group hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
+llvm wasi_scope_close hserve's detached scope on wasm (compiler/wasm rt3.xo, decision 0447 R2c); native uses tasks.scope_detached
+arm64 wasi_sock_peer the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername
+llvm wasi_sock_peer the wasi:sockets command runtime is wasm only (compiler/wasm rt9.xo, decision 0447 R2c); native reads getpeername

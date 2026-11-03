@@ -413,6 +413,7 @@ fn ity_sock_tcp(t_net: Int, t_ec: Int, t_sa: Int, t_in: Int, t_out: Int, t_poll:
   i.fun("[method]tcp-socket.accept", [("self", bs)], acc)
   let la = i.def(dt_result(sa, ec))
   i.fun("[method]tcp-socket.local-address", [("self", bs)], la)
+  i.fun("[method]tcp-socket.remote-address", [("self", bs)], la)
   i.fun("[method]tcp-socket.subscribe", [("self", bs)], own_p)
   i
 }

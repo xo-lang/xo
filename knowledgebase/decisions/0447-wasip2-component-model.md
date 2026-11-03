@@ -779,3 +779,23 @@ wasm arms dial through netwasi.dial_addr and read and write with
 netwasi's hc_recv and hc_send, so its requests and its handling of
 responses are the native client's. Not on wasm yet: https (an error that
 says so), HTTP/2, the connection pool (each request dials).
+
+### Full duplex in a command (2026-11-03, R2c)
+
+The native client sends a streamed request body from a task of a server
+record's detached scope (hserve.srv_new, tasks.scope_detached), so the
+response head can come before the body ends. R2a's wasm server record had
+no scope (Server.serve's own scope runs the connections), so R2b sent the
+body first, and hserve.srv_group, which read the missing scope, faulted.
+The wasm task runtime now has a detached scope: rt.wasi_scope_new is
+rt3's $scope_open under the root node (it outlives the client call that
+made it) that leaves the caller's node unchanged; rt.wasi_scope_group is
+its group; rt.wasi_scope_close (blocking) cancels and waits for its tasks
+and restores the caller's node. srv_new stores one in SR_SCOPE on wasm,
+srv_group returns its group, and srv_close and srv_free close or release
+it, so Client.open's duplex path is the same on both backends. Server.serve
+keeps its own scope for connections on wasm (they are foreground tasks
+there, waited for by the scope's end). hserve.hc_new also sets the
+connection's peer address on wasm (rt.wasi_sock_peer, tcp-socket's
+remote-address), so Request.remote_addr and the proxy's X-Forwarded-For
+match native.

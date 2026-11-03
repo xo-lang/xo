@@ -29,7 +29,7 @@
 
 /// The runtime calls of rt9.xo (the operands' leaves, like rt3.xo's).
 fn rt9_direct(name: Str) -> Bool {
-  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
+  name is "net_status" | "net_msg" | "wasi_sock_status" | "wasi_sock_msg" | "wasi_sock_set" | "wasi_sock_err" | "wasi_sock_listen" | "wasi_sock_local" | "wasi_sock_peer" | "wasi_sock_accept" | "wasi_sock_connect" | "wasi_sock_connected" | "wasi_sock_read" | "wasi_sock_write" | "wasi_sock_close" | "wasi_sock_lclose" | "wasi_sock_deadline" | "wasi_sock_resolve" | "wasi_sock_next" | "wasi_sock_resolve_end"
 }
 
 /// The calls of rt9.xo that can suspend the task.
@@ -50,6 +50,7 @@ fn rt9_imports() -> Str {
     (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.finish-listen" (func $sk_flisten (param i32 i32)))
     (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.accept" (func $sk_accept (param i32 i32)))
     (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.local-address" (func $sk_local (param i32 i32)))
+    (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.remote-address" (func $sk_remote (param i32 i32)))
     (import "wasi:sockets/tcp@0.2.0" "[method]tcp-socket.subscribe" (func $sk_sub (param i32) (result i32)))
     (import "wasi:sockets/tcp@0.2.0" "[resource-drop]tcp-socket" (func $sk_drop (param i32)))
     (import "wasi:sockets/ip-name-lookup@0.2.0" "resolve-addresses" (func $sk_resolve (param i32 i32 i32 i32)))
@@ -710,7 +711,7 @@ fn rt9_text(var g: Gen) -> Str {
 
     ;; the bound address: v6 (0 or 1), the port's two bytes, the 4 or 16
     ;; bytes of the address; empty on an error
-    (func $wasi_sock_local (param $l i32) (result i32 i32) (local $r i32) (local $o i32) (local $i i32) (local $w i32)
+    (func $wasi_sock_local (param $l i32) (result i32 i32)
       local.get $l
       i32.load offset=12
       if
@@ -720,9 +721,39 @@ fn rt9_text(var g: Gen) -> Str {
       end
       local.get $l
       i32.load offset=8
+      i32.const 0
+      call $sk_addr_bytes)
+
+    ;; rt.wasi_sock_peer: connection c's peer address, as $wasi_sock_local's
+    ;; (hserve.hc_new's Request.remote_addr, decision 0447 R2c); empty
+    ;; once closed
+    (func $wasi_sock_peer (param $c i32) (result i32 i32)
+      local.get $c
+      i32.load offset=20
+      if
+        i32.const ${dead}
+        i32.const 0
+        return
+      end
+      local.get $c
+      i32.load offset=8
+      i32.const 1
+      call $sk_addr_bytes)
+
+    ;; socket s's local (remote 0) or remote address as bytes
+    (func $sk_addr_bytes (param $s i32) (param $remote i32) (result i32 i32) (local $r i32) (local $o i32) (local $i i32) (local $w i32)
       call $hret_at
-      local.tee $r
-      call $sk_local
+      local.set $r
+      local.get $remote
+      if
+        local.get $s
+        local.get $r
+        call $sk_remote
+      else
+        local.get $s
+        local.get $r
+        call $sk_local
+      end
       local.get $r
       i32.load8_u
       if

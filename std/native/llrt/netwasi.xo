@@ -228,6 +228,16 @@ pub fn listener_addr(l: Listener) -> List[Str] {
   [fmt_addr(b[3..b.len()], Int(b[1]) * 256 + Int(b[2]))]
 }
 
+/// Connection c's peer address without its port (Request.remote_addr's
+/// host; "" when it cannot be read).
+pub fn peer_ip(c: Conn) -> Str {
+  let b = rt.wasi_sock_peer(c)
+  if b.len() < 7 {
+    return ""
+  }
+  dns.ntop(b[3..b.len()])
+}
+
 /// `l.accept()` (netconn.listener_accept).
 pub fn listener_accept(l: Listener) -> ServerConn {
   let c = rt.wasi_sock_accept(l)

@@ -30,6 +30,7 @@ use native/llrt/ctx
 use native/llrt/hclient
 use native/llrt/hconn
 use native/llrt/http1
+use native/llrt/netwasi
 use native/llrt/obj
 use native/llrt/poll
 use native/llrt/pool
@@ -94,9 +95,11 @@ fn srec(s: rthttp.Srv) -> Int { rt.obj_addr(s) }
 /// A new server, with the scope of its connections open.
 pub fn srv_new() -> rthttp.Srv {
   if target.arch == TargetArch.Wasm32 {
-    // no connection scope or continuations on wasm: serve's own scope runs
-    // the connections (http.xo, decision 0447 R2a)
+    // no continuations on wasm, and serve's own scope runs the
+    // connections (http.xo, decision 0447 R2a); the detached scope holds a
+    // client's full duplex sender (R2c)
     let w = rt.wasi_handle_new(hconn.SR_SIZE, rt.wasi_hook("srv_free"))
+    st(w, hconn.SR_SCOPE, rt.wasi_scope_new())
     let h = rt.obj_at[rthttp.Srv](w)
     tasks.h_release(w)
     return h
@@ -113,9 +116,11 @@ pub fn srv_new() -> rthttp.Srv {
 /// The scope of the connection tasks as a task.Group.
 pub fn srv_group(s: rthttp.Srv) -> task.Group {
   if target.arch == TargetArch.Wasm32 {
-    // no connection scope on wasm (srv_new): Server.serve uses its own
-    // scope's group there
-    fault("hserve.srv_group: no connection scope on wasm")
+    // the wasm runtime's detached scope (srv_new, decision 0447 R2c)
+    let g = rt.wasi_scope_group(ld(srec(s), hconn.SR_SCOPE))
+    let h = rt.obj_at[task.Group](g)
+    tasks.h_release(g)
+    return h
   }
   let g = tasks.scope_group(ld(srec(s), hconn.SR_SCOPE))
   let h = rt.obj_at[task.Group](g)
@@ -475,7 +480,11 @@ pub fn srv_close(s: rthttp.Srv) {
   }
   hconn.unlock(a)
   if target.arch == TargetArch.Wasm32 {
-    // no connection scope: serve's own scope ended its tasks
+    // serve's own scope ended its connections; the detached scope's
+    // tasks (a duplex sender) are canceled and waited for (R2c)
+    let sc = ld(a, hconn.SR_SCOPE)
+    let _r = rt.wasi_scope_close(sc, 1)
+    tasks.h_release(sc)
     return
   }
   let c = ctx.cur()
@@ -571,10 +580,11 @@ pub fn hc_new(s: rthttp.Srv, c: ServerConn) -> rthttp.HConn {
   rc.inc(cn)
   st(hc, hconn.HC_SRV, a)
   st(hc, hconn.HC_CONN, cn)
-  // on wasm R1's connection (no poll descriptor; the peer's address is
-  // not read yet, decision 0447 R2a)
+  // on wasm R1's connection (no poll descriptor, decision 0447 R2a)
   let pd = if wasm { 0 } else { hconn.conn_pd(hc) }
-  if !wasm {
+  if wasm {
+    hconn.set_ip(hc, netwasi.peer_ip(rt.obj_at[Conn](cn)))
+  } else {
     hconn.set_ip(hc, hconn.peer_ip(rt.mem_load(pd, 8, 4)))
   }
   hconn.lock(a)

@@ -1087,3 +1087,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [netpoll-wait-idle-wake-latency.md](netpoll-wait-idle-wake-latency.md): a netpoller wait cost about 1 ms per wake in a program with no concurrency in its code (no worker polled, only the poller thread's ticks)
 - [heap-profile-inuse-flake.md](heap-profile-inuse-flake.md): Observed 2026-11-03: TestProfHeap/arm64 rarely counts 585 freed str_repeat samples as live (linux/arm64, about 1 in 100 under load, 0 in 850 on demand); the test now keeps a failing run.
 - [conc-count-by-name-lists.md](conc-count-by-name-lists.md): the compiler's concurrency count goes by name lists; std/dns and std/udp were missed (no scheduler, no network exports) until std net effects counted
+- [wasi-import-needs-component-type.md](wasi-import-needs-component-type.md): a new WASI import in rt9.xo also needs its function in component.xo's instance type, or every command fails to load ("has no export named").

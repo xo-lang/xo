@@ -348,6 +348,13 @@ fn wasi_h_release(p: Int)
 /// (the task runtime's $mono, WASI's monotonic clock), sysio.mono_ns's
 /// wasm arm
 fn wasi_mono_ns() -> Int
+/// wasm only (decision 0447 R2c): a detached task scope for hserve's
+/// server record (native tasks.scope_detached), its group, and its close
+/// (mode: 1 cancels every task, as tasks.scope_close), which waits for its
+/// tasks and leaves the caller's context as it was
+fn wasi_scope_new() -> Int
+fn wasi_scope_group(s: Int) -> Int
+fn wasi_scope_close(s: Int, mode: Int) -> Int
 /// wasm only (decision 0447 R2a): the table index of the C ABI export
 /// function NAME (a string literal), a runtime record's free hook.
 fn wasi_hook(name: Str) -> Int
@@ -360,6 +367,9 @@ fn wasi_sock_msg() -> Str
 fn wasi_sock_listen(v6: Bool, ip: Bytes, port: Int) -> Listener
 /// The bound address: v6 (0 or 1), the port's two bytes, the address.
 fn wasi_sock_local(l: Listener) -> Bytes
+/// wasm only: connection c's peer address, as wasi_sock_local's bytes
+/// (decision 0447 R2c)
+fn wasi_sock_peer(c: Conn) -> Bytes
 fn wasi_sock_accept(l: Listener) -> ServerConn
 fn wasi_sock_lclose(l: Listener)
 /// A connect started, limited to d ns (0 none); wasi_sock_connected waits

@@ -1,5 +1,21 @@
 # std/http changes
 
+## 2026-11-03: feature: full duplex http.Client requests in a wasip2/wasm command
+
+- Kind: feature
+- Commit: this commit
+- Found by: decision 0447 R2c
+- Go reference: none
+- Test: goldens http_pipe, http_reverse_proxy, http_reverse_proxy_ws
+- Timing: none
+
+A streamed request body in a wasip2/wasm command is sent from a task while
+the response is read, as natively (it was sent whole first): a wasm server
+record now has a detached task scope (rt.wasi_scope_new), which holds the
+sender, and closing the record cancels and waits for it. A request's
+remote_addr is now the peer's address in a command too (it was empty):
+wasi:sockets' tcp-socket.remote-address (rt.wasi_sock_peer).
+
 ## 2026-11-03: feature: http.Client in a wasip2/wasm command
 
 - Kind: feature
