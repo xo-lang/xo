@@ -17,7 +17,7 @@
 - Kind: perf
 - Commit: this commit
 - Test: the corpus above, unchanged (arm64, LLVM, Go backend)
-- Timing: Mac iteration (not evidence), bench/perf/norm: NFC 2.3, NFD 1.4, NFKC 1.7 of x/text's time, from 5.7, 2.1, 3.8 on host 1; the host row follows in bench/results
+- Timing: Mac iteration (not evidence), bench/perf/norm: NFC 2.3, NFD 1.4, NFKC 1.7 of x/text's time, from 5.7, 2.1, 3.8 on host 1; host rows in bench/results/std-twin-rows16-2026-11-03.md: NFC 1.64, NFD 1.13, NFKC 1.11 of x/text
 
 Runes below 0xC0 (0xA0 for the compatibility forms) are their own normalization and never combine with a rune before them, so `normalize` copies them as slices and runs decomposition, reordering and composition only on each run of runes from there up plus the one starter before it; a rune below 0x300 skips the composition pair lookup; the result is built in a `BytesBuilder` with `write_rune`.
 
@@ -27,6 +27,6 @@ Runes below 0xC0 (0xA0 for the compatibility forms) are their own normalization 
 - Commit: this commit
 - Test: the corpus above, unchanged (arm64, LLVM, Go backend)
 - Cost: a program importing std/norm grows by 66,480 bytes (was 299,008): tables 58 KB of `Bytes` constants (was 200 KB of `List[Int]`), code +9.4 KB (was +87 KB); Go's x/text/unicode/norm adds 100,096 (stripped), see bench/results/std-idna-size-2026-11-03.md
-- Timing: Mac iteration (not evidence) bench/perf/norm: NFC 2.2 of x/text, NFD 1.3, NFKC 1.4; the host row follows in bench/results
+- Timing: Mac iteration (not evidence) bench/perf/norm: NFC 2.2 of x/text, NFD 1.3, NFKC 1.4; host rows in bench/results/std-twin-rows16-2026-11-03.md: NFC 1.64, NFD 1.13, NFKC 1.11 of x/text
 
 Decompositions are 7 byte records (a rune or a run of runes at one delta, then the delta or a position in a pool of varint runes) found by a binary search bounded by a 64 rune block index; composition pairs by a search bounded by an index on the first rune; the segment loop walks the bytes, one class list per run.
