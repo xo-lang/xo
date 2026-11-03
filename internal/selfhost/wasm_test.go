@@ -334,7 +334,10 @@ func runWasm(t *testing.T, node, runner, wasm, dir string, leak bool) wasmRun {
 	if data, err := os.ReadFile(filepath.Join(dir, "args.txt")); err == nil {
 		args = append(args, strings.Fields(string(data))...)
 	}
-	cmd := exec.Command(node, args...)
+	// guarded (testtmp.Guard): a node runner left by a killed or timed out
+	// test ran a stuck golden for 12 hours (2026-11-02,
+	// gotchas/wasm-runner-orphaned.md)
+	cmd := testtmp.Guard(exec.Command(node, args...))
 	cmd.Dir = dir
 	cmd.Env = os.Environ()
 	if data, err := os.ReadFile(filepath.Join(dir, "stdin.txt")); err == nil {
