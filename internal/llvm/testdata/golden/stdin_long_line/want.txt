@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+first: 20000 bytes, as written true
+second: "short"
+rest: 2000 lines, each as written true
+--- stderr

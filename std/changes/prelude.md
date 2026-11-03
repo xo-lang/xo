@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-11-03: fix: long standard input on wasm
+
+- Kind: fix
+- Commit: this commit
+- Found by: decision 0447 R2a sizing, reading compiler/wasm's heap_large
+- Go reference: none
+- Test: golden stdin_long_line on wasip1/wasm, wasip2/wasm and natively
+- Timing: none
+- Shipped in: every release with wasip1/wasm stdin, through v0.36.0
+
+Reading standard input on wasm corrupted what followed once the input
+buffer grew past 4 KiB: a long line, or many lines read ahead. The
+buffer's growth (rt.heap_large_resize) copied from 8 bytes before the
+old block (gotchas/wasm-heap-large-resize-prefix.md). Each read's 64 KiB
+block is also given back now instead of leaked.
+
 ## 2026-11-03: perf: a growing large list or string reserves room for four times its size
 
 - Kind: perf

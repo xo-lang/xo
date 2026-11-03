@@ -531,6 +531,8 @@ fn (var g: Gen) call(v: Int) {
         return
       }
       if name == "rt.heap_large_resize" {
+        // the argument is the block's prefix, 8 bytes before its data, as
+        // on the native heap (0: none)
         g.push(x.args[0])
         g.e("i32.wrap_i64")
         g.push(x.args[1])
@@ -541,8 +543,11 @@ fn (var g: Gen) call(v: Int) {
         return
       }
       if name == "rt.heap_release" {
-        // pages from memory.grow are not given back (one wasm instance
-        // a run)
+        // the block onto its class's free list (rt.xo $heap_release); the
+        // argument is its prefix, 8 bytes before its data
+        g.push(x.args[0])
+        g.e("i32.wrap_i64")
+        g.e("call $heap_release")
         return
       }
       if name == "rt.sys_clock_buf" {

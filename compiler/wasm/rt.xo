@@ -200,19 +200,98 @@ fn rt_text(var g: Gen) -> Str {
       i32.add)
 
     ;; rt.heap_large (decision 0207): n zeroed bytes for the runtime's
-    ;; records, from the bump pointer like a new block but with no size
-    ;; class, so the budgets and the leak check do not count them and
-    ;; they are never freed; the size in the 16 byte header before them
-    (func $heap_large (param $n i32) (result i32) (local $p i32) (local $need i32)
+    ;; records, outside the allocator, so the budgets and the leak check
+    ;; do not count them. A block is a power of two of at least 64 bytes
+    ;; with a 16 byte header (its usable size, then the next free block
+    ;; of its class); rt.heap_release puts it on its class's free list
+    ;; and heap_large takes from there first, so a server's per request
+    ;; buffers are reused (they once came from the bump pointer and were
+    ;; never given back)
+    (func $heap_large (param $n i32) (result i32) (local $k i32) (local $p i32)
+      local.get $n
+      i32.const 1073741808
+      i32.gt_u
+      if
+        call $oom
+      end
+      ;; the class: the smallest k with 2^k >= n + 16, at least 6
+      i32.const 32
+      local.get $n
+      i32.const 15
+      i32.add
+      i32.clz
+      i32.sub
+      local.tee $k
+      i32.const 6
+      i32.lt_u
+      if
+        i32.const 6
+        local.set $k
+      end
+      call $lfree_table
+      local.get $k
+      i32.const 2
+      i32.shl
+      i32.add
+      local.tee $p
+      i32.load
+      local.tee $p
+      if
+        ;; reuse: unlink it
+        call $lfree_table
+        local.get $k
+        i32.const 2
+        i32.shl
+        i32.add
+        local.get $p
+        i32.load offset=4
+        i32.store
+      else
+        i32.const 1
+        local.get $k
+        i32.shl
+        call $lbump
+        local.tee $p
+        i32.const 1
+        local.get $k
+        i32.shl
+        i32.const 16
+        i32.sub
+        i32.store
+      end
+      local.get $p
+      i32.const 0
+      i32.store offset=4
+      local.get $p
+      i32.const 16
+      i32.add
+      i32.const 0
+      local.get $n
+      memory.fill
+      local.get $p
+      i32.const 16
+      i32.add)
+    ;; the 32 free list heads of heap_large's classes, made on first use
+    (func $lfree_table (result i32)
+      global.get $lfree
+      i32.eqz
+      if
+        i32.const 128
+        call $lbump
+        i32.const 16
+        i32.add
+        global.set $lfree
+      end
+      global.get $lfree)
+    ;; sz bytes (16 aligned, zeroed: fresh pages) from the bump pointer
+    (func $lbump (param $sz i32) (result i32) (local $p i32) (local $need i32)
       global.get $hp
       i32.const 15
       i32.add
       i32.const -16
       i32.and
       local.tee $p
-      i32.const 16
-      i32.add
-      local.get $n
+      local.get $sz
       i32.add
       local.set $need
       local.get $need
@@ -243,33 +322,58 @@ fn rt_text(var g: Gen) -> Str {
       end
       local.get $need
       global.set $hp
-      local.get $p
-      local.get $n
-      i32.store
-      local.get $p
+      local.get $p)
+    ;; rt.heap_release: the block whose prefix is at b (8 bytes before its
+    ;; data, as on the native heap; 0: none) onto its class's free list
+    (func $heap_release (param $b i32) (local $p i32) (local $k i32)
+      local.get $b
+      i32.eqz
+      if
+        return
+      end
+      local.get $b
+      i32.const 8
+      i32.sub
+      local.tee $p
+      i32.load
       i32.const 16
       i32.add
-      i32.const 0
-      local.get $n
-      memory.fill
+      i32.ctz
+      local.set $k
       local.get $p
-      i32.const 16
-      i32.add)
-    ;; rt.heap_large_resize: a new block of n bytes with the old one's
-    ;; first min(old, n) bytes (the old block is not reused)
-    (func $heap_large_resize (param $b i32) (param $n i32) (result i32) (local $q i32) (local $old i32)
+      call $lfree_table
+      local.get $k
+      i32.const 2
+      i32.shl
+      i32.add
+      i32.load
+      i32.store offset=4
+      call $lfree_table
+      local.get $k
+      i32.const 2
+      i32.shl
+      i32.add
+      local.get $p
+      i32.store)
+    ;; rt.heap_large_resize: a block of n bytes with the first min(old, n)
+    ;; bytes of the one whose prefix is at b (0: none), which is released
+    (func $heap_large_resize (param $b i32) (param $n i32) (result i32) (local $q i32) (local $old i32) (local $d i32)
       local.get $n
       call $heap_large
       local.set $q
       local.get $b
       if
         local.get $b
+        i32.const 8
+        i32.add
+        local.set $d
+        local.get $d
         i32.const 16
         i32.sub
         i32.load
         local.set $old
         local.get $q
-        local.get $b
+        local.get $d
         local.get $old
         local.get $n
         local.get $old
@@ -277,6 +381,8 @@ fn rt_text(var g: Gen) -> Str {
         i32.lt_u
         select
         memory.copy
+        local.get $b
+        call $heap_release
       end
       local.get $q)
     (func $free (param $p i32) (local $b i32) (local $c i32)

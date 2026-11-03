@@ -1748,6 +1748,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   }
   b.write("  (memory (export \"memory\") ${pages})\n")
   b.write("  (global $hp (mut i32) (i32.const ${heap}))\n")
+  b.write("  (global $lfree (mut i32) (i32.const 0))\n")
   if g.frames_used {
     // the stack of the functions' memory frames (func.xo memory_frame)
     b.write("  (global $ls (mut i32) (i32.const 0))\n  (global $lsend (mut i32) (i32.const 0))\n")

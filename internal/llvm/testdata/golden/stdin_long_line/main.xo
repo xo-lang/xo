@@ -1,0 +1,25 @@
+// A first line of 20,000 bytes on standard input, longer than the input
+// buffer's first 4,096, so the buffer grows (stdin.xo put) with its bytes
+// kept, then 2,000 lines of 100 bytes, read in many reads. On wasm the
+// growth is rt.heap_large_resize, which once read the old block's size
+// and bytes 8 bytes early, and each read's 64 KiB block is given back to
+// the free lists (compiler/wasm rt.xo $heap_release) instead of leaked.
+fn main(os: Os) ! {
+  let out = os.stdio
+  let first = out.read_line()? ?? "<end>"
+  var want = StrBuilder.new()
+  for _ in 0..2000 {
+    want.write("abcdefghij")
+  }
+  out.println("first: ${first.len()} bytes, as written ${first == want.freeze()}")
+  out.println("second: ${(out.read_line()? ?? "<end>").quote()}")
+  var n = 0
+  var ok = true
+  while let Some(l) = out.read_line()? {
+    if l.len() != 99 || !l.starts_with("${n}".pad_left(6, "0")) {
+      ok = false
+    }
+    n += 1
+  }
+  out.println("rest: ${n} lines, each as written ${ok}")
+}
