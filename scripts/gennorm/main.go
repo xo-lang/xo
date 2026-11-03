@@ -145,6 +145,38 @@ func main() {
 	w.WriteString("/// The runes of the decompositions of CANON, each a varint.\nconst CANON_POOL: Bytes = " + lit(cp) + "\n\n")
 	w.WriteString("/// Runes whose full compatibility decomposition (NFKD) differs from their NFD, as CANON.\nconst COMPAT: Bytes = " + lit(kr7) + "\n\n")
 	w.WriteString("/// The runes of the decompositions of COMPAT, each a varint.\nconst COMPAT_POOL: Bytes = " + lit(kp) + "\n\n")
+	idx16 := func(v int) []byte { return []byte{byte(v), byte(v >> 8)} }
+	rd3 := func(b []byte, p int) int { return int(b[p]) | int(b[p+1])<<8 | int(b[p+2])<<16 }
+	// blockIdx[b]: the last record with its first rune at or before b*64 (0 if none), for b up to 0x3000/64
+	blockIdx := func(recs []byte) []byte {
+		var out []byte
+		n := len(recs) / 7
+		for b := 0; b <= 0x3000/64; b++ {
+			last := 0
+			for i := 0; i < n; i++ {
+				if rd3(recs, 7*i) <= b*64 {
+					last = i
+				}
+			}
+			out = append(out, idx16(last)...)
+		}
+		return out
+	}
+	// compIdx[a]: the first composition pair whose first rune is at least a, for a up to 0x400
+	var compIdx []byte
+	for a := 0; a <= 0x400; a++ {
+		first := len(pk)
+		for i, k := range pk {
+			if k>>21 >= a {
+				first = i
+				break
+			}
+		}
+		compIdx = append(compIdx, idx16(first)...)
+	}
+	w.WriteString("/// Per block of 64 runes up to U+3000 (and one more), 2 bytes: the last record of CANON that starts at or before the block's first rune, to bound the search.\nconst CANON_IDX: Bytes = " + lit(blockIdx(cr7)) + "\n\n")
+	w.WriteString("/// The same for COMPAT.\nconst COMPAT_IDX: Bytes = " + lit(blockIdx(kr7)) + "\n\n")
+	w.WriteString("/// Per first rune up to U+400 (and one more), 2 bytes: the first record of COMP whose first rune is at least that.\nconst COMP_IDX: Bytes = " + lit(compIdx) + "\n\n")
 	w.WriteString("/// Canonical combining classes as 7 byte records, ascending: the first rune (3 bytes), the last rune (3 bytes), the class.\nconst CCC: Bytes = " + lit(ccb) + "\n\n")
 	w.WriteString("/// Primary composition pairs, ascending by first * 2**21 + second, 9 bytes each: that key (6 bytes) and the rune it composes to (3 bytes).\nconst COMP: Bytes = " + lit(cmb) + "\n\n")
 	// sort pairs by key
