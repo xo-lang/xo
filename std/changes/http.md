@@ -10,7 +10,7 @@
 
 Attribute names, SameSite values, the weekday and the month compare with `equal_fold` against constant
 names (the values are ASCII there, so the result is the lower cased compare's) instead of allocating a
-lower cased copy each time; the weekday and month lists are consts. See the results file for the figure.
+lower cased copy each time; the weekday and month lists are consts. Xo / Go wall of setcookie: 1.52 to 1.02 (host 1, 15 rounds).
 
 ## 2026-11-02: fix: an HTTP/2 request's trailers were copied from freed memory
 
