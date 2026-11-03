@@ -129,6 +129,13 @@ Each line names the first release with the bug (found by reading the
 history: the commit that brought the faulty code, and the first tag holding
 it). Bugs that came and went within this cycle are not listed.
 
+- Security: a hostile archive crashed a native program in untar or unzip
+  instead of returning an error (a zip whose local header fell before the
+  data, a tar or PAX time past 2262, a zip NTFS time with its top bit
+  set); each now gives Go's answer, and several other archives read as Go
+  reads them (std/changes/archive.md). std/archive has shipped since
+  v0.11.0; when each faulting read arrived was not traced.
+
 - Native dial on Linux could return a connection that was never made (the
   socket watched before connect, then SO_ERROR 0 taken as done): since
   v0.7.0 (the C runtime; ported unchanged to Xo in v0.12.0).
@@ -188,6 +195,7 @@ it). Bugs that came and went within this cycle are not listed.
 
 ### Every change in 0.36.0
 
+- FIX (std/archive, security): untar and unzip of a hostile archive no longer crash a native program (an index out of range on a zip local header before the data, an integer overflow on a tar or PAX time past 2262 or a zip NTFS time with its top bit set); each gives Go's answer, 64-bit fields are read with a wrapping shift, and tar's padding end, PAX global headers, old GNU sparse maps and special headers, and zip's directory count, cut local headers, non UTF-8 names and unknown Unix file types now read as Go reads them. Found by the archive fuzz harness (internal/stdtest/archivefuzz_test.go, 2,010 corpus cases on arm64, LLVM and the Go backend). std/changes/archive.md.
 - FIX (native): `net.dial` of a name with IPv6 and IPv4 addresses races them as Go's dual stack dial does, the second family 300 ms after the first (decision 0462). On Windows, where localhost is ::1 first and a refused connect takes about 2 s, every dial to localhost with an IPv4-only listener cost 2 s (golden tls_coalesced_finish: 84 s, past its 60 s timeout under load); now 300 ms at most. Since v0.7.0.
 - fix (native, LLVM): a select's word send arm keeps its channel, and a word receive arm keeps its select, alive until the runtime call that uses them returns; both were released as soon as their address was taken, so a send arm whose channel had no later use could free it while select still read it (TSan use-after-free in select_arm_order under --race on Linux). A select's receive arm now takes the word path whenever its element is a word (it was decided from a checker type id read as an SSA type, so it varied with unrelated types). Codegen pattern test test/codegen/selectrc; gotcha obj-addr-handle-released-early.md.
 - perf (native, amd64): a two word copy into the stack whose first word sits at 8 mod 16 copies that word alone, so no 16 byte movdqu store into the stack straddles a 4 KiB page (the amd64 form of the arm64 save pair fix): 82,849 such stores in xo for linux/amd64 to 0, .text +0.08%. bench/results/stack-phase-2026-11-02.md "amd64".
