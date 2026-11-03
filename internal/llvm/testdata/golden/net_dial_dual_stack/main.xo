@@ -32,11 +32,18 @@ fn main(os: Os) {
     }
     Err(e) => os.stdio.println("listen: ${e}")
   }
-  // ::1 alone: hosts with no IPv6 loopback skip it
+  // ::1 alone, only where localhost resolves to an IPv6 address (Go's
+  // tests skip without IPv6 support): a host may have a ::1 loopback while
+  // its hosts file maps localhost to 127.0.0.1 alone (WSL2), and a dial to
+  // localhost there never tries ::1
+  if !has_v6(os) {
+    os.stdio.println("localhost to ::1: ok")
+    return
+  }
   match os.net.listen("[::1]:0") {
     Ok(l) => {
       let ok = dials(os, "localhost", l, 1)
-      os.stdio.println("localhost to ::1: ${if ok == 1 || !has_v6(os) { "ok" } else { "failed" }}")
+      os.stdio.println("localhost to ::1: ${if ok == 1 { "ok" } else { "failed" }}")
       l.close()
     }
     Err(_) => os.stdio.println("localhost to ::1: ok")
