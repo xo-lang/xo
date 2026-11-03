@@ -1,0 +1,30 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): maps.
+
+struct E {
+  name: Str
+  seq: Int
+}
+
+// Map.update's closure neither catches a fault nor keeps the value it was
+// given (only Mutex.with's does, core 5.4), so the inner map it changes
+// is not held twice: no retain of its lists before the put (each a bl to
+// a retain thunk, _xo_h..._xN; the captures' two remain), which made the
+// put copy them and then turn the map into the log form for good
+// (2026-11-03, std/cookiejar's map of maps: seven calls before the fix).
+fn step(var m: Map[Str, Map[Str, E]], key: Str, id: Str, i: Int) -> Int {
+  m.update(key, {}, fn(var sub: Map[Str, E]) -> Int {
+    // func step.fn1
+    // arm64: "bl _?xo_f_xo_2emap_2eput" -"bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+bl _xo_h[A-Za-z0-9]+_x[0-9]+\s+"
+    sub[id] = E{name: id, seq: i}
+    sub.len()
+  })
+}
+
+fn main(os: Os) uses stdio {
+  var m: Map[Str, Map[Str, E]] = {}
+  var n = 0
+  for i in 0..100 {
+    n += step(m, "k${i % 3}", "id${i % 7}", i)
+  }
+  os.stdio.println("${n}")
+}
