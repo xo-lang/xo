@@ -62,3 +62,7 @@ Listed above (2, 3). Also rejected: normalizing inside `Str` operations or compa
 
 std/norm is accepted now: implement it and report its real cost (`__text` and binary size of a program that imports
 it against one that does not). std/idna waits for the owner's word after that number.
+
+## Cost of std/norm (measured 2026-11-03)
+
+A program importing std/norm against one that does not, darwin/arm64 release: binary +292 KB (227 KB to 519 KB), `__text` +86,748 bytes, `__const` +199,744 bytes. Programs, commands and table: bench/results/std-norm-size-2026-11-03.md. std/idna waits for the owner after this number.
