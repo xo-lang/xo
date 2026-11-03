@@ -76,6 +76,12 @@ fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
     return Some(json.Value.List(items: items))
   }
   let ms = jsontext.members(src, tape, i)
+  // a duplicate key's earlier values are dropped, but Go's decode still
+  // fails on a number out of range in one (found by the json fuzz,
+  // internal/stdtest/jsonfuzz_test.go, 2026-11-02)
+  if ms.len() < 2 * tape[i + 1] && bad_path(src, tape, i) != None {
+    return None
+  }
   var fields: List[(Str, json.Value)] = []
   var m = 0
   while m + 1 < ms.len() {
@@ -86,7 +92,9 @@ fn value_at(src: Bytes, tape: List[Int], i: Int) -> json.Value? {
 }
 
 /// The decode path (".key", "[2]") of the first number at or under node i
-/// that is out of Float's range, with that number's node, or None.
+/// that is out of Float's range, with that number's node, or None. An
+/// object's members are walked as written, a duplicate key's earlier
+/// values too, as Go's decode reads them.
 fn bad_path(src: Bytes, tape: List[Int], i: Int) -> (Str, Int)? {
   let k = tape[i]
   if k == 3 {
@@ -108,13 +116,15 @@ fn bad_path(src: Bytes, tape: List[Int], i: Int) -> (Str, Int)? {
     return None
   }
   if k == 6 {
-    let ms = jsontext.members(src, tape, i)
+    // members as written: key node j, its value at j + 3
+    var j = i + 3
     var m = 0
-    while m + 1 < ms.len() {
-      if let Some((p, at)) = bad_path(src, tape, ms[m + 1]) {
-        return Some(("." + jsontext.str_at(src, tape, ms[m]) + p, at))
+    while m < tape[i + 1] {
+      if let Some((p, at)) = bad_path(src, tape, j + 3) {
+        return Some(("." + jsontext.str_at(src, tape, j) + p, at))
       }
-      m += 2
+      j = jsontext.next(tape, j + 3)
+      m += 1
     }
   }
   None

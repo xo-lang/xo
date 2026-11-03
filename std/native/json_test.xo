@@ -3181,3 +3181,15 @@ test "encode_indent (S3): Go's MarshalIndent of a struct" {
   expect(json.encode_indent_str(v)) == "{\n  \"id\": 7,\n  \"raw\": {\n    \"k\": []\n  },\n  \"note\": \"x\\ty\"\n}"
   expect(json.encode_indent(v, "", "").to_str()) == Some("{\n\"id\": 7,\n\"raw\": {\n\"k\": []\n},\n\"note\": \"x\\ty\"\n}")
 }
+
+test "parse_value: a number out of range under a duplicate key fails, as Go's Unmarshal" {
+  // found by internal/stdtest/jsonfuzz_test.go (2026-11-02): the key's
+  // last value replaced the bad one and the error was dropped
+  expect(json.parse_value("{\"a\": 1e400, \"a\": 1}").is_err()) == true
+  expect(json.parse_value("{\"a\": {\"b\": -1e400}, \"a\": 1}").is_err()) == true
+  expect(json.parse_value("[{\"a\": 1.7976931348623159e308, \"a\": {}}]").is_err()) == true
+  expect(json.decode[json.Value](b"{\"a\": 1e400, \"\\u0061\": 1}").is_err()) == true
+  // a duplicate key alone is fine: its last value
+  expect(json.parse_value("{\"a\": 1, \"a\": 2}").ok().map(fn(v) { v.encode() })) == Some("{\"a\":2}")
+  expect(json.parse_value("{\"a\": 1e400}").is_err()) == true
+}

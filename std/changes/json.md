@@ -1,5 +1,23 @@
 # std/json changes
 
+## 2026-11-02: fix: a number out of range under a duplicate key fails decode, as in Go
+
+- Kind: fix
+- Commit: this commit
+- Found by: the json fuzz harness (internal/stdtest/jsonfuzz_test.go, seeds 3 to 5)
+- Go reference: encoding/json Unmarshal into `any` (go1.26.1): an UnmarshalTypeError in a value a later duplicate key replaces is still returned
+- Test: internal/stdtest/testdata/corpus/jsonfuzz/jsonfuzz_test.xo (2,003 cases against Go's Unmarshal and Compact, seed 1, run by TestStdCorpora); TestJsonFuzz runs fresh seeds
+
+`decode[json.Value]` and `parse_value` of an object whose key repeats
+read only each key's last value, so a number out of Float's range in an
+earlier value (`{"a": 1e400, "a": 1}`) was dropped and the decode
+succeeded; Go fails it. The range check now walks an object's members as
+written when it has a duplicate key (objects without one take the same
+path as before), and the error's path names the first such number in
+document order. Typed `decode[T]` still reads only each key's last value,
+so an error in a replaced value (a number out of range, a value of the
+wrong type) is dropped there; a typed fuzz mode is the next step.
+
 ## 2026-10-29: feature: json.Value as a field; encode_indent, indent, compact (S3)
 
 - Kind: feature
