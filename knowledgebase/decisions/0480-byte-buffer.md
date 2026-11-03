@@ -1,7 +1,11 @@
 # 0480: A byte buffer to consume from the front (Go's bytes.Buffer)
 
-Status: Proposed (Xo Lang 2, 2026-11-03; for the owner; no implementation
-before a choice)
+Status: Accepted on a condition (owner, 2026-11-03, through the lead): B1
+ships only if the measurement passes (peak RSS no worse than Go's
+bytes.Buffer on 1M small records and on 1 MiB and 64 MiB records, with Go's
+buffer_test ported), and if a simpler option (B3, B4) wins the measurement
+the choice comes back to the owner instead. Measured 2026-11-03: B3 meets
+the bar (below); back to the owner, B1 not built.
 
 ## Context
 
@@ -121,3 +125,15 @@ bench/perf/bytebuf with a twin.txt:
 ## Alternatives
 
 The options above; the proposal is B1, with B2 as a follow-up.
+
+## Measurement (2026-11-03)
+
+bench/results/std-twin-bytebuf-2026-11-03.md, linux/arm64, Go's
+bytes.Buffer as the twin: option B3 (views and an offset, no new type)
+cuts 1M small records at 0.916 of Go's wall and 0.182 of its peak RSS, a
+1 MiB record at 0.171 of its peak (wall within noise), and a 64 MiB record
+at 0.201 of its wall and 0.249 of its peak. Today's `rest + piece` is
+0.919 on small records too, and quadratic on a large record only. B3
+wins on the owner's measure, so B1 waits for the owner's choice; what B1
+would still add is the bookkeeping each parser repeats (B3's held views
+and the join).

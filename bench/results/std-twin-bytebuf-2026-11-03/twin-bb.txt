@@ -1,0 +1,26 @@
+offload: /work had 25 GB free; pruned xo cache files idle over 360 min, now 25G
+linux/arm64: /work/l2twin/xoprog
+build env: none
+go go1.26.1; host Linux 7.0.14-linuxkit aarch64; rev ae5e9d89cacfaeb56b408db9d6b228de32b315b4
+== small_concat: small_concat 1006704 49326864 | small_concat 1006704 49326864
+wall_ms               14.52       13.34       1.017% 3.855%     0.919   0.905 to 0.938    better (n=15)
+cpu_ms                15.18       13.29       1.858% 3.57%      0.876   0.859 to 0.889    too coarse (n=15)
+max_rss_kb            12072       2196        8.632% 0%         0.182   0.182 to 0.219    better (n=15)
+== small_views: small_views 1006704 49326864 | small_views 1006704 49326864
+wall_ms               14.66       13.43       13.8% 20.04%      0.916   0.905 to 0.941    better (n=15)
+cpu_ms                15.42       13.3        3.955% 17.27%     0.862   0.856 to 0.89     too coarse (n=15)
+max_rss_kb            12072       2196        0.696% 5.829%     0.182   0.182 to 0.193    better (n=15)
+== large1_concat: large1_concat 1 1048576 | large1_concat 1 1048576
+wall_ms               1.049       1.028       40.01% 7.929%     0.98    0.802 to 1.015    within noise (n=15)
+cpu_ms                1.306       0.941       44.91% 9.405%     0.721   0.553 to 0.791    too coarse (n=15)
+max_rss_kb            9852        3816        0.284% 0%         0.387   0.387 to 0.388    better (n=15)
+== large1_views: large1_views 1 1048576 | large1_views 1 1048576
+wall_ms               1.268       0.99        142.1% 50.02%     0.78    0.372 to 1.078    within noise (n=15)
+cpu_ms                1.535       0.904       30.68% 27.49%     0.589   0.501 to 0.713    too coarse (n=15)
+max_rss_kb            9844        1684        0.366% 3.8%       0.171   0.171 to 0.172    better (n=15)
+== large64_views: large64_views 1 67108864 | large64_views 1 67108864
+wall_ms               26.97       5.42        32.4% 33.9%       0.201   0.177 to 0.26     better (n=15)
+cpu_ms                34.62       5.281       38.47% 20.18%     0.153   0.115 to 0.177    too coarse (n=15)
+max_rss_kb            270636      67372       0.048% 0.095%     0.249   0.249 to 0.249    better (n=15)
+twin: ok
+OFFLOAD-RC=0
