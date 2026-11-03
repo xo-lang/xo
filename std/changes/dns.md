@@ -1,5 +1,25 @@
 # std/dns changes
 
+## 2026-11-03: perf: a lookup of one query waits on the netpoller, not in ppoll
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 3's dns mx row (4.66x Go; CPU 30 ms against 22 ms of wall per 2,000 lookups)
+- Go reference: net/dnsclient_unix.go dnsPacketRoundTrip (its UDP conn read parks the goroutine on the netpoller)
+- Test: internal/arm64 TestGoldenRun dns_records, net_lookup_dial_timeout, udp_echo, net_dial_dual_stack, net_only
+- Timing: bench/perf/dns mx, `xo bench --ab` on linux/arm64: 101.3 ms to 20.73 ms wall (0.205), cpu 0.243
+- Shipped in: unreleased
+
+The UDP round of a lookup waited for its answer in ppoll(2) (poll on
+macOS) on the worker thread, so every lookup slept and woke a thread,
+and a server task in the same program waited for a free worker. A
+lookup of one query (an MX, TXT, SRV or other records lookup) now
+registers its socket with the netpoller and parks its task on it until
+the answer or the deadline, as a UDP read does, reading the socket until
+it would block before each wait (the poller is edge triggered). Lookups
+of several queries in parallel (A and AAAA) and Windows keep the ppoll
+round.
+
 ## 2026-11-02: fix: the resolver configuration and hosts file were copied from freed memory
 
 - Kind: fix

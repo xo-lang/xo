@@ -56,6 +56,7 @@ use native/llrt/darwin
 use native/llrt/host
 use native/llrt/linux
 use native/llrt/obj
+use native/llrt/poll
 use native/llrt/pool
 use native/llrt/raw
 use native/llrt/sock
@@ -1625,6 +1626,14 @@ struct Q {
 /// (dnsPacketRoundTrip, then the meaning); KIND_TRUNC for one to repeat
 /// over TCP.
 fn udp_round(qs: List[Q], name: Str, server: Bytes, deadline: Int) -> List[(Int, List[Addr])] {
+  if qs.len() == 1 && os() != 3 {
+    return [udp_one(qs[0], name, server, deadline)]
+  }
+  udp_round_wait(qs, name, server, deadline)
+}
+
+/// udp_round in ppoll on the worker thread (several queries, Windows).
+fn udp_round_wait(qs: List[Q], name: Str, server: Bytes, deadline: Int) -> List[(Int, List[Addr])] {
   var out: List[(Int, List[Addr])] = []
   var fds: List[Int] = []
   for q in qs {
@@ -1706,6 +1715,68 @@ fn udp_round(qs: List[Q], name: Str, server: Bytes, deadline: Int) -> List[(Int,
   }
   let _k = sock.keep(buf, 0)
   out
+}
+
+/// udp_round of one query, waiting in the task on the netpoller (as
+/// netconn.udp_read does) instead of in ppoll on the worker thread: a
+/// lookup answered by a task of the same program (bench/perf/dns) wakes
+/// with a fiber switch, not a thread sleep and wake. The poller is edge
+/// triggered, so the socket is read until EAGAIN before each wait.
+fn udp_one(q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, List[Addr]) {
+  let fd = open_sock(server, sock.SOCK_DGRAM)
+  if fd < 0 {
+    return (KIND_TEMP, [])
+  }
+  let pd = poll.pd_new(fd, false)
+  if pd == 0 {
+    let _c = sock.close(fd)
+    return udp_round_wait([q], name, server, deadline)[0]
+  }
+  let r = udp_one_pd(pd, fd, q, name, server, deadline)
+  poll.pd_free(pd)
+  r
+}
+
+fn udp_one_pd(pd: Int, fd: Int, q: Q, name: Str, server: Bytes, deadline: Int) -> (Int, List[Addr]) {
+  var c = sock.connect_to(fd, server)
+  while c == -sock.EINTR {
+    c = sock.connect_to(fd, server)
+  }
+  var s = if c < 0 { c } else { sock.send_bytes(fd, q.msg) }
+  while s == -sock.EINTR {
+    s = sock.send_bytes(fd, q.msg)
+  }
+  if s < 0 || !poll.pd_begin(pd) {
+    return (KIND_TEMP, [])
+  }
+  // the poller's clock for the deadline (the test world's may be virtual)
+  let pdl = poll.now() + (deadline - now())
+  let buf = raw.bytes_buf(MAX_PACKET)
+  var res = (KIND_TEMP, [])
+  while true {
+    let r = sock.recv(fd, raw.bytes_addr(buf), MAX_PACKET, 0)
+    if r == -sock.EINTR {
+      continue
+    }
+    if r == -e_again() {
+      if deadline - now() <= 0 || poll.pd_wait(pd, false, if pdl == 0 { 1 } else { pdl }) != poll.READY {
+        break
+      }
+      continue
+    }
+    if r < 0 {
+      // a socket error (ICMP refused): temporary
+      break
+    }
+    let (kind, addrs) = answer(buf[0..r], q.id, name, q.qtype)
+    if kind != KIND_IGNORE {
+      res = (kind, addrs)
+      break
+    }
+  }
+  poll.pd_end(pd)
+  let _k = sock.keep(buf, 0)
+  res
 }
 
 /// The TCP exchange of query q with server until a deadline timeout
