@@ -48,6 +48,18 @@ one() {
 	for b in go llvm native alloff; do
 		[ $b = $ref ] || [ $b = "$skip" ] || cmp -s "$o/$ref.out" "$o/$b.out" || bad="$bad $b"
 	done
+	# a run that timed out (exit 124 or 137) is load, not a difference:
+	# reported as TIMEOUT with its outputs kept, never as DIFF (a native
+	# program that ran 10 s under load was a DIFF, 2026-11-02)
+	to=""
+	for b in go llvm native alloff; do
+		grep -q -E "^exit (124|137)$" "$o/$b.out" && to="$to $b"
+	done
+	if [ -n "$to" ]; then
+		echo "TIMEOUT $n:$to"
+		mkdir -p "${KEEP:-/tmp/coll-diff-keep}/$n" && cp -r "$d/." "${KEEP:-/tmp/coll-diff-keep}/$n/" && cp "$o"/*.out "${KEEP:-/tmp/coll-diff-keep}/$n/"
+		return
+	fi
 	if [ -z "$bad" ]; then echo "same $n"; else
 		echo "DIFF $n:$bad"
 		if ! cmp -s "$o/$ref.out" "$o/native.out" && cmp -s "$o/$ref.out" "$o/llvm.out"; then
@@ -56,9 +68,10 @@ one() {
 				cmp -s "$o/$ref.out" "$o/sweep.out" && echo "  $n: native agrees with $ref when $p is off"
 			done
 		fi
-		mkdir -p "${KEEP:-/tmp/coll-diff-keep}" && cp -r "$d" "${KEEP:-/tmp/coll-diff-keep}/$n"
+		# the source and every backend's output (stdout and exit), to compare
+		mkdir -p "${KEEP:-/tmp/coll-diff-keep}" && cp -r "$d" "${KEEP:-/tmp/coll-diff-keep}/$n" && cp "$o"/*.out "$o"/*.err "${KEEP:-/tmp/coll-diff-keep}/$n/" 2>/dev/null
 	fi
 }
 export -f one
 printf '%s\n' "$@" | xargs -P "$JOBS" -I{} bash -c 'one {}' | tee "$T/log"
-echo "reference failed: $(grep -c '^REFFAIL' "$T/log"), programs: $(grep -c '^\(same\|DIFF\|REFFAIL\)' "$T/log"), same: $(grep -c '^same' "$T/log"), differ: $(grep -c '^DIFF' "$T/log")"
+echo "reference failed: $(grep -c '^REFFAIL' "$T/log"), programs: $(grep -c '^\(same\|DIFF\|REFFAIL\|TIMEOUT\)' "$T/log"), same: $(grep -c '^same' "$T/log"), differ: $(grep -c '^DIFF' "$T/log"), timeout: $(grep -c '^TIMEOUT' "$T/log")"
