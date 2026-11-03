@@ -1,0 +1,11 @@
+// std/adler32 (spec/std.md 52). Declaration file; encoding rules are
+// listed at the top of std/prelude.xo. Go's hash/adler32: the checksum
+// of zlib (RFC 1950). Fast and weak on short inputs: for detecting
+// corruption, not for hashing. Pure.
+
+/// The Adler-32 of data, 0 to 2^32 - 1 (Go's Checksum); 1 for empty data.
+fn checksum(data: Bytes) -> Int
+/// The Adler-32 of what sum was the checksum of, followed by data (Go's
+/// Write on a digest at that state): `update(checksum(a), b) ==
+/// checksum(a + b)`, and `update(1, d) == checksum(d)`.
+fn update(sum: Int, data: Bytes) -> Int

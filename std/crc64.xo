@@ -1,0 +1,19 @@
+// std/crc64 (spec/std.md 51). Declaration file; encoding rules are
+// listed at the top of std/prelude.xo. Go's hash/crc64: the 64 bit
+// cyclic redundancy check (ISO 3309, used by Redis and HDLC; ECMA 182,
+// used by xz). Pure.
+
+/// The polynomial: Go's ISO (0xd800000000000000) and ECMA
+/// (0xc96c5795d7870f42) tables, both reversed as Go's are.
+enum Poly {
+  Iso
+  Ecma
+}
+
+/// The CRC-64 of data: the Int's bits are Go's uint64, so a checksum past
+/// 2^63 is negative (Go's Checksum with MakeTable(poly)).
+fn checksum(data: Bytes, poly: Poly = Poly.Iso) -> Int
+/// The CRC-64 of what crc was the checksum of, followed by data (Go's
+/// Update): `update(checksum(a), b) == checksum(a + b)`, and
+/// `update(0, d) == checksum(d)`.
+fn update(crc: Int, data: Bytes, poly: Poly = Poly.Iso) -> Int

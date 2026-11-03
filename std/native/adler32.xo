@@ -1,0 +1,52 @@
+// std/adler32 on the native backends: Go's hash/adler32 (adler32.go of
+// go1.26.1). Two sums mod 65521, kept as Ints: with 64 bit sums the
+// modulus is taken once a megabyte (Go's nmax of 5552 is the 32 bit
+// limit), eight bytes a step read as one word.
+use std/adler32
+use native/rt
+
+const MOD: Int = 65521
+const BLOCK: Int = 1048576
+
+fn checksum(data: Bytes) -> Int { update(1, data) }
+
+fn update(sum: Int, data: Bytes) -> Int {
+  var s1 = sum & 0xffff
+  var s2 = (sum >> 16) & 0xffff
+  var i = 0
+  let n = data.len()
+  while i < n {
+    var e = i + BLOCK
+    if e > n {
+      e = n
+    }
+    while i + 8 <= e {
+      let w = rt.bytes_word(data, i)
+      s1 += w & 255
+      s2 += s1
+      s1 += (w >> 8) & 255
+      s2 += s1
+      s1 += (w >> 16) & 255
+      s2 += s1
+      s1 += (w >> 24) & 255
+      s2 += s1
+      s1 += (w >> 32) & 255
+      s2 += s1
+      s1 += (w >> 40) & 255
+      s2 += s1
+      s1 += (w >> 48) & 255
+      s2 += s1
+      s1 += (w >> 56) & 255
+      s2 += s1
+      i += 8
+    }
+    while i < e {
+      s1 += Int(data[i])
+      s2 += s1
+      i += 1
+    }
+    s1 = s1 % MOD
+    s2 = s2 % MOD
+  }
+  (s2 << 16) | s1
+}

@@ -2,7 +2,9 @@ package main
 
 import (
 	"fmt"
+	"hash/adler32"
 	"hash/crc32"
+	"hash/crc64"
 	"hash/fnv"
 	"os"
 )
@@ -33,6 +35,18 @@ func main() {
 		}
 		for i := 0; i < 2000; i++ {
 			sum = sum ^ int(crc32.Checksum(big, t)) ^ i
+		}
+	case "crc64", "crc64e":
+		t := crc64.MakeTable(crc64.ISO)
+		if w == "crc64e" {
+			t = crc64.MakeTable(crc64.ECMA)
+		}
+		for i := 0; i < 2000; i++ {
+			sum = sum ^ int(int64(crc64.Checksum(big, t))) ^ i
+		}
+	case "adler32":
+		for i := 0; i < 2000; i++ {
+			sum = sum ^ int(adler32.Checksum(big)) ^ i
 		}
 	case "fnv32a", "fnv64a", "fnv128a":
 		for i := 0; i < 2000000; i++ {
