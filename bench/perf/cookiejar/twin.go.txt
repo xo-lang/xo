@@ -1,0 +1,46 @@
+package main
+
+import (
+	"fmt"
+	"net/http"
+	"net/http/cookiejar"
+	"net/url"
+	"os"
+)
+
+func urlOf(i int) *url.URL {
+	paths := []string{"/", "/a", "/a/b", "/x", "/x/y"}
+	scheme := "http"
+	if i%3 == 0 {
+		scheme = "https"
+	}
+	return &url.URL{Scheme: scheme, Host: fmt.Sprintf("h%d.example.com", i%8), Path: paths[(i/8)%5]}
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	if w != "none" {
+		jar, _ := cookiejar.New(nil)
+		for i := 0; i < 100000; i++ {
+			u := urlOf(i % 40)
+			if w == "set" || w == "both" {
+				jar.SetCookies(u, []*http.Cookie{{Name: "a", Value: fmt.Sprintf("v%d", i%7)}, {Name: "b", Value: "w", Domain: "example.com"}, {Name: "c", Value: fmt.Sprintf("x%d", i%3), Path: "/a", Secure: true}})
+			} else if i < 40 {
+				jar.SetCookies(u, []*http.Cookie{{Name: "a", Value: "v1"}, {Name: "b", Value: "w", Domain: "example.com"}})
+			}
+			if w == "get" || w == "both" {
+				d := &url.URL{Scheme: u.Scheme, Host: u.Host, Path: u.Path + "/deep"}
+				cs := jar.Cookies(d)
+				sum += len(cs)
+				for _, c := range cs {
+					sum += len(c.Value)
+				}
+			}
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

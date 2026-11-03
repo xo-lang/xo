@@ -1,0 +1,37 @@
+// cookiejar: std/cookiejar against Go's net/http/cookiejar (twin.go.txt):
+// 100000 rounds, each stores three cookies a server sets for one of 40
+// URLs (8 hosts, 5 paths) and asks for the cookies to send to a deeper URL.
+// Usage: `<program> none|set|get|both`. Prints `<workload> <checksum>` (the
+// cookies chosen, by count and value length); the twin prints the same.
+use std/cookiejar
+use std/http
+
+fn url_of(i: Int) -> http.Url {
+  let paths = ["/", "/a", "/a/b", "/x", "/x/y"]
+  http.Url{scheme: if i % 3 == 0 { "https" } else { "http" }, host: "h${i % 8}.example.com", port: None, path: paths[(i / 8) % 5], query: {}}
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  if w != "none" {
+    let jar = cookiejar.new()
+    let now = Time.from_unix(1700000000)
+    for i in 0..100000 {
+      let u = url_of(i % 40)
+      if w == "set" || w == "both" {
+        jar.set_cookies(u, [http.Cookie{name: "a", value: "v${i % 7}"}, http.Cookie{name: "b", value: "w", domain: "example.com"}, http.Cookie{name: "c", value: "x${i % 3}", path: "/a", secure: true}], now)
+      } else if i < 40 {
+        jar.set_cookies(u, [http.Cookie{name: "a", value: "v1"}, http.Cookie{name: "b", value: "w", domain: "example.com"}], now)
+      }
+      if w == "get" || w == "both" {
+        let cs = jar.cookies(http.Url{scheme: u.scheme, host: u.host, port: None, path: u.path + "/deep", query: {}}, now)
+        sum += cs.len()
+        for c in cs {
+          sum += c.value.len()
+        }
+      }
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}

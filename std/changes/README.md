@@ -50,6 +50,7 @@ entries yet.
 - [fnv.md](fnv.md): std/fnv (spec/std.md 45)
 - [bufio.md](bufio.md): std/bufio (spec/std.md 55)
 - [cron.md](cron.md): std/cron (spec/std.md 58)
+- [cookiejar.md](cookiejar.md): std/cookiejar (spec/std.md 59)
 - [crc32.md](crc32.md): std/crc32 (spec/std.md 44)
 - [crc64.md](crc64.md): std/crc64 (spec/std.md 51)
 - [adler32.md](adler32.md): std/adler32 (spec/std.md 52)

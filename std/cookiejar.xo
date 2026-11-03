@@ -1,0 +1,53 @@
+// std/cookiejar (spec/std.md 58, decision 0475). Declaration file. A cookie
+// jar with net/http/cookiejar's rules (RFC 6265 section 5): the cookies a
+// server sets for a URL are kept, and the ones to send with a request for a
+// URL are chosen by domain, path and Secure, in Go's order. No public suffix
+// list is consulted (Go's default too). The time is a parameter, so a test
+// passes a fixed instant.
+use std/http
+
+/// One stored cookie (net/http/cookiejar's entry). Internal: use the jar.
+struct Entry {
+  name: Str
+  value: Str
+  quoted: Bool
+  domain: Str
+  path: Str
+  secure: Bool
+  /// false for a session cookie (expires is then not used)
+  persistent: Bool
+  host_only: Bool
+  expires: Time
+  creation: Time
+  last_access: Time
+  seq: Int
+}
+
+/// A jar's state. Internal: use the methods.
+struct JarState {
+  /// by the registrable domain key, then by `domain;path;name`
+  entries: Map[Str, Map[Str, Entry]]
+  next_seq: Int
+}
+
+/// A cookie jar. A handle: copies share the cookies, and tasks may use it
+/// at once.
+struct Jar {
+  st: Mutex[JarState]
+}
+
+/// An empty jar (cookiejar.New(nil)).
+fn new() -> Jar
+
+/// Stores the cookies a server set for url (Jar.SetCookies): none for a
+/// scheme other than http and https, one that has a bad Domain attribute
+/// (not the host or a parent of it, or an IP host with a Domain) is
+/// ignored, a Max-Age below 0 or an Expires not after now deletes. A host
+/// that is not ASCII is ignored (no IDNA yet).
+fn (j: Jar) set_cookies(url: http.Url, cookies: List[http.Cookie], now: Time)
+/// The cookies to send with a request for url (Jar.Cookies): name, value
+/// and quoted only, the longest path first, then the earliest created.
+/// Expired cookies are dropped.
+fn (j: Jar) cookies(url: http.Url, now: Time) -> List[http.Cookie]
+/// Forgets every cookie.
+fn (j: Jar) clear()

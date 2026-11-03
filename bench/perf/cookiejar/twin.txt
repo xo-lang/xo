@@ -1,0 +1,5 @@
+# twincheck: cookiejar: four workloads (none is the setup alone); Go is net/http/cookiejar.
+- - none
+- - set
+- - get
+- - both

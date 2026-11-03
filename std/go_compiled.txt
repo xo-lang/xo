@@ -20,3 +20,4 @@ cbor
 charset
 otp
 bcrypt
+cookiejar

@@ -169,7 +169,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | net/http (client) | std/http Client | partial | get, send, post_json, redirects, gzip, HTTP/2, TLS roots, one timeout per client. Missing: cookie jar, proxies, streaming response bodies (Response.body is whole), a timeout per request. |
 | net/http/httptest | std/testing FakeNet, Router.call | done | In process servers and fakes (section 8). |
 | net/http/httputil | none | planned | ReverseProxy and DumpRequest. |
-| net/http/cookiejar | none | planned | With client cookies. |
+| net/http/cookiejar | std/cookiejar | done | Jar with Go's matching rules, the clock a parameter, no public suffix list (spec/std.md 59, decision 0475); the http.Client wiring is a later change. |
 | net/http/pprof | std/debug router (decision 0325) | done | CPU and heap profiles over HTTP under a prefix the program mounts, behind its auth function; XO_PROF for files (decision 0238). |
 | net/http/httptrace | none | not planned | Tracing is the runtime's (decision 0240). |
 | net/http/cgi, net/http/fcgi | none | not planned | Legacy deployment models. |
