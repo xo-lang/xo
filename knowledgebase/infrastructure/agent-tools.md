@@ -38,6 +38,13 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   examples/realtime-control), or whose requirement is not in the module
   cache, is left out and the rest checked, and the answer names it
   (`"skipped"` in JSON, a `note: skipped` line in text).
+- Prelude names: an unqualified name resolves to the program's own
+  declaration first, so in the repository `File` is compiler/parser's,
+  not the prelude's file handle. Write `prelude.File` (`prelude.Map.get`)
+  for the prelude's. When the program's declaration hides a prelude one,
+  def and doc say so: a `note: the prelude also declares File, hidden
+  here by the program's own: xo doc prelude.File` line in text, a
+  `"prelude"` key in JSON (2026-11-03, cmd/xo TestDocPreludeHidden).
 - A root's check skips every `testdata` directory, as each DIR/... walk
   does (decision 0210), so the program goldens under
   internal/*/testdata are not searched: refs names the directories it

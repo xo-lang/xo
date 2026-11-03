@@ -574,6 +574,27 @@ fn (s: Session) resolve(name: Str) -> List[QDef] {
   out
 }
 
+/// The spelling that asks for the prelude's declaration of an
+/// unqualified name when a module of the program declares the same name
+/// and so hides it from def and doc (`File` in a checkout whose
+/// compiler/parser declares one): `prelude.File`; "" when nothing is
+/// hidden.
+pub fn (s: Session) prelude_hidden(name: Str) -> Str {
+  if s.c.prelude < 0 || name.contains("/") || name.starts_with("prelude.") {
+    return ""
+  }
+  let parts = name.split(".")
+  if s.lookup(s.c.prelude, parts).is_empty() {
+    return ""
+  }
+  for m in s.user_modules() {
+    if !s.lookup(m, parts).is_empty() {
+      return "prelude.${name}"
+    }
+  }
+  ""
+}
+
 fn add_defs(var out: List[QDef], var seen: Set[Str], ds: List[QDef]) {
   for d in ds {
     let k = "${d.kind}|${pos_text(d.pos)}|${d.name}"

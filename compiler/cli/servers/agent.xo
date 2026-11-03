@@ -335,6 +335,10 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
         print_json(os, v)
       } else {
         os.stdio.print(agent_text(os, cmd, v, a.docs, cwd, s.std_dir))
+        let hidden = jstr_of(v, "prelude")
+        if !hidden.is_empty() {
+          os.stdio.println("note: the prelude also declares ${a.target}, hidden here by the program's own: xo ${cmd} ${hidden}")
+        }
         if !cut.is_empty() {
           os.stdio.println("note: ${cut}")
         }
@@ -1044,6 +1048,12 @@ fn (var s: Session) agent_def(os: Os, target: Str, with_methods: Bool) -> J ! St
       }
     }
     out.push(d)
+  }
+  // a prelude declaration the program's own hides (`File` in the
+  // repository, compiler/parser's): name the spelling that asks for it
+  let hidden = semantic.Session{c: s.res[0].c, wd: s.wd}.prelude_hidden(target)
+  if !hidden.is_empty() {
+    return Ok(jobj(["target", "declarations", "prelude"], [jstr(target), jarr(out), jstr(hidden)]))
   }
   Ok(jobj(["target", "declarations"], [jstr(target), jarr(out)]))
 }

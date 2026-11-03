@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 )
@@ -80,4 +81,43 @@ func itoaT(n int) string {
 		n /= 10
 	}
 	return string(b)
+}
+
+// TestDocPreludeHidden covers a prelude name that the program's own
+// declaration hides (2026-11-03, Xo Lang 2: `xo doc File` in the
+// repository answered compiler/parser's File): the answer stays the
+// program's, with a note (and the JSON key "prelude") naming the spelling
+// that asks for the prelude's, and that spelling answers it.
+func TestDocPreludeHidden(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "xo.mod"), []byte("module example.com/dh\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	src := "struct File { n: Int }\n\nfn main(os: Os) {\n  let f = File{n: 1}\n  os.stdio.println(\"${f.n}\")\n}\n"
+	if err := os.WriteFile(filepath.Join(dir, "main.xo"), []byte(src), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	chdir(t, dir)
+	var out, errb bytes.Buffer
+	if code := runXo(t, []string{"doc", "--dir=.", "--text", "File"}, &out, &errb); code != 0 {
+		t.Fatalf("xo doc File: exit %d\n%s%s", code, out.String(), errb.String())
+	}
+	if !strings.Contains(out.String(), "main.xo") || !strings.Contains(out.String(), "xo doc prelude.File") {
+		t.Errorf("xo doc File: want the program's File and a note naming prelude.File:\n%s%s", out.String(), errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := runXo(t, []string{"def", "--dir=.", "--json", "File"}, &out, &errb); code != 0 || !regexp.MustCompile(`"prelude": ?"prelude\.File"`).MatchString(out.String()) {
+		t.Errorf("xo def --json File: exit %d, want a \"prelude\" key of \"prelude.File\":\n%s%s", code, out.String(), errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := runXo(t, []string{"doc", "--dir=.", "--text", "prelude.File"}, &out, &errb); code != 0 || !strings.Contains(out.String(), "File.read") || strings.Contains(out.String(), "note: the prelude") {
+		t.Errorf("xo doc prelude.File: exit %d, want the prelude's File with its methods and no note:\n%s%s", code, out.String(), errb.String())
+	}
+	out.Reset()
+	errb.Reset()
+	if code := runXo(t, []string{"doc", "--dir=.", "--text", "Map"}, &out, &errb); code != 0 || strings.Contains(out.String(), "note: the prelude") {
+		t.Errorf("xo doc Map: exit %d, want no note (nothing hides it):\n%s%s", code, out.String(), errb.String())
+	}
 }
