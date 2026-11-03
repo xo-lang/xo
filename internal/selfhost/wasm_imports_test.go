@@ -17,14 +17,12 @@ import (
 // UDP only program for no TCP (the host grants the network from the
 // imports, wasmNetFlags). The runtime's import blocks list whole
 // interfaces; gen.xo drop_unused_imports keeps the called ones (a UDP
-// program imported TCP until 2026-11-03). Needs wasm-tools; skips without.
+// program imported TCP until 2026-11-03). Needs wasm-tools (needWasmTools).
 func TestWasmCommandImports(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
-	if _, err := exec.LookPath("wasm-tools"); err != nil {
-		t.Skip("wasm-tools is not installed")
-	}
+	needWasmTools(t, "wasm-tools")
 	xo, err := xotool.Path()
 	if err != nil {
 		t.Fatal(err)

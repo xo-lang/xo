@@ -34,11 +34,7 @@ func TestWasmCommandGoldens(t *testing.T) {
 	if testing.Short() {
 		t.Skip("builds programs")
 	}
-	for _, tool := range []string{"wasm-tools", "wasmtime"} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s not found", tool)
-		}
-	}
+	needWasmTools(t, "wasm-tools", "wasmtime")
 	xo, err := xotool.Path()
 	if err != nil {
 		t.Fatal(err)
@@ -236,4 +232,20 @@ func matchAny(pats, name string) bool {
 		}
 	}
 	return false
+}
+
+// needWasmTools skips t when a tool is not on PATH (the Mac), or fails it
+// when XO_TEST_WASM_TOOLS=1: the lead's tier sets it, so its wasm command
+// tests cannot pass by skipping (they did on the second linux/arm64 host,
+// whose jobs had no /work/tools/bin on PATH, until 2026-11-03).
+func needWasmTools(t *testing.T, tools ...string) {
+	t.Helper()
+	for _, tool := range tools {
+		if _, err := exec.LookPath(tool); err != nil {
+			if os.Getenv("XO_TEST_WASM_TOOLS") == "1" {
+				t.Fatalf("%s not found and XO_TEST_WASM_TOOLS=1", tool)
+			}
+			t.Skipf("%s not found", tool)
+		}
+	}
 }

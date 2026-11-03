@@ -117,11 +117,7 @@ func TestWasmComponentServe(t *testing.T) {
 	if host != "wasmtime" && host != "spin" {
 		t.Fatalf("XO_WASM_HOST=%s: want wasmtime or spin", host)
 	}
-	for _, tool := range []string{"wasm-tools", host} {
-		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s not found", tool)
-		}
-	}
+	needWasmTools(t, "wasm-tools", host)
 	xo, err := xotool.Path()
 	if err != nil {
 		t.Fatal(err)
