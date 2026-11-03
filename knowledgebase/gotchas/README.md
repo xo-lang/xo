@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [shared-list-write-same-value.md](shared-list-write-same-value.md): Observed 2026-11-03: setting a flag that was already set, in a list std's ELF half shares, copied 5.75 MB of section records at link.resolve; test before a write that is often a no-op.
 - [stack-phase-4k-aliasing.md](stack-phase-4k-aliasing.md): Observed 2026-11-02: a 208 byte smaller frame put hot prologues' register pairs across a 4 KiB page, +36% CPU on /alloc (Linux VM, M4); save area now 16 byte aligned, XO_STACK_SHIFT finds such phases
 - [wasm-runner-orphaned.md](wasm-runner-orphaned.md): Observed 2026-11-02: internal/selfhost runWasm started node unguarded, and a killed test left it running a stuck golden for 12 hours; every runner a test starts goes through testtmp.Guard or Lifeline.
 - [wsl2-loopback-http-throughput.md](wsl2-loopback-http-throughput.md): Observed 2026-11-02: loopback HTTP on the WSL2 amd64 offload host runs about 20x below the arm64 hosts, Go's jitter server worse than Xo's; not for HTTP throughput (a1's amd64 HTTP rows in doubt)

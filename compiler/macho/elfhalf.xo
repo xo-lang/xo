@@ -100,6 +100,7 @@ pub fn (s: ElfStoreLink) capture_half() -> ElfHalf? {
     return None
   }
   var objs: List[EObj] = List.with_capacity(s.n)
+  var maps: List[List[Int]] = List.with_capacity(s.n)
   var kept = 0
   var dropped = 0
   for o in 0..s.n {
@@ -165,6 +166,15 @@ pub fn (s: ElfStoreLink) capture_half() -> ElfHalf? {
       ob.sects[k].data = if places.is_empty() { l.osects[x.out].bytes[x.off..x.off + x.size] } else { half_restore(l.osects[x.out].bytes, x.off, x.size, x.data, places) }
       ob.sects[k].relocs = keep
     }
+    // most of std's symbols are locals of its dead sections (coll's half:
+    // 78,725 of 105,356, mapping and section symbols of functions the
+    // program does not use), which nothing reads: the half leaves them
+    // out unless a relocation names one, and the indexes after them move
+    // down (relocations, a group's signature, the globals below). A half
+    // file is keyed by xo's self_id, so none written before this is read.
+    let (kept_syms, remap) = drop_dead_locals(ob.sects, ob.syms)
+    ob.syms = kept_syms
+    maps.push(remap)
     objs.push(ob)
   }
   var globals: Map[Bytes, (Int, Int)] = {}
@@ -189,7 +199,16 @@ pub fn (s: ElfStoreLink) capture_half() -> ElfHalf? {
   var seen_gc: Map[Bytes, Int] = {}
   var und_gc: List[(Bytes, Bool)] = []
   t.undefined_in(0, s.n, true, seen_gc, und_gc)
-  Some(ElfHalf{objs: objs, n: s.n, globals: globals, comdats: comdats, und: und, und_gc: und_gc, pins: l.half_pins(), kept: kept, dropped: dropped})
+  // the half's own symbol indexes (und above reads l's objects, whose
+  // indexes are unchanged)
+  var hglobals = globals
+  for (name, d) in globals {
+    let (o, i) = d
+    if o < maps.len() && !maps[o].is_empty() && i >= 0 && i < maps[o].len() {
+      hglobals[name] = (o, maps[o][i])
+    }
+  }
+  Some(ElfHalf{objs: objs, n: s.n, globals: hglobals, comdats: comdats, und: und, und_gc: und_gc, pins: l.half_pins(), kept: kept, dropped: dropped})
 }
 
 fn (l: ELinker) half_pins() -> List[Int] {
@@ -315,6 +334,61 @@ pub fn elf_half_encode(h: ElfHalf) -> Bytes {
 
 /// The half in b, None when b is not one: section bytes and names are
 /// views of b.
+/// syms without the local symbols of dead sections that no relocation of
+/// sects names, and the old index to new index map (empty when nothing is
+/// left out; a dropped symbol maps to -1); sects' relocations and a group
+/// section's signature index are moved to the new indexes in place.
+fn drop_dead_locals(var sects: List[ESect], syms: List[ESym]) -> (List[ESym], List[Int]) {
+  var named: List[Bool] = List.with_capacity(syms.len())
+  for _ in 0..syms.len() {
+    named.push(false)
+  }
+  for s in sects {
+    for r in s.relocs {
+      if r.sym >= 0 && r.sym < named.len() {
+        named.set(r.sym, true)
+      }
+    }
+    if s.typ == SHT_GROUP && s.info >= 0 && s.info < named.len() {
+      named.set(s.info, true)
+    }
+  }
+  var drop = 0
+  for (i, y) in syms.indexed() {
+    if i > 0 && (y.info >> 4) == STB_LOCAL && y.shndx > 0 && y.shndx < SHN_LORESERVE && y.shndx < sects.len() && sects[y.shndx].dead && !named[i] {
+      drop += 1
+    }
+  }
+  if drop == 0 {
+    return (syms, [])
+  }
+  var map: List[Int] = List.with_capacity(syms.len())
+  var out: List[ESym] = List.with_capacity(syms.len() - drop)
+  for (i, y) in syms.indexed() {
+    if i > 0 && (y.info >> 4) == STB_LOCAL && y.shndx > 0 && y.shndx < SHN_LORESERVE && y.shndx < sects.len() && sects[y.shndx].dead && !named[i] {
+      map.push(-1)
+    } else {
+      map.push(out.len())
+      out.push(y)
+    }
+  }
+  for k in 0..sects.len() {
+    if !sects[k].relocs.is_empty() {
+      var rs = sects[k].relocs
+      for j in 0..rs.len() {
+        var r = rs[j]
+        r.sym = map[r.sym]
+        rs.set(j, r)
+      }
+      sects[k].relocs = rs
+    }
+    if sects[k].typ == SHT_GROUP && sects[k].info >= 0 && sects[k].info < map.len() {
+      sects[k].info = map[sects[k].info]
+    }
+  }
+  (out, map)
+}
+
 pub fn elf_half_decode(b: Bytes) -> ElfHalf? {
   let m = ELF_HALF_MAGIC.bytes()
   if b.len() < m.len() + 16 || b[0..m.len()] != m {

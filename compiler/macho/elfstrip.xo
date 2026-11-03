@@ -110,8 +110,12 @@ fn (var l: ELinker) gc_sections() {
   for o in 0..l.objs.len() {
     if l.objs[o].stored {
       l.gc_done = true
+      // only the ones not dead yet: a write copies the object's section
+      // list, which std's half shares (its store_dead sections are dead
+      // already, 5.6 MB of copies at link.resolve, decision 0448,
+      // gotchas/shared-list-write-same-value.md)
       for k in 0..l.objs[o].sects.len() {
-        if l.objs[o].sects[k].store_dead {
+        if l.objs[o].sects[k].store_dead && !l.objs[o].sects[k].dead {
           l.objs[o].sects[k].dead = true
         }
       }

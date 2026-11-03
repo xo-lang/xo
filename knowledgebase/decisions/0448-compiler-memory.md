@@ -948,8 +948,28 @@ function) and 3,497 relocations, and each section allocated its own empty reloca
 now share the empty literal's list (elfhalf.xo): elf_half_decode in use 18.2 to 11.3 MB at
 link.resolve, store_prepare's rise +28 to +20 MB. linux/arm64 ab-host edit builds, 3 rounds, 0
 loaded: coll max RSS 0.942, wall 0.983; conc-spawn 0.903, 0.975; the HTTP server 0.974, 0.943. The rest of the
-11.3 MB is the section records themselves (about 220 bytes each); a store_dead section, most of
-std's, needs only its size and name.
+11.3 MB is about half section records (112 bytes each in a probe of 100,000: about 5.8 MB) and
+half symbol records (105,356).
+
+Two more, measured A then B in one environment on host 1 (heap profile at link.resolve, coll):
+
+- The half's symbols: 78,725 of coll's 105,356 are locals of its dead sections (the mapping and
+  section symbols of functions the program does not use), and nothing reads the ones no
+  relocation names. The half leaves those out when it is written (elfhalf.xo
+  drop_dead_locals) and moves the remaining indexes down (relocations, a group's signature,
+  the globals map); a half file is keyed by xo's self_id, so none written before is read.
+  Dropping them at decode instead took in use 29.3 to 25.2 MB but cost coll's edit 1.5% wall
+  (two passes over every symbol each link); dropping them at write also shrinks the file, so
+  its bytes (raw.bytes_buf) fall 9.9 to 7.5 MB.
+- ELinker.gc_sections set `dead` on each store_dead section, all of them dead already in the
+  half; the write copied each object's section list, which the half shares (5.75 MB,
+  gotchas/shared-list-write-same-value.md). It now writes only a change.
+
+Both: in use at link.resolve 29.3 (main at 902e37b4c, with the empty relocation lists) to
+16.9 MB, 36.1 before those; coll, conc-spawn and the HTTP server link byte-identical to main.
+linux/arm64 ab-host edit builds against 902e37b4c, 3 rounds: max RSS coll 0.896,
+conc-spawn 0.930, the HTTP server 0.927; wall 0.984, 0.935, 1.011 (within noise). What is left at link.resolve: the
+decoded half (8.2 MB) and the half file's bytes (7.5 MB, viewed by every kept name and section).
 
 ## Consequences
 
