@@ -1,5 +1,17 @@
 # std/base32 changes
 
+## 2026-11-03: perf: decode copies its input only when a newline is to be dropped
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/base32 decode 1.76 of Go's wall (bench/results/std-twin-rows2-2026-11-03.md)
+- Go reference: encoding/base32 decode (go1.26.1)
+- Test: bench/perf/base32 (twincheck), `xo test --std-module=native/base32`
+
+Every decode copied the text byte by byte into a builder to drop CR and LF; it now checks for
+them first and decodes the text in place when there are none. Xo / Go wall of decode: 1.76 to 0.47
+(`xo bench --ab`, host 1, 15 rounds).
+
 ## 2026-10-26: perf: encode takes whole five byte blocks as one word
 
 - Kind: perf

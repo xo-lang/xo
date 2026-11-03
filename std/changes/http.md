@@ -1,5 +1,17 @@
 # std/http changes
 
+## 2026-11-03: perf: parse_set_cookie and Expires dates no longer lower case copies
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/cookie setcookie 1.52 of Go's wall; profile: cookie_date 36%, unicode.case_append 14%
+- Go reference: net/http cookie.go (go1.26.1)
+- Test: bench/perf/cookie (twincheck), `xo test --std-module=native/http`, internal/stdtest http corpus
+
+Attribute names, SameSite values, the weekday and the month compare with `equal_fold` against constant
+names (the values are ASCII there, so the result is the lower cased compare's) instead of allocating a
+lower cased copy each time; the weekday and month lists are consts. See the results file for the figure.
+
 ## 2026-11-02: fix: an HTTP/2 request's trailers were copied from freed memory
 
 - Kind: fix
