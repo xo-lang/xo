@@ -100,3 +100,17 @@ Go runs measured putget 9,996 KB and push 88,232 KB (lines 5, 6).
 the release run measured 13,634 KB and the 5-run THP table above
 12,964 KB, so its median here depends on the split. Go's push runs
 range from 66,236 to 88,380 KB (line 18).
+
+## 0.37.0 as released, 7 runs
+
+The 0.37.0 seed build, 849e98465 (both the cap and decision 0469),
+measured the same way, with Go again in the same job:
+
+| Host | putget | vs 0.35.0 | push | vs 0.35.0 | Go putget | Go push | file |
+|---|---|---|---|---|---|---|---|
+| darwin/arm64 | 6,288 | 0.862 | 26,784 | 0.526 | 8,864 | 58,016 | [darwin-0.37.0.txt](alloc-cache-cap-2026-11-03/darwin-0.37.0.txt) lines 2 to 5 |
+| linux/arm64 (dense) | 8,772 | 0.847 | 31,840 | 0.581 | 9,996 | 80,380 | [linux-0.37.0.txt](alloc-cache-cap-2026-11-03/linux-0.37.0.txt) lines 3 to 6 |
+
+The ratios are against the 0.35.0 rows above (darwin.txt line 2 and 3,
+linux.txt line 3 and 4). Linux putget is 76 KB over 3389eb2c0's 8,696;
+Go's push again spreads widest (55,992 to 103,240 KB).
