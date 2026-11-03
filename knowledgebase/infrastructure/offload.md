@@ -209,9 +209,11 @@ not restart; the Mac's known_hosts entry changes with the host key):
 - nodejs, make, gcc, python3, time, flock;
 - the user `xo` (tests run as non-root: as root, the permission goldens
   such as fs_ops_edges print other output);
-- the seed: the public 0.34.0 linux-arm64 release in `/work/seed`; after a
-  minor version bump that seed cannot build, put the new release there
-  and change `OFF_SEED`.
+- the seed: the 0.37.0 linux-arm64 seed in
+  `/work/seed/xo-0.37.0-linux-arm64` (both arm64 hosts; last verified:
+  2026-11-03); after a minor version bump that seed cannot build,
+  unpack the new seed there and change `OFF_SEED`. `alloc-split.sh`'s
+  base spec is built by `$OFF_SEED`, so it moves with the seed.
 
 ### WebAssembly tools (owner-approved 2026-10-30, decisions 0405 and 0447)
 
@@ -283,8 +285,9 @@ The owner's second machine (2026-10-29): a 16-core x86-64 box running
 Windows with OpenSSH (password login, user `xo`, no administrator) and a
 WSL2 Ubuntu 24.04 distribution for that user (28 CPUs, 62 GB from its
 `.wslconfig`). Its values live in `~/xo-lead/offload-amd64.env` (mode
-600) with `OFF_KIND=wsl` and `OFF_SEED` the WSL path of the 0.34.0
-linux-amd64 seed (`~/xo-ci/seed/xo/bin/xo`); WSL has clang 18, lld,
+600) with `OFF_KIND=wsl` and `OFF_SEED` the WSL path of the 0.37.0
+linux-amd64 seed (`~/xo-ci/seed-0.37.0/xo/bin/xo`; Windows itself uses
+`~/xo-ci/seed-0.37.0/xo/bin/xo.exe`; last verified: 2026-11-03); WSL has clang 18, lld,
 llvm, build-essential, expect and Go 1.26.0 in `~/go-sdk` (on PATH from
 `~/.profile`). Windows' own shell is cmd.exe, so offload.sh sends a job
 there as a file: scp (`-O`, the legacy protocol, which both hosts take)
