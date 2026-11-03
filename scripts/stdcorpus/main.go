@@ -38,6 +38,7 @@ var generators = map[string]func() string{
 	"binary":     binaryCorpus,
 	"bytes":      bytesCorpus,
 	"case":       caseCorpus,
+	"charset":    charsetCorpus,
 	"cli":        cliCorpus,
 	"compress":   compressCorpus,
 	"aead":       aeadCorpus,
