@@ -12,6 +12,11 @@ LICENSE and std/LICENSE.
        decision 0059)
      std/native/bcrypt.xo (golang.org/x/crypto v0.58.0, packages bcrypt
        and blowfish, ported to Xo; the file says which code it follows)
+     std/native/norm.xo (golang.org/x/text v0.43.0, package unicode/norm:
+       the algorithm follows it and the tables are generated from it by
+       scripts/gennorm; Copyright 2011 The Go Authors, BSD-style license)
+     std/native/cookiejar.xo (Go 1.26.1, package net/http/cookiejar,
+       ported to Xo)
 
    Ported to Xo or modeled on Go's standard library (the files say which
    Go code they follow): parts of std/ and std/native/, including the

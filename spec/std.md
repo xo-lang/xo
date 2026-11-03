@@ -6893,3 +6893,18 @@ fn (j: Jar) clear()
 - Cookies are kept per registrable domain key (the last two labels of the host; an IP address is its own key), by domain, path and name. `set_cookies` takes the Domain and Path attributes as RFC 6265 section 5.3 and Go: a Domain that is not the host or a parent of it is ignored, an IP host takes a Domain only if equal to it (then host only), a Max-Age below 0 or an Expires not after `now` deletes the cookie, Max-Age wins over Expires, a Path that does not start with `/` is the default path of the URL.
 - `cookies` sends a cookie whose domain matches (a host cookie only its host), whose path matches (RFC 6265 section 5.1.4) and, if it is Secure, over https, or to `localhost` and loopback addresses over http (as Go 1.26 does). Cookies past their expiry are dropped. They come in Go's order: the greater path first (compared as strings), then the earlier created.
 - A scheme other than http and https stores and sends nothing. A host that is not ASCII is ignored (there is no IDNA yet, decision 0476). No public suffix list is consulted (Go's default): a cookie for `com` or `co.uk` is accepted. `http.Url` holds the port apart; an IPv6 host keeps its brackets unless the Url has a port, as Go's `net/url` and `canonicalHost` do. The jar is not saved to a file and is not wired into `http.Client` (a later change).
+
+## 60. std/norm
+
+Status: implemented on every backend (2026-11-03, decision 0476, std/norm accepted by the owner 2026-11-03; std/idna waits): `std/native/norm.xo` on the native backends and, through `std/go_compiled.txt`, the Go backend. The tables (Unicode 15.0.0, the version of golang.org/x/text v0.43.0's unicode/norm that go1.26 builds) are generated into the native source by `scripts/gennorm`; the corpus (`internal/stdtest/testdata/corpus/norm`, `go run ./scripts/stdcorpus norm`) holds x/text's result for every rune a form changes and for 700 seeded strings of decomposable runes, combining marks, Hangul and ASCII.
+
+```xo
+enum Form { Nfc, Nfd, Nfkc, Nfkd }
+fn unicode_version() -> Str                    // "15.0.0"
+fn normalize(s: Str, f: Form) -> Str
+fn is_normalized(s: Str, f: Form) -> Bool
+```
+
+- `normalize` decomposes every rune (canonically, or by compatibility for Nfkc and Nfkd; Hangul syllables by arithmetic), puts each run of combining marks in canonical order (stable by combining class) and, for Nfc and Nfkc, composes (the primary composites, none of the full composition exclusions; a mark blocked by one of an equal or higher class stays separate), as UAX #15. Pure ASCII is returned as it is.
+- `is_normalized(s, f)` is `normalize(s, f) == s` (x/text's quick check avoids building the result; here it does not yet).
+- The tables add about 200 KB of read only data and 87 KB of code to a program that imports the module (measured: decision 0476 and std/changes/norm.md); a program that does not import it pays nothing. Not included: `Form.Append`, the streaming `Reader` and `Writer`, `Iter`, `FirstBoundary` and `Properties` (a later change if a user needs them), and IDNA (decision 0476, waits for the owner).
