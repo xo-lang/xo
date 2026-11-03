@@ -14,3 +14,4 @@ metrics
 trace
 rate
 backoff
+png

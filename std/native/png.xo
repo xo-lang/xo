@@ -1,0 +1,1448 @@
+// std/png on the native backends and, through std/go_compiled.txt, on the
+// Go backend (decision 0312): one source, Go's image/png (reader.go,
+// writer.go, paeth.go; Copyright 2009 The Go Authors, BSD-style license)
+// over std/compress's zlib. The reader takes the IDAT chunks as one
+// buffer and unfilters row after row into the pix layout of Go's image
+// types; the writer filters each row as writer.go does and compresses the
+// rows through one streaming zlib compressor.
+use std/binary
+use std/compress
+use std/crc32
+use std/png
+
+// ---------------------------------------------------------------------------
+// Color types and bit depths (a "cb" is a combination of both)
+
+const CT_GRAY: Int = 0
+const CT_TRUE: Int = 2
+const CT_PAL: Int = 3
+const CT_GRAYA: Int = 4
+const CT_TRUEA: Int = 6
+
+const CB_G1: Int = 1
+const CB_G2: Int = 2
+const CB_G4: Int = 3
+const CB_G8: Int = 4
+const CB_GA8: Int = 5
+const CB_TC8: Int = 6
+const CB_P1: Int = 7
+const CB_P2: Int = 8
+const CB_P4: Int = 9
+const CB_P8: Int = 10
+const CB_TCA8: Int = 11
+const CB_G16: Int = 12
+const CB_GA16: Int = 13
+const CB_TC16: Int = 14
+const CB_TCA16: Int = 15
+
+const FT_NONE: Int = 0
+const FT_SUB: Int = 1
+const FT_UP: Int = 2
+const FT_AVERAGE: Int = 3
+const FT_PAETH: Int = 4
+
+/// The decoding stages (the order the chunks may come in).
+const DS_START: Int = 0
+const DS_IHDR: Int = 1
+const DS_PLTE: Int = 2
+const DS_TRNS: Int = 3
+const DS_IDAT: Int = 4
+const DS_IEND: Int = 5
+
+fn cb_paletted(cb: Int) -> Bool { cb >= CB_P1 && cb <= CB_P8 }
+
+fn cb_true_color(cb: Int) -> Bool { cb == CB_TC8 || cb == CB_TC16 }
+
+fn bits_per_pixel(cb: Int, depth: Int) -> Int {
+  if cb == CB_G1 || cb == CB_G2 || cb == CB_G4 || cb == CB_G8 {
+    return depth
+  }
+  if cb >= CB_P1 && cb <= CB_P8 {
+    return depth
+  }
+  if cb == CB_GA8 || cb == CB_G16 {
+    return 16
+  }
+  if cb == CB_TC8 {
+    return 24
+  }
+  if cb == CB_TCA8 || cb == CB_GA16 {
+    return 32
+  }
+  if cb == CB_TC16 {
+    return 48
+  }
+  64
+}
+
+fn pngerr_display(e: png.PngErr) -> Str {
+  match e {
+    png.PngErr.Format(msg) => "png: invalid format: ${msg}"
+    png.PngErr.Unsupported(msg) => "png: unsupported feature: ${msg}"
+    png.PngErr.Truncated => "unexpected EOF"
+    png.PngErr.Flate(msg) => msg
+  }
+}
+
+fn format_err(msg: Str) -> png.PngErr { png.PngErr.Format(msg: msg) }
+
+fn unsupported(msg: Str) -> png.PngErr { png.PngErr.Unsupported(msg: msg) }
+
+fn model_bytes(m: png.Model) -> Int {
+  match m {
+    png.Model.Gray => 1
+    png.Model.Paletted => 1
+    png.Model.Gray16 => 2
+    png.Model.RGBA => 4
+    png.Model.NRGBA => 4
+    png.Model.RGBA64 => 8
+    png.Model.NRGBA64 => 8
+  }
+}
+
+fn model_bytes_per_pixel(m: png.Model) -> Int { model_bytes(m) }
+
+fn zeros(n: Int) -> Bytes { Bytes.zeroed(n) }
+
+fn image(width: Int, height: Int, model: png.Model) -> png.Image {
+  if width < 1 || height < 1 {
+    fault("png.image: bad size ${width}x${height}")
+  }
+  png.Image{width: width, height: height, model: model, pix: zeros(width * height * model_bytes(model)), palette: []}
+}
+
+// ---------------------------------------------------------------------------
+// The paeth predictor (paeth.go)
+
+fn min_int(a: Int, b: Int) -> Int { if a < b { a } else { b } }
+
+fn abs_int(x: Int) -> Int { if x < 0 { 0 - x } else { x } }
+
+fn paeth(a: Int, b: Int, c: Int) -> Int {
+  var pc = c
+  var pa = b - pc
+  var pb = a - pc
+  pc = abs_int(pa + pb)
+  pa = abs_int(pa)
+  pb = abs_int(pb)
+  if pa <= pb && pa <= pc {
+    return a
+  } else if pb <= pc {
+    return b
+  }
+  c
+}
+
+// ---------------------------------------------------------------------------
+// The decoder
+
+/// The decoder's state while the chunks are read.
+struct Dec {
+  w: Int = 0
+  h: Int = 0
+  depth: Int = 0
+  cb: Int = 0
+  interlace: Int = 0
+  stage: Int = 0
+  /// The palette: 256 entries (0xRRGGBBAA), the ones past the PLTE chunk
+  /// opaque black, and `npal` of them visible so far.
+  palette: List[Int] = []
+  npal: Int = 0
+  use_t: Bool = false
+  transparent: List[Int] = [0, 0, 0, 0, 0, 0]
+}
+
+fn be32(b: Bytes, at: Int) -> Int { binary.get_u32_be(b, at) }
+
+/// Whether n bytes are there from at on.
+fn have(data: Bytes, at: Int, n: Int) -> Bool { at + n <= data.len() }
+
+/// The checksum of the chunk whose type starts at ts and whose data is
+/// length bytes long, against the four bytes after it.
+fn check_crc(data: Bytes, ts: Int, length: Int) -> () ! png.PngErr {
+  if !have(data, ts + 4 + length, 4) {
+    return Err(png.PngErr.Truncated)
+  }
+  if be32(data, ts + 4 + length) != crc32.checksum(data[ts..ts + 4 + length]) {
+    return Err(format_err("invalid checksum"))
+  }
+}
+
+fn parse_ihdr(var d: Dec, data: Bytes, at: Int, length: Int, max_pixels: Int) -> () ! png.PngErr {
+  if length != 13 {
+    return Err(format_err("bad IHDR length"))
+  }
+  if !have(data, at, 13) {
+    return Err(png.PngErr.Truncated)
+  }
+  let comp = Int(data[at + 10])
+  let filt = Int(data[at + 11])
+  let il = Int(data[at + 12])
+  if comp != 0 {
+    return Err(unsupported("compression method"))
+  }
+  if filt != 0 {
+    return Err(unsupported("filter method"))
+  }
+  if il != 0 && il != 1 {
+    return Err(format_err("invalid interlace method"))
+  }
+  d.interlace = il
+  // Go reads the sizes as int32
+  var w = be32(data, at)
+  var h = be32(data, at + 4)
+  if w >= 2147483648 {
+    w = w - 4294967296
+  }
+  if h >= 2147483648 {
+    h = h - 4294967296
+  }
+  if w <= 0 || h <= 0 {
+    return Err(format_err("non-positive dimension"))
+  }
+  let depth = Int(data[at + 8])
+  let ct = Int(data[at + 9])
+  var cb = 0
+  if depth == 1 {
+    if ct == CT_GRAY {
+      cb = CB_G1
+    } else if ct == CT_PAL {
+      cb = CB_P1
+    }
+  } else if depth == 2 {
+    if ct == CT_GRAY {
+      cb = CB_G2
+    } else if ct == CT_PAL {
+      cb = CB_P2
+    }
+  } else if depth == 4 {
+    if ct == CT_GRAY {
+      cb = CB_G4
+    } else if ct == CT_PAL {
+      cb = CB_P4
+    }
+  } else if depth == 8 {
+    if ct == CT_GRAY {
+      cb = CB_G8
+    } else if ct == CT_TRUE {
+      cb = CB_TC8
+    } else if ct == CT_PAL {
+      cb = CB_P8
+    } else if ct == CT_GRAYA {
+      cb = CB_GA8
+    } else if ct == CT_TRUEA {
+      cb = CB_TCA8
+    }
+  } else if depth == 16 {
+    if ct == CT_GRAY {
+      cb = CB_G16
+    } else if ct == CT_TRUE {
+      cb = CB_TC16
+    } else if ct == CT_GRAYA {
+      cb = CB_GA16
+    } else if ct == CT_TRUEA {
+      cb = CB_TCA16
+    }
+  }
+  if cb == 0 {
+    return Err(unsupported("bit depth ${depth}, color type ${ct}"))
+  }
+  if w * h > max_pixels {
+    return Err(format_err("image too large"))
+  }
+  d.depth = depth
+  d.cb = cb
+  d.w = w
+  d.h = h
+}
+
+fn parse_plte(var d: Dec, data: Bytes, at: Int, length: Int) -> () ! png.PngErr {
+  let np = length / 3
+  if length % 3 != 0 || np <= 0 || np > 256 || np > (1 << d.depth) {
+    return Err(format_err("bad PLTE length"))
+  }
+  if !have(data, at, 3 * np) {
+    return Err(png.PngErr.Truncated)
+  }
+  if cb_paletted(d.cb) {
+    var pal: List[Int] = List[Int].with_capacity(256)
+    for i in 0..np {
+      pal.push((Int(data[at + 3 * i]) << 24) | (Int(data[at + 3 * i + 1]) << 16) | (Int(data[at + 3 * i + 2]) << 8) | 255)
+    }
+    // the rest opaque black (libpng 1.5.13's choice, as Go)
+    for _ in np..256 {
+      pal.push(255)
+    }
+    d.palette = pal
+    d.npal = np
+  } else if !cb_true_color(d.cb) && d.cb != CB_TCA8 && d.cb != CB_TCA16 {
+    return Err(format_err("PLTE, color type mismatch"))
+  }
+}
+
+fn parse_trns(var d: Dec, data: Bytes, at: Int, length: Int) -> () ! png.PngErr {
+  let cb = d.cb
+  if cb == CB_G1 || cb == CB_G2 || cb == CB_G4 || cb == CB_G8 || cb == CB_G16 {
+    if length != 2 {
+      return Err(format_err("bad tRNS length"))
+    }
+    if !have(data, at, 2) {
+      return Err(png.PngErr.Truncated)
+    }
+    d.transparent[0] = Int(data[at])
+    d.transparent[1] = Int(data[at + 1])
+    // uint8 arithmetic
+    if cb == CB_G1 {
+      d.transparent[1] = (d.transparent[1] * 255) & 255
+    } else if cb == CB_G2 {
+      d.transparent[1] = (d.transparent[1] * 85) & 255
+    } else if cb == CB_G4 {
+      d.transparent[1] = (d.transparent[1] * 17) & 255
+    }
+    d.use_t = true
+  } else if cb == CB_TC8 || cb == CB_TC16 {
+    if length != 6 {
+      return Err(format_err("bad tRNS length"))
+    }
+    if !have(data, at, 6) {
+      return Err(png.PngErr.Truncated)
+    }
+    for i in 0..6 {
+      d.transparent[i] = Int(data[at + i])
+    }
+    d.use_t = true
+  } else if cb_paletted(cb) {
+    if length > 256 {
+      return Err(format_err("bad tRNS length"))
+    }
+    if !have(data, at, length) {
+      return Err(png.PngErr.Truncated)
+    }
+    if d.npal < length {
+      d.npal = length
+    }
+    for i in 0..length {
+      d.palette[i] = (d.palette[i] & 0xFFFFFF00) | Int(data[at + i])
+    }
+  } else {
+    return Err(format_err("tRNS, color type mismatch"))
+  }
+}
+
+/// The Adam7 passes: x factor, y factor, x offset, y offset.
+fn pass_geometry(pass: Int) -> (Int, Int, Int, Int) {
+  if pass == 0 {
+    return (8, 8, 0, 0)
+  } else if pass == 1 {
+    return (8, 8, 4, 0)
+  } else if pass == 2 {
+    return (4, 8, 0, 4)
+  } else if pass == 3 {
+    return (4, 4, 2, 0)
+  } else if pass == 4 {
+    return (2, 4, 0, 2)
+  } else if pass == 5 {
+    return (2, 2, 1, 0)
+  }
+  (1, 2, 0, 1)
+}
+
+/// The size of pass `pass` of an image (the whole image when it is not
+/// interlaced; pass 0 then).
+fn pass_size(d: Dec, pass: Int) -> (Int, Int) {
+  if d.interlace == 0 {
+    return (d.w, d.h)
+  }
+  let (xf, yf, xo, yo) = pass_geometry(pass)
+  ((d.w - xo + xf - 1) / xf, (d.h - yo + yf - 1) / yf)
+}
+
+/// The image type a decoded color type gives.
+fn model_of(cb: Int, use_t: Bool) -> png.Model {
+  if cb == CB_G1 || cb == CB_G2 || cb == CB_G4 || cb == CB_G8 {
+    return if use_t { png.Model.NRGBA } else { png.Model.Gray }
+  }
+  if cb == CB_GA8 || cb == CB_TCA8 {
+    return png.Model.NRGBA
+  }
+  if cb == CB_TC8 {
+    return if use_t { png.Model.NRGBA } else { png.Model.RGBA }
+  }
+  if cb_paletted(cb) {
+    return png.Model.Paletted
+  }
+  if cb == CB_G16 {
+    return if use_t { png.Model.NRGBA64 } else { png.Model.Gray16 }
+  }
+  if cb == CB_TC16 {
+    return if use_t { png.Model.NRGBA64 } else { png.Model.RGBA64 }
+  }
+  png.Model.NRGBA64
+}
+
+/// What the decompressed data of the image has to come to: a filter byte
+/// and the packed pixels of each row of each pass.
+fn expected_size(d: Dec) -> Int {
+  let bpp = bits_per_pixel(d.cb, d.depth)
+  if d.interlace == 0 {
+    return d.h * (1 + (bpp * d.w + 7) / 8)
+  }
+  var total = 0
+  for pass in 0..7 {
+    let (w, h) = pass_size(d, pass)
+    if w > 0 && h > 0 {
+      total += h * (1 + (bpp * w + 7) / 8)
+    }
+  }
+  total
+}
+
+/// One decoded pass: its size, pix bytes, and the highest palette index
+/// it used plus one.
+struct Pass {
+  pix: Bytes
+  max_index: Int
+}
+
+/// Reads one pass from raw at off: row after row, unfiltered and converted
+/// to the pix layout of the model (readImagePass). Returns the pass and the
+/// offset after it.
+fn read_pass(d: Dec, raw: Bytes, off0: Int, width: Int, height: Int) -> (Pass, Int) ! png.PngErr {
+  let bpp_bits = bits_per_pixel(d.cb, d.depth)
+  let bpp = (bpp_bits + 7) / 8
+  let row_size = 1 + (bpp_bits * width + 7) / 8
+  let n = row_size - 1
+  if height > 0 && !have(raw, off0, row_size) {
+    return Err(format_err("not enough pixel data"))
+  }
+  // the current and the previous row, in one list: [co, co + n) and
+  // [po, po + n), swapped each row
+  var buf: List[UInt8] = List[UInt8].with_capacity(2 * n)
+  for _ in 0..(2 * n) {
+    buf.push(0)
+  }
+  var co = 0
+  var po = n
+  let mbytes = model_bytes(model_of(d.cb, d.use_t))
+  var out = BytesBuilder.with_capacity(min_int(width * height * mbytes, 32 * raw.len() + 64))
+  var max_index = 0
+  var off = off0
+  for _ in 0..height {
+    if !have(raw, off, row_size) {
+      return Err(format_err("not enough pixel data"))
+    }
+    let ft = Int(raw[off])
+    let base = off + 1
+    off += row_size
+    if ft == FT_NONE {
+      for i in 0..n {
+        buf[co + i] = raw[base + i]
+      }
+    } else if ft == FT_SUB {
+      for i in 0..n {
+        if i < bpp {
+          buf[co + i] = raw[base + i]
+        } else {
+          buf[co + i] = UInt8((Int(raw[base + i]) + Int(buf[co + i - bpp])) & 255)
+        }
+      }
+    } else if ft == FT_UP {
+      for i in 0..n {
+        buf[co + i] = UInt8((Int(raw[base + i]) + Int(buf[po + i])) & 255)
+      }
+    } else if ft == FT_AVERAGE {
+      for i in 0..n {
+        if i < bpp {
+          buf[co + i] = UInt8((Int(raw[base + i]) + Int(buf[po + i]) / 2) & 255)
+        } else {
+          buf[co + i] = UInt8((Int(raw[base + i]) + (Int(buf[co + i - bpp]) + Int(buf[po + i])) / 2) & 255)
+        }
+      }
+    } else if ft == FT_PAETH {
+      for i in 0..n {
+        if i < bpp {
+          buf[co + i] = UInt8((Int(raw[base + i]) + Int(buf[po + i])) & 255)
+        } else {
+          buf[co + i] = UInt8((Int(raw[base + i]) + paeth(Int(buf[co + i - bpp]), Int(buf[po + i]), Int(buf[po + i - bpp]))) & 255)
+        }
+      }
+    } else {
+      return Err(format_err("bad filter type"))
+    }
+    let mi = convert_row(d, buf, co, width, out)
+    if mi > max_index {
+      max_index = mi
+    }
+    let t = po
+    po = co
+    co = t
+  }
+  (Pass{pix: out.freeze(), max_index: max_index}, off)
+}
+
+/// Converts one unfiltered row to the pix layout of the decoded model and
+/// appends it; returns the highest palette index plus one it used (0 for
+/// other types).
+fn convert_row(d: Dec, c: List[UInt8], ro: Int, width: Int, var out: BytesBuilder) -> Int {
+  let cb = d.cb
+  if cb == CB_G1 || cb == CB_G2 || cb == CB_G4 {
+    let depth = d.depth
+    let mask = (1 << depth) - 1
+    let mult = 255 / mask
+    for x in 0..width {
+      let bit = x * depth
+      let v = (Int(c[ro + bit / 8]) >> (8 - depth - bit % 8)) & mask
+      let y = UInt8(v * mult)
+      out.write_byte(y)
+      if d.use_t {
+        out.write_byte(y)
+        out.write_byte(y)
+        out.write_byte(if Int(y) == d.transparent[1] { 0 } else { 255 })
+      }
+    }
+    return 0
+  }
+  if cb == CB_G8 {
+    for x in 0..width {
+      let y = c[ro + x]
+      out.write_byte(y)
+      if d.use_t {
+        out.write_byte(y)
+        out.write_byte(y)
+        out.write_byte(if Int(y) == d.transparent[1] { 0 } else { 255 })
+      }
+    }
+    return 0
+  }
+  if cb == CB_GA8 {
+    for x in 0..width {
+      let y = c[ro + 2 * x]
+      out.write_byte(y)
+      out.write_byte(y)
+      out.write_byte(y)
+      out.write_byte(c[ro + 2 * x + 1])
+    }
+    return 0
+  }
+  if cb == CB_TC8 {
+    let tr = d.transparent[1]
+    let tg = d.transparent[3]
+    let tb = d.transparent[5]
+    var j = 0
+    for _ in 0..width {
+      let r = c[ro + j]
+      let g = c[ro + j + 1]
+      let b = c[ro + j + 2]
+      out.write_byte(r)
+      out.write_byte(g)
+      out.write_byte(b)
+      if d.use_t && Int(r) == tr && Int(g) == tg && Int(b) == tb {
+        out.write_byte(0)
+      } else {
+        out.write_byte(255)
+      }
+      j += 3
+    }
+    return 0
+  }
+  if cb == CB_P1 || cb == CB_P2 || cb == CB_P4 {
+    let depth = d.depth
+    let mask = (1 << depth) - 1
+    var mx = 0
+    for x in 0..width {
+      let bit = x * depth
+      let idx = (Int(c[ro + bit / 8]) >> (8 - depth - bit % 8)) & mask
+      if idx + 1 > mx {
+        mx = idx + 1
+      }
+      out.write_byte(UInt8(idx))
+    }
+    return mx
+  }
+  if cb == CB_P8 {
+    var mx = 0
+    for x in 0..width {
+      let v = c[ro + x]
+      if Int(v) + 1 > mx {
+        mx = Int(v) + 1
+      }
+      out.write_byte(v)
+    }
+    return mx
+  }
+  if cb == CB_TCA8 {
+    for i in 0..(4 * width) {
+      out.write_byte(c[ro + i])
+    }
+    return 0
+  }
+  if cb == CB_G16 {
+    let ty = (d.transparent[0] << 8) | d.transparent[1]
+    for x in 0..width {
+      let y0 = c[ro + 2 * x]
+      let y1 = c[ro + 2 * x + 1]
+      out.write_byte(y0)
+      out.write_byte(y1)
+      if d.use_t {
+        out.write_byte(y0)
+        out.write_byte(y1)
+        out.write_byte(y0)
+        out.write_byte(y1)
+        if ((Int(y0) << 8) | Int(y1)) == ty {
+          out.write_byte(0)
+          out.write_byte(0)
+        } else {
+          out.write_byte(255)
+          out.write_byte(255)
+        }
+      }
+    }
+    return 0
+  }
+  if cb == CB_GA16 {
+    for x in 0..width {
+      let y0 = c[ro + 4 * x]
+      let y1 = c[ro + 4 * x + 1]
+      out.write_byte(y0)
+      out.write_byte(y1)
+      out.write_byte(y0)
+      out.write_byte(y1)
+      out.write_byte(y0)
+      out.write_byte(y1)
+      out.write_byte(c[ro + 4 * x + 2])
+      out.write_byte(c[ro + 4 * x + 3])
+    }
+    return 0
+  }
+  if cb == CB_TC16 {
+    let tr = (d.transparent[0] << 8) | d.transparent[1]
+    let tg = (d.transparent[2] << 8) | d.transparent[3]
+    let tb = (d.transparent[4] << 8) | d.transparent[5]
+    for x in 0..width {
+      let j = 6 * x
+      for k in 0..6 {
+        out.write_byte(c[ro + j + k])
+      }
+      if d.use_t {
+        let r = (Int(c[ro + j]) << 8) | Int(c[ro + j + 1])
+        let g = (Int(c[ro + j + 2]) << 8) | Int(c[ro + j + 3])
+        let b = (Int(c[ro + j + 4]) << 8) | Int(c[ro + j + 5])
+        if r == tr && g == tg && b == tb {
+          out.write_byte(0)
+          out.write_byte(0)
+        } else {
+          out.write_byte(255)
+          out.write_byte(255)
+        }
+      } else {
+        out.write_byte(255)
+        out.write_byte(255)
+      }
+    }
+    return 0
+  }
+  // CB_TCA16
+  for i in 0..(8 * width) {
+    out.write_byte(c[ro + i])
+  }
+  0
+}
+
+/// Copies the pixels of pass `pass` into the full size image.
+fn merge_pass(var dst: BytesBuilder, w: Int, mbytes: Int, src: Bytes, pass: Int, pw: Int, ph: Int) {
+  let (xf, yf, xo, yo) = pass_geometry(pass)
+  var s = 0
+  for y in 0..ph {
+    let dbase = (y * yf + yo) * w * mbytes + xo * mbytes
+    for x in 0..pw {
+      let at = dbase + x * xf * mbytes
+      if mbytes == 1 {
+        dst.put_be(at, Int(src[s]), 1)
+      } else if mbytes == 2 {
+        dst.put_be(at, binary.get_u16_be(src, s), 2)
+      } else if mbytes == 4 {
+        dst.put_be(at, binary.get_u32_be(src, s), 4)
+      } else {
+        dst.put_be(at, binary.get_u64_be(src, s), 8)
+      }
+      s += mbytes
+    }
+  }
+}
+
+fn palette_of(d: Dec, len: Int) -> List[Int] {
+  var out: List[Int] = []
+  for i in 0..len {
+    out.push(d.palette[i])
+  }
+  out
+}
+
+/// What zdata inflates to before its first error, read in growing pieces
+/// (the whole buffer at once gives nothing for a stream that fails late).
+fn partial_inflate(zdata: Bytes, max: Int) -> Bytes {
+  // the DEFLATE data after the zlib header, so a bad trailer still gives
+  // the rows (a stream with a bad header gives none)
+  if zdata.len() < 2 {
+    return b""
+  }
+  let c0 = Int(zdata[0])
+  let c1 = Int(zdata[1])
+  if (c0 & 15) != 8 || (c0 >> 4) > 7 || ((c0 << 8) | c1) % 31 != 0 || (c1 & 0x20) != 0 {
+    return b""
+  }
+  var dc = compress.decompressor(compress.Format.Deflate, max)
+  var got = BytesBuilder.new()
+  var at = 2
+  while at < zdata.len() {
+    var step = (at - 2) / 4
+    if step < 64 {
+      step = 64
+    }
+    var end = at + step
+    if end > zdata.len() {
+      end = zdata.len()
+    }
+    match dc.write(zdata[at..end]) {
+      Ok(o) => got.write(o)
+      Err(_) => return got.freeze()
+    }
+    at = end
+  }
+  got.freeze()
+}
+
+/// Decodes the image whose IDAT data is zdata (decode). Go reads the rows
+/// as the data inflates, so a bad row comes before a later flate error;
+/// the whole buffer is inflated at once and only a stream that fails is
+/// read again for the rows before its error.
+fn decode_image(d: Dec, zdata: Bytes) -> png.Image ! png.PngErr {
+  let expect = expected_size(d)
+  match compress.unzlib(zdata, expect + 1) {
+    Ok(raw) => {
+      let img = decode_rows(d, raw)?
+      if raw.len() > expect {
+        return Err(format_err("too much pixel data"))
+      }
+      img
+    }
+    Err(e) => {
+      let raw = partial_inflate(zdata, expect + 1)
+      match decode_rows(d, raw) {
+        Err(re) => {
+          // running out of rows is the stream's own error below
+          let short = raw.len() < expect && re.display() == "png: invalid format: not enough pixel data"
+          if !short {
+            return Err(re)
+          }
+        }
+        Ok(_) => {}
+      }
+      if raw.len() >= expect {
+        if e.msg.contains("exceeds max_size") {
+          return Err(format_err("too much pixel data"))
+        }
+        return Err(format_err(e.msg))
+      }
+      if e.msg == "unexpected EOF" {
+        return Err(format_err("not enough pixel data"))
+      }
+      Err(png.PngErr.Flate(msg: e.msg))
+    }
+  }
+}
+
+fn decode_rows(d: Dec, raw: Bytes) -> png.Image ! png.PngErr {
+  let model = model_of(d.cb, d.use_t)
+  let mbytes = model_bytes(model)
+  var palette: List[Int] = []
+  if d.interlace == 0 {
+    let (p, _) = read_pass(d, raw, 0, d.w, d.h)?
+    if cb_paletted(d.cb) {
+      var n = d.npal
+      if p.max_index > n {
+        n = p.max_index
+      }
+      palette = palette_of(d, n)
+    }
+    return png.Image{width: d.w, height: d.h, model: model, pix: p.pix, palette: palette}
+  }
+  // a header that asks for more pixels than the data has is read for its
+  // errors without allocating the image
+  let roomy = raw.len() >= expected_size(d)
+  var dst = BytesBuilder.with_capacity(if roomy { d.w * d.h * mbytes } else { 0 })
+  if roomy {
+    dst.write(zeros(d.w * d.h * mbytes))
+  }
+  var off = 0
+  var npal = d.npal
+  for pass in 0..7 {
+    let (pw, ph) = pass_size(d, pass)
+    if pw == 0 || ph == 0 {
+      continue
+    }
+    let (p, next) = read_pass(d, raw, off, pw, ph)?
+    off = next
+    if roomy {
+      merge_pass(dst, d.w, mbytes, p.pix, pass, pw, ph)
+    }
+    if p.max_index > npal {
+      npal = p.max_index
+    }
+  }
+  if !roomy {
+    return Err(format_err("not enough pixel data"))
+  }
+  if cb_paletted(d.cb) {
+    palette = palette_of(d, npal)
+  }
+  png.Image{width: d.w, height: d.h, model: model, pix: dst.freeze(), palette: palette}
+}
+
+fn dec_new() -> Dec {
+  var pal: List[Int] = []
+  for _ in 0..256 {
+    pal.push(255)
+  }
+  Dec{palette: pal}
+}
+
+const HEADER: Bytes = b"\x89PNG\r\n\x1a\n"
+
+/// The chunks (parseChunk): returns the decoder state and, when decoding,
+/// the image.
+fn walk(data: Bytes, config_only: Bool, max_pixels: Int) -> (Dec, png.Image?) ! png.PngErr {
+  if data.len() < 8 {
+    return Err(png.PngErr.Truncated)
+  }
+  if data[0..8] != HEADER {
+    return Err(format_err("not a PNG file"))
+  }
+  var d = dec_new()
+  var img: png.Image? = None
+  var pos = 8
+  while d.stage != DS_IEND {
+    if !have(data, pos, 8) {
+      return Err(png.PngErr.Truncated)
+    }
+    let length = be32(data, pos)
+    let ts = pos + 4
+    let at = pos + 8
+    let typ = data[ts..ts + 4]
+    var handled = false
+    if typ == b"IHDR" {
+      if d.stage != DS_START {
+        return Err(format_err("chunk out of order"))
+      }
+      d.stage = DS_IHDR
+      parse_ihdr(d, data, at, length, max_pixels)?
+      handled = true
+    } else if typ == b"PLTE" {
+      if d.stage != DS_IHDR {
+        return Err(format_err("chunk out of order"))
+      }
+      d.stage = DS_PLTE
+      parse_plte(d, data, at, length)?
+      handled = true
+    } else if typ == b"tRNS" {
+      if cb_paletted(d.cb) {
+        if d.stage != DS_PLTE {
+          return Err(format_err("chunk out of order"))
+        }
+      } else if cb_true_color(d.cb) {
+        if d.stage != DS_IHDR && d.stage != DS_PLTE {
+          return Err(format_err("chunk out of order"))
+        }
+      } else if d.stage != DS_IHDR {
+        return Err(format_err("chunk out of order"))
+      }
+      d.stage = DS_TRNS
+      parse_trns(d, data, at, length)?
+      handled = true
+    } else if typ == b"IDAT" {
+      if d.stage < DS_IHDR || d.stage > DS_IDAT || (d.stage == DS_IHDR && cb_paletted(d.cb)) {
+        return Err(format_err("chunk out of order"))
+      }
+      if d.stage != DS_IDAT {
+        d.stage = DS_IDAT
+        if config_only {
+          return (d, None)
+        }
+        // the consecutive IDAT chunks are one stream; Go reads them as the
+        // decoder asks, so an error in the pixel data comes before the
+        // checksum of the last chunk (and before a cut in the file)
+        var end = pos
+        var parts: List[Bytes] = []
+        var cut = false
+        var last_bad = false
+        var more = true
+        while more {
+          if !have(data, end, 8) {
+            cut = true
+            more = false
+          } else if data[end + 4..end + 8] != b"IDAT" {
+            more = false
+          } else {
+            let len2 = be32(data, end)
+            if last_bad {
+              return Err(format_err("invalid checksum"))
+            }
+            if !have(data, end + 8, len2) {
+              parts.push(data[end + 8..data.len()])
+              cut = true
+              more = false
+            } else if !have(data, end + 8 + len2, 4) {
+              parts.push(data[end + 8..end + 8 + len2])
+              cut = true
+              more = false
+            } else {
+              last_bad = be32(data, end + 8 + len2) != crc32.checksum(data[end + 4..end + 8 + len2])
+              parts.push(data[end + 8..end + 8 + len2])
+              end += 12 + len2
+            }
+          }
+        }
+        var z = parts[0]
+        if parts.len() > 1 {
+          var zb = BytesBuilder.new()
+          for p in parts {
+            zb.write(p)
+          }
+          z = zb.freeze()
+        }
+        img = Some(decode_image(d, z)?)
+        if cut {
+          return Err(png.PngErr.Truncated)
+        }
+        if last_bad {
+          return Err(format_err("invalid checksum"))
+        }
+        pos = end
+        continue
+      }
+      handled = false
+    } else if typ == b"IEND" {
+      if d.stage != DS_IDAT {
+        return Err(format_err("chunk out of order"))
+      }
+      d.stage = DS_IEND
+      if length != 0 {
+        return Err(format_err("bad IEND length"))
+      }
+      handled = true
+    }
+    if !handled && length > 2147483647 {
+      return Err(format_err("Bad chunk length: ${length}"))
+    }
+    if !have(data, at, length) {
+      return Err(png.PngErr.Truncated)
+    }
+    check_crc(data, ts, length)?
+    pos = at + length + 4
+    if config_only {
+      if cb_paletted(d.cb) {
+        if d.stage >= DS_TRNS {
+          break
+        }
+      } else if d.stage >= DS_IHDR {
+        break
+      }
+    }
+  }
+  (d, img)
+}
+
+fn decode(data: Bytes, max_pixels: Int) -> png.Image ! png.PngErr {
+  let (_, img) = walk(data, false, max_pixels)?
+  img ?? fault("png: no image")
+}
+
+fn decode_config(data: Bytes) -> png.Config ! png.PngErr {
+  let (d, _) = walk(data, true, 4611686018427387904)?
+  png.Config{width: d.w, height: d.h, model: model_of(d.cb, d.use_t)}
+}
+
+// ---------------------------------------------------------------------------
+// The encoder
+
+fn put_u32(var b: BytesBuilder, v: Int) { b.write(binary.u32_be(v)) }
+
+/// One chunk: length, type, data and the checksum of type and data.
+fn write_chunk(var out: BytesBuilder, name: Bytes, payload: Bytes) {
+  put_u32(out, payload.len())
+  out.write(name)
+  out.write(payload)
+  put_u32(out, crc32.update(crc32.checksum(name), payload))
+}
+
+fn abs8(d: Int) -> Int { if d < 128 { d } else { 256 - d } }
+
+fn model_cb(img: png.Image, opaque: Bool) -> Int {
+  match img.model {
+    png.Model.Gray => CB_G8
+    png.Model.Gray16 => CB_G16
+    png.Model.Paletted => {
+      let n = img.palette.len()
+      if n <= 2 {
+        CB_P1
+      } else if n <= 4 {
+        CB_P2
+      } else if n <= 16 {
+        CB_P4
+      } else {
+        CB_P8
+      }
+    }
+    png.Model.RGBA => if opaque { CB_TC8 } else { CB_TCA8 }
+    png.Model.NRGBA => if opaque { CB_TC8 } else { CB_TCA8 }
+    png.Model.RGBA64 => if opaque { CB_TC16 } else { CB_TCA16 }
+    png.Model.NRGBA64 => if opaque { CB_TC16 } else { CB_TCA16 }
+  }
+}
+
+/// Whether every pixel is opaque (writer.go opaque).
+fn is_opaque(img: png.Image) -> Bool {
+  let m = img.model
+  if m is png.Model.RGBA | png.Model.NRGBA {
+    var i = 3
+    let n = img.width * img.height * 4
+    while i < n {
+      if img.pix[i] != 255 {
+        return false
+      }
+      i += 4
+    }
+    return true
+  }
+  if m is png.Model.RGBA64 | png.Model.NRGBA64 {
+    var i = 6
+    let n = img.width * img.height * 8
+    while i < n {
+      if img.pix[i] != 255 || img.pix[i + 1] != 255 {
+        return false
+      }
+      i += 8
+    }
+    return true
+  }
+  // gray and paletted images: image.Gray, Gray16 and Paletted with
+  // an opaque palette are encoded by their own color type, not here
+  true
+}
+
+fn level_of(l: png.Compression) -> compress.Level {
+  match l {
+    png.Compression.Default => compress.Level.Default
+    png.Compression.None => compress.Level.NoCompression
+    png.Compression.Speed => compress.Level.BestSpeed
+    png.Compression.Best => compress.Level.BestCompression
+  }
+}
+
+/// Chooses the filter of the current row and leaves the filtered rows in
+/// c (five rows of n bytes, in c[t * n + i]); the row at 0 is the
+/// unfiltered one. Returns the filter (writer.go filter).
+fn choose_filter(var c: List[UInt8], p: List[UInt8], n: Int, bpp: Int) -> Int {
+  // the up filter
+  var sum = 0
+  for k in 0..n {
+    let v = (Int(c[k]) - Int(p[k])) & 255
+    c[2 * n + k] = UInt8(v)
+    sum += abs8(v)
+  }
+  var best = sum
+  var filter = FT_UP
+  // the Paeth filter
+  sum = 0
+  for k in 0..bpp {
+    let v = (Int(c[k]) - Int(p[k])) & 255
+    c[4 * n + k] = UInt8(v)
+    sum += abs8(v)
+  }
+  var i = bpp
+  while i < n {
+    let v = (Int(c[i]) - paeth(Int(c[i - bpp]), Int(p[i]), Int(p[i - bpp]))) & 255
+    c[4 * n + i] = UInt8(v)
+    sum += abs8(v)
+    if sum >= best {
+      break
+    }
+    i += 1
+  }
+  if sum < best {
+    best = sum
+    filter = FT_PAETH
+  }
+  // the none filter
+  sum = 0
+  i = 0
+  while i < n {
+    sum += abs8(Int(c[i]))
+    if sum >= best {
+      break
+    }
+    i += 1
+  }
+  if sum < best {
+    best = sum
+    filter = FT_NONE
+  }
+  // the sub filter
+  sum = 0
+  for k in 0..bpp {
+    c[n + k] = c[k]
+    sum += abs8(Int(c[k]))
+  }
+  i = bpp
+  while i < n {
+    let v = (Int(c[i]) - Int(c[i - bpp])) & 255
+    c[n + i] = UInt8(v)
+    sum += abs8(v)
+    if sum >= best {
+      break
+    }
+    i += 1
+  }
+  if sum < best {
+    best = sum
+    filter = FT_SUB
+  }
+  // the average filter
+  sum = 0
+  for k in 0..bpp {
+    let v = (Int(c[k]) - Int(p[k]) / 2) & 255
+    c[3 * n + k] = UInt8(v)
+    sum += abs8(v)
+  }
+  i = bpp
+  while i < n {
+    let v = (Int(c[i]) - (Int(c[i - bpp]) + Int(p[i])) / 2) & 255
+    c[3 * n + i] = UInt8(v)
+    sum += abs8(v)
+    if sum >= best {
+      break
+    }
+    i += 1
+  }
+  if sum < best {
+    filter = FT_AVERAGE
+  }
+  filter
+}
+
+/// Row y of the image as the bytes of its color type, into c[0..n).
+fn fill_row(img: png.Image, cb: Int, y: Int, var c: List[UInt8], n: Int) {
+  let w = img.width
+  let pix = img.pix
+  let mb = model_bytes(img.model)
+  let src = y * w * mb
+  if cb == CB_G8 || cb == CB_P8 || cb == CB_G16 {
+    for i in 0..n {
+      c[i] = pix[src + i]
+    }
+    return
+  }
+  if cb == CB_P1 || cb == CB_P2 || cb == CB_P4 {
+    let depth = if cb == CB_P1 { 1 } else if cb == CB_P2 { 2 } else { 4 }
+    let per = 8 / depth
+    var a = 0
+    var cnt = 0
+    var o = 0
+    for x in 0..w {
+      a = ((a << depth) | Int(pix[src + x])) & 255
+      cnt += 1
+      if cnt == per {
+        c[o] = UInt8(a)
+        o += 1
+        a = 0
+        cnt = 0
+      }
+    }
+    if cnt != 0 {
+      while cnt != per {
+        a = (a << depth) & 255
+        cnt += 1
+      }
+      c[o] = UInt8(a)
+    }
+    return
+  }
+  let m = img.model
+  if cb == CB_TC8 {
+    var j = src
+    var o = 0
+    for _ in 0..w {
+      c[o] = pix[j]
+      c[o + 1] = pix[j + 1]
+      c[o + 2] = pix[j + 2]
+      o += 3
+      j += 4
+    }
+    return
+  }
+  if cb == CB_TCA8 {
+    if m is png.Model.NRGBA {
+      for i in 0..n {
+        c[i] = pix[src + i]
+      }
+      return
+    }
+    // RGBA: alpha premultiplied to not
+    var j = src
+    var o = 0
+    for _ in 0..w {
+      let a = Int(pix[j + 3])
+      if a == 0 {
+        c[o] = 0
+        c[o + 1] = 0
+        c[o + 2] = 0
+        c[o + 3] = 0
+      } else if a == 255 {
+        c[o] = pix[j]
+        c[o + 1] = pix[j + 1]
+        c[o + 2] = pix[j + 2]
+        c[o + 3] = 255
+      } else {
+        let mm = 257 * 65535
+        let a16 = a * 257
+        c[o] = UInt8(((Int(pix[j]) * mm / a16) >> 8) & 255)
+        c[o + 1] = UInt8(((Int(pix[j + 1]) * mm / a16) >> 8) & 255)
+        c[o + 2] = UInt8(((Int(pix[j + 2]) * mm / a16) >> 8) & 255)
+        c[o + 3] = UInt8(a)
+      }
+      o += 4
+      j += 4
+    }
+    return
+  }
+  if cb == CB_TC16 {
+    var j = src
+    var o = 0
+    for _ in 0..w {
+      for k in 0..6 {
+        c[o + k] = pix[j + k]
+      }
+      o += 6
+      j += 8
+    }
+    return
+  }
+  // CB_TCA16
+  if m is png.Model.NRGBA64 {
+    for i in 0..n {
+      c[i] = pix[src + i]
+    }
+    return
+  }
+  var j = src
+  var o = 0
+  for _ in 0..w {
+    let a = (Int(pix[j + 6]) << 8) | Int(pix[j + 7])
+    if a == 0 {
+      for k in 0..8 {
+        c[o + k] = 0
+      }
+    } else if a == 65535 {
+      for k in 0..8 {
+        c[o + k] = pix[j + k]
+      }
+    } else {
+      for k in 0..3 {
+        let v = ((Int(pix[j + 2 * k]) << 8) | Int(pix[j + 2 * k + 1])) * 65535 / a
+        c[o + 2 * k] = UInt8(v >> 8)
+        c[o + 2 * k + 1] = UInt8(v & 255)
+      }
+      c[o + 6] = pix[j + 6]
+      c[o + 7] = pix[j + 7]
+    }
+    o += 8
+    j += 8
+  }
+}
+
+fn encode(img: png.Image, level: png.Compression) -> Bytes ! png.PngErr {
+  let w = img.width
+  let h = img.height
+  if w <= 0 || h <= 0 || w >= 4294967296 || h >= 4294967296 {
+    return Err(format_err("invalid image size: ${w}x${h}"))
+  }
+  let mb = model_bytes(img.model)
+  if img.pix.len() != w * h * mb {
+    fault("png.encode: pix has ${img.pix.len()} bytes, want ${w * h * mb} for ${w}x${h}")
+  }
+  let cb = model_cb(img, is_opaque(img))
+  var depth = 8
+  var ct = CT_GRAY
+  var bits = 0
+  if cb == CB_G8 {
+    depth = 8
+    ct = CT_GRAY
+    bits = 8
+  } else if cb == CB_TC8 {
+    depth = 8
+    ct = CT_TRUE
+    bits = 24
+  } else if cb == CB_P8 {
+    depth = 8
+    ct = CT_PAL
+    bits = 8
+  } else if cb == CB_P4 {
+    depth = 4
+    ct = CT_PAL
+    bits = 4
+  } else if cb == CB_P2 {
+    depth = 2
+    ct = CT_PAL
+    bits = 2
+  } else if cb == CB_P1 {
+    depth = 1
+    ct = CT_PAL
+    bits = 1
+  } else if cb == CB_TCA8 {
+    depth = 8
+    ct = CT_TRUEA
+    bits = 32
+  } else if cb == CB_G16 {
+    depth = 16
+    ct = CT_GRAY
+    bits = 16
+  } else if cb == CB_TC16 {
+    depth = 16
+    ct = CT_TRUE
+    bits = 48
+  } else {
+    depth = 16
+    ct = CT_TRUEA
+    bits = 64
+  }
+  var out = BytesBuilder.new()
+  out.write(HEADER)
+  var ihdr = BytesBuilder.with_capacity(13)
+  put_u32(ihdr, w)
+  put_u32(ihdr, h)
+  ihdr.write_byte(UInt8(depth))
+  ihdr.write_byte(UInt8(ct))
+  ihdr.write_byte(0)
+  ihdr.write_byte(0)
+  ihdr.write_byte(0)
+  write_chunk(out, b"IHDR", ihdr.freeze())
+  if img.model is png.Model.Paletted {
+    let np = img.palette.len()
+    if np < 1 || np > 256 {
+      return Err(format_err("bad palette length: ${np}"))
+    }
+    var plte = BytesBuilder.with_capacity(3 * np)
+    var alpha = BytesBuilder.with_capacity(np)
+    var last = -1
+    for i in 0..np {
+      let c = img.palette[i]
+      plte.write_byte(UInt8((c >> 24) & 255))
+      plte.write_byte(UInt8((c >> 16) & 255))
+      plte.write_byte(UInt8((c >> 8) & 255))
+      let a = c & 255
+      if a != 255 {
+        last = i
+      }
+      alpha.write_byte(UInt8(a))
+    }
+    write_chunk(out, b"PLTE", plte.freeze())
+    if last != -1 {
+      write_chunk(out, b"tRNS", alpha.freeze()[0..last + 1])
+    }
+  }
+  // the filtered rows
+  let n = (bits * w + 7) / 8
+  let bpp = bits / 8
+  var c: List[UInt8] = List[UInt8].with_capacity(5 * n)
+  var p: List[UInt8] = List[UInt8].with_capacity(n)
+  for _ in 0..(5 * n) {
+    c.push(0)
+  }
+  for _ in 0..n {
+    p.push(0)
+  }
+  let no_filter = level is png.Compression.None || cb == CB_P8 || cb == CB_P4 || cb == CB_P2 || cb == CB_P1
+  var raw = BytesBuilder.with_capacity(h * (n + 1))
+  for y in 0..h {
+    fill_row(img, cb, y, c, n)
+    var f = FT_NONE
+    if !no_filter {
+      f = choose_filter(c, p, n, bpp)
+    }
+    raw.write_byte(UInt8(f))
+    for i in 0..n {
+      raw.write_byte(c[f * n + i])
+    }
+    for i in 0..n {
+      p[i] = c[i]
+    }
+  }
+  let z = compress.zlib(raw.freeze(), level_of(level))
+  var at = 0
+  while at < z.len() {
+    var end = at + 32768
+    if end > z.len() {
+      end = z.len()
+    }
+    write_chunk(out, b"IDAT", z[at..end])
+    at = end
+  }
+  write_chunk(out, b"IEND", b"")
+  out.freeze()
+}
+
+// ---------------------------------------------------------------------------
+// Pixel access
+
+/// The pixel at (x, y) as 0xRRGGBBAA, not premultiplied.
+fn image_at(img: png.Image, x: Int, y: Int) -> Int {
+  if x < 0 || y < 0 || x >= img.width || y >= img.height {
+    fault("png: pixel (${x}, ${y}) outside the ${img.width}x${img.height} image")
+  }
+  let mb = model_bytes(img.model)
+  let at = (y * img.width + x) * mb
+  let pix = img.pix
+  match img.model {
+    png.Model.Gray => {
+      let v = Int(pix[at])
+      (v << 24) | (v << 16) | (v << 8) | 255
+    }
+    png.Model.Gray16 => {
+      let v = Int(pix[at])
+      (v << 24) | (v << 16) | (v << 8) | 255
+    }
+    png.Model.Paletted => {
+      let i = Int(pix[at])
+      if i < img.palette.len() { img.palette[i] } else { 0 }
+    }
+    png.Model.NRGBA => (Int(pix[at]) << 24) | (Int(pix[at + 1]) << 16) | (Int(pix[at + 2]) << 8) | Int(pix[at + 3])
+    png.Model.RGBA => {
+      let a = Int(pix[at + 3])
+      if a == 255 {
+        (Int(pix[at]) << 24) | (Int(pix[at + 1]) << 16) | (Int(pix[at + 2]) << 8) | 255
+      } else if a == 0 {
+        0
+      } else {
+        let a16 = a * 257
+        let r = ((Int(pix[at]) * 257 * 65535 / a16) >> 8) & 255
+        let g = ((Int(pix[at + 1]) * 257 * 65535 / a16) >> 8) & 255
+        let b = ((Int(pix[at + 2]) * 257 * 65535 / a16) >> 8) & 255
+        (r << 24) | (g << 16) | (b << 8) | a
+      }
+    }
+    png.Model.NRGBA64 => (Int(pix[at]) << 24) | (Int(pix[at + 2]) << 16) | (Int(pix[at + 4]) << 8) | Int(pix[at + 6])
+    png.Model.RGBA64 => {
+      let a = (Int(pix[at + 6]) << 8) | Int(pix[at + 7])
+      if a == 65535 {
+        (Int(pix[at]) << 24) | (Int(pix[at + 2]) << 16) | (Int(pix[at + 4]) << 8) | 255
+      } else if a == 0 {
+        0
+      } else {
+        let r = (((Int(pix[at]) << 8) | Int(pix[at + 1])) * 65535 / a) >> 8
+        let g = (((Int(pix[at + 2]) << 8) | Int(pix[at + 3])) * 65535 / a) >> 8
+        let b = (((Int(pix[at + 4]) << 8) | Int(pix[at + 5])) * 65535 / a) >> 8
+        (r << 24) | (g << 16) | (b << 8) | (a >> 8)
+      }
+    }
+  }
+}
