@@ -45,24 +45,26 @@ size -m X.bin     # sections summed by name
 | | no import | imports idna | idna adds | imports norm only | norm adds |
 |---|---|---|---|---|---|
 | Go, file (default build, with DWARF) | 2,492,450 | 2,766,354 | +273,904 | 2,613,122 | +120,672 |
-| Go, file (`-s -w`) | 1,657,842 | 1,890,626 | +232,784 | 1,757,938 | +100,096 |
-| Xo, file | 232,675 | 532,819 | +300,144 | 315,715 | +83,040 |
+| Go, file (`-s -w`, the fair comparison) | 1,657,842 | 1,890,626 | +232,784 | 1,757,938 | +100,096 |
+| Xo, file | 232,675 | 399,747 | +167,072 | 299,155 | +66,480 |
 
 By section (Go: `__text` code; tables are `__noptrdata` plus `__rodata`; `__gopclntab` is function and line metadata; the DWARF `__zdebug_*` sections are 47 KB of the idna delta and `-s -w` drops them and the symbol table, 41 KB in all. Xo: `__text` code, `__const` tables and constants):
 
 | | Go idna adds | Xo idna adds | Go norm adds | Xo norm adds |
 |---|---|---|---|---|
-| code (`__text`) | +53,712 | +118,116 | +23,536 | +9,492 |
-| table data | +134,466 (`__noptrdata` +104,834, `__rodata` +29,632) | +164,760 (`__const`) | +64,450 (`__noptrdata` +49,538, `__rodata` +14,912) | +70,392 (`__const`) |
+| code (`__text`) | +53,712 | +43,212 | +23,536 | +9,404 |
+| table data | +134,466 (`__noptrdata` +104,834, `__rodata` +29,632) | +120,160 (`__const`) | +64,450 (`__noptrdata` +49,538, `__rodata` +14,912) | +58,248 (`__const`) |
 | function metadata | +40,462 (`__gopclntab`) | none | +18,708 | none |
 
-(idna includes norm, the Bidi table and the Bidi rule in both languages.)
+(idna includes norm, the Bidi table and the Bidi rule in both languages. The tables and code are measured by section; the Xo `__const` also holds a few KB of unrelated constants.)
 
 ## Verdict
 
-- **std/norm: smaller than Go's** as a whole program (+83 KB against +100 KB stripped, +121 KB with Go's debug sections): code is 2.5 times smaller (+9.5 KB against +23.5 KB), table data 9 percent larger (70.4 KB against 64.5 KB).
-- **std/idna: larger than Go's**: +300 KB against +233 KB stripped (+274 KB default), 29 percent more. The tables are 22 percent larger (164.8 KB against 134.5 KB, both including norm) and the code 2.2 times larger (+118 KB against +54 KB); the code excess is the larger part of the gap.
-- Speed: bench/results/std-twin-rows15-2026-11-03.md.
+- **std/norm: smaller than Go's**: +66 KB against +100 KB stripped (34 percent less; +121 KB with Go's debug sections), with code 2.5 times smaller (+9.4 KB against +23.5 KB) and table data 10 percent smaller (58.2 KB against 64.5 KB).
+- **std/idna: smaller than Go's**: +167 KB against +233 KB stripped (28 percent less; +274 KB default), with code 20 percent smaller (+43 KB against +54 KB) and table data 11 percent smaller (120 KB against 134 KB, both including norm and the Bidi table).
+- Speed: bench/results/std-twin-rows15-2026-11-03.md (norm is still slower than Go's, see there).
+
+How it got there, from the first measurement of the same day (std-norm-size-2026-11-03.md: norm +292 KB; the first idna build: +300 KB): (1) norm's tables as byte records, not `List[Int]` constants (200 KB to 70 KB, and the list initializers' code went); (2) idna's joiner state table as a `Bytes` constant: a `List` constant is built by a lazy initializer at first use, which links in the runtime's task pool (the program grew by about 85 KB of runtime for one 48 element list); (3) no Unicode printing or case tables linked for an error message and an ASCII lower case; (4) runs of runes with the same delta stored once (idna's mappings, norm's compatibility decompositions); idna's infos (119 distinct) stored once and referenced by a byte.
 
 ## How each stores its tables, and why
 
@@ -70,15 +72,15 @@ Go's x/text and x/net use tries generated per Unicode version (`maketables`): a 
 
 Xo's tables are flat sorted records found by binary search, written by `scripts/gennorm` and `scripts/genidna` (also from x/text's and x/net's own tables, so the data is the same):
 
-- std/norm: 2,061 canonical and 3,812 compatibility decompositions as 7 byte records (rune, count, position in a pool of varint runes), 388 combining class ranges (7 bytes) and 941 composition pairs (9 bytes): 70 KB. Before the packing the same data was `List[Int]` constants at 8 bytes an element, 200 KB (std-norm-size-2026-11-03.md); packing as bytes took the table from 200 KB to 70 KB and the code from +87 KB to +9.5 KB (the list initializers were code).
-- std/idna: 7,380 ranges of runes of equal data, 9 bytes each (first rune, category, joining and attribute flags, Bidi class, position of the mapping), 66 KB, plus 17 KB of mappings; the Bidi class sits in the same record, so it needs no second table (Go has a 20 KB `bidiValues` beside the 46 KB of idna tables). Idna's own table is 84 KB against Go's idna and bidi tables of about 66 KB.
+- std/norm: 2,061 canonical and 3,812 compatibility decompositions as 7 byte records (a rune or a run of consecutive runes at one delta, then the delta or the position in a pool of varint runes), 388 combining class ranges (7 bytes) and 941 composition pairs (9 bytes): 57 KB (canonical 14.4 KB and 7.3 KB of pool, compatibility 17.0 KB and 7.5 KB, classes 2.7 KB, pairs 8.5 KB). Before the packing the same data was `List[Int]` constants at 8 bytes an element, 200 KB.
+- std/idna: 7,380 ranges of runes of equal data, 7 bytes each (first rune, an index into 119 distinct infos of category, joining and attribute flags, Bidi class and mapping kind, and 3 bytes that hold the zigzag delta of a one rune mapping or the position of a longer one): 51.7 KB, plus 6.5 KB of mappings and 0.5 KB of infos; the Bidi class sits in the same info, so it needs no second table (Go has a 20 KB `bidiValues` beside the 46 KB of idna tables).
 
 A binary search over fixed records is simple and needs no table generator beyond the dump, but stores a record for every run where Go's trie shares equal blocks.
 
-## Where Xo is worse and the fix path
+## What is left
 
-1. idna code, +118 KB against +54 KB: not yet investigated. Candidates: the generic container machinery that each `Result`, `Option`, `List[Str]` and tuple instantiation brings in, string interpolation, and the label iterator's `List[Str]` helpers, none of which Go's idna needs. Next experiment: `xo build --release` with a symbol size listing (`nm -S` on the Mach-O) of xb.bin to rank idna's functions, then write the hot ones over bytes.
-2. idna tables, 164.8 KB against 134.5 KB: a two stage table (an index of 1,088 blocks of 1,024 runes, then deduplicated blocks of 3 byte values) would store equal blocks once like Go's trie; expected 45 to 50 KB for idna, from the 66 KB of ranges and the 9 byte records. The mappings can be stored once with norm's compatibility decompositions where the two agree: idna's mapping is NFKC and case folding of the rune, so the mapped runes that are only a compatibility decomposition (how many of idna's mapped ranges, to be counted first) could be derived from std/norm's table instead of stored; this needs a casefold step that std/unicode has.
-3. norm table data, 70 KB against 64 KB: the same two stage layout for the decomposition index, or 2 byte entries for runes below 0x10000 in the pools.
+Both modules are now smaller than Go's, so the fix path is about margin and speed, not a deficit:
 
-The data is correct on every backend (corpora against x/text and x/net, bench/results/std-twin-rows12 and 15 for speed), so these are size and speed work, not correctness.
+1. Norm's composition pairs (8.5 KB) are the inverse of the canonical two rune decompositions; storing only the decompositions and deriving the pair on lookup would drop them, at a cost in lookup time that has to be measured.
+2. A two stage block table (an index of blocks, deduplicated blocks of values) for idna's 7,380 ranges would trade the binary search for two reads, as Go's trie does; worth it only if the timing rows show the search.
+3. Speed: norm's NFC is 2.7 of Go's time on a Mac run after the byte packing (the record decoding), and was 2.1 before it on the host (bench/results/std-twin-rows12-2026-11-03.md); the host rows are in std-twin-rows15-2026-11-03.md.

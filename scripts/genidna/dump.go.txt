@@ -80,28 +80,35 @@ func (c info) appendMapping(b []byte, s string) []byte {
 }
 
 func Dump(path string) {
-	var recs, maps []byte
+	var recs, maps, infos []byte
+	ids := map[[4]int]int{}
 	var cur rec
 	start := 0
 	var haveCur bool
 	nrec := 0
 	flush := func() {
-		recs = append(recs, byte(start), byte(start>>8), byte(start>>16), byte(cur.cat), byte(cur.flags), byte(cur.class))
-		pos := 0
-		if cur.kind != 0 {
-			pos = len(maps) + 1
-			switch cur.kind {
-			case 1:
-				maps = varint(maps, 0)
-				maps = varint(maps, zigzag(cur.delta))
-			case 2:
-				maps = varint(maps, len(cur.str)+1)
-				for _, m := range cur.str {
-					maps = varint(maps, int(m))
-				}
+		key := [4]int{cur.cat, cur.flags, cur.class, cur.kind}
+		id, ok := ids[key]
+		if !ok {
+			id = len(ids)
+			ids[key] = id
+			infos = append(infos, byte(cur.cat), byte(cur.flags), byte(cur.class), byte(cur.kind))
+		}
+		if id > 255 {
+			panic("more than 256 distinct infos")
+		}
+		data := 0
+		switch cur.kind {
+		case 1:
+			data = zigzag(cur.delta)
+		case 2:
+			data = len(maps) + 1
+			maps = varint(maps, len(cur.str))
+			for _, m := range cur.str {
+				maps = varint(maps, int(m))
 			}
 		}
-		recs = append(recs, byte(pos), byte(pos>>8), byte(pos>>16))
+		recs = append(recs, byte(start), byte(start>>8), byte(start>>16), byte(id), byte(data), byte(data>>8), byte(data>>16))
 		nrec++
 	}
 	for r := rune(0); r <= 0x10FFFF; r++ {
@@ -162,10 +169,11 @@ func Dump(path string) {
 	}
 	flush()
 	var w strings.Builder
-	fmt.Fprintf(&w, "// Unicode %s, from golang.org/x/net/idna's tables (scripts/genidna): %d ranges of runes (%d bytes) and %d bytes of mappings.\n", UnicodeVersion, nrec, len(recs), len(maps))
+	fmt.Fprintf(&w, "// Unicode %s, from golang.org/x/net/idna's tables (scripts/genidna): %d ranges of runes (%d bytes), %d distinct infos and %d bytes of mappings.\n", UnicodeVersion, nrec, len(recs), len(infos)/4, len(maps))
 	fmt.Fprintf(&w, "const UNICODE_VERSION: Str = %q\n\n", UnicodeVersion)
-	w.WriteString("/// Per range of runes, 9 bytes, ascending: its first rune (3 bytes), the category, the flags (join type, attributes, may need norm, bidi), the bidi class, and the position plus one of its mapping in MAPS (3 bytes, 0 for none).\nconst RANGES: Bytes = " + bytesLit(recs) + "\n\n")
-	w.WriteString("/// Mappings: 0 and a zigzag varint delta from the rune, or a count plus 1 and that many varint runes.\nconst MAPS: Bytes = " + bytesLit(maps) + "\n\n")
+	w.WriteString("/// Per range of runes, 7 bytes, ascending: its first rune (3 bytes), the number of its entry in INFOS, and 3 bytes of data: for a mapping of one rune the zigzag delta from the rune, for a longer mapping its position plus one in MAPS, else 0.\nconst RANGES: Bytes = " + bytesLit(recs) + "\n\n")
+	w.WriteString("/// Per distinct info, 4 bytes: the category, the flags (join type, attributes, may need norm, bidi), the bidi class and the kind of mapping (0 none, 1 one rune by delta, 2 a string in MAPS).\nconst INFOS: Bytes = " + bytesLit(infos) + "\n\n")
+	w.WriteString("/// Mappings of more than one rune (or none), each a count and that many varint runes.\nconst MAPS: Bytes = " + bytesLit(maps) + "\n\n")
 	b, err := os.ReadFile(path)
 	if err != nil {
 		panic(err)

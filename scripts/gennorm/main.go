@@ -33,16 +33,42 @@ func varint(b []byte, v int) []byte {
 	return append(b, byte(v))
 }
 
-// decomps packs sorted (key, runes) as 7 byte records (the key in 3 bytes, the
-// count in 1, the position of the varint coded runes in the pool in 3) and the pool.
+func zigzag(d int) int {
+	if d < 0 {
+		return -2*d - 1
+	}
+	return 2 * d
+}
+
+// decomps packs the sorted (key, runes) as 7 byte records: the first rune (3
+// bytes), a byte (bit 7 set: a run of consecutive runes whose decomposition
+// is one rune each at the same delta from the rune, the low bits the length
+// minus one; else the low bits the count of runes of the decomposition) and
+// 3 bytes of data (the zigzag delta of a run, else the position of the varint
+// coded runes in the pool).
 func decomps(keys, offs, runes []int) (recs, pool []byte) {
-	for i, k := range keys {
-		pos := len(pool)
+	for i := 0; i < len(keys); {
+		k := keys[i]
 		n := offs[i+1] - offs[i]
+		if n == 1 {
+			d := runes[offs[i]] - k
+			j := i
+			for j+1 < len(keys) && j+1-i < 127 && keys[j+1] == keys[j]+1 && offs[j+2]-offs[j+1] == 1 && runes[offs[j+1]]-keys[j+1] == d {
+				j++
+			}
+			if j > i {
+				z := zigzag(d)
+				recs = append(recs, byte(k), byte(k>>8), byte(k>>16), byte(0x80|(j-i)), byte(z), byte(z>>8), byte(z>>16))
+				i = j + 1
+				continue
+			}
+		}
+		pos := len(pool)
 		for _, r := range runes[offs[i]:offs[i+1]] {
 			pool = varint(pool, r)
 		}
 		recs = append(recs, byte(k), byte(k>>8), byte(k>>16), byte(n), byte(pos), byte(pos>>8), byte(pos>>16))
+		i++
 	}
 	return
 }
@@ -115,7 +141,7 @@ func main() {
 		v := pv[i]
 		cmb = append(cmb, byte(k), byte(k>>8), byte(k>>16), byte(k>>24), byte(k>>32), byte(k>>40), byte(v), byte(v>>8), byte(v>>16))
 	}
-	w.WriteString("/// Runes with a canonical decomposition, ascending, 7 bytes each: the rune (3 bytes), the count of runes of its full decomposition (NFD), and where they start in CANON_POOL (3 bytes). Hangul syllables are algorithmic.\nconst CANON: Bytes = " + lit(cr7) + "\n\n")
+	w.WriteString("/// Runes with a canonical decomposition, ascending, 7 bytes each (the layout of `decomps` in scripts/gennorm): a rune or a run of runes with their full decompositions (NFD), the runes of the others in CANON_POOL. Hangul syllables are algorithmic.\nconst CANON: Bytes = " + lit(cr7) + "\n\n")
 	w.WriteString("/// The runes of the decompositions of CANON, each a varint.\nconst CANON_POOL: Bytes = " + lit(cp) + "\n\n")
 	w.WriteString("/// Runes whose full compatibility decomposition (NFKD) differs from their NFD, as CANON.\nconst COMPAT: Bytes = " + lit(kr7) + "\n\n")
 	w.WriteString("/// The runes of the decompositions of COMPAT, each a varint.\nconst COMPAT_POOL: Bytes = " + lit(kp) + "\n\n")
