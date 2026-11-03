@@ -464,3 +464,5 @@ Consequences, Alternatives. Never delete a decision; mark it `Superseded by NNNN
 - [0472](0472-std-heap-priority-queue.md): proposed: std/heap, a binary min-heap Heap[T] by a caller comparison with push, pop, peek, remove(i), fix(i, x) and a moved(x, i) callback for index bookkeeping; closes survey rank 13 (container/heap)
 - [0473](0473-std-otp.md): proposed: std/otp, hotp, totp, verify (constant time, skew window), generate_secret and an otpauth uri over std/crypto hmac and std/base32; closes survey TOTP
 - [0474](0474-std-cron.md): proposed: std/cron, parse a robfig/cron spec (5 fields, descriptors, @every, TZ=) into a Schedule and next(after) with DST gap and overlap rules; closes survey rank 8
+- [0475](0475-std-cookiejar.md): proposed: std/cookiejar, a Jar with Go's cookiejar matching rules (set_cookies, cookies, now as a parameter); client wiring is a later ADR; closes survey cookiejar
+- [0476](0476-std-norm-idna.md): proposed: std/norm (NFC, NFD, NFKC, NFKD) and std/idna (to_ascii, to_unicode, Lookup profile) from generated x/text and x/net tables, norm first; closes survey rank 12
