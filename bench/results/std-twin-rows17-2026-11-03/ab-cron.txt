@@ -1,0 +1,20 @@
+offload: /work had 27 GB free; pruned xo cache files idle over 360 min, now 27G
+ab-host l2cron: A c17b801bfc4 B 95b06977e8a on Linux aarch64, 12 CPUs
+ab-host: xo a built in 0 s (xo 0.37.0 linux/arm64)
+ab-host: xo b built in 1 s (xo 0.37.0 linux/arm64)
+ab-host: quiet wait 65 s, load 0.92 4.18 4.62
+round 1/3: load 0.92 / 0.92
+round 2/3: load 0.92 / 0.92
+round 3/3: load 0.92 / 0.92
+A: /work/abl2cron.out/prog-a monthly_last 
+B: /work/abl2cron.out/prog-b monthly_last 
+3 of 3 rounds used (0 loaded), loads A/B per round: 0.92/0.92 0.92/0.92 0.92/0.92
+
+metric                A median    B median    spread A/B        B / A   95% interval      verdict
+wall_ms               10.4        2.423       1.552% 1.176%     0.233   0.232 to 0.237    better (n=3)
+cpu_ms                10.39       2.355       1.54% 0.701%      0.227   0.226 to 0.232    too coarse (n=3)
+max_rss_kb            1220        1220        0% 0%             1.0     1.0 to 1.0        within noise (n=3)
+load: median 0.92 (A) / 0.92 (B); loaded: 0 of 3 rounds (at or above 6.0; baseline 0.92 + 3.0, at least 6.0)
+instructions, cycles, ipc: n/a (only macOS time -l reports them)
+ab-host l2cron: ok in 2 s
+OFFLOAD-RC=0

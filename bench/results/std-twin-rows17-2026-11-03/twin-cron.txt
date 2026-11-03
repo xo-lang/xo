@@ -1,0 +1,23 @@
+offload: /work had 27 GB free; pruned xo cache files idle over 360 min, now 27G
+time.zone: note: time.zone with a name known only at run time embeds the whole zone database (398 KB); pass a constant name to embed only that zone, or build with --tzdata=system to read the host's database
+linux/arm64: /work/l2twin/xoprog
+go: downloading github.com/robfig/cron/v3 v3.0.1
+go go1.26.1; host Linux 7.0.14-linuxkit aarch64; rev 95b06977e8af05d78c70b819fa0567ad0725eb7a
+== none: none 0 | none 0
+wall_ms               0.617       0.533       9.217% 9.49%      0.864   0.808 to 0.915    better (n=15)
+cpu_ms                0.634       0.44        12.62% 9.432%     0.694   0.646 to 0.755    too coarse (n=15)
+max_rss_kb            5796        1224        35.92% 0.327%     0.211   0.21 to 0.327     better (n=15)
+== every5: every5 145999990000000 | every5 145999990000000
+wall_ms               103.7       20.15       11.08% 39.35%     0.194   0.177 to 0.264    better (n=15)
+cpu_ms                103.0       19.88       9.846% 32.47%     0.193   0.175 to 0.254    better (n=15)
+max_rss_kb            5800        1220        36.24% 0.328%     0.21    0.209 to 0.326    better (n=15)
+== weekday_ny: weekday_ny 10433915574800 | weekday_ny 10433915574800
+wall_ms               249.4       60.63       35.5% 35.97%      0.243   0.238 to 0.283    better (n=15)
+cpu_ms                249.8       60.57       34.57% 30.89%     0.243   0.234 to 0.278    better (n=15)
+max_rss_kb            3740        1312        56.2% 0%          0.351   0.224 to 0.351    better (n=15)
+== monthly_last: monthly_last 505049510400 | monthly_last 505049510400
+wall_ms               2.774       2.378       4.712% 2.806%     0.857   0.846 to 0.89     better (n=15)
+cpu_ms                2.852       2.324       4.33% 2.087%      0.815   0.801 to 0.84     too coarse (n=15)
+max_rss_kb            5800        1224        35.48% 0.327%     0.211   0.21 to 0.327     better (n=15)
+twin: ok
+OFFLOAD-RC=0

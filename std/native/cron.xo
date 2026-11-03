@@ -297,9 +297,22 @@ fn (s: Schedule) next(after: Time) -> Time? {
         t = date_go(z, c.date.year, c.date.month, c.date.day, 0, 0, 0)
         c = civ(t, z)
       }
-      let nd = c.date.add_days(1)
-      t = date_go(z, nd.year, nd.month, nd.day, c.time.hour, c.time.minute, c.time.second)
-      c = civ(t, z)
+      // date_go of the next day at the same clock, done in place: that
+      // civil time read as UTC is this one's plus a day, and when the
+      // zone's offset there is the one the lookup returns, the civil time
+      // is that day and clock with no conversion back (the zone label is
+      // not read here); another offset converts as date_go and civ do
+      let l = t + c.offset.nanos() / 1000000000 + 86400
+      let off_a = z.offset_at(Time.from_unix(l)).nanos() / 1000000000
+      let utc_a = l - off_a
+      let off_b = z.offset_at(Time.from_unix(utc_a)).nanos() / 1000000000
+      if off_b == off_a {
+        t = utc_a
+        c = time.Civil{date: c.date.add_days(1), time: c.time, offset: Duration.from_nanos(off_a * 1000000000), zone: c.zone}
+      } else {
+        t = l - off_b
+        c = civ(t, z)
+      }
       if c.time.hour != 0 {
         if c.time.hour > 12 {
           t += (24 - c.time.hour) * 3600
