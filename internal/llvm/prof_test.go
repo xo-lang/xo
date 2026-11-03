@@ -250,6 +250,24 @@ func TestProfHeap(t *testing.T) {
 				cmd.Dir = dir
 				cmd.Env = append(os.Environ(), env...)
 				got, err := runCombined(cmd, 2*time.Minute)
+				// a failure keeps this run's raw profile, output and program
+				// past the temporary directory (registered after it, so it
+				// runs first): the in use flake of 2026-11-03 (2.5 MB in 2585
+				// objects, all raw.str_repeat) came once in about 100 runs
+				// on linux/arm64 and not in 850 on demand
+				t.Cleanup(func() {
+					if !t.Failed() {
+						return
+					}
+					keep, kerr := os.MkdirTemp("", "xo-profheap-fail-")
+					if kerr != nil {
+						return
+					}
+					_ = os.WriteFile(filepath.Join(dir, "run-output.txt"), []byte(strings.Join(env, " ")+"\n"+got), 0o644)
+					_ = exec.Command("cp", "-R", dir, keep).Run()
+					_ = exec.Command("cp", bin, filepath.Join(keep, "prog")).Run()
+					t.Logf("kept the run %v, its profile and the program in %s", env, keep)
+				})
 				if err != nil || !strings.Contains(got, "held 2000 churned 2000000") {
 					t.Fatalf("run %v: %v\n%s", env, err, got)
 				}
