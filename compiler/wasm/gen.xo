@@ -1735,6 +1735,10 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
     // stdin without files: rt7_p1_text's fd_read
     b.write("    (import \"wasi_snapshot_preview1\" \"fd_read\" (func $fd_read (param i32 i32 i32 i32) (result i32)))\n")
   }
+  if !g.comp && !g.cmd && g.stdin && !g.conc {
+    // rt7_p1_text's wait after EAGAIN (the task runtime imports it too)
+    b.write("    (import \"wasi_snapshot_preview1\" \"poll_oneoff\" (func $poll_oneoff (param i32 i32 i32 i32) (result i32)))\n")
+  }
   if g.comp {
     b.write(rt5_imports())
     if g.is_client() {

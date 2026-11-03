@@ -339,8 +339,13 @@ fn rt7_run(start: List[Str], files: Bool) -> Str {
 /// rt.wasi_stdin_read in a preview 1 module: fd_read of descriptor 0.
 fn rt7_p1_text() -> Str {
   """
-    (func $wasi_stdin_read (param $p i64) (param $n i64) (result i64) (local $io i32) (local $e i32) (local $k i32)
-      i32.const 16
+    ;; a read of standard input: the count, 0 at its end, -5 on an
+    ;; error. A host whose stdin does not block (node's WASI on a pipe
+    ;; its writer has not filled yet) answers EAGAIN (6): the read waits
+    ;; a little (1 ms, doubling to 16 ms) and asks again
+    ;; (gotchas/wasm-stdin-eagain.md)
+    (func $wasi_stdin_read (param $p i64) (param $n i64) (result i64) (local $io i32) (local $e i32) (local $k i32) (local $ms i64)
+      i32.const 96
       call $alloc
       local.set $io
       local.get $io
@@ -351,14 +356,65 @@ fn rt7_p1_text() -> Str {
       local.get $n
       i32.wrap_i64
       i32.store offset=4
-      i32.const 0
-      local.get $io
-      i32.const 1
-      local.get $io
-      i32.const 8
-      i32.add
-      call $fd_read
-      local.set $e
+      i64.const 1
+      local.set $ms
+      block $got
+        loop $again
+          i32.const 0
+          local.get $io
+          i32.const 1
+          local.get $io
+          i32.const 8
+          i32.add
+          call $fd_read
+          local.tee $e
+          i32.const 6
+          i32.ne
+          br_if $got
+          ;; a relative clock subscription at io+16 (userdata, tag 0,
+          ;; clock id 1 monotonic, timeout, precision, flags 0), its
+          ;; event at io+64: the 48 byte subscription ends at io+64
+          local.get $io
+          i32.const 16
+          i32.add
+          i32.const 0
+          i32.const 48
+          memory.fill
+          local.get $io
+          i32.const 1
+          i32.store offset=32
+          local.get $io
+          local.get $ms
+          i64.const 1000000
+          i64.mul
+          i64.store offset=40
+          local.get $io
+          i64.const 1000
+          i64.store offset=48
+          local.get $io
+          i32.const 16
+          i32.add
+          local.get $io
+          i32.const 64
+          i32.add
+          i32.const 1
+          local.get $io
+          i32.const 12
+          i32.add
+          call $poll_oneoff
+          drop
+          local.get $ms
+          i64.const 16
+          i64.lt_s
+          if
+            local.get $ms
+            i64.const 1
+            i64.shl
+            local.set $ms
+          end
+          br $again
+        end
+      end
       local.get $io
       i32.load offset=8
       local.set $k
