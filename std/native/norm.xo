@@ -288,8 +288,25 @@ fn is_ascii(s: Str) -> Bool {
 /// The normalization of one run of text that starts at a starter.
 fn normalize_run(s: Str, compat: Bool, composing: Bool) -> List[Int] {
   var rs: List[Int] = []
-  for r in s.runes() {
-    decompose_rune(rs, Int(r), compat)
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i < n {
+    let c = Int(b[i])
+    var r = c
+    if c >= 0xF0 {
+      r = ((c & 7) << 18) | ((Int(b[i + 1]) & 63) << 12) | ((Int(b[i + 2]) & 63) << 6) | (Int(b[i + 3]) & 63)
+      i += 4
+    } else if c >= 0xE0 {
+      r = ((c & 15) << 12) | ((Int(b[i + 1]) & 63) << 6) | (Int(b[i + 2]) & 63)
+      i += 3
+    } else if c >= 0xC0 {
+      r = ((c & 31) << 6) | (Int(b[i + 1]) & 63)
+      i += 2
+    } else {
+      i += 1
+    }
+    decompose_rune(rs, r, compat)
   }
   var cs: List[Int] = List.with_capacity(rs.len())
   for r in rs {
