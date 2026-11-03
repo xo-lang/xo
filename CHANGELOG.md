@@ -23,9 +23,10 @@ cited by file and line; every change is listed under "Every change in
   linux/arm64 host (a Linux VM on an M4 Pro, 4 KiB guest pages) runs at
   0.966 and 0.953 of v0.35.0's requests a second at 32 and 256
   connections, with about 4.5% more CPU a request, in two jobs
-  (bench/results/alloc-regression-2026-11-02.md:74-99, finding 9). The
+  (bench/results/alloc-regression-2026-11-02.md:74-114, finding 9). The
   same servers on the Mac (darwin, 16 KiB pages) are level with v0.35.0
-  (same finding), and the stack phases behind the gap cost under 1% on
+  in requests a second (0.995 to 1.015), with 1 to 4% more CPU a request
+  in a quiet-window job (same finding), and the stack phases behind the gap cost under 1% on
   bare-metal Graviton 4 (bench/results/stack-phase-2026-11-02.md:89-114),
   so this ships as a known cost of that VM (owner, 2026-11-02). The part
   that was Xo's, prologue stores that crossed a 4 KiB page at one fiber
