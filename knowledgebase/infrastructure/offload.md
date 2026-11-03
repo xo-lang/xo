@@ -79,7 +79,13 @@ before. The Mac keeps `short`, `arm64`, `llvm`, `cmd` and `corpora-all`
   minutes in, since 2026-10-31) holds a slot, the oldest
   plain job takes the free slot, since the exclusive one cannot start
   before the long job ends (tier 31 held a slot about two hours while
-  twelve jobs waited behind an exclusive --ab). At most 2 arm64 jobs
+  twelve jobs waited behind an exclusive --ab). heavyd's lanes backfill
+  only a job that is not long itself (lead, 2026-11-03, writer
+  preference): a backfilled long job kept backfill open after the jobs
+  the exclusive one waited for had ended, so a chain of them could hold
+  it off for good (scripts/lead/heavyd TestLaneExclusiveNotStarved;
+  offload.sh's own ticket queue, used with OFF_NO_LANE=1, still
+  backfills any plain job; Last verified: 2026-11-03). At most 2 arm64 jobs
   per agent, waiting or running: offload.sh counts the jobs of its
   Claude session and refuses a third with exit 5 (OFF_MAX_QUEUED,
   0 turns it off; lead, 2026-10-31: one agent had five --ab runs
