@@ -1,5 +1,5 @@
 // std/bcrypt (spec/std.md 53). Declaration file. golang.org/x/crypto/bcrypt:
-// password hashes in the format of OpenBSD's bcrypt ($2a$ with a cost, a
+// password hashes in the bcrypt format ($2a$ with a cost, a
 // 22 character salt and a 31 character hash), `hash` and `compare` as
 // GenerateFromPassword and CompareHashAndPassword, to verify hashes made
 // by other systems and to make new ones. Passwords are bytes (at most 72
