@@ -15,6 +15,10 @@ LICENSE and std/LICENSE.
      std/native/norm.xo (golang.org/x/text v0.43.0, package unicode/norm:
        the algorithm follows it and the tables are generated from it by
        scripts/gennorm; Copyright 2011 The Go Authors, BSD-style license)
+     std/native/idna.xo (golang.org/x/net v0.60.0, package idna, and
+       golang.org/x/text v0.43.0, package secure/bidirule: the algorithms
+       ported to Xo, the tables generated from them by scripts/genidna;
+       Copyright 2016 The Go Authors, BSD-style license)
      std/native/cookiejar.xo (Go 1.26.1, package net/http/cookiejar,
        ported to Xo)
 

@@ -15,17 +15,36 @@ import (
 	"golang.org/x/text/unicode/norm"
 )
 
-func list(name string, doc string, xs []int, w *strings.Builder) {
-	fmt.Fprintf(w, "%s\nconst %s: List[Int] = [", doc, name)
-	for i, x := range xs {
-		if i%12 == 0 {
-			w.WriteString("\n  ")
-		} else {
-			w.WriteString(" ")
-		}
-		fmt.Fprintf(w, "%d,", x)
+func lit(b []byte) string {
+	var w strings.Builder
+	w.WriteString(`b"`)
+	for _, c := range b {
+		fmt.Fprintf(&w, `\x%02x`, c)
 	}
-	w.WriteString("\n]\n\n")
+	w.WriteString(`"`)
+	return w.String()
+}
+
+func varint(b []byte, v int) []byte {
+	for v >= 0x80 {
+		b = append(b, byte(v&0x7f|0x80))
+		v >>= 7
+	}
+	return append(b, byte(v))
+}
+
+// decomps packs sorted (key, runes) as 7 byte records (the key in 3 bytes, the
+// count in 1, the position of the varint coded runes in the pool in 3) and the pool.
+func decomps(keys, offs, runes []int) (recs, pool []byte) {
+	for i, k := range keys {
+		pos := len(pool)
+		n := offs[i+1] - offs[i]
+		for _, r := range runes[offs[i]:offs[i+1]] {
+			pool = varint(pool, r)
+		}
+		recs = append(recs, byte(k), byte(k>>8), byte(k>>16), byte(n), byte(pos), byte(pos>>8), byte(pos>>16))
+	}
+	return
 }
 
 func main() {
@@ -85,15 +104,23 @@ func main() {
 	var w strings.Builder
 	fmt.Fprintf(&w, "// Unicode %s, from golang.org/x/text/unicode/norm (scripts/gennorm): %d canonical and %d compatibility decompositions, %d combining class ranges, %d composition pairs.\n", norm.Version, len(ck), len(kk), len(cc)/3, len(pk))
 	w.WriteString("const UNICODE_VERSION: Str = \"" + norm.Version + "\"\n\n")
-	list("CANON_KEYS", "/// Runes with a canonical decomposition, ascending (Hangul syllables are algorithmic).", ck, &w)
-	list("CANON_OFFS", "/// Where the decomposition of CANON_KEYS[i] starts in CANON_RUNES; one past the last at the end.", co, &w)
-	list("CANON_RUNES", "/// The full canonical decompositions (NFD) of CANON_KEYS, one after the other.", cr, &w)
-	list("COMPAT_KEYS", "/// Runes whose full compatibility decomposition (NFKD) differs from their NFD, ascending.", kk, &w)
-	list("COMPAT_OFFS", "/// Where the NFKD of COMPAT_KEYS[i] starts in COMPAT_RUNES; one past the last at the end.", ko, &w)
-	list("COMPAT_RUNES", "/// The full compatibility decompositions of COMPAT_KEYS, one after the other.", kr, &w)
-	list("CCC", "/// Canonical combining classes as (first rune, last rune, class) triples, ascending.", cc, &w)
-	list("COMP_KEYS", "/// Primary composition pairs, first * 2**21 + second, ascending.", pk, &w)
-	list("COMP_VALS", "/// The rune each COMP_KEYS pair composes to.", pv, &w)
+	cr7, cp := decomps(ck, co, cr)
+	kr7, kp := decomps(kk, ko, kr)
+	var ccb []byte
+	for i := 0; i < len(cc); i += 3 {
+		ccb = append(ccb, byte(cc[i]), byte(cc[i]>>8), byte(cc[i]>>16), byte(cc[i+1]), byte(cc[i+1]>>8), byte(cc[i+1]>>16), byte(cc[i+2]))
+	}
+	var cmb []byte
+	for i, k := range pk {
+		v := pv[i]
+		cmb = append(cmb, byte(k), byte(k>>8), byte(k>>16), byte(k>>24), byte(k>>32), byte(k>>40), byte(v), byte(v>>8), byte(v>>16))
+	}
+	w.WriteString("/// Runes with a canonical decomposition, ascending, 7 bytes each: the rune (3 bytes), the count of runes of its full decomposition (NFD), and where they start in CANON_POOL (3 bytes). Hangul syllables are algorithmic.\nconst CANON: Bytes = " + lit(cr7) + "\n\n")
+	w.WriteString("/// The runes of the decompositions of CANON, each a varint.\nconst CANON_POOL: Bytes = " + lit(cp) + "\n\n")
+	w.WriteString("/// Runes whose full compatibility decomposition (NFKD) differs from their NFD, as CANON.\nconst COMPAT: Bytes = " + lit(kr7) + "\n\n")
+	w.WriteString("/// The runes of the decompositions of COMPAT, each a varint.\nconst COMPAT_POOL: Bytes = " + lit(kp) + "\n\n")
+	w.WriteString("/// Canonical combining classes as 7 byte records, ascending: the first rune (3 bytes), the last rune (3 bytes), the class.\nconst CCC: Bytes = " + lit(ccb) + "\n\n")
+	w.WriteString("/// Primary composition pairs, ascending by first * 2**21 + second, 9 bytes each: that key (6 bytes) and the rune it composes to (3 bytes).\nconst COMP: Bytes = " + lit(cmb) + "\n\n")
 	// sort pairs by key
 	b, err := os.ReadFile(path)
 	if err != nil {

@@ -63,15 +63,70 @@ fn idnaerr_display(e: idna.IdnaErr) -> Str { e.msg }
 
 fn unicode_version() -> Str { UNICODE_VERSION }
 
+/// label as Go's %q writes it for ASCII, and with \u escapes beyond (every
+/// non ASCII rune is escaped here, so no Unicode printing tables are linked in).
+fn quote_label(label: Str) -> Str {
+  var b = StrBuilder.new()
+  b.write("\"")
+  for rr in label.runes() {
+    let r = Int(rr)
+    if r == 34 {
+      b.write("\\\"")
+    } else if r == 92 {
+      b.write("\\\\")
+    } else if r == 10 {
+      b.write("\\n")
+    } else if r == 13 {
+      b.write("\\r")
+    } else if r == 9 {
+      b.write("\\t")
+    } else if r >= 32 && r < 127 {
+      b.write("${rr}")
+    } else if r < 32 || r == 127 {
+      b.write("\\x${hex(r, 2)}")
+    } else if r < 0x10000 {
+      b.write("\\u${hex(r, 4)}")
+    } else {
+      b.write("\\U${hex(r, 8)}")
+    }
+  }
+  b.write("\"")
+  b.freeze()
+}
+
+fn hex(r: Int, w: Int) -> Str {
+  var h = r.to_str_base(16)
+  while h.len() < w {
+    h = "0${h}"
+  }
+  h
+}
+
+fn hex_upper(r: Int) -> Str {
+  let digits = "0123456789ABCDEF"
+  var h = ""
+  var x = r
+  while x > 0 || h.len() < 4 {
+    h = "${digits[x % 16..x % 16 + 1]}${h}"
+    x = x / 16
+  }
+  h
+}
+
+fn ascii_lower(s: Str) -> Str {
+  var b = BytesBuilder.with_capacity(s.len())
+  for c in s.bytes() {
+    b.write_byte(if c >= 65 && c <= 90 { c + 32 } else { c })
+  }
+  b.freeze().to_str() ?? s
+}
+
 fn label_err(label: Str, code: Str) -> idna.IdnaErr {
-  idna.IdnaErr{code: code, msg: "idna: invalid label ${label.quote()}"}
+  idna.IdnaErr{code: code, msg: "idna: invalid label ${quote_label(label)}"}
 }
 
 fn rune_err(r: Int, code: Str) -> idna.IdnaErr {
-  var h = r.to_str_base(16).to_upper()
-  while h.len() < 4 {
-    h = "0${h}"
-  }
+  var h = hex_upper(r)
   idna.IdnaErr{code: code, msg: "idna: disallowed rune U+${h}"}
 }
 
@@ -494,7 +549,7 @@ fn validate_and_map(o: Opts, s: Str) -> Mapped {
     break
   }
   if plain {
-    return Mapped{s: if upper { s.to_lower() } else { s }, bidi: false, err: None}
+    return Mapped{s: if upper { ascii_lower(s) } else { s }, bidi: false, err: None}
   }
   var b = BytesBuilder.new()
   var k = 0

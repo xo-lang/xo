@@ -1,6 +1,6 @@
 # 0476: std/norm and std/idna, Unicode normalization and internationalised domain names (proposal)
 
-Status: Partly accepted (owner, 2026-11-03): std/norm now, with its real cost (`__text` and binary size of a program importing it) reported; std/idna waits for the owner after that number
+Status: Accepted (owner, 2026-11-03): std/norm first with its cost reported, then std/idna ("see if our method is better than Go's or not"; the comparison is bench/results/std-idna-size-2026-11-03.md)
 
 ## Context
 
