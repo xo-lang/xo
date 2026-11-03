@@ -20,11 +20,11 @@ Linux/arm64 offload host, `xo bench --ab` style runs (scratchpad twin-ab2: 15 ro
 | bcrypt | none | 0.706 | 0.446 | 0.631 | 0.584-0.733 | 1.178 |
 | bcrypt | hash | 1219 | 1754 | 1.439 | 1.32-1.604 | 0.806 |
 | bcrypt | compare | 1314 | 2034 | 1.548 | 1.406-1.681 | 0.806 |
-| charset | none | 8.903 | 10.11 | 1.135 | 1.099-1.154 | 0.544 |
-| charset | utf16_encode | 66.07 | 119.0 | 1.802 | 1.697-1.874 | 0.463 |
-| charset | utf16_decode | 63.47 | 123.5 | 1.945 | 1.914-1.968 | 0.497 |
-| charset | w1252_decode | 96.09 | 206.1 | 2.145 | 2.075-2.204 | 0.289 |
-| charset | w1252_encode | 318.9 | 203.2 | 0.637 | 0.633-0.641 | 0.429 |
+| charset | none | 20.93 | 16.0 | 0.765 | 0.723-0.925 | 0.557 |
+| charset | utf16_encode | 125.6 | 54.1 | 0.431 | 0.395-0.651 | 0.21 |
+| charset | utf16_decode | 95.27 | 70.35 | 0.738 | 0.698-0.789 | 0.479 |
+| charset | w1252_decode | 92.39 | 55.21 | 0.598 | 0.514-0.693 | 0.256 |
+| charset | w1252_encode | 122.3 | 44.98 | 0.368 | 0.333-0.605 | 0.329 |
 | bufio | none | 64.79 | 43.21 | 0.667 | 0.465-0.744 | 0.769 |
 | bufio | lines | 101.1 | 56.11 | 0.555 | 0.403-0.859 | 0.436 |
 | bufio | until | 104.1 | 75.84 | 0.729 | 0.633-0.882 | 0.474 |
@@ -35,5 +35,5 @@ Reading:
 - hash: crc64 (1.04) and adler32 (1.05) are within noise of Go; crc64e 1.10 has an interval of 1.01 to 1.23 and uses the same slicing-by-8 tables and loop as crc64 (Go's crc64 also uses slicing-by-8 for both tables), so the gap between the two rows is noise; it is re-measured with the next batch. crc32c is 0.42 (Go's crc32c has no arm64 assembly path here), fnv128a 0.79.
 - csv: parse 0.66, format 0.69 and the streaming `reader` over a File 0.69 of Go's wall at 0.46 to 0.72 of its peak memory.
 - bufio: lines 0.56, until 0.73 and exact 0.67 of Go's bufio.Reader over 1460 byte chunks (the `none` row, the building of the 8 MiB test data, is 0.67).
-- bcrypt: hash 1.44 and compare 1.55 of x/crypto's. Not Proven. The 16 Blowfish rounds do four List reads each and each is bounds checked; Go reads fixed arrays by byte index, with no checks. Next experiment: an inner loop on the form the sha256 and aes inner loops use.
-- charset: the first run, on a twin whose test text was 50% non-ASCII (unrealistic); decode is 1.8 to 2.1 of Go's, encode to Windows-1252 0.64. The twin data was then made text-like (90% ASCII) and decode given an ASCII run fast path; the re-run replaces these rows in the next part.
+- bcrypt: hash 1.44 and compare 1.55 of x/crypto's. Not Proven. Tried 2026-11-03: unchecked S box and P reads (a relaxed slot load), F written out in the round loop, and wrapping adds; each measured 1.42 to 1.58 on the Mac, so the 4 bounds branches and 2 overflow-checked adds per F in the arm64 code are not the cost (a re-run on the host with the unchecked reads gave 2.0 on a loaded host and was dropped with the change). The 32 bit masks, the byte extraction as shift and mask against Go's byte indexing of a uint32 array, and 8 byte words (8 KiB of state against Go's 4 KiB) are what remains; next experiment: a Bytes-backed 32 bit state read with rt.bytes_word.
+- charset: re-measured 2026-11-03 on the text-like twin data (9 in 10 characters ASCII, as text is) after the UTF-8 write was inlined: UTF-16 encode 0.43, UTF-16 decode 0.74, windows-1252 decode 0.60 and encode 0.37 of x/text's wall. The first run, on a twin whose text was 50% non-ASCII, had decode at 1.8 to 2.1 of Go's; the data, not only the code, differed, so those rows are replaced and not comparable with these.
