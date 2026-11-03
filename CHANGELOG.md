@@ -133,8 +133,8 @@ it). Bugs that came and went within this cycle are not listed.
   instead of returning an error (a zip whose local header fell before the
   data, a tar or PAX time past 2262, a zip NTFS time with its top bit
   set); each now gives Go's answer, and several other archives read as Go
-  reads them (std/changes/archive.md). std/archive has shipped since
-  v0.11.0; when each faulting read arrived was not traced.
+  reads them (std/changes/archive.md): since v0.11.0 (the native port,
+  dbd0ec952); a cut zip directory's error text since v0.24.0.
 
 - Native dial on Linux could return a connection that was never made (the
   socket watched before connect, then SO_ERROR 0 taken as done): since
