@@ -1,0 +1,45 @@
+package main
+
+import (
+	"fmt"
+	"os"
+	"time"
+
+	_ "time/tzdata"
+
+	"github.com/robfig/cron/v3"
+)
+
+func run(spec string, n int) int {
+	s, err := cron.ParseStandard(spec)
+	if err != nil {
+		panic(err)
+	}
+	t := time.Unix(1700000000, 0).UTC()
+	sum := 0
+	for i := 0; i < n; i++ {
+		t = s.Next(t)
+		if t.IsZero() {
+			panic("none")
+		}
+		sum += int(t.Unix() % 1000000000)
+	}
+	return sum
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	sum := 0
+	switch w {
+	case "every5":
+		sum = run("*/5 * * * *", 200000)
+	case "weekday_ny":
+		sum = run("TZ=America/New_York 30 9 * * 1-5", 20000)
+	case "monthly_last":
+		sum = run("0 0 31 1,3,5,7,8,10,12 *", 1000)
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

@@ -253,7 +253,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | OAuth2 client | golang.org/x/oauth2 | none | planned | Needs form encoding. |
 | TOTP | pquerna/otp | std/otp | done | hotp, totp, verify, generate_secret, uri (spec/std.md 57, decision 0473). |
 | Migrations | golang-migrate, goose | none | planned | std/embed landed (28b3fe3b), so migration files can be embedded. |
-| Cron schedules | robfig/cron | none | planned | |
+| Cron schedules | robfig/cron | std/cron | done | parse and next of robfig/cron v3.0.1 (spec/std.md 58, decision 0474). |
 | Prometheus exposition | prometheus/client_golang | std/metrics | done | Registry, counters, gauges, histograms, text exposition and handler (section 37). |
 | S3 and AWS SigV4 | aws-sdk-go-v2 | none | not planned | A third party module; std provides HMAC and SHA-256. |
 | gRPC, protobuf | google.golang.org/grpc | none | not planned | Large; a module, after HTTP/2 trailers are exposed. |
@@ -339,7 +339,7 @@ many services hit the gap, blockers (no workaround) first:
 | 5 | Closed 2026-10-29 (std/html, template.parse_html, decision 0408). HTML escaping and contextual auto escaping templates, a trusted HTML type, template functions | web app | blocker (XSS by default) | html, html/template, template.FuncMap | L |
 | 6 | Closed 2026-10-29 (std/udp, Net.lookup_host, Net.dial_timeout, decision 0406; std/dns lookup_mx, lookup_txt, lookup_srv, lookup_addr, decision 0417). UDP sockets and a DNS lookup API (host, SRV), a dial timeout | exporter | blocker | net.ListenPacket, net.LookupSRV, net.DialTimeout | M |
 | 7 | X.509 certificate parsing and a TLS connection's peer certificates | exporter | blocker | crypto/x509 ParseCertificate, tls.ConnectionState | M (the parser exists inside TLS) |
-| 8 | Cron schedules | scheduler | blocker | robfig/cron (outside Go's std) | M |
+| 8 | Closed 2026-11-03 (`std/cron`). Cron schedules | scheduler | blocker | robfig/cron (outside Go's std) | M |
 | 9 | Host facts: Hostname, Getpid, rusage, statfs, network interfaces | exporter, scheduler | blocker (statfs), awkward | os, syscall.Statfs, net.Interfaces | S each |
 | 10 | std/metrics: gauges and collectors read at scrape time, deleting a series, Summary quantiles | exporter, scheduler | awkward | prometheus Collector, GaugeFunc, Summary | S to M |
 | 11 | HTTP server: read and idle timeouts, header limits, a body limit per route, Request host, TLS state, raw query and escaped path, HTML error pages, Redirect | gateway, web app | awkward | net/http Server, MaxBytesReader, Request.Host, URL.RawQuery | S each |

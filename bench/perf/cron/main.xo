@@ -1,0 +1,29 @@
+// cron: std/cron's Schedule.next against robfig/cron v3.0.1's (twin.go.txt):
+// 20000 or fewer fire times in a row for three schedules (200000, 20000, 1000), each from the one before.
+// Usage: `<program> none|every5|weekday_ny|monthly_last`. Prints `<workload>
+// <checksum>` (the sum of the fire times mod 1e9); the twin prints the same.
+use std/cron
+
+fn run(spec: Str, n: Int) -> Int {
+  let s = cron.parse(spec).ok() ?? fault("parse")
+  var t = Time.from_unix(1700000000)
+  var sum = 0
+  for _ in 0..n {
+    t = s.next(t) ?? fault("none")
+    sum += t.unix() % 1000000000
+  }
+  sum
+}
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var sum = 0
+  if w == "every5" {
+    sum = run("*/5 * * * *", 200000)
+  } else if w == "weekday_ny" {
+    sum = run("TZ=America/New_York 30 9 * * 1-5", 20000)
+  } else if w == "monthly_last" {
+    sum = run("0 0 31 1,3,5,7,8,10,12 *", 1000)
+  }
+  os.stdio.println("${w} ${sum}")
+}

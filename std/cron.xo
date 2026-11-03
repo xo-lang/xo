@@ -1,0 +1,44 @@
+// std/cron (spec/std.md 58, decision 0474). Declaration file. A crontab
+// schedule and its next fire time, a port of robfig/cron v3's standard
+// parser (parser.go) and SpecSchedule.Next (spec.go). Pure: running jobs
+// stays with the caller (sleep until `next`, run, ask again).
+use std/time
+
+/// Why a spec did not parse; `msg` is robfig/cron's text, for example
+/// `expected exactly 5 fields, found 3: [* * *]`.
+struct CronErr {
+  msg: Str
+}
+
+fn (e: CronErr) display() -> Str
+
+/// A parsed schedule: a value, never changes.
+struct Schedule {
+  /// private: the parsed fields (declared so that the Go backend compiles
+  /// and copies a schedule as a value; use the methods)
+  _every: Int
+  _minute: Int
+  _hour: Int
+  _dom: Int
+  _month: Int
+  _dow: Int
+  _dom_star: Bool
+  _dow_star: Bool
+  _loc: time.Zone
+}
+
+/// robfig's ParseStandard: five fields (minute 0-59, hour 0-23, day of month
+/// 1-31, month 1-12 or jan-dec, day of week 0-6 or sun-sat), each a comma
+/// list of `*`, `?`, a number or name, a range `a-b` and a step `a-b/n`,
+/// `*/n` or `a/n`; or `@yearly`, `@annually`, `@monthly`, `@weekly`,
+/// `@daily`, `@midnight`, `@hourly`, `@every DURATION`; optionally led by
+/// `TZ=Name ` or `CRON_TZ=Name ` (the zone of the schedule; `zone` is the
+/// default). Day of month and day of week both restricted: either matches;
+/// either starred: both must.
+fn parse(spec: Str, zone: time.Zone = time.utc()) -> Schedule ! CronErr
+/// The first fire time strictly after `after` (robfig's Next, whole
+/// seconds); None when none is found within 5 years. `@every` is
+/// `after` plus the delay, rounded down to the second.
+fn (s: Schedule) next(after: Time) -> Time?
+/// The zone the fields are read in.
+fn (s: Schedule) zone() -> time.Zone

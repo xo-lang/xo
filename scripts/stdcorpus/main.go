@@ -86,6 +86,7 @@ var generators = map[string]func() string{
 	"backoff":    backoffCorpus,
 	"deque":      dequeCorpus,
 	"heap":       heapCorpus,
+	"cron":       cronCorpus,
 	"rate":       rateCorpus,
 	"heapops":    heapopsCorpus,
 	"otp":        otpCorpus,
