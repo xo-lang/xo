@@ -123,6 +123,7 @@ var componentGoldens = []struct {
 // a connection, TLS, HTTP/2 or a raw socket, which the wasi:http handler has
 // no way to reach or leaves to the host.
 var componentGoldensNotRun = map[string]string{
+	"http_raw_path":            "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_client":              "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_client_body_reader":  "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
 	"http_reverse_proxy":       "it listens on a socket of its own for the client to call, which a component cannot; TestWasmComponentClient runs the client",
