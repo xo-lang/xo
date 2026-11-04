@@ -205,3 +205,49 @@ func Archive_unzip(_ *Task, data Bytes) Result[List[Archive_Entry], Archive_Arch
 	}
 	return Ok[List[Archive_Entry], Archive_ArchiveErr](ListOf(out...))
 }
+
+// Archive_zip_reader is `archive.zip_reader(data)`: unzip's checks on every
+// entry, none inflated. The Go backend keeps an entry's index in the
+// ZipFile's offset, and reads an entry by opening the archive again.
+func Archive_zip_reader(_ *Task, data Bytes) Result[Archive_ZipReader, Archive_ArchiveErr] {
+	r, err := zip.NewReader(strings.NewReader(string(data)), int64(len(data)))
+	if err != nil {
+		return Err[Archive_ZipReader](archiveErr("zip_reader: " + err.Error()))
+	}
+	var out []Archive_ZipFile
+	for i, f := range r.File {
+		p, ok := archivePath(textOf(f.Name))
+		if !ok {
+			return Err[Archive_ZipReader](archiveErr("zip_reader: entry path " + strconv.Quote(f.Name) + " leaves the archive"))
+		}
+		m := f.Mode()
+		if !m.IsDir() && !m.IsRegular() {
+			return Err[Archive_ZipReader](archiveErr("zip_reader: entry " + strconv.Quote(f.Name) + " is not a file or a directory"))
+		}
+		out = append(out, Archive_ZipFile{F_path: p, F_size: int64(f.UncompressedSize64), F_compressed: int64(f.CompressedSize64), F_mode: int64(m.Perm()),
+			F_is_dir: m.IsDir(), F_modified: Time(f.Modified.UnixNano()), F_offset: int64(i), F_method: int64(f.Method), F_flags: int64(f.Flags), F_crc: int64(f.CRC32)})
+	}
+	return Ok[Archive_ZipReader, Archive_ArchiveErr](Archive_ZipReader{F_data: data, F_list: ListOf(out...)})
+}
+
+func (r *Archive_ZipReader) M_files(*Task) List[Archive_ZipFile] { return r.F_list }
+
+func (r *Archive_ZipReader) M_read(_ *Task, f Archive_ZipFile) Result[Bytes, Archive_ArchiveErr] {
+	if f.F_is_dir {
+		return Ok[Bytes, Archive_ArchiveErr](Bytes(""))
+	}
+	zr, err := zip.NewReader(strings.NewReader(string(r.F_data)), int64(len(r.F_data)))
+	if err != nil || f.F_offset < 0 || int(f.F_offset) >= len(zr.File) {
+		return Err[Bytes](archiveErr("zip_reader: not a file of this archive"))
+	}
+	rc, err := zr.File[f.F_offset].Open()
+	if err != nil {
+		return Err[Bytes](archiveErr("zip_reader: " + err.Error()))
+	}
+	b, err := io.ReadAll(rc)
+	rc.Close()
+	if err != nil {
+		return Err[Bytes](archiveErr("zip_reader: " + err.Error()))
+	}
+	return Ok[Bytes, Archive_ArchiveErr](Bytes(b))
+}

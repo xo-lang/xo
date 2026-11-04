@@ -3,7 +3,7 @@
 // directories, written as a tar and as a deflated zip, and read back, 200
 // passes each; `none` is the setup alone. The checksums count entries and
 // content bytes, not archive bytes (the two writers' headers may differ
-// and still be valid). Usage: `<program> none|tar|untar|zip|unzip`.
+// and still be valid). Usage: `<program> none|tar|untar|zip|unzip|zip_reader`.
 // Prints `<workload> <checksum>`; the twin prints the same.
 use std/archive
 
@@ -51,6 +51,17 @@ fn main(os: Os) uses stdio, env {
     for _ in 0..200 {
       let got = (if w == "untar" { archive.untar(a) } else { archive.unzip(a) }).ok() ?? fault("read")
       sum += content(got)
+    }
+  } else if w == "zip_reader" {
+    // the same entries read one at a time through a ZipReader (decision 0479)
+    let a = archive.zip(es).ok() ?? fault("write")
+    for _ in 0..200 {
+      let r = archive.zip_reader(a).ok() ?? fault("read")
+      let fs = r.files()
+      sum += fs.len()
+      for f in fs {
+        sum += (r.read(f).ok() ?? fault("read")).len()
+      }
     }
   } else {
     sum = content(es)

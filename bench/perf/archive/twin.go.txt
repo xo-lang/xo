@@ -128,7 +128,7 @@ func main() {
 				sum += content(es)
 			}
 		}
-	case "untar", "unzip":
+	case "untar", "unzip", "zip_reader":
 		var a []byte
 		if w == "untar" {
 			a = writeTar(es)

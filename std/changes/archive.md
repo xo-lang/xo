@@ -1,5 +1,15 @@
 # std/archive changes
 
+## 2026-11-03: feature: zip_reader, ZipReader.files and ZipReader.read
+
+- Kind: feature
+- Commit: this commit
+- Go reference: archive/zip (go1.26.1): `NewReader`, `Reader.File`, `File.Open`
+- Test: the archive corpus: `zip_reader reads one entry at a time what unzip reads` (every ZIP_CASES row and every ZIP_REFUSED row against `unzip`) and `zip_reader lists sizes and kinds before inflating`, on arm64, LLVM and the Go backend
+- Timing: host row follows in std-twin-ziprd-2026-11-03.md (bench/perf/archive, workload zip_reader)
+
+`zip_reader(data)` reads the central directory and applies `unzip`'s path and kind rules to every entry without inflating any; `files()` lists them (path, sizes, mode, time) and `read(f)` inflates one and checks its CRC. `unzip` is now the same two steps in a loop (`zip_directory`, `zip_meta`, `zip_read`), with unchanged results and errors. The native module's own header struct is `ZipHdr` (it was `ZipFile`, the public type's name).
+
 ## 2026-11-03: perf: zip writes every file with one flate stream
 
 - Kind: perf

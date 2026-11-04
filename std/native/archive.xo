@@ -1157,7 +1157,7 @@ fn detect_utf8(s: Str) -> (Bool, Bool) {
   (true, require)
 }
 
-struct ZipFile {
+struct ZipHdr {
   name: Str
   /// the name's bytes, which an error quotes as Go does (\xNN for a
   /// byte that is not UTF-8)
@@ -1179,7 +1179,7 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
   let t = flate.crc_table()
   var out = BytesBuilder.new()
   var count = 0
-  var files: List[ZipFile] = []
+  var files: List[ZipHdr] = []
   var zs = flate.new_stream(5)
   for e in entries {
     let p = match archive_path(e.path) {
@@ -1218,7 +1218,7 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
     put_u32(xb, secs & 0xffffffff)
     let extra = xb.freeze()
     let nb = name.bytes()
-    var zf = ZipFile{name: name, raw: name.bytes(), creator: 0x0314, flags: flags, method: method, time: time, date: date, crc: 0, csize: 0, usize: 0, extra: extra, attrs: attrs, offset: count}
+    var zf = ZipHdr{name: name, raw: name.bytes(), creator: 0x0314, flags: flags, method: method, time: time, date: date, crc: 0, csize: 0, usize: 0, extra: extra, attrs: attrs, offset: count}
     // the local header
     var h = BytesBuilder.new()
     put_u32(h, 0x04034b50)
@@ -1296,7 +1296,7 @@ const ERR_FORMAT: Str = "zip: not a valid zip file"
 /// directory stops: `unexpected EOF` (a short header), ERR_FORMAT (not a
 /// header), or `EOF` (nothing left to read, which ends the read
 /// with that error).
-fn zip_dir_header(data: Bytes, pos: Int) -> (ZipFile, Int) ! Str {
+fn zip_dir_header(data: Bytes, pos: Int) -> (ZipHdr, Int) ! Str {
   let n = data.len()
   if pos < 0 || pos > n {
     return Err("unexpected EOF")
@@ -1373,14 +1373,14 @@ fn zip_dir_header(data: Bytes, pos: Int) -> (ZipFile, Int) ! Str {
   if need_c || need_o {
     return Err(ERR_FORMAT)
   }
-  let zf = ZipFile{name: scan.text_of(sub(data, p, p + nlen)), raw: sub(data, p, p + nlen), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize64, usize: usize64, extra: x, attrs: get_u32(data, pos + 38), offset: offset64}
+  let zf = ZipHdr{name: scan.text_of(sub(data, p, p + nlen)), raw: sub(data, p, p + nlen), creator: get_u16(data, pos + 4), flags: get_u16(data, pos + 8), method: get_u16(data, pos + 10), time: get_u16(data, pos + 12), date: get_u16(data, pos + 14), crc: get_u32(data, pos + 16), csize: csize64, usize: usize64, extra: x, attrs: get_u32(data, pos + 38), offset: offset64}
   (zf, p + nlen + xlen + clen)
 }
 
 /// The modification time of a central directory entry in Unix
 /// nanoseconds: its extended (or NTFS, or Unix) timestamp, else its
 /// MS-DOS time read as UTC.
-fn zip_modified(zf: ZipFile) -> Int {
+fn zip_modified(zf: ZipHdr) -> Int {
   var mod = 0
   var found = false
   let x = zf.extra
@@ -1470,9 +1470,9 @@ fn zip_find_end(data: Bytes) -> Int {
   -1
 }
 
-fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
-  let t = flate.crc_table()
-  let fixed = flate.fixed_decoder()
+/// The central directory of a zip archive: its files in order, or why it
+/// cannot be read (Reader.init).
+fn zip_directory(data: Bytes) -> List[ZipHdr] ! Str {
   let size = data.len()
   let end_off = zip_find_end(data)
   if end_off < 0 {
@@ -1520,7 +1520,7 @@ fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
       Err(_) => ()
     }
   }
-  var files: List[ZipFile] = []
+  var files: List[ZipHdr] = []
   var pos = base + dir_off
   var stop = ""
   while true {
@@ -1545,49 +1545,101 @@ fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
   if (files.len() & 65535) != (records & 65535) {
     return Err(stop)
   }
+  files
+}
+
+/// The path, permission bits and kind (true for a directory) of an
+/// entry (FileHeader.Mode), or why it is refused: a path that leaves the
+/// archive, a device, pipe, link or socket.
+fn zip_meta(zf: ZipHdr) -> (Str, Int, Bool) ! Str {
+  let p = match archive_path(zf.name) {
+    Some(x) => x
+    None => return Err("entry path ${go_q(zf.raw)} leaves the archive")
+  }
+  let creator = zf.creator >> 8
+  var perm = 0
+  var typ = 0
+  if creator == 3 || creator == 19 {
+    let m = zf.attrs >> 16
+    perm = m & 0o777
+    typ = m & 0xf000
+  } else if creator == 11 || creator == 14 || creator == 0 {
+    if (zf.attrs & 0x10) != 0 {
+      typ = 0x4000
+      perm = 0o777
+    } else {
+      perm = 0o666
+    }
+    if (zf.attrs & 0x01) != 0 {
+      perm = perm & 0o555
+    }
+  }
+  if typ == 0x4000 || zf.name.ends_with("/") {
+    return Ok((p, perm, true))
+  }
+  // unixModeToFileMode marks only a device, pipe, link or socket; any
+  // other file type, unknown ones too, is a regular file
+  if typ == 0x6000 || typ == 0x2000 || typ == 0x1000 || typ == 0xa000 || typ == 0xc000 {
+    return Err("entry ${go_q(zf.raw)} is not a file or a directory")
+  }
+  Ok((p, perm, false))
+}
+
+fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
+  let t = flate.crc_table()
+  let fixed = flate.fixed_decoder()
+  let files = zip_directory(data)?
   var out: List[archive.Entry] = []
   for zf in files {
-    let p = match archive_path(zf.name) {
-      Some(x) => x
-      None => return Err("entry path ${go_q(zf.raw)} leaves the archive")
-    }
-    // FileHeader.Mode
-    let creator = zf.creator >> 8
-    var perm = 0
-    var typ = 0
-    if creator == 3 || creator == 19 {
-      let m = zf.attrs >> 16
-      perm = m & 0o777
-      typ = m & 0xf000
-    } else if creator == 11 || creator == 14 || creator == 0 {
-      if (zf.attrs & 0x10) != 0 {
-        typ = 0x4000
-        perm = 0o777
-      } else {
-        perm = 0o666
-      }
-      if (zf.attrs & 0x01) != 0 {
-        perm = perm & 0o555
-      }
-    }
-    var e = archive.Entry{path: p, data: b"", mode: perm, is_dir: false, modified: Time.UNIX_EPOCH + Duration.from_nanos(zip_modified(zf))}
-    if typ == 0x4000 || zf.name.ends_with("/") {
-      e.is_dir = true
-    } else if typ != 0x6000 && typ != 0x2000 && typ != 0x1000 && typ != 0xa000 && typ != 0xc000 {
-      // unixModeToFileMode marks only a device, pipe, link or socket; any
-      // other file type, unknown ones too, is a regular file
+    let (p, perm, is_dir) = zip_meta(zf)?
+    var e = archive.Entry{path: p, data: b"", mode: perm, is_dir: is_dir, modified: Time.UNIX_EPOCH + Duration.from_nanos(zip_modified(zf))}
+    if !is_dir {
       e.data = zip_read(data, zf, t, fixed)?
-    } else {
-      return Err("entry ${go_q(zf.raw)} is not a file or a directory")
     }
     out.push(e)
   }
   out
 }
 
+/// A zip archive kept in memory with its central directory read once
+/// (decision 0479): every entry is checked as unzip checks it, none is
+/// inflated until read.
+fn zip_reader(data: Bytes) -> archive.ZipReader ! archive.ArchiveErr {
+  var list: List[archive.ZipFile] = []
+  match zip_files(data) {
+    Ok(l) => list = l
+    Err(e) => return Err(archive_err("zip_reader: ${e}"))
+  }
+  archive.ZipReader{data: data, list: list}
+}
+
+fn zip_files(data: Bytes) -> List[archive.ZipFile] ! Str {
+  let files = zip_directory(data)?
+  var out: List[archive.ZipFile] = []
+  for zf in files {
+    let (p, perm, is_dir) = zip_meta(zf)?
+    out.push(archive.ZipFile{path: p, size: zf.usize, compressed: zf.csize, mode: perm, is_dir: is_dir, modified: Time.UNIX_EPOCH + Duration.from_nanos(zip_modified(zf)), offset: zf.offset, method: zf.method, flags: zf.flags, crc: zf.crc})
+  }
+  out
+}
+
+fn zipreader_files(r: archive.ZipReader) -> List[archive.ZipFile] { r.list }
+
+/// The contents of one entry, inflated and checked (its CRC).
+fn zipreader_read(r: archive.ZipReader, f: archive.ZipFile) -> Bytes ! archive.ArchiveErr {
+  if f.is_dir {
+    return Ok(b"")
+  }
+  let zf = ZipHdr{name: f.path, raw: b"", creator: 0, flags: f.flags, method: f.method, time: 0, date: 0, crc: f.crc, csize: f.compressed, usize: f.size, extra: b"", attrs: 0, offset: f.offset}
+  match zip_read(r.data, zf, flate.crc_table(), flate.fixed_decoder()) {
+    Ok(b) => b
+    Err(e) => Err(archive_err("zip_reader: ${e}"))
+  }
+}
+
 /// The contents of a file (File.Open and its checksumReader read to the
 /// end).
-fn zip_read(data: Bytes, zf: ZipFile, t: List[Int], fixed: flate.HDec) -> Bytes ! Str {
+fn zip_read(data: Bytes, zf: ZipHdr, t: List[Int], fixed: flate.HDec) -> Bytes ! Str {
   let size = data.len()
   let ho = zf.offset
   if ho < 0 {

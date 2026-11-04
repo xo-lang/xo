@@ -166,3 +166,49 @@ test "unzip refuses what std/archive.xo says it refuses" {
   }
   expect(show3(bad)) == []
 }
+fn read_all(data: Bytes) -> List[archive.Entry] ! archive.ArchiveErr {
+  let r = archive.zip_reader(data)?
+  var out: List[archive.Entry] = []
+  for f in r.files() {
+    out.push(archive.Entry{path: f.path, data: r.read(f)?, mode: f.mode, is_dir: f.is_dir, modified: f.modified})
+  }
+  out
+}
+
+test "zip_reader reads one entry at a time what unzip reads" {
+  var bad: List[(Str, Str, Str)] = []
+  for (hex_text, _want) in ZIP_CASES {
+    let data = Bytes.from_hex(hex_text) ?? b""
+    let got = match read_all(data) {
+      Ok(entries) => summarize(entries)
+      Err(e) => "!error ${e.display()}"
+    }
+    let ref = match archive.unzip(data) {
+      Ok(entries) => summarize(entries)
+      Err(e) => "!error ${e.display()}"
+    }
+    // the error texts differ in their prefix (zip_reader: and unzip:)
+    if got.starts_with("!error") != ref.starts_with("!error") || (!got.starts_with("!error") && got != ref) {
+      bad.push((hex_text[0..16], got, ref))
+    }
+  }
+  for (hex_text, why) in ZIP_REFUSED {
+    let data = Bytes.from_hex(hex_text) ?? b""
+    match read_all(data) {
+      Ok(_) => bad.push((why, "read", "refused"))
+      Err(_) => {}
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "zip_reader lists sizes and kinds before inflating" {
+  let data = archive.zip([archive.file("a.txt", b"hello hello hello hello"), archive.dir("d"), archive.file("d/b", b"")]).ok() ?? b""
+  let r = archive.zip_reader(data).ok() ?? fault("reader")
+  let fs = r.files()
+  expect(fs.map(fn(f) { f.path })) == ["a.txt", "d", "d/b"]
+  expect(fs.map(fn(f) { f.size })) == [23, 0, 0]
+  expect(fs.map(fn(f) { f.is_dir })) == [false, true, false]
+  expect(r.read(fs[0]).ok() ?? b"") == b"hello hello hello hello"
+  expect(r.read(fs[1]).ok() ?? b"x") == b""
+}

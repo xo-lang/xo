@@ -37,3 +37,36 @@ fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
 fn zip(entries: List[Entry]) -> Bytes ! ArchiveErr
 /// The entries of a zip archive, with the same path rules as untar.
 fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
+
+/// One entry of a zip archive's central directory (decision 0479):
+/// `size` is the inflated length and `compressed` the stored one. The
+/// fields after `modified` are the header's own, for `ZipReader.read`.
+struct ZipFile {
+  path: Str
+  size: Int
+  compressed: Int
+  mode: Int
+  is_dir: Bool
+  modified: Time
+  offset: Int
+  method: Int
+  flags: Int
+  crc: Int
+}
+
+/// A zip archive in memory whose central directory was read once and
+/// whose entries are inflated one at a time. @internal: use `zip_reader`,
+/// `r.files()` and `r.read(f)`
+struct ZipReader {
+  data: Bytes
+  list: List[ZipFile]
+}
+
+/// The archive's directory, checked as `unzip` checks it (paths, kinds,
+/// Go's errors); no entry is inflated.
+fn zip_reader(data: Bytes) -> ZipReader ! ArchiveErr
+/// The entries in directory order.
+fn (r: ZipReader) files() -> List[ZipFile]
+/// One entry's contents, inflated and checked against its CRC; a
+/// directory's is empty.
+fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr

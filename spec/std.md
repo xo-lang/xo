@@ -4186,7 +4186,20 @@ pub fn tar(entries: List[Entry]) -> Bytes ! ArchiveErr
 pub fn untar(data: Bytes) -> List[Entry] ! ArchiveErr
 pub fn zip(entries: List[Entry]) -> Bytes ! ArchiveErr
 pub fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
+pub fn zip_reader(data: Bytes) -> ZipReader ! ArchiveErr   // decision 0479 step 3
+fn (r: ZipReader) files() -> List[ZipFile]
+fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr
+struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool, modified: Time, offset: Int, method: Int, flags: Int, crc: Int }
 ```
+
+- `zip_reader` reads a zip archive's central directory once and checks
+  every entry as `unzip` does (paths, kinds, Go's errors), but inflates
+  none: `r.files()` lists them (`size` is the inflated length) and
+  `r.read(f)` inflates one and checks its CRC, so a program holding an
+  archive of many large entries holds one inflated entry at a time, not
+  all of them as `unzip` does. Writing by entry (`zip_writer`), reading
+  from a File (`zip_open`) and a streaming `EntryReader` are the later
+  steps of decision 0479.
 
 - In memory and pure: read the archive with `Fs.read`, write the
   entries with `Fs.write` (into a sub capability, so the archive's paths

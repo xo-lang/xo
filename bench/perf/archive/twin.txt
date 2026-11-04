@@ -1,6 +1,7 @@
-# twincheck: archive: five workloads (none is the setup alone); checksums count entries and content bytes, not archive bytes.
+# twincheck: archive: six workloads (none is the setup alone); checksums count entries and content bytes, not archive bytes.
 - - none
 - - tar
 - - untar
 - - zip
 - - unzip
+- - zip_reader

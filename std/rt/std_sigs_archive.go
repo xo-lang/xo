@@ -6,13 +6,16 @@ package rt
 // The signatures the Go backend calls the hand written std functions
 // with (compiler/gen stdtypes.xo std_sigs).
 var (
-	_ func(*Archive_ArchiveErr, *Task) string                            = (*Archive_ArchiveErr).M_display
-	_ func(*Task, string, Bytes) Archive_Entry                           = Archive_file
-	_ func(*Task, string) Archive_Entry                                  = Archive_dir
-	_ func(*Task, Bytes) Bytes                                           = Archive_gzip
-	_ func(*Task, Bytes) Result[Bytes, Archive_ArchiveErr]               = Archive_gunzip
-	_ func(*Task, List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr] = Archive_tar
-	_ func(*Task, Bytes) Result[List[Archive_Entry], Archive_ArchiveErr] = Archive_untar
-	_ func(*Task, List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr] = Archive_zip
-	_ func(*Task, Bytes) Result[List[Archive_Entry], Archive_ArchiveErr] = Archive_unzip
+	_ func(*Archive_ArchiveErr, *Task) string                                            = (*Archive_ArchiveErr).M_display
+	_ func(*Task, string, Bytes) Archive_Entry                                           = Archive_file
+	_ func(*Task, string) Archive_Entry                                                  = Archive_dir
+	_ func(*Task, Bytes) Bytes                                                           = Archive_gzip
+	_ func(*Task, Bytes) Result[Bytes, Archive_ArchiveErr]                               = Archive_gunzip
+	_ func(*Task, List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr]                 = Archive_tar
+	_ func(*Task, Bytes) Result[List[Archive_Entry], Archive_ArchiveErr]                 = Archive_untar
+	_ func(*Task, List[Archive_Entry]) Result[Bytes, Archive_ArchiveErr]                 = Archive_zip
+	_ func(*Task, Bytes) Result[List[Archive_Entry], Archive_ArchiveErr]                 = Archive_unzip
+	_ func(*Task, Bytes) Result[Archive_ZipReader, Archive_ArchiveErr]                   = Archive_zip_reader
+	_ func(*Archive_ZipReader, *Task) List[Archive_ZipFile]                              = (*Archive_ZipReader).M_files
+	_ func(*Archive_ZipReader, *Task, Archive_ZipFile) Result[Bytes, Archive_ArchiveErr] = (*Archive_ZipReader).M_read
 )
