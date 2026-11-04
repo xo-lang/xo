@@ -8,11 +8,15 @@ import "hash/crc64"
 var (
 	crc64Iso  = crc64.MakeTable(crc64.ISO)
 	crc64Ecma = crc64.MakeTable(crc64.ECMA)
+	crc64Nvme = crc64.MakeTable(0x9a6c9329ac4bc9b5)
 )
 
 func crc64Table(p Crc64_Poly) *crc64.Table {
 	if p.Tag == 2 { // Ecma (tags count from 1)
 		return crc64Ecma
+	}
+	if p.Tag == 3 { // Nvme
+		return crc64Nvme
 	}
 	return crc64Iso
 }

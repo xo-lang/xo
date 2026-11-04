@@ -4,10 +4,14 @@
 // used by xz). Pure.
 
 /// The polynomial: Go's ISO (0xd800000000000000) and ECMA
-/// (0xc96c5795d7870f42) tables, both reversed as Go's are.
+/// (0xc96c5795d7870f42) tables, both reversed as Go's are, and NVMe's
+/// (0x9a6c9329ac4bc9b5 reversed, CRC-64/NVME: Amazon S3's default
+/// flexible checksum; `checksum(b"123456789", Poly.Nvme)` is
+/// 0xae8b14860a799888 as a Go uint64).
 enum Poly {
   Iso
   Ecma
+  Nvme
 }
 
 /// The CRC-64 of data: the Int's bits are Go's uint64, so a checksum past

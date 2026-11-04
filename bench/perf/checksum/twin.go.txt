@@ -23,6 +23,7 @@ func main() {
 		data = append(data, byte((r>>8)&255))
 	}
 	iso := crc64.MakeTable(crc64.ISO)
+	nvme := crc64.MakeTable(0x9a6c9329ac4bc9b5)
 	sum := 0
 	for i := 0; i < 20000; i++ {
 		switch w {
@@ -30,6 +31,8 @@ func main() {
 			sum += int(crc32.ChecksumIEEE(data)) % 1000003
 		case "crc64":
 			sum += int(crc64.Checksum(data, iso)&0x7fffffffffffffff) % 1000003
+		case "crc64nvme":
+			sum += int(crc64.Checksum(data, nvme)&0x7fffffffffffffff) % 1000003
 		case "fnv32a":
 			h := fnv.New32a()
 			h.Write(data)

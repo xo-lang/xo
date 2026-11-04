@@ -6877,7 +6877,7 @@ its golden strings and on pseudo random buffers of 0 to 1,500,000 bytes
 (corpus `crc64`). Pure.
 
 ```xo
-enum Poly { Iso, Ecma }
+enum Poly { Iso, Ecma, Nvme }  // Nvme: CRC-64/NVME, 0x9a6c9329ac4bc9b5 reversed (S3's default checksum); check value of "123456789" 0xae8b14860a799888
 pub fn checksum(data: Bytes, poly: Poly = Poly.Iso) -> Int             // Checksum(data, MakeTable(poly))
 pub fn update(crc: Int, data: Bytes, poly: Poly = Poly.Iso) -> Int     // Update
 ```

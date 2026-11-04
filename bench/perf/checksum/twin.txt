@@ -1,7 +1,8 @@
-# twincheck: checksum: six workloads (none is the setup alone), the same names on both sides.
+# twincheck: checksum: seven workloads (none is the setup alone), the same names on both sides.
 - - none
 - - crc32
 - - crc64
+- - crc64nvme
 - - fnv32a
 - - fnv64a
 - - adler32
