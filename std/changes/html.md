@@ -1,5 +1,17 @@
 # std/html changes
 
+## 2026-11-04: perf: escape_string writes the output through its address
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/html escape 1.37 of Go's wall after the byte-by-byte change
+- Go reference: html escape.go EscapeString (go1.26.1)
+- Test: `xo test --std-module=native/html` on arm64 and LLVM (a new case with adjacent and trailing specials and multi-byte runs), bench/perf/html twincheck
+- Timing: host 1 A/B escape 0.846 of before (0.835-0.853, n=6), about 1.16 of Go's wall
+- Shipped in: not yet released
+
+The output buffer is exactly sized (the first scan counts the extra bytes) and written with one `mem_copy` for each run of unescaped bytes and one 4 byte store for each replacement (a `;` byte after for `&amp;`, `&#39;` and `&#34;`), in place of a builder call for each byte.
+
 ## 2026-11-03: perf: escape_string writes each replacement byte by byte
 
 - Kind: perf
