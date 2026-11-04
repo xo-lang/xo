@@ -746,7 +746,12 @@ fn (p: PgConn) query(q: Str, args: List[sql.SqlValue]) -> sql.DriverRows ! sql.S
     let r = p.run(q, args)?
     return sql.DriverRows{columns: r.cols, rows: r.rows}
   }
-  p.send(pgwire.parse("", q, []) + pgwire.bind("", "", args.map(param_of), [0]) + pgwire.describe("P", "") + pgwire.execute("", 0) + pgwire.sync())?
+  if args.is_empty() {
+    // the simple query protocol, as run does (and as a server that only speaks it expects)
+    p.send(pgwire.query(q))?
+  } else {
+    p.send(pgwire.parse("", q, []) + pgwire.bind("", "", args.map(param_of), [0]) + pgwire.describe("P", "") + pgwire.execute("", 0) + pgwire.sync())?
+  }
   var failed: sql.SqlErr? = None
   while {
     match p.recv()? {
