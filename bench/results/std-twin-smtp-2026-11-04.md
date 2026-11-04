@@ -77,6 +77,26 @@ server process). (2) `futex_wake` at 15% with one worker: who wakes whom
 the attribution is skewed): perf is not available, so a run with
 `XO_THREADS=1` and the idle sleep counts per message.
 
+## Result of experiment 1: the smtp shape without smtp (host 1, 9 rounds)
+
+tcpping `handshake` (2,000 connections, each 11 turn arounds of 20 bytes,
+then close): Go 173.5, Xo 264.7 ms = 1.525 (1.498-1.569). So the smtp gap
+is not in smtp.send; it is the net and scheduler path of many small turn
+arounds on short lived connections. Per round trip (time over round trips):
+
+| shape | Go us/trip | Xo us/trip |
+|---|---|---|
+| pingpong, one connection, 60,000 trips | 10.1 | 10.0 |
+| handshake, 2,000 connections x 11 trips | 7.9 | 12.0 |
+| connect, 4,000 connections x 1 trip | 114 per connection | 53 per connection |
+
+Xo's time per trip is steady (10 to 12 us) while Go's is 8 on short lived
+connections (the client and server goroutines share a P) and 10 on one long
+one. The lever is the per turnaround cost of a park and wake pair in
+Xo's poll path (Lang 1's scheduler: 11 parks, 21 epoll returns and 10.6
+EAGAIN reads a message): `xo bench --ab` on tcpping handshake is the gate
+for any change there.
+
 # std/sql row decode, linux/arm64 host 2 (7 rounds, n=6)
 
 sqlrow scan: Go (stub driver) 56.53, Xo (std/sql.memory) 91.77: 1.623 of
