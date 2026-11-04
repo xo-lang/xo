@@ -562,6 +562,18 @@ pub fn str_at(src: Bytes, tape: List[Int], i: Int) -> Str {
   unquote(src, lo, lo + n)
 }
 
+/// Whether the string node at i has the value s, compared in place when
+/// it is ASCII without escapes (no Str is made): a tagged enum's tag
+/// against each variant's name (decision 0478).
+pub fn str_is(src: Bytes, tape: List[Int], i: Int, s: Str) -> Bool {
+  let raw = tape[i + 2]
+  let n = raw & LEN_MASK
+  if raw == n {
+    return n == s.len() && range_eq(src, tape[i + 1], s.bytes(), 0, n)
+  }
+  str_at(src, tape, i) == s
+}
+
 /// The Time of the string node at i (text.parse_time), read in place when the
 /// string has no escapes (a time string is ASCII): no copy of the text.
 /// None for a time that does not parse.

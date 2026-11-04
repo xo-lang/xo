@@ -59,6 +59,14 @@ fields, and reads the tag's string a second time. Follow-up: match the
 tag in place (key_eq_padded on the tape, no Str) and skip the tag member
 in dec_fields.
 
+Follow-up done 2026-11-04 (jsontext.str_is: the tag compared in place,
+no Str unless the variant is unknown), host 1, `xo bench --ab`, n=6, A
+11089eb18, B the change: tagfirst wall 0.857 (0.842 to 0.889), better,
+220.7 to 189.0 ms; external 0.984 (0.88 to 1.006), within noise (its
+path is unchanged). A tagged decode now takes less time than the
+external form's (189.0 against 208.5 ms). The tag member is still read
+by the field pass as an unknown key; skipping it is not needed for this.
+
 ## 4. Correctness, every backend
 
 - golden json_via (arm64, LLVM, Go parity, wasm): struct via Str with a

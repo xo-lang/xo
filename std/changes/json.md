@@ -1,5 +1,19 @@
 # std/json changes
 
+## 2026-11-04: perf: a tagged enum's tag is matched in place
+
+- Kind: perf
+- Commit: this push
+- Found by: decision 0478 stage 4 (tagged decode 1.089 of the external form on host 1; XO_PROF: the tag read into a Str, then compared per variant)
+- Go reference: none (Go has no tagged enum decoding; its two pass RawMessage form is the twin)
+- Test: goldens json_tagged_enum, json_via, sql_json_tagged (arm64, LLVM, Go parity, wasm); twincheck bench/perf/jsontag
+- Timing: bench/perf/jsontag on host 1 (linux/arm64), `xo bench --ab`, n=6, base 11089eb18: tagfirst wall 0.857 (0.842 to 0.889), better; external (unchanged path, control) 0.984 (0.88 to 1.006), within noise; bench/results/json-own-form-tagged-2026-11-03.md
+- Shipped in: not yet released
+
+The decoder compares the tag's string node with each variant name in
+place when it is ASCII without escapes (jsontext.str_is), and makes the
+Str only for the unknown variant error.
+
 ## 2026-11-03: feature: a type's own JSON form (`derive Json(via: P, to: f, from: g)`)
 
 - Kind: feature

@@ -1275,7 +1275,6 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
   let (no2, join2) = b.if_then_begin(b.add(Op.Ne, bt, Aux.None, [k, b.cint(JK_STR)]))
   b.retv(b.dec_err(d, b.const_str(".${tag}"), b.const_str("expected a variant name")))
   b.if_then_end(no2, join2)
-  let nm = b.dec_str(d, j)
   var pay = i
   var has = b.cbool(true)
   if !content.is_empty() {
@@ -1288,7 +1287,8 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
       continue
     }
     let wn = check.text(check.variant_json_name(vo))
-    let (no, join3) = b.if_then_begin(b.call("str.eq", bt, "", [nm, b.const_str(wn)]))
+    // the tag compared in place, with no Str of it (str_is)
+    let (no, join3) = b.if_then_begin(b.json_rt("json_str_is", bt, [d.src, d.tape, j, b.const_str(wn)]))
     if !content.is_empty() {
       b.dec_variant(d, t, vi, wn, ".${content}", vo, sb, pay, has)
     } else if vo.fields.is_empty() {
@@ -1310,6 +1310,7 @@ fn (var b: Builder) dec_tagged(d: Dec, t: Int, obj: Int, sb: Map[Int, Int]) {
     }
     b.if_then_end(no, join3)
   }
+  let nm = b.dec_str(d, j)
   let s1 = b.call("str.concat", b.str_t(), "", [b.const_str("unknown variant `"), nm])
   let s2 = b.call("str.concat", b.str_t(), "", [s1, b.const_str("` of enum ${ename}")])
   b.retv(b.dec_err(d, b.const_str(".${tag}"), s2))
