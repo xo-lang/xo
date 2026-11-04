@@ -456,6 +456,21 @@ fn int(var b: BytesBuilder, v: Int) {
   w(b, "i", "${v}")
 }
 
+/// The derive arguments of a declaration: key, identifier value and
+/// string value each (decisions 0277, 0478); a declaration without them
+/// hashes as before they existed.
+fn derive_args(var b: BytesBuilder, args: List[parser.DeriveArg]) {
+  for a in args {
+    open(b, "DeriveArg")
+    ident_n(b, a.derive)
+    ident_n(b, a.key)
+    ident_n(b, a.value)
+    if let Some(sv) = a.str {
+      str(b, sv)
+    }
+  }
+}
+
 fn str(var b: BytesBuilder, s: Bytes) {
   wb(b, "s", s)
 }
@@ -607,12 +622,7 @@ fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
       for id in x.derive {
         ident_n(b, id)
       }
-      for a in x.derive_args {
-        open(b, "DeriveArg")
-        ident_n(b, a.derive)
-        ident_n(b, a.key)
-        ident_n(b, a.value)
-      }
+      derive_args(b, x.derive_args)
     }
     EnumDecl(x) => {
       open(b, "EnumDecl")
@@ -623,6 +633,11 @@ fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
       for v in x.variants {
         open(b, "Variant")
         ident_n(b, v.name)
+        if let Some(w) = v.wire {
+          // its wire name (decision 0478)
+          open(b, "Wire")
+          str(b, w)
+        }
         let fs = v.fields ?? []
         list_len(b, fs.len())
         for f in fs {
@@ -636,6 +651,8 @@ fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
       for id in x.derive {
         ident_n(b, id)
       }
+      // case:, tag:, content: (decision 0478)
+      derive_args(b, x.derive_args)
     }
     InterfaceDecl(x) => {
       open(b, "InterfaceDecl")

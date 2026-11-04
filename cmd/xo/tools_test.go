@@ -69,6 +69,23 @@ func TestFmtCoalesceArm(t *testing.T) {
 	}
 }
 
+// TestFmtEnumWireNames: an enum's derive arguments and its variants'
+// wire names (decision 0478) print back; fmt dropped both until
+// 2026-11-03, which changed the program's JSON.
+func TestFmtEnumWireNames(t *testing.T) {
+	t.Parallel()
+	src := "enum Ev {\n  Say(text: Str)\n  Chat  as  \"chat.message\"(body: Str)\n  Ping\n} derive Json(tag:\"type\",case:snake)\n\nenum Box {\n  Num(n: Int)\n} derive Json(tag: \"t\", content: \"c\")\n"
+	want := "enum Ev {\n  Say(text: Str)\n  Chat as \"chat.message\"(body: Str)\n  Ping\n} derive Json(tag: \"type\", case: snake)\n\nenum Box {\n  Num(n: Int)\n} derive Json(tag: \"t\", content: \"c\")\n"
+	dir := writeFiles(t, map[string]string{"a.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"fmt", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("fmt exit %d: %s", code, errOut.String())
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "a.xo")); string(data) != want {
+		t.Errorf("a.xo = %q, want %q", data, want)
+	}
+}
+
 func TestFmtSyntaxError(t *testing.T) {
 	t.Parallel()
 	dir := writeFiles(t, map[string]string{"bad.xo": "fn f( {\n", "ok.xo": "fn g()  {}\n"})

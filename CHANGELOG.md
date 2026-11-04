@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- fix: `xo fmt` no longer deletes an enum's `derive Json(case:, tag:, content:)` arguments or a variant's `as "name"` wire name (decision 0478), which changed the program's JSON; the incremental caches' definition hashes now include them, so editing only one rebuilds what depends on it. Test: cmd/xo TestFmtEnumWireNames.
 - feature (prelude, archive): `File.read_at(offset, max)` (decision 0479, Go's `os.File.ReadAt`: pread, the position untouched; linux, macOS, Windows, MemFs and the Go backend; a wasm build answers "function not implemented") and `archive.zip_open(f, size)`, which reads a zip archive from a File: the directory at once, each entry when read. `ZipReader.read` now `uses fs.read`. std/changes/prelude.md, archive.md.
 - feature (archive): `zip_writer(f)` with `add`, `create`, `write` and `close` (decision 0479 step 3, Go's `zip.Writer`): a zip archive written to a File entry by entry, a streamed entry deflated as it is fed, memory the directory records. std/changes/archive.md.
 - feature (archive): `zip_reader(data)`, `ZipReader.files()` and `ZipReader.read(f)` (decision 0479 step 3, Go's archive/zip `NewReader` and `File.Open`): the central directory is read and every entry checked as `unzip` checks it, and entries are inflated one at a time, so an archive of large entries is not all in memory at once. std/changes/archive.md.

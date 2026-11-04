@@ -954,7 +954,9 @@ fn (var p: Printer) derive(ds: List[parser.Ident], args: List[parser.DeriveArg])
       }
       p.w(if first { "(" } else { ", " })
       first = false
-      p.w(name_of(a.key) + ": " + name_of(a.value))
+      // a string value (`tag: "type"`, decision 0478) as written
+      let v = if a.str != None { p.text(a.value.span) } else { name_of(a.value) }
+      p.w(name_of(a.key) + ": " + v)
       end = end_off(a.value.span)
     }
     if !first {
@@ -968,6 +970,13 @@ fn (var p: Printer) derive(ds: List[parser.Ident], args: List[parser.DeriveArg])
 fn (var p: Printer) variant(v: parser.Variant) {
   p.w(name_of(v.name))
   p.done(end_off(v.name.span))
+  var name_end = end_off(v.name.span)
+  if let Some(ws) = v.wire_span {
+    // its wire name (decision 0478), as written
+    p.w(" as " + p.text(ws))
+    p.done(end_off(ws))
+    name_end = end_off(ws)
+  }
   if let Some(x) = v.value {
     p.w(" = ")
     p.expr(x)
@@ -980,7 +989,7 @@ fn (var p: Printer) variant(v: parser.Variant) {
   for vf in fields {
     items.push(Item{start: off(vf.span), end: end_off(vf.span), k: ItemK.VField([vf])})
   }
-  p.list("(", ")", p.find(end_off(v.name.span), '('), items, false)
+  p.list("(", ")", p.find(name_end, '('), items, false)
 }
 
 fn (var p: Printer) enum_decl(e: parser.EnumDecl) {
@@ -999,7 +1008,7 @@ fn (var p: Printer) enum_decl(e: parser.EnumDecl) {
     items.push(Item{start: off(v.span), end: end_off(v.span), k: ItemK.Variant([v])})
   }
   p.members(p.find(end, '{'), items)
-  p.derive(e.derive, [])
+  p.derive(e.derive, e.derive_args)
 }
 
 fn (var p: Printer) iface_decl(d: parser.InterfaceDecl) {
