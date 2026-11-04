@@ -597,6 +597,11 @@ fn (var m: Module) check_types(f: Func, v: Int) -> Str {
         return "fault takes a Str"
       }
     }
+    ShareIn => {
+      if n != 2 || a0 < 0 || m.types[a0].kind != Kind.List {
+        return "sharein takes a list and its element"
+      }
+    }
     Retain | Release | Drop | Reuse | Share => {
       if n != 1 || a0 < 0 || !m.heap(a0) {
         return "reference counting of a value that is not on the heap"

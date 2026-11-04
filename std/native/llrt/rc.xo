@@ -92,6 +92,23 @@ pub fn claim(p: Int) -> Int {
   0
 }
 
+/// Whether the object at p may be written in place by its holder: a
+/// thread local count, or the shared count of one holder (-1, after an
+/// acquire load: the other holders' releases happened before). Unlike
+/// claim it leaves -1 shared, so a container written under a Mutex stays
+/// shared and the unlock's share does not walk it (decision 0488); the
+/// writer shares what it stores (ShareIn).
+pub fn hold(p: Int) -> Int {
+  let c = rt.slot_load(p, 0, RELAXED)
+  if c == 1 {
+    return 1
+  }
+  if c == -1 && rt.slot_load(p, 0, ACQUIRE) == -1 {
+    return 1
+  }
+  0
+}
+
 /// Makes the count at p shared (xo_rc_mark): 1 when it was thread local
 /// (the caller then marks the object's children), else 0.
 pub fn mark(p: Int) -> Int {

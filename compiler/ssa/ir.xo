@@ -103,6 +103,9 @@ pub enum Op {
   Drop
   Reuse
   Share
+  // ShareIn(list, elem): share elem when the list is held once shared
+  // (count -1): a store into a held-once shared list (decision 0488)
+  ShareIn
   Jump
   Branch
   Return
@@ -158,6 +161,7 @@ pub fn op_name(o: Op) -> Str {
     Drop => "drop"
     Reuse => "reuse"
     Share => "share"
+    ShareIn => "sharein"
     Jump => "jump"
     Branch => "br"
     Return => "ret"

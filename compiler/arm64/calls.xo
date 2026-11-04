@@ -351,6 +351,32 @@ fn (var g: G) reuse(v: Int) {
   g.set(v, [r])
 }
 
+/// ShareIn(list, elem) (decision 0488): when the list's count is -1
+/// (a held-once shared list written in place; not the immortal empty
+/// list's, also negative), the element it
+/// is about to store is shared with it; a thread local list skips.
+fn (var g: G) share_in(v: Int) {
+  let x = g.f.values[v]
+  let e = x.args[1]
+  if g.op(e) == ssa.Op.Const || !g.heap(g.vty(e)) {
+    return
+  }
+  let l = g.word(x.args[0])
+  let c = g.def1(false, "ldr $d0, [$u0]", [l])
+  let before = g.m_()
+  let sh = g.new_block(true)
+  let cont = g.new_block(false)
+  let _b = g.add(Inst{kind: K_CONDBR, text: "cmn $u0, #1", us: [c], cond: "eq", targets: [sh, cont]})
+  g.cur = sh
+  let h = g.rc_helper("share", g.vty(e))
+  let ws = g.to_int(g.words(e), g.layout(g.vty(e)))
+  let _r = g.call(h, regs(ws), [])
+  let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+  g.cur = cont
+  g.inherit(before)
+  g.clobber()
+}
+
 /// The runtime callback that retains or releases a list element through
 /// a pointer (zero when elements are not on the heap).
 fn (var g: G) elem_fn(kind: Str, t: Int) -> Src {

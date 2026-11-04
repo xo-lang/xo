@@ -172,7 +172,7 @@ fn (g: G) succ_blocks(b: Int) -> List[Int] {
 fn (g: G) keeps_memory(u: Int, chain: Map[Int, Bool], root: Int) -> Bool {
   let x = g.f.values[u]
   if root >= 0 {
-    if x.op is ssa.Op.Release | ssa.Op.Drop | ssa.Op.Reuse | ssa.Op.SetField | ssa.Op.Call | ssa.Op.CallValue | ssa.Op.Share | ssa.Op.Box {
+    if x.op is ssa.Op.Release | ssa.Op.Drop | ssa.Op.Reuse | ssa.Op.SetField | ssa.Op.Call | ssa.Op.CallValue | ssa.Op.Share | ssa.Op.ShareIn | ssa.Op.Box {
       for a in x.args {
         if g.part_of(a, root) && !(x.op == ssa.Op.Call && g.reads_only(x)) {
           return false
@@ -183,7 +183,7 @@ fn (g: G) keeps_memory(u: Int, chain: Map[Int, Bool], root: Int) -> Bool {
   }
   match x.op {
     Call => g.reads_only(x)
-    CallValue | SetField | Drop | Reuse | Share | Box => false
+    CallValue | SetField | Drop | Reuse | Share | ShareIn | Box => false
     Release => chain.contains(x.args[0]) || g.from_chain(x.args[0], chain)
     _ => true
   }

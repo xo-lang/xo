@@ -1335,6 +1335,23 @@ fn (var g: Gen) instr_body(v: Int) {
       }
       g.rc_val_call(g.rc_fn("drop", g.vty(a)), a)
     }
+    ShareIn => {
+      // decision 0488: a store into a held-once shared list (a negative
+      // count) shares the element with it
+      let e = args[1]
+      if g.f.values[e].op != ssa.Op.Const && g.heap(g.vty(e)) {
+        let l0 = g.op(args[0])
+        let c = g.def("load atomic i64, ptr ${l0} unordered, align 8${TBAA_RC}")
+        let neg = g.def("icmp eq i64 ${c}, -1")
+        let sh = g.new_label("sharein")
+        let done = g.new_label("sharein_done")
+        g.emit("br i1 ${neg}, label %${sh}, label %${done}, !prof !0")
+        g.start(sh)
+        g.rc_val_call(g.rc_fn("share", g.vty(e)), e)
+        g.emit("br label %${done}")
+        g.start(done)
+      }
+    }
     Share => {
       let a = args[0]
       if g.f.values[a].op == ssa.Op.Const {

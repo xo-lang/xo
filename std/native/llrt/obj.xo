@@ -798,7 +798,9 @@ fn each(l: Int, esize: Int, f: Int) {
 /// elements (dup, when not 0), and l loses the one the caller gave up
 /// (freed with drop when the other references went meanwhile).
 pub fn rl_copy(hw: Int, l: Int, esize: Int, dup: Int, drop: Int) -> Int {
-  if rc.claim(l) != 0 {
+  // rc.hold, not claim: a held-once shared list stays shared (decision
+  // 0488), its writer sharing each element it stores (ShareIn)
+  if rc.hold(l) != 0 {
     // a shared count proved unique: the other holders' releases happened
     // before (claim's acquire load); told to ThreadSanitizer, which does
     // not see the runtime's atomics (TestTSanSharedMaps, 2026-10-30: a

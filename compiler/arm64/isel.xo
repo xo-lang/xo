@@ -605,7 +605,7 @@ fn rpo_succs(f: ssa.Func, b: Int) -> List[Int] {
 /// argument is an escape, whatever the callee: a Bytes made from an inline
 /// Str is then an object.
 fn (g: G) reads_borrowed(x: ssa.Value, j: Int) -> Bool {
-  if x.op is ssa.Op.Retain | ssa.Op.Release | ssa.Op.Drop | ssa.Op.Share {
+  if x.op is ssa.Op.Retain | ssa.Op.Release | ssa.Op.Drop | ssa.Op.Share | ssa.Op.ShareIn {
     return true
   }
   if x.op != ssa.Op.Call || j != 0 {
@@ -1633,6 +1633,7 @@ fn (var g: G) instr1(v: Int) {
       g.rel_stored = false
     }
     Reuse => g.reuse(v)
+    ShareIn => g.share_in(v)
     Share => {
       let a = x.args[0]
       if g.op(a) == ssa.Op.Const {

@@ -506,7 +506,7 @@ fn key_aux(var b: BytesBuilder, a: Aux) {
 /// Every opcode, for reading an entry back (an opcode missing here only
 /// makes its functions miss the cache).
 fn all_ops() -> List[Op] {
-  [Op.Param, Op.Const, Op.Add, Op.Sub, Op.Mul, Op.Div, Op.Rem, Op.Neg, Op.And, Op.Or, Op.Xor, Op.Not, Op.Shl, Op.Shr, Op.Eq, Op.Ne, Op.Lt, Op.Le, Op.Gt, Op.Ge, Op.IntToFloat, Op.FloatToInt, Op.IntConv, Op.Struct, Op.Tuple, Op.Variant, Op.Field, Op.SetField, Op.Tag, Op.Payload, Op.Cap, Op.Undef, Op.Closure, Op.Capture, Op.CallValue, Op.Box, Op.Unbox, Op.FuncAddr, Op.Rebind, Op.Call, Op.Fault, Op.Retain, Op.Release, Op.Drop, Op.Reuse, Op.Share, Op.Jump, Op.Branch, Op.Return, Op.Unreachable]
+  [Op.Param, Op.Const, Op.Add, Op.Sub, Op.Mul, Op.Div, Op.Rem, Op.Neg, Op.And, Op.Or, Op.Xor, Op.Not, Op.Shl, Op.Shr, Op.Eq, Op.Ne, Op.Lt, Op.Le, Op.Gt, Op.Ge, Op.IntToFloat, Op.FloatToInt, Op.IntConv, Op.Struct, Op.Tuple, Op.Variant, Op.Field, Op.SetField, Op.Tag, Op.Payload, Op.Cap, Op.Undef, Op.Closure, Op.Capture, Op.CallValue, Op.Box, Op.Unbox, Op.FuncAddr, Op.Rebind, Op.Call, Op.Fault, Op.Retain, Op.Release, Op.Drop, Op.Reuse, Op.Share, Op.ShareIn, Op.Jump, Op.Branch, Op.Return, Op.Unreachable]
 }
 
 /// The name of type t, "" for none; false when the name does not lead

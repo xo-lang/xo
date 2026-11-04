@@ -559,7 +559,7 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
         ms[0] = Mode.Borrow
       }
     }
-    Fault | Retain | Eq | Ne | Capture | Unbox | Share => ms = fill_modes(n, Mode.Borrow)
+    Fault | Retain | Eq | Ne | Capture | Unbox | Share | ShareIn => ms = fill_modes(n, Mode.Borrow)
     CallValue => {
       // the closure borrowed; each argument borrowed unless its type is
       // the result's (decision 0337, fv_arg_owned)
@@ -2937,7 +2937,8 @@ fn (var r: Rc) reuse(var f: Func) {
           // a list its callee handed back unique: the reuse stays (the
           // mark every later pass and the verifier read), marked so the
           // backends lower it to nothing (decision 0322)
-          let ax = if r.handed_unique(f, u, l, bl) { Aux.I(n: r.uq_mark) } else { Aux.None }
+          let hu = r.handed_unique(f, u, l, bl)
+          let ax = if hu { Aux.I(n: r.uq_mark) } else { Aux.None }
           let x = new_value(f, bl, Op.Reuse, ty_of(f.values[a].tb), ax, [a])
           out.push(x)
           f.values[v].args[0] = x
@@ -2947,6 +2948,50 @@ fn (var r: Rc) reuse(var f: Func) {
     }
     f.blocks[bl].instrs = out
   }
+  r.share_in(f)
+}
+
+/// Puts ShareIn(list, elem) before each list.set and list.push of a heap
+/// element whose list is not one this function made (decision 0488): a
+/// held-once shared list (-1) is written in place and stays shared, so
+/// what it stores is shared with it. Every such store, not only the ones
+/// with a reuse: a write after a reuse sees the list proved unique (count
+/// 1 was the proof's premise) and has none.
+fn (var r: Rc) share_in(var f: Func) {
+  for bl in 0..f.blocks.len() {
+    var out: List[Int] = []
+    for v in f.blocks[bl].instrs {
+      let x = f.values[v]
+      if x.op == Op.Call {
+        let nm = aux_name(x.aux)
+        let ei = if nm == "list.set" { 2 } else if nm == "list.push" { 1 } else { -1 }
+        if ei > 0 && ei < x.args.len() && r.heap(ty_of(f.values[x.args[ei]].tb)) && !made_here(f, x.args[0]) {
+          out.push(new_value(f, bl, Op.ShareIn, -1, Aux.None, [x.args[0], x.args[ei]]))
+        }
+      }
+      out.push(v)
+    }
+    f.blocks[bl].instrs = out
+  }
+}
+
+/// Whether list value l is one this function made (a list.new or a
+/// literal, through the updates and reuses of it): never shared.
+fn made_here(f: Func, l: Int) -> Bool {
+  var c = l
+  var n = 0
+  while n < 1000 {
+    let x = f.values[c]
+    if x.op == Op.Reuse && x.args.len() == 1 {
+      c = x.args[0]
+    } else if x.op == Op.Call && is_update_call(aux_name(x.aux)) && x.args.len() > 0 {
+      c = x.args[0]
+    } else {
+      return x.op == Op.Call && aux_name(x.aux) is "list.new" | "list.with_capacity"
+    }
+    n += 1
+  }
+  false
 }
 
 // ---------------------------------------------------------------------------

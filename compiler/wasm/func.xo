@@ -1395,7 +1395,8 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
     g.mop = ssa.op_name(x.op)
   }
   match x.op {
-    Param | Cap | Undef | Share => {}
+    // wasm counts are never shared (ShareIn: decision 0488)
+    Param | Cap | Undef | Share | ShareIn => {}
     Const => g.constant(v)
     Add | Sub | Mul => {
       let opn = if x.op == ssa.Op.Add { "add" } else if x.op == ssa.Op.Sub { "sub" } else { "mul" }
