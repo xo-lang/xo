@@ -1224,8 +1224,13 @@ How it works:
   through `task.return`, then writes the body, the trailers and the
   done future. A read or write the host cannot finish at once returns
   WAIT with the waitable set, and the callback goes on from that
-  phase. Nothing blocks inside the export: Spin answered 500 to a
-  hand-written component that waited inside it.
+  phase. Nothing blocks inside the export. (Correction, 2026-11-03:
+  this design came from a test in which Spin answered 500 to a
+  hand-written component that waited inside the export. That 500 came
+  from a stale Spin still serving an older build,
+  gotchas/spin-up-child-outlives-kill.md. Retested cleanly, a blocking
+  `waitable-set.wait` inside the callback-lifted export works on both
+  hosts; step 2 builds on it.)
 - One request runs at a time in an instance (`backpressure.inc` at
   the start, `dec` at the end), with the state reset per request.
 
@@ -1259,3 +1264,25 @@ Not in step 1, for the owner's next decision:
 - The client (XO1515).
 - Sockets and commands at 0.3.
 - One instance serving every request, measured on its own.
+
+## Stage 5 step 2: streamed bodies and the client (Accepted, owner, 2026-11-03; Xo Lang 4)
+
+Owner decision (2026-11-03): step 2 is approved. It covers streaming
+bodies both ways as `stream<u8>`, trailers as a future, and the client
+(`client.send`, async lowered) on 0.3. It is measured against Rust at
+0.3 on one host: a streamed 100,000-byte request body, and one outgoing
+request per incoming request (req/s, p99). Concurrent requests per
+instance, and commands and sockets at 0.3, stay later, each as its own
+decision.
+
+Design: main runs inside the export, as on wasip2. A stream or future
+read or write that returns BLOCKED joins its waitable to the set, waits
+in place (`waitable-set.wait`, which both hosts allow inside a
+callback-lifted export, as retested 2026-11-03), and leaves the set
+again. So a `handle_stream` route reads the request body as it
+arrives, with its trailers, and an `http.stream` response is written as
+main writes it, with no task suspension added. The client builds a
+`request` with a body stream and a trailers future, calls `send`
+lowered async, writes the body while the call runs, waits for the
+subtask, then reads the response's body stream.
+
