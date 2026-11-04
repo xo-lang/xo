@@ -1,6 +1,7 @@
 # 0370: store a short Str's text inside its 16 byte value
 
-Status: Accepted as an opt-in flag (owner, 2026-10-25): `xo build --inline-str`,
+Status: Accepted as an opt-in flag (owner, 2026-10-25; kept opt-in after the
+2026-11-03 survey, owner 2026-11-04, see the addendum): `xo build --inline-str`,
 arm64 only, default off. The measured trade is below; it does not meet the
 bar for a default (about 1% code size, wall within noise on the Str, json and
 http benches). Proposed by Xo Lang 3, 2026-10-24.
@@ -299,6 +300,21 @@ view variant adds the copy-on-write hazard. Sort-heavy programs would gain more
 than `--inline-str` does; a variant restricted to sort and Map key storage (the
 slots never read back as Strs except at the end) stays open as a possible
 specialised container, not a general layout.
+
+## Addendum (owner, 2026-11-04): stays opt-in
+
+The whole-suite survey with `--inline-str` on
+(bench/results/inline-str-survey-2026-11-03.md, 20b9c2661, after the put
+fix fe7a71942) measured 334 rows: 171 worse, 42 better, 121 within noise,
+geometric mean of wall 1.070; xo's self build 1.073; ELF `.text` +3.9%
+(xo) to +9.3% (bench/perf/csv). The worst rows slice short strings at a
+variable start (text cut_prefix 2.68, cut_suffix 2.50, trim 1.84): each
+such slice of an inline Str goes through the runtime (inlstr.view) where
+the default shares the object. The best is strconv itoa 0.466.
+
+Decision: `--inline-str` stays opt-in, default off. Revisit when a slice
+of an inline Str at a variable start is done in registers, as calls.xo
+already does for a constant start, and the survey is rerun.
 
 ## Alternatives
 
