@@ -12,3 +12,13 @@ without a count, decision 0465 step 2). Ratio is Xo wall over Go wall.
 
 A second run (n=6): trim 1.59 (1.58-1.60), trim_start 1.36, trim_end 1.46. Step 2 took trim from 2.24 to about 1.55 of Go's.
 Mac profile of `trim` (40 M calls): `trim_chars` 26 percent flat, `trim_start_unicode` 22, `trim_end_unicode` 13, `trim_end_ascii` 9; no single cause, the ASCII bitmap and Unicode rune loops are all spread. Not Proven (ADR 0461). The code is Lang 1's strings area (std/native/llrt/scan.xo); the next experiment is to measure `ascii_set` (a tuple of three results per call) against a fused ASCII path in `trim_chars`.
+
+## After the Unicode path change (d585dcc81; host 1, `--early`, n=6)
+
+| workload | Go ms | Xo ms | ratio | interval |
+|---|---|---|---|---|
+| trim | 16.27 | 26.28 | 1.62 | 1.56-1.68 |
+| trim_start | 14.11 | 20.0 | 1.42 | 1.37-1.45 |
+| trim_end | 13.6 | 21.72 | 1.60 | 1.55-1.62 |
+
+No gain: the ratios are within the spread of the earlier runs (1.54, 1.39, 1.51). `trim_start_unicode` and `trim_end_unicode` now use `raw.decode` and `rune_in_set`, which is cleaner but does not move the host wall, so the cost is not the rune lookup. Next: a host `perf` or XO_PROF=cpu profile of the workload on host 1 to rank the real cost (the Mac profile is flat), before changing the ASCII paths.
