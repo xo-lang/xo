@@ -1,0 +1,106 @@
+// Full duplex (decision 0433) over HTTP/2 on TLS (ALPN; http_tls's test
+// certificate): the client writes the next piece of its request body only
+// after it read the echo of the last one. The native client's h2 pump
+// polls a duplex body between short reads; over TLS that read once
+// waited for the request's deadline instead (tlsio kept its own), so the
+// first echo never came (b24, 2026-11-04). A second exchange on the same
+// connection follows, and a PING keepalive client takes the same path.
+use std/http
+
+fn routes() -> http.Router {
+  var r = http.router()
+  r.handle_stream("POST /echo", fn(_req, b) {
+    http.stream(200, fn(w) {
+      while true {
+        match b.read()? {
+          Some(d) => {
+            w.write("echo ${d.to_str() ?? "?"};".bytes())?
+            w.flush()?
+          }
+          None => break
+        }
+      }
+      w.write("end".bytes())?
+    }).with_full_duplex()
+  })
+  r
+}
+
+fn pingpong(os: Os, c: http.Client, label: Str, url: Str) {
+  let (w, r) = http.pipe()
+  let acks = Chan[Int].new(1)
+  scope s {
+    s.spawn(fn() {
+      for i in 0..3 {
+        match w.write("m${i}".bytes()) {
+          Ok(_) => ()
+          Err(e) => os.stdio.println("${label} write: ${e}")
+        }
+        let _ = acks.recv()
+      }
+      w.close()
+    })
+    match c.open(http.new_request("POST", url).with_body_reader(r)) {
+      Ok(st) => {
+        os.stdio.println("${label}: head ${st.head().status}")
+        while true {
+          match st.read() {
+            Ok(Some(d)) => {
+              os.stdio.println("${label}: ${d.to_str() ?? "?"}")
+              acks.send(1)
+            }
+            Ok(None) => break
+            Err(e) => {
+              os.stdio.println("${label}: ${e}")
+              break
+            }
+          }
+        }
+        st.close()
+      }
+      Err(e) => os.stdio.println("${label}: ${e}")
+    }
+    acks.close()
+  }
+}
+
+fn main(os: Os) {
+  let cert = match http.tls_cert(good_cert(), good_key()) {
+    Ok(c) => c
+    Err(e) => {
+      os.stdio.println("cert: ${e}")
+      return
+    }
+  }
+  let c = match http.client(os.net, timeout: 20s).with_roots(ca_pem()) {
+    Ok(c) => c
+    Err(e) => {
+      os.stdio.println("roots: ${e}")
+      return
+    }
+  }
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let srv = http.server(l, routes()).with_tls([cert])
+      let port = srv.addr().split(":")[1]
+      let url = "https://localhost:${port}/echo"
+      scope s {
+        s.spawn_background(fn() {
+          match srv.serve() {
+            Ok(_) => ()
+            Err(e) => os.stdio.println("serve failed: ${e}")
+          }
+        })
+        pingpong(os, c, "h2", url)
+        pingpong(os, c, "again", url)
+        pingpong(os, c.with_h2_config(http.H2Config{send_ping_timeout: 5s, ping_timeout: 5s}), "ping", url)
+      }
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen failed: ${e}")
+  }
+}
+
+fn ca_pem() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_cert() -> Bytes { "-----BEGIN CERTIFICATE-----\nMIIBlzCCAT2gAwIBAgIBBDAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAPMQ0wCwYDVQQD\nEwRnb29kMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE9O8DlRiEOqE5kBcoi9Xg\nkTscb94E/jndT7qf0pYOYj1zJGJbD2l1bZAVsrAY5C3Wv2aAF51muJPDyheawAHK\nSqOBgTB/MA4GA1UdDwEB/wQEAwIHgDATBgNVHSUEDDAKBggrBgEFBQcDATAfBgNV\nHSMEGDAWgBS622eQNH88xONsY6xWmU1iiQvWejA3BgNVHREEMDAugglsb2NhbGhv\nc3SCCWdvb2QudGVzdIcEfwAAAYcQAAAAAAAAAAAAAAAAAAAAATAKBggqhkjOPQQD\nAgNIADBFAiAckDQ7jBugRRKa+Ugpt8hKU8GY0WGo4eWxak8QHej1hgIhAORlgKwn\niJ4cvV9cxqu4a2fovArW28G2KaR4WLfzeSBL\n-----END CERTIFICATE-----\n-----BEGIN CERTIFICATE-----\nMIIBXTCCAQOgAwIBAgIBAjAKBggqhkjOPQQDAjAVMRMwEQYDVQQDEwpYbyBUZXN0\nIENBMCAXDTIwMDEwMTAwMDAwMFoYDzIxMjAwMTAxMDAwMDAwWjAVMRMwEQYDVQQD\nEwpYbyBUZXN0IENBMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEijw7AWGYTeLp\n/9oDX6t32fPfTkDcI/F29wXFQRBDz+0AxRDpI6PQf9UdiF9aZfB5AM5J3PdtARhw\nCIekwP7z7aNCMEAwDgYDVR0PAQH/BAQDAgKEMA8GA1UdEwEB/wQFMAMBAf8wHQYD\nVR0OBBYEFLrbZ5A0fzzE42xjrFaZTWKJC9Z6MAoGCCqGSM49BAMCA0gAMEUCIHzG\n+C1Oz2qF9sqKv6CMRcep89t3K01Um1dypPN+nE7ZAiEA3+DkafbsP8oH5cfghe/i\nMsgJIwR+YEK89sPkPWqn3nI=\n-----END CERTIFICATE-----\n".bytes() }
+fn good_key() -> Bytes { "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgRJJMUtA6v5smeBFF\npZ933x7IwE6wYj/9NyjqnMscBwmhRANCAAT07wOVGIQ6oTmQFyiL1eCROxxv3gT+\nOd1Pup/Slg5iPXMkYlsPaXVtkBWysBjkLda/ZoAXnWa4k8PKF5rAAcpK\n-----END PRIVATE KEY-----\n".bytes() }

@@ -42,6 +42,8 @@ struct Chunk {
 struct Wire {
   recv: fn(Int) -> Chunk
   send: fn(Bytes) -> NetErr?
+  /// 0, or n > 0 (a server's): stop sending, then read and drop up to n
+  /// bytes of the peer's input for at most 500 ms or until it closes
   close: fn(Int) -> ()
 }
 
@@ -386,6 +388,14 @@ fn (c: WsConn) read_message(var st: ReadState) -> websocket.Message ! websocket.
       length += n
       if length < 0 || (c.max > 0 && length > c.max) {
         c.write_control(OP_CLOSE, close_message(1009, "")).ignore_err("the error is the limit's")
+        // the rest of the message stays unread: a server lingers (the
+        // 413 and 431 replies' linger_close) so a close with input
+        // unread sends no RST that could overtake the 1009 (the client
+        // saw 1006; owner's v0.36.0 evaluation, 2026-11-04)
+        if c.server {
+          // n is the peer's (up to 2**63 - 1): 64 MiB at most
+          c.wire.close(if n > 67108864 { 67108864 } else { n + 65536 })
+        }
         return Err(websocket.WsErr.TooBig(limit: c.max))
       }
     }
@@ -748,7 +758,13 @@ fn upgrade[fx: Effects](req: http.Request, f: fn(WsConn) -> () uses fx, protocol
         raw.alive(d)
         if r == 0 { None } else if r == -2 { Some(NetErr.Timeout) } else { Some(NetErr.Io(msg: "write: connection closed")) }
       },
-      close: fn(_x: Int) { hconn.shut_wr(h) },
+      close: fn(x: Int) {
+        if x > 0 {
+          hconn.linger_close(h, max: x)
+        } else {
+          hconn.shut_wr(h)
+        }
+      },
     }
     // what the server read past the request's head is the first input
     let rest = http1.take_rest(h)

@@ -643,13 +643,14 @@ pub fn shut_wr(h: rthttp.HConn) {
 /// Shuts down the sending side and reads what the peer still sends, for
 /// at most 500 ms or until it closes (net/http's closeWriteAndWait): a
 /// close with unread request bytes sends a RST on Linux, which can cost
-/// the client the 431 or 413 reply it has not read yet.
-pub fn linger_close(h: rthttp.HConn) {
+/// the client the 431 or 413 reply it has not read yet. At most max bytes
+/// are read (a WebSocket server passes the rest of a message too big).
+pub fn linger_close(h: rthttp.HConn, max: Int = 1048576) {
   shut_wr(h)
   let buf = rt.heap_large(4096)
   let until = deadline(500000000)
   var total = 0
-  while total < 1048576 {
+  while total < max {
     let n = recv_until(h, buf, 4096, false, until)
     if n <= 0 {
       break

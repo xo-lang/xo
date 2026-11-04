@@ -22,3 +22,16 @@ After an early error reply (431, 413), shut down the sending side and read
 and discard until the peer closes or a bound passes, then close:
 hconn.linger_close (500 ms, 1 MiB), net/http's closeWriteAndWait. Any new
 early-reply-and-close path in the server does the same.
+
+## 2026-11-04: macOS too, with another client; and the cap
+
+The WebSocket server's close 1009 (a message over max_message) hit the
+same reset on the Mac: Node's WebSocket client got 1006 on 47 of 600
+oversized messages (bench/results/websocket-1009-linger-2026-11-04.md),
+so "macOS delivers the reply first" depends on the client. Xo's own
+client never showed it (it reads only after its write ends), so a test
+that reproduces this needs a client that reads while it writes. The
+linger's read cap matters too: linger_close's 1 MiB default reset an
+8 MiB message partway; the WebSocket path passes the message's remaining
+length (linger_close's `max`).
+

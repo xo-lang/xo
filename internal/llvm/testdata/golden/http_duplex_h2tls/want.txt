@@ -1,0 +1,19 @@
+exit 0
+--- stdout
+h2: head 200
+h2: echo m0;
+h2: echo m1;
+h2: echo m2;
+h2: end
+again: head 200
+again: echo m0;
+again: echo m1;
+again: echo m2;
+again: end
+ping: head 200
+ping: echo m0;
+ping: echo m1;
+ping: echo m2;
+ping: end
+done
+--- stderr

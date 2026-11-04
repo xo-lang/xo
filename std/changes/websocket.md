@@ -1,5 +1,21 @@
 # std/websocket changes
 
+## 2026-11-04: fix: a message too big gets its close 1009, not a reset
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.36.0 evaluation (tests/10-tls-ws failed once in two runs; a hammer of 60 oversized messages saw 1006 on 8 and 34)
+- Go reference: net/http server.go closeWriteAndWait (what hconn.linger_close does for 413 and 431); gorilla/websocket does not linger (44 and 38 of 60 in the evaluation)
+- Test: bench/results/websocket-1009-linger-2026-11-04.md: Node's WebSocket client, 300 connections each at 2 and 8 MiB, 1006 on 18 and 29 before and 0 after (a golden would pass without the fix: Xo's client never sees the reset)
+- Timing: none (only the close of a connection that broke the limit waits, until the peer closes or 500 ms)
+- Shipped in: not yet released
+
+After a server sends close 1009 it now stops sending and reads and drops
+the rest of the oversized message (up to its declared length plus 64 KiB,
+64 MiB at most) until the client closes or 500 ms pass, then closes. Before,
+it closed with the rest unread, which sends a reset that can reach the
+client before it reads the 1009.
+
 ## 2026-11-02: fix: a client frame's mask key was read from freed memory
 
 - Kind: fix

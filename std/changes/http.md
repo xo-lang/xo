@@ -1,5 +1,16 @@
 # std/http changes
 
+## 2026-11-04: fix: full duplex over HTTP/2 on TLS (native client)
+
+- Kind: fix
+- Commit: this push
+- Found by: the owner's v0.36.0 evaluation (b24): an HTTP/2 over TLS request whose body is an http.pipe got its head, but the server saw no more of the body until it ended, so a full duplex exchange (decision 0433) timed out on its first read; HTTP/1.1, h2c, the Go backend and Go's client were fine
+- Cause: the h2 pump polls a duplex body between reads with a 10 ms deadline (and the PING keepalive uses one too) set by hclient.put_deadline, which set only the socket's deadline; a TLS connection's reads wait on tlsio's own, so the read waited for the request's deadline instead
+- Go reference: net/http h2_bundle.go clientStream.writeRequestBody (the body is written as it is read, independent of the response's reads)
+- Test: golden http_duplex_h2tls (arm64 and LLVM): three ping-pong exchanges over HTTP/2 by ALPN on TLS, the second on the same connection, the third with a PING keepalive configured; origin/main's std timed out after the first echo on both
+- Timing: none (a missing wakeup, no hot path changed)
+- Shipped in: not yet released
+
 ## 2026-11-03: fix: the client pools a connection after a request whose body came from a source
 
 - Kind: fix
