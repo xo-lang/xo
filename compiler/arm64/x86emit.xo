@@ -360,6 +360,7 @@ fn (var g: G) x86_emit_once() {
     }
   }
   b.push(g.stubs.join(""))
+  b.push(g.leaf_pes.join(""))
   if g.m.debug_info && !g.dl_rows.is_empty() {
     let end = g.local("${g.lbl_prefix()}_dend")
     b.push("${end}:\n")
@@ -1234,7 +1235,11 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     let after = if dv_end.is_empty() { "" } else { "${dv_end}:\n" }
     if inst.pad >= 0 {
       let (from2, to2) = g.call_site_labels()
-      g.stub_sites.push(CallSite{from: from2, to: to2, pad: g.pad_of(inst.pad)})
+      let pad = g.pad_of(inst.pad)
+      // a leaf's stub pushed a frame record: the fault lands on an entry
+      // that pops it (x86_leaf_pad_entry); a Windows leaf pushes none
+      let entry = if g.fr.leaf && !win_leaf { g.x86_leaf_pad_entry(pad) } else { "" }
+      g.stub_sites.push(CallSite{from: from2, to: to2, pad: pad, entry: entry})
       sb.push("${from2}:\n\tcallq ${inst.ffn()}\n${to2}:\n${after}\tud2\n")
     } else if win_leaf {
       sb.push("\tjmp ${inst.ffn()}\n")
@@ -1243,6 +1248,25 @@ fn (var g: G) x86_emit_plain(var b: List[Str], inst: Inst) {
     }
     g.stubs.push(g.cause_label(C_FAULT_STUB) + sb.join(""))
   }
+}
+
+/// The entry of landing pad block pad for a leaf's fault stubs (not on
+/// Windows): the unwinder resumes there with the stub's frame record
+/// pushed (rsp and rbp at it), so it pops the record, giving back the
+/// caller's rbp with rsp at the return address, and jumps to the pad.
+/// The pad's ret popped the saved rbp as its return address before
+/// (SIGSEGV on a fault in a leaf Mutex.with closure, decision 0482's
+/// pads; amd64 golden mutex_poison_leaf, 2026-11-04; arm64's twin is
+/// emit.xo leaf_pad_entry). After the stubs, in the function's one
+/// region: never at offset 0 of its call site table's base.
+fn (var g: G) x86_leaf_pad_entry(pad: Int) -> Str {
+  if let Some(l) = g.pad_entries.get(pad) {
+    return l
+  }
+  let l = g.local("${g.lbl_prefix()}_pe${pad}")
+  g.leaf_pes.push("${g.cause_label(C_LANDING)}${l}:\n\tmovq %rbp, %rsp\n\tpopq %rbp\n\tjmp ${g.label(g.fwd(pad))}\n")
+  g.pad_entries[pad] = l
+  l
 }
 
 /// x86_scratch, or a borrowed register (x86_borrow), saved at
