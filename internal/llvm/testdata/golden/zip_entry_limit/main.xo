@@ -1,0 +1,68 @@
+// The zip end record's 16-bit entry count (no zip64 written yet): 65,535
+// entries is the most archive.zip and archive.zip_writer write, and the
+// 65,536th is an error on every backend, where native zip() once wrote the
+// count modulo 65,536 (1 for 65,537 entries). Go's archive/zip reads the
+// 65,535 entry archives back (2026-11-04 differential).
+use std/archive
+
+fn entries(n: Int) -> List[archive.Entry] {
+  var out: List[archive.Entry] = []
+  for i in 0..n {
+    out.push(archive.file("e${i}", "${i}".bytes()))
+  }
+  out
+}
+
+fn check(os: Os, what: Str, z: Bytes) {
+  match archive.unzip(z) {
+    Ok(es) => {
+      var ok = 0
+      for i in 0..es.len() {
+        if es[i].path == "e${i}" && es[i].data == "${i}".bytes() {
+          ok += 1
+        }
+      }
+      os.stdio.println("${what}: ${es.len()} entries read back, ${ok} right")
+    }
+    Err(e) => os.stdio.println("${what}: unzip ${e}")
+  }
+}
+
+fn main(os: Os) {
+  match archive.zip(entries(65535)) {
+    Ok(z) => check(os, "zip 65535", z)
+    Err(e) => os.stdio.println("zip 65535: ${e}")
+  }
+  match archive.zip(entries(65536)) {
+    Ok(z) => os.stdio.println("zip 65536: accepted, ${z.len()} bytes")
+    Err(e) => os.stdio.println("zip 65536: ${e}")
+  }
+  // a directory counts as an entry too
+  var mixed = entries(65534)
+  mixed.push(archive.dir("d"))
+  mixed.push(archive.file("last", b"x"))
+  match archive.zip(mixed) {
+    Ok(z) => os.stdio.println("zip 65534 + dir + file: accepted, ${z.len()} bytes")
+    Err(e) => os.stdio.println("zip 65534 + dir + file: ${e}")
+  }
+
+  let p = "zip_entry_limit_tmp.zip"
+  os.fs.remove(p).ok()
+  let f = os.fs.create(p).or_fault("create")
+  var w = archive.zip_writer(f)
+  for e in entries(65535) {
+    w.add(e).or_fault("add")
+  }
+  match w.add(archive.file("e65535", b"65535")) {
+    Ok(_) => os.stdio.println("zip_writer entry 65536: accepted")
+    Err(e) => os.stdio.println("zip_writer entry 65536: ${e}")
+  }
+  match w.create("streamed", 0o644) {
+    Ok(_) => os.stdio.println("zip_writer create 65536: accepted")
+    Err(e) => os.stdio.println("zip_writer create 65536: ${e}")
+  }
+  w.close().or_fault("close writer")
+  f.close().or_fault("close")
+  check(os, "zip_writer 65535", os.fs.read(p).or_fault("read"))
+  os.fs.remove(p).or_fault("cleanup")
+}

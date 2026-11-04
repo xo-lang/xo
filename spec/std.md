@@ -4281,7 +4281,8 @@ struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool,
   comes, a data descriptor after it), and the next `add`, `create` or
   `close` ends it; `w.close()` writes the central directory. Memory is the
   directory records, not the data. No zip64: more than 65,535 entries or
-  4 GB is an error. (Decision 0479 sketched `create` returning an
+  4 GB is an error, for `zip` as for `zip_writer`, on every backend
+  (2026-11-04; Go's writer would switch to zip64). (Decision 0479 sketched `create` returning an
   `EntryWriter`; a separate value cannot tell the writer how much it
   wrote, so the entry is the writer's current one.)
 

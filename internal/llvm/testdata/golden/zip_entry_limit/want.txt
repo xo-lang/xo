@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+zip 65535: 65535 entries read back, 65535 right
+zip 65536: archive: zip: more than 65535 entries (zip64 is not supported)
+zip 65534 + dir + file: archive: zip: more than 65535 entries (zip64 is not supported)
+zip_writer entry 65536: archive: zip_writer: more than 65535 entries (zip64 is not supported)
+zip_writer create 65536: archive: zip_writer: more than 65535 entries (zip64 is not supported)
+zip_writer 65535: 65535 entries read back, 65535 right
+--- stderr

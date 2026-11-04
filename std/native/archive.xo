@@ -1302,6 +1302,14 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
       Some(x) => x
       None => return Err(archive_err("bad entry path ${e.path.quote()}"))
     }
+    // the end record's 16-bit count and 32-bit offsets, as zip_writer
+    // (no zip64 yet: past them the count or an offset would wrap)
+    if files.len() >= 65535 {
+      return Err(archive_err("zip: more than 65535 entries (zip64 is not supported)"))
+    }
+    if count > 4000000000 {
+      return Err(archive_err("zip: archive larger than 4 GB (zip64 is not supported)"))
+    }
     var zf = zip_new_header(p, e.mode, e.is_dir, e.modified, count)
     let hdr = zip_local_header(zf)
     out.write(hdr)
@@ -1317,6 +1325,9 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
       count += 16
     }
     files.push(zf)
+  }
+  if count > 4000000000 {
+    return Err(archive_err("zip: archive larger than 4 GB (zip64 is not supported)"))
   }
   out.write(zip_central(files, count))
   out.freeze()

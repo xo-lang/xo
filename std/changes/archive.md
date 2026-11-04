@@ -1,5 +1,16 @@
 # std/archive changes
 
+## 2026-11-04: fix: zip refuses a 65,536th entry instead of writing a wrong count
+
+- Kind: fix
+- Commit: this push
+- Found by: the zip differential for the owner's v0.38.1 "not tested yet" list (Xo Lang 2): native `zip` of 65,537 entries wrote 1 as the end record's count
+- Go reference: archive/zip writes a zip64 end record past 65,534 entries or 4 GB; Xo writes no zip64 yet (std.md 18)
+- Test: golden zip_entry_limit (65,535 entries, then the 65,536th, on every backend)
+- Shipped in: not yet released
+
+`zip` wrote the end record's 16-bit entry count modulo 65,536, so an archive of 65,537 entries said it held 1; Go's reader still read it (it compares the counts modulo 65,536), but a stricter reader does not. `zip` now refuses the 65,536th entry with `zip: more than 65535 entries (zip64 is not supported)` and an archive past 4 GB with `zip: archive larger than 4 GB (zip64 is not supported)`, the limits `zip_writer` already had natively. The Go backend's `zip` and `zip_writer`, which let Go write zip64, refuse at the same counts, so every backend gives the same result.
+
 ## 2026-11-04: fix: a NUL byte in an entry name is named, not "leaves the archive"
 
 - Kind: fix
