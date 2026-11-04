@@ -1,5 +1,17 @@
 # std/mime changes
 
+## 2026-11-04: perf: format_media_type scans each token once and sorts parameters by one walk
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/mime format 1.31 of Go's wall (std-twin rows)
+- Go reference: mime.FormatMediaType (sorts the parameter names, checks isToken and needsEncoding)
+- Test: the mime corpus (arm64, LLVM, Go backend) and `xo test --std-module=mime`
+- Timing: host 1 A/B format 0.625 of before (0.605-0.652, n=6), about 0.82 of Go's wall
+- Shipped in: not yet released
+
+Each type, attribute and value is classified in one scan (token and lower case, or token and needs encoding), and the parameters are collected in one walk of the map with an insertion sort, in place of `keys().sort()` and a hashed lookup per key.
+
 ## 2026-11-03: perf: format_media_type writes a lower case token as it is
 
 - Kind: perf
