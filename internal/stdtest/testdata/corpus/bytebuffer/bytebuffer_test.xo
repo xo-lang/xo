@@ -182,3 +182,56 @@ test "growth after consuming keeps the content (TestBufferGrowth)" {
   out.write(rest(b))
   expect(out.freeze()) == data[0..1024].repeat(1000)
 }
+
+test "small and large writes mixed with every read agree with a model" {
+  let data = test_bytes()
+  var b = ByteBuffer.new()
+  // the model: everything written, and how much was consumed
+  var model = b""
+  var used = 0
+  var x = 11
+  for _ in 0..3000 {
+    x = (x * 1103515245 + 12345) % 2147483648
+    let op = x % 7
+    let n = (x / 7) % (if op == 0 { 300 } else { 40 })
+    if op <= 1 {
+      let w = data[n..2 * n + 1]
+      b.write(w)
+      model = model + w
+      continue
+    }
+    let un = model[used..model.len()]
+    expect(b.len()) == un.len()
+    match op {
+      2 => {
+        let k = if n < un.len() { n } else { un.len() }
+        expect(b.next(n)) == un[0..k]
+        used += k
+      }
+      3 => {
+        let k = if n < un.len() { n } else { un.len() }
+        expect(b.peek(n)) == un[0..k]
+      }
+      4 => {
+        let db = data[n % 26..n % 26 + 1]
+        let d = db[0]
+        match un.find(db) {
+          Some(i) => {
+            expect(b.read_until(d)) == Some(un[0..i + 1])
+            used += i + 1
+          }
+          None => expect(b.read_until(d)) == None
+        }
+      }
+      5 => {
+        let sub = data[n..n + 3]
+        expect(b.find(sub)) == un.find(sub)
+      }
+      _ => {
+        let k = if n < un.len() { n } else { un.len() }
+        b.discard(n)
+        used += k
+      }
+    }
+  }
+}

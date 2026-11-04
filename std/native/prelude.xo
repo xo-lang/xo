@@ -5526,92 +5526,190 @@ fn clockerr_display(e: ClockErr) -> Str {
 // ByteBuffer (decision 0480; std/rt bytebuf.go on the Go backend)
 
 struct ByteBuffer {
-  /// the storage: its bytes before off were consumed, the rest are unread
-  s: Str = ""
-  off: Int = 0
-  /// the unread bytes read_until searched for delim and did not find it in
-  /// (a later call starts after them)
-  scanned: Int = 0
+  /// what was written, in pieces: views of the callers' Bytes (a write
+  /// copies nothing) or of small writes gathered in tail; the pieces
+  /// before head are read (and emptied)
+  segs: List[Bytes] = []
+  head: Int = 0
+  /// positions in the stream: of segs[head]'s first byte, of the first
+  /// unread byte, and past the last byte written
+  hstart: Int = 0
+  pos: Int = 0
+  end: Int = 0
+  /// small writes not yet in segs (appended in place)
+  tail: Str = ""
+  /// read_until found no delim from pos to scan_to; scan_seg is the piece
+  /// holding scan_to, starting at scan_start
   delim: Int = -1
+  scan_to: Int = 0
+  scan_seg: Int = 0
+  scan_start: Int = 0
 }
+
+/// A write this short is copied into tail rather than kept as a view
+const BB_SMALL = 64
 
 fn bytebuffer_new() -> ByteBuffer { ByteBuffer{} }
 
-fn bytebuffer_with_capacity(n: Int) -> ByteBuffer {
-  if n <= 0 { ByteBuffer{} } else { ByteBuffer{s: rt.rs_with_cap(n)} }
-}
+fn bytebuffer_with_capacity(n: Int) -> ByteBuffer { ByteBuffer{} }
 
-fn bytebuffer_len(b: ByteBuffer) -> Int { b.s.len() - b.off }
+fn bytebuffer_len(b: ByteBuffer) -> Int { b.end - b.pos }
 
-/// Appends in place while the storage has room and no view holds it, else
-/// to new storage (a view keeps the old one). When half or more of the
-/// storage was consumed, the unread bytes move to new storage first: each
-/// byte is copied a constant number of times overall, as Go's grow.
+/// Keeps data as a view (decision 0480: no copy at write time; a record
+/// inside one piece is a view of it, one that spans pieces is joined once).
 fn bytebuffer_write(var b: ByteBuffer, data: Bytes) {
   let n = data.len()
   if n == 0 {
     return
   }
-  let end = b.s.len()
-  let unread = end - b.off
-  if b.off > 0 && b.off >= unread {
-    let old = b.s
-    b.s = ""
-    b.s = rt.rs_append_bytes(rt.rs_with_cap(2 * unread + n), old.bytes(), b.off, end, 0)
-    b.off = 0
+  if n < BB_SMALL {
+    let t = b.tail
+    b.tail = ""
+    b.tail = rt.rs_append_bytes(if t.is_empty() { rt.rs_with_cap(256) } else { t }, data, 0, n, 0)
+    b.end += n
+    return
   }
-  // the field let go first, so that the storage is not shared by it and
-  // the append can be in place
-  let t = b.s
-  b.s = ""
-  b.s = rt.rs_append_bytes(t, data, 0, n, 0)
+  bytebuffer_flush(b)
+  b.segs.push(data)
+  b.end += n
 }
 
-/// Consumes k of the unread bytes (0 <= k <= len); drops the storage once
-/// all are read.
-fn bytebuffer_take(var b: ByteBuffer, k: Int) {
-  b.off += k
-  b.scanned = if b.scanned > k { b.scanned - k } else { 0 }
-  if b.off == b.s.len() {
-    b.s = ""
-    b.off = 0
+/// Moves tail's bytes into segs.
+fn bytebuffer_flush(var b: ByteBuffer) {
+  if !b.tail.is_empty() {
+    let t = b.tail
+    b.tail = ""
+    b.segs.push(t.bytes())
   }
+}
+
+/// Consumes the unread bytes before stream position p (pos <= p <= end).
+fn bytebuffer_take(var b: ByteBuffer, p: Int) {
+  b.pos = p
+  while b.head < b.segs.len() && b.hstart + b.segs[b.head].len() <= p {
+    b.hstart += b.segs[b.head].len()
+    b.segs[b.head] = b""
+    b.head += 1
+  }
+  if b.head == b.segs.len() {
+    b.segs = []
+    b.head = 0
+  } else if b.head >= 32 && 2 * b.head >= b.segs.len() {
+    var kept: List[Bytes] = List.with_capacity(b.segs.len() - b.head)
+    for k in b.head..b.segs.len() {
+      kept.push(b.segs[k])
+    }
+    b.segs = kept
+    b.scan_seg -= b.head
+    b.head = 0
+  }
+  if b.scan_to <= p || b.scan_seg < b.head {
+    b.scan_to = p
+    b.scan_seg = b.head
+    b.scan_start = b.hstart
+  }
+}
+
+/// Piece k, tail's bytes after the last.
+fn bytebuffer_seg(b: ByteBuffer, k: Int) -> Bytes { if k < b.segs.len() { b.segs[k] } else { b.tail.bytes() } }
+
+/// The unread bytes from stream position a to c (pos <= a < c <= end):
+/// a view when they lie in one piece, else joined.
+fn bytebuffer_slice(b: ByteBuffer, a: Int, c: Int) -> Bytes {
+  var k = b.head
+  var ks = b.hstart
+  while ks + bytebuffer_seg(b, k).len() <= a {
+    ks += bytebuffer_seg(b, k).len()
+    k += 1
+  }
+  let first = bytebuffer_seg(b, k)
+  if c <= ks + first.len() {
+    return first[a - ks..c - ks]
+  }
+  var j = BytesBuilder.with_capacity(c - a)
+  var from = a - ks
+  while ks < c {
+    let s = bytebuffer_seg(b, k)
+    let to = if c - ks < s.len() { c - ks } else { s.len() }
+    j.write(s[from..to])
+    ks += s.len()
+    from = 0
+    k += 1
+  }
+  j.freeze()
 }
 
 fn bytebuffer_clamp(b: ByteBuffer, n: Int) -> Int {
-  let m = b.s.len() - b.off
+  let m = b.end - b.pos
   if n < 0 { 0 } else if n > m { m } else { n }
 }
 
 fn bytebuffer_peek(b: ByteBuffer, n: Int) -> Bytes {
   let k = bytebuffer_clamp(b, n)
-  b.s.bytes()[b.off..b.off + k]
+  if k == 0 {
+    return b""
+  }
+  bytebuffer_slice(b, b.pos, b.pos + k)
 }
 
 fn bytebuffer_next(var b: ByteBuffer, n: Int) -> Bytes {
   let k = bytebuffer_clamp(b, n)
-  let v = b.s.bytes()[b.off..b.off + k]
-  bytebuffer_take(b, k)
+  if k == 0 {
+    return b""
+  }
+  bytebuffer_flush(b)
+  let v = bytebuffer_slice(b, b.pos, b.pos + k)
+  bytebuffer_take(b, b.pos + k)
   v
 }
 
-fn bytebuffer_discard(var b: ByteBuffer, n: Int) { bytebuffer_take(b, bytebuffer_clamp(b, n)) }
-
-fn bytebuffer_read_until(var b: ByteBuffer, delim: UInt8) -> Bytes? {
-  let d = Int(delim)
-  let from = b.off + if b.delim == d { b.scanned } else { 0 }
-  let end = b.s.len()
-  let all = b.s.bytes()
-  let i = scan.find_byte(all, from, end, d)
-  if i < 0 {
-    b.delim = d
-    b.scanned = end - b.off
-    return None
+fn bytebuffer_discard(var b: ByteBuffer, n: Int) {
+  let k = bytebuffer_clamp(b, n)
+  if k > 0 {
+    bytebuffer_flush(b)
+    bytebuffer_take(b, b.pos + k)
   }
-  let k = i + 1 - b.off
-  let v = all[b.off..i + 1]
-  bytebuffer_take(b, k)
-  Some(v)
 }
 
-fn bytebuffer_find(b: ByteBuffer, sub: Bytes) -> Int? { b.s.bytes()[b.off..b.s.len()].find(sub) }
+/// Searches from where the last search for the same delimiter stopped.
+fn bytebuffer_read_until(var b: ByteBuffer, delim: UInt8) -> Bytes? {
+  let d = Int(delim)
+  if b.end == b.pos {
+    return None
+  }
+  bytebuffer_flush(b)
+  var k = b.head
+  var ks = b.hstart
+  var from = b.pos
+  if b.delim == d && b.scan_to > b.pos {
+    k = b.scan_seg
+    ks = b.scan_start
+    from = b.scan_to
+  }
+  while k < b.segs.len() {
+    let s = b.segs[k]
+    let i = scan.find_byte(s, from - ks, s.len(), d)
+    if i >= 0 {
+      let e = ks + i + 1
+      let v = if k == b.head { s[b.pos - ks..i + 1] } else { bytebuffer_slice(b, b.pos, e) }
+      bytebuffer_take(b, e)
+      return Some(v)
+    }
+    ks += s.len()
+    from = ks
+    k += 1
+  }
+  b.delim = d
+  b.scan_to = b.end
+  b.scan_seg = k
+  b.scan_start = ks
+  None
+}
+
+/// Searches a join of the unread bytes when they span pieces.
+fn bytebuffer_find(b: ByteBuffer, sub: Bytes) -> Int? {
+  if b.end == b.pos {
+    return if sub.is_empty() { Some(0) } else { None }
+  }
+  bytebuffer_slice(b, b.pos, b.end).find(sub)
+}
