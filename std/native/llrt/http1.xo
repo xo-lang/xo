@@ -3410,16 +3410,17 @@ const CC_OK: Int = 0
 const CC_EOF: Int = 1
 const CC_ERR: Int = 4
 
-/// url.URL.EscapedPath: the path as written when it is a valid encoding of
-/// the decoded path (url.go's RawPath rule: validEncoded and the same
-/// unescaping), else the decoded path escaped.
-pub fn escaped_path_of(u: neturl.Url) -> Str {
-  let raw = u.rawtext
-  if !raw.is_empty() && raw != escape_path(u.path) && valid_encoded(raw) && path_unescape(raw) == u.path {
+/// url.URL.EscapedPath: raw (the path as written, "" for none) when it is a
+/// valid encoding of the decoded path (url.go's RawPath rule: validEncoded
+/// and the same unescaping), else the decoded path escaped.
+pub fn escaped_path(path: Str, raw: Str) -> Str {
+  if !raw.is_empty() && valid_encoded(raw) && path_unescape(raw) == path {
     return raw
   }
-  escape_path(u.path)
+  escape_path(path)
 }
+
+pub fn escaped_path_of(u: neturl.Url) -> Str { escaped_path(u.path, u.rawtext) }
 
 /// url.go validEncoded(s, encodePath): only bytes a path may hold as they are.
 fn valid_encoded(s: Str) -> Bool {

@@ -1361,58 +1361,7 @@ fn request_raw_query(r: Request) -> Str { r.raw_query }
 
 /// Go's URL.EscapedPath: the raw path when it unescapes to the path and
 /// is a valid escaping, else the path escaped.
-fn request_escaped_path(r: Request) -> Str {
-  if !r.raw_path.is_empty() {
-    match url.path_unescape(r.raw_path) {
-      Ok(p) => {
-        if p == r.path && valid_encoded_path(r.raw_path) {
-          return r.raw_path
-        }
-      }
-      Err(_) => {}
-    }
-  }
-  escape_path_keep(r.path)
-}
-
-/// url.escape(s, encodePath): Go's EscapedPath form of a path: the
-/// unreserved characters and `$&+,/:;=@` kept, everything else %XX
-/// (upper case hex); std/url's path_escape is PathEscape, which escapes
-/// `/` as a segment's.
-fn escape_path_keep(s: Str) -> Str {
-  var b = BytesBuilder.new()
-  let hex = b"0123456789ABCDEF"
-  var any = false
-  for c in s.bytes() {
-    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46 || c == 126 || c == 36 || c == 38 || c == 43 || c == 44 || c == 47 || c == 58 || c == 59 || c == 61 || c == 64 {
-      b.write_byte(c)
-    } else {
-      any = true
-      b.write_byte(37)
-      b.write_byte(hex[Int(c) / 16])
-      b.write_byte(hex[Int(c) % 16])
-    }
-  }
-  if !any {
-    return s
-  }
-  b.freeze().to_str() ?? s
-}
-
-/// url.go validEncoded for a path: unreserved, sub delimiters, `:@/`
-/// and `%` (the escapes were checked by path_unescape).
-fn valid_encoded_path(s: Str) -> Bool {
-  for c in s.bytes() {
-    if c == 33 || c == 36 || c == 38 || c == 39 || c == 40 || c == 41 || c == 42 || c == 43 || c == 44 || c == 59 || c == 61 || c == 58 || c == 64 || c == 91 || c == 93 || c == 37 || c == 47 {
-      continue
-    }
-    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46 || c == 126 {
-      continue
-    }
-    return false
-  }
-  true
-}
+fn request_escaped_path(r: Request) -> Str { http1.escaped_path(r.path, r.raw_path) }
 
 /// Go's Redirect (server.go): the Location, resolved for a relative url.
 fn redirect(req: http.Request, url0: Str, status: Int) -> http.Response {
@@ -3866,18 +3815,8 @@ fn query_map(raw: Str) -> Map[Str, Str] {
 fn request_url_string(req: Request) -> Str {
   // the raw path as written while it still encodes url.path (Go's
   // EscapedPath rule), else the path escaped: the client sends what the
-  // caller wrote (aws-19, 2026-11-04)
-  var path = escape_path_keep(req.url.path)
-  if req.url.scheme.is_empty() || req.url.host.is_empty() {
-    // not an absolute URL: its text as given, for the error that says so
-    path = req.url.path
-  } else if !req.raw_path.is_empty() && valid_encoded_path(req.raw_path) {
-    if let Ok(p) = url.path_unescape(req.raw_path) {
-      if p == req.url.path {
-        path = req.raw_path
-      }
-    }
-  }
+  // caller wrote (aws-19, 2026-11-04); a URL with no host is shown as given
+  let path = if req.url.scheme.is_empty() || req.url.host.is_empty() { req.url.path } else { http1.escaped_path(req.url.path, req.raw_path) }
   if req.raw_query.is_empty() || query_map(req.raw_query) != req.url.query {
     return url_string_path(req.url, path)
   }
