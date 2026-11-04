@@ -37,7 +37,7 @@ fn content(es: List[archive.Entry]) -> Int {
   s
 }
 
-fn main(os: Os) uses stdio, env {
+fn main(os: Os) uses stdio, env, fs.read {
   let w = os.env.args().get(0) ?? "none"
   let es = entries()
   var sum = 0
