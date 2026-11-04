@@ -1,0 +1,55 @@
+// url: std/url against Go's net/url (twin.go.txt): query_escape and
+// path_escape of text with spaces, reserved bytes and UTF-8, their inverses,
+// parse_query of query strings and Values.encode, 200,000 passes each.
+// Usage: `<program> none|escape|unescape|query|encode`. Prints `<workload>
+// <checksum>`; the twin prints the same.
+use std/url
+
+const TEXTS: List[Str] = [
+  "hello world",
+  "a/b/c?d=e&f=g",
+  "plain-text_with.safe~chars",
+  "café 日本語",
+  "100% sure: x+y=z",
+  "https://example.com/a b?q=1&r=2#frag",
+  "",
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789",
+]
+
+const QUERIES: List[Str] = [
+  "a=1&b=2&c=3",
+  "q=hello+world&page=2&sort=desc",
+  "name=Ada%20Lovelace&langs=en&langs=fr&langs=de",
+  "x=%E6%97%A5%E6%9C%AC&y=caf%C3%A9",
+  "k",
+  "a=1&a=2&a=3&b=&=c",
+]
+
+fn main(os: Os) uses stdio, env {
+  let w = os.env.args().get(0) ?? "none"
+  var enc: List[Str] = []
+  for t in TEXTS {
+    enc.push(url.query_escape(t))
+  }
+  var sum = 0
+  for i in 0..200000 {
+    if w == "escape" {
+      sum += url.query_escape(TEXTS[i % 8]).len() + url.path_escape(TEXTS[(i + 3) % 8]).len()
+    } else if w == "unescape" {
+      sum += (url.query_unescape(enc[i % 8]).ok() ?? "").len() + (url.path_unescape(enc[(i + 5) % 8]).ok() ?? "").len()
+    } else if w == "query" {
+      let v = url.parse_query(QUERIES[i % 6]).ok() ?? url.values()
+      sum += v.keys().len() + (v.get("a") ?? "").len() + v.all("langs").len()
+    } else if w == "encode" {
+      var v = url.values()
+      v.add("q", TEXTS[i % 8])
+      v.add("page", "2")
+      v.add("tag", TEXTS[(i + 1) % 8])
+      v.add("tag", "x y")
+      sum += v.encode().len()
+    } else {
+      sum += TEXTS[i % 8].len() + i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
