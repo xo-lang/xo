@@ -149,6 +149,26 @@ fn (var g: Gen) op(v: Int) -> Str {
 /// the memory that holds it when there is one (decision 0148's homes,
 /// decision 0147's unwritten memory), else the function's slot of its
 /// type after a store.
+/// The address of field read a when the value it reads is held in a
+/// tracked memory before instruction v and its helpers take a pointer
+/// (else ""): the field there.
+fn (var g: Gen) held_field_ptr(v: Int, a: Int) -> Str {
+  if !g.has_held || a >= g.f.values.len() {
+    return ""
+  }
+  let x = g.f.values[a]
+  if x.op != ssa.Op.Field || !g.rc_by_ptr(g.vty(a)) {
+    return ""
+  }
+  let m = g.held_at(v, x.args[0])
+  if m < 0 {
+    return ""
+  }
+  let lt = g.held.mems[m].lt
+  let ptr = g.held.mems[m].ptr
+  g.def("getelementptr ${lt}, ptr ${ptr}, i32 0, i32 ${aux_int(x.aux)}")
+}
+
 fn (var g: Gen) rc_val_call(h: Str, a: Int) {
   let t = g.vty(a)
   // in a fault's cleanup the helper stays a call (#12: noinline cold),
@@ -550,6 +570,7 @@ fn (var g: Gen) lower_func(fi: Int) {
     g.unsupported("a `var` parameter passed by reference (decision 0148)")
   }
   g.compute_held(mems)
+  g.find_take_args()
   for (i, p) in params0.indexed() {
     if !br.is_empty() && br[i] {
       let m = g.mem_only(p)
@@ -1333,11 +1354,24 @@ fn (var g: Gen) instr_body(v: Int) {
       if g.cancel[v] {
         return
       }
+      let fp = g.held_field_ptr(v, a)
+      if !fp.is_empty() {
+        // a field of a value its memory still holds: released there, not
+        // loaded and stored to a temporary first (a fault's cleanup of a
+        // `var` parameter's large fields: tlsio.put's tls13.Client, 968
+        // bytes, twice)
+        let ca = if g.dbg_block >= 0 && g.dbg_block < g.cold.len() && g.cold[g.dbg_block] { " #12" } else { "" }
+        g.emit("call void ${g.rc_fn("drop", g.vty(a))}(ptr ${fp})${ca}")
+        return
+      }
       g.rc_val_call(g.rc_fn("drop", g.vty(a)), a)
     }
     ShareIn => {
       // decision 0488: a store into a held-once shared list (a negative
       // count) shares the element with it
+      if g.take_skip.contains(v) {
+        return // the element never left a unique list (decision 0498)
+      }
       let e = args[1]
       if g.f.values[e].op != ssa.Op.Const && g.heap(g.vty(e)) {
         let l0 = g.op(args[0])
@@ -1456,7 +1490,15 @@ fn (var g: Gen) field(v: Int) {
     g.set(v, "load ${lv}, ptr ${fp}")
     return
   }
-  let m = g.held_at(v, a)
+  var m = g.held_at(v, a)
+  if m < 0 && g.has_held && !g.held.before[v].is_empty() {
+    // another field of a value whose memory a field home's call wrote:
+    // unchanged there
+    let mm = g.mem_of(g.ll(g.vty(a)))
+    if mm >= 0 && g.field_home_read(v, a, g.held.before[v][mm]) {
+      m = mm
+    }
+  }
   if m >= 0 {
     let lt = g.held.mems[m].lt
     let ptr = g.held.mems[m].ptr
@@ -1476,12 +1518,15 @@ fn (var g: Gen) set_field(v: Int) {
   if g.has_held {
     let m = g.held.in_place[v]
     if m >= 0 {
-      // the memory holds the operand: write the field there
+      // the memory holds the operand: write the field there (a field
+      // home's callee already did)
       let lt = g.held.mems[m].lt
       let ptr = g.held.mems[m].ptr
-      let t1 = g.typed(x.args[1])
-      let fp = g.def("getelementptr ${lt}, ptr ${ptr}, i32 0, i32 ${aux_int(x.aux)}")
-      g.emit("store ${t1}, ptr ${fp}")
+      if !g.held.fdone.contains(v) {
+        let t1 = g.typed(x.args[1])
+        let fp = g.def("getelementptr ${lt}, ptr ${ptr}, i32 0, i32 ${aux_int(x.aux)}")
+        g.emit("store ${t1}, ptr ${fp}")
+      }
       if g.mem_only(v) >= 0 {
         g.lazy[v] = m
       } else {

@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (LLVM, decision 0500): a large `var` argument that is a field of a value held in a `var` parameter's memory, or a taken list element, is passed at its address there instead of copied to a stack slot and back, and a fault's cleanup releases such a field in place: tlsio.put 7,480 to 684 bytes, the fetch client 16,512 bytes smaller on darwin/arm64. Goldens field_homes, list_elem_homes.
 - perf (native, decision 0498): a `var` argument that is a large list element (`tls12.send(c.cl12[0], data)`) is passed at its slot in the list instead of copied out to the frame and back: tlsio.put 2,384 to 944 bytes, the fetch client 16,511 bytes smaller on darwin/arm64. Golden list_elem_homes (a fault mid-update, a kept copy, a list in a field, a local list).
 
 - perf (native and LLVM, decision 0507): a closure literal passed to its own scope's `s.spawn` borrows its captures of `let`s and non-`var` parameters declared before the scope: no retain when the closure is made and no release when its task ends, the scope keeping each alive past its join (a share after each close). bench/perf/micro13 spawn100k (100,000 tasks on one captured Atomic) wall 0.814 (0.744 to 0.975) on linux/arm64, CPU within noise. New golden conc_scope_borrow covers each case the rule leaves owned.

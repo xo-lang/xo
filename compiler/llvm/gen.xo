@@ -171,6 +171,13 @@ pub struct Gen {
   /// decision 0148).
   held: Held = Held{}
   has_held: Bool = false
+  /// list element homes (decision 0498, held.xo find_take_args): a
+  /// `var` argument (call, index) that is a taken list element, passed
+  /// at its slot; each such take's slot address; the stores back (and
+  /// their ShareIn) that the callee made
+  take_arg: Map[(Int, Int), Int] = {}
+  take_ptr: Map[Int, Str] = {}
+  take_skip: Map[Int, Bool] = {}
   /// Per value: stable computed (0 no, 1 yes, -1 not yet).
   stable_memo: List[Int] = []
   /// Per value: the memory it is read from at every use, or -1.

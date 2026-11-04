@@ -1,6 +1,6 @@
 # 0500: On LLVM, a `var` field or list element argument is passed at its address
 
-Status: Proposed (xo-lang-4, 2026-11-04). The LLVM follow-up to
+Status: Accepted (owner, 2026-11-04); proposed by xo-lang-4 the same day. The LLVM follow-up to
 decisions 0490 (field homes, wasm) and 0498 (list element homes,
 native), which the owner asked for when accepting 0490.
 

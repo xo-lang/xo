@@ -142,6 +142,14 @@ fn (var g: Gen) call(v: Int) {
       }
       let a1 = g.op(args[1])
       let p = g.elem_ptr(et, l, a1)
+      if g.take_ptr.contains(v) {
+        // a list element home (decision 0498): the call gets the slot's
+        // address, the element stays
+        g.take_ptr[v] = p
+        let rt0 = g.ll(vt)
+        g.set(v, "insertvalue ${rt0} undef, ptr ${l}, 0")
+        return
+      }
       let ev = g.elem_load(et, p, md)
       let h = g.hole(et)
       g.elem_store(et, h, p, md)
@@ -183,6 +191,11 @@ fn (var g: Gen) call(v: Int) {
       g.set(v, "phi ${ol} [ ${sv}, %${yes_end} ], [ ${nv}, %${no_end} ]")
     }
     "list.set" => {
+      if g.take_skip.contains(v) {
+        // the callee wrote the element at its slot (decision 0498)
+        g.alias(v, g.op(args[0]))
+        return
+      }
       let et = g.vty(args[2])
       let l = g.op(args[0])
       if ssa.has_pos(x.lp) {
@@ -514,10 +527,26 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
   var st_ps: List[Str] = []
   for (i, a) in x.args.indexed() {
     slots.push("")
+    if let Some(t) = g.take_arg.get((v, i)) {
+      // a list element home: its slot in the list (decision 0498)
+      let tp = g.take_ptr.get(t) ?? ""
+      slots[i] = tp
+      args.push("ptr ${tp}")
+      continue
+    }
     let p = g.addr[a]
     if !p.is_empty() && !br.is_empty() && br[i] && !g.is_var_param(callee, i) {
       // in memory nothing writes during the call: passed as it is
       args.push("ptr ${p}")
+      continue
+    }
+    if let Some((m, _u, idx)) = g.held.fslot.get((v, i)) {
+      // a field home: the field's address in the memory holding its value
+      let hl = g.held.mems[m].lt
+      let hp = g.held.mems[m].ptr
+      let fp = g.def("getelementptr ${hl}, ptr ${hp}, i32 0, i32 ${idx}")
+      slots[i] = fp
+      args.push("ptr ${fp}")
       continue
     }
     if !br.is_empty() && br[i] {
@@ -565,7 +594,11 @@ fn (var g: Gen) user_call(v: Int, callee: Int) {
   for (k, rt) in results.indexed() {
     var y = ""
     if k > 0 && br[vps[k - 1]] {
-      if g.lazy_result(v, k) {
+      if g.take_arg.contains((v, vps[k - 1])) {
+        y = "undef" // read only by the store back, which is the callee's
+      } else if g.held.fslot.contains((v, vps[k - 1])) && g.res_only_stored(v, k) {
+        y = "undef" // the setfield that stores it back is the callee's
+      } else if g.lazy_result(v, k) {
         y = "undef" // read from memory where it is used (decision 0148)
       } else {
         y = g.load_ref(rt, slots[vps[k - 1]])

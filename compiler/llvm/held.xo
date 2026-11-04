@@ -43,6 +43,14 @@ struct Held {
   in_place: List[Int] = []
   mem_only: List[Int] = []
   changed: Bool = false
+  /// field homes (decision 0490 on LLVM): a `var` argument (call, index)
+  /// that is field idx of value u held in memory m, passed at the
+  /// field's address there: (m, u, idx); after the call the memory holds
+  /// u with that field rewritten, the key HKey{v: call, k: -10 - index}
+  fslot: Map[(Int, Int), (Int, Int, Int)] = {}
+  /// the setfields storing such a result back, done by the callee: the
+  /// memory
+  fdone: Map[Int, Int] = {}
 }
 
 fn top_key() -> HKey {
@@ -145,6 +153,199 @@ fn (var g: Gen) stable(v: Int) -> Bool {
   r
 }
 
+/// List element homes (decision 0498): a `var` argument passed by
+/// reference that is an element taken out of a list (`f(c.items[i])`:
+/// `t = list.take(l, i)`, the call, then `list.set(t.0, i, the new
+/// element)`, with decision 0488's ShareIn before it) is passed at its
+/// slot in the list, which the take made unique (decision 0169's
+/// reuse), instead of copied to a slot and back: the take loads nothing
+/// and leaves no hole, and the store back (and its ShareIn, which a
+/// unique list never takes) is the callee's own. The taken list may
+/// also be released by a fault's cleanup, with the element in place.
+fn (var g: Gen) find_take_args() {
+  g.take_arg = {}
+  g.take_ptr = {}
+  g.take_skip = {}
+  for v in 0..g.f.values.len() {
+    let x = g.f.values[v]
+    if x.op != ssa.Op.Call {
+      continue
+    }
+    let callee = g.by_name.get(aux_str(x.aux)) ?? -1
+    if callee < 0 {
+      continue
+    }
+    let br = g.by_ref_of(callee)
+    if br.is_empty() {
+      continue
+    }
+    let sm = g.slot_mems(v, callee)
+    for (i, a) in x.args.indexed() {
+      if !br[i] || sm[i] >= 0 || !g.is_var_param(callee, i) || g.f.values[a].op != ssa.Op.Field || aux_int(g.f.values[a].aux) != 1 || g.users(a) != [v] {
+        continue
+      }
+      let t = g.f.values[a].args[0]
+      let tx = g.f.values[t]
+      if tx.op != ssa.Op.Call || aux_str(tx.aux) != "list.take" || g.take_ptr.contains(t) {
+        continue
+      }
+      let skip = g.take_store(t, v, callee, i)
+      if skip.is_empty() {
+        continue
+      }
+      g.take_arg[(v, i)] = t
+      g.take_ptr[t] = ""
+      for s in skip {
+        g.take_skip[s] = true
+      }
+    }
+  }
+}
+
+/// The list.set storing back, at the slot take t emptied, the new value
+/// of `var` argument i of call v (and the ShareIn before it), when they
+/// are that value's only uses and the taken list's only other uses are
+/// releases (else empty).
+fn (var g: Gen) take_store(t: Int, v: Int, callee: Int, i: Int) -> List[Int] {
+  var k = -1
+  for (j, vi) in g.m.funcs[callee].var_params.indexed() {
+    if vi == i {
+      k = 1 + j
+    }
+  }
+  if k < 0 {
+    return []
+  }
+  var r = -1
+  for u in g.users(v) {
+    let ux = g.f.values[u]
+    if ux.op == ssa.Op.Field && aux_int(ux.aux) == k {
+      if r >= 0 {
+        return []
+      }
+      r = u
+    }
+  }
+  if r < 0 {
+    return []
+  }
+  var set = -1
+  var share = -1
+  for u in g.users(r) {
+    let ux = g.f.values[u]
+    if ux.op == ssa.Op.Call && aux_str(ux.aux) == "list.set" && ux.args.len() == 3 && ux.args[1] == g.f.values[t].args[1] && ux.args[2] == r && set < 0 {
+      set = u
+    } else if ux.op == ssa.Op.ShareIn && ux.args[1] == r && share < 0 {
+      share = u
+    } else {
+      return []
+    }
+  }
+  if set < 0 {
+    return []
+  }
+  // every read of the taken list (the store's, a fault's cleanup's) is
+  // only stored into or released
+  for u in g.users(t) {
+    let ux = g.f.values[u]
+    if ux.op != ssa.Op.Field {
+      return []
+    }
+    if aux_int(ux.aux) != 0 {
+      continue
+    }
+    for w in g.users(u) {
+      if w != set && w != share && g.f.values[w].op != ssa.Op.Release {
+        return []
+      }
+    }
+  }
+  let sl = g.f.values[g.f.values[set].args[0]]
+  if sl.op != ssa.Op.Field || sl.args[0] != t || (share >= 0 && g.f.values[share].args[0] != g.f.values[set].args[0]) {
+    return []
+  }
+  if share >= 0 {
+    return [set, share]
+  }
+  [set]
+}
+
+/// Whether setfield v stores back the result of the field home that key
+/// k says its memory holds: the same base, field and the call's result
+/// for that argument (the callee already wrote it there).
+fn (var g: Gen) field_store_done(v: Int, k: HKey) -> Bool {
+  if k.v < 0 || k.k > -10 {
+    return false
+  }
+  let i = -10 - k.k
+  let (_m, u, idx) = match g.held.fslot.get((k.v, i)) {
+    Some(s) => s
+    None => return false
+  }
+  let x = g.f.values[v]
+  if x.args[0] != u || aux_int(x.aux) != idx {
+    return false
+  }
+  let r = g.f.values[x.args[1]]
+  r.op == ssa.Op.Field && r.args[0] == k.v && aux_int(r.aux) == g.var_result(k.v, i)
+}
+
+/// The result index of call v's `var` argument i (-1: not a `var` one).
+fn (var g: Gen) var_result(v: Int, i: Int) -> Int {
+  let callee = g.by_name.get(aux_str(g.f.values[v].aux)) ?? -1
+  if callee < 0 {
+    return -1
+  }
+  for (j, vi) in g.m.funcs[callee].var_params.indexed() {
+    if vi == i {
+      return 1 + j
+    }
+  }
+  -1
+}
+
+/// Whether instruction v reads value a while the memory holding a has a
+/// field home's call result in another field: a read of a field other
+/// than the one the call wrote (the same as a's), or the setfield that
+/// stores that result back.
+fn (var g: Gen) field_home_read(v: Int, a: Int, k: HKey) -> Bool {
+  if k.v < 0 || k.k > -10 {
+    return false
+  }
+  let (_m, u, idx) = match g.held.fslot.get((k.v, -10 - k.k)) {
+    Some(s) => s
+    None => return false
+  }
+  if u != a {
+    return false
+  }
+  let x = g.f.values[v]
+  if x.op == ssa.Op.Field {
+    return aux_int(x.aux) != idx
+  }
+  g.held.fdone.contains(v)
+}
+
+/// Whether result k of call v is read only by setfields a field home
+/// made the callee's (fdone).
+fn (var g: Gen) res_only_stored(v: Int, k: Int) -> Bool {
+  for u in g.users(v) {
+    let x = g.f.values[u]
+    if x.op != ssa.Op.Field {
+      return false
+    }
+    if aux_int(x.aux) != k {
+      continue
+    }
+    for w in g.users(u) {
+      if !g.held.fdone.contains(w) {
+        return false
+      }
+    }
+  }
+  true
+}
+
 /// Runs the dataflow for the current function (computeHeld); nothing
 /// when it has no tracked memory.
 fn (var g: Gen) compute_held(mems: List[HeldMem]) {
@@ -194,8 +395,33 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
                   st[m] = g.key_of(x.args[i])
                 }
               }
+              // a `var` argument that is a field of a value held in a
+              // memory no other argument is stored into is passed at the
+              // field's address there (field homes)
+              var fs: List[(Int, Int)] = []
+              let cb = g.by_ref_of(callee)
+              for (i, a) in x.args.indexed() {
+                // the dataflow runs to a fixed point: a pass decides again
+                g.held.fslot.remove((v, i))
+                if cb.is_empty() || !cb[i] || sm[i] >= 0 || !g.is_var_param(callee, i) || g.f.values[a].op != ssa.Op.Field {
+                  continue
+                }
+                let u = g.f.values[a].args[0]
+                let m = g.mem_of(g.ll(g.vty(u)))
+                if m < 0 || sm.contains(m) || st[m] != g.key_of(u) || fs.any(fn(p) { p.0 == m }) {
+                  continue
+                }
+                g.held.fslot[(v, i)] = (m, u, aux_int(g.f.values[a].aux))
+                fs.push((m, i))
+              }
+              for (m, i) in fs {
+                st[m] = HKey{v: v, k: -10 - i}
+              }
               pad = st
               pad_own = true
+              for (m, _i) in fs {
+                pad[m] = bot_key()
+              }
               for (i, m) in sm.indexed() {
                 if m >= 0 && g.is_var_param(callee, i) {
                   pad[m] = bot_key()
@@ -209,10 +435,15 @@ fn (var g: Gen) compute_held(mems: List[HeldMem]) {
             }
           }
           SetField => {
+            g.held.fdone.remove(v)
             let u = x.args[0]
             let m = g.mem_of(g.ll(g.vty(u)))
             if m >= 0 && st[m] == g.key_of(u) {
               g.held.in_place[v] = m
+              st[m] = HKey{v: v, k: -1}
+            } else if m >= 0 && g.field_store_done(v, st[m]) {
+              g.held.in_place[v] = m
+              g.held.fdone[v] = m
               st[m] = HKey{v: v, k: -1}
             }
           }
@@ -364,7 +595,7 @@ fn (var g: Gen) find_mem_only() {
           continue
         }
         let st = g.held.before[v]
-        if st.is_empty() || st[m] != g.key_of(a) {
+        if st.is_empty() || (st[m] != g.key_of(a) && !g.field_home_read(v, a, st[m])) {
           bad[a] = true
         }
       }
