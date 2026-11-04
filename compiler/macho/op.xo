@@ -177,7 +177,7 @@ fn mem_text(m: Mem) -> Str {
 /// stay on the text path).
 pub fn encode_op(o: Op) -> Int {
   let n = o.ops.len()
-  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" | "sha1c" | "sha1p" | "sha1m" | "sha1h" | "sha1su0" | "sha1su1" | "eor3" | "bcax" | "rax1" | "xar" {
+  if o.m is "cnt" | "addv" | "dup" | "movi" | "cmeq" | "cmlt" | "shrn" | "pmull" | "pmull2" | "umov" | "aese" | "aesd" | "aesmc" | "aesimc" | "uzp1" | "ushll" | "ushll2" | "rev32" | "rev64" | "ext" | "sha256h" | "sha256h2" | "sha256su0" | "sha256su1" | "sha1c" | "sha1p" | "sha1m" | "sha1h" | "sha1su0" | "sha1su1" | "sha512h" | "sha512h2" | "sha512su0" | "sha512su1" | "eor3" | "bcax" | "rax1" | "xar" {
     return simd_word(o.m, o.ops)
   }
   // decision 0373's case fold adds cmhs and bic on whole bytes
@@ -1409,6 +1409,16 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     }
     return (if m == "sha256h" { 0x5e004000 } else { 0x5e005000 }) | (y * 0x10000) | (x * 32) | d
   }
+  if m == "sha512h" || m == "sha512h2" {
+    // sha512h qD, qN, vM.2d (FEAT_SHA512; ssa sha512hw.xo)
+    let (d, kd) = rk_of(o[0])
+    let (x, kx) = rk_of(o[1])
+    let (y, ay) = if n == 3 { v_of(o[2]) } else { (-1, "") }
+    if kd != RQ || kx != RQ || y < 0 || ay != "2d" {
+      return -1
+    }
+    return (if m == "sha512h" { 0xce608000 } else { 0xce608400 }) | (y * 0x10000) | (x * 32) | d
+  }
   if m is "sha1c" | "sha1p" | "sha1m" {
     // sha1c qD, sN, vM.4s (the SHA-1 rounds: e in a scalar register)
     let (d, kd) = rk_of(o[0])
@@ -1526,6 +1536,8 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     // decision 0373's case fold: add, sub, cmhs (unsigned, at or above) and
     // bic of whole bytes, three registers (the .4s forms below are the
     // matmul and ChaCha ones)
+    // SHA-512's sums of 64 bit lanes (ssa sha512hw.xo)
+    "add" if ad == "2d" => if n != 3 || d < 0 || x < 0 || y < 0 || ax != "2d" || ay != "2d" { -1 } else { 0x4ee08400 | (y * 0x10000) | (x * 32) | d }
     "add" | "sub" | "cmhs" | "bic" if ad == "16b" => {
       if n != 3 || d < 0 || x < 0 || y < 0 || ax != "16b" || ay != "16b" {
         return -1
@@ -1574,6 +1586,8 @@ fn simd_word(m: Str, o: List[Operand]) -> Int {
     }
     "sha256su0" => if n != 2 || d < 0 || x < 0 || ad != "4s" || ax != "4s" { -1 } else { 0x5e282800 | (x * 32) | d }
     "sha1su1" => if n != 2 || d < 0 || x < 0 || ad != "4s" || ax != "4s" { -1 } else { 0x5e281800 | (x * 32) | d }
+    "sha512su0" => if n != 2 || d < 0 || x < 0 || ad != "2d" || ax != "2d" { -1 } else { 0xcec08000 | (x * 32) | d }
+    "sha512su1" => if n != 3 || d < 0 || x < 0 || y < 0 || ad != "2d" || ax != "2d" || ay != "2d" { -1 } else { 0xce608800 | (y * 0x10000) | (x * 32) | d }
     "ushll" | "ushll2" => {
       // ushll vD.2d, vN.2s, #0 (uxtl); ushll2 vD.2d, vN.4s, #0 (uxtl2)
       let want = if m == "ushll" { "2s" } else { "4s" }

@@ -1,0 +1,63 @@
+// SHA-512's compression with the CPU's instructions (decision 0231's
+// SHA-512 addendum, 2026-11-03): the instruction sequence both native
+// arm64 lowerings of rt.sha512_block use (compiler/arm64 calls.xo,
+// compiler/llvm call.xo). The state is eight 8 byte words at st (a to h,
+// as std/native/llrt/digest_tables.xo's sha512_block keeps them), the
+// block 128 bytes at p, the 80 round constants 8 byte little endian words
+// at k (640 bytes).
+
+/// The arm64 SHA512H, SHA512H2, SHA512SU0 and SHA512SU1 compression of
+/// one block, the Linux kernel's sha512-ce form (its dround macro) with
+/// each round pair's constants loaded where they are used: the state as
+/// the pairs ab, cd, ef and gh in v0 to v3, rotating through v0 to v4
+/// (40 round pairs, a multiple of 5, so it ends where it began), the
+/// message in v16 to v23, the constants in v24, scratch in v29 to v31.
+/// Uses v0 to v4, v16 to v24 and v29 to v31, which the caller saves or
+/// lists as clobbered.
+pub fn sha512_a64_lines(st: Str, p: Str, k: Str) -> List[Str] {
+  var t: List[Str] = []
+  for i in 0..4 {
+    t.push("ldr q${i}, [${st}, #${16 * i}]")
+  }
+  for i in 0..8 {
+    t.push("ldr q${16 + i}, [${p}, #${16 * i}]")
+    t.push("rev64 v${16 + i}.16b, v${16 + i}.16b")
+  }
+  // the kernel's register rotation: (i0, i1, i2, i3, i4) per round pair,
+  // five patterns in turn
+  let rot = [[0, 1, 2, 3, 4], [3, 0, 4, 2, 1], [2, 3, 1, 4, 0], [4, 2, 0, 1, 3], [1, 4, 3, 0, 2]]
+  for j in 0..40 {
+    let r = rot[j % 5]
+    let (i0, i1, i2, i3, i4) = (r[0], r[1], r[2], r[3], r[4])
+    // the message words of this pair and the ones its schedule reads
+    let m0 = 16 + j % 8
+    let m1 = 16 + (j + 1) % 8
+    let m2 = 16 + (j + 7) % 8
+    let m3 = 16 + (j + 4) % 8
+    let m4 = 16 + (j + 5) % 8
+    t.push("ldr q24, [${k}, #${16 * j}]")
+    t.push("add v29.2d, v24.2d, v${m0}.2d")
+    t.push("ext v30.16b, v${i2}.16b, v${i3}.16b, #8")
+    t.push("ext v29.16b, v29.16b, v29.16b, #8")
+    t.push("ext v31.16b, v${i1}.16b, v${i2}.16b, #8")
+    t.push("add v${i3}.2d, v${i3}.2d, v29.2d")
+    // the schedule: the last 8 pairs read words already made
+    if j < 32 {
+      t.push("ext v29.16b, v${m3}.16b, v${m4}.16b, #8")
+      t.push("sha512su0 v${m0}.2d, v${m1}.2d")
+    }
+    t.push("sha512h q${i3}, q30, v31.2d")
+    if j < 32 {
+      t.push("sha512su1 v${m0}.2d, v${m2}.2d, v29.2d")
+    }
+    t.push("add v${i4}.2d, v${i1}.2d, v${i3}.2d")
+    t.push("sha512h2 q${i3}, q${i1}, v${i0}.2d")
+  }
+  // the sums with the state before
+  for i in 0..4 {
+    t.push("ldr q24, [${st}, #${16 * i}]")
+    t.push("add v${i}.2d, v${i}.2d, v24.2d")
+    t.push("str q${i}, [${st}, #${16 * i}]")
+  }
+  t
+}

@@ -1,5 +1,14 @@
 # std/crypto changes
 
+## 2026-11-03: perf: SHA-512 and SHA-384 with arm64's SHA512 instructions
+
+- Kind: perf
+- Commit: this commit
+- Found by: Lang 2's std/otp census (TOTP with SHA-512 at 1.376 of Go's time, 72% in the software sha512_block); Go's crypto/sha512 uses the instructions on arm64
+- Go reference: crypto/sha512 sha512block_arm64.s (the kernel's sha512-ce sequence)
+- Test: TestSHA512HWDiff (internal/llvm: blocks against a Go reference, SHA-512 and SHA-384 digests, split and HMAC against crypto/sha512 on lengths 0 to 300 and around 4096, both arm64 backends); golden cpu_sha512 (arm64, LLVM, Go parity)
+- Timing: `xo bench --ab` on the first linux/arm64 offload host, 2026-11-03, bench/perf/sha512 (SHA-512 and SHA-384 of 64 KiB 1,000 times each, HMAC-SHA512 of an 8 byte counter 600,000 times), A b19877176 (the parent with only the program) and B 4e10c4b77: wall 624.8 ms to 412.5 ms, B/A 0.66 (95% interval 0.657 to 0.661, 3 rounds); the HMAC loop's per MAC work (pads, Hasher state copies) is what is left
+
 ## 2026-11-03: perf: HMAC pads a key a word at a time; SHA-1 finishes with one append
 
 - Kind: perf

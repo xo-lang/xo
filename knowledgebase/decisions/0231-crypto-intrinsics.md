@@ -389,3 +389,41 @@ lowerings:
   crypto/sha1 on every length from 0 to 200 and around 4096, on both
   arm64 backends; the cpu_sha1 golden (also in the amd64 sample).
 - Timing: `xo bench --ab` on the first linux/arm64 offload host, 2026-11-03, bench/perf/sha1 (SHA-1 of 64 KiB 2,000 times and HMAC-SHA1 of an 8 byte counter 1,500,000 times), A 5cb9bae79 (the parent with only the program) and B 3f303624e: wall 3012 ms to 645.6 ms, B/A 0.214 (95% interval 0.213 to 0.217, 6 rounds)
+
+## Addendum (2026-11-03): SHA-512's compression (sha512_block)
+
+cpu.sha512_block(st, p, k) compresses the 128 byte block at p into the
+eight state words at st (8 bytes each, as digest_tables.xo's
+sha512_block keeps them); k is the 80 round constants as 8 byte little
+endian words (sha256.xo's K512). Lead's request after Lang 2's std/otp
+census (otp's SHA-512 TOTP at 1.376 of Go's time, 72% of it in the
+software sha512_block); Go's crypto/sha512 uses the instructions on
+arm64. One sequence in compiler/ssa sha512hw.xo, used by both arm64
+lowerings:
+
+- arm64: SHA512H, SHA512H2, SHA512SU0, SHA512SU1 (FEAT_SHA512) in the
+  Linux kernel's sha512-ce form (its dround macro): the state as the
+  pairs ab, cd, ef and gh rotating through v0 to v4 (40 round pairs, a
+  multiple of the rotation's 5, so the state ends where it began), the
+  message in v16 to v23 byte swapped by rev64, each pair's constants
+  loaded into v24 where they are used, scratch in v29 to v31. The native
+  backend saves v0 to v4 and v16 to v24 below sp (as sha1_block saves
+  its registers); LLVM emits the sequence as one inline asm with
+  `.arch_extension sha3` and the q registers clobbered.
+- x86-64 runs the software compression: SHA-NI has no SHA-512, and the
+  AVX2 or SHA512 (Arrow Lake) paths are separate work.
+- hw() has the new bit HW_SHA512 (4096): every Apple arm64 CPU, Linux
+  arm64 by AT_HWCAP's SHA512 bit (1 << 21). sha256.xo's compress takes
+  the instructions for SHA-512 and SHA-384 when hw() has it; wasm, amd64
+  and code an older xo compiled run digest_tables.sha512_block.
+  cpu.xo's sha512_block_soft (FIPS 180-4 6.4.2 on the words in memory)
+  is the body other targets lower the call to and the tests' reference.
+- xo's arm64 assembler encodes the new forms (macho op.xo: sha512h and
+  sha512h2 qD, qN, vM.2d, sha512su0, sha512su1), from clang's words
+  (-march=armv8.4-a+sha3), each with a row in macho_test.xo.
+- Checks: TestSHA512HWDiff (internal/llvm): the instructions and the
+  body against a Go reference compression on edge and 200 random states
+  and blocks, and std's SHA-512 and SHA-384 one shot, SHA-512 split and
+  as HMAC against crypto/sha512 on every length from 0 to 300 and
+  around 4096, on both arm64 backends; the cpu_sha512 golden.
+- Timing: `xo bench --ab` on the first linux/arm64 offload host, 2026-11-03, bench/perf/sha512 (SHA-512 and SHA-384 of 64 KiB 1,000 times each, HMAC-SHA512 of an 8 byte counter 600,000 times), A b19877176 (the parent with only the program) and B 4e10c4b77: wall 624.8 ms to 412.5 ms, B/A 0.66 (95% interval 0.657 to 0.661, 3 rounds); the HMAC loop's per MAC work (pads, Hasher state copies) is what is left

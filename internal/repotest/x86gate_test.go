@@ -24,6 +24,7 @@ var x86Needs = map[string]string{
 	"clmul_hi":          "HW_CLMUL",
 	"sha256_block":      "HW_SHA256",
 	"sha1_block":        "HW_SHA1",
+	"sha512_block":      "HW_SHA512",
 	"fma_hw":            "HW_FMA",
 	"chacha_blocks4":    "HW_SSSE3",
 	"chacha_stream4":    "HW_SSSE3",

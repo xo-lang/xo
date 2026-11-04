@@ -3146,7 +3146,10 @@ pub fn ed25519_verify(public_key: Bytes, msg: Bytes, sig: Bytes) -> Bool
   (`digest(Sha1, ...)`, `hmac(Sha1, ...)`, the TLS 1.2 CBC suites' MAC)
   likewise takes the CPU's SHA-1 instructions (arm64's SHA1 extension,
   x86-64's SHA-NI; `sha1_block`, decision 0231's SHA-1 addendum,
-  2026-11-03).
+  2026-11-03), and SHA-512 and SHA-384 (`digest`, `hmac`, `Hasher`,
+  Ed25519) arm64's SHA512 instructions (always on macOS, by `AT_HWCAP`
+  on Linux; `sha512_block`, decision 0231's SHA-512 addendum,
+  2026-11-03; portable Xo on x86-64).
 - Randomness comes only from the `Rand` capability (section 3.4), as
   everywhere else: cryptographically secure in programs, seeded from the
   test seed in tests, so a test that creates tokens or salts is

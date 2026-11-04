@@ -54,6 +54,11 @@ pub const HW_VPCLMUL: Int = 1024
 /// AT_HWCAP SHA1 bit) and x86-64's SHA-NI (CPUID leaf 7 EBX bit 29, the
 /// bit HW_SHA256 has there: one extension has both).
 pub const HW_SHA1: Int = 2048
+/// SHA-512's compression (sha512_block; decision 0231's SHA-512 addendum,
+/// 2026-11-03): arm64's SHA512 instructions (FEAT_SHA512: every Apple
+/// arm64 CPU, Linux's AT_HWCAP SHA512 bit). x86-64 runs the software
+/// compression.
+pub const HW_SHA512: Int = 4096
 /// The bit hw() keeps in its word once it has looked.
 const HW_KNOWN = 4
 /// rt.static_word: hw()'s word (0 until the first call).
@@ -64,6 +69,7 @@ const AT_HWCAP = 16
 const HWCAP_AES = 8
 const HWCAP_PMULL = 16
 const HWCAP_SHA1 = 32
+const HWCAP_SHA512 = 2097152
 const HWCAP_SHA2 = 64
 const HWCAP_CRC32 = 128
 
@@ -105,7 +111,7 @@ pub fn hw() -> Int {
   let p = rt.static_word(W_HW)
   let k = rt.slot_load[Int](p, 0, 0)
   if k != 0 {
-    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C | HW_VPCLMUL | HW_SHA1)
+    return k & (HW_AES | HW_CLMUL | HW_SHA256 | HW_FMA | HW_SSSE3 | HW_AVX2 | HW_CRC32 | HW_SHA3 | HW_CRC32C | HW_VPCLMUL | HW_SHA1 | HW_SHA512)
   }
   let f = if lowered() != 0 { detect() } else { 0 }
   rt.slot_store[Int](p, 0, f | HW_KNOWN, 0)
@@ -115,10 +121,10 @@ pub fn hw() -> Int {
 fn detect() -> Int {
   match target.arch {
     TargetArch.Arm64 => match target.os {
-      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256 | HW_CRC32 | HW_SHA3 | HW_SHA1
+      TargetOs.Darwin => HW_AES | HW_CLMUL | HW_SHA256 | HW_CRC32 | HW_SHA3 | HW_SHA1 | HW_SHA512
       TargetOs.Linux => {
         let h = linux.auxval(AT_HWCAP)
-        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 }) | (if (h & HWCAP_CRC32) != 0 { HW_CRC32 } else { 0 }) | (if (h & HWCAP_SHA1) != 0 { HW_SHA1 } else { 0 })
+        (if (h & HWCAP_AES) != 0 { HW_AES } else { 0 }) | (if (h & HWCAP_PMULL) != 0 { HW_CLMUL } else { 0 }) | (if (h & HWCAP_SHA2) != 0 { HW_SHA256 } else { 0 }) | (if (h & HWCAP_CRC32) != 0 { HW_CRC32 } else { 0 }) | (if (h & HWCAP_SHA1) != 0 { HW_SHA1 } else { 0 }) | (if (h & HWCAP_SHA512) != 0 { HW_SHA512 } else { 0 })
       }
       _ => 0
     }
@@ -716,6 +722,61 @@ pub fn sha256_block_soft(st: Int, p: Int, k: Int) {
 }
 
 // ---------------------------------------------------------------------------
+// SHA-512's compression (SHA512H, SHA512H2, SHA512SU0, SHA512SU1 on arm64)
+
+/// FIPS 180-4's SHA-512 compression of one block: the 8 state words at st
+/// (a to h, 8 bytes each, as digest_tables.xo keeps them) take in the 128
+/// bytes at p, with the 80 round constants at k (8 byte little endian
+/// words, 640 bytes). Call it only when hw() has HW_SHA512 (decision
+/// 0231's SHA-512 addendum, 2026-11-03); arm64 lowers it to ssa
+/// sha512hw.xo's instructions.
+pub fn sha512_block(st: Int, p: Int, k: Int) { sha512_block_soft(st, p, k) }
+
+/// The big endian 64 bit word at a + o.
+fn be64(a: Int, o: Int) -> Int { rt.mem_load(a, o, 8).swap_bytes() }
+
+/// sha512_block's body: FIPS 180-4 6.4.2 on the words in memory.
+pub fn sha512_block_soft(st: Int, p: Int, k: Int) {
+  var w: List[Int] = []
+  for i in 0..16 {
+    w.push(be64(p, 8 * i))
+  }
+  for i in 16..80 {
+    let x = w[i - 15]
+    let y = w[i - 2]
+    let s0 = x.rotate_right(1) ^ x.rotate_right(8) ^ x.shr_logical(7)
+    let s1 = y.rotate_right(19) ^ y.rotate_right(61) ^ y.shr_logical(6)
+    w.push(w[i - 16].wrapping_add(s0).wrapping_add(w[i - 7]).wrapping_add(s1))
+  }
+  var a = rt.mem_load(st, 0, 8)
+  var b = rt.mem_load(st, 8, 8)
+  var c = rt.mem_load(st, 16, 8)
+  var d = rt.mem_load(st, 24, 8)
+  var e = rt.mem_load(st, 32, 8)
+  var f = rt.mem_load(st, 40, 8)
+  var g = rt.mem_load(st, 48, 8)
+  var h = rt.mem_load(st, 56, 8)
+  for i in 0..80 {
+    let s1 = e.rotate_right(14) ^ e.rotate_right(18) ^ e.rotate_right(41)
+    let ch = g ^ (e & (f ^ g))
+    let t1 = h.wrapping_add(s1).wrapping_add(ch).wrapping_add(rt.mem_load(k, 8 * i, 8)).wrapping_add(w[i])
+    let s0 = a.rotate_right(28) ^ a.rotate_right(34) ^ a.rotate_right(39)
+    let maj = (a & b) | (c & (a | b))
+    h = g
+    g = f
+    f = e
+    e = d.wrapping_add(t1)
+    d = c
+    c = b
+    b = a
+    a = t1.wrapping_add(s0.wrapping_add(maj))
+  }
+  for (i, x) in [a, b, c, d, e, f, g, h].indexed() {
+    rt.mem_store(st, 8 * i, rt.mem_load(st, 8 * i, 8).wrapping_add(x), 8)
+  }
+}
+
+// ---------------------------------------------------------------------------
 // SHA-1's compression (SHA1C, SHA1P, SHA1M, SHA1H, SHA1SU0, SHA1SU1 on
 // arm64; SHA-NI's SHA1RNDS4, SHA1NEXTE, SHA1MSG1, SHA1MSG2 on x86-64)
 
@@ -784,7 +845,9 @@ fn block(b: Bytes) -> List[Int] { [rt.bytes_word(b, 0), rt.bytes_word(b, 8)] }
 /// byte block b, the round constants c as sha256_block takes them; the
 /// new state as a was), sha1_block (the state a as 5 four byte little
 /// endian words, the 64 byte block b, the constants c as sha1_block
-/// takes them; the new state as a was), mul_hi_signed (the words a and b; the high word);
+/// takes them; the new state as a was), sha512_block (the state a as 8
+/// eight byte little endian words, the 128 byte block b, the 80 round
+/// constants c as sha512_block takes them; the new state as a was), mul_hi_signed (the words a and b; the high word);
 /// with `_soft` after the name, the body, on every backend (without it,
 /// the instructions on arm64 and LLVM, on a CPU that has them). None if
 /// unknown.
@@ -1118,6 +1181,33 @@ pub fn op(what: Str, a: Bytes, b: Bytes, c: Bytes, d: Bytes) -> Bytes? {
       var o = rt.rs_with_cap(32)
       for i in 0..8 {
         o = rt.rs_push_word(o, rt.mem_load(addr(st), 8 * i, 8), 4)
+      }
+      keep(st)
+      keep(blk)
+      keep(k)
+      Some(o.bytes())
+    }
+    "sha512_block" => {
+      var st: List[Int] = []
+      for i in 0..8 {
+        st.push(rt.bytes_word(a, 8 * i))
+      }
+      var blk: List[Int] = []
+      for i in 0..16 {
+        blk.push(rt.bytes_word(b, 8 * i))
+      }
+      var k: List[Int] = []
+      for i in 0..80 {
+        k.push(rt.bytes_word(c, 8 * i))
+      }
+      if soft {
+        sha512_block_soft(addr(st), addr(blk), addr(k))
+      } else {
+        sha512_block(addr(st), addr(blk), addr(k))
+      }
+      var o = rt.rs_with_cap(64)
+      for i in 0..8 {
+        o = rt.rs_push_word(o, rt.mem_load(addr(st), 8 * i, 8), 8)
       }
       keep(st)
       keep(blk)

@@ -1,0 +1,73 @@
+// SHA-512's compression of std/native/llrt/cpu.xo (sha512_block: SHA512H,
+// SHA512H2, SHA512SU0 and SHA512SU1 on arm64; decision 0231's SHA-512
+// addendum, 2026-11-03) against its portable body, through
+// internal.crypto_op: the padded block of "abc" from the initial state
+// (FIPS 180-4's digest), then 50 states and blocks from a SHA-256 stream;
+// the lowered one runs only where cpu.hw() reports SHA-512 (else the body
+// twice), and only whether the two agree is printed, the same on every
+// machine. Then std's SHA-512 and SHA-384 (sha256.xo, which takes the
+// instructions) on FIPS 180-4's message examples, and an HMAC.
+use std/crypto
+use std/internal
+
+/// The 80 round constants as 8 byte little endian words (crypto_op's layout).
+const K: Str = "22ae28d7982f8a42cd65ef23914437712f3b4deccffbc0b5bcdb8981a5dbb5e938b548f35bc2563919d005b6f111f1599b4f19afa4823f9218816ddad55e1cab420203a398aa07d8be6f7045015b83128cb2e44ebe853124e2b4ffd5c37d0c556f897bf2745dbe72b196163bfeb1de803512c725a706dc9b942669cf74f19bc1d24af19ec1699be4e3254f388647beefb5d58c8bc69dc10f659cac77cca10c2475022b596f2ce92d83e4a66eaa84744ad4fb41bddca9b05cb5531183da88f976abdf66ee52513e981032b42d6dc631a83f21fb98c82703b0e40eefbec77f59bfc28fa83df30be0c625a70a934791a7d56f8203e05163ca06706e0e0a67292914fc2fd246850ab72726c9265c38211b2eed2ac45afc6d2c4ddfb3959d130d3853de63af8b54730a65a8b2773cbb0a6a76e6aeed472ec9c2813b358214852c72926403f14ca1e8bfa2013042bc4b661aa89197f8d0708b4bc230be5406a3516cc71852efd619e892d110a96555240699d62a20715785350ef4b8d1bb3270a06a10c8d0d2b816c1a41953ab4151086c371e99eb8edf4c774827a8489be1b5bcb034635ac9c5b30c1c39cb8a41e34aaad84e73e363774fca9c5ba3b8b2d6f36f2e68fcb2ef5dee828f74602f17436f63a57872abf0a11478c884ec39641a0802c78c281e6323faffbe90e9bd82deeb6c50a41579c6b2f7a3f9be2b5372e3f27871c69c6126eace3e27ca07c2c021c7b886d11eebe0cdd67ddaea78d16eee7f4f7df5ba6f1772aa67f006a698c8a2c57d630aae0df9be04983f111b471c13350b711b847d0423f577db289324c7407babca32bcbec9150abe9e3c4c0d109cc4671d43b6423ecbbed4c54c2a7e65fc9c297f59ecfad63aab6fcb5f1758474a8c19446c"
+
+/// SHA-512's initial state, the same layout.
+const IV: Str = "08c9bcf367e6096a3ba7ca8485ae67bb2bf894fe72f36e3cf1361d5f3af54fa5d182e6ad7f520e511f6c3e2b8c68059b6bbd41fbabd9831f79217e1319cde05b"
+
+/// The state as big endian bytes (the digest's order).
+fn be_digest(st: Bytes) -> Str {
+  var b = BytesBuilder.new()
+  for i in 0..8 {
+    for j in 0..8 {
+      b.write_byte(st[8 * i + 7 - j])
+    }
+  }
+  b.freeze().to_hex()
+}
+
+fn main(os: Os) uses stdio {
+  let hw = Int.parse(internal.crypto_op("cpu.hw", b"", b"", b"", b"").to_str() ?? "0") ?? 0
+  let lowered = if (hw & 4096) != 0 { "cpu.sha512_block" } else { "cpu.sha512_block_soft" }
+  let k = Bytes.from_hex(K) ?? b""
+  let iv = Bytes.from_hex(IV) ?? b""
+  // "abc", 0x80, zeros, the bit length 24
+  var blk = BytesBuilder.new()
+  blk.write_str("abc")
+  blk.write_byte(UInt8(0x80))
+  for _ in 0..123 {
+    blk.write_byte(UInt8(0))
+  }
+  blk.write_byte(UInt8(24))
+  let abc = blk.freeze()
+  let d1 = internal.crypto_op(lowered, iv, abc, k, b"")
+  let d2 = internal.crypto_op("cpu.sha512_block_soft", iv, abc, k, b"")
+  os.stdio.println("abc ${be_digest(d1)} ${if d1 == d2 { "same" } else { "differs" }}")
+  var seed = crypto.digest(Sha256, b"cpu_sha512")
+  var same = 0
+  for i in 0..50 {
+    let st = seed + crypto.digest(Sha256, seed + b"s")
+    seed = crypto.digest(Sha256, st)
+    var b = seed
+    for j in 0..3 {
+      b = b + crypto.digest(Sha256, seed + "${j}".bytes())
+    }
+    seed = crypto.digest(Sha256, b)
+    let x = internal.crypto_op(lowered, st, b, k, b"")
+    let y = internal.crypto_op("cpu.sha512_block_soft", st, b, k, b"")
+    if x == y {
+      same += 1
+    } else {
+      os.stdio.println("block ${i} differs: ${x.to_hex()} ${y.to_hex()}")
+    }
+  }
+  os.stdio.println("blocks ${same} of 50 agree")
+  os.stdio.println("sha512 abc ${crypto.digest(Sha512, "abc".bytes()).to_hex()}")
+  os.stdio.println("sha512 two ${crypto.digest(Sha512, TWO.bytes()).to_hex()}")
+  os.stdio.println("sha384 two ${crypto.digest(Sha384, TWO.bytes()).to_hex()}")
+  os.stdio.println("hmac ${crypto.hmac(Sha512, b"key", "The quick brown fox jumps over the lazy dog".bytes()).to_hex()}")
+}
+
+/// FIPS 180-4's two block example for SHA-384 and SHA-512.
+const TWO: Str = "abcdefghbcdefghicdefghijdefghijkefghijklfghijklmghijklmnhijklmnoijklmnopjklmnopqklmnopqrlmnopqrsmnopqrstnopqrstu"

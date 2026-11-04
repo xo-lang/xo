@@ -1,0 +1,32 @@
+// SHA-512 on the native backends (decision 0231's SHA-512 addendum,
+// 2026-11-03: cpu.sha512_block's instructions against the rounds in Xo):
+// SHA-512 and SHA-384 of 64 KiB 1,000 times each (the compression), then
+// HMAC-SHA512 of an 8 byte counter under a 64 byte key 600,000 times (a
+// TOTP code's shape with SHA-512: four compressions a MAC). Prints a
+// checksum, the same on every backend and revision; `xo bench --ab` times
+// the whole run.
+use std/crypto
+
+fn main(os: Os) uses stdio {
+  var big = BytesBuilder.new()
+  for i in 0..65536 {
+    big.write_byte(UInt8(i % 251))
+  }
+  let data = big.freeze()
+  var h = 0
+  for _ in 0..1000 {
+    let d = crypto.digest(Sha512, data)
+    let e = crypto.digest(Sha384, data)
+    h = (h * 31 + Int(d[0]) + Int(e[1])) % 1000000007
+  }
+  let key = b"1234567890123456789012345678901234567890123456789012345678901234"
+  for i in 0..600000 {
+    var c = BytesBuilder.new()
+    for j in 0..8 {
+      c.write_byte(UInt8((i >> (8 * (7 - j))) & 255))
+    }
+    let m = crypto.hmac(Sha512, key, c.freeze())
+    h = (h * 31 + Int(m[63])) % 1000000007
+  }
+  os.stdio.println("sha512 ${h}")
+}

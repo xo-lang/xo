@@ -852,6 +852,37 @@ func cryptoCPU(what string, a, b, c Bytes) (Bytes, bool) {
 			out = binary.LittleEndian.AppendUint32(out, h[i]+x[i])
 		}
 		return Bytes(out), true
+	case "sha512_block":
+		// SHA-512's compression of the 128 byte block b into the state a
+		// (eight little endian 64 bit words), with the 80 round constants c
+		// (little endian 64 bit words), as cpu.xo's op lays them out
+		var h [8]uint64
+		for i := 0; i < 8; i++ {
+			h[i] = binary.LittleEndian.Uint64([]byte(a[8*i:]))
+		}
+		var w [80]uint64
+		for i := 0; i < 16; i++ {
+			w[i] = binary.BigEndian.Uint64([]byte(b[8*i:]))
+		}
+		for i := 16; i < 80; i++ {
+			s0 := bits.RotateLeft64(w[i-15], -1) ^ bits.RotateLeft64(w[i-15], -8) ^ w[i-15]>>7
+			s1 := bits.RotateLeft64(w[i-2], -19) ^ bits.RotateLeft64(w[i-2], -61) ^ w[i-2]>>6
+			w[i] = w[i-16] + s0 + w[i-7] + s1
+		}
+		x := h
+		for i := 0; i < 80; i++ {
+			s1 := bits.RotateLeft64(x[4], -14) ^ bits.RotateLeft64(x[4], -18) ^ bits.RotateLeft64(x[4], -41)
+			ch := x[4]&x[5] ^ ^x[4]&x[6]
+			t1 := x[7] + s1 + ch + binary.LittleEndian.Uint64([]byte(c[8*i:])) + w[i]
+			s0 := bits.RotateLeft64(x[0], -28) ^ bits.RotateLeft64(x[0], -34) ^ bits.RotateLeft64(x[0], -39)
+			maj := x[0]&x[1] ^ x[0]&x[2] ^ x[1]&x[2]
+			x = [8]uint64{t1 + s0 + maj, x[0], x[1], x[2], x[3] + t1, x[4], x[5], x[6]}
+		}
+		out := make([]byte, 0, 64)
+		for i := 0; i < 8; i++ {
+			out = binary.LittleEndian.AppendUint64(out, h[i]+x[i])
+		}
+		return Bytes(out), true
 	case "sha1_block":
 		// SHA-1's compression of the 64 byte block b into the state a
 		// (five little endian 32 bit words); the constants c are the
