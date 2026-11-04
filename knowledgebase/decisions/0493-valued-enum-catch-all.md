@@ -1,7 +1,7 @@
 # 0493: A valued enum may keep unknown values in one catch-all variant
 
-Status: Proposed (xo-lang-4, 2026-11-04, for the AWS SDK agent through the
-lead). Nothing is built before the owner accepts.
+Status: Accepted (owner, 2026-11-04). Proposed by xo-lang-4 the same day,
+for the AWS SDK agent through the lead.
 
 ## Context
 
