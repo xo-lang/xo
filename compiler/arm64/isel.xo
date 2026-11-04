@@ -52,8 +52,14 @@ fn (var g: G) function(fi: Int) {
   }
   // again once dce dropped the dead copies of a negation thread_const
   // left in the blocks it threaded (they read it a second time)
-  if g.on("thread_cset") && !g.x86 {
+  if g.on("thread_cset") {
     g.fold_not_tests()
+    // a cset whose negation that fold took away now reaches its branch
+    // alone (pdq_partition's `!(d[j] < p)` loop test, 2026-11-04)
+    g.thread_cset_once()
+    if g.on("mir_dce") {
+      g.dce()
+    }
   }
   if g.on("select_compares") {
     g.select_compares()

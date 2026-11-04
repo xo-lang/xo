@@ -116,7 +116,7 @@ fn or_not(a: Int, b: Int) -> Int {
 
 fn main(os: Os) {
   let n = os.env.args().len()
-  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)} ${trims(n, n + 40, n + 50)} ${count_digits(n + 1000)} ${outside(n)} ${digit_sum("12${n}".bytes())} ${sign_of("+-".bytes(), n % 2)} ${byte2(n * 65536)}")
+  os.stdio.println("${times8(n)} ${div4(n)} ${fold()} ${times3(n)} ${clear_low(n + 6)} ${bit1(n)} ${low_bits(n)} ${word_index(n)} ${word_rem(n)} ${by_zero(n)} ${rune_rem(n * 7919)} ${u64_mod(UInt64(n) * 12345)} ${and_not(n * 5, n)} ${or_not(n, n * 3)} ${digit_or(n + 50)} ${packed(n)} ${packed_mask(n)} ${page_cmp(n)} ${page_cmn(n)} ${neg_join(n)} ${neg_any(n)} ${trims(n, n + 40, n + 50)} ${count_digits(n + 1000)} ${outside(n)} ${last_not_below([5, 3, 9, n], 0, 4)} ${digit_sum("12${n}".bytes())} ${sign_of("+-".bytes(), n % 2)} ${byte2(n * 65536)}")
 }
 
 // `d < 0 || d > 9` of a `d = x - 48` is one unsigned compare (isel
@@ -211,6 +211,20 @@ fn count_digits(n: Int) -> Int {
     x = x / 3
   }
   k
+}
+
+// pdq_partition's loop: `i <= j && !(d[j] < p)`, the negated compare
+// under an && join, branches on the compare (2026-11-04: a cset and a
+// cbnz on arm64; setl, movzbl, xorq, testq and je on amd64; thread_cset
+// after fold_not_tests).
+fn last_not_below(d: List[Int], i: Int, p: Int) -> Int {
+  // arm64: -"cset"
+  // amd64: -"\tset[a-z]+ " -"xorq \$1"
+  var j = d.len() - 1
+  while i <= j && !(d[j] < p) {
+    j -= 1
+  }
+  j
 }
 
 fn outside(x: Int) -> Bool {

@@ -1541,6 +1541,14 @@ fn (g: G) const_defs() -> Map[Int, Int] {
 const X86_CAS_BOOL = "\nsete $bd0\nmovzbl $bd0, $wd0"
 
 fn (var g: G) thread_cset() {
+  g.thread_cset_once()
+  g.fold_not_tests()
+}
+
+/// One round of thread_cset's threading (isel.xo runs another after the
+/// second fold_not_tests, whose copies of the negations it took away can
+/// leave a cset that a branch alone reads).
+fn (var g: G) thread_cset_once() {
   let nuses = g.use_counts()
   for p in g.all_blocks() {
     let n = g.blocks[p].insts.len()
@@ -1603,7 +1611,17 @@ fn (var g: G) thread_cset() {
     if src == 0 {
       continue
     }
-    let def = g.blocks[p].insts[np - 3]
+    var di = np - 3
+    // through fold_not_tests' copy of a negation it took away, `mov d, s`
+    // that only the move reads (2026-11-04: pdq_partition's `!(d[j] < p)`
+    // loop test, `cset; mov; move; jump` to a cbnz block: setl, movzbl,
+    // test and jne on amd64)
+    let cp = g.blocks[p].insts[di]
+    if di >= 1 && cp.kind == K_PLAIN && cp.text == "mov $d0, $u0" && cp.defs.len() == 1 && cp.defs[0] == src && cp.us.len() == 1 && !cp.has(IF_HAS_FAULT) && !cp.has(IF_KEEP) && (nuses.get(src) ?? 0) == 1 {
+      src = cp.us[0]
+      di -= 1
+    }
+    let def = g.blocks[p].insts[di]
     if def.kind != K_PLAIN || def.defs.len() != 1 || def.defs[0] != src || def.has(IF_HAS_FAULT) || def.has(IF_KEEP) {
       continue
     }
@@ -1633,9 +1651,6 @@ fn (var g: G) thread_cset() {
       ins = drop_move(ins, np - 2, r)
     }
     g.put_insts(p, ins)
-  }
-  if !g.x86 {
-    g.fold_not_tests()
   }
 }
 
