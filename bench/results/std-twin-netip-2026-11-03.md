@@ -32,3 +32,4 @@ The mixed row went from 1.79 to 1.31. Host 2 A/B of the representation change: m
 
 Against Go (rows above): display4 about 1.26, parse6 about 1.50. Left: compare 2.02 and part of display4 are RC drops of the zone Str (Lang 1: inline drop test), parse4 1.38.
 
+parse4 (1.38): a tight fast path for well formed quads (checks that name an error only on failure) measured 0.986 (0.973-1.004, n=15), within noise, and was dropped; the in place range variant was 1.03. The Mac profile is 64 percent ipv4_fields (a byte loop, no allocation), so the remaining gap is the loop itself.
