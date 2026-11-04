@@ -1,0 +1,46 @@
+// std/metrics against prometheus/client_golang (go/): `counter` makes
+// 3,000,000 labelled increments over 50 series, `histogram` 2,000,000
+// observations of a scrambled sequence over 20 series (the default
+// latency buckets), `scrape` renders 1,000 series (a counter of 500 and a
+// histogram of 50 series) 300 times in the text format; `none` registers
+// the instruments and stops. Usage: `<program> none|counter|histogram|scrape`.
+// Prints `<workload> <checksum>`; the twin prints the same.
+use std/metrics
+
+fn main(os: Os) {
+  let w = os.env.args().get(0) ?? "none"
+  let r = metrics.registry()
+  let c = r.counter("req_total", "Requests.", ["path"])
+  let h = r.histogram("lat_seconds", "Latency.", ["path"])
+  let big = r.counter("big_total", "Many series.", ["id"])
+  var names: List[Str] = []
+  for i in 0..50 {
+    names.push("p${i}")
+  }
+  var sum = 0
+  if w == "counter" {
+    for i in 0..3000000 {
+      c.inc([names[i % 50]])
+    }
+    sum = 3000000
+  } else if w == "histogram" {
+    var x = 1
+    for i in 0..2000000 {
+      x = (x * 7) % 1000003
+      h.observe(Float(x) / 100000.0, [names[i % 20]])
+    }
+    sum = 2000000
+  } else if w == "scrape" {
+    for i in 0..500 {
+      big.inc(["s${i}"])
+    }
+    for i in 0..50 {
+      h.observe(0.01 * Float(i + 1), [names[i]])
+    }
+    for _ in 0..300 {
+      let t = r.text()
+      sum += t.len()
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
