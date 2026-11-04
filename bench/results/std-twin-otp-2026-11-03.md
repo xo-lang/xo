@@ -30,4 +30,4 @@ prof-otp512.txt is the profile that sent SHA-512 to its instructions
 | sha256 | 87.0 | 110.6 | 1.272 | 1.243 to 1.314 |
 | sha512 | 178.6 | 165.8 | 0.928 | 0.911 to 0.951 |
 
-The HMAC cost is the hash's compression function (std/native/llrt sha1, sha256): sha512 is ahead of Go, sha256 is not, which is Go's SHA-NI path on this host against Xo's scalar rounds for 256.
+HMAC time is the hash's compression function; sha512 is ahead of Go and sha256 is not. Cause not yet profiled on this host (the compiler has SHA2 instruction support, so check first whether the sha256 compress uses it).
