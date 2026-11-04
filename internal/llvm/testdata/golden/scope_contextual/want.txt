@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+scope=20261104/us-east-1/s3/aws4_request
+2 23
+2 23
+--- stderr

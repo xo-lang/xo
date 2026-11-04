@@ -1,0 +1,32 @@
+// decision 0497: `scope` is a contextual word: `scope NAME {` is the
+// scope expression, and anywhere else `scope` is a name (a field, a
+// parameter, a local, a function), as SigV4's credential scope needs.
+
+struct Credential {
+  key: Str
+  scope: Str
+}
+
+fn scope(date: Str, region: Str) -> Str {
+  "${date}/${region}/s3/aws4_request"
+}
+
+fn describe(scope: Str) -> Str {
+  "scope=${scope}"
+}
+
+fn main(os: Os) {
+  let c = Credential{key: "AKID", scope: scope("20261104", "us-east-1")}
+  os.stdio.println(describe(c.scope))
+  var scope = 1
+  scope += 1
+  let n = scope
+  let total = scope t {
+    let a = t.spawn(fn() -> Int { n * 10 })
+    let b = t.spawn(fn() -> Int { 3 })
+    a.await + b.await
+  }
+  os.stdio.println("${scope} ${total}")
+  let scopes = [scope, total]
+  os.stdio.println("${scopes.len()} ${scopes[1]}")
+}

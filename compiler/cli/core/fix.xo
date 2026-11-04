@@ -646,7 +646,7 @@ fn rewrite_scope_timeout(file: Str, src: Bytes) -> (Bytes, List[Change]) {
   var chs: List[Change] = []
   var i = 0
   while i + 3 < toks.len() {
-    if toks[i].kind != lexer.Kind.Scope || toks[i + 1].kind != lexer.Kind.Ident || toks[i + 2].kind != lexer.Kind.Ident || tok_text(toks[i + 2]) != "timeout" {
+    if toks[i].kind != lexer.Kind.Ident || tok_text(toks[i]) != "scope" || toks[i + 1].kind != lexer.Kind.Ident || toks[i + 2].kind != lexer.Kind.Ident || tok_text(toks[i + 2]) != "timeout" {
       i += 1
       continue
     }

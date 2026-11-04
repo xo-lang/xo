@@ -230,9 +230,9 @@ pub fn kind_text(k: Kind) -> Str {
   }
 }
 
-/// Whether k is one of the 28 keywords.
+/// Whether k is one of the 27 keywords.
 fn is_keyword(k: Kind) -> Bool {
-  k is As | Break | Const | Continue | Defer | Else | Ensures | Enum | Fn | For | If | In | Interface | Invariant | Let | Match | Pub | Requires | Return | Scope | Select | Struct | Test | Type | Use | Uses | Var | While
+  k is As | Break | Const | Continue | Defer | Else | Ensures | Enum | Fn | For | If | In | Interface | Invariant | Let | Match | Pub | Requires | Return | Select | Struct | Test | Type | Use | Uses | Var | While
 }
 
 /// A keyword that names things in other languages' code (`test`, `type`,
@@ -249,7 +249,7 @@ fn (var p: Parser) keyword_name_note(d: Int, t: Token) {
     Match => "matched"
     Use => "usage"
     Select => "selected"
-    Const | Defer | Ensures | Enum | Interface | Invariant | Requires | Scope | Struct | Uses => "${kw}_name"
+    Const | Defer | Ensures | Enum | Interface | Invariant | Requires | Struct | Uses => "${kw}_name"
     _ => return
   }
   p.add_note(d, "`${kw}` is a keyword, so it cannot name a variable, parameter, or field; rename it, for example `${rename}` (core 1.4)")

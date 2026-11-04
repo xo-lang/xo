@@ -333,6 +333,14 @@ fn (var p: Parser) parse_primary() -> Expr {
   let sp = t.span
   match t.kind {
     Ident => {
+      // `scope NAME {` is the scope expression; `scope` anywhere else is
+      // a name (a contextual word, decision 0497)
+      if t.text == b"scope" && p.peek(1).kind == Kind.Ident && p.peek(2).kind == Kind.LBrace {
+        p.next()
+        let name = p.expect_ident("a scope name")
+        let body = p.parse_block()
+        return Expr.ScopeExpr(span: p.span_from(sp.start), name: name, body: body)
+      }
       p.next()
       return Expr.Ident(Ident{span: sp, name: t.text})
     }
@@ -403,12 +411,6 @@ fn (var p: Parser) parse_primary() -> Expr {
     }
     If => return p.parse_if()
     Match => return p.parse_match()
-    Scope => {
-      p.next()
-      let name = p.expect_ident("a scope name")
-      let body = p.parse_block()
-      return Expr.ScopeExpr(span: p.span_from(sp.start), name: name, body: body)
-    }
     Select => return p.parse_select()
     Fn => return p.parse_fn_lit()
     While => {

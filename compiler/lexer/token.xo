@@ -97,7 +97,7 @@ pub enum Kind {
   While
 } derive Display
 
-/// The 28 keywords (core 1.4).
+/// The 27 keywords (core 1.4; `scope` is a contextual word since decision 0497).
 const KEYWORDS = {
   "as": Kind.As,
   "break": Kind.Break,
@@ -118,7 +118,6 @@ const KEYWORDS = {
   "pub": Kind.Pub,
   "requires": Kind.Requires,
   "return": Kind.Return,
-  "scope": Kind.Scope,
   "select": Kind.Select,
   "struct": Kind.Struct,
   "test": Kind.Test,

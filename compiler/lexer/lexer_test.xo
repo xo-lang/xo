@@ -73,7 +73,7 @@ test "identifiers, keywords, and contextual words" {
   expect(render(lex_str("let x = foo").tokens)) == "let id:x = id:foo ;"
   let kws = keywords().filter(fn(k) { k != "use" }).join(" ")
   expect(render(lex_str(kws).tokens)) == kws
-  expect(keywords().len()) == 28
+  expect(keywords().len()) == 27
   expect(render(lex_str("derive from with after seed result old").tokens)) == "id:derive id:from id:with id:after id:seed id:result id:old ;"
   expect(render(lex_str("r b r1 b2").tokens)) == "id:r id:b id:r1 id:b2 ;"
 }

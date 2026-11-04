@@ -68,7 +68,7 @@ archive serves both. The runner starts it with `play.test -v`.
 ## Editor
 
 A textarea over a highlighted `<pre>` (`highlight.js`, a tokenizer for the
-lexical grammar: the 28 keywords of core 1.4, strings with `${}`
+lexical grammar: the 27 keywords of core 1.4, strings with `${}`
 interpolation, raw and byte strings, runes, numbers and durations, `???`).
 It builds DOM nodes with `textContent`. Update its keyword list when
 core 1.4 changes.

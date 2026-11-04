@@ -484,13 +484,13 @@ Consequences: `} else {` and `} else if` must be on the same line as the
 closing brace. A list that spans lines needs a trailing comma after the last
 element. Trailing commas are allowed in every comma separated list.
 
-### 1.4 Keywords (28)
+### 1.4 Keywords (27)
 
 ```
 as        break     const     continue  defer     else      ensures
 enum      fn        for       if        in        interface invariant
-let       match     pub       requires  return    scope     select
-struct    test      type      use       uses      var       while
+let       match     pub       requires  return    select    struct
+test      type      use       uses      var       while
 ```
 
 Predeclared identifiers (cannot be redefined at top level):
@@ -506,7 +506,8 @@ elsewhere): `derive` (after a type body), `from` (in an enum variant),
 `with` (postfix struct update), `after` (in a `select` arm), `seed` (after a
 test name), `result` and `old` (inside `ensures`), `is` (binary operator
 position), `bound` (after a loop header's expression, 3.5), `realtime` (in
-a declaration's uses clause, 6.5).
+a declaration's uses clause, 6.5), `scope` (the scope expression, written
+`scope NAME {`, 7.1; anywhere else `scope` is a name, decision 0497).
 
 To keep parsing unambiguous, an unparenthesized struct literal may not appear
 in an `if`, `while`, `for`, `match`, `requires`, or `ensures` expression (the

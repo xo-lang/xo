@@ -785,7 +785,7 @@ fn (p: Parser) top_level_start() -> Bool {
 
 fn (var p: Parser) top_level_stmt_error() {
   match p.tok.kind {
-    Let | Var | Return | For | While | If | Match | Defer | Break | Continue | Scope | Select | Ident | Int | String | LParen | LBrack | LBrace => p.fail(STMT_AT_TOP_LEVEL, p.tok.span, "statements are only allowed inside a function or test body, found ${describe(p.tok)}")
+    Let | Var | Return | For | While | If | Match | Defer | Break | Continue | Select | Ident | Int | String | LParen | LBrack | LBrace => p.fail(STMT_AT_TOP_LEVEL, p.tok.span, "statements are only allowed inside a function or test body, found ${describe(p.tok)}")
     _ => p.error_expected("a declaration")
   }
 }

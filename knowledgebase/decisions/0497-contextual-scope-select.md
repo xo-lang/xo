@@ -81,3 +81,16 @@ contextual words:
 Recommendation: the decision as written (both words). If the owner wants
 the smallest step, (b) first: it removes the commonest collision with no
 special case.
+
+## Implementation (2026-11-04, option (b))
+
+The lexer no longer maps `scope` to a keyword (Kind.Scope stays for the
+AST codec's numbering); parser expr.xo parse_primary reads `scope`
+followed by an identifier and `{` as the ScopeExpr and any other
+`scope` as an identifier. habits.xo's keyword lists, the top level
+statement error and `xo fix`'s `scope NAME timeout` rewrite (fix.xo)
+follow. Spec 1.4: 27 keywords, `scope` among the contextual words. The
+VS Code grammar colors `scope` in its contextual rule, only before a
+name and a brace. Golden scope_contextual (a field, a function, a
+parameter and a `var` named `scope`, beside a scope expression).
+

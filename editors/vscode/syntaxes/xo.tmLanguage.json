@@ -254,11 +254,11 @@
       "match": "\\b(?:net(?:\\.(?:dial|listen))?|fs(?:\\.(?:read|write))?|clock|rand|env|proc|stdio|ffi)\\b"
     },
     "keywords": {
-      "comment": "The 28 keywords of core 1.4. editors/vscode/grammar_test.go checks this set against internal/token.",
+      "comment": "The 27 keywords of core 1.4 (scope is in contextual since decision 0497). editors/vscode/grammar_test.go checks this set against internal/token.",
       "patterns": [
         {
           "name": "keyword.control.xo",
-          "match": "\\b(?:break|continue|defer|else|for|if|in|match|return|scope|select|while)\\b"
+          "match": "\\b(?:break|continue|defer|else|for|if|in|match|return|select|while)\\b"
         },
         {
           "name": "keyword.other.contract.xo",
@@ -284,6 +284,11 @@
         {
           "match": "(?<=\\})\\s*(derive)\\b",
           "captures": { "1": { "name": "keyword.other.derive.xo" } }
+        },
+        {
+          "comment": "scope NAME { ... }: the scope expression (decision 0497); scope elsewhere is a name",
+          "match": "\\b(scope)(?=\\s+[A-Za-z_][A-Za-z0-9_]*\\s*\\{)",
+          "captures": { "1": { "name": "keyword.control.xo" } }
         },
         {
           "match": "\\b(with)\\s*(?=\\{)",
