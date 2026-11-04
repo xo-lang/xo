@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-04: perf: on amd64 the large block cache keeps the sizes a program asks for again
+
+- Kind: perf
+- Commit: this commit
+- Found by: the owner's v0.36.0 and v0.38.1 evaluations (Intel Mac json10kx20 111 to 176 ms); bisected to f3f9552ac
+- Go reference: none (Go's heap keeps freed spans for reuse)
+- Test: TestGoldenRun (heap goldens); the 13-perf micro and bench/perf/xo putget and push on linux/amd64, darwin/amd64 and darwin/arm64 (decision 0492's table)
+- Speed: json10kx20 linux/amd64 84 to 47 ms, darwin/amd64 154 to 124 ms; arm64 unchanged
+
+The cache table keeps the last 16 sizes asked of it (take, hit or miss),
+and on amd64 a freed mapping one of them could use (take's fit: need <=
+size <= 4 need) may pass decision 0448's quarter bound (never CACHE_N or
+CACHE_MAX). A program that frees and asks again for one size keeps those
+mappings; a growing list still gets the bound. Max RSS on amd64: the
+micro +6 MB (linux) and +9 MB (darwin), putget +0.8 and +1.9 MB, push
+40.0 to 29.6 MB (linux) and 29.5 to 30.0 (darwin). arm64 keeps 0448's
+rule (no speed to gain there; its RSS would have risen the same).
+
 ## 2026-11-04: perf: wasm modules leave out Linux's vDSO clock lookup
 
 - Kind: perf (size)

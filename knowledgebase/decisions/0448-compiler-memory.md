@@ -1056,6 +1056,9 @@ after coll warmed the cache): heap peak 67 MB against 52 for the next build, all
 link.half_save (15.5 ms, the ELF half written for a new link key, decision 0400).
 ## The large block cache bounded by the bytes in use (xo-lang-2, 2026-11-03; accepted (owner, 2026-11-03))
 
+Refined by decision 0492 (owner, 2026-11-04): on amd64 a freed mapping one of the last 16
+requested sizes could use passes this bound (x86 json was 1.75x under it); arm64 keeps it as is.
+
 Accepted (owner, 2026-11-03): the retention change ships in 0.37.0.
 
 Lang 4's 0.36.0 comparison found coll putget's max RSS 1.18x of v0.35.0 on darwin and 1.32 to 1.39x

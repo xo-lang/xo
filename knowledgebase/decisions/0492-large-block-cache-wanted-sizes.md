@@ -1,8 +1,8 @@
 # 0492: the large block cache keeps past its bound the sizes a program asks for again
 
-Status: Proposed (2026-11-04, Xo Lang 1), for the owner. Refines decision
-0448's bounded cache (f3f9552ac, accepted by the owner 2026-11-03).
-Implementation held on branch lang1-adr492 until the owner decides.
+Status: Accepted (owner, 2026-11-04), as proposed. Refines decision 0448's
+bounded cache (f3f9552ac, accepted by the owner 2026-11-03). Implemented in
+std/native/llrt/heapos.xo (take's request ring, keep's `wanted`).
 
 ## Context
 

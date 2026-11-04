@@ -54,6 +54,14 @@ const CACHE_N = 16
 const CACHE_MAX = 67108864
 /// The byte of the table's advise switch (advise_on), past the entries.
 const CACHE_SWITCH = 24 + 8 * CACHE_N
+/// The table's ring of the last WANT_N sizes a large block asked the
+/// cache for (take, hit or miss), and its next slot: on amd64 a freed
+/// mapping one of them could have used may pass the quarter bound (keep;
+/// decision 0492: json 1.75x there under the bound alone; arm64 gained
+/// nothing from it and kept 0448's RSS)
+const WANT_N = 16
+const CACHE_WANT = CACHE_SWITCH + 8
+const CACHE_WANT_AT = CACHE_WANT + 8 * WANT_N
 
 /// A large mapping's size is a multiple of this (16 KiB pages on Apple
 /// silicon, 64 KiB the Windows allocation granularity).
@@ -382,7 +390,7 @@ fn keep(m: Int, size: Int) -> Bool {
   // (coll putget max RSS 8.3 MB with the cache, 5.2 without), while xo's
   // builds, with far more in use, keep the cache's reuse (without any
   // cache their linux/arm64 edit builds ran 1.04 to 1.07x)
-  if k >= CACHE_N || bytes.wrapping_add(size) > CACHE_MAX || bytes.wrapping_add(size) > (membudget.mapped() >> 2) {
+  if k >= CACHE_N || bytes.wrapping_add(size) > CACHE_MAX || (bytes.wrapping_add(size) > (membudget.mapped() >> 2) && !(target.arch == TargetArch.Amd64 && wanted(t, size))) {
     clock_give()
     return false
   }
@@ -397,6 +405,23 @@ fn keep(m: Int, size: Int) -> Bool {
   cache_advise(m, size, false)
   clock_give()
   true
+}
+
+/// Whether a mapping of size bytes could serve one of the sizes the
+/// cache was last asked for (take's fit: need <= size <= 4 need): a
+/// program that frees and asks again for blocks of one size (json's
+/// buffers each round) keeps them past the quarter bound, while a list
+/// that grows (each request larger than any block it frees) does not.
+/// Sixteen sizes: json's growing buffers ask for more than four a round
+/// (four left darwin/amd64 json at 136 ms, sixteen 124, 0492).
+fn wanted(t: Int, size: Int) -> Bool {
+  for i in 0..WANT_N {
+    let n = rt.mem_load(t, CACHE_WANT + 8 * i, 8)
+    if n > 0 && size >= n && size <= n.wrapping_shl(2) {
+      return true
+    }
+  }
+  false
 }
 
 /// The large block cache's mappings and the bytes they hold (diagnostics).
@@ -459,6 +484,9 @@ fn take(need: Int) -> Int {
   }
   clock_take()
   let t = rt.mem_load(w, 0, 8)
+  let wi = rt.mem_load(t, CACHE_WANT_AT, 8)
+  rt.mem_store(t, CACHE_WANT + 8 * wi, need, 8)
+  rt.mem_store(t, CACHE_WANT_AT, (wi + 1) % WANT_N, 8)
   var k = rt.mem_load(t, 16, 8)
   let most = need.wrapping_shl(2)
   while k > 0 {
