@@ -1,5 +1,26 @@
 # std/http changes
 
+## 2026-11-03: fix: http.reverse_proxy sends a request without a body without one, so a GET is retried on a fresh connection
+
+- Kind: fix
+- Commit: this commit
+- Found by: the http_reverse_proxy_ws golden's flake (Lead's queue, 2026-11-03): under the full arm64 golden load 1 to 3 runs in 200 failed ("dial tcp ...: connection refused", `protocol error: Get ".../bye": EOF`, or a bad handshake with no proxy log)
+- Go reference: net/http/httputil reverseproxy.go (`if req.ContentLength == 0 { outreq.Body = nil }`), net/http transport.go shouldRetryRequest and Request.isReplayable
+- Test: golden http_reverse_proxy_retry (arm64, LLVM, Go parity): a target that closes a kept connection on its next request is retried on a new one, a POST's body is still forwarded, a bodiless request goes without a body; http_reverse_proxy_ws 50 and 100 times and an instrumented copy 800 times under the full arm64 golden load on the second linux/arm64 host, no failure
+- Timing: none
+
+The proxy handed every incoming request's body reader to its client,
+so even a GET without a body went to the target as `Transfer-Encoding:
+chunked` with an empty chunk, and, having a body source, was not
+replayable: when the pooled connection it took had been closed by the
+target, the client did not send it again on a new connection (decision
+0303's rule, which Go's Transport has) and the proxy answered 502. A
+request the server read no body for (HTTP/1.1 Content-Length 0 or
+neither it nor chunked, net/http's ContentLength 0) now goes on with no
+body, as httputil sets `outreq.Body = nil`; the Go backend's proxy
+(std/rt http_proxy.go) does the same with net/http's NoBody. Requests
+with a body are unchanged (not replayable, as in Go).
+
 ## 2026-11-03: feature: http.Client reuses connections in a wasip2/wasm command
 
 - Kind: feature

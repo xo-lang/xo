@@ -200,7 +200,12 @@ func (p Http_ReverseProxy) M_serve(tk *Task, req Http_Request, body Http_BodyRea
 	if p.rewrite != nil {
 		out = p.rewrite(tk, req, out).V
 	}
-	out = out.M_with_body_reader(tk, body)
+	// a request without a body goes on without one (httputil: outreq.Body
+	// = nil when ContentLength is 0), so a GET stays replayable on a
+	// pooled connection the target closed
+	if body.r == nil || !body.r.empty {
+		out = out.M_with_body_reader(tk, body)
+	}
 	r := c.M_open(tk, out)
 	if !r.Ok {
 		logRecord(tk, levelError, "http: proxy error", []logField{{k: "error", v: Display(tk, r.E)}}, "")

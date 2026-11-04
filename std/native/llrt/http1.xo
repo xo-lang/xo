@@ -2135,6 +2135,14 @@ fn part_err(x: Int, why: Str) -> BodyPart {
   BodyPart{data: "", end: false, err: why}
 }
 
+/// Whether request seq on h has no body, asked before its handler reads
+/// it: Content-Length 0 or neither it nor chunked (net/http's
+/// ContentLength 0), the mode the request loop starts it in.
+pub fn body_none(h: rthttp.HConn, seq: Int) -> Bool {
+  let x = x1_of(h)
+  xl(x, X_SSEQ) == seq && xl(x, X_SMODE) == S_END
+}
+
 /// The next bytes of the body of request seq on h (at most max, at
 /// least one), its end, or an error (net/http's body.Read: a body cut
 /// short is "unexpected EOF"; a chunked body's errors are its

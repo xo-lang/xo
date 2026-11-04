@@ -1,0 +1,7 @@
+exit 0
+--- stdout
+warm: 200 "0 none" conns=1
+stale get: 200 "0 none" conns=2
+post: 200 "7 length"
+get: 200 "0 none"
+--- stderr

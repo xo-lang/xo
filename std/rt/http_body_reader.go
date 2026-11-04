@@ -2,6 +2,7 @@ package rt
 
 import (
 	"io"
+	"net/http"
 	"strings"
 	"sync"
 )
@@ -20,6 +21,10 @@ type bodyReader struct {
 	// trailer: the request's trailers once src has ended (net/http's
 	// Request.Trailer, decision 0433), nil when there are none
 	trailer func() map[string][]string
+	// empty: the server read no body for the request (net/http's NoBody,
+	// ContentLength 0), so a reverse proxy sends it on with none
+	// (httputil's outreq.Body = nil), which keeps it replayable
+	empty bool
 }
 
 // streamBody names the request value that carries the server's unread
@@ -29,7 +34,7 @@ const streamBody = "\x00body"
 
 // withStreamBody is req carrying the unread body src.
 func withStreamBody(req Http_Request, src io.Reader) Http_Request {
-	req.XValues = &reqValues{name: streamBody, v: &bodyReader{src: src}, next: req.XValues}
+	req.XValues = &reqValues{name: streamBody, v: &bodyReader{src: src, empty: src == http.NoBody}, next: req.XValues}
 	return req
 }
 

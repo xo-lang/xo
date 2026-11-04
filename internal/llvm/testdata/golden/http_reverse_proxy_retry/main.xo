@@ -1,0 +1,156 @@
+// http.reverse_proxy on a pooled connection the target closed (Go's
+// Transport rule, transport.go shouldRetryRequest and isReplayable, with
+// httputil's outreq.Body = nil for a request without a body): a raw
+// target counts its connections and, on a connection's second request to
+// /stale, closes it without an answer, as a server closing an idle
+// connection just as the next request comes. A GET through the proxy is
+// replayed on a new connection; a POST's body is still forwarded, and a
+// request without one goes without one (no empty chunked body).
+use std/http
+
+/// A request head's path, its Content-Length (-1 for none) and whether it
+/// is chunked.
+fn head_of(h: Str) -> (Str, Int, Bool) {
+  let lines = h.split("\r\n")
+  let parts = lines[0].split(" ")
+  var n = -1
+  var chunked = false
+  for l in lines {
+    let k = l.to_lower()
+    if k.starts_with("content-length:") {
+      n = Int.parse(l.split(":")[1].trim()) ?? 0
+    }
+    if k.starts_with("transfer-encoding:") && k.contains("chunked") {
+      chunked = true
+    }
+  }
+  (if parts.len() > 1 { parts[1] } else { "" }, n, chunked)
+}
+
+/// The decoded length of a whole chunked body in s, and where it ends, or
+/// None when more must be read.
+fn chunked_len(s: Str) -> (Int, Int)? {
+  var at = 0
+  var n = 0
+  while true {
+    let e = s[at..s.len()].find("\r\n")?
+    let size = Int.parse_base(s[at..at + e], 16) ?? 0
+    at = at + e + 2
+    if size == 0 {
+      if s.len() < at + 2 {
+        return None
+      }
+      return Some((n, at + 2))
+    }
+    if s.len() < at + size + 2 {
+      return None
+    }
+    n += size
+    at = at + size + 2
+  }
+  None
+}
+
+fn main(os: Os) ! {
+  let l1 = os.net.listen("127.0.0.1:0")?
+  let l2 = os.net.listen("127.0.0.1:0")?
+  let conns = Atomic[Int].new(0)
+  let p = http.reverse_proxy(http.client(os.net), http.parse_url("http://${l1.addr()}/").or_fault("url"))
+  var fr = http.router()
+  fr.handle_stream("/{rest...}", fn(req, body) { p.serve(req, body) })
+  let front = http.server(l2, fr)
+  let c = http.client(os.net, timeout: 5s)
+  let base = "http://${l2.addr()}"
+  scope s {
+    s.spawn_background(fn() {
+      while true {
+        match l1.accept() {
+          Ok(conn) => {
+            let _n = conns.add(1)
+            s.spawn_background(fn() {
+              var got = ""
+              var nreq = 0
+              while true {
+                var at = got.find("\r\n\r\n")
+                while at == None {
+                  match conn.read(4096) {
+                    Ok(Some(b)) => got = got + (b.to_str() ?? "")
+                    _ => {
+                      conn.close()
+                      return
+                    }
+                  }
+                  at = got.find("\r\n\r\n")
+                }
+                let e = (at ?? 0) + 4
+                let (path, clen, chunked) = head_of(got[0..e])
+                nreq += 1
+                var blen = 0
+                var end = e
+                if chunked {
+                  var cl = chunked_len(got[e..got.len()])
+                  while cl == None {
+                    match conn.read(4096) {
+                      Ok(Some(b)) => got = got + (b.to_str() ?? "")
+                      _ => {
+                        conn.close()
+                        return
+                      }
+                    }
+                    cl = chunked_len(got[e..got.len()])
+                  }
+                  let (n, used) = cl ?? (0, 0)
+                  blen = n
+                  end = e + used
+                } else if clen > 0 {
+                  while got.len() < e + clen {
+                    match conn.read(4096) {
+                      Ok(Some(b)) => got = got + (b.to_str() ?? "")
+                      _ => {
+                        conn.close()
+                        return
+                      }
+                    }
+                  }
+                  blen = clen
+                  end = e + clen
+                }
+                got = got[end..got.len()]
+                if path == "/stale" && nreq > 1 {
+                  // read, never answered: the connection just closes
+                  conn.close()
+                  return
+                }
+                let framing = if chunked { "chunked" } else if clen >= 0 { "length" } else { "none" }
+                let text = "${blen} ${framing}"
+                conn.write("HTTP/1.1 200 OK\r\nContent-Length: ${text.len()}\r\n\r\n${text}".bytes()).ignore_err("the proxy may have gone")
+              }
+            })
+          }
+          Err(_) => return
+        }
+      }
+    })
+    s.spawn_background(fn() {
+      match front.serve() {
+        Ok(_) => ()
+        Err(e) => os.stdio.println("serve failed: ${e}")
+      }
+    })
+    let steps = [
+      ("warm", http.new_request("GET", base + "/warm", {})),
+      ("stale get", http.new_request("GET", base + "/stale", {})),
+      ("post", http.new_request("POST", base + "/len", {}, "payload".bytes())),
+      ("get", http.new_request("GET", base + "/len", {})),
+    ]
+    for (name, req) in steps {
+      match c.send(req) {
+        // the connection count only where it shows the retry: a request
+        // with a body ends its connection after it on the native client
+        Ok(r) => os.stdio.println("${name}: ${r.status} ${(r.body.to_str() ?? "?").quote()}${if name == "warm" || name == "stale get" { " conns=${conns.get()}" } else { "" }}")
+        Err(e) => os.stdio.println("${name}: error ${e}")
+      }
+    }
+    s.cancel()
+  }
+}

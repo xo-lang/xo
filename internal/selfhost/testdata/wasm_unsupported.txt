@@ -29,6 +29,7 @@ http_gzip_responses # the wasm backend does not support the network (`rt.net_lis
 http_header_fields # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_multipart_stream # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_reverse_proxy # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_reverse_proxy_retry # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_reverse_proxy_ws # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_server # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 http_server_limits # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets

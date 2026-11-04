@@ -221,6 +221,11 @@ struct BodyReader {
   /// a request that sends this body (with_body_reader); set when made and
   /// read without st, which a read waiting on the source holds
   close: List[fn() -> ()] = []
+  /// the request has no body (HTTP/1.1 with neither Content-Length nor
+  /// chunked, or Content-Length 0: net/http's ContentLength 0), so a
+  /// reverse proxy sends it on with none (httputil's outreq.Body = nil),
+  /// which keeps it replayable on a dead pooled connection
+  empty: Bool = false
 }
 
 /// What a BodyReader read: from the connection (next: http1.body_next
@@ -2810,7 +2815,7 @@ fn serve_h1(hc: rthttp.HConn, r: Router, serve_h2: fn(rthttp.HConn, Int, Router)
         var req = head_request(rd, q)
         let sq = rd.streamed()
         if sq != 0 {
-          let b = conn_body(fn(max: Int) -> http1.BodyPart { http1.body_next(hc, sq, max) }, [fn() { http1.body_finish(hc, sq) }], declared_trailers(q.trailer))
+          let b = conn_body(fn(max: Int) -> http1.BodyPart { http1.body_next(hc, sq, max) }, [fn() { http1.body_finish(hc, sq) }], declared_trailers(q.trailer)) with {empty: http1.body_none(hc, sq)}
           req = req with {values: [ReqValue{name: STREAM_BODY, v: rt.any_of(b)}]}
         }
         let (open, resp) = respond(hc, req, r)
@@ -4889,7 +4894,11 @@ fn (p: ReverseProxy) serve(req0: http.Request, body: http.BodyReader) -> http.Re
   if let Some(f) = p.rewrite.get(0) {
     out = f(req0, out)
   }
-  let sent = rt.cast[http.Request, Request](out).with_body_reader(body)
+  // a request without a body goes on without one (httputil: outreq.Body
+  // = nil when ContentLength is 0): a GET then stays replayable, so a
+  // pooled connection the target closed is retried on a new one
+  // (decision 0303) instead of failing as EOF
+  let sent = if rt.cast[http.BodyReader, BodyReader](body).empty { rt.cast[http.Request, Request](out) } else { rt.cast[http.Request, Request](out).with_body_reader(body) }
   match c.open(sent) {
     Err(e) => {
       log.error("http: proxy error", {"error": e.display()})
