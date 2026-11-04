@@ -291,3 +291,4 @@
 - [std-twin-trimchars-2026-11-03.md](std-twin-trimchars-2026-11-03.md): host rows for Str.trim_chars after decision 0465 step 2 (trim 2.24 to 1.54 of Go); not Proven.
 - [std-twin-strconv-2026-11-03.md](std-twin-strconv-2026-11-03.md): host row for itoa after decision 0465 step 2 (1.52 to 1.35 of Go); not Proven.
 - [std-twin-html-2026-11-03.md](std-twin-html-2026-11-03.md): host rows for std/html (escape 1.75 to 1.37, unescape 0.54 of Go); escape not Proven.
+- [wasip2-stage4-2026-11-03.md](wasip2-stage4-2026-11-03.md): decision 0447 stage 4's TCP echo load under wasmtime 50 on the first linux/arm64 host: Xo 149,524 round trips/s at 64 B and 105,567 at 16 KiB against Rust std's 83,748 and 89,249 (opt-level 3; "s" agrees), p99 3.6x and 3.0x lower; the second host's earlier run (Rust at half rate) kept as raw output.

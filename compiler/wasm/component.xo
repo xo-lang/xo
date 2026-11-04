@@ -1074,9 +1074,13 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
   let tcp = wanted("wasi:sockets/tcp${WASI_V}")
   let udp = wanted("wasi:sockets/udp${WASI_V}")
   let sock = tcp || udp
+  // the network without a socket: a program that only resolves names
+  // (Net.lookup_host; since R2h's import trimming its module imports no
+  // TCP or UDP)
+  let net = sock || wanted("wasi:sockets/instance-network${WASI_V}") || wanted("wasi:sockets/ip-name-lookup${WASI_V}")
   // a stream's pollable and poll without sockets: a command with tasks
   // parks its stdin read on them (rt9.xo $wasi_stdin_wait_read, R2k)
-  let waits = sock || wanted_fn("wasi:io/streams${WASI_V}", "[method]input-stream.subscribe")
+  let waits = net || wanted_fn("wasi:io/streams${WASI_V}", "[method]input-stream.subscribe")
   if wanted("wasi:io/poll${WASI_V}") {
     let ip = c.import_iface("wasi:io/poll${WASI_V}", ity_io_poll(waits))
     t_poll = c.alias_type(ip, "pollable")
@@ -1087,7 +1091,7 @@ pub fn component_of(core: Bytes, run: Bool = false) -> (Bytes, Str) {
   let is = c.import_iface("wasi:io/streams${WASI_V}", ity_io_streams(t_err, if waits { t_poll } else { -1 }))
   let t_in = c.alias_type(is, "input-stream")
   let t_out = c.alias_type(is, "output-stream")
-  if sock {
+  if net {
     // the network (rt9.xo, decision 0447)
     let inet = c.import_iface("wasi:sockets/network${WASI_V}", ity_sock_network())
     let t_net = c.alias_type(inet, "network")

@@ -57,6 +57,22 @@ time. Returned records are views that stay valid after later writes.
 `NetConn` has Stream's methods and the three deadline setters; `Conn`,
 `ServerConn` and `tls.TlsConn` satisfy it. Stream is unchanged.
 
+## 2026-11-03: fix: Stdio.width and read_secret in a wasm module
+
+- Kind: fix
+- Commit: this commit
+- Found by: decision 0447 stage 4's look at wasm_cmd_unsupported.txt (term_stdio)
+- Go reference: none (golang.org/x/term's GetSize and ReadPassword fail on a descriptor that is not a terminal)
+- Test: golden term_stdio as a wasip2/wasm command and under wasip1 (internal/selfhost TestWasmCommandGoldens, TestSelfhostWasm), off both unsupported lists
+- Timing: none (no hot path)
+- Shipped in: not yet released
+
+In a wasm module `Stdio.width()` faulted (`rt.call_c2` in obj.heap_word)
+and `read_secret` with it: the terminal width and echo code took the
+native heap's scratch record before checking for a WASI module. A WASI
+module has no terminal, so width is None and read_secret reads the line
+without touching echo, as `stdin_is_tty` already answered false.
+
 ## 2026-11-03: feature: Duration.round and truncate, Bytes.to_str_lossy and to_valid_utf8
 
 - Kind: feature

@@ -19,10 +19,9 @@ net_only # XO1515: no processes in a WASI 0.2 world (proc.run)
 proc_child_usage # XO1515: no processes in a WASI 0.2 world (proc.spawn)
 proc_children_load # XO1515: no processes in a WASI 0.2 world (proc.exec)
 proc_cmd # XO1515: no processes in a WASI 0.2 world (proc.run)
-rt_addrs # the wasm backend does not support the call `rt.fn_addr`
+rt_addrs # rt.fn_addr faults on wasm (native code paths name native-only exports through it: lowering it built the fiber switch into every wasm module, 2026-11-03), rt.sym_addr("strlen") needs the C library and auxv is Linux's
 signal_notify # XO1515: no processes in a WASI 0.2 world (proc.run)
 sys_c # the platform call `getpid` of c on another OS
-term_stdio # the wasm backend does not support the call `rt.call_c2` (obj.heap_word)
 unix_kill # XO1515: no processes in a WASI 0.2 world (proc.spawn)
 use_c_add # use c: no C calls on wasm
 use_c_enum # use c: no C calls on wasm

@@ -576,6 +576,11 @@ pub fn term_width() -> Int {
   if twflags.fake(TW_REAL_STDIO) {
     return tty_width()
   }
+  if sysio.layer() == 0 {
+    // a WASI module: no terminal, as isatty (columns' scratch record is
+    // the native heap's, which a wasm build does not have)
+    return 0
+  }
   for fd in [1, 2, 0] {
     let c = columns(fd)
     if c > 0 {
@@ -611,7 +616,8 @@ fn i16(v: Int) -> Int { if v >= 32768 { v - 65536 } else { v } }
 /// or restores them (on true). Turning it off returns true when standard
 /// input is a terminal whose echo it turned off.
 pub fn echo(on: Bool) -> Bool {
-  if twflags.fake(TW_REAL_STDIO) {
+  if twflags.fake(TW_REAL_STDIO) || sysio.layer() == 0 {
+    // a WASI module has no terminal whose echo to turn off
     return false
   }
   let r = rec()

@@ -973,3 +973,222 @@ tasks keeps the blocking read; a wasip1 module keeps fd_read with the
 EAGAIN backoff (gotchas/wasm-stdin-eagain.md). Proof:
 TestWasmCommandStdinParks (one task reads a line written 3 s late while
 another prints five ticks: the ticks come first).
+
+## Stage 4 results (2026-11-03, Xo Lang 4)
+
+Sockets (R2a to R2k) in a wasip2/wasm command, measured on the second
+linux/arm64 offload host (wasmtime 50.0.1, wasm-tools 1.263.0, TinyGo
+0.44.0, Rust 1.99.1), against the same programs in Rust (wasm32-wasip2,
+std::net; opt-level s, LTO, stripped) and TinyGo (`-target=wasip2`). The
+programs are in no repository: a TCP echo server (a task per connection),
+a UDP echo server, a lookup of `localhost`, and a GET of a 1,000 byte
+page from a local server.
+
+TinyGo has no row for sockets: its wasip2 target builds net programs but
+every socket or lookup fails at run time with `Netdev not set` (TinyGo's
+net needs a netdev driver, and wasip2 has none). Its net/http fetch
+over wasi:http's outgoing-handler (ydnar/wasi-http-go's transport) builds
+only for that package's proxy-world target (3,257,305 bytes), which
+`wasmtime run` cannot run as a command, so TinyGo has no runnable program
+in this stage.
+
+### Component size (bytes)
+
+| program | Xo | Rust | TinyGo |
+|---|---|---|---|
+| TCP echo | 76,299 | 132,868 | (no sockets) |
+| UDP echo | 73,768 | 129,277 | (no sockets) |
+| lookup | 92,860 | 98,704 | (no sockets) |
+| HTTP fetch | 2,178,531 | 134,538 | (not a command) |
+
+- All validate with `wasm-tools validate`; each Xo and Rust program ran
+  and printed the same output (`localhost: 127.0.0.1 ::1`, `status 200,
+  1000 bytes`, the echoed message and datagram).
+- The fetch rows are not the same program: Xo's is std/http's client
+  (HTTP/1.1 and HTTP/2, redirects, pooling, TLS linked in), Rust's writes
+  one HTTP/1.1 request by hand over std::net (std has no client), TinyGo's
+  would be net/http over wasi:http. Xo's size is std/http's, and it is the
+  next size target.
+- Xo imports only what each program calls (R2h's correction): 13 imported
+  interfaces for the echo servers and the lookup, against Rust's 21 for
+  the echo servers (std imports every wasi:cli interface and the
+  terminals).
+
+### Instantiate plus first request, and TCP echo under load
+
+Each server ran alone on the first linux/arm64 offload host with
+`wasmtime run -S inherit-network=y -S allow-ip-name-lookup=y` (the same
+flags for all) and a Go load generator: 32 connections, 15 s, each
+connection writing a message and reading its echo before the next; 3
+rounds, medians. First echo is from starting wasmtime to the first echoed
+message (median of 5). Builds: Xo `xo build --targets=wasip2/wasm`; Rust
+`cargo build --release --target wasm32-wasip2` with LTO at opt-level 3
+(the size rows above are opt-level "s"; on the load the two agree within
+the rounds' spread, bench/results/wasip2-stage4-2026-11-03.md). Server
+design: wasm32-wasip2 has no threads, so Rust std's echo is one
+nonblocking loop over every connection that sleeps 50 us when nothing was
+ready; Xo's and wstd's (Rust's async runtime over wasi:io, wstd 0.5) run a
+task per connection.
+
+| | Xo | Rust std | Rust wstd |
+|---|---|---|---|
+| first echo (ms) | 10.9 | 10.7 | 11.1 |
+| 64 B: round trips/s | 149,524 | 83,748 | 17,291 |
+| 64 B: p50 / p99 (ms) | 0.199 / 0.530 | 0.180 / 1.931 | 0.172 / 0.204 |
+| 16 KiB: round trips/s | 105,567 | 89,249 | 16,826 |
+| 16 KiB: MB/s | 1,730 | 1,462 | 276 |
+| 16 KiB: p50 / p99 (ms) | 0.295 / 0.583 | 0.281 / 1.742 | 0.177 / 0.211 |
+
+- 0 errors in every round.
+- Xo serves 1.79x Rust std's round trips at 64 bytes and 1.18x at
+  16 KiB, with a p99 3.6x and 3.0x lower; Rust std's p50 is a little
+  lower (its loop answers a ready connection without a task switch, and
+  its 50 us sleep shows in the tail).
+- An earlier run on the second host gave Rust std half these rates
+  (41,987 at 64 B) while Xo's matched, so the gap there (3.5x) was the
+  host, not the build; the table uses the first host, where the opt-level
+  3 and "s" builds of Rust agree.
+- wstd's latencies do not fit its rate: 32 connections at about 17,000
+  round trips a second would take about 1.9 ms each, not 0.17. Most
+  connections wait while a few are served, and the load generator
+  reports only the round trips that finished, so its p50 is not a
+  like-for-like figure; not investigated further.
+
+### What is still unsupported (internal/selfhost/testdata/wasm_cmd_unsupported.txt)
+
+21 of the goldens do not run as wasip2/wasm commands, all for what WASI
+0.2 does not have:
+
+- Processes (10: cmd_inherit, handle_drop_leak, host_usage, net_only,
+  proc_child_usage, proc_children_load, proc_cmd, signal_notify,
+  unix_kill, user_caps): WASI 0.2 has no process creation or signals, so
+  a program reaching proc.run, proc.spawn or proc.exec is XO1515 at build
+  time. net_only runs a child to test Net.only.
+- File modes, locks, the working directory and old times (7: fs_atomic,
+  fs_dir_errors, fs_files, fs_mkdir_mode, lock_drop_relock: modes and
+  locks; fs_cwd_path: no working directory; fs_ops_edges: wasi:filesystem's
+  datetime has no time before 1970). They build and run up to the first
+  such call, which returns "operation not supported".
+- C (3: use_c_add, use_c_enum: `use c` has no C to call in wasm; sys_c:
+  the C library's getpid).
+- rt_addrs (1): rt.fn_addr stays a fault in a wasm module (lowering it
+  built the native fiber switch into every module,
+  gotchas/wasm-fn-addr-builds-native-exports.md), rt.sym_addr("strlen")
+  needs the C library, and the auxiliary vector is Linux's.
+
+term_stdio left the list in this change: std's terminal width and echo
+used the native heap's scratch record before checking for a WASI module
+(rt.call_c2 faulted in obj.heap_word); they now answer "no terminal" as
+isatty does.
+
+The stage also found a hang a user could hit: a TCP close used
+`blocking-flush`, which stops every task in the instance, so a peer task
+in the same program never read (websocket_tls_deadline hung about 1 run
+in 20 on main) and a slow remote peer stalled all tasks. A close now
+flushes in the background through the scheduler's poll
+(gotchas/wasm-blocking-flush-deadlock.md, golden net_close_flush).
+Known issue: a closed connection whose peer never reads stays in that
+closing list while the program runs, since wasmtime's drop of a stream
+whose write is in flight waits for the write and tcp-socket.shutdown does
+not fail it (wasmtime PR #14461, "wasi: restore cancellation of pending
+TCP writes on stream drop", open); the runtime warns once at 1,024 such
+connections (golden net_close_stuck). Re-test when wasmtime merges it or
+ships an equivalent.
+
+## Stage 5 plan: WASI 0.3 (Proposed, 2026-11-03, Xo Lang 4)
+
+For the owner's decision; nothing of it is built. Stage 5 of the staged
+plan above: the `wasi:http/service` world with the async canonical ABI,
+over the existing suspension, and streams for bodies.
+
+### Where 0.3 runs today (read 2026-11-03)
+
+- WASI 0.3.0 was ratified on 2026-06-11, and 0.3.1 (`map<K, V>`, the
+  `implements` and `external-id` annotations) on 2026-08-11. A 0.3.2 with
+  the same WITs as 0.3.0 apart from the version is planned; wasmtime's
+  move to it (PR 14800, 2026-10-19) waits on 0.3.1's features.
+- wasmtime 46 and later (2026-06-22) implement the final 0.3.0 and
+  enable it and `component-model-async` by default. 43 to 45 implement
+  the 0.3.0-rc-2026-03-15 snapshot, 41 and 42 the 2026-01-06 one, both
+  behind `-Sp3 -W component-model-async=y`. `wasmtime serve` runs a
+  component exporting 0.3's service world and falls back to 0.2's proxy
+  world otherwise. The hosts' wasmtime 50.0.1 is in the first group, so
+  no tool change is needed to start.
+- Spin 4.0 (2026-06-15) made WASIp3 the default for new applications,
+  on the 0.3.0-rc-2026-03-15 snapshot, which it commits to support long
+  term; an instance serves several in-flight requests at once. Whether
+  Spin 4.2.6 (the hosts' Spin, on wasmtime 50.0.1) also accepts the final
+  0.3.0 names is not stated in its release notes: stage 5's first step
+  checks it on the host (a component naming `@0.3.0`, then one naming
+  the rc). If Spin takes only the rc, Xo writes the rc names under a
+  build flag until Spin moves, as step 1 rewrote 0.2.0 to 0.2.12.
+- Toolchains: Rust has 0.3 bindings (the `wasip3` crate) and jco an
+  experimental 0.3 shim; TinyGo and most others still write 0.2.
+
+### What changes in Xo's backend
+
+0.3 drops `wasi:io`: a pollable becomes a `future<T>`, input and output
+streams become `stream<u8>`, and start/finish pairs become async
+functions. Its request and response resources carry their bodies as
+`stream<u8>` and trailers as a `future`, and `handler.handle` is an
+async export returning `result<response, error-code>`.
+
+1. **component.xo**: the async canonical ABI's built-ins in the component
+   it writes: `canon lift ... async` with a callback for the exported
+   handler; `task.return`; `waitable-set.new`, `.wait`, `.poll` and
+   `waitable.join`; `stream.new`, `.read`, `.write`, `.cancel-read`,
+   `.cancel-write`, `.drop-readable`, `.drop-writable` for `stream<u8>`;
+   the same for `future<T>`; `context.get` and `context.set`; and the
+   async lowering (`canon lower ... async`) of imports such as
+   `client.send`. The interface types for `wasi:http/types@0.3.0`,
+   `wasi:http/handler`, `wasi:cli` and `wasi:clocks` at 0.3 (no
+   `wasi:io`), and `wasi:sockets` at 0.3 (2 interfaces, `listen`
+   returning a stream of sockets) if commands move too.
+2. **The scheduler (rt3.xo, rt9.xo)**: today a task that waits records a
+   pollable in rt9's wait table and the scheduler calls `poll`. Under
+   0.3 the export returns to the host with a callback code instead of
+   blocking: the callback is the scheduler's loop, run once per event,
+   and a waiting task joins its stream or future to the instance's
+   waitable set. The suspension points and resume points the gen scan
+   already marks (rt3_blocking, rt9_blocking) stay; what changes is the
+   wait primitive beneath them and that the export does not own the
+   thread. Several requests may be in flight in one instance (Spin 4
+   does this): the router and main run once per instance, not per
+   request, which removes the cost step 1 named (main and the router
+   built for each request).
+3. **std/http's component path (http.serve_component)**: the request
+   body is read from a `stream<u8>` and the response body written to one;
+   trailers through the futures. The 0.2 path stays: one build flag or a
+   target (`--targets=wasip3/wasm`, alongside `wasip2/wasm`) picks the
+   world, and every stage 2 golden runs on both.
+4. **The client (outgoing requests)**: `client.send` is one async call in
+   place of `outgoing-handler.handle` plus a future-incoming-response
+   poll.
+
+Order: hello on `wasi:http/service` under `wasmtime serve` first (the
+lift, task.return, a response with a body stream), measured; then bodies
+both ways, trailers and the client; then instance reuse with concurrent
+requests; commands and sockets at 0.3 last, as their own decision.
+
+### Measurement plan against stage 2's 0.2 numbers
+
+On the second linux/arm64 host, alone on it, with the step 1 programs
+and loadgen (32 connections, 20 s, 3 rounds, medians), as the tables
+above:
+
+- The hello component at 0.3 against Xo's 0.2 hello (257,324 bytes,
+  14.2 ms first request, 81,681 req/s, p50 0.347 ms, p99 1.270 ms at
+  stage 2), and against Rust's `wasip3` hello the same way: bytes, first
+  request, req/s, p50, p90, p99.
+- The same with one instance serving all requests (0.3's reuse, under
+  `wasmtime serve` and Spin), to separate the per-request main and
+  router cost from the ABI's.
+- A streaming body both ways (the 100,000 byte request body of
+  TestWasmComponentServe and a 1 MB response): throughput and p99 at
+  0.2 and 0.3.
+- An outgoing request per incoming request (the client): req/s and p99
+  at 0.2 and 0.3.
+- Speed claims between Xo builds use `xo bench --ab` where it applies;
+  component sizes come from the built files.
+
+The owner decides whether to start it.

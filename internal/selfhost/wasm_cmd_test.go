@@ -81,6 +81,11 @@ func TestWasmCommandGoldens(t *testing.T) {
 				_, listed := known[name]
 				if why != "" && !listed {
 					t.Errorf("%s; fix it, or list it in internal/selfhost/testdata/wasm_cmd_unsupported.txt with the reason", why)
+				} else if why != "" {
+					// what fails now, beside the list's reason (-v)
+					t.Logf("listed (%s): %s", known[name], why)
+				} else if listed {
+					t.Logf("listed (%s) but passes", known[name])
 				}
 			})
 		}

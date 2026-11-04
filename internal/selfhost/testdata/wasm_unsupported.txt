@@ -59,10 +59,9 @@ net_only # the wasm backend does not support processes (`proc.run`): WASI previe
 net_short_str # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 proc_children_load # the wasm backend does not support processes (`proc.exec`): WASI preview1 has none
 proc_cmd # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
-rt_addrs # the wasm backend does not support the call `rt.fn_addr`
+rt_addrs # rt.fn_addr faults on wasm (native code paths name native-only exports through it: lowering it built the fiber switch into every wasm module, 2026-11-03), rt.sym_addr("strlen") needs the C library and auxv is Linux's
 signal_notify # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
 sys_c # the platform call `getpid` of c on another OS
-term_stdio # the wasm backend does not support the call `rt.call_c2`
 tls_client # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_coalesced_finish # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 tls_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
