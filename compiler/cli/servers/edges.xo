@@ -87,7 +87,8 @@ pub fn edges_of(os: Os, dir: Str, impls: Bool, preload: Bool) -> Edges ! Str use
 /// implementation files loaded and their bodies checked too (preload), or
 /// the program alone.
 fn session(os: Os, dir: Str, preload: Bool) -> Session ! Str uses (stdio, fs, env) {
-  let s = agent_session(os, dir, if preload { impl_modules(os, std_dir(os)) } else { [] }, false, [], false)?
+  let std = agent_std(os, dir)
+  let s = agent_session(os, dir, std, if preload { impl_modules(os, std) } else { [] }, false, [], false)?
   if !s.err.is_empty() {
     return Err(s.err)
   }

@@ -49,7 +49,12 @@ its full documentation lives. Last verified: 2026-10-18 (main 41a6afe2).
   does (decision 0210), so the program goldens under
   internal/*/testdata are not searched: refs names the directories it
   left out (`"testdata_skipped"`, a `note: not checked` line), and
-  `xo refs --testdata` checks them too. At a root, refs checks only the
+  `xo refs --testdata` checks them too. With XO_STD unset, def, refs,
+  type, doc and symbols read the std of the tree --dir is in (a `std`
+  directory holding prelude.xo, or a checkout's std/), not bin/../std:
+  another checkout's bin/xo run in a worktree answers from the
+  worktree's std (2026-11-04; before, the calls resolved to the other
+  std and only the declaration was listed). At a root, refs checks only the
   modules whose text spells the name's last segment as a whole
   identifier (a module that does not cannot refer to it; 2026-10-26):
   inside those, a function body that spells none of the names is not

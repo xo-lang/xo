@@ -1402,24 +1402,18 @@ func TestAgentRuntimeRefs(t *testing.T) {
 	}
 }
 
-// TestAgentRefsOtherStd: refs run from the root of a tree whose std is
-// not the one xo runs with (a worktree's root, while xo is another
-// checkout's bin/xo, whose std is bin/../std, and XO_STD is unset) lists
-// the qualified calls too (xo-lang-4, 2026-11-04: from a worktree's root,
-// `xo refs --dir=std/native/llrt linux.vdso_clock` listed only the
-// declaration, missing the calls in linux.xo, sysio.xo and prof.xo; from
-// the worktree's cmd/xo, from /tmp, or with XO_STD set to the worktree's
-// std it lists all five). The test copies std into a directory, runs refs
-// there with XO_STD empty, and points --dir into the copy. It runs with
-// XO_TEST_REFS_GAP=1 until the fix (queued with the Lead), which removes
-// the skip.
+// TestAgentRefsOtherStd: refs in a std tree other than the one xo runs
+// with (a worktree's std, while xo is another checkout's bin/xo whose
+// std is bin/../std) lists the qualified calls too: the check reads the
+// tree's own std (Xo Lang 4, 2026-11-04: from a worktree, `xo refs
+// --dir=std/native/llrt linux.vdso_clock` listed only the declaration,
+// missing the calls in linux.xo, sysio.xo and prof.xo). The test copies
+// std, points --dir into the copy, and runs with no XO_STD (which, when
+// set, still wins). def in the copy answers from the copy.
 func TestAgentRefsOtherStd(t *testing.T) {
-	if os.Getenv("XO_TEST_REFS_GAP") == "" {
-		t.Skip("a known gap of xo refs: set XO_TEST_REFS_GAP=1 to run it")
-	}
 	t.Parallel()
-	root := t.TempDir()
-	other := filepath.Join(root, "std")
+	setenv(t, "XO_STD", "")
+	other := filepath.Join(t.TempDir(), "std")
 	err := filepath.WalkDir(xoStd(), func(p string, d fs.DirEntry, err error) error {
 		if err != nil {
 			return err
@@ -1437,17 +1431,73 @@ func TestAgentRefsOtherStd(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	chdir(t, root)
-	setenv(t, "XO_STD", "")
-	v := agentJSON(t, 0, "refs", "--dir="+filepath.Join(other, "native", "llrt"), "--json", "linux.vdso_clock")
-	got := map[string]int{}
-	for _, r := range v["references"].([]any) {
-		got[filepath.Base(r.(map[string]any)["file"].(string))]++
+	// the copy's linux.xo one line longer at the top: def's line says which
+	// tree answered
+	lx := filepath.Join(other, "native", "llrt", "linux.xo")
+	src, err := os.ReadFile(lx)
+	if err != nil {
+		t.Fatal(err)
 	}
-	// the declaration and the two calls in clock_gettime; clock_choose's
-	// call; the profiler's
-	if got["linux.xo"] < 3 || got["sysio.xo"] < 1 || got["prof.xo"] < 1 {
-		t.Errorf("refs linux.vdso_clock in a copy of std: %v, want linux.xo 3, sysio.xo 1, prof.xo 1", got)
+	if err := os.WriteFile(lx, append([]byte("// the copy\n"), src...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	want := 0
+	for i, l := range strings.Split(string(src), "\n") {
+		if strings.HasPrefix(l, "pub fn vdso_clock(") {
+			want = i + 2
+		}
+	}
+	llrt := filepath.Join(other, "native", "llrt")
+	for _, name := range []string{"linux.vdso_clock", "vdso_clock"} {
+		v := agentJSON(t, 0, "refs", "--dir="+llrt, name)
+		got := map[string]int{}
+		for _, r := range v["references"].([]any) {
+			got[filepath.Base(r.(map[string]any)["file"].(string))]++
+		}
+		// the declaration and the two calls in clock_gettime; clock_choose's
+		// call; the profiler's
+		if got["linux.xo"] < 3 || got["sysio.xo"] < 1 || got["prof.xo"] < 1 {
+			t.Errorf("refs %s in a copy of std: %v, want linux.xo 3, sysio.xo 1, prof.xo 1", name, got)
+		}
+	}
+	v := agentJSON(t, 0, "def", "--dir="+llrt, "linux.vdso_clock")
+	ds, _ := v["declarations"].([]any)
+	if len(ds) != 1 || int(ds[0].(map[string]any)["line"].(float64)) != want {
+		t.Errorf("def linux.vdso_clock in a copy of std: %v, want line %d of the copy", v, want)
+	}
+}
+
+// TestAgentRefsAlias: def and refs of a function, a type and a method
+// spelled through a module alias (`use M as sh`, `sh.Box.area`), the
+// module's name, or bare, all answer the declaration and its uses.
+func TestAgentRefsAlias(t *testing.T) {
+	t.Parallel()
+	dir := writeFiles(t, map[string]string{
+		"xo.mod":           "module example.com/alias\nedition preview\n",
+		"shapes/shapes.xo": "pub struct Box { pub w: Int }\n\npub fn (b: Box) area() -> Int { b.w * b.w }\n\npub fn make(w: Int) -> Box { Box{w: w} }\n",
+		"main.xo":          "use example.com/alias/shapes as sh\n\nfn main(os: Os) {\n  let b = sh.make(3)\n  let c: sh.Box = sh.Box{w: 2}\n  os.stdio.println(\"${b.area()} ${c.area()}\")\n}\n",
+	})
+	count := func(v map[string]any, file string) int {
+		n := 0
+		for _, r := range v["references"].([]any) {
+			if filepath.Base(r.(map[string]any)["file"].(string)) == file {
+				n++
+			}
+		}
+		return n
+	}
+	for _, q := range []struct {
+		name string
+		main int
+	}{{"sh.Box.area", 2}, {"shapes.Box.area", 2}, {"Box.area", 2}, {"sh.make", 1}, {"sh.Box", 2}} {
+		v := agentJSON(t, 0, "refs", "--dir="+dir, q.name)
+		if got := count(v, "main.xo"); got != q.main {
+			t.Errorf("refs %s: %d uses in main.xo, want %d: %v", q.name, got, q.main, v)
+		}
+		d := agentJSON(t, 0, "def", "--dir="+dir, q.name)
+		if !strings.Contains(fmt.Sprint(d), "shapes.xo") {
+			t.Errorf("def %s: %v, want shapes/shapes.xo", q.name, d)
+		}
 	}
 }
 

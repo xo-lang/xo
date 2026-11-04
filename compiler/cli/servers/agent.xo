@@ -182,13 +182,16 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
       dir = dir_of(fp)
     }
   }
+  // the std the check reads: the tree the directory is in when it is a
+  // std tree or a checkout's (agent_std)
+  let std = agent_std(os, abs_of(cwd, dir))
   // the std and runtime modules a name refers to load with the program
-  var preload = if a.target.is_empty() || position_of(a.target).is_some() { [] } else if cmd == "refs" { semantic.preloads_wide(os, std_dir(os), a.target) } else { semantic.preloads_for(os, std_dir(os), a.target) }
+  var preload = if a.target.is_empty() || position_of(a.target).is_some() { [] } else if cmd == "refs" { semantic.preloads_wide(os, std, a.target) } else { semantic.preloads_for(os, std, a.target) }
   // refs over std itself (--dir=std or std/native): the runtime files
   // that spell a name looked for, which no module checked there may
   // import (pg.xo, imported by native/sql only; 2026-10-30)
   if cmd == "refs" && position_of(a.target).is_none() {
-    let sd = std_dir(os).trim_suffix("/")
+    let sd = std.trim_suffix("/")
     let ad = abs_of(cwd, dir).trim_suffix("/")
     if ad == sd || ad == "${sd}/native" {
       for p in semantic.runtime_spelling(os, sd, [a.target] + a.more) {
@@ -200,7 +203,7 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   }
   // several names: every one's modules, loaded and checked once
   for t in a.more {
-    for p in semantic.preloads_wide(os, std_dir(os), t) {
+    for p in semantic.preloads_wide(os, std, t) {
       if !preload.contains(p) {
         preload.push(p)
       }
@@ -241,13 +244,13 @@ pub fn run_agent(os: Os, cmd: Str, args: List[Str]) -> Int uses (stdio, fs, env)
   // def, doc and symbols read declarations only: no body is parsed or
   // checked (a position's lookup reads its body)
   let decls_only = (cmd is "def" | "doc" | "symbols") && position_of(a.target).is_none() && !eager
-  var s = match agent_session(os, dir, preload, a.testdata, words, decls_only) {
+  var s = match agent_session(os, dir, std, preload, a.testdata, words, decls_only) {
     Ok(x) => x
     Err(e) => {
       // `xo doc NAME` or `xo def NAME` run outside a module (a scratch or
       // home directory over the walk bound, or one with no .xo file):
       // a std or prelude name is answered from std alone
-      let fb = if (cmd is "doc" | "def") && !a.dir_set { std_session(os, preload, decls_only) } else { None }
+      let fb = if (cmd is "doc" | "def") && !a.dir_set { std_session(os, std, preload, decls_only) } else { None }
       match fb {
         Some(x) => {
           os.stdio.eprintln("xo ${cmd}: the working directory was not checked (${e}); answering from std")
@@ -629,17 +632,46 @@ fn too_wide(os: Os, d: Str) -> Str? uses fs.read {
   None
 }
 
+/// The std an agent command reads for dir: $XO_STD when set; else the std
+/// tree dir is in (a directory `std` holding prelude.xo) or the std of
+/// the checkout dir is in (an ancestor holding std/prelude.xo and
+/// std/native); else xo's own (std_dir). A worktree's std checked by
+/// another checkout's bin/xo, whose std is bin/../std, resolved the
+/// tree's calls to the other std's declarations: `xo refs
+/// --dir=std/native/llrt linux.vdso_clock` listed the declaration alone
+/// (Xo Lang 4, 2026-11-04).
+fn agent_std(os: Os, dir: Str) -> Str uses (env, fs) {
+  if !(os.env.get("XO_STD") ?? "").is_empty() {
+    return std_dir(os)
+  }
+  var d = dir.trim_suffix("/")
+  while d.len() > 1 {
+    if d.ends_with("/std") && (os.fs.exists("${d}/prelude.xo").ok() ?? false) {
+      return d
+    }
+    if (os.fs.exists("${d}/std/prelude.xo").ok() ?? false) && (os.fs.exists("${d}/std/native").ok() ?? false) {
+      return "${d}/std"
+    }
+    let p = dir_of(d)
+    if p == d || p == "." {
+      break
+    }
+    d = p
+  }
+  std_dir(os)
+}
+
 /// A Session of std alone (and the modules preload names): agent_session
 /// over a new directory holding one empty program, removed after; None
 /// when it fails too.
-fn std_session(os: Os, preload: List[Str], decls_only: Bool) -> Session? uses (stdio, fs, env) {
+fn std_session(os: Os, std: Str, preload: List[Str], decls_only: Bool) -> Session? uses (stdio, fs, env) {
   let tmp = os.fs.create_temp(hostpath.temp_dir(os.env), "xo-doc-").ok() ?? return None
   // create_temp makes a file: a directory of that name instead
   os.fs.remove(tmp).ignore_err("replaced by a directory")
   os.fs.create_dir_all(tmp).ok() ?? return None
   // a directory with no .xo file is refused: one empty program
   os.fs.write("${tmp}/main.xo", "fn main() {}\n".bytes()).ok() ?? return None
-  let r = agent_session(os, tmp, preload, false, [], decls_only).ok()
+  let r = agent_session(os, tmp, std, preload, false, [], decls_only).ok()
   os.fs.remove_all(tmp).ignore_err("a temporary directory")
   r
 }
@@ -647,9 +679,9 @@ fn std_session(os: Os, preload: List[Str], decls_only: Bool) -> Session? uses (s
 /// A Session over the .xo files of dir, checked as `xo lsp` checks open
 /// documents, with nothing written to standard output; at a root,
 /// testdata walks its `testdata` directories too.
-fn agent_session(os: Os, dir: Str, preload: List[Str], testdata: Bool, words: List[Str], decls_only: Bool) -> Session ! Str uses (stdio, fs, env) {
+fn agent_session(os: Os, dir: Str, std: Str, preload: List[Str], testdata: Bool, words: List[Str], decls_only: Bool) -> Session ! Str uses (stdio, fs, env) {
   let wd = os.fs.cwd_path().ok() ?? os.env.get("PWD") ?? ""
-  var s = Session{version: "", std_dir: std_dir(os), wd: wd, lsp_std: "", quiet: true, preload: preload, decls_only: decls_only}
+  var s = Session{version: "", std_dir: std, wd: wd, lsp_std: "", quiet: true, preload: preload, decls_only: decls_only}
   let d = abs_of(wd, dir)
   let entries = os.fs.read_dir(d).map_err(fn(e) { e.display() })?
   for fi in entries {
