@@ -33,12 +33,24 @@ with megabytes queued to that open socket, waited forever: 20 of 20 runs
 hung after the last line before "done". Only drop a stream whose flush is
 done or failed; never drop the leftovers at main's end.
 
-Known issue (open, 2026-11-03): a peer that never reads keeps a closed
-connection's socket and stream in the closing list for as long as the
-program runs; main's end leaves them to the instance. A long running
-server leaks one entry, its socket and the host's buffer per such
-client, a way for clients to exhaust it. A native close hands the bytes
-to the kernel, which bounds them. The planned fix (an expiry, the write
-deadline or 30 s, then tcp-socket.shutdown and the drop) hung its own
-golden (100 connections whose peer never reads) in its first version;
-which step blocks is being measured (decision 0447, Stage 4 results).
+Known issue (open, a wasmtime limit, 2026-11-03): a peer that never
+reads keeps a closed connection's socket and stream in the closing list
+for as long as the program runs, so a long running server keeps one
+entry, its socket and the host's buffer per such client. rt9.xo warns
+once on stderr at 1,024 entries (CLOSING_WARN) and keeps them. Two ways
+to free them were tried with golden net_close_stuck (100 connections
+closed with a write in flight while the client holds them unread):
+
+- an expiry (the write deadline, else 30 s), then tcp-socket.shutdown(both)
+  and the drop: the drop still waited for the write, and the program hung
+  (10 of 10);
+- the shutdown, then the drop once check-write reports the write failed:
+  no hang, but the write never failed while the peer held the
+  connection, so all 100 entries stayed until the client closed
+  (counted with a logging build).
+
+wasmtime's drop of a TCP output stream waits for a pending write; see
+wasmtime PR #14461 "wasi: restore cancellation of pending TCP writes on
+stream drop" (open since 2026-10-01). Re-test when wasmtime merges it or
+ships an equivalent: with a drop that cancels the write, an entry past
+its expiry can be dropped and the warning becomes a bound.

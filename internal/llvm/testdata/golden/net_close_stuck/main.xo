@@ -1,0 +1,64 @@
+// A server whose peer never reads (decision 0447, 2026-11-03): for each of
+// 100 connections the server writes until its write deadline stops it and
+// closes with the write still in flight, while the client keeps every
+// connection open and reads nothing. The closes must neither hang nor wait:
+// on wasm each such connection waits in rt9.xo's closing list (dropping a
+// stream whose write is in flight waits in wasmtime) until the client's own
+// close fails the write.
+
+fn main(os: Os) {
+  let clock = os.clock
+  let n = 100
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let addr = l.addr()
+      let served: Chan[Str] = Chan[Str].new(cap: 1)
+      scope s {
+        s.spawn(fn() {
+          let chunk = Bytes.zeroed(65536)
+          var timeouts = 0
+          for _ in 0..n {
+            match l.accept() {
+              Ok(c) => {
+                c.set_write_deadline(clock, Some(clock.now() + 10ms))
+                while {
+                  match c.write(chunk) {
+                    Ok(_) => ()
+                    Err(_) => {
+                      timeouts += 1
+                      break
+                    }
+                  }
+                }
+                c.close()
+              }
+              Err(e) => {
+                os.stdio.println("accept: ${e}")
+                break
+              }
+            }
+          }
+          served.send("${timeouts} of ${n} writes stopped by the deadline")
+        })
+        var conns: List[Conn] = []
+        for _ in 0..n {
+          match os.net.dial(addr) {
+            Ok(c) => conns.push(c)
+            Err(e) => {
+              os.stdio.println("dial: ${e}")
+              break
+            }
+          }
+        }
+        os.stdio.println(served.recv() ?? "?")
+        os.stdio.println("the client held ${conns.len()} connections, unread")
+        for c in conns {
+          c.close()
+        }
+      }
+      l.close()
+      os.stdio.println("done")
+    }
+    Err(e) => os.stdio.println("listen: ${e}")
+  }
+}

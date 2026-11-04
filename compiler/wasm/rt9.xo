@@ -94,6 +94,9 @@ fn rt9_imports() -> Str {
   """
 }
 
+/// The closing list's length at which rt9.xo warns once on stderr.
+const CLOSING_WARN = 1024
+
 /// The globals of rt9.xo: the outcome rt.net_status and rt.net_msg read
 /// (set by netwasi.xo), the last call's error, the network, and the wait
 /// table ({pollable, owner, task, unused} entries of 16 bytes).
@@ -198,6 +201,7 @@ fn rt9_text(var g: Gen) -> Str {
       i32.load offset=8
       call $sk_drop""" } else { "" }
   // the closing list (TCP only: a UDP close drops at once)
+  let capmsg = g.litp("xo: ${CLOSING_WARN} closed TCP connections are waiting for peers that do not read; they are kept (wasmtime waits in the drop of a stream whose write is in flight, wasmtime PR #14461)\n")
   let closing = if g.tcp { """
     ;; a closed connection's output stream o and socket s, kept until what
     ;; o holds has gone out ({o, s} entries of 8 bytes)
@@ -245,7 +249,18 @@ fn rt9_text(var g: Gen) -> Str {
       global.get $cln
       i32.const 1
       i32.add
-      global.set $cln)
+      global.set $cln
+      ;; once, at CLOSING_WARN entries: peers that do not read keep their
+      ;; entries (a drop with the write in flight waits in wasmtime, and
+      ;; tcp-socket.shutdown does not fail that write, 2026-11-03)
+      global.get $cln
+      i32.const ${CLOSING_WARN}
+      i32.eq
+      if
+        i32.const 2
+        ${capmsg}
+        call $write
+      end)
 
     ;; 1 when output stream o, after a flush started, has written what it
     ;; held (check-write allows bytes again) or failed; never waits

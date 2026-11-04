@@ -1,0 +1,6 @@
+exit 0
+--- stdout
+100 of 100 writes stopped by the deadline
+the client held 100 connections, unread
+done
+--- stderr

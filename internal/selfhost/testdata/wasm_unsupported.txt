@@ -51,6 +51,7 @@ lock_drop_relock # operation not supported (WASI has no file modes or locks)
 multipart_basic # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 native_sql # the wasm backend does not support the network (`rt.net_dial`): WASI preview1 has no sockets
 net_close_flush # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+net_close_stuck # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 net_dial_dual_stack # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 net_echo # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
 net_lookup_dial_timeout # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
