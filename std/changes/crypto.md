@@ -1,5 +1,21 @@
 # std/crypto changes
 
+## 2026-11-04: perf: bigmod.mac_row as two carry chains (Go's addMulVVW shape on arm64)
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Lead (mac_row is 75% of an RS256 verify; Go has assembly for addMulVVW)
+- Go reference: math/big arith_arm64.s addMulVVW (go1.26.1): the same two ADDS/ADCS chains in Xo, no assembly
+- Test: internal/llvm TestRSADiff and TestConstantTimeLLVM; TestStdCorpora; tls_rsa, tls_x509, tls_verify, tls_nistec, http_tls_keys goldens under XO_FREE_CHECK=1; bench/perf/jwt and rsa outputs
+- Timing: `xo bench --ab` on linux/arm64 (host 1, n=3), A the parent: bench/perf/jwt rs256_verify 0.933 (0.865 to 0.948), bench/perf/rsa sign2048 0.957 (0.934 to 0.964), sign4096 0.868 (0.865 to 0.870), verify2048 0.921 (0.869 to 1.006, within noise)
+
+mac_row's 4-word round added each word's low half and the carry word in
+series (two adds a word, 16 for four, and a store each). It now adds x and
+the four low halves in one carry chain, then the carry word and the high
+halves one word up in a second, the carry kept in the flags (arm64: 8
+multiplies, 10 adds in two adds/adcs runs, two stp). No branch depends on
+the values, as before.
+
 ## 2026-11-04: perf: ECDSA verification multiplies with public-input windows
 
 - Kind: perf
