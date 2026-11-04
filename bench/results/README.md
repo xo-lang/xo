@@ -302,3 +302,4 @@
 - [std-twin-time-2026-11-03.md](std-twin-time-2026-11-03.md): std/time parse after integer field codes: 0.815 of before on host 2 (A/B); the Go row waits for host 1
 - [mutex-poison-2026-11-03.md](mutex-poison-2026-11-03.md): decision 0482, Mutex.with without the copy: a 1M element list written 20,000 times went from about 9 s to 0.00 s (Mac, same checksum); cookiejar --ab within noise on linux/arm64.
 - [json-own-form-tagged-2026-11-03.md](json-own-form-tagged-2026-11-03.md): decision 0478 stage 4: own form (via) and tagged enum cost against the workarounds and Go twins, code size, correctness, identity.
+- [std-twin-jwt-2026-11-03.md](std-twin-jwt-2026-11-03.md): std/jwt host 1 rows against golang-jwt v5: HS256 0.67, EdDSA 0.74, RS256 verify 1.12, ES256 verify 1.85 (the signature check in std/crypto)
