@@ -1,0 +1,65 @@
+// jwt: std/jwt against github.com/golang-jwt/jwt/v5 (twin.go.txt). Usage:
+// `<program> none|hs256_sign|hs256_verify|rs256_verify|es256_verify|eddsa_verify`.
+// Setup parses the keys and signs one token per algorithm; the workload then
+// signs (HS256, 20000 times) or verifies (2000 times, 200 for RS256 and ES256
+// is not needed: all 2000). Prints `<workload> <count of ok results>`.
+use std/jwt
+use std/crypto
+
+struct Claims {
+  sub: Str
+  exp: Int
+  iss: Str
+} derive Json
+
+const RSA_PRIV: Str = "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDB4VbTYTHERXZ/\n9ObD76o0l4GPFoyb+5KOqnGnhlq3t7e8s09gdi6sGOGrVHbQK7FBrHt9Z0l2XY5A\npoVMq+q2LW81n7fdRaHtpkTuetISI4xkC1/Px3Akgqr4btBs1ZvA+uUiJfkB6p2i\nrnz8TzZleAuLaKezvGQOkSIiDkTnfQJR72VCPDAC+iL7QblYkDRXRp6PQKr/KD5/\nW9swaUFopFPDQFkVeAxSjVqlZtdQJtdpmrmn3EZbuEUb6i8YoUdOLhDuJ9NnCOOE\nPvbyIwl4Fv4bM8a3Wrbw1Sgj9bWQ+qG3aO/CLB+63b4SmJ/D10R6dPapchK56wfL\n1TUf90yLAgMBAAECggEAFTl8flaBEroB/38JdkC58tj1K3tt+DOBt1GMcKkCLGOV\n3zgIBAjcEiYFKnLsMNzfok9mE3PntGgIhyZTqHGXl8sAhi/OepBBallN6YeTkL3I\nhDlEi2QLcEvHuLu04H0/+E/fHq5mhKGxERql/x8S1ufd56yU01XX5EpaIL1MKMUz\nTEVCuuYaQ1ckXwSEL1bVehGXiayqkiPwa0Sqf7Cxt3doTUnrZPKJnZjOXS/ZtuM3\nZj0JreMA0iEIxto2R4iATsuj4MsXGuA31COnfDHY1nFQFmZTaV3BHWgE7ry+xd//\nJIvd/MkLQRG5+qeFn7504bdm+kKa0dR4ymulCOIycQKBgQDSTlaUlNbMG/wB04Jt\nv7uNTfKz+mYiqGKBHzDYhGiUaJJXxC043AZIZstPPsNQ0fmc0d15kasbLEf3pHFA\nqX429xxwD87x/ARBgr9PKBRbyH7aZkSdTOtXWRecdpbCh6QCTw/U6CGk0f0rHRgT\nEPZl56MJ5BHYLe4r+cIKqNyCOwKBgQDsAV1eeLxJrZoIvj1jVKRPXpHI9abEZgat\nweXU3IXu6rpgKplIjLp7m1Dc48kViIJR7inDE+bjrItxK6YQd0fAImd5EVZ5w2QF\na7lwGF4Irq3VQKHPYiai78fhm6YCcmBYarh2sQqRYp/qq192Z+hk0hLuMUZthVKZ\nGWfE8vvp8QKBgGb0CLiWII0tSfJO6/P0P8mOFjl7ZJKk4gwaC9yC/XthsfqbRBQo\nyj6ZbAAwVodzM4JMzuJbqGsWA2k9LGAeWXZpBJfrdUDLQf4cFrGWiljgTxF1rTNg\nW3mYWNG00FsM8gJbWAG/XfEFB64agRWcYTND8XG/H+k3mvgWPaLgRYrPAoGBANhr\nP/Xb/b4Kxk/yNFUcTzjBXirMqcs8TC+WuW4Dc4ZuFc8OAVZ4RqIHAZYuBD4M2oTL\nQ9yyKW7q0UxMXJKI73EPm5d4ALbUKKqX6IsUrVaE6L+/7yI/vXJ5M/B9TTS9MgCi\njNm67Bf6Ou91i6sHCiM6SUXIRe807VOb6n6+26fhAoGBAKoVJLW4AE6RUm/AnCdA\n1nf6UF5mwhQ3ZfxLkw8nHUP3X5QOJ1GcCAR8oIshARBb6Grf96vO4QFQxi9YNOjq\n10309Htd0Ejcc3usUj+MFsswG6AtkXKTE0x6gjoIQRoSX+FJqvKzeh2p35KsZeXC\nZComAH7nKEXIAUHFDCTh1yku\n-----END PRIVATE KEY-----\n"
+const RSA_PUB: Str = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAweFW02ExxEV2f/Tmw++q\nNJeBjxaMm/uSjqpxp4Zat7e3vLNPYHYurBjhq1R20CuxQax7fWdJdl2OQKaFTKvq\nti1vNZ+33UWh7aZE7nrSEiOMZAtfz8dwJIKq+G7QbNWbwPrlIiX5Aeqdoq58/E82\nZXgLi2ins7xkDpEiIg5E530CUe9lQjwwAvoi+0G5WJA0V0aej0Cq/yg+f1vbMGlB\naKRTw0BZFXgMUo1apWbXUCbXaZq5p9xGW7hFG+ovGKFHTi4Q7ifTZwjjhD728iMJ\neBb+GzPGt1q28NUoI/W1kPqht2jvwiwfut2+Epifw9dEenT2qXISuesHy9U1H/dM\niwIDAQAB\n-----END PUBLIC KEY-----\n"
+const P256_PRIV: Str = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgdZudbn82KK6ToN5K\nhguL9VxnTS6RI6YWkiFZsZDOmwShRANCAAQTdSfQcmyCEGbTxpGvMCpqt7+og3xZ\nj8bNz2+LdeS5RASHtjcVTY6annrHSO15nje7cjPweljkgbI1nk1+Clc9\n-----END PRIVATE KEY-----\n"
+const P256_PUB: Str = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEE3Un0HJsghBm08aRrzAqare/qIN8\nWY/Gzc9vi3XkuUQEh7Y3FU2Omp56x0jteZ43u3Iz8HpY5IGyNZ5NfgpXPQ==\n-----END PUBLIC KEY-----\n"
+const ED25519_PRIV: Str = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIC7Z8Ua7ufdSALkYsD/akRduAGTeVMHobs5KcOahwkRv\n-----END PRIVATE KEY-----\n"
+const ED25519_PUB: Str = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAmtD1+qnxS5ac/r6NLnoHFt+7PAraxfLpVr3bdVEfSwc=\n-----END PUBLIC KEY-----\n"
+
+fn priv(pem: Str) -> jwt.Key {
+  let der = crypto.pem_decode(pem)[0].bytes
+  jwt.Key.Private(key: crypto.parse_private_key(der).ok() ?? fault("private key"))
+}
+
+fn pubkey(pem: Str) -> jwt.Key {
+  let der = crypto.pem_decode(pem)[0].bytes
+  jwt.Key.Public(key: crypto.parse_public_key(der).ok() ?? fault("public key"))
+}
+
+fn main(os: Os) uses stdio, env, rand {
+  let w = os.env.args().get(0) ?? "none"
+  let claims = Claims{sub: "ann", exp: 4000000000, iss: "me"}
+  let hs = jwt.Key.Hmac(secret: Secret.new(b"secret-for-jwt-bench-0123456789abcdef"))
+  let rsa = priv(RSA_PRIV)
+  let p256 = priv(P256_PRIV)
+  let ed = priv(ED25519_PRIV)
+  let rsa_pub = pubkey(RSA_PUB)
+  let p256_pub = pubkey(P256_PUB)
+  let ed_pub = pubkey(ED25519_PUB)
+  let hs_tok = jwt.sign(os.rand, jwt.Alg.HS256, hs, claims, None).ok() ?? fault("sign")
+  let rs_tok = jwt.sign(os.rand, jwt.Alg.RS256, rsa, claims, None).ok() ?? fault("sign")
+  let es_tok = jwt.sign(os.rand, jwt.Alg.ES256, p256, claims, None).ok() ?? fault("sign")
+  let ed_tok = jwt.sign(os.rand, jwt.Alg.EdDSA, ed, claims, None).ok() ?? fault("sign")
+  var ok = 0
+  if w == "hs256_sign" {
+    for _i in 0..20000 {
+      if jwt.sign(os.rand, jwt.Alg.HS256, hs, claims, None).is_ok() {
+        ok += 1
+      }
+    }
+  } else if w != "none" {
+    let alg = if w == "hs256_verify" { jwt.Alg.HS256 } else if w == "rs256_verify" { jwt.Alg.RS256 } else if w == "es256_verify" { jwt.Alg.ES256 } else { jwt.Alg.EdDSA }
+    let tok = if w == "hs256_verify" { hs_tok } else if w == "rs256_verify" { rs_tok } else if w == "es256_verify" { es_tok } else { ed_tok }
+    let key = if w == "hs256_verify" { hs } else if w == "rs256_verify" { rsa_pub } else if w == "es256_verify" { p256_pub } else { ed_pub }
+    let o = jwt.Options{algs: [alg], now: Time.UNIX_EPOCH + Duration.from_secs_int(1000)}
+    for _i in 0..2000 {
+      if jwt.verify_with[Claims](tok, key, o).is_ok() {
+        ok += 1
+      }
+    }
+  }
+  os.stdio.println("${w} ${ok}")
+}

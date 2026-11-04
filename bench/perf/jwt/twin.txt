@@ -1,0 +1,8 @@
+# twincheck: jwt: six workloads (none is the setup alone); Go is github.com/golang-jwt/jwt/v5.
+require github.com/golang-jwt/jwt/v5 v5.3.1
+- - none
+- - hs256_sign
+- - hs256_verify
+- - rs256_verify
+- - es256_verify
+- - eddsa_verify

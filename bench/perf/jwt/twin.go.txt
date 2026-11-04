@@ -1,0 +1,109 @@
+package main
+
+import (
+	"crypto"
+	"crypto/ecdsa"
+	"crypto/ed25519"
+	"crypto/rsa"
+	"crypto/x509"
+	"encoding/pem"
+	"fmt"
+	"os"
+	"time"
+
+	"github.com/golang-jwt/jwt/v5"
+)
+
+const rsaPriv = "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDB4VbTYTHERXZ/\n9ObD76o0l4GPFoyb+5KOqnGnhlq3t7e8s09gdi6sGOGrVHbQK7FBrHt9Z0l2XY5A\npoVMq+q2LW81n7fdRaHtpkTuetISI4xkC1/Px3Akgqr4btBs1ZvA+uUiJfkB6p2i\nrnz8TzZleAuLaKezvGQOkSIiDkTnfQJR72VCPDAC+iL7QblYkDRXRp6PQKr/KD5/\nW9swaUFopFPDQFkVeAxSjVqlZtdQJtdpmrmn3EZbuEUb6i8YoUdOLhDuJ9NnCOOE\nPvbyIwl4Fv4bM8a3Wrbw1Sgj9bWQ+qG3aO/CLB+63b4SmJ/D10R6dPapchK56wfL\n1TUf90yLAgMBAAECggEAFTl8flaBEroB/38JdkC58tj1K3tt+DOBt1GMcKkCLGOV\n3zgIBAjcEiYFKnLsMNzfok9mE3PntGgIhyZTqHGXl8sAhi/OepBBallN6YeTkL3I\nhDlEi2QLcEvHuLu04H0/+E/fHq5mhKGxERql/x8S1ufd56yU01XX5EpaIL1MKMUz\nTEVCuuYaQ1ckXwSEL1bVehGXiayqkiPwa0Sqf7Cxt3doTUnrZPKJnZjOXS/ZtuM3\nZj0JreMA0iEIxto2R4iATsuj4MsXGuA31COnfDHY1nFQFmZTaV3BHWgE7ry+xd//\nJIvd/MkLQRG5+qeFn7504bdm+kKa0dR4ymulCOIycQKBgQDSTlaUlNbMG/wB04Jt\nv7uNTfKz+mYiqGKBHzDYhGiUaJJXxC043AZIZstPPsNQ0fmc0d15kasbLEf3pHFA\nqX429xxwD87x/ARBgr9PKBRbyH7aZkSdTOtXWRecdpbCh6QCTw/U6CGk0f0rHRgT\nEPZl56MJ5BHYLe4r+cIKqNyCOwKBgQDsAV1eeLxJrZoIvj1jVKRPXpHI9abEZgat\nweXU3IXu6rpgKplIjLp7m1Dc48kViIJR7inDE+bjrItxK6YQd0fAImd5EVZ5w2QF\na7lwGF4Irq3VQKHPYiai78fhm6YCcmBYarh2sQqRYp/qq192Z+hk0hLuMUZthVKZ\nGWfE8vvp8QKBgGb0CLiWII0tSfJO6/P0P8mOFjl7ZJKk4gwaC9yC/XthsfqbRBQo\nyj6ZbAAwVodzM4JMzuJbqGsWA2k9LGAeWXZpBJfrdUDLQf4cFrGWiljgTxF1rTNg\nW3mYWNG00FsM8gJbWAG/XfEFB64agRWcYTND8XG/H+k3mvgWPaLgRYrPAoGBANhr\nP/Xb/b4Kxk/yNFUcTzjBXirMqcs8TC+WuW4Dc4ZuFc8OAVZ4RqIHAZYuBD4M2oTL\nQ9yyKW7q0UxMXJKI73EPm5d4ALbUKKqX6IsUrVaE6L+/7yI/vXJ5M/B9TTS9MgCi\njNm67Bf6Ou91i6sHCiM6SUXIRe807VOb6n6+26fhAoGBAKoVJLW4AE6RUm/AnCdA\n1nf6UF5mwhQ3ZfxLkw8nHUP3X5QOJ1GcCAR8oIshARBb6Grf96vO4QFQxi9YNOjq\n10309Htd0Ejcc3usUj+MFsswG6AtkXKTE0x6gjoIQRoSX+FJqvKzeh2p35KsZeXC\nZComAH7nKEXIAUHFDCTh1yku\n-----END PRIVATE KEY-----\n"
+const rsaPub = "-----BEGIN PUBLIC KEY-----\nMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEAweFW02ExxEV2f/Tmw++q\nNJeBjxaMm/uSjqpxp4Zat7e3vLNPYHYurBjhq1R20CuxQax7fWdJdl2OQKaFTKvq\nti1vNZ+33UWh7aZE7nrSEiOMZAtfz8dwJIKq+G7QbNWbwPrlIiX5Aeqdoq58/E82\nZXgLi2ins7xkDpEiIg5E530CUe9lQjwwAvoi+0G5WJA0V0aej0Cq/yg+f1vbMGlB\naKRTw0BZFXgMUo1apWbXUCbXaZq5p9xGW7hFG+ovGKFHTi4Q7ifTZwjjhD728iMJ\neBb+GzPGt1q28NUoI/W1kPqht2jvwiwfut2+Epifw9dEenT2qXISuesHy9U1H/dM\niwIDAQAB\n-----END PUBLIC KEY-----\n"
+const p256Priv = "-----BEGIN PRIVATE KEY-----\nMIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgdZudbn82KK6ToN5K\nhguL9VxnTS6RI6YWkiFZsZDOmwShRANCAAQTdSfQcmyCEGbTxpGvMCpqt7+og3xZ\nj8bNz2+LdeS5RASHtjcVTY6annrHSO15nje7cjPweljkgbI1nk1+Clc9\n-----END PRIVATE KEY-----\n"
+const p256Pub = "-----BEGIN PUBLIC KEY-----\nMFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEE3Un0HJsghBm08aRrzAqare/qIN8\nWY/Gzc9vi3XkuUQEh7Y3FU2Omp56x0jteZ43u3Iz8HpY5IGyNZ5NfgpXPQ==\n-----END PUBLIC KEY-----\n"
+const ed25519Priv = "-----BEGIN PRIVATE KEY-----\nMC4CAQAwBQYDK2VwBCIEIC7Z8Ua7ufdSALkYsD/akRduAGTeVMHobs5KcOahwkRv\n-----END PRIVATE KEY-----\n"
+const ed25519Pub = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAmtD1+qnxS5ac/r6NLnoHFt+7PAraxfLpVr3bdVEfSwc=\n-----END PUBLIC KEY-----\n"
+
+type Claims struct {
+	Sub string `json:"sub"`
+	Exp int64  `json:"exp"`
+	Iss string `json:"iss"`
+}
+
+func (c Claims) GetExpirationTime() (*jwt.NumericDate, error) {
+	return jwt.NewNumericDate(time.Unix(c.Exp, 0)), nil
+}
+func (Claims) GetIssuedAt() (*jwt.NumericDate, error)  { return nil, nil }
+func (Claims) GetNotBefore() (*jwt.NumericDate, error) { return nil, nil }
+func (c Claims) GetIssuer() (string, error)            { return c.Iss, nil }
+func (c Claims) GetSubject() (string, error)           { return c.Sub, nil }
+func (Claims) GetAudience() (jwt.ClaimStrings, error)  { return nil, nil }
+
+func priv(s string) crypto.PrivateKey {
+	b, _ := pem.Decode([]byte(s))
+	k, err := x509.ParsePKCS8PrivateKey(b.Bytes)
+	if err != nil {
+		panic(err)
+	}
+	return k
+}
+
+func pub(s string) crypto.PublicKey {
+	b, _ := pem.Decode([]byte(s))
+	k, err := x509.ParsePKIXPublicKey(b.Bytes)
+	if err != nil {
+		panic(err)
+	}
+	return k
+}
+
+var _ = ecdsa.PublicKey{}
+var _ = ed25519.PublicKey{}
+var _ = rsa.PublicKey{}
+
+func sign(m jwt.SigningMethod, k any, c Claims) string {
+	s, err := jwt.NewWithClaims(m, c).SignedString(k)
+	if err != nil {
+		panic(err)
+	}
+	return s
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	c := Claims{Sub: "ann", Exp: 4000000000, Iss: "me"}
+	hs := []byte("secret-for-jwt-bench-0123456789abcdef")
+	rsaK, p256K, edK := priv(rsaPriv), priv(p256Priv), priv(ed25519Priv)
+	rsaP, p256P, edP := pub(rsaPub), pub(p256Pub), pub(ed25519Pub)
+	hsTok := sign(jwt.SigningMethodHS256, hs, c)
+	rsTok := sign(jwt.SigningMethodRS256, rsaK, c)
+	esTok := sign(jwt.SigningMethodES256, p256K, c)
+	edTok := sign(jwt.SigningMethodEdDSA, edK, c)
+	ok := 0
+	now := func() time.Time { return time.Unix(1000, 0) }
+	if w == "hs256_sign" {
+		for i := 0; i < 20000; i++ {
+			if _, err := jwt.NewWithClaims(jwt.SigningMethodHS256, c).SignedString(hs); err == nil {
+				ok++
+			}
+		}
+	} else if w != "none" {
+		alg, tok, key := "EdDSA", edTok, any(edP)
+		switch w {
+		case "hs256_verify":
+			alg, tok, key = "HS256", hsTok, hs
+		case "rs256_verify":
+			alg, tok, key = "RS256", rsTok, rsaP
+		case "es256_verify":
+			alg, tok, key = "ES256", esTok, p256P
+		}
+		p := jwt.NewParser(jwt.WithValidMethods([]string{alg}), jwt.WithTimeFunc(now), jwt.WithExpirationRequired())
+		for i := 0; i < 2000; i++ {
+			var got Claims
+			if _, err := p.ParseWithClaims(tok, &got, func(*jwt.Token) (any, error) { return key, nil }); err == nil {
+				ok++
+			}
+		}
+	}
+	fmt.Println(w, ok)
+}

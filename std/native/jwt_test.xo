@@ -1,0 +1,43 @@
+use std/jwt
+
+struct Claims {
+  sub: Str
+  exp: Int
+  role: Str?
+} derive Json
+
+fn opts(now: Int) -> jwt.Options {
+  jwt.Options{algs: [jwt.Alg.HS256], now: Time.UNIX_EPOCH + Duration.from_secs_int(now)}
+}
+
+test "HS256 round trip and the checks" {
+  let key = jwt.Key.Hmac(secret: Secret.new(b"a secret of some length"))
+  let tok = jwt.sign(os.rand, jwt.Alg.HS256, key, Claims{sub: "ann", exp: 2000, role: Some("admin")}, Some("k1"))?
+  let got = jwt.verify_with[Claims](tok, key, opts(1000))?
+  expect(got.sub) == "ann"
+  expect(got.role) == Some("admin")
+  expect(jwt.peek_header(tok)?.kid) == Some("k1")
+  // expired and wrong key
+  match jwt.verify_with[Claims](tok, key, opts(2000)) {
+    Err(jwt.JwtErr.Expired(_)) => ()
+    _ => fault("expected Expired")
+  }
+  let other = jwt.Key.Hmac(secret: Secret.new(b"another secret"))
+  match jwt.verify_with[Claims](tok, other, opts(1000)) {
+    Err(jwt.JwtErr.Signature) => ()
+    _ => fault("expected Signature")
+  }
+  // not in algs
+  var o = opts(1000)
+  o.algs = [jwt.Alg.HS512]
+  match jwt.verify_with[Claims](tok, key, o) {
+    Err(jwt.JwtErr.Alg(_)) => ()
+    _ => fault("expected Alg")
+  }
+  // a none token
+  let none = "eyJhbGciOiJub25lIiwidHlwIjoiSldUIn0.eyJzdWIiOiJhbm4iLCJleHAiOjIwMDB9."
+  match jwt.verify_with[Claims](none, key, opts(1000)) {
+    Err(jwt.JwtErr.Alg(_)) => ()
+    _ => fault("expected Alg for none")
+  }
+}

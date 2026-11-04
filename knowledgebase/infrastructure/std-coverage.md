@@ -249,7 +249,7 @@ Each module's change log is `std/changes/MODULE.md` (decision 0276 item
 | bcrypt | golang.org/x/crypto/bcrypt | std/bcrypt | done | `hash`, `compare`, `cost` (spec/std.md 53); one source for every backend; Go's hashes and error texts on seeded salts and malformed hashes. |
 | WebSocket | golang.org/x/net/websocket, gorilla, coder/websocket | std/websocket | partial | gorilla's behavior, ws:// both sides and wss:// in dial (decision 0313). Missing: permessage-deflate, a message written in pieces, the Autobahn run (stage 3). |
 | HTTP/2 | golang.org/x/net/http2 | std/http | done | Decision 0121. |
-| JWT, JOSE | golang-jwt, go-jose | none | planned | HS256 is writable today by hand; RS256 and ES256 need public RSA and ECDSA. |
+| JWT, JOSE | golang-jwt, go-jose | std/jwt | done | sign, verify_with, verify (key by kid), peek_header, jwks; JWS only, no JWE (spec/std.md 62, decision 0486). |
 | CBOR | fxamacker/cbor | std/cbor | done | RFC 8949 `Value` tree, `decode`, `encode` (preferred and deterministic), diagnostic notation, JSON bridge (decision 0468, section 50, 2026-11-03). No derive for typed values. |
 | UUID | google/uuid | std/uuid | done | v4 and v7 from Rand and Clock, parsing (decision 0282). |
 | OAuth2 client | golang.org/x/oauth2 | none | planned | Needs form encoding. |

@@ -41,7 +41,7 @@ struct Options {
 }
 
 enum JwtErr {
-  Malformed(msg: Str)                // not three segments, bad base64url, bad JSON, duplicate member
+  Malformed(msg: Str)                // not three segments, bad base64url, bad JSON
   Alg(msg: Str)                      // none, not in algs, or a key that does not fit the alg
   Signature
   Expired(at: Time)  NotYetValid(at: Time)  Issuer  Audience  Subject
@@ -70,7 +70,7 @@ Protections (each with a negative corpus row):
    is the classic RS256 to HS256 confusion.
 4. **Constant time** HMAC comparison (`crypto.equal`).
 5. **Strict encoding**: base64url without padding, no whitespace or extra segments, a header and payload that are
-   JSON objects with no duplicate members, `crit` present is `Malformed` (no extension is understood),
+   JSON objects (a repeated member keeps the last value, as Go's decoder does), `crit` present is `Malformed` (no extension is understood),
    `max_size` before any decoding. `jku`, `jwk`, `x5u` and `x5c` headers are ignored, never fetched.
 6. **Claims**: `exp` required by default, `nbf`, `iat` and `aud` (string or array of strings) as RFC 7519 4.1, with
    `leeway`; a non-numeric date or non-string `iss` is `Claim`. NumericDate fractions are kept.

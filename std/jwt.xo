@@ -1,0 +1,90 @@
+// std/jwt (spec/std.md 62, decision 0486). Declaration file; encoding rules
+// are listed at the top of std/prelude.xo. JSON Web Tokens in the JWS compact
+// form (RFC 7515, RFC 7519) on std/crypto, with golang-jwt/jwt v5's checks.
+// Pure but for `sign`'s randomness.
+use std/crypto
+
+/// The signature algorithms (RFC 7518 3.1). There is no `none`.
+enum Alg {
+  HS256
+  HS384
+  HS512
+  RS256
+  RS384
+  RS512
+  PS256
+  PS384
+  PS512
+  ES256
+  ES384
+  ES512
+  EdDSA
+}
+
+/// A key. `Hmac` for HS*, a public key (or a private key, whose public
+/// half verifies) for RS*, PS*, ES* and EdDSA, a private key to sign them.
+enum Key {
+  Hmac(secret: Secret[Bytes])
+  Public(key: crypto.PublicKey)
+  Private(key: crypto.PrivateKey)
+}
+
+/// The protected header: `alg`, and the optional `kid` and `typ`.
+struct Header {
+  alg: Alg
+  kid: Str?
+  typ: Str?
+}
+
+/// What a verification requires. `algs` has no default: the token's own
+/// `alg` is only matched against it.
+struct Options {
+  algs: List[Alg]
+  /// the clock, passed in (a test's, or `os.clock.now()`)
+  now: Time
+  leeway: Duration = 0s
+  issuer: Str? = None
+  audience: Str? = None
+  subject: Str? = None
+  require_exp: Bool = true
+  /// `iat` in the future (past the leeway) is NotYetValid
+  check_iat: Bool = false
+  /// now - iat past this is Expired
+  max_age: Duration? = None
+  /// the token's length in bytes, checked before any decoding
+  max_size: Int = 16384
+}
+
+enum JwtErr {
+  /// not three segments, a bad base64url, a header or payload that is not a JSON object, or `crit`
+  Malformed(msg: Str)
+  /// `none`, an `alg` outside `Options.algs`, or a key that does not fit it
+  Alg(msg: Str)
+  Signature
+  Expired(at: Time)
+  NotYetValid(at: Time)
+  Issuer
+  Audience
+  Subject
+  /// a registered claim missing or of the wrong type
+  Claim(msg: Str)
+  /// no key for the token's `kid`
+  Key(msg: Str)
+}
+
+fn (e: JwtErr) display() -> Str
+
+/// The compact token of claims (any `derive Json` value that encodes as an
+/// object), signed with key; `r` is the randomness of RSA-PSS and ECDSA.
+fn sign[T: Json](r: Rand, alg: Alg, key: Key, claims: T, kid: Str? = None) -> Str ! JwtErr uses rand
+/// Verifies token with one key and returns its claims decoded as T, after
+/// checking the registered claims against opts.
+fn verify_with[T: Json](token: Str, key: Key, opts: Options) -> T ! JwtErr
+/// The same with the key chosen from the verified-so-far header (its
+/// `kid`), for key rotation; the function returns JwtErr.Key for an
+/// unknown kid.
+fn verify[T: Json](token: Str, keys: fn(Header) -> Key ! JwtErr, opts: Options) -> T ! JwtErr
+/// The header of token, unverified: for routing by `kid`, never to decide anything.
+fn peek_header(token: Str) -> Header ! JwtErr
+/// The keys of an RFC 7517 key set by `kid` (public keys only).
+fn jwks(set: Str) -> Map[Str, Key] ! JwtErr
