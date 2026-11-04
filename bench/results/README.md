@@ -289,3 +289,4 @@
 - [std-twin-norm-2026-11-03.md](std-twin-norm-2026-11-03.md): host rows for std/norm (NFC 0.88, NFKC 0.77, NFD 1.09 of x/text after the quickSpan table), and its size.
 - [std-twin-trimchars-2026-11-03.md](std-twin-trimchars-2026-11-03.md): host rows for Str.trim_chars after decision 0465 step 2 (trim 2.24 to 1.54 of Go); not Proven.
 - [std-twin-strconv-2026-11-03.md](std-twin-strconv-2026-11-03.md): host row for itoa after decision 0465 step 2 (1.52 to 1.35 of Go); not Proven.
+- [std-twin-html-2026-11-03.md](std-twin-html-2026-11-03.md): host rows for std/html (escape 1.75 to 1.37, unescape 0.54 of Go); escape not Proven.
