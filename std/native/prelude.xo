@@ -5672,27 +5672,38 @@ fn bytebuffer_discard(var b: ByteBuffer, n: Int) {
 }
 
 /// Searches from where the last search for the same delimiter stopped.
+/// Small, to be inlined: the common case, the delimiter in the head
+/// piece past the unread start with no search state further on, else
+/// bytebuffer_read_slow.
 fn bytebuffer_read_until(var b: ByteBuffer, delim: UInt8) -> Bytes? {
   let d = Int(delim)
+  // no operation here can fault (wrapping arithmetic, get), so that the
+  // inliner takes it (a function with landing pads stays a call)
+  if b.tail.is_empty() && b.end > b.pos && (b.delim != d || b.scan_seg == b.head) {
+    if let Some(s) = b.segs.get(b.head) {
+      let lo = b.pos.wrapping_sub(b.hstart)
+      let start = if b.delim == d && b.scan_to > b.pos { b.scan_to.wrapping_sub(b.hstart) } else { lo }
+      let i = scan.find_byte(s, start, s.len(), d)
+      let e = i.wrapping_add(1)
+      if i >= 0 && e < s.len() {
+        b.pos = b.hstart.wrapping_add(e)
+        if b.scan_to < b.pos {
+          b.scan_to = b.pos
+        }
+        // s[lo..e] unchecked (lo <= e <= s.len() by the search): a
+        // checked slice would add a landing pad
+        return Some(rt.cast[Str, Bytes](rt.str_view(rt.cast[Bytes, Str](s), lo, e)))
+      }
+    }
+  }
+  bytebuffer_read_slow(b, d)
+}
+
+fn bytebuffer_read_slow(var b: ByteBuffer, d: Int) -> Bytes? {
   if b.end == b.pos {
     return None
   }
   bytebuffer_flush(b)
-  // the common case: the delimiter in the head piece, past the unread
-  // start, with no search state further on to resume from
-  if b.delim != d || b.scan_seg == b.head {
-    let s = b.segs[b.head]
-    let lo = b.pos - b.hstart
-    let start = if b.delim == d && b.scan_to > b.pos { b.scan_to - b.hstart } else { lo }
-    let i = scan.find_byte(s, start, s.len(), d)
-    if i >= 0 && i + 1 < s.len() {
-      b.pos = b.hstart + i + 1
-      if b.scan_to < b.pos {
-        b.scan_to = b.pos
-      }
-      return Some(s[lo..i + 1])
-    }
-  }
   var k = b.head
   var ks = b.hstart
   var from = b.pos
