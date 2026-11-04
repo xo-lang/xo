@@ -3634,7 +3634,7 @@ call and its result, plus scheduler decisions.
   attached to crash bundles.
 - `xo replay trace.xotrace` (or a `.xocrash`) re executes the program offline
   with identical effect results and interleavings.
-- `xo debug --replay trace.xotrace` supports stepping backward.
+- **[later]** `xo debug --replay trace.xotrace` steps backward (11.5: `xo debug` is not built).
 - `xo why <expr> --at file:line` traces where a value came from (the
   assignments, calls, and effect results that produced it) using the replay.
 
@@ -3681,9 +3681,23 @@ call and its result, plus scheduler decisions.
 
 ### 11.5 Debugger protocol
 
-`xo debug --json` speaks a JSON line protocol (breakpoints, conditional
-breakpoints, break on contract failure, eval, step, step back with replay).
-`xo debug --dap` speaks the Debug Adapter Protocol for editors.
+What is built (decision 0253 stages 1 and 5's protocol, 2026-10-17):
+`xo dev debug` (hidden) runs the debugger's commands on a recorded,
+stopped thread (`--snap FILE`, as lldb or gdb recorded it): `break`
+resolves a FILE:LINE or a function to its addresses, and `backtrace`
+(inlined calls as frames), `frame`, `locals`, `print` (a field path),
+`threads` and `quit` read the snapshot through the program's DWARF and
+unwind tables. With `--json` each command gives one JSON line, the
+protocol's version 1 below; with no `-c` it reads commands from standard
+input. `run`, `continue`, `step`, `next` and `finish` answer that
+process control comes with stage 2, `tasks` and `task` with stage 4.
+
+**[later]** Not built: the `xo debug` command itself (a live process:
+0253 stage 2 on macOS arm64, stage 6 for Linux and Windows), conditional
+breakpoints, a break on a contract failure, evaluating expressions
+(beyond `print`'s field path), and stepping back over a replay (11.3).
+`xo debug --dap`, the Debug Adapter Protocol for editors, is planned and
+is not a stage of decision 0253 yet.
 
 The protocol's version 1 (decision 0253; compiler/debug session.xo; until
 the process control of stage 2 it runs on a recorded thread as `xo dev
