@@ -1,5 +1,17 @@
 # std/archive changes
 
+## 2026-11-04: perf: a ZipReader read no longer builds the fixed Huffman decoder
+
+- Kind: perf
+- Commit: this push
+- Found by: the host 1 row zip_reader 1.147 of Go against unzip 0.995 for the same entries, and the Mac XO_PROF (flate.hdec_init 21 percent)
+- Go reference: compress/flate's fixedHuffmanDecoder (built once, in a sync.Once)
+- Test: corpora archive, compress, png on arm64 and the Go backend; flate_test.xo compares the constant with hdec_init
+- Timing: host 1 A/B zip_reader 0.857 of before (0.848-0.879, n=6), about 0.95 of Go's wall
+- Shipped in: not yet released
+
+`flate.fixed_decoder()` is a constant 512 entry chunk table (no links: the fixed code has no code longer than 9 bits) in place of 288 pushes and an `hdec_init` on every call. `ZipReader.read` called it for each entry, and a small zip entry is often one fixed block; every gzip, zlib and zip reader call benefits.
+
 ## 2026-11-03: feature: zip_open (a zip archive read from a File)
 
 - Kind: feature

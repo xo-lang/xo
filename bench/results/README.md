@@ -304,3 +304,4 @@
 - [json-own-form-tagged-2026-11-03.md](json-own-form-tagged-2026-11-03.md): decision 0478 stage 4: own form (via) and tagged enum cost against the workarounds and Go twins, code size, correctness, identity.
 - [std-twin-jwt-2026-11-03.md](std-twin-jwt-2026-11-03.md): std/jwt host 1 rows against golang-jwt v5: HS256 0.67, EdDSA 0.74, RS256 verify 1.12, ES256 verify 1.85 (the signature check in std/crypto)
 - [inline-str-survey-2026-11-03.md](inline-str-survey-2026-11-03.md): decision 0370 --inline-str on every twin row, http, self build and .text: a put bug made jpeg 5.8x and the self build 40x (fixed fe7a71942); after it 334 rows geomean 1.070, self build 1.073, .text +4 to 9%, slicing short strings the worst (text cut 2.5 to 2.7x), itoa 0.47
+- [std-twin-archive-2026-11-04.md](std-twin-archive-2026-11-04.md): archive zip_reader 1.147 -> about 0.95 of Go after the constant fixed Huffman decoder (host 1 A/B 0.857); unzip 0.995
