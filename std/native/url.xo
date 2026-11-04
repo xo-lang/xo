@@ -7,6 +7,8 @@
 // invalid byte as its `%XX` escape, so Str stays valid UTF-8 (Go returns
 // the raw bytes).
 use std/url
+use native/llrt/raw
+use native/rt
 
 /// url.go defaultMaxParams: ParseQuery's limit on parameters.
 const MAX_PARAMS: Int = 10000
@@ -57,31 +59,65 @@ fn keeps(c: UInt8, path: Bool) -> Bool {
   path && (c == 36 || c == 38 || c == 43 || c == 58 || c == 61 || c == 64)
 }
 
+/// One byte a character: 0 kept as it is, 1 escaped as `%XX`, and in the
+/// query table 2 for a space (written as `+`).
+const QUERY_CLASS: Bytes = b"\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x02\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01\x01\x01\x01\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01\x01\x01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01\x01\x00\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01"
+
+/// The path segment table: also keeps `$ & + : = @`.
+const PATH_CLASS: Bytes = b"\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x00\x01\x00\x01\x01\x01\x01\x00\x01\x00\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01\x00\x01\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01\x01\x01\x00\x01\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x01\x01\x01\x00\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01\x01"
+
 fn escape(s: Str, path: Bool) -> Str {
   let b = s.bytes()
+  let tab = if path { PATH_CLASS } else { QUERY_CLASS }
+  let nb = b.len()
   var n = 0
+  var plus = 0
   for c in b {
-    if !keeps(c, path) {
-      n += 1
-    }
+    let t = Int(tab[Int(c)])
+    n += t & 1
+    plus += t >> 1
   }
-  if n == 0 {
+  if n == 0 && plus == 0 {
     return s
   }
+  // the output is written through its address: a run of kept bytes is one
+  // mem_copy, an escape three byte stores (a byte at a time into a builder
+  // with the character tests was 1.55 of Go's wall, 2026-11-04)
   let hex = UPPER_HEX.bytes()
-  var out = BytesBuilder.with_capacity(b.len() + 2 * n)
-  for c in b {
-    if c == 32 && !path {
-      out.write_byte(43)
-    } else if keeps(c, path) {
-      out.write_byte(c)
-    } else {
-      out.write_byte(37)
-      out.write_byte(hex[Int(c) >> 4])
-      out.write_byte(hex[Int(c) & 15])
+  let ob = raw.bytes_buf(nb + 2 * n)
+  let op = raw.bytes_addr(ob)
+  let sp = raw.bytes_addr(b)
+  var o = 0
+  var start = 0
+  var i = 0
+  while i < nb {
+    let c = Int(b[i])
+    let t = Int(tab[c])
+    if t != 0 {
+      let run = i - start
+      if run > 0 {
+        rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), run)
+        o += run
+      }
+      if t == 2 {
+        rt.mem_store(op, o, 43, 1)
+        o += 1
+      } else {
+        rt.mem_store(op, o, 37, 1)
+        rt.mem_store(op, o + 1, Int(hex[c >> 4]), 1)
+        rt.mem_store(op, o + 2, Int(hex[c & 15]), 1)
+        o += 3
+      }
+      start = i + 1
     }
+    i += 1
   }
-  out.freeze().to_str() ?? ""
+  if start < nb {
+    rt.mem_copy(op.wrapping_add(o), sp.wrapping_add(start), nb - start)
+  }
+  raw.alive(b)
+  // kept bytes are ASCII and every non-ASCII byte is escaped: the result is ASCII
+  rt.cast[Bytes, Str](ob)
 }
 
 fn is_hex(c: UInt8) -> Bool { (c >= 48 && c <= 57) || (c >= 97 && c <= 102) || (c >= 65 && c <= 70) }
@@ -244,7 +280,8 @@ const OWN_MIN = 4096
 /// skipped. Go keeps parsing after an error and returns the first; Xo
 /// returns the first error alone.
 fn parse_query(s: Str) -> Values ! url.EscapeErr {
-  if s.split("&").len() > MAX_PARAMS {
+  let parts = s.split("&")
+  if parts.len() > MAX_PARAMS {
     return Err(url.EscapeErr{msg: "number of URL query parameters exceeded limit"})
   }
   let big = s.len() > OWN_MIN
@@ -254,10 +291,10 @@ fn parse_query(s: Str) -> Values ! url.EscapeErr {
   var vs: List[List[Str]] = []
   // Go's parseQuery: a pair with a semicolon sets its error whatever came
   // before, so it wins over an earlier escape error
-  if s.split("&").any(fn(p) { p.contains(";") }) {
+  if s.contains(";") {
     return Err(url.EscapeErr{msg: "invalid semicolon separator in query"})
   }
-  for pair in s.split("&") {
+  for pair in parts {
     if pair.is_empty() {
       continue
     }
