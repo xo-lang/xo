@@ -322,7 +322,8 @@ fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
   if values.len() != f.labels.len() {
     fault("metrics: ${f.name} has ${f.labels.len()} labels, got ${values.len()} values")
   }
-  let key = values.join(SEP)
+  // one label: its value is the key (what join gives), without the copy
+  let key = if values.len() == 1 { values[0] } else { values.join(SEP) }
   if let Some(s) = f.series.with_read(fn(m: Map[Str, metrics.Series]) -> metrics.Series? { m.get(key) }) {
     return Some(s)
   }
@@ -391,10 +392,15 @@ fn gauge_add(g: metrics.Gauge, v: Float, values: List[Str] = []) {
 
 fn histogram_observe(h: metrics.Histogram, v: Float, values: List[Str] = []) {
   if let Some(s) = series_of(h.f, values) {
-    for (i, b) in h.f.bounds.indexed() {
-      if v <= b {
-        let _n = s.buckets[i].add(1)
-      }
+    // the first bucket that holds v (client_golang's findBucket): the
+    // cells count one bucket each and a scrape adds them up
+    var i = 0
+    let bounds = h.f.bounds
+    while i < bounds.len() && !(v <= bounds[i]) {
+      i += 1
+    }
+    if i < bounds.len() {
+      let _n = s.buckets[i].add(1)
     }
     let _c = s.count.add(1)
     add_float(s.sum, v)
@@ -486,8 +492,10 @@ fn expose(f: metrics.Family, now_ms: Int) -> List[Str] {
       out.push("${head("${f.name}_sum", f.labels, s.values, "")} ${num(load(s.sum))}")
       out.push("${head("${f.name}_count", f.labels, s.values, "")} ${s.count.get()}")
     } else {
+      var upto = 0
       for (i, b) in f.bounds.indexed() {
-        out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"${num(b)}\"")} ${s.buckets[i].get()}")
+        upto += s.buckets[i].get()
+        out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"${num(b)}\"")} ${upto}")
       }
       let n = s.count.get()
       out.push("${head("${f.name}_bucket", f.labels, s.values, "le=\"+Inf\"")} ${n}")
