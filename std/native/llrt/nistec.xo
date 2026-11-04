@@ -2244,34 +2244,58 @@ fn pt_mul(c: Int, r: Int, p: Int, k: Int) {
 }
 
 /// VARIABLE TIME: only `verify` may call this (internal/repotest TestVtPublicOnlyInVerify).
-/// r = [k]p for a public k (verification, where nothing is secret): the
-/// windows of pt_mul, but a window's table entry is read directly and a zero
-/// digit adds nothing, so no mask select over 16 entries and about a sixteenth
-/// fewer additions. Not constant time in k.
+/// r = [k]p for a public k (verification, where nothing is secret): sliding
+/// windows of up to 5 bits over the odd multiples [1]p to [31]p, read
+/// directly (no mask select over the table), about 43 additions and 16 table
+/// entries against 60 and 15 for the fixed 4 bit windows. Not constant time in k.
 fn pt_mul_vt_public(c: Int, r: Int, p: Int, k: Int) {
   let n = limbs(c)
   let tab = at(c, TABLE)
-  pt_identity(c, tab)
-  var i = 1
-  while i < 16 {
-    pt_add(c, at(tab, PS * i), at(tab, PS * (i - 1)), p)
-    i += 1
+  let two = at(c, SEL)
+  // the odd multiples [1]P, [3]P to [31]P: a sliding window of up to 5 bits
+  // always ends in a set bit, so each window is one addition of an odd
+  // multiple and a run of zero bits is only doublings
+  copy_pt(tab, p)
+  pt_double(c, two, p)
+  var j = 1
+  while j < 16 {
+    pt_add(c, at(tab, PS * j), at(tab, PS * (j - 1)), two)
+    j += 1
   }
   let acc = at(c, ACC)
   pt_identity(c, acc)
-  var w = 16 * n - 1
-  while w >= 0 {
-    if w != 16 * n - 1 {
-      pt_double(c, acc, acc)
-      pt_double(c, acc, acc)
-      pt_double(c, acc, acc)
-      pt_double(c, acc, acc)
+  var started = false
+  var i = 64 * n - 1
+  while i >= 0 {
+    if (ld(k, 8 * (i / 64)).shr_logical(i % 64) & 1) == 0 {
+      if started {
+        pt_double(c, acc, acc)
+      }
+      i -= 1
+      continue
     }
-    let digit = ld(k, 8 * (w / 16)).shr_logical(4 * (w % 16)) & 15
-    if digit != 0 {
-      pt_add(c, acc, acc, at(tab, PS * digit))
+    var l = if i >= 4 { i - 4 } else { 0 }
+    while (ld(k, 8 * (l / 64)).shr_logical(l % 64) & 1) == 0 {
+      l += 1
     }
-    w -= 1
+    var digit = 0
+    var t = i
+    while t >= l {
+      digit = (digit << 1) | (ld(k, 8 * (t / 64)).shr_logical(t % 64) & 1)
+      t -= 1
+    }
+    if started {
+      var d = i - l + 1
+      while d > 0 {
+        pt_double(c, acc, acc)
+        d -= 1
+      }
+      pt_add(c, acc, acc, at(tab, PS * (digit >> 1)))
+    } else {
+      copy_pt(acc, at(tab, PS * (digit >> 1)))
+      started = true
+    }
+    i = l - 1
   }
   copy_pt(r, acc)
 }
