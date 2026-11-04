@@ -1,5 +1,16 @@
 # prelude changes
 
+## 2026-11-03: perf: trim_chars with a non-ASCII cutset decodes with raw.decode and a set walk
+
+- Kind: perf
+- Commit: this commit
+- Found by: the host row of bench/perf/trimchars after decision 0465 step 2 (bench/results/std-twin-trimchars-2026-11-03.md): trim 1.54 of Go
+- Go reference: strings.Trim's trimLeftUnicode and trimRightUnicode
+- Test: the strings, bytes, strsearch, strwhere and trimchars corpora on arm64, LLVM and the Go backend
+- Timing: Mac iteration (not evidence): trimchars trim 46 ms (Go 33); host row follows in std-twin-trimchars-2026-11-03.md
+
+`trim_start_unicode` and `trim_end_unicode` (llrt scan) looked each rune up with `index_rune(chars, r)`, which took `chars.bytes()` and checked bounds per rune; they now walk the cutset's bytes with `rune_in_set` and decode the string with `raw.decode`, and return `rt.str_view`.
+
 ## 2026-11-03: perf: Str.trim and the trim_chars family return a view of their receiver on every path
 
 - Kind: perf

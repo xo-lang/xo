@@ -720,28 +720,31 @@ fn trim_end_ascii(s: Str, lo: Int, hi: Int) -> Str {
 
 fn trim_start_unicode(s: Str, chars: Str) -> Str {
   let b = s.bytes()
+  let cb = chars.bytes()
+  let n = b.len()
   var i = 0
-  while i < b.len() {
-    let (r, sz) = b.decode_rune(i)
-    if index_rune(chars, r) < 0 {
+  while i < n {
+    let p = raw.decode(b, i)
+    if !rune_in_set(cb, Rune(p >> 3)) {
       break
     }
-    i += sz
+    i += p & 7
   }
-  s[i..]
+  rt.str_view(s, i, n)
 }
 
 fn trim_end_unicode(s: Str, chars: Str) -> Str {
   let b = s.bytes()
+  let cb = chars.bytes()
   var n = b.len()
   while n > 0 {
     let (r, sz) = decode_last(b, n)
-    if index_rune(chars, r) < 0 {
+    if !rune_in_set(cb, r) {
       break
     }
     n -= sz
   }
-  s[0..n]
+  rt.str_view(s, 0, n)
 }
 
 /// The number of UTF-8 continuation bytes (0x80 to 0xBF) in w.
