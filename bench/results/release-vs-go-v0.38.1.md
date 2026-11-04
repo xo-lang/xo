@@ -505,3 +505,29 @@ pad sweep verdict (reference base): each cell is the median over pads of each pa
 | /hello c256 | base | 4 | 893,324 [892,372 to 894,700] | 5.87 [5.84 to 5.90] |  |  |
 | /hello c256 | go | 1 | 488,810 [488,810 to 488,810] | 9.96 [9.96 to 9.96] | 0.547 | one pad: not judged |
 | /hello c256 | xo | 4 | 892,181 [888,708 to 896,388] | 5.87 [5.84 to 5.88] | 0.999 | placement |
+
+## linux/amd64 micro set (added 2026-11-04)
+
+The section this report did not have (Lead, 2026-11-04: Xo Lang 1 found
+json10kx20 1.78 times slower on linux/amd64 than in 0.35.0, unseen here):
+scripts/release-vs-go.sh SECTIONS=amd64 with the released darwin/arm64 xo of
+v0.38.1 and of v0.36.0 (AMD64_BASE_XO, from the v0.36.0 GitHub release,
+sha256 checked), bench/perf/micro13 built for linux/amd64 with --release by
+each and by Go 1.26.1, run on the linux/amd64 offload host (WSL2, 28 CPUs,
+load 5.4 to 5.8) by scripts/release-vs-go-amd64.sh, 5 rounds of xo bench
+--ab per row. Wall medians; the ratios are 0.38.1 over the other, with the
+95% interval and the verdict.
+
+| workload | 0.36.0 ms | 0.38.1 ms | 0.38.1 / 0.36.0 | Go ms | 0.38.1 / Go |
+|---|---|---|---|---|---|
+| fib32 | 13.71 | 13.21 | 0.963 (0.957 to 1.014, within noise (n=5)) | 22.38 | 0.623 (0.585 to 0.63) |
+| map1M | 96.99 | 94.59 | 0.975 (0.947 to 0.993, better (n=5)) | 121.8 | 0.771 (0.733 to 0.783) |
+| strbuild1M | 21.88 | 17.45 | 0.797 (0.779 to 0.813, better (n=5)) | 33.03 | 0.563 (0.436 to 0.588) |
+| sort1M | 80.46 | 79.46 | 0.988 (0.974 to 0.999, better (n=5)) | 82.49 | 0.965 (0.955 to 0.974) |
+| json10kx20 | 60.63 | 94.43 | 1.557 (1.549 to 1.683, worse (n=5)) FLAGGED | 192.4 | 0.491 (0.481 to 0.518) |
+| spawn100k | 16.82 | 17.11 | 1.017 (0.793 to 1.061, within noise (n=5)) | 17.09 | 1.023 (0.986 to 1.082) |
+
+json10kx20 is the one regression against 0.36.0 (1.557; still 0.49 of Go,
+whose encoding/json is slow on this host). Xo Lang 1 owns its bisect and fix.
+The section is now a required part of the release report (toolchain.md
+"Cutting a release" step 7).

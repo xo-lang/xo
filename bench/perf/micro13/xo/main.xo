@@ -1,0 +1,78 @@
+// The owner's CPU microbenchmarks (the 0.36.0 evaluation's tests/13-perf
+// micro-xo, 2026-11-04), go/main.go the same work in Go. Each line is NAME
+// CHECKSUM MILLIS (the owner's order was NAME MILLIS CHECKSUM; twin.txt
+// compares the first two fields). The first argument picks one workload (all with none), so
+// `xo bench --ab` can run each alone: release-vs-go.sh's amd64 section.
+use std/json
+
+struct Rec {
+  id: Int
+  name: Str
+  score: Float
+  tags: List[Str]
+} derive Json
+
+fn fib(n: Int) -> Int { if n < 2 { n } else { fib(n - 1) + fib(n - 2) } }
+
+fn report(os: Os, name: Str, t0: Time, sum: Int) {
+  os.stdio.println("${name} ${sum} ${(os.clock.now() - t0).millis()}")
+}
+
+fn main(os: Os) ! {
+  let args = os.env.args()
+  let only = if args.is_empty() { "" } else { args[0] }
+  let on = fn(name: Str) -> Bool { only == "" || only == name }
+  var t0 = os.clock.now()
+  if on("fib32") {
+    report(os, "fib32", t0, fib(32))
+  }
+
+  if on("map1M") {
+    t0 = os.clock.now()
+    var m: Map[Int, Int] = {}
+    for i in 0..1_000_000 { m.put(i * 7, i) }
+    var msum = 0
+    for i in 0..1_000_000 { msum += m.get(i * 7) ?? 0 }
+    report(os, "map1M", t0, msum)
+  }
+
+  if on("strbuild1M") {
+    t0 = os.clock.now()
+    var sb = StrBuilder.new()
+    for i in 0..1_000_000 { sb.write("${i},") }
+    report(os, "strbuild1M", t0, sb.freeze().len())
+  }
+
+  if on("sort1M") {
+    t0 = os.clock.now()
+    var xs = Buf[Int].with_capacity(1_000_000)
+    var x = 12345
+    for _ in 0..1_000_000 {
+      x = (x * 1103515245 + 12345) % 2147483648
+      xs.push(x)
+    }
+    let sorted = xs.freeze().sort()
+    report(os, "sort1M", t0, sorted[500_000])
+  }
+
+  if on("json10kx20") {
+    t0 = os.clock.now()
+    let recs = (0..10_000).to_list().map(fn(i) { Rec{id: i, name: "rec ${i}", score: Float(i) / 3.0, tags: ["a", "b"]} })
+    var jtotal = 0
+    for _ in 0..20 {
+      let b = json.encode(recs)
+      let back = json.decode[List[Rec]](b)?
+      jtotal += back.len() + b.len()
+    }
+    report(os, "json10kx20", t0, jtotal)
+  }
+
+  if on("spawn100k") {
+    t0 = os.clock.now()
+    let total = Atomic[Int].new(0)
+    scope s {
+      for i in 0..100_000 { s.spawn(fn() { total.add(i % 7) }) }
+    }
+    report(os, "spawn100k", t0, total.get())
+  }
+}

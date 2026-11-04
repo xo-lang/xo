@@ -1,0 +1,10 @@
+# twincheck: one Xo program and one Go program (the owner's tests/13-perf
+# micro set, 2026-11-04), each taking the workload as its argument; lines
+# are NAME CHECKSUM MILLIS, so only the first two fields are compared.
+compare fields 2
+xo go fib32
+xo go map1M
+xo go strbuild1M
+xo go sort1M
+xo go json10kx20
+xo go spawn100k

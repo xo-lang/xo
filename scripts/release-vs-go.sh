@@ -40,7 +40,17 @@
 # v0.36.0's), which builds the base servers. The host's OFF_SEED only builds
 # Xo at HTTP_REV: it moves with every seed cut, so a base that followed it
 # would compare 0.37 against 0.37.
-# SECTIONS (default "compile run test http") limits the report's sections.
+# amd64 (2026-11-04, Lead: json10kx20 1.78 times slower on linux/amd64 in
+# 0.38.1 than 0.35.0, unseen by the arm64 only report): bench/perf/micro13
+# (the owner's micro set: fib, map, strbuild, sort, json, spawn) built with
+# --release for linux/amd64 by AMD64_BASE_XO (the release before's xo on this
+# Mac, required), by XO, and by Go, then on the linux/amd64 offload host
+# (offload-amd64.env, its seed's xo running the A/Bs): scripts/release-vs-go-
+# amd64.sh, AMD64_ROUNDS rounds (default 5): base against new and Go against
+# new per workload. A row more than 3% slower than the release before is
+# flagged in the report, and the release checklist settles it (toolchain.md
+# "Cutting a release" step 7).
+# SECTIONS (default "compile run test http amd64") limits the report's sections.
 # ROUNDS (default 3, owner 2026-11-01) sets the --ab rounds; WORKLOADS limits the run
 # workloads (names as below). Run it through heavy.sh as HEAVY_CLASS=measure:
 # xo bench --ab refuses to run under a bulk or gate job (lead, 2026-10-30:
@@ -53,7 +63,7 @@ set -euo pipefail
 XO=${1:?usage: release-vs-go.sh XO OUT}
 OUT=${2:?usage: release-vs-go.sh XO OUT}
 ROUNDS=${ROUNDS:-3}
-SECTIONS=${SECTIONS:-compile run test http}
+SECTIONS=${SECTIONS:-compile run test http amd64}
 section() { [[ " $SECTIONS " == *" $1 "* ]]; }
 MAX_LOAD=${MAX_LOAD:-6}
 WAIT_MIN=${WAIT_MIN:-30}
@@ -375,6 +385,53 @@ PY
 		if grep -qE '^(xo|base)\.p[0-9]+ ' "$OUT/http.txt"; then
 			echo >>"$report"
 			python3 -I "$perf/jitter/pads.py" "$OUT/http.txt" >>"$report"
+		fi
+	fi
+fi
+# the amd64 section: the micro set cross-built here, run on the amd64 host
+if section amd64; then
+	{
+		echo
+		echo "## linux/amd64 micro set (bench/perf/micro13, the linux/amd64 offload host)"
+		echo
+	} >>"$report"
+	agents=$HOME/xo-lead/agents
+	if [ ! -x "$agents/offload.sh" ]; then
+		echo "(skipped: no $agents/offload.sh)" >>"$report"
+	elif [ -z "${AMD64_BASE_XO:-}" ]; then
+		echo "(skipped: set AMD64_BASE_XO to the release before's xo on this Mac)" >>"$report"
+	else
+		d=$work/amd64
+		mkdir -p "$d"
+		cp -R "$perf/micro13/xo" "$d/src-xo"
+		ok=1
+		(cd "$d/src-xo" && "$AMD64_BASE_XO" build --release --targets=linux/amd64 -o "$d/micro13.base" . >"$OUT/amd64-build-base.log" 2>&1) || ok=0
+		(cd "$d/src-xo" && "$XO" build --release --targets=linux/amd64 -o "$d/micro13.new" . >"$OUT/amd64-build-new.log" 2>&1) || ok=0
+		(cd "$perf/micro13/go" && GOOS=linux GOARCH=amd64 GOFLAGS=-trimpath go build -o "$d/micro13.go" . >"$OUT/amd64-build-go.log" 2>&1) || ok=0
+		if [ "$ok" = 0 ]; then
+			echo "(a build failed: see $OUT/amd64-build-*.log)" >>"$report"
+		else
+			{
+				echo "- base: $("$AMD64_BASE_XO" version 2>&1 | head -1); new: $("$XO" version 2>&1 | head -1); Go $(go env GOVERSION); all built for linux/amd64 (xo with --release, as the owner's tests/13-perf)"
+				echo "- each block is xo bench --ab, A = base or go, B = new; ratio is new over A; a row more than 3% slower than base is FLAGGED"
+				echo
+				echo '```'
+			} >>"$report"
+			(
+				set -a
+				. "$HOME/xo-lead/offload-amd64.env"
+				set +a
+				export OFFLOAD_ENV=offload-amd64.env
+				# a --put lands in the Windows home's xo-ci/off (offload.md "The
+				# linux/amd64 host"), which WSL reads under /mnt/c/Users
+				for f in base new go; do
+					"$agents/offload.sh" --put "$d/micro13.$f" "xo-ci/off/rvg-micro13.$f" || exit 4
+				done
+				"$agents/offload.sh" "$root/scripts/release-vs-go-amd64.sh" "/mnt/c/Users/$OFF_USER/xo-ci/off" "$OFF_SEED" "${AMD64_ROUNDS:-5}"
+			) >"$OUT/amd64.txt" 2>&1 || true
+			# the B/A ratio is the 6th column of a wall_ms line (name, A, B, two spreads)
+			awk '/^### / {blk=$0} /^wall_ms/ && blk ~ /base against/ && $6 + 0 > 1.03 {print $0 "   FLAGGED (" substr(blk, 5) ")"; next} {print}' "$OUT/amd64.txt" >>"$report"
+			echo '```' >>"$report"
 		fi
 	fi
 fi

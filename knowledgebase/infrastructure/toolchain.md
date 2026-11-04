@@ -297,8 +297,25 @@ create`. The order:
    first offload host (for 0.37.0's report, v0.36.0's), required since
    2026-11-03 so the base no longer follows the host's seed (the section
    is skipped without it; the seed builds only Xo at HTTP_REV).
-   SECTIONS="compile run test http" (the default) picks sections. Last
-   verified: 2026-10-30 (test section smoke run, SECTIONS=test ROUNDS=2).
+   An amd64 section (2026-11-04, Lead; REQUIRED for every release: 0.38.1
+   shipped a json10kx20 that took 1.56 to 1.78 times as long as the
+   releases before on linux/amd64 while the arm64 only report showed
+   about 1.1) builds bench/perf/micro13 (the owner's tests/13-perf micro
+   set: fib32, map1M, strbuild1M, sort1M, json10kx20, spawn100k) with
+   `--release` for linux/amd64 by AMD64_BASE_XO (the release before's
+   xo on the Mac, the darwin/arm64 archive unpacked; required, else the
+   section is skipped and the report is not complete), by the release
+   and by Go, and runs scripts/release-vs-go-amd64.sh on the linux/amd64
+   offload host: `xo bench --ab` per workload, the release before
+   against the release and Go against the release (AMD64_ROUNDS, default
+   5). A wall row more than 3% slower than the release before is
+   FLAGGED in the report; a flagged row is settled before the report is
+   committed (a direct A/B of the two releases on that host, or a fix
+   owner named in the report). SECTIONS="compile run test http amd64"
+   (the default) picks sections. Last verified: 2026-10-30 (test section
+   smoke run, SECTIONS=test ROUNDS=2); 2026-11-04 (amd64 section,
+   v0.36.0 against v0.38.1: json10kx20 flagged at 1.557, the other five
+   within noise or better).
 8. the website's comparison pages (owner, 2026-10-23): refresh the
    tables of `content/docs/xo-and-go.md` from step 7's
    `release-vs-go-vX.Y.Z.md` (and any newer `*-vs-go-*` results),
