@@ -159,5 +159,6 @@ lists the rest.
   2026-11-03): a program that calls `http.serve_component` as a WASI 0.3
   component (async `wasi:http/handler@0.3.0` with a callback; wasmtime
   serve 50, Spin 4): streamed request and response bodies and trailers,
-  and `http.Client` through `wasi:http/client`'s send; commands and
-  sockets at 0.3 are not yet (XO1515).
+  `http.Client` through `wasi:http/client`'s send, and several requests
+  at once per instance (step 3); commands and sockets at 0.3 are not yet
+  (XO1515).

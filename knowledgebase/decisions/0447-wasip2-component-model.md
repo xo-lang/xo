@@ -1321,3 +1321,42 @@ Rust's rate on the echo and 0.989x on the proxy, with p99 alike, and
 decisions: concurrent requests per instance, commands and sockets at
 0.3, and the component's size (queue item 3).
 
+
+### Stage 5 step 3: several in-flight requests per instance (Accepted, owner, 2026-11-04)
+
+Approved by the owner on 2026-11-04: a wasip3/wasm component serves several
+requests at once in one instance. It is measured against Rust's wasip3
+component on one host: req/s and p99 at 32 and 256 connections, and memory
+per instance. Commands and sockets at 0.3 stay a later decision.
+
+Design:
+
+- The constraint: today rt10.xo blocks in `waitable-set.wait` inside
+  `handle`, so a second request enters the instance only after the first
+  returns to the host.
+- Waits instead suspend the Xo task (rt3.xo's unwinding), and the
+  scheduler returns to the host at its idle step: the callback answers
+  WAIT on the request's waitable set.
+- Each request runs main in an rt3 task of its own (as implemented: the
+  program keeps no state between requests, as at 0.2), which gets a 500
+  for a fault, as `http.server` does. The scheduler's prologue runs once
+  per instance; the export starts the request's task and runs the
+  scheduler until every task waits.
+- Each request has a record in place of rt10.xo's per-request globals,
+  found from the running task. Its waitables join that request's set, so
+  an event wakes the component task that owns it.
+- `task.return` must run in its own component task. When a request's
+  head or end happens while another request's task runs (a channel
+  between requests, a background task), its component task is woken
+  through a future made for that purpose.
+
+Results (2026-11-04,
+[bench/results/wasip3-concurrency-2026-11-04.md](../../bench/results/wasip3-concurrency-2026-11-04.md)):
+req/s and p99 match Rust's 0.3 component before and after this step
+(hello at 256 connections 202,599 req/s, p99 5.44 ms, against 207,995
+and 5.10; a proxy to a 5 ms upstream 14,440 and 81.9 ms against 14,513
+and 77.9). Memory is the gap: the proxy's peak resident size fell from
+752 MB to 507 MB at 32 connections and from 5.45 GB to 2.36 GB at 256,
+against Rust's 67 MB and 146 MB. Most of the rest is the wasm backend's
+16 MB memory-frame stack resident in every instance
+(gotchas/wasm-frame-stack-resident.md, fixed separately).

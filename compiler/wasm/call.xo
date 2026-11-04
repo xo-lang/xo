@@ -507,6 +507,18 @@ fn (var g: Gen) call(v: Int) {
         return
       }
       if name.starts_with("rt.") && g.comp && rt5_direct(op) {
+        if g.p3 && rt10_blocking(name) {
+          // the request's task can wait there (rt10.xo): the call
+          // repeats when it runs again
+          let id = g.resume_point()
+          for a in g.f.values[v].args {
+            g.push(a)
+          }
+          g.e("call $${op}")
+          g.suspend_check(id)
+          g.def(v)
+          return
+        }
         g.rt_call(v, "$${op}")
         return
       }

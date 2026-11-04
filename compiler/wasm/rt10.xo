@@ -1,19 +1,26 @@
 // The runtime of the WebAssembly backend for a WASI 0.3 wasi:http
 // component (wasip3/wasm, decision 0447 stage 5): the program is the core
 // module of a component exporting `wasi:http/handler@0.3.0`'s async handle,
-// lifted with a callback (componentp3.xo). handle keeps the request's
-// method, path, authority and fields, consumes it (a body stream and a
-// trailers future), and runs main inside the export (it builds its router
-// and calls serve_component, as on wasip2). The response head goes back
-// through task.return; its body and trailers go to the stream and future
-// the response was made with, as main writes them, and a handle_stream
-// route reads the request body as it arrives. A read or write the host
-// cannot finish at once waits in place: its waitable joins the set,
-// waitable-set.wait blocks until it is done (both wasmtime and Spin allow
-// a blocking wait in a callback-lifted export, step 2, 2026-11-03), and it
-// leaves the set again. The request getters, fields and the 500 are
-// rt5.xo's, whose 0.2 imports rt10's map to their 0.3 functions of the same
-// flat forms.
+// lifted with a callback (componentp3.xo). Several requests run at once in
+// an instance (step 3): handle keeps the request's method, path,
+// authority and fields in a record, consumes the request (a body stream
+// and a trailers future), and starts a task of rt3.xo's scheduler that
+// runs main (it builds its router and calls serve_component, as on
+// wasip2) with the record as its request. The scheduler runs the tasks
+// until none can (rt10_sched), and the export or its callback gives the
+// host WAIT on the request's waitable set, or EXIT once the request is
+// finished. Every host operation is started here and goes on in the
+// callback when its event comes (the wait table names each waitable's
+// kind and record): the request body is read into the record's buffer
+// as tasks want it, the response body is buffered and written as the host
+// takes it, and an outgoing request's subtask, body and response have a
+// record of their own. A task waits by parking (its call repeats when it
+// runs again), and an event wakes only the task that waits for it. The
+// response head goes back through task.return in its request's own
+// component task: when another request's task makes it, a future made
+// for the purpose wakes that task. The request getters, fields and the
+// 500 are rt5.xo's, whose 0.2 imports rt10's map to their 0.3 functions
+// of the same flat forms.
 
 /// rt10's imports: rt5's names for the 0.3 functions of the same flat
 /// forms, the 0.2 stream functions rt6.xo's output writes with, the rest of wasi:http/types@0.3.0 it calls, and the async ABI's
@@ -51,10 +58,9 @@ fn rt10_imports() -> Str {
     (import "$p3" "[task-return]" (func $p3_return (param i32 i32 i32 i64 i32 i32 i32 i32)))
     (import "$p3" "[waitable-set-new]" (func $p3_wsnew (result i32)))
     (import "$p3" "[waitable-join]" (func $p3_join (param i32 i32)))
-    (import "$p3" "[waitable-set-wait]" (func $p3_wswait (param i32 i32) (result i32)))
     (import "$p3" "[waitable-set-drop]" (func $p3_wsdrop (param i32)))
-    (import "$p3" "[backpressure-inc]" (func $p3_bp_inc))
-    (import "$p3" "[backpressure-dec]" (func $p3_bp_dec))
+    (import "$p3" "[context-get]" (func $p3_ctx_get (result i32)))
+    (import "$p3" "[context-set]" (func $p3_ctx_set (param i32)))
 
   """
 }
@@ -86,46 +92,110 @@ fn rt10_client_imports() -> Str {
 /// The globals of rt10.xo (with rt5.xo's).
 fn rt10_globals() -> Str {
   """
-    ;; the waitable set of a blocked read or write, and the event
-    ;; waitable-set.wait writes (8 bytes)
-    (global $p3ws (mut i32) (i32.const 0))
-    (global $p3ev (mut i32) (i32.const 0))
-    ;; the request: its fields as rt5's getters returned them, kept for
-    ;; main (taken once; consume-body ends the request)
-    (global $p3m (mut i32) (i32.const 0))
-    (global $p3mn (mut i32) (i32.const 0))
-    (global $p3p (mut i32) (i32.const 0))
-    (global $p3pn (mut i32) (i32.const 0))
-    (global $p3a (mut i32) (i32.const 0))
-    (global $p3an (mut i32) (i32.const 0))
-    (global $p3h (mut i32) (i32.const 0))
-    (global $p3hn (mut i32) (i32.const 0))
-    ;; its body stream (0 once it ended and was dropped), its trailers
-    ;; future (0 once read or dropped), and the done future's writable end
-    (global $p3rx (mut i32) (i32.const 0))
-    (global $p3trx (mut i32) (i32.const 0))
-    (global $p3dtx (mut i32) (i32.const 0))
-    ;; the response: its body stream's and trailers future's writable ends,
-    ;; 1 when the host dropped the body stream, 1 once the body ended, and
-    ;; a 32 byte value area (a future's payload: ok(none) zeroed, or
-    ;; ok(some(fields)))
-    (global $p3tx (mut i32) (i32.const 0))
-    (global $p3ftx (mut i32) (i32.const 0))
-    (global $p3wdrop (mut i32) (i32.const 0))
-    (global $p3ended (mut i32) (i32.const 0))
-    (global $p3tr (mut i32) (i32.const 0))
-    ;; an outgoing request's 32 byte value area (send's result, its
-    ;; trailers' ok(none))
-    (global $p3cv (mut i32) (i32.const 0))
+    ;; the request record of the running task (rt10_sched keeps it in the
+    ;; task at 224), and that of the component task whose export or
+    ;; callback runs now
+    (global $treq (mut i32) (i32.const 0))
+    (global $p3ctx (mut i32) (i32.const 0))
+    ;; 1 once the first request set the instance up; a zeroed 32 byte
+    ;; value (a future's ok(none)); the scope request tasks are in (never
+    ;; closed); the wait table ({kind, object} per waitable handle) and
+    ;; its capacity; the waitables joined to a set, and the requests whose
+    ;; main has not ended
+    (global $p3init (mut i32) (i32.const 0))
+    (global $p3zero (mut i32) (i32.const 0))
+    (global $p3scope (mut i32) (i32.const 0))
+    (global $p3wt (mut i32) (i32.const 0))
+    (global $p3wcap (mut i32) (i32.const 0))
+    (global $p3nreg (mut i32) (i32.const 0))
+    (global $p3live (mut i32) (i32.const 0))
 
   """
+}
+
+/// The calls of rt10.xo that can suspend the task (its call repeats when
+/// the task runs again).
+fn rt10_blocking(name: Str) -> Bool {
+  name is "rt.wasi_http_body" | "rt.wasi_http_body_read" | "rt.wasi_http_body_trailers" | "rt.wasi_http_write" | "rt.wasi_http_send" | "rt.wasi_http_resp_body"
+}
+
+/// rt3.xo's text for a wasip3/wasm component (stage 5 step 3): requests
+/// run as tasks, several at once. A task has 8 more bytes (224 the request
+/// record of its task tree, $treq while it runs, kept and inherited as its
+/// deadline is; 228 its outgoing request, rt10_text's client record); the
+/// scheduler's start runs once per instance
+/// and main is not one of its tasks (each request's task runs main); and
+/// at its idle step the scheduler returns to the export or callback that
+/// ran it ($p3_idle), which gives the host WAIT on the request's set.
+fn rt10_sched(rt3: Str) -> Str {
+  var out = StrBuilder.new()
+  let ls = rt3.lines()
+  var n_size = 0
+  var n_in = 0
+  var n_out = 0
+  var in_sched = false
+  var guarded = false
+  var idle = false
+  var in_end = false
+  var n_wake = 0
+  for (i, l) in ls.indexed() {
+    let t = l.trim()
+    let ind = l[0..l.len() - l.trim_start().len()]
+    if t.starts_with("(func $sched ") {
+      in_sched = true
+      out.write(l)
+      out.write("\n${ind}  global.get $mtask\n${ind}  i32.eqz\n${ind}  if\n")
+      continue
+    }
+    if t.starts_with("(func ") {
+      in_end = t.starts_with("(func $task_end ")
+    }
+    // a request's task ending wakes no other task: its scope is never
+    // awaited (a wake makes every blocked task repeat its call)
+    if in_end && t == "call $wake)" {
+      out.write("${ind}local.get $s\n${ind}global.get $p3scope\n${ind}i32.ne\n${ind}if\n${ind}  call $wake\n${ind}end)\n")
+      n_wake += 1
+      continue
+    }
+    if in_sched && !guarded && t == "local.get $m" && i + 1 < ls.len() && ls[i + 1].trim() == "call $act_push" {
+      continue
+    }
+    if in_sched && !guarded && t == "call $act_push" {
+      out.write("${ind}end\n")
+      guarded = true
+      continue
+    }
+    if in_sched && !idle && t == "call $next_deadline" && i > 0 && ls[i - 1].trim() == "br_if $round" {
+      out.write("${ind}call $p3_idle\n${ind}if\n${ind}  return\n${ind}end\n")
+      idle = true
+    }
+    if t == "i32.const 224" && i + 2 < ls.len() && ls[i + 1].trim().starts_with("i32.const ") && ls[i + 2].trim() == "call $obj_new" {
+      out.write("${ind}i32.const 232\n")
+      n_size += 1
+      continue
+    }
+    out.write(l)
+    out.write("\n")
+    if t == "global.set $tdl" && i > 0 && ls[i - 1].trim() == "i64.load offset=200" {
+      out.write("${ind}local.get $t\n${ind}i32.load offset=224\n${ind}global.set $treq\n")
+      n_in += 1
+    }
+    if t == "i64.store offset=200" && i > 0 && ls[i - 1].trim() == "global.get $tdl" {
+      out.write("${ind}local.get $t\n${ind}global.get $treq\n${ind}i32.store offset=224\n")
+      n_out += 1
+    }
+  }
+  if !guarded || !idle || n_size != 2 || n_in != 1 || n_out != 2 || n_wake != 1 {
+    fault("rt10_sched: rt3.xo changed (start ${guarded}, idle ${idle}, sizes ${n_size}, loads ${n_in}, stores ${n_out}, task_end ${n_wake})")
+  }
+  out.freeze()
 }
 
 /// rt5.xo's functions that rt10.xo replaces: their definitions renamed
 /// (strip_runtime drops them), so the calls of the rest bind to rt10's.
 fn rt10_rt5(var g: Gen) -> Str {
   var t = rt5_text(g)
-  for n in ["wasi_http_method", "wasi_http_path", "wasi_http_authority", "wasi_http_headers", "wasi_http_body", "wasi_http_body_read", "wasi_http_body_trailers", "wasi_http_head", "wasi_http_write", "wasi_http_end", "handle_end", "wasi_http_send", "wasi_http_resp_headers", "wasi_http_resp_body"] {
+  for n in ["wasi_http_method", "wasi_http_path", "wasi_http_authority", "wasi_http_headers", "wasi_http_body", "wasi_http_body_read", "wasi_http_body_trailers", "wasi_http_head", "wasi_http_write", "wasi_http_end", "handle_end", "wasi_http_send", "wasi_http_resp_headers", "wasi_http_resp_body", "wasi_http_respond"] {
     let o = "(func \$${n} "
     let o2 = "(func \$${n}\n"
     if !t.contains(o) && !t.contains(o2) {
@@ -147,11 +217,36 @@ fn rt10_text(var g: Gen) -> Str {
   hb.write_byte(0)
   let h500b = hb.freeze()
   let h500 = g.str_obj(h500b)
-  rt10_rt5(g) + """
+  let cdisp = if g.is_client() { "call $p3_cdispatch" } else { "drop\n        drop\n        drop\n        drop" }
+  rt10_rt5(g) + (if g.is_client() { rt10_client_text() } else { "" }) + """
+    ;; A request's record (rt10_handle makes it; 272 bytes): 0 its
+    ;; component task's waitable set, 4 its task, 8..36 what the getters
+    ;; give once (method, path, authority, fields: object and length), 40
+    ;; the request body stream (0 once dropped), 44 its trailers future, 48
+    ;; the done future's writable end, 52 the response body stream's
+    ;; writable end, 56 its trailers future's, 60 flags (1 the head was
+    ;; made, 2 end came, 4 the host dropped the body, 8 main ended, 16 a
+    ;; body read in flight, 32 the body ended, 64 a body write in flight,
+    ;; 128 a trailers read in flight, 256 the trailers were read, 512 the
+    ;; trailers' write in flight, 1024 the done future's write in flight,
+    ;; 2048 a kick in flight, 4096 the head waits for its own component
+    ;; task, 8192 finished, 16384 the body stream closed), 64 the response
+    ;; that waits, 68 the read buffer (64 KiB), 72 its unread start, 76 its
+    ;; end, 80 the whole body read so far {80 bytes, 84 length, 88
+    ;; capacity}, 92 the body bytes being written {92, 96 length, 100 how
+    ;; far}, 104 the next ones {104, 108 length, 112 capacity}, 116 the
+    ;; task waiting for the body, 120 the task waiting to write, 124 the
+    ;; request trailers (object, 128 length), 132 the response trailers'
+    ;; fields, 136 the kick future's readable end, 140 its waitables in
+    ;; the set, 144 the trailers read's value, 176 the response trailers'
+    ;; value, 208 the done value, 240 the kick's value.
+
     ;; the request's getters: what handle kept, given to the first caller
     ;; (serve_component calls each once), else empty
-    (func $wasi_http_method (result i32 i32)
-      global.get $p3m
+    (func $wasi_http_method (result i32 i32) (local $R i32)
+      global.get $treq
+      local.tee $R
+      i32.load offset=8
       i32.eqz
       if
         i32.const 0
@@ -159,13 +254,18 @@ fn rt10_text(var g: Gen) -> Str {
         i32.const 0
         return
       end
-      global.get $p3m
-      global.get $p3mn
+      local.get $R
+      i32.load offset=8
+      local.get $R
+      i32.load offset=12
+      local.get $R
       i32.const 0
-      global.set $p3m)
+      i32.store offset=8)
 
-    (func $wasi_http_path (result i32 i32)
-      global.get $p3p
+    (func $wasi_http_path (result i32 i32) (local $R i32)
+      global.get $treq
+      local.tee $R
+      i32.load offset=16
       i32.eqz
       if
         i32.const 0
@@ -173,13 +273,18 @@ fn rt10_text(var g: Gen) -> Str {
         i32.const 0
         return
       end
-      global.get $p3p
-      global.get $p3pn
+      local.get $R
+      i32.load offset=16
+      local.get $R
+      i32.load offset=20
+      local.get $R
       i32.const 0
-      global.set $p3p)
+      i32.store offset=16)
 
-    (func $wasi_http_authority (result i32 i32)
-      global.get $p3a
+    (func $wasi_http_authority (result i32 i32) (local $R i32)
+      global.get $treq
+      local.tee $R
+      i32.load offset=24
       i32.eqz
       if
         i32.const 0
@@ -187,13 +292,18 @@ fn rt10_text(var g: Gen) -> Str {
         i32.const 0
         return
       end
-      global.get $p3a
-      global.get $p3an
+      local.get $R
+      i32.load offset=24
+      local.get $R
+      i32.load offset=28
+      local.get $R
       i32.const 0
-      global.set $p3a)
+      i32.store offset=24)
 
-    (func $wasi_http_headers (result i32 i32)
-      global.get $p3h
+    (func $wasi_http_headers (result i32 i32) (local $R i32)
+      global.get $treq
+      local.tee $R
+      i32.load offset=32
       i32.eqz
       if
         i32.const 0
@@ -201,355 +311,1006 @@ fn rt10_text(var g: Gen) -> Str {
         i32.const 0
         return
       end
-      global.get $p3h
-      global.get $p3hn
+      local.get $R
+      i32.load offset=32
+      local.get $R
+      i32.load offset=36
+      local.get $R
       i32.const 0
-      global.set $p3h)
+      i32.store offset=32)
 
-    ;; w's operation, which returned BLOCKED, waited for: its code
-    ;; (count << 4 | status)
-    (func $p3_block (param $w i32) (result i32)
-      local.get $w
-      global.get $p3ws
-      call $p3_join
-      global.get $p3ws
-      global.get $p3ev
-      call $p3_wswait
-      drop
-      local.get $w
-      i32.const 0
-      call $p3_join
-      global.get $p3ev
-      i32.load offset=4)
+    (func $p3_flag (param $R i32) (param $f i32)
+      local.get $R
+      local.get $R
+      i32.load offset=60
+      local.get $f
+      i32.or
+      i32.store offset=60)
 
-    ;; stream rx's read of at most n bytes to a, waited for when blocked:
-    ;; its code (count << 4 | status)
-    (func $p3_sread_at (param $rx i32) (param $a i32) (param $n i32) (result i32) (local $r i32)
-      local.get $rx
-      local.get $a
-      local.get $n
-      call $p3_sread
-      local.tee $r
+    (func $p3_unflag (param $R i32) (param $f i32)
+      local.get $R
+      local.get $R
+      i32.load offset=60
+      local.get $f
       i32.const -1
-      i32.eq
-      if
-        local.get $rx
-        call $p3_block
-        local.set $r
-      end
-      local.get $r)
+      i32.xor
+      i32.and
+      i32.store offset=60)
 
-    ;; stream rx read to its end and dropped: a Bytes object
-    (func $p3_read_all (param $rx i32) (result i32 i32) (local $buf i32) (local $len i32) (local $cap i32) (local $k i32) (local $o i32)
-      block $end
-        loop $more
-          local.get $cap
-          local.get $len
-          i32.sub
-          i32.const 16384
-          i32.lt_u
-          if
-            local.get $cap
-            i32.const 1
-            i32.shl
-            local.tee $k
-            local.get $len
-            i32.const 65536
-            i32.add
-            local.tee $o
-            local.get $k
-            local.get $o
-            i32.gt_u
-            select
-            local.tee $cap
-            call $alloc
-            local.tee $o
-            local.get $buf
-            local.get $len
-            memory.copy
-            local.get $buf
-            if
-              local.get $buf
-              call $free
-            end
-            local.get $o
-            local.set $buf
-          end
-          local.get $rx
-          local.get $buf
-          local.get $len
-          i32.add
-          local.get $cap
-          local.get $len
-          i32.sub
-          call $p3_sread_at
-          local.tee $k
-          i32.const 4
-          i32.shr_u
-          local.get $len
-          i32.add
-          local.set $len
-          local.get $k
-          i32.const 15
-          i32.and
-          br_if $end
-          br $more
+    ;; 1 when R has any of flags f, else 0 (a Bool: p3_after ands it)
+    (func $p3_has (param $R i32) (param $f i32) (result i32)
+      local.get $R
+      i32.load offset=60
+      local.get $f
+      i32.and
+      i32.const 0
+      i32.ne)
+
+    ;; waitable w, whose operation returned BLOCKED, joins the set of
+    ;; request R with its kind and object (the record, or a client record)
+    (func $p3_reg (param $w i32) (param $kind i32) (param $obj i32) (param $R i32) (local $nb i32) (local $nc i32)
+      local.get $w
+      global.get $p3wcap
+      i32.ge_u
+      if
+        local.get $w
+        i32.const 1
+        i32.shl
+        i32.const 64
+        i32.add
+        local.tee $nc
+        i32.const 3
+        i32.shl
+        call $alloc
+        local.tee $nb
+        i32.const 0
+        local.get $nc
+        i32.const 3
+        i32.shl
+        memory.fill
+        global.get $p3wt
+        if
+          local.get $nb
+          global.get $p3wt
+          global.get $p3wcap
+          i32.const 3
+          i32.shl
+          memory.copy
+          global.get $p3wt
+          call $free
         end
+        local.get $nb
+        global.set $p3wt
+        local.get $nc
+        global.set $p3wcap
       end
-      local.get $rx
-      call $p3_sdrop_r
-      local.get $len
-      call $rs_new
-      local.tee $o
-      i32.const 8
+      global.get $p3wt
+      local.get $w
+      i32.const 3
+      i32.shl
       i32.add
-      local.get $buf
-      local.get $len
-      memory.copy
-      local.get $buf
-      if
-        local.get $buf
-        call $free
-      end
-      local.get $o
-      local.get $len)
+      local.tee $nb
+      local.get $kind
+      i32.store
+      local.get $nb
+      local.get $obj
+      i32.store offset=4
+      local.get $R
+      local.get $R
+      i32.load offset=140
+      i32.const 1
+      i32.add
+      i32.store offset=140
+      global.get $p3nreg
+      i32.const 1
+      i32.add
+      global.set $p3nreg
+      local.get $w
+      local.get $R
+      i32.load
+      call $p3_join)
 
-    ;; future f's write of the value at v, waited for when blocked; then
-    ;; its writable end dropped (trailers is 1 for a trailers future, 0
-    ;; for a done future)
-    (func $p3_fput (param $f i32) (param $v i32) (param $trailers i32)
-      local.get $trailers
+    (func $p3_unreg (param $w i32) (param $R i32)
+      global.get $p3wt
+      local.get $w
+      i32.const 3
+      i32.shl
+      i32.add
+      i64.const 0
+      i64.store
+      local.get $R
+      local.get $R
+      i32.load offset=140
+      i32.const 1
+      i32.sub
+      i32.store offset=140
+      global.get $p3nreg
+      i32.const 1
+      i32.sub
+      global.set $p3nreg
+      local.get $w
+      i32.const 0
+      call $p3_join)
+
+    ;; task t, parked, runs again (its call repeats); only it: $wake would
+    ;; make every blocked task repeat its call
+    (func $p3_wake (param $t i32)
+      local.get $t
       if
-        local.get $f
-        local.get $v
-        call $p3_twrite
-        i32.const -1
-        i32.eq
-        if
-          local.get $f
-          call $p3_block
-          drop
-        end
-        local.get $f
-        call $p3_tdrop_w
-      else
-        local.get $f
-        local.get $v
-        call $p3_dwrite
-        i32.const -1
-        i32.eq
-        if
-          local.get $f
-          call $p3_block
-          drop
-        end
-        local.get $f
-        call $p3_ddrop_w
+        local.get $t
+        local.get $t
+        i32.load offset=116
+        i32.const 1
+        i32.sub
+        i32.store offset=116
       end)
 
-    ;; at most n bytes of the request body to a: the count, or -1 at its
-    ;; end (the stream is then dropped)
-    (func $p3_read (param $a i32) (param $n i32) (result i32) (local $r i32)
-      loop $again
-        global.get $p3rx
-        i32.eqz
-        if
-          i32.const -1
-          return
-        end
-        global.get $p3rx
-        local.get $a
-        local.get $n
-        call $p3_sread_at
-        local.tee $r
-        i32.const 15
-        i32.and
-        if
-          ;; the writer dropped its end (or the read was cancelled)
-          global.get $p3rx
-          call $p3_sdrop_r
-          i32.const 0
-          global.set $p3rx
-        end
-        local.get $r
-        i32.const 4
-        i32.shr_u
-        local.tee $r
-        if
-          local.get $r
-          return
-        end
-        br $again
-      end
-      i32.const -1)
+    ;; the running task waits until a $p3_wake of the task stored at slot
+    (func $p3_park (param $slot i32)
+      local.get $slot
+      global.get $cur
+      i32.store
+      call $block)
 
-    ;; the request's body: a Bytes object of the stream read to its end
-    (func $wasi_http_body (result i32 i32) (local $buf i32) (local $len i32) (local $cap i32) (local $k i32) (local $o i32)
-      block $end
-        loop $more
-          local.get $cap
-          local.get $len
-          i32.sub
-          i32.const 16384
-          i32.lt_u
-          if
-            local.get $cap
-            i32.const 1
-            i32.shl
-            local.tee $k
-            local.get $len
-            i32.const 65536
-            i32.add
-            local.tee $o
-            local.get $k
-            local.get $o
-            i32.gt_u
-            select
-            local.tee $cap
-            call $alloc
-            local.tee $o
-            local.get $buf
-            local.get $len
-            memory.copy
-            local.get $buf
-            if
-              local.get $buf
-              call $free
-            end
-            local.get $o
-            local.set $buf
-          end
-          local.get $buf
-          local.get $len
-          i32.add
-          local.get $cap
-          local.get $len
-          i32.sub
-          call $p3_read
-          local.tee $k
-          i32.const 0
-          i32.lt_s
-          br_if $end
-          local.get $len
-          local.get $k
-          i32.add
-          local.set $len
-          br $more
-        end
-      end
-      local.get $len
-      call $rs_new
-      local.tee $o
-      i32.const 8
-      i32.add
-      local.get $buf
-      local.get $len
-      memory.copy
-      local.get $buf
-      if
-        local.get $buf
-        call $free
-      end
-      local.get $o
-      local.get $len)
-
-    ;; a handle_stream route's next read of the request body: at most max
-    ;; bytes (1 MiB at most) as they arrive, empty at its end
-    (func $wasi_http_body_read (param $max i64) (result i32 i32) (local $m i32) (local $o i32) (local $k i32)
-      local.get $max
-      i64.const 1048576
-      i64.gt_s
-      if (result i32)
-        i32.const 1048576
-      else
-        local.get $max
-        i32.wrap_i64
-      end
-      local.tee $m
-      call $rs_new
-      local.tee $o
-      i32.const 8
-      i32.add
-      local.get $m
-      call $p3_read
-      local.tee $k
+    ;; scheduler: whether its idle step returns to the export or callback
+    ;; (a host operation is in flight, or no request runs main)
+    (func $p3_idle (result i32)
+      global.get $p3nreg
       i32.const 0
-      i32.lt_s
-      if
-        i32.const 0
-        local.set $k
-      end
-      local.get $o
-      local.get $k)
-
-    ;; the request's trailers (in the headers' form), once its body is read
-    ;; to the end (the rest is read and dropped); empty when there are none
-    (func $wasi_http_body_trailers (result i32 i32) (local $r i32) (local $t i32)
-      block $drained
-        loop $drain
-          global.get $p3rx
-          i32.eqz
-          br_if $drained
-          global.get $p3tr
-          i32.const 32
-          call $p3_read
-          drop
-          br $drain
-        end
-      end
-      global.get $p3trx
+      i32.gt_u
+      global.get $p3live
       i32.eqz
+      i32.or)
+
+    ;; request R's component task is told to run (task.return or its end
+    ;; waits for it): a future it reads, written at once
+    (func $p3_kick (param $R i32) (local $t i64)
+      local.get $R
+      i32.const 2048
+      call $p3_has
       if
-        i32.const 0
-        call $rs_new
-        i32.const 0
         return
       end
-      global.get $p3tr
-      i32.const 0
-      i32.const 32
-      memory.fill
-      global.get $p3trx
-      global.get $p3tr
-      call $p3_tread
-      i32.const -1
-      i32.eq
-      if
-        global.get $p3trx
-        call $p3_block
-        drop
-      end
-      global.get $p3trx
-      call $p3_tdrop_r
-      i32.const 0
-      global.set $p3trx
-      ;; result<option<own<trailers>>, error-code>: ok's case at 0, the
-      ;; option's at 8, the trailers at 12
-      global.get $p3tr
-      i32.load8_u
-      global.get $p3tr
-      i32.load8_u offset=8
-      i32.eqz
-      i32.or
-      if
-        i32.const 0
-        call $rs_new
-        i32.const 0
-        return
-      end
-      global.get $p3tr
-      i32.load offset=12
+      local.get $R
+      i32.const 2048
+      call $p3_flag
+      call $p3_tnew
       local.set $t
-      global.get $p3tr
+      local.get $R
+      local.get $t
+      i32.wrap_i64
+      i32.store offset=136
+      local.get $R
+      i32.const 240
+      i32.add
       i32.const 0
       i32.const 32
       memory.fill
       local.get $t
-      call $fields_bytes)
+      i32.wrap_i64
+      local.get $R
+      i32.const 240
+      i32.add
+      call $p3_tread
+      drop
+      local.get $t
+      i32.wrap_i64
+      i32.const 6
+      local.get $R
+      local.get $R
+      call $p3_reg
+      local.get $t
+      i64.const 32
+      i64.shr_u
+      i32.wrap_i64
+      global.get $p3zero
+      call $p3_twrite
+      drop
+      local.get $t
+      i64.const 32
+      i64.shr_u
+      i32.wrap_i64
+      call $p3_tdrop_w)
+
+    ;; R is finished once main ended and the host has the response's body,
+    ;; trailers and done value, with nothing of R's in its set
+    (func $p3_check_done (param $R i32)
+      local.get $R
+      i32.const 8
+      call $p3_has
+      i32.eqz
+      if
+        return
+      end
+      local.get $R
+      i32.const 8192
+      call $p3_has
+      if
+        return
+      end
+      local.get $R
+      i32.load offset=52
+      local.get $R
+      i32.load offset=56
+      i32.or
+      local.get $R
+      i32.load offset=48
+      i32.or
+      if
+        return
+      end
+      local.get $R
+      i32.const 4096
+      call $p3_has
+      local.get $R
+      i32.load offset=140
+      i32.or
+      if
+        return
+      end
+      local.get $R
+      i32.const 8192
+      call $p3_flag
+      local.get $R
+      global.get $p3ctx
+      i32.ne
+      if
+        local.get $R
+        call $p3_kick
+      end)
+
+    ;; the request body: a read of up to 64 KiB into R's buffer when it has
+    ;; nothing unread
+    (func $p3_rx_pump (param $R i32) (local $c i32)
+      local.get $R
+      i32.load offset=40
+      i32.eqz
+      if
+        return
+      end
+      local.get $R
+      i32.const 48
+      call $p3_has
+      if
+        return
+      end
+      local.get $R
+      i32.load offset=72
+      local.get $R
+      i32.load offset=76
+      i32.lt_u
+      if
+        return
+      end
+      local.get $R
+      i32.load offset=68
+      i32.eqz
+      if
+        local.get $R
+        i32.const 65536
+        call $alloc
+        i32.store offset=68
+      end
+      local.get $R
+      i32.load offset=40
+      local.get $R
+      i32.load offset=68
+      i32.const 65536
+      call $p3_sread
+      local.tee $c
+      i32.const -1
+      i32.eq
+      if
+        local.get $R
+        i32.const 16
+        call $p3_flag
+        local.get $R
+        i32.load offset=40
+        i32.const 1
+        local.get $R
+        local.get $R
+        call $p3_reg
+        return
+      end
+      local.get $R
+      local.get $c
+      call $p3_rx_done)
+
+    ;; a body read's code: its bytes buffered; the stream dropped at its end
+    ;; (or once main ended), the task waiting for it told
+    (func $p3_rx_done (param $R i32) (param $c i32)
+      local.get $R
+      i32.const 16
+      call $p3_unflag
+      local.get $R
+      i32.const 0
+      i32.store offset=72
+      local.get $R
+      local.get $c
+      i32.const 4
+      i32.shr_u
+      i32.store offset=76
+      local.get $c
+      i32.const 15
+      i32.and
+      local.get $R
+      i32.const 8
+      call $p3_has
+      i32.or
+      if
+        local.get $R
+        i32.const 32
+        call $p3_flag
+        local.get $R
+        i32.load offset=40
+        call $p3_sdrop_r
+        local.get $R
+        i32.const 0
+        i32.store offset=40
+        local.get $R
+        call $p3_check_done
+      end
+      local.get $R
+      i32.load offset=116
+      call $p3_wake
+      local.get $R
+      i32.const 0
+      i32.store offset=116)
+
+    ;; 1 when R has unread body bytes or the body ended; else 0 with a read
+    ;; in flight and the running task parked (its call repeats)
+    (func $p3_rx_ready (param $R i32) (result i32)
+      loop $again
+        local.get $R
+        i32.load offset=72
+        local.get $R
+        i32.load offset=76
+        i32.lt_u
+        if
+          i32.const 1
+          return
+        end
+        local.get $R
+        i32.load offset=40
+        i32.eqz
+        if
+          i32.const 1
+          return
+        end
+        local.get $R
+        call $p3_rx_pump
+        local.get $R
+        i32.const 16
+        call $p3_has
+        if
+          local.get $R
+          i32.const 116
+          i32.add
+          call $p3_park
+          i32.const 0
+          return
+        end
+        br $again
+      end
+      i32.const 0)
+
+    ;; at most max bytes of the request body, as they come; empty at its end
+    (func $wasi_http_body_read (param $max i64) (result i32 i32) (local $R i32) (local $n i32) (local $o i32)
+      ;; a resumption's rewind ends here
+      call $resumed
+      drop
+      global.get $treq
+      local.tee $R
+      call $p3_rx_ready
+      i32.eqz
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      local.get $R
+      i32.load offset=76
+      local.get $R
+      i32.load offset=72
+      i32.sub
+      local.tee $n
+      i64.extend_i32_u
+      local.get $max
+      i64.gt_u
+      if
+        local.get $max
+        i32.wrap_i64
+        local.set $n
+      end
+      local.get $n
+      call $rs_new
+      local.tee $o
+      i32.const 8
+      i32.add
+      local.get $R
+      i32.load offset=68
+      local.get $R
+      i32.load offset=72
+      i32.add
+      local.get $n
+      memory.copy
+      local.get $R
+      local.get $R
+      i32.load offset=72
+      local.get $n
+      i32.add
+      i32.store offset=72
+      local.get $o
+      local.get $n)
+
+    ;; the request's body: a Bytes object of the stream read to its end
+    (func $wasi_http_body (result i32 i32) (local $R i32) (local $n i32) (local $o i32) (local $k i32)
+      ;; a resumption's rewind ends here
+      call $resumed
+      drop
+      global.get $treq
+      local.set $R
+      loop $more
+        local.get $R
+        call $p3_rx_ready
+        i32.eqz
+        if
+          i32.const 0
+          call $rs_new
+          i32.const 0
+          return
+        end
+        local.get $R
+        i32.load offset=76
+        local.get $R
+        i32.load offset=72
+        i32.sub
+        local.tee $n
+        if
+          local.get $R
+          i32.load offset=84
+          local.get $n
+          i32.add
+          local.get $R
+          i32.load offset=88
+          i32.gt_u
+          if
+            local.get $R
+            i32.load offset=88
+            i32.const 1
+            i32.shl
+            local.tee $k
+            local.get $R
+            i32.load offset=84
+            local.get $n
+            i32.add
+            i32.const 65536
+            i32.add
+            local.tee $o
+            local.get $k
+            local.get $o
+            i32.gt_u
+            select
+            local.tee $k
+            call $alloc
+            local.tee $o
+            local.get $R
+            i32.load offset=80
+            local.get $R
+            i32.load offset=84
+            memory.copy
+            local.get $R
+            i32.load offset=80
+            if
+              local.get $R
+              i32.load offset=80
+              call $free
+            end
+            local.get $R
+            local.get $o
+            i32.store offset=80
+            local.get $R
+            local.get $k
+            i32.store offset=88
+          end
+          local.get $R
+          i32.load offset=80
+          local.get $R
+          i32.load offset=84
+          i32.add
+          local.get $R
+          i32.load offset=68
+          local.get $R
+          i32.load offset=72
+          i32.add
+          local.get $n
+          memory.copy
+          local.get $R
+          local.get $R
+          i32.load offset=84
+          local.get $n
+          i32.add
+          i32.store offset=84
+          local.get $R
+          local.get $R
+          i32.load offset=76
+          i32.store offset=72
+          br $more
+        end
+      end
+      local.get $R
+      i32.load offset=84
+      local.tee $n
+      call $rs_new
+      local.tee $o
+      i32.const 8
+      i32.add
+      local.get $R
+      i32.load offset=80
+      local.get $n
+      memory.copy
+      local.get $R
+      i32.load offset=80
+      if
+        local.get $R
+        i32.load offset=80
+        call $free
+      end
+      local.get $R
+      i32.const 0
+      i32.store offset=80
+      local.get $R
+      i32.const 0
+      i32.store offset=84
+      local.get $R
+      i32.const 0
+      i32.store offset=88
+      local.get $o
+      local.get $n)
+
+    ;; the trailers future's value: result<option<own<trailers>>,
+    ;; error-code> (ok's case at 0, the option's at 8, the trailers at 12),
+    ;; kept in the headers' form; the future dropped
+    (func $p3_trx_done (param $R i32) (local $a i32) (local $t i32) (local $o i32) (local $n i32)
+      local.get $R
+      i32.const 128
+      call $p3_unflag
+      local.get $R
+      i32.const 256
+      call $p3_flag
+      local.get $R
+      i32.const 144
+      i32.add
+      local.tee $a
+      i32.load8_u
+      i32.eqz
+      local.get $a
+      i32.load8_u offset=8
+      i32.const 0
+      i32.ne
+      i32.and
+      if
+        local.get $a
+        i32.load offset=12
+        call $fields_bytes
+        local.set $n
+        local.set $o
+        local.get $R
+        local.get $o
+        i32.store offset=124
+        local.get $R
+        local.get $n
+        i32.store offset=128
+      end
+      local.get $R
+      i32.load offset=44
+      call $p3_tdrop_r
+      local.get $R
+      i32.const 0
+      i32.store offset=44
+      local.get $R
+      i32.load offset=116
+      call $p3_wake
+      local.get $R
+      i32.const 0
+      i32.store offset=116
+      local.get $R
+      call $p3_check_done)
+
+    ;; the request's trailers (in the headers' form), once its body is read
+    ;; to the end (the rest is read and dropped); empty when there are none
+    (func $wasi_http_body_trailers (result i32 i32) (local $R i32) (local $o i32) (local $n i32)
+      ;; a resumption's rewind ends here
+      call $resumed
+      drop
+      global.get $treq
+      local.set $R
+      loop $top
+        block $drained
+          loop $drain
+            local.get $R
+            call $p3_rx_ready
+            i32.eqz
+            if
+              i32.const 0
+              call $rs_new
+              i32.const 0
+              return
+            end
+            local.get $R
+            i32.load offset=40
+            i32.eqz
+            local.get $R
+            i32.load offset=72
+            local.get $R
+            i32.load offset=76
+            i32.ge_u
+            i32.and
+            br_if $drained
+            local.get $R
+            local.get $R
+            i32.load offset=76
+            i32.store offset=72
+            br $drain
+          end
+        end
+        local.get $R
+        i32.const 256
+        call $p3_has
+        if
+          local.get $R
+          i32.load offset=124
+          local.tee $o
+          i32.eqz
+          if
+            i32.const 0
+            call $rs_new
+            i32.const 0
+            return
+          end
+          local.get $R
+          i32.load offset=128
+          local.set $n
+          local.get $R
+          i32.const 0
+          i32.store offset=124
+          local.get $o
+          local.get $n
+          return
+        end
+        local.get $R
+        i32.load offset=44
+        i32.eqz
+        if
+          i32.const 0
+          call $rs_new
+          i32.const 0
+          return
+        end
+        local.get $R
+        i32.const 128
+        call $p3_has
+        i32.eqz
+        if
+          local.get $R
+          i32.const 144
+          i32.add
+          i32.const 0
+          i32.const 32
+          memory.fill
+          local.get $R
+          i32.load offset=44
+          local.get $R
+          i32.const 144
+          i32.add
+          call $p3_tread
+          i32.const -1
+          i32.ne
+          if
+            local.get $R
+            call $p3_trx_done
+            br $top
+          end
+          local.get $R
+          i32.const 128
+          call $p3_flag
+          local.get $R
+          i32.load offset=44
+          i32.const 3
+          local.get $R
+          local.get $R
+          call $p3_reg
+        end
+        local.get $R
+        i32.const 116
+        i32.add
+        call $p3_park
+      end
+      i32.const 0
+      call $rs_new
+      i32.const 0)
+
+    ;; n bytes at p after R's buffered response body
+    (func $p3_out_append (param $R i32) (param $p i32) (param $n i32) (local $nc i32) (local $nb i32)
+      local.get $R
+      i32.load offset=108
+      local.get $n
+      i32.add
+      local.get $R
+      i32.load offset=112
+      i32.gt_u
+      if
+        local.get $R
+        i32.load offset=112
+        i32.const 1
+        i32.shl
+        local.tee $nc
+        local.get $R
+        i32.load offset=108
+        local.get $n
+        i32.add
+        i32.const 4096
+        i32.add
+        local.tee $nb
+        local.get $nc
+        local.get $nb
+        i32.gt_u
+        select
+        local.tee $nc
+        call $alloc
+        local.tee $nb
+        local.get $R
+        i32.load offset=104
+        local.get $R
+        i32.load offset=108
+        memory.copy
+        local.get $R
+        i32.load offset=104
+        if
+          local.get $R
+          i32.load offset=104
+          call $free
+        end
+        local.get $R
+        local.get $nb
+        i32.store offset=104
+        local.get $R
+        local.get $nc
+        i32.store offset=112
+      end
+      local.get $R
+      i32.load offset=104
+      local.get $R
+      i32.load offset=108
+      i32.add
+      local.get $p
+      local.get $n
+      memory.copy
+      local.get $R
+      local.get $R
+      i32.load offset=108
+      local.get $n
+      i32.add
+      i32.store offset=108)
+
+    ;; a body write's code
+    (func $p3_tx_note (param $R i32) (param $c i32)
+      local.get $R
+      i32.const 64
+      call $p3_unflag
+      local.get $R
+      local.get $R
+      i32.load offset=100
+      local.get $c
+      i32.const 4
+      i32.shr_u
+      i32.add
+      i32.store offset=100
+      local.get $c
+      i32.const 15
+      i32.and
+      if
+        local.get $R
+        i32.const 4
+        call $p3_flag
+      end)
+
+    ;; the body stream closed and the trailers written to their future,
+    ;; ok(some(fields)) when there are any, else ok(none)
+    (func $p3_out_finish (param $R i32) (local $a i32)
+      local.get $R
+      i32.const 16384
+      call $p3_has
+      if
+        return
+      end
+      local.get $R
+      i32.const 16384
+      call $p3_flag
+      local.get $R
+      i32.load offset=52
+      call $p3_sdrop_w
+      local.get $R
+      i32.const 0
+      i32.store offset=52
+      local.get $R
+      i32.const 176
+      i32.add
+      local.tee $a
+      i32.const 0
+      i32.const 32
+      memory.fill
+      local.get $R
+      i32.load offset=132
+      if
+        local.get $a
+        i32.const 1
+        i32.store8 offset=8
+        local.get $a
+        local.get $R
+        i32.load offset=132
+        i32.store offset=12
+        local.get $R
+        i32.const 0
+        i32.store offset=132
+      end
+      local.get $R
+      i32.load offset=56
+      local.get $a
+      call $p3_twrite
+      i32.const -1
+      i32.eq
+      if
+        local.get $R
+        i32.const 512
+        call $p3_flag
+        local.get $R
+        i32.load offset=56
+        i32.const 4
+        local.get $R
+        local.get $R
+        call $p3_reg
+        return
+      end
+      local.get $R
+      call $p3_ftx_done)
+
+    (func $p3_ftx_done (param $R i32)
+      local.get $R
+      i32.const 512
+      call $p3_unflag
+      local.get $R
+      i32.load offset=56
+      call $p3_tdrop_w
+      local.get $R
+      i32.const 0
+      i32.store offset=56
+      local.get $R
+      call $p3_check_done)
+
+    ;; the buffered body to the host: one write in flight; the next buffer
+    ;; when it is done; the end once all was written and end came
+    (func $p3_out_pump (param $R i32) (local $c i32)
+      loop $more
+        local.get $R
+        i32.const 64
+        call $p3_has
+        if
+          return
+        end
+        local.get $R
+        i32.load offset=52
+        i32.eqz
+        if
+          return
+        end
+        local.get $R
+        i32.const 4
+        call $p3_has
+        if
+          ;; the host dropped the body: the rest is not written
+          local.get $R
+          local.get $R
+          i32.load offset=96
+          i32.store offset=100
+          local.get $R
+          i32.const 0
+          i32.store offset=108
+        end
+        local.get $R
+        i32.load offset=100
+        local.get $R
+        i32.load offset=96
+        i32.ge_u
+        if
+          local.get $R
+          i32.load offset=92
+          if
+            local.get $R
+            i32.load offset=92
+            call $free
+          end
+          local.get $R
+          local.get $R
+          i32.load offset=104
+          i32.store offset=92
+          local.get $R
+          local.get $R
+          i32.load offset=108
+          i32.store offset=96
+          local.get $R
+          i32.const 0
+          i32.store offset=100
+          local.get $R
+          i32.const 0
+          i32.store offset=104
+          local.get $R
+          i32.const 0
+          i32.store offset=108
+          local.get $R
+          i32.const 0
+          i32.store offset=112
+          local.get $R
+          i32.load offset=120
+          call $p3_wake
+          local.get $R
+          i32.const 0
+          i32.store offset=120
+          local.get $R
+          i32.load offset=96
+          i32.eqz
+          if
+            local.get $R
+            i32.const 2
+            call $p3_has
+            if
+              local.get $R
+              call $p3_out_finish
+            end
+            return
+          end
+        end
+        local.get $R
+        i32.load offset=52
+        local.get $R
+        i32.load offset=92
+        local.get $R
+        i32.load offset=100
+        i32.add
+        local.get $R
+        i32.load offset=96
+        local.get $R
+        i32.load offset=100
+        i32.sub
+        call $p3_swrite
+        local.tee $c
+        i32.const -1
+        i32.eq
+        if
+          local.get $R
+          i32.const 64
+          call $p3_flag
+          local.get $R
+          i32.load offset=52
+          i32.const 2
+          local.get $R
+          local.get $R
+          call $p3_reg
+          return
+        end
+        local.get $R
+        local.get $c
+        call $p3_tx_note
+        br $more
+      end)
 
     ;; the response's head: made with a body stream and a trailers future,
-    ;; its status set, and given to the host (task.return(ok(response)))
-    (func $wasi_http_head (param $status i64) (param $h i32) (param $hn i32) (local $f i32) (local $s i64) (local $t i64) (local $r i32)
+    ;; its status set, and given to the host (task.return(ok(response))),
+    ;; from its own component task (else that task is kicked to do it)
+    (func $wasi_http_head (param $status i64) (param $h i32) (param $hn i32) (local $R i32) (local $f i32) (local $s i64) (local $t i64) (local $r i32)
+      global.get $treq
+      local.set $R
       local.get $h
       local.get $hn
       call $fields_of
@@ -559,13 +1320,19 @@ fn rt10_text(var g: Gen) -> Str {
       i64.const 32
       i64.shr_u
       i32.wrap_i64
-      global.set $p3tx
+      local.set $r
+      local.get $R
+      local.get $r
+      i32.store offset=52
       call $p3_tnew
       local.tee $t
       i64.const 32
       i64.shr_u
       i32.wrap_i64
-      global.set $p3ftx
+      local.set $r
+      local.get $R
+      local.get $r
+      i32.store offset=56
       call $hret_at
       local.set $r
       ;; response.new(headers, some(body), trailers) -> (response, done)
@@ -586,401 +1353,137 @@ fn rt10_text(var g: Gen) -> Str {
       i32.wrap_i64
       call $p3_resp_status
       drop
-      ;; result<own<response>, error-code>: ok (0), the response, then
-      ;; error-code's joined payload slots, zero
+      local.get $R
+      i32.const 1
+      call $p3_flag
+      local.get $R
+      global.get $p3ctx
+      i32.eq
+      if
+        local.get $r
+        i32.load
+        call $p3_return_ok
+      else
+        local.get $R
+        local.get $r
+        i32.load
+        i32.store offset=64
+        local.get $R
+        i32.const 4096
+        call $p3_flag
+        local.get $R
+        call $p3_kick
+      end
+      local.get $R
+      call $p3_out_pump)
+
+    ;; task.return(ok(response)): ok (0), the response, then error-code's
+    ;; joined payload slots, zero
+    (func $p3_return_ok (param $resp i32)
       i32.const 0
-      local.get $r
-      i32.load
+      local.get $resp
       i32.const 0
       i64.const 0
       i32.const 0
       i32.const 0
       i32.const 0
       i32.const 0
-      call $p3_return
-      ;; answered: a fault after this point ends the body, not a 500
-      i32.const 1
-      global.set $hdone)
+      call $p3_return)
 
-    ;; Bytes object b's bn bytes of the response body, written as they come
-    ;; (dropped when the host dropped the stream)
-    (func $wasi_http_write (param $b i32) (param $bn i32) (local $off i32) (local $r i32)
-      block $done
-        loop $more
-          global.get $p3wdrop
-          br_if $done
-          local.get $off
-          local.get $bn
-          i32.ge_u
-          br_if $done
-          global.get $p3tx
-          local.get $b
-          i32.const 8
-          i32.add
-          local.get $off
-          i32.add
-          local.get $bn
-          local.get $off
-          i32.sub
-          call $p3_swrite
-          local.tee $r
-          i32.const -1
-          i32.eq
-          if
-            global.get $p3tx
-            call $p3_block
-            local.set $r
-          end
-          local.get $off
-          local.get $r
-          i32.const 4
-          i32.shr_u
-          i32.add
-          local.set $off
-          local.get $r
-          i32.const 15
-          i32.and
-          if
-            i32.const 1
-            global.set $p3wdrop
-          end
-          br $more
-        end
-      end)
-
-    ;; the body's end: its stream closed and the trailers (in the headers'
-    ;; form) written to their future, ok(some(fields)) when there are any,
-    ;; else ok(none)
-    (func $wasi_http_end (param $t i32) (param $tn i32)
-      global.get $p3ended
+    ;; Bytes object b's bn bytes of the response body: buffered and written
+    ;; as the host takes them; past 256 KiB buffered the task waits for the
+    ;; host (its call repeats)
+    (func $wasi_http_write (param $b i32) (param $bn i32) (local $R i32)
+      ;; a resumption's rewind ends here
+      call $resumed
+      drop
+      global.get $treq
+      local.set $R
+      local.get $R
+      i32.const 4
+      call $p3_has
+      local.get $bn
+      i32.eqz
+      i32.or
       if
         return
       end
-      i32.const 1
-      global.set $p3ended
-      global.get $p3tx
-      call $p3_sdrop_w
-      global.get $p3tr
-      i32.const 0
-      i32.const 32
-      memory.fill
+      local.get $R
+      i32.load offset=108
+      i32.const 262144
+      i32.ge_u
+      if
+        local.get $R
+        i32.const 120
+        i32.add
+        call $p3_park
+        return
+      end
+      local.get $R
+      local.get $b
+      i32.const 8
+      i32.add
+      local.get $bn
+      call $p3_out_append
+      local.get $R
+      call $p3_out_pump)
+
+    ;; the body's end: once the buffered bytes are written, the stream is
+    ;; closed and the trailers (in the headers' form) go to their future
+    (func $wasi_http_end (param $t i32) (param $tn i32) (local $R i32)
+      global.get $treq
+      local.tee $R
+      i32.const 2
+      call $p3_has
+      if
+        return
+      end
+      local.get $R
+      i32.const 2
+      call $p3_flag
       local.get $tn
       if
-        global.get $p3tr
-        i32.const 1
-        i32.store8 offset=8
-        global.get $p3tr
+        local.get $R
         local.get $t
         local.get $tn
         call $fields_of
-        i32.store offset=12
+        i32.store offset=132
       end
-      global.get $p3ftx
-      global.get $p3tr
-      call $p3_twrite
-      i32.const -1
-      i32.eq
-      if
-        global.get $p3ftx
-        call $p3_block
-        drop
-      end
-      global.get $p3ftx
-      call $p3_tdrop_w)
+      local.get $R
+      call $p3_out_pump)
 
-    ;; an outgoing request (std/native/http.xo wasi_send, as rt5.xo's):
-    ;; method (mk, the variant's case; 9 names it in m), scheme (0 HTTP, 1
-    ;; HTTPS), authority, path with query, fields, the whole body, a
-    ;; timeout in ns for each of the host's three (0 none). client.send
-    ;; runs as a subtask while the body is written to the request's stream;
-    ;; then it is waited for. The status, the response kept for the next
-    ;; two calls; below zero: -1 the host refused a part of the request,
-    ;; -(100 + the error-code's case) the request failed.
-    (func $wasi_http_send (param $mk i64) (param $m i32) (param $mn i32) (param $sk i64) (param $au i32) (param $aun i32) (param $pq i32) (param $pqn i32) (param $h i32) (param $hn i32) (param $b i32) (param $bn i32) (param $tns i64) (result i64) (local $f i32) (local $s i64) (local $t i64) (local $opt i32) (local $q i32) (local $v i32) (local $bad i32) (local $st i32) (local $sub i32) (local $off i32) (local $r i32)
-      global.get $p3cv
-      i32.eqz
-      if
-        i32.const 32
-        call $alloc
-        global.set $p3cv
-      end
-      global.get $p3cv
-      local.set $v
+    ;; a whole response: head, body, end (never waits)
+    (func $wasi_http_respond (param $status i64) (param $h i32) (param $hn i32) (param $b i32) (param $bn i32) (param $t i32) (param $tn i32)
+      local.get $status
       local.get $h
       local.get $hn
-      call $fields_of
-      local.set $f
-      call $p3_snew
-      local.set $s
-      call $p3_tnew
-      local.set $t
-      local.get $tns
-      i64.const 0
-      i64.gt_s
+      call $wasi_http_head
+      local.get $bn
       if
-        call $p3_ropt_new
-        local.tee $opt
-        i32.const 1
-        local.get $tns
-        local.get $v
-        call $p3_ropt_connect
-        local.get $opt
-        i32.const 1
-        local.get $tns
-        local.get $v
-        call $p3_ropt_first
-        local.get $opt
-        i32.const 1
-        local.get $tns
-        local.get $v
-        call $p3_ropt_between
+        global.get $treq
+        local.get $b
+        i32.const 8
+        i32.add
+        local.get $bn
+        call $p3_out_append
       end
-      ;; request.new(headers, some(body), trailers, options) -> (request,
-      ;; done); when it was sent is not needed
-      local.get $f
-      i32.const 1
-      local.get $s
-      i32.wrap_i64
       local.get $t
-      i32.wrap_i64
-      local.get $opt
-      i32.const 0
-      i32.ne
-      local.get $opt
-      local.get $v
-      call $p3_req_new
-      local.get $v
-      i32.load
-      local.set $q
-      local.get $v
-      i32.load offset=4
-      call $p3_ddrop_r
-      local.get $q
-      ;; a Str's bytes are 8 past its object
-      local.get $mk
-      i32.wrap_i64
-      local.get $m
-      i32.const 8
-      i32.add
-      local.get $mn
-      call $p3_req_method
-      local.get $q
-      i32.const 1
-      local.get $sk
-      i32.wrap_i64
-      i32.const 0
-      i32.const 0
-      call $p3_req_scheme
-      i32.or
-      local.get $q
-      i32.const 1
-      local.get $au
-      i32.const 8
-      i32.add
-      local.get $aun
-      call $p3_req_authority
-      i32.or
-      local.get $q
-      i32.const 1
-      local.get $pq
-      i32.const 8
-      i32.add
-      local.get $pqn
-      call $p3_req_path
-      i32.or
-      local.set $bad
-      local.get $bad
-      if
-        local.get $q
-        call $p3_req_drop
-        local.get $s
-        i64.const 32
-        i64.shr_u
-        i32.wrap_i64
-        call $p3_sdrop_w
-        ;; a future's writer is dropped only after its value is written
-        global.get $p3cv
-        i32.const 0
-        i32.const 32
-        memory.fill
-        local.get $t
-        i64.const 32
-        i64.shr_u
-        i32.wrap_i64
-        global.get $p3cv
-        i32.const 1
-        call $p3_fput
-        i64.const -1
-        return
-      end
-      ;; send(request) as a subtask: STARTED (1) or RETURNED (2) in the low
-      ;; bits, the subtask above them
-      local.get $q
-      local.get $v
-      call $p3_send
-      local.tee $st
-      i32.const 4
-      i32.shr_u
-      local.set $sub
-      local.get $st
-      i32.const 15
-      i32.and
-      local.set $st
-      ;; the body, then the trailers: ok(none)
-      block $done
-        loop $more
-          local.get $off
-          local.get $bn
-          i32.ge_u
-          br_if $done
-          local.get $s
-          i64.const 32
-          i64.shr_u
-          i32.wrap_i64
-          local.get $b
-          i32.const 8
-          i32.add
-          local.get $off
-          i32.add
-          local.get $bn
-          local.get $off
-          i32.sub
-          call $p3_swrite
-          local.tee $r
-          i32.const -1
-          i32.eq
-          if
-            local.get $s
-            i64.const 32
-            i64.shr_u
-            i32.wrap_i64
-            call $p3_block
-            local.set $r
-          end
-          local.get $off
-          local.get $r
-          i32.const 4
-          i32.shr_u
-          i32.add
-          local.set $off
-          local.get $r
-          i32.const 15
-          i32.and
-          br_if $done
-          br $more
-        end
-      end
-      local.get $s
-      i64.const 32
-      i64.shr_u
-      i32.wrap_i64
-      call $p3_sdrop_w
-      global.get $p3tr
-      i32.eqz
-      if
-        i32.const 32
-        call $alloc
-        global.set $p3tr
-      end
-      global.get $p3tr
-      i32.const 0
-      i32.const 32
-      memory.fill
-      local.get $t
-      i64.const 32
-      i64.shr_u
-      i32.wrap_i64
-      global.get $p3tr
-      i32.const 1
-      call $p3_fput
-      ;; the subtask until it returned (2); its result is then at v
-      block $returned
-        loop $wait
-          local.get $st
-          i32.const 2
-          i32.ge_u
-          br_if $returned
-          local.get $sub
-          call $p3_block
-          local.set $st
-          br $wait
-        end
-      end
-      local.get $sub
-      if
-        local.get $sub
-        call $p3_subtask_drop
-      end
-      ;; result<own<response>, error-code>: the case, then at 8 the
-      ;; response or the error-code's case
-      local.get $v
-      i32.load8_u
-      if
-        i64.const -100
-        local.get $v
-        i64.load8_u offset=8
-        i64.sub
-        return
-      end
-      local.get $v
-      i32.load offset=8
-      global.set $hresp
-      global.get $hresp
-      call $p3_resp_code
-      i64.extend_i32_u)
+      local.get $tn
+      call $wasi_http_end)
 
-    ;; the fields of the response wasi_http_send kept
-    (func $wasi_http_resp_headers (result i32 i32)
-      global.get $hresp
-      call $p3_resp_headers
-      call $fields_bytes)
-
-    ;; its body, read to the end; the response is consumed, its trailers
-    ;; dropped, and its done future told the body was read
-    (func $wasi_http_resp_body (result i32 i32) (local $d i64) (local $r i32) (local $o i32) (local $n i32)
-      call $p3_dnew
-      local.set $d
-      global.get $p3cv
-      local.set $r
-      global.get $hresp
-      local.get $d
-      i32.wrap_i64
-      local.get $r
-      call $p3_resp_consume
-      i32.const 0
-      global.set $hresp
-      local.get $r
-      i32.load offset=4
-      call $p3_tdrop_r
-      local.get $r
-      i32.load
-      call $p3_read_all
-      local.set $n
-      local.set $o
-      global.get $p3cv
-      i32.const 0
-      i32.const 32
-      memory.fill
-      local.get $d
-      i64.const 32
-      i64.shr_u
-      i32.wrap_i64
-      global.get $p3cv
-      i32.const 0
-      call $p3_fput
-      local.get $o
-      local.get $n)
-
-    ;; after main: a fault is reported, a request main did not answer gets
-    ;; 500, a body main did not end is ended; the request's body and
-    ;; trailers left unread are dropped, and its done future says it was
-    ;; consumed
-    (func $handle_end
+    ;; main of request R ended (a fault reported, and a 500 when it gave no
+    ;; head): the body ends, the request's unread parts are dropped, and
+    ;; the done future written
+    (func $p3_req_finish (local $R i32)
+      global.get $treq
+      local.set $R
       global.get $faulting
       if
         call $fault_report
       end
-      global.get $hdone
+      local.get $R
+      i32.const 1
+      call $p3_has
       i32.eqz
       if
         i64.const 500
@@ -995,120 +1498,1278 @@ fn rt10_text(var g: Gen) -> Str {
       i32.const 0
       i32.const 0
       call $wasi_http_end
-      global.get $p3rx
+      local.get $R
+      i32.const 8
+      call $p3_flag
+      global.get $p3live
+      i32.const 1
+      i32.sub
+      global.set $p3live
+      local.get $R
+      i32.load offset=40
       if
-        global.get $p3rx
-        call $p3_sdrop_r
-        i32.const 0
-        global.set $p3rx
+        local.get $R
+        i32.const 16
+        call $p3_has
+        i32.eqz
+        if
+          local.get $R
+          i32.load offset=40
+          call $p3_sdrop_r
+          local.get $R
+          i32.const 0
+          i32.store offset=40
+        end
       end
-      global.get $p3trx
+      local.get $R
+      i32.load offset=44
       if
-        global.get $p3trx
-        call $p3_tdrop_r
-        i32.const 0
-        global.set $p3trx
+        local.get $R
+        i32.const 128
+        call $p3_has
+        i32.eqz
+        if
+          local.get $R
+          i32.load offset=44
+          call $p3_tdrop_r
+          local.get $R
+          i32.const 0
+          i32.store offset=44
+        end
       end
-      global.get $p3tr
+      local.get $R
+      i32.const 208
+      i32.add
       i32.const 0
       i32.const 32
       memory.fill
-      global.get $p3dtx
-      global.get $p3tr
+      local.get $R
+      i32.load offset=48
+      local.get $R
+      i32.const 208
+      i32.add
       call $p3_dwrite
       i32.const -1
       i32.eq
       if
-        global.get $p3dtx
-        call $p3_block
-        drop
+        local.get $R
+        i32.const 1024
+        call $p3_flag
+        local.get $R
+        i32.load offset=48
+        i32.const 5
+        local.get $R
+        local.get $R
+        call $p3_reg
+      else
+        local.get $R
+        i32.load offset=48
+        call $p3_ddrop_w
+        local.get $R
+        i32.const 0
+        i32.store offset=48
       end
-      global.get $p3dtx
-      call $p3_ddrop_w)
+      local.get $R
+      call $p3_check_done)
+
+    ;; a request's task: main, then the request's end (the call repeats
+    ;; while main is suspended, rewinding it)
+    (func $p3_req_run (param $fl i32) (param $t i32)
+      call $main_entry
+      global.get $sstate
+      i32.const 1
+      i32.eq
+      if
+        return
+      end
+      call $p3_req_finish)
+
+    ;; an event of waitable w (code: the operation's, a subtask's state)
+    (func $p3_dispatch (param $w i32) (param $code i32) (local $e i32) (local $k i32) (local $o i32) (local $R i32)
+      local.get $w
+      global.get $p3wcap
+      i32.ge_u
+      if
+        return
+      end
+      global.get $p3wt
+      local.get $w
+      i32.const 3
+      i32.shl
+      i32.add
+      local.tee $e
+      i32.load
+      local.tee $k
+      i32.eqz
+      if
+        return
+      end
+      local.get $e
+      i32.load offset=4
+      local.tee $o
+      local.set $R
+      local.get $k
+      i32.const 7
+      i32.ge_u
+      if
+        local.get $o
+        i32.load offset=4
+        local.set $R
+      end
+      ;; a subtask stays in the set until it returned
+      local.get $k
+      i32.const 7
+      i32.eq
+      local.get $code
+      i32.const 2
+      i32.lt_u
+      i32.and
+      if
+        return
+      end
+      local.get $w
+      local.get $R
+      call $p3_unreg
+      local.get $k
+      i32.const 7
+      i32.ge_u
+      if
+        local.get $k
+        local.get $o
+        local.get $w
+        local.get $code
+        ${cdisp}
+        return
+      end
+      block $c6
+      block $c5
+      block $c4
+      block $c3
+      block $c2
+      block $c1
+        local.get $k
+        i32.const 1
+        i32.sub
+        br_table $c1 $c2 $c3 $c4 $c5 $c6
+      end
+      ;; 1: a request body read
+      local.get $R
+      local.get $code
+      call $p3_rx_done
+      return
+      end
+      ;; 2: a response body write
+      local.get $R
+      local.get $code
+      call $p3_tx_note
+      local.get $R
+      call $p3_out_pump
+      return
+      end
+      ;; 3: the request trailers
+      local.get $R
+      call $p3_trx_done
+      return
+      end
+      ;; 4: the response trailers
+      local.get $R
+      call $p3_ftx_done
+      return
+      end
+      ;; 5: the done future
+      local.get $R
+      i32.const 1024
+      call $p3_unflag
+      local.get $R
+      i32.load offset=48
+      call $p3_ddrop_w
+      local.get $R
+      i32.const 0
+      i32.store offset=48
+      local.get $R
+      call $p3_check_done
+      return
+      end
+      ;; 6: a kick
+      local.get $R
+      i32.const 2048
+      call $p3_unflag
+      local.get $R
+      i32.load offset=136
+      call $p3_tdrop_r
+      local.get $R
+      i32.const 0
+      i32.store offset=136)
+
+    ;; after the scheduler ran in request R's component task: the head it
+    ;; waits to give; EXIT once R is finished (its task, buffers and set
+    ;; freed), else WAIT on its set
+    (func $p3_after (param $R i32) (result i32) (local $x i32)
+      local.get $R
+      i32.const 4096
+      call $p3_has
+      if
+        local.get $R
+        i32.const 4096
+        call $p3_unflag
+        local.get $R
+        i32.load offset=64
+        call $p3_return_ok
+        local.get $R
+        call $p3_check_done
+      end
+      local.get $R
+      i32.const 8192
+      call $p3_has
+      local.get $R
+      i32.load offset=140
+      i32.eqz
+      i32.and
+      if
+        local.get $R
+        i32.load
+        call $p3_wsdrop
+        local.get $R
+        i32.load offset=4
+        call $h_release
+        local.get $R
+        i32.load offset=68
+        local.tee $x
+        if
+          local.get $x
+          call $free
+        end
+        local.get $R
+        i32.load offset=80
+        local.tee $x
+        if
+          local.get $x
+          call $free
+        end
+        local.get $R
+        i32.load offset=92
+        local.tee $x
+        if
+          local.get $x
+          call $free
+        end
+        local.get $R
+        i32.load offset=104
+        local.tee $x
+        if
+          local.get $x
+          call $free
+        end
+        local.get $R
+        i32.load offset=124
+        local.tee $x
+        if
+          local.get $x
+          call $rc_dec
+          if
+            local.get $x
+            call $free
+          end
+        end
+        local.get $R
+        call $free
+        i32.const 0
+        return
+      end
+      local.get $R
+      i32.load
+      i32.const 4
+      i32.shl
+      i32.const 2
+      i32.or)
+
 
   """
 }
 
-/// The handle export and its callback, and $p3_main: main run (the start
-/// sequence), then handle_end.
-fn rt10_handle(start: List[Str]) -> Str {
-  var b = StrBuilder.new()
-  b.write("  (func $p3_main\n")
-  for s in start {
-    b.write("    ${s}\n")
-  }
-  b.write("    call $handle_end)\n")
-  b.write("""
-  (func $p3_handle (export "[async-lift]wasi:http/handler@0.3.0#handle") (param $req i32) (result i32) (local $d i64) (local $r i32)
-    ;; one request at a time in an instance: the host starts the next
-    ;; handle when this one returns, on a fresh state
-    call $p3_bp_inc
-    local.get $req
-    global.set $hreq
-    i32.const 0
-    global.set $hdone
-    i32.const 0
-    global.set $p3wdrop
-    i32.const 0
-    global.set $p3ended
-    ;; what main reads of the request, before consume-body ends it
-    call $rt5_wasi_http_method
-    global.set $p3mn
-    global.set $p3m
-    call $rt5_wasi_http_path
-    global.set $p3pn
-    global.set $p3p
-    call $rt5_wasi_http_authority
-    global.set $p3an
-    global.set $p3a
-    call $rt5_wasi_http_headers
-    global.set $p3hn
-    global.set $p3h
-    global.get $p3tr
+/// The handle export and its callback (stage 5 step 3): each request
+/// gets a record and a task that runs main; the scheduler runs until no
+/// task can, then the export or callback gives the host WAIT on the
+/// request's set, or EXIT once the request is finished.
+fn rt10_handle(var g: Gen, start: List[Str]) -> Str {
+  let task_free = g.table_index("$task_free")
+  let run = g.table_index("$p3_req_run")
+  """
+  (func $p3_handle (export "[async-lift]wasi:http/handler@0.3.0#handle") (param $req i32) (result i32) (local $R i32) (local $t i32) (local $a i32) (local $d i64)
+    global.get $p3init
     i32.eqz
     if
+      i32.const 1
+      global.set $p3init
       i32.const 32
       call $alloc
-      global.set $p3tr
-      i32.const 8
+      local.tee $t
+      i32.const 0
+      i32.const 32
+      memory.fill
+      local.get $t
+      global.set $p3zero
+      i32.const 64
       call $alloc
-      global.set $p3ev
+      local.tee $t
+      i32.const 0
+      i32.const 64
+      memory.fill
+      local.get $t
+      global.set $p3scope
+      ;; the scheduler's start (main's root node), with no task to run
+      call $sched
+      global.get $p3scope
+      global.get $stop_root
+      i32.store offset=16
     end
+    i32.const 272
+    call $alloc
+    local.tee $R
+    i32.const 0
+    i32.const 272
+    memory.fill
+    local.get $R
     call $p3_wsnew
-    global.set $p3ws
+    i32.store
+    ;; what main reads of the request, before consume-body ends it
+    local.get $req
+    global.set $hreq
+    call $rt5_wasi_http_method
+    local.set $a
+    local.set $t
+    local.get $R
+    local.get $t
+    i32.store offset=8
+    local.get $R
+    local.get $a
+    i32.store offset=12
+    call $rt5_wasi_http_path
+    local.set $a
+    local.set $t
+    local.get $R
+    local.get $t
+    i32.store offset=16
+    local.get $R
+    local.get $a
+    i32.store offset=20
+    call $rt5_wasi_http_authority
+    local.set $a
+    local.set $t
+    local.get $R
+    local.get $t
+    i32.store offset=24
+    local.get $R
+    local.get $a
+    i32.store offset=28
+    call $rt5_wasi_http_headers
+    local.set $a
+    local.set $t
+    local.get $R
+    local.get $t
+    i32.store offset=32
+    local.get $R
+    local.get $a
+    i32.store offset=36
     ;; consume-body(request, done) -> (body, trailers)
     call $p3_dnew
-    local.tee $d
+    local.set $d
+    local.get $R
+    local.get $d
     i64.const 32
     i64.shr_u
     i32.wrap_i64
-    global.set $p3dtx
+    i32.store offset=48
     call $hret_at
-    local.set $r
-    global.get $hreq
+    local.set $a
+    local.get $req
     local.get $d
     i32.wrap_i64
-    local.get $r
+    local.get $a
     call $p3_consume
-    local.get $r
+    local.get $R
+    local.get $a
     i32.load
-    global.set $p3rx
-    local.get $r
+    i32.store offset=40
+    local.get $R
+    local.get $a
     i32.load offset=4
-    global.set $p3trx
+    i32.store offset=44
     i32.const 0
     global.set $hreq
-    call $p3_main
-    global.get $p3ws
-    call $p3_wsdrop
-    call $p3_bp_dec
-    ;; EXIT: the task returned (task.return) and its work is done
-    i32.const 0)
+    ;; its task, in a scope that is never closed, runs main
+    i32.const 232
+    i32.const ${task_free}
+    call $obj_new
+    local.tee $t
+    i32.const ${run}
+    i32.store offset=12
+    local.get $t
+    global.get $p3scope
+    i32.store offset=56
+    local.get $t
+    global.get $stop_root
+    i32.store offset=64
+    local.get $t
+    local.get $t
+    i32.const 60
+    i32.add
+    i32.store offset=104
+    local.get $t
+    local.get $R
+    i32.store offset=224
+    local.get $R
+    local.get $t
+    i32.store offset=4
+    local.get $t
+    call $act_push
+    global.get $p3live
+    i32.const 1
+    i32.add
+    global.set $p3live
+    local.get $R
+    global.set $p3ctx
+    local.get $R
+    call $p3_ctx_set
+    call $sched
+    local.get $R
+    call $p3_after)
 
-  ;; handle never returns WAIT, so the host never calls this
-  (func $p3_callback (export "[callback][async-lift]wasi:http/handler@0.3.0#handle") (param $ev i32) (param $w i32) (param $code i32) (result i32)
-    i32.const 0)
+  ;; an event in a request's set: its operation goes on, then the tasks
+  ;; that can run
+  (func $p3_callback (export "[callback][async-lift]wasi:http/handler@0.3.0#handle") (param $ev i32) (param $w i32) (param $code i32) (result i32) (local $R i32)
+    call $p3_ctx_get
+    local.tee $R
+    global.set $p3ctx
+    local.get $ev
+    if
+      local.get $w
+      local.get $code
+      call $p3_dispatch
+    end
+    call $sched
+    local.get $R
+    call $p3_after)
 
-""")
-  b.freeze()
+"""
+}
+
+/// The outgoing request functions of rt10.xo (a program that sends).
+fn rt10_client_text() -> Str {
+  """
+    ;; An outgoing request's record (the task's at 228; 160 bytes): 0 flags
+    ;; (1 send returned, 2 the body was written, 4 its trailers, 8 the
+    ;; result was given, 16 a response body read in flight, 32 the response
+    ;; body ended, 64 a body write in flight, 128 a trailers write in
+    ;; flight, 256 a done write in flight), 4 the request record whose set
+    ;; its waitables join, 8 the subtask, 12 the body stream's writable
+    ;; end, 16 the trailers future's, 20 the body {20 bytes, 24 length, 28
+    ;; how far}, 40 the response, 44 the task waiting for it, 48 send's
+    ;; result (32 bytes), 80 the trailers' ok(none) (16), 96 the response
+    ;; body stream, 100 its bytes {100, 104 length, 108 capacity}, 112 its
+    ;; done future's writable end, 116 0, 1 reading the response body, 2
+    ;; it ended, 128 the done value (32).
+
+    (func $p3_cflag (param $C i32) (param $f i32)
+      local.get $C
+      local.get $C
+      i32.load
+      local.get $f
+      i32.or
+      i32.store)
+
+    (func $p3_cunflag (param $C i32) (param $f i32)
+      local.get $C
+      local.get $C
+      i32.load
+      local.get $f
+      i32.const -1
+      i32.xor
+      i32.and
+      i32.store)
+
+    ;; the request body to the host, then its trailers (ok(none))
+    (func $p3_c_pump (param $C i32) (local $c i32)
+      loop $more
+        local.get $C
+        i32.load
+        i32.const 2
+        i32.and
+        if
+          local.get $C
+          i32.load
+          i32.const 132
+          i32.and
+          if
+            return
+          end
+          local.get $C
+          i32.load offset=16
+          local.get $C
+          i32.const 80
+          i32.add
+          call $p3_twrite
+          i32.const -1
+          i32.eq
+          if
+            local.get $C
+            i32.const 128
+            call $p3_cflag
+            local.get $C
+            i32.load offset=16
+            i32.const 9
+            local.get $C
+            local.get $C
+            i32.load offset=4
+            call $p3_reg
+            return
+          end
+          local.get $C
+          call $p3_c_trailed
+          return
+        end
+        local.get $C
+        i32.load
+        i32.const 64
+        i32.and
+        if
+          return
+        end
+        local.get $C
+        i32.load offset=28
+        local.get $C
+        i32.load offset=24
+        i32.ge_u
+        if
+          local.get $C
+          i32.load offset=12
+          call $p3_sdrop_w
+          local.get $C
+          i32.const 0
+          i32.store offset=12
+          local.get $C
+          i32.const 2
+          call $p3_cflag
+          br $more
+        end
+        local.get $C
+        i32.load offset=12
+        local.get $C
+        i32.load offset=20
+        local.get $C
+        i32.load offset=28
+        i32.add
+        local.get $C
+        i32.load offset=24
+        local.get $C
+        i32.load offset=28
+        i32.sub
+        call $p3_swrite
+        local.tee $c
+        i32.const -1
+        i32.eq
+        if
+          local.get $C
+          i32.const 64
+          call $p3_cflag
+          local.get $C
+          i32.load offset=12
+          i32.const 8
+          local.get $C
+          local.get $C
+          i32.load offset=4
+          call $p3_reg
+          return
+        end
+        local.get $C
+        local.get $c
+        call $p3_c_note
+        br $more
+      end)
+
+    (func $p3_c_note (param $C i32) (param $c i32)
+      local.get $C
+      i32.const 64
+      call $p3_cunflag
+      local.get $C
+      local.get $C
+      i32.load offset=28
+      local.get $c
+      i32.const 4
+      i32.shr_u
+      i32.add
+      i32.store offset=28
+      local.get $c
+      i32.const 15
+      i32.and
+      if
+        ;; the host dropped the body
+        local.get $C
+        local.get $C
+        i32.load offset=24
+        i32.store offset=28
+      end)
+
+    (func $p3_c_trailed (param $C i32)
+      local.get $C
+      i32.const 128
+      call $p3_cunflag
+      local.get $C
+      i32.load offset=16
+      call $p3_tdrop_w
+      local.get $C
+      i32.const 0
+      i32.store offset=16
+      local.get $C
+      i32.const 4
+      call $p3_cflag)
+
+    ;; an outgoing request's record freed (its response dropped when its
+    ;; body was never read)
+    (func $p3_c_free (param $C i32)
+      local.get $C
+      i32.load offset=40
+      if
+        local.get $C
+        i32.load offset=116
+        i32.eqz
+        if
+          local.get $C
+          i32.load offset=40
+          call $p3_resp_drop
+        end
+      end
+      local.get $C
+      i32.load offset=20
+      if
+        local.get $C
+        i32.load offset=20
+        call $free
+      end
+      local.get $C
+      i32.load offset=100
+      if
+        local.get $C
+        i32.load offset=100
+        call $free
+      end
+      local.get $C
+      call $free)
+
+    ;; an outgoing request (std/native/http.xo wasi_send, as rt5.xo's):
+    ;; method (mk, the variant's case; 9 names it in m), scheme (0 HTTP, 1
+    ;; HTTPS), authority, path with query, fields, the whole body, a
+    ;; timeout in ns for each of the host's three (0 none). client.send
+    ;; runs as a subtask while the body is written to the request's stream;
+    ;; the task waits until both are done (its call repeats). The status,
+    ;; the response kept for the next two calls; below zero: -1 the host
+    ;; refused a part of the request, -(100 + the error-code's case) the
+    ;; request failed.
+    (func $wasi_http_send (param $mk i64) (param $m i32) (param $mn i32) (param $sk i64) (param $au i32) (param $aun i32) (param $pq i32) (param $pqn i32) (param $h i32) (param $hn i32) (param $b i32) (param $bn i32) (param $tns i64) (result i64) (local $C i32) (local $f i32) (local $s i64) (local $t i64) (local $opt i32) (local $q i32) (local $v i32) (local $bad i32) (local $st i32) (local $R i32)
+      ;; a resumption's rewind ends here
+      call $resumed
+      drop
+      global.get $cur
+      i32.load offset=228
+      local.tee $C
+      if
+        local.get $C
+        i32.load
+        i32.const 8
+        i32.and
+        if
+          ;; a request before this one, whose response was not read
+          local.get $C
+          call $p3_c_free
+          i32.const 0
+          local.set $C
+          global.get $cur
+          i32.const 0
+          i32.store offset=228
+        end
+      end
+      local.get $C
+      i32.eqz
+      if
+        global.get $treq
+        local.tee $R
+        i32.eqz
+        if
+          global.get $p3ctx
+          local.set $R
+        end
+        i32.const 160
+        call $alloc
+        local.tee $C
+        i32.const 0
+        i32.const 160
+        memory.fill
+        local.get $C
+        local.get $R
+        i32.store offset=4
+        local.get $C
+        i32.const 48
+        i32.add
+        local.set $v
+        local.get $h
+        local.get $hn
+        call $fields_of
+        local.set $f
+        call $p3_snew
+        local.set $s
+        call $p3_tnew
+        local.set $t
+        local.get $tns
+        i64.const 0
+        i64.gt_s
+        if
+          call $p3_ropt_new
+          local.tee $opt
+          i32.const 1
+          local.get $tns
+          local.get $v
+          call $p3_ropt_connect
+          local.get $opt
+          i32.const 1
+          local.get $tns
+          local.get $v
+          call $p3_ropt_first
+          local.get $opt
+          i32.const 1
+          local.get $tns
+          local.get $v
+          call $p3_ropt_between
+        end
+        ;; request.new(headers, some(body), trailers, options) -> (request,
+        ;; done); when it was sent is not needed
+        local.get $f
+        i32.const 1
+        local.get $s
+        i32.wrap_i64
+        local.get $t
+        i32.wrap_i64
+        local.get $opt
+        i32.const 0
+        i32.ne
+        local.get $opt
+        local.get $v
+        call $p3_req_new
+        local.get $v
+        i32.load
+        local.set $q
+        local.get $v
+        i32.load offset=4
+        call $p3_ddrop_r
+        local.get $q
+        ;; a Str's bytes are 8 past its object
+        local.get $mk
+        i32.wrap_i64
+        local.get $m
+        i32.const 8
+        i32.add
+        local.get $mn
+        call $p3_req_method
+        local.get $q
+        i32.const 1
+        local.get $sk
+        i32.wrap_i64
+        i32.const 0
+        i32.const 0
+        call $p3_req_scheme
+        i32.or
+        local.get $q
+        i32.const 1
+        local.get $au
+        i32.const 8
+        i32.add
+        local.get $aun
+        call $p3_req_authority
+        i32.or
+        local.get $q
+        i32.const 1
+        local.get $pq
+        i32.const 8
+        i32.add
+        local.get $pqn
+        call $p3_req_path
+        i32.or
+        local.set $bad
+        local.get $bad
+        if
+          ;; the request goes, and with it the readers of its body and
+          ;; trailers: the writes finish at once
+          local.get $q
+          call $p3_req_drop
+          local.get $s
+          i64.const 32
+          i64.shr_u
+          i32.wrap_i64
+          call $p3_sdrop_w
+          local.get $t
+          i64.const 32
+          i64.shr_u
+          i32.wrap_i64
+          global.get $p3zero
+          call $p3_twrite
+          drop
+          local.get $t
+          i64.const 32
+          i64.shr_u
+          i32.wrap_i64
+          call $p3_tdrop_w
+          local.get $C
+          call $free
+          i64.const -1
+          return
+        end
+        local.get $C
+        local.get $s
+        i64.const 32
+        i64.shr_u
+        i32.wrap_i64
+        i32.store offset=12
+        local.get $C
+        local.get $t
+        i64.const 32
+        i64.shr_u
+        i32.wrap_i64
+        i32.store offset=16
+        local.get $bn
+        if
+          local.get $C
+          local.get $bn
+          call $alloc
+          local.tee $f
+          i32.store offset=20
+          local.get $f
+          local.get $b
+          i32.const 8
+          i32.add
+          local.get $bn
+          memory.copy
+          local.get $C
+          local.get $bn
+          i32.store offset=24
+        end
+        global.get $cur
+        local.get $C
+        i32.store offset=228
+        ;; send(request) as a subtask: STARTED (1) or RETURNED (2) in the
+        ;; low bits, the subtask above them
+        local.get $q
+        local.get $v
+        call $p3_send
+        local.tee $st
+        i32.const 15
+        i32.and
+        i32.const 2
+        i32.ge_u
+        if
+          local.get $C
+          i32.const 1
+          call $p3_cflag
+        else
+          local.get $C
+          local.get $st
+          i32.const 4
+          i32.shr_u
+          i32.store offset=8
+          local.get $st
+          i32.const 4
+          i32.shr_u
+          i32.const 7
+          local.get $C
+          local.get $R
+          call $p3_reg
+        end
+        local.get $C
+        call $p3_c_pump
+      end
+      local.get $C
+      i32.load
+      i32.const 7
+      i32.and
+      i32.const 7
+      i32.ne
+      if
+        local.get $C
+        i32.const 44
+        i32.add
+        call $p3_park
+        i64.const 0
+        return
+      end
+      local.get $C
+      i32.const 8
+      call $p3_cflag
+      ;; result<own<response>, error-code>: the case, then at 8 the
+      ;; response or the error-code's case
+      local.get $C
+      i32.load8_u offset=48
+      if
+        i64.const -100
+        local.get $C
+        i64.load8_u offset=56
+        i64.sub
+        local.get $C
+        call $p3_c_free
+        global.get $cur
+        i32.const 0
+        i32.store offset=228
+        return
+      end
+      local.get $C
+      local.get $C
+      i32.load offset=56
+      i32.store offset=40
+      local.get $C
+      i32.load offset=40
+      call $p3_resp_code
+      i64.extend_i32_u)
+
+    ;; the fields of the response wasi_http_send kept
+    (func $wasi_http_resp_headers (result i32 i32) (local $C i32)
+      global.get $cur
+      i32.load offset=228
+      local.tee $C
+      i32.eqz
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      local.get $C
+      i32.load offset=40
+      call $p3_resp_headers
+      call $fields_bytes)
+
+    ;; a response body read's code
+    (func $p3_c_rx_note (param $C i32) (param $c i32)
+      local.get $C
+      i32.const 16
+      call $p3_cunflag
+      local.get $C
+      local.get $C
+      i32.load offset=104
+      local.get $c
+      i32.const 4
+      i32.shr_u
+      i32.add
+      i32.store offset=104
+      local.get $c
+      i32.const 15
+      i32.and
+      if
+        local.get $C
+        i32.const 32
+        call $p3_cflag
+        local.get $C
+        i32.load offset=96
+        call $p3_sdrop_r
+        local.get $C
+        i32.const 0
+        i32.store offset=96
+      end)
+
+    ;; its body, read to the end (the task waits, its call repeating); the
+    ;; response is consumed, its trailers dropped, and its done future told
+    ;; the body was read
+    (func $wasi_http_resp_body (result i32 i32) (local $C i32) (local $d i64) (local $r i32) (local $k i32) (local $o i32) (local $c i32)
+      ;; a resumption's rewind ends here
+      call $resumed
+      drop
+      global.get $cur
+      i32.load offset=228
+      local.tee $C
+      i32.eqz
+      if
+        i32.const 0
+        call $rs_new
+        i32.const 0
+        return
+      end
+      local.get $C
+      i32.load offset=116
+      i32.eqz
+      if
+        call $p3_dnew
+        local.set $d
+        local.get $C
+        i32.const 48
+        i32.add
+        local.set $r
+        local.get $C
+        i32.load offset=40
+        local.get $d
+        i32.wrap_i64
+        local.get $r
+        call $p3_resp_consume
+        local.get $r
+        i32.load offset=4
+        call $p3_tdrop_r
+        local.get $C
+        local.get $r
+        i32.load
+        i32.store offset=96
+        local.get $C
+        local.get $d
+        i64.const 32
+        i64.shr_u
+        i32.wrap_i64
+        i32.store offset=112
+        local.get $C
+        i32.const 1
+        i32.store offset=116
+      end
+      block $read
+        loop $more
+          local.get $C
+          i32.load
+          i32.const 32
+          i32.and
+          br_if $read
+          local.get $C
+          i32.load
+          i32.const 16
+          i32.and
+          if
+            local.get $C
+            i32.const 44
+            i32.add
+            call $p3_park
+            i32.const 0
+            call $rs_new
+            i32.const 0
+            return
+          end
+          local.get $C
+          i32.load offset=108
+          local.get $C
+          i32.load offset=104
+          i32.sub
+          i32.const 16384
+          i32.lt_u
+          if
+            local.get $C
+            i32.load offset=108
+            i32.const 1
+            i32.shl
+            local.tee $k
+            local.get $C
+            i32.load offset=104
+            i32.const 65536
+            i32.add
+            local.tee $o
+            local.get $k
+            local.get $o
+            i32.gt_u
+            select
+            local.tee $k
+            call $alloc
+            local.tee $o
+            local.get $C
+            i32.load offset=100
+            local.get $C
+            i32.load offset=104
+            memory.copy
+            local.get $C
+            i32.load offset=100
+            if
+              local.get $C
+              i32.load offset=100
+              call $free
+            end
+            local.get $C
+            local.get $o
+            i32.store offset=100
+            local.get $C
+            local.get $k
+            i32.store offset=108
+          end
+          local.get $C
+          i32.load offset=96
+          local.get $C
+          i32.load offset=100
+          local.get $C
+          i32.load offset=104
+          i32.add
+          local.get $C
+          i32.load offset=108
+          local.get $C
+          i32.load offset=104
+          i32.sub
+          call $p3_sread
+          local.tee $c
+          i32.const -1
+          i32.eq
+          if
+            local.get $C
+            i32.const 16
+            call $p3_cflag
+            local.get $C
+            i32.load offset=96
+            i32.const 10
+            local.get $C
+            local.get $C
+            i32.load offset=4
+            call $p3_reg
+            br $more
+          end
+          local.get $C
+          local.get $c
+          call $p3_c_rx_note
+          br $more
+        end
+      end
+      ;; the done future: the body was read
+      local.get $C
+      i32.load offset=112
+      if
+        local.get $C
+        i32.load
+        i32.const 256
+        i32.and
+        if
+          local.get $C
+          i32.const 44
+          i32.add
+          call $p3_park
+          i32.const 0
+          call $rs_new
+          i32.const 0
+          return
+        end
+        local.get $C
+        i32.const 128
+        i32.add
+        i32.const 0
+        i32.const 32
+        memory.fill
+        local.get $C
+        i32.load offset=112
+        local.get $C
+        i32.const 128
+        i32.add
+        call $p3_dwrite
+        i32.const -1
+        i32.eq
+        if
+          local.get $C
+          i32.const 256
+          call $p3_cflag
+          local.get $C
+          i32.load offset=112
+          i32.const 11
+          local.get $C
+          local.get $C
+          i32.load offset=4
+          call $p3_reg
+          local.get $C
+          i32.const 44
+          i32.add
+          call $p3_park
+          i32.const 0
+          call $rs_new
+          i32.const 0
+          return
+        end
+        local.get $C
+        i32.load offset=112
+        call $p3_ddrop_w
+        local.get $C
+        i32.const 0
+        i32.store offset=112
+      end
+      local.get $C
+      i32.load offset=104
+      local.tee $k
+      call $rs_new
+      local.tee $o
+      i32.const 8
+      i32.add
+      local.get $C
+      i32.load offset=100
+      local.get $k
+      memory.copy
+      local.get $C
+      i32.const 2
+      i32.store offset=116
+      local.get $C
+      call $p3_c_free
+      global.get $cur
+      i32.const 0
+      i32.store offset=228
+      local.get $o
+      local.get $k)
+
+    ;; an outgoing request's event (kinds 7 to 11 of $p3_dispatch)
+    (func $p3_cdispatch (param $k i32) (param $o i32) (param $w i32) (param $code i32)
+      block $c11
+      block $c10
+      block $c9
+      block $c8
+      block $c7
+        local.get $k
+        i32.const 7
+        i32.sub
+        br_table $c7 $c8 $c9 $c10 $c11
+      end
+      ;; 7: send returned
+      local.get $o
+      i32.const 1
+      call $p3_cflag
+      local.get $w
+      call $p3_subtask_drop
+      local.get $o
+      i32.const 0
+      i32.store offset=8
+      local.get $o
+      i32.load offset=44
+      call $p3_wake
+      return
+      end
+      ;; 8: an outgoing body write
+      local.get $o
+      local.get $code
+      call $p3_c_note
+      local.get $o
+      call $p3_c_pump
+      local.get $o
+      i32.load offset=44
+      call $p3_wake
+      return
+      end
+      ;; 9: its trailers
+      local.get $o
+      call $p3_c_trailed
+      local.get $o
+      i32.load offset=44
+      call $p3_wake
+      return
+      end
+      ;; 10: a response body read
+      local.get $o
+      local.get $code
+      call $p3_c_rx_note
+      local.get $o
+      i32.load offset=44
+      call $p3_wake
+      return
+      end
+      ;; 11: the response's done future
+      local.get $o
+      i32.const 256
+      call $p3_cunflag
+      local.get $o
+      i32.load offset=112
+      call $p3_ddrop_w
+      local.get $o
+      i32.const 0
+      i32.store offset=112
+      local.get $o
+      i32.load offset=44
+      call $p3_wake)
+
+  """
 }

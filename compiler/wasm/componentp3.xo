@@ -259,6 +259,10 @@ fn p3_canon(name: Str, t: P3Types, realloc: Int) -> List[Int] {
     "[subtask-drop]" => d.push(0x0d)
     // cancellable: no; memory 0
     "[waitable-set-wait]" => extend(d, [0x20, 0x00, 0x00])
+    // context.get / context.set i32 0: the request a component task
+    // serves (rt10.xo)
+    "[context-get]" => extend(d, [0x0a, 0x7f, 0x00])
+    "[context-set]" => extend(d, [0x0b, 0x7f, 0x00])
     "[backpressure-inc]" => d.push(0x24)
     "[backpressure-dec]" => d.push(0x25)
     _ => {}

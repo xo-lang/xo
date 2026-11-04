@@ -271,6 +271,11 @@ fn gen_module(m: ssa.Module, all: Bool, lax: Bool, annotate: Bool, tz: List[tzse
   g.comp = p2 && g.is_component()
   g.cmd = p2 && !g.comp
   g.p3 = p3 && g.comp
+  if g.p3 {
+    // each request runs as a task of the scheduler (rt10.xo, stage 5
+    // step 3)
+    g.conc = true
+  }
   if p3 && !g.comp {
     return Program{code: "XO1515", err: "a wasip3/wasm program is a wasi:http component (it calls http.serve_component): commands and the rest of WASI 0.3 are later steps of decision 0447 stage 5"}
   }
@@ -1408,7 +1413,7 @@ fn (var g: Gen) find_susp() {
     for x in f.values {
       if x.op == ssa.Op.Call {
         if let S(n) = x.aux {
-          if rt3_blocking(n) || rt9_blocking(n) || (n == "rt.wasi_stdin_read" && g.cmd) {
+          if rt3_blocking(n) || rt9_blocking(n) || (n == "rt.wasi_stdin_read" && g.cmd) || (g.p3 && rt10_blocking(n)) {
             blocks = true
           }
         }
@@ -1477,6 +1482,9 @@ fn (var g: Gen) find_susp() {
           if rt3_blocking(name) {
             s = true
           }
+        } else if g.p3 && rt10_blocking(name) {
+          // a request's task waits for the host there (rt10.xo)
+          s = true
         }
       }
     }
@@ -1695,7 +1703,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   g.compute_homes(main)
   if g.conc {
     let t3 = rt3_text(g, main, main_res, main_args)
-    rt = rt + (if g.net && g.cmd { rt9_sched(t3, tcp: g.tcp) } else { t3 })
+    rt = rt + (if g.net && g.cmd { rt9_sched(t3, tcp: g.tcp) } else if g.p3 { rt10_sched(t3) } else { t3 })
   }
   if g.net && g.cmd {
     rt = rt + rt9_text(g)
@@ -1841,7 +1849,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   called_names("call $fault_report call $flush_exit0 call $consts_free", roots)
   if g.p3 {
     // the handle export and its callback (rt10_handle), after the strip
-    called_names(rt10_handle(start), roots)
+    called_names(rt10_handle(g, start), roots)
   } else if g.comp {
     // the handle export (rt5_handle) is written after the strip
     called_names("call $handle_end", roots)
@@ -1858,7 +1866,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   }
   if g.p3 {
     // a WASI 0.3 component's async handle export (rt10.xo)
-    b.write(rt10_handle(start))
+    b.write(rt10_handle(g, start))
   } else if g.comp {
     // a wasi:http component's handle export runs main per request
     // (rt5.xo); it has no _start

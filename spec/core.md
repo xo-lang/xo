@@ -3708,8 +3708,10 @@ runs inside `handle`. A `handle_stream` route reads the request body as
 it arrives (`stream<u8>`), with its trailers (a future); a response's
 body goes to the host as main writes it, then its trailers. `http.Client`
 sends through `client.send`, lowered async, writing the request body
-while the call runs. One request runs at a time in an instance
-(`backpressure`), and a host may start the next on the same instance.
+while the call runs. Several requests run at once in an instance
+(step 3, 2026-11-04): each runs main in a task of its own, and a task
+that waits for the host lets the others run; no state outlives main, so
+the requests share nothing but the instance's memory.
 On wasip3/wasm, a program that does not call `http.serve_component` is
 XO1515.
 

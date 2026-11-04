@@ -1116,3 +1116,4 @@ One file per gotcha: symptom, cause, fix or workaround. Mark each as
 - [inline-str-put-copies-builder.md](inline-str-put-copies-builder.md): Observed: --inline-str made every BytesBuilder.put_le/put_be copy the whole builder ("" + cur); jpeg 5.8x, self build 40x
 - [xo-asm-not-the-built-binary.md](xo-asm-not-the-built-binary.md): Observed: xo asm lays code out differently from xo build; read the binary (otool/objdump) and XO_DUMP_FN post-rc dumps
 - [gate-passes-on-inline-fallback.md](gate-passes-on-inline-fallback.md): Observed: a module that fails the rc verifier builds without inlining; goldens run strict but must include the shape inlined into a caller
+- [wasm-parking-rt-call-needs-resume-point.md](wasm-parking-rt-call-needs-resume-point.md): a wasm runtime call that parks its task needs a resume point and suspend check in call.xo and a place in gen.xo's blocks test, or the caller takes its dummy results as real (rt10, 2026-11-04)
