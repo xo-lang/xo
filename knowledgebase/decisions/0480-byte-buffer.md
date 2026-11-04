@@ -137,6 +137,18 @@ cuts 1M small records at 0.916 of Go's wall and 0.182 of its peak RSS, a
 1 MiB record at 0.171 of its peak (wall within noise), and a 64 MiB record
 at 0.201 of its wall and 0.249 of its peak. Today's `rest + piece` is
 0.919 on small records too, and quadratic on a large record only. B3
-wins on the owner's measure, so B1 waits for the owner's choice; what B1
-would still add is the bookkeeping each parser repeats (B3's held views
-and the join).
+met the owner's first bar; the owner then chose B1 for the code a parser
+writes, with these B3 numbers as the bar B1 must meet.
+
+## Implementation (2026-11-03)
+
+`read_until` keeps how far its last search for the same delimiter got, so
+`while let Some(rec) = b.read_until(0x0A)` after each write is linear (Go's
+ReadBytes rescans; the Go twin keeps that offset by hand). Natively a
+write keeps its Bytes as a view, writes under 64 bytes are gathered in
+one appended tail, and a record that spans pieces is joined once: B3's
+work, behind B1's methods. A first form copied each piece into one
+storage Str (moved to new storage once half was consumed, Go's grow) and
+was 7% slower than B3 on small records (0.993 of Go's wall against
+0.925, host 1). On the Go backend std/rt/bytebuf.go wraps bytes.Buffer
+and copies each returned view.

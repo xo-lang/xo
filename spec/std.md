@@ -545,11 +545,11 @@ fn (s: Secret[T]) reveal() -> T
 bytes that arrive in pieces: the loop `b.write(piece)` then `while let
 Some(rec) = b.read_until(0x0A)` costs time linear in the bytes, since
 `read_until` resumes its search where the last call with the same
-delimiter stopped, and the unread bytes move to new storage only once
-half the storage was consumed. `peek`, `next` and `read_until` return
-views of the buffer's storage that stay valid after later writes (a write
-never changes bytes a view holds; Go's `Next` is valid only until the next
-write). A count `n` below 0 is 0 and above `len()` is `len()`.
+delimiter stopped, and a write keeps its bytes without copying them (a
+record inside one written piece is a view of it; one that spans pieces is
+joined once). `peek`, `next` and `read_until` return views that stay
+valid after later writes (Go's `Next` is valid only until the next
+write); `peek` and `find` copy when the bytes they cover span pieces. A count `n` below 0 is 0 and above `len()` is `len()`.
 
 `BytesBuilder.put_le` and `put_be` (decision 0399) overwrite the `n` bytes
 `at..at + n` of what has been written, in place (Go's
