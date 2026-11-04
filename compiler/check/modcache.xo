@@ -14,7 +14,7 @@
 
 use std/crypto
 
-const MOD_CACHE_VERSION = "xo check cache v6"
+const MOD_CACHE_VERSION = "xo check cache v7"
 
 /// Per module: the SHA-256 of its interface closure (above).
 pub fn (c: Checker) iface_closures() -> List[Str] {
@@ -93,6 +93,15 @@ fn (var c: Checker) mod_cache_load() uses fs.read {
     var paths: List[(Str, Int)] = []
     for f in c.mods[m].files {
       paths.push((c.files[f].path, f))
+    }
+    // the consumer's vouches for the module (decision 0156): an entry
+    // stored under a vouch must not replay once it is removed or changed
+    // (an XO1316 the check would report)
+    let mp = c.mods[m].path
+    for v in c.consumer_vouches() {
+      if mp == v.path || mp.starts_with("${v.path}/") {
+        h.write_str("vouch ${v.path} ${v.version} ${v.kind} ${v.target} ${v.effects.map(fn(e) { e.effects.join(",") }) ?? "-"}\n")
+      }
     }
     for (p, f) in paths.sort_by(fn(e) { e.0 }) {
       h.write_str("${p}\n")
