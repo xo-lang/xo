@@ -7,14 +7,11 @@ use std/tabwriter
 
 fn main(os: Os) uses stdio, env {
   let w = os.env.args().get(0) ?? "none"
-  var tb = BytesBuilder.with_capacity(4096)
+  var text = ""
   for r in 0..40 {
-    tb.write(b"row${r}\t")
-    tb.write(b"${r * 7919 % 100003}\t")
-    tb.write(b"name-${r % 7}-${r * r}\t")
-    tb.write(b"${r % 3 == 0}\n")
+    text += "row${r}\t${r * 7919 % 100003}\tname-${r % 7}-${r * r}\t${r % 3 == 0}\n"
   }
-  let table = tb.freeze()
+  let table = text.bytes()
   var sum = 0
   for i in 0..5000 {
     if w == "pad" || w == "right" {
