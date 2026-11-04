@@ -712,6 +712,9 @@ fn fs_open(p: Str, mode: Int, x: Str) -> FsFile
 fn fs_file_closed(f: FsFile) -> Bool
 /// At most max bytes in a list of one, or the empty list at the end.
 fn fs_file_read(f: FsFile, max: Int, x: Str) -> List[Bytes]
+/// At most max bytes at offset in a list of one, or the empty list at the
+/// end (a wasm build's File.read_at; natively fsops.xo's pread).
+fn fs_file_read_at(f: FsFile, offset: Int, max: Int, x: Str) -> List[Bytes]
 /// A line without \n or \r\n in a list of one, or the empty list.
 fn fs_file_read_line(f: FsFile, x: Str) -> List[Str]
 fn fs_file_write(f: FsFile, data: Bytes, x: Str) -> Int

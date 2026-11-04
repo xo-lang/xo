@@ -1,0 +1,9 @@
+exit 0
+--- stdout
+head 504b0304
+past end none
+end record 504b0506
+read PK
+a.txt 5 5 true
+dir/big.txt 133890 133890 true
+--- stderr

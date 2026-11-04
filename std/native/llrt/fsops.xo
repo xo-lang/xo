@@ -625,12 +625,11 @@ pub fn file_read(f: rt.FsFile, max: Int, x: Str) -> List[Bytes] {
 
 /// `f.read_at(offset, max)` (offset >= 0, max > 0, at most 1 MiB): the
 /// bytes in a list of one, or the empty list at the end (status 0) or on
-/// an error. The handle's position and read buffer are not used. A wasm
-/// build has no positioned read (status ENOSYS).
+/// an error. The handle's position and read buffer are not used.
 pub fn file_read_at(f: rt.FsFile, offset: Int, max: Int, x: Str) -> List[Bytes] {
+  // a wasm build: fd_pread (wasi:filesystem's descriptor.read on wasip2)
   if sysio.layer() == 0 {
-    fail(1, 38, x)
-    return []
+    return rt.fs_file_read_at(f, offset, max, x)
   }
   let l = layer()
   let a = rt.obj_addr(f)

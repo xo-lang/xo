@@ -25,6 +25,7 @@ arm64 fs_copy layer 0 only: called from the WASI and Go backend arms of std/nati
 arm64 fs_file_close layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 arm64 fs_file_closed layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 arm64 fs_file_read layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+arm64 fs_file_read_at layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 arm64 fs_file_read_line layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 arm64 fs_file_write layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 arm64 fs_info layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
@@ -130,6 +131,7 @@ llvm fs_copy layer 0 only: called from the WASI and Go backend arms of std/nativ
 llvm fs_file_close layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm fs_file_closed layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm fs_file_read layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
+llvm fs_file_read_at layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm fs_file_read_line layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm fs_file_write layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends
 llvm fs_info layer 0 only: called from the WASI and Go backend arms of std/native/llrt and the portable prelude, which fold away on the native backends

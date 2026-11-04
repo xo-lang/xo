@@ -1,0 +1,61 @@
+// File.read_at and archive.zip_open (decision 0479 step 3) on a real file:
+// a zip written entry by entry to a File, then read in place from another
+// File: its directory, each entry when read, and read_at at offsets inside
+// and past the end, which leaves the File's position where it was. Runs on
+// every backend, wasm included (fd_pread; wasi:filesystem's descriptor.read
+// on wasip2).
+use std/archive
+
+fn main(os: Os) {
+  let p = "zip_open_file_tmp.zip"
+  os.fs.remove(p).ok()
+  var big = BytesBuilder.new()
+  for i in 0..5000 {
+    big.write("line ${i} of the big entry\n".bytes())
+  }
+  let data = big.freeze()
+  let out = os.fs.create(p).or_fault("create")
+  var w = archive.zip_writer(out)
+  w.add(archive.file("a.txt", b"alpha")).or_fault("add a")
+  w.add(archive.file("dir/big.txt", data)).or_fault("add big")
+  w.close().or_fault("close writer")
+  out.close().or_fault("close out")
+
+  let size = (os.fs.stat(p).or_fault("stat") ?? fault("no file")).size
+  let f = os.fs.open(p).or_fault("open")
+  // the local header's signature, PK\x03\x04
+  match f.read_at(0, 4) {
+    Ok(Some(b)) => os.stdio.println("head ${b.to_hex()}")
+    Ok(None) => os.stdio.println("head none")
+    Err(e) => os.stdio.println("head err ${e}")
+  }
+  match f.read_at(size, 16) {
+    Ok(Some(b)) => os.stdio.println("past end ${b.len()}")
+    Ok(None) => os.stdio.println("past end none")
+    Err(e) => os.stdio.println("past end err ${e}")
+  }
+  match f.read_at(size - 22, 4) {
+    Ok(Some(b)) => os.stdio.println("end record ${b.to_hex()}")
+    Ok(None) => os.stdio.println("end record none")
+    Err(e) => os.stdio.println("end record err ${e}")
+  }
+  // read_at does not move the position: read starts at the beginning
+  match f.read(2) {
+    Ok(Some(b)) => os.stdio.println("read ${b.to_str() ?? "?"}")
+    Ok(None) => os.stdio.println("read none")
+    Err(e) => os.stdio.println("read err ${e}")
+  }
+  match archive.zip_open(f, size) {
+    Ok(r) => {
+      for z in r.files() {
+        match r.read(z) {
+          Ok(b) => os.stdio.println("${z.path} ${z.size} ${b.len()} ${b == (if z.path == "a.txt" { b"alpha" } else { data })}")
+          Err(e) => os.stdio.println("${z.path} err ${e}")
+        }
+      }
+    }
+    Err(e) => os.stdio.println("zip_open err ${e}")
+  }
+  f.close().or_fault("close")
+  os.fs.remove(p).or_fault("cleanup")
+}

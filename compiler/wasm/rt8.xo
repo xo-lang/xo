@@ -40,7 +40,7 @@ fn rt8_globals() -> Str {
 /// The functions of rt6.xo (its ENOSYS file calls and its file write) that
 /// rt8.xo replaces.
 fn rt8_replaces() -> List[Str] {
-  ["path_open", "fd_read", "fd_close", "path_filestat_get", "fd_readdir", "path_create_directory", "path_remove_directory", "path_unlink_file", "path_rename", "path_readlink", "path_symlink", "path_filestat_set_times", "fd_write_file"]
+  ["path_open", "fd_read", "fd_pread", "fd_close", "path_filestat_get", "fd_readdir", "path_create_directory", "path_remove_directory", "path_unlink_file", "path_rename", "path_readlink", "path_symlink", "path_filestat_set_times", "fd_write_file"]
 }
 
 /// The functions of rt8.xo.
@@ -466,6 +466,65 @@ fn rt8_text() -> Str {
       end
       local.get $nr
       local.get $total
+      i32.store
+      i32.const 0)
+
+    ;; fd_pread: the first iovec's bytes read at offset off (File.read_at
+    ;; uses one); the descriptor's own offset does not move
+    (func $fd_pread (param $fd i32) (param $iov i32) (param $n i32) (param $off i64) (param $nr i32) (result i32) (local $e i32) (local $r i32) (local $q i32) (local $k i32)
+      local.get $fd
+      call $fs_entry
+      local.tee $e
+      i32.eqz
+      if
+        i32.const 8
+        return
+      end
+      local.get $n
+      i32.eqz
+      if
+        local.get $nr
+        i32.const 0
+        i32.store
+        i32.const 0
+        return
+      end
+      call $hret_at
+      local.set $r
+      local.get $e
+      i32.load
+      local.get $iov
+      i32.load offset=4
+      i64.extend_i32_u
+      local.get $off
+      local.get $r
+      call $wfs_dread
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=4
+        call $fs_errno
+        return
+      end
+      local.get $r
+      i32.load offset=4
+      local.set $q
+      local.get $r
+      i32.load offset=8
+      local.set $k
+      local.get $iov
+      i32.load
+      local.get $q
+      local.get $k
+      memory.copy
+      local.get $k
+      if
+        local.get $q
+        call $free
+      end
+      local.get $nr
+      local.get $k
       i32.store
       i32.const 0)
 

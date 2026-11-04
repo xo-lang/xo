@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-04: feature: File.read_at on wasm
+
+- Kind: feature
+- Commit: this commit
+- Go reference: os.File.ReadAt (go1.26.1), as natively
+- Test: the zip_open_file golden (a zip written to a real file, then read_at and archive.zip_open on another File) on wasip1 (Node and wasmtime), wasip2 commands, arm64 and LLVM
+- Timing: none (one host call)
+
+`f.read_at(offset, max)` in a wasm build is preview 1's fd_pread on wasip1/wasm and wasi:filesystem's `descriptor.read` at the offset in a wasip2/wasm command, so `archive.zip_open` reads a zip in place there too. The descriptor's position does not move. A wasi:http component has no files (XO1515).
+
 ## 2026-11-03: behavior: a fault inside Mutex.with poisons the mutex; Mutex.reset
 
 - Kind: behavior
