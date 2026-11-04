@@ -47,6 +47,14 @@ func trimEndAll() int {
 	return sum
 }
 
+func trimWith(cs string) int {
+	sum := 0
+	for i := 0; i < n; i++ {
+		sum += len(strings.Trim(texts[i%len(texts)], cs))
+	}
+	return sum
+}
+
 // indexAll is the loop's own cost, the two table lookups and the
 // lengths, with no trim.
 func indexAll() int {
@@ -70,6 +78,14 @@ func main() {
 		sum = trimStartAll()
 	case "trim_end":
 		sum = trimEndAll()
+	case "one":
+		sum = trimWith(" ")
+	case "pair":
+		sum = trimWith(" \t")
+	case "abc":
+		sum = trimWith("abc")
+	case "uni":
+		sum = trimWith("é✓")
 	case "index":
 		sum = indexAll()
 	}

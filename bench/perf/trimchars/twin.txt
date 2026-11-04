@@ -3,3 +3,7 @@
 - - trim
 - - trim_start
 - - trim_end
+- - one
+- - pair
+- - abc
+- - uni

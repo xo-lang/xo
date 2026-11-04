@@ -44,6 +44,16 @@ fn trim_end_all() -> Int {
   n
 }
 
+// trim_with is trim_all over one cutset, picked once outside the loop: which
+// of Go's trim paths carries the gap (one byte, ASCII bitmap, Unicode).
+fn trim_with(cs: Str) -> Int {
+  var n = 0
+  for i in 0..N {
+    n += TEXTS[i % TEXTS.len()].trim_chars(cs).len()
+  }
+  n
+}
+
 // index_all is the loop's own cost, the two table lookups and the
 // lengths, with no trim, so a trim row can be read net of it.
 fn index_all() -> Int {
@@ -64,6 +74,14 @@ fn main(os: Os) {
     n = trim_start_all()
   } else if w == "trim_end" {
     n = trim_end_all()
+  } else if w == "one" {
+    n = trim_with(" ")
+  } else if w == "pair" {
+    n = trim_with(" \t")
+  } else if w == "abc" {
+    n = trim_with("abc")
+  } else if w == "uni" {
+    n = trim_with("é✓")
   } else if w == "index" {
     n = index_all()
   }
