@@ -274,6 +274,9 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
   } else {
     g.heap_leaves(t, 0, all)
   }
+  if g.one_leaf_enum(b, kind, sym, t, all) {
+    return
+  }
   var out = 0
   for l in all {
     out = imax(out, align16(8 * (g.leaf_words(l.t) - 8)))
@@ -339,6 +342,40 @@ fn (var g: G) agg_rc(var b: List[Str], kind: Str, sym: Str, id: Int, t: Int) {
     }
     b.push("\tret\n")
   }
+}
+
+/// The dup or drop helper of an enum whose one heap leaf is a Str or a
+/// List in the first eight words (an Option[Bytes], a Result[Str, Int]):
+/// the tag tested in x0 and the leaf's own helper taken as a tail call,
+/// with no frame and no words stored (agg_rc stored every word and called
+/// the leaf: `while let Some(rec) = b.read_until(..)` paid a frame and
+/// three stores a record dropping rec); false for any other enum.
+fn (var g: G) one_leaf_enum(var b: List[Str], kind: Str, sym: Str, t: Int, all: List[Leaf]) -> Bool {
+  let x = g.m.types[t]
+  if x.kind != ssa.Kind.Enum || all.len() != 1 || !(kind is "dup" | "drop") {
+    return false
+  }
+  let l = all[0]
+  if !(g.kind(l.t) is ssa.Kind.Str | ssa.Kind.List) || l.off < 1 || l.off + g.leaf_words(l.t) > 8 {
+    return false
+  }
+  var vi = -1
+  for (k, v) in x.variants.indexed() {
+    var ls: List[Leaf] = []
+    for (fi, f) in v.fields.indexed() {
+      let (off, _) = g.payload_words(t, k, fi)
+      g.heap_leaves(f.ty, off, ls)
+    }
+    if !ls.is_empty() {
+      vi = k
+    }
+  }
+  if vi < 0 || vi > 4095 {
+    return false
+  }
+  let ret = "${sym}_one_ret"
+  b.push("\tcmp x0, #${vi}\n\tb.ne ${ret}\n\tmov x0, x${l.off}\n\tmov x1, x${l.off + 1}\n\tb ${g.rc_helper(kind, l.t)}\n${ret}:\n\tret\n")
+  true
 }
 
 /// The body of the dupp, dropp, or sharep helper of an enum, struct, or

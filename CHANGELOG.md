@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (arm64): the drop and dup of an enum whose one heap leaf is a Str or a List (Option[Bytes], Option[Str], Result[Str, Int]) test the tag in a register and tail-call the leaf's helper, with no frame and no stores (`while let Some(rec) = b.read_until(..)` paid a frame and three stores a record): bench/perf/bytebuf small_buf 0.977 (0.949 to 0.987) on linux/arm64
 - fix (--inline-str, decision 0370): BytesBuilder.put_le and put_be no longer copy the whole builder on every call (the builder was made an object as "" + cur, a new object each time; now cur + ""): jpeg_decode with --inline-str 0.12 s against 0.10 s plain on the Mac (was 5.8x on linux/arm64), internal/arm64 TestInlineStrPutInPlace; gotchas/inline-str-put-copies-builder.md
 - perf (json): a tagged enum's tag is compared with each variant name in place, with no string made unless the variant is unknown: bench/perf/jsontag tagfirst 0.857 of before on linux/arm64 (bench/results/json-own-form-tagged-2026-11-03.md, std/changes/json.md).
 - feature (wasm): `File.read_at` works in a wasm build (preview 1's fd_pread on wasip1/wasm, wasi:filesystem's descriptor.read at the offset in a wasip2/wasm command), so `archive.zip_open` reads a zip in place there too; golden zip_open_file.
