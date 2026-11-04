@@ -1077,11 +1077,23 @@ fn (var g: G) bounds_check(v: Int, l: Int, i: Int, sl: Int, si: Int) {
   // len >> k and len / C are below len once len is at least 1, which
   // len_pos reads from a dominating `if len > 0` (2026-10-26)
   let short = g.proof.div_of_len(g.f, ssa.block_of(x.tb), si, sl)
-  if !short && !g.proved_index(si, n, -1) && !g.proof.proven(g.f, ssa.block_of(x.tb), si, sl) {
+  if !short && !g.proved_index(si, n, -1) && !g.proof.proven(g.f, ssa.block_of(x.tb), si, sl) && !g.below_len_min(si, sl, ssa.block_of(x.tb)) {
     g.check("cmp $u0, $u1", [i, n], "hs", "xo_fault_index", [rsrc(i), rsrc(n)] + g.loc_args(pos))
   }
   g.index_facts(i)
   g.less_fact(si, n)
+}
+
+/// Whether index si is in [0, C) for a C the length of list sl is known
+/// to be at least in block at (Proof.len_min: a dominating guard on the
+/// length against a constant): a masked index into a table of fixed size,
+/// `st[S1 + ((x >> 16) & 255)]` after `if st.len() != 1042 { ... }`.
+fn (var g: G) below_len_min(si: Int, sl: Int, at: Int) -> Bool {
+  let (lo, hi) = g.bounds(si)
+  if lo < 0 || hi < 0 {
+    return false
+  }
+  hi < g.proof.len_min(g.f, at, sl)
 }
 
 /// Option words on two paths: in the current block when cond holds (the

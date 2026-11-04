@@ -161,9 +161,13 @@ fn bcrypterr_display(e: bcrypt.BcryptErr) -> Str {
   }
 }
 
-/// blowfish's F: the S boxes on the four bytes of x.
+/// blowfish's F: the S boxes on the four bytes of x (a 32-bit word: the
+/// top byte's mask changes no result, and with expand's length check it
+/// lets the compiler drop the four index checks, ranges.xo).
 fn f(st: List[Int], x: Int) -> Int {
-  ((((st[18 + (x >> 24)] + st[S1 + ((x >> 16) & 255)]) & M) ^ st[S2 + ((x >> 8) & 255)]) + st[S3 + (x & 255)]) & M
+  // every state word is below 2**32 (masked as it is stored), so neither
+  // sum can overflow: wrapping_add, the same value without the check
+  (((st[18 + ((x >> 24) & 255)].wrapping_add(st[S1 + ((x >> 16) & 255)]) & M) ^ st[S2 + ((x >> 8) & 255)]).wrapping_add(st[S3 + (x & 255)])) & M
 }
 
 /// block.go encryptBlock: the pair (xr, xl) as xr * 2**32 + xl.
@@ -202,6 +206,11 @@ fn cyc_words(b: Bytes, n: Int) -> List[Int] {
 /// from a zero block (salt: expandKeyWithSalt, the salt's words xor the
 /// block before each encryption).
 fn expand(var st: List[Int], kw: List[Int], sw: List[Int]) {
+  // the P array and four S boxes (BF's 1042 words): the loop's index
+  // checks are proved from it (st[S3 + (x & 255)] below 1042)
+  if st.len() != 1042 {
+    fault("bcrypt: state of ${st.len()} words")
+  }
   for i in 0..18 {
     st[i] = st[i] ^ kw[i]
   }

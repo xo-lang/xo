@@ -197,3 +197,17 @@ Quiet `xo bench --ab`, wall over A, 20 rounds:
 - **Changing unicode.xo** (direct tables for three byte runes, an
   inline UTF-8 encoder): out of scope; the backend change helps every
   program.
+
+## Addendum 2026-11-04: length lower bounds from guards
+
+A branch comparing `list.len(x)` with a constant C records len(root of x)
+>= C on the edge that implies it (`!= C` and `< C` on the false edge,
+`== C` and `>= C` on the true one, `> C` and `<= C` give C + 1), keyed by
+the length root that list.set, Reuse and loop parameters keep
+(fieldlicm.xo min_fact). An index whose known range is in [0, C) needs no
+check where such a fact's block dominates the access, unless something in
+the function changes that container's length (FACT_UNSTABLE)
+(calls.xo below_len_min). The per block register facts already used the
+guard in straight code; a loop that writes the list lost it, which kept
+every S box check of bcrypt's expand (18 checks, now 4).
+Test: test/codegen/maskedindex.

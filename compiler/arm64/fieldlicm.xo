@@ -377,6 +377,9 @@ const FACT_LT = 1
 const FACT_LE = 2
 const FACT_LEN = 3
 const FACT_UNSTABLE = 4
+/// len(r) >= C: (C, the block from which on it holds), from a branch of
+/// `list.len(x) op C` (len_min).
+const FACT_MIN = 5
 /// The distance between the key spaces of the kinds of fact; fact ids are
 /// value indices and far below it.
 const FACT_SCALE = 1099511627776
@@ -428,6 +431,7 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
     }
     let tb = f.edges[tv.succs[0]].to
     let fb = f.edges[tv.succs[1]].to
+    pr.min_fact(f, c, tb, fb)
     var x = -1
     var n = -1
     if c.op == ssa.Op.Lt {
@@ -473,6 +477,77 @@ fn new_proof(f: ssa.Func, rpo: List[Int]) -> Proof {
     }
   }
   pr
+}
+
+/// Records len(r) >= C for a branch on c, `list.len(x) op C` (either
+/// order), x of length root r, on the edge whose block only it enters:
+/// `!= C` and `< C` leave C on the false edge, `== C` and `>= C` on the
+/// true one, `> C` C + 1 on the true one, `<= C` C + 1 on the false one
+/// (2026-11-04: bcrypt's `if st.len() != 1042 { fault(...) }` before its
+/// S box loop, whose `st[S3 + (x & 255)]` writes go through list.set).
+fn (var pr: Proof) min_fact(f: ssa.Func, c: ssa.Value, tb: Int, fb: Int) {
+  if c.args.len() != 2 {
+    return
+  }
+  var op = c.op
+  var lv = c.args[0]
+  var kv = c.args[1]
+  if f.values[kv].op != ssa.Op.Const {
+    lv = c.args[1]
+    kv = c.args[0]
+    op = match c.op {
+      ssa.Op.Lt => ssa.Op.Gt
+      ssa.Op.Gt => ssa.Op.Lt
+      ssa.Op.Le => ssa.Op.Ge
+      ssa.Op.Ge => ssa.Op.Le
+      _ => c.op
+    }
+  }
+  let k = f.values[kv]
+  let l = f.values[lv]
+  if k.op != ssa.Op.Const || l.op != ssa.Op.Call || l.args.len() != 1 || aux_str(l.aux) != "list.len" {
+    return
+  }
+  let cn = aux_int(k.aux)
+  if cn <= 0 || cn >= MAX_INT {
+    return
+  }
+  let (blk, n) = match op {
+    ssa.Op.Ne => (fb, cn)
+    ssa.Op.Lt => (fb, cn)
+    ssa.Op.Eq => (tb, cn)
+    ssa.Op.Ge => (tb, cn)
+    ssa.Op.Gt => (tb, cn + 1)
+    ssa.Op.Le => (fb, cn + 1)
+    _ => (-1, 0)
+  }
+  if blk < 0 || f.blocks[blk].preds.len() != 1 {
+    return
+  }
+  let r = len_root(f, l.args[0], [], FIELD_DEPTH)
+  if r < 0 {
+    return
+  }
+  var ls = pr.facts.get(fact_key(FACT_MIN, r)) ?? []
+  ls.push((n, blk))
+  pr.facts[fact_key(FACT_MIN, r)] = ls
+}
+
+/// The largest C with len(l) >= C known in block at (min_fact, its block
+/// dominating at), 0 for none: l's length root, when nothing in the
+/// function changes that container's length.
+fn (pr: Proof) len_min(f: ssa.Func, at: Int, l: Int) -> Int {
+  let r = len_root(f, l, [], FIELD_DEPTH)
+  if r < 0 || !(pr.facts.get(fact_key(FACT_UNSTABLE, r)) ?? []).is_empty() {
+    return 0
+  }
+  var best = 0
+  for (n, cb) in pr.facts.get(fact_key(FACT_MIN, r)) ?? [] {
+    if n > best && dominates_b(pr.idom, pr.entry, cb, at) {
+      best = n
+    }
+  }
+  best
 }
 
 /// Whether `0 <= idx < the length of list l` is known in block at: idx is

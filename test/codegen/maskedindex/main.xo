@@ -1,0 +1,95 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): an index masked into
+// [0, C) needs no bounds check after a guard that puts the list's length at
+// C or more (compiler/arm64 fieldlicm.xo min_fact and len_min, calls.xo
+// below_len_min; 2026-11-04, bcrypt's S boxes). The facts follow the list
+// through element writes (list.set keeps the length) and stop at anything
+// that can change it. Before the change only sboxes kept its checks (the
+// loop and the writes hid the guard from the per block register facts);
+// lt_guard and byte_index were already free of them, and stay regression
+// guards here.
+
+// bcrypt's shape: a fixed size state checked once, written in the loop,
+// read through masked bytes at offsets.
+fn sboxes(var st: List[Int], xs: List[Int]) -> Int {
+  // arm64: -"b\.hs"
+  // amd64: -"\tjae "
+  if st.len() != 1042 {
+    return 0
+  }
+  var s = 0
+  var i = 0
+  for x in xs {
+    s = s ^ st[18 + ((x >> 24) & 255)] ^ st[274 + ((x >> 16) & 255)] ^ st[786 + (x & 255)]
+    st[(i & 511) + 18] = s
+    i += 1
+  }
+  s
+}
+
+// `if t.len() < 256 { return }` leaves the length at least 256.
+fn lt_guard(t: List[Int], x: Int) -> Int {
+  // arm64: -"b\.hs"
+  // amd64: -"\tjae "
+  if t.len() < 256 {
+    return 0
+  }
+  t[x & 255]
+}
+
+// A UInt8 index is in [0, 255] by its type.
+fn byte_index(t: List[Int], b: UInt8) -> Int {
+  // arm64: -"b\.hs"
+  // amd64: -"\tjae "
+  if t.len() >= 256 {
+    return t[b]
+  }
+  0
+}
+
+// The boundary: a mask past the guarded length keeps the check.
+fn mask_too_wide(t: List[Int], x: Int) -> Int {
+  // arm64: "b\.hs"
+  // amd64: "\tjae "
+  if t.len() < 256 {
+    return 0
+  }
+  t[x & 511]
+}
+
+// One short: a length of at least 255 does not hold index 255.
+fn guard_one_short(t: List[Int], x: Int) -> Int {
+  // arm64: "b\.hs"
+  // amd64: "\tjae "
+  if t.len() < 255 {
+    return 0
+  }
+  t[x & 255]
+}
+
+// No guard: the length is unknown.
+fn no_guard(t: List[Int], x: Int) -> Int {
+  // arm64: "b\.hs"
+  // amd64: "\tjae "
+  t[x & 255]
+}
+
+// A pop can shorten the list after the guard: the fact does not hold.
+fn popped(var t: List[Int], x: Int) -> Int {
+  // arm64: "b\.hs"
+  // amd64: "\tjae "
+  if t.len() < 256 {
+    return 0
+  }
+  let _p = t.pop()
+  t[x & 255]
+}
+
+fn main(os: Os) {
+  var st: List[Int] = []
+  for i in 0..1042 {
+    st.push(i)
+  }
+  let xs = [0x01020304, 0x7F00FF00, 0xFFFFFFFF]
+  let t = st[0..256]
+  os.stdio.println("${sboxes(st, xs)} ${lt_guard(t, 300)} ${byte_index(t, UInt8(200))} ${mask_too_wide(st, 300)} ${guard_one_short(t, 255)} ${no_guard(t, 7)} ${popped(st, 3)}")
+}
