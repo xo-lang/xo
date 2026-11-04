@@ -940,8 +940,7 @@ pub fn pread_at(h: Int, a: Int, n: Int, off: Int) -> Int {
   rt.mem_store(oa, 8, 0, 8)
   rt.mem_store(oa, 16, off, 8)
   rt.mem_store(oa, 24, 0, 8)
-  let rc = Int(sys_windows.ReadFile(h, a, k, done, oa))
-  keep_bytes(o)
+  let rc = keep(o, Int(sys_windows.ReadFile(h, a, k, done, oa)))
   if rc == 0 {
     let e = Int(sys_windows.GetLastError())
     if e == ERROR_HANDLE_EOF {
