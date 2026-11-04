@@ -1,0 +1,21 @@
+use std/cbor
+
+/// The item of CBOR text b.
+fn item(b: Bytes) -> cbor.Value { cbor.decode(b).ok() ?? cbor.Value.Null }
+
+test "to_int refuses a Uint past Int's range and takes the edges" {
+  // 0x1b: an 8 byte unsigned head; 0x3b: an 8 byte negative head
+  expect(item(b"\x1b\x7f\xff\xff\xff\xff\xff\xff\xff").to_int()) == Some(9223372036854775807)
+  expect(item(b"\x1b\x80\x00\x00\x00\x00\x00\x00\x00").to_int()) == None
+  expect(item(b"\x1b\xff\xff\xff\xff\xff\xff\xff\xff").to_int()) == None
+  expect(item(b"\x3b\x7f\xff\xff\xff\xff\xff\xff\xff").to_int()) == Some(-9223372036854775807 - 1)
+  expect(item(b"\x3b\x80\x00\x00\x00\x00\x00\x00\x00").to_int()) == None
+}
+
+test "a decimal fraction Tag(4, [exponent, mantissa]) round trips" {
+  let v = item(b"\xc4\x82\x21\x19\x6a\xb3")
+  expect(cbor.encode(v).ok() ?? b"") == b"\xc4\x82\x21\x19\x6a\xb3"
+  // a mantissa past Int: the bignum form's head stays 8 bytes
+  let big = item(b"\xc4\x82\x03\x1b\xff\xff\xff\xff\xff\xff\xff\xff")
+  expect(cbor.encode(big).ok() ?? b"") == b"\xc4\x82\x03\x1b\xff\xff\xff\xff\xff\xff\xff\xff"
+}

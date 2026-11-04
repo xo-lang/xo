@@ -1,5 +1,20 @@
 # prelude changes
 
+## 2026-11-04: perf: eprintln writes the line and its newline in one write
+
+- Kind: perf
+- Commit: this push
+- Found by: XO_PROF of the log twin (87% of a text record's time in `write`): eprintln made two write system calls, the text and then "\n", where Go's log and slog make one
+- Go reference: os.Stderr.Write of a whole line (log/slog's handler writes the record with its newline in one Write)
+- Test: twincheck bench/perf/log; the stdio goldens (every backend)
+- Timing: bench/results/std-twin-log-2026-11-04.md
+- Shipped in: not yet released
+
+Stdio.eprintln (and so every log record) copies a line shorter than 64 KiB
+into one buffer with its newline and writes it once; the other lines
+keep the two writes. Two writes also let another process's line land
+between a record and its newline.
+
 ## 2026-11-04: perf: one poller wake byte at a time
 
 - Kind: perf
