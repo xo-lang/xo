@@ -65,7 +65,7 @@ func TestTSanSharedMaps(t *testing.T) {
 			if strings.Contains(stderr.String(), "ThreadSanitizer") || err != nil {
 				t.Fatalf("exit %v; stdout %q:\n%s", err, stdout.String(), stderr.String())
 			}
-			if got := strings.TrimSpace(stdout.String()); got != "done 1200 1200 8 8" {
+			if got := strings.TrimSpace(stdout.String()); got != "done 1200 1200 8 8 1600 64" {
 				t.Fatalf("stdout %q, want done 1200 1200 8 8", got)
 			}
 		})

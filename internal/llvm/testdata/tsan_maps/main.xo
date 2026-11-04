@@ -5,6 +5,9 @@
 // entries into chunks already marked shared, whose values other threads
 // then counted without atomics (decision 0291, 2026-10-21). A walk under
 // the read lock reads a log-mode table in place while other tasks append.
+// Lists in the same State are written in place under the lock (push and
+// set on a held-once shared list, decision 0488: the stored element is
+// shared with it) and their elements read on other threads.
 use std/task
 
 struct Rec {
@@ -16,6 +19,8 @@ struct State {
   recs: Map[Int, Rec]
   by_name: Map[Str, Int]
   counts: Map[Int, Int]
+  log: List[Str]
+  slots: List[Rec]
 }
 
 fn worker(m: Mutex[State], w: Int) -> Int {
@@ -27,6 +32,12 @@ fn worker(m: Mutex[State], w: Int) -> Int {
       st.recs.put(id, Rec{name: name, tags: ["t${i}", name]})
       st.by_name.put(name, id)
       st.counts.put(w, i)
+      st.log.push(name)
+      if st.slots.len() < 64 {
+        st.slots.push(Rec{name: name, tags: [name]})
+      } else {
+        st.slots[(w * 7 + i) % 64] = Rec{name: "${name}+", tags: ["s${i}"]}
+      }
     })
     if i % 3 == 0 {
       m.with(fn(var st) {
@@ -42,6 +53,12 @@ fn worker(m: Mutex[State], w: Int) -> Int {
     // a copy out under the read lock, used after it
     let got = m.with_read(fn(st) { st.recs.get(id) })
     if let Some(r) = got {
+      seen += r.name.len() + r.tags.len()
+    }
+    // list elements copied out under the read lock, used after it
+    let (lg, sl) = m.with_read(fn(st) { (st.log.get(st.log.len() - 1) ?? "", st.slots.get(i % 64)) })
+    seen += lg.len()
+    if let Some(r) = sl {
       seen += r.name.len() + r.tags.len()
     }
     // a snapshot of the whole Map, iterated outside the lock
@@ -63,12 +80,13 @@ fn worker(m: Mutex[State], w: Int) -> Int {
 }
 
 fn main(os: Os) {
-  let m = Mutex[State].new(State{recs: {}, by_name: {}, counts: {}})
+  let m = Mutex[State].new(State{recs: {}, by_name: {}, counts: {}, log: [], slots: []})
   var tasks: List[Int] = []
   for w in 0..8 {
     tasks.push(w)
   }
   let results = task.map_concurrent(tasks, 8, fn(w) { worker(m, w) })
   let (n, names, ws) = m.with_read(fn(st) { (st.recs.len(), st.by_name.len(), st.counts.len()) })
-  os.stdio.println("done ${n} ${names} ${ws} ${results.len()}")
+  let (nl, ns) = m.with_read(fn(st) { (st.log.len(), st.slots.len()) })
+  os.stdio.println("done ${n} ${names} ${ws} ${results.len()} ${nl} ${ns}")
 }
