@@ -696,6 +696,40 @@ test "zip_reader lists sizes and kinds before inflating" {
   expect(r.read(fs[0]).ok() ?? b"") == b"hello hello hello hello"
   expect(r.read(fs[1]).ok() ?? b"x") == b""
 }
+test "zip_writer writes what unzip and zip_reader read" {
+  var f = os.fs.create("out.zip")?
+  var w = archive.zip_writer(f)
+  w.add(archive.file("a.txt", b"hello hello hello hello"))?
+  w.add(archive.dir("d"))?
+  w.create("d/big", 0o600)?
+  var want = ""
+  for i in 0..50 {
+    let line = "line ${i} of the streamed entry\n"
+    want += line
+    w.write(line.bytes())?
+  }
+  w.add(archive.file("z", b""))?
+  w.close()?
+  f.close()?
+  let data = os.fs.read("out.zip")?
+  let got = archive.unzip(data)?
+  expect(got.map(fn(e) { e.path })) == ["a.txt", "d", "d/big", "z"]
+  expect(got[0].data) == b"hello hello hello hello"
+  expect(got[1].is_dir) == true
+  expect(got[2].mode) == 0o600
+  expect(got[2].data) == want.bytes()
+  expect(got[3].data) == b""
+  let r = archive.zip_reader(data)?
+  expect(r.files().map(fn(x) { x.size })) == [23, 0, want.len(), 0]
+}
+
+test "zip_writer refuses a bad path and a write without create" {
+  var f = os.fs.create("o.zip")?
+  var w = archive.zip_writer(f)
+  expect(w.add(archive.file("../x", b"1")).is_err()) == true
+  expect(w.write(b"x").is_err()) == true
+  w.close()?
+}
 `)
 	return o.String()
 }

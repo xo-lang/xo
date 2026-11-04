@@ -4189,6 +4189,8 @@ pub fn unzip(data: Bytes) -> List[Entry] ! ArchiveErr
 pub fn zip_reader(data: Bytes) -> ZipReader ! ArchiveErr   // decision 0479 step 3
 fn (r: ZipReader) files() -> List[ZipFile]
 fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr
+pub fn zip_writer(f: File) -> ZipWriter
+fn (var w: ZipWriter) add(e: Entry) -> () ! ArchiveErr uses fs.write   // also create(path, mode), write(data), close()
 struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool, modified: Time, offset: Int, method: Int, flags: Int, crc: Int }
 ```
 
@@ -4197,9 +4199,18 @@ struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool,
   none: `r.files()` lists them (`size` is the inflated length) and
   `r.read(f)` inflates one and checks its CRC, so a program holding an
   archive of many large entries holds one inflated entry at a time, not
-  all of them as `unzip` does. Writing by entry (`zip_writer`), reading
-  from a File (`zip_open`) and a streaming `EntryReader` are the later
-  steps of decision 0479.
+  all of them as `unzip` does. Reading from a File (`zip_open`) and a
+  streaming `EntryReader` are the later steps of decision 0479.
+- `zip_writer(f)` writes an archive to a File entry by entry
+  (move only; the File stays the caller's, closed after `close`):
+  `w.add(entry)` writes one whose data is in hand, `w.create(path, mode)`
+  starts a streamed file entry that `w.write(data)` feeds (deflated as it
+  comes, a data descriptor after it), and the next `add`, `create` or
+  `close` ends it; `w.close()` writes the central directory. Memory is the
+  directory records, not the data. No zip64: more than 65,535 entries or
+  4 GB is an error. (Decision 0479 sketched `create` returning an
+  `EntryWriter`; a separate value cannot tell the writer how much it
+  wrote, so the entry is the writer's current one.)
 
 - In memory and pure: read the archive with `Fs.read`, write the
   entries with `Fs.write` (into a sub capability, so the archive's paths

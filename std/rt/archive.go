@@ -251,3 +251,100 @@ func (r *Archive_ZipReader) M_read(_ *Task, f Archive_ZipFile) Result[Bytes, Arc
 	}
 	return Ok[Bytes, Archive_ArchiveErr](Bytes(b))
 }
+
+// Archive_ZipWriter is `archive.ZipWriter` (move only): Go's zip.Writer over
+// the File, which a Write adapter feeds with the current task.
+type Archive_ZipWriter struct {
+	zw  *zip.Writer
+	fw  *zipFileWriter
+	cur io.Writer
+}
+
+type zipFileWriter struct {
+	f   File
+	tk  *Task
+	err string
+}
+
+func (z *zipFileWriter) Write(p []byte) (int, error) {
+	if r := z.f.M_write(z.tk, Bytes(append([]byte(nil), p...))); !r.Ok {
+		z.err = r.E.M_display(z.tk)
+		return 0, io.ErrClosedPipe
+	}
+	return len(p), nil
+}
+
+func (Archive_ZipWriter) XoDebug(b *strings.Builder) { b.WriteString("<zip_writer>") }
+func (x Archive_ZipWriter) M_debug(*Task) string     { return Debug(x) }
+
+func Archive_zip_writer(_ *Task, f File) Archive_ZipWriter {
+	fw := &zipFileWriter{f: f}
+	return Archive_ZipWriter{zw: zip.NewWriter(fw), fw: fw}
+}
+
+func (x *Archive_ZipWriter) fail(tk *Task, err error) Result[Unit, Archive_ArchiveErr] {
+	if x.fw.err != "" {
+		return Err[Unit](archiveErr("zip_writer: " + x.fw.err))
+	}
+	return Err[Unit](archiveErr("zip_writer: " + err.Error()))
+}
+
+func (x *Archive_ZipWriter) start(tk *Task, name string, mode int64, isDir bool, mod time.Time) error {
+	h := &zip.FileHeader{Name: name, Method: zip.Deflate, Modified: mod}
+	h.SetMode(fs.FileMode(mode & 0o777))
+	if isDir {
+		h.Name = name + "/"
+		h.Method = zip.Store
+		h.SetMode(fs.ModeDir | fs.FileMode(mode&0o777))
+	}
+	x.fw.tk = tk
+	w, err := x.zw.CreateHeader(h)
+	x.cur = w
+	return err
+}
+
+func (x *Archive_ZipWriter) M_add(tk *Task, e Archive_Entry) Result[Unit, Archive_ArchiveErr] {
+	p, ok := archivePath(textOf(e.F_path))
+	if !ok {
+		return Err[Unit](archiveErr("bad entry path " + strconv.Quote(e.F_path)))
+	}
+	if err := x.start(tk, p, e.F_mode, e.F_is_dir, entryTime(e)); err != nil {
+		return x.fail(tk, err)
+	}
+	if !e.F_is_dir {
+		if _, err := x.cur.Write([]byte(e.F_data)); err != nil {
+			return x.fail(tk, err)
+		}
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+func (x *Archive_ZipWriter) M_create(tk *Task, p string, mode int64) Result[Unit, Archive_ArchiveErr] {
+	clean, ok := archivePath(textOf(p))
+	if !ok {
+		return Err[Unit](archiveErr("bad entry path " + strconv.Quote(p)))
+	}
+	if err := x.start(tk, clean, mode, false, time.Unix(0, 0).UTC()); err != nil {
+		return x.fail(tk, err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+func (x *Archive_ZipWriter) M_write(tk *Task, data Bytes) Result[Unit, Archive_ArchiveErr] {
+	if x.cur == nil {
+		return Err[Unit](archiveErr("zip_writer: write without create"))
+	}
+	x.fw.tk = tk
+	if _, err := x.cur.Write([]byte(data)); err != nil {
+		return x.fail(tk, err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}
+
+func (x *Archive_ZipWriter) M_close(tk *Task) Result[Unit, Archive_ArchiveErr] {
+	x.fw.tk = tk
+	if err := x.zw.Close(); err != nil {
+		return x.fail(tk, err)
+	}
+	return Ok[Unit, Archive_ArchiveErr](Unit{})
+}

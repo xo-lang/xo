@@ -18,4 +18,9 @@ var (
 	_ func(*Task, Bytes) Result[Archive_ZipReader, Archive_ArchiveErr]                   = Archive_zip_reader
 	_ func(*Archive_ZipReader, *Task) List[Archive_ZipFile]                              = (*Archive_ZipReader).M_files
 	_ func(*Archive_ZipReader, *Task, Archive_ZipFile) Result[Bytes, Archive_ArchiveErr] = (*Archive_ZipReader).M_read
+	_ func(*Task, File) Archive_ZipWriter                                                = Archive_zip_writer
+	_ func(*Archive_ZipWriter, *Task, Archive_Entry) Result[Unit, Archive_ArchiveErr]    = (*Archive_ZipWriter).M_add
+	_ func(*Archive_ZipWriter, *Task, string, int64) Result[Unit, Archive_ArchiveErr]    = (*Archive_ZipWriter).M_create
+	_ func(*Archive_ZipWriter, *Task, Bytes) Result[Unit, Archive_ArchiveErr]            = (*Archive_ZipWriter).M_write
+	_ func(*Archive_ZipWriter, *Task) Result[Unit, Archive_ArchiveErr]                   = (*Archive_ZipWriter).M_close
 )

@@ -1,5 +1,15 @@
 # std/archive changes
 
+## 2026-11-03: feature: zip_writer
+
+- Kind: feature
+- Commit: this commit
+- Go reference: archive/zip (go1.26.1): `Writer.CreateHeader`, `Writer.Close`
+- Test: the archive corpus `zip_writer writes what unzip and zip_reader read` and `zip_writer refuses a bad path and a write without create` (arm64, LLVM, Go backend)
+- Timing: none yet (the writer is bound by the File)
+
+`zip_writer(f)` writes local header, deflated data and data descriptor per entry to the File and the central directory at `close`. `zip` shares the header, descriptor and directory builders with it (`zip_new_header`, `zip_local_header`, `zip_descriptor`, `zip_central`), with the same bytes as before. The streamed entry is the writer's current one (`create` then `write`), not a separate `EntryWriter` as the decision sketched.
+
 ## 2026-11-03: feature: zip_reader, ZipReader.files and ZipReader.read
 
 - Kind: feature

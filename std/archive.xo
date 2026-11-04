@@ -70,3 +70,22 @@ fn (r: ZipReader) files() -> List[ZipFile]
 /// One entry's contents, inflated and checked against its CRC; a
 /// directory's is empty.
 fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr
+
+/// A zip archive written entry by entry to a File (decision 0479): memory
+/// is the directory records, not the data. The File stays the caller's:
+/// open it for writing, and close it after `close`. Entries are deflated;
+/// an archive past 65,535 entries or 4 GiB is an error (no zip64).
+/// @move_only
+struct ZipWriter {}
+
+fn zip_writer(f: File) -> ZipWriter
+/// Writes an entry whose data is in hand, ending the entry before it.
+fn (var w: ZipWriter) add(e: Entry) -> () ! ArchiveErr uses fs.write
+/// Starts a streamed file entry (its time the Unix epoch, as `file`),
+/// ending the one before it; `write` gives it data.
+fn (var w: ZipWriter) create(path: Str, mode: Int = 0o644) -> () ! ArchiveErr uses fs.write
+/// Data for the entry `create` started (a data descriptor follows it).
+fn (var w: ZipWriter) write(data: Bytes) -> () ! ArchiveErr uses fs.write
+/// Ends the last entry and writes the central directory.
+/// @moves
+fn (var w: ZipWriter) close() -> () ! ArchiveErr uses fs.write

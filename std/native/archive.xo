@@ -1175,84 +1175,78 @@ struct ZipHdr {
   offset: Int
 }
 
-fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
-  let t = flate.crc_table()
-  var out = BytesBuilder.new()
-  var count = 0
-  var files: List[ZipHdr] = []
-  var zs = flate.new_stream(5)
-  for e in entries {
-    let p = match archive_path(e.path) {
-      Some(x) => x
-      None => return Err(archive_err("bad entry path ${e.path.quote()}"))
-    }
-    var name = p
-    let perm = e.mode & 0o777
-    var attrs = (0x8000 | perm) << 16
-    var method = 8
-    var flags = 0x8
-    if e.is_dir {
-      name = p + "/"
-      method = 0
-      flags = 0
-      attrs = ((0x4000 | perm) << 16) | 0x10
-    }
-    if (perm & 0o200) == 0 {
-      attrs = attrs | 0x01
-    }
-    let (valid, require) = detect_utf8(name)
-    if require && valid {
-      flags = flags | 0x800
-    }
-    let ns = (e.modified - Time.UNIX_EPOCH).nanos()
-    let secs = floor_div(ns, 1000000000)
-    let days = floor_div(secs, 86400)
-    let sod = secs - days * 86400
-    let (year, month, day) = civil(days)
-    let date = (day + (month << 5) + ((year - 1980) << 9)) & 65535
-    let time = ((sod % 60) / 2 + (((sod / 60) % 60) << 5) + ((sod / 3600) << 11)) & 65535
-    var xb = BytesBuilder.new()
-    put_u16(xb, 0x5455)
-    put_u16(xb, 5)
-    xb.write_byte(UInt8(1))
-    put_u32(xb, secs & 0xffffffff)
-    let extra = xb.freeze()
-    let nb = name.bytes()
-    var zf = ZipHdr{name: name, raw: name.bytes(), creator: 0x0314, flags: flags, method: method, time: time, date: date, crc: 0, csize: 0, usize: 0, extra: extra, attrs: attrs, offset: count}
-    // the local header
-    var h = BytesBuilder.new()
-    put_u32(h, 0x04034b50)
-    put_u16(h, 20)
-    put_u16(h, flags)
-    put_u16(h, method)
-    put_u16(h, time)
-    put_u16(h, date)
-    put_u32(h, 0)
-    put_u32(h, 0)
-    put_u32(h, 0)
-    put_u16(h, nb.len())
-    put_u16(h, extra.len())
-    h.write(nb)
-    h.write(extra)
-    let hdr = h.freeze()
-    out.write(hdr)
-    count += hdr.len()
-    if !e.is_dir {
-      let comp = flate.deflate_again(zs, e.data)
-      out.write(comp)
-      count += comp.len()
-      zf.crc = flate.crc32(t, 0, e.data)
-      zf.csize = comp.len()
-      zf.usize = e.data.len()
-      put_u32(out, 0x08074b50)
-      put_u32(out, zf.crc)
-      put_u32(out, zf.csize)
-      put_u32(out, zf.usize)
-      count += 16
-    }
-    files.push(zf)
+/// The directory record of an entry whose data is not yet written: its
+/// name (a directory's ends with `/`), flags, method, MS-DOS and Unix
+/// times, attributes and header offset (Writer.CreateHeader).
+fn zip_new_header(p: Str, mode: Int, is_dir: Bool, modified: Time, offset: Int) -> ZipHdr {
+  var name = p
+  let perm = mode & 0o777
+  var attrs = (0x8000 | perm) << 16
+  var method = 8
+  var flags = 0x8
+  if is_dir {
+    name = p + "/"
+    method = 0
+    flags = 0
+    attrs = ((0x4000 | perm) << 16) | 0x10
   }
-  let start = count
+  if (perm & 0o200) == 0 {
+    attrs = attrs | 0x01
+  }
+  let (valid, require) = detect_utf8(name)
+  if require && valid {
+    flags = flags | 0x800
+  }
+  let ns = (modified - Time.UNIX_EPOCH).nanos()
+  let secs = floor_div(ns, 1000000000)
+  let days = floor_div(secs, 86400)
+  let sod = secs - days * 86400
+  let (year, month, day) = civil(days)
+  let date = (day + (month << 5) + ((year - 1980) << 9)) & 65535
+  let time = ((sod % 60) / 2 + (((sod / 60) % 60) << 5) + ((sod / 3600) << 11)) & 65535
+  var xb = BytesBuilder.new()
+  put_u16(xb, 0x5455)
+  put_u16(xb, 5)
+  xb.write_byte(UInt8(1))
+  put_u32(xb, secs & 0xffffffff)
+  ZipHdr{name: name, raw: name.bytes(), creator: 0x0314, flags: flags, method: method, time: time, date: date, crc: 0, csize: 0, usize: 0, extra: xb.freeze(), attrs: attrs, offset: offset}
+}
+
+/// The local file header of zf (sizes and CRC zero: they follow the data).
+fn zip_local_header(zf: ZipHdr) -> Bytes {
+  let nb = zf.name.bytes()
+  var h = BytesBuilder.new()
+  put_u32(h, 0x04034b50)
+  put_u16(h, 20)
+  put_u16(h, zf.flags)
+  put_u16(h, zf.method)
+  put_u16(h, zf.time)
+  put_u16(h, zf.date)
+  put_u32(h, 0)
+  put_u32(h, 0)
+  put_u32(h, 0)
+  put_u16(h, nb.len())
+  put_u16(h, zf.extra.len())
+  h.write(nb)
+  h.write(zf.extra)
+  h.freeze()
+}
+
+/// The data descriptor after a deflated entry's data.
+fn zip_descriptor(zf: ZipHdr) -> Bytes {
+  var d = BytesBuilder.with_capacity(16)
+  put_u32(d, 0x08074b50)
+  put_u32(d, zf.crc)
+  put_u32(d, zf.csize)
+  put_u32(d, zf.usize)
+  d.freeze()
+}
+
+/// The central directory and the end record for files, the directory
+/// starting at start.
+fn zip_central(files: List[ZipHdr], start: Int) -> Bytes {
+  var out = BytesBuilder.new()
+  var count = start
   for zf in files {
     let nb = zf.name.bytes()
     put_u32(out, 0x02014b50)
@@ -1286,6 +1280,155 @@ fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
   put_u32(out, start)
   put_u16(out, 0)
   out.freeze()
+}
+
+fn zip(entries: List[archive.Entry]) -> Bytes ! archive.ArchiveErr {
+  let t = flate.crc_table()
+  var out = BytesBuilder.new()
+  var count = 0
+  var files: List[ZipHdr] = []
+  var zs = flate.new_stream(5)
+  for e in entries {
+    let p = match archive_path(e.path) {
+      Some(x) => x
+      None => return Err(archive_err("bad entry path ${e.path.quote()}"))
+    }
+    var zf = zip_new_header(p, e.mode, e.is_dir, e.modified, count)
+    let hdr = zip_local_header(zf)
+    out.write(hdr)
+    count += hdr.len()
+    if !e.is_dir {
+      let comp = flate.deflate_again(zs, e.data)
+      out.write(comp)
+      count += comp.len()
+      zf.crc = flate.crc32(t, 0, e.data)
+      zf.csize = comp.len()
+      zf.usize = e.data.len()
+      out.write(zip_descriptor(zf))
+      count += 16
+    }
+    files.push(zf)
+  }
+  out.write(zip_central(files, count))
+  out.freeze()
+}
+
+/// A zip archive being written to a File, entry by entry (decision 0479).
+struct ZipWriter {
+  f: File
+  t: List[Int]
+  files: List[ZipHdr]
+  /// the bytes written so far
+  pos: Int
+  /// the entry being streamed, and whether there is one
+  cur: ZipHdr
+  open: Bool
+  s: flate.Stream
+  sum: Int
+  done: Bool
+}
+
+fn zip_writer(f: File) -> ZipWriter {
+  let none = ZipHdr{name: "", raw: b"", creator: 0, flags: 0, method: 0, time: 0, date: 0, crc: 0, csize: 0, usize: 0, extra: b"", attrs: 0, offset: 0}
+  ZipWriter{f: f, t: flate.crc_table(), files: [], pos: 0, cur: none, open: false, s: flate.new_stream(5), sum: 0, done: false}
+}
+
+fn zw_err(e: FsErr) -> archive.ArchiveErr { archive_err("zip_writer: ${e.display()}") }
+
+fn (var w: ZipWriter) put(b: Bytes) -> () ! archive.ArchiveErr uses fs.write {
+  match w.f.write(b) {
+    Ok(_) => ()
+    Err(e) => return Err(zw_err(e))
+  }
+  w.pos += b.len()
+  Ok(())
+}
+
+/// Ends the entry being streamed: the last deflate block, the data
+/// descriptor, and its directory record.
+fn (var w: ZipWriter) end_entry() -> () ! archive.ArchiveErr uses fs.write {
+  if !w.open {
+    return Ok(())
+  }
+  if w.cur.method == 8 {
+    w.s.close()
+    let comp = w.s.take()
+    w.cur.csize += comp.len()
+    w.put(comp)?
+    w.cur.crc = w.sum
+    w.put(zip_descriptor(w.cur))?
+  }
+  w.files.push(w.cur)
+  w.open = false
+  Ok(())
+}
+
+fn (var w: ZipWriter) start(p: Str, mode: Int, is_dir: Bool, modified: Time) -> () ! archive.ArchiveErr uses fs.write {
+  if w.done {
+    return Err(archive_err("zip_writer: closed"))
+  }
+  w.end_entry()?
+  if w.files.len() >= 65535 {
+    return Err(archive_err("zip_writer: more than 65535 entries (zip64 is not supported)"))
+  }
+  if w.pos > 4000000000 {
+    return Err(archive_err("zip_writer: archive larger than 4 GB (zip64 is not supported)"))
+  }
+  w.cur = zip_new_header(p, mode, is_dir, modified, w.pos)
+  w.put(zip_local_header(w.cur))?
+  w.open = true
+  w.sum = 0
+  if !is_dir {
+    w.s = flate.new_stream(5)
+  }
+  Ok(())
+}
+
+fn (var w: ZipWriter) add(e: archive.Entry) -> () ! archive.ArchiveErr uses fs.write {
+  let p = match archive_path(e.path) {
+    Some(x) => x
+    None => return Err(archive_err("bad entry path ${e.path.quote()}"))
+  }
+  w.start(p, e.mode, e.is_dir, e.modified)?
+  if !e.is_dir {
+    w.write(e.data)?
+  }
+  w.end_entry()
+}
+
+fn (var w: ZipWriter) create(path: Str, mode: Int) -> () ! archive.ArchiveErr uses fs.write {
+  let p = match archive_path(path) {
+    Some(x) => x
+    None => return Err(archive_err("bad entry path ${path.quote()}"))
+  }
+  w.start(p, mode, false, Time.UNIX_EPOCH)
+}
+
+fn (var w: ZipWriter) write(data: Bytes) -> () ! archive.ArchiveErr uses fs.write {
+  if !w.open || w.cur.method != 8 {
+    return Err(archive_err("zip_writer: write without create"))
+  }
+  if w.cur.usize + data.len() > 4000000000 {
+    return Err(archive_err("zip_writer: entry larger than 4 GB (zip64 is not supported)"))
+  }
+  w.sum = flate.crc32(w.t, w.sum, data)
+  w.cur.usize += data.len()
+  w.s.write(data)
+  let comp = w.s.take()
+  w.cur.csize += comp.len()
+  w.put(comp)
+}
+
+fn (var w: ZipWriter) close() -> () ! archive.ArchiveErr uses fs.write {
+  if w.done {
+    return Err(archive_err("zip_writer: closed"))
+  }
+  w.end_entry()?
+  w.done = true
+  if w.pos > 4000000000 {
+    return Err(archive_err("zip_writer: archive larger than 4 GB (zip64 is not supported)"))
+  }
+  w.put(zip_central(w.files, w.pos))
 }
 
 const ERR_FORMAT: Str = "zip: not a valid zip file"
