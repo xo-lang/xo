@@ -1,6 +1,6 @@
 # 0488: a write to a held-once shared container stays in place and shares what it stores
 
-Status: Proposed (Xo Lang 2, 2026-11-04).
+Status: Accepted (owner, 2026-11-04; proposed by Xo Lang 2 the same day).
 
 ## Context
 
