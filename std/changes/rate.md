@@ -1,5 +1,17 @@
 # std/rate changes
 
+## 2026-11-04: perf: Allow and AllowN build no Reservation
+
+- Kind: perf
+- Commit: this push
+- Found by: bench/perf/rate allow 1.29 of Go's wall (std-twin rows)
+- Go reference: x/time/rate Limiter.Allow (reserveN with no wait)
+- Test: the rate corpus (arm64, LLVM, Go backend) and `xo test --std-module=rate`
+- Timing: host 1 A/B allow 0.502 of before (0.498-0.507, n=6), about 0.65 of Go's wall
+- Shipped in: not yet released
+
+`allow` and `allow_n` answer a Bool inside the limiter's lock; the Reservation (which holds the limiter) is built only by `reserve`.
+
 ## 2026-10-29: port: std/rate, golang.org/x/time/rate
 
 - Kind: port
