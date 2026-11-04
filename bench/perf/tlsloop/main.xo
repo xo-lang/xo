@@ -6,7 +6,8 @@
 // `<program> [small|big]`: small posts and gets 16 bytes, big 16 KiB
 // (a full record each way). The certificate chain (cert.pem: a P-256
 // leaf for 127.0.0.1 and its CA, ca.pem) and key.pem are test keys made
-// for this benchmark by bench/perf/tls/serve -keys, not secrets. Prints `<workload> <bytes received>`. Written 2026-11-04 for
+// once for this benchmark with Go's crypto/x509 (as bench/perf/tls/serve
+// -keys does, whose certificates last one day), valid to 2120, not secrets. Prints `<workload> <bytes received>`. Written 2026-11-04 for
 // decision 0500 (LLVM var homes), whose TLS 1.3 client send path it times.
 use std/http
 
