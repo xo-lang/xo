@@ -52,14 +52,10 @@ fn has_prefix(b: Bytes, at: Int, p: Bytes) -> Bool {
 }
 
 fn index_of(b: Bytes, from: Int, p: Bytes) -> Int {
-  var i = from
-  while i + p.len() <= b.len() {
-    if has_prefix(b, i, p) {
-      return i
-    }
-    i += 1
+  match b[from..].find(p) {
+    Some(i) => from + i
+    None => -1
   }
-  -1
 }
 
 /// Go's %q of bytes (strconv.Quote of a string holding them).

@@ -1,0 +1,37 @@
+// std/udp against net (twin.go.txt): a loopback echo, 60,000 datagrams of 200
+// bytes: the client writes one to a bound socket, a server task reads it
+// and writes it back, the client reads the echo; `none` binds the sockets
+// and stops. Usage: `<program> none|echo`. Prints `<workload> <checksum>`;
+// the twin prints the same.
+use std/udp
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "none"
+  let srv = udp.listen(os.net, "127.0.0.1:0")?
+  let cli = udp.dial(os.net, srv.local_addr())?
+  var sum = 0
+  if w == "echo" {
+    let n = 60000
+    scope s {
+      s.spawn(fn() ! NetErr {
+        for _ in 0..n {
+          let (d, from) = srv.read_from()?
+          srv.write_to(d, from)?
+        }
+      })
+      var msg = BytesBuilder.new()
+      for i in 0..200 {
+        msg.write_byte(UInt8(65 + i % 26))
+      }
+      let data = msg.freeze()
+      for i in 0..n {
+        cli.write(data)?
+        let back = cli.read()?
+        sum += back.len() + Int(back[i % back.len()])
+      }
+    }
+  }
+  cli.close()
+  srv.close()
+  os.stdio.println("${w} ${sum}")
+}

@@ -1,0 +1,55 @@
+package main
+
+import (
+	"fmt"
+	"net"
+	"os"
+)
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	srv, err := net.ListenPacket("udp", "127.0.0.1:0")
+	if err != nil {
+		panic(err)
+	}
+	cli, err := net.Dial("udp", srv.LocalAddr().String())
+	if err != nil {
+		panic(err)
+	}
+	sum := 0
+	if w == "echo" {
+		n := 60000
+		done := make(chan struct{})
+		go func() {
+			buf := make([]byte, 65535)
+			for i := 0; i < n; i++ {
+				k, from, err := srv.ReadFrom(buf)
+				if err != nil {
+					panic(err)
+				}
+				srv.WriteTo(buf[:k], from)
+			}
+			close(done)
+		}()
+		data := make([]byte, 200)
+		for i := range data {
+			data[i] = byte(65 + i%26)
+		}
+		buf := make([]byte, 65535)
+		for i := 0; i < n; i++ {
+			cli.Write(data)
+			k, err := cli.Read(buf)
+			if err != nil {
+				panic(err)
+			}
+			sum += k + int(buf[i%k])
+		}
+		<-done
+	}
+	cli.Close()
+	srv.Close()
+	fmt.Println(w, sum)
+}
