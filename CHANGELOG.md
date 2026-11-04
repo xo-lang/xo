@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- feature (xo doc): `xo doc std` (or `--json`) lists the std modules the running xo ships, each with the first sentence its header comment says about it (or the spec section it points to), so "does std have X" is one command (the AWS agent's feedback log, 2026-11-04). cmd/xo TestDocStdList.
 - diagnostics: XO0605 for another module's function or method that is not `pub` carries a fix that adds `pub` to its declaration (the AWS agent's feedback log, 2026-11-04: a `display` method called from another module); decision 0496 (Proposed) asks whether a method implementing a visible interface should be callable without it. cmd/xo TestNotPubMethodFix.
 - perf (wasm, decision 0490): a `var` argument that is a field of a value held by address (a home), as `take(c.cl)` with c a large `var` struct, is passed by the field's address and updated in place, where it was copied to a temporary block and read back word by word: the HTTPS client component is 6,014 bytes smaller, and a loop of 2,000,000 such calls takes 0.55x the time. Golden field_homes.
 - diagnostics: XO0603 for a predeclared error or result name redefined (`pub enum Err`, `Error`, `Result`, `Option`) notes the module's own name, as std names its error types (`JwtErr`): `AwsSigErr` in module aws_sig (the AWS agent's feedback log, 2026-11-04). cmd/xo TestPredeclaredErrSuggestsModuleName, errorcheck predeclared_err.

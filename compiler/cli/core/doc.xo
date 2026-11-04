@@ -45,6 +45,12 @@ fn run_doc(os: Os, ctx: Ctx, args: List[Str]) -> Int {
     return 2
   }
   let target = if fl.args.len() == 1 { fl.args[0] } else { "." }
+  // `xo doc std`: the std modules this xo ships, a line each (the AWS
+  // agent's feedback log, 2026-11-04: "does std have X" had no answer
+  // short of listing the directory)
+  if target == "std" || target == "std/" {
+    return std_list(os, ctx, fl.get_bool("json"))
+  }
   let all = fl.get_bool("all")
   var docs: List[DocModule] = []
   let is_dir = match os.fs.stat(target) {
@@ -389,3 +395,95 @@ fn item_json(it: Item) -> Str {
 fn doc_json(d: DocModule) -> Str {
   jobj([("module", jstr(d.module)), ("constants", jarr(d.constants.map(fn(i: Item) -> Str { item_json(i) }))), ("types", jarr(d.types.map(fn(i: Item) -> Str { item_json(i) }))), ("functions", jarr(d.functions.map(fn(i: Item) -> Str { item_json(i) })))])
 }
+
+/// `xo doc std`: each std module of ctx.std (a std/NAME.xo file, not the
+/// prelude or std's internal one) with the first sentence its header
+/// comment says about it after the module line and the declaration file
+/// boilerplate; JSON with json.
+fn std_list(os: Os, ctx: Ctx, json: Bool) -> Int {
+  let files = match os.fs.read_dir(ctx.std) {
+    Ok(fs) => fs
+    Err(e) => {
+      os.stdio.eprintln("xo doc: std at ${ctx.std}: ${e}")
+      return 1
+    }
+  }
+  var rows: List[(Str, Str)] = []
+  for f in files.sort_by(fn(f: FileInfo) -> Str { f.name }) {
+    if f.is_dir || !f.name.ends_with(".xo") || f.name.ends_with("_test.xo") || f.name == "prelude.xo" || f.name == "internal.xo" {
+      continue
+    }
+    let name = "std/${f.name.trim_suffix(".xo")}"
+    let src = (os.fs.read("${ctx.std}/${f.name}").ok() ?? b"").to_str() ?? ""
+    rows.push((name, std_summary(src)))
+  }
+  if json {
+    os.stdio.print(indent_json(jarr(rows.map(fn(r: (Str, Str)) -> Str { "{\"module\":${go_quote(r.0)},\"summary\":${go_quote(r.1)}}" }))))
+    return 0
+  }
+  var w = 0
+  for r in rows {
+    if r.0.len() > w {
+      w = r.0.len()
+    }
+  }
+  var b = StrBuilder.new()
+  for r in rows {
+    b.write("${r.0}${" ".repeat(w - r.0.len() + 2)}${r.1}\n")
+  }
+  b.write("\n${rows.len()} modules in ${ctx.std}; `xo doc std/NAME` for one's API\n")
+  os.stdio.print(b.freeze())
+  0
+}
+
+/// The first sentence of a std file's header comment that describes the
+/// module: the comment's text without its `std/NAME (spec ...).` opening,
+/// the declaration file's boilerplate sentence and a "Notes for this
+/// file:" line; at most 100 characters.
+fn std_summary(src: Str) -> Str {
+  var t = StrBuilder.new()
+  for l in src.split("\n") {
+    if !l.starts_with("//") {
+      break
+    }
+    let x = l.trim_prefix("//").trim()
+    if x.is_empty() || x.starts_with("-") {
+      break
+    }
+    t.write("${x} ")
+  }
+  var text = t.freeze().trim()
+  // the spec section the opening names, the summary of a file whose
+  // header says nothing more (std/http's notes)
+  var refs = ""
+  if text.starts_with("std/") {
+    if let Some(i) = text.find("). ") {
+      if let Some(j) = text.find(" (") {
+        refs = "see ${text[j + 2..i]}"
+      }
+      text = text[i + 3..text.len()]
+    }
+  }
+  if text.starts_with("Declaration file;") {
+    if let Some(i) = text.find("prelude.xo. ") {
+      text = text[i + 12..text.len()]
+    } else {
+      text = ""
+    }
+  }
+  text = text.trim_prefix("Declaration file. ")
+  if text.starts_with("Notes for this file:") || text == "Declaration file." {
+    text = ""
+  }
+  if text.is_empty() {
+    return refs
+  }
+  if let Some(i) = text.find(". ") {
+    text = text[0..i + 1]
+  }
+  if text.len() > 100 {
+    text = "${text[0..97]}..."
+  }
+  text
+}
+

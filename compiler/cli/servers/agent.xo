@@ -36,7 +36,8 @@ pub fn is_agent_command(os: Os, args: List[Str]) -> Bool uses fs {
       name = a
     }
   }
-  if name.is_empty() || name == "." {
+  // `xo doc std` lists std's modules (core doc.xo std_list)
+  if name.is_empty() || name == "." || name == "std" || name == "std/" {
     return false
   }
   // a module path names a module (`xo doc std/tls`) unless its last

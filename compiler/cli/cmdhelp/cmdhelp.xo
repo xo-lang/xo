@@ -468,6 +468,10 @@ fn doc_text() -> Str {
   """
 usage: xo doc [--json] [--all] [--dir=<dir>] [module dir or import path]
        xo doc [--dir=DIR] [--json] NAME
+       xo doc [--json] std
+
+`xo doc std` lists the std modules this xo ships, a line each with what
+its header says it is (does std have X?); `xo doc std/NAME` gives one's API.
 
 Markdown documentation from doc comments and signatures, with the
 example code blocks of each doc comment. --all includes declarations
