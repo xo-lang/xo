@@ -2175,6 +2175,16 @@ fn (var b: Builder) arm_to(join: Int, has_val: Bool, v: Int, t: Int, at: Expr?) 
   }
 }
 
+/// A match arm's expression (a block arm's too), which a conversion of
+/// its value to the match's type (to an interface, core 2.10) reads its
+/// checker type from; None for a statement arm.
+fn arm_expr(body: Stmt?) -> Expr? {
+  if let Some(ExprStmt(x: x, ..)) = body {
+    return Some(x)
+  }
+  None
+}
+
 /// A match as a chain of pattern tests (match).
 /// A match arm's body: its value (unit for a statement or none). An
 /// expression body is at its own line, as a statement body is: its calls
@@ -2222,7 +2232,7 @@ fn (var b: Builder) match_expr(e: Expr) -> Int {
       if b.is_dead() {
         return b.undef(t)
       }
-      b.arm_to(join, has_val, av, t, None)
+      b.arm_to(join, has_val, av, t, arm_expr(a.body))
       b.seal(join)
       b.s.cur = join
       if res >= 0 {
@@ -2240,7 +2250,7 @@ fn (var b: Builder) match_expr(e: Expr) -> Int {
       b.test_br(gv, next)
     }
     let av = b.arm_body(a.body)
-    b.arm_to(join, has_val, av, t, None)
+    b.arm_to(join, has_val, av, t, arm_expr(a.body))
     b.seal(next)
     b.s.cur = next
   }

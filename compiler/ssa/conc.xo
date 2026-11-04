@@ -1232,7 +1232,7 @@ fn (var b: Builder) select_expr(e: Expr) -> Int {
       None => av = b.unit()
     }
     if has_val {
-      b.jump(join, [b.coerce(av, t)])
+      b.jump(join, [b.coerce_at(av, t, arm_expr(a.body))])
     } else {
       b.jump(join, [])
     }

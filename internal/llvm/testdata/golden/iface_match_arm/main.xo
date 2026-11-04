@@ -1,0 +1,60 @@
+// A struct converted to an interface as the value of a match arm, a
+// block arm, a select arm, and an if/else branch, where the `let` names
+// the interface (native XO1201 before 2026-11-04, aws report entry 1).
+
+interface P {
+  fn get(self) -> Int ! Str
+}
+
+struct Plain {
+  n: Int
+}
+
+fn (p: Plain) get() -> Int ! Str { Ok(p.n) }
+
+struct Wrap {
+  inner: P
+}
+
+fn (w: Wrap) get() -> Int ! Str { Ok(w.inner.get()? * 10) }
+
+fn pick(o: P?, n: Int) -> P {
+  let p: P = match o {
+    Some(v) => v
+    None => Wrap{inner: Plain{n: n}}
+  }
+  p
+}
+
+fn pick_block(o: P?, n: Int) -> P {
+  let p: P = match o {
+    Some(v) => v
+    None => {
+      let w = Plain{n: n + 1}
+      Wrap{inner: w}
+    }
+  }
+  p
+}
+
+fn pick_if(wrap: Bool, n: Int) -> P {
+  let p: P = if wrap { Wrap{inner: Plain{n: n}} } else { Plain{n: n} }
+  p
+}
+
+fn from_select(ch: Chan[Int]) -> P {
+  let p: P = select {
+    n = ch.recv() => Plain{n: n ?? -1}
+  }
+  p
+}
+
+fn main(os: Os) ! {
+  os.stdio.println("${pick(None, 3).get()?}")
+  os.stdio.println("${pick(Some(Plain{n: 4}), 0).get()?}")
+  os.stdio.println("${pick_block(None, 5).get()?}")
+  os.stdio.println("${pick_if(true, 7).get()?} ${pick_if(false, 8).get()?}")
+  let ch: Chan[Int] = Chan.new(1)
+  ch.send(9)
+  os.stdio.println("${from_select(ch).get()?}")
+}
