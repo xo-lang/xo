@@ -1,5 +1,17 @@
 # std/time changes
 
+## 2026-11-03: perf: parse keeps a field's argument as an integer code and the literal as a layout range
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Mac XO_PROF of bench/perf/time parse (6M parses): `drop Str` 13 percent, `field_code_b` 11, `field_ok` 3 beside `parse_stream`'s own 56
+- Go reference: time/format.go parse
+- Test: the time corpus (arm64, Go backend), bin/xo test --std-module=time
+- Timing: host 2 A/B in bench/results/std-twin-time-2026-11-03.md
+- Shipped in: not yet released
+
+`parse_stream` no longer copies a `Str` for each literal run and field argument: the argument is a code (`arg_code`: 0 none, 1 to 9, 20 short, 21 name, 22 compact) and a literal is a range of the layout. Same results and error texts.
+
 ## 2026-11-03: perf: format scans each field once and appends two digits and names in one call
 
 - Kind: perf
