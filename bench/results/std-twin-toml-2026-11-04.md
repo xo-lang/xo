@@ -8,3 +8,5 @@ Host 1 (linux/arm64, `--early`, n=6), bench/perf/toml at dd0aaf1d6 (includes 930
 | encode | 33.39 | 16.13 | 0.483 | 0.481 to 0.501 |
 
 Before (std-twin rows of 2026-11-03): decode 1.174, encode 1.323. Encode's gain is `json.to_value` building the Value directly; decode still writes JSON text from the TOML parse and decodes it, the remaining gap.
+
+Tried 2026-11-04 (host 1, n=6): toml.decode building a json.Value from the parsed document and calling json.from_value (no JSON text): decode 1.087 of the text route (1.071 to 1.11), worse (the Value tree allocates more than the text costs); not kept.
