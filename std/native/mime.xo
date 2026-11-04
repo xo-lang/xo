@@ -106,8 +106,18 @@ fn format_media_type(kind: Str, params: Map[Str, Str]) -> Str {
     }
   }
   let hex = UPPER_HEX.bytes()
-  for attr in params.keys().sort() {
-    let value = params.get(attr) ?? ""
+  // the (attribute, value) pairs by attribute: one walk of the map and an
+  // insertion sort (a few parameters), where keys().sort() and a lookup a
+  // key hashed each again
+  var ps: List[(Str, Str)] = []
+  for (k, v) in params {
+    var at = ps.len()
+    while at > 0 && ps[at - 1].0 > k {
+      at -= 1
+    }
+    ps.insert(at, (k, v))
+  }
+  for (attr, value) in ps {
     b.write("; ")
     let ac = token_case(attr)
     if ac < 0 {
