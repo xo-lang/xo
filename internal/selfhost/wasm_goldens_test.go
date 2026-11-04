@@ -135,6 +135,7 @@ var componentGoldensNotRun = map[string]string{
 	"http_reverse_proxy_ws":   "needs the client and an upgrade",
 	"http_stream_body_h2":     "HTTP/2 on the wire, which the host owns; http_stream_body covers the routes",
 	"http_tls":                "TLS, which the host owns",
+	"netconn_deadline":        "TLS and connection deadlines, which the host owns; it dials its own listener as a client",
 	"http_tls_keys":           "TLS, which the host owns",
 	"http_tls_state":          "TLS, which the host owns",
 	"http_trailers":           "trailers are not decided",
