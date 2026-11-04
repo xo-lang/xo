@@ -1,0 +1,32 @@
+// A `let` copy of a Deque (b23, owner's v0.36.0 evaluation): the copy keeps
+// its elements when the original pops its front or pushes into the freed
+// slot. The Go backend shared the ring between `let c = d` and d (std 47: a
+// Deque is a value with List's copy on write). Every backend prints the same.
+use std/deque
+
+fn show(xs: List[Int]) -> Str {
+  var out = "["
+  for i in 0..xs.len() {
+    if i > 0 {
+      out += " "
+    }
+    out += "${xs[i]}"
+  }
+  out + "]"
+}
+
+fn main(os: Os) uses stdio {
+  var d: deque.Deque[Int] = deque.new(cap: 4)
+  d.push_back(0)
+  d.push_back(1)
+  d.push_back(2)
+  let c = d
+  d.pop_front()
+  os.stdio.println("${show(c.to_list())} ${c.front() ?? -1} ${show(d.to_list())}")
+  var e: deque.Deque[Int] = deque.new(cap: 4)
+  e.push_back(1)
+  let f = e
+  e.pop_front()
+  e.push_back(5)
+  os.stdio.println("${show(f.to_list())} ${show(e.to_list())}")
+}
