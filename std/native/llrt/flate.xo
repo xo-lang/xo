@@ -1035,8 +1035,13 @@ struct Deflater {
 
 fn (d: Deflater) win(i: Int) -> Int { byte_of(d.data, d.base + i) }
 
+/// hash4: the four bytes at i as a big endian word (one load and a byte
+/// swap, where four loads each checked their index), hashed as Go's hash4.
+/// Callers have i + 3 inside the window (index below max_insert_index).
 fn (d: Deflater) hash4(i: Int) -> Int {
-  let x = d.win(i + 3) | (d.win(i + 2) << 8) | (d.win(i + 1) << 16) | (d.win(i) << 24)
+  let p = raw.bytes_addr(d.data).wrapping_add(d.base)
+  let x = rt.mem_load(p, i, 4).swap_bytes().shr_logical(32)
+  raw.alive(d.data)
   ((x * 0x1e35a7bd) & 0xffffffff) >> 15
 }
 
