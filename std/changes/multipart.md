@@ -1,5 +1,18 @@
 # std/multipart changes
 
+## 2026-11-04: perf: the boundary search of parse is a vectorized find
+
+- Kind: perf
+- Commit: this push
+- Found by: the twin bench/perf/multipart (parse 1.399 of Go; XO_PROF: read_part 84% of the profile)
+- Go reference: mime/multipart's scanUntilBoundary (bytes.Index)
+- Test: the multipart corpus and std tests (arm64, LLVM, Go backend); twincheck bench/perf/multipart
+- Timing: bench/results/std-twin-multipart-udp-2026-11-04.md: parse 1.399 to 0.222 of Go (n=6), write 0.243
+- Shipped in: not yet released
+
+index_of searched with a byte loop that called has_prefix at every offset;
+it uses Bytes.find now.
+
 ## 2026-10-21: fix: parse_form skips a bad quoted-printable part as Go does
 
 - Kind: fix
