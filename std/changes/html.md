@@ -1,5 +1,16 @@
 # std/html changes
 
+## 2026-11-03: perf: escape_string writes each replacement byte by byte
+
+- Kind: perf
+- Commit: this commit
+- Found by: the Mac profile of bench/perf/html escape: `rs_append`, `move_at` and `rs_concat` (the `write_str` of a literal replacement) were 29 percent beside the scan loop
+- Go reference: html escape.go EscapeString (go1.26.1)
+- Test: bench/perf/html (twincheck), `xo test --std-module=html`
+- Timing: Mac iteration (not evidence): escape 236 to 193 ms (Go 139); host row follows in std-twin-html-2026-11-03.md
+
+The five replacements (`&amp;`, `&lt;`, `&gt;`, `&#39;`, `&#34;`) are written with `write_byte` instead of `write_str` of a literal Str, which went through the string append path (a move and a concat) for 4 to 5 bytes.
+
 ## 2026-11-03: perf: escape_string counts with a table and returns its bytes as the Str they are
 
 - Kind: perf
