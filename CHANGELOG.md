@@ -8,6 +8,8 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- arm64: a fault in a Mutex.with closure that compiles to a leaf (no calls, such as `fn(var c) { c.n += 1 }` overflowing) poisons the mutex as decision 0482 says instead of crashing with SIGTRAP: the landing pad's entry now undoes the fault stub's frame record, and the stubs get an unwind region of their own with their own call site table (gotchas/arm64-compact-unwind-leaf-fault-frames.md). Found by the full tier's TestNoLeafWithPads; golden mutex_poison_leaf. Not in any release (43b7eba82 came after v0.37.0).
+
 - fix (--inline-str, decision 0370): BytesBuilder.put_le and put_be no longer copy the whole builder on every call (the builder was made an object as "" + cur, a new object each time; now cur + ""): jpeg_decode with --inline-str 0.12 s against 0.10 s plain on the Mac (was 5.8x on linux/arm64), internal/arm64 TestInlineStrPutInPlace; gotchas/inline-str-put-copies-builder.md
 - perf (json): a tagged enum's tag is compared with each variant name in place, with no string made unless the variant is unknown: bench/perf/jsontag tagfirst 0.857 of before on linux/arm64 (bench/results/json-own-form-tagged-2026-11-03.md, std/changes/json.md).
 - feature (wasm): `File.read_at` works in a wasm build (preview 1's fd_pread on wasip1/wasm, wasi:filesystem's descriptor.read at the offset in a wasip2/wasm command), so `archive.zip_open` reads a zip in place there too; golden zip_open_file.

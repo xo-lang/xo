@@ -2,7 +2,7 @@
 
 Status: Observed (2026-10-17: decision 0253's unwinder, and the runtime's
 CPU profiler on darwin/arm64); fixed 2026-10-17 for leaves without landing
-pads (step 1 below, xo-4), open for leaves with them
+pads (step 1 below, xo-4), and 2026-11-04 for leaves with them (Xo Lang 2)
 
 Symptom: a stop (or a sample) in the body of an arm64 function such as
 testdata/debugvars' `sum` on macOS: an unwinder that trusts
@@ -94,3 +94,29 @@ sites relative to the region, a landing pad in the body at a negative
 offset (std/native/llrt/unwind.xo landing reads sdata4 signed). The
 emitter marks such a leaf with a `_leafpads` label after its code, and
 internal/arm64 TestNoLeafWithPads fails when a golden has one.
+
+Leaves with landing pads, Observed and fixed (2026-11-04, Xo Lang 2):
+decision 0482 (43b7eba82) gave a Mutex.with closure a landing pad for a
+fault inside it, so a closure such as conc_reentrant's
+`fn(var c) { c.n += 1 }` became an adds/b.vs leaf whose overflow stub
+has a pad; the 2026-11-04 full tier failed TestNoLeafWithPads on four
+goldens. Worse than the unwind encoding, the landing itself was wrong: the
+unwinder resumes at the pad with the stub's frame record still pushed
+(sp 16 low, x30 the stub's return address), so the pad's `ret` returned
+into the stub's `brk #1` and the program died of SIGTRAP instead of
+poisoning the mutex (golden mutex_poison_leaf). Fix (compiler/arm64
+emit.xo): a leaf's stubs always get their own unwind region; when they
+have pads it names the personality and its own call site table, counted
+from the region's start (`_sbegin`), and each stub lands on a pad entry
+among the stubs (leaf_pad_entry: `mov sp, x29`, `ldp x29, x30, [sp],
+#16`, then a branch to the body's pad), so no negative offset is needed.
+The entries go after the stubs, never first in the region: a landing
+pad offset of 0 from the table's base means "no landing pad" in GCC's
+format, so a first try that put the entry at `_sbegin` unwound straight
+past the frame (the fault reached task.isolate with the mutex still
+held, XO-F004 on the next with). The same trap waits for any region
+whose first instruction is a landing pad.
+The body's region names no personality (a leaf has no other calls).
+TestNoLeafWithPads now checks that mutex_poison_leaf's stubs region names
+its own table and that no golden has the old `_leafpads` marker.
+

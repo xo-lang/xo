@@ -263,7 +263,10 @@ fn (var g: G) emit() {
       pads = pads || inst.pad >= 0
     }
   }
-  g.cfi_start(b, pads)
+  // a leaf's only call sites are its fault stubs, which name the
+  // personality in their own unwind region (below)
+  g.cfi_start(b, pads && !g.fr.leaf)
+  var stub_lsda = false
   if !g.shrink {
     g.cause_mark(b, C_FRAME)
     g.prologue(b)
@@ -380,13 +383,18 @@ fn (var g: G) emit() {
     // position, so one region made the body FRAME too, and an unwinder
     // trusting it took the caller's record for the leaf's (darwin's CPU
     // profile lost the caller of every sample in such a leaf,
-    // gotchas/arm64-compact-unwind-leaf-fault-frames.md). The body's
-    // region then states nothing: frameless, the return address in lr.
-    // With landing pads the stubs stay in the body's region: their call
-    // sites are in the function's LSDA, whose offsets count from the
-    // region's start
-    if !pads {
-      b.push("\t.cfi_endproc\n\t.cfi_startproc\n")
+    // gotchas/arm64-compact-unwind-leaf-fault-frames.md). They are an
+    // unwind region of their own: the body's region then states nothing,
+    // frameless, the return address in lr. With landing pads (a fault in
+    // a Mutex.with closure, decision 0482) the stubs' region names the
+    // personality and its own call site table, whose offsets count from
+    // the region's start, and each stub lands on a pad entry there that
+    // undoes the stub's frame record (leaf_pad_entry)
+    b.push("\t.cfi_endproc\n\t.cfi_startproc\n")
+    if !g.stub_sites.is_empty() {
+      b.push("${g.stubs_begin()}:\n")
+      g.cfi_personality(b)
+      stub_lsda = true
     }
     b.push("\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
   }
@@ -403,13 +411,7 @@ fn (var g: G) emit() {
     }
   }
   b.push(g.stubs.join(""))
-  if g.fr.leaf && !g.stubs.is_empty() && pads {
-    // a leaf with fault stubs and landing pads keeps one unwind region
-    // (its compact encoding FRAME for the body too); none was found
-    // (2026-10-17: xo and every golden). The label, after the code, marks
-    // it for internal/arm64 TestNoLeafWithPads
-    b.push("${g.local("${g.lbl_prefix()}_leafpads")}:\n")
-  }
+  b.push(g.leaf_pes.join(""))
   if g.m.debug_info && !g.dl_rows.is_empty() {
     let end = g.local("${g.lbl_prefix()}_dend")
     b.push("${end}:\n")
@@ -433,8 +435,8 @@ fn (var g: G) emit() {
   // when no call site with one was emitted (2026-10-22: with every
   // optional pass off, G.str_data's table was missing and the link failed
   // on a difference with an undefined label): an empty table then
-  if pads || !sites.is_empty() {
-    g.lsda(sites)
+  if (pads && !g.fr.leaf) || stub_lsda || !sites.is_empty() {
+    g.lsda(sites, if stub_lsda { g.stubs_begin() } else { g.func_begin() })
     ext = g.lsdas[g.lsdas.len() - 1]
   }
   b.push("\n")
@@ -1514,7 +1516,7 @@ fn (var g: G) emit_plain(var b: List[Str], inst: Inst) {
     if inst.pad >= 0 {
       let (from2, to2) = g.call_site_labels()
       let pad = g.pad_of(inst.pad)
-      let entry = if saved.is_empty() { "" } else { g.pad_entry(pad) }
+      let entry = if g.fr.leaf { g.leaf_pad_entry(pad) } else if saved.is_empty() { "" } else { g.pad_entry(pad) }
       g.stub_sites.push(CallSite{from: from2, to: to2, pad: pad, entry: entry})
       sb.push("${from2}:\n\tbl ${inst.ffn()}\n${to2}:\n${after}\tbrk #1\n")
     } else {
@@ -1816,6 +1818,32 @@ fn (var g: G) pad_entry(pad: Int) -> Str {
   l
 }
 
+/// The entry of landing pad block pad for a leaf's fault stubs: the
+/// unwinder resumes there with the stub's frame record still pushed (sp
+/// and x29 at it, x30 the stub's return address), so it pops the record,
+/// giving back the caller's x29 and return address, and jumps to the pad
+/// (decision 0482's pads in a leaf crashed on the pad's ret into the
+/// stub's brk, 2026-11-04). One per pad, among the stubs, in their unwind
+/// region.
+fn (var g: G) leaf_pad_entry(pad: Int) -> Str {
+  if let Some(l) = g.pad_entries.get(pad) {
+    return l
+  }
+  let l = g.local("${g.lbl_prefix()}_pe${pad}")
+  // after the stubs, never at the region's start: a landing pad at
+  // offset 0 of its call site table's base means none (GCC's format;
+  // the first try put one there and the unwinder went past the frame)
+  g.leaf_pes.push("${g.cause_label(C_LANDING)}${l}:\n\tmov sp, x29\n\tldp x29, x30, [sp], #16\n\tb ${g.label(g.fwd(pad))}\n")
+  g.pad_entries[pad] = l
+  l
+}
+
+/// The start of a leaf's fault stubs' unwind region, which its call site
+/// table counts from.
+fn (g: G) stubs_begin() -> Str {
+  g.local("${g.lbl_prefix()}_sbegin")
+}
+
 /// The labels around the `bl` of a call that unwinds to a landing pad
 /// (decision 0085).
 fn (var g: G) call_site_labels() -> (Str, Str) {
@@ -1830,9 +1858,14 @@ fn (var g: G) call_site_labels() -> (Str, Str) {
 fn (var g: G) cfi_start(var b: List[Str], pads: Bool) {
   b.push("${g.func_begin()}:\n")
   b.push("\t.cfi_startproc\n")
-  if !pads {
-    return
+  if pads {
+    g.cfi_personality(b)
   }
+}
+
+/// Names the personality routine and the call site table in the unwind
+/// region just opened.
+fn (var g: G) cfi_personality(var b: List[Str]) {
   if g.os == "darwin" {
     b.push("\t.cfi_personality 155, ${g.sym(personality_name(g.os))}\n\t.cfi_lsda 16, ${g.lsda_label()}\n")
   } else {
@@ -1912,14 +1945,13 @@ fn cfi_at(r: Int, off: Int) -> Str {
 
 /// Emits the call site table of the function (GCC's format for cleanups,
 /// decision 0085).
-fn (var g: G) lsda(sites: List[CallSite]) {
+fn (var g: G) lsda(sites: List[CallSite], fb: Str) {
   var b: List[Str] = []
   if g.os == "darwin" {
     b.push("\t.section __TEXT,__gcc_except_tab\n")
   } else {
     b.push("\t.section .gcc_except_table,\"a\",@progbits\n")
   }
-  let fb = g.func_begin()
   let beg = g.local("${g.lbl_prefix()}_cst")
   let end = g.local("${g.lbl_prefix()}_cste")
   b.push("\t.p2align 2\n${g.lsda_label()}:\n\t.byte 255\n\t.byte 255\n\t.byte 1\n\t.uleb128 ${end}-${beg}\n${beg}:\n")

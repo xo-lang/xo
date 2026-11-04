@@ -1,0 +1,27 @@
+// A fault in a Mutex.with closure that is an arm64 leaf (no calls, no
+// frame: its fault stub makes the frame record) lands on the closure's
+// landing pad and poisons the mutex (decision 0482). The pad's entry
+// undoes the stub's frame record: without it the pad returned into the
+// stub (SIGTRAP, 2026-11-04), and the stubs need an unwind region of
+// their own (gotchas/arm64-compact-unwind-leaf-fault-frames.md).
+use std/task
+
+fn bump(m: Mutex[Int]) -> Int { m.with(fn(var v) { v += 1; v }) }
+
+fn show(io: Stdio, label: Str, r: Result[Int, task.Isolated[()]]) uses stdio {
+  match r {
+    Ok(v) => io.println("${label}: ok ${v}")
+    Err(task.Isolated.Faulted(info)) => io.println("${label}: fault ${info.msg}")
+    Err(_) => io.println("${label}: failed")
+  }
+}
+
+fn main(os: Os) {
+  let io = os.stdio
+  let m = Mutex.new(9223372036854775806)
+  show(io, "first", task.isolate(fn() -> Int ! () { bump(m) }))
+  show(io, "overflow", task.isolate(fn() -> Int ! () { bump(m) }))
+  show(io, "after", task.isolate(fn() -> Int ! () { bump(m) }))
+  m.reset(1)
+  show(io, "reset", task.isolate(fn() -> Int ! () { bump(m) }))
+}
