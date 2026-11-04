@@ -1,5 +1,20 @@
 # std/url changes
 
+## 2026-11-04: fix: url parsing keeps the path as written for the client's request target
+
+- Kind: fix
+- Commit: this push
+- Found by: aws-19 (2026-11-04), see std/changes/http.md
+- Go reference: net/url URL.setPath, RawPath
+- Test: golden http_raw_path
+- Timing: none
+- Shipped in: not yet released
+
+llrt/neturl's Url carries the path text before unescaping (`rawtext`);
+http.new_request keeps it as Go's RawPath when it differs from the
+default escaping of the decoded path. `url.parse` and `url.Url` are
+unchanged.
+
 ## 2026-11-04: perf: escape, parse_query and Values.encode
 
 - Kind: perf

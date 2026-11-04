@@ -127,7 +127,7 @@ fn parse_target(raw: Str, connect: Bool) -> neturl.Url {
   if connect && !raw.starts_with("/") {
     let u = neturl.url_parse("http://" + raw, true)
     if u.ok {
-      return neturl.Url{ok: true, err: "", scheme: "", host: u.host, path: u.path, rawquery: u.rawquery}
+      return neturl.Url{ok: true, err: "", scheme: "", host: u.host, path: u.path, rawquery: u.rawquery, rawtext: u.rawtext}
     }
     return u
   }
@@ -314,7 +314,9 @@ pub fn url_parts(s: Str, request: Bool) -> List[Str] {
     return []
   }
   let (name, port) = split_hostport(u.host)
-  [u.scheme, name, port, u.path, u.rawquery, u.host]
+  // url.go setPath: RawPath is the path as written when escaping the decoded
+  // path gives something else ("" when it is the default form)
+  [u.scheme, name, port, u.path, u.rawquery, u.host, if u.rawtext == escape_path(u.path) { "" } else { u.rawtext }]
 }
 
 /// The text of url.Parse's error: parse "url": reason; "" when it parses.
@@ -3408,6 +3410,31 @@ const CC_OK: Int = 0
 const CC_EOF: Int = 1
 const CC_ERR: Int = 4
 
+/// url.URL.EscapedPath: the path as written when it is a valid encoding of
+/// the decoded path (url.go's RawPath rule: validEncoded and the same
+/// unescaping), else the decoded path escaped.
+pub fn escaped_path_of(u: neturl.Url) -> Str {
+  let raw = u.rawtext
+  if !raw.is_empty() && raw != escape_path(u.path) && valid_encoded(raw) && path_unescape(raw) == u.path {
+    return raw
+  }
+  escape_path(u.path)
+}
+
+/// url.go validEncoded(s, encodePath): only bytes a path may hold as they are.
+fn valid_encoded(s: Str) -> Bool {
+  for c in s.bytes() {
+    if c == 33 || c == 36 || c == 38 || c == 39 || c == 40 || c == 41 || c == 42 || c == 43 || c == 44 || c == 59 || c == 61 || c == 58 || c == 64 || c == 91 || c == 93 || c == 37 || c == 47 {
+      continue
+    }
+    if (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c == 45 || c == 95 || c == 46 || c == 126 {
+      continue
+    }
+    return false
+  }
+  true
+}
+
 /// url.escape(s, encodePath) (url.URL.EscapedPath without a RawPath).
 pub fn escape_path(s: Str) -> Str {
   let b = s.bytes()
@@ -4517,7 +4544,7 @@ pub fn client_do(m: Str, url: Str, names: List[Str], values: List[Str], body0: B
     // the request: the address (host:port, 80 or 443 by default), the
     // target (the escaped path and the query)
     let addr = if scan.find(name, ":", 0) >= 0 { "[" + name + "]:" + port } else { name + ":" + port }
-    var target_of = if u.path == "*" { "*" } else if u.path.is_empty() { "/" } else { escape_path(u.path) }
+    var target_of = if u.path == "*" { "*" } else if u.path.is_empty() { "/" } else { escaped_path_of(u) }
     if !u.rawquery.is_empty() {
       target_of = target_of + "?" + u.rawquery
     }

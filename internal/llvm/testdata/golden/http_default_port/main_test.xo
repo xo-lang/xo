@@ -1,0 +1,23 @@
+use std/http
+
+test "http://host/ reaches the listener of host:80, https://host/ host:443" {
+  var r80 = http.router()
+  r80.handle("GET /{rest...}", fn(req) -> http.Response { http.text(200, "eighty ${req.path}") })
+  let l80 = os.net.listen("objects.test:80")?
+  let s80 = http.server(l80, r80)
+  var r443 = http.router()
+  r443.handle("GET /{rest...}", fn(req) -> http.Response { http.text(200, "tls ${req.path}") })
+  let l443 = os.net.listen("objects.test:443")?
+  let s443 = http.server(l443, r443)
+  let client = http.client(os.net, timeout: 5s)
+  scope s {
+    s.spawn_background(fn() { s80.serve() })
+    s.spawn_background(fn() { s443.serve() })
+    let a = client.send(http.new_request("GET", "http://objects.test/a%2Fb"))?
+    expect(a.body.to_str() ?? "") == "eighty /a/b"
+    let b = client.send(http.new_request("GET", "https://objects.test/x"))?
+    expect(b.body.to_str() ?? "") == "tls /x"
+    let c = client.send(http.new_request("GET", "http://objects.test:80/y"))?
+    expect(c.body.to_str() ?? "") == "eighty /y"
+  }
+}

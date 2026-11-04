@@ -1,0 +1,13 @@
+exit 0
+--- stdout
+/bucket/a%20b%2Bc/%E1%88%B4//x => 200 /bucket/a%20b%2Bc/%E1%88%B4//x | /bucket/a b+c/ሴ//x | 
+/a+b => 200 /a+b | /a+b | 
+/a%2Fb/c => 200 /a%2Fb/c | /a/b/c | 
+/plain/path => 200 /plain/path | /plain/path | 
+/a%2fb => 200 /a%2fb | /a/b | 
+/caf%C3%A9?x=a%20b&y=%2B => 200 /caf%C3%A9 | /café | x=a%20b&y=%2B
+/!*'() => 200 /!*'() | /!*'() | 
+/a%25b => 200 /a%25b | /a%b | 
+/%7Euser => 200 /%7Euser | /~user | 
+/a b => 200 /a%20b | /a b | 
+--- stderr

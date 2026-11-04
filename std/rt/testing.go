@@ -1119,6 +1119,12 @@ func (f Testing_FakeNet) dispatch(tk *Task, req Http_Request, rawURL string) Res
 		hostport := req.F_url.F_host
 		if req.F_url.F_port.Some {
 			hostport += fmt.Sprint(":", req.F_url.F_port.V)
+		} else if strings.EqualFold(req.F_url.F_scheme, "https") {
+			// the default port, as a real dial would use: a listener on
+			// host:443 serves https://host/ (aws-19, 2026-11-04)
+			hostport += ":443"
+		} else {
+			hostport += ":80"
 		}
 		srv = n.listeners[hostport]
 	}

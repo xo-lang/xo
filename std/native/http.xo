@@ -1608,7 +1608,9 @@ fn new_request(method: Str, url: Str, headers: Map[Str, Str] = {}, body: Bytes =
   }
   let path = if parts.is_empty() { url } else { parts[3] }
   let raw = if parts.is_empty() { "" } else { parts[4] }
-  Request{method: method.to_upper(), path: path, url: u, headers: h, body: body, remote_ip: "127.0.0.1", raw_query: raw}
+  // the path as written when escaping the decoded one differs (Go's RawPath)
+  let raw_path = if parts.is_empty() { "" } else { parts[6] }
+  Request{method: method.to_upper(), path: path, url: u, headers: h, body: body, remote_ip: "127.0.0.1", raw_query: raw, raw_path: raw_path}
 }
 
 fn parse_url(s: Str) -> http.Url ! http.UrlErr {
@@ -3862,14 +3864,31 @@ fn query_map(raw: Str) -> Map[Str, Str] {
 /// URL.RawQuery verbatim, so repeated keys and their order survive) while
 /// url.query still says what it does, else the query built from url.query.
 fn request_url_string(req: Request) -> Str {
-  if req.raw_query.is_empty() || query_map(req.raw_query) != req.url.query {
-    return url_string(req.url)
+  // the raw path as written while it still encodes url.path (Go's
+  // EscapedPath rule), else the path escaped: the client sends what the
+  // caller wrote (aws-19, 2026-11-04)
+  var path = escape_path_keep(req.url.path)
+  if req.url.scheme.is_empty() || req.url.host.is_empty() {
+    // not an absolute URL: its text as given, for the error that says so
+    path = req.url.path
+  } else if !req.raw_path.is_empty() && valid_encoded_path(req.raw_path) {
+    if let Ok(p) = url.path_unescape(req.raw_path) {
+      if p == req.url.path {
+        path = req.raw_path
+      }
+    }
   }
-  url_string(req.url with {query: {}}) + "?" + req.raw_query
+  if req.raw_query.is_empty() || query_map(req.raw_query) != req.url.query {
+    return url_string_path(req.url, path)
+  }
+  url_string_path(req.url with {query: {}}, path) + "?" + req.raw_query
 }
 
 /// The text of a URL (std/rt's urlString).
-fn url_string(u: http.Url) -> Str {
+fn url_string(u: http.Url) -> Str { url_string_path(u, u.path) }
+
+/// url_string with path as the path's text.
+fn url_string_path(u: http.Url, path: Str) -> Str {
   var s = ""
   if !u.scheme.is_empty() {
     s = u.scheme + "://"
@@ -3879,7 +3898,7 @@ fn url_string(u: http.Url) -> Str {
     Some(p) => s = s + ":${p}"
     None => ()
   }
-  s = s + u.path
+  s = s + path
   var first = true
   for (k, v) in u.query {
     if first {
@@ -3985,9 +4004,14 @@ fn send_mem(req: Request, raw: Str) -> http.Response ! http.ClientErr {
       return h(req with {params: best_params})
     }
   }
+  // the default port when the URL has none, as a real dial would use
   var hp = req.url.host
   if let Some(p) = req.url.port {
     hp = hp + ":${p}"
+  } else if req.url.scheme.to_lower() == "https" {
+    hp = hp + ":443"
+  } else {
+    hp = hp + ":80"
   }
   let found = twrun.mem_begin(hp)
   if found.is_empty() {

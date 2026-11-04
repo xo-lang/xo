@@ -627,16 +627,20 @@ func Http_new_request(tk *Task, method, rawURL string, headers Map[string, strin
 		Map_put(tk, &h, textproto.CanonicalMIMEHeaderKey(k), v)
 	}
 	raw := ""
+	rawPath := ""
 	path := u.F_path
 	if pu, err := url.Parse(rawURL); err == nil {
 		raw = pu.RawQuery
+		// Go's URL.RawPath: the path as written when escaping the decoded
+		// one gives something else; the client sends it as it is (aws-19)
+		rawPath = pu.RawPath
 		// the request's path is Go's URL.Path (its escaped form when the decoded
 		// bytes are not UTF-8, which a Str cannot hold), "" for a URL with none
 		// or an opaque one (url.path of the loose parse says "/" for the
 		// first), as the native new_request's
 		path = pathKeepInvalid(pu.Path)
 	}
-	return Http_Request{F_method: strings.ToUpper(method), F_path: path, F_url: u, F_headers: h, F_body: body, F_remote_ip: "127.0.0.1", XRawQuery: raw}
+	return Http_Request{F_method: strings.ToUpper(method), F_path: path, F_url: u, F_headers: h, F_body: body, F_remote_ip: "127.0.0.1", XRawQuery: raw, XRawPath: rawPath}
 }
 
 // M_query_all is `req.query_all(name)` (decision 0279): Go's
@@ -1430,21 +1434,44 @@ func (c Http_Client) M_send(tk *Task, req Http_Request) Result[Http_Response, Ht
 // Client sends URL.RawQuery verbatim) while url.query still says what it
 // does, else urlString's query built from url.query.
 func requestURLString(req Http_Request) string {
+	us := func(u Http_Url) string {
+		if p, ok := requestRawPath(req); ok {
+			return urlStringPath(u, p)
+		}
+		// Go's URL.String writes EscapedPath, so a decoded "%" is "%25" again
+		return urlStringPath(u, (&url.URL{Path: u.F_path}).EscapedPath())
+	}
 	if req.XRawQuery == "" {
-		return urlString(req.F_url)
+		return us(req.F_url)
 	}
 	pu := &url.URL{RawQuery: req.XRawQuery}
 	want := urlOf(nil, pu).F_query
 	if !EqAny(want, req.F_url.F_query) {
-		return urlString(req.F_url)
+		return us(req.F_url)
 	}
 	u := req.F_url
 	u.F_query = Map[string, string]{}
-	return urlString(u) + "?" + req.XRawQuery
+	return us(u) + "?" + req.XRawQuery
+}
+
+// requestRawPath is the request's RawPath when it is still a valid encoding
+// of the url's path (Go's EscapedPath rule), so the client sends it as given.
+func requestRawPath(req Http_Request) (string, bool) {
+	if req.XRawPath == "" {
+		return "", false
+	}
+	u := &url.URL{Path: pathKeepInvalid(req.F_url.F_path), RawPath: req.XRawPath}
+	if u.EscapedPath() == req.XRawPath {
+		return req.XRawPath, true
+	}
+	return "", false
 }
 
 // urlString renders a parsed URL.
-func urlString(u Http_Url) string {
+func urlString(u Http_Url) string { return urlStringPath(u, u.F_path) }
+
+// urlStringPath is urlString with path as the path's text.
+func urlStringPath(u Http_Url, path string) string {
 	var b strings.Builder
 	if u.F_scheme != "" {
 		b.WriteString(u.F_scheme + "://")
@@ -1453,7 +1480,7 @@ func urlString(u Http_Url) string {
 	if u.F_port.Some {
 		b.WriteString(":" + strconv.FormatInt(u.F_port.V, 10))
 	}
-	b.WriteString(u.F_path)
+	b.WriteString(path)
 	first := true
 	for k, v := range Map_All(u.F_query) {
 		if first {

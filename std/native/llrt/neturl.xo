@@ -397,9 +397,12 @@ pub struct Url {
   pub host: Str
   pub path: Str
   pub rawquery: Str
+  /// The path as written (escapes undecoded): url.go's setPath keeps it as
+  /// RawPath when escaping `path` gives something else.
+  pub rawtext: Str
 }
 
-pub fn url_fail(err: Str) -> Url { Url{ok: false, err: err, scheme: "", host: "", path: "", rawquery: ""} }
+pub fn url_fail(err: Str) -> Url { Url{ok: false, err: err, scheme: "", host: "", path: "", rawquery: "", rawtext: ""} }
 
 /// net/url's parse of s: ParseRequestURI when via_request, else Parse
 /// (the fragment already cut).
@@ -414,7 +417,7 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
     return url_fail("empty url")
   }
   if sn == 1 && b[0] == 42 {
-    return Url{ok: true, err: "", scheme: "", host: "", path: "*", rawquery: ""}
+    return Url{ok: true, err: "", scheme: "", host: "", path: "*", rawquery: "", rawtext: ""}
   }
   // getScheme
   var rest = 0
@@ -455,7 +458,7 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
   if !(rn > rest && b[rest] == 47) {
     if !scheme.is_empty() {
       // opaque: no host, no path
-      return Url{ok: true, err: "", scheme: scheme, host: "", path: "", rawquery: rawquery}
+      return Url{ok: true, err: "", scheme: scheme, host: "", path: "", rawquery: rawquery, rawtext: ""}
     }
     if via_request {
       return url_fail("invalid URI for request")
@@ -515,7 +518,7 @@ pub fn url_parse(s: Str, via_request: Bool) -> Url {
   if !pok {
     return url_fail(escape_error(b, s, p, rn))
   }
-  Url{ok: true, err: "", scheme: scheme, host: host, path: path, rawquery: rawquery}
+  Url{ok: true, err: "", scheme: scheme, host: host, path: path, rawquery: rawquery, rawtext: rawb.str_slice(s, p, rn)}
 }
 
 /// strconv.Quote (printable: ASCII graphic and every rune from U+00A1
