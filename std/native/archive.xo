@@ -1615,8 +1615,14 @@ fn zip_find_end(data: Bytes) -> Int {
 
 /// The central directory of a zip archive: its files in order, or why it
 /// cannot be read (Reader.init).
-fn zip_directory(data: Bytes) -> List[ZipHdr] ! Str {
-  let size = data.len()
+fn zip_directory(data: Bytes) -> List[ZipHdr] ! Str { zip_directory_at(data, 0) }
+
+/// zip_directory of an archive of which data holds the bytes from the
+/// file offset shift to the end (an archive read from a File keeps its
+/// tail and its directory, not its entries). An error "NEED n" says the
+/// directory needs the bytes from the file offset n < shift.
+fn zip_directory_at(data: Bytes, shift: Int) -> List[ZipHdr] ! Str {
+  let size = shift + data.len()
   let end_off = zip_find_end(data)
   if end_off < 0 {
     return Err(ERR_FORMAT)
@@ -1625,13 +1631,13 @@ fn zip_directory(data: Bytes) -> List[ZipHdr] ! Str {
   let dir_size32 = get_u32(data, end_off + 12)
   let dir_off32 = get_u32(data, end_off + 16)
   let comment_len = get_u16(data, end_off + 20)
-  if comment_len > size - end_off - 22 {
+  if comment_len > data.len() - end_off - 22 {
     return Err("zip: invalid comment length")
   }
   var records = records32
   var dir_size = dir_size32
   var dir_off = dir_off32
-  var end_at = end_off
+  var end_at = shift + end_off
   // these values mean the archive may be zip64 (Go compares the 32-bit
   // size with 0xffff too): the zip64 end record through its locator
   if records == 0xffff || dir_size == 0xffff || dir_off == 0xffffffff {
@@ -1641,12 +1647,15 @@ fn zip_directory(data: Bytes) -> List[ZipHdr] ! Str {
       if p < 0 || p > size - 56 {
         return Err("EOF")
       }
-      if get_u32(data, p) != 0x06064b50 {
+      if p < shift {
+        return Err("NEED ${p}")
+      }
+      if get_u32(data, p - shift) != 0x06064b50 {
         return Err(ERR_FORMAT)
       }
-      records = get_u64(data, p + 32)
-      dir_size = get_u64(data, p + 40)
-      dir_off = get_u64(data, p + 48)
+      records = get_u64(data, p - shift + 32)
+      dir_size = get_u64(data, p - shift + 40)
+      dir_off = get_u64(data, p - shift + 48)
       end_at = p
     }
   }
@@ -1658,13 +1667,20 @@ fn zip_directory(data: Bytes) -> List[ZipHdr] ! Str {
     return Err(ERR_FORMAT)
   }
   if base > 0 {
-    match zip_dir_header(data, dir_off) {
+    if dir_off < shift {
+      return Err("NEED ${dir_off}")
+    }
+    match zip_dir_header(data, dir_off - shift) {
       Ok(_) => base = 0
       Err(_) => ()
     }
   }
   var files: List[ZipHdr] = []
   var pos = base + dir_off
+  if pos < shift {
+    return Err("NEED ${pos}")
+  }
+  pos -= shift
   var stop = ""
   while true {
     match zip_dir_header(data, pos) {
@@ -1749,15 +1765,65 @@ fn unzip_entries(data: Bytes) -> List[archive.Entry] ! Str {
 /// inflated until read.
 fn zip_reader(data: Bytes) -> archive.ZipReader ! archive.ArchiveErr {
   var list: List[archive.ZipFile] = []
-  match zip_files(data) {
+  match zip_files_at(data, 0) {
     Ok(l) => list = l
     Err(e) => return Err(archive_err("zip_reader: ${e}"))
   }
-  archive.ZipReader{data: data, list: list}
+  archive.ZipReader{data: data, list: list, file: None, total: 0}
 }
 
-fn zip_files(data: Bytes) -> List[archive.ZipFile] ! Str {
-  let files = zip_directory(data)?
+/// n bytes of f from the offset off, or why not.
+fn read_span(f: File, off: Int, n: Int) -> Bytes ! archive.ArchiveErr uses fs.read {
+  var out = BytesBuilder.with_capacity(n)
+  var at = off
+  while out.len() < n {
+    let got = match f.read_at(at, n - out.len()) {
+      Ok(x) => x
+      Err(e) => return Err(archive_err("zip_open: ${e.display()}"))
+    }
+    match got {
+      Some(b) => {
+        if b.len() == 0 {
+          return Err(archive_err("zip_open: unexpected EOF"))
+        }
+        out.write(b)
+        at += b.len()
+      }
+      None => return Err(archive_err("zip_open: unexpected EOF"))
+    }
+  }
+  out.freeze()
+}
+
+/// A zip archive of size bytes in the File f, read in place (decision
+/// 0479): the tail and the central directory are read, each entry's
+/// bytes only when it is read.
+fn zip_open(f: File, size: Int) -> archive.ZipReader ! archive.ArchiveErr uses fs.read {
+  if size < 22 {
+    return Err(archive_err("zip_open: ${ERR_FORMAT}"))
+  }
+  var shift = if size > 67584 { size - 67584 } else { 0 }
+  for _ in 0..3 {
+    let data = read_span(f, shift, size - shift)?
+    match zip_files_at(data, shift) {
+      Ok(l) => return Ok(archive.ZipReader{data: b"", list: l, file: Some(f), total: size})
+      Err(e) => {
+        if e.starts_with("NEED ") {
+          let n = Int.parse(e[5..]) ?? -1
+          if n >= 0 && n < shift {
+            shift = n
+            continue
+          }
+        }
+        return Err(archive_err("zip_open: ${e}"))
+      }
+    }
+  }
+  Err(archive_err("zip_open: ${ERR_FORMAT}"))
+}
+
+fn zip_files_at(data: Bytes, shift: Int) -> List[archive.ZipFile] ! Str {
+  let files = zip_directory_at(data, shift)?
   var out: List[archive.ZipFile] = []
   for zf in files {
     let (p, perm, is_dir) = zip_meta(zf)?
@@ -1769,12 +1835,30 @@ fn zip_files(data: Bytes) -> List[archive.ZipFile] ! Str {
 fn zipreader_files(r: archive.ZipReader) -> List[archive.ZipFile] { r.list }
 
 /// The contents of one entry, inflated and checked (its CRC).
-fn zipreader_read(r: archive.ZipReader, f: archive.ZipFile) -> Bytes ! archive.ArchiveErr {
+fn zipreader_read(r: archive.ZipReader, f: archive.ZipFile) -> Bytes ! archive.ArchiveErr uses fs.read {
   if f.is_dir {
     return Ok(b"")
   }
-  let zf = ZipHdr{name: f.path, raw: b"", creator: 0, flags: f.flags, method: f.method, time: 0, date: 0, crc: f.crc, csize: f.compressed, usize: f.size, extra: b"", attrs: 0, offset: f.offset}
-  match zip_read(r.data, zf, flate.crc_table(), flate.fixed_decoder()) {
+  var zf = ZipHdr{name: f.path, raw: b"", creator: 0, flags: f.flags, method: f.method, time: 0, date: 0, crc: f.crc, csize: f.compressed, usize: f.size, extra: b"", attrs: 0, offset: f.offset}
+  var data = r.data
+  match r.file {
+    Some(file) => {
+      let ho = f.offset
+      if ho < 0 || ho + 30 > r.total {
+        return Err(archive_err("zip_reader: EOF"))
+      }
+      let head = read_span(file, ho, 30)?
+      let body = 30 + get_u16(head, 26) + get_u16(head, 28)
+      var want = body + f.compressed + 16
+      if ho + want > r.total {
+        want = r.total - ho
+      }
+      data = read_span(file, ho, want)?
+      zf.offset = 0
+    }
+    None => ()
+  }
+  match zip_read(data, zf, flate.crc_table(), flate.fixed_decoder()) {
     Ok(b) => b
     Err(e) => Err(archive_err("zip_reader: ${e}"))
   }

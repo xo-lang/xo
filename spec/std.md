@@ -816,6 +816,7 @@ fn (f: Fs) try_lock(path: Str) -> FileLock? ! FsErr uses fs.write
 struct File {}                                    // handle
 fn (f: File) read(max: Int) -> Bytes? ! FsErr     uses fs.read   // None at the end
 fn (f: File) read_line() -> Str? ! FsErr          uses fs.read   // without \n or \r\n
+fn (f: File) read_at(offset: Int, max: Int) -> Bytes? ! FsErr uses fs.read   // decision 0479: Go's ReadAt once; position untouched; None at the end
 fn (f: File) write(data: Bytes) -> () ! FsErr     uses fs.write
 fn (f: File) sync() -> () ! FsErr                 uses fs.write   // fsync (F_FULLFSYNC on macOS)
 fn (f: File) close() -> () ! FsErr                               // closing again does nothing
@@ -4200,8 +4201,12 @@ struct ZipFile { path: Str, size: Int, compressed: Int, mode: Int, is_dir: Bool,
   none: `r.files()` lists them (`size` is the inflated length) and
   `r.read(f)` inflates one and checks its CRC, so a program holding an
   archive of many large entries holds one inflated entry at a time, not
-  all of them as `unzip` does. Reading from a File (`zip_open`) and a
-  streaming `EntryReader` are the later steps of decision 0479.
+  all of them as `unzip` does. `zip_open(f, size)` does the same
+  for a File (`Fs.stat` gives the size): the tail and the central
+  directory are read, and an entry's bytes only when `read` asks (through
+  `File.read_at`), so an archive larger than memory can be walked; the
+  Go backend reads the File whole. `read` therefore `uses fs.read`. A
+  streaming `EntryReader` is a later step of decision 0479.
 - `zip_writer(f)` writes an archive to a File entry by entry
   (move only; the File stays the caller's, closed after `close`):
   `w.add(entry)` writes one whose data is in hand, `w.create(path, mode)`
@@ -5166,7 +5171,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-500 declarations.
+501 declarations.
 
 ### Range
 
@@ -5750,6 +5755,7 @@ fn (e: DirEntry) info(fs: Fs) -> FileInfo ! FsErr uses fs.read
 
 ```
 fn (f: File) read(max: Int) -> Bytes? ! FsErr uses fs.read
+fn (f: File) read_at(offset: Int, max: Int) -> Bytes? ! FsErr uses fs.read
 fn (f: File) read_line() -> Str? ! FsErr uses fs.read
 fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
 fn (f: File) sync() -> () ! FsErr uses fs.write

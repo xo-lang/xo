@@ -1,5 +1,15 @@
 # prelude changes
 
+## 2026-11-03: feature: File.read_at
+
+- Kind: feature
+- Commit: this commit
+- Go reference: os.File.ReadAt (go1.26.1), one call (a short read is allowed)
+- Test: the prelude corpus `File.read_at reads at an offset without moving the position, as Go's ReadAt` (MemFs; arm64, LLVM, Go backend); a real file on macOS in a scratch program
+- Timing: none (one syscall)
+
+`f.read_at(offset, max)` is pread(2) (pread64 on Linux, ReadFile with an OVERLAPPED offset on Windows): the position and the read buffer are untouched, `None` at or past the end. A file open for writing, a closed file and a negative offset are errors. A wasm build answers "function not implemented".
+
 ## 2026-11-03: feature: XO_FREE_CHECK=1 poisons freed blocks and closed connections, so a use after a free faults on native
 
 - Kind: feature

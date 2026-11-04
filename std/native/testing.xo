@@ -858,6 +858,34 @@ fn memfile_read_in(var st: MemState, f: File, max: Int) -> Bytes? ! FsErr {
   Some(b)
 }
 
+fn memfile_read_at(f: File, offset: Int, max: Int) -> Bytes? ! FsErr {
+  var st = memfs_load()
+  let r = memfile_read_at_in(st, f, offset, max)
+  memfs_store(st)
+  r?
+}
+
+fn memfile_read_at_in(var st: MemState, f: File, offset: Int, max: Int) -> Bytes? ! FsErr {
+  let mf = memfile_state(st, f, false)?
+  if offset < 0 {
+    return Err(FsErr.Io(path: rt.mem_file_path(f), msg: "negative offset"))
+  }
+  if max <= 0 {
+    return Some(b"")
+  }
+  if offset >= mf.data.len() {
+    return None
+  }
+  var n = mf.data.len() - offset
+  if max < n {
+    n = max
+  }
+  if n > 1048576 {
+    n = 1048576
+  }
+  Some(mf.data[offset..offset + n])
+}
+
 fn memfile_read_line(f: File) -> Str? ! FsErr {
   var st = memfs_load()
   let r = memfile_read_line_in(st, f)

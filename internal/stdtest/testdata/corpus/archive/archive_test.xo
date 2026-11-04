@@ -246,3 +246,51 @@ test "zip_writer refuses a bad path and a write without create" {
   expect(w.write(b"x").is_err()) == true
   w.close()?
 }
+fn read_all_open(fs: Fs, hex_text: Str) -> List[archive.Entry] ! archive.ArchiveErr {
+  let data = Bytes.from_hex(hex_text) ?? b""
+  fs.write("c.zip", data).ok() ?? fault("write")
+  let f = fs.open("c.zip").ok() ?? fault("open")
+  let r = archive.zip_open(f, data.len())?
+  var out: List[archive.Entry] = []
+  for z in r.files() {
+    out.push(archive.Entry{path: z.path, data: r.read(z)?, mode: z.mode, is_dir: z.is_dir, modified: z.modified})
+  }
+  f.close().ok() ?? fault("close")
+  out
+}
+
+test "zip_open reads a File as zip_reader reads the bytes" {
+  var bad: List[(Str, Str, Str)] = []
+  for (hex_text, _want) in ZIP_CASES {
+    let data = Bytes.from_hex(hex_text) ?? b""
+    let ref = match read_all(data) {
+      Ok(entries) => summarize(entries)
+      Err(_e) => "!error"
+    }
+    let got = match read_all_open(os.fs, hex_text) {
+      Ok(entries) => summarize(entries)
+      Err(_e) => "!error"
+    }
+    if got != ref {
+      bad.push((hex_text[0..16], got, ref))
+    }
+  }
+  expect(show3(bad)) == []
+}
+
+test "zip_open walks a large archive from the File" {
+  var es: List[archive.Entry] = []
+  for i in 0..300 {
+    es.push(archive.file("dir/f${i}.txt", ("entry ${i} " + "x".repeat(i * 7)).bytes()))
+  }
+  let data = archive.zip(es)?
+  os.fs.write("big.zip", data)?
+  let f = os.fs.open("big.zip")?
+  let r = archive.zip_open(f, data.len())?
+  let fs = r.files()
+  expect(fs.len()) == 300
+  expect(r.read(fs[299])?) == es[299].data
+  expect(r.read(fs[0])?) == es[0].data
+  expect(archive.zip_open(f, 10).is_err()) == true
+  f.close()?
+}

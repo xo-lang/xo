@@ -963,6 +963,11 @@ struct File {}
 /// At most max bytes; None at the end.
 fn (f: File) read(max: Int) -> Bytes? ! FsErr uses fs.read
 /// One line without `\n` or `\r\n`; None at the end.
+/// At most max bytes at offset, whatever the position: None at or past
+/// the end (Go's os.File.ReadAt, one call, a short read allowed); the
+/// handle's position and reads are unaffected. A wasm build answers
+/// "function not implemented".
+fn (f: File) read_at(offset: Int, max: Int) -> Bytes? ! FsErr uses fs.read
 fn (f: File) read_line() -> Str? ! FsErr uses fs.read
 fn (f: File) write(data: Bytes) -> () ! FsErr uses fs.write
 /// Commits what was written to stable storage (Go's File.Sync: fsync,

@@ -348,3 +348,25 @@ func (x *Archive_ZipWriter) M_close(tk *Task) Result[Unit, Archive_ArchiveErr] {
 	}
 	return Ok[Unit, Archive_ArchiveErr](Unit{})
 }
+
+// Archive_zip_open is `archive.zip_open(f, size)`: the Go backend reads the
+// File whole through read_at and opens it as zip_reader does (its memory is
+// the archive's; the native backends read the directory and each entry).
+func Archive_zip_open(tk *Task, f File, size int64) Result[Archive_ZipReader, Archive_ArchiveErr] {
+	var buf []byte
+	for int64(len(buf)) < size {
+		r := f.M_read_at(tk, int64(len(buf)), size-int64(len(buf)))
+		if !r.Ok {
+			return Err[Archive_ZipReader](archiveErr("zip_open: " + r.E.M_display(tk)))
+		}
+		if !r.V.Some || len(r.V.V) == 0 {
+			return Err[Archive_ZipReader](archiveErr("zip_open: unexpected EOF"))
+		}
+		buf = append(buf, r.V.V...)
+	}
+	r := Archive_zip_reader(tk, Bytes(buf))
+	if !r.Ok {
+		return Err[Archive_ZipReader](archiveErr("zip_open:" + strings.TrimPrefix(r.E.F_msg, "zip_reader:")))
+	}
+	return r
+}

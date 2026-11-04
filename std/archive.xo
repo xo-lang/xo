@@ -54,12 +54,14 @@ struct ZipFile {
   crc: Int
 }
 
-/// A zip archive in memory whose central directory was read once and
-/// whose entries are inflated one at a time. @internal: use `zip_reader`,
+/// A zip archive (in memory, or in a File) whose central directory was
+/// read once and whose entries are inflated one at a time. @internal: use `zip_reader`,
 /// `r.files()` and `r.read(f)`
 struct ZipReader {
   data: Bytes
   list: List[ZipFile]
+  file: File?
+  total: Int
 }
 
 /// The archive's directory, checked as `unzip` checks it (paths, kinds,
@@ -69,7 +71,12 @@ fn zip_reader(data: Bytes) -> ZipReader ! ArchiveErr
 fn (r: ZipReader) files() -> List[ZipFile]
 /// One entry's contents, inflated and checked against its CRC; a
 /// directory's is empty.
-fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr
+fn (r: ZipReader) read(f: ZipFile) -> Bytes ! ArchiveErr uses fs.read
+/// A zip archive of size bytes in a File (`Fs.stat` gives the size), read
+/// in place: the tail and the central directory are read now and an
+/// entry's bytes when `read` asks, so an archive larger than memory can be
+/// walked. The File stays the caller's and must stay open and unchanged.
+fn zip_open(f: File, size: Int) -> ZipReader ! ArchiveErr uses fs.read
 
 /// A zip archive written entry by entry to a File (decision 0479): memory
 /// is the directory records, not the data. The File stays the caller's:

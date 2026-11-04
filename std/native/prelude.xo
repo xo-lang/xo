@@ -3314,6 +3314,22 @@ fn file_read(f: File, max: Int) -> Bytes? ! FsErr {
   l.get(0)
 }
 
+fn file_read_at(f: File, offset: Int, max: Int) -> Bytes? ! FsErr {
+  file_state(f, false)?
+  if offset < 0 {
+    return Err(FsErr.Io(path: f.path, msg: "negative offset"))
+  }
+  if max <= 0 {
+    return Some(b"")
+  }
+  let l = fsops.file_read_at(f.h, offset, max, f.path)
+  let st = sysio.status()
+  if st != 0 {
+    return Err(fs_err(st, f.path))
+  }
+  l.get(0)
+}
+
 fn file_read_line(f: File) -> Str? ! FsErr {
   file_state(f, false)?
   let l = fsops.file_read_line(f.h, f.path)

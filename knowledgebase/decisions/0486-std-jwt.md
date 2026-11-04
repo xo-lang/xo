@@ -1,6 +1,6 @@
 # 0486: std/jwt: JSON Web Tokens on our crypto, with golang-jwt's protections
 
-Status: Proposed (Xo Lang 3, 2026-11-03), at the Lead's request after decision 0479. Redis is a separate module and
+Status: Accepted (owner, 2026-11-03; proposed by Xo Lang 3 at the Lead's request). Owner answers: no JWE for now (later, as a separate module); both `verify_with(token, key)` (one key) and `verify` with a key function (kid lookup, JWKS rotation) are offered. Redis is a separate module and
 its own decision.
 
 ## Context
@@ -13,7 +13,7 @@ every primitive: `crypto.hmac`, `crypto.equal`, `crypto.verify` and `sign` (RSA 
 `verify_pss`/`sign_pss`, `verify_raw_ecdsa`/`sign_raw_ecdsa` (JWS's fixed size r || s), `jwk_public_key`,
 `base64`'s URL alphabet, and `json`.
 
-## Decision (proposed)
+## Decision
 
 A module `std/jwt` (JWS compact serialization, RFC 7515 and RFC 7519; no JWE, no JSON serialization).
 
@@ -108,8 +108,3 @@ at most about 1.05 of Go's wall (decision 0461), most of the time being the cryp
   and `Keyfunc` returning `any` are the source of the key-type bugs; typed `Key` and a closed `Alg` remove them.
 - **Only helpers on std/crypto** (`crypto.jws_sign`): no claims validation, which is where the mistakes are.
 - **Do nothing**: every service re-implements the checks above.
-
-## Open questions for the owner
-
-- Include JWE (`dir`, `A256GCM`)? Proposed: no, later and separate.
-- `verify_with` plus `verify` with a key function, or only the latter?

@@ -633,3 +633,40 @@ func (f Testing_FakeEnv) M_config_dir(tk *Task) Result[string, EnvErr] {
 	return userDir(tk, f, false)
 }
 func (f Testing_FakeEnv) M_cache_dir(tk *Task) Result[string, EnvErr] { return userDir(tk, f, true) }
+
+// M_read_at is `f.read_at(offset, max)`: Go's os.File.ReadAt once, the
+// position and the read buffer untouched.
+func (f File) M_read_at(tk *Task, offset, max int64) Result[Option[Bytes], FsErr] {
+	h := f.h
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	switch {
+	case tk.Canceled():
+		return Err[Option[Bytes]](FsCanceled)
+	case h.closed:
+		return Err[Option[Bytes]](fileClosed(h.path))
+	case h.write:
+		return Err[Option[Bytes]](fsIo(h.path, "file is open for writing"))
+	case offset < 0:
+		return Err[Option[Bytes]](fsIo(h.path, "negative offset"))
+	case max <= 0:
+		return Ok[Option[Bytes], FsErr](Some(Bytes("")))
+	}
+	if h.mem != nil {
+		d := h.mem.data
+		if offset >= int64(len(d)) {
+			return Ok[Option[Bytes], FsErr](Option[Bytes]{})
+		}
+		n := min(int64(len(d))-offset, max, 1<<20)
+		return Ok[Option[Bytes], FsErr](Some(Bytes(d[offset : offset+n])))
+	}
+	buf := make([]byte, min(max, 1<<20))
+	n, err := h.osf.ReadAt(buf, offset)
+	if n > 0 {
+		return Ok[Option[Bytes], FsErr](Some(Bytes(buf[:n])))
+	}
+	if err == nil || errors.Is(err, io.EOF) {
+		return Ok[Option[Bytes], FsErr](Option[Bytes]{})
+	}
+	return Err[Option[Bytes]](mapFsErr(err, h.path))
+}

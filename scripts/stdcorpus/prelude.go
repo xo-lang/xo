@@ -756,6 +756,25 @@ test "walk_dir visits as Go's WalkDir: name order, SkipDir on a directory and on
   }
 }
 
+test "File.read_at reads at an offset without moving the position, as Go's ReadAt" {
+  os.fs.write("ra.txt", b"0123456789abcdef")?
+  let f = os.fs.open("ra.txt")?
+  expect(f.read_at(10, 4)?) == Some(b"abcd")
+  expect(f.read_at(14, 10)?) == Some(b"ef")
+  expect(f.read_at(16, 4)?) == None
+  expect(f.read_at(99, 4)?) == None
+  expect(f.read_at(3, 0)?) == Some(b"")
+  expect(f.read(3)?) == Some(b"012")
+  expect(f.read_at(0, 2)?) == Some(b"01")
+  expect(f.read(3)?) == Some(b"345")
+  expect(f.read_at(-1, 2).is_err()) == true
+  f.close()?
+  expect(f.read_at(0, 1).is_err()) == true
+  let w = os.fs.create("raw.txt")?
+  expect(w.read_at(0, 1).is_err()) == true
+  w.close()?
+}
+
 test "read_dir_entries, walk_entries and walk_dir_entries answer as Go's os.ReadDir and WalkDir with the type and no stat" {
   for d in ["a/b", "a/c"] {
     os.fs.create_dir_all(d)?

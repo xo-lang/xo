@@ -1,5 +1,15 @@
 # std/archive changes
 
+## 2026-11-03: feature: zip_open (a zip archive read from a File)
+
+- Kind: feature
+- Commit: this commit
+- Go reference: archive/zip (go1.26.1): `NewReader(io.ReaderAt, size)`
+- Test: the archive corpus `zip_open reads a File as zip_reader reads the bytes` (every ZIP_CASES row) and `zip_open walks a large archive from the File`; a real file on macOS (2,000 entries) in a scratch program
+- Timing: none yet
+
+`zip_open(f, size)` reads the last 66 KiB, finds the end record and, if the directory lies before it, reads from the directory's start (the zip64 and prepended-data rules of `zip_directory_at` unchanged); `ZipReader.read` then reads one entry's local header and bytes with `File.read_at`. `ZipReader.read` `uses fs.read`.
+
 ## 2026-11-03: feature: zip_writer
 
 - Kind: feature

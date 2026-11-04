@@ -51,6 +51,7 @@ const INVALID_FILE_ATTRIBUTES: Int = 4294967295
 const FILE_TYPE_UNKNOWN: Int = 0
 const ERROR_ACCESS_DENIED: Int = 5
 const ERROR_BROKEN_PIPE: Int = 109
+const ERROR_HANDLE_EOF: Int = 38
 const ERROR_CANT_ACCESS_FILE: Int = 1920
 const BCRYPT_USE_SYSTEM_PREFERRED_RNG: Int = 2
 // GetStdHandle's arguments, (DWORD)-11 and (DWORD)-12 (processenv.h)
@@ -926,6 +927,29 @@ pub fn readlink(path: Str) -> (Str, Int) {
   let off = rt.mem_load(ra, 12, 2) + 20
   let n = rt.mem_load(ra, 14, 2) / 2
   (narrow_slash(buf, off, n), 0)
+}
+
+/// ReadFile of at most n bytes at offset off to the address a (an
+/// OVERLAPPED with the offset on a synchronous handle), as read_at.
+pub fn pread_at(h: Int, a: Int, n: Int, off: Int) -> Int {
+  let done = obj.scratch()
+  let k = if n > 2147483647 { 2147483647 } else { n }
+  let o = raw.bytes_buf(32)
+  let oa = raw.bytes_addr(o)
+  rt.mem_store(oa, 0, 0, 8)
+  rt.mem_store(oa, 8, 0, 8)
+  rt.mem_store(oa, 16, off, 8)
+  rt.mem_store(oa, 24, 0, 8)
+  let rc = Int(sys_windows.ReadFile(h, a, k, done, oa))
+  keep_bytes(o)
+  if rc == 0 {
+    let e = Int(sys_windows.GetLastError())
+    if e == ERROR_HANDLE_EOF {
+      return 0
+    }
+    return if e == ERROR_ACCESS_DENIED { -EBADF } else { -dos_errno(e) }
+  }
+  rt.mem_load(done, 0, 8) & 4294967295
 }
 
 /// flock of the handle h with op (LOCK_SH 1, LOCK_EX 2, LOCK_NB 4,

@@ -207,6 +207,21 @@ fn read_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
   0
 }
 
+/// One positioned read of at most n bytes at offset off: the count, 0 at
+/// the end, or the negative errno.
+fn pread_fd(l: Int, fd: Int, a: Int, n: Int, off: Int) -> Int {
+  if l == 3 {
+    return windows.pread_at(fd, a, n, off)
+  }
+  while true {
+    let r = if l == 2 { darwin.pread_at(fd, a, n, off) } else { linux.pread_at(fd, a, n, off) }
+    if r != -EINTR {
+      return r
+    }
+  }
+  0
+}
+
 /// Writes the n bytes at the address a (EINTR and short writes retried):
 /// 0, or the errno.
 fn write_at(l: Int, fd: Int, a: Int, n: Int) -> Int {
@@ -606,6 +621,31 @@ pub fn file_read(f: rt.FsFile, max: Int, x: Str) -> List[Bytes] {
   rt.mem_store(a, F_R, r + k, 8)
   ok()
   [out]
+}
+
+/// `f.read_at(offset, max)` (offset >= 0, max > 0, at most 1 MiB): the
+/// bytes in a list of one, or the empty list at the end (status 0) or on
+/// an error. The handle's position and read buffer are not used. A wasm
+/// build has no positioned read (status ENOSYS).
+pub fn file_read_at(f: rt.FsFile, offset: Int, max: Int, x: Str) -> List[Bytes] {
+  if sysio.layer() == 0 {
+    fail(1, 38, x)
+    return []
+  }
+  let l = layer()
+  let a = rt.obj_addr(f)
+  let m = if max > READ_MAX { READ_MAX } else { max }
+  let b = raw.bytes_buf(m)
+  let k = pread_fd(l, rt.mem_load(a, F_FD, 8), raw.bytes_addr(b), m, offset)
+  if k < 0 {
+    fail(l, -k, x)
+    return []
+  }
+  ok()
+  if k == 0 {
+    return []
+  }
+  [raw.bytes_len(b, k)]
 }
 
 /// The index of the first \n in the bytes at the address a from lo to hi,
