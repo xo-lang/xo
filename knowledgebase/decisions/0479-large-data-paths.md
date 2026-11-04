@@ -1,7 +1,7 @@
 # 0479: Large data paths: a row cursor, COPY FROM, and zip by entry
 
-Status: Proposed (Xo Lang 2, 2026-11-03; for the owner; no implementation
-before a choice)
+Status: Accepted (owner, 2026-11-03, through the lead): the row cursor,
+COPY FROM, and zip by entry. Xo Lang 3 implements it.
 
 ## Context
 

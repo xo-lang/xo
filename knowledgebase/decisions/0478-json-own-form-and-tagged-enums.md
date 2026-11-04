@@ -1,7 +1,9 @@
 # 0478: A type's own JSON form and internally tagged enums
 
-Status: Proposed (Xo Lang 2, 2026-11-03; for the language owner and the
-owner; prototype only after a choice)
+Status: Accepted as proposed (owner, 2026-11-03, through the lead): A1
+(the typed proxy), B1 (`tag:` and `content:`), N1 (variant wire names),
+S2 (SqlRow unchanged). Xo Lang 2 implements it after the HTTP client pool
+item, with its measurement plan.
 
 ## Context
 
