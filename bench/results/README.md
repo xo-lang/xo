@@ -287,3 +287,4 @@
 - [std-twin-rows17-2026-11-03.md](std-twin-rows17-2026-11-03.md): host rows for std/norm and std/idna with in-place UTF-8 decoding (idna mixed 1.54, long 1.49; norm NFC 1.55, NFD 1.08); not Proven.
 - [std-twin-idna-2026-11-03.md](std-twin-idna-2026-11-03.md): host rows for std/norm and std/idna with in-place UTF-8 decoding (idna mixed 1.54, long 1.49; norm NFC 1.55, NFD 1.08); not Proven.
 - [std-twin-norm-2026-11-03.md](std-twin-norm-2026-11-03.md): host rows for std/norm (NFC 0.88, NFKC 0.77, NFD 1.09 of x/text after the quickSpan table), and its size.
+- [std-twin-trimchars-2026-11-03.md](std-twin-trimchars-2026-11-03.md): host rows for Str.trim_chars after decision 0465 step 2 (trim 2.24 to 1.54 of Go); not Proven.
