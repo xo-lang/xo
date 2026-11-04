@@ -296,3 +296,4 @@
 - [std-twin-walkdir-2026-11-03.md](std-twin-walkdir-2026-11-03.md): host rows for walk_dir_entries (0.91 of Go, Proven) and info (1.11).
 - [dns-netpoll-2026-11-03.md](dns-netpoll-2026-11-03.md): std/dns's one-query lookup on the netpoller: 0.175x wall for an in-process server (mx); for a lone task against another process the same wall at twice the CPU, so it waits on the netpoller only while other tasks run or wait (pool.others_active), and the other-process cases match main
 - [std-twin-sqlrows-2026-11-03.md](std-twin-sqlrows-2026-11-03.md): std/sql row cursor, max RSS of query vs rows on the Mac (320 MB vs 3.9 MB at 1M rows).
+- [std-twin-netip-2026-11-03.md](std-twin-netip-2026-11-03.md): host rows for std/netip (1.88, 1.79 of Go's wall) before decision 0485.
