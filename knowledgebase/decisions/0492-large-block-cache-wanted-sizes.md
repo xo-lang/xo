@@ -114,3 +114,16 @@ credit from an unrelated early hit let list growth's frees stay).
 - No bound, or a 16 MiB floor: the speed back, and 0448's RSS case undone.
 - A 4 MiB floor or half of mapped: too little of the speed back.
 - Reuse credit: darwin push max RSS +60%.
+
+## Addendum (2026-11-04, Xo Lang 1): the ring also gates darwin's advice
+
+Bisecting the darwin/amd64 0.35.0 to 0.36.0 json step found 14a71b5e6
+(decision 0448 stage 1): keep advised a cached mapping's pages away
+(MADV_FREE_REUSABLE), so each reuse faulted them back in. keep now
+skips that advice when one of the last 16 requested sizes could use the
+mapping (`wanted`), on every architecture (the advice is darwin only).
+darwin/amd64 json10kx20 122 to 105 ms and map1M 152 to 145; darwin/arm64
+map1M 55 to 50; micro and push max RSS unchanged; the xo self build's
+peak footprint 3550 to 3584 MB down to 3431 to 3445 (max RSS about 5%
+higher). A mapping no recent request fits is still advised, so 0448
+stage 1's footprint goal holds.

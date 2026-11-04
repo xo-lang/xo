@@ -402,7 +402,13 @@ fn keep(m: Int, size: Int) -> Bool {
   // (decision 0448 stage 1: a kept mapping stayed resident, so a build's
   // transient tables held their RSS to exit), under the lock, so no taker
   // writes a page the advice then drops
-  cache_advise(m, size, false)
+  // a size the program asked for recently (decision 0492's ring) is
+  // likely taken again soon: advising its pages away made each reuse
+  // fault them back in (darwin/amd64 json10kx20 105 to 122 ms), so only
+  // a mapping no recent request fits gives its pages back
+  if !wanted(t, size) {
+    cache_advise(m, size, false)
+  }
   clock_give()
   true
 }

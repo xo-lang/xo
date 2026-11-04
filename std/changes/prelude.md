@@ -1,5 +1,22 @@
 # prelude changes
 
+## 2026-11-04: perf: on darwin the large block cache keeps the pages of the sizes a program asks for again
+
+- Kind: perf
+- Commit: this commit
+- Found by: bisecting the owner's v0.36.0 Intel Mac evaluation (darwin/amd64 json10kx20 0.35.0 to 0.36.0); cause 14a71b5e6
+- Go reference: none (Go's scavenger returns pages in the background, not at free)
+- Test: TestGoldenRun (heap and json goldens); the 13-perf micro on darwin/amd64 and darwin/arm64; the xo self build's footprint
+- Speed: darwin/amd64 json10kx20 122 to 105 ms, map1M 152 to 145; darwin/arm64 map1M 55 to 50
+
+keep gives a freed mapping's pages past its first 16 KiB back to Darwin
+(MADV_FREE_REUSABLE, decision 0448 stage 1) only when none of the last
+16 requested sizes (decision 0492's ring) could use it; a mapping that
+one could is taken again soon, and the advice made every reuse fault
+its pages back in. The xo self build's peak footprint 3550 to 3584 MB
+down to 3431 to 3445 (its max RSS about 5% higher); the micro and push
+max RSS unchanged.
+
 ## 2026-11-04: perf: on amd64 the large block cache keeps the sizes a program asks for again
 
 - Kind: perf
