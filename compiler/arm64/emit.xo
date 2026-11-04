@@ -1578,7 +1578,9 @@ fn (g: G) parallel(var b: List[Str], moves: List[Move]) {
     }
     let m = pending[0]
     var tmp = MLoc{reg: SCRATCH0}
-    if m.dst.reg >= FP_BASE {
+    // a wide value in a slot too (decision 0323 stage 3 carries one
+    // across a loop's back edge): x16 holds 64 bits, v31 128
+    if m.dst.reg >= FP_BASE || m.dst.wide {
       tmp = MLoc{reg: FSCRATCH}
     }
     g.move(b, tmp, MSrc{kind: M_LOC, l: m.dst})

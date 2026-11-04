@@ -847,3 +847,477 @@ fn (g: G) slp_ord(at: List[SPos], u: SPos) -> Int {
   }
   -1
 }
+
+/// Decision 0323 stage 3, loop carried packs: a pair of loop header
+/// parameters a and b that the loop reads only as a pack (`zip1 w, a,
+/// b`), and whose values on every back edge are the two lanes of one wide
+/// p (`dup a', p.d[0]`, `dup b', p.d[1]`, the latch's parallel move
+/// `a <- a'`, `b <- b'`), is carried as w instead: the zip1 moves to the
+/// preheader, each latch moves p into w, and the loop's exits split w
+/// back into a and b. Inside an iteration w still holds (a, b), so an exit
+/// from any block of the loop reads the right values. The zip1 and the
+/// dups were on the loop carried chain (nbody's bs[i].vx and vy across
+/// the j loop: zip1, fsub, dup, about 7 cycles an iteration where Go's
+/// scalar fmsub takes 4; 1.036 of Go's wall at 0.867 of its
+/// instructions, 2026-11-04).
+///
+/// Not for a loop with a call outside its cold blocks (a wide value has
+/// no callee saved register) or without one preheader ending in a jump,
+/// or whose exits are entered from outside it.
+fn (var g: G) slp_carry() {
+  if g.x86 {
+    return
+  }
+  var tr: List[Str] = []
+  // one pair a round: a carry may add blocks (an exit's split), so the
+  // loops are found again
+  var n = 0
+  while n < 16 && g.slp_carry_round(tr) {
+    n += 1
+  }
+  if g.f.name == g.m.dump_fn {
+    g.dumps.push(("slpc-${g.f.name}", tr.join("\n")))
+  }
+}
+
+/// One round of slp_carry: the first pair carried in any loop, whether
+/// there was one.
+fn (var g: G) slp_carry_round(var tr: List[Str]) -> Bool {
+  let blocks = g.all_blocks()
+  let preds = g.mpreds_all(blocks)
+  let loops = g.dfs_loops(g.hot[0], preds)
+  for l in loops {
+    let (head, body) = l
+    var pre = -1
+    for p in preds[head] {
+      if body[p] {
+        continue
+      }
+      if pre >= 0 {
+        pre = -1
+        break
+      }
+      pre = p
+    }
+    if pre < 0 || g.term_kind(pre) != K_JUMP {
+      tr.push("loop b${head}: no preheader")
+      continue
+    }
+    var exits: List[Int] = []
+    var ok = true
+    for b in blocks {
+      if !body[b] {
+        continue
+      }
+      for x in g.blocks[b].insts {
+        ok = ok && !(x.kind == K_CALL && !g.blocks[b].cold && !x.has(IF_COLD_CALL))
+      }
+      for s in g.slp_succs(b) {
+        if !body[s] && !exits.contains(s) {
+          exits.push(s)
+        }
+      }
+    }
+    if !ok {
+      tr.push("loop b${head}: a call")
+      continue
+    }
+    if g.slp_carry_one(blocks, preds, body, head, pre, exits, tr) {
+      return true
+    }
+  }
+  false
+}
+
+/// One pair of slp_carry in the loop of header head (its body, preheader
+/// pre and exits), whether one was found and moved.
+fn (var g: G) slp_carry_one(blocks: List[Int], preds: List[List[Int]], body: List[Bool], head: Int, pre: Int, exits: List[Int], var tr: List[Str]) -> Bool {
+  // the counts below are maps over every instruction of blocks, built
+  // per loop: only for a loop with a zip1 to carry (the self build spent
+  // 4% of its CPU here before this check, 2026-11-04)
+  var any_zip = false
+  for zb in blocks {
+    if any_zip || !body[zb] || g.blocks[zb].cold {
+      continue
+    }
+    for z in g.blocks[zb].insts {
+      if z.kind == K_PLAIN && z.text == "zip1 $vd0.2d, $vu0.2d, $vu1.2d" {
+        any_zip = true
+        break
+      }
+    }
+  }
+  if !any_zip {
+    return false
+  }
+  var ndef: Map[Int, Int] = {}
+  var nuse: Map[Int, Int] = {}
+  var nuse_in: Map[Int, Int] = {}
+  // a vreg's (last) definition: (block, index)
+  var defat: Map[Int, (Int, Int)] = {}
+  for b in blocks {
+    for (i, x) in g.blocks[b].insts.indexed() {
+      for d in x.defs {
+        ndef[d] = (ndef.get(d) ?? 0) + 1
+        defat[d] = (b, i)
+      }
+      for u in x.us {
+        nuse[u] = (nuse.get(u) ?? 0) + 1
+        if body[b] {
+          nuse_in[u] = (nuse_in.get(u) ?? 0) + 1
+        }
+      }
+    }
+  }
+  for zb in blocks {
+    if !body[zb] || g.blocks[zb].cold {
+      continue
+    }
+    for (zi, z) in g.blocks[zb].insts.indexed() {
+      if z.kind != K_PLAIN || z.text != "zip1 $vd0.2d, $vu0.2d, $vu1.2d" || z.us.len() != 2 || z.defs.len() != 1 {
+        continue
+      }
+      let a = z.us[0]
+      let c = z.us[1]
+      let w = z.defs[0]
+      if a == c || a == 0 || c == 0 || (ndef.get(w) ?? 0) != 1 || (nuse_in.get(a) ?? 0) != 1 || (nuse_in.get(c) ?? 0) != 1 {
+        continue
+      }
+      // every definition of a or c in the loop: a latch's parallel move
+      // of both, from the lanes of one wide p: (block, index, k of a, k
+      // of c, p)
+      var lat: List[(Int, Int, Int, Int, Int)] = []
+      var drop: List[(Int, Int)] = [(zb, zi)]
+      var ok = true
+      for lb in blocks {
+        if !body[lb] || !ok {
+          continue
+        }
+        for (k, x) in g.blocks[lb].insts.indexed() {
+          let ka = x.defs.index_of(a) ?? -1
+          let kc = x.defs.index_of(c) ?? -1
+          if ka < 0 && kc < 0 {
+            continue
+          }
+          if x.kind != K_PMOVE || ka < 0 || kc < 0 || !g.slp_succs(lb).contains(head) || x.srcs[ka].kind != S_REG || x.srcs[kc].kind != S_REG {
+            ok = false
+            break
+          }
+          let e0 = x.srcs[ka].v
+          let e1 = x.srcs[kc].v
+          if (ndef.get(e0) ?? 0) != 1 || (ndef.get(e1) ?? 0) != 1 || (nuse.get(e0) ?? 0) != 1 || (nuse.get(e1) ?? 0) != 1 {
+            ok = false
+            break
+          }
+          let (b0, i0) = defat.get_or_fault(e0, "a vreg defined once has a definition")
+          let (b1, i1) = defat.get_or_fault(e1, "a vreg defined once has a definition")
+          let d0 = g.blocks[b0].insts[i0]
+          let d1 = g.blocks[b1].insts[i1]
+          if d0.text != "dup $d0, $vu0.d[0]" || d1.text != "dup $d0, $vu0.d[1]" || d0.us.len() != 1 || d1.us.len() != 1 || d0.us[0] != d1.us[0] || !g.wide.contains(d0.us[0]) {
+            ok = false
+            break
+          }
+          lat.push((lb, k, ka, kc, d0.us[0]))
+          drop.push((b0, i0))
+          drop.push((b1, i1))
+        }
+      }
+      if !ok || lat.is_empty() {
+        tr.push("  zip1 b${zb}: a ${a} c ${c}: not a carried pair")
+        continue
+      }
+      // each latch moves p into w, not the lanes into a and c
+      for (lb, k, ka, kc, p) in lat {
+        var x = g.blocks[lb].insts[k]
+        var defs: List[Int] = []
+        var srcs: List[Src] = []
+        for j in 0..x.defs.len() {
+          if j == ka {
+            defs.push(w)
+            srcs.push(rsrc(p))
+          } else if j != kc {
+            defs.push(x.defs[j])
+            srcs.push(x.srcs[j])
+          }
+        }
+        var us: List[Int] = []
+        for s in srcs {
+          if s.kind == S_REG && s.v != 0 {
+            us.push(s.v)
+          }
+        }
+        x.defs = defs
+        x.srcs = srcs
+        x.us = us
+        g.blocks[lb].insts[k] = x
+      }
+      for (db, di) in drop {
+        var x = g.blocks[db].insts[di]
+        x.kind = -1
+        g.blocks[db].insts[di] = x
+      }
+      for b in blocks {
+        if g.blocks[b].insts.any(fn(x) { x.kind == -1 }) {
+          g.blocks[b].insts = g.blocks[b].insts.filter(fn(x) { x.kind != -1 })
+        }
+      }
+      let pins = g.blocks[pre].insts
+      let n = pins.len()
+      g.blocks[pre].insts = pins[0..n - 1] + [g.slp_carry_load(preds, pre, a, c, w) ?? z] + [pins[n - 1]]
+      for s in exits {
+        if !g.slp_live_from(s, a, c, body) {
+          continue
+        }
+        // the pair stored next to each other right after the loop: one q
+        // store of w, no split (nbody's j loop runs 0 to 4 times an entry,
+        // where the exit's two dups cost more than the loop saved)
+        if (nuse.get(a) ?? 0) == 2 && (nuse.get(c) ?? 0) == 2 && preds[s].all(fn(p) { body[p] }) && g.slp_carry_store(preds, body, s, a, c, w) {
+          continue
+        }
+        let x0 = Inst{kind: K_PLAIN, text: "dup $d0, $vu0.d[0]", defs: [a], us: [w]}
+        let x1 = Inst{kind: K_PLAIN, text: "dup $d0, $vu0.d[1]", defs: [c], us: [w]}
+        if preds[s].all(fn(p) { body[p] }) {
+          g.blocks[s].insts = [x0, x1] + g.blocks[s].insts
+          continue
+        }
+        // entered from outside the loop too (a rotated loop's guard skips
+        // it): split each edge from the loop instead, where w is defined
+        for p in preds[s] {
+          if !body[p] {
+            continue
+          }
+          let nb = g.new_block(g.blocks[s].cold)
+          g.blocks[nb].insts = [x0, x1, Inst{kind: K_JUMP, targets: [s]}]
+          let t = g.term_at(p)
+          var y = g.blocks[p].insts[t]
+          for (k, tg) in y.targets.indexed() {
+            if tg == s {
+              y.targets[k] = nb
+            }
+          }
+          g.blocks[p].insts[t] = y
+          // lay it out right after p
+          let list = if g.blocks[s].cold { g.cold } else { g.hot }
+          var out: List[Int] = []
+          for b in list {
+            if b == nb {
+              continue
+            }
+            out.push(b)
+            if b == p {
+              out.push(nb)
+            }
+          }
+          if !out.contains(nb) {
+            out.push(nb)
+          }
+          if g.blocks[s].cold {
+            g.cold = out
+          } else {
+            g.hot = out
+          }
+        }
+      }
+      tr.push("  zip1 b${zb}: a ${a} c ${c} carried as ${w}, ${lat.len()} latches, ${exits.len()} exits")
+      return true
+    }
+  }
+  false
+}
+
+/// Whether a or c may be read on a path from block s (outside the loop
+/// body) before both are written: an exit's split of a carried pair is
+/// needed (a fault's cold exit reads neither, and keeping w live into it
+/// kept w and the latch's p apart, a mov an iteration).
+fn (g: G) slp_live_from(s: Int, a: Int, c: Int, body: List[Bool]) -> Bool {
+  var seen: Map[Int, Bool] = {}
+  var work = [s]
+  while !work.is_empty() {
+    let b = work.pop() ?? -1
+    if b < 0 || seen.contains(b) {
+      continue
+    }
+    seen[b] = true
+    var wa = false
+    var wc = false
+    for x in g.blocks[b].insts {
+      if (!wa && x.us.contains(a)) || (!wc && x.us.contains(c)) {
+        return true
+      }
+      wa = wa || x.defs.contains(a)
+      wc = wc || x.defs.contains(c)
+    }
+    if wa && wc {
+      continue
+    }
+    for t in g.slp_succs(b) {
+      // back into the loop: its header's parameters are a and c
+      if body[t] {
+        return true
+      }
+      work.push(t)
+    }
+  }
+  false
+}
+
+/// slp_carry's exit split as one store: the blocks from s on (s, then
+/// each block whose one predecessor is the one before, which jumps only
+/// there, up to 4) store a at [base, #k] and c at [base, #k + 8] (str,
+/// the only reads of a and c outside the loop) with nothing between that
+/// touches memory or base; the two become one `str q` of w at the later
+/// one's place. Whether it did.
+fn (var g: G) slp_carry_store(preds: List[List[Int]], body: List[Bool], s: Int, a: Int, c: Int, w: Int) -> Bool {
+  var ch = [s]
+  while ch.len() < 4 {
+    let ss = g.slp_succs(ch[ch.len() - 1])
+    if ss.len() != 1 || ss[0] >= body.len() || body[ss[0]] || preds[ss[0]].len() != 1 || ch.contains(ss[0]) {
+      break
+    }
+    ch.push(ss[0])
+  }
+  // every instruction of the chain: (block, index)
+  var at: List[(Int, Int)] = []
+  for b in ch {
+    for i in 0..g.blocks[b].insts.len() {
+      at.push((b, i))
+    }
+  }
+  var ia = -1
+  var ic = -1
+  var ka = -1
+  var kc = -1
+  for (n, (b, i)) in at.indexed() {
+    let x = g.blocks[b].insts[i]
+    if let Some((k, _, v)) = g.slp_store(x) {
+      if v == a && ia < 0 && x.us[1] != a && x.us[1] != c {
+        ia = n
+        ka = k
+        continue
+      } else if v == c && ic < 0 && x.us[1] != a && x.us[1] != c {
+        ic = n
+        kc = k
+        continue
+      }
+    }
+    if x.us.contains(a) || x.us.contains(c) {
+      return false
+    }
+  }
+  if ia < 0 || ic < 0 {
+    return false
+  }
+  let xa = g.blocks[at[ia].0].insts[at[ia].1]
+  let xc = g.blocks[at[ic].0].insts[at[ic].1]
+  let base = xa.us[1]
+  // ldr/str q takes a multiple of 16 up to 65520, or -256 to 255
+  if base != xc.us[1] || ka < 0 || kc != ka + 8 || !(ka % 16 == 0 && ka <= 65520 || ka < 256) {
+    return false
+  }
+  let lo = imin(ia, ic)
+  let hi = imax(ia, ic)
+  for n in lo + 1..hi {
+    let x = g.blocks[at[n].0].insts[at[n].1]
+    if x.defs.contains(base) {
+      return false
+    }
+    if x.kind == K_JUMP {
+      continue
+    }
+    if x.kind != K_PLAIN || x.text.contains("[") || x.text.contains("\n") {
+      return false
+    }
+  }
+  let (hb, hn) = at[hi]
+  var y = g.blocks[hb].insts[hn]
+  y.text = "str $qu0, [$u1, #${ka}]"
+  y.us = [w, base]
+  g.blocks[hb].insts[hn] = y
+  let (lb, ln) = at[lo]
+  let li = g.blocks[lb].insts
+  g.blocks[lb].insts = li[0..ln] + li[ln + 1..li.len()]
+  true
+}
+
+/// slp_carry's entry pack as one load: the preheader's parallel move
+/// gives a and c the values of `ldr [base, #k]` and `ldr [base, #k + 8]`
+/// in the preheader or the blocks straight before it (each the one
+/// predecessor of the next, its other successors cold, up to 4), with nothing
+/// after the first load that writes memory, base or the loaded values;
+/// then w is `ldr q [base, #k]` at the preheader's end, not a zip1.
+fn (g: G) slp_carry_load(preds: List[List[Int]], pre: Int, a: Int, c: Int, w: Int) -> Inst? {
+  var ch = [pre]
+  while ch.len() < 4 {
+    let ps = preds[ch[0]]
+    // its other successors cold (a check's fault path): the q load only
+    // reads again what the loads read, on the path that reaches pre
+    if ps.len() != 1 || ch.contains(ps[0]) || !g.slp_succs(ps[0]).all(fn(t) { t == ch[0] || g.blocks[t].cold }) {
+      break
+    }
+    ch = [ps[0]] + ch
+  }
+  var at: List[(Int, Int)] = []
+  for b in ch {
+    for i in 0..g.blocks[b].insts.len() {
+      at.push((b, i))
+    }
+  }
+  var pm = -1
+  for (n, (b, i)) in at.indexed() {
+    let x = g.blocks[b].insts[i]
+    if b == pre && x.kind == K_PMOVE && x.defs.contains(a) && x.defs.contains(c) {
+      pm = n
+    }
+  }
+  if pm < 0 {
+    return None
+  }
+  let x = g.blocks[at[pm].0].insts[at[pm].1]
+  let sa = x.srcs[x.defs.index_of(a) ?? 0]
+  let sc = x.srcs[x.defs.index_of(c) ?? 0]
+  if sa.kind != S_REG || sc.kind != S_REG {
+    return None
+  }
+  var la = -1
+  var lc = -1
+  var ka = -1
+  var kc = -1
+  var ba = -1
+  var bc = -1
+  for (n, (b, i)) in at.indexed() {
+    if let Some((k, bs, d)) = g.slp_load(g.blocks[b].insts[i]) {
+      if d == sa.v {
+        la = n
+        ka = k
+        ba = bs
+      } else if d == sc.v {
+        lc = n
+        kc = k
+        bc = bs
+      }
+    }
+  }
+  if la < 0 || lc < 0 || ba != bc || ka < 0 || kc != ka + 8 || !(ka % 16 == 0 && ka <= 65520 || ka < 256) {
+    return None
+  }
+  for n in imin(la, lc)..at.len() {
+    let (b, i) = at[n]
+    let y = g.blocks[b].insts[i]
+    if n == la || n == lc || (b == pre && i == g.blocks[pre].insts.len() - 1) {
+      continue
+    }
+    // a parallel move writes registers only; any other write of base or
+    // the loaded values, a store, a call: the slots may differ at the end
+    if y.defs.contains(ba) || y.defs.contains(sa.v) || y.defs.contains(sc.v) {
+      return None
+    }
+    if y.kind == K_PMOVE || y.kind == K_JUMP {
+      continue
+    }
+    if y.kind != K_PLAIN || slp_writes(y) {
+      return None
+    }
+  }
+  Some(Inst{kind: K_PLAIN, text: "ldr $qd0, [$u0, #${ka}]", defs: [w], us: [ba]})
+}
+

@@ -1,0 +1,42 @@
+// Codegen patterns (decision 0217, `xo dev codegen`): loop carried Float
+// pairs (decision 0323 stage 3, compiler/arm64 slp.xo slp_carry).
+
+struct P {
+  x: Float
+  y: Float
+  vx: Float
+  vy: Float
+}
+
+// p's (vx, vy), held in locals across the j loop (as hoist_fields holds
+// nbody's bs[i].vx and vy), is one pair there: loaded with one q load
+// before it (the pack's own load, not two loads and a zip1) and updated
+// by one two lane fsub an iteration; without slp_carry the loop builds
+// the pair with zip1 and splits it with two dups every iteration. The
+// stores after it stay two (a bounds check's fault path between them).
+fn pull(var ps: List[P], i: Int, k: Float) {
+  // arm64: "fsub v[0-9]+\.2d, v[0-9]+\.2d, v[0-9]+\.2d" "ldr q[0-9]+, \[x[0-9]+, #40\]"
+  let xi = ps[i].x
+  let yi = ps[i].y
+  var vx = ps[i].vx
+  var vy = ps[i].vy
+  var j = i + 1
+  while j < ps.len() {
+    vx -= (xi - ps[j].x) * k
+    vy -= (yi - ps[j].y) * k
+    j += 1
+  }
+  ps[i].vx = vx
+  ps[i].vy = vy
+}
+
+fn main(os: Os) {
+  var ps: List[P] = []
+  for n in 0..6 {
+    ps.push(P{x: Float(n), y: Float(n * n), vx: 0.5, vy: -0.5})
+  }
+  for i in 0..6 {
+    pull(ps, i, 0.125)
+  }
+  os.stdio.println("${ps[0].vx} ${ps[0].vy} ${ps[3].vx} ${ps[5].vy}")
+}

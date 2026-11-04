@@ -89,6 +89,7 @@ pub fn passes() -> List[Str] {
     "live_dce",
     "select_compares",
     "slp_f64",
+    "slp_carry",
     "hoist_consts",
     "hoist_invariants",
     "copy_prop",

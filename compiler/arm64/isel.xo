@@ -62,6 +62,10 @@ fn (var g: G) function(fi: Int) {
   // scalars is built once, outside the loop) and cluster_mem
   if g.on("slp_f64") {
     g.slp_f64()
+    // decision 0323 stage 3: a pair a loop carries stays one wide register
+    if g.on("slp_carry") {
+      g.slp_carry()
+    }
   }
   if g.on("hoist_consts") {
     g.hoist_consts()
