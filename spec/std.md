@@ -4713,7 +4713,7 @@ the Go backend. Pure but for `lookup` (decision 0406: host's addresses
 through `Net.lookup_host`, section 3.2).
 
 ```
-struct Addr { bits: Int, ip: Bytes, zone: Str } derive Ord   // 32, 128, or 0; 16 bytes; an IPv6 zone
+struct Addr { bits: Int, hi: Int, lo: Int, zone: Str } derive Ord   // 32, 128, or 0; the 16 bytes as two words (top bit flipped, as Uuid); an IPv6 zone
 struct Prefix { addr: Addr, len: Int }
 struct ParseErr { msg: Str }   // ParseAddr("1.2.3"): IPv4 address too short
 
@@ -4733,9 +4733,14 @@ fn (p: Prefix) display() -> Str
 
 - Parsing is Go's ParseAddr and ParsePrefix, errors included: IPv4
   without leading zeros, IPv6 with `::`, an embedded IPv4, and zones (not
-  in a prefix). An IPv4 address is kept as `::ffff:a.b.c.d` in `ip`, with
-  `bits` 32; `==` and the order are Go's (`Compare`: the bit length, the
-  bytes, then the zone).
+  in a prefix). An IPv4 address is kept as `::ffff:a.b.c.d` in the words
+  `hi` and `lo`, with `bits` 32; `==` and the order are Go's (`Compare`:
+  the bit length, the bytes, then the zone).
+- Migration (decision 0485, Breaking): `Addr` has two words instead of the
+  field `ip: Bytes`, so an address is three words and a zone with no
+  allocation. A program that read `a.ip` reads `a.bytes()` (4 bytes for
+  IPv4, 16 for IPv6, Go's `AsSlice`; `ip` was always 16) and builds an
+  address from bytes with `netip.addr_from_bytes(b)`.
 - A typical use, the client address behind trusted proxies:
   `trusted.any(fn(p) { p.contains(peer) })`.
 

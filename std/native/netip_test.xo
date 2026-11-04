@@ -3336,7 +3336,7 @@ test "go net/netip: ParseAddr and ParsePrefix" {
   var bad: List[Str] = []
   for (s, want) in ADDRS {
     let got = parse_addr(s).map(fn(a) {
-      (a.bits, a.ip.to_hex(), a.zone, addr_display(a), addr_is_4in6(a), addr_is_loopback(a), addr_is_private(a), addr_is_unspecified(a), addr_is_link_local_unicast(a), addr_is_multicast(a), addr_is_4(addr_unmap(a)), addr_bytes(a).to_hex())
+      (a.bits, words_bytes(hi_of(a), lo_of(a)).to_hex(), a.zone, addr_display(a), addr_is_4in6(a), addr_is_loopback(a), addr_is_private(a), addr_is_unspecified(a), addr_is_link_local_unicast(a), addr_is_multicast(a), addr_is_4(addr_unmap(a)), addr_bytes(a).to_hex())
     }).map_err(fn(e) { e.msg })
     if got != want && bad.len() < 10 {
       bad.push("${s.quote()}: got ${got.debug()} want ${want.debug()}")

@@ -3,11 +3,15 @@
 // addresses and prefixes as values. Pure but for lookup (decision 0406).
 
 /// An IP address: `bits` is 32 for IPv4, 128 for IPv6, 0 for the zero
-/// value; `ip` its 16 bytes (an IPv4 address as ::ffff:a.b.c.d); `zone`
-/// an IPv6 zone. The order is Go's Addr.Compare.
+/// value; `hi` and `lo` its 16 bytes as two words (an IPv4 address as
+/// ::ffff:a.b.c.d); `zone` an IPv6 zone. The order is Go's Addr.Compare.
 struct Addr {
   bits: Int
-  ip: Bytes
+  /// the first and last 8 bytes, the first byte highest, with the top
+  /// bit flipped so that the derived order of the signed words is the
+  /// order of the bytes
+  hi: Int
+  lo: Int
   zone: Str
 } derive Ord
 

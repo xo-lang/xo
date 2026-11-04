@@ -1,6 +1,9 @@
 package rt
 
-import "net/netip"
+import (
+	"encoding/binary"
+	"net/netip"
+)
 
 // The display methods of std/netip's values (std.md 28): the runtime calls
 // them through interfaces, so they stay Go methods (netipOf is the runtime's
@@ -11,12 +14,17 @@ func (e Netip_ParseErr) M_display(*Task) string { return e.F_msg }
 
 func netipOf(a netip.Addr) Netip_Addr {
 	ip := a.As16()
-	return Netip_Addr{F_bits: int64(a.BitLen()), F_ip: Bytes(ip[:]), F_zone: textOf(a.Zone())}
+	const sign = -1 << 63
+	hi := int64(binary.BigEndian.Uint64(ip[:8]))
+	lo := int64(binary.BigEndian.Uint64(ip[8:]))
+	return Netip_Addr{F_bits: int64(a.BitLen()), F_hi: hi ^ sign, F_lo: lo ^ sign, F_zone: textOf(a.Zone())}
 }
 
 func (a Netip_Addr) goAddr() netip.Addr {
 	var b [16]byte
-	copy(b[:], a.F_ip)
+	const sign = -1 << 63
+	binary.BigEndian.PutUint64(b[:8], uint64(a.F_hi^sign))
+	binary.BigEndian.PutUint64(b[8:], uint64(a.F_lo^sign))
 	switch a.F_bits {
 	case 32:
 		return netip.AddrFrom16(b).Unmap()

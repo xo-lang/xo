@@ -526,7 +526,7 @@ fn create_certificate(r: Rand, t: x509.Template, public_key: crypto.PublicKey, p
       names.push(asn1.enc_implicit(1, e.bytes()))
     }
     for a in t.ip_addresses {
-      names.push(asn1.enc_implicit(7, if a.bits == 32 { a.ip[12..16] } else { a.ip }))
+      names.push(asn1.enc_implicit(7, a.bytes()))
     }
     for u in t.uris {
       ia5_check(u)?
@@ -701,7 +701,7 @@ fn sans(dns: List[Str], emails: List[Str], ips: List[netip.Addr], uris: List[Str
     names.push(asn1.enc_implicit(1, e.bytes()))
   }
   for a in ips {
-    names.push(asn1.enc_implicit(7, if a.bits == 32 { a.ip[12..16] } else { a.ip }))
+    names.push(asn1.enc_implicit(7, a.bytes()))
   }
   for u in uris {
     ia5_check(u)?

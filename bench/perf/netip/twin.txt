@@ -1,2 +1,8 @@
-# twincheck: netip's program takes no arguments (one workload).
-- -
+# twincheck: netip: six workloads; Go is net/netip.
+- - none
+- - mixed
+- - parse4
+- - parse6
+- - display4
+- - display6
+- - compare

@@ -35,8 +35,9 @@ struct Addr {
 }
 ```
 
-- `Ord` becomes a written `compare` (Go's `Addr.Compare`: bit length, then `hi` then `lo` as unsigned, then zone): a
-  `derive Ord` on signed words would put addresses with the top bit set first.
+- `Ord` stays `derive Ord` (Go's `Addr.Compare`: bit length, then `hi` then `lo` as unsigned, then zone): the stored
+  words have their top bit flipped, as `Uuid`'s do, so the signed order of the words is the unsigned order of the bytes
+  (implemented 2026-11-03; no written compare was needed).
 - `bytes()`, `addr_from_bytes`, `display` and the predicates read and write the words with shifts; `is_private`,
   `is_loopback` and the others become comparisons of `hi` and `lo`, as Go's.
 - Parsers accumulate the words as they read groups and digits, with no builder. `string4` and `string6` keep one

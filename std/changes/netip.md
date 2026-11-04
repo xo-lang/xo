@@ -1,5 +1,16 @@
 # std/netip changes
 
+## 2026-11-03: perf, breaking: Addr holds its 16 bytes as two words
+
+- Kind: perf (breaking)
+- Commit: this commit
+- Found by: bench/perf/netip 1.79 of Go's wall (decision 0485)
+- Go reference: net/netip (go1.26.1): `Addr{addr uint128, z}`
+- Test: the netip, x509 and http corpora (arm64, LLVM, Go backend), twincheck bench/perf/netip
+- Timing: host row follows in std-twin-netip-2026-11-03.md
+
+`Addr` is `{bits, hi, lo, zone}` with the top bit of each word flipped so that the derived order of the signed words is the order of the bytes (as `Uuid`). The parsers build the words with shifts (a `::` moves the later groups with a 128-bit shift), the predicates and `Prefix.contains` compare masked words, and `string4`/`string6` read octets and groups from them. Breaking: the field `ip: Bytes` is gone; read `a.bytes()` and build with `netip.addr_from_bytes(b)`. std/x509's IP SANs and the corpus helpers use `bytes()`.
+
 ## 2026-11-03: perf: address text is returned without a UTF-8 check, and parse_ipv6 scans for % by byte
 
 - Kind: perf

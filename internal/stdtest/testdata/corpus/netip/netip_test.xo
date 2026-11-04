@@ -3918,8 +3918,19 @@ fn first_bad[T](bad: List[T]) -> List[T] { bad[0..(if bad.len() < 20 { bad.len()
 
 fn bit(x: Bool) -> Str { if x { "1" } else { "0" } }
 
+/// Go's As16 as hex: the 16 bytes of the address (an IPv4 address as ::ffff:a.b.c.d).
+fn ip16(a: netip.Addr) -> Str {
+  if a.bits == 32 {
+    return "00000000000000000000ffff" + a.bytes().to_hex()
+  }
+  if a.bits == 128 {
+    return a.bytes().to_hex()
+  }
+  "00000000000000000000000000000000"
+}
+
 fn addr_text(a: netip.Addr) -> Str {
-  "${a.bits}|${a.ip.to_hex()}|${a.zone}|${a}|${bit(a.is_4())}${bit(a.is_6())}${bit(a.is_4in6())}${bit(a.is_loopback())}${bit(a.is_private())}${bit(a.is_unspecified())}${bit(a.is_link_local_unicast())}${bit(a.is_multicast())}|${a.unmap()}|${a.bytes().to_hex()}"
+  "${a.bits}|${ip16(a)}|${a.zone}|${a}|${bit(a.is_4())}${bit(a.is_6())}${bit(a.is_4in6())}${bit(a.is_loopback())}${bit(a.is_private())}${bit(a.is_unspecified())}${bit(a.is_link_local_unicast())}${bit(a.is_multicast())}|${a.unmap()}|${a.bytes().to_hex()}"
 }
 
 /// The addresses that parse, in order: the probes of PREFIXES.
@@ -3975,7 +3986,7 @@ test "the order of Addr is Go's Compare" {
     let a = g[i]
     let b = g[i + 1]
     // Go: BitLen, then the 16 bytes, then the zone
-    let want = if a.bits != b.bits { a.bits < b.bits } else if a.ip != b.ip { a.ip.to_hex() < b.ip.to_hex() } else { a.zone < b.zone }
+    let want = if a.bits != b.bits { a.bits < b.bits } else if ip16(a) != ip16(b) { ip16(a) < ip16(b) } else { a.zone < b.zone }
     if (a < b) != want {
       bad.push(("${a}", "${b}"))
     }
