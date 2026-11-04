@@ -1688,7 +1688,7 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   g.compute_homes(main)
   if g.conc {
     let t3 = rt3_text(g, main, main_res, main_args)
-    rt = rt + (if g.net && g.cmd { rt9_sched(t3) } else { t3 })
+    rt = rt + (if g.net && g.cmd { rt9_sched(t3, tcp: g.tcp) } else { t3 })
   }
   if g.net && g.cmd {
     rt = rt + rt9_text(g)

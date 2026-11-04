@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+read 1048576 of 1048576 bytes, 0 wrong, then the end
+--- stderr

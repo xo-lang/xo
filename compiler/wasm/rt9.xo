@@ -74,7 +74,7 @@ fn rt9_imports() -> Str {
     (import "wasi:io/streams@0.2.0" "[resource-drop]input-stream" (func $sk_idrop (param i32)))
     (import "wasi:io/streams@0.2.0" "[method]output-stream.check-write" (func $sk_ocheck (param i32 i32)))
     (import "wasi:io/streams@0.2.0" "[method]output-stream.write" (func $sk_owrite (param i32 i32 i32 i32)))
-    (import "wasi:io/streams@0.2.0" "[method]output-stream.blocking-flush" (func $sk_oflush (param i32 i32)))
+    (import "wasi:io/streams@0.2.0" "[method]output-stream.flush" (func $sk_oflush_start (param i32 i32)))
     (import "wasi:io/streams@0.2.0" "[method]output-stream.subscribe" (func $sk_osub (param i32) (result i32)))
     (import "wasi:io/poll@0.2.0" "poll" (func $sk_poll (param i32 i32 i32)))
     (import "wasi:sockets/udp-create-socket@0.2.0" "create-udp-socket" (func $udp_create (param i32 i32)))
@@ -99,18 +99,24 @@ fn rt9_imports() -> Str {
 /// table ({pollable, owner, task, unused} entries of 16 bytes).
 fn rt9_globals(var g: Gen) -> Str {
   let empty = g.str_obj(b"")
-  "    (global $nstat (mut i32) (i32.const 0))\n    (global $nmsg (mut i32) (i32.const ${empty}))\n    (global $nmsgn (mut i32) (i32.const 0))\n    (global $skerr (mut i32) (i32.const 0))\n    (global $skab (mut i32) (i32.const 0))\n    (global $sknet (mut i32) (i32.const -1))\n    (global $wq (mut i32) (i32.const 0))\n    (global $wn (mut i32) (i32.const 0))\n    (global $wcap (mut i32) (i32.const 0))\n    (global $wgen (mut i32) (i32.const 0))\n"
+  "    (global $nstat (mut i32) (i32.const 0))\n    (global $nmsg (mut i32) (i32.const ${empty}))\n    (global $nmsgn (mut i32) (i32.const 0))\n    (global $skerr (mut i32) (i32.const 0))\n    (global $skab (mut i32) (i32.const 0))\n    (global $sknet (mut i32) (i32.const -1))\n    (global $wq (mut i32) (i32.const 0))\n    (global $wn (mut i32) (i32.const 0))\n    (global $wcap (mut i32) (i32.const 0))\n    (global $wgen (mut i32) (i32.const 0))\n    (global $clq (mut i32) (i32.const 0))\n    (global $cln (mut i32) (i32.const 0))\n    (global $clcap (mut i32) (i32.const 0))\n"
 }
 
 /// rt3.xo's scheduler with $io_poll before it sleeps or reports a deadlock:
 /// the waits on sockets are what can still wake a task.
-fn rt9_sched(rt3: Str) -> Str {
+/// tcp: the program closes TCP connections, so main's end waits for the
+/// closing list ($sk_closing_drain) after $sched_end.
+fn rt9_sched(rt3: Str, tcp: Bool = false) -> Str {
   var out = StrBuilder.new()
   let ls = rt3.lines()
   var done = false
   for (i, l) in ls.indexed() {
     out.write(l)
     out.write("\n")
+    if tcp && l.trim() == "call $sched_end" {
+      let ind = l[0..l.len() - l.trim_start().len()]
+      out.write("${ind}call $sk_closing_drain\n")
+    }
     if !done && l.trim() == "local.tee $d" && i > 0 && ls[i - 1].trim() == "call $next_deadline" {
       let ind = l[0..l.len() - l.trim_start().len()]
       out.write("${ind}call $io_poll\n${ind}br_if $round\n${ind}local.get $d\n")
@@ -152,18 +158,6 @@ fn rt9_text(var g: Gen) -> Str {
       end""" } else { "" }
   let tcp_shut = if g.tcp { """
       local.get $c
-      i32.load offset=16
-      if
-        ;; what the stream holds goes out before it is dropped
-        local.get $c
-        i32.load offset=16
-        call $hret_at
-        call $sk_oflush
-        local.get $c
-        i32.load offset=16
-        call $ostream_drop
-      end
-      local.get $c
       i32.load offset=12
       if
         local.get $c
@@ -171,8 +165,280 @@ fn rt9_text(var g: Gen) -> Str {
         call $sk_idrop
       end
       local.get $c
+      i32.load offset=16
+      if
+        ;; what the stream holds goes out after the close, without waiting
+        ;; here: a blocking flush stopped every task, the peer too when it
+        ;; is one (a deadlock, websocket_tls_deadline 2026-11-03). Nothing
+        ;; unsent (the flush ends at once) or a failed stream drops now;
+        ;; else the stream and the socket wait in the closing list
+        ;; ($sk_closing_sweep), since dropping a stream whose write is in
+        ;; flight waits in the host for that write (conn_deadline)
+        local.get $c
+        i32.load offset=16
+        call $hret_at
+        call $sk_oflush_start
+        local.get $c
+        i32.load offset=16
+        call $sk_out_done
+        i32.eqz
+        if
+          local.get $c
+          i32.load offset=16
+          local.get $c
+          i32.load offset=8
+          call $sk_closing_add
+          return
+        end
+        local.get $c
+        i32.load offset=16
+        call $ostream_drop
+      end
+      local.get $c
       i32.load offset=8
       call $sk_drop""" } else { "" }
+  // the closing list (TCP only: a UDP close drops at once)
+  let closing = if g.tcp { """
+    ;; a closed connection's output stream o and socket s, kept until what
+    ;; o holds has gone out ({o, s} entries of 8 bytes)
+    (func $sk_closing_add (param $o i32) (param $s i32) (local $nb i32)
+      global.get $cln
+      global.get $clcap
+      i32.ge_u
+      if
+        global.get $clcap
+        i32.const 1
+        i32.shl
+        i32.const 4
+        i32.add
+        global.set $clcap
+        global.get $clcap
+        i32.const 3
+        i32.shl
+        call $alloc
+        local.set $nb
+        global.get $clq
+        if
+          local.get $nb
+          global.get $clq
+          global.get $cln
+          i32.const 3
+          i32.shl
+          memory.copy
+          global.get $clq
+          call $free
+        end
+        local.get $nb
+        global.set $clq
+      end
+      global.get $clq
+      global.get $cln
+      i32.const 3
+      i32.shl
+      i32.add
+      local.tee $nb
+      local.get $o
+      i32.store
+      local.get $nb
+      local.get $s
+      i32.store offset=4
+      global.get $cln
+      i32.const 1
+      i32.add
+      global.set $cln)
+
+    ;; 1 when output stream o, after a flush started, has written what it
+    ;; held (check-write allows bytes again) or failed; never waits
+    (func $sk_out_done (param $o i32) (result i32) (local $r i32)
+      local.get $o
+      call $hret_at
+      local.tee $r
+      call $sk_ocheck
+      local.get $r
+      i32.load8_u
+      if
+        local.get $r
+        i32.load8_u offset=8
+        i32.eqz
+        if
+          local.get $r
+          i32.load offset=12
+          call $ioerr_drop
+        end
+        i32.const 1
+        return
+      end
+      local.get $r
+      i64.load offset=8
+      i64.eqz
+      i32.eqz)
+
+    ;; drops each closing entry whose stream is done ($sk_out_done); the
+    ;; host writes in the background meanwhile. Called from $io_poll and
+    ;; $sk_closing_drain.
+    (func $sk_closing_sweep (local $i i32) (local $e i32)
+      block $x
+        loop $l
+          local.get $i
+          global.get $cln
+          i32.ge_u
+          br_if $x
+          global.get $clq
+          local.get $i
+          i32.const 3
+          i32.shl
+          i32.add
+          local.tee $e
+          i32.load
+          call $sk_out_done
+          if
+            local.get $e
+            i32.load
+            call $ostream_drop
+            local.get $e
+            i32.load offset=4
+            call $sk_drop
+            ;; the last entry takes its place
+            global.get $cln
+            i32.const 1
+            i32.sub
+            global.set $cln
+            local.get $e
+            global.get $clq
+            global.get $cln
+            i32.const 3
+            i32.shl
+            i32.add
+            i64.load
+            i64.store
+          else
+            local.get $i
+            i32.const 1
+            i32.add
+            local.set $i
+          end
+          br $l
+        end
+      end)
+
+    ;; after main ended: waits for the closing streams to write what they
+    ;; hold, at most 2 s, then leaves the rest to the instance's end (a
+    ;; native close hands the bytes to the kernel, which sends them after
+    ;; the process exits; a WASI instance's streams end with it)
+    (func $sk_closing_drain (local $end i64) (local $b i32) (local $i i32) (local $left i64) (local $r i32)
+      call $sk_closing_sweep
+      global.get $cln
+      i32.eqz
+      if
+        return
+      end
+      call $mono
+      i64.const 2000000000
+      i64.add
+      local.set $end
+      block $out
+        loop $wait
+          call $sk_closing_sweep
+          global.get $cln
+          i32.eqz
+          br_if $out
+          local.get $end
+          call $mono
+          i64.sub
+          local.tee $left
+          i64.const 0
+          i64.le_s
+          br_if $out
+          ;; each stream's pollable and the clock's, then one poll
+          global.get $cln
+          i32.const 1
+          i32.add
+          i32.const 2
+          i32.shl
+          call $alloc
+          local.set $b
+          i32.const 0
+          local.set $i
+          block $x
+            loop $l
+              local.get $i
+              global.get $cln
+              i32.ge_u
+              br_if $x
+              local.get $b
+              local.get $i
+              i32.const 2
+              i32.shl
+              i32.add
+              global.get $clq
+              local.get $i
+              i32.const 3
+              i32.shl
+              i32.add
+              i32.load
+              call $sk_osub
+              i32.store
+              local.get $i
+              i32.const 1
+              i32.add
+              local.set $i
+              br $l
+            end
+          end
+          local.get $b
+          global.get $cln
+          i32.const 2
+          i32.shl
+          i32.add
+          local.get $left
+          call $mono_sub
+          i32.store
+          local.get $b
+          global.get $cln
+          i32.const 1
+          i32.add
+          call $hret_at
+          local.tee $r
+          call $sk_poll
+          local.get $r
+          i32.load offset=4
+          if
+            local.get $r
+            i32.load
+            call $free
+          end
+          i32.const 0
+          local.set $i
+          block $x
+            loop $l
+              local.get $i
+              global.get $cln
+              i32.gt_u
+              br_if $x
+              local.get $b
+              local.get $i
+              i32.const 2
+              i32.shl
+              i32.add
+              i32.load
+              call $poll_drop
+              local.get $i
+              i32.const 1
+              i32.add
+              local.set $i
+              br $l
+            end
+          end
+          local.get $b
+          call $free
+          br $wait
+        end
+      end
+      ;; what is left is not dropped: wasmtime's drop of an output stream
+      ;; waits for its write, which a peer that never reads never ends
+      ;; (conn_deadline hung so, 2026-11-03); the instance's end takes them
+      )
+""" } else { "" }
   let udp_addr = if g.udp { """
       local.get $remote
       i32.const 2
@@ -193,6 +459,73 @@ fn rt9_text(var g: Gen) -> Str {
         local.get $s
         local.get $r
         call $sk_local
+      end""" } else { "" }
+  let sweep = if g.tcp { "      call $sk_closing_sweep" } else { "" }
+  // the closing streams' pollables join the poll, so a flush that ends
+  // while the tasks wait on other pollables (a peer waiting for the end
+  // of its stream, which comes once the socket is dropped) wakes it
+  let cl_room = if g.tcp { "      global.get $cln\n      i32.add" } else { "" }
+  let cl_add = if g.tcp { """
+      local.get $n
+      local.set $cb
+      global.get $cln
+      local.set $ck
+      i32.const 0
+      local.set $i
+      block $x
+        loop $l
+          local.get $i
+          local.get $ck
+          i32.ge_u
+          br_if $x
+          local.get $b
+          local.get $n
+          i32.const 2
+          i32.shl
+          i32.add
+          global.get $clq
+          local.get $i
+          i32.const 3
+          i32.shl
+          i32.add
+          i32.load
+          call $sk_osub
+          i32.store
+          local.get $n
+          i32.const 1
+          i32.add
+          local.set $n
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
+      end""" } else { "" }
+  let cl_drop = if g.tcp { """
+      i32.const 0
+      local.set $i
+      block $x
+        loop $l
+          local.get $i
+          local.get $ck
+          i32.ge_u
+          br_if $x
+          local.get $b
+          local.get $cb
+          local.get $i
+          i32.add
+          i32.const 2
+          i32.shl
+          i32.add
+          i32.load
+          call $poll_drop
+          local.get $i
+          i32.const 1
+          i32.add
+          local.set $i
+          br $l
+        end
       end""" } else { "" }
   """
     ;; the outcome of the last network operation (netwasi.xo's): a NetErr
@@ -599,7 +932,8 @@ fn rt9_text(var g: Gen) -> Str {
     ;; no task waits on a socket; else polls their pollables and, when d is
     ;; not 0, a clock pollable for the deadline d, then drops them all and
     ;; wakes the waiting tasks, which repeat their calls
-    (func $io_poll (param $d i64) (result i32) (local $n i32) (local $b i32) (local $i i32) (local $clk i32) (local $now i64) (local $r i32)
+    (func $io_poll (param $d i64) (result i32) (local $n i32) (local $b i32) (local $i i32) (local $clk i32) (local $now i64) (local $r i32) (local $cb i32) (local $ck i32)
+${sweep}
       global.get $wn
       i32.eqz
       if
@@ -610,6 +944,7 @@ fn rt9_text(var g: Gen) -> Str {
       local.tee $n
       i32.const 1
       i32.add
+${cl_room}
       i32.const 2
       i32.shl
       call $alloc
@@ -639,6 +974,7 @@ fn rt9_text(var g: Gen) -> Str {
           br $l
         end
       end
+${cl_add}
       local.get $d
       i64.eqz
       i32.eqz
@@ -687,6 +1023,7 @@ fn rt9_text(var g: Gen) -> Str {
         local.get $clk
         call $poll_drop
       end
+${cl_drop}
       local.get $b
       call $free
       i32.const 0
@@ -807,6 +1144,7 @@ fn rt9_text(var g: Gen) -> Str {
       call $sk_unwait
 ${udp_shut}
 ${tcp_shut})
+${closing}
 
     ;; Net.listen's socket: bound to the address (v6, the 4 or 16 bytes ip,
     ;; port) and listening

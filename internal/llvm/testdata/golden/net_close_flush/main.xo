@@ -1,0 +1,61 @@
+// A close does not lose or wait on what is still queued (decision 0447,
+// 2026-11-03): the server writes 1 MB to a client in the same program and
+// closes before the client reads any of it; the client then reads all of
+// it and the end of the stream. On wasm a close used a blocking flush,
+// which stopped every task, the reader too, so a program like this hung.
+
+fn main(os: Os) {
+  let n = 1 << 20
+  let wrote: Chan[()] = Chan[()].new(cap: 1)
+  match os.net.listen("127.0.0.1:0") {
+    Ok(l) => {
+      let addr = l.addr()
+      scope s {
+        s.spawn(fn() {
+          match l.accept() {
+            Ok(c) => {
+              let b = "x".bytes().repeat(n)
+              match c.write(b) {
+                Ok(_) => ()
+                Err(e) => os.stdio.println("write: ${e}")
+              }
+              c.close()
+              wrote.send(())
+            }
+            Err(e) => os.stdio.println("accept: ${e}")
+          }
+        })
+        match os.net.dial(addr) {
+          Ok(c) => {
+            // the server has closed before the first read
+            let _ = wrote.recv()
+            var got = 0
+            var bad = 0
+            while {
+              match c.read(65536) {
+                Ok(Some(b)) => {
+                  for x in b {
+                    if x != 120 {
+                      bad = bad + 1
+                    }
+                  }
+                  got = got + b.len()
+                }
+                Ok(None) => break
+                Err(e) => {
+                  os.stdio.println("read: ${e}")
+                  break
+                }
+              }
+            }
+            os.stdio.println("read ${got} of ${n} bytes, ${bad} wrong, then the end")
+            c.close()
+          }
+          Err(e) => os.stdio.println("dial: ${e}")
+        }
+      }
+      l.close()
+    }
+    Err(e) => os.stdio.println("listen: ${e}")
+  }
+}

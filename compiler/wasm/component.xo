@@ -308,7 +308,8 @@ fn ity_io_poll(sock: Bool) -> InstTy {
 
 /// wasi:io/streams; t_poll (wasi:io/poll's pollable, -1 for none) adds
 /// what a socket's streams use (rt9.xo): read, check-write, write,
-/// blocking-flush and the subscribes.
+/// blocking-flush, flush (a close's, rt9.xo $sk_closing_add) and the
+/// subscribes.
 fn ity_io_streams(t_error: Int, t_poll: Int) -> InstTy {
   var i = InstTy{}
   let e0 = i.outer(t_error)
@@ -338,6 +339,7 @@ fn ity_io_streams(t_error: Int, t_poll: Int) -> InstTy {
     i.fun("[method]output-stream.check-write", [("self", bo)], r3)
     i.fun("[method]output-stream.write", [("self", bo), ("contents", bytes)], r2)
     i.fun("[method]output-stream.blocking-flush", [("self", bo)], r2)
+    i.fun("[method]output-stream.flush", [("self", bo)], r2)
     i.fun("[method]output-stream.subscribe", [("self", bo)], own_p)
   }
   i
