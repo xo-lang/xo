@@ -14,6 +14,19 @@ sysio's clock_now and real_ns answer WASI's clock first under a constant
 linux.vdso_clock (elf_dynsym, auxval) are no longer compiled into a wasm
 module; the clock read is unchanged on every target.
 
+## 2026-11-04: fix: XO_PROF's stack walk stops at a negative pc
+
+- Kind: fix
+- Commit: this commit
+- Found by: Xo Lang 1 (a CPU profile of xo with the drop thunk, whose first draft had no frame record, faulted at exit: `-9223372036854775808 - 1 does not fit Int` in prof.table_of)
+- Go reference: none (runtime/pprof's unwinder stops at an invalid pc too)
+- Test: XO_PROF=cpu on xo's self build (32768 samples, written)
+
+The profiler's walk recorded any word a misdescribed frame's step read
+as a pc; a negative one (the immortal reference count) then overflowed
+`pc - 1` while the profile was written, and the program exited 70 after
+its own work. A pc of 0 or below now ends the stack, as 0 did.
+
 ## 2026-11-04: perf: List.sort, insert and remove_at move elements by swaps
 
 - Kind: perf

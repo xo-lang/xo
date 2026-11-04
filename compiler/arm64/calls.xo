@@ -258,6 +258,18 @@ fn (var g: G) release(t: Int, ws: List[Int]) {
         // a literal's count is immortal: nothing to release
         return
       }
+      // a cold block (a landing pad) keeps the call: its clobbers would
+      // keep tail_merge_cold from sharing the pads' releases (xo's __text
+      // +18% with the thunk in pads too, 2026-11-04)
+      // A List keeps it too: most are freed at their last release, where
+      // the thunk saves sixteen registers (xo's self build 1.019 with
+      // Lists, 2026-11-04).
+      if g.kind(t) == ssa.Kind.Str && !g.x86 && g.os != "windows" && !g.m.race && !g.blocks[g.cur].cold && g.on("drop_thunk") {
+        let th = g.drop_thunk(t)
+        let _c = g.add(Inst{kind: K_PLAIN, text: "bl ${th}_$u0", us: [g.real(ws[0])], clobbers: [16, 17, 30], fl: IF_FRAME | IF_KEEP})
+        g.clobber()
+        return
+      }
       let h = g.rc_helper("drop", t)
       let _r = g.call(h, regs([ws[0]]), [])
     }

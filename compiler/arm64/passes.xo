@@ -77,6 +77,9 @@ pub fn passes() -> List[Str] {
     "rc_thunk",
     // calls.xo rc_thunk_here: the retains of a large loop too
     "rc_thunk_loops",
+    // rc.xo drop_thunk: a Str or List release calls a thunk that keeps
+    // every register but x16, x17 and x30
+    "drop_thunk",
     // per function: MIR
     "mir_dce",
     "thread_const",

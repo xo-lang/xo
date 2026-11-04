@@ -116,21 +116,22 @@ xo_f_main:
 .LpGL1jtk_f1_b23:
 .LpGL1jtk_f1_du18:
 .LpGL1jtk_f1_x6_dc16:
-	mov x0, x22
+	bl xo_hJ17197haHe_x22
+.LpGL1jtk_f1_x1_dc17:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48
-	b xo_hV7Co53ncOR
+	ret
 .LpGL1jtk_f1_du19:
 .LpGL1jtk_f1_b21:
 .LpGL1jtk_f1_du20:
-.LpGL1jtk_f1_x3_dc17:
+.LpGL1jtk_f1_x3_dc18:
 	mov x0, x22
 	bl xo_hV7Co53ncOR
 .LpGL1jtk_f1_du21:
 .LpGL1jtk_f1_b22:
 .LpGL1jtk_f1_du22:
-.LpGL1jtk_f1_x2_dc18:
+.LpGL1jtk_f1_x2_dc19:
 	ldp x20, x19, [sp, #16]
 	ldp x22, x21, [sp, #32]
 	ldp x29, x30, [sp], #48

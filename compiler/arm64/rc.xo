@@ -154,6 +154,68 @@ fn (var g: G) inc_thunk(str: Bool) -> Str {
   sym
 }
 
+/// The base of the release thunks of a Str type t (drop_thunk; a List
+/// keeps its call, see calls.xo release):
+/// a release is `bl BASE_xN` with the object in xN, as a retain's
+/// inc_thunk, where it was a call of the drop helper with the object in
+/// x0, which made each caller saved register live across it be saved
+/// (netip's sort, 2026-11-04: 16% flat in `drop Str`). Each thunk
+/// moves the object to x16 and decrements a count above 1 in place with
+/// x17 its only scratch; the last reference and a shared count save x0
+/// to x15 and x30 and call
+/// the drop helper, which reads the count again (it frees, or decrements
+/// the shared count atomically); a literal's immortal count (bit 62
+/// clear) and an inline Str (bit 0) return at once. Inlining that fast
+/// path at every release instead was measured and left out: xo's __text
+/// +0.85% and its self build 1.003 to 1.011 (2026-11-04).
+fn (var g: G) drop_thunk(t: Int) -> Str {
+  let key = "drop thunk ${g.tname(t)}"
+  if let Some(s) = g.helped.get(key) {
+    return s
+  }
+  if g.defers(key, Want{op: 11, t: t}) {
+    return g.helped.get(key) ?? ""
+  }
+  let sym = g.helper_label("dropth")
+  g.helped[key] = sym
+  let h = g.rc_helper("drop", t)
+  let inl = g.inl_str() && g.kind(t) == ssa.Kind.Str
+  var b = StrBuilder.new()
+  // one entry per register, two instructions, moving the object to x16;
+  // one body per type (a body per register was xo's __text +19%: a
+  // thousand Str and List types, 2026-11-04)
+  for r in INC_THUNK_REGS {
+    let obj = "x${r}"
+    let lbl = "${sym}_${obj}"
+    b.write("${g.cmt()} ${key} ${obj}\n${g.fn_align()}${g.alias_sub(key, obj)}${lbl}:\n\t.cfi_startproc\n")
+    if r != 16 {
+      b.write("\tmov x16, ${obj}\n")
+    }
+    b.write("\tb ${sym}_body\n\t.cfi_endproc\n\n")
+  }
+  let lbl = "${sym}_body"
+  b.write("${g.fn_align()}${lbl}:\n\t.cfi_startproc\n")
+  if inl {
+    b.write("\ttbnz x16, #0, ${lbl}_ret\n")
+  }
+  // no flags on the fast path: a count above 1 decremented; 1 (the last
+  // reference) calls; a negative count calls when shared (bit 62) and is
+  // kept when immortal
+  b.write("\tldr x17, [x16]\n\ttbnz x17, #63, ${lbl}_neg\n\tsub x17, x17, #1\n\tcbz x17, ${lbl}_call\n\tstr x17, [x16]\n\tret\n")
+  b.write("${lbl}_neg:\n\ttbz x17, #62, ${lbl}_ret\n${lbl}_call:\n")
+  // a frame record at CFA - 16 with x29 set, so compact unwind (the
+  // profiler and fault traces on macOS) describes the body as a frame: x30
+  // saved anywhere else reads as frameless, whose return address is x30,
+  // which the drop helper's call has replaced (a profile's walk read the
+  // immortal count as a pc and its writer faulted, 2026-11-04)
+  b.write("\tsub sp, sp, #144\n\t.cfi_def_cfa_offset 144\n\tstp x29, x30, [sp, #128]\n\tadd x29, sp, #128\n\t.cfi_def_cfa w29, 16\n\t.cfi_offset w30, -8\n\t.cfi_offset w29, -16\n")
+  b.write("\tstp x0, x1, [sp]\n\tstp x2, x3, [sp, #16]\n\tstp x4, x5, [sp, #32]\n\tstp x6, x7, [sp, #48]\n\tstp x8, x9, [sp, #64]\n\tstp x10, x11, [sp, #80]\n\tstp x12, x13, [sp, #96]\n\tstp x14, x15, [sp, #112]\n\tmov x0, x16\n")
+  b.write("\tbl ${h}\n\tldp x0, x1, [sp]\n\tldp x2, x3, [sp, #16]\n\tldp x4, x5, [sp, #32]\n\tldp x6, x7, [sp, #48]\n\tldp x8, x9, [sp, #64]\n\tldp x10, x11, [sp, #80]\n\tldp x12, x13, [sp, #96]\n\tldp x14, x15, [sp, #112]\n\tldp x29, x30, [sp, #128]\n\tadd sp, sp, #144\n\t.cfi_def_cfa sp, 0\n\t.cfi_restore w29\n\t.cfi_restore w30\n")
+  b.write("${lbl}_ret:\n\tret\n\t.cfi_endproc\n\n")
+  g.helpers.push(b.freeze())
+  sym
+}
+
 /// The symbol of the dup, drop, or share helper of t.
 fn (var g: G) rc_helper(kind: Str, t: Int) -> Str {
   let key = "${kind} ${g.tname(t)}"
