@@ -89,7 +89,7 @@ func main() {
 		"example.com", "EXAMPLE.COM", "Example.Com.", "a.b.c", "", ".", "..", "a..b", "a..", ".a", "a.b.",
 		"bücher.de", "BÜCHER.de", "faß.de", "ﬁsh.com", "ß", "ς.gr", "Σ.gr", "例え.jp", "例え.テスト", "日本語.jp", "правда.рф", "пример.испытание",
 		"xn--bcher-kva.de", "xn--fa-hia.de", "xn--r8jz45g.jp", "xn--80aswg.xn--p1ai", "xn--", "xn---", "xn--a", "xn--abc-", "xn--zca.com",
-		"xn--bcher-kva.", "XN--BCHER-KVA.de", "xn--0.pt", "xn--a.com", "xn--ls8h.la", "💩.la", "xn--ls8h",
+		"xn--ib9b", "xn--ib9b.com", "a.xn--ib9b", "xn--ib9c", "xn--ib9b-", "xn--bcher-kva.", "XN--BCHER-KVA.de", "xn--0.pt", "xn--a.com", "xn--ls8h.la", "💩.la", "xn--ls8h",
 		"a_b.com", "a b.com", "-a.com", "a-.com", "ab--c.com", "a--b.com", "xn--ab--c.com", "1.2.3.4", "[::1]", "a.com:80",
 		"‍.com", "a‍b.com", "क्‍ष.in", "ب‌ا.com", "با‌ب.com", "a‌b",
 		"العربية.com", "אבג.com", "אa.com", "aא.com", "א١.com", "א1.com", "١٢.com",
