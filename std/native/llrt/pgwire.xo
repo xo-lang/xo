@@ -591,7 +591,7 @@ pub fn parse_url(conn: Str) -> Map[Str, Str] ! Str {
       }
       hosts.write(p[1..end])
       p = p[end + 1..]
-      if !p.is_empty() && !(p[0..1] is ":" | "/" | "?" | ",") {
+      if !p.is_empty() && !(p.starts_with(":") || p.starts_with("/") || p.starts_with("?") || p.starts_with(",")) {
         return Err("unexpected character \"${p[0..1]}\" at position ${conn.len() - p.len() + 1} in URI (expected \":\" or \"/\")")
       }
     } else {

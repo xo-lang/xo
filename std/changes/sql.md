@@ -1,5 +1,17 @@
 # std/sql changes
 
+## 2026-11-04: perf: the connection URL parser checks a character without slicing
+
+- Kind: perf
+- Commit: this push
+- Found by: cmd/xo TestVetCostStd on cb9df459a (XO0913 at pgwire.xo:594: `p[0..1] is ":" | "/" | "?" | ","` made a one character Str slice in the host loop only to compare it)
+- Go reference: none (pgconn's ParseConfig reads the same characters)
+- Test: go test ./cmd/xo -run TestVetCostStd; the pgwire URL tests (std/native/pgwire_test.xo)
+- Shipped in: not yet released
+
+The check after a bracketed IPv6 host is four `starts_with` calls now.
+
+
 ## 2026-11-04: fix: pg copy_from stops calling rows once the server refuses the COPY
 
 - Kind: fix
