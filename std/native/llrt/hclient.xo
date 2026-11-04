@@ -1043,6 +1043,43 @@ pub fn mark_sent(r: rthttp.CResp) { rt.slot_store[Int](rec(r) + R_SENT, 0, 1, 2)
 /// connection only once the request was written (wroteRequest).
 pub fn sent(r: rthttp.CResp) -> Bool { rt.slot_load[Int](rec(r) + R_SENT, 0, 1) == 1 }
 
+/// How long a response read to its end waits for the sender's mark
+/// before its connection is closed instead of pooled (ns): net/http's
+/// maxWriteWaitBeforeConnReuse, 50 ms.
+const SENT_WAIT_NS = 50000000
+
+/// Whether the sender marked the body sent, waiting up to SENT_WAIT_NS
+/// for it (net/http's persistConn.wroteRequest): a server answers after
+/// the body's last byte arrived, so the response can be read before the
+/// sender task stores its mark (http_client_pool_body dialed again 1 run
+/// in a few on linux/arm64 without the wait, 2026-11-03). Yields first,
+/// since the sender is usually runnable, then sleeps in 100 us steps.
+pub fn wait_sent(r: rthttp.CResp) -> Bool {
+  if sent(r) {
+    return true
+  }
+  if target.arch == TargetArch.Wasm32 {
+    return false
+  }
+  for _ in 0..8 {
+    pool.yield_now()
+    if sent(r) {
+      return true
+    }
+  }
+  let dl = sysio.mono_ns() + SENT_WAIT_NS
+  while !sent(r) {
+    let now = sysio.mono_ns()
+    if now >= dl {
+      return false
+    }
+    if poll.sleep_until(if now + 100000 < dl { now + 100000 } else { dl }) != poll.TIMEOUT {
+      return sent(r)
+    }
+  }
+  true
+}
+
 /// Whether r's connection came from the pool (a failure before the
 /// response is replayed on a new connection for a replayable request).
 pub fn reused(r: rthttp.CResp) -> Bool { ld4(rec(r), R_REUSED) != 0 }

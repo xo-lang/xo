@@ -16,8 +16,10 @@ was closed at the response's end, since the sender task might still be
 writing. The sender now marks the body sent in full after its last
 write, and the connection goes back to the pool when the response kept
 it alive, was read to its end, and the body was marked sent, as Go's
-Transport does; a response that ends before the body was sent still
-closes it.
+Transport does. Since a server answers once the body's last byte has
+arrived, the reader may finish first; it waits up to 50 ms for the mark
+(net/http's maxWriteWaitBeforeConnReuse) and closes the connection if
+the body is still not sent.
 
 ## 2026-11-03: fix: the proxy's tunnel keeps the target connection until its client-to-target copy ends
 

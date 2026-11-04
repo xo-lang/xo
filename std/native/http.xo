@@ -3664,7 +3664,7 @@ fn gz_step(var s: StreamState, b: Bytes, last: Bool) -> Result[(), http.ClientEr
 /// sender marked the request body sent in full (net/http's wroteRequest),
 /// when a kept connection goes to the pool.
 fn end_conn(x: StreamState, r: rthttp.CResp, keep: Bool, s: Int) {
-  if x.shared || (x.dsrv.is_some() && !(keep && s == hclient.CC_OK && hclient.sent(r))) {
+  if x.shared || (x.dsrv.is_some() && !(keep && s == hclient.CC_OK && hclient.wait_sent(r))) {
     hclient.end_shared(r, s, "")
   } else {
     hclient.end_keep(r, keep, x.https, x.addr, x.name, x.roots, s, "")
