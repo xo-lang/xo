@@ -5,6 +5,7 @@
 - - large1_concat
 - - large1_views
 - - small_buf
+- - small_vrec
 - - large1_buf
 - - large64_buf
 - - large64_views
