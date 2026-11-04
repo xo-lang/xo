@@ -8,6 +8,9 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+
+## v0.38.1 (2026-11-04)
+- release: v0.38.0 is a seed-only tag (like v0.37.0): its compiler crashed with SIGSEGV, instead of poisoning the mutex, on a fault in a leaf Mutex.with closure in programs built for linux/amd64 and darwin/amd64 (the x86 entry below). v0.38.1 is v0.38.0 plus that fix.
 - x86: a fault in a Mutex.with closure that compiles to a leaf poisons the mutex on linux/amd64 and darwin/amd64 instead of dying of SIGSEGV: the landing pad's entry now pops the fault stub's frame record (arm64's fix, 81a0c9284, did not cover x86; gotchas/arm64-compact-unwind-leaf-fault-frames.md). Found by the 2-hourly check's amd64 goldens (mutex_poison_leaf, now in the amd64 sample). Windows was not affected.
 
 - arm64: a fault in a Mutex.with closure that compiles to a leaf (no calls, such as `fn(var c) { c.n += 1 }` overflowing) poisons the mutex as decision 0482 says instead of crashing with SIGTRAP: the landing pad's entry now undoes the fault stub's frame record, and the stubs get an unwind region of their own with their own call site table (gotchas/arm64-compact-unwind-leaf-fault-frames.md). Found by the full tier's TestNoLeafWithPads; golden mutex_poison_leaf. Not in any release (43b7eba82 came after v0.37.0).
