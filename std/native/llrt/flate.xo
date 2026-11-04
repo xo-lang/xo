@@ -1142,13 +1142,17 @@ fn (d: Deflater) find_match(pos: Int, prev_head: Int, prev_length: Int, lookahea
   if length >= d.good {
     tries = tries >> 2
   }
-  var w_end = d.win(pos + length)
+  // the window bytes through one raw pointer: every index here is inside
+  // the window (Go indexes the same bytes), and the loop made a checked
+  // load of each
+  let wp = raw.bytes_addr(d.data).wrapping_add(d.base)
+  var w_end = rt.mem_load(wp, pos + length, 1)
   let min_index = pos - WINDOW_SIZE
   var ok = false
   var offset = 0
   var i = prev_head
   while tries > 0 {
-    if w_end == d.win(i + length) {
+    if w_end == rt.mem_load(wp, i + length, 1) {
       let n = d.match_len(i, pos, min_match_look)
       if n > length && (n > MIN_MATCH || pos - i <= 4096) {
         length = n
@@ -1157,7 +1161,7 @@ fn (d: Deflater) find_match(pos: Int, prev_head: Int, prev_length: Int, lookahea
         if n >= nice {
           break
         }
-        w_end = d.win(pos + n)
+        w_end = rt.mem_load(wp, pos + n, 1)
       }
     }
     if i == min_index {
@@ -1169,6 +1173,7 @@ fn (d: Deflater) find_match(pos: Int, prev_head: Int, prev_length: Int, lookahea
     }
     tries -= 1
   }
+  raw.alive(d.data)
   (ok, length, offset)
 }
 
