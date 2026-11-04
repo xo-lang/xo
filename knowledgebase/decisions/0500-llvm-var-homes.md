@@ -52,9 +52,12 @@ On the LLVM backend:
 ## Consequences
 
 - tlsio.put 7,480 to 684 bytes; the fetch client 4,496,339 to 4,479,827
-  bytes (-16,512), darwin/arm64, against the same main. Speed: an `--ab`
-  with `--backend=llvm` on a TLS row on the linux/arm64 host before
-  acceptance.
+  bytes (-16,512), darwin/arm64, against the same main. Speed
+  (bench/results/llvm-var-homes-2026-11-04.md, linux/arm64, `--ab`, 3
+  rounds, `--backend=llvm`, bench/perf/tlsloop): 16 byte requests over
+  TLS 1.3 0.969x wall (0.969 to 0.989), 0.951x CPU, 0.939x peak RSS;
+  16 KiB requests 0.998x wall, CPU within noise; the binary 85,416 bytes
+  smaller.
 - Goldens field_homes and list_elem_homes (a fault mid-update under the
   leak check, a kept copy, a list in a field, a local list) run on LLVM
   as on native.

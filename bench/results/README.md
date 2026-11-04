@@ -316,3 +316,4 @@
 - [std-twin-toml-2026-11-04.md](std-twin-toml-2026-11-04.md): toml encode 1.323 -> 0.483 of Go after json.to_value without text; decode 1.135.
 - [std-twin-bcrypt-2026-11-04.md](std-twin-bcrypt-2026-11-04.md): bcrypt state as List[UInt32] tried, worse (1.137); raw buffer needs bcrypt out of go_compiled.
 - [struct-field-hoist-2026-11-04.md](struct-field-hoist-2026-11-04.md): hoist_fields for Deflater's fields (find_match, then deflate()'s loop through write_block with a per-callee summary): no zip gain (1.004, 0.993), branches lang1-dfl and lang1-fsum parked
+- [llvm-var-homes-2026-11-04.md](llvm-var-homes-2026-11-04.md): decision 0500 on LLVM, tlsloop --ab: 16 B TLS requests 0.969x wall, 0.951x CPU; 16 KiB within noise.
