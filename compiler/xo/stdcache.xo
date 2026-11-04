@@ -180,8 +180,13 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bo
   // silence (2026-10-29: a std edit that only the store's full check
   // rejected hid every separately compiled build for hours); the key
   // changes with std's files, so a fixed std builds again
+  // the marker names the std tree it failed for: the key follows std's
+  // relative paths, sizes and times, not its place, so another copy of the
+  // same std shares it (b26, owner's v0.38.1 evaluation: a deleted
+  // release smoke test's std turned separate compilation off for the
+  // intact install)
   if !done {
-    os.fs.write("${store}.failed", "${why}\n".bytes()).ignore_err("only the warning")
+    os.fs.write("${store}.failed", "${why}\nstd ${ctx.std}\n".bytes()).ignore_err("only the warning")
   } else {
     os.fs.remove("${store}.failed").ignore_err("none was there")
     if tmode {
@@ -199,6 +204,36 @@ fn std_variant(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmode: Bo
     os.stdio.eprintln("cache std ${key[0..12]} conc=${conc}${tv(tmode)} ${if done { "built" } else { "failed (${why}): the whole program is built" }} in ${os.clock.since(t0).millis()} ms")
   }
   if done { Some((store, facts)) } else { None }
+}
+
+/// How long a failed std store build stops separately compiled builds
+/// before one is tried again.
+const STD_FAILED_TTL = 1h
+
+/// The reason of a failed store build that holds for std (its marker
+/// at path names this std tree and is under STD_FAILED_TTL old), or None:
+/// no marker, one of another tree or of an older xo (no std line), or one
+/// past its time; a marker that does not hold is removed, so the next
+/// build tries again.
+fn std_failed_here(os: Os, path: Str, std: Str) -> Str? {
+  let b = os.fs.read(path).ok() ?? return None
+  let lines = (b.to_str() ?? "").trim().split("\n")
+  let why = if lines.is_empty() { "" } else { lines[0].trim() }
+  var here = false
+  for l in lines {
+    if l.starts_with("std ") && l[4..] == std {
+      here = true
+    }
+  }
+  var fresh = false
+  if let Ok(Some(fi)) = os.fs.stat(path) {
+    fresh = os.clock.since(fi.modified) < STD_FAILED_TTL
+  }
+  if here && fresh {
+    return Some(why)
+  }
+  os.fs.remove(path).ignore_err("the next build tries again either way")
+  None
 }
 
 /// What a failed `xo dev stdobj` said: its first diagnostic line (file:
@@ -266,10 +301,12 @@ fn std_variant_peek(os: Os, ctx: Ctx, tgoos: Str, tgoarch: Str, conc: Bool, tmod
       os.stdio.eprintln("std variant: miss, ${why}")
     }
   }
-  // a build of this variant failed: one warning, every build, no retry
-  // until std changes (the key follows std's files)
-  if let Ok(b) = os.fs.read("${store}.failed") {
-    os.stdio.eprintln("xo: warning: separate compilation is off: std's store build failed (${(b.to_str() ?? "").trim()}); the whole program is built")
+  // a build of this variant failed for this std less than an hour ago:
+  // one warning, every build; a marker of another std tree (one that
+  // shares the key: the same files elsewhere) or an older one is retried
+  // (b26: a deleted std's failure turned the install's off for good)
+  if let Some(why) = std_failed_here(os, "${store}.failed", ctx.std) {
+    os.stdio.eprintln("xo: warning: separate compilation is off: std's store build failed (${why}); the whole program is built (retried after an hour; ${store}.failed)")
     return None
   }
   if (os.env.get("XO_SEPCOMP_BG") ?? "") == "0" {

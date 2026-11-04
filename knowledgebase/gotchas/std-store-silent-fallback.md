@@ -23,8 +23,15 @@ went whole-program, "never slower than without separate compilation".
 The failed build leaves `<key>.store.failed` with the first error line
 beside the store's name; a build that finds it prints `xo: warning:
 separate compilation is off: std's store build failed (FILE:LINE: ...)`
-and builds whole, with no retry until std changes (the key follows std's
-files). internal/arm64 TestStdStoreBuilds builds the store from scratch
+and builds whole. Since 2026-11-04 (b26 of the owner's v0.38.1
+evaluation) the marker also names the std tree that failed (`std PATH`),
+and it holds only for that tree and for an hour: the key follows std's
+relative paths, sizes and times, not its place, so a deleted release
+smoke test's copy under $TMPDIR (no zoneinfo.zip there) shared the
+intact install's key and turned its separate compilation off for good.
+A marker of another tree, of an older xo (no `std` line) or past its
+hour is removed and the build tries again; the warning names the
+marker's path. internal/arm64 TestStdFailedMarkerPerTree. internal/arm64 TestStdStoreBuilds builds the store from scratch
 and is not skipped under -short, so the hourly check sees it.
 
 ## Rule
