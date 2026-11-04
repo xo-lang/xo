@@ -1,5 +1,20 @@
 # std/json changes
 
+## 2026-11-03: feature: a type's own JSON form (`derive Json(via: P, to: f, from: g)`)
+
+- Kind: feature
+- Commit: this push
+- Found by: decision 0478 (the 2026-10-30 backend survey: money, IDs and enums kept as strings), stage 3 of its four
+- Go reference: encoding/json's `Marshaler`/`Unmarshaler` and `TextMarshaler`, typed: the encoder never sees bytes; serde's `#[serde(into, try_from)]`
+- Test: golden json_via (arm64, LLVM, Go parity): a struct via Str with a failing `from`, an enum via Int, a newtype via Str with an infallible `from`, in fields, `List`, `Map` and `T?`, errors at their paths; test/errorcheck/json_via (XO0413, XO0432, XO0433)
+- Timing: decision 0478's plan, item 2 (to come with stage 4)
+- Shipped in: not yet released
+
+A struct, enum or newtype may travel as another Json type: encoding
+calls `to` and encodes its result, decoding decodes that type at the same
+path and calls `from`, whose error's Display text is the decode error's
+message.
+
 ## 2026-11-03: feature: tagged enums (`derive Json(tag: "type")`, `content: "data"`)
 
 - Kind: feature

@@ -459,7 +459,7 @@ fn int(var b: BytesBuilder, v: Int) {
 /// The derive arguments of a declaration: key, identifier value and
 /// string value each (decisions 0277, 0478); a declaration without them
 /// hashes as before they existed.
-fn derive_args(var b: BytesBuilder, args: List[parser.DeriveArg]) {
+fn (var c: Enc) derive_args(var b: BytesBuilder, args: List[parser.DeriveArg]) {
   for a in args {
     open(b, "DeriveArg")
     ident_n(b, a.derive)
@@ -467,6 +467,10 @@ fn derive_args(var b: BytesBuilder, args: List[parser.DeriveArg]) {
     ident_n(b, a.value)
     if let Some(sv) = a.str {
       str(b, sv)
+    }
+    if let Some(t) = a.typ {
+      // `via: P` (decision 0478)
+      c.typ(b, t)
     }
   }
 }
@@ -622,7 +626,7 @@ fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
       for id in x.derive {
         ident_n(b, id)
       }
-      derive_args(b, x.derive_args)
+      c.derive_args(b, x.derive_args)
     }
     EnumDecl(x) => {
       open(b, "EnumDecl")
@@ -652,7 +656,7 @@ fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
         ident_n(b, id)
       }
       // case:, tag:, content: (decision 0478)
-      derive_args(b, x.derive_args)
+      c.derive_args(b, x.derive_args)
     }
     InterfaceDecl(x) => {
       open(b, "InterfaceDecl")
@@ -671,6 +675,7 @@ fn (var c: Enc) decl(var b: BytesBuilder, d: Decl) {
       c.type_params(b, x.type_params)
       bool(b, x.newtype)
       c.opt_typ(b, x.typ)
+      c.derive_args(b, x.derive_args)
     }
     ConstDecl(x) => c.const_decl(b, x, true)
     TestDecl(_) => open(b, "TestDecl")

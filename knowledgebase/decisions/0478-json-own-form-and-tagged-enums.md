@@ -6,8 +6,9 @@ S2 (SqlRow unchanged). Xo Lang 2 implements it after the HTTP client pool
 item, with its measurement plan. Stage 1, variant wire names (N1 and
 `case:` on enums), shipped 2026-11-03 (golden json_variant_names); stage
 2, the tagged forms (B1, `tag:` and `content:`), shipped 2026-11-03
-(golden json_tagged_enum, XO0431); next the own form (A1), then the
-measurements.
+(golden json_tagged_enum, XO0431); stage 3, the own form (A1, `via:`
+on a struct, enum or newtype), shipped 2026-11-03 (golden json_via,
+XO0432, XO0433); next the measurements (stage 4).
 
 ## Context
 

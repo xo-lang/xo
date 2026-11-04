@@ -2306,6 +2306,7 @@ fn (p: Patch[T]) apply_opt(current: T?) -> T? // Absent keeps, Null clears, Valu
 | enum unit variant | string `"Variant"` (its wire name: `as "name"` or `case:`, decision 0478, core 2.3) |
 | enum variant with fields | object `{"Variant": {fields}}`, the name and the fields' keys as above |
 | tagged enum, `derive Json(tag: "type")` | object `{"type": "Variant", fields...}`, a wrapped struct's fields beside the tag; with `content: "data"`, `{"type": "Variant", "data": payload}` (decision 0478, core 2.3) |
+| a type with its own form, `derive Json(via: P, to: f, from: g)` | P's encoding of `f(v)`; decoding decodes a P at the same path and calls `g`, whose error's Display text is the `DecodeErr` message (decision 0478, core 2.3) |
 | tuple `(A, B, ...)` | array `[a, b, ...]`; decodes only from an array of exactly that length (decision 0088) |
 | `()` | `null` |
 | `Duration` | string `"1.5s"` (any `Duration.parse` form decodes) |

@@ -86,6 +86,22 @@ func TestFmtEnumWireNames(t *testing.T) {
 	}
 }
 
+// TestFmtJsonVia: `derive Json(via: TYPE, ...)` (decision 0478) prints
+// back, on a struct and on a newtype.
+func TestFmtJsonVia(t *testing.T) {
+	t.Parallel()
+	src := "struct M {\n  a: Int\n} derive Json(via:List[ Int ],to:m_to,from:m_from)\n\ntype U struct(Str) derive  Json(via: Str, to: u_to, from: u_from)\n"
+	want := "struct M {\n  a: Int\n} derive Json(via: List[Int], to: m_to, from: m_from)\n\ntype U struct(Str) derive Json(via: Str, to: u_to, from: u_from)\n"
+	dir := writeFiles(t, map[string]string{"a.xo": src})
+	var out, errOut bytes.Buffer
+	if code := run(t, []string{"fmt", dir}, &out, &errOut); code != 0 {
+		t.Fatalf("fmt exit %d: %s", code, errOut.String())
+	}
+	if data, _ := os.ReadFile(filepath.Join(dir, "a.xo")); string(data) != want {
+		t.Errorf("a.xo = %q, want %q", data, want)
+	}
+}
+
 func TestFmtSyntaxError(t *testing.T) {
 	t.Parallel()
 	dir := writeFiles(t, map[string]string{"bad.xo": "fn f( {\n", "ok.xo": "fn g()  {}\n"})

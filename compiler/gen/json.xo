@@ -400,8 +400,38 @@ fn (var g: Gen) gen_json_tagged_dec(t: Int, self: Str, tuse: Str, jtag: Str, jco
   g.pl("}\n")
 }
 
+/// XoJsonEnc and XoJsonDec of a type with its own form (`derive
+/// Json(via: P, to: f, from: g)`, decision 0478): the P that f makes,
+/// encoded; P decoded at the same path, then g, whose error's Display text
+/// is the DecodeErr's message. No XoJsonRead: rt.JsonRead decodes it
+/// through XoJsonDec.
+fn (var g: Gen) gen_json_via(t: Int) {
+  let rt = g.rt()
+  let self = g.self_type(t)
+  let o = g.c.objs[t]
+  let p = g.go_type(o.json_via)
+  let to = g.func_go_name(o.json_to)
+  let from = g.func_go_name(o.json_from)
+  g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) { ${rt}JsonEnc(tk, w, ${to}(tk, v)) }\n")
+  g.pl("func (v *${self}) XoJsonDec(tk *${rt}Task, x any, path string) *${rt}Json_DecodeErr {")
+  g.pl("\tvar p ${p}")
+  g.pl("\tif err := ${rt}JsonDec(tk, &p, x, path); err != nil {\n\t\treturn err\n\t}")
+  if g.returns_result(o.json_from) {
+    g.pl("\tr := ${from}(tk, p)")
+    g.pl("\tif !r.Ok {\n\t\treturn &${rt}Json_DecodeErr{F_path: path, F_msg: ${rt}Display(tk, r.E)}\n\t}")
+    g.pl("\t*v = r.V")
+  } else {
+    g.pl("\t*v = ${from}(tk, p)")
+  }
+  g.pl("\treturn nil\n}\n")
+}
+
 /// A newtype encoded as its underlying value (genJSONNewtype).
 fn (var g: Gen) gen_json_newtype(t: Int) {
+  if g.c.objs[t].json_via >= 0 {
+    g.gen_json_via(t)
+    return
+  }
   let rt = g.rt()
   let self = g.self_type(t)
   g.pl("func (v ${self}) XoJsonEnc(tk *${rt}Task, w *${rt}JsonW) { ${rt}JsonEnc(tk, w, v.F0) }\n")

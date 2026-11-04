@@ -1,0 +1,96 @@
+// A type's own JSON form (decision 0478 part 1): `derive Json(via: P,
+// to: f, from: g)` encodes a T as the P that f makes and decodes a P at
+// the same path, then calls g, whose error's Display text becomes the
+// DecodeErr's message. It works for a struct, an enum and a newtype, and
+// wherever a Json type does: fields, List, Map, T?.
+use std/json
+
+struct MoneyErr {
+  text: Str
+}
+
+fn (e: MoneyErr) display() -> Str { "invalid amount \"${e.text}\"" }
+
+pub struct Money {
+  minor: Int
+} derive Json(via: Str, to: money_text, from: parse_money)
+
+fn money_text(m: Money) -> Str {
+  let c = m.minor % 100
+  "${m.minor / 100}.${if c < 10 { "0" } else { "" }}${c}"
+}
+
+fn parse_money(s: Str) -> Money ! MoneyErr {
+  let parts = s.split(".")
+  if parts.len() != 2 || parts[1].len() != 2 {
+    return Err(MoneyErr{text: s})
+  }
+  let w = Int.parse(parts[0]) ?? return Err(MoneyErr{text: s})
+  let f = Int.parse(parts[1]) ?? return Err(MoneyErr{text: s})
+  Ok(Money{minor: w * 100 + f})
+}
+
+enum Level {
+  Low
+  High
+} derive Json(via: Int, to: level_num, from: num_level)
+
+fn level_num(l: Level) -> Int {
+  match l {
+    Low => 1
+    High => 9
+  }
+}
+
+fn num_level(n: Int) -> Level ! Str {
+  match n {
+    1 => Ok(Level.Low)
+    9 => Ok(Level.High)
+    _ => Err("no level ${n}")
+  }
+}
+
+/// from cannot fail
+type Upper struct(Str) derive Json(via: Str, to: upper_text, from: upper_of)
+
+fn upper_text(u: Upper) -> Str { u.0 }
+
+fn upper_of(s: Str) -> Upper { Upper(s.to_upper()) }
+
+struct Leg {
+  amount: Money
+  level: Level = Level.Low
+  tag: Upper? = None
+} derive Json
+
+struct Trip {
+  legs: List[Leg]
+  totals: Map[Str, Money]
+} derive Json
+
+fn main(os: Os) {
+  let t = Trip{legs: [Leg{amount: Money{minor: 1234}, level: Level.High, tag: Some(Upper("A"))}, Leg{amount: Money{minor: 5}}], totals: {"eur": Money{minor: 1239}}}
+  let s = json.encode_str(t)
+  os.stdio.println(s)
+  match json.decode[Trip](s.bytes()) {
+    Ok(back) => os.stdio.println("round trip ${json.encode_str(back) == s}")
+    Err(e) => os.stdio.println("decode failed: ${e}")
+  }
+  os.stdio.println(json.encode_str(Money{minor: 700}))
+  for s in [
+    "{\"legs\":[{\"amount\":\"1.00\",\"tag\":\"lower\"}],\"totals\":{}}",
+    "{\"legs\":[{\"amount\":\"1.00\"},{\"amount\":\"12.3.4\"}],\"totals\":{}}",
+    "{\"legs\":[],\"totals\":{\"usd\":\"x\"}}",
+    "{\"legs\":[{\"amount\":\"1.00\",\"level\":4}],\"totals\":{}}",
+    "{\"legs\":[{\"amount\":12}],\"totals\":{}}",
+  ] {
+    match json.decode[Trip](s.bytes()) {
+      Ok(v) => os.stdio.println("${s} -> ${json.encode_str(v)}")
+      Err(e) => os.stdio.println("${s} -> ${e}")
+    }
+  }
+  match json.decode[List[Level]](b"[9,1]") {
+    Ok(ls) => os.stdio.println("levels ${json.encode_str(ls)}")
+    Err(e) => os.stdio.println("levels: ${e}")
+  }
+}

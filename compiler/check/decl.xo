@@ -368,8 +368,12 @@ fn (var c: Checker) wire_keys(sd: parser.StructDecl, fields0: List[FieldInfo], d
       c.error("XO0413", a.span, "`derive ${d}` takes no arguments; `case:` applies to `derive Json` and `derive SqlRow` (decision 0277)")
       continue
     }
+    if d == "Json" && (k is "via" | "to" | "from") {
+      // a type's own form (decision 0478): check_json_via
+      continue
+    }
     if k != "case" {
-      c.error("XO0413", a.key.span, "unknown argument `${k}` of `derive ${d}`; it takes `case: snake | camel | pascal | kebab`")
+      c.error("XO0413", a.key.span, "unknown argument `${k}` of `derive ${d}`; it takes `case: snake | camel | pascal | kebab`, or `via:`, `to:` and `from:`")
       continue
     }
     if a.str != None {
@@ -458,6 +462,10 @@ fn (var c: Checker) variant_wire_names(t: Int, ed: parser.EnumDecl, vs0: List[Va
         }
         None => c.error("XO0413", a.value.span, "`${k}:` takes a string, the key: `${k}: \"${v}\"`")
       }
+      continue
+    }
+    if k is "via" | "to" | "from" {
+      // a type's own form (decision 0478): check_json_via
       continue
     }
     if k != "case" {

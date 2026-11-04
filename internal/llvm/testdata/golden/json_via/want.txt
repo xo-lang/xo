@@ -1,0 +1,12 @@
+exit 0
+--- stdout
+{"legs":[{"amount":"12.34","level":9,"tag":"A"},{"amount":"0.05","level":1,"tag":null}],"totals":{"eur":"12.39"}}
+round trip true
+"7.00"
+{"legs":[{"amount":"1.00","tag":"lower"}],"totals":{}} -> {"legs":[{"amount":"1.00","level":1,"tag":"LOWER"}],"totals":{}}
+{"legs":[{"amount":"1.00"},{"amount":"12.3.4"}],"totals":{}} -> at $.legs[1].amount: invalid amount "12.3.4"
+{"legs":[],"totals":{"usd":"x"}} -> at $.totals.usd: invalid amount "x"
+{"legs":[{"amount":"1.00","level":4}],"totals":{}} -> at $.legs[0].level: no level 4
+{"legs":[{"amount":12}],"totals":{}} -> at $.legs[0].amount: expected string
+levels [9,1]
+--- stderr

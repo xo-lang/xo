@@ -1398,7 +1398,12 @@ fn (var p: Parser) parse_derive() -> (List[Ident], List[DeriveArg]) {
         let astart = p.tok.span.start
         let key = p.expect_ident("a derive argument name")
         p.expect(Kind.Colon, "`:` after the derive argument's name")
-        if p.at(Kind.String) || p.at(Kind.RawString) {
+        if key.name == b"via" {
+          // a type, `via: Str` (decision 0478)
+          let tsp = p.tok.span
+          let ty = p.parse_type()
+          args.push(DeriveArg{span: p.span_from(astart), derive: d, key: key, value: Ident{name: b"", span: tsp}, typ: Some(ty)})
+        } else if p.at(Kind.String) || p.at(Kind.RawString) {
           // a string value, `tag: "type"` (decision 0478)
           let (sv, ssp, ok) = p.plain_string()
           if !ok {
@@ -1561,11 +1566,16 @@ fn (var p: Parser) parse_type_decl(doc: Doc?, is_pub: Bool, start: Pos) -> Decl 
     d.typ = Some(p.parse_type())
     p.expect(Kind.RParen, "`)`")
     if !p.bad {
-      // decision 0390: the checker takes Ord only and reports arguments
+      // decision 0390: the checker takes Ord, and Json with its own
+      // form (decision 0478); arguments of any other derive are errors
       let (ds, args) = p.parse_derive()
       d.derive = ds
-      if let Some(a) = args.first() {
-        p.fail(UNEXPECTED_TOKEN, a.span, "a newtype's derive takes no arguments: it derives `Ord` only (decision 0390)")
+      d.derive_args = args
+      for a in args {
+        if a.derive.name != b"Json" {
+          p.fail(UNEXPECTED_TOKEN, a.span, "a newtype's derive takes arguments only for `Json(via: ...)`: it derives `Ord`, or its own JSON form (decisions 0390, 0478)")
+          break
+        }
       }
     }
   } else {

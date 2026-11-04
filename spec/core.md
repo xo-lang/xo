@@ -807,6 +807,27 @@ enum Color: Str { Red, Green, Blue }       // "Red", "Green", "Blue"
   and a content key equal to the tag, are `XO0411`; `content:` without
   `tag:`, a tag that is not a string, and `tag:` on a valued enum are
   `XO0413`.
+- A type's own JSON form (decision 0478): a struct, enum or newtype
+  without type parameters may travel as another Json type P, `derive
+  Json(via: P, to: f, from: g)`, where `f` is `fn(T) -> P` and `g` is
+  `fn(P) -> T ! E` (or `fn(P) -> T`), both non generic functions of T's
+  module, and E implements Display. Encoding a T encodes `f(v)`; decoding
+  decodes a P at the same path, then calls `g`, and an `Err(e)` is a
+  `DecodeErr` at that path whose message is `e`'s Display text (`at
+  $.legs[1].amount: invalid amount "12.3.4"`). The type then works
+  wherever a Json type does (fields, `List`, `Map`, `T?`). A `to:` or
+  `from:` naming no such function is `XO0432`, a mistyped one, or an E
+  without Display, `XO0433`; `via:` without both functions, beside any
+  other `derive Json` argument, or on a generic type is `XO0413`.
+
+```
+struct Money {
+  minor: Int
+} derive Json(via: Str, to: money_text, from: parse_money)
+
+fn money_text(m: Money) -> Str { ... }             // "12.34"
+fn parse_money(s: Str) -> Money ! MoneyErr { ... }  // MoneyErr: Display
+```
 
 ### 2.4 Interfaces
 
@@ -989,7 +1010,9 @@ whose underlying type is Json is Json):
   `T: Ord` code see `Name("a") < Name("b")` as `"a" < "b"`. The value's
   type must be `Ord` (else `XO0404`). A newtype is not ordered without
   it, and `Ord` is the only derive it takes (`XO0404` for any other: its
-  equality, hashing, and JSON are its value's already; decision 0390).
+  equality, hashing, and JSON are its value's already; decision 0390),
+  apart from `derive Json(via: P, to: f, from: g)`, which gives it a JSON
+  form of its own (2.3, decision 0478).
 
 ```
 type Email struct(Str)
@@ -3303,6 +3326,8 @@ decision 0215); a test (internal/repotest) keeps this table equal to it.
 | `XO0429` | error | checker | an invalid valued enum: a value type other than `Int` or `Str`, a value on an enum with no value type, a variant with fields, type parameters, or a value that is not a constant of the value type (core 2.3, decision 0269) |
 | `XO0430` | error | checker | a pattern name spelled like a constant (upper case) that is neither a `const` in scope nor a variant: a misspelled constant pattern (core 3.5, decision 0269) |
 | `XO0431` | error | checker | a variant of an internally tagged enum (`derive Json(tag: "type")` without `content:`) whose payload is not an object: one field that is not a struct (core 2.3, decision 0478) |
+| `XO0432` | error | checker | `derive Json(via: P, to: f, from: g)` whose `to:` or `from:` names no non generic, non method function of the type's module (core 2.3, decision 0478) |
+| `XO0433` | error | checker | a mistyped `to:` or `from:` of `derive Json(via: ...)`: `to` must be `fn(T) -> P` with no error, `from` `fn(P) -> T ! E` with E implementing Display (core 2.3, decision 0478) |
 | `XO0501` | error | checker | var method called on a non var binding (core 3.4) |
 | `XO0502` | error | checker | assignment to an immutable binding or to a captured variable (core 5.2, 3.3) |
 | `XO0503` | error | checker | one variable or overlapping places passed to two `var` parameters of one call (core 5.2, decision 0111) |

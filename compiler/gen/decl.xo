@@ -180,7 +180,11 @@ fn (var g: Gen) gen_struct(t: Int, d: parser.StructDecl) {
   }
   g.mark_method(self, mfs, mts)
   if g.derives(t, "Json") {
-    g.gen_json_struct(t)
+    if g.c.objs[t].json_via >= 0 {
+      g.gen_json_via(t)
+    } else {
+      g.gen_json_struct(t)
+    }
   }
   if g.derives(t, "SqlRow") {
     g.gen_sql_row_struct(t)
@@ -397,7 +401,11 @@ fn (var g: Gen) gen_enum(t: Int, sp: Span) {
   g.pl(if own_debug { "}\n" } else { "\t}\n}\n" })
   g.gen_iface_methods(t, self)
   if g.derives(t, "Json") && !rt_hand_written(g.local_type_name(t) + ".json") {
-    g.gen_json_enum(t)
+    if g.c.objs[t].json_via >= 0 {
+      g.gen_json_via(t)
+    } else {
+      g.gen_json_enum(t)
+    }
   }
   if g.opts.test_mode && !g.pkgs[g.p].in_rt {
     g.gen_gen_enum(t)

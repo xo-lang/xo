@@ -163,17 +163,20 @@ fn (var c: Checker) check_module(m: Int) {
             let t = c.files[f].decl_objs[i]
             c.check_struct_extras(t, sd)
             c.check_derives(t, sd.derive)
+            c.check_json_via(t, sd.derive_args)
           }
         }
         EnumDecl(d: ed) => {
           if c.is_scope_entry(f, i, ed.name.name) {
             c.check_derives(c.files[f].decl_objs[i], ed.derive)
             c.check_tagged_enum(c.files[f].decl_objs[i], ed)
+            c.check_json_via(c.files[f].decl_objs[i], ed.derive_args)
           }
         }
         TypeDecl(d: td) => {
           if !td.derive.is_empty() && c.is_scope_entry(f, i, td.name.name) {
-            c.check_newtype_derives(c.files[f].decl_objs[i], td.derive)
+            c.check_newtype_derives(c.files[f].decl_objs[i], td.derive, td.derive_args)
+            c.check_json_via(c.files[f].decl_objs[i], td.derive_args)
           }
         }
         _ => {}
@@ -737,11 +740,15 @@ fn (var c: Checker) const_bad(sp: Span, what: Str) {
 /// A newtype's derives (decision 0390): `Ord` only, the order of its
 /// value, which must be Ord; its equality, hashing and JSON are its
 /// value's already (core 2.8).
-fn (var c: Checker) check_newtype_derives(t: Int, ids: List[Ident]) {
+fn (var c: Checker) check_newtype_derives(t: Int, ids: List[Ident], args: List[parser.DeriveArg]) {
   for id in ids {
     let n = text(id.name)
     if !is_derivable(id.name) {
       // derives_of reported it
+      continue
+    }
+    if n == "Json" && args.any(fn(a) { a.derive.name == b"Json" && a.key.name == b"via" }) {
+      // its own JSON form (decision 0478), checked by check_json_via
       continue
     }
     if n != "Ord" {
@@ -756,6 +763,103 @@ fn (var c: Checker) check_newtype_derives(t: Int, ids: List[Ident]) {
       c.error("XO0404", id.span, "`derive Ord` needs the newtype's value to implement `Ord`, but `${text(c.objs[t].name)}` holds `${c.show(vt)}`")
     }
   }
+}
+
+/// A type's own JSON form (decision 0478 A1): `derive Json(via: P, to:
+/// f, from: g)` with f: fn(T) -> P and g: fn(P) -> T ! E (E: Display; g
+/// may have no error), both module functions of T's module, P a Json
+/// type. Sets json_via, json_to, json_from and json_from_err. A missing
+/// or unknown function is XO0432, a mistyped one XO0433; a missing part,
+/// `via` beside another derive Json argument, or on a generic type,
+/// XO0413.
+fn (var c: Checker) check_json_via(t: Int, args: List[parser.DeriveArg]) {
+  var via: parser.DeriveArg? = None
+  var to: parser.DeriveArg? = None
+  var from: parser.DeriveArg? = None
+  var others: List[parser.DeriveArg] = []
+  for a in args {
+    if a.derive.name != b"Json" {
+      continue
+    }
+    match text(a.key.name) {
+      "via" => via = Some(a)
+      "to" => to = Some(a)
+      "from" => from = Some(a)
+      _ => others.push(a)
+    }
+  }
+  if via == None && to == None && from == None {
+    return
+  }
+  let any_span = (via ?? to ?? from ?? fault("unreachable")).span
+  if via == None || to == None || from == None {
+    c.error("XO0413", any_span, "a type's own JSON form takes all three of `via: TYPE`, `to: FUNCTION` and `from: FUNCTION` (decision 0478)")
+    return
+  }
+  for o in others {
+    c.error("XO0413", o.span, "`via:` replaces the type's JSON form, so `${text(o.key.name)}:` has no effect beside it")
+  }
+  if !c.objs[t].tparams.is_empty() {
+    c.error("XO0413", any_span, "`via:` applies to a type without type parameters")
+    return
+  }
+  let va = via ?? fault("via")
+  let ta = to ?? fault("to")
+  let fa = from ?? fault("from")
+  var env = TypeEnv{file: c.objs[t].decl_file, mod: c.objs[t].module}
+  let p = c.resolve_type(va.typ ?? fault("via type"), env)
+  if c.is_bad(c.resolve(p)) {
+    return
+  }
+  if !c.implements(p, c.named("Json"), va.span) {
+    c.error("XO0413", va.span, "`via: ${c.show(p)}`: the proxy type must implement Json")
+    return
+  }
+  let self_ty = c.mk_named(t, [])
+  let fto = c.json_via_fn(t, ta, "to", [p], -1)
+  let ffrom = c.json_via_fn(t, fa, "from", [p], self_ty)
+  if fto < 0 || ffrom < 0 {
+    return
+  }
+  let to_ok = c.objs[fto].params.len() == 1 && c.same_ty(c.objs[fto].params[0].ty, self_ty) && c.same_ty(c.objs[fto].result, p) && c.objs[fto].err < 0
+  if !to_ok {
+    c.error("XO0433", ta.value.span, "`to: ${text(ta.value.name)}` must be `fn(${c.show(self_ty)}) -> ${c.show(p)}` with no error, converting the value to its `via` type")
+    return
+  }
+  let from_ok = c.objs[ffrom].params.len() == 1 && c.same_ty(c.objs[ffrom].params[0].ty, p) && c.same_ty(c.objs[ffrom].result, self_ty)
+  if !from_ok {
+    c.error("XO0433", fa.value.span, "`from: ${text(fa.value.name)}` must be `fn(${c.show(p)}) -> ${c.show(self_ty)} ! E` (E: Display), converting the `via` value back")
+    return
+  }
+  let e = c.objs[ffrom].err
+  if e >= 0 && !c.implements(e, c.named("Display"), fa.span) {
+    c.error("XO0433", fa.value.span, "`from: ${text(fa.value.name)}`'s error `${c.show(e)}` must implement Display: its text becomes the decode error's message")
+    return
+  }
+  c.objs[t].json_via = p
+  c.objs[t].json_to = fto
+  c.objs[t].json_from = ffrom
+  c.objs[t].json_from_err = e
+}
+
+/// The module function a.value names in T's module, for `to:` or `from:`
+/// (XO0432 when there is none, or it is generic or a method).
+fn (var c: Checker) json_via_fn(t: Int, a: parser.DeriveArg, what: Str, _p: List[Int], _r: Int) -> Int {
+  let name = a.value.name
+  let fo = c.mods[c.objs[t].module].members.get(name) ?? -1
+  if name.is_empty() || fo < 0 || c.objs[fo].kind != ObjKind.Func || !c.objs[fo].tparams.is_empty() || c.objs[fo].recv >= 0 {
+    c.error("XO0432", a.value.span, "`${what}: ${text(name)}` names no non generic function of this module; declare `fn ${text(name)}(...)` beside the type (decision 0478)")
+    return -1
+  }
+  if !c.objs[fo].sig_done {
+    c.resolve_sig(fo, TypeEnv{file: c.objs[fo].decl_file, mod: c.objs[fo].module}, false)
+  }
+  fo
+}
+
+/// Whether a and b are one type (each assignable to the other).
+fn (var c: Checker) same_ty(a: Int, b: Int) -> Bool {
+  a >= 0 && b >= 0 && c.assignable(a, b, no_span()) && c.assignable(b, a, no_span())
 }
 
 /// An internally tagged enum (decision 0478, `derive Json(tag: "type")`

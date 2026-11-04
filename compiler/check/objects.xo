@@ -132,6 +132,13 @@ pub struct Obj {
   /// payload (empty: the fields beside the tag).
   pub json_tag: Bytes = b""
   pub json_content: Bytes = b""
+  /// `derive Json(via: P, to: f, from: g)` (decision 0478): the proxy
+  /// type P and the Func objects that convert to and from it (-1: none),
+  /// and g's error type (-1: g has none).
+  pub json_via: Int = -1
+  pub json_to: Int = -1
+  pub json_from: Int = -1
+  pub json_from_err: Int = -1
   /// An empty std struct: an opaque handle.
   pub opaque: Bool = false
   /// Methods and statics (Func objects) by name.

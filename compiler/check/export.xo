@@ -78,7 +78,7 @@ pub struct StdFileRec {
   pub ranges: List[parser.DeclRange] = []
 }
 
-const EXPORT_VERSION = "xo std export v7 (variant JSON names, tagged enums, decision 0478)"
+const EXPORT_VERSION = "xo std export v8 (variant JSON names, tagged enums, own forms, decision 0478)"
 
 /// The std block's records as the checker holds them now.
 pub fn (c: Checker) std_export() -> StdExport {
@@ -390,6 +390,10 @@ fn (var w: ExW) obj(x: Obj, t: List[Int]) {
   }
   w.bytes(x.json_tag)
   w.bytes(x.json_content)
+  w.sv(x.json_via)
+  w.sv(x.json_to)
+  w.sv(x.json_from)
+  w.sv(x.json_from_err)
   w.bool(x.opaque)
   w.uv(x.methods.len())
   for (k, f) in x.methods.entries() {
@@ -518,6 +522,10 @@ fn (var r: ExR) obj() -> (Obj, List[Int]) {
   }
   x.json_tag = r.bytes()
   x.json_content = r.bytes()
+  x.json_via = r.sv()
+  x.json_to = r.sv()
+  x.json_from = r.sv()
+  x.json_from_err = r.sv()
   x.opaque = r.bool()
   let nm = r.uv()
   for _ in 0..nm {
@@ -1128,6 +1136,10 @@ fn (var r: Reloc) obj_rec(x0: Obj) -> Obj {
   x.variants = r.variants_of(x0.variants)
   x.iface_meths = r.objs_of(x0.iface_meths)
   x.target = r.ty(x0.target)
+  x.json_via = r.ty(x0.json_via)
+  x.json_to = r.obj(x0.json_to)
+  x.json_from = r.obj(x0.json_from)
+  x.json_from_err = r.ty(x0.json_from_err)
   x.methods = r.obj_map(x0.methods)
   x.statics = r.obj_map(x0.statics)
   x.decl_file = r.idx(r.files, x0.decl_file)

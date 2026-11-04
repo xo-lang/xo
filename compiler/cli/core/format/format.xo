@@ -954,10 +954,17 @@ fn (var p: Printer) derive(ds: List[parser.Ident], args: List[parser.DeriveArg])
       }
       p.w(if first { "(" } else { ", " })
       first = false
-      // a string value (`tag: "type"`, decision 0478) as written
-      let v = if a.str != None { p.text(a.value.span) } else { name_of(a.value) }
-      p.w(name_of(a.key) + ": " + v)
-      end = end_off(a.value.span)
+      p.w(name_of(a.key) + ": ")
+      if let Some(t) = a.typ {
+        // a type value (`via: Str`, decision 0478)
+        p.typ(t)
+      } else if a.str != None {
+        // a string value (`tag: "type"`, decision 0478) as written
+        p.w(p.text(a.value.span))
+      } else {
+        p.w(name_of(a.value))
+      }
+      end = end_off(a.span)
     }
     if !first {
       p.w(")")
@@ -1035,7 +1042,7 @@ fn (var p: Printer) type_decl(d: parser.TypeDecl) {
       p.typ(t)
     }
     p.w(")")
-    p.derive(d.derive, [])
+    p.derive(d.derive, d.derive_args)
     return
   }
   p.w(" = ")

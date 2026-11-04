@@ -334,6 +334,13 @@ fn (var b: Builder) json_enc_body(ct: Int, t: Int) {
     b.retv(acc)
     return
   }
+  if b.c.objs[obj].json_via >= 0 {
+    // its own form (decision 0478): the proxy `to` makes, encoded
+    let fi = b.declare(b.c.objs[obj].json_to, [])
+    let pv = b.add(Op.Call, b.m.funcs[fi].results[0], Aux.S(s: b.m.funcs[fi].name), [v])
+    b.retv(b.json_sub(acc, pv, b.c.objs[obj].json_via))
+    return
+  }
   let args = b.ty_args(ct)
   let om = b.obj_mod(obj)
   let oname = b.obj_name(obj)
@@ -984,6 +991,10 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
     b.dec_fail(d, "unsupported")
     return
   }
+  if b.c.objs[obj].json_via >= 0 {
+    b.dec_via(d, ct, obj)
+    return
+  }
   let args = b.ty_args(ct)
   let om = b.obj_mod(obj)
   let oname = b.obj_name(obj)
@@ -1215,6 +1226,33 @@ fn (var b: Builder) json_dec_body(d: Dec, ct: Int) {
   }
   b.unsupported("JSON for `${b.c.show(ct)}`")
   b.dec_fail(d, "unsupported")
+}
+
+/// The decoder of a type with its own form (decision 0478): the proxy
+/// decoded at the same path, then `from`; its error's Display text is
+/// the DecodeErr's message, at this value's path.
+fn (var b: Builder) dec_via(d: Dec, ct: Int, obj: Int) {
+  let bt = b.bool_t()
+  let it = b.int_t()
+  let pv = b.dec_child(d, b.c.objs[obj].json_via, d.i, b.const_str(""))
+  let fi = b.declare(b.c.objs[obj].json_from, [])
+  let rt = b.m.funcs[fi].results[0]
+  let r = b.add(Op.Call, rt, Aux.S(s: b.m.funcs[fi].name), [b.coerce(pv, b.func_value_type(fi, b.m.funcs[fi].blocks[0].params[0]))])
+  let et = b.fail_err(b.c.objs[obj].json_from_err)
+  if et < 0 {
+    b.dec_ok(d, r)
+    return
+  }
+  let ok = b.m.variant_index(rt, "Ok")
+  let err = b.m.variant_index(rt, "Err")
+  let tag = b.add(Op.Tag, it, Aux.None, [r])
+  let (yes, no) = b.branch(b.add(Op.Eq, bt, Aux.None, [tag, b.cint(ok)]))
+  b.s.cur = yes
+  b.dec_ok(d, b.add(Op.Payload, b.m.types[rt].variants[ok].fields[0].ty, Aux.P(tag: ok, field: 0), [r]))
+  b.s.cur = no
+  let ev = b.add(Op.Payload, b.m.types[rt].variants[err].fields[0].ty, Aux.P(tag: err, field: 0), [r])
+  let msg = b.append_display(b.const_str(""), b.unbox(ev), et)
+  b.retv(b.dec_err(d, b.const_str(""), msg))
 }
 
 /// The decoder of a tagged enum (decision 0478): the object's tag member,

@@ -1,0 +1,53 @@
+// A type's own JSON form (decision 0478): the checker's errors.
+struct NoFn {
+  a: Int
+} derive Json(via: Str, to: missing_to, from: nf_from) // ERROR XO0432 "`to: missing_to` names no non generic function"
+
+fn nf_from(s: Str) -> NoFn { NoFn{a: s.len()} }
+
+struct BadTo {
+  a: Int
+} derive Json(via: Str, to: bt_to, from: bt_from) // ERROR XO0433 "`to: bt_to` must be"
+
+fn bt_to(b: BadTo) -> Int { b.a }
+
+fn bt_from(s: Str) -> BadTo { BadTo{a: s.len()} }
+
+struct BadFrom {
+  a: Int
+} derive Json(via: Int, to: bf_to, from: bf_from) // ERROR XO0433 "`from: bf_from` must be"
+
+fn bf_to(b: BadFrom) -> Int { b.a }
+
+fn bf_from(s: Str) -> BadFrom { BadFrom{a: s.len()} }
+
+struct NoDisplay {
+  code: Int
+}
+
+struct BadErr {
+  a: Int
+} derive Json(via: Int, to: be_to, from: be_from) // ERROR XO0433 "must implement Display"
+
+fn be_to(b: BadErr) -> Int { b.a }
+
+fn be_from(n: Int) -> BadErr ! NoDisplay {
+  if n < 0 {
+    return Err(NoDisplay{code: n})
+  }
+  Ok(BadErr{a: n})
+}
+
+struct Partial {
+  a: Int
+} derive Json(via: Int, to: be_to) // ERROR XO0413 "takes all three"
+
+struct Mixed {
+  a: Int
+} derive Json(via: Int, to: mx_to, from: mx_from, case: snake) // ERROR XO0413 "`case:` has no effect beside it"
+
+fn mx_to(m: Mixed) -> Int { m.a }
+
+fn mx_from(n: Int) -> Mixed { Mixed{a: n} }
+
+fn main() {}

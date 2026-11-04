@@ -31,7 +31,9 @@ Last verified: 2026-10-24 (spec/core.md and spec/std.md at main).
   table, compiler/check/derivables.xo); wire names `as "x"` plus per-format
   `json "..."`, `sql "..."`, `xml "..."` (0315); enum variant wire names
   `Say as "say"` and `derive Json(case: snake)` on an enum, tagged enums
-  `derive Json(tag: "type"[, content: "data"])` (0478).
+  `derive Json(tag: "type"[, content: "data"])`, and a type's own form
+  `derive Json(via: Str, to: f, from: g)` on a struct, enum or newtype
+  (0478).
 
 ## Statements and expressions (core 3)
 
