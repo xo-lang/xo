@@ -1,0 +1,4 @@
+exit 0
+--- stdout
+my_lib c:inc/My-Lib.h|z /m/inc/
+--- stderr

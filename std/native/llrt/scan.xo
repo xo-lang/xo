@@ -614,8 +614,12 @@ pub fn cut_suffix_bytes(b: Bytes, p: Bytes) -> Bytes? {
 /// chars trims that byte, an ASCII chars is a bitmap, else runes are
 /// decoded and looked up in chars.
 pub fn trim_chars(s: Str, chars: Str) -> Str {
+  // every return a view of s, none s itself, here and in trim_start_chars
+  // and trim_end_chars: then each returns a view of its parameter
+  // (decision 0465 step 2) and its caller counts the result only where it
+  // must own it
   if s.len() == 0 || chars.len() == 0 {
-    return s
+    return rt.str_view(s, 0, s.len())
   }
   let cb = chars.bytes()
   if chars.len() == 1 && cb[0] < 0x80 {
@@ -645,7 +649,7 @@ pub fn trim_chars(s: Str, chars: Str) -> Str {
 /// strings.TrimLeft: s without its leading runes in chars, a view of s.
 pub fn trim_start_chars(s: Str, chars: Str) -> Str {
   if s.len() == 0 || chars.len() == 0 {
-    return s
+    return rt.str_view(s, 0, s.len())
   }
   let cb = chars.bytes()
   if chars.len() == 1 && cb[0] < 0x80 {
@@ -661,7 +665,7 @@ pub fn trim_start_chars(s: Str, chars: Str) -> Str {
 /// strings.TrimRight: s without its trailing runes in chars, a view of s.
 pub fn trim_end_chars(s: Str, chars: Str) -> Str {
   if s.len() == 0 || chars.len() == 0 {
-    return s
+    return rt.str_view(s, 0, s.len())
   }
   let cb = chars.bytes()
   if chars.len() == 1 && cb[0] < 0x80 {

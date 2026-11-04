@@ -338,6 +338,10 @@ pub struct Func {
   /// Per parameter, whether the callee only reads it (Func.Borrowed, set
   /// by InsertRC); empty before.
   pub borrowed: List[Bool] = []
+  /// The parameter whose view the function returns uncounted (decision
+  /// 0465 step 2, Rc.rvp, set by InsertRC): its callers treat the call as
+  /// a projection of that argument; -1 for none (the result is owned).
+  pub ret_view: Int = -1
   /// Why the builder left it incomplete (a construct outside the stages
   /// ported, decision 0150), or "": such a function is not compared.
   pub skip: Str = ""
@@ -387,7 +391,7 @@ pub fn (var f: Func) set_pos(v: Int, pos: Str) {
 }
 
 pub fn (f: Func) shell() -> Func {
-  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader}
+  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, captures: f.captures, entry: f.entry, export: f.export, catches: f.catches, unwind_exit: f.unwind_exit, borrowed: f.borrowed, ret_view: f.ret_view, skip: f.skip, ckey: f.ckey, target: f.target, reader: f.reader}
 }
 
 /// A lowered program (ssa.Module).

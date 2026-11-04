@@ -516,6 +516,9 @@ fn func_sig(m: ssa.Module, n: Str, taken: Map[Str, Bool], by_name: Map[Str, Int]
   for x in f.borrowed {
     b.write(" ${x}")
   }
+  if f.ret_view >= 0 {
+    b.write(" rv ${f.ret_view}")
+  }
   b.freeze()
 }
 

@@ -83,6 +83,89 @@ with XO_GATE_LLVM=1 (the arm64 goldens, the full LLVM goldens and the -O2
 sample, the full cmd/xo suite, the fixed point, chkcache, cross) all
 pass, after xo test compiler/ssa compiler/arm64 (107 passed).
 
+## Step 2 landed (2026-11-03, Xo Lang 1)
+
+Built without a second body: the calling convention itself changes for a
+function that qualifies, since every caller of such a function is known.
+ssa/retview.xo `return_views`, a pessimistic fixed point after the borrow
+inference, marks a function as returning a view of parameter p
+(`Func.ret_view`, `Rc.rvp`) when every Return is p itself (the entry
+block's parameter, not a join's), `rt.str_view`/`rt.str_borrow` of such a
+value, a call of another marked function on its p, or a constant (an
+immortal Str, a fault path's zero value), p is borrowed, its one result
+is a Str, and it is reached only directly: not indirect, an entry, an
+export, or the target of a FuncAddr or Closure. Then:
+
+- the callee returns the view uncounted (insert_rc's Return borrows its
+  argument; modes() agrees for the verifier);
+- each caller treats the call as a projection of its argument p (rc.xo
+  kind() and parent(), as rt.str_view under view_proj), so insert_rc
+  retains the result only where it must be owned (stored, returned,
+  passed to a consuming call, kept past p's release) and
+  borrow_projections leaves it uncounted elsewhere;
+- std's facts carry it (std facts v3, `StdFact.ret_view`; a mismatch is a
+  calling convention error in the facts verifier), and extern shells take
+  it from them;
+- such a function inlines only with exactly one Return (arm64/inline.xo
+  inline_call `direct`): the call's uses take the returned view itself,
+  with no join parameter, which the counting would own. With more than
+  one it stays a call (a join would return a counted value into a caller
+  that expects a view). The count of Returns is the inliner's summary's
+  (inlsum.xo FnSum.rets, inline sum v3), which a warm build reads from
+  the cache, so cold and warm builds decide alike
+  (gotchas/inline-shell-has-no-blocks.md). The rc, inline and function
+  caches key on the fact (rc cache v13, inline cache v12, fcache's
+  signature line);
+- kind() asks for every call value, so the names of the marked functions
+  are kept apart (`Rc.rvn`) and looked up only for a Str result; the
+  verifier's checker (verify.xo rc_checker) builds them too
+  (golden ret_view_field_arg; without them xo's self build failed under
+  XO_INLINE_STRICT=1);
+- std's trims qualify: llrt strings.trim cuts with rt.str_view (a Str is
+  valid UTF-8 and both scans step whole runes, so raw.str_cut's copy
+  never ran) and the trim_chars family returns rt.str_view(s, 0, len)
+  where it returned s;
+- XO0915 follows the convention: a marked function's result is checked
+  against its argument's release as an rt.str_borrow is.
+
+`XO_PASSES=-ret_views` turns it off; it is on with view_proj. Three
+places held a copy of the function without the field and failed only on a
+warm build (gotchas/func-field-lost-on-cached-build.md). Gates and the
+measurement: on the second linux/arm64 offload host, 2026-11-03,
+scripts/gate.sh arm64 llvm cmd fp with XO_GATE_LLVM=1 (arm64 goldens,
+the full LLVM goldens and the -O2 sample, cmd/xo, the fixed point,
+chkcache, cross) all pass, after xo test compiler/ssa compiler/arm64
+(108 passed) and internal/arm64 TestStdFactsVerify, whose Go decoder of
+the std facts now reads the ret_view field. At the final revision (step
+2 rebased onto 1e5f98fe6) on the same host: xo test compiler/ssa
+compiler/arm64 (108 passed), gate.sh arm64 fp (arm64 goldens, the fixed
+point, chkcache, cross) pass; the LLVM goldens and cmd/xo passed at its
+parent a8b75ae1, whose rebase brought in no compiler/llvm or cmd change
+of its own. Two goldens failed once each under the gate's load and pass
+alone at the change and at main (http_reverse_proxy_ws 25 of 25,
+TestStdRecordDefaultArgs, and both again in a rerun).
+
+Measured with `xo bench --ab` on the first linux/arm64 offload host,
+2026-11-03, A = main, B = step 2 (bench/results/retview-step2-2026-11-03.md):
+
+- generated code: bench/perf/trimchars trim 0.741 (0.663 to 0.76),
+  trim_end 0.728 (0.697 to 0.744); bench/perf/retview use 0.721 (0.72 to
+  0.734), keep 0.746 (0.727 to 0.845); bench/perf/jitter's server
+  (scripts/release-vs-go-http.sh, base = main's xo, 4 pads): every row
+  within placement (req/s 0.998 to 1.007);
+- xo's self build, both xo built by the seed (step 2's compile cost):
+  wall 1.007 (0.997 to 1.010), cpu 1.003 (0.999 to 1.006), within noise;
+- xo's self build, each xo built by itself (s2, so B's own code carries
+  the views), XO_INLINE_STRICT=1, 8 rounds from a quiet host: wall 1.004
+  (0.999 to 1.009), cpu 1.004, max RSS 1.002, all within noise. One
+  binary building xo with the pass on and off: insert_rc +44 ms, emit
+  -305 ms.
+
+An earlier lookup (a hash of the callee's name in kind() for every call)
+cost the self build 1.1%; a later draft read 0.94 because its xo failed
+the inlined module's verification and built without inlining
+(gotchas/ab-self-measures-inline-fallback.md).
+
 ## Consequences
 
 - Removes the `drop Str` share of trim and slice heavy loops (24% of this profile).

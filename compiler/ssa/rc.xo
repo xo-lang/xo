@@ -79,6 +79,12 @@ struct Rc {
   addr_drop: Bool = true
   /// decision 0465: rt.str_view a projection (view_proj)
   view_proj: Bool = false
+  /// decision 0465 step 2: per function, the parameter whose view it
+  /// returns uncounted (return_views), or -1; empty when view_proj is off
+  rvp: List[Int] = []
+  /// rvp's functions that return a view, by name: kind asks for every
+  /// call, so the lookup is skipped unless the call's result is a Str
+  rvn: Map[Str, Int] = {}
   // each function's `var` parameter indexes, by name, and type word
   // counts (chain_pads)
   vparams: Map[Str, List[Int]] = {}
@@ -445,7 +451,7 @@ fn (var r: Rc) kind(f: Func, v: Int) -> RootKind {
     Call => {
       // rt.str_borrow is always one (only view_proj makes it, and the
       // verifier's Rc reads the module after it)
-      if is_proj_call(aux_name(x.aux)) || aux_name(x.aux) == "rt.str_borrow" || (r.view_proj && aux_name(x.aux) == "rt.str_view") {
+      if is_proj_call(aux_name(x.aux)) || aux_name(x.aux) == "rt.str_borrow" || (r.view_proj && aux_name(x.aux) == "rt.str_view") || r.ret_view_at(x) >= 0 {
         return r.proj_kind(f, v)
       }
     }
@@ -468,7 +474,26 @@ fn (var r: Rc) proj_kind(f: Func, v: Int) -> RootKind {
 
 /// The leaf a projection root was taken from (parent).
 fn (var r: Rc) parent(f: Func, v: Int) -> Leaf {
-  r.leaves(f, f.values[v].args[0])[0]
+  let x = f.values[v]
+  // a call of a function that returns a view of its argument p (decision
+  // 0465 step 2): that argument's
+  let p = if x.op == Op.Call { r.ret_view_at(x) } else { -1 }
+  r.leaves(f, x.args[if p > 0 && p < x.args.len() { p } else { 0 }])[0]
+}
+
+/// The parameter whose view call x's function returns uncounted
+/// (Rc.rvp), or -1. Only a Str result can be one, and the name is looked
+/// up only then, in the few names that qualify: kind asks for every
+/// call value.
+fn (r: Rc) ret_view_at(x: Value) -> Int {
+  if r.rvn.is_empty() {
+    return -1
+  }
+  let t = ty_of(x.tb)
+  if t < 0 || t >= r.types.len() || r.types[t].kind != Kind.Str {
+    return -1
+  }
+  r.rvn.get(aux_name(x.aux)) ?? -1
 }
 
 fn (var r: Rc) tracked(f: Func, l: Leaf) -> Bool {
@@ -485,7 +510,14 @@ fn (var r: Rc) modes(f: Func, v: Int) -> List[Mode] {
     ms.push(Mode.No)
   }
   match x.op {
-    Struct | Tuple | Variant | Return | Release | Reuse | Closure | Rebind | Box => ms = fill_modes(n, Mode.Consume)
+    Struct | Tuple | Variant | Return | Release | Reuse | Closure | Rebind | Box => {
+      ms = fill_modes(n, Mode.Consume)
+      if x.op == Op.Return && n > 0 && r.fi >= 0 && r.fi < r.rvp.len() && r.rvp[r.fi] >= 0 {
+        // decision 0465 step 2: the result, a view of a borrowed
+        // parameter, goes back uncounted
+        ms[0] = Mode.Borrow
+      }
+    }
     Fault | Retain | Eq | Ne | Capture | Unbox | Share => ms = fill_modes(n, Mode.Borrow)
     CallValue => {
       // the closure borrowed; each argument borrowed unless its type is
@@ -1158,6 +1190,8 @@ pub fn (var b: Builder) rc_prepare(jobs: Int) -> Rc {
   r.addr_keep = !b.m.passes_off.contains("addr_keep")
   r.addr_drop = !b.m.passes_off.contains("addr_keep_drop")
   r.view_proj = view_proj_on(b.m)
+  r.rvp = r.ret_views(b.m)
+  r.rvn = ret_view_names(r.fidx, r.rvp)
   r
 }
 
@@ -1201,6 +1235,8 @@ pub fn (var b: Builder) rc_prepare_incr(jobs: Int, id: Str, prev: Map[Str, List[
   r.addr_keep = !b.m.passes_off.contains("addr_keep")
   r.addr_drop = !b.m.passes_off.contains("addr_keep_drop")
   r.view_proj = view_proj_on(b.m)
+  r.rvp = r.ret_views(b.m)
+  r.rvn = ret_view_names(r.fidx, r.rvp)
   (r, rec, nd, !check || r.borrowed == full)
 }
 
@@ -1225,7 +1261,7 @@ fn (var r: Rc) rc_cached(m: Module, f0: Func, fi: Int, key: Str, entries: Map[St
     if let Some(e) = entry {
       // with its summary: not decoded until something needs the body
       if let Some(sm) = sums.get(key) {
-        return (lazy_shell(f, key, r.borrowed[fi]), "", b"", true, false, Some(LazyFn{key: key, entry: e, sum: sm}))
+        return (lazy_shell(f, key, r.borrowed[fi], if fi < r.rvp.len() { r.rvp[fi] } else { -1 }), "", b"", true, false, Some(LazyFn{key: key, entry: e, sum: sm}))
       }
       if let Some(g0) = decode_func(m, e, ops) {
         var g = g0
@@ -1389,6 +1425,7 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   // build has none
   if f.blocks.len() == 1 && f.blocks[0].instrs.is_empty() {
     f.borrowed = r.borrowed[fi]
+    f.ret_view = if fi < r.rvp.len() { r.rvp[fi] } else { -1 }
     return
   }
   var c = RcFunc{}
@@ -1427,6 +1464,7 @@ fn (var r: Rc) rc_func(var f: Func, fi: Int) {
   r.lm_fi = -1
   r.um_fi = -1
   f.borrowed = r.borrowed[fi]
+  f.ret_view = if fi < r.rvp.len() { r.rvp[fi] } else { -1 }
 }
 
 fn (var r: Rc) liveness(f: Func, var c: RcFunc) {
@@ -1895,9 +1933,12 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
     }
     Return => {
       var k = Counted{}
-      for a in f.values[term].args {
+      // decision 0465 step 2: a function that returns a view of a borrowed
+      // parameter (Rc.rvp) hands its result back uncounted
+      let rv = r.fi >= 0 && r.fi < r.rvp.len() && r.rvp[r.fi] >= 0
+      for (ai, a) in f.values[term].args.indexed() {
         for l in r.leaves(f, a) {
-          k.add(l, Mode.Consume)
+          k.add(l, if rv && ai == 0 { Mode.Borrow } else { Mode.Consume })
         }
       }
       var code: List[Int] = []
@@ -1905,7 +1946,9 @@ fn (var r: Rc) walk(var f: Func, var c: RcFunc, bl: Int) {
         var n = k.consumes(l)
         if r.tracked(f, l) {
           live.add(leaf_key(l))
-          n -= 1
+          if n > 0 {
+            n -= 1
+          }
         }
         for x in r.rc_ops(f, Op.Retain, l, bl, n) {
           code.push(x)
@@ -3345,4 +3388,18 @@ fn borrow_views(var f: Func) {
       f.values[i].aux = Aux.S("rt.str_borrow")
     }
   }
+}
+
+/// Rc.rvn: the names of fidx whose function returns a view (rvp).
+fn ret_view_names(fidx: Map[Str, Int], rvp: List[Int]) -> Map[Str, Int] {
+  var out: Map[Str, Int] = {}
+  if rvp.is_empty() {
+    return out
+  }
+  for (n, ci) in fidx {
+    if ci >= 0 && ci < rvp.len() && rvp[ci] >= 0 {
+      out[n] = rvp[ci]
+    }
+  }
+  out
 }

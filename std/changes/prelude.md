@@ -1,5 +1,23 @@
 # prelude changes
 
+## 2026-11-03: perf: Str.trim and the trim_chars family return a view of their receiver on every path
+
+- Kind: perf
+- Commit: this commit
+- Found by: decision 0465 step 2's ceiling (bench/results/retview-ceiling-2026-11-03.md): the trims did not qualify as functions that return a view of their parameter
+- Go reference: strings.TrimSpace and strings.Trim return a slice of s on every path
+- Test: arm64 string goldens under XO_RC_CHECK; internal/llvm TestGolden trim goldens; std test of native/path
+- Timing: xo bench --ab on linux/arm64 (with decision 0465 step 2): bench/perf/trimchars trim 0.741 (0.663 to 0.76), trim_end 0.728 (0.697 to 0.744)
+- Shipped in: not yet released
+
+llrt strings.trim (Str.trim, trim_start, trim_end) cuts with rt.str_view
+instead of raw.str_cut and no longer returns s itself when nothing is
+trimmed: a Str is valid UTF-8 and both scans step over whole runes, so
+str_cut's copy path never ran. scan.trim_chars, trim_start_chars and
+trim_end_chars return rt.str_view(s, 0, s.len()) for an empty s or
+cutset. Every return is then a view of the receiver, so decision 0465
+step 2 marks them and their callers count the result only where they must
+own it.
 ## 2026-11-03: feature: NetConn, a connection interface with deadlines
 
 - Kind: feature

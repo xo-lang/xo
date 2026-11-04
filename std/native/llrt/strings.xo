@@ -360,8 +360,10 @@ pub fn trim(s: Str, mode: Int) -> Str {
   if mode != 1 {
     hi = space_start(b, lo, n)
   }
-  if lo == 0 && hi == n {
-    return s
-  }
-  raw.str_cut(s, lo, hi)
+  // a view always: lo and hi are rune boundaries (a Str is valid UTF-8,
+  // and both scans step over whole runes), so raw.str_cut's copy path
+  // never runs; one return of a view of s makes trim a function that
+  // returns a view of its parameter (decision 0465 step 2), as returning
+  // s itself when nothing is trimmed did not
+  rt.str_view(s, lo, hi)
 }

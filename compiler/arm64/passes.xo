@@ -42,6 +42,11 @@ pub fn passes() -> List[Str] {
     // full unroll; off for a clang before LLVM 19 (compiler/xo clang.xo
     // unroll_cap_ok)
     "unroll_full",
+    // compiler/ssa retview.xo (decision 0465 step 2): a function that
+    // returns a view of a borrowed parameter returns it uncounted, and its
+    // callers treat the call as a projection of that argument (needs
+    // view_proj)
+    "ret_views",
     // compiler/ssa uniqvar.xo (decision 0322): a `var` List parameter
     // every call passes unique skips its entry copy-on-write check
     "uniq_var_params",

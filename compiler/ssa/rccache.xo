@@ -10,7 +10,7 @@
 use std/crypto
 
 /// The version of the entries and keys.
-const RC_CACHE_VERSION = "xo rc cache v12"
+const RC_CACHE_VERSION = "xo rc cache v13"
 
 /// What insert_rc_plan computed for the cache: the key of each function
 /// ("" for one not cached), and the pass's state after borrow inference.
@@ -48,8 +48,8 @@ pub struct LazyFn {
 /// summary, not the body). reader comes from the function as built: the
 /// inliner must see it without decoding the body (a build without debug
 /// information keeps the readers' stubs this way, 2026-10-25).
-fn lazy_shell(f: Func, key: Str, borrowed: List[Bool]) -> Func {
-  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, borrowed: borrowed, ckey: "rc ${key}"}
+fn lazy_shell(f: Func, key: Str, borrowed: List[Bool], rv: Int) -> Func {
+  Func{name: f.name, file: f.file, results: f.results, var_params: f.var_params, indirect: f.indirect, entry: f.entry, export: f.export, catches: f.catches, reader: f.reader, borrowed: borrowed, ret_view: rv, ckey: "rc ${key}"}
 }
 
 /// Decodes the lazy functions idx of m (all of them for idx []) in
@@ -203,7 +203,7 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
   let f = m.funcs[fi]
   var b = BytesBuilder.new()
   b.write_str("${RC_CACHE_VERSION}\n${id}\n${m.goarch}\n")
-  b.write_str("self ${bools_text(r.borrowed[fi])} last=${(r.fidx.get(f.name) ?? -1) == fi} imm=${r.skip_imm} ak=${r.addr_keep} ${r.addr_drop} vp=${r.view_proj}\n")
+  b.write_str("self ${bools_text(r.borrowed[fi])} last=${(r.fidx.get(f.name) ?? -1) == fi} imm=${r.skip_imm} ak=${r.addr_keep} ${r.addr_drop} vp=${r.view_proj} rv=${if fi < r.rvp.len() { r.rvp[fi] } else { -1 }}\n")
   if key_body(b, m, fi, f, tk) {
     // apply_uniq's marks, which the body id does not cover
     let es = if fi < r.uq_entry.len() { bools_text(r.uq_entry[fi]) } else { "-" }
@@ -220,7 +220,10 @@ fn rc_key(m: Module, fi: Int, r: Rc, tk: List[Str], id: Str) -> Str {
         let ir = if let Some(fs) = r.imm_ret.get(s) { bools_text(fs) } else { "-" }
         // and what it hands back unique (decision 0322, Rc.handed_unique)
         let uq = if ci >= 0 && ci < r.uq.len() { bools_text(r.uq[ci]) } else { "-" }
-        b.write_str("callee ${s.len()}:${s} ${bs} ${ir} ${uq}\n")
+        // and the parameter whose view it returns uncounted (decision
+        // 0465 step 2), which makes its calls projections here
+        let rv = if ci >= 0 && ci < r.rvp.len() { r.rvp[ci] } else { -1 }
+        b.write_str("callee ${s.len()}:${s} ${bs} ${ir} ${uq} rv=${rv}\n")
       }
     }
   }
@@ -344,7 +347,7 @@ fn key_head(var b: BytesBuilder, f: Func, tk: List[Str]) {
   write_int(b, f.name.len())
   b.write_str(":${f.name} indirect=${f.indirect} entry=${f.entry} export=${f.export.len()}:${f.export} catches=${f.catches} unwind=${f.unwind_exit} skip=${f.skip.len()}:${f.skip} file=${f.file.len()}:${f.file} var=[")
   write_ints(b, f.var_params)
-  b.write_str("] borrowed=${bools_text(f.borrowed)}\n")
+  b.write_str("] borrowed=${bools_text(f.borrowed)} rv=${f.ret_view}\n")
   b.write_str("results")
   for t in f.results {
     b.write_byte(' ')
@@ -633,6 +636,7 @@ fn encode_func(m: Module, f: Func) -> Option[Bytes] {
   for x in f.borrowed {
     e.bool(x)
   }
+  e.uv(f.ret_view + 1)
   e.str(f.skip)
   e.uv(f.blocks.len())
   for bl in f.blocks {
@@ -876,6 +880,7 @@ fn decode_func_at(m: Module, d: Bytes, ops: Map[Str, Op], head_only: Bool) -> Op
   for _ in 0..nbw {
     f.borrowed.push(r.bool())
   }
+  f.ret_view = r.uv() - 1
   f.skip = r.str()
   if head_only {
     return if r.ok { Some(f) } else { None }
@@ -1167,7 +1172,7 @@ pub fn (m: Module) verify_keys(keys: List[Str]) -> List[Str] {
       continue
     }
     var b = BytesBuilder.new()
-    b.write_str("xo verify key v1\n${keys[fi]}\nself ${faults[fi]} ${f.catches} ${bools_text(f.borrowed)}\n")
+    b.write_str("xo verify key v1\n${keys[fi]}\nself ${faults[fi]} ${f.catches} ${bools_text(f.borrowed)} rv=${f.ret_view}\n")
     var seen: Map[Str, Bool] = {}
     // (a function not decoded: its body facts' names, decision 0283 B)
     for s in m.value_names(fi) {
@@ -1177,7 +1182,7 @@ pub fn (m: Module) verify_keys(keys: List[Str]) -> List[Str] {
         for ci in [m.func_index(s), last.get(s) ?? -1] {
           if ci >= 0 {
             let g = m.funcs[ci]
-            b.write_str(" ${ci} ${faults[ci]} ${g.catches} ${bools_text(g.borrowed)}")
+            b.write_str(" ${ci} ${faults[ci]} ${g.catches} ${bools_text(g.borrowed)} rv=${g.ret_view}")
           } else {
             b.write_str(" -")
           }

@@ -42,3 +42,29 @@ test "XO0915: a borrowed view used before the release, or retained first, is not
   expect(codes(view_func(["use", "release"]))) == []
   expect(codes(view_func(["retain", "release", "use"]))) == []
 }
+
+/// f: s, the result of a call of trim (which returns a view of its
+/// parameter 0, decision 0465 step 2), s released, then the result's length.
+fn ret_view_func() -> Func {
+  var m = Module{}
+  let fi = m.new_func("f", [], [])
+  var f = m.funcs[fi]
+  let s = f.add(0, Op.Const, -1, Aux.S(s: "hello"), [])
+  let v = f.add(0, Op.Call, -1, Aux.S(s: "trim"), [s])
+  f.values[v].lp = 2 * 4096 + 1
+  let r = f.add(0, Op.Release, -1, Aux.None, [s])
+  f.values[r].lp = 3 * 4096 + 1
+  let u = f.add(0, Op.Call, -1, Aux.S(s: "Str.len"), [v])
+  f.values[u].lp = 4 * 4096 + 1
+  m.funcs[fi] = f
+  m.funcs[fi]
+}
+
+test "XO0915: the result of a function that returns a view of its parameter" {
+  var out: List[Str] = []
+  for n in freed_addresses_rv(ret_view_func(), {"trim": 0}) {
+    out.push("${n.code}:${n.line}")
+  }
+  expect(out) == ["XO0915:2"]
+  expect(codes(ret_view_func())) == []
+}

@@ -166,6 +166,9 @@ func ownOneBorrowed(d []byte) (string, []byte, error) {
 		if _, err := skipBools(); err != nil { // unique
 			return "", nil, err
 		}
+		if _, err := uv(); err != nil { // ret_view (std facts v3, a signed varint)
+			return "", nil, err
+		}
 		if _, err := skipBools(); err != nil { // catches, faults, cancels
 			return "", nil, err
 		}

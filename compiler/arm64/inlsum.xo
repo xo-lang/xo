@@ -11,7 +11,7 @@
 
 use github.com/xo-lang/xo/compiler/ssa
 
-const INLINE_SUM_VERSION = "xo inline sum v2"
+const INLINE_SUM_VERSION = "xo inline sum v3"
 
 /// See the file comment; inline_walk reads it in the order of the body.
 pub struct FnSum {
@@ -33,12 +33,19 @@ pub struct FnSum {
   indirect: Bool = false
   catches: Bool = false
   nres: Int = 0
+  /// the Return terminators (inline.xo: a function that returns a view
+  /// inlines with exactly one; a warm build's shell has no blocks to
+  /// count, 2026-11-03)
+  rets: Int = 0
 }
 
 /// The summary of f's body.
 pub fn fn_sum(f: ssa.Func) -> FnSum {
   var s = FnSum{blocks: f.blocks.len(), indirect: f.indirect, catches: f.catches, nres: f.results.len()}
   for bl in f.blocks {
+    if !bl.instrs.is_empty() && f.values[bl.instrs[bl.instrs.len() - 1]].op == ssa.Op.Return {
+      s.rets += 1
+    }
     s.adc += adc_pairs(f, bl.instrs)
     var prev = -1
     for v in bl.instrs {
@@ -149,7 +156,7 @@ fn sum_at(m: ssa.Module, fi: Int) -> FnSum {
 pub fn encode_sum(s: FnSum) -> Bytes {
   var w = BytesBuilder.new()
   w.write_str("${INLINE_SUM_VERSION}\n")
-  for v in [s.blocks, s.adc, s.consts, s.instrs, s.nres] {
+  for v in [s.blocks, s.adc, s.consts, s.instrs, s.nres, s.rets] {
     sum_uv(w, v)
   }
   sum_uv(w, (if s.pads { 1 } else { 0 }) | (if s.badpad { 2 } else { 0 }) | (if s.indirect { 4 } else { 0 }) | (if s.catches { 8 } else { 0 }))
@@ -180,6 +187,7 @@ pub fn decode_sum(b: Bytes) -> FnSum? {
   s.consts = r.uv()
   s.instrs = r.uv()
   s.nres = r.uv()
+  s.rets = r.uv()
   let fl = r.uv()
   s.pads = (fl & 1) != 0
   s.badpad = (fl & 2) != 0

@@ -1127,9 +1127,13 @@ fn rc_checker(m: Module) -> Rc {
   for (i, f) in m.funcs.indexed() {
     r.fidx[f.name] = i
     r.borrowed.push(f.borrowed)
+    r.rvp.push(f.ret_view)
     let ps = if f.blocks.is_empty() { [] } else { f.blocks[0].params }
     r.fparam0.push(if ps.is_empty() || ps[0] >= f.values.len() { -1 } else { ty_of(f.values[ps[0]].tb) })
   }
+  // kind reads the names (ret_view_at), not rvp: both, or the checker
+  // counts a view's call as an owned result
+  r.rvn = ret_view_names(r.fidx, r.rvp)
   r
 }
 

@@ -1,0 +1,115 @@
+// Decision 0465 step 2: a call of a function that returns a view of its
+// parameter (ext_of), passed a field of a copied struct (o.header), as
+// compiler/cli/bind's Binder.locate does. The verifier's own reference
+// counting once missed the names of such functions, so it read the call as
+// an owned result and xo's self build failed under XO_INLINE_STRICT=1
+// (2026-11-03).
+
+struct Opts {
+  header: Str
+  mod_dir: Str
+  links: List[Str]
+}
+
+struct Bnd {
+  name: Str = ""
+  key: Str = ""
+  include_dirs: List[Str] = []
+}
+
+struct Binder {
+  opts: Opts
+  bnd: Bnd = Bnd{}
+}
+
+fn clean(p: Str) -> Str {
+  if p.is_empty() { return "." }
+  p
+}
+
+fn dir_of(p: Str) -> Str {
+  var i = p.len()
+  let bs = p.bytes()
+  while i > 0 && bs[i - 1] != '/' {
+    i -= 1
+  }
+  clean(p[0..i])
+}
+
+fn base_of(p0: Str) -> Str {
+  if p0.is_empty() {
+    return "."
+  }
+  var p = p0
+  while p.len() > 1 && p.ends_with("/") {
+    p = p.trim_suffix("/")
+  }
+  if p == "/" {
+    return "/"
+  }
+  let bs = p.bytes()
+  var i = p.len()
+  while i > 0 && bs[i - 1] != '/' {
+    i -= 1
+  }
+  p[i..p.len()]
+}
+
+fn ext_of(p: Str) -> Str {
+  let bs = p.bytes()
+  var i = p.len() - 1
+  while i >= 0 && bs[i] != '/' {
+    if bs[i] == '.' {
+      return p[i..p.len()]
+    }
+    i -= 1
+  }
+  ""
+}
+
+fn module_name(base: Str) -> Str {
+  var sb = StrBuilder.new()
+  for r in base.to_lower().runes() {
+    if r == '_' || (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') {
+      sb.write("${r}")
+    } else {
+      sb.write("_")
+    }
+  }
+  var s = sb.freeze()
+  while s.starts_with("_") {
+    s = s.trim_prefix("_")
+  }
+  while s.ends_with("_") {
+    s = s.trim_suffix("_")
+  }
+  s
+}
+
+fn (var b: Binder) locate() -> () ! Str {
+  let o = b.opts
+  b.bnd = Bnd{}
+  if o.header.is_empty() {
+    return Err("empty header path")
+  }
+  var local = "${o.mod_dir}/${o.header}"
+  if o.header.starts_with("/") {
+    local = o.header
+  }
+  if local.len() > 3 {
+    b.bnd.include_dirs.push(dir_of(local))
+  }
+  let hb = base_of(o.header)
+  let base = hb.trim_suffix(ext_of(o.header))
+  b.bnd.name = module_name(base)
+  b.bnd.key = "c:${o.header}|${o.links.join(",")}"
+  Ok(())
+}
+
+fn main(os: Os) {
+  var b = Binder{opts: Opts{header: "inc/My-Lib.h", mod_dir: "/m", links: ["z"]}}
+  match b.locate() {
+    Ok(_) => os.stdio.println("${b.bnd.name} ${b.bnd.key} ${b.bnd.include_dirs.join(",")}")
+    Err(e) => os.stdio.println(e)
+  }
+}

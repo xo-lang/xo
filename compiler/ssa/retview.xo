@@ -1,0 +1,152 @@
+// Decision 0465 step 2, part A: which functions return a view of one of
+// their parameters (a Str result that is the parameter itself, a view of
+// it, a view of a view, or the result of a call that returns a view of
+// its argument), so a caller can treat the call as a projection of that
+// argument (as rt.str_view is with view_proj) and the callee can return
+// it without a count. Only functions every caller reaches directly
+// qualify: an indirect one (called through a function value), one whose
+// address is taken (FuncAddr, Closure), an export and an entry keep
+// today's convention, since a caller that does not know the fact would
+// release a result it never owned.
+
+/// For each function, the index of the parameter its Str result is a
+/// view of, or -1: a pessimistic fixed point over the call graph (a
+/// recursive function qualifies when its non-recursive returns already
+/// prove it; a cycle of only each other is left out).
+///
+/// borrowed is each function's borrowed parameters (the borrow
+/// inference's): the parameter must be one, so its caller keeps it alive
+/// past the call. ext holds the facts of the functions whose bodies are
+/// another compilation's (std's, decision 0388), taken as they are.
+pub fn return_views(funcs: List[Func], types: List[SType], fidx: Map[Str, Int], borrowed: List[List[Bool]], ext: Map[Str, Int]) -> List[Int] {
+  var rvp: List[Int] = []
+  var cand: List[Bool] = []
+  for f in funcs {
+    if let Some(p) = ext.get(f.name) {
+      rvp.push(p)
+      cand.push(false)
+      continue
+    }
+    rvp.push(-1)
+    cand.push(!f.indirect && !f.entry && f.export.is_empty() && f.results.len() == 1 && is_str(types, f.results[0]))
+  }
+  // a function named by a FuncAddr or a Closure is reached through a value
+  for f in funcs {
+    for v in f.values {
+      if v.op is Op.FuncAddr | Op.Closure {
+        let k = fidx.get(aux_name(v.aux)) ?? -1
+        if k >= 0 {
+          cand[k] = false
+        }
+      }
+    }
+  }
+  var changed = true
+  while changed {
+    changed = false
+    for (fi, f) in funcs.indexed() {
+      if !cand[fi] || rvp[fi] >= 0 {
+        continue
+      }
+      let p = returned_view(f, rvp, fidx)
+      if p >= 0 && fi < borrowed.len() && p < borrowed[fi].len() && borrowed[fi][p] {
+        rvp[fi] = p
+        changed = true
+      }
+    }
+  }
+  rvp
+}
+
+fn is_str(types: List[SType], t: Int) -> Bool {
+  t >= 0 && t < types.len() && types[t].kind == Kind.Str
+}
+
+/// The parameter every Return of f returns a view of, or -1.
+fn returned_view(f: Func, rvp: List[Int], fidx: Map[Str, Int]) -> Int {
+  var p = -1
+  var any = false
+  for bl in f.blocks {
+    if bl.instrs.is_empty() {
+      continue
+    }
+    let t = f.values[bl.instrs[bl.instrs.len() - 1]]
+    if t.op != Op.Return {
+      continue
+    }
+    if t.args.is_empty() {
+      return -1
+    }
+    var seen: Map[Int, Bool] = {}
+    let q = view_of(f, t.args[0], rvp, fidx, seen)
+    if q == -1 || (q >= 0 && any && q != p) {
+      return -1
+    }
+    if q >= 0 {
+      p = q
+      any = true
+    }
+  }
+  p
+}
+
+/// The parameter v is a view of in f, -1 for none, or -2 for a value any
+/// parameter agrees with: a constant (an immortal Str, a fault path's
+/// zero value), which no caller counts. seen guards a value met twice.
+fn view_of(f: Func, v: Int, rvp: List[Int], fidx: Map[Str, Int], var seen: Map[Int, Bool]) -> Int {
+  if v < 0 || v >= f.values.len() {
+    return -1
+  }
+  if seen.contains(v) {
+    return -2
+  }
+  seen[v] = true
+  let x = f.values[v]
+  match x.op {
+    Op.Const | Op.Undef => -2
+    Op.Param => {
+      // the entry block's: a parameter. Not a join's (another block's
+      // parameter): the counting owns a block parameter (its edges count
+      // what they pass), so returning one uncounted would leak that count
+      // (ssa.cln_body's `if` of b"" and a slice, 2026-11-03)
+      if block_of(x.tb) != 0 {
+        return -1
+      }
+      f.blocks[0].params.index_of(v) ?? -1
+    }
+    Op.Call => {
+      let n = aux_name(x.aux)
+      if n is "rt.str_view" | "rt.str_borrow" {
+        if x.args.is_empty() {
+          return -1
+        }
+        let q = view_of(f, x.args[0], rvp, fidx, seen)
+        // a view of a constant is a constant's: not a parameter's
+        return if q == -2 { -1 } else { q }
+      }
+      let g = fidx.get(n) ?? -1
+      if g < 0 || rvp[g] < 0 || rvp[g] >= x.args.len() {
+        return -1
+      }
+      let q = view_of(f, x.args[rvp[g]], rvp, fidx, seen)
+      if q == -2 { -1 } else { q }
+    }
+    _ => -1
+  }
+}
+
+/// Rc.rvp of m (decision 0465 step 2): return_views when views are
+/// projections (view_proj) and the pass is on (XO_PASSES=-ret_views turns
+/// it off), with std's facts for the functions std compiled; else none.
+fn (r: Rc) ret_views(m: Module) -> List[Int] {
+  if !r.view_proj || m.passes_off.contains("ret_views") {
+    return []
+  }
+  var ext: Map[Str, Int] = {}
+  for f in m.funcs {
+    if let Some(x) = m.externs.get(f.name) {
+      ext[f.name] = x.ret_view
+    }
+  }
+  return_views(m.funcs, r.types, r.fidx, r.borrowed, ext)
+}

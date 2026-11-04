@@ -218,6 +218,22 @@ fn inline_walk(m: ssa.Module, sums: List[FnSum], by_name: Map[Str, Int], sites: 
     c.why = if f.name == "main" { "main" } else if ssa.cold_fn(f.name) { "slow path" } else { "denied" }
   }
   c.instrs -= s.adc
+  if f.ret_view >= 0 && s.rets != 1 {
+    // decision 0465 step 2: it returns a view uncounted, which its
+    // callers treat as a projection of their argument; inlined, its
+    // returns would become a join's parameter, which the counting owns.
+    // With one Return, inline_call puts the view in the call's place
+    // instead. The count is the summary's (s.rets), which a warm build
+    // reads from the cache: its function is a shell with no blocks here,
+    // and counting those inlined path.ext (four returns) through a join,
+    // then, with "!= 1", built other code than the cold build
+    // (TestStdModuleRunCache, TestModuleCheckAuto; 2026-11-03,
+    // gotchas/inline-shell-has-no-blocks.md) (16 of xo's 17 such functions were inlined before step 2;
+    // without them its self build ran 0.8% slower, 2026-11-03)
+    c.bad = true
+    c.hard = true
+    c.why = "returns a view"
+  }
   // landing pads of its own (decision 0085) are copied with the body
   // since decision 0256: each copied value's pad is the copy of its
   // check, and the callee's unwind exit re-raises into the caller's
@@ -483,7 +499,9 @@ pub fn inline_report(m: ssa.Module, filter: Str) -> List[Str] {
     }
     let c = costs.get(f.name) ?? InlineCost{instrs: 0, blocks: 0, bad: true}
     let how = if small.contains(f.name) { "small" } else if fewl.contains(f.name) { "few" } else if loopy.contains(f.name) { "loop" } else if padded.contains(f.name) { "padded" } else if c.hard { "no (hard: ${c.why})" } else if c.pads { "no (pads)" } else { "no (size)" }
-    out.push("inline ${f.name}: instrs ${c.instrs} blocks ${c.blocks} sites ${sites.get(f.name) ?? 0} ${how}")
+    // view: it returns a view of parameter ret_view (decision 0465 step 2)
+    let rv = if f.ret_view >= 0 { " view ${f.ret_view}" } else { "" }
+    out.push("inline ${f.name}: instrs ${c.instrs} blocks ${c.blocks} sites ${sites.get(f.name) ?? 0} ${how}${rv}")
   }
   out
 }
@@ -1185,12 +1203,22 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
       f.edges[e].from = cont
     }
   }
+  // a callee that returns a view uncounted (decision 0465 step 2) with
+  // one Return: its value takes the call's uses as it is, the view the
+  // caller's counting expects, with no join parameter (which the counting
+  // owns: passing the view to one consumed a count it never had); its
+  // block is cont's one predecessor, so it dominates them
+  let direct = callee.ret_view >= 0 && callee.results.len() == 1 && return_count(callee) == 1
   var res: List[Int] = []
-  for r in callee.results {
-    res.push(f.add_param(cont, r))
+  if !direct {
+    for r in callee.results {
+      res.push(f.add_param(cont, r))
+    }
   }
   var repl = -1
-  if res.len() == 1 {
+  if direct {
+    repl = -1
+  } else if res.len() == 1 {
     repl = res[0]
   } else {
     repl = f.add(cont, ssa.Op.Tuple, ssa.ty_of(f.values[call].tb), ssa.Aux.None, res)
@@ -1198,7 +1226,9 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   for v in rest {
     f.blocks[cont].instrs.push(v)
   }
-  replace_uses(f, call, repl)
+  if !direct {
+    replace_uses(f, call, repl)
+  }
 
   // the call's inline site, and the callee's own sites under it
   // (decision 0239: the line tables' inlined frames)
@@ -1238,6 +1268,7 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
   let pad = ssa.pad_of(f.values[call].pi)
   var pads: List[(Int, Int)] = []
   var edges: List[Pending] = []
+  var ret_arg = -1
   for cb in order {
     let nb = bm.get(cb) ?? -1
     for v in callee.blocks[cb].instrs {
@@ -1257,7 +1288,11 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
         }
         Return => {
           let t = f.jump(nb, cont, [])
-          edges.push(Pending{e: f.values[t].succs[0], args: x.args})
+          if direct {
+            ret_arg = x.args[0]
+          } else {
+            edges.push(Pending{e: f.values[t].succs[0], args: x.args})
+          }
         }
         _ => {
           var args: List[Int] = []
@@ -1295,6 +1330,9 @@ fn inline_call(var f: ssa.Func, call: Int, callee: ssa.Func) {
       args.push(vm.get(a) ?? a)
     }
     f.edges[p.e].args = args
+  }
+  if direct {
+    replace_uses(f, call, vm.get(ret_arg) ?? ret_arg)
   }
   for (nv, cp) in pads {
     // a closure that catches its faults hands back the value it was
@@ -1371,4 +1409,15 @@ fn denied(m: ssa.Module, name: Str) -> Bool {
     }
   }
   false
+}
+
+/// The Return terminators of f.
+fn return_count(f: ssa.Func) -> Int {
+  var n = 0
+  for bl in f.blocks {
+    if !bl.instrs.is_empty() && f.values[bl.instrs[bl.instrs.len() - 1]].op == ssa.Op.Return {
+      n += 1
+    }
+  }
+  n
 }
