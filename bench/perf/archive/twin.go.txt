@@ -108,6 +108,36 @@ func readZip(a []byte) []entry {
 	return out
 }
 
+func writeZipFile(es []entry) {
+	f, _ := os.Create("zw.zip")
+	w := zip.NewWriter(f)
+	for _, e := range es {
+		h := &zip.FileHeader{Name: e.path, Method: zip.Deflate, Modified: time.Unix(0, 0)}
+		if e.isDir {
+			h.Method = zip.Store
+		}
+		fw, _ := w.CreateHeader(h)
+		fw.Write(e.data)
+	}
+	w.Close()
+	f.Close()
+}
+
+func readZipFile(path string) []entry {
+	var out []entry
+	f, _ := os.Open(path)
+	st, _ := f.Stat()
+	r, _ := zip.NewReader(f, st.Size())
+	for _, zf := range r.File {
+		rc, _ := zf.Open()
+		d, _ := io.ReadAll(rc)
+		rc.Close()
+		out = append(out, entry{zf.Name, d, strings.HasSuffix(zf.Name, "/")})
+	}
+	f.Close()
+	return out
+}
+
 func main() {
 	w := "none"
 	if len(os.Args) > 1 {
@@ -143,6 +173,16 @@ func main() {
 				got = readZip(a)
 			}
 			sum += content(got)
+		}
+	case "zip_writer":
+		for p := 0; p < 200; p++ {
+			writeZipFile(es)
+			sum += content(es)
+		}
+	case "zip_open":
+		os.WriteFile("zo.zip", writeZip(es), 0o644)
+		for p := 0; p < 200; p++ {
+			sum += content(readZipFile("zo.zip"))
 		}
 	default:
 		sum = content(es)

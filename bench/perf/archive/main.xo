@@ -3,7 +3,9 @@
 // directories, written as a tar and as a deflated zip, and read back, 200
 // passes each; `none` is the setup alone. The checksums count entries and
 // content bytes, not archive bytes (the two writers' headers may differ
-// and still be valid). Usage: `<program> none|tar|untar|zip|unzip|zip_reader`.
+// and still be valid). Usage: `<program> none|tar|untar|zip|unzip|zip_reader|zip_writer|zip_open`; zip_writer
+// streams the entries to a file with a ZipWriter and zip_open reads them
+// back from a file (decision 0479), in the working directory.
 // Prints `<workload> <checksum>`; the twin prints the same.
 use std/archive
 
@@ -37,7 +39,7 @@ fn content(es: List[archive.Entry]) -> Int {
   s
 }
 
-fn main(os: Os) uses stdio, env, fs.read {
+fn main(os: Os) uses stdio, env, fs.read, fs.write {
   let w = os.env.args().get(0) ?? "none"
   let es = entries()
   var sum = 0
@@ -51,6 +53,30 @@ fn main(os: Os) uses stdio, env, fs.read {
     for _ in 0..200 {
       let got = (if w == "untar" { archive.untar(a) } else { archive.unzip(a) }).ok() ?? fault("read")
       sum += content(got)
+    }
+  } else if w == "zip_writer" {
+    for _ in 0..200 {
+      var f = os.fs.create("zw.zip").ok() ?? fault("create")
+      var zw = archive.zip_writer(f)
+      for e in es {
+        zw.add(e).ok() ?? fault("add")
+      }
+      zw.close().ok() ?? fault("close")
+      f.close().ok() ?? fault("close")
+      sum += content(es)
+    }
+  } else if w == "zip_open" {
+    let a = archive.zip(es).ok() ?? fault("write")
+    os.fs.write("zo.zip", a).ok() ?? fault("write")
+    for _ in 0..200 {
+      let f = os.fs.open("zo.zip").ok() ?? fault("open")
+      let r = archive.zip_open(f, a.len()).ok() ?? fault("open")
+      let fs = r.files()
+      sum += fs.len()
+      for z in fs {
+        sum += (r.read(z).ok() ?? fault("read")).len()
+      }
+      f.close().ok() ?? fault("close")
     }
   } else if w == "zip_reader" {
     // the same entries read one at a time through a ZipReader (decision 0479)
