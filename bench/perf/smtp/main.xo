@@ -20,17 +20,16 @@ fn serve(l: Listener, n: Int, got: Mutex[Int]) -> () ! NetErr uses net {
     var data = 0
     var done = false
     while !done {
-      var i = 0
-      while i < buf.len() && buf[i] != '\n' {
-        i += 1
-      }
-      if i == buf.len() {
-        match c.read(4096)? {
-          Some(b) => {
-            buf = buf + b
-            continue
+      let i = match buf.find(b"\n") {
+        Some(k) => k
+        None => {
+          match c.read(4096)? {
+            Some(b) => {
+              buf = buf + b
+              continue
+            }
+            None => break
           }
-          None => break
         }
       }
       let line = buf[0..i]
