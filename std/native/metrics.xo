@@ -327,6 +327,11 @@ fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
   if let Some(s) = f.series.with_read(fn(m: Map[Str, metrics.Series]) -> metrics.Series? { m.get(key) }) {
     return Some(s)
   }
+  // the fields the closure reads, bound first: capturing f would copy
+  // its 13 words and share each heap field on every call (XO0910)
+  let bounds = f.bounds
+  let kind = f.kind
+  let age_buckets = f.age_buckets
   let made = f.series.with(fn(var m: Map[Str, metrics.Series]) -> metrics.Series? {
     if let Some(s) = m.get(key) {
       return Some(s)
@@ -335,10 +340,10 @@ fn series_of(f: metrics.Family, values: List[Str]) -> metrics.Series? {
       return None
     }
     var bs: List[Atomic[Int]] = []
-    for _ in f.bounds {
+    for _ in bounds {
       bs.push(Atomic[Int].new(0))
     }
-    let q = if f.kind == 3 { [Mutex[metrics.QState].new(qstate_new(f.age_buckets))] } else { [] }
+    let q = if kind == 3 { [Mutex[metrics.QState].new(qstate_new(age_buckets))] } else { [] }
     let s = metrics.Series{values: values, v: Atomic[Int].new(0), buckets: bs, count: Atomic[Int].new(0), sum: Atomic[Int].new(0), q: q}
     m.put(key, s)
     Some(s)
