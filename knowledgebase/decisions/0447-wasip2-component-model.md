@@ -1095,11 +1095,18 @@ TCP writes on stream drop", open); the runtime warns once at 1,024 such
 connections (golden net_close_stuck). Re-test when wasmtime merges it or
 ships an equivalent.
 
-## Stage 5 plan: WASI 0.3 (Proposed, 2026-11-03, Xo Lang 4)
+## Stage 5 plan: WASI 0.3 (first step Accepted, owner, 2026-11-03; Xo Lang 4)
 
-For the owner's decision; nothing of it is built. Stage 5 of the staged
-plan above: the `wasi:http/service` world with the async canonical ABI,
-over the existing suspension, and streams for bodies.
+Stage 5 of the staged plan above: the `wasi:http/service` world with the
+async canonical ABI, over the existing suspension, and streams for bodies.
+
+Owner decision (2026-11-03): the first step only is approved. That is
+the Spin version check (a component naming `@0.3.0`, then the release
+candidate), then "hello" on `wasi:http/service` with the async ABI,
+measured against stage 2's 0.2 row (257 KB, 14.2 ms to first response,
+about 82,000 requests per second) and Rust's 0.3 hello (the wasip3
+crate). Bodies, the client and sockets wait for the owner's next
+decision, on those numbers.
 
 ### Where 0.3 runs today (read 2026-11-03)
 
