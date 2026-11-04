@@ -699,7 +699,7 @@ fn validate_label(o: Opts, s: Str, label_code: Str) -> idna.IdnaErr? {
       if is_modifier(v) {
         return Some(label_err(s, "V5"))
       }
-      if !s.contains("\u{200d}") && !s.contains("\u{200c}") {
+      if !has_joiner(s) {
         return None
       }
       any_join = true
@@ -734,6 +734,20 @@ fn rune_at(b: Bytes, p: Int) -> Int {
     return (((c & 15) << 12) | ((Int(b[p + 1]) & 63) << 6) | (Int(b[p + 2]) & 63)) | (3 << 32)
   }
   (((c & 31) << 6) | (Int(b[p + 1]) & 63)) | (2 << 32)
+}
+
+/// Whether s holds U+200C or U+200D (E2 80 8C or E2 80 8D), in one pass.
+fn has_joiner(s: Str) -> Bool {
+  let b = s.bytes()
+  let n = b.len()
+  var i = 0
+  while i + 2 < n {
+    if b[i] == 0xE2 && b[i + 1] == 0x80 && (b[i + 2] == 0x8C || b[i + 2] == 0x8D) {
+      return true
+    }
+    i += 1
+  }
+  false
 }
 
 fn is_ascii_str(s: Str) -> Bool {
@@ -779,16 +793,14 @@ fn li_label(var l: LabelIter) -> Str {
   if l.sliced {
     return l.slice[l.i]
   }
-  let rest = l.orig[l.cur_start..l.orig.len()]
-  match rest.find(".") {
-    Some(p) => {
-      l.cur_end = l.cur_start + p
-    }
-    None => {
-      l.cur_end = l.orig.len()
-    }
+  let b = l.orig.bytes()
+  let n = b.len()
+  var e = l.cur_start
+  while e < n && b[e] != 46 {
+    e += 1
   }
-  l.orig[l.cur_start..l.cur_end]
+  l.cur_end = e
+  l.orig[l.cur_start..e]
 }
 
 fn li_next(var l: LabelIter) {
