@@ -1,7 +1,8 @@
 # 0504: xo debug --dap, the Debug Adapter Protocol over decision 0253's session
 
-Status: Proposed (Xo Lang 2, 2026-11-04, at the lead's request; for the
-owner)
+Status: Accepted (owner, 2026-11-04) as the plan: built only after
+decision 0253 stage 2's live process control. Proposed by Xo Lang 2 the
+same day at the lead's request.
 
 ## Context
 
