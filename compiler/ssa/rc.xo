@@ -283,6 +283,38 @@ fn (var r: Rc) heap(t: Int) -> Bool {
   h
 }
 
+/// Whether t is an enum, or a struct or tuple whose every leaf holding
+/// heap memory is one: nothing in it is updated in place, so decision
+/// 0149's rule (borrowed unless every path consumes it) costs no copy.
+/// A struct with a Str or List leaf keeps decision 0046's rule (its in
+/// place updates would copy: bench/results/part-borrow-2026-11-02.md).
+/// template's `Val{v: V, boxed: Bool}` (2026-11-04: its dot, passed down
+/// the walker and returned on one path of eval_command, was retained and
+/// released at every node; `dup V` was 23% of render).
+fn (var r: Rc) enum_like(t: Int) -> Bool {
+  let x = r.types[t]
+  match x.kind {
+    Enum => true
+    Struct => {
+      for f in x.fields {
+        if r.heap(f.ty) && !r.enum_like(f.ty) {
+          return false
+        }
+      }
+      true
+    }
+    Tuple => {
+      for e in x.elems {
+        if r.heap(e) && !r.enum_like(e) {
+          return false
+        }
+      }
+      true
+    }
+    _ => false
+  }
+}
+
 fn (r: Rc) heap_in(t: Int, seen: List[Int]) -> Bool {
   if seen.contains(t) {
     return true
@@ -1025,7 +1057,7 @@ fn (var r: Rc) borrow_scan(f: Func, fi: Int) -> List[Int] {
   var owned: List[Int] = []
   for (i, bs) in cons {
     let pt = ty_of(f.values[f.blocks[0].params[i]].tb)
-    if r.types[pt].kind != Kind.Enum || consumed_on_every_path(f, bs) {
+    if !r.enum_like(pt) || consumed_on_every_path(f, bs) {
       owned.push(i)
     }
   }

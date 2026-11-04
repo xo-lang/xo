@@ -7,6 +7,8 @@ Status: Accepted (2026-10-10). Implemented in `internal/ssa/rc.go`
 as LLVM golden `internal/llvm/testdata/golden/borrow_enum` (no leak).
 Evidence: `bench/results/selfhost-checker-2026-10-10.md` (LLVM
 experiments). Refines the borrow inference of decision 0046.
+Refined by decision 0489 (2026-11-04): a struct or tuple whose every heap
+leaf is an enum takes this rule too.
 Revisited 2026-11-02 for struct parameters and left as it is:
 `bench/results/part-borrow-2026-11-02.md`; `bench/perf/rcpart` holds the
 cases a change here must keep flat.
