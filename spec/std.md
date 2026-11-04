@@ -2401,6 +2401,61 @@ pub fn from_value[T: Json](v: Value) -> T ! DecodeErr
   out of `encode`'s output when empty.
 - Goldens `json_stream` and `json_omitempty` (every backend).
 
+### 5.3 Tokens (decision 0495)
+
+```
+enum Token { ObjectStart, ObjectEnd, ArrayStart, ArrayEnd, Key(s: Str), Str(s: Str),
+             Number(text: Str), Bool(b: Bool), Null }
+struct TokenReader {}                               // move only
+pub fn token_reader(max_token: Int = 67108864) -> TokenReader
+pub fn tokens(data: Bytes) -> TokenReader           // a whole text, read by next
+fn (var r: TokenReader) write(data: Bytes) -> List[Token] ! DecodeErr
+fn (var r: TokenReader) finish() -> List[Token] ! DecodeErr
+fn (var r: TokenReader) next() -> Token? ! DecodeErr
+fn (var r: TokenReader) more() -> Bool
+fn (r: TokenReader) offset() -> Int
+fn (var r: TokenReader) skip() -> () ! DecodeErr
+fn (var r: TokenReader) value() -> Value ! DecodeErr
+
+struct JsonWriter {}                                // move only
+pub fn json_writer(escape_html: Bool = true) -> JsonWriter
+fn (var w: JsonWriter) object_start() / object_end() / array_start() / array_end()
+fn (var w: JsonWriter) key(name: Str) / str(s: Str) / int(n: Int) / bool(b: Bool) / null()
+fn (var w: JsonWriter) float(f: Float) / number(text: Str) / raw(text: Str) / value(v: Value) -> () ! DecodeErr
+fn (var w: JsonWriter) finish() -> Bytes
+```
+
+- The reader is the state machine of Go's `Decoder.Token` (stream.go:
+  tokenState, tokenStack, tokenError), so tokens, errors (`invalid
+  character ',' after array element`), `more` (Decoder.More) and `offset`
+  (Decoder.InputOffset) are Go's. Differences: an object member's name
+  is `Key`, a number is its text as written (Go's UseNumber), and the
+  input that ends inside an array or object is `invalid JSON: unexpected
+  EOF` (Go returns io.EOF there, as at a clean end). The empty text and
+  white space give None. Values follow one another, as in 5.2.
+- `tokens(data)` reads a text in memory with `next`; `write` and `finish`
+  take bytes in pieces, as `Decoder` does, with the same rule for an error
+  after some tokens (the next call returns it) and `max_token` bounding a
+  string or number that is not complete.
+- Strings are read as `decode` reads them (invalid UTF-8 and lone
+  surrogate escapes are U+FFFD). `skip` steps over the next value (an
+  array or object whole, found by its brackets and then checked) and
+  `value` reads it as `parse_value` does.
+- The writer inserts commas and colons and writes strings as encoding/json
+  does (`"`, `\`, control characters, U+2028, U+2029 and invalid
+  UTF-8 escaped; `<`, `>`, `&` as `\u003c`, `\u003e`, `\u0026` when `escape_html`) and
+  floats as Go's floatEncoder (shortest form, exponent below 1e-6 or from
+  1e21). `float` refuses NaN and infinities, `number` text that is not a
+  JSON number, `raw` text that is not JSON (it is written compacted). A call
+  out of order (a value where a key is due, `array_end` with no open
+  array, `finish` with one open) faults. Top level values are separated by
+  a newline.
+- Tested against Go's Decoder.Token, More and InputOffset on 1,200
+  generated streams and 55 hand picked ones, read whole and in random
+  pieces, and against Marshal's strings and floats
+  (internal/stdtest/testdata/corpus/jsontoken, scripts/stdcorpus);
+  twin bench/perf/jsontoken.
+
 ## 6. std/log
 
 The log functions perform the `log` effect (core 6.1, decision 0156): no

@@ -92,9 +92,9 @@ Commas and colons are inserted by the writer. A call out of order (a value
 where a key is due, `object_end` with no open object) faults, since it is a
 bug in the caller, not an input error. Strings are written as
 encoding/json writes them: `"` and `\` escaped, control characters as `\u00XX`
-(`\n`, `\r`, `\t` short), `<`, `>`, `&` as `<`, `>`, `&`
-unless `escape_html` is false, U+2028 and U+2029 as ` `, ` `,
-invalid UTF-8 as `�`. Floats follow Go's `floatEncoder`: shortest
+(`\n`, `\r`, `\t` short), `<`, `>`, `&` as `\u003c`, `\u003e`, `\u0026`
+unless `escape_html` is false, U+2028 and U+2029 as `\u2028`, `\u2029`,
+invalid UTF-8 as `\ufffd`. Floats follow Go's `floatEncoder`: shortest
 representation, exponent form for exponents below -6 or at or above 21,
 `e-09` cleaned to `e-9`.
 
@@ -140,6 +140,12 @@ Weighed on cbor (std/cbor), for later changes, not part of this build:
 - A timing row beside the json twin: reading a large document token by token
   against Go's `Decoder.Token` (known to be slow in Go, so it should not be
   hard to match).
+- Built 2026-11-04 (std/native/json.xo, std/rt/jsontoken.go; spec/std.md
+  5.3): the reader is Go's `Decoder.Token` state machine, so its error texts
+  and `more`/`offset` are Go's (the corpus `jsontoken` checks them against
+  Go on 1,255 streams); `Key` after `{` with a bad byte has no context text,
+  as Go's tokenError has none for tokenObjectStart. The `for t? in` form
+  waits for decision 0494.
 - Two new std types and about 20 functions; the Go backend implements them in
   std/rt with encoding/json itself.
 

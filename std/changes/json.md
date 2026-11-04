@@ -1,5 +1,22 @@
 # std/json changes
 
+## 2026-11-04: feature: TokenReader and JsonWriter (decision 0495)
+
+- Kind: feature
+- Commit: this push
+- Found by: aws-19 (the AWS SDK port: Smithy's JSON protocols read and write a response a token at a time and need encoding/json's exact forms); owner accepted decision 0495 on 2026-11-04
+- Go reference: encoding/json stream.go Decoder.Token, More, InputOffset (tokenState, tokenError), encode.go encodeState.string and floatEncoder
+- Test: corpus jsontoken (arm64, LLVM, Go backend): Go's tokens, input offsets, More and errors on the streams read whole and in random pieces, the tokens written back in Go's string forms, 400 strings with and without HTML escaping, the floats; tests of skip, value, max_token, number, float and raw
+- Timing: see bench/results/std-twin-jsontoken-2026-11-04.md
+- Shipped in: not yet released
+
+`json.tokens(data)` and `json.token_reader()` give the tokens of a JSON
+text (`Token`: delimiters, `Key`, `Str`, `Number` as written, `Bool`,
+`Null`) with Go's `Decoder.Token` state machine and error texts, `more`,
+`offset`, `skip` and `value`. `json.json_writer()` writes one a call at a
+time in encoding/json's string and float forms. Both backends implement
+them (std/native/json.xo, std/rt/jsontoken.go).
+
 ## 2026-11-04: perf: to_value and from_value with no text
 
 - Kind: perf
