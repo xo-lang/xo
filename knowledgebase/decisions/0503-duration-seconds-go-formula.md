@@ -1,7 +1,7 @@
 # 0503: Duration.seconds is Go's Duration.Seconds, to the bit
 
-Status: Proposed (Xo Lang 2, 2026-11-04, at the lead's request; held for
-the owner: it changes results in the last bit)
+Status: Accepted (owner, 2026-11-04), implemented after the 0.39 cut.
+Proposed by Xo Lang 2 the same day at the lead's request.
 
 ## Context
 

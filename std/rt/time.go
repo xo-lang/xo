@@ -70,8 +70,8 @@ func (e DurationErr) M_display(*Task) string {
 	return "invalid duration " + strconv.Quote(e.F_input) + `: expected numbers with units ns, us, ms, s, m, h, such as "1.5s" or "1h30m"`
 }
 
-// Duration_seconds is `d.seconds()`.
-func Duration_seconds(_ *Task, d Duration) float64 { return float64(d) / 1e9 }
+// Duration_seconds is `d.seconds()`: Go's Duration.Seconds (decision 0503).
+func Duration_seconds(_ *Task, d Duration) float64 { return time.Duration(d).Seconds() }
 
 // Duration_millis is `d.millis()`, truncated.
 func Duration_millis(_ *Task, d Duration) int64 { return int64(d) / 1e6 }

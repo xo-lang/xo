@@ -459,7 +459,7 @@ Duration.from_secs_int(s: Int) -> Duration    // the same as `1s * s`; faults on
 Duration.from_millis(ms: Int) -> Duration
 Duration.from_nanos(ns: Int) -> Duration
 Duration.parse(s: Str) -> Duration ! DurationErr
-fn (d: Duration) seconds() -> Float
+fn (d: Duration) seconds() -> Float          // Go's Duration.Seconds to the bit: whole seconds plus the rest over 1e9 (decision 0503)
 fn (d: Duration) millis() -> Int             // truncated
 fn (d: Duration) nanos() -> Int
 fn (d: Duration) scale(f: Float) -> Duration // rounds to the nearest nanosecond

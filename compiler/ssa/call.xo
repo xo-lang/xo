@@ -2488,9 +2488,15 @@ fn (var b: Builder) io_call(x: Expr, ci: check.CallInfo) -> Int? {
     "Duration.nanos" => return Some(recv)
     "Duration.millis" => return Some(b.add(Op.Div, it, Aux.None, [recv, b.cint(1000000)]))
     "Duration.seconds" => {
+      // Go's Duration.Seconds to the bit (decision 0503): whole seconds
+      // plus the rest over 1e9, which one division rounds differently
       let ft = b.float_t()
-      let f = b.add(Op.IntToFloat, ft, Aux.None, [recv])
-      return Some(b.add(Op.Div, ft, Aux.None, [f, b.add(Op.Const, ft, Aux.F(f: 1000000000.0), [])]))
+      let sec = b.add(Op.Div, it, Aux.None, [recv, b.cint(1000000000)])
+      let nsec = b.add(Op.Rem, it, Aux.None, [recv, b.cint(1000000000)])
+      let fs = b.add(Op.IntToFloat, ft, Aux.None, [sec])
+      let fn_ = b.add(Op.IntToFloat, ft, Aux.None, [nsec])
+      let frac = b.add(Op.Div, ft, Aux.None, [fn_, b.add(Op.Const, ft, Aux.F(f: 1000000000.0), [])])
+      return Some(b.add(Op.Add, ft, Aux.None, [fs, frac]))
     }
     "Duration.abs" => return Some(b.call("Int.abs", it, pos, [recv]))
     "Time.unix" | "Time.unix_millis" => {

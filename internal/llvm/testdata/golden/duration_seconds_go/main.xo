@@ -1,0 +1,12 @@
+// Duration.seconds is Go's Duration.Seconds to the bit (decision 0503):
+// whole seconds plus the rest over 1e9. One division, before, rounded
+// differently in the last bit for some durations (the first six below,
+// from a Go sweep); each line is the nanoseconds and the bits of the
+// result, which equal Go's on every backend.
+fn main(os: Os) {
+  let ns: List[Int] = [66407336114473942, -66407336114473942, 267355255869213980, -267355255869213980, 300306706849867314, -300306706849867314, 1500000000, 4692785615, 0, 1, -1, 4611686018427387904]
+  for n in ns {
+    let d = Duration.from_nanos(n)
+    os.stdio.println("${n} ${d.seconds().to_bits()}")
+  }
+}

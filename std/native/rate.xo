@@ -256,13 +256,5 @@ fn tokens_from_duration(limit: Float, d: Duration) -> Float {
   if limit <= 0.0 {
     return 0.0
   }
-  go_seconds(d) * limit
-}
-
-/// Go's Duration.Seconds: whole seconds plus the rest over 1e9, which
-/// rounds differently from the nanoseconds over 1e9 in the last bit; the
-/// tokens are Go's to the bit with it (the random differential).
-fn go_seconds(d: Duration) -> Float {
-  let ns = d.nanos()
-  Float(ns / 1000000000) + Float(ns % 1000000000) / 1e9
+  d.seconds() * limit
 }

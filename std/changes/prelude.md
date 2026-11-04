@@ -51,6 +51,17 @@ instead of three fcntl calls after it (get flags, set O_NONBLOCK, set
 FD_CLOEXEC). macOS and Windows keep the calls, since their accept and
 socket take no such flags.
 
+## 2026-11-04: changed: Duration.seconds is Go's Duration.Seconds to the bit
+
+- Kind: behavior
+- Commit: this push
+- Found by: the std/rate random differential against golang.org/x/time/rate (tokens off in the last bit); decision 0503, accepted by the owner 2026-11-04
+- Go reference: time.Duration.Seconds (`float64(d/Second) + float64(d%Second)/1e9`)
+- Test: golden duration_seconds_go (Go's bits for durations where one division differs, negatives, 0, 1 ns, 2^62 ns), the rate differential
+- Shipped in: not yet released
+
+`seconds()` was the nanoseconds over 1e9 as one division (the SSA lowering and the Go backend's `float64(d) / 1e9`); for some durations past one second that rounds differently from Go's whole seconds plus the rest over 1e9 in the last bit. Every backend now computes Go's formula; a port that calls `seconds()` where Go calls `Seconds()` agrees with Go to the bit.
+
 ## 2026-11-04: perf: eprintln writes the line and its newline in one write
 
 - Kind: perf
