@@ -144,7 +144,7 @@ pub struct Gen {
   /// Why the function just lowered took the dispatch loop (--annotate).
   why_dispatch: Str = ""
   /// Some function keeps locals in a frame of linear memory
-  /// (memory_frame): the module has $ls, $lsend and $ls_init.
+  /// (memory_frame): the module has $ls, $lsend, $ls_push and $ls_pop.
   frames_used: Bool = false
   /// The function being lowered can suspend.
   su: Bool = false
@@ -1831,8 +1831,8 @@ fn (var g: Gen) module_text(tz: List[tzsel.TZSel]) -> Str {
   b.write("  (global $lfree (mut i32) (i32.const 0))\n")
   if g.frames_used {
     // the stack of the functions' memory frames (func.xo memory_frame)
-    b.write("  (global $ls (mut i32) (i32.const 0))\n  (global $lsend (mut i32) (i32.const 0))\n")
-    g.helpers.push("  (func $ls_init\n    i32.const ${FRAME_STACK}\n    call $heap_large\n    global.set $ls\n    global.get $ls\n    i32.const ${FRAME_STACK}\n    i32.add\n    global.set $lsend)\n")
+    b.write("  (global $ls (mut i32) (i32.const 0))\n  (global $lsend (mut i32) (i32.const 0))\n  (global $lschunk (mut i32) (i32.const 0))\n  (global $lsspare (mut i32) (i32.const 0))\n  (global $lscap (mut i32) (i32.const 0))\n")
+    g.helpers.push(ls_text())
   }
   // only the runtime functions the program reaches: the calls of its
   // code, the table, and the exports
@@ -1975,4 +1975,152 @@ fn import_func_name(l: Str) -> Str {
 /// Whether c can follow $ in a WAT identifier (as this backend writes them).
 fn ident_byte(c: Int) -> Bool {
   (c >= 97 && c <= 122) || (c >= 65 && c <= 90) || (c >= 48 && c <= 57) || c == 95 || c == 46 || c == 45 || c == 36
+}
+
+/// The stack of the functions' memory frames (func.xo memory_frame):
+/// $ls_push(n) answers the address of n bytes on it, $ls_pop(fp) gives
+/// back the frame at fp and every frame above it. The first chunk is
+/// FRAME_STACK bytes; a frame that does not fit takes a new chunk (the
+/// one given back last when it is big enough, else twice the size of the
+/// last new one or its own), whose 16 byte header holds the previous
+/// chunk's end, the previous chunk, the chunk's size and the stack's top
+/// before it; the frame at the start of a chunk gives the chunk back.
+fn ls_text() -> Str {
+  """  (func $ls_push (param $n i32) (result i32) (local $fp i32) (local $c i32) (local $k i32)
+    global.get $ls
+    i32.eqz
+    if
+      i32.const ${FRAME_STACK}
+      call $heap_large
+      local.tee $c
+      global.set $ls
+      local.get $c
+      i32.const ${FRAME_STACK}
+      i32.add
+      global.set $lsend
+      i32.const ${FRAME_STACK}
+      global.set $lscap
+    end
+    global.get $ls
+    local.tee $fp
+    local.get $n
+    i32.add
+    global.get $lsend
+    i32.le_u
+    if
+      local.get $fp
+      local.get $n
+      i32.add
+      global.set $ls
+      local.get $fp
+      return
+    end
+    ;; a new chunk: the spare when it holds n bytes, else a new one
+    global.get $lsspare
+    local.tee $c
+    if
+      local.get $c
+      i32.load offset=8
+      local.get $n
+      i32.lt_u
+      if
+        i32.const 0
+        local.set $c
+      else
+        i32.const 0
+        global.set $lsspare
+      end
+    end
+    local.get $c
+    i32.eqz
+    if
+      global.get $lscap
+      i32.const 1
+      i32.shl
+      local.tee $k
+      local.get $n
+      local.get $k
+      local.get $n
+      i32.gt_u
+      select
+      local.tee $k
+      global.set $lscap
+      local.get $k
+      i32.const 16
+      i32.add
+      call $heap_large
+      local.tee $c
+      local.get $k
+      i32.store offset=8
+    end
+    local.get $c
+    global.get $lsend
+    i32.store
+    local.get $c
+    global.get $lschunk
+    i32.store offset=4
+    local.get $c
+    global.get $ls
+    i32.store offset=12
+    local.get $c
+    global.set $lschunk
+    local.get $c
+    i32.const 16
+    i32.add
+    local.tee $fp
+    local.get $c
+    i32.load offset=8
+    i32.add
+    global.set $lsend
+    local.get $fp
+    local.get $n
+    i32.add
+    global.set $ls
+    local.get $fp)
+
+  (func $ls_pop (param $fp i32) (local $c i32)
+    local.get $fp
+    global.set $ls
+    global.get $lschunk
+    local.tee $c
+    i32.eqz
+    if
+      return
+    end
+    local.get $fp
+    local.get $c
+    i32.const 16
+    i32.add
+    i32.ne
+    if
+      return
+    end
+    ;; the chunk's first frame: back to the chunk before it, this one
+    ;; kept as the spare when it is the bigger
+    local.get $c
+    i32.load
+    global.set $lsend
+    local.get $c
+    i32.load offset=4
+    global.set $lschunk
+    local.get $c
+    i32.load offset=12
+    global.set $ls
+    global.get $lsspare
+    i32.eqz
+    if
+      local.get $c
+      global.set $lsspare
+      return
+    end
+    global.get $lsspare
+    i32.load offset=8
+    local.get $c
+    i32.load offset=8
+    i32.lt_u
+    if
+      local.get $c
+      global.set $lsspare
+    end)
+"""
 }

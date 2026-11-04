@@ -289,8 +289,13 @@ const WIDE_RC = 16
 /// (memory_frame).
 const FRAME_MIN = 160
 const FRAME_KEEP = 64
-/// The bytes of the linear memory stack of those frames.
-const FRAME_STACK = 16777216
+/// The bytes of the first chunk of the linear memory stack of those
+/// frames; a frame that does not fit takes a new chunk of twice the last
+/// one's size (or its own), which its return gives back ($ls_push and
+/// $ls_pop). One 16 MB stack was resident in every instance of a wasm
+/// component that reached a framed function: 160 KB of a 0.3 proxy's
+/// 5 MB per request in flight, 2026-11-04.
+const FRAME_STACK = 65536
 
 /// Moves the locals of the function in the current buffer beyond its
 /// FRAME_KEEP most used ones into a frame of linear memory, 8 bytes a
@@ -357,23 +362,9 @@ fn (var g: Gen) memory_frame() {
   }
   let size = 8 * nslots
   var out: List[Str] = []
-  out.push("global.get $ls")
-  out.push("i32.eqz")
-  out.push("if")
-  out.push("call $ls_init")
-  out.push("end")
-  out.push("global.get $ls")
-  out.push("local.tee ${fp}")
   out.push("i32.const ${size}")
-  out.push("i32.add")
-  out.push("global.set $ls")
-  out.push("global.get $ls")
-  out.push("global.get $lsend")
-  out.push("i32.gt_u")
-  out.push("if")
-  out.push("unreachable") // the frames' stack is full
-  out.push("end")
-  out.push("local.get ${fp}")
+  out.push("call $ls_push")
+  out.push("local.tee ${fp}")
   out.push("i32.const 0")
   out.push("i32.const ${size}")
   out.push("memory.fill")
@@ -408,12 +399,12 @@ fn (var g: Gen) memory_frame() {
     }
     if l == "return" {
       out.push("local.get ${fp}")
-      out.push("global.set $ls")
+      out.push("call $ls_pop")
     }
     out.push(l)
   }
   out.push("local.get ${fp}")
-  out.push("global.set $ls")
+  out.push("call $ls_pop")
   g.cur.lines = out
   g.cur.locals = locals
   g.frames_used = true
@@ -1707,17 +1698,9 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         }
         let bl = g.tmps(["i32"])
         g.frames_used = true
-        g.e("global.get $ls")
-        g.e("i32.eqz")
-        g.e("if")
-        g.e("call $ls_init")
-        g.e("end")
-        g.e("global.get $ls")
-        g.set(bl)
-        g.get(bl)
         g.e("i32.const ${8 * n}")
-        g.e("i32.add")
-        g.e("global.set $ls")
+        g.e("call $ls_push")
+        g.set(bl)
         let ls = g.leaves(at)
         for k in 0..n {
           g.get(bl)
@@ -1727,7 +1710,7 @@ fn (var g: Gen) instr(v: Int, bi: Int) {
         g.get(bl)
         g.e("call ${g.rc_addr_fn(op, at)}")
         g.get(bl)
-        g.e("global.set $ls")
+        g.e("call $ls_pop")
         return
       }
       g.push(a)
