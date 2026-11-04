@@ -415,17 +415,56 @@ fn write_octet(var out: BytesBuilder, v: Int) {
   out.write_byte(UInt8(48 + v % 10))
 }
 
+const ZERO16: Bytes = b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00"
+
+/// The dotted decimal of the IPv4 address v: each octet's digits and dot are
+/// packed into the little endian words lo and hi by shifts and ors (no
+/// builder call a byte: bench/perf/netip display4 was 1.98 of Go's wall),
+/// stored with two put_le in a 16 byte builder and cut to the length.
 fn string4(v: Int) -> Str {
-  var out = BytesBuilder.with_capacity(15)
-  write_octet(out, v >> 24)
-  out.write_byte(46)
-  write_octet(out, (v >> 16) & 255)
-  out.write_byte(46)
-  write_octet(out, (v >> 8) & 255)
-  out.write_byte(46)
-  write_octet(out, v & 255)
-  // digits, dots, colons, hex and the zone text (a Str): valid
-  rt.cast[Bytes, Str](out.freeze())
+  var lo = 0
+  var hi = 0
+  var n = 0
+  var k = 0
+  while k < 4 {
+    let o = (v >> (24 - 8 * k)) & 255
+    var d = 1
+    if o >= 100 {
+      d = 3
+    } else if o >= 10 {
+      d = 2
+    }
+    // up to 4 bytes: the digits and the dot after all but the last octet
+    var w = 0
+    if d == 3 {
+      w = (48 + o / 100) | ((48 + o / 10 % 10) << 8) | ((48 + o % 10) << 16)
+    } else if d == 2 {
+      w = (48 + o / 10) | ((48 + o % 10) << 8)
+    } else {
+      w = 48 + o
+    }
+    var m = d
+    if k < 3 {
+      w = w | (46 << (8 * d))
+      m += 1
+    }
+    if n < 8 {
+      lo = lo | w.wrapping_shl(8 * n)
+      if n + m > 8 {
+        hi = hi | (w >> (8 * (8 - n)))
+      }
+    } else {
+      hi = hi | w.wrapping_shl(8 * (n - 8))
+    }
+    n += m
+    k += 1
+  }
+  var out = BytesBuilder.with_capacity(16)
+  out.write(ZERO16)
+  out.put_le(0, lo, 8)
+  out.put_le(8, hi, 8)
+  // digits and dots: valid UTF-8
+  rt.cast[Bytes, Str](out.freeze()[0..n])
 }
 
 /// Group i (0 to 7) of the words hi and lo.
