@@ -50,6 +50,33 @@ Next experiments, ranked:
 3. If connect and close are the gap: per-connection syscalls (setsockopt,
    getsockname, getpeername, shutdown) that Go skips.
 
+## Profile on host 1 and the open gap
+
+Rerun after the lighter in-twin server (9 rounds, load 0.97): send 186.6
+against 254.4 ms = 1.364 (1.347-1.421), unchanged from 1.375, so the
+server's line scan was not the gap. XO_PROF cpu on host 1 at one worker
+thread, 40,000 messages (505 samples): `conn_write` 27.7% flat,
+`futex_wake` 15.1%, `poll_round` 8.1%, `conn_read` 7.5%, `pd_close` 7.3%,
+`dial_timeout` 6.9%, `listener_accept` 4.8%, `epoll_add` 3.6%; smtp.run 2%
+flat (23% cumulative, nearly all in those calls). The time is in the
+system calls, not in smtp code, and the same calls cost less in tcpping:
+the difference is the call mix of a message (15 small writes and 11 small
+reads across 11 turn arounds on a new connection each), which tcpping's
+two shapes do not reproduce together. The host has no strace and the job
+runs unprivileged, so the syscall sequence of Go's SendMail against Xo's
+smtp.send is not yet compared.
+
+Next experiments, ranked: (1) tcpping with 11 turn arounds on a new
+connection each message (`handshake`: dial, 11 request/reply pairs of 20
+bytes, close), which is the smtp shape without smtp; if it shows 1.3, the
+cause is the per connection plus many small turn arounds mix and the
+poll/park path is the lever (Lang 1, scheduler); if it shows 1.0, the cause
+is inside smtp.send (then bisect with a client only run against a Go
+server process). (2) `futex_wake` at 15% with one worker: who wakes whom
+(XO_RTSTATS counted 151 wakes in 2,000 messages, so each is expensive or
+the attribution is skewed): perf is not available, so a run with
+`XO_THREADS=1` and the idle sleep counts per message.
+
 # std/sql row decode, linux/arm64 host 2 (7 rounds, n=6)
 
 sqlrow scan: Go (stub driver) 56.53, Xo (std/sql.memory) 91.77: 1.623 of
