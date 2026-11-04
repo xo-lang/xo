@@ -1,0 +1,34 @@
+package main
+
+import (
+	"fmt"
+	"log/slog"
+	"os"
+)
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	opts := &slog.HandlerOptions{Level: slog.LevelInfo}
+	var h slog.Handler = slog.NewTextHandler(os.Stderr, opts)
+	if w == "json" {
+		h = slog.NewJSONHandler(os.Stderr, opts)
+	}
+	l := slog.New(h)
+	sum := 0
+	for i := 0; i < 100000; i++ {
+		switch w {
+		case "filtered":
+			l.Debug("cache miss", "key", fmt.Sprintf("user:%d", i%100), "n", i)
+			sum++
+		case "text", "json":
+			l.Info("request done", "path", "/orders", "status", 200+i%3, "ms", i%50)
+			sum += 3
+		default:
+			sum += i % 3
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}

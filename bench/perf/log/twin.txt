@@ -1,0 +1,5 @@
+# twincheck: log: four workloads (none is the setup alone), the same names on both sides.
+- - none
+- - filtered
+- - text
+- - json

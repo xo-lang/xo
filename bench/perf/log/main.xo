@@ -1,0 +1,30 @@
+// log: std/log against Go's log/slog (twin.go.txt): records written to the
+// standard error with two fields each, as text and as JSON (the line layouts
+// differ, so only the record count and field sum are compared), 100,000
+// records a workload; `filtered` logs below the level (nothing written) and
+// `none` is the setup alone. Usage: `<program> none|filtered|text|json`.
+// Prints `<workload> <checksum>`; the twin prints the same. The run discards
+// standard error.
+use std/log
+
+fn main(os: Os) uses stdio, env, log {
+  let w = os.env.args().get(0) ?? "none"
+  if w == "json" {
+    log.configure(os.stdio, level: log.Level.Info, format: log.Format.Json)
+  } else {
+    log.configure(os.stdio, level: log.Level.Info, format: log.Format.Text)
+  }
+  var sum = 0
+  for i in 0..100000 {
+    if w == "filtered" {
+      log.debug("cache miss", {"key": "user:${i % 100}", "n": i})
+      sum += 1
+    } else if w == "text" || w == "json" {
+      log.info("request done", {"path": "/orders", "status": 200 + i % 3, "ms": i % 50})
+      sum += 3
+    } else {
+      sum += i % 3
+    }
+  }
+  os.stdio.println("${w} ${sum}")
+}
