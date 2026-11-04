@@ -195,6 +195,11 @@ test "a Driver the program writes drives Db's pool: query, exec, begin, commit, 
   }
 }
 
+struct RowItem {
+  id: Int
+  name: Str
+} derive SqlRow
+
 struct CurDriver {
   closed: Mutex[Int]
 }
@@ -302,6 +307,9 @@ test "rows, next_as and each on the in memory Db" {
   expect(rs.columns()) == ["id", "name"]
   expect(rs.next()?.map(fn(r) { r.str("name").ok() ?? "" })) == Some("n1")
   expect(rs.next()?.map(fn(r) { r.str("name").ok() ?? "" })) == Some("n2")
+  let third = db.rows("SELECT id, name FROM t ORDER BY id")?
+  expect(third.next_as[RowItem]()?.map(fn(i) { i.name })) == Some("n1")
+  third.close()
   rs.close()
   // a closed cursor has no more rows
   expect(rs.next()?.is_none()) == true
