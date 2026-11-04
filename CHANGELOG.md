@@ -9,6 +9,7 @@ the text of every entry is unchanged).
 
 ## Unreleased
 - perf (wasm, size, crypto): SHA-256 and SHA-512 on wasm run 16 rounds unrolled in a loop (4 and 5 times) instead of the 64 and 80 unrolled rounds native uses: an HTTPS client component is 61 KB smaller and hashes faster under wasmtime (SHA-256 0.90, SHA-512 0.89 of before); native unchanged.
+- perf (wasm, size, mime): the content sniffing table (net/http's DetectContentType signatures) is decoded once from one Bytes literal instead of built from 51 enum literals: a wasm hello component 3.6 KB smaller; results unchanged.
 
 - json: to_value and from_value convert with no JSON text in between: a converter generated per type for to_value, and a parse tape written straight from the Value for from_value. Same results as the text round trip (golden json_to_value, 52 cases including errors). Host 1 --ab: bench/perf/jsonvalue to 0.144, from 0.757; toml encode 0.411 (it goes through to_value). bench/results/json-value-direct-2026-11-04.md, std/changes/json.md.
 - perf (wasm, size): a wasm module no longer carries Linux's vDSO clock lookup (sysio clock_now and real_ns test the wasm target first, a constant): hello component -4,759 bytes (324,153 to 319,394); std/changes/prelude.md

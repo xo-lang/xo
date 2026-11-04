@@ -1,5 +1,21 @@
 # std/mime changes
 
+## 2026-11-04: perf: the content sniffing table is data
+
+- Kind: perf (size)
+- Commit: this push
+- Found by: the wasm component size breakdown (decision 0447 queue, component size): `const[mime.SIGS]` was 6,279
+  bytes of a hello component's code, its 51 enum literals built one by one
+- Go reference: net/http sniff.go's sniffSignatures (same table, same order)
+- Test: the mime module's tests (`xo test --std-module=mime`, Go's DetectContentType cases), TestWasm* goldens
+- Size: a wasm hello component 318,749 to 315,164 bytes (-3,585)
+- Shipped in: not yet released
+
+`SIGS` is decoded once from `SIG_DATA`, one Bytes literal of 555 bytes
+(a kind, a length, the pattern and mask, a content type index per
+record), and `SIG_TYPES`, one literal split at its newlines; the
+signatures, their order and detect_content_type's results are unchanged.
+
 ## 2026-11-04: perf: format_media_type scans each token once and sorts parameters by one walk
 
 - Kind: perf

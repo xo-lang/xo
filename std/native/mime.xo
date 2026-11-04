@@ -582,60 +582,48 @@ enum Sig {
 
 /// sniff.go's sniffSignatures in order, made once (sigs() built the list,
 /// and each HTML pattern's Bytes, on every call: 2026-10-26, with the
-/// slices below, detect_content_type ran at 8.3x Go's time).
-const SIGS: List[Sig] = [
-  Sig.Html(p: b"<!DOCTYPE HTML"),
-  Sig.Html(p: b"<HTML"),
-  Sig.Html(p: b"<HEAD"),
-  Sig.Html(p: b"<SCRIPT"),
-  Sig.Html(p: b"<IFRAME"),
-  Sig.Html(p: b"<H1"),
-  Sig.Html(p: b"<DIV"),
-  Sig.Html(p: b"<FONT"),
-  Sig.Html(p: b"<TABLE"),
-  Sig.Html(p: b"<A"),
-  Sig.Html(p: b"<STYLE"),
-  Sig.Html(p: b"<TITLE"),
-  Sig.Html(p: b"<B"),
-  Sig.Html(p: b"<BODY"),
-  Sig.Html(p: b"<BR"),
-  Sig.Html(p: b"<P"),
-  Sig.Html(p: b"<!--"),
-    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\xFF", pat: b"<?xml", skip_ws: true, ct: "text/xml; charset=utf-8"),
-    Sig.Exact(sig: b"%PDF-", ct: "application/pdf"),
-    Sig.Exact(sig: b"%!PS-Adobe-", ct: "application/postscript"),
-    Sig.Masked(mask: b"\xFF\xFF\x00\x00", pat: b"\xFE\xFF\x00\x00", skip_ws: false, ct: "text/plain; charset=utf-16be"),
-    Sig.Masked(mask: b"\xFF\xFF\x00\x00", pat: b"\xFF\xFE\x00\x00", skip_ws: false, ct: "text/plain; charset=utf-16le"),
-    Sig.Masked(mask: b"\xFF\xFF\xFF\x00", pat: b"\xEF\xBB\xBF\x00", skip_ws: false, ct: "text/plain; charset=utf-8"),
-    Sig.Exact(sig: b"\x00\x00\x01\x00", ct: "image/x-icon"),
-    Sig.Exact(sig: b"\x00\x00\x02\x00", ct: "image/x-icon"),
-    Sig.Exact(sig: b"BM", ct: "image/bmp"),
-    Sig.Exact(sig: b"GIF87a", ct: "image/gif"),
-    Sig.Exact(sig: b"GIF89a", ct: "image/gif"),
-    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFF\xFF\xFF", pat: b"RIFF\x00\x00\x00\x00WEBPVP", skip_ws: false, ct: "image/webp"),
-    Sig.Exact(sig: b"\x89PNG\x0D\x0A\x1A\x0A", ct: "image/png"),
-    Sig.Exact(sig: b"\xFF\xD8\xFF", ct: "image/jpeg"),
-    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFF", pat: b"FORM\x00\x00\x00\x00AIFF", skip_ws: false, ct: "audio/aiff"),
-    Sig.Masked(mask: b"\xFF\xFF\xFF", pat: b"ID3", skip_ws: false, ct: "audio/mpeg"),
-    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\xFF", pat: b"OggS\x00", skip_ws: false, ct: "application/ogg"),
-    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFF", pat: b"MThd\x00\x00\x00\x06", skip_ws: false, ct: "audio/midi"),
-    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFF", pat: b"RIFF\x00\x00\x00\x00AVI ", skip_ws: false, ct: "video/avi"),
-    Sig.Masked(mask: b"\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFF", pat: b"RIFF\x00\x00\x00\x00WAVE", skip_ws: false, ct: "audio/wave"),
-    Sig.Mp4,
-    Sig.Exact(sig: b"\x1A\x45\xDF\xA3", ct: "video/webm"),
-    Sig.Masked(mask: b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFF\xFF", pat: b"\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00LP", skip_ws: false, ct: "application/vnd.ms-fontobject"),
-    Sig.Exact(sig: b"\x00\x01\x00\x00", ct: "font/ttf"),
-    Sig.Exact(sig: b"OTTO", ct: "font/otf"),
-    Sig.Exact(sig: b"ttcf", ct: "font/collection"),
-    Sig.Exact(sig: b"wOFF", ct: "font/woff"),
-    Sig.Exact(sig: b"wOF2", ct: "font/woff2"),
-    Sig.Exact(sig: b"\x1F\x8B\x08", ct: "application/x-gzip"),
-    Sig.Exact(sig: b"PK\x03\x04", ct: "application/zip"),
-    Sig.Exact(sig: b"Rar!\x1A\x07\x00", ct: "application/x-rar-compressed"),
-    Sig.Exact(sig: b"Rar!\x1A\x07\x01\x00", ct: "application/x-rar-compressed"),
-    Sig.Exact(sig: b"\x00\x61\x73\x6D", ct: "application/wasm"),
-    Sig.Text,
-]
+/// slices below, detect_content_type ran at 8.3x Go's time), decoded from
+/// SIG_DATA (as 51 enum literals the list was 6 KB of a wasm module's code).
+const SIGS: List[Sig] = sigs_of(SIG_DATA)
+
+/// The signatures' records in sniff.go's order: a kind byte (0 Html,
+/// 1 Masked, 2 Masked after leading white space, 3 Exact, 4 Mp4, 5 Text);
+/// for Html a length and the pattern; for Masked a length, the mask and the
+/// pattern (each that long) and the index of the content type in
+/// SIG_TYPES; for Exact a length, the signature and the type's index.
+const SIG_DATA: Bytes = b"\x00\x0E<!DOCTYPE HTML\x00\x05<HTML\x00\x05<HEAD\x00\x07<SCRIPT\x00\x07<IFRAME\x00\x03<H1\x00\x04<DIV\x00\x05<FONT\x00\x06<TABLE\x00\x02<A\x00\x06<STYLE\x00\x06<TITLE\x00\x02<B\x00\x05<BODY\x00\x03<BR\x00\x02<P\x00\x04<!--\x02\x05\xFF\xFF\xFF\xFF\xFF<?xml\x00\x03\x05%PDF-\x01\x03\x0B%!PS-Adobe-\x02\x01\x04\xFF\xFF\x00\x00\xFE\xFF\x00\x00\x03\x01\x04\xFF\xFF\x00\x00\xFF\xFE\x00\x00\x04\x01\x04\xFF\xFF\xFF\x00\xEF\xBB\xBF\x00\x05\x03\x04\x00\x00\x01\x00\x06\x03\x04\x00\x00\x02\x00\x06\x03\x02BM\x07\x03\x06GIF87a\x08\x03\x06GIF89a\x08\x01\x0E\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFF\xFF\xFFRIFF\x00\x00\x00\x00WEBPVP\x09\x03\x08\x89PNG\x0D\x0A\x1A\x0A\x0A\x03\x03\xFF\xD8\xFF\x0B\x01\x0C\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFFFORM\x00\x00\x00\x00AIFF\x0C\x01\x03\xFF\xFF\xFFID3\x0D\x01\x05\xFF\xFF\xFF\xFF\xFFOggS\x00\x0E\x01\x08\xFF\xFF\xFF\xFF\xFF\xFF\xFF\xFFMThd\x00\x00\x00\x06\x0F\x01\x0C\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFFRIFF\x00\x00\x00\x00AVI \x10\x01\x0C\xFF\xFF\xFF\xFF\x00\x00\x00\x00\xFF\xFF\xFF\xFFRIFF\x00\x00\x00\x00WAVE\x11\x04\x03\x04\x1AE\xDF\xA3\x12\x01\x24\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\xFF\xFF\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00\x00LP\x13\x03\x04\x00\x01\x00\x00\x14\x03\x04OTTO\x15\x03\x04ttcf\x16\x03\x04wOFF\x17\x03\x04wOF2\x18\x03\x03\x1F\x8B\x08\x19\x03\x04PK\x03\x04\x1A\x03\x07Rar!\x1A\x07\x00\x1B\x03\x08Rar!\x1A\x07\x01\x00\x1B\x03\x04\x00asm\x1C\x05"
+
+/// The content types SIG_DATA's records name, by index (one literal: as
+/// a list literal, 29 elements were built one by one).
+const SIG_TYPES: List[Str] = "text/xml; charset=utf-8\napplication/pdf\napplication/postscript\ntext/plain; charset=utf-16be\ntext/plain; charset=utf-16le\ntext/plain; charset=utf-8\nimage/x-icon\nimage/bmp\nimage/gif\nimage/webp\nimage/png\nimage/jpeg\naudio/aiff\naudio/mpeg\napplication/ogg\naudio/midi\nvideo/avi\naudio/wave\nvideo/webm\napplication/vnd.ms-fontobject\nfont/ttf\nfont/otf\nfont/collection\nfont/woff\nfont/woff2\napplication/x-gzip\napplication/zip\napplication/x-rar-compressed\napplication/wasm".split("\n")
+
+/// The signatures of SIG_DATA's records.
+fn sigs_of(d: Bytes) -> List[Sig] {
+  var out: List[Sig] = []
+  var i = 0
+  while i < d.len() {
+    let k = Int(d[i])
+    if k == 4 || k == 5 {
+      out.push(if k == 4 { Sig.Mp4 } else { Sig.Text })
+      i += 1
+      continue
+    }
+    let n = Int(d[i + 1])
+    let a = d[i + 2..i + 2 + n]
+    if k == 0 {
+      out.push(Sig.Html(p: a))
+      i += 2 + n
+    } else if k == 3 {
+      out.push(Sig.Exact(sig: a, ct: SIG_TYPES[Int(d[i + 2 + n])]))
+      i += 3 + n
+    } else {
+      let pat = d[i + 2 + n..i + 2 + 2 * n]
+      out.push(Sig.Masked(mask: a, pat: pat, skip_ws: k == 2, ct: SIG_TYPES[Int(d[i + 2 + 2 * n])]))
+      i += 3 + 2 * n
+    }
+  }
+  out
+}
 
 fn is_ws(b: UInt8) -> Bool { b == 9 || b == 10 || b == 12 || b == 13 || b == 32 }
 
