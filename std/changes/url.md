@@ -1,5 +1,17 @@
 # std/url changes
 
+## 2026-11-04: perf: escape, parse_query and Values.encode
+
+- Kind: perf
+- Commit: this push
+- Found by: the new bench/perf/url twin (escape 1.55, parse_query 1.50, encode 1.21 of Go's net/url wall)
+- Go reference: net/url escape (a shouldEscape table, one exact size buffer), ParseQuery
+- Test: the url and httpurl corpora (arm64, LLVM, Go backend), `xo test --std-module=native/url`, twincheck bench/perf/url
+- Timing: host 1 A/B against the parent: escape 0.695 (0.672-0.731), parse_query 0.788 (0.771-0.808), encode 0.894 (0.843-0.922), n=6 each
+- Shipped in: not yet released
+
+`query_escape` and `path_escape` classify bytes through a 256 byte table and write the result into an exact size buffer with `mem_copy` runs for the kept bytes. `parse_query` splits the query once and tests for `;` on the whole text. `Values.encode` sorts key indexes and reads each key's values by index. Results are unchanged.
+
 ## 2026-10-23: fix: a postgres URL keeps its comma-separated host list, as Go 1.26's parseHost
 
 - Kind: fix
