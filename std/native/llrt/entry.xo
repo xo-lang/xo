@@ -276,6 +276,10 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
     let m = atoll(mid)
     if m >= 1024 && m <= MID_MAX {
       heapos.set_mid_max(m)
+    } else {
+      // an out of range value kept the default with no word (262144, one
+      // word past the cap, measured the default as the old limit)
+      stdio.eprint("xo heap: XO_HEAP_MID_MAX ignored: it takes a byte count from 1024 to ${MID_MAX}", true)
     }
   }
   // XO_PROF (decision 0238): nothing when unset; a release build without

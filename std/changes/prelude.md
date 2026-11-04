@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-04: fix: an out of range XO_HEAP_MID_MAX is reported at start
+
+- Kind: fix
+- Commit: this commit
+- Found by: the darwin 0.35 to 0.36 bisect (XO_HEAP_MID_MAX=262144, one word past the cap, kept the 16 KiB default and looked like no effect)
+- Go reference: none (GODEBUG ignores unknown settings, but Xo's heap knobs take numbers)
+- Test: cmd/xo TestHeapMidMaxRange (1024, 65536, 262136 quiet; 262144, 512, 64K, off warn; every native backend)
+
+entry.xo's start prints `xo heap: XO_HEAP_MID_MAX ignored: it takes a
+byte count from 1024 to 262136` on stderr when the value is outside that
+range or not a number, and keeps the default as before.
+
 ## 2026-11-04: perf: on darwin the large block cache keeps the pages of the sizes a program asks for again
 
 - Kind: perf
