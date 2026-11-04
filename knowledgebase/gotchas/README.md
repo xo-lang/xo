@@ -3,6 +3,7 @@
 One file per gotcha: symptom, cause, fix or workaround. Mark each as
 `Observed` (it actually happened) or `Anticipated` (known in advance, not yet hit).
 
+- [checker-dirs-relative-to-wd.md](checker-dirs-relative-to-wd.md): Observed 2026-11-04: compiler/check's module dirs are relative to the working directory ("." for the module there), so a prefix test of two dirs needs c.abs on both.
 - [heavy-log-appends.md](heavy-log-appends.md): Observed 2026-11-04: heavy.sh appends to NAME-cmd.log, so reading the first match of a reused NAME reads an older run (two xo binaries' IR compared identical, and a working prototype was reset).
 - [native-silent-on-freed-llrt-records.md](native-silent-on-freed-llrt-records.md): a use-after-free of a shared llrt record (a client connection) traps on wasip2 and passes silently on native, even under XO_RC_CHECK=1; a poison-and-quarantine debug free is proposed
 - [native-use-not-native.md](native-use-not-native.md): Observed 2026-11-03: norm and idna's `use native/rt` loaded native/rt as an ordinary std module (native false), so stdgen's std_sigs listed its bodyless functions and go vet ./std/rt failed; test the native/ path, not the flag alone.
