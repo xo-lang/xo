@@ -1,0 +1,59 @@
+// Derived Ord on structs and tuples over every field kind: the first
+// field that differs decides (Int, UInt64 above 2^63, Str including the
+// empty one and a prefix, Float, Bool, a nested struct, an enum, a
+// tuple), and equal values compare 0.
+enum Tone { Low, Mid(n: Int), High(s: Str) } derive Ord
+
+struct Inner { a: Int, s: Str } derive Ord
+
+struct Rec {
+  u: UInt64
+  s: Str
+  f: Float
+  b: Bool
+  n: Inner
+  t: Tone
+  p: (Int, Str)
+} derive Ord
+
+fn cmp3(x: Rec, y: Rec) -> Int {
+  if x < y { -1 } else if y < x { 1 } else { 0 }
+}
+
+fn main(os: Os) {
+  let big = UInt64.from_bits(-1)
+  let mid = UInt64.from_bits(-9223372036854775807 - 1)
+  let base = Rec{u: UInt64.from_bits(5), s: "ab", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 2), p: (3, "x")}
+  var xs: List[Rec] = [
+    base,
+    Rec{u: big, s: "ab", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 2), p: (3, "x")},
+    Rec{u: mid, s: "ab", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 2), p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "a", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 2), p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 2), p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "ab", f: -0.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 2), p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "ab", f: 1.5, b: true, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 2), p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "ab", f: 1.5, b: false, n: Inner{a: 1, s: "z"}, t: Tone.Mid(n: 2), p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "ab", f: 1.5, b: false, n: Inner{a: 0, s: "z"}, t: Tone.Mid(n: 2), p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "ab", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Low, p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "ab", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.High(s: "q"), p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "ab", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 1), p: (3, "x")},
+    Rec{u: UInt64.from_bits(5), s: "ab", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 2), p: (3, "")},
+    Rec{u: UInt64.from_bits(5), s: "ab", f: 1.5, b: false, n: Inner{a: 1, s: ""}, t: Tone.Mid(n: 2), p: (-3, "x")},
+  ]
+  for (i, x) in xs.indexed() {
+    os.stdio.println("${i}: ${cmp3(base, x)} ${cmp3(x, base)} ${cmp3(x, x)}")
+  }
+  let ys = xs.sort()
+  var order: List[Str] = []
+  for y in ys {
+    order.push(xs.index_of(y).map(fn(k) { "${k}" }) ?? "?")
+  }
+  os.stdio.println(order.join(" "))
+  var zs = xs
+  zs.sort_in_place()
+  os.stdio.println("${zs == ys}")
+  let ts = [(2, "b"), (1, "zz"), (2, ""), (1, "z"), (2, "a")].sort()
+  for (k, s) in ts {
+    os.stdio.println("${k} \"${s}\"")
+  }
+}

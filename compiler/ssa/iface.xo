@@ -971,6 +971,22 @@ fn (var b: Builder) cmp_sub(x0: Int, y0: Int) {
   b.if_then_end(no, join)
 }
 
+/// Whether x0 and y0 differ in the derived order and whether x0 is the
+/// lesser: an Int as two compares, a Str by str.cmp, anything else by its
+/// own cmp function.
+fn (var b: Builder) cmp_field(x0: Int, y0: Int) -> (Int, Int) {
+  let it = b.int_t()
+  let bt = b.bool_t()
+  let x = b.unbox(x0)
+  let y = b.unbox(y0)
+  let k = b.m.types[b.vty(x)].kind
+  if k == Kind.Int {
+    return (b.compare(Op.Ne, x, y), b.compare(Op.Lt, x, y))
+  }
+  let c = if k == Kind.Str { b.call("str.cmp", it, "", [x, y]) } else { b.call(b.cmp_func(b.vty(x)), it, "", [x, y]) }
+  (b.add(Op.Ne, bt, Aux.None, [c, b.cint(0)]), b.add(Op.Lt, bt, Aux.None, [c, b.cint(0)]))
+}
+
 /// Returns -1 when lt holds, then 1 when gt holds (cmpFunc's lt).
 fn (var b: Builder) cmp_lt(lt: Int, gt: Int) {
   let (no, join) = b.if_then_begin(lt)
@@ -1002,13 +1018,32 @@ fn (var b: Builder) cmp_func(t: Int) -> Str {
   match x.kind {
     Unit => {}
     Struct | Tuple => {
-      if !b.is_trace(t) {
+      if !b.is_trace(t) && b.num_fields(t) > 0 {
+        // the first field that differs decides: one compare and branch a
+        // field into one exit that returns -1 or 1 (each field's own
+        // cmp and its `if c != 0 { return c }` made netip.Addr's 81
+        // instructions in 45 blocks, too big to inline into the sort's
+        // loops, 2026-11-04)
+        let out = b.new_block()
+        let lt = b.s.f.add_param(out, bt)
         for i in 0..b.num_fields(t) {
           let ft = b.field_type(t, i)
           let a = b.add(Op.Field, ft, Aux.I(n: i), [l])
           let c = b.add(Op.Field, ft, Aux.I(n: i), [r])
-          b.cmp_sub(a, c)
+          let (ne, less) = b.cmp_field(a, c)
+          let (yes, no) = b.branch(ne)
+          b.s.cur = yes
+          b.jump(out, [less])
+          b.s.cur = no
         }
+        b.retv(b.cint(0))
+        b.seal(out)
+        b.s.cur = out
+        let (y, n) = b.branch(lt)
+        b.s.cur = y
+        b.retv(b.cint(-1))
+        b.s.cur = n
+        b.retv(b.cint(1))
       }
     }
     Int => {

@@ -1413,8 +1413,28 @@ fn (var g: G) call_op(v: Int) {
         let an = g.str_len(a)
         let bn = g.str_len(b)
         let n = g.def1(false, "cmp $u0, $u1\ncsel $d0, $u0, $u1, lt", [an, bn])
+        // no call when the shorter one is empty or both are the same
+        // bytes: the lengths decide (netip.Addr's derived order compared
+        // its empty zones with a memcmp, 2026-11-04)
+        let c = g.new_vreg(false)
+        let before = g.m_()
+        let same = g.new_block(false)
+        let chk = g.new_block(false)
+        let call = g.new_block(false)
+        let cont = g.new_block(false)
+        let _z = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, #0", us: [n], cond: "eq", targets: [same, chk]})
+        g.cur = chk
+        let _p = g.add(Inst{kind: K_CONDBR, text: "cmp $u0, $u1", us: [xd, yd], cond: "eq", targets: [same, call]})
+        g.cur = call
         let r = g.rt("memcmp", regs([xd, yd, n]), [false])
-        let c = g.def1(false, "sxtw $d0, $wu0", [r[0]])
+        g.pmove([c], regs([g.def1(false, "sxtw $d0, $wu0", [r[0]])]))
+        let _j = g.add(Inst{kind: K_JUMP, targets: [cont]})
+        g.cur = same
+        g.pmove([c], regs([g.imm(0)]))
+        let _j2 = g.add(Inst{kind: K_JUMP, targets: [cont]})
+        g.cur = cont
+        g.inherit(before)
+        g.clobber()
         let s1 = g.def1(false, "cmp $u0, #0\ncset $d0, ne\ncneg $d0, $d0, lt", [c])
         let s2 = g.def1(false, "cmp $u0, $u1\ncset $d0, ne\ncneg $d0, $d0, lt", [an, bn])
         g.set(v, [g.def1(false, "cmp $u0, #0\ncsel $d0, $u1, $u2, ne", [c, s1, s2])])
