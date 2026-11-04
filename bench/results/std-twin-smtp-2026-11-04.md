@@ -58,3 +58,22 @@ rows through exec, Go has no table to fill, so it is not a comparison.
 Xo's side includes the in memory engine's SELECT and ORDER BY, Go's stub
 hands out rows, so the gap is an upper bound on the decode cost; the pgx
 row above (1.24) is the like for like one.
+
+## Round trip against connect: the tcpping twin (host 1, 5 rounds)
+
+bench/perf/tcpping (a persistent connection echoing 60,000 messages of 64
+bytes, and 4,000 connections that each make one round trip and close),
+Go first, Xo / Go:
+
+| workload | Go | Xo | Xo / Go | range |
+|---|---|---|---|---|
+| pingpong (60,000 round trips) | 606.0 | 598.3 | 0.987 | 0.709-1.166 (noisy) |
+| connect (4,000 connections) | 456.4 | 212.2 | 0.465 | 0.390-0.970 |
+
+The I/O path itself is at Go's speed or better (connect is twice as fast),
+so the 21 poll returns and 10.6 EAGAIN reads a message above are not the
+smtp gap by themselves, and the question for Lang 1 shrinks to whether
+anything in them is avoidable, not whether it explains smtp. What differs
+in the smtp twin: its in-twin servers (Xo's scanned bytes in a loop, Go's
+bufio), which made half of the Xo profile (`serve` 48% cumulative of 25
+samples on host 1) before the server's line scan used Bytes.find.
