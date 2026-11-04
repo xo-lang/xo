@@ -637,39 +637,45 @@ fn (t: Tx) rows(q: Str, args: List[sql.SqlValue] = []) -> Rows ! sql.SqlErr uses
 fn (r: Rows) columns() -> List[Str] { r.cols }
 
 fn (r: Rows) next() -> Row? ! sql.SqlErr uses net.dial {
-  r.st.with(fn(var s) -> Row? ! sql.SqlErr {
+  // the closure always returns Ok: an Err would undo rows_finish (a
+  // Mutex.with closure's changes are kept only when it returns Ok)
+  let (row, err) = r.st.with(fn(var s) -> (Row?, sql.SqlErr?) {
     if s.done {
-      return None
+      return (None, None)
     }
     if s.pos < s.buf.len() {
       let v = s.buf[s.pos]
       s.pos += 1
-      return Some(Row{cols: r.cols, vals: v})
+      return (Some(Row{cols: r.cols, vals: v}), None)
     }
     match s.cursor {
       Some(c) => {
         match c.next() {
           Ok(o) => {
             match o {
-              Some(v) => return Some(Row{cols: r.cols, vals: v})
+              Some(v) => (Some(Row{cols: r.cols, vals: v}), None)
               None => {
                 rows_finish(s)
-                return None
+                (None, None)
               }
             }
           }
           Err(e) => {
             rows_finish(s)
-            return Err(e)
+            (None, Some(e))
           }
         }
       }
       None => {
         rows_finish(s)
-        None
+        (None, None)
       }
     }
   })
+  if let Some(e) = err {
+    return Err(e)
+  }
+  row
 }
 
 fn (r: Rows) next_as[T: SqlRow]() -> T? ! sql.SqlErr uses net.dial {

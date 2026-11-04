@@ -676,17 +676,9 @@ fn (c: PgCursor) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
       Ok(m) => {
         match m {
           DataRow(vals) => return Some(decode_row(c.oids, vals))
-          Error(f) => c.st.with(fn(var s) {
-            if s.failed.is_none() {
-              s.failed = Some(server_err(f))
-            }
-          })
+          Error(f) => c.note_failure(server_err(f))
           Ready(_) => {
-            let failed = c.st.with(fn(var s) {
-              s.done = true
-              s.failed
-            })
-            if let Some(e) = failed {
+            if let Some(e) = c.finish() {
               return Err(e)
             }
             return None
@@ -695,12 +687,29 @@ fn (c: PgCursor) next() -> List[sql.SqlValue]? ! sql.SqlErr uses net.dial {
         }
       }
       Err(e) => {
-        c.st.with(fn(var s) { s.done = true })
+        let _ = c.finish()
         return Err(e)
       }
     }
   }
   None
+}
+
+/// Marks the statement failed (the first error is kept).
+fn (c: PgCursor) note_failure(e: sql.SqlErr) {
+  c.st.with(fn(var s) {
+    if s.failed.is_none() {
+      s.failed = Some(e)
+    }
+  })
+}
+
+/// Marks the cursor done; the statement's error, if any.
+fn (c: PgCursor) finish() -> sql.SqlErr? {
+  c.st.with(fn(var s) -> sql.SqlErr? {
+    s.done = true
+    s.failed
+  })
 }
 
 fn (c: PgCursor) rest() -> List[List[sql.SqlValue]] ! sql.SqlErr uses net.dial {
