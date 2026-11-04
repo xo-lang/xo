@@ -241,6 +241,9 @@ var (
 	_ func(*ByteBuffer, *Task, Bytes) Option[int64]                 = (*ByteBuffer).M_find
 	_ func(*FsErr, *Task) string                                    = (*FsErr).M_display
 	_ func(*Task, Fs, string, int64) Result[Unit, FsErr]            = Prelude_create_dir_all_mode
+	_ func(*DirEntry, *Task, Fs) Result[FileInfo, FsErr]            = (*DirEntry).M_info
+	_ func(*Task, Fs, string) Result[List[DirEntry], FsErr]         = Prelude_read_dir_entries
+	_ func(*Task, Fs, string) Result[List[DirEntry], FsErr]         = Prelude_walk_entries
 	_ func(*Task, Fs, string, string) Result[string, FsErr]         = Prelude_read_text_or
 	_ func(*Task, Fs, string, Bytes) Result[Bytes, FsErr]           = Prelude_read_or
 	_ func(*Task, Fs, string) Result[Bytes, FsErr]                  = Prelude_read_mapped

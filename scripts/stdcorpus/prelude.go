@@ -756,6 +756,33 @@ test "walk_dir visits as Go's WalkDir: name order, SkipDir on a directory and on
   }
 }
 
+test "read_dir_entries, walk_entries and walk_dir_entries answer as Go's os.ReadDir and WalkDir with the type and no stat" {
+  for d in ["a/b", "a/c"] {
+    os.fs.create_dir_all(d)?
+  }
+  for p in ["a/x.txt", "a/b/y.txt", "a/c/w.txt", "a/d.txt"] {
+    os.fs.write(p, b"")?
+  }
+  let top = read_dir_entries(os.fs, "a")?
+  expect(top.map(fn(e) { e.name })) == ["b", "c", "d.txt", "x.txt"]
+  expect(top.map(fn(e) { e.is_dir })) == [true, true, false, false]
+  expect(top.map(fn(e) { e.path })) == os.fs.read_dir("a")?.map(fn(fi) { fi.path })
+  let all = walk_entries(os.fs, "a")?
+  expect(all.map(fn(e) { e.path })) == os.fs.walk("a")?.map(fn(fi) { fi.path })
+  let skip = walk_dir_entries(os.fs, "a", fn(e) { if e.name == "b" { WalkStep.SkipDir } else { WalkStep.Continue } })?
+  expect(skip.map(fn(e) { e.path })) == ["a/b", "a/c", "a/c/w.txt", "a/d.txt", "a/x.txt"]
+  let stop = walk_dir_entries(os.fs, "a", fn(e) { if e.name == "w.txt" { WalkStep.Stop } else { WalkStep.Continue } })?
+  expect(stop.map(fn(e) { e.path })) == ["a/b", "a/b/y.txt", "a/c", "a/c/w.txt"]
+  // info is the stat on demand: the size now, NotFound after a removal
+  os.fs.write("a/x.txt", b"hello")?
+  let x = top[3]
+  expect(x.info(os.fs)?.size) == 5
+  os.fs.remove("a/x.txt")?
+  expect(x.info(os.fs).is_err()) == true
+  expect(read_dir_entries(os.fs, "missing").is_err()) == true
+  expect(read_dir_entries(os.fs, "a/d.txt").is_err()) == true
+}
+
 test "read_text_or and read_or answer the default only when the file is missing" {
   os.fs.write("present.txt", b"hello")?
   expect(read_text_or(os.fs, "present.txt", "none")?) == "hello"

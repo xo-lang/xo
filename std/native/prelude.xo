@@ -2804,6 +2804,109 @@ fn walk_dir_in[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep us
   false
 }
 
+/// The native backends' layout of the prelude's DirEntry (decision 0483),
+/// as DiskUsage: the fields match std/prelude.xo's
+/// (gotchas/new-prelude-struct-needs-native-twin.md).
+struct DirEntry {
+  name: Str
+  path: Str
+  is_dir: Bool
+  is_symlink: Bool = false
+}
+
+/// The DirEntry of a FileInfo (any Fs that answers through its methods).
+fn dir_entry_of(fi: FileInfo) -> DirEntry {
+  DirEntry{name: fi.name, path: fi.path, is_dir: fi.is_dir, is_symlink: fi.is_symlink}
+}
+
+/// read_dir_entries (decision 0483): the type from the directory entry
+/// (fsops.entries), a stat only for an entry whose type the file system
+/// does not give; a user value, and every Fs in the test world, answers
+/// through read_dir.
+fn read_dir_entries(fs: Fs, dir: Str) -> List[DirEntry] ! FsErr uses fs.read {
+  if userfs.user(fs) is Some(_) || testworld.on() {
+    var out: List[DirEntry] = []
+    for fi in fs.read_dir(dir)? {
+      out.push(dir_entry_of(fi))
+    }
+    return out
+  }
+  let op = fs_check(fs, dir, false)?
+  let ents = fsops.entries(op, dir)
+  let st = sysio.status()
+  if st != 0 {
+    return Err(fs_err(st, dir))
+  }
+  var out = List[DirEntry].with_capacity(ents.len())
+  // in name order, as read_dir
+  for e in ents.sort_by(fn(x) { x[1..] }) {
+    let kind = e.bytes()[0]
+    let n = e[1..]
+    let child = fs_join(op, n)
+    let name = scan.text(n)
+    let xc = fs_join(dir, name)
+    if kind == 63 {
+      let i = sysio.fs_stat(child, false, xc)
+      if i.st == 1 {
+        continue
+      }
+      if i.st != 0 {
+        return Err(fs_err(i.st, xc))
+      }
+      out.push(DirEntry{name: name, path: fs_rel(fs, child, xc), is_dir: i.is_dir, is_symlink: i.is_link})
+    } else {
+      out.push(DirEntry{name: name, path: fs_rel(fs, child, xc), is_dir: kind == 100, is_symlink: kind == 108})
+    }
+  }
+  out
+}
+
+/// DirEntry.info: an lstat of the entry now.
+fn direntry_info(e: DirEntry, fs: Fs) -> FileInfo ! FsErr uses fs.read {
+  if userfs.user(fs) is Some(_) || testworld.on() {
+    match fs.stat(e.path)? {
+      Some(fi) => return fi
+      None => return Err(FsErr.NotFound(path: e.path))
+    }
+  }
+  let op = fs_check(fs, e.path, false)?
+  let i = sysio.fs_stat(op, false, e.path)
+  if i.st != 0 {
+    return Err(fs_err(i.st, e.path))
+  }
+  fs_info_of(fs, op, e.path, i)
+}
+
+fn walk_entries(fs: Fs, dir: Str) -> List[DirEntry] ! FsErr uses fs.read {
+  walk_dir_entries(fs, dir, fn(e) { WalkStep.Continue })
+}
+
+fn walk_dir_entries[fx: Effects](fs: Fs, dir: Str, visit: fn(DirEntry) -> WalkStep uses fx) -> List[DirEntry] ! FsErr uses (fs.read, fx) {
+  var out: List[DirEntry] = []
+  walk_dir_entries_in(fs, dir, visit, out)?
+  out
+}
+
+fn walk_dir_entries_in[fx: Effects](fs: Fs, dir: Str, visit: fn(DirEntry) -> WalkStep uses fx, var out: List[DirEntry]) -> Bool ! FsErr uses (fs.read, fx) {
+  for e in read_dir_entries(fs, dir)? {
+    out.push(e)
+    match visit(e) {
+      WalkStep.Stop => return true
+      WalkStep.SkipDir => {
+        if !e.is_dir {
+          return false
+        }
+      }
+      WalkStep.Continue => {
+        if e.is_dir && walk_dir_entries_in(fs, e.path, visit, out)? {
+          return true
+        }
+      }
+    }
+  }
+  false
+}
+
 /// read_text_or and read_or (std.md 3.1): the file, or default when it
 /// does not exist; through Fs's methods, so any Fs (MemFs, a sub or
 /// attenuated one) answers as for read_text.

@@ -1003,6 +1003,60 @@ pub fn names(path: Str) -> (List[Str], Int) {
   (out, keep(fd, 0))
 }
 
+/// names with each entry's type as a first byte (linux.entries):
+/// dwFileAttributes at 0, a reparse point is `?` (a link or a mount
+/// point: the caller stats it). The entries (not `.` and `..`, in no order) and 0,
+/// or the errno: FindFirstFileExW of path\*, as xo_win.c's opendir and
+/// readdir.
+pub fn entries(path: Str) -> (List[Str], Int) {
+  let p = cpath(path)
+  var s = BytesBuilder.with_capacity(p.len() + 2)
+  s.write(p[0..p.len() - 1])
+  s.write_byte(UInt8(92))
+  s.write_byte(UInt8(42))
+  s.write_byte(UInt8(0))
+  let w = wide(s.freeze())
+  // WIN32_FIND_DATAW (592 bytes): cFileName at 44
+  let fd = raw.bytes_buf(592)
+  let fa = raw.bytes_addr(fd)
+  let h = sys_windows.FindFirstFileExW(w, 1, fa, 0, 0, 0)
+  let e = keep(w, if h == -1 { Int(sys_windows.GetLastError()) } else { 0 })
+  if h == -1 {
+    // FindFirstFile on a file reports a missing path
+    let (m, se) = stat_mode(path, true)
+    if e == ERROR_DIRECTORY || (se == 0 && (m & 61440) != 16384) {
+      return ([], ENOTDIR)
+    }
+    return ([], fix(p, shim_errno(e), false))
+  }
+  var out: List[Str] = []
+  while true {
+    var n = 0
+    while n < 260 && rt.mem_load(fa, 44 + 2 * n, 2) != 0 {
+      n += 1
+    }
+    let c0 = rt.mem_load(fa, 44, 2)
+    let c1 = rt.mem_load(fa, 46, 2)
+    if !(n == 1 && c0 == 46) && !(n == 2 && c0 == 46 && c1 == 46) {
+      let at = rt.mem_load(fa, 0, 4)
+      let ty = if (at & 1024) != 0 { "?" } else if (at & 16) != 0 { "d" } else { "f" }
+      out.push(ty + narrow(fd, 44, n))
+    }
+    if Int(sys_windows.FindNextFileW(h, fa)) == 0 {
+      // the end is ERROR_NO_MORE_FILES; another error is reported, not
+      // a list cut short (os.File.ReadDir)
+      let le = Int(sys_windows.GetLastError())
+      if le != ERROR_NO_MORE_FILES {
+        sys_windows.FindClose(h)
+        return ([], keep(fd, shim_errno(le)))
+      }
+      break
+    }
+  }
+  sys_windows.FindClose(h)
+  (out, keep(fd, 0))
+}
+
 /// The UTF-8 of the n UTF-16 units at offset off of b
 /// (WideCharToMultiByte: an unpaired surrogate is U+FFFD).
 fn narrow(b: Bytes, off: Int, n: Int) -> Str { utf8_of(b, off, n, false) }

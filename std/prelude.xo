@@ -907,6 +907,34 @@ enum WalkStep {
 /// that satisfies Fs still does.
 fn walk_dir[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses fx) -> List[FileInfo] ! FsErr uses (fs.read, fx)
 
+/// A directory entry with the name and the type the directory itself
+/// gives and no stat (Go's fs.DirEntry, decision 0483): read_dir_entries,
+/// walk_entries and walk_dir_entries return them, `info` is the stat.
+struct DirEntry {
+  name: Str
+  /// Relative to the capability root, as FileInfo.path.
+  path: Str
+  /// A directory; a symbolic link is not followed.
+  is_dir: Bool
+  /// A symbolic link itself.
+  is_symlink: Bool = false
+}
+
+/// The FileInfo of the entry, a stat now (Go's DirEntry.Info, an lstat):
+/// NotFound when the entry was removed since the listing.
+fn (e: DirEntry) info(fs: Fs) -> FileInfo ! FsErr uses fs.read
+
+/// The entries of dir by name with no stat of any, as read_dir's order
+/// (Go's os.ReadDir). A free function, not a method of Fs, so every type
+/// that satisfies Fs still does.
+fn read_dir_entries(fs: Fs, dir: Str) -> List[DirEntry] ! FsErr uses fs.read
+
+/// Every entry under dir, as walk's order, with no stat of any.
+fn walk_entries(fs: Fs, dir: Str) -> List[DirEntry] ! FsErr uses fs.read
+
+/// walk_dir with DirEntry: no stat of any entry unless visit calls info.
+fn walk_dir_entries[fx: Effects](fs: Fs, dir: Str, visit: fn(DirEntry) -> WalkStep uses fx) -> List[DirEntry] ! FsErr uses (fs.read, fx)
+
 /// The text of the file at path, or default when it does not exist
 /// (FsErr.NotFound); any other error is the result (std.md 3.1). A free
 /// function, not a method of Fs, so every type that satisfies Fs still does.

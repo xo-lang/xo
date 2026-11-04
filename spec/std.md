@@ -671,6 +671,13 @@ struct FileInfo {
   is_symlink: Bool = false  // a link itself: read_dir and walk report links, stat follows them
 }
 
+struct DirEntry {          // read_dir_entries, walk_entries, walk_dir_entries (decision 0483): no stat
+  name: Str
+  path: Str                // relative to the capability root
+  is_dir: Bool             // from the directory entry; a link is not followed
+  is_symlink: Bool = false
+}                          // fn (e: DirEntry) info(fs: Fs) -> FileInfo ! FsErr uses fs.read: the lstat now
+
 struct DiskUsage {         // the file system holding a path (decision 0426)
   total: Int               // bytes
   free: Int                // bytes free, a superuser's reserve included
@@ -775,6 +782,16 @@ do the work in `visit` and drop the result. Two differences from Go:
 `dir` itself is not visited (as `walk`), and the first error (a
 directory that cannot be read) ends the walk with that error, where Go
 passes it to the function. A free function, so any `Fs` answers.
+
+`DirEntry` (decision 0483, Go's `fs.DirEntry`) is an entry with its
+`name`, `path`, `is_dir` and `is_symlink` from the directory entry itself
+and no stat. `read_dir_entries(fs, dir)` is `read_dir`, `walk_entries(fs,
+dir)` is `walk`, and `walk_dir_entries(fs, dir, visit)` is `walk_dir`,
+each returning `DirEntry` in the same order; `entry.info(fs)` is the stat
+now (an lstat, Go's `DirEntry.Info`) and fails with NotFound when the entry
+was removed since the listing. Where the file system reports no type
+(`DT_UNKNOWN`) the entry is stat'ed when listed, as in Go; a user `Fs` and
+a MemFs answer through `read_dir`. Free functions, so any `Fs` answers.
 
 Handles, links, globs, and locks (decision 0163; the Go backend and
 MemFs, and native builds on the real filesystem, decision 0172; a native
@@ -5069,7 +5086,7 @@ Every function and method of std/prelude.xo, by type, as declared there
 `static` receiver is a function on the type (`Int.parse(s)`); one with an
 UPPER_SNAKE name and no parameters is a constant, read without a call
 (`Time.UNIX_EPOCH`).
-496 declarations.
+500 declarations.
 
 ### Range
 
@@ -5643,6 +5660,12 @@ fn lock(self, path: Str) -> FileLock ! FsErr uses fs.write
 fn try_lock(self, path: Str) -> FileLock? ! FsErr uses fs.write
 ```
 
+### DirEntry
+
+```
+fn (e: DirEntry) info(fs: Fs) -> FileInfo ! FsErr uses fs.read
+```
+
 ### File
 
 ```
@@ -5856,6 +5879,9 @@ fn fault(msg: Str) -> Never
 fn dbg[T](x: T) -> T
 fn create_dir_all_mode(fs: Fs, dir: Str, mode: Int) -> () ! FsErr uses fs
 fn walk_dir[fx: Effects](fs: Fs, dir: Str, visit: fn(FileInfo) -> WalkStep uses fx) -> List[FileInfo] ! FsErr uses (fs.read, fx)
+fn read_dir_entries(fs: Fs, dir: Str) -> List[DirEntry] ! FsErr uses fs.read
+fn walk_entries(fs: Fs, dir: Str) -> List[DirEntry] ! FsErr uses fs.read
+fn walk_dir_entries[fx: Effects](fs: Fs, dir: Str, visit: fn(DirEntry) -> WalkStep uses fx) -> List[DirEntry] ! FsErr uses (fs.read, fx)
 fn read_text_or(fs: Fs, path: Str, default: Str) -> Str ! FsErr uses fs.read
 fn read_or(fs: Fs, path: Str, default: Bytes) -> Bytes ! FsErr uses fs.read
 fn read_mapped(fs: Fs, path: Str) -> Bytes ! FsErr uses fs.read

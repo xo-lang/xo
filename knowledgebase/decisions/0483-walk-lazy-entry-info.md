@@ -1,6 +1,6 @@
 # 0483: directory walks with lazy entry info (DirEntry, Go's fs.DirEntry)
 
-Status: Accepted (owner, 2026-11-03; proposed by Xo Lang 3). One release, with a migration note in CHANGELOG (Breaking) and spec/std. Implementation follows time and netip.
+Status: Accepted (owner, 2026-11-03; proposed by Xo Lang 3). Implemented 2026-11-03 as free functions (read_dir_entries, walk_entries, walk_dir_entries) and the method `DirEntry.info(fs)`, not as Fs methods: an interface method would break every user Fs (decision 0307), and the ADR claimed no migration. Nothing existing changes, so the CHANGELOG entry is a feature.
 
 ## Context
 

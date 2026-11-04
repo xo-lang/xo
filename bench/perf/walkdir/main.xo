@@ -3,8 +3,8 @@
 // under the scratch directory, then walked 200 times, the directories
 // named b7 skipped (SkipDir); `none` is the setup alone. The tree is in
 // a new directory under $TMPDIR (else /tmp), removed at the end. Usage:
-// `<program> none|walk|walk_info` (walk_info also reads each entry's
-// info, which Go's DirEntry stats lazily and Xo's FileInfo holds already). Prints `<workload> <checksum>`; the twin prints
+// `<program> none|walk|walk_info|walk_entries|walk_entries_info` (walk_info also reads each entry's
+// info, which Go's DirEntry stats lazily and Xo's FileInfo holds already; walk_entries and walk_entries_info are the same two with walk_dir_entries, decision 0483, info being the lazy stat). Prints `<workload> <checksum>`; the twin prints
 // the same.
 
 fn main(os: Os) ! {
@@ -30,6 +30,20 @@ fn main(os: Os) ! {
         s += fi.path.len()
         if w == "walk_info" && fi.is_dir {
           s += 1
+        }
+      }
+    }
+  }
+  if w == "walk_entries" || w == "walk_entries_info" {
+    for _ in 0..200 {
+      let seen = walk_dir_entries(fs, "t", fn(e) { if e.name == "b7" { WalkStep.SkipDir } else { WalkStep.Continue } })?
+      for e in seen {
+        s += e.path.len()
+        if w == "walk_entries_info" {
+          let fi = e.info(fs)?
+          if fi.is_dir {
+            s += 1
+          }
         }
       }
     }

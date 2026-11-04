@@ -1,5 +1,17 @@
 # prelude changes
 
+## 2026-11-03: feature: DirEntry, read_dir_entries, walk_entries, walk_dir_entries
+
+- Kind: feature
+- Commit: this commit
+- Found by: bench/perf/walkdir walk 1.54 of Go's wall on host 1 (bench/results/std-twin-rows4-2026-11-03.md): Go's WalkDir gives name and type from the directory entry and stats only on `Info()`
+- Go reference: io/fs DirEntry, os.ReadDir, path/filepath.WalkDir (go1.26.1)
+- Test: the prelude corpus ("read_dir_entries, walk_entries and walk_dir_entries ..."), twincheck bench/perf/walkdir
+- Decision: 0483 (Accepted, owner, 2026-11-03); free functions, not Fs methods, so a user Fs still satisfies Fs
+- Timing: Mac iteration (not evidence): walk 2304 ms (FileInfo), walk_entries 1597 (Go 1514); host row follows in std-twin-walkdir-2026-11-03.md
+
+`DirEntry{name, path, is_dir, is_symlink}` and `DirEntry.info(fs)` (the lstat on demand), `read_dir_entries`, `walk_entries` and `walk_dir_entries` list a directory with the type from getdents64 (d_type), getdirentries64 or FindNextFile and no stat; an entry whose type the file system does not give (DT_UNKNOWN, a Windows reparse point) is stat'ed, as in Go. A user Fs and the test world answer through `read_dir`. Nothing existing changes.
+
 ## 2026-11-03: perf: trim_chars with a non-ASCII cutset decodes with raw.decode and a set walk
 
 - Kind: perf

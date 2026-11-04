@@ -296,6 +296,16 @@ fn dir_names(l: Int, p: Str) -> (List[Str], Int) {
   linux.names(p)
 }
 
+fn dir_entries(l: Int, p: Str) -> (List[Str], Int) {
+  if l == 3 {
+    return windows.entries(p)
+  }
+  if l == 2 {
+    return darwin.entries(p)
+  }
+  linux.entries(p)
+}
+
 /// The errno or 0 of a call's result r.
 fn errno_of(r: Int) -> Int {
   if r < 0 {
@@ -315,6 +325,27 @@ pub fn names(p: Str, x: Str) -> List[Str] {
   }
   let l = layer()
   let (ns, e) = dir_names(l, p)
+  if e != 0 {
+    fail(l, e, x)
+    return []
+  }
+  ok()
+  ns
+}
+
+/// names with a type byte before each name (`d`, `l`, `f` or `?` for none
+/// known; decision 0483): from the directory entry itself, no stat. At
+/// layer 0 (the Go backend and WASI) every type is `?`.
+pub fn entries(p: Str, x: Str) -> List[Str] {
+  if sysio.layer() == 0 {
+    var out: List[Str] = []
+    for n in rt.fs_names(p, x) {
+      out.push("?" + n)
+    }
+    return out
+  }
+  let l = layer()
+  let (ns, e) = dir_entries(l, p)
   if e != 0 {
     fail(l, e, x)
     return []

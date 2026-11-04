@@ -1387,3 +1387,117 @@ func Prelude_read_or(tk *Task, fs Fs, path string, def Bytes) Result[Bytes, FsEr
 	}
 	return r
 }
+
+// dirEntryOf is the DirEntry of a FileInfo (an Fs that answers through
+// its methods).
+func dirEntryOf(fi FileInfo) DirEntry {
+	return DirEntry{F_name: fi.F_name, F_path: fi.F_path, F_is_dir: fi.F_is_dir, F_is_symlink: fi.F_is_symlink}
+}
+
+// readDirEntries is the root Fs's read_dir_entries (decision 0483): the
+// type from os.ReadDir's entry, no stat.
+func (f *realFs) readDirEntries(tk *Task, dir string) Result[List[DirEntry], FsErr] {
+	op, e := f.check(tk, dir, false)
+	if e != nil {
+		return Err[List[DirEntry]](*e)
+	}
+	ents, err := os.ReadDir(op)
+	if err != nil {
+		return Err[List[DirEntry]](mapFsErr(err, dir))
+	}
+	out := make([]DirEntry, 0, len(ents))
+	for _, de := range ents {
+		name := textOf(de.Name())
+		out = append(out, DirEntry{F_name: name, F_path: f.relPath(filepath.Join(op, de.Name()), path.Join(dir, name)), F_is_dir: de.IsDir(), F_is_symlink: de.Type()&os.ModeSymlink != 0})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].F_name < out[j].F_name })
+	return Ok[List[DirEntry], FsErr](ListOf(out...))
+}
+
+// Prelude_read_dir_entries is `read_dir_entries(fs, dir)` (decision
+// 0483): the entries with no stat on the root Fs, through read_dir on any
+// other.
+func Prelude_read_dir_entries(tk *Task, fs Fs, dir string) Result[List[DirEntry], FsErr] {
+	if rf, ok := fs.(*realFs); ok {
+		return fx(tk, "fs.read_dir", false, func() []any { return []any{dir} }, func() Result[List[DirEntry], FsErr] { return rf.readDirEntries(tk, dir) })
+	}
+	r := fs.M_read_dir(tk, dir)
+	if !r.Ok {
+		return Err[List[DirEntry]](r.E)
+	}
+	fis := List_Slice(r.V)
+	out := make([]DirEntry, len(fis))
+	for i, fi := range fis {
+		out[i] = dirEntryOf(fi)
+	}
+	return Ok[List[DirEntry], FsErr](ListOf(out...))
+}
+
+// M_info is `DirEntry.info(fs)`: the lstat of the entry now (Go's
+// DirEntry.Info); NotFound when it was removed.
+func (e DirEntry) M_info(tk *Task, fs Fs) Result[FileInfo, FsErr] {
+	if rf, ok := fs.(*realFs); ok {
+		return fx(tk, "fs.stat", false, func() []any { return []any{e.F_path} }, func() Result[FileInfo, FsErr] {
+			op, ce := rf.check(tk, e.F_path, false)
+			if ce != nil {
+				return Err[FileInfo](*ce)
+			}
+			fi, err := os.Lstat(op)
+			if err != nil {
+				return Err[FileInfo](mapFsErr(err, e.F_path))
+			}
+			return Ok[FileInfo, FsErr](rf.info(op, e.F_path, fi))
+		})
+	}
+	r := fs.M_stat(tk, e.F_path)
+	if !r.Ok {
+		return Err[FileInfo](r.E)
+	}
+	if !r.V.Some {
+		return Err[FileInfo](fsErr(1, e.F_path))
+	}
+	return Ok[FileInfo, FsErr](r.V.V)
+}
+
+// Prelude_walk_entries is `walk_entries(fs, dir)`: walk_dir_entries
+// that continues into every directory.
+func Prelude_walk_entries(tk *Task, fs Fs, dir string) Result[List[DirEntry], FsErr] {
+	return Prelude_walk_dir_entries(tk, fs, dir, func(*Task, DirEntry) Result[WalkStep, Never] {
+		return Ok[WalkStep, Never](WalkStep{Tag: 1})
+	})
+}
+
+// Prelude_walk_dir_entries is `walk_dir_entries(fs, dir, visit)`: as
+// walk_dir through read_dir_entries.
+func Prelude_walk_dir_entries(tk *Task, fs Fs, dir string, visit func(*Task, DirEntry) Result[WalkStep, Never]) Result[List[DirEntry], FsErr] {
+	var out []DirEntry
+	if _, err := walkDirEntriesIn(tk, fs, dir, visit, &out); err != nil {
+		return Err[List[DirEntry]](*err)
+	}
+	return Ok[List[DirEntry], FsErr](ListOf(out...))
+}
+
+func walkDirEntriesIn(tk *Task, fs Fs, dir string, visit func(*Task, DirEntry) Result[WalkStep, Never], out *[]DirEntry) (bool, *FsErr) {
+	r := Prelude_read_dir_entries(tk, fs, dir)
+	if !r.Ok {
+		return false, &r.E
+	}
+	for _, de := range List_Slice(r.V) {
+		*out = append(*out, de)
+		switch visit(tk, de).V.Tag {
+		case 3: // Stop
+			return true, nil
+		case 2: // SkipDir
+			if !de.F_is_dir {
+				return false, nil
+			}
+		default:
+			if de.F_is_dir {
+				if stop, err := walkDirEntriesIn(tk, fs, de.F_path, visit, out); stop || err != nil {
+					return stop, err
+				}
+			}
+		}
+	}
+	return false, nil
+}

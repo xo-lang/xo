@@ -33,7 +33,7 @@ func main() {
 		}
 	}
 	s := 0
-	if w == "walk" || w == "walk_info" {
+	if w == "walk" || w == "walk_info" || w == "walk_entries" || w == "walk_entries_info" {
 		root := base + "/t"
 		for n := 0; n < 200; n++ {
 			err := filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -45,7 +45,7 @@ func main() {
 				}
 				rel, _ := filepath.Rel(base, p)
 				s += len(rel)
-				if w == "walk_info" {
+				if w == "walk_info" || w == "walk_entries_info" {
 					if info, err := d.Info(); err == nil && info.IsDir() {
 						s++
 					}

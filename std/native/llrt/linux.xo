@@ -811,6 +811,68 @@ pub fn names(path: Str) -> (List[Str], Int) {
   (out, 0)
 }
 
+/// names with each entry's type from its directory entry as a first
+/// byte: `d` directory, `l` symbolic link, `f` any other known type, `?`
+/// when the file system reports none (DT_UNKNOWN; decision 0483). The
+/// entries (not `.` and `..`, in getdents64(2)'s order) and 0, or the errno of its open or of a failed
+/// read (os.File.ReadDir: EINTR retried, any other error reported, not
+/// a list cut short).
+pub fn entries(path: Str) -> (List[Str], Int) {
+  var fd = open(path, O_RDONLY | O_CLOEXEC | o_directory(), 0)
+  while fd == -EINTR {
+    fd = open(path, O_RDONLY | O_CLOEXEC | o_directory(), 0)
+  }
+  if fd < 0 {
+    return ([], -fd)
+  }
+  var out: List[Str] = []
+  let buf = raw.bytes_buf(16384)
+  let a = raw.bytes_addr(buf)
+  while true {
+    let n = rt.sys6(nr(61, 217), fd, a, 16384, 0, 0, 0)
+    if n == -EINTR {
+      continue
+    }
+    if n < 0 {
+      keep(buf, 0)
+      close(fd)
+      return ([], -n)
+    }
+    if n == 0 {
+      break
+    }
+    // struct linux_dirent64: d_reclen at 16, d_name (zero terminated)
+    // at 19
+    var off = 0
+    while off < n {
+      let name = a + off + 19
+      let k = raw.cstr_len(name)
+      if !dots(name, k) {
+        out.push(type_prefix(rt.mem_load(a + off, 18, 1)) + raw.str_at(name, k))
+      }
+      off += rt.mem_load(a + off, 16, 2)
+    }
+  }
+  keep(buf, 0)
+  close(fd)
+  (out, 0)
+}
+
+/// The first byte of an entry from a dirent d_type (DT_DIR 4, DT_LNK 10,
+/// DT_UNKNOWN 0).
+pub fn type_prefix(t: Int) -> Str {
+  if t == 4 {
+    return "d"
+  }
+  if t == 10 {
+    return "l"
+  }
+  if t == 0 {
+    return "?"
+  }
+  "f"
+}
+
 /// Whether the k bytes at the address name are `.` or `..`.
 pub fn dots(name: Int, k: Int) -> Bool {
   if k == 1 {
