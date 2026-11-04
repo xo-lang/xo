@@ -90,3 +90,5 @@ http_duplex_h2tls # the wasm backend does not support the network
 host_usage # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
 proc_child_usage # the wasm backend does not support processes (`proc.run`): WASI preview1 has none
 netconn_deadline # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_default_port # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
+http_raw_path # the wasm backend does not support the network (`rt.net_listen`): WASI preview1 has no sockets
