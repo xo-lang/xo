@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- perf (crypto, native): PEM decoding compares a block's type line and END trailer with Bytes.ends_with and starts_with instead of slicing views (xo vet --cost XO0913, seen once bench/perf/jwt reached it); cmd/xo vetcost-std-allow.txt drops archive's pax line, which no bench/perf program reaches since 067a24a4c
 - fix (native runtime): the heap record list's head (heapos.xo W_HEAPS) is read only through heaps_head, an acquire load, and written only through heaps_set, a release store; internal/repotest TestHeapListHeadAccessors fails on any other use (three ThreadSanitizer races on it since 2026-11-02)
 - feature (json): a type's own JSON form, `derive Json(via: Str, to: money_text, from: parse_money)` on a struct, enum or newtype (decision 0478 stage 3): encoding encodes what `to` returns, decoding decodes the `via` type at the same path and calls `from`, whose error's Display text is the decode error's message (`at $.legs[1].amount: invalid amount "12.3.4"`). New codes XO0432 (no such function) and XO0433 (mistyped). On every backend; `xo fmt` keeps it. std/changes/json.md.
 - fix: `xo fmt` no longer deletes an enum's `derive Json(case:, tag:, content:)` arguments or a variant's `as "name"` wire name (decision 0478), which changed the program's JSON; the incremental caches' definition hashes now include them, so editing only one rebuilds what depends on it. Test: cmd/xo TestFmtEnumWireNames.

@@ -486,7 +486,7 @@ fn pem_decode_one(data: Bytes, at: Int) -> (crypto.PemBlock, Int)? {
     rest = next
     end_index -= consumed
     end_trailer -= consumed
-    if type_line0.len() < eol.len() || type_line0[type_line0.len() - eol.len()..] != eol {
+    if !type_line0.ends_with(eol) {
       continue
     }
     let type_line = type_line0[0..type_line0.len() - eol.len()]
@@ -522,7 +522,7 @@ fn pem_decode_one(data: Bytes, at: Int) -> (crypto.PemBlock, Int)? {
       continue
     }
     let trailer = data[et..et + et_len]
-    if trailer[0..type_line.len()] != type_line || trailer[type_line.len()..] != eol {
+    if !trailer.starts_with(type_line) || !trailer.ends_with(eol) {
       continue
     }
     let (after, _, _) = pem_line(data, et + et_len)

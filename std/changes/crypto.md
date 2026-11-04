@@ -1,5 +1,19 @@
 # std/crypto changes
 
+## 2026-11-03: perf: PEM decoding compares a block's type and trailer without views
+
+- Kind: perf
+- Commit: this push
+- Found by: xo vet --cost XO0913 (cmd/xo TestVetCostStd), once bench/perf/jwt reached pem_decode_one
+- Go reference: encoding/pem Decode (bytes.HasSuffix, bytes.HasPrefix)
+- Test: internal/stdtest corpora crypto, x509, x509create and jwt on arm64; cmd/xo TestVetCostStd
+- Timing: none (a PEM block's two compares; the notes were the point)
+- Shipped in: not yet released
+
+pem_decode_one checked a block's "-----BEGIN TYPE-----" line and its END
+trailer by slicing them and comparing the views; it now uses
+Bytes.ends_with and starts_with, which make no view.
+
 ## 2026-11-03: perf: SHA-2 finishes with one append and four words a call
 
 - Kind: perf
