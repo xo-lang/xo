@@ -38,3 +38,12 @@ removed; the lesson stands for any code that picks one record out of the list.
 thread still starting (`pool.defer_wake`) pushed its record:
 TestGoldenTasks/conc_unwind in internal/llvm. Both now load it with acquire,
 as `thp_mode` does; every other reader holds `hlock` or runs at startup.
+
+**Made structural, 2026-11-03 (Xo Lang 1, the Lead's ask after the third
+race):** every read of the head goes through `heapos.heaps_head()` (an acquire
+load; 0 before the static words exist) and every write through
+`heaps_set` (a release store), including the reads under `hlock` and at
+startup, which were safe but were where the next plain read got copied from.
+internal/repotest TestHeapListHeadAccessors fails on any other use of
+static word 27 in std/native/llrt (it flagged the 17 direct uses of the code
+before).

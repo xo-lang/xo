@@ -816,12 +816,12 @@ const CUT_OFF = 1056
 
 /// XO_CUT=0: no growth cuts a magazine (decision 0383, (a)).
 pub fn set_cut_kb(kb: Int) {
-  let cen = rt.mem_load(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_CENTRAL, 8)
+  let cen = rt.mem_load(heaps_head(), H_CENTRAL, 8)
   rt.mem_store(cen, CUT_OFF + 8, kb, 8)
 }
 
 pub fn set_cut_off() {
-  let cen = rt.mem_load(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_CENTRAL, 8)
+  let cen = rt.mem_load(heaps_head(), H_CENTRAL, 8)
   rt.mem_store(cen, CUT_OFF, 1, 8)
 }
 
@@ -832,7 +832,7 @@ pub fn set_cut_off() {
 const THP_OFF = 1080
 
 pub fn set_thp_off() {
-  let h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  let h = heaps_head()
   let cen = rt.mem_load(h, H_CENTRAL, 8)
   rt.mem_store(cen, THP_OFF, 1, 8)
   // the main thread's chunks made before this call (the startup's own
@@ -874,18 +874,14 @@ fn thp_off() -> Bool { thp_mode() != 0 }
 /// MADV_HUGEPAGE. A thread that fills 2 MiB allocates densely; one that never
 /// does stays on small pages. Large blocks keep the kernel's policy.
 pub fn set_thp_dense() {
-  let cen = rt.mem_load(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_CENTRAL, 8)
+  let cen = rt.mem_load(heaps_head(), H_CENTRAL, 8)
   rt.mem_store(cen, THP_OFF, 2, 8)
 }
 
 /// The huge page mode: 0 the default, 1 off, 2 dense; 0 before the heaps
 /// exist (their own records are mapped first).
 fn thp_mode() -> Int {
-  let hs = rt.static_word(W_HEAPS)
-  if hs == 0 {
-    return 0
-  }
-  let h = rt.slot_load(hs, 0, ACQUIRE)
+  let h = heaps_head()
   if h == 0 {
     return 0
   }
@@ -1145,6 +1141,24 @@ const TLS_HEAP = 3
 /// rt.static_word: the list of every heap record (its first record, the
 /// main one at start), its lock word, and a record's size.
 const W_HEAPS = 27
+
+/// The heap record list's head, the newest record (thread_heap pushes
+/// each new one there; the main thread's is the last, H_NEXT 0), read
+/// with acquire: a pool thread may push while any thread reads, so a
+/// plain load races and on arm64 may see the record before its fields
+/// (gotchas/heap-list-head-is-newest-record.md: three races, 2026-11-02
+/// and 2026-11-03). Every reader of W_HEAPS goes through it; repotest
+/// TestHeapListHeadAccessors fails on another read.
+/// 0 before the static words exist (thp_mode runs while the heaps' own
+/// records are mapped).
+fn heaps_head() -> Int {
+  let w = rt.static_word(W_HEAPS)
+  if w == 0 { 0 } else { rt.slot_load(w, 0, ACQUIRE) }
+}
+
+/// Publishes record h as the list's head (release: its fields first),
+/// the one writer of W_HEAPS besides heaps_head's reads.
+fn heaps_set(h: Int) { rt.slot_store(rt.static_word(W_HEAPS), 0, h, RELEASE) }
 const W_HLOCK = 28
 const W_HSIZE = 29
 
@@ -1198,7 +1212,7 @@ pub fn main_record() -> Int {
   rt.mem_store(h, H_COUNT, 1, 8)
   rt.mem_store(h, H_SAMPLE_AT, NEVER, 8)
   rt.mem_store(h, H_CENTRAL, map(8192), 8)
-  rt.mem_store(rt.static_word(W_HEAPS), 0, h, 8)
+  heaps_set(h)
   rt.mem_store(rt.static_word(W_HSIZE), 0, H_SIZE, 8)
   h
 }
@@ -1239,7 +1253,7 @@ fn mag_caps(h: Int) {
 /// heaps (entry.xo start), so every free takes alloc.free_mt and so
 /// free_hold.
 pub fn free_check_on() {
-  let h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  let h = heaps_head()
   rt.mem_store(h, H_COUNT, 1, 8)
   check_record(h)
 }
@@ -1310,7 +1324,7 @@ pub fn free_hold(h: Int) {
 pub fn retire(p: Int, n: Int) {
   // the head with acquire, as thp_mode: other threads may push records
   // (thread_heap's release store; gotchas/heap-list-head-is-newest-record.md)
-  let r = rt.slot_load(rt.static_word(W_HEAPS), 0, ACQUIRE)
+  let r = heaps_head()
   if r == 0 || rt.mem_load(r, H_FQ, 8) == 0 {
     rt.mem_set(p, 0, n)
     return
@@ -1348,7 +1362,7 @@ fn written_after_free() {
 pub fn free_check_end() {
   // with acquire: a pool thread still starting may push its record now
   // (TSan, conc_unwind on linux/arm64, 2026-11-03)
-  var r = rt.slot_load(rt.static_word(W_HEAPS), 0, ACQUIRE)
+  var r = heaps_head()
   while r != 0 {
     let ring = rt.mem_load(r, H_FQ, 8)
     if ring != 0 {
@@ -1368,7 +1382,7 @@ pub fn free_check_end() {
 /// Stops the counting of allocations and frees (alloc.xo COUNT) on the
 /// main record, which the threads' records copy (the program's start,
 /// before a second thread: no report reads the counts).
-pub fn counting_off() { rt.mem_store(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_COUNT, 0, 8) }
+pub fn counting_off() { rt.mem_store(heaps_head(), H_COUNT, 0, 8) }
 
 /// Counts on every record from now on (a budget's stretch, which reads
 /// its record's allocated bytes): nothing when record h, the caller's,
@@ -1379,7 +1393,7 @@ pub fn counting_on(h: Int) {
     return
   }
   hlock_take()
-  var r = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  var r = heaps_head()
   while r != 0 {
     rt.mem_store(r, H_COUNT, 1, 8)
     r = rt.mem_load(r, H_NEXT, 8)
@@ -1389,7 +1403,7 @@ pub fn counting_on(h: Int) {
 
 /// Sets the size classes' limit to m (XO_HEAP_MID_MAX, at start: the
 /// main record, which the others copy; mid_default() otherwise).
-pub fn set_mid_max(m: Int) { rt.mem_store(rt.mem_load(rt.static_word(W_HEAPS), 0, 8), H_MID_MAX, m, 8) }
+pub fn set_mid_max(m: Int) { rt.mem_store(heaps_head(), H_MID_MAX, m, 8) }
 
 /// Makes record h the calling thread's (the main thread, when a second
 /// thread is about to run Xo code).
@@ -1404,9 +1418,8 @@ pub fn thread_heap() -> Int {
   }
   let h = map(rt.mem_load(rt.static_word(W_HSIZE), 0, 8))
   mag_caps(h)
-  let w = rt.static_word(W_HEAPS)
   hlock_take()
-  let first = rt.mem_load(w, 0, 8)
+  let first = heaps_head()
   rt.mem_store(h, H_MID_MAX, rt.mem_load(first, H_MID_MAX, 8), 8)
   rt.mem_store(h, H_PAGES, rt.mem_load(first, H_PAGES, 8), 8)
   rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
@@ -1420,7 +1433,7 @@ pub fn thread_heap() -> Int {
   rt.mem_store(h, H_SAMPLE_AT, if prof != 0 { 0 } else { NEVER }, 8)
   rt.mem_store(h, H_NEXT, first, 8)
   // the list's head is also read without the lock (thp_mode): published with release
-  rt.slot_store(w, 0, h, RELEASE)
+  heaps_set(h)
   hlock_give()
   rt.tlocal_set(TLS_HEAP, h)
   h
@@ -1431,7 +1444,7 @@ pub fn thread_heap() -> Int {
 /// next sample at once (the hook draws its first gap).
 pub fn profile_on() {
   hlock_take()
-  var r = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  var r = heaps_head()
   while r != 0 {
     rt.mem_store(r, H_COUNT, 1, 8)
     rt.mem_store(r, H_PROF, 1, 8)
@@ -1447,7 +1460,7 @@ pub fn live(lp: Int, tp: Int) {
   var l = 0
   var t = 0
   hlock_take()
-  var h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  var h = heaps_head()
   while h != 0 {
     let a = rt.mem_load(h, H_ALLOCS, 8)
     l = l.wrapping_add(a.wrapping_sub(rt.mem_load(h, H_FREES, 8)))
@@ -1469,7 +1482,7 @@ pub fn live(lp: Int, tp: Int) {
 pub fn nfree(c: Int) -> Int {
   var n = 0
   hlock_take()
-  var h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  var h = heaps_head()
   while h != 0 {
     let fl = h.wrapping_add(c.wrapping_shl(3))
     n = n.wrapping_add(list_len_c(c, rt.mem_load(fl, H_FREE_LISTS, 8)))
@@ -1477,7 +1490,7 @@ pub fn nfree(c: Int) -> Int {
     h = rt.mem_load(h, H_NEXT, 8)
   }
   // the central list's magazines, linked by their first block's second word
-  let h0 = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  let h0 = heaps_head()
   if h0 != 0 {
     let cen = rt.mem_load(h0, H_CENTRAL, 8)
     if cen != 0 {

@@ -14,6 +14,22 @@ value: the mutex is poisoned, and later `with` and `with_read` fault
 with XO-F010 until `m.reset(v)`. An Err and a cancellation still leave
 the value unchanged. A closure that cannot be canceled no longer keeps
 the value it was given, so its writes do not copy it.
+## 2026-11-03: fix: the native heap record list's head is read only with acquire
+
+- Kind: fix
+- Commit: this commit
+- Found by: the third ThreadSanitizer race on the head in two days (5a5a5792b; gotchas/heap-list-head-is-newest-record.md)
+- Go reference: none (Go's runtime mheap is not a list of per thread records)
+- Test: internal/repotest TestHeapListHeadAccessors; goldens with threads and the --race runtime tests
+- Timing: none (setup, diagnostics and the huge page mode read it, no allocation path)
+
+Every read of std/native/llrt/heapos.xo's heap record list head
+(W_HEAPS) goes through one accessor, `heaps_head`, an acquire load, and
+every write through `heaps_set`, a release store. A pool thread pushes its
+record there while other threads read it; three plain loads added since
+2026-11-02 were each a race. A repository test now fails on any other use
+of the word.
+
 ## 2026-11-03: feature: File.read_at
 
 - Kind: feature
