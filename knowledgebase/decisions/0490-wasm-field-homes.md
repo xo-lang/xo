@@ -28,6 +28,17 @@ the same fetch client) is 6,188 bytes, 578 of its instructions on q
 registers: the client copied in and back out. Measured 2026-11-04 with xo
 at eab4586dd.
 
+Correction (xo-lang-4, 2026-11-04, after acceptance): native arm64
+already passes a `var` field of a held value by its address (field
+homes, compiler/arm64/byref.xo `held.fslot`, 2026-10-21). In tlsio.put
+all 240 of its q register loads and stores surround the TLS 1.2 call
+`tls12.send(c.cl12[0], data)`, 120 before and 120 after: a list
+element copied out to the frame and stored back. The TLS 1.3 call
+`tls13.send(c.cl, data)`, a field, copies nothing natively. So the
+native follow-up is not this decision's rule but the list element case
+(the same one left in wasm, Alternatives); LLVM's 6,188 bytes are to be
+split the same way before that decision.
+
 ## Decision
 
 On wasm (plan_field_calls in home.xo, after plan_nested), a call v of a
