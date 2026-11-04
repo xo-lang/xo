@@ -1,5 +1,24 @@
 # std/http changes
 
+## 2026-11-03: fix: the client pools a connection after a request whose body came from a source
+
+- Kind: fix
+- Commit: this push
+- Found by: Xo Lang 1 (2026-11-03): a streamed request with a body source ended through hclient.end_shared, which always closed the connection
+- Go reference: net/http transport.go persistConn.readLoop (a kept alive response read to its end and `pc.wroteRequest()`)
+- Test: golden http_client_pool_body (arm64, LLVM, Go parity): six POSTs with body sources (Client.open chunked and with a Content-Length, Client.send) and two GETs on one connection, where the native client dialed four
+- Timing: bench/results/http-client-pool-body-2026-11-03.md: 2000 keep-alive POSTs with body sources through Client.open, 0.253 of the wall time (0.231 to 0.314) and 0.16 of the CPU time on linux/arm64; Client.send within noise (it already pooled)
+- Shipped in: not yet released
+
+A request whose body came from a source (Request.with_body_reader) sent
+through Client.open went full duplex (decision 0433) and its connection
+was closed at the response's end, since the sender task might still be
+writing. The sender now marks the body sent in full after its last
+write, and the connection goes back to the pool when the response kept
+it alive, was read to its end, and the body was marked sent, as Go's
+Transport does; a response that ends before the body was sent still
+closes it.
+
 ## 2026-11-03: fix: the proxy's tunnel keeps the target connection until its client-to-target copy ends
 
 - Kind: fix
