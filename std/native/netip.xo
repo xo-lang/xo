@@ -3,6 +3,7 @@
 // ParsePrefix, Prefix.Contains and Masked, the Is predicates), ported
 // with the same results and error texts.
 use std/netip
+use native/rt
 
 fn parseerr_display(e: netip.ParseErr) -> Str { e.msg }
 
@@ -98,15 +99,17 @@ fn rest_text(b: Bytes, p: Int) -> Str { b[p..].to_str() ?? "" }
 fn parse_ipv6(input: Str) -> netip.Addr ! netip.ParseErr {
   var s = input
   var zone = ""
-  match input.find("%") {
-    Some(i) => {
-      s = input[0..i]
-      zone = input[i + 1..]
-      if zone.is_empty() {
-        return Err(addr_err(input, "zone must be a non-empty string", ""))
-      }
+  let ib = input.bytes()
+  var pz = 0
+  while pz < ib.len() && ib[pz] != 37 {
+    pz += 1
+  }
+  if pz < ib.len() {
+    s = input[0..pz]
+    zone = input[pz + 1..]
+    if zone.is_empty() {
+      return Err(addr_err(input, "zone must be a non-empty string", ""))
     }
-    None => ()
   }
   var tmp = BytesBuilder.with_capacity(16)
   var ellipsis = -1
@@ -354,7 +357,8 @@ fn string4(ip: Bytes) -> Str {
   write_octet(out, ip[14])
   out.write_byte(46)
   write_octet(out, ip[15])
-  out.freeze().to_str() ?? ""
+  // digits, dots, colons, hex and the zone text (a Str): valid
+  rt.cast[Bytes, Str](out.freeze())
 }
 
 fn group(ip: Bytes, i: Int) -> Int { Int(ip[2 * i]) * 256 + Int(ip[2 * i + 1]) }
@@ -413,7 +417,8 @@ fn string6(a: netip.Addr) -> Str {
     out.write_byte(37)
     out.write_str(a.zone)
   }
-  out.freeze().to_str() ?? ""
+  // digits, dots, colons, hex and the zone text (a Str): valid
+  rt.cast[Bytes, Str](out.freeze())
 }
 
 fn addr_display(a: netip.Addr) -> Str {

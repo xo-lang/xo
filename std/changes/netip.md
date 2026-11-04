@@ -1,5 +1,16 @@
 # std/netip changes
 
+## 2026-11-03: perf: address text is returned without a UTF-8 check, and parse_ipv6 scans for % by byte
+
+- Kind: perf
+- Commit: this commit
+- Found by: bench/perf/netip 1.88 of Go's wall on host 1 (n1: Go 19.0 ms, Xo 35.8); Mac profile: parse_ipv6, parse_addr, ipv4_fields, `drop Str`
+- Go reference: net/netip (go1.26.1)
+- Test: the netip corpus (arm64, LLVM, Go backend), twincheck bench/perf/netip
+- Timing: host row follows in std-twin-netip-2026-11-03.md
+
+`string4` and `string6` return their built bytes as the Str they are (digits, dots, colons, hex and the zone Str) without `to_str`'s validation, and `parse_ipv6` finds the zone separator with a byte loop instead of `Str.find`.
+
 ## 2026-10-29: feature: netip.lookup
 
 - Kind: feature
