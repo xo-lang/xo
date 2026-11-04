@@ -218,6 +218,12 @@ struct G {
   /// is in and the cause labels made
   cur_cause: Int = 0
   blk_cause: Int = 0
+  /// the release being lowered is of a Str read from storage (a field,
+  /// payload, list element or the entry's parameter), which drop_thunk
+  /// takes: a call's result or a value carried around a loop is most
+  /// often the last reference, where the thunk's register saves cost more
+  /// than the call (bench/perf/strconv itoa 0.11 to 0.13 s, 2026-11-04)
+  rel_stored: Bool = false
   dc_cur: Int = 0
   dc_n: Int = 0
   dl_last: Int = 0

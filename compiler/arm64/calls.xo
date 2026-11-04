@@ -264,7 +264,7 @@ fn (var g: G) release(t: Int, ws: List[Int]) {
       // A List keeps it too: most are freed at their last release, where
       // the thunk saves sixteen registers (xo's self build 1.019 with
       // Lists, 2026-11-04).
-      if g.kind(t) == ssa.Kind.Str && !g.x86 && g.os != "windows" && !g.m.race && !g.blocks[g.cur].cold && g.on("drop_thunk") {
+      if g.kind(t) == ssa.Kind.Str && !g.x86 && g.os != "windows" && !g.m.race && !g.blocks[g.cur].cold && g.rel_stored && g.on("drop_thunk") {
         let th = g.drop_thunk(t)
         let _c = g.add(Inst{kind: K_PLAIN, text: "bl ${th}_$u0", us: [g.real(ws[0])], clobbers: [16, 17, 30], fl: IF_FRAME | IF_KEEP})
         g.clobber()

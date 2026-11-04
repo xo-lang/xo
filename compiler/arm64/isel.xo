@@ -1628,7 +1628,9 @@ fn (var g: G) instr1(v: Int) {
       if g.rc_at(v, "drop", a) {
         return
       }
+      g.rel_stored = stored_value(g.f, a)
       g.release(t, g.words(a))
+      g.rel_stored = false
     }
     Reuse => g.reuse(v)
     Share => {
@@ -1738,6 +1740,21 @@ fn (var g: G) fold_decided(blocks: List[Int], idom: List[Int]) {
       g.f.values[t].succs = [keep]
       g.nuses[c] -= 1
     }
+  }
+}
+
+/// Whether value a was read from storage: a field, a payload, a list
+/// element, or a parameter of the entry (G.rel_stored).
+fn stored_value(f: ssa.Func, a: Int) -> Bool {
+  let x = f.values[a]
+  match x.op {
+    Field | Payload => true
+    Param => ssa.block_of(x.tb) == 0
+    Call => match x.aux {
+      S(s) => s == "list.index"
+      _ => false
+    }
+    _ => false
   }
 }
 
