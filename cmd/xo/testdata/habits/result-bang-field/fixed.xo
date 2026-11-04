@@ -1,0 +1,8 @@
+struct Job {
+  result: Result[Int, Str]
+}
+
+fn main(os: Os) {
+  let j = Job{result: Ok(1)}
+  os.stdio.println("${j.result ?? _ => 0}")
+}

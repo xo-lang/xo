@@ -113,6 +113,9 @@ fn (var p: Parser) finish_var(start: Pos) -> Stmt {
   var typ: Type? = None
   if p.got(Kind.Colon) {
     typ = Some(p.parse_type())
+    if p.at(Kind.Bang) {
+      typ = Some(p.param_result_type(typ ?? Type.BadType(name.span), "`=` in `var`", "a `var` binding"))
+    }
   }
   p.expect(Kind.Assign, "`=` in `var`")
   let value = p.parse_expr()

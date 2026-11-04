@@ -1,0 +1,4 @@
+fn main(os: Os) {
+  let r: Result[Int, Str] = Ok(2)
+  os.stdio.println("${r ?? _ => 0}")
+}

@@ -1,0 +1,36 @@
+[
+  {
+    "code": "XO0160",
+    "severity": "error",
+    "message": "expected a new line or `=` after the field's type, found `!`",
+    "span": {
+      "file": "main.xo",
+      "line": 2,
+      "col": 15,
+      "end_line": 2,
+      "end_col": 16
+    },
+    "notes": [
+      {
+        "message": "`T ! E` is only a function's result; a struct field of a Result type writes `Result[Int, Str]` (core 2.6, 3.2)"
+      }
+    ],
+    "fixes": [
+      {
+        "title": "write `Result[Int, Str]`",
+        "edits": [
+          {
+            "span": {
+              "file": "main.xo",
+              "line": 2,
+              "col": 11,
+              "end_line": 2,
+              "end_col": 20
+            },
+            "replace": "Result[Int, Str]"
+          }
+        ]
+      }
+    ]
+  }
+]
