@@ -598,7 +598,7 @@ fn parse_pax(text: Bytes) -> Map[Str, Str]? {
     }
     let rest = s[sp + 1..]
     let rec = rest[0..rest_n - 1]
-    if rest[rest_n - 1..rest_n] != "\n" {
+    if rest.bytes()[rest_n - 1] != 10 {
       return None
     }
     let eq = match rec.find("=") {
