@@ -1,5 +1,15 @@
 # std/http changes
 
+## 2026-11-04: fix: a server finishes a streamed request body under its lock, so a reverse proxy's body sender no longer races the connection
+
+- Kind: fix
+- Commit: this push
+- Found by: Xo Lang 2's ThreadSanitizer rounds of TestGoldenTasks (2026-11-04): http_reverse_proxy_retry, XO_THREADS=2, a data race of http1.body_next (the proxy's full duplex sender reading the request body, decision 0433) against serve_h1's body_finish closure
+- Cause: stream_finish copied the body's finish function out under a read lock and ran it unlocked, while BodyReader.read runs body_next under the body's lock: the server could finish (and move the connection on to its next request) while a read on another task was still in body_next
+- Go reference: net/http transfer.go body.Close takes body.mu, the lock Read holds, so a close waits for an in-flight read; a read after it is "http: invalid Read on closed Body"
+- Fix: stream_finish runs finish under the body's lock, then drops the body's reader; a later read gets net/http's closed body error (never the next request's bytes, never a silent end that would cut a proxied upload short)
+- Tests: TestGoldenRun http_reverse_proxy*, http_stream*, http_duplex*, http_trailers, http_h2c*, http_server*, http_pipe and others (21); ThreadSanitizer rounds of http_reverse_proxy_retry
+
 ## 2026-11-04: fix: the client sends a request's path as written (RawPath), and http://host/ reaches a listener on host:80
 
 - Kind: fix

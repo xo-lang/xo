@@ -409,15 +409,28 @@ fn body_reader_of(req: Request) -> BodyReader {
 }
 
 /// Runs what req's streamed body asks for after its handler (finish), if
-/// it has one.
+/// it has one, under the body's lock as net/http's server closes a body
+/// under body.mu: a read still running on another task (a reverse
+/// proxy's full duplex sender, decision 0433) ends first, and a read
+/// after it gets net/http's closed body error instead of reaching the
+/// connection, which has moved on to its next request (a ThreadSanitizer
+/// race of http1.body_next against body_finish, 2026-11-04).
 fn stream_finish(req: Request) {
   for rv in req.values {
     if rv.name == STREAM_BODY {
       if let Some(b) = rt.any_get[BodyReader](rv.v) {
-        let fs = b.st.with_read(fn(s) { s.finish })
-        if !fs.is_empty() {
-          fs[0]()
-        }
+        b.st.with(fn(var s: BodyState) {
+          if !s.finish.is_empty() {
+            s.finish[0]()
+          }
+          if !s.next.is_empty() {
+            s.next = []
+            s.finish = []
+            if !s.end && s.err.is_empty() {
+              s.err = "http: invalid Read on closed Body"
+            }
+          }
+        })
       }
     }
   }
