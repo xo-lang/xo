@@ -214,6 +214,19 @@ pub fn err(p: Int, n: Int, nl: Bool) {
     }
     return
   }
+  if nl && n < 65536 {
+    // the text and its newline in one write, as Go's os.Stderr.Write of a
+    // line is (two writes interleave with other processes' lines)
+    let ob = raw.bytes_buf(n + 1)
+    let op = raw.bytes_addr(ob)
+    rt.mem_copy(op, p, n)
+    rt.mem_store(op, n, 10, 1)
+    lock(w, m)
+    flush_locked(w)
+    write_all(2, op, n + 1)
+    unlock(w, m)
+    return
+  }
   lock(w, m)
   flush_locked(w)
   write_all(2, p, n)
