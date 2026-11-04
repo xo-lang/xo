@@ -1015,6 +1015,51 @@ fn format_items(items: List[Item], t: Time, z: Zone) -> Str {
   rt.cast[Bytes, Str](out.freeze())
 }
 
+/// The field at b[i] (a `{`): code, mode + 2 and the position after its
+/// `}` packed as code | (mode + 2) << 8 | end << 16, or -1 when it is not
+/// a well formed field (an unmatched brace, an unknown name or argument).
+/// One scan, the cases with no argument (the common ones) decided on the
+/// name alone; an argument goes through arg_literal, field_ok and
+/// item_mode.
+fn field_scan(b: Bytes, i: Int, n: Int) -> Int {
+  var j = i + 1
+  var colon = -1
+  while j < n {
+    let c = b[j]
+    if c == 125 {
+      break
+    }
+    if c == 123 {
+      return -1
+    }
+    if c == 58 && colon < 0 {
+      colon = j
+    }
+    j += 1
+  }
+  if j >= n {
+    return -1
+  }
+  if colon < 0 {
+    let code = field_code_b(b, i + 1, j)
+    // weekday needs an argument, an unknown name is code 0
+    if code == 0 || code == 4 {
+      return -1
+    }
+    return code | ((if code == 10 { 1 } else { 2 }) << 8) | ((j + 1) << 16)
+  }
+  let code = field_code_b(b, i + 1, colon)
+  match arg_literal(b, colon + 1, j) {
+    Some(arg) => {
+      if !field_ok(code, arg, true) {
+        return -1
+      }
+      code | ((item_mode(code, arg) + 2) << 8) | ((j + 1) << 16)
+    }
+    None => -1
+  }
+}
+
 /// format of a layout text in one scan (Go's appendFormat structure): the
 /// instant's fields once, then each field written as the layout is read,
 /// with no list of items; None when the layout is not well formed, which
@@ -1057,35 +1102,13 @@ fn format_stream(layout: Str, t: Time, z: Zone) -> Str? {
     if i > start {
       out.write_str(layout[start..i])
     }
-    var j = i + 1
-    while j < n && b[j] != 123 && b[j] != 125 {
-      j += 1
-    }
-    if j >= n || b[j] == 123 {
+    let fs = field_scan(b, i, n)
+    if fs < 0 {
       return None
     }
-    var colon = -1
-    var cj = i + 1
-    while cj < j {
-      if b[cj] == 58 {
-        colon = cj
-        break
-      }
-      cj += 1
-    }
-    let nend = if colon >= 0 { colon } else { j }
-    let code = field_code_b(b, i + 1, nend)
-    var arg = ""
-    if colon >= 0 {
-      match arg_literal(b, colon + 1, j) {
-        Some(a) => arg = a
-        None => return None
-      }
-    }
-    if !field_ok(code, arg, colon >= 0) {
-      return None
-    }
-    let mode = item_mode(code, arg)
+    let code = fs & 255
+    let mode = ((fs >> 8) & 255) - 2
+    let j = (fs >> 16) - 1
     if code == 13 {
       out.write_byte(123)
     } else if code == 14 {
@@ -1195,27 +1218,25 @@ const WEEKDAYS_SHORT: Str = "MonTueWedThuFriSatSun"
 
 /// The 3 byte name number i of names.
 fn put_name(var out: BytesBuilder, names: Str, i: Int) {
-  let nb = names.bytes()
-  out.write_byte(nb[i * 3])
-  out.write_byte(nb[i * 3 + 1])
-  out.write_byte(nb[i * 3 + 2])
+  out.write_str(names[i * 3..i * 3 + 3])
 }
+
+/// The two digit texts 00 to 99, one append each.
+const TWO_DIGITS: Str = "00010203040506070809101112131415161718192021222324252627282930313233343536373839404142434445464748495051525354555657585960616263646566676869707172737475767778798081828384858687888990919293949596979899"
+
 
 /// n in decimal, zero padded to w digits (a negative n is "-" and the
 /// digits of -n padded to w - 1), as pad.
 fn put_num(var out: BytesBuilder, n: Int, w: Int) {
   if w == 2 && n >= 0 && n < 100 {
-    out.write_byte(UInt8(48 + n / 10))
-    out.write_byte(UInt8(48 + n % 10))
+    out.write_str(TWO_DIGITS[n * 2..n * 2 + 2])
     return
   }
   if w == 4 && n >= 0 && n < 10000 {
     let hi = n / 100
     let lo = n % 100
-    out.write_byte(UInt8(48 + hi / 10))
-    out.write_byte(UInt8(48 + hi % 10))
-    out.write_byte(UInt8(48 + lo / 10))
-    out.write_byte(UInt8(48 + lo % 10))
+    out.write_str(TWO_DIGITS[hi * 2..hi * 2 + 2])
+    out.write_str(TWO_DIGITS[lo * 2..lo * 2 + 2])
     return
   }
   if n < 0 {

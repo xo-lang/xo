@@ -1,5 +1,16 @@
 # std/time changes
 
+## 2026-11-03: perf: format scans each field once and appends two digits and names in one call
+
+- Kind: perf
+- Commit: this commit
+- Found by: the host 1 profile of bench/perf/time format (3.70 of Go): `format_stream` 38 percent self, `obj_rs_push_byte` 10, `field_code_b` 7, `item_mode` 7, `put_name` 6
+- Go reference: time/format.go nextStdChunk (one switch on the first byte)
+- Test: the time corpus (arm64, LLVM, Go backend), twincheck bench/perf/time
+- Timing: Mac iteration (not evidence): format/Go 2.57 to 2.13; host row follows
+
+`field_scan` reads a `{name:arg}` field in one pass and returns its code, mode and end packed in an Int (the no-argument fields decided on the name alone), replacing the colon search, `arg_literal`, `field_ok` and `item_mode` calls per field per `format`. Two digit numbers and month and weekday names are appended with one `write_str` of a table slice instead of two or three `write_byte` calls.
+
 ## 2026-11-03: perf: parse reads the layout as it parses
 
 - Kind: perf
