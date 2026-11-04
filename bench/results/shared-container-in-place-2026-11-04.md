@@ -35,6 +35,9 @@ noise.
 - Goldens map, mutex, conc, chan, list, str, json, http_server on arm64
   and LLVM (0488 alone); map, mutex, conc, list, http_server, json on
   arm64 (combined).
+- Combined, Mac: XO_FREE_CHECK=1 goldens (map, mutex, conc, chan, list,
+  http server, h2c and client, json) 83 of 83 on arm64; 273 of 273 on
+  LLVM with Go parity; wasm goldens (map, mutex, list, conc) pass.
 - To do before acceptance: TestGoldenTasks under TSan x20 (host), the
-  XO_FREE_CHECK=1 goldens, wasm and Go parity goldens, the --ab rows on
-  host 1 for httpsession and cookiejar, code size of xo's __text.
+  --ab rows on host 1 for httpsession and cookiejar, code size of xo's
+  __text.
