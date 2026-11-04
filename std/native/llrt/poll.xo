@@ -322,7 +322,7 @@ pub fn pd_unpark(pd: Int, cont: Int) -> Bool {
 const W_EV = 43
 /// Its size: the words below, Windows', then the network poll's of
 /// decision 0324.
-const EV_SIZE = 248
+const EV_SIZE = 256
 
 /// The event loop's record's words: the start's state
 /// (0 not started, 1 starting, 2 running), the lock word, the self
@@ -373,6 +373,10 @@ pub const EV_SUBTAB = 224
 pub const EV_SUBN = 232
 /// the address of the parked connections' fire function (set_cont_fire)
 const EV_CONTFIRE = 240
+/// 1 while np_break's byte is in the self pipe and no poll has drained
+/// it yet (Go's netpollWakeSig): a further break writes nothing, since
+/// that byte already ends the next wait
+const EV_BRK = 248
 
 /// The ev record's address (sigsub.xo).
 pub fn ev_rec() -> Int { ev() }
@@ -1619,6 +1623,9 @@ fn poll_round(e: Int, evs: Int, maxwait: Int, worker: Bool) -> Int {
       // the self pipe: drain it (on Windows the break is a completion
       // with no record), then the signals that wrote to it
       while !win && read_fd(pipe_r, drain, 64) > 0 {}
+      // drained: the next np_break writes again (this wait ends here, and
+      // its worker looks for work before it can wait again)
+      rt.slot_store(ev(), EV_BRK / 8, 0, SEQ_CST)
       var k = rt.slot_swap(sigs, 0, 0, ACQ_REL)
       while k > 0 {
         stop.signal()
@@ -1704,7 +1711,11 @@ pub fn np_break() {
   let e = ev()
   if e != 0 {
     let t = rt.slot_load(addw(e, EV_TOK), 0, SEQ_CST)
-    if t == TOK_BLOCKED || t == TOK_FREE {
+    // one byte at a time: a spawn per push wrote one each while the
+    // waiting worker had not yet run (spawn100k: write was 45% of the
+    // darwin/amd64 profile; the self pipe only: Windows' break is drained
+    // elsewhere)
+    if (t == TOK_BLOCKED || t == TOK_FREE) && (windows() || rt.slot_cas(e, EV_BRK / 8, 0, 1, SEQ_CST)) {
       poke()
     }
   }

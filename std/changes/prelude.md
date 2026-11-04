@@ -1,5 +1,19 @@
 # prelude changes
 
+## 2026-11-04: perf: one poller wake byte at a time
+
+- Kind: perf
+- Commit: this commit
+- Found by: the owner's v0.38.1 evaluation (spawn100k 1.33x Go on darwin/amd64); XO_PROF: write 45% (poll.poke from pool.wakep's np_break)
+- Go reference: runtime/netpoll_kqueue.go and netpoll_epoll.go netpollBreak (netpollWakeSig CAS; netpoll clears it after reading the pipe)
+- Test: TestGoldenRun conc, spawn, scope, timer, signal, net and http goldens; the micro13 spawn100k on darwin/amd64, linux/amd64 and linux/arm64
+- Speed: darwin/amd64 spawn100k 39 to 30 ms (Go 26)
+
+np_break writes the self pipe's byte only when it sets the event loop's
+break flag (EV_BRK) from 0 to 1; the poll that drains the pipe clears it.
+A push while a byte waits writes nothing: that byte ends the poller's
+next wait anyway. Windows posts a completion per break as before.
+
 ## 2026-11-04: perf: the darwin size class limit is 64 KiB
 
 - Kind: perf
