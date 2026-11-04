@@ -8,7 +8,7 @@
 - Go reference: io/fs DirEntry, os.ReadDir, path/filepath.WalkDir (go1.26.1)
 - Test: the prelude corpus ("read_dir_entries, walk_entries and walk_dir_entries ..."), twincheck bench/perf/walkdir
 - Decision: 0483 (Accepted, owner, 2026-11-03); free functions, not Fs methods, so a user Fs still satisfies Fs
-- Timing: Mac iteration (not evidence): walk 2304 ms (FileInfo), walk_entries 1597 (Go 1514); host row follows in std-twin-walkdir-2026-11-03.md
+- Timing: Mac iteration (not evidence): walk 2304 ms (FileInfo), walk_entries 1597 (Go 1514); host 1 (bench/results/std-twin-walkdir-2026-11-03.md): walk_entries 0.91 of Go (walk 1.49, walk_info 0.94, walk_entries_info 1.11)
 
 `DirEntry{name, path, is_dir, is_symlink}` and `DirEntry.info(fs)` (the lstat on demand), `read_dir_entries`, `walk_entries` and `walk_dir_entries` list a directory with the type from getdents64 (d_type), getdirentries64 or FindNextFile and no stat; an entry whose type the file system does not give (DT_UNKNOWN, a Windows reparse point) is stat'ed, as in Go. A user Fs and the test world answer through `read_dir`. Nothing existing changes.
 
