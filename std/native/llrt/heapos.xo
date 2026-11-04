@@ -678,6 +678,17 @@ const H_PAGES = 10968
 /// The ends of the bump chunk's and the page chunk's reservations.
 const H_BLIM = 10976
 const H_PLIM = 10984
+/// XO_FREE_CHECK (decision 0484): the record's quarantine ring (0 off),
+/// its next slot, and the block free_mt hands free_hold (alloc.xo FQ, FQP).
+const H_FQ = 10992
+const H_FQI = 11000
+const H_FQP = 11008
+/// The ring's slots (a power of two): a freed block stays poisoned and
+/// unused until FQ_N more frees of its thread.
+const FQ_N = 65536
+/// A freed block's every word: as an address it is outside every user
+/// space (a load through it faults), as a count or length it is huge.
+const POISON = -2401053088876216593
 /// A chunk's bytes at first (a thread that allocates little touches little
 /// of its two chunks: a dozen of them were most of a small build's mapped
 /// heap, decision 0448).
@@ -1145,8 +1156,11 @@ const W_HSIZE = 29
 /// (XO_HEAP_MID_MAX lowers it), and the central lists' words (a list
 /// per size class, 1 to 72); then each class's magazine size (alloc.xo
 /// MAG_CAP, written by mag_caps); then the page chunk's bump words and the
-/// page blocks flag (alloc.xo PCUR, PEND, PAGES; decision 0425).
-const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73 + 24 + 16
+/// page blocks flag (alloc.xo PCUR, PEND, PAGES; decision 0425), the
+/// chunks' reservation ends (H_BLIM, H_PLIM), and XO_FREE_CHECK's ring,
+/// its next slot and the block being freed (alloc.xo FQ, FQP; decision
+/// 0484).
+const H_SIZE = 2152 + 32 * 256 + 24 + 8 * 73 + 24 + 16 + 24
 /// The first word of the per class magazine sizes (alloc.xo MAG_CAP).
 const H_MAG_CAP = 10368
 /// The bytes of blocks in a magazine (alloc.xo MAG_BYTES).
@@ -1219,6 +1233,134 @@ fn mag_caps(h: Int) {
   }
 }
 
+/// XO_FREE_CHECK (decision 0484), at the program's start, while one
+/// thread runs: counting stays on and the main record gets a quarantine
+/// ring (check_record); the caller then moves the program to per thread
+/// heaps (entry.xo start), so every free takes alloc.free_mt and so
+/// free_hold.
+pub fn free_check_on() {
+  let h = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  rt.mem_store(h, H_COUNT, 1, 8)
+  check_record(h)
+}
+
+/// Record h's quarantine ring, and its magazine sizes far below any
+/// list's length, so alloc.free_push declines every free (to free_mt;
+/// not 0: alloc's pops take a list's length below 0 when free_push did not
+/// count the block).
+fn check_record(h: Int) {
+  rt.mem_store(h, H_FQ, map(FQ_N.wrapping_shl(3)), 8)
+  rt.mem_store(h, H_FQI, 0, 8)
+  var c = 1
+  while c < NCLASS1 {
+    rt.mem_store(h, H_MAG_CAP.wrapping_add(c.wrapping_shl(3)), -4611686018427387904, 8)
+    c = c.wrapping_add(1)
+  }
+}
+
+/// The bytes after the prefix of a block of class c (alloc.xo's classes).
+fn class_bytes(c: Int) -> Int {
+  if c <= 64 { c.wrapping_shl(4) } else { (2048).wrapping_shl(c.wrapping_sub(65)).wrapping_sub(8) }
+}
+
+/// XO_FREE_CHECK's free (cabi.xo heap_grow, from alloc.xo free_mt) of
+/// the block in record h's H_FQP word: a block of a class is filled with
+/// POISON and takes the ring's next slot, and the block it replaces,
+/// freed FQ_N frees ago, is checked still poisoned (else written after
+/// its free: reported, status 70) and given back (alloc.free_held); a
+/// page block or a big one is given back at once.
+pub fn free_hold(h: Int) {
+  let p = rt.mem_load(h, H_FQP, 8)
+  if (p & 16383) == 0 {
+    alloc.free_held(h, p)
+    return
+  }
+  let c = rt.mem_load(p.wrapping_sub(8), 0, 8)
+  if c <= 0 || c >= PAGE_CLASS {
+    alloc.free_held(h, p)
+    return
+  }
+  let n = class_bytes(c)
+  var k = 0
+  while k < n {
+    rt.mem_store(p, k, POISON, 8)
+    k = k.wrapping_add(8)
+  }
+  let ring = rt.mem_load(h, H_FQ, 8)
+  let i = rt.mem_load(h, H_FQI, 8)
+  let slot = ring.wrapping_add(i.wrapping_shl(3))
+  let q = rt.mem_load(slot, 0, 8)
+  rt.mem_store(slot, 0, p, 8)
+  rt.mem_store(h, H_FQI, i.wrapping_add(1) & FQ_N.wrapping_sub(1), 8)
+  if q == 0 {
+    return
+  }
+  if held_written(q) {
+    written_after_free()
+  }
+  alloc.free_held(h, q)
+}
+
+/// Clears the n bytes (a multiple of 8) at p of a record whose part was
+/// closed or freed while the record lives on (hclient.xo close_at's
+/// connection fields): zeros, or POISON under XO_FREE_CHECK, so a use
+/// after the close faults where it happens instead of reading a zero
+/// that looks valid (descriptor 0 is standard input; on wasm address 0
+/// is memory). Decision 0484.
+pub fn retire(p: Int, n: Int) {
+  let r = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  if r == 0 || rt.mem_load(r, H_FQ, 8) == 0 {
+    rt.mem_set(p, 0, n)
+    return
+  }
+  var k = 0
+  while k < n {
+    rt.mem_store(p, k, POISON, 8)
+    k = k.wrapping_add(8)
+  }
+}
+
+/// Whether held block q (free_hold) is no longer all POISON: written
+/// after its free.
+fn held_written(q: Int) -> Bool {
+  let n = class_bytes(rt.mem_load(q.wrapping_sub(8), 0, 8))
+  var k = 0
+  while k < n {
+    if rt.mem_load(q, k, 8) != POISON {
+      return true
+    }
+    k = k.wrapping_add(8)
+  }
+  false
+}
+
+/// "fault: XO_FREE_CHECK: ..." and the end of the process (status 70).
+fn written_after_free() {
+  let m = "fault: XO_FREE_CHECK: a freed block was written after its free (a use after free: a store, or a reference count changed, through a pointer to it)"
+  stdio.err(raw.data(m), m.len(), true)
+  process.os_exit(70)
+}
+
+/// XO_FREE_CHECK at the program's end (entry.xo finish): every record's
+/// held blocks checked as an eviction checks one (free_hold).
+pub fn free_check_end() {
+  var r = rt.mem_load(rt.static_word(W_HEAPS), 0, 8)
+  while r != 0 {
+    let ring = rt.mem_load(r, H_FQ, 8)
+    if ring != 0 {
+      var i = 0
+      while i < FQ_N {
+        let q = rt.mem_load(ring, i.wrapping_shl(3), 8)
+        if q != 0 && held_written(q) {
+          written_after_free()
+        }
+        i = i.wrapping_add(1)
+      }
+    }
+    r = rt.mem_load(r, H_NEXT, 8)
+  }
+}
+
 /// Stops the counting of allocations and frees (alloc.xo COUNT) on the
 /// main record, which the threads' records copy (the program's start,
 /// before a second thread: no report reads the counts).
@@ -1265,6 +1407,9 @@ pub fn thread_heap() -> Int {
   rt.mem_store(h, H_PAGES, rt.mem_load(first, H_PAGES, 8), 8)
   rt.mem_store(h, H_CENTRAL, rt.mem_load(first, H_CENTRAL, 8), 8)
   rt.mem_store(h, H_COUNT, rt.mem_load(first, H_COUNT, 8), 8)
+  if rt.mem_load(first, H_FQ, 8) != 0 {
+    check_record(h)
+  }
   let prof = rt.mem_load(first, H_PROF, 8)
   rt.mem_store(h, H_PROF, prof, 8)
   // profiling: the first allocation's hook draws this record's first gap

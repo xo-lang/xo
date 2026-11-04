@@ -296,6 +296,10 @@ fn heap_grow(h: Int, n: Int) -> Int {
     }
     return 0
   }
+  if n == FHOLD {
+    heapos.free_hold(h)
+    return 0
+  }
   if n == TRIM {
     heapos.trim_thread()
     return 0
@@ -330,6 +334,9 @@ const PFREED = 288230376151711744
 /// page blocks (heapos.xo trim_thread; pool.xo's idle worker, which
 /// cannot import heapos; decision 0448 stage 1).
 const TRIM = 144115188075855872
+/// alloc.xo's FHOLD: XO_FREE_CHECK holds the block free_mt left in h's
+/// FQP word (decision 0484).
+const FHOLD = 144115188075855873
 const PSAMPLE = 10360
 
 fn heap_lock() { heapos.lock() }

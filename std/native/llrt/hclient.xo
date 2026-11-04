@@ -11,6 +11,7 @@
 use native/llrt/atexit
 use native/llrt/ctx
 use native/llrt/h2w
+use native/llrt/heapos
 use native/llrt/hconn
 use native/llrt/http1w
 use native/llrt/netconn
@@ -1553,7 +1554,9 @@ fn close_at(a: Int) {
   }
   tasks.h_release(cn)
   free_c(ld(c, C_BUF))
-  rt.mem_set(c, 0, 72)
+  // XO_FREE_CHECK poisons the fields: a send or read on the closed
+  // connection faults (decision 0484)
+  heapos.retire(c, 72)
   st(a, R_CN, 0)
   st4(a, R_READING, 0)
 }

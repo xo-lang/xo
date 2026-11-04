@@ -234,7 +234,17 @@ pub fn start(argc: Int, argv: Int, envp: Int) {
   }
   // no report reads the allocation counts: the heaps stop keeping them
   // (alloc.xo COUNT; a budget turns them on again)
-  if process.env_real_at("XO_LEAKCHECK") == 0 && process.env_real_at("XO_HEAPSTATS") == 0 && process.env_real_at("XO_RTSTATS") == 0 {
+  // XO_FREE_CHECK=1 (decision 0484): freed blocks are poisoned and held
+  // back from reuse, so a use after a free faults or is reported; the
+  // program runs on per thread heaps from here (cabi.xo heap_threads'
+  // switch), where every free goes through alloc.free_mt
+  let fcheck = process.env_real_at("XO_FREE_CHECK") != 0 && obj.solo_heap() != 0 && heapos.pages_on()
+  if fcheck {
+    heapos.free_check_on()
+    heapos.set_thread_heap(obj.solo_heap())
+    obj.heap_init(0, rt.fn_addr("heap_thread"))
+    stdio.threads()
+  } else if process.env_real_at("XO_LEAKCHECK") == 0 && process.env_real_at("XO_HEAPSTATS") == 0 && process.env_real_at("XO_RTSTATS") == 0 {
     heapos.counting_off()
   }
   // XO_CUT=0: the growth of a thread's chunk never cuts a larger class's
@@ -445,6 +455,8 @@ fn win_start(argc: Int, argv: Int, envp: Int) {
 /// collection constants and the zones are freed) and XO_HEAPSTATS' free
 /// lists and chunks, on standard error.
 pub fn finish() {
+  // XO_FREE_CHECK (decision 0484): the blocks still held are checked too
+  heapos.free_check_end()
   if process.env_real_at("XO_LEAKCHECK") != 0 {
     let _c = rt.call_c2(rt.fn_addr("consts_free"), 0, 0)
     // std/time's kept zones, if the program has them (atexit.xo)

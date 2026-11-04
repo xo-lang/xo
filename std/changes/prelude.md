@@ -1,5 +1,21 @@
 # prelude changes
 
+## 2026-11-03: feature: XO_FREE_CHECK=1 poisons freed blocks and closed connections, so a use after a free faults on native
+
+- Kind: feature
+- Commit: this commit
+- Found by: the Lead (2026-11-03): http_reverse_proxy_ws's use after close trapped only on wasm (gotchas/native-silent-on-freed-llrt-records.md)
+- Go reference: none (Go's GC has no frees); GODEBUG's clobberfree is the nearest
+- Test: at ab852cf42 plus this change http_reverse_proxy_ws crashes at 0xdeadbeefdeadbeef in hclient.send_chunk < http.tunnel under the mode and passes without it; the 83 network goldens and internal/stdtest pass under it (decision 0484)
+- Timing: none (off by default; the paths it hooks are free_mt, close_at and the start)
+
+Decision 0484. With XO_FREE_CHECK=1 the program runs on per thread heaps
+from its start; every free goes through alloc.free_mt, which fills a
+size class block with POISON and holds it in its thread's ring of
+65,536 before it is reused, checking it was not written meanwhile;
+hclient.xo close_at retires a connection's fields as POISON instead of
+zero (heapos.retire).
+
 ## 2026-11-03: feature: DirEntry, read_dir_entries, walk_entries, walk_dir_entries
 
 - Kind: feature

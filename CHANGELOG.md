@@ -8,6 +8,7 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- feature (native runtime): XO_FREE_CHECK=1 (decision 0484), a debug mode: freed heap blocks are filled with 0xdeadbeefdeadbeef and held from reuse in a per thread ring, and a closed client connection's fields are poisoned, so a use after a free or a close faults where it happens on native instead of passing silently (it catches the proxy upgrade bug of ab852cf42, which only wasm trapped on); a write after a free is reported when the block leaves the ring or at the end. Off by default; costs nothing when off.
 - fix (http, native): http.reverse_proxy no longer writes to a freed connection after a proxied WebSocket upgrade ends (a regression of the bodiless-request fix: a trap on wasip2, silent on native); an upgrade keeps its body source.
 - wasm: a wasip2/wasm program warns once on stderr when 1,024 closed TCP connections are waiting for peers that do not read; they are kept, since wasmtime's drop of a stream whose write is in flight waits for it (wasmtime PR #14461; gotchas/wasm-blocking-flush-deadlock.md). Golden net_close_stuck (100 connections closed with a write in flight to a client that never reads).
 - perf: SHA-224, SHA-256, SHA-384 and SHA-512 finish a digest with one padding append and four words a call (otp sha256 0.931 of before on linux/arm64); with SHA-512's instructions, otp sha512 is 0.937 of Go's time (was 1.376).

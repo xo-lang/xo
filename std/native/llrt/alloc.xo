@@ -172,6 +172,16 @@ const PAGES = 10968
 /// rt.heap_grow(p, PFREED): the heap profile forgets page block p (cabi.xo
 /// heap_grow; a prefixed block's sampled free goes through heap_big_release).
 const PFREED = 288230376151711744
+/// XO_FREE_CHECK (decision 0484): the address of the heap's quarantine
+/// ring, 0 when off (heapos.xo free_check_on), and the block free_mt
+/// hands it in (FQP); rt.heap_grow(h, FHOLD) asks heapos.xo free_hold to
+/// poison and hold it. The mode runs the program on per thread heaps from
+/// its start (as once a second thread runs), keeps COUNT on and MAG_CAP
+/// 0, so every allocation takes alloc and every free free_mt (free_push
+/// declines): the single threaded and inlined paths are unchanged.
+const FQ = 10992
+const FQP = 11008
+const FHOLD = 144115188075855873
 
 /// The slot atomics' relaxed order.
 const RELAXED = 0
@@ -480,6 +490,25 @@ pub fn free(h: Int, p: Int) {
   rt.mem_store(fl, FREE_LISTS, p, 8)
 }
 
+/// XO_FREE_CHECK's release of a block it held (heapos.xo free_hold): onto
+/// heap h's list of its class, counted in the list's length (free_mt
+/// counted the free), never into a magazine; a page block or a big one
+/// as free.
+pub fn free_held(h: Int, p: Int) {
+  if (p & 16383) == 0 {
+    return free_aligned(h, p)
+  }
+  let c = rt.mem_load(p.wrapping_sub(8), 0, 8)
+  if c < 0 {
+    rt.heap_big_release(p.wrapping_sub(8))
+    return
+  }
+  let fl = h.wrapping_add(c.wrapping_shl(3))
+  rt.mem_store(p, 0, rt.mem_load(fl, FREE_LISTS, 8), 8)
+  rt.mem_store(fl, FREE_LISTS, p, 8)
+  rt.mem_store(fl, NFREE, rt.mem_load(fl, NFREE, 8).wrapping_add(1), 8)
+}
+
 /// free of a page aligned block: a page block (decision 0425: its class
 /// and link in its chunk's table), else free's prefixed path.
 fn free_aligned(h: Int, p: Int) {
@@ -632,6 +661,12 @@ pub fn free_push(h: Int, p: Int) -> Bool {
 pub fn free_mt(h: Int, p: Int) {
   if rt.mem_load(h, COUNT, 8) != 0 {
     rt.mem_store(h, FREES, rt.mem_load(h, FREES, 8).wrapping_add(1), 8)
+    if rt.mem_load(h, FQ, 8) != 0 {
+      // XO_FREE_CHECK: poisoned and held (heapos.xo free_hold)
+      rt.mem_store(h, FQP, p, 8)
+      let _q = rt.heap_grow(h, FHOLD)
+      return
+    }
   }
   var c = 0
   var pg = false

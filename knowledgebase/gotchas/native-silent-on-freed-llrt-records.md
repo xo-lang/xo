@@ -1,6 +1,6 @@
 # Native runs pass a use-after-free of an llrt record that wasm traps on
 
-Status: Observed (2026-11-03)
+Status: Observed (2026-11-03); fixed by a check mode (decision 0484)
 
 ## Symptom
 
@@ -36,15 +36,14 @@ not a record shared with another task.
   connection's lifetime: it is the one backend that traps on this.
 - TSan (`--race`) sees it only when the two tasks run on two threads.
 
-## Fix (proposed, not built)
+## Fix
 
-A debug allocator mode (say XO_FREE_CHECK=1, or under XO_RC_CHECK=1):
-alloc.free fills a freed small block with a poison word
-(0xdeadbeefdeadbeef) and keeps it in a FIFO quarantine of N blocks
-before it goes back to its class's free list; obj.h_free_n and
-poll.pd_close clear the object's kind word to a freed tag. A load of a
-poisoned handle or pointer then faults on its first use (an address
-in the non-canonical range), and alloc on a quarantined block's reuse
-checks that the poison is intact (a write after free). The cost is
-only in the debug mode; the hot path checks one static word as
-COUNT already does.
+Decision 0484: XO_FREE_CHECK=1 poisons freed heap blocks (held in a
+per thread ring before reuse) and a closed connection's fields
+(heapos.retire, from hclient.xo close_at), so this bug crashes on native
+at the use (tlsio.write < hclient.send_chunk < http.tunnel). The
+cause turned out to be a use after close, not after free: close_at
+zeroed the fields of a record that lives on, and zero is a valid
+descriptor (and a valid wasm address). Run a network or concurrency
+golden under XO_FREE_CHECK=1 when a change moves an object's or a
+connection's lifetime.
