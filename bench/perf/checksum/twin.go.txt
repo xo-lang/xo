@@ -1,0 +1,48 @@
+package main
+
+import (
+	"fmt"
+	"hash/adler32"
+	"hash/crc32"
+	"hash/crc64"
+	"hash/fnv"
+	"os"
+)
+
+func next(x int) int { return (x*1103515245 + 12345) % 2147483648 }
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	data := make([]byte, 0, 4096)
+	r := 7
+	for i := 0; i < 4096; i++ {
+		r = next(r)
+		data = append(data, byte((r>>8)&255))
+	}
+	iso := crc64.MakeTable(crc64.ISO)
+	sum := 0
+	for i := 0; i < 20000; i++ {
+		switch w {
+		case "crc32":
+			sum += int(crc32.ChecksumIEEE(data)) % 1000003
+		case "crc64":
+			sum += int(crc64.Checksum(data, iso)&0x7fffffffffffffff) % 1000003
+		case "fnv32a":
+			h := fnv.New32a()
+			h.Write(data)
+			sum += int(h.Sum32()) % 1000003
+		case "fnv64a":
+			h := fnv.New64a()
+			h.Write(data)
+			sum += int(h.Sum64()&0x7fffffffffffffff) % 1000003
+		case "adler32":
+			sum += int(adler32.Checksum(data)) % 1000003
+		default:
+			sum += len(data) + i%3
+		}
+	}
+	fmt.Printf("%s %d\n", w, sum)
+}
