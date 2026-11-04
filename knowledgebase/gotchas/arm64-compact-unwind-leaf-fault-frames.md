@@ -120,3 +120,14 @@ The body's region names no personality (a leaf has no other calls).
 TestNoLeafWithPads now checks that mutex_poison_leaf's stubs region names
 its own table and that no golden has the old `_leafpads` marker.
 
+x86 had the same landing (Observed 2026-11-04, the 2-hourly main check at
+629061d29: amd64 golden mutex_poison_leaf SIGSEGV at a stack address): a
+leaf's stub pushes rbp and the pad's `ret` popped it as the return
+address. Fix: compiler/arm64 x86emit.xo x86_leaf_pad_entry (`movq %rbp,
+%rsp`, `popq %rbp`, a jump to the pad), after the stubs in the function's
+one region. A Windows leaf's stub pushes no frame (it jumps to the
+raise), so it lands right. The amd64 sample did not have the golden, so
+the per-push amd64 run passed; mutex_poison_leaf is in
+scripts/docker-amd64-sample.txt now. A fix of one backend's landing
+path is checked on every backend's goldens before the release cut.
+

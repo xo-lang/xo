@@ -8,6 +8,8 @@ CHANGELOG.md held them (split on 2026-11-02 from one "Unreleased" list;
 the text of every entry is unchanged).
 
 ## Unreleased
+- x86: a fault in a Mutex.with closure that compiles to a leaf poisons the mutex on linux/amd64 and darwin/amd64 instead of dying of SIGSEGV: the landing pad's entry now pops the fault stub's frame record (arm64's fix, 3652d1880, did not cover x86; gotchas/arm64-compact-unwind-leaf-fault-frames.md). Found by the 2-hourly check's amd64 goldens (mutex_poison_leaf, now in the amd64 sample). Windows was not affected.
+
 - perf (wasm, size): a wasm module no longer carries Linux's vDSO clock lookup (sysio clock_now and real_ns test the wasm target first, a constant): hello component -4,759 bytes (324,153 to 319,394); std/changes/prelude.md
 - feat (wasm, wasip3, decision 0447 stage 5 step 3): a wasip3/wasm http component serves several requests at once per instance: each request runs main in a task of its own (compiler/wasm rt10.xo), a task waiting on the host (body reads, writes, an outgoing send) lets the others run, and the callback ABI's waitable set wakes the waiting task; wasmtime serve's default of 16 requests per 0.3 instance now applies; gotchas/wasm-parking-rt-call-needs-resume-point.md
 - fix (tools): `xo def`, `refs`, `type`, `doc` and `symbols` with XO_STD unset read the std of the tree --dir is in (a `std` directory holding prelude.xo, or a checkout's std/) instead of the one beside the binary: another checkout's bin/xo run in a worktree listed only a declaration, its calls resolved against the other std (`xo refs --dir=std/native/llrt linux.vdso_clock`, Xo Lang 4).
