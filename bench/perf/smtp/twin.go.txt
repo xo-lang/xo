@@ -1,0 +1,83 @@
+package main
+
+import (
+	"bufio"
+	"bytes"
+	"fmt"
+	"net"
+	"net/smtp"
+	"os"
+)
+
+func serve(l net.Listener, n int, got chan int) {
+	for k := 0; k < n; k++ {
+		c, err := l.Accept()
+		if err != nil {
+			panic(err)
+		}
+		r := bufio.NewReader(c)
+		c.Write([]byte("220 bench ESMTP\r\n"))
+		inData := false
+		data := 0
+		for {
+			line, err := r.ReadBytes('\n')
+			if err != nil {
+				break
+			}
+			if inData {
+				if len(line) == 3 && line[0] == '.' {
+					inData = false
+					c.Write([]byte("250 queued\r\n"))
+				} else {
+					data += len(line) - 1
+				}
+			} else if len(line) >= 4 && line[0] == 'D' && line[1] == 'A' {
+				inData = true
+				c.Write([]byte("354 go\r\n"))
+			} else if len(line) >= 4 && line[0] == 'Q' {
+				c.Write([]byte("221 bye\r\n"))
+				break
+			} else if len(line) >= 4 && line[0] == 'E' {
+				c.Write([]byte("250 bench\r\n"))
+			} else {
+				c.Write([]byte("250 ok\r\n"))
+			}
+		}
+		got <- data + 1
+		c.Close()
+	}
+}
+
+func main() {
+	w := "none"
+	if len(os.Args) > 1 {
+		w = os.Args[1]
+	}
+	var body bytes.Buffer
+	body.WriteString("Subject: bench\r\nFrom: a@x.test\r\nTo: b@y.test\r\n\r\n")
+	for i := 0; i < 15; i++ {
+		body.WriteString(fmt.Sprintf("line %d of the message body, long enough to look real, 0123456789abcdefghijklmnopqrstuvwxyz\r\n", i))
+	}
+	msg := body.Bytes()
+	sum := len(msg)
+	if w == "send" {
+		n := 2000
+		l, err := net.Listen("tcp", "127.0.0.1:0")
+		if err != nil {
+			panic(err)
+		}
+		got := make(chan int, n)
+		go serve(l, n, got)
+		to := []string{"b@y.test", "c@y.test"}
+		for k := 0; k < n; k++ {
+			if err := smtp.SendMail(l.Addr().String(), nil, "a@x.test", to, msg); err != nil {
+				panic(err)
+			}
+		}
+		for k := 0; k < n; k++ {
+			sum += <-got
+		}
+		l.Close()
+	}
+	fmt.Println(w, sum)
+}

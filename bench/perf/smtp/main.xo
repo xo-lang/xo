@@ -1,0 +1,86 @@
+// std/smtp against net/smtp (twin.go.txt): 2,000 messages of about 1 KB
+// (two recipients each) sent with smtp.send, one connection a message, to a
+// minimal in-process server on loopback (greeting, EHLO, MAIL, RCPT, DATA,
+// QUIT; plain text); the checksum is the data bytes the server read plus
+// the messages. `none` builds the message and stops. Usage:
+// `<program> none|send`. Prints `<workload> <checksum>`; the twin prints
+// the same.
+use std/smtp
+
+fn reply(c: ServerConn, r: Str) -> () ! NetErr uses net {
+  c.write("${r}\r\n".bytes())?
+}
+
+fn serve(l: Listener, n: Int, got: Mutex[Int]) -> () ! NetErr uses net {
+  for _ in 0..n {
+    let c = l.accept()?
+    reply(c, "220 bench ESMTP")?
+    var buf = b""
+    var in_data = false
+    var data = 0
+    var done = false
+    while !done {
+      var i = 0
+      while i < buf.len() && buf[i] != '\n' {
+        i += 1
+      }
+      if i == buf.len() {
+        match c.read(4096)? {
+          Some(b) => {
+            buf = buf + b
+            continue
+          }
+          None => break
+        }
+      }
+      let line = buf[0..i]
+      buf = buf[i + 1..]
+      if in_data {
+        if line.len() == 2 && line[0] == '.' {
+          in_data = false
+          reply(c, "250 queued")?
+        } else {
+          data += line.len()
+        }
+      } else if line.len() >= 4 && line[0] == 'D' && line[1] == 'A' {
+        in_data = true
+        reply(c, "354 go")?
+      } else if line.len() >= 4 && line[0] == 'Q' {
+        reply(c, "221 bye")?
+        done = true
+      } else if line.len() >= 4 && line[0] == 'E' {
+        reply(c, "250 bench")?
+      } else {
+        reply(c, "250 ok")?
+      }
+    }
+    got.with(fn(var v) { v += data + 1 })
+    c.close()
+  }
+}
+
+fn main(os: Os) ! {
+  let w = os.env.args().get(0) ?? "none"
+  var body = BytesBuilder.new()
+  body.write("Subject: bench\r\nFrom: a@x.test\r\nTo: b@y.test\r\n\r\n".bytes())
+  for i in 0..15 {
+    body.write("line ${i} of the message body, long enough to look real, 0123456789abcdefghijklmnopqrstuvwxyz\r\n".bytes())
+  }
+  let msg = body.freeze()
+  var sum = msg.len()
+  if w == "send" {
+    let n = 2000
+    let l = os.net.listen("127.0.0.1:0")?
+    let got = Mutex[Int].new(0)
+    let to = ["b@y.test", "c@y.test"]
+    scope s {
+      s.spawn(fn() ! NetErr { serve(l, n, got) })
+      for _ in 0..n {
+        smtp.send(os.net, l.addr(), "a@x.test", to, msg, security: smtp.Security.None)?
+      }
+    }
+    sum += got.with(fn(v) { v })
+    l.close()
+  }
+  os.stdio.println("${w} ${sum}")
+}
