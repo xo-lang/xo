@@ -21,3 +21,13 @@ HMAC state's drops and allocations (drop Str 15%, drop crypto.State 15%)
 and the block (25%), which already runs on the SHA-256 instructions.
 prof-otp512.txt is the profile that sent SHA-512 to its instructions
 (72% in the software block).
+
+## 2026-11-04 refresh (host 1, n=6 unless noted, main at 80294e16b)
+
+| workload | Go ms | Xo ms | ratio | interval |
+|---|---|---|---|---|
+| sha1 | 92.65 | 102.4 | 1.105 | 1.086 to 1.17 (n=7) |
+| sha256 | 87.0 | 110.6 | 1.272 | 1.243 to 1.314 |
+| sha512 | 178.6 | 165.8 | 0.928 | 0.911 to 0.951 |
+
+The HMAC cost is the hash's compression function (std/native/llrt sha1, sha256): sha512 is ahead of Go, sha256 is not, which is Go's SHA-NI path on this host against Xo's scalar rounds for 256.
